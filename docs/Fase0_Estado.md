@@ -16,11 +16,6 @@ cambie cualquiera de estas líneas.
 | Los motores de `deploy/mail/` levantan contra el esquema `mail` | Pendiente: copia y adaptación a PostgreSQL en curso | `docker compose -f deploy/mail/docker-compose.mail.yml up` con `MAIL_DB_*` |
 | `ERP/` y `mailcow/` borrados | Pendiente hasta cerrar lo anterior | |
 
-## Pendiente para cerrar
-
-* Script en `ops/` que cree la empresa de plataforma y su primer `superadmin` (hoy se
-  inserta a mano en `mail_registry`; el e2e lo hace por SQL).
-
 ## Deuda conocida que sale de la copia (no bloquea la fase 0)
 
 * `pkg/events` sin outbox: las publicaciones críticas se hacen tras el commit y pueden

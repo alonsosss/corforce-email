@@ -22,7 +22,15 @@ materializa en `/dev/shm/core-force-mail/secrets.env` (tmpfs, 0600, todo o nada)
 canónica es `ops/security/secrets/secret-keys.txt`; añadir una variable ahí es parte de
 introducir el secreto. CI: `make check-secrets` y `make check-secret-sources`.
 
-## 3. Migraciones
+## 3. Arranque de una plataforma vacía
+
+`ops/db/bootstrap-platform.sh` crea la celda inicial, la empresa `platform` y su primer
+`superadmin` (contraseña solo por `PLATFORM_ADMIN_PASSWORD`, nunca por argumento; hash
+bcrypt hecho por Postgres). Idempotente. Es lo único que no se puede hacer por API, porque
+para llamar a la API hace falta ya un superadmin. Después, todo por API: `POST /cells`,
+`POST /organizations`.
+
+## 4. Migraciones
 
 * Registro: las aplica `organization` al arrancar (`RegistryMigrator`, idempotente).
 * Empresa: se aplican al crear la empresa y en un barrido de fondo (`RUN_TENANT_MIGRATIONS`)
@@ -33,7 +41,7 @@ introducir el secreto. CI: `make check-secrets` y `make check-secret-sources`.
   `-- Schema | Service`, nunca cambiar el tipo de una columna sin
   `ops/maintenance/pgbouncer-reconnect.sh` después (los planes preparados viven en el pooler).
 
-## 4. Despliegue
+## 5. Despliegue
 
 * `scripts/deploy-ecr.sh` desde el PC: compila en local, publica a ECR etiquetando por
   commit y el servidor solo hace `pull`. **Nunca `docker compose build` en el servidor** ni
@@ -51,7 +59,7 @@ introducir el secreto. CI: `make check-secrets` y `make check-secret-sources`.
 * `docker-compose.images.yml` es generado (`make gen-compose-images`); CI falla si queda
   atrás.
 
-## 5. Respaldos
+## 6. Respaldos
 
 `ops/backup/backup-tenants.sh` vuelca cada base (`mail_%`) por separado con `pg_dump -Fc`,
 verifica que `pg_restore --list` lo lee, sube a `BACKUP_S3_BUCKET` (bucket distinto al de
@@ -59,7 +67,7 @@ medios, con Object Lock) y conserva 3 días en local. `verify-restore.sh` restau
 volcado en una base desechable cada semana. Las alertas vigilan la antigüedad del último
 éxito y la ausencia de la serie. Programación: `ops/backup/systemd/`.
 
-## 6. Observabilidad
+## 7. Observabilidad
 
 `docker-compose.observability.yml` (Prometheus, Grafana, Loki, Promtail, node-exporter,
 docker-socket-proxy) se une a la red `mail_mail-internal` como externa. Los objetivos se
@@ -68,7 +76,7 @@ pruebas de `promtool` (`make check-alertas`). Cada servicio expone `/healthz` y 
 fuera de su cadena de middlewares; las imágenes son `FROM scratch` y el `HEALTHCHECK` usa
 el propio binario con `--healthcheck <puerto>`.
 
-## 7. Alta de un servicio
+## 8. Alta de un servicio
 
 1. `make new-service name=<svc> port=<puerto> module=<modulo>`: molde hexagonal que compila,
    Dockerfile, migración canónica de empresa, puerto en `.env.example`.
@@ -79,7 +87,7 @@ el propio binario con `--healthcheck <puerto>`.
 5. `make validate-scaffold` comprueba puertos, permisos, catálogo, acoplamiento, streams e
    imágenes. `make gen-events` y `make gen-observability-targets` regeneran lo derivado.
 
-## 8. Checks antes de dar por terminada una tarea
+## 9. Checks antes de dar por terminada una tarea
 
 `make checks` (build, vet, migraciones, acoplamiento, errores mudos, aridad SQL, streams,
 contratos de eventos, secretos, scaffold) y `make clean-copy`. Con docker:

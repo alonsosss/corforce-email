@@ -267,14 +267,14 @@ make -s check-compose-images
 if [[ "${SOLO_FICHEROS:-0}" == "1" ]]; then
   if git diff --quiet "$(remote 'cat .deployed-tag 2>/dev/null' || echo HEAD)" HEAD -- \
       docker-compose.yml docker-compose.images.yml docker-compose.observability.yml \
-      migrations ops/edge-proxy ops/security ops/ecr ops/observability ops/maintenance ops/backup pgbouncer 2>/dev/null; then
+      migrations ops/db ops/security ops/ecr ops/observability ops/maintenance ops/backup pgbouncer 2>/dev/null; then
     echo "nada que desplegar"; exit 0
   fi
   echo ">> tag $TAG | sin imagenes que reconstruir; se sincronizan los ficheros del servidor"
   adquirir_candado
   CANDADO_TOMADO=1
   guardia_retroceso || exit 1
-  stage_head_files docker-compose.yml docker-compose.images.yml docker-compose.observability.yml migrations ops/edge-proxy ops/security ops/ecr ops/observability ops/maintenance ops/backup pgbouncer
+  stage_head_files docker-compose.yml docker-compose.images.yml docker-compose.observability.yml migrations ops/db ops/security ops/ecr ops/observability ops/maintenance ops/backup pgbouncer
   rsync -a -e "ssh -o IdentitiesOnly=yes -i $SSH_KEY" "$STAGE_DIR"/ "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/"
   recargar_prometheus
   remote "echo $TAG > .deployed-tag"
@@ -357,7 +357,7 @@ if [[ "$TRANSPORT" == "ecr" ]]; then
   adquirir_candado
   CANDADO_TOMADO=1
   guardia_retroceso || exit 1
-  stage_head_files docker-compose.yml docker-compose.images.yml docker-compose.observability.yml migrations ops/edge-proxy ops/security ops/ecr ops/observability ops/maintenance ops/backup pgbouncer
+  stage_head_files docker-compose.yml docker-compose.images.yml docker-compose.observability.yml migrations ops/db ops/security ops/ecr ops/observability ops/maintenance ops/backup pgbouncer
   rsync -a -e "ssh -o IdentitiesOnly=yes -i $SSH_KEY" "$STAGE_DIR"/ "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/"
   recargar_prometheus
   # El login de docker contra ECR caduca a las 12 h. El servidor tiene su rol
@@ -408,7 +408,7 @@ else
   docker save $(printf 'app-%s:latest ' "${SVCS[@]}") | gzip | "${SSH[@]}" 'gunzip | docker load'
   # La MISMA lista que el camino de ECR. Cuando divergen, un fichero llega o no llega segun
   # el transporte que se usara ese dia, que es de las cosas mas dificiles de diagnosticar.
-  stage_head_files docker-compose.yml docker-compose.images.yml docker-compose.observability.yml migrations ops/edge-proxy ops/security ops/ecr ops/observability ops/maintenance ops/backup pgbouncer
+  stage_head_files docker-compose.yml docker-compose.images.yml docker-compose.observability.yml migrations ops/db ops/security ops/ecr ops/observability ops/maintenance ops/backup pgbouncer
   rsync -a -e "ssh -o IdentitiesOnly=yes -i $SSH_KEY" "$STAGE_DIR"/ "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/"
   recargar_prometheus
   por_lotes_remoto "recrear" "ops/security/secrets/with-secrets.sh docker compose up -d --no-deps"
