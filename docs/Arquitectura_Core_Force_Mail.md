@@ -42,7 +42,7 @@ JetStream, S3, ClickHouse (analitica, fase 4), Prometheus/Grafana/Loki.
 Difiere del informe: `tenant-service` se llama `organization` (nombre heredado, esquema
 `organization`); `billing-service` y `policy-service` no existen todavia (fase 3/4).
 
-### 2.2 Correo corporativo (celda). Estado: motores copiados; servicios Go en fase 2
+### 2.2 Correo corporativo (celda). Estado: `mail-directory`, `mail-auth` y `domain-service` verificados (2026-09-12); `mail-security` en construccion; motores copiados
 
 | Servicio | Responsabilidad | Esquema |
 |---|---|---|
@@ -64,7 +64,12 @@ Por que la celda y no la empresa: un motor SMTP no puede consultar N bases; ve t
 dominios que sirve en una sola. El aislamiento entre empresas es `tenant_id` + RLS para
 los servicios Go y el rol `mail_engine` de solo lectura para los motores.
 
-### 2.3 Transaccional y marketing (empresa). Estado: fase 3 y 4
+Verificado de punta a punta con binarios reales (2026-09-12): alta de dominio por API en
+`domain-service`, activacion interna en `mail-directory`, alta de buzon, y la fila que
+Postfix/Dovecot leen bajo el rol `mail_engine` con su ruta Maildir; otra empresa lista cero
+buzones (RLS).
+
+### 2.3 Transaccional y marketing (empresa). Estado: `suppression` verificado; `templates` y `transactional` en construccion; fase 4 pendiente
 
 | Servicio | Responsabilidad |
 |---|---|
