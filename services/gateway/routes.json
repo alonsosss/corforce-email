@@ -35,6 +35,11 @@
     {"prefix": "suppression",   "service": "suppression",    "module": "suppression"},
     {"prefix": "templates",     "service": "templates",      "module": "templates"}
   ],
+  "read_posts": [
+    {"prefix": "suppression", "action": "check"},
+    {"prefix": "templates",   "action": "render"},
+    {"prefix": "templates",   "action": "preview"}
+  ],
   "public": [
     {"method": "POST", "path": "/public/transactional/ses-events/{tenantID}", "service": "transactional"},
     {"method": "GET",  "path": "/public/transactional/unsubscribe",           "service": "transactional"},

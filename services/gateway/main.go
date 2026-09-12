@@ -136,7 +136,7 @@ func main() {
 			enforcer := newRBACEnforcer(
 				table.serviceURL("access-control"), internalToken,
 				os.Getenv("RBAC_ENFORCE_MODE"), os.Getenv("RBAC_FAIL_MODE"), os.Getenv("RBAC_READ_MODE"),
-				modules, logger,
+				modules, table.readPostIndex(), logger,
 			)
 			r.Use(enforcer.middleware)
 			// Rastro de auditoria de escrituras: publica un evento por cada

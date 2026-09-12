@@ -32,6 +32,11 @@ type routeTable struct {
 	// Un modulo vacio significa "no se gatea por modulo" y solo se admite en las
 	// rutas de consulta de acceso, que ya resuelve el propio servicio con el JWT.
 	Routes []routeSpec `json:"routes"`
+	// ReadPosts: consultas que viajan en POST porque llevan cuerpo (una comprobacion de
+	// mil direcciones, un renderizado de plantilla). El RBAC las gatea como LECTURA del
+	// modulo: exigir una accion de escritura dejaria fuera a quien solo puede consultar.
+	// Se identifican por prefijo y ultimo segmento (`/api/v1/<prefix>/.../<action>`).
+	ReadPosts []readPostSpec `json:"read_posts,omitempty"`
 	// Public: rutas bajo /api/v1 que se sirven SIN sesion (webhooks de proveedores, bajas
 	// de suscripcion desde el correo). Van con el limitador general y nada mas: la
 	// proteccion es del propio servicio (firma del proveedor, enlace firmado). Metodo y
@@ -40,6 +45,11 @@ type routeTable struct {
 	// Frontend: servicio que sirve la aplicacion web (comodin /*). Opcional: sin el,
 	// el gateway solo expone el API.
 	Frontend string `json:"frontend,omitempty"`
+}
+
+type readPostSpec struct {
+	Prefix string `json:"prefix"`
+	Action string `json:"action"`
 }
 
 type publicRouteSpec struct {
@@ -116,6 +126,11 @@ func (t *routeTable) validate() error {
 			return fmt.Errorf("tabla de rutas: modulo invalido %q en %q", r.Module, r.Prefix)
 		}
 	}
+	for _, rp := range t.ReadPosts {
+		if !seen[rp.Prefix] || !prefixRe.MatchString(rp.Action) {
+			return fmt.Errorf("tabla de rutas: read_post invalido %q/%q", rp.Prefix, rp.Action)
+		}
+	}
 	for _, p := range t.Public {
 		switch p.Method {
 		case "GET", "POST", "PUT", "DELETE":
@@ -162,6 +177,27 @@ func (t *routeTable) moduleIndex() map[string]string {
 		}
 	}
 	return m
+}
+
+// readPostIndex devuelve prefijo -> acciones POST que se gatean como lectura.
+func (t *routeTable) readPostIndex() map[string]map[string]bool {
+	m := make(map[string]map[string]bool)
+	for _, rp := range t.ReadPosts {
+		if m[rp.Prefix] == nil {
+			m[rp.Prefix] = map[string]bool{}
+		}
+		m[rp.Prefix][rp.Action] = true
+	}
+	return m
+}
+
+// lastSegment devuelve el ultimo segmento de la ruta sin barra final.
+func lastSegment(path string) string {
+	p := strings.TrimSuffix(path, "/")
+	if i := strings.LastIndex(p, "/"); i >= 0 {
+		return p[i+1:]
+	}
+	return p
 }
 
 // pathSegments devuelve los dos primeros segmentos de /api/v1/<seg1>/<seg2>/...

@@ -46,7 +46,7 @@ func TestLaAccionExigidaSaleDelMetodo(t *testing.T) {
 // Los modos nacen cerrados: un despliegue que olvide configurarlos bloquea en vez de
 // dejar pasar, que es el sentido de tener un gateway delante de datos personales.
 func TestLosModosNacenEnEnforceYFailClosed(t *testing.T) {
-	e := newRBACEnforcer("http://access", "tok", "", "", "", nil, nil)
+	e := newRBACEnforcer("http://access", "tok", "", "", "", nil, nil, nil)
 	if e.mode != "enforce" || e.failMode != "closed" || e.readMode != "enforce" {
 		t.Fatalf("modos por defecto: %s/%s/%s", e.mode, e.failMode, e.readMode)
 	}
@@ -74,5 +74,20 @@ func TestLaRespuestaDeAccessControlSeTraduceACaché(t *testing.T) {
 	}
 	if e.expires.Before(time.Now()) {
 		t.Errorf("la entrada nace caducada")
+	}
+}
+
+func TestUnPostDeConsultaSeGateaComoLectura(t *testing.T) {
+	e := newRBACEnforcer("http://access", "tok", "", "", "", nil,
+		map[string]map[string]bool{"suppression": {"check": true}}, nil)
+	req := func(m, p string) *http.Request { r, _ := http.NewRequest(m, p, nil); return r }
+	if !e.isReadPost(req(http.MethodPost, "/api/v1/suppression/check")) {
+		t.Fatal("suppression/check debe ser lectura")
+	}
+	if e.isReadPost(req(http.MethodPost, "/api/v1/suppression/entries")) {
+		t.Fatal("crear entradas sigue siendo escritura")
+	}
+	if e.isReadPost(req(http.MethodGet, "/api/v1/suppression/check")) {
+		t.Fatal("solo aplica a POST")
 	}
 }

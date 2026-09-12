@@ -50,6 +50,7 @@ type rbacEnforcer struct {
 	failMode  string // open | closed
 	readMode  string // off | audit | enforce
 	modules   map[string]string
+	readPosts map[string]map[string]bool
 	logger    *zap.Logger
 	client    *http.Client
 
@@ -78,7 +79,7 @@ var rbacWriteMethods = map[string]bool{
 	http.MethodPost: true, http.MethodPut: true, http.MethodPatch: true, http.MethodDelete: true,
 }
 
-func newRBACEnforcer(accessURL, token, mode, failMode, readMode string, modules map[string]string, logger *zap.Logger) *rbacEnforcer {
+func newRBACEnforcer(accessURL, token, mode, failMode, readMode string, modules map[string]string, readPosts map[string]map[string]bool, logger *zap.Logger) *rbacEnforcer {
 	if mode == "" {
 		mode = "enforce"
 	}
@@ -95,6 +96,7 @@ func newRBACEnforcer(accessURL, token, mode, failMode, readMode string, modules 
 		failMode:  failMode,
 		readMode:  readMode,
 		modules:   modules,
+		readPosts: readPosts,
 		logger:    logger,
 		client:    &http.Client{Timeout: 3 * time.Second},
 		cache:     make(map[string]rbacEntry),
@@ -220,7 +222,7 @@ func (e *rbacEnforcer) middleware(next http.Handler) http.Handler {
 			return
 		}
 
-		if !rbacWriteMethods[r.Method] {
+		if !rbacWriteMethods[r.Method] || e.isReadPost(r) {
 			if !e.gatearLectura(w, r) {
 				return
 			}
@@ -304,6 +306,15 @@ func (e *rbacEnforcer) middleware(next http.Handler) http.Handler {
 		e.recordDenial(userID, tenantID, module, action, r.Method, r.URL.Path, false)
 		next.ServeHTTP(w, r)
 	})
+}
+
+// isReadPost reconoce las consultas con cuerpo declaradas en la tabla de rutas.
+func (e *rbacEnforcer) isReadPost(r *http.Request) bool {
+	if r.Method != http.MethodPost {
+		return false
+	}
+	seg1, _ := pathSegments(r.URL.Path)
+	return e.readPosts[seg1][lastSegment(r.URL.Path)]
 }
 
 // recordDenial persiste el acceso denegado en access-control para las metricas de

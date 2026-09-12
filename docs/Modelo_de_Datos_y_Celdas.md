@@ -8,8 +8,8 @@ implementas algo marcado P, muevelo a V en la misma tarea.
 | Plano | Base | Quien la lee | Contenido | Migraciones |
 |---|---|---|---|---|
 | Registro | `mail_registry` (una) | identity, access-control, organization; el gateway indirectamente | empresas, celdas, usuarios, sesiones, roles, permisos, catalogo de modulos, (P) planes | `migrations/registry/` |
-| Celda | `mail_cell_<code>` (una por celda) | Postfix, Dovecot, Rspamd via `mail-auth`/`mail-policy`; mail-directory, mail-security, domain-service | directorio de correo (`mail`), politicas antispam y cuarentena (`mail_security`) | `migrations/cell/canonical/<svc>/` |
-| Empresa | `mail_tenant_<slug>` (una por empresa) | el resto de servicios | auditoria, scheduler, contactos, campanas, plantillas, envios, supresion | `migrations/tenant/canonical/<svc>/` |
+| Celda | `mail_cell_<code>` (una por celda) | Postfix, Dovecot, Rspamd via `mail-auth`/`mail-policy`; mail-directory, mail-security | directorio de correo (`mail`), politicas antispam y cuarentena (`mail_security`) | `migrations/cell/canonical/<svc>/` |
+| Empresa | `mail_tenant_<slug>` (una por empresa) | el resto de servicios | auditoria, scheduler, dominios y claves DKIM (`domains`), contactos, campanas, plantillas, envios, supresion | `migrations/tenant/canonical/<svc>/` |
 
 Las tres bases llevan además el esquema `platform` con `event_outbox` (`pkg/outbox`).
 
@@ -79,8 +79,10 @@ como dueno porque resuelven identidades sin empresa previa, y lo dicen en un com
 Base `mail_tenant_<slug>` creada por `organization` al dar de alta la empresa
 (`CREATE DATABASE` + todas las canonicas en orden, con advisory lock sobre conexion
 directa sin PgBouncer, `public.schema_migrations`, baseline para bases preexistentes).
-Barrido en segundo plano al arrancar (`RUN_TENANT_MIGRATIONS`). Hoy contiene `audit` y
-`scheduler`.
+Barrido en segundo plano al arrancar (`RUN_TENANT_MIGRATIONS`). Hoy contiene `audit`,
+`scheduler`, `domains` y `suppression` (lista de exclusiones de envio: una fila por
+direccion y empresa, causa vigente por orden de gravedad, consulta previa a todo envio
+por `POST /internal/suppression/check`).
 
 ## 5. Enrutado por peticion y por celda (V)
 
