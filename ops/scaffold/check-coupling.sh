@@ -29,7 +29,6 @@ owned_schemas() {
     # mail-auth es la mitad de autenticacion del directorio: verifica contrasenas de
     # buzon y de aplicacion que solo estan en mail.*; no tiene tablas propias.
     mail-directory|mail-auth) echo "mail" ;;
-    domain-service) echo "domains" ;;
     # domain-service posee el esquema domains (no domain_service): dominios de correo,
     # verificacion DNS y custodia DKIM en la base de cada empresa.
     domain-service) echo "domains" ;;

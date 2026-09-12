@@ -12,6 +12,11 @@ construye fuera del literal y no se puede leer estaticamente.
 | Subject | Servicio | Campos |
 |---|---|---|
 | `audit.security.alert` | audit | `detail`, `event_type`, `ip`, `risk_level`, `user_id` |
+| `domains.domain.created` | domain-service | `domain`, `domain_id`, `purpose`, `status`, `tenant_id` |
+| `domains.domain.deleted` | domain-service | `domain`, `domain_id`, `purpose`, `status`, `tenant_id` |
+| `domains.domain.dkim_rotated` | domain-service | `domain`, `domain_id`, `purpose`, `status`, `tenant_id` |
+| `domains.domain.failed` | domain-service | `domain`, `domain_id`, `purpose`, `status`, `tenant_id` |
+| `domains.domain.verified` | domain-service | `domain`, `domain_id`, `purpose`, `status`, `tenant_id` |
 | `identity.session.revoked_by_admin` | identity | `ip`, `session_id`, `target_user_id` |
 | `identity.user.created` | identity | `email` |
 | `identity.user.locked` | identity | _opaco_ |

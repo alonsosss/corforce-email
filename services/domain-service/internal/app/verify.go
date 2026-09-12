@@ -1,0 +1,146 @@
+package app
+
+import (
+	"context"
+	"errors"
+	"fmt"
+
+	"github.com/alonsosss/corforce-email/services/domain-service/internal/domain"
+	"github.com/google/uuid"
+	"go.uber.org/zap"
+)
+
+// VerifyResult es la respuesta de una verificacion: el dominio con su estado nuevo, el
+// detalle por registro y el veredicto.
+type VerifyResult struct {
+	Domain  *domain.Domain
+	Checks  []domain.DNSCheck
+	Outcome domain.Outcome
+	// IntegrationErrors: fallos al activar o publicar claves tras verificar. El estado
+	// ya es verified; el barrido lo reintenta.
+	IntegrationErrors []string
+}
+
+// Verify consulta el DNS y aplica el resultado al dominio. Es una consulta: no falla por
+// que falten registros, lo cuenta.
+func (uc *UseCase) Verify(ctx context.Context, tenantID, id uuid.UUID) (*VerifyResult, error) {
+	d, err := uc.repo.GetByID(ctx, tenantID, id)
+	if err != nil {
+		return nil, err
+	}
+	return uc.verify(ctx, d, false)
+}
+
+// verify es el nucleo compartido por la verificacion manual y el barrido. sweep cambia
+// dos cosas: un pendiente que no verifica se queda en pending (nadie lo pidio), y un
+// verificado solo cae a failed si pierde la propiedad, el MX o el SPF, nunca por el
+// DKIM, que durante una rotacion puede tardar en publicarse.
+func (uc *UseCase) verify(ctx context.Context, d *domain.Domain, sweep bool) (*VerifyResult, error) {
+	now := uc.now()
+	expected := uc.ExpectedRecords(d)
+	result := domain.Evaluate(d, expected, uc.observe(ctx, expected), now)
+	if err := uc.repo.SaveChecks(ctx, result.Checks); err != nil {
+		return nil, fmt.Errorf("guardar comprobaciones DNS: %w", err)
+	}
+	d.LastCheckedAt = &now
+
+	previous := d.Status
+	switch result.Outcome {
+	case domain.OutcomeVerified:
+		if d.Status != domain.StatusVerified {
+			d.Status = domain.StatusVerified
+			d.VerifiedAt = &now
+		}
+	case domain.OutcomeFailed:
+		switch {
+		case sweep && d.Status == domain.StatusPending:
+			// Sigue esperando a que el cliente publique; no es un fallo suyo.
+		case sweep && d.Status == domain.StatusVerified && !lostRoutingRecord(result.Checks):
+			// Solo el DKIM falla: se registra, pero el dominio sigue recibiendo.
+		default:
+			d.Status = domain.StatusFailed
+			d.VerifiedAt = nil
+		}
+	case domain.OutcomeInconclusive:
+		// El DNS no respondio: no se sabe nada nuevo y el estado no cambia.
+	}
+	if err := uc.repo.Update(ctx, d); err != nil {
+		return nil, err
+	}
+
+	out := &VerifyResult{Domain: d, Checks: result.Checks, Outcome: result.Outcome}
+	switch {
+	case d.Status == domain.StatusVerified:
+		out.IntegrationErrors = uc.syncVerified(ctx, d, result.SignWithPrevious)
+		if previous != domain.StatusVerified {
+			uc.publish("domains.domain.verified", d, func() error { return uc.events.DomainVerified(ctx, d) })
+		}
+	case d.Status == domain.StatusFailed && previous == domain.StatusVerified:
+		if d.Purpose.IncludesCorporate() {
+			if err := uc.mailDirectory.SetActivation(ctx, d.TenantID, d.Domain, false); err != nil {
+				uc.logger.Error("no se pudo desactivar el dominio en mail-directory",
+					zap.String("domain", d.Domain), zap.Error(err))
+				out.IntegrationErrors = append(out.IntegrationErrors, "desactivar en mail-directory: "+err.Error())
+			}
+		}
+		uc.publish("domains.domain.failed", d, func() error { return uc.events.DomainFailed(ctx, d) })
+	case d.Status == domain.StatusFailed && previous != domain.StatusFailed:
+		uc.publish("domains.domain.failed", d, func() error { return uc.events.DomainFailed(ctx, d) })
+	}
+	return out, nil
+}
+
+// lostRoutingRecord dice si fallo, con respuesta del DNS, alguno de los registros que
+// hacen que el correo llegue o salga por la celda: propiedad, MX o SPF.
+func lostRoutingRecord(checks []domain.DNSCheck) bool {
+	for _, c := range checks {
+		switch c.Record {
+		case domain.RecordOwnershipTXT, domain.RecordMX, domain.RecordSPF:
+			if !c.OK {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// syncVerified aplica lo que un dominio verificado debe tener fuera de esta base: activo
+// en el directorio de la celda si recibe correo, y sus claves DKIM en los motores. Ambas
+// llamadas son idempotentes y se repiten en cada barrido, que es lo que las cura si aqui
+// fallan.
+func (uc *UseCase) syncVerified(ctx context.Context, d *domain.Domain, signWithPrevious bool) []string {
+	var failures []string
+	if d.Purpose.IncludesCorporate() {
+		if err := uc.mailDirectory.SetActivation(ctx, d.TenantID, d.Domain, true); err != nil {
+			uc.logger.Error("no se pudo activar el dominio en mail-directory; se reintenta en el barrido",
+				zap.String("domain", d.Domain), zap.Error(err))
+			failures = append(failures, "activar en mail-directory: "+err.Error())
+		}
+	}
+	if err := uc.publishDKIM(ctx, d, signWithPrevious); err != nil {
+		uc.logger.Error("no se pudieron publicar las claves DKIM; se reintenta en el barrido",
+			zap.String("domain", d.Domain), zap.Error(err))
+		failures = append(failures, "publicar DKIM en mail-security: "+err.Error())
+	}
+	return failures
+}
+
+// observe consulta cada registro esperado. Un error de consulta se conserva en la
+// observacion: Evaluate lo distingue de un registro ausente.
+func (uc *UseCase) observe(ctx context.Context, expected []domain.DNSRecord) map[domain.RecordKind]domain.Observation {
+	observed := make(map[domain.RecordKind]domain.Observation, len(expected))
+	for _, rec := range expected {
+		var obs domain.Observation
+		switch rec.Type {
+		case "MX":
+			obs.MX, obs.Err = uc.dns.LookupMX(ctx, rec.Host)
+		default:
+			obs.TXT, obs.Err = uc.dns.LookupTXT(ctx, rec.Host)
+		}
+		if obs.Err != nil && errors.Is(obs.Err, context.Canceled) {
+			obs.Err = fmt.Errorf("consulta cancelada")
+		}
+		observed[rec.Record] = obs
+	}
+	return observed
+}
