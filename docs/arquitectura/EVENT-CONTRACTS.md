@@ -1,0 +1,33 @@
+# Contratos de eventos
+
+Generado — no editar a mano. Regenera con `make gen-event-contracts`.
+
+Campos del payload (`Event.Data`) por subject, extraidos del codigo. Un cambio en
+esta tabla es un cambio de contrato: quitar o renombrar un campo rompe a sus
+consumidores en tiempo de ejecucion, no de compilacion. `opaco` = el payload se
+construye fuera del literal y no se puede leer estaticamente.
+
+## Publicado
+
+| Subject | Servicio | Campos |
+|---|---|---|
+| `audit.security.alert` | audit | `detail`, `event_type`, `ip`, `risk_level`, `user_id` |
+| `identity.session.revoked_by_admin` | identity | `ip`, `session_id`, `target_user_id` |
+| `identity.user.created` | identity | `email` |
+| `identity.user.locked` | identity | _opaco_ |
+| `identity.user.logged_in` | identity | `ip`, `user_agent` |
+| `identity.user.logged_out` | identity | _opaco_ |
+| `identity.user.login_failed` | identity | `email`, `ip`, `user_agent` |
+| `identity.user.password_changed` | identity | _opaco_ |
+| `organization.tenant.created` | organization | `cell_id`, `db_name`, `name`, `slug`, `status`, `tenant_id` |
+| `organization.tenant.modules_changed` | organization | `disabled`, `enabled`, `tenant_id` |
+| `organization.tenant.status_changed` | organization | `previous_status`, `slug`, `status`, `tenant_id` |
+| `scheduler.job.completed` | scheduler | `execution_id`, `job_id` |
+| `scheduler.job.failed` | scheduler | `error`, `execution_id`, `job_id` |
+| `scheduler.job.started` | scheduler | `execution_id`, `job_id` |
+
+## Consumido
+
+| Subject | Servicio | Campos que lee |
+|---|---|---|
+| `audit.api.write` | audit | `ip`, `method`, `module`, `path`, `request_id`, `roles`, `status`, `tenant_id`, `user_agent`, `user_id` |

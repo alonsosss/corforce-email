@@ -1,0 +1,12 @@
+[Unit]
+Description=Verifica que los respaldos de Core Force restauran de verdad
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=deploy
+WorkingDirectory=/opt/core-force-mail/app
+ExecStart=/opt/core-force-mail/app/ops/backup/verify-restore.sh
+Nice=10
+IOSchedulingClass=idle

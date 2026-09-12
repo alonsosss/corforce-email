@@ -1,0 +1,257 @@
+name: Release (build -> ECR -> deploy)
+
+# D-3 (PLAN-DESPLIEGUE-RAPIDO): en cada push a main, GitHub construye en paralelo las
+# imagenes de los servicios AFECTADOS (o todos via workflow_dispatch), las publica a ECR
+# etiquetadas por commit (OIDC, sin secretos estaticos de AWS) y deja el deploy a un
+# clic (job con environment "production"). El server solo hace pull.
+#
+# ESCALABLE POR DISENO: la lista de servicios se deriva de docker-compose.yml (los que
+# tienen build:), igual que ops/ecr/lib.sh -> un microservicio nuevo creado con
+# `make new-service` entra al pipeline automaticamente, sin tocar este archivo.
+#
+# Setup unico (una vez, ver ops/aws/setup-github-oidc.sh):
+#   - Rol IAM con OIDC de GitHub -> variable de repo AWS_ECR_ROLE_ARN
+#   - Secreto DEPLOY_SSH_KEY (llave del usuario deploy) para el job de deploy
+
+# El filtro de rutas tiene que cubrir TODO lo que una imagen hornea, no solo la carpeta
+# del servicio: si un cambio no dispara el workflow, no se construye nada y el arreglo se
+# queda en el repositorio sin que falle ni avise nadie. Faltaban las raices que
+# ops/scaffold/service-paths.sh ya trataba como dependencias externas (web/ para la
+# aplicacion) y migrations/, que viaja dentro de la imagen del servicio que la aplica.
+# Ensanchar esto es barato: si el paso "detect" no encuentra servicios, el resto del job
+# se salta entero y la ejecucion no cuesta mas que un runner en vacio.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'services/**'
+      - 'pkg/**'
+      - 'go.mod'
+      - 'go.sum'
+      - 'docker-compose.yml'
+      - 'web/**'
+      - 'migrations/**'
+  workflow_dispatch:
+    inputs:
+      services:
+        description: 'Servicios concretos, separados por espacios (vacio = detectar por commits)'
+        type: string
+        default: ''
+      all:
+        description: 'Construir TODOS los servicios'
+        type: boolean
+        default: false
+      deploy:
+        description: 'Desplegar al servidor tras publicar (el clic de aprobacion)'
+        type: boolean
+        default: false
+
+permissions:
+  id-token: write   # OIDC hacia AWS
+  contents: read
+
+env:
+  ECR_REGION: us-east-1
+  ECR_NS: core-force-mail
+
+jobs:
+  build-push:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+      services: ${{ steps.detect.outputs.services }}
+    steps:
+      # Historia completa: el rango de deteccion puede abarcar varios commits, y con una
+      # profundidad fija el commit base no existe en el clon.
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+
+      - id: meta
+        run: echo "tag=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
+      # Servicios afectados: el mapa ruta->servicio derivado del compose
+      # (ops/scaffold/service-paths.sh, el mismo que usan deploy-fast y deploy-ecr y que
+      # el CI verifica con check-service-paths). Una sola fuente: cubre contextos propios
+      # de los Python, los 21 frontends cuando cambia frontend/packages, y pkg/ -> Go.
+      #
+      # El rango es TODO lo que entra en el push, no solo el ultimo commit. Con "HEAD^ HEAD"
+      # un push de varios commits solo construia los servicios que tocara el ultimo: los
+      # demas se publicaban en el repositorio y no llegaban a ninguna imagen, sin error y
+      # sin nada que lo delatara. Es la forma silenciosa de que un servicio se quede atras.
+      # En un force-push o en el primer push, github.event.before no es un commit valido;
+      # ahi se cae al commit anterior, que es el comportamiento de siempre.
+      - id: detect
+        env:
+          ANTES: ${{ github.event.before }}
+          EXPLICITOS: ${{ inputs.services }}
+        run: |
+          if [ -n "$EXPLICITOS" ]; then
+            # Lista explicita, como "scripts/deploy-ecr.sh svc1 svc2". Sirve para reconstruir
+            # un servicio que se quedo atras sin tener que fabricar un commit vacio ni
+            # construir los ciento doce. Se valida contra el mapa: un nombre mal escrito
+            # produciria un job verde que no construye nada.
+            conocidos=$(bash ops/scaffold/service-paths.sh --map | cut -f1)
+            for s in $EXPLICITOS; do
+              echo "$conocidos" | grep -qx "$s" || { echo "servicio desconocido: $s"; exit 1; }
+            done
+            svcs="$EXPLICITOS"
+          elif [ "${{ inputs.all }}" = "true" ]; then
+            svcs=$(bash ops/scaffold/service-paths.sh --map | cut -f1)
+          else
+            base=""
+            if [ "${{ github.event_name }}" = "push" ] && [ -n "$ANTES" ] \
+               && [ "$ANTES" != "0000000000000000000000000000000000000000" ] \
+               && git rev-parse -q --verify "$ANTES^{commit}" >/dev/null; then
+              base="$ANTES"
+            else
+              base="$(git rev-parse HEAD^)"
+            fi
+            echo "Rango de deteccion: $base..HEAD"
+            svcs=$(git diff --name-only "$base" HEAD | bash ops/scaffold/service-paths.sh --changed)
+          fi
+          echo "services=$(echo $svcs)" >> "$GITHUB_OUTPUT"
+          echo "A construir: $svcs"
+
+      - if: steps.detect.outputs.services != ''
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ECR_ROLE_ARN }}
+          aws-region: ${{ env.ECR_REGION }}
+
+      - if: steps.detect.outputs.services != ''
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - if: steps.detect.outputs.services != ''
+        uses: docker/setup-buildx-action@v3
+
+      # Build+push en paralelo (xargs -P) con la cache D-1 de los Dockerfiles. El contexto
+      # y el Dockerfile de cada servicio salen del mapa, no de adivinar por carpeta: los 8
+      # Python declaran contexto propio (services/<s>) y con contexto raiz su COPY falla.
+      - if: steps.detect.outputs.services != ''
+        run: |
+          REG='${{ steps.ecr.outputs.registry }}'; TAG='${{ steps.meta.outputs.tag }}'
+          bash ops/scaffold/service-paths.sh --map > /tmp/svc-map.tsv
+          build_one() {
+            s="$1"
+            path=$(awk -F'\t' -v s="$s" '$1==s{print $2}' /tmp/svc-map.tsv)
+            class=$(awk -F'\t' -v s="$s" '$1==s{print $3}' /tmp/svc-map.tsv)
+            extra=""
+            case "$class" in
+              go)         ctx=.; df="services/$s/Dockerfile" ;;
+              standalone) ctx="$path"; df="$path/Dockerfile" ;;
+              frontend)   ctx=frontend; df="frontend/Dockerfile"
+                          extra="--build-arg APP_DIR=${path#frontend/} --build-arg PACKAGE_NAME=@cp/${s#fe-}" ;;
+              *) echo "servicio $s fuera del mapa (correr make check-service-paths)"; return 1 ;;
+            esac
+            docker buildx build -f "$df" $extra \
+              -t "$REG/$ECR_NS/$s:$TAG" -t "$REG/$ECR_NS/$s:latest" \
+              --push "$ctx"
+          }
+          export -f build_one; export REG TAG ECR_NS
+          echo '${{ steps.detect.outputs.services }}' | tr ' ' '\n' | xargs -P 4 -I{} bash -c 'build_one {}'
+
+  # El deploy SOLO corre en ejecucion manual con deploy=true (el "clic"): required
+  # reviewers de environments exige plan Pro en repos privados; workflow_dispatch da el
+  # mismo control humano en el plan Free. El push a main solo construye y publica.
+  deploy:
+    needs: build-push
+    if: github.event_name == 'workflow_dispatch' && inputs.deploy && needs.build-push.outputs.services != ''
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      # El paso de deriva necesita el arbol, y su deteccion de rezagados resuelve los tags
+      # vivos como commits: con profundidad 1 no existirian y los daria por no juzgables.
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+
+      # El mismo rol OIDC que publica a ECR. Aqui se usa para hablar con SSM.
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ECR_ROLE_ARN }}
+          aws-region: ${{ env.ECR_REGION }}
+
+      # Se entra por SSM, no por SSH: el Security Group solo admite el puerto 22 desde la IP
+      # del administrador en /32 y los runners de GitHub salen por IPs arbitrarias, asi que
+      # el job moria con "Connection timed out". Por SSM no hay que abrir ningun puerto de
+      # entrada. Se comprueba antes de tocar nada, para fallar con un motivo legible en vez
+      # de a mitad del despliegue.
+      - name: Comprobar que la instancia responde por SSM
+        env:
+          INSTANCIA: ${{ vars.DEPLOY_INSTANCE_ID }}
+        run: |
+          if [ -z "$INSTANCIA" ]; then
+            echo "Falta la variable de repositorio DEPLOY_INSTANCE_ID."
+            echo "La imprime ops/aws/setup-github-deploy.sh, que ademas concede los permisos."
+            exit 1
+          fi
+          ping=$(aws ssm describe-instance-information --region "$ECR_REGION" \
+                   --filters "Key=InstanceIds,Values=$INSTANCIA" \
+                   --query 'InstanceInformationList[0].PingStatus' --output text 2>&1 || true)
+          echo "PingStatus de $INSTANCIA: $ping"
+          if [ "$ping" != "Online" ]; then
+            echo "La instancia no responde por SSM. Ejecuta ops/aws/setup-github-deploy.sh"
+            echo "con credenciales de administrador y vuelve a lanzar el despliegue."
+            exit 1
+          fi
+
+      - name: Pull + restart en el servidor (nunca compila)
+        id: desplegar
+        env:
+          DEPLOY_SSM_INSTANCE: ${{ vars.DEPLOY_INSTANCE_ID }}
+          TAG: ${{ needs.build-push.outputs.tag }}
+          SVCS: ${{ needs.build-push.outputs.services }}
+        run: |
+          ops/aws/ssm-exec.sh <<REMOTO
+          set -euo pipefail
+          cd /opt/core-force-mail/app
+          ACC=\$(aws sts get-caller-identity --query Account --output text)
+          REG="\$ACC.dkr.ecr.${{ env.ECR_REGION }}.amazonaws.com"
+          # Sin este login el pull muere con "no basic auth credentials", que parece un
+          # problema de permisos y es de caducidad: el token de ECR dura 12 h. Se renueva
+          # con el rol de la instancia y se retira SIEMPRE, porque docker lo deja en claro
+          # en ~/.docker/config.json y ahi se queda hasta que alguien lo borra.
+          trap 'docker logout "\$REG" >/dev/null 2>&1 || true' EXIT
+          aws ecr get-login-password --region ${{ env.ECR_REGION }} | docker login --username AWS --password-stdin "\$REG" >/dev/null
+          export DEPLOY_TAG=$TAG
+          ops/security/secrets/with-secrets.sh docker compose -f docker-compose.yml -f docker-compose.images.yml pull -q $SVCS
+          ops/security/secrets/with-secrets.sh docker compose -f docker-compose.yml -f docker-compose.images.yml up -d --no-deps $SVCS
+          echo $TAG > .deployed-tag
+          # Un pull que no trajo nada o un up que no recreo dejan el despliegue "correcto"
+          # con codigo viejo dentro, y eso ya ha pasado aqui. Se comprueba contenedor a
+          # contenedor que corre el tag recien publicado.
+          for s in $SVCS; do
+            real=\$(docker inspect --format '{{.Config.Image}}' "app-\$s-1")
+            echo "\$s -> \$real"
+            case "\$real" in
+              *:$TAG) ;;
+              *) echo "ERROR: app-\$s-1 no corre el tag $TAG"; exit 1 ;;
+            esac
+          done
+          REMOTO
+
+      # Un servicio que retrocedio de ECR a una imagen compilada en el servidor corre codigo
+      # posiblemente anterior al desplegado, sin sintoma visible. No tumba el job: el deploy
+      # de este run si quedo aplicado, y la regresion suele venir de OTRO servicio.
+      - name: Deriva de imagenes (regresion a imagen local)
+        env:
+          DEPLOY_SSM_INSTANCE: ${{ vars.DEPLOY_INSTANCE_ID }}
+        run: |
+          scripts/check-image-drift.sh || echo "::warning::deriva de imagenes en produccion, revisa la salida de este paso"
+
+      # El disco del servidor no lo limpia la politica de ciclo de vida de ECR: esa limpia
+      # el registro en AWS, y las copias descargadas se quedan en /var/lib/docker. Cuando el
+      # disco se llena no falla el despliegue: falla Postgres.
+      # Solo si el despliegue llego a tocar el servidor. Con always() se intentaba tambien
+      # cuando la instancia no era ni alcanzable, y el job terminaba con un aviso de
+      # limpieza fallida que tapaba el motivo real.
+      - name: Retirar imagenes viejas del servidor
+        if: steps.desplegar.outcome == 'success'
+        env:
+          DEPLOY_SSM_INSTANCE: ${{ vars.DEPLOY_INSTANCE_ID }}
+        run: |
+          ops/aws/ssm-exec.sh <<'REMOTO' || echo "::warning::no se pudieron retirar las imagenes viejas"
+          set -euo pipefail
+          cd /opt/core-force-mail/app
+          ops/ecr/prune-local-images.sh --apply
+          REMOTO

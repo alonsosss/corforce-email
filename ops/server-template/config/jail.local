@@ -1,0 +1,16 @@
+# Core Force - fail2ban (proteccion de fuerza bruta SSH)
+# Aplicado por ops/server-template/bootstrap.sh en /etc/fail2ban/jail.local.
+# En Ubuntu moderno sshd escribe en journald, por eso backend = systemd.
+
+[DEFAULT]
+backend = systemd
+bantime = 1h
+findtime = 10m
+maxretry = 5
+ignoreip = 127.0.0.1/8 ::1 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16
+
+[sshd]
+enabled = true
+mode = aggressive
+maxretry = 4
+bantime = 2h

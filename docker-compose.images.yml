@@ -1,0 +1,15 @@
+# GENERADO por ops/ecr/gen-compose-images.sh - no editar a mano.
+# Uso: docker compose -f docker-compose.yml -f docker-compose.images.yml pull <svc> && up -d
+services:
+  gateway:
+    image: ${ECR_REGISTRY:?definir en .env}/core-force/gateway:${DEPLOY_TAG:-latest}
+  identity:
+    image: ${ECR_REGISTRY:?definir en .env}/core-force/identity:${DEPLOY_TAG:-latest}
+  access-control:
+    image: ${ECR_REGISTRY:?definir en .env}/core-force/access-control:${DEPLOY_TAG:-latest}
+  organization:
+    image: ${ECR_REGISTRY:?definir en .env}/core-force/organization:${DEPLOY_TAG:-latest}
+  audit:
+    image: ${ECR_REGISTRY:?definir en .env}/core-force/audit:${DEPLOY_TAG:-latest}
+  scheduler:
+    image: ${ECR_REGISTRY:?definir en .env}/core-force/scheduler:${DEPLOY_TAG:-latest}

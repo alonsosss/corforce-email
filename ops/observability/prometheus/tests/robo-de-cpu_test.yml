@@ -1,0 +1,83 @@
+# Pruebas de la alerta RoboDeCPU.
+#
+# POR QUE EXISTE
+#
+# Del 7 al 29 de julio de 2026 la instancia t3.large estuvo veintitres dias con el saldo de
+# creditos de CPU en cero, frenada por el hipervisor a su linea base. Ninguna de las reglas
+# del grupo host lo dijo: miden carga, memoria y uso, y el freno no es ninguna de esas tres
+# cosas; el kernel lo contabiliza como tiempo "steal". Se descubrio en septiembre, mirando
+# CloudWatch a mano.
+#
+# La prueba reproduce ese episodio con las cifras medidas -un 21% de steal acumulado- y
+# comprueba tres cosas: que con la maquina sana no hay aviso, que el freno dispara tras la
+# media hora de tolerancia, y que un pico corto (un vecino ruidoso unos minutos) no molesta.
+#
+#   make check-alertas
+
+rule_files:
+  - ../rules/plataforma.yml
+
+evaluation_interval: 1m
+
+tests:
+  # ── Instancia sana: nada de steal ─────────────────────────────────────────
+  - interval: 1m
+    input_series:
+      # node_cpu_seconds_total es un contador: crece 60 s por minuto repartidos entre modos.
+      # Dos CPUs, con casi todo en idle y un steal despreciable (0,6 s por minuto = 1%).
+      - series: 'node_cpu_seconds_total{cpu="0",mode="steal"}'
+        values: '0+0.6x60'
+      - series: 'node_cpu_seconds_total{cpu="1",mode="steal"}'
+        values: '0+0.6x60'
+      - series: 'node_cpu_seconds_total{cpu="0",mode="idle"}'
+        values: '0+59.4x60'
+      - series: 'node_cpu_seconds_total{cpu="1",mode="idle"}'
+        values: '0+59.4x60'
+    alert_rule_test:
+      - eval_time: 45m
+        alertname: RoboDeCPU
+        exp_alerts: []
+
+  # ── El episodio de julio: 21% de steal sostenido ──────────────────────────
+  - interval: 1m
+    input_series:
+      # 12,6 s de cada 60 en steal por CPU = 21%, la cifra acumulada que quedo en /proc/stat.
+      - series: 'node_cpu_seconds_total{cpu="0",mode="steal"}'
+        values: '0+12.6x60'
+      - series: 'node_cpu_seconds_total{cpu="1",mode="steal"}'
+        values: '0+12.6x60'
+      - series: 'node_cpu_seconds_total{cpu="0",mode="idle"}'
+        values: '0+30x60'
+      - series: 'node_cpu_seconds_total{cpu="1",mode="idle"}'
+        values: '0+30x60'
+    alert_rule_test:
+      # A los diez minutos ya se ve, pero la regla tolera media hora: pending, no firing.
+      - eval_time: 10m
+        alertname: RoboDeCPU
+        exp_alerts: []
+      # Pasada la media hora, avisa, y el texto es el que leera quien lo reciba.
+      - eval_time: 40m
+        alertname: RoboDeCPU
+        exp_alerts:
+          - exp_labels:
+              severidad: alta
+            exp_annotations:
+              resumen: "El hipervisor esta frenando la instancia (steal sostenido)"
+              detalle: "Creditos de CPU agotados. Comprobar CPUCreditBalance desde el PC (docs/aws/RUNBOOK-ESCALADO-EC2.md); si es carga real, decidir entre modo unlimited (cobra) o subir de instancia."
+
+  # ── Pico corto: diez minutos de vecino ruidoso y vuelta a la normalidad ───
+  - interval: 1m
+    input_series:
+      # Diez minutos al 30% de steal y luego 1%: nunca llega a la media hora sostenida.
+      - series: 'node_cpu_seconds_total{cpu="0",mode="steal"}'
+        values: '0+18x10 180+0.6x50'
+      - series: 'node_cpu_seconds_total{cpu="1",mode="steal"}'
+        values: '0+18x10 180+0.6x50'
+      - series: 'node_cpu_seconds_total{cpu="0",mode="idle"}'
+        values: '0+42x10 420+59.4x50'
+      - series: 'node_cpu_seconds_total{cpu="1",mode="idle"}'
+        values: '0+42x10 420+59.4x50'
+    alert_rule_test:
+      - eval_time: 55m
+        alertname: RoboDeCPU
+        exp_alerts: []

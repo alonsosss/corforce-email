@@ -1,0 +1,32 @@
+# Configuracion de Prometheus para la plataforma. Los objetivos NO se descubren por el
+# socket de Docker (eso equivaldria a dar root del host al contenedor de monitoreo): se
+# generan desde docker-compose.yml con ops/observability/gen-targets.sh y se leen por
+# fichero, que Prometheus recarga en caliente sin reiniciar.
+global:
+  scrape_interval: 30s
+  scrape_timeout: 10s
+  evaluation_interval: 30s
+  external_labels:
+    plataforma: core-force-mail
+
+rule_files:
+  - /etc/prometheus/rules/*.yml
+
+scrape_configs:
+  # Microservicios de la plataforma. Cada uno expone /metrics en su propio puerto, fuera de la
+  # cadena de middlewares del servicio (ver pkg/observability).
+  - job_name: mail-services
+    file_sd_configs:
+      - files:
+          - /etc/prometheus/targets.json
+        refresh_interval: 5m
+
+  # Recursos del host: disco, memoria y CPU. Un disco lleno detiene la plataforma entera
+  # y no se ve en ninguna metrica de aplicacion.
+  - job_name: host
+    static_configs:
+      - targets: ["node-exporter:9100"]
+
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]

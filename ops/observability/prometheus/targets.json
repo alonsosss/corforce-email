@@ -1,0 +1,56 @@
+[
+  {
+    "targets": [
+      "access-control:8002"
+    ],
+    "labels": {
+      "job": "mail-services",
+      "service": "access-control"
+    }
+  },
+  {
+    "targets": [
+      "audit:8030"
+    ],
+    "labels": {
+      "job": "mail-services",
+      "service": "audit"
+    }
+  },
+  {
+    "targets": [
+      "gateway:8080"
+    ],
+    "labels": {
+      "job": "mail-services",
+      "service": "gateway"
+    }
+  },
+  {
+    "targets": [
+      "identity:8001"
+    ],
+    "labels": {
+      "job": "mail-services",
+      "service": "identity"
+    }
+  },
+  {
+    "targets": [
+      "organization:8003"
+    ],
+    "labels": {
+      "job": "mail-services",
+      "service": "organization"
+    }
+  },
+  {
+    "targets": [
+      "scheduler:8033"
+    ],
+    "labels": {
+      "job": "mail-services",
+      "service": "scheduler"
+    }
+  }
+]

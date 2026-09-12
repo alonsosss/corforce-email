@@ -1,0 +1,45 @@
+.env
+*.env.local
+vendor/
+bin/
+dist/
+node_modules/
+.DS_Store
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+coverage.txt
+*.log
+tmp/
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Python (scripts de los motores de correo)
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+
+# Binario del gateway compilado a mano en su carpeta (artefacto local)
+services/gateway/gateway
+
+# Artefactos TypeScript sueltos bajo src/ (la salida real va a dist/)
+web/**/src/**/*.js
+web/**/src/**/*.js.map
+
+# Certificados y llaves de los motores de correo: nunca en el repositorio
+deploy/mail/ssl/
+deploy/mail/dkim/
+*.pem
+*.key
+!deploy/mail/ssl-example/*.pem
+!deploy/mail/ssl-example/*.key
+
+# Clones de referencia de la fase 0 (solo mientras dura la copia)
+/ERP/
+/mailcow/

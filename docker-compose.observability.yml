@@ -1,0 +1,174 @@
+# Plano de observabilidad de la plataforma. Va en un fichero aparte del despliegue de
+# negocio a proposito: se levanta, se actualiza y se apaga sin tocar los servicios de la plataforma,
+# y una caida del monitoreo no puede arrastrar al producto.
+#
+#   docker compose -f docker-compose.observability.yml up -d
+#
+# El nombre del proyecto va FIJADO abajo (`name: obs`) y no se deja al azar. Compose lo
+# deriva del nombre del directorio cuando no se declara, y aqui ese directorio es
+# `/opt/core-force-mail/app`: el comando de arriba levantaba una SEGUNDA pila bajo el proyecto
+# `app`, en paralelo a la que ya corria como `obs`, sin avisar de nada. Pasa exactamente
+# al seguir la instruccion de esta cabecera, que es la peor forma de que pase.
+#
+# Se une a la red del despliegue principal como red EXTERNA (APP_NETWORK), de modo que
+# Prometheus alcanza a los servicios por su nombre de contenedor sin publicar un solo
+# puerto mas hacia fuera. Prometheus y Grafana escuchan solo en el loopback del host: se
+# consultan por tunel SSH, nunca desde internet.
+name: obs
+
+services:
+  prometheus:
+    image: prom/prometheus:v3.1.0
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      # El disco del servidor es compartido con imagenes y logs: la retencion se acota por
+      # tiempo y por tamano para que el monitoreo nunca sea la causa de un disco lleno.
+      - --storage.tsdb.retention.time=15d
+      - --storage.tsdb.retention.size=4GB
+      - --web.enable-lifecycle
+    volumes:
+      # Se monta el DIRECTORIO, no cada fichero. Un bind de fichero apunta a un inodo, y
+      # rsync (y casi cualquier editor) reemplaza el fichero por uno nuevo al actualizarlo:
+      # el contenedor se quedaria mirando el inodo viejo para siempre. Con la lista de
+      # objetivos eso significa que un microservicio nuevo NUNCA entraria al monitoreo, y
+      # sin ningun error: simplemente no aparece.
+      - ./ops/observability/prometheus:/etc/prometheus:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "127.0.0.1:${PROMETHEUS_PORT:-9090}:9090"
+    restart: unless-stopped
+    networks:
+      - app
+
+  # Metricas del host (disco, memoria, CPU). Monta el sistema de ficheros en solo lectura;
+  # no publica puerto: solo Prometheus lo consulta por la red interna.
+  node-exporter:
+    image: prom/node-exporter:v1.9.1
+    command:
+      - --path.rootfs=/host
+      - --collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc|var/lib/docker/.+)($$|/)
+      # Los trabajos programados que no viven en un contenedor -el respaldo por empresa y su
+      # prueba de restauracion- dejan aqui su resultado. Sin esto, que el respaldo deje de
+      # correr se ve igual que si corriera: no hay nada que mirar salvo un log.
+      #
+      # El directorio se monta aparte en vez de alcanzarlo por /host: el arbol de la
+      # aplicacion es 0750 y este contenedor corre como 'nobody', que no puede atravesarlo.
+      # Abrirlo dejaria los volcados de base de datos al alcance de cualquier usuario local;
+      # montar solo esta carpeta no toca el resto.
+      - --collector.textfile.directory=/textfile
+    pid: host
+    volumes:
+      - /:/host:ro,rslave
+      - ${METRICS_TEXTFILE_DIR:-/opt/core-force-mail/metrics}:/textfile:ro
+    restart: unless-stopped
+    networks:
+      - app
+
+  grafana:
+    image: grafana/grafana:11.6.0
+    environment:
+      # Sin valor por defecto a proposito: si falta la variable, Grafana no arranca con una
+      # contrasena conocida.
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:?falta GRAFANA_ADMIN_PASSWORD}
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_AUTH_ANONYMOUS_ENABLED=false
+      - GF_ANALYTICS_REPORTING_ENABLED=false
+      - GF_ANALYTICS_CHECK_FOR_UPDATES=false
+    volumes:
+      - ./ops/observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./ops/observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "127.0.0.1:${GRAFANA_PORT:-3000}:3000"
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+    networks:
+      - app
+
+  # ── Registros ──────────────────────────────────────────────────────────────
+  #
+  # Hasta ahora los logs vivian solo en el disco de cada contenedor, con rotacion de
+  # 20 MB x 5: un incidente de hace dos semanas no se podia reconstruir porque la
+  # evidencia ya se habia rotado. Pendiente desde julio.
+  #
+  # Volumen medido antes de dimensionarlo: los 130 contenedores suman 48 MB de log
+  # rotado y el gateway escribe 666 lineas al dia. Con eso, el modo binario unico con
+  # almacenamiento en fichero sobra; el modo distribuido con S3 seria complejidad sin
+  # contrapartida.
+  loki:
+    image: grafana/loki:3.4.2
+    command: -config.file=/etc/loki/loki.yml
+    volumes:
+      # El DIRECTORIO, no el fichero: rsync reemplaza el inodo al actualizar y el
+      # contenedor se quedaria mirando el viejo para siempre (misma razon que Prometheus).
+      - ./ops/observability/loki:/etc/loki:ro
+      - loki-data:/loki
+    # Sin puerto publicado: solo Grafana y el recolector lo alcanzan por la red interna.
+    restart: unless-stopped
+    # Tope de memoria: el monitoreo no puede ser quien deje sin RAM a la plataforma. 512 MiB es
+    # holgado para este volumen y acota el peor caso.
+    mem_limit: 512m
+    networks:
+      - app
+
+  # Proxy de solo lectura al socket de Docker.
+  #
+  # El recolector necesita preguntar que contenedores hay para etiquetar sus registros, y
+  # eso se hace por la API de Docker. Montarle /var/run/docker.sock le daria control TOTAL
+  # del host -crear un contenedor privilegiado y salir- y montarlo "ro" no cambia nada:
+  # restringe el fichero, no la API. Este proxy solo deja pasar la consulta de
+  # contenedores; todo lo demas se rechaza aunque alguien lo pida.
+  docker-socket-ro:
+    image: tecnativa/docker-socket-proxy:0.3.0
+    environment:
+      # Solo lo que el recolector necesita para etiquetar, y las dos son de LECTURA:
+      # la lista de contenedores y la de redes. Se descubrio que hacia falta la segunda
+      # porque el proxy la rechazaba con 403 y la exploracion entera fallaba: promtail
+      # calcula etiquetas de red al montar cada objetivo. Todo lo demas -crear, ejecutar,
+      # montar volumenes, que es por donde se sale al host- sigue cerrado.
+      - CONTAINERS=1
+      - NETWORKS=1
+      - POST=0
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    restart: unless-stopped
+    mem_limit: 64m
+    security_opt: ["no-new-privileges:true"]
+    networks:
+      - app
+
+  # Lee los ficheros de log que Docker YA escribe y los envia a Loki.
+  #
+  # No se usa el controlador de log `loki` de Docker a proposito: con el, un contenedor se
+  # bloquea escribiendo su log si Loki no responde, y eso ataria el producto al monitoreo.
+  # Esta pila vive en un compose aparte justamente para lo contrario.
+  promtail:
+    image: grafana/promtail:3.4.2
+    command: -config.file=/etc/promtail/promtail.yml
+    volumes:
+      - ./ops/observability/promtail:/etc/promtail:ro
+      # Los ficheros de log de Docker, en solo lectura. Aqui "ro" si protege: son ficheros.
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - promtail-data:/promtail
+    depends_on:
+      - loki
+      - docker-socket-ro
+    restart: unless-stopped
+    mem_limit: 256m
+    security_opt: ["no-new-privileges:true"]
+    networks:
+      - app
+
+volumes:
+  prometheus-data:
+  grafana-data:
+  loki-data:
+  promtail-data:
+
+networks:
+  app:
+    external: true
+    name: ${APP_NETWORK:-app_mail-internal}

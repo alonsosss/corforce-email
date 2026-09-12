@@ -1,0 +1,14 @@
+[Unit]
+Description=Respaldo por empresa de las bases de Core Force
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=deploy
+WorkingDirectory=/opt/core-force-mail/app
+ExecStart=/opt/core-force-mail/app/ops/backup/backup-tenants.sh
+# El respaldo compite con la operación: se le baja la prioridad de CPU y de disco para
+# que un volcado largo no degrade la atención en caja.
+Nice=10
+IOSchedulingClass=idle

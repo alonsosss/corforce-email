@@ -1,0 +1,88 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  backend:
+    name: Backend (Go)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache: true
+
+      - name: Build
+        run: go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Tests
+        run: go test ./... -race -count=1
+
+      # Sin restos de las dos bases de las que nace el repositorio (plataforma de referencia y
+      # capa PHP/MySQL de mailcow): un termino de esos en el codigo es una suposicion de
+      # otro producto que falla en silencio.
+      - name: Copia limpia
+        run: make clean-copy
+
+      - name: Validar consistencia (puertos, modulos gateados, acoplamiento, streams, imagenes)
+        run: bash ops/scaffold/validate.sh
+
+      - name: Migraciones canonicas idempotentes (empresa y celda)
+        run: make check-migrations
+
+      - name: Migraciones que dicen reemplazar y no reemplazan
+        run: make check-migration-drops
+
+      - name: Fallos sin rastro (500 mudos)
+        run: bash ops/scaffold/check-silent-errors.sh
+
+      - name: Contratos de eventos (payload por subject)
+        run: go run ./ops/scaffold/eventcontracts -check
+
+      - name: Secretos fuera del repositorio
+        run: make check-secrets
+
+      - name: Secretos por el resolvedor comun
+        run: make check-secret-sources
+
+      - name: Objetivos de monitoreo al dia
+        run: make check-observability-targets
+
+      - name: Override de imagenes ECR al dia
+        run: make check-compose-images
+
+      - name: Mapa ruta->servicio al dia
+        run: make check-service-paths
+
+      - name: Reglas de alerta (pruebas de promtool)
+        run: bash ops/observability/check-alertas.sh
+
+      - name: Vulnerabilidades alcanzables (Go)
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
+      - name: Registro de eventos al dia (sin drift)
+        run: |
+          bash ops/scaffold/gen-events.sh
+          git diff --quiet -- docs/arquitectura/EVENTS.md || \
+            ( echo "docs/arquitectura/EVENTS.md desactualizado: corre 'make gen-events'" >&2; \
+              git --no-pager diff -- docs/arquitectura/EVENTS.md; exit 1 )
+
+  mail-engines:
+    name: Motores de correo (deploy/mail)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Sintaxis de scripts y compose
+        run: |
+          set -e
+          for f in $(find deploy/mail -name '*.sh'); do bash -n "$f"; done
+          for f in $(find deploy/mail -name '*.py'); do python3 -m py_compile "$f"; done
+          docker compose -f deploy/mail/docker-compose.mail.yml config -q

@@ -1,0 +1,25 @@
+{
+  "services": {
+    "identity":       {"host_env": "IDENTITY_HOST",       "default_host": "identity",       "default_port": "8001"},
+    "access-control": {"host_env": "ACCESS_CONTROL_HOST", "default_host": "access-control", "default_port": "8002"},
+    "organization":   {"host_env": "ORGANIZATION_HOST",   "default_host": "organization",   "default_port": "8003"},
+    "audit":          {"host_env": "AUDIT_HOST",          "default_host": "audit",          "default_port": "8030"},
+    "scheduler":      {"host_env": "SCHEDULER_HOST",      "default_host": "scheduler",      "default_port": "8033"},
+    "web":            {"host_env": "WEB_HOST",            "default_host": "web",            "default_port": "80"}
+  },
+  "routes": [
+    {"prefix": "users",         "service": "identity",       "module": "identity"},
+    {"prefix": "sessions",      "service": "identity",       "module": "identity"},
+    {"prefix": "roles",         "service": "access-control", "module": "access"},
+    {"prefix": "permissions",   "service": "access-control", "module": "access"},
+    {"prefix": "user-roles",    "service": "access-control", "module": "access"},
+    {"prefix": "check-access",  "service": "access-control", "module": ""},
+    {"prefix": "policy",        "service": "access-control", "module": ""},
+    {"prefix": "access",        "service": "access-control", "module": ""},
+    {"prefix": "organizations", "service": "organization",   "module": "organization"},
+    {"prefix": "cells",         "service": "organization",   "module": "organization"},
+    {"prefix": "audit",         "service": "audit",          "module": "audit"},
+    {"prefix": "scheduler",     "service": "scheduler",      "module": "scheduler"}
+  ],
+  "frontend": "web"
+}

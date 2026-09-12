@@ -1,0 +1,249 @@
+# Despliegue de la plataforma (plano de control). Los motores de correo tienen su propio
+# compose en deploy/mail/docker-compose.mail.yml y se levantan aparte, por celda.
+#
+# Entorno de los servicios: cada uno lee .env (configuracion NO sensible: puertos, hosts,
+# URLs) y, si existe, el fichero de secretos que ops/security/secrets/fetch-secrets.sh
+# materializa en memoria desde AWS Secrets Manager. En el entorno local ese fichero no
+# existe y Compose lo omite (required: false), asi que el desarrollo sigue arrancando solo
+# con .env. Ver ops/security/secrets/README.md.
+services:
+  postgres-primary:
+    image: pgvector/pgvector:pg16
+    # Solo dev local. En produccion (AWS) la base vive en RDS y este contenedor no
+    # arranca: levantalo con `docker compose --profile embedded-db up`.
+    profiles: ["embedded-db"]
+    command: >
+      postgres
+      -c max_connections=200
+      -c shared_buffers=512MB
+      -c work_mem=16MB
+      -c maintenance_work_mem=128MB
+      -c checkpoint_completion_target=0.9
+      -c random_page_cost=1.1
+    environment:
+      TZ: ${TZ:-America/Lima}
+      PGTZ: ${TZ:-America/Lima}
+      POSTGRES_USER: mail_admin
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dev_password_123}
+      POSTGRES_DB: mail_registry
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mail_admin -d mail_registry"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    networks:
+      - mail-internal
+
+  pgbouncer:
+    # Fijada por digest: pgbouncer esta en el camino de TODA lectura y escritura. Con
+    # :latest, un `pull` cualquiera cambiaria el pooler de la base sin que nadie lo revise.
+    image: edoburu/pgbouncer@sha256:4c1ca296ef525f108f5d3552cc337c0c09587cf8dae7f0067fd93349e47dc1cd
+    environment:
+      TZ: ${TZ:-America/Lima}
+      DB_UPSTREAM_HOST: ${DB_UPSTREAM_HOST:-postgres-primary}
+      DB_UPSTREAM_PORT: ${DB_UPSTREAM_PORT:-5432}
+    entrypoint: ["/usr/local/bin/pgbouncer-entrypoint.sh"]
+    volumes:
+      # El DIRECTORIO entero, no fichero a fichero: un bind de fichero ata el inodo y,
+      # cuando alguien reemplaza userlist.txt en el host (cualquier editor o `sed -i`
+      # escribe un temporal y lo renombra encima), el contenedor sigue leyendo el inodo
+      # viejo para siempre. userlist.txt guarda credenciales en claro y lo lee el uid 70
+      # del contenedor: modo 640 con grupo 70.
+      - ./pgbouncer:/etc/pgbouncer:ro
+      - ./pgbouncer/entrypoint.sh:/usr/local/bin/pgbouncer-entrypoint.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 5432 -U mail_admin"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    networks:
+      mail-internal:
+        aliases:
+          - postgres
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-} --maxmemory 512mb --maxmemory-policy allkeys-lru --hz 20
+    environment:
+      TZ: ${TZ:-America/Lima}
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    networks:
+      - mail-internal
+
+  nats:
+    image: nats:2.10-alpine
+    # -m 8222 abre el monitor HTTP (/varz, /jsz, /connz). Sin el no hay forma de ver si
+    # un consumidor de JetStream se quedo atascado. El puerto NO se publica al host.
+    command: ["-js", "-sd", "/data", "-m", "8222"]
+    environment:
+      TZ: ${TZ:-America/Lima}
+    ports:
+      - "127.0.0.1:4222:4222"
+    volumes:
+      - natsdata:/data
+    healthcheck:
+      test: ["CMD", "nats-server", "--help"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    networks:
+      - mail-internal
+
+  gateway:
+    build:
+      context: .
+      dockerfile: ./services/gateway/Dockerfile
+    # Solo en loopback: la unica entrada desde fuera es el proxy de borde (443), que
+    # llega al gateway por la red interna. Publicarlo en 0.0.0.0 dejaria una puerta HTTP
+    # en claro que solo taparia el grupo de seguridad.
+    ports:
+      - "127.0.0.1:${GATEWAY_PORT:-8080}:8080"
+    env_file:
+      - .env
+      - path: /dev/shm/core-force-mail/secrets.env
+        required: false
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+      identity:
+        condition: service_started
+      access-control:
+        condition: service_started
+    restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    networks:
+      - mail-internal
+
+  identity:
+    build:
+      context: .
+      dockerfile: ./services/identity/Dockerfile
+    ports:
+      - "127.0.0.1:${IDENTITY_PORT:-8001}:8001"
+    env_file:
+      - .env
+      - path: /dev/shm/core-force-mail/secrets.env
+        required: false
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+    restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    networks:
+      - mail-internal
+
+  access-control:
+    build:
+      context: .
+      dockerfile: ./services/access-control/Dockerfile
+    ports:
+      - "127.0.0.1:${ACCESS_CONTROL_PORT:-8002}:8002"
+    env_file:
+      - .env
+      - path: /dev/shm/core-force-mail/secrets.env
+        required: false
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    networks:
+      - mail-internal
+
+  organization:
+    build:
+      context: .
+      dockerfile: ./services/organization/Dockerfile
+    ports:
+      - "127.0.0.1:${ORGANIZATION_PORT:-8003}:8003"
+    env_file:
+      - .env
+      - path: /dev/shm/core-force-mail/secrets.env
+        required: false
+    environment:
+      # Las migraciones viajan dentro de la imagen del servicio que las aplica.
+      TENANT_MIGRATION_DIR: /app/migrations/tenant/canonical
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+    restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    networks:
+      - mail-internal
+
+  audit:
+    build:
+      context: .
+      dockerfile: ./services/audit/Dockerfile
+    ports:
+      - "127.0.0.1:${AUDIT_PORT:-8030}:8030"
+    env_file:
+      - .env
+      - path: /dev/shm/core-force-mail/secrets.env
+        required: false
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+    restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    networks:
+      - mail-internal
+
+  scheduler:
+    build:
+      context: .
+      dockerfile: ./services/scheduler/Dockerfile
+    ports:
+      - "127.0.0.1:${SCHEDULER_PORT:-8033}:8033"
+    env_file:
+      - .env
+      - path: /dev/shm/core-force-mail/secrets.env
+        required: false
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+    restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    networks:
+      - mail-internal
+
+volumes:
+  pgdata:
+  redisdata:
+  natsdata:
+
+networks:
+  mail-internal:
+    driver: bridge

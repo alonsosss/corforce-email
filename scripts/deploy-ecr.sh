@@ -1,0 +1,472 @@
+#!/usr/bin/env bash
+# Deploy rapido (PLAN-DESPLIEGUE-RAPIDO D-2): construye EN LOCAL (paralelo + cache
+# BuildKit D-1), publica las imagenes etiquetadas por commit y el servidor solo hace
+# pull && up (nunca compila). Rollback: DEPLOY_TAG=<sha-anterior> en el server.
+#
+# Uso:
+#   scripts/deploy-ecr.sh                    # detecta servicios cambiados vs .deployed-tag
+#   scripts/deploy-ecr.sh svc1 svc2 ...      # servicios explicitos
+#   TRANSPORT=save scripts/deploy-ecr.sh ... # sin AWS local: docker save | ssh load
+set -euo pipefail
+
+ROOT="$(git -C "$(dirname "$0")" rev-parse --show-toplevel)"; cd "$ROOT"
+# El transporte por defecto es SSM, no la IP. El Security Group admite el 22 desde UNA
+# sola IP y la de esta PC es dinamica: cuando cambiaba, esto moria con "Connection timed
+# out" -que parece del servidor y no lo es- y arreglarlo exigia subir al perfil raiz con
+# MFA. Por SSM no hay puerto que autorizar y funciona desde cualquier sitio.
+#
+# `core-force-mail-ssm` es un alias de ~/.ssh/config que lo instala ops/aws/setup-ssm-local.sh;
+# ssh, scp y rsync no cambian, solo el transporte por debajo.
+#
+# El 22 sigue abierto como puerta de emergencia. Si SSM fallara:
+#   DEPLOY_HOST=23.22.171.91 scripts/deploy-ecr.sh
+DEPLOY_HOST="${DEPLOY_HOST:-core-force-mail-ssm}"; DEPLOY_USER="${DEPLOY_USER:-deploy}"
+DEPLOY_PATH="${DEPLOY_PATH:-/opt/core-force-mail/app}"
+SSH_KEY="${DEPLOY_SSH_KEY:-$HOME/.ssh/core-force-mail-prod.pem}"
+SSH=(ssh -o StrictHostKeyChecking=accept-new -o IdentitiesOnly=yes -i "$SSH_KEY" "$DEPLOY_USER@$DEPLOY_HOST")
+TRANSPORT="${TRANSPORT:-ecr}"   # ecr | save
+TAG="$(git rev-parse --short HEAD)"
+ECR_REGION="${ECR_REGION:-us-east-1}"; NS=core-force
+
+remote() { "${SSH[@]}" "cd $DEPLOY_PATH && $*"; }
+
+# Comprobar el transporte ANTES de compilar. Sin esto, un fallo de conexion aparecia tras
+# varios minutos de build, y el mensaje de ssh no distingue "SSM no responde" de "tu IP
+# cambio", que son dos arreglos completamente distintos.
+if ! "${SSH[@]}" -o ConnectTimeout=45 true 2>/dev/null; then
+  echo "no se pudo conectar a $DEPLOY_USER@$DEPLOY_HOST" >&2
+  if [[ "$DEPLOY_HOST" == "core-force-mail-ssm" ]]; then
+    echo "  El transporte es SSM. Comprueba:" >&2
+    echo "    ops/aws/setup-ssm-local.sh        # instala el plugin y el alias, y lo prueba" >&2
+    echo "    aws ssm describe-instance-information --region $ECR_REGION" >&2
+    echo "  Puerta de emergencia (el 22 sigue abierto a tu IP):" >&2
+    echo "    DEPLOY_HOST=23.22.171.91 $0 $*" >&2
+  else
+    echo "  Transporte directo por el puerto 22: casi siempre es que tu IP cambio." >&2
+    echo "    curl -s https://checkip.amazonaws.com   # contrastala con la regla del grupo" >&2
+    echo "  O usa SSM, que no depende de la IP:  ops/aws/setup-ssm-local.sh" >&2
+  fi
+  exit 1
+fi
+
+# Prometheus monta ops/observability/prometheus como configuracion, pero lee las reglas al
+# ARRANCAR o al recibir una recarga: el rsync dejaba la regla nueva en disco y Prometheus
+# seguia evaluando las viejas hasta el siguiente reinicio del contenedor, que puede tardar
+# semanas. Una alerta que no se carga no falla: no suena. Se recarga tras cada rsync; si
+# el contenedor no esta levantado (la observabilidad va aparte), se avisa y no se aborta.
+recargar_prometheus() {
+  if remote 'P=$(docker ps -q -f name=prometheus | head -1); [ -n "$P" ] && docker kill -s HUP "$P"' >/dev/null 2>&1; then
+    echo ">> Prometheus recargado (reglas de alerta al dia)"
+  else
+    echo ">> aviso: Prometheus no esta levantado; las reglas nuevas se cargaran cuando arranque"
+  fi
+}
+
+# El tag del despliegue es el hash de HEAD, asi que lo que viaja tiene que ser HEAD:
+# con el arbol sucio, la imagen incluiria cambios sin commitear y el tag mentiria
+# (y el rollback por tag repondria otra cosa). Ademas el rsync de migraciones podria
+# arrastrar un .sql a medio escribir directo a produccion.
+if [[ -n "$(git status --porcelain --untracked-files=no)" && "${DEPLOY_ALLOW_DIRTY:-0}" != "1" ]]; then
+  echo "arbol de trabajo con cambios sin commitear:" >&2
+  git status --porcelain --untracked-files=no | sed 's/^/  /' >&2
+  echo "commitea primero (el deploy va atado a un commit exacto) o, a proposito," >&2
+  echo "salta la guarda con DEPLOY_ALLOW_DIRTY=1." >&2
+  exit 1
+fi
+
+# Ficheros que viajan al servidor: SIEMPRE desde HEAD (git archive), nunca desde el
+# arbol de trabajo. Una migracion nueva sin commitear no puede colarse a produccion.
+#
+# ops/edge-proxy va aqui porque su nginx.conf se MONTA como volumen y no se hornea en
+# ninguna imagen: si no viaja en este rsync no llega por ningun otro camino, y el cambio
+# se queda en el repositorio sin que nada lo delate.
+#
+# ops/ecr y ops/security por el mismo motivo: sus scripts se EJECUTAN en el servidor
+# -la limpieza de imagenes y el almacen de secretos- y, sobre todo, Declarar ahi una clave nueva en el repositorio
+# no servia de nada -add-secret.sh la rechazaba por no estar declarada- hasta copiarla a
+# mano, que es un paso que nadie recuerda. Ojo ademas al recrear: el montaje es
+# de un fichero suelto, asi que queda anclado al inodo y rsync lo reemplaza por otro; hay
+# que recrear el contenedor, no basta con recargar nginx.
+# ops/observability por lo mismo, y con una vuelta de tuerca: Prometheus MONTA
+# /opt/core-force-mail/app/ops/observability/prometheus como su configuracion, asi que sus reglas
+# de alerta viven en el arbol que sincroniza este rsync... pero la ruta no estaba en la lista,
+# de modo que una regla nueva escrita en el repositorio no llegaba nunca. Las que hay hoy se
+# copiaron a mano. Una alerta que no llega no falla: simplemente no suena.
+#
+# La limpieza es UNA rutina y UN trap: traps sueltos se pisan entre si, y un
+# fallo a mitad dejaba el candado puesto o el token de ECR en el servidor.
+STAGE_DIR=""
+CANDADO_TOMADO=0
+ECR_LOGUEADO=0
+limpiar() {
+  [[ -n "$STAGE_DIR" ]] && rm -rf "$STAGE_DIR"
+  [[ "$ECR_LOGUEADO" == "1" ]] && remote "docker logout $ECR_REGISTRY >/dev/null 2>&1" || true
+  [[ "$CANDADO_TOMADO" == "1" ]] && remote 'rm -rf /tmp/core-deploy.lock' >/dev/null 2>&1 || true
+}
+trap limpiar EXIT
+
+stage_head_files() {
+  STAGE_DIR="$(mktemp -d)"
+  git archive HEAD -- "$@" | tar -x -C "$STAGE_DIR"
+}
+
+# Los Dockerfile de los servicios Go usan "RUN --mount=type=cache" para reutilizar el
+# cache de modulos y de compilacion. Sin BuildKit, Docker cae al constructor clasico y el
+# build muere a media compilacion con un mensaje que no explica que falta. Se comprueba
+# antes de construir nada.
+if ! docker buildx version >/dev/null 2>&1; then
+  echo "falta BuildKit: 'docker buildx' no esta disponible en esta maquina." >&2
+  echo "  sin el, los servicios Go no compilan (--mount=type=cache lo requiere)." >&2
+  echo "  instalalo con: sudo apt install docker-buildx" >&2
+  exit 1
+fi
+
+# El transporte ecr exige credenciales AWS locales (access key IAM). Sin ellas el
+# camino correcto sigue siendo compilar aqui: se degrada a save (docker save | ssh load)
+# en vez de abortar, porque la alternativa real seria compilar en el servidor de 2 vCPU
+# y eso satura produccion (ver docs/aws/RUNBOOK-ESCALADO-EC2.md).
+if [[ "$TRANSPORT" == "ecr" ]] && ! aws sts get-caller-identity >/dev/null 2>&1; then
+  echo ">> sin credenciales AWS locales (o sesion expirada): se usa save." >&2
+  echo ">> para habilitar ecr: ops/aws/setup-iam.sh crea el usuario core-force-deploy-local;" >&2
+  echo ">> con su llave, 'aws configure' (region us-east-1) deja credenciales permanentes." >&2
+  TRANSPORT=save
+fi
+
+# ── 1. servicios a desplegar ─────────────────────────────────────────────────
+# cambiados_desde imprime los servicios con cambios entre un commit y HEAD. Memoriza por
+# commit: los servidores suelen tener pocos tags distintos vivos y la lista es la misma
+# para todos los servicios que corren el mismo.
+declare -A CAMBIADOS_CACHE
+cambiados_desde() {
+  local base="$1"
+  if [[ -z "${CAMBIADOS_CACHE[$base]+x}" ]]; then
+    CAMBIADOS_CACHE[$base]="$(git diff --name-only "$base"..HEAD | ops/scaffold/service-paths.sh --changed | tr '\n' ' ')"
+  fi
+  printf '%s' "${CAMBIADOS_CACHE[$base]}"
+}
+
+# rezagados encuentra los servicios que se quedaron atras aunque .deployed-tag diga otra cosa.
+#
+# El archivo .deployed-tag lo escribe TODO despliegue, incluidos los que llevan una lista
+# explicita de servicios. Un despliegue de dos servicios avanza el archivo para los ciento
+# doce, de modo que lo que cambio y no estaba en esa lista se vuelve invisible para las
+# detecciones siguientes: nadie lo vuelve a mirar. Ya paso -asociaciones e identity se
+# quedaron corriendo imagenes de dias antes con el archivo al dia- y no lo delata nada,
+# porque check-image-drift vigila RETROCESOS, no rezagos.
+#
+# Aqui la base de comparacion de cada servicio es el commit que ese contenedor corre de
+# verdad. Solo se juzga a los que corren un tag conocido del repositorio: los que estan en
+# "latest" o en una imagen local no pasan por ECR y no se pueden comparar.
+rezagados() {
+  local corriendo="$1" svc tag_vivo
+  while read -r svc _ _; do
+    [[ -z "$svc" ]] && continue
+    tag_vivo="$(awk -v n="app-$svc-1" '$1==n {split($2,a,":"); print a[length(a)]}' <<<"$corriendo")"
+    [[ -z "$tag_vivo" || "$tag_vivo" == "latest" || "$tag_vivo" == "$TAG" ]] && continue
+    git rev-parse -q --verify "$tag_vivo^{commit}" >/dev/null || continue
+    [[ " $(cambiados_desde "$tag_vivo") " == *" $svc "* ]] && echo "$svc"
+  done < <(ops/scaffold/service-paths.sh)
+}
+
+declare -a SVCS
+if [[ $# -gt 0 ]]; then
+  SVCS=("$@")
+else
+  BASE="$(remote 'cat .deployed-tag 2>/dev/null' || true)"
+  if [[ -z "$BASE" ]] || ! git rev-parse -q --verify "$BASE" >/dev/null; then
+    echo "sin .deployed-tag valido en el server: indica servicios explicitos" >&2; exit 1
+  fi
+  # El mapa ruta->servicio se deriva del compose (ops/scaffold/service-paths.sh): cubre
+  # backend, frontends y las raices compartidas (pkg/, go.mod, frontend/packages) sin
+  # listas escritas a mano, de modo que un servicio nuevo entra solo.
+  CORRIENDO="$(remote "docker ps --format '{{.Names}} {{.Image}}'" || true)"
+  mapfile -t SVCS < <(
+    { cambiados_desde "$BASE" | tr ' ' '\n'; rezagados "$CORRIENDO"; } | grep -v '^$' | sort -u
+  )
+fi
+# Sin imagenes que reconstruir puede quedar, aun asi, trabajo para el servidor: lo que
+# EJECUTA o MONTA (migraciones, compose, ops/security...) viaja por rsync, no dentro de una
+# imagen. El caso se resuelve mas abajo, cuando ya existen el candado y la guarda.
+[[ ${#SVCS[@]} -eq 0 ]] && SOLO_FICHEROS=1
+if [[ "${SOLO_FICHEROS:-0}" != "1" ]]; then
+  echo ">> tag $TAG | servicios (${#SVCS[@]}): ${SVCS[*]}"
+fi
+
+# ── 1b. guardia de retroceso ─────────────────────────────────────────────────
+# Desplegar un commit ANTERIOR al que ya corre es un retroceso de version que
+# nada delata: el deploy termina "bien", check-image-drift no lo ve (solo compara
+# ECR contra imagen local) y el sintoma es una funcionalidad que desaparece de la
+# pantalla horas despues. Ya ocurrio con dos sesiones desplegando fe-hr.
+#
+# Se comprueba DOS veces: aqui, para fallar antes de gastar el build, y otra vez
+# con el candado del servidor en la mano, porque dos despliegues en carrera
+# pasan ambos la primera comprobacion y el que termina ultimo pisa al otro; esa
+# segunda pasada, ya serializada, es la que de verdad cierra la puerta. Un
+# rollback a proposito se declara con DEPLOY_ALLOW_ROLLBACK=1.
+guardia_retroceso() {
+  [[ "${DEPLOY_ALLOW_ROLLBACK:-0}" == "1" ]] && return 0
+  local corriendo retrocesos=() svc tag_vivo
+  corriendo="$(remote "docker ps --format '{{.Names}} {{.Image}}'" || true)"
+  for svc in "${SVCS[@]}"; do
+    tag_vivo="$(awk -v n="app-$svc-1" '$1==n {split($2,a,":"); print a[length(a)]}' <<<"$corriendo")"
+    [[ -z "$tag_vivo" || "$tag_vivo" == "$TAG" || "$tag_vivo" == "latest" ]] && continue
+    if ! git cat-file -e "$tag_vivo^{commit}" 2>/dev/null; then
+      # El commit vivo no existe en este repo (otra maquina, historia no
+      # traida): no se puede juzgar. Se avisa y se continua.
+      echo ">> aviso: $svc corre $tag_vivo, commit desconocido en este repo; no se puede comparar." >&2
+      continue
+    fi
+    if git merge-base --is-ancestor "$TAG" "$tag_vivo" 2>/dev/null; then
+      retrocesos+=("$svc ($tag_vivo -> $TAG)")
+    fi
+  done
+  if [[ ${#retrocesos[@]} -gt 0 ]]; then
+    echo "RETROCESO DE VERSION: el commit a desplegar ($TAG) es ANTERIOR al que ya corre en:" >&2
+    printf '  %s\n' "${retrocesos[@]}" >&2
+    echo "desplegar asi retiraria de produccion lo publicado despues de $TAG." >&2
+    echo "si es un rollback a proposito, repite con DEPLOY_ALLOW_ROLLBACK=1;" >&2
+    echo "si no, despliega desde HEAD (o haz pull/rebase primero)." >&2
+    return 1
+  fi
+}
+guardia_retroceso || exit 1
+
+# Un despliegue a la vez por servidor. El candado es un directorio (mkdir es
+# atomico) con el tag y la hora dentro; uno abandonado hace mas de 30 minutos
+# se considera muerto y se roba. Sin esto, dos despliegues en carrera terminan
+# con los contenedores del que acabo ultimo, gane quien gane las guardias.
+adquirir_candado() {
+  local intento=0 info
+  while ! remote "mkdir /tmp/core-deploy.lock 2>/dev/null && echo '$TAG $(date -u +%FT%TZ)' > /tmp/core-deploy.lock/info"; do
+    info="$(remote 'cat /tmp/core-deploy.lock/info 2>/dev/null' || true)"
+    if remote 'test -n "$(find /tmp/core-deploy.lock -maxdepth 0 -mmin +30 2>/dev/null)"'; then
+      echo ">> candado abandonado (${info:-sin info}); se libera." >&2
+      remote 'rm -rf /tmp/core-deploy.lock' || true
+      continue
+    fi
+    intento=$((intento + 1))
+    if (( intento > 60 )); then
+      echo "otro despliegue lleva mas de 10 minutos con el candado (${info:-sin info}); abortando." >&2
+      exit 1
+    fi
+    echo ">> otro despliegue en curso (${info:-sin info}); esperando..." >&2
+    sleep 10
+  done
+}
+
+# El servidor no tiene el codigo fuente: solo levanta lo que el override de imagenes
+# referencia. Un servicio ausente del override intentaria compilar alli y el deploy
+# quedaria a medias, asi que se verifica antes de construir nada.
+make -s check-compose-images
+
+# Sin servicios que reconstruir puede quedar, aun asi, trabajo que llevar al servidor:
+# lo que el servidor EJECUTA o MONTA (migraciones, compose, ops/security, ops/ecr...) viaja
+# por rsync, no dentro de una imagen. Salir aqui dejaba ese cambio en el repositorio sin que
+# nada lo delatara: el despliegue decia "nada que desplegar" y el fichero nuevo -una clave
+# declarada en el almacen de secretos, por ejemplo- no llegaba nunca.
+if [[ "${SOLO_FICHEROS:-0}" == "1" ]]; then
+  if git diff --quiet "$(remote 'cat .deployed-tag 2>/dev/null' || echo HEAD)" HEAD -- \
+      docker-compose.yml docker-compose.images.yml docker-compose.observability.yml \
+      migrations ops/edge-proxy ops/security ops/ecr ops/observability ops/maintenance ops/backup pgbouncer 2>/dev/null; then
+    echo "nada que desplegar"; exit 0
+  fi
+  echo ">> tag $TAG | sin imagenes que reconstruir; se sincronizan los ficheros del servidor"
+  adquirir_candado
+  CANDADO_TOMADO=1
+  guardia_retroceso || exit 1
+  stage_head_files docker-compose.yml docker-compose.images.yml docker-compose.observability.yml migrations ops/edge-proxy ops/security ops/ecr ops/observability ops/maintenance ops/backup pgbouncer
+  rsync -a -e "ssh -o IdentitiesOnly=yes -i $SSH_KEY" "$STAGE_DIR"/ "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/"
+  recargar_prometheus
+  remote "echo $TAG > .deployed-tag"
+  echo ">> DEPLOY $TAG COMPLETO (solo ficheros)"
+  exit 0
+fi
+
+# ── 2. build local en paralelo (BuildKit + cache D-1) ────────────────────────
+# Se construye a traves de Compose y no con "docker build" a mano: cada servicio declara
+# su propio context, dockerfile y build args (los Python usan ./services/<svc>, los
+# frontends ./frontend con APP_DIR/PACKAGE_NAME/VITE_*). Compose es la unica fuente que
+# los conoce todos.
+export DOCKER_BUILDKIT=1
+export COMPOSE_PROJECT_NAME=app   # fija el nombre de imagen local app-<svc> (el directorio del repo no lo garantiza)
+
+# Compose lanza TODOS los builds a la vez. En un despliegue acotado da igual, pero
+# cuando el cambio toca pkg/ o el api-client la lista son ~100 servicios y el PC de
+# trabajo se queda sin RAM (swap) e inusable. Se construye en lotes: mismo resultado
+# y misma cache, con el pico de CPU/RAM acotado. Ajustable con DEPLOY_BUILD_LOTE.
+#
+# El tamano sale de medir builds en frio, no de estimarlo: un servicio Go pica 2,1 GiB
+# y un frontend 1,6 GiB, pero el pico NO es la suma -comparten cache de modulos y se
+# solapan poco-. Con 12 en paralelo el pico real fue 6,4 GiB (5,4 GiB con doce
+# frontends, el caso que dispara tocar nginx.conf) y el tiempo por servicio bajo de
+# 13,8 s a 8,3 s frente a lotes de cuatro. El techo ya no es la RAM sino los hilos de
+# CPU, asi que subirlo mas rinde poco. En una maquina de 16 GB conviene bajarlo a 4.
+BUILD_LOTE="${DEPLOY_BUILD_LOTE:-12}"
+build_en_lotes() {
+  local total=${#SVCS[@]} i
+  for ((i = 0; i < total; i += BUILD_LOTE)); do
+    (( total > BUILD_LOTE )) && echo ">> build lote $((i / BUILD_LOTE + 1))/$(((total + BUILD_LOTE - 1) / BUILD_LOTE)): ${SVCS[*]:i:BUILD_LOTE}"
+    "${COMPOSE[@]}" build "${SVCS[@]:i:BUILD_LOTE}"
+  done
+}
+
+# El build va en lotes desde ayer por la RAM del PC. La RECREACION en el servidor no,
+# y ahi el pico es de CPU: `up -d` con la lista entera arranca todos los contenedores a
+# la vez. Medido el 2026-09-06 con un despliegue de 94 servicios: la CPU de la instancia
+# -dos nucleos- llego al 88% durante cinco minutos, en horario de oficina. Es el mismo
+# pico que produce un reinicio (99,9% el 05-09, con los 130 arrancando de golpe).
+#
+# Los creditos lo absorben y no hay caida, pero un pico al tope con dos nucleos es una
+# cola de peticiones para quien esta usando la plataforma en ese momento.
+#
+# En lotes el trabajo total es el mismo y tarda algo mas; lo que cambia es que el pico
+# se reparte. 20 sale de que el consumo medido en reposo es de 0,19% de un nucleo por
+# contenedor y arrancar cuesta un orden de magnitud mas: un lote de 20 cabe holgado en
+# dos nucleos sin dejar sin turno a lo que ya esta sirviendo.
+UP_LOTE="${DEPLOY_UP_LOTE:-20}"
+por_lotes_remoto() {
+  local prefijo="$1"; shift
+  local total=${#SVCS[@]} i
+  for ((i = 0; i < total; i += UP_LOTE)); do
+    (( total > UP_LOTE )) && echo ">> $prefijo lote $((i / UP_LOTE + 1))/$(((total + UP_LOTE - 1) / UP_LOTE))"
+    remote "$* ${SVCS[*]:i:UP_LOTE}"
+  done
+}
+
+if [[ "$TRANSPORT" == "ecr" ]]; then
+  ACC="$(aws sts get-caller-identity --query Account --output text)"
+  export ECR_REGISTRY="$ACC.dkr.ecr.$ECR_REGION.amazonaws.com" DEPLOY_TAG="$TAG"
+  # Con el override activo, Compose etiqueta cada imagen directamente como
+  # <registry>/<ns>/<svc>:<tag>: no hay retag manual que se pueda desincronizar.
+  COMPOSE=(docker compose -f docker-compose.yml -f docker-compose.images.yml)
+  build_en_lotes
+  echo ">> build local OK"
+
+  aws ecr get-login-password --region "$ECR_REGION" | docker login --username AWS --password-stdin "$ECR_REGISTRY" >/dev/null
+  "${COMPOSE[@]}" push -q "${SVCS[@]}"
+  # "latest" lo consumen el timer core-force-mail-ecr-sync y los servidores solo-pull.
+  for s in "${SVCS[@]}"; do
+    docker tag "$ECR_REGISTRY/$NS/$s:$TAG" "$ECR_REGISTRY/$NS/$s:latest"
+    docker push -q "$ECR_REGISTRY/$NS/$s:latest"
+  done
+  echo ">> push ECR OK"
+
+  # server: pull etiquetado + up con override de imagenes. Desde aqui todo va
+  # bajo candado: la re-verificacion de retroceso ve el estado REAL tras
+  # cualquier despliegue que haya corrido en paralelo durante nuestro build.
+  adquirir_candado
+  CANDADO_TOMADO=1
+  guardia_retroceso || exit 1
+  stage_head_files docker-compose.yml docker-compose.images.yml docker-compose.observability.yml migrations ops/edge-proxy ops/security ops/ecr ops/observability ops/maintenance ops/backup pgbouncer
+  rsync -a -e "ssh -o IdentitiesOnly=yes -i $SSH_KEY" "$STAGE_DIR"/ "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/"
+  recargar_prometheus
+  # El login de docker contra ECR caduca a las 12 h. El servidor tiene su rol
+  # IAM, pero si nadie renueva la sesion el pull falla con un 403 opaco que
+  # parece un problema de permisos y no de caducidad. Se renueva en cada
+  # despliegue: cuesta un segundo y evita perseguir el error equivocado.
+  # docker login deja el token de ECR EN CLARO en ~/.docker/config.json y ahi se
+  # queda. Se usa dentro del despliegue y se retira al terminar, de modo que en
+  # reposo no hay ninguna credencial de registro guardada en el servidor: el rol
+  # IAM de la instancia basta para volver a obtenerla.
+  #
+  # El logout va con trap para que tambien se ejecute si el pull o el up fallan.
+  remote "aws ecr get-login-password --region $ECR_REGION | docker login --username AWS --password-stdin $ECR_REGISTRY >/dev/null"
+  ECR_LOGUEADO=1
+
+  # El pull va entero: solo trae bytes y no compite por CPU con lo que esta sirviendo.
+  remote "export DEPLOY_TAG=$TAG && ops/security/secrets/with-secrets.sh docker compose -f docker-compose.yml -f docker-compose.images.yml pull -q ${SVCS[*]}"
+  # La recreacion, en lotes: es la que arranca procesos y dispara la CPU.
+  por_lotes_remoto "recrear" "export DEPLOY_TAG=$TAG && ops/security/secrets/with-secrets.sh docker compose -f docker-compose.yml -f docker-compose.images.yml up -d --no-deps"
+
+  # El contenedor tiene que estar corriendo LA imagen recien construida. Un pull
+  # que no trajo nada, un compose que reutilizo la anterior o un up que no
+  # recreo dejan el despliegue "correcto" con codigo viejo dentro, y eso ya ha
+  # pasado en este repo: se comprueba en vez de confiar.
+  for s in "${SVCS[@]}"; do
+    # Por etiqueta de compose, no por nombre: Docker renombra el contenedor a
+    # "<id>_<nombre>" cuando una recreacion se cruza consigo misma, y entonces la
+    # comprobacion no encuentra nada y da el despliegue por no verificado.
+    real=$(remote "docker ps -a --filter 'label=com.docker.compose.service=$s' --filter 'label=com.docker.compose.project=app' --format '{{.Image}}' 2>/dev/null | head -1" || true)
+    case "$real" in
+      *":$TAG") ;;
+      "") echo "!! $s: no se pudo verificar la imagen del contenedor" >&2 ;;
+      *)
+        echo "!! $s corre '$real' y se esperaba el tag $TAG" >&2
+        echo "   el despliegue NO quedo aplicado para ese servicio" >&2
+        exit 1
+        ;;
+    esac
+  done
+else
+  # fallback sin AWS local: save | ssh load, luego up normal (imagen local del server)
+  COMPOSE=(docker compose)
+  build_en_lotes
+  adquirir_candado
+  CANDADO_TOMADO=1
+  guardia_retroceso || exit 1
+  echo ">> build local OK"
+  docker save $(printf 'app-%s:latest ' "${SVCS[@]}") | gzip | "${SSH[@]}" 'gunzip | docker load'
+  # La MISMA lista que el camino de ECR. Cuando divergen, un fichero llega o no llega segun
+  # el transporte que se usara ese dia, que es de las cosas mas dificiles de diagnosticar.
+  stage_head_files docker-compose.yml docker-compose.images.yml docker-compose.observability.yml migrations ops/edge-proxy ops/security ops/ecr ops/observability ops/maintenance ops/backup pgbouncer
+  rsync -a -e "ssh -o IdentitiesOnly=yes -i $SSH_KEY" "$STAGE_DIR"/ "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/"
+  recargar_prometheus
+  por_lotes_remoto "recrear" "ops/security/secrets/with-secrets.sh docker compose up -d --no-deps"
+fi
+
+# Las migraciones de tenant corren al arrancar organization. Si alguna cambio el TIPO de
+# una columna, las sentencias preparadas que pgbouncer guarda en sus conexiones al servidor
+# siguen con el tipo viejo y ese servicio falla con "cached plan must not change result
+# type" hasta una hora despues, aunque se reinicie (el plan no vive en el servicio). Se
+# renuevan las conexiones con RECONNECT, que es gradual: no corta ninguna transaccion.
+RECONNECT_ARGS=""
+for s in "${SVCS[@]}"; do [[ "$s" == "organization" ]] && RECONNECT_ARGS="--wait-migrations"; done
+remote "ops/maintenance/pgbouncer-reconnect.sh $RECONNECT_ARGS" || echo ">> aviso: no se pudo renovar las conexiones de pgbouncer; si un servicio falla con 'cached plan', ejecuta ops/maintenance/pgbouncer-reconnect.sh en el servidor" >&2
+
+# ── 4. registrar tag desplegado + sanidad ────────────────────────────────────
+# El 'ps' tambien va por el envoltorio. No crea contenedores y seria seguro sin el, pero sin
+# secretos Compose avisa de cada ${VAR} vacia: ese ruido al final de cada despliegue es lo que
+# hace invisible el aviso que si importa.
+remote "echo $TAG > .deployed-tag && ops/security/secrets/with-secrets.sh docker compose ps --format '{{.Name}} {{.Status}}' | grep -E \"$(IFS='|'; echo "${SVCS[*]}")\" | head -20"
+
+# Un servicio que retrocedio de ECR a una imagen compilada en el servidor corre codigo
+# posiblemente ANTERIOR al desplegado, sin sintoma visible. Se revisa aqui porque el
+# despliegue es el unico momento en que alguien esta mirando; no aborta (la regresion suele
+# ser de OTRO servicio y el despliegue en curso si quedo aplicado y verificado arriba).
+scripts/check-image-drift.sh || echo ">> revisa la deriva de imagenes antes del proximo cambio"
+
+# Las copias locales de imagenes viejas se acumulan sin que nada las retire. La politica de
+# ciclo de vida de ECR (ops/ecr/lifecycle-policy.json) limpia el REGISTRO en AWS, pero no
+# sabe nada del disco de la maquina: cada despliegue hace un pull y esa copia se queda para
+# siempre. Sin esto el disco se llena, y cuando se llena no falla el despliegue: falla
+# Postgres, que es mucho peor.
+#
+# Se limpia aqui, que es donde se generan, y no en un cron: asi la limpieza va atada al acto
+# que la hace necesaria y no hay que acordarse de nada. Conserva las 3 ultimas de cada
+# servicio para que el retroceso con DEPLOY_TAG=<sha-anterior> siga siendo posible.
+#
+# No aborta si falla: lo desplegado ya quedo verificado arriba, y quedarse sin limpiar una
+# vez es molesto, no grave.
+remote "ops/ecr/prune-local-images.sh --apply" || echo ">> no se pudo retirar las imagenes viejas del servidor"
+
+# Los parches de kernel y de libc se instalan solos (unattended-upgrades) pero no protegen
+# hasta reiniciar, y nada lo decia: el servidor acumulo 68 dias y tres kernels sin aplicar
+# (2026-09-05). El despliegue es el momento en que alguien mira la consola, asi que se
+# avisa aqui. Solo informa: reiniciar es una ventana aparte (docs/PLAN-ENDURECIMIENTO-2026-09.md, seccion 6).
+if remote "test -f /var/run/reboot-required" 2>/dev/null; then
+  echo ">> AVISO: el servidor tiene parches instalados que exigen REINICIO ($(remote "sort -u /var/run/reboot-required.pkgs 2>/dev/null | tr '\n' ' '"))" >&2
+  echo ">>        no protegen hasta reiniciar; planifica la ventana (seccion 6 del plan de endurecimiento)" >&2
+fi
+
+# Si en esta tanda va el servicio que hornea las migraciones, se confirma que el barrido
+# llego al final en todas las empresas. Aplicarlas automaticamente no basta: un barrido que
+# aborta a la mitad deja empresas sin la migracion y sin las posteriores, y solo lo delata
+# una linea de log. Tampoco aborta: lo desplegado quedo verificado arriba.
+for svc in "${SVCS[@]}"; do
+  if ops/scaffold/service-paths.sh --migrations | grep -qx "$svc"; then
+    scripts/check-migrations-applied.sh || echo ">> revisa las migraciones antes del proximo cambio"
+    break
+  fi
+done
+
+echo ">> DEPLOY $TAG COMPLETO"

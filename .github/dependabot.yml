@@ -1,0 +1,36 @@
+# Actualizaciones de dependencias con la cadencia justa para que se lean y no se ignoren.
+#
+# govulncheck y pnpm audit en el CI ya cortan lo EXPLOTABLE; esto cubre lo que aquellos no
+# ven: una version con arreglo de seguridad que aun no tiene CVE publicado, y la deuda de
+# ir quedandose atras hasta que actualizar sea una migracion. Semanal y agrupado por
+# ecosistema: un PR por semana y familia, no uno por paquete. Los mayores (major) no se
+# agrupan a proposito: cada uno merece leerse solo.
+#
+# Sin entrada docker: las 84 imagenes Go comparten golang:1.25-alpine y la version de Go
+# la gobierna go.mod, que si se vigila aqui; vigilar un Dockerfile de 84 seria cosmetico.
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule: { interval: weekly, day: monday, time: "07:00", timezone: America/Lima }
+    open-pull-requests-limit: 3
+    groups:
+      go-menores:
+        update-types: [minor, patch]
+    labels: [dependencias, go]
+
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule: { interval: weekly, day: monday, time: "07:00", timezone: America/Lima }
+    open-pull-requests-limit: 3
+    groups:
+      frontend-menores:
+        update-types: [minor, patch]
+    labels: [dependencias, frontend]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: monthly }
+    open-pull-requests-limit: 2
+    labels: [dependencias, ci]
+

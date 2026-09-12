@@ -1,0 +1,84 @@
+# Almacen de registros de la plataforma.
+#
+# POR QUE. Los logs viven en el disco de cada contenedor con rotacion de 20 MB x 5, asi que
+# un incidente de hace dos semanas NO se puede reconstruir: para cuando alguien pregunta
+# que paso, la evidencia ya se rotó. Es la pieza que faltaba desde julio.
+#
+# Modo binario unico y almacenamiento en fichero: para 130 contenedores que en total
+# generan 48 MB de log rotado, montar el modo distribuido con S3 seria complejidad sin
+# ninguna contrapartida. Cuando el volumen lo pida se cambia el backend sin tocar quien
+# escribe ni quien consulta.
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+  grpc_listen_port: 9096
+  # El servidor solo se alcanza por la red interna; no publica puerto al host.
+  log_level: warn
+
+common:
+  instance_addr: 127.0.0.1
+  path_prefix: /loki
+  storage:
+    filesystem:
+      chunks_directory: /loki/chunks
+      rules_directory: /loki/rules
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+
+schema_config:
+  configs:
+    # Muy anterior a cualquier dato que pueda llegar. Esta fecha NO es "desde cuando se
+    # guarda": es desde cuando este esquema es valido, y una linea con marca de tiempo
+    # anterior hace que Loki rechace el lote ENTERO con un 500 ("no schema config found
+    # for time"). Paso al arrancar: los ficheros rotados que ya habia en disco traian
+    # lineas de agosto y ninguna se pudo ingerir. Lo que acota la antiguedad admitida es
+    # reject_old_samples_max_age, mas abajo, que descarta la linea sola sin tumbar el lote.
+    - from: 2025-01-01
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+limits_config:
+  # Retencion: 30 dias. La pregunta que esto viene a contestar -"que paso hace dos
+  # semanas"- necesita al menos eso, y con este volumen cuesta menos de 1 GiB.
+  retention_period: 720h
+  # Topes para que el monitoreo no pueda ser la causa de un disco lleno ni de una fuga de
+  # memoria. Son holgados frente al volumen medido (48 MB en total hoy).
+  ingestion_rate_mb: 8
+  ingestion_burst_size_mb: 16
+  max_streams_per_user: 5000
+  # Una linea de log gigantesca -un volcado, una traza entera- se recorta en vez de
+  # tumbar la ingesta.
+  max_line_size: 256KB
+  max_line_size_truncate: true
+  # Se admite tan atras como dure la retencion, y no menos. Con el valor por defecto de
+  # 168h, al arrancar se rechazaba con un 400 todo lo que promtail leia de los ficheros
+  # YA rotados que habia en disco: registros que existen, que caben en la retencion y que
+  # se perdian por una incoherencia entre dos numeros. Ahora la primera lectura recupera
+  # el historico que quedara en disco en vez de tirarlo.
+  reject_old_samples: true
+  reject_old_samples_max_age: 720h
+
+  # Loki 3 inventa una etiqueta `service_name` cuando no reconoce ninguna de las suyas, y
+  # aqui salia "unknown_service" en todos los flujos: una etiqueta constante que no
+  # distingue nada y ensucia cada consulta. El nombre del servicio ya lo pone el
+  # recolector en `servicio`.
+  discover_service_name: []
+
+compactor:
+  working_directory: /loki/compactor
+  # Sin esto la retencion NO se aplica: Loki marcaria los datos como caducados y no los
+  # borraria nunca. Es el fallo silencioso clasico de esta configuracion.
+  retention_enabled: true
+  delete_request_store: filesystem
+  compaction_interval: 10m
+
+# Sin telemetria hacia fuera: este servidor no habla con nadie que no sea necesario.
+analytics:
+  reporting_enabled: false

@@ -1,0 +1,67 @@
+[databases]
+; Reenvía cualquier nombre de base de datos al Postgres real (upstream).
+; El host/puerto se inyectan por entorno (entrypoint.sh) para no fijar el
+; endpoint en el repo: en dev local resuelve al contenedor postgres-primary;
+; en producción (AWS) apunta al endpoint de RDS.
+* = host=__DB_UPSTREAM_HOST__ port=__DB_UPSTREAM_PORT__
+
+[pgbouncer]
+listen_addr         = *
+listen_port         = 5432
+auth_type           = plain
+auth_file           = /etc/pgbouncer/userlist.txt
+
+; Consola de administracion (base virtual "pgbouncer"). La necesita
+; ops/maintenance/pgbouncer-reconnect.sh: tras una migracion que cambia el tipo
+; de una columna, las sentencias preparadas que viven en las conexiones al
+; servidor siguen con el tipo viejo y Postgres responde "cached plan must not
+; change result type" hasta que esas conexiones mueren (server_lifetime).
+; RECONNECT las renueva sin cortar a nadie. Se autentica con userlist.txt.
+admin_users         = erp_admin
+stats_users         = erp_admin
+
+; transaction mode: libera la conexión al terminar cada transacción
+; es el modo más eficiente para microservicios stateless
+pool_mode           = transaction
+
+; Clientes máximos simultáneos (todos los microservicios + picos)
+max_client_conn     = 1000
+
+; Conexiones reales a Postgres por pool (DB + usuario)
+; Con 3 DBs × 20 = 60 conexiones reales máx en vez de 277+
+default_pool_size   = 20
+; Suelo por base y usuario. Estaba en 5 desde el servidor anterior, donde Postgres corria
+; en la misma maquina con 8 GB; en RDS de 2 GiB, 10 bases x 2 usuarios x 5 son ~80 procesos
+; de Postgres vivos a cualquier hora, a 5-8 MiB cada uno, sin hacer nada. El techo
+; (default_pool_size) no se toca: es el que responde bajo carga. Cambiado el 2026-09-05.
+min_pool_size       = 1
+reserve_pool_size   = 5
+reserve_pool_timeout = 3
+
+; Timeouts (segundos)
+; Una conexion al servidor sin uso se cierra a los 2 min (antes 10). En horario de trabajo
+; no llegan a estar ociosas tanto tiempo, asi que no hay reconexiones de mas; de noche se
+; sueltan y devuelven memoria a la base. Reabrir cuesta milisegundos dentro de la VPC.
+server_idle_timeout  = 120
+server_lifetime      = 3600
+client_idle_timeout  = 600
+query_timeout        = 0
+query_wait_timeout   = 120
+
+; Logging mínimo
+log_connections       = 0
+log_disconnections    = 0
+log_pooler_errors     = 1
+stats_period          = 60
+
+; Seguridad: require = exige TLS hacia el upstream (RDS). Fail-closed: nunca
+; cae a texto plano. RDS ofrece TLS 1.3, asi que el handshake es transparente.
+; verify-full: ademas de cifrar, comprueba que el servidor de base de datos es el de AWS
+; (cadena de confianza del bundle global de RDS) y que el nombre del endpoint coincide con
+; su certificado. Con require, alguien en la ruta con un certificado cualquiera podia
+; hacerse pasar por la base. El bundle es publico (truststore.pki.rds.amazonaws.com) y
+; viaja con este directorio; AWS lo renueva con anos de margen, y la 03-MANTENIMIENTO lo
+; recuerda. Cambiado el 2026-09-05.
+server_tls_sslmode    = verify-full
+server_tls_ca_file    = /etc/pgbouncer/rds-global-bundle.pem
+ignore_startup_parameters = extra_float_digits,search_path

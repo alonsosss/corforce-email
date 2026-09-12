@@ -1,0 +1,16 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AdministrarRetencionDeImagenes",
+      "Effect": "Allow",
+      "Action": [
+        "ecr:GetLifecyclePolicy",
+        "ecr:PutLifecyclePolicy",
+        "ecr:DeleteLifecyclePolicy",
+        "ecr:DescribeRepositories"
+      ],
+      "Resource": "arn:aws:ecr:us-east-1:188149024609:repository/core-force/*"
+    }
+  ]
+}

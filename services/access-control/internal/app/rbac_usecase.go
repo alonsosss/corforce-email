@@ -1,0 +1,321 @@
+package app
+
+import (
+	"context"
+	"fmt"
+	"sort"
+	"time"
+
+	"github.com/alonsosss/corforce-email/services/access-control/internal/domain"
+	"github.com/alonsosss/corforce-email/services/access-control/internal/ports"
+	"github.com/google/uuid"
+	"go.uber.org/zap"
+)
+
+// SystemRoles son los nombres de los dos roles estructurales de la plataforma. Llegan
+// desde el cableado (pkg/middleware) para que el caso de uso no dependa del paquete
+// HTTP; que permiso tiene cada uno sigue siendo un dato de la base.
+type SystemRoles struct {
+	// Superadmin opera la plataforma entera: transciende el catalogo de modulos.
+	Superadmin string
+	// TenantAdmin administra su propia empresa: es_admin, pero queda sujeto a los
+	// modulos que la empresa tenga contratados.
+	TenantAdmin string
+}
+
+type RBACUseCase struct {
+	roles       ports.RoleRepository
+	perms       ports.PermissionRepository
+	rolePerms   ports.RolePermissionRepository
+	userRoles   ports.UserRoleRepository
+	denials     ports.DenialRepository
+	moduleGate  ports.TenantModuleGate
+	systemRoles SystemRoles
+	logger      *zap.Logger
+}
+
+func NewRBACUseCase(
+	roles ports.RoleRepository,
+	perms ports.PermissionRepository,
+	rolePerms ports.RolePermissionRepository,
+	userRoles ports.UserRoleRepository,
+	denials ports.DenialRepository,
+	moduleGate ports.TenantModuleGate,
+	systemRoles SystemRoles,
+	logger *zap.Logger,
+) *RBACUseCase {
+	return &RBACUseCase{
+		roles:       roles,
+		perms:       perms,
+		rolePerms:   rolePerms,
+		userRoles:   userRoles,
+		denials:     denials,
+		moduleGate:  moduleGate,
+		systemRoles: systemRoles,
+		logger:      logger,
+	}
+}
+
+func (uc *RBACUseCase) RecordDenial(ctx context.Context, d *domain.AccessDenial) error {
+	return uc.denials.Record(ctx, d)
+}
+
+// DenialMetrics resume los accesos denegados de un tenant en una ventana de tiempo.
+type DenialMetrics struct {
+	Total    int64
+	ByModule []domain.DenialSummaryRow
+	ByUser   []domain.DenialSummaryRow
+	Recent   []*domain.AccessDenial
+}
+
+func (uc *RBACUseCase) DenialMetrics(ctx context.Context, tenantID uuid.UUID, since time.Time, recentLimit int) (*DenialMetrics, error) {
+	total, err := uc.denials.Total(ctx, tenantID, since)
+	if err != nil {
+		return nil, err
+	}
+	byModule, err := uc.denials.SummaryByModule(ctx, tenantID, since)
+	if err != nil {
+		return nil, err
+	}
+	byUser, err := uc.denials.SummaryByUser(ctx, tenantID, since)
+	if err != nil {
+		return nil, err
+	}
+	recent, err := uc.denials.List(ctx, tenantID, recentLimit)
+	if err != nil {
+		return nil, err
+	}
+	return &DenialMetrics{Total: total, ByModule: byModule, ByUser: byUser, Recent: recent}, nil
+}
+
+func (uc *RBACUseCase) CreateRole(ctx context.Context, tenantID uuid.UUID, name, description string) (*domain.Role, error) {
+	existing, _ := uc.roles.GetByName(ctx, tenantID, name)
+	if existing != nil {
+		return nil, domain.ErrRoleAlreadyExists
+	}
+
+	role := &domain.Role{
+		ID:          uuid.New(),
+		TenantID:    tenantID,
+		Name:        name,
+		Description: description,
+		Status:      "active",
+	}
+
+	if err := uc.roles.Create(ctx, role); err != nil {
+		return nil, fmt.Errorf("create role: %w", err)
+	}
+	return role, nil
+}
+
+// tenantRole carga un rol y comprueba que pertenece al tenant: un rol ajeno se reporta
+// como inexistente para no revelar que existe.
+func (uc *RBACUseCase) tenantRole(ctx context.Context, tenantID, id uuid.UUID) (*domain.Role, error) {
+	role, err := uc.roles.GetByID(ctx, id)
+	if err != nil || role.TenantID != tenantID {
+		return nil, domain.ErrRoleNotFound
+	}
+	return role, nil
+}
+
+func (uc *RBACUseCase) GetRole(ctx context.Context, tenantID, id uuid.UUID) (*domain.Role, error) {
+	return uc.tenantRole(ctx, tenantID, id)
+}
+
+func (uc *RBACUseCase) ListRoles(ctx context.Context, tenantID uuid.UUID) ([]*domain.Role, error) {
+	return uc.roles.List(ctx, tenantID)
+}
+
+func (uc *RBACUseCase) UpdateRole(ctx context.Context, tenantID, id uuid.UUID, name, description string) (*domain.Role, error) {
+	role, err := uc.tenantRole(ctx, tenantID, id)
+	if err != nil {
+		return nil, err
+	}
+	if role.IsSystem {
+		return nil, domain.ErrSystemRole
+	}
+
+	role.Name = name
+	role.Description = description
+
+	if err := uc.roles.Update(ctx, role); err != nil {
+		return nil, fmt.Errorf("update role: %w", err)
+	}
+	return role, nil
+}
+
+func (uc *RBACUseCase) DeleteRole(ctx context.Context, tenantID, id uuid.UUID) error {
+	role, err := uc.tenantRole(ctx, tenantID, id)
+	if err != nil {
+		return err
+	}
+	if role.IsSystem {
+		return domain.ErrSystemRole
+	}
+	return uc.roles.Delete(ctx, id)
+}
+
+func (uc *RBACUseCase) SetRolePermissions(ctx context.Context, tenantID, roleID uuid.UUID, permissionIDs []uuid.UUID) error {
+	role, err := uc.tenantRole(ctx, tenantID, roleID)
+	if err != nil {
+		return err
+	}
+	if role.IsSystem {
+		return domain.ErrSystemRole
+	}
+	return uc.rolePerms.ReplaceAll(ctx, roleID, permissionIDs)
+}
+
+func (uc *RBACUseCase) GetRolePermissions(ctx context.Context, tenantID, roleID uuid.UUID) ([]*domain.Permission, error) {
+	if _, err := uc.tenantRole(ctx, tenantID, roleID); err != nil {
+		return nil, err
+	}
+	return uc.rolePerms.ListPermissions(ctx, roleID)
+}
+
+func (uc *RBACUseCase) AssignRoleToUser(ctx context.Context, tenantID, userID, roleID, assignedBy uuid.UUID) error {
+	if _, err := uc.tenantRole(ctx, tenantID, roleID); err != nil {
+		return err
+	}
+	return uc.userRoles.Assign(ctx, userID, roleID, assignedBy)
+}
+
+func (uc *RBACUseCase) RevokeRoleFromUser(ctx context.Context, tenantID, userID, roleID uuid.UUID) error {
+	if _, err := uc.tenantRole(ctx, tenantID, roleID); err != nil {
+		return err
+	}
+	return uc.userRoles.Revoke(ctx, userID, roleID)
+}
+
+func (uc *RBACUseCase) GetUserRoles(ctx context.Context, userID, tenantID uuid.UUID) ([]*domain.Role, error) {
+	return uc.userRoles.ListRoles(ctx, userID, tenantID)
+}
+
+// UserAccess resume el acceso operativo de un usuario para filtrar el menu y la API.
+// Modules: modulos visibles (cualquier permiso). WriteModules: modulos donde puede
+// modificar. La distincion evita que un rol de solo lectura pueda escribir aunque vea
+// el modulo.
+type UserAccess struct {
+	IsAdmin      bool
+	Roles        []string
+	Modules      []string
+	WriteModules []string
+	// WriteActions: modulo -> acciones de escritura que el usuario tiene (create,
+	// update, delete, ...). Permite gateo por accion en el gateway.
+	WriteActions map[string][]string
+	// DisabledModules: modulos que la empresa no tiene contratados. El gateway los usa
+	// para bloquear escrituras incluso del administrador de la empresa (que si no
+	// tendria acceso total). Vacio si el tenant no tiene estado explicito o el usuario
+	// es superadmin.
+	DisabledModules []string
+	// TokensValidFrom: instante de revocacion del usuario. El gateway rechaza los access
+	// token emitidos antes.
+	TokensValidFrom time.Time
+}
+
+func (uc *RBACUseCase) GetUserAccess(ctx context.Context, userID, tenantID uuid.UUID) (*UserAccess, error) {
+	roles, err := uc.userRoles.ListRoles(ctx, userID, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	access := &UserAccess{Roles: make([]string, 0, len(roles)), DisabledModules: []string{}}
+	isSuperadmin := false
+	for _, r := range roles {
+		access.Roles = append(access.Roles, r.Name)
+		switch r.Name {
+		case uc.systemRoles.Superadmin:
+			isSuperadmin = true
+			access.IsAdmin = true
+		case uc.systemRoles.TenantAdmin:
+			access.IsAdmin = true
+		}
+	}
+
+	modules, err := uc.userRoles.ListAccessibleModules(ctx, userID, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	access.Modules = modules
+
+	writeActions, err := uc.userRoles.ListWriteActionsByModule(ctx, userID, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	access.WriteActions = writeActions
+
+	// Fail-open: si no se puede leer el instante de revocacion se deja en cero y el
+	// gateway no rechaza por el; la sesion sigue acotada por la vida corta del access
+	// token. Un fallo transitorio de la base no debe expulsar a toda la empresa.
+	if validFrom, tvErr := uc.userRoles.TokensValidFrom(ctx, userID); tvErr != nil {
+		uc.logger.Warn("no se pudo leer el instante de revocacion de tokens",
+			zap.String("user_id", userID.String()), zap.Error(tvErr))
+	} else {
+		access.TokensValidFrom = validFrom
+	}
+
+	// Acotar por contratacion: interseccion de los modulos del rol con los que la
+	// empresa tiene habilitados. El superadmin transciende el catalogo. Fail-open: el
+	// catalogo es comercial, no una frontera de seguridad, y si su lectura falla es
+	// preferible no filtrar a dejar a la empresa sin pantallas.
+	if uc.moduleGate != nil && tenantID != uuid.Nil && !isSuperadmin {
+		availability, gateErr := uc.moduleGate.EffectiveModules(ctx, tenantID)
+		if gateErr != nil {
+			uc.logger.Warn("no se pudo leer los modulos contratados del tenant; sin filtro",
+				zap.String("tenant_id", tenantID.String()), zap.Error(gateErr))
+		} else if availability.Restricted {
+			access.DisabledModules = availability.Disabled()
+			access.Modules = filterAllowed(access.Modules, availability)
+			filtered := make(map[string][]string, len(access.WriteActions))
+			for m, acts := range access.WriteActions {
+				if availability.Allows(m) {
+					filtered[m] = acts
+				}
+			}
+			access.WriteActions = filtered
+		}
+	}
+
+	access.WriteModules = make([]string, 0, len(access.WriteActions))
+	for module := range access.WriteActions {
+		access.WriteModules = append(access.WriteModules, module)
+	}
+	sort.Strings(access.WriteModules)
+
+	return access, nil
+}
+
+// UsersWithPermission resuelve a quien hay que avisar de algo. Es preferible a preguntar
+// por un rol: los nombres de rol los puede cambiar cada empresa, el permiso no.
+func (uc *RBACUseCase) UsersWithPermission(ctx context.Context, tenantID uuid.UUID, module, action string) ([]uuid.UUID, error) {
+	return uc.userRoles.ListUsersWithPermission(ctx, tenantID, module, action)
+}
+
+func filterAllowed(modules []string, availability domain.ModuleAvailability) []string {
+	out := make([]string, 0, len(modules))
+	for _, m := range modules {
+		if availability.Allows(m) {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+func (uc *RBACUseCase) CheckAccess(ctx context.Context, userID, tenantID uuid.UUID, module, resource, action string) (bool, error) {
+	policy, err := uc.userRoles.GetAccessPolicy(ctx, userID, tenantID)
+	if err != nil {
+		return false, err
+	}
+	return policy.HasPermission(module, resource, action), nil
+}
+
+func (uc *RBACUseCase) GetAccessPolicy(ctx context.Context, userID, tenantID uuid.UUID) (*domain.AccessPolicy, error) {
+	return uc.userRoles.GetAccessPolicy(ctx, userID, tenantID)
+}
+
+func (uc *RBACUseCase) ListPermissions(ctx context.Context) ([]*domain.Permission, error) {
+	return uc.perms.List(ctx)
+}
+
+func (uc *RBACUseCase) ListPermissionsByModule(ctx context.Context, module string) ([]*domain.Permission, error) {
+	return uc.perms.ListByModule(ctx, module)
+}

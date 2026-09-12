@@ -1,0 +1,323 @@
+# Reglas de alerta de la plataforma. Cada una describe un sintoma observable, no una
+# causa: la causa se investiga en los tableros. Las ventanas (`for`) son deliberadamente
+# amplias para que un despliegue normal no dispare ruido.
+#
+# El envio de las alertas (correo, WhatsApp) se configura en Grafana como punto de
+# contacto; hasta que existan credenciales SMTP reales las alertas se ven, pero no salen.
+groups:
+  - name: disponibilidad
+    rules:
+      - alert: ServicioCaido
+        expr: up{job="mail-services"} == 0
+        for: 3m
+        labels:
+          severidad: critica
+        annotations:
+          resumen: "El servicio {{ $labels.service }} no responde al recolector"
+          detalle: "Sin respuesta en /metrics durante 3 minutos. Revisar 'docker compose ps {{ $labels.service }}' y sus logs."
+
+      - alert: ServicioReiniciandose
+        expr: changes(process_start_time_seconds{job="mail-services"}[15m]) > 3
+        for: 5m
+        labels:
+          severidad: alta
+        annotations:
+          resumen: "El servicio {{ $labels.service }} se reinicia en bucle"
+          detalle: "Mas de tres arranques en 15 minutos: normalmente una dependencia caida o una variable de entorno ausente."
+
+  - name: version-desplegada
+    rules:
+      # El retroceso silencioso de version.
+      #
+      # El despliegue bueno compila en el PC y el servidor solo hace pull de ECR. Un
+      # `docker compose build/up` ejecutado EN el servidor compila con la copia de
+      # /opt/core-force-mail/app, que llega por rsync selectivo y puede estar atrasada: el
+      # contenedor queda "Up", el despliegue parecio salir bien y dentro corre codigo
+      # ANTERIOR al desplegado.
+      #
+      # Paso el 2026-08-16 con el gateway: se recreo desde una imagen local diez minutos
+      # despues de un despliegue, su binario era previo a la ruta /remotes/asociaciones y ese
+      # modulo dejo de cargar. Trece remotes daban 200 y uno 404. Nadie se entero hasta que
+      # alguien abrio esa pantalla, porque el unico que compara -check-image-drift.sh- corre
+      # DENTRO del despliegue y aqui el retroceso llego despues.
+      #
+      # La ventana es amplia porque durante un despliegue el contenedor se recrea y la
+      # metrica puede faltar un momento; diez minutos no los aguanta ningun despliegue.
+      - alert: ServicioConImagenLocal
+        expr: core_force_image_local == 1
+        for: 10m
+        labels:
+          severidad: alta
+        annotations:
+          resumen: "{{ $labels.servicio }} corre una imagen compilada en el servidor, no la de ECR"
+          detalle: "Puede estar ejecutando codigo anterior al desplegado sin ningun sintoma. Reponer con 'scripts/deploy-ecr.sh {{ $labels.servicio }}' desde el PC; NO recrearlo a mano en el servidor, que es lo que lo provoca."
+
+      # Que la vigilancia deje de correr se ve igual que si todo estuviera bien: la metrica
+      # simplemente se queda quieta. Por eso se alerta de su antiguedad y no solo de su valor.
+      - alert: VigilanciaDeImagenesDetenida
+        expr: time() - core_force_image_check_timestamp_seconds > 3600
+        for: 15m
+        labels:
+          severidad: media
+        annotations:
+          resumen: "Nadie esta comprobando el origen de las imagenes desde hace mas de una hora"
+          detalle: "El cron de ops/observability/report-image-source.sh dejo de publicar. Mientras tanto, un servicio puede retroceder de version sin que nada avise."
+
+  - name: trafico
+    rules:
+      - alert: TasaDeErrorAlta
+        expr: |
+          sum by (service) (rate(http_requests_total{status=~"5.."}[5m]))
+            / sum by (service) (rate(http_requests_total[5m])) > 0.05
+        for: 10m
+        labels:
+          severidad: alta
+        annotations:
+          resumen: "{{ $labels.service }} devuelve mas de 5% de errores de servidor"
+          detalle: "Proporcion de respuestas 5xx sostenida durante 10 minutos."
+
+      - alert: LatenciaAlta
+        expr: |
+          histogram_quantile(0.95,
+            sum by (service, le) (rate(http_request_duration_seconds_bucket[5m]))) > 2
+        for: 10m
+        labels:
+          severidad: media
+        annotations:
+          resumen: "{{ $labels.service }} responde por encima de 2s en el percentil 95"
+          detalle: "Suele preceder al agotamiento del pool de conexiones o a una consulta sin indice."
+
+  - name: base-de-datos
+    rules:
+      # El agotamiento del pool no se ve como error: se ve como lentitud. Vigilarlo es la
+      # diferencia entre enterarse por la metrica o por el cliente.
+      - alert: PoolDeConexionesAlLimite
+        expr: |
+          pgx_pool_connections{state="acquired"} / pgx_pool_max_connections > 0.9
+        for: 5m
+        labels:
+          severidad: alta
+        annotations:
+          resumen: "{{ $labels.service }} usa mas del 90% del pool de {{ $labels.pool }}"
+          detalle: "Con una base por empresa, revisar si el trafico crecio o si una consulta retiene conexiones."
+
+      - alert: EsperaDeConexiones
+        expr: rate(pgx_pool_acquire_waits_total[5m]) > 1
+        for: 10m
+        labels:
+          severidad: media
+        annotations:
+          resumen: "{{ $labels.service }} espera por conexiones libres en {{ $labels.pool }}"
+          detalle: "Adquisiciones que encontraron el pool vacio. Precede a PoolDeConexionesAlLimite."
+
+  - name: seguridad
+    rules:
+      # Un pico de denegaciones efectivas es ambiguo por diseno: o alguien intenta lo que
+      # no le toca, o un despliegue dejo un permiso sin sembrar. Ambas cosas hay que verlas.
+      - alert: PicoDeDenegacionesRBAC
+        expr: sum by (module) (rate(rbac_denials_total{enforced="true"}[10m])) > 0.2
+        for: 10m
+        labels:
+          severidad: media
+        annotations:
+          resumen: "Denegaciones de escritura sostenidas en el modulo {{ $labels.module }}"
+          detalle: "Contrastar con el rastro de auditoria: permiso mal sembrado tras un despliegue o acceso indebido."
+
+  - name: host
+    rules:
+      - alert: DiscoCasiLleno
+        expr: |
+          node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"} < 0.15
+        for: 15m
+        labels:
+          severidad: critica
+        annotations:
+          resumen: "Menos del 15% de disco libre en el servidor"
+          detalle: "Las imagenes y los logs son los consumidores habituales; hay poda programada en ops/maintenance."
+
+      - alert: MemoriaCasiAgotada
+        expr: node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes < 0.10
+        for: 15m
+        labels:
+          severidad: alta
+        annotations:
+          resumen: "Menos del 10% de memoria disponible en el servidor"
+          detalle: "Con mas de cien contenedores en una sola maquina, esto termina en muertes por falta de memoria."
+
+      - alert: CPUSaturada
+        expr: 1 - avg(rate(node_cpu_seconds_total{mode="idle"}[5m])) > 0.90
+        for: 15m
+        labels:
+          severidad: media
+        annotations:
+          resumen: "CPU del servidor por encima del 90% sostenido"
+          detalle: "Contrastar con builds en curso; si es trafico real, toca separar servicios de maquina."
+
+      # El hipervisor frena a una instancia t3 cuando agota sus creditos de CPU, y ese
+      # freno se ve como tiempo "robado" (steal), no como carga ni como memoria: las
+      # demas reglas de este grupo no lo distinguen. Del 7 al 29 de julio de 2026 la
+      # instancia estuvo veintitres dias con el saldo en cero y nadie lo supo hasta
+      # mirar CloudWatch en septiembre. Un 10% sostenido ya es freno real; el 21%
+      # acumulado de aquel episodio se habria visto en la primera hora.
+      - alert: RoboDeCPU
+        expr: avg(rate(node_cpu_seconds_total{mode="steal"}[5m])) > 0.10
+        for: 30m
+        labels:
+          severidad: alta
+        annotations:
+          resumen: "El hipervisor esta frenando la instancia (steal sostenido)"
+          detalle: "Creditos de CPU agotados. Comprobar CPUCreditBalance desde el PC (docs/aws/RUNBOOK-ESCALADO-EC2.md); si es carga real, decidir entre modo unlimited (cobra) o subir de instancia."
+
+      # Las tres reglas siguientes son los umbrales del runbook de escalado
+      # (docs/aws/RUNBOOK-ESCALADO-EC2.md): avisan ANTES de que MemoriaCasiAgotada o
+      # CPUSaturada disparen, con margen para ejecutar el cambio de instancia en frio.
+      - alert: MemoriaDisponibleBaja
+        expr: node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes < 0.20
+        for: 30m
+        labels:
+          severidad: media
+        annotations:
+          resumen: "Menos del 20% de memoria disponible sostenido media hora"
+          detalle: "Aviso temprano del runbook de escalado: si ocurre en estado estable (sin builds), evaluar subir de instancia antes de que llegue MemoriaCasiAgotada."
+
+      - alert: CargaSostenidaAlta
+        expr: node_load15 / count without (cpu, mode) (node_cpu_seconds_total{mode="idle"}) > 1
+        for: 30m
+        labels:
+          severidad: media
+        annotations:
+          resumen: "Cola de CPU sostenida: load15 por encima del numero de nucleos"
+          detalle: "Normalizado por nucleo (sobrevive a un cambio de tipo de instancia). En estado estable indica que los procesos esperan CPU aunque el porcentaje no llegue al 90%."
+
+      - alert: SwapActivo
+        expr: rate(node_vmstat_pswpout[10m]) > 100
+        for: 15m
+        labels:
+          severidad: alta
+        annotations:
+          resumen: "El servidor esta escribiendo a swap de forma sostenida"
+          detalle: "Paginado de salida continuo: la RAM ya no alcanza y el rendimiento se degrada antes de cualquier OOM. Umbral del runbook de escalado."
+
+  - name: chat
+    rules:
+      - alert: ChatDesalojaClientes
+        expr: rate(realtime_clients_evicted_total[10m]) > 0.05
+        for: 15m
+        labels:
+          severidad: alta
+        annotations:
+          resumen: "El tiempo real esta cerrando conexiones que no dan abasto"
+          detalle: "Se cierra al cliente cuya cola de salida se llena para que reconecte y recargue: es el comportamiento correcto, pero de forma sostenida significa que la maquina va justa o que hay una difusion demasiado grande. Contrastar con realtime_connected_clients."
+
+      - alert: ChatCercaDeSuTecho
+        expr: realtime_connected_clients > 3000
+        for: 15m
+        labels:
+          severidad: media
+        annotations:
+          resumen: "El tiempo real sostiene mas de 3.000 conexiones"
+          detalle: "El techo medido en esta maquina son 6.000 con difusion por debajo del segundo. Pasada la mitad conviene decidir si se separa el servicio o se crece la instancia, antes de que lo decida la saturacion."
+
+      # Un analizador caido no se distingue de un dia sin adjuntos: en los dos casos no
+      # pasa nada visible. Lo que los separa es aceptar archivos y no resolver ninguno.
+      # Los dos lados se agregan por servicio a proposito: el contador de resueltos
+      # lleva la etiqueta 'result' y el de aceptados no, y 'and' exige que las
+      # etiquetas coincidan exactamente. Sin agregar, la comparacion no casa nunca y
+      # la alerta jamas se dispara -- comprobado consultando a Prometheus, porque
+      # promtool valida la sintaxis pero no que la expresion pueda dar resultado.
+      - alert: ChatAdjuntosSinRevisar
+        expr: |
+          sum by (service) (increase(chat_attachment_scans_registered_total[30m])) > 0
+            and sum by (service) (increase(chat_attachment_scans_total[30m])) == 0
+        for: 15m
+        labels:
+          severidad: alta
+        annotations:
+          resumen: "Se aceptan adjuntos y no se esta resolviendo ninguno"
+          detalle: "El analizador de contenido no responde: los adjuntos quedan pendientes y no pueden descargarse (que es el lado seguro). Revisar 'docker compose ps clamav' y sus logs; el flujo duradero recuperara lo pendiente en cuanto vuelva."
+
+      - alert: ChatAdjuntoRechazado
+        expr: increase(chat_attachment_scans_total{result="infected"}[1h]) > 0
+        labels:
+          severidad: media
+        annotations:
+          resumen: "El analisis de contenido rechazo un adjunto del chat"
+          detalle: "Alguien intento compartir un archivo con una firma conocida. El binario ya se retiro del almacenamiento y la descarga esta cerrada; el detalle esta en Configuracion > Archivos del chat."
+
+      - alert: ChatAdjuntosSinPoderRevisar
+        expr: increase(chat_attachment_scans_total{result="error"}[1h]) > 0
+        labels:
+          severidad: media
+        annotations:
+          resumen: "Hubo adjuntos que no se pudieron analizar"
+          detalle: "Agotados los cinco intentos, quedan en 'error' y SI se entregan: un analizador roto no puede dejar a la empresa sin sus documentos. Conviene revisar por que fallo antes de que se acumulen."
+
+  # Vigilar al vigilante. Un vigia de alertas caido se ve EXACTAMENTE igual que un
+  # sistema sano: en los dos casos no llega ningun aviso. Estas reglas son las
+  # unicas que distinguen "no pasa nada" de "no me estoy enterando de nada".
+  - name: vigilancia
+    rules:
+      - alert: VigiaDeAlertasNoSeRegistra
+        expr: absent(platform_alert_watcher_last_run_timestamp_seconds)
+        for: 15m
+        labels:
+          severidad: critica
+        annotations:
+          resumen: "El vigia de alertas no publica ninguna senal de vida"
+          detalle: "Sin la serie no hay forma de saber si las alertas llegan a alguien. Revisar que notification arranco con PROMETHEUS_URL y PLATFORM_TENANT_ID; sin esas dos variables el vigia queda apagado a proposito."
+
+      - alert: VigiaDeAlertasParado
+        expr: time() - platform_alert_watcher_last_run_timestamp_seconds > 600
+        for: 5m
+        labels:
+          severidad: critica
+        annotations:
+          resumen: "El vigia de alertas lleva mas de diez minutos sin completar una vuelta"
+          detalle: "Da la vuelta cada minuto. Si se detiene, las alertas siguen disparandose en el recolector pero no llegan a ninguna persona. Revisar los logs de notification."
+
+      # Una alerta disparada que no encuentra a quien avisar es peor que no tenerla:
+      # el sistema cree que aviso. Se reintenta sola, pero hay que saberlo.
+      - alert: AlertasSinDestinatario
+        expr: increase(platform_alerts_without_operators_total[30m]) > 0
+        for: 5m
+        labels:
+          severidad: critica
+        annotations:
+          resumen: "Hay alertas disparadas y nadie a quien avisar"
+          detalle: "El tenant de plataforma no tiene operadores activos. Los avisos se reintentan en cada vuelta, pero mientras tanto nadie se entera de nada. Revisar los usuarios del tenant de plataforma."
+
+  # La pasarela es la unica puerta de entrada de la plataforma: por ahi pasa TODO. Las reglas
+  # genericas ya la cubren, pero con el umbral de un servicio cualquiera. Un 2% de
+  # errores aqui significa que a una de cada cincuenta personas se le esta cayendo la
+  # aplicacion, y eso no puede esperar diez minutos para avisar.
+  - name: parcheado_del_host
+    rules:
+      - alert: ReinicioPendienteHaceDemasiado
+        expr: |
+          core_force_reinicio_pendiente == 1
+          and
+          time() - core_force_reinicio_pendiente_desde_timestamp_seconds > 1209600
+        for: 1h
+        labels:
+          severidad: alta
+        annotations:
+          resumen: "Hay parches de seguridad esperando un reinicio desde hace mas de dos semanas"
+          detalle: "El host tiene paquetes instalados que no protegen hasta reiniciar (kernel, libc6 o systemd). Con Livepatch los CVE criticos del kernel se aplican en caliente, pero libc6 y los saltos de version no. Revisar /var/run/reboot-required.pkgs y planificar la ventana; el reinicio automatico corre a la 01:00 de Lima."
+
+      - alert: EstadoDelHostNoSeRegistra
+        expr: absent(core_force_reinicio_pendiente)
+        for: 6h
+        labels:
+          severidad: media
+        annotations:
+          resumen: "El estado de parcheado del host no publica ninguna serie"
+          detalle: "Sin la serie, la alerta de reinicio pendiente no puede dispararse: quedaria vigilando algo que no existe. Comprobar 'systemctl status coreforce-estado-host.timer' y que pueda escribir en /opt/core-force-mail/metrics."
+
+      - alert: VerificacionDeArranqueFallida
+        expr: core_force_job_last_exit_code{trabajo="verificacion_arranque"} != 0
+        for: 5m
+        labels:
+          severidad: critica
+        annotations:
+          resumen: "El sistema no volvio entero despues del ultimo arranque"
+          detalle: "La verificacion posterior al arranque encontro contenedores caidos, enfermos o la pasarela sin responder, y no pudo arreglarlo. Revisar /var/log/core-force-mail-verificacion-arranque.log en el servidor. Nota: si el que no volvio fue Prometheus, esta alerta NO puede sonar y el aviso llega por el vigilante externo."

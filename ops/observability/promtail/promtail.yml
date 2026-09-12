@@ -1,0 +1,51 @@
+# Recolector de registros: lee lo que ya escriben los contenedores y lo manda a Loki.
+#
+# POR QUE ASI Y NO CON EL CONTROLADOR DE LOG DE DOCKER. El controlador `loki` de Docker
+# haria que cada contenedor escribiera directamente a Loki, y eso ata el producto al
+# monitoreo: si Loki no responde, el contenedor se BLOQUEA escribiendo su log. Esta pila
+# esta en un compose aparte precisamente para que una caida del monitoreo no arrastre al
+# plataforma, y usar ese controlador lo desharia. Leyendo los ficheros que Docker ya escribe, lo
+# peor que puede pasar si Loki cae es que falten registros de ese rato.
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+  log_level: warn
+
+positions:
+  # Donde se quedo la lectura de cada fichero. En volumen propio: si se pierde, promtail
+  # reenviaria desde el principio y duplicaria lo ya guardado.
+  filename: /promtail/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  - job_name: contenedores
+    docker_sd_configs:
+      # A traves del proxy, NO del socket de Docker directamente. Ver el compose: montar
+      # /var/run/docker.sock aqui daria a este contenedor control total del host, y
+      # "solo lectura" en el montaje no limita nada -restringe el fichero, no la API-.
+      - host: tcp://docker-socket-ro:2375
+        refresh_interval: 30s
+
+    relabel_configs:
+      # Nombre del contenedor sin la barra inicial que pone Docker.
+      - source_labels: ['__meta_docker_container_name']
+        regex: '/?(.*)'
+        target_label: 'contenedor'
+      # El servicio de compose: es la etiqueta por la que de verdad se busca ("que dijo
+      # invoicing anoche"), y sobrevive a que el contenedor se recree.
+      - source_labels: ['__meta_docker_container_label_com_docker_compose_service']
+        target_label: 'servicio'
+      # De que compose viene: separa la plataforma de la propia observabilidad.
+      - source_labels: ['__meta_docker_container_label_com_docker_compose_project']
+        target_label: 'plano'
+      - source_labels: ['__meta_docker_container_log_stream']
+        target_label: 'flujo'
+
+    # Deliberadamente NO se extraen mas etiquetas. En Loki cada combinacion de etiquetas
+    # es un flujo con su indice: poner aqui el tenant, el usuario o el id de peticion
+    # multiplicaria los flujos por miles y acabaria costando mas memoria que los propios
+    # registros. Eso se filtra al consultar (`| json | tenant="x"`), que es gratis.
+    pipeline_stages:
+      - docker: {}
