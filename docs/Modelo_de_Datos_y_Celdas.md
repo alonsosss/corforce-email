@@ -62,13 +62,17 @@ Como leen los motores (V en `deploy/mail`, ver su README): Postfix por mapas
 dict de cuota sobre `mail.quota_usage`, dicts de sieve sobre las vistas; contrasenas por
 `passwd-verify.lua` -> `MAIL_AUTH_URL`.
 
-### 3.2 RLS en la celda (P)
+### 3.2 RLS en la celda (V: politicas; P: que todos los servicios de celda las usen)
 
-Las tablas de `mail` comparten base entre empresas. Los servicios Go que las lean deben
-usar `db.TransactRLS` (rol `mail_app`, GUCs `app.current_tenant_id` y
-`app.is_privileged`) con politicas `USING (tenant_id = current_setting('app.current_tenant_id')::uuid)`.
-La migracion que introduzca la primera politica crea el rol `mail_app` con el patron que
-`pkg/db` documenta (sin `FORCE`, `SET LOCAL ROLE` dentro de la transaccion).
+`02_mail_rls.sql`: rol `mail_app` (NOLOGIN, concedido al usuario de la aplicacion) con
+politica `tenant_isolation` por `tenant_id = mail.current_tenant()` en todas las tablas con
+empresa, fail-closed sin GUC; rol `mail_engine` con `engine_read` `USING (true)` (Postfix y
+Dovecot no saben de empresas). `quota_usage` se lee por la aplicacion solo unida a sus
+buzones. Vistas publicadas `mail.v_routing_*` para `mail-security`. Probado: la
+aplicacion ve solo su empresa, nada sin GUC y no puede escribir en otra; el motor ve todo.
+Los servicios Go de celda acceden SIEMPRE dentro de `db.TransactRLS` y ademas filtran por
+`tenant_id` en el SQL; `mail-auth` y los endpoints de motores de `mail-security` consultan
+como dueno porque resuelven identidades sin empresa previa, y lo dicen en un comentario.
 
 ## 4. Empresa (V)
 
@@ -112,6 +116,6 @@ que el dato nazca correcto.
 | El gateway inyecta el tenant; los servicios no aceptan `X-Tenant-ID` sin `X-Gateway-Token` | V |
 | Rutas por id comprueban la empresa de la sesion en el plano de control | V |
 | Directorio de correo con `tenant_id` en cada fila y rol de motores sin acceso a credenciales | V |
-| RLS en la celda para los servicios Go | P |
+| RLS en la celda para los servicios Go | V (politicas y roles); los servicios que las usan, en fase 2 |
 | Una celda no lee otra celda; claves de cifrado por celda | P |
 | Respaldo por base y restauracion probada semanalmente (`ops/backup`) | V (scripts), P (programados en este entorno) |

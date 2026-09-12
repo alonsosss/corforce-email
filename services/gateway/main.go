@@ -113,6 +113,12 @@ func main() {
 		// mismo limitador; no revela nada del usuario.
 		r.With(authLimiter.Limit).Get("/auth/reset-password/policy", identity.ServeHTTP)
 
+		// Rutas publicas declaradas en la tabla: webhooks de proveedores y enlaces que
+		// llegan por correo. Sin JWT; el servicio verifica la firma o el enlace.
+		for _, p := range table.Public {
+			r.Method(p.Method, p.Path, reverseProxy(table.serviceURL(p.Service), internalToken))
+		}
+
 		// MFA self-service: requiere autenticacion (inyecta X-User-ID) pero NO pasa
 		// por RBAC: es gestion de la propia cuenta, no un recurso protegido por modulo.
 		r.Group(func(r chi.Router) {

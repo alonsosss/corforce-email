@@ -32,9 +32,20 @@ type routeTable struct {
 	// Un modulo vacio significa "no se gatea por modulo" y solo se admite en las
 	// rutas de consulta de acceso, que ya resuelve el propio servicio con el JWT.
 	Routes []routeSpec `json:"routes"`
+	// Public: rutas bajo /api/v1 que se sirven SIN sesion (webhooks de proveedores, bajas
+	// de suscripcion desde el correo). Van con el limitador general y nada mas: la
+	// proteccion es del propio servicio (firma del proveedor, enlace firmado). Metodo y
+	// ruta exactos con la sintaxis de chi; el servicio recibe la misma ruta.
+	Public []publicRouteSpec `json:"public,omitempty"`
 	// Frontend: servicio que sirve la aplicacion web (comodin /*). Opcional: sin el,
 	// el gateway solo expone el API.
 	Frontend string `json:"frontend,omitempty"`
+}
+
+type publicRouteSpec struct {
+	Method  string `json:"method"`
+	Path    string `json:"path"`
+	Service string `json:"service"`
 }
 
 type serviceSpec struct {
@@ -103,6 +114,19 @@ func (t *routeTable) validate() error {
 		}
 		if r.Module != "" && !moduleRe.MatchString(r.Module) {
 			return fmt.Errorf("tabla de rutas: modulo invalido %q en %q", r.Module, r.Prefix)
+		}
+	}
+	for _, p := range t.Public {
+		switch p.Method {
+		case "GET", "POST", "PUT", "DELETE":
+		default:
+			return fmt.Errorf("tabla de rutas: metodo publico invalido %q", p.Method)
+		}
+		if !strings.HasPrefix(p.Path, "/public/") {
+			return fmt.Errorf("tabla de rutas: la ruta publica %q debe colgar de /public/", p.Path)
+		}
+		if _, ok := t.Services[p.Service]; !ok {
+			return fmt.Errorf("tabla de rutas: la ruta publica %q apunta al servicio desconocido %q", p.Path, p.Service)
 		}
 	}
 	if t.Frontend != "" {

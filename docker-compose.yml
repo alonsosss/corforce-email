@@ -305,6 +305,68 @@ services:
     networks:
       - mail-internal
 
+  transactional:
+    build:
+      context: .
+      dockerfile: ./services/transactional/Dockerfile
+    ports:
+      - "127.0.0.1:${TRANSACTIONAL_PORT:-8045}:8045"
+    env_file:
+      - .env
+      - path: /dev/shm/core-force-mail/secrets.env
+        required: false
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    networks:
+      - mail-internal
+
+  suppression:
+    build:
+      context: .
+      dockerfile: ./services/suppression/Dockerfile
+    ports:
+      - "127.0.0.1:${SUPPRESSION_PORT:-8046}:8046"
+    env_file:
+      - .env
+      - path: /dev/shm/core-force-mail/secrets.env
+        required: false
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+    restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    networks:
+      - mail-internal
+
+  templates:
+    build:
+      context: .
+      dockerfile: ./services/templates/Dockerfile
+    ports:
+      - "127.0.0.1:${TEMPLATES_PORT:-8047}:8047"
+    env_file:
+      - .env
+      - path: /dev/shm/core-force-mail/secrets.env
+        required: false
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+    restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    networks:
+      - mail-internal
+
   web:
     build:
       context: ./web

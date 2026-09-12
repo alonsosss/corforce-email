@@ -42,6 +42,12 @@ func TestValidacionRechazaIncoherencias(t *testing.T) {
 		"modulo invalido":      func(t *routeTable) { t.Routes[0].Module = "mail-boxes" },
 		"frontend desconocido": func(t *routeTable) { t.Frontend = "web" },
 		"host_env invalido":    func(t *routeTable) { s := t.Services["identity"]; s.HostEnv = "identity_host"; t.Services["identity"] = s },
+		"publica fuera de /public": func(t *routeTable) {
+			t.Public = []publicRouteSpec{{Method: "POST", Path: "/auth/login", Service: "identity"}}
+		},
+		"publica con metodo raro": func(t *routeTable) {
+			t.Public = []publicRouteSpec{{Method: "PATCH", Path: "/public/x", Service: "identity"}}
+		},
 	}
 	for nombre, romper := range casos {
 		tbl := base()
