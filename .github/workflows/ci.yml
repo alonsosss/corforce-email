@@ -75,6 +75,28 @@ jobs:
             ( echo "docs/arquitectura/EVENTS.md desactualizado: corre 'make gen-events'" >&2; \
               git --no-pager diff -- docs/arquitectura/EVENTS.md; exit 1 )
 
+  web:
+    name: Aplicacion web (lint, typecheck, tests, build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test -- --run
+      - run: pnpm build
+
   mail-engines:
     name: Motores de correo (deploy/mail)
     runs-on: ubuntu-latest

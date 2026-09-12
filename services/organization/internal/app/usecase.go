@@ -130,15 +130,16 @@ func (uc *OrganizationUseCase) CreateTenant(ctx context.Context, req CreateTenan
 		Settings: settings,
 	}
 
-	if err := uc.provisioner.CreateDatabase(ctx, tenant.DBName); err != nil {
+	target := domain.DBTargetFor(tenant, cell)
+	if err := uc.provisioner.CreateDatabase(ctx, target); err != nil {
 		return nil, fmt.Errorf("aprovisionar base: %w", err)
 	}
-	if err := uc.provisioner.RunMigrations(ctx, tenant.DBName); err != nil {
-		_ = uc.provisioner.DropDatabase(ctx, tenant.DBName)
+	if err := uc.provisioner.RunMigrations(ctx, target); err != nil {
+		_ = uc.provisioner.DropDatabase(ctx, target)
 		return nil, fmt.Errorf("migrar base nueva: %w", err)
 	}
 	if err := uc.tenants.Create(ctx, tenant); err != nil {
-		_ = uc.provisioner.DropDatabase(ctx, tenant.DBName)
+		_ = uc.provisioner.DropDatabase(ctx, target)
 		return nil, fmt.Errorf("registrar tenant: %w", err)
 	}
 
@@ -158,6 +159,15 @@ func (uc *OrganizationUseCase) CreateTenant(ctx context.Context, req CreateTenan
 		return uc.publisher.TenantCreated(ctx, tenant)
 	})
 	return tenant, nil
+}
+
+// targetFor localiza la base de un tenant existente en su celda.
+func (uc *OrganizationUseCase) targetFor(ctx context.Context, t *domain.Tenant) (domain.DBTarget, error) {
+	cell, err := uc.cells.GetByID(ctx, t.CellID)
+	if err != nil {
+		return domain.DBTarget{}, fmt.Errorf("celda del tenant %s: %w", t.Slug, err)
+	}
+	return domain.DBTargetFor(t, cell), nil
 }
 
 // resolveCell devuelve la celda de la peticion o, si no trae, la celda por defecto

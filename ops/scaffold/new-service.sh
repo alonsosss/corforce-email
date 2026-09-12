@@ -89,9 +89,8 @@ func main() {
 	}
 	defer registryPool.Close()
 
-	mgr := db.NewTenantPoolManager(cfg.Postgres.TenantDSN, logger)
+	tenantDB, mgr := db.NewTenantRouting(registryPool.Pool, cfg.Postgres, logger)
 	defer mgr.CloseAll()
-	tenantDB := db.NewTenantDB(registryPool.Pool, mgr)
 	ctxPool := &db.ContextPool{}
 
 	var publisher *natsadapter.Publisher

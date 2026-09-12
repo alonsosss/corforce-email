@@ -45,6 +45,24 @@ func (p PostgresConfig) TenantDSN(dbName string) string {
 	)
 }
 
+// TenantDSNAt es TenantDSN contra el host de otra celda (organization.cells).
+func (p PostgresConfig) TenantDSNAt(host string, port int, dbName string) string {
+	return fmt.Sprintf(
+		"postgres://%s:%s@%s:%d/%s?sslmode=prefer",
+		p.User, p.Password, host, port, dbName,
+	)
+}
+
+// TenantDirectDSNAt es TenantDirectDSN contra otra celda: si el host es el del cluster
+// por defecto se respeta POSTGRES_DIRECT_HOST; para cualquier otra celda su host es
+// tambien su conexion directa (una celda remota se declara con su Postgres real).
+func (p PostgresConfig) TenantDirectDSNAt(host string, port int, dbName string) string {
+	if host == "" || host == p.Host {
+		return p.TenantDirectDSN(dbName)
+	}
+	return p.TenantDSNAt(host, port, dbName)
+}
+
 // CellDSN es la conexion a la base de la celda por pgbouncer. Falla si el servicio no
 // declaro CELL_DB_NAME: un servicio de celda sin celda es un error de despliegue.
 func (p PostgresConfig) CellDSN() (string, error) {

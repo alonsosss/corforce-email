@@ -105,23 +105,23 @@ type fakeProvisioner struct {
 	dropped []string
 }
 
-func (f *fakeProvisioner) CreateDatabase(_ context.Context, dbName string) error {
-	f.created = append(f.created, dbName)
+func (f *fakeProvisioner) CreateDatabase(_ context.Context, target domain.DBTarget) error {
+	f.created = append(f.created, target.DBName)
 	return nil
 }
 
-func (f *fakeProvisioner) DropDatabase(_ context.Context, dbName string) error {
-	f.dropped = append(f.dropped, dbName)
+func (f *fakeProvisioner) DropDatabase(_ context.Context, target domain.DBTarget) error {
+	f.dropped = append(f.dropped, target.DBName)
 	return nil
 }
 
-func (f *fakeProvisioner) RunMigrations(_ context.Context, dbName string) error {
-	f.ran = append(f.ran, dbName)
-	return f.runErr[dbName]
+func (f *fakeProvisioner) RunMigrations(_ context.Context, target domain.DBTarget) error {
+	f.ran = append(f.ran, target.DBName)
+	return f.runErr[target.DBName]
 }
 
-func (f *fakeProvisioner) MigrationStatus(_ context.Context, dbName string) (domain.TenantMigrationStatus, error) {
-	return f.status[dbName], nil
+func (f *fakeProvisioner) MigrationStatus(_ context.Context, target domain.DBTarget) (domain.TenantMigrationStatus, error) {
+	return f.status[target.DBName], nil
 }
 
 type fakeRoleSeeder struct{ seeded []uuid.UUID }

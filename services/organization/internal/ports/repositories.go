@@ -29,11 +29,11 @@ type CellRepository interface {
 }
 
 type TenantDBProvisioner interface {
-	CreateDatabase(ctx context.Context, dbName string) error
-	RunMigrations(ctx context.Context, dbName string) error
-	DropDatabase(ctx context.Context, dbName string) error
+	CreateDatabase(ctx context.Context, target domain.DBTarget) error
+	RunMigrations(ctx context.Context, target domain.DBTarget) error
+	DropDatabase(ctx context.Context, target domain.DBTarget) error
 	// MigrationStatus reporta migraciones aplicadas y pendientes sin aplicar nada.
-	MigrationStatus(ctx context.Context, dbName string) (domain.TenantMigrationStatus, error)
+	MigrationStatus(ctx context.Context, target domain.DBTarget) (domain.TenantMigrationStatus, error)
 }
 
 // RoleSeeder siembra los roles de sistema de un tenant. Es idempotente: se aplica en

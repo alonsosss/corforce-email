@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/alonsosss/corforce-email/pkg/config"
 	"github.com/alonsosss/corforce-email/pkg/middleware"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -182,27 +183,61 @@ func (r errRow) Scan(dest ...interface{}) error { return r.err }
 
 // ── TenantPoolManager ─────────────────────────────────────────────────────────
 
+// DBTarget localiza la base de una empresa: la base y, si su celda no es el cluster por
+// defecto, el host y puerto de esa celda. Host vacio = cluster por defecto (POSTGRES_*).
+type DBTarget struct {
+	Host   string
+	Port   int
+	DBName string
+}
+
+// Key identifica el pool: dos empresas con el mismo nombre de base en celdas distintas
+// son dos bases distintas.
+func (t DBTarget) Key() string {
+	if t.Host == "" {
+		return t.DBName
+	}
+	return fmt.Sprintf("%s:%d/%s", t.Host, t.Port, t.DBName)
+}
+
 type TenantPoolManager struct {
 	mu      sync.RWMutex
-	pools   map[string]*pgxpool.Pool // keyed by db_name
-	dbNames map[string]string        // tenantID → db_name (local cache)
+	pools   map[string]*pgxpool.Pool // por DBTarget.Key()
+	targets map[string]DBTarget      // tenantID -> destino (cache local)
 	baseDSN func(dbName string) string
+	// cellDSN construye el DSN de una base en OTRA celda. Sin el, toda empresa se
+	// busca en el cluster por defecto aunque su celda diga otra cosa.
+	cellDSN func(host string, port int, dbName string) string
 	logger  *zap.Logger
 }
 
 func NewTenantPoolManager(baseDSN func(string) string, logger *zap.Logger) *TenantPoolManager {
 	return &TenantPoolManager{
 		pools:   make(map[string]*pgxpool.Pool),
-		dbNames: make(map[string]string),
+		targets: make(map[string]DBTarget),
 		baseDSN: baseDSN,
 		logger:  logger,
 	}
 }
 
-// GetPoolByDBName returns (or lazily creates) a pool for the given database name.
+// SetCellDSN activa el enrutado por celda: las empresas cuya celda tenga host propio
+// abren su pool contra ese host. Es opcional para que un despliegue de una sola celda
+// no tenga que configurar nada.
+func (m *TenantPoolManager) SetCellDSN(fn func(host string, port int, dbName string) string) {
+	m.cellDSN = fn
+}
+
+// GetPoolByDBName returns (or lazily creates) a pool for the given database name in
+// the default cluster.
 func (m *TenantPoolManager) GetPoolByDBName(ctx context.Context, dbName string) (*pgxpool.Pool, error) {
+	return m.GetPool(ctx, DBTarget{DBName: dbName})
+}
+
+// GetPool devuelve (o abre) el pool del destino.
+func (m *TenantPoolManager) GetPool(ctx context.Context, target DBTarget) (*pgxpool.Pool, error) {
+	key := target.Key()
 	m.mu.RLock()
-	if pool, ok := m.pools[dbName]; ok {
+	if pool, ok := m.pools[key]; ok {
 		m.mu.RUnlock()
 		return pool, nil
 	}
@@ -210,11 +245,15 @@ func (m *TenantPoolManager) GetPoolByDBName(ctx context.Context, dbName string) 
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if pool, ok := m.pools[dbName]; ok {
+	if pool, ok := m.pools[key]; ok {
 		return pool, nil
 	}
 
-	cfg, err := pgxpool.ParseConfig(m.baseDSN(dbName))
+	dsn := m.baseDSN(target.DBName)
+	if target.Host != "" && m.cellDSN != nil {
+		dsn = m.cellDSN(target.Host, target.Port, target.DBName)
+	}
+	cfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
 		return nil, fmt.Errorf("parse tenant dsn: %w", err)
 	}
@@ -229,30 +268,37 @@ func (m *TenantPoolManager) GetPoolByDBName(ctx context.Context, dbName string) 
 
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
-		return nil, fmt.Errorf("create tenant pool %s: %w", dbName, err)
+		return nil, fmt.Errorf("create tenant pool %s: %w", key, err)
 	}
 	if err := pool.Ping(ctx); err != nil {
 		pool.Close()
-		return nil, fmt.Errorf("ping tenant db %s: %w", dbName, err)
+		return nil, fmt.Errorf("ping tenant db %s: %w", key, err)
 	}
 
-	m.pools[dbName] = pool
-	RegisterPoolMetrics(dbName, pool)
-	m.logger.Info("tenant pool created", zap.String("db", dbName))
+	m.pools[key] = pool
+	RegisterPoolMetrics(key, pool)
+	m.logger.Info("tenant pool created", zap.String("db", key))
 	return pool, nil
 }
 
-func (m *TenantPoolManager) cacheDBName(tenantID, dbName string) {
+func (m *TenantPoolManager) cacheTarget(tenantID string, target DBTarget) {
 	m.mu.Lock()
-	m.dbNames[tenantID] = dbName
+	m.targets[tenantID] = target
 	m.mu.Unlock()
 }
 
-func (m *TenantPoolManager) getCachedDBName(tenantID string) (string, bool) {
+func (m *TenantPoolManager) getCachedTarget(tenantID string) (DBTarget, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	v, ok := m.dbNames[tenantID]
+	v, ok := m.targets[tenantID]
 	return v, ok
+}
+
+// Forget olvida el destino en cache de una empresa (tras moverla de celda).
+func (m *TenantPoolManager) Forget(tenantID string) {
+	m.mu.Lock()
+	delete(m.targets, tenantID)
+	m.mu.Unlock()
 }
 
 func (m *TenantPoolManager) CloseAll() {
@@ -264,7 +310,7 @@ func (m *TenantPoolManager) CloseAll() {
 		m.logger.Info("tenant pool closed", zap.String("db", name))
 	}
 	m.pools = make(map[string]*pgxpool.Pool)
-	m.dbNames = make(map[string]string)
+	m.targets = make(map[string]DBTarget)
 }
 
 // ── TenantDB ─────────────────────────────────────────────────────────────────
@@ -274,10 +320,28 @@ func (m *TenantPoolManager) CloseAll() {
 type TenantDB struct {
 	registry *pgxpool.Pool
 	manager  *TenantPoolManager
+	// defaultHost es el host del cluster por defecto tal como lo declararia una celda
+	// (POSTGRES_HOST); vacio = ninguna celda se considera la de por defecto.
+	defaultHost string
 }
 
 func NewTenantDB(registry *pgxpool.Pool, manager *TenantPoolManager) *TenantDB {
 	return &TenantDB{registry: registry, manager: manager}
+}
+
+// SetDefaultHost declara que host de celda equivale al cluster por defecto.
+func (t *TenantDB) SetDefaultHost(host string) { t.defaultHost = host }
+
+// NewTenantRouting cablea el enrutado por empresa completo a partir de la configuracion
+// de Postgres: pool por base en el cluster por defecto, pool por celda cuando la empresa
+// vive en otra, y la equivalencia entre el host por defecto y su celda. Es lo que debe
+// usar cada servicio de empresa en su main.
+func NewTenantRouting(registry *pgxpool.Pool, pg config.PostgresConfig, logger *zap.Logger) (*TenantDB, *TenantPoolManager) {
+	mgr := NewTenantPoolManager(pg.TenantDSN, logger)
+	mgr.SetCellDSN(pg.TenantDSNAt)
+	tdb := NewTenantDB(registry, mgr)
+	tdb.SetDefaultHost(pg.Host)
+	return tdb, mgr
 }
 
 // ResolveForTenant looks up the db_name for tenantID (cached) and returns its pool.
@@ -285,18 +349,38 @@ func (t *TenantDB) ResolveForTenant(ctx context.Context, tenantID string) (*pgxp
 	if tenantID == "" {
 		return nil, fmt.Errorf("empty tenant id")
 	}
-	if dbName, ok := t.manager.getCachedDBName(tenantID); ok {
-		return t.manager.GetPoolByDBName(ctx, dbName)
+	if target, ok := t.manager.getCachedTarget(tenantID); ok {
+		return t.manager.GetPool(ctx, target)
 	}
-	var dbName string
-	err := t.registry.QueryRow(ctx,
-		`SELECT db_name FROM organization.tenants WHERE id = $1`, tenantID,
-	).Scan(&dbName)
+	target, err := t.lookupTarget(ctx, `WHERE t.id = $1`, tenantID)
 	if err != nil {
 		return nil, fmt.Errorf("resolve tenant db for %s: %w", tenantID, err)
 	}
-	t.manager.cacheDBName(tenantID, dbName)
-	return t.manager.GetPoolByDBName(ctx, dbName)
+	t.manager.cacheTarget(tenantID, target)
+	return t.manager.GetPool(ctx, target)
+}
+
+// targetColumns une la empresa con su celda. Una celda cuyo host coincide con el del
+// cluster por defecto (POSTGRES_HOST) se trata como tal: es lo que permite que un
+// despliegue de una sola celda declare su celda sin abrir un segundo pool por empresa.
+const targetColumns = `t.db_name, COALESCE(c.db_host, ''), COALESCE(c.db_port, 0)
+	   FROM organization.tenants t LEFT JOIN organization.cells c ON c.id = t.cell_id `
+
+func (t *TenantDB) lookupTarget(ctx context.Context, where string, args ...interface{}) (DBTarget, error) {
+	var target DBTarget
+	err := t.registry.QueryRow(ctx, `SELECT `+targetColumns+where, args...).Scan(&target.DBName, &target.Host, &target.Port)
+	if err != nil {
+		return DBTarget{}, err
+	}
+	return t.normalize(target), nil
+}
+
+// normalize deja Host vacio cuando la celda es el cluster por defecto.
+func (t *TenantDB) normalize(target DBTarget) DBTarget {
+	if target.Host == t.defaultHost {
+		target.Host, target.Port = "", 0
+	}
+	return target
 }
 
 // IsUnknownTenant indica que el fallo de ResolveForTenant es DEFINITIVO: el tenant no
@@ -317,26 +401,31 @@ func (t *TenantDB) ResolveBySlug(ctx context.Context, slug string) (*pgxpool.Poo
 	if slug == "" {
 		return nil, fmt.Errorf("empty slug")
 	}
-	var tenantID, dbName string
+	var tenantID string
+	var target DBTarget
 	err := t.registry.QueryRow(ctx,
-		`SELECT id, db_name FROM organization.tenants WHERE slug = $1 AND status = 'active'`, slug,
-	).Scan(&tenantID, &dbName)
+		`SELECT t.id, `+targetColumns+`WHERE t.slug = $1 AND t.status = 'active'`, slug,
+	).Scan(&tenantID, &target.DBName, &target.Host, &target.Port)
 	if err != nil {
 		return nil, fmt.Errorf("resolve tenant by slug %s: %w", slug, err)
 	}
-	t.manager.cacheDBName(tenantID, dbName)
-	return t.manager.GetPoolByDBName(ctx, dbName)
+	target = t.normalize(target)
+	t.manager.cacheTarget(tenantID, target)
+	return t.manager.GetPool(ctx, target)
 }
 
 // ForEachActiveTenant fetches all active tenants from the registry and calls fn
 // for each one with a context that has that tenant's pool already injected.
 // Errors from fn are logged but do not stop iteration.
 // Used by background workers (e.g. scheduler ticker) that need per-tenant access.
-type activeTenantRow struct{ id, dbName string }
+type activeTenantRow struct {
+	id     string
+	target DBTarget
+}
 
 func (t *TenantDB) listActiveTenants(ctx context.Context) ([]activeTenantRow, error) {
 	rows, err := t.registry.Query(ctx,
-		`SELECT id, db_name FROM organization.tenants WHERE status = 'active'`,
+		`SELECT t.id, `+targetColumns+`WHERE t.status = 'active'`,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("list active tenants: %w", err)
@@ -346,9 +435,10 @@ func (t *TenantDB) listActiveTenants(ctx context.Context) ([]activeTenantRow, er
 	var tenants []activeTenantRow
 	for rows.Next() {
 		var r activeTenantRow
-		if err := rows.Scan(&r.id, &r.dbName); err != nil {
+		if err := rows.Scan(&r.id, &r.target.DBName, &r.target.Host, &r.target.Port); err != nil {
 			continue
 		}
+		r.target = t.normalize(r.target)
 		tenants = append(tenants, r)
 	}
 	if err := rows.Err(); err != nil {
@@ -363,11 +453,11 @@ func (t *TenantDB) ForEachActiveTenant(ctx context.Context, fn func(ctx context.
 		return err
 	}
 	for _, tr := range tenants {
-		pool, err := t.manager.GetPoolByDBName(ctx, tr.dbName)
+		pool, err := t.manager.GetPool(ctx, tr.target)
 		if err != nil {
 			continue
 		}
-		t.manager.cacheDBName(tr.id, tr.dbName)
+		t.manager.cacheTarget(tr.id, tr.target)
 		// El contexto lleva el pool Y la empresa. Sin lo segundo, cualquier
 		// consulta a una tabla con RLS devuelve CERO filas y sin error: el GUC
 		// app.current_tenant_id viajaría vacío. Es el fallo más traicionero de
@@ -406,12 +496,12 @@ func (t *TenantDB) ForEachActiveTenantConcurrent(ctx context.Context, concurrenc
 			return ctx.Err()
 		case sem <- struct{}{}:
 		}
-		pool, err := t.manager.GetPoolByDBName(ctx, tr.dbName)
+		pool, err := t.manager.GetPool(ctx, tr.target)
 		if err != nil {
 			<-sem
 			continue
 		}
-		t.manager.cacheDBName(tr.id, tr.dbName)
+		t.manager.cacheTarget(tr.id, tr.target)
 		wg.Add(1)
 		go func(tr activeTenantRow, pool *pgxpool.Pool) {
 			defer wg.Done()

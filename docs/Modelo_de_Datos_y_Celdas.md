@@ -82,19 +82,20 @@ directa sin PgBouncer, `public.schema_migrations`, baseline para bases preexiste
 Barrido en segundo plano al arrancar (`RUN_TENANT_MIGRATIONS`). Hoy contiene `audit` y
 `scheduler`.
 
-## 5. Enrutado por peticion (V) y por celda (P)
+## 5. Enrutado por peticion y por celda (V)
 
-V: el gateway pone `X-Tenant-ID` desde el JWT; `db.TenantPoolMiddleware` resuelve
-`db_name` en `organization.tenants` (cache en memoria) y abre un pool perezoso por base
-(`MaxConns 10`, `MinConns 0`, reciclado a los 5 minutos ociosos). `db.ContextPool` lleva
-el pool o la transaccion en el contexto. `ForEachActiveTenantConcurrent` para trabajos de
-fondo con timeout por empresa.
+El gateway pone `X-Tenant-ID` desde el JWT; `db.TenantPoolMiddleware` resuelve la empresa
+en `organization.tenants` unida a `organization.cells` (`db_name`, `db_host`, `db_port`;
+cache en memoria) y abre un pool perezoso por destino (`MaxConns 10`, `MinConns 0`,
+reciclado a los 5 minutos ociosos). Una celda cuyo `db_host` coincide con `POSTGRES_HOST`
+es el cluster por defecto; cualquier otra abre su pool contra su propio host con la misma
+credencial de plataforma (`db.NewTenantRouting` lo cablea en cada `main`). `organization`
+crea y migra la base de una empresa nueva en el cluster de su celda (conexion directa a la
+base de mantenimiento de la celda). Los servicios de celda abren su base por
+`CELL_DB_NAME` (`db.NewNamedPool` + `db.StaticPoolMiddleware`).
 
-P: `TenantPoolManager` debe construir el DSN a partir de la celda de la empresa
-(`cells.db_host/db_port` y una credencial por celda), y el servicio de celda
-(`mail-directory`) resolver su base por `CELL_CODE`. Hoy todas las bases viven en un solo
-cluster y el DSN sale de `POSTGRES_*`. `organization.cells` ya existe como directorio para
-que el dato nazca correcto.
+P: credencial distinta por celda (hoy una sola de plataforma) y mover una empresa de
+celda (`TenantPoolManager.Forget` ya invalida la cache; falta el traslado de datos).
 
 ## 6. Limites que condicionan el dimensionado (V, heredados y vigentes)
 
@@ -117,5 +118,5 @@ que el dato nazca correcto.
 | Rutas por id comprueban la empresa de la sesion en el plano de control | V |
 | Directorio de correo con `tenant_id` en cada fila y rol de motores sin acceso a credenciales | V |
 | RLS en la celda para los servicios Go | V (politicas y roles); los servicios que las usan, en fase 2 |
-| Una celda no lee otra celda; claves de cifrado por celda | P |
+| Una celda no lee otra celda (los servicios de celda solo abren `CELL_DB_NAME`); claves de cifrado por celda | V / P (claves) |
 | Respaldo por base y restauracion probada semanalmente (`ops/backup`) | V (scripts), P (programados en este entorno) |

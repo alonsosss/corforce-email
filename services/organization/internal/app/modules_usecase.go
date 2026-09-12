@@ -49,7 +49,13 @@ type TenantMigrationInfo struct {
 func (uc *OrganizationUseCase) MigrateAllTenants(ctx context.Context) (MigrationSweepResult, error) {
 	var res MigrationSweepResult
 	err := uc.activeTenants(ctx, func(t *domain.Tenant) {
-		switch e := uc.provisioner.RunMigrations(ctx, t.DBName); {
+		target, err := uc.targetFor(ctx, t)
+		if err != nil {
+			uc.logger.Error("fallo al localizar la base del tenant", zap.String("slug", t.Slug), zap.Error(err))
+			res.Failed++
+			return
+		}
+		switch e := uc.provisioner.RunMigrations(ctx, target); {
 		case e == nil:
 			res.Migrated++
 		case errors.Is(e, domain.ErrMigrationsLocked):
@@ -72,7 +78,11 @@ func (uc *OrganizationUseCase) MigrateTenant(ctx context.Context, tenantID uuid.
 	if err != nil {
 		return err
 	}
-	return uc.provisioner.RunMigrations(ctx, t.DBName)
+	target, err := uc.targetFor(ctx, t)
+	if err != nil {
+		return err
+	}
+	return uc.provisioner.RunMigrations(ctx, target)
 }
 
 // TenantMigrationStatuses reporta, por tenant activo, cuantas migraciones canonicas tiene
@@ -82,7 +92,11 @@ func (uc *OrganizationUseCase) TenantMigrationStatuses(ctx context.Context) ([]T
 	out := make([]TenantMigrationInfo, 0, 8)
 	err := uc.activeTenants(ctx, func(t *domain.Tenant) {
 		info := TenantMigrationInfo{TenantID: t.ID, Slug: t.Slug, DBName: t.DBName}
-		st, err := uc.provisioner.MigrationStatus(ctx, t.DBName)
+		var st domain.TenantMigrationStatus
+		target, err := uc.targetFor(ctx, t)
+		if err == nil {
+			st, err = uc.provisioner.MigrationStatus(ctx, target)
+		}
 		switch {
 		case err != nil:
 			info.Status = "error"

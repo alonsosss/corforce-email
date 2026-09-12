@@ -259,6 +259,30 @@ services:
     networks:
       - mail-internal
 
+  mail-auth:
+    build:
+      context: .
+      dockerfile: ./services/mail-auth/Dockerfile
+    ports:
+      - "127.0.0.1:${MAIL_AUTH_PORT:-8041}:8041"
+    env_file:
+      - .env
+      - path: /dev/shm/core-force-mail/secrets.env
+        required: false
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    networks:
+      mail-internal: {}
+      # Dovecot (deploy/mail) lo busca por MAIL_AUTH_URL en la red de los motores.
+      mail-engines:
+        aliases:
+          - mail-auth
+
   mail-security:
     build:
       context: .
@@ -279,9 +303,10 @@ services:
     restart: unless-stopped
     security_opt: ["no-new-privileges:true"]
     networks:
-      mail-internal:
-        # Los motores (deploy/mail) lo buscan por MAIL_POLICY_HOST; el alias evita
-        # tocar los ficheros de Rspamd copiados.
+      mail-internal: {}
+      # Los motores (deploy/mail) lo buscan por MAIL_POLICY_HOST; el alias evita
+      # tocar los ficheros de Rspamd copiados.
+      mail-engines:
         aliases:
           - mail-policy
 
@@ -384,3 +409,8 @@ volumes:
 networks:
   mail-internal:
     driver: bridge
+  # Red de los motores de correo: la crea deploy/mail/docker-compose.mail.yml. Aqui solo
+  # se unen los servicios que los motores llaman por nombre (mail-auth, mail-policy).
+  mail-engines:
+    external: true
+    name: ${MAIL_ENGINES_NETWORK:-mail-engines}

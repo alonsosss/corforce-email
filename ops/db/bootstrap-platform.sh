@@ -41,7 +41,9 @@ fi
 export PGHOST="${PGHOST:-${POSTGRES_HOST:-127.0.0.1}}" PGPORT="${PGPORT:-${POSTGRES_PORT:-5432}}"
 export PGUSER="${PGUSER:-${POSTGRES_USER:-mail_admin}}" PGPASSWORD="${PGPASSWORD:-${POSTGRES_PASSWORD:-}}"
 REGISTRY_DB="${POSTGRES_DB:-mail_registry}"
-CELL_DB_HOST="${CELL_DB_HOST:-$PGHOST}"
+# El host de la celda es el que ven los SERVICIOS (el alias de pgbouncer en compose), no
+# el que ve este script desde fuera: por defecto POSTGRES_HOST.
+CELL_DB_HOST="${CELL_DB_HOST:-${POSTGRES_HOST:-postgres}}"
 
 # Los valores entran como variables de psql (-v) y se citan con :'x': nunca se interpolan
 # en el texto SQL desde bash.

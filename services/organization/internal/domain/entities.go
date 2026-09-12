@@ -78,6 +78,19 @@ type Cell struct {
 	CreatedAt time.Time
 }
 
+// DBTarget localiza la base de un tenant: nombre y, si su celda no es el cluster por
+// defecto, host y puerto de esa celda.
+type DBTarget struct {
+	Host   string
+	Port   int
+	DBName string
+}
+
+// DBTargetFor compone el destino de la base del tenant en su celda.
+func DBTargetFor(t *Tenant, c *Cell) DBTarget {
+	return DBTarget{Host: c.DBHost, Port: c.DBPort, DBName: t.DBName}
+}
+
 // AcceptsTenants indica si la celda puede recibir un tenant nuevo.
 func (c Cell) AcceptsTenants() bool { return c.Status == CellStatusActive }
 

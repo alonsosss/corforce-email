@@ -120,7 +120,7 @@ func main() {
 	// falso entre replicas).
 	provisioner := postgres.NewDBProvisioner(pool.Pool,
 		loadMigrations(envOrDefault("TENANT_MIGRATION_DIR", defaultTenantMigrationDir)),
-		cfg.Postgres.TenantDirectDSN)
+		cfg.Postgres.TenantDirectDSNAt, cfg.Postgres.Host)
 
 	// Los eventos del plano de control son persistentes. Sin NATS el servicio arranca
 	// igual: el alta funciona y los avisos no salen, que es preferible a no poder

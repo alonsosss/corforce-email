@@ -131,35 +131,62 @@ const baselineMarker = "__baseline__"
 type DBProvisioner struct {
 	pool        *pgxpool.Pool
 	migrations  []MigrationFile
-	tenantDSNFn func(dbName string) string
+	directDSNFn func(host string, port int, dbName string) string
+	// defaultHost es el host del cluster del registro: una celda con ese host se
+	// aprovisiona por el pool del registro; cualquier otra, por su propio host.
+	defaultHost string
 }
 
 // NewDBProvisioner recibe la funcion que construye el DSN DIRECTO (sin pgbouncer) de
-// cada base: los advisory locks exigen semantica de sesion.
-func NewDBProvisioner(pool *pgxpool.Pool, migrations []MigrationFile, tenantDSNFn func(string) string) *DBProvisioner {
-	return &DBProvisioner{pool: pool, migrations: migrations, tenantDSNFn: tenantDSNFn}
+// cada base en su celda: los advisory locks exigen semantica de sesion.
+func NewDBProvisioner(pool *pgxpool.Pool, migrations []MigrationFile, directDSNFn func(string, int, string) string, defaultHost string) *DBProvisioner {
+	return &DBProvisioner{pool: pool, migrations: migrations, directDSNFn: directDSNFn, defaultHost: defaultHost}
 }
 
-func (p *DBProvisioner) CreateDatabase(ctx context.Context, dbName string) error {
-	safe := sanitizeDBName(dbName)
-	_, err := p.pool.Exec(ctx, fmt.Sprintf("CREATE DATABASE %s", safe))
+// remote indica si el destino vive en un cluster distinto al del registro.
+func (p *DBProvisioner) remote(target domain.DBTarget) bool {
+	return target.Host != "" && target.Host != p.defaultHost
+}
+
+// adminExec ejecuta una sentencia de administracion (CREATE/DROP DATABASE) en el cluster
+// del destino: por el pool del registro si es el mismo cluster, o por una conexion
+// efimera a la base de mantenimiento `postgres` de la celda.
+func (p *DBProvisioner) adminExec(ctx context.Context, target domain.DBTarget, sql string) error {
+	if !p.remote(target) {
+		_, err := p.pool.Exec(ctx, sql)
+		return err
+	}
+	conn, err := pgx.Connect(ctx, p.directDSNFn(target.Host, target.Port, "postgres"))
+	if err != nil {
+		return fmt.Errorf("conectar a la celda %s: %w", target.Host, err)
+	}
+	defer conn.Close(ctx)
+	_, err = conn.Exec(ctx, sql)
 	return err
 }
 
-func (p *DBProvisioner) DropDatabase(ctx context.Context, dbName string) error {
-	safe := sanitizeDBName(dbName)
-	_, err := p.pool.Exec(ctx, fmt.Sprintf("DROP DATABASE IF EXISTS %s", safe))
-	return err
+func (p *DBProvisioner) tenantDSN(target domain.DBTarget) string {
+	host, port := target.Host, target.Port
+	if !p.remote(target) {
+		host, port = "", 0
+	}
+	return p.directDSNFn(host, port, sanitizeDBName(target.DBName))
+}
+
+func (p *DBProvisioner) CreateDatabase(ctx context.Context, target domain.DBTarget) error {
+	return p.adminExec(ctx, target, fmt.Sprintf("CREATE DATABASE %s", sanitizeDBName(target.DBName)))
+}
+
+func (p *DBProvisioner) DropDatabase(ctx context.Context, target domain.DBTarget) error {
+	return p.adminExec(ctx, target, fmt.Sprintf("DROP DATABASE IF EXISTS %s", sanitizeDBName(target.DBName)))
 }
 
 // RunMigrations aplica las migraciones canonicas pendientes sobre la base del tenant.
 // Es idempotente (tracking en public.schema_migrations), esta serializado por un advisory
 // lock para tolerar varias replicas, y hace baseline de bases preexistentes sin tracking
 // antes de aplicar nada. Devuelve ErrMigrationsLocked si otra instancia va primero.
-func (p *DBProvisioner) RunMigrations(ctx context.Context, dbName string) error {
-	safe := sanitizeDBName(dbName)
-
-	tenantPool, err := pgxpool.New(ctx, p.tenantDSNFn(safe))
+func (p *DBProvisioner) RunMigrations(ctx context.Context, target domain.DBTarget) error {
+	tenantPool, err := pgxpool.New(ctx, p.tenantDSN(target))
 	if err != nil {
 		return fmt.Errorf("conectar a la base del tenant: %w", err)
 	}
@@ -282,11 +309,10 @@ func (p *DBProvisioner) baselineExistingTenant(ctx context.Context, conn *pgxpoo
 
 // MigrationStatus reporta el estado de migraciones canonicas de una base de tenant sin
 // aplicar nada. Alimenta el endpoint del plano de control.
-func (p *DBProvisioner) MigrationStatus(ctx context.Context, dbName string) (domain.TenantMigrationStatus, error) {
+func (p *DBProvisioner) MigrationStatus(ctx context.Context, target domain.DBTarget) (domain.TenantMigrationStatus, error) {
 	var st domain.TenantMigrationStatus
-	safe := sanitizeDBName(dbName)
 
-	tenantPool, err := pgxpool.New(ctx, p.tenantDSNFn(safe))
+	tenantPool, err := pgxpool.New(ctx, p.tenantDSN(target))
 	if err != nil {
 		return st, fmt.Errorf("conectar a la base del tenant: %w", err)
 	}

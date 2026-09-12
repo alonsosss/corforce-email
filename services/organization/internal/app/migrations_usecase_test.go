@@ -18,8 +18,14 @@ func tenantsFixture() []*domain.Tenant {
 	}
 }
 
+// Todos los tenants del fixture viven en la misma celda: el barrido de migraciones
+// necesita localizar la base de cada uno en su celda antes de migrarla.
 func newMigrationsUC(repo *fakeTenantRepo, prov *fakeProvisioner) *OrganizationUseCase {
-	return NewOrganizationUseCase(Dependencies{Tenants: repo, Provisioner: prov})
+	cells := cellsFixture()
+	for _, t := range repo.tenants {
+		t.CellID = cells[0].ID
+	}
+	return NewOrganizationUseCase(Dependencies{Tenants: repo, Cells: &fakeCellRepo{cells: cells}, Provisioner: prov})
 }
 
 // Un tenant bloqueado por otra instancia no es un fallo, y un tenant en error no debe
