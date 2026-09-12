@@ -218,8 +218,9 @@ documento que contradice al código es peor que ninguno.
   (`RequireGatewayToken` + `InjectFromGateway`) y nunca validan JWT por su cuenta.
 * **Eventos**: subjects `<dominio>.<entidad>.<accion>`, un solo dueño por subject,
   envelope `events.Event`, el consumidor declara su stream con `EnsureStream`, consumidores
-  durables e idempotentes con DLQ. Publicaciones críticas por outbox (pendiente en
-  `pkg/events`: hasta entonces, publicar tras el commit y tolerar la pérdida).
+  durables e idempotentes con DLQ. Publicaciones críticas por outbox (`pkg/outbox`:
+  `Enqueue` dentro de la transacción de negocio y `Relay`/`RunForTenants` en el servicio;
+  la tabla `platform.event_outbox` existe en las tres bases).
 * **Entregabilidad**: corporativo y marketing nunca comparten reputación ni infraestructura
   de salida. Marketing y transaccional salen por SES con configuration sets separados;
   toda lista de supresión, rebote o queja se respeta antes de encolar; los enlaces de baja

@@ -28,9 +28,9 @@ cambie cualquiera de estas líneas.
 
 ## Deuda conocida que sale de la copia (no bloquea la fase 0)
 
-* `pkg/events` sin outbox: las publicaciones críticas se hacen tras el commit y pueden
-  perderse si el proceso cae entre ambos. Decisión: outbox en `pkg/events` antes de la
-  fase 3 (envíos).
+* Outbox disponible en `pkg/outbox` (probado contra Postgres): los servicios copiados en
+  fase 0 siguen publicando tras el commit; se migran a `Enqueue` cuando se toquen. Los
+  servicios nuevos lo usan desde el principio para sus publicaciones críticas.
 * `pkg/auth` firma HS256 con un secreto compartido por todos los servicios. Decisión:
   pasar a EdDSA con `kid` cuando exista más de un emisor; hoy solo firma identity.
 * Falta `RequirePermission(module, resource, action)` en `pkg/middleware` (tercera capa);

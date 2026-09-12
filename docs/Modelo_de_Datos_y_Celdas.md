@@ -11,6 +11,8 @@ implementas algo marcado P, muevelo a V en la misma tarea.
 | Celda | `mail_cell_<code>` (una por celda) | Postfix, Dovecot, Rspamd via `mail-auth`/`mail-policy`; mail-directory, mail-security, domain-service | directorio de correo (`mail`), politicas antispam y cuarentena (`mail_security`) | `migrations/cell/canonical/<svc>/` |
 | Empresa | `mail_tenant_<slug>` (una por empresa) | el resto de servicios | auditoria, scheduler, contactos, campanas, plantillas, envios, supresion | `migrations/tenant/canonical/<svc>/` |
 
+Las tres bases llevan además el esquema `platform` con `event_outbox` (`pkg/outbox`).
+
 Convenciones (V): `id uuid DEFAULT gen_random_uuid()`, `tenant_id uuid NOT NULL` donde
 aplica, `timestamptz`, trigger `update_updated_at()`, un esquema por servicio, sin claves
 foraneas entre esquemas, cabecera `-- Schema: x | Service: y`, idempotentes y aditivas

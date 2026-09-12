@@ -47,13 +47,14 @@ Difiere del informe: `tenant-service` se llama `organization` (nombre heredado, 
 | Servicio | Responsabilidad | Esquema |
 |---|---|---|
 | `mail-directory` | Dominios (parte de enrutado), buzones, aliases, dominios alias, contrasenas de aplicacion, relayhosts, transportes, politicas TLS, sieve, cuota. Es lo que Postfix y Dovecot leen por SQL | `mail` (celda) |
-| `mail-auth` | `POST /` HTTPS que Dovecot invoca desde `passwd-verify.lua`: verifica contrasena o contrasena de aplicacion, aplica `*_access` por protocolo, registra el inicio de sesion | `mail` (lee) |
-| `mail-policy` | Los mapas dinamicos que Rspamd y Postfix piden por HTTP (8081/9081): `settings`, `aliasexp`, `bcc`, `footer`, `forwardinghosts`, `pipe` (cuarentena), `pipe_rl`; y alimenta las claves de Redis (`DOMAIN_MAP`, `DKIM_*`, `RL_VALUE`, ...) | `mail`, `mail_security` |
-| `mail-security` | Politicas antispam por empresa y buzon, cuarentena, listas blancas/negras, avisos de cuarentena y cuota | `mail_security` (celda) |
-| `domain-service` | Alta y verificacion de dominios (DNS, DKIM, SPF, DMARC, MTA-STS), generacion y custodia cifrada de claves DKIM; al verificar, activa el dominio en `mail-directory` | `domains` (registro) |
+| `mail-auth` | `POST /` HTTPS que Dovecot invoca desde `passwd-verify.lua`: verifica contrasena o contrasena de aplicacion, aplica `*_access` por protocolo, freno de fuerza bruta en Redis, registra el inicio de sesion. Sin tablas propias: es la mitad de autenticacion del directorio | `mail` (lee) |
+| `mail-security` | Politicas antispam por empresa y buzon, listas, pies de pagina, limites de tasa, cuarentena; sirve los mapas dinamicos que Rspamd y Postfix piden por HTTP (8081: `settings`, `aliasexp`, `bcc`, `footer`, `forwardinghosts`; 9081: `pipe`, `pipe_rl`; alias de red `mail-policy`) y es el UNICO escritor de las claves de Redis de los motores (`DOMAIN_MAP`, `DKIM_*`, `RL_VALUE`, ...). Lee el directorio solo por las vistas `mail.v_routing_*` | `mail_security` (celda) |
+| `domain-service` | Alta y verificacion de dominios (TXT de propiedad, MX, SPF, DKIM, DMARC), generacion y custodia cifrada de claves DKIM con rotacion; al verificar, activa el dominio en `mail-directory` y entrega la clave DKIM a `mail-security` | `domains` (empresa) |
 
 Difiere del informe: `mailbox-service`, `mail-routing-service` y `mail-storage-service` se
-funden en `mail-directory`. Postfix resuelve un destinatario con UNA consulta que une
+funden en `mail-directory`, y `mail-policy` (los mapas HTTP de los motores) vive dentro de
+`mail-security`, porque ambos leen y escriben las mismas politicas y solo debe haber un
+escritor de Redis. Postfix resuelve un destinatario con UNA consulta que une
 buzon, alias y dominio alias; repartir esas tablas en tres esquemas obligaria a que los
 mapas SQL de Postfix cruzaran esquemas, que es justo lo que prohibe la regla de un
 esquema por servicio. `mail-admin-service` queda cubierto por `dockerapi` y `watchdog` de
@@ -101,8 +102,8 @@ migraciones conectan directo.
 | Fase | Contenido | Estado |
 |---|---|---|
 | 0 | Copia y limpieza del plano de control, `pkg/`, operativa; motores de mailcow en `deploy/mail/`; esquema `mail` de celda; documentos | En curso: `Fase0_Estado.md` |
-| 1 | `web/` (React + TypeScript, una sola aplicacion): login, MFA, usuarios, roles, empresas, celdas | Pendiente |
-| 2 | Correo corporativo: `mail-directory`, `mail-auth`, `mail-policy`, `mail-security`, `domain-service`; motores levantados contra la celda; webmail | Pendiente |
+| 1 | `web/` (React + TypeScript, una sola aplicacion): login, MFA, usuarios, roles, empresas, celdas | En curso |
+| 2 | Correo corporativo: `mail-directory`, `mail-auth`, `mail-security`, `domain-service`; motores levantados contra la celda; webmail | En curso |
 | 3 | Transaccional: `transactional`, `templates`, `suppression`, `reputation`, ingesta SES, `billing` | Pendiente |
 | 4 | Marketing: `contacts`, `segments`, `campaigns`, `automations`, `analytics` con ClickHouse, `policy` | Pendiente |
 | 5 | pgvector: busqueda semantica, clasificacion, resumen, segmentacion asistida | Pendiente |

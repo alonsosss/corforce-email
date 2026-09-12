@@ -239,6 +239,81 @@ services:
     networks:
       - mail-internal
 
+  mail-directory:
+    build:
+      context: .
+      dockerfile: ./services/mail-directory/Dockerfile
+    ports:
+      - "127.0.0.1:${MAIL_DIRECTORY_PORT:-8040}:8040"
+    env_file:
+      - .env
+      - path: /dev/shm/core-force-mail/secrets.env
+        required: false
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+    restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    networks:
+      - mail-internal
+
+  mail-security:
+    build:
+      context: .
+      dockerfile: ./services/mail-security/Dockerfile
+    ports:
+      - "127.0.0.1:${MAIL_SECURITY_PORT:-8042}:8042"
+    env_file:
+      - .env
+      - path: /dev/shm/core-force-mail/secrets.env
+        required: false
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    networks:
+      mail-internal:
+        # Los motores (deploy/mail) lo buscan por MAIL_POLICY_HOST; el alias evita
+        # tocar los ficheros de Rspamd copiados.
+        aliases:
+          - mail-policy
+
+  domain-service:
+    build:
+      context: .
+      dockerfile: ./services/domain-service/Dockerfile
+    ports:
+      - "127.0.0.1:${DOMAIN_SERVICE_PORT:-8043}:8043"
+    env_file:
+      - .env
+      - path: /dev/shm/core-force-mail/secrets.env
+        required: false
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+    restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    networks:
+      - mail-internal
+
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    networks:
+      - mail-internal
+
 volumes:
   pgdata:
   redisdata:
