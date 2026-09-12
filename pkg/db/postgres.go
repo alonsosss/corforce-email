@@ -11,10 +11,18 @@ import (
 
 type Pool struct {
 	*pgxpool.Pool
+	name   string
 	logger *zap.Logger
 }
 
 func NewPool(ctx context.Context, dsn string, logger *zap.Logger) (*Pool, error) {
+	return NewNamedPool(ctx, dsn, registryPoolName, logger)
+}
+
+// NewNamedPool abre un pool fijo con nombre propio en las metricas. Lo usan los servicios
+// de celda: su base no es la de registro ni la de una empresa, y con el nombre del
+// registro sus conexiones se sumarian a las de aquel y nadie sabria cual se agota.
+func NewNamedPool(ctx context.Context, dsn, name string, logger *zap.Logger) (*Pool, error) {
 	cfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
 		return nil, fmt.Errorf("parse dsn: %w", err)
@@ -37,8 +45,8 @@ func NewPool(ctx context.Context, dsn string, logger *zap.Logger) (*Pool, error)
 	}
 
 	logger.Info("database connected", zap.String("host", cfg.ConnConfig.Host))
-	RegisterPoolMetrics(registryPoolName, pool)
-	return &Pool{Pool: pool, logger: logger}, nil
+	RegisterPoolMetrics(name, pool)
+	return &Pool{Pool: pool, name: name, logger: logger}, nil
 }
 
 // registryPoolName etiqueta al pool de la base de registro global, el unico que no
@@ -46,7 +54,7 @@ func NewPool(ctx context.Context, dsn string, logger *zap.Logger) (*Pool, error)
 const registryPoolName = "registry"
 
 func (p *Pool) Close() {
-	UnregisterPoolMetrics(registryPoolName)
+	UnregisterPoolMetrics(p.name)
 	p.Pool.Close()
 	p.logger.Info("database connection closed")
 }

@@ -26,7 +26,9 @@ automations analytics billing policy"
 owned_schemas() {
   case "$1" in
     identity|organization|access-control) echo "identity organization access_control" ;;
-    mail-directory|mail-auth|mail-policy) echo "mail" ;;
+    # mail-auth es la mitad de autenticacion del directorio: verifica contrasenas de
+    # buzon y de aplicacion que solo estan en mail.*; no tiene tablas propias.
+    mail-directory|mail-auth) echo "mail" ;;
     *) echo "${1//-/_}" ;;
   esac
 }

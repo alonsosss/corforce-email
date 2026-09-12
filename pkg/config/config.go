@@ -26,6 +26,9 @@ type PostgresConfig struct {
 	// que requieren semantica de sesion (advisory locks de migraciones). Opcional.
 	DirectHost string
 	DirectPort int
+	// CellDBName es la base de la CELDA (directorio de correo que leen los motores) para
+	// los servicios que viven en ella. Vacio en los servicios del plano de control.
+	CellDBName string
 }
 
 func (p PostgresConfig) DSN() string {
@@ -40,6 +43,15 @@ func (p PostgresConfig) TenantDSN(dbName string) string {
 		"postgres://%s:%s@%s:%d/%s?sslmode=disable",
 		p.User, p.Password, p.Host, p.Port, dbName,
 	)
+}
+
+// CellDSN es la conexion a la base de la celda por pgbouncer. Falla si el servicio no
+// declaro CELL_DB_NAME: un servicio de celda sin celda es un error de despliegue.
+func (p PostgresConfig) CellDSN() (string, error) {
+	if p.CellDBName == "" {
+		return "", fmt.Errorf("CELL_DB_NAME is required for cell services")
+	}
+	return p.TenantDSN(p.CellDBName), nil
 }
 
 // TenantDirectDSN conecta al Postgres REAL, saltando pgbouncer. Lo necesita el plano
@@ -97,6 +109,7 @@ func Load() (*Config, error) {
 			DBName:     getEnv("POSTGRES_DB", "mail_registry"),
 			DirectHost: getEnv("POSTGRES_DIRECT_HOST", ""),
 			DirectPort: getEnvInt("POSTGRES_DIRECT_PORT", 0),
+			CellDBName: getEnv("CELL_DB_NAME", ""),
 		},
 		Redis: RedisConfig{
 			Host:     getEnv("REDIS_HOST", "localhost"),

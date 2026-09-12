@@ -5,6 +5,9 @@
     "organization":   {"host_env": "ORGANIZATION_HOST",   "default_host": "organization",   "default_port": "8003"},
     "audit":          {"host_env": "AUDIT_HOST",          "default_host": "audit",          "default_port": "8030"},
     "scheduler":      {"host_env": "SCHEDULER_HOST",      "default_host": "scheduler",      "default_port": "8033"},
+    "mail-directory": {"host_env": "MAIL_DIRECTORY_HOST", "default_host": "mail-directory", "default_port": "8040"},
+    "mail-security":  {"host_env": "MAIL_SECURITY_HOST",  "default_host": "mail-security",  "default_port": "8042"},
+    "domain-service": {"host_env": "DOMAIN_SERVICE_HOST", "default_host": "domain-service", "default_port": "8043"},
     "web":            {"host_env": "WEB_HOST",            "default_host": "web",            "default_port": "80"}
   },
   "routes": [
@@ -19,7 +22,12 @@
     {"prefix": "organizations", "service": "organization",   "module": "organization"},
     {"prefix": "cells",         "service": "organization",   "module": "organization"},
     {"prefix": "audit",         "service": "audit",          "module": "audit"},
-    {"prefix": "scheduler",     "service": "scheduler",      "module": "scheduler"}
+    {"prefix": "scheduler",     "service": "scheduler",      "module": "scheduler"},
+    {"prefix": "mail-domains",  "service": "mail-directory", "module": "domains"},
+    {"prefix": "mailboxes",     "service": "mail-directory", "module": "mailboxes"},
+    {"prefix": "mail-routing",  "service": "mail-directory", "module": "mail_routing"},
+    {"prefix": "mail-security", "service": "mail-security",  "module": "mail_security"},
+    {"prefix": "domains",       "service": "domain-service", "module": "domains"}
   ],
   "frontend": "web"
 }

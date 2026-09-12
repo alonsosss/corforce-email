@@ -6,6 +6,7 @@ import (
 
 	"github.com/alonsosss/corforce-email/pkg/middleware"
 	"github.com/alonsosss/corforce-email/pkg/response"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // TenantPoolMiddleware resuelve el pool de la empresa de la peticion y lo deja en
@@ -46,6 +47,17 @@ func TenantHeaderPoolMiddleware(tdb *TenantDB) func(http.Handler) http.Handler {
 				response.ErrNotFound(w, "tenant database not found")
 				return
 			}
+			next.ServeHTTP(w, r.WithContext(WithPool(r.Context(), pool)))
+		})
+	}
+}
+
+// StaticPoolMiddleware deja en el contexto un pool fijo: el de la base de la celda en los
+// servicios que viven en ella. La empresa sigue viajando en el contexto (InjectFromGateway)
+// y es lo que leen las politicas RLS al abrir la transaccion.
+func StaticPoolMiddleware(pool *pgxpool.Pool) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			next.ServeHTTP(w, r.WithContext(WithPool(r.Context(), pool)))
 		})
 	}
