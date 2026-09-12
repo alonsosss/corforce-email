@@ -43,3 +43,20 @@ deploy/mail/dkim/
 # Clones de referencia de la fase 0 (solo mientras dura la copia)
 /ERP/
 /mailcow/
+
+# Ficheros que los entrypoints de los motores generan en los bind mounts (llevan la
+# credencial de mail_engine y certificados): nunca en el repositorio
+deploy/mail/postfix/conf/sql/
+deploy/mail/postfix/conf/sni.map*
+deploy/mail/postfix/conf/extra.cf
+deploy/mail/postfix/conf/dns_blocklists.cf
+deploy/mail/dovecot/conf/sql/
+deploy/mail/dovecot/conf/sni.conf
+deploy/mail/dovecot/conf/extra.conf
+deploy/mail/dovecot/conf/mail_plugins*
+deploy/mail/dovecot/conf/acl_anyone
+deploy/mail/dovecot/conf/shared_namespace.conf
+deploy/mail/dovecot/conf/mail_replica.conf
+deploy/mail/dovecot/conf/dovecot-master.*
+deploy/mail/rspamd/local.d/external_services.conf
+deploy/mail/rspamd/override.d/worker-controller-password.inc

@@ -1,0 +1,9 @@
+# Tareas periodicas de Dovecot (antes las lanzaba ofelia desde fuera del contenedor).
+# Las ejecuta busybox crond bajo supervisord; cada linea carga el entorno del contenedor
+# desde /source_env.sh. Solo el nodo MASTER=y ejecuta las tareas que escriben.
+0 * * * *    /bin/bash -c 'source /source_env.sh; [[ ${MASTER} == y ]] && /usr/local/bin/gosu vmail /usr/local/bin/trim_logs.sh || exit 0'
+0 0 * * *    /bin/bash -c 'source /source_env.sh; [[ ${MASTER} == y ]] && /usr/local/bin/gosu vmail /usr/local/bin/clean_q_aged.sh || exit 0'
+*/30 * * * * /bin/bash -c 'source /source_env.sh; /usr/local/bin/gosu vmail /usr/local/bin/maildir_gc.sh'
+0 3 * * *    /bin/bash -c 'source /source_env.sh; /usr/local/bin/sa-rules.sh'
+0 0 * * *    /bin/bash -c 'source /source_env.sh; /usr/local/bin/gosu vmail /usr/local/bin/optimize-fts.sh'
+*/5 * * * *  /bin/bash -c 'source /source_env.sh; /usr/local/bin/gosu vmail /usr/local/bin/repl_health.sh'

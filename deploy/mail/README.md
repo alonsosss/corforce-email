@@ -1,0 +1,282 @@
+# Motores de correo (deploy/mail)
+
+Motores de correo de Core Force Mail, tomados de mailcow-dockerized (commit
+`02552ffefdf0` de agosto de 2026) y adaptados para leer el directorio de correo
+desde PostgreSQL (esquema `mail`, rol `mail_engine`) y para delegar en dos
+servicios Go de la plataforma, `mail-auth` y `mail-policy`, todo lo que mailcow
+resolvia con su capa PHP. Aqui no hay interfaz web, ni MariaDB, ni SOGo, ni
+nginx, ni memcached, ni ofelia.
+
+Los ficheros de configuracion copiados conservan sus comentarios originales en
+ingles. Los comentarios nuevos estan en espanol.
+
+## Estructura
+
+| Directorio | Contenido | Origen en mailcow |
+|---|---|---|
+| `postfix/` | Dockerfile, `postfix.sh` (genera los mapas `pgsql_*.cf`), `conf/` (main.cf, master.cf, pcre, cidr) | `data/Dockerfiles/postfix`, `data/conf/postfix` |
+| `dovecot/` | Dockerfile, entrypoint, scripts de cron, `conf/` (dovecot.conf, sieve globales, fts, `auth/passwd-verify.lua`), `crontab` | `data/Dockerfiles/dovecot`, `data/conf/dovecot` |
+| `rspamd/` | Dockerfile, entrypoint, `local.d/`, `override.d/`, `lua/`, `custom/`, `plugins.d/`, `settings.conf` | `data/Dockerfiles/rspamd`, `data/conf/rspamd` |
+| `unbound/` | Resolver DNSSEC validante (`unbound.conf`) | `data/Dockerfiles/unbound`, `data/conf/unbound` |
+| `clamav/` | Dockerfile (compila ClamAV 1.4.6), `clamd.conf`, `freshclam.conf` | `data/Dockerfiles/clamd`, `data/conf/clamav` |
+| `olefy/` | Analizador de macros Office para Rspamd | `data/Dockerfiles/olefy` |
+| `postfix-tlspol/` | Companion de politicas TLS (DANE / MTA-STS) para Postfix | `data/Dockerfiles/postfix-tlspol` |
+| `netfilter/` | Fail2ban propio sobre nftables/iptables, alimentado por Redis | `data/Dockerfiles/netfilter` |
+| `acme/` | Cliente Let's Encrypt (HTTP-01 o DNS-01) | `data/Dockerfiles/acme` |
+| `dockerapi/` | API HTTPS interna para reiniciar contenedores y ejecutar tareas (doveadm, mailq) | `data/Dockerfiles/dockerapi` |
+| `watchdog/` | Vigilante de salud con reinicio automatico y notificaciones | `data/Dockerfiles/watchdog` |
+| `redis/redis-conf.sh` | Arranque de Redis con `requirepass` y el usuario ACL `quota_notify` | `data/conf/redis` |
+| `ssl-example/` | Certificado snake-oil inicial y `dhparams.pem` | `data/assets/ssl-example` |
+| `templates/quota.tpl` | Plantilla Jinja del aviso de cuota | `data/assets/templates` |
+| `docker-compose.mail.yml` | Compose solo de los motores | nuevo |
+
+No se copiaron: `data/web`, sogo, phpfpm, nginx, mysql, `dynmaps/*.php`,
+`meta_exporter/*.php`, `mailcowauth.php`, ldap, backup, `update.sh`,
+`_modules`, `helper-scripts`, imapsync, `quarantine_notify.py`,
+`pw_reset_*.tpl`, `quarantine.tpl`.
+
+## Que cambio respecto a mailcow
+
+* **Base de datos.** Todos los mapas de Postfix son `proxy:pgsql:` y se generan en
+  `postfix.sh` contra `mail.*`. El userdb y los dicts de Dovecot son `pgsql`.
+  La espera de arranque usa `pg_isready`. Los Dockerfiles instalan
+  `postfix-pgsql`, `dovecot-pgsql`, `lua-sql-postgres` y `postgresql-client`
+  en lugar de las variantes MySQL/MariaDB.
+* **Autenticacion.** `passwd-verify.lua` llama a `MAIL_AUTH_URL` (por defecto
+  `https://mail-auth:9082`). El entrypoint de Dovecot renderiza la plantilla con
+  `envsubst` en `/etc/dovecot-auth/passwd-verify.lua`, fuera del bind mount, para
+  no reescribir el fichero del repositorio.
+* **Politicas dinamicas.** Todo `http://nginx:8081/<x>.php` pasa a
+  `http://mail-policy:8081/<x>` y `http://nginx:9081/<x>.php` a
+  `http://mail-policy:9081/<x>`. Rspamd espera a esos dos puertos al arrancar.
+* **SOGo.** Eliminado del entrypoint de Dovecot (`sogo_trusted_ip.conf`,
+  `sogo-sso.conf`, credenciales de cron), de `dovecot.conf`, del watchdog, del
+  dockerapi (`sogo rename_user`), de rspamd (`SOGO_CONTACT`) y de netfilter
+  (regex 8 y 9). El master user generico de Dovecot se conserva bajo
+  `@platform.local` y solo es utilizable si se definen
+  `DOVECOT_MASTER_USER`/`DOVECOT_MASTER_PASS`.
+* **Eliminado tambien:** imapsync (scripts, cron, dependencias Perl), la tabla
+  `versions`/GUID, `quarantine_notify.py`, la regla `PUSHOVERMAIL` y el selector
+  `mailcow_rcpt` de `metadata_exporter.conf`, los checks de nginx, mysql,
+  mysql_repl, phpfpm, sogo y `external_checks` del watchdog, los handlers
+  `mysql_upgrade`, `mysql_tzinfo_to_sql` y `reload nginx` del dockerapi, y los
+  mapas BCC de Postfix (mailcow ya los aplicaba solo desde Rspamd).
+* **Cron.** Los jobs de Dovecot que lanzaba ofelia ahora los ejecuta busybox
+  `crond` dentro del contenedor, gestionado por supervisord (ver mas abajo).
+* **Nombres.** `MAILCOW_HOSTNAME` -> `MAIL_HOSTNAME`, `DBUSER/DBPASS/DBNAME` ->
+  `MAIL_DB_*`, `REDISPASS` -> `MAIL_REDIS_PASSWORD`, `MAILCOW_REPLICA_IP` ->
+  `MAIL_REPLICA_IP`, `ONLY_MAILCOW_HOSTNAME` -> `ONLY_MAIL_HOSTNAME`,
+  `mail_name = Core Force Mail`, `allow_mailcow_local.regexp` ->
+  `allow_platform_local.regexp`, `mailcow.local` -> `platform.local`,
+  `mailcow_networks.map` -> `platform_networks.map`, contenedores `<svc>-mail`,
+  red `mail-engines` (bridge `br-mail`). El resto de variables genericas de
+  mailcow (`TZ`, `SKIP_FTS`, `MASTER`, `LOG_LINES`, `IPV4_NETWORK`...) conservan
+  su nombre para no romper los scripts que las leen.
+* **Spamhaus.** Las listas abiertas de Spamhaus solo se activan si
+  `SPAMHAUS_ASN_CHECK_URL` responde 200 (mailcow consultaba su propio servicio);
+  sin esa variable ni `SPAMHAUS_DQS_KEY` quedan desactivadas por seguridad.
+* **Comprobacion de DNS.** El canario `dig mailcow.email` pasa a
+  `dig letsencrypt.org`.
+
+Los simbolos de Rspamd que llevan `MAILCOW_` en el nombre (`MAILCOW_AUTH`,
+`RCPT_MAILCOW_DOMAIN`, `MAILCOW_WHITE`, `MAILCOW_BLACK`, `MAILCOW_FUZZY_*`,
+`MAILCOW_DOMAIN_HEADER_FROM`) se conservan: son identificadores internos
+referenciados desde composites, multimap, lua, metadata_exporter y el UCL que
+devuelve `/settings`; renombrarlos no aporta nada y es una fuente de errores.
+
+## Requisitos externos
+
+1. **PostgreSQL** de la celda con el esquema `mail` migrado
+   (`migrations/cell/canonical/mail-directory/01_mail.sql`) y el rol
+   `mail_engine` con contrasena. Debe ser alcanzable desde la red `mail-engines`
+   por el nombre que se pase en `MAIL_DB_HOST` (si es un contenedor, unirlo a la
+   red; si es externo, IP o DNS resoluble por unbound).
+2. **`mail-auth`** y **`mail-policy`** (servicios Go) unidos a la red
+   `mail-engines` con esos alias, o `MAIL_AUTH_URL`/`MAIL_POLICY_HOST` apuntando
+   a donde esten. El unbound de la red solo resuelve nombres publicos: los alias
+   los resuelve el DNS interno de Docker.
+3. **HTTP-01 de ACME:** el gateway de la plataforma debe servir
+   `http://<dominio>/.well-known/acme-challenge/` desde el volumen
+   `acme-challenge-vol` (montado en acme en `/var/www/acme`). Alternativa:
+   `ACME_DNS_CHALLENGE=y` con la configuracion de `acme/load-dns-config.sh`.
+4. Si `mail-policy` escribe los mapas de `rspamd/custom/` (listas globales), debe
+   correr con uid/gid 82, que es el propietario que fija el entrypoint de Rspamd.
+
+## Variables de entorno
+
+Comunes a casi todos: `TZ`, `LOG_LINES`, `IPV4_NETWORK` (por defecto `172.22.1`),
+`IPV6_NETWORK`, `REDIS_SLAVEOF_IP`/`REDIS_SLAVEOF_PORT` (replica), `MAIL_REDIS_HOST`
+(por defecto `redis`), `MAIL_REDIS_PASSWORD`.
+
+| Contenedor | Variables propias |
+|---|---|
+| `postfix-mail` | `MAIL_HOSTNAME`, `MAIL_DB_HOST`, `MAIL_DB_PORT`, `MAIL_DB_NAME`, `MAIL_DB_USER`, `MAIL_DB_PASSWORD`, `MAIL_POLICY_HOST`, `SKIP_LETS_ENCRYPT`, `SPAMHAUS_DQS_KEY`, `SPAMHAUS_ASN_CHECK_URL` |
+| `dovecot-mail` | `MAIL_HOSTNAME`, `MAIL_DB_*`, `MAIL_AUTH_URL`, `DOVECOT_MASTER_USER`, `DOVECOT_MASTER_PASS`, `MAIL_REPLICA_IP`, `DOVEADM_REPLICA_PORT`, `MAILDIR_GC_TIME`, `ACL_ANYONE`, `SKIP_FTS`, `FTS_HEAP`, `FTS_PROCS`, `MAILDIR_SUB`, `MASTER`, `COMPOSE_PROJECT_NAME` |
+| `rspamd-mail` | `MAIL_POLICY_HOST`, `SPAMHAUS_DQS_KEY`, `SKIP_OLEFY` |
+| `acme-mail` | `MAIL_HOSTNAME`, `MAIL_DB_*`, `ADDITIONAL_SAN`, `AUTODISCOVER_SAN`, `SKIP_LETS_ENCRYPT`, `DIRECTORY_URL`, `ENABLE_SSL_SNI`, `SKIP_IP_CHECK`, `SKIP_HTTP_VERIFICATION`, `ONLY_MAIL_HOSTNAME`, `LE_STAGING`, `SNAT_TO_SOURCE`, `SNAT6_TO_SOURCE`, `ACME_DNS_CHALLENGE`, `ACME_DNS_PROVIDER`, `ACME_ACCOUNT_EMAIL`, `COMPOSE_PROJECT_NAME` |
+| `watchdog-mail` | `MAIL_HOSTNAME`, `USE_WATCHDOG`, `WATCHDOG_NOTIFY_EMAIL`, `WATCHDOG_NOTIFY_BAN`, `WATCHDOG_NOTIFY_START`, `WATCHDOG_SUBJECT`, `WATCHDOG_NOTIFY_WEBHOOK`, `WATCHDOG_NOTIFY_WEBHOOK_BODY`, `WATCHDOG_VERBOSE`, `IP_BY_DOCKER_API`, `CHECK_UNBOUND`, `SKIP_CLAMD`, `SKIP_OLEFY`, `SKIP_LETS_ENCRYPT`, `*_THRESHOLD`, `MAILQ_CRIT`, `DEV_MODE`, `COMPOSE_PROJECT_NAME` |
+| `netfilter-mail` | `SNAT_TO_SOURCE`, `SNAT6_TO_SOURCE`, `MAIL_REPLICA_IP`, `DISABLE_NETFILTER_ISOLATION_RULE` (usa `IPV4_NETWORK.249` para Redis porque va en `network_mode: host`) |
+| `postfix-tlspol-mail` | `DEV_MODE` |
+| `redis-mail` | `MAIL_REDIS_PASSWORD`, `MAIL_REDIS_MASTER_PASSWORD` |
+| `clamd-mail` | `SKIP_CLAMD` |
+| `olefy-mail` | `OLEFY_*`, `SKIP_OLEFY` |
+| `unbound-mail` | `SKIP_UNBOUND_HEALTHCHECK` |
+| `dockerapi-mail` | solo las comunes de Redis |
+
+Obligatorias sin valor por defecto: `MAIL_HOSTNAME`, `MAIL_DB_HOST`,
+`MAIL_DB_NAME`, `MAIL_DB_PASSWORD`, `MAIL_REDIS_PASSWORD`. Ninguna va en el
+compose: llegan por `.env` o por el orquestador.
+
+## Red, IPs fijas y puertos
+
+Red `mail-engines` (`${IPV4_NETWORK}.0/24`, bridge `br-mail`): unbound `.254`,
+redis `.249`, dovecot `.250`, postfix `.253`; rspamd con `hostname: rspamd`.
+`netfilter-mail` corre en `network_mode: host` y aisla los puertos 3306, 6379,
+8983 y 12345 del bridge salvo para `MAIL_REPLICA_IP`.
+
+Publicados: 25 (SMTP), 465 (SMTPS), 587 (submission), 143/993 (IMAP), 110/995
+(POP3), 4190 (ManageSieve). Internos: postfix 588 (submission interna sin TLS
+obligatorio, `submission_host` de Dovecot y avisos de cuota), 590 (reinyeccion
+de cuarentena), 591 (copias BCC), 589 (watchdog), 10025/10465/10587 (HAProxy);
+dovecot 24 (LMTP), 10001 (SASL para Postfix), 12345 (doveadm); rspamd 9900
+(milter), 11332-11334 y `/var/lib/rspamd/rspamd.sock`; postfix-tlspol 8642;
+clamd 3310; olefy 10055; dockerapi 443.
+
+## Contrato HTTP de `mail-auth`
+
+Lo llama `passwd-verify.lua` en cada autenticacion IMAP/POP3/ManageSieve/SMTP
+(Postfix delega el SASL en Dovecot). HTTPS con certificado no verificado
+(`insecure = true`, igual que mailcow), timeout 30 s.
+
+```
+POST /            Content-Type: application/json
+{"username": "user@dominio", "password": "...", "real_rip": "1.2.3.4", "service": "imap|pop3|sieve|smtp|lmtp"}
+
+200  {"success": true}
+401  {"success": false}
+400  {"success": false}   cuerpo incompleto
+```
+
+Cualquier otro codigo o un JSON invalido se trata como fallo de contrasena
+(`PASSDB_RESULT_PASSWORD_MISMATCH`), lo que invalida la cache de auth de ese
+usuario. El servicio debe validar contrasena principal y `mail.app_passwords`
+(acotadas por `service`), respetar `mailboxes.active = 1` y los flags
+`imap_access`/`pop3_access`/`smtp_access`/`sieve_access`, y registrar el login en
+`mail.sasl_logins`. Dovecot cachea resultados 300 s (negativos 60 s).
+
+## Contrato HTTP de `mail-policy`
+
+Todos los endpoints son HTTP plano en la red interna. Los cuerpos de respuesta
+son `text/plain` salvo donde se indica. Las direcciones llegan con la etiqueta
+`+tag` incluida; el servicio debe quitarla (`local+tag@d` -> `local@d`) como
+hacia el PHP.
+
+### Puerto 8081 (mapas dinamicos)
+
+| Ruta | Quien la llama | Peticion | Respuesta |
+|---|---|---|---|
+| `/aliasexp` | Rspamd, simbolo `TAG_MOO` (prefiltro, prioridad 19) | `POST`, cuerpo vacio, cabecera `Rcpt: <direccion>` | `200` con el username del buzon final **solo si** la expansion termina en exactamente un buzon; `200` vacio en cualquier otro caso (varios buzones, dominio ajeno, alias `postmaster`). `502` error SQL, `504` sin Redis |
+| `/bcc` | Rspamd, simbolo `BCC` (postfiltro, prioridad 20); una llamada por destinatario con `Rcpt:` y una por remitente con `From:` | `POST`, cuerpo vacio, cabecera `Rcpt:` o `From:` | `201` + direccion BCC cuando `mail.bcc_maps` tiene fila activa (`type='rcpt'` con `local_dest = Rcpt`, o `type='sender'` con `local_dest = From`); `200` vacio si no hay. Rspamd solo actua con `201`; la copia sale por `postfix:591` |
+| `/footer` | Rspamd, simbolo `DOMAIN_WIDE_FOOTER` (prioridad 1) | `POST`, cabeceras `Domain:` (dominio del envelope-from, ya resuelto alias -> target), `Username:` (usuario SASL), `From:` (envelope-from) | `200` JSON `{"html":"","plain":"","skip_replies":0,"vars":{}}` cuando no hay pie; con pie: `{"html","plain","skip_replies","vars":{atributo: valor}}` (`mbox_exclude` y `alias_domain_exclude` se evaluan en el servidor). `502` error |
+| `/forwardinghosts?host=IP` | Postfix, tabla `tcp:127.0.0.1:10027` via `whitelist_forwardinghosts.sh` (postscreen_access_list) | `GET` | cuerpo `200 PERMIT` si la IP cae en algun CIDR de la hash Redis `WHITELISTED_FWD_HOST`, si no `200 DUNNO` (protocolo tcp_table de Postfix, siempre HTTP 200) |
+| `/forwardinghosts` (sin `host`) | Rspamd `greylist.conf` (`whitelisted_ip`) | `GET` | lista de CIDR, uno por linea, empezando siempre por `240.240.240.240` (mapa nunca vacio) |
+| `/settings` | Rspamd `settings.conf` (modulo settings, polling periodico) | `GET` con `If-Modified-Since` | `304` + `Last-Modified` si nada cambio; `200 text/plain` con UCL `settings { ... }` + `Last-Modified`. Como minimo debe emitir la regla `watchdog` (rcpt `/null@localhost/i`, from `/watchdog@localhost/i`, `reject = 9999.0`, `want_spam = yes`, `symbols_disabled = [HISTORY_SAVE, ARC, ARC_SIGNED, DKIM, DKIM_SIGNED, CLAM_VIRUS]`): el watchdog comprueba que `required_score` sea 9999. Encima van las reglas por dominio/buzon (listas blancas y negras, `settingsmap`, `MAILCOW_INTERNAL_ALIAS` para `mail.aliases.internal`) |
+
+### Puerto 9081 (exportacion de metadatos de Rspamd)
+
+| Ruta | Quien la llama | Peticion | Respuesta |
+|---|---|---|---|
+| `/pipe` | `metadata_exporter`, regla `QUARANTINE` (selector `reject_no_global_bl`: accion reject/add header/rewrite subject sin lista negra global) | `POST multipart/form-data`: campo `metadata` (JSON con `qid`, `subject`, `score`, `rcpt[]`, `user`, `ip`, `action`, `from`, `symbols[]`, `fuzzy[]`, `message_id`) y fichero `message` (RFC822 crudo) | `200` guardado; `400` partes ausentes o JSON invalido; `505` mensaje mayor que `Q_MAX_SIZE` MiB; `502` error resolviendo destinatarios; `503` error al insertar; `504` sin Redis. Expande cada rcpt hasta sus buzones finales (misma logica que `/aliasexp`), salta dominios de `Q_EXCLUDE_DOMAINS` y guarda una fila por buzon, recortando por buzon a `Q_RETENTION_SIZE` filas |
+| `/pipe_rl` | `metadata_exporter`, regla `RLINFO` (selector `ratelimited`, formato json) | `POST application/json`: `{rcpt[], from, user, symbols[{name, options[]}], qid, ip, message_id, header_subject[], header_from[]}` | `200`. El servidor extrae de `symbols[RATELIMITED].options` el texto `nombre(hash)` y hace `LPUSH RL_LOG` con `{time, rcpt, from, user, rl_info, rl_name, rl_hash, qid, ip, message_id, header_subject, header_from}` |
+
+`pushover` no se migra.
+
+## Contrato Redis
+
+Redis (`redis-mail`, `requirepass`) es el bus de configuracion en caliente entre
+la plataforma y los motores. La plataforma escribe; los motores leen.
+
+| Clave | Tipo | Escribe | Lee | Contenido |
+|---|---|---|---|---|
+| `DOMAIN_MAP` | hash `dominio -> 1` | mail-directory | rspamd multimap (`RCPT_MAILCOW_DOMAIN`, `MAILCOW_DOMAIN_HEADER_FROM`), mail-policy | dominios y alias domains activos de la celda |
+| `WHITELISTED_FWD_HOST` | hash `cidr -> origen` | mail-directory | rspamd multimap, mail-policy `/forwardinghosts` | hosts de reenvio de confianza |
+| `RL_VALUE` | hash `buzon|dominio -> "N / 1h"` | mail-policy | rspamd `DYN_RL_CHECK` (lua) | ratelimits por objeto |
+| `SMTP_ALLOW_NETS_<usuario>` | hash `ip|cidr -> 1` | mail-policy | rspamd `SMTP_ACCESS` (lua) | redes desde las que puede enviar un usuario con `SMTP_LIMITED_ACCESS` |
+| `SMTP_LIMITED_ACCESS` | hash `usuario -> 1` | mail-policy | rspamd multimap | usuarios con acceso SMTP restringido |
+| `KEEP_SPAM` | hash `ip|cidr -> 1` | mail-policy | rspamd (lua, pre-result accept) | hosts cuyo spam no se filtra |
+| `RCPT_WANTS_SUBFOLDER_TAG`, `RCPT_WANTS_SUBJECT_TAG` | hash `buzon -> 1` | mail-directory | rspamd `TAG_MOO` | como entregar correo con `+tag` |
+| `DKIM_PRIV_KEYS` | hash `selector.dominio -> clave privada PEM` | mail-directory | rspamd `dkim_signing`, `arc` | claves DKIM |
+| `DKIM_SELECTORS` | hash `dominio -> selector` | mail-directory | rspamd | selector por dominio |
+| `QW_HTML`, `QW_SENDER`, `QW_SUBJ` | string | mail-directory | `quota_notify.py` (usuario ACL `quota_notify`, solo `GET/HGET ~QW_*`) | plantilla Jinja, remitente y asunto del aviso de cuota |
+| `QW_BCC` | hash `dominio -> {"bcc_rcpts":[...],"active":1}` | mail-directory | `quota_notify.py` | copias del aviso de cuota |
+| `Q_MAX_AGE` | string (dias) | mail-security | `clean_q_aged.sh` | retencion de la cuarentena |
+| `Q_MAX_SIZE`, `Q_EXCLUDE_DOMAINS`, `Q_RETENTION_SIZE` | string | mail-security | mail-policy `/pipe` | limites de cuarentena |
+| `F2B_OPTIONS`, `F2B_REGEX` | string JSON | netfilter (defaults) / mail-security | netfilter | opciones y regex de baneo |
+| `F2B_WHITELIST`, `F2B_BLACKLIST` | hash `cidr -> 1` | mail-security | netfilter | listas del cortafuegos |
+| `F2B_ACTIVE_BANS`, `F2B_PERM_BANS`, `F2B_QUEUE_UNBAN` | hash | netfilter (`F2B_QUEUE_UNBAN` tambien mail-security) | netfilter, watchdog | estado de baneos |
+| `F2B_CHANNEL` | pub/sub | syslog-ng de postfix y dovecot | netfilter | lineas de log a evaluar |
+| `F2B_LOG` / `NETFILTER_LOG`, `POSTFIX_MAILLOG`, `DOVECOT_MAILLOG`, `ACME_LOG`, `WATCHDOG_LOG`, `RL_LOG` | list (LPUSH, recortadas por `trim_logs.sh` a `LOG_LINES`) | motores | plataforma (UI de logs) | logs JSON |
+| `DOVECOT_REPL_HEALTH`, `ACME_FAIL_TIME` | string | dovecot / acme | watchdog | estado |
+| `MC_CHANNEL` | pub/sub | plataforma | dockerapi | `{"api_call":"container_post","post_action":"exec|restart|...","container_name":"...","request":{"cmd":..,"task":..}}` |
+
+Rspamd guarda ademas sus propias estructuras (bayes, fuzzy, history, ratelimit,
+reputation) en el mismo Redis.
+
+## Consultas SQL
+
+Postfix: `postfix/postfix.sh` genera en `/opt/postfix/conf/sql/` un fichero por
+mapa (`pgsql_relay_ne`, `pgsql_relay_recipient_maps`,
+`pgsql_tls_policy_override_maps`, `pgsql_tls_enforce_in_policy`,
+`pgsql_sender_dependent_default_transport_maps`, `pgsql_transport_maps`,
+`pgsql_virtual_resource_maps`, `pgsql_sasl_passwd_maps_sender_dependent`,
+`pgsql_sasl_passwd_maps_transport_maps`, `pgsql_virtual_alias_domain_maps`,
+`pgsql_virtual_alias_maps`, `pgsql_recipient_canonical_maps`,
+`pgsql_virtual_domains_maps`, `pgsql_virtual_mailbox_maps`,
+`pgsql_virtual_relay_domain_maps`, `pgsql_virtual_sender_acl`,
+`pgsql_mbr_access_maps`, `pgsql_virtual_spamalias_maps`). Todas usan
+`hosts = ${MAIL_DB_HOST}:${MAIL_DB_PORT}` y las tablas `mail.*`; el tri-estado
+`active` de buzones y aliases se respeta (`IN (1, 2)` para recibir, `= 1` para
+enviar).
+
+Dovecot: `dovecot/docker-entrypoint.sh` genera `sql/dovecot-dict-sql-userdb.conf`
+(`user_query`/`iterate_query` contra `mail.mailboxes`), el dict de cuota contra
+`mail.quota_usage` (Dovecot hace upsert por `username`) y los dicts de sieve
+contra `mail.v_sieve_before`/`mail.v_sieve_after`.
+
+ACME: `SELECT domain FROM mail.domains WHERE NOT backupmx AND active`.
+
+## Tareas periodicas (Dovecot)
+
+`dovecot/crontab` lo ejecuta busybox `crond` bajo supervisord (mismo contenedor,
+sin scheduler externo):
+
+| Tarea | Frecuencia | Que hace |
+|---|---|---|
+| `trim_logs.sh` | cada hora (`MASTER=y`) | recorta las listas de log en Redis a `LOG_LINES` |
+| `clean_q_aged.sh` | diaria (`MASTER=y`) | borra cuarentena mas antigua que `Q_MAX_AGE`; no hace nada mientras no exista `mail.quarantine` |
+| `maildir_gc.sh` | cada 30 min | purga `/var/vmail/_garbage` con mas de `MAILDIR_GC_TIME` min |
+| `sa-rules.sh` | diaria 03:00 | descarga reglas SpamAssassin de Heinlein y reinicia rspamd via dockerapi si cambian |
+| `optimize-fts.sh` | diaria | `doveadm fts optimize -A` si FTS activo |
+| `repl_health.sh` | cada 5 min | publica `DOVECOT_REPL_HEALTH` |
+
+## Ficheros generados en tiempo de ejecucion
+
+Los bind mounts de `postfix/conf` y `dovecot/conf` reciben ficheros generados
+por los entrypoints, igual que en mailcow: `postfix/conf/sql/*.cf`, `sni.map*`,
+`dns_blocklists.cf`, `dnsbl_reply.map`, `extra.cf`, `custom_transport.pcre`,
+`custom_postscreen_whitelist.cidr`; `dovecot/conf/sql/*.conf`, `sni.conf`,
+`shared_namespace.conf`, `mail_replica.conf`, `dovecot-master.*`,
+`mail_plugins*`, `acl_anyone`. `rspamd/custom/` recibe `platform_networks.map`,
+`dovecot_trusted.map`, `rspamd_trusted.map`, `sa-rules` y `dqs-rbl.conf`. No
+deben versionarse.
+
+## Pendientes
+
+* `mail.quarantine` (mail-security): la escribe `mail-policy /pipe`, la lee
+  `clean_q_aged.sh` (espera `id` y `created_at`) y falta `quarantine_notify.py`.
+* Tablas de politicas de Rspamd (`filterconf`, `settingsmap`, `domain_wide_footer`,
+  atributos personalizados de buzon): sin ellas `/settings` solo puede emitir la
+  regla `watchdog` y `/footer` el pie vacio.
+* MTA-STS: sin tabla `mta_sts`, ACME no pide certificados `mta-sts.<dominio>`.
+* Contrasena de `mail_engine`: la fija operacion; llega solo por `MAIL_DB_PASSWORD`.
+* `SPAMHAUS_ASN_CHECK_URL`: sin servicio propio, usar `SPAMHAUS_DQS_KEY`.

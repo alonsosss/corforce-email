@@ -1,0 +1,423 @@
+# Motores de correo de Core Force Mail (derivados de mailcow-dockerized, sin su capa
+# web ni su base de datos propia). Todo lo que necesita estado de negocio lo lee de PostgreSQL
+# (esquema mail, rol mail_engine) o lo sirven los servicios Go mail-auth y mail-policy,
+# que deben unirse a la red mail-engines con esos alias. Ver README.md.
+#
+# Sin secretos: MAIL_DB_PASSWORD, MAIL_REDIS_PASSWORD y SPAMHAUS_DQS_KEY llegan por .env
+# o por el entorno del orquestador.
+
+services:
+
+  unbound-mail:
+    build: ./unbound
+    environment:
+      - TZ=${TZ:-UTC}
+      - SKIP_UNBOUND_HEALTHCHECK=${SKIP_UNBOUND_HEALTHCHECK:-n}
+    volumes:
+      - ./unbound/unbound.conf:/etc/unbound/unbound.conf:ro,Z
+    restart: always
+    tty: true
+    networks:
+      mail-engines:
+        ipv4_address: ${IPV4_NETWORK:-172.22.1}.254
+        aliases:
+          - unbound
+
+  redis-mail:
+    image: redis:7.4.10-alpine
+    entrypoint: ["/bin/sh", "/redis-conf.sh"]
+    volumes:
+      - redis-vol:/data/
+      - ./redis/redis-conf.sh:/redis-conf.sh:z
+    restart: always
+    depends_on:
+      - netfilter-mail
+    environment:
+      - TZ=${TZ:-UTC}
+      - MAIL_REDIS_PASSWORD=${MAIL_REDIS_PASSWORD}
+      - MAIL_REDIS_MASTER_PASSWORD=${MAIL_REDIS_MASTER_PASSWORD:-}
+    sysctls:
+      - net.core.somaxconn=4096
+    networks:
+      mail-engines:
+        ipv4_address: ${IPV4_NETWORK:-172.22.1}.249
+        aliases:
+          - redis
+
+  clamd-mail:
+    build: ./clamav
+    restart: always
+    depends_on:
+      unbound-mail:
+        condition: service_healthy
+    dns:
+      - ${IPV4_NETWORK:-172.22.1}.254
+    environment:
+      - TZ=${TZ:-UTC}
+      - SKIP_CLAMD=${SKIP_CLAMD:-n}
+    volumes:
+      - ./clamav/clamd.conf:/etc/clamav/clamd.conf:Z
+      - ./clamav/freshclam.conf:/etc/clamav/freshclam.conf:Z
+      - clamd-db-vol:/var/lib/clamav
+    networks:
+      mail-engines:
+        aliases:
+          - clamd
+
+  rspamd-mail:
+    build: ./rspamd
+    stop_grace_period: 30s
+    depends_on:
+      - dovecot-mail
+      - clamd-mail
+    environment:
+      - TZ=${TZ:-UTC}
+      - IPV4_NETWORK=${IPV4_NETWORK:-172.22.1}
+      - IPV6_NETWORK=${IPV6_NETWORK:-fd4d:6169:6c63:6f77::/64}
+      - REDIS_SLAVEOF_IP=${REDIS_SLAVEOF_IP:-}
+      - REDIS_SLAVEOF_PORT=${REDIS_SLAVEOF_PORT:-}
+      - MAIL_REDIS_HOST=${MAIL_REDIS_HOST:-redis}
+      - MAIL_REDIS_PASSWORD=${MAIL_REDIS_PASSWORD}
+      - MAIL_POLICY_HOST=${MAIL_POLICY_HOST:-mail-policy}
+      - SPAMHAUS_DQS_KEY=${SPAMHAUS_DQS_KEY:-}
+      - SKIP_OLEFY=${SKIP_OLEFY:-n}
+    volumes:
+      - ./rspamd/custom/:/etc/rspamd/custom:z
+      - ./rspamd/override.d/:/etc/rspamd/override.d:Z
+      - ./rspamd/local.d/:/etc/rspamd/local.d:Z
+      - ./rspamd/plugins.d/:/etc/rspamd/plugins.d:Z
+      - ./rspamd/lua/:/etc/rspamd/lua/:ro,Z
+      - ./rspamd/rspamd.conf.local:/etc/rspamd/rspamd.conf.local:Z
+      - ./rspamd/rspamd.conf.override:/etc/rspamd/rspamd.conf.override:Z
+      - rspamd-vol:/var/lib/rspamd
+    restart: always
+    hostname: rspamd
+    dns:
+      - ${IPV4_NETWORK:-172.22.1}.254
+    networks:
+      mail-engines:
+        aliases:
+          - rspamd
+
+  dovecot-mail:
+    build: ./dovecot
+    depends_on:
+      - netfilter-mail
+      - redis-mail
+    dns:
+      - ${IPV4_NETWORK:-172.22.1}.254
+    cap_add:
+      - NET_BIND_SERVICE
+    volumes:
+      - ./dovecot/conf:/etc/dovecot:z
+      - ssl-vol:/etc/ssl/mail/:ro,z
+      - vmail-vol:/var/vmail
+      - vmail-index-vol:/var/vmail_index
+      - crypt-vol:/mail_crypt/
+      - ./rspamd/custom/:/etc/rspamd/custom:z
+      - ./templates:/templates:z
+      - rspamd-vol:/var/lib/rspamd
+    environment:
+      - TZ=${TZ:-UTC}
+      - MAIL_HOSTNAME=${MAIL_HOSTNAME}
+      - MAIL_DB_HOST=${MAIL_DB_HOST}
+      - MAIL_DB_PORT=${MAIL_DB_PORT:-5432}
+      - MAIL_DB_NAME=${MAIL_DB_NAME}
+      - MAIL_DB_USER=${MAIL_DB_USER:-mail_engine}
+      - MAIL_DB_PASSWORD=${MAIL_DB_PASSWORD}
+      - MAIL_REDIS_HOST=${MAIL_REDIS_HOST:-redis}
+      - MAIL_REDIS_PASSWORD=${MAIL_REDIS_PASSWORD}
+      - MAIL_AUTH_URL=${MAIL_AUTH_URL:-https://mail-auth:9082}
+      - REDIS_SLAVEOF_IP=${REDIS_SLAVEOF_IP:-}
+      - REDIS_SLAVEOF_PORT=${REDIS_SLAVEOF_PORT:-}
+      - DOVECOT_MASTER_USER=${DOVECOT_MASTER_USER:-}
+      - DOVECOT_MASTER_PASS=${DOVECOT_MASTER_PASS:-}
+      - MAIL_REPLICA_IP=${MAIL_REPLICA_IP:-}
+      - DOVEADM_REPLICA_PORT=${DOVEADM_REPLICA_PORT:-}
+      - LOG_LINES=${LOG_LINES:-9999}
+      - IPV4_NETWORK=${IPV4_NETWORK:-172.22.1}
+      - MAILDIR_GC_TIME=${MAILDIR_GC_TIME:-7200}
+      - ACL_ANYONE=${ACL_ANYONE:-disallow}
+      - SKIP_FTS=${SKIP_FTS:-y}
+      - FTS_HEAP=${FTS_HEAP:-512}
+      - FTS_PROCS=${FTS_PROCS:-3}
+      - MAILDIR_SUB=${MAILDIR_SUB:-}
+      - MASTER=${MASTER:-y}
+      - COMPOSE_PROJECT_NAME=${COMPOSE_PROJECT_NAME:-mail}
+    ports:
+      - "${IMAP_PORT:-143}:143"
+      - "${IMAPS_PORT:-993}:993"
+      - "${POP_PORT:-110}:110"
+      - "${POPS_PORT:-995}:995"
+      - "${SIEVE_PORT:-4190}:4190"
+    restart: always
+    tty: true
+    ulimits:
+      nproc: 65535
+      nofile:
+        soft: 20000
+        hard: 40000
+    networks:
+      mail-engines:
+        ipv4_address: ${IPV4_NETWORK:-172.22.1}.250
+        aliases:
+          - dovecot
+
+  postfix-mail:
+    build: ./postfix
+    depends_on:
+      unbound-mail:
+        condition: service_healthy
+      postfix-tlspol-mail:
+        condition: service_started
+    volumes:
+      - ./postfix/conf:/opt/postfix/conf:z
+      - ssl-vol:/etc/ssl/mail/:ro,z
+      - postfix-vol:/var/spool/postfix
+      - crypt-vol:/var/lib/zeyple
+      - rspamd-vol:/var/lib/rspamd
+    environment:
+      - TZ=${TZ:-UTC}
+      - LOG_LINES=${LOG_LINES:-9999}
+      - MAIL_HOSTNAME=${MAIL_HOSTNAME}
+      - MAIL_DB_HOST=${MAIL_DB_HOST}
+      - MAIL_DB_PORT=${MAIL_DB_PORT:-5432}
+      - MAIL_DB_NAME=${MAIL_DB_NAME}
+      - MAIL_DB_USER=${MAIL_DB_USER:-mail_engine}
+      - MAIL_DB_PASSWORD=${MAIL_DB_PASSWORD}
+      - MAIL_REDIS_HOST=${MAIL_REDIS_HOST:-redis}
+      - MAIL_REDIS_PASSWORD=${MAIL_REDIS_PASSWORD}
+      - MAIL_POLICY_HOST=${MAIL_POLICY_HOST:-mail-policy}
+      - REDIS_SLAVEOF_IP=${REDIS_SLAVEOF_IP:-}
+      - REDIS_SLAVEOF_PORT=${REDIS_SLAVEOF_PORT:-}
+      - SKIP_LETS_ENCRYPT=${SKIP_LETS_ENCRYPT:-n}
+      - SPAMHAUS_DQS_KEY=${SPAMHAUS_DQS_KEY:-}
+      - SPAMHAUS_ASN_CHECK_URL=${SPAMHAUS_ASN_CHECK_URL:-}
+    cap_add:
+      - NET_BIND_SERVICE
+    ports:
+      - "${SMTP_PORT:-25}:25"
+      - "${SMTPS_PORT:-465}:465"
+      - "${SUBMISSION_PORT:-587}:587"
+    restart: always
+    dns:
+      - ${IPV4_NETWORK:-172.22.1}.254
+    networks:
+      mail-engines:
+        ipv4_address: ${IPV4_NETWORK:-172.22.1}.253
+        aliases:
+          - postfix
+
+  postfix-tlspol-mail:
+    build: ./postfix-tlspol
+    depends_on:
+      unbound-mail:
+        condition: service_healthy
+    volumes:
+      - postfix-tlspol-vol:/var/lib/postfix-tlspol
+    environment:
+      - TZ=${TZ:-UTC}
+      - LOG_LINES=${LOG_LINES:-9999}
+      - REDIS_SLAVEOF_IP=${REDIS_SLAVEOF_IP:-}
+      - REDIS_SLAVEOF_PORT=${REDIS_SLAVEOF_PORT:-}
+      - MAIL_REDIS_HOST=${MAIL_REDIS_HOST:-redis}
+      - MAIL_REDIS_PASSWORD=${MAIL_REDIS_PASSWORD}
+      - DEV_MODE=${DEV_MODE:-n}
+    restart: always
+    dns:
+      - ${IPV4_NETWORK:-172.22.1}.254
+    networks:
+      mail-engines:
+        aliases:
+          - postfix-tlspol
+
+  acme-mail:
+    build: ./acme
+    depends_on:
+      unbound-mail:
+        condition: service_healthy
+    dns:
+      - ${IPV4_NETWORK:-172.22.1}.254
+    environment:
+      - TZ=${TZ:-UTC}
+      - LOG_LINES=${LOG_LINES:-9999}
+      - MAIL_HOSTNAME=${MAIL_HOSTNAME}
+      - ADDITIONAL_SAN=${ADDITIONAL_SAN:-}
+      - AUTODISCOVER_SAN=${AUTODISCOVER_SAN:-y}
+      - MAIL_DB_HOST=${MAIL_DB_HOST}
+      - MAIL_DB_PORT=${MAIL_DB_PORT:-5432}
+      - MAIL_DB_NAME=${MAIL_DB_NAME}
+      - MAIL_DB_USER=${MAIL_DB_USER:-mail_engine}
+      - MAIL_DB_PASSWORD=${MAIL_DB_PASSWORD}
+      - MAIL_REDIS_HOST=${MAIL_REDIS_HOST:-redis}
+      - MAIL_REDIS_PASSWORD=${MAIL_REDIS_PASSWORD}
+      - REDIS_SLAVEOF_IP=${REDIS_SLAVEOF_IP:-}
+      - REDIS_SLAVEOF_PORT=${REDIS_SLAVEOF_PORT:-}
+      - SKIP_LETS_ENCRYPT=${SKIP_LETS_ENCRYPT:-n}
+      - COMPOSE_PROJECT_NAME=${COMPOSE_PROJECT_NAME:-mail}
+      - DIRECTORY_URL=${DIRECTORY_URL:-}
+      - ENABLE_SSL_SNI=${ENABLE_SSL_SNI:-n}
+      - SKIP_IP_CHECK=${SKIP_IP_CHECK:-n}
+      - SKIP_HTTP_VERIFICATION=${SKIP_HTTP_VERIFICATION:-n}
+      - ONLY_MAIL_HOSTNAME=${ONLY_MAIL_HOSTNAME:-n}
+      - LE_STAGING=${LE_STAGING:-n}
+      - SNAT_TO_SOURCE=${SNAT_TO_SOURCE:-n}
+      - SNAT6_TO_SOURCE=${SNAT6_TO_SOURCE:-n}
+      - ACME_DNS_CHALLENGE=${ACME_DNS_CHALLENGE:-n}
+      - ACME_DNS_PROVIDER=${ACME_DNS_PROVIDER:-dns_xxx}
+      - ACME_ACCOUNT_EMAIL=${ACME_ACCOUNT_EMAIL:-me@example.com}
+    volumes:
+      - acme-challenge-vol:/var/www/acme:z
+      - ssl-vol:/var/lib/acme/:z
+      - ./ssl-example:/var/lib/ssl-example/:ro,Z
+      - acme-conf-vol:/etc/acme/:z
+    restart: always
+    networks:
+      mail-engines:
+        aliases:
+          - acme
+
+  netfilter-mail:
+    build: ./netfilter
+    stop_grace_period: 30s
+    restart: always
+    privileged: true
+    environment:
+      - TZ=${TZ:-UTC}
+      - IPV4_NETWORK=${IPV4_NETWORK:-172.22.1}
+      - IPV6_NETWORK=${IPV6_NETWORK:-fd4d:6169:6c63:6f77::/64}
+      - SNAT_TO_SOURCE=${SNAT_TO_SOURCE:-n}
+      - SNAT6_TO_SOURCE=${SNAT6_TO_SOURCE:-n}
+      - REDIS_SLAVEOF_IP=${REDIS_SLAVEOF_IP:-}
+      - REDIS_SLAVEOF_PORT=${REDIS_SLAVEOF_PORT:-}
+      - MAIL_REDIS_PASSWORD=${MAIL_REDIS_PASSWORD}
+      - MAIL_REPLICA_IP=${MAIL_REPLICA_IP:-}
+      - DISABLE_NETFILTER_ISOLATION_RULE=${DISABLE_NETFILTER_ISOLATION_RULE:-n}
+    network_mode: "host"
+    volumes:
+      - /lib/modules:/lib/modules:ro
+
+  watchdog-mail:
+    build: ./watchdog
+    dns:
+      - ${IPV4_NETWORK:-172.22.1}.254
+    tmpfs:
+      - /tmp
+    volumes:
+      - rspamd-vol:/var/lib/rspamd
+      - postfix-vol:/var/spool/postfix
+      - ssl-vol:/etc/ssl/mail/:ro,z
+    restart: always
+    depends_on:
+      - postfix-mail
+      - dovecot-mail
+      - acme-mail
+      - redis-mail
+    environment:
+      - TZ=${TZ:-UTC}
+      - IPV6_NETWORK=${IPV6_NETWORK:-fd4d:6169:6c63:6f77::/64}
+      - LOG_LINES=${LOG_LINES:-9999}
+      - USE_WATCHDOG=${USE_WATCHDOG:-n}
+      - WATCHDOG_NOTIFY_EMAIL=${WATCHDOG_NOTIFY_EMAIL:-}
+      - WATCHDOG_NOTIFY_BAN=${WATCHDOG_NOTIFY_BAN:-y}
+      - WATCHDOG_NOTIFY_START=${WATCHDOG_NOTIFY_START:-y}
+      - WATCHDOG_SUBJECT=${WATCHDOG_SUBJECT:-Watchdog ALERT}
+      - WATCHDOG_NOTIFY_WEBHOOK=${WATCHDOG_NOTIFY_WEBHOOK:-}
+      - WATCHDOG_NOTIFY_WEBHOOK_BODY=${WATCHDOG_NOTIFY_WEBHOOK_BODY:-}
+      - WATCHDOG_VERBOSE=${WATCHDOG_VERBOSE:-n}
+      - MAIL_HOSTNAME=${MAIL_HOSTNAME}
+      - MAIL_REDIS_HOST=${MAIL_REDIS_HOST:-redis}
+      - MAIL_REDIS_PASSWORD=${MAIL_REDIS_PASSWORD}
+      - REDIS_SLAVEOF_IP=${REDIS_SLAVEOF_IP:-}
+      - REDIS_SLAVEOF_PORT=${REDIS_SLAVEOF_PORT:-}
+      - COMPOSE_PROJECT_NAME=${COMPOSE_PROJECT_NAME:-mail}
+      - IPV4_NETWORK=${IPV4_NETWORK:-172.22.1}
+      - IP_BY_DOCKER_API=${IP_BY_DOCKER_API:-0}
+      - CHECK_UNBOUND=${CHECK_UNBOUND:-1}
+      - SKIP_CLAMD=${SKIP_CLAMD:-n}
+      - SKIP_OLEFY=${SKIP_OLEFY:-n}
+      - SKIP_LETS_ENCRYPT=${SKIP_LETS_ENCRYPT:-n}
+      - UNBOUND_THRESHOLD=${UNBOUND_THRESHOLD:-5}
+      - REDIS_THRESHOLD=${REDIS_THRESHOLD:-5}
+      - POSTFIX_THRESHOLD=${POSTFIX_THRESHOLD:-8}
+      - POSTFIX_TLSPOL_THRESHOLD=${POSTFIX_TLSPOL_THRESHOLD:-8}
+      - CLAMD_THRESHOLD=${CLAMD_THRESHOLD:-15}
+      - DOVECOT_THRESHOLD=${DOVECOT_THRESHOLD:-12}
+      - DOVECOT_REPL_THRESHOLD=${DOVECOT_REPL_THRESHOLD:-20}
+      - RATELIMIT_THRESHOLD=${RATELIMIT_THRESHOLD:-1}
+      - FAIL2BAN_THRESHOLD=${FAIL2BAN_THRESHOLD:-1}
+      - ACME_THRESHOLD=${ACME_THRESHOLD:-1}
+      - RSPAMD_THRESHOLD=${RSPAMD_THRESHOLD:-5}
+      - OLEFY_THRESHOLD=${OLEFY_THRESHOLD:-5}
+      - MAILQ_THRESHOLD=${MAILQ_THRESHOLD:-20}
+      - MAILQ_CRIT=${MAILQ_CRIT:-30}
+      - DEV_MODE=${DEV_MODE:-n}
+    networks:
+      mail-engines:
+        aliases:
+          - watchdog
+
+  dockerapi-mail:
+    build: ./dockerapi
+    security_opt:
+      - label=disable
+    restart: always
+    dns:
+      - ${IPV4_NETWORK:-172.22.1}.254
+    environment:
+      - TZ=${TZ:-UTC}
+      - REDIS_SLAVEOF_IP=${REDIS_SLAVEOF_IP:-}
+      - REDIS_SLAVEOF_PORT=${REDIS_SLAVEOF_PORT:-}
+      - MAIL_REDIS_HOST=${MAIL_REDIS_HOST:-redis}
+      - MAIL_REDIS_PASSWORD=${MAIL_REDIS_PASSWORD}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      mail-engines:
+        aliases:
+          - dockerapi
+
+  olefy-mail:
+    build: ./olefy
+    restart: always
+    environment:
+      - TZ=${TZ:-UTC}
+      - OLEFY_BINDADDRESS=0.0.0.0
+      - OLEFY_BINDPORT=10055
+      - OLEFY_TMPDIR=/tmp
+      - OLEFY_PYTHON_PATH=/usr/bin/python3
+      - OLEFY_OLEVBA_PATH=/usr/bin/olevba
+      - OLEFY_LOGLVL=20
+      - OLEFY_MINLENGTH=500
+      - OLEFY_DEL_TMP=1
+      - SKIP_OLEFY=${SKIP_OLEFY:-n}
+    networks:
+      mail-engines:
+        aliases:
+          - olefy
+
+networks:
+  mail-engines:
+    name: mail-engines
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.name: br-mail
+    enable_ipv6: ${ENABLE_IPV6:-true}
+    ipam:
+      driver: default
+      config:
+        - subnet: ${IPV4_NETWORK:-172.22.1}.0/24
+        - subnet: ${IPV6_NETWORK:-fd4d:6169:6c63:6f77::/64}
+
+volumes:
+  vmail-vol:
+  vmail-index-vol:
+  redis-vol:
+  rspamd-vol:
+  postfix-vol:
+  postfix-tlspol-vol:
+  crypt-vol:
+  clamd-db-vol:
+  ssl-vol:
+  acme-challenge-vol:
+  acme-conf-vol:

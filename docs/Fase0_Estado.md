@@ -13,8 +13,18 @@ cambie cualquiera de estas líneas.
 | Migraciones de empresa (`audit`, `scheduler`) aplican desde cero y se re-ejecutan | Cumplido (Postgres 16, 2026-09-12) | idem |
 | Migración de celda (`mail`) aplica desde cero y se re-ejecuta; `mail_engine` sin acceso a `app_passwords` | Cumplido (Postgres 16, 2026-09-12) | idem |
 | Se aprovisiona una celda y una empresa de punta a punta y su `tenant_admin` inicia sesión por el gateway | Cumplido (2026-09-12, binarios reales contra Postgres/NATS/Redis desechables: login superadmin, `POST /organizations` crea `mail_tenant_acme` y siembra `tenant_admin`, login del admin con sus permisos, 403 en `/cells`, 401 sin token) | `POST /cells`, `POST /organizations`, `POST /auth/login`, `GET /access/my-modules` |
-| Los motores de `deploy/mail/` levantan contra el esquema `mail` | Pendiente: copia y adaptación a PostgreSQL en curso | `docker compose -f deploy/mail/docker-compose.mail.yml up` con `MAIL_DB_*` |
-| `ERP/` y `mailcow/` borrados | Pendiente hasta cerrar lo anterior | |
+| Los motores de `deploy/mail/` levantan contra el esquema `mail` | Parcial: copiados y adaptados a PostgreSQL (153 ficheros, compose validado, scripts con sintaxis comprobada); las 20 consultas de Postfix y Dovecot ejecutadas como `mail_engine` contra el esquema real sin errores (2026-09-12). Levantar la pila completa exige `mail-auth` (Dovecot no autentica sin él) y `mail-policy` (Rspamd no arranca sin su mapa `settings`), que son de la fase 2 | `docker compose -f deploy/mail/docker-compose.mail.yml up` con `MAIL_DB_*`, `postmap -q`, `doveadm user` |
+| `ERP/` y `mailcow/` borrados | Los clones viven fuera del repositorio (scratchpad de sesión) y `.gitignore` los excluye si se clonan dentro; se borran al cerrar el punto anterior | |
+
+## Pendientes que dejan los motores (fase 2)
+
+* `mail-auth` (contrato en `deploy/mail/README.md`: `POST /` JSON, 200/401) y `mail-policy`
+  (8081: `aliasexp`, `bcc`, `footer`, `forwardinghosts`, `settings` con regla `watchdog`;
+  9081: `pipe`, `pipe_rl`) más el contrato Redis (`DOMAIN_MAP`, `DKIM_*`, `RL_VALUE`, ...).
+* Tablas que los motores esperan y el esquema aún no tiene: `quarantine` y las políticas
+  antispam por objeto (`mail_security`), pie de página por dominio, `mta_sts` (acme).
+* El gateway debe servir `/.well-known/acme-challenge/` o usarse `ACME_DNS_CHALLENGE=y`.
+* Primer despliegue: smoke test con `postmap -q` y `doveadm user` sobre la celda.
 
 ## Deuda conocida que sale de la copia (no bloquea la fase 0)
 
