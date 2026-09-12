@@ -74,6 +74,16 @@ Los servicios Go de celda acceden SIEMPRE dentro de `db.TransactRLS` y ademas fi
 `tenant_id` en el SQL; `mail-auth` y los endpoints de motores de `mail-security` consultan
 como dueno porque resuelven identidades sin empresa previa, y lo dicen en un comentario.
 
+`03_mail_app_policies.sql` (mail-directory) anade lo que el primer consumidor necesito:
+`app_delete` sobre `quota_usage` (solo del buzon propio, por eso el servicio borra la cuota
+antes que el buzon), `WITH CHECK` en `transports` que admite `tenant_id NULL` solo con
+`app.is_privileged` (que ademas sea el superadmin lo exige el servicio), y
+`mail.name_in_use(text)` (SECURITY DEFINER) para saber si un nombre ya es dominio o dominio
+alias de otra empresa sin ver sus filas. `mail-directory` abre TODA lectura y escritura en
+`db.TransactRLS`; su ruta interna de activacion (la llama domain-service con `X-Tenant-ID`,
+sin usuario) corre sin cambio de rol y ahi solo protege el filtro por `tenant_id`. Probado
+con dos empresas en `services/mail-directory/internal/adapters/postgres/integration_test.go`.
+
 ## 4. Empresa (V)
 
 Base `mail_tenant_<slug>` creada por `organization` al dar de alta la empresa
@@ -119,6 +129,6 @@ celda (`TenantPoolManager.Forget` ya invalida la cache; falta el traslado de dat
 | El gateway inyecta el tenant; los servicios no aceptan `X-Tenant-ID` sin `X-Gateway-Token` | V |
 | Rutas por id comprueban la empresa de la sesion en el plano de control | V |
 | Directorio de correo con `tenant_id` en cada fila y rol de motores sin acceso a credenciales | V |
-| RLS en la celda para los servicios Go | V (politicas y roles); los servicios que las usan, en fase 2 |
+| RLS en la celda para los servicios Go | V (politicas y roles; `mail-directory` las usa en toda lectura y escritura) |
 | Una celda no lee otra celda (los servicios de celda solo abren `CELL_DB_NAME`); claves de cifrado por celda | V / P (claves) |
 | Respaldo por base y restauracion probada semanalmente (`ops/backup`) | V (scripts), P (programados en este entorno) |
