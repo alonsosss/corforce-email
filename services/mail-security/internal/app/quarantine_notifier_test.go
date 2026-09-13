@@ -267,6 +267,36 @@ func TestAvisoOmiteBuzonesQueNoReciben(t *testing.T) {
 	}
 }
 
+// Un aviso de cuarentena que vuelve a entrar y acaba retenido no genera otro aviso: se da
+// por atendido con su motivo y el resto del buzon se avisa como siempre.
+func TestAvisoNoAvisaDeSusPropiosAvisos(t *testing.T) {
+	f := newNotifierFixture(t)
+	own := f.add("ana@acme.com", 5, time.Minute, "Aviso anterior", "Cuarentena <CUARENTENA@acme.com>")
+	other := f.add("ana@acme.com", 5, 2*time.Minute, "Factura", "proveedor@b.com")
+
+	if res := f.sweep(t); res != (SweepResult{Sent: 1, Skipped: 1}) || len(f.sender.Sent) != 1 {
+		t.Fatalf("resultado %+v, enviados %d", res, len(f.sender.Sent))
+	}
+	if html := f.sender.Sent[0].HTML; !strings.Contains(html, "Factura") || strings.Contains(html, "Aviso anterior") {
+		t.Fatalf("el aviso debe listar solo el mensaje ajeno: %s", html)
+	}
+	if !f.item(own.ID).Notified || !f.item(other.ID).Notified {
+		t.Fatal("los dos mensajes quedan atendidos")
+	}
+	found := false
+	for _, r := range f.notices.Records {
+		if r.ErrorCode == domain.NoticeOwnNoticeCode && r.Status == domain.NoticeSkipped {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("falta el registro con motivo %s: %+v", domain.NoticeOwnNoticeCode, f.notices.Records)
+	}
+	if res := f.sweep(t); res != (SweepResult{}) {
+		t.Fatalf("un segundo barrido no debe hacer nada: %+v", res)
+	}
+}
+
 // El marcado y el registro van en una transaccion: si el registro falla, los mensajes
 // siguen sin avisar y el siguiente barrido repite con la misma clave.
 func TestAvisoMarcaYRegistraEnLaMismaTransaccion(t *testing.T) {

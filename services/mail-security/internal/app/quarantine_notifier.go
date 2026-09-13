@@ -128,7 +128,22 @@ func (n *QuarantineNotifier) sweepTenant(ctx context.Context, s domain.Quarantin
 		log.Warn("cuarentena pendiente de aviso", zap.Error(err))
 		return
 	}
-	for _, g := range domain.GroupByMailbox(pending) {
+	own, rest := domain.SplitOwnNotices(pending, s.Notify.Sender)
+	for _, g := range domain.GroupByMailbox(own) {
+		if ctx.Err() != nil {
+			return
+		}
+		record := &domain.QuarantineNotice{
+			ID: uuid.New(), TenantID: s.TenantID, Rcpt: g.Mailbox, IdempotencyKey: domain.NoticeIdempotencyKey(g.Mailbox, g.Latest().ID),
+			QuarantineIDs: g.IDs(), CreatedAt: n.now(), Status: domain.NoticeSkipped, ErrorCode: domain.NoticeOwnNoticeCode,
+		}
+		if n.save(ctx, record, log.With(zap.String("rcpt", g.Mailbox))) == domain.NoticeSkipped {
+			res.Skipped++
+		} else {
+			res.Retry++
+		}
+	}
+	for _, g := range domain.GroupByMailbox(rest) {
 		if ctx.Err() != nil {
 			return
 		}
