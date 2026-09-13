@@ -120,6 +120,14 @@ restriccion `messages_marketing_check` exige campana, contacto, enlace de baja y
 destinatario; peticiones idempotentes en `transactional.submissions` con su clase y los
 suprimidos de la respuesta, para que una repeticion devuelva lo mismo y una clave no cruce
 de clase; eventos de SES, proyeccion de dominios de envio, bajas),
+`campaigns` (`campaigns.campaigns` con nombre unico por empresa sin distinguir mayusculas,
+estado con CHECK, version de plantilla obligatoria fuera de borrador, audiencia en `jsonb`
+y contadores con CHECK de no negativos; `campaigns.batches`, un lote por pagina de la
+audiencia con su cursor de entrada y salida, la pagina fijada antes del primer envio
+(se vacia al cerrarse) y la reserva del trabajador que lo envia, con a lo sumo un lote
+pendiente por campana por el indice parcial `uq_campaigns_batches_one_pending`;
+`processed_events` para la deduplicacion por id de evento, podada a los 30 dias;
+`message_engagement` con la primera apertura y el primer clic de cada mensaje),
 `analytics` (agregados diarios por dia UTC en `analytics.daily_class_stats`,
 `daily_campaign_stats` y `daily_domain_stats`, cada uno con sus dimensiones sin NULL
 ambiguos y contadores con CHECK de no negativos; `analytics.message_facts`, una fila por
