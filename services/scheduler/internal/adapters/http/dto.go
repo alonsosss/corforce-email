@@ -18,6 +18,7 @@ type jobDTO struct {
 	Description     *string    `json:"description"`
 	JobType         string     `json:"job_type"`
 	CronExpression  *string    `json:"cron_expression"`
+	Timezone        string     `json:"timezone"`
 	IntervalMinutes *int       `json:"interval_minutes"`
 	Handler         string     `json:"handler"`
 	Payload         *string    `json:"payload"`
@@ -73,7 +74,7 @@ type handlerDTO struct {
 func jobResponse(j *domain.JobDefinition) jobDTO {
 	return jobDTO{
 		ID: j.ID, TenantID: j.TenantID, Name: j.Name, Code: j.Code, Description: j.Description,
-		JobType: j.JobType, CronExpression: j.CronExpression, IntervalMinutes: j.IntervalMinutes,
+		JobType: j.JobType, CronExpression: j.CronExpression, Timezone: j.Timezone, IntervalMinutes: j.IntervalMinutes,
 		Handler: j.Handler, Payload: j.Payload, IsActive: j.IsActive, MaxRetries: j.MaxRetries,
 		TimeoutSeconds: j.TimeoutSeconds, CreatedAt: j.CreatedAt, UpdatedAt: j.UpdatedAt,
 	}

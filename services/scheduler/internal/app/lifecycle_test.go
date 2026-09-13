@@ -18,7 +18,7 @@ func TestManejadorDesconocidoONoPermitidoSeRechaza(t *testing.T) {
 	newJob := func(handler string) *domain.JobDefinition {
 		tenant := f.tenantID
 		return &domain.JobDefinition{TenantID: &tenant, Name: "n", Code: handler + "-code", JobType: domain.JobTypeInterval,
-			IntervalMinutes: &five, Handler: handler, TimeoutSeconds: 60}
+			Timezone: domain.DefaultTimezone, IntervalMinutes: &five, Handler: handler, TimeoutSeconds: 60}
 	}
 	for _, h := range []string{"no.existe", platformHandler} {
 		if err := f.uc.CreateJob(ctx, newJob(h)); !errors.Is(err, domain.ErrHandlerNotAllowed) {

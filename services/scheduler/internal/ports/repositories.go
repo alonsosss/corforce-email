@@ -20,7 +20,8 @@ type JobDefinitionRepository interface {
 	GetByCode(ctx context.Context, code string) (*domain.JobDefinition, error)
 	List(ctx context.Context, tenantID *uuid.UUID, isActive *bool) ([]*domain.JobDefinition, error)
 	Update(ctx context.Context, job *domain.JobDefinition) error
-	Deactivate(ctx context.Context, id uuid.UUID) error
+	// Deactivate desactiva el trabajo con updatedAt como hora del cambio, igual que Update.
+	Deactivate(ctx context.Context, id uuid.UUID, updatedAt time.Time) error
 }
 
 type JobExecutionRepository interface {

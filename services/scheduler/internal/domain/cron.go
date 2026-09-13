@@ -2,6 +2,7 @@ package domain
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -32,16 +33,17 @@ var cronParser = cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month 
 // que es lo que busca la libreria antes de rendirse.
 var neverProbe = time.Date(2000, time.January, 1, 0, 0, 0, 0, time.UTC)
 
-// CronSpec es una expresion cron ya validada. Se evalua en UTC: el modelo de datos no tiene
-// zona horaria por trabajo.
+// CronSpec es una expresion cron ya validada con la zona del trabajo en la que se evalua.
 type CronSpec struct {
 	schedule cron.Schedule
 	// every es el periodo de @every; cero para las expresiones de calendario.
 	every time.Duration
+	loc   *time.Location
 }
 
-// ParseCron valida una expresion: cinco campos o uno de los descriptores admitidos.
-func ParseCron(expr string) (CronSpec, error) {
+// ParseCron valida una expresion (cinco campos o uno de los descriptores admitidos) y la
+// zona IANA en la que se evalua.
+func ParseCron(expr, timezone string) (CronSpec, error) {
 	if len(expr) > MaxCronExpressionLength {
 		return CronSpec{}, fmt.Errorf("%w: longer than %d characters", ErrInvalidCron, MaxCronExpressionLength)
 	}
@@ -49,10 +51,10 @@ func ParseCron(expr string) (CronSpec, error) {
 	if spec == "" {
 		return CronSpec{}, fmt.Errorf("%w: cron_expression is required for cron jobs", ErrInvalidCron)
 	}
-	// La libreria aceptaria un prefijo TZ=/CRON_TZ= y cargaria la zona del sistema: la zona
-	// no es parte de la expresion, es un dato del trabajo que todavia no existe.
+	// La libreria aceptaria un prefijo TZ=/CRON_TZ= y cargaria la zona por su cuenta: la zona
+	// no es parte de la expresion, es el campo timezone del trabajo.
 	if strings.HasPrefix(spec, "TZ=") || strings.HasPrefix(spec, "CRON_TZ=") {
-		return CronSpec{}, fmt.Errorf("%w: time zones are not supported, expressions run in UTC", ErrInvalidCron)
+		return CronSpec{}, fmt.Errorf("%w: the time zone goes in the timezone field, not in the expression", ErrInvalidCron)
 	}
 	if strings.HasPrefix(spec, "@") && !cronDescriptors[spec] && !strings.HasPrefix(spec, everyPrefix) {
 		return CronSpec{}, fmt.Errorf("%w: descriptor must be @hourly, @daily, @weekly, @monthly or @every <duration>", ErrInvalidCron)
@@ -61,22 +63,37 @@ func ParseCron(expr string) (CronSpec, error) {
 	if err != nil {
 		return CronSpec{}, fmt.Errorf("%w: %s", ErrInvalidCron, err.Error())
 	}
-	if every, ok := schedule.(cron.ConstantDelaySchedule); ok {
+	var every time.Duration
+	if delay, ok := schedule.(cron.ConstantDelaySchedule); ok {
 		// La libreria sube a un segundo cualquier periodo menor, cero o negativo incluidos.
-		if every.Delay < MinCronEvery {
+		if delay.Delay < MinCronEvery {
 			return CronSpec{}, fmt.Errorf("%w: @every must be at least %s", ErrInvalidCron, MinCronEvery)
 		}
-		return CronSpec{schedule: schedule, every: every.Delay}, nil
-	}
-	if schedule.Next(neverProbe).IsZero() {
+		every = delay.Delay
+	} else if schedule.Next(neverProbe).IsZero() {
 		return CronSpec{}, fmt.Errorf("%w: the expression never matches a date", ErrInvalidCron)
 	}
-	return CronSpec{schedule: schedule}, nil
+	loc, err := LoadTimezone(timezone)
+	if err != nil {
+		return CronSpec{}, err
+	}
+	return CronSpec{schedule: schedule, every: every, loc: loc}, nil
 }
 
-// NextRun es la primera ocurrencia de expr estrictamente posterior a after, en UTC.
-func NextRun(expr string, after time.Time) (time.Time, error) {
-	spec, err := ParseCron(expr)
+// CronDescriptors devuelve los descriptores admitidos, ademas de @every, ordenados.
+func CronDescriptors() []string {
+	out := make([]string, 0, len(cronDescriptors))
+	for d := range cronDescriptors {
+		out = append(out, d)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// NextRun es la primera ocurrencia de expr en la zona timezone estrictamente posterior a
+// after, en UTC.
+func NextRun(expr, timezone string, after time.Time) (time.Time, error) {
+	spec, err := ParseCron(expr, timezone)
 	if err != nil {
 		return time.Time{}, err
 	}
@@ -84,15 +101,36 @@ func NextRun(expr string, after time.Time) (time.Time, error) {
 }
 
 // Next es la primera ocurrencia estrictamente posterior a after, en UTC.
+//
+// Una expresion de calendario describe horas de pared de la zona del trabajo, y cada una
+// se lanza una sola vez:
+//
+//   - la que cae en la hora que se salta al adelantar el reloj se lanza en el instante del
+//     salto (02:30 en un dia que pasa de 02:00 a 03:00 se lanza a las 03:00); si la
+//     expresion tiene tambien una ocurrencia en ese instante, una sola ejecucion cubre ambas;
+//   - la que cae en la hora que se repite al atrasarlo se lanza en su primera pasada; en la
+//     segunda no se repite, tampoco las de una expresion de cada minuto o cada hora.
+//
+// @every cuenta tiempo transcurrido y no depende de la zona.
 func (c CronSpec) Next(after time.Time) (time.Time, error) {
 	if c.schedule == nil {
 		return time.Time{}, fmt.Errorf("%w: expression not parsed", ErrInvalidCron)
 	}
-	next := c.schedule.Next(after.UTC())
-	if next.IsZero() {
-		return time.Time{}, fmt.Errorf("%w: the expression never matches a date", ErrInvalidCron)
+	if c.every > 0 {
+		return c.schedule.Next(after.UTC()), nil
 	}
-	return next, nil
+	wall := wallClock(after, c.loc)
+	for {
+		wall = c.schedule.Next(wall)
+		if wall.IsZero() {
+			return time.Time{}, fmt.Errorf("%w: the expression never matches a date", ErrInvalidCron)
+		}
+		// Solo vuelve a pasar en la segunda pasada de una hora repetida: esas horas de pared
+		// ya se lanzaron en la primera.
+		if at := firstInstantAtWall(wall, c.loc); at.After(after) {
+			return at, nil
+		}
+	}
 }
 
 // NextAfterDispatch es la ejecucion que sigue a la prevista para scheduled, despachada en now.

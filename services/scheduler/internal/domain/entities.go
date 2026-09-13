@@ -35,13 +35,16 @@ const (
 )
 
 type JobDefinition struct {
-	ID              uuid.UUID
-	TenantID        *uuid.UUID
-	Name            string
-	Code            string
-	Description     *string
-	JobType         string
-	CronExpression  *string
+	ID             uuid.UUID
+	TenantID       *uuid.UUID
+	Name           string
+	Code           string
+	Description    *string
+	JobType        string
+	CronExpression *string
+	// Timezone es la zona IANA en la que se evalua CronExpression. No afecta a @every, a
+	// interval ni a one_time, que cuentan tiempo transcurrido.
+	Timezone        string
 	IntervalMinutes *int
 	Handler         string
 	Payload         *string
@@ -96,11 +99,12 @@ type JobSchedule struct {
 	LockedAt  *time.Time
 }
 
-// CronJobSchedule es el calendario de un trabajo cron activo con la expresion de la que
-// deberia salir su next_run_at.
+// CronJobSchedule es el calendario de un trabajo cron activo con la expresion y la zona de
+// las que deberia salir su next_run_at.
 type CronJobSchedule struct {
 	JobID      uuid.UUID
 	Expression string
+	Timezone   string
 	NextRunAt  time.Time
 }
 

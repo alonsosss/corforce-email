@@ -10,6 +10,9 @@ import (
 	"strconv"
 	"sync"
 	"time"
+	// La imagen es scratch y no trae la base de zonas horarias: sin esto, toda zona de un
+	// trabajo distinta de UTC fallaria al validarla y al evaluar su calendario.
+	_ "time/tzdata"
 
 	"github.com/alonsosss/corforce-email/pkg/authz"
 	"github.com/alonsosss/corforce-email/pkg/config"
@@ -44,10 +47,27 @@ const (
 	tickInterval = 30 * time.Second
 )
 
+// tzCheckFlag hace que el binario solo compruebe que carga zonas horarias y salga, sin
+// abrir conexiones: el Dockerfile lo corre sobre la imagen final.
+const tzCheckFlag = "--tzcheck"
+
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == tzCheckFlag {
+		if err := domain.CheckTZDatabase(); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
+
 	logger, _ := zap.NewProduction()
 	defer logger.Sync()
 	response.SetUnexpectedLogger(logger)
+
+	// Sin base de zonas cada cron fuera de UTC se desactivaria al vencer: mejor no arrancar.
+	if err := domain.CheckTZDatabase(); err != nil {
+		log.Fatalf("%v", err)
+	}
 
 	cfg, err := config.Load()
 	if err != nil {

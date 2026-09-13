@@ -49,7 +49,7 @@ func TestCrearUnCronLoPlanificaEnSuOcurrencia(t *testing.T) {
 	tenant := f.tenantID
 	newJob := func(code, expr string) *domain.JobDefinition {
 		return &domain.JobDefinition{TenantID: &tenant, Name: "n", Code: code, JobType: domain.JobTypeCron,
-			CronExpression: &expr, Handler: tenantHandler, TimeoutSeconds: 60}
+			CronExpression: &expr, Timezone: domain.DefaultTimezone, Handler: tenantHandler, TimeoutSeconds: 60}
 	}
 	daily := newJob("diario", "0 3 * * *")
 	if err := f.uc.CreateJob(ctx, daily); err != nil {
@@ -70,7 +70,7 @@ func TestCrearUnCronLoPlanificaEnSuOcurrencia(t *testing.T) {
 
 	five := 5
 	interval := &domain.JobDefinition{TenantID: &tenant, Name: "n", Code: "intervalo", JobType: domain.JobTypeInterval,
-		IntervalMinutes: &five, Handler: tenantHandler, TimeoutSeconds: 60}
+		Timezone: domain.DefaultTimezone, IntervalMinutes: &five, Handler: tenantHandler, TimeoutSeconds: 60}
 	if err := f.uc.CreateJob(ctx, interval); err != nil {
 		t.Fatal(err)
 	}

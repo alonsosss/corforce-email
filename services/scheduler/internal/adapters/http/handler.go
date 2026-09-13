@@ -59,6 +59,7 @@ func (h *Handler) Routes() chi.Router {
 	r.Route("/api/v1/scheduler", func(r chi.Router) {
 		r.Use(h.api...)
 		r.With(h.perm("jobs", "read")).Get("/handlers", h.ListHandlers)
+		r.With(h.perm("jobs", "read")).Get("/meta", h.Meta)
 		r.Route("/jobs", func(r chi.Router) {
 			r.With(h.perm("jobs", "read")).Get("/", h.ListJobs)
 			r.With(h.perm("jobs", "create")).Post("/", h.CreateJob)
@@ -125,6 +126,8 @@ func writeError(w http.ResponseWriter, err error) {
 		response.ErrNotFound(w, "execution not found")
 	case errors.Is(err, domain.ErrPlatformJob):
 		response.ErrForbidden(w, err.Error())
+	case errors.Is(err, domain.ErrInvalidTimezone):
+		response.Err(w, http.StatusUnprocessableEntity, "INVALID_TIMEZONE", err.Error())
 	case errors.Is(err, domain.ErrHandlerNotAllowed),
 		errors.Is(err, domain.ErrInvalidJob),
 		errors.Is(err, domain.ErrInvalidCron),
@@ -148,11 +151,13 @@ func (h *Handler) ListHandlers(w http.ResponseWriter, r *http.Request) {
 }
 
 type createJobReq struct {
-	Name            string  `json:"name"`
-	Code            string  `json:"code"`
-	Description     *string `json:"description"`
-	JobType         string  `json:"job_type"`
-	CronExpression  *string `json:"cron_expression"`
+	Name           string  `json:"name"`
+	Code           string  `json:"code"`
+	Description    *string `json:"description"`
+	JobType        string  `json:"job_type"`
+	CronExpression *string `json:"cron_expression"`
+	// Timezone ausente (o null) es UTC; presente se valida tal cual, vacio incluido.
+	Timezone        *string `json:"timezone"`
 	IntervalMinutes *int    `json:"interval_minutes"`
 	Handler         string  `json:"handler"`
 	Payload         *string `json:"payload"`
@@ -182,6 +187,10 @@ func (h *Handler) CreateJob(w http.ResponseWriter, r *http.Request) {
 		response.ErrUnauthorized(w, "invalid tenant")
 		return
 	}
+	timezone := domain.DefaultTimezone
+	if req.Timezone != nil {
+		timezone = *req.Timezone
+	}
 	job := &domain.JobDefinition{
 		TenantID:        &tenantID,
 		Name:            req.Name,
@@ -189,6 +198,7 @@ func (h *Handler) CreateJob(w http.ResponseWriter, r *http.Request) {
 		Description:     req.Description,
 		JobType:         req.JobType,
 		CronExpression:  req.CronExpression,
+		Timezone:        timezone,
 		IntervalMinutes: req.IntervalMinutes,
 		Handler:         req.Handler,
 		Payload:         req.Payload,
@@ -242,10 +252,13 @@ func (h *Handler) ListJobs(w http.ResponseWriter, r *http.Request) {
 }
 
 type updateJobReq struct {
-	Name            string  `json:"name"`
-	Description     *string `json:"description"`
-	JobType         string  `json:"job_type"`
-	CronExpression  *string `json:"cron_expression"`
+	Name           string  `json:"name"`
+	Description    *string `json:"description"`
+	JobType        string  `json:"job_type"`
+	CronExpression *string `json:"cron_expression"`
+	// Timezone ausente (o null) conserva la zona guardada: un cliente que no conoce el campo
+	// no devuelve el trabajo a UTC al editarlo.
+	Timezone        *string `json:"timezone"`
 	IntervalMinutes *int    `json:"interval_minutes"`
 	Handler         string  `json:"handler"`
 	Payload         *string `json:"payload"`
@@ -278,6 +291,9 @@ func (h *Handler) UpdateJob(w http.ResponseWriter, r *http.Request) {
 	job.Description = req.Description
 	job.JobType = req.JobType
 	job.CronExpression = req.CronExpression
+	if req.Timezone != nil {
+		job.Timezone = *req.Timezone
+	}
 	job.IntervalMinutes = req.IntervalMinutes
 	job.Handler = req.Handler
 	job.Payload = req.Payload
@@ -505,7 +521,7 @@ func (h *Handler) CancelTask(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) ListPendingTasks(w http.ResponseWriter, r *http.Request) {
-	tasks, err := h.uc.ListPendingTasks(r.Context(), time.Now().UTC().Add(24*time.Hour))
+	tasks, err := h.uc.ListPendingTasks(r.Context())
 	if err != nil {
 		writeError(w, err)
 		return

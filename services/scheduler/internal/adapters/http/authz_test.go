@@ -60,6 +60,7 @@ var rutas = []ruta{
 	{http.MethodGet, base + "/tasks/no-es-uuid", "", "scheduler/tasks/read", http.StatusBadRequest},
 	{http.MethodPost, base + "/tasks/no-es-uuid/cancel", "", "scheduler/tasks/cancel", http.StatusBadRequest},
 	{http.MethodGet, base + "/handlers", "", "scheduler/jobs/read", http.StatusOK},
+	{http.MethodGet, base + "/meta", "", "scheduler/jobs/read", http.StatusOK},
 }
 
 type jobsVacios struct{ ports.JobDefinitionRepository }

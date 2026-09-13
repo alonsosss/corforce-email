@@ -133,11 +133,12 @@ func (r memJobs) Update(_ context.Context, j *domain.JobDefinition) error {
 	return nil
 }
 
-func (r memJobs) Deactivate(_ context.Context, id uuid.UUID) error {
+func (r memJobs) Deactivate(_ context.Context, id uuid.UUID, updatedAt time.Time) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	j := r.jobs[id]
 	j.IsActive = false
+	j.UpdatedAt = updatedAt
 	r.jobs[id] = j
 	r.deactivated++
 	return nil
@@ -278,7 +279,7 @@ func (r memSchedules) LockActiveCron(context.Context) ([]*domain.CronJobSchedule
 	for id, s := range r.schedules {
 		j := r.jobs[id]
 		if j.IsActive && j.JobType == domain.JobTypeCron {
-			out = append(out, &domain.CronJobSchedule{JobID: id, Expression: j.CronExpr(), NextRunAt: s.NextRunAt})
+			out = append(out, &domain.CronJobSchedule{JobID: id, Expression: j.CronExpr(), Timezone: j.Timezone, NextRunAt: s.NextRunAt})
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].JobID.String() < out[j].JobID.String() })
@@ -347,13 +348,13 @@ func newFixture(t *testing.T) *fixture {
 	return &fixture{t: t, store: s, clock: clk, uc: uc, tenantID: uuid.New()}
 }
 
-// addJob guarda un trabajo de la empresa (activo, cada 5 minutos, plazo de 120 s y dos
-// reintentos) con los cambios de mut.
+// addJob guarda un trabajo de la empresa (activo, cada 5 minutos, en UTC, plazo de 120 s y
+// dos reintentos) con los cambios de mut.
 func (f *fixture) addJob(mut func(j *domain.JobDefinition)) domain.JobDefinition {
 	tenant, five := f.tenantID, 5
 	j := domain.JobDefinition{
 		ID: uuid.New(), TenantID: &tenant, Name: "Informe", Code: uuid.NewString(), JobType: domain.JobTypeInterval,
-		IntervalMinutes: &five, Handler: tenantHandler, IsActive: true, MaxRetries: 2, TimeoutSeconds: 120,
+		Timezone: domain.DefaultTimezone, IntervalMinutes: &five, Handler: tenantHandler, IsActive: true, MaxRetries: 2, TimeoutSeconds: 120,
 		CreatedAt: f.clock.now(), UpdatedAt: f.clock.now(),
 	}
 	if mut != nil {

@@ -94,7 +94,8 @@ func newInternalFixture(t *testing.T, status string) internalFixture {
 	t.Helper()
 	tenant := uuid.New()
 	now := time.Now().UTC()
-	job := &domain.JobDefinition{ID: uuid.New(), TenantID: &tenant, Handler: "reports.daily", IsActive: true, MaxRetries: 1}
+	job := &domain.JobDefinition{ID: uuid.New(), TenantID: &tenant, Handler: "reports.daily", IsActive: true, MaxRetries: 1,
+		Timezone: domain.DefaultTimezone}
 	exec := &domain.JobExecution{ID: uuid.New(), JobID: job.ID, TenantID: &tenant, Status: status, StartedAt: &now, CreatedAt: now}
 	catalog, err := domain.NewHandlerCatalog([]domain.HandlerSpec{{
 		Name: "reports.daily", Service: "reports", MaxTimeoutSeconds: 600, Scopes: []domain.HandlerScope{domain.ScopeTenant},

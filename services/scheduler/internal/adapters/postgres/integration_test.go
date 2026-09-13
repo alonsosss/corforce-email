@@ -34,6 +34,7 @@ var migrations = []string{
 	"migrations/tenant/canonical/platform/00_outbox.sql",
 	"migrations/tenant/canonical/scheduler/01_scheduler.sql",
 	"migrations/tenant/canonical/scheduler/02_execution_lifecycle.sql",
+	"migrations/tenant/canonical/scheduler/03_job_timezone.sql",
 }
 
 type testClock struct {
@@ -135,7 +136,7 @@ func (e *env) createJob(t *testing.T, maxRetries int) *domain.JobDefinition {
 	tenant, five := e.tenant, 5
 	job := &domain.JobDefinition{
 		TenantID: &tenant, Name: "Informe", Code: "it-" + uuid.NewString(), JobType: domain.JobTypeInterval,
-		IntervalMinutes: &five, Handler: "it.report", MaxRetries: maxRetries, TimeoutSeconds: 30,
+		Timezone: domain.DefaultTimezone, IntervalMinutes: &five, Handler: "it.report", MaxRetries: maxRetries, TimeoutSeconds: 30,
 	}
 	if err := e.uc.CreateJob(e.ctx, job); err != nil {
 		t.Fatal(err)
@@ -394,7 +395,7 @@ func (e *env) schedule(t *testing.T, jobID uuid.UUID) (time.Time, *time.Time) {
 
 func mustNextRun(t *testing.T, expr string, after time.Time) time.Time {
 	t.Helper()
-	next, err := domain.NextRun(expr, after)
+	next, err := domain.NextRun(expr, domain.DefaultTimezone, after)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -405,7 +406,7 @@ func TestCronSeDespachaEnSuOcurrenciaSinDeriva(t *testing.T) {
 	e := setup(t)
 	tenant, expr := e.tenant, "*/5 * * * *"
 	job := &domain.JobDefinition{TenantID: &tenant, Name: "Cron", Code: "it-" + uuid.NewString(), JobType: domain.JobTypeCron,
-		CronExpression: &expr, Handler: "it.report", TimeoutSeconds: 30}
+		CronExpression: &expr, Timezone: domain.DefaultTimezone, Handler: "it.report", TimeoutSeconds: 30}
 	if err := e.uc.CreateJob(e.ctx, job); err != nil {
 		t.Fatal(err)
 	}

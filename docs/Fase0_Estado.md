@@ -77,8 +77,7 @@ cambie cualquiera de estas líneas.
   catálogo de manejadores (`services/scheduler/handlers.json`) está vacío porque ningún
   servicio consume hoy `scheduler.job.started`: hasta que un ejecutor se declare, crear o
   editar un trabajo responde 422. Pendiente del scheduler: las tareas puntuales
-  (`scheduled_tasks`) se marcan `executed` sin despachar nada, y no hay zona horaria por
-  trabajo (el modelo no tiene columna de zona: toda expresión cron se evalúa en UTC).
+  (`scheduled_tasks`) se marcan `executed` sin despachar nada.
 * `cron_expression` evaluada (2026-09-13, unitarias e integración contra Postgres 16) con
   el parser de `github.com/robfig/cron/v3` v3.0.1; la planificación sigue en la base. Se
   admiten los cinco campos estándar y `@hourly`, `@daily`, `@weekly`, `@monthly` y
@@ -88,6 +87,14 @@ cambie cualquiera de estas líneas.
   las ocurrencias que una caída se saltó se lanzan una sola vez. La primera vuelta de cada
   proceso por empresa reconcilia los calendarios `cron` que dejó la versión que no
   evaluaba la expresión y desactiva los que tienen una expresión inválida.
+* Zona horaria por trabajo (2026-09-13, unitarias e integración contra Postgres 16):
+  `job_definitions.timezone` (`03_job_timezone.sql`, IANA, `UTC` por defecto; las filas
+  previas quedan en UTC). La expresión cron se evalúa en esa zona; `@every`, `interval` y
+  `one_time` cuentan tiempo transcurrido. Cada hora de pared se lanza una vez: la que cae
+  en la hora saltada se lanza en el salto y la de la hora repetida solo en su primera
+  pasada. Zona inválida: 422 `INVALID_TIMEZONE`; reglas en `GET /api/v1/scheduler/meta`. El
+  binario incorpora `time/tzdata`, no arranca sin base de zonas y el Dockerfile lo
+  comprueba (`--tzcheck`).
 * Contrato JSON del scheduler fijado en snake_case (DTOs del adaptador HTTP, con test de
   contrato; la duración sale como `duration_ms`). `web/` todavía no lo consume.
 * Lecturas del registro entre esquemas, todas por vistas publicadas: `identity` resuelve la

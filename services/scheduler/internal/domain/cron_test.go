@@ -43,7 +43,7 @@ func TestNextRun(t *testing.T) {
 		{"espacios de sobra", "  0   9 * * *  ", base, utc(2026, 9, 14, 9, 0, 0)},
 	}
 	for _, tc := range cases {
-		got, err := NextRun(tc.expr, tc.after)
+		got, err := NextRun(tc.expr, DefaultTimezone, tc.after)
 		if err != nil {
 			t.Errorf("%s (%q): %v", tc.name, tc.expr, err)
 			continue
@@ -54,10 +54,10 @@ func TestNextRun(t *testing.T) {
 	}
 }
 
-func TestNextRunSeEvaluaEnUTC(t *testing.T) {
+func TestLaZonaPorDefectoEsUTC(t *testing.T) {
 	lima := time.FixedZone("UTC-5", -5*3600)
 	after := time.Date(2026, 9, 13, 20, 0, 0, 0, lima) // 2026-09-14 01:00 UTC
-	got, err := NextRun("0 9 * * *", after)
+	got, err := NextRun("0 9 * * *", DefaultTimezone, after)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,22 +94,28 @@ func TestExpresionesInvalidas(t *testing.T) {
 		"zona horaria corta":       "TZ=UTC 0 9 * * *",
 		"demasiado larga":          "0 " + strings.Repeat("1,", 60) + "2 * * *",
 	}
+	now := utc(2026, 9, 13, 10, 0, 0)
 	for name, expr := range cases {
-		if _, err := NextRun(expr, time.Now()); !errors.Is(err, ErrInvalidCron) {
+		if _, err := NextRun(expr, DefaultTimezone, now); !errors.Is(err, ErrInvalidCron) {
 			t.Errorf("%s (%q): %v", name, expr, err)
 		}
 	}
-	if _, err := ParseCron("@every 1m"); err != nil {
+	if _, err := ParseCron("@every 1m", DefaultTimezone); err != nil {
 		t.Errorf("@every del minimo exacto: %v", err)
 	}
-	if _, err := (CronSpec{}).Next(time.Now()); !errors.Is(err, ErrInvalidCron) {
+	if _, err := (CronSpec{}).Next(now); !errors.Is(err, ErrInvalidCron) {
 		t.Errorf("una expresion sin analizar: %v", err)
 	}
 }
 
 func mustParse(t *testing.T, expr string) CronSpec {
 	t.Helper()
-	spec, err := ParseCron(expr)
+	return mustParseIn(t, expr, DefaultTimezone)
+}
+
+func mustParseIn(t *testing.T, expr, timezone string) CronSpec {
+	t.Helper()
+	spec, err := ParseCron(expr, timezone)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -195,9 +201,21 @@ func TestReconciliarUnCalendario(t *testing.T) {
 
 func TestDefinicionCronValida(t *testing.T) {
 	daily, bad, empty := "0 3 * * *", "0 25 * * *", ""
-	ok := JobDefinition{JobType: JobTypeCron, CronExpression: &daily}
+	ok := JobDefinition{JobType: JobTypeCron, CronExpression: &daily, Timezone: DefaultTimezone}
 	if err := ok.Validate(); err != nil {
 		t.Fatal(err)
+	}
+	lima := ok
+	lima.Timezone = "America/Lima"
+	if err := lima.Validate(); err != nil {
+		t.Fatalf("un cron en America/Lima: %v", err)
+	}
+	for _, tz := range []string{"", "+05:00", "America/Nowhere"} {
+		j := ok
+		j.Timezone = tz
+		if err := j.Validate(); !errors.Is(err, ErrInvalidTimezone) {
+			t.Errorf("zona %q: %v", tz, err)
+		}
 	}
 	for name, expr := range map[string]*string{"sin expresion": nil, "vacia": &empty, "hora 25": &bad} {
 		j := ok
@@ -207,8 +225,12 @@ func TestDefinicionCronValida(t *testing.T) {
 		}
 	}
 	five := 5
-	interval := JobDefinition{JobType: JobTypeInterval, IntervalMinutes: &five, CronExpression: &bad}
+	interval := JobDefinition{JobType: JobTypeInterval, IntervalMinutes: &five, CronExpression: &bad, Timezone: DefaultTimezone}
 	if err := interval.Validate(); err != nil {
 		t.Errorf("un trabajo de intervalo no depende de cron_expression: %v", err)
+	}
+	interval.Timezone = "Local"
+	if err := interval.Validate(); !errors.Is(err, ErrInvalidTimezone) {
+		t.Errorf("la zona se valida en todo trabajo, aunque solo la use cron: %v", err)
 	}
 }
