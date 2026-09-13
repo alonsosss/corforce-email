@@ -4,7 +4,7 @@ Generado por `ops/scaffold/gen-events.sh` desde el codigo. NO editar a mano.
 Convencion de subject: `<dominio>.<entidad>.<accion>`. Un subject tiene UN dueno
 (el servicio que lo publica); los demas solo lo consumen (regla no-fork).
 
-Resumen: 26 publicaciones, 3 suscripciones, 26 subjects distintos.
+Resumen: 33 publicaciones, 3 suscripciones, 33 subjects distintos.
 
 ## Cruce por subject (dueno -> consumidores)
 
@@ -12,6 +12,13 @@ Resumen: 26 publicaciones, 3 suscripciones, 26 subjects distintos.
 |---|---|---|
 | `audit.api.write` | gateway | audit |
 | `audit.security.alert` | audit | - |
+| `campaigns.campaign.cancelled` | campaigns | - |
+| `campaigns.campaign.completed` | campaigns | - |
+| `campaigns.campaign.failed` | campaigns | - |
+| `campaigns.campaign.paused` | campaigns | - |
+| `campaigns.campaign.resumed` | campaigns | - |
+| `campaigns.campaign.scheduled` | campaigns | - |
+| `campaigns.campaign.started` | campaigns | - |
 | `gateway.security.exfiltration` | gateway | - |
 | `identity.session.revoked_by_admin` | identity | - |
 | `identity.user.created` | identity | - |
@@ -42,6 +49,9 @@ Resumen: 26 publicaciones, 3 suscripciones, 26 subjects distintos.
 ### audit
 - Publica: `audit.security.alert`
 - Consume: `audit.api.write`
+
+### campaigns
+- Publica: `campaigns.campaign.cancelled`,`campaigns.campaign.completed` `campaigns.campaign.failed`,`campaigns.campaign.paused` `campaigns.campaign.resumed`,`campaigns.campaign.scheduled` `campaigns.campaign.started`
 
 ### gateway
 - Publica: `audit.api.write`,`gateway.security.exfiltration`
