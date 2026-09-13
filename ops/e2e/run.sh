@@ -7,7 +7,8 @@
 # contactos con su consentimiento y audiencia, campanas por la via de marketing de
 # transactional (hasta su rechazo por remitente sin verificar, sin SES), el doble opt-in por
 # automations, el panel de analitica y el rechazo del token de una cuenta borrada o desactivada. Los servicios de la celda corren con la credencial
-# propia de la celda (ops/db/cell-service-role.sh), sin la de plataforma.
+# propia de la celda (ops/db/cell-service-role.sh), sin la de plataforma. domain-service verifica
+# contra un DNS de la prueba (ops/e2e/dns_prueba.py) y activa cada dominio en la celda de su empresa.
 #
 # Cada paso COMPRUEBA su resultado y la ejecucion termina con error si alguno falla: no
 # basta con que los servicios arranquen, tienen que hablarse. Las credenciales se generan
@@ -97,6 +98,7 @@ declare -A PORT=(
 MAPS_PORT=$((BASE + 81))
 AUTH_TLS_PORT=$((BASE + 82))
 EXPORT_PORT=$((BASE + 91))
+DNS_PORT=$((BASE + 65))
 GW="http://127.0.0.1:${PORT[gateway]}/api/v1"
 export IDENTITY_PORT=${PORT[identity]} ACCESS_CONTROL_PORT=${PORT[access-control]} ORGANIZATION_PORT=${PORT[organization]}
 export MAIL_DIRECTORY_PORT=${PORT[mail-directory]} MAIL_SECURITY_PORT=${PORT[mail-security]} DOMAIN_SERVICE_PORT=${PORT[domain-service]}
@@ -105,6 +107,9 @@ export BILLING_PORT=${PORT[billing]} REPUTATION_PORT=${PORT[reputation]} CONTACT
 export TRANSACTIONAL_PORT=${PORT[transactional]} CAMPAIGNS_PORT=${PORT[campaigns]} AUTOMATIONS_PORT=${PORT[automations]}
 export MAIL_POLICY_MAPS_PORT=$MAPS_PORT MAIL_POLICY_EXPORT_PORT=$EXPORT_PORT
 export MAIL_AUTH_PORT=${PORT[mail-auth]} MAIL_AUTH_TLS_PORT=$AUTH_TLS_PORT
+# domain-service verifica contra el DNS de la prueba: la zona es $WORK/zona.json, que la prueba
+# escribe con los registros que pide domain-service. Sin zona, todo nombre es NXDOMAIN.
+export MAIL_DNS_RESOLVER="127.0.0.1:$DNS_PORT"
 export API_ORIGIN="http://localhost:${PORT[gateway]}" PUBLIC_BASE_URL="http://localhost:${PORT[gateway]}"
 # Direcciones internas: las que el gateway lee de routes.json por <SERVICIO>_HOST(_PORT) y
 # las que los servicios usan entre si.
@@ -134,6 +139,8 @@ export SUPPRESSION_EXPIRY_SWEEP_INTERVAL=1s
 # Los servicios de la celda arrancan con SU credencial y sin la de plataforma: un permiso que
 # le falte al rol de la celda hace fallar las comprobaciones del correo de mas abajo.
 SERVICIOS_DE_CELDA=" mail-directory mail-auth mail-security "
+
+cp ops/e2e/dns_prueba.py "$WORK/bin/" && python3 "$WORK/bin/dns_prueba.py" "$DNS_PORT" "$WORK/zona.json" >"$WORK/log/dns.log" 2>&1 &
 
 echo "== Plano de control"
 arrancar organization
@@ -540,7 +547,7 @@ echo "== Rutas con sesion por celda (segundo gateway, dos celdas)"
 # la celda base (GATEWAY_BASE_CELL_CODE) y una instancia de mail-directory sobre mail_cell_pe_02:
 # cada peticion con sesion va a la celda de su empresa, que pregunta a organization, y una celda
 # sin instancia declarada no llega a ninguna. Tokens nuevos: los de arriba caducan a los 5 min.
-MD2_PORT=$((BASE + 60)) GW2_PORT=$((BASE + 61)) MS2_PORT=$((BASE + 62)) REDIS2_PORT=$((BASE - 1620))
+MD2_PORT=$((BASE + 60)) GW2_PORT=$((BASE + 61)) MS2_PORT=$((BASE + 62)) REDIS2_PORT=$((BASE - 1620)) DS2_PORT=$((BASE + 66))
 T1N=$(e2e_login "$ADMIN_EMAIL" "$ADMIN_PASS" | jget data.access_token)
 A2N="Authorization: Bearer $(e2e_login admin@acme.test "$TENANT_PASS" | jget data.access_token)"
 for c in pe-02 pe-03; do
@@ -571,10 +578,14 @@ docker run -d --name "$E2E_PREFIX-redis-pe02" -p "127.0.0.1:$REDIS2_PORT:6379" r
 env -u POSTGRES_PASSWORD -u JWT_SIGNING_KEY CELL_CODE=pe-02 CELL_DB_NAME=mail_cell_pe_02 CELL_DB_PASSWORD="$CELL2_PASS" \
   MAIL_SECURITY_PORT="$MS2_PORT" MAIL_POLICY_MAPS_PORT=$((BASE + 63)) MAIL_POLICY_EXPORT_PORT=$((BASE + 64)) \
   MAIL_REDIS_PORT="$REDIS2_PORT" NATS_URL=nats://127.0.0.1:1 "$WORK/bin/mail-security" >"$WORK/log/mail-security-pe-02.log" 2>&1 &
+# domain-service con las instancias de mail-directory por celda de este gateway, que le lleva /domains.
+env -u JWT_SIGNING_KEY DOMAIN_SERVICE_PORT="$DS2_PORT" GATEWAY_BASE_CELL_CODE=pe-01 MAIL_DIRECTORY_CELL_HOSTS="pe-02=127.0.0.1:$MD2_PORT" \
+  "$WORK/bin/domain-service" >"$WORK/log/domain-service-celdas.log" 2>&1 &
 env -u JWT_SIGNING_KEY GATEWAY_PORT="$GW2_PORT" GATEWAY_BASE_CELL_CODE=pe-01 MAIL_DIRECTORY_CELL_HOSTS="pe-02=127.0.0.1:$MD2_PORT" \
-  MAIL_SECURITY_CELL_HOSTS="pe-02=127.0.0.1:$MS2_PORT" "$WORK/bin/gateway" >"$WORK/log/gateway-celdas.log" 2>&1 &
+  MAIL_SECURITY_CELL_HOSTS="pe-02=127.0.0.1:$MS2_PORT" DOMAIN_SERVICE_HOST_PORT="$DS2_PORT" "$WORK/bin/gateway" >"$WORK/log/gateway-celdas.log" 2>&1 &
 esperar_salud mail-directory-pe-02 "$MD2_PORT"
 esperar_salud mail-security-pe-02 "$MS2_PORT"
+esperar_salud domain-service-celdas "$DS2_PORT"
 esperar_salud gateway-celdas "$GW2_PORT"
 GW2="http://127.0.0.1:$GW2_PORT/api/v1"
 en_pe02() { grep -c '"path":"/api/v1/mailboxes"' "$WORK/log/mail-directory-pe-02.log"; }
@@ -647,8 +658,45 @@ contains "y mail-security el suyo" "$(curl -s "http://127.0.0.1:${PORT[mail-secu
   'cell_membership_refusals_total{reason="foreign_tenant"} 1'
 expect "acme sigue entrando por el gateway sin celdas" "$(codigo "$GW/mailboxes" -H "$A2N")" "200"
 
+echo "== domain-service por la celda de cada empresa"
+# beta (pe-02) da de alta beta.test y la prueba publica sus registros en el DNS de la prueba. El
+# domain-service sin celdas (primer gateway) llama a las instancias de pe-01, que rechazan a beta:
+# el paso falla como error de configuracion y pe-01 no guarda nada. El de las celdas (segundo
+# gateway) activa el dominio en mail_cell_pe_02; mail-security no declara pe-02, asi que las
+# claves DKIM no salen hacia ninguna instancia y el paso queda para el barrido.
+AB="Authorization: Bearer $(e2e_login admin@beta.test "$CELDAS_PASS" | jget data.access_token)"
+BDOM=$(curl -s -X POST "$GW2/domains" -H "$AB" -H 'Content-Type: application/json' -d '{"domain":"beta.test","purpose":"corporate"}')
+BDOMID=$(echo "$BDOM" | jget data.id)
+expect "alta de beta.test en domain-service (pending)" "$(echo "$BDOM" | jget data.status)" "pending"
+echo "$BDOM" | jget data.dns_records >"$WORK/zona.json.tmp" && mv "$WORK/zona.json.tmp" "$WORK/zona.json"
+# errores_de <fragmento>: de los integration_errors de la verificacion en stdin, cuantos hay y
+# cuantos llevan el fragmento.
+errores_de() {
+  python3 -c 'import json, sys; e = json.load(sys.stdin)["data"]["integration_errors"]; print(len(e), sum(sys.argv[1] in x for x in e))' "$1" 2>/dev/null
+}
+en_pe01() { sql mail_cell_pe_01 "SELECT count(*) FROM mail.domains WHERE domain = 'beta.test' OR tenant_id = '$BID'"; }
+V1=$(curl -s -X POST "$GW/domains/$BDOMID/verify" -H "$AB")
+expect "domain-service sin celdas verifica beta.test contra el DNS de la prueba" "$(echo "$V1" | jget data.status)" "verified"
+expect "la activacion y las claves no se dan por hechas: pe-01 no atiende a beta" "$(echo "$V1" | errores_de TENANT_NOT_IN_CELL)" "2 2"
+expect "y pe-01 no guarda nada de beta.test" "$(en_pe01)" "0"
+M_DS=$(curl -s "http://127.0.0.1:${PORT[domain-service]}/metrics")
+contains "domain-service cuenta la instancia de otra celda en mail-directory" "$M_DS" 'cell_call_failures_total{reason="not_in_cell",service="mail-directory"} 1'
+contains "y en mail-security" "$M_DS" 'cell_call_failures_total{reason="not_in_cell",service="mail-security"} 1'
+V2=$(curl -s -X POST "$GW2/domains/$BDOMID/verify" -H "$AB")
+expect "domain-service de las celdas lo verifica" "$(echo "$V2" | jget data.status)" "verified"
+expect "y lo activa en mail_cell_pe_02 con la empresa de beta" \
+  "$(sql mail_cell_pe_02 "SELECT active FROM mail.domains WHERE domain = 'beta.test' AND tenant_id = '$BID'")" "t"
+expect "sin escribir nada en mail_cell_pe_01" "$(en_pe01)" "0"
+expect "las claves DKIM no salen hacia ninguna instancia: mail-security no declara pe-02" \
+  "$(echo "$V2" | errores_de 'celda pe-02: la celda de la empresa no tiene instancia declarada')" "1 1"
+M_DS2=$(curl -s "http://127.0.0.1:$DS2_PORT/metrics")
+contains "y lo cuenta como celda sin instancia" "$M_DS2" 'cell_call_failures_total{reason="not_served",service="mail-security"} 1'
+contains "sin llamar a ninguna instancia de otra celda" "$M_DS2" 'cell_call_failures_total{reason="not_in_cell",service="mail-directory"} 0'
+
 echo "== Registros"
-e2e_registros_sin_errores
+# Los unicos errores esperados son los que la prueba provoca a proposito: los pasos de
+# domain-service para beta que no llegan a la instancia de su celda.
+e2e_registros_sin_errores "\"tenant_id\":\"$BID\".*(TENANT_NOT_IN_CELL|no tiene instancia declarada)"
 
 echo
 if [[ $fallos -gt 0 ]]; then echo "E2E: $fallos fallos" >&2; exit 1; fi

@@ -127,7 +127,12 @@ para llamar a la API hace falta ya un superadmin. Después, todo por API: `POST 
   enlaces de cuarentena llegan a la celda base, que los rechaza (`Modelo_de_Datos_y_Celdas.md`,
   5.3 y 5.4). `GATEWAY_BASE_CELL_CODE` se fija al registrar la segunda celda en organization,
   antes de dar de alta empresas en ella: sin el, el gateway da por hecho una sola celda y las
-  mandaria a la base. El webmail todavia no se enruta por celda (5.5).
+  mandaria a la base. El webmail todavia no se enruta por celda (5.5). `domain-service` lee las
+  mismas tres variables, con `MAIL_DIRECTORY_URL` y `MAIL_SECURITY_URL` como destinos base, y con
+  `GATEWAY_BASE_CELL_CODE` necesita `ORGANIZATION_URL` (sin ella no arranca): activa dominios y
+  entrega las claves DKIM en la instancia de la celda de cada empresa. Si esa celda no tiene
+  instancia declarada de un servicio, sus pasos fallan, se reintentan en el barrido y se cuentan
+  en `cell_call_failures_total{service, reason}`.
 * Reglas: idempotentes y aditivas (`make check-migrations` cubre empresa y celda), cabecera
   `-- Schema | Service`, nunca cambiar el tipo de una columna sin
   `ops/maintenance/pgbouncer-reconnect.sh` después (los planes preparados viven en el pooler).

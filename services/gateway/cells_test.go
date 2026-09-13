@@ -169,45 +169,6 @@ func TestCeldaDesconocidaIgualQueFirmaAlterada(t *testing.T) {
 	}
 }
 
-func TestInstanciasPorCeldaDelEntorno(t *testing.T) {
-	got, err := parseCellHosts("X", " pe-01=mail-security-pe-01:8042 , pe-02=10.0.2.15:9042,eu-west-1=[fd00::5]:8042")
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := map[string]string{"pe-01": "http://mail-security-pe-01:8042", "pe-02": "http://10.0.2.15:9042", "eu-west-1": "http://[fd00::5]:8042"}
-	if len(got) != len(want) {
-		t.Fatalf("instancias: %v", got)
-	}
-	for code, target := range want {
-		if got[code] != target {
-			t.Errorf("%s: %q, se esperaba %q", code, got[code], target)
-		}
-	}
-	if got, err := parseCellHosts("X", "  "); err != nil || len(got) != 0 {
-		t.Fatalf("vacia: %v %v", got, err)
-	}
-
-	for name, raw := range map[string]string{
-		"sin igual":             "pe-01",
-		"sin puerto":            "pe-01=mail-security",
-		"puerto no numerico":    "pe-01=mail-security:http",
-		"puerto fuera de rango": "pe-01=mail-security:70000",
-		"puerto cero":           "pe-01=mail-security:0",
-		"con esquema":           "pe-01=http://mail-security:8042",
-		"con ruta":              "pe-01=mail-security/x:8042",
-		"sin host":              "pe-01=:8042",
-		"celda repetida":        "pe-01=a:1,pe-01=b:2",
-		"celda en mayusculas":   "PE-01=a:1",
-		"celda con guion final": "pe-=a:1",
-		"celda vacia":           "=a:1",
-		"entrada vacia":         "pe-01=a:1,,pe-02=b:2",
-	} {
-		if _, err := parseCellHosts("X", raw); err == nil {
-			t.Errorf("%s: %q se esperaba error", name, raw)
-		}
-	}
-}
-
 // Una variable de instancias mal formada impide arrancar.
 func TestInstanciasMalFormadasNoArrancan(t *testing.T) {
 	t.Setenv("GATEWAY_ROUTES_FILE", "")

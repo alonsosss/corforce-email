@@ -44,7 +44,7 @@ func (uc *UseCase) verify(ctx context.Context, d *domain.Domain, sweep bool) (*V
 	}
 	d.LastCheckedAt = &now
 
-	previous := d.Status
+	previous, wasActive := d.Status, d.ActiveInDirectory()
 	switch result.Outcome {
 	case domain.OutcomeVerified:
 		if d.Status != domain.StatusVerified {
@@ -64,6 +64,15 @@ func (uc *UseCase) verify(ctx context.Context, d *domain.Domain, sweep bool) (*V
 	case domain.OutcomeInconclusive:
 		// El DNS no respondio: no se sabe nada nuevo y el estado no cambia.
 	}
+	switch {
+	case d.ActiveInDirectory():
+		// syncVerified lo activa: una desactivacion pendiente ya no toca.
+		d.DirectoryDeactivationPending = false
+	case wasActive:
+		// Deja de recibir: la marca se guarda antes de llamar, para que el barrido termine la
+		// desactivacion si esta llamada no llega.
+		d.DirectoryDeactivationPending = true
+	}
 	if err := uc.repo.Update(ctx, d); err != nil {
 		return nil, err
 	}
@@ -76,10 +85,10 @@ func (uc *UseCase) verify(ctx context.Context, d *domain.Domain, sweep bool) (*V
 			uc.publish("domains.domain.verified", d, func() error { return uc.events.DomainVerified(ctx, d) })
 		}
 	case d.Status == domain.StatusFailed && previous == domain.StatusVerified:
-		if d.Purpose.IncludesCorporate() {
-			if err := uc.mailDirectory.SetActivation(ctx, d.TenantID, d.Domain, false); err != nil {
-				uc.logger.Error("no se pudo desactivar el dominio en mail-directory",
-					zap.String("domain", d.Domain), zap.Error(err))
+		if wasActive {
+			if err := uc.completeDeactivation(ctx, d); err != nil {
+				uc.logger.Error("no se pudo desactivar el dominio en mail-directory; se reintenta en el barrido",
+					zap.String("domain", d.Domain), zap.String("tenant_id", d.TenantID.String()), zap.Error(err))
 				out.IntegrationErrors = append(out.IntegrationErrors, "desactivar en mail-directory: "+err.Error())
 			}
 		}
@@ -107,22 +116,32 @@ func lostRoutingRecord(checks []domain.DNSCheck) bool {
 // syncVerified aplica lo que un dominio verificado debe tener fuera de esta base: activo
 // en el directorio de la celda si recibe correo, y sus claves DKIM en los motores. Ambas
 // llamadas son idempotentes y se repiten en cada barrido, que es lo que las cura si aqui
-// fallan.
+// fallan (tambien si no llegan a la celda de la empresa: el estado sale solo del DNS).
 func (uc *UseCase) syncVerified(ctx context.Context, d *domain.Domain, signWithPrevious bool) []string {
 	var failures []string
 	if d.Purpose.IncludesCorporate() {
 		if err := uc.mailDirectory.SetActivation(ctx, d.TenantID, d.Domain, true); err != nil {
 			uc.logger.Error("no se pudo activar el dominio en mail-directory; se reintenta en el barrido",
-				zap.String("domain", d.Domain), zap.Error(err))
+				zap.String("domain", d.Domain), zap.String("tenant_id", d.TenantID.String()), zap.Error(err))
 			failures = append(failures, "activar en mail-directory: "+err.Error())
 		}
 	}
 	if err := uc.publishDKIM(ctx, d, signWithPrevious); err != nil {
 		uc.logger.Error("no se pudieron publicar las claves DKIM; se reintenta en el barrido",
-			zap.String("domain", d.Domain), zap.Error(err))
+			zap.String("domain", d.Domain), zap.String("tenant_id", d.TenantID.String()), zap.Error(err))
 		failures = append(failures, "publicar DKIM en mail-security: "+err.Error())
 	}
 	return failures
+}
+
+// completeDeactivation desactiva en el directorio de la celda un dominio que ya no debe recibir
+// y, confirmado, quita la marca. Si no se confirma, la marca queda y el barrido lo repite.
+func (uc *UseCase) completeDeactivation(ctx context.Context, d *domain.Domain) error {
+	if err := uc.mailDirectory.SetActivation(ctx, d.TenantID, d.Domain, false); err != nil {
+		return err
+	}
+	d.DirectoryDeactivationPending = false
+	return uc.repo.Update(ctx, d)
 }
 
 // observe consulta cada registro esperado. Un error de consulta se conserva en la

@@ -556,3 +556,199 @@ func TestTenantIsolation(t *testing.T) {
 		t.Errorf("otra empresa no verifica el dominio: %v", err)
 	}
 }
+
+// ── Pasos que no llegan a la celda de la empresa ─────────────────────────────
+
+// errCelda hace de cualquier paso que no llega a la instancia de la celda de la empresa:
+// organization sin respuesta, celda sin instancia declarada o instancia de otra celda.
+var errCelda = errors.New("mail-directory: no se pudo resolver la celda de la empresa")
+
+func (h *harness) stored(t *testing.T, id uuid.UUID) *domain.Domain {
+	t.Helper()
+	d, err := h.repo.GetByID(context.Background(), h.tenantID, id)
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	return d
+}
+
+// failWhileDirectoryDown deja el dominio verificado y lo tumba (pierde el SPF) con
+// mail-directory sin respuesta: queda failed y con la desactivacion pendiente.
+func (h *harness) failWhileDirectoryDown(t *testing.T, d *domain.Domain) {
+	t.Helper()
+	h.dns.publishZone(h.uc, d)
+	h.verify(t, d.ID)
+	h.dns.txt[d.Domain] = nil
+	h.directory.err = errCelda
+	res := h.verify(t, d.ID)
+	if res.Domain.Status != domain.StatusFailed || len(res.IntegrationErrors) != 1 || !h.stored(t, d.ID).DirectoryDeactivationPending {
+		t.Fatalf("status %s, errores %v, pendiente %v", res.Domain.Status, res.IntegrationErrors, h.stored(t, d.ID).DirectoryDeactivationPending)
+	}
+}
+
+// El estado sale solo del DNS: sin llegar a la celda, un dominio verificado sigue verificado,
+// ningun paso se da por hecho y el barrido los repite hasta que llegan.
+func TestSinCeldaElDominioSigueVerificadoYElBarridoReintenta(t *testing.T) {
+	h := newHarness(t)
+	d := h.create(t, "acme.com", domain.PurposeCorporate)
+	h.dns.publishZone(h.uc, d)
+	h.directory.err, h.security.err = errCelda, errCelda
+
+	if res := h.verify(t, d.ID); res.Domain.Status != domain.StatusVerified || len(res.IntegrationErrors) != 2 {
+		t.Fatalf("status %s, errores %v", res.Domain.Status, res.IntegrationErrors)
+	}
+	for i := 0; i < 2; i++ {
+		if rep := h.uc.SweepTenant(context.Background(), h.tenantID); rep.Failed != 0 || rep.Rechecked != 1 {
+			t.Fatalf("barrido %d sin celda: %+v", i, rep)
+		}
+		if got := h.stored(t, d.ID); got.Status != domain.StatusVerified || got.DirectoryDeactivationPending {
+			t.Fatalf("barrido %d sin celda: status %s, pendiente %v", i, got.Status, got.DirectoryDeactivationPending)
+		}
+	}
+	if h.events.count("domains.domain.failed") != 0 || len(h.directory.calls) != 0 || len(h.security.published) != 0 {
+		t.Fatalf("eventos %v, activaciones %d, publicaciones %d", h.events.subjects, len(h.directory.calls), len(h.security.published))
+	}
+
+	h.directory.err, h.security.err = nil, nil
+	h.uc.SweepTenant(context.Background(), h.tenantID)
+	if len(h.directory.calls) != 1 || !h.directory.calls[0].active || len(h.security.published) != 1 {
+		t.Errorf("con la celda de vuelta: activaciones %+v, publicaciones %d", h.directory.calls, len(h.security.published))
+	}
+}
+
+// Un dominio que cae sin poder desactivarse queda marcado; el barrido repite la desactivacion
+// hasta que mail-directory la confirma y despues no vuelve a llamar.
+func TestLaDesactivacionDeUnDominioCaidoSeReintentaHastaConfirmarse(t *testing.T) {
+	h := newHarness(t)
+	d := h.create(t, "acme.com", domain.PurposeCorporate)
+	h.failWhileDirectoryDown(t, d)
+
+	if rep := h.uc.SweepTenant(context.Background(), h.tenantID); rep.Deactivated != 0 || !h.stored(t, d.ID).DirectoryDeactivationPending {
+		t.Fatalf("sin celda: %+v", rep)
+	}
+	h.directory.err = nil
+	rep := h.uc.SweepTenant(context.Background(), h.tenantID)
+	last := h.directory.calls[len(h.directory.calls)-1]
+	if rep.Deactivated != 1 || last.active || h.stored(t, d.ID).DirectoryDeactivationPending {
+		t.Fatalf("con la celda de vuelta: %+v, ultima llamada %+v", rep, last)
+	}
+	calls := len(h.directory.calls)
+	if rep := h.uc.SweepTenant(context.Background(), h.tenantID); rep.Deactivated != 0 || len(h.directory.calls) != calls {
+		t.Errorf("una desactivacion confirmada no se repite: %+v", rep)
+	}
+	if h.events.count("domains.domain.failed") != 1 {
+		t.Errorf("eventos = %v", h.events.subjects)
+	}
+}
+
+// Si el dominio vuelve a verificar, la desactivacion pendiente ya no toca: se activa.
+func TestUnDominioReverificadoOlvidaLaDesactivacionPendiente(t *testing.T) {
+	h := newHarness(t)
+	d := h.create(t, "acme.com", domain.PurposeCorporate)
+	h.failWhileDirectoryDown(t, d)
+
+	h.directory.err = nil
+	h.dns.publishZone(h.uc, d)
+	if res := h.verify(t, d.ID); res.Domain.Status != domain.StatusVerified || h.stored(t, d.ID).DirectoryDeactivationPending {
+		t.Fatalf("reverificado: %s", res.Domain.Status)
+	}
+	if last := h.directory.calls[len(h.directory.calls)-1]; !last.active {
+		t.Error("el dominio reverificado se activa")
+	}
+	calls := len(h.directory.calls)
+	if rep := h.uc.SweepTenant(context.Background(), h.tenantID); rep.Deactivated != 0 {
+		t.Errorf("barrido: %+v", rep)
+	}
+	for _, c := range h.directory.calls[calls:] {
+		if !c.active {
+			t.Error("el barrido desactivo un dominio verificado")
+		}
+	}
+}
+
+// Dejar de ser corporativo no cancela una desactivacion pendiente: un dominio solo de envio no
+// esta en el directorio, verificado o no. La termina el barrido o, antes, el borrado.
+func TestLaDesactivacionPendienteSobreviveAlCambioDeUso(t *testing.T) {
+	sending := string(domain.PurposeSending)
+
+	h := newHarness(t)
+	d := h.create(t, "acme.com", domain.PurposeCorporate)
+	h.failWhileDirectoryDown(t, d)
+	upd, err := h.uc.Update(context.Background(), h.tenantID, d.ID, UpdateRequest{Purpose: &sending})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.dns.publishZone(h.uc, upd)
+	if res := h.verify(t, d.ID); res.Domain.Status != domain.StatusVerified || !h.stored(t, d.ID).DirectoryDeactivationPending {
+		t.Fatalf("verificado solo para envio: %s, pendiente %v", res.Domain.Status, h.stored(t, d.ID).DirectoryDeactivationPending)
+	}
+	h.directory.err = nil
+	if rep := h.uc.SweepTenant(context.Background(), h.tenantID); rep.Deactivated != 1 || h.stored(t, d.ID).DirectoryDeactivationPending {
+		t.Errorf("barrido: %+v", rep)
+	}
+
+	h = newHarness(t)
+	d = h.create(t, "acme.com", domain.PurposeCorporate)
+	h.failWhileDirectoryDown(t, d)
+	if _, err := h.uc.Update(context.Background(), h.tenantID, d.ID, UpdateRequest{Purpose: &sending}); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.uc.Delete(context.Background(), h.tenantID, d.ID); !errors.Is(err, domain.ErrIntegrationUnavailable) {
+		t.Fatalf("borrar sin celda: %v", err)
+	}
+	h.stored(t, d.ID)
+	h.directory.err = nil
+	if err := h.uc.Delete(context.Background(), h.tenantID, d.ID); err != nil {
+		t.Fatal(err)
+	}
+	if last := h.directory.calls[len(h.directory.calls)-1]; last.active || last.domain != "acme.com" {
+		t.Errorf("el borrado desactiva lo pendiente: %+v", last)
+	}
+}
+
+// Quitar el uso corporativo desactiva en el momento: sin la celda no se guarda el cambio.
+func TestQuitarElUsoCorporativoSinCeldaNoCambiaNada(t *testing.T) {
+	h := newHarness(t)
+	d := h.create(t, "acme.com", domain.PurposeCorporate)
+	h.dns.publishZone(h.uc, d)
+	h.verify(t, d.ID)
+	h.directory.err = errCelda
+	sending := string(domain.PurposeSending)
+	if _, err := h.uc.Update(context.Background(), h.tenantID, d.ID, UpdateRequest{Purpose: &sending}); !errors.Is(err, domain.ErrIntegrationUnavailable) {
+		t.Fatalf("sin celda: %v", err)
+	}
+	if got := h.stored(t, d.ID); got.Purpose != domain.PurposeCorporate || got.Status != domain.StatusVerified {
+		t.Errorf("guardado sin desactivar: %s/%s", got.Purpose, got.Status)
+	}
+}
+
+// Rotar descarta la clave que estaba en gracia: si mail-security no la retira, no se rota y la
+// fila la sigue recordando.
+func TestRotarSinRetirarLaClaveEnGraciaNoRota(t *testing.T) {
+	h := newHarness(t)
+	d := h.create(t, "acme.com", domain.PurposeSending)
+	h.dns.publishZone(h.uc, d)
+	h.verify(t, d.ID)
+	first, err := h.uc.RotateDKIM(context.Background(), h.tenantID, d.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inGrace := first.Domain.DKIMPreviousSelector
+
+	h.security.err = errCelda
+	if _, err := h.uc.RotateDKIM(context.Background(), h.tenantID, d.ID); !errors.Is(err, domain.ErrIntegrationUnavailable) {
+		t.Fatalf("sin celda: %v", err)
+	}
+	if got := h.stored(t, d.ID); got.DKIMSelector != first.Domain.DKIMSelector || got.DKIMPreviousSelector != inGrace {
+		t.Fatalf("roto sin retirar la clave en gracia: %s/%s", got.DKIMSelector, got.DKIMPreviousSelector)
+	}
+
+	h.security.err = nil
+	second, err := h.uc.RotateDKIM(context.Background(), h.tenantID, d.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(h.security.retired) != 1 || h.security.retired[0] != "acme.com/"+inGrace || second.Domain.DKIMPreviousSelector != first.Domain.DKIMSelector {
+		t.Errorf("retiradas %v, en gracia %s", h.security.retired, second.Domain.DKIMPreviousSelector)
+	}
+}

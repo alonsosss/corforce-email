@@ -26,7 +26,7 @@ func NewRepository(pool *db.ContextPool) *Repository {
 const domainColumns = `id, tenant_id, domain, purpose, status, verification_token, verified_at, last_checked_at,
  dkim_selector, dkim_private_key_enc, dkim_public_key, dkim_key_bits,
  dkim_previous_selector, dkim_previous_private_key_enc, dkim_previous_public_key, dkim_rotated_at,
- dmarc_policy, created_at, updated_at`
+ dmarc_policy, directory_deactivation_pending, created_at, updated_at`
 
 func scanDomain(row pgx.Row) (*domain.Domain, error) {
 	d := &domain.Domain{}
@@ -35,7 +35,7 @@ func scanDomain(row pgx.Row) (*domain.Domain, error) {
 		&d.ID, &d.TenantID, &d.Domain, &d.Purpose, &d.Status, &d.VerificationToken, &d.VerifiedAt, &d.LastCheckedAt,
 		&d.DKIMSelector, &d.DKIMPrivateKeyEnc, &d.DKIMPublicKey, &d.DKIMKeyBits,
 		&prevSelector, &d.DKIMPreviousPrivateKeyEnc, &prevPublic, &d.DKIMRotatedAt,
-		&d.DMARCPolicy, &d.CreatedAt, &d.UpdatedAt,
+		&d.DMARCPolicy, &d.DirectoryDeactivationPending, &d.CreatedAt, &d.UpdatedAt,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -123,12 +123,12 @@ func (r *Repository) Update(ctx context.Context, d *domain.Domain) error {
 		`UPDATE domains.domains SET purpose = $3, status = $4, verified_at = $5, last_checked_at = $6,
  dkim_selector = $7, dkim_private_key_enc = $8, dkim_public_key = $9, dkim_key_bits = $10,
  dkim_previous_selector = $11, dkim_previous_private_key_enc = $12, dkim_previous_public_key = $13,
- dkim_rotated_at = $14, dmarc_policy = $15
+ dkim_rotated_at = $14, dmarc_policy = $15, directory_deactivation_pending = $16
  WHERE tenant_id = $1 AND id = $2`,
 		d.TenantID, d.ID, d.Purpose, d.Status, d.VerifiedAt, d.LastCheckedAt,
 		d.DKIMSelector, d.DKIMPrivateKeyEnc, d.DKIMPublicKey, d.DKIMKeyBits,
 		nullable(d.DKIMPreviousSelector), d.DKIMPreviousPrivateKeyEnc, nullable(d.DKIMPreviousPublicKey),
-		d.DKIMRotatedAt, d.DMARCPolicy,
+		d.DKIMRotatedAt, d.DMARCPolicy, d.DirectoryDeactivationPending,
 	)
 	if err != nil {
 		return err
@@ -170,6 +170,19 @@ func (r *Repository) ListWithExpiredPreviousDKIM(ctx context.Context, tenantID u
  WHERE tenant_id = $1 AND dkim_previous_selector IS NOT NULL AND dkim_rotated_at < $2
  ORDER BY dkim_rotated_at`,
 		tenantID, rotatedBefore)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return collect(rows)
+}
+
+func (r *Repository) ListPendingDeactivation(ctx context.Context, tenantID uuid.UUID) ([]*domain.Domain, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT `+domainColumns+` FROM domains.domains
+ WHERE tenant_id = $1 AND directory_deactivation_pending
+ ORDER BY domain`,
+		tenantID)
 	if err != nil {
 		return nil, err
 	}

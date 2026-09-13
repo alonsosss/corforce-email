@@ -214,16 +214,16 @@ func (uc *UseCase) Update(ctx context.Context, tenantID, id uuid.UUID, req Updat
 	return d, nil
 }
 
-// Delete retira el dominio: primero lo desactiva en el directorio (409 si hay buzones) y
-// borra sus claves del Redis de los motores; solo entonces borra la fila. Si un servicio
-// no responde, la fila se queda: una clave de firma huerfana en Redis es peor que un
-// dominio que tarda en borrarse.
+// Delete retira el dominio: primero lo desactiva en el directorio (409 si hay buzones), tambien
+// si ya no es corporativo pero su desactivacion seguia pendiente, y borra sus claves del Redis
+// de los motores; solo entonces borra la fila. Si un servicio no responde, la fila se queda:
+// una clave de firma huerfana en Redis es peor que un dominio que tarda en borrarse.
 func (uc *UseCase) Delete(ctx context.Context, tenantID, id uuid.UUID) error {
 	d, err := uc.repo.GetByID(ctx, tenantID, id)
 	if err != nil {
 		return err
 	}
-	if d.Purpose.IncludesCorporate() {
+	if d.Purpose.IncludesCorporate() || d.DirectoryDeactivationPending {
 		if err := uc.mailDirectory.SetActivation(ctx, tenantID, d.Domain, false); err != nil {
 			return integrationError("desactivar en mail-directory", err)
 		}

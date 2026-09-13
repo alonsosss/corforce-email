@@ -3,11 +3,9 @@ package main
 import (
 	"errors"
 	"fmt"
-	"net"
 	"net/http"
 	"os"
 	"sort"
-	"strconv"
 	"strings"
 
 	"github.com/alonsosss/corforce-email/pkg/middleware"
@@ -43,7 +41,7 @@ import (
 const (
 	cellParam = "cell"
 	// baseCellEnv nombra la celda que sirven los destinos base de los servicios de celda.
-	baseCellEnv = "GATEWAY_BASE_CELL_CODE"
+	baseCellEnv = tenantcell.BaseCellEnv
 	// cellDirectoryService es el servicio que sabe en que celda vive cada empresa.
 	cellDirectoryService = "organization"
 )
@@ -148,42 +146,27 @@ func (t *routeTable) validateCellServices() error {
 }
 
 // loadCellTargets lee del entorno las instancias por celda de cada servicio de celda y la
-// celda de los destinos base. Una entrada mal formada, instancias sin celda base o la celda
-// base declarada tambien como instancia impiden arrancar.
+// celda de los destinos base, con las reglas de tenantcell.LoadInstances (las mismas que
+// domain-service): una entrada mal formada, instancias sin celda base o la celda base declarada
+// tambien como instancia impiden arrancar.
 func (t *routeTable) loadCellTargets() error {
-	t.cellTargets = map[string]map[string]string{}
-	var envs []string
-	declared := false
+	serviceOf := map[string]string{}
+	envs := make([]string, 0, len(t.Services))
 	for name, s := range t.Services {
-		if s.CellHostsEnv == "" {
-			continue
-		}
-		envs = append(envs, s.CellHostsEnv)
-		targets, err := parseCellHosts(s.CellHostsEnv, os.Getenv(s.CellHostsEnv))
-		if err != nil {
-			return err
-		}
-		t.cellTargets[name] = targets
-		declared = declared || len(targets) > 0
-	}
-	sort.Strings(envs)
-
-	base := strings.TrimSpace(os.Getenv(baseCellEnv))
-	switch {
-	case base == "" && declared:
-		return fmt.Errorf("%s es obligatorio cuando %s declaran instancias: sin el no se sabe que celda sirven los destinos base", baseCellEnv, strings.Join(envs, " o "))
-	case base == "":
-		return nil
-	case !tenantcell.ValidCode(base):
-		return fmt.Errorf("%s: %q no es un codigo de celda", baseCellEnv, base)
-	}
-	for name, targets := range t.cellTargets {
-		if _, dup := targets[base]; dup {
-			return fmt.Errorf("%s: la celda %q es la de los destinos base (%s) y no se declara tambien como instancia de %q",
-				t.Services[name].CellHostsEnv, base, baseCellEnv, name)
+		if s.CellHostsEnv != "" {
+			serviceOf[s.CellHostsEnv] = name
+			envs = append(envs, s.CellHostsEnv)
 		}
 	}
-	t.baseCell = base
+	inst, err := tenantcell.LoadInstances(os.Getenv, baseCellEnv, envs...)
+	if err != nil {
+		return err
+	}
+	t.cellTargets = make(map[string]map[string]string, len(serviceOf))
+	for env, name := range serviceOf {
+		t.cellTargets[name] = inst.ByEnv[env]
+	}
+	t.baseCell = inst.BaseCell
 	return nil
 }
 
@@ -226,32 +209,6 @@ func (t *routeTable) cellCoverageGaps() map[string][]string {
 		}
 	}
 	return gaps
-}
-
-// parseCellHosts interpreta "celda=host:puerto" separados por comas. Vacia no declara
-// ninguna instancia por celda.
-func parseCellHosts(envName, raw string) (map[string]string, error) {
-	out := map[string]string{}
-	if strings.TrimSpace(raw) == "" {
-		return out, nil
-	}
-	for _, entry := range strings.Split(raw, ",") {
-		code, hostport, ok := strings.Cut(strings.TrimSpace(entry), "=")
-		code, hostport = strings.TrimSpace(code), strings.TrimSpace(hostport)
-		if !ok || !tenantcell.ValidCode(code) {
-			return nil, fmt.Errorf("%s: entrada %q: se espera celda=host:puerto con el codigo de la celda", envName, entry)
-		}
-		if _, dup := out[code]; dup {
-			return nil, fmt.Errorf("%s: celda %q repetida", envName, code)
-		}
-		host, port, err := net.SplitHostPort(hostport)
-		n, perr := strconv.Atoi(port)
-		if err != nil || host == "" || strings.ContainsAny(host, "/?#@ ") || perr != nil || n < 1 || n > 65535 {
-			return nil, fmt.Errorf("%s: la celda %q necesita host:puerto, llego %q", envName, code, hostport)
-		}
-		out[code] = "http://" + net.JoinHostPort(host, strconv.Itoa(n))
-	}
-	return out, nil
 }
 
 // cellRouter elige la instancia por el segmento {cell}; lo que no es una celda declarada va

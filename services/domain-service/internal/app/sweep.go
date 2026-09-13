@@ -10,20 +10,38 @@ import (
 
 // SweepReport resume una pasada del barrido sobre una empresa.
 type SweepReport struct {
-	Rechecked int
-	Failed    int
-	Retired   int
-	Pruned    int64
+	Rechecked   int
+	Failed      int
+	Deactivated int
+	Retired     int
+	Pruned      int64
 }
 
-// SweepTenant reverifica los dominios de una empresa: los verificados (que pueden
+// SweepTenant termina primero las desactivaciones que quedaron sin confirmar en el directorio
+// de la celda. Despues reverifica los dominios de una empresa: los verificados (que pueden
 // perder sus registros) y los pendientes recientes (que pueden haberlos publicado sin
-// pulsar verificar). Despues retira las claves DKIM fuera de gracia y poda el historial.
+// pulsar verificar). Por ultimo retira las claves DKIM fuera de gracia y poda el historial.
 // El contexto lleva ya el pool de la empresa (ForEachActiveTenantConcurrent).
 func (uc *UseCase) SweepTenant(ctx context.Context, tenantID uuid.UUID) SweepReport {
 	var report SweepReport
 	now := uc.now()
 	log := uc.logger.With(zap.String("tenant_id", tenantID.String()))
+
+	pending, err := uc.repo.ListPendingDeactivation(ctx, tenantID)
+	if err != nil {
+		log.Error("barrido: listar desactivaciones pendientes", zap.Error(err))
+	}
+	for _, d := range pending {
+		if ctx.Err() != nil {
+			return report
+		}
+		if err := uc.completeDeactivation(ctx, d); err != nil {
+			log.Warn("barrido: el dominio ya no recibe y sigue sin desactivarse en mail-directory; se reintenta en el siguiente",
+				zap.String("domain", d.Domain), zap.Error(err))
+			continue
+		}
+		report.Deactivated++
+	}
 
 	domains, err := uc.repo.ListForRecheck(ctx, tenantID, now.Add(-uc.pendingWindow))
 	if err != nil {

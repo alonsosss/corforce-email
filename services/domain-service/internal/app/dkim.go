@@ -126,6 +126,14 @@ func (uc *UseCase) RotateDKIM(ctx context.Context, tenantID, id uuid.UUID) (*Rot
 	if d.HasPreviousDKIM() {
 		retired = d.DKIMPreviousSelector
 	}
+	// La clave en gracia sale de los motores antes de que la fila la olvide: despues ya nada
+	// la recordaria y su clave privada quedaria en el Redis de la celda. Si mail-security no la
+	// retira (tambien si no se llega a la celda de la empresa), no se rota.
+	if d.Status == domain.StatusVerified && retired != "" {
+		if err := uc.mailSecurity.RetireDKIM(ctx, tenantID, d.Domain, retired); err != nil {
+			return nil, integrationError("retirar en mail-security la clave en gracia", err)
+		}
+	}
 	previous := domain.Domain{
 		DKIMSelector: d.DKIMSelector, DKIMPrivateKeyEnc: d.DKIMPrivateKeyEnc, DKIMPublicKey: d.DKIMPublicKey,
 	}
@@ -141,12 +149,6 @@ func (uc *UseCase) RotateDKIM(ctx context.Context, tenantID, id uuid.UUID) (*Rot
 	}
 
 	if d.Status == domain.StatusVerified {
-		if retired != "" {
-			if err := uc.mailSecurity.RetireDKIM(ctx, tenantID, d.Domain, retired); err != nil {
-				uc.logger.Warn("no se pudo retirar el selector anterior en mail-security; se reintenta en el barrido",
-					zap.String("domain", d.Domain), zap.String("selector", retired), zap.Error(err))
-			}
-		}
 		// El TXT nuevo no esta publicado todavia: la clave nueva se deposita pero se
 		// sigue firmando con la anterior.
 		if err := uc.publishDKIM(ctx, d, true); err != nil {

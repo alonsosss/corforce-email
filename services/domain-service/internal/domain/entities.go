@@ -96,9 +96,20 @@ type Domain struct {
 	DKIMPreviousPublicKey     string
 	DKIMRotatedAt             *time.Time
 
+	// DirectoryDeactivationPending: el dominio dejo de recibir por la celda y su directorio
+	// puede tenerlo aun activo. Se marca antes de llamar a mail-directory y se quita cuando la
+	// desactivacion se confirma; el barrido la repite mientras siga marcada.
+	DirectoryDeactivationPending bool
+
 	DMARCPolicy DMARCPolicy
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
+}
+
+// ActiveInDirectory dice si el dominio debe estar activo en el directorio de la celda:
+// verificado y con uso corporativo.
+func (d *Domain) ActiveInDirectory() bool {
+	return d.Status == StatusVerified && d.Purpose.IncludesCorporate()
 }
 
 // HasPreviousDKIM indica si queda una clave anterior en gracia.

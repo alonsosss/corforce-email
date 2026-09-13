@@ -136,6 +136,18 @@ func (r *fakeRepo) ListWithExpiredPreviousDKIM(_ context.Context, tenantID uuid.
 	return out, nil
 }
 
+func (r *fakeRepo) ListPendingDeactivation(_ context.Context, tenantID uuid.UUID) ([]*domain.Domain, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []*domain.Domain
+	for _, d := range r.domains {
+		if d.TenantID == tenantID && d.DirectoryDeactivationPending {
+			out = append(out, clone(d))
+		}
+	}
+	return out, nil
+}
+
 func (r *fakeRepo) SaveChecks(_ context.Context, checks []domain.DNSCheck) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()

@@ -7,14 +7,15 @@ package postgres
 //	DOMAIN_SERVICE_TEST_DSN=postgres://user:pass@localhost:5432/db?sslmode=disable \
 //	  go test -tags integration ./services/domain-service/internal/adapters/postgres/
 //
-// Aplica la migracion canonica dos veces (idempotencia) y ejercita todas las consultas
-// del repositorio sobre una base desechable.
+// Aplica las migraciones canonicas del servicio en su orden, dos veces (idempotencia), y
+// ejercita todas las consultas del repositorio sobre una base desechable.
 
 import (
 	"context"
 	"errors"
 	"os"
 	"path/filepath"
+	"sort"
 	"testing"
 	"time"
 
@@ -49,16 +50,65 @@ func setup(t *testing.T) (context.Context, *Repository) {
 	}
 	t.Cleanup(pool.Close)
 
-	sqlBytes, err := os.ReadFile(filepath.Join("..", "..", "..", "..", "..", "migrations", "tenant", "canonical", "domain-service", "01_domains.sql"))
-	if err != nil {
-		t.Fatalf("leer migracion: %v", err)
+	files, err := filepath.Glob(filepath.Join("..", "..", "..", "..", "..", "migrations", "tenant", "canonical", "domain-service", "*.sql"))
+	if err != nil || len(files) < 2 {
+		t.Fatalf("migraciones del servicio: %v %v", files, err)
 	}
+	sort.Strings(files)
 	for i := 0; i < 2; i++ {
-		if _, err := pool.Exec(ctx, string(sqlBytes)); err != nil {
-			t.Fatalf("aplicar migracion (pasada %d): %v", i+1, err)
+		for _, f := range files {
+			sqlBytes, err := os.ReadFile(f)
+			if err != nil {
+				t.Fatalf("leer migracion %s: %v", f, err)
+			}
+			if _, err := pool.Exec(ctx, string(sqlBytes)); err != nil {
+				t.Fatalf("aplicar migracion %s (pasada %d): %v", filepath.Base(f), i+1, err)
+			}
 		}
 	}
 	return db.WithPool(ctx, pool), NewRepository(&db.ContextPool{})
+}
+
+// La marca de desactivacion pendiente nace apagada, se guarda con Update y solo la ve el
+// barrido de su empresa.
+func TestRepositoryDeactivationPending(t *testing.T) {
+	ctx, repo := setup(t)
+	tenantID := uuid.New()
+	d := sample(tenantID, "caido-"+uuid.NewString()[:8]+".test")
+	if err := repo.Create(ctx, d); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	other := sample(tenantID, "sano-"+uuid.NewString()[:8]+".test")
+	if err := repo.Create(ctx, other); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	got, err := repo.GetByID(ctx, tenantID, d.ID)
+	if err != nil || got.DirectoryDeactivationPending {
+		t.Fatalf("nace con la marca: %v %v", got, err)
+	}
+	if pending, err := repo.ListPendingDeactivation(ctx, tenantID); err != nil || len(pending) != 0 {
+		t.Fatalf("sin marcas: %d %v", len(pending), err)
+	}
+
+	got.Status, got.DirectoryDeactivationPending = domain.StatusFailed, true
+	if err := repo.Update(ctx, got); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	pending, err := repo.ListPendingDeactivation(ctx, tenantID)
+	if err != nil || len(pending) != 1 || pending[0].ID != d.ID || !pending[0].DirectoryDeactivationPending || pending[0].Status != domain.StatusFailed {
+		t.Fatalf("pendientes: %+v %v", pending, err)
+	}
+	if pending, _ := repo.ListPendingDeactivation(ctx, uuid.New()); len(pending) != 0 {
+		t.Error("otra empresa no ve las marcas de esta")
+	}
+
+	got.DirectoryDeactivationPending = false
+	if err := repo.Update(ctx, got); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if pending, _ := repo.ListPendingDeactivation(ctx, tenantID); len(pending) != 0 {
+		t.Errorf("la marca quitada sigue: %d", len(pending))
+	}
 }
 
 func sample(tenantID uuid.UUID, name string) *domain.Domain {

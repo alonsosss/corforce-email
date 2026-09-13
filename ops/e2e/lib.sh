@@ -218,11 +218,20 @@ e2e_alta_empresa() {
     -d "{\"slug\":\"$2\",\"name\":\"$2\",\"cell_code\":\"$3\",\"admin_email\":\"$4\",\"admin_password\":\"$5\",\"admin_first_name\":\"Ana\",\"admin_last_name\":\"Perez\"}"
 }
 
-# e2e_registros_sin_errores: ningun binario del host registro un error.
+# e2e_registros_sin_errores [ERE]: ningun binario del host registro un error, salvo las lineas que
+# casan con ERE: los errores que la prueba provoca a proposito, acotados por empresa y motivo.
 e2e_registros_sin_errores() {
-  local errores f
-  errores=$(grep -l '"level":"error"' "$WORK"/log/*.log 2>/dev/null)
-  if [[ -z "$errores" ]]; then ok "ningun servicio del host registro errores"; else
-    for f in $errores; do mal "errores en $(basename "$f")"; grep '"level":"error"' "$f" | head -3 >&2; done
-  fi
+  local ignorar="${1:-}" f lineas limpio=1
+  for f in "$WORK"/log/*.log; do
+    [[ -f "$f" ]] || continue
+    lineas=$(grep '"level":"error"' "$f")
+    [[ -n "$ignorar" && -n "$lineas" ]] && lineas=$(grep -Ev -- "$ignorar" <<<"$lineas")
+    if [[ -n "$lineas" ]]; then
+      limpio=0
+      mal "errores en $(basename "$f")"
+      head -3 <<<"$lineas" >&2
+    fi
+  done
+  [[ $limpio -eq 1 ]] && ok "ningun servicio del host registro errores"
+  return 0
 }

@@ -1,57 +1,38 @@
 package maildirectorycli
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
-	"strings"
-	"time"
 
-	"github.com/alonsosss/corforce-email/pkg/httpclient"
+	"github.com/alonsosss/corforce-email/services/domain-service/internal/adapters/cellcli"
 	"github.com/alonsosss/corforce-email/services/domain-service/internal/domain"
 	"github.com/google/uuid"
 )
 
-// Client activa y desactiva dominios en el directorio de la celda a traves de
-// mail-directory. Es una llamada interna: viaja con el token de gateway y la empresa
-// en cabecera, como el resto de llamadas servicio-a-servicio.
+// Client activa y desactiva dominios en el directorio de la celda de la empresa a traves de
+// mail-directory. La llamada va a la instancia de esa celda (cellcli), con el token de gateway
+// y la empresa en cabecera, como el resto de llamadas servicio-a-servicio.
 type Client struct {
-	baseURL string
-	token   string
-	http    *httpclient.Client
+	cell *cellcli.Caller
 }
 
-func New(baseURL, token string) *Client {
-	return &Client{
-		baseURL: strings.TrimRight(baseURL, "/"),
-		token:   token,
-		http:    httpclient.New("mail-directory", httpclient.Options{Timeout: 5 * time.Second, MaxAttempts: 3}),
-	}
+func New(cell *cellcli.Caller) *Client {
+	return &Client{cell: cell}
 }
 
-// SetActivation hace PUT /internal/mail-directory/domains/{domain}/activation. Un 409
-// significa que el dominio conserva buzones y no puede desactivarse.
+// SetActivation hace PUT /internal/mail-directory/domains/{domain}/activation. Un 409 significa
+// que el dominio conserva buzones y no puede desactivarse. mail-directory da de alta el dominio
+// que no tiene, en los dos sentidos: ninguna respuesta de error es "nada que hacer", y un 404 es
+// una instancia que no sirve la ruta, no un dominio que falta.
 func (c *Client) SetActivation(ctx context.Context, tenantID uuid.UUID, name string, active bool) error {
 	body, err := json.Marshal(map[string]bool{"active": active})
 	if err != nil {
 		return err
 	}
-	endpoint := fmt.Sprintf("%s/internal/mail-directory/domains/%s/activation", c.baseURL, url.PathEscape(name))
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, endpoint, bytes.NewReader(body))
-	if err != nil {
-		return err
-	}
-	// GetBody permite a pkg/httpclient rebobinar el cuerpo en un reintento.
-	req.GetBody = func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(body)), nil }
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Gateway-Token", c.token)
-	req.Header.Set("X-Tenant-ID", tenantID.String())
-
-	resp, err := c.http.Do(req)
+	resp, err := c.cell.Do(ctx, tenantID, http.MethodPut, "/internal/mail-directory/domains/"+url.PathEscape(name)+"/activation", body)
 	if err != nil {
 		return err
 	}
@@ -61,9 +42,6 @@ func (c *Client) SetActivation(ctx context.Context, tenantID uuid.UUID, name str
 		return nil
 	case resp.StatusCode == http.StatusConflict:
 		return domain.ErrDomainHasMailboxes
-	case resp.StatusCode == http.StatusNotFound && !active:
-		// Nada que desactivar: el directorio nunca tuvo el dominio.
-		return nil
 	default:
 		return fmt.Errorf("mail-directory: activation de %s respondio %d", name, resp.StatusCode)
 	}

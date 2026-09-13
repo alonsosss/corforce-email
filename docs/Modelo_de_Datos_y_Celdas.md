@@ -591,7 +591,7 @@ si falta `organization` entre los servicios.
   `foreign_tenant`, que es siempre un error de despliegue. Descartado: que organization copie en
   la base de la celda la lista de sus empresas al darlas de alta. Seria organization escribiendo
   en el esquema de mail-directory, o necesitaria un mapa de instancias por celda en organization
-  (el problema de domain-service, abajo), y las empresas ya existentes pedirian un relleno; a
+  (como el que usa domain-service, mas abajo), y las empresas ya existentes pedirian un relleno; a
   cambio solo se ganaria sobrevivir a un reinicio de la instancia con organization caido.
 * Probado: unitarias del gateway (cada ruta con sesion de cada servicio de celda, una celda sin
   consultas a organization, validacion de la tabla y del entorno), de `pkg/tenantcell`
@@ -665,6 +665,48 @@ si falta `organization` entre los servicios.
     una empresa con la cabecera recibe 403 y con la interna sigue en su celda; el gateway sin
     celdas no la admite; las metricas lo cuentan.
 
+* Llamadas de `domain-service` a la celda de cada empresa (V, 2026-09-13). `domain-service` vive en
+  el plano de empresa: activa dominios en `mail-directory` y entrega las claves DKIM a
+  `mail-security` de la celda de la empresa, no de una sola instancia. Lee las mismas variables que
+  el gateway (`GATEWAY_BASE_CELL_CODE`, `MAIL_DIRECTORY_CELL_HOSTS`, `MAIL_SECURITY_CELL_HOSTS`),
+  con las mismas reglas de arranque (`tenantcell.LoadInstances`) y `MAIL_DIRECTORY_URL` y
+  `MAIL_SECURITY_URL` como destinos base, y resuelve la celda con `tenantcell.Resolver` (la misma
+  ruta de organization, la misma cache y el mismo margen con organization caido). Con celda base
+  no arranca sin `ORGANIZATION_URL`; sin celda base ni instancias todo va a los destinos base y no
+  pregunta a nadie (una celda).
+  * Falla cerrado (`tenantcell.Targets`, `services/domain-service/internal/adapters/cellcli`): una
+    celda sin respuesta aplicable, una empresa que organization no conoce o una celda sin instancia
+    declarada del servicio no salen hacia ninguna instancia, y un 403 `TENANT_NOT_IN_CELL` de la
+    instancia es un error de configuracion. Ninguno cuenta como hecho ni como 404: el paso falla.
+    `cell_call_failures_total{service, reason}` (`unresolved`, `unknown_tenant`, `not_served`,
+    `not_in_cell`, nacen a cero) y registro con empresa y celda (nivel error para `not_served` y
+    `not_in_cell`, que son de despliegue). Un circuito de `pkg/httpclient` por instancia: una celda
+    caida no corta las llamadas a las demas.
+  * Reintento: el estado de un dominio sale solo del DNS, asi que un fallo de celda nunca lo marca
+    failed. La activacion y las claves de un dominio verificado se repiten en cada barrido, y la
+    verificacion las devuelve en `integration_errors`. Un dominio corporativo verificado que cae a
+    failed queda con `directory_deactivation_pending` (migracion de empresa
+    `02_directory_deactivation.sql`), guardada antes de llamar: el barrido repite la desactivacion
+    hasta que mail-directory la confirma, una reverificacion la anula y borrar el dominio desactiva
+    tambien si la marca sigue aunque ya no sea corporativo. Quitar el uso corporativo y borrar son
+    sincronos: sin la celda, 503 `INTEGRATION_UNAVAILABLE` y no se guarda nada. Rotar con una clave
+    en gracia la retira de mail-security antes de olvidarla; si no se puede, 503 y no se rota.
+  * Un 404 ya no cuenta como hecho: al activar o desactivar, mail-directory da de alta el dominio
+    que no tiene, y retirar claves en mail-security responde 204 aunque no esten. Un 404 solo puede
+    ser una instancia que no sirve la ruta.
+  * Probado: unitarias de `pkg/tenantcell` (lectura de instancias y sus reglas; eleccion en la celda
+    base, en otra celda, celda sin instancia, empresa desconocida, organization caido con la celda
+    en cache, sin ella y fuera del margen; una celda sin consultas), de `cellcli` (cada empresa a
+    la instancia de su celda con token y empresa; cortes sin salir hacia ninguna; 403
+    `TENANT_NOT_IN_CELL`; metricas), de los dos clientes (ningun 404 es hecho), del caso de uso
+    (verificado sin celda, desactivacion pendiente hasta confirmarse, reverificacion, cambio de uso,
+    borrado, rotacion) y de la configuracion; integracion del repositorio contra Postgres (la marca
+    y su consulta, migraciones dos veces); `make e2e`: beta verifica beta.test contra un DNS de la
+    prueba (`ops/e2e/dns_prueba.py`); el domain-service sin celdas no lo activa (pe-01 responde 403
+    `TENANT_NOT_IN_CELL`, sin filas en `mail_cell_pe_01`, metrica `not_in_cell`) y el de las celdas
+    lo activa en `mail_cell_pe_02` y cuenta `not_served` para las claves, porque `mail-security` no
+    declara pe-02.
+
 Pendiente (P):
 
 * Operaciones de plataforma de `mail-directory` en otra celda: los transportes sin empresa
@@ -674,12 +716,6 @@ Pendiente (P):
   plataforma, declaradas con `AcceptOperators`.
 * La web no tiene pantalla del cortafuegos: cuando la tenga, el selector de celda (solo para el
   superadmin, con las celdas de `GET /cells`) manda `X-Target-Cell` en sus peticiones.
-* Llamadas entre servicios hacia la celda: `domain-service` activa dominios y entrega DKIM en
-  una sola instancia (`MAIL_DIRECTORY_URL`, `MAIL_SECURITY_URL`). Con varias celdas, la instancia
-  responde 403 `TENANT_NOT_IN_CELL` a la empresa de otra celda y el paso falla en vez de escribir
-  en la celda equivocada (antes, desactivar respondia 404 y domain-service lo daba por hecho).
-  Diseno: `tenantcell.Resolver` y un mapa de instancias por celda en `domain-service`, fallando
-  cerrado igual que el gateway.
 * Traslado de una empresa de celda: el gateway y las instancias de celda lo ven al caducar su
   entrada (5 minutos); falta invalidarla con el evento del traslado.
 
@@ -746,6 +782,7 @@ Diseno:
 | Una peticion con sesion a un servicio de celda solo llega a la instancia de la celda de su empresa; sin celda resoluble o sin instancia declarada no sale hacia ninguna (5.4) | V (2026-09-13; con `GATEWAY_BASE_CELL_CODE`) |
 | Una instancia de celda solo atiende a las empresas de su celda aunque le lleguen de otra (gateway mal configurado, llamada de servicio a la instancia equivocada): pregunta a organization y rechaza con 403 antes de cualquier ruta, sin escribir nada; con organization caido solo las ya comprobadas (5.4) | V (2026-09-13, `mail-directory` y `mail-security`; el webmail no la necesita, 5.5) |
 | Un operador de la plataforma solo alcanza otra celda nombrandola (`X-Target-Cell`): el gateway lo acepta solo del superadmin y hacia una celda con instancia, sin volver nunca a la de su empresa; la instancia solo le atiende rutas de plataforma declaradas, nunca datos de una empresa, y cada peticion queda auditada con la celda (5.4) | V (2026-09-13; rutas de plataforma: el cortafuegos de `mail-security`) |
+| Un servicio del plano de empresa (`domain-service`) solo escribe en la instancia de la celda de la empresa: sin celda resuelta o sin instancia declarada no llama a ninguna, y el 403 `TENANT_NOT_IN_CELL` es un fallo que se reintenta, nunca un exito (5.4) | V (2026-09-13) |
 | El webmail de un buzon se sirve en la celda de su dominio (5.5) | P |
 | Un servicio de empresa solo abre su esquema y no el registro (credencial por servicio) | P (5.2) |
 | Respaldo por base y restauracion probada semanalmente (`ops/backup`) | V (scripts), P (programados en este entorno) |

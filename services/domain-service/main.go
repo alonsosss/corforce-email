@@ -18,6 +18,8 @@ import (
 	"github.com/alonsosss/corforce-email/pkg/middleware"
 	"github.com/alonsosss/corforce-email/pkg/response"
 	"github.com/alonsosss/corforce-email/pkg/server"
+	"github.com/alonsosss/corforce-email/pkg/tenantcell"
+	"github.com/alonsosss/corforce-email/services/domain-service/internal/adapters/cellcli"
 	dnsadapter "github.com/alonsosss/corforce-email/services/domain-service/internal/adapters/dns"
 	handler "github.com/alonsosss/corforce-email/services/domain-service/internal/adapters/http"
 	"github.com/alonsosss/corforce-email/services/domain-service/internal/adapters/maildirectorycli"
@@ -38,6 +40,12 @@ const (
 	defaultSweepWorkers    = 4
 	// sweepLockKey serializa el barrido entre replicas (advisory lock en el registro).
 	sweepLockKey int64 = 0x646f6d73 // "doms"
+
+	// Instancias por celda de los servicios de celda: las mismas variables que lee el gateway
+	// (Modelo_de_Datos_y_Celdas.md, 5.4), con MAIL_DIRECTORY_URL y MAIL_SECURITY_URL como
+	// destinos base de la celda tenantcell.BaseCellEnv.
+	mailDirectoryCellHostsEnv = "MAIL_DIRECTORY_CELL_HOSTS"
+	mailSecurityCellHostsEnv  = "MAIL_SECURITY_CELL_HOSTS"
 )
 
 // settings es la configuracion propia del servicio. Los valores que aparecen en la zona
@@ -48,6 +56,9 @@ type settings struct {
 	platform         domain.PlatformDNS
 	mailDirectoryURL string
 	mailSecurityURL  string
+	// directoryTargets y securityTargets eligen la instancia de la celda de cada empresa.
+	directoryTargets *tenantcell.Targets
+	securityTargets  *tenantcell.Targets
 	internalToken    string
 	dnsResolver      string
 	rotationGrace    time.Duration
@@ -58,7 +69,9 @@ type settings struct {
 	port             int
 }
 
-func loadSettings() (settings, error) {
+// loadSettings lee y valida la configuracion. Con varias celdas (tenantcell.BaseCellEnv)
+// necesita ORGANIZATION_URL para resolver la celda de cada empresa; con una no pregunta a nadie.
+func loadSettings(logger *zap.Logger) (settings, error) {
 	var missing []string
 	require := func(key string) string {
 		v := strings.TrimSpace(os.Getenv(key))
@@ -95,6 +108,23 @@ func loadSettings() (settings, error) {
 		return s, err
 	}
 	s.internalToken = token
+
+	cells, err := tenantcell.LoadInstances(os.Getenv, tenantcell.BaseCellEnv, mailDirectoryCellHostsEnv, mailSecurityCellHostsEnv)
+	if err != nil {
+		return s, err
+	}
+	var resolver *tenantcell.Resolver
+	if cells.BaseCell != "" {
+		if resolver, err = tenantcell.ResolverFromEnv(logger); err != nil {
+			return s, fmt.Errorf("con %s hace falta preguntar a organization la celda de cada empresa: %w", tenantcell.BaseCellEnv, err)
+		}
+	}
+	if s.directoryTargets, err = cells.Targets(mailDirectoryCellHostsEnv, s.mailDirectoryURL, resolver); err != nil {
+		return s, err
+	}
+	if s.securityTargets, err = cells.Targets(mailSecurityCellHostsEnv, s.mailSecurityURL, resolver); err != nil {
+		return s, err
+	}
 	return s, nil
 }
 
@@ -121,13 +151,20 @@ func main() {
 	if err != nil {
 		log.Fatalf("load config: %v", err)
 	}
-	st, err := loadSettings()
+	st, err := loadSettings(logger)
 	if err != nil {
 		log.Fatalf("domain-service: %v", err)
 	}
 	keyRing, err := crypto.LoadKeyRing("MAIL_ENCRYPTION_KEY", "MAIL_ENCRYPTION_KEYS_OLD")
 	if err != nil {
 		log.Fatalf("domain-service: cifrado de claves DKIM: %v", err)
+	}
+	if base := st.directoryTargets.BaseCell(); base != "" {
+		logger.Info("servicios de celda por la celda de cada empresa", zap.String("base_cell", base),
+			zap.Strings("mail_directory_cells", st.directoryTargets.Cells()),
+			zap.Strings("mail_security_cells", st.securityTargets.Cells()))
+	} else {
+		logger.Info("una celda: mail-directory y mail-security en su destino base, sin resolver la celda de cada empresa")
 	}
 
 	ctx := context.Background()
@@ -156,8 +193,8 @@ func main() {
 		Repo:                 postgres.NewRepository(ctxPool),
 		DNS:                  dnsadapter.New(st.dnsResolver),
 		Cipher:               keyRing,
-		MailDirectory:        maildirectorycli.New(st.mailDirectoryURL, st.internalToken),
-		MailSecurity:         mailsecuritycli.New(st.mailSecurityURL, st.internalToken),
+		MailDirectory:        maildirectorycli.New(cellcli.New("mail-directory", st.directoryTargets, st.internalToken, logger)),
+		MailSecurity:         mailsecuritycli.New(cellcli.New("mail-security", st.securityTargets, st.internalToken, logger)),
 		Events:               publisher,
 		Platform:             st.platform,
 		PlatformHostname:     st.platformHostname,
@@ -209,6 +246,7 @@ func runSweeps(ctx context.Context, tenantDB *db.TenantDB, registry *db.Pool, uc
 			mu.Lock()
 			total.Rechecked += rep.Rechecked
 			total.Failed += rep.Failed
+			total.Deactivated += rep.Deactivated
 			total.Retired += rep.Retired
 			total.Pruned += rep.Pruned
 			mu.Unlock()
@@ -219,6 +257,7 @@ func runSweeps(ctx context.Context, tenantDB *db.TenantDB, registry *db.Pool, uc
 		}
 		logger.Info("barrido de dominios completado",
 			zap.Int("rechecked", total.Rechecked), zap.Int("failed", total.Failed),
+			zap.Int("deactivated", total.Deactivated),
 			zap.Int("dkim_retired", total.Retired), zap.Int64("checks_pruned", total.Pruned),
 			zap.Duration("took", time.Since(started)))
 	}

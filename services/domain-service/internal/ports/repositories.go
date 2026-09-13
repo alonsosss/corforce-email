@@ -24,6 +24,9 @@ type Repository interface {
 	// ListWithExpiredPreviousDKIM devuelve los dominios cuya clave DKIM anterior lleva
 	// en gracia mas de la ventana indicada.
 	ListWithExpiredPreviousDKIM(ctx context.Context, tenantID uuid.UUID, rotatedBefore time.Time) ([]*domain.Domain, error)
+	// ListPendingDeactivation devuelve los dominios cuya desactivacion en el directorio de la
+	// celda sigue sin confirmarse.
+	ListPendingDeactivation(ctx context.Context, tenantID uuid.UUID) ([]*domain.Domain, error)
 
 	SaveChecks(ctx context.Context, checks []domain.DNSCheck) error
 	// LatestChecks devuelve la ultima comprobacion de cada registro del dominio.
