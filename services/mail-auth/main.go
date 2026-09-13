@@ -59,11 +59,7 @@ func main() {
 	}
 
 	ctx := context.Background()
-	dsn, err := cfg.Postgres.CellDSN()
-	if err != nil {
-		log.Fatalf("cell dsn: %v", err)
-	}
-	pool, err := db.NewNamedPool(ctx, dsn, "cell", logger)
+	pool, err := db.NewCellPool(ctx, cfg.Postgres, logger)
 	if err != nil {
 		log.Fatalf("connect cell db: %v", err)
 	}

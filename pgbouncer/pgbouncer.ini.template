@@ -17,8 +17,8 @@ auth_file           = /etc/pgbouncer/userlist.txt
 ; servidor siguen con el tipo viejo y Postgres responde "cached plan must not
 ; change result type" hasta que esas conexiones mueren (server_lifetime).
 ; RECONNECT las renueva sin cortar a nadie. Se autentica con userlist.txt.
-admin_users         = erp_admin
-stats_users         = erp_admin
+admin_users         = __DB_ADMIN_USER__
+stats_users         = __DB_ADMIN_USER__
 
 ; transaction mode: libera la conexión al terminar cada transacción
 ; es el modo más eficiente para microservicios stateless

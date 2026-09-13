@@ -103,11 +103,7 @@ func main() {
 
 	// Servicio de CELDA: un solo pool fijo a la base de la celda. La empresa viaja en
 	// el contexto (InjectFromGateway) y es lo que leen las politicas RLS.
-	cellDSN, err := cfg.Postgres.CellDSN()
-	if err != nil {
-		log.Fatalf("cell dsn: %v", err)
-	}
-	pool, err := db.NewNamedPool(ctx, cellDSN, "cell", logger)
+	pool, err := db.NewCellPool(ctx, cfg.Postgres, logger)
 	if err != nil {
 		log.Fatalf("connect cell db: %v", err)
 	}

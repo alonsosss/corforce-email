@@ -6,7 +6,8 @@
 # planes y derechos de billing, autorizacion de envio en reputation, alcance de permisos,
 # contactos con su consentimiento y audiencia, campanas por la via de marketing de
 # transactional (hasta su rechazo por remitente sin verificar, sin SES), el doble opt-in por
-# automations y el panel de analitica.
+# automations y el panel de analitica. Los servicios de la celda corren con la credencial
+# propia de la celda (ops/db/cell-service-role.sh), sin la de plataforma.
 #
 # Cada paso COMPRUEBA su resultado y la ejecucion termina con error si alguno falla: no
 # basta con que los servicios arranquen, tienen que hablarse. Las credenciales se generan
@@ -101,12 +102,26 @@ echo "== Compilacion (${SERVICES[*]})"
 mkdir -p "$WORK/bin" "$WORK/log"
 for s in "${SERVICES[@]}"; do go build -o "$WORK/bin/$s" "./services/$s" || { echo "no compila $s" >&2; exit 1; }; done
 
-echo "== Base de la celda pe-01"
+echo "== Bases de las celdas pe-01 y pe-02"
 export PGUSER=mail_admin PGPASSWORD="$POSTGRES_PASSWORD"
-sql mail_registry "CREATE DATABASE mail_cell_pe_01" >/dev/null
-for f in migrations/cell/canonical/platform/*.sql migrations/cell/canonical/mail-directory/*.sql migrations/cell/canonical/mail-security/*.sql; do
-  psql -v ON_ERROR_STOP=1 -q -d mail_cell_pe_01 < "$f" >/dev/null 2>&1 || { mal "migracion de celda $f"; }
+for celda in mail_cell_pe_01 mail_cell_pe_02; do
+  sql mail_registry "CREATE DATABASE $celda" >/dev/null
+  for f in migrations/cell/canonical/platform/*.sql migrations/cell/canonical/mail-directory/*.sql migrations/cell/canonical/mail-security/*.sql; do
+    psql -v ON_ERROR_STOP=1 -q -d "$celda" < "$f" >/dev/null 2>&1 || { mal "migracion de celda $f en $celda"; }
+  done
 done
+
+echo "== Credencial propia de cada celda (ops/db/cell-service-role.sh)"
+CELL_ROLE=mail_cell_pe_01_svc
+CELL_PASS="$(rand_hex 24)"
+PGHOST=127.0.0.1 CELL_DB_PASSWORD="$CELL_PASS" bash ops/db/cell-service-role.sh --cell pe-01 >/dev/null || mal "cell-service-role.sh pe-01"
+PGHOST=127.0.0.1 CELL_DB_PASSWORD="$(rand_hex 24)" bash ops/db/cell-service-role.sh --cell pe-02 >/dev/null || mal "cell-service-role.sh pe-02"
+# Por el socket del contenedor: lo que se prueba es el privilegio CONNECT, no la contrasena
+# (la prueban los servicios de la celda, que entran por TCP).
+como_celda() { psql -U "$CELL_ROLE" -d "$1" -At -c 'SELECT current_user' 2>&1; }
+expect "el rol de la celda entra en su base" "$(como_celda mail_cell_pe_01)" "$CELL_ROLE"
+contains "pero no en el registro" "$(como_celda mail_registry)" "permission denied for database"
+contains "ni en la base de otra celda" "$(como_celda mail_cell_pe_02)" "permission denied for database"
 
 # ── Entorno comun ────────────────────────────────────────────────────────────
 export ENVIRONMENT=development
@@ -163,7 +178,16 @@ export SES_REGION=us-east-1 SES_CONFIG_SET_TRANSACTIONAL=cfm-transactional SES_C
 export PLATFORM_FROM_EMAIL=no-reply@platform.test PLATFORM_FROM_NAME="Core Force Mail" PLATFORM_FROM_ALLOW_UNVERIFIED=false
 export CAMPAIGNS_TICK=1s
 
-arrancar() { "$WORK/bin/$1" >"$WORK/log/$1.log" 2>&1 & }
+# Los servicios de la celda arrancan con SU credencial y sin la de plataforma: un permiso que
+# le falte al rol de la celda hace fallar las comprobaciones del correo de mas abajo.
+SERVICIOS_DE_CELDA=" mail-directory mail-auth mail-security "
+arrancar() {
+  if [[ "$SERVICIOS_DE_CELDA" == *" $1 "* ]]; then
+    env -u POSTGRES_PASSWORD CELL_DB_PASSWORD="$CELL_PASS" "$WORK/bin/$1" >"$WORK/log/$1.log" 2>&1 &
+  else
+    "$WORK/bin/$1" >"$WORK/log/$1.log" 2>&1 &
+  fi
+}
 esperar_salud() {
   for _ in $(seq 1 40); do
     [[ "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$2/healthz")" == 200 ]] && return 0
@@ -188,6 +212,19 @@ ARRANQUE=(identity access-control mail-directory mail-auth domain-service mail-s
 for s in "${ARRANQUE[@]}"; do arrancar "$s"; done
 for s in "${ARRANQUE[@]}"; do esperar_salud "$s" "${PORT[$s]}"; done
 
+echo "== Credencial de la celda en uso"
+expect "los servicios de la celda conectan con su rol" \
+  "$(sql mail_registry "SELECT count(*) > 0 FROM pg_stat_activity WHERE usename = '$CELL_ROLE' AND datname = 'mail_cell_pe_01'")" "t"
+# Con la de plataforma a mano pero sin la de la celda, en produccion no arranca.
+env -u CELL_DB_PASSWORD ENVIRONMENT=production MAIL_DIRECTORY_PORT=$((BASE + 96)) \
+  timeout 20 "$WORK/bin/mail-directory" >"$WORK/fail-closed.log" 2>&1
+rc=$?
+if [[ $rc -ne 0 && $rc -ne 124 ]] && grep -q 'CELL_DB_PASSWORD is required' "$WORK/fail-closed.log"; then
+  ok "en produccion, sin credencial de celda mail-directory no arranca"
+else
+  mal "mail-directory en produccion sin credencial de celda (salida $rc): $(head -c 300 "$WORK/fail-closed.log")"
+fi
+
 echo "== Identidad y acceso"
 L1=$(curl -s -X POST "$GW/auth/login" -H 'Content-Type: application/json' -d "{\"email\":\"root@platform.test\",\"password\":\"$ADMIN_PASS\"}")
 T1=$(echo "$L1" | jget data.access_token)
@@ -200,6 +237,7 @@ ORG=$(curl -s -X POST "$GW/organizations" -H "$A1" -H 'Content-Type: application
   -d "{\"slug\":\"acme\",\"name\":\"Acme\",\"cell_code\":\"pe-01\",\"admin_email\":\"admin@acme.test\",\"admin_password\":\"$TENANT_PASS\",\"admin_first_name\":\"Ana\",\"admin_last_name\":\"Perez\"}")
 expect "alta de empresa en su celda" "$(echo "$ORG" | jget data.slug)" "acme"
 expect "base de la empresa creada y migrada" "$(sql mail_registry "SELECT count(*) FROM pg_database WHERE datname = 'mail_tenant_acme'")" "1"
+contains "organization la cierra: el rol de la celda no la abre" "$(como_celda mail_tenant_acme)" "permission denied for database"
 
 L2=$(curl -s -X POST "$GW/auth/login" -H 'Content-Type: application/json' -d "{\"email\":\"admin@acme.test\",\"password\":\"$TENANT_PASS\"}")
 T2=$(echo "$L2" | jget data.access_token)

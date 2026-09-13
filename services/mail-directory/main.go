@@ -44,14 +44,9 @@ func main() {
 	if err != nil {
 		log.Fatalf("load config: %v", err)
 	}
-	dsn, err := cfg.Postgres.CellDSN()
-	if err != nil {
-		log.Fatalf("cell dsn: %v", err)
-	}
-
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	pool, err := db.NewNamedPool(ctx, dsn, "cell", logger)
+	pool, err := db.NewCellPool(ctx, cfg.Postgres, logger)
 	if err != nil {
 		log.Fatalf("connect cell db: %v", err)
 	}

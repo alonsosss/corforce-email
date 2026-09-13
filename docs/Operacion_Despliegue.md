@@ -22,6 +22,17 @@ materializa en `/dev/shm/core-force-mail/secrets.env` (tmpfs, 0600, todo o nada)
 canónica es `ops/security/secrets/secret-keys.txt`; añadir una variable ahí es parte de
 introducir el secreto. CI: `make check-secrets` y `make check-secret-sources`.
 
+Credencial de la celda: la contraseña del rol `<CELL_DB_NAME>_svc` de la celda que sirve
+el despliegue va al almacén como `CELL_DB_PASSWORD` (obligatoria: sin ella el despliegue se
+detiene antes de recrear nada). La reciben solo `mail-directory`, `mail-security` y
+`mail-auth`, que en producción no arrancan sin ella; `CELL_DB_USER` es configuración
+opcional y por defecto ese nombre. Alta y rotación, seguidas: publicar el valor con
+`add-secret.sh` (al menos 32 caracteres ASCII imprimibles), correr
+`with-secrets.sh ops/db/cell-service-role.sh --cell <code>`, poner la entrada del rol en
+`userlist.txt` de PgBouncer y recrear los tres servicios. Entre el script y la recreación,
+las conexiones abiertas siguen vivas pero las nuevas con la contraseña retirada fallan.
+Detalle en `docs/Modelo_de_Datos_y_Celdas.md` 5.1.
+
 ## 3. Arranque de una plataforma vacía
 
 `ops/db/bootstrap-platform.sh` crea la celda inicial, la empresa `platform` y su primer
@@ -36,7 +47,9 @@ para llamar a la API hace falta ya un superadmin. Después, todo por API: `POST 
 * Empresa: se aplican al crear la empresa y en un barrido de fondo (`RUN_TENANT_MIGRATIONS`)
   por conexión directa con advisory lock; `POST /api/v1/organizations/migrate` para forzar.
 * Celda: `ops/db/apply-migration.sh` contra `mail_cell_<code>` (P: runner propio en
-  `mail-directory`).
+  `mail-directory`). Al abrir una celda, en el mismo paso y tras sus migraciones,
+  `ops/db/cell-service-role.sh --cell <code>`: crea el rol de sus servicios y cierra a
+  PUBLIC las bases del cluster (necesita `mail_service`, de las migraciones 06).
 * Reglas: idempotentes y aditivas (`make check-migrations` cubre empresa y celda), cabecera
   `-- Schema | Service`, nunca cambiar el tipo de una columna sin
   `ops/maintenance/pgbouncer-reconnect.sh` después (los planes preparados viven en el pooler).

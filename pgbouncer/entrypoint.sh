@@ -7,6 +7,8 @@ set -eu
 
 DB_UPSTREAM_HOST="${DB_UPSTREAM_HOST:-postgres-primary}"
 DB_UPSTREAM_PORT="${DB_UPSTREAM_PORT:-5432}"
+# Usuario de administracion y estadisticas de pgbouncer: el de la plataforma.
+DB_ADMIN_USER="${DB_ADMIN_USER:-${POSTGRES_USER:-mail_admin}}"
 
 template="/etc/pgbouncer/pgbouncer.ini.template"
 # Se renderiza a una ruta escribible (la imagen puede correr como usuario
@@ -16,6 +18,7 @@ rendered="/tmp/pgbouncer.ini"
 sed \
   -e "s|__DB_UPSTREAM_HOST__|${DB_UPSTREAM_HOST}|g" \
   -e "s|__DB_UPSTREAM_PORT__|${DB_UPSTREAM_PORT}|g" \
+  -e "s|__DB_ADMIN_USER__|${DB_ADMIN_USER}|g" \
   "$template" > "$rendered"
 
 exec pgbouncer "$rendered"

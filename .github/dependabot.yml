@@ -6,8 +6,9 @@
 # ecosistema: un PR por semana y familia, no uno por paquete. Los mayores (major) no se
 # agrupan a proposito: cada uno merece leerse solo.
 #
-# Sin entrada docker: las 84 imagenes Go comparten golang:1.25-alpine y la version de Go
-# la gobierna go.mod, que si se vigila aqui; vigilar un Dockerfile de 84 seria cosmetico.
+# Sin entrada docker: todas las imagenes Go comparten la misma imagen golang y la version
+# de Go la gobierna go.mod, que si se vigila aqui (al subirla, subir tambien los Dockerfile,
+# la plantilla de make new-service y el go-version de CI).
 version: 2
 updates:
   - package-ecosystem: gomod

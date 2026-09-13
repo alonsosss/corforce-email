@@ -1,9 +1,13 @@
 package config
 
 import (
+	"errors"
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -29,28 +33,41 @@ type PostgresConfig struct {
 	// CellDBName es la base de la CELDA (directorio de correo que leen los motores) para
 	// los servicios que viven en ella. Vacio en los servicios del plano de control.
 	CellDBName string
+	// CellUser y CellPassword son la credencial propia de la celda: el rol de login que
+	// crea ops/db/cell-service-role.sh, con CONNECT solo a la base de su celda. CellUser
+	// vacio toma el nombre por convencion (CellServiceRole).
+	CellUser     string
+	CellPassword string
+	// AllowPlatformCellCredential deja que un servicio de celda sin credencial propia abra
+	// su base con la de plataforma. Solo lo activa un ENVIRONMENT declarado de desarrollo
+	// o de prueba: en cualquier otro, sin credencial de celda el servicio no arranca.
+	AllowPlatformCellCredential bool
+}
+
+// postgresURL compone un DSN con el usuario y la contrasena escapados: una contrasena con
+// '@', '/' o '?' partiria la URL y pgx la rechazaria o, peor, la leeria mal.
+func postgresURL(user, password, host string, port int, dbName, sslMode string) string {
+	u := url.URL{
+		Scheme:   "postgres",
+		User:     url.UserPassword(user, password),
+		Host:     net.JoinHostPort(host, strconv.Itoa(port)),
+		Path:     "/" + dbName,
+		RawQuery: "sslmode=" + sslMode,
+	}
+	return u.String()
 }
 
 func (p PostgresConfig) DSN() string {
-	return fmt.Sprintf(
-		"postgres://%s:%s@%s:%d/%s?sslmode=disable",
-		p.User, p.Password, p.Host, p.Port, p.DBName,
-	)
+	return postgresURL(p.User, p.Password, p.Host, p.Port, p.DBName, "disable")
 }
 
 func (p PostgresConfig) TenantDSN(dbName string) string {
-	return fmt.Sprintf(
-		"postgres://%s:%s@%s:%d/%s?sslmode=disable",
-		p.User, p.Password, p.Host, p.Port, dbName,
-	)
+	return postgresURL(p.User, p.Password, p.Host, p.Port, dbName, "disable")
 }
 
 // TenantDSNAt es TenantDSN contra el host de otra celda (organization.cells).
 func (p PostgresConfig) TenantDSNAt(host string, port int, dbName string) string {
-	return fmt.Sprintf(
-		"postgres://%s:%s@%s:%d/%s?sslmode=prefer",
-		p.User, p.Password, host, port, dbName,
-	)
+	return postgresURL(p.User, p.Password, host, port, dbName, "prefer")
 }
 
 // TenantDirectDSNAt es TenantDirectDSN contra otra celda: si el host es el del cluster
@@ -63,13 +80,74 @@ func (p PostgresConfig) TenantDirectDSNAt(host string, port int, dbName string) 
 	return p.TenantDSNAt(host, port, dbName)
 }
 
-// CellDSN es la conexion a la base de la celda por pgbouncer. Falla si el servicio no
-// declaro CELL_DB_NAME: un servicio de celda sin celda es un error de despliegue.
-func (p PostgresConfig) CellDSN() (string, error) {
+// cellServiceRoleSuffix completa el nombre del rol de login de una celda a partir del de
+// su base. ops/db/cell-service-role.sh aplica la misma regla.
+const cellServiceRoleSuffix = "_svc"
+
+// CellServiceRole es el rol de login de los servicios de la celda cuya base es cellDBName
+// (mail_cell_pe_01 -> mail_cell_pe_01_svc).
+func CellServiceRole(cellDBName string) string {
+	return cellDBName + cellServiceRoleSuffix
+}
+
+// ErrCellCredentialRequired: un servicio de celda sin credencial propia en un entorno que
+// no admite el respaldo de plataforma.
+var ErrCellCredentialRequired = errors.New(
+	"CELL_DB_PASSWORD is required: cell services only use the platform credential when ENVIRONMENT is development or test")
+
+// CellConnection es como abre su base un servicio de celda.
+type CellConnection struct {
+	DSN  string
+	User string
+	// PlatformCredential indica que la conexion usa la credencial de plataforma como
+	// respaldo de desarrollo, no la de la celda.
+	PlatformCredential bool
+}
+
+// CellConnection resuelve la conexion a la base de la celda por pgbouncer, fallando
+// cerrado: sin CELL_DB_NAME no hay celda, y sin credencial de celda solo se admite la de
+// plataforma donde AllowPlatformCellCredential lo permite.
+func (p PostgresConfig) CellConnection() (CellConnection, error) {
 	if p.CellDBName == "" {
-		return "", fmt.Errorf("CELL_DB_NAME is required for cell services")
+		return CellConnection{}, fmt.Errorf("CELL_DB_NAME is required for cell services")
 	}
-	return p.TenantDSN(p.CellDBName), nil
+	switch {
+	case p.CellPassword != "":
+		user := p.CellUser
+		if user == "" {
+			user = CellServiceRole(p.CellDBName)
+		}
+		return CellConnection{
+			DSN:  postgresURL(user, p.CellPassword, p.Host, p.Port, p.CellDBName, "disable"),
+			User: user,
+		}, nil
+	case p.CellUser != "":
+		return CellConnection{}, fmt.Errorf("CELL_DB_USER is set without CELL_DB_PASSWORD")
+	case !p.AllowPlatformCellCredential:
+		return CellConnection{}, ErrCellCredentialRequired
+	case p.Password == "":
+		return CellConnection{}, fmt.Errorf("no database credential for the cell: set CELL_DB_PASSWORD")
+	}
+	return CellConnection{
+		DSN:                postgresURL(p.User, p.Password, p.Host, p.Port, p.CellDBName, "disable"),
+		User:               p.User,
+		PlatformCredential: true,
+	}, nil
+}
+
+// CellDSN es el DSN de CellConnection.
+func (p PostgresConfig) CellDSN() (string, error) {
+	conn, err := p.CellConnection()
+	if err != nil {
+		return "", err
+	}
+	return conn.DSN, nil
+}
+
+// hasCellCredential indica que el proceso es un servicio de celda con credencial propia:
+// no necesita la de plataforma y, en produccion, no debe recibirla.
+func (p PostgresConfig) hasCellCredential() bool {
+	return p.CellDBName != "" && p.CellPassword != ""
 }
 
 // TenantDirectDSN conecta al Postgres REAL, saltando pgbouncer. Lo necesita el plano
@@ -86,10 +164,7 @@ func (p PostgresConfig) TenantDirectDSN(dbName string) string {
 			port = p.DirectPort
 		}
 	}
-	return fmt.Sprintf(
-		"postgres://%s:%s@%s:%d/%s?sslmode=prefer",
-		p.User, p.Password, host, port, dbName,
-	)
+	return postgresURL(p.User, p.Password, host, port, dbName, "prefer")
 }
 
 type RedisConfig struct {
@@ -116,18 +191,31 @@ type GatewayConfig struct {
 	Port int
 }
 
+// platformCellFallbackEnvironments son los valores de ENVIRONMENT que admiten que un
+// servicio de celda use la credencial de plataforma. Se exige que ENVIRONMENT los diga:
+// su valor por defecto no cuenta, porque un despliegue que olvida declararlo no puede
+// quedar abierto.
+var platformCellFallbackEnvironments = map[string]bool{"development": true, "test": true}
+
+func platformCellFallbackAllowed(environment string) bool {
+	return platformCellFallbackEnvironments[strings.ToLower(strings.TrimSpace(environment))]
+}
+
 func Load() (*Config, error) {
 	cfg := &Config{
 		Environment: getEnv("ENVIRONMENT", "development"),
 		Postgres: PostgresConfig{
-			Host:       getEnv("POSTGRES_HOST", "localhost"),
-			Port:       getEnvInt("POSTGRES_PORT", 5432),
-			User:       getEnv("POSTGRES_USER", "mail_admin"),
-			Password:   getEnv("POSTGRES_PASSWORD", ""),
-			DBName:     getEnv("POSTGRES_DB", "mail_registry"),
-			DirectHost: getEnv("POSTGRES_DIRECT_HOST", ""),
-			DirectPort: getEnvInt("POSTGRES_DIRECT_PORT", 0),
-			CellDBName: getEnv("CELL_DB_NAME", ""),
+			Host:                        getEnv("POSTGRES_HOST", "localhost"),
+			Port:                        getEnvInt("POSTGRES_PORT", 5432),
+			User:                        getEnv("POSTGRES_USER", "mail_admin"),
+			Password:                    getEnv("POSTGRES_PASSWORD", ""),
+			DBName:                      getEnv("POSTGRES_DB", "mail_registry"),
+			DirectHost:                  getEnv("POSTGRES_DIRECT_HOST", ""),
+			DirectPort:                  getEnvInt("POSTGRES_DIRECT_PORT", 0),
+			CellDBName:                  getEnv("CELL_DB_NAME", ""),
+			CellUser:                    getEnv("CELL_DB_USER", ""),
+			CellPassword:                getEnv("CELL_DB_PASSWORD", ""),
+			AllowPlatformCellCredential: platformCellFallbackAllowed(os.Getenv("ENVIRONMENT")),
 		},
 		Redis: RedisConfig{
 			Host:     getEnv("REDIS_HOST", "localhost"),
@@ -153,7 +241,7 @@ func Load() (*Config, error) {
 	if cfg.JWT.Secret == "" {
 		return nil, fmt.Errorf("JWT_SECRET is required")
 	}
-	if cfg.Postgres.Password == "" {
+	if cfg.Postgres.Password == "" && !cfg.Postgres.hasCellCredential() {
 		return nil, fmt.Errorf("POSTGRES_PASSWORD is required")
 	}
 

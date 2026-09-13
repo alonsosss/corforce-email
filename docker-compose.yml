@@ -253,6 +253,11 @@ services:
       - .env
       - path: /dev/shm/core-force-mail/secrets.env
         required: false
+    environment:
+      # La credencial de plataforma no llega a los servicios de celda: usan la de su celda
+      # (secreto CELL_DB_PASSWORD). Solo en desarrollo, sin rol de celda, se les puede dar
+      # la de plataforma con CELL_SERVICES_PLATFORM_PASSWORD; en produccion queda vacia.
+      POSTGRES_PASSWORD: ${CELL_SERVICES_PLATFORM_PASSWORD:-}
     depends_on:
       pgbouncer:
         condition: service_healthy
@@ -273,6 +278,11 @@ services:
       - .env
       - path: /dev/shm/core-force-mail/secrets.env
         required: false
+    environment:
+      # La credencial de plataforma no llega a los servicios de celda: usan la de su celda
+      # (secreto CELL_DB_PASSWORD). Solo en desarrollo, sin rol de celda, se les puede dar
+      # la de plataforma con CELL_SERVICES_PLATFORM_PASSWORD; en produccion queda vacia.
+      POSTGRES_PASSWORD: ${CELL_SERVICES_PLATFORM_PASSWORD:-}
     depends_on:
       pgbouncer:
         condition: service_healthy
@@ -297,6 +307,11 @@ services:
       - .env
       - path: /dev/shm/core-force-mail/secrets.env
         required: false
+    environment:
+      # La credencial de plataforma no llega a los servicios de celda: usan la de su celda
+      # (secreto CELL_DB_PASSWORD). Solo en desarrollo, sin rol de celda, se les puede dar
+      # la de plataforma con CELL_SERVICES_PLATFORM_PASSWORD; en produccion queda vacia.
+      POSTGRES_PASSWORD: ${CELL_SERVICES_PLATFORM_PASSWORD:-}
     depends_on:
       pgbouncer:
         condition: service_healthy
@@ -324,6 +339,11 @@ services:
       - .env
       - path: /dev/shm/core-force-mail/secrets.env
         required: false
+    environment:
+      # La credencial de plataforma no llega a los servicios de celda: usan la de su celda
+      # (secreto CELL_DB_PASSWORD). Solo en desarrollo, sin rol de celda, se les puede dar
+      # la de plataforma con CELL_SERVICES_PLATFORM_PASSWORD; en produccion queda vacia.
+      POSTGRES_PASSWORD: ${CELL_SERVICES_PLATFORM_PASSWORD:-}
     depends_on:
       redis:
         condition: service_healthy

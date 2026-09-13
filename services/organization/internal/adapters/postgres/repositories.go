@@ -173,8 +173,20 @@ func (p *DBProvisioner) tenantDSN(target domain.DBTarget) string {
 	return p.directDSNFn(host, port, sanitizeDBName(target.DBName))
 }
 
+// CreateDatabase crea la base de la empresa y la cierra a PUBLIC: Postgres da CONNECT a
+// todo rol de login en cada base nueva, y un rol de celda (ops/db/cell-service-role.sh)
+// podria abrirla. Entran el dueno (la credencial de plataforma) y los superusuarios. Una
+// base que no se pudo cerrar se retira: abierta seria peor que no creada.
 func (p *DBProvisioner) CreateDatabase(ctx context.Context, target domain.DBTarget) error {
-	return p.adminExec(ctx, target, fmt.Sprintf("CREATE DATABASE %s", sanitizeDBName(target.DBName)))
+	name := sanitizeDBName(target.DBName)
+	if err := p.adminExec(ctx, target, fmt.Sprintf("CREATE DATABASE %s", name)); err != nil {
+		return err
+	}
+	if err := p.adminExec(ctx, target, fmt.Sprintf("REVOKE CONNECT, TEMPORARY ON DATABASE %s FROM PUBLIC", name)); err != nil {
+		_ = p.DropDatabase(ctx, target)
+		return fmt.Errorf("cerrar la base a PUBLIC: %w", err)
+	}
+	return nil
 }
 
 func (p *DBProvisioner) DropDatabase(ctx context.Context, target domain.DBTarget) error {

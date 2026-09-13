@@ -57,7 +57,11 @@ cambie cualquiera de estas líneas.
   proceso, con su caso de uso de política) exigen el permiso de acción concreto. Ningún
   handler queda con `IsPrivileged` o `RequireRoles(tenant_admin)` como única comprobación.
 * Enrutado por celda implementado (`db.NewTenantRouting`, aprovisionamiento en la celda de
-  la empresa). Queda una credencial por celda (hoy una sola de plataforma).
+  la empresa). Credencial propia por celda para los servicios de celda hecha (2026-09-13:
+  `ops/db/cell-service-role.sh`, `db.NewCellPool`, falla cerrado fuera de desarrollo;
+  `Modelo_de_Datos_y_Celdas.md` 5.1). Pendiente: reparto de secretos por servicio en
+  compose, la entrada del rol en `userlist.txt` de PgBouncer, `mail_engine` por celda y la
+  credencial por servicio de las bases de empresa (5.2).
 * Ciclo de vida de una ejecución del scheduler cerrado (2026-09-13, unitarias e integración
   contra Postgres 16): `scheduler.job.started`, `.completed` y `.failed` salen por la outbox
   en la transacción que cambia la ejecución (stream `SCHEDULER`); el ejecutor cierra por

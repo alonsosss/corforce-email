@@ -90,7 +90,19 @@ buzones. Vistas publicadas `mail.v_routing_*` para `mail-security`. Probado: la
 aplicacion ve solo su empresa, nada sin GUC y no puede escribir en otra; el motor ve todo.
 Los servicios Go de celda acceden SIEMPRE dentro de `db.TransactRLS` y ademas filtran por
 `tenant_id` en el SQL; `mail-auth` y los endpoints de motores de `mail-security` consultan
-como dueno porque resuelven identidades sin empresa previa, y lo dicen en un comentario.
+sin cambio de rol porque resuelven identidades sin empresa previa, y lo dicen en un
+comentario.
+
+Rol `mail_service` (V, 2026-09-13, `mail-directory/06_service_role.sql` y
+`mail-security/06_service_role.sql`): lo que antes corria como dueno de las tablas (esos
+caminos sin empresa, la ruta interna de activacion, las tareas de fondo y el rele de la
+outbox) corre con la credencial de la celda (5.1), que no es duena de nada. `mail_service`
+(NOLOGIN) tiene DML sobre `mail` y `mail_security`, DML sobre `platform.event_outbox` y la
+politica `service_all` `USING (true) WITH CHECK (true)` en cada tabla con RLS de los dos
+esquemas (incluidas `engine_documents` y `firewall_*`); ni DDL, ni `TRUNCATE`, ni tablas
+temporales. Una tabla nueva con RLS lleva su `service_all` en la migracion que la crea (la
+prueba de integracion de 5.1 falla si falta). Las peticiones con usuario siguen bajando a
+`mail_app`, que no hereda nada de `mail_service`.
 
 `mail_security` (`migrations/cell/canonical/mail-security/01_mail_security.sql`) sigue el
 mismo patron: `tenant_isolation` por `tenant_id = mail_security.current_tenant()` para
@@ -105,8 +117,8 @@ prefijo IPv4 de /8 a /32 e IPv6 de /32 a /128, lo que compara Rspamd) con
 `tenant_isolation`; `03_engine_documents.sql`, la marca `Last-Modified` de `/settings` por
 celda, y `05_firewall.sql`, listas y opciones del cortafuegos de la celda. Estas dos
 ultimas no tienen `tenant_id`: son de la celda o de la plataforma, `mail_app` no tiene
-permisos sobre ellas (RLS activo sin politica) y el servicio las usa como dueno, el
-cortafuegos solo tras exigir al superadmin.
+permisos sobre ellas (RLS activo sin politica para ella) y el servicio las usa como
+`mail_service`, el cortafuegos solo tras exigir al superadmin.
 
 `03_mail_app_policies.sql` (mail-directory) anade lo que el primer consumidor necesito:
 `app_delete` sobre `quota_usage` (solo del buzon propio, por eso el servicio borra la cuota
@@ -233,11 +245,76 @@ reciclado a los 5 minutos ociosos). Una celda cuyo `db_host` coincide con `POSTG
 es el cluster por defecto; cualquier otra abre su pool contra su propio host con la misma
 credencial de plataforma (`db.NewTenantRouting` lo cablea en cada `main`). `organization`
 crea y migra la base de una empresa nueva en el cluster de su celda (conexion directa a la
-base de mantenimiento de la celda). Los servicios de celda abren su base por
-`CELL_DB_NAME` (`db.NewNamedPool` + `db.StaticPoolMiddleware`).
+base de mantenimiento de la celda) y la cierra a PUBLIC (`REVOKE CONNECT, TEMPORARY`):
+solo entran su dueno (la credencial de plataforma) y los superusuarios; si no puede
+cerrarla, la retira. Los servicios de celda abren su base por `CELL_DB_NAME`
+(`db.NewCellPool` + `db.StaticPoolMiddleware`).
 
-P: credencial distinta por celda (hoy una sola de plataforma) y mover una empresa de
-celda (`TenantPoolManager.Forget` ya invalida la cache; falta el traslado de datos).
+P: mover una empresa de celda (`TenantPoolManager.Forget` ya invalida la cache; falta el
+traslado de datos).
+
+### 5.1 Credencial de la celda (V, 2026-09-13)
+
+`mail-directory`, `mail-security` y `mail-auth` abren la base de su celda con el rol de
+login `<CELL_DB_NAME>_svc` (`mail_cell_pe_01_svc`, `config.CellServiceRole`); fuera de
+desarrollo, nunca con la de plataforma.
+
+* Lo crea `ops/db/cell-service-role.sh --cell <code>` con la credencial de plataforma:
+  crear roles no es cosa del runtime, y la contrasena no la genera ningun servicio, vive en
+  el almacen como `CELL_DB_PASSWORD`. Idempotente: `CREATE ROLE ... LOGIN` si falta, la
+  contrasena fijada en cada ejecucion como verificador SCRAM-SHA-256 calculado fuera de
+  Postgres (el texto de la sentencia nunca lleva la contrasena), `GRANT mail_app,
+  mail_service`, `GRANT CONNECT` sobre su base al rol y a `mail_engine`, y `REVOKE CONNECT,
+  TEMPORARY ... FROM PUBLIC` en todas las bases del cluster salvo `postgres` (sin datos).
+  Termina comprobando que el rol no tiene atributos de administracion, no crea objetos ni
+  temporales y no alcanza otra base, y falla si no.
+* El servicio la recibe por `CELL_DB_PASSWORD` (secreto) y, opcional, `CELL_DB_USER` (por
+  defecto el nombre por convencion). `config.PostgresConfig.CellConnection` falla cerrado:
+  sin `CELL_DB_PASSWORD` solo admite la credencial de plataforma si `ENVIRONMENT` dice
+  expresamente `development` o `test` (el valor por defecto no cuenta) y lo avisa al
+  arrancar; en cualquier otro entorno el servicio no arranca. Con credencial de celda no
+  necesita `POSTGRES_PASSWORD`.
+* Probado: unitarias de `pkg/config` y `pkg/db`; integracion contra Postgres 16
+  (`services/organization/internal/adapters/postgres/cell_role_integration_test.go`: el rol
+  entra en su celda por TCP con contrasena y no en el registro, en otra celda ni en una
+  base de empresa que organization crea despues; sin DDL, `TRUNCATE` ni temporales;
+  `mail_app` sigue acotado por RLS y sin lectura de la outbox; rotacion de contrasena); y
+  `make e2e`, que corre los tres servicios de celda con su credencial y sin la de
+  plataforma.
+
+Pendiente de la credencial de celda (P):
+
+* Reparto de secretos por servicio en compose: hoy cada servicio recibe el fichero de
+  secretos entero, asi que un servicio de celda sigue viendo `POSTGRES_PASSWORD` y uno de
+  empresa `CELL_DB_PASSWORD`. A cada uno se le deja vacia la que no le toca.
+* PgBouncer autentica con `userlist.txt` (`auth_type = plain`): el rol de la celda necesita
+  su entrada ahi. Mejor: `auth_query` con un usuario que solo consulte verificadores.
+* `mail_engine` sigue siendo un rol de login compartido por las celdas de un cluster, con
+  CONNECT en todas sus bases de celda: pasa a un rol por celda con el mismo patron.
+* Una base de celda recien creada queda abierta a PUBLIC hasta que corre el script para
+  ella: se corre en el mismo paso en que se abre la celda.
+
+### 5.2 Credencial de las bases de empresa (P)
+
+Evaluado y descartado con el enrutado actual: un servicio de empresa atiende desde un solo
+despliegue a TODAS las empresas de TODAS las celdas y resuelve cada una en el registro.
+Con una credencial por celda tendria la de todas las celdas y seguiria necesitando la de
+plataforma para leer `organization.tenants`: no aislaria nada. Ademas `DBTarget` no lleva
+la celda (la del cluster por defecto se normaliza a host vacio) y `secret-keys.txt` es una
+lista fija de nombres. El diseno que si aisla:
+
+1. Vista publicada `organization.v_tenant_routing` (id, slug, status, db_name, db_host,
+   db_port, codigo de celda) y un rol de login de enrutado con `SELECT` solo sobre ella y
+   CONNECT solo al registro: `db.NewTenantRouting` resuelve con el, no con la credencial de
+   plataforma.
+2. Rol NOLOGIN por servicio con `USAGE` y DML solo sobre su esquema, concedido por su
+   migracion canonica de empresa, y rol de login por servicio miembro de el; organization
+   le da CONNECT al crear cada base de empresa. Sin DDL (las migraciones siguen corriendo
+   como dueno). Un servicio comprometido ve su esquema, no los de los demas ni el registro.
+3. Si los servicios de empresa llegan a desplegarse por celda: el mismo rol por servicio y
+   celda, con CONNECT solo a las bases de empresa de su celda; `DBTarget` gana la celda y
+   `TenantPoolManager` elige la credencial por celda.
+4. `organization` sigue siendo el unico con la credencial de plataforma (crea y migra).
 
 ## 6. Limites que condicionan el dimensionado (V, heredados y vigentes)
 
@@ -260,5 +337,6 @@ celda (`TenantPoolManager.Forget` ya invalida la cache; falta el traslado de dat
 | Rutas por id comprueban la empresa de la sesion en el plano de control | V |
 | Directorio de correo con `tenant_id` en cada fila y rol de motores sin acceso a credenciales | V |
 | RLS en la celda para los servicios Go | V (politicas y roles; `mail-directory` y el API de administracion de `mail-security` las usan en toda lectura y escritura) |
-| Una celda no lee otra celda (los servicios de celda solo abren `CELL_DB_NAME`); claves de cifrado por celda | V / P (claves) |
+| Una celda no lee otra celda: sus servicios abren solo `CELL_DB_NAME` con el rol `<CELL_DB_NAME>_svc`, sin CONNECT al registro, a otra celda ni a una empresa (5.1); claves de cifrado por celda | V / P (claves; reparto de secretos por servicio) |
+| Un servicio de empresa solo abre su esquema y no el registro (credencial por servicio) | P (5.2) |
 | Respaldo por base y restauracion probada semanalmente (`ops/backup`) | V (scripts), P (programados en este entorno) |
