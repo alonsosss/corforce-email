@@ -80,6 +80,13 @@ cambie cualquiera de estas líneas.
 ## Lo que la fase 0 dejó mejor que la base
 
 * Gateway con tabla de rutas en datos (`routes.json`) y validación al arrancar.
+* Límites de peticiones del gateway comunes a todas sus réplicas: el general de `/api/v1`
+  (`API_RATE_LIMIT_PER_MIN`) y el estricto de autenticación (`AUTH_RATE_LIMIT_PER_MIN`:
+  `/auth` y `POST /api/v1/webmail/session`) cuentan por IP en el Redis de la plataforma
+  (`REDIS_*`); con Redis caído cada réplica decide en memoria con el mismo cupo y lo cuenta
+  en `rate_limit_degraded_total`. Probado con dos réplicas contra Redis 7 real y con Redis
+  inalcanzable (2026-09-13). Los límites propios de los demás servicios siguen en memoria
+  (motivo en `docs/arquitectura/CSP-Y-SESION.md`).
 * RBAC en `enforce` y `fail-closed` por defecto.
 * Dos bugs de identity corregidos: el cambio de contraseña propio no persistía y el logout
   no revocaba la sesión en servidor; el historial de contraseñas ahora se aplica.

@@ -94,3 +94,49 @@ salvo imágenes de mapa de bits, PDF y texto plano).
 El HTML de un mensaje llega ya saneado (bluemonday) dentro del JSON. La interfaz debe
 pintarlo en un `<iframe sandbox>` sin `allow-scripts` ni `allow-same-origin`: el saneado es
 la primera barrera y el aislamiento la segunda.
+
+## Límites de peticiones del gateway
+
+Dos limitadores por IP (`services/gateway/ratelimit.go`, `pkg/middleware/ratelimit.go`):
+
+| Limitador | Rutas | Cupo por minuto |
+|---|---|---|
+| `gateway:api` | Todo `/api/v1` | `API_RATE_LIMIT_PER_MIN` (600) |
+| `gateway:auth` | `POST /auth/login`, `/auth/mfa/challenge`, `/auth/forgot-password`, `/auth/reset-password`, `GET /auth/reset-password/policy` y las rutas `strict_limit` de `self_authenticated` (`POST /webmail/session`) | `AUTH_RATE_LIMIT_PER_MIN` (30) |
+
+El cupo es **uno para todas las réplicas**: cuentan en el Redis de la plataforma
+(`REDIS_*`). En memoria de cada proceso, con N réplicas un cliente obtenía N veces su cupo,
+también el de autenticación, que es la barrera contra el barrido de cuentas desde una IP
+(el bloqueo por cuenta de identity frena el ataque a una sola). El inicio de sesión de la
+plataforma y el del webmail comparten el cupo estricto de la IP.
+
+**Algoritmo**: ventana fija de un minuto anclada en la primera petición de cada IP. En
+Redis es un script Lua atómico (`INCR`, y `PEXPIRE` solo si la clave no tiene caducidad)
+sobre una clave por limitador e identidad, `rl:<limitador>:ip:<ip>`, que caduca sola con
+su ventana. El final de la ventana lo marca el TTL de Redis, no el reloj de cada réplica.
+Un usuario (`LimitPerUser`) va como `u:<sha256 truncado>` y cualquier identidad que no sea
+una IP como `id:<sha256 truncado>`: fuera de la IP, nada llega en claro al almacén. Como toda
+ventana fija, en el cruce de dos ventanas admite hasta el doble del cupo; se acepta porque
+detrás están el bloqueo por cuenta de identity y el freno por (buzón, IP) de `mail-auth`.
+
+**429**: `Retry-After` con los segundos que faltan para cerrar la ventana, redondeados hacia
+arriba y nunca 0, igual decida Redis o la memoria.
+
+**IP**: la que resuelve `CaptureClientIP` (`X-Real-IP` solo si la conexión llega desde
+`TRUSTED_PROXY_CIDRS`). Ni `X-Real-IP`, ni `X-Forwarded-For`, ni una cabecera interna
+enviada por el cliente cambian la clave (probado en `pkg/middleware` y en el gateway).
+
+**Redis caído**: los dos limitadores caen a memoria con el mismo cupo por réplica. En el
+estricto, nunca se deja pasar sin límite, pero tampoco se tumba el inicio de sesión.
+La memoria cuenta siempre, también con Redis sano, así que al caer cada réplica sigue desde
+lo que ya vio. Cada consulta espera a Redis como mucho 250 ms y, tras un fallo, no se le
+vuelve a preguntar durante 5 s. Mientras dura, el cupo efectivo es N veces el configurado;
+se ve en `rate_limit_degraded_total{limiter}` (decisiones tomadas en memoria) y en un aviso
+del registro, como mucho uno por minuto y limitador, más otro cuando Redis vuelve.
+
+**Los demás servicios** (`contacts`, `automations`, `scheduler`, `analytics`, `suppression`,
+`mail-security`, `webmail`) mantienen su limitador en memoria por proceso. Todos están
+detrás del gateway, que ya aplica el cupo común. Su límite es una segunda barrera contra el
+abuso de quien ya tiene sesión, no la barrera contra la fuerza bruta. El freno de
+credenciales del correo (`mail-auth`) ya vive en Redis, y el enlace público del doble
+opt-in de `contacts` va firmado.
