@@ -364,6 +364,16 @@ func (f fakeLists) RemoveMembers(_ context.Context, _ uuid.UUID, listID uuid.UUI
 	return n, nil
 }
 
+func (f fakeLists) MembersAmong(_ context.Context, tenantID, listID uuid.UUID, contactIDs []uuid.UUID) ([]uuid.UUID, error) {
+	var out []uuid.UUID
+	for _, id := range contactIDs {
+		if c, ok := f.s.contacts[id]; ok && c.TenantID == tenantID && f.s.members[listID][id] {
+			out = append(out, id)
+		}
+	}
+	return out, nil
+}
+
 func (f fakeLists) ListsOf(ctx context.Context, tenantID, contactID uuid.UUID) ([]domain.List, error) {
 	var out []domain.List
 	for id, m := range f.s.members {
@@ -542,6 +552,18 @@ func (f *fakeQuery) Audience(_ context.Context, tenantID uuid.UUID, spec ports.A
 	if len(out) > spec.Limit {
 		out = out[:spec.Limit]
 	}
+	return out, nil
+}
+
+// Sendable aplica la misma regla que el SQL: domain.Contact.Sendable.
+func (f *fakeQuery) Sendable(_ context.Context, tenantID uuid.UUID, ids []uuid.UUID) ([]domain.Contact, error) {
+	var out []domain.Contact
+	for _, id := range ids {
+		if c, ok := f.s.contacts[id]; ok && c.TenantID == tenantID && c.Sendable() {
+			out = append(out, *copyContact(c))
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return bytes.Compare(out[i].ID[:], out[j].ID[:]) < 0 })
 	return out, nil
 }
 

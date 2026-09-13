@@ -52,6 +52,9 @@ construye fuera del literal y no se puede leer estaticamente.
 |---|---|---|
 | `audit.api.write` | audit | `ip`, `method`, `module`, `path`, `request_id`, `roles`, `status`, `tenant_id`, `user_agent`, `user_id` |
 | `campaigns.campaign.*` | analytics | `campaign_id`, `occurred_at`, `status`, `tenant_id` |
+| `contacts.consent.granted` | automations | `contact_id`, `purpose` |
+| `contacts.consent.requested` | automations | `confirm_url`, `contact_id`, `email`, `first_name` |
+| `contacts.contact.created` | automations | `contact_id` |
 | `contacts.contact.created` | billing | `tenant_id` |
 | `contacts.contact.deleted` | billing | `tenant_id` |
 | `domains.domain.*` | transactional | `domain`, `purpose`, `status`, `tenant_id` |
@@ -65,6 +68,7 @@ construye fuera del literal y no se puede leer estaticamente.
 | `organization.tenant.status_changed` | billing | `status`, `tenant_id` |
 | `transactional.email.*` | analytics | `bounce_type`, `campaign_id`, `class`, `email`, `message_id`, `occurred_at`, `tenant_id`, `to` |
 | `transactional.email.>` | campaigns | _opaco_ |
+| `transactional.email.clicked` | automations | `campaign_id`, `class`, `contact_id` |
 | `transactional.email.sent` | billing | `class`, `tenant_id`, `to` |
 | `transactional.marketing.queued` | transactional | _opaco_ |
 | `transactional.message.queued` | transactional | _opaco_ |

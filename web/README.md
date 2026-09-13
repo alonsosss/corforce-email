@@ -3,7 +3,9 @@
 Una sola aplicacion React 18 + TypeScript (estricto) + Vite 5, sin module federation. Cubre
 el plano de control (acceso, cuenta, usuarios, roles y permisos, sesiones, empresas, celdas
 y auditoria), el correo corporativo (dominios, directorio de la celda, buzones, enrutado,
-seguridad y cuarentena) y los envios (plantillas y supresion).
+seguridad y cuarentena), los envios (plantillas, supresion y reputacion), el marketing
+(contactos, segmentos, campanas y analitica) y el plan de la empresa. El superadmin opera
+ademas el catalogo de planes, las suscripciones y la reputacion de todas las empresas.
 
 ## Desarrollo
 
@@ -103,12 +105,54 @@ src/
 | Cuarentena                              | `/mail/quarantine`                             | `mail_security` | `/mail-security/quarantine` |
 | Plantillas                              | `/sending/templates`, `/sending/templates/:id` | `templates`     | `/templates`                |
 | Supresion                               | `/sending/suppression`                         | `suppression`   | `/suppression`              |
+| Reputacion                              | `/sending/reputation`                          | `reputation`    | `/reputation`               |
+
+## Marketing, plan y plataforma
+
+| Menu                                | Ruta                                                                        | Modulo o rol     | API                                |
+| ----------------------------------- | --------------------------------------------------------------------------- | ---------------- | ---------------------------------- |
+| Contactos (listas, atributos, CSV)  | `/marketing/contacts`, `/marketing/contacts/:id`, `/marketing/lists/:id`    | `contacts`       | `/contacts/*`                      |
+| Segmentos                           | `/marketing/segments`, `/marketing/segments/new`, `/marketing/segments/:id` | `segments`       | `/segments/*`                      |
+| Campanas                            | `/marketing/campaigns`, `/marketing/campaigns/:id`                          | `campaigns`      | `/campaigns/*`                     |
+| Analitica                           | `/marketing/analytics`                                                      | `analytics`      | `/analytics/*`                     |
+| Plan y consumo                      | `/billing`                                                                  | `billing`        | `/billing/subscription`, `/usage`  |
+| Planes y suscripciones (plataforma) | `/platform/billing`                                                         | rol `superadmin` | `/billing/plans`, `/subscriptions` |
+| Reputacion de empresas (plataforma) | `/platform/reputation`                                                      | rol `superadmin` | `/reputation/tenants/*`            |
+
+Las dos pantallas de plataforma se gatean por rol del sistema y no por modulo: billing
+`plans`/`subscriptions` y reputation `tenants` tienen alcance plataforma y el servicio exige
+el rol superadmin. Suspender, liberar y fijar limites de reputacion son acciones criticas:
+si el API responde `STEP_UP_REQUIRED`, el cliente pide reconfirmar la identidad y reintenta.
+
+Catalogos del API en lugar de constantes copiadas:
+
+- `GET /templates/meta`: tipos, estados, estados de version, tipos de variable, variables
+  reservadas y topes (`templatesMeta` en `api/templates.ts`).
+- `GET /suppression/meta`: motivos con su gravedad y si un operador puede retirarlos,
+  motivos del alta manual y topes de consulta, importacion y longitud.
+- `GET /segments/meta`: campos, operadores con su aridad, valores de los enumerados,
+  atributos declarados de la empresa y limites del DSL. El editor de segmentos se construye
+  solo con esto.
+
+Se leen con `cachedResource` (una peticion por sesion) y `useResource`. Las listas que aun
+son espejo del servicio (estados de contacto y campana, recursos y estados de billing,
+estados de reputacion, clases de envio) llevan un comentario que lo dice y el catalogo que
+las sustituira.
 
 Reglas de la interfaz que no se relajan:
 
 - HTML que no es de la aplicacion (plantillas, pies de pagina, aviso de cuarentena) solo se
   pinta en `HtmlPreviewFrame`: `<iframe sandbox="">` con `srcdoc`, sin scripts, formularios,
-  navegacion ni mismo origen. Nunca `dangerouslySetInnerHTML`.
+  navegacion ni mismo origen. Nunca `dangerouslySetInnerHTML`. Antes de `srcdoc`,
+  `lib/untrustedHtml.ts` quita todo lo que carga algo por si solo (link, base, meta
+  http-equiv, iframes, objetos, audio y video), reescribe las imagenes remotas (`src`,
+  `srcset`, `background`, `url()` en estilos, `image` de SVG) y anade una CSP propia al
+  documento. Las imagenes remotas solo se muestran si quien mira pulsa "Mostrar imagenes
+  remotas" en esa vista: un pixel de seguimiento no sabe quien abre la vista previa.
+- Importes, tasas y porcentajes del API son texto decimal: se muestran con `lib/decimal.ts`
+  desplazando la coma en la cadena, sin recalcularlos ni pasarlos por float.
+- La exportacion del titular (`GET /contacts/{id}/export`) solo se pide al pulsar el boton y
+  se queda en memoria hasta descargarla o descartarla.
 - El mensaje en cuarentena (`message/rfc822`) se pide con `api.getText` y se muestra como
   texto en un `<pre>`; jamas se interpreta su HTML.
 - Las contrasenas de aplicacion se muestran una sola vez, en un dialogo que no se cierra

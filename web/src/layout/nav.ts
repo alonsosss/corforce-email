@@ -5,13 +5,18 @@ import type { Access } from '@/access/useAccess';
 import type { MessageKey } from '@/i18n';
 import { paths } from '@/paths';
 import {
+  IconActivity,
+  IconAddressBook,
   IconAlertTriangle,
   IconArchive,
   IconBan,
+  IconBarChart,
   IconBuilding,
   IconClipboard,
+  IconCreditCard,
   IconFileText,
   IconFilter,
+  IconGauge,
   IconGlobe,
   IconHome,
   IconInbox,
@@ -19,9 +24,11 @@ import {
   IconLink,
   IconMonitor,
   IconRoute,
+  IconSend,
   IconServer,
   IconShieldCheck,
   IconShieldOff,
+  IconTarget,
   IconUser,
   IconUsers,
   type IconProps,
@@ -50,6 +57,7 @@ export const NAV: NavGroup[] = [
     items: [
       { to: paths.home, labelKey: 'nav.home', icon: IconHome },
       { to: paths.account, labelKey: 'nav.account', icon: IconUser },
+      { to: paths.billing, labelKey: 'nav.billing', icon: IconGauge, module: MODULES.billing },
     ],
   },
   {
@@ -97,6 +105,31 @@ export const NAV: NavGroup[] = [
         icon: IconBan,
         module: MODULES.suppression,
       },
+      {
+        to: paths.reputation,
+        labelKey: 'nav.reputation',
+        icon: IconActivity,
+        module: MODULES.reputation,
+      },
+    ],
+  },
+  {
+    labelKey: 'nav.group.marketing',
+    items: [
+      {
+        to: paths.contacts,
+        labelKey: 'nav.contacts',
+        icon: IconAddressBook,
+        module: MODULES.contacts,
+      },
+      { to: paths.segments, labelKey: 'nav.segments', icon: IconTarget, module: MODULES.segments },
+      { to: paths.campaigns, labelKey: 'nav.campaigns', icon: IconSend, module: MODULES.campaigns },
+      {
+        to: paths.analytics,
+        labelKey: 'nav.analytics',
+        icon: IconBarChart,
+        module: MODULES.analytics,
+      },
     ],
   },
   {
@@ -140,6 +173,20 @@ export const NAV: NavGroup[] = [
         labelKey: 'nav.cells',
         icon: IconServer,
         module: MODULES.organization,
+        role: SYSTEM_ROLES.superadmin,
+      },
+      // Solo rol: el catalogo de planes y la reputacion de todas las empresas no son
+      // permisos de modulo sino operacion del superadmin.
+      {
+        to: paths.platformBilling,
+        labelKey: 'nav.platformBilling',
+        icon: IconCreditCard,
+        role: SYSTEM_ROLES.superadmin,
+      },
+      {
+        to: paths.platformReputation,
+        labelKey: 'nav.platformReputation',
+        icon: IconActivity,
         role: SYSTEM_ROLES.superadmin,
       },
     ],

@@ -4,7 +4,7 @@
 //
 // Ningun payload lleva los atributos del contacto; la direccion solo viaja donde el
 // consumidor la necesita (resuscripcion para suppression, peticion de doble opt-in para
-// automations) y nunca en el evento de borrado.
+// automations, que recibe tambien el nombre de pila) y nunca en el evento de borrado.
 package outbox
 
 import (
@@ -90,12 +90,13 @@ func (p *Publisher) ConsentRevoked(ctx context.Context, c *domain.Consent) error
 }
 
 // ConsentRequested lleva el enlace de confirmacion para que automations envie el correo
-// del doble opt-in. Es el unico sitio por el que viaja el token en claro; en la base solo
-// queda su sha256.
+// del doble opt-in, y el nombre de pila para saludar. Es el unico sitio por el que viaja
+// el token en claro; en la base solo queda su sha256.
 func (p *Publisher) ConsentRequested(ctx context.Context, c *domain.Contact, confirmURL string) error {
 	return p.enqueue(ctx, SubjectConsentRequested, c.TenantID, map[string]interface{}{
 		"contact_id":  c.ID.String(),
 		"email":       c.Email,
+		"first_name":  c.FirstName,
 		"confirm_url": confirmURL,
 	})
 }

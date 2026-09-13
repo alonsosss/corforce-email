@@ -1,9 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  TEMPLATE_KINDS,
-  TEMPLATE_STATUSES,
   templatesApi,
+  templatesMeta,
   type Template,
   type TemplateKind,
   type TemplateStatus,
@@ -12,6 +11,7 @@ import { PERMISSIONS } from '@/access/permissions';
 import { useAccess } from '@/access/useAccess';
 import { usePagination } from '@/hooks/usePagination';
 import { useQuery } from '@/hooks/useQuery';
+import { useResource } from '@/hooks/useResource';
 import {
   Badge,
   Button,
@@ -42,6 +42,7 @@ export default function TemplatesPage() {
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
   const [creating, setCreating] = useState(false);
+  const meta = useResource(templatesMeta);
 
   useEffect(() => {
     const handle = window.setTimeout(() => {
@@ -146,7 +147,10 @@ export default function TemplatesPage() {
             <Select
               id="templates-kind"
               placeholder={t('common.all')}
-              options={TEMPLATE_KINDS.map((k) => ({ value: k, label: tEnum('templates.kind', k) }))}
+              options={(meta.data?.kinds ?? []).map((k) => ({
+                value: k,
+                label: tEnum('templates.kind', k),
+              }))}
               value={kind}
               onChange={(e) => {
                 setKind(e.target.value as TemplateKind | '');
@@ -161,7 +165,7 @@ export default function TemplatesPage() {
             <Select
               id="templates-status"
               placeholder={t('common.all')}
-              options={TEMPLATE_STATUSES.map((s) => ({
+              options={(meta.data?.statuses ?? []).map((s) => ({
                 value: s,
                 label: tEnum('templates.status', s),
               }))}

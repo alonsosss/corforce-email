@@ -1,4 +1,4 @@
-import { TEMPLATE_MAX_VARIABLES, VARIABLE_TYPES, type VariableType } from '@/api/templates';
+import type { VariableType } from '@/api/templates';
 import { Button, Checkbox, Input, Select } from '@/design/components';
 import { IconPlus, IconTrash } from '@/design/icons';
 import { t, tEnum } from '@/i18n';
@@ -7,11 +7,21 @@ import { newVariableDraft, type VariableDraft } from './variables';
 export interface VariablesEditorProps {
   drafts: VariableDraft[];
   onChange: (next: VariableDraft[]) => void;
+  /** Tipos y tope que publica GET /templates/meta. */
+  types: readonly VariableType[];
+  maxVariables: number;
   errors?: Record<string, string>;
   countError?: string;
 }
 
-export function VariablesEditor({ drafts, onChange, errors, countError }: VariablesEditorProps) {
+export function VariablesEditor({
+  drafts,
+  onChange,
+  types,
+  maxVariables,
+  errors,
+  countError,
+}: VariablesEditorProps) {
   const update = (key: string, patch: Partial<VariableDraft>) =>
     onChange(drafts.map((d) => (d.key === key ? { ...d, ...patch } : d)));
 
@@ -36,7 +46,7 @@ export function VariablesEditor({ drafts, onChange, errors, countError }: Variab
               />
               <Select
                 aria-label={t('templates.variables.type')}
-                options={VARIABLE_TYPES.map((type) => ({
+                options={types.map((type) => ({
                   value: type,
                   label: tEnum('templates.variableType', type),
                 }))}
@@ -105,7 +115,7 @@ export function VariablesEditor({ drafts, onChange, errors, countError }: Variab
           size="sm"
           icon={<IconPlus size={14} />}
           onClick={() => onChange([...drafts, newVariableDraft()])}
-          disabled={drafts.length >= TEMPLATE_MAX_VARIABLES}
+          disabled={drafts.length >= maxVariables}
         >
           {t('templates.variables.add')}
         </Button>

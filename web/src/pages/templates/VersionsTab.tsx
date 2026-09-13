@@ -1,14 +1,17 @@
 import { useState } from 'react';
 import {
   templatesApi,
+  templatesMeta,
   type TemplateContent,
   type TemplateDetail,
+  type TemplatesMeta,
   type VersionSummary,
 } from '@/api/templates';
 import { PERMISSIONS } from '@/access/permissions';
 import { useAccess } from '@/access/useAccess';
 import { useAction } from '@/hooks/useAction';
 import { useQuery } from '@/hooks/useQuery';
+import { useResource } from '@/hooks/useResource';
 import {
   Badge,
   Button,
@@ -276,11 +279,19 @@ function NewVersion({
       baseVersion ? (await templatesApi.getVersion(templateId, baseVersion)).data : null,
     [templateId, baseVersion],
   );
-  if (base.loading || base.error) {
+  const meta = useResource(templatesMeta);
+  const failed = base.error ?? meta.error;
+  if (base.loading || failed || !meta.data) {
     return (
       <Modal open title={t('templates.versions.new')} onClose={onClose}>
-        {base.error ? (
-          <ErrorState error={base.error} onRetry={base.reload} />
+        {failed ? (
+          <ErrorState
+            error={failed}
+            onRetry={() => {
+              base.reload();
+              meta.reload();
+            }}
+          />
         ) : (
           <Skeleton lines={6} />
         )}
@@ -291,6 +302,7 @@ function NewVersion({
     <NewVersionForm
       templateId={templateId}
       initial={contentFromVersion(base.data)}
+      meta={meta.data}
       onClose={onClose}
       onCreated={onCreated}
     />
@@ -300,11 +312,13 @@ function NewVersion({
 function NewVersionForm({
   templateId,
   initial,
+  meta,
   onClose,
   onCreated,
 }: {
   templateId: string;
   initial: ContentDraft;
+  meta: TemplatesMeta;
   onClose: () => void;
   onCreated: (version: number) => void;
 }) {
@@ -317,7 +331,7 @@ function NewVersionForm({
   });
 
   const submit = async () => {
-    const parsed = contentFromDraft(content);
+    const parsed = contentFromDraft(content, meta);
     setErrors(parsed.errors);
     if (!parsed.content) return;
     await action.run(parsed.content);
@@ -340,6 +354,7 @@ function NewVersionForm({
         value={content}
         onChange={setContent}
         errors={errors}
+        meta={meta}
       />
     </FormModal>
   );

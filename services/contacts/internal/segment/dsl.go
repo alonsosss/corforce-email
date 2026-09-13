@@ -300,24 +300,36 @@ const (
 )
 
 type fixedField struct {
+	name   string
 	column string
 	kind   kind
 }
 
-// fixedFields es la lista blanca de campos fijos. La columna es SIEMPRE uno de estos
-// literales; el nombre que manda el usuario solo sirve para buscarla aqui.
-var fixedFields = map[string]fixedField{
-	"email":      {"c.email", kindEmail},
-	"first_name": {"c.first_name", kindText},
-	"last_name":  {"c.last_name", kindText},
-	"locale":     {"c.locale", kindNullableText},
-	"timezone":   {"c.timezone", kindNullableText},
-	"status":     {"c.status", kindEnum},
-	"source":     {"c.source", kindEnum},
-	"consent":    {"c.marketing_consent", kindEnum},
-	"created_at": {"c.created_at", kindTimestamp},
-	"tags":       {"c.tags", kindTags},
-	"list":       {"", kindList},
+// fieldSpecs es la lista blanca de campos fijos, en el orden en que se presentan. La
+// columna es SIEMPRE uno de estos literales; el nombre que manda el usuario solo sirve
+// para buscarla aqui.
+var fieldSpecs = []fixedField{
+	{"email", "c.email", kindEmail},
+	{"first_name", "c.first_name", kindText},
+	{"last_name", "c.last_name", kindText},
+	{"locale", "c.locale", kindNullableText},
+	{"timezone", "c.timezone", kindNullableText},
+	{"status", "c.status", kindEnum},
+	{"source", "c.source", kindEnum},
+	{"consent", "c.marketing_consent", kindEnum},
+	{"created_at", "c.created_at", kindTimestamp},
+	{"tags", "c.tags", kindTags},
+	{"list", "", kindList},
+}
+
+var fixedFields = indexFields(fieldSpecs)
+
+func indexFields(specs []fixedField) map[string]fixedField {
+	out := make(map[string]fixedField, len(specs))
+	for _, f := range specs {
+		out[f.name] = f
+	}
+	return out
 }
 
 type compiler struct {

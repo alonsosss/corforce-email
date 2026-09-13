@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react';
 import {
-  SUPPRESSION_REASONS,
-  isRemovableReason,
+  isRemovable,
   suppressionApi,
   type CreateSuppressionRequest,
   type SuppressionEntry,
+  type SuppressionMeta,
   type SuppressionReason,
 } from '@/api/suppression';
 import { ERROR_CODES } from '@/api/errors';
@@ -34,10 +34,8 @@ import { RowActions } from '@/pages/shared/RowActions';
 import { ReasonBadge } from './suppressionReason';
 
 const SEARCH_DEBOUNCE_MS = 300;
-const EMAIL_MAX_LENGTH = 320;
-const DETAIL_MAX_LENGTH = 1000;
 
-export function EntriesTab() {
+export function EntriesTab({ meta }: { meta: SuppressionMeta }) {
   const toast = useToast();
   const { can } = useAccess();
   const pager = usePagination();
@@ -103,7 +101,7 @@ export function EntriesTab() {
       align: 'right',
       render: (e) => (
         <RowActions
-          onDelete={canDelete && isRemovableReason(e.reason) ? () => setRemoving(e) : undefined}
+          onDelete={canDelete && isRemovable(meta, e.reason) ? () => setRemoving(e) : undefined}
         />
       ),
     },
@@ -141,9 +139,9 @@ export function EntriesTab() {
           <Select
             id="suppression-reason"
             placeholder={t('common.all')}
-            options={SUPPRESSION_REASONS.map((r) => ({
-              value: r,
-              label: tEnum('suppression.reason', r),
+            options={meta.reasons.map((r) => ({
+              value: r.reason,
+              label: tEnum('suppression.reason', r.reason),
             }))}
             value={reason}
             onChange={(e) => {
@@ -171,6 +169,7 @@ export function EntriesTab() {
       />
       {creating ? (
         <SuppressionForm
+          meta={meta}
           onClose={() => setCreating(false)}
           onCreated={() => {
             toast.success(t('suppression.created'));
@@ -199,7 +198,15 @@ export function EntriesTab() {
   );
 }
 
-function SuppressionForm({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
+function SuppressionForm({
+  meta,
+  onClose,
+  onCreated,
+}: {
+  meta: SuppressionMeta;
+  onClose: () => void;
+  onCreated: () => void;
+}) {
   const [email, setEmail] = useState('');
   const [detail, setDetail] = useState('');
   const [expires, setExpires] = useState('');
@@ -214,9 +221,9 @@ function SuppressionForm({ onClose, onCreated }: { onClose: () => void; onCreate
     const expiresAt = localToRfc3339(expires);
     const next = {
       email:
-        validateField(email, rules.required, rules.email, rules.maxLength(EMAIL_MAX_LENGTH)) ??
+        validateField(email, rules.required, rules.email, rules.maxLength(meta.max_email_length)) ??
         undefined,
-      detail: validateField(detail, rules.maxLength(DETAIL_MAX_LENGTH)) ?? undefined,
+      detail: validateField(detail, rules.maxLength(meta.max_detail_length)) ?? undefined,
       expires: expiresAt && isPast(expiresAt) ? t('suppression.form.expiryPast') : undefined,
     };
     setErrors(next);

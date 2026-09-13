@@ -13,6 +13,12 @@ export const MODULES = {
   mailSecurity: 'mail_security',
   templates: 'templates',
   suppression: 'suppression',
+  contacts: 'contacts',
+  segments: 'segments',
+  campaigns: 'campaigns',
+  analytics: 'analytics',
+  billing: 'billing',
+  reputation: 'reputation',
 } as const;
 
 export type ModuleName = (typeof MODULES)[keyof typeof MODULES];

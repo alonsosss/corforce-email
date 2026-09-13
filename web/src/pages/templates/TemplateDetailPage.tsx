@@ -1,16 +1,17 @@
 import { useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
-  TEMPLATE_DESCRIPTION_MAX_LENGTH,
-  TEMPLATE_NAME_MAX_LENGTH,
   templatesApi,
+  templatesMeta,
   type TemplateDetail,
+  type TemplatesMeta,
 } from '@/api/templates';
 import { ERROR_CODES } from '@/api/errors';
 import { PERMISSIONS } from '@/access/permissions';
 import { useAccess } from '@/access/useAccess';
 import { useAction } from '@/hooks/useAction';
 import { useQuery } from '@/hooks/useQuery';
+import { useResource } from '@/hooks/useResource';
 import { useTabParam } from '@/hooks/useTabParam';
 import {
   Alert,
@@ -33,6 +34,7 @@ import { rules, validateField } from '@/lib/validate';
 import { t, tEnum } from '@/i18n';
 import { paths } from '@/paths';
 import { FormModal } from '@/pages/shared/FormModal';
+import { ResourceGate } from '@/pages/shared/ResourceGate';
 import { PreviewTab } from './PreviewTab';
 import { templateKindTone, templateStatusTone } from './templateStatus';
 import { VersionsTab } from './VersionsTab';
@@ -214,15 +216,30 @@ export default function TemplateDetailPage() {
   );
 }
 
-function TemplateEditForm({
-  template,
-  onClose,
-  onSaved,
-}: {
+interface TemplateEditFormProps {
   template: TemplateDetail;
   onClose: () => void;
   onSaved: () => void;
-}) {
+}
+
+function TemplateEditForm(props: TemplateEditFormProps) {
+  const meta = useResource(templatesMeta);
+  return (
+    <ResourceGate
+      resource={meta}
+      modal={{ title: t('templates.form.editTitle'), onClose: props.onClose }}
+    >
+      {(data) => <EditForm {...props} meta={data} />}
+    </ResourceGate>
+  );
+}
+
+function EditForm({
+  template,
+  onClose,
+  onSaved,
+  meta,
+}: TemplateEditFormProps & { meta: TemplatesMeta }) {
   const [name, setName] = useState(template.name);
   const [description, setDescription] = useState(template.description);
   const [errors, setErrors] = useState<Record<string, string | undefined>>({});
@@ -243,9 +260,11 @@ function TemplateEditForm({
   const submit = async () => {
     const next = {
       name:
-        validateField(name, rules.required, rules.maxLength(TEMPLATE_NAME_MAX_LENGTH)) ?? undefined,
+        validateField(name, rules.required, rules.maxLength(meta.limits.max_name_length)) ??
+        undefined,
       description:
-        validateField(description, rules.maxLength(TEMPLATE_DESCRIPTION_MAX_LENGTH)) ?? undefined,
+        validateField(description, rules.maxLength(meta.limits.max_description_length)) ??
+        undefined,
     };
     setErrors(next);
     if (next.name || next.description) return;

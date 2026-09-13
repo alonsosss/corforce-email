@@ -1,5 +1,5 @@
 import { useMemo, useState, type FormEvent } from 'react';
-import { SUPPRESSION_MAX_CHECK, suppressionApi, type SuppressedAddress } from '@/api/suppression';
+import { suppressionApi, type SuppressedAddress, type SuppressionMeta } from '@/api/suppression';
 import { errorMessage } from '@/api/messages';
 import { useAction } from '@/hooks/useAction';
 import {
@@ -33,7 +33,7 @@ const columns: Column<SuppressedAddress>[] = [
   },
 ];
 
-export function CheckTab() {
+export function CheckTab({ meta }: { meta: SuppressionMeta }) {
   const [text, setText] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<CheckResult | null>(null);
@@ -50,8 +50,8 @@ export function CheckTab() {
     const next =
       lines.length === 0
         ? t('suppression.import.emptyList')
-        : lines.length > SUPPRESSION_MAX_CHECK
-          ? t('suppression.check.tooMany', { max: format.format(SUPPRESSION_MAX_CHECK) })
+        : lines.length > meta.max_check_emails
+          ? t('suppression.check.tooMany', { max: format.format(meta.max_check_emails) })
           : null;
     setError(next);
     if (next) return;
@@ -70,7 +70,7 @@ export function CheckTab() {
             error={error}
             hint={t('suppression.import.count', {
               n: format.format(lines.length),
-              max: format.format(SUPPRESSION_MAX_CHECK),
+              max: format.format(meta.max_check_emails),
             })}
           >
             <Textarea

@@ -48,6 +48,9 @@ var (
 	ErrInvalidListName    = errors.New("name es obligatorio y admite como maximo 200 caracteres")
 	ErrInvalidSegmentName = errors.New("name es obligatorio y admite como maximo 200 caracteres")
 	ErrTooManyMembers     = errors.New("contact_ids admite como maximo 1000 contactos por peticion")
+	// ErrInvalidContactIDs: una consulta interna por ids sin ninguno o con mas de los que
+	// admite la operacion.
+	ErrInvalidContactIDs = errors.New("contact_ids no puede estar vacio ni superar el maximo de la operacion")
 	ErrInvalidLimit       = errors.New("limit debe estar entre 1 y 1000")
 
 	ErrInvalidSegment  = errors.New("definicion de segmento no valida")

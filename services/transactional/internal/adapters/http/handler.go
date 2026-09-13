@@ -101,6 +101,7 @@ func (h *Handler) Routes() http.Handler {
 		r.Use(middleware.InjectFromGateway)
 		r.Use(db.TenantHeaderPoolMiddleware(h.tenantDB))
 		r.Post("/send-email", h.InternalSendEmail)
+		r.Post("/transactional/messages", h.InternalCreateMessages)
 		r.Post("/transactional/batch", h.MarketingBatch)
 	})
 	return r
@@ -149,11 +150,23 @@ func (h *Handler) CreateMessages(w http.ResponseWriter, r *http.Request) {
 		response.ErrBadRequest(w, err.Error())
 		return
 	}
-	key := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
-	if key == "" {
-		key = strings.TrimSpace(req.IdempotencyKey)
+	cmd := req.command(tenantID, idempotencyKey(r, req))
+	if uid, err := uuid.Parse(middleware.GetUserID(r.Context())); err == nil {
+		cmd.CreatedBy = &uid
 	}
-	cmd := app.CreateMessagesCommand{
+	h.createMessages(w, r, cmd)
+}
+
+// idempotencyKey: la cabecera manda sobre el campo del cuerpo.
+func idempotencyKey(r *http.Request, req createRequest) string {
+	if key := strings.TrimSpace(r.Header.Get("Idempotency-Key")); key != "" {
+		return key
+	}
+	return strings.TrimSpace(req.IdempotencyKey)
+}
+
+func (req createRequest) command(tenantID uuid.UUID, key string) app.CreateMessagesCommand {
+	return app.CreateMessagesCommand{
 		TenantID:        tenantID,
 		IdempotencyKey:  key,
 		From:            domain.Recipient(req.From),
@@ -173,9 +186,11 @@ func (h *Handler) CreateMessages(w http.ResponseWriter, r *http.Request) {
 		Unsubscribable:  req.Unsubscribable,
 		HasAttachments:  len(req.Attachments) > 0 && string(req.Attachments) != "null" && string(req.Attachments) != "[]",
 	}
-	if uid, err := uuid.Parse(middleware.GetUserID(r.Context())); err == nil {
-		cmd.CreatedBy = &uid
-	}
+}
+
+// createMessages responde 202 al crear y 200 ante una repeticion de la clave o si todos
+// los destinatarios estaban suprimidos.
+func (h *Handler) createMessages(w http.ResponseWriter, r *http.Request, cmd app.CreateMessagesCommand) {
 	result, err := h.uc.CreateMessages(r.Context(), cmd)
 	if err != nil {
 		writeError(w, err)
@@ -186,6 +201,38 @@ func (h *Handler) CreateMessages(w http.ResponseWriter, r *http.Request) {
 		status = http.StatusOK
 	}
 	response.JSON(w, status, result)
+}
+
+// internalCreateRequest es el cuerpo de POST /messages mas el proposito, que solo admite
+// esta ruta interna.
+type internalCreateRequest struct {
+	createRequest
+	Purpose string `json:"purpose,omitempty"`
+}
+
+// InternalCreateMessages es el envio de una empresa para otro servicio de la plataforma
+// (automations, correo del doble opt-in): mismo cuerpo y mismas reglas que POST /messages,
+// la empresa en X-Tenant-ID, Idempotency-Key obligatoria (por cabecera o en el cuerpo) y
+// un proposito opcional (domain.PurposeDoubleOptIn).
+func (h *Handler) InternalCreateMessages(w http.ResponseWriter, r *http.Request) {
+	tenantID, err := uuid.Parse(r.Header.Get("X-Tenant-ID"))
+	if err != nil {
+		response.ErrUnauthorized(w, "invalid tenant")
+		return
+	}
+	var req internalCreateRequest
+	if err := validate.DecodeJSONLimit(w, r, &req, maxCreateBody); err != nil {
+		response.ErrBadRequest(w, err.Error())
+		return
+	}
+	key := idempotencyKey(r, req.createRequest)
+	if key == "" {
+		response.ErrValidation(w, "Idempotency-Key is required on this route")
+		return
+	}
+	cmd := req.command(tenantID, key)
+	cmd.Purpose = req.Purpose
+	h.createMessages(w, r, cmd)
 }
 
 func allSuppressed(res *app.CreateResult) bool {

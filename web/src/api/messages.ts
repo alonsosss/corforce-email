@@ -1,8 +1,15 @@
 import { ERROR_CODES, isApiError } from './errors';
-import { t, type MessageKey } from '@/i18n';
+import { hasMessage, t, type MessageKey } from '@/i18n';
 
-// Codigo del backend -> texto de la aplicacion. Los codigos sin entrada muestran el
+// Codigo del backend -> texto de la aplicacion. Un codigo propio de un servicio se
+// traduce con la clave `error.code.<CODIGO>` si existe. Los codigos sin texto muestran el
 // mensaje del servidor (validaciones, conflictos), que explica el caso concreto.
+
+/** Texto de la aplicacion para un codigo de error del backend, si lo hay. */
+export function codeMessage(code: string): string | null {
+  const key = `error.code.${code}`;
+  return hasMessage(key) ? t(key) : null;
+}
 const BY_CODE: Partial<Record<string, MessageKey>> = {
   [ERROR_CODES.NETWORK_ERROR]: 'error.network',
   [ERROR_CODES.INVALID_RESPONSE]: 'error.invalidResponse',
@@ -32,6 +39,8 @@ export function errorMessage(
     if (override) return t(override);
     const key = BY_CODE[err.code];
     if (key) return t(key);
+    const byCode = err.code ? codeMessage(err.code) : null;
+    if (byCode) return byCode;
     if (err.message) return err.message;
     if (err.status >= 502 && err.status <= 504) return t('error.serviceUnavailable');
   }

@@ -60,20 +60,45 @@ func (q *SegmentQuery) Audience(ctx context.Context, tenantID uuid.UUID, spec po
 	return collectContacts(rows)
 }
 
-// audienceSQL arma la consulta de una pagina de audiencia.
+// sendableConditions es la regla de contacto enviable en SQL, con la empresa en $1. Es la
+// misma que domain.Contact.Sendable y la unica escritura de esa regla en SQL: la audiencia
+// y la consulta de enviables por id la comparten.
 //
-// Las condiciones de enviable van como literales y no como argumentos a proposito: son
-// las del indice parcial idx_contacts_contacts_sendable, y el planificador solo puede
-// usarlo si ve el mismo literal. El recorrido es por ese indice en orden de id, asi que
-// la paginacion por keyset (c.id > cursor ... ORDER BY c.id LIMIT n) no ordena nada: lee
-// la siguiente tanda y para.
-func audienceSQL(tenantID uuid.UUID, spec ports.AudienceSpec) (string, []any, error) {
-	args := segment.NewArgs(tenantID)
-	conds := []string{
+// Las condiciones van como literales y no como argumentos a proposito: son las del indice
+// parcial idx_contacts_contacts_sendable, y el planificador solo puede usarlo si ve el
+// mismo literal.
+func sendableConditions() []string {
+	return []string{
 		"c.tenant_id = $1",
 		"c.status = '" + string(domain.StatusActive) + "'",
 		"c.marketing_consent = '" + string(domain.ConsentGranted) + "'",
 	}
+}
+
+func (q *SegmentQuery) Sendable(ctx context.Context, tenantID uuid.UUID, ids []uuid.UUID) ([]domain.Contact, error) {
+	sql, args := sendableSQL(tenantID, ids)
+	rows, err := q.pool.Query(ctx, sql, args...)
+	if err != nil {
+		return nil, err
+	}
+	return collectContacts(rows)
+}
+
+// sendableSQL filtra por id sobre el mismo indice parcial (tenant_id, id).
+func sendableSQL(tenantID uuid.UUID, ids []uuid.UUID) (string, []any) {
+	conds := append(sendableConditions(), "c.id = ANY($2::uuid[])")
+	return `SELECT ` + contactColumns + ` FROM contacts.contacts c WHERE ` + strings.Join(conds, " AND ") +
+		` ORDER BY c.id`, []any{tenantID, ids}
+}
+
+// audienceSQL arma la consulta de una pagina de audiencia.
+//
+// El recorrido es por el indice parcial de enviables en orden de id, asi que la
+// paginacion por keyset (c.id > cursor ... ORDER BY c.id LIMIT n) no ordena nada: lee la
+// siguiente tanda y para.
+func audienceSQL(tenantID uuid.UUID, spec ports.AudienceSpec) (string, []any, error) {
+	args := segment.NewArgs(tenantID)
+	conds := sendableConditions()
 	if spec.After != uuid.Nil {
 		conds = append(conds, "c.id > "+args.Add(spec.After)+"::uuid")
 	}

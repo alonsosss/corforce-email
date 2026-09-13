@@ -1,7 +1,7 @@
 import { useMemo, useState, type FormEvent } from 'react';
 import {
-  SUPPRESSION_MAX_IMPORT,
   suppressionApi,
+  type SuppressionMeta,
   type ImportResult,
   type ImportSuppressionRequest,
   type SuppressionImport,
@@ -26,9 +26,7 @@ import { splitLines } from '@/lib/listInput';
 import { rules, validateField } from '@/lib/validate';
 import { getLocale, t } from '@/i18n';
 
-const DETAIL_MAX_LENGTH = 1000;
-
-export function ImportTab() {
+export function ImportTab({ meta }: { meta: SuppressionMeta }) {
   const toast = useToast();
   const pager = usePagination();
   const [text, setText] = useState('');
@@ -58,10 +56,10 @@ export function ImportTab() {
       emails:
         lines.length === 0
           ? t('suppression.import.emptyList')
-          : lines.length > SUPPRESSION_MAX_IMPORT
-            ? t('suppression.import.tooMany', { max: format.format(SUPPRESSION_MAX_IMPORT) })
+          : lines.length > meta.max_import_emails
+            ? t('suppression.import.tooMany', { max: format.format(meta.max_import_emails) })
             : undefined,
-      detail: validateField(detail, rules.maxLength(DETAIL_MAX_LENGTH)) ?? undefined,
+      detail: validateField(detail, rules.maxLength(meta.max_detail_length)) ?? undefined,
     };
     setErrors(next);
     if (next.emails || next.detail) return;
@@ -107,7 +105,7 @@ export function ImportTab() {
             error={errors.emails}
             hint={t('suppression.import.count', {
               n: format.format(lines.length),
-              max: format.format(SUPPRESSION_MAX_IMPORT),
+              max: format.format(meta.max_import_emails),
             })}
           >
             <Textarea

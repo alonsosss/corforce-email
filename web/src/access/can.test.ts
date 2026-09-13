@@ -10,7 +10,7 @@ const perm = (module: string, resource: string, action: string): PermissionTripl
   action,
 });
 
-describe('evaluatePermission (espejo de AccessPolicy.HasPermission)', () => {
+describe('evaluatePermission (espejo de pkg/authz y AccessPolicy.HasPermission)', () => {
   it('concede la triple exacta y nada mas', () => {
     const perms = [perm(MODULES.identity, 'users', 'read')];
     expect(evaluatePermission(perms, MODULES.identity, 'users', 'read')).toBe(true);
@@ -19,22 +19,35 @@ describe('evaluatePermission (espejo de AccessPolicy.HasPermission)', () => {
     expect(evaluatePermission(perms, MODULES.access, 'users', 'read')).toBe(false);
   });
 
-  it('(*, *) cubre todo el modulo, pero solo ese modulo', () => {
-    const perms = [perm(MODULES.audit, '*', '*')];
-    expect(evaluatePermission(perms, MODULES.audit, 'logs', 'read')).toBe(true);
-    expect(evaluatePermission(perms, MODULES.audit, 'integrity', 'verify')).toBe(true);
-    expect(evaluatePermission(perms, MODULES.identity, 'users', 'read')).toBe(false);
+  it('el comodin de recurso es independiente: (*, read) lee cualquier recurso del modulo', () => {
+    const perms = [perm(MODULES.contacts, '*', 'read')];
+    expect(evaluatePermission(perms, MODULES.contacts, 'lists', 'read')).toBe(true);
+    expect(evaluatePermission(perms, MODULES.contacts, 'contacts', 'read')).toBe(true);
+    expect(evaluatePermission(perms, MODULES.contacts, 'lists', 'delete')).toBe(false);
   });
 
-  it('(recurso, *) cubre todas las acciones de ese recurso', () => {
+  it('el comodin de accion es independiente: (recurso, *) cubre solo ese recurso', () => {
     const perms = [perm(MODULES.access, 'roles', '*')];
     expect(evaluatePermission(perms, MODULES.access, 'roles', 'update')).toBe(true);
+    expect(evaluatePermission(perms, MODULES.access, 'roles', 'delete')).toBe(true);
     expect(evaluatePermission(perms, MODULES.access, 'user_roles', 'assign')).toBe(false);
   });
 
-  it('(*, accion) no concede nada, igual que en el backend', () => {
-    const perms = [perm(MODULES.identity, '*', 'read')];
+  it('(*, *) cubre todo el modulo', () => {
+    const perms = [perm(MODULES.audit, '*', '*')];
+    expect(evaluatePermission(perms, MODULES.audit, 'logs', 'read')).toBe(true);
+    expect(evaluatePermission(perms, MODULES.audit, 'integrity', 'verify')).toBe(true);
+  });
+
+  it('ningun comodin cruza de modulo', () => {
+    const perms = [
+      perm(MODULES.audit, '*', '*'),
+      perm(MODULES.contacts, '*', 'read'),
+      perm(MODULES.access, 'roles', '*'),
+    ];
     expect(evaluatePermission(perms, MODULES.identity, 'users', 'read')).toBe(false);
+    expect(evaluatePermission(perms, MODULES.segments, 'segments', 'read')).toBe(false);
+    expect(evaluatePermission(perms, MODULES.identity, 'roles', 'update')).toBe(false);
   });
 
   it('sin permisos no concede nada', () => {

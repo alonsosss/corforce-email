@@ -72,8 +72,9 @@ export const PERMISSIONS = {
     read: [MODULES.audit, 'security_events', 'read'],
     acknowledge: [MODULES.audit, 'security_events', 'acknowledge'],
   },
+  // GET /audit/integrity recorre toda la cadena y exige verify; integrity/read no tiene
+  // ruta, asi que la interfaz no lo pregunta.
   integrity: {
-    read: [MODULES.audit, 'integrity', 'read'],
     verify: [MODULES.audit, 'integrity', 'verify'],
   },
 
@@ -157,6 +158,48 @@ export const PERMISSIONS = {
   },
   suppressionStats: {
     read: [MODULES.suppression, 'stats', 'read'],
+  },
+
+  // 012 a 017: contactos, segmentos, campanas, analitica, plan y reputacion. Los permisos
+  // de plataforma (billing plans y subscriptions, reputation tenants) no se piden aqui:
+  // esas pantallas son del rol superadmin.
+  contacts: {
+    ...crud(MODULES.contacts, 'contacts'),
+    import: [MODULES.contacts, 'contacts', 'import'],
+    export: [MODULES.contacts, 'contacts', 'export'],
+  },
+  contactLists: crud(MODULES.contacts, 'lists'),
+  contactAttributes: crud(MODULES.contacts, 'attributes'),
+  consents: {
+    read: [MODULES.contacts, 'consents', 'read'],
+    create: [MODULES.contacts, 'consents', 'create'],
+  },
+  segments: {
+    ...crud(MODULES.segments, 'segments'),
+    preview: [MODULES.segments, 'segments', 'preview'],
+  },
+  campaigns: {
+    ...crud(MODULES.campaigns, 'campaigns'),
+    send: [MODULES.campaigns, 'campaigns', 'send'],
+    cancel: [MODULES.campaigns, 'campaigns', 'cancel'],
+  },
+  campaignStats: {
+    read: [MODULES.campaigns, 'stats', 'read'],
+  },
+  analyticsReports: {
+    read: [MODULES.analytics, 'reports', 'read'],
+  },
+  billingSubscription: {
+    read: [MODULES.billing, 'subscription', 'read'],
+  },
+  billingUsage: {
+    read: [MODULES.billing, 'usage', 'read'],
+  },
+  reputationStatus: {
+    read: [MODULES.reputation, 'status', 'read'],
+  },
+  reputationHistory: {
+    read: [MODULES.reputation, 'history', 'read'],
   },
 } as const satisfies Record<string, Record<string, Triple>>;
 

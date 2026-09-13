@@ -16,7 +16,7 @@ export default function IntegrityPage() {
     setResult(data);
   });
 
-  const canVerify = can(...PERMISSIONS.integrity.verify) || can(...PERMISSIONS.integrity.read);
+  const canVerify = can(...PERMISSIONS.integrity.verify);
 
   return (
     <div>
@@ -42,7 +42,10 @@ export default function IntegrityPage() {
             {errorMessage(verify.error)}
           </div>
         ) : result === null ? (
-          <EmptyState icon={<IconLink size={32} />} title={t('audit.integrity.idle')} />
+          <EmptyState
+            icon={<IconLink size={32} />}
+            title={canVerify ? t('audit.integrity.idle') : t('audit.integrity.noVerify')}
+          />
         ) : result.ok ? (
           <EmptyState
             icon={

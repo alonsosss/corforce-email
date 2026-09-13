@@ -56,6 +56,7 @@ func (h *Handler) Routes() http.Handler {
 	r := chi.NewRouter()
 	r.With(h.perm(actionRead)).Get("/", h.ListTemplates)
 	r.With(h.perm(actionCreate)).Post("/", h.CreateTemplate)
+	r.With(h.perm(actionRead)).Get("/meta", h.Meta)
 	r.Route("/{id}", func(r chi.Router) {
 		r.With(h.perm(actionRead)).Get("/", h.GetTemplate)
 		r.With(h.perm(actionUpdate)).Patch("/", h.UpdateTemplate)
@@ -142,6 +143,52 @@ func writeError(w http.ResponseWriter, err error) {
 	default:
 		response.Unexpected(w, err)
 	}
+}
+
+// ── Catalogo ─────────────────────────────────────────────────────────────────
+
+type reservedVariableMeta struct {
+	Name string `json:"name"`
+	Type string `json:"type"`
+}
+
+type limitsMeta struct {
+	MaxNameLength        int `json:"max_name_length"`
+	MaxDescriptionLength int `json:"max_description_length"`
+	MaxVariables         int `json:"max_variables"`
+	MaxSubjectBytes      int `json:"max_subject_bytes"`
+	MaxHTMLBytes         int `json:"max_html_bytes"`
+}
+
+type metaResponse struct {
+	Kinds             []string               `json:"kinds"`
+	Statuses          []string               `json:"statuses"`
+	VersionStatuses   []string               `json:"version_statuses"`
+	VariableTypes     []string               `json:"variable_types"`
+	ReservedVariables []reservedVariableMeta `json:"reserved_variables"`
+	Limits            limitsMeta             `json:"limits"`
+}
+
+// Meta publica los valores del dominio que la interfaz necesita para validar y ofrecer
+// opciones (tipos, estados, variables reservadas y topes), para que no los copie.
+func (h *Handler) Meta(w http.ResponseWriter, r *http.Request) {
+	reserved := domain.ReservedVariables()
+	out := metaResponse{
+		Kinds:             domain.Kinds(),
+		Statuses:          domain.TemplateStatuses(),
+		VersionStatuses:   domain.VersionStatuses(),
+		VariableTypes:     domain.VariableTypes(),
+		ReservedVariables: make([]reservedVariableMeta, 0, len(reserved)),
+		Limits: limitsMeta{
+			MaxNameLength: domain.MaxNameLength, MaxDescriptionLength: domain.MaxDescription,
+			MaxVariables: domain.MaxVariables, MaxSubjectBytes: domain.MaxSubjectBytes,
+			MaxHTMLBytes: domain.MaxHTMLBytes,
+		},
+	}
+	for _, v := range reserved {
+		out.ReservedVariables = append(out.ReservedVariables, reservedVariableMeta{Name: v.Name, Type: v.Type})
+	}
+	response.JSON(w, http.StatusOK, out)
 }
 
 // ── Plantillas ───────────────────────────────────────────────────────────────

@@ -1,19 +1,20 @@
 import { useState } from 'react';
 import {
-  TEMPLATE_DESCRIPTION_MAX_LENGTH,
-  TEMPLATE_KINDS,
-  TEMPLATE_NAME_MAX_LENGTH,
   templatesApi,
+  templatesMeta,
   type CreateTemplateRequest,
   type Template,
   type TemplateKind,
+  type TemplatesMeta,
 } from '@/api/templates';
 import { ERROR_CODES } from '@/api/errors';
 import { useAction } from '@/hooks/useAction';
+import { useResource } from '@/hooks/useResource';
 import { FormField, Input, Select, Textarea } from '@/design/components';
 import { rules, validateField } from '@/lib/validate';
 import { t, tEnum } from '@/i18n';
 import { FormModal } from '@/pages/shared/FormModal';
+import { ResourceGate } from '@/pages/shared/ResourceGate';
 import { ContentFields } from './ContentFields';
 import { contentFromDraft, emptyContent, type ContentDraft, type ContentErrors } from './content';
 
@@ -22,7 +23,23 @@ export interface TemplateCreateFormProps {
   onCreated: (template: Template) => void;
 }
 
-export function TemplateCreateForm({ onClose, onCreated }: TemplateCreateFormProps) {
+export function TemplateCreateForm(props: TemplateCreateFormProps) {
+  const meta = useResource(templatesMeta);
+  return (
+    <ResourceGate
+      resource={meta}
+      modal={{ title: t('templates.form.createTitle'), onClose: props.onClose }}
+    >
+      {(data) => <CreateForm {...props} meta={data} />}
+    </ResourceGate>
+  );
+}
+
+function CreateForm({
+  onClose,
+  onCreated,
+  meta,
+}: TemplateCreateFormProps & { meta: TemplatesMeta }) {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [kind, setKind] = useState<TemplateKind | ''>('');
@@ -38,12 +55,14 @@ export function TemplateCreateForm({ onClose, onCreated }: TemplateCreateFormPro
   const submit = async () => {
     const next = {
       name:
-        validateField(name, rules.required, rules.maxLength(TEMPLATE_NAME_MAX_LENGTH)) ?? undefined,
+        validateField(name, rules.required, rules.maxLength(meta.limits.max_name_length)) ??
+        undefined,
       description:
-        validateField(description, rules.maxLength(TEMPLATE_DESCRIPTION_MAX_LENGTH)) ?? undefined,
+        validateField(description, rules.maxLength(meta.limits.max_description_length)) ??
+        undefined,
       kind: kind ? undefined : t('validation.required'),
     };
-    const parsed = contentFromDraft(content);
+    const parsed = contentFromDraft(content, meta);
     setErrors(next);
     setContentErrors(parsed.errors);
     if (Object.values(next).some(Boolean) || !parsed.content || !kind) return;
@@ -86,7 +105,7 @@ export function TemplateCreateForm({ onClose, onCreated }: TemplateCreateFormPro
           <Select
             id="template-kind"
             placeholder={t('common.select')}
-            options={TEMPLATE_KINDS.map((k) => ({ value: k, label: tEnum('templates.kind', k) }))}
+            options={meta.kinds.map((k) => ({ value: k, label: tEnum('templates.kind', k) }))}
             value={kind}
             onChange={(e) => setKind(e.target.value as TemplateKind | '')}
             invalid={Boolean(errors.kind)}
@@ -110,6 +129,7 @@ export function TemplateCreateForm({ onClose, onCreated }: TemplateCreateFormPro
         value={content}
         onChange={setContent}
         errors={contentErrors}
+        meta={meta}
       />
     </FormModal>
   );

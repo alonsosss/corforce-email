@@ -6,6 +6,12 @@ import { toPage, type Page, type PageQuery } from './types';
 const FALLBACK_PAGE = 1;
 const FALLBACK_PER_PAGE = 20;
 
+/**
+ * per_page de los selectores (listas, segmentos, plantillas, empresas): el maximo que
+ * admiten los servicios (maxPerPage en sus handlers). Mas alla, el selector lo avisa.
+ */
+export const PICKER_PAGE_SIZE = 100;
+
 /** GET de un listado paginado: manda el meta del envelope, no lo que se pidio. */
 export async function fetchPage<T>(path: string, query: PageQuery & QueryParams): Promise<Page<T>> {
   const res = await api.get<T[]>(path, { params: query });

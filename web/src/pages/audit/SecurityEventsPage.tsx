@@ -22,6 +22,7 @@ import {
 import { IconCheck } from '@/design/icons';
 import { formatDateTime } from '@/lib/format';
 import { t, tEnum } from '@/i18n';
+import { MissingPermission } from '@/pages/shared/MissingPermission';
 
 function riskTone(level: RiskLevel): BadgeTone {
   if (level === 'critical' || level === 'high') return 'danger';
@@ -38,6 +39,16 @@ interface Filters {
 const EMPTY: Filters = { event_type: '', risk_level: '', pendingOnly: true };
 
 export default function SecurityEventsPage() {
+  const { can } = useAccess();
+  if (!can(...PERMISSIONS.securityEvents.read)) {
+    return (
+      <MissingPermission title={t('audit.events.title')} description={t('audit.events.subtitle')} />
+    );
+  }
+  return <SecurityEventsView />;
+}
+
+function SecurityEventsView() {
   const toast = useToast();
   const { can } = useAccess();
   const pager = usePagination();

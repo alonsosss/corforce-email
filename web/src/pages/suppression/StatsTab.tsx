@@ -1,4 +1,4 @@
-import { SUPPRESSION_REASONS, suppressionApi, type SuppressionReason } from '@/api/suppression';
+import { suppressionApi, type SuppressionMeta, type SuppressionReason } from '@/api/suppression';
 import { useQuery } from '@/hooks/useQuery';
 import { Card, DataTable, ErrorState, Skeleton, type Column } from '@/design/components';
 import { getLocale, t } from '@/i18n';
@@ -9,7 +9,7 @@ interface ReasonRow {
   count: number;
 }
 
-export function StatsTab() {
+export function StatsTab({ meta }: { meta: SuppressionMeta }) {
   const stats = useQuery(async () => (await suppressionApi.stats()).data, []);
   const format = new Intl.NumberFormat(getLocale());
 
@@ -29,7 +29,7 @@ export function StatsTab() {
   }
 
   const byReason = stats.data.by_reason ?? {};
-  const rows: ReasonRow[] = SUPPRESSION_REASONS.map((reason) => ({
+  const rows: ReasonRow[] = meta.reasons.map(({ reason }) => ({
     reason,
     count: byReason[reason] ?? 0,
   }));

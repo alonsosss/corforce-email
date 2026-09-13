@@ -64,7 +64,7 @@ describe('menu frente a rutas', () => {
       ),
     ).toBe(true);
     const everyRoleItem = allItems
-      .filter((i) => i.role && modules.includes(i.module ?? ''))
+      .filter((i) => i.role && (!i.module || modules.includes(i.module)))
       .map((i) => i.to);
     expect(withRole([SYSTEM_ROLES.superadmin]).sort()).toEqual(everyRoleItem.sort());
   });
@@ -81,7 +81,32 @@ describe('menu frente a rutas', () => {
     expect(group('nav.group.sending')?.items.map((i) => [i.to, i.module])).toEqual([
       [paths.templates, MODULES.templates],
       [paths.suppression, MODULES.suppression],
+      [paths.reputation, MODULES.reputation],
     ]);
+    expect(group('nav.group.marketing')?.items.map((i) => [i.to, i.module])).toEqual([
+      [paths.contacts, MODULES.contacts],
+      [paths.segments, MODULES.segments],
+      [paths.campaigns, MODULES.campaigns],
+      [paths.analytics, MODULES.analytics],
+    ]);
+  });
+
+  it('la operacion de planes y reputacion de la plataforma es del superadmin, sin modulo', () => {
+    const platform: string[] = [paths.platformBilling, paths.platformReputation];
+    for (const to of platform) {
+      const item = allItems.find((i) => i.to === to);
+      expect(item?.module, to).toBeUndefined();
+      expect(item?.role, to).toBe(SYSTEM_ROLES.superadmin);
+    }
+    const visible = (roles: string[]) =>
+      visibleNav(accessWith([MODULES.billing, MODULES.reputation], roles))
+        .flatMap((g) => g.items)
+        .map((i) => i.to);
+    expect(visible([SYSTEM_ROLES.tenantAdmin]).filter((to) => platform.includes(to))).toEqual([]);
+    expect(visible([SYSTEM_ROLES.superadmin])).toEqual(expect.arrayContaining(platform));
+    expect(visible([SYSTEM_ROLES.tenantAdmin])).toEqual(
+      expect.arrayContaining([paths.billing, paths.reputation]),
+    );
   });
 
   it('solo muestra las entradas de correo y envios de los modulos concedidos', () => {
@@ -98,6 +123,11 @@ describe('menu frente a rutas', () => {
       [paths.domains, `${paths.domains}/:id`],
       [paths.mailboxes, `${paths.mailboxes}/:id`],
       [paths.templates, `${paths.templates}/:id`],
+      [paths.contacts, `${paths.contacts}/:id`],
+      [paths.contacts, paths.contactListPattern],
+      [paths.segments, paths.segmentNew],
+      [paths.segments, `${paths.segments}/:id`],
+      [paths.campaigns, `${paths.campaigns}/:id`],
     ] as const) {
       const listScreen = SCREENS.find((s) => s.path === list);
       const detailScreen = SCREENS.find((s) => s.path === detail);

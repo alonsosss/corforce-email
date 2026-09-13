@@ -34,6 +34,9 @@ type CreateMessagesCommand struct {
 	ScheduledAt     *time.Time
 	Unsubscribable  bool
 	HasAttachments  bool
+	// Purpose solo llega por el envio interno (domain.PurposeDoubleOptIn); el API publico
+	// no lo acepta.
+	Purpose string
 }
 
 // MessageSummary es lo que se devuelve por cada mensaje creado.
@@ -67,7 +70,7 @@ func (uc *UseCase) CreateMessages(ctx context.Context, cmd CreateMessagesCommand
 		return nil, err
 	}
 
-	suppressed, err := uc.filterSuppressed(ctx, cmd.TenantID, &cmd.To, &cmd.Cc, &cmd.Bcc)
+	suppressed, err := uc.filterSuppressed(ctx, cmd.TenantID, cmd.Purpose, &cmd.To, &cmd.Cc, &cmd.Bcc)
 	if err != nil {
 		return nil, err
 	}
@@ -186,7 +189,7 @@ func (uc *UseCase) InternalSend(ctx context.Context, cmd InternalSendCommand) (*
 	}
 	to := []domain.Recipient{{Email: cmd.To}}
 	var cc, bcc []domain.Recipient
-	if _, err := uc.filterSuppressed(ctx, cmd.TenantID, &to, &cc, &bcc); err != nil {
+	if _, err := uc.filterSuppressed(ctx, cmd.TenantID, "", &to, &cc, &bcc); err != nil {
 		return nil, err
 	}
 
@@ -247,6 +250,15 @@ func (uc *UseCase) validateCreate(cmd *CreateMessagesCommand) error {
 	}
 	if dup := duplicateRecipient(cmd.To, cmd.Cc, cmd.Bcc); dup != "" {
 		return domain.NewValidationError("recipient %s appears more than once", dup)
+	}
+	cmd.Purpose = strings.TrimSpace(cmd.Purpose)
+	if !domain.ValidPurpose(cmd.Purpose) {
+		return domain.NewValidationError("purpose must be %q or empty", domain.PurposeDoubleOptIn)
+	}
+	// El proposito relaja la supresion para UNA persona: un mensaje con varios
+	// destinatarios o copias escribiria a quien se dio de baja sin que lo hubiera pedido.
+	if cmd.Purpose != "" && (len(cmd.To) != 1 || len(cmd.Cc) > 0 || len(cmd.Bcc) > 0) {
+		return domain.NewValidationError("purpose %q requires exactly one recipient in to and no cc or bcc", cmd.Purpose)
 	}
 
 	hasBody := strings.TrimSpace(cmd.HTML) != "" || strings.TrimSpace(cmd.Text) != ""
@@ -371,8 +383,9 @@ func (uc *UseCase) checkSuppressed(ctx context.Context, tenantID uuid.UUID, emai
 }
 
 // filterSuppressed consulta suppression con todos los destinatarios y quita los
-// suprimidos de cada lista.
-func (uc *UseCase) filterSuppressed(ctx context.Context, tenantID uuid.UUID, lists ...*[]domain.Recipient) ([]ports.Suppressed, error) {
+// suprimidos de cada lista. Con proposito, las causas que ese proposito no respeta
+// (domain.IgnoresSuppression) ni bloquean ni figuran como suprimidas.
+func (uc *UseCase) filterSuppressed(ctx context.Context, tenantID uuid.UUID, purpose string, lists ...*[]domain.Recipient) ([]ports.Suppressed, error) {
 	var emails []string
 	for _, l := range lists {
 		for _, r := range *l {
@@ -382,6 +395,18 @@ func (uc *UseCase) filterSuppressed(ctx context.Context, tenantID uuid.UUID, lis
 	suppressed, blocked, err := uc.checkSuppressed(ctx, tenantID, emails)
 	if err != nil {
 		return nil, err
+	}
+	if purpose != "" {
+		kept := make([]ports.Suppressed, 0, len(suppressed))
+		blocked = make(map[string]bool, len(suppressed))
+		for _, s := range suppressed {
+			if domain.IgnoresSuppression(purpose, s.Reason) {
+				continue
+			}
+			kept = append(kept, s)
+			blocked[strings.ToLower(s.Email)] = true
+		}
+		suppressed = kept
 	}
 	for _, l := range lists {
 		kept := (*l)[:0]

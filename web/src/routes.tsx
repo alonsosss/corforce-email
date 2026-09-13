@@ -139,6 +139,73 @@ export const SCREENS: readonly ScreenDecl[] = [
     module: MODULES.suppression,
     load: () => import('@/pages/suppression/SuppressionPage'),
   },
+  {
+    path: paths.reputation,
+    module: MODULES.reputation,
+    load: () => import('@/pages/reputation/ReputationPage'),
+  },
+  {
+    path: paths.contacts,
+    module: MODULES.contacts,
+    load: () => import('@/pages/contacts/ContactsPage'),
+  },
+  {
+    path: `${paths.contacts}/:id`,
+    module: MODULES.contacts,
+    load: () => import('@/pages/contacts/ContactDetailPage'),
+  },
+  {
+    path: paths.contactListPattern,
+    module: MODULES.contacts,
+    load: () => import('@/pages/contacts/ListDetailPage'),
+  },
+  {
+    path: paths.segments,
+    module: MODULES.segments,
+    load: () => import('@/pages/segments/SegmentsPage'),
+  },
+  {
+    path: paths.segmentNew,
+    module: MODULES.segments,
+    load: () => import('@/pages/segments/SegmentEditorPage'),
+  },
+  {
+    path: `${paths.segments}/:id`,
+    module: MODULES.segments,
+    load: () => import('@/pages/segments/SegmentEditorPage'),
+  },
+  {
+    path: paths.campaigns,
+    module: MODULES.campaigns,
+    load: () => import('@/pages/campaigns/CampaignsPage'),
+  },
+  {
+    path: `${paths.campaigns}/:id`,
+    module: MODULES.campaigns,
+    load: () => import('@/pages/campaigns/CampaignDetailPage'),
+  },
+  {
+    path: paths.analytics,
+    module: MODULES.analytics,
+    load: () => import('@/pages/analytics/AnalyticsPage'),
+  },
+  {
+    path: paths.billing,
+    module: MODULES.billing,
+    load: () => import('@/pages/billing/PlanPage'),
+  },
+  // Operacion de la plataforma: la exige el rol superadmin en el propio servicio, no un
+  // permiso de modulo (billing plans y subscriptions, reputation tenants).
+  {
+    path: paths.platformBilling,
+    role: SYSTEM_ROLES.superadmin,
+    load: () => import('@/pages/billing/PlatformBillingPage'),
+  },
+  {
+    path: paths.platformReputation,
+    role: SYSTEM_ROLES.superadmin,
+    load: () => import('@/pages/reputation/PlatformReputationPage'),
+  },
 ];
 
 const NotFoundPage = lazy(() => import('@/pages/NotFoundPage'));

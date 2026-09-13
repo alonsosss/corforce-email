@@ -1,3 +1,4 @@
+import type { TemplatesMeta } from '@/api/templates';
 import { FormField, HtmlPreviewFrame, Input, Textarea } from '@/design/components';
 import { t } from '@/i18n';
 import type { ContentDraft, ContentErrors } from './content';
@@ -8,9 +9,10 @@ export interface ContentFieldsProps {
   value: ContentDraft;
   onChange: (next: ContentDraft) => void;
   errors: ContentErrors;
+  meta: TemplatesMeta;
 }
 
-export function ContentFields({ idPrefix, value, onChange, errors }: ContentFieldsProps) {
+export function ContentFields({ idPrefix, value, onChange, errors, meta }: ContentFieldsProps) {
   return (
     <>
       <FormField
@@ -67,9 +69,23 @@ export function ContentFields({ idPrefix, value, onChange, errors }: ContentFiel
       </FormField>
       <div className="cf-form__section">{t('templates.variables.title')}</div>
       <span className="cf-text-sm cf-text-secondary">{t('templates.variables.hint')}</span>
+      {meta.reserved_variables.length ? (
+        <span className="cf-text-sm cf-text-secondary">
+          {t('templates.variables.reservedHint')}{' '}
+          <span className="cf-inline-list" style={{ display: 'inline-flex' }}>
+            {meta.reserved_variables.map((v) => (
+              <code key={v.name} className="cf-mono">
+                {v.name}
+              </code>
+            ))}
+          </span>
+        </span>
+      ) : null}
       <VariablesEditor
         drafts={value.variables}
         onChange={(variables) => onChange({ ...value, variables })}
+        types={meta.variable_types}
+        maxVariables={meta.limits.max_variables}
         errors={errors.variables}
         countError={errors.variablesCount}
       />

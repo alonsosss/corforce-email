@@ -6,8 +6,11 @@ import {
   type AuditLogQuery,
   type Severity,
 } from '@/api/audit';
+import { PERMISSIONS } from '@/access/permissions';
+import { useAccess } from '@/access/useAccess';
 import { usePagination } from '@/hooks/usePagination';
 import { useQuery } from '@/hooks/useQuery';
+import { MissingPermission } from '@/pages/shared/MissingPermission';
 import {
   Badge,
   Button,
@@ -66,6 +69,16 @@ function toQuery(f: Filters): Omit<AuditLogQuery, 'page' | 'per_page'> {
 }
 
 export default function AuditLogsPage() {
+  const { can } = useAccess();
+  if (!can(...PERMISSIONS.auditLogs.read)) {
+    return (
+      <MissingPermission title={t('audit.logs.title')} description={t('audit.logs.subtitle')} />
+    );
+  }
+  return <AuditLogsView />;
+}
+
+function AuditLogsView() {
   const pager = usePagination();
   const [draft, setDraft] = useState<Filters>(EMPTY);
   const [applied, setApplied] = useState<Filters>(EMPTY);

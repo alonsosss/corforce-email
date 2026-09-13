@@ -155,6 +155,16 @@ func (uc *UseCase) DeleteSegment(ctx context.Context, tenantID, id uuid.UUID) er
 	return uc.segments.Delete(ctx, tenantID, id)
 }
 
+// SegmentMeta es lo que una definicion de esta empresa puede usar: campos, operadores,
+// valores de los enumerados y atributos declarados, tomados del dominio y del compilador.
+func (uc *UseCase) SegmentMeta(ctx context.Context, tenantID uuid.UUID) (segment.Catalog, error) {
+	defs, err := uc.definitions(ctx, tenantID)
+	if err != nil {
+		return segment.Catalog{}, err
+	}
+	return segment.Describe(schemaFor(defs)), nil
+}
+
 // Preview es el tamano de un segmento y una muestra de sus contactos.
 type Preview struct {
 	Count  int64            `json:"count"`

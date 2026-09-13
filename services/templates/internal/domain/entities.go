@@ -40,6 +40,9 @@ const (
 
 func Kinds() []string            { return []string{KindTransactional, KindMarketing} }
 func TemplateStatuses() []string { return []string{TemplateStatusActive, TemplateStatusArchived} }
+func VersionStatuses() []string {
+	return []string{VersionStatusDraft, VersionStatusPublished, VersionStatusSuperseded}
+}
 
 // Template es la cabecera estable de una plantilla. CurrentVersion es 0 mientras no haya
 // ninguna version publicada.

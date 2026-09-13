@@ -177,7 +177,23 @@ en su transaccion); `contacts.confirmation_tokens` guarda solo el sha256 del tok
 opt-in; `contacts.lists`, `contacts.list_members`, `contacts.segments` (el DSL validado,
 nunca SQL) y `contacts.imports`. El indice parcial `idx_contacts_contacts_sendable
 (tenant_id, id) WHERE status = 'active' AND marketing_consent = 'granted'` sirve la audiencia
-por keyset.
+por keyset y la consulta interna de enviables por id.
+Tambien `automations` (2026-09-13): `automations.doi_settings` (una fila por empresa,
+`UNIQUE (tenant_id)`; activado exige plantilla y remitente por CHECK);
+`automations.doi_deliveries`, un intento por evento `contacts.consent.requested` con
+`UNIQUE (event_id)`, estado `pending|sent|skipped|failed`, motivo, `message_id`, intentos y
+la foto de plantilla y remitente con que se reclamo (un pending la exige por CHECK), sin el
+enlace de confirmacion, que es una credencial y nunca se guarda; el indice parcial
+`(tenant_id, contact_id, created_at) WHERE status IN ('pending','sent')` sirve el limite por
+contacto; `automations.workflows` con nombre unico por empresa sin distinguir mayusculas,
+estado y disparador con CHECK (lista blanca), campana solo para `email.clicked`, pasos en
+`jsonb` (1..20 por CHECK) e indice parcial de los activos por disparador;
+`automations.runs`, una ejecucion por contacto y flujo con `UNIQUE (workflow_id, contact_id,
+trigger_event_id)` y `UNIQUE (workflow_id, contact_id, entry_key)` (`entry_key` = id del
+evento con reentrada, `once` sin ella), la reserva `lease_token`/`lease_until` que solo existe
+en `running` y `finished_at` que solo existe en los terminales (CHECK), indice parcial de las
+debidas y de las fallidas por flujo; `automations.processed_events` para la deduplicacion por
+id de evento, podada a los 30 dias.
 
 ## 5. Enrutado por peticion y por celda (V)
 

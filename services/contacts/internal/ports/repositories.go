@@ -79,6 +79,8 @@ type ListRepository interface {
 	AddMembers(ctx context.Context, tenantID, listID uuid.UUID, contactIDs []uuid.UUID) (int, error)
 	// RemoveMembers quita de la lista los contactos pedidos; devuelve cuantos salieron.
 	RemoveMembers(ctx context.Context, tenantID, listID uuid.UUID, contactIDs []uuid.UUID) (int, error)
+	// MembersAmong devuelve cuales de los contactos pedidos son miembros de la lista.
+	MembersAmong(ctx context.Context, tenantID, listID uuid.UUID, contactIDs []uuid.UUID) ([]uuid.UUID, error)
 	ListsOf(ctx context.Context, tenantID, contactID uuid.UUID) ([]domain.List, error)
 }
 
@@ -118,6 +120,9 @@ type SegmentQuery interface {
 	Count(ctx context.Context, tenantID uuid.UUID, def segment.Definition, schema segment.Schema) (int64, error)
 	Page(ctx context.Context, tenantID uuid.UUID, def segment.Definition, schema segment.Schema, limit, offset int) ([]domain.Contact, error)
 	Audience(ctx context.Context, tenantID uuid.UUID, spec AudienceSpec) ([]domain.Contact, error)
+	// Sendable devuelve, de los ids dados, los contactos enviables de la empresa con la
+	// misma condicion que Audience.
+	Sendable(ctx context.Context, tenantID uuid.UUID, ids []uuid.UUID) ([]domain.Contact, error)
 }
 
 type ImportRepository interface {

@@ -78,6 +78,15 @@ describe('declaracion de variables de una plantilla', () => {
     expect(draftsToVariables(variablesToDrafts(declared)).variables).toEqual(declared);
   });
 
+  it('una variable reservada por el catalogo no se declara', () => {
+    const drafts = [draft('unsubscribe_url', 'url'), draft('nombre', 'string')];
+    const { variables, errors } = draftsToVariables(drafts, ['unsubscribe_url']);
+    expect(variables.map((v) => v.name)).toEqual(['nombre']);
+    expect(errors[drafts[0]?.key ?? '']).toBe(
+      t('templates.variables.reserved', { name: 'unsubscribe_url' }),
+    );
+  });
+
   it('las URL solo admiten http y https absolutas', () => {
     expect(coerceValue('url', 'https://empresa.pe').ok).toBe(true);
     expect(coerceValue('url', 'javascript:alert(1)').ok).toBe(false);

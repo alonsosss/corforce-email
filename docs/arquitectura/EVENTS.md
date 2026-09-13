@@ -4,7 +4,7 @@ Generado por `ops/scaffold/gen-events.sh` desde el codigo. NO editar a mano.
 Convencion de subject: `<dominio>.<entidad>.<accion>`. Un subject tiene UN dueno
 (el servicio que lo publica); los demas solo lo consumen (regla no-fork).
 
-Resumen: 31 publicaciones, 3 suscripciones, 31 subjects distintos.
+Resumen: 36 publicaciones, 7 suscripciones, 39 subjects distintos.
 
 ## Cruce por subject (dueno -> consumidores)
 
@@ -12,6 +12,11 @@ Resumen: 31 publicaciones, 3 suscripciones, 31 subjects distintos.
 |---|---|---|
 | `audit.api.write` | gateway | audit |
 | `audit.security.alert` | audit | - |
+| `automations.run.completed` | automations | - |
+| `automations.run.failed` | automations | - |
+| `automations.workflow.activated` | automations | - |
+| `automations.workflow.archived` | automations | - |
+| `automations.workflow.paused` | automations | - |
 | `campaigns.campaign.cancelled` | campaigns | - |
 | `campaigns.campaign.completed` | campaigns | - |
 | `campaigns.campaign.failed` | campaigns | - |
@@ -19,6 +24,9 @@ Resumen: 31 publicaciones, 3 suscripciones, 31 subjects distintos.
 | `campaigns.campaign.resumed` | campaigns | - |
 | `campaigns.campaign.scheduled` | campaigns | - |
 | `campaigns.campaign.started` | campaigns | - |
+| `contacts.consent.granted` | (ninguno: subject huerfano) | automations |
+| `contacts.consent.requested` | (ninguno: subject huerfano) | automations |
+| `contacts.contact.created` | (ninguno: subject huerfano) | automations |
 | `gateway.security.exfiltration` | gateway | - |
 | `identity.session.revoked_by_admin` | identity | - |
 | `identity.user.created` | identity | - |
@@ -32,7 +40,7 @@ Resumen: 31 publicaciones, 3 suscripciones, 31 subjects distintos.
 | `scheduler.job.started` | scheduler | - |
 | `templates.template.published` | templates | - |
 | `transactional.email.bounced` | transactional | - |
-| `transactional.email.clicked` | transactional | - |
+| `transactional.email.clicked` | transactional | automations |
 | `transactional.email.complained` | transactional | - |
 | `transactional.email.delivered` | transactional | - |
 | `transactional.email.failed` | transactional | - |
@@ -47,6 +55,10 @@ Resumen: 31 publicaciones, 3 suscripciones, 31 subjects distintos.
 ### audit
 - Publica: `audit.security.alert`
 - Consume: `audit.api.write`
+
+### automations
+- Publica: `automations.run.completed`,`automations.run.failed` `automations.workflow.activated`,`automations.workflow.archived` `automations.workflow.paused`
+- Consume: `contacts.consent.granted`,`contacts.consent.requested` `contacts.contact.created`,`transactional.email.clicked`
 
 ### campaigns
 - Publica: `campaigns.campaign.cancelled`,`campaigns.campaign.completed` `campaigns.campaign.failed`,`campaigns.campaign.paused` `campaigns.campaign.resumed`,`campaigns.campaign.scheduled` `campaigns.campaign.started`

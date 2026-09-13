@@ -115,6 +115,7 @@ func (h *Handler) SegmentRoutes() http.Handler {
 	r := chi.NewRouter()
 	r.With(perm(modSegments, "segments", "read")).Get("/", h.ListSegments)
 	r.With(perm(modSegments, "segments", "create")).Post("/", h.CreateSegment)
+	r.With(perm(modSegments, "segments", "read")).Get("/meta", h.SegmentMeta)
 	r.With(perm(modSegments, "segments", "preview")).Post("/preview", h.PreviewSegment)
 	r.With(perm(modSegments, "segments", "read")).Get("/{id}", h.GetSegment)
 	r.With(perm(modSegments, "segments", "update")).Patch("/{id}", h.UpdateSegment)
@@ -133,10 +134,16 @@ func (h *Handler) PublicRoutes() http.Handler {
 }
 
 // InternalRoutes cuelga de /internal/contacts: servicio a servicio con el token interno
-// y la empresa en X-Tenant-ID.
+// y la empresa en X-Tenant-ID. La audiencia la pide campaigns; los enviables por id, la
+// pertenencia a una lista y el alta y baja de miembros, automations (las dos ultimas son
+// los mismos casos de uso que el API con sesion).
 func (h *Handler) InternalRoutes() http.Handler {
 	r := chi.NewRouter()
 	r.Post("/audience", h.Audience)
+	r.Post("/sendable", h.Sendable)
+	r.Post("/lists/{listID}/members", h.AddMembers)
+	r.Post("/lists/{listID}/members/remove", h.RemoveMembers)
+	r.Post("/lists/{listID}/members/check", h.CheckMembers)
 	return r
 }
 
@@ -1033,6 +1040,21 @@ func (h *Handler) DeleteSegment(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// SegmentMeta publica el catalogo del DSL con el esquema de la empresa: el editor de
+// segmentos lo usa en lugar de copiar campos, operadores y valores.
+func (h *Handler) SegmentMeta(w http.ResponseWriter, r *http.Request) {
+	tenantID, ok := tenantFrom(w, r)
+	if !ok {
+		return
+	}
+	catalog, err := h.uc.SegmentMeta(r.Context(), tenantID)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	response.JSON(w, http.StatusOK, catalog)
+}
+
 type previewRequest struct {
 	Definition json.RawMessage `json:"definition"`
 }
@@ -1133,12 +1155,80 @@ func (h *Handler) Audience(w http.ResponseWriter, r *http.Request) {
 	}
 	out := audienceResponse{Contacts: make([]audienceContact, len(page.Contacts)), NextCursor: page.NextCursor}
 	for i, c := range page.Contacts {
-		out.Contacts[i] = audienceContact{
-			ID: c.ID, Email: c.Email, FirstName: c.FirstName, LastName: c.LastName,
-			Locale: c.Locale, Timezone: c.Timezone, Attributes: c.Attributes,
-		}
+		out.Contacts[i] = toAudienceContact(c)
 	}
 	response.JSON(w, http.StatusOK, out)
+}
+
+func toAudienceContact(c domain.Contact) audienceContact {
+	return audienceContact{
+		ID: c.ID, Email: c.Email, FirstName: c.FirstName, LastName: c.LastName,
+		Locale: c.Locale, Timezone: c.Timezone, Attributes: c.Attributes,
+	}
+}
+
+// ── Enviables y pertenencia a listas (interno) ──────────────────────────────
+
+type sendableRequest struct {
+	ContactIDs []uuid.UUID `json:"contact_ids"`
+}
+
+type sendableResponse struct {
+	Contacts []audienceContact `json:"contacts"`
+}
+
+// Sendable devuelve, de los ids pedidos, SOLO los contactos enviables con lo necesario
+// para personalizar (el mismo contrato de contacto que la audiencia).
+func (h *Handler) Sendable(w http.ResponseWriter, r *http.Request) {
+	tenantID, ok := tenantFrom(w, r)
+	if !ok {
+		return
+	}
+	var req sendableRequest
+	if err := validate.DecodeJSONLimit(w, r, &req, membersBodyLimit); err != nil {
+		response.ErrBadRequest(w, err.Error())
+		return
+	}
+	v := validate.New()
+	if len(req.ContactIDs) == 0 {
+		v.Add("contact_ids", "no puede estar vacio")
+	}
+	if len(req.ContactIDs) > app.MaxSendableIDs {
+		v.Add("contact_ids", "admite como maximo "+strconv.Itoa(app.MaxSendableIDs)+" contactos")
+	}
+	if !v.Valid() {
+		response.ErrValidation(w, v.Error())
+		return
+	}
+	contacts, err := h.uc.SendableContacts(r.Context(), tenantID, req.ContactIDs)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	out := sendableResponse{Contacts: make([]audienceContact, len(contacts))}
+	for i, c := range contacts {
+		out.Contacts[i] = toAudienceContact(c)
+	}
+	response.JSON(w, http.StatusOK, out)
+}
+
+type membershipResponse struct {
+	ContactIDs []uuid.UUID `json:"contact_ids"`
+}
+
+// CheckMembers dice cuales de los contactos pedidos estan en la lista; 404 si la lista no
+// existe.
+func (h *Handler) CheckMembers(w http.ResponseWriter, r *http.Request) {
+	tenantID, listID, ids, ok := decodeMembers(w, r)
+	if !ok {
+		return
+	}
+	members, err := h.uc.ListMembersAmong(r.Context(), tenantID, listID, ids)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	response.JSON(w, http.StatusOK, membershipResponse{ContactIDs: members})
 }
 
 // ── Doble opt-in (publico) ───────────────────────────────────────────────────
@@ -1279,6 +1369,7 @@ var validationErrors = []error{
 	domain.ErrInvalidConsentMethod, domain.ErrInvalidIP, domain.ErrInvalidSegment, domain.ErrInvalidCursor,
 	domain.ErrNoImportRows, domain.ErrTooManyRows, domain.ErrConsentBasis, domain.ErrInvalidAudience,
 	domain.ErrInvalidListName, domain.ErrInvalidSegmentName, domain.ErrTooManyMembers, domain.ErrInvalidLimit,
+	domain.ErrInvalidContactIDs,
 }
 
 func isValidationError(err error) bool {

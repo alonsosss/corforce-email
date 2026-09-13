@@ -1,34 +1,13 @@
 import { api } from './client';
 import { endpoints } from './endpoints';
 import { fetchPage } from './paging';
+import { cachedResource } from './resource';
 import type { Page, PageQuery } from './types';
 
 // DTOs de services/suppression/internal/adapters/http/handler.go, domain/entities.go y
-// app.Stats.
+// app.Stats. Motivos, cuales se pueden retirar y los topes llegan en GET /suppression/meta.
 
 export type SuppressionReason = 'complaint' | 'hard_bounce' | 'unsubscribe' | 'invalid' | 'manual';
-
-/** Espejo de domain.Reasons(): de mas a menos grave. */
-export const SUPPRESSION_REASONS: readonly SuppressionReason[] = [
-  'complaint',
-  'hard_bounce',
-  'unsubscribe',
-  'invalid',
-  'manual',
-];
-
-// Espejo de app.MaxImportEmails y app.MaxCheckEmails, y del tope de per_page.
-export const SUPPRESSION_MAX_IMPORT = 10_000;
-export const SUPPRESSION_MAX_CHECK = 1_000;
-export const SUPPRESSION_MAX_PAGE_SIZE = 100;
-
-/**
- * Espejo de domain.Reason.Removable(): una baja pedida por la persona solo la levanta un
- * consentimiento nuevo, nunca un operador (el backend responde 409 UNSUBSCRIBE_PROTECTED).
- */
-export function isRemovableReason(reason: SuppressionReason): boolean {
-  return reason !== 'unsubscribe';
-}
 
 export interface SuppressionEntry {
   id: string;
@@ -88,6 +67,28 @@ export interface SuppressionStats {
   by_reason: Partial<Record<SuppressionReason, number>> | null;
 }
 
+export interface ReasonInfo {
+  reason: SuppressionReason;
+  severity: number;
+  /** Una baja pedida por la persona solo la levanta un consentimiento nuevo. */
+  removable: boolean;
+}
+
+/** GET /suppression/meta: motivos de mas a menos grave y topes del API. */
+export interface SuppressionMeta {
+  reasons: ReasonInfo[];
+  manual_reasons: SuppressionReason[];
+  max_check_emails: number;
+  max_import_emails: number;
+  max_per_page: number;
+  max_email_length: number;
+  max_detail_length: number;
+}
+
+export function isRemovable(meta: SuppressionMeta, reason: SuppressionReason): boolean {
+  return meta.reasons.find((r) => r.reason === reason)?.removable ?? false;
+}
+
 export const suppressionApi = {
   list: (query: SuppressionQuery): Promise<Page<SuppressionEntry>> =>
     fetchPage<SuppressionEntry>(endpoints.suppression.entries.collection, { ...query }),
@@ -109,4 +110,9 @@ export const suppressionApi = {
     return res.data?.suppressed ?? [];
   },
   stats: () => api.get<SuppressionStats>(endpoints.suppression.stats),
+
+  meta: async (): Promise<SuppressionMeta> =>
+    (await api.get<SuppressionMeta>(endpoints.suppression.meta)).data,
 };
+
+export const suppressionMeta = cachedResource(suppressionApi.meta);

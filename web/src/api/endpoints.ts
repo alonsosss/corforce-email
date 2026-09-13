@@ -156,6 +156,7 @@ export const endpoints = {
     publish: (id: string, version: number) =>
       `${API_PREFIX}/templates/${seg(id)}/versions/${version}/publish`,
     preview: (id: string) => `${API_PREFIX}/templates/${seg(id)}/preview`,
+    meta: `${API_PREFIX}/templates/meta`,
   },
   suppression: {
     check: `${API_PREFIX}/suppression/check`,
@@ -163,5 +164,60 @@ export const endpoints = {
     import: `${API_PREFIX}/suppression/entries/import`,
     imports: `${API_PREFIX}/suppression/imports`,
     stats: `${API_PREFIX}/suppression/stats`,
+    meta: `${API_PREFIX}/suppression/meta`,
+  },
+  contacts: {
+    ...collectionOf('/contacts'),
+    export: (id: string) => `${API_PREFIX}/contacts/${seg(id)}/export`,
+    consents: (id: string) => `${API_PREFIX}/contacts/${seg(id)}/consents`,
+    consent: (id: string) => `${API_PREFIX}/contacts/${seg(id)}/consent`,
+    consentRequest: (id: string) => `${API_PREFIX}/contacts/${seg(id)}/consent/request`,
+    imports: collectionOf('/contacts/imports'),
+    lists: collectionOf('/contacts/lists'),
+    listMembers: (id: string) => `${API_PREFIX}/contacts/lists/${seg(id)}/members`,
+    listMembersRemove: (id: string) => `${API_PREFIX}/contacts/lists/${seg(id)}/members/remove`,
+    attributes: `${API_PREFIX}/contacts/attributes`,
+    attribute: (key: string) => `${API_PREFIX}/contacts/attributes/${seg(key)}`,
+  },
+  segments: {
+    ...collectionOf('/segments'),
+    meta: `${API_PREFIX}/segments/meta`,
+    preview: `${API_PREFIX}/segments/preview`,
+    contacts: (id: string) => `${API_PREFIX}/segments/${seg(id)}/contacts`,
+  },
+  campaigns: {
+    ...collectionOf('/campaigns'),
+    schedule: (id: string) => `${API_PREFIX}/campaigns/${seg(id)}/schedule`,
+    start: (id: string) => `${API_PREFIX}/campaigns/${seg(id)}/start`,
+    pause: (id: string) => `${API_PREFIX}/campaigns/${seg(id)}/pause`,
+    resume: (id: string) => `${API_PREFIX}/campaigns/${seg(id)}/resume`,
+    cancel: (id: string) => `${API_PREFIX}/campaigns/${seg(id)}/cancel`,
+    test: (id: string) => `${API_PREFIX}/campaigns/${seg(id)}/test`,
+    batches: (id: string) => `${API_PREFIX}/campaigns/${seg(id)}/batches`,
+  },
+  analytics: {
+    overview: `${API_PREFIX}/analytics/overview`,
+    timeseries: `${API_PREFIX}/analytics/timeseries`,
+    campaigns: collectionOf('/analytics/campaigns'),
+    domains: `${API_PREFIX}/analytics/domains`,
+  },
+  billing: {
+    subscription: `${API_PREFIX}/billing/subscription`,
+    usage: `${API_PREFIX}/billing/usage`,
+    plans: collectionOf('/billing/plans'),
+    retirePlan: (id: string) => `${API_PREFIX}/billing/plans/${seg(id)}/retire`,
+    subscriptions: collectionOf('/billing/subscriptions'),
+    tenantUsage: (tenantId: string) => `${API_PREFIX}/billing/usage/${seg(tenantId)}`,
+  },
+  reputation: {
+    status: `${API_PREFIX}/reputation/status`,
+    history: `${API_PREFIX}/reputation/history`,
+    tenants: `${API_PREFIX}/reputation/tenants`,
+    limits: (tenantId: string, sendClass: string) =>
+      `${API_PREFIX}/reputation/tenants/${seg(tenantId)}/limits/${seg(sendClass)}`,
+    suspend: (tenantId: string, sendClass: string) =>
+      `${API_PREFIX}/reputation/tenants/${seg(tenantId)}/${seg(sendClass)}/suspend`,
+    release: (tenantId: string, sendClass: string) =>
+      `${API_PREFIX}/reputation/tenants/${seg(tenantId)}/${seg(sendClass)}/release`,
   },
 } as const;

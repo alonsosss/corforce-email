@@ -12,6 +12,7 @@
     "suppression":    {"host_env": "SUPPRESSION_HOST",    "default_host": "suppression",    "default_port": "8046"},
     "templates":      {"host_env": "TEMPLATES_HOST",      "default_host": "templates",      "default_port": "8047"},
     "contacts":       {"host_env": "CONTACTS_HOST",       "default_host": "contacts",       "default_port": "8050"},
+    "automations":    {"host_env": "AUTOMATIONS_HOST",    "default_host": "automations",    "default_port": "8051"},
     "billing":        {"host_env": "BILLING_HOST",        "default_host": "billing",        "default_port": "8055"},
     "reputation":     {"host_env": "REPUTATION_HOST",     "default_host": "reputation",     "default_port": "8054"},
     "campaigns":      {"host_env": "CAMPAIGNS_HOST",      "default_host": "campaigns",      "default_port": "8052"},
@@ -45,6 +46,7 @@
     {"prefix": "billing",       "service": "billing",        "module": "billing"},
     {"prefix": "reputation",    "service": "reputation",     "module": "reputation"},
     {"prefix": "campaigns",     "service": "campaigns",      "module": "campaigns"},
+    {"prefix": "automations",   "service": "automations",    "module": "automations"},
     {"prefix": "analytics",     "service": "analytics",      "module": "analytics"}
   ],
   "read_posts": [

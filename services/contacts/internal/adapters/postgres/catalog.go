@@ -136,6 +136,18 @@ func (r *ListRepository) RemoveMembers(ctx context.Context, tenantID, listID uui
 	return int(tag.RowsAffected()), nil
 }
 
+func (r *ListRepository) MembersAmong(ctx context.Context, tenantID, listID uuid.UUID, contactIDs []uuid.UUID) ([]uuid.UUID, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT contact_id FROM contacts.list_members
+		  WHERE tenant_id = $1 AND list_id = $2 AND contact_id = ANY($3::uuid[])
+		  ORDER BY contact_id`,
+		tenantID, listID, contactIDs)
+	if err != nil {
+		return nil, err
+	}
+	return collectIDs(rows)
+}
+
 func (r *ListRepository) ListsOf(ctx context.Context, tenantID, contactID uuid.UUID) ([]domain.List, error) {
 	rows, err := r.pool.Query(ctx,
 		`SELECT `+listColumns+` FROM contacts.lists l

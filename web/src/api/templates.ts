@@ -1,30 +1,17 @@
 import { api } from './client';
 import { endpoints } from './endpoints';
 import { fetchList, fetchPage } from './paging';
+import { cachedResource } from './resource';
 import type { Page, PageQuery } from './types';
 
 // DTOs de services/templates/internal/adapters/http/handler.go (templateResponse,
-// versionResponse, versionSummaryResponse, renderedResponse) y domain/variables.go.
+// versionResponse, versionSummaryResponse, renderedResponse, metaResponse) y
+// domain/variables.go. Los valores admitidos y los topes llegan en GET /templates/meta.
 
 export type TemplateKind = 'transactional' | 'marketing';
 export type TemplateStatus = 'active' | 'archived';
 export type VersionStatus = 'draft' | 'published' | 'superseded';
 export type VariableType = 'string' | 'number' | 'boolean' | 'url' | 'email';
-
-export const TEMPLATE_KINDS: readonly TemplateKind[] = ['transactional', 'marketing'];
-export const TEMPLATE_STATUSES: readonly TemplateStatus[] = ['active', 'archived'];
-export const VARIABLE_TYPES: readonly VariableType[] = [
-  'string',
-  'number',
-  'boolean',
-  'url',
-  'email',
-];
-
-// Espejo de domain.MaxNameLength, domain.MaxDescription y domain.MaxVariables.
-export const TEMPLATE_NAME_MAX_LENGTH = 120;
-export const TEMPLATE_DESCRIPTION_MAX_LENGTH = 1000;
-export const TEMPLATE_MAX_VARIABLES = 100;
 
 /** Valor por defecto de una variable: el backend acepta el JSON que coincide con su tipo. */
 export type VariableValue = string | number | boolean;
@@ -114,6 +101,29 @@ export interface RenderedTemplate {
   version: number;
 }
 
+export interface ReservedVariable {
+  name: string;
+  type: VariableType;
+}
+
+export interface TemplateLimits {
+  max_name_length: number;
+  max_description_length: number;
+  max_variables: number;
+  max_subject_bytes: number;
+  max_html_bytes: number;
+}
+
+/** GET /templates/meta: valores de domain/entities.go y domain/variables.go. */
+export interface TemplatesMeta {
+  kinds: TemplateKind[];
+  statuses: TemplateStatus[];
+  version_statuses: VersionStatus[];
+  variable_types: VariableType[];
+  reserved_variables: ReservedVariable[];
+  limits: TemplateLimits;
+}
+
 export const templatesApi = {
   list: (query: TemplateListQuery): Promise<Page<Template>> =>
     fetchPage<Template>(endpoints.templates.collection, { ...query }),
@@ -135,4 +145,10 @@ export const templatesApi = {
   /** Renderiza cualquier version, publicada o no, sin enviar nada. */
   preview: (id: string, input: RenderRequest) =>
     api.post<RenderedTemplate>(endpoints.templates.preview(id), { body: input }),
+
+  meta: async (): Promise<TemplatesMeta> =>
+    (await api.get<TemplatesMeta>(endpoints.templates.meta)).data,
 };
+
+/** Catalogo de plantillas compartido por todas las pantallas de la sesion. */
+export const templatesMeta = cachedResource(templatesApi.meta);

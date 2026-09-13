@@ -28,7 +28,14 @@ const (
 
 	defaultPerPage = 20
 	maxPerPage     = 100
+
+	maxEmailLength  = 320
+	maxDetailLength = 1000
 )
+
+// manualReasons son las causas que admite el alta por el API publico: los demas motivos
+// los registra la plataforma a partir de un hecho (rebote, queja, baja).
+func manualReasons() []string { return []string{string(domain.ReasonManual)} }
 
 type Handler struct {
 	uc    *app.UseCase
@@ -44,6 +51,7 @@ func NewHandler(uc *app.UseCase, checker *authz.Checker) *Handler {
 func (h *Handler) PublicRoutes() http.Handler {
 	r := chi.NewRouter()
 	r.Get("/health", h.Health)
+	r.With(h.authz.RequirePermission(permModule, "entries", "read")).Get("/meta", h.Meta)
 	r.With(h.authz.RequirePermission(permModule, "entries", "read")).Post("/check", h.Check)
 	r.Route("/entries", func(r chi.Router) {
 		r.With(h.authz.RequirePermission(permModule, "entries", "read")).Get("/", h.ListEntries)
@@ -101,6 +109,44 @@ func parsePagination(r *http.Request) (int, int) {
 	return page, perPage
 }
 
+// ── Catalogo ─────────────────────────────────────────────────────────────────
+
+type reasonMeta struct {
+	Reason    domain.Reason `json:"reason"`
+	Severity  int           `json:"severity"`
+	Removable bool          `json:"removable"`
+}
+
+type metaResponse struct {
+	// Reasons va de mas a menos grave, el orden de domain.Reasons().
+	Reasons         []reasonMeta `json:"reasons"`
+	ManualReasons   []string     `json:"manual_reasons"`
+	MaxCheckEmails  int          `json:"max_check_emails"`
+	MaxImportEmails int          `json:"max_import_emails"`
+	MaxPerPage      int          `json:"max_per_page"`
+	MaxEmailLength  int          `json:"max_email_length"`
+	MaxDetailLength int          `json:"max_detail_length"`
+}
+
+// Meta publica los motivos, cuales puede retirar un operador y los topes del API, para
+// que la interfaz no los copie.
+func (h *Handler) Meta(w http.ResponseWriter, r *http.Request) {
+	reasons := domain.Reasons()
+	out := metaResponse{
+		Reasons:         make([]reasonMeta, 0, len(reasons)),
+		ManualReasons:   manualReasons(),
+		MaxCheckEmails:  app.MaxCheckEmails,
+		MaxImportEmails: app.MaxImportEmails,
+		MaxPerPage:      maxPerPage,
+		MaxEmailLength:  maxEmailLength,
+		MaxDetailLength: maxDetailLength,
+	}
+	for _, reason := range reasons {
+		out.Reasons = append(out.Reasons, reasonMeta{Reason: reason, Severity: reason.Severity(), Removable: reason.Removable()})
+	}
+	response.JSON(w, http.StatusOK, out)
+}
+
 // ── Consulta previa al envio ─────────────────────────────────────────────────
 
 type checkRequest struct {
@@ -143,7 +189,7 @@ func (h *Handler) ListEntries(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	v := validate.New()
 	v.OneOf("reason", q.Get("reason"), reasonNames())
-	v.MaxLength("search", q.Get("search"), 320)
+	v.MaxLength("search", q.Get("search"), maxEmailLength)
 	if !v.Valid() {
 		response.ErrValidation(w, v.Error())
 		return
@@ -198,9 +244,9 @@ func (h *Handler) CreateEntry(w http.ResponseWriter, r *http.Request) {
 	}
 	v := validate.New()
 	v.Required("email", req.Email)
-	v.MaxLength("email", req.Email, 320)
-	v.OneOf("reason", req.Reason, []string{string(domain.ReasonManual)})
-	v.MaxLength("detail", req.Detail, 1000)
+	v.MaxLength("email", req.Email, maxEmailLength)
+	v.OneOf("reason", req.Reason, manualReasons())
+	v.MaxLength("detail", req.Detail, maxDetailLength)
 	if !v.Valid() {
 		response.ErrValidation(w, v.Error())
 		return
@@ -263,8 +309,8 @@ func (h *Handler) ImportEntries(w http.ResponseWriter, r *http.Request) {
 		req.Reason = string(domain.ReasonManual)
 	}
 	v := validate.New()
-	v.OneOf("reason", req.Reason, []string{string(domain.ReasonManual)})
-	v.MaxLength("detail", req.Detail, 1000)
+	v.OneOf("reason", req.Reason, manualReasons())
+	v.MaxLength("detail", req.Detail, maxDetailLength)
 	if len(req.Emails) == 0 {
 		v.Add("emails", "no puede estar vacio")
 	}
@@ -341,12 +387,12 @@ func (h *Handler) InternalAdd(w http.ResponseWriter, r *http.Request) {
 	}
 	v := validate.New()
 	v.Required("email", req.Email)
-	v.MaxLength("email", req.Email, 320)
+	v.MaxLength("email", req.Email, maxEmailLength)
 	v.Required("reason", req.Reason)
 	v.OneOf("reason", req.Reason, reasonNames())
 	v.Required("source", req.Source)
 	v.MaxLength("source", req.Source, 100)
-	v.MaxLength("detail", req.Detail, 1000)
+	v.MaxLength("detail", req.Detail, maxDetailLength)
 	if !v.Valid() {
 		response.ErrValidation(w, v.Error())
 		return

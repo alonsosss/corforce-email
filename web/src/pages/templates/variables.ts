@@ -76,7 +76,11 @@ export interface DraftsResult {
   errors: Record<string, string>;
 }
 
-export function draftsToVariables(drafts: readonly VariableDraft[]): DraftsResult {
+/** reserved: nombres que inyecta quien envia (GET /templates/meta); no se declaran. */
+export function draftsToVariables(
+  drafts: readonly VariableDraft[],
+  reserved: readonly string[] = [],
+): DraftsResult {
   const variables: TemplateVariable[] = [];
   const errors: Record<string, string> = {};
   const seen = new Set<string>();
@@ -84,6 +88,10 @@ export function draftsToVariables(drafts: readonly VariableDraft[]): DraftsResul
     const name = draft.name.trim();
     if (!NAME.test(name)) {
       errors[draft.key] = t('templates.variables.invalidName');
+      continue;
+    }
+    if (reserved.includes(name)) {
+      errors[draft.key] = t('templates.variables.reserved', { name });
       continue;
     }
     if (seen.has(name)) {
