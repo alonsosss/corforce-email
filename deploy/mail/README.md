@@ -261,6 +261,27 @@ hacia el PHP.
 Redis (`redis-mail`, `requirepass`) es el bus de configuracion en caliente entre
 la plataforma y los motores. La plataforma escribe; los motores leen.
 
+**Cifrado en transito.** `redis-mail` no ofrece TLS y sus lectores lo usan en
+claro. Cifrarlo hoy obligaria a tocar los motores por dentro, porque cada lector
+abre su conexion en claro desde su propio codigo o configuracion: Rspamd
+(`local.d/redis.conf` que escribe `docker-entrypoint.sh`; el soporte TLS hacia
+Redis es un pedido abierto aguas arriba y no esta verificado en la version
+empaquetada), el destino `redis()` de syslog-ng en Postfix y Dovecot (sin opcion
+TLS documentada), `netfilter/main.py` y `dockerapi/main.py` (conexion fija sin
+TLS) y `watchdog.sh` (`redis-cli` y un `check_tcp` que manda `AUTH` en claro). La
+replica (`REDIS_SLAVEOF_*`) tambien va en claro. La garantia es de red:
+`redis-mail` no publica puertos, solo esta en el bridge `mail-engines` del host
+de la celda, netfilter aisla el 6379 del bridge salvo para `MAIL_REPLICA_IP`, se
+exige `requirepass` y `quota_notify` entra con un usuario ACL que solo lee
+`QW_*`. Por eso `mail-security`, su unico escritor, corre en ese mismo host unido
+a `mail-engines` (como ya exige el alias `mail-policy`) y su trafico hacia Redis
+no sale del bridge. `MAIL_REDIS_TLS`, `MAIL_REDIS_TLS_CA_FILE` y
+`MAIL_REDIS_TLS_SERVER_NAME` (mismo contrato que `REDIS_TLS*`, `pkg/config`)
+quedan apagadas y nunca se exigen: se encienden solo si `redis-mail` abre ademas
+un `tls-port` (Redis 7 lo sirve junto al puerto en claro) para un `mail-security`
+fuera de ese host. Una replica entre hosts distintos cruza la red en claro: solo
+sobre un enlace privado hasta que se cifre.
+
 | Clave | Tipo | Escribe | Lee | Contenido |
 |---|---|---|---|---|
 | `DOMAIN_MAP` | hash `dominio -> 1` | mail-security (eventos `mail.domain.*`/`mail.alias_domain.*` y reconciliacion) | rspamd multimap (`RCPT_MAILCOW_DOMAIN`, `MAILCOW_DOMAIN_HEADER_FROM`), mail-policy | dominios y alias domains activos de la celda |

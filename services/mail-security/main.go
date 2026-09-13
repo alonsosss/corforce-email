@@ -121,11 +121,22 @@ func main() {
 	ctxPool := &db.ContextPool{}
 	withPool := func(c context.Context) context.Context { return db.WithPool(c, pool.Pool) }
 
-	// Redis de los motores (no el de la plataforma): este servicio es su unico escritor.
+	// Redis de los motores (no el de la plataforma): este servicio es su unico escritor. El
+	// TLS es opcional y nunca exigido: los motores lo leen en claro dentro de la red de la
+	// celda (deploy/mail/README.md, Contrato Redis).
+	engineRedisTLS, err := config.RedisTLSFromEnv(config.EngineRedisEnvPrefix)
+	if err != nil {
+		log.Fatalf("redis de los motores: %v", err)
+	}
+	engineTLS, err := engineRedisTLS.ClientConfig()
+	if err != nil {
+		log.Fatalf("redis de los motores: %v", err)
+	}
 	store := redisadapter.New(redisadapter.Config{
 		Host:     envOrDefault("MAIL_REDIS_HOST", defaultRedisHost),
 		Port:     envInt("MAIL_REDIS_PORT", defaultRedisPort),
 		Password: os.Getenv("MAIL_REDIS_PASSWORD"),
+		TLS:      engineTLS,
 	})
 	defer store.Close()
 	if err := store.Ping(ctx); err != nil {

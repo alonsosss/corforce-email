@@ -276,6 +276,15 @@ falla_cerrado() {
 }
 falla_cerrado identity 'JWT_SIGNING_KEY is required' -u JWT_SIGNING_KEY -u JWT_SIGNING_KID ENVIRONMENT=production IDENTITY_PORT=$((BASE + 97))
 falla_cerrado gateway 'JWT_PUBLIC_KEYS is required' -u JWT_PUBLIC_KEYS GATEWAY_PORT=$((BASE + 98))
+# Fuera de desarrollo, el Redis de la plataforma en claro impide el arranque.
+env -u REDIS_TLS -u REDIS_TLS_CA_FILE -u REDIS_TLS_SERVER_NAME ENVIRONMENT=production GATEWAY_PORT=$((BASE + 95)) \
+  timeout 20 "$WORK/bin/gateway" >"$WORK/fail-closed-redis.log" 2>&1
+rc=$?
+if [[ $rc -ne 0 && $rc -ne 124 ]] && grep -q 'REDIS_TLS=true is required' "$WORK/fail-closed-redis.log"; then
+  ok "en produccion, sin TLS hacia Redis el gateway no arranca"
+else
+  mal "gateway en produccion sin REDIS_TLS (salida $rc): $(head -c 300 "$WORK/fail-closed-redis.log")"
+fi
 
 TENANT_PASS="$(rand_hex 12)Aa1!"
 ORG=$(curl -s -X POST "$GW/organizations" -H "$A1" -H 'Content-Type: application/json' \

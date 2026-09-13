@@ -71,7 +71,10 @@ func main() {
 	defer mgr.CloseAll()
 	ctxPool := &db.ContextPool{}
 
-	rdb := newRedis(ctx, cfg.Redis, logger)
+	rdb, err := newRedis(ctx, cfg.Redis, logger)
+	if err != nil {
+		log.Fatalf("redis: %v", err)
+	}
 	defer rdb.Close()
 
 	directory := tenants.NewDirectory(tenantDB, tenantWorkers)
@@ -149,11 +152,17 @@ func main() {
 // newRedis abre el cliente del Redis de la plataforma con tiempos cortos: la reserva de
 // tasa va en el camino de cada envio y, si Redis no responde, se autoriza sin ella en vez
 // de esperar. Un Redis caido al arrancar no impide el arranque; el cliente reconecta solo.
-func newRedis(ctx context.Context, rc config.RedisConfig, logger *zap.Logger) *goredis.Client {
+// Una configuracion TLS invalida, o ausente fuera de desarrollo, si lo impide.
+func newRedis(ctx context.Context, rc config.RedisConfig, logger *zap.Logger) (*goredis.Client, error) {
+	tlsCfg, err := rc.TLSConfig()
+	if err != nil {
+		return nil, err
+	}
 	rdb := goredis.NewClient(&goredis.Options{
 		Addr:                  rc.Addr(),
 		Password:              rc.Password,
 		DB:                    0,
+		TLSConfig:             tlsCfg,
 		DialTimeout:           time.Second,
 		ReadTimeout:           500 * time.Millisecond,
 		WriteTimeout:          500 * time.Millisecond,
@@ -165,5 +174,5 @@ func newRedis(ctx context.Context, rc config.RedisConfig, logger *zap.Logger) *g
 	if err := rdb.Ping(pingCtx).Err(); err != nil {
 		logger.Warn("reputation: Redis no disponible al arrancar; la tasa se autoriza sin reservar cupo hasta que vuelva", zap.Error(err))
 	}
-	return rdb
+	return rdb, nil
 }

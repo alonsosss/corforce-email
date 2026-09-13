@@ -44,10 +44,15 @@ func main() {
 	denialRepo := postgres.NewDenialRepo(pool.Pool)
 	moduleGate := postgres.NewTenantModuleGateRepo(pool.Pool)
 
+	redisTLS, err := cfg.Redis.TLSConfig()
+	if err != nil {
+		log.Fatalf("redis: %v", err)
+	}
 	rdb := redis.NewClient(&redis.Options{
-		Addr:     cfg.Redis.Addr(),
-		Password: cfg.Redis.Password,
-		DB:       0,
+		Addr:      cfg.Redis.Addr(),
+		Password:  cfg.Redis.Password,
+		DB:        0,
+		TLSConfig: redisTLS,
 	})
 
 	// Los nombres de los roles estructurales llegan del paquete compartido: son los

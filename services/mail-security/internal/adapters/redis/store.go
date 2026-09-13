@@ -4,8 +4,11 @@ package redis
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
+	"net"
+	"strconv"
 	"time"
 
 	"github.com/alonsosss/corforce-email/services/mail-security/internal/domain"
@@ -22,12 +25,15 @@ type Config struct {
 	Host     string
 	Port     int
 	Password string
+	// TLS es nil con el Redis en claro (config.RedisTLS.ClientConfig).
+	TLS *tls.Config
 }
 
 func New(cfg Config) *Store {
 	return &Store{client: goredis.NewClient(&goredis.Options{
-		Addr:         fmt.Sprintf("%s:%d", cfg.Host, cfg.Port),
+		Addr:         net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port)),
 		Password:     cfg.Password,
+		TLSConfig:    cfg.TLS,
 		DialTimeout:  5 * time.Second,
 		ReadTimeout:  3 * time.Second,
 		WriteTimeout: 3 * time.Second,

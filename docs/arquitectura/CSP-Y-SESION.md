@@ -153,7 +153,8 @@ Dos limitadores por IP (`services/gateway/ratelimit.go`, `pkg/middleware/ratelim
 | `gateway:auth` | `POST /auth/login`, `/auth/mfa/challenge`, `/auth/forgot-password`, `/auth/reset-password`, `GET /auth/reset-password/policy` y las rutas `strict_limit` de `self_authenticated` (`POST /webmail/session`) | `AUTH_RATE_LIMIT_PER_MIN` (30) |
 
 El cupo es **uno para todas las réplicas**: cuentan en el Redis de la plataforma
-(`REDIS_*`). En memoria de cada proceso, con N réplicas un cliente obtenía N veces su cupo,
+(`REDIS_*`, cifrado con `REDIS_TLS` fuera de desarrollo: `docs/Operacion_Despliegue.md`,
+1). En memoria de cada proceso, con N réplicas un cliente obtenía N veces su cupo,
 también el de autenticación, que es la barrera contra el barrido de cuentas desde una IP
 (el bloqueo por cuenta de identity frena el ataque a una sola). El inicio de sesión de la
 plataforma y el del webmail comparten el cupo estricto de la IP.

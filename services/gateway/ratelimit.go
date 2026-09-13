@@ -2,10 +2,9 @@ package main
 
 import (
 	"context"
-	"net"
-	"os"
 	"time"
 
+	"github.com/alonsosss/corforce-email/pkg/config"
 	"github.com/alonsosss/corforce-email/pkg/middleware"
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
@@ -21,19 +20,21 @@ const (
 // newRateLimitStore abre el Redis de la plataforma (REDIS_*) para los cupos del gateway,
 // compartidos entre replicas. Tiempos cortos: el limitador va delante de cada peticion y,
 // si Redis no responde, decide en memoria en vez de esperar. Un Redis caido al arrancar no
-// impide el arranque; el cliente reconecta solo.
-func newRateLimitStore(logger *zap.Logger) *middleware.RedisRateLimitStore {
-	host := os.Getenv("REDIS_HOST")
-	if host == "" {
-		host = "localhost"
+// impide el arranque; el cliente reconecta solo. Una configuracion TLS invalida, o ausente
+// fuera de desarrollo, si lo impide.
+func newRateLimitStore(logger *zap.Logger) (*middleware.RedisRateLimitStore, error) {
+	rc, err := config.LoadRedis()
+	if err != nil {
+		return nil, err
 	}
-	port := os.Getenv("REDIS_PORT")
-	if port == "" {
-		port = "6379"
+	tlsCfg, err := rc.TLSConfig()
+	if err != nil {
+		return nil, err
 	}
 	rdb := redis.NewClient(&redis.Options{
-		Addr:                  net.JoinHostPort(host, port),
-		Password:              os.Getenv("REDIS_PASSWORD"),
+		Addr:                  rc.Addr(),
+		Password:              rc.Password,
+		TLSConfig:             tlsCfg,
 		DialTimeout:           time.Second,
 		ReadTimeout:           250 * time.Millisecond,
 		WriteTimeout:          250 * time.Millisecond,
@@ -45,7 +46,7 @@ func newRateLimitStore(logger *zap.Logger) *middleware.RedisRateLimitStore {
 	if err := rdb.Ping(ctx).Err(); err != nil {
 		logger.Warn("gateway: Redis no disponible al arrancar; los limites se cuentan en memoria de cada replica hasta que vuelva", zap.Error(err))
 	}
-	return middleware.NewRedisRateLimitStore(rdb)
+	return middleware.NewRedisRateLimitStore(rdb), nil
 }
 
 // newRateLimiters crea el limitador general (todo /api/v1) y el estricto de

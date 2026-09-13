@@ -12,6 +12,19 @@ largas de cada guardarraíl están en `ops/scaffold/README.md`, `ops/security/se
 * Producción (AWS): una cuenta por ambiente (dev, staging, prod). RDS PostgreSQL Multi-AZ
   detrás de PgBouncer, ElastiCache, SES, S3, Secrets Manager. Servidor de aplicación
   endurecido con `ops/server-template/bootstrap.sh`.
+* Redis en tránsito (`pkg/config/redis.go`). El Redis de la plataforma (`REDIS_*`: cupos
+  del gateway, freno de `mail-auth`, sesiones del webmail, tasa de `reputation`, caché de
+  `access-control`) va cifrado: `REDIS_TLS=true`, con verificación del certificado siempre
+  activa y TLS 1.2 como mínimo. Solo un `ENVIRONMENT` declarado `development` o `test`
+  admite Redis en claro; en cualquier otro (también `staging` o sin declarar) esos servicios
+  no arrancan sin TLS (`REDIS_TLS=true is required`). ElastiCache debe crearse con cifrado
+  en tránsito (y `AUTH`, la contraseña va en `REDIS_PASSWORD` del almacén); su certificado
+  lo firma una CA pública que ya está en las raíces de las imágenes. `REDIS_TLS_CA_FILE`
+  (PEM que se suma a las raíces del sistema, montado en el contenedor) es para un Redis
+  propio con CA interna, y `REDIS_TLS_SERVER_NAME` para cuando el certificado no lleva el
+  nombre de `REDIS_HOST`. Un valor de `REDIS_TLS` que no es booleano, o una CA o un nombre
+  con TLS apagado, detienen el arranque. El Redis de los motores (`MAIL_REDIS_*`) tiene
+  las mismas variables, opcionales y apagadas: ver `deploy/mail/README.md`, Contrato Redis.
 
 ## 2. Secretos
 

@@ -70,10 +70,14 @@ func main() {
 		log.Fatalf("password verifier: %v", err)
 	}
 
+	throttle, err := newThrottle(ctx, cfg.Redis, logger)
+	if err != nil {
+		log.Fatalf("redis: %v", err)
+	}
 	uc := app.New(app.Deps{
 		Repo:      postgres.NewRepository(&db.ContextPool{}),
 		Passwords: verifier,
-		Throttle:  newThrottle(ctx, cfg.Redis, logger),
+		Throttle:  throttle,
 		Metrics:   promadapter.New(),
 		Logger:    logger,
 	})
@@ -144,13 +148,18 @@ func main() {
 }
 
 // newThrottle abre el freno de fuerza bruta sobre el Redis de la plataforma. Sin Redis
-// el servicio arranca sin freno y lo avisa: la capa de red la sigue dando netfilter.
-func newThrottle(ctx context.Context, rc config.RedisConfig, logger *zap.Logger) *redisadapter.Throttle {
-	rdb := redis.NewClient(&redis.Options{Addr: rc.Addr(), Password: rc.Password, DB: 0})
+// el servicio arranca sin freno y lo avisa: la capa de red la sigue dando netfilter. Una
+// configuracion TLS invalida, o ausente fuera de desarrollo, impide el arranque.
+func newThrottle(ctx context.Context, rc config.RedisConfig, logger *zap.Logger) (*redisadapter.Throttle, error) {
+	tlsCfg, err := rc.TLSConfig()
+	if err != nil {
+		return nil, err
+	}
+	rdb := redis.NewClient(&redis.Options{Addr: rc.Addr(), Password: rc.Password, DB: 0, TLSConfig: tlsCfg})
 	if err := rdb.Ping(ctx).Err(); err != nil {
 		logger.Warn("mail-auth: Redis no disponible, se arranca SIN freno de fuerza bruta", zap.Error(err))
 		_ = rdb.Close()
-		return nil
+		return nil, nil
 	}
 	tcfg := redisadapter.Config{
 		MaxFailures:      int64(envInt("MAIL_AUTH_MAX_FAILURES", defaultMaxFailures)),
@@ -161,7 +170,7 @@ func newThrottle(ctx context.Context, rc config.RedisConfig, logger *zap.Logger)
 	logger.Info("mail-auth: freno de fuerza bruta activo",
 		zap.Int64("max_failures", tcfg.MaxFailures), zap.Int64("max_failures_per_ip", tcfg.MaxFailuresPerIP),
 		zap.Duration("window", tcfg.Window), zap.Duration("lock_ttl", tcfg.LockTTL))
-	return redisadapter.NewThrottle(rdb, tcfg, logger)
+	return redisadapter.NewThrottle(rdb, tcfg, logger), nil
 }
 
 func envInt(key string, fallback int) int {

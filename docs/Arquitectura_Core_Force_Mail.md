@@ -100,6 +100,10 @@ migraciones conectan directo.
 * Sesion: `docs/arquitectura/CSP-Y-SESION.md`. Tres capas de acceso:
   `Usuarios_Roles_y_Acceso.md`.
 * Secretos en el almacen; credenciales de terceros cifradas por empresa con rotacion.
+* Redis de la plataforma cifrado en transito con verificacion del certificado
+  (`REDIS_TLS`, obligatorio fuera de un `ENVIRONMENT` de desarrollo o prueba:
+  `Operacion_Despliegue.md` 1). El Redis de los motores va en claro solo dentro de la red
+  de la celda (`deploy/mail/README.md`, Contrato Redis).
 * `mail_engine` no puede leer contrasenas de buzon: la verificacion pasa por `mail-auth`.
 * ClamAV en Rspamd para todo lo que entra; ClamAV antes de guardar cualquier adjunto que
   suba una persona.

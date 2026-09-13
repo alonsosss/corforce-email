@@ -76,7 +76,11 @@ func main() {
 	// navegador. El bloqueo por cuenta ya frena el ataque a UNA cuenta; esto ademas
 	// frena el barrido de MUCHAS cuentas desde una misma IP. El valor por defecto
 	// aguanta el pico de una oficina tras NAT.
-	limiter, authLimiter := newRateLimiters(newRateLimitStore(logger),
+	rateStore, err := newRateLimitStore(logger)
+	if err != nil {
+		log.Fatalf("redis: %v", err)
+	}
+	limiter, authLimiter := newRateLimiters(rateStore,
 		envInt("API_RATE_LIMIT_PER_MIN", 600), envInt("AUTH_RATE_LIMIT_PER_MIN", 30), logger)
 
 	identity := reverseProxy(table.serviceURL("identity"), internalToken)

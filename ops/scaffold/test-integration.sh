@@ -11,7 +11,8 @@
 #      aqui: una prueba nueva con una variable que nadie le da no puede pasar desapercibida.
 #   2. Levanta un Postgres (pgvector/pgvector:pg16) y un Redis (redis:7.4.10-alpine)
 #      desechables, o adopta los que le dan (CI: los services de GitHub Actions), y les
-#      cambia la credencial por una aleatoria de esta ejecucion.
+#      cambia la credencial por una aleatoria de esta ejecucion. La prueba del TLS hacia
+#      Redis crea ella misma un Redis con tls-port (cfm-it-tls-redis, puerto base+2).
 #   3. Crea una base por variable *_TEST_DSN en ese Postgres y exporta todas las variables.
 #      Cada prueba migra su propia base; las que aun dan su base por migrada reciben aqui
 #      sus migraciones (MIGRADAS_POR_EL_SCRIPT), dos veces.
@@ -25,7 +26,8 @@
 #   make test-integration
 #   IT_PACKAGES='./services/billing/...' make test-integration   # acota los paquetes
 #   IT_KEEP=1 make test-integration       # deja contenedores y la salida json
-#   IT_PORT_BASE=26000 make test-integration   # otro rango si 27000-27001 esta ocupado
+#   IT_PORT_BASE=26000 make test-integration   # otro rango si 27000-27002 esta ocupado
+#   IT_REDIS_TLS_PORT=27890 make test-integration   # solo el puerto del Redis TLS
 #
 # En CI, con los contenedores ya levantados por services:
 #   IT_PG_CONTAINER=<id> IT_PG_PORT=27000 IT_PG_USER=cfm_it \
@@ -83,9 +85,12 @@ REDIS_PASSWORD_VARS=(REDIS_TEST_PASSWORD MAIL_SECURITY_TEST_REDIS_PASSWORD REPUT
 # La prueba del rol de celda crea sus propias bases desde la de mantenimiento y usa el psql
 # del contenedor (no hay cliente en el anfitrion).
 OTRAS_VARS=(CELL_ROLE_TEST_DSN CELL_ROLE_TEST_CONTAINER)
+# La prueba del TLS hacia Redis (pkg/config) genera su CA y su certificado y crea con ellos
+# su propio Redis con tls-port: recibe solo el nombre del contenedor y el puerto.
+REDIS_TLS_VARS=(REDIS_TLS_TEST_CONTAINER REDIS_TLS_TEST_PORT)
 
 echo "== Variables de las pruebas de integracion"
-python3 - "$ROOT" "${!BASES[*]} ${REDIS_ADDR_VARS[*]} ${REDIS_PASSWORD_VARS[*]} ${OTRAS_VARS[*]}" <<'PY' || exit 1
+python3 - "$ROOT" "${!BASES[*]} ${REDIS_ADDR_VARS[*]} ${REDIS_PASSWORD_VARS[*]} ${OTRAS_VARS[*]} ${REDIS_TLS_VARS[*]}" <<'PY' || exit 1
 import os, re, subprocess, sys
 
 root, declaradas = sys.argv[1], set(sys.argv[2].split())
@@ -123,9 +128,11 @@ PY
 BASE="${IT_PORT_BASE:-27000}"
 PG_PORT="${IT_PG_PORT:-$BASE}"
 REDIS_PORT="${IT_REDIS_PORT:-$((BASE + 1))}"
+REDIS_TLS_PORT="${IT_REDIS_TLS_PORT:-$((BASE + 2))}"
+REDIS_TLS_CONTAINER=cfm-it-tls-redis
 PG_USER="${IT_PG_USER:-cfm_it}"
 read -r EFIMERO_MIN EFIMERO_MAX < /proc/sys/net/ipv4/ip_local_port_range 2>/dev/null || { EFIMERO_MIN=32768; EFIMERO_MAX=60999; }
-for p in "$PG_PORT" "$REDIS_PORT"; do
+for p in "$PG_PORT" "$REDIS_PORT" "$REDIS_TLS_PORT"; do
   if (( p >= EFIMERO_MIN && p <= EFIMERO_MAX )); then
     echo "test-integration: el puerto $p cae en el rango efimero $EFIMERO_MIN-$EFIMERO_MAX; usa otro IT_PORT_BASE" >&2
     exit 2
@@ -166,6 +173,8 @@ limpiar() {
   if (( PROPIOS )); then
     docker rm -f "$PG_CONTAINER" "$REDIS_CONTAINER" >/dev/null 2>&1
   fi
+  # El Redis TLS lo crea y borra la prueba; esto solo recoge el de una ejecucion cortada.
+  docker rm -f "$REDIS_TLS_CONTAINER" >/dev/null 2>&1
   rm -rf "$WORK"
 }
 trap limpiar EXIT
@@ -250,6 +259,7 @@ export CELL_ROLE_TEST_DSN; CELL_ROLE_TEST_DSN="$(dsn postgres)"
 export CELL_ROLE_TEST_CONTAINER="$PG_CONTAINER"
 for v in "${REDIS_ADDR_VARS[@]}"; do export "$v=127.0.0.1:$REDIS_PORT"; done
 for v in "${REDIS_PASSWORD_VARS[@]}"; do export "$v=$REDIS_PASSWORD"; done
+export REDIS_TLS_TEST_CONTAINER="$REDIS_TLS_CONTAINER" REDIS_TLS_TEST_PORT="$REDIS_TLS_PORT"
 export INTEGRATION_REQUIRED=1
 
 # ── Pruebas ──────────────────────────────────────────────────────────────────

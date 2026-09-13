@@ -118,7 +118,8 @@ func TestCellConnection(t *testing.T) {
 // para Load es lo mismo que no definida.
 func setEnv(t *testing.T, vars map[string]string) {
 	t.Helper()
-	for _, key := range []string{"ENVIRONMENT", "JWT_SECRET", "POSTGRES_PASSWORD", "POSTGRES_USER", "CELL_DB_NAME", "CELL_DB_USER", "CELL_DB_PASSWORD"} {
+	for _, key := range []string{"ENVIRONMENT", "JWT_SECRET", "POSTGRES_PASSWORD", "POSTGRES_USER", "CELL_DB_NAME", "CELL_DB_USER", "CELL_DB_PASSWORD",
+		"REDIS_TLS", "REDIS_TLS_CA_FILE", "REDIS_TLS_SERVER_NAME"} {
 		// JWT_SECRET queda vacia en todas las pruebas: ningun servicio la necesita ya.
 		t.Setenv(key, vars[key])
 	}

@@ -121,7 +121,11 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	rdb := goredis.NewClient(&goredis.Options{Addr: cfg.Redis.Addr(), Password: cfg.Redis.Password})
+	redisTLS, err := cfg.Redis.TLSConfig()
+	if err != nil {
+		log.Fatalf("webmail: redis: %v", err)
+	}
+	rdb := goredis.NewClient(&goredis.Options{Addr: cfg.Redis.Addr(), Password: cfg.Redis.Password, TLSConfig: redisTLS})
 	defer rdb.Close()
 	if err := rdb.Ping(ctx).Err(); err != nil {
 		log.Fatalf("webmail: Redis no disponible (las sesiones viven ahi): %v", err)

@@ -111,6 +111,16 @@ cambie cualquiera de estas líneas.
   en `rate_limit_degraded_total`. Probado con dos réplicas contra Redis 7 real y con Redis
   inalcanzable (2026-09-13). Los límites propios de los demás servicios siguen en memoria
   (motivo en `docs/arquitectura/CSP-Y-SESION.md`).
+* TLS hacia el Redis de la plataforma (2026-09-13): todos sus clientes (gateway,
+  access-control, mail-auth, reputation, webmail) toman `REDIS_TLS`, `REDIS_TLS_CA_FILE` y
+  `REDIS_TLS_SERVER_NAME` de `pkg/config` (`LoadRedis`, `RedisConfig.TLSConfig`), sin
+  forma de saltarse la verificación, y fuera de un `ENVIRONMENT` declarado de desarrollo o
+  de prueba no arrancan en claro. Probado en unitarias de `pkg/config` (incluida una
+  negociación real en proceso), en integración contra un Redis 7 que solo escucha en
+  `tls-port` con CA y certificado generados en la prueba (conexión verificada; sin la CA,
+  con otra CA, con otro nombre o en claro, falla) y en `make e2e` (el gateway con
+  `ENVIRONMENT=production` y sin TLS no arranca). El Redis de los motores sigue en claro
+  dentro de la red de la celda: motivo en `deploy/mail/README.md`, Contrato Redis.
 * RBAC en `enforce` y `fail-closed` por defecto.
 * Dos bugs de identity corregidos: el cambio de contraseña propio no persistía y el logout
   no revocaba la sesión en servidor; el historial de contraseñas ahora se aplica.

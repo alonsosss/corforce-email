@@ -171,10 +171,14 @@ type RedisConfig struct {
 	Host     string
 	Port     int
 	Password string
+	TLS      RedisTLS
+	// AllowPlaintext deja conectar sin TLS. Solo lo activa un ENVIRONMENT declarado de
+	// desarrollo o de prueba: en cualquier otro, TLSConfig exige REDIS_TLS=true.
+	AllowPlaintext bool
 }
 
 func (r RedisConfig) Addr() string {
-	return fmt.Sprintf("%s:%d", r.Host, r.Port)
+	return net.JoinHostPort(r.Host, strconv.Itoa(r.Port))
 }
 
 type NATSConfig struct {
@@ -207,6 +211,10 @@ func declaredDevelopmentOrTest(environment string) bool {
 }
 
 func Load() (*Config, error) {
+	redisCfg, err := LoadRedis()
+	if err != nil {
+		return nil, err
+	}
 	cfg := &Config{
 		Environment: getEnv("ENVIRONMENT", "development"),
 		Postgres: PostgresConfig{
@@ -222,11 +230,7 @@ func Load() (*Config, error) {
 			CellPassword:                getEnv("CELL_DB_PASSWORD", ""),
 			AllowPlatformCellCredential: declaredDevelopmentOrTest(os.Getenv("ENVIRONMENT")),
 		},
-		Redis: RedisConfig{
-			Host:     getEnv("REDIS_HOST", "localhost"),
-			Port:     getEnvInt("REDIS_PORT", 6379),
-			Password: getEnv("REDIS_PASSWORD", ""),
-		},
+		Redis: redisCfg,
 		NATS: NATSConfig{
 			URL: getEnv("NATS_URL", "nats://localhost:4222"),
 		},
