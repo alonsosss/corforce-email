@@ -13,6 +13,7 @@ import (
 	"github.com/alonsosss/corforce-email/pkg/auth"
 	"github.com/alonsosss/corforce-email/pkg/authz"
 	"github.com/alonsosss/corforce-email/pkg/middleware"
+	"github.com/alonsosss/corforce-email/services/identity/internal/adapters/passwordhash"
 	"github.com/alonsosss/corforce-email/services/identity/internal/app"
 	"github.com/alonsosss/corforce-email/services/identity/internal/domain"
 	"github.com/alonsosss/corforce-email/services/identity/internal/ports"
@@ -121,6 +122,16 @@ func (d *lgDeletions) UserDeleted(_ context.Context, del domain.UserDeletion) er
 	return nil
 }
 
+// testHasher es el hasher de identity con el coste minimo: estas pruebas no miden tiempos.
+func testHasher(t *testing.T) *passwordhash.Bcrypt {
+	t.Helper()
+	h, err := passwordhash.NewBcrypt(bcrypt.MinCost)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return h
+}
+
 type lgFixture struct {
 	srv       http.Handler
 	users     *lgUsers
@@ -156,11 +167,14 @@ func newLoginFixture(t *testing.T) *lgFixture {
 		tenant:    uuid.New(),
 		hash:      string(hash),
 	}
-	authUC := app.NewAuthUseCase(app.AuthDeps{
+	authUC, err := app.NewAuthUseCase(app.AuthDeps{
 		Users: f.users, Sessions: lgSessions{}, Policies: lgPolicies{}, Audit: lgAudit{}, Events: lgEvents{},
-		Tokens: f.tokens, Tenants: lgTenants{id: f.tenant}, Roles: &roleStore{}, Logger: zap.NewNop(),
-		Now: func() time.Time { return loginNow },
+		Tokens: f.tokens, Tenants: lgTenants{id: f.tenant}, Roles: &roleStore{}, Hasher: testHasher(t),
+		Logger: zap.NewNop(), Now: func() time.Time { return loginNow },
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	userUC := app.NewUserUseCase(app.UserDeps{Users: f.users, Tx: lgTx{}, AccountEvents: f.deletions, Logger: zap.NewNop()})
 	r := chi.NewRouter()
 	r.Use(middleware.InjectFromGateway)

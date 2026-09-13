@@ -20,6 +20,7 @@ import (
 	"github.com/alonsosss/corforce-email/services/identity/internal/adapters/mailerclient"
 	natsadapter "github.com/alonsosss/corforce-email/services/identity/internal/adapters/nats"
 	outboxadapter "github.com/alonsosss/corforce-email/services/identity/internal/adapters/outbox"
+	"github.com/alonsosss/corforce-email/services/identity/internal/adapters/passwordhash"
 	"github.com/alonsosss/corforce-email/services/identity/internal/adapters/postgres"
 	"github.com/alonsosss/corforce-email/services/identity/internal/adapters/pwned"
 	"github.com/alonsosss/corforce-email/services/identity/internal/app"
@@ -71,7 +72,11 @@ func main() {
 
 	eventPub := natsadapter.NewEventPublisher(bus)
 
-	authUC := app.NewAuthUseCase(app.AuthDeps{
+	hasher, err := passwordhash.NewBcrypt(passwordhash.BcryptCost)
+	if err != nil {
+		log.Fatalf("password hasher: %v", err)
+	}
+	authUC, err := app.NewAuthUseCase(app.AuthDeps{
 		Users:           userRepo,
 		Sessions:        sessionRepo,
 		Blocklist:       blocklistRepo,
@@ -83,8 +88,12 @@ func main() {
 		Tokens:          tokenSvc,
 		Tenants:         tenantRepo,
 		Roles:           roleRepo,
+		Hasher:          hasher,
 		Logger:          logger,
 	})
+	if err != nil {
+		log.Fatalf("auth use case: %v", err)
+	}
 
 	breachChecker := pwned.NewFromEnv()
 	logger.Info("contrasenas filtradas", zap.Bool("comprobacion_activa", breachChecker.Enabled()))
@@ -97,6 +106,7 @@ func main() {
 		Audit:         auditRepo,
 		Events:        eventPub,
 		Breach:        breachChecker,
+		Hasher:        hasher,
 		Tx:            postgres.NewTransactor(pool.Pool),
 		AccountEvents: outboxadapter.NewPublisher(&db.ContextPool{}),
 		Logger:        logger,
@@ -108,6 +118,7 @@ func main() {
 		Tenants:     tenantRepo,
 		Policies:    policyRepo,
 		Breach:      breachChecker,
+		Hasher:      hasher,
 		Audit:       auditRepo,
 		Events:      eventPub,
 		Logger:      logger,
@@ -127,6 +138,7 @@ func main() {
 		Resets:        postgres.NewPasswordResetRepo(pool.Pool),
 		Policies:      policyRepo,
 		Breach:        breachChecker,
+		Hasher:        hasher,
 		History:       historyRepo,
 		Sessions:      sessionRepo,
 		Audit:         auditRepo,

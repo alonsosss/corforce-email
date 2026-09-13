@@ -69,11 +69,41 @@ func (s *authUsers) LockUser(_ context.Context, _ uuid.UUID, until *time.Time) e
 	return nil
 }
 
-type authTenants struct{ id uuid.UUID }
+// authTenants resuelve la misma empresa por slug y por correo; con missing, ninguna.
+type authTenants struct {
+	id      uuid.UUID
+	missing bool
+}
 
-func (t authTenants) GetIDBySlug(context.Context, string) (uuid.UUID, error)  { return t.id, nil }
-func (t authTenants) GetIDByEmail(context.Context, string) (uuid.UUID, error) { return t.id, nil }
-func (t authTenants) IsActive(context.Context, uuid.UUID) (bool, error)       { return true, nil }
+func (t *authTenants) GetIDBySlug(context.Context, string) (uuid.UUID, error)  { return t.resolve() }
+func (t *authTenants) GetIDByEmail(context.Context, string) (uuid.UUID, error) { return t.resolve() }
+func (t *authTenants) IsActive(context.Context, uuid.UUID) (bool, error)       { return true, nil }
+
+func (t *authTenants) resolve() (uuid.UUID, error) {
+	if t.missing {
+		return uuid.Nil, domain.ErrTenantNotFound
+	}
+	return t.id, nil
+}
+
+// countingHasher es bcrypt con el coste que se le da y anota que hashes compara: las pruebas
+// comprueban que cada fallo compara una contrasena, no cuanto tarda.
+type countingHasher struct {
+	cost     int
+	hashes   int
+	compared []string
+}
+
+func (h *countingHasher) Hash(password string) (string, error) {
+	h.hashes++
+	out, err := bcrypt.GenerateFromPassword([]byte(password), h.cost)
+	return string(out), err
+}
+
+func (h *countingHasher) Compare(hash, password string) error {
+	h.compared = append(h.compared, hash)
+	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(password))
+}
 
 type authSessions struct {
 	ports.SessionRepository
@@ -126,6 +156,8 @@ type authFixture struct {
 	events   *authEvents
 	tokens   *auth.TokenService
 	tenant   uuid.UUID
+	tenants  *authTenants
+	hasher   *countingHasher
 }
 
 func newAuthFixture(t *testing.T) *authFixture {
@@ -148,12 +180,18 @@ func newAuthFixture(t *testing.T) *authFixture {
 		events:   &authEvents{},
 		tokens:   auth.NewTokenService(signer, verifier, 5*time.Minute, time.Hour),
 		tenant:   uuid.New(),
+		hasher:   &countingHasher{cost: bcrypt.MinCost},
 	}
-	f.uc = NewAuthUseCase(AuthDeps{
+	f.tenants = &authTenants{id: f.tenant}
+	uc, err := NewAuthUseCase(AuthDeps{
 		Users: f.users, Sessions: f.sessions, Policies: authPolicies{}, Audit: nopAudit{},
-		Events: f.events, Tokens: f.tokens, Tenants: authTenants{id: f.tenant}, Roles: noRoles{},
+		Events: f.events, Tokens: f.tokens, Tenants: f.tenants, Roles: noRoles{}, Hasher: f.hasher,
 		Logger: zap.NewNop(), Now: func() time.Time { return authNow },
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.uc = uc
 	return f
 }
 
@@ -172,8 +210,9 @@ func (f *authFixture) login(u *domain.User, password string) (*ports.LoginRespon
 	})
 }
 
-// Una cuenta que no puede tener sesion se rechaza antes de mirar la contrasena: con la buena y
-// con una mala se responde lo mismo, no cuenta un intento fallido ni abre sesion.
+// Una cuenta que no puede tener sesion se rechaza sin mirar su contrasena: con la buena y con
+// una mala se responde lo mismo, no cuenta un intento fallido ni abre sesion. Compara una vez
+// contra el hash de relleno, nunca contra el de la cuenta, para tardar lo que otro fallo.
 func TestLoginRechazaSinMirarLaContrasena(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -190,8 +229,12 @@ func TestLoginRechazaSinMirarLaContrasena(t *testing.T) {
 		f := newAuthFixture(t)
 		u := f.account(c.status, c.until)
 		for _, password := range []string{authPassword, "no-es-la-contrasena"} {
+			before := len(f.hasher.compared)
 			if res, err := f.login(u, password); !errors.Is(err, c.want) || res != nil {
 				t.Errorf("%s con contrasena %q: res=%v err=%v, se esperaba %v", c.name, password, res, err, c.want)
+			}
+			if got := f.hasher.compared[before:]; len(got) != 1 || got[0] != f.uc.decoyHash {
+				t.Errorf("%s con contrasena %q: comparo %d hashes %v, se esperaba solo el de relleno", c.name, password, len(got), got)
 			}
 		}
 		if f.users.increments != 0 || f.sessions.created != 0 {
@@ -297,5 +340,71 @@ func TestElSegundoFactorAplicaLaMismaRegla(t *testing.T) {
 		if f.users.increments != 0 || f.sessions.created != 0 {
 			t.Errorf("%s: %d intentos y %d sesiones, se esperaba ninguno", c.name, f.users.increments, f.sessions.created)
 		}
+		// El reto firmado solo sale con la contrasena correcta: aqui no se compara ninguna.
+		if len(f.hasher.compared) != 0 {
+			t.Errorf("%s: el segundo factor comparo %d contrasenas", c.name, len(f.hasher.compared))
+		}
+	}
+}
+
+// Todo inicio de sesion compara exactamente una contrasena, falle donde falle: sin empresa, sin
+// cuenta o con la contrasena mala. Solo la cuenta que puede entrar compara contra su hash; el
+// resto, contra el de relleno. Asi el tiempo no dice si el correo existe ni si resuelve empresa.
+func TestCadaLoginComparaUnaContrasena(t *testing.T) {
+	cases := []struct {
+		name      string
+		slug      string
+		noTenant  bool
+		ownEmail  bool
+		password  string
+		want      error
+		wantDecoy bool
+	}{
+		{"slug que no resuelve empresa", "no-existe", true, false, authPassword, domain.ErrTenantNotFound, true},
+		{"correo que no resuelve empresa", "", true, false, authPassword, domain.ErrTenantNotFound, true},
+		{"correo desconocido en la empresa", "acme", false, false, authPassword, domain.ErrInvalidCredentials, true},
+		{"contrasena mala con slug", "acme", false, true, "no-es-la-contrasena", domain.ErrInvalidCredentials, false},
+		{"contrasena mala sin slug", "", false, true, "no-es-la-contrasena", domain.ErrInvalidCredentials, false},
+		{"contrasena buena", "acme", false, true, authPassword, nil, false},
+	}
+	for _, c := range cases {
+		f := newAuthFixture(t)
+		u := f.account(domain.UserStatusActive, nil)
+		f.tenants.missing = c.noTenant
+		email := "nadie@example.test"
+		if c.ownEmail {
+			email = u.Email
+		}
+		res, err := f.uc.Login(context.Background(), ports.LoginRequest{
+			TenantSlug: c.slug, Email: email, Password: c.password, IPAddress: "203.0.113.7",
+		})
+		if !errors.Is(err, c.want) || (c.want == nil) != (res != nil) {
+			t.Errorf("%s: res=%v err=%v, se esperaba %v", c.name, res, err, c.want)
+		}
+		wantHash := u.PasswordHash
+		if c.wantDecoy {
+			wantHash = f.uc.decoyHash
+		}
+		if got := f.hasher.compared; len(got) != 1 || got[0] != wantHash {
+			t.Errorf("%s: comparo %d hashes %v, se esperaba uno: %q", c.name, len(got), got, wantHash)
+		}
+	}
+}
+
+// El hash de relleno sale del hasher al construir el caso de uso, con el coste de ese hasher:
+// no es una constante que pueda quedarse con otro coste. Sin hasher no hay caso de uso.
+func TestElHashDeRellenoTieneElCosteDelHasher(t *testing.T) {
+	for _, cost := range []int{bcrypt.MinCost, bcrypt.MinCost + 1} {
+		h := &countingHasher{cost: cost}
+		uc, err := NewAuthUseCase(AuthDeps{Hasher: h, Logger: zap.NewNop()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got, err := bcrypt.Cost([]byte(uc.decoyHash)); h.hashes != 1 || err != nil || got != cost {
+			t.Errorf("coste %d: %d hashes al construir, relleno con coste %d (%v)", cost, h.hashes, got, err)
+		}
+	}
+	if _, err := NewAuthUseCase(AuthDeps{Logger: zap.NewNop()}); err == nil {
+		t.Fatal("sin hasher el caso de uso no debe construirse")
 	}
 }

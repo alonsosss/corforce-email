@@ -56,6 +56,14 @@ type CreateUserRequest struct {
 	CreatedBy uuid.UUID
 }
 
+// PasswordHasher calcula y compara los hashes de contrasena. Todo hash que escribe identity
+// sale del mismo hasher, con el mismo coste.
+type PasswordHasher interface {
+	Hash(password string) (string, error)
+	// Compare devuelve nil solo si password corresponde a hash.
+	Compare(hash, password string) error
+}
+
 // TransactionalMailer envia los correos transaccionales del flujo de identidad
 // (recuperacion de contrasena) a traves del servicio de correo transaccional.
 type TransactionalMailer interface {

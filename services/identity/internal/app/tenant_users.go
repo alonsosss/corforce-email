@@ -9,7 +9,6 @@ import (
 	"github.com/alonsosss/corforce-email/services/identity/internal/ports"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
-	"golang.org/x/crypto/bcrypt"
 )
 
 // TenantUsersDeps agrupa los puertos de TenantUsersUseCase.
@@ -19,6 +18,7 @@ type TenantUsersDeps struct {
 	Tenants     ports.TenantRepository
 	Policies    ports.PasswordPolicyRepository
 	Breach      ports.PasswordBreachChecker
+	Hasher      ports.PasswordHasher
 	Audit       ports.AuditRepository
 	Events      ports.EventPublisher
 	Logger      *zap.Logger
@@ -32,6 +32,7 @@ type TenantUsersUseCase struct {
 	tenants     ports.TenantRepository
 	policies    ports.PasswordPolicyRepository
 	breach      ports.PasswordBreachChecker
+	hasher      ports.PasswordHasher
 	audit       ports.AuditRepository
 	events      ports.EventPublisher
 	logger      *zap.Logger
@@ -48,6 +49,7 @@ func NewTenantUsersUseCase(d TenantUsersDeps) *TenantUsersUseCase {
 		tenants:     d.Tenants,
 		policies:    d.Policies,
 		breach:      d.Breach,
+		hasher:      d.Hasher,
 		audit:       d.Audit,
 		events:      d.Events,
 		logger:      logger,
@@ -74,7 +76,7 @@ type FirstUserRequest struct {
 func (uc *TenantUsersUseCase) CreateFirstUser(ctx context.Context, req FirstUserRequest) (*domain.User, bool, error) {
 	if existing, err := uc.users.GetByID(ctx, req.UserID); err == nil {
 		if existing.TenantID != req.TenantID || existing.Email != req.Email ||
-			bcrypt.CompareHashAndPassword([]byte(existing.PasswordHash), []byte(req.Password)) != nil {
+			uc.hasher.Compare(existing.PasswordHash, req.Password) != nil {
 			return nil, false, domain.ErrFirstUserConflict
 		}
 		return existing, false, nil
@@ -87,7 +89,7 @@ func (uc *TenantUsersUseCase) CreateFirstUser(ctx context.Context, req FirstUser
 	if err := checkNewPassword(ctx, req.Password, policy, uc.breach, uc.logger); err != nil {
 		return nil, false, err
 	}
-	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+	hash, err := uc.hasher.Hash(req.Password)
 	if err != nil {
 		return nil, false, fmt.Errorf("hash password: %w", err)
 	}
@@ -97,7 +99,7 @@ func (uc *TenantUsersUseCase) CreateFirstUser(ctx context.Context, req FirstUser
 		ID:           req.UserID,
 		TenantID:     req.TenantID,
 		Email:        req.Email,
-		PasswordHash: string(hash),
+		PasswordHash: hash,
 		FirstName:    req.FirstName,
 		LastName:     req.LastName,
 		Status:       domain.UserStatusActive,

@@ -49,6 +49,25 @@ V = verificado en el codigo. P = propuesto, todavia no implementado.
   empresa responden el mismo 401; sin `tenant_slug`, el correo de una cuenta `inactive` o
   `pending` no resuelve empresa y responde ese 401, asi que su estado solo lo ve quien indica
   la empresa, como ya pasaba con `inactive`.
+* Tiempo del inicio de sesion (V, 2026-09-13): todo intento compara la contrasena exactamente
+  una vez. Con una cuenta que puede tener sesion, contra su hash; sin empresa (slug
+  desconocido o correo que no la resuelve), sin cuenta en la empresa o con una cuenta que no
+  puede tener sesion (`inactive`, `pending`, bloqueo vigente), contra un hash de relleno que
+  identity deriva al arrancar con el mismo hasher y el mismo coste que todo hash que escribe
+  (`services/identity/internal/adapters/passwordhash`, bcrypt 10; el superadmin que siembra
+  `ops/db/bootstrap-platform.sh` lleva ese coste y una prueba del paquete lo vigila). El tiempo
+  no dice si el correo existe ni si resuelve empresa, el de una cuenta sin sesion no dice mas
+  que su cuerpo, y su contrasena sigue sin mirarse. Queda: (1) la contrasena mala de una
+  cuenta existente anade despues el apunte del intento (contador, evento, politica y, en el
+  umbral, el bloqueo), milisegundos frente a las decenas del bcrypt, que solo se miden con
+  muchas muestras y las cortan el limite por IP y el bloqueo; (2) ese bloqueo, a los N fallos,
+  responde 403 `ACCOUNT_LOCKED` y delata la cuenta por el cuerpo; (3) una cuenta con un hash
+  de otro coste (el superadmin de una plataforma arrancada antes de este cambio, con 12) se
+  distingue por el tiempo hasta que cambie su contrasena; (4) cada intento sin cuenta cuesta
+  ahora un bcrypt de CPU, que acotan los mismos limites. El reto MFA no compara contrasena ni
+  sirve para enumerar: pide un token de reto firmado, que solo sale con la contrasena correcta.
+  La solicitud de reinicio (`forgot-password`) responde igual, pero con cuenta guarda el enlace
+  y llama al servicio transaccional antes de responder: su tiempo si delata la cuenta (P).
 * Reinicio de contrasena por enlace de un solo uso, respuesta identica exista o no el
   correo; enviado por el servicio transaccional (`TRANSACTIONAL_MAIL_URL`, P hasta que
   exista).

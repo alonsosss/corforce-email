@@ -9,7 +9,6 @@ import (
 	"github.com/alonsosss/corforce-email/services/identity/internal/ports"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
-	"golang.org/x/crypto/bcrypt"
 )
 
 type UserUseCase struct {
@@ -19,6 +18,7 @@ type UserUseCase struct {
 	audit         ports.AuditRepository
 	events        ports.EventPublisher
 	breach        ports.PasswordBreachChecker
+	hasher        ports.PasswordHasher
 	tx            ports.Transactor
 	accountEvents ports.AccountEvents
 	now           func() time.Time
@@ -33,6 +33,7 @@ type UserDeps struct {
 	Audit    ports.AuditRepository
 	Events   ports.EventPublisher
 	Breach   ports.PasswordBreachChecker
+	Hasher   ports.PasswordHasher
 	// Tx y AccountEvents sostienen la baja de una cuenta: el borrado y su evento se
 	// confirman en la misma transaccion.
 	Tx            ports.Transactor
@@ -58,6 +59,7 @@ func NewUserUseCase(d UserDeps) *UserUseCase {
 		audit:         d.Audit,
 		events:        d.Events,
 		breach:        d.Breach,
+		hasher:        d.Hasher,
 		tx:            d.Tx,
 		accountEvents: d.AccountEvents,
 		now:           now,
@@ -92,7 +94,7 @@ func (uc *UserUseCase) Create(ctx context.Context, req ports.CreateUserRequest) 
 		return nil, err
 	}
 
-	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+	hash, err := uc.hasher.Hash(req.Password)
 	if err != nil {
 		return nil, fmt.Errorf("hash password: %w", err)
 	}
@@ -102,7 +104,7 @@ func (uc *UserUseCase) Create(ctx context.Context, req ports.CreateUserRequest) 
 		ID:           uuid.New(),
 		TenantID:     req.TenantID,
 		Email:        req.Email,
-		PasswordHash: string(hash),
+		PasswordHash: hash,
 		FirstName:    req.FirstName,
 		LastName:     req.LastName,
 		Status:       domain.UserStatusActive,
@@ -212,7 +214,7 @@ func (uc *UserUseCase) ChangePassword(ctx context.Context, userID uuid.UUID, req
 		return domain.ErrUserNotFound
 	}
 
-	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.CurrentPassword)); err != nil {
+	if err := uc.hasher.Compare(user.PasswordHash, req.CurrentPassword); err != nil {
 		return domain.ErrInvalidCredentials
 	}
 
@@ -227,16 +229,16 @@ func (uc *UserUseCase) ChangePassword(ctx context.Context, userID uuid.UUID, req
 		return err
 	}
 
-	hash, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
+	hash, err := uc.hasher.Hash(req.NewPassword)
 	if err != nil {
 		return fmt.Errorf("hash password: %w", err)
 	}
 
-	if err := uc.users.UpdatePassword(ctx, user.ID, string(hash)); err != nil {
+	if err := uc.users.UpdatePassword(ctx, user.ID, hash); err != nil {
 		return fmt.Errorf("update password: %w", err)
 	}
 
-	uc.history.Add(ctx, user.ID, string(hash))
+	uc.history.Add(ctx, user.ID, hash)
 	uc.events.PublishPasswordChanged(user.TenantID.String(), user.ID.String())
 
 	return nil
@@ -257,7 +259,7 @@ func (uc *UserUseCase) checkNotReused(ctx context.Context, userID uuid.UUID, pas
 		return nil
 	}
 	for _, h := range recent {
-		if bcrypt.CompareHashAndPassword([]byte(h), []byte(password)) == nil {
+		if uc.hasher.Compare(h, password) == nil {
 			return domain.ErrPasswordReused
 		}
 	}
@@ -282,12 +284,12 @@ func (uc *UserUseCase) ResetPassword(ctx context.Context, userID uuid.UUID, newP
 		return err
 	}
 
-	hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	hash, err := uc.hasher.Hash(newPassword)
 	if err != nil {
 		return fmt.Errorf("hash password: %w", err)
 	}
 
-	if err := uc.users.UpdatePassword(ctx, user.ID, string(hash)); err != nil {
+	if err := uc.users.UpdatePassword(ctx, user.ID, hash); err != nil {
 		return fmt.Errorf("update password: %w", err)
 	}
 
@@ -296,7 +298,7 @@ func (uc *UserUseCase) ResetPassword(ctx context.Context, userID uuid.UUID, newP
 			zap.String("user_id", user.ID.String()), zap.Error(err))
 	}
 
-	uc.history.Add(ctx, user.ID, string(hash))
+	uc.history.Add(ctx, user.ID, hash)
 	uc.events.PublishPasswordChanged(user.TenantID.String(), user.ID.String())
 	uc.audit.Log(ctx, &domain.AuditEntry{
 		ID:         uuid.New(),

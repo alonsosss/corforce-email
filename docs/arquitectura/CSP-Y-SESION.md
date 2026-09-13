@@ -228,8 +228,9 @@ vuelve a preguntar durante 5 s. Mientras dura, el cupo efectivo es N veces el co
 se ve en `rate_limit_degraded_total{limiter}` (decisiones tomadas en memoria) y en un aviso
 del registro, como mucho uno por minuto y limitador, más otro cuando Redis vuelve.
 
-**Los demás servicios** (`contacts`, `automations`, `scheduler`, `analytics`, `suppression`,
-`mail-security`, `webmail`) mantienen su limitador en memoria por proceso. Todos están
+**Los demás servicios** (`identity`, 60 por minuto e IP en todas sus rutas; `contacts`,
+`automations`, `scheduler`, `analytics`, `suppression`, `mail-security`, `webmail`) mantienen
+su limitador en memoria por proceso. Todos están
 detrás del gateway, que ya aplica el cupo común. Su límite es una segunda barrera contra el
 abuso de quien ya tiene sesión, no la barrera contra la fuerza bruta. El freno de
 credenciales del correo (`mail-auth`) ya vive en Redis, y el enlace público del doble

@@ -117,7 +117,7 @@ func newTUFixture(t *testing.T) *tuFixture {
 	}
 	uc := app.NewTenantUsersUseCase(app.TenantUsersDeps{
 		Users: f.store, TenantUsers: f.store, Tenants: f.tenants, Policies: tuPolicies{},
-		Breach: tuBreach{tuBreached: true}, Audit: f.audit, Events: f.events, Logger: zap.NewNop(),
+		Breach: tuBreach{tuBreached: true}, Hasher: testHasher(t), Audit: f.audit, Events: f.events, Logger: zap.NewNop(),
 	})
 	r := chi.NewRouter()
 	r.Use(middleware.RequireGatewayToken)

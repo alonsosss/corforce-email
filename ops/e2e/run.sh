@@ -82,6 +82,11 @@ export MAIL_REDIS_HOST=127.0.0.1 MAIL_REDIS_PORT="$REDIS_PORT"
 export DEFAULT_CELL_CODE=pe-01 CELL_CODE=pe-01 CELL_DB_NAME=mail_cell_pe_01
 export MAIL_HOSTNAME=mail.cfm.test MAIL_MX_HOSTNAME=mail.cfm.test MAIL_SPF_INCLUDE=include:spf.cfm.test MAIL_DMARC_RUA=dmarc@cfm.test
 export CORS_ALLOWED_ORIGINS=http://localhost:3000
+# Cupo estricto de autenticacion del gateway para la prueba, que inicia sesion muchas veces: el
+# de produccion (30 por minuto e IP) la dejaba al borde del 429. Por debajo del limite propio de
+# identity (60 por minuto e IP), para que la rafaga de "Limite de inicios de sesion" choque con
+# el gateway y no con identity.
+export AUTH_RATE_LIMIT_PER_MIN=50
 
 declare -A PORT=(
   [identity]=$((BASE + 1)) [access-control]=$((BASE + 2)) [organization]=$((BASE + 3))
@@ -160,6 +165,25 @@ T1=$(echo "$L1" | jget data.access_token)
 [[ -n "$T1" ]] && ok "login del superadmin" || { mal "login del superadmin: ${L1:0:200}"; exit 1; }
 A1="Authorization: Bearer $T1"
 contains "el superadmin lista celdas" "$(curl -s "$GW/cells" -H "$A1")" '"code":"pe-01"'
+
+echo "== Limite de inicios de sesion por IP"
+# La prueba sube el cupo estricto (AUTH_RATE_LIMIT_PER_MIN): una rafaga por encima tiene que
+# seguir chocando con el, o la holgura esconderia un limitador roto. Sale desde una IP de
+# documentacion por X-Real-IP, que el gateway acepta de loopback como de su proxy de borde
+# (TRUSTED_PROXY_CIDRS por defecto): no gasta el cupo de 127.0.0.1 del resto de pasos, y el
+# limite propio de identity, que cuenta por la IP que le pasa el gateway, la ve nueva.
+rafaga() {
+  curl -s "$@" -X POST "$GW/auth/login" -H 'X-Real-IP: 198.51.100.23' -H 'Content-Type: application/json' \
+    -d '{"email":"nadie@rafaga.test","password":"no-es-la-contrasena"}'
+}
+pasan=0
+for _ in $(seq 1 "$AUTH_RATE_LIMIT_PER_MIN"); do
+  [[ "$(rafaga -o /dev/null -w '%{http_code}')" == 401 ]] && pasan=$((pasan + 1))
+done
+expect "los $AUTH_RATE_LIMIT_PER_MIN inicios del cupo llegan a identity (401)" "$pasan" "$AUTH_RATE_LIMIT_PER_MIN"
+EXCESO=$(rafaga -o /dev/null -D -)
+contains "el siguiente recibe 429 del gateway" "$EXCESO" " 429"
+contains "con Retry-After" "$EXCESO" "Retry-After:"
 
 echo "== Firma del token de acceso"
 cabecera() {

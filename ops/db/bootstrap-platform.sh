@@ -8,9 +8,11 @@
 #     ops/db/bootstrap-platform.sh [--cell pe-01 --region sa-east-1 --db-host <host> --db-port 5432]
 #
 # La contrasena viaja SOLO por variable de entorno (nunca por argumento: quedaria en el
-# historial y en `ps`). El hash lo hace Postgres con pgcrypto (bcrypt, coste 12), el mismo
-# formato que verifica identity. Idempotente: si la celda, la empresa o el usuario ya
-# existen, no los toca y no cambia ninguna contrasena.
+# historial y en `ps`). El hash lo hace Postgres con pgcrypto (bcrypt) con el formato y el
+# coste de los que escribe identity (passwordhash.BcryptCost, 10; lo comprueba una prueba de
+# ese paquete): con otro coste, el tiempo de un inicio de sesion fallido delataria la cuenta.
+# Idempotente: si la celda, la empresa o el usuario ya existen, no los toca y no cambia
+# ninguna contrasena.
 #
 # Credenciales de la base: como el resto de ops/, por ops/db/pg-credentials.sh (el almacen
 # de secretos en el servidor; POSTGRES_* en desarrollo).
@@ -65,7 +67,7 @@ SELECT t.id, 'superadmin', 'Operador de la plataforma', true, 'active'
 ON CONFLICT (tenant_id, name) DO NOTHING;
 
 INSERT INTO identity.users (tenant_id, email, password_hash, first_name, last_name, status)
-SELECT t.id, lower(:'email'), crypt(:'password', gen_salt('bf', 12)), 'Platform', 'Admin', 'active'
+SELECT t.id, lower(:'email'), crypt(:'password', gen_salt('bf', 10)), 'Platform', 'Admin', 'active'
   FROM organization.tenants t WHERE t.slug = 'platform'
 ON CONFLICT (tenant_id, email) DO NOTHING;
 

@@ -14,7 +14,6 @@ import (
 	"github.com/alonsosss/corforce-email/services/identity/internal/ports"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
-	"golang.org/x/crypto/bcrypt"
 )
 
 const resetTokenTTL = 30 * time.Minute
@@ -31,6 +30,7 @@ type PasswordResetUseCase struct {
 	resets        ports.PasswordResetRepository
 	policies      ports.PasswordPolicyRepository
 	breach        ports.PasswordBreachChecker
+	hasher        ports.PasswordHasher
 	history       ports.PasswordHistoryRepository
 	sessions      ports.SessionRepository
 	audit         ports.AuditRepository
@@ -46,6 +46,7 @@ type PasswordResetDeps struct {
 	Resets   ports.PasswordResetRepository
 	Policies ports.PasswordPolicyRepository
 	Breach   ports.PasswordBreachChecker
+	Hasher   ports.PasswordHasher
 	History  ports.PasswordHistoryRepository
 	Sessions ports.SessionRepository
 	Audit    ports.AuditRepository
@@ -64,6 +65,7 @@ func NewPasswordResetUseCase(deps PasswordResetDeps) *PasswordResetUseCase {
 		resets:        deps.Resets,
 		policies:      deps.Policies,
 		breach:        deps.Breach,
+		hasher:        deps.Hasher,
 		history:       deps.History,
 		sessions:      deps.Sessions,
 		audit:         deps.Audit,
@@ -176,11 +178,11 @@ func (uc *PasswordResetUseCase) ConfirmReset(ctx context.Context, token, newPass
 		return err
 	}
 
-	hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	hash, err := uc.hasher.Hash(newPassword)
 	if err != nil {
 		return fmt.Errorf("hash password: %w", err)
 	}
-	if err := uc.users.UpdatePassword(ctx, user.ID, string(hash)); err != nil {
+	if err := uc.users.UpdatePassword(ctx, user.ID, hash); err != nil {
 		return fmt.Errorf("update password: %w", err)
 	}
 	if err := uc.resets.MarkUsed(ctx, prt.ID); err != nil {
@@ -198,7 +200,7 @@ func (uc *PasswordResetUseCase) ConfirmReset(ctx context.Context, token, newPass
 		uc.logger.Warn("password reset: adelantar el epoch de tokens", zap.Error(err))
 	}
 
-	uc.history.Add(ctx, user.ID, string(hash))
+	uc.history.Add(ctx, user.ID, hash)
 	uc.events.PublishPasswordChanged(user.TenantID.String(), user.ID.String())
 	uc.audit.Log(ctx, &domain.AuditEntry{
 		ID:         uuid.New(),

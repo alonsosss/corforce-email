@@ -2,8 +2,10 @@ package app
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"time"
 	"unicode"
@@ -14,7 +16,6 @@ import (
 	"github.com/alonsosss/corforce-email/services/identity/internal/ports"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
-	"golang.org/x/crypto/bcrypt"
 )
 
 // accessTokenBlockTTL es cuanto se retiene en la lista de bloqueo el access token de un
@@ -33,8 +34,12 @@ type AuthUseCase struct {
 	tokens          *auth.TokenService
 	tenants         ports.TenantRepository
 	roles           ports.RoleLookup
-	logger          *zap.Logger
-	now             func() time.Time
+	hasher          ports.PasswordHasher
+	// decoyHash es un hash del hasher, de una contrasena aleatoria que no se guarda: el
+	// inicio de sesion que no tiene hash de cuenta que comparar compara contra el.
+	decoyHash string
+	logger    *zap.Logger
+	now       func() time.Time
 }
 
 type AuthDeps struct {
@@ -49,17 +54,29 @@ type AuthDeps struct {
 	Tokens          *auth.TokenService
 	Tenants         ports.TenantRepository
 	Roles           ports.RoleLookup
-	Logger          *zap.Logger
+	// Hasher es el mismo que escribe las contrasenas: de el sale el hash de relleno, con su
+	// coste, al construir el caso de uso.
+	Hasher ports.PasswordHasher
+	Logger *zap.Logger
 	// Now es el reloj de las decisiones de sesion y bloqueo; nil es time.Now.
 	Now func() time.Time
 }
 
-func NewAuthUseCase(deps AuthDeps) *AuthUseCase {
+func NewAuthUseCase(deps AuthDeps) (*AuthUseCase, error) {
+	if deps.Hasher == nil {
+		return nil, errors.New("auth: falta el hasher de contrasenas")
+	}
+	decoy, err := deps.Hasher.Hash(rand.Text())
+	if err != nil {
+		return nil, fmt.Errorf("auth: hash de relleno: %w", err)
+	}
 	now := deps.Now
 	if now == nil {
 		now = time.Now
 	}
 	return &AuthUseCase{
+		hasher:          deps.Hasher,
+		decoyHash:       decoy,
 		now:             now,
 		users:           deps.Users,
 		sessions:        deps.Sessions,
@@ -73,9 +90,12 @@ func NewAuthUseCase(deps AuthDeps) *AuthUseCase {
 		tenants:         deps.Tenants,
 		roles:           deps.Roles,
 		logger:          deps.Logger,
-	}
+	}, nil
 }
 
+// Login compara la contrasena exactamente una vez en todo intento: contra el hash de la
+// cuenta si puede tener sesion y, si no hay cuenta, empresa o sesion posible, contra el de
+// relleno. Asi el tiempo de un fallo no dice si el correo existe ni si resuelve empresa.
 func (uc *AuthUseCase) Login(ctx context.Context, req ports.LoginRequest) (*ports.LoginResponse, error) {
 	var tenantID uuid.UUID
 	var err error
@@ -85,23 +105,27 @@ func (uc *AuthUseCase) Login(ctx context.Context, req ports.LoginRequest) (*port
 		tenantID, err = uc.tenants.GetIDByEmail(ctx, req.Email)
 	}
 	if err != nil {
+		uc.compareDecoy(req.Password)
 		return nil, domain.ErrTenantNotFound
 	}
 
 	user, err := uc.users.GetByEmail(ctx, tenantID, req.Email)
 	if err != nil {
+		uc.compareDecoy(req.Password)
 		return nil, domain.ErrInvalidCredentials
 	}
 
 	// Una cuenta que no puede tener sesion (inactive, pending o con el bloqueo vigente) se
-	// rechaza antes de mirar la contrasena, como siempre se hizo con inactive y locked: no
-	// cuenta un intento fallido ni ofrece un oraculo de la contrasena. Un bloqueo caducado
-	// deja pasar y se retira al entrar (ResetFailedAttempts).
+	// rechaza sin mirar su contrasena, como siempre se hizo con inactive y locked: no cuenta
+	// un intento fallido ni ofrece un oraculo de la contrasena. Compara contra el relleno
+	// para no tardar menos que el resto de fallos. Un bloqueo caducado deja pasar y se
+	// retira al entrar (ResetFailedAttempts).
 	if err := user.SessionAllowed(uc.now()); err != nil {
+		uc.compareDecoy(req.Password)
 		return nil, err
 	}
 
-	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password)); err != nil {
+	if err := uc.hasher.Compare(user.PasswordHash, req.Password); err != nil {
 		uc.handleFailedLogin(ctx, user, tenantID, req.IPAddress, req.UserAgent)
 		return nil, domain.ErrInvalidCredentials
 	}
@@ -394,6 +418,12 @@ func (uc *AuthUseCase) handleFailedLogin(ctx context.Context, user *domain.User,
 	}
 }
 
+// compareDecoy gasta lo mismo que comparar la contrasena de una cuenta y descarta el
+// resultado.
+func (uc *AuthUseCase) compareDecoy(password string) {
+	_ = uc.hasher.Compare(uc.decoyHash, password)
+}
+
 func hashToken(token string) string {
 	h := sha256.Sum256([]byte(token))
 	return hex.EncodeToString(h[:])
@@ -436,7 +466,7 @@ func (uc *AuthUseCase) DisableMFA(ctx context.Context, userID uuid.UUID, current
 	if !user.MFAEnabled {
 		return nil
 	}
-	if bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(currentPassword)) != nil {
+	if uc.hasher.Compare(user.PasswordHash, currentPassword) != nil {
 		return domain.ErrInvalidCredentials
 	}
 	if !totp.Validate(user.MFASecret, code) {
@@ -452,7 +482,7 @@ func (uc *AuthUseCase) StepUp(ctx context.Context, userID uuid.UUID, currentPass
 	if err != nil {
 		return "", domain.ErrUserNotFound
 	}
-	if bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(currentPassword)) != nil {
+	if uc.hasher.Compare(user.PasswordHash, currentPassword) != nil {
 		return "", domain.ErrInvalidCredentials
 	}
 	if user.MFAEnabled {
