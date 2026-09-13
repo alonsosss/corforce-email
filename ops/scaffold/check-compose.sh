@@ -7,6 +7,9 @@
 # No arranca nada ni lee secretos: interpola contra un .env vacio en una carpeta temporal.
 # Sin docker (CI sin daemon, maquina sin compose) avisa y no falla: make checks debe poder
 # correr sin docker, y la validacion vuelve a correr donde si lo haya.
+#
+# Un override que no se sostiene solo declara su base con una linea
+# `# compose-base: <fichero de la misma carpeta>` y se valida junto a ella, en ese orden.
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -25,14 +28,32 @@ for f in "${FICHEROS[@]}"; do
   mkdir -p "$dir"
   cp "$f" "$dir/"
   : > "$dir/.env"
+  args=(-f "$(basename "$f")")
+  base=$(sed -n 's/^# compose-base: *\([^ ]*\) *$/\1/p' "$f" | head -1)
+  if [[ -n "$base" ]]; then
+    if [[ ! -f "$(dirname "$f")/$base" ]]; then
+      echo "  FALLA: $f: su base $base no existe en $(dirname "$f")" >&2
+      fallos=$((fallos + 1))
+      continue
+    fi
+    cp "$(dirname "$f")/$base" "$dir/"
+    args=(-f "$base" -f "$(basename "$f")")
+  fi
   # Las variables marcadas como obligatorias (${VAR:?...}) son configuracion o secretos de
   # produccion: se rellenan con un valor de relleno para validar la estructura, no su valor.
   ok=0
-  for _ in $(seq 1 20); do
-    if out=$(cd "$dir" && docker compose -f "$(basename "$f")" config -q 2>&1); then ok=1; break; fi
+  for _ in $(seq 1 60); do
+    if out=$(cd "$dir" && docker compose "${args[@]}" config -q 2>&1); then ok=1; break; fi
     var=$(printf '%s' "$out" | sed -n 's/.*required variable \([A-Za-z_][A-Za-z0-9_]*\) is missing a value.*/\1/p' | head -1)
     [[ -n "$var" ]] || break
-    echo "$var=validacion-estructural" >> "$dir/.env"
+    # Compose valida la forma de algunos valores: un puerto tiene que ser un numero y el
+    # origen de un bind mount una ruta (sin barra lo lee como el nombre de un volumen).
+    case "$var" in
+      *PORT*) valor=1 ;;
+      *_DIR | *_ROOT) valor=/validacion-estructural ;;
+      *) valor=validacion-estructural ;;
+    esac
+    echo "$var=$valor" >> "$dir/.env"
   done
   if [[ $ok -eq 1 ]]; then
     echo "  OK: $f"

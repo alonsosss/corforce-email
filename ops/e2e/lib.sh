@@ -1,0 +1,194 @@
+#!/usr/bin/env bash
+# Piezas comunes de las pruebas de punta a punta (ops/e2e/*.sh). Se carga con `source` y no
+# ejecuta nada por si misma: comprobaciones con salida OK/FALLA, infraestructura desechable
+# (Postgres, NATS, Redis), bases de celda migradas, arranque de binarios del host, una
+# plataforma vacia con ops/db/bootstrap-platform.sh y el alta de una empresa por el gateway.
+#
+# Quien la carga fija antes ROOT (raiz del repositorio, directorio actual), WORK (carpeta
+# temporal de la ejecucion), E2E_PREFIX (prefijo de los contenedores), PG_PORT, NATS_PORT y
+# REDIS_PORT (puertos en 127.0.0.1) y, para gateway y logins, GW (URL de /api/v1).
+#
+# Las credenciales se generan en cada ejecucion; ninguna vive en este fichero.
+
+rand_hex() { head -c "$1" /dev/urandom | od -An -tx1 | tr -d ' \n'; }
+
+fallos=0
+aciertos=0
+ok()   { printf '  OK    %s\n' "$1"; aciertos=$((aciertos + 1)); }
+mal()  { printf '  FALLA %s\n' "$1" >&2; fallos=$((fallos + 1)); }
+# expect <descripcion> <obtenido> <esperado>
+expect() { if [[ "$2" == "$3" ]]; then ok "$1"; else mal "$1 (obtenido: '$2', esperado: '$3')"; fi; }
+# contains <descripcion> <texto> <fragmento>
+contains() { if [[ "$2" == *"$3"* ]]; then ok "$1"; else mal "$1 (no contiene '$3': ${2:0:300})"; fi; }
+# lacks <descripcion> <texto> <fragmento>
+lacks() { if [[ "$2" != *"$3"* ]]; then ok "$1"; else mal "$1 (contiene '$3': ${2:0:300})"; fi; }
+
+# jget <ruta.con.puntos>: extrae un campo del JSON de stdin; vacio si no existe.
+jget() {
+  python3 -c '
+import sys, json
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    print(""); sys.exit(0)
+for k in sys.argv[1].split("."):
+    if not k:
+        continue
+    if isinstance(d, list):
+        d = d[int(k)] if k.isdigit() and int(k) < len(d) else None
+    elif isinstance(d, dict):
+        d = d.get(k)
+    else:
+        d = None
+print("" if d is None else (json.dumps(d) if isinstance(d, (dict, list)) else d))' "$1" 2>/dev/null
+}
+
+# e2e_fuera_del_rango_efimero <puerto>...: dentro del rango efimero el kernel puede dar el
+# puerto de un servicio a una conexion saliente justo antes de que el servicio lo abra
+# ("address already in use" sin nadie escuchando despues).
+e2e_fuera_del_rango_efimero() {
+  local min max p
+  read -r min max < /proc/sys/net/ipv4/ip_local_port_range 2>/dev/null || { min=32768; max=60999; }
+  for p in "$@"; do
+    if (( p >= min && p <= max )); then
+      echo "E2E: el puerto $p cae en el rango efimero $min-$max; usa otra base de puertos" >&2
+      exit 2
+    fi
+  done
+}
+
+# e2e_puertos_libres <puerto>...: nadie escucha ya en ellos (un choque no se ve en el log).
+e2e_puertos_libres() {
+  local p ocupado
+  for p in "$@"; do
+    ocupado=$(ss -Hltn "sport = :$p" 2>/dev/null)
+    if [[ -n "$ocupado" ]]; then
+      echo "E2E: el puerto $p ya esta en uso; usa otra base de puertos" >&2
+      exit 2
+    fi
+  done
+}
+
+# psql sin cliente local: el de dentro del contenedor. Exportada para que la use tambien
+# ops/db/bootstrap-platform.sh y ops/db/cell-service-role.sh, que son parte de lo que se prueba.
+psql() { docker exec -i -e PGPASSWORD="${PGPASSWORD:-}" "$PG_CONTAINER" psql -U "${PGUSER:-mail_admin}" "$@"; }
+export -f psql
+sql() { psql -v ON_ERROR_STOP=1 -q -At -d "$1" -c "$2"; }
+
+# e2e_infra_up [red]: Postgres (pgvector), NATS y Redis desechables, publicados solo en
+# 127.0.0.1. Con red, ademas se unen a ella con su nombre de contenedor para los servicios
+# que corren en contenedores. La espera es por TCP: el servidor temporal del initdb solo
+# escucha en el socket y responderia antes de tiempo.
+e2e_infra_up() {
+  local red=()
+  [[ -n "${1:-}" ]] && red=(--network "$1")
+  export PG_CONTAINER="$E2E_PREFIX-pg"
+  docker rm -f "$E2E_PREFIX-pg" "$E2E_PREFIX-nats" "$E2E_PREFIX-redis" >/dev/null 2>&1
+  export POSTGRES_PASSWORD; POSTGRES_PASSWORD="$(rand_hex 16)"
+  docker run -d --name "$E2E_PREFIX-pg" "${red[@]}" -e POSTGRES_USER=mail_admin -e POSTGRES_PASSWORD="$POSTGRES_PASSWORD" \
+    -e POSTGRES_DB=mail_registry -p "127.0.0.1:$PG_PORT:5432" pgvector/pgvector:pg16 >/dev/null || return 1
+  docker run -d --name "$E2E_PREFIX-nats" "${red[@]}" -p "127.0.0.1:$NATS_PORT:4222" nats:2.10-alpine -js >/dev/null || return 1
+  docker run -d --name "$E2E_PREFIX-redis" "${red[@]}" -p "127.0.0.1:$REDIS_PORT:6379" redis:7.4.10-alpine >/dev/null || return 1
+  for _ in $(seq 1 60); do
+    docker exec "$E2E_PREFIX-pg" pg_isready -h 127.0.0.1 -U mail_admin -d mail_registry >/dev/null 2>&1 && break
+    sleep 1
+  done
+  export PGUSER=mail_admin PGPASSWORD="$POSTGRES_PASSWORD"
+}
+
+# e2e_celda <codigo>: crea mail_cell_<codigo> y le aplica las migraciones de la celda en su
+# orden (platform antes que los servicios, que conceden sobre sus tablas).
+e2e_celda() {
+  local db="mail_cell_${1//-/_}" f
+  sql mail_registry "CREATE DATABASE $db" >/dev/null || { mal "base de la celda $1"; return 1; }
+  for f in migrations/cell/canonical/platform/*.sql migrations/cell/canonical/mail-directory/*.sql migrations/cell/canonical/mail-security/*.sql; do
+    psql -v ON_ERROR_STOP=1 -q -d "$db" < "$f" >/dev/null 2>&1 || mal "migracion de celda $f en $db"
+  done
+}
+
+# e2e_credencial_celda <codigo> <contrasena>: rol propio de la celda (ops/db/cell-service-role.sh).
+e2e_credencial_celda() {
+  PGHOST=127.0.0.1 CELL_DB_PASSWORD="$2" bash ops/db/cell-service-role.sh --cell "$1" >/dev/null || mal "cell-service-role.sh $1"
+}
+
+# e2e_entorno_comun: variables que comparten los binarios del host. El par de firma del token
+# sale de la herramienta de operacion y la privada solo la recibe identity (arrancar).
+e2e_entorno_comun() {
+  local claves
+  export ENVIRONMENT=development
+  claves="$(bash ops/security/jwt-keygen.sh --privada "$WORK/jwt-signing-key" 2>/dev/null)" || { echo "jwt-keygen.sh fallo" >&2; return 1; }
+  export JWT_SIGNING_KID JWT_PUBLIC_KEYS JWT_SIGNING_KEY
+  JWT_SIGNING_KID="$(sed -n 's/^JWT_SIGNING_KID=//p' <<<"$claves")"
+  JWT_PUBLIC_KEYS="$(sed -n 's/^JWT_PUBLIC_KEY_ENTRY=//p' <<<"$claves")"
+  JWT_SIGNING_KEY="$(sed -n 's/^JWT_SIGNING_KEY=//p' "$WORK/jwt-signing-key")"
+  export INTERNAL_GATEWAY_TOKEN; INTERNAL_GATEWAY_TOKEN="$(rand_hex 24)"
+  export MAIL_ENCRYPTION_KEY; MAIL_ENCRYPTION_KEY="$(rand_hex 32)"
+  export MAIL_LINK_SIGNING_KEY; MAIL_LINK_SIGNING_KEY="$(rand_hex 32)"
+  export POSTGRES_HOST=127.0.0.1 POSTGRES_PORT="$PG_PORT" POSTGRES_USER=mail_admin POSTGRES_DB=mail_registry
+  export NATS_URL="nats://127.0.0.1:$NATS_PORT" REDIS_HOST=127.0.0.1 REDIS_PORT="$REDIS_PORT"
+  export REGISTRY_MIGRATION_DIR="$ROOT/migrations/registry" TENANT_MIGRATION_DIR="$ROOT/migrations/tenant/canonical"
+  export AUTH_COOKIE_SECURE=false PASSWORD_BREACH_CHECK=off MFA_ISSUER="Core Force Mail"
+}
+
+# e2e_compilar <servicio>...: binarios en $WORK/bin.
+e2e_compilar() {
+  local s
+  mkdir -p "$WORK/bin" "$WORK/log"
+  for s in "$@"; do go build -o "$WORK/bin/$s" "./services/$s" || { echo "no compila $s" >&2; return 1; }; done
+}
+
+# arrancar <servicio>: binario de $WORK/bin en segundo plano con registro en $WORK/log. La clave
+# de firma del token solo la recibe identity; los de SERVICIOS_DE_CELDA arrancan con la
+# credencial de su celda (CELL_PASS) y sin la de plataforma.
+arrancar() {
+  local sin_firma=(-u JWT_SIGNING_KEY)
+  [[ "$1" == identity ]] && sin_firma=()
+  if [[ "${SERVICIOS_DE_CELDA:-}" == *" $1 "* ]]; then
+    env -u POSTGRES_PASSWORD "${sin_firma[@]}" CELL_DB_PASSWORD="$CELL_PASS" "$WORK/bin/$1" >"$WORK/log/$1.log" 2>&1 &
+  else
+    env "${sin_firma[@]}" "$WORK/bin/$1" >"$WORK/log/$1.log" 2>&1 &
+  fi
+}
+
+# esperar_salud <nombre> <puerto>: /healthz en 127.0.0.1:<puerto>. Si falla, el final del
+# registro y, si el puerto lo tiene otro proceso, cual.
+esperar_salud() {
+  for _ in $(seq 1 60); do
+    [[ "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$2/healthz")" == 200 ]] && return 0
+    sleep 0.5
+  done
+  mal "$1 no responde en /healthz"
+  [[ -f "$WORK/log/$1.log" ]] && tail -5 "$WORK/log/$1.log" >&2
+  ss -ltnp 2>/dev/null | grep ":$2 " >&2
+  return 1
+}
+
+# e2e_plataforma <celda>: plataforma vacia con ops/db/bootstrap-platform.sh. Deja el
+# superadmin en ADMIN_EMAIL / ADMIN_PASS (aleatoria).
+e2e_plataforma() {
+  ADMIN_EMAIL=root@platform.test
+  ADMIN_PASS="$(rand_hex 12)Aa1!"
+  PGHOST=127.0.0.1 PLATFORM_ADMIN_EMAIL="$ADMIN_EMAIL" PLATFORM_ADMIN_PASSWORD="$ADMIN_PASS" \
+    bash ops/db/bootstrap-platform.sh --cell "$1" --region sa-east-1 >/dev/null || mal "bootstrap-platform.sh"
+}
+
+# e2e_login <email> <contrasena>: respuesta JSON del login por el gateway.
+e2e_login() {
+  curl -s -X POST "$GW/auth/login" -H 'Content-Type: application/json' -d "{\"email\":\"$1\",\"password\":\"$2\"}"
+}
+
+# e2e_alta_empresa <token superadmin> <slug> <celda> <email admin> <contrasena admin>:
+# POST /organizations (crea y migra la base de la empresa y siembra su tenant_admin).
+e2e_alta_empresa() {
+  curl -s -X POST "$GW/organizations" -H "Authorization: Bearer $1" -H 'Content-Type: application/json' \
+    -d "{\"slug\":\"$2\",\"name\":\"$2\",\"cell_code\":\"$3\",\"admin_email\":\"$4\",\"admin_password\":\"$5\",\"admin_first_name\":\"Ana\",\"admin_last_name\":\"Perez\"}"
+}
+
+# e2e_registros_sin_errores: ningun binario del host registro un error.
+e2e_registros_sin_errores() {
+  local errores f
+  errores=$(grep -l '"level":"error"' "$WORK"/log/*.log 2>/dev/null)
+  if [[ -z "$errores" ]]; then ok "ningun servicio del host registro errores"; else
+    for f in $errores; do mal "errores en $(basename "$f")"; grep '"level":"error"' "$f" | head -3 >&2; done
+  fi
+}

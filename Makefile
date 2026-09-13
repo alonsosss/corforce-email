@@ -179,6 +179,13 @@ check-service-paths:
 e2e:
 	@bash ops/e2e/run.sh
 
+# make e2e-mail  (los motores de deploy/mail contra una celda real: Postfix, Dovecot, Rspamd,
+# ClamAV, Unbound y redis-mail con mail-auth, mail-policy y el webmail; mapas, IMAP, envio
+# autenticado, antivirus y webmail por el gateway. Necesita docker y red; E2E_KEEP=1 deja
+# todo en pie)
+e2e-mail:
+	@bash ops/e2e/mail.sh
+
 # make checks  (todo lo que corre CI sin docker, en un solo comando; si CI anade un paso,
 # se anade aqui: un check que solo corre en CI deja pasar lo que rompe el despliegue)
 checks: build check-gofmt check-migrations check-migration-drops check-coupling check-silent-errors \

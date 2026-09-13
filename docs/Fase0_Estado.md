@@ -13,8 +13,8 @@ cambie cualquiera de estas líneas.
 | Migraciones de empresa (`audit`, `scheduler`) aplican desde cero y se re-ejecutan | Cumplido (Postgres 16, 2026-09-12) | idem |
 | Migración de celda (`mail`) aplica desde cero y se re-ejecuta; `mail_engine` sin acceso a `app_passwords` | Cumplido (Postgres 16, 2026-09-12) | idem |
 | Se aprovisiona una celda y una empresa de punta a punta y su `tenant_admin` inicia sesión por el gateway | Cumplido (2026-09-12, binarios reales contra Postgres/NATS/Redis desechables: login superadmin, `POST /organizations` crea `mail_tenant_acme` y siembra `tenant_admin`, login del admin con sus permisos, 403 en `/cells`, 401 sin token) | `make e2e` (también en CI): plataforma vacía con `bootstrap-platform.sh`, empresa, acceso por el gateway, dominio y buzón en la celda, Redis de los motores, plantillas, supresión, planes y derechos de billing, autorización de envío con límite por hora en reputation, alcance de permisos (los de plataforma no llegan a un rol de empresa), contactos con consentimiento y audiencia, y el panel de analítica; 59 comprobaciones en verde (2026-09-13) |
-| Los motores de `deploy/mail/` levantan contra el esquema `mail` | Parcial: copiados y adaptados a PostgreSQL (153 ficheros, compose validado, scripts con sintaxis comprobada); las 20 consultas de Postfix y Dovecot ejecutadas como `mail_engine` contra el esquema real sin errores (2026-09-12). Levantar la pila completa exige `mail-auth` (Dovecot no autentica sin él) y `mail-policy` (Rspamd no arranca sin su mapa `settings`), que son de la fase 2 | `docker compose -f deploy/mail/docker-compose.mail.yml up` con `MAIL_DB_*`, `postmap -q`, `doveadm user` |
-| `ERP/` y `mailcow/` borrados | Los clones viven fuera del repositorio (scratchpad de sesión) y `.gitignore` los excluye si se clonan dentro; se borran al cerrar el punto anterior | |
+| Los motores de `deploy/mail/` levantan contra el esquema `mail` | Cumplido (2026-09-13, dos ejecuciones seguidas desde cero en verde: 156 comprobaciones, unos 100 s cada una con las imágenes construidas). Postfix, Dovecot, Rspamd, ClamAV (firmas reales de freshclam), Unbound, Olefy, postfix-tlspol y redis-mail con las imágenes de `deploy/mail`, junto a `mail-auth`, `mail-security` (`mail-policy`), `mail-directory` y `webmail` construidos con sus Dockerfile y con la credencial de la celda. Celda y empresa por el camino real (`bootstrap-platform.sh`, alta por el gateway), dominio verificado por `domain-service` contra un DNS de la prueba (activa el dominio y entrega la clave DKIM), buzones, aliases y enrutado por el API de `mail-directory`. Probado: los 18 mapas pgsql con `postmap -q` (con `smtpd_sender_login_maps` sobre `mail.sender_login_owners`, migración 07); `doveadm user`; IMAP por `passwd-verify.lua` y `mail-auth`; usuario maestro del webmail solo desde la red de los motores; submission autenticado, Rspamd con DKIM y el mapa `settings` de `mail-policy`, entrega por LMTP leída por IMAP; 553 a un remitente ajeno (también con la credencial maestra) y envío como alias con permiso, dominio alias y `sender_acl`; EICAR rechazado y en cuarentena; `DOMAIN_MAP` y claves DKIM en redis-mail; webmail por el gateway. Corrigió tres fallos que solo se ven con los motores reales (`deploy/mail/README.md`). Sustituidos en la prueba: certificado (CA propia en lugar de ACME), `acme`, `netfilter`, `watchdog` y `dockerapi` fuera | `make e2e-mail` (`ops/e2e/mail.sh`); en CI, `.github/workflows/mail-engines.yml` (no bloquea: cambios que le afectan, cada noche y a mano). En producción, el primer despliegue repite `postmap -q` y `doveadm user` sobre la celda |
+| `ERP/` y `mailcow/` borrados | Cumplido: no existen en el repositorio (comprobado 2026-09-13); `.gitignore` los excluye si se vuelven a clonar dentro | `ls ERP mailcow` |
 
 ## Pendientes que dejan los motores (fase 2)
 
@@ -44,6 +44,17 @@ cambie cualquiera de estas líneas.
   `mail.quarantine`, que no existe): la poda la hace el servicio.
 * El gateway debe servir `/.well-known/acme-challenge/` o usarse `ACME_DNS_CHALLENGE=y`.
 * Primer despliegue: smoke test con `postmap -q` y `doveadm user` sobre la celda.
+* Corregido con la prueba de los motores (2026-09-13): `mail-policy` responde al `HEAD` con el
+  que Rspamd 4 pide `/settings` y `/forwardinghosts` (sin él Rspamd daba la carga por fallida
+  y nunca aplicaba el mapa `settings`); `/pipe` acepta los metadatos de Rspamd 4 (símbolos
+  como objetos, `rcpt` como `unknown`), que respondía 400 y no guardaba ninguna cuarentena;
+  y los mapas de Postfix que buscaban el buzón como destino del alias `buzón -> buzón` de
+  mailcow (TLS obligatorio al recibir y al enviar, relayhost propio) casan ya el propio
+  buzón, con la credencial SASL del mismo relayhost que elige el transporte.
+* Sin probar contra los motores: la entrada por el puerto 25 desde internet (postscreen, DNSBL,
+  greylisting, SPF/DKIM/DMARC de remitentes externos), la salida real por DANE/MTA-STS y los
+  relayhosts, la réplica de Dovecot, netfilter y watchdog. Lo cubre el smoke test del primer
+  despliegue.
 
 ## Deuda conocida que sale de la copia (no bloquea la fase 0)
 

@@ -134,6 +134,21 @@ func TestSettingsSirveUCLYRespondeNotModified(t *testing.T) {
 		t.Fatalf("el 304 debe llevar Last-Modified: %q", resp.Header.Get("Last-Modified"))
 	}
 
+	// Rspamd 4 pregunta con HEAD antes de cada GET de un mapa HTTP: sin respuesta al HEAD no
+	// carga el mapa.
+	resp, body = call(t, http.MethodHead, s.srv.URL+"/settings", nil)
+	if resp.StatusCode != http.StatusOK || body != "" || resp.Header.Get("Last-Modified") != lastModified {
+		t.Fatalf("HEAD de settings: %d %q %q", resp.StatusCode, body, resp.Header.Get("Last-Modified"))
+	}
+	resp, _ = call(t, http.MethodHead, s.srv.URL+"/settings", map[string]string{"If-Modified-Since": lastModified})
+	if resp.StatusCode != http.StatusNotModified {
+		t.Fatalf("HEAD condicional de settings: %d", resp.StatusCode)
+	}
+	resp, body = call(t, http.MethodHead, s.srv.URL+"/forwardinghosts", nil)
+	if resp.StatusCode != http.StatusOK || body != "" {
+		t.Fatalf("HEAD de forwardinghosts: %d %q", resp.StatusCode, body)
+	}
+
 	s.policy.Scores = nil
 	resp, body = call(t, http.MethodGet, s.srv.URL+"/settings", map[string]string{"If-Modified-Since": lastModified})
 	if resp.StatusCode != http.StatusOK || strings.Contains(body, "score_0") {

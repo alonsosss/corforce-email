@@ -228,11 +228,15 @@ contrasena (la comprueba `mail-auth` con service `webmail` al abrir la sesion):
   contra la suplantacion descansa en que el webmail siempre se autentica; un proceso
   comprometido dentro de esa red podria enviar sin autenticar (modelo heredado de mailcow).
 
-P (no verificado contra Dovecot y Postfix reales): que `allow_nets` se aplique a la passdb
-maestra, que el nombre SASL que ve Postfix con `buzon*maestro` sea el del buzon, el rechazo
-553 de un remitente ajeno y el mapa `pgsql_virtual_sender_acl` llamando a la funcion. La
-prueba de integracion del webmail emula ese comportamiento con un IMAP en memoria y un SMTP
-en proceso. V contra Postgres: que `mail.sender_login_owners` devuelve los mismos duenos que
+V contra Dovecot y Postfix reales (2026-09-13, `make e2e-mail`): `allow_nets` se aplica a la
+passdb maestra (el maestro entra desde la red de los motores y no desde fuera, donde el buzon
+si entra con su contrasena); con `buzon*maestro` el nombre SASL que ve Postfix es el del
+buzon (con esa credencial, `ana@` se acepta y `bea@` se rechaza con 553 citando al buzon);
+el mapa `pgsql_virtual_sender_acl` llama a la funcion y responde el buzon, sus aliases con
+permiso, su direccion en un dominio alias y `sender_acl`; las identidades que ofrece el webmail
+son exactamente direcciones que Postfix acepta, y el webmail envia, guarda en Enviados, no
+repite con la misma `Idempotency-Key` y para un adjunto EICAR con ClamAV. V contra Postgres:
+que `mail.sender_login_owners` devuelve los mismos duenos que
 la consulta anterior del mapa para cada caso (alias exacto y catch-all, `active` 1, 2 y 0,
 dominios y dominios alias activos e inactivos, `sender_acl` concreta, `@dominio` y `*`), que
 `mail_engine` puede llamarla y que `mail_app` no puede enumerar remitentes
@@ -251,6 +255,12 @@ son `text/plain` salvo donde se indica. Las direcciones llegan con la etiqueta
 `+tag` incluida; el servicio debe quitarla (`local+tag@d` -> `local@d`) como
 hacia el PHP.
 
+Rspamd 4 pide cada mapa HTTP (`/settings`, `/forwardinghosts`) con `HEAD` antes del `GET`
+(capturado con `rspamd-4.1.4`): si el `HEAD` no responde 2xx o 304, marca la carga como
+fallida y no reintenta en unos 15 minutos, y el mapa no llega a aplicarse. Los dos responden
+a `HEAD` con las mismas cabeceras que el `GET` (V, 2026-09-13, `make e2e-mail`: la regla
+`watchdog` de `/settings` se aplica en Rspamd).
+
 ### Puerto 8081 (mapas dinamicos)
 
 | Ruta | Quien la llama | Peticion | Respuesta |
@@ -266,7 +276,7 @@ hacia el PHP.
 
 | Ruta | Quien la llama | Peticion | Respuesta |
 |---|---|---|---|
-| `/pipe` | `metadata_exporter`, regla `QUARANTINE` (selector `reject_no_global_bl`: accion reject/add header/rewrite subject sin lista negra global) | `POST multipart/form-data`: campo `metadata` (JSON con `qid`, `subject`, `score`, `rcpt[]`, `user`, `ip`, `action`, `from`, `symbols[]`, `fuzzy[]`, `message_id`) y fichero `message` (RFC822 crudo) | `200` guardado; `400` partes ausentes o JSON invalido; `505` mensaje mayor que `Q_MAX_SIZE` MiB; `502` error resolviendo destinatarios; `503` error al insertar (`504` no se da: `/pipe` no depende de Redis). Expande cada rcpt hasta sus buzones finales (misma logica que `/aliasexp`) y aplica los ajustes de la EMPRESA de cada buzon (`mail_security.quarantine_settings`: tamano, dominios excluidos, retencion); guarda una fila por buzon en `mail_security.quarantine` y recorta por buzon. `505` solo si ningun buzon lo guardo por tamano |
+| `/pipe` | `metadata_exporter`, regla `QUARANTINE` (selector `reject_no_global_bl`: accion reject/add header/rewrite subject sin lista negra global) | `POST multipart/form-data` (frontera entre comillas, cada parte `Content-Transfer-Encoding: binary`): fichero `message` (`message.eml`, RFC822 crudo) y campo `metadata` (JSON con `qid`, `subject`, `score`, `rcpt[]`, `user`, `ip`, `action`, `from`, `symbols[]`, `fuzzy[]`, `message_id`). Rspamd 4 manda cada simbolo como objeto (`name`, `score`, `options`, `groups`) y `rcpt` como la cadena `unknown` si no hay destinatarios SMTP; se admiten tambien simbolos como cadenas y se guarda el nombre de cada uno | `200` guardado; `400` partes ausentes o JSON invalido; `505` mensaje mayor que `Q_MAX_SIZE` MiB; `502` error resolviendo destinatarios; `503` error al insertar (`504` no se da: `/pipe` no depende de Redis). Expande cada rcpt hasta sus buzones finales (misma logica que `/aliasexp`) y aplica los ajustes de la EMPRESA de cada buzon (`mail_security.quarantine_settings`: tamano, dominios excluidos, retencion); guarda una fila por buzon en `mail_security.quarantine` y recorta por buzon. `505` solo si ningun buzon lo guardo por tamano |
 | `/pipe_rl` | `metadata_exporter`, regla `RLINFO` (selector `ratelimited`, formato json) | `POST application/json`: `{rcpt[], from, user, symbols[{name, options[]}], qid, ip, message_id, header_subject[], header_from[]}` | `200`. El servidor extrae de `symbols[RATELIMITED].options` el texto `nombre(hash)` y hace `LPUSH RL_LOG` con `{time, rcpt, from, user, rl_info, rl_name, rl_hash, qid, ip, message_id, header_subject, header_from}` |
 
 `pushover` no se migra.
@@ -342,6 +352,16 @@ mapa (`pgsql_relay_ne`, `pgsql_relay_recipient_maps`,
 enviar). `pgsql_virtual_sender_acl` no lleva la consulta sino la llamada a
 `mail.sender_login_owners('%s')`: la regla de `smtpd_sender_login_maps` vive en la base de la
 celda porque el webmail la necesita al reves (`mail.sender_identities`).
+
+Los mapas que miran un ajuste del buzon por su direccion (`pgsql_tls_enforce_in_policy`, la
+rama `tls_enforce_out` y la del relayhost propio de
+`pgsql_sender_dependent_default_transport_maps`, y `pgsql_sasl_passwd_maps_sender_dependent`)
+buscaban el buzon solo como destino de un alias con esa direccion: mailcow creaba el alias
+`buzon -> buzon` y mail-directory no, asi que nunca se aplicaban. Ahora tambien casan el
+propio buzon y su direccion en un dominio alias. Ademas `pgsql_sasl_passwd_maps_sender_dependent`
+busca primero el relayhost del buzon y despues el del dominio, la misma precedencia que el
+mapa de transporte: al reves, un buzon con relayhost propio salia por el suyo con la
+credencial del del dominio. V con `postmap -q` (2026-09-13, `make e2e-mail`).
 
 Dovecot: `dovecot/docker-entrypoint.sh` genera `sql/dovecot-dict-sql-userdb.conf`
 (`user_query`/`iterate_query` contra `mail.mailboxes`), el dict de cuota contra
@@ -420,6 +440,75 @@ dos veces; sin prueba de punta a punta con SES.
 * Sin `MAIL_LINK_SIGNING_KEY` (32 caracteres o mas) y `PUBLIC_BASE_URL` el servicio arranca
   sin aviso y todo enlace es invalido; sin `TRANSACTIONAL_URL` o `INTERNAL_GATEWAY_TOKEN`,
   sin aviso. Ambos casos quedan en el log como error.
+
+## Prueba de punta a punta de los motores (`make e2e-mail`)
+
+`ops/e2e/mail.sh` levanta esta pila contra una celda real y comprueba que el correo circula,
+con una linea OK o FALLA por comprobacion; termina con error si alguna falla y lo derriba
+todo al acabar (`E2E_KEEP=1` lo deja en pie para depurar). Necesita docker con compose v2,
+Go, `openssl`, `python3` y salida a internet (imagenes, firmas de ClamAV, DNS publico).
+
+```
+make e2e-mail
+E2E_KEEP=1 make e2e-mail                     # deja contenedores, red y registros
+E2E_MAIL_PORT_BASE=29100 make e2e-mail       # otro rango de puertos (29000-29099 por defecto)
+E2E_MAIL_IPV4_NETWORK=172.31.29 make e2e-mail  # otra /24 si 172.30.29.0/24 esta ocupada
+E2E_MAIL_PURGE_SIGNATURES=1 make e2e-mail    # borra al final el volumen de firmas de ClamAV
+```
+
+Como se monta:
+
+* **Plataforma y celda por el camino real**: Postgres, NATS y Redis desechables con
+  credenciales aleatorias (`ops/e2e/lib.sh`, compartido con la prueba de la plataforma),
+  migraciones de la celda (incluida `07_sender_identities.sql`), rol propio de la celda
+  (`ops/db/cell-service-role.sh`), contrasena aleatoria de `mail_engine`,
+  `ops/db/bootstrap-platform.sh`, alta de la empresa por el gateway y login de su
+  `tenant_admin`. El plano de control y domain-service corren como binarios del host.
+* **Dominio verificado de verdad**: domain-service da de alta `acme.test` y lo verifica contra
+  un Unbound autoritativo de la prueba (`MAIL_DNS_RESOLVER`) que publica exactamente los
+  registros que domain-service pide; la verificacion activa el dominio en mail-directory y
+  entrega la clave DKIM a mail-security. Buzones, aliases, dominio alias, `sender_acl`, alias
+  de spam, reescrituras, politica TLS, transportes, relayhosts y un backup MX se crean por el
+  API de mail-directory a traves del gateway.
+* **Servicios de la celda en contenedores** (`docker-compose.e2e.yml`, con sus Dockerfile):
+  mail-directory, mail-auth, mail-security (alias `mail-policy`) y webmail, en la red de los
+  motores y con la credencial de la celda, publicados solo en `127.0.0.1` para el gateway y
+  domain-service. El directorio se maneja como `tenant_admin`, que `pkg/authz` no consulta en
+  access-control (rol del sistema); un usuario con rol de empresa necesitaria que
+  access-control sea alcanzable desde la red de la celda.
+
+Que comprueba: los 18 mapas pgsql con `postmap -q` (valor esperado o sin resultado, y que no
+quede un mapa generado sin comprobacion), en particular `smtpd_sender_login_maps` sobre
+`mail.sender_login_owners`; `doveadm user`; IMAP con la contrasena del buzon a traves de
+`passwd-verify.lua` y mail-auth (y su registro en `mail.sasl_logins`), contrasena mala, el
+usuario maestro del webmail y su `allow_nets`; submission autenticado con STARTTLS verificado,
+entrega por LMTP leida por IMAP, firma DKIM de Rspamd con el selector de domain-service,
+rechazos 553 de `reject_authenticated_sender_login_mismatch` (tambien con la credencial
+maestra), envio como alias con permiso, como dominio alias y por `sender_acl`; un adjunto
+EICAR rechazado al final de DATA (`CLAM_VIRUS` -> `VIRUS_FOUND` -> reject) y guardado en la
+cuarentena del destinatario por `/pipe`; que Rspamd aplica la regla `watchdog` del mapa
+`settings` de mail-policy y ve `DOMAIN_MAP`; Unbound con validacion DNSSEC; el webmail por el
+gateway (sesion, carpetas, identidades frente a Postfix, envio idempotente, lectura del
+destinatario, Enviados, remitente ajeno, EICAR, cierre de sesion); y registros sin errores ni
+reinicios.
+
+Diferencias con produccion (solo en `docker-compose.e2e.yml` y el entorno del script; ningun
+fichero de configuracion de los motores cambia para la prueba):
+
+| Prueba | Produccion | Motivo |
+|---|---|---|
+| Certificado de una CA propia de la ejecucion en `/etc/ssl/mail` | Let's Encrypt por `acme-mail` | ACME necesita DNS publico y HTTP-01 hacia la maquina |
+| Sin `acme-mail`, `netfilter-mail`, `watchdog-mail` ni `dockerapi-mail` | Los cuatro | netfilter corre privilegiado en la red del host y reescribe su cortafuegos; dockerapi monta el socket de docker del host; watchdog vigila a los anteriores |
+| Ningun puerto de los motores en el host; IPv6 apagado; red y bridge propios | 25, 465, 587, 143/993, 110/995, 4190 publicados | La prueba habla desde dentro de la red (cliente IMAP/SMTP en `ops/e2e/mail_client.py`) |
+| `SKIP_UNBOUND_HEALTHCHECK=y` | `n` | El chequeo hace ping a resolvers publicos y los runners de CI no dejan salir ICMP; la resolucion con DNSSEC se comprueba aparte |
+| Firmas de ClamAV en un volumen que sobrevive entre ejecuciones | Volumen del despliegue | freshclam actualiza por diferencias en vez de bajar la base entera cada vez (la CDN de ClamAV limita las descargas repetidas) |
+| DNS de `acme.test` servido por un Unbound de la prueba | DNS del cliente | El dominio de la prueba no existe en internet |
+| mail-security sin `TRANSACTIONAL_URL` | Con transactional | El aviso de cuarentena sale por SES; queda desactivado y lo registra como error, que la prueba descuenta |
+
+En CI corre en su propio flujo (`.github/workflows/mail-engines.yml`), sin bloquear: cuando
+cambia algo de lo que prueba, cada noche y a mano. En local, una ejecucion con las imagenes ya
+construidas tarda menos de dos minutos (156 comprobaciones, 2026-09-13); construirlas desde
+cero, unos seis mas, y la primera descarga de firmas de ClamAV, uno o dos.
 
 ## Pendientes
 

@@ -40,6 +40,10 @@ func (h *EngineHandler) Routes(allowedCIDRs string) http.Handler {
 	r.Post("/footer", h.Footer)
 	r.Get("/forwardinghosts", h.ForwardingHosts)
 	r.Get("/settings", h.Settings)
+	// Rspamd 4 pide cada mapa HTTP con HEAD antes del GET y, si el HEAD no responde, da la
+	// carga por fallida y no reintenta en un cuarto de hora: sin esto nunca aplicaba settings.
+	r.Head("/forwardinghosts", h.ForwardingHosts)
+	r.Head("/settings", h.Settings)
 	return r
 }
 

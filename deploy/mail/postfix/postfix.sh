@@ -85,17 +85,29 @@ ${PGSQL_MAP_HEADER}
 query = SELECT policy || ' ' || parameters AS tls_policy FROM mail.tls_policy_overrides WHERE active AND dest = '%s'
 EOF
 
+# Los mapas que miran un ajuste del BUZON por la direccion (%s) cuentan con que el buzon
+# sea destino de si mismo en mail.aliases: mailcow creaba ese alias buzon -> buzon y
+# mail-directory no. Sin la rama "m.username = '%s'" (y su equivalente en un dominio alias)
+# tls_enforce_in, tls_enforce_out y el relayhost propio de un buzon no se aplicaban nunca.
 cat <<EOF > /opt/postfix/conf/sql/pgsql_tls_enforce_in_policy.cf
 ${PGSQL_MAP_HEADER}
 query = SELECT CASE WHEN EXISTS(
-  SELECT 'TLS_ACTIVE' FROM mail.aliases a
-    LEFT OUTER JOIN mail.mailboxes m ON m.username = a.goto
-      WHERE (a.address = '%s'
-        OR a.address IN (
+  SELECT 'TLS_ACTIVE' FROM mail.mailboxes m
+    WHERE m.tls_enforce_in AND m.active = 1
+      AND (m.username = '%s'
+        OR m.username IN (
           SELECT '%u' || '@' || target_domain FROM mail.alias_domains
             WHERE alias_domain = '%d'
         )
-      ) AND m.tls_enforce_in AND m.active = 1
+        OR m.username IN (
+          SELECT a.goto FROM mail.aliases a
+            WHERE a.address = '%s'
+              OR a.address IN (
+                SELECT '%u' || '@' || target_domain FROM mail.alias_domains
+                  WHERE alias_domain = '%d'
+              )
+        )
+      )
   ) THEN 'reject_plaintext_session' ELSE NULL END AS tls_enforce_in
 EOF
 
@@ -103,16 +115,23 @@ cat <<EOF > /opt/postfix/conf/sql/pgsql_sender_dependent_default_transport_maps.
 ${PGSQL_MAP_HEADER}
 query = SELECT string_agg(transport, '' ORDER BY ord) AS transport_maps
   FROM (
-    SELECT 1 AS ord, CASE WHEN EXISTS(SELECT 'smtp_type' FROM mail.aliases a
-      LEFT OUTER JOIN mail.mailboxes m ON m.username = a.goto
-        WHERE (a.address = '%s'
-          OR a.address IN (
-            SELECT '%u' || '@' || target_domain FROM mail.alias_domains
-              WHERE alias_domain = '%d'
+    SELECT 1 AS ord, CASE WHEN EXISTS(SELECT 'smtp_type' FROM mail.mailboxes m
+        WHERE m.tls_enforce_out
+          AND m.active = 1
+          AND (m.username = '%s'
+            OR m.username IN (
+              SELECT '%u' || '@' || target_domain FROM mail.alias_domains
+                WHERE alias_domain = '%d'
+            )
+            OR m.username IN (
+              SELECT a.goto FROM mail.aliases a
+                WHERE a.address = '%s'
+                  OR a.address IN (
+                    SELECT '%u' || '@' || target_domain FROM mail.alias_domains
+                      WHERE alias_domain = '%d'
+                  )
+            )
           )
-        )
-        AND m.tls_enforce_out
-        AND m.active = 1
     ) THEN 'smtp_enforced_tls:' ELSE 'smtp:' END AS transport
     UNION ALL
     SELECT 2 AS ord, COALESCE(
@@ -120,7 +139,8 @@ query = SELECT string_agg(transport, '' ORDER BY ord) AS transport_maps
       LEFT OUTER JOIN mail.mailboxes m ON m.relayhost_id = r.id
         WHERE r.active
           AND (
-            m.username IN (SELECT a.goto FROM mail.aliases a
+            m.username = '%s'
+            OR m.username IN (SELECT a.goto FROM mail.aliases a
               JOIN mail.mailboxes mb ON mb.username = a.goto
                 WHERE a.active = 1
                   AND a.address = '%s'
@@ -159,9 +179,27 @@ EOF
 
 cat <<EOF > /opt/postfix/conf/sql/pgsql_sasl_passwd_maps_sender_dependent.cf
 ${PGSQL_MAP_HEADER}
+# Misma precedencia que pgsql_sender_dependent_default_transport_maps (primero el relayhost
+# del buzon, despues el del dominio): mailcow buscaba aqui al reves y un buzon con relayhost
+# propio en un dominio con otro salia por el suyo con la credencial del dominio.
 query = SELECT concat_ws(':', username, password) AS auth_data FROM mail.relayhosts
   WHERE id IN (
     SELECT COALESCE(
+      (SELECT r.id FROM mail.relayhosts r
+      LEFT OUTER JOIN mail.mailboxes m ON m.relayhost_id = r.id
+      WHERE r.active
+        AND (
+          m.username = '%s'
+          OR m.username IN (
+            SELECT a.goto FROM mail.aliases a
+              JOIN mail.mailboxes mb ON mb.username = a.goto
+                WHERE a.active = 1
+                  AND a.address = '%s'
+                  AND a.address NOT LIKE '@%%'
+          )
+        )
+      LIMIT 1
+      ),
       (SELECT r.id FROM mail.relayhosts r
       LEFT OUTER JOIN mail.domains d ON d.relayhost_id = r.id
       WHERE r.active
@@ -169,20 +207,6 @@ query = SELECT concat_ws(':', username, password) AS auth_data FROM mail.relayho
           OR d.domain IN (
             SELECT target_domain FROM mail.alias_domains
             WHERE alias_domain = '%d'
-          )
-        )
-      LIMIT 1
-      ),
-      (SELECT r.id FROM mail.relayhosts r
-      LEFT OUTER JOIN mail.mailboxes m ON m.relayhost_id = r.id
-      WHERE r.active
-        AND (
-          m.username IN (
-            SELECT a.goto FROM mail.aliases a
-              JOIN mail.mailboxes mb ON mb.username = a.goto
-                WHERE a.active = 1
-                  AND a.address = '%s'
-                  AND a.address NOT LIKE '@%%'
           )
         )
       LIMIT 1

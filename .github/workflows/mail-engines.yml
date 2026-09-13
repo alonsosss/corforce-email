@@ -1,0 +1,71 @@
+name: Motores de correo (punta a punta)
+
+# make e2e-mail (ops/e2e/mail.sh) levanta los motores de deploy/mail contra una celda real
+# con mail-auth, mail-policy y el webmail. Va en su propio flujo y no bloquea la integracion:
+# construye las imagenes de los motores (ClamAV se compila), baja las firmas de ClamAV y
+# depende de DNS publico (Unbound valida DNSSEC). Corre cuando cambia algo de lo que prueba,
+# cada noche y a mano.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'deploy/mail/**'
+      - 'services/mail-auth/**'
+      - 'services/mail-security/**'
+      - 'services/mail-directory/**'
+      - 'services/webmail/**'
+      - 'services/domain-service/**'
+      - 'services/gateway/**'
+      - 'services/identity/**'
+      - 'services/organization/**'
+      - 'services/access-control/**'
+      - 'migrations/**'
+      - 'pkg/**'
+      - 'ops/e2e/**'
+      - 'ops/db/**'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/mail-engines.yml'
+  pull_request:
+    paths:
+      - 'deploy/mail/**'
+      - 'services/mail-auth/**'
+      - 'services/mail-security/**'
+      - 'services/mail-directory/**'
+      - 'services/webmail/**'
+      - 'services/domain-service/**'
+      - 'services/gateway/**'
+      - 'services/identity/**'
+      - 'services/organization/**'
+      - 'services/access-control/**'
+      - 'migrations/**'
+      - 'pkg/**'
+      - 'ops/e2e/**'
+      - 'ops/db/**'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/mail-engines.yml'
+  schedule:
+    - cron: '17 4 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: mail-engines-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  e2e-mail:
+    name: Motores contra una celda real (make e2e-mail)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: true
+      - name: make e2e-mail
+        run: make e2e-mail

@@ -1,0 +1,156 @@
+# compose-base: docker-compose.mail.yml
+#
+# Perfil de PRUEBA de los motores. Lo usa ops/e2e/mail.sh (`make e2e-mail`) encima de
+# docker-compose.mail.yml y nunca un despliegue. No cambia la configuracion de ningun motor:
+# solo sustituye lo que una maquina de desarrollo o un runner de CI no tienen (motivos en
+# deploy/mail/README.md, "Prueba de punta a punta de los motores"):
+#
+#   * red propia (E2E_MAIL_NETWORK), solo IPv4, y ningun puerto de los motores en el host:
+#     la prueba habla con ellos desde dentro de la red;
+#   * certificado de una CA de la prueba en /etc/ssl/mail, donde acme deja el de Let's Encrypt;
+#   * firmas de ClamAV en un volumen que sobrevive entre ejecuciones (E2E_MAIL_CLAMAV_VOLUME):
+#     freshclam actualiza por diferencias en vez de bajar la base entera en cada ejecucion;
+#   * fuera netfilter, acme, watchdog y dockerapi;
+#   * los servicios de celda que los motores llaman por nombre (mail-auth, mail-policy) y los
+#     que la prueba usa (mail-directory, webmail), con sus Dockerfile y publicados solo en
+#     127.0.0.1 para el plano de control, que corre en el host.
+#
+# Sin secretos: todos los valores llegan por el entorno de ops/e2e/mail.sh, generados en
+# cada ejecucion.
+
+x-celda: &celda
+  ENVIRONMENT: development
+  POSTGRES_HOST: ${E2E_PG_HOST:?lo fija ops/e2e/mail.sh}
+  POSTGRES_PORT: "5432"
+  CELL_CODE: ${CELL_CODE:?lo fija ops/e2e/mail.sh}
+  CELL_DB_NAME: ${CELL_DB_NAME:?lo fija ops/e2e/mail.sh}
+  CELL_DB_PASSWORD: ${CELL_DB_PASSWORD:?lo fija ops/e2e/mail.sh}
+  NATS_URL: nats://${E2E_NATS_HOST:?lo fija ops/e2e/mail.sh}:4222
+  REDIS_HOST: ${E2E_REDIS_HOST:?lo fija ops/e2e/mail.sh}
+  REDIS_PORT: "6379"
+  INTERNAL_GATEWAY_TOKEN: ${INTERNAL_GATEWAY_TOKEN:?lo fija ops/e2e/mail.sh}
+
+x-fuera: &fuera
+  # netfilter corre privilegiado en la red del host y reescribe su cortafuegos; dockerapi
+  # monta el socket de docker del host; acme necesita DNS publico y HTTP-01 de Let's
+  # Encrypt; watchdog vigila a acme y a los anteriores.
+  profiles: ["fuera-de-la-prueba"]
+
+services:
+  redis-mail:
+    depends_on: !reset []
+
+  clamd-mail:
+    volumes:
+      - clamav-signatures:/var/lib/clamav
+
+  dovecot-mail:
+    depends_on: !override
+      - redis-mail
+    ports: !reset []
+    volumes:
+      - ${E2E_TLS_DIR:?lo fija ops/e2e/mail.sh}/mail:/etc/ssl/mail/:ro
+
+  postfix-mail:
+    ports: !reset []
+    volumes:
+      - ${E2E_TLS_DIR:?lo fija ops/e2e/mail.sh}/mail:/etc/ssl/mail/:ro
+
+  netfilter-mail: *fuera
+  acme-mail: *fuera
+  watchdog-mail: *fuera
+  dockerapi-mail: *fuera
+
+  mail-directory:
+    build:
+      context: ${E2E_REPO_ROOT:?lo fija ops/e2e/mail.sh}
+      dockerfile: services/mail-directory/Dockerfile
+    environment:
+      <<: *celda
+      MAIL_DIRECTORY_PORT: "8040"
+    ports:
+      - "127.0.0.1:${E2E_PORT_MAIL_DIRECTORY:?lo fija ops/e2e/mail.sh}:8040"
+    networks:
+      mail-engines:
+        aliases:
+          - mail-directory
+
+  mail-auth:
+    build:
+      context: ${E2E_REPO_ROOT:?lo fija ops/e2e/mail.sh}
+      dockerfile: services/mail-auth/Dockerfile
+    environment:
+      <<: *celda
+      MAIL_AUTH_PORT: "8041"
+      MAIL_AUTH_TLS_PORT: "9082"
+      MAIL_AUTH_TLS_CERT: /run/cfm-e2e/tls/mail-auth.pem
+      MAIL_AUTH_TLS_KEY: /run/cfm-e2e/tls/mail-auth-key.pem
+    volumes:
+      - ${E2E_TLS_DIR:?lo fija ops/e2e/mail.sh}:/run/cfm-e2e/tls:ro
+    ports:
+      - "127.0.0.1:${E2E_PORT_MAIL_AUTH:?lo fija ops/e2e/mail.sh}:8041"
+    networks:
+      mail-engines:
+        aliases:
+          - mail-auth
+
+  mail-security:
+    build:
+      context: ${E2E_REPO_ROOT:?lo fija ops/e2e/mail.sh}
+      dockerfile: services/mail-security/Dockerfile
+    environment:
+      <<: *celda
+      MAIL_SECURITY_PORT: "8042"
+      MAIL_REDIS_HOST: redis
+      MAIL_REDIS_PORT: "6379"
+      MAIL_REDIS_PASSWORD: ${MAIL_REDIS_PASSWORD:?lo fija ops/e2e/mail.sh}
+      MAIL_HOSTNAME: ${MAIL_HOSTNAME:?lo fija ops/e2e/mail.sh}
+      MAIL_LINK_SIGNING_KEY: ${MAIL_LINK_SIGNING_KEY:?lo fija ops/e2e/mail.sh}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:?lo fija ops/e2e/mail.sh}
+    ports:
+      - "127.0.0.1:${E2E_PORT_MAIL_SECURITY:?lo fija ops/e2e/mail.sh}:8042"
+    networks:
+      mail-engines:
+        aliases:
+          - mail-policy
+
+  webmail:
+    build:
+      context: ${E2E_REPO_ROOT:?lo fija ops/e2e/mail.sh}
+      dockerfile: services/webmail/Dockerfile
+    environment:
+      <<: *celda
+      WEBMAIL_PORT: "8044"
+      MAIL_HOSTNAME: ${MAIL_HOSTNAME:?lo fija ops/e2e/mail.sh}
+      MAIL_AUTH_URL: https://mail-auth:9082
+      MAIL_DIRECTORY_URL: http://mail-directory:8040
+      WEBMAIL_IMAP_ADDR: dovecot:993
+      WEBMAIL_SMTP_ADDR: postfix:587
+      WEBMAIL_TLS_CA_FILE: /run/cfm-e2e/tls/ca.pem
+      WEBMAIL_MASTER_USER: ${DOVECOT_MASTER_USER:?lo fija ops/e2e/mail.sh}@platform.local
+      WEBMAIL_MASTER_PASSWORD: ${DOVECOT_MASTER_PASS:?lo fija ops/e2e/mail.sh}
+      WEBMAIL_CLAMD_ADDR: clamd:3310
+      AUTH_COOKIE_SECURE: "false"
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:?lo fija ops/e2e/mail.sh}
+      API_ORIGIN: ${API_ORIGIN:?lo fija ops/e2e/mail.sh}
+    volumes:
+      - ${E2E_TLS_DIR:?lo fija ops/e2e/mail.sh}/ca.pem:/run/cfm-e2e/tls/ca.pem:ro
+    ports:
+      - "127.0.0.1:${E2E_PORT_WEBMAIL:?lo fija ops/e2e/mail.sh}:8044"
+    networks:
+      mail-engines: {}
+
+networks:
+  mail-engines:
+    name: ${E2E_MAIL_NETWORK:?lo fija ops/e2e/mail.sh}
+    driver_opts:
+      com.docker.network.bridge.name: ${E2E_MAIL_BRIDGE:?lo fija ops/e2e/mail.sh}
+    enable_ipv6: false
+    ipam:
+      config: !override
+        - subnet: ${IPV4_NETWORK:-172.22.1}.0/24
+
+volumes:
+  clamav-signatures:
+    external: true
+    name: ${E2E_MAIL_CLAMAV_VOLUME:?lo fija ops/e2e/mail.sh}
