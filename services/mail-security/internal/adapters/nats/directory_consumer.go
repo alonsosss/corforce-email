@@ -77,10 +77,7 @@ func (c *DirectoryConsumer) handle(evt events.Event, ack func()) {
 		err = c.refreshDomainFrom(ctx, data, "alias_domain")
 	case evt.Type == "mail.mailbox.deleted":
 		if username, ok := data["username"].(string); ok && username != "" {
-			username = strings.ToLower(username)
-			if err = c.policy.DeleteMailboxTagsByUsername(ctx, username); err == nil {
-				err = c.sync.RemoveMailboxTags(ctx, username)
-			}
+			err = c.forgetMailbox(ctx, strings.ToLower(username))
 		}
 	}
 	if err != nil {
@@ -88,6 +85,21 @@ func (c *DirectoryConsumer) handle(evt events.Event, ack func()) {
 		return
 	}
 	ack()
+}
+
+// forgetMailbox retira lo que este servicio guardaba del buzon dado de baja: etiquetas y
+// restriccion de redes SMTP, en la base y en Redis. Idempotente.
+func (c *DirectoryConsumer) forgetMailbox(ctx context.Context, username string) error {
+	if err := c.policy.DeleteMailboxTagsByUsername(ctx, username); err != nil {
+		return err
+	}
+	if err := c.policy.DeleteSMTPAccessByUsername(ctx, username); err != nil {
+		return err
+	}
+	if err := c.sync.RemoveMailboxTags(ctx, username); err != nil {
+		return err
+	}
+	return c.sync.RemoveSMTPAccess(ctx, username)
 }
 
 func (c *DirectoryConsumer) refreshDomainFrom(ctx context.Context, data map[string]any, key string) error {

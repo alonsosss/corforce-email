@@ -91,12 +91,14 @@ func (uc *UseCase) CreateAlias(ctx context.Context, tenantID uuid.UUID, req Crea
 		if err := uc.addressFree(ctx, tenantID, address); err != nil {
 			return err
 		}
-		return uc.aliases.Create(ctx, a)
+		if err := uc.aliases.Create(ctx, a); err != nil {
+			return err
+		}
+		return uc.events.AliasCreated(ctx, a)
 	})
 	if err != nil {
 		return nil, err
 	}
-	uc.publish("mail.alias.created", uc.events.AliasCreated(ctx, a))
 	return a, nil
 }
 
@@ -137,30 +139,28 @@ func (uc *UseCase) UpdateAlias(ctx context.Context, tenantID, id uuid.UUID, req 
 		if req.PublicComment != nil {
 			a.PublicComment = strings.TrimSpace(*req.PublicComment)
 		}
-		return uc.aliases.Update(ctx, a)
+		if err := uc.aliases.Update(ctx, a); err != nil {
+			return err
+		}
+		return uc.events.AliasUpdated(ctx, a)
 	})
 	if err != nil {
 		return nil, err
 	}
-	uc.publish("mail.alias.updated", uc.events.AliasUpdated(ctx, a))
 	return a, nil
 }
 
 func (uc *UseCase) DeleteAlias(ctx context.Context, tenantID, id uuid.UUID) error {
-	var a *domain.Alias
-	err := uc.tx.InTx(ctx, func(ctx context.Context) error {
-		var err error
-		a, err = uc.aliases.Get(ctx, tenantID, id)
+	return uc.tx.InTx(ctx, func(ctx context.Context) error {
+		a, err := uc.aliases.Get(ctx, tenantID, id)
 		if err != nil {
 			return err
 		}
-		return uc.aliases.Delete(ctx, tenantID, id)
+		if err := uc.aliases.Delete(ctx, tenantID, id); err != nil {
+			return err
+		}
+		return uc.events.AliasDeleted(ctx, a)
 	})
-	if err != nil {
-		return err
-	}
-	uc.publish("mail.alias.deleted", uc.events.AliasDeleted(ctx, a))
-	return nil
 }
 
 // ── Aliases temporales ────────────────────────────────────────────────────────

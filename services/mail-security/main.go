@@ -16,10 +16,12 @@ import (
 	"github.com/alonsosss/corforce-email/pkg/db"
 	"github.com/alonsosss/corforce-email/pkg/events"
 	"github.com/alonsosss/corforce-email/pkg/middleware"
+	"github.com/alonsosss/corforce-email/pkg/outbox"
 	"github.com/alonsosss/corforce-email/pkg/response"
 	"github.com/alonsosss/corforce-email/pkg/server"
 	handler "github.com/alonsosss/corforce-email/services/mail-security/internal/adapters/http"
 	natsadapter "github.com/alonsosss/corforce-email/services/mail-security/internal/adapters/nats"
+	outboxadapter "github.com/alonsosss/corforce-email/services/mail-security/internal/adapters/outbox"
 	"github.com/alonsosss/corforce-email/services/mail-security/internal/adapters/postgres"
 	redisadapter "github.com/alonsosss/corforce-email/services/mail-security/internal/adapters/redis"
 	"github.com/alonsosss/corforce-email/services/mail-security/internal/adapters/rspamd"
@@ -45,6 +47,10 @@ const (
 	defaultReinjectPort      = 590
 	defaultControllerURL     = "http://rspamd:11334"
 	defaultPipeMaxBodyMiB    = 50
+
+	// outboxRetention conserva lo publicado lo mismo que el stream (EnsureStream: 7 dias).
+	outboxRetention = 7 * 24 * time.Hour
+	streamRetry     = 5 * time.Second
 )
 
 func envOrDefault(key, fallback string) string {
@@ -120,17 +126,16 @@ func main() {
 		logger.Warn("redis de los motores no responde al arrancar; se reintentara en la reconciliacion", zap.Error(err))
 	}
 
+	// Los eventos se encolan en la outbox de la celda dentro de cada transaccion; sin NATS
+	// esperan en la tabla y el rele los entrega cuando vuelva.
+	publisher := outboxadapter.NewPublisher(ctxPool)
 	var bus *events.Bus
-	publisher := natsadapter.NewPublisher(nil, logger)
 	if b, err := events.NewBus(cfg.NATS.URL, logger); err != nil {
-		logger.Warn("NATS no disponible: sin eventos ni consumo del directorio", zap.Error(err))
+		logger.Warn("NATS no disponible: sin consumo del directorio; los eventos quedan en la outbox", zap.Error(err))
 	} else {
 		bus = b
 		defer bus.Close()
-		if err := bus.EnsureStream(domain.StreamName, []string{domain.SubjectQuarantineStored, domain.SubjectQuarantineReleased}); err != nil {
-			logger.Warn("ensure stream MAIL_SECURITY", zap.Error(err))
-		}
-		publisher = natsadapter.NewPublisher(bus, logger)
+		go runCellRelay(ctx, bus, pool, logger)
 	}
 
 	directory := postgres.NewDirectoryRepository(ctxPool)
@@ -152,8 +157,12 @@ func main() {
 		Logger:     logger,
 	})
 	engineUC := app.NewEngineUseCase(app.EngineDeps{
+		Tx: ctxPool, Documents: postgres.NewDocumentRepository(ctxPool),
 		Directory: directory, Policy: policyReader, Quarantine: quarantineRepo, Sync: redisSync,
 		Store: store, Events: publisher, Logger: logger, LogLines: int64(envInt("MAIL_LOG_LINES", defaultLogLines)),
+	})
+	firewallUC := app.NewFirewallUseCase(app.FirewallDeps{
+		Tx: ctxPool, Repo: postgres.NewFirewallRepository(ctxPool), Policy: policyReader, Sync: redisSync, Store: store, Logger: logger,
 	})
 
 	// Reconciliacion de Redis al arrancar y periodica, y consumo de eventos del
@@ -171,7 +180,7 @@ func main() {
 	r.Use(middleware.SecureHeaders)
 	r.Use(middleware.Logger(logger))
 	r.Use(middleware.NewRateLimiter(120, time.Minute).Limit)
-	r.Mount("/", handler.NewHandler(policyUC, quarantineUC, authz.NewCheckerFromEnv()).Routes())
+	r.Mount("/", handler.NewHandler(policyUC, quarantineUC, firewallUC, authz.NewCheckerFromEnv()).Routes())
 
 	// Superficie B: listeners de los motores, sin gateway ni JWT, acotados por IP.
 	allowedCIDRs := os.Getenv("MAIL_ENGINE_ALLOWED_CIDRS")
@@ -206,4 +215,27 @@ func main() {
 	if runErr != nil {
 		logger.Fatal("server error", zap.Error(runErr))
 	}
+}
+
+// runCellRelay vacia la outbox de la celda hacia JetStream. Antes asegura el stream de sus
+// subjects, reintentando mientras NATS no responda: publicar en un subject sin stream falla
+// y consume los reintentos de la fila. Comparte cerrojo con el rele de mail-directory, de
+// modo que en toda la celda solo vacia una instancia a la vez.
+func runCellRelay(ctx context.Context, bus *events.Bus, pool *db.Pool, logger *zap.Logger) {
+	for {
+		err := bus.EnsureStream(domain.StreamName, []string{domain.SubjectQuarantineStored, domain.SubjectQuarantineReleased})
+		if err == nil {
+			break
+		}
+		logger.Warn("stream MAIL_SECURITY no asegurado; se reintenta", zap.Error(err))
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(streamRetry):
+		}
+	}
+	relay := outbox.NewRelay(pool.Pool, bus, logger, outbox.Options{Retention: outboxRetention})
+	relay.RunExclusive(ctx, func(c context.Context) (func(), bool) {
+		return db.TryLeaderLock(c, pool.Pool, outbox.CellRelayLockKey)
+	})
 }

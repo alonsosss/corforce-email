@@ -9,7 +9,6 @@ import (
 	"net"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/alonsosss/corforce-email/services/mail-security/internal/domain"
@@ -28,6 +27,8 @@ const forwardingHostsSentinel = "240.240.240.240"
 // por lo que el motor pide (direccion, dominio, IP), nunca a lo ancho.
 type EngineUseCase struct {
 	expander   *Expander
+	tx         ports.OwnerTransactor
+	documents  ports.DocumentStamps
 	dir        ports.DirectoryReader
 	policy     ports.PolicyReader
 	quarantine ports.QuarantineRepository
@@ -37,21 +38,11 @@ type EngineUseCase struct {
 	logger     *zap.Logger
 	logLines   int64
 	now        func() time.Time
-
-	mu       sync.Mutex
-	settings settingsCache
-}
-
-// settingsCache recuerda el ultimo documento servido para responder 304. La marca de
-// tiempo avanza cuando cambia el CONTENIDO (no solo updated_at): asi un borrado o un
-// cambio de dominios alias en el directorio tambien fuerza la recarga en Rspamd.
-type settingsCache struct {
-	hash  string
-	body  string
-	since time.Time
 }
 
 type EngineDeps struct {
+	Tx         ports.OwnerTransactor
+	Documents  ports.DocumentStamps
 	Directory  ports.DirectoryReader
 	Policy     ports.PolicyReader
 	Quarantine ports.QuarantineRepository
@@ -65,6 +56,8 @@ type EngineDeps struct {
 func NewEngineUseCase(d EngineDeps) *EngineUseCase {
 	return &EngineUseCase{
 		expander:   NewExpander(d.Directory),
+		tx:         d.Tx,
+		documents:  d.Documents,
 		dir:        d.Directory,
 		policy:     d.Policy,
 		quarantine: d.Quarantine,
@@ -179,7 +172,10 @@ type SettingsDocument struct {
 }
 
 // Settings genera el UCL y decide si cambio desde ifModifiedSince (notModified=true
-// significa responder 304).
+// significa responder 304). La marca de tiempo avanza cuando cambia el CONTENIDO (por su
+// hash, no por updated_at): un borrado o un cambio de dominios alias en el directorio
+// tambien fuerza la recarga. Vive en la base y no en memoria, asi que todas las replicas
+// responden con la misma marca y el servicio puede correr con varias.
 func (uc *EngineUseCase) Settings(ctx context.Context, ifModifiedSince time.Time) (SettingsDocument, bool, error) {
 	in, err := uc.buildSettingsInput(ctx)
 	if err != nil {
@@ -189,27 +185,47 @@ func (uc *EngineUseCase) Settings(ctx context.Context, ifModifiedSince time.Time
 	sum := sha256.Sum256([]byte(body))
 	hash := hex.EncodeToString(sum[:])
 
-	uc.mu.Lock()
-	defer uc.mu.Unlock()
-	if uc.settings.hash != hash {
-		since := uc.now().Truncate(time.Second)
-		if uc.settings.hash == "" {
-			// Primer documento tras arrancar: si nada cambio desde el ultimo updated_at,
-			// un reinicio del servicio no debe obligar a Rspamd a recargar.
-			if updated, err := uc.policy.PolicyUpdatedAt(ctx); err == nil && !updated.IsZero() {
-				since = updated.Truncate(time.Second)
+	stamp, err := uc.settingsStamp(ctx, hash)
+	if err != nil {
+		return SettingsDocument{}, false, fmt.Errorf("marca de settings: %w", err)
+	}
+	doc := SettingsDocument{Body: body, LastModified: stamp.LastModified}
+	if stamp.ContentHash != hash {
+		// Otra replica dio de alta a la vez un contenido distinto y quedo su marca. Este
+		// contenido sale con una marca anterior a la guardada: el siguiente sondeo no puede
+		// recibir 304 y recoge el vigente.
+		doc.LastModified = stamp.LastModified.Add(-time.Second)
+		return doc, false, nil
+	}
+	notModified := !ifModifiedSince.IsZero() && !stamp.LastModified.After(ifModifiedSince)
+	return doc, notModified, nil
+}
+
+// settingsStamp devuelve la marca compartida del documento con ese hash y la adelanta si
+// el contenido cambio. La fila queda bloqueada durante la decision: dos replicas que ven el
+// mismo cambio no dan dos marcas distintas.
+func (uc *EngineUseCase) settingsStamp(ctx context.Context, hash string) (domain.DocumentStamp, error) {
+	var stamp domain.DocumentStamp
+	err := uc.tx.Transact(ctx, func(ctx context.Context) error {
+		prev, err := uc.documents.LockDocument(ctx, domain.DocumentRspamdSettings)
+		if err != nil {
+			return err
+		}
+		var seed time.Time
+		if prev == nil {
+			if seed, err = uc.policy.PolicyUpdatedAt(ctx); err != nil {
+				return err
 			}
 		}
-		// Las fechas HTTP tienen resolucion de segundo: dos cambios en el mismo
-		// segundo tienen que dar marcas distintas o el segundo se perderia.
-		if !since.After(uc.settings.since) {
-			since = uc.settings.since.Add(time.Second)
+		next, changed := domain.NextStamp(prev, domain.DocumentRspamdSettings, hash, uc.now(), seed)
+		if !changed {
+			stamp = next
+			return nil
 		}
-		uc.settings = settingsCache{hash: hash, body: body, since: since}
-	}
-	doc := SettingsDocument{Body: uc.settings.body, LastModified: uc.settings.since}
-	notModified := !ifModifiedSince.IsZero() && !uc.settings.since.After(ifModifiedSince)
-	return doc, notModified, nil
+		stamp, err = uc.documents.SaveDocument(ctx, next)
+		return err
+	})
+	return stamp, err
 }
 
 func (uc *EngineUseCase) buildSettingsInput(ctx context.Context) (domain.SettingsInput, error) {
@@ -355,17 +371,22 @@ func (uc *EngineUseCase) Pipe(ctx context.Context, meta domain.QuarantineMetadat
 				UserName: meta.User, Msg: msg, CreatedAt: uc.now(),
 			}
 			item.QHash = quarantineHash(item.ID, meta.QID)
-			if err := uc.quarantine.Insert(ctx, &item); err != nil {
+			// La fila y su evento se confirman juntos: una cuarentena sin evento es un aviso
+			// que nunca sale, y un evento sin fila, un aviso de un mensaje que no existe.
+			err = uc.tx.Transact(ctx, func(ctx context.Context) error {
+				if err := uc.quarantine.Insert(ctx, &item); err != nil {
+					return err
+				}
+				return uc.events.QuarantineStored(ctx, &item)
+			})
+			if err != nil {
 				return out, fmt.Errorf("guardar cuarentena de %s: %w", mb.Username, errStore(err))
 			}
 			out.Stored++
+			// La poda va fuera: un fallo aqui no debe deshacer la fila recien guardada.
 			if _, err := uc.quarantine.PruneRcpt(ctx, mb.TenantID, mb.Username, settings.RetentionSize); err != nil {
 				uc.logger.Warn("poda de cuarentena por buzon", zap.String("rcpt", mb.Username), zap.Error(err))
 			}
-			uc.events.Publish("mail_security.quarantine.stored", map[string]any{
-				"id": item.ID.String(), "tenant_id": item.TenantID.String(), "rcpt": item.Rcpt,
-				"sender": item.Sender, "subject": item.Subject, "score": item.Score.String(), "qid": item.QID,
-			})
 		}
 	}
 	return out, nil

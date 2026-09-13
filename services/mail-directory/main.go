@@ -12,10 +12,11 @@ import (
 	"github.com/alonsosss/corforce-email/pkg/db"
 	"github.com/alonsosss/corforce-email/pkg/events"
 	"github.com/alonsosss/corforce-email/pkg/middleware"
+	"github.com/alonsosss/corforce-email/pkg/outbox"
 	"github.com/alonsosss/corforce-email/pkg/response"
 	"github.com/alonsosss/corforce-email/pkg/server"
 	handler "github.com/alonsosss/corforce-email/services/mail-directory/internal/adapters/http"
-	natsadapter "github.com/alonsosss/corforce-email/services/mail-directory/internal/adapters/nats"
+	outboxadapter "github.com/alonsosss/corforce-email/services/mail-directory/internal/adapters/outbox"
 	"github.com/alonsosss/corforce-email/services/mail-directory/internal/adapters/postgres"
 	"github.com/alonsosss/corforce-email/services/mail-directory/internal/adapters/secrets"
 	"github.com/alonsosss/corforce-email/services/mail-directory/internal/app"
@@ -23,7 +24,13 @@ import (
 	"go.uber.org/zap"
 )
 
-const defaultPort = 8040
+const (
+	defaultPort = 8040
+	// outboxRetention conserva lo publicado lo mismo que el stream (EnsureStream: 7 dias),
+	// para poder reconstruir una entrega perdida mientras JetStream aun la recuerda.
+	outboxRetention = 7 * 24 * time.Hour
+	streamRetry     = 5 * time.Second
+)
 
 // mail-directory es un servicio de CELDA: una sola base (la del directorio de correo que
 // leen Postfix y Dovecot) compartida por todas las empresas de la celda. No hay pool por
@@ -42,7 +49,8 @@ func main() {
 		log.Fatalf("cell dsn: %v", err)
 	}
 
-	ctx := context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	pool, err := db.NewNamedPool(ctx, dsn, "cell", logger)
 	if err != nil {
 		log.Fatalf("connect cell db: %v", err)
@@ -50,17 +58,13 @@ func main() {
 	defer pool.Close()
 	ctxPool := &db.ContextPool{}
 
-	// Sin NATS el directorio sigue operando; los consumidores (mail-security) se quedan
-	// sin avisos hasta que vuelva, que es preferible a no poder administrar buzones.
-	publisher := natsadapter.NewPublisher(nil)
+	// Los eventos se encolan en la outbox de la celda dentro de cada transaccion; sin NATS
+	// el directorio sigue operando y los eventos esperan en la tabla a que vuelva.
 	if bus, err := events.NewBus(cfg.NATS.URL, logger); err != nil {
-		logger.Warn("NATS no disponible: los eventos del directorio no se publicaran", zap.Error(err))
+		logger.Warn("NATS no disponible: los eventos del directorio quedan en la outbox", zap.Error(err))
 	} else {
 		defer bus.Close()
-		if err := bus.EnsureStream(natsadapter.StreamName, []string{natsadapter.StreamSubjects}); err != nil {
-			logger.Warn("ensure stream MAIL_DIRECTORY", zap.Error(err))
-		}
-		publisher = natsadapter.NewPublisher(bus)
+		go runCellRelay(ctx, bus, pool, logger)
 	}
 
 	uc := app.New(app.Deps{
@@ -79,7 +83,7 @@ func main() {
 		RecipientMap: postgres.NewRecipientMapRepo(ctxPool),
 		BCCMaps:      postgres.NewBCCMapRepo(ctxPool),
 		Secrets:      secrets.New(),
-		Events:       publisher,
+		Events:       outboxadapter.NewPublisher(ctxPool),
 		Logger:       logger,
 	})
 
@@ -101,7 +105,32 @@ func main() {
 	}
 
 	srv := server.New(port, r, logger)
-	if err := srv.Run(); err != nil {
-		logger.Fatal("server error", zap.Error(err))
+	runErr := srv.Run()
+	cancel()
+	if runErr != nil {
+		logger.Fatal("server error", zap.Error(runErr))
 	}
+}
+
+// runCellRelay vacia la outbox de la celda hacia JetStream. Antes asegura el stream de sus
+// subjects, reintentando mientras NATS no responda: publicar en un subject sin stream falla
+// y consume los reintentos de la fila. Comparte cerrojo con el rele de mail-security, de
+// modo que en toda la celda solo vacia una instancia a la vez.
+func runCellRelay(ctx context.Context, bus *events.Bus, pool *db.Pool, logger *zap.Logger) {
+	for {
+		err := bus.EnsureStream(outboxadapter.StreamName, []string{outboxadapter.StreamSubjects})
+		if err == nil {
+			break
+		}
+		logger.Warn("stream MAIL_DIRECTORY no asegurado; se reintenta", zap.Error(err))
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(streamRetry):
+		}
+	}
+	relay := outbox.NewRelay(pool.Pool, bus, logger, outbox.Options{Retention: outboxRetention})
+	relay.RunExclusive(ctx, func(c context.Context) (func(), bool) {
+		return db.TryLeaderLock(c, pool.Pool, outbox.CellRelayLockKey)
+	})
 }

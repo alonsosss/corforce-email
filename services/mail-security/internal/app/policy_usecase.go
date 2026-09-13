@@ -38,8 +38,14 @@ func NewPolicyUseCase(d PolicyDeps) *PolicyUseCase {
 }
 
 func (uc *PolicyUseCase) afterCommit(ctx context.Context, what string, fn func(context.Context) error) {
+	logAfterCommit(ctx, uc.logger, what, fn)
+}
+
+// logAfterCommit escribe Redis tras confirmar; un fallo solo se registra porque la
+// reconciliacion periodica vuelve a poner la clave desde la base.
+func logAfterCommit(ctx context.Context, logger *zap.Logger, what string, fn func(context.Context) error) {
 	if err := fn(ctx); err != nil {
-		uc.logger.Error("redis no actualizado; la reconciliacion lo corregira", zap.String("clave", what), zap.Error(err))
+		logger.Error("redis no actualizado; la reconciliacion lo corregira", zap.String("clave", what), zap.Error(err))
 	}
 }
 
@@ -416,6 +422,79 @@ func (uc *PolicyUseCase) PutMailboxTags(ctx context.Context, tenantID uuid.UUID,
 	}
 	uc.afterCommit(ctx, domain.RedisWantsSubjectTag, func(ctx context.Context) error { return uc.sync.SyncMailboxTags(ctx, *out) })
 	return out, nil
+}
+
+// ── Redes SMTP por buzon ──────────────────────────────────────────────────────
+
+func (uc *PolicyUseCase) ListSMTPAccess(ctx context.Context, tenantID uuid.UUID) (out []domain.SMTPAccess, err error) {
+	err = uc.tx.TransactRLS(ctx, func(ctx context.Context) error {
+		out, err = uc.repo.ListSMTPAccess(ctx, tenantID)
+		return err
+	})
+	return out, err
+}
+
+// GetSMTPAccess devuelve las redes del buzon o, si no tiene y el buzon es de la empresa,
+// una lista vacia: sin restriccion.
+func (uc *PolicyUseCase) GetSMTPAccess(ctx context.Context, tenantID uuid.UUID, username string) (out *domain.SMTPAccess, err error) {
+	username = strings.ToLower(strings.TrimSpace(username))
+	err = uc.tx.TransactRLS(ctx, func(ctx context.Context) error {
+		out, err = uc.repo.GetSMTPAccess(ctx, tenantID, username)
+		if err != domain.ErrNotFound {
+			return err
+		}
+		owned, err := uc.dir.ObjectOwnedBy(ctx, tenantID, username)
+		if err != nil {
+			return err
+		}
+		if !owned || domain.ObjectKindOf(username) != domain.ObjectMailbox {
+			return domain.ErrNotFound
+		}
+		out = &domain.SMTPAccess{TenantID: tenantID, Username: username, Networks: []string{}}
+		return nil
+	})
+	return out, err
+}
+
+// PutSMTPAccess deja al buzon enviar por SMTP autenticado solo desde esas redes; Rspamd
+// puntua 999 cualquier otro origen (SMTP_ACCESS).
+func (uc *PolicyUseCase) PutSMTPAccess(ctx context.Context, tenantID uuid.UUID, username string, networks []string) (out *domain.SMTPAccess, err error) {
+	if domain.ObjectKindOf(username) != domain.ObjectMailbox {
+		return nil, &domain.ValidationError{Msg: "username debe ser un buzon"}
+	}
+	prefixes, err := domain.NormalizeSMTPNetworks(networks)
+	if err != nil {
+		return nil, err
+	}
+	err = uc.tx.TransactRLS(ctx, func(ctx context.Context) error {
+		user, err := uc.ownedObject(ctx, tenantID, username)
+		if err != nil {
+			return err
+		}
+		if err := uc.repo.ReplaceSMTPAccess(ctx, tenantID, user, prefixes); err != nil {
+			return err
+		}
+		out, err = uc.repo.GetSMTPAccess(ctx, tenantID, user)
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	uc.afterCommit(ctx, domain.RedisSMTPLimitedAccess, func(ctx context.Context) error { return uc.sync.SyncSMTPAccess(ctx, *out) })
+	return out, nil
+}
+
+// DeleteSMTPAccess quita la restriccion: el buzon vuelve a enviar desde cualquier red.
+func (uc *PolicyUseCase) DeleteSMTPAccess(ctx context.Context, tenantID uuid.UUID, username string) error {
+	username = strings.ToLower(strings.TrimSpace(username))
+	err := uc.tx.TransactRLS(ctx, func(ctx context.Context) error {
+		return uc.repo.DeleteSMTPAccess(ctx, tenantID, username)
+	})
+	if err != nil {
+		return err
+	}
+	uc.afterCommit(ctx, domain.RedisSMTPLimitedAccess, func(ctx context.Context) error { return uc.sync.RemoveSMTPAccess(ctx, username) })
+	return nil
 }
 
 // ── Ajustes de cuarentena ─────────────────────────────────────────────────────

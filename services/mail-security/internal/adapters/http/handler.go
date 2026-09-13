@@ -28,11 +28,12 @@ const adminMaxBody = 1 << 20
 type Handler struct {
 	policy     *app.PolicyUseCase
 	quarantine *app.QuarantineUseCase
+	firewall   *app.FirewallUseCase
 	authz      *authz.Checker
 }
 
-func NewHandler(policy *app.PolicyUseCase, quarantine *app.QuarantineUseCase, checker *authz.Checker) *Handler {
-	return &Handler{policy: policy, quarantine: quarantine, authz: checker}
+func NewHandler(policy *app.PolicyUseCase, quarantine *app.QuarantineUseCase, firewall *app.FirewallUseCase, checker *authz.Checker) *Handler {
+	return &Handler{policy: policy, quarantine: quarantine, firewall: firewall, authz: checker}
 }
 
 func (h *Handler) can(resource, action string) func(http.Handler) http.Handler {
@@ -85,6 +86,20 @@ func (h *Handler) Routes() http.Handler {
 
 		r.With(h.can("quarantine_settings", "read")).Get("/quarantine-settings", h.GetQuarantineSettings)
 		r.With(h.can("quarantine_settings", "update")).Put("/quarantine-settings", h.PutQuarantineSettings)
+
+		r.With(h.can("smtp_access", "read")).Get("/smtp-access", h.ListSMTPAccess)
+		r.With(h.can("smtp_access", "read")).Get("/smtp-access/{username}", h.GetSMTPAccess)
+		r.With(h.can("smtp_access", "update")).Put("/smtp-access/{username}", h.PutSMTPAccess)
+		r.With(h.can("smtp_access", "delete")).Delete("/smtp-access/{username}", h.DeleteSMTPAccess)
+
+		// Cortafuegos de la celda: permiso de plataforma y, en el caso de uso, superadmin.
+		r.With(h.can("firewall", "read")).Get("/firewall/networks", h.ListFirewallNetworks)
+		r.With(h.can("firewall", "create")).Post("/firewall/networks", h.AddFirewallNetwork)
+		r.With(h.can("firewall", "delete")).Delete("/firewall/networks/{id}", h.DeleteFirewallNetwork)
+		r.With(h.can("firewall", "read")).Get("/firewall/options", h.GetFirewallOptions)
+		r.With(h.can("firewall", "update")).Put("/firewall/options", h.PutFirewallOptions)
+		r.With(h.can("firewall", "read")).Get("/firewall/bans", h.ListFirewallBans)
+		r.With(h.can("firewall", "update")).Post("/firewall/bans/unban", h.UnbanFirewallNetwork)
 	})
 
 	// Rutas internas: las llama domain-service con el token de gateway y X-Tenant-ID.
@@ -136,8 +151,12 @@ func writeError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, domain.ErrNotFound):
 		response.ErrNotFound(w, "no encontrado")
-	case errors.Is(err, domain.ErrObjectNotOwned):
+	case errors.Is(err, domain.ErrObjectNotOwned), errors.Is(err, domain.ErrPlatformOnly):
 		response.ErrForbidden(w, err.Error())
+	case errors.Is(err, domain.ErrAlreadyExists):
+		response.ErrConflict(w, "ya existe")
+	case errors.Is(err, domain.ErrRedisUnavailable):
+		response.Err(w, http.StatusServiceUnavailable, "REDIS_UNAVAILABLE", "el redis de los motores no responde")
 	case errors.As(err, &verr):
 		response.ErrValidation(w, verr.Msg)
 	case errors.Is(err, domain.ErrNotConfigured):

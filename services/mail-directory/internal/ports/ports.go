@@ -18,6 +18,19 @@ type Page struct {
 	Limit  int
 }
 
+// DomainFilter acota el listado de dominios. Search vacio no filtra; llega ya validado y
+// se busca sin distinguir mayusculas como subcadena del nombre.
+type DomainFilter struct {
+	Search string
+}
+
+// MailboxFilter acota el listado de buzones: Search sobre username y nombre visible (sin
+// distinguir mayusculas) y Domain exacto, ya normalizado. Vacios no filtran.
+type MailboxFilter struct {
+	Search string
+	Domain string
+}
+
 // TransportScope acota el acceso a rutas de plataforma (tenant_id NULL): solo quien
 // opera la plataforma las administra; todas las empresas las ven.
 type TransportScope struct {
@@ -26,7 +39,7 @@ type TransportScope struct {
 }
 
 type DomainRepository interface {
-	List(ctx context.Context, tenantID uuid.UUID, page Page) ([]domain.Domain, int64, error)
+	List(ctx context.Context, tenantID uuid.UUID, filter DomainFilter, page Page) ([]domain.Domain, int64, error)
 	Get(ctx context.Context, tenantID, id uuid.UUID) (*domain.Domain, error)
 	GetByName(ctx context.Context, tenantID uuid.UUID, name string) (*domain.Domain, error)
 	Create(ctx context.Context, d *domain.Domain) error
@@ -49,7 +62,7 @@ type AliasDomainRepository interface {
 }
 
 type MailboxRepository interface {
-	List(ctx context.Context, tenantID uuid.UUID, page Page) ([]domain.Mailbox, int64, error)
+	List(ctx context.Context, tenantID uuid.UUID, filter MailboxFilter, page Page) ([]domain.Mailbox, int64, error)
 	Get(ctx context.Context, tenantID, id uuid.UUID) (*domain.Mailbox, error)
 	GetByUsername(ctx context.Context, tenantID uuid.UUID, username string) (*domain.Mailbox, error)
 	Create(ctx context.Context, m *domain.Mailbox) error
@@ -159,13 +172,17 @@ type Secrets interface {
 }
 
 // EventPublisher emite los hechos del directorio que otros servicios materializan
-// (mail-security alimenta DOMAIN_MAP y las etiquetas). Nunca lleva contrasenas ni hashes.
+// (mail-security alimenta DOMAIN_MAP y las etiquetas, billing cuenta, el webmail revoca
+// sesiones). Cada metodo ENCOLA en la outbox por la transaccion del contexto: se llama
+// dentro de Transactor.InTx y su error revierte la escritura. Nunca lleva contrasenas ni
+// hashes.
 type EventPublisher interface {
 	DomainCreated(ctx context.Context, d *domain.Domain) error
 	DomainUpdated(ctx context.Context, d *domain.Domain) error
 	DomainDeleted(ctx context.Context, d *domain.Domain) error
 	DomainActivated(ctx context.Context, d *domain.Domain) error
 	AliasDomainCreated(ctx context.Context, a *domain.AliasDomain) error
+	AliasDomainUpdated(ctx context.Context, a *domain.AliasDomain) error
 	AliasDomainDeleted(ctx context.Context, a *domain.AliasDomain) error
 	MailboxCreated(ctx context.Context, m *domain.Mailbox) error
 	MailboxUpdated(ctx context.Context, m *domain.Mailbox) error

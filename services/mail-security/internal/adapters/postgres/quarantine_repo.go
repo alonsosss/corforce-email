@@ -24,11 +24,13 @@ func NewQuarantineRepository(pool *db.ContextPool) *QuarantineRepository {
 const quarantineColumns = `id, tenant_id, qid, subject, score::text, COALESCE(host(ip), ''), action, symbols, fuzzy_hashes,
 	sender, rcpt, domain, notified, user_name, qhash, octet_length(msg), created_at`
 
-func scanQuarantine(row pgx.Row) (*domain.QuarantineItem, error) {
+// scanQuarantine lee quarantineColumns y, detras, las columnas extra que pida la consulta.
+func scanQuarantine(row pgx.Row, extra ...interface{}) (*domain.QuarantineItem, error) {
 	var it domain.QuarantineItem
 	var score string
-	if err := row.Scan(&it.ID, &it.TenantID, &it.QID, &it.Subject, &score, &it.IP, &it.Action, &it.Symbols, &it.FuzzyHashes,
-		&it.Sender, &it.Rcpt, &it.Domain, &it.Notified, &it.UserName, &it.QHash, &it.Size, &it.CreatedAt); err != nil {
+	dest := append([]interface{}{&it.ID, &it.TenantID, &it.QID, &it.Subject, &score, &it.IP, &it.Action, &it.Symbols, &it.FuzzyHashes,
+		&it.Sender, &it.Rcpt, &it.Domain, &it.Notified, &it.UserName, &it.QHash, &it.Size, &it.CreatedAt}, extra...)
+	if err := row.Scan(dest...); err != nil {
 		return nil, err
 	}
 	var err error
@@ -136,6 +138,18 @@ func (r *QuarantineRepository) GetMessage(ctx context.Context, tenantID, id uuid
 	var msg []byte
 	err := r.pool.QueryRow(ctx, `SELECT msg FROM mail_security.quarantine WHERE tenant_id = $1 AND id = $2`, tenantID, id).Scan(&msg)
 	return msg, notFound(err)
+}
+
+// LockForRelease lee la fila con su mensaje y la bloquea hasta el fin de la transaccion.
+func (r *QuarantineRepository) LockForRelease(ctx context.Context, tenantID, id uuid.UUID) (*domain.QuarantineItem, error) {
+	var msg []byte
+	it, err := scanQuarantine(r.pool.QueryRow(ctx,
+		`SELECT `+quarantineColumns+`, msg FROM mail_security.quarantine WHERE tenant_id = $1 AND id = $2 FOR UPDATE`, tenantID, id), &msg)
+	if err != nil {
+		return nil, notFound(err)
+	}
+	it.Msg = msg
+	return it, nil
 }
 
 func (r *QuarantineRepository) Delete(ctx context.Context, tenantID, id uuid.UUID) error {

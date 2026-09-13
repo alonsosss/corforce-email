@@ -40,7 +40,9 @@ sistema; `IsPrivileged` es la unica pregunta que hace el codigo.
 Cada permiso del catalogo tiene un alcance (`access_control.permissions.scope`,
 `018_permission_scope.sql`): `tenant` o `platform`. Los de plataforma (`organization/*`,
 `identity/platform_sessions/*`, `billing/plans/*`, `billing/subscriptions/*`,
-`reputation/tenants/*`) los ejerce solo el
+`reputation/tenants/*`, `mail_security/firewall/*` de
+`021_mail_security_access_permissions.sql`, que `mail-security` vuelve a exigir al
+superadmin en el caso de uso porque el cortafuegos es de toda la celda) los ejerce solo el
 `superadmin`, que no los necesita en ningun rol. Ningun rol de empresa los recibe: el
 sembrado del `tenant_admin` filtra por alcance, `PUT /roles/{id}/permissions` responde 403
 si se pide uno y el catalogo `GET /permissions` los oculta a quien no es `superadmin`. Una

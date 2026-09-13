@@ -14,6 +14,10 @@ var (
 	ErrNotConfigured = errors.New("integracion no configurada")
 	// ErrRedisUnavailable: Redis no responde; los motores lo distinguen (504).
 	ErrRedisUnavailable = errors.New("redis unavailable")
+	// ErrPlatformOnly: el cortafuegos de la celda solo lo opera el superadmin.
+	ErrPlatformOnly = errors.New("solo el operador de la plataforma administra el cortafuegos de la celda")
+	// ErrAlreadyExists: la red ya figura en una lista del cortafuegos.
+	ErrAlreadyExists = errors.New("ya existe")
 )
 
 // ValidationError lleva el detalle de una entrada rechazada.

@@ -2,6 +2,7 @@ package ports
 
 import (
 	"context"
+	"net/netip"
 	"time"
 
 	"github.com/alonsosss/corforce-email/services/mail-security/internal/domain"
@@ -45,6 +46,14 @@ type PolicyRepository interface {
 	GetMailboxTags(ctx context.Context, tenantID uuid.UUID, username string) (*domain.MailboxTags, error)
 	UpsertMailboxTags(ctx context.Context, t *domain.MailboxTags) error
 
+	ListSMTPAccess(ctx context.Context, tenantID uuid.UUID) ([]domain.SMTPAccess, error)
+	// GetSMTPAccess devuelve ErrNotFound si el buzon no tiene redes.
+	GetSMTPAccess(ctx context.Context, tenantID uuid.UUID, username string) (*domain.SMTPAccess, error)
+	// ReplaceSMTPAccess deja como unicas redes del buzon las dadas.
+	ReplaceSMTPAccess(ctx context.Context, tenantID uuid.UUID, username string, networks []netip.Prefix) error
+	// DeleteSMTPAccess devuelve ErrNotFound si el buzon no tenia redes.
+	DeleteSMTPAccess(ctx context.Context, tenantID uuid.UUID, username string) error
+
 	GetQuarantineSettings(ctx context.Context, tenantID uuid.UUID) (*domain.QuarantineSettings, error)
 	UpsertQuarantineSettings(ctx context.Context, s *domain.QuarantineSettings) error
 }
@@ -61,9 +70,23 @@ type PolicyReader interface {
 	AllForwardingHosts(ctx context.Context) ([]domain.ForwardingHost, error)
 	AllRateLimits(ctx context.Context) ([]domain.RateLimit, error)
 	AllMailboxTags(ctx context.Context) ([]domain.MailboxTags, error)
+	AllSMTPAccess(ctx context.Context) ([]domain.SMTPAccess, error)
 	AllQuarantineSettings(ctx context.Context) ([]domain.QuarantineSettings, error)
 	QuarantineSettingsFor(ctx context.Context, tenantID uuid.UUID) (*domain.QuarantineSettings, error)
+	AllFirewallNetworks(ctx context.Context) ([]domain.FirewallNetwork, error)
+	// FirewallOptions devuelve ErrNotFound si la plataforma no las ha fijado.
+	FirewallOptions(ctx context.Context) (*domain.FirewallOptions, error)
 	DeleteMailboxTagsByUsername(ctx context.Context, username string) error
+	DeleteSMTPAccessByUsername(ctx context.Context, username string) error
+}
+
+// FirewallRepository escribe las tablas del cortafuegos de la celda. Son de plataforma,
+// sin empresa: corre como duena del pool (OwnerTransactor) tras exigir al operador.
+type FirewallRepository interface {
+	CreateFirewallNetwork(ctx context.Context, n *domain.FirewallNetwork) error
+	// DeleteFirewallNetwork devuelve la red borrada o ErrNotFound.
+	DeleteFirewallNetwork(ctx context.Context, id uuid.UUID) (*domain.FirewallNetwork, error)
+	UpsertFirewallOptions(ctx context.Context, o *domain.FirewallOptions) error
 }
 
 // QuarantineRepository es la cuarentena. Insert y las podas las usa el exportador (sin
@@ -75,7 +98,20 @@ type QuarantineRepository interface {
 	List(ctx context.Context, tenantID uuid.UUID, f domain.QuarantineFilter) ([]domain.QuarantineItem, int64, error)
 	Get(ctx context.Context, tenantID, id uuid.UUID) (*domain.QuarantineItem, error)
 	GetMessage(ctx context.Context, tenantID, id uuid.UUID) ([]byte, error)
+	// LockForRelease devuelve la fila con su mensaje y la bloquea hasta el fin de la
+	// transaccion: dos liberaciones simultaneas no entregan el mensaje dos veces.
+	LockForRelease(ctx context.Context, tenantID, id uuid.UUID) (*domain.QuarantineItem, error)
 	Delete(ctx context.Context, tenantID, id uuid.UUID) error
+}
+
+// DocumentStamps guarda la marca de modificacion de los documentos que sondean los
+// motores, compartida por todas las replicas. Corre en una OwnerTransactor.
+type DocumentStamps interface {
+	// LockDocument lee la marca bloqueando su fila; nil si aun no hay ninguna.
+	LockDocument(ctx context.Context, document string) (*domain.DocumentStamp, error)
+	// SaveDocument guarda la marca y devuelve la que queda en la base, que puede ser la de
+	// otra replica si ambas daban de alta el documento a la vez.
+	SaveDocument(ctx context.Context, s domain.DocumentStamp) (domain.DocumentStamp, error)
 }
 
 // DirectoryReader es lo que este servicio lee del directorio de correo: solo las vistas
@@ -110,19 +146,26 @@ type DirectoryReader interface {
 // los motores leen.
 type EngineStore interface {
 	Ping(ctx context.Context) error
+	Get(ctx context.Context, key string) (string, bool, error)
 	HSet(ctx context.Context, key, field, value string) error
 	HDel(ctx context.Context, key string, fields ...string) error
 	HGet(ctx context.Context, key, field string) (string, bool, error)
 	HGetAll(ctx context.Context, key string) (map[string]string, error)
 	// HKeys lista los campos de un hash que casan con un patron glob (HSCAN MATCH).
 	HKeys(ctx context.Context, key, pattern string) ([]string, error)
+	// Keys lista las claves que casan con un patron glob (SCAN MATCH, sin bloquear Redis).
+	Keys(ctx context.Context, pattern string) ([]string, error)
+	Del(ctx context.Context, keys ...string) error
 	Set(ctx context.Context, key, value string) error
 	LPushTrim(ctx context.Context, key, value string, maxLen int64) error
 }
 
-// EventPublisher desacopla la emision de eventos del bus concreto.
+// EventPublisher encola los eventos del servicio en la outbox de la celda por la
+// transaccion del contexto: se llama DENTRO de ella y su error la revierte, de modo que
+// el evento existe si y solo si existe el cambio que lo origina.
 type EventPublisher interface {
-	Publish(subject string, payload map[string]any)
+	QuarantineStored(ctx context.Context, item *domain.QuarantineItem) error
+	QuarantineReleased(ctx context.Context, item *domain.QuarantineItem, userID string) error
 }
 
 // Reinjector devuelve un mensaje de cuarentena al flujo de entrega (SMTP interno).
@@ -139,4 +182,11 @@ type SpamLearner interface {
 // rol sujeto a RLS y fija la empresa de la peticion (pkg/db.ContextPool.TransactRLS).
 type Transactor interface {
 	TransactRLS(ctx context.Context, fn func(ctx context.Context) error) error
+}
+
+// OwnerTransactor abre una transaccion como duena del pool, sin rol sujeto a RLS
+// (pkg/db.ContextPool.Transact). La usan el camino de los motores, que no tiene empresa
+// en la peticion, y la administracion del cortafuegos, cuyas tablas son de plataforma.
+type OwnerTransactor interface {
+	Transact(ctx context.Context, fn func(ctx context.Context) error) error
 }

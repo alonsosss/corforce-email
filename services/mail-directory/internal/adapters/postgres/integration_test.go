@@ -12,18 +12,20 @@ import (
 
 	"github.com/alonsosss/corforce-email/pkg/db"
 	"github.com/alonsosss/corforce-email/pkg/middleware"
-	natsadapter "github.com/alonsosss/corforce-email/services/mail-directory/internal/adapters/nats"
-	"github.com/alonsosss/corforce-email/services/mail-directory/internal/adapters/secrets"
 	"github.com/alonsosss/corforce-email/services/mail-directory/internal/app"
 	"github.com/alonsosss/corforce-email/services/mail-directory/internal/domain"
+	"github.com/alonsosss/corforce-email/services/mail-directory/internal/ports"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// Prueba contra la base real de la celda (MAIL_DIRECTORY_TEST_DSN) con las migraciones
-// 01..03 aplicadas. Lo que importa comprobar no cabe en un falso: que el SQL es valido,
-// que el rol mail_app y sus politicas dejan pasar lo que el servicio necesita, y que una
-// segunda empresa no ve ni toca lo de la primera aunque comparta la base.
+// Prueba contra una base DESECHABLE de celda (MAIL_DIRECTORY_TEST_DSN); las migraciones
+// las aplica la propia prueba. Lo que importa comprobar no cabe en un falso: que el SQL es
+// valido, que el rol mail_app y sus politicas dejan pasar lo que el servicio necesita, y
+// que una segunda empresa no ve ni toca lo de la primera aunque comparta la base.
+//
+//	docker run -d --name md-pg -e POSTGRES_PASSWORD=t -e POSTGRES_USER=t -e POSTGRES_DB=cell -p 55433:5432 pgvector/pgvector:pg16
+//	MAIL_DIRECTORY_TEST_DSN='postgres://t:t@127.0.0.1:55433/cell?sslmode=disable' go test -tags integration ./services/mail-directory/...
 func TestDirectorioContraPostgres(t *testing.T) {
 	dsn := os.Getenv("MAIL_DIRECTORY_TEST_DSN")
 	if dsn == "" {
@@ -37,16 +39,10 @@ func TestDirectorioContraPostgres(t *testing.T) {
 	}
 	// Los Cleanup corren en orden inverso: el pool se cierra DESPUES de limpiar las filas.
 	t.Cleanup(pool.Close)
+	applyCellMigrations(t, ctx, pool)
 
 	ctxPool := &db.ContextPool{}
-	uc := app.New(app.Deps{
-		Tx: NewTransactor(ctxPool), Domains: NewDomainRepo(ctxPool), AliasDomains: NewAliasDomainRepo(ctxPool),
-		Mailboxes: NewMailboxRepo(ctxPool), AppPasswords: NewAppPasswordRepo(ctxPool), Sieve: NewSieveRepo(ctxPool),
-		Aliases: NewAliasRepo(ctxPool), SpamAliases: NewSpamAliasRepo(ctxPool), SenderACL: NewSenderACLRepo(ctxPool),
-		Relayhosts: NewRelayhostRepo(ctxPool), Transports: NewTransportRepo(ctxPool), TLSPolicies: NewTLSPolicyRepo(ctxPool),
-		RecipientMap: NewRecipientMapRepo(ctxPool), BCCMaps: NewBCCMapRepo(ctxPool),
-		Secrets: secrets.New(), Events: natsadapter.NewPublisher(nil),
-	})
+	uc := newUseCase(ctxPool)
 
 	tenantA, tenantB := uuid.New(), uuid.New()
 	suffix := strings.Split(uuid.New().String(), "-")[0]
@@ -131,11 +127,28 @@ func TestDirectorioContraPostgres(t *testing.T) {
 		t.Fatalf("logins: %v", err)
 	}
 
-	// ── Empresa B no ve ni toca lo de A ──────────────────────────────────────────
+	// ── Busqueda en el SQL, bajo RLS ─────────────────────────────────────────────
 	_, _, firstPage := app.NormalizePage(1, 50)
-	items, total, err := uc.ListDomains(ctxB, tenantB, firstPage)
+	if found, total, err := uc.ListMailboxes(ctxA, tenantA, ports.MailboxFilter{Search: "ANA"}, firstPage); err != nil || total != 1 || found[0].ID != mb.ID {
+		t.Fatalf("busqueda por username sin distinguir mayusculas: %v total=%d", err, total)
+	}
+	if _, total, err := uc.ListMailboxes(ctxA, tenantA, ports.MailboxFilter{Search: "an%"}, firstPage); err != nil || total != 0 {
+		t.Fatalf("un %% del usuario se busca como texto: %v total=%d", err, total)
+	}
+	if _, total, err := uc.ListMailboxes(ctxA, tenantA, ports.MailboxFilter{Domain: "otro.example"}, firstPage); err != nil || total != 0 {
+		t.Fatalf("filtro por dominio exacto: %v total=%d", err, total)
+	}
+	if found, total, err := uc.ListDomains(ctxA, tenantA, ports.DomainFilter{Search: suffix + "-A"}, firstPage); err != nil || total != 1 || found[0].ID != d.ID {
+		t.Fatalf("busqueda de dominios: %v total=%d", err, total)
+	}
+
+	// ── Empresa B no ve ni toca lo de A ──────────────────────────────────────────
+	items, total, err := uc.ListDomains(ctxB, tenantB, ports.DomainFilter{}, firstPage)
 	if err != nil || total != 0 || len(items) != 0 {
 		t.Fatalf("B lista dominios de A: %v total=%d", err, total)
+	}
+	if _, total, err := uc.ListMailboxes(ctxB, tenantB, ports.MailboxFilter{Search: "ana"}, firstPage); err != nil || total != 0 {
+		t.Fatalf("B encuentra buzones de A buscando: %v total=%d", err, total)
 	}
 	if _, err := uc.GetMailbox(ctxB, tenantB, mb.ID); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("B lee el buzon de A: %v", err)
@@ -188,9 +201,12 @@ func TestDirectorioContraPostgres(t *testing.T) {
 	}
 }
 
-// cleanup borra como dueno (sin RLS) todo lo que dejo la prueba.
+// cleanup borra como dueno (sin RLS) todo lo que dejo la prueba, eventos incluidos.
 func cleanup(t *testing.T, pool *pgxpool.Pool, domainA, domainB string, tenants ...uuid.UUID) {
 	ctx := context.Background()
+	if _, err := pool.Exec(ctx, `DELETE FROM platform.event_outbox WHERE tenant_id = ANY($1)`, tenants); err != nil {
+		t.Logf("limpieza outbox: %v", err)
+	}
 	if _, err := pool.Exec(ctx, `DELETE FROM mail.quota_usage WHERE username LIKE '%@' || $1 OR username LIKE '%@' || $2`, domainA, domainB); err != nil {
 		t.Logf("limpieza quota_usage: %v", err)
 	}

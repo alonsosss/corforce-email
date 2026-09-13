@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/alonsosss/corforce-email/services/mail-directory/internal/domain"
+	"github.com/alonsosss/corforce-email/services/mail-directory/internal/ports"
 	"github.com/google/uuid"
 )
 
@@ -164,7 +165,7 @@ func TestTodaOperacionPasaPorLaTransaccionRLS(t *testing.T) {
 	tenant := uuid.New()
 	h.addDomain(tenant, "acme.com", domain.DomainLimits{})
 	before := h.tx.calls
-	if _, _, err := h.uc.ListMailboxes(context.Background(), tenant, NormalizedPage()); err != nil {
+	if _, _, err := h.uc.ListMailboxes(context.Background(), tenant, ports.MailboxFilter{}, NormalizedPage()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := h.uc.GetDomain(context.Background(), tenant, h.domains.items[0].ID); err != nil {

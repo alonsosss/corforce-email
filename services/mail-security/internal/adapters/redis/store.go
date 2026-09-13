@@ -43,6 +43,39 @@ func (s *Store) Ping(ctx context.Context) error {
 	return nil
 }
 
+func (s *Store) Get(ctx context.Context, key string) (string, bool, error) {
+	v, err := s.client.Get(ctx, key).Result()
+	if errors.Is(err, goredis.Nil) {
+		return "", false, nil
+	}
+	return v, err == nil, err
+}
+
+// Keys recorre el espacio de claves con SCAN: KEYS bloquearia Redis mientras los motores
+// lo consultan en cada mensaje.
+func (s *Store) Keys(ctx context.Context, pattern string) ([]string, error) {
+	var out []string
+	var cursor uint64
+	for {
+		keys, next, err := s.client.Scan(ctx, cursor, pattern, 200).Result()
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, keys...)
+		if next == 0 {
+			return out, nil
+		}
+		cursor = next
+	}
+}
+
+func (s *Store) Del(ctx context.Context, keys ...string) error {
+	if len(keys) == 0 {
+		return nil
+	}
+	return s.client.Del(ctx, keys...).Err()
+}
+
 func (s *Store) HSet(ctx context.Context, key, field, value string) error {
 	return s.client.HSet(ctx, key, field, value).Err()
 }

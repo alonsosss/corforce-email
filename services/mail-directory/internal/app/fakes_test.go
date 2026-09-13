@@ -12,11 +12,31 @@ import (
 // Los falsos guardan en memoria y solo implementan lo que ejercitan los casos de uso
 // probados; el resto devuelve el valor vacio para satisfacer la interfaz.
 
-type fakeTx struct{ calls int }
+// fakeTx imita la transaccion: un error dentro de fn deshace lo que escribieron los
+// falsos (snapshot), como la base deshace la fila de negocio y la de outbox a la vez.
+type fakeTx struct {
+	calls      int
+	active     bool
+	rolledBack int
+	snapshot   func() (restore func())
+}
 
 func (f *fakeTx) InTx(ctx context.Context, fn func(ctx context.Context) error) error {
 	f.calls++
-	return fn(ctx)
+	var restore func()
+	if f.snapshot != nil {
+		restore = f.snapshot()
+	}
+	f.active = true
+	err := fn(ctx)
+	f.active = false
+	if err != nil {
+		f.rolledBack++
+		if restore != nil {
+			restore()
+		}
+	}
+	return err
 }
 
 type fakeSecrets struct{}
@@ -26,9 +46,28 @@ func (fakeSecrets) GenerateAppPassword() (string, error) {
 	return "generada-en-servidor-de-32-chars!", nil
 }
 
-type fakeEvents struct{ subjects []string }
+// fakeEvents hace de outbox: anota cada evento, apunta aparte los que se emitieron fuera
+// de la transaccion y puede fallar como fallaria el INSERT de outbox.Enqueue.
+type fakeEvents struct {
+	tx       *fakeTx
+	subjects []string
+	outside  []string
+	fail     error
+}
 
-func (f *fakeEvents) record(s string) error { f.subjects = append(f.subjects, s); return nil }
+func (f *fakeEvents) record(s string) error {
+	if f.fail != nil {
+		return f.fail
+	}
+	if f.tx == nil || !f.tx.active {
+		f.outside = append(f.outside, s)
+	}
+	f.subjects = append(f.subjects, s)
+	return nil
+}
+func (f *fakeEvents) AliasDomainUpdated(context.Context, *domain.AliasDomain) error {
+	return f.record("mail.alias_domain.updated")
+}
 func (f *fakeEvents) DomainCreated(context.Context, *domain.Domain) error {
 	return f.record("mail.domain.created")
 }
@@ -72,10 +111,12 @@ type fakeDomains struct {
 	items   []*domain.Domain
 	updated int
 	// foreign simula dominios de OTRA empresa: name_in_use los ve, GetByName no.
-	foreign []string
+	foreign    []string
+	lastFilter ports.DomainFilter
 }
 
-func (f *fakeDomains) List(_ context.Context, tenantID uuid.UUID, page ports.Page) ([]domain.Domain, int64, error) {
+func (f *fakeDomains) List(_ context.Context, tenantID uuid.UUID, filter ports.DomainFilter, page ports.Page) ([]domain.Domain, int64, error) {
+	f.lastFilter = filter
 	var out []domain.Domain
 	for _, d := range f.items {
 		if d.TenantID == tenantID {
@@ -143,7 +184,12 @@ type fakeAliasDomains struct{ items []*domain.AliasDomain }
 func (f *fakeAliasDomains) List(context.Context, uuid.UUID, ports.Page) ([]domain.AliasDomain, int64, error) {
 	return nil, 0, nil
 }
-func (f *fakeAliasDomains) Get(context.Context, uuid.UUID, uuid.UUID) (*domain.AliasDomain, error) {
+func (f *fakeAliasDomains) Get(_ context.Context, tenantID, id uuid.UUID) (*domain.AliasDomain, error) {
+	for _, a := range f.items {
+		if a.TenantID == tenantID && a.ID == id {
+			return a, nil
+		}
+	}
 	return nil, domain.ErrNotFound
 }
 func (f *fakeAliasDomains) Create(_ context.Context, a *domain.AliasDomain) error {
@@ -151,7 +197,15 @@ func (f *fakeAliasDomains) Create(_ context.Context, a *domain.AliasDomain) erro
 	return nil
 }
 func (f *fakeAliasDomains) Update(context.Context, *domain.AliasDomain) error { return nil }
-func (f *fakeAliasDomains) Delete(context.Context, uuid.UUID, uuid.UUID) error  { return nil }
+func (f *fakeAliasDomains) Delete(_ context.Context, tenantID, id uuid.UUID) error {
+	for i, a := range f.items {
+		if a.TenantID == tenantID && a.ID == id {
+			f.items = append(f.items[:i], f.items[i+1:]...)
+			return nil
+		}
+	}
+	return domain.ErrNotFound
+}
 func (f *fakeAliasDomains) ExistsByName(_ context.Context, tenantID uuid.UUID, name string) (bool, error) {
 	for _, a := range f.items {
 		if a.TenantID == tenantID && a.AliasDomain == name {
@@ -167,9 +221,11 @@ type fakeMailboxes struct {
 	items        []*domain.Mailbox
 	aliases      *fakeAliases
 	quotaDeleted []string
+	lastFilter   ports.MailboxFilter
 }
 
-func (f *fakeMailboxes) List(context.Context, uuid.UUID, ports.Page) ([]domain.Mailbox, int64, error) {
+func (f *fakeMailboxes) List(_ context.Context, _ uuid.UUID, filter ports.MailboxFilter, _ ports.Page) ([]domain.Mailbox, int64, error) {
+	f.lastFilter = filter
 	return nil, 0, nil
 }
 
@@ -309,15 +365,28 @@ type fakeAliases struct{ items []*domain.Alias }
 func (f *fakeAliases) List(context.Context, uuid.UUID, ports.Page) ([]domain.Alias, int64, error) {
 	return nil, 0, nil
 }
-func (f *fakeAliases) Get(context.Context, uuid.UUID, uuid.UUID) (*domain.Alias, error) {
+func (f *fakeAliases) Get(_ context.Context, tenantID, id uuid.UUID) (*domain.Alias, error) {
+	for _, a := range f.items {
+		if a.TenantID == tenantID && a.ID == id {
+			return a, nil
+		}
+	}
 	return nil, domain.ErrNotFound
 }
 func (f *fakeAliases) Create(_ context.Context, a *domain.Alias) error {
 	f.items = append(f.items, a)
 	return nil
 }
-func (f *fakeAliases) Update(context.Context, *domain.Alias) error         { return nil }
-func (f *fakeAliases) Delete(context.Context, uuid.UUID, uuid.UUID) error { return nil }
+func (f *fakeAliases) Update(context.Context, *domain.Alias) error { return nil }
+func (f *fakeAliases) Delete(_ context.Context, tenantID, id uuid.UUID) error {
+	for i, a := range f.items {
+		if a.TenantID == tenantID && a.ID == id {
+			f.items = append(f.items[:i], f.items[i+1:]...)
+			return nil
+		}
+	}
+	return domain.ErrNotFound
+}
 func (f *fakeAliases) CountByDomain(_ context.Context, tenantID uuid.UUID, name string) (int64, error) {
 	var n int64
 	for _, a := range f.items {
@@ -424,6 +493,8 @@ func newHarness() *harness {
 		senderACL: &fakeSenderACL{}, relayhosts: &fakeRelayhosts{}, transports: &fakeTransports{}, events: &fakeEvents{},
 	}
 	h.mailboxes = &fakeMailboxes{aliases: h.aliases}
+	h.events.tx = h.tx
+	h.tx.snapshot = h.snapshot
 	h.uc = New(Deps{
 		Tx: h.tx, Domains: h.domains, AliasDomains: h.aliasDomains, Mailboxes: h.mailboxes,
 		AppPasswords: h.appPasswords, Sieve: h.sieve, Aliases: h.aliases, SpamAliases: h.spamAliases,
@@ -451,6 +522,27 @@ func (h *harness) addMailbox(tenantID uuid.UUID, username string, quota int64) *
 	}
 	h.mailboxes.items = append(h.mailboxes.items, m)
 	return m
+}
+
+// snapshot copia lo que escriben los casos de uso probados y devuelve como restaurarlo.
+func (h *harness) snapshot() func() {
+	domains, aliasDomains := cloneAll(h.domains.items), cloneAll(h.aliasDomains.items)
+	mailboxes, aliases := cloneAll(h.mailboxes.items), cloneAll(h.aliases.items)
+	subjects := append([]string(nil), h.events.subjects...)
+	return func() {
+		h.domains.items, h.aliasDomains.items = domains, aliasDomains
+		h.mailboxes.items, h.aliases.items = mailboxes, aliases
+		h.events.subjects = subjects
+	}
+}
+
+func cloneAll[T any](items []*T) []*T {
+	out := make([]*T, len(items))
+	for i, it := range items {
+		c := *it
+		out[i] = &c
+	}
+	return out
 }
 
 func (h *harness) published(subject string) int {

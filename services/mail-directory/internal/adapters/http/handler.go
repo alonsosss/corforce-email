@@ -45,6 +45,9 @@ func (h *Handler) Routes() chi.Router {
 		r.Route("/mail-domains", h.domainRoutes)
 		r.Route("/mailboxes", h.mailboxRoutes)
 		r.Route("/mail-routing", h.routingRoutes)
+		// Reglas del directorio para la interfaz: sin datos de la empresa, pero detras del
+		// mismo permiso de lectura que el listado de buzones que las usa.
+		r.With(h.require(moduleMailboxes, "mailboxes", actionRead)).Get("/mail-directory/meta", h.Meta)
 	})
 	// Ruta servicio-a-servicio: la protege RequireGatewayToken en main y toma la empresa
 	// de X-Tenant-ID; no pasa por el gateway ni por permisos de usuario.
@@ -108,7 +111,7 @@ var validationErrors = []error{
 	domain.ErrInvalidLimit, domain.ErrSieveEmpty, domain.ErrSieveTooLarge, domain.ErrValidityRequired,
 	domain.ErrNothingToUpdate, domain.ErrNameRequired, domain.ErrWildcardNeedsExtnl, domain.ErrDomainNotOwned,
 	domain.ErrMailboxNotOwned, domain.ErrRelayhostNotOwned, domain.ErrActivationNotAllowed,
-	domain.ErrQuotaExceedsMax, domain.ErrDomainQuotaExceeded,
+	domain.ErrQuotaExceedsMax, domain.ErrDomainQuotaExceeded, domain.ErrSearchTooLong,
 }
 
 // conflictErrors son los choques con el estado actual: 409.
@@ -197,9 +200,14 @@ func deleteOf(del func(context.Context, uuid.UUID, uuid.UUID) error) http.Handle
 
 // ── Dominios ──────────────────────────────────────────────────────────────────
 
+// Meta responde las reglas del directorio (app.DirectoryMeta).
+func (h *Handler) Meta(w http.ResponseWriter, r *http.Request) {
+	response.JSON(w, http.StatusOK, app.DirectoryMeta())
+}
+
 func (h *Handler) domainRoutes(r chi.Router) {
 	const res, aliasRes = "domains", "alias_domains"
-	r.With(h.require(moduleDomains, res, actionRead)).Get("/", listOf(h.uc.ListDomains))
+	r.With(h.require(moduleDomains, res, actionRead)).Get("/", h.ListDomains)
 	r.With(h.require(moduleDomains, res, actionCreate)).Post("/", h.CreateDomain)
 	r.With(h.require(moduleDomains, aliasRes, actionRead)).Get("/alias-domains", listOf(h.uc.ListAliasDomains))
 	r.With(h.require(moduleDomains, aliasRes, actionCreate)).Post("/alias-domains", h.CreateAliasDomain)
@@ -208,6 +216,22 @@ func (h *Handler) domainRoutes(r chi.Router) {
 	r.With(h.require(moduleDomains, res, actionRead)).Get("/{id}", getOf(h.uc.GetDomain))
 	r.With(h.require(moduleDomains, res, actionUpdate)).Patch("/{id}", h.UpdateDomain)
 	r.With(h.require(moduleDomains, res, actionDelete)).Delete("/{id}", deleteOf(h.uc.DeleteDomain))
+}
+
+// ListDomains admite ?search= (subcadena del nombre, sin distinguir mayusculas) ademas
+// de la paginacion.
+func (h *Handler) ListDomains(w http.ResponseWriter, r *http.Request) {
+	tenantID, ok := tenantFrom(w, r)
+	if !ok {
+		return
+	}
+	page, perPage, pg := pageFrom(r)
+	items, total, err := h.uc.ListDomains(r.Context(), tenantID, ports.DomainFilter{Search: r.URL.Query().Get("search")}, pg)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	response.JSONWithMeta(w, http.StatusOK, items, response.PageMeta(total, page, perPage))
 }
 
 func (h *Handler) CreateDomain(w http.ResponseWriter, r *http.Request) {
@@ -221,7 +245,7 @@ func (h *Handler) CreateDomain(w http.ResponseWriter, r *http.Request) {
 	}
 	v := validate.New()
 	v.Required("domain", req.Domain)
-	v.MaxLength("description", req.Description, 255)
+	v.MaxLength("description", req.Description, domain.MaxDescriptionLength)
 	if !v.Valid() {
 		response.ErrValidation(w, v.Error())
 		return
@@ -256,7 +280,7 @@ func (h *Handler) UpdateDomain(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Description != nil {
 		v := validate.New()
-		v.MaxLength("description", *req.Description, 255)
+		v.MaxLength("description", *req.Description, domain.MaxDescriptionLength)
 		if !v.Valid() {
 			response.ErrValidation(w, v.Error())
 			return

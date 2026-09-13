@@ -14,6 +14,22 @@ const (
 	ActiveReceiveOnly = 2
 )
 
+// ActiveState es un valor del tri-estado con un codigo estable para los clientes; el
+// texto que ve una persona lo pone la interfaz a partir del codigo.
+type ActiveState struct {
+	Value int    `json:"value"`
+	Code  string `json:"code"`
+}
+
+// ActiveStates lista los estados en el orden en que se ofrecen: el habitual primero.
+func ActiveStates() []ActiveState {
+	return []ActiveState{
+		{Value: ActiveOn, Code: "active"},
+		{Value: ActiveReceiveOnly, Code: "receive_only"},
+		{Value: ActiveOff, Code: "inactive"},
+	}
+}
+
 // Kinds de buzon: '' para personas; los recursos no reciben correo.
 var mailboxKinds = []string{"", "location", "thing", "group"}
 
@@ -31,6 +47,10 @@ const (
 	SieveTypePrefilter  = "prefilter"
 	SieveTypePostfilter = "postfilter"
 )
+
+func BCCTypes() []string { return []string{BCCTypeSender, BCCTypeRcpt} }
+
+func SieveFilterTypes() []string { return []string{SieveTypePrefilter, SieveTypePostfilter} }
 
 type Domain struct {
 	ID                 uuid.UUID  `json:"id"`

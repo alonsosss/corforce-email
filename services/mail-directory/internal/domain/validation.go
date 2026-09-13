@@ -10,10 +10,21 @@ const (
 	MinPasswordLength = 12
 	MaxPasswordLength = 256
 	// MaxSieveScriptBytes acota lo que Dovecot compila por buzon.
-	MaxSieveScriptBytes = 64 * 1024
-	maxDomainLength     = 253
-	maxLabelLength      = 63
-	maxLocalPartLength  = 64
+	MaxSieveScriptBytes  = 64 * 1024
+	MaxDomainLength      = 253
+	MaxLabelLength       = 63
+	MaxLocalPartLength   = 64
+	MaxDisplayNameLength = 255
+	MaxDescriptionLength = 255
+	// MaxSearchLength acota el texto de busqueda de los listados: acaba en un ILIKE por
+	// cada fila de la empresa.
+	MaxSearchLength = 100
+
+	// Unlimited es el valor que significa "sin limite" en cuotas (bytes) y en los maximos
+	// de buzones y aliases de un dominio. Postfix y Dovecot lo leen asi de la celda.
+	Unlimited = 0
+	// QuotaUnit es la unidad de todas las cuotas del directorio.
+	QuotaUnit = "bytes"
 )
 
 var (
@@ -32,7 +43,7 @@ var (
 func NormalizeDomain(raw string) (string, error) {
 	name := strings.ToLower(strings.TrimSpace(raw))
 	name = strings.TrimSuffix(name, ".")
-	if name == "" || len(name) > maxDomainLength {
+	if name == "" || len(name) > MaxDomainLength {
 		return "", ErrInvalidDomainName
 	}
 	labels := strings.Split(name, ".")
@@ -40,7 +51,7 @@ func NormalizeDomain(raw string) (string, error) {
 		return "", ErrInvalidDomainName
 	}
 	for _, label := range labels {
-		if len(label) > maxLabelLength || !dnsLabelRegex.MatchString(label) {
+		if len(label) > MaxLabelLength || !dnsLabelRegex.MatchString(label) {
 			return "", ErrInvalidDomainName
 		}
 	}
@@ -54,7 +65,7 @@ func NormalizeDomain(raw string) (string, error) {
 // consecutivos ni en los extremos.
 func NormalizeLocalPart(raw string) (string, error) {
 	local := strings.ToLower(strings.TrimSpace(raw))
-	if local == "" || len(local) > maxLocalPartLength || !localPartRegex.MatchString(local) {
+	if local == "" || len(local) > MaxLocalPartLength || !localPartRegex.MatchString(local) {
 		return "", ErrInvalidLocalPart
 	}
 	if strings.HasPrefix(local, ".") || strings.HasSuffix(local, ".") || strings.Contains(local, "..") {
@@ -72,7 +83,7 @@ func NormalizeEmail(raw string) (address, domainPart string, err error) {
 		return "", "", ErrInvalidEmail
 	}
 	local, dom := addr[:at], addr[at+1:]
-	if len(local) > maxLocalPartLength || !externalLocalRegex.MatchString(local) {
+	if len(local) > MaxLocalPartLength || !externalLocalRegex.MatchString(local) {
 		return "", "", ErrInvalidEmail
 	}
 	if strings.HasPrefix(local, ".") || strings.HasSuffix(local, ".") || strings.Contains(local, "..") {
@@ -226,18 +237,18 @@ func CheckMailboxQuota(requested int64, limits DomainLimits, usedByOthers int64)
 	if requested < 0 {
 		return ErrInvalidLimit
 	}
-	if limits.MaxQuotaBytes > 0 && (requested == 0 || requested > limits.MaxQuotaBytes) {
+	if limits.MaxQuotaBytes > Unlimited && (requested == Unlimited || requested > limits.MaxQuotaBytes) {
 		return ErrQuotaExceedsMax
 	}
-	if limits.QuotaBytes > 0 && (requested == 0 || usedByOthers+requested > limits.QuotaBytes) {
+	if limits.QuotaBytes > Unlimited && (requested == Unlimited || usedByOthers+requested > limits.QuotaBytes) {
 		return ErrDomainQuotaExceeded
 	}
 	return nil
 }
 
-// CheckLimit comprueba un maximo (0 = sin limite) contra lo ya existente.
+// CheckLimit comprueba un maximo (Unlimited = sin limite) contra lo ya existente.
 func CheckLimit(max int, current int64, exceeded error) error {
-	if max > 0 && current >= int64(max) {
+	if max > Unlimited && current >= int64(max) {
 		return exceeded
 	}
 	return nil

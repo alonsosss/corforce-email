@@ -40,9 +40,14 @@ func (r UpdateDomainRequest) empty() bool {
 		r.MaxMailboxes == nil && r.DefaultQuotaBytes == nil && r.MaxQuotaBytes == nil && r.QuotaBytes == nil
 }
 
-func (uc *UseCase) ListDomains(ctx context.Context, tenantID uuid.UUID, page ports.Page) (items []domain.Domain, total int64, err error) {
+// ListDomains pagina los dominios de la empresa; filter.Search busca por subcadena del
+// nombre sin distinguir mayusculas.
+func (uc *UseCase) ListDomains(ctx context.Context, tenantID uuid.UUID, filter ports.DomainFilter, page ports.Page) (items []domain.Domain, total int64, err error) {
+	if filter.Search, err = normalizeSearch(filter.Search); err != nil {
+		return nil, 0, err
+	}
 	err = uc.tx.InTx(ctx, func(ctx context.Context) error {
-		items, total, err = uc.domains.List(ctx, tenantID, page)
+		items, total, err = uc.domains.List(ctx, tenantID, filter, page)
 		return err
 	})
 	return items, total, err
@@ -81,12 +86,14 @@ func (uc *UseCase) CreateDomain(ctx context.Context, tenantID uuid.UUID, req Cre
 		if err := uc.nameFree(ctx, name); err != nil {
 			return err
 		}
-		return uc.domains.Create(ctx, d)
+		if err := uc.domains.Create(ctx, d); err != nil {
+			return err
+		}
+		return uc.events.DomainCreated(ctx, d)
 	})
 	if err != nil {
 		return nil, err
 	}
-	uc.publish("mail.domain.created", uc.events.DomainCreated(ctx, d))
 	return d, nil
 }
 
@@ -125,12 +132,14 @@ func (uc *UseCase) UpdateDomain(ctx context.Context, tenantID, id uuid.UUID, req
 		if err := domainLimits(d).Validate(); err != nil {
 			return err
 		}
-		return uc.domains.Update(ctx, d)
+		if err := uc.domains.Update(ctx, d); err != nil {
+			return err
+		}
+		return uc.events.DomainUpdated(ctx, d)
 	})
 	if err != nil {
 		return nil, err
 	}
-	uc.publish("mail.domain.updated", uc.events.DomainUpdated(ctx, d))
 	return d, nil
 }
 
@@ -182,10 +191,8 @@ func domainLimits(d *domain.Domain) domain.DomainLimits {
 // DeleteDomain se niega mientras cuelguen buzones, aliases o dominios alias: borrarlos
 // en cascada dejaria correo sin destino sin que nadie lo pidiera.
 func (uc *UseCase) DeleteDomain(ctx context.Context, tenantID, id uuid.UUID) error {
-	var d *domain.Domain
-	err := uc.tx.InTx(ctx, func(ctx context.Context) error {
-		var err error
-		d, err = uc.domains.Get(ctx, tenantID, id)
+	return uc.tx.InTx(ctx, func(ctx context.Context) error {
+		d, err := uc.domains.Get(ctx, tenantID, id)
 		if err != nil {
 			return err
 		}
@@ -196,13 +203,11 @@ func (uc *UseCase) DeleteDomain(ctx context.Context, tenantID, id uuid.UUID) err
 		if mailboxes > 0 || aliases > 0 || aliasDomains > 0 {
 			return domain.ErrDomainInUse
 		}
-		return uc.domains.Delete(ctx, tenantID, id)
+		if err := uc.domains.Delete(ctx, tenantID, id); err != nil {
+			return err
+		}
+		return uc.events.DomainDeleted(ctx, d)
 	})
-	if err != nil {
-		return err
-	}
-	uc.publish("mail.domain.deleted", uc.events.DomainDeleted(ctx, d))
-	return nil
 }
 
 // SetDomainActivation es la llamada interna del servicio de dominios: crea el dominio si
@@ -213,35 +218,38 @@ func (uc *UseCase) SetDomainActivation(ctx context.Context, tenantID uuid.UUID, 
 		return nil, err
 	}
 	var d *domain.Domain
-	created := false
 	err = uc.tx.InTx(ctx, func(ctx context.Context) error {
 		var err error
 		d, err = uc.domains.GetByName(ctx, tenantID, name)
 		switch err {
 		case nil:
-			if d.Active == active {
-				return nil
+			if d.Active != active {
+				d.Active = active
+				if err := uc.domains.Update(ctx, d); err != nil {
+					return err
+				}
 			}
-			d.Active = active
-			return uc.domains.Update(ctx, d)
 		case domain.ErrNotFound:
 			if err := uc.nameFree(ctx, name); err != nil {
 				return err
 			}
 			d = &domain.Domain{ID: uuid.New(), TenantID: tenantID, Domain: name, Active: active}
-			created = true
-			return uc.domains.Create(ctx, d)
+			if err := uc.domains.Create(ctx, d); err != nil {
+				return err
+			}
+			if err := uc.events.DomainCreated(ctx, d); err != nil {
+				return err
+			}
 		default:
 			return err
 		}
+		// Tambien sin cambios: la llamada es idempotente y los consumidores leen el
+		// estado real del directorio, no el del evento.
+		return uc.events.DomainActivated(ctx, d)
 	})
 	if err != nil {
 		return nil, err
 	}
-	if created {
-		uc.publish("mail.domain.created", uc.events.DomainCreated(ctx, d))
-	}
-	uc.publish("mail.domain.activated", uc.events.DomainActivated(ctx, d))
 	return d, nil
 }
 
@@ -294,12 +302,14 @@ func (uc *UseCase) CreateAliasDomain(ctx context.Context, tenantID uuid.UUID, re
 		if err := uc.nameFree(ctx, alias); err != nil {
 			return err
 		}
-		return uc.aliasDomains.Create(ctx, a)
+		if err := uc.aliasDomains.Create(ctx, a); err != nil {
+			return err
+		}
+		return uc.events.AliasDomainCreated(ctx, a)
 	})
 	if err != nil {
 		return nil, err
 	}
-	uc.publish("mail.alias_domain.created", uc.events.AliasDomainCreated(ctx, a))
 	return a, nil
 }
 
@@ -330,7 +340,10 @@ func (uc *UseCase) UpdateAliasDomain(ctx context.Context, tenantID, id uuid.UUID
 		if req.Active != nil {
 			a.Active = *req.Active
 		}
-		return uc.aliasDomains.Update(ctx, a)
+		if err := uc.aliasDomains.Update(ctx, a); err != nil {
+			return err
+		}
+		return uc.events.AliasDomainUpdated(ctx, a)
 	})
 	if err != nil {
 		return nil, err
@@ -339,18 +352,14 @@ func (uc *UseCase) UpdateAliasDomain(ctx context.Context, tenantID, id uuid.UUID
 }
 
 func (uc *UseCase) DeleteAliasDomain(ctx context.Context, tenantID, id uuid.UUID) error {
-	var a *domain.AliasDomain
-	err := uc.tx.InTx(ctx, func(ctx context.Context) error {
-		var err error
-		a, err = uc.aliasDomains.Get(ctx, tenantID, id)
+	return uc.tx.InTx(ctx, func(ctx context.Context) error {
+		a, err := uc.aliasDomains.Get(ctx, tenantID, id)
 		if err != nil {
 			return err
 		}
-		return uc.aliasDomains.Delete(ctx, tenantID, id)
+		if err := uc.aliasDomains.Delete(ctx, tenantID, id); err != nil {
+			return err
+		}
+		return uc.events.AliasDomainDeleted(ctx, a)
 	})
-	if err != nil {
-		return err
-	}
-	uc.publish("mail.alias_domain.deleted", uc.events.AliasDomainDeleted(ctx, a))
-	return nil
 }

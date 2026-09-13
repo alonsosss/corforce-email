@@ -28,6 +28,7 @@ func newEngineServer(t *testing.T) *engineServer {
 	logger := zap.NewNop()
 	uc := app.NewEngineUseCase(app.EngineDeps{
 		Directory: dir, Policy: policy, Quarantine: &apptest.Quarantine{},
+		Tx: &apptest.Tx{}, Documents: apptest.NewDocuments(),
 		Sync: app.NewRedisSync(store, dir, policy, logger), Store: store, Events: &apptest.Publisher{}, Logger: logger, LogLines: 10,
 	})
 	srv := httptest.NewServer(NewEngineHandler(uc, logger).Routes(""))

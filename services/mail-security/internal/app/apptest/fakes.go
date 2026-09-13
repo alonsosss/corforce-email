@@ -130,15 +130,40 @@ func (f *Directory) BCCDestination(_ context.Context, kind, localDest string) (s
 
 // PolicyReader implementa ports.PolicyReader en memoria.
 type PolicyReader struct {
-	Scores    []domain.SpamScore
-	Lists     []domain.AddressListEntry
-	Maps      []domain.SettingsMap
-	UpdatedAt time.Time
-	Footers   map[string]domain.DomainFooter
-	FwdHosts  []domain.ForwardingHost
-	RL        []domain.RateLimit
-	Tags      []domain.MailboxTags
-	QSettings map[uuid.UUID]domain.QuarantineSettings
+	Scores       []domain.SpamScore
+	Lists        []domain.AddressListEntry
+	Maps         []domain.SettingsMap
+	UpdatedAt    time.Time
+	Footers      map[string]domain.DomainFooter
+	FwdHosts     []domain.ForwardingHost
+	RL           []domain.RateLimit
+	Tags         []domain.MailboxTags
+	SMTP         []domain.SMTPAccess
+	QSettings    map[uuid.UUID]domain.QuarantineSettings
+	FirewallNets []domain.FirewallNetwork
+	FwOptions    *domain.FirewallOptions
+}
+
+func (f *PolicyReader) AllSMTPAccess(context.Context) ([]domain.SMTPAccess, error) { return f.SMTP, nil }
+func (f *PolicyReader) DeleteSMTPAccessByUsername(_ context.Context, username string) error {
+	kept := f.SMTP[:0]
+	for _, a := range f.SMTP {
+		if a.Username != username {
+			kept = append(kept, a)
+		}
+	}
+	f.SMTP = kept
+	return nil
+}
+func (f *PolicyReader) AllFirewallNetworks(context.Context) ([]domain.FirewallNetwork, error) {
+	return append([]domain.FirewallNetwork(nil), f.FirewallNets...), nil
+}
+func (f *PolicyReader) FirewallOptions(context.Context) (*domain.FirewallOptions, error) {
+	if f.FwOptions == nil {
+		return nil, domain.ErrNotFound
+	}
+	o := *f.FwOptions
+	return &o, nil
 }
 
 func NewPolicyReader() *PolicyReader {
@@ -199,6 +224,46 @@ func NewStore() *Store {
 func (s *Store) Ping(context.Context) error {
 	if s.Down {
 		return domain.ErrRedisUnavailable
+	}
+	return nil
+}
+
+func (s *Store) Get(_ context.Context, key string) (string, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	v, ok := s.Values[key]
+	return v, ok, nil
+}
+
+func (s *Store) Keys(_ context.Context, pattern string) ([]string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []string
+	for _, m := range []map[string]bool{keysOf(s.Hashes), keysOf(s.Values), keysOf(s.Lists)} {
+		for k := range m {
+			if ok, _ := filepath.Match(pattern, k); ok {
+				out = append(out, k)
+			}
+		}
+	}
+	return out, nil
+}
+
+func keysOf[V any](m map[string]V) map[string]bool {
+	out := make(map[string]bool, len(m))
+	for k := range m {
+		out[k] = true
+	}
+	return out
+}
+
+func (s *Store) Del(_ context.Context, keys ...string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, k := range keys {
+		delete(s.Hashes, k)
+		delete(s.Values, k)
+		delete(s.Lists, k)
 	}
 	return nil
 }
@@ -325,6 +390,10 @@ func (q *Quarantine) GetMessage(ctx context.Context, tenantID, id uuid.UUID) ([]
 	}
 	return it.Msg, nil
 }
+func (q *Quarantine) LockForRelease(ctx context.Context, tenantID, id uuid.UUID) (*domain.QuarantineItem, error) {
+	return q.Get(ctx, tenantID, id)
+}
+
 func (q *Quarantine) Delete(_ context.Context, tenantID, id uuid.UUID) error {
 	for i, it := range q.Items {
 		if it.TenantID == tenantID && it.ID == id {
@@ -335,9 +404,126 @@ func (q *Quarantine) Delete(_ context.Context, tenantID, id uuid.UUID) error {
 	return domain.ErrNotFound
 }
 
-// Publisher implementa ports.EventPublisher y recuerda los subjects emitidos.
-type Publisher struct{ Subjects []string }
+// Tx implementa las dos transacciones (TransactRLS y Transact) en memoria: marca si hay
+// una abierta y, si fn falla, deshace lo que capturo Snapshot, como la base deshace la
+// fila de negocio y la de la outbox a la vez.
+type Tx struct {
+	Active     bool
+	Calls      int
+	RolledBack int
+	Snapshot   func() (restore func())
+}
 
-func (p *Publisher) Publish(subject string, _ map[string]any) {
+func (t *Tx) run(ctx context.Context, fn func(ctx context.Context) error) error {
+	t.Calls++
+	var restore func()
+	if t.Snapshot != nil {
+		restore = t.Snapshot()
+	}
+	t.Active = true
+	err := fn(ctx)
+	t.Active = false
+	if err != nil {
+		t.RolledBack++
+		if restore != nil {
+			restore()
+		}
+	}
+	return err
+}
+
+func (t *Tx) TransactRLS(ctx context.Context, fn func(ctx context.Context) error) error {
+	return t.run(ctx, fn)
+}
+
+func (t *Tx) Transact(ctx context.Context, fn func(ctx context.Context) error) error {
+	return t.run(ctx, fn)
+}
+
+// Publisher implementa ports.EventPublisher: anota los subjects, aparte los emitidos fuera
+// de una transaccion, y puede fallar como fallaria el INSERT de la outbox.
+type Publisher struct {
+	Tx       *Tx
+	Subjects []string
+	Outside  []string
+	Fail     error
+}
+
+func (p *Publisher) record(subject string) error {
+	if p.Fail != nil {
+		return p.Fail
+	}
+	if p.Tx == nil || !p.Tx.Active {
+		p.Outside = append(p.Outside, subject)
+	}
 	p.Subjects = append(p.Subjects, subject)
+	return nil
+}
+
+func (p *Publisher) QuarantineStored(context.Context, *domain.QuarantineItem) error {
+	return p.record(domain.SubjectQuarantineStored)
+}
+
+func (p *Publisher) QuarantineReleased(context.Context, *domain.QuarantineItem, string) error {
+	return p.record(domain.SubjectQuarantineReleased)
+}
+
+// Documents implementa ports.DocumentStamps en memoria. Varios casos de uso pueden
+// compartirlo como si fueran replicas sobre la misma base.
+type Documents struct {
+	mu     sync.Mutex
+	Stamps map[string]domain.DocumentStamp
+	Saves  int
+}
+
+func NewDocuments() *Documents { return &Documents{Stamps: map[string]domain.DocumentStamp{}} }
+
+func (d *Documents) LockDocument(_ context.Context, document string) (*domain.DocumentStamp, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	s, ok := d.Stamps[document]
+	if !ok {
+		return nil, nil
+	}
+	return &s, nil
+}
+
+func (d *Documents) SaveDocument(_ context.Context, s domain.DocumentStamp) (domain.DocumentStamp, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.Saves++
+	d.Stamps[s.Document] = s
+	return s, nil
+}
+
+// Firewall implementa ports.FirewallRepository escribiendo en el PolicyReader en memoria,
+// que es donde lo leen el caso de uso y la reconciliacion.
+type Firewall struct{ Reader *PolicyReader }
+
+func (f *Firewall) CreateFirewallNetwork(_ context.Context, n *domain.FirewallNetwork) error {
+	for _, existing := range f.Reader.FirewallNets {
+		if existing.Network == n.Network {
+			return domain.ErrAlreadyExists
+		}
+	}
+	n.ID = uuid.New()
+	n.CreatedAt = time.Now()
+	f.Reader.FirewallNets = append(f.Reader.FirewallNets, *n)
+	return nil
+}
+
+func (f *Firewall) DeleteFirewallNetwork(_ context.Context, id uuid.UUID) (*domain.FirewallNetwork, error) {
+	for i, n := range f.Reader.FirewallNets {
+		if n.ID == id {
+			f.Reader.FirewallNets = append(f.Reader.FirewallNets[:i], f.Reader.FirewallNets[i+1:]...)
+			return &n, nil
+		}
+	}
+	return nil, domain.ErrNotFound
+}
+
+func (f *Firewall) UpsertFirewallOptions(_ context.Context, o *domain.FirewallOptions) error {
+	saved := *o
+	f.Reader.FwOptions = &saved
+	return nil
 }

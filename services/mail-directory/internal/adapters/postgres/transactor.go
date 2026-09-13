@@ -6,6 +6,7 @@ package postgres
 import (
 	"context"
 	"errors"
+	"strings"
 
 	"github.com/alonsosss/corforce-email/pkg/db"
 	"github.com/alonsosss/corforce-email/services/mail-directory/internal/domain"
@@ -53,6 +54,18 @@ func affected(tag pgconn.CommandTag, err error) error {
 		return domain.ErrNotFound
 	}
 	return nil
+}
+
+// likeEscaper deja como texto los comodines de LIKE que escriba el usuario.
+var likeEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+
+// likePattern arma el patron de una busqueda por subcadena para ILIKE ... ESCAPE '\'.
+// Vacio no filtra: las consultas comparan el parametro con ''.
+func likePattern(search string) string {
+	if search == "" {
+		return ""
+	}
+	return "%" + likeEscaper.Replace(search) + "%"
 }
 
 // listPage ejecuta el conteo y la pagina de un listado con los mismos argumentos de

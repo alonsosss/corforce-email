@@ -2,6 +2,8 @@ package app
 
 import (
 	"context"
+	"strings"
+	"unicode/utf8"
 
 	"github.com/alonsosss/corforce-email/services/mail-directory/internal/domain"
 	"github.com/alonsosss/corforce-email/services/mail-directory/internal/ports"
@@ -97,12 +99,14 @@ func NormalizePage(page, perPage int) (int, int, ports.Page) {
 	return page, perPage, ports.Page{Offset: (page - 1) * perPage, Limit: perPage}
 }
 
-// publish registra el fallo y sigue: hasta que exista outbox, un evento que no sale
-// no deshace una escritura ya confirmada.
-func (uc *UseCase) publish(subject string, err error) {
-	if err != nil {
-		uc.logger.Warn("evento no publicado", zap.String("subject", subject), zap.Error(err))
+// normalizeSearch recorta el texto de busqueda de un listado y rechaza el que supera el
+// tope.
+func normalizeSearch(raw string) (string, error) {
+	s := strings.TrimSpace(raw)
+	if utf8.RuneCountInString(s) > domain.MaxSearchLength {
+		return "", domain.ErrSearchTooLong
 	}
+	return s, nil
 }
 
 // ownDomain resuelve un dominio propio de la empresa por nombre.

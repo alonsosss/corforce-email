@@ -26,14 +26,19 @@ cambie cualquiera de estas líneas.
   cuarentena, las políticas antispam por objeto, el pie por dominio y las alias internas
   viven en `mail_security` o se leen de las vistas `mail.v_routing_*` (probado contra
   Postgres y Redis reales, 2026-09-12).
-* Restricción de operación de `mail-security`: `/settings` guarda en memoria el instante
-  del último cambio del documento, así que se despliega con UNA réplica hasta que ese
-  marcador viva en la base (con varias, una réplica recién arrancada podría responder 304
-  a un Rspamd con reglas viejas).
+* `mail-security` ya admite varias réplicas: el `Last-Modified` de `/settings` vive en la
+  base de la celda (`mail_security.engine_documents`, migración 03) y lo adelanta, bajo
+  `FOR UPDATE`, la réplica que ve un contenido nuevo; todas responden con la misma marca
+  (probado con dos réplicas contra Postgres, 2026-09-13).
+* `mail-security` escribe `SMTP_LIMITED_ACCESS` / `SMTP_ALLOW_NETS_<usuario>` (redes SMTP
+  por buzón, `/api/v1/mail-security/smtp-access`, migración 04) y las claves `F2B_WHITELIST`,
+  `F2B_BLACKLIST`, `F2B_OPTIONS` y `F2B_QUEUE_UNBAN` de netfilter (cortafuegos de la celda,
+  solo superadmin, `/api/v1/mail-security/firewall/*`, migración 05), con reconciliación
+  desde la base. Sus eventos y los de `mail-directory` salen por `pkg/outbox` (2026-09-13).
 * Pendiente en `mail-security`: el aviso de cuarentena al buzón (hay ajustes y columna
-  `notified`, falta el emisor), `SMTP_LIMITED_ACCESS` / `SMTP_ALLOW_NETS_*`, las claves
-  `F2B_*` de netfilter y pasar sus eventos a `pkg/outbox`. `clean_q_aged.sh` de Dovecot no
-  hace nada (busca `mail.quarantine`, que no existe): la poda la hace el servicio.
+  `notified`, falta el emisor; necesita `transactional`, contrato en
+  `deploy/mail/README.md`). `clean_q_aged.sh` de Dovecot no hace nada (busca
+  `mail.quarantine`, que no existe): la poda la hace el servicio.
 * El gateway debe servir `/.well-known/acme-challenge/` o usarse `ACME_DNS_CHALLENGE=y`.
 * Primer despliegue: smoke test con `postmap -q` y `doveadm user` sobre la celda.
 
@@ -41,7 +46,10 @@ cambie cualquiera de estas líneas.
 
 * Outbox disponible en `pkg/outbox` (probado contra Postgres): los servicios copiados en
   fase 0 siguen publicando tras el commit; se migran a `Enqueue` cuando se toquen. Los
-  servicios nuevos lo usan desde el principio para sus publicaciones críticas.
+  servicios nuevos lo usan desde el principio para sus publicaciones críticas. Los de celda
+  (`mail-directory`, `mail-security`) encolan en `platform.event_outbox` de la celda y la
+  vacía un solo relé por celda (`Relay.RunExclusive` con `db.TryLeaderLock` y
+  `outbox.CellRelayLockKey`, compartida por los dos).
 * `pkg/auth` firma HS256 con un secreto compartido por todos los servicios. Decisión:
   pasar a EdDSA con `kid` cuando exista más de un emisor; hoy solo firma identity.
 * La tercera capa (`pkg/authz.RequirePermission`) la usan los servicios nuevos y todo el

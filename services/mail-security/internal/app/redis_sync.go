@@ -42,8 +42,136 @@ func (s *RedisSync) ReconcileAll(ctx context.Context) error {
 	keep(s.reconcileRateLimits(ctx), domain.RedisRateLimitValue)
 	keep(s.reconcileForwardingHosts(ctx), domain.RedisWhitelistedFwdHost)
 	keep(s.reconcileMailboxTags(ctx), domain.RedisWantsSubjectTag)
+	keep(s.reconcileSMTPAccess(ctx), domain.RedisSMTPLimitedAccess)
+	keep(s.reconcileFirewall(ctx), domain.RedisF2BWhitelist)
 	keep(s.SyncQuarantineTop(ctx), domain.RedisQuarantineMaxSize)
 	return firstErr
+}
+
+// SyncSMTPAccess publica las redes del buzon y DESPUES lo marca como limitado: al reves,
+// durante un instante Rspamd veria al usuario limitado sin redes y rechazaria su envio.
+func (s *RedisSync) SyncSMTPAccess(ctx context.Context, a domain.SMTPAccess) error {
+	want := make(map[string]string, len(a.Networks))
+	for _, n := range a.Networks {
+		want[n] = "1"
+	}
+	if err := s.reconcileHash(ctx, domain.SMTPAllowNetsKey(a.Username), want); err != nil {
+		return err
+	}
+	return s.store.HSet(ctx, domain.RedisSMTPLimitedAccess, a.Username, "1")
+}
+
+// RemoveSMTPAccess retira la marca ANTES que las redes, por el mismo motivo.
+func (s *RedisSync) RemoveSMTPAccess(ctx context.Context, username string) error {
+	if err := s.store.HDel(ctx, domain.RedisSMTPLimitedAccess, username); err != nil {
+		return err
+	}
+	return s.store.Del(ctx, domain.SMTPAllowNetsKey(username))
+}
+
+func (s *RedisSync) reconcileSMTPAccess(ctx context.Context) error {
+	all, err := s.policy.AllSMTPAccess(ctx)
+	if err != nil {
+		return err
+	}
+	limited := make(map[string]string, len(all))
+	keep := make(map[string]bool, len(all))
+	for _, a := range all {
+		want := make(map[string]string, len(a.Networks))
+		for _, n := range a.Networks {
+			want[n] = "1"
+		}
+		key := domain.SMTPAllowNetsKey(a.Username)
+		if err := s.reconcileHash(ctx, key, want); err != nil {
+			return err
+		}
+		limited[a.Username] = "1"
+		keep[key] = true
+	}
+	if err := s.reconcileHash(ctx, domain.RedisSMTPLimitedAccess, limited); err != nil {
+		return err
+	}
+	keys, err := s.store.Keys(ctx, domain.RedisSMTPAllowNetsPrefix+"*")
+	if err != nil {
+		return err
+	}
+	var stale []string
+	for _, k := range keys {
+		if !keep[k] {
+			stale = append(stale, k)
+		}
+	}
+	return s.store.Del(ctx, stale...)
+}
+
+// SyncFirewallNetwork pone la red en su lista de netfilter y la quita de la otra.
+func (s *RedisSync) SyncFirewallNetwork(ctx context.Context, n domain.FirewallNetwork) error {
+	other := domain.FirewallDeny
+	if n.List == domain.FirewallDeny {
+		other = domain.FirewallAllow
+	}
+	if err := s.store.HDel(ctx, other.RedisKey(), n.Network); err != nil {
+		return err
+	}
+	return s.store.HSet(ctx, n.List.RedisKey(), n.Network, "1")
+}
+
+func (s *RedisSync) RemoveFirewallNetwork(ctx context.Context, n domain.FirewallNetwork) error {
+	return s.store.HDel(ctx, n.List.RedisKey(), n.Network)
+}
+
+// SyncFirewallOptions escribe en F2B_OPTIONS las claves que gobierna la plataforma y
+// conserva las que mantiene netfilter (banlist_id, manage_external). netfilter relee la
+// clave cada pocos segundos.
+func (s *RedisSync) SyncFirewallOptions(ctx context.Context, o domain.FirewallOptions) error {
+	current := map[string]interface{}{}
+	raw, ok, err := s.store.Get(ctx, domain.RedisF2BOptions)
+	if err != nil {
+		return err
+	}
+	// Un valor que no es JSON se reemplaza: con el, netfilter se detiene al arrancar.
+	if ok && json.Unmarshal([]byte(raw), &current) != nil {
+		current = map[string]interface{}{}
+	}
+	for k, v := range o.Managed() {
+		current[k] = v
+	}
+	data, err := json.Marshal(current)
+	if err != nil {
+		return err
+	}
+	return s.store.Set(ctx, domain.RedisF2BOptions, string(data))
+}
+
+// reconcileFirewall deja las listas de netfilter como la base. Sin opciones propias de la
+// plataforma, F2B_OPTIONS se deja a los valores por defecto de netfilter.
+func (s *RedisSync) reconcileFirewall(ctx context.Context) error {
+	nets, err := s.policy.AllFirewallNetworks(ctx)
+	if err != nil {
+		return err
+	}
+	allow, deny := map[string]string{}, map[string]string{}
+	for _, n := range nets {
+		if n.List == domain.FirewallDeny {
+			deny[n.Network] = "1"
+		} else {
+			allow[n.Network] = "1"
+		}
+	}
+	if err := s.reconcileHash(ctx, domain.RedisF2BWhitelist, allow); err != nil {
+		return err
+	}
+	if err := s.reconcileHash(ctx, domain.RedisF2BBlacklist, deny); err != nil {
+		return err
+	}
+	opts, err := s.policy.FirewallOptions(ctx)
+	if err == domain.ErrNotFound {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return s.SyncFirewallOptions(ctx, *opts)
 }
 
 // ReconcileDomains deja DOMAIN_MAP exactamente igual a los dominios y dominios alias

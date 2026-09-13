@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alonsosss/corforce-email/pkg/db"
 	"github.com/alonsosss/corforce-email/pkg/events"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
@@ -89,5 +90,60 @@ func TestReleVaciaLaOutboxYReintentaLoQueFalla(t *testing.T) {
 	borradas, err := Purge(ctx, pool, 24*time.Hour)
 	if err != nil || borradas != 2 {
 		t.Fatalf("poda: %d %v", borradas, err)
+	}
+}
+
+// Con RunExclusive solo vacia quien tiene el cerrojo, y la poda por retencion corre en la
+// misma vuelta.
+func TestRunExclusiveSoloVaciaConElCerrojo(t *testing.T) {
+	dsn := os.Getenv("OUTBOX_TEST_DSN")
+	if dsn == "" {
+		t.Skip("OUTBOX_TEST_DSN no definido")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	if _, err := pool.Exec(ctx, "DELETE FROM platform.event_outbox"); err != nil {
+		t.Fatal(err)
+	}
+	viejo := events.Event{ID: "44444444-4444-4444-8444-444444444444", Type: "a.b.viejo"}
+	nuevo := events.Event{ID: "55555555-5555-4555-8555-555555555555", Type: "a.b.nuevo"}
+	for _, e := range []events.Event{viejo, nuevo} {
+		if err := Enqueue(ctx, pool, e.Type, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := pool.Exec(ctx, "UPDATE platform.event_outbox SET published_at = now() - interval '3 days' WHERE id = $1", viejo.ID); err != nil {
+		t.Fatal(err)
+	}
+	lock := func(c context.Context) (func(), bool) { return db.TryLeaderLock(c, pool, CellRelayLockKey) }
+	pub := &publicadorFalso{}
+	relay := NewRelay(pool, pub, zap.NewNop(), Options{Interval: 10 * time.Millisecond, Retention: 24 * time.Hour})
+	correr := func() {
+		c, cancel := context.WithTimeout(ctx, 80*time.Millisecond)
+		defer cancel()
+		relay.RunExclusive(c, lock)
+	}
+
+	// Otra instancia tiene el cerrojo: este rele no publica ni poda.
+	release, ok := db.TryLeaderLock(ctx, pool, CellRelayLockKey)
+	if !ok {
+		t.Fatal("no se pudo tomar el cerrojo")
+	}
+	correr()
+	var filas int
+	_ = pool.QueryRow(ctx, "SELECT count(*) FROM platform.event_outbox").Scan(&filas)
+	if len(pub.vistos) != 0 || filas != 2 {
+		t.Fatalf("sin cerrojo no se vacia ni se poda: publicados=%v filas=%d", pub.vistos, filas)
+	}
+	release()
+
+	correr()
+	_ = pool.QueryRow(ctx, "SELECT count(*) FROM platform.event_outbox").Scan(&filas)
+	if len(pub.vistos) != 1 || pub.vistos[0] != "a.b.nuevo|"+nuevo.ID || filas != 1 {
+		t.Fatalf("con el cerrojo se publica lo pendiente y se poda lo viejo: publicados=%v filas=%d", pub.vistos, filas)
 	}
 }

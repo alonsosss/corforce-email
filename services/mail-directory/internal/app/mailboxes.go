@@ -57,9 +57,19 @@ func boolOr(v *bool, def bool) bool {
 	return *v
 }
 
-func (uc *UseCase) ListMailboxes(ctx context.Context, tenantID uuid.UUID, page ports.Page) (items []domain.Mailbox, total int64, err error) {
+// ListMailboxes pagina los buzones de la empresa. filter.Search busca por subcadena en
+// username y nombre visible sin distinguir mayusculas; filter.Domain es exacto.
+func (uc *UseCase) ListMailboxes(ctx context.Context, tenantID uuid.UUID, filter ports.MailboxFilter, page ports.Page) (items []domain.Mailbox, total int64, err error) {
+	if filter.Search, err = normalizeSearch(filter.Search); err != nil {
+		return nil, 0, err
+	}
+	if filter.Domain = strings.TrimSpace(filter.Domain); filter.Domain != "" {
+		if filter.Domain, err = domain.NormalizeDomain(filter.Domain); err != nil {
+			return nil, 0, err
+		}
+	}
 	err = uc.tx.InTx(ctx, func(ctx context.Context) error {
-		items, total, err = uc.mailboxes.List(ctx, tenantID, page)
+		items, total, err = uc.mailboxes.List(ctx, tenantID, filter, page)
 		return err
 	})
 	return items, total, err
@@ -132,12 +142,14 @@ func (uc *UseCase) CreateMailbox(ctx context.Context, tenantID uuid.UUID, req Cr
 		if err := uc.addressFree(ctx, tenantID, m.Username); err != nil {
 			return err
 		}
-		return uc.mailboxes.Create(ctx, m)
+		if err := uc.mailboxes.Create(ctx, m); err != nil {
+			return err
+		}
+		return uc.events.MailboxCreated(ctx, m)
 	})
 	if err != nil {
 		return nil, err
 	}
-	uc.publish("mail.mailbox.created", uc.events.MailboxCreated(ctx, m))
 	return m, nil
 }
 
@@ -190,14 +202,15 @@ func (uc *UseCase) UpdateMailbox(ctx context.Context, tenantID, id uuid.UUID, re
 		// Un buzon apagado no puede iniciar sesion; sus contrasenas de aplicacion se
 		// revocan para que un cliente configurado no siga entrando al reactivarlo.
 		if deactivated {
-			return uc.appPasswords.DeactivateByMailbox(ctx, tenantID, id)
+			if err := uc.appPasswords.DeactivateByMailbox(ctx, tenantID, id); err != nil {
+				return err
+			}
 		}
-		return nil
+		return uc.events.MailboxUpdated(ctx, m)
 	})
 	if err != nil {
 		return nil, err
 	}
-	uc.publish("mail.mailbox.updated", uc.events.MailboxUpdated(ctx, m))
 	return m, nil
 }
 
@@ -247,10 +260,8 @@ func applyMailboxUpdate(m *domain.Mailbox, req UpdateMailboxRequest) {
 // entregaban en el. El uso de cuota se borra ANTES que el buzon: la politica que lo
 // permite exige que el buzon exista.
 func (uc *UseCase) DeleteMailbox(ctx context.Context, tenantID, id uuid.UUID) error {
-	var m *domain.Mailbox
-	err := uc.tx.InTx(ctx, func(ctx context.Context) error {
-		var err error
-		m, err = uc.mailboxes.Get(ctx, tenantID, id)
+	return uc.tx.InTx(ctx, func(ctx context.Context) error {
+		m, err := uc.mailboxes.Get(ctx, tenantID, id)
 		if err != nil {
 			return err
 		}
@@ -261,6 +272,7 @@ func (uc *UseCase) DeleteMailbox(ctx context.Context, tenantID, id uuid.UUID) er
 			func() error { return uc.senderACL.DeleteByLoggedInAs(ctx, tenantID, m.Username) },
 			func() error { return uc.spamAliases.DeleteByGoto(ctx, tenantID, m.Username) },
 			func() error { return uc.mailboxes.Delete(ctx, tenantID, id) },
+			func() error { return uc.events.MailboxDeleted(ctx, m) },
 		}
 		for _, step := range steps {
 			if err := step(); err != nil {
@@ -269,11 +281,6 @@ func (uc *UseCase) DeleteMailbox(ctx context.Context, tenantID, id uuid.UUID) er
 		}
 		return nil
 	})
-	if err != nil {
-		return err
-	}
-	uc.publish("mail.mailbox.deleted", uc.events.MailboxDeleted(ctx, m))
-	return nil
 }
 
 func (uc *UseCase) SetMailboxPassword(ctx context.Context, tenantID, id uuid.UUID, password string) error {

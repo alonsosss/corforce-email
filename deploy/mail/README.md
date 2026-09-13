@@ -203,7 +203,7 @@ hacia el PHP.
 | `/footer` | Rspamd, simbolo `DOMAIN_WIDE_FOOTER` (prioridad 1) | `POST`, cabeceras `Domain:` (dominio del envelope-from, ya resuelto alias -> target), `Username:` (usuario SASL), `From:` (envelope-from) | `200` JSON `{"html":"","plain":"","skip_replies":0,"vars":{}}` cuando no hay pie; con pie: `{"html","plain","skip_replies","vars":{atributo: valor}}` (`mbox_exclude` y `alias_domain_exclude` se evaluan en el servidor). `502` error |
 | `/forwardinghosts?host=IP` | Postfix, tabla `tcp:127.0.0.1:10027` via `whitelist_forwardinghosts.sh` (postscreen_access_list) | `GET` | cuerpo `200 PERMIT` si la IP cae en algun CIDR de la hash Redis `WHITELISTED_FWD_HOST`, si no `200 DUNNO` (protocolo tcp_table de Postfix, siempre HTTP 200) |
 | `/forwardinghosts` (sin `host`) | Rspamd `greylist.conf` (`whitelisted_ip`) | `GET` | lista de CIDR, uno por linea, empezando siempre por `240.240.240.240` (mapa nunca vacio) |
-| `/settings` | Rspamd `settings.conf` (modulo settings, polling periodico) | `GET` con `If-Modified-Since` | `304` + `Last-Modified` si nada cambio; `200 text/plain` con UCL `settings { ... }` + `Last-Modified`. Como minimo debe emitir la regla `watchdog` (rcpt `/null@localhost/i`, from `/watchdog@localhost/i`, `reject = 9999.0`, `want_spam = yes`, `symbols_disabled = [HISTORY_SAVE, ARC, ARC_SIGNED, DKIM, DKIM_SIGNED, CLAM_VIRUS]`): el watchdog comprueba que `required_score` sea 9999. Encima van las reglas por dominio/buzon (listas blancas y negras, `settingsmap`, `MAILCOW_INTERNAL_ALIAS` para `mail.aliases.internal`) |
+| `/settings` | Rspamd `settings.conf` (modulo settings, polling periodico) | `GET` con `If-Modified-Since` | `304` + `Last-Modified` si nada cambio; `200 text/plain` con UCL `settings { ... }` + `Last-Modified`. Como minimo debe emitir la regla `watchdog` (rcpt `/null@localhost/i`, from `/watchdog@localhost/i`, `reject = 9999.0`, `want_spam = yes`, `symbols_disabled = [HISTORY_SAVE, ARC, ARC_SIGNED, DKIM, DKIM_SIGNED, CLAM_VIRUS]`): el watchdog comprueba que `required_score` sea 9999. Encima van las reglas por dominio/buzon (listas blancas y negras, `settingsmap`, `MAILCOW_INTERNAL_ALIAS` para `mail.aliases.internal`). El `Last-Modified` es de la celda y no del proceso (`mail_security.engine_documents`): todas las replicas de `mail-security` responden con la misma marca |
 
 ### Puerto 9081 (exportacion de metadatos de Rspamd)
 
@@ -224,8 +224,8 @@ la plataforma y los motores. La plataforma escribe; los motores leen.
 | `DOMAIN_MAP` | hash `dominio -> 1` | mail-security (eventos `mail.domain.*`/`mail.alias_domain.*` y reconciliacion) | rspamd multimap (`RCPT_MAILCOW_DOMAIN`, `MAILCOW_DOMAIN_HEADER_FROM`), mail-policy | dominios y alias domains activos de la celda |
 | `WHITELISTED_FWD_HOST` | hash `cidr -> origen` | mail-security | rspamd multimap, mail-policy `/forwardinghosts` | hosts de reenvio de confianza |
 | `RL_VALUE` | hash `buzon|dominio -> "N / 1h"` | mail-security | rspamd `DYN_RL_CHECK` (lua) | ratelimits por objeto |
-| `SMTP_ALLOW_NETS_<usuario>` | hash `ip|cidr -> 1` | pendiente (nadie lo escribe aun) | rspamd `SMTP_ACCESS` (lua) | redes desde las que puede enviar un usuario con `SMTP_LIMITED_ACCESS` |
-| `SMTP_LIMITED_ACCESS` | hash `usuario -> 1` | pendiente (nadie lo escribe aun) | rspamd multimap | usuarios con acceso SMTP restringido |
+| `SMTP_ALLOW_NETS_<usuario>` | hash `ip|red/prefijo -> 1` | mail-security (`mail_security.smtp_access_networks`, `PUT /api/v1/mail-security/smtp-access/{usuario}` y reconciliacion) | rspamd `SMTP_ACCESS` (lua) | redes desde las que puede enviar un usuario con `SMTP_LIMITED_ACCESS`: la IP sola para un host, `red/prefijo` para el resto (IPv4 /8 a /32, IPv6 /32 a /128, lo que compara el Lua) |
+| `SMTP_LIMITED_ACCESS` | hash `usuario -> 1` | mail-security (se marca despues de escribir las redes y se desmarca antes de borrarlas) | rspamd multimap | usuarios con acceso SMTP restringido |
 | `KEEP_SPAM` | hash `ip|cidr -> 1` | mail-security (host de reenvio con `filter_spam=false`) | rspamd (lua, pre-result accept) | hosts cuyo spam no se filtra |
 | `RCPT_WANTS_SUBFOLDER_TAG`, `RCPT_WANTS_SUBJECT_TAG` | hash `buzon -> 1` | mail-security | rspamd `TAG_MOO` | como entregar correo con `+tag` |
 | `DKIM_PRIV_KEYS` | hash `selector.dominio -> clave privada PEM` | mail-security (la recibe de domain-service por `PUT /internal/mail-security/dkim/{dominio}`; no la guarda en su base; en rotacion conviven dos selectores) | rspamd `dkim_signing`, `arc` | claves DKIM |
@@ -234,9 +234,11 @@ la plataforma y los motores. La plataforma escribe; los motores leen.
 | `QW_BCC` | hash `dominio -> {"bcc_rcpts":[...],"active":1}` | mail-directory | `quota_notify.py` | copias del aviso de cuota |
 | `Q_MAX_AGE` | string (dias) | mail-security | `clean_q_aged.sh` | TOPE de la celda (maximo entre empresas) |
 | `Q_MAX_SIZE` (MiB), `Q_EXCLUDE_DOMAINS` (JSON), `Q_RETENTION_SIZE` | string | mail-security | informativo | TOPE de la celda: maximo entre empresas y union de dominios excluidos. Los ajustes son por empresa y los aplica `/pipe` con la fila de la empresa; Redis admite un solo valor |
-| `F2B_OPTIONS`, `F2B_REGEX` | string JSON | netfilter (defaults) / mail-security | netfilter | opciones y regex de baneo |
-| `F2B_WHITELIST`, `F2B_BLACKLIST` | hash `cidr -> 1` | mail-security | netfilter | listas del cortafuegos |
-| `F2B_ACTIVE_BANS`, `F2B_PERM_BANS`, `F2B_QUEUE_UNBAN` | hash | netfilter (`F2B_QUEUE_UNBAN` tambien mail-security) | netfilter, watchdog | estado de baneos |
+| `F2B_OPTIONS` | string JSON | netfilter (defaults) y mail-security (`ban_time`, `max_ban_time`, `ban_time_increment`, `max_attempts`, `retry_window`, `netban_ipv4`, `netban_ipv6` de `mail_security.firewall_options`; conserva `banlist_id` y `manage_external`; sin fila en la base no la toca) | netfilter | opciones de baneo |
+| `F2B_REGEX` | string JSON | netfilter (defaults) | netfilter | regex de baneo; no se expone por API: una regex mal escrita deja la celda sin baneos o banea de mas |
+| `F2B_WHITELIST`, `F2B_BLACKLIST` | hash `red/prefijo -> 1` | mail-security (`mail_security.firewall_networks`, `/api/v1/mail-security/firewall/networks`, solo superadmin, y reconciliacion) | netfilter | listas del cortafuegos de la celda |
+| `F2B_ACTIVE_BANS`, `F2B_PERM_BANS` | hash | netfilter | netfilter, watchdog, mail-security (`GET /api/v1/mail-security/firewall/bans`) | estado de baneos |
+| `F2B_QUEUE_UNBAN` | hash `red/prefijo -> 1` | mail-security (`POST /api/v1/mail-security/firewall/bans/unban`, solo baneos temporales vigentes) | netfilter | desbaneos pendientes |
 | `F2B_CHANNEL` | pub/sub | syslog-ng de postfix y dovecot | netfilter | lineas de log a evaluar |
 | `F2B_LOG` / `NETFILTER_LOG`, `POSTFIX_MAILLOG`, `DOVECOT_MAILLOG`, `ACME_LOG`, `WATCHDOG_LOG`, `RL_LOG` | list (LPUSH, recortadas por `trim_logs.sh` a `LOG_LINES`) | motores | plataforma (UI de logs) | logs JSON |
 | `DOVECOT_REPL_HEALTH`, `ACME_FAIL_TIME` | string | dovecot / acme | watchdog | estado |
@@ -296,12 +298,20 @@ deben versionarse.
 ## Pendientes
 
 * Aviso de cuarentena (lo que hacia `quarantine_notify.py`): los ajustes existen
-  (`quarantine_settings.notify_*`) y la columna `notified`, pero nadie envia el aviso.
-* `/settings` no emite todavia `MAILCOW_INTERNAL_ALIAS` (aliases internos): la vista
-  publicada `mail.v_routing_aliases` no expone la columna `internal`.
+  (`quarantine_settings.notify_*`) y la columna `notified`, pero nadie envia el aviso. El
+  correo sale por `transactional`, no por los motores de la celda. Contrato que haria
+  falta: `mail-security`, en un barrido periodico, agrupa por buzon las filas con
+  `notified = false` y `score <= notify_max_score` de las empresas con `notify_enabled`,
+  llama a `POST /internal/transactional/messages` de la empresa (clase transaccional,
+  `purpose = quarantine_notice`, `Idempotency-Key = quarantine-notice:<buzon>:<id mas
+  reciente>`, remitente `notify_sender`, asunto `notify_subject` y el HTML de
+  `notify_html_template` con la lista de mensajes) y marca `notified` al recibir el 2xx.
+  Falta en `transactional` aceptar ese `purpose`, y una ruta sin sesion que libere o
+  descarte por `qhash` con enlace firmado (hoy solo existe la liberacion con sesion).
 * `/footer`: `vars` lleva `from` y `domain`; faltan los atributos personalizados del
-  buzon (`mailboxes.attributes`), que `mail.v_routing_mailboxes` no publica.
-* `SMTP_LIMITED_ACCESS` y `SMTP_ALLOW_NETS_<usuario>`: sin tabla ni API que los alimente.
+  buzon. `mail.v_routing_mailboxes` ya publica `attributes`, pero ningun API de
+  `mail-directory` los escribe (quedan en `{}`): hace falta ese API y que `/footer` los
+  mezcle en `vars`.
 * MTA-STS: sin tabla `mta_sts`, ACME no pide certificados `mta-sts.<dominio>`.
 * Contrasena de `mail_engine`: la fija operacion; llega solo por `MAIL_DB_PASSWORD`.
 * `SPAMHAUS_ASN_CHECK_URL`: sin servicio propio, usar `SPAMHAUS_DQS_KEY`.

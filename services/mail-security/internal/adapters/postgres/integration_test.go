@@ -21,6 +21,7 @@ import (
 
 	"github.com/alonsosss/corforce-email/pkg/db"
 	"github.com/alonsosss/corforce-email/pkg/middleware"
+	outboxadapter "github.com/alonsosss/corforce-email/services/mail-security/internal/adapters/outbox"
 	"github.com/alonsosss/corforce-email/services/mail-security/internal/app"
 	"github.com/alonsosss/corforce-email/services/mail-security/internal/app/apptest"
 	"github.com/alonsosss/corforce-email/services/mail-security/internal/domain"
@@ -42,13 +43,16 @@ func repoRoot(t *testing.T) string {
 
 func applyMigrations(t *testing.T, ctx context.Context, pool *pgxpool.Pool, root string) {
 	t.Helper()
-	// Todas las del directorio en orden (incluida la vista de bcc) y despues la propia.
-	files, err := filepath.Glob(filepath.Join(root, "migrations/cell/canonical/mail-directory/*.sql"))
-	if err != nil || len(files) == 0 {
-		t.Fatalf("migraciones del directorio: %v", err)
+	// La outbox de la celda, todas las del directorio en orden y despues las propias.
+	var files []string
+	for _, dir := range []string{"platform", "mail-directory", "mail-security"} {
+		found, err := filepath.Glob(filepath.Join(root, "migrations/cell/canonical", dir, "*.sql"))
+		if err != nil || len(found) == 0 {
+			t.Fatalf("migraciones de %s: %v", dir, err)
+		}
+		sort.Strings(found)
+		files = append(files, found...)
 	}
-	sort.Strings(files)
-	files = append(files, filepath.Join(root, "migrations/cell/canonical/mail-security/01_mail_security.sql"))
 	// Dos pasadas: la migracion tiene que tolerar re-ejecutarse.
 	for pass := 0; pass < 2; pass++ {
 		for _, f := range files {
@@ -72,7 +76,9 @@ func seedDirectory(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 		   ('` + tenantA.String() + `', 'ana@acme.com', 'jefe@acme.com', 'acme.com', 'sender', false)`,
 		`DELETE FROM mail_security.quarantine; DELETE FROM mail_security.quarantine_settings; DELETE FROM mail_security.spam_scores;
 		 DELETE FROM mail_security.address_lists; DELETE FROM mail_security.settings_maps; DELETE FROM mail_security.rate_limits;
-		 DELETE FROM mail_security.forwarding_hosts; DELETE FROM mail_security.mailbox_tags; DELETE FROM mail_security.domain_footers`,
+		 DELETE FROM mail_security.forwarding_hosts; DELETE FROM mail_security.mailbox_tags; DELETE FROM mail_security.domain_footers;
+		 DELETE FROM mail_security.smtp_access_networks; DELETE FROM mail_security.firewall_networks;
+		 DELETE FROM mail_security.firewall_options; DELETE FROM mail_security.engine_documents; DELETE FROM platform.event_outbox`,
 		`INSERT INTO mail.domains (tenant_id, domain, active) VALUES
 		   ('` + tenantA.String() + `', 'acme.com', true),
 		   ('` + tenantB.String() + `', 'otra.com', true),
@@ -211,6 +217,23 @@ func TestIntegracionCelda(t *testing.T) {
 		if _, err := policy.PutQuarantineSettings(ctxA, tenantA, qs); err != nil {
 			t.Fatal(err)
 		}
+		// Redes SMTP: cidr en la base, en la forma de SMTP_ACCESS al leer.
+		access, err := policy.PutSMTPAccess(ctxA, tenantA, "Ana@acme.com", []string{"203.0.113.9/24", "198.51.100.7", "198.51.100.7/32"})
+		if err != nil || strings.Join(access.Networks, ",") != "198.51.100.7,203.0.113.0/24" {
+			t.Fatalf("redes SMTP: %+v %v", access, err)
+		}
+		if got, err := policy.GetSMTPAccess(ctxA, tenantA, "luis@acme.com"); err != nil || len(got.Networks) != 0 {
+			t.Fatalf("un buzon propio sin redes no tiene restriccion: %+v %v", got, err)
+		}
+		if _, err := policy.PutSMTPAccess(ctxB, tenantB, "ana@acme.com", []string{"10.0.0.0/8"}); err != domain.ErrObjectNotOwned {
+			t.Fatalf("un buzon ajeno se rechaza: %v", err)
+		}
+		if _, err := policy.GetSMTPAccess(ctxB, tenantB, "ana@acme.com"); err != domain.ErrNotFound {
+			t.Fatalf("la otra empresa no ve las redes: %v", err)
+		}
+		if list, err := policy.ListSMTPAccess(ctxB, tenantB); err != nil || len(list) != 0 {
+			t.Fatalf("aislamiento de redes SMTP: %+v %v", list, err)
+		}
 
 		// La otra empresa no ve nada de lo anterior, ni por RLS ni por filtro.
 		if scores, err := policy.ListSpamScores(ctxB, tenantB); err != nil || len(scores) != 0 {
@@ -229,12 +252,31 @@ func TestIntegracionCelda(t *testing.T) {
 		}
 	})
 
+	newEngine := func() *app.EngineUseCase {
+		return app.NewEngineUseCase(app.EngineDeps{Tx: ctxPool, Documents: NewDocumentRepository(ctxPool),
+			Directory: directory, Policy: reader, Quarantine: quarantine,
+			Sync: app.NewRedisSync(apptest.NewStore(), directory, reader, logger), Store: apptest.NewStore(),
+			Events: outboxadapter.NewPublisher(ctxPool), Logger: logger, LogLines: 10})
+	}
+
 	t.Run("documento de settings desde la base", func(t *testing.T) {
-		engine := app.NewEngineUseCase(app.EngineDeps{Directory: directory, Policy: reader, Quarantine: quarantine,
-			Sync: app.NewRedisSync(apptest.NewStore(), directory, reader, logger), Store: apptest.NewStore(), Events: &apptest.Publisher{}, Logger: logger, LogLines: 10})
+		engine := newEngine()
 		doc, _, err := engine.Settings(engineCtx, time.Time{})
 		if err != nil {
 			t.Fatal(err)
+		}
+		// Otra replica sobre la misma base responde con la misma marca: 304 a quien ya
+		// tiene el documento.
+		doc2, notModified, err := newEngine().Settings(engineCtx, doc.LastModified)
+		if err != nil || !notModified || !doc2.LastModified.Equal(doc.LastModified) {
+			t.Fatalf("replica: %v 304=%v %v vs %v", err, notModified, doc2.LastModified, doc.LastModified)
+		}
+		// La marca no es de ninguna empresa: el rol de la aplicacion no la ve.
+		if err := ctxPool.TransactRLS(adminCtx(pool, tenantA), func(ctx context.Context) error {
+			var n int
+			return ctxPool.QueryRow(ctx, `SELECT count(*) FROM mail_security.engine_documents`).Scan(&n)
+		}); err == nil {
+			t.Fatal("mail_app no debe poder leer engine_documents")
 		}
 		for _, want := range []string{
 			"watchdog {",
@@ -279,6 +321,13 @@ func TestIntegracionCelda(t *testing.T) {
 		if err != nil || total != 4 || len(items) != 4 {
 			t.Fatalf("tras la poda deben quedar 2 por buzon: total=%d %v", total, err)
 		}
+		// Cada fila guardada encolo su evento en la misma transaccion (la poda no los
+		// retira: el evento dice que se guardo, no que siga ahi).
+		var stored int
+		if err := pool.QueryRow(ctx, `SELECT count(*) FROM platform.event_outbox
+			WHERE subject = 'mail_security.quarantine.stored' AND tenant_id = $1 AND payload->'data'->>'qid' = 'ABC123'`, tenantA).Scan(&stored); err != nil || stored != 6 {
+			t.Fatalf("eventos de cuarentena: %d %v", stored, err)
+		}
 		if items[0].IP != "203.0.113.4" || !items[0].Score.Equal(decimal.RequireFromString("13.75")) || items[0].Symbols[0] != "BAYES_SPAM" || items[0].Size == 0 {
 			t.Errorf("fila de cuarentena: %+v", items[0])
 		}
@@ -304,6 +353,102 @@ func TestIntegracionCelda(t *testing.T) {
 		}
 	})
 
+	t.Run("liberacion por la outbox", func(t *testing.T) {
+		reinj := &reinyectorFalso{}
+		release := app.NewQuarantineUseCase(app.QuarantineDeps{Tx: ctxPool, Repo: quarantine, Reinjector: reinj,
+			Events: outboxadapter.NewPublisher(ctxPool), Logger: logger})
+		items, _, err := quarantine.List(adminCtx(pool, tenantA), tenantA, domain.QuarantineFilter{Page: 1, PerPage: 50})
+		if err != nil || len(items) < 2 {
+			t.Fatalf("filas para liberar: %d %v", len(items), err)
+		}
+		released := func(id uuid.UUID) (rows, events int) {
+			t.Helper()
+			if err := pool.QueryRow(ctx, `SELECT (SELECT count(*) FROM mail_security.quarantine WHERE id = $1),
+				(SELECT count(*) FROM platform.event_outbox WHERE subject = 'mail_security.quarantine.released' AND payload->'data'->>'id' = $1::text)`,
+				id).Scan(&rows, &events); err != nil {
+				t.Fatal(err)
+			}
+			return rows, events
+		}
+
+		// Bajo mail_app: reinyecta, borra y encola en la misma transaccion.
+		if err := release.Release(adminCtx(pool, tenantA), tenantA, items[0].ID, uuid.New().String()); err != nil {
+			t.Fatalf("liberar: %v", err)
+		}
+		if r, e := released(items[0].ID); r != 0 || e != 1 || reinj.entregados != 1 {
+			t.Fatalf("liberada: filas=%d eventos=%d entregas=%d", r, e, reinj.entregados)
+		}
+		// La otra empresa no libera lo ajeno.
+		if err := release.Release(adminCtx(pool, tenantB), tenantB, items[1].ID, ""); err != domain.ErrNotFound {
+			t.Fatalf("liberacion ajena: %v", err)
+		}
+		// Fallo inyectado en la outbox: la fila sigue y no queda evento.
+		if _, err := pool.Exec(ctx, `REVOKE INSERT ON platform.event_outbox FROM mail_app`); err != nil {
+			t.Fatal(err)
+		}
+		grant, err := os.ReadFile(filepath.Join(repoRoot(t), "migrations/cell/canonical/mail-security/02_outbox_grants.sql"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _, _ = pool.Exec(context.Background(), string(grant)) })
+		if err := release.Release(adminCtx(pool, tenantA), tenantA, items[1].ID, ""); err == nil {
+			t.Fatal("sin outbox la liberacion no se confirma")
+		}
+		if r, e := released(items[1].ID); r != 1 || e != 0 {
+			t.Fatalf("liberacion revertida: filas=%d eventos=%d", r, e)
+		}
+		if _, err := pool.Exec(ctx, string(grant)); err != nil {
+			t.Fatal(err)
+		}
+		if err := release.Release(adminCtx(pool, tenantA), tenantA, items[1].ID, ""); err != nil {
+			t.Fatalf("liberar tras restituir el permiso: %v", err)
+		}
+	})
+
+	t.Run("cortafuegos de plataforma", func(t *testing.T) {
+		store := apptest.NewStore()
+		fw := app.NewFirewallUseCase(app.FirewallDeps{Tx: ctxPool, Repo: NewFirewallRepository(ctxPool), Policy: reader,
+			Sync: app.NewRedisSync(store, directory, reader, logger), Store: store, Logger: logger})
+		if _, err := fw.AddNetwork(engineCtx, false, domain.FirewallDeny, "203.0.113.0/24", ""); err != domain.ErrPlatformOnly {
+			t.Fatalf("sin operador: %v", err)
+		}
+		n, err := fw.AddNetwork(engineCtx, true, domain.FirewallDeny, "203.0.113.7/24", "abuso")
+		if err != nil || n.Network != "203.0.113.0/24" {
+			t.Fatalf("alta: %+v %v", n, err)
+		}
+		if _, err := fw.AddNetwork(engineCtx, true, domain.FirewallAllow, "203.0.113.0/24", ""); err != domain.ErrAlreadyExists {
+			t.Fatalf("red repetida: %v", err)
+		}
+		if _, err := fw.AddNetwork(engineCtx, true, domain.FirewallAllow, "198.51.100.7", "oficina"); err != nil {
+			t.Fatal(err)
+		}
+		o := domain.DefaultFirewallOptions()
+		o.BanTime, o.MaxBanTime = 3600, 86400
+		if _, err := fw.PutOptions(engineCtx, true, o); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := fw.PutOptions(engineCtx, true, o); err != nil {
+			t.Fatalf("las opciones son una fila por celda: %v", err)
+		}
+		got, err := fw.Options(engineCtx, true)
+		if err != nil || got.BanTime != 3600 || got.UpdatedAt.IsZero() {
+			t.Fatalf("opciones: %+v %v", got, err)
+		}
+		// El rol de la aplicacion no ve el cortafuegos, aunque sea de la empresa que opera.
+		if err := ctxPool.TransactRLS(adminCtx(pool, tenantA), func(ctx context.Context) error {
+			var n int
+			return ctxPool.QueryRow(ctx, `SELECT count(*) FROM mail_security.firewall_networks`).Scan(&n)
+		}); err == nil {
+			t.Fatal("mail_app no debe poder leer firewall_networks")
+		}
+		if err := fw.DeleteNetwork(engineCtx, true, n.ID); err != nil {
+			t.Fatal(err)
+		}
+		if err := fw.DeleteNetwork(engineCtx, true, n.ID); err != domain.ErrNotFound {
+			t.Fatalf("baja repetida: %v", err)
+		}
+	})
+
 	t.Run("reconciliacion completa contra la base", func(t *testing.T) {
 		store := apptest.NewStore()
 		if err := app.NewRedisSync(store, directory, reader, logger).ReconcileAll(engineCtx); err != nil {
@@ -314,5 +459,27 @@ func TestIntegracionCelda(t *testing.T) {
 			store.Values[domain.RedisQuarantineExclude] != `["zzz.com"]` {
 			t.Errorf("redis reconciliado: %v %v", store.Hashes, store.Values)
 		}
+		nets := store.Hashes[domain.SMTPAllowNetsKey("ana@acme.com")]
+		if store.Hashes[domain.RedisSMTPLimitedAccess]["ana@acme.com"] != "1" || nets["198.51.100.7"] != "1" || nets["203.0.113.0/24"] != "1" {
+			t.Errorf("redes SMTP en redis: %v", store.Hashes)
+		}
+		if store.Hashes[domain.RedisF2BWhitelist]["198.51.100.7/32"] != "1" || len(store.Hashes[domain.RedisF2BBlacklist]) != 0 ||
+			!strings.Contains(store.Values[domain.RedisF2BOptions], `"ban_time":3600`) {
+			t.Errorf("cortafuegos en redis: %v %v", store.Hashes, store.Values)
+		}
+		// Baja del buzon (evento del directorio): sus redes desaparecen de la base.
+		if err := reader.DeleteSMTPAccessByUsername(engineCtx, "ana@acme.com"); err != nil {
+			t.Fatal(err)
+		}
+		if all, err := reader.AllSMTPAccess(engineCtx); err != nil || len(all) != 0 {
+			t.Errorf("redes tras la baja: %+v %v", all, err)
+		}
 	})
+}
+
+type reinyectorFalso struct{ entregados int }
+
+func (r *reinyectorFalso) Reinject(context.Context, string, string, []byte) error {
+	r.entregados++
+	return nil
 }

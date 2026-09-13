@@ -74,6 +74,7 @@ type Relay struct {
 	// maxAttempts: a partir de aqui la fila se deja marcada como fallida y se avisa; no se
 	// reintenta para siempre porque un payload que JetStream rechaza no va a cambiar.
 	maxAttempts int
+	retention   time.Duration
 }
 
 // Options del rele; los ceros toman los valores por defecto.
@@ -81,7 +82,24 @@ type Options struct {
 	Batch       int
 	Interval    time.Duration
 	MaxAttempts int
+	// Retention > 0 poda lo publicado hace mas de ese tiempo, como mucho una vez por
+	// purgeEvery. Con cero la tabla no se poda desde el rele.
+	Retention time.Duration
 }
+
+// purgeEvery acota la poda: un DELETE por vuelta del rele seria trabajo inutil.
+const purgeEvery = time.Hour
+
+// CellRelayLockKey es el cerrojo del rele de la base de una CELDA. Lo comparten todos los
+// servicios que encolan en ella (mail-directory, mail-security): con la misma clave, una
+// sola instancia de todos ellos vacia la outbox de la celda a la vez y los eventos salen
+// en el orden en que se confirmaron.
+const CellRelayLockKey int64 = 0x63656c6c6f757462 // "celloutb"
+
+// LeaderLock toma el cerrojo de "una sola instancia a la vez" y devuelve como soltarlo;
+// pkg/db.TryLeaderLock lo cumple con el pool y la clave ligados. Se inyecta para no
+// importar pkg/db desde aqui.
+type LeaderLock func(ctx context.Context) (release func(), ok bool)
 
 func NewRelay(pool *pgxpool.Pool, publisher Publisher, logger *zap.Logger, opt Options) *Relay {
 	if opt.Batch <= 0 {
@@ -93,31 +111,76 @@ func NewRelay(pool *pgxpool.Pool, publisher Publisher, logger *zap.Logger, opt O
 	if opt.MaxAttempts <= 0 {
 		opt.MaxAttempts = 50
 	}
-	return &Relay{pool: pool, publisher: publisher, logger: logger, batch: opt.Batch, interval: opt.Interval, maxAttempts: opt.MaxAttempts}
+	return &Relay{pool: pool, publisher: publisher, logger: logger, batch: opt.Batch, interval: opt.Interval,
+		maxAttempts: opt.MaxAttempts, retention: opt.Retention}
 }
 
 // Run vacia la outbox hasta que el contexto termina. Varias replicas pueden correrlo a la
 // vez: FOR UPDATE SKIP LOCKED reparte las filas sin que dos publiquen la misma.
 func (r *Relay) Run(ctx context.Context) {
+	r.run(ctx, nil)
+}
+
+// RunExclusive es Run, pero en cada vuelta solo vacia quien consigue el cerrojo. Con varias
+// replicas (o varios servicios sobre la misma base) Run reparte las filas entre lotes
+// concurrentes y un evento posterior puede salir antes que uno anterior; con el cerrojo
+// hay un unico rele activo y el orden de confirmacion se conserva salvo en los reintentos.
+// Quien no lo consigue lo vuelve a intentar en la siguiente vuelta, asi que la caida del
+// rele activo no deja la outbox sin vaciar mas de un intervalo.
+func (r *Relay) RunExclusive(ctx context.Context, lock LeaderLock) {
+	r.run(ctx, lock)
+}
+
+func (r *Relay) run(ctx context.Context, lock LeaderLock) {
 	t := time.NewTicker(r.interval)
 	defer t.Stop()
+	var lastPurge time.Time
 	for {
-		for {
-			n, err := r.Drain(ctx)
-			if err != nil {
-				if ctx.Err() == nil {
-					r.logger.Warn("outbox: fallo al vaciar", zap.Error(err))
-				}
-				break
-			}
-			if n < r.batch {
-				break
-			}
+		if lock == nil {
+			r.turn(ctx, &lastPurge)
+		} else if release, ok := lock(ctx); ok {
+			r.turn(ctx, &lastPurge)
+			release()
 		}
 		select {
 		case <-ctx.Done():
 			return
 		case <-t.C:
+		}
+	}
+}
+
+// turn es una vuelta del rele: vaciar y, si toca, podar.
+func (r *Relay) turn(ctx context.Context, lastPurge *time.Time) {
+	r.drainAll(ctx)
+	if r.retention <= 0 || time.Since(*lastPurge) < purgeEvery {
+		return
+	}
+	n, err := Purge(ctx, r.pool, r.retention)
+	if err != nil {
+		if ctx.Err() == nil {
+			r.logger.Warn("outbox: fallo al podar", zap.Error(err))
+		}
+		return
+	}
+	*lastPurge = time.Now()
+	if n > 0 {
+		r.logger.Info("outbox: eventos publicados podados", zap.Int64("filas", n))
+	}
+}
+
+// drainAll vacia lotes hasta que uno sale incompleto o falla.
+func (r *Relay) drainAll(ctx context.Context) {
+	for {
+		n, err := r.Drain(ctx)
+		if err != nil {
+			if ctx.Err() == nil {
+				r.logger.Warn("outbox: fallo al vaciar", zap.Error(err))
+			}
+			return
+		}
+		if n < r.batch {
+			return
 		}
 	}
 }

@@ -30,11 +30,14 @@ func scanMailbox(row pgx.Row) (domain.Mailbox, error) {
 	return m, mapErr(err)
 }
 
-func (r *MailboxRepo) List(ctx context.Context, tenantID uuid.UUID, page ports.Page) ([]domain.Mailbox, int64, error) {
+func (r *MailboxRepo) List(ctx context.Context, tenantID uuid.UUID, filter ports.MailboxFilter, page ports.Page) ([]domain.Mailbox, int64, error) {
+	const where = ` FROM mail.mailboxes WHERE tenant_id = $1
+   AND ($2 = '' OR username ILIKE $2 ESCAPE '\' OR display_name ILIKE $2 ESCAPE '\')
+   AND ($3 = '' OR domain = $3)`
 	return listPage(ctx, r.pool,
-		`SELECT COUNT(*) FROM mail.mailboxes WHERE tenant_id = $1`,
-		`SELECT `+mailboxColumns+` FROM mail.mailboxes WHERE tenant_id = $1 ORDER BY username LIMIT $2 OFFSET $3`,
-		scanMailbox, page.Limit, page.Offset, tenantID)
+		`SELECT COUNT(*)`+where,
+		`SELECT `+mailboxColumns+where+` ORDER BY username LIMIT $4 OFFSET $5`,
+		scanMailbox, page.Limit, page.Offset, tenantID, likePattern(filter.Search), filter.Domain)
 }
 
 func (r *MailboxRepo) Get(ctx context.Context, tenantID, id uuid.UUID) (*domain.Mailbox, error) {

@@ -8,6 +8,7 @@ import (
 	"github.com/alonsosss/corforce-email/pkg/validate"
 	"github.com/alonsosss/corforce-email/services/mail-directory/internal/app"
 	"github.com/alonsosss/corforce-email/services/mail-directory/internal/domain"
+	"github.com/alonsosss/corforce-email/services/mail-directory/internal/ports"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -16,7 +17,7 @@ const maxSieveBody = 3 * domain.MaxSieveScriptBytes
 
 func (h *Handler) mailboxRoutes(r chi.Router) {
 	const res, apRes, sieveRes = "mailboxes", "app_passwords", "sieve"
-	r.With(h.require(moduleMailboxes, res, actionRead)).Get("/", listOf(h.uc.ListMailboxes))
+	r.With(h.require(moduleMailboxes, res, actionRead)).Get("/", h.ListMailboxes)
 	r.With(h.require(moduleMailboxes, res, actionCreate)).Post("/", h.CreateMailbox)
 	r.With(h.require(moduleMailboxes, res, actionRead)).Get("/{id}", getOf(h.uc.GetMailbox))
 	r.With(h.require(moduleMailboxes, res, actionUpdate)).Patch("/{id}", h.UpdateMailbox)
@@ -34,6 +35,24 @@ func (h *Handler) mailboxRoutes(r chi.Router) {
 	r.With(h.require(moduleMailboxes, sieveRes, actionUpdate)).Put("/{id}/sieve", h.PutSieve)
 }
 
+// ListMailboxes admite ?search= (subcadena de username o nombre visible, sin distinguir
+// mayusculas) y ?domain= (exacto) ademas de la paginacion. El filtro va en el SQL, bajo
+// RLS: la interfaz ya no trae la pagina maxima para filtrar en el navegador.
+func (h *Handler) ListMailboxes(w http.ResponseWriter, r *http.Request) {
+	tenantID, ok := tenantFrom(w, r)
+	if !ok {
+		return
+	}
+	page, perPage, pg := pageFrom(r)
+	q := r.URL.Query()
+	items, total, err := h.uc.ListMailboxes(r.Context(), tenantID, ports.MailboxFilter{Search: q.Get("search"), Domain: q.Get("domain")}, pg)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	response.JSONWithMeta(w, http.StatusOK, items, response.PageMeta(total, page, perPage))
+}
+
 func (h *Handler) CreateMailbox(w http.ResponseWriter, r *http.Request) {
 	tenantID, ok := tenantFrom(w, r)
 	if !ok {
@@ -47,7 +66,7 @@ func (h *Handler) CreateMailbox(w http.ResponseWriter, r *http.Request) {
 	v.Required("local_part", req.LocalPart)
 	v.Required("domain", req.Domain)
 	v.Required("password", req.Password)
-	v.MaxLength("display_name", req.DisplayName, 255)
+	v.MaxLength("display_name", req.DisplayName, domain.MaxDisplayNameLength)
 	if !v.Valid() {
 		response.ErrValidation(w, v.Error())
 		return
@@ -81,7 +100,7 @@ func (h *Handler) UpdateMailbox(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.DisplayName != nil {
 		v := validate.New()
-		v.MaxLength("display_name", *req.DisplayName, 255)
+		v.MaxLength("display_name", *req.DisplayName, domain.MaxDisplayNameLength)
 		if !v.Valid() {
 			response.ErrValidation(w, v.Error())
 			return

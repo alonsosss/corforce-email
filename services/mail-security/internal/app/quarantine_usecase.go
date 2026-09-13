@@ -79,27 +79,34 @@ func (uc *QuarantineUseCase) Delete(ctx context.Context, tenantID, id uuid.UUID)
 }
 
 // Release reinyecta el mensaje por el puerto interno de Postfix (sin milter) al buzon
-// final y borra la fila. La reinyeccion va fuera de la transaccion: si falla, la fila
-// sigue ahi y se puede reintentar.
+// final, borra la fila y encola el evento en UNA transaccion que bloquea la fila: dos
+// liberaciones simultaneas no entregan el mensaje dos veces (la segunda ya no lo
+// encuentra), y si la reinyeccion falla no se borra nada y se puede reintentar. El coste es
+// mantener la transaccion abierta durante la entrega SMTP local, que acota el timeout del
+// reinyector.
 func (uc *QuarantineUseCase) Release(ctx context.Context, tenantID, id uuid.UUID, userID string) error {
-	item, err := uc.Get(ctx, tenantID, id)
-	if err != nil {
-		return err
-	}
-	msg, err := uc.Message(ctx, tenantID, id)
-	if err != nil {
-		return err
-	}
-	if err := uc.reinj.Reinject(ctx, item.Sender, item.Rcpt, msg); err != nil {
-		return fmt.Errorf("reinyectar %s: %w", id, err)
-	}
-	if err := uc.Delete(ctx, tenantID, id); err != nil {
-		uc.logger.Warn("mensaje liberado pero no borrado de cuarentena", zap.String("id", id.String()), zap.Error(err))
-	}
-	uc.events.Publish("mail_security.quarantine.released", map[string]any{
-		"id": id.String(), "tenant_id": tenantID.String(), "rcpt": item.Rcpt, "user_id": userID,
+	reinjected := false
+	err := uc.tx.TransactRLS(ctx, func(ctx context.Context) error {
+		item, err := uc.repo.LockForRelease(ctx, tenantID, id)
+		if err != nil {
+			return err
+		}
+		if err := uc.reinj.Reinject(ctx, item.Sender, item.Rcpt, item.Msg); err != nil {
+			return fmt.Errorf("reinyectar %s: %w", id, err)
+		}
+		reinjected = true
+		if err := uc.repo.Delete(ctx, tenantID, id); err != nil {
+			return err
+		}
+		return uc.events.QuarantineReleased(ctx, item, userID)
 	})
-	return nil
+	if err != nil && reinjected {
+		// El mensaje ya se entrego pero la fila sigue: se deja constancia para que nadie lo
+		// libere de nuevo sin saberlo.
+		uc.logger.Error("mensaje reinyectado sin confirmar la liberacion; la fila sigue en cuarentena",
+			zap.String("id", id.String()), zap.Error(err))
+	}
+	return err
 }
 
 // LearnSpam entrena el clasificador con el mensaje. La fila se conserva.

@@ -15,6 +15,8 @@ import (
 
 type engineFixture struct {
 	uc     *EngineUseCase
+	tx     *apptest.Tx
+	docs   *apptest.Documents
 	dir    *apptest.Directory
 	policy *apptest.PolicyReader
 	store  *apptest.Store
@@ -23,14 +25,26 @@ type engineFixture struct {
 }
 
 func newEngineFixture() *engineFixture {
-	f := &engineFixture{dir: apptest.NewDirectory(), policy: apptest.NewPolicyReader(), store: apptest.NewStore(), q: &apptest.Quarantine{}, pub: &apptest.Publisher{}}
-	logger := zap.NewNop()
-	f.uc = NewEngineUseCase(EngineDeps{
-		Directory: f.dir, Policy: f.policy, Quarantine: f.q,
-		Sync:   NewRedisSync(f.store, f.dir, f.policy, logger),
-		Store:  f.store, Events: f.pub, Logger: logger, LogLines: 3,
-	})
+	f := &engineFixture{tx: &apptest.Tx{}, docs: apptest.NewDocuments(), dir: apptest.NewDirectory(),
+		policy: apptest.NewPolicyReader(), store: apptest.NewStore(), q: &apptest.Quarantine{}}
+	f.pub = &apptest.Publisher{Tx: f.tx}
+	// Un fallo dentro de la transaccion deshace lo guardado en la cuarentena en memoria.
+	f.tx.Snapshot = func() func() {
+		saved := append([]domain.QuarantineItem(nil), f.q.Items...)
+		return func() { f.q.Items = saved }
+	}
+	f.uc = f.replica()
 	return f
+}
+
+// replica es otra instancia del servicio sobre la misma base (y el mismo Redis).
+func (f *engineFixture) replica() *EngineUseCase {
+	logger := zap.NewNop()
+	return NewEngineUseCase(EngineDeps{
+		Tx: f.tx, Documents: f.docs, Directory: f.dir, Policy: f.policy, Quarantine: f.q,
+		Sync:  NewRedisSync(f.store, f.dir, f.policy, logger),
+		Store: f.store, Events: f.pub, Logger: logger, LogLines: 3,
+	})
 }
 
 func TestSettingsRespondeNotModifiedYAvanzaAlCambiar(t *testing.T) {

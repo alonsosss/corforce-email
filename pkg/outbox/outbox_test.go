@@ -3,11 +3,29 @@ package outbox
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/alonsosss/corforce-email/pkg/events"
 	"github.com/jackc/pgx/v5/pgconn"
+	"go.uber.org/zap"
 )
+
+// Sin cerrojo el rele no toca la base: con pool nil, un vaciado entraria en panico.
+func TestRunExclusiveSinCerrojoNoVacia(t *testing.T) {
+	r := NewRelay(nil, nil, zap.NewNop(), Options{Interval: 5 * time.Millisecond, Retention: time.Hour})
+	var intentos atomic.Int32
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Millisecond)
+	defer cancel()
+	r.RunExclusive(ctx, func(context.Context) (func(), bool) {
+		intentos.Add(1)
+		return nil, false
+	})
+	if intentos.Load() < 2 {
+		t.Fatalf("el rele debe reintentar el cerrojo en cada vuelta: %d intentos", intentos.Load())
+	}
+}
 
 type execGrabador struct {
 	sql  string

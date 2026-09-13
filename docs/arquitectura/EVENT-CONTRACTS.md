@@ -24,8 +24,19 @@ construye fuera del literal y no se puede leer estaticamente.
 | `identity.user.logged_out` | identity | _opaco_ |
 | `identity.user.login_failed` | identity | `email`, `ip`, `user_agent` |
 | `identity.user.password_changed` | identity | _opaco_ |
-| `mail_security.quarantine.released` | mail-security | `id`, `rcpt`, `tenant_id`, `user_id` |
-| `mail_security.quarantine.stored` | mail-security | `id`, `qid`, `rcpt`, `score`, `sender`, `subject`, `tenant_id` |
+| `mail.alias.created` | mail-directory | `active`, `address`, `domain`, `goto`, `id`, `internal`, `tenant_id` |
+| `mail.alias.deleted` | mail-directory | `active`, `address`, `domain`, `goto`, `id`, `internal`, `tenant_id` |
+| `mail.alias.updated` | mail-directory | `active`, `address`, `domain`, `goto`, `id`, `internal`, `tenant_id` |
+| `mail.alias_domain.created` | mail-directory | `active`, `alias_domain`, `id`, `target_domain`, `tenant_id` |
+| `mail.alias_domain.deleted` | mail-directory | `active`, `alias_domain`, `id`, `target_domain`, `tenant_id` |
+| `mail.alias_domain.updated` | mail-directory | `active`, `alias_domain`, `id`, `target_domain`, `tenant_id` |
+| `mail.domain.activated` | mail-directory | `active`, `backupmx`, `domain`, `id`, `tenant_id` |
+| `mail.domain.created` | mail-directory | `active`, `backupmx`, `domain`, `id`, `tenant_id` |
+| `mail.domain.deleted` | mail-directory | `active`, `backupmx`, `domain`, `id`, `tenant_id` |
+| `mail.domain.updated` | mail-directory | `active`, `backupmx`, `domain`, `id`, `tenant_id` |
+| `mail.mailbox.created` | mail-directory | `active`, `domain`, `id`, `kind`, `tenant_id`, `username` |
+| `mail.mailbox.deleted` | mail-directory | `active`, `domain`, `id`, `kind`, `tenant_id`, `username` |
+| `mail.mailbox.updated` | mail-directory | `active`, `domain`, `id`, `kind`, `tenant_id`, `username` |
 | `organization.tenant.created` | organization | `cell_id`, `db_name`, `name`, `slug`, `status`, `tenant_id` |
 | `organization.tenant.modules_changed` | organization | `disabled`, `enabled`, `tenant_id` |
 | `organization.tenant.status_changed` | organization | `previous_status`, `slug`, `status`, `tenant_id` |

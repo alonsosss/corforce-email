@@ -49,7 +49,7 @@ la sesion (V en identity, access-control y organization).
 
 ## 3. Celda
 
-### 3.1 Esquema `mail` (V: migracion; P: servicios que lo escriben)
+### 3.1 Esquema `mail` (V: migracion y `mail-directory`, que lo escribe)
 
 `migrations/cell/canonical/mail-directory/01_mail.sql`. Conserva la semantica del
 directorio de mailcow, que es la que Postfix y Dovecot entienden, traducida a PostgreSQL:
@@ -90,6 +90,15 @@ mismo patron: `tenant_isolation` por `tenant_id = mail_security.current_tenant()
 consultan como dueno y atribuyen cada fila de cuarentena a la empresa del buzon final.
 Probado contra Postgres: una empresa no ve umbrales, ajustes ni cuarentena de otra.
 
+Anadidos de `mail-security` (V, probado contra Postgres con las migraciones aplicadas dos
+veces, 2026-09-13): `04_smtp_access.sql`, redes SMTP por buzon (`cidr`; un CHECK exige
+prefijo IPv4 de /8 a /32 e IPv6 de /32 a /128, lo que compara Rspamd) con
+`tenant_isolation`; `03_engine_documents.sql`, la marca `Last-Modified` de `/settings` por
+celda, y `05_firewall.sql`, listas y opciones del cortafuegos de la celda. Estas dos
+ultimas no tienen `tenant_id`: son de la celda o de la plataforma, `mail_app` no tiene
+permisos sobre ellas (RLS activo sin politica) y el servicio las usa como dueno, el
+cortafuegos solo tras exigir al superadmin.
+
 `03_mail_app_policies.sql` (mail-directory) anade lo que el primer consumidor necesito:
 `app_delete` sobre `quota_usage` (solo del buzon propio, por eso el servicio borra la cuota
 antes que el buzon), `WITH CHECK` en `transports` que admite `tenant_id NULL` solo con
@@ -99,6 +108,23 @@ alias de otra empresa sin ver sus filas. `mail-directory` abre TODA lectura y es
 `db.TransactRLS`; su ruta interna de activacion (la llama domain-service con `X-Tenant-ID`,
 sin usuario) corre sin cambio de rol y ahi solo protege el filtro por `tenant_id`. Probado
 con dos empresas en `services/mail-directory/internal/adapters/postgres/integration_test.go`.
+
+### 3.3 Eventos de la celda (V, 2026-09-13)
+
+`mail-directory` (`mail.*`) y `mail-security` (`mail_security.quarantine.*`) encolan con
+`pkg/outbox.Enqueue` en la MISMA transaccion que el cambio (bajo `TransactRLS` en las
+peticiones con usuario): el evento existe si y solo si existe el cambio, y un fallo al
+encolar revierte la escritura. `mail-directory/05_outbox_grants.sql` y
+`mail-security/02_outbox_grants.sql` conceden a `mail_app` `USAGE` en `platform` e
+`INSERT`, y solo `INSERT`, sobre `platform.event_outbox`: la aplicacion encola pero no lee
+una tabla con eventos de todas las empresas. Un solo rele por celda vacia la outbox hacia
+JetStream (`Relay.RunExclusive` con `db.TryLeaderLock` y `outbox.CellRelayLockKey`,
+compartida por los dos servicios y sus replicas) y poda lo publicado a los 7 dias. El id
+del evento es el de la fila y no cambia entre reintentos: es la clave de deduplicacion de
+JetStream y de los consumidores. Probado en
+`services/mail-directory/internal/adapters/postgres/outbox_integration_test.go`: el alta
+de buzon deja fila y evento, sin permiso de `INSERT` no deja ninguna, y el rele entrega el
+evento con el id de su fila.
 
 ## 4. Empresa (V)
 
@@ -188,6 +214,6 @@ celda (`TenantPoolManager.Forget` ya invalida la cache; falta el traslado de dat
 | El gateway inyecta el tenant; los servicios no aceptan `X-Tenant-ID` sin `X-Gateway-Token` | V |
 | Rutas por id comprueban la empresa de la sesion en el plano de control | V |
 | Directorio de correo con `tenant_id` en cada fila y rol de motores sin acceso a credenciales | V |
-| RLS en la celda para los servicios Go | V (politicas y roles; `mail-directory` las usa en toda lectura y escritura) |
+| RLS en la celda para los servicios Go | V (politicas y roles; `mail-directory` y el API de administracion de `mail-security` las usan en toda lectura y escritura) |
 | Una celda no lee otra celda (los servicios de celda solo abren `CELL_DB_NAME`); claves de cifrado por celda | V / P (claves) |
 | Respaldo por base y restauracion probada semanalmente (`ops/backup`) | V (scripts), P (programados en este entorno) |

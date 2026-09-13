@@ -27,6 +27,7 @@ var (
 	ErrNothingToUpdate    = errors.New("la peticion no trae ningun campo que actualizar")
 	ErrNameRequired       = errors.New("name es obligatorio")
 	ErrWildcardNeedsExtnl = errors.New("send_as * exige external = true")
+	ErrSearchTooLong      = errors.New("search supera la longitud maxima")
 
 	// ErrDomainNotOwned: el dominio no pertenece a la empresa de la peticion (o no existe).
 	ErrDomainNotOwned = errors.New("el dominio no pertenece a la empresa")

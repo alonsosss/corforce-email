@@ -34,6 +34,7 @@
     {"prefix": "mail-domains",  "service": "mail-directory", "module": "domains"},
     {"prefix": "mailboxes",     "service": "mail-directory", "module": "mailboxes"},
     {"prefix": "mail-routing",  "service": "mail-directory", "module": "mail_routing"},
+    {"prefix": "mail-directory", "service": "mail-directory", "module": "mailboxes"},
     {"prefix": "mail-security", "service": "mail-security",  "module": "mail_security"},
     {"prefix": "domains",       "service": "domain-service", "module": "domains"},
     {"prefix": "transactional", "service": "transactional",  "module": "transactional"},

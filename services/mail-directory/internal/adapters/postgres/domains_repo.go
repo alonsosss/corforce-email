@@ -28,11 +28,12 @@ func scanDomain(row pgx.Row) (domain.Domain, error) {
 	return d, mapErr(err)
 }
 
-func (r *DomainRepo) List(ctx context.Context, tenantID uuid.UUID, page ports.Page) ([]domain.Domain, int64, error) {
+func (r *DomainRepo) List(ctx context.Context, tenantID uuid.UUID, filter ports.DomainFilter, page ports.Page) ([]domain.Domain, int64, error) {
+	const where = ` FROM mail.domains WHERE tenant_id = $1 AND ($2 = '' OR domain ILIKE $2 ESCAPE '\')`
 	return listPage(ctx, r.pool,
-		`SELECT COUNT(*) FROM mail.domains WHERE tenant_id = $1`,
-		`SELECT `+domainColumns+` FROM mail.domains WHERE tenant_id = $1 ORDER BY domain LIMIT $2 OFFSET $3`,
-		scanDomain, page.Limit, page.Offset, tenantID)
+		`SELECT COUNT(*)`+where,
+		`SELECT `+domainColumns+where+` ORDER BY domain LIMIT $3 OFFSET $4`,
+		scanDomain, page.Limit, page.Offset, tenantID, likePattern(filter.Search))
 }
 
 func (r *DomainRepo) Get(ctx context.Context, tenantID, id uuid.UUID) (*domain.Domain, error) {
