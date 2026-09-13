@@ -321,3 +321,17 @@ groups:
         annotations:
           resumen: "El sistema no volvio entero despues del ultimo arranque"
           detalle: "La verificacion posterior al arranque encontro contenedores caidos, enfermos o la pasarela sin responder, y no pudo arreglarlo. Revisar /var/log/core-force-mail-verificacion-arranque.log en el servidor. Nota: si el que no volvio fue Prometheus, esta alerta NO puede sonar y el aviso llega por el vigilante externo."
+
+  - name: limites-de-peticiones
+    rules:
+      # Sin Redis cada replica cuenta el cupo en su propia memoria: el servicio sigue
+      # atendiendo, pero con N replicas un cliente obtiene N veces su cupo, tambien en el
+      # inicio de sesion. Un reinicio breve de Redis no avisa: la ventana es de 10 minutos.
+      - alert: LimitadorSinRedis
+        expr: sum by (service, limiter) (rate(rate_limit_degraded_total[5m])) > 0
+        for: 10m
+        labels:
+          severidad: alta
+        annotations:
+          resumen: "El limitador {{ $labels.limiter }} de {{ $labels.service }} cuenta en memoria"
+          detalle: "Redis no responde al limitador desde hace 10 minutos: cada replica aplica el cupo por su cuenta y el total se multiplica por el numero de replicas, tambien en el inicio de sesion. Revisar Redis y la red del servicio."

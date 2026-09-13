@@ -1,0 +1,52 @@
+# Pruebas de la alerta LimitadorSinRedis.
+#
+# Sin Redis los limites de peticiones del gateway siguen funcionando, pero cada replica
+# cuenta por su cuenta: el cupo real se multiplica por el numero de replicas, tambien en el
+# inicio de sesion. La prueba comprueba que con Redis sano no hay aviso, que una caida
+# sostenida avisa con el limitador y el servicio en el texto, y que un corte de dos
+# minutos (un reinicio de Redis) no molesta.
+#
+#   make check-alertas
+
+rule_files:
+  - ../rules/plataforma.yml
+
+evaluation_interval: 1m
+
+tests:
+  # ── Redis sano: ninguna decision en memoria ───────────────────────────────
+  - interval: 1m
+    input_series:
+      - series: 'rate_limit_degraded_total{job="mail-services",service="gateway",limiter="gateway-auth"}'
+        values: '0x60'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: LimitadorSinRedis
+        exp_alerts: []
+
+  # ── Redis caido: cada peticion se decide en memoria ───────────────────────
+  - interval: 1m
+    input_series:
+      - series: 'rate_limit_degraded_total{job="mail-services",service="gateway",limiter="gateway-auth"}'
+        values: '0+20x60'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: LimitadorSinRedis
+        exp_alerts:
+          - exp_labels:
+              severidad: alta
+              service: gateway
+              limiter: gateway-auth
+            exp_annotations:
+              resumen: "El limitador gateway-auth de gateway cuenta en memoria"
+              detalle: "Redis no responde al limitador desde hace 10 minutos: cada replica aplica el cupo por su cuenta y el total se multiplica por el numero de replicas, tambien en el inicio de sesion. Revisar Redis y la red del servicio."
+
+  # ── Reinicio de Redis: dos minutos en memoria y vuelta a la normalidad ────
+  - interval: 1m
+    input_series:
+      - series: 'rate_limit_degraded_total{job="mail-services",service="gateway",limiter="gateway-api"}'
+        values: '0x10 20 40 40x48'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: LimitadorSinRedis
+        exp_alerts: []

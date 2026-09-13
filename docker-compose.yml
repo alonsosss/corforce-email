@@ -127,6 +127,10 @@ services:
         condition: service_healthy
       nats:
         condition: service_healthy
+      # Los limites de peticiones se cuentan en Redis para todas las replicas; sin el, cada
+      # replica cuenta en memoria (arranca igual, pero el cupo se multiplica).
+      redis:
+        condition: service_healthy
       identity:
         condition: service_started
       access-control:
