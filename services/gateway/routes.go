@@ -1,9 +1,12 @@
 package main
 
 import (
+	"bytes"
 	_ "embed"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"regexp"
 	"strings"
@@ -120,15 +123,31 @@ func loadRouteTable() (*routeTable, error) {
 		}
 		raw = b
 	}
-	var t routeTable
-	if err := json.Unmarshal(raw, &t); err != nil {
-		return nil, fmt.Errorf("tabla de rutas: %w", err)
+	t, err := decodeRouteTable(raw)
+	if err != nil {
+		return nil, err
 	}
 	if err := t.validate(); err != nil {
 		return nil, err
 	}
 	if err := t.loadCellTargets(); err != nil {
 		return nil, err
+	}
+	return t, nil
+}
+
+// decodeRouteTable rechaza los campos que la tabla no conoce: una clave mal escrita o que
+// ya no existe se ignoraria en silencio y la ruta se comportaria distinto de lo que dice el
+// fichero.
+func decodeRouteTable(raw []byte) (*routeTable, error) {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	var t routeTable
+	if err := dec.Decode(&t); err != nil {
+		return nil, fmt.Errorf("tabla de rutas: %w", err)
+	}
+	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
+		return nil, fmt.Errorf("tabla de rutas: contenido despues del objeto")
 	}
 	return &t, nil
 }

@@ -1,16 +1,33 @@
 package main
 
 import (
-	"encoding/json"
 	"testing"
 )
+
+// Una clave que la tabla no conoce (mal escrita o retirada, como default_cell) no se ignora:
+// el gateway no arranca, en vez de enrutar distinto de lo que dice el fichero.
+func TestTablaRechazaCamposDesconocidos(t *testing.T) {
+	casos := map[string]string{
+		"clave retirada en una ruta publica": `{"services":{},"public":[{"method":"GET","path":"/x","service":"s","default_cell":true}]}`,
+		"clave desconocida arriba":           `{"services":{},"rutas":[]}`,
+		"contenido despues del objeto":       `{"services":{}} {"services":{}}`,
+	}
+	for nombre, raw := range casos {
+		if _, err := decodeRouteTable([]byte(raw)); err == nil {
+			t.Errorf("%s: se acepto %s", nombre, raw)
+		}
+	}
+	if _, err := decodeRouteTable([]byte(`{"services":{}}`)); err != nil {
+		t.Errorf("una tabla sin claves desconocidas debe leerse: %v", err)
+	}
+}
 
 // La tabla embebida es la que arranca en produccion: si deja de validar, el gateway
 // no levanta. Se comprueba aqui para que el fallo aparezca en CI y no en el despliegue.
 func TestTablaEmbebidaEsValida(t *testing.T) {
-	var tbl routeTable
-	if err := json.Unmarshal(defaultRoutes, &tbl); err != nil {
-		t.Fatalf("routes.json no es JSON valido: %v", err)
+	tbl, err := decodeRouteTable(defaultRoutes)
+	if err != nil {
+		t.Fatalf("routes.json no se lee con la decodificacion estricta: %v", err)
 	}
 	if err := tbl.validate(); err != nil {
 		t.Fatalf("routes.json no valida: %v", err)
