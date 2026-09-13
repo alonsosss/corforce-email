@@ -163,7 +163,29 @@ func (uc *RBACUseCase) SetRolePermissions(ctx context.Context, tenantID, roleID 
 	if role.IsSystem {
 		return domain.ErrSystemRole
 	}
-	return uc.rolePerms.ReplaceAll(ctx, roleID, permissionIDs)
+	unique := make([]uuid.UUID, 0, len(permissionIDs))
+	seen := make(map[uuid.UUID]struct{}, len(permissionIDs))
+	for _, id := range permissionIDs {
+		if _, dup := seen[id]; !dup {
+			seen[id] = struct{}{}
+			unique = append(unique, id)
+		}
+	}
+	if len(unique) > 0 {
+		found, err := uc.perms.GetByIDs(ctx, unique)
+		if err != nil {
+			return fmt.Errorf("leer permisos: %w", err)
+		}
+		if len(found) != len(unique) {
+			return domain.ErrPermissionNotFound
+		}
+		for _, p := range found {
+			if !p.AssignableToTenantRole() {
+				return domain.ErrPlatformPermission
+			}
+		}
+	}
+	return uc.rolePerms.ReplaceAll(ctx, roleID, unique)
 }
 
 func (uc *RBACUseCase) GetRolePermissions(ctx context.Context, tenantID, roleID uuid.UUID) ([]*domain.Permission, error) {
@@ -312,10 +334,33 @@ func (uc *RBACUseCase) GetAccessPolicy(ctx context.Context, userID, tenantID uui
 	return uc.userRoles.GetAccessPolicy(ctx, userID, tenantID)
 }
 
-func (uc *RBACUseCase) ListPermissions(ctx context.Context) ([]*domain.Permission, error) {
-	return uc.perms.List(ctx)
+// ListPermissions devuelve el catalogo con el que se editan roles. Quien no opera la
+// plataforma solo ve los permisos que puede asignar a un rol de su empresa.
+func (uc *RBACUseCase) ListPermissions(ctx context.Context, includePlatform bool) ([]*domain.Permission, error) {
+	perms, err := uc.perms.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return scopeFilter(perms, includePlatform), nil
 }
 
-func (uc *RBACUseCase) ListPermissionsByModule(ctx context.Context, module string) ([]*domain.Permission, error) {
-	return uc.perms.ListByModule(ctx, module)
+func (uc *RBACUseCase) ListPermissionsByModule(ctx context.Context, module string, includePlatform bool) ([]*domain.Permission, error) {
+	perms, err := uc.perms.ListByModule(ctx, module)
+	if err != nil {
+		return nil, err
+	}
+	return scopeFilter(perms, includePlatform), nil
+}
+
+func scopeFilter(perms []*domain.Permission, includePlatform bool) []*domain.Permission {
+	if includePlatform {
+		return perms
+	}
+	out := make([]*domain.Permission, 0, len(perms))
+	for _, p := range perms {
+		if p.AssignableToTenantRole() {
+			out = append(out, p)
+		}
+	}
+	return out
 }

@@ -262,6 +262,10 @@ func (h *Handler) SetRolePermissions(w http.ResponseWriter, r *http.Request) {
 			response.ErrNotFound(w, "role not found")
 		case domain.ErrSystemRole:
 			response.ErrForbidden(w, "cannot modify system role permissions")
+		case domain.ErrPermissionNotFound:
+			response.ErrBadRequest(w, "unknown permission id")
+		case domain.ErrPlatformPermission:
+			response.ErrForbidden(w, domain.ErrPlatformPermission.Error())
 		default:
 			response.ErrInternal(w)
 		}
@@ -301,10 +305,11 @@ func (h *Handler) ListPermissions(w http.ResponseWriter, r *http.Request) {
 	var perms []*domain.Permission
 	var err error
 
+	includePlatform := middleware.HasAnyRole(r.Context(), middleware.RoleSuperadmin)
 	if module != "" {
-		perms, err = h.rbac.ListPermissionsByModule(r.Context(), module)
+		perms, err = h.rbac.ListPermissionsByModule(r.Context(), module, includePlatform)
 	} else {
-		perms, err = h.rbac.ListPermissions(r.Context())
+		perms, err = h.rbac.ListPermissions(r.Context(), includePlatform)
 	}
 	if err != nil {
 		response.ErrInternal(w)
@@ -636,6 +641,7 @@ func permResponse(p *domain.Permission) map[string]interface{} {
 		"resource":    p.Resource,
 		"action":      p.Action,
 		"description": p.Description,
+		"scope":       p.Scope,
 	}
 }
 

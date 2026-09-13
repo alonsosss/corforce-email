@@ -7,7 +7,7 @@ implementas algo marcado P, muevelo a V en la misma tarea.
 
 | Plano | Base | Quien la lee | Contenido | Migraciones |
 |---|---|---|---|---|
-| Registro | `mail_registry` (una) | identity, access-control, organization; el gateway indirectamente | empresas, celdas, usuarios, sesiones, roles, permisos, catalogo de modulos, (P) planes | `migrations/registry/` |
+| Registro | `mail_registry` (una) | identity, access-control, organization, billing; el gateway indirectamente | empresas, celdas, usuarios, sesiones, roles, permisos, catalogo de modulos, planes, suscripciones y contadores de consumo | `migrations/registry/` |
 | Celda | `mail_cell_<code>` (una por celda) | Postfix, Dovecot, Rspamd via `mail-auth`/`mail-policy`; mail-directory, mail-security | directorio de correo (`mail`), politicas antispam y cuarentena (`mail_security`) | `migrations/cell/canonical/<svc>/` |
 | Empresa | `mail_tenant_<slug>` (una por empresa) | el resto de servicios | auditoria, scheduler, dominios y claves DKIM (`domains`), contactos, campanas, plantillas, envios, supresion | `migrations/tenant/canonical/<svc>/` |
 
@@ -33,6 +33,15 @@ foraneas entre esquemas, cabecera `-- Schema: x | Service: y`, idempotentes y ad
   `role_permissions`, `user_roles`, `access_denials`.
 * Semilla de permisos del plano de control en `005_seed_permissions.sql`; cada servicio
   nuevo trae la suya.
+* `billing` (`013_billing.sql`, permisos en `014`): `plans` (codigo unico, moneda ISO 4217,
+  `base_price numeric(15,2)`, `monthly|yearly`, `active|retired`), `plan_limits` (un limite
+  por recurso: `included` con -1 ilimitado, `hard_limit`, `overage_unit_price numeric(15,6)`
+  solo en limite blando), `subscriptions` (una por empresa, periodo en dias UTC con
+  `anchor_day` para que 31 ene -> 28/29 feb -> 31 mar no derive), `usage_counters` (stock en
+  `period_start = 1970-01-01`, flujo por periodo de la suscripcion), `processed_events`
+  (deduplicacion del consumo por id de evento, podada a 30 dias) y `stock_items` (un dominio
+  lo informan domain-service y mail-directory: cuenta una vez). Lo lee solo `billing`, que
+  filtra por `tenant_id` en cada consulta; los demas servicios preguntan por HTTP.
 
 El registro no tiene RLS: los tres servicios que lo leen filtran por `tenant_id` en cada
 consulta y los handlers comprueban que el recurso pedido por id pertenece a la empresa de
@@ -105,7 +114,19 @@ por `POST /internal/suppression/check`) y `templates` (plantillas de correo por 
 una sola version publicada por plantilla garantizada por el indice parcial
 `uq_versions_one_published`, las anteriores quedan `superseded`; renderizado interno por
 `POST /internal/templates/{id}/render` y evento `templates.template.published` por la
-outbox), `transactional` (mensajes, eventos de SES, proyeccion de dominios de envio, bajas).
+outbox), `transactional` (mensajes de las dos clases en `transactional.messages.class`,
+`transactional` o `marketing`; los de marketing llevan `campaign_id` y `contact_id` y la
+restriccion `messages_marketing_check` exige campana, contacto, enlace de baja y un solo
+destinatario; peticiones idempotentes en `transactional.submissions` con su clase y los
+suprimidos de la respuesta, para que una repeticion devuelva lo mismo y una clave no cruce
+de clase; eventos de SES, proyeccion de dominios de envio, bajas)
+y `reputation` (contadores por dia UTC y clase en `reputation.daily_stats`, con los envios
+contados por destinatario igual que rebotes permanentes y quejas; estado vigente por clase
+en `reputation.states` con la marca `manual` de una decision del superadmin que la
+evaluacion no pisa; `reputation.state_history` de solo insercion, protegido por trigger;
+limites de tasa propios en `reputation.limit_overrides`; ids de evento ya contados en
+`reputation.processed_events` para que la reentrega no sume dos veces; cada cambio de
+estado sale por la outbox como `reputation.tenant.state_changed`).
 
 ## 5. Enrutado por peticion y por celda (V)
 

@@ -18,12 +18,25 @@ type Role struct {
 	UpdatedAt   time.Time
 }
 
+// Alcance de un permiso del catalogo. Los de plataforma (gestionar empresas, planes o las
+// suscripciones de todas) solo los ejerce el superadmin, que no los necesita en ningun
+// rol: no se asignan nunca a un rol de empresa.
+const (
+	PermissionScopeTenant   = "tenant"
+	PermissionScopePlatform = "platform"
+)
+
 type Permission struct {
 	ID          uuid.UUID
 	Module      string
 	Resource    string
 	Action      string
 	Description string
+	Scope       string
+}
+
+func (p Permission) AssignableToTenantRole() bool {
+	return p.Scope == PermissionScopeTenant
 }
 
 type AccessPolicy struct {

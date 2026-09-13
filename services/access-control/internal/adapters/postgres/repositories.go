@@ -33,14 +33,14 @@ func collectRoles(rows pgx.Rows) ([]*domain.Role, error) {
 	return roles, rows.Err()
 }
 
-const permissionColumns = `id, module, resource, action, description`
+const permissionColumns = `id, module, resource, action, description, scope`
 
 func collectPermissions(rows pgx.Rows) ([]*domain.Permission, error) {
 	defer rows.Close()
 	perms := make([]*domain.Permission, 0)
 	for rows.Next() {
 		p := &domain.Permission{}
-		if err := rows.Scan(&p.ID, &p.Module, &p.Resource, &p.Action, &p.Description); err != nil {
+		if err := rows.Scan(&p.ID, &p.Module, &p.Resource, &p.Action, &p.Description, &p.Scope); err != nil {
 			return nil, err
 		}
 		perms = append(perms, p)
@@ -131,6 +131,15 @@ func (r *PermissionRepo) ListByModule(ctx context.Context, module string) ([]*do
 	return collectPermissions(rows)
 }
 
+func (r *PermissionRepo) GetByIDs(ctx context.Context, ids []uuid.UUID) ([]*domain.Permission, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT `+permissionColumns+` FROM access_control.permissions WHERE id = ANY($1)`, ids)
+	if err != nil {
+		return nil, err
+	}
+	return collectPermissions(rows)
+}
+
 type RolePermissionRepo struct {
 	pool *pgxpool.Pool
 }
@@ -141,7 +150,7 @@ func NewRolePermissionRepo(pool *pgxpool.Pool) *RolePermissionRepo {
 
 func (r *RolePermissionRepo) ListPermissions(ctx context.Context, roleID uuid.UUID) ([]*domain.Permission, error) {
 	rows, err := r.pool.Query(ctx,
-		`SELECT p.id, p.module, p.resource, p.action, p.description
+		`SELECT p.id, p.module, p.resource, p.action, p.description, p.scope
 		   FROM access_control.permissions p
 		   JOIN access_control.role_permissions rp ON rp.permission_id = p.id
 		  WHERE rp.role_id = $1
@@ -224,7 +233,7 @@ func (r *UserRoleRepo) ListRoles(ctx context.Context, userID, tenantID uuid.UUID
 
 func (r *UserRoleRepo) ListPermissions(ctx context.Context, userID, tenantID uuid.UUID) ([]*domain.Permission, error) {
 	rows, err := r.pool.Query(ctx,
-		`SELECT DISTINCT p.id, p.module, p.resource, p.action, p.description
+		`SELECT DISTINCT p.id, p.module, p.resource, p.action, p.description, p.scope
 		   FROM access_control.permissions p
 		   JOIN access_control.role_permissions rp ON rp.permission_id = p.id
 		   JOIN access_control.user_roles ur ON ur.role_id = rp.role_id

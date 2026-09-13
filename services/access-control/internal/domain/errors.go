@@ -7,4 +7,5 @@ var (
 	ErrRoleAlreadyExists  = errors.New("role already exists")
 	ErrPermissionNotFound = errors.New("permission not found")
 	ErrSystemRole         = errors.New("cannot modify system role")
+	ErrPlatformPermission = errors.New("platform permissions cannot be assigned to tenant roles")
 )

@@ -40,7 +40,8 @@ JetStream, S3, ClickHouse (analitica, fase 4), Prometheus/Grafana/Loki.
 | `scheduler` | Trabajos cron y tareas programadas por empresa con bloqueo en base | `scheduler` (por empresa) |
 
 Difiere del informe: `tenant-service` se llama `organization` (nombre heredado, esquema
-`organization`); `billing-service` y `policy-service` no existen todavia (fase 3/4).
+`organization`); `billing-service` es `billing` (tabla de 2.3; su esquema `billing` vive en
+el registro) y `policy-service` se absorbe en `reputation` (seccion 6).
 
 ### 2.2 Correo corporativo (celda). Estado: `mail-directory`, `mail-auth`, `domain-service` y `mail-security` verificados contra Postgres real (2026-09-12); motores copiados, pendientes de levantar con `mail-security` como `mail-policy`
 
@@ -69,19 +70,19 @@ Verificado de punta a punta con binarios reales (2026-09-12): alta de dominio po
 Postfix/Dovecot leen bajo el rol `mail_engine` con su ruta Maildir; otra empresa lista cero
 buzones (RLS).
 
-### 2.3 Transaccional y marketing (empresa). Estado: `transactional`, `templates` y `suppression` verificados (2026-09-12); fase 4 en construccion (`contacts`, `billing`, `reputation`; despues `campaigns`, `analytics`, `automations`)
+### 2.3 Transaccional y marketing (empresa). Estado: `transactional`, `templates` y `suppression` verificados (2026-09-12); `reputation` verificado contra Postgres y Redis reales (2026-09-13); carril de marketing y autorizacion previa de `transactional` verificados con pruebas unitarias e integracion contra Postgres (2026-09-13), sin prueba de punta a punta con SES; fase 4 en construccion (`contacts`, `billing`; despues `campaigns`, `analytics`, `automations`)
 
 | Servicio | Responsabilidad |
 |---|---|
-| `transactional` | API de envio transaccional (idempotente), adaptador SES v2, plantillas por referencia, ingesta de eventos SES (SNS con firma verificada o EventBridge), `POST /internal/send-email` para la propia plataforma |
+| `transactional` | API de envio transaccional (idempotente), adaptador SES v2, plantillas por referencia, ingesta de eventos SES (SNS con firma verificada o EventBridge), `POST /internal/send-email` para la propia plataforma. Carril de marketing para `campaigns` (`POST /internal/transactional/batch`, lotes de hasta 500): cola `transactional.marketing.queued`, consumidor `transactional-marketing-sender`, configuration set `SES_CONFIG_SET_MARKETING` y tasa `SES_MAX_SEND_RATE_MARKETING` propios; el carril sale de `messages.class`, nunca del subject. Autorizacion previa en `reputation` por clase y numero de mensajes: una denegacion se respeta siempre; si `reputation` no responde, el marketing falla cerrado (503) y el transaccional sale igual y queda en el log. Todos los `transactional.email.*` llevan `class`, `campaign_id`, `contact_id` y `occurred_at` |
 | `templates` | Plantillas versionadas con `html/template`, parte de texto generada, variables validadas; `POST /internal/templates/{id}/render` para `transactional` y `campaigns` |
 | `suppression` | Lista por empresa y global: rebotes duros, quejas, bajas; consulta previa a cualquier encolado |
-| `reputation` | Tasas de rebote y queja por empresa y clase de envio, restricciones automaticas y cuotas de envio por periodo: responde a "puede esta empresa enviar N mensajes de esta clase ahora" (absorbe al `policy-service` del informe) |
+| `reputation` | Tasas de rebote y queja por empresa y clase de envio sobre una ventana movil, restricciones automaticas (la clase `transactional` solo se restringe sola al doble del umbral de bloqueo), suspension manual del superadmin, limites de tasa por hora y dia en Redis y derecho mensual consultado a `billing`: `POST /internal/reputation/authorize` responde a "puede esta empresa enviar N mensajes de esta clase ahora" (absorbe al `policy-service` del informe). Fail-open en la tasa y en el plan, nunca en el estado de reputacion |
 | `contacts` | Contactos con atributos declarados, consentimiento como evidencia append-only (doble opt-in), listas estaticas y segmentos dinamicos con un DSL compilado a SQL parametrizado; entrega audiencias paginadas a `campaigns` |
 | `campaigns` | Campanas, estados y programacion; orquestador que recorre la audiencia de `contacts` por lotes con cursor guardado antes de enviar (claim-before-send) y entrega cada lote a la via de marketing de `transactional` con clave idempotente por lote; estadisticas por campana desde los eventos `transactional.email.*` |
 | `automations` | Flujos disparados por eventos |
 | `analytics` | Agregados por empresa, campana y dia sobre Postgres; ClickHouse cuando el volumen lo exija, con ADR |
-| `billing` | Plano de control: planes con limites por recurso, suscripcion por empresa, contadores de consumo alimentados por eventos (idempotentes por id de evento) y consulta de derechos (`entitlements/check`) |
+| `billing` | Plano de control (esquema `billing` del registro): planes con limites por recurso, suscripcion por empresa, contadores de consumo alimentados por eventos (idempotentes por id de evento) y consulta de derechos (`POST /internal/billing/entitlements/check`). V (2026-09-12): servicio, migraciones `013`/`014`, pruebas unitarias y de integracion contra Postgres. Pendiente: pasarela de pago y facturas (el cierre de periodo publica `billing.period.closed` para ellas), y que los servicios consulten el derecho antes de crear |
 
 ## 3. Datos: tres planos
 

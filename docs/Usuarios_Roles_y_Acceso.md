@@ -31,11 +31,19 @@ Solo dos roles viven en codigo (`pkg/middleware/roles.go`):
 | Rol | Alcance | Se siembra |
 |---|---|---|
 | `superadmin` | Opera la plataforma: empresas, celdas, migraciones, sesiones de cualquier empresa. No dirige ninguna empresa y no recibe sus avisos | Empresa de plataforma, por operacion |
-| `tenant_admin` | Administra su empresa: usuarios, roles, dominios, politicas | `organization.RoleSeeder` al crear cada empresa, `is_system = true`, con todos los permisos cuyo modulo no sea `organization` |
+| `tenant_admin` | Administra su empresa: usuarios, roles, dominios, politicas | `organization.RoleSeeder` al crear cada empresa, `is_system = true`, con todos los permisos de alcance `tenant` |
 
 Cualquier otro rol lo crea un `tenant_admin` por API y recibe permisos por
 `role_permissions`. Un handler nunca compara con un nombre de rol distinto de los dos del
 sistema; `IsPrivileged` es la unica pregunta que hace el codigo.
+
+Cada permiso del catalogo tiene un alcance (`access_control.permissions.scope`,
+`018_permission_scope.sql`): `tenant` o `platform`. Los de plataforma (`organization/*`,
+`billing/plans/*`, `billing/subscriptions/*`, `reputation/tenants/*`) los ejerce solo el
+`superadmin`, que no los necesita en ningun rol. Ningun rol de empresa los recibe: el
+sembrado del `tenant_admin` filtra por alcance, `PUT /roles/{id}/permissions` responde 403
+si se pide uno y el catalogo `GET /permissions` los oculta a quien no es `superadmin`. Una
+migracion que siembre un permiso de plataforma lo declara con `scope = 'platform'`.
 
 ## 3. Permisos (V)
 
@@ -57,7 +65,7 @@ en cache Redis 5 minutos por usuario y empresa, invalidada al asignar o revocar.
 |---|---|---|---|
 | 1. Menu | `web/` | Muestra solo los modulos donde el usuario tiene algun permiso (`modules`) y consulta `can(module, resource, action)` para cada accion | P (fase 1) |
 | 2. Gateway | `services/gateway/rbac.go` | Lecturas: exige que el modulo del prefijo este en `modules` (`RBAC_READ_MODE`). Escrituras: DELETE exige `delete`, PUT/PATCH `update`, POST cualquier accion de escritura del modulo (`RBAC_ENFORCE_MODE`). Modulo deshabilitado bloquea a todos, administradores incluidos. Autoservicio (`/auth`, `/sessions`, `/users/me`, `/access/my-modules`) no se gatea. Fallo: `RBAC_FAIL_MODE=closed`. Por defecto todo en `enforce` | V |
-| 3. Handler | cada servicio | Exige el permiso de accion concreto ademas del gateo por modulo | V: `pkg/authz.Checker.RequirePermission(module, resource, action)` consulta la politica en access-control (`/api/v1/policy/{user}`, cache en memoria 1 minuto), deja pasar a `superadmin` y `tenant_admin`, responde 403 sin permiso y 503 si no se puede comprobar ni hay politica en cache. Lo usan `domain-service`, `mail-directory`, `mail-security`, `suppression`, `templates` y `transactional`. P: el plano de control (`organization`, `identity`, `access-control`) sigue con `RequireRoles` o `IsPrivileged` |
+| 3. Handler | cada servicio | Exige el permiso de accion concreto ademas del gateo por modulo | V: `pkg/authz.Checker.RequirePermission(module, resource, action)` consulta la politica en access-control (`/api/v1/policy/{user}`, cache en memoria 1 minuto), deja pasar a `superadmin` y `tenant_admin`, responde 403 sin permiso y 503 si no se puede comprobar ni hay politica en cache. Lo usan `domain-service`, `mail-directory`, `mail-security`, `suppression`, `templates`, `transactional` y `billing` (que en su API de plataforma, planes y suscripciones de todas las empresas, exige ademas `RequireRoles(superadmin)`) y `reputation` (sus rutas de plataforma `/api/v1/reputation/tenants/*`, que operan sobre la base de otra empresa, exigen tambien `RequireRoles(superadmin)` por el mismo motivo con `reputation/tenants/*`). P: el plano de control (`organization`, `identity`, `access-control`) sigue con `RequireRoles` o `IsPrivileged` |
 
 Las consultas que viajan en POST por llevar cuerpo (comprobar una lista de direcciones,
 renderizar o previsualizar una plantilla, previsualizar un segmento) se declaran en

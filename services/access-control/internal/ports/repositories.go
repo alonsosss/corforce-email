@@ -20,6 +20,9 @@ type RoleRepository interface {
 type PermissionRepository interface {
 	List(ctx context.Context) ([]*domain.Permission, error)
 	ListByModule(ctx context.Context, module string) ([]*domain.Permission, error)
+	// GetByIDs devuelve los permisos existentes entre los pedidos; los que no existen no
+	// aparecen.
+	GetByIDs(ctx context.Context, ids []uuid.UUID) ([]*domain.Permission, error)
 }
 
 type RolePermissionRepository interface {

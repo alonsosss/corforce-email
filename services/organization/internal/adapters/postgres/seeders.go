@@ -14,9 +14,10 @@ import (
 //
 // Solo se siembra tenant_admin: es el unico rol que existe antes de que el tenant
 // tenga ningun permiso propio, y de el nace el resto de la administracion. Recibe
-// TODOS los permisos del catalogo salvo los de plataforma. El superadmin es una cuenta
-// de plataforma y no se siembra por tenant. Que permiso tiene el rol es un dato del
-// catalogo access_control.permissions, nunca una lista en el codigo.
+// TODOS los permisos del catalogo de alcance 'tenant'; los de alcance 'platform' son del
+// superadmin, que es una cuenta de plataforma y no se siembra por tenant. Que permiso
+// tiene el rol y cual es de plataforma son datos del catalogo access_control.permissions,
+// nunca una lista en el codigo.
 type RoleSeeder struct {
 	pool *pgxpool.Pool
 }
@@ -24,10 +25,6 @@ type RoleSeeder struct {
 func NewRoleSeeder(pool *pgxpool.Pool) *RoleSeeder {
 	return &RoleSeeder{pool: pool}
 }
-
-// platformPermissionModules son los modulos de permiso reservados a la plataforma: un
-// administrador de tenant no los recibe aunque esten en el catalogo.
-var platformPermissionModules = []string{"organization"}
 
 const tenantAdminDescription = "Administrador del tenant: usuarios, dominios y politicas de su propia organizacion"
 
@@ -56,9 +53,9 @@ func (s *RoleSeeder) SeedDefaultRoles(ctx context.Context, tenantID uuid.UUID) e
    FROM access_control.roles r
    CROSS JOIN access_control.permissions p
   WHERE r.tenant_id = $1 AND r.name = $2
-    AND p.module <> ALL($3)
+    AND p.scope = 'tenant'
  ON CONFLICT DO NOTHING`,
-		tenantID, middleware.RoleTenantAdmin, platformPermissionModules,
+		tenantID, middleware.RoleTenantAdmin,
 	); err != nil {
 		return fmt.Errorf("conceder permisos a %s: %w", middleware.RoleTenantAdmin, err)
 	}
