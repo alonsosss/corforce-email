@@ -52,3 +52,27 @@ func TestAggregate(t *testing.T) {
 		t.Fatalf("luis: %+v", luis)
 	}
 }
+
+// causes de la consulta previa lista exactamente las causas de reasons, en su orden, cada
+// una con la hora de alta de su fila; una manual caducada no aparece.
+func TestSuppressedLlevaLaHoraDeCadaCausaVigente(t *testing.T) {
+	now := time.Date(2026, 9, 13, 12, 0, 0, 0, time.UTC)
+	past := now.Add(-time.Hour)
+	tenant := uuid.New()
+	baja := now.Add(-72 * time.Hour)
+	rebote := now.Add(-2 * time.Hour)
+	got := Aggregate([]Entry{
+		{ID: uuid.New(), TenantID: tenant, Email: "ana@example.com", Reason: ReasonUnsubscribe, CreatedAt: baja},
+		{ID: uuid.New(), TenantID: tenant, Email: "ana@example.com", Reason: ReasonManual, ExpiresAt: &past, CreatedAt: now.Add(-3 * time.Hour)},
+		{ID: uuid.New(), TenantID: tenant, Email: "ana@example.com", Reason: ReasonHardBounce, CreatedAt: rebote},
+	}, now)
+	if len(got) != 1 {
+		t.Fatalf("una direccion: %+v", got)
+	}
+	s := got[0].Suppressed(now)
+	want := []ActiveCause{{Reason: ReasonHardBounce, CreatedAt: rebote}, {Reason: ReasonUnsubscribe, CreatedAt: baja}}
+	if s.Email != "ana@example.com" || s.Reason != ReasonHardBounce || !reflect.DeepEqual(s.Causes, want) ||
+		!reflect.DeepEqual(s.Reasons, []Reason{ReasonHardBounce, ReasonUnsubscribe}) {
+		t.Fatalf("consulta previa: %+v", s)
+	}
+}

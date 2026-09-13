@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/alonsosss/corforce-email/services/contacts/internal/domain"
 	"github.com/google/uuid"
@@ -24,7 +25,17 @@ func legacy(ev SuppressionEvent) SuppressionEvent {
 	return ev
 }
 
+// suppressed fija las causas vigentes sin hora, como las devuelve un suppression anterior
+// a causes; suppressedAt, con la hora de alta de cada una.
 func (f *fixture) suppressed(email string, causes ...domain.SuppressionCause) {
+	active := make([]domain.ActiveCause, len(causes))
+	for i, c := range causes {
+		active[i] = domain.ActiveCause{Cause: c}
+	}
+	f.sup.causes[email] = active
+}
+
+func (f *fixture) suppressedAt(email string, causes ...domain.ActiveCause) {
 	f.sup.causes[email] = causes
 }
 
@@ -212,6 +223,127 @@ func TestProductorSinReasonsAplicaLaCausaDelEvento(t *testing.T) {
 	}
 	if f.sup.calls != 0 {
 		t.Fatalf("sin reasons no se consulta a suppression: %d", f.sup.calls)
+	}
+}
+
+// reconsent lleva a quien se dio de baja por el doble opt-in completo a la hora at y
+// devuelve el contacto ya reactivado.
+func (f *fixture) reconsent(t *testing.T, c *domain.Contact, at time.Time) *domain.Contact {
+	t.Helper()
+	ctx := context.Background()
+	f.now = at.Add(-time.Minute)
+	if _, err := f.uc.RequestConfirmation(ctx, f.tenant, c.ID, "form"); err != nil {
+		t.Fatal(err)
+	}
+	f.now = at
+	if err := f.uc.Confirm(ctx, f.tenant, tokenFromURL(t, f), "203.0.113.7", "Mozilla/5.0"); err != nil {
+		t.Fatal(err)
+	}
+	got := f.contact(t, c.ID)
+	if !got.Sendable() || f.ev.count("contact.resubscribed|") != 1 {
+		t.Fatalf("reconsentimiento: %+v %v", got, f.ev.events)
+	}
+	return got
+}
+
+// El hueco que cierra la hora de las causas: la persona reconsiente por doble opt-in y,
+// antes de que suppression retire la baja al recibir contacts.contact.resubscribed, llega
+// (o se reentrega) el alta de esa baja antigua. La baja es anterior al consentimiento: no
+// lo revoca ni devuelve al contacto a unsubscribed.
+func TestBajaAnteriorAlReconsentimientoNoLoRevoca(t *testing.T) {
+	f := newFixture(t)
+	baja := f.now
+	c := f.addContact(t, "vuelve@example.com", domain.StatusUnsubscribed, domain.ConsentRevoked)
+	f.reconsent(t, c, baja.Add(72*time.Hour))
+	consents, events := len(f.s.consents), len(f.ev.events)
+
+	f.suppressedAt(c.Email, domain.ActiveCause{Cause: domain.CauseUnsubscribe, RegisteredAt: baja})
+	for i := 0; i < 2; i++ {
+		if res := f.apply(t, added(f, c.Email, "unsubscribe")); res.Changed {
+			t.Fatalf("entrega %d de la baja anterior: %+v", i+1, res)
+		}
+	}
+	if got := f.contact(t, c.ID); got.Status != domain.StatusActive || got.ConsentStatus != domain.ConsentGranted || !got.Sendable() {
+		t.Fatalf("el reconsentimiento sigue: %+v", got)
+	}
+	if len(f.s.consents) != consents || len(f.ev.events) != events {
+		t.Fatalf("ninguna revocacion ni evento: %v", f.ev.events[events:])
+	}
+}
+
+// Una baja registrada despues del reconsentimiento siempre lo revoca, y una reentrega de
+// la baja antigua despues no cambia nada.
+func TestBajaPosteriorAlReconsentimientoLoRevoca(t *testing.T) {
+	f := newFixture(t)
+	baja := f.now
+	c := f.addContact(t, "otra-vez@example.com", domain.StatusUnsubscribed, domain.ConsentRevoked)
+	regrant := baja.Add(72 * time.Hour)
+	f.reconsent(t, c, regrant)
+	consents := len(f.s.consents)
+
+	nueva := regrant.Add(time.Hour)
+	f.now = nueva
+	f.suppressedAt(c.Email, domain.ActiveCause{Cause: domain.CauseUnsubscribe, RegisteredAt: nueva})
+	if res := f.apply(t, added(f, c.Email, "unsubscribe")); !res.Changed {
+		t.Fatalf("la baja nueva revoca: %+v", res)
+	}
+	got := f.contact(t, c.ID)
+	if got.Status != domain.StatusUnsubscribed || got.ConsentStatus != domain.ConsentRevoked || got.Sendable() {
+		t.Fatalf("baja nueva: %+v", got)
+	}
+	if len(f.s.consents) != consents+1 || f.s.consents[consents].Method != domain.MethodSuppression ||
+		f.s.consents[consents].Status != domain.ConsentRevoked {
+		t.Fatalf("evidencia de la baja nueva: %+v", f.s.consents[consents:])
+	}
+	if f.ev.count("consent.revoked|suppression") != 1 {
+		t.Fatalf("evento de la revocacion: %v", f.ev.events)
+	}
+}
+
+// Sin un consentimiento posterior que pruebe que lo pidio la persona, la baja revoca como
+// antes: tanto sin historial como con un consentimiento declarado por la empresa (api)
+// despues de la baja, que CheckGrant habria rechazado si contacts la hubiera conocido.
+func TestBajaSinReconsentimientoRevocaComoHoy(t *testing.T) {
+	f := newFixture(t)
+	baja := f.now
+
+	sin := f.addContact(t, "nuevo@example.com", domain.StatusActive, domain.ConsentNone)
+	api := f.addContact(t, "crm@example.com", domain.StatusActive, domain.ConsentNone)
+	f.now = baja.Add(time.Hour)
+	if err := (fakeConsents{f.s}).Append(context.Background(), &domain.Consent{
+		TenantID: f.tenant, ContactID: api.ID, Purpose: domain.PurposeMarketing,
+		Status: domain.ConsentGranted, Method: domain.MethodAPI, Source: "crm",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !f.contact(t, api.ID).Sendable() {
+		t.Fatal("el contacto de la empresa tiene consentimiento")
+	}
+
+	for _, c := range []*domain.Contact{sin, api} {
+		f.suppressedAt(c.Email, domain.ActiveCause{Cause: domain.CauseUnsubscribe, RegisteredAt: baja})
+		if res := f.apply(t, added(f, c.Email, "unsubscribe")); !res.Changed {
+			t.Fatalf("%s: la baja revoca: %+v", c.Email, res)
+		}
+		if got := f.contact(t, c.ID); got.Status != domain.StatusUnsubscribed || got.ConsentStatus != domain.ConsentRevoked {
+			t.Fatalf("%s: %+v", c.Email, got)
+		}
+	}
+}
+
+// Un suppression que aun no publica causes no da la hora de la baja: se aplica la regla
+// de antes y la baja revoca aunque haya un reconsentimiento.
+func TestProductorSinHorasRevocaComoHoy(t *testing.T) {
+	f := newFixture(t)
+	c := f.addContact(t, "replica@example.com", domain.StatusUnsubscribed, domain.ConsentRevoked)
+	f.reconsent(t, c, f.now.Add(72*time.Hour))
+
+	f.suppressed(c.Email, domain.CauseUnsubscribe)
+	if res := f.apply(t, added(f, c.Email, "unsubscribe")); !res.Changed {
+		t.Fatalf("sin hora la baja revoca: %+v", res)
+	}
+	if got := f.contact(t, c.ID); got.Status != domain.StatusUnsubscribed || got.ConsentStatus != domain.ConsentRevoked {
+		t.Fatalf("como hoy: %+v", got)
 	}
 }
 

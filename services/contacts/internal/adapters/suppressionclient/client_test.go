@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/alonsosss/corforce-email/services/contacts/internal/domain"
 	"github.com/google/uuid"
@@ -31,16 +32,23 @@ func TestActiveCausesContract(t *testing.T) {
 	defer srv.Close()
 	c := New(srv.URL+"/", "tok")
 
+	rebote := time.Date(2026, 9, 10, 8, 30, 0, 123456000, time.UTC)
+	manual := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	cases := []struct {
 		body string
-		want []domain.SuppressionCause
+		want []domain.ActiveCause
 	}{
-		{`{"data":{"suppressed":[]}}`, []domain.SuppressionCause{}},
+		{`{"data":{"suppressed":[]}}`, []domain.ActiveCause{}},
+		// Lo que devuelve el suppression actual: causes con la hora de alta de cada causa.
+		{`{"data":{"suppressed":[{"email":"ana@example.com","reason":"hard_bounce","reasons":["hard_bounce","manual"],` +
+			`"causes":[{"reason":"hard_bounce","created_at":"2026-09-10T08:30:00.123456Z"},{"reason":"manual","created_at":"2026-09-01T00:00:00Z"}]}]}}`,
+			[]domain.ActiveCause{{Cause: domain.CauseHardBounce, RegisteredAt: rebote}, {Cause: domain.CauseManual, RegisteredAt: manual}}},
+		// Una replica sin causes: las causas llegan sin hora.
 		{`{"data":{"suppressed":[{"email":"ana@example.com","reason":"hard_bounce","reasons":["hard_bounce","manual"]}]}}`,
-			[]domain.SuppressionCause{domain.CauseHardBounce, domain.CauseManual}},
+			[]domain.ActiveCause{{Cause: domain.CauseHardBounce}, {Cause: domain.CauseManual}}},
 		// Una replica anterior sin reasons: la direccion sigue suprimida por su causa.
 		{`{"data":{"suppressed":[{"email":"ana@example.com","reason":"complaint"}]}}`,
-			[]domain.SuppressionCause{domain.CauseComplaint}},
+			[]domain.ActiveCause{{Cause: domain.CauseComplaint}}},
 	}
 	for _, tc := range cases {
 		body = tc.body
@@ -54,6 +62,11 @@ func TestActiveCausesContract(t *testing.T) {
 		`{"data":{"suppressed":[{"email":"ana@example.com","reasons":[]}]}}`,
 		`{"data":{"suppressed":[{"email":"otra@example.com","reason":"manual","reasons":["manual"]}]}}`,
 		`{"data":{"suppressed":[{"email":"ana@example.com","reason":"manual"},{"email":"ana@example.com","reason":"invalid"}]}}`,
+		// causes que no nombra exactamente las causas de reasons.
+		`{"data":{"suppressed":[{"email":"ana@example.com","reason":"unsubscribe","reasons":["unsubscribe","manual"],"causes":[{"reason":"unsubscribe","created_at":"2026-09-10T08:30:00Z"}]}]}}`,
+		`{"data":{"suppressed":[{"email":"ana@example.com","reason":"unsubscribe","reasons":["unsubscribe"],"causes":[{"reason":"manual","created_at":"2026-09-10T08:30:00Z"}]}]}}`,
+		`{"data":{"suppressed":[{"email":"ana@example.com","reason":"unsubscribe","reasons":["unsubscribe"],"causes":[]}]}}`,
+		`{"data":{"suppressed":[{"email":"ana@example.com","reason":"unsubscribe","reasons":["unsubscribe"],"causes":[{"reason":"unsubscribe","created_at":"ayer"}]}]}}`,
 		`no es json`,
 	} {
 		body = bad

@@ -89,9 +89,9 @@ func (uc *UseCase) activeReasons(ctx context.Context, tenantID uuid.UUID, email 
 }
 
 // Check devuelve, de las direcciones dadas, las que tienen alguna causa vigente, con la
-// principal como reason y todas las vigentes en reasons. Las direcciones se normalizan y
-// las que no son direcciones validas se ignoran: no pueden estar en la lista y quien envia
-// ya las rechaza por su cuenta.
+// principal como reason, todas las vigentes en reasons y cada una con su hora de alta en
+// causes. Las direcciones se normalizan y las que no son direcciones validas se ignoran:
+// no pueden estar en la lista y quien envia ya las rechaza por su cuenta.
 func (uc *UseCase) Check(ctx context.Context, tenantID uuid.UUID, emails []string) ([]domain.Suppressed, error) {
 	if len(emails) > MaxCheckEmails {
 		return nil, domain.ErrTooManyEmails
@@ -104,11 +104,12 @@ func (uc *UseCase) Check(ctx context.Context, tenantID uuid.UUID, emails []strin
 	if err != nil {
 		return nil, err
 	}
-	addresses := domain.Aggregate(found, uc.now())
+	now := uc.now()
+	addresses := domain.Aggregate(found, now)
 	out := make([]domain.Suppressed, 0, len(addresses))
 	for _, a := range addresses {
 		if a.Active() {
-			out = append(out, domain.Suppressed{Email: a.Email, Reason: a.Reason, Reasons: a.Reasons})
+			out = append(out, a.Suppressed(now))
 		}
 	}
 	return out, nil

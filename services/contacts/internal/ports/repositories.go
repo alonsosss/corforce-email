@@ -140,8 +140,9 @@ type Transactor interface {
 // de verdad del estado del contacto: la foto de causas que trae cada evento puede llegar
 // desordenada respecto de otras.
 type SuppressionState interface {
-	// ActiveCauses devuelve las causas vigentes de la direccion; vacio si esta libre.
-	ActiveCauses(ctx context.Context, tenantID uuid.UUID, email string) ([]domain.SuppressionCause, error)
+	// ActiveCauses devuelve las causas vigentes de la direccion, cada una con su hora de
+	// alta si suppression la publica; vacio si esta libre.
+	ActiveCauses(ctx context.Context, tenantID uuid.UUID, email string) ([]domain.ActiveCause, error)
 }
 
 // EventPublisher encola los eventos del dominio DENTRO de la transaccion (outbox): el

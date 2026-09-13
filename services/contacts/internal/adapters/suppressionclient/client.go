@@ -47,14 +47,20 @@ type checkResponse struct {
 			Email   string   `json:"email"`
 			Reason  string   `json:"reason"`
 			Reasons []string `json:"reasons"`
+			Causes  []struct {
+				Reason    string    `json:"reason"`
+				CreatedAt time.Time `json:"created_at"`
+			} `json:"causes"`
 		} `json:"suppressed"`
 	} `json:"data"`
 }
 
 // ActiveCauses consulta una sola direccion ya normalizada. Una direccion que suppression
 // devuelve como suprimida nunca se lee como libre: sin reasons (una replica anterior) su
-// causa es reason, y sin ninguna de las dos la respuesta es un error.
-func (c *Client) ActiveCauses(ctx context.Context, tenantID uuid.UUID, email string) ([]domain.SuppressionCause, error) {
+// causa es reason, y sin ninguna de las dos la respuesta es un error. La hora de cada
+// causa sale de causes; sin causes (una replica anterior) queda en cero, y un causes que
+// no nombra exactamente las causas de reasons es un error.
+func (c *Client) ActiveCauses(ctx context.Context, tenantID uuid.UUID, email string) ([]domain.ActiveCause, error) {
 	if c.baseURL == "" {
 		return nil, fmt.Errorf("suppression: SUPPRESSION_URL no configurada")
 	}
@@ -84,7 +90,7 @@ func (c *Client) ActiveCauses(ctx context.Context, tenantID uuid.UUID, email str
 	}
 	switch len(out.Data.Suppressed) {
 	case 0:
-		return []domain.SuppressionCause{}, nil
+		return []domain.ActiveCause{}, nil
 	case 1:
 	default:
 		return nil, fmt.Errorf("suppression: %d resultados para una sola direccion", len(out.Data.Suppressed))
@@ -100,9 +106,27 @@ func (c *Client) ActiveCauses(ctx context.Context, tenantID uuid.UUID, email str
 	if len(raw) == 0 {
 		return nil, fmt.Errorf("suppression: direccion suprimida sin causa")
 	}
-	causes := make([]domain.SuppressionCause, len(raw))
+	var since map[string]time.Time
+	if item.Causes != nil {
+		since = make(map[string]time.Time, len(item.Causes))
+		for _, cause := range item.Causes {
+			since[cause.Reason] = cause.CreatedAt
+		}
+		if len(item.Causes) != len(raw) || len(since) != len(raw) {
+			return nil, fmt.Errorf("suppression: causes no coincide con reasons")
+		}
+	}
+	causes := make([]domain.ActiveCause, len(raw))
 	for i, r := range raw {
-		causes[i] = domain.SuppressionCause(r)
+		causes[i].Cause = domain.SuppressionCause(r)
+		if since == nil {
+			continue
+		}
+		at, ok := since[r]
+		if !ok {
+			return nil, fmt.Errorf("suppression: causes no coincide con reasons")
+		}
+		causes[i].RegisteredAt = at
 	}
 	return causes, nil
 }

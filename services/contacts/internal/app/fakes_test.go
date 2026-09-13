@@ -596,19 +596,20 @@ func (f fakeImports) List(_ context.Context, tenantID uuid.UUID, _, _ int) ([]do
 }
 
 // fakeSuppression es el estado vigente de suppression: las causas de cada direccion en
-// el momento de la consulta, que el test fija antes de aplicar cada evento.
+// el momento de la consulta, con su hora de alta, que el test fija antes de aplicar cada
+// evento.
 type fakeSuppression struct {
-	causes map[string][]domain.SuppressionCause
+	causes map[string][]domain.ActiveCause
 	err    error
 	calls  int
 }
 
-func (f *fakeSuppression) ActiveCauses(_ context.Context, _ uuid.UUID, email string) ([]domain.SuppressionCause, error) {
+func (f *fakeSuppression) ActiveCauses(_ context.Context, _ uuid.UUID, email string) ([]domain.ActiveCause, error) {
 	f.calls++
 	if f.err != nil {
 		return nil, f.err
 	}
-	return append([]domain.SuppressionCause{}, f.causes[email]...), nil
+	return append([]domain.ActiveCause{}, f.causes[email]...), nil
 }
 
 type fakeTx struct{}
@@ -685,7 +686,7 @@ func newFixture(t *testing.T) *fixture {
 	f := &fixture{ev: &fakePublisher{}, tenant: uuid.New(), now: time.Date(2026, 9, 12, 12, 0, 0, 0, time.UTC)}
 	f.s = newStore(func() time.Time { return f.now })
 	f.query = &fakeQuery{s: f.s}
-	f.sup = &fakeSuppression{causes: map[string][]domain.SuppressionCause{}}
+	f.sup = &fakeSuppression{causes: map[string][]domain.ActiveCause{}}
 	f.uc = New(Deps{
 		Contacts: fakeContacts{f.s}, Consents: fakeConsents{f.s}, Tokens: fakeTokens{f.s},
 		Lists: fakeLists{f.s}, Attributes: fakeAttributes{f.s}, Segments: fakeSegments{f.s},

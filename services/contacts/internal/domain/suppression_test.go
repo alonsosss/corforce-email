@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"testing"
+	"time"
 )
 
 func TestReconcileSuppression(t *testing.T) {
@@ -45,6 +46,59 @@ func TestReconcileSuppression(t *testing.T) {
 				t.Fatalf("%s con %v: quedo %s (cambio=%v), se esperaba %s", tc.status, tc.causes, c.Status, changed, tc.want)
 			}
 		})
+	}
+}
+
+func TestUnsubscribeRevokes(t *testing.T) {
+	baja := time.Date(2026, 9, 10, 8, 0, 0, 0, time.UTC)
+	ip := "203.0.113.7"
+	grant := func(method ConsentMethod, ip *string, at time.Time) Consent {
+		return Consent{Purpose: PurposeMarketing, Status: ConsentGranted, Method: method, IP: ip, OccurredAt: at}
+	}
+	after, before := baja.Add(time.Microsecond), baja.Add(-time.Microsecond)
+	cases := []struct {
+		name     string
+		at       time.Time
+		consents []Consent
+		want     bool
+	}{
+		{"sin historial", baja, nil, true},
+		{"doble opt-in posterior: la baja es anterior y no revoca", baja, []Consent{grant(MethodDoubleOptIn, nil, after)}, false},
+		{"formulario con ip posterior", baja, []Consent{grant(MethodForm, &ip, after)}, false},
+		{"doble opt-in anterior: la baja es nueva", baja, []Consent{grant(MethodDoubleOptIn, nil, before)}, true},
+		{"empate: revoca", baja, []Consent{grant(MethodDoubleOptIn, nil, baja)}, true},
+		{"api posterior no levanta una baja", baja, []Consent{grant(MethodAPI, nil, after)}, true},
+		{"importacion posterior no levanta una baja", baja, []Consent{grant(MethodImport, nil, after)}, true},
+		{"formulario sin ip posterior no levanta una baja", baja, []Consent{grant(MethodForm, nil, after)}, true},
+		{"pendiente o revocado posterior no cuentan", baja, []Consent{
+			{Purpose: PurposeMarketing, Status: ConsentPending, Method: MethodDoubleOptIn, OccurredAt: after},
+			{Purpose: PurposeMarketing, Status: ConsentRevoked, Method: MethodForm, IP: &ip, OccurredAt: after},
+		}, true},
+		{"cuenta cualquier reconsentimiento posterior, no solo el ultimo", baja, []Consent{
+			grant(MethodDoubleOptIn, nil, after), grant(MethodAPI, nil, after.Add(time.Hour)),
+		}, false},
+		{"baja sin hora (suppression anterior): revoca como antes", time.Time{}, []Consent{grant(MethodDoubleOptIn, nil, after)}, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := UnsubscribeRevokes(tc.at, tc.consents); got != tc.want {
+				t.Fatalf("UnsubscribeRevokes = %v, se esperaba %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestCausasConHora(t *testing.T) {
+	at := time.Date(2026, 9, 10, 8, 0, 0, 0, time.UTC)
+	active := []ActiveCause{{Cause: CauseHardBounce, RegisteredAt: at.Add(time.Hour)}, {Cause: CauseUnsubscribe, RegisteredAt: at}}
+	if got := CausesOf(active); len(got) != 2 || got[0] != CauseHardBounce || got[1] != CauseUnsubscribe {
+		t.Fatalf("CausesOf: %v", got)
+	}
+	if got, ok := CauseRegisteredAt(active, CauseUnsubscribe); !ok || !got.Equal(at) {
+		t.Fatalf("hora de la baja: %v %v", got, ok)
+	}
+	if _, ok := CauseRegisteredAt(active, CauseComplaint); ok {
+		t.Fatal("una causa que no esta vigente no tiene hora")
 	}
 }
 

@@ -79,15 +79,15 @@ func (uc *UseCase) ApplySuppression(ctx context.Context, ev SuppressionEvent) (S
 		if err != nil {
 			return err
 		}
-		causes, err := uc.suppression.ActiveCauses(ctx, ev.TenantID, email)
+		active, err := uc.suppression.ActiveCauses(ctx, ev.TenantID, email)
 		if err != nil {
 			return fmt.Errorf("consultar el estado vigente en suppression: %w", err)
 		}
-		// La baja revoca el consentimiento solo si sigue vigente: la que llega tarde, cuando
-		// la persona ya reconsintio y suppression la retiro, no deshace ese consentimiento.
-		registered := ev.Subject == SubjectSuppressionAdded &&
-			domain.SuppressionCause(ev.Reason) == domain.CauseUnsubscribe &&
-			domain.HasCause(causes, domain.CauseUnsubscribe)
+		registered, err := uc.unsubscribeRegistered(ctx, c, ev, active)
+		if err != nil {
+			return err
+		}
+		causes := domain.CausesOf(active)
 		if registered {
 			revoked, err := uc.revokeByUnsubscribe(ctx, c, ev)
 			if err != nil {
@@ -102,6 +102,27 @@ func (uc *UseCase) ApplySuppression(ctx context.Context, ev SuppressionEvent) (S
 		return nil
 	})
 	return res, err
+}
+
+// unsubscribeRegistered dice si el evento registra una baja que revoca el consentimiento
+// del contacto ya bloqueado: es el alta de una baja, la baja sigue vigente (la que
+// suppression ya retiro porque la persona reconsintio no deshace ese consentimiento) y no
+// es anterior al ultimo reconsentimiento del contacto (domain.UnsubscribeRevokes), que es
+// lo que distingue la baja atrasada o reentregada, aun vigente mientras suppression no
+// procesa contacts.contact.resubscribed, de una baja nueva.
+func (uc *UseCase) unsubscribeRegistered(ctx context.Context, c *domain.Contact, ev SuppressionEvent, active []domain.ActiveCause) (bool, error) {
+	if ev.Subject != SubjectSuppressionAdded || domain.SuppressionCause(ev.Reason) != domain.CauseUnsubscribe {
+		return false, nil
+	}
+	at, ok := domain.CauseRegisteredAt(active, domain.CauseUnsubscribe)
+	if !ok {
+		return false, nil
+	}
+	consents, err := uc.consents.ListByContact(ctx, ev.TenantID, c.ID)
+	if err != nil {
+		return false, fmt.Errorf("leer el historial de consentimiento: %w", err)
+	}
+	return domain.UnsubscribeRevokes(at, consents), nil
 }
 
 // applySuppressionByReason es la regla de un productor sin reasons, que guardaba una

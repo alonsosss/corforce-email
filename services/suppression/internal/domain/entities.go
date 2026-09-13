@@ -159,11 +159,34 @@ type Import struct {
 // Suppressed es la respuesta de la consulta previa al envio para una direccion. Reason es
 // la causa vigente mas grave; Reasons, todas las vigentes de mas a menos grave: quien
 // relaja la supresion por una causa (el doble opt-in ignora las bajas) necesita saber que
-// no hay otra detras.
+// no hay otra detras. Causes son esas mismas causas, en el mismo orden, con la hora en que
+// se registro cada una: contacts la compara con el ultimo consentimiento de la persona
+// para no dejar que una baja anterior a el lo revoque.
 type Suppressed struct {
-	Email   string   `json:"email"`
-	Reason  Reason   `json:"reason"`
-	Reasons []Reason `json:"reasons"`
+	Email   string        `json:"email"`
+	Reason  Reason        `json:"reason"`
+	Reasons []Reason      `json:"reasons"`
+	Causes  []ActiveCause `json:"causes"`
+}
+
+// ActiveCause es una causa vigente y la hora de alta de su fila (created_at, el reloj de
+// la base de la empresa).
+type ActiveCause struct {
+	Reason    Reason    `json:"reason"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// Suppressed es la direccion tal como la devuelve la consulta previa al envio. now debe
+// ser el mismo instante con que se agrego la direccion, para que Causes y Reasons
+// coincidan.
+func (a Address) Suppressed(now time.Time) Suppressed {
+	causes := make([]ActiveCause, 0, len(a.Reasons))
+	for _, c := range a.Causes {
+		if c.Active(now) {
+			causes = append(causes, ActiveCause{Reason: c.Reason, CreatedAt: c.CreatedAt})
+		}
+	}
+	return Suppressed{Email: a.Email, Reason: a.Reason, Reasons: a.Reasons, Causes: causes}
 }
 
 // ReasonCount es el numero de direcciones con alguna exclusion vigente cuya causa

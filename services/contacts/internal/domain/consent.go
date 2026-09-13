@@ -74,10 +74,18 @@ func CheckGrant(c *Contact, method ConsentMethod, ip *string) error {
 	if c.Status != StatusUnsubscribed && c.ConsentStatus != ConsentRevoked {
 		return nil
 	}
-	if method == MethodDoubleOptIn || (method == MethodForm && ip != nil) {
+	if provesOwnRequest(method, ip) {
 		return nil
 	}
 	return ErrResubscribeRequiresOptIn
+}
+
+// provesOwnRequest indica si un consentimiento concedido prueba que lo pidio la propia
+// persona: el doble opt-in o un formulario con la ip de quien lo envio. Es lo unico que
+// levanta una baja, al registrarla (CheckGrant) y al compararla con una baja que llega
+// tarde (UnsubscribeRevokes).
+func provesOwnRequest(method ConsentMethod, ip *string) bool {
+	return method == MethodDoubleOptIn || (method == MethodForm && ip != nil)
 }
 
 // CheckConfirmationRequest decide si se puede pedir el doble opt-in. A una direccion que

@@ -184,7 +184,10 @@ fila por direccion; cada causa (`hard_bounce`, `complaint`, `unsubscribe`, `inva
 con un bloqueo consultivo por direccion en la transaccion; la causa principal, la vigente
 mas grave por el orden de `domain.Reasons()`, se calcula al leer y es el `reason` del
 listado, de la consulta de una exclusion y de la consulta previa a todo envio por
-`POST /internal/suppression/check`, que anaden `reasons` con todas las vigentes; el listado
+`POST /internal/suppression/check`, que anaden `reasons` con todas las vigentes; la consulta
+previa anade ademas `causes: [{reason, created_at}]` (V, 2026-09-13), las mismas causas de
+`reasons` en su orden con la hora de alta de su fila, el reloj de la base de la empresa;
+el listado
 filtra y las estadisticas cuentan por la principal; `suppression.entry.added` y `.removed`
 llevan la causa que entro o salio en `reason` y las vigentes que quedan en `reasons`) y
 `templates` (plantillas de correo por empresa:
@@ -240,7 +243,16 @@ contacto bloqueada (5 s, un intento; si falla, el evento queda sin confirmar y J
 reentrega), no con la causa ni la foto de `reasons` del evento, que puede llegar
 desordenada: una queja o un rebote vigentes fijan el estado del mas grave; una baja vigente
 deja `unsubscribed` a quien estaba en un estado mas grave o la acaba de registrar, y solo
-entonces revoca el consentimiento; sin ninguna causa vigente `bounced` y `complained`
+entonces revoca el consentimiento. Una baja que se acaba de registrar no revoca si es
+anterior al ultimo reconsentimiento con prueba de que lo pidio la persona (doble opt-in o
+formulario con ip, la regla de `CheckGrant`): es la baja atrasada o reentregada que
+suppression aun no retiro al recibir `contacts.contact.resubscribed`. Se compara el
+`created_at` de la causa en `causes` con el `occurred_at` de `contacts.consents`; en empate
+revoca; un consentimiento posterior por API o importacion no levanta la baja; sin hora
+(suppression anterior a `causes`) revoca como antes. Las dos horas las pone el mismo
+servidor, el de la base de la empresa que guarda los dos esquemas, asi que no hay deriva de
+relojes que tolerar (si algun dia se separan, la tolerancia pasa a ser la deriva NTP entre
+servidores). Sin ninguna causa vigente `bounced` y `complained`
 vuelven a `active` (una `manual` o `invalid` vigente lo impide) y `unsubscribed` no, ni se
 reconcede el consentimiento: eso solo lo hace un doble opt-in. Un evento sin `reasons`
 (productor anterior) se aplica por su causa, con un aviso limitado en el log.
