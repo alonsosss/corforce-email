@@ -242,6 +242,59 @@ func TestVerifyContrasenaIncorrectaAlimentaElFreno(t *testing.T) {
 	}
 }
 
+func TestVerifyWebmailExigeImapYSmtp(t *testing.T) {
+	cases := map[string]struct {
+		imap, smtp bool
+		want       domain.Result
+	}{
+		"ambos":    {true, true, domain.ResultOK},
+		"sin smtp": {true, false, domain.ResultNoAccess},
+		"sin imap": {false, true, domain.ResultNoAccess},
+	}
+	for name, c := range cases {
+		mb := activeMailbox()
+		mb.Access.IMAP, mb.Access.SMTP = c.imap, c.smtp
+		h := newHarness(mb)
+		if got := h.uc.Verify(context.Background(), request("principal", "webmail")); got != c.want {
+			t.Fatalf("%s: resultado = %s, se esperaba %s", name, got, c.want)
+		}
+	}
+}
+
+func TestVerifyWebmailNoAceptaContrasenasDeAplicacion(t *testing.T) {
+	h := newHarness(activeMailbox())
+	// Aunque hubiera una contrasena de aplicacion habilitada para el protocolo, el webmail
+	// no la consulta: solo entra la principal.
+	h.repo.appPasswords = []domain.AppPassword{{ID: uuid.New(), Name: "movil", PasswordHash: hashApp}}
+	h.repo.appProtocol = domain.ProtocolWebmail
+
+	if got := h.uc.Verify(context.Background(), request("movil", "webmail")); got != domain.ResultBadPassword {
+		t.Fatalf("resultado = %s, se esperaba bad_password", got)
+	}
+	if h.throttle.failures != 1 {
+		t.Fatalf("el intento debe alimentar el freno: failures=%d", h.throttle.failures)
+	}
+	if got := h.uc.Verify(context.Background(), request("principal", "webmail")); got != domain.ResultOK {
+		t.Fatalf("la contrasena principal abre el webmail, resultado = %s", got)
+	}
+	if len(h.repo.logins) != 1 || h.repo.logins[0].Service != "webmail" {
+		t.Fatalf("el inicio del webmail se registra con su servicio: %+v", h.repo.logins)
+	}
+}
+
+func TestAuthenticateDevuelveElNombreSoloSiAutoriza(t *testing.T) {
+	mb := activeMailbox()
+	mb.DisplayName = "Ana Perez"
+	h := newHarness(mb)
+
+	if v := h.uc.Authenticate(context.Background(), request("principal", "webmail")); v.Result != domain.ResultOK || v.DisplayName != "Ana Perez" {
+		t.Fatalf("verificacion inesperada: %+v", v)
+	}
+	if v := h.uc.Authenticate(context.Background(), request("otra", "webmail")); v.Result != domain.ResultBadPassword || v.DisplayName != "" {
+		t.Fatalf("un rechazo no debe llevar el nombre: %+v", v)
+	}
+}
+
 func TestVerifySinFrenoConfiguradoFunciona(t *testing.T) {
 	repo := &fakeRepo{mailbox: activeMailbox()}
 	uc := New(Deps{Repo: repo, Passwords: &fakeVerifier{}, Logger: zap.NewNop()})

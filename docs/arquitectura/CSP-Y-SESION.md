@@ -53,7 +53,8 @@ un estilo no ejecuta código.
 
 El gateway borra las cabeceras de seguridad que vengan del servicio de origen antes de
 poner las suyas. Con dos políticas el navegador aplica la intersección, y una cabecera
-repetida termina bloqueando algo sin explicación.
+repetida termina bloqueando algo sin explicación. Excepción: los prefijos
+`self_authenticated` conservan la CSP del servicio (ver «Sesión del webmail»).
 
 ### Los scripts que Cloudflare inyecta en el borde
 
@@ -66,3 +67,30 @@ hacía su trabajo), pero Cloudflare perdía una señal antibot y, el día que se
 Managed Challenge, el desafío habría fallado para usuarios legítimos.
 
 Un hash en la CSP no sirve: el script cambia entre cargas.
+
+## Sesión del webmail
+
+El webmail (`services/webmail`) no usa la sesión de la plataforma: sus usuarios son buzones
+de correo, no usuarios de identity. Token opaco de 256 bits en la cookie `cf_wm` con
+`HttpOnly`, `Secure` (misma variable `AUTH_COOKIE_SECURE`), `SameSite=Strict` y
+`Path=/api/v1/webmail`. En Redis solo está su SHA-256, con la inactividad como TTL
+(`WEBMAIL_SESSION_IDLE`) y una vida máxima (`WEBMAIL_SESSION_MAX`) que aplica el servicio
+aunque haya actividad. El token se rota en cada inicio de sesión y nunca viaja en un
+cuerpo. Toda escritura exige además un `Origin` de `CORS_ALLOWED_ORIGINS` o `API_ORIGIN`:
+`SameSite=Strict` ya impide que otro sitio envíe la cookie, y el `Origin` cierra el paso a
+los subdominios del mismo sitio.
+
+La revocación es por buzón: una marca en Redis con el instante del cambio (contraseña,
+desactivación, baja) invalida toda sesión abierta antes, aunque su clave siga ahí.
+
+El gateway enruta el webmail como prefijo `self_authenticated` (sin JWT ni RBAC, con los
+limitadores y las cabeceras del borde) y, solo para esos prefijos, **conserva la CSP del
+servicio** junto a la suya: sus respuestas son datos del buzón y adjuntos, nunca la
+aplicación, y su política (`default-src 'none'; sandbox`) es más estricta, así que la
+intersección que aplica el navegador es la del servicio. Los adjuntos salen siempre con
+`Content-Disposition: attachment`, `nosniff` y un tipo inofensivo (`application/octet-stream`
+salvo imágenes de mapa de bits, PDF y texto plano).
+
+El HTML de un mensaje llega ya saneado (bluemonday) dentro del JSON. La interfaz debe
+pintarlo en un `<iframe sandbox>` sin `allow-scripts` ni `allow-same-origin`: el saneado es
+la primera barrera y el aislamiento la segunda.

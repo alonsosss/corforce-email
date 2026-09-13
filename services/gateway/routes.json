@@ -17,6 +17,7 @@
     "reputation":     {"host_env": "REPUTATION_HOST",     "default_host": "reputation",     "default_port": "8054"},
     "campaigns":      {"host_env": "CAMPAIGNS_HOST",      "default_host": "campaigns",      "default_port": "8052"},
     "analytics":      {"host_env": "ANALYTICS_HOST",      "default_host": "analytics",      "default_port": "8053"},
+    "webmail":        {"host_env": "WEBMAIL_HOST",        "default_host": "webmail",        "default_port": "8044"},
     "web":            {"host_env": "WEB_HOST",            "default_host": "web",            "default_port": "80"}
   },
   "routes": [
@@ -62,6 +63,9 @@
     {"method": "POST", "path": "/public/transactional/unsubscribe",           "service": "transactional"},
     {"method": "GET",  "path": "/public/contacts/confirm",                    "service": "contacts"},
     {"method": "POST", "path": "/public/contacts/confirm",                    "service": "contacts"}
+  ],
+  "self_authenticated": [
+    {"prefix": "webmail", "service": "webmail", "strict_limit": [{"method": "POST", "path": "/session"}]}
   ],
   "frontend": "web"
 }

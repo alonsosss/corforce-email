@@ -52,9 +52,9 @@ No se copiaron: `data/web`, sogo, phpfpm, nginx, mysql, `dynmaps/*.php`,
 * **SOGo.** Eliminado del entrypoint de Dovecot (`sogo_trusted_ip.conf`,
   `sogo-sso.conf`, credenciales de cron), de `dovecot.conf`, del watchdog, del
   dockerapi (`sogo rename_user`), de rspamd (`SOGO_CONTACT`) y de netfilter
-  (regex 8 y 9). El master user generico de Dovecot se conserva bajo
-  `@platform.local` y solo es utilizable si se definen
-  `DOVECOT_MASTER_USER`/`DOVECOT_MASTER_PASS`.
+  (regex 8 y 9). El usuario maestro de Dovecot se conserva bajo
+  `@platform.local`: lo usa el webmail (seccion "Webmail") y solo existe si se definen
+  `DOVECOT_MASTER_USER`/`DOVECOT_MASTER_PASS`; sin ellas es aleatorio.
 * **Eliminado tambien:** imapsync (scripts, cron, dependencias Perl), la tabla
   `versions`/GUID, `quarantine_notify.py`, la regla `PUSHOVERMAIL` y el selector
   `mailcow_rcpt` de `metadata_exporter.conf`, los checks de nginx, mysql,
@@ -66,8 +66,8 @@ No se copiaron: `data/web`, sogo, phpfpm, nginx, mysql, `dynmaps/*.php`,
 * **Nombres.** `MAILCOW_HOSTNAME` -> `MAIL_HOSTNAME`, `DBUSER/DBPASS/DBNAME` ->
   `MAIL_DB_*`, `REDISPASS` -> `MAIL_REDIS_PASSWORD`, `MAILCOW_REPLICA_IP` ->
   `MAIL_REPLICA_IP`, `ONLY_MAILCOW_HOSTNAME` -> `ONLY_MAIL_HOSTNAME`,
-  `mail_name = Core Force Mail`, `allow_mailcow_local.regexp` ->
-  `allow_platform_local.regexp`, `mailcow.local` -> `platform.local`,
+  `mail_name = Core Force Mail`, `mailcow.local` -> `platform.local`
+  (`allow_mailcow_local.regexp` se elimino: ver "Webmail"),
   `mailcow_networks.map` -> `platform_networks.map`, contenedores `<svc>-mail`,
   red `mail-engines` (bridge `br-mail`). El resto de variables genericas de
   mailcow (`TZ`, `SKIP_FTS`, `MASTER`, `LOG_LINES`, `IPV4_NETWORK`...) conservan
@@ -111,7 +111,7 @@ Comunes a casi todos: `TZ`, `LOG_LINES`, `IPV4_NETWORK` (por defecto `172.22.1`)
 | Contenedor | Variables propias |
 |---|---|
 | `postfix-mail` | `MAIL_HOSTNAME`, `MAIL_DB_HOST`, `MAIL_DB_PORT`, `MAIL_DB_NAME`, `MAIL_DB_USER`, `MAIL_DB_PASSWORD`, `MAIL_POLICY_HOST`, `SKIP_LETS_ENCRYPT`, `SPAMHAUS_DQS_KEY`, `SPAMHAUS_ASN_CHECK_URL` |
-| `dovecot-mail` | `MAIL_HOSTNAME`, `MAIL_DB_*`, `MAIL_AUTH_URL`, `DOVECOT_MASTER_USER`, `DOVECOT_MASTER_PASS`, `MAIL_REPLICA_IP`, `DOVEADM_REPLICA_PORT`, `MAILDIR_GC_TIME`, `ACL_ANYONE`, `SKIP_FTS`, `FTS_HEAP`, `FTS_PROCS`, `MAILDIR_SUB`, `MASTER`, `COMPOSE_PROJECT_NAME` |
+| `dovecot-mail` | `MAIL_HOSTNAME`, `MAIL_DB_*`, `MAIL_AUTH_URL`, `DOVECOT_MASTER_USER`, `DOVECOT_MASTER_PASS`, `DOVECOT_MASTER_ALLOWED_NETS`, `MAIL_REPLICA_IP`, `DOVEADM_REPLICA_PORT`, `MAILDIR_GC_TIME`, `ACL_ANYONE`, `SKIP_FTS`, `FTS_HEAP`, `FTS_PROCS`, `MAILDIR_SUB`, `MASTER`, `COMPOSE_PROJECT_NAME` |
 | `rspamd-mail` | `MAIL_POLICY_HOST`, `SPAMHAUS_DQS_KEY`, `SKIP_OLEFY` |
 | `acme-mail` | `MAIL_HOSTNAME`, `MAIL_DB_*`, `ADDITIONAL_SAN`, `AUTODISCOVER_SAN`, `SKIP_LETS_ENCRYPT`, `DIRECTORY_URL`, `ENABLE_SSL_SNI`, `SKIP_IP_CHECK`, `SKIP_HTTP_VERIFICATION`, `ONLY_MAIL_HOSTNAME`, `LE_STAGING`, `SNAT_TO_SOURCE`, `SNAT6_TO_SOURCE`, `ACME_DNS_CHALLENGE`, `ACME_DNS_PROVIDER`, `ACME_ACCOUNT_EMAIL`, `COMPOSE_PROJECT_NAME` |
 | `watchdog-mail` | `MAIL_HOSTNAME`, `USE_WATCHDOG`, `WATCHDOG_NOTIFY_EMAIL`, `WATCHDOG_NOTIFY_BAN`, `WATCHDOG_NOTIFY_START`, `WATCHDOG_SUBJECT`, `WATCHDOG_NOTIFY_WEBHOOK`, `WATCHDOG_NOTIFY_WEBHOOK_BODY`, `WATCHDOG_VERBOSE`, `IP_BY_DOCKER_API`, `CHECK_UNBOUND`, `SKIP_CLAMD`, `SKIP_OLEFY`, `SKIP_LETS_ENCRYPT`, `*_THRESHOLD`, `MAILQ_CRIT`, `DEV_MODE`, `COMPOSE_PROJECT_NAME` |
@@ -150,9 +150,9 @@ Lo llama `passwd-verify.lua` en cada autenticacion IMAP/POP3/ManageSieve/SMTP
 
 ```
 POST /            Content-Type: application/json
-{"username": "user@dominio", "password": "...", "real_rip": "1.2.3.4", "service": "imap|pop3|sieve|smtp|lmtp"}
+{"username": "user@dominio", "password": "...", "real_rip": "1.2.3.4", "service": "imap|pop3|sieve|smtp|lmtp|webmail"}
 
-200  {"success": true}
+200  {"success": true}                          (con service "webmail": {"success": true, "display_name": "..."})
 401  {"success": false}
 400  {"success": false}   cuerpo incompleto
 ```
@@ -168,9 +168,11 @@ Lo implementa `services/mail-auth`: listener TLS en `MAIL_AUTH_TLS_PORT` (9082)
 con `MAIL_AUTH_TLS_CERT`/`MAIL_AUTH_TLS_KEY` (sin ellos, certificado autofirmado
 en memoria avisado en log); `POST /` y `POST /auth`; `service` se traduce a flag
 (`imap`, `pop3`, `smtp`/`submission`/`lmtp` -> `smtp_access`,
-`sieve`/`managesieve` -> `sieve_access`; cualquier otro se deniega); bcrypt sobre
-la contrasena principal y despues sobre las de aplicacion activas con ese flag
-(actualiza `last_used_at`); `active = 2` y `active = 0` no entran;
+`sieve`/`managesieve` -> `sieve_access`; `webmail` exige `imap_access` Y
+`smtp_access`, porque el webmail lee y envia con la credencial maestra, que no vuelve a
+pasar por aqui; cualquier otro se deniega); bcrypt sobre la contrasena principal y
+despues sobre las de aplicacion activas con ese flag (actualiza `last_used_at`; el
+webmail solo acepta la principal); `active = 2` y `active = 0` no entran;
 `force_pw_update` no bloquea. Freno de fuerza bruta en el Redis de la plataforma
 por `(username, real_rip)` y por `real_rip` (`MAIL_AUTH_MAX_FAILURES` 10,
 `MAIL_AUTH_MAX_FAILURES_PER_IP` 50, `MAIL_AUTH_FAILURE_WINDOW` 15m,
@@ -180,6 +182,46 @@ por `(username, real_rip)` y por `real_rip` (`MAIL_AUTH_MAX_FAILURES` 10,
 `GET /internal/mail-auth/logins?username=&limit=` (tras `X-Gateway-Token` +
 `X-Tenant-ID`). El contenedor debe unirse a `mail-engines` con el alias
 `mail-auth`.
+
+## Webmail (usuario maestro y envio)
+
+`services/webmail` lee por IMAP y envia por submission en nombre del buzon sin guardar su
+contrasena (la comprueba `mail-auth` con service `webmail` al abrir la sesion):
+
+* **IMAP**: `LOGIN "<buzon>*<maestro>@platform.local" <contrasena maestra>` contra
+  `WEBMAIL_IMAP_ADDR` (`dovecot:993`, TLS implicito verificado contra `MAIL_HOSTNAME`). La
+  passdb maestra (`dovecot-master.passwd`, `master = yes`, `auth_master_user_separator = *`)
+  la escribe el entrypoint desde `DOVECOT_MASTER_USER`/`DOVECOT_MASTER_PASS` (32 caracteres
+  o mas; el usuario solo `[a-z0-9._-]`) con `{SHA512-CRYPT}`, permisos `640 root:dovecot`
+  y `allow_nets=${DOVECOT_MASTER_ALLOWED_NETS}` (por defecto `${IPV4_NETWORK}.0/24`, la red
+  de los motores): una credencial maestra filtrada no abre buzones desde fuera. Tras
+  autenticar al maestro, Dovecot solo busca el buzon en el userdb SQL (`active IN (1, 2)`);
+  `active = 1`, `imap_access` y `smtp_access` los exige `mail-auth` al abrir la sesion y la
+  revocacion por eventos (`mail.mailbox.*`) cierra las sesiones abiertas si cambian.
+* **SMTP**: `WEBMAIL_SMTP_ADDR` (`postfix:587`, STARTTLS obligatorio) con `AUTH PLAIN` de
+  la misma credencial. Postfix delega el SASL en Dovecot, que devuelve el nombre del BUZON;
+  `reject_authenticated_sender_login_mismatch` con `smtpd_sender_login_maps` decide si el
+  remitente le pertenece (el propio buzon, sus aliases con `sender_allowed` o `sender_acl`).
+  El webmail escribe el mismo remitente en el sobre y en la cabecera From.
+* **Puerto 588**: se retiro `check_sasl_access regexp:allow_platform_local.regexp`, que
+  dejaba a cualquier nombre SASL `*@platform.local` enviar como cualquier remitente (y cuya
+  expresion, sin anclar ni escapar el punto, casaba tambien con dominios como
+  `platformXlocal.com`). Sin SOGo nadie la necesitaba y el usuario maestro ya no es inutil.
+* **`pgsql_virtual_sender_acl`** incluye el propio buzon (`mail.mailboxes`, `active = 1`):
+  mail-directory no crea el alias `buzon -> buzon` que mailcow daba por supuesto, y sin el
+  todo envio autenticado desde la direccion del propio buzon se rechazaba.
+* **ClamAV**: el webmail analiza cada adjunto con `clamd:3310` (INSTREAM, `StreamMaxLength`
+  25M) antes de enviarlo o guardarlo en Borradores o Enviados: el APPEND por IMAP no pasa
+  por Rspamd.
+* **Red**: el webmail se une a `mail-engines`, que es `mynetworks` de Postfix. La garantia
+  contra la suplantacion descansa en que el webmail siempre se autentica; un proceso
+  comprometido dentro de esa red podria enviar sin autenticar (modelo heredado de mailcow).
+
+P (no verificado contra Dovecot y Postfix reales): que `allow_nets` se aplique a la passdb
+maestra, que el nombre SASL que ve Postfix con `buzon*maestro` sea el del buzon, el rechazo
+553 de un remitente ajeno y la nueva fila de `pgsql_virtual_sender_acl`. La prueba de
+integracion del webmail emula ese comportamiento con un IMAP en memoria y un SMTP en
+proceso.
 
 ## Contrato HTTP de `mail-policy`
 

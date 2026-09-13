@@ -26,6 +26,23 @@ func TestTablaEmbebidaEsValida(t *testing.T) {
 	if idx["access"] != "" {
 		t.Errorf("la ruta access no debe gatearse por modulo")
 	}
+	// El webmail lo autentica el propio servicio (buzones, no usuarios de la plataforma)
+	// y su inicio de sesion va con el limitador estricto.
+	var webmail *selfAuthSpec
+	for i := range tbl.SelfAuthenticated {
+		if tbl.SelfAuthenticated[i].Prefix == "webmail" {
+			webmail = &tbl.SelfAuthenticated[i]
+		}
+	}
+	if webmail == nil || webmail.Service != "webmail" {
+		t.Fatalf("el webmail debe declararse en self_authenticated")
+	}
+	if len(webmail.StrictLimit) != 1 || webmail.StrictLimit[0] != (methodPathSpec{Method: "POST", Path: "/session"}) {
+		t.Errorf("el inicio de sesion del webmail debe ir con el limitador estricto: %+v", webmail.StrictLimit)
+	}
+	if idx["webmail"] != "" {
+		t.Errorf("el webmail no se gatea por modulo")
+	}
 }
 
 func TestValidacionRechazaIncoherencias(t *testing.T) {
@@ -47,6 +64,27 @@ func TestValidacionRechazaIncoherencias(t *testing.T) {
 		},
 		"publica con metodo raro": func(t *routeTable) {
 			t.Public = []publicRouteSpec{{Method: "PATCH", Path: "/public/x", Service: "identity"}}
+		},
+		"autenticada por el servicio sobre una ruta con JWT": func(t *routeTable) {
+			t.SelfAuthenticated = []selfAuthSpec{{Prefix: "users", Service: "identity"}}
+		},
+		"autenticada por el servicio sobre un prefijo reservado": func(t *routeTable) {
+			t.SelfAuthenticated = []selfAuthSpec{{Prefix: "auth", Service: "identity"}}
+		},
+		"autenticada por el servicio repetida": func(t *routeTable) {
+			t.SelfAuthenticated = []selfAuthSpec{{Prefix: "inbox", Service: "identity"}, {Prefix: "inbox", Service: "identity"}}
+		},
+		"autenticada por el servicio desconocido": func(t *routeTable) {
+			t.SelfAuthenticated = []selfAuthSpec{{Prefix: "inbox", Service: "nadie"}}
+		},
+		"autenticada por el servicio con prefijo invalido": func(t *routeTable) {
+			t.SelfAuthenticated = []selfAuthSpec{{Prefix: "In/box", Service: "identity"}}
+		},
+		"limite estricto con metodo raro": func(t *routeTable) {
+			t.SelfAuthenticated = []selfAuthSpec{{Prefix: "inbox", Service: "identity", StrictLimit: []methodPathSpec{{Method: "TRACE", Path: "/session"}}}}
+		},
+		"limite estricto con ruta relativa": func(t *routeTable) {
+			t.SelfAuthenticated = []selfAuthSpec{{Prefix: "inbox", Service: "identity", StrictLimit: []methodPathSpec{{Method: "POST", Path: "session"}}}}
 		},
 	}
 	for nombre, romper := range casos {

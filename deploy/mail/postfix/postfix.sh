@@ -245,6 +245,9 @@ ${PGSQL_MAP_HEADER}
 query = SELECT domain FROM mail.domains WHERE domain = '%s' AND backupmx AND active
 EOF
 
+# smtpd_sender_login_maps: quien puede enviar como '%s'. El propio buzon figura como dueno de
+# su direccion: mail-directory no crea un alias buzon -> buzon, y sin esta fila
+# reject_authenticated_sender_login_mismatch rechazaba todo envio autenticado.
 cat <<EOF > /opt/postfix/conf/sql/pgsql_virtual_sender_acl.cf
 ${PGSQL_MAP_HEADER}
 # First select queries domain and alias_domain to determine if domains are active.
@@ -290,6 +293,10 @@ query = SELECT goto FROM mail.aliases
       AND logged_in_as NOT IN (
         SELECT goto FROM mail.aliases
           WHERE address = '%s')
+  UNION
+  SELECT username FROM mail.mailboxes
+    WHERE username = '%s'
+      AND active = 1
   UNION
   SELECT m.username FROM mail.mailboxes m, mail.alias_domains ad
     WHERE ad.alias_domain = '%d'

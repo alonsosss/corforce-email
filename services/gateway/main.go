@@ -119,6 +119,10 @@ func main() {
 			r.Method(p.Method, p.Path, reverseProxy(table.serviceURL(p.Service), internalToken))
 		}
 
+		// Prefijos que autentica el propio servicio con su sesion (el webmail): sin JWT
+		// ni RBAC, con el limitador general y el estricto en su inicio de sesion.
+		mountSelfAuthenticated(r, table.SelfAuthenticated, table.serviceURL, authLimiter.Limit, internalToken)
+
 		// MFA self-service: requiere autenticacion (inyecta X-User-ID) pero NO pasa
 		// por RBAC: es gestion de la propia cuenta, no un recurso protegido por modulo.
 		r.Group(func(r chi.Router) {
@@ -225,6 +229,15 @@ func stampCSPNonce(resp *http.Response) error {
 }
 
 func reverseProxy(target, internalToken string) http.Handler {
+	return reverseProxyWith(target, internalToken, false)
+}
+
+// reverseProxyWith es reverseProxy con la opcion de conservar la CSP del servicio. Solo
+// la piden los prefijos autenticados por el servicio (self_authenticated): sus respuestas
+// son datos y adjuntos, nunca la aplicacion, y su politica es mas estricta que la del
+// borde. Con las dos cabeceras el navegador aplica la interseccion, que es la del
+// servicio; el resto de rutas sigue con una sola politica.
+func reverseProxyWith(target, internalToken string, keepUpstreamCSP bool) http.Handler {
 	u, err := url.Parse(target)
 	if err != nil {
 		log.Fatalf("upstream invalido %q: %v", target, err)
@@ -233,12 +246,16 @@ func reverseProxy(target, internalToken string) http.Handler {
 	// Cada servicio pone sus propias cabeceras de seguridad y el gateway pone las suyas:
 	// con dos politicas CSP el navegador aplica la INTERSECCION, asi que una cabecera
 	// repetida puede bloquear algo sin explicacion. Manda la del borde, que es una sola.
+	stripped := []string{
+		"X-Frame-Options", "X-Content-Type-Options",
+		"X-XSS-Protection", "Referrer-Policy", "Permissions-Policy",
+		"Strict-Transport-Security",
+	}
+	if !keepUpstreamCSP {
+		stripped = append(stripped, "Content-Security-Policy")
+	}
 	proxy.ModifyResponse = func(resp *http.Response) error {
-		for _, h := range []string{
-			"Content-Security-Policy", "X-Frame-Options", "X-Content-Type-Options",
-			"X-XSS-Protection", "Referrer-Policy", "Permissions-Policy",
-			"Strict-Transport-Security",
-		} {
+		for _, h := range stripped {
 			resp.Header.Del(h)
 		}
 		return stampCSPNonce(resp)

@@ -42,10 +42,32 @@ type routeTable struct {
 	// proteccion es del propio servicio (firma del proveedor, enlace firmado). Metodo y
 	// ruta exactos con la sintaxis de chi; el servicio recibe la misma ruta.
 	Public []publicRouteSpec `json:"public,omitempty"`
+	// SelfAuthenticated: prefijos bajo /api/v1 cuyo servicio autentica cada peticion con
+	// su propia sesion (el webmail, con la cookie del buzon: sus usuarios son buzones, no
+	// usuarios de la plataforma). El gateway no exige JWT ni aplica RBAC por modulo, pero
+	// si el limitador general, las cabeceras de seguridad y el token interno hacia el
+	// servicio. StrictLimit son las rutas atacables por fuerza bruta (el inicio de
+	// sesion), que ademas pasan por el limitador de autenticacion.
+	SelfAuthenticated []selfAuthSpec `json:"self_authenticated,omitempty"`
 	// Frontend: servicio que sirve la aplicacion web (comodin /*). Opcional: sin el,
 	// el gateway solo expone el API.
 	Frontend string `json:"frontend,omitempty"`
 }
+
+type selfAuthSpec struct {
+	Prefix      string           `json:"prefix"`
+	Service     string           `json:"service"`
+	StrictLimit []methodPathSpec `json:"strict_limit,omitempty"`
+}
+
+type methodPathSpec struct {
+	Method string `json:"method"`
+	Path   string `json:"path"`
+}
+
+// reservedPrefixes los monta el gateway por su cuenta: un prefijo autenticado por el
+// servicio no puede ocuparlos.
+var reservedPrefixes = map[string]bool{"auth": true, "public": true}
 
 type readPostSpec struct {
 	Prefix string `json:"prefix"`
@@ -142,6 +164,29 @@ func (t *routeTable) validate() error {
 		}
 		if _, ok := t.Services[p.Service]; !ok {
 			return fmt.Errorf("tabla de rutas: la ruta publica %q apunta al servicio desconocido %q", p.Path, p.Service)
+		}
+	}
+	for _, s := range t.SelfAuthenticated {
+		if !prefixRe.MatchString(s.Prefix) {
+			return fmt.Errorf("tabla de rutas: prefijo autenticado por el servicio invalido %q", s.Prefix)
+		}
+		// Un prefijo que ya tiene ruta con JWT perderia su gateo si se declarara aqui.
+		if seen[s.Prefix] || reservedPrefixes[s.Prefix] {
+			return fmt.Errorf("tabla de rutas: el prefijo autenticado por el servicio %q choca con otra ruta", s.Prefix)
+		}
+		seen[s.Prefix] = true
+		if _, ok := t.Services[s.Service]; !ok {
+			return fmt.Errorf("tabla de rutas: el prefijo %q apunta al servicio desconocido %q", s.Prefix, s.Service)
+		}
+		for _, l := range s.StrictLimit {
+			switch l.Method {
+			case "GET", "POST", "PUT", "PATCH", "DELETE":
+			default:
+				return fmt.Errorf("tabla de rutas: metodo invalido %q en strict_limit de %q", l.Method, s.Prefix)
+			}
+			if !strings.HasPrefix(l.Path, "/") || strings.Contains(l.Path, "..") {
+				return fmt.Errorf("tabla de rutas: ruta invalida %q en strict_limit de %q", l.Path, s.Prefix)
+			}
 		}
 	}
 	if t.Frontend != "" {

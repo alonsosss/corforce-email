@@ -1,0 +1,203 @@
+package http
+
+import (
+	"context"
+	"errors"
+	"io"
+	"mime/multipart"
+	"net/http"
+	"strings"
+
+	"github.com/alonsosss/corforce-email/pkg/response"
+	"github.com/alonsosss/corforce-email/services/webmail/internal/domain"
+)
+
+const (
+	// multipartOverhead son las cabeceras y fronteras del formulario, que no cuentan
+	// como contenido del mensaje.
+	multipartOverhead = 1 << 20
+	attachmentField   = "attachments"
+	maxListValues     = 200
+)
+
+// composeFields son los campos de texto admitidos; cualquier otro se rechaza.
+var composeFields = map[string]bool{
+	"from": true, "to": true, "cc": true, "bcc": true, "subject": true, "text": true, "html": true,
+	"in_reply_to": true, "in_reply_to_folder": true, "replace_uid": true,
+}
+
+// listFields admiten varios valores (y cada valor, una lista separada por comas).
+var listFields = map[string]bool{"to": true, "cc": true, "bcc": true}
+
+type composeForm struct {
+	draft      domain.Draft
+	replaceUID uint32
+}
+
+func (h *Handler) Send(w http.ResponseWriter, r *http.Request) {
+	extendDeadlines(w, h.cfg.TransferTimeout)
+	form, err := h.readCompose(w, r, false)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), h.cfg.TransferTimeout)
+	defer cancel()
+	result, err := h.app.Send(ctx, sessionFrom(r), form.draft)
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	response.JSON(w, http.StatusAccepted, sendDTO{MessageID: result.MessageID, SavedToSent: result.SavedToSent})
+}
+
+func (h *Handler) SaveDraft(w http.ResponseWriter, r *http.Request) {
+	extendDeadlines(w, h.cfg.TransferTimeout)
+	form, err := h.readCompose(w, r, true)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), h.cfg.TransferTimeout)
+	defer cancel()
+	uid, err := h.app.SaveDraft(ctx, sessionFrom(r), form.draft, form.replaceUID)
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	response.JSON(w, http.StatusCreated, draftDTO{UID: uid})
+}
+
+// readCompose lee el formulario multipart parte a parte, con un tope total. No usa
+// ParseMultipartForm: volcaria los ficheros grandes a un temporal en disco, y la imagen
+// del servicio no tiene /tmp ni debe dejar adjuntos sin analizar en disco.
+func (h *Handler) readCompose(w http.ResponseWriter, r *http.Request, allowReplace bool) (composeForm, error) {
+	limit := h.cfg.MaxMessageBytes + multipartOverhead
+	r.Body = http.MaxBytesReader(w, r.Body, limit)
+	mr, err := r.MultipartReader()
+	if err != nil {
+		return composeForm{}, domain.NewValidationError("body", "se esperaba multipart/form-data")
+	}
+	fields := map[string][]string{}
+	var attachments []domain.Attachment
+	var total int64
+	for {
+		part, err := mr.NextPart()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return composeForm{}, bodyError(err)
+		}
+		name := part.FormName()
+		if name == attachmentField {
+			if len(attachments) >= domain.MaxAttachments {
+				return composeForm{}, domain.NewValidationError("attachments", "demasiados adjuntos")
+			}
+			data, err := readPart(part, h.cfg.MaxMessageBytes-total)
+			if err != nil {
+				return composeForm{}, err
+			}
+			total += int64(len(data))
+			attachments = append(attachments, domain.Attachment{
+				Filename: part.FileName(), ContentType: part.Header.Get("Content-Type"), Data: data,
+			})
+			continue
+		}
+		if !composeFields[name] || (name == "replace_uid" && !allowReplace) {
+			return composeForm{}, domain.NewValidationError(name, "campo no admitido")
+		}
+		if part.FileName() != "" {
+			return composeForm{}, domain.NewValidationError(name, "se esperaba texto, no un fichero")
+		}
+		data, err := readPart(part, h.cfg.MaxMessageBytes-total)
+		if err != nil {
+			return composeForm{}, err
+		}
+		total += int64(len(data))
+		fields[name] = append(fields[name], string(data))
+		if (listFields[name] && len(fields[name]) > maxListValues) || (!listFields[name] && len(fields[name]) > 1) {
+			return composeForm{}, domain.NewValidationError(name, "demasiados valores")
+		}
+	}
+	return buildComposeForm(fields, attachments)
+}
+
+func buildComposeForm(fields map[string][]string, attachments []domain.Attachment) (composeForm, error) {
+	var form composeForm
+	d := &form.draft
+	var err error
+	if v := single(fields, "from"); v != "" {
+		from, err := domain.ParseAddressField("from", []string{v})
+		if err != nil {
+			return composeForm{}, err
+		}
+		if len(from) != 1 {
+			return composeForm{}, domain.NewValidationError("from", "debe ser una sola direccion")
+		}
+		d.From = from[0]
+	}
+	if d.To, err = domain.ParseAddressField("to", fields["to"]); err != nil {
+		return composeForm{}, err
+	}
+	if d.Cc, err = domain.ParseAddressField("cc", fields["cc"]); err != nil {
+		return composeForm{}, err
+	}
+	if d.Bcc, err = domain.ParseAddressField("bcc", fields["bcc"]); err != nil {
+		return composeForm{}, err
+	}
+	d.Subject = strings.TrimSpace(single(fields, "subject"))
+	d.Text = single(fields, "text")
+	d.HTML = single(fields, "html")
+	d.Attachments = attachments
+
+	if raw := single(fields, "in_reply_to"); raw != "" {
+		uid, err := domain.ParseUID(raw)
+		if err != nil {
+			return composeForm{}, domain.NewValidationError("in_reply_to", "debe ser el UID del mensaje original")
+		}
+		folder := single(fields, "in_reply_to_folder")
+		if folder == "" {
+			folder = "INBOX"
+		}
+		d.InReplyTo = &domain.ReplyTarget{Folder: folder, UID: uid}
+	}
+	if raw := single(fields, "replace_uid"); raw != "" {
+		uid, err := domain.ParseUID(raw)
+		if err != nil {
+			return composeForm{}, domain.NewValidationError("replace_uid", "debe ser el UID del borrador anterior")
+		}
+		form.replaceUID = uid
+	}
+	return form, nil
+}
+
+func single(fields map[string][]string, name string) string {
+	if v := fields[name]; len(v) > 0 {
+		return v[0]
+	}
+	return ""
+}
+
+// readPart lee una parte del formulario sin pasar de remaining bytes.
+func readPart(part *multipart.Part, remaining int64) ([]byte, error) {
+	if remaining < 0 {
+		return nil, domain.ErrMessageTooLarge
+	}
+	data, err := io.ReadAll(io.LimitReader(part, remaining+1))
+	if err != nil {
+		return nil, bodyError(err)
+	}
+	if int64(len(data)) > remaining {
+		return nil, domain.ErrMessageTooLarge
+	}
+	return data, nil
+}
+
+func bodyError(err error) error {
+	var tooLarge *http.MaxBytesError
+	if errors.As(err, &tooLarge) {
+		return domain.ErrMessageTooLarge
+	}
+	return domain.NewValidationError("body", "formulario multipart invalido")
+}

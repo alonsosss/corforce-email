@@ -33,11 +33,11 @@ func NewRepository(pool *db.ContextPool) *Repository {
 func (r *Repository) FindByUsername(ctx context.Context, username string) (*domain.Mailbox, error) {
 	var m domain.Mailbox
 	err := r.pool.QueryRow(ctx, `
-		SELECT id, tenant_id, username, password_hash, active, force_pw_update,
+		SELECT id, tenant_id, username, display_name, password_hash, active, force_pw_update,
 		       imap_access, pop3_access, smtp_access, sieve_access
 		  FROM mail.mailboxes
 		 WHERE username = $1`, username,
-	).Scan(&m.ID, &m.TenantID, &m.Username, &m.PasswordHash, &m.Active, &m.ForcePasswordUpdate,
+	).Scan(&m.ID, &m.TenantID, &m.Username, &m.DisplayName, &m.PasswordHash, &m.Active, &m.ForcePasswordUpdate,
 		&m.Access.IMAP, &m.Access.POP3, &m.Access.SMTP, &m.Access.Sieve)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, domain.ErrNotFound

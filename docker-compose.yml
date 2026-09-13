@@ -310,6 +310,30 @@ services:
         aliases:
           - mail-policy
 
+  webmail:
+    build:
+      context: .
+      dockerfile: ./services/webmail/Dockerfile
+    ports:
+      - "127.0.0.1:${WEBMAIL_PORT:-8044}:8044"
+    env_file:
+      - .env
+      - path: /dev/shm/core-force-mail/secrets.env
+        required: false
+    depends_on:
+      redis:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+    restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    networks:
+      mail-internal: {}
+      # Habla con dovecot (IMAP), postfix (submission), mail-auth y clamd por la red de los
+      # motores. Esa red es mynetworks de Postfix: el webmail se autentica siempre para que
+      # smtpd_sender_login_maps se aplique al buzon (deploy/mail/README.md, Webmail).
+      mail-engines: {}
+
   domain-service:
     build:
       context: .

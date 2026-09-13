@@ -161,17 +161,38 @@ for cert_dir in /etc/ssl/mail/*/ ; do
   done
 done
 
-# Master user (login as any mailbox with user*master@platform.local). Random and unusable unless
-# DOVECOT_MASTER_USER/DOVECOT_MASTER_PASS are provided; the platform never needs it for SSO.
+# Usuario maestro: "<buzon>*<maestro>@platform.local" inicia sesion como cualquier buzon de la
+# celda. Lo usa el webmail (services/webmail), con WEBMAIL_MASTER_USER =
+# ${DOVECOT_MASTER_USER}@platform.local y WEBMAIL_MASTER_PASSWORD = DOVECOT_MASTER_PASS, las dos
+# del almacen de secretos. Sin ellas se genera uno aleatorio que nadie conoce.
+# La contrasena se guarda con SHA512-CRYPT y la entrada solo vale desde
+# DOVECOT_MASTER_ALLOWED_NETS (por defecto la red de los motores): una credencial maestra
+# filtrada no abre buzones desde fuera de la celda.
 RAND_USER=$(cat /dev/urandom | tr -dc 'a-z0-9' | fold -w 16 | head -n 1)
-RAND_PASS=$(cat /dev/urandom | tr -dc 'a-z0-9' | fold -w 24 | head -n 1)
+RAND_PASS=$(cat /dev/urandom | tr -dc 'a-z0-9' | fold -w 32 | head -n 1)
 
 if [[ ! -z ${DOVECOT_MASTER_USER} ]] && [[ ! -z ${DOVECOT_MASTER_PASS} ]]; then
+  if [[ ! ${DOVECOT_MASTER_USER} =~ ^[a-z0-9._-]+$ ]]; then
+    echo "DOVECOT_MASTER_USER solo admite [a-z0-9._-]" >&2
+    exit 1
+  fi
+  if [[ ${#DOVECOT_MASTER_PASS} -lt 32 ]]; then
+    echo "DOVECOT_MASTER_PASS debe tener al menos 32 caracteres" >&2
+    exit 1
+  fi
   RAND_USER=${DOVECOT_MASTER_USER}
   RAND_PASS=${DOVECOT_MASTER_PASS}
 fi
-echo ${RAND_USER}@platform.local:{SHA1}$(echo -n ${RAND_PASS} | sha1sum | awk '{print $1}'):::::: > /etc/dovecot/dovecot-master.passwd
+MASTER_NETS=${DOVECOT_MASTER_ALLOWED_NETS:-${IPV4_NETWORK:-172.22.1}.0/24}
+if [[ ! ${MASTER_NETS} =~ ^[0-9a-fA-F.:/,]+$ ]]; then
+  echo "DOVECOT_MASTER_ALLOWED_NETS debe ser una lista de CIDR separada por comas" >&2
+  exit 1
+fi
+MASTER_HASH=$(printf '%s' "${RAND_PASS}" | openssl passwd -6 -stdin)
+echo "${RAND_USER}@platform.local:{SHA512-CRYPT}${MASTER_HASH}::::::allow_nets=${MASTER_NETS}" > /etc/dovecot/dovecot-master.passwd
 echo ${RAND_USER}@platform.local::5000:5000:::: > /etc/dovecot/dovecot-master.userdb
+chown root:dovecot /etc/dovecot/dovecot-master.passwd
+chmod 640 /etc/dovecot/dovecot-master.passwd
 
 if [[ -z ${MAILDIR_SUB} ]]; then
   MAILDIR_SUB_SHARED=

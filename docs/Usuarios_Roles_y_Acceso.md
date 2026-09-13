@@ -90,7 +90,7 @@ renderizar o previsualizar una plantilla, previsualizar un segmento) se declaran
 Las denegaciones se cuentan en `rbac_denials_total` y se guardan en
 `access_control.access_denials`.
 
-## 5. Cuentas de correo frente a usuarios de la plataforma (P, decision)
+## 5. Cuentas de correo frente a usuarios de la plataforma (V; P contra motores reales)
 
 Un **usuario** de la plataforma (identity) administra; un **buzon** (`mail.mailboxes`) es
 una cuenta de correo con su propia contrasena y contrasenas de aplicacion, verificadas por
@@ -102,7 +102,19 @@ politica de bloqueo y el mismo registro de inicios (`mail.sasl_logins`).
 V: `mail-auth` verifica hoy contrasena principal y de aplicacion con bcrypt, deniega
 `active <> 1` y el protocolo sin flag, frena por `(username, IP)` y por IP en Redis y
 escribe `mail.sasl_logins`; expone los inicios de un buzon por
-`GET /internal/mail-auth/logins` acotado por `X-Tenant-ID`. P: el webmail que lo consuma.
+`GET /internal/mail-auth/logins` acotado por `X-Tenant-ID`.
+
+V (2026-09-13): el webmail (`services/webmail`) autentica contra el buzon por `mail-auth`
+con service `webmail`, que exige `imap_access` y `smtp_access`, acepta solo la contrasena
+principal (nunca una de aplicacion), responde igual a un buzon inexistente y a una
+contrasena mala y frena por (buzon, IP real que llega del gateway en `X-Real-IP`). No lleva
+JWT de la plataforma ni pasa por el RBAC por modulo: el gateway lo enruta como prefijo
+`self_authenticated` (`services/gateway/routes.json`, limitador estricto en
+`POST /api/v1/webmail/session`) y el servicio autentica cada peticion con su cookie `cf_wm`
+y exige un `Origin` permitido en toda escritura (`docs/arquitectura/CSP-Y-SESION.md`). Las
+sesiones de un buzon se revocan al actualizarse o borrarse (`mail.mailbox.updated`,
+`mail.mailbox.deleted`) y al cambiar su contrasena (`mail.mailbox.credentials_changed`, P
+hasta que mail-directory lo emita). P: la verificacion contra Dovecot y Postfix reales.
 
 ## 6. Auditoria de acceso (V)
 

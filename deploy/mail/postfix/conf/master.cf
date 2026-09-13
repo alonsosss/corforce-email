@@ -43,12 +43,14 @@ submission inet n       -       n       -       -       smtpd
   -o cleanup_service_name=smtp_sender_cleanup
   -o syslog_name=postfix/submission-haproxy
 
-# used by platform-internal senders (webmail, quota notifications) via submission_host
-# smtpd_sender_restrictions should match main.cf, but with check_sasl_access prepended for login-as-mailbox-user function
+# Envio interno de la plataforma (submission_host de Dovecot: sieve y vacaciones; avisos de
+# cuota). Mismas restricciones de remitente que main.cf, sin la excepcion que dejaba a un
+# nombre SASL *@platform.local enviar como cualquier remitente: el webmail se autentica
+# como el buzon (buzon*maestro) y Postfix le aplica smtpd_sender_login_maps.
 588 inet n      -       n       -       -       smtpd
   -o smtpd_client_restrictions=permit_mynetworks,permit_sasl_authenticated,reject
   -o smtpd_tls_auth_only=no
-  -o smtpd_sender_restrictions=check_sasl_access,regexp:/opt/postfix/conf/allow_platform_local.regexp,reject_authenticated_sender_login_mismatch,permit_mynetworks,permit_sasl_authenticated,reject_unlisted_sender,reject_unknown_sender_domain
+  -o smtpd_sender_restrictions=reject_authenticated_sender_login_mismatch,permit_mynetworks,permit_sasl_authenticated,reject_unlisted_sender,reject_unknown_sender_domain
   -o cleanup_service_name=smtp_sender_cleanup
   -o syslog_name=postfix/internal
 

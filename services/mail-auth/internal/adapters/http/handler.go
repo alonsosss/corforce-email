@@ -23,7 +23,7 @@ const (
 
 // Verifier es lo que el adaptador necesita del caso de uso.
 type Verifier interface {
-	Verify(ctx context.Context, req domain.VerifyRequest) domain.Result
+	Authenticate(ctx context.Context, req domain.VerifyRequest) domain.Verification
 	RecentLogins(ctx context.Context, tenantID uuid.UUID, username string, limit int) ([]domain.Login, error)
 }
 
@@ -61,6 +61,9 @@ type verifyRequest struct {
 
 type verifyResponse struct {
 	Success bool `json:"success"`
+	// DisplayName solo viaja al webmail (service "webmail"), que lo usa como nombre del
+	// remitente. passwd-verify.lua solo lee success e ignora el resto.
+	DisplayName *string `json:"display_name,omitempty"`
 }
 
 // Verify responde 200 {"success":true}, 401 {"success":false} o 400 si el cuerpo esta
@@ -69,31 +72,35 @@ type verifyResponse struct {
 func (h *Handler) Verify(w http.ResponseWriter, r *http.Request) {
 	var body verifyRequest
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeVerify(w, http.StatusBadRequest, false)
+		writeVerify(w, http.StatusBadRequest, verifyResponse{})
 		return
 	}
 	if body.Username == "" || body.Password == "" || body.RealRIP == "" {
-		writeVerify(w, http.StatusBadRequest, false)
+		writeVerify(w, http.StatusBadRequest, verifyResponse{})
 		return
 	}
-	result := h.uc.Verify(r.Context(), domain.VerifyRequest{
+	v := h.uc.Authenticate(r.Context(), domain.VerifyRequest{
 		Username: body.Username,
 		Password: body.Password,
 		RemoteIP: body.RealRIP,
 		Service:  body.Service,
 	})
-	if !result.Authorized() {
-		writeVerify(w, http.StatusUnauthorized, false)
+	if !v.Result.Authorized() {
+		writeVerify(w, http.StatusUnauthorized, verifyResponse{})
 		return
 	}
-	writeVerify(w, http.StatusOK, true)
+	resp := verifyResponse{Success: true}
+	if p, _ := domain.ProtocolFromService(body.Service); p == domain.ProtocolWebmail {
+		resp.DisplayName = &v.DisplayName
+	}
+	writeVerify(w, http.StatusOK, resp)
 }
 
-func writeVerify(w http.ResponseWriter, status int, success bool) {
+func writeVerify(w http.ResponseWriter, status int, resp verifyResponse) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(verifyResponse{Success: success})
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 // RecentLogins lista los ultimos inicios de un buzon de la empresa de la peticion.

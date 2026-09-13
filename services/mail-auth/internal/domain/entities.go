@@ -20,7 +20,17 @@ const (
 	ProtocolPOP3  Protocol = "pop3"
 	ProtocolSMTP  Protocol = "smtp"
 	ProtocolSieve Protocol = "sieve"
+	// ProtocolWebmail es el webmail de la plataforma. El buzon no tiene flag propio: el
+	// webmail lee por IMAP y envia por SMTP con la credencial maestra de Dovecot, que no
+	// vuelve a pasar por aqui, asi que exige los DOS flags. Si bastara imap_access, un
+	// buzon sin smtp_access enviaria desde el webmail saltandose su flag.
+	ProtocolWebmail Protocol = "webmail"
 )
+
+// AcceptsAppPasswords indica si el protocolo admite contrasenas de aplicacion. Son
+// credenciales acotadas a un cliente (movil, escritorio); el webmail abre una sesion de
+// navegador que lee y envia, y solo entra con la contrasena principal.
+func (p Protocol) AcceptsAppPasswords() bool { return p != ProtocolWebmail }
 
 // serviceProtocols traduce el campo service de passwd-verify.lua a su flag. Un servicio
 // que no figure aqui se deniega: es preferible negar un protocolo nuevo a autorizarlo
@@ -33,6 +43,7 @@ var serviceProtocols = map[string]Protocol{
 	"lmtp":        ProtocolSMTP,
 	"sieve":       ProtocolSieve,
 	"managesieve": ProtocolSieve,
+	"webmail":     ProtocolWebmail,
 }
 
 // ProtocolFromService resuelve el flag de un servicio de Dovecot (sin distinguir
@@ -56,6 +67,7 @@ type Mailbox struct {
 	ID                  uuid.UUID
 	TenantID            uuid.UUID
 	Username            string
+	DisplayName         string
 	PasswordHash        string
 	Active              int16
 	ForcePasswordUpdate bool
@@ -82,6 +94,8 @@ func (a ProtocolAccess) Allows(p Protocol) bool {
 		return a.SMTP
 	case ProtocolSieve:
 		return a.Sieve
+	case ProtocolWebmail:
+		return a.IMAP && a.SMTP
 	}
 	return false
 }
@@ -136,3 +150,10 @@ const (
 
 // Authorized indica si el resultado abre la sesion.
 func (r Result) Authorized() bool { return r == ResultOK }
+
+// Verification es el desenlace con el nombre visible del buzon, que solo se rellena
+// cuando la credencial abre la sesion (el webmail lo usa como nombre del remitente).
+type Verification struct {
+	Result      Result
+	DisplayName string
+}

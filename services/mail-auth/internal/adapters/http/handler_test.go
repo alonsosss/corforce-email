@@ -13,13 +13,14 @@ import (
 )
 
 type stubVerifier struct {
-	result domain.Result
-	got    *domain.VerifyRequest
+	result      domain.Result
+	displayName string
+	got         *domain.VerifyRequest
 }
 
-func (s *stubVerifier) Verify(_ context.Context, req domain.VerifyRequest) domain.Result {
+func (s *stubVerifier) Authenticate(_ context.Context, req domain.VerifyRequest) domain.Verification {
 	s.got = &req
-	return s.result
+	return domain.Verification{Result: s.result, DisplayName: s.displayName}
 }
 
 func (s *stubVerifier) RecentLogins(context.Context, uuid.UUID, string, int) ([]domain.Login, error) {
@@ -123,6 +124,45 @@ func TestVerifySinServicioLlegaAlCasoDeUso(t *testing.T) {
 	}
 	if stub.got == nil || stub.got.Service != "" {
 		t.Fatalf("peticion inesperada: %+v", stub.got)
+	}
+}
+
+func TestVerifyDevuelveElNombreSoloAlWebmail(t *testing.T) {
+	stub := &stubVerifier{result: domain.ResultOK, displayName: "Ana Perez"}
+	h := NewHandler(stub).VerifyRoutes()
+
+	decode := func(rec *httptest.ResponseRecorder) map[string]any {
+		t.Helper()
+		var body map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatalf("cuerpo no es JSON: %q", rec.Body.String())
+		}
+		return body
+	}
+
+	webmail := post(t, h, "/", `{"username":"ana@empresa.pe","password":"s3cr3t","real_rip":"203.0.113.7","service":"webmail"}`)
+	if webmail.Code != http.StatusOK {
+		t.Fatalf("webmail: status = %d", webmail.Code)
+	}
+	if got := decode(webmail)["display_name"]; got != "Ana Perez" {
+		t.Fatalf("webmail: display_name = %v", got)
+	}
+
+	// Dovecot sigue recibiendo exactamente {"success":true}.
+	imap := post(t, h, "/", luaBody)
+	body := decode(imap)
+	if _, ok := body["display_name"]; ok || len(body) != 1 {
+		t.Fatalf("imap: el cuerpo debe llevar solo success: %q", imap.Body.String())
+	}
+
+	// Un rechazo nunca revela el nombre.
+	stub.result = domain.ResultBadPassword
+	denied := post(t, h, "/", `{"username":"ana@empresa.pe","password":"x","real_rip":"203.0.113.7","service":"webmail"}`)
+	if denied.Code != http.StatusUnauthorized {
+		t.Fatalf("rechazo: status = %d", denied.Code)
+	}
+	if _, ok := decode(denied)["display_name"]; ok {
+		t.Fatalf("rechazo: no debe llevar display_name: %q", denied.Body.String())
 	}
 }
 

@@ -44,65 +44,83 @@ func New(d Deps) *UseCase {
 // inexistente, uno inactivo y uno sin el protocolo tardan lo mismo y reciben el mismo
 // 401. Solo se distinguen en las metricas y en el log.
 func (uc *UseCase) Verify(ctx context.Context, req domain.VerifyRequest) domain.Result {
+	return uc.Authenticate(ctx, req).Result
+}
+
+// Authenticate es Verify con el nombre visible del buzon, que solo sale si la
+// credencial abre la sesion.
+func (uc *UseCase) Authenticate(ctx context.Context, req domain.VerifyRequest) domain.Verification {
+	result, mailbox := uc.verify(ctx, req)
+	v := domain.Verification{Result: uc.finish(req.Service, result)}
+	if result.Authorized() && mailbox != nil {
+		v.DisplayName = mailbox.DisplayName
+	}
+	return v
+}
+
+func (uc *UseCase) verify(ctx context.Context, req domain.VerifyRequest) (domain.Result, *domain.Mailbox) {
 	username := strings.ToLower(strings.TrimSpace(req.Username))
 	fields := []zap.Field{zap.String("username", username), zap.String("remote_ip", req.RemoteIP), zap.String("service", req.Service)}
 
 	protocol, known := domain.ProtocolFromService(req.Service)
 	if !known {
 		uc.logger.Warn("mail-auth: servicio desconocido, se deniega", fields...)
-		return uc.finish(req.Service, domain.ResultUnknownService)
+		return domain.ResultUnknownService, nil
 	}
 
 	if uc.throttle.Blocked(ctx, username, req.RemoteIP) {
 		uc.logger.Warn("mail-auth: intento bloqueado por el freno de fuerza bruta", fields...)
-		return uc.finish(req.Service, domain.ResultThrottled)
+		return domain.ResultThrottled, nil
 	}
 
 	mailbox, err := uc.repo.FindByUsername(ctx, username)
 	if err != nil && !errors.Is(err, domain.ErrNotFound) {
 		uc.logger.Error("mail-auth: no se pudo leer el buzon", append(fields, zap.Error(err))...)
-		return uc.finish(req.Service, domain.ResultError)
+		return domain.ResultError, nil
 	}
 	if mailbox == nil {
 		uc.passwords.Verify(uc.passwords.DummyHash(), req.Password)
 		uc.throttle.Failure(ctx, username, req.RemoteIP)
 		uc.logger.Info("mail-auth: credencial rechazada", fields...)
-		return uc.finish(req.Service, domain.ResultBadPassword)
+		return domain.ResultBadPassword, nil
 	}
 
 	appPassword, matched, err := uc.matchPassword(ctx, mailbox, protocol, req.Password)
 	if err != nil {
 		uc.logger.Error("mail-auth: no se pudieron leer las contrasenas de aplicacion", append(fields, zap.Error(err))...)
-		return uc.finish(req.Service, domain.ResultError)
+		return domain.ResultError, nil
 	}
 	if !matched {
 		uc.throttle.Failure(ctx, username, req.RemoteIP)
 		uc.logger.Info("mail-auth: credencial rechazada", fields...)
-		return uc.finish(req.Service, domain.ResultBadPassword)
+		return domain.ResultBadPassword, nil
 	}
 
 	// Una contrasena correcta sobre un buzon que no puede entrar no es fuerza bruta:
 	// no alimenta el freno, pero tampoco abre nada.
 	if !mailbox.CanLogin() {
 		uc.logger.Info("mail-auth: buzon sin inicio de sesion", append(fields, zap.Int16("active", mailbox.Active))...)
-		return uc.finish(req.Service, domain.ResultInactive)
+		return domain.ResultInactive, nil
 	}
 	if !mailbox.Access.Allows(protocol) {
 		uc.logger.Info("mail-auth: protocolo deshabilitado para el buzon", append(fields, zap.String("protocol", string(protocol)))...)
-		return uc.finish(req.Service, domain.ResultNoAccess)
+		return domain.ResultNoAccess, nil
 	}
 
 	uc.throttle.Success(ctx, username, req.RemoteIP)
 	uc.recordSuccess(ctx, mailbox, appPassword, req, fields)
-	return uc.finish(req.Service, domain.ResultOK)
+	return domain.ResultOK, mailbox
 }
 
-// matchPassword prueba la contrasena principal y, si no coincide, las de aplicacion
-// acotadas al protocolo. Devuelve la contrasena de aplicacion usada, o nil si entro
-// con la principal.
+// matchPassword prueba la contrasena principal y, si no coincide y el protocolo las
+// admite, las de aplicacion acotadas al protocolo. Devuelve la contrasena de aplicacion
+// usada, o nil si entro con la principal.
 func (uc *UseCase) matchPassword(ctx context.Context, mailbox *domain.Mailbox, protocol domain.Protocol, password string) (*domain.AppPassword, bool, error) {
 	if uc.passwords.Verify(mailbox.PasswordHash, password) {
 		return nil, true, nil
+	}
+	if !protocol.AcceptsAppPasswords() {
+		return nil, false, nil
 	}
 	candidates, err := uc.repo.ListAppPasswords(ctx, mailbox.ID, protocol)
 	if err != nil {
