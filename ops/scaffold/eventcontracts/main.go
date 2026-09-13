@@ -1,27 +1,39 @@
-// Command eventcontracts extrae de forma estatica el CONTRATO de cada evento NATS: que
-// campos publica el emisor y que campos exige cada consumidor.
+// Command eventcontracts extrae de forma estatica el CONTRATO de cada evento NATS (que
+// campos publica el emisor y que campos exige cada consumidor) y, del mismo analisis, el
+// registro de quien publica y quien consume cada subject.
 //
-// Por que: EVENTS.md ya registra quien publica y quien consume cada subject, pero no que
-// lleva dentro el payload. Hoy cambiar una clave del mapa de datos no rompe ninguna
-// compilacion — rompe al consumidor en produccion, en silencio. Este comando materializa
-// el contrato en un archivo versionado (drift detectado en CI) y, cuando puede leer ambos
-// lados con certeza, comprueba que el emisor publique todo lo que el consumidor lee.
+// Por que: cambiar una clave del mapa de datos no rompe ninguna compilacion — rompe al
+// consumidor en produccion, en silencio. Este comando materializa el contrato en archivos
+// versionados (drift detectado en CI) y, cuando puede leer ambos lados con certeza,
+// comprueba que el emisor publique todo lo que el consumidor lee.
 //
-// Alcance deliberado: solo entiende el patron dominante del repo — Publish(subject,
-// events.Event{Data: map[...]{...}}) y consumidores que indexan el mapa con claves
-// literales. Si un lado no es legible estaticamente se marca "opaco" y se excluye de la
-// comprobacion, nunca se adivina.
+// Publicaciones: Publish/PublishPersistent(subject, evento) y outbox.Enqueue(ctx, q,
+// subject, evento), que el rele entrega despues con el mismo subject y payload. El subject
+// es un literal o una constante (del paquete o de otro paquete del modulo); si llega por
+// parametro se sigue hasta cada llamada del servicio que lo fija, por nombre y aridad. Un
+// subject de publicacion que no se resuelve es un error, nunca se omite. El payload se lee
+// del mapa literal o del struct (etiquetas json) que va en Data, siguiendo variables,
+// parametros, claves anadidas con m["clave"] = v y funciones que lo devuelven.
 //
-//	go run ./ops/scaffold/eventcontracts            # regenera el registro
-//	go run ./ops/scaffold/eventcontracts -check     # falla si hay drift o campo faltante
+// Consumidores: Subscribe/QueueSubscribe/DurableQueueSubscribe con subject literal,
+// constante o de una tabla de structs; el handler indexa evt.Data con claves literales en
+// su cuerpo o en auxiliares que reciben el mapa. Si el handler lo fabrica una funcion que
+// recibe el subject, las ramas que lo comparan con una constante se evaluan por subject.
+//
+// Lo que no es legible se marca "opaco" y se excluye de la comprobacion: no se adivina.
+//
+//	go run ./ops/scaffold/eventcontracts            # regenera EVENT-CONTRACTS.md y EVENTS.md
+//	go run ./ops/scaffold/eventcontracts -check     # falla si hay drift, subject sin resolver,
+//	                                                # subject con dos duenos o campo faltante
 package main
 
 import (
 	"flag"
 	"fmt"
 	"go/ast"
-	"go/parser"
 	"go/token"
+	"go/types"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -29,346 +41,283 @@ import (
 	"strings"
 )
 
-const outputPath = "docs/arquitectura/EVENT-CONTRACTS.md"
+const (
+	outputPath   = "docs/arquitectura/EVENT-CONTRACTS.md"
+	registryPath = "docs/arquitectura/EVENTS.md"
+)
 
 type contract struct {
-	Subject   string
-	Publisher string   // servicio emisor
-	Fields    []string // campos del payload; nil + Opaque = no legible
-	Opaque    bool
+	Subject    string
+	Publishers []string // servicios emisores; mas de uno rompe la regla de un solo dueno
+	Fields     []string // campos del payload; nil + Opaque = no legible
+	Opaque     bool
+	Sites      map[string][]token.Pos // publicaciones por servicio
 }
 
-type consumption struct {
-	Subject  string
-	Consumer string
-	Fields   []string
-	Opaque   bool
+type result struct {
+	repo       *repo
+	services   []string
+	pubs       []publication
+	cons       []consumption
+	contracts  map[string]*contract
+	unresolved []string
+	notices    []string
 }
 
 func main() {
-	check := flag.Bool("check", false, "falla si el registro esta desactualizado o hay un campo faltante")
+	check := flag.Bool("check", false, "falla si los registros estan desactualizados, hay un subject sin resolver, con dos duenos o un campo faltante")
 	flag.Parse()
 
 	root, err := repoRoot()
 	if err != nil {
 		fail(err)
 	}
-	published, consumed, err := scan(filepath.Join(root, "services"))
+	os.Exit(run(root, *check, os.Stdout, os.Stderr))
+}
+
+func run(root string, check bool, stdout, stderr io.Writer) int {
+	res, err := analyze(root)
 	if err != nil {
-		fail(err)
+		fmt.Fprintf(stderr, "eventcontracts: %v\n", err)
+		return 1
+	}
+	for _, n := range res.notices {
+		fmt.Fprintf(stderr, "aviso: %s\n", n)
+	}
+	reg := buildRegistry(res)
+	docs := []struct{ path, content string }{
+		{outputPath, renderContracts(res)},
+		{registryPath, reg.render()},
 	}
 
-	rendered := render(published, consumed)
-	target := filepath.Join(root, outputPath)
-
-	if !*check {
-		if err := os.WriteFile(target, []byte(rendered), 0o644); err != nil {
-			fail(err)
+	if !check {
+		if len(res.unresolved) > 0 {
+			for _, p := range res.unresolved {
+				fmt.Fprintf(stderr, "::error::%s\n", p)
+			}
+			fmt.Fprintln(stderr, "eventcontracts: registros sin regenerar: hay publicaciones cuyo subject no se puede resolver")
+			return 1
 		}
-		fmt.Printf("%s actualizado: %d subjects publicados, %d consumos\n",
-			outputPath, len(published), len(consumed))
-		return
+		for _, d := range docs {
+			if err := os.WriteFile(filepath.Join(root, d.path), []byte(d.content), 0o644); err != nil {
+				fmt.Fprintf(stderr, "eventcontracts: %v\n", err)
+				return 1
+			}
+		}
+		fmt.Fprintf(stdout, "%s actualizado: %d subjects publicados, %d consumos\n", outputPath, len(res.contracts), len(res.cons))
+		fmt.Fprintf(stdout, "%s actualizado: %d subjects, %d pub, %d sub\n", registryPath, len(reg.rows), reg.npub, reg.ncon)
+		if len(reg.orphans) > 0 {
+			fmt.Fprintln(stdout, "Subjects consumidos sin publicador (revisar):")
+			for _, s := range reg.orphans {
+				fmt.Fprintf(stdout, "  - %s\n", s)
+			}
+		}
+		return 0
 	}
 
-	problems := verify(published, consumed)
-	current, err := os.ReadFile(target)
-	if err != nil || string(current) != rendered {
-		problems = append(problems, fmt.Sprintf(
-			"%s desactualizado: corre 'make gen-event-contracts' y commitea el cambio", outputPath))
+	problems := append(append([]string{}, res.unresolved...), verify(res)...)
+	for _, d := range docs {
+		current, err := os.ReadFile(filepath.Join(root, d.path))
+		if err != nil || string(current) != d.content {
+			problems = append(problems, fmt.Sprintf(
+				"%s desactualizado: corre 'make gen-event-contracts' y commitea el cambio", d.path))
+		}
 	}
 	if len(problems) > 0 {
 		for _, p := range problems {
-			fmt.Fprintf(os.Stderr, "::error::%s\n", p)
+			fmt.Fprintf(stderr, "::error::%s\n", p)
 		}
-		os.Exit(1)
+		return 1
 	}
-	fmt.Printf("Contratos de eventos al dia: %d subjects, sin campos faltantes.\n", len(published))
+	fmt.Fprintf(stdout, "Contratos de eventos al dia: %d subjects, sin campos faltantes.\n", len(res.contracts))
+	return 0
 }
 
-// verify comprueba que cada campo que un consumidor lee lo publique su emisor. Solo se
-// pronuncia cuando ambos lados son legibles: un lado opaco se reporta como informacion,
-// no como fallo, para no inventar contratos que no se pueden leer.
-func verify(published map[string]contract, consumed []consumption) []string {
-	var problems []string
-	for _, c := range consumed {
-		if c.Opaque || strings.ContainsAny(c.Subject, "*>") {
-			continue
-		}
-		pub, ok := published[c.Subject]
-		if !ok || pub.Opaque {
-			continue
-		}
-		have := make(map[string]bool, len(pub.Fields))
-		for _, f := range pub.Fields {
-			have[f] = true
-		}
-		var missing []string
-		for _, f := range c.Fields {
-			if !have[f] {
-				missing = append(missing, f)
-			}
-		}
-		if len(missing) > 0 {
-			problems = append(problems, fmt.Sprintf(
-				"%s: %s lee %v, pero %s no lo publica (campos: %v)",
-				c.Subject, c.Consumer, missing, pub.Publisher, pub.Fields))
-		}
-	}
-	sort.Strings(problems)
-	return problems
-}
-
-func scan(servicesDir string) (map[string]contract, []consumption, error) {
-	published := map[string]contract{}
-	var consumed []consumption
-
-	entries, err := os.ReadDir(servicesDir)
+func analyze(root string) (*result, error) {
+	r, err := newRepo(root)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
+	entries, err := os.ReadDir(filepath.Join(root, "services"))
+	if err != nil {
+		return nil, err
+	}
+	res := &result{repo: r}
+	a := &analyzer{r: r}
 	for _, e := range entries {
 		if !e.IsDir() {
 			continue
 		}
-		service := e.Name()
-		var files []*ast.File
-		err := filepath.WalkDir(filepath.Join(servicesDir, service), func(path string, d os.DirEntry, err error) error {
-			if err != nil || d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
-				return nil
-			}
-			fset := token.NewFileSet()
-			file, perr := parser.ParseFile(fset, path, nil, 0)
-			if perr != nil {
-				return nil // un archivo que no parsea no es asunto de este check
-			}
-			files = append(files, file)
-			return nil
-		})
+		svc, err := r.loadService(e.Name())
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
-		// Dos pasadas: primero las constantes de cadena de TODO el servicio, porque el
-		// subject suele declararse como constante junto al worker y la llamada la usa por
-		// nombre. Sin esto el consumo desaparece del mapa sin que nada falle: el servicio
-		// sigue suscrito y el documento dice que nadie escucha.
-		consts, ambiguos := map[string]string{}, map[string]bool{}
-		for _, file := range files {
-			collectStringConsts(file, consts, ambiguos)
-		}
-		for _, file := range files {
-			collectPublishers(file, service, published, consts, ambiguos)
-			consumed = append(consumed, collectConsumers(file, service, consts, ambiguos)...)
-		}
+		res.services = append(res.services, e.Name())
+		a.svc = svc
+		a.collectPublishers()
+		a.collectConsumers()
 	}
-	return published, consumed, nil
+	res.pubs, res.cons = a.pubs, a.cons
+	res.contracts = buildContracts(a.pubs)
+	sort.Strings(a.problems)
+	res.unresolved = dedupe(a.problems)
+	sort.Strings(a.notices)
+	res.notices = dedupe(a.notices)
+	return res, nil
 }
 
-func collectPublishers(file *ast.File, service string, out map[string]contract, consts map[string]string, ambiguos map[string]bool) {
-	ast.Inspect(file, func(n ast.Node) bool {
-		call, ok := n.(*ast.CallExpr)
-		if !ok || len(call.Args) != 2 {
-			return true
-		}
-		sel, ok := call.Fun.(*ast.SelectorExpr)
-		if !ok || (sel.Sel.Name != "Publish" && sel.Sel.Name != "PublishPersistent") {
-			return true
-		}
-		subject, ok := subjectArg(call.Args[0], consts, ambiguos)
-		if !ok {
-			return true // subject dinamico: no hay contrato que fijar
-		}
-		lit, ok := call.Args[1].(*ast.CompositeLit)
-		if !ok {
-			return true
-		}
-		c := contract{Subject: subject, Publisher: service}
-
-		// Forma directa: Publish(subject, map{...}). La usan los servicios cuyo
-		// publisher envuelve el evento por dentro; el payload es igual de legible.
-		if fields, readable := mapLiteralKeys(lit); readable {
-			c.Fields = fields
-			c.Opaque = false
-			mergeContract(out, subject, service, c)
-			return true
-		}
-
-		dataFound := false
-		for _, elt := range lit.Elts {
-			kv, ok := elt.(*ast.KeyValueExpr)
-			if !ok {
-				continue
-			}
-			if ident, ok := kv.Key.(*ast.Ident); !ok || ident.Name != "Data" {
-				continue
-			}
-			dataFound = true
-			fields, readable := mapLiteralKeys(kv.Value)
-			c.Fields, c.Opaque = fields, !readable
-		}
-		if !dataFound {
-			c.Opaque = true
-		}
-		mergeContract(out, subject, service, c)
-		return true
-	})
-}
-
-// mergeContract acumula lo hallado para un subject. Un mismo subject emitido desde varios
+// buildContracts acumula lo hallado por subject. Un mismo subject emitido desde varios
 // sitios une sus campos, y basta que uno sea opaco para no afirmar nada sobre el.
-func mergeContract(out map[string]contract, subject, service string, c contract) {
-	if prev, exists := out[subject]; exists {
-		c.Fields = union(prev.Fields, c.Fields)
-		c.Opaque = prev.Opaque || c.Opaque
-		if prev.Publisher != service {
-			c.Publisher = prev.Publisher + ", " + service
+func buildContracts(pubs []publication) map[string]*contract {
+	out := map[string]*contract{}
+	for _, p := range pubs {
+		c, ok := out[p.Subject]
+		if !ok {
+			c = &contract{Subject: p.Subject, Sites: map[string][]token.Pos{}}
+			out[p.Subject] = c
+		}
+		c.Fields = union(c.Fields, p.Fields)
+		c.Opaque = c.Opaque || p.Opaque
+		if !contains(c.Publishers, p.Service) {
+			c.Publishers = append(c.Publishers, p.Service)
+			sort.Strings(c.Publishers)
+		}
+		sites := c.Sites[p.Service]
+		found := false
+		for _, s := range sites {
+			found = found || s == p.Pos
+		}
+		if !found {
+			sites = append(sites, p.Pos)
+			sort.Slice(sites, func(i, j int) bool { return sites[i] < sites[j] })
+			c.Sites[p.Service] = sites
 		}
 	}
-	sort.Strings(c.Fields)
-	out[subject] = c
-}
-
-func collectConsumers(file *ast.File, service string, consts map[string]string, ambiguos map[string]bool) []consumption {
-	var out []consumption
-	methods := map[string]*ast.FuncDecl{}
-	for _, decl := range file.Decls {
-		if fn, ok := decl.(*ast.FuncDecl); ok {
-			methods[fn.Name.Name] = fn
-		}
-	}
-
-	ast.Inspect(file, func(n ast.Node) bool {
-		call, ok := n.(*ast.CallExpr)
-		if !ok || len(call.Args) == 0 {
-			return true
-		}
-		sel, ok := call.Fun.(*ast.SelectorExpr)
-		if !ok {
-			return true
-		}
-		switch sel.Sel.Name {
-		case "Subscribe", "QueueSubscribe", "DurableQueueSubscribe":
-		default:
-			return true
-		}
-		subject, ok := subjectArg(call.Args[0], consts, ambiguos)
-		if !ok {
-			return true
-		}
-		handler := call.Args[len(call.Args)-1]
-		var body *ast.BlockStmt
-		switch h := handler.(type) {
-		case *ast.FuncLit:
-			body = h.Body
-		case *ast.SelectorExpr:
-			if fn, found := methods[h.Sel.Name]; found {
-				body = fn.Body
-			}
-		case *ast.Ident:
-			if fn, found := methods[h.Name]; found {
-				body = fn.Body
-			}
-		}
-		if body == nil {
-			out = append(out, consumption{Subject: subject, Consumer: service, Opaque: true})
-			return true
-		}
-		fields, readable := payloadKeysRead(body)
-		out = append(out, consumption{
-			Subject: subject, Consumer: service, Fields: fields, Opaque: !readable,
-		})
-		return true
-	})
 	return out
 }
 
-// payloadKeysRead busca la variable que recibe evt.Data por asercion de tipo y devuelve
-// las claves literales con las que se la indexa. Si el handler no usa ese patron (p.ej.
-// deserializa a un struct), se declara opaco: no se adivina.
-func payloadKeysRead(body *ast.BlockStmt) ([]string, bool) {
-	var dataVars []string
-	ast.Inspect(body, func(n ast.Node) bool {
-		assign, ok := n.(*ast.AssignStmt)
-		if !ok || len(assign.Rhs) != 1 {
-			return true
-		}
-		ta, ok := assign.Rhs[0].(*ast.TypeAssertExpr)
-		if !ok {
-			return true
-		}
-		sel, ok := ta.X.(*ast.SelectorExpr)
-		if !ok || sel.Sel.Name != "Data" {
-			return true
-		}
-		if ident, ok := assign.Lhs[0].(*ast.Ident); ok && ident.Name != "_" {
-			dataVars = append(dataVars, ident.Name)
-		}
-		return true
-	})
-	if len(dataVars) == 0 {
-		return nil, false
-	}
-
-	seen := map[string]bool{}
-	ast.Inspect(body, func(n ast.Node) bool {
-		idx, ok := n.(*ast.IndexExpr)
-		if !ok {
-			return true
-		}
-		ident, ok := idx.X.(*ast.Ident)
-		if !ok || !contains(dataVars, ident.Name) {
-			return true
-		}
-		if key, ok := stringLit(idx.Index); ok {
-			seen[key] = true
-		}
-		return true
-	})
-	return sortedKeys(seen), true
-}
-
-// mapLiteralKeys extrae las claves de un literal map[...]{...}. Devuelve readable=false
-// si el valor no es un literal (p.ej. una variable construida en otro sitio).
-func mapLiteralKeys(v ast.Expr) ([]string, bool) {
-	lit, ok := v.(*ast.CompositeLit)
-	if !ok {
-		return nil, false
-	}
-	if _, ok := lit.Type.(*ast.MapType); !ok {
-		return nil, false
-	}
-	seen := map[string]bool{}
-	for _, elt := range lit.Elts {
-		kv, ok := elt.(*ast.KeyValueExpr)
-		if !ok {
+// verify comprueba que cada subject tenga un solo dueno y que cada campo que un
+// consumidor lee lo publique su emisor (o, con comodin, alguno de los subjects que
+// recibe). Solo se pronuncia cuando ambos lados son legibles: un lado opaco se excluye,
+// para no inventar contratos que no se pueden leer.
+func verify(res *result) []string {
+	r := res.repo
+	var problems []string
+	for _, subject := range sortedContractKeys(res.contracts) {
+		c := res.contracts[subject]
+		if len(c.Publishers) < 2 {
 			continue
 		}
-		if key, ok := stringLit(kv.Key); ok {
-			seen[key] = true
+		who := make([]string, 0, len(c.Publishers))
+		for _, s := range c.Publishers {
+			who = append(who, fmt.Sprintf("%s (%s)", s, r.rel(c.Sites[s][0])))
+		}
+		problems = append(problems, fmt.Sprintf("%s: lo publican %s; un subject tiene un solo dueno",
+			subject, strings.Join(who, " y ")))
+	}
+	for _, c := range res.cons {
+		if c.Opaque {
+			continue
+		}
+		if isPattern(c.Subject) {
+			problems = append(problems, verifyPattern(res, c)...)
+			continue
+		}
+		pub, ok := res.contracts[c.Subject]
+		if !ok || pub.Opaque {
+			continue
+		}
+		if missing := missingFields(c.Fields, pub.Fields); len(missing) > 0 {
+			problems = append(problems, fmt.Sprintf("%s: %s lee %s, pero %s no lo publica (%s; campos: %v)",
+				c.Subject, c.Consumer, readSites(r, c, missing), strings.Join(pub.Publishers, ", "),
+				pubSites(r, pub), pub.Fields))
 		}
 	}
-	return sortedKeys(seen), true
+	sort.Strings(problems)
+	return dedupe(problems)
 }
 
-func render(published map[string]contract, consumed []consumption) string {
+func verifyPattern(res *result, c consumption) []string {
+	var matched []string
+	have := map[string]bool{}
+	for subject, pc := range res.contracts {
+		if !matchSubject(c.Subject, subject) {
+			continue
+		}
+		if pc.Opaque {
+			return nil
+		}
+		matched = append(matched, subject)
+		for _, f := range pc.Fields {
+			have[f] = true
+		}
+	}
+	if len(matched) == 0 {
+		return nil
+	}
+	var missing []string
+	for _, f := range c.Fields {
+		if !have[f] {
+			missing = append(missing, f)
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	sort.Strings(matched)
+	return []string{fmt.Sprintf("%s: %s lee %s, pero ninguno de los subjects que recibe lo publica (%s)",
+		c.Subject, c.Consumer, readSites(res.repo, c, missing), strings.Join(matched, ", "))}
+}
+
+func missingFields(read, published []string) []string {
+	var missing []string
+	for _, f := range read {
+		if !contains(published, f) {
+			missing = append(missing, f)
+		}
+	}
+	return missing
+}
+
+func readSites(r *repo, c consumption, fields []string) string {
+	parts := make([]string, 0, len(fields))
+	for _, f := range fields {
+		parts = append(parts, fmt.Sprintf("`%s` en %s", f, r.rel(c.FieldPos[f])))
+	}
+	return strings.Join(parts, ", ")
+}
+
+func pubSites(r *repo, c *contract) string {
+	var parts []string
+	for _, s := range c.Publishers {
+		for _, pos := range c.Sites[s] {
+			parts = append(parts, "publica en "+r.rel(pos))
+		}
+	}
+	return strings.Join(parts, ", ")
+}
+
+func renderContracts(res *result) string {
 	var b strings.Builder
 	b.WriteString("# Contratos de eventos\n\n")
 	b.WriteString("Generado — no editar a mano. Regenera con `make gen-event-contracts`.\n\n")
 	b.WriteString("Campos del payload (`Event.Data`) por subject, extraidos del codigo. Un cambio en\n")
 	b.WriteString("esta tabla es un cambio de contrato: quitar o renombrar un campo rompe a sus\n")
-	b.WriteString("consumidores en tiempo de ejecucion, no de compilacion. `opaco` = el payload se\n")
-	b.WriteString("construye fuera del literal y no se puede leer estaticamente.\n\n")
+	b.WriteString("consumidores en tiempo de ejecucion, no de compilacion. Cuenta lo publicado en el\n")
+	b.WriteString("bus y lo encolado en la outbox (`outbox.Enqueue`), que el rele entrega con el mismo\n")
+	b.WriteString("subject y payload. `opaco` = el payload no se puede leer estaticamente.\n\n")
 
 	b.WriteString("## Publicado\n\n")
 	b.WriteString("| Subject | Servicio | Campos |\n|---|---|---|\n")
-	for _, subject := range sortedContractKeys(published) {
-		c := published[subject]
-		b.WriteString(fmt.Sprintf("| `%s` | %s | %s |\n", subject, c.Publisher, fieldList(c.Fields, c.Opaque)))
+	for _, subject := range sortedContractKeys(res.contracts) {
+		c := res.contracts[subject]
+		b.WriteString(fmt.Sprintf("| `%s` | %s | %s |\n", subject, strings.Join(c.Publishers, ", "), fieldList(c.Fields, c.Opaque)))
 	}
 
 	b.WriteString("\n## Consumido\n\n")
 	b.WriteString("| Subject | Servicio | Campos que lee |\n|---|---|---|\n")
-	rows := make([]string, 0, len(consumed))
-	for _, c := range consumed {
+	rows := make([]string, 0, len(res.cons))
+	for _, c := range res.cons {
 		rows = append(rows, fmt.Sprintf("| `%s` | %s | %s |\n", c.Subject, c.Consumer, fieldList(c.Fields, c.Opaque)))
 	}
 	sort.Strings(rows)
@@ -393,49 +342,6 @@ func fieldList(fields []string, opaque bool) string {
 	return strings.Join(quoted, ", ")
 }
 
-// collectStringConsts junta las constantes (y variables) de cadena declaradas en el
-// archivo. Un nombre que aparece con DOS valores distintos en el mismo servicio queda
-// marcado como ambiguo y deja de resolverse: preferimos perder ese subject a atribuirlo
-// mal.
-func collectStringConsts(file *ast.File, out map[string]string, ambiguos map[string]bool) {
-	for _, decl := range file.Decls {
-		gd, ok := decl.(*ast.GenDecl)
-		if !ok || (gd.Tok != token.CONST && gd.Tok != token.VAR) {
-			continue
-		}
-		for _, spec := range gd.Specs {
-			vs, ok := spec.(*ast.ValueSpec)
-			if !ok || len(vs.Names) != len(vs.Values) {
-				continue
-			}
-			for i, name := range vs.Names {
-				valor, ok := stringLit(vs.Values[i])
-				if !ok {
-					continue
-				}
-				if prev, existe := out[name.Name]; existe && prev != valor {
-					ambiguos[name.Name] = true
-				}
-				out[name.Name] = valor
-			}
-		}
-	}
-}
-
-// subjectArg resuelve el primer argumento de Publish/Subscribe: un literal, o el nombre de
-// una constante de cadena del mismo servicio.
-func subjectArg(e ast.Expr, consts map[string]string, ambiguos map[string]bool) (string, bool) {
-	if s, ok := stringLit(e); ok {
-		return s, true
-	}
-	ident, ok := e.(*ast.Ident)
-	if !ok || ambiguos[ident.Name] {
-		return "", false
-	}
-	s, ok := consts[ident.Name]
-	return s, ok
-}
-
 func stringLit(e ast.Expr) (string, bool) {
 	lit, ok := e.(*ast.BasicLit)
 	if !ok || lit.Kind != token.STRING {
@@ -448,6 +354,8 @@ func stringLit(e ast.Expr) (string, bool) {
 	return s, true
 }
 
+func exprString(e ast.Expr) string { return types.ExprString(e) }
+
 func sortedKeys(m map[string]bool) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {
@@ -457,7 +365,16 @@ func sortedKeys(m map[string]bool) []string {
 	return out
 }
 
-func sortedContractKeys(m map[string]contract) []string {
+func sortedPosKeys(m map[string]token.Pos) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func sortedContractKeys(m map[string]*contract) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {
 		out = append(out, k)

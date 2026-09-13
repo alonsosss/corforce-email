@@ -3,8 +3,10 @@
 Generado por `ops/scaffold/gen-events.sh` desde el codigo. NO editar a mano.
 Convencion de subject: `<dominio>.<entidad>.<accion>`. Un subject tiene UN dueno
 (el servicio que lo publica); los demas solo lo consumen (regla no-fork).
+Publicar incluye encolar en la outbox (`outbox.Enqueue`); un consumidor con comodin
+(`*`, `>`) figura en cada subject publicado que recibe.
 
-Resumen: 36 publicaciones, 7 suscripciones, 39 subjects distintos.
+Resumen: 76 publicaciones, 32 suscripciones, 76 subjects distintos.
 
 ## Cruce por subject (dueno -> consumidores)
 
@@ -17,16 +19,31 @@ Resumen: 36 publicaciones, 7 suscripciones, 39 subjects distintos.
 | `automations.workflow.activated` | automations | - |
 | `automations.workflow.archived` | automations | - |
 | `automations.workflow.paused` | automations | - |
-| `campaigns.campaign.cancelled` | campaigns | - |
-| `campaigns.campaign.completed` | campaigns | - |
-| `campaigns.campaign.failed` | campaigns | - |
-| `campaigns.campaign.paused` | campaigns | - |
-| `campaigns.campaign.resumed` | campaigns | - |
-| `campaigns.campaign.scheduled` | campaigns | - |
-| `campaigns.campaign.started` | campaigns | - |
-| `contacts.consent.granted` | (ninguno: subject huerfano) | automations |
-| `contacts.consent.requested` | (ninguno: subject huerfano) | automations |
-| `contacts.contact.created` | (ninguno: subject huerfano) | automations |
+| `billing.limit.reached` | billing | - |
+| `billing.period.closed` | billing | - |
+| `billing.subscription.changed` | billing | - |
+| `billing.subscription.created` | billing | - |
+| `billing.subscription.suspended` | billing | - |
+| `campaigns.campaign.cancelled` | campaigns | analytics |
+| `campaigns.campaign.completed` | campaigns | analytics |
+| `campaigns.campaign.failed` | campaigns | analytics |
+| `campaigns.campaign.paused` | campaigns | analytics |
+| `campaigns.campaign.resumed` | campaigns | analytics |
+| `campaigns.campaign.scheduled` | campaigns | analytics |
+| `campaigns.campaign.started` | campaigns | analytics |
+| `contacts.consent.granted` | contacts | automations |
+| `contacts.consent.requested` | contacts | automations |
+| `contacts.consent.revoked` | contacts | - |
+| `contacts.contact.created` | contacts | automations, billing |
+| `contacts.contact.deleted` | contacts | billing |
+| `contacts.contact.resubscribed` | contacts | suppression |
+| `contacts.contact.updated` | contacts | - |
+| `contacts.import.completed` | contacts | - |
+| `domains.domain.created` | domain-service | billing, transactional |
+| `domains.domain.deleted` | domain-service | billing, transactional |
+| `domains.domain.dkim_rotated` | domain-service | transactional |
+| `domains.domain.failed` | domain-service | transactional |
+| `domains.domain.verified` | domain-service | transactional |
 | `gateway.security.exfiltration` | gateway | - |
 | `identity.session.revoked_by_admin` | identity | - |
 | `identity.user.created` | identity | - |
@@ -35,47 +52,105 @@ Resumen: 36 publicaciones, 7 suscripciones, 39 subjects distintos.
 | `identity.user.logged_out` | identity | - |
 | `identity.user.login_failed` | identity | - |
 | `identity.user.password_changed` | identity | - |
+| `mail.alias.created` | mail-directory | mail-security |
+| `mail.alias.deleted` | mail-directory | mail-security |
+| `mail.alias.updated` | mail-directory | mail-security |
+| `mail.alias_domain.created` | mail-directory | mail-security |
+| `mail.alias_domain.deleted` | mail-directory | mail-security |
+| `mail.alias_domain.updated` | mail-directory | mail-security |
+| `mail.domain.activated` | mail-directory | mail-security |
+| `mail.domain.created` | mail-directory | billing, mail-security |
+| `mail.domain.deleted` | mail-directory | billing, mail-security |
+| `mail.domain.updated` | mail-directory | mail-security |
+| `mail.mailbox.created` | mail-directory | billing, mail-security, webmail |
+| `mail.mailbox.credentials_changed` | mail-directory | mail-security, webmail |
+| `mail.mailbox.deleted` | mail-directory | billing, mail-security, webmail |
+| `mail.mailbox.updated` | mail-directory | mail-security, webmail |
+| `mail_security.quarantine.released` | mail-security | - |
+| `mail_security.quarantine.stored` | mail-security | - |
+| `organization.tenant.created` | organization | billing |
+| `organization.tenant.modules_changed` | organization | - |
+| `organization.tenant.status_changed` | organization | billing |
+| `reputation.tenant.state_changed` | reputation | - |
 | `scheduler.job.completed` | scheduler | - |
 | `scheduler.job.failed` | scheduler | - |
 | `scheduler.job.started` | scheduler | - |
+| `suppression.entry.added` | suppression | contacts |
+| `suppression.entry.removed` | suppression | contacts |
 | `templates.template.published` | templates | - |
-| `transactional.email.bounced` | transactional | - |
-| `transactional.email.clicked` | transactional | automations |
-| `transactional.email.complained` | transactional | - |
-| `transactional.email.delivered` | transactional | - |
-| `transactional.email.failed` | transactional | - |
-| `transactional.email.opened` | transactional | - |
-| `transactional.email.sent` | transactional | - |
-| `transactional.email.unsubscribed` | transactional | - |
+| `transactional.email.bounced` | transactional | analytics, campaigns, reputation, suppression |
+| `transactional.email.clicked` | transactional | analytics, automations, campaigns |
+| `transactional.email.complained` | transactional | analytics, campaigns, reputation, suppression |
+| `transactional.email.delivered` | transactional | analytics, campaigns |
+| `transactional.email.failed` | transactional | analytics, campaigns |
+| `transactional.email.opened` | transactional | analytics, campaigns |
+| `transactional.email.sent` | transactional | analytics, billing, campaigns, reputation |
+| `transactional.email.unsubscribed` | transactional | analytics, campaigns |
 | `transactional.marketing.queued` | transactional | transactional |
 | `transactional.message.queued` | transactional | transactional |
 
 ## Por servicio
+
+### analytics
+- Consume: `campaigns.campaign.*`, `transactional.email.*`
 
 ### audit
 - Publica: `audit.security.alert`
 - Consume: `audit.api.write`
 
 ### automations
-- Publica: `automations.run.completed`,`automations.run.failed` `automations.workflow.activated`,`automations.workflow.archived` `automations.workflow.paused`
-- Consume: `contacts.consent.granted`,`contacts.consent.requested` `contacts.contact.created`,`transactional.email.clicked`
+- Publica: `automations.run.completed`, `automations.run.failed`, `automations.workflow.activated`, `automations.workflow.archived`, `automations.workflow.paused`
+- Consume: `contacts.consent.granted`, `contacts.consent.requested`, `contacts.contact.created`, `transactional.email.clicked`
+
+### billing
+- Publica: `billing.limit.reached`, `billing.period.closed`, `billing.subscription.changed`, `billing.subscription.created`, `billing.subscription.suspended`
+- Consume: `contacts.contact.created`, `contacts.contact.deleted`, `domains.domain.created`, `domains.domain.deleted`, `mail.domain.created`, `mail.domain.deleted`, `mail.mailbox.created`, `mail.mailbox.deleted`, `organization.tenant.created`, `organization.tenant.status_changed`, `transactional.email.sent`
 
 ### campaigns
-- Publica: `campaigns.campaign.cancelled`,`campaigns.campaign.completed` `campaigns.campaign.failed`,`campaigns.campaign.paused` `campaigns.campaign.resumed`,`campaigns.campaign.scheduled` `campaigns.campaign.started`
+- Publica: `campaigns.campaign.cancelled`, `campaigns.campaign.completed`, `campaigns.campaign.failed`, `campaigns.campaign.paused`, `campaigns.campaign.resumed`, `campaigns.campaign.scheduled`, `campaigns.campaign.started`
+- Consume: `transactional.email.>`
+
+### contacts
+- Publica: `contacts.consent.granted`, `contacts.consent.requested`, `contacts.consent.revoked`, `contacts.contact.created`, `contacts.contact.deleted`, `contacts.contact.resubscribed`, `contacts.contact.updated`, `contacts.import.completed`
+- Consume: `suppression.entry.added`, `suppression.entry.removed`
+
+### domain-service
+- Publica: `domains.domain.created`, `domains.domain.deleted`, `domains.domain.dkim_rotated`, `domains.domain.failed`, `domains.domain.verified`
 
 ### gateway
-- Publica: `audit.api.write`,`gateway.security.exfiltration`
+- Publica: `audit.api.write`, `gateway.security.exfiltration`
 
 ### identity
-- Publica: `identity.session.revoked_by_admin`,`identity.user.created` `identity.user.locked`,`identity.user.logged_in` `identity.user.logged_out`,`identity.user.login_failed` `identity.user.password_changed`
+- Publica: `identity.session.revoked_by_admin`, `identity.user.created`, `identity.user.locked`, `identity.user.logged_in`, `identity.user.logged_out`, `identity.user.login_failed`, `identity.user.password_changed`
+
+### mail-directory
+- Publica: `mail.alias.created`, `mail.alias.deleted`, `mail.alias.updated`, `mail.alias_domain.created`, `mail.alias_domain.deleted`, `mail.alias_domain.updated`, `mail.domain.activated`, `mail.domain.created`, `mail.domain.deleted`, `mail.domain.updated`, `mail.mailbox.created`, `mail.mailbox.credentials_changed`, `mail.mailbox.deleted`, `mail.mailbox.updated`
+
+### mail-security
+- Publica: `mail_security.quarantine.released`, `mail_security.quarantine.stored`
+- Consume: `mail.>`
+
+### organization
+- Publica: `organization.tenant.created`, `organization.tenant.modules_changed`, `organization.tenant.status_changed`
+
+### reputation
+- Publica: `reputation.tenant.state_changed`
+- Consume: `transactional.email.bounced`, `transactional.email.complained`, `transactional.email.sent`
 
 ### scheduler
-- Publica: `scheduler.job.completed`,`scheduler.job.failed` `scheduler.job.started`
+- Publica: `scheduler.job.completed`, `scheduler.job.failed`, `scheduler.job.started`
+
+### suppression
+- Publica: `suppression.entry.added`, `suppression.entry.removed`
+- Consume: `contacts.contact.resubscribed`, `transactional.email.bounced`, `transactional.email.complained`
 
 ### templates
 - Publica: `templates.template.published`
 
 ### transactional
-- Publica: `transactional.email.bounced`,`transactional.email.clicked` `transactional.email.complained`,`transactional.email.delivered` `transactional.email.failed`,`transactional.email.opened` `transactional.email.sent`,`transactional.email.unsubscribed` `transactional.marketing.queued`,`transactional.message.queued`
-- Consume: `transactional.marketing.queued`,`transactional.message.queued`
+- Publica: `transactional.email.bounced`, `transactional.email.clicked`, `transactional.email.complained`, `transactional.email.delivered`, `transactional.email.failed`, `transactional.email.opened`, `transactional.email.sent`, `transactional.email.unsubscribed`, `transactional.marketing.queued`, `transactional.message.queued`
+- Consume: `domains.domain.*`, `transactional.marketing.queued`, `transactional.message.queued`
+
+### webmail
+- Consume: `mail.mailbox.>`
 

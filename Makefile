@@ -60,7 +60,8 @@ new-service:
 validate-scaffold:
 	@ops/scaffold/validate.sh
 
-# make gen-events  (regenera docs/arquitectura/EVENTS.md: registro de eventos NATS)
+# make gen-events  (regenera docs/arquitectura/EVENTS.md y EVENT-CONTRACTS.md desde el codigo:
+# publicaciones directas y por outbox, suscripciones y campos)
 gen-events:
 	@ops/scaffold/gen-events.sh
 

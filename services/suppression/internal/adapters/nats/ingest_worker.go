@@ -148,11 +148,14 @@ func (w *IngestWorker) handle(subject string) func(events.Event, func()) {
 		}
 
 		ev := app.DeliveryEvent{
-			Subject:    subject,
-			TenantID:   tenantID,
-			Email:      str(data["email"]),
-			BounceType: str(data["bounce_type"]),
-			Detail:     str(data["detail"]),
+			Subject:  subject,
+			TenantID: tenantID,
+			Email:    str(data["email"]),
+			Detail:   str(data["detail"]),
+		}
+		// bounce_type solo existe en transactional.email.bounced: la queja no lo publica.
+		if subject == app.SubjectEmailBounced {
+			ev.BounceType = str(data["bounce_type"])
 		}
 		if id, err := uuid.Parse(str(data["message_id"])); err == nil {
 			ev.MessageID = &id
