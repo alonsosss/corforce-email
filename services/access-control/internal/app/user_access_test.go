@@ -16,17 +16,22 @@ const (
 	testTenantAdmin = "tenant_admin"
 )
 
-// fakeUserRoles entrega el acceso minimo que necesita GetUserAccess.
+// fakeUserRoles entrega el acceso minimo que necesita GetUserAccess. Sin account, la
+// cuenta esta activa con validFrom como instante de revocacion.
 type fakeUserRoles struct {
 	roles        []*domain.Role
 	modules      []string
 	writeActions map[string][]string
 	validFrom    time.Time
+	account      *domain.UserAccount
+	accountErr   error
+	rolesRead    bool
 }
 
 func (f *fakeUserRoles) Assign(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) error { return nil }
 func (f *fakeUserRoles) Revoke(context.Context, uuid.UUID, uuid.UUID) error            { return nil }
 func (f *fakeUserRoles) ListRoles(context.Context, uuid.UUID, uuid.UUID) ([]*domain.Role, error) {
+	f.rolesRead = true
 	return f.roles, nil
 }
 func (f *fakeUserRoles) ListPermissions(context.Context, uuid.UUID, uuid.UUID) ([]*domain.Permission, error) {
@@ -41,8 +46,14 @@ func (f *fakeUserRoles) ListAccessibleModules(context.Context, uuid.UUID, uuid.U
 func (f *fakeUserRoles) ListWriteActionsByModule(context.Context, uuid.UUID, uuid.UUID) (map[string][]string, error) {
 	return f.writeActions, nil
 }
-func (f *fakeUserRoles) TokensValidFrom(context.Context, uuid.UUID) (time.Time, error) {
-	return f.validFrom, nil
+func (f *fakeUserRoles) UserAccount(context.Context, uuid.UUID, uuid.UUID) (domain.UserAccount, error) {
+	if f.accountErr != nil {
+		return domain.UserAccount{}, f.accountErr
+	}
+	if f.account != nil {
+		return *f.account, nil
+	}
+	return domain.UserAccount{Status: "active", TokensValidFrom: f.validFrom}, nil
 }
 func (f *fakeUserRoles) ListUsersWithPermission(context.Context, uuid.UUID, string, string) ([]uuid.UUID, error) {
 	return nil, nil
@@ -197,6 +208,46 @@ func TestElInstanteDeRevocacionViajaConElAcceso(t *testing.T) {
 	}
 	if !access.TokensValidFrom.Equal(roles.validFrom) {
 		t.Errorf("TokensValidFrom = %v, want %v", access.TokensValidFrom, roles.validFrom)
+	}
+}
+
+// Una cuenta que no existe en la empresa es una respuesta definitiva: no se resuelven sus
+// roles, que pueden seguir asignados tras borrar la cuenta.
+func TestUnaCuentaInexistenteNoTieneAcceso(t *testing.T) {
+	roles := operatorRoles()
+	roles.accountErr = domain.ErrUserNotFound
+	access, err := newAccessUC(roles, &fakeGate{}).GetUserAccess(context.Background(), uuid.New(), uuid.New())
+	if !errors.Is(err, domain.ErrUserNotFound) || access != nil {
+		t.Fatalf("GetUserAccess = %v, %v; se esperaba ErrUserNotFound", access, err)
+	}
+	if roles.rolesRead {
+		t.Error("se leyeron los roles de una cuenta inexistente")
+	}
+}
+
+// Solo una cuenta activa conserva el acceso, el mismo criterio con el que identity renueva.
+func TestUnaCuentaNoActivaNoTieneAcceso(t *testing.T) {
+	for _, status := range []string{"inactive", "locked", "pending", ""} {
+		roles := operatorRoles()
+		roles.account = &domain.UserAccount{Status: status}
+		_, err := newAccessUC(roles, &fakeGate{}).GetUserAccess(context.Background(), uuid.New(), uuid.New())
+		if !errors.Is(err, domain.ErrUserNotActive) {
+			t.Errorf("estado %q: err = %v, se esperaba ErrUserNotActive", status, err)
+		}
+	}
+}
+
+// Un fallo leyendo la cuenta no es definitivo: el acceso se resuelve sin instante de
+// revocacion, como antes, para que una caida de la base no expulse a toda la empresa.
+func TestUnFalloLeyendoLaCuentaNoCierraLaSesion(t *testing.T) {
+	roles := operatorRoles()
+	roles.accountErr = errors.New("registro no disponible")
+	access, err := newAccessUC(roles, &fakeGate{}).GetUserAccess(context.Background(), uuid.New(), uuid.New())
+	if err != nil {
+		t.Fatalf("GetUserAccess: %v", err)
+	}
+	if !access.TokensValidFrom.IsZero() || len(access.Modules) != 3 {
+		t.Errorf("acceso = %+v; se esperaba el de siempre sin instante de revocacion", access)
 	}
 }
 

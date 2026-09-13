@@ -7,6 +7,16 @@ import (
 	"github.com/google/uuid"
 )
 
+// UserAccount es lo que identity publica de una cuenta (identity.v_user_status).
+type UserAccount struct {
+	Status          string
+	TokensValidFrom time.Time
+}
+
+// Active: solo una cuenta activa conserva la sesion; es el mismo criterio con el que
+// identity renueva el token.
+func (a UserAccount) Active() bool { return a.Status == "active" }
+
 type Role struct {
 	ID          uuid.UUID
 	TenantID    uuid.UUID

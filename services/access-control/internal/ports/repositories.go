@@ -48,10 +48,11 @@ type UserRoleRepository interface {
 	// exige delete), no solo por modulo, y que un rol de solo lectura no pueda modificar
 	// aunque vea el modulo.
 	ListWriteActionsByModule(ctx context.Context, userID, tenantID uuid.UUID) (map[string][]string, error)
-	// TokensValidFrom devuelve el instante desde el cual son validos los tokens del
-	// usuario: el gateway rechaza cualquier access token emitido antes (revocacion
-	// instantanea de sesiones).
-	TokensValidFrom(ctx context.Context, userID uuid.UUID) (time.Time, error)
+	// UserAccount devuelve el estado de la cuenta en la empresa y el instante desde el cual
+	// valen sus tokens: el gateway rechaza el access token de una cuenta que no existe o no
+	// esta activa y el emitido antes de ese instante. domain.ErrUserNotFound si la cuenta no
+	// existe en esa empresa.
+	UserAccount(ctx context.Context, userID, tenantID uuid.UUID) (domain.UserAccount, error)
 	// ListUsersWithPermission devuelve los usuarios activos de la empresa que tienen un
 	// permiso concreto. Permite avisar a quien corresponde sin que el servicio que avisa
 	// tenga que conocer los nombres de los roles (que cada empresa puede renombrar).

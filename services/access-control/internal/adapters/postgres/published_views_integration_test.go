@@ -14,18 +14,19 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alonsosss/corforce-email/services/access-control/internal/domain"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // ACCESS_CONTROL_TEST_DSN apunta a un Postgres limpio (pgvector/pgvector:pg16). La prueba
-// aplica dos veces todas las migraciones del registro y comprueba que TokensValidFrom y
+// aplica dos veces todas las migraciones del registro y comprueba que UserAccount y
 // ListUsersWithPermission, que leen la vista identity.v_user_status, devuelven lo mismo
 // que las consultas sobre identity.users a las que sustituyen, con datos de dos empresas.
 
 const (
-	legacyTokensValidFromSQL = `SELECT tokens_valid_from FROM identity.users WHERE id = $1`
+	legacyUserAccountSQL = `SELECT tenant_id, status, tokens_valid_from FROM identity.users WHERE id = $1`
 
 	legacyUsersWithPermissionSQL = `SELECT DISTINCT ur.user_id
 		   FROM access_control.permissions p
@@ -223,7 +224,7 @@ func TestVistaUserStatusPublicaSoloLoNecesario(t *testing.T) {
 	}
 }
 
-func TestTokensValidFromPorVistaIgualQueTabla(t *testing.T) {
+func TestUserAccountPorVistaIgualQueTabla(t *testing.T) {
 	ctx := context.Background()
 	pool := registryDB(t)
 	f := seedRegistry(ctx, t, pool)
@@ -231,28 +232,38 @@ func TestTokensValidFromPorVistaIgualQueTabla(t *testing.T) {
 
 	seen := map[time.Time]bool{}
 	for key, id := range f.users {
-		var legacy time.Time
-		if err := pool.QueryRow(ctx, legacyTokensValidFromSQL, id).Scan(&legacy); err != nil {
+		var (
+			tenant    uuid.UUID
+			status    string
+			validFrom time.Time
+		)
+		if err := pool.QueryRow(ctx, legacyUserAccountSQL, id).Scan(&tenant, &status, &validFrom); err != nil {
 			t.Fatalf("%s por la tabla: %v", key, err)
 		}
-		got, err := repo.TokensValidFrom(ctx, id)
+		got, err := repo.UserAccount(ctx, id, tenant)
 		if err != nil {
 			t.Fatalf("%s por la vista: %v", key, err)
 		}
-		if !got.Equal(legacy) {
-			t.Fatalf("%s: vista %s, tabla %s", key, got, legacy)
+		if got.Status != status || !got.TokensValidFrom.Equal(validFrom) {
+			t.Fatalf("%s: vista %+v, tabla %s %s", key, got, status, validFrom)
 		}
-		seen[got.UTC()] = true
+		if got.Active() != (status == "active") {
+			t.Fatalf("%s: Active() = %v con estado %s", key, got.Active(), status)
+		}
+		seen[got.TokensValidFrom.UTC()] = true
 	}
 	if len(seen) != len(f.users) {
 		t.Fatalf("se esperaban %d epochs distintos, hubo %d", len(f.users), len(seen))
 	}
 
 	missing := uuid.New()
-	legacyErr := pool.QueryRow(ctx, legacyTokensValidFromSQL, missing).Scan(new(time.Time))
-	_, err := repo.TokensValidFrom(ctx, missing)
-	if !errors.Is(legacyErr, pgx.ErrNoRows) || !errors.Is(err, pgx.ErrNoRows) {
-		t.Fatalf("usuario inexistente: vista err=%v, tabla err=%v; ambas debian ser pgx.ErrNoRows", err, legacyErr)
+	legacyErr := pool.QueryRow(ctx, legacyUserAccountSQL, missing).Scan(new(uuid.UUID), new(string), new(time.Time))
+	if _, err := repo.UserAccount(ctx, missing, f.tenantA); !errors.Is(legacyErr, pgx.ErrNoRows) || !errors.Is(err, domain.ErrUserNotFound) {
+		t.Fatalf("usuario inexistente: vista err=%v, tabla err=%v; se esperaba ErrUserNotFound y pgx.ErrNoRows", err, legacyErr)
+	}
+	// La cuenta de otra empresa es, para esta, una cuenta que no existe.
+	if _, err := repo.UserAccount(ctx, f.users["a_activo"], f.tenantB); !errors.Is(err, domain.ErrUserNotFound) {
+		t.Fatalf("cuenta de otra empresa: err=%v, se esperaba ErrUserNotFound", err)
 	}
 }
 

@@ -132,10 +132,20 @@ func main() {
 		// ni RBAC, con el limitador general y el estricto en su inicio de sesion.
 		mountSelfAuthenticated(r, table.SelfAuthenticated, table.serviceURL, authLimiter.Limit, internalToken)
 
+		// Toda ruta con sesion pasa por la misma comprobacion de la sesion (cuenta cerrada o
+		// token revocado), con la cache del RBAC.
+		modules := table.moduleIndex()
+		enforcer := newRBACEnforcer(
+			table.serviceURL("access-control"), internalToken,
+			os.Getenv("RBAC_ENFORCE_MODE"), os.Getenv("RBAC_FAIL_MODE"), os.Getenv("RBAC_READ_MODE"),
+			modules, table.readPostIndex(), logger,
+		)
+
 		// MFA self-service: requiere autenticacion (inyecta X-User-ID) pero NO pasa
 		// por RBAC: es gestion de la propia cuenta, no un recurso protegido por modulo.
 		r.Group(func(r chi.Router) {
 			r.Use(jwtAuth.Authenticate)
+			r.Use(enforcer.sessionCheck)
 			r.Post("/auth/mfa/setup", identity.ServeHTTP)
 			r.Post("/auth/mfa/activate", identity.ServeHTTP)
 			r.Delete("/auth/mfa/disable", identity.ServeHTTP)
@@ -145,12 +155,7 @@ func main() {
 
 		r.Group(func(r chi.Router) {
 			r.Use(jwtAuth.Authenticate)
-			modules := table.moduleIndex()
-			enforcer := newRBACEnforcer(
-				table.serviceURL("access-control"), internalToken,
-				os.Getenv("RBAC_ENFORCE_MODE"), os.Getenv("RBAC_FAIL_MODE"), os.Getenv("RBAC_READ_MODE"),
-				modules, table.readPostIndex(), logger,
-			)
+			r.Use(enforcer.sessionCheck)
 			r.Use(enforcer.middleware)
 			// Rastro de auditoria de escrituras: publica un evento por cada
 			// mutacion autenticada, que persiste el servicio audit. Corre despues

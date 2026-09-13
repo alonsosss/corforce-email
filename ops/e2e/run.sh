@@ -6,7 +6,7 @@
 # planes y derechos de billing, autorizacion de envio en reputation, alcance de permisos,
 # contactos con su consentimiento y audiencia, campanas por la via de marketing de
 # transactional (hasta su rechazo por remitente sin verificar, sin SES), el doble opt-in por
-# automations y el panel de analitica. Los servicios de la celda corren con la credencial
+# automations, el panel de analitica y el rechazo del token de una cuenta borrada o desactivada. Los servicios de la celda corren con la credencial
 # propia de la celda (ops/db/cell-service-role.sh), sin la de plataforma.
 #
 # Cada paso COMPRUEBA su resultado y la ejecucion termina con error si alguno falla: no
@@ -455,6 +455,35 @@ contains "con el motivo de transactional" "$(echo "$ENT" | jget data.0.reason)" 
 echo "== Analitica"
 expect "el panel responde sin envios" "$(curl -s "$GW/analytics/overview" -H "$A2" | jget data.totals.sent)" "0"
 expect "un rango invertido se rechaza" "$(codigo "$GW/analytics/overview?from=2026-09-10&to=2026-09-01" -H "$A2")" "422"
+
+echo "== Cuentas borradas o desactivadas"
+# El access token sigue firmado y vigente 5 minutos. El gateway lo rechaza en cuanto la cuenta
+# deja de existir o de estar activa, tambien en las rutas de autoservicio que no gatea ningun
+# modulo. Los tokens no se usan antes de la baja: la cache del gateway (60 s) retrasaria el
+# rechazo.
+cuenta_de_prueba() {
+  local email="$1@acme.test" pass id
+  pass="$(rand_hex 10)Aa1!"
+  id=$(curl -s -X POST "$GW/users" -H "$A2" -H 'Content-Type: application/json' \
+    -d "{\"email\":\"$email\",\"password\":\"$pass\",\"first_name\":\"Luis\",\"last_name\":\"Rios\"}" | jget data.id)
+  echo "$id $(e2e_login "$email" "$pass" | jget data.access_token)"
+}
+# sesion <curl args>: "<codigo de error> <estado HTTP>".
+sesion() { local r; r=$(curl -s -w ' %{http_code}' "$@"); echo "$(echo "${r% *}" | jget error.code) ${r##* }"; }
+read -r U_VIGENTE T_VIGENTE <<<"$(cuenta_de_prueba vigente)"
+read -r U_BORRADA T_BORRADA <<<"$(cuenta_de_prueba borrada)"
+read -r U_INACTIVA T_INACTIVA <<<"$(cuenta_de_prueba inactiva)"
+[[ -n "$T_VIGENTE" && -n "$T_BORRADA" && -n "$T_INACTIVA" ]] && ok "tres cuentas con sesion" || mal "alta o login de las cuentas de prueba"
+expect "una cuenta vigente sin roles abre su ficha (autoservicio, sin modulo)" \
+  "$(codigo "$GW/users/$U_VIGENTE" -H "Authorization: Bearer $T_VIGENTE")" "200"
+expect "el tenant_admin borra una cuenta" "$(codigo -X DELETE "$GW/users/$U_BORRADA" -H "$A2")" "204"
+expect "su token, aun vigente, ya no abre ni su ficha" \
+  "$(sesion "$GW/users/$U_BORRADA" -H "Authorization: Bearer $T_BORRADA")" "SESSION_REVOKED 401"
+expect "el tenant_admin desactiva otra" "$(codigo -X POST "$GW/users/$U_INACTIVA/deactivate" -H "$A2")" "200"
+expect "su token ya no lista sus sesiones" \
+  "$(sesion "$GW/sessions/mine" -H "Authorization: Bearer $T_INACTIVA")" "SESSION_REVOKED 401"
+expect "ni pide un step-up" \
+  "$(sesion -X POST "$GW/auth/step-up" -H "Authorization: Bearer $T_INACTIVA" -H 'Content-Type: application/json' -d '{"current_password":"x"}')" "SESSION_REVOKED 401"
 
 echo "== Registros"
 e2e_registros_sin_errores

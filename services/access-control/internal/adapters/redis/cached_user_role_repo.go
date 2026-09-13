@@ -76,10 +76,10 @@ func (r *CachedUserRoleRepo) ListRoles(ctx context.Context, userID, tenantID uui
 	return r.inner.ListRoles(ctx, userID, tenantID)
 }
 
-// TokensValidFrom NO se cachea: la revocacion instantanea necesita el valor fresco. Se
-// delega directo a la base (el gateway ya lo cachea unos segundos por su lado).
-func (r *CachedUserRoleRepo) TokensValidFrom(ctx context.Context, userID uuid.UUID) (time.Time, error) {
-	return r.inner.TokensValidFrom(ctx, userID)
+// UserAccount NO se cachea: la revocacion y la baja de una cuenta necesitan el valor
+// fresco. Se delega directo a la base (el gateway lo cachea 60 s por su lado).
+func (r *CachedUserRoleRepo) UserAccount(ctx context.Context, userID, tenantID uuid.UUID) (domain.UserAccount, error) {
+	return r.inner.UserAccount(ctx, userID, tenantID)
 }
 
 func (r *CachedUserRoleRepo) ListPermissions(ctx context.Context, userID, tenantID uuid.UUID) ([]*domain.Permission, error) {

@@ -18,4 +18,8 @@ var (
 	ErrSystemRoleNameTaken = errors.New("a tenant role already uses the system role name")
 	// ErrTenantActive: los roles de una empresa activa no se retiran en bloque.
 	ErrTenantActive = errors.New("tenant is active")
+	// ErrUserNotFound: la cuenta no existe en la empresa (borrada, o de otra empresa).
+	ErrUserNotFound = errors.New("user not found")
+	// ErrUserNotActive: la cuenta existe pero no esta activa (inactive, locked, pending).
+	ErrUserNotActive = errors.New("user not active")
 )

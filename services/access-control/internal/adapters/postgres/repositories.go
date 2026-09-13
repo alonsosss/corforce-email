@@ -3,7 +3,6 @@ package postgres
 import (
 	"context"
 	"errors"
-	"time"
 
 	"github.com/alonsosss/corforce-email/services/access-control/internal/domain"
 	"github.com/google/uuid"
@@ -195,13 +194,18 @@ func NewUserRoleRepo(pool *pgxpool.Pool) *UserRoleRepo {
 	return &UserRoleRepo{pool: pool}
 }
 
-// TokensValidFrom lee la columna que identity adelanta al revocar todas las sesiones de
-// un usuario, por la vista que publica identity (identity.v_user_status).
-func (r *UserRoleRepo) TokensValidFrom(ctx context.Context, userID uuid.UUID) (time.Time, error) {
-	var validFrom time.Time
+// UserAccount lee el estado de la cuenta y el instante que identity adelanta al revocar
+// todas sus sesiones, por la vista que publica identity (identity.v_user_status). Distingue
+// la cuenta que no existe (ErrUserNotFound, respuesta definitiva) de un fallo de la base.
+func (r *UserRoleRepo) UserAccount(ctx context.Context, userID, tenantID uuid.UUID) (domain.UserAccount, error) {
+	var account domain.UserAccount
 	err := r.pool.QueryRow(ctx,
-		`SELECT tokens_valid_from FROM identity.v_user_status WHERE user_id = $1`, userID).Scan(&validFrom)
-	return validFrom, err
+		`SELECT status, tokens_valid_from FROM identity.v_user_status WHERE user_id = $1 AND tenant_id = $2`,
+		userID, tenantID).Scan(&account.Status, &account.TokensValidFrom)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.UserAccount{}, domain.ErrUserNotFound
+	}
+	return account, err
 }
 
 // Assign sin actor (una asignacion de la plataforma, como la del primer administrador) deja

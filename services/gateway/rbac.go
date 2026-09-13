@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"strconv"
 	"sync"
@@ -70,10 +71,19 @@ type rbacEntry struct {
 	// tokensValidFrom: epoch unix de revocacion del usuario. Un access token con iat
 	// anterior esta revocado. 0 = sin revocacion.
 	tokensValidFrom int64
-	expires         time.Time
+	// closedAccount: access-control respondio de forma definitiva que la cuenta no existe
+	// (accountMissing) o no esta activa (accountInactive). Vacio si esta activa.
+	closedAccount string
+	// checkedAt: epoch unix de la respuesta de access-control.
+	checkedAt int64
+	expires   time.Time
 }
 
-const rbacCacheTTL = 60 * time.Second
+const (
+	rbacCacheTTL    = 60 * time.Second
+	accountMissing  = "missing"
+	accountInactive = "inactive"
+)
 
 var rbacWriteMethods = map[string]bool{
 	http.MethodPost: true, http.MethodPut: true, http.MethodPatch: true, http.MethodDelete: true,
@@ -154,7 +164,7 @@ func (e *rbacEnforcer) gatearLectura(w http.ResponseWriter, r *http.Request) boo
 		return true
 	}
 	tenantID := middleware.GetTenantID(r.Context())
-	entry, err := e.modulesFor(r.Context(), userID, tenantID)
+	entry, err := e.modulesFor(r.Context(), userID, tenantID, middleware.GetTokenIssuedAt(r.Context()))
 	if err != nil {
 		if e.readMode == "enforce" && e.failMode == "closed" {
 			e.logger.Warn("rbac: sin acceso consultable, se bloquea la lectura (fail-closed)",
@@ -182,24 +192,42 @@ func (e *rbacEnforcer) gatearLectura(w http.ResponseWriter, r *http.Request) boo
 	return false
 }
 
-// revoked indica si el access token fue emitido ANTES del epoch de revocacion del
-// usuario (sesion cerrada, contrasena cambiada). Fail-open: si no se puede resolver
-// el epoch o el token no trae iat, NO se rechaza (el token sigue acotado por su vida
-// corta). Margen de 5s por el desfase de reloj entre identity y la base.
-func (e *rbacEnforcer) revoked(r *http.Request) bool {
-	iat := middleware.GetTokenIssuedAt(r.Context())
-	if iat == 0 {
-		return false
-	}
+// sessionCheck rechaza con 401 el access token que ya no vale aunque su firma y su vida
+// sigan en regla: el de una cuenta que access-control da por inexistente o no activa
+// (borrada, desactivada, bloqueada, pendiente) y el emitido antes del epoch de revocacion
+// del usuario (sesion cerrada, contrasena cambiada). Va en toda ruta con sesion, antes del
+// RBAC y sea cual sea su modo.
+//
+// Solo decide con una respuesta definitiva de access-control, reciente o en cache. Si no
+// responde y no hay una aplicable, deja pasar: el token sigue acotado por su vida corta, y
+// bloquear ahi convertiria una caida de access-control en una caida de toda la plataforma.
+// Las rutas con modulo siguen despues con RBAC_FAIL_MODE.
+func (e *rbacEnforcer) sessionCheck(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if e.sessionRejected(r) {
+			e.denyRevoked(w)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// sessionRejected deja un margen de 5 s al epoch de revocacion por el desfase de reloj
+// entre identity y la base. Un token sin iat solo se juzga por el estado de la cuenta.
+func (e *rbacEnforcer) sessionRejected(r *http.Request) bool {
 	userID := middleware.GetUserID(r.Context())
 	if userID == "" {
 		return false
 	}
-	entry, err := e.modulesFor(r.Context(), userID, middleware.GetTenantID(r.Context()))
+	iat := middleware.GetTokenIssuedAt(r.Context())
+	entry, err := e.modulesFor(r.Context(), userID, middleware.GetTenantID(r.Context()), iat)
 	if err != nil {
 		return false
 	}
-	return entry.tokensValidFrom > 0 && iat < entry.tokensValidFrom-5
+	if entry.closedAccount != "" {
+		return true
+	}
+	return iat != 0 && entry.tokensValidFrom > 0 && iat < entry.tokensValidFrom-5
 }
 
 func (e *rbacEnforcer) denyRevoked(w http.ResponseWriter) {
@@ -210,13 +238,6 @@ func (e *rbacEnforcer) denyRevoked(w http.ResponseWriter) {
 
 func (e *rbacEnforcer) middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Revocacion instantanea: un token emitido antes de que el usuario revocara
-		// sus sesiones deja de servir de inmediato, sin esperar a que expire. Corre
-		// para TODOS los metodos, antes que el resto del RBAC.
-		if e.revoked(r) {
-			e.denyRevoked(w)
-			return
-		}
 		if e.mode == "off" {
 			next.ServeHTTP(w, r)
 			return
@@ -252,7 +273,7 @@ func (e *rbacEnforcer) middleware(next http.Handler) http.Handler {
 			return
 		}
 
-		entry, err := e.modulesFor(r.Context(), userID, tenantID)
+		entry, err := e.modulesFor(r.Context(), userID, tenantID, middleware.GetTokenIssuedAt(r.Context()))
 		if err != nil {
 			// Los administradores nunca se bloquean por indisponibilidad de access-control.
 			if isAdmin {
@@ -352,27 +373,35 @@ func (e *rbacEnforcer) deny(w http.ResponseWriter) {
 	_, _ = w.Write([]byte(`{"error":{"code":"FORBIDDEN","message":"su rol no tiene permiso para esta operacion"}}`))
 }
 
-func (e *rbacEnforcer) modulesFor(ctx context.Context, userID, tenantID string) (rbacEntry, error) {
+// modulesFor resuelve el acceso del usuario desde la cache (rbacCacheTTL) o access-control.
+// Una cuenta cerrada solo se da por cerrada para los tokens emitidos hasta esa respuesta: uno
+// posterior lo emitio identity con la cuenta activa otra vez (renovar exige cuenta activa, y
+// una cuenta borrada ya no renueva), asi que obliga a preguntar de nuevo.
+func (e *rbacEnforcer) modulesFor(ctx context.Context, userID, tenantID string, iat int64) (rbacEntry, error) {
 	key := userID + ":" + tenantID
 	e.mu.Lock()
 	cached, hasCached := e.cache[key]
-	if hasCached && time.Now().Before(cached.expires) {
-		e.mu.Unlock()
+	e.mu.Unlock()
+	applies := hasCached && (cached.closedAccount == "" || iat <= cached.checkedAt)
+	if applies && time.Now().Before(cached.expires) {
 		return cached, nil
 	}
-	e.mu.Unlock()
 
 	ent, err := e.fetch(ctx, userID, tenantID)
 	if err != nil {
-		// Resiliencia: si access-control no responde pero teniamos un valor previo,
-		// se usa ese en vez de fallar. Solo si nunca se consulto al usuario se
-		// devuelve el error y decide el modo de fallo del middleware.
-		if hasCached {
+		// Resiliencia: si access-control no responde pero teniamos un valor previo que
+		// aplica al token, se usa ese en vez de fallar. Si no, se devuelve el error y
+		// decide quien pregunta: la sesion deja pasar y el RBAC aplica su modo de fallo.
+		if applies {
 			e.logger.Warn("rbac: usando acceso en cache por error de access-control",
 				zap.String("user_id", userID), zap.Error(err))
 			return cached, nil
 		}
 		return rbacEntry{}, err
+	}
+	if ent.closedAccount != "" {
+		e.logger.Info("rbac: la cuenta no existe o no esta activa; se rechazan sus tokens",
+			zap.String("user_id", userID), zap.String("account", ent.closedAccount))
 	}
 
 	e.mu.Lock()
@@ -407,6 +436,10 @@ func (e *rbacEnforcer) fetch(ctx context.Context, userID, tenantID string) (rbac
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
+		if reason := closedAccountReason(resp); reason != "" {
+			now := time.Now()
+			return rbacEntry{closedAccount: reason, checkedAt: now.Unix(), expires: now.Add(rbacCacheTTL)}, nil
+		}
 		return rbacEntry{}, errStatus(resp.StatusCode)
 	}
 
@@ -415,6 +448,31 @@ func (e *rbacEnforcer) fetch(ctx context.Context, userID, tenantID string) (rbac
 		return rbacEntry{}, err
 	}
 	return entryFromPayload(payload), nil
+}
+
+// closedAccountReason reconoce las dos respuestas definitivas del contrato de
+// GET /access/my-modules: 404 USER_NOT_FOUND y 403 USER_NOT_ACTIVE. Cualquier otra, tambien
+// un 404 de ruta, un 403 por otro motivo o un 401 del token interno, es "no se pudo
+// determinar": tomarla por cuenta cerrada expulsaria a todos ante un fallo de despliegue.
+func closedAccountReason(resp *http.Response) string {
+	if resp.StatusCode != http.StatusNotFound && resp.StatusCode != http.StatusForbidden {
+		return ""
+	}
+	var body struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if json.NewDecoder(io.LimitReader(resp.Body, 4<<10)).Decode(&body) != nil {
+		return ""
+	}
+	switch {
+	case resp.StatusCode == http.StatusNotFound && body.Error.Code == "USER_NOT_FOUND":
+		return accountMissing
+	case resp.StatusCode == http.StatusForbidden && body.Error.Code == "USER_NOT_ACTIVE":
+		return accountInactive
+	}
+	return ""
 }
 
 func entryFromPayload(payload myModulesPayload) rbacEntry {
@@ -438,13 +496,15 @@ func entryFromPayload(payload myModulesPayload) rbacEntry {
 	if !payload.Data.TokensValidFrom.IsZero() {
 		validFrom = payload.Data.TokensValidFrom.Unix()
 	}
+	now := time.Now()
 	return rbacEntry{
 		writeActions:    wa,
 		modules:         mods,
 		isAdmin:         payload.Data.IsAdmin,
 		disabledModules: disabled,
 		tokensValidFrom: validFrom,
-		expires:         time.Now().Add(rbacCacheTTL),
+		checkedAt:       now.Unix(),
+		expires:         now.Add(rbacCacheTTL),
 	}
 }
 

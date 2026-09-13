@@ -24,9 +24,14 @@ V = verificado en el codigo. P = propuesto, todavia no implementado.
 * MFA TOTP (setup, activate, disable, reto de 5 minutos); step-up de 5 minutos para
   acciones criticas (`X-Step-Up`, `STEP_UP_MODE=enforce`). El reto y el step-up salen de
   la misma clave con su propio `typ`: ninguno vale como token de acceso ni al reves.
-* Revocacion instantanea: `tokens_valid_from` por usuario; el gateway rechaza cualquier
-  access token emitido antes (logout-all, cambio o reinicio de contrasena, MFA
-  desactivada).
+* Revocacion: `tokens_valid_from` por usuario; el gateway rechaza (401 `SESSION_REVOKED`)
+  cualquier access token emitido antes (logout-all, cambio o reinicio de contrasena, MFA
+  desactivada) y el de una cuenta que ya no existe en su empresa o no esta activa
+  (`inactive`, `locked`, `pending`: el mismo criterio con el que identity renueva). Lo
+  comprueba en toda ruta con sesion, tambien las de autoservicio, MFA y step-up, con la
+  respuesta de access-control guardada 60 s por replica: ese es el plazo maximo para que
+  una baja, una desactivacion o un logout-all surtan efecto. Detalle y comportamiento con
+  access-control caido en `docs/arquitectura/CSP-Y-SESION.md` (Revocacion en el gateway).
 * Reinicio de contrasena por enlace de un solo uso, respuesta identica exista o no el
   correo; enviado por el servicio transaccional (`TRANSACTIONAL_MAIL_URL`, P hasta que
   exista).
@@ -83,16 +88,21 @@ Triple `(module, resource, action)` en `access_control.permissions`, con comodin
 `automations`, `analytics`, `billing`, `policy`), que solo estan disponibles si la empresa
 tiene contratado el modulo del catalogo que los agrupa (`module_catalog.permission_modules`).
 
-Politica efectiva del usuario (`GET /api/v1/access/my-modules`):
-`{is_admin, roles, modules, write_modules, write_actions, disabled_modules, tokens_valid_from}`,
-en cache Redis 5 minutos por usuario y empresa, invalidada al asignar o revocar.
+Acceso operativo del usuario (`GET /api/v1/access/my-modules`):
+`{is_admin, roles, modules, write_modules, write_actions, disabled_modules, tokens_valid_from}`.
+access-control lo calcula en cada consulta, sin cache propia; el gateway lo guarda 60 s por
+replica. Responde 404 `USER_NOT_FOUND` si la cuenta no existe en la empresa del token y 403
+`USER_NOT_ACTIVE` si no esta activa: son las unicas respuestas que el gateway toma como
+cuenta cerrada. La politica de permisos (`GET /api/v1/policy/{user}`, la que consulta
+`pkg/authz`) va en cache Redis 5 minutos por usuario y empresa, invalidada al asignar o
+revocar un rol y al retirar los roles de una empresa.
 
 ## 4. Tres capas de control
 
 | Capa | Donde | Que hace | Estado |
 |---|---|---|---|
 | 1. Menu | `web/` | Muestra solo los modulos donde el usuario tiene algun permiso (`modules`) y consulta `can(module, resource, action)` para cada accion | P (fase 1) |
-| 2. Gateway | `services/gateway/rbac.go` | Lecturas: exige que el modulo del prefijo este en `modules` (`RBAC_READ_MODE`). Escrituras: DELETE exige `delete`, PUT/PATCH `update`, POST cualquier accion de escritura del modulo (`RBAC_ENFORCE_MODE`). Modulo deshabilitado bloquea a todos, administradores incluidos. Autoservicio (`/auth`, `/sessions`, `/users/me`, `/access/my-modules`) no se gatea. Fallo: `RBAC_FAIL_MODE=closed`. Por defecto todo en `enforce` | V |
+| 2. Gateway | `services/gateway/rbac.go` | Antes, en toda ruta con sesion: rechaza con 401 el token revocado o de una cuenta cerrada (seccion 1). Lecturas: exige que el modulo del prefijo este en `modules` (`RBAC_READ_MODE`). Escrituras: DELETE exige `delete`, PUT/PATCH `update`, POST cualquier accion de escritura del modulo (`RBAC_ENFORCE_MODE`). Modulo deshabilitado bloquea a todos, administradores incluidos. Autoservicio (`/auth`, `/sessions`, `/users/me`, `/access/my-modules`) no se gatea. Fallo: `RBAC_FAIL_MODE=closed`. Por defecto todo en `enforce` | V |
 | 3. Handler | cada servicio | Exige el permiso de accion concreto ademas del gateo por modulo | V: `pkg/authz.Checker.RequirePermission(module, resource, action)` consulta la politica en access-control (`/api/v1/policy/{user}`, cache en memoria 1 minuto), deja pasar a `superadmin` y `tenant_admin`, responde 403 sin permiso y 503 si no se puede comprobar ni hay politica en cache. Lo usan `contacts` (modulos `contacts` y `segments`), `domain-service`, `mail-directory`, `mail-security`, `suppression`, `templates`, `transactional`, `campaigns` (`send` para programar, iniciar, reanudar y probar; `cancel` para pausar y cancelar; el detalle y el listado solo llevan estadisticas si el usuario tiene ademas `campaigns/stats/read`), `analytics` (`analytics/reports/read` en todas sus rutas), `automations` (`automations/workflows/{read,create,update,delete,activate}`, donde `activate` cubre tambien pausar y archivar; `automations/runs/read`; `automations/settings/{read,update}` para el doble opt-in y su historial; alcance `tenant`, `019_automations_permissions.sql`) y `billing` (que en su API de plataforma, planes y suscripciones de todas las empresas, exige ademas `RequireRoles(superadmin)`) y `reputation` (sus rutas de plataforma `/api/v1/reputation/tenants/*`, que operan sobre la base de otra empresa, exigen tambien `RequireRoles(superadmin)` por el mismo motivo con `reputation/tenants/*`). V tambien en el plano de control: `organization` exige `organization/*` (alcance plataforma, `020_control_plane_permissions.sql` anade `cells/*`); empresas, migraciones, modulos y celdas siguen ademas con `RequireRoles(superadmin)` porque operan la plataforma u otra empresa, y `reseed-roles` sigue con `RequireRoles(tenant_admin)` mas `access/roles/update` porque repara el rol de sistema, que ningun rol de empresa puede tocar. `identity` exige `identity/users/*` (`delete` para desactivar y borrar, `reset_password` para fijar la contrasena de otro), `identity/sessions/*` y `identity/session_policies/*`; la vista de sesiones de todas las empresas sigue con `RequireRoles(superadmin)` mas `identity/platform_sessions/read`; un rol de empresa con permisos sobre usuarios no edita, desactiva, borra ni reinicia a un usuario con rol del sistema (403; 503 si sus roles no se pueden leer). `access-control` comprueba en proceso con su caso de uso de politica (misma semantica, sin llamarse por HTTP): `access/roles/*`, `access/permissions/read`, `access/user_roles/*`, `access/denials/read`; la politica, los roles y el `check-access` propios son autoservicio y los de otro exigen `access/user_roles/read`; `POST /access/denials` solo lo llama la plataforma (403 si la peticion trae usuario) y `users-with-permission` pasa sin usuario (llamada interna) o con `access/user_roles/read`. Sin permiso, por ser autoservicio: `/auth/*` y MFA, `/sessions/{logout,logout-all,mine}`, la ficha y el perfil propios en `/users/{id}`, `change-password`, `password-policy` y `/access/my-modules`. V tambien `audit` y `scheduler`, cuyos datos son de la propia empresa (su base), con permisos de alcance `tenant` y sin `RequireRoles`: `audit` exige `audit/logs/read` (rastro, detalle, resumen, actividad de un usuario, cambios), `audit/logs/create` (apunte y lote), `audit/security_events/read`, `audit/security_events/acknowledge` para reconocer un evento y `audit/integrity/verify` para recorrer la cadena de hash (`audit/integrity/read` no tiene ruta); `scheduler` exige `scheduler/jobs/*` (`read`, `create`, `update` para editar, habilitar y deshabilitar, `run` para lanzar a mano), `scheduler/executions/*` (`read`, tambien el historial de un trabajo; `cancel`; `retry`) y `scheduler/tasks/*` (`read`, `create`, `cancel`) |
 
 Las consultas que viajan en POST por llevar cuerpo (comprobar una lista de direcciones,
@@ -174,6 +184,15 @@ empresa, sus modulos y su saga salen del registro. No se deshace: un fallo deja 
 curso en su paso y el siguiente `DELETE` o el barrido la terminan. La base de una empresa que
 llego a operar se conserva.
 
-P: el access token (5 min) de una cuenta borrada sigue verificando en el gateway hasta
-caducar, porque sin fila en `identity.v_user_status` no hay `tokens_valid_from` que comparar
-y esa comprobacion falla abierta; sin roles, el RBAC del gateway ya no le abre ningun modulo.
+V (2026-09-13): el access token (5 min) de una cuenta borrada, con la baja de su empresa o
+una a una, deja de servir en cuanto el gateway vuelve a preguntar a access-control (como
+mucho 60 s por replica): sin fila en `identity.v_user_status` access-control responde
+`USER_NOT_FOUND` y el gateway rechaza el token con 401 en toda ruta, tambien en las de
+autoservicio que no gatea ningun modulo. Antes esa comprobacion fallaba abierta.
+
+P: borrar una cuenta suelta (`DELETE /users/{id}`) no avisa a access-control: identity no
+publica un evento de baja y access-control no consume eventos, asi que sus asignaciones
+(`access_control.user_roles`) quedan huerfanas y su politica en Redis caduca sola (5 min).
+No abren nada, porque el gateway rechaza el token antes, pero son datos de mas; se resuelve
+con un `identity.user.deleted` que access-control consuma para retirar las asignaciones e
+invalidar la cache.

@@ -479,19 +479,30 @@ func (h *Handler) CheckAccess(w http.ResponseWriter, r *http.Request) {
 // MyModules devuelve el acceso operativo del usuario autenticado: los modulos en los
 // que tiene permisos, sus acciones de escritura, sus roles y si es administrador. El
 // shell lo usa para mostrar en el menu solo lo que corresponde a su rol y el gateway
-// para gatear escrituras.
+// para gatear escrituras y validar la sesion.
+//
+// Contrato con el gateway: 404 USER_NOT_FOUND y 403 USER_NOT_ACTIVE son definitivos (el
+// gateway rechaza el token con 401); cualquier otra respuesta que no sea 200 significa
+// que no se pudo determinar.
 func (h *Handler) MyModules(w http.ResponseWriter, r *http.Request) {
 	userID, ok := requestUser(w, r)
 	if !ok {
 		return
 	}
-
-	// El tenant se toma del contexto (cabecera inyectada por el gateway). Sin el,
-	// uuid.Nil: se resuelven los roles sin filtrar por modulos contratados.
-	tenantID, _ := uuid.Parse(middleware.GetTenantID(r.Context()))
+	tenantID, ok := requestTenant(w, r)
+	if !ok {
+		return
+	}
 
 	access, err := h.rbac.GetUserAccess(r.Context(), userID, tenantID)
-	if err != nil {
+	switch {
+	case errors.Is(err, domain.ErrUserNotFound):
+		response.Err(w, http.StatusNotFound, "USER_NOT_FOUND", "user not found")
+		return
+	case errors.Is(err, domain.ErrUserNotActive):
+		response.Err(w, http.StatusForbidden, "USER_NOT_ACTIVE", "user not active")
+		return
+	case err != nil:
 		response.ErrInternal(w)
 		return
 	}

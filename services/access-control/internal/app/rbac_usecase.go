@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"time"
@@ -289,12 +290,32 @@ type UserAccess struct {
 	TokensValidFrom time.Time
 }
 
+// GetUserAccess devuelve domain.ErrUserNotFound o domain.ErrUserNotActive cuando la cuenta
+// no existe en la empresa o no esta activa: el gateway los toma como definitivos y rechaza
+// el token. Un fallo leyendo la cuenta no lo es: se sigue sin instante de revocacion, porque
+// un fallo transitorio de la base no debe expulsar a toda la empresa, y la sesion queda
+// acotada por la vida corta del access token.
 func (uc *RBACUseCase) GetUserAccess(ctx context.Context, userID, tenantID uuid.UUID) (*UserAccess, error) {
+	account, err := uc.userRoles.UserAccount(ctx, userID, tenantID)
+	switch {
+	case errors.Is(err, domain.ErrUserNotFound):
+		return nil, domain.ErrUserNotFound
+	case err != nil:
+		uc.logger.Warn("no se pudo leer el estado de la cuenta; sin instante de revocacion",
+			zap.String("user_id", userID.String()), zap.Error(err))
+	case !account.Active():
+		return nil, domain.ErrUserNotActive
+	}
+
 	roles, err := uc.userRoles.ListRoles(ctx, userID, tenantID)
 	if err != nil {
 		return nil, err
 	}
-	access := &UserAccess{Roles: make([]string, 0, len(roles)), DisabledModules: []string{}}
+	access := &UserAccess{
+		Roles:           make([]string, 0, len(roles)),
+		DisabledModules: []string{},
+		TokensValidFrom: account.TokensValidFrom,
+	}
 	isSuperadmin := false
 	for _, r := range roles {
 		access.Roles = append(access.Roles, r.Name)
@@ -318,16 +339,6 @@ func (uc *RBACUseCase) GetUserAccess(ctx context.Context, userID, tenantID uuid.
 		return nil, err
 	}
 	access.WriteActions = writeActions
-
-	// Fail-open: si no se puede leer el instante de revocacion se deja en cero y el
-	// gateway no rechaza por el; la sesion sigue acotada por la vida corta del access
-	// token. Un fallo transitorio de la base no debe expulsar a toda la empresa.
-	if validFrom, tvErr := uc.userRoles.TokensValidFrom(ctx, userID); tvErr != nil {
-		uc.logger.Warn("no se pudo leer el instante de revocacion de tokens",
-			zap.String("user_id", userID.String()), zap.Error(tvErr))
-	} else {
-		access.TokensValidFrom = validFrom
-	}
 
 	// Acotar por contratacion: interseccion de los modulos del rol con los que la
 	// empresa tiene habilitados. El superadmin transciende el catalogo. Fail-open: el
