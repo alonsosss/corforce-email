@@ -21,7 +21,38 @@ const (
 	// subscribeRetry: el stream SUPPRESSION lo declara su dueno; si este servicio
 	// arranca antes, la suscripcion falla y se reintenta sin bloquear el HTTP.
 	subscribeRetry = 10 * time.Second
+	// legacyWarnEvery acota el aviso de eventos sin reasons: en un despliegue escalonado
+	// llegan en rafaga y basta con saber que siguen llegando y cuantos.
+	legacyWarnEvery = 10 * time.Minute
 )
+
+// hasReasons indica si el evento trae la lista de causas vigentes, aunque este vacia.
+func hasReasons(data map[string]interface{}) bool {
+	_, ok := data["reasons"].([]interface{})
+	return ok
+}
+
+// throttle deja pasar un aviso por intervalo y cuenta los que calla entre medias.
+type throttle struct {
+	every time.Duration
+
+	mu      sync.Mutex
+	last    time.Time
+	skipped int
+}
+
+// allow devuelve si toca avisar y cuantos avisos se callaron desde el anterior.
+func (t *throttle) allow(now time.Time) (bool, int) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if !t.last.IsZero() && now.Sub(t.last) < t.every {
+		t.skipped++
+		return false, 0
+	}
+	skipped := t.skipped
+	t.last, t.skipped = now, 0
+	return true, skipped
+}
 
 type subscription struct {
 	subject string
@@ -41,12 +72,14 @@ type SuppressionWorker struct {
 	tenantDB *db.TenantDB
 	logger   *zap.Logger
 
+	legacy throttle
+
 	mu   sync.Mutex
 	subs []*natsgo.Subscription
 }
 
 func NewSuppressionWorker(bus *events.Bus, uc *app.UseCase, tenantDB *db.TenantDB, logger *zap.Logger) *SuppressionWorker {
-	return &SuppressionWorker{bus: bus, uc: uc, tenantDB: tenantDB, logger: logger}
+	return &SuppressionWorker{bus: bus, uc: uc, tenantDB: tenantDB, logger: logger, legacy: throttle{every: legacyWarnEvery}}
 }
 
 // Start suscribe en segundo plano y reintenta lo que aun no tiene stream.
@@ -98,7 +131,7 @@ func (w *SuppressionWorker) Stop() {
 
 // handle: sin ack, JetStream reentrega. Se acka lo procesado y lo que nunca se va a
 // poder procesar (payload roto, empresa inexistente, direccion invalida); un fallo de la
-// base se deja sin ack para reintentar.
+// base o de la consulta a suppression se deja sin ack para reintentar.
 func (w *SuppressionWorker) handle(subject string) func(events.Event, func()) {
 	return func(evt events.Event, ack func()) {
 		data, _ := evt.Data.(map[string]interface{})
@@ -127,12 +160,20 @@ func (w *SuppressionWorker) handle(subject string) func(events.Event, func()) {
 		}
 		ctx = db.WithTenant(ctx, pool, tenantID.String())
 
+		withReasons := hasReasons(data)
+		if !withReasons {
+			if ok, skipped := w.legacy.allow(time.Now()); ok {
+				w.logger.Warn("contacts: evento de suppression sin reasons (productor anterior); se aplica por su causa",
+					zap.String("subject", subject), zap.Int("avisos_omitidos", skipped))
+			}
+		}
 		res, err := w.uc.ApplySuppression(ctx, app.SuppressionEvent{
-			Subject:  subject,
-			TenantID: tenantID,
-			Email:    str(data["email"]),
-			Reason:   str(data["reason"]),
-			Source:   str(data["source"]),
+			Subject:    subject,
+			TenantID:   tenantID,
+			Email:      str(data["email"]),
+			Reason:     str(data["reason"]),
+			Source:     str(data["source"]),
+			HasReasons: withReasons,
 		})
 		if err != nil {
 			if app.IsInputError(err) {

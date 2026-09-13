@@ -44,8 +44,11 @@ type Deps struct {
 	Imports    ports.ImportRepository
 	Tx         ports.Transactor
 	Events     ports.EventPublisher
-	Config     Config
-	Logger     *zap.Logger
+	// Suppression da las causas vigentes con que se decide el estado del contacto al
+	// consumir los eventos de suppression.
+	Suppression ports.SuppressionState
+	Config      Config
+	Logger      *zap.Logger
 	// Now fija el reloj en las pruebas; nil = time.Now en UTC.
 	Now func() time.Time
 	// Random es la fuente de los tokens; nil = crypto/rand.
@@ -53,20 +56,21 @@ type Deps struct {
 }
 
 type UseCase struct {
-	contacts   ports.ContactRepository
-	consents   ports.ConsentRepository
-	tokens     ports.TokenRepository
-	lists      ports.ListRepository
-	attributes ports.AttributeRepository
-	segments   ports.SegmentRepository
-	query      ports.SegmentQuery
-	imports    ports.ImportRepository
-	tx         ports.Transactor
-	events     ports.EventPublisher
-	cfg        Config
-	logger     *zap.Logger
-	now        func() time.Time
-	random     io.Reader
+	contacts    ports.ContactRepository
+	consents    ports.ConsentRepository
+	tokens      ports.TokenRepository
+	lists       ports.ListRepository
+	attributes  ports.AttributeRepository
+	segments    ports.SegmentRepository
+	query       ports.SegmentQuery
+	imports     ports.ImportRepository
+	tx          ports.Transactor
+	events      ports.EventPublisher
+	suppression ports.SuppressionState
+	cfg         Config
+	logger      *zap.Logger
+	now         func() time.Time
+	random      io.Reader
 }
 
 func New(d Deps) *UseCase {
@@ -92,7 +96,7 @@ func New(d Deps) *UseCase {
 	return &UseCase{
 		contacts: d.Contacts, consents: d.Consents, tokens: d.Tokens, lists: d.Lists,
 		attributes: d.Attributes, segments: d.Segments, query: d.Query, imports: d.Imports,
-		tx: d.Tx, events: d.Events, cfg: cfg, logger: logger, now: now, random: random,
+		tx: d.Tx, events: d.Events, suppression: d.Suppression, cfg: cfg, logger: logger, now: now, random: random,
 	}
 }
 
@@ -129,8 +133,8 @@ func schemaFor(defs domain.Definitions) segment.Schema {
 	return segment.Schema{
 		Attributes: attrs,
 		Enums: map[string][]string{
-			"status": statuses,
-			"source": sources,
+			"status":  statuses,
+			"source":  sources,
 			"consent": consents,
 		},
 	}

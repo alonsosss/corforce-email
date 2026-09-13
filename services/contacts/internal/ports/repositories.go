@@ -136,6 +136,14 @@ type Transactor interface {
 	Transact(ctx context.Context, fn func(ctx context.Context) error) error
 }
 
+// SuppressionState lee de suppression las causas vigentes de una direccion. Es la fuente
+// de verdad del estado del contacto: la foto de causas que trae cada evento puede llegar
+// desordenada respecto de otras.
+type SuppressionState interface {
+	// ActiveCauses devuelve las causas vigentes de la direccion; vacio si esta libre.
+	ActiveCauses(ctx context.Context, tenantID uuid.UUID, email string) ([]domain.SuppressionCause, error)
+}
+
 // EventPublisher encola los eventos del dominio DENTRO de la transaccion (outbox): el
 // evento existe si y solo si el cambio existe. Ningun payload lleva los atributos.
 type EventPublisher interface {

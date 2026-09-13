@@ -3,23 +3,18 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/alonsosss/corforce-email/services/contacts/internal/domain"
 	"github.com/google/uuid"
 )
 
 // Subjects que este servicio consume. Los publica suppression (stream SUPPRESSION) por
-// su outbox con Data {tenant_id, email, reason, source}.
+// su outbox con Data {tenant_id, email, reason, source, reasons}: reason es la causa que
+// entro o salio y reasons las vigentes que le quedan a la direccion.
 const (
 	SubjectSuppressionAdded   = "suppression.entry.added"
 	SubjectSuppressionRemoved = "suppression.entry.removed"
-)
-
-// Causas de suppression (su contrato; ver services/suppression/internal/domain).
-const (
-	reasonUnsubscribe = "unsubscribe"
-	reasonHardBounce  = "hard_bounce"
-	reasonComplaint   = "complaint"
 )
 
 // SuppressionEvent es un evento de suppression tal como lo lee este servicio.
@@ -29,55 +24,103 @@ type SuppressionEvent struct {
 	Email    string
 	Reason   string
 	Source   string
+	// HasReasons: el evento trae reasons, luego lo publico el suppression de una fila por
+	// causa. Sin ellas viene de un productor anterior, de una fila por direccion.
+	HasReasons bool
 }
 
 // SuppressionResult dice que hizo el evento, para el log del consumidor.
 type SuppressionResult struct {
-	// Ignored: la causa no cambia el contacto (manual, invalid) o no hay contacto con
-	// esa direccion en la empresa.
+	// Ignored: el evento no aplica a ningun contacto (subject ajeno, ninguna direccion
+	// igual en la empresa) o, en un evento sin reasons, su causa no cambia al contacto.
 	Ignored bool
 	Changed bool
 }
 
 // IsInputError distingue el evento que nunca se va a poder procesar (direccion no
-// valida) del fallo transitorio de la base: el consumidor descarta el primero.
+// valida) del fallo transitorio de la base o de suppression: el consumidor descarta el
+// primero.
 func IsInputError(err error) bool {
 	return errors.Is(err, domain.ErrInvalidEmail)
 }
 
-// statusForReason es el estado que implica cada causa de exclusion. manual e invalid
-// no dicen nada de la persona: excluyen del envio (lo hace suppression) sin cambiarla.
-func statusForReason(reason string) (domain.Status, bool) {
-	switch reason {
-	case reasonUnsubscribe:
-		return domain.StatusUnsubscribed, true
-	case reasonHardBounce:
-		return domain.StatusBounced, true
-	case reasonComplaint:
-		return domain.StatusComplained, true
-	}
-	return "", false
-}
-
 // ApplySuppression refleja en el contacto un alta o una baja de la lista de exclusiones.
 // Idempotente: reentregar el mismo evento no cambia nada la segunda vez.
+//
+// Un evento con reasons no se aplica por su causa ni por su foto de causas: los dos
+// subjects llegan por durables distintos y una reentrega puede adelantar a un evento
+// anterior, asi que el ultimo en aplicarse podria traer una foto vieja. Se decide con las
+// causas vigentes que devuelve suppression, leidas con la fila del contacto bloqueada:
+// dos eventos de la misma direccion se serializan en ese bloqueo y el que escribe despues
+// leyo despues, de modo que el estado final es el que suppression tenia al aplicarse el
+// ultimo.
 func (uc *UseCase) ApplySuppression(ctx context.Context, ev SuppressionEvent) (SuppressionResult, error) {
 	email, err := domain.NormalizeEmail(ev.Email)
 	if err != nil {
 		return SuppressionResult{}, err
 	}
-	target, ok := statusForReason(ev.Reason)
-	if !ok || (ev.Subject != SubjectSuppressionAdded && ev.Subject != SubjectSuppressionRemoved) {
+	if ev.Subject != SubjectSuppressionAdded && ev.Subject != SubjectSuppressionRemoved {
 		return SuppressionResult{Ignored: true}, nil
 	}
-	// Retirar una baja no reactiva por aqui: eso lo hace el nuevo consentimiento, que es
-	// quien la pide (contacts.contact.resubscribed).
-	if ev.Subject == SubjectSuppressionRemoved && ev.Reason == reasonUnsubscribe {
-		return SuppressionResult{Ignored: true}, nil
+	if !ev.HasReasons {
+		return uc.applySuppressionByReason(ctx, ev, email)
+	}
+	if uc.suppression == nil {
+		return SuppressionResult{}, errors.New("contacts: sin lector del estado de suppression")
 	}
 
 	var res SuppressionResult
 	err = uc.tx.Transact(ctx, func(ctx context.Context) error {
+		c, err := uc.contacts.GetByEmailForUpdate(ctx, ev.TenantID, email)
+		if errors.Is(err, domain.ErrContactNotFound) {
+			res.Ignored = true
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		causes, err := uc.suppression.ActiveCauses(ctx, ev.TenantID, email)
+		if err != nil {
+			return fmt.Errorf("consultar el estado vigente en suppression: %w", err)
+		}
+		// La baja revoca el consentimiento solo si sigue vigente: la que llega tarde, cuando
+		// la persona ya reconsintio y suppression la retiro, no deshace ese consentimiento.
+		registered := ev.Subject == SubjectSuppressionAdded &&
+			domain.SuppressionCause(ev.Reason) == domain.CauseUnsubscribe &&
+			domain.HasCause(causes, domain.CauseUnsubscribe)
+		if registered {
+			revoked, err := uc.revokeByUnsubscribe(ctx, c, ev)
+			if err != nil {
+				return err
+			}
+			res.Changed = res.Changed || revoked
+		}
+		if c.ReconcileSuppression(causes, registered) {
+			res.Changed = true
+			return uc.saveStatus(ctx, c)
+		}
+		return nil
+	})
+	return res, err
+}
+
+// applySuppressionByReason es la regla de un productor sin reasons, que guardaba una
+// sola fila por direccion: el estado sale de la causa del evento, sin degradar uno mas
+// grave, y retirar un rebote o una queja reactiva a quien estaba en ese estado.
+func (uc *UseCase) applySuppressionByReason(ctx context.Context, ev SuppressionEvent, email string) (SuppressionResult, error) {
+	cause := domain.SuppressionCause(ev.Reason)
+	target, _ := domain.StatusForCause(cause)
+	if target == "" {
+		return SuppressionResult{Ignored: true}, nil
+	}
+	// Retirar una baja no reactiva por aqui: eso lo hace el nuevo consentimiento, que es
+	// quien la pide (contacts.contact.resubscribed).
+	if ev.Subject == SubjectSuppressionRemoved && cause == domain.CauseUnsubscribe {
+		return SuppressionResult{Ignored: true}, nil
+	}
+
+	var res SuppressionResult
+	err := uc.tx.Transact(ctx, func(ctx context.Context) error {
 		c, err := uc.contacts.GetByEmailForUpdate(ctx, ev.TenantID, email)
 		if errors.Is(err, domain.ErrContactNotFound) {
 			res.Ignored = true
@@ -91,41 +134,52 @@ func (uc *UseCase) ApplySuppression(ctx context.Context, ev SuppressionEvent) (S
 				return nil
 			}
 			res.Changed = true
-			if err := uc.contacts.Update(ctx, c); err != nil {
-				return err
-			}
-			return uc.events.ContactUpdated(ctx, c, []string{"status"})
+			return uc.saveStatus(ctx, c)
 		}
-
-		if ev.Reason == reasonUnsubscribe && c.ConsentStatus != domain.ConsentRevoked {
-			source := "suppression"
-			if ev.Source != "" {
-				source += ":" + ev.Source
-			}
-			revoked := &domain.Consent{
-				TenantID: ev.TenantID, ContactID: c.ID, Purpose: domain.PurposeMarketing,
-				Status: domain.ConsentRevoked, Method: domain.MethodSuppression,
-				Source: truncateString(source, domain.MaxConsentSource), Evidence: map[string]any{"reason": ev.Reason},
-			}
-			if err := uc.consents.Append(ctx, revoked); err != nil {
+		if cause == domain.CauseUnsubscribe {
+			revoked, err := uc.revokeByUnsubscribe(ctx, c, ev)
+			if err != nil {
 				return err
 			}
-			c.ConsentStatus = domain.ConsentRevoked
-			res.Changed = true
-			if err := uc.events.ConsentRevoked(ctx, revoked); err != nil {
-				return err
-			}
+			res.Changed = revoked
 		}
 		if c.ApplySuppression(target) {
 			res.Changed = true
-			if err := uc.contacts.Update(ctx, c); err != nil {
-				return err
-			}
-			return uc.events.ContactUpdated(ctx, c, []string{"status"})
+			return uc.saveStatus(ctx, c)
 		}
 		return nil
 	})
 	return res, err
+}
+
+// revokeByUnsubscribe deja la evidencia de la baja sobre un contacto ya bloqueado, salvo
+// que su consentimiento vigente ya este revocado. Devuelve si la anadio.
+func (uc *UseCase) revokeByUnsubscribe(ctx context.Context, c *domain.Contact, ev SuppressionEvent) (bool, error) {
+	if c.ConsentStatus == domain.ConsentRevoked {
+		return false, nil
+	}
+	source := "suppression"
+	if ev.Source != "" {
+		source += ":" + ev.Source
+	}
+	revoked := &domain.Consent{
+		TenantID: ev.TenantID, ContactID: c.ID, Purpose: domain.PurposeMarketing,
+		Status: domain.ConsentRevoked, Method: domain.MethodSuppression,
+		Source: truncateString(source, domain.MaxConsentSource), Evidence: map[string]any{"reason": ev.Reason},
+	}
+	if err := uc.consents.Append(ctx, revoked); err != nil {
+		return false, err
+	}
+	c.ConsentStatus = domain.ConsentRevoked
+	return true, uc.events.ConsentRevoked(ctx, revoked)
+}
+
+// saveStatus guarda el estado nuevo del contacto y publica el cambio.
+func (uc *UseCase) saveStatus(ctx context.Context, c *domain.Contact) error {
+	if err := uc.contacts.Update(ctx, c); err != nil {
+		return err
+	}
+	return uc.events.ContactUpdated(ctx, c, []string{"status"})
 }
 
 func truncateString(s string, n int) string {

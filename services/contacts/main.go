@@ -25,6 +25,7 @@ import (
 	natsadapter "github.com/alonsosss/corforce-email/services/contacts/internal/adapters/nats"
 	outboxadapter "github.com/alonsosss/corforce-email/services/contacts/internal/adapters/outbox"
 	"github.com/alonsosss/corforce-email/services/contacts/internal/adapters/postgres"
+	"github.com/alonsosss/corforce-email/services/contacts/internal/adapters/suppressionclient"
 	"github.com/alonsosss/corforce-email/services/contacts/internal/app"
 	"github.com/go-chi/chi/v5"
 	"go.uber.org/zap"
@@ -47,9 +48,16 @@ func main() {
 		log.Fatalf("load config: %v", err)
 	}
 
-	publicBase, err := publicBaseURL(os.Getenv("PUBLIC_BASE_URL"))
+	publicBase, err := absoluteURL(os.Getenv("PUBLIC_BASE_URL"))
 	if err != nil {
-		log.Fatalf("PUBLIC_BASE_URL: %v", err)
+		log.Fatalf("PUBLIC_BASE_URL (enlaces del doble opt-in): %v", err)
+	}
+	// El estado del contacto se decide con las causas vigentes que devuelve suppression:
+	// sin su URL, los eventos de suppression no se podrian aplicar sin arriesgar un estado
+	// que la contradiga.
+	suppressionURL, err := absoluteURL(os.Getenv("SUPPRESSION_URL"))
+	if err != nil {
+		log.Fatalf("SUPPRESSION_URL (causas vigentes de suppression): %v", err)
 	}
 	doiTTL, err := envDuration("CONTACTS_DOI_TTL", app.DefaultDOITTL, time.Hour, 30*24*time.Hour)
 	if err != nil {
@@ -75,18 +83,19 @@ func main() {
 	ctxPool := &db.ContextPool{}
 
 	uc := app.New(app.Deps{
-		Contacts:   postgres.NewContactRepository(ctxPool),
-		Consents:   postgres.NewConsentRepository(ctxPool),
-		Tokens:     postgres.NewTokenRepository(ctxPool),
-		Lists:      postgres.NewListRepository(ctxPool),
-		Attributes: postgres.NewAttributeRepository(ctxPool),
-		Segments:   postgres.NewSegmentRepository(ctxPool),
-		Query:      postgres.NewSegmentQuery(ctxPool),
-		Imports:    postgres.NewImportRepository(ctxPool),
-		Tx:         ctxPool,
-		Events:     outboxadapter.NewPublisher(ctxPool),
-		Config:     app.Config{PublicBaseURL: publicBase, DOITTL: doiTTL, ImportMaxRows: importMax},
-		Logger:     logger,
+		Contacts:    postgres.NewContactRepository(ctxPool),
+		Consents:    postgres.NewConsentRepository(ctxPool),
+		Tokens:      postgres.NewTokenRepository(ctxPool),
+		Lists:       postgres.NewListRepository(ctxPool),
+		Attributes:  postgres.NewAttributeRepository(ctxPool),
+		Segments:    postgres.NewSegmentRepository(ctxPool),
+		Query:       postgres.NewSegmentQuery(ctxPool),
+		Imports:     postgres.NewImportRepository(ctxPool),
+		Tx:          ctxPool,
+		Events:      outboxadapter.NewPublisher(ctxPool),
+		Suppression: suppressionclient.New(suppressionURL, os.Getenv("INTERNAL_GATEWAY_TOKEN")),
+		Config:      app.Config{PublicBaseURL: publicBase, DOITTL: doiTTL, ImportMaxRows: importMax},
+		Logger:      logger,
 	})
 
 	// Sin NATS el servicio sigue sirviendo el API y la audiencia; los eventos propios
@@ -145,12 +154,12 @@ func main() {
 	}
 }
 
-// publicBaseURL valida la URL publica de la que cuelga el enlace de confirmacion: sin
-// ella no se puede pedir un doble opt-in, y el servicio no arranca a medias.
-func publicBaseURL(raw string) (string, error) {
+// absoluteURL valida una URL obligatoria de la configuracion (la publica del doble opt-in,
+// la interna de suppression): el servicio no arranca a medias sin ella.
+func absoluteURL(raw string) (string, error) {
 	s := strings.TrimRight(strings.TrimSpace(raw), "/")
 	if s == "" {
-		return "", fmt.Errorf("es obligatoria para construir los enlaces del doble opt-in")
+		return "", fmt.Errorf("es obligatoria")
 	}
 	u, err := url.Parse(s)
 	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" || u.RawQuery != "" || u.Fragment != "" {

@@ -595,6 +595,22 @@ func (f fakeImports) List(_ context.Context, tenantID uuid.UUID, _, _ int) ([]do
 	return out, int64(len(out)), nil
 }
 
+// fakeSuppression es el estado vigente de suppression: las causas de cada direccion en
+// el momento de la consulta, que el test fija antes de aplicar cada evento.
+type fakeSuppression struct {
+	causes map[string][]domain.SuppressionCause
+	err    error
+	calls  int
+}
+
+func (f *fakeSuppression) ActiveCauses(_ context.Context, _ uuid.UUID, email string) ([]domain.SuppressionCause, error) {
+	f.calls++
+	if f.err != nil {
+		return nil, f.err
+	}
+	return append([]domain.SuppressionCause{}, f.causes[email]...), nil
+}
+
 type fakeTx struct{}
 
 func (fakeTx) Transact(ctx context.Context, fn func(ctx context.Context) error) error { return fn(ctx) }
@@ -659,6 +675,7 @@ type fixture struct {
 	s      *fakeStore
 	ev     *fakePublisher
 	query  *fakeQuery
+	sup    *fakeSuppression
 	tenant uuid.UUID
 	now    time.Time
 }
@@ -668,10 +685,11 @@ func newFixture(t *testing.T) *fixture {
 	f := &fixture{ev: &fakePublisher{}, tenant: uuid.New(), now: time.Date(2026, 9, 12, 12, 0, 0, 0, time.UTC)}
 	f.s = newStore(func() time.Time { return f.now })
 	f.query = &fakeQuery{s: f.s}
+	f.sup = &fakeSuppression{causes: map[string][]domain.SuppressionCause{}}
 	f.uc = New(Deps{
 		Contacts: fakeContacts{f.s}, Consents: fakeConsents{f.s}, Tokens: fakeTokens{f.s},
 		Lists: fakeLists{f.s}, Attributes: fakeAttributes{f.s}, Segments: fakeSegments{f.s},
-		Query: f.query, Imports: fakeImports{f.s}, Tx: fakeTx{}, Events: f.ev,
+		Query: f.query, Imports: fakeImports{f.s}, Tx: fakeTx{}, Events: f.ev, Suppression: f.sup,
 		Config: Config{PublicBaseURL: "https://app.example.com", DOITTL: 72 * time.Hour, ImportMaxRows: 1000},
 		Now:    func() time.Time { return f.now }, Random: &counterReader{},
 	})
