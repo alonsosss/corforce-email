@@ -18,12 +18,10 @@ cambie cualquiera de estas líneas.
 
 ## Pendientes que dejan los motores (fase 2)
 
-* `mail-auth` está implementado (`services/mail-auth`, contrato en `deploy/mail/README.md`;
-  probado contra el esquema `mail` real y con Redis, 2026-09-12) pero falta declararlo en
-  `docker-compose.yml` unido a la red `mail-engines` con alias `mail-auth`. Queda
-  `mail-policy` (8081: `aliasexp`, `bcc`, `footer`, `forwardinghosts`, `settings` con regla
-  `watchdog`; 9081: `pipe`, `pipe_rl`) más el contrato Redis (`DOMAIN_MAP`, `DKIM_*`,
-  `RL_VALUE`, ...).
+* `mail-auth` implementado y declarado en `docker-compose.yml` en la red `mail-engines` con
+  alias `mail-auth` (probado contra el esquema `mail` real y con Redis, 2026-09-12). Los
+  mapas HTTP de los motores (8081/9081) y el contrato Redis los sirve `mail-security` con
+  alias `mail-policy`.
 * Tablas que los motores esperan y el esquema aún no tiene: `quarantine` y las políticas
   antispam por objeto (`mail_security`), pie de página por dominio, `mta_sts` (acme).
 * El gateway debe servir `/.well-known/acme-challenge/` o usarse `ACME_DNS_CHALLENGE=y`.
@@ -36,11 +34,11 @@ cambie cualquiera de estas líneas.
   servicios nuevos lo usan desde el principio para sus publicaciones críticas.
 * `pkg/auth` firma HS256 con un secreto compartido por todos los servicios. Decisión:
   pasar a EdDSA con `kid` cuando exista más de un emisor; hoy solo firma identity.
-* Falta `RequirePermission(module, resource, action)` en `pkg/middleware` (tercera capa);
-  los handlers usan `RequireRoles(tenant_admin)` o `IsPrivileged`.
-* `pkg/db` resuelve el DSN de empresa contra un solo cluster; el enrutado por celda
-  (`cells.db_host/db_port`) está diseñado pero no implementado
-  (`Modelo_de_Datos_y_Celdas.md`, sección 5).
+* La tercera capa existe (`pkg/authz.RequirePermission`) y la usan los servicios nuevos;
+  los copiados en fase 0 (identity, access-control, organization, audit, scheduler) siguen
+  con `RequireRoles(tenant_admin)` o `IsPrivileged` y se migran cuando se toquen.
+* Enrutado por celda implementado (`db.NewTenantRouting`, aprovisionamiento en la celda de
+  la empresa). Queda una credencial por celda (hoy una sola de plataforma).
 * El scheduler crea ejecuciones y publica `scheduler.job.started`, pero ningún ejecutor
   las cierra: hace falta definir el consumidor.
 * El scheduler serializa sus entidades en PascalCase (sin etiquetas JSON); fijar el

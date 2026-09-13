@@ -11,6 +11,8 @@
     "transactional":  {"host_env": "TRANSACTIONAL_HOST",  "default_host": "transactional",  "default_port": "8045"},
     "suppression":    {"host_env": "SUPPRESSION_HOST",    "default_host": "suppression",    "default_port": "8046"},
     "templates":      {"host_env": "TEMPLATES_HOST",      "default_host": "templates",      "default_port": "8047"},
+    "contacts":       {"host_env": "CONTACTS_HOST",       "default_host": "contacts",       "default_port": "8050"},
+    "billing":        {"host_env": "BILLING_HOST",        "default_host": "billing",        "default_port": "8055"},
     "web":            {"host_env": "WEB_HOST",            "default_host": "web",            "default_port": "80"}
   },
   "routes": [
@@ -33,17 +35,23 @@
     {"prefix": "domains",       "service": "domain-service", "module": "domains"},
     {"prefix": "transactional", "service": "transactional",  "module": "transactional"},
     {"prefix": "suppression",   "service": "suppression",    "module": "suppression"},
-    {"prefix": "templates",     "service": "templates",      "module": "templates"}
+    {"prefix": "templates",     "service": "templates",      "module": "templates"},
+    {"prefix": "contacts",      "service": "contacts",       "module": "contacts"},
+    {"prefix": "segments",      "service": "contacts",       "module": "segments"},
+    {"prefix": "billing",       "service": "billing",        "module": "billing"}
   ],
   "read_posts": [
     {"prefix": "suppression", "action": "check"},
     {"prefix": "templates",   "action": "render"},
-    {"prefix": "templates",   "action": "preview"}
+    {"prefix": "templates",   "action": "preview"},
+    {"prefix": "segments",    "action": "preview"}
   ],
   "public": [
     {"method": "POST", "path": "/public/transactional/ses-events/{tenantID}", "service": "transactional"},
     {"method": "GET",  "path": "/public/transactional/unsubscribe",           "service": "transactional"},
-    {"method": "POST", "path": "/public/transactional/unsubscribe",           "service": "transactional"}
+    {"method": "POST", "path": "/public/transactional/unsubscribe",           "service": "transactional"},
+    {"method": "GET",  "path": "/public/contacts/confirm",                    "service": "contacts"},
+    {"method": "POST", "path": "/public/contacts/confirm",                    "service": "contacts"}
   ],
   "frontend": "web"
 }

@@ -57,7 +57,11 @@ en cache Redis 5 minutos por usuario y empresa, invalidada al asignar o revocar.
 |---|---|---|---|
 | 1. Menu | `web/` | Muestra solo los modulos donde el usuario tiene algun permiso (`modules`) y consulta `can(module, resource, action)` para cada accion | P (fase 1) |
 | 2. Gateway | `services/gateway/rbac.go` | Lecturas: exige que el modulo del prefijo este en `modules` (`RBAC_READ_MODE`). Escrituras: DELETE exige `delete`, PUT/PATCH `update`, POST cualquier accion de escritura del modulo (`RBAC_ENFORCE_MODE`). Modulo deshabilitado bloquea a todos, administradores incluidos. Autoservicio (`/auth`, `/sessions`, `/users/me`, `/access/my-modules`) no se gatea. Fallo: `RBAC_FAIL_MODE=closed`. Por defecto todo en `enforce` | V |
-| 3. Handler | cada servicio | Exige el permiso de accion concreto ademas del gateo por modulo | P: falta `RequirePermission(module, resource, action)` en `pkg/middleware` que consulte la politica (cache local + `check-access`); hoy los handlers usan `RequireRoles(tenant_admin)` o `IsPrivileged` |
+| 3. Handler | cada servicio | Exige el permiso de accion concreto ademas del gateo por modulo | V: `pkg/authz.Checker.RequirePermission(module, resource, action)` consulta la politica en access-control (`/api/v1/policy/{user}`, cache en memoria 1 minuto), deja pasar a `superadmin` y `tenant_admin`, responde 403 sin permiso y 503 si no se puede comprobar ni hay politica en cache. Lo usan `domain-service`, `mail-directory`, `mail-security`, `suppression`, `templates` y `transactional`. P: el plano de control (`organization`, `identity`, `access-control`) sigue con `RequireRoles` o `IsPrivileged` |
+
+Las consultas que viajan en POST por llevar cuerpo (comprobar una lista de direcciones,
+renderizar o previsualizar una plantilla, previsualizar un segmento) se declaran en
+`routes.json` como `read_posts` y el gateway las gatea como LECTURA del modulo (V).
 
 Las denegaciones se cuentan en `rbac_denials_total` y se guardan en
 `access_control.access_denials`.

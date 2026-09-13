@@ -392,6 +392,46 @@ services:
     networks:
       - mail-internal
 
+  contacts:
+    build:
+      context: .
+      dockerfile: ./services/contacts/Dockerfile
+    ports:
+      - "127.0.0.1:${CONTACTS_PORT:-8050}:8050"
+    env_file:
+      - .env
+      - path: /dev/shm/core-force-mail/secrets.env
+        required: false
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+    restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    networks:
+      - mail-internal
+
+  billing:
+    build:
+      context: .
+      dockerfile: ./services/billing/Dockerfile
+    ports:
+      - "127.0.0.1:${BILLING_PORT:-8055}:8055"
+    env_file:
+      - .env
+      - path: /dev/shm/core-force-mail/secrets.env
+        required: false
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+    restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    networks:
+      - mail-internal
+
   web:
     build:
       context: ./web

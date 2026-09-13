@@ -69,19 +69,19 @@ Verificado de punta a punta con binarios reales (2026-09-12): alta de dominio po
 Postfix/Dovecot leen bajo el rol `mail_engine` con su ruta Maildir; otra empresa lista cero
 buzones (RLS).
 
-### 2.3 Transaccional y marketing (empresa). Estado: `suppression` verificado; `templates` y `transactional` en construccion; fase 4 pendiente
+### 2.3 Transaccional y marketing (empresa). Estado: `suppression` y `templates` verificados; `transactional` en construccion; fase 4 pendiente
 
 | Servicio | Responsabilidad |
 |---|---|
 | `transactional` | API de envio transaccional (idempotente), adaptador SES v2, plantillas por referencia, ingesta de eventos SES (SNS con firma verificada o EventBridge), `POST /internal/send-email` para la propia plataforma |
-| `templates` | Plantillas versionadas con `html/template`, parte de texto generada, variables validadas |
+| `templates` | Plantillas versionadas con `html/template`, parte de texto generada, variables validadas; `POST /internal/templates/{id}/render` para `transactional` y `campaigns` |
 | `suppression` | Lista por empresa y global: rebotes duros, quejas, bajas; consulta previa a cualquier encolado |
-| `reputation` | Puntuacion, limites y eleccion de configuration set / pool por empresa y clase de envio |
-| `contacts`, `segments` | Contactos con consentimiento y origen; segmentacion estatica y dinamica |
+| `reputation` | Tasas de rebote y queja por empresa y clase de envio, restricciones automaticas y cuotas de envio por periodo: responde a "puede esta empresa enviar N mensajes de esta clase ahora" (absorbe al `policy-service` del informe) |
+| `contacts` | Contactos con atributos declarados, consentimiento como evidencia append-only (doble opt-in), listas estaticas y segmentos dinamicos con un DSL compilado a SQL parametrizado; entrega audiencias paginadas a `campaigns` |
 | `campaigns` | Campanas, estados, programacion; `sender-orchestrator` (expansion, politicas, `email.requested` a NATS) y `sender-worker` (consumo durable, claim-before-send) |
 | `automations` | Flujos disparados por eventos |
-| `analytics` | Agregados; eventos masivos en ClickHouse |
-| `billing`, `policy` | Planes, cuotas, metering; limites por empresa |
+| `analytics` | Agregados por empresa, campana y dia sobre Postgres; ClickHouse cuando el volumen lo exija, con ADR |
+| `billing` | Plano de control: planes con limites por recurso, suscripcion por empresa, contadores de consumo alimentados por eventos (idempotentes por id de evento) y consulta de derechos (`entitlements/check`) |
 
 ## 3. Datos: tres planos
 
@@ -123,3 +123,6 @@ migraciones conectan directo.
 | OpenTelemetry | Prometheus + zap + Loki | Sin metricas que exijan trazas distribuidas; ADR si cambia |
 | Module federation en el frontend | Una sola aplicacion Vite | Un equipo, un producto; la federacion del ERP obligaba a compartir sesion por `window` |
 | RBAC en modo `audit` por defecto | `enforce` y `fail-closed` por defecto | Es una plataforma de correo con datos personales: lo que no se configura, bloquea |
+| `contact-service` y `segment-service` | `contacts` con listas y segmentos | Evaluar un segmento es filtrar contactos: separarlos obliga a leer tablas ajenas o a copiar la base de contactos |
+| `policy-service` | Dentro de `reputation` | Un envio necesita una sola respuesta (cuota del plan y restriccion por reputacion); dos servicios serian dos llamadas y dos verdades |
+| ClickHouse desde el principio | Agregados en Postgres; ClickHouse con ADR | Sin volumen medido no se introduce infraestructura nueva (`CLAUDE.md`) |
