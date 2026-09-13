@@ -1,0 +1,221 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  Core Force Mail - salida por Amazon SES. Configuration sets separados para correo
+  transaccional y de marketing (reputacion y seguimiento distintos) y un topic SNS cifrado
+  que entrega sus eventos al endpoint publico de transactional. Se aplica con
+  ops/aws/setup-ses.sh.
+
+Parameters:
+  Environment:
+    Type: String
+    AllowedValues: [dev, staging, prod]
+    Description: Ambiente de la cuenta (una cuenta por ambiente).
+  EventsEndpointUrl:
+    Type: String
+    AllowedPattern: "^https://[A-Za-z0-9.-]+(:[0-9]+)?/.+$"
+    Description: >-
+      URL HTTPS publica de la ruta sin empresa de transactional
+      (.../api/v1/public/transactional/ses-events). Transactional confirma la suscripcion
+      y verifica la firma de cada mensaje.
+  TransactionalSetName:
+    Type: String
+    Default: cfm-transactional
+    AllowedPattern: "^[a-zA-Z0-9_-]{1,64}$"
+    Description: Valor de SES_CONFIG_SET_TRANSACTIONAL.
+  MarketingSetName:
+    Type: String
+    Default: cfm-marketing
+    AllowedPattern: "^[a-zA-Z0-9_-]{1,64}$"
+    Description: Valor de SES_CONFIG_SET_MARKETING.
+  TransactionalTlsPolicy:
+    Type: String
+    Default: OPTIONAL
+    AllowedValues: [OPTIONAL, REQUIRE]
+    Description: >-
+      REQUIRE descarta la entrega a servidores sin TLS. Un codigo de acceso o una factura
+      no deben perderse por eso: OPTIONAL por defecto (SES intenta TLS siempre).
+  MarketingTlsPolicy:
+    Type: String
+    Default: OPTIONAL
+    AllowedValues: [OPTIONAL, REQUIRE]
+  MarketingTrackingDomain:
+    Type: String
+    Default: ""
+    AllowedPattern: "^$|^[A-Za-z0-9.-]+$"
+    Description: >-
+      Subdominio propio para los enlaces de seguimiento de aperturas y clics (con su CNAME
+      y certificado ya publicados). Vacio usa el dominio de seguimiento de SES.
+  MarketingSendingPoolName:
+    Type: String
+    Default: ""
+    AllowedPattern: "^$|^[a-zA-Z0-9_-]{1,64}$"
+    Description: >-
+      Pool de IP dedicadas ya existente para marketing. Vacio usa las IP compartidas de SES.
+      El transaccional nunca comparte pool con marketing.
+
+Conditions:
+  HasTrackingDomain: !Not [!Equals [!Ref MarketingTrackingDomain, ""]]
+  HasMarketingPool: !Not [!Equals [!Ref MarketingSendingPoolName, ""]]
+
+Resources:
+  EventsKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: !Sub "Core Force Mail ${Environment} - cifrado del topic de eventos de SES"
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AdministracionDeLaCuenta
+            Effect: Allow
+            Principal:
+              AWS: !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:root"
+            Action: "kms:*"
+            Resource: "*"
+          - Sid: SesPublicaEnElTopicCifrado
+            Effect: Allow
+            Principal:
+              Service: ses.amazonaws.com
+            Action:
+              - kms:GenerateDataKey*
+              - kms:Decrypt
+            Resource: "*"
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+              ArnLike:
+                aws:SourceArn:
+                  - !Sub "arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:configuration-set/${TransactionalSetName}"
+                  - !Sub "arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:configuration-set/${MarketingSetName}"
+      Tags:
+        - { Key: Project, Value: core-force-mail }
+        - { Key: Environment, Value: !Ref Environment }
+
+  EventsKeyAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: !Sub "alias/cfm-${Environment}-ses-events"
+      TargetKeyId: !Ref EventsKey
+
+  EventsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub "cfm-${Environment}-ses-events"
+      KmsMasterKeyId: !Ref EventsKey
+      Tags:
+        - { Key: Project, Value: core-force-mail }
+        - { Key: Environment, Value: !Ref Environment }
+
+  EventsTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      Topics: [!Ref EventsTopic]
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: SoloLosConfigurationSetsDeEstaCuenta
+            Effect: Allow
+            Principal:
+              Service: ses.amazonaws.com
+            Action: sns:Publish
+            Resource: !Ref EventsTopic
+            Condition:
+              StringEquals:
+                AWS:SourceAccount: !Ref AWS::AccountId
+              ArnLike:
+                AWS:SourceArn:
+                  - !Sub "arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:configuration-set/${TransactionalSetName}"
+                  - !Sub "arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:configuration-set/${MarketingSetName}"
+          - Sid: SoloTransporteCifrado
+            Effect: Deny
+            Principal: "*"
+            Action: sns:Publish
+            Resource: !Ref EventsTopic
+            Condition:
+              Bool:
+                aws:SecureTransport: "false"
+
+  EventsSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref EventsTopic
+      Protocol: https
+      Endpoint: !Ref EventsEndpointUrl
+      # transactional verifica la firma del sobre SNS: la entrega no puede ser en crudo.
+      RawMessageDelivery: false
+
+  TransactionalSet:
+    Type: AWS::SES::ConfigurationSet
+    Properties:
+      Name: !Ref TransactionalSetName
+      DeliveryOptions:
+        TlsPolicy: !Ref TransactionalTlsPolicy
+      ReputationOptions:
+        ReputationMetricsEnabled: true
+      SendingOptions:
+        SendingEnabled: true
+      SuppressionOptions:
+        SuppressedReasons: [BOUNCE, COMPLAINT]
+      Tags:
+        - { Key: Project, Value: core-force-mail }
+        - { Key: Environment, Value: !Ref Environment }
+        - { Key: Class, Value: transactional }
+
+  MarketingSet:
+    Type: AWS::SES::ConfigurationSet
+    Properties:
+      Name: !Ref MarketingSetName
+      DeliveryOptions:
+        TlsPolicy: !Ref MarketingTlsPolicy
+        SendingPoolName: !If [HasMarketingPool, !Ref MarketingSendingPoolName, !Ref AWS::NoValue]
+      ReputationOptions:
+        ReputationMetricsEnabled: true
+      SendingOptions:
+        SendingEnabled: true
+      SuppressionOptions:
+        SuppressedReasons: [BOUNCE, COMPLAINT]
+      TrackingOptions: !If
+        - HasTrackingDomain
+        - CustomRedirectDomain: !Ref MarketingTrackingDomain
+          HttpsPolicy: REQUIRE
+        - !Ref AWS::NoValue
+      Tags:
+        - { Key: Project, Value: core-force-mail }
+        - { Key: Environment, Value: !Ref Environment }
+        - { Key: Class, Value: marketing }
+
+  # Sin OPEN ni CLICK: el correo transaccional no se sigue (ni se reescriben sus enlaces).
+  TransactionalEvents:
+    Type: AWS::SES::ConfigurationSetEventDestination
+    DependsOn: EventsTopicPolicy
+    Properties:
+      ConfigurationSetName: !Ref TransactionalSet
+      EventDestination:
+        Name: cfm-transactional-sns
+        Enabled: true
+        MatchingEventTypes: [SEND, REJECT, BOUNCE, COMPLAINT, DELIVERY, RENDERING_FAILURE, DELIVERY_DELAY]
+        SnsDestination:
+          TopicARN: !Ref EventsTopic
+
+  MarketingEvents:
+    Type: AWS::SES::ConfigurationSetEventDestination
+    DependsOn: EventsTopicPolicy
+    Properties:
+      ConfigurationSetName: !Ref MarketingSet
+      EventDestination:
+        Name: cfm-marketing-sns
+        Enabled: true
+        MatchingEventTypes: [SEND, REJECT, BOUNCE, COMPLAINT, DELIVERY, RENDERING_FAILURE, DELIVERY_DELAY, OPEN, CLICK, SUBSCRIPTION]
+        SnsDestination:
+          TopicARN: !Ref EventsTopic
+
+Outputs:
+  EventsTopicArn:
+    Description: Valor de SES_EVENTS_TOPIC_ARN en transactional.
+    Value: !Ref EventsTopic
+  TransactionalConfigurationSet:
+    Description: Valor de SES_CONFIG_SET_TRANSACTIONAL.
+    Value: !Ref TransactionalSet
+  MarketingConfigurationSet:
+    Description: Valor de SES_CONFIG_SET_MARKETING.
+    Value: !Ref MarketingSet

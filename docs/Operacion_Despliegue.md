@@ -58,6 +58,15 @@ para llamar a la API hace falta ya un superadmin. Después, todo por API: `POST 
   con otra sesión.
 * `docker-compose.images.yml` es generado (`make gen-compose-images`); CI falla si queda
   atrás.
+* Salida por Amazon SES: `ops/aws/setup-ses.sh <dev|staging|prod>` aplica la pila
+  `ops/aws/ses-mail.yaml` (CloudFormation): los configuration sets transaccional y de
+  marketing (reputación y TLS por clase; aperturas, clics y bajas solo en marketing, con
+  dominio de seguimiento propio y pool de IP dedicadas opcionales), un topic SNS estándar
+  cifrado con una clave KMS propia al que solo publican esos dos sets de la cuenta, y la
+  suscripción HTTPS a `/api/v1/public/transactional/ses-events`, que `transactional`
+  confirma y verifica. `--check` muestra el conjunto de cambios sin aplicarlo. Sus salidas
+  son `SES_EVENTS_TOPIC_ARN`, `SES_CONFIG_SET_TRANSACTIONAL` y `SES_CONFIG_SET_MARKETING`.
+  No verifica dominios ni saca la cuenta del sandbox: eso es por empresa y con su DNS.
 
 ## 6. Respaldos
 
