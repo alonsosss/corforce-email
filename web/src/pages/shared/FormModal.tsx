@@ -13,6 +13,8 @@ export interface FormModalProps {
   onSubmit: () => void | Promise<void>;
   size?: 'md' | 'lg';
   errorOverrides?: Partial<Record<string, MessageKey>>;
+  /** Envio imposible por un motivo que el formulario ya explica (por ejemplo, sin catalogo). */
+  submitDisabled?: boolean;
   children: ReactNode;
 }
 
@@ -27,6 +29,7 @@ export function FormModal({
   onSubmit,
   size,
   errorOverrides,
+  submitDisabled = false,
   children,
 }: FormModalProps) {
   return (
@@ -40,7 +43,13 @@ export function FormModal({
           <Button onClick={onClose} disabled={busy}>
             {t('common.cancel')}
           </Button>
-          <Button type="submit" form={id} variant="primary" loading={busy}>
+          <Button
+            type="submit"
+            form={id}
+            variant="primary"
+            loading={busy}
+            disabled={submitDisabled}
+          >
             {submitLabel}
           </Button>
         </>
@@ -52,6 +61,7 @@ export function FormModal({
         noValidate
         onSubmit={(e) => {
           e.preventDefault();
+          if (submitDisabled) return;
           void onSubmit();
         }}
       >

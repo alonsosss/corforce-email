@@ -1,8 +1,8 @@
 # Core Force Mail: aplicacion web
 
 Una sola aplicacion React 18 + TypeScript (estricto) + Vite 5, sin module federation. Cubre
-el plano de control (acceso, cuenta, usuarios, roles y permisos, sesiones, empresas, celdas
-y auditoria), el correo corporativo (dominios, directorio de la celda, buzones, enrutado,
+el plano de control (acceso, cuenta, usuarios, roles y permisos, sesiones, empresas, celdas,
+trabajos programados y auditoria), el correo corporativo (dominios, directorio de la celda, buzones, enrutado,
 seguridad y cuarentena), los envios (plantillas, supresion y reputacion), el marketing
 (contactos, segmentos, campanas y analitica) y el plan de la empresa. El superadmin opera
 ademas el catalogo de planes, las suscripciones y la reputacion de todas las empresas. Bajo
@@ -153,6 +153,10 @@ Catalogos del API en lugar de constantes copiadas:
   por defecto, tope y valor por defecto del ranking de dominios y tamano de pagina. El filtro
   de clase, los atajos de rango, el tamano del ranking y la zona visible salen de aqui.
 
+- `GET /scheduler/meta`: zona por defecto, patron y longitud maxima de una zona IANA,
+  descriptores cron admitidos, periodo minimo de `@every` (tambien el minimo del intervalo) y
+  longitud maxima de la expresion. `GET /scheduler/handlers`: catalogo de manejadores.
+
 Se leen con `cachedResource` (una peticion por sesion) y `useResource`. `api/sendClass.ts`
 solo conserva el tipo de los DTO: ninguna pantalla ofrece una lista de clases copiada.
 
@@ -190,6 +194,32 @@ Reglas de la interfaz que no se relajan:
   `notify.subject`, `notify.html_template`); la pantalla lo pinta junto a ese campo. Las
   variables de la plantilla (`domain.QuarantineNoticeData`) se listan en
   `QUARANTINE_NOTICE_TEMPLATE` porque mail-security no publica un catalogo de ellas.
+
+## Trabajos programados
+
+| Menu                 | Ruta                           | Modulo      | API                                       |
+| -------------------- | ------------------------------ | ----------- | ----------------------------------------- |
+| Trabajos programados | `/scheduler`, `/scheduler/:id` | `scheduler` | `/scheduler/jobs/*`, `/scheduler/tasks/*` |
+
+- Permisos: leer trabajos `jobs/read` (tambien la meta y el catalogo), crear `jobs/create`,
+  editar, activar y desactivar `jobs/update`, lanzar a mano `jobs/run`; historial
+  `executions/read`, cancelar y reintentar una ejecucion `executions/cancel` y
+  `executions/retry`; tareas puntuales `tasks/read` y `tasks/cancel`. Un trabajo de
+  plataforma (`tenant_id` nulo) se lee sin acciones: el servicio responde 403.
+- `GET /scheduler/jobs` devuelve la lista completa (filtro `is_active`): se pagina en el
+  cliente con `lib/localPage.ts`. El historial si llega paginado con su meta.
+- El formulario ofrece solo los manejadores de alcance `tenant` de `GET /scheduler/handlers`.
+  Con el catalogo vacio lo dice y no deja enviar: el servidor rechazaria cualquier trabajo.
+  Las zonas de `Intl.supportedValuesOf('timeZone')` son solo sugerencias; decide el servidor.
+- Los 422 van junto a su campo: `INVALID_TIMEZONE` a la zona y `VALIDATION_ERROR` por el
+  prefijo del mensaje (`invalid cron expression`, `handler not allowed`, `invalid job: <campo>`,
+  `<campo> is required`), porque el servicio no manda `error.details`.
+- Contratos que faltan: la proxima y la ultima ejecucion de cada trabajo (`next_run_at`,
+  `last_run_at` y el estado de la ultima ejecucion) no estan en el DTO del trabajo, asi que el
+  listado no las muestra; `GET /scheduler/jobs` no pagina; la meta no publica `job_types` (el
+  formulario usa `JOB_TYPES` de `api/scheduler.ts`, espejo de `domain/entities.go`) ni los
+  topes de nombre, codigo, intervalo, reintentos y plazo; las tareas puntuales no estan
+  ligadas a un trabajo.
 
 ## Webmail
 

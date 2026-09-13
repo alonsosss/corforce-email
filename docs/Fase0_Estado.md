@@ -113,7 +113,12 @@ cambie cualquiera de estas líneas.
   binario incorpora `time/tzdata`, no arranca sin base de zonas y el Dockerfile lo
   comprueba (`--tzcheck`).
 * Contrato JSON del scheduler fijado en snake_case (DTOs del adaptador HTTP, con test de
-  contrato; la duración sale como `duration_ms`). `web/` todavía no lo consume.
+  contrato; la duración sale como `duration_ms`). `web/` lo consume (2026-09-13, pruebas
+  unitarias y de componente en jsdom; P: en navegador real contra el servicio): `/scheduler`
+  y `/scheduler/:id` con trabajos, alta y edición, historial de ejecuciones y tareas
+  puntuales. Faltan en el API: la próxima y la última ejecución de cada trabajo en su DTO,
+  la paginación de `GET /scheduler/jobs`, y `job_types` y los topes de nombre, código,
+  intervalo, reintentos y plazo en `GET /scheduler/meta`.
 * Lecturas del registro entre esquemas, todas por vistas publicadas: `identity` resuelve la
   empresa del login y el nombre de la empresa del listado de sesiones por
   `organization.v_tenants` (`025_organization_tenants_view.sql`, sin `db_name`, `cell_id`

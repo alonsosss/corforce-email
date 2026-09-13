@@ -119,6 +119,16 @@ describe('menu frente a rutas', () => {
     expect(groups.some((g) => g.labelKey === 'nav.group.platform')).toBe(false);
   });
 
+  it('los trabajos programados solo aparecen con el modulo scheduler', () => {
+    expect(allItems.find((i) => i.to === paths.scheduler)?.module).toBe(MODULES.scheduler);
+    const visible = (modules: string[]) =>
+      visibleNav(accessWith(modules))
+        .flatMap((g) => g.items)
+        .map((i) => i.to);
+    expect(visible([MODULES.identity])).not.toContain(paths.scheduler);
+    expect(visible([MODULES.scheduler])).toContain(paths.scheduler);
+  });
+
   it('cada pantalla de detalle de correo exige el mismo modulo que su listado', () => {
     for (const [list, detail] of [
       [paths.domains, `${paths.domains}/:id`],
@@ -132,6 +142,7 @@ describe('menu frente a rutas', () => {
       [paths.automations, paths.automationNew],
       [paths.automations, `${paths.automations}/:id`],
       [paths.automations, paths.automationRunPattern],
+      [paths.scheduler, `${paths.scheduler}/:id`],
     ] as const) {
       const listScreen = SCREENS.find((s) => s.path === list);
       const detailScreen = SCREENS.find((s) => s.path === detail);

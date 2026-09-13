@@ -239,6 +239,19 @@ export const endpoints = {
     release: (tenantId: string, sendClass: string) =>
       `${API_PREFIX}/reputation/tenants/${seg(tenantId)}/${seg(sendClass)}/release`,
   },
+  scheduler: {
+    meta: `${API_PREFIX}/scheduler/meta`,
+    handlers: `${API_PREFIX}/scheduler/handlers`,
+    jobs: collectionOf('/scheduler/jobs'),
+    enable: (id: string) => `${API_PREFIX}/scheduler/jobs/${seg(id)}/enable`,
+    disable: (id: string) => `${API_PREFIX}/scheduler/jobs/${seg(id)}/disable`,
+    run: (id: string) => `${API_PREFIX}/scheduler/jobs/${seg(id)}/run`,
+    history: (id: string) => `${API_PREFIX}/scheduler/jobs/${seg(id)}/history`,
+    cancelExecution: (id: string) => `${API_PREFIX}/scheduler/executions/${seg(id)}/cancel`,
+    retryExecution: (id: string) => `${API_PREFIX}/scheduler/executions/${seg(id)}/retry`,
+    tasks: collectionOf('/scheduler/tasks'),
+    cancelTask: (id: string) => `${API_PREFIX}/scheduler/tasks/${seg(id)}/cancel`,
+  },
   // services/webmail: prefijo autenticado por el propio servicio con la cookie cf_wm, sin
   // el access token de la plataforma. Solo lo usa api/webmail.ts. El nombre de carpeta va
   // codificado entero (una subcarpeta lleva el separador como %2F) y el servicio lo

@@ -215,6 +215,16 @@ export const SCREENS: readonly ScreenDecl[] = [
     module: MODULES.billing,
     load: () => import('@/pages/billing/PlanPage'),
   },
+  {
+    path: paths.scheduler,
+    module: MODULES.scheduler,
+    load: () => import('@/pages/scheduler/SchedulerPage'),
+  },
+  {
+    path: `${paths.scheduler}/:id`,
+    module: MODULES.scheduler,
+    load: () => import('@/pages/scheduler/JobDetailPage'),
+  },
   // Operacion de la plataforma: la exige el rol superadmin en el propio servicio, no un
   // permiso de modulo (billing plans y subscriptions, reputation tenants).
   {

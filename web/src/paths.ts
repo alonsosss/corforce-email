@@ -75,6 +75,8 @@ export const paths = {
   automationRunPattern: '/marketing/automations/runs/:id',
   analytics: '/marketing/analytics',
   billing: '/billing',
+  scheduler: '/scheduler',
+  schedulerJob: (id: string) => `/scheduler/${encodeURIComponent(id)}`,
   platformBilling: '/platform/billing',
   platformReputation: '/platform/reputation',
 } as const;

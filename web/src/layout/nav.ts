@@ -12,6 +12,7 @@ import {
   IconBan,
   IconBarChart,
   IconBuilding,
+  IconCalendar,
   IconClipboard,
   IconCreditCard,
   IconFileText,
@@ -59,6 +60,12 @@ export const NAV: NavGroup[] = [
       { to: paths.home, labelKey: 'nav.home', icon: IconHome },
       { to: paths.account, labelKey: 'nav.account', icon: IconUser },
       { to: paths.billing, labelKey: 'nav.billing', icon: IconGauge, module: MODULES.billing },
+      {
+        to: paths.scheduler,
+        labelKey: 'nav.scheduler',
+        icon: IconCalendar,
+        module: MODULES.scheduler,
+      },
     ],
   },
   {

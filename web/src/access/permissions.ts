@@ -68,6 +68,22 @@ export const PERMISSIONS = {
   auditLogs: {
     read: [MODULES.audit, 'logs', 'read'],
   },
+  // scheduler/jobs/delete esta sembrado pero no tiene ruta: la interfaz no lo pregunta.
+  schedulerJobs: {
+    read: [MODULES.scheduler, 'jobs', 'read'],
+    create: [MODULES.scheduler, 'jobs', 'create'],
+    update: [MODULES.scheduler, 'jobs', 'update'],
+    run: [MODULES.scheduler, 'jobs', 'run'],
+  },
+  schedulerExecutions: {
+    read: [MODULES.scheduler, 'executions', 'read'],
+    cancel: [MODULES.scheduler, 'executions', 'cancel'],
+    retry: [MODULES.scheduler, 'executions', 'retry'],
+  },
+  schedulerTasks: {
+    read: [MODULES.scheduler, 'tasks', 'read'],
+    cancel: [MODULES.scheduler, 'tasks', 'cancel'],
+  },
   securityEvents: {
     read: [MODULES.audit, 'security_events', 'read'],
     acknowledge: [MODULES.audit, 'security_events', 'acknowledge'],
