@@ -73,6 +73,14 @@ type TenantRoleLifecycle interface {
 	DeleteTenantRoles(ctx context.Context, tenantID uuid.UUID) (*domain.TenantRolesRemoval, error)
 }
 
+// DeletedAccountRoles retira las asignaciones de roles de una cuenta que identity borro.
+type DeletedAccountRoles interface {
+	// RemoveRolesOfDeletedUser borra las asignaciones del usuario a roles de la empresa si la
+	// cuenta ya no existe en ella, y devuelve cuantas borro: cero si no tenia, si ya se
+	// retiraron (tambien por la baja de la empresa) o si la cuenta vuelve a existir.
+	RemoveRolesOfDeletedUser(ctx context.Context, tenantID, userID uuid.UUID) (int64, error)
+}
+
 // PolicyCache descarta la politica cacheada de unos usuarios.
 type PolicyCache interface {
 	InvalidateUsers(ctx context.Context, userIDs []uuid.UUID)

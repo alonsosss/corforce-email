@@ -7,9 +7,18 @@
 -- necesita.
 --
 -- El registro tiene un unico rol de base para el plano de control, por eso no hay GRANT.
--- Una migracion posterior que anada columnas debe redefinir la vista con guarda: re-ejecutar
--- esta sobre una vista ampliada quitaria columnas (42P16).
+-- La 027 amplia la vista con effective_status: esta redefinicion se salta si la columna ya
+-- existe, porque re-ejecutarla sobre la vista ampliada quitaria columnas (42P16).
 
-CREATE OR REPLACE VIEW identity.v_user_status AS
-    SELECT id AS user_id, tenant_id, status, tokens_valid_from
-      FROM identity.users;
+DO $mig$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'identity' AND table_name = 'v_user_status'
+                      AND column_name = 'effective_status') THEN
+        EXECUTE $vista$
+            CREATE OR REPLACE VIEW identity.v_user_status AS
+                SELECT id AS user_id, tenant_id, status, tokens_valid_from
+                  FROM identity.users
+        $vista$;
+    END IF;
+END $mig$;

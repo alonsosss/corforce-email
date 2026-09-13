@@ -219,7 +219,7 @@ func TestVistaUserStatusPublicaSoloLoNecesario(t *testing.T) {
 		}
 		cols = append(cols, c)
 	}
-	if want := []string{"user_id", "tenant_id", "status", "tokens_valid_from"}; !slices.Equal(cols, want) {
+	if want := []string{"user_id", "tenant_id", "status", "tokens_valid_from", "effective_status"}; !slices.Equal(cols, want) {
 		t.Fatalf("columnas de v_user_status = %v, se esperaba %v", cols, want)
 	}
 }

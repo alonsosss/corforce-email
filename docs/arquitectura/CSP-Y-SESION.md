@@ -87,14 +87,15 @@ Probado en `pkg/auth`, `services/identity`, `services/gateway` y `make e2e`.
 Un access token con firma y vida en regla deja de valer antes de caducar en dos casos: se
 emitió antes del `tokens_valid_from` del usuario (logout-all, cambio o reinicio de
 contraseña, MFA desactivada; con 5 s de margen por el desfase de reloj), o su cuenta ya no
-existe en la empresa del token o no está activa (`inactive`, `locked`, `pending`, el mismo
-criterio con el que identity renueva). El gateway lo comprueba (`sessionCheck` en
+existe en la empresa del token o no está activa (`inactive`, `pending`, o `locked` con el
+bloqueo vigente: la regla con la que identity inicia sesión y renueva). El gateway lo comprueba (`sessionCheck` en
 `services/gateway/rbac.go`) en toda ruta con sesión, antes del RBAC y sea cual sea su modo,
 también en las de autoservicio, MFA y step-up, y responde 401 `SESSION_REVOKED`: el cliente
 renueva una vez, identity rechaza la renovación y la sesión termina.
 
-La respuesta sale de `GET /access/my-modules` de access-control, que lee
-`identity.v_user_status` sin cache propia. Solo dos respuestas cierran la cuenta, cada una
+La respuesta sale de `GET /access/my-modules` de access-control, que lee `effective_status`
+de `identity.v_user_status` sin cache propia: identity calcula ahí el estado con la misma
+regla con la que decide (`027_identity_effective_status.sql`). Solo dos respuestas cierran la cuenta, cada una
 con su estado y su código: 404 `USER_NOT_FOUND` y 403 `USER_NOT_ACTIVE`. Cualquier otra
 (caída, 5xx, 404 de ruta, 403 por otro motivo, 401 del token interno, 429) es «no se pudo
 determinar»: tomarla por cuenta cerrada convertiría un fallo de access-control o de un
@@ -104,7 +105,8 @@ despliegue en la expulsión de toda la plataforma.
 |---|---|
 | Cuenta activa, token posterior a `tokens_valid_from` | Pasa |
 | Cuenta borrada, o de otra empresa | 401 |
-| Cuenta `inactive`, `locked` o `pending` | 401 |
+| Cuenta `inactive`, `pending` o `locked` con el bloqueo vigente | 401 |
+| Cuenta `locked` cuyo bloqueo ya venció (o sin fecha) | Pasa: cuenta como `active` |
 | Token anterior a `tokens_valid_from` | 401 |
 | access-control no responde y hay en cache, aunque caducada, una respuesta que aplica al token | Decide con esa respuesta |
 | access-control no responde y no hay nada aplicable | La sesión pasa, acotada por los 5 min del token; una ruta con módulo sigue con `RBAC_FAIL_MODE` (`closed`: 403, salvo a los administradores) |
@@ -119,7 +121,10 @@ obliga a preguntar de nuevo y una reactivación no espera a la cache.
 
 El bloqueo por intentos fallidos (`locked`) también corta la sesión abierta, como ya lo hacía
 la renovación: quien fuerza el bloqueo de una cuenta ajena la saca en como mucho 60 s en vez
-de 5 min. Es el precio de no dejar trabajar a una cuenta bloqueada.
+de 5 min. Es el precio de no dejar trabajar a una cuenta bloqueada. Solo mientras dura el
+bloqueo: vencido `locked_until`, la vista publica la cuenta como `active` y la sesión vuelve
+a pasar, y a renovar, sin esperar a un nuevo inicio de sesión (antes seguía cerrada hasta
+entonces).
 
 ## CSP
 

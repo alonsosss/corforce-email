@@ -38,8 +38,11 @@ foraneas entre esquemas, cabecera `-- Schema: x | Service: y`, idempotentes y ad
   `access_control.v_user_roles(user_id, tenant_id, role_name)`, solo roles activos, para
   sellar los roles en el token (`022_access_control_published_views.sql`).
   access-control lee `identity.v_user_status(user_id, tenant_id, status,
-  tokens_valid_from)` para la politica y `users-with-permission`
-  (`023_identity_published_views.sql`). Ninguna expone correo, nombre, hash ni secreto MFA.
+  tokens_valid_from, effective_status)` para la politica, `users-with-permission` y la
+  retirada de los roles de una cuenta borrada (`023_identity_published_views.sql`, ampliada
+  por `027_identity_effective_status.sql`: `effective_status` cuenta como `active` un bloqueo
+  por intentos ya vencido, la regla de identity). Ninguna expone correo, nombre, hash ni
+  secreto MFA.
   access-control gatea los permisos por modulo contratado leyendo
   `organization.v_module_catalog(module, tier, permission_modules)` y
   `organization.v_tenant_modules(tenant_id, module, enabled)`

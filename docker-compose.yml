@@ -185,6 +185,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      nats:
+        condition: service_healthy
     restart: unless-stopped
     security_opt: ["no-new-privileges:true"]
     networks:

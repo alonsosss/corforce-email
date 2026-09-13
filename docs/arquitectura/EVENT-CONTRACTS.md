@@ -47,6 +47,7 @@ subject y payload. `opaco` = el payload no se puede leer estaticamente.
 | `gateway.security.exfiltration` | gateway | `count`, `ip`, `tenant_id`, `user_id`, `window` |
 | `identity.session.revoked_by_admin` | identity | `ip`, `session_id`, `target_user_id` |
 | `identity.user.created` | identity | `email` |
+| `identity.user.deleted` | identity | `deleted_at`, `tenant_id`, `user_id` |
 | `identity.user.locked` | identity | _opaco_ |
 | `identity.user.logged_in` | identity | `ip`, `user_agent` |
 | `identity.user.logged_out` | identity | _opaco_ |
@@ -105,6 +106,7 @@ subject y payload. `opaco` = el payload no se puede leer estaticamente.
 | `domains.domain.*` | transactional | `domain`, `purpose`, `status`, `tenant_id` |
 | `domains.domain.created` | billing | `domain`, `tenant_id` |
 | `domains.domain.deleted` | billing | `domain`, `tenant_id` |
+| `identity.user.deleted` | access-control | `tenant_id`, `user_id` |
 | `mail.>` | mail-security | `username` |
 | `mail.domain.created` | billing | `domain`, `tenant_id` |
 | `mail.domain.deleted` | billing | `domain`, `tenant_id` |

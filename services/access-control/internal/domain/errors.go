@@ -20,6 +20,7 @@ var (
 	ErrTenantActive = errors.New("tenant is active")
 	// ErrUserNotFound: la cuenta no existe en la empresa (borrada, o de otra empresa).
 	ErrUserNotFound = errors.New("user not found")
-	// ErrUserNotActive: la cuenta existe pero no esta activa (inactive, locked, pending).
+	// ErrUserNotActive: la cuenta existe pero no esta activa (inactive, pending, o locked con
+	// el bloqueo vigente).
 	ErrUserNotActive = errors.New("user not active")
 )

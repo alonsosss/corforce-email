@@ -6,7 +6,7 @@ Convencion de subject: `<dominio>.<entidad>.<accion>`. Un subject tiene UN dueno
 Publicar incluye encolar en la outbox (`outbox.Enqueue`); un consumidor con comodin
 (`*`, `>`) figura en cada subject publicado que recibe.
 
-Resumen: 77 publicaciones, 33 suscripciones, 77 subjects distintos.
+Resumen: 78 publicaciones, 34 suscripciones, 78 subjects distintos.
 
 ## Cruce por subject (dueno -> consumidores)
 
@@ -47,6 +47,7 @@ Resumen: 77 publicaciones, 33 suscripciones, 77 subjects distintos.
 | `gateway.security.exfiltration` | gateway | - |
 | `identity.session.revoked_by_admin` | identity | - |
 | `identity.user.created` | identity | - |
+| `identity.user.deleted` | identity | access-control |
 | `identity.user.locked` | identity | - |
 | `identity.user.logged_in` | identity | - |
 | `identity.user.logged_out` | identity | - |
@@ -92,6 +93,9 @@ Resumen: 77 publicaciones, 33 suscripciones, 77 subjects distintos.
 
 ## Por servicio
 
+### access-control
+- Consume: `identity.user.deleted`
+
 ### analytics
 - Consume: `campaigns.campaign.*`, `transactional.email.*`
 
@@ -122,7 +126,7 @@ Resumen: 77 publicaciones, 33 suscripciones, 77 subjects distintos.
 - Publica: `audit.api.write`, `gateway.security.exfiltration`
 
 ### identity
-- Publica: `identity.session.revoked_by_admin`, `identity.user.created`, `identity.user.locked`, `identity.user.logged_in`, `identity.user.logged_out`, `identity.user.login_failed`, `identity.user.password_changed`
+- Publica: `identity.session.revoked_by_admin`, `identity.user.created`, `identity.user.deleted`, `identity.user.locked`, `identity.user.logged_in`, `identity.user.logged_out`, `identity.user.login_failed`, `identity.user.password_changed`
 
 ### mail-directory
 - Publica: `mail.alias.created`, `mail.alias.deleted`, `mail.alias.updated`, `mail.alias_domain.created`, `mail.alias_domain.deleted`, `mail.alias_domain.updated`, `mail.domain.activated`, `mail.domain.created`, `mail.domain.deleted`, `mail.domain.updated`, `mail.mailbox.created`, `mail.mailbox.credentials_changed`, `mail.mailbox.deleted`, `mail.mailbox.updated`

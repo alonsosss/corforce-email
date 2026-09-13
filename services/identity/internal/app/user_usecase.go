@@ -13,32 +13,55 @@ import (
 )
 
 type UserUseCase struct {
-	users    ports.UserRepository
-	policies ports.PasswordPolicyRepository
-	history  ports.PasswordHistoryRepository
-	audit    ports.AuditRepository
-	events   ports.EventPublisher
-	breach   ports.PasswordBreachChecker
-	logger   *zap.Logger
+	users         ports.UserRepository
+	policies      ports.PasswordPolicyRepository
+	history       ports.PasswordHistoryRepository
+	audit         ports.AuditRepository
+	events        ports.EventPublisher
+	breach        ports.PasswordBreachChecker
+	tx            ports.Transactor
+	accountEvents ports.AccountEvents
+	now           func() time.Time
+	logger        *zap.Logger
 }
 
-func NewUserUseCase(
-	users ports.UserRepository,
-	policies ports.PasswordPolicyRepository,
-	history ports.PasswordHistoryRepository,
-	audit ports.AuditRepository,
-	events ports.EventPublisher,
-	breach ports.PasswordBreachChecker,
-	logger *zap.Logger,
-) *UserUseCase {
+// UserDeps agrupa los puertos de UserUseCase.
+type UserDeps struct {
+	Users    ports.UserRepository
+	Policies ports.PasswordPolicyRepository
+	History  ports.PasswordHistoryRepository
+	Audit    ports.AuditRepository
+	Events   ports.EventPublisher
+	Breach   ports.PasswordBreachChecker
+	// Tx y AccountEvents sostienen la baja de una cuenta: el borrado y su evento se
+	// confirman en la misma transaccion.
+	Tx            ports.Transactor
+	AccountEvents ports.AccountEvents
+	// Now fecha la baja que se anuncia; nil es time.Now.
+	Now    func() time.Time
+	Logger *zap.Logger
+}
+
+func NewUserUseCase(d UserDeps) *UserUseCase {
+	now := d.Now
+	if now == nil {
+		now = time.Now
+	}
+	logger := d.Logger
+	if logger == nil {
+		logger = zap.NewNop()
+	}
 	return &UserUseCase{
-		users:    users,
-		policies: policies,
-		history:  history,
-		audit:    audit,
-		events:   events,
-		breach:   breach,
-		logger:   logger,
+		users:         d.Users,
+		policies:      d.Policies,
+		history:       d.History,
+		audit:         d.Audit,
+		events:        d.Events,
+		breach:        d.Breach,
+		tx:            d.Tx,
+		accountEvents: d.AccountEvents,
+		now:           now,
+		logger:        logger,
 	}
 }
 
@@ -156,11 +179,31 @@ func (uc *UserUseCase) Deactivate(ctx context.Context, id uuid.UUID) error {
 	return uc.users.Update(ctx, user)
 }
 
-func (uc *UserUseCase) Delete(ctx context.Context, id uuid.UUID) error {
-	if _, err := uc.users.GetByID(ctx, id); err != nil {
+// Delete borra la cuenta y encola identity.user.deleted en la misma transaccion: el evento
+// existe si y solo si la cuenta ya no existe. Sesiones, historial y enlaces de reinicio caen
+// con ella (ON DELETE CASCADE); sus asignaciones de roles las retira access-control al
+// consumir el evento. actorID es quien la borra. ErrUserNotFound si ya no estaba, tambien
+// cuando otra baja simultanea gano: una cuenta no se anuncia borrada dos veces.
+func (uc *UserUseCase) Delete(ctx context.Context, id, actorID uuid.UUID) error {
+	user, err := uc.users.GetByID(ctx, id)
+	if err != nil {
 		return domain.ErrUserNotFound
 	}
-	return uc.users.Delete(ctx, id)
+	deletion := domain.UserDeletion{
+		UserID:    user.ID,
+		TenantID:  user.TenantID,
+		ActorID:   actorID,
+		DeletedAt: uc.now().UTC(),
+	}
+	return uc.tx.Transact(ctx, func(ctx context.Context) error {
+		if err := uc.users.Delete(ctx, user.ID); err != nil {
+			return err
+		}
+		if err := uc.accountEvents.UserDeleted(ctx, deletion); err != nil {
+			return fmt.Errorf("anunciar la baja de la cuenta: %w", err)
+		}
+		return nil
+	})
 }
 
 func (uc *UserUseCase) ChangePassword(ctx context.Context, userID uuid.UUID, req ports.ChangePasswordRequest) error {

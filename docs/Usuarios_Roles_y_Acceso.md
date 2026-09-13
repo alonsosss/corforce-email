@@ -27,11 +27,28 @@ V = verificado en el codigo. P = propuesto, todavia no implementado.
 * Revocacion: `tokens_valid_from` por usuario; el gateway rechaza (401 `SESSION_REVOKED`)
   cualquier access token emitido antes (logout-all, cambio o reinicio de contrasena, MFA
   desactivada) y el de una cuenta que ya no existe en su empresa o no esta activa
-  (`inactive`, `locked`, `pending`: el mismo criterio con el que identity renueva). Lo
+  (`inactive`, `pending`, o `locked` con el bloqueo vigente: la regla con la que identity
+  inicia sesion y renueva). Lo
   comprueba en toda ruta con sesion, tambien las de autoservicio, MFA y step-up, con la
   respuesta de access-control guardada 60 s por replica: ese es el plazo maximo para que
   una baja, una desactivacion o un logout-all surtan efecto. Detalle y comportamiento con
   access-control caido en `docs/arquitectura/CSP-Y-SESION.md` (Revocacion en el gateway).
+* Estado de la cuenta (V, 2026-09-13): una sola regla (`domain.User.SessionAllowed`) decide
+  el inicio de sesion, el segundo factor, la renovacion y la vista que lee access-control
+  (`identity.v_user_status.effective_status`, `027_identity_effective_status.sql`): solo una
+  cuenta efectivamente activa abre o conserva sesion. El bloqueo por intentos fallidos es
+  temporal: con `locked_until` vencido, o sin fecha, la cuenta cuenta como `active` sin que
+  nada escriba en ella; el siguiente inicio de sesion correcto lo retira (estado a `active`,
+  intentos a cero) y una contrasena mala tras vencer vuelve a bloquear desde ese momento. El
+  bloqueo solo cae sobre una cuenta `active` o `locked`: nunca convierte en `locked` una
+  `inactive` o `pending`, que al vencer quedaria activa. Cerrar una cuenta sin plazo es
+  `inactive`. `inactive`, `pending` y cualquier estado desconocido se rechazan antes de mirar
+  la contrasena con 403 `ACCOUNT_INACTIVE` (antes `pending` entraba y recibia un token que la
+  renovacion y el gateway rechazaban), y el bloqueo vigente con 403 `ACCOUNT_LOCKED`, sin
+  contar un intento fallido. Contrasena mala, correo desconocido y correo que no resuelve
+  empresa responden el mismo 401; sin `tenant_slug`, el correo de una cuenta `inactive` o
+  `pending` no resuelve empresa y responde ese 401, asi que su estado solo lo ve quien indica
+  la empresa, como ya pasaba con `inactive`.
 * Reinicio de contrasena por enlace de un solo uso, respuesta identica exista o no el
   correo; enviado por el servicio transaccional (`TRANSACTIONAL_MAIL_URL`, P hasta que
   exista).
@@ -95,7 +112,8 @@ replica. Responde 404 `USER_NOT_FOUND` si la cuenta no existe en la empresa del 
 `USER_NOT_ACTIVE` si no esta activa: son las unicas respuestas que el gateway toma como
 cuenta cerrada. La politica de permisos (`GET /api/v1/policy/{user}`, la que consulta
 `pkg/authz`) va en cache Redis 5 minutos por usuario y empresa, invalidada al asignar o
-revocar un rol y al retirar los roles de una empresa.
+revocar un rol, al retirar los roles de una empresa y al borrar una cuenta
+(`identity.user.deleted`, seccion 7).
 
 ## 4. Tres capas de control
 
@@ -190,9 +208,16 @@ mucho 60 s por replica): sin fila en `identity.v_user_status` access-control res
 `USER_NOT_FOUND` y el gateway rechaza el token con 401 en toda ruta, tambien en las de
 autoservicio que no gatea ningun modulo. Antes esa comprobacion fallaba abierta.
 
-P: borrar una cuenta suelta (`DELETE /users/{id}`) no avisa a access-control: identity no
-publica un evento de baja y access-control no consume eventos, asi que sus asignaciones
-(`access_control.user_roles`) quedan huerfanas y su politica en Redis caduca sola (5 min).
-No abren nada, porque el gateway rechaza el token antes, pero son datos de mas; se resuelve
-con un `identity.user.deleted` que access-control consuma para retirar las asignaciones e
-invalidar la cache.
+V (2026-09-13): borrar una cuenta suelta (`DELETE /users/{id}`) encola
+`identity.user.deleted` (`tenant_id`, `user_id`, `deleted_at`; en el sobre, quien la borro)
+en la outbox del registro dentro de la transaccion del borrado: si el evento no se encola, la
+cuenta no se borra, y una baja repetida responde 404 sin anunciarse dos veces. El rele de
+identity lo entrega al stream `IDENTITY`, que declaran identity y, con la misma definicion,
+access-control. access-control lo consume (su primer consumidor: durable
+`access-control-user-deleted`, reentrega y `EVENTS_DLQ` de `pkg/events`) y retira las
+asignaciones de la cuenta a roles de su empresa, solo si la cuenta ya no existe en ella segun
+`identity.v_user_status`, y descarta su politica en Redis. Es idempotente: una reentrega, una
+cuenta sin roles o una empresa cuya baja ya retiro sus roles no borran nada y se confirman.
+La baja de una empresa entera no lo emite, porque la saga ya retira los roles por empresa. Una
+cuenta que vuelve a existir con el mismo id (restauracion) conserva sus asignaciones aunque le
+llegue una entrega tardia.

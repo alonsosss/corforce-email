@@ -9,10 +9,12 @@ import (
 
 	"github.com/alonsosss/corforce-email/pkg/config"
 	"github.com/alonsosss/corforce-email/pkg/db"
+	"github.com/alonsosss/corforce-email/pkg/events"
 	"github.com/alonsosss/corforce-email/pkg/middleware"
 	"github.com/alonsosss/corforce-email/pkg/response"
 	"github.com/alonsosss/corforce-email/pkg/server"
 	handler "github.com/alonsosss/corforce-email/services/access-control/internal/adapters/http"
+	natsadapter "github.com/alonsosss/corforce-email/services/access-control/internal/adapters/nats"
 	"github.com/alonsosss/corforce-email/services/access-control/internal/adapters/postgres"
 	redisadapter "github.com/alonsosss/corforce-email/services/access-control/internal/adapters/redis"
 	"github.com/alonsosss/corforce-email/services/access-control/internal/app"
@@ -86,6 +88,16 @@ func main() {
 		Tenants:     postgres.NewTenantDirectory(pool.Pool),
 		SystemRoles: systemRoles,
 	})
+
+	// Sin NATS el servicio responde igual: las bajas de cuentas esperan en el stream IDENTITY
+	// y sus roles se retiran cuando el consumidor consigue suscribirse.
+	deletedAccounts := app.NewDeletedAccountsUseCase(postgres.NewDeletedAccountRepo(pool.Pool), policyCache)
+	if bus, err := events.NewBus(cfg.NATS.URL, logger); err != nil {
+		logger.Warn("NATS no disponible: las bajas de cuentas no retiraran sus roles", zap.Error(err))
+	} else {
+		defer bus.Close()
+		go natsadapter.NewIdentityConsumer(bus, deletedAccounts, logger).Run(ctx)
+	}
 
 	h := handler.NewHandler(rbacUC)
 

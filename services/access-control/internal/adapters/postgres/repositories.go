@@ -194,13 +194,14 @@ func NewUserRoleRepo(pool *pgxpool.Pool) *UserRoleRepo {
 	return &UserRoleRepo{pool: pool}
 }
 
-// UserAccount lee el estado de la cuenta y el instante que identity adelanta al revocar
-// todas sus sesiones, por la vista que publica identity (identity.v_user_status). Distingue
-// la cuenta que no existe (ErrUserNotFound, respuesta definitiva) de un fallo de la base.
+// UserAccount lee el estado efectivo de la cuenta (un bloqueo caducado cuenta como active) y
+// el instante que identity adelanta al revocar todas sus sesiones, por la vista que publica
+// identity (identity.v_user_status). Distingue la cuenta que no existe (ErrUserNotFound,
+// respuesta definitiva) de un fallo de la base.
 func (r *UserRoleRepo) UserAccount(ctx context.Context, userID, tenantID uuid.UUID) (domain.UserAccount, error) {
 	var account domain.UserAccount
 	err := r.pool.QueryRow(ctx,
-		`SELECT status, tokens_valid_from FROM identity.v_user_status WHERE user_id = $1 AND tenant_id = $2`,
+		`SELECT effective_status, tokens_valid_from FROM identity.v_user_status WHERE user_id = $1 AND tenant_id = $2`,
 		userID, tenantID).Scan(&account.Status, &account.TokensValidFrom)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.UserAccount{}, domain.ErrUserNotFound
@@ -337,8 +338,8 @@ func (r *UserRoleRepo) GetAccessPolicy(ctx context.Context, userID, tenantID uui
 	return policy, nil
 }
 
-// ListUsersWithPermission devuelve los usuarios activos de una empresa que tienen un
-// permiso concreto, resuelto por sus roles. Existe para poder avisar a quien corresponde
+// ListUsersWithPermission devuelve los usuarios efectivamente activos de una empresa que
+// tienen un permiso concreto, resuelto por sus roles. Existe para poder avisar a quien corresponde
 // sin que el servicio que avisa tenga que conocer el modelo de roles: notificar "a los
 // que gestionan dominios" es preguntar por quien tiene domains/update, no por un rol con
 // un nombre concreto (que cada empresa puede haber renombrado).
@@ -351,7 +352,7 @@ func (r *UserRoleRepo) ListUsersWithPermission(ctx context.Context, tenantID uui
 		   JOIN access_control.roles r ON r.id = ur.role_id
 		   JOIN identity.v_user_status u ON u.user_id = ur.user_id
 		  WHERE p.module = $1 AND p.action = $2
-		    AND r.tenant_id = $3 AND r.status = 'active' AND u.tenant_id = $3 AND u.status = 'active'`,
+		    AND r.tenant_id = $3 AND r.status = 'active' AND u.tenant_id = $3 AND u.effective_status = 'active'`,
 		module, action, tenantID)
 	if err != nil {
 		return nil, err

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/alonsosss/corforce-email/pkg/db"
 	"github.com/alonsosss/corforce-email/services/identity/internal/domain"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -119,9 +120,35 @@ func (r *UserRepo) Update(ctx context.Context, u *domain.User) error {
 	return err
 }
 
+// txAware escribe en la transaccion del contexto cuando la hay (Transactor) y, si no, en el
+// pool que se le deja en el contexto. No guarda estado.
+var txAware db.ContextPool
+
+// Delete borra la cuenta en la transaccion del contexto, si la hay: asi el borrado y su
+// evento en la outbox se confirman juntos. ErrUserNotFound si no borro ninguna fila.
 func (r *UserRepo) Delete(ctx context.Context, id uuid.UUID) error {
-	_, err := r.pool.Exec(ctx, `DELETE FROM identity.users WHERE id = $1`, id)
-	return err
+	tag, err := txAware.Exec(db.WithPool(ctx, r.pool), `DELETE FROM identity.users WHERE id = $1`, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return domain.ErrUserNotFound
+	}
+	return nil
+}
+
+// Transactor abre la transaccion de negocio de identity en el registro. UserRepo.Delete y el
+// publicador de la outbox (sobre db.ContextPool) escriben en ella.
+type Transactor struct {
+	pool *pgxpool.Pool
+}
+
+func NewTransactor(pool *pgxpool.Pool) *Transactor {
+	return &Transactor{pool: pool}
+}
+
+func (t *Transactor) Transact(ctx context.Context, fn func(ctx context.Context) error) error {
+	return txAware.Transact(db.WithPool(ctx, t.pool), fn)
 }
 
 // List filtra por texto sobre correo y nombre. El filtro se aplica EN LA BASE: un
@@ -177,16 +204,26 @@ func (r *UserRepo) IncrementFailedAttempts(ctx context.Context, id uuid.UUID) er
 	return err
 }
 
+// ResetFailedAttempts retira el bloqueo por intentos: contador a cero, sin fecha y, si la fila
+// seguia en locked, de vuelta a active. inactive y pending no se tocan.
 func (r *UserRepo) ResetFailedAttempts(ctx context.Context, id uuid.UUID) error {
 	_, err := r.pool.Exec(ctx,
-		`UPDATE identity.users SET failed_login_attempts = 0, locked_until = NULL WHERE id = $1`, id,
+		`UPDATE identity.users
+		    SET failed_login_attempts = 0, locked_until = NULL,
+		        status = CASE WHEN status = 'locked' THEN 'active' ELSE status END
+		  WHERE id = $1`, id,
 	)
 	return err
 }
 
+// LockUser solo bloquea una cuenta que podia entrar (active, o locked con el bloqueo ya
+// caducado): el bloqueo es temporal y al caducar la cuenta vuelve a contar como active, asi
+// que bloquear una inactive o pending, por ejemplo desactivada mientras se probaba su
+// contrasena, la reactivaria al pasar el plazo.
 func (r *UserRepo) LockUser(ctx context.Context, id uuid.UUID, until *time.Time) error {
 	_, err := r.pool.Exec(ctx,
-		`UPDATE identity.users SET status = 'locked', locked_until = $1 WHERE id = $2`, until, id,
+		`UPDATE identity.users SET status = 'locked', locked_until = $1
+		  WHERE id = $2 AND status IN ('active', 'locked')`, until, id,
 	)
 	return err
 }
@@ -645,10 +682,13 @@ func (r *TenantRepo) IsActive(ctx context.Context, tenantID uuid.UUID) (bool, er
 	return active, err
 }
 
+// GetIDByEmail solo resuelve la empresa por una cuenta que puede entrar (active, o locked, que
+// es temporal): el correo de una cuenta inactive o pending se responde como uno que no existe,
+// igual que un correo desconocido, y no revela su estado sin que se indique la empresa.
 func (r *TenantRepo) GetIDByEmail(ctx context.Context, email string) (uuid.UUID, error) {
 	var id uuid.UUID
 	err := r.pool.QueryRow(ctx,
-		`SELECT tenant_id FROM identity.users WHERE email = $1 AND status != 'inactive' LIMIT 1`, email,
+		`SELECT tenant_id FROM identity.users WHERE email = $1 AND status IN ('active', 'locked') LIMIT 1`, email,
 	).Scan(&id)
 	if err != nil {
 		return uuid.Nil, domain.ErrTenantNotFound

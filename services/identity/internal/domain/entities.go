@@ -34,6 +34,47 @@ type User struct {
 	UpdatedAt           time.Time
 }
 
+// LockActive dice si el bloqueo por intentos fallidos sigue vigente en now. El bloqueo es
+// siempre temporal (LockUser fija locked_until): sin fecha, o con la fecha ya pasada, la
+// cuenta no esta bloqueada aunque su fila siga en locked hasta el siguiente inicio de
+// sesion. Cerrar una cuenta sin plazo es inactive, no locked.
+func (u *User) LockActive(now time.Time) bool {
+	return u.Status == UserStatusLocked && u.LockedUntil != nil && now.Before(*u.LockedUntil)
+}
+
+// EffectiveStatus es el estado con el que se decide si la cuenta puede tener sesion: un
+// bloqueo caducado cuenta como active. Es la misma regla que publica la columna
+// effective_status de identity.v_user_status (registry 027), que lee access-control.
+func (u *User) EffectiveStatus(now time.Time) UserStatus {
+	if u.Status == UserStatusLocked && !u.LockActive(now) {
+		return UserStatusActive
+	}
+	return u.Status
+}
+
+// SessionAllowed es la unica regla de inicio de sesion, segundo factor y renovacion: solo
+// una cuenta efectivamente activa abre o conserva sesion. Un bloqueo vigente es
+// ErrAccountLocked; inactive, pending o un estado desconocido, ErrAccountInactive.
+func (u *User) SessionAllowed(now time.Time) error {
+	switch u.EffectiveStatus(now) {
+	case UserStatusActive:
+		return nil
+	case UserStatusLocked:
+		return ErrAccountLocked
+	default:
+		return ErrAccountInactive
+	}
+}
+
+// UserDeletion es la baja de una cuenta suelta tal como se anuncia al resto de la
+// plataforma (identity.user.deleted). ActorID es quien la borro; uuid.Nil si no hubo persona.
+type UserDeletion struct {
+	UserID    uuid.UUID
+	TenantID  uuid.UUID
+	ActorID   uuid.UUID
+	DeletedAt time.Time
+}
+
 type Session struct {
 	ID               uuid.UUID
 	UserID           uuid.UUID

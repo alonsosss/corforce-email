@@ -2,6 +2,7 @@ package http
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -813,8 +814,13 @@ func (h *Handler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 	if !ok || !h.canManage(w, r, existing) {
 		return
 	}
-	if err := h.user.Delete(r.Context(), existing.ID); err != nil {
-		response.ErrInternal(w)
+	actorID, _ := uuid.Parse(middleware.GetUserID(r.Context()))
+	if err := h.user.Delete(r.Context(), existing.ID, actorID); err != nil {
+		if errors.Is(err, domain.ErrUserNotFound) {
+			response.ErrNotFound(w, "user not found")
+			return
+		}
+		response.Unexpected(w, fmt.Errorf("borrar usuario: %w", err))
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -973,11 +979,15 @@ func (h *Handler) MFAChallenge(w http.ResponseWriter, r *http.Request) {
 
 	res, err := h.auth.VerifyMFAChallenge(r.Context(), req.MFAToken, req.Code, extractClientIP(r), r.UserAgent())
 	if err != nil {
-		if err == domain.ErrAccountLocked {
+		// Quien llega aqui ya probo la contrasena: el estado de su cuenta no revela nada.
+		switch err {
+		case domain.ErrAccountLocked:
 			response.Err(w, http.StatusForbidden, "ACCOUNT_LOCKED", "account is temporarily locked")
-			return
+		case domain.ErrAccountInactive:
+			response.Err(w, http.StatusForbidden, "ACCOUNT_INACTIVE", "account is inactive")
+		default:
+			response.ErrUnauthorized(w, "invalid MFA code")
 		}
-		response.ErrUnauthorized(w, "invalid MFA code")
 		return
 	}
 

@@ -477,6 +477,9 @@ read -r U_INACTIVA T_INACTIVA <<<"$(cuenta_de_prueba inactiva)"
 [[ -n "$T_VIGENTE" && -n "$T_BORRADA" && -n "$T_INACTIVA" ]] && ok "tres cuentas con sesion" || mal "alta o login de las cuentas de prueba"
 expect "una cuenta vigente sin roles abre su ficha (autoservicio, sin modulo)" \
   "$(codigo "$GW/users/$U_VIGENTE" -H "Authorization: Bearer $T_VIGENTE")" "200"
+ROL_SISTEMA=$(sql mail_registry "SELECT r.id FROM access_control.roles r JOIN organization.tenants t ON t.id = r.tenant_id WHERE t.slug = 'acme' AND r.is_system")
+expect "la cuenta que se va a borrar recibe un rol" \
+  "$(codigo -X POST "$GW/user-roles/assign" -H "$A2" -H 'Content-Type: application/json' -d "{\"user_id\":\"$U_BORRADA\",\"role_id\":\"$ROL_SISTEMA\"}")" "200"
 expect "el tenant_admin borra una cuenta" "$(codigo -X DELETE "$GW/users/$U_BORRADA" -H "$A2")" "204"
 expect "su token, aun vigente, ya no abre ni su ficha" \
   "$(sesion "$GW/users/$U_BORRADA" -H "Authorization: Bearer $T_BORRADA")" "SESSION_REVOKED 401"
@@ -486,6 +489,28 @@ expect "su token ya no lista sus sesiones" \
 expect "ni pide un step-up" \
   "$(sesion -X POST "$GW/auth/step-up" -H "Authorization: Bearer $T_INACTIVA" -H 'Content-Type: application/json' -d '{"current_password":"x"}')" "SESSION_REVOKED 401"
 
+# identity encola identity.user.deleted con el borrado; su rele lo publica en IDENTITY y
+# access-control retira las asignaciones de la cuenta.
+roles_de_la_borrada() { sql mail_registry "SELECT count(*) FROM access_control.user_roles WHERE user_id = '$U_BORRADA'"; }
+for _ in $(seq 1 40); do [[ "$(roles_de_la_borrada)" == 0 ]] && break; sleep 0.5; done
+expect "access-control retira sus asignaciones al consumir identity.user.deleted" "$(roles_de_la_borrada)" "0"
+expect "borrarla otra vez no la encuentra" "$(codigo -X DELETE "$GW/users/$U_BORRADA" -H "$A2")" "404"
+expect "la baja se anuncio una sola vez, por la outbox del registro, con su empresa" \
+  "$(sql mail_registry "SELECT count(*) FROM platform.event_outbox WHERE subject = 'identity.user.deleted' AND payload->'data'->>'user_id' = '$U_BORRADA' AND payload->'data'->>'tenant_id' = (SELECT id::text FROM organization.tenants WHERE slug = 'acme')")" "1"
+# Una cuenta pending no inicia sesion: indicando su empresa responde como una inactiva y, sin
+# empresa, igual que un correo desconocido. Su token anterior tampoco sirve.
+pend_pass="$(rand_hex 10)Aa1!"
+U_PEND=$(curl -s -X POST "$GW/users" -H "$A2" -H 'Content-Type: application/json' \
+  -d "{\"email\":\"pendiente@acme.test\",\"password\":\"$pend_pass\",\"first_name\":\"Luis\",\"last_name\":\"Rios\"}" | jget data.id)
+T_PEND=$(e2e_login pendiente@acme.test "$pend_pass" | jget data.access_token)
+[[ -n "$U_PEND" && -n "$T_PEND" ]] && ok "cuenta que pasara a pending, con sesion" || mal "alta o login de la cuenta pending"
+sql mail_registry "UPDATE identity.users SET status = 'pending' WHERE id = '$U_PEND'" >/dev/null
+expect "pending no inicia sesion en su empresa, ni con la contrasena buena" \
+  "$(sesion -X POST "$GW/auth/login" -H 'Content-Type: application/json' -d "{\"email\":\"pendiente@acme.test\",\"password\":\"$pend_pass\",\"tenant_slug\":\"acme\"}")" "ACCOUNT_INACTIVE 403"
+expect "sin empresa responde igual que un correo desconocido" \
+  "$(curl -s -w ' %{http_code}' -X POST "$GW/auth/login" -H 'Content-Type: application/json' -d "{\"email\":\"pendiente@acme.test\",\"password\":\"$pend_pass\"}")" \
+  "$(curl -s -w ' %{http_code}' -X POST "$GW/auth/login" -H 'Content-Type: application/json' -d "{\"email\":\"nadie@acme.test\",\"password\":\"$pend_pass\"}")"
+expect "su token anterior ya no abre su ficha" "$(sesion "$GW/users/$U_PEND" -H "Authorization: Bearer $T_PEND")" "SESSION_REVOKED 401"
 echo "== Rutas con sesion por celda (segundo gateway, dos celdas)"
 # El gateway de arriba no declara celdas: todo va al destino base. Este segundo gateway declara
 # la celda base (GATEWAY_BASE_CELL_CODE) y una instancia de mail-directory sobre mail_cell_pe_02:

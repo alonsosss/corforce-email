@@ -13,15 +13,18 @@ import (
 	"github.com/alonsosss/corforce-email/pkg/db"
 	"github.com/alonsosss/corforce-email/pkg/events"
 	"github.com/alonsosss/corforce-email/pkg/middleware"
+	"github.com/alonsosss/corforce-email/pkg/outbox"
 	"github.com/alonsosss/corforce-email/pkg/response"
 	"github.com/alonsosss/corforce-email/pkg/server"
 	identityhttp "github.com/alonsosss/corforce-email/services/identity/internal/adapters/http"
 	"github.com/alonsosss/corforce-email/services/identity/internal/adapters/mailerclient"
 	natsadapter "github.com/alonsosss/corforce-email/services/identity/internal/adapters/nats"
+	outboxadapter "github.com/alonsosss/corforce-email/services/identity/internal/adapters/outbox"
 	"github.com/alonsosss/corforce-email/services/identity/internal/adapters/postgres"
 	"github.com/alonsosss/corforce-email/services/identity/internal/adapters/pwned"
 	"github.com/alonsosss/corforce-email/services/identity/internal/app"
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 )
 
@@ -85,7 +88,20 @@ func main() {
 
 	breachChecker := pwned.NewFromEnv()
 	logger.Info("contrasenas filtradas", zap.Bool("comprobacion_activa", breachChecker.Enabled()))
-	userUC := app.NewUserUseCase(userRepo, policyRepo, historyRepo, auditRepo, eventPub, breachChecker, logger)
+	// La baja de una cuenta y su evento se confirman juntos: el publicador escribe en la
+	// outbox del registro por la transaccion que abre el Transactor.
+	userUC := app.NewUserUseCase(app.UserDeps{
+		Users:         userRepo,
+		Policies:      policyRepo,
+		History:       historyRepo,
+		Audit:         auditRepo,
+		Events:        eventPub,
+		Breach:        breachChecker,
+		Tx:            postgres.NewTransactor(pool.Pool),
+		AccountEvents: outboxadapter.NewPublisher(&db.ContextPool{}),
+		Logger:        logger,
+	})
+	go runAccountEventRelay(ctx, bus, pool.Pool, logger)
 	tenantUsersUC := app.NewTenantUsersUseCase(app.TenantUsersDeps{
 		Users:       userRepo,
 		TenantUsers: userRepo,
@@ -150,6 +166,33 @@ func main() {
 	if err := srv.Run(); err != nil {
 		logger.Fatal("server error", zap.Error(err))
 	}
+}
+
+const (
+	// streamRetry espacia los intentos de declarar el stream mientras NATS no responde.
+	streamRetry = 5 * time.Second
+	// outboxRetention conserva lo publicado lo mismo que el stream (EnsureStream: 7 dias).
+	outboxRetention = 7 * 24 * time.Hour
+)
+
+// runAccountEventRelay declara el stream IDENTITY y despues vacia la outbox del registro. Sin
+// NATS reintenta: los eventos esperan en la outbox, no se pierden. billing vacia la misma
+// tabla con su propio rele; FOR UPDATE SKIP LOCKED reparte las filas y el id del evento
+// deduplica en JetStream.
+func runAccountEventRelay(ctx context.Context, bus *events.Bus, pool *pgxpool.Pool, logger *zap.Logger) {
+	for {
+		err := bus.EnsureStream(outboxadapter.StreamName, []string{outboxadapter.SubjectUserDeleted})
+		if err == nil {
+			break
+		}
+		logger.Warn("no se pudo declarar el stream IDENTITY; se reintenta", zap.Error(err))
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(streamRetry):
+		}
+	}
+	outbox.NewRelay(pool, bus, logger, outbox.Options{Retention: outboxRetention}).Run(ctx)
 }
 
 // newTokenService resuelve la clave de firma (JWT_SIGNING_KEY, solo identity la recibe) y

@@ -34,6 +34,7 @@ type AuthUseCase struct {
 	tenants         ports.TenantRepository
 	roles           ports.RoleLookup
 	logger          *zap.Logger
+	now             func() time.Time
 }
 
 type AuthDeps struct {
@@ -49,10 +50,17 @@ type AuthDeps struct {
 	Tenants         ports.TenantRepository
 	Roles           ports.RoleLookup
 	Logger          *zap.Logger
+	// Now es el reloj de las decisiones de sesion y bloqueo; nil es time.Now.
+	Now func() time.Time
 }
 
 func NewAuthUseCase(deps AuthDeps) *AuthUseCase {
+	now := deps.Now
+	if now == nil {
+		now = time.Now
+	}
 	return &AuthUseCase{
+		now:             now,
 		users:           deps.Users,
 		sessions:        deps.Sessions,
 		blocklist:       deps.Blocklist,
@@ -85,16 +93,12 @@ func (uc *AuthUseCase) Login(ctx context.Context, req ports.LoginRequest) (*port
 		return nil, domain.ErrInvalidCredentials
 	}
 
-	if user.Status == domain.UserStatusInactive {
-		return nil, domain.ErrAccountInactive
-	}
-
-	if user.Status == domain.UserStatusLocked {
-		if user.LockedUntil != nil && time.Now().Before(*user.LockedUntil) {
-			return nil, domain.ErrAccountLocked
-		}
-		user.Status = domain.UserStatusActive
-		uc.users.Update(ctx, user)
+	// Una cuenta que no puede tener sesion (inactive, pending o con el bloqueo vigente) se
+	// rechaza antes de mirar la contrasena, como siempre se hizo con inactive y locked: no
+	// cuenta un intento fallido ni ofrece un oraculo de la contrasena. Un bloqueo caducado
+	// deja pasar y se retira al entrar (ResetFailedAttempts).
+	if err := user.SessionAllowed(uc.now()); err != nil {
+		return nil, err
 	}
 
 	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password)); err != nil {
@@ -120,7 +124,7 @@ func (uc *AuthUseCase) Login(ctx context.Context, req ports.LoginRequest) (*port
 			Resource:  "session",
 			IPAddress: req.IPAddress,
 			UserAgent: req.UserAgent,
-			CreatedAt: time.Now(),
+			CreatedAt: uc.now(),
 		})
 		return &ports.LoginResponse{
 			MFARequired: true,
@@ -142,7 +146,7 @@ func (uc *AuthUseCase) openSession(ctx context.Context, user *domain.User, tenan
 	}
 
 	policy := uc.sessionPolicy(ctx, tenantID)
-	now := time.Now()
+	now := uc.now()
 	session := &domain.Session{
 		ID:               uuid.New(),
 		UserID:           user.ID,
@@ -260,12 +264,12 @@ func (uc *AuthUseCase) RefreshToken(ctx context.Context, refreshToken string) (*
 		if session.RevokedReason != "rotated" {
 			return nil, domain.ErrSessionRevoked
 		}
-		if session.RevokedAt == nil || time.Since(*session.RevokedAt) > refreshReuseGrace {
+		if session.RevokedAt == nil || uc.now().Sub(*session.RevokedAt) > refreshReuseGrace {
 			uc.sessions.RevokeAllByUser(ctx, session.UserID)
 			return nil, domain.ErrSessionRevoked
 		}
 		// Dentro de la gracia: continua al flujo de emision (no se revoca de nuevo).
-	} else if time.Now().After(session.ExpiresAt) {
+	} else if uc.now().After(session.ExpiresAt) {
 		uc.sessions.Revoke(ctx, session.ID)
 		return nil, domain.ErrSessionExpired
 	}
@@ -275,15 +279,16 @@ func (uc *AuthUseCase) RefreshToken(ctx context.Context, refreshToken string) (*
 		return nil, domain.ErrUserNotFound
 	}
 
-	if user.Status != domain.UserStatusActive {
-		return nil, domain.ErrAccountInactive
+	// La misma regla que el inicio de sesion: un bloqueo caducado no impide renovar.
+	if err := user.SessionAllowed(uc.now()); err != nil {
+		return nil, err
 	}
 
 	// Cierre por inactividad: la ultima renovacion (created_at de la fila vigente) es
 	// la ultima senal de vida del dispositivo. Se evalua aqui y no con un barrido
 	// periodico para que la politica surta efecto sin depender de un proceso externo.
 	policy := uc.sessionPolicy(ctx, user.TenantID)
-	if policy.IdleExceeded(session.CreatedAt, time.Now()) {
+	if policy.IdleExceeded(session.CreatedAt, uc.now()) {
 		uc.sessions.Revoke(ctx, session.ID)
 		return nil, domain.ErrSessionIdle
 	}
@@ -310,7 +315,7 @@ func (uc *AuthUseCase) RefreshToken(ctx context.Context, refreshToken string) (*
 		// La renovacion no extiende la sesion mas alla de su ventana original: si no,
 		// una politica de 8 horas se volveria eterna renovando cada 15 minutos.
 		ExpiresAt: session.ExpiresAt,
-		CreatedAt: time.Now(),
+		CreatedAt: uc.now(),
 		// La rotacion conserva el inicio de sesion original de la cadena.
 		LoginAt: session.LoginAt,
 	}
@@ -333,7 +338,7 @@ func (uc *AuthUseCase) RefreshToken(ctx context.Context, refreshToken string) (*
 // si la sesion es del propio usuario: un refresh ajeno no cierra la sesion de otro.
 func (uc *AuthUseCase) Logout(ctx context.Context, tenantID, userID uuid.UUID, accessToken, refreshToken string) error {
 	if accessToken != "" {
-		uc.blocklist.Add(ctx, hashToken(accessToken), time.Now().Add(accessTokenBlockTTL))
+		uc.blocklist.Add(ctx, hashToken(accessToken), uc.now().Add(accessTokenBlockTTL))
 	}
 	if refreshToken != "" {
 		if session, err := uc.sessions.GetByRefreshTokenHash(ctx, hashToken(refreshToken)); err == nil && session.UserID == userID && !session.Revoked {
@@ -373,7 +378,7 @@ func (uc *AuthUseCase) handleFailedLogin(ctx context.Context, user *domain.User,
 	}
 
 	if user.FailedLoginAttempts >= policy.MaxFailedAttempts {
-		lockUntil := time.Now().Add(time.Duration(policy.LockoutDurationMinutes) * time.Minute)
+		lockUntil := uc.now().Add(time.Duration(policy.LockoutDurationMinutes) * time.Minute)
 		uc.users.LockUser(ctx, user.ID, &lockUntil)
 		uc.events.PublishUserLocked(tenantID.String(), user.ID.String())
 		uc.audit.Log(ctx, &domain.AuditEntry{
@@ -384,7 +389,7 @@ func (uc *AuthUseCase) handleFailedLogin(ctx context.Context, user *domain.User,
 			Resource:   "user",
 			ResourceID: user.ID.String(),
 			IPAddress:  ip,
-			CreatedAt:  time.Now(),
+			CreatedAt:  uc.now(),
 		})
 	}
 }
@@ -485,13 +490,10 @@ func (uc *AuthUseCase) VerifyMFAChallenge(ctx context.Context, challengeToken, c
 	// sin esto, con la contrasena ya obtenida, el espacio de 6 digitos del TOTP es
 	// forzable (el limite por IP se reparte entre varias). El token de desafio
 	// dura 5 minutos, asi que la ventana de intentos es corta y ademas se cierra
-	// al alcanzar el umbral de intentos fallidos de la politica del tenant.
-	if user.Status == domain.UserStatusLocked {
-		if user.LockedUntil != nil && time.Now().Before(*user.LockedUntil) {
-			return nil, domain.ErrAccountLocked
-		}
-		user.Status = domain.UserStatusActive
-		uc.users.Update(ctx, user)
+	// al alcanzar el umbral de intentos fallidos de la politica del tenant. La cuenta
+	// desactivada durante los 5 minutos del reto tampoco termina de entrar.
+	if err := user.SessionAllowed(uc.now()); err != nil {
+		return nil, err
 	}
 
 	if !totp.Validate(user.MFASecret, code) {
@@ -573,7 +575,7 @@ func (uc *AuthUseCase) SaveSessionPolicy(ctx context.Context, p *domain.SessionP
 			"max_concurrent_sessions": p.MaxConcurrentSessions,
 			"idle_timeout_minutes":    p.IdleTimeoutMinutes,
 		},
-		CreatedAt: time.Now(),
+		CreatedAt: uc.now(),
 	})
 	return nil
 }
@@ -612,7 +614,7 @@ func (uc *AuthUseCase) RevokeSessionScoped(ctx context.Context, sessionID, actor
 			"target_email":   info.UserEmail,
 			"ip_address":     info.IPAddress,
 		},
-		CreatedAt: time.Now(),
+		CreatedAt: uc.now(),
 	})
 	uc.events.PublishSessionRevoked(info.TenantID.String(), actorID.String(), info.UserID.String(), sessionID.String(), actorIP)
 	return nil

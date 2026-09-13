@@ -7,14 +7,16 @@ import (
 	"github.com/google/uuid"
 )
 
-// UserAccount es lo que identity publica de una cuenta (identity.v_user_status).
+// UserAccount es lo que identity publica de una cuenta (identity.v_user_status). Status es el
+// estado efectivo (effective_status), no el guardado: un bloqueo por intentos fallidos que
+// ya caduco cuenta como active.
 type UserAccount struct {
 	Status          string
 	TokensValidFrom time.Time
 }
 
-// Active: solo una cuenta activa conserva la sesion; es el mismo criterio con el que
-// identity renueva el token.
+// Active: solo una cuenta efectivamente activa conserva la sesion; es la regla con la que
+// identity inicia sesion y renueva el token, que la calcula y la publica en la vista.
 func (a UserAccount) Active() bool { return a.Status == "active" }
 
 type Role struct {

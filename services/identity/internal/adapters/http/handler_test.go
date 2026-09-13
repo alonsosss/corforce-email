@@ -90,7 +90,7 @@ func (tm *team) serverWith(t *testing.T, accessURL string, cfg Config, stepUpMod
 	t.Helper()
 	t.Setenv("STEP_UP_MODE", stepUpMode)
 	authUC := app.NewAuthUseCase(app.AuthDeps{Users: tm.users, Roles: tm.roles, Logger: zap.NewNop()})
-	userUC := app.NewUserUseCase(tm.users, nil, nil, nil, nil, nil, zap.NewNop())
+	userUC := app.NewUserUseCase(app.UserDeps{Users: tm.users, Logger: zap.NewNop()})
 	h := NewHandler(authUC, userUC, nil, authz.NewChecker(accessURL, ""), cfg)
 	r := chi.NewRouter()
 	r.Use(middleware.InjectFromGateway)
