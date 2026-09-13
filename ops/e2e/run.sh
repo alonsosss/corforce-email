@@ -204,6 +204,23 @@ if [[ $rc -ne 0 && $rc -ne 124 ]] && grep -q 'REDIS_TLS=true is required' "$WORK
 else
   mal "gateway en produccion sin REDIS_TLS (salida $rc): $(head -c 300 "$WORK/fail-closed-redis.log")"
 fi
+# Solo development o test relajan algo (config.DeclaredDevelopmentOrTest): en staging o sin
+# ENVIRONMENT, sin token interno ni el gateway ni domain-service arrancan.
+sin_token_falla_cerrado() {
+  local nombre="$1" entorno="$2" log="$WORK/fail-closed-token-$1.log"; shift 2
+  env -u INTERNAL_GATEWAY_TOKEN "$@" GATEWAY_PORT=$((BASE + 94)) DOMAIN_SERVICE_PORT=$((BASE + 94)) \
+    timeout 20 "$WORK/bin/$nombre" >"$log" 2>&1
+  local rc=$?
+  if [[ $rc -ne 0 && $rc -ne 124 ]] && grep -q 'INTERNAL_GATEWAY_TOKEN is required' "$log"; then
+    ok "$entorno, sin token interno $nombre no arranca"
+  else
+    mal "$nombre $entorno sin INTERNAL_GATEWAY_TOKEN (salida $rc): $(head -c 300 "$log")"
+  fi
+}
+for s in gateway domain-service; do
+  sin_token_falla_cerrado "$s" "en staging" ENVIRONMENT=staging
+  sin_token_falla_cerrado "$s" "sin ENVIRONMENT" -u ENVIRONMENT
+done
 
 TENANT_PASS="$(rand_hex 12)Aa1!"
 ORG=$(e2e_alta_empresa "$T1" acme pe-01 admin@acme.test "$TENANT_PASS")

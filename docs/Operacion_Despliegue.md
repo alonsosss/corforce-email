@@ -35,23 +35,24 @@ largas de cada guardarraíl están en `ops/scaffold/README.md`, `ops/security/se
   la última asignación de `ENVIRONMENT` del `.env` no es exactamente una de las dos (con
   espacios, un comentario o un CR al final tampoco: el servicio recibiría otro texto). Todo
   `docker compose` del servidor va por `with-secrets.sh` (`check-secret-sources.sh`), así que
-  es el punto único de `release.yml` y de `scripts/deploy-ecr.sh`. Lo que cambia según el
-  valor:
+  es el punto único de `release.yml` y de `scripts/deploy-ecr.sh`. Una sola regla decide qué
+  se relaja según el valor, `config.DeclaredDevelopmentOrTest` (`pkg/config/config.go`):
+  solo `development` o `test` declarados (sin distinguir mayúsculas ni espacios en los
+  extremos) relajan algo; sin declarar, `production`, `staging` o cualquier otro valor es
+  estricto. Ningún código compara `ENVIRONMENT` por su cuenta. Lo que relaja:
 
-  | Comportamiento | Se relaja con |
+  | Con `development` o `test` | Dónde |
   |---|---|
-  | Redis de la plataforma en claro (`pkg/config/redis.go`) | `development` o `test` declarados (sin distinguir mayúsculas); sin declarar, no |
-  | Servicios de celda con la credencial de plataforma, sin `CELL_DB_PASSWORD` (`pkg/config/config.go`) | ídem |
-  | identity firma con un par efímero sin `JWT_SIGNING_KEY` (`pkg/config/config.go`, `pkg/auth`) | ídem |
-  | gateway arranca sin `INTERNAL_GATEWAY_TOKEN` (`services/gateway/main.go`) | cualquier valor distinto de `production` exacto, `staging` y sin declarar incluidos |
-  | Sin `INTERNAL_GATEWAY_TOKEN`, `RequireGatewayToken` deja pasar sin comprobar en vez de responder 503 (`pkg/middleware/middleware.go`) | cualquier valor distinto de `production` (sin distinguir mayúsculas) |
-  | domain-service arranca sin `INTERNAL_GATEWAY_TOKEN` (`services/domain-service/main.go`) | ídem |
-  | webmail admite `WEBMAIL_TLS_INSECURE_SKIP_VERIFY=true` y `WEBMAIL_IMAP_TLS=none`, adjuntos sin ClamAV con `WEBMAIL_ALLOW_UNSCANNED_ATTACHMENTS=true` y arranca sin `INTERNAL_GATEWAY_TOKEN` (`services/webmail/main.go`) | ídem |
+  | Redis de la plataforma en claro, sin `REDIS_TLS=true` | `pkg/config/redis.go` |
+  | Servicios de celda con la credencial de plataforma, sin `CELL_DB_PASSWORD` | `pkg/config/config.go` |
+  | identity firma con un par efímero, sin `JWT_SIGNING_KEY` | `pkg/config/config.go`, `pkg/auth` |
+  | Sin `INTERNAL_GATEWAY_TOKEN` arrancan el gateway, domain-service y webmail, y `RequireGatewayToken` deja pasar sin comprobar; en cualquier otro entorno esos tres no arrancan y el middleware responde 503 a todo | `middleware.InternalGatewayToken` (`pkg/middleware/middleware.go`), `services/gateway/main.go`, `services/domain-service/main.go`, `services/webmail/main.go` |
+  | webmail con `WEBMAIL_TLS_INSECURE_SKIP_VERIFY=true` o `WEBMAIL_IMAP_TLS=none`, y adjuntos sin ClamAV con `WEBMAIL_ALLOW_UNSCANNED_ATTACHMENTS=true` | `services/webmail/main.go` |
 
-  Lo del token interno no alcanza a un servidor: `INTERNAL_GATEWAY_TOKEN` es obligatorio en
-  el almacén (`secret-keys.txt`) y sin él `fetch-secrets.sh` detiene el despliegue. Lo demás
-  del webmail sí: en `staging` depende de que el `.env` no lo active. `AUTH_COOKIE_SECURE`
-  no depende de `ENVIRONMENT` (`docs/arquitectura/CSP-Y-SESION.md`).
+  Además, en un servidor `INTERNAL_GATEWAY_TOKEN` es obligatorio en el almacén
+  (`secret-keys.txt`) y sin él `fetch-secrets.sh` detiene el despliegue. `make e2e` comprueba
+  que con `staging` y sin `ENVIRONMENT` el gateway y domain-service no arrancan sin token.
+  `AUTH_COOKIE_SECURE` no depende de `ENVIRONMENT` (`docs/arquitectura/CSP-Y-SESION.md`).
 
 ## 2. Secretos
 

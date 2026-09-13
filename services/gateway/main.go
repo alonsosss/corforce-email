@@ -31,9 +31,9 @@ func main() {
 		log.Fatalf("token keys: %v", err)
 	}
 	logger.Info("claves publicas del token de acceso", zap.Strings("kid", kids))
-	internalToken := os.Getenv("INTERNAL_GATEWAY_TOKEN")
-	if internalToken == "" && os.Getenv("ENVIRONMENT") == "production" {
-		log.Fatal("INTERNAL_GATEWAY_TOKEN is required in production")
+	internalToken, err := middleware.InternalGatewayToken()
+	if err != nil {
+		log.Fatal(err)
 	}
 
 	table, err := loadRouteTable()

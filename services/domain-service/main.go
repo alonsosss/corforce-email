@@ -76,7 +76,6 @@ func loadSettings() (settings, error) {
 		},
 		mailDirectoryURL: require("MAIL_DIRECTORY_URL"),
 		mailSecurityURL:  require("MAIL_SECURITY_URL"),
-		internalToken:    os.Getenv("INTERNAL_GATEWAY_TOKEN"),
 		dnsResolver:      strings.TrimSpace(os.Getenv("MAIL_DNS_RESOLVER")),
 		rotationGrace:    envDuration("MAIL_DKIM_ROTATION_GRACE", app.DefaultDKIMRotationGrace),
 		recheckInterval:  envDuration("DOMAIN_RECHECK_INTERVAL", defaultRecheckInterval),
@@ -91,9 +90,11 @@ func loadSettings() (settings, error) {
 	if !strings.HasPrefix(s.platform.SPFInclude, "include:") {
 		return s, fmt.Errorf("MAIL_SPF_INCLUDE debe ser un mecanismo include: (p. ej. include:spf.%s)", s.platformHostname)
 	}
-	if s.internalToken == "" && strings.EqualFold(os.Getenv("ENVIRONMENT"), "production") {
-		return s, fmt.Errorf("INTERNAL_GATEWAY_TOKEN es obligatorio en produccion")
+	token, err := middleware.InternalGatewayToken()
+	if err != nil {
+		return s, err
 	}
+	s.internalToken = token
 	return s, nil
 }
 

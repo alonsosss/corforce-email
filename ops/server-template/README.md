@@ -28,9 +28,11 @@ secundarios.
 
 ## Entorno declarado
 
-Los servicios relajan controles con `ENVIRONMENT=development` o `test` (Redis en claro,
-credencial de plataforma en la celda, clave de firma efimera: `docs/Operacion_Despliegue.md`,
-1), y `.env.example` trae `development` para el entorno local. Por eso:
+Los servicios relajan controles solo con `ENVIRONMENT=development` o `test` (Redis en claro,
+credencial de plataforma en la celda, clave de firma efimera, servicios sin
+`INTERNAL_GATEWAY_TOKEN`, webmail sin TLS verificado o sin ClamAV:
+`docs/Operacion_Despliegue.md`, 1), y `.env.example` trae `development` para el entorno
+local. Por eso:
 
 - `server.env` declara `ENVIRONMENT=production` o `staging`, tambien en el servidor de la
   cuenta de dev; sin uno de los dos, `bootstrap.sh` no aprovisiona;

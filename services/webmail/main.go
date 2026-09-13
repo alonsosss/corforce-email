@@ -97,7 +97,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("load config: %v", err)
 	}
-	st, err := loadSettings(cfg.Environment)
+	st, err := loadSettings()
 	if err != nil {
 		log.Fatalf("webmail: %v", err)
 	}
@@ -221,8 +221,8 @@ func main() {
 
 // loadSettings lee y valida la configuracion. Todo valor ilegible es un error de
 // despliegue: no se cae a un valor por defecto en silencio.
-func loadSettings(environment string) (settings, error) {
-	production := strings.EqualFold(environment, "production")
+func loadSettings() (settings, error) {
+	devRelaxations := config.DeclaredDevelopmentOrTest()
 	var st settings
 	var err error
 	if st.port, err = envInt("WEBMAIL_PORT", defaultPort); err != nil {
@@ -252,8 +252,8 @@ func loadSettings(environment string) (settings, error) {
 	if st.tlsInsecure, err = envBool("WEBMAIL_TLS_INSECURE_SKIP_VERIFY", false); err != nil {
 		return st, err
 	}
-	if production && (st.tlsInsecure || st.imapTLS == imapadapter.TLSNone) {
-		return st, errors.New("en produccion el webmail exige TLS verificado con Dovecot, Postfix y mail-auth")
+	if !devRelaxations && (st.tlsInsecure || st.imapTLS == imapadapter.TLSNone) {
+		return st, errors.New("el webmail exige TLS verificado con Dovecot, Postfix y mail-auth: WEBMAIL_TLS_INSECURE_SKIP_VERIFY=true y WEBMAIL_IMAP_TLS=none solo valen con ENVIRONMENT development o test")
 	}
 
 	if st.masterUser, err = required("WEBMAIL_MASTER_USER"); err != nil {
@@ -297,8 +297,8 @@ func loadSettings(environment string) (settings, error) {
 	if err != nil {
 		return st, err
 	}
-	if st.clamdAddr == "" && (!allowUnscanned || production) {
-		return st, errors.New("WEBMAIL_CLAMD_ADDR es obligatorio: ClamAV analiza cada adjunto antes de enviarlo o guardarlo")
+	if st.clamdAddr == "" && (!allowUnscanned || !devRelaxations) {
+		return st, errors.New("WEBMAIL_CLAMD_ADDR es obligatorio: ClamAV analiza cada adjunto antes de enviarlo o guardarlo (WEBMAIL_ALLOW_UNSCANNED_ATTACHMENTS=true solo vale con ENVIRONMENT development o test)")
 	}
 
 	// Secure por defecto; se apaga a proposito solo en desarrollo local sin TLS, con la
@@ -313,9 +313,8 @@ func loadSettings(environment string) (settings, error) {
 	if st.mailDirectoryURL, err = required("MAIL_DIRECTORY_URL"); err != nil {
 		return st, err
 	}
-	st.internalToken = os.Getenv("INTERNAL_GATEWAY_TOKEN")
-	if production && st.internalToken == "" {
-		return st, errors.New("INTERNAL_GATEWAY_TOKEN es obligatorio en produccion: sin el mail-directory rechaza la consulta de remitentes")
+	if st.internalToken, err = middleware.InternalGatewayToken(); err != nil {
+		return st, fmt.Errorf("%w (sin el mail-directory rechaza la consulta de remitentes)", err)
 	}
 	return st, nil
 }

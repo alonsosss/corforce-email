@@ -12,12 +12,11 @@ import (
 )
 
 type Config struct {
-	Environment string
-	Postgres    PostgresConfig
-	Redis       RedisConfig
-	NATS        NATSConfig
-	JWT         JWTConfig
-	Gateway     GatewayConfig
+	Postgres PostgresConfig
+	Redis    RedisConfig
+	NATS     NATSConfig
+	JWT      JWTConfig
+	Gateway  GatewayConfig
 }
 
 type PostgresConfig struct {
@@ -201,13 +200,15 @@ type GatewayConfig struct {
 }
 
 // developmentOrTestEnvironments son los valores de ENVIRONMENT que admiten los respaldos de
-// desarrollo: que un servicio de celda use la credencial de plataforma y que identity firme
-// con un par efimero. Se exige que ENVIRONMENT los diga: su valor por defecto no cuenta,
-// porque un despliegue que olvida declararlo no puede quedar abierto.
+// desarrollo (docs/Operacion_Despliegue.md, 1).
 var developmentOrTestEnvironments = map[string]bool{"development": true, "test": true}
 
-func declaredDevelopmentOrTest(environment string) bool {
-	return developmentOrTestEnvironments[strings.ToLower(strings.TrimSpace(environment))]
+// DeclaredDevelopmentOrTest es la unica regla que relaja un control segun el entorno: cierto
+// solo si ENVIRONMENT declara development o test, sin distinguir mayusculas ni espacios en
+// los extremos. Sin declarar, production, staging o cualquier otro valor es estricto: un
+// despliegue que olvida o escribe mal su entorno no puede quedar abierto.
+func DeclaredDevelopmentOrTest() bool {
+	return developmentOrTestEnvironments[strings.ToLower(strings.TrimSpace(os.Getenv("ENVIRONMENT")))]
 }
 
 func Load() (*Config, error) {
@@ -216,7 +217,6 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 	cfg := &Config{
-		Environment: getEnv("ENVIRONMENT", "development"),
 		Postgres: PostgresConfig{
 			Host:                        getEnv("POSTGRES_HOST", "localhost"),
 			Port:                        getEnvInt("POSTGRES_PORT", 5432),
@@ -228,7 +228,7 @@ func Load() (*Config, error) {
 			CellDBName:                  getEnv("CELL_DB_NAME", ""),
 			CellUser:                    getEnv("CELL_DB_USER", ""),
 			CellPassword:                getEnv("CELL_DB_PASSWORD", ""),
-			AllowPlatformCellCredential: declaredDevelopmentOrTest(os.Getenv("ENVIRONMENT")),
+			AllowPlatformCellCredential: DeclaredDevelopmentOrTest(),
 		},
 		Redis: redisCfg,
 		NATS: NATSConfig{
@@ -240,7 +240,7 @@ func Load() (*Config, error) {
 			// El cliente renueva en memoria, asi que solo cambia la frecuencia de refresco.
 			AccessTTL:                getEnvDuration("JWT_ACCESS_TTL", 5*time.Minute),
 			RefreshTTL:               getEnvDuration("JWT_REFRESH_TTL", 168*time.Hour),
-			AllowEphemeralSigningKey: declaredDevelopmentOrTest(os.Getenv("ENVIRONMENT")),
+			AllowEphemeralSigningKey: DeclaredDevelopmentOrTest(),
 		},
 		Gateway: GatewayConfig{
 			Port: getEnvInt("GATEWAY_PORT", 8080),

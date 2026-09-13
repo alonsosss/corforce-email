@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/base64"
+	"errors"
 	"net"
 	"net/http"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/alonsosss/corforce-email/pkg/auth"
+	"github.com/alonsosss/corforce-email/pkg/config"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
@@ -342,14 +344,33 @@ func GetTokenIssuedAt(ctx context.Context) int64 {
 	return v
 }
 
+// ErrGatewayTokenRequired: sin INTERNAL_GATEWAY_TOKEN fuera de un ENVIRONMENT declarado de
+// desarrollo o de prueba.
+var ErrGatewayTokenRequired = errors.New(
+	"INTERNAL_GATEWAY_TOKEN is required: services only run without it when ENVIRONMENT is development or test")
+
+// InternalGatewayToken lee INTERNAL_GATEWAY_TOKEN, el secreto que el gateway presenta a los
+// servicios y con el que estos se llaman entre si. Vacio solo se admite donde
+// config.DeclaredDevelopmentOrTest lo permite; en cualquier otro entorno el proceso que lo
+// necesita no debe arrancar.
+func InternalGatewayToken() (string, error) {
+	token := os.Getenv("INTERNAL_GATEWAY_TOKEN")
+	if token == "" && !config.DeclaredDevelopmentOrTest() {
+		return "", ErrGatewayTokenRequired
+	}
+	return token, nil
+}
+
+// RequireGatewayToken exige el token del gateway en X-Gateway-Token. Sin token configurado
+// deja pasar solo con InternalGatewayToken en desarrollo o prueba; fuera, responde 503.
 func RequireGatewayToken(next http.Handler) http.Handler {
-	expected := os.Getenv("INTERNAL_GATEWAY_TOKEN")
+	expected, err := InternalGatewayToken()
+	if err != nil {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, `{"error":"gateway token not configured"}`, http.StatusServiceUnavailable)
+		})
+	}
 	if expected == "" {
-		if strings.EqualFold(os.Getenv("ENVIRONMENT"), "production") {
-			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				http.Error(w, `{"error":"gateway token not configured"}`, http.StatusServiceUnavailable)
-			})
-		}
 		return next
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

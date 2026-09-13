@@ -93,7 +93,7 @@ func LoadRedis() (RedisConfig, error) {
 		Port:           getEnvInt("REDIS_PORT", 6379),
 		Password:       getEnv("REDIS_PASSWORD", ""),
 		TLS:            t,
-		AllowPlaintext: declaredDevelopmentOrTest(os.Getenv("ENVIRONMENT")),
+		AllowPlaintext: DeclaredDevelopmentOrTest(),
 	}, nil
 }
 
