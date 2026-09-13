@@ -6,6 +6,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/alonsosss/corforce-email/services/templates/internal/app/apptest"
 	"github.com/alonsosss/corforce-email/services/templates/internal/domain"
 	"github.com/alonsosss/corforce-email/services/templates/internal/ports"
 	"github.com/google/uuid"
@@ -13,16 +14,16 @@ import (
 
 type harness struct {
 	uc       *UseCase
-	repo     *fakeRepo
-	tx       *fakeTx
-	renderer *fakeRenderer
-	events   *fakeEvents
+	repo     *apptest.Repo
+	tx       *apptest.Tx
+	renderer *apptest.Renderer
+	events   *apptest.Events
 	tenant   uuid.UUID
 	user     uuid.UUID
 }
 
 func newHarness() *harness {
-	h := &harness{repo: newFakeRepo(), tx: &fakeTx{}, renderer: &fakeRenderer{}, events: &fakeEvents{}, tenant: uuid.New(), user: uuid.New()}
+	h := &harness{repo: apptest.NewRepo(), tx: &apptest.Tx{}, renderer: &apptest.Renderer{}, events: &apptest.Events{}, tenant: uuid.New(), user: uuid.New()}
 	h.uc = New(Deps{Repo: h.repo, Tx: h.tx, Renderer: h.renderer, Events: h.events})
 	return h
 }
@@ -51,8 +52,8 @@ func TestCreateTemplateCompilaYGuardaEnTransaccion(t *testing.T) {
 	if tpl.Name != "Bienvenida" {
 		t.Errorf("el nombre no se normalizo: %q", tpl.Name)
 	}
-	if h.renderer.compiled != 1 || h.tx.calls != 1 {
-		t.Errorf("esperaba una compilacion y una transaccion, hubo %d y %d", h.renderer.compiled, h.tx.calls)
+	if h.renderer.Compiled != 1 || h.tx.Calls != 1 {
+		t.Errorf("esperaba una compilacion y una transaccion, hubo %d y %d", h.renderer.Compiled, h.tx.Calls)
 	}
 	if _, _, err := h.uc.CreateTemplate(context.Background(), h.tenant, h.user, CreateTemplateInput{
 		Name: "bienvenida2", Kind: domain.KindMarketing, Content: content("<p>INVALID</p>"),
@@ -92,7 +93,7 @@ func TestPublicarDejaUnaSolaPublicada(t *testing.T) {
 	if _, err := h.uc.PublishVersion(ctx, h.tenant, tpl.ID, 2); err != nil {
 		t.Fatalf("publicar v2: %v", err)
 	}
-	if n := h.repo.publishedCount(tpl.ID); n != 1 {
+	if n := h.repo.PublishedCount(tpl.ID); n != 1 {
 		t.Fatalf("debe quedar una sola publicada, hay %d", n)
 	}
 	v1, _ := h.repo.GetVersion(ctx, h.tenant, tpl.ID, 1)
@@ -106,8 +107,8 @@ func TestPublicarDejaUnaSolaPublicada(t *testing.T) {
 	if len(detail.Versions) != 2 || detail.Versions[0].Version != 2 {
 		t.Errorf("el detalle lista las versiones de la mas reciente a la primera: %+v", detail.Versions)
 	}
-	if len(h.events.published) != 2 || h.events.published[1].Version != 2 || h.events.published[1].TemplateID != tpl.ID {
-		t.Errorf("eventos de publicacion inesperados: %+v", h.events.published)
+	if len(h.events.Published) != 2 || h.events.Published[1].Version != 2 || h.events.Published[1].TemplateID != tpl.ID {
+		t.Errorf("eventos de publicacion inesperados: %+v", h.events.Published)
 	}
 
 	if _, err := h.uc.PublishVersion(ctx, h.tenant, tpl.ID, 2); !errors.Is(err, domain.ErrVersionAlreadyPublished) {
@@ -117,7 +118,7 @@ func TestPublicarDejaUnaSolaPublicada(t *testing.T) {
 	if _, err := h.uc.PublishVersion(ctx, h.tenant, tpl.ID, 1); err != nil {
 		t.Fatalf("volver a v1: %v", err)
 	}
-	if n := h.repo.publishedCount(tpl.ID); n != 1 {
+	if n := h.repo.PublishedCount(tpl.ID); n != 1 {
 		t.Fatalf("tras el rollback debe seguir habiendo una publicada, hay %d", n)
 	}
 	if _, err := h.uc.PublishVersion(ctx, h.tenant, tpl.ID, 9); !errors.Is(err, domain.ErrVersionNotFound) {
