@@ -1,7 +1,11 @@
 package domain
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -10,11 +14,14 @@ import (
 	"github.com/shopspring/decimal"
 )
 
-const testLinkKey = "clave-de-firma-de-pruebas-con-mas-de-32-caracteres"
+const (
+	testLinkKey = "clave-de-firma-de-pruebas-con-mas-de-32-caracteres"
+	testCell    = "pe-01"
+)
 
 func newTestSigner(t *testing.T) *QuarantineLinkSigner {
 	t.Helper()
-	s, err := NewQuarantineLinkSigner(testLinkKey, "https://app.example.com/", 72*time.Hour)
+	s, err := NewQuarantineLinkSigner(testLinkKey, "https://app.example.com/", testCell, 72*time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -26,7 +33,7 @@ func TestFirmaDelEnlaceValidaAlteradaYCaducada(t *testing.T) {
 	now := time.Date(2026, 9, 13, 10, 0, 0, 0, time.UTC)
 	c := QuarantineLinkClaims{TenantID: uuid.New(), MessageID: uuid.New(), Action: LinkRelease, ExpiresAt: now.Add(time.Hour).Unix()}
 	sig := s.Sign(c)
-	if !s.Verify(c, sig, now) {
+	if !s.Verify(testCell, c, sig, now) {
 		t.Fatal("la firma recien hecha debe valer")
 	}
 
@@ -47,7 +54,7 @@ func TestFirmaDelEnlaceValidaAlteradaYCaducada(t *testing.T) {
 	other.Action = "delete"
 	altered["accion desconocida"] = other
 	for name, claims := range altered {
-		if s.Verify(claims, sig, now) {
+		if s.Verify(testCell, claims, sig, now) {
 			t.Errorf("%s: la firma no debe valer", name)
 		}
 	}
@@ -59,22 +66,92 @@ func TestFirmaDelEnlaceValidaAlteradaYCaducada(t *testing.T) {
 		flipped[10] = 'a'
 	}
 	for name, bad := range map[string]string{"alterada": string(flipped), "truncada": sig[:63], "vacia": "", "mayusculas": strings.ToUpper(sig)} {
-		if s.Verify(c, bad, now) {
+		if s.Verify(testCell, c, bad, now) {
 			t.Errorf("firma %s aceptada", name)
 		}
 	}
 
-	if s.Verify(c, sig, time.Unix(c.ExpiresAt, 0)) {
+	if s.Verify(testCell, c, sig, time.Unix(c.ExpiresAt, 0)) {
 		t.Error("en el segundo de caducidad el enlace ya no vale")
 	}
-	if s.Verify(c, sig, now.Add(2*time.Hour)) {
+	if s.Verify(testCell, c, sig, now.Add(2*time.Hour)) {
 		t.Error("un enlace caducado no vale")
 	}
-	otherKey, err := NewQuarantineLinkSigner(testLinkKey+"-otra", "https://app.example.com", time.Hour)
+	otherKey, err := NewQuarantineLinkSigner(testLinkKey+"-otra", "https://app.example.com", testCell, time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if otherKey.Verify(c, sig, now) {
+	if otherKey.Verify(testCell, c, sig, now) {
+		t.Error("una firma de otra clave no vale")
+	}
+}
+
+// legacySignature es la firma de los enlaces emitidos antes de llevar la celda, escrita a
+// mano: fija el formato de los enlaces ya enviados.
+func legacySignature(key string, c QuarantineLinkClaims) string {
+	mac := hmac.New(sha256.New, []byte(key))
+	mac.Write([]byte("quarantine-link\n" + c.TenantID.String() + "\n" + c.MessageID.String() + "\n" + string(c.Action) + "\n" + strconv.FormatInt(c.ExpiresAt, 10)))
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
+// La celda va en la firma: un enlace solo vale en la celda que lo firmo, aunque la otra
+// comparta la clave, y el segmento de la ruta tiene que ser esa celda.
+func TestFirmaDelEnlaceAtadaALaCelda(t *testing.T) {
+	now := time.Date(2026, 9, 13, 10, 0, 0, 0, time.UTC)
+	pe01 := newTestSigner(t)
+	pe02, err := NewQuarantineLinkSigner(testLinkKey, "https://app.example.com", "pe-02", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pe01.Cell() != testCell || pe02.Cell() != "pe-02" {
+		t.Fatalf("celdas: %q %q", pe01.Cell(), pe02.Cell())
+	}
+	c := QuarantineLinkClaims{TenantID: uuid.New(), MessageID: uuid.New(), Action: LinkRelease, ExpiresAt: now.Add(time.Hour).Unix()}
+	sig02 := pe02.Sign(c)
+	if !pe02.Verify("pe-02", c, sig02, now) {
+		t.Fatal("en su celda vale")
+	}
+	if pe01.Sign(c) == sig02 {
+		t.Fatal("la misma clave en dos celdas no da la misma firma")
+	}
+	for name, ok := range map[string]bool{
+		"segmento cambiado a la celda que lo recibe": pe01.Verify(testCell, c, sig02, now),
+		"segmento de su celda en otra celda":         pe01.Verify("pe-02", c, sig02, now),
+		"celda desconocida":                          pe02.Verify("zz-99", c, sig02, now),
+		"sin celda":                                  pe02.Verify("", c, sig02, now),
+		"celda en mayusculas":                        pe02.Verify("PE-02", c, sig02, now),
+	} {
+		if ok {
+			t.Errorf("%s: no debe valer", name)
+		}
+	}
+}
+
+// Los enlaces sin celda ya enviados valen hasta que caducan, con su firma de siempre; la
+// firma de una forma no vale por la otra.
+func TestEnlaceSinCeldaDeAntes(t *testing.T) {
+	now := time.Date(2026, 9, 13, 10, 0, 0, 0, time.UTC)
+	s := newTestSigner(t)
+	c := QuarantineLinkClaims{TenantID: uuid.New(), MessageID: uuid.New(), Action: LinkDiscard, ExpiresAt: now.Add(time.Hour).Unix()}
+	legacy := legacySignature(testLinkKey, c)
+	if !s.VerifyLegacy(c, legacy, now) {
+		t.Fatal("un enlace de antes vigente vale")
+	}
+	if s.VerifyLegacy(c, legacy, time.Unix(c.ExpiresAt, 0)) {
+		t.Error("caducado ya no vale")
+	}
+	other := c
+	other.Action = LinkRelease
+	if s.VerifyLegacy(other, legacy, now) {
+		t.Error("otra accion no vale")
+	}
+	if s.Verify(testCell, c, legacy, now) {
+		t.Error("una firma sin celda no vale en la ruta con celda")
+	}
+	if s.VerifyLegacy(c, s.Sign(c), now) {
+		t.Error("una firma con celda no vale en la ruta sin celda")
+	}
+	if s.VerifyLegacy(c, legacySignature(testLinkKey+"-otra", c), now) {
 		t.Error("una firma de otra clave no vale")
 	}
 }
@@ -89,31 +166,36 @@ func TestURLDelEnlace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if u.Scheme != "https" || u.Host != "app.example.com" || u.Path != QuarantineDiscardPath {
+	if u.Scheme != "https" || u.Host != "app.example.com" || u.Path != "/api/v1/public/mail-security/quarantine/pe-01/discard" {
 		t.Fatalf("enlace: %s", raw)
 	}
 	q := u.Query()
 	if q.Get("t") != c.TenantID.String() || q.Get("q") != qhash || q.Get("e") == "" || !IsHexToken(q.Get("sig")) || q.Has("m") {
 		t.Fatalf("parametros: %v", q)
 	}
-	if !s.Verify(c, q.Get("sig"), now) {
+	if !s.Verify(testCell, c, q.Get("sig"), now) {
 		t.Fatal("la firma del enlace debe verificar")
 	}
 }
 
 func TestFirmanteExigeClaveBaseYVigencia(t *testing.T) {
 	for name, tc := range map[string]struct {
-		key, base string
-		ttl       time.Duration
+		key, base, cell string
+		ttl             time.Duration
 	}{
-		"clave corta":    {"corta", "https://app.example.com", time.Hour},
-		"sin base":       {testLinkKey, "", time.Hour},
-		"base relativa":  {testLinkKey, "/api", time.Hour},
-		"otro esquema":   {testLinkKey, "ftp://app.example.com", time.Hour},
-		"vigencia nula":  {testLinkKey, "https://app.example.com", 0},
-		"vigencia menor": {testLinkKey, "https://app.example.com", -time.Hour},
+		"clave corta":         {"corta", "https://app.example.com", testCell, time.Hour},
+		"sin base":            {testLinkKey, "", testCell, time.Hour},
+		"base relativa":       {testLinkKey, "/api", testCell, time.Hour},
+		"otro esquema":        {testLinkKey, "ftp://app.example.com", testCell, time.Hour},
+		"vigencia nula":       {testLinkKey, "https://app.example.com", testCell, 0},
+		"vigencia menor":      {testLinkKey, "https://app.example.com", testCell, -time.Hour},
+		"sin celda":           {testLinkKey, "https://app.example.com", "", time.Hour},
+		"celda en mayusculas": {testLinkKey, "https://app.example.com", "PE-01", time.Hour},
+		"celda con barra":     {testLinkKey, "https://app.example.com", "pe/01", time.Hour},
+		"celda con punto":     {testLinkKey, "https://app.example.com", "..", time.Hour},
+		"celda larguisima":    {testLinkKey, "https://app.example.com", strings.Repeat("a", 64), time.Hour},
 	} {
-		if _, err := NewQuarantineLinkSigner(tc.key, tc.base, tc.ttl); err == nil {
+		if _, err := NewQuarantineLinkSigner(tc.key, tc.base, tc.cell, tc.ttl); err == nil {
 			t.Errorf("%s: se esperaba error", name)
 		}
 	}
@@ -180,8 +262,8 @@ func TestAvisoEscapaTextoHostil(t *testing.T) {
 		"1 mensajes para ana@acme.com",
 		"(13.46, 2026-09-13 08:30 UTC)",
 		"enlaces hasta 2026-09-16 08:30 UTC",
-		`href="https://app.example.com/api/v1/public/mail-security/quarantine/release?e=`,
-		`href="https://app.example.com/api/v1/public/mail-security/quarantine/discard?e=`,
+		`href="https://app.example.com/api/v1/public/mail-security/quarantine/pe-01/release?e=`,
+		`href="https://app.example.com/api/v1/public/mail-security/quarantine/pe-01/discard?e=`,
 		"&amp;q=" + strings.Repeat("cd", 32),
 	} {
 		if !strings.Contains(out, want) {

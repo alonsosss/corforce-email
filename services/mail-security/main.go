@@ -160,12 +160,13 @@ func main() {
 	quarantineRepo := postgres.NewQuarantineRepository(ctxPool)
 	redisSync := app.NewRedisSync(store, directory, policyReader, logger)
 
-	// Enlaces sin sesion del aviso de cuarentena: firmados con MAIL_LINK_SIGNING_KEY y
-	// colgados de PUBLIC_BASE_URL. Sin ellos el servicio arranca, pero no avisa y todo
-	// enlace es invalido.
+	// Enlaces sin sesion del aviso de cuarentena: firmados con MAIL_LINK_SIGNING_KEY,
+	// colgados de PUBLIC_BASE_URL y atados a la celda CELL_CODE, que va en su ruta para que el
+	// gateway los enrute. Sin ellos el servicio arranca, pero no avisa y todo enlace es
+	// invalido.
 	noticeRepo := postgres.NewQuarantineNoticeRepository(ctxPool)
 	quarantineLinks, linksErr := domain.NewQuarantineLinkSigner(os.Getenv("MAIL_LINK_SIGNING_KEY"), os.Getenv("PUBLIC_BASE_URL"),
-		envDuration("MAIL_QUARANTINE_LINK_TTL", defaultQuarantineLinkTTL))
+		strings.TrimSpace(os.Getenv("CELL_CODE")), envDuration("MAIL_QUARANTINE_LINK_TTL", defaultQuarantineLinkTTL))
 	if linksErr != nil {
 		logger.Error("aviso de cuarentena y sus enlaces desactivados", zap.Error(linksErr))
 	}

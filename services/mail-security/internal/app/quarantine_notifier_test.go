@@ -22,7 +22,10 @@ import (
 	"go.uber.org/zap"
 )
 
-const testLinkKey = "clave-de-firma-de-pruebas-con-mas-de-32-caracteres"
+const (
+	testLinkKey = "clave-de-firma-de-pruebas-con-mas-de-32-caracteres"
+	testCell    = "pe-01"
+)
 
 const testNoticeTemplate = `<p>{{.Count}} mensajes retenidos para {{.Mailbox}}</p>
 <ul>{{range .Messages}}<li>{{.Subject}} de {{.Sender}} ({{.Score}}, {{.Date}})
@@ -43,7 +46,7 @@ type notifierFixture struct {
 
 func newNotifierFixture(t *testing.T) *notifierFixture {
 	t.Helper()
-	links, err := domain.NewQuarantineLinkSigner(testLinkKey, "https://app.example.com", 72*time.Hour)
+	links, err := domain.NewQuarantineLinkSigner(testLinkKey, "https://app.example.com", testCell, 72*time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,10 +111,12 @@ func linkRequests(t *testing.T, body string) []LinkRequest {
 		q := u.Query()
 		exp, _ := strconv.ParseInt(q.Get("e"), 10, 64)
 		action := domain.LinkRelease
-		if u.Path == domain.QuarantineDiscardPath {
+		if u.Path == domain.LinkDiscard.Path(testCell) {
 			action = domain.LinkDiscard
+		} else if u.Path != domain.LinkRelease.Path(testCell) {
+			t.Fatalf("el enlace lleva la celda en la ruta: %s", u.Path)
 		}
-		out = append(out, LinkRequest{TenantID: uuid.MustParse(q.Get("t")), QHash: q.Get("q"), ExpiresAt: exp, Signature: q.Get("sig"), Action: action})
+		out = append(out, LinkRequest{Cell: testCell, TenantID: uuid.MustParse(q.Get("t")), QHash: q.Get("q"), ExpiresAt: exp, Signature: q.Get("sig"), Action: action})
 	}
 	return out
 }

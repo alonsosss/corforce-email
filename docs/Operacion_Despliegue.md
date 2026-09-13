@@ -115,7 +115,11 @@ para llamar a la API hace falta ya un superadmin. Después, todo por API: `POST 
 * Celda: `ops/db/apply-migration.sh` contra `mail_cell_<code>` (P: runner propio en
   `mail-directory`). Al abrir una celda, en el mismo paso y tras sus migraciones,
   `ops/db/cell-service-role.sh --cell <code>`: crea el rol de sus servicios y cierra a
-  PUBLIC las bases del cluster (necesita `mail_service`, de las migraciones 06).
+  PUBLIC las bases del cluster (necesita `mail_service`, de las migraciones 06). Su
+  `mail-security` arranca con `CELL_CODE=<code>` y el gateway recibe su entrada en
+  `MAIL_SECURITY_CELL_HOSTS` (`<code>=host:puerto`): sin ella, los enlaces de cuarentena de
+  esa celda llegan a la celda por defecto, que los rechaza (`Modelo_de_Datos_y_Celdas.md`,
+  5.3).
 * Reglas: idempotentes y aditivas (`make check-migrations` cubre empresa y celda), cabecera
   `-- Schema | Service`, nunca cambiar el tipo de una columna sin
   `ops/maintenance/pgbouncer-reconnect.sh` después (los planes preparados viven en el pooler).

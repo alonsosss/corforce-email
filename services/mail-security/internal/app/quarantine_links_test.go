@@ -29,7 +29,7 @@ type linkFixture struct {
 
 func newLinkFixture(t *testing.T) *linkFixture {
 	t.Helper()
-	links, err := domain.NewQuarantineLinkSigner(testLinkKey, "https://app.example.com", 72*time.Hour)
+	links, err := domain.NewQuarantineLinkSigner(testLinkKey, "https://app.example.com", testCell, 72*time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +51,14 @@ func newLinkFixture(t *testing.T) *linkFixture {
 
 func (f *linkFixture) link(action domain.QuarantineLinkAction, expires time.Time) LinkRequest {
 	claims := domain.QuarantineLinkClaims{TenantID: f.item.TenantID, MessageID: f.item.ID, Action: action, ExpiresAt: expires.Unix()}
-	return LinkRequest{TenantID: f.item.TenantID, QHash: f.item.QHash, ExpiresAt: claims.ExpiresAt, Signature: f.links.Sign(claims), Action: action}
+	return LinkRequest{Cell: testCell, TenantID: f.item.TenantID, QHash: f.item.QHash, ExpiresAt: claims.ExpiresAt, Signature: f.links.Sign(claims), Action: action}
+}
+
+// legacyLink es un enlace sin celda de los emitidos antes de llevarla en la ruta.
+func (f *linkFixture) legacyLink(action domain.QuarantineLinkAction, expires time.Time) LinkRequest {
+	claims := domain.QuarantineLinkClaims{TenantID: f.item.TenantID, MessageID: f.item.ID, Action: action, ExpiresAt: expires.Unix()}
+	return LinkRequest{Legacy: true, TenantID: f.item.TenantID, QHash: f.item.QHash, ExpiresAt: claims.ExpiresAt,
+		Signature: apptest.LegacyLinkSignature(testLinkKey, claims), Action: action}
 }
 
 var testClient = LinkClient{IP: "203.0.113.7", UserAgent: "Mozilla/5.0"}
@@ -134,6 +141,33 @@ func TestEnlaceAlteradoOCaducadoNoValeYNoTocaNada(t *testing.T) {
 	r = valid
 	r.Action = domain.LinkDiscard
 	cases["firma de liberar en descartar"] = r
+	r = valid
+	r.Cell = "pe-02"
+	cases["otra celda en la ruta"] = r
+	r = valid
+	r.Cell = "zz-99"
+	cases["celda desconocida"] = r
+	r = valid
+	r.Cell = ""
+	cases["sin celda en la ruta"] = r
+	pe02, err := domain.NewQuarantineLinkSigner(testLinkKey, "https://app.example.com", "pe-02", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r = valid
+	r.Signature = pe02.Sign(domain.QuarantineLinkClaims{TenantID: f.item.TenantID, MessageID: f.item.ID, Action: domain.LinkRelease, ExpiresAt: valid.ExpiresAt})
+	cases["firmado en otra celda con el segmento cambiado"] = r
+	r = valid
+	r.Legacy = true
+	cases["firma con celda en la ruta sin celda"] = r
+	r = f.legacyLink(domain.LinkRelease, f.now.Add(time.Hour))
+	r.Legacy = false
+	r.Cell = testCell
+	cases["firma sin celda en la ruta con celda"] = r
+	cases["sin celda caducado"] = f.legacyLink(domain.LinkRelease, f.now.Add(-time.Second))
+	r = f.legacyLink(domain.LinkRelease, f.now.Add(time.Hour))
+	r.TenantID = uuid.New()
+	cases["sin celda de otra empresa"] = r
 
 	for name, req := range cases {
 		if _, err := f.uc.CheckLink(context.Background(), req); !errors.Is(err, domain.ErrInvalidLink) {
@@ -154,6 +188,33 @@ func TestEnlaceAlteradoOCaducadoNoValeYNoTocaNada(t *testing.T) {
 	}
 	if err := f.uc.DiscardByLink(context.Background(), valid, testClient); !errors.Is(err, domain.ErrInvalidLink) {
 		t.Fatalf("un enlace de liberar no descarta: %v", err)
+	}
+}
+
+// Los enlaces sin celda ya enviados siguen liberando y descartando hasta que caducan, con
+// el mismo uso unico que los nuevos.
+func TestEnlaceSinCeldaDeAntesValeHastaCaducar(t *testing.T) {
+	f := newLinkFixture(t)
+	release := f.legacyLink(domain.LinkRelease, f.now.Add(time.Hour))
+	if _, err := f.uc.CheckLink(context.Background(), release); err != nil {
+		t.Fatalf("pagina de un enlace de antes: %v", err)
+	}
+	if err := f.uc.ReleaseByLink(context.Background(), release, testClient); err != nil {
+		t.Fatal(err)
+	}
+	if f.reinj.entregados != 1 || len(f.q.Items) != 0 || f.notices.Uses[f.item.ID].Action != domain.LinkRelease {
+		t.Fatalf("liberacion: entregas=%d filas=%d usos=%+v", f.reinj.entregados, len(f.q.Items), f.notices.Uses)
+	}
+	if err := f.uc.ReleaseByLink(context.Background(), release, testClient); !errors.Is(err, domain.ErrInvalidLink) {
+		t.Fatalf("segundo uso: %v", err)
+	}
+
+	g := newLinkFixture(t)
+	if err := g.uc.DiscardByLink(context.Background(), g.legacyLink(domain.LinkDiscard, g.now.Add(time.Hour)), testClient); err != nil {
+		t.Fatal(err)
+	}
+	if len(g.q.Items) != 0 || g.reinj.entregados != 0 {
+		t.Fatalf("descarte: filas=%d entregas=%d", len(g.q.Items), g.reinj.entregados)
 	}
 }
 

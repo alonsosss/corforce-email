@@ -40,7 +40,9 @@ type routeTable struct {
 	// Public: rutas bajo /api/v1 que se sirven SIN sesion (webhooks de proveedores, bajas
 	// de suscripcion desde el correo). Van con el limitador general y nada mas: la
 	// proteccion es del propio servicio (firma del proveedor, enlace firmado). Metodo y
-	// ruta exactos con la sintaxis de chi; el servicio recibe la misma ruta.
+	// ruta exactos con la sintaxis de chi; el servicio recibe la misma ruta. Una ruta de un
+	// servicio de celda (cell_hosts_env) lleva el segmento {cell} y se enruta por el
+	// (cells.go), o declara default_cell y va a la celda por defecto.
 	Public []publicRouteSpec `json:"public,omitempty"`
 	// SelfAuthenticated: prefijos bajo /api/v1 cuyo servicio autentica cada peticion con
 	// su propia sesion (el webmail, con la cookie del buzon: sus usuarios son buzones, no
@@ -52,6 +54,10 @@ type routeTable struct {
 	// Frontend: servicio que sirve la aplicacion web (comodin /*). Opcional: sin el,
 	// el gateway solo expone el API.
 	Frontend string `json:"frontend,omitempty"`
+
+	// cellTargets: servicio de celda -> celda -> URL de su instancia, leido del entorno al
+	// cargar la tabla (loadCellTargets).
+	cellTargets map[string]map[string]string
 }
 
 type selfAuthSpec struct {
@@ -78,12 +84,19 @@ type publicRouteSpec struct {
 	Method  string `json:"method"`
 	Path    string `json:"path"`
 	Service string `json:"service"`
+	// DefaultCell: ruta de un servicio de celda SIN {cell}, que va al destino base (la
+	// celda por defecto). Se declara a proposito para que olvidar {cell} no arranque.
+	DefaultCell bool `json:"default_cell,omitempty"`
 }
 
 type serviceSpec struct {
 	HostEnv     string `json:"host_env"`
 	DefaultHost string `json:"default_host"`
 	DefaultPort string `json:"default_port"`
+	// CellHostsEnv marca un servicio desplegado por celda y nombra la variable con sus
+	// instancias por celda ("celda=host:puerto,..."). El destino base (HostEnv) es el de la
+	// celda por defecto; vacia, todas las celdas van a el (despliegue de una celda).
+	CellHostsEnv string `json:"cell_hosts_env,omitempty"`
 }
 
 type routeSpec struct {
@@ -117,6 +130,9 @@ func loadRouteTable() (*routeTable, error) {
 	if err := t.validate(); err != nil {
 		return nil, err
 	}
+	if err := t.loadCellTargets(); err != nil {
+		return nil, err
+	}
 	return &t, nil
 }
 
@@ -131,6 +147,9 @@ func (t *routeTable) validate() error {
 		if !hostEnvRe.MatchString(s.HostEnv) || s.DefaultHost == "" || s.DefaultPort == "" {
 			return fmt.Errorf("tabla de rutas: servicio %q incompleto (host_env, default_host, default_port)", name)
 		}
+	}
+	if err := t.validateCellHostsEnv(); err != nil {
+		return err
 	}
 	seen := make(map[string]bool, len(t.Routes))
 	for _, r := range t.Routes {
@@ -165,6 +184,12 @@ func (t *routeTable) validate() error {
 		if _, ok := t.Services[p.Service]; !ok {
 			return fmt.Errorf("tabla de rutas: la ruta publica %q apunta al servicio desconocido %q", p.Path, p.Service)
 		}
+		if err := t.validatePublicCell(p); err != nil {
+			return err
+		}
+	}
+	if err := t.validateCellServicesRouted(); err != nil {
+		return err
 	}
 	for _, s := range t.SelfAuthenticated {
 		if !prefixRe.MatchString(s.Prefix) {

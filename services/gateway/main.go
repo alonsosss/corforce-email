@@ -40,6 +40,9 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	for service, cells := range table.cellCodes() {
+		logger.Info("instancias por celda", zap.String("service", service), zap.Strings("cells", cells))
+	}
 
 	corsOrigins := os.Getenv("CORS_ALLOWED_ORIGINS")
 	var allowedOrigins []string
@@ -121,10 +124,9 @@ func main() {
 		r.With(authLimiter.Limit).Get("/auth/reset-password/policy", identity.ServeHTTP)
 
 		// Rutas publicas declaradas en la tabla: webhooks de proveedores y enlaces que
-		// llegan por correo. Sin JWT; el servicio verifica la firma o el enlace.
-		for _, p := range table.Public {
-			r.Method(p.Method, p.Path, reverseProxy(table.serviceURL(p.Service), internalToken))
-		}
+		// llegan por correo. Sin JWT; el servicio verifica la firma o el enlace. Las de un
+		// servicio de celda se enrutan por el segmento {cell} (cells.go).
+		mountPublic(r, table, internalToken)
 
 		// Prefijos que autentica el propio servicio con su sesion (el webmail): sin JWT
 		// ni RBAC, con el limitador general y el estricto en su inicio de sesion.

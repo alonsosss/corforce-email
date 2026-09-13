@@ -18,6 +18,8 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -36,7 +38,10 @@ import (
 	"go.uber.org/zap"
 )
 
-const integrationLinkKey = "clave-de-firma-de-integracion-con-mas-de-32-caracteres"
+const (
+	integrationLinkKey = "clave-de-firma-de-integracion-con-mas-de-32-caracteres"
+	integrationCell    = "pe-01"
+)
 
 const integrationTemplate = `<p>{{.Count}} mensajes para {{.Mailbox}}</p>{{range .Messages}}<p>{{.Subject}}
 <a href="{{.ReleaseURL}}">Liberar</a> <a href="{{.DiscardURL}}">Descartar</a></p>{{end}}`
@@ -97,7 +102,7 @@ func TestIntegracionAvisoDeCuarentena(t *testing.T) {
 	quarantine := NewQuarantineRepository(ctxPool)
 	notices := NewQuarantineNoticeRepository(ctxPool)
 	logger := zap.NewNop()
-	links, err := domain.NewQuarantineLinkSigner(integrationLinkKey, "https://app.example.com", 72*time.Hour)
+	links, err := domain.NewQuarantineLinkSigner(integrationLinkKey, "https://app.example.com", integrationCell, 72*time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -263,6 +268,31 @@ func TestIntegracionAvisoDeCuarentena(t *testing.T) {
 		}
 		if n := count(t, ctx, pool, `SELECT count(*) FROM mail_security.quarantine WHERE id = $1`, other.ID); n != 1 {
 			t.Fatal("el mensaje de la otra empresa sigue")
+		}
+
+		// Firmado por otra celda con la misma clave y el segmento cambiado a esta: no vale.
+		pe02, err := domain.NewQuarantineLinkSigner(integrationLinkKey, "https://app.example.com", "pe-02", time.Hour)
+		if err != nil {
+			t.Fatal(err)
+		}
+		claims := domain.QuarantineLinkClaims{TenantID: spammy.TenantID, MessageID: spammy.ID, Action: domain.LinkDiscard, ExpiresAt: time.Now().Add(time.Hour).Unix()}
+		u, _ := url.Parse(pe02.URL(claims, spammy.QHash))
+		tampered := srv.URL + strings.Replace(u.RequestURI(), "/pe-02/", "/"+integrationCell+"/", 1)
+		if resp, err := http.Post(tampered, "application/x-www-form-urlencoded", nil); err != nil || resp.StatusCode != http.StatusForbidden {
+			t.Fatalf("enlace de otra celda con el segmento cambiado: %v %v", resp, err)
+		}
+		if n := count(t, ctx, pool, `SELECT count(*) FROM mail_security.quarantine WHERE id = $1`, spammy.ID); n != 1 {
+			t.Fatal("el enlace de otra celda no toca nada")
+		}
+
+		// Un enlace sin celda de los ya enviados sigue descartando hasta caducar.
+		legacy := srv.URL + domain.QuarantineLinkBasePath + "/discard?" + url.Values{
+			"t": {spammy.TenantID.String()}, "q": {spammy.QHash}, "e": {strconv.FormatInt(claims.ExpiresAt, 10)},
+			"sig": {apptest.LegacyLinkSignature(integrationLinkKey, claims)},
+		}.Encode()
+		oneWinner("descartar con un enlace sin celda dos veces", post(legacy, legacy))
+		if n := count(t, ctx, pool, `SELECT count(*) FROM mail_security.quarantine WHERE id = $1`, spammy.ID); n != 0 {
+			t.Fatal("el enlace sin celda descarta")
 		}
 
 		// La constancia se poda con la retencion de la empresa.

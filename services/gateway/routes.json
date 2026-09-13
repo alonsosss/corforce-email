@@ -6,7 +6,7 @@
     "audit":          {"host_env": "AUDIT_HOST",          "default_host": "audit",          "default_port": "8030"},
     "scheduler":      {"host_env": "SCHEDULER_HOST",      "default_host": "scheduler",      "default_port": "8033"},
     "mail-directory": {"host_env": "MAIL_DIRECTORY_HOST", "default_host": "mail-directory", "default_port": "8040"},
-    "mail-security":  {"host_env": "MAIL_SECURITY_HOST",  "default_host": "mail-security",  "default_port": "8042"},
+    "mail-security":  {"host_env": "MAIL_SECURITY_HOST",  "default_host": "mail-security",  "default_port": "8042", "cell_hosts_env": "MAIL_SECURITY_CELL_HOSTS"},
     "domain-service": {"host_env": "DOMAIN_SERVICE_HOST", "default_host": "domain-service", "default_port": "8043"},
     "transactional":  {"host_env": "TRANSACTIONAL_HOST",  "default_host": "transactional",  "default_port": "8045"},
     "suppression":    {"host_env": "SUPPRESSION_HOST",    "default_host": "suppression",    "default_port": "8046"},
@@ -63,10 +63,14 @@
     {"method": "POST", "path": "/public/transactional/unsubscribe",           "service": "transactional"},
     {"method": "GET",  "path": "/public/contacts/confirm",                    "service": "contacts"},
     {"method": "POST", "path": "/public/contacts/confirm",                    "service": "contacts"},
-    {"method": "GET",  "path": "/public/mail-security/quarantine/release",    "service": "mail-security"},
-    {"method": "POST", "path": "/public/mail-security/quarantine/release",    "service": "mail-security"},
-    {"method": "GET",  "path": "/public/mail-security/quarantine/discard",    "service": "mail-security"},
-    {"method": "POST", "path": "/public/mail-security/quarantine/discard",    "service": "mail-security"}
+    {"method": "GET",  "path": "/public/mail-security/quarantine/{cell}/release", "service": "mail-security"},
+    {"method": "POST", "path": "/public/mail-security/quarantine/{cell}/release", "service": "mail-security"},
+    {"method": "GET",  "path": "/public/mail-security/quarantine/{cell}/discard", "service": "mail-security"},
+    {"method": "POST", "path": "/public/mail-security/quarantine/{cell}/discard", "service": "mail-security"},
+    {"method": "GET",  "path": "/public/mail-security/quarantine/release",    "service": "mail-security", "default_cell": true},
+    {"method": "POST", "path": "/public/mail-security/quarantine/release",    "service": "mail-security", "default_cell": true},
+    {"method": "GET",  "path": "/public/mail-security/quarantine/discard",    "service": "mail-security", "default_cell": true},
+    {"method": "POST", "path": "/public/mail-security/quarantine/discard",    "service": "mail-security", "default_cell": true}
   ],
   "self_authenticated": [
     {"prefix": "webmail", "service": "webmail", "strict_limit": [{"method": "POST", "path": "/session"}]}

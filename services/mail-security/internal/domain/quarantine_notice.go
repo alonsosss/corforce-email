@@ -9,6 +9,7 @@ import (
 	"errors"
 	"html/template"
 	"net/url"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -29,29 +30,33 @@ const (
 	LinkDiscard QuarantineLinkAction = "discard"
 )
 
-// Rutas publicas de los enlaces, tal como las declara el gateway (routes.json, public).
-const (
-	QuarantineReleasePath = "/api/v1/public/mail-security/quarantine/release"
-	QuarantineDiscardPath = "/api/v1/public/mail-security/quarantine/discard"
-)
+// QuarantineLinkBasePath es la raiz publica de los enlaces. El gateway declara debajo
+// <celda>/<accion>, que enruta a la celda del segmento, y <accion> a secas, la forma de los
+// enlaces emitidos antes de llevar la celda (routes.json, public).
+const QuarantineLinkBasePath = "/api/v1/public/mail-security/quarantine"
 
-// Path devuelve la ruta publica de la accion; vacia si la accion no existe.
-func (a QuarantineLinkAction) Path() string {
-	switch a {
-	case LinkRelease:
-		return QuarantineReleasePath
-	case LinkDiscard:
-		return QuarantineDiscardPath
-	}
-	return ""
+// Valid dice si la accion existe.
+func (a QuarantineLinkAction) Valid() bool {
+	return a == LinkRelease || a == LinkDiscard
+}
+
+// Path devuelve la ruta publica del enlace en la celda: <base>/<celda>/<accion>.
+func (a QuarantineLinkAction) Path(cell string) string {
+	return QuarantineLinkBasePath + "/" + cell + "/" + string(a)
 }
 
 // minLinkKeyLen es el minimo de MAIL_LINK_SIGNING_KEY, el mismo que exige transactional.
 const minLinkKeyLen = 32
 
-// QuarantineLinkClaims es lo que protege la firma: empresa, mensaje, accion y caducidad
-// (segundos Unix). El qhash viaja en el enlace para encontrar la fila; la firma lo ata al
-// mensaje porque la fila encontrada tiene que tener ese id.
+// Codigo de celda: el mismo formato que admite organization al darla de alta.
+var cellCodeRe = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
+
+const maxCellCodeLen = 63
+
+// QuarantineLinkClaims es lo que protege la firma junto con la celda del firmante:
+// empresa, mensaje, accion y caducidad (segundos Unix). El qhash viaja en el enlace para
+// encontrar la fila; la firma lo ata al mensaje porque la fila encontrada tiene que tener
+// ese id.
 type QuarantineLinkClaims struct {
 	TenantID  uuid.UUID
 	MessageID uuid.UUID
@@ -64,13 +69,18 @@ type QuarantineLinkClaims struct {
 // la clave es la misma que firma las bajas de transactional y una firma de un tipo de
 // enlace no vale para el otro. La firma va completa en hexadecimal y se compara en tiempo
 // constante.
+//
+// Cada firmante es de UNA celda (CELL_CODE): firma con la suya y solo acepta la suya. La
+// celda va en la ruta sin firmar para que el gateway enrute sin la clave, y va tambien en
+// la firma: un segmento cambiado lleva el enlace a una celda que lo rechaza.
 type QuarantineLinkSigner struct {
 	key     []byte
 	baseURL string
+	cell    string
 	ttl     time.Duration
 }
 
-func NewQuarantineLinkSigner(key, baseURL string, ttl time.Duration) (*QuarantineLinkSigner, error) {
+func NewQuarantineLinkSigner(key, baseURL, cell string, ttl time.Duration) (*QuarantineLinkSigner, error) {
 	if len(key) < minLinkKeyLen {
 		return nil, errors.New("MAIL_LINK_SIGNING_KEY debe tener al menos 32 caracteres")
 	}
@@ -79,47 +89,81 @@ func NewQuarantineLinkSigner(key, baseURL string, ttl time.Duration) (*Quarantin
 	if base == "" || err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
 		return nil, errors.New("PUBLIC_BASE_URL debe ser una URL absoluta http(s)")
 	}
+	if len(cell) > maxCellCodeLen || !cellCodeRe.MatchString(cell) {
+		return nil, errors.New("CELL_CODE debe ser el codigo de la celda (minusculas, digitos y guiones)")
+	}
 	if ttl <= 0 {
 		return nil, errors.New("MAIL_QUARANTINE_LINK_TTL debe ser positiva")
 	}
-	return &QuarantineLinkSigner{key: []byte(key), baseURL: base, ttl: ttl}, nil
+	return &QuarantineLinkSigner{key: []byte(key), baseURL: base, cell: cell, ttl: ttl}, nil
 }
 
 // TTL es la vigencia de los enlaces que se emiten.
 func (s *QuarantineLinkSigner) TTL() time.Duration { return s.ttl }
 
+// Cell es la celda del firmante, la que va en la ruta y en la firma de sus enlaces.
+func (s *QuarantineLinkSigner) Cell() string { return s.cell }
+
 func (s *QuarantineLinkSigner) canonical(c QuarantineLinkClaims) []byte {
+	return []byte("quarantine-link/v2\n" + s.cell + "\n" + c.TenantID.String() + "\n" + c.MessageID.String() + "\n" +
+		string(c.Action) + "\n" + strconv.FormatInt(c.ExpiresAt, 10))
+}
+
+// legacyCanonical es la forma firmada de los enlaces emitidos antes de llevar la celda. Ya
+// no se emite; se verifica mientras quede alguno vigente (como mucho MAIL_QUARANTINE_LINK_TTL
+// desde el despliegue que la retiro). El dominio de separacion distinto impide que una firma
+// de una forma valga por la otra.
+func legacyCanonical(c QuarantineLinkClaims) []byte {
 	return []byte("quarantine-link\n" + c.TenantID.String() + "\n" + c.MessageID.String() + "\n" +
 		string(c.Action) + "\n" + strconv.FormatInt(c.ExpiresAt, 10))
 }
 
-// Sign devuelve la firma hexadecimal de las claims.
-func (s *QuarantineLinkSigner) Sign(c QuarantineLinkClaims) string {
+func (s *QuarantineLinkSigner) mac(msg []byte) string {
 	mac := hmac.New(sha256.New, s.key)
-	mac.Write(s.canonical(c))
+	mac.Write(msg)
 	return hex.EncodeToString(mac.Sum(nil))
 }
 
-// Verify comprueba accion, caducidad y firma. Cualquier fallo es false, sin distinguir.
-func (s *QuarantineLinkSigner) Verify(c QuarantineLinkClaims, signature string, now time.Time) bool {
-	if c.Action.Path() == "" || c.ExpiresAt <= now.Unix() {
+// Sign devuelve la firma hexadecimal de las claims en la celda del firmante.
+func (s *QuarantineLinkSigner) Sign(c QuarantineLinkClaims) string {
+	return s.mac(s.canonical(c))
+}
+
+// Verify comprueba que el enlace es de esta celda (cell es el segmento de la ruta), la
+// accion, la caducidad y la firma. Cualquier fallo es false, sin distinguir.
+func (s *QuarantineLinkSigner) Verify(cell string, c QuarantineLinkClaims, signature string, now time.Time) bool {
+	if cell != s.cell || !c.Action.Valid() || c.ExpiresAt <= now.Unix() {
 		return false
 	}
-	expected := s.Sign(c)
+	return equalSignature(s.Sign(c), signature)
+}
+
+// VerifyLegacy comprueba un enlace de la forma sin celda (ruta <base>/<accion>): accion,
+// caducidad y firma. Solo lo recibe la celda por defecto del gateway, y solo encuentra el
+// mensaje si la empresa esta en esta celda.
+func (s *QuarantineLinkSigner) VerifyLegacy(c QuarantineLinkClaims, signature string, now time.Time) bool {
+	if !c.Action.Valid() || c.ExpiresAt <= now.Unix() {
+		return false
+	}
+	return equalSignature(s.mac(legacyCanonical(c)), signature)
+}
+
+func equalSignature(expected, signature string) bool {
 	if len(signature) != len(expected) {
 		return false
 	}
 	return subtle.ConstantTimeCompare([]byte(expected), []byte(signature)) == 1
 }
 
-// URL construye el enlace completo: t (empresa), q (qhash), e (caducidad) y sig.
+// URL construye el enlace completo en la celda del firmante: t (empresa), q (qhash),
+// e (caducidad) y sig.
 func (s *QuarantineLinkSigner) URL(c QuarantineLinkClaims, qhash string) string {
 	q := url.Values{}
 	q.Set("t", c.TenantID.String())
 	q.Set("q", qhash)
 	q.Set("e", strconv.FormatInt(c.ExpiresAt, 10))
 	q.Set("sig", s.Sign(c))
-	return s.baseURL + c.Action.Path() + "?" + q.Encode()
+	return s.baseURL + c.Action.Path(s.cell) + "?" + q.Encode()
 }
 
 // IsHexToken dice si s tiene la forma de un qhash o de una firma: 64 caracteres

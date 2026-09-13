@@ -426,10 +426,31 @@ dos veces; sin prueba de punta a punta con SES.
   /quarantine-settings` exige remitente con forma de direccion, asunto de una linea y una
   plantilla que se interprete y ejecute; el HTML renderizado tiene un tope de 1 MiB.
 * Enlaces sin sesion, declarados en `services/gateway/routes.json` (`public`):
-  `GET|POST /api/v1/public/mail-security/quarantine/release` y `.../discard` con
-  `t` (empresa), `q` (qhash), `e` (caducidad, segundos Unix) y `sig` (HMAC-SHA256 con
-  `MAIL_LINK_SIGNING_KEY` sobre `quarantine-link`, empresa, id del mensaje, accion y
-  caducidad). Caducan a `MAIL_QUARANTINE_LINK_TTL` (72h). GET muestra una confirmacion sin
+  `GET|POST /api/v1/public/mail-security/quarantine/<celda>/release` y `.../<celda>/discard`
+  con `t` (empresa), `q` (qhash), `e` (caducidad, segundos Unix) y `sig` (HMAC-SHA256 con
+  `MAIL_LINK_SIGNING_KEY` sobre `quarantine-link/v2`, celda, empresa, id del mensaje, accion
+  y caducidad). La celda es `CELL_CODE` de la instancia que emite el aviso (sin un
+  `CELL_CODE` valido no hay aviso y todo enlace es invalido). Ejemplo:
+  `https://app.example.com/api/v1/public/mail-security/quarantine/pe-01/release?e=1789900000&q=<qhash>&sig=<hmac>&t=<empresa>`.
+* Enrutado por celda (V, 2026-09-13): el segmento `<celda>` va sin firmar y el gateway enruta
+  por el sin verificar nada (no recibe `MAIL_LINK_SIGNING_KEY`). `mail-security` declara en
+  `routes.json` `cell_hosts_env: MAIL_SECURITY_CELL_HOSTS`, variable del gateway con las
+  instancias por celda (`pe-02=mail-security-pe-02:8042,eu-west-1=10.0.2.15:8042`; mal
+  formada, el gateway no arranca). Una celda listada va a su instancia; cualquier otro
+  segmento, conocido o no, va al destino base (`MAIL_SECURITY_HOST`, la celda por defecto),
+  que lo rechaza con la misma pagina 403 que una firma alterada: el gateway no responde nada
+  propio y no sirve para enumerar celdas. Cada instancia acepta solo su celda, en la ruta y
+  en la firma: un segmento cambiado lleva el enlace a una celda que lo rechaza. Con una sola
+  celda la variable queda vacia y todo va al destino base.
+* Enlaces de antes, sin celda (`.../quarantine/release` y `.../discard`, firmados sobre
+  `quarantine-link` sin celda): el gateway los declara con `default_cell` y los manda al
+  destino base, el mismo al que apuntaba el prefijo unico; `mail-security` los verifica con
+  la forma antigua hasta que caducan (como mucho `MAIL_QUARANTINE_LINK_TTL` desde el
+  despliegue, porque ya no se emiten). Con una celda valen todos; con varias, solo los de la
+  celda del destino base, que eran los unicos que llegaban a su celda antes del cambio. La
+  firma de una forma no vale por la otra. Pasada esa ventana, las cuatro rutas
+  `default_cell` y `VerifyLegacy` se retiran.
+* Caducan a `MAIL_QUARANTINE_LINK_TTL` (72h). GET muestra una confirmacion sin
   JavaScript y POST ejecuta: liberar es el caso de uso de siempre (reinyeccion por el puerto
   590, borrado y evento por la outbox en una transaccion con la fila bloqueada) y descartar
   borra la fila. El uso se registra en `mail_security.quarantine_link_uses` (una fila por

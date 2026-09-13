@@ -9,9 +9,13 @@ import (
 	"go.uber.org/zap"
 )
 
-// LinkRequest es lo que trae un enlace del aviso de cuarentena. La accion sale de la ruta,
-// no de la URL: la firma la incluye, asi que un enlace de liberar no descarta.
+// LinkRequest es lo que trae un enlace del aviso de cuarentena. La accion y la celda salen
+// de la ruta: la firma incluye las dos, asi que un enlace de liberar no descarta y uno de
+// otra celda no vale aqui. Legacy es la ruta sin celda de los enlaces emitidos antes; Cell
+// no cuenta en ella.
 type LinkRequest struct {
+	Cell      string
+	Legacy    bool
 	TenantID  uuid.UUID
 	QHash     string
 	ExpiresAt int64
@@ -85,9 +89,10 @@ func (uc *QuarantineUseCase) DiscardByLink(ctx context.Context, req LinkRequest,
 }
 
 // findLinked encuentra la fila por qhash y comprueba la firma contra su id. La caducidad y
-// la forma se comprueban antes de consultar la base.
+// la forma se comprueban antes de consultar la base; la celda, con la firma y despues de
+// consultarla, para que una celda ajena cueste lo mismo que una firma alterada.
 func (uc *QuarantineUseCase) findLinked(ctx context.Context, req LinkRequest) (*domain.QuarantineItem, error) {
-	if uc.links == nil || uc.notices == nil || req.Action.Path() == "" || req.ExpiresAt <= uc.now().Unix() ||
+	if uc.links == nil || uc.notices == nil || !req.Action.Valid() || req.ExpiresAt <= uc.now().Unix() ||
 		!domain.IsHexToken(req.QHash) || !domain.IsHexToken(req.Signature) {
 		return nil, domain.ErrInvalidLink
 	}
@@ -96,7 +101,11 @@ func (uc *QuarantineUseCase) findLinked(ctx context.Context, req LinkRequest) (*
 		return nil, err
 	}
 	claims := domain.QuarantineLinkClaims{TenantID: req.TenantID, MessageID: item.ID, Action: req.Action, ExpiresAt: req.ExpiresAt}
-	if !uc.links.Verify(claims, req.Signature, uc.now()) {
+	valid := uc.links.Verify(req.Cell, claims, req.Signature, uc.now())
+	if req.Legacy {
+		valid = uc.links.VerifyLegacy(claims, req.Signature, uc.now())
+	}
+	if !valid {
 		return nil, domain.ErrInvalidLink
 	}
 	return item, nil

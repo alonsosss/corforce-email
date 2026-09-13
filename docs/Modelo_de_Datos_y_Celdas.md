@@ -517,6 +517,23 @@ lista fija de nombres. El diseno que si aisla:
    `TenantPoolManager` elige la credencial por celda.
 4. `organization` sigue siendo el unico con la credencial de plataforma (crea y migra).
 
+### 5.3 Enlaces publicos por celda (V, 2026-09-13)
+
+`mail-security` vive por celda y firma los enlaces sin sesion del aviso de cuarentena con
+`MAIL_LINK_SIGNING_KEY`. El enlace lleva la celda en la ruta
+(`/api/v1/public/mail-security/quarantine/<celda>/release|discard`) y dentro de la firma
+(`quarantine-link/v2`: celda, empresa, mensaje, accion, caducidad); la celda es el
+`CELL_CODE` de la instancia que lo emite. El gateway enruta por ese segmento con
+`MAIL_SECURITY_CELL_HOSTS` (`celda=host:puerto,...`, declarado como `cell_hosts_env` del
+servicio en `routes.json`) y no tiene la clave: una celda que no figura va al destino base
+(`MAIL_SECURITY_HOST`, la celda por defecto), y cada instancia solo acepta enlaces de su
+propia celda, con la misma pagina 403 que una firma mala. Un segmento manipulado solo
+llega a una celda que lo rechaza. Con una sola celda la variable queda vacia. Los enlaces
+antiguos sin celda van a la celda por defecto y se verifican con la firma anterior hasta
+caducar (`MAIL_QUARANTINE_LINK_TTL`); ya no se emiten. Solo estas rutas publicas van por
+celda: el API autenticado de `mail-security` y el webmail siguen yendo al destino base
+(P: enrutado de empresa a celda para ellos).
+
 ## 6. Limites que condicionan el dimensionado (V, heredados y vigentes)
 
 * PgBouncer en `pool_mode = transaction`, `default_pool_size 20`, `max_client_conn 1000`.
@@ -539,5 +556,6 @@ lista fija de nombres. El diseno que si aisla:
 | Directorio de correo con `tenant_id` en cada fila y rol de motores sin acceso a credenciales | V |
 | RLS en la celda para los servicios Go | V (politicas y roles; `mail-directory` y el API de administracion de `mail-security` las usan en toda lectura y escritura) |
 | Una celda no lee otra celda: sus servicios abren solo `CELL_DB_NAME` con el rol `<CELL_DB_NAME>_svc`, sin CONNECT al registro, a otra celda ni a una empresa (5.1); claves de cifrado por celda | V / P (claves; reparto de secretos por servicio) |
+| Un enlace publico de cuarentena solo actua en la celda que lo firmo: la celda va en la firma, el gateway enruta sin la clave y una celda desconocida responde igual que una firma mala (5.3) | V (2026-09-13) |
 | Un servicio de empresa solo abre su esquema y no el registro (credencial por servicio) | P (5.2) |
 | Respaldo por base y restauracion probada semanalmente (`ops/backup`) | V (scripts), P (programados en este entorno) |
