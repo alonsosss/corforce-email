@@ -237,7 +237,7 @@ documento que contradice al código es peor que ninguno.
 
 ## Stack
 
-Go 1.25 con `chi`, `pgx`, `nats.go`, `zap`, `shopspring/decimal` para dominio y APIs.
+Go 1.26 con `chi`, `pgx`, `nats.go`, `zap`, `shopspring/decimal` para dominio y APIs.
 Python solo donde mailcow ya lo usa dentro de los motores (netfilter, dockerapi, avisos de
 cuota). React 18 con TypeScript y Vite para la aplicación web (`web/`, una sola aplicación,
 sin module federation). PostgreSQL con pgvector como única base canónica; NATS JetStream;
