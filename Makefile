@@ -144,6 +144,11 @@ check-compose-images:
 		( echo "docker-compose.images.yml desactualizado: corre 'make gen-compose-images'" >&2; \
 		  git --no-pager diff -- docker-compose.images.yml; exit 1 )
 
+# make check-compose  (los ficheros de compose tienen que ser validos para docker compose;
+# sin docker avisa y no falla)
+check-compose:
+	@bash ops/scaffold/check-compose.sh
+
 # make check-service-paths  (todo servicio con build: debe quedar en el mapa ruta->servicio)
 service-paths:
 	@bash ops/scaffold/service-paths.sh
@@ -152,7 +157,7 @@ check-service-paths:
 	@bash ops/scaffold/service-paths.sh --check
 
 # ── Agregados ────────────────────────────────────────────────────────────────
-.PHONY: checks clean-copy e2e
+.PHONY: checks clean-copy e2e check-compose
 
 # make e2e  (binarios reales contra Postgres, NATS y Redis desechables: plataforma vacia,
 # empresa, acceso por el gateway, correo en la celda, Redis de los motores, plantillas y
@@ -163,7 +168,7 @@ e2e:
 # make checks  (todo lo que corre CI sin docker, en un solo comando)
 checks: build check-migrations check-migration-drops check-coupling check-silent-errors \
 	check-sql-arity check-streams check-event-contracts check-secrets check-secret-sources \
-	validate-scaffold
+	check-compose validate-scaffold
 	@$(GO) vet ./...
 	@echo "checks: OK"
 
