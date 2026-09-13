@@ -123,6 +123,11 @@ func (r *JobDefinitionRepo) GetByID(ctx context.Context, id, tenantID uuid.UUID)
 		`SELECT `+jobColumns+` FROM scheduler.job_definitions WHERE id=$1 AND (tenant_id=$2 OR tenant_id IS NULL)`, id, tenantID))
 }
 
+func (r *JobDefinitionRepo) GetForUpdate(ctx context.Context, id, tenantID uuid.UUID) (*domain.JobDefinition, error) {
+	return scanJob(r.pool.QueryRow(ctx,
+		`SELECT `+jobColumns+` FROM scheduler.job_definitions WHERE id=$1 AND (tenant_id=$2 OR tenant_id IS NULL) FOR UPDATE`, id, tenantID))
+}
+
 func (r *JobDefinitionRepo) GetByCode(ctx context.Context, code string) (*domain.JobDefinition, error) {
 	return scanJob(r.pool.QueryRow(ctx, `SELECT `+jobColumns+` FROM scheduler.job_definitions WHERE code=$1`, code))
 }
@@ -170,22 +175,32 @@ func (r *JobDefinitionRepo) List(ctx context.Context, f domain.JobFilter) ([]*do
 	return list, total, nil
 }
 
-// Update y Deactivate escriben por id y empresa: una fila de otra empresa no se toca aunque
-// alguien llegue con su id. IS NOT DISTINCT FROM iguala tambien la de plataforma (NULL).
+// Update, Activate y Deactivate escriben por id y empresa: una fila de otra empresa no se
+// toca aunque alguien llegue con su id. IS NOT DISTINCT FROM iguala tambien la de plataforma
+// (NULL). Update no escribe is_active: la definicion editada puede venir de una lectura
+// anterior al despacho que desactivo un one_time.
 func (r *JobDefinitionRepo) Update(ctx context.Context, job *domain.JobDefinition) error {
 	tag, err := r.pool.Exec(ctx,
-		`UPDATE scheduler.job_definitions SET name=$1,description=$2,job_type=$3,cron_expression=$4,timezone=$5,interval_minutes=$6,handler=$7,payload=$8,is_active=$9,max_retries=$10,timeout_seconds=$11,updated_at=$12
-		  WHERE id=$13 AND tenant_id IS NOT DISTINCT FROM $14`,
+		`UPDATE scheduler.job_definitions SET name=$1,description=$2,job_type=$3,cron_expression=$4,timezone=$5,interval_minutes=$6,handler=$7,payload=$8,max_retries=$9,timeout_seconds=$10,updated_at=$11
+		  WHERE id=$12 AND tenant_id IS NOT DISTINCT FROM $13`,
 		job.Name, job.Description, job.JobType, job.CronExpression, job.Timezone, job.IntervalMinutes,
-		job.Handler, job.Payload, job.IsActive, job.MaxRetries, job.TimeoutSeconds, job.UpdatedAt, job.ID, job.TenantID,
+		job.Handler, job.Payload, job.MaxRetries, job.TimeoutSeconds, job.UpdatedAt, job.ID, job.TenantID,
 	)
 	return affectedOr(tag, err, domain.ErrJobNotFound)
 }
 
+func (r *JobDefinitionRepo) Activate(ctx context.Context, id uuid.UUID, owner *uuid.UUID, updatedAt time.Time) error {
+	return r.setActive(ctx, id, owner, true, updatedAt)
+}
+
 func (r *JobDefinitionRepo) Deactivate(ctx context.Context, id uuid.UUID, owner *uuid.UUID, updatedAt time.Time) error {
+	return r.setActive(ctx, id, owner, false, updatedAt)
+}
+
+func (r *JobDefinitionRepo) setActive(ctx context.Context, id uuid.UUID, owner *uuid.UUID, active bool, updatedAt time.Time) error {
 	tag, err := r.pool.Exec(ctx,
-		`UPDATE scheduler.job_definitions SET is_active=false, updated_at=$1 WHERE id=$2 AND tenant_id IS NOT DISTINCT FROM $3`,
-		updatedAt, id, owner)
+		`UPDATE scheduler.job_definitions SET is_active=$1, updated_at=$2 WHERE id=$3 AND tenant_id IS NOT DISTINCT FROM $4`,
+		active, updatedAt, id, owner)
 	return affectedOr(tag, err, domain.ErrJobNotFound)
 }
 
@@ -467,11 +482,17 @@ func (r *JobScheduleRepo) UpdateNextRun(ctx context.Context, jobID uuid.UUID, ne
 	return err
 }
 
-func (r *JobScheduleRepo) Get(ctx context.Context, jobID uuid.UUID) (*domain.JobSchedule, error) {
+// GetForUpdate bloquea solo la fila del calendario (FOR UPDATE OF js): la del trabajo la
+// bloquea despues quien la necesite, en el mismo orden que el despacho.
+func (r *JobScheduleRepo) GetForUpdate(ctx context.Context, jobID, tenantID uuid.UUID) (*domain.JobSchedule, error) {
 	s := &domain.JobSchedule{JobID: jobID}
 	err := r.pool.QueryRow(ctx,
-		`SELECT next_run_at, last_run_at FROM scheduler.job_schedules WHERE job_id=$1`, jobID,
-	).Scan(&s.NextRunAt, &s.LastRunAt)
+		`SELECT js.next_run_at, js.last_run_at, jd.tenant_id
+		   FROM scheduler.job_schedules js
+		   JOIN scheduler.job_definitions jd ON jd.id = js.job_id
+		  WHERE js.job_id=$1 AND (jd.tenant_id=$2 OR jd.tenant_id IS NULL)
+		  FOR UPDATE OF js`, jobID, tenantID,
+	).Scan(&s.NextRunAt, &s.LastRunAt, &s.TenantID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}

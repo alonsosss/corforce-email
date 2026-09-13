@@ -60,8 +60,23 @@ func (r *storedJobs) Create(_ context.Context, j *domain.JobDefinition) error {
 	return nil
 }
 
-func (r *storedJobs) Update(ctx context.Context, j *domain.JobDefinition) error {
-	return r.Create(ctx, j)
+func (r *storedJobs) GetForUpdate(ctx context.Context, id, tenantID uuid.UUID) (*domain.JobDefinition, error) {
+	return r.GetByID(ctx, id, tenantID)
+}
+
+// Update guarda como el SQL: la definicion, sin is_active.
+func (r *storedJobs) Update(_ context.Context, j *domain.JobDefinition) error {
+	c := *j
+	if r.job != nil {
+		c.IsActive = r.job.IsActive
+	}
+	r.job = &c
+	return nil
+}
+
+func (r *storedJobs) Activate(context.Context, uuid.UUID, *uuid.UUID, time.Time) error {
+	r.job.IsActive = true
+	return nil
 }
 
 type plannedSchedules struct {
@@ -80,7 +95,7 @@ func (s *plannedSchedules) Restart(_ context.Context, _ uuid.UUID, next time.Tim
 	return nil
 }
 
-func (s *plannedSchedules) Get(_ context.Context, jobID uuid.UUID) (*domain.JobSchedule, error) {
+func (s *plannedSchedules) GetForUpdate(_ context.Context, jobID, _ uuid.UUID) (*domain.JobSchedule, error) {
 	if s.next.IsZero() {
 		return nil, nil
 	}

@@ -128,8 +128,10 @@ func (uc *SchedulerUseCase) ListJobs(ctx context.Context, filter domain.JobFilte
 	return uc.jobs.List(ctx, filter)
 }
 
-// UpdateJob recibe el trabajo leido con GetJob y ya modificado; su empresa no cambia. Si la
-// edicion cambia el calendario (domain.JobDefinition.ScheduleChanged: el tipo, la expresion
+// UpdateJob recibe el trabajo leido con GetJob y ya modificado; su empresa no cambia, y su
+// estado tampoco: esa lectura puede ser anterior al despacho que desactivo un one_time, y
+// is_active solo lo cambian EnableJob, DisableJob y el calendario. Si la edicion cambia el
+// calendario (domain.JobDefinition.ScheduleChanged: el tipo, la expresion
 // o la zona de un cron, los minutos de un interval) se replanifica desde ahora con la
 // definicion nueva (domain.JobDefinition.FirstRunAt) en la misma transaccion, sin anotar
 // una ejecucion; si cambia el tipo, ademas se olvida la ultima pasada, como en un alta. Una
@@ -146,7 +148,7 @@ func (uc *SchedulerUseCase) UpdateJob(ctx context.Context, job *domain.JobDefini
 	job.UpdatedAt = uc.now()
 	var out *domain.JobOverview
 	err := uc.tx.Transact(ctx, func(ctx context.Context) error {
-		stored, err := uc.jobs.GetByID(ctx, job.ID, *job.TenantID)
+		stored, _, err := uc.lockTenantJob(ctx, job.ID, *job.TenantID)
 		if err != nil {
 			return err
 		}
@@ -190,32 +192,46 @@ func (uc *SchedulerUseCase) tenantJob(ctx context.Context, id, tenantID uuid.UUI
 	return job, nil
 }
 
+// lockTenantJob bloquea, dentro de la transaccion del llamante, el calendario y despues el
+// trabajo de la empresa, y los devuelve leidos bajo esos bloqueos (el calendario, nil si no
+// tiene). Es el orden del despacho, que toma el calendario con ClaimDue y despues desactiva
+// el one_time: una edicion o una reactivacion espera al despacho en curso y lee lo que dejo,
+// y el despacho salta el calendario mientras ellas duran. El orden inverso se interbloquea
+// con el despacho.
+func (uc *SchedulerUseCase) lockTenantJob(ctx context.Context, id, tenantID uuid.UUID) (*domain.JobDefinition, *domain.JobSchedule, error) {
+	schedule, err := uc.schedules.GetForUpdate(ctx, id, tenantID)
+	if err != nil {
+		return nil, nil, err
+	}
+	job, err := uc.jobs.GetForUpdate(ctx, id, tenantID)
+	if err != nil {
+		return nil, nil, err
+	}
+	if job.IsPlatform() {
+		return nil, nil, domain.ErrPlatformJob
+	}
+	return job, schedule, nil
+}
+
 // EnableJob reactiva un trabajo de la empresa y lo replanifica desde ahora con la regla de
 // domain.JobDefinition.ResumeAt: lo que no se lanzo mientras estuvo parado no se lanza al
 // reactivarlo y next_run_at no queda en el pasado. Reactivar uno activo no toca su
 // calendario.
 func (uc *SchedulerUseCase) EnableJob(ctx context.Context, id, tenantID uuid.UUID) error {
 	return uc.tx.Transact(ctx, func(ctx context.Context) error {
-		job, err := uc.tenantJob(ctx, id, tenantID)
+		job, schedule, err := uc.lockTenantJob(ctx, id, tenantID)
 		if err != nil {
 			return err
 		}
 		now := uc.now()
 		if job.IsActive {
-			job.UpdatedAt = now
-			return uc.jobs.Update(ctx, job)
-		}
-		schedule, err := uc.schedules.Get(ctx, job.ID)
-		if err != nil {
-			return err
+			return uc.jobs.Activate(ctx, job.ID, job.TenantID, now)
 		}
 		next, err := job.ResumeAt(schedule, now)
 		if err != nil {
 			return err
 		}
-		job.IsActive = true
-		job.UpdatedAt = now
-		if err := uc.jobs.Update(ctx, job); err != nil {
+		if err := uc.jobs.Activate(ctx, job.ID, job.TenantID, now); err != nil {
 			return err
 		}
 		return uc.schedules.SetNextRun(ctx, job.ID, next)

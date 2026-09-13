@@ -27,10 +27,15 @@ type memStore struct {
 	txSeq      int
 	// failPublish hace fallar la publicacion para comprobar que arrastra al dato.
 	failPublish error
+	// jobUpdates cuenta las escrituras de un trabajo que no lo desactivan (Update, Activate).
 	jobUpdates  int
 	deactivated int
 	// planned cuenta las planificaciones sin ejecucion (SetNextRun).
 	planned int
+	// locks anota, en orden, las filas que se bloquean con GetForUpdate ("schedule", "job").
+	locks []string
+	// beforeJobUpdate, si esta, corre una vez al empezar la siguiente escritura de un trabajo.
+	beforeJobUpdate func()
 }
 
 type recorded struct {
@@ -119,6 +124,13 @@ func (r memJobs) GetByID(_ context.Context, id, tenantID uuid.UUID) (*domain.Job
 	return &j, nil
 }
 
+func (r memJobs) GetForUpdate(ctx context.Context, id, tenantID uuid.UUID) (*domain.JobDefinition, error) {
+	r.mu.Lock()
+	r.locks = append(r.locks, "job")
+	r.mu.Unlock()
+	return r.GetByID(ctx, id, tenantID)
+}
+
 func (r memJobs) GetByCode(_ context.Context, code string) (*domain.JobDefinition, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -169,28 +181,58 @@ func sameOwner(a, b *uuid.UUID) bool {
 	return *a == *b
 }
 
+// Update escribe como el SQL: la definicion, sin is_active.
 func (r memJobs) Update(_ context.Context, j *domain.JobDefinition) error {
 	r.mu.Lock()
+	hook := r.beforeJobUpdate
+	r.beforeJobUpdate = nil
+	r.mu.Unlock()
+	if hook != nil {
+		hook()
+	}
+	r.mu.Lock()
 	defer r.mu.Unlock()
-	if stored, ok := r.jobs[j.ID]; !ok || !sameOwner(stored.TenantID, j.TenantID) {
+	stored, ok := r.jobs[j.ID]
+	if !ok || !sameOwner(stored.TenantID, j.TenantID) {
 		return domain.ErrJobNotFound
 	}
-	r.jobs[j.ID] = *j
+	updated := *j
+	updated.IsActive = stored.IsActive
+	r.jobs[j.ID] = updated
 	r.jobUpdates++
 	return nil
 }
 
+func (r memJobs) Activate(_ context.Context, id uuid.UUID, owner *uuid.UUID, updatedAt time.Time) error {
+	if err := r.setActive(id, owner, true, updatedAt); err != nil {
+		return err
+	}
+	r.mu.Lock()
+	r.jobUpdates++
+	r.mu.Unlock()
+	return nil
+}
+
 func (r memJobs) Deactivate(_ context.Context, id uuid.UUID, owner *uuid.UUID, updatedAt time.Time) error {
+	if err := r.setActive(id, owner, false, updatedAt); err != nil {
+		return err
+	}
+	r.mu.Lock()
+	r.deactivated++
+	r.mu.Unlock()
+	return nil
+}
+
+func (r memJobs) setActive(id uuid.UUID, owner *uuid.UUID, active bool, updatedAt time.Time) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	j, ok := r.jobs[id]
 	if !ok || !sameOwner(j.TenantID, owner) {
 		return domain.ErrJobNotFound
 	}
-	j.IsActive = false
+	j.IsActive = active
 	j.UpdatedAt = updatedAt
 	r.jobs[id] = j
-	r.deactivated++
 	return nil
 }
 
@@ -321,13 +363,17 @@ func (r memExecs) ClaimDispatchable(_ context.Context, now time.Time) (*domain.J
 
 type memSchedules struct{ *memStore }
 
-func (r memSchedules) Get(_ context.Context, jobID uuid.UUID) (*domain.JobSchedule, error) {
+// GetForUpdate lee como el SQL: el calendario de un trabajo que ve la empresa, o nil.
+func (r memSchedules) GetForUpdate(_ context.Context, jobID, tenantID uuid.UUID) (*domain.JobSchedule, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.locks = append(r.locks, "schedule")
 	s, ok := r.schedules[jobID]
-	if !ok {
+	j, known := r.jobs[jobID]
+	if !ok || !known || !visible(j.TenantID, tenantID) {
 		return nil, nil
 	}
+	s.TenantID = j.TenantID
 	return &s, nil
 }
 

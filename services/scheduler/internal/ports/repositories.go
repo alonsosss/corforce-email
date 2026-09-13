@@ -17,17 +17,24 @@ type Transactor interface {
 type JobDefinitionRepository interface {
 	Create(ctx context.Context, job *domain.JobDefinition) error
 	GetByID(ctx context.Context, id, tenantID uuid.UUID) (*domain.JobDefinition, error)
+	// GetForUpdate lee el trabajo como GetByID bloqueando su fila hasta el final de la
+	// transaccion.
+	GetForUpdate(ctx context.Context, id, tenantID uuid.UUID) (*domain.JobDefinition, error)
 	GetByCode(ctx context.Context, code string) (*domain.JobDefinition, error)
 	// GetOverview lee el trabajo con su calendario y su ultima ejecucion.
 	GetOverview(ctx context.Context, id, tenantID uuid.UUID) (*domain.JobOverview, error)
 	// List devuelve una pagina del listado con el total de filas que cumplen el filtro, en
 	// una sola consulta por pagina: sin una lectura por trabajo.
 	List(ctx context.Context, filter domain.JobFilter) ([]*domain.JobOverview, int64, error)
-	// Update escribe el trabajo solo si sigue siendo de job.TenantID (nil, de plataforma):
-	// domain.ErrJobNotFound si no. La empresa de un trabajo no cambia.
+	// Update escribe la definicion del trabajo solo si sigue siendo de job.TenantID (nil, de
+	// plataforma): domain.ErrJobNotFound si no. La empresa de un trabajo no cambia y su
+	// estado tampoco: is_active solo lo escriben Activate y Deactivate.
 	Update(ctx context.Context, job *domain.JobDefinition) error
+	// Activate activa el trabajo de owner (nil, de plataforma) con updatedAt como hora del
+	// cambio; domain.ErrJobNotFound si no es suyo.
+	Activate(ctx context.Context, id uuid.UUID, owner *uuid.UUID, updatedAt time.Time) error
 	// Deactivate desactiva el trabajo de owner (nil, de plataforma) con updatedAt como hora
-	// del cambio, igual que Update; domain.ErrJobNotFound si no es suyo.
+	// del cambio, igual que Activate; domain.ErrJobNotFound si no es suyo.
 	Deactivate(ctx context.Context, id uuid.UUID, owner *uuid.UUID, updatedAt time.Time) error
 }
 
@@ -74,8 +81,10 @@ type ScheduledTaskRepository interface {
 }
 
 type JobScheduleRepository interface {
-	// Get lee el calendario del trabajo; nil si no tiene.
-	Get(ctx context.Context, jobID uuid.UUID) (*domain.JobSchedule, error)
+	// GetForUpdate lee el calendario de un trabajo que ve la empresa (el suyo o uno de
+	// plataforma) bloqueando su fila hasta el final de la transaccion; nil si no tiene. Espera
+	// al despacho que lo tenga tomado (ClaimDue).
+	GetForUpdate(ctx context.Context, jobID, tenantID uuid.UUID) (*domain.JobSchedule, error)
 	// UpdateNextRun reprograma tras lanzar el trabajo: fija next_run_at y anota ranAt en
 	// last_run_at.
 	UpdateNextRun(ctx context.Context, jobID uuid.UUID, nextRunAt, ranAt time.Time) error

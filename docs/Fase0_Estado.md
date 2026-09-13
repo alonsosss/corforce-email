@@ -146,7 +146,13 @@ cambie cualquiera de estas líneas.
   pasa a `one_time` corre una vez aunque antes corriera como intervalo. Una edición que no
   toca el calendario (nombre, manejador, payload, reintentos, plazo, la zona de un
   intervalo) respeta la ejecución prevista. En un trabajo inactivo la hora queda guardada
-  sin exponerse y al reactivarlo decide `ResumeAt`.
+  sin exponerse y al reactivarlo decide `ResumeAt`. Editar y reactivar bloquean el
+  calendario y después el trabajo, en el orden del despacho: esperan al despacho en curso y
+  leen lo que dejó, y el despacho salta el calendario mientras duran, sin interbloqueo. La
+  edición no escribe `is_active` (lo cambian solo activar, desactivar y el calendario): un
+  PUT leído antes de que el calendario despache un `one_time` guarda la edición y lo deja
+  inactivo, y reactivarlo sigue siendo 409 `JOB_ALREADY_RUN` (unitarias e integración
+  contra Postgres 16 con las transacciones intercaladas).
 * Aislamiento por empresa del scheduler (2026-09-13, unitarias, contrato e integración
   contra Postgres 16): ninguna lectura ni escritura por id va sin la empresa del token.
   Leer y cancelar una tarea, `GET /jobs/{id}/history`, `GET /executions` y las escrituras de
