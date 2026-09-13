@@ -4,7 +4,11 @@ package postgres
 
 import (
 	"context"
+	"fmt"
 	"os"
+	"path/filepath"
+	"runtime"
+	"sort"
 	"testing"
 	"time"
 
@@ -15,15 +19,56 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-// Prueba las consultas contra un Postgres real con el esquema mail de mail-directory ya
-// migrado (MAIL_AUTH_TEST_DSN). Lo que importa comprobar no cabe en un mock: que los
-// nombres de columna existen, que inet acepta lo que se le pasa y que RecentLogins ve
-// solo lo de su empresa.
-func TestRepositorioContraEsquemaReal(t *testing.T) {
-	dsn := os.Getenv("MAIL_AUTH_TEST_DSN")
-	if dsn == "" {
-		t.Skip("MAIL_AUTH_TEST_DSN no definida")
+// integrationEnv devuelve la variable de entorno que apunta a la infraestructura de la
+// prueba. Sin ella la prueba se salta, salvo con INTEGRATION_REQUIRED=1 (make
+// test-integration y CI): ahi es un fallo, porque un salto esconderia que no llego.
+func integrationEnv(t *testing.T, name string) string {
+	t.Helper()
+	v := os.Getenv(name)
+	if v == "" {
+		if os.Getenv("INTEGRATION_REQUIRED") == "1" {
+			t.Fatalf("%s no definida con INTEGRATION_REQUIRED=1", name)
+		}
+		t.Skipf("%s no definida", name)
 	}
+	return v
+}
+
+// applyMigrationsTwice aplica en orden, dos veces, las migraciones de cada directorio
+// (relativo a la raiz del repositorio): la segunda pasada demuestra que toleran
+// re-ejecutarse.
+func applyMigrationsTwice(ctx context.Context, pool *pgxpool.Pool, dirs ...string) error {
+	_, file, _, _ := runtime.Caller(0)
+	root := filepath.Join(filepath.Dir(file), "..", "..", "..", "..", "..")
+	var files []string
+	for _, dir := range dirs {
+		found, err := filepath.Glob(filepath.Join(root, dir, "*.sql"))
+		if err != nil || len(found) == 0 {
+			return fmt.Errorf("migraciones de %s: %v", dir, err)
+		}
+		sort.Strings(found)
+		files = append(files, found...)
+	}
+	for pass := 1; pass <= 2; pass++ {
+		for _, f := range files {
+			sql, err := os.ReadFile(f)
+			if err != nil {
+				return err
+			}
+			if _, err := pool.Exec(ctx, string(sql)); err != nil {
+				return fmt.Errorf("pasada %d, %s: %w", pass, filepath.Base(f), err)
+			}
+		}
+	}
+	return nil
+}
+
+// Prueba las consultas contra un Postgres real (MAIL_AUTH_TEST_DSN, una base desechable a
+// la que aplica dos veces las migraciones de la celda: el esquema mail es de
+// mail-directory). Lo que importa comprobar no cabe en un mock: que los nombres de columna
+// existen, que inet acepta lo que se le pasa y que RecentLogins ve solo lo de su empresa.
+func TestRepositorioContraEsquemaReal(t *testing.T) {
+	dsn := integrationEnv(t, "MAIL_AUTH_TEST_DSN")
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	pool, err := pgxpool.New(ctx, dsn)
@@ -33,6 +78,10 @@ func TestRepositorioContraEsquemaReal(t *testing.T) {
 	// Los Cleanup corren en orden inverso: el pool se registra primero para que siga
 	// abierto cuando se borren las filas sembradas (un defer se ejecutaria antes).
 	t.Cleanup(pool.Close)
+	if err := applyMigrationsTwice(ctx, pool, "migrations/cell/canonical/platform",
+		"migrations/cell/canonical/mail-directory", "migrations/cell/canonical/mail-security"); err != nil {
+		t.Fatalf("migraciones de la celda: %v", err)
+	}
 	ctx = db.WithPool(ctx, pool)
 
 	tenantID := uuid.New()

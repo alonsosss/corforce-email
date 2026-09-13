@@ -16,10 +16,7 @@ import (
 // que al soltarlo vuelve a estar disponible. Con el helper de sesion anterior la primera
 // afirmacion se cumplia por casualidad en local (sin pgbouncer) y fallaba en produccion.
 func TestTryLeaderLockExcluyeYLibera(t *testing.T) {
-	url := os.Getenv("TEST_DATABASE_URL")
-	if url == "" {
-		t.Skip("TEST_DATABASE_URL no definida")
-	}
+	url := integrationEnv(t, "TEST_DATABASE_URL")
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	pool, err := pgxpool.New(ctx, url)
@@ -44,4 +41,19 @@ func TestTryLeaderLockExcluyeYLibera(t *testing.T) {
 		t.Fatal("tras soltarlo, el cerrojo debe volver a estar disponible")
 	}
 	release3()
+}
+
+// integrationEnv devuelve la variable de entorno que apunta a la infraestructura de la
+// prueba. Sin ella la prueba se salta, salvo con INTEGRATION_REQUIRED=1 (make
+// test-integration y CI): ahi es un fallo, porque un salto esconderia que no llego.
+func integrationEnv(t *testing.T, name string) string {
+	t.Helper()
+	v := os.Getenv(name)
+	if v == "" {
+		if os.Getenv("INTEGRATION_REQUIRED") == "1" {
+			t.Fatalf("%s no definida con INTEGRATION_REQUIRED=1", name)
+		}
+		t.Skipf("%s no definida", name)
+	}
+	return v
 }

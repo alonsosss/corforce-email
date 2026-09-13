@@ -5,7 +5,6 @@ package postgres
 import (
 	"context"
 	"errors"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -27,10 +26,7 @@ import (
 //	docker run -d --name md-pg -e POSTGRES_PASSWORD=t -e POSTGRES_USER=t -e POSTGRES_DB=cell -p 55433:5432 pgvector/pgvector:pg16
 //	MAIL_DIRECTORY_TEST_DSN='postgres://t:t@127.0.0.1:55433/cell?sslmode=disable' go test -tags integration ./services/mail-directory/...
 func TestDirectorioContraPostgres(t *testing.T) {
-	dsn := os.Getenv("MAIL_DIRECTORY_TEST_DSN")
-	if dsn == "" {
-		t.Skip("MAIL_DIRECTORY_TEST_DSN no definida")
-	}
+	dsn := integrationEnv(t, "MAIL_DIRECTORY_TEST_DSN")
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	pool, err := pgxpool.New(ctx, dsn)

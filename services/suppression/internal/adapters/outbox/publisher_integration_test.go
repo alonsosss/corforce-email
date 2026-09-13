@@ -5,7 +5,11 @@ package outbox
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
+	"path/filepath"
+	"runtime"
+	"sort"
 	"testing"
 
 	"github.com/alonsosss/corforce-email/pkg/db"
@@ -15,20 +19,64 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// SUPPRESSION_TEST_DSN apunta a una base con platform/00_outbox.sql aplicada. Comprueba
-// que el evento queda en la outbox de la misma transaccion y que se pierde si esta se
-// revierte: es la garantia por la que existe este adaptador.
-func TestPublicadorEncolaEnLaTransaccion(t *testing.T) {
-	dsn := os.Getenv("SUPPRESSION_TEST_DSN")
-	if dsn == "" {
-		t.Skip("SUPPRESSION_TEST_DSN no definido")
+// integrationEnv devuelve la variable de entorno que apunta a la infraestructura de la
+// prueba. Sin ella la prueba se salta, salvo con INTEGRATION_REQUIRED=1 (make
+// test-integration y CI): ahi es un fallo, porque un salto esconderia que no llego.
+func integrationEnv(t *testing.T, name string) string {
+	t.Helper()
+	v := os.Getenv(name)
+	if v == "" {
+		if os.Getenv("INTEGRATION_REQUIRED") == "1" {
+			t.Fatalf("%s no definida con INTEGRATION_REQUIRED=1", name)
+		}
+		t.Skipf("%s no definida", name)
 	}
+	return v
+}
+
+// applyMigrationsTwice aplica en orden, dos veces, las migraciones de cada directorio
+// (relativo a la raiz del repositorio): la segunda pasada demuestra que toleran
+// re-ejecutarse.
+func applyMigrationsTwice(ctx context.Context, pool *pgxpool.Pool, dirs ...string) error {
+	_, file, _, _ := runtime.Caller(0)
+	root := filepath.Join(filepath.Dir(file), "..", "..", "..", "..", "..")
+	var files []string
+	for _, dir := range dirs {
+		found, err := filepath.Glob(filepath.Join(root, dir, "*.sql"))
+		if err != nil || len(found) == 0 {
+			return fmt.Errorf("migraciones de %s: %v", dir, err)
+		}
+		sort.Strings(found)
+		files = append(files, found...)
+	}
+	for pass := 1; pass <= 2; pass++ {
+		for _, f := range files {
+			sql, err := os.ReadFile(f)
+			if err != nil {
+				return err
+			}
+			if _, err := pool.Exec(ctx, string(sql)); err != nil {
+				return fmt.Errorf("pasada %d, %s: %w", pass, filepath.Base(f), err)
+			}
+		}
+	}
+	return nil
+}
+
+// SUPPRESSION_TEST_DSN apunta a una base desechable, a la que la prueba aplica dos veces la
+// outbox de plataforma. Comprueba que el evento queda en la outbox de la misma transaccion
+// y que se pierde si esta se revierte: es la garantia por la que existe este adaptador.
+func TestPublicadorEncolaEnLaTransaccion(t *testing.T) {
+	dsn := integrationEnv(t, "SUPPRESSION_TEST_DSN")
 	ctx := context.Background()
 	pool, err := pgxpool.New(ctx, dsn)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer pool.Close()
+	if err := applyMigrationsTwice(ctx, pool, "migrations/tenant/canonical/platform"); err != nil {
+		t.Fatalf("outbox de plataforma: %v", err)
+	}
 
 	tenant, user := uuid.New(), uuid.New()
 	ctx = middleware.WithIdentity(db.WithPool(ctx, pool), user.String(), tenant.String())

@@ -249,8 +249,9 @@ La CI y la operación vienen del ERP y aplican aquí con los nombres nuevos: des
 `scripts/deploy-ecr.sh` compilando en local, nunca en el servidor; commits con pathspec;
 `service-paths.sh` para el alcance de un cambio; secretos por `with-secrets.sh`; y los
 checks de `ops/scaffold/` (`validate-scaffold`, `check-migrations`, `check-coupling`,
-`check-event-contracts`, `check-clean-copy`). `make checks` los corre todos sin docker y
-`make e2e` recorre la plataforma de punta a punta con binarios reales (docker).
+`check-event-contracts`, `check-clean-copy`). `make checks` los corre todos sin docker,
+`make test-integration` corre las pruebas de integración contra Postgres y Redis desechables
+y `make e2e` recorre la plataforma de punta a punta con binarios reales (las dos con docker).
 Antes de dar por terminada una tarea, ejecuta los checks que toquen lo cambiado. Las
 razones detalladas de cada regla están en `docs/Operacion_Despliegue.md` y
 `ops/scaffold/README.md`.

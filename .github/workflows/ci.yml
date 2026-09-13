@@ -35,7 +35,7 @@ jobs:
       - name: Validar consistencia (puertos, modulos gateados, acoplamiento, streams, imagenes)
         run: bash ops/scaffold/validate.sh
 
-      - name: Migraciones canonicas idempotentes (empresa y celda)
+      - name: Migraciones idempotentes (empresa, celda y registro)
         run: make check-migrations
 
       - name: Migraciones que dicen reemplazar y no reemplazan
@@ -87,6 +87,54 @@ jobs:
           cache: true
       - name: make e2e
         run: make e2e
+
+  # Pruebas //go:build integration contra Postgres y Redis reales. services: levanta los
+  # contenedores; ops/scaffold/test-integration.sh les cambia la credencial por una
+  # aleatoria de la ejecucion, crea una base por paquete, corre los paquetes en serie y
+  # falla si una prueba falla o se salta (INTEGRATION_REQUIRED=1).
+  integration:
+    name: Integracion (Postgres y Redis reales, una base por paquete)
+    runs-on: ubuntu-latest
+    needs: backend
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: cfm_it
+          POSTGRES_DB: postgres
+          # Solo para el arranque: el script la reemplaza por una aleatoria antes de que
+          # conecte ninguna prueba.
+          POSTGRES_PASSWORD: boot-${{ github.run_id }}-${{ github.run_attempt }}
+        ports:
+          - 27000:5432
+        options: >-
+          --health-cmd "pg_isready -h 127.0.0.1 -U cfm_it -d postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 30
+      redis:
+        image: redis:7.4.10-alpine
+        ports:
+          - 27001:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: true
+      - name: make test-integration
+        env:
+          IT_PG_CONTAINER: ${{ job.services.postgres.id }}
+          IT_PG_PORT: '27000'
+          IT_PG_USER: cfm_it
+          IT_REDIS_CONTAINER: ${{ job.services.redis.id }}
+          IT_REDIS_PORT: '27001'
+        run: make test-integration
 
   web:
     name: Aplicacion web (lint, typecheck, tests, build)

@@ -15,14 +15,27 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 )
 
-// REPUTATION_TEST_REDIS_ADDR apunta a un Redis desechable (docker run -d redis:7-alpine).
+// integrationEnv devuelve la variable de entorno que apunta a la infraestructura de la
+// prueba. Sin ella la prueba se salta, salvo con INTEGRATION_REQUIRED=1 (make
+// test-integration y CI): ahi es un fallo, porque un salto esconderia que no llego.
+func integrationEnv(t *testing.T, name string) string {
+	t.Helper()
+	v := os.Getenv(name)
+	if v == "" {
+		if os.Getenv("INTEGRATION_REQUIRED") == "1" {
+			t.Fatalf("%s no definida con INTEGRATION_REQUIRED=1", name)
+		}
+		t.Skipf("%s no definida", name)
+	}
+	return v
+}
+
+// REPUTATION_TEST_REDIS_ADDR apunta a un Redis desechable (docker run -d redis:7.4.10-alpine;
+// REPUTATION_TEST_REDIS_PASSWORD si pide contrasena).
 func testClient(t *testing.T) *goredis.Client {
 	t.Helper()
-	addr := os.Getenv("REPUTATION_TEST_REDIS_ADDR")
-	if addr == "" {
-		t.Skip("REPUTATION_TEST_REDIS_ADDR no definido")
-	}
-	rdb := goredis.NewClient(&goredis.Options{Addr: addr})
+	addr := integrationEnv(t, "REPUTATION_TEST_REDIS_ADDR")
+	rdb := goredis.NewClient(&goredis.Options{Addr: addr, Password: os.Getenv("REPUTATION_TEST_REDIS_PASSWORD")})
 	if err := rdb.Ping(context.Background()).Err(); err != nil {
 		t.Fatal(err)
 	}

@@ -16,12 +16,24 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 )
 
+// integrationEnv devuelve la variable de entorno que apunta a la infraestructura de la
+// prueba. Sin ella la prueba se salta, salvo con INTEGRATION_REQUIRED=1 (make
+// test-integration y CI): ahi es un fallo, porque un salto esconderia que no llego.
+func integrationEnv(t *testing.T, name string) string {
+	t.Helper()
+	v := os.Getenv(name)
+	if v == "" {
+		if os.Getenv("INTEGRATION_REQUIRED") == "1" {
+			t.Fatalf("%s no definida con INTEGRATION_REQUIRED=1", name)
+		}
+		t.Skipf("%s no definida", name)
+	}
+	return v
+}
+
 func testStore(t *testing.T) (*SessionStore, *goredis.Client) {
 	t.Helper()
-	addr := os.Getenv("WEBMAIL_TEST_REDIS_ADDR")
-	if addr == "" {
-		t.Skip("WEBMAIL_TEST_REDIS_ADDR no definido")
-	}
+	addr := integrationEnv(t, "WEBMAIL_TEST_REDIS_ADDR")
 	rdb := goredis.NewClient(&goredis.Options{Addr: addr, Password: os.Getenv("WEBMAIL_TEST_REDIS_PASSWORD")})
 	if err := rdb.Ping(context.Background()).Err(); err != nil {
 		t.Fatalf("redis: %v", err)

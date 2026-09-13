@@ -78,12 +78,24 @@ func applyMigration(t *testing.T, pool *pgxpool.Pool, rel string) {
 	}
 }
 
+// integrationEnv devuelve la variable de entorno que apunta a la infraestructura de la
+// prueba. Sin ella la prueba se salta, salvo con INTEGRATION_REQUIRED=1 (make
+// test-integration y CI): ahi es un fallo, porque un salto esconderia que no llego.
+func integrationEnv(t *testing.T, name string) string {
+	t.Helper()
+	v := os.Getenv(name)
+	if v == "" {
+		if os.Getenv("INTEGRATION_REQUIRED") == "1" {
+			t.Fatalf("%s no definida con INTEGRATION_REQUIRED=1", name)
+		}
+		t.Skipf("%s no definida", name)
+	}
+	return v
+}
+
 func setup(t *testing.T) *env {
 	t.Helper()
-	dsn := os.Getenv("SCHEDULER_TEST_DSN")
-	if dsn == "" {
-		t.Skip("SCHEDULER_TEST_DSN no definida")
-	}
+	dsn := integrationEnv(t, "SCHEDULER_TEST_DSN")
 	pool, err := pgxpool.New(context.Background(), dsn)
 	if err != nil {
 		t.Fatal(err)

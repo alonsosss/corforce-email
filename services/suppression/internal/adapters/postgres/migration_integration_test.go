@@ -4,7 +4,6 @@ package postgres
 
 import (
 	"context"
-	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -35,10 +34,7 @@ func snapshotEntries(t *testing.T, ctx context.Context, pool *pgxpool.Pool) []st
 // perder ni cambiar ninguna fila, las migraciones se pueden repetir, y despues la direccion
 // admite una fila por causa. Corre en una base temporal que crea y borra la propia prueba.
 func TestMigracionAUnaFilaPorCausaConservaLosDatos(t *testing.T) {
-	dsn := os.Getenv("SUPPRESSION_TEST_DSN")
-	if dsn == "" {
-		t.Skip("SUPPRESSION_TEST_DSN no definido")
-	}
+	dsn := integrationEnv(t, "SUPPRESSION_TEST_DSN")
 	ctx := context.Background()
 	admin, err := pgx.Connect(ctx, dsn)
 	if err != nil {

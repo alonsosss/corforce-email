@@ -141,3 +141,8 @@ contratos de eventos, secretos, scaffold) y `make clean-copy`. Con docker: `make
 (con `-race`) y `make e2e`, que levanta Postgres, NATS y Redis desechables, compila los
 servicios integrados y recorre la plataforma de punta a punta con comprobaciones que
 fallan: un servicio nuevo que otro consume se añade a `ops/e2e/run.sh` en la misma tarea.
+`make test-integration` (también un job de CI) corre las pruebas `//go:build integration`
+contra un Postgres y un Redis desechables, con una base por variable `*_TEST_DSN` y los
+paquetes en serie; una prueba que se salta cuenta como fallo. Una prueba de integración
+nueva aplica ella misma sus migraciones (dos veces, en su base) y su variable se declara en
+`ops/scaffold/test-integration.sh`, o el job falla.

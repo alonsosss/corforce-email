@@ -25,7 +25,8 @@ en `migrations/cell/canonical/<name>/` en vez de `tenant/`.
 | Script | Regla |
 |---|---|
 | `validate.sh` | Puertos sin colisión; todo módulo gateado en `routes.json` tiene permisos sembrados; delega en coupling, streams, base-images y sql-arity |
-| `check-migrations.sh` | Migraciones canónicas idempotentes (por sentencia), sin depender de esquemas creados después, sin redefinir vistas que otra amplía. `CANON_DIR` elige empresa o celda |
+| `check-migrations.sh` | Migraciones idempotentes (por sentencia, siembras con `ON CONFLICT` o `NOT EXISTS`), sin depender de esquemas creados después, sin redefinir vistas que otra amplía. Revisa empresa, celda y registro; `CANON_DIR` acota a uno |
+| `test-integration.sh` | `make test-integration` y el job `integration` de CI: pruebas `//go:build integration` contra Postgres y Redis desechables, una base por variable `*_TEST_DSN`, paquetes en serie, y falla si una prueba se salta o lee una variable que el script no define |
 | `check-migration-drops.sh` | Un `DROP CONSTRAINT IF EXISTS` con nombre mal escrito no falla: se detecta |
 | `check-coupling.sh` | Un servicio no lee tablas de otro esquema; solo vistas `v_*`. Escrituras ajenas se vigilan aparte |
 | `check-streams.sh` | Dos streams de JetStream no se solapan en subjects |

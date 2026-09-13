@@ -9,6 +9,10 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
+	"sort"
+	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -17,25 +21,82 @@ import (
 	"github.com/alonsosss/corforce-email/services/billing/internal/app"
 	"github.com/alonsosss/corforce-email/services/billing/internal/domain"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/shopspring/decimal"
 )
 
 var ctx = context.Background()
 
-// BILLING_TEST_DSN apunta a un registro con migrations/registry/001, 003, 004, 013 y 014.
+// BILLING_TEST_DSN apunta a una base desechable. La prueba le aplica dos veces todas las
+// migraciones del registro, donde vive billing (013 y 014, sobre 001, 003 y 004).
 func testDB(t *testing.T) *pgxpool.Pool {
 	t.Helper()
-	dsn := os.Getenv("BILLING_TEST_DSN")
-	if dsn == "" {
-		t.Skip("BILLING_TEST_DSN no definido")
-	}
+	dsn := integrationEnv(t, "BILLING_TEST_DSN")
 	pool, err := pgxpool.New(ctx, dsn)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(pool.Close)
+	applyRegistryMigrationsTwice(t, dsn)
 	return pool
+}
+
+// integrationEnv devuelve la variable de entorno que apunta a la infraestructura de la
+// prueba. Sin ella la prueba se salta, salvo con INTEGRATION_REQUIRED=1 (make
+// test-integration y CI): ahi es un fallo, porque un salto esconderia que no llego.
+func integrationEnv(t *testing.T, name string) string {
+	t.Helper()
+	v := os.Getenv(name)
+	if v == "" {
+		if os.Getenv("INTEGRATION_REQUIRED") == "1" {
+			t.Fatalf("%s no definida con INTEGRATION_REQUIRED=1", name)
+		}
+		t.Skipf("%s no definida", name)
+	}
+	return v
+}
+
+// applyRegistryMigrationsTwice recorre dos veces el registro completo en orden numerico: la
+// segunda pasada demuestra que cada migracion tolera re-ejecutarse. Corre en una conexion
+// propia que conserva hasta el final de la prueba el candado asesor que toman tambien
+// access-control e identity (otro paquete que migre la misma base mientras esta siembra
+// provoca bloqueos mutuos entre el DDL y los INSERT), sin quitarle conexiones al pool.
+func applyRegistryMigrationsTwice(t *testing.T, dsn string) {
+	t.Helper()
+	dir := filepath.Join("..", "..", "..", "..", "..", "migrations", "registry")
+	files, err := filepath.Glob(filepath.Join(dir, "*.sql"))
+	if err != nil || len(files) == 0 {
+		t.Fatalf("migraciones del registro en %s: %v", dir, err)
+	}
+	order := func(path string) int {
+		n, convErr := strconv.Atoi(strings.SplitN(filepath.Base(path), "_", 2)[0])
+		if convErr != nil {
+			t.Fatalf("migracion sin numero: %s", path)
+		}
+		return n
+	}
+	sort.Slice(files, func(i, j int) bool { return order(files[i]) < order(files[j]) })
+
+	conn, err := pgx.Connect(ctx, dsn)
+	if err != nil {
+		t.Fatalf("conexion de migracion: %v", err)
+	}
+	t.Cleanup(func() { _ = conn.Close(context.Background()) })
+	if _, err := conn.Exec(ctx, `SELECT pg_advisory_lock(hashtext('registry-migrations-it'))`); err != nil {
+		t.Fatalf("candado: %v", err)
+	}
+	for pass := 1; pass <= 2; pass++ {
+		for _, f := range files {
+			sql, err := os.ReadFile(f)
+			if err != nil {
+				t.Fatalf("leer %s: %v", f, err)
+			}
+			if _, err := conn.Exec(ctx, string(sql)); err != nil {
+				t.Fatalf("pasada %d, %s: %v", pass, filepath.Base(f), err)
+			}
+		}
+	}
 }
 
 type clock struct {

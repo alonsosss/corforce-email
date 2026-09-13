@@ -4,7 +4,6 @@ package postgres
 
 import (
 	"context"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -37,10 +36,7 @@ func (b *busFalso) PublishPersistent(_ string, evt events.Event) error {
 // outbox en la misma transaccion; un fallo al encolar no deja ninguna; y el rele entrega
 // el evento con el id de la fila, que es la clave de deduplicacion de los consumidores.
 func TestOutboxEnLaMismaTransaccion(t *testing.T) {
-	dsn := os.Getenv("MAIL_DIRECTORY_TEST_DSN")
-	if dsn == "" {
-		t.Skip("MAIL_DIRECTORY_TEST_DSN no definida")
-	}
+	dsn := integrationEnv(t, "MAIL_DIRECTORY_TEST_DSN")
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	pool, err := pgxpool.New(ctx, dsn)

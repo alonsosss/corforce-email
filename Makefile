@@ -1,4 +1,4 @@
-.PHONY: all build build-svc clean dev dev-down dev-logs dev-db test lint tidy deps
+.PHONY: all build build-svc clean dev dev-down dev-logs dev-db test test-integration lint tidy deps
 
 PROJECT=core-force-mail
 GO=go
@@ -33,6 +33,12 @@ dev-db:
 test:
 	$(GO) test ./... -race -count=1
 
+# make test-integration  (pruebas //go:build integration contra Postgres y Redis desechables:
+# una base por paquete, paquetes en serie, y una prueba que se salta cuenta como fallo;
+# necesita docker. IT_PACKAGES acota los paquetes, IT_KEEP=1 deja los contenedores)
+test-integration:
+	@bash ops/scaffold/test-integration.sh
+
 lint:
 	golangci-lint run ./...
 
@@ -61,10 +67,10 @@ gen-events:
 # ── Migraciones ──────────────────────────────────────────────────────────────
 .PHONY: check-migrations check-migration-drops
 
-# make check-migrations  (las migraciones canonicas nuevas deben tolerar re-ejecutarse)
+# make check-migrations  (las migraciones de empresa, celda y registro deben tolerar
+# re-ejecutarse y no depender de un esquema que se crea despues)
 check-migrations:
 	@bash ops/scaffold/check-migrations.sh
-	@CANON_DIR=migrations/cell/canonical bash ops/scaffold/check-migrations.sh
 
 # make check-migration-drops  (una migracion que dice reemplazar una restriccion y erra el
 # nombre no falla: deja la vieja en pie y figura como aplicada)

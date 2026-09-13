@@ -6,6 +6,8 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -32,18 +34,50 @@ func (p *publicadorFalso) PublishPersistent(subject string, evt events.Event) er
 	return nil
 }
 
-// OUTBOX_TEST_DSN apunta a una base con migrations/*/platform/00_outbox.sql aplicada.
-func TestReleVaciaLaOutboxYReintentaLoQueFalla(t *testing.T) {
-	dsn := os.Getenv("OUTBOX_TEST_DSN")
-	if dsn == "" {
-		t.Skip("OUTBOX_TEST_DSN no definido")
+// integrationEnv devuelve la variable de entorno que apunta a la infraestructura de la
+// prueba. Sin ella la prueba se salta, salvo con INTEGRATION_REQUIRED=1 (make
+// test-integration y CI): ahi es un fallo, porque un salto esconderia que no llego.
+func integrationEnv(t *testing.T, name string) string {
+	t.Helper()
+	v := os.Getenv(name)
+	if v == "" {
+		if os.Getenv("INTEGRATION_REQUIRED") == "1" {
+			t.Fatalf("%s no definida con INTEGRATION_REQUIRED=1", name)
+		}
+		t.Skipf("%s no definida", name)
 	}
+	return v
+}
+
+// outboxDB abre OUTBOX_TEST_DSN, una base desechable, y le aplica dos veces la outbox de
+// plataforma (la misma en registro, celda y empresa): la segunda pasada demuestra que
+// tolera re-ejecutarse.
+func outboxDB(t *testing.T) *pgxpool.Pool {
+	t.Helper()
+	dsn := integrationEnv(t, "OUTBOX_TEST_DSN")
 	ctx := context.Background()
 	pool, err := pgxpool.New(ctx, dsn)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer pool.Close()
+	t.Cleanup(pool.Close)
+	_, file, _, _ := runtime.Caller(0)
+	migration := filepath.Join(filepath.Dir(file), "..", "..", "migrations", "tenant", "canonical", "platform", "00_outbox.sql")
+	sql, err := os.ReadFile(migration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for pass := 1; pass <= 2; pass++ {
+		if _, err := pool.Exec(ctx, string(sql)); err != nil {
+			t.Fatalf("outbox de plataforma, pasada %d: %v", pass, err)
+		}
+	}
+	return pool
+}
+
+func TestReleVaciaLaOutboxYReintentaLoQueFalla(t *testing.T) {
+	ctx := context.Background()
+	pool := outboxDB(t)
 	if _, err := pool.Exec(ctx, "DELETE FROM platform.event_outbox"); err != nil {
 		t.Fatal(err)
 	}
@@ -96,16 +130,8 @@ func TestReleVaciaLaOutboxYReintentaLoQueFalla(t *testing.T) {
 // Con RunExclusive solo vacia quien tiene el cerrojo, y la poda por retencion corre en la
 // misma vuelta.
 func TestRunExclusiveSoloVaciaConElCerrojo(t *testing.T) {
-	dsn := os.Getenv("OUTBOX_TEST_DSN")
-	if dsn == "" {
-		t.Skip("OUTBOX_TEST_DSN no definido")
-	}
 	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer pool.Close()
+	pool := outboxDB(t)
 	if _, err := pool.Exec(ctx, "DELETE FROM platform.event_outbox"); err != nil {
 		t.Fatal(err)
 	}

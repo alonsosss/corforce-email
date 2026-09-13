@@ -5,7 +5,11 @@ package postgres
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
+	"path/filepath"
+	"runtime"
+	"sort"
 	"sync"
 	"testing"
 	"time"
@@ -17,14 +21,61 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// ANALYTICS_TEST_DSN apunta a una base con migrations/tenant/canonical/analytics/01_analytics.sql
-// aplicada. Cada prueba usa una empresa nueva, asi que la base puede reutilizarse.
+var (
+	migrateOnce sync.Once
+	migrateErr  error
+)
+
+// integrationEnv devuelve la variable de entorno que apunta a la infraestructura de la
+// prueba. Sin ella la prueba se salta, salvo con INTEGRATION_REQUIRED=1 (make
+// test-integration y CI): ahi es un fallo, porque un salto esconderia que no llego.
+func integrationEnv(t *testing.T, name string) string {
+	t.Helper()
+	v := os.Getenv(name)
+	if v == "" {
+		if os.Getenv("INTEGRATION_REQUIRED") == "1" {
+			t.Fatalf("%s no definida con INTEGRATION_REQUIRED=1", name)
+		}
+		t.Skipf("%s no definida", name)
+	}
+	return v
+}
+
+// applyMigrationsTwice aplica en orden, dos veces, las migraciones de cada directorio
+// (relativo a la raiz del repositorio): la segunda pasada demuestra que toleran
+// re-ejecutarse.
+func applyMigrationsTwice(ctx context.Context, pool *pgxpool.Pool, dirs ...string) error {
+	_, file, _, _ := runtime.Caller(0)
+	root := filepath.Join(filepath.Dir(file), "..", "..", "..", "..", "..")
+	var files []string
+	for _, dir := range dirs {
+		found, err := filepath.Glob(filepath.Join(root, dir, "*.sql"))
+		if err != nil || len(found) == 0 {
+			return fmt.Errorf("migraciones de %s: %v", dir, err)
+		}
+		sort.Strings(found)
+		files = append(files, found...)
+	}
+	for pass := 1; pass <= 2; pass++ {
+		for _, f := range files {
+			sql, err := os.ReadFile(f)
+			if err != nil {
+				return err
+			}
+			if _, err := pool.Exec(ctx, string(sql)); err != nil {
+				return fmt.Errorf("pasada %d, %s: %w", pass, filepath.Base(f), err)
+			}
+		}
+	}
+	return nil
+}
+
+// testCtx abre ANALYTICS_TEST_DSN, una base desechable, y la primera vez le aplica las
+// migraciones de analytics. Cada prueba usa una empresa nueva, asi que la base puede
+// reutilizarse.
 func testCtx(t *testing.T) (context.Context, *pgxpool.Pool) {
 	t.Helper()
-	dsn := os.Getenv("ANALYTICS_TEST_DSN")
-	if dsn == "" {
-		t.Skip("ANALYTICS_TEST_DSN no definido")
-	}
+	dsn := integrationEnv(t, "ANALYTICS_TEST_DSN")
 	cfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
 		t.Fatal(err)
@@ -35,6 +86,12 @@ func testCtx(t *testing.T) (context.Context, *pgxpool.Pool) {
 		t.Fatal(err)
 	}
 	t.Cleanup(pool.Close)
+	migrateOnce.Do(func() {
+		migrateErr = applyMigrationsTwice(context.Background(), pool, "migrations/tenant/canonical/analytics")
+	})
+	if migrateErr != nil {
+		t.Fatalf("migraciones: %v", migrateErr)
+	}
 	return db.WithPool(context.Background(), pool), pool
 }
 

@@ -37,12 +37,9 @@ import (
 //	CELL_ROLE_TEST_CONTAINER=cfm-cellrole-pg \
 //	  go test -tags integration -run TestCellServiceRole ./services/organization/internal/adapters/postgres/
 func TestCellServiceRoleIsolation(t *testing.T) {
-	dsn := os.Getenv("CELL_ROLE_TEST_DSN")
-	if dsn == "" {
-		t.Skip("CELL_ROLE_TEST_DSN no definida")
-	}
+	dsn := integrationEnv(t, "CELL_ROLE_TEST_DSN")
 	if _, err := exec.LookPath("python3"); err != nil {
-		t.Skip("sin python3: el script calcula con el el verificador SCRAM")
+		skipIntegration(t, "sin python3: el script calcula con el el verificador SCRAM")
 	}
 	shimDir := psqlShim(t)
 
@@ -246,9 +243,31 @@ func psqlShim(t *testing.T) string {
 		return dir
 	}
 	if _, err := exec.LookPath("psql"); err != nil {
-		t.Skip("sin psql ni CELL_ROLE_TEST_CONTAINER")
+		skipIntegration(t, "sin psql ni CELL_ROLE_TEST_CONTAINER")
 	}
 	return ""
+}
+
+// skipIntegration salta la prueba por falta de infraestructura, salvo con
+// INTEGRATION_REQUIRED=1 (make test-integration y CI): ahi es un fallo, porque un salto
+// esconderia que la prueba no corrio.
+func skipIntegration(t *testing.T, reason string) {
+	t.Helper()
+	if os.Getenv("INTEGRATION_REQUIRED") == "1" {
+		t.Fatalf("%s (INTEGRATION_REQUIRED=1)", reason)
+	}
+	t.Skip(reason)
+}
+
+// integrationEnv devuelve la variable de entorno que apunta a la infraestructura de la
+// prueba, o salta la prueba (falla con INTEGRATION_REQUIRED=1) si no esta.
+func integrationEnv(t *testing.T, name string) string {
+	t.Helper()
+	v := os.Getenv(name)
+	if v == "" {
+		skipIntegration(t, name+" no definida")
+	}
+	return v
 }
 
 func repoRoot(t *testing.T) string {

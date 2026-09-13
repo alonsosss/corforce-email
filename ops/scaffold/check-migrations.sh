@@ -9,14 +9,28 @@
 # Los archivos historicos que no cumplen viven en el allowlist (sus tenants ya los tienen
 # registrados y no se re-ejecutan). Cualquier archivo NUEVO que no cumpla falla el CI.
 #
-# Uso: bash ops/scaffold/check-migrations.sh
+# Las mismas reglas valen para los tres planos: empresa (por servicio), celda (por
+# servicio) y registro (un solo directorio numerado). El registro se aplica en cada
+# arranque del plano de control y en cada restauracion, asi que una migracion suya que no
+# tolere re-ejecutarse deja al plano de control sin arrancar.
+#
+# Uso: bash ops/scaffold/check-migrations.sh                       # los tres planos
+#      CANON_DIR=migrations/registry bash ops/scaffold/check-migrations.sh   # uno solo
 set -uo pipefail
 LC_ALL=C
 export LC_ALL
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-# Por defecto las canonicas por empresa; CANON_DIR=migrations/cell/canonical para las de celda.
-CANON_DIR="${CANON_DIR:-$ROOT/migrations/tenant/canonical}"
+
+if [ -z "${CANON_DIR:-}" ]; then
+  rc=0
+  for plano in migrations/tenant/canonical migrations/cell/canonical migrations/registry; do
+    echo "== $plano"
+    CANON_DIR="$ROOT/$plano" bash "${BASH_SOURCE[0]}" || rc=1
+  done
+  exit "$rc"
+fi
+case "$CANON_DIR" in /*) ;; *) CANON_DIR="$ROOT/$CANON_DIR" ;; esac
 ALLOWLIST="$ROOT/ops/scaffold/migration-idempotency-allowlist.txt"
 
 [ -d "$CANON_DIR" ] || { echo "No existe $CANON_DIR"; exit 1; }
@@ -36,6 +50,11 @@ ALLOWLIST="$ROOT/ops/scaffold/migration-idempotency-allowlist.txt"
 # ademas MEJOR que el CREATE OR REPLACE que este guardarrail recomendaba: replace falla si
 # cambia la lista de columnas (42P16), que es justo el fallo que persigue el guardarrail 3
 # de mas abajo. Para un TIPO es la unica forma, porque no admite OR REPLACE.
+#
+# Un INSERT suelto tambien falla al re-ejecutarse (clave duplicada) o, sin clave unica,
+# duplica la fila en silencio. Es el riesgo propio de las siembras del registro (permisos,
+# roles, planes): se exige ON CONFLICT o una guarda NOT EXISTS. Los INSERT dentro de
+# funciones (triggers de auditoria) quedan fuera con el resto de cuerpos $$.
 detect() {
   perl -0777 -ne '
     s/\$\$.*?\$\$/ /gs;               # cuerpos dollar-quoted
@@ -69,7 +88,8 @@ detect() {
        || $stmt =~ /^CREATE\s+VIEW\s+/i
        || ($stmt =~ /^ALTER\s+TABLE\s+(?:ONLY\s+)?\S+\s+ADD\s+(?!COLUMN\s+IF\s+NOT\s+EXISTS\b)/i
             && !($stmt =~ /ADD\s+CONSTRAINT\s+(\w+)/i && $dropped{lc $1}))
-       || $stmt =~ /^DROP\s+(?:TABLE|SCHEMA|INDEX|TYPE|VIEW|MATERIALIZED\s+VIEW)\s+(?!IF\s+EXISTS\b)/i) {
+       || $stmt =~ /^DROP\s+(?:TABLE|SCHEMA|INDEX|TYPE|VIEW|MATERIALIZED\s+VIEW)\s+(?!IF\s+EXISTS\b)/i
+       || ($stmt =~ /^INSERT\s+INTO\s/i && $stmt !~ /\bON\s+CONFLICT\b/i && $stmt !~ /\bNOT\s+EXISTS\b/i)) {
         print "1"; exit 0;
       }
     }
@@ -107,8 +127,12 @@ EXISTS. Para constraints y tipos, que no admiten IF NOT EXISTS:
     ALTER TABLE x ADD CONSTRAINT y ...;
   EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
-El runner de organization aplica estas migraciones a cada tenant: una que no tolere
-re-ejecutarse deja al tenant sin las migraciones posteriores.
+Para siembras: INSERT ... ON CONFLICT DO NOTHING (o DO UPDATE), o INSERT ... SELECT ...
+WHERE NOT EXISTS (...).
+
+El runner de organization aplica estas migraciones a cada tenant, y el plano de control
+las del registro en cada arranque: una que no tolere re-ejecutarse deja esa base sin las
+migraciones posteriores.
 EOF
   exit 1
 fi
@@ -134,14 +158,25 @@ done < "$ALLOWLIST"
 # el tipo de fallo que solo aparece al provisionar un tenant nuevo, cuando ya
 # esta en produccion. Una guarda con to_regclass exime al archivo, porque
 # entonces comprueba la tabla en vez de darla por hecha.
+#
+# El recorrido es recursivo: empresa y celda tienen un directorio por servicio, el
+# registro uno solo; en los tres el orden es el numero del nombre del archivo.
 python3 - "$CANON_DIR" <<'PYEOF'
 import glob, os, re, sys
 
-canon = sorted(glob.glob(os.path.join(sys.argv[1], "*", "*.sql")))
+canon = sorted(glob.glob(os.path.join(sys.argv[1], "**", "*.sql"), recursive=True))
+
+# Sin comentarios: un comentario nombra tablas de otros esquemas sin usarlas (la 001 del
+# registro documenta que permission_modules son modulos de access_control.permissions) y
+# no es una dependencia.
+def codigo(f):
+    txt = open(f, encoding="utf-8", errors="ignore").read()
+    return re.sub(r"/\*.*?\*/", " ", re.sub(r"--[^\n]*", "", txt), flags=re.S)
+
 creado = {}
 for f in canon:
     n = int(re.match(r"(\d+)", os.path.basename(f)).group(1))
-    txt = open(f, encoding="utf-8", errors="ignore").read()
+    txt = codigo(f)
     for m in re.finditer(r"CREATE SCHEMA(?:\s+IF NOT EXISTS)?\s+([a-z_]+)", txt, re.I):
         e = m.group(1).lower()
         creado[e] = min(creado.get(e, 10**9), n)
@@ -150,7 +185,7 @@ fallos = []
 for f in canon:
     base = os.path.basename(f)
     n = int(re.match(r"(\d+)", base).group(1))
-    txt = open(f, encoding="utf-8", errors="ignore").read()
+    txt = codigo(f)
     if "to_regclass" in txt:
         continue
     for e in sorted({m.group(1).lower() for m in re.finditer(r"\b([a-z_]+)\.[a-z_]+", txt)}):
@@ -183,11 +218,11 @@ orden=$?
 # en la relacion entre dos. Una redefinicion envuelta en un bloque dollar-quoted queda
 # exenta: ahi la guarda decide si toca la vista o la deja como esta.
 VIEW_ALLOWLIST="$ROOT/ops/scaffold/migration-view-allowlist.txt"
-python3 - "$CANON_DIR" "$VIEW_ALLOWLIST" <<'PYEOF'
+python3 - "$CANON_DIR" "$VIEW_ALLOWLIST" "$ROOT" <<'PYEOF'
 import glob, os, re, sys
 
-canon = sorted(glob.glob(os.path.join(sys.argv[1], "*", "*.sql")))
-raiz = os.path.abspath(os.path.join(sys.argv[1], "..", "..", ".."))
+canon = sorted(glob.glob(os.path.join(sys.argv[1], "**", "*.sql"), recursive=True))
+raiz = sys.argv[3]
 try:
     eximidos = {l.strip() for l in open(sys.argv[2], encoding="utf-8")
                if l.strip() and not l.startswith("#")}

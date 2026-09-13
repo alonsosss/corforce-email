@@ -24,12 +24,24 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// integrationEnv devuelve la variable de entorno que apunta a la infraestructura de la
+// prueba. Sin ella la prueba se salta, salvo con INTEGRATION_REQUIRED=1 (make
+// test-integration y CI): ahi es un fallo, porque un salto esconderia que no llego.
+func integrationEnv(t *testing.T, name string) string {
+	t.Helper()
+	v := os.Getenv(name)
+	if v == "" {
+		if os.Getenv("INTEGRATION_REQUIRED") == "1" {
+			t.Fatalf("%s no definida con INTEGRATION_REQUIRED=1", name)
+		}
+		t.Skipf("%s no definida", name)
+	}
+	return v
+}
+
 func setup(t *testing.T) (context.Context, *Repository) {
 	t.Helper()
-	dsn := os.Getenv("DOMAIN_SERVICE_TEST_DSN")
-	if dsn == "" {
-		t.Skip("DOMAIN_SERVICE_TEST_DSN no definido")
-	}
+	dsn := integrationEnv(t, "DOMAIN_SERVICE_TEST_DSN")
 	ctx := context.Background()
 	pool, err := pgxpool.New(ctx, dsn)
 	if err != nil {

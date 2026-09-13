@@ -21,12 +21,24 @@ import (
 	"go.uber.org/zap"
 )
 
+// integrationEnv devuelve la variable de entorno que apunta a la infraestructura de la
+// prueba. Sin ella la prueba se salta, salvo con INTEGRATION_REQUIRED=1 (make
+// test-integration y CI): ahi es un fallo, porque un salto esconderia que no llego.
+func integrationEnv(t *testing.T, name string) string {
+	t.Helper()
+	v := os.Getenv(name)
+	if v == "" {
+		if os.Getenv("INTEGRATION_REQUIRED") == "1" {
+			t.Fatalf("%s no definida con INTEGRATION_REQUIRED=1", name)
+		}
+		t.Skipf("%s no definida", name)
+	}
+	return v
+}
+
 func redisForTest(t *testing.T) *redis.Client {
 	t.Helper()
-	addr := os.Getenv("REDIS_TEST_ADDR")
-	if addr == "" {
-		t.Skip("REDIS_TEST_ADDR no definido")
-	}
+	addr := integrationEnv(t, "REDIS_TEST_ADDR")
 	rdb := redis.NewClient(&redis.Options{Addr: addr, Password: os.Getenv("REDIS_TEST_PASSWORD")})
 	t.Cleanup(func() { _ = rdb.Close() })
 	if err := rdb.Ping(context.Background()).Err(); err != nil {

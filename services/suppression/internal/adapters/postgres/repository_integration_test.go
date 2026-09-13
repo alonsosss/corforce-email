@@ -50,15 +50,27 @@ func applyFiles(t *testing.T, ctx context.Context, pool *pgxpool.Pool, files ...
 	}
 }
 
+// integrationEnv devuelve la variable de entorno que apunta a la infraestructura de la
+// prueba. Sin ella la prueba se salta, salvo con INTEGRATION_REQUIRED=1 (make
+// test-integration y CI): ahi es un fallo, porque un salto esconderia que no llego.
+func integrationEnv(t *testing.T, name string) string {
+	t.Helper()
+	v := os.Getenv(name)
+	if v == "" {
+		if os.Getenv("INTEGRATION_REQUIRED") == "1" {
+			t.Fatalf("%s no definida con INTEGRATION_REQUIRED=1", name)
+		}
+		t.Skipf("%s no definida", name)
+	}
+	return v
+}
+
 // SUPPRESSION_TEST_DSN apunta a una base de pruebas (vacia o ya migrada). La prueba aplica
 // platform/00_outbox.sql y todas las migraciones de suppression DOS veces, que es lo que
 // garantiza que toleran re-ejecutarse. Cada prueba usa una empresa nueva.
 func testPool(t *testing.T) (*pgxpool.Pool, context.Context) {
 	t.Helper()
-	dsn := os.Getenv("SUPPRESSION_TEST_DSN")
-	if dsn == "" {
-		t.Skip("SUPPRESSION_TEST_DSN no definido")
-	}
+	dsn := integrationEnv(t, "SUPPRESSION_TEST_DSN")
 	ctx := context.Background()
 	pool, err := pgxpool.New(ctx, dsn)
 	if err != nil {

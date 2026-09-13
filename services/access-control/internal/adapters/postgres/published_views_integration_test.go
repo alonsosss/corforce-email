@@ -39,10 +39,7 @@ const (
 
 func registryDB(t *testing.T) *pgxpool.Pool {
 	t.Helper()
-	dsn := os.Getenv("ACCESS_CONTROL_TEST_DSN")
-	if dsn == "" {
-		t.Skip("ACCESS_CONTROL_TEST_DSN no definido")
-	}
+	dsn := integrationEnv(t, "ACCESS_CONTROL_TEST_DSN")
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 	pool, err := pgxpool.New(ctx, dsn)
@@ -97,6 +94,21 @@ func applyRegistryMigrationsTwice(ctx context.Context, t *testing.T, pool *pgxpo
 			}
 		}
 	}
+}
+
+// integrationEnv devuelve la variable de entorno que apunta a la infraestructura de la
+// prueba. Sin ella la prueba se salta, salvo con INTEGRATION_REQUIRED=1 (make
+// test-integration y CI): ahi es un fallo, porque un salto esconderia que no llego.
+func integrationEnv(t *testing.T, name string) string {
+	t.Helper()
+	v := os.Getenv(name)
+	if v == "" {
+		if os.Getenv("INTEGRATION_REQUIRED") == "1" {
+			t.Fatalf("%s no definida con INTEGRATION_REQUIRED=1", name)
+		}
+		t.Skipf("%s no definida", name)
+	}
+	return v
 }
 
 type registryFixture struct {
