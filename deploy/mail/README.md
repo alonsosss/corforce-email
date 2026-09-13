@@ -183,6 +183,12 @@ por `(username, real_rip)` y por `real_rip` (`MAIL_AUTH_MAX_FAILURES` 10,
 
 ## Contrato HTTP de `mail-policy`
 
+Lo sirve el servicio Go `mail-security` (`services/mail-security`): sus listeners 8081 y
+9081 van en el mismo contenedor, unido a la red `mail-engines` con el alias `mail-policy`,
+de modo que los ficheros de Rspamd y Postfix copiados no cambian. Sin gateway ni JWT: la
+unica autenticacion es la IP de origen (`MAIL_ENGINE_ALLOWED_CIDRS`, por defecto RFC1918 y
+loopback) y el cuerpo va acotado.
+
 Todos los endpoints son HTTP plano en la red interna. Los cuerpos de respuesta
 son `text/plain` salvo donde se indica. Las direcciones llegan con la etiqueta
 `+tag` incluida; el servicio debe quitarla (`local+tag@d` -> `local@d`) como
@@ -193,7 +199,7 @@ hacia el PHP.
 | Ruta | Quien la llama | Peticion | Respuesta |
 |---|---|---|---|
 | `/aliasexp` | Rspamd, simbolo `TAG_MOO` (prefiltro, prioridad 19) | `POST`, cuerpo vacio, cabecera `Rcpt: <direccion>` | `200` con el username del buzon final **solo si** la expansion termina en exactamente un buzon; `200` vacio en cualquier otro caso (varios buzones, dominio ajeno, alias `postmaster`). `502` error SQL, `504` sin Redis |
-| `/bcc` | Rspamd, simbolo `BCC` (postfiltro, prioridad 20); una llamada por destinatario con `Rcpt:` y una por remitente con `From:` | `POST`, cuerpo vacio, cabecera `Rcpt:` o `From:` | `201` + direccion BCC cuando `mail.bcc_maps` tiene fila activa (`type='rcpt'` con `local_dest = Rcpt`, o `type='sender'` con `local_dest = From`); `200` vacio si no hay. Rspamd solo actua con `201`; la copia sale por `postfix:591` |
+| `/bcc` | Rspamd, simbolo `BCC` (postfiltro, prioridad 20); una llamada por destinatario con `Rcpt:` y una por remitente con `From:` | `POST`, cuerpo vacio, cabecera `Rcpt:` o `From:` | `201` + direccion BCC cuando la vista `mail.v_routing_bcc_maps` tiene fila activa (`type='rcpt'` con `local_dest = Rcpt`, o `type='sender'` con `local_dest = From`); `200` vacio si no hay. Rspamd solo actua con `201`; la copia sale por `postfix:591` |
 | `/footer` | Rspamd, simbolo `DOMAIN_WIDE_FOOTER` (prioridad 1) | `POST`, cabeceras `Domain:` (dominio del envelope-from, ya resuelto alias -> target), `Username:` (usuario SASL), `From:` (envelope-from) | `200` JSON `{"html":"","plain":"","skip_replies":0,"vars":{}}` cuando no hay pie; con pie: `{"html","plain","skip_replies","vars":{atributo: valor}}` (`mbox_exclude` y `alias_domain_exclude` se evaluan en el servidor). `502` error |
 | `/forwardinghosts?host=IP` | Postfix, tabla `tcp:127.0.0.1:10027` via `whitelist_forwardinghosts.sh` (postscreen_access_list) | `GET` | cuerpo `200 PERMIT` si la IP cae en algun CIDR de la hash Redis `WHITELISTED_FWD_HOST`, si no `200 DUNNO` (protocolo tcp_table de Postfix, siempre HTTP 200) |
 | `/forwardinghosts` (sin `host`) | Rspamd `greylist.conf` (`whitelisted_ip`) | `GET` | lista de CIDR, uno por linea, empezando siempre por `240.240.240.240` (mapa nunca vacio) |
@@ -203,7 +209,7 @@ hacia el PHP.
 
 | Ruta | Quien la llama | Peticion | Respuesta |
 |---|---|---|---|
-| `/pipe` | `metadata_exporter`, regla `QUARANTINE` (selector `reject_no_global_bl`: accion reject/add header/rewrite subject sin lista negra global) | `POST multipart/form-data`: campo `metadata` (JSON con `qid`, `subject`, `score`, `rcpt[]`, `user`, `ip`, `action`, `from`, `symbols[]`, `fuzzy[]`, `message_id`) y fichero `message` (RFC822 crudo) | `200` guardado; `400` partes ausentes o JSON invalido; `505` mensaje mayor que `Q_MAX_SIZE` MiB; `502` error resolviendo destinatarios; `503` error al insertar; `504` sin Redis. Expande cada rcpt hasta sus buzones finales (misma logica que `/aliasexp`), salta dominios de `Q_EXCLUDE_DOMAINS` y guarda una fila por buzon, recortando por buzon a `Q_RETENTION_SIZE` filas |
+| `/pipe` | `metadata_exporter`, regla `QUARANTINE` (selector `reject_no_global_bl`: accion reject/add header/rewrite subject sin lista negra global) | `POST multipart/form-data`: campo `metadata` (JSON con `qid`, `subject`, `score`, `rcpt[]`, `user`, `ip`, `action`, `from`, `symbols[]`, `fuzzy[]`, `message_id`) y fichero `message` (RFC822 crudo) | `200` guardado; `400` partes ausentes o JSON invalido; `505` mensaje mayor que `Q_MAX_SIZE` MiB; `502` error resolviendo destinatarios; `503` error al insertar (`504` no se da: `/pipe` no depende de Redis). Expande cada rcpt hasta sus buzones finales (misma logica que `/aliasexp`) y aplica los ajustes de la EMPRESA de cada buzon (`mail_security.quarantine_settings`: tamano, dominios excluidos, retencion); guarda una fila por buzon en `mail_security.quarantine` y recorta por buzon. `505` solo si ningun buzon lo guardo por tamano |
 | `/pipe_rl` | `metadata_exporter`, regla `RLINFO` (selector `ratelimited`, formato json) | `POST application/json`: `{rcpt[], from, user, symbols[{name, options[]}], qid, ip, message_id, header_subject[], header_from[]}` | `200`. El servidor extrae de `symbols[RATELIMITED].options` el texto `nombre(hash)` y hace `LPUSH RL_LOG` con `{time, rcpt, from, user, rl_info, rl_name, rl_hash, qid, ip, message_id, header_subject, header_from}` |
 
 `pushover` no se migra.
@@ -215,19 +221,19 @@ la plataforma y los motores. La plataforma escribe; los motores leen.
 
 | Clave | Tipo | Escribe | Lee | Contenido |
 |---|---|---|---|---|
-| `DOMAIN_MAP` | hash `dominio -> 1` | mail-directory | rspamd multimap (`RCPT_MAILCOW_DOMAIN`, `MAILCOW_DOMAIN_HEADER_FROM`), mail-policy | dominios y alias domains activos de la celda |
-| `WHITELISTED_FWD_HOST` | hash `cidr -> origen` | mail-directory | rspamd multimap, mail-policy `/forwardinghosts` | hosts de reenvio de confianza |
-| `RL_VALUE` | hash `buzon|dominio -> "N / 1h"` | mail-policy | rspamd `DYN_RL_CHECK` (lua) | ratelimits por objeto |
-| `SMTP_ALLOW_NETS_<usuario>` | hash `ip|cidr -> 1` | mail-policy | rspamd `SMTP_ACCESS` (lua) | redes desde las que puede enviar un usuario con `SMTP_LIMITED_ACCESS` |
-| `SMTP_LIMITED_ACCESS` | hash `usuario -> 1` | mail-policy | rspamd multimap | usuarios con acceso SMTP restringido |
-| `KEEP_SPAM` | hash `ip|cidr -> 1` | mail-policy | rspamd (lua, pre-result accept) | hosts cuyo spam no se filtra |
-| `RCPT_WANTS_SUBFOLDER_TAG`, `RCPT_WANTS_SUBJECT_TAG` | hash `buzon -> 1` | mail-directory | rspamd `TAG_MOO` | como entregar correo con `+tag` |
-| `DKIM_PRIV_KEYS` | hash `selector.dominio -> clave privada PEM` | mail-directory | rspamd `dkim_signing`, `arc` | claves DKIM |
-| `DKIM_SELECTORS` | hash `dominio -> selector` | mail-directory | rspamd | selector por dominio |
+| `DOMAIN_MAP` | hash `dominio -> 1` | mail-security (eventos `mail.domain.*`/`mail.alias_domain.*` y reconciliacion) | rspamd multimap (`RCPT_MAILCOW_DOMAIN`, `MAILCOW_DOMAIN_HEADER_FROM`), mail-policy | dominios y alias domains activos de la celda |
+| `WHITELISTED_FWD_HOST` | hash `cidr -> origen` | mail-security | rspamd multimap, mail-policy `/forwardinghosts` | hosts de reenvio de confianza |
+| `RL_VALUE` | hash `buzon|dominio -> "N / 1h"` | mail-security | rspamd `DYN_RL_CHECK` (lua) | ratelimits por objeto |
+| `SMTP_ALLOW_NETS_<usuario>` | hash `ip|cidr -> 1` | pendiente (nadie lo escribe aun) | rspamd `SMTP_ACCESS` (lua) | redes desde las que puede enviar un usuario con `SMTP_LIMITED_ACCESS` |
+| `SMTP_LIMITED_ACCESS` | hash `usuario -> 1` | pendiente (nadie lo escribe aun) | rspamd multimap | usuarios con acceso SMTP restringido |
+| `KEEP_SPAM` | hash `ip|cidr -> 1` | mail-security (host de reenvio con `filter_spam=false`) | rspamd (lua, pre-result accept) | hosts cuyo spam no se filtra |
+| `RCPT_WANTS_SUBFOLDER_TAG`, `RCPT_WANTS_SUBJECT_TAG` | hash `buzon -> 1` | mail-security | rspamd `TAG_MOO` | como entregar correo con `+tag` |
+| `DKIM_PRIV_KEYS` | hash `selector.dominio -> clave privada PEM` | mail-security (la recibe de domain-service por `PUT /internal/mail-security/dkim/{dominio}`; no la guarda en su base; en rotacion conviven dos selectores) | rspamd `dkim_signing`, `arc` | claves DKIM |
+| `DKIM_SELECTORS` | hash `dominio -> selector` | mail-security | rspamd | selector por dominio |
 | `QW_HTML`, `QW_SENDER`, `QW_SUBJ` | string | mail-directory | `quota_notify.py` (usuario ACL `quota_notify`, solo `GET/HGET ~QW_*`) | plantilla Jinja, remitente y asunto del aviso de cuota |
 | `QW_BCC` | hash `dominio -> {"bcc_rcpts":[...],"active":1}` | mail-directory | `quota_notify.py` | copias del aviso de cuota |
-| `Q_MAX_AGE` | string (dias) | mail-security | `clean_q_aged.sh` | retencion de la cuarentena |
-| `Q_MAX_SIZE`, `Q_EXCLUDE_DOMAINS`, `Q_RETENTION_SIZE` | string | mail-security | mail-policy `/pipe` | limites de cuarentena |
+| `Q_MAX_AGE` | string (dias) | mail-security | `clean_q_aged.sh` | TOPE de la celda (maximo entre empresas) |
+| `Q_MAX_SIZE` (MiB), `Q_EXCLUDE_DOMAINS` (JSON), `Q_RETENTION_SIZE` | string | mail-security | informativo | TOPE de la celda: maximo entre empresas y union de dominios excluidos. Los ajustes son por empresa y los aplica `/pipe` con la fila de la empresa; Redis admite un solo valor |
 | `F2B_OPTIONS`, `F2B_REGEX` | string JSON | netfilter (defaults) / mail-security | netfilter | opciones y regex de baneo |
 | `F2B_WHITELIST`, `F2B_BLACKLIST` | hash `cidr -> 1` | mail-security | netfilter | listas del cortafuegos |
 | `F2B_ACTIVE_BANS`, `F2B_PERM_BANS`, `F2B_QUEUE_UNBAN` | hash | netfilter (`F2B_QUEUE_UNBAN` tambien mail-security) | netfilter, watchdog | estado de baneos |
@@ -270,7 +276,7 @@ sin scheduler externo):
 | Tarea | Frecuencia | Que hace |
 |---|---|---|
 | `trim_logs.sh` | cada hora (`MASTER=y`) | recorta las listas de log en Redis a `LOG_LINES` |
-| `clean_q_aged.sh` | diaria (`MASTER=y`) | borra cuarentena mas antigua que `Q_MAX_AGE`; no hace nada mientras no exista `mail.quarantine` |
+| `clean_q_aged.sh` | diaria (`MASTER=y`) | busca `mail.quarantine`, que no existe (la cuarentena es `mail_security.quarantine`), y no hace nada. La poda por antiguedad la hace `mail-security` en su reconciliacion, con el `max_age_days` de cada empresa, sin dar a `mail_engine` permiso de borrado |
 | `maildir_gc.sh` | cada 30 min | purga `/var/vmail/_garbage` con mas de `MAILDIR_GC_TIME` min |
 | `sa-rules.sh` | diaria 03:00 | descarga reglas SpamAssassin de Heinlein y reinicia rspamd via dockerapi si cambian |
 | `optimize-fts.sh` | diaria | `doveadm fts optimize -A` si FTS activo |
@@ -289,11 +295,13 @@ deben versionarse.
 
 ## Pendientes
 
-* `mail.quarantine` (mail-security): la escribe `mail-policy /pipe`, la lee
-  `clean_q_aged.sh` (espera `id` y `created_at`) y falta `quarantine_notify.py`.
-* Tablas de politicas de Rspamd (`filterconf`, `settingsmap`, `domain_wide_footer`,
-  atributos personalizados de buzon): sin ellas `/settings` solo puede emitir la
-  regla `watchdog` y `/footer` el pie vacio.
+* Aviso de cuarentena (lo que hacia `quarantine_notify.py`): los ajustes existen
+  (`quarantine_settings.notify_*`) y la columna `notified`, pero nadie envia el aviso.
+* `/settings` no emite todavia `MAILCOW_INTERNAL_ALIAS` (aliases internos): la vista
+  publicada `mail.v_routing_aliases` no expone la columna `internal`.
+* `/footer`: `vars` lleva `from` y `domain`; faltan los atributos personalizados del
+  buzon (`mailboxes.attributes`), que `mail.v_routing_mailboxes` no publica.
+* `SMTP_LIMITED_ACCESS` y `SMTP_ALLOW_NETS_<usuario>`: sin tabla ni API que los alimente.
 * MTA-STS: sin tabla `mta_sts`, ACME no pide certificados `mta-sts.<dominio>`.
 * Contrasena de `mail_engine`: la fija operacion; llega solo por `MAIL_DB_PASSWORD`.
 * `SPAMHAUS_ASN_CHECK_URL`: sin servicio propio, usar `SPAMHAUS_DQS_KEY`.
