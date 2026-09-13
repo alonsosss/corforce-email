@@ -168,6 +168,10 @@ efectiva que sirve access-control (roles, permisos, modulos visibles, acciones d
 y usuarios con un permiso) solo cuenta roles activos, igual que el token de identity.
 Desactivar un rol retira sus permisos en cuanto caduca la cache de la politica.
 
+El superadmin opera el cortafuegos de otra celda nombrandola en `X-Target-Cell` (V,
+2026-09-13; Modelo 5.4): el gateway solo la acepta con el rol `superadmin` y la instancia
+solo le atiende rutas de plataforma, nunca datos de una empresa.
+
 ## 3. Permisos (V)
 
 Triple `(module, resource, action)` en `access_control.permissions`, con comodin `*` en
@@ -232,7 +236,8 @@ hasta que mail-directory lo emita). P: la verificacion contra Dovecot y Postfix 
 ## 6. Auditoria de acceso (V)
 
 Todo inicio, fallo, bloqueo, logout y revocacion publica `identity.*`; el gateway publica
-`audit.api.write` por cada escritura autenticada y `gateway.security.exfiltration` cuando
+`audit.api.write` por cada escritura autenticada y por cada peticion con celda destino
+(tambien lecturas y rechazadas), con `target_cell`, y `gateway.security.exfiltration` cuando
 un usuario supera el umbral de lecturas; `audit` los persiste en cadena de hashes por
 empresa y el detector genera eventos de seguridad (fuerza bruta, IP o dispositivo nuevo,
 viaje imposible, exfiltracion) que reconoce quien tiene `audit/security_events/acknowledge`
