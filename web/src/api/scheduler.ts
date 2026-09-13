@@ -2,12 +2,29 @@ import { api } from './client';
 import { endpoints } from './endpoints';
 import { fetchList, fetchPage } from './paging';
 import { cachedResource } from './resource';
-import type { Page, PageQuery } from './types';
+import { toPage, type Meta, type Page, type PageQuery } from './types';
 
 // DTOs de services/scheduler/internal/adapters/http/dto.go (jobDTO, executionDTO, taskDTO,
-// handlerDTO), meta.go (metaResponse) y los cuerpos de handler.go (createJobReq,
-// updateJobReq). El decodificador del servicio rechaza campos desconocidos: los cuerpos
-// llevan exactamente estos campos.
+// handlerDTO, tasksPageMeta), meta.go (metaResponse) y los cuerpos de handler.go
+// (createJobReq, updateJobReq). El decodificador del servicio rechaza campos desconocidos:
+// los cuerpos llevan exactamente estos campos.
+
+/**
+ * Reglas de un error de campo (error.details.rule), de domain/errors.go. La pantalla explica
+ * el error por la regla, con el limite de la meta; el mensaje del servidor solo sirve ante una
+ * regla que no esta aqui.
+ */
+export const FIELD_RULES = {
+  required: 'required',
+  tooLong: 'too_long',
+  outOfRange: 'out_of_range',
+  invalidFormat: 'invalid_format',
+  notAllowed: 'not_allowed',
+  neverMatches: 'never_matches',
+  duplicate: 'duplicate',
+} as const;
+
+export type FieldRule = (typeof FIELD_RULES)[keyof typeof FIELD_RULES];
 
 /**
  * Tipos de trabajo de domain/entities.go. Los que se ofrecen, y en que orden, los publica
@@ -136,11 +153,19 @@ export interface SchedulerMeta {
     default_per_page: number;
     max_per_page: number;
   };
-  tasks: {
-    /** GET /tasks lista las tareas pendientes que vencen dentro de esta ventana. */
-    pending_window_seconds: number;
-  };
 }
+
+/** Meta de GET /scheduler/tasks: la de toda pagina mas la ventana del listado. */
+interface TasksMeta extends Meta {
+  pending_window_seconds?: number;
+}
+
+/** Pagina de tareas pendientes con la ventana en la que vencen (null si no llego). */
+export interface TasksPage extends Page<ScheduledTask> {
+  pendingWindowSeconds: number | null;
+}
+
+const FALLBACK_TASKS_QUERY = { page: 1, per_page: 20 } as const;
 
 export interface CreateJobRequest {
   name: string;
@@ -186,9 +211,26 @@ export const schedulerApi = {
   cancelExecution: (id: string) => api.post<null>(endpoints.scheduler.cancelExecution(id)),
   retryExecution: (id: string) => api.post<JobExecution>(endpoints.scheduler.retryExecution(id)),
 
-  /** Sin paginar: las pendientes dentro de meta.tasks.pending_window_seconds. */
-  listPendingTasks: (): Promise<ScheduledTask[]> =>
-    fetchList<ScheduledTask>(endpoints.scheduler.tasks.collection),
+  /**
+   * Pendientes de la empresa del token, paginadas como los trabajos. La ventana en la que
+   * vencen llega en la meta de la respuesta, que se lee con tasks/read.
+   */
+  listPendingTasks: async (query: PageQuery): Promise<TasksPage> => {
+    const res = await api.get<ScheduledTask[]>(endpoints.scheduler.tasks.collection, {
+      params: { ...query },
+    });
+    const page = toPage(res, {
+      page: query.page ?? FALLBACK_TASKS_QUERY.page,
+      per_page: query.per_page ?? FALLBACK_TASKS_QUERY.per_page,
+    });
+    const window = (res.meta as TasksMeta | undefined)?.pending_window_seconds;
+    return {
+      ...page,
+      pendingWindowSeconds:
+        typeof window === 'number' && Number.isFinite(window) && window > 0 ? window : null,
+    };
+  },
+  /** 204 tambien si ya estaba cancelada; 404 si no es de la empresa; 409 si ya se ejecuto. */
   cancelTask: (id: string) => api.post<null>(endpoints.scheduler.cancelTask(id)),
 };
 

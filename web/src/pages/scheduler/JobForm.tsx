@@ -83,7 +83,10 @@ function Form({ job, onClose, onSaved, meta, handlers, title }: FormProps) {
       : await schedulerApi.createJob(toCreateRequest(current, jobType));
     onSaved(data);
   });
-  const fromServer = useMemo(() => serverFieldErrors(action.error), [action.error]);
+  const fromServer = useMemo(
+    () => serverFieldErrors(action.error, meta, selected),
+    [action.error, meta, selected],
+  );
   const errorOf = (field: JobField): string | undefined =>
     errors[field] ?? (touched.has(field) ? undefined : fromServer[field]);
 

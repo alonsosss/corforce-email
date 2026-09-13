@@ -1,5 +1,6 @@
 import { ERROR_CODES, errorDetail, isApiError } from '@/api/errors';
 import {
+  FIELD_RULES,
   PLATFORM_SCOPE,
   TENANT_SCOPE,
   type CreateJobRequest,
@@ -9,7 +10,7 @@ import {
   type SchedulerMeta,
   type UpdateJobRequest,
 } from '@/api/scheduler';
-import { t, type MessageKey } from '@/i18n';
+import { t, tEnum, type MessageKey } from '@/i18n';
 import { formatBytes } from '@/lib/quota';
 import { type FieldErrors } from '@/lib/validate';
 import { formatSeconds } from './schedulerFormat';
@@ -291,8 +292,9 @@ export function toUpdateRequest(draft: JobDraft, jobType: JobType): UpdateJobReq
   return toUpdateBody(draft, jobType);
 }
 
-/** Clave de error.details con la que el scheduler nombra el campo que fallo. */
+/** Claves de error.details con las que el scheduler nombra el campo y la regla que incumple. */
 const FIELD_DETAIL = 'field';
+const RULE_DETAIL = 'rule';
 
 const FORM_FIELDS: ReadonlySet<string> = new Set<JobField>([
   'name',
@@ -315,20 +317,147 @@ const REJECTED: Partial<Record<JobField, MessageKey>> = {
   timezone: 'scheduler.form.timezoneRejected',
 };
 
+/** Tope de longitud de un campo de texto, tal como lo publica la meta. */
+function maxLengthOf(field: JobField, meta: SchedulerMeta): number | null {
+  switch (field) {
+    case 'name':
+      return meta.limits.max_name_length;
+    case 'code':
+      return meta.limits.max_code_length;
+    case 'description':
+      return meta.limits.max_description_length;
+    case 'handler':
+      return meta.limits.max_handler_length;
+    case 'cron_expression':
+      return meta.cron.max_length;
+    case 'timezone':
+      return meta.timezone.max_length;
+    default:
+      return null;
+  }
+}
+
+function outOfRangeMessage(
+  field: JobField,
+  meta: SchedulerMeta,
+  handler: SchedulerHandler | null,
+): string {
+  const { limits } = meta;
+  switch (field) {
+    case 'interval_minutes':
+      return t('validation.range', {
+        min: limits.min_interval_minutes,
+        max: limits.max_interval_minutes,
+      });
+    case 'max_retries':
+      return t('validation.range', { min: 0, max: limits.max_retries });
+    case 'timeout_seconds':
+      return handler
+        ? t('scheduler.validation.timeoutHandlerMax', {
+            value: formatSeconds(maxTimeoutSeconds(meta, handler)),
+          })
+        : t('validation.range', { min: 0, max: limits.max_timeout_seconds });
+    case 'cron_expression':
+      return t('scheduler.validation.everyMin', {
+        min: formatSeconds(meta.cron.min_every_seconds),
+      });
+    default:
+      return t('scheduler.rule.out_of_range');
+  }
+}
+
+function invalidFormatMessage(field: JobField): string {
+  switch (field) {
+    case 'cron_expression':
+      return t('scheduler.validation.cronFormat');
+    case 'timezone':
+      return t('scheduler.validation.timezoneFormat');
+    case 'payload':
+      return t('scheduler.validation.payloadJson');
+    default:
+      return t('scheduler.validation.text');
+  }
+}
+
+function notAllowedMessage(field: JobField, meta: SchedulerMeta): string {
+  switch (field) {
+    case 'job_type':
+      return t('scheduler.validation.jobType', {
+        list: meta.job_types.map((type) => tEnum('scheduler.jobType', type)).join(', '),
+      });
+    case 'cron_expression':
+      return t('scheduler.validation.descriptor', { list: meta.cron.descriptors.join(', ') });
+    case 'timezone':
+      return t('scheduler.validation.timezoneUnknown');
+    case 'handler':
+      return t('scheduler.error.handlerNotAllowed');
+    default:
+      return t('scheduler.rule.not_allowed');
+  }
+}
+
 /**
- * Error del servidor asociado al campo que nombra error.details.field. Vacio si no nombra un
- * campo del formulario: entonces se muestra como error general.
+ * Texto de la regla (error.details.rule) que incumple el campo, con el limite de la meta o
+ * del manejador elegido. null si esta version no conoce la regla.
  */
-export function serverFieldErrors(err: unknown): JobErrors {
+function ruleMessage(
+  field: JobField,
+  rule: string,
+  meta: SchedulerMeta,
+  handler: SchedulerHandler | null,
+): string | null {
+  switch (rule) {
+    case FIELD_RULES.required:
+      return t('validation.required');
+    case FIELD_RULES.tooLong: {
+      if (field === 'payload') {
+        return t('scheduler.validation.payloadSize', {
+          max: formatBytes(meta.limits.max_payload_bytes),
+        });
+      }
+      const max = maxLengthOf(field, meta);
+      return max === null ? t('scheduler.rule.too_long') : t('validation.maxLength', { n: max });
+    }
+    case FIELD_RULES.outOfRange:
+      return outOfRangeMessage(field, meta, handler);
+    case FIELD_RULES.invalidFormat:
+      return invalidFormatMessage(field);
+    case FIELD_RULES.notAllowed:
+      return notAllowedMessage(field, meta);
+    case FIELD_RULES.neverMatches:
+      return t('scheduler.validation.cronNever');
+    case FIELD_RULES.duplicate:
+      return field === 'code' ? t('scheduler.error.codeTaken') : t('scheduler.rule.duplicate');
+    default:
+      return null;
+  }
+}
+
+/**
+ * Error del servidor asociado al campo que nombra error.details.field, explicado por su regla
+ * (error.details.rule). Solo ante una regla que no se conoce se muestra el mensaje del
+ * servidor. Vacio si no nombra un campo del formulario: entonces es un error general.
+ */
+export function serverFieldErrors(
+  err: unknown,
+  meta: SchedulerMeta,
+  handler: SchedulerHandler | null,
+): JobErrors {
   const field = errorDetail(err, FIELD_DETAIL);
   if (!isApiError(err) || !field || !isFormField(field)) return {};
-  // El unico 409 con campo es el codigo repetido del alta (ErrJobAlreadyExists).
-  if (err.code === ERROR_CODES.CONFLICT) {
-    return field === 'code' ? { code: t('scheduler.error.codeTaken') } : {};
-  }
-  if (err.code !== ERROR_CODES.VALIDATION_ERROR && err.code !== ERROR_CODES.INVALID_TIMEZONE) {
+  const conflict = err.code === ERROR_CODES.CONFLICT;
+  if (
+    !conflict &&
+    err.code !== ERROR_CODES.VALIDATION_ERROR &&
+    err.code !== ERROR_CODES.INVALID_TIMEZONE
+  ) {
     return {};
   }
+  const rule = errorDetail(err, RULE_DETAIL);
+  const known = rule ? ruleMessage(field, rule, meta, handler) : null;
+  if (known) return { [field]: known };
+  // El unico 409 con campo es el codigo repetido del alta (ErrJobAlreadyExists).
+  if (conflict) return field === 'code' ? { code: t('scheduler.error.codeTaken') } : {};
   return {
     [field]: t(REJECTED[field] ?? 'scheduler.form.serverRejected', { detail: err.message }),
   };

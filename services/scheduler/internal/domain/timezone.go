@@ -29,14 +29,17 @@ const tzDatabaseProbe = "Etc/UTC"
 // "Local" no es una zona: es la del servidor, que no dice nada de la empresa.
 func LoadTimezone(name string) (*time.Location, error) {
 	if name == "" {
-		return nil, invalidField(FieldTimezone, ErrInvalidTimezone, "timezone must not be empty")
+		return nil, invalidField(FieldTimezone, RuleRequired, ErrInvalidTimezone, "timezone must not be empty")
 	}
-	if len(name) > MaxTimezoneLength || name == "Local" || !timezoneRe.MatchString(name) {
-		return nil, invalidField(FieldTimezone, ErrInvalidTimezone, "%q is not an IANA time zone name (Area/Location)", truncateName(name))
+	if len(name) > MaxTimezoneLength {
+		return nil, invalidField(FieldTimezone, RuleTooLong, ErrInvalidTimezone, "%q is longer than %d characters", truncateName(name), MaxTimezoneLength)
+	}
+	if name == "Local" || !timezoneRe.MatchString(name) {
+		return nil, invalidField(FieldTimezone, RuleInvalidFormat, ErrInvalidTimezone, "%q is not an IANA time zone name (Area/Location)", name)
 	}
 	loc, err := time.LoadLocation(name)
 	if err != nil {
-		return nil, invalidField(FieldTimezone, ErrInvalidTimezone, "%q is not in the time zone database", name)
+		return nil, invalidField(FieldTimezone, RuleNotAllowed, ErrInvalidTimezone, "%q is not in the time zone database", name)
 	}
 	return loc, nil
 }

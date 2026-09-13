@@ -8,6 +8,7 @@ import (
 
 	"github.com/alonsosss/corforce-email/services/scheduler/internal/domain"
 	"github.com/alonsosss/corforce-email/services/scheduler/internal/ports"
+	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
 
@@ -151,22 +152,27 @@ func TestDesactivarUsaElRelojDelCasoDeUso(t *testing.T) {
 
 type horizonTasks struct {
 	ports.ScheduledTaskRepository
-	before time.Time
+	filter domain.TaskFilter
 }
 
-func (r *horizonTasks) ListPending(_ context.Context, before time.Time) ([]*domain.ScheduledTask, error) {
-	r.before = before
-	return nil, nil
+func (r *horizonTasks) ListPending(_ context.Context, f domain.TaskFilter) ([]*domain.ScheduledTask, int64, error) {
+	r.filter = f
+	return nil, 0, nil
 }
 
 func TestTareasPendientesConElRelojDelCasoDeUso(t *testing.T) {
 	clk := &clock{t: utcAt(2026, 9, 13, 10, 0, 0)}
 	tasks := &horizonTasks{}
 	uc := NewSchedulerUseCase(SchedulerDeps{Tasks: tasks, Now: clk.now, Logger: zap.NewNop()})
-	if _, err := uc.ListPendingTasks(ctx); err != nil {
+	tenant := uuid.New()
+	if _, _, err := uc.ListPendingTasks(ctx, tenant, 3, 25); err != nil {
 		t.Fatal(err)
 	}
-	if want := utcAt(2026, 9, 14, 10, 0, 0); !tasks.before.Equal(want) {
-		t.Fatalf("horizonte %v, se esperaba %v (24 h desde el reloj)", tasks.before, want)
+	f := tasks.filter
+	if want := utcAt(2026, 9, 14, 10, 0, 0); !f.Before.Equal(want) {
+		t.Fatalf("horizonte %v, se esperaba %v (24 h desde el reloj)", f.Before, want)
+	}
+	if f.TenantID != tenant || f.Page != 3 || f.PerPage != 25 {
+		t.Fatalf("filtro: %+v", f)
 	}
 }

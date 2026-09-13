@@ -64,11 +64,19 @@ func (r *storedJobs) Update(ctx context.Context, j *domain.JobDefinition) error 
 type plannedSchedules struct {
 	ports.JobScheduleRepository
 	next time.Time
+	last *time.Time
 }
 
 func (s *plannedSchedules) SetNextRun(_ context.Context, _ uuid.UUID, next time.Time) error {
 	s.next = next
 	return nil
+}
+
+func (s *plannedSchedules) Get(_ context.Context, jobID uuid.UUID) (*domain.JobSchedule, error) {
+	if s.next.IsZero() {
+		return nil, nil
+	}
+	return &domain.JobSchedule{JobID: jobID, NextRunAt: s.next, LastRunAt: s.last}, nil
 }
 
 type inlineTx struct{}
@@ -198,7 +206,8 @@ func TestEditarConservaOCambiaLaZona(t *testing.T) {
 func TestContratoDeLaMeta(t *testing.T) {
 	srv, _, _ := timezoneServer(t)
 	obj, got := keysOf(t, getData(t, srv, "/api/v1/scheduler/meta"))
-	if got != "cron,job_types,limits,pagination,tasks,timezone" {
+	// La ventana de las tareas no esta: la lleva la meta de GET /tasks (tasks/read).
+	if got != "cron,job_types,limits,pagination,timezone" {
 		t.Fatalf("claves: %s", got)
 	}
 	if string(obj["job_types"]) != `["cron","interval","one_time"]` {
@@ -220,9 +229,6 @@ func TestContratoDeLaMeta(t *testing.T) {
 	if pages, got := keysOf(t, obj["pagination"]); got != "default_per_page,max_per_page" ||
 		string(pages["default_per_page"]) != "20" || string(pages["max_per_page"]) != "100" {
 		t.Fatalf("pagination: %s", obj["pagination"])
-	}
-	if tasks, got := keysOf(t, obj["tasks"]); got != "pending_window_seconds" || string(tasks["pending_window_seconds"]) != "86400" {
-		t.Fatalf("tasks: %s", obj["tasks"])
 	}
 	tz, got := keysOf(t, obj["timezone"])
 	if got != "default,format,max_length,pattern" {

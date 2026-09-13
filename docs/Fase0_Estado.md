@@ -98,7 +98,10 @@ cambie cualquiera de estas líneas.
   catálogo de manejadores (`services/scheduler/handlers.json`) está vacío porque ningún
   servicio consume hoy `scheduler.job.started`: hasta que un ejecutor se declare, crear o
   editar un trabajo responde 422. Pendiente del scheduler: las tareas puntuales
-  (`scheduled_tasks`) se marcan `executed` sin despachar nada.
+  (`scheduled_tasks`) se marcan `executed` sin despachar nada (P). Lo que si hace el
+  barrido (V, 2026-09-13): marcar solo las que siguen `scheduled`, con la hora del caso de
+  uso en `executed_at`, de modo que una tarea cancelada entre la lectura y la escritura
+  sigue cancelada.
 * `cron_expression` evaluada (2026-09-13, unitarias e integración contra Postgres 16) con
   el parser de `github.com/robfig/cron/v3` v3.0.1; la planificación sigue en la base. Se
   admiten los cinco campos estándar y `@hourly`, `@daily`, `@weekly`, `@monthly` y
@@ -108,6 +111,28 @@ cambie cualquiera de estas líneas.
   las ocurrencias que una caída se saltó se lanzan una sola vez. La primera vuelta de cada
   proceso por empresa reconcilia los calendarios `cron` que dejó la versión que no
   evaluaba la expresión y desactiva los que tienen una expresión inválida.
+* Reactivar un trabajo (2026-09-13, unitarias con reloj inyectado e integración contra
+  Postgres 16; `domain.JobDefinition.ResumeAt`): nada de lo que no se lanzó mientras estuvo
+  parado se lanza al reactivarlo y `next_run_at` nunca queda en el pasado. `cron`: la
+  primera ocurrencia posterior a ahora en su zona. `interval`: sigue su rejilla sin
+  deriva (la hora guardada más k periodos): si la hora guardada aún no llegó se respeta; si
+  pasó, la primera de la rejilla posterior a ahora; sin calendario, o con una hora a más de
+  un periodo (el intervalo se acortó mientras estaba parado), un periodo desde ahora; sin
+  `interval_minutes` válido, 422 con el campo. `one_time`: si el calendario nunca lo
+  despachó, sale en la pasada siguiente, como al crearlo; si ya lo despachó, 409
+  `JOB_ALREADY_RUN` y sigue inactivo (volver a lanzarlo es `POST /jobs/{id}/run`, con
+  `jobs/run`; reactivarlo lo habría relanzado con solo `jobs/update`). Reactivar uno activo
+  no toca su calendario. Queda fuera: el despacho de un `interval` sigue contando desde la
+  hora real (P: llevarlo a la rejilla como `@every`), y editar `interval_minutes` de un
+  trabajo activo no lo replanifica (P).
+* Aislamiento por empresa del scheduler (2026-09-13, unitarias, contrato e integración
+  contra Postgres 16): ninguna lectura ni escritura por id va sin la empresa del token.
+  Leer y cancelar una tarea, `GET /jobs/{id}/history`, `GET /executions` y las escrituras de
+  trabajos (`Update`, `Deactivate`) y ejecuciones (`Update`) llevan la condición en el SQL;
+  lo de otra empresa responde 404 como lo que no existe, sin efectos. `POST
+  /tasks/{id}/cancel` responde 204 (también si ya estaba cancelada), 404 o 409 si ya se
+  ejecutó; `GET /tasks/{id}` separa el 404 de un fallo de la base (500 registrado). El
+  scheduler no audita sus escrituras (P).
 * Zona horaria por trabajo (2026-09-13, unitarias e integración contra Postgres 16):
   `job_definitions.timezone` (`03_job_timezone.sql`, IANA, `UTC` por defecto; las filas
   previas quedan en UTC). La expresión cron se evalúa en esa zona; `@every`, `interval` y
@@ -124,12 +149,19 @@ cambie cualquiera de estas líneas.
   Postgres 16) y `web/` los consume: el trabajo lleva `next_run_at` (null si está inactivo),
   `last_run_at` (última pasada del calendario) y `last_execution` (`id`, `status`,
   `completed_at`, `failure_reason` o null), leídos con dos consultas por página;
-  `GET /scheduler/jobs` pagina con `page` y `per_page` (20 por defecto, tope 100) sobre la
-  empresa del token; `GET /scheduler/meta` publica `job_types`, `limits`, `pagination` y
-  `tasks.pending_window_seconds` desde `domain/validation.go`. Todo 422 del scheduler lleva
-  `error.details.field` (también `INVALID_TIMEZONE`) y el 409 de código repetido
-  `details.field = code`; un campo fuera de su columna ya no es un 500. Falta paginar
-  `GET /scheduler/tasks`.
+  `GET /scheduler/jobs`, `GET /scheduler/jobs/{id}/history` y `GET /scheduler/tasks`
+  paginan con `page` y `per_page` (20 por defecto, tope 100, desplazamiento que satura: una
+  página enorme no tiene filas en vez de ser un 500) sobre la empresa del token;
+  `GET /scheduler/meta` (`jobs/read`) publica `job_types`, `limits` y `pagination` desde
+  `domain/validation.go`, y la ventana de las tareas pendientes va en la meta de
+  `GET /scheduler/tasks` (`pending_window_seconds`, `tasks/read`); `web/` pagina las tareas
+  en el servidor y lee de ahí la ventana. Todo error de campo del scheduler (422, también
+  `INVALID_TIMEZONE`, y el 409 de código repetido) lleva `error.details.field` y
+  `error.details.rule`, una regla estable del dominio: `required`, `too_long`,
+  `out_of_range`, `invalid_format`, `not_allowed`, `never_matches` o `duplicate`. `web/` lo
+  explica en español por la regla con el límite de la meta (o del manejador elegido) y solo
+  muestra el mensaje del servidor ante una regla que no conoce; un campo fuera de su columna
+  ya no es un 500.
 * Lecturas del registro entre esquemas, todas por vistas publicadas: `identity` resuelve la
   empresa del login y el nombre de la empresa del listado de sesiones por
   `organization.v_tenants` (`025_organization_tenants_view.sql`, sin `db_name`, `cell_id`

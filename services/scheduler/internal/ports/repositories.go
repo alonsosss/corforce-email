@@ -23,9 +23,12 @@ type JobDefinitionRepository interface {
 	// List devuelve una pagina del listado con el total de filas que cumplen el filtro, en
 	// una sola consulta por pagina: sin una lectura por trabajo.
 	List(ctx context.Context, filter domain.JobFilter) ([]*domain.JobOverview, int64, error)
+	// Update escribe el trabajo solo si sigue siendo de job.TenantID (nil, de plataforma):
+	// domain.ErrJobNotFound si no. La empresa de un trabajo no cambia.
 	Update(ctx context.Context, job *domain.JobDefinition) error
-	// Deactivate desactiva el trabajo con updatedAt como hora del cambio, igual que Update.
-	Deactivate(ctx context.Context, id uuid.UUID, updatedAt time.Time) error
+	// Deactivate desactiva el trabajo de owner (nil, de plataforma) con updatedAt como hora
+	// del cambio, igual que Update; domain.ErrJobNotFound si no es suyo.
+	Deactivate(ctx context.Context, id uuid.UUID, owner *uuid.UUID, updatedAt time.Time) error
 }
 
 type JobExecutionRepository interface {
@@ -34,9 +37,14 @@ type JobExecutionRepository interface {
 	GetByID(ctx context.Context, id, tenantID uuid.UUID) (*domain.JobExecution, error)
 	// GetForUpdate carga la ejecucion bloqueando su fila hasta el final de la transaccion.
 	GetForUpdate(ctx context.Context, id, tenantID uuid.UUID) (*domain.JobExecution, error)
-	GetByJob(ctx context.Context, jobID uuid.UUID, page, pageSize int) ([]*domain.JobExecution, int64, error)
+	// GetByJob pagina las ejecuciones del trabajo que ve la empresa (las suyas y las de
+	// plataforma), de la mas reciente a la mas antigua, con el total.
+	GetByJob(ctx context.Context, jobID, tenantID uuid.UUID, page, perPage int) ([]*domain.JobExecution, int64, error)
+	// Update escribe la ejecucion solo si sigue siendo de exec.TenantID:
+	// domain.ErrExecutionNotFound si no.
 	Update(ctx context.Context, exec *domain.JobExecution) error
-	ListRunning(ctx context.Context) ([]*domain.JobExecution, error)
+	// ListRunning lista las ejecuciones activas que ve la empresa.
+	ListRunning(ctx context.Context, tenantID uuid.UUID) ([]*domain.JobExecution, error)
 	// ClaimOverdue bloquea la ejecucion activa con el plazo vencido mas antiguo, saltando
 	// las que otra transaccion ya tiene; nil si no queda ninguna.
 	ClaimOverdue(ctx context.Context, now time.Time) (*domain.JobExecution, error)
@@ -44,15 +52,29 @@ type JobExecutionRepository interface {
 	ClaimDispatchable(ctx context.Context, now time.Time) (*domain.JobExecution, error)
 }
 
+// ScheduledTaskRepository: toda lectura o escritura por id lleva la empresa. Una tarea de
+// otra empresa es domain.ErrTaskNotFound, igual que una que no existe.
 type ScheduledTaskRepository interface {
 	Create(ctx context.Context, task *domain.ScheduledTask) error
 	GetByID(ctx context.Context, id, tenantID uuid.UUID) (*domain.ScheduledTask, error)
-	ListPending(ctx context.Context, before time.Time) ([]*domain.ScheduledTask, error)
-	UpdateStatus(ctx context.Context, id uuid.UUID, status string) error
-	Cancel(ctx context.Context, id uuid.UUID) error
+	// GetForUpdate carga la tarea bloqueando su fila hasta el final de la transaccion.
+	GetForUpdate(ctx context.Context, id, tenantID uuid.UUID) (*domain.ScheduledTask, error)
+	// ListPending pagina las programadas de la empresa que vencen hasta filter.Before, por
+	// hora de disparo, con el total.
+	ListPending(ctx context.Context, filter domain.TaskFilter) ([]*domain.ScheduledTask, int64, error)
+	// Cancel pasa a cancelada una tarea programada de la empresa.
+	Cancel(ctx context.Context, id, tenantID uuid.UUID) error
+	// ListDue lista las programadas vencidas de la base del contexto, sin mirar la empresa:
+	// es el barrido del ticker, que ya recorre una base por empresa.
+	ListDue(ctx context.Context, now time.Time) ([]*domain.ScheduledTask, error)
+	// MarkExecuted pasa a ejecutada una tarea que sigue programada; false si ya no lo estaba
+	// (se cancelo entre la lectura y la escritura).
+	MarkExecuted(ctx context.Context, id uuid.UUID, at time.Time) (bool, error)
 }
 
 type JobScheduleRepository interface {
+	// Get lee el calendario del trabajo; nil si no tiene.
+	Get(ctx context.Context, jobID uuid.UUID) (*domain.JobSchedule, error)
 	// UpdateNextRun reprograma tras lanzar el trabajo: fija next_run_at y anota ranAt en
 	// last_run_at.
 	UpdateNextRun(ctx context.Context, jobID uuid.UUID, nextRunAt, ranAt time.Time) error

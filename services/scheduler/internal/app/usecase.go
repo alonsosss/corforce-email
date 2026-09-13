@@ -180,24 +180,31 @@ func (uc *SchedulerUseCase) tenantJob(ctx context.Context, id, tenantID uuid.UUI
 	return job, nil
 }
 
-// EnableJob reactiva un trabajo. Un cron que estaba desactivado se replanifica desde ahora:
-// las ocurrencias de mientras estuvo parado no se lanzan al reactivarlo.
+// EnableJob reactiva un trabajo de la empresa y lo replanifica desde ahora con la regla de
+// domain.JobDefinition.ResumeAt: lo que no se lanzo mientras estuvo parado no se lanza al
+// reactivarlo y next_run_at no queda en el pasado. Reactivar uno activo no toca su
+// calendario.
 func (uc *SchedulerUseCase) EnableJob(ctx context.Context, id, tenantID uuid.UUID) error {
-	job, err := uc.tenantJob(ctx, id, tenantID)
-	if err != nil {
-		return err
-	}
-	wasActive := job.IsActive
-	job.IsActive = true
-	job.UpdatedAt = uc.now()
-	if wasActive || job.JobType != domain.JobTypeCron {
-		return uc.jobs.Update(ctx, job)
-	}
-	next, err := uc.nextRun(job, nil, job.UpdatedAt)
-	if err != nil {
-		return err
-	}
 	return uc.tx.Transact(ctx, func(ctx context.Context) error {
+		job, err := uc.tenantJob(ctx, id, tenantID)
+		if err != nil {
+			return err
+		}
+		now := uc.now()
+		if job.IsActive {
+			job.UpdatedAt = now
+			return uc.jobs.Update(ctx, job)
+		}
+		schedule, err := uc.schedules.Get(ctx, job.ID)
+		if err != nil {
+			return err
+		}
+		next, err := job.ResumeAt(schedule, now)
+		if err != nil {
+			return err
+		}
+		job.IsActive = true
+		job.UpdatedAt = now
 		if err := uc.jobs.Update(ctx, job); err != nil {
 			return err
 		}
@@ -206,10 +213,11 @@ func (uc *SchedulerUseCase) EnableJob(ctx context.Context, id, tenantID uuid.UUI
 }
 
 func (uc *SchedulerUseCase) DisableJob(ctx context.Context, id, tenantID uuid.UUID) error {
-	if _, err := uc.tenantJob(ctx, id, tenantID); err != nil {
+	job, err := uc.tenantJob(ctx, id, tenantID)
+	if err != nil {
 		return err
 	}
-	return uc.jobs.Deactivate(ctx, id, uc.now())
+	return uc.jobs.Deactivate(ctx, id, job.TenantID, uc.now())
 }
 
 // RunJob lanza a mano un trabajo de la empresa: la ejecucion nace despachada.
@@ -237,25 +245,44 @@ func (uc *SchedulerUseCase) ScheduleTask(ctx context.Context, task *domain.Sched
 		return err
 	}
 	task.ID = uuid.New()
-	task.Status = "scheduled"
+	task.Status = domain.TaskStatusScheduled
 	task.CreatedAt = uc.now()
 	return uc.tasks.Create(ctx, task)
 }
 
-func (uc *SchedulerUseCase) CancelTask(ctx context.Context, id uuid.UUID) error {
-	return uc.tasks.Cancel(ctx, id)
+// CancelTask cancela una tarea programada de la empresa. La de otra empresa responde igual
+// que una que no existe (domain.ErrTaskNotFound) y no toca nada; cancelar dos veces no cambia
+// nada; una ya ejecutada es domain.ErrTaskNotCancellable.
+func (uc *SchedulerUseCase) CancelTask(ctx context.Context, id, tenantID uuid.UUID) error {
+	return uc.tx.Transact(ctx, func(ctx context.Context) error {
+		task, err := uc.tasks.GetForUpdate(ctx, id, tenantID)
+		if err != nil {
+			return err
+		}
+		changed, err := task.Cancel()
+		if err != nil || !changed {
+			return err
+		}
+		return uc.tasks.Cancel(ctx, task.ID, tenantID)
+	})
 }
 
 func (uc *SchedulerUseCase) GetTask(ctx context.Context, id, tenantID uuid.UUID) (*domain.ScheduledTask, error) {
 	return uc.tasks.GetByID(ctx, id, tenantID)
 }
 
-func (uc *SchedulerUseCase) GetJobHistory(ctx context.Context, jobID uuid.UUID, page, pageSize int) ([]*domain.JobExecution, int64, error) {
-	return uc.executions.GetByJob(ctx, jobID, page, pageSize)
+// GetJobHistory pagina las ejecuciones de un trabajo que ve la empresa; el de otra empresa,
+// o uno que no existe, es domain.ErrJobNotFound.
+func (uc *SchedulerUseCase) GetJobHistory(ctx context.Context, jobID, tenantID uuid.UUID, page, perPage int) ([]*domain.JobExecution, int64, error) {
+	if _, err := uc.jobs.GetByID(ctx, jobID, tenantID); err != nil {
+		return nil, 0, err
+	}
+	return uc.executions.GetByJob(ctx, jobID, tenantID, page, perPage)
 }
 
-func (uc *SchedulerUseCase) GetRunningJobs(ctx context.Context) ([]*domain.JobExecution, error) {
-	return uc.executions.ListRunning(ctx)
+// GetRunningJobs lista las ejecuciones activas que ve la empresa: las suyas y las de plataforma.
+func (uc *SchedulerUseCase) GetRunningJobs(ctx context.Context, tenantID uuid.UUID) ([]*domain.JobExecution, error) {
+	return uc.executions.ListRunning(ctx, tenantID)
 }
 
 func (uc *SchedulerUseCase) GetExecution(ctx context.Context, id, tenantID uuid.UUID) (*domain.JobExecution, error) {
@@ -297,7 +324,7 @@ func (uc *SchedulerUseCase) runDue(ctx context.Context, s *domain.JobSchedule) e
 		}
 		next, err := uc.nextRun(job, &scheduled, now)
 		if errors.Is(err, domain.ErrInvalidCron) || errors.Is(err, domain.ErrInvalidTimezone) {
-			return uc.deactivateUnschedulable(ctx, job.ID, now, err)
+			return uc.deactivateUnschedulable(ctx, job.ID, job.TenantID, now, err)
 		}
 		if err != nil {
 			return err
@@ -316,7 +343,7 @@ func (uc *SchedulerUseCase) runDue(ctx context.Context, s *domain.JobSchedule) e
 			return err
 		}
 		if job.JobType == domain.JobTypeOneTime {
-			return uc.jobs.Deactivate(ctx, job.ID, now)
+			return uc.jobs.Deactivate(ctx, job.ID, job.TenantID, now)
 		}
 		return nil
 	})
@@ -326,10 +353,10 @@ func (uc *SchedulerUseCase) runDue(ctx context.Context, s *domain.JobSchedule) e
 // evaluar (escritas antes de que se validaran, o una zona que la base de zonas ya no
 // carga): lanzarlo seria hacerlo a deshora. Reactivarlo exige corregirlas antes. Que falte
 // la base de zonas entera no llega aqui: el proceso no arranca sin ella.
-func (uc *SchedulerUseCase) deactivateUnschedulable(ctx context.Context, jobID uuid.UUID, now time.Time, cause error) error {
+func (uc *SchedulerUseCase) deactivateUnschedulable(ctx context.Context, jobID uuid.UUID, owner *uuid.UUID, now time.Time, cause error) error {
 	uc.logger.Error("scheduler: trabajo cron con expresion o zona invalida; se desactiva",
 		zap.String("job_id", jobID.String()), zap.Error(cause))
-	return uc.jobs.Deactivate(ctx, jobID, now)
+	return uc.jobs.Deactivate(ctx, jobID, owner, now)
 }
 
 // ReconcileCronSchedules corrige en la base del contexto los calendarios cron que no salen
@@ -349,7 +376,7 @@ func (uc *SchedulerUseCase) ReconcileCronSchedules(ctx context.Context) (int, er
 		for _, s := range schedules {
 			spec, err := domain.ParseCron(s.Expression, s.Timezone)
 			if err != nil {
-				if err := uc.deactivateUnschedulable(ctx, s.JobID, now, err); err != nil {
+				if err := uc.deactivateUnschedulable(ctx, s.JobID, s.TenantID, now, err); err != nil {
 					return err
 				}
 				fixed++
@@ -372,17 +399,22 @@ func (uc *SchedulerUseCase) ReconcileCronSchedules(ctx context.Context) (int, er
 	return fixed, err
 }
 
+// ProcessPendingTasks marca ejecutadas las tareas vencidas de la base del contexto. Una que
+// se cancelo entre la lectura y la escritura sigue cancelada.
 func (uc *SchedulerUseCase) ProcessPendingTasks(ctx context.Context) {
 	now := uc.now()
-	tasks, err := uc.tasks.ListPending(ctx, now)
+	tasks, err := uc.tasks.ListDue(ctx, now)
 	if err != nil {
-		uc.logger.Error("list pending tasks", zap.Error(err))
+		uc.logger.Error("scheduler: no se listaron las tareas vencidas", zap.Error(err))
 		return
 	}
 	for _, t := range tasks {
-		_ = uc.tasks.UpdateStatus(ctx, t.ID, "executed")
-		executedAt := now
-		t.ExecutedAt = &executedAt
+		if ctx.Err() != nil {
+			return
+		}
+		if _, err := uc.tasks.MarkExecuted(ctx, t.ID, now); err != nil {
+			uc.logger.Error("scheduler: no se marco ejecutada la tarea", zap.String("task_id", t.ID.String()), zap.Error(err))
+		}
 	}
 }
 
@@ -410,10 +442,12 @@ func (uc *SchedulerUseCase) nextRun(job *domain.JobDefinition, scheduled *time.T
 	return now.Add(time.Hour), nil
 }
 
-// ListPendingTasks lista las tareas puntuales pendientes que vencen dentro de
-// domain.PendingTasksWindow, vistas desde el reloj del caso de uso.
-func (uc *SchedulerUseCase) ListPendingTasks(ctx context.Context) ([]*domain.ScheduledTask, error) {
-	return uc.tasks.ListPending(ctx, uc.now().Add(domain.PendingTasksWindow))
+// ListPendingTasks pagina las tareas puntuales pendientes de la empresa que vencen dentro de
+// domain.PendingTasksWindow, vistas desde el reloj del caso de uso, con el total.
+func (uc *SchedulerUseCase) ListPendingTasks(ctx context.Context, tenantID uuid.UUID, page, perPage int) ([]*domain.ScheduledTask, int64, error) {
+	return uc.tasks.ListPending(ctx, domain.TaskFilter{
+		TenantID: tenantID, Before: uc.now().Add(domain.PendingTasksWindow), Page: page, PerPage: perPage,
+	})
 }
 
 func newExecution(job *domain.JobDefinition, now time.Time) *domain.JobExecution {

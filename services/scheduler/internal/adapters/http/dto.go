@@ -1,8 +1,11 @@
 package http
 
 import (
+	"encoding/json"
+	"net/http"
 	"time"
 
+	"github.com/alonsosss/corforce-email/pkg/response"
 	"github.com/alonsosss/corforce-email/services/scheduler/internal/domain"
 	"github.com/google/uuid"
 )
@@ -139,6 +142,29 @@ func tasksResponse(tasks []*domain.ScheduledTask) []taskDTO {
 		out = append(out, taskResponse(t))
 	}
 	return out
+}
+
+// tasksPageMeta es la meta de GET /tasks: la de toda pagina mas la ventana con la que se
+// filtro el listado.
+type tasksPageMeta struct {
+	*response.Meta
+	PendingWindowSeconds int `json:"pending_window_seconds"`
+}
+
+type tasksPage struct {
+	Data []taskDTO     `json:"data"`
+	Meta tasksPageMeta `json:"meta"`
+}
+
+// writeTasksPage escribe el envelope de pkg/response con la meta ampliada: response.Meta no
+// tiene donde llevar la ventana y es comun a todos los servicios.
+func writeTasksPage(w http.ResponseWriter, tasks []*domain.ScheduledTask, page *response.Meta) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(tasksPage{
+		Data: tasksResponse(tasks),
+		Meta: tasksPageMeta{Meta: page, PendingWindowSeconds: int(domain.PendingTasksWindow / time.Second)},
+	})
 }
 
 func handlersResponse(specs []domain.HandlerSpec) []handlerDTO {

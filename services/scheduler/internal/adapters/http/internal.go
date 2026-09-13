@@ -66,11 +66,11 @@ func (h *Handler) FailExecution(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if strings.TrimSpace(req.Error) == "" {
-		fieldError(w, codeValidation, "error", "error is required")
+		writeError(w, domain.NewFieldError(domain.FieldReportError, domain.RuleRequired, domain.ErrInvalidReport, "error is required"))
 		return
 	}
 	if req.Retryable == nil {
-		fieldError(w, codeValidation, "retryable", "retryable is required")
+		writeError(w, domain.NewFieldError(domain.FieldRetryable, domain.RuleRequired, domain.ErrInvalidReport, "retryable is required"))
 		return
 	}
 	exec, err := h.uc.FailExecution(r.Context(), id, tenantID, req.Error, *req.Retryable)

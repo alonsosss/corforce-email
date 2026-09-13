@@ -102,18 +102,18 @@ func NewHandlerCatalog(specs []HandlerSpec) (*HandlerCatalog, error) {
 // Resolve devuelve el manejador si existe y acepta el tipo del trabajo.
 func (c *HandlerCatalog) Resolve(name string, platformJob bool) (HandlerSpec, error) {
 	if c == nil {
-		return HandlerSpec{}, invalidField(FieldHandler, ErrHandlerNotAllowed, "%q is not in the catalog", name)
+		return HandlerSpec{}, invalidField(FieldHandler, RuleNotAllowed, ErrHandlerNotAllowed, "%q is not in the catalog", name)
 	}
 	spec, ok := c.byName[name]
 	if !ok {
-		return HandlerSpec{}, invalidField(FieldHandler, ErrHandlerNotAllowed, "%q is not in the catalog", name)
+		return HandlerSpec{}, invalidField(FieldHandler, RuleNotAllowed, ErrHandlerNotAllowed, "%q is not in the catalog", name)
 	}
 	scope := ScopeTenant
 	if platformJob {
 		scope = ScopePlatform
 	}
 	if !spec.Allows(scope) {
-		return HandlerSpec{}, invalidField(FieldHandler, ErrHandlerNotAllowed, "%q does not accept %s jobs", name, scope)
+		return HandlerSpec{}, invalidField(FieldHandler, RuleNotAllowed, ErrHandlerNotAllowed, "%q does not accept %s jobs", name, scope)
 	}
 	return spec, nil
 }

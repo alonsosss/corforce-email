@@ -38,51 +38,65 @@ func jobBody(t *testing.T, fields map[string]any) string {
 
 func errorOf(t *testing.T, rec *httptest.ResponseRecorder) (code, field string) {
 	t.Helper()
+	code, field, _ = errorWithRule(t, rec)
+	return code, field
+}
+
+// errorWithRule lee el codigo, el campo y la regla de un error de campo.
+func errorWithRule(t *testing.T, rec *httptest.ResponseRecorder) (code, field, rule string) {
+	t.Helper()
 	var env envelope
 	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil || env.Error == nil {
 		t.Fatalf("se esperaba un error: %d %q", rec.Code, rec.Body.String())
 	}
-	return env.Error.Code, env.Error.Details["field"]
+	return env.Error.Code, env.Error.Details["field"], env.Error.Details["rule"]
 }
 
 func long(n int) string { return strings.Repeat("a", n) }
 
-func TestUn422NombraElCampoQueFalla(t *testing.T) {
+func TestUn422NombraElCampoYLaReglaQueFalla(t *testing.T) {
 	srv, jobs, _ := timezoneServer(t)
+	const v, tz = "VALIDATION_ERROR", "INVALID_TIMEZONE"
 	cases := []struct {
 		name   string
 		fields map[string]any
 		code   string
 		field  string
+		rule   string
 	}{
-		{"nombre de 256", map[string]any{"name": long(256)}, "VALIDATION_ERROR", "name"},
-		{"nombre en blanco", map[string]any{"name": "   "}, "VALIDATION_ERROR", "name"},
-		{"sin nombre", map[string]any{"name": absent}, "VALIDATION_ERROR", "name"},
-		{"nombre con NUL", map[string]any{"name": "a\x00b"}, "VALIDATION_ERROR", "name"},
-		{"codigo de 101", map[string]any{"code": long(101)}, "VALIDATION_ERROR", "code"},
-		{"sin codigo", map[string]any{"code": absent}, "VALIDATION_ERROR", "code"},
-		{"descripcion de 2001", map[string]any{"description": long(2001)}, "VALIDATION_ERROR", "description"},
-		{"sin tipo", map[string]any{"job_type": absent}, "VALIDATION_ERROR", "job_type"},
-		{"tipo desconocido", map[string]any{"job_type": "weekly"}, "VALIDATION_ERROR", "job_type"},
-		{"sin manejador", map[string]any{"handler": absent}, "VALIDATION_ERROR", "handler"},
-		{"manejador de 256", map[string]any{"handler": long(256)}, "VALIDATION_ERROR", "handler"},
-		{"manejador fuera del catalogo", map[string]any{"handler": "no.existe"}, "VALIDATION_ERROR", "handler"},
-		{"cron invalido", map[string]any{"job_type": "cron", "cron_expression": "0 25 * * *", "interval_minutes": nil}, "VALIDATION_ERROR", "cron_expression"},
-		{"cron de 101 en un intervalo", map[string]any{"cron_expression": long(101)}, "VALIDATION_ERROR", "cron_expression"},
-		{"zona invalida", map[string]any{"timezone": "Mars/Olympus_Mons"}, "INVALID_TIMEZONE", "timezone"},
-		{"intervalo cero", map[string]any{"interval_minutes": 0}, "VALIDATION_ERROR", "interval_minutes"},
-		{"intervalo de mas", map[string]any{"interval_minutes": 525601}, "VALIDATION_ERROR", "interval_minutes"},
-		{"intervalo fuera de integer", map[string]any{"interval_minutes": int64(1) << 31}, "VALIDATION_ERROR", "interval_minutes"},
-		{"intervalo null", map[string]any{"interval_minutes": nil}, "VALIDATION_ERROR", "interval_minutes"},
-		{"reintentos negativos", map[string]any{"max_retries": -1}, "VALIDATION_ERROR", "max_retries"},
-		{"reintentos de mas", map[string]any{"max_retries": 11}, "VALIDATION_ERROR", "max_retries"},
-		{"reintentos fuera de integer", map[string]any{"max_retries": int64(1) << 40}, "VALIDATION_ERROR", "max_retries"},
-		{"plazo negativo", map[string]any{"timeout_seconds": -1}, "VALIDATION_ERROR", "timeout_seconds"},
-		{"plazo mayor que el del manejador", map[string]any{"timeout_seconds": 601}, "VALIDATION_ERROR", "timeout_seconds"},
-		{"plazo de mas", map[string]any{"timeout_seconds": 604801}, "VALIDATION_ERROR", "timeout_seconds"},
-		{"payload ilegible", map[string]any{"payload": `{"a":`}, "VALIDATION_ERROR", "payload"},
-		{"payload con NUL", map[string]any{"payload": `{"a":"\u0000"}`}, "VALIDATION_ERROR", "payload"},
-		{"payload de mas", map[string]any{"payload": `"` + long(65535) + `"`}, "VALIDATION_ERROR", "payload"},
+		{"nombre de 256", map[string]any{"name": long(256)}, v, "name", domain.RuleTooLong},
+		{"nombre en blanco", map[string]any{"name": "   "}, v, "name", domain.RuleRequired},
+		{"sin nombre", map[string]any{"name": absent}, v, "name", domain.RuleRequired},
+		{"nombre con NUL", map[string]any{"name": "a\x00b"}, v, "name", domain.RuleInvalidFormat},
+		{"codigo de 101", map[string]any{"code": long(101)}, v, "code", domain.RuleTooLong},
+		{"sin codigo", map[string]any{"code": absent}, v, "code", domain.RuleRequired},
+		{"descripcion de 2001", map[string]any{"description": long(2001)}, v, "description", domain.RuleTooLong},
+		{"sin tipo", map[string]any{"job_type": absent}, v, "job_type", domain.RuleRequired},
+		{"tipo desconocido", map[string]any{"job_type": "weekly"}, v, "job_type", domain.RuleNotAllowed},
+		{"sin manejador", map[string]any{"handler": absent}, v, "handler", domain.RuleRequired},
+		{"manejador de 256", map[string]any{"handler": long(256)}, v, "handler", domain.RuleTooLong},
+		{"manejador fuera del catalogo", map[string]any{"handler": "no.existe"}, v, "handler", domain.RuleNotAllowed},
+		{"cron invalido", map[string]any{"job_type": "cron", "cron_expression": "0 25 * * *", "interval_minutes": nil}, v, "cron_expression", domain.RuleInvalidFormat},
+		{"cron que nunca ocurre", map[string]any{"job_type": "cron", "cron_expression": "0 0 30 2 *", "interval_minutes": nil}, v, "cron_expression", domain.RuleNeverMatches},
+		{"@every corto", map[string]any{"job_type": "cron", "cron_expression": "@every 10s", "interval_minutes": nil}, v, "cron_expression", domain.RuleOutOfRange},
+		{"descriptor no admitido", map[string]any{"job_type": "cron", "cron_expression": "@yearly", "interval_minutes": nil}, v, "cron_expression", domain.RuleNotAllowed},
+		{"cron de 101 en un intervalo", map[string]any{"cron_expression": long(101)}, v, "cron_expression", domain.RuleTooLong},
+		{"zona vacia", map[string]any{"timezone": ""}, tz, "timezone", domain.RuleRequired},
+		{"zona con otra forma", map[string]any{"timezone": "+05:00"}, tz, "timezone", domain.RuleInvalidFormat},
+		{"zona invalida", map[string]any{"timezone": "Mars/Olympus_Mons"}, tz, "timezone", domain.RuleNotAllowed},
+		{"intervalo cero", map[string]any{"interval_minutes": 0}, v, "interval_minutes", domain.RuleOutOfRange},
+		{"intervalo de mas", map[string]any{"interval_minutes": 525601}, v, "interval_minutes", domain.RuleOutOfRange},
+		{"intervalo fuera de integer", map[string]any{"interval_minutes": int64(1) << 31}, v, "interval_minutes", domain.RuleOutOfRange},
+		{"intervalo null", map[string]any{"interval_minutes": nil}, v, "interval_minutes", domain.RuleRequired},
+		{"reintentos negativos", map[string]any{"max_retries": -1}, v, "max_retries", domain.RuleOutOfRange},
+		{"reintentos de mas", map[string]any{"max_retries": 11}, v, "max_retries", domain.RuleOutOfRange},
+		{"reintentos fuera de integer", map[string]any{"max_retries": int64(1) << 40}, v, "max_retries", domain.RuleOutOfRange},
+		{"plazo negativo", map[string]any{"timeout_seconds": -1}, v, "timeout_seconds", domain.RuleOutOfRange},
+		{"plazo mayor que el del manejador", map[string]any{"timeout_seconds": 601}, v, "timeout_seconds", domain.RuleOutOfRange},
+		{"plazo de mas", map[string]any{"timeout_seconds": 604801}, v, "timeout_seconds", domain.RuleOutOfRange},
+		{"payload ilegible", map[string]any{"payload": `{"a":`}, v, "payload", domain.RuleInvalidFormat},
+		{"payload con NUL", map[string]any{"payload": `{"a":"\u0000"}`}, v, "payload", domain.RuleInvalidFormat},
+		{"payload de mas", map[string]any{"payload": `"` + long(65535) + `"`}, v, "payload", domain.RuleTooLong},
 	}
 	for _, tc := range cases {
 		rec := request(t, srv, http.MethodPost, "/api/v1/scheduler/jobs", jobBody(t, tc.fields), uuid.NewString())
@@ -90,8 +104,8 @@ func TestUn422NombraElCampoQueFalla(t *testing.T) {
 			t.Errorf("%s: %d %s, se esperaba 422", tc.name, rec.Code, rec.Body.String())
 			continue
 		}
-		if code, field := errorOf(t, rec); code != tc.code || field != tc.field {
-			t.Errorf("%s: %s en %q, se esperaba %s en %q (%s)", tc.name, code, field, tc.code, tc.field, rec.Body.String())
+		if code, field, rule := errorWithRule(t, rec); code != tc.code || field != tc.field || rule != tc.rule {
+			t.Errorf("%s: %s en %q con %q, se esperaba %s en %q con %q (%s)", tc.name, code, field, rule, tc.code, tc.field, tc.rule, rec.Body.String())
 		}
 	}
 	if jobs.job != nil {
@@ -121,7 +135,7 @@ func TestEditarConUnNombreDeMasEs422(t *testing.T) {
 	}
 	rec := request(t, srv, http.MethodPut, "/api/v1/scheduler/jobs/"+jobs.job.ID.String(),
 		jobBody(t, map[string]any{"code": absent, "name": long(256)}), uuid.NewString())
-	if code, field := errorOf(t, rec); rec.Code != http.StatusUnprocessableEntity || code != "VALIDATION_ERROR" || field != "name" {
+	if code, field, rule := errorWithRule(t, rec); rec.Code != http.StatusUnprocessableEntity || code != "VALIDATION_ERROR" || field != "name" || rule != domain.RuleTooLong {
 		t.Fatalf("editar: %d %s", rec.Code, rec.Body.String())
 	}
 	if jobs.job.Name != "Informe" {
@@ -136,32 +150,41 @@ func (takenCode) GetByCode(context.Context, string) (*domain.JobDefinition, erro
 	return &domain.JobDefinition{}, nil
 }
 
-func TestCodigoRepetidoEs409ConElCampo(t *testing.T) {
+func TestCodigoRepetidoEs409ConElCampoYLaRegla(t *testing.T) {
 	schedules := &plannedSchedules{}
 	srv := newJobServer(t, takenCode{&storedJobs{schedules: schedules}}, schedules)
 	rec := request(t, srv, http.MethodPost, "/api/v1/scheduler/jobs", jobBody(t, nil), uuid.NewString())
-	if code, field := errorOf(t, rec); rec.Code != http.StatusConflict || code != "CONFLICT" || field != "code" {
+	if code, field, rule := errorWithRule(t, rec); rec.Code != http.StatusConflict || code != "CONFLICT" || field != "code" || rule != domain.RuleDuplicate {
 		t.Fatalf("codigo repetido: %d %s", rec.Code, rec.Body.String())
 	}
 }
 
-func TestUnaTareaInvalidaNombraSuCampo(t *testing.T) {
+func TestUnaTareaInvalidaNombraSuCampoYSuRegla(t *testing.T) {
 	srv, _, _ := timezoneServer(t)
 	const trigger = "2026-09-14T10:00:00Z"
-	for body, field := range map[string]string{
-		`{}`: "name",
-		`{"name":"` + long(256) + `","trigger_at":"` + trigger + `","handler":"reports.daily"}`:                        "name",
-		`{"name":"Aviso","trigger_at":"manana","handler":"reports.daily"}`:                                             "trigger_at",
-		`{"name":"Aviso","handler":"reports.daily"}`:                                                                   "trigger_at",
-		`{"name":"Aviso","trigger_at":"` + trigger + `"}`:                                                              "handler",
-		`{"name":"Aviso","trigger_at":"` + trigger + `","handler":"` + long(256) + `"}`:                                "handler",
-		`{"name":"Aviso","trigger_at":"` + trigger + `","handler":"reports.daily","description":"` + long(2001) + `"}`: "description",
-		`{"name":"Aviso","trigger_at":"` + trigger + `","handler":"reports.daily","payload":"{"}`:                      "payload",
+	for body, want := range map[string][2]string{
+		`{}`: {"name", domain.RuleRequired},
+		`{"name":"` + long(256) + `","trigger_at":"` + trigger + `","handler":"reports.daily"}`:                        {"name", domain.RuleTooLong},
+		`{"name":"Aviso","trigger_at":"manana","handler":"reports.daily"}`:                                             {"trigger_at", domain.RuleInvalidFormat},
+		`{"name":"Aviso","handler":"reports.daily"}`:                                                                   {"trigger_at", domain.RuleRequired},
+		`{"name":"Aviso","trigger_at":"` + trigger + `"}`:                                                              {"handler", domain.RuleRequired},
+		`{"name":"Aviso","trigger_at":"` + trigger + `","handler":"` + long(256) + `"}`:                                {"handler", domain.RuleTooLong},
+		`{"name":"Aviso","trigger_at":"` + trigger + `","handler":"reports.daily","description":"` + long(2001) + `"}`: {"description", domain.RuleTooLong},
+		`{"name":"Aviso","trigger_at":"` + trigger + `","handler":"reports.daily","payload":"{"}`:                      {"payload", domain.RuleInvalidFormat},
 	} {
 		rec := request(t, srv, http.MethodPost, "/api/v1/scheduler/tasks", body, uuid.NewString())
-		if code, got := errorOf(t, rec); rec.Code != http.StatusUnprocessableEntity || code != "VALIDATION_ERROR" || got != field {
-			t.Errorf("tarea %.60s: %d %s, se esperaba el campo %s", body, rec.Code, rec.Body.String(), field)
+		if code, field, rule := errorWithRule(t, rec); rec.Code != http.StatusUnprocessableEntity || code != "VALIDATION_ERROR" || field != want[0] || rule != want[1] {
+			t.Errorf("tarea %.60s: %d %s, se esperaba %s/%s", body, rec.Code, rec.Body.String(), want[0], want[1])
 		}
+	}
+}
+
+func TestUnFiltroIlegibleNombraSuCampoYSuRegla(t *testing.T) {
+	c := contractServer()
+	rec := request(t, c.srv, http.MethodGet, "/api/v1/scheduler/jobs?is_active=quizas", "", uuid.NewString())
+	if code, field, rule := errorWithRule(t, rec); rec.Code != http.StatusUnprocessableEntity || code != "VALIDATION_ERROR" ||
+		field != domain.FieldIsActive || rule != domain.RuleInvalidFormat {
+		t.Fatalf("is_active ilegible: %d %s", rec.Code, rec.Body.String())
 	}
 }
 
@@ -174,16 +197,19 @@ func TestUnCuerpoDeMasEs400(t *testing.T) {
 	}
 }
 
-func TestElCierreDelEjecutorNombraSuCampo(t *testing.T) {
+func TestElCierreDelEjecutorNombraSuCampoYSuRegla(t *testing.T) {
 	f := newInternalFixture(t, domain.StatusRunning)
-	for action, cases := range map[string]map[string]string{
-		"fail":     {`{"error":"x"}`: "retryable", `{"error":"  ","retryable":false}`: "error"},
-		"complete": {`{"result":{"a":"\u0000"}}`: "result"},
+	for action, cases := range map[string]map[string][2]string{
+		"fail": {
+			`{"error":"x"}`:                    {"retryable", domain.RuleRequired},
+			`{"error":"  ","retryable":false}`: {"error", domain.RuleRequired},
+		},
+		"complete": {`{"result":{"a":"\u0000"}}`: {"result", domain.RuleInvalidFormat}},
 	} {
-		for body, field := range cases {
+		for body, want := range cases {
 			rec := f.post(t, action, body)
-			if code, got := errorOf(t, rec); rec.Code != http.StatusUnprocessableEntity || code != "VALIDATION_ERROR" || got != field {
-				t.Errorf("%s %s: %d %s, se esperaba el campo %s", action, body, rec.Code, rec.Body.String(), field)
+			if code, field, rule := errorWithRule(t, rec); rec.Code != http.StatusUnprocessableEntity || code != "VALIDATION_ERROR" || field != want[0] || rule != want[1] {
+				t.Errorf("%s %s: %d %s, se esperaba %s/%s", action, body, rec.Code, rec.Body.String(), want[0], want[1])
 			}
 		}
 	}

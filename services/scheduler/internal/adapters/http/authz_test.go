@@ -7,7 +7,6 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/alonsosss/corforce-email/pkg/authz"
 	"github.com/alonsosss/corforce-email/pkg/middleware"
@@ -71,14 +70,14 @@ func (jobsVacios) List(context.Context, domain.JobFilter) ([]*domain.JobOverview
 
 type ejecucionesVacias struct{ ports.JobExecutionRepository }
 
-func (ejecucionesVacias) ListRunning(context.Context) ([]*domain.JobExecution, error) {
+func (ejecucionesVacias) ListRunning(context.Context, uuid.UUID) ([]*domain.JobExecution, error) {
 	return nil, nil
 }
 
 type tareasVacias struct{ ports.ScheduledTaskRepository }
 
-func (tareasVacias) ListPending(context.Context, time.Time) ([]*domain.ScheduledTask, error) {
-	return nil, nil
+func (tareasVacias) ListPending(context.Context, domain.TaskFilter) ([]*domain.ScheduledTask, int64, error) {
+	return nil, 0, nil
 }
 
 // policyStub hace de access-control: sirve a pkg/authz la politica con los permisos

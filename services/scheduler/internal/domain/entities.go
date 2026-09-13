@@ -80,6 +80,13 @@ type JobExecution struct {
 	FailureReason *string
 }
 
+// Estados de una tarea puntual (scheduled_tasks_status_check).
+const (
+	TaskStatusScheduled = "scheduled"
+	TaskStatusExecuted  = "executed"
+	TaskStatusCancelled = "cancelled"
+)
+
 type ScheduledTask struct {
 	ID          uuid.UUID
 	TenantID    uuid.UUID
@@ -92,6 +99,31 @@ type ScheduledTask struct {
 	ExecutedAt  *time.Time
 	CreatedAt   time.Time
 }
+
+// Cancel detiene una tarea programada. Cancelar dos veces no cambia nada, como con una
+// ejecucion; una tarea ya ejecutada no se cancela.
+func (t *ScheduledTask) Cancel() (bool, error) {
+	switch t.Status {
+	case TaskStatusScheduled:
+		t.Status = TaskStatusCancelled
+		return true, nil
+	case TaskStatusCancelled:
+		return false, nil
+	default:
+		return false, ErrTaskNotCancellable
+	}
+}
+
+// TaskFilter es una pagina de las tareas pendientes de una empresa que vencen hasta Before.
+type TaskFilter struct {
+	TenantID uuid.UUID
+	Before   time.Time
+	Page     int
+	PerPage  int
+}
+
+// Offset es el desplazamiento de la pagina (ver PageOffset).
+func (f TaskFilter) Offset() int64 { return PageOffset(f.Page, f.PerPage) }
 
 type JobSchedule struct {
 	JobID     uuid.UUID
@@ -106,7 +138,9 @@ type JobSchedule struct {
 // CronJobSchedule es el calendario de un trabajo cron activo con la expresion y la zona de
 // las que deberia salir su next_run_at.
 type CronJobSchedule struct {
-	JobID      uuid.UUID
+	JobID uuid.UUID
+	// TenantID es la empresa del trabajo; nil si es de plataforma.
+	TenantID   *uuid.UUID
 	Expression string
 	Timezone   string
 	NextRunAt  time.Time
@@ -150,16 +184,20 @@ type JobFilter struct {
 	PerPage  int
 }
 
-// Offset es el desplazamiento de la pagina. Una pagina que no cabe en un int64 satura: no
-// tiene filas, en vez de desbordar a un desplazamiento negativo.
-func (f JobFilter) Offset() int64 {
-	if f.Page <= 1 || f.PerPage <= 0 {
+// Offset es el desplazamiento de la pagina (ver PageOffset).
+func (f JobFilter) Offset() int64 { return PageOffset(f.Page, f.PerPage) }
+
+// PageOffset es el desplazamiento de la pagina page de perPage filas. Una pagina que no cabe
+// en un int64 satura: no tiene filas, en vez de desbordar a un desplazamiento negativo que la
+// base rechaza con un 500.
+func PageOffset(page, perPage int) int64 {
+	if page <= 1 || perPage <= 0 {
 		return 0
 	}
-	if int64(f.Page-1) > math.MaxInt64/int64(f.PerPage) {
+	if int64(page-1) > math.MaxInt64/int64(perPage) {
 		return math.MaxInt64
 	}
-	return int64(f.Page-1) * int64(f.PerPage)
+	return int64(page-1) * int64(perPage)
 }
 
 // CronExpr es la expresion del trabajo, vacia si no tiene.

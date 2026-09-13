@@ -29,11 +29,15 @@ const (
 // JSON dentro del cuerpo, y el escapado puede duplicar su tamano.
 const maxRequestBody = 8 * domain.MaxPayloadBytes
 
-// Codigos de un 422 y la clave de error.details que nombra el campo que fallo.
+// Codigos de error propios y las claves de error.details de un error de campo: el campo que
+// fallo y la regla que incumple (domain.Rule*).
 const (
 	codeValidation      = "VALIDATION_ERROR"
 	codeInvalidTimezone = "INVALID_TIMEZONE"
+	codeConflict        = "CONFLICT"
+	codeJobAlreadyRun   = "JOB_ALREADY_RUN"
 	detailField         = "field"
+	detailRule          = "rule"
 )
 
 // Deps del adaptador HTTP. Los middlewares de cada superficie los decide main.go: el pool
@@ -132,9 +136,9 @@ func parsePage(r *http.Request) (int, int) {
 	return page, pageSize
 }
 
-// fieldError responde 422 nombrando en error.details.field el campo que fallo.
-func fieldError(w http.ResponseWriter, code, field, message string) {
-	response.ErrWithDetails(w, http.StatusUnprocessableEntity, code, message, map[string]string{detailField: field})
+// fieldError responde con el campo que fallo y la regla que incumple en error.details.
+func fieldError(w http.ResponseWriter, status int, code, field, rule, message string) {
+	response.ErrWithDetails(w, status, code, message, map[string]string{detailField: field, detailRule: rule})
 }
 
 // writeError traduce los errores del caso de uso. Lo no clasificado es un 500 que queda
@@ -147,15 +151,19 @@ func writeError(w http.ResponseWriter, err error) {
 		if errors.Is(err, domain.ErrInvalidTimezone) {
 			code = codeInvalidTimezone
 		}
-		fieldError(w, code, ferr.Field, err.Error())
+		fieldError(w, http.StatusUnprocessableEntity, code, ferr.Field, ferr.Rule, err.Error())
 	case errors.Is(err, domain.ErrJobNotFound):
 		response.ErrNotFound(w, "job not found")
 	case errors.Is(err, domain.ErrExecutionNotFound):
 		response.ErrNotFound(w, "execution not found")
+	case errors.Is(err, domain.ErrTaskNotFound):
+		response.ErrNotFound(w, "task not found")
 	case errors.Is(err, domain.ErrPlatformJob):
 		response.ErrForbidden(w, err.Error())
 	case errors.Is(err, domain.ErrJobAlreadyExists):
-		response.ErrWithDetails(w, http.StatusConflict, "CONFLICT", err.Error(), map[string]string{detailField: domain.FieldCode})
+		fieldError(w, http.StatusConflict, codeConflict, domain.FieldCode, domain.RuleDuplicate, err.Error())
+	case errors.Is(err, domain.ErrOneTimeAlreadyRun):
+		response.Err(w, http.StatusConflict, codeJobAlreadyRun, err.Error())
 	// El dominio nombra el campo de todo error de validacion; estos casos solo cubren uno que
 	// llegara sin el, que sigue siendo un 422 y no un 500.
 	case errors.Is(err, domain.ErrInvalidTimezone):
@@ -170,7 +178,8 @@ func writeError(w http.ResponseWriter, err error) {
 		errors.Is(err, domain.ErrExecutionClosed),
 		errors.Is(err, domain.ErrExecutionNotRetryable),
 		errors.Is(err, domain.ErrAlreadyRetried),
-		errors.Is(err, domain.ErrMaxRetriesExceeded):
+		errors.Is(err, domain.ErrMaxRetriesExceeded),
+		errors.Is(err, domain.ErrTaskNotCancellable):
 		response.ErrConflict(w, err.Error())
 	default:
 		response.Unexpected(w, err)
@@ -268,7 +277,7 @@ func (h *Handler) ListJobs(w http.ResponseWriter, r *http.Request) {
 	if a := r.URL.Query().Get("is_active"); a != "" {
 		active, err := strconv.ParseBool(a)
 		if err != nil {
-			fieldError(w, codeValidation, "is_active", "is_active must be true or false")
+			writeError(w, domain.NewFieldError(domain.FieldIsActive, domain.RuleInvalidFormat, domain.ErrInvalidQuery, "is_active must be true or false"))
 			return
 		}
 		filter.IsActive = &active
@@ -393,23 +402,36 @@ func (h *Handler) RunJob(w http.ResponseWriter, r *http.Request) {
 	response.JSON(w, http.StatusCreated, executionResponse(exec))
 }
 
+// GetJobHistory pagina el historial de un trabajo que ve la empresa; el de otra empresa es
+// 404 como uno que no existe. La pagina se recorta como en /jobs y una enorme no tiene filas.
 func (h *Handler) GetJobHistory(w http.ResponseWriter, r *http.Request) {
 	id, err := parseIDParam(r)
 	if err != nil {
 		response.ErrBadRequest(w, "invalid id")
 		return
 	}
-	page, pageSize := parsePage(r)
-	execs, total, err := h.uc.GetJobHistory(r.Context(), id, page, pageSize)
+	tenantID, err := parseTenantID(r)
+	if err != nil {
+		response.ErrUnauthorized(w, "invalid tenant")
+		return
+	}
+	page, perPage := parsePage(r)
+	execs, total, err := h.uc.GetJobHistory(r.Context(), id, tenantID, page, perPage)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	response.JSONWithMeta(w, http.StatusOK, executionsResponse(execs), response.PageMeta(total, page, pageSize))
+	response.JSONWithMeta(w, http.StatusOK, executionsResponse(execs), response.PageMeta(total, page, perPage))
 }
 
+// ListRunning lista las ejecuciones activas que ve la empresa del token.
 func (h *Handler) ListRunning(w http.ResponseWriter, r *http.Request) {
-	execs, err := h.uc.GetRunningJobs(r.Context())
+	tenantID, err := parseTenantID(r)
+	if err != nil {
+		response.ErrUnauthorized(w, "invalid tenant")
+		return
+	}
+	execs, err := h.uc.GetRunningJobs(r.Context(), tenantID)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -492,7 +514,7 @@ func (h *Handler) ScheduleTask(w http.ResponseWriter, r *http.Request) {
 	if req.TriggerAt != "" {
 		t, err := time.Parse(time.RFC3339, req.TriggerAt)
 		if err != nil {
-			writeError(w, domain.NewFieldError(domain.FieldTriggerAt, domain.ErrInvalidTask, "trigger_at must be an RFC 3339 date-time"))
+			writeError(w, domain.NewFieldError(domain.FieldTriggerAt, domain.RuleInvalidFormat, domain.ErrInvalidTask, "trigger_at must be an RFC 3339 date-time"))
 			return
 		}
 		triggerAt = t
@@ -530,30 +552,45 @@ func (h *Handler) GetTask(w http.ResponseWriter, r *http.Request) {
 	}
 	task, err := h.uc.GetTask(r.Context(), id, tenantID)
 	if err != nil {
-		response.ErrNotFound(w, "task not found")
+		writeError(w, err)
 		return
 	}
 	response.JSON(w, http.StatusOK, taskResponse(task))
 }
 
+// CancelTask: 204 si queda cancelada (tambien si ya lo estaba), 404 si no es de la empresa del
+// token o no existe, 409 si ya se ejecuto.
 func (h *Handler) CancelTask(w http.ResponseWriter, r *http.Request) {
 	id, err := parseIDParam(r)
 	if err != nil {
 		response.ErrBadRequest(w, "invalid id")
 		return
 	}
-	if err := h.uc.CancelTask(r.Context(), id); err != nil {
+	tenantID, err := parseTenantID(r)
+	if err != nil {
+		response.ErrUnauthorized(w, "invalid tenant")
+		return
+	}
+	if err := h.uc.CancelTask(r.Context(), id, tenantID); err != nil {
 		writeError(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// ListPendingTasks pagina como /jobs las tareas pendientes de la empresa del token. La meta
+// lleva ademas la ventana del listado, que asi conoce quien solo tiene tasks/read.
 func (h *Handler) ListPendingTasks(w http.ResponseWriter, r *http.Request) {
-	tasks, err := h.uc.ListPendingTasks(r.Context())
+	tenantID, err := parseTenantID(r)
+	if err != nil {
+		response.ErrUnauthorized(w, "invalid tenant")
+		return
+	}
+	page, perPage := parsePage(r)
+	tasks, total, err := h.uc.ListPendingTasks(r.Context(), tenantID, page, perPage)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	response.JSON(w, http.StatusOK, tasksResponse(tasks))
+	writeTasksPage(w, tasks, response.PageMeta(total, page, perPage))
 }

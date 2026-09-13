@@ -170,18 +170,34 @@ func (r *JobDefinitionRepo) List(ctx context.Context, f domain.JobFilter) ([]*do
 	return list, total, nil
 }
 
+// Update y Deactivate escriben por id y empresa: una fila de otra empresa no se toca aunque
+// alguien llegue con su id. IS NOT DISTINCT FROM iguala tambien la de plataforma (NULL).
 func (r *JobDefinitionRepo) Update(ctx context.Context, job *domain.JobDefinition) error {
-	_, err := r.pool.Exec(ctx,
-		`UPDATE scheduler.job_definitions SET name=$1,description=$2,job_type=$3,cron_expression=$4,timezone=$5,interval_minutes=$6,handler=$7,payload=$8,is_active=$9,max_retries=$10,timeout_seconds=$11,updated_at=$12 WHERE id=$13`,
+	tag, err := r.pool.Exec(ctx,
+		`UPDATE scheduler.job_definitions SET name=$1,description=$2,job_type=$3,cron_expression=$4,timezone=$5,interval_minutes=$6,handler=$7,payload=$8,is_active=$9,max_retries=$10,timeout_seconds=$11,updated_at=$12
+		  WHERE id=$13 AND tenant_id IS NOT DISTINCT FROM $14`,
 		job.Name, job.Description, job.JobType, job.CronExpression, job.Timezone, job.IntervalMinutes,
-		job.Handler, job.Payload, job.IsActive, job.MaxRetries, job.TimeoutSeconds, job.UpdatedAt, job.ID,
+		job.Handler, job.Payload, job.IsActive, job.MaxRetries, job.TimeoutSeconds, job.UpdatedAt, job.ID, job.TenantID,
 	)
-	return err
+	return affectedOr(tag, err, domain.ErrJobNotFound)
 }
 
-func (r *JobDefinitionRepo) Deactivate(ctx context.Context, id uuid.UUID, updatedAt time.Time) error {
-	_, err := r.pool.Exec(ctx, `UPDATE scheduler.job_definitions SET is_active=false, updated_at=$1 WHERE id=$2`, updatedAt, id)
-	return err
+func (r *JobDefinitionRepo) Deactivate(ctx context.Context, id uuid.UUID, owner *uuid.UUID, updatedAt time.Time) error {
+	tag, err := r.pool.Exec(ctx,
+		`UPDATE scheduler.job_definitions SET is_active=false, updated_at=$1 WHERE id=$2 AND tenant_id IS NOT DISTINCT FROM $3`,
+		updatedAt, id, owner)
+	return affectedOr(tag, err, domain.ErrJobNotFound)
+}
+
+// affectedOr traduce una escritura que no encontro su fila en notFound.
+func affectedOr(tag pgconn.CommandTag, err error, notFound error) error {
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return notFound
+	}
+	return nil
 }
 
 type JobExecutionRepo struct {
@@ -235,15 +251,25 @@ func (r *JobExecutionRepo) GetForUpdate(ctx context.Context, id, tenantID uuid.U
 		`SELECT `+executionColumns+` FROM scheduler.job_executions WHERE id=$1 AND (tenant_id=$2 OR tenant_id IS NULL) FOR UPDATE`, id, tenantID))
 }
 
-func (r *JobExecutionRepo) GetByJob(ctx context.Context, jobID uuid.UUID, page, pageSize int) ([]*domain.JobExecution, int64, error) {
+// executionVisibleTo son las ejecuciones que ve la empresa $2: las suyas y las de plataforma.
+const executionVisibleTo = ` AND (tenant_id=$2 OR tenant_id IS NULL)`
+
+// GetByJob cuenta y lee la pagina con dos consultas; el desempate por id evita que dos
+// paginas se solapen cuando varias ejecuciones comparten created_at.
+func (r *JobExecutionRepo) GetByJob(ctx context.Context, jobID, tenantID uuid.UUID, page, perPage int) ([]*domain.JobExecution, int64, error) {
 	var total int64
-	err := r.pool.QueryRow(ctx, `SELECT COUNT(*) FROM scheduler.job_executions WHERE job_id=$1`, jobID).Scan(&total)
+	err := r.pool.QueryRow(ctx,
+		`SELECT count(*) FROM scheduler.job_executions WHERE job_id=$1`+executionVisibleTo, jobID, tenantID).Scan(&total)
 	if err != nil {
 		return nil, 0, err
 	}
-	offset := (page - 1) * pageSize
+	if total == 0 {
+		return nil, 0, nil
+	}
 	list, err := r.list(ctx,
-		`SELECT `+executionColumns+` FROM scheduler.job_executions WHERE job_id=$1 ORDER BY created_at DESC LIMIT $2 OFFSET $3`, jobID, pageSize, offset)
+		`SELECT `+executionColumns+` FROM scheduler.job_executions WHERE job_id=$1`+executionVisibleTo+`
+		  ORDER BY created_at DESC, id DESC LIMIT $3 OFFSET $4`,
+		jobID, tenantID, perPage, domain.PageOffset(page, perPage))
 	if err != nil {
 		return nil, 0, err
 	}
@@ -251,17 +277,20 @@ func (r *JobExecutionRepo) GetByJob(ctx context.Context, jobID uuid.UUID, page, 
 }
 
 func (r *JobExecutionRepo) Update(ctx context.Context, exec *domain.JobExecution) error {
-	_, err := r.pool.Exec(ctx,
-		`UPDATE scheduler.job_executions SET status=$1,started_at=$2,completed_at=$3,duration=$4,result=$5,error_message=$6,retry_count=$7,deadline_at=$8,next_attempt_at=$9,failure_reason=$10 WHERE id=$11`,
+	tag, err := r.pool.Exec(ctx,
+		`UPDATE scheduler.job_executions SET status=$1,started_at=$2,completed_at=$3,duration=$4,result=$5,error_message=$6,retry_count=$7,deadline_at=$8,next_attempt_at=$9,failure_reason=$10
+		  WHERE id=$11 AND tenant_id IS NOT DISTINCT FROM $12`,
 		exec.Status, exec.StartedAt, exec.CompletedAt, exec.Duration, exec.Result, exec.ErrorMessage, exec.RetryCount,
-		exec.DeadlineAt, exec.NextAttemptAt, exec.FailureReason, exec.ID,
+		exec.DeadlineAt, exec.NextAttemptAt, exec.FailureReason, exec.ID, exec.TenantID,
 	)
-	return err
+	return affectedOr(tag, err, domain.ErrExecutionNotFound)
 }
 
-func (r *JobExecutionRepo) ListRunning(ctx context.Context) ([]*domain.JobExecution, error) {
+func (r *JobExecutionRepo) ListRunning(ctx context.Context, tenantID uuid.UUID) ([]*domain.JobExecution, error) {
 	return r.list(ctx,
-		`SELECT `+executionColumns+` FROM scheduler.job_executions WHERE status IN ('pending','running') ORDER BY created_at DESC`)
+		`SELECT `+executionColumns+` FROM scheduler.job_executions
+		  WHERE status IN ('pending','running') AND (tenant_id=$1 OR tenant_id IS NULL)
+		  ORDER BY created_at DESC, id DESC`, tenantID)
 }
 
 func (r *JobExecutionRepo) ClaimOverdue(ctx context.Context, now time.Time) (*domain.JobExecution, error) {
@@ -322,23 +351,58 @@ func (r *ScheduledTaskRepo) Create(ctx context.Context, task *domain.ScheduledTa
 	return err
 }
 
-func (r *ScheduledTaskRepo) GetByID(ctx context.Context, id, tenantID uuid.UUID) (*domain.ScheduledTask, error) {
+const taskColumns = `id,tenant_id,name,description,trigger_at,handler,payload,status,executed_at,created_at`
+
+// scanTask distingue la tarea que no esta (domain.ErrTaskNotFound) de un fallo de la base,
+// que sube tal cual y acaba en un 500 registrado.
+func scanTask(row pgx.Row) (*domain.ScheduledTask, error) {
 	t := &domain.ScheduledTask{}
-	err := r.pool.QueryRow(ctx,
-		`SELECT id,tenant_id,name,description,trigger_at,handler,payload,status,executed_at,created_at
- FROM scheduler.scheduled_tasks WHERE id=$1 AND tenant_id=$2`, id, tenantID,
-	).Scan(&t.ID, &t.TenantID, &t.Name, &t.Description, &t.TriggerAt, &t.Handler, &t.Payload, &t.Status, &t.ExecutedAt, &t.CreatedAt)
-	if err != nil {
+	err := row.Scan(&t.ID, &t.TenantID, &t.Name, &t.Description, &t.TriggerAt, &t.Handler, &t.Payload, &t.Status, &t.ExecutedAt, &t.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, domain.ErrTaskNotFound
+	}
+	if err != nil {
+		return nil, err
 	}
 	return t, nil
 }
 
-func (r *ScheduledTaskRepo) ListPending(ctx context.Context, before time.Time) ([]*domain.ScheduledTask, error) {
-	rows, err := r.pool.Query(ctx,
-		`SELECT id,tenant_id,name,description,trigger_at,handler,payload,status,executed_at,created_at
- FROM scheduler.scheduled_tasks WHERE status='scheduled' AND trigger_at <= $1 ORDER BY trigger_at`, before,
-	)
+func (r *ScheduledTaskRepo) GetByID(ctx context.Context, id, tenantID uuid.UUID) (*domain.ScheduledTask, error) {
+	return scanTask(r.pool.QueryRow(ctx,
+		`SELECT `+taskColumns+` FROM scheduler.scheduled_tasks WHERE id=$1 AND tenant_id=$2`, id, tenantID))
+}
+
+func (r *ScheduledTaskRepo) GetForUpdate(ctx context.Context, id, tenantID uuid.UUID) (*domain.ScheduledTask, error) {
+	return scanTask(r.pool.QueryRow(ctx,
+		`SELECT `+taskColumns+` FROM scheduler.scheduled_tasks WHERE id=$1 AND tenant_id=$2 FOR UPDATE`, id, tenantID))
+}
+
+// ListPending cuenta y lee la pagina con dos consultas (idx_scheduled_tasks_tenant); el
+// desempate por id evita que dos paginas se solapen.
+func (r *ScheduledTaskRepo) ListPending(ctx context.Context, f domain.TaskFilter) ([]*domain.ScheduledTask, int64, error) {
+	const where = ` FROM scheduler.scheduled_tasks WHERE tenant_id=$1 AND status='scheduled' AND trigger_at <= $2`
+	var total int64
+	if err := r.pool.QueryRow(ctx, `SELECT count(*)`+where, f.TenantID, f.Before).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	if total == 0 {
+		return nil, 0, nil
+	}
+	list, err := r.list(ctx, `SELECT `+taskColumns+where+` ORDER BY trigger_at, id LIMIT $3 OFFSET $4`,
+		f.TenantID, f.Before, f.PerPage, f.Offset())
+	if err != nil {
+		return nil, 0, err
+	}
+	return list, total, nil
+}
+
+func (r *ScheduledTaskRepo) ListDue(ctx context.Context, now time.Time) ([]*domain.ScheduledTask, error) {
+	return r.list(ctx, `SELECT `+taskColumns+` FROM scheduler.scheduled_tasks
+		  WHERE status='scheduled' AND trigger_at <= $1 ORDER BY trigger_at, id`, now)
+}
+
+func (r *ScheduledTaskRepo) list(ctx context.Context, sql string, args ...any) ([]*domain.ScheduledTask, error) {
+	rows, err := r.pool.Query(ctx, sql, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -346,29 +410,30 @@ func (r *ScheduledTaskRepo) ListPending(ctx context.Context, before time.Time) (
 
 	var list []*domain.ScheduledTask
 	for rows.Next() {
-		t := &domain.ScheduledTask{}
-		if err := rows.Scan(&t.ID, &t.TenantID, &t.Name, &t.Description, &t.TriggerAt, &t.Handler, &t.Payload, &t.Status, &t.ExecutedAt, &t.CreatedAt); err != nil {
+		t, err := scanTask(rows)
+		if err != nil {
 			return nil, err
 		}
 		list = append(list, t)
 	}
-	return list, nil
+	return list, rows.Err()
 }
 
-// UpdateStatus fija executed_at al pasar a 'executed': es la unica escritura de
-// esa columna, y sin ella la fecha de ejecucion quedaba solo en memoria.
-func (r *ScheduledTaskRepo) UpdateStatus(ctx context.Context, id uuid.UUID, status string) error {
-	_, err := r.pool.Exec(ctx,
-		`UPDATE scheduler.scheduled_tasks
-		    SET status=$1,
-		        executed_at = CASE WHEN $1 = 'executed' THEN NOW() ELSE executed_at END
-		  WHERE id=$2`, status, id)
-	return err
+// MarkExecuted es la unica escritura de executed_at, con la hora del caso de uso. Solo pasa
+// una tarea que sigue programada: la cancelada mientras tanto no se reabre.
+func (r *ScheduledTaskRepo) MarkExecuted(ctx context.Context, id uuid.UUID, at time.Time) (bool, error) {
+	tag, err := r.pool.Exec(ctx,
+		`UPDATE scheduler.scheduled_tasks SET status='executed', executed_at=$1 WHERE id=$2 AND status='scheduled'`, at, id)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() == 1, nil
 }
 
-func (r *ScheduledTaskRepo) Cancel(ctx context.Context, id uuid.UUID) error {
-	_, err := r.pool.Exec(ctx, `UPDATE scheduler.scheduled_tasks SET status='cancelled' WHERE id=$1 AND status='scheduled'`, id)
-	return err
+func (r *ScheduledTaskRepo) Cancel(ctx context.Context, id, tenantID uuid.UUID) error {
+	tag, err := r.pool.Exec(ctx,
+		`UPDATE scheduler.scheduled_tasks SET status='cancelled' WHERE id=$1 AND tenant_id=$2 AND status='scheduled'`, id, tenantID)
+	return affectedOr(tag, err, domain.ErrTaskNotFound)
 }
 
 type JobScheduleRepo struct {
@@ -388,6 +453,21 @@ func (r *JobScheduleRepo) UpdateNextRun(ctx context.Context, jobID uuid.UUID, ne
 		jobID, nextRunAt, ranAt,
 	)
 	return err
+}
+
+func (r *JobScheduleRepo) Get(ctx context.Context, jobID uuid.UUID) (*domain.JobSchedule, error) {
+	s := &domain.JobSchedule{JobID: jobID}
+	err := r.pool.QueryRow(ctx,
+		`SELECT next_run_at, last_run_at FROM scheduler.job_schedules WHERE job_id=$1`, jobID,
+	).Scan(&s.NextRunAt, &s.LastRunAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	s.NextRunAt = s.NextRunAt.UTC()
+	return s, nil
 }
 
 func (r *JobScheduleRepo) SetNextRun(ctx context.Context, jobID uuid.UUID, nextRunAt time.Time) error {
@@ -419,7 +499,7 @@ func (r *JobScheduleRepo) ClaimDue(ctx context.Context, jobID uuid.UUID, now tim
 
 func (r *JobScheduleRepo) LockActiveCron(ctx context.Context) ([]*domain.CronJobSchedule, error) {
 	rows, err := r.pool.Query(ctx,
-		`SELECT js.job_id, COALESCE(jd.cron_expression, ''), jd.timezone, js.next_run_at
+		`SELECT js.job_id, jd.tenant_id, COALESCE(jd.cron_expression, ''), jd.timezone, js.next_run_at
  FROM scheduler.job_schedules js
  JOIN scheduler.job_definitions jd ON jd.id = js.job_id
  WHERE jd.job_type = $1 AND jd.is_active
@@ -434,7 +514,7 @@ func (r *JobScheduleRepo) LockActiveCron(ctx context.Context) ([]*domain.CronJob
 	var list []*domain.CronJobSchedule
 	for rows.Next() {
 		s := &domain.CronJobSchedule{}
-		if err := rows.Scan(&s.JobID, &s.Expression, &s.Timezone, &s.NextRunAt); err != nil {
+		if err := rows.Scan(&s.JobID, &s.TenantID, &s.Expression, &s.Timezone, &s.NextRunAt); err != nil {
 			return nil, err
 		}
 		s.NextRunAt = s.NextRunAt.UTC()

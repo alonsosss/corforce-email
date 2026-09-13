@@ -1,10 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { t } from '@/i18n';
 import { setAccessToken } from './client';
 import { ApiError, ERROR_CODES, errorDetail } from './errors';
+import { errorMessage } from './messages';
 import {
+  FIELD_RULES,
   schedulerApi,
   type CreateJobRequest,
   type JobExecution,
+  type ScheduledTask,
   type SchedulerJob,
   type SchedulerMeta,
 } from './scheduler';
@@ -214,42 +218,109 @@ describe('cliente del scheduler', () => {
         max_timeout_seconds: 604800,
       },
       pagination: { default_per_page: 20, max_per_page: 100 },
-      tasks: { pending_window_seconds: 86400 },
     };
     const calls = mockFetch((call) =>
       call.url.endsWith('/meta') ? jsonResponse(200, { data: meta }) : jsonResponse(200, {}),
     );
     expect(await schedulerApi.meta()).toEqual(meta);
     expect(await schedulerApi.handlers()).toEqual([]);
-    expect(await schedulerApi.listPendingTasks()).toEqual([]);
+    expect(await schedulerApi.listPendingTasks({ page: 1, per_page: 20 })).toEqual({
+      items: [],
+      page: 1,
+      perPage: 20,
+      total: 0,
+      totalPages: 0,
+      pendingWindowSeconds: null,
+    });
     expect(calls.map((c) => c.url)).toEqual([
       '/api/v1/scheduler/meta',
       '/api/v1/scheduler/handlers',
-      '/api/v1/scheduler/tasks',
+      '/api/v1/scheduler/tasks?page=1&per_page=20',
     ]);
   });
 
-  it('una zona invalida llega como 422 INVALID_TIMEZONE con el campo en error.details', async () => {
+  it('pagina las tareas pendientes y lee la ventana de la meta de la propia respuesta', async () => {
+    const task: ScheduledTask = {
+      id: 'task-1',
+      tenant_id: 'tenant-1',
+      name: 'Aviso',
+      description: null,
+      trigger_at: '2026-09-14T08:00:00Z',
+      handler: 'reports.daily',
+      payload: null,
+      status: 'scheduled',
+      executed_at: null,
+      created_at: '2026-09-13T10:00:00Z',
+    };
+    const calls = mockFetch(() =>
+      jsonResponse(200, {
+        data: [task],
+        meta: { page: 2, per_page: 20, total: 21, total_pages: 2, pending_window_seconds: 86400 },
+      }),
+    );
+    const page = await schedulerApi.listPendingTasks({ page: 2, per_page: 20 });
+    expect(calls[0]?.url).toBe('/api/v1/scheduler/tasks?page=2&per_page=20');
+    expect(page).toEqual({
+      items: [task],
+      page: 2,
+      perPage: 20,
+      total: 21,
+      totalPages: 2,
+      pendingWindowSeconds: 86400,
+    });
+
+    for (const window of [0, -60, '86400', null]) {
+      mockFetch(() =>
+        jsonResponse(200, { data: [], meta: { page: 1, per_page: 20, pending_window_seconds: window } }),
+      );
+      expect((await schedulerApi.listPendingTasks({ page: 1, per_page: 20 })).pendingWindowSeconds).toBe(
+        null,
+      );
+    }
+  });
+
+  it('una zona invalida llega como 422 INVALID_TIMEZONE con el campo y la regla en error.details', async () => {
     const message = 'invalid time zone: "Mars/Olympus" is not in the time zone database';
     mockFetch(() =>
       jsonResponse(422, {
-        error: { code: 'INVALID_TIMEZONE', message, details: { field: 'timezone' } },
+        error: {
+          code: 'INVALID_TIMEZONE',
+          message,
+          details: { field: 'timezone', rule: FIELD_RULES.notAllowed },
+        },
       }),
     );
     const err = await schedulerApi.createJob(CREATE).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ApiError);
     expect(err).toMatchObject({ status: 422, code: ERROR_CODES.INVALID_TIMEZONE, message });
     expect(errorDetail(err, 'field')).toBe('timezone');
+    expect(errorDetail(err, 'rule')).toBe('not_allowed');
   });
 
-  it('el codigo repetido es un 409 CONFLICT que nombra el campo code', async () => {
+  it('el codigo repetido es un 409 CONFLICT que nombra el campo code con la regla duplicate', async () => {
     mockFetch(() =>
       jsonResponse(409, {
-        error: { code: 'CONFLICT', message: 'job already exists', details: { field: 'code' } },
+        error: {
+          code: 'CONFLICT',
+          message: 'job already exists',
+          details: { field: 'code', rule: FIELD_RULES.duplicate },
+        },
       }),
     );
     const err = await schedulerApi.createJob(CREATE).catch((e: unknown) => e);
     expect(err).toMatchObject({ status: 409, code: ERROR_CODES.CONFLICT });
     expect(errorDetail(err, 'field')).toBe('code');
+    expect(errorDetail(err, 'rule')).toBe('duplicate');
+  });
+
+  it('reactivar un one_time ya despachado es un 409 JOB_ALREADY_RUN con texto propio', async () => {
+    mockFetch(() =>
+      jsonResponse(409, {
+        error: { code: 'JOB_ALREADY_RUN', message: 'a one_time job that already ran cannot be re-enabled' },
+      }),
+    );
+    const err = await schedulerApi.enableJob('job-1').catch((e: unknown) => e);
+    expect(err).toMatchObject({ status: 409, code: ERROR_CODES.JOB_ALREADY_RUN });
+    expect(errorMessage(err)).toBe(t('error.code.JOB_ALREADY_RUN'));
   });
 });

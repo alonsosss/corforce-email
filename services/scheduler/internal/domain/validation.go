@@ -45,6 +45,11 @@ const (
 	FieldTimeoutSeconds  = "timeout_seconds"
 	FieldTriggerAt       = "trigger_at"
 	FieldResult          = "result"
+	// FieldReportError y FieldRetryable son los del cierre fallido que informa un ejecutor.
+	FieldReportError = "error"
+	FieldRetryable   = "retryable"
+	// FieldIsActive es el filtro del listado de trabajos.
+	FieldIsActive = "is_active"
 )
 
 // JobTypes son los tipos de trabajo admitidos, en el orden en que se ofrecen.
@@ -77,11 +82,13 @@ func (j *JobDefinition) Validate() error {
 		}
 	case JobTypeInterval:
 		if j.IntervalMinutes == nil {
-			return invalidField(FieldIntervalMinutes, ErrInvalidJob, "interval_minutes is required for interval jobs")
+			return invalidField(FieldIntervalMinutes, RuleRequired, ErrInvalidJob, "interval_minutes is required for interval jobs")
 		}
 	case JobTypeOneTime:
+	case "":
+		return invalidField(FieldJobType, RuleRequired, ErrInvalidJob, "job_type is required (one of %s)", strings.Join(JobTypes(), ", "))
 	default:
-		return invalidField(FieldJobType, ErrInvalidJob, "job_type must be one of %s", strings.Join(JobTypes(), ", "))
+		return invalidField(FieldJobType, RuleNotAllowed, ErrInvalidJob, "job_type must be one of %s", strings.Join(JobTypes(), ", "))
 	}
 	// Los campos de otro tipo de trabajo no se usan, pero se guardan: tambien deben caber.
 	if j.JobType != JobTypeCron && j.CronExpression != nil {
@@ -90,13 +97,13 @@ func (j *JobDefinition) Validate() error {
 		}
 	}
 	if j.IntervalMinutes != nil && (*j.IntervalMinutes < MinIntervalMinutes || *j.IntervalMinutes > MaxIntervalMinutes) {
-		return invalidField(FieldIntervalMinutes, ErrInvalidJob, "interval_minutes must be between %d and %d", MinIntervalMinutes, MaxIntervalMinutes)
+		return invalidField(FieldIntervalMinutes, RuleOutOfRange, ErrInvalidJob, "interval_minutes must be between %d and %d", MinIntervalMinutes, MaxIntervalMinutes)
 	}
 	if j.MaxRetries < 0 || j.MaxRetries > MaxJobRetries {
-		return invalidField(FieldMaxRetries, ErrInvalidJob, "max_retries must be between 0 and %d", MaxJobRetries)
+		return invalidField(FieldMaxRetries, RuleOutOfRange, ErrInvalidJob, "max_retries must be between 0 and %d", MaxJobRetries)
 	}
 	if j.TimeoutSeconds < 0 || j.TimeoutSeconds > MaxHandlerTimeoutSeconds {
-		return invalidField(FieldTimeoutSeconds, ErrInvalidJob, "timeout_seconds must be between 0 and %d (0 takes the handler maximum)", MaxHandlerTimeoutSeconds)
+		return invalidField(FieldTimeoutSeconds, RuleOutOfRange, ErrInvalidJob, "timeout_seconds must be between 0 and %d (0 takes the handler maximum)", MaxHandlerTimeoutSeconds)
 	}
 	return checkPayload(ErrInvalidJob, j.Payload)
 }
@@ -105,7 +112,7 @@ func (j *JobDefinition) Validate() error {
 // silencio al despacharlo.
 func (j *JobDefinition) CheckTimeoutFor(spec HandlerSpec) error {
 	if j.TimeoutSeconds > spec.MaxTimeoutSeconds {
-		return invalidField(FieldTimeoutSeconds, ErrInvalidJob, "timeout_seconds must be at most %d for handler %q (0 takes that maximum)", spec.MaxTimeoutSeconds, spec.Name)
+		return invalidField(FieldTimeoutSeconds, RuleOutOfRange, ErrInvalidJob, "timeout_seconds must be at most %d for handler %q (0 takes that maximum)", spec.MaxTimeoutSeconds, spec.Name)
 	}
 	return nil
 }
@@ -124,7 +131,7 @@ func (t *ScheduledTask) Validate() error {
 		return err
 	}
 	if t.TriggerAt.IsZero() {
-		return invalidField(FieldTriggerAt, ErrInvalidTask, "trigger_at is required")
+		return invalidField(FieldTriggerAt, RuleRequired, ErrInvalidTask, "trigger_at is required")
 	}
 	return checkPayload(ErrInvalidTask, t.Payload)
 }
@@ -133,13 +140,13 @@ func (t *ScheduledTask) Validate() error {
 // NUL); con required, ademas, que no este en blanco.
 func checkText(field string, cause error, value string, max int, required bool) error {
 	if required && strings.TrimSpace(value) == "" {
-		return invalidField(field, cause, "%s is required", field)
+		return invalidField(field, RuleRequired, cause, "%s is required", field)
 	}
 	if !utf8.ValidString(value) || strings.ContainsRune(value, 0) {
-		return invalidField(field, cause, "%s must be valid UTF-8 text without the NUL character", field)
+		return invalidField(field, RuleInvalidFormat, cause, "%s must be valid UTF-8 text without the NUL character", field)
 	}
 	if utf8.RuneCountInString(value) > max {
-		return invalidField(field, cause, "%s must be at most %d characters", field, max)
+		return invalidField(field, RuleTooLong, cause, "%s must be at most %d characters", field, max)
 	}
 	return nil
 }
@@ -149,10 +156,10 @@ func checkPayload(cause error, payload *string) error {
 		return nil
 	}
 	if len(*payload) > MaxPayloadBytes {
-		return invalidField(FieldPayload, cause, "payload must be at most %d bytes", MaxPayloadBytes)
+		return invalidField(FieldPayload, RuleTooLong, cause, "payload must be at most %d bytes", MaxPayloadBytes)
 	}
 	if err := validJSONDocument([]byte(*payload)); err != nil {
-		return invalidField(FieldPayload, cause, "payload %s", err.Error())
+		return invalidField(FieldPayload, RuleInvalidFormat, cause, "payload %s", err.Error())
 	}
 	return nil
 }

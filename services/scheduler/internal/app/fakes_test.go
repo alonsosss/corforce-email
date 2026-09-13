@@ -19,9 +19,12 @@ type memStore struct {
 	jobs      map[uuid.UUID]domain.JobDefinition
 	execs     map[uuid.UUID]domain.JobExecution
 	schedules map[uuid.UUID]domain.JobSchedule
-	events    []recorded
-	writes    []recorded
-	txSeq     int
+	tasks     map[uuid.UUID]domain.ScheduledTask
+	// taskWrites cuenta las escrituras de tareas (cancelar, marcar ejecutada).
+	taskWrites int
+	events     []recorded
+	writes     []recorded
+	txSeq      int
 	// failPublish hace fallar la publicacion para comprobar que arrastra al dato.
 	failPublish error
 	jobUpdates  int
@@ -50,6 +53,7 @@ func newMemStore() *memStore {
 		jobs:      map[uuid.UUID]domain.JobDefinition{},
 		execs:     map[uuid.UUID]domain.JobExecution{},
 		schedules: map[uuid.UUID]domain.JobSchedule{},
+		tasks:     map[uuid.UUID]domain.ScheduledTask{},
 	}
 }
 
@@ -57,6 +61,7 @@ type memSnapshot struct {
 	jobs          map[uuid.UUID]domain.JobDefinition
 	execs         map[uuid.UUID]domain.JobExecution
 	schedules     map[uuid.UUID]domain.JobSchedule
+	tasks         map[uuid.UUID]domain.ScheduledTask
 	events, write int
 }
 
@@ -68,7 +73,8 @@ func (s *memStore) Transact(ctx context.Context, fn func(ctx context.Context) er
 	s.txSeq++
 	id := s.txSeq
 	snap := memSnapshot{jobs: map[uuid.UUID]domain.JobDefinition{}, execs: map[uuid.UUID]domain.JobExecution{},
-		schedules: map[uuid.UUID]domain.JobSchedule{}, events: len(s.events), write: len(s.writes)}
+		schedules: map[uuid.UUID]domain.JobSchedule{}, tasks: map[uuid.UUID]domain.ScheduledTask{},
+		events: len(s.events), write: len(s.writes)}
 	for k, v := range s.jobs {
 		snap.jobs[k] = v
 	}
@@ -78,10 +84,13 @@ func (s *memStore) Transact(ctx context.Context, fn func(ctx context.Context) er
 	for k, v := range s.schedules {
 		snap.schedules[k] = v
 	}
+	for k, v := range s.tasks {
+		snap.tasks[k] = v
+	}
 	s.mu.Unlock()
 	if err := fn(context.WithValue(ctx, txKey{}, id)); err != nil {
 		s.mu.Lock()
-		s.jobs, s.execs, s.schedules = snap.jobs, snap.execs, snap.schedules
+		s.jobs, s.execs, s.schedules, s.tasks = snap.jobs, snap.execs, snap.schedules, snap.tasks
 		s.events, s.writes = s.events[:snap.events], s.writes[:snap.write]
 		s.mu.Unlock()
 		return err
@@ -151,18 +160,33 @@ func (r memJobs) GetOverview(_ context.Context, id, tenantID uuid.UUID) (*domain
 	return domain.NewJobOverview(j, next, last, summary), nil
 }
 
+// sameOwner es la condicion de las escrituras por id del repositorio: la fila sigue siendo
+// de esa empresa (nil, de plataforma).
+func sameOwner(a, b *uuid.UUID) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return *a == *b
+}
+
 func (r memJobs) Update(_ context.Context, j *domain.JobDefinition) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if stored, ok := r.jobs[j.ID]; !ok || !sameOwner(stored.TenantID, j.TenantID) {
+		return domain.ErrJobNotFound
+	}
 	r.jobs[j.ID] = *j
 	r.jobUpdates++
 	return nil
 }
 
-func (r memJobs) Deactivate(_ context.Context, id uuid.UUID, updatedAt time.Time) error {
+func (r memJobs) Deactivate(_ context.Context, id uuid.UUID, owner *uuid.UUID, updatedAt time.Time) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	j := r.jobs[id]
+	j, ok := r.jobs[id]
+	if !ok || !sameOwner(j.TenantID, owner) {
+		return domain.ErrJobNotFound
+	}
 	j.IsActive = false
 	j.UpdatedAt = updatedAt
 	r.jobs[id] = j
@@ -205,19 +229,54 @@ func (r memExecs) GetForUpdate(_ context.Context, id, tenantID uuid.UUID) (*doma
 	return r.get(id, tenantID)
 }
 
-func (r memExecs) GetByJob(context.Context, uuid.UUID, int, int) ([]*domain.JobExecution, int64, error) {
-	return nil, 0, nil
+// GetByJob pagina como el repositorio: las visibles para la empresa, las mas recientes antes.
+func (r memExecs) GetByJob(_ context.Context, jobID, tenantID uuid.UUID, page, perPage int) ([]*domain.JobExecution, int64, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var all []*domain.JobExecution
+	for _, e := range r.execs {
+		if e.JobID == jobID && visible(e.TenantID, tenantID) {
+			c := e
+			all = append(all, &c)
+		}
+	}
+	sort.Slice(all, func(i, j int) bool { return all[i].CreatedAt.After(all[j].CreatedAt) })
+	return pageOf(all, page, perPage), int64(len(all)), nil
+}
+
+// pageOf corta la pagina con el desplazamiento del dominio, que satura en vez de desbordar.
+func pageOf[T any](all []T, page, perPage int) []T {
+	offset := domain.PageOffset(page, perPage)
+	if offset >= int64(len(all)) {
+		return nil
+	}
+	end := min(int(offset)+perPage, len(all))
+	return all[offset:end]
 }
 
 func (r memExecs) Update(ctx context.Context, e *domain.JobExecution) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if stored, ok := r.execs[e.ID]; !ok || !sameOwner(stored.TenantID, e.TenantID) {
+		return domain.ErrExecutionNotFound
+	}
 	r.execs[e.ID] = *e
 	r.writes = append(r.writes, recorded{subject: "update", execID: e.ID, tx: txOf(ctx)})
 	return nil
 }
 
-func (r memExecs) ListRunning(context.Context) ([]*domain.JobExecution, error) { return nil, nil }
+func (r memExecs) ListRunning(_ context.Context, tenantID uuid.UUID) ([]*domain.JobExecution, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []*domain.JobExecution
+	for _, e := range r.execs {
+		if e.IsActive() && visible(e.TenantID, tenantID) {
+			c := e
+			out = append(out, &c)
+		}
+	}
+	return out, nil
+}
 
 // first devuelve la ejecucion que cumple ok con la menor clave de orden.
 func (r memExecs) first(ok func(e domain.JobExecution) bool, key func(e domain.JobExecution) time.Time) *domain.JobExecution {
@@ -253,6 +312,16 @@ func (r memExecs) ClaimDispatchable(_ context.Context, now time.Time) (*domain.J
 }
 
 type memSchedules struct{ *memStore }
+
+func (r memSchedules) Get(_ context.Context, jobID uuid.UUID) (*domain.JobSchedule, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	s, ok := r.schedules[jobID]
+	if !ok {
+		return nil, nil
+	}
+	return &s, nil
+}
 
 func (r memSchedules) UpdateNextRun(_ context.Context, jobID uuid.UUID, next, ranAt time.Time) error {
 	r.mu.Lock()
@@ -305,11 +374,89 @@ func (r memSchedules) LockActiveCron(context.Context) ([]*domain.CronJobSchedule
 	for id, s := range r.schedules {
 		j := r.jobs[id]
 		if j.IsActive && j.JobType == domain.JobTypeCron {
-			out = append(out, &domain.CronJobSchedule{JobID: id, Expression: j.CronExpr(), Timezone: j.Timezone, NextRunAt: s.NextRunAt})
+			out = append(out, &domain.CronJobSchedule{JobID: id, TenantID: j.TenantID, Expression: j.CronExpr(), Timezone: j.Timezone, NextRunAt: s.NextRunAt})
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].JobID.String() < out[j].JobID.String() })
 	return out, nil
+}
+
+// memTasks es el repositorio de tareas con las mismas condiciones que el SQL: toda lectura y
+// escritura por id lleva la empresa.
+type memTasks struct{ *memStore }
+
+func (r memTasks) Create(_ context.Context, t *domain.ScheduledTask) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.tasks[t.ID] = *t
+	return nil
+}
+
+func (r memTasks) GetByID(_ context.Context, id, tenantID uuid.UUID) (*domain.ScheduledTask, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	t, ok := r.tasks[id]
+	if !ok || t.TenantID != tenantID {
+		return nil, domain.ErrTaskNotFound
+	}
+	return &t, nil
+}
+
+func (r memTasks) GetForUpdate(ctx context.Context, id, tenantID uuid.UUID) (*domain.ScheduledTask, error) {
+	return r.GetByID(ctx, id, tenantID)
+}
+
+func (r memTasks) ListPending(_ context.Context, f domain.TaskFilter) ([]*domain.ScheduledTask, int64, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var all []*domain.ScheduledTask
+	for _, t := range r.tasks {
+		if t.TenantID == f.TenantID && t.Status == domain.TaskStatusScheduled && !t.TriggerAt.After(f.Before) {
+			c := t
+			all = append(all, &c)
+		}
+	}
+	sort.Slice(all, func(i, j int) bool { return all[i].TriggerAt.Before(all[j].TriggerAt) })
+	return pageOf(all, f.Page, f.PerPage), int64(len(all)), nil
+}
+
+func (r memTasks) Cancel(_ context.Context, id, tenantID uuid.UUID) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	t, ok := r.tasks[id]
+	if !ok || t.TenantID != tenantID || t.Status != domain.TaskStatusScheduled {
+		return domain.ErrTaskNotFound
+	}
+	t.Status = domain.TaskStatusCancelled
+	r.tasks[id] = t
+	r.taskWrites++
+	return nil
+}
+
+func (r memTasks) ListDue(_ context.Context, now time.Time) ([]*domain.ScheduledTask, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []*domain.ScheduledTask
+	for _, t := range r.tasks {
+		if t.Status == domain.TaskStatusScheduled && !t.TriggerAt.After(now) {
+			c := t
+			out = append(out, &c)
+		}
+	}
+	return out, nil
+}
+
+func (r memTasks) MarkExecuted(_ context.Context, id uuid.UUID, at time.Time) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	t, ok := r.tasks[id]
+	if !ok || t.Status != domain.TaskStatusScheduled {
+		return false, nil
+	}
+	t.Status, t.ExecutedAt = domain.TaskStatusExecuted, &at
+	r.tasks[id] = t
+	r.taskWrites++
+	return true, nil
 }
 
 type memEvents struct{ *memStore }
@@ -367,7 +514,7 @@ func newFixture(t *testing.T) *fixture {
 	s := newMemStore()
 	clk := &clock{t: time.Date(2026, 9, 13, 10, 0, 0, 0, time.UTC)}
 	uc := NewSchedulerUseCase(SchedulerDeps{
-		Jobs: memJobs{s}, Executions: memExecs{s}, Schedules: memSchedules{s}, Events: memEvents{s}, Tx: s,
+		Jobs: memJobs{s}, Executions: memExecs{s}, Schedules: memSchedules{s}, Tasks: memTasks{s}, Events: memEvents{s}, Tx: s,
 		Catalog: catalog, Retry: domain.RetryPolicy{BaseDelay: time.Minute, MaxDelay: 10 * time.Minute},
 		Now: clk.now, Logger: zap.NewNop(),
 	})

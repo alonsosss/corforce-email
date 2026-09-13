@@ -1395,6 +1395,8 @@ export const es = {
   'error.code.TEMPLATE_NOT_FOUND': 'La plantilla o su version no existe.',
   'error.code.TEMPLATES_UNAVAILABLE': 'El servicio de plantillas no esta disponible.',
   'error.code.REPUTATION_UNAVAILABLE': 'El servicio de reputacion no respondio: no se envio nada.',
+  'error.code.JOB_ALREADY_RUN':
+    'Este trabajo de una sola vez ya se ejecuto y no se reactiva: lanzalo a mano o crea uno nuevo.',
   'error.code.SUPPRESSION_UNAVAILABLE':
     'La lista de supresion no esta disponible: no se envio nada.',
   'error.code.DATABASE_UNAVAILABLE': 'La base de datos no esta disponible en este momento.',
@@ -2532,6 +2534,16 @@ export const es = {
   'scheduler.validation.timezoneFormat': 'No es un nombre de zona IANA (Area/Lugar).',
   'scheduler.validation.payloadJson': 'Debe ser un documento JSON valido.',
   'scheduler.validation.payloadSize': 'No puede superar {max}.',
+  'scheduler.validation.cronFormat':
+    'No es una expresion cron valida: cinco campos (minuto, hora, dia del mes, mes y dia de la semana) o un descriptor. La zona va en su propio campo.',
+  'scheduler.validation.cronNever': 'La expresion no coincide con ninguna fecha.',
+  'scheduler.validation.timezoneUnknown': 'El servidor no conoce esa zona horaria.',
+  'scheduler.validation.jobType': 'Elige uno de los tipos admitidos: {list}.',
+  'scheduler.validation.text': 'Contiene caracteres que no se pueden guardar.',
+  'scheduler.rule.too_long': 'Es demasiado largo.',
+  'scheduler.rule.out_of_range': 'Esta fuera del rango admitido.',
+  'scheduler.rule.not_allowed': 'Ese valor no esta admitido.',
+  'scheduler.rule.duplicate': 'Ya existe otro con ese valor.',
   'scheduler.validation.timeoutHandlerMax':
     'Supera el plazo maximo del manejador ({value}). Con 0 se usa ese maximo.',
   'scheduler.error.codeTaken': 'Ya existe un trabajo con ese codigo.',
@@ -2594,6 +2606,7 @@ export const es = {
   'scheduler.tasks.cancelLabel': 'Cancelar la tarea {name}',
   'scheduler.tasks.cancelConfirm': 'La tarea "{name}" no se ejecutara.',
   'scheduler.tasks.cancelled': 'Tarea cancelada.',
+  'scheduler.tasks.cancelConflict': 'La tarea ya se ejecuto y no se puede cancelar.',
   'scheduler.taskStatus.scheduled': 'Programada',
   'scheduler.taskStatus.executed': 'Ejecutada',
   'scheduler.taskStatus.cancelled': 'Cancelada',

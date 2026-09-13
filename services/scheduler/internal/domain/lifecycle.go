@@ -27,7 +27,7 @@ func NormalizeResult(raw json.RawMessage) (*string, error) {
 		return nil, nil
 	}
 	if err := validJSONDocument(trimmed); err != nil {
-		return nil, invalidField(FieldResult, ErrInvalidReport, "result %s", err.Error())
+		return nil, invalidField(FieldResult, RuleInvalidFormat, ErrInvalidReport, "result %s", err.Error())
 	}
 	s := string(trimmed)
 	return &s, nil

@@ -6,6 +6,7 @@ import type { PermissionTriple } from '@/api/access';
 import { ApiError, ERROR_CODES } from '@/api/errors';
 import { errorMessage } from '@/api/messages';
 import {
+  FIELD_RULES,
   schedulerApi,
   schedulerHandlers,
   schedulerMeta,
@@ -15,6 +16,7 @@ import {
   type SchedulerHandler,
   type SchedulerJob,
   type SchedulerMeta,
+  type TasksPage,
 } from '@/api/scheduler';
 import type { Page } from '@/api/types';
 import { MODULES } from '@/access/modules';
@@ -79,9 +81,31 @@ function pageOf(jobs: SchedulerJob[], extra: Partial<Page<SchedulerJob>> = {}): 
 }
 
 /** Un error como lo arma client.ts: el cuerpo entero queda en body para errorDetail. */
-function rejected(status: number, code: string, message: string, field?: string): ApiError {
-  const error = { code, message, ...(field ? { details: { field } } : {}) };
+function rejected(
+  status: number,
+  code: string,
+  message: string,
+  field?: string,
+  rule?: string,
+): ApiError {
+  const details = field ? { field, ...(rule ? { rule } : {}) } : undefined;
+  const error = { code, message, ...(details ? { details } : {}) };
   return new ApiError(status, error, { error });
+}
+
+/** Ventana que publica GET /scheduler/tasks en su meta (domain.PendingTasksWindow). */
+const TASKS_WINDOW_SECONDS = 86_400;
+
+function tasksPage(items: ScheduledTask[], extra: Partial<TasksPage> = {}): TasksPage {
+  return {
+    items,
+    page: 1,
+    perPage: DEFAULT_PER_PAGE,
+    total: items.length,
+    totalPages: items.length > 0 ? 1 : 0,
+    pendingWindowSeconds: TASKS_WINDOW_SECONDS,
+    ...extra,
+  };
 }
 
 function renderWith(ui: JSX.Element) {
@@ -145,21 +169,30 @@ describe('formulario de un trabajo', () => {
     expect(create).not.toHaveBeenCalled();
   });
 
-  it('el 422 va al campo de error.details.field, una sola vez, y se retira al corregirlo', async () => {
+  it('el 422 va al campo de error.details.field en espanol por su regla, una sola vez, y se retira al corregirlo', async () => {
     const user = userEvent.setup();
     mockCatalogs();
     const detail = 'invalid cron expression: expected exactly 5 fields, found 3: [0 7 *]';
     const create = vi
       .spyOn(schedulerApi, 'createJob')
-      .mockRejectedValue(rejected(422, ERROR_CODES.VALIDATION_ERROR, detail, 'cron_expression'));
+      .mockRejectedValue(
+        rejected(
+          422,
+          ERROR_CODES.VALIDATION_ERROR,
+          detail,
+          'cron_expression',
+          FIELD_RULES.invalidFormat,
+        ),
+      );
     renderWith(<JobForm job={null} onClose={vi.fn()} onSaved={vi.fn()} />);
 
     await fillCronForm(user, '0 7 *');
     await user.click(submitButton());
 
-    const message = t('scheduler.form.cronRejected', { detail });
+    const message = t('scheduler.validation.cronFormat');
     expect(await screen.findByText(message)).toHaveAttribute('id', 'job-cron-error');
     expect(screen.getAllByText(message)).toHaveLength(1);
+    expect(screen.queryByText(detail, { exact: false })).toBeNull();
     expect(create).toHaveBeenCalledWith({
       name: 'Resumen diario',
       code: 'daily-digest',
@@ -183,7 +216,7 @@ describe('formulario de un trabajo', () => {
     mockCatalogs();
     const detail = 'invalid time zone: "Mars/Olympus" is not in the time zone database';
     vi.spyOn(schedulerApi, 'createJob').mockRejectedValue(
-      rejected(422, ERROR_CODES.INVALID_TIMEZONE, detail, 'timezone'),
+      rejected(422, ERROR_CODES.INVALID_TIMEZONE, detail, 'timezone', FIELD_RULES.notAllowed),
     );
     renderWith(<JobForm job={null} onClose={vi.fn()} onSaved={vi.fn()} />);
 
@@ -192,17 +225,59 @@ describe('formulario de un trabajo', () => {
     await user.type(field(t('scheduler.form.timezone')), 'Mars/Olympus');
     await user.click(submitButton());
 
-    expect(
-      await screen.findByText(t('scheduler.form.timezoneRejected', { detail })),
-    ).toHaveAttribute('id', 'job-timezone-error');
+    expect(await screen.findByText(t('scheduler.validation.timezoneUnknown'))).toHaveAttribute(
+      'id',
+      'job-timezone-error',
+    );
     expect(field(t('scheduler.form.timezone'))).toHaveAttribute('aria-invalid', 'true');
   });
 
-  it('el codigo repetido (409 con field code) se pinta junto al codigo', async () => {
+  it('una regla que esta version no conoce muestra el mensaje del servidor junto al campo', async () => {
+    const user = userEvent.setup();
+    mockCatalogs();
+    const detail = 'invalid time zone: "Mars/Olympus" is retired';
+    vi.spyOn(schedulerApi, 'createJob').mockRejectedValue(
+      rejected(422, ERROR_CODES.INVALID_TIMEZONE, detail, 'timezone', 'retired_zone'),
+    );
+    renderWith(<JobForm job={null} onClose={vi.fn()} onSaved={vi.fn()} />);
+
+    await fillCronForm(user, '0 7 * * *');
+    await user.click(submitButton());
+    expect(
+      await screen.findByText(t('scheduler.form.timezoneRejected', { detail })),
+    ).toHaveAttribute('id', 'job-timezone-error');
+  });
+
+  it('el plazo fuera de rango se explica con el maximo del manejador elegido', async () => {
     const user = userEvent.setup();
     mockCatalogs();
     vi.spyOn(schedulerApi, 'createJob').mockRejectedValue(
-      rejected(409, ERROR_CODES.CONFLICT, 'job already exists', 'code'),
+      rejected(
+        422,
+        ERROR_CODES.VALIDATION_ERROR,
+        'invalid job: timeout_seconds must be at most 600',
+        'timeout_seconds',
+        FIELD_RULES.outOfRange,
+      ),
+    );
+    renderWith(<JobForm job={null} onClose={vi.fn()} onSaved={vi.fn()} />);
+
+    await fillCronForm(user, '0 7 * * *');
+    await user.click(submitButton());
+    expect(
+      await screen.findByText(
+        t('scheduler.validation.timeoutHandlerMax', {
+          value: formatSeconds(tenantHandlerFixture.max_timeout_seconds),
+        }),
+      ),
+    ).toHaveAttribute('id', 'job-timeout-error');
+  });
+
+  it('el codigo repetido (409 con field code y regla duplicate) se pinta junto al codigo', async () => {
+    const user = userEvent.setup();
+    mockCatalogs();
+    vi.spyOn(schedulerApi, 'createJob').mockRejectedValue(
+      rejected(409, ERROR_CODES.CONFLICT, 'job already exists', 'code', FIELD_RULES.duplicate),
     );
     renderWith(<JobForm job={null} onClose={vi.fn()} onSaved={vi.fn()} />);
 
@@ -457,27 +532,28 @@ describe('listado de trabajos y permisos', () => {
     grant(PERMISSIONS.schedulerJobs.read, PERMISSIONS.schedulerTasks.read);
     mockCatalogs();
     vi.spyOn(schedulerApi, 'listJobs').mockResolvedValue(pageOf([]));
-    const tasks = vi.spyOn(schedulerApi, 'listPendingTasks').mockResolvedValue([TASK]);
+    const tasks = vi.spyOn(schedulerApi, 'listPendingTasks').mockResolvedValue(tasksPage([TASK]));
     renderWith(<SchedulerPage />);
 
     expect(tasks).not.toHaveBeenCalled();
     await user.click(screen.getByRole('tab', { name: t('scheduler.tab.tasks') }));
     expect(await screen.findByText(TASK.name)).toBeInTheDocument();
     expect(screen.getByText(t('scheduler.taskStatus.scheduled'))).toBeInTheDocument();
+    expect(tasks).toHaveBeenCalledWith({ page: 1, per_page: DEFAULT_PER_PAGE });
     expect(
       screen.queryByRole('button', { name: t('scheduler.tasks.cancelLabel', { name: TASK.name }) }),
     ).toBeNull();
   });
 
-  it('la ventana de las tareas pendientes sale de la meta', async () => {
-    const user = userEvent.setup();
-    grant(PERMISSIONS.schedulerJobs.read, PERMISSIONS.schedulerTasks.read);
-    mockCatalogs(undefined, { ...META, tasks: { pending_window_seconds: 7_200 } });
-    vi.spyOn(schedulerApi, 'listJobs').mockResolvedValue(pageOf([]));
-    vi.spyOn(schedulerApi, 'listPendingTasks').mockResolvedValue([]);
+  it('con solo tasks/read la ventana sale de la respuesta del listado, sin pedir la meta', async () => {
+    grant(PERMISSIONS.schedulerTasks.read);
+    const meta = vi.spyOn(schedulerMeta, 'get');
+    const jobs = vi.spyOn(schedulerApi, 'listJobs');
+    vi.spyOn(schedulerApi, 'listPendingTasks').mockResolvedValue(
+      tasksPage([], { pendingWindowSeconds: 7_200 }),
+    );
     renderWith(<SchedulerPage />);
 
-    await user.click(screen.getByRole('tab', { name: t('scheduler.tab.tasks') }));
     const window = formatSeconds(7_200);
     expect(
       await screen.findByText(t('scheduler.tasks.descriptionWindow', { window })),
@@ -485,6 +561,37 @@ describe('listado de trabajos y permisos', () => {
     expect(
       await screen.findByText(t('scheduler.tasks.emptyWindow', { window })),
     ).toBeInTheDocument();
+    expect(meta).not.toHaveBeenCalled();
+    expect(jobs).not.toHaveBeenCalled();
+  });
+
+  it('si la respuesta no trae ventana, la pestana se describe sin plazo', async () => {
+    grant(PERMISSIONS.schedulerTasks.read);
+    vi.spyOn(schedulerApi, 'listPendingTasks').mockResolvedValue(
+      tasksPage([], { pendingWindowSeconds: null }),
+    );
+    renderWith(<SchedulerPage />);
+    expect(await screen.findByText(t('scheduler.tasks.description'))).toBeInTheDocument();
+    expect(screen.getByText(t('scheduler.tasks.empty'))).toBeInTheDocument();
+  });
+
+  it('pagina las tareas en el servidor', async () => {
+    const user = userEvent.setup();
+    grant(PERMISSIONS.schedulerTasks.read);
+    const list = vi.spyOn(schedulerApi, 'listPendingTasks').mockImplementation(async (query) => {
+      const page = query.page ?? 1;
+      return tasksPage([{ ...TASK, id: `task-${page}`, name: `Tarea ${page}` }], {
+        page,
+        total: DEFAULT_PER_PAGE + 1,
+        totalPages: 2,
+      });
+    });
+    renderWith(<SchedulerPage />);
+
+    expect(await screen.findByText('Tarea 1')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: t('common.next') }));
+    expect(await screen.findByText('Tarea 2')).toBeInTheDocument();
+    expect(list).toHaveBeenLastCalledWith({ page: 2, per_page: DEFAULT_PER_PAGE });
   });
 
   it('con tasks/cancel se cancela una tarea tras confirmarlo', async () => {
@@ -492,7 +599,7 @@ describe('listado de trabajos y permisos', () => {
     grant(PERMISSIONS.schedulerTasks.read, PERMISSIONS.schedulerTasks.cancel);
     const jobs = vi.spyOn(schedulerApi, 'listJobs');
     const meta = vi.spyOn(schedulerMeta, 'get');
-    vi.spyOn(schedulerApi, 'listPendingTasks').mockResolvedValue([TASK]);
+    vi.spyOn(schedulerApi, 'listPendingTasks').mockResolvedValue(tasksPage([TASK]));
     const cancel = vi.spyOn(schedulerApi, 'cancelTask').mockResolvedValue({ data: null });
     renderWith(<SchedulerPage />);
 
@@ -506,9 +613,71 @@ describe('listado de trabajos y permisos', () => {
     );
     await waitFor(() => expect(cancel).toHaveBeenCalledWith(TASK.id));
     expect(jobs).not.toHaveBeenCalled();
-    // Sin jobs/read no se pide la meta: la pestana se describe sin ventana.
+    // Sin jobs/read no se pide la meta: la ventana llega con el propio listado.
     expect(meta).not.toHaveBeenCalled();
-    expect(screen.getByText(t('scheduler.tasks.description'))).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        t('scheduler.tasks.descriptionWindow', { window: formatSeconds(TASKS_WINDOW_SECONDS) }),
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it('tras cancelar la unica tarea de la ultima pagina vuelve a la que existe', async () => {
+    const user = userEvent.setup();
+    grant(PERMISSIONS.schedulerTasks.read, PERMISSIONS.schedulerTasks.cancel);
+    let secondPageGone = false;
+    const list = vi.spyOn(schedulerApi, 'listPendingTasks').mockImplementation(async (query) => {
+      const page = query.page ?? 1;
+      if (page === 2 && secondPageGone) {
+        return tasksPage([], { page: 2, total: DEFAULT_PER_PAGE, totalPages: 1 });
+      }
+      return tasksPage([{ ...TASK, id: `task-${page}`, name: `Tarea ${page}` }], {
+        page,
+        total: DEFAULT_PER_PAGE + 1,
+        totalPages: 2,
+      });
+    });
+    vi.spyOn(schedulerApi, 'cancelTask').mockImplementation(async () => {
+      secondPageGone = true;
+      return { data: null };
+    });
+    renderWith(<SchedulerPage />);
+
+    await screen.findByText('Tarea 1');
+    await user.click(screen.getByRole('button', { name: t('common.next') }));
+    await user.click(
+      await screen.findByRole('button', {
+        name: t('scheduler.tasks.cancelLabel', { name: 'Tarea 2' }),
+      }),
+    );
+    await user.click(
+      within(screen.getByRole('dialog')).getByRole('button', { name: t('scheduler.tasks.cancel') }),
+    );
+    await waitFor(() =>
+      expect(list).toHaveBeenLastCalledWith({ page: 1, per_page: DEFAULT_PER_PAGE }),
+    );
+    expect(await screen.findByText('Tarea 1')).toBeInTheDocument();
+  });
+
+  it('cancelar una tarea que ya se ejecuto explica el 409 en espanol', async () => {
+    const user = userEvent.setup();
+    grant(PERMISSIONS.schedulerTasks.read, PERMISSIONS.schedulerTasks.cancel);
+    vi.spyOn(schedulerApi, 'listPendingTasks').mockResolvedValue(tasksPage([TASK]));
+    vi.spyOn(schedulerApi, 'cancelTask').mockRejectedValue(
+      rejected(409, ERROR_CODES.CONFLICT, 'task already executed and can no longer be cancelled'),
+    );
+    renderWith(<SchedulerPage />);
+
+    await user.click(
+      await screen.findByRole('button', {
+        name: t('scheduler.tasks.cancelLabel', { name: TASK.name }),
+      }),
+    );
+    const dialog = screen.getByRole('dialog');
+    await user.click(within(dialog).getByRole('button', { name: t('scheduler.tasks.cancel') }));
+    expect(
+      await within(dialog).findByText(t('scheduler.tasks.cancelConflict')),
+    ).toBeInTheDocument();
   });
 });
 
@@ -701,6 +870,33 @@ describe('detalle de un trabajo', () => {
     await within(table).findByText(t('scheduler.executionStatus.failed'));
     expect(within(table).queryAllByRole('button')).toHaveLength(0);
     expect(screen.queryByText(t('scheduler.handler.outOfCatalog'))).toBeNull();
+  });
+
+  it('reactivar un one_time ya lanzado explica el 409 JOB_ALREADY_RUN', async () => {
+    const user = userEvent.setup();
+    grant(PERMISSIONS.schedulerJobs.read, PERMISSIONS.schedulerJobs.update);
+    mockCatalogs();
+    vi.spyOn(schedulerApi, 'getJob').mockResolvedValue({
+      data: jobFixture({
+        job_type: 'one_time',
+        cron_expression: null,
+        is_active: false,
+        next_run_at: null,
+        last_run_at: '2026-09-13T09:00:00Z',
+      }),
+    });
+    const enable = vi
+      .spyOn(schedulerApi, 'enableJob')
+      .mockRejectedValue(
+        rejected(409, ERROR_CODES.JOB_ALREADY_RUN, 'a one_time job that already ran cannot be re-enabled'),
+      );
+    renderDetail();
+
+    await user.click(await screen.findByRole('button', { name: t('common.activate') }));
+    const dialog = screen.getByRole('dialog');
+    await user.click(within(dialog).getByRole('button', { name: t('common.activate') }));
+    expect(await within(dialog).findByText(t('error.code.JOB_ALREADY_RUN'))).toBeInTheDocument();
+    expect(enable).toHaveBeenCalledTimes(1);
   });
 
   it('avisa cuando el manejador del trabajo ya no esta en el catalogo', async () => {

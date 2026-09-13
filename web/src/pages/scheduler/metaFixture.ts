@@ -26,7 +26,6 @@ export const schedulerMetaFixture: SchedulerMeta = {
     max_timeout_seconds: 604800,
   },
   pagination: { default_per_page: 20, max_per_page: 100 },
-  tasks: { pending_window_seconds: 86400 },
 };
 
 export const tenantHandlerFixture: SchedulerHandler = {

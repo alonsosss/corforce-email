@@ -106,7 +106,7 @@ func setup(t *testing.T) *env {
 		applyMigration(t, pool, rel)
 	}
 	if _, err := pool.Exec(context.Background(),
-		`TRUNCATE scheduler.job_executions, scheduler.job_schedules, scheduler.job_definitions, platform.event_outbox`); err != nil {
+		`TRUNCATE scheduler.job_executions, scheduler.job_schedules, scheduler.job_definitions, scheduler.scheduled_tasks, platform.event_outbox`); err != nil {
 		t.Fatal(err)
 	}
 

@@ -45,8 +45,10 @@ export const ERROR_CODES = {
   PLAN_CODE_TAKEN: 'PLAN_CODE_TAKEN',
   PLAN_IN_USE: 'PLAN_IN_USE',
   PLAN_RETIRED: 'PLAN_RETIRED',
-  // scheduler: zona del trabajo que no es un nombre IANA cargable.
+  // scheduler: zona del trabajo que no es un nombre IANA cargable, y un one_time ya
+  // despachado que se intenta reactivar (409).
   INVALID_TIMEZONE: 'INVALID_TIMEZONE',
+  JOB_ALREADY_RUN: 'JOB_ALREADY_RUN',
   // webmail (services/webmail/internal/adapters/http/handler.go, writeError). El resto de
   // sus codigos solo se muestran y se traducen con error.code.<CODIGO>.
   SESSION_EXPIRED: 'SESSION_EXPIRED',

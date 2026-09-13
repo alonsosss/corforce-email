@@ -1,5 +1,6 @@
-import { useState } from 'react';
-import { schedulerApi, schedulerMeta, type ScheduledTask } from '@/api/scheduler';
+import { useEffect, useState } from 'react';
+import { ERROR_CODES } from '@/api/errors';
+import { schedulerApi, type ScheduledTask } from '@/api/scheduler';
 import { PERMISSIONS } from '@/access/permissions';
 import { useAccess } from '@/access/useAccess';
 import { usePagination } from '@/hooks/usePagination';
@@ -15,25 +16,34 @@ import {
 } from '@/design/components';
 import { IconRefresh } from '@/design/icons';
 import { formatDateTime } from '@/lib/format';
-import { localPage } from '@/lib/localPage';
 import { t, tEnum } from '@/i18n';
 import { formatSeconds } from './schedulerFormat';
 
-/** Tareas puntuales pendientes de la empresa (GET /scheduler/tasks, sin paginar). */
+/** Tareas puntuales pendientes de la empresa (GET /scheduler/tasks, paginado en el servidor). */
 export function TasksTab() {
   const toast = useToast();
   const { can } = useAccess();
   const pager = usePagination();
+  const { page, perPage, setPage } = pager;
   const [cancelling, setCancelling] = useState<ScheduledTask | null>(null);
   const canCancel = can(...PERMISSIONS.schedulerTasks.cancel);
-  const tasks = useQuery(() => schedulerApi.listPendingTasks(), []);
-  const page = localPage(tasks.data ?? [], pager.page, pager.perPage);
-  // La ventana del listado la publica GET /scheduler/meta, que exige jobs/read. Sin ella, o si
-  // la meta no carga, se describe el listado sin plazo.
-  const canReadMeta = can(...PERMISSIONS.schedulerJobs.read);
-  const meta = useQuery(async () => (canReadMeta ? schedulerMeta.get() : null), [canReadMeta]);
-  const windowSeconds = meta.data?.tasks.pending_window_seconds;
+  const tasks = useQuery(
+    () => schedulerApi.listPendingTasks({ page, per_page: perPage }),
+    [page, perPage],
+  );
+  // La ventana del listado llega en la meta de la propia respuesta (tasks/read); si no llega,
+  // se describe el listado sin plazo.
+  const windowSeconds = tasks.data?.pendingWindowSeconds ?? null;
   const windowLabel = windowSeconds ? formatSeconds(windowSeconds) : null;
+
+  // Tras cancelar la ultima tarea de la ultima pagina, o si vencen mientras tanto, la pagina
+  // pedida puede quedar vacia: se vuelve a la ultima que existe en vez de dejar la tabla vacia.
+  const data = tasks.data;
+  useEffect(() => {
+    if (data && data.items.length === 0 && page > 1 && data.totalPages < page) {
+      setPage(Math.max(data.totalPages, 1));
+    }
+  }, [data, page, setPage]);
 
   const columns: Column<ScheduledTask>[] = [
     {
@@ -106,7 +116,7 @@ export function TasksTab() {
     >
       <DataTable
         columns={columns}
-        rows={page.items}
+        rows={data?.items ?? []}
         rowKey={(task) => task.id}
         loading={tasks.loading}
         error={tasks.error}
@@ -118,11 +128,11 @@ export function TasksTab() {
             : undefined,
         }}
         pagination={{
-          page: page.page,
-          perPage: page.perPage,
-          total: page.total,
-          totalPages: page.totalPages,
-          onPageChange: pager.setPage,
+          page: data?.page ?? page,
+          perPage,
+          total: data?.total ?? 0,
+          totalPages: data?.totalPages ?? 0,
+          onPageChange: setPage,
         }}
       />
       <ConfirmDialog
@@ -131,6 +141,7 @@ export function TasksTab() {
         message={cancelling ? t('scheduler.tasks.cancelConfirm', { name: cancelling.name }) : ''}
         confirmLabel={t('scheduler.tasks.cancel')}
         danger
+        errorOverrides={{ [ERROR_CODES.CONFLICT]: 'scheduler.tasks.cancelConflict' }}
         onCancel={() => setCancelling(null)}
         onConfirm={async () => {
           if (!cancelling) return;

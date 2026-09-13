@@ -44,18 +44,14 @@ type metaPagination struct {
 	MaxPerPage     int `json:"max_per_page"`
 }
 
-// metaTasks: GET /tasks lista las tareas pendientes que vencen dentro de esta ventana.
-type metaTasks struct {
-	PendingWindowSeconds int `json:"pending_window_seconds"`
-}
-
+// metaResponse son las reglas de los trabajos (jobs/read). La ventana de las tareas
+// pendientes no va aqui: la lleva la meta de GET /tasks, que se lee con tasks/read.
 type metaResponse struct {
 	Timezone   metaTimezone   `json:"timezone"`
 	Cron       metaCron       `json:"cron"`
 	JobTypes   []string       `json:"job_types"`
 	Limits     metaLimits     `json:"limits"`
 	Pagination metaPagination `json:"pagination"`
-	Tasks      metaTasks      `json:"tasks"`
 }
 
 // timezoneFormat nombra la base de la que salen las zonas validas.
@@ -92,6 +88,5 @@ func buildMeta() metaResponse {
 			MaxTimeoutSeconds:    domain.MaxHandlerTimeoutSeconds,
 		},
 		Pagination: metaPagination{DefaultPerPage: defaultPerPage, MaxPerPage: maxPerPage},
-		Tasks:      metaTasks{PendingWindowSeconds: int(domain.PendingTasksWindow / time.Second)},
 	}
 }

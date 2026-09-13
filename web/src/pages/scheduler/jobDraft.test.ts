@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { ApiError, ERROR_CODES } from '@/api/errors';
-import type { SchedulerHandler, SchedulerMeta } from '@/api/scheduler';
-import { getLocale, t } from '@/i18n';
+import { FIELD_RULES, type SchedulerHandler, type SchedulerMeta } from '@/api/scheduler';
+import { getLocale, t, tEnum } from '@/i18n';
 import { formatBytes } from '@/lib/quota';
 import {
   charLength,
@@ -237,51 +237,121 @@ describe('cuerpos del API', () => {
   });
 });
 
-describe('errores del servidor por campo (error.details.field)', () => {
-  const rejected = (status: number, code: string, message: string, field?: string) => {
-    const error = { code, message, ...(field ? { details: { field } } : {}) };
+describe('errores del servidor por campo (error.details.field y rule)', () => {
+  const rejected = (status: number, code: string, message: string, field?: string, rule?: string) => {
+    const details = field ? { field, ...(rule ? { rule } : {}) } : undefined;
+    const error = { code, message, ...(details ? { details } : {}) };
     return new ApiError(status, error, { error });
   };
-  const validation = (message: string, field?: string) =>
-    rejected(422, ERROR_CODES.VALIDATION_ERROR, message, field);
+  const validation = (message: string, field?: string, rule?: string) =>
+    rejected(422, ERROR_CODES.VALIDATION_ERROR, message, field, rule);
+  const errorsOf = (err: unknown, handler: SchedulerHandler | null = tenantHandlerFixture) =>
+    serverFieldErrors(err, META, handler);
+  const english = 'invalid job: the server explains it in English';
+  const { limits } = META;
 
-  it('cada 422 va al campo que nombra el servidor, con su mensaje', () => {
-    const message = 'invalid job: max_retries must be between 0 and 10';
-    expect(serverFieldErrors(validation(message, 'max_retries'))).toEqual({
-      max_retries: t('scheduler.form.serverRejected', { detail: message }),
-    });
-    const handler = 'handler not allowed: "x" is not in the catalog';
-    expect(serverFieldErrors(validation(handler, 'handler'))).toEqual({
-      handler: t('scheduler.form.serverRejected', { detail: handler }),
+  it('cada regla se explica en espanol con el limite de la meta, sin el texto del servidor', () => {
+    const cases: [string, string, string][] = [
+      ['name', FIELD_RULES.required, t('validation.required')],
+      ['name', FIELD_RULES.tooLong, t('validation.maxLength', { n: limits.max_name_length })],
+      ['code', FIELD_RULES.tooLong, t('validation.maxLength', { n: limits.max_code_length })],
+      [
+        'description',
+        FIELD_RULES.tooLong,
+        t('validation.maxLength', { n: limits.max_description_length }),
+      ],
+      ['handler', FIELD_RULES.tooLong, t('validation.maxLength', { n: limits.max_handler_length })],
+      ['cron_expression', FIELD_RULES.tooLong, t('validation.maxLength', { n: META.cron.max_length })],
+      ['timezone', FIELD_RULES.tooLong, t('validation.maxLength', { n: META.timezone.max_length })],
+      [
+        'payload',
+        FIELD_RULES.tooLong,
+        t('scheduler.validation.payloadSize', { max: formatBytes(limits.max_payload_bytes) }),
+      ],
+      [
+        'interval_minutes',
+        FIELD_RULES.outOfRange,
+        t('validation.range', { min: limits.min_interval_minutes, max: limits.max_interval_minutes }),
+      ],
+      ['max_retries', FIELD_RULES.outOfRange, t('validation.range', { min: 0, max: limits.max_retries })],
+      [
+        'timeout_seconds',
+        FIELD_RULES.outOfRange,
+        t('scheduler.validation.timeoutHandlerMax', {
+          value: formatSeconds(tenantHandlerFixture.max_timeout_seconds),
+        }),
+      ],
+      [
+        'cron_expression',
+        FIELD_RULES.outOfRange,
+        t('scheduler.validation.everyMin', { min: formatSeconds(META.cron.min_every_seconds) }),
+      ],
+      ['cron_expression', FIELD_RULES.invalidFormat, t('scheduler.validation.cronFormat')],
+      ['timezone', FIELD_RULES.invalidFormat, t('scheduler.validation.timezoneFormat')],
+      ['payload', FIELD_RULES.invalidFormat, t('scheduler.validation.payloadJson')],
+      ['name', FIELD_RULES.invalidFormat, t('scheduler.validation.text')],
+      [
+        'job_type',
+        FIELD_RULES.notAllowed,
+        t('scheduler.validation.jobType', {
+          list: META.job_types.map((type) => tEnum('scheduler.jobType', type)).join(', '),
+        }),
+      ],
+      [
+        'cron_expression',
+        FIELD_RULES.notAllowed,
+        t('scheduler.validation.descriptor', { list: META.cron.descriptors.join(', ') }),
+      ],
+      ['timezone', FIELD_RULES.notAllowed, t('scheduler.validation.timezoneUnknown')],
+      ['handler', FIELD_RULES.notAllowed, t('scheduler.error.handlerNotAllowed')],
+      ['cron_expression', FIELD_RULES.neverMatches, t('scheduler.validation.cronNever')],
+    ];
+    for (const [field, rule, expected] of cases) {
+      const got = errorsOf(validation(english, field, rule));
+      expect(got, `${field}/${rule}`).toEqual({ [field]: expected });
+      expect(got[field as keyof typeof got], `${field}/${rule}`).not.toContain(english);
+    }
+    const zone = rejected(422, ERROR_CODES.INVALID_TIMEZONE, english, 'timezone', 'not_allowed');
+    expect(errorsOf(zone)).toEqual({ timezone: t('scheduler.validation.timezoneUnknown') });
+  });
+
+  it('el plazo fuera de rango sin manejador del catalogo usa el tope general de la meta', () => {
+    expect(errorsOf(validation(english, 'timeout_seconds', FIELD_RULES.outOfRange), null)).toEqual({
+      timeout_seconds: t('validation.range', { min: 0, max: limits.max_timeout_seconds }),
     });
   });
 
-  it('la expresion y la zona llevan su propio texto', () => {
+  it('solo una regla que no se conoce, o ninguna, muestra el mensaje del servidor', () => {
+    expect(errorsOf(validation(english, 'max_retries', 'future_rule'))).toEqual({
+      max_retries: t('scheduler.form.serverRejected', { detail: english }),
+    });
     const cron = 'invalid cron expression: expected exactly 5 fields, found 2: [0 7]';
-    expect(serverFieldErrors(validation(cron, 'cron_expression'))).toEqual({
+    expect(errorsOf(validation(cron, 'cron_expression'))).toEqual({
       cron_expression: t('scheduler.form.cronRejected', { detail: cron }),
     });
     const zone = 'invalid time zone: "Mars/Olympus" is not in the time zone database';
-    expect(
-      serverFieldErrors(rejected(422, ERROR_CODES.INVALID_TIMEZONE, zone, 'timezone')),
-    ).toEqual({ timezone: t('scheduler.form.timezoneRejected', { detail: zone }) });
+    expect(errorsOf(rejected(422, ERROR_CODES.INVALID_TIMEZONE, zone, 'timezone'))).toEqual({
+      timezone: t('scheduler.form.timezoneRejected', { detail: zone }),
+    });
   });
 
-  it('el 409 que nombra code es el codigo repetido', () => {
-    expect(
-      serverFieldErrors(rejected(409, ERROR_CODES.CONFLICT, 'job already exists', 'code')),
-    ).toEqual({ code: t('scheduler.error.codeTaken') });
-    expect(serverFieldErrors(rejected(409, ERROR_CODES.CONFLICT, 'job is locked'))).toEqual({});
+  it('el 409 que nombra code es el codigo repetido, con o sin regla', () => {
+    for (const rule of [FIELD_RULES.duplicate, undefined]) {
+      expect(errorsOf(rejected(409, ERROR_CODES.CONFLICT, 'job already exists', 'code', rule))).toEqual(
+        { code: t('scheduler.error.codeTaken') },
+      );
+    }
+    expect(errorsOf(rejected(409, ERROR_CODES.CONFLICT, 'job is locked'))).toEqual({});
   });
 
   it('sin campo, o con uno que no esta en el formulario, queda como error general', () => {
-    expect(serverFieldErrors(validation('invalid cron expression: x'))).toEqual({});
-    expect(serverFieldErrors(validation('is_active must be true or false', 'is_active'))).toEqual(
+    expect(errorsOf(validation('invalid cron expression: x'))).toEqual({});
+    expect(errorsOf(validation('is_active must be true or false', 'is_active', 'invalid_format'))).toEqual(
       {},
     );
-    expect(serverFieldErrors(rejected(500, ERROR_CODES.INTERNAL_ERROR, 'x', 'name'))).toEqual({});
-    expect(serverFieldErrors(new Error('invalid cron expression: x'))).toEqual({});
-    expect(serverFieldErrors(null)).toEqual({});
+    expect(errorsOf(rejected(500, ERROR_CODES.INTERNAL_ERROR, 'x', 'name', 'required'))).toEqual({});
+    expect(errorsOf(new Error('invalid cron expression: x'))).toEqual({});
+    expect(errorsOf(null)).toEqual({});
   });
 });
 
