@@ -3,7 +3,6 @@ package main
 import (
 	"net/http"
 	"os"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -48,19 +47,16 @@ type readWindow struct {
 	lastAlert   time.Time
 }
 
-func newAuditTrail(modules map[string]string, logger *zap.Logger) *auditTrail {
-	max := 400
-	if v := os.Getenv("EXFIL_READ_THRESHOLD"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			max = n
-		}
+func newAuditTrail(modules map[string]string, logger *zap.Logger) (*auditTrail, error) {
+	max, err := positiveIntFromEnv("EXFIL_READ_THRESHOLD", 400)
+	if err != nil {
+		return nil, err
 	}
-	window := 5 * time.Minute
-	if v := os.Getenv("EXFIL_WINDOW_MIN"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			window = time.Duration(n) * time.Minute
-		}
+	windowMin, err := positiveIntFromEnv("EXFIL_WINDOW_MIN", 5)
+	if err != nil {
+		return nil, err
 	}
+	window := time.Duration(windowMin) * time.Minute
 	url := os.Getenv("NATS_URL")
 	if url == "" {
 		url = "nats://nats:4222"
@@ -69,14 +65,14 @@ func newAuditTrail(modules map[string]string, logger *zap.Logger) *auditTrail {
 	bus, err := events.NewBus(url, logger)
 	if err != nil {
 		logger.Warn("audit trail sin NATS: escrituras no auditadas a nivel API", zap.Error(err))
-		return at
+		return at, nil
 	}
 	if err := bus.EnsureStream("AUDIT_API", []string{"audit.api.>"}); err != nil {
 		logger.Warn("ensure stream AUDIT_API", zap.Error(err))
 	}
 	at.bus = bus
 	go at.exfilCleanup()
-	return at
+	return at, nil
 }
 
 // trackRead cuenta una lectura del usuario y devuelve true la PRIMERA vez que supera el

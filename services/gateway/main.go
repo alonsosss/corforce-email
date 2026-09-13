@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -98,8 +99,15 @@ func main() {
 	if err != nil {
 		log.Fatalf("redis: %v", err)
 	}
-	limiter, authLimiter := newRateLimiters(rateStore,
-		envInt("API_RATE_LIMIT_PER_MIN", 600), envInt("AUTH_RATE_LIMIT_PER_MIN", 30), logger)
+	apiLimit, err := positiveIntFromEnv("API_RATE_LIMIT_PER_MIN", 600)
+	if err != nil {
+		log.Fatal(err)
+	}
+	authLimit, err := positiveIntFromEnv("AUTH_RATE_LIMIT_PER_MIN", 30)
+	if err != nil {
+		log.Fatal(err)
+	}
+	limiter, authLimiter := newRateLimiters(rateStore, apiLimit, authLimit, logger)
 
 	identity := reverseProxy(table.serviceURL("identity"), internalToken)
 
@@ -160,7 +168,10 @@ func main() {
 		// despues del rastro de auditoria, para que tambien quede la rechazada.
 		targets := newTargetCellGate(table, logger)
 		// Rastro de auditoria: escrituras con modulo y toda peticion con celda destino.
-		trail := newAuditTrail(modules, logger)
+		trail, err := newAuditTrail(modules, logger)
+		if err != nil {
+			log.Fatal(err)
+		}
 
 		// MFA self-service: requiere autenticacion (inyecta X-User-ID) pero NO pasa
 		// por RBAC: es gestion de la propia cuenta, no un recurso protegido por modulo. El
@@ -239,13 +250,19 @@ func jwtAuthFromEnv() (*middleware.JWTAuth, []string, error) {
 	return middleware.NewJWTAuth(verifier), keys.KIDs(), nil
 }
 
-func envInt(key string, fallback int) int {
-	if v := os.Getenv(key); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			return n
-		}
+// positiveIntFromEnv lee un entero positivo del entorno. Ausente vale el valor por defecto;
+// presente y no valido (no numerico, cero o negativo) es un error: un limite mal escrito que
+// cae en silencio al valor por defecto no se nota hasta que hace falta.
+func positiveIntFromEnv(key string, fallback int) (int, error) {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback, nil
 	}
-	return fallback
+	n, err := strconv.Atoi(v)
+	if err != nil || n <= 0 {
+		return 0, fmt.Errorf("%s=%q: debe ser un entero positivo", key, v)
+	}
+	return n, nil
 }
 
 // stampCSPNonce marca los <script> del HTML con el nonce de esta respuesta.
