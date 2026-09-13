@@ -10,6 +10,19 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// El catalogo y el estado por empresa son de organization: se leen por las vistas que
+// publica (024_organization_published_views.sql), nunca por sus tablas.
+const (
+	tenantHasModuleStateSQL = `SELECT EXISTS(SELECT 1 FROM organization.v_tenant_modules WHERE tenant_id = $1)`
+
+	tenantModuleAvailabilitySQL = `SELECT mc.module,
+		        mc.tier = 'core' OR COALESCE(tm.enabled, false) AS enabled,
+		        COALESCE(mc.permission_modules, '[]'::jsonb)
+		   FROM organization.v_module_catalog mc
+		   LEFT JOIN organization.v_tenant_modules tm
+		     ON tm.module = mc.module AND tm.tenant_id = $1`
+)
+
 // TenantModuleGateRepo lee el catalogo de modulos contratables y su estado por tenant
 // (schema organization, misma base de registro que access_control).
 type TenantModuleGateRepo struct {
@@ -27,22 +40,14 @@ func NewTenantModuleGateRepo(pool *pgxpool.Pool) *TenantModuleGateRepo {
 // con estado explicito, lo que no esta encendido esta apagado.
 func (r *TenantModuleGateRepo) EffectiveModules(ctx context.Context, tenantID uuid.UUID) (domain.ModuleAvailability, error) {
 	var restricted bool
-	if err := r.pool.QueryRow(ctx,
-		`SELECT EXISTS(SELECT 1 FROM organization.tenant_modules WHERE tenant_id = $1)`,
-		tenantID).Scan(&restricted); err != nil {
+	if err := r.pool.QueryRow(ctx, tenantHasModuleStateSQL, tenantID).Scan(&restricted); err != nil {
 		return domain.ModuleAvailability{}, err
 	}
 	if !restricted {
 		return domain.ModuleAvailability{}, nil
 	}
 
-	rows, err := r.pool.Query(ctx,
-		`SELECT mc.module,
-		        mc.tier = 'core' OR COALESCE(tm.enabled, false) AS enabled,
-		        COALESCE(mc.permission_modules, '[]'::jsonb)
-		   FROM organization.module_catalog mc
-		   LEFT JOIN organization.tenant_modules tm
-		     ON tm.module = mc.module AND tm.tenant_id = $1`, tenantID)
+	rows, err := r.pool.Query(ctx, tenantModuleAvailabilitySQL, tenantID)
 	if err != nil {
 		return domain.ModuleAvailability{}, err
 	}

@@ -40,6 +40,10 @@ foraneas entre esquemas, cabecera `-- Schema: x | Service: y`, idempotentes y ad
   access-control lee `identity.v_user_status(user_id, tenant_id, status,
   tokens_valid_from)` para la politica y `users-with-permission`
   (`023_identity_published_views.sql`). Ninguna expone correo, nombre, hash ni secreto MFA.
+  access-control gatea los permisos por modulo contratado leyendo
+  `organization.v_module_catalog(module, tier, permission_modules)` y
+  `organization.v_tenant_modules(tenant_id, module, enabled)`
+  (`024_organization_published_views.sql`), sin `requires`, `label` ni `updated_at`.
   Lo que aun lee o escribe tablas de `organization` o desde ella figura con su motivo en
   `ops/scaffold/coupling-allowlist.txt` y `coupling-writes-allowlist.txt`.
 * `billing` (`013_billing.sql`, permisos en `014`): `plans` (codigo unico, moneda ISO 4217,

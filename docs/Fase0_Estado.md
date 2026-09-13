@@ -85,8 +85,10 @@ cambie cualquiera de estas líneas.
   contrato; la duración sale como `duration_ms`). `web/` todavía no lo consume.
 * Lecturas del registro que todavía van a tablas ajenas, sancionadas con motivo en
   `ops/scaffold/coupling-allowlist.txt`: `identity` lee `organization.tenants` (slug y
-  nombre de la empresa) y `access-control` lee `organization.module_catalog` y
-  `tenant_modules`; faltan las vistas de `organization`. `organization` además escribe en
+  nombre de la empresa); falta la vista de `organization`. `access-control` ya lee el
+  catálogo de módulos y su estado por empresa por `organization.v_module_catalog` y
+  `organization.v_tenant_modules` (`024_organization_published_views.sql`) y salió de la
+  allowlist: si vuelve a leer las tablas, `check-coupling` falla. `organization` además escribe en
   `identity` y `access_control` al sembrar y borrar una empresa
   (`coupling-writes-allowlist.txt`); falta que esos servicios expongan la operación.
 
