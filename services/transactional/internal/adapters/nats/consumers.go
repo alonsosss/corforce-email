@@ -1,5 +1,6 @@
-// Package nats contiene los consumidores durables del servicio: el worker de envio
-// (transactional.message.queued) y la proyeccion de dominios (domains.domain.*).
+// Package nats contiene los consumidores durables del servicio: los workers de envio de
+// cada carril (transactional.message.queued y transactional.marketing.queued) y la
+// proyeccion de dominios (domains.domain.*).
 package nats
 
 import (
@@ -22,14 +23,16 @@ const (
 	StreamTransactional = "TRANSACTIONAL"
 	StreamDomains       = "DOMAINS"
 
-	senderDurable  = "transactional-sender"
-	domainsDurable = "transactional-domains"
+	senderDurable          = "transactional-sender"
+	marketingSenderDurable = "transactional-marketing-sender"
+	domainsDurable         = "transactional-domains"
 
 	// handlerTimeout acota cada entrega; debe quedar por debajo del AckWait del bus.
 	handlerTimeout = 60 * time.Second
 )
 
-// EnsureStreams declara los streams que este servicio publica y consume. Idempotente.
+// EnsureStreams declara los streams que este servicio publica y consume. Idempotente. Las
+// dos colas de envio caben en transactional.>.
 func EnsureStreams(bus *events.Bus) error {
 	if err := bus.EnsureStream("TRANSACTIONAL", []string{"transactional.>"}); err != nil {
 		return err
@@ -37,20 +40,37 @@ func EnsureStreams(bus *events.Bus) error {
 	return bus.EnsureStream("DOMAINS", []string{"domains.>"})
 }
 
+// lane identifica la cola que consume un worker de envio.
+type lane int
+
+const (
+	laneTransactional lane = iota
+	laneMarketing
+)
+
+func (l lane) String() string {
+	if l == laneMarketing {
+		return "marketing"
+	}
+	return "transactional"
+}
+
 type job struct {
 	evt events.Event
 	ack func()
 }
 
-// SenderWorker consume la cola de envio con N goroutines y un limitador de tasa
-// compartido. La suscripcion push entrega en serie; cada entrega se pasa a un worker y
-// el ack llega desde el (el bus lo admite desde otra goroutine).
+// SenderWorker consume una cola de envio con N goroutines. La suscripcion push entrega en
+// serie; cada entrega se pasa a un worker y el ack llega desde el (el bus lo admite desde
+// otra goroutine). El emisor y la tasa los decide la clase del mensaje en el caso de uso,
+// asi que cada carril tiene su propio consumidor y su propio numero de workers.
 type SenderWorker struct {
 	bus      *events.Bus
 	uc       *app.UseCase
 	tenantDB *db.TenantDB
 	logger   *zap.Logger
 	workers  int
+	lane     lane
 
 	jobs chan job
 	wg   sync.WaitGroup
@@ -58,12 +78,22 @@ type SenderWorker struct {
 	stop chan struct{}
 }
 
+// NewSenderWorker consume transactional.message.queued (carril transaccional).
 func NewSenderWorker(bus *events.Bus, uc *app.UseCase, tenantDB *db.TenantDB, workers int, logger *zap.Logger) *SenderWorker {
+	return newSenderWorker(bus, uc, tenantDB, workers, laneTransactional, logger)
+}
+
+// NewMarketingSenderWorker consume transactional.marketing.queued (carril de marketing).
+func NewMarketingSenderWorker(bus *events.Bus, uc *app.UseCase, tenantDB *db.TenantDB, workers int, logger *zap.Logger) *SenderWorker {
+	return newSenderWorker(bus, uc, tenantDB, workers, laneMarketing, logger)
+}
+
+func newSenderWorker(bus *events.Bus, uc *app.UseCase, tenantDB *db.TenantDB, workers int, l lane, logger *zap.Logger) *SenderWorker {
 	if workers < 1 {
 		workers = 1
 	}
-	return &SenderWorker{bus: bus, uc: uc, tenantDB: tenantDB, logger: logger, workers: workers,
-		jobs: make(chan job), stop: make(chan struct{})}
+	return &SenderWorker{bus: bus, uc: uc, tenantDB: tenantDB, logger: logger.With(zap.String("lane", l.String())),
+		workers: workers, lane: l, jobs: make(chan job), stop: make(chan struct{})}
 }
 
 func (w *SenderWorker) Start() error {
@@ -71,7 +101,7 @@ func (w *SenderWorker) Start() error {
 		w.wg.Add(1)
 		go w.loop()
 	}
-	sub, err := w.bus.DurableQueueSubscribe("transactional.message.queued", senderDurable, w.dispatch)
+	sub, err := w.subscribe()
 	if err != nil {
 		close(w.stop)
 		w.wg.Wait()
@@ -79,6 +109,13 @@ func (w *SenderWorker) Start() error {
 	}
 	w.sub = sub
 	return nil
+}
+
+func (w *SenderWorker) subscribe() (*natsgo.Subscription, error) {
+	if w.lane == laneMarketing {
+		return w.bus.DurableQueueSubscribe("transactional.marketing.queued", marketingSenderDurable, w.dispatch)
+	}
+	return w.bus.DurableQueueSubscribe("transactional.message.queued", senderDurable, w.dispatch)
 }
 
 func (w *SenderWorker) Stop() {
@@ -114,7 +151,7 @@ func (w *SenderWorker) handle(j job) {
 	tenantID, err1 := uuid.Parse(str(data["tenant_id"]))
 	messageID, err2 := uuid.Parse(str(data["message_id"]))
 	if err1 != nil || err2 != nil {
-		w.logger.Error("transactional.message.queued malformado; se descarta", zap.Any("data", data))
+		w.logger.Error("transactional: evento de cola malformado; se descarta", zap.String("type", j.evt.Type), zap.Any("data", data))
 		j.ack()
 		return
 	}
@@ -124,7 +161,7 @@ func (w *SenderWorker) handle(j job) {
 	pool, err := w.tenantDB.ResolveForTenant(ctx, tenantID.String())
 	if err != nil {
 		if db.IsUnknownTenant(err) {
-			w.logger.Error("transactional.message.queued de una empresa inexistente; se descarta",
+			w.logger.Error("transactional: evento de cola de una empresa inexistente; se descarta",
 				zap.String("tenant_id", tenantID.String()))
 			j.ack()
 			return

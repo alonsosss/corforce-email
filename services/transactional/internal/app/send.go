@@ -41,9 +41,17 @@ func (uc *UseCase) SendQueued(ctx context.Context, tenantID, messageID uuid.UUID
 			outcome.Status = msg.Status
 			return nil
 		}
+		// El carril sale de la clase guardada en el mensaje, no del subject por el que
+		// llego: un mensaje de marketing nunca sale por el emisor ni la tasa transaccional.
+		lane, err := uc.laneFor(msg.Class)
+		if err != nil {
+			uc.logger.Error("transactional: la clase del mensaje no tiene carril; queda en la cola",
+				zap.String("message_id", msg.ID.String()), zap.String("class", msg.Class))
+			return fmt.Errorf("mensaje %s: %w", msg.ID, err)
+		}
 
 		email := uc.outgoing(msg)
-		providerID, sendErr := uc.sendWithRetries(ctx, email)
+		providerID, sendErr := uc.sendWithRetries(ctx, lane, email)
 		if sendErr == nil {
 			sentAt := uc.now()
 			if err := uc.repo.MarkSent(ctx, tenantID, msg.ID, providerID, sentAt); err != nil {
@@ -58,11 +66,16 @@ func (uc *UseCase) SendQueued(ctx context.Context, tenantID, messageID uuid.UUID
 				return err
 			}
 			outcome.Status = domain.StatusSent
+			attr := msg.Attribution()
 			return uc.events.Publish(ctx, "transactional.email.sent", tenantID, map[string]any{
 				"tenant_id":      tenantID.String(),
 				"message_id":     msg.ID.String(),
 				"ses_message_id": providerID,
 				"to":             msg.AllRecipients(),
+				"class":          attr.Class,
+				"campaign_id":    nullableID(attr.CampaignID),
+				"contact_id":     nullableID(attr.ContactID),
+				"occurred_at":    eventTime(sentAt),
 			})
 		}
 
@@ -100,18 +113,23 @@ func (uc *UseCase) failMessage(ctx context.Context, tenantID uuid.UUID, msg *dom
 	uc.logger.Error("transactional: el proveedor rechazo el mensaje",
 		zap.String("message_id", msg.ID.String()), zap.String("code", se.Code), zap.String("detail", se.Message))
 	outcome.Status = domain.StatusFailed
+	attr := msg.Attribution()
 	return uc.events.Publish(ctx, "transactional.email.failed", tenantID, map[string]any{
-		"tenant_id":  tenantID.String(),
-		"message_id": msg.ID.String(),
-		"code":       se.Code,
-		"error":      se.Message,
-		"to":         msg.AllRecipients(),
+		"tenant_id":   tenantID.String(),
+		"message_id":  msg.ID.String(),
+		"code":        se.Code,
+		"error":       se.Message,
+		"to":          msg.AllRecipients(),
+		"class":       attr.Class,
+		"campaign_id": nullableID(attr.CampaignID),
+		"contact_id":  nullableID(attr.ContactID),
+		"occurred_at": eventTime(uc.now()),
 	})
 }
 
-// sendWithRetries respeta el limitador de tasa en cada intento y repite solo los fallos
-// transitorios, con una espera corta entre ellos.
-func (uc *UseCase) sendWithRetries(ctx context.Context, email domain.OutgoingEmail) (string, error) {
+// sendWithRetries respeta el limitador de tasa del carril en cada intento y repite solo
+// los fallos transitorios, con una espera corta entre ellos.
+func (uc *UseCase) sendWithRetries(ctx context.Context, lane Lane, email domain.OutgoingEmail) (string, error) {
 	var lastErr error
 	for attempt := 0; attempt <= len(transientRetryDelays); attempt++ {
 		if attempt > 0 {
@@ -123,10 +141,10 @@ func (uc *UseCase) sendWithRetries(ctx context.Context, email domain.OutgoingEma
 			case <-timer.C:
 			}
 		}
-		if err := uc.limiter.Wait(ctx); err != nil {
+		if err := lane.Limiter.Wait(ctx); err != nil {
 			return "", err
 		}
-		id, err := uc.sender.Send(ctx, email)
+		id, err := lane.Sender.Send(ctx, email)
 		if err == nil {
 			return id, nil
 		}

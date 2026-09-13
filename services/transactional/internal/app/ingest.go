@@ -35,11 +35,13 @@ func (uc *UseCase) IngestSESEvent(ctx context.Context, routeTenant uuid.UUID, ev
 	case ev.Type == domain.EventComplaint:
 		suppressReason = "complaint"
 	}
+	var known *domain.MessageAttribution
 	if suppressReason != "" {
+		known = uc.attributionFor(ctx, ev.TenantID, ev.MessageID)
 		for _, email := range ev.Recipients {
 			if err := uc.suppression.Add(ctx, ev.TenantID, ports.SuppressionEntry{
 				Email: email, Reason: suppressReason, Source: uc.cfg.Source,
-				Detail: summary, MessageID: ev.MessageID.String(),
+				Detail: summary, MessageID: ev.MessageID.String(), CampaignID: campaignOf(known),
 			}); err != nil {
 				uc.logger.Warn("transactional: no se pudo suprimir tras evento de SES", zap.Error(err))
 				return domain.ErrSuppressionUnavailable
@@ -65,33 +67,100 @@ func (uc *UseCase) IngestSESEvent(ctx context.Context, routeTenant uuid.UUID, ev
 				return err
 			}
 		}
-		switch ev.Type {
-		case domain.EventBounce:
-			for _, email := range ev.Recipients {
-				if err := uc.events.Publish(ctx, "transactional.email.bounced", ev.TenantID, map[string]any{
-					"tenant_id":   ev.TenantID.String(),
-					"message_id":  ev.MessageID.String(),
-					"email":       email,
-					"bounce_type": ev.BounceType,
-					"detail":      summary,
-				}); err != nil {
-					return err
-				}
-			}
-		case domain.EventComplaint:
-			for _, email := range ev.Recipients {
-				if err := uc.events.Publish(ctx, "transactional.email.complained", ev.TenantID, map[string]any{
-					"tenant_id":  ev.TenantID.String(),
-					"message_id": ev.MessageID.String(),
-					"email":      email,
-					"detail":     summary,
-				}); err != nil {
-					return err
-				}
+		if !publishesEvent(ev.Type) {
+			return nil
+		}
+		attr, err := uc.resolveAttribution(ctx, ev.TenantID, ev.MessageID, known)
+		if err != nil {
+			return err
+		}
+		return uc.publishDeliveryEvents(ctx, ev, attr, summary)
+	})
+}
+
+// publishesEvent dice que eventos de SES se convierten en un transactional.email.*.
+func publishesEvent(eventType string) bool {
+	switch eventType {
+	case domain.EventBounce, domain.EventComplaint, domain.EventDelivery, domain.EventOpen, domain.EventClick:
+		return true
+	}
+	return false
+}
+
+// publishDeliveryEvents publica el hecho con la atribucion del mensaje. Rebotes, quejas y
+// entregas van uno por destinatario afectado. Aperturas y clics llegan por mensaje: SES no
+// sabe quien de varios destinatarios abrio, asi que email solo lleva la direccion cuando
+// el mensaje tiene un unico destinatario (siempre en marketing).
+func (uc *UseCase) publishDeliveryEvents(ctx context.Context, ev domain.InboundEvent, attr domain.MessageAttribution, summary string) error {
+	switch ev.Type {
+	case domain.EventBounce:
+		for _, email := range ev.Recipients {
+			if err := uc.events.Publish(ctx, "transactional.email.bounced", ev.TenantID, map[string]any{
+				"tenant_id":   ev.TenantID.String(),
+				"message_id":  ev.MessageID.String(),
+				"email":       email,
+				"bounce_type": ev.BounceType,
+				"detail":      summary,
+				"class":       attr.Class,
+				"campaign_id": nullableID(attr.CampaignID),
+				"contact_id":  nullableID(attr.ContactID),
+				"occurred_at": eventTime(ev.OccurredAt),
+			}); err != nil {
+				return err
 			}
 		}
-		return nil
-	})
+	case domain.EventComplaint:
+		for _, email := range ev.Recipients {
+			if err := uc.events.Publish(ctx, "transactional.email.complained", ev.TenantID, map[string]any{
+				"tenant_id":   ev.TenantID.String(),
+				"message_id":  ev.MessageID.String(),
+				"email":       email,
+				"detail":      summary,
+				"class":       attr.Class,
+				"campaign_id": nullableID(attr.CampaignID),
+				"contact_id":  nullableID(attr.ContactID),
+				"occurred_at": eventTime(ev.OccurredAt),
+			}); err != nil {
+				return err
+			}
+		}
+	case domain.EventDelivery:
+		for _, email := range ev.Recipients {
+			if err := uc.events.Publish(ctx, "transactional.email.delivered", ev.TenantID, map[string]any{
+				"tenant_id":   ev.TenantID.String(),
+				"message_id":  ev.MessageID.String(),
+				"email":       email,
+				"class":       attr.Class,
+				"campaign_id": nullableID(attr.CampaignID),
+				"contact_id":  nullableID(attr.ContactID),
+				"occurred_at": eventTime(ev.OccurredAt),
+			}); err != nil {
+				return err
+			}
+		}
+	case domain.EventOpen:
+		return uc.events.Publish(ctx, "transactional.email.opened", ev.TenantID, map[string]any{
+			"tenant_id":   ev.TenantID.String(),
+			"message_id":  ev.MessageID.String(),
+			"email":       soleRecipient(ev.Recipients),
+			"class":       attr.Class,
+			"campaign_id": nullableID(attr.CampaignID),
+			"contact_id":  nullableID(attr.ContactID),
+			"occurred_at": eventTime(ev.OccurredAt),
+		})
+	case domain.EventClick:
+		return uc.events.Publish(ctx, "transactional.email.clicked", ev.TenantID, map[string]any{
+			"tenant_id":   ev.TenantID.String(),
+			"message_id":  ev.MessageID.String(),
+			"email":       soleRecipient(ev.Recipients),
+			"link":        detailString(ev.Detail, "link"),
+			"class":       attr.Class,
+			"campaign_id": nullableID(attr.CampaignID),
+			"contact_id":  nullableID(attr.ContactID),
+			"occurred_at": eventTime(ev.OccurredAt),
+		})
+	}
+	return nil
 }
 
 // IsIgnorableIngestError distingue los fallos que reintentar no arregla (mensaje
@@ -102,6 +171,14 @@ func IsIgnorableIngestError(err error) bool {
 
 func firstOf(list []string) string {
 	if len(list) > 0 {
+		return list[0]
+	}
+	return ""
+}
+
+// soleRecipient devuelve la direccion solo si hay exactamente una.
+func soleRecipient(list []string) string {
+	if len(list) == 1 {
 		return list[0]
 	}
 	return ""

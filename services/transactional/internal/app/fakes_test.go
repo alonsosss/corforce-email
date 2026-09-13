@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"html/template"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -36,6 +38,8 @@ type fakeRepo struct {
 	// commitBeforeNextTx simula una transaccion concurrente que confirma justo antes de
 	// que empiece la siguiente.
 	commitBeforeNextTx func(r *fakeRepo)
+	// attributionErr simula que la lectura de la atribucion falla (base caida).
+	attributionErr error
 }
 
 func newFakeRepo() *fakeRepo {
@@ -127,6 +131,18 @@ func (r *fakeRepo) GetMessage(_ context.Context, tenantID, id uuid.UUID) (*domai
 	return &m, nil
 }
 
+func (r *fakeRepo) GetAttribution(_ context.Context, tenantID, id uuid.UUID) (*domain.MessageAttribution, error) {
+	if r.attributionErr != nil {
+		return nil, r.attributionErr
+	}
+	m, ok := r.messages[id]
+	if !ok || m.TenantID != tenantID {
+		return nil, domain.ErrNotFound
+	}
+	a := m.Attribution()
+	return &a, nil
+}
+
 func (r *fakeRepo) GetMessages(ctx context.Context, tenantID uuid.UUID, ids []uuid.UUID) ([]domain.Message, error) {
 	var out []domain.Message
 	for _, id := range ids {
@@ -141,7 +157,7 @@ func (r *fakeRepo) ListMessages(_ context.Context, tenantID uuid.UUID, f domain.
 	var out []domain.Message
 	for _, id := range r.order {
 		m := r.messages[id]
-		if m.TenantID != tenantID || (f.Status != "" && m.Status != f.Status) {
+		if m.TenantID != tenantID || (f.Status != "" && m.Status != f.Status) || (f.Class != "" && m.Class != f.Class) {
 			continue
 		}
 		out = append(out, m)
@@ -357,24 +373,76 @@ func (s *fakeSuppression) Add(_ context.Context, _ uuid.UUID, entry ports.Suppre
 	return nil
 }
 
+// renderedBody pasa el enlace de baja por html/template, como el servicio templates: el
+// enlace llega escapado (& como &amp;) igual que en produccion.
+var renderedBody = template.Must(template.New("body").Parse(`<p>Pedido</p><a href="{{.}}">Darse de baja</a>`))
+
 // fakeTemplates renderiza con las variables reservadas a la vista, para poder comprobar
-// que cambian por destinatario.
+// que cambian por destinatario. Admite llamadas concurrentes (los lotes renderizan en
+// paralelo).
 type fakeTemplates struct {
+	mu    sync.Mutex
 	calls []ports.RenderRequest
 	err   error
+	// withoutUnsubscribe simula una plantilla que no usa unsubscribe_url (transaccional).
+	withoutUnsubscribe bool
 }
 
 func (f *fakeTemplates) Render(_ context.Context, _ uuid.UUID, req ports.RenderRequest) (*ports.Rendered, error) {
+	f.mu.Lock()
 	f.calls = append(f.calls, req)
+	err, without := f.err, f.withoutUnsubscribe
+	f.mu.Unlock()
+	if err != nil {
+		return nil, err
+	}
+	var html strings.Builder
+	if without {
+		html.WriteString("<p>Pedido</p>")
+	} else if err := renderedBody.Execute(&html, req.Reserved.UnsubscribeURL); err != nil {
+		return nil, err
+	}
+	version := 3
+	if req.Version != nil {
+		version = *req.Version
+	}
+	return &ports.Rendered{Subject: "Hola " + req.Reserved.RecipientEmail, HTML: html.String(), Text: "Pedido", Version: version}, nil
+}
+
+func (f *fakeTemplates) callFor(email string) (ports.RenderRequest, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, c := range f.calls {
+		if c.Reserved.RecipientEmail == email {
+			return c, true
+		}
+	}
+	return ports.RenderRequest{}, false
+}
+
+// reputationCall es una autorizacion pedida.
+type reputationCall struct {
+	Class string
+	Count int
+}
+
+// fakeReputation autoriza todo salvo que se fije una denegacion (auth) o una caida (err).
+type fakeReputation struct {
+	calls []reputationCall
+	auth  *ports.Authorization
+	err   error
+}
+
+func (f *fakeReputation) Authorize(_ context.Context, _ uuid.UUID, class string, count int) (*ports.Authorization, error) {
+	f.calls = append(f.calls, reputationCall{Class: class, Count: count})
 	if f.err != nil {
 		return nil, f.err
 	}
-	return &ports.Rendered{
-		Subject: "Hola " + req.Reserved.RecipientEmail,
-		HTML:    `<p>Pedido</p><a href="` + req.Reserved.UnsubscribeURL + `">Darse de baja</a>`,
-		Text:    "Pedido",
-		Version: 3,
-	}, nil
+	if f.auth != nil {
+		a := *f.auth
+		return &a, nil
+	}
+	return &ports.Authorization{Allowed: true, Class: class, State: "healthy"}, nil
 }
 
 // fakeSender es el proveedor: errs se consume en orden; err se devuelve siempre.
@@ -410,15 +478,19 @@ func (l *fakeLimiter) Wait(context.Context) error {
 const testSigningKey = "0123456789abcdef0123456789abcdef-test"
 
 type fixture struct {
-	uc      *UseCase
-	repo    *fakeRepo
-	supp    *fakeSuppression
-	tpl     *fakeTemplates
-	sender  *fakeSender
-	limiter *fakeLimiter
-	links   *domain.LinkSigner
-	tenant  uuid.UUID
-	now     time.Time
+	uc       *UseCase
+	deps     Deps
+	repo     *fakeRepo
+	supp     *fakeSuppression
+	tpl      *fakeTemplates
+	rep      *fakeReputation
+	sender   *fakeSender
+	limiter  *fakeLimiter
+	mSender  *fakeSender
+	mLimiter *fakeLimiter
+	links    *domain.LinkSigner
+	tenant   uuid.UUID
+	now      time.Time
 }
 
 func newFixture(t *testing.T, cfg Config) *fixture {
@@ -428,20 +500,25 @@ func newFixture(t *testing.T, cfg Config) *fixture {
 		t.Fatal(err)
 	}
 	f := &fixture{
-		repo:    newFakeRepo(),
-		supp:    &fakeSuppression{suppressed: map[string]string{}},
-		tpl:     &fakeTemplates{},
-		sender:  &fakeSender{},
-		limiter: &fakeLimiter{},
-		links:   links,
-		tenant:  uuid.New(),
-		now:     time.Date(2026, 9, 12, 12, 0, 0, 0, time.UTC),
+		repo:     newFakeRepo(),
+		supp:     &fakeSuppression{suppressed: map[string]string{}},
+		tpl:      &fakeTemplates{},
+		rep:      &fakeReputation{},
+		sender:   &fakeSender{},
+		limiter:  &fakeLimiter{},
+		mSender:  &fakeSender{},
+		mLimiter: &fakeLimiter{},
+		links:    links,
+		tenant:   uuid.New(),
+		now:      time.Date(2026, 9, 12, 12, 0, 0, 0, time.UTC),
 	}
-	f.uc = New(Deps{
-		Repo: f.repo, Events: f.repo, Suppression: f.supp, Templates: f.tpl, Sender: f.sender,
-		Limiter: f.limiter, Links: links, Config: cfg, Logger: zap.NewNop(),
+	f.deps = Deps{
+		Repo: f.repo, Events: f.repo, Suppression: f.supp, Templates: f.tpl, Reputation: f.rep,
+		Sender: f.sender, Limiter: f.limiter, Marketing: Lane{Sender: f.mSender, Limiter: f.mLimiter},
+		Links: links, Config: cfg, Logger: zap.NewNop(),
 		Now: func() time.Time { return f.now },
-	})
+	}
+	f.uc = New(f.deps)
 	return f
 }
 

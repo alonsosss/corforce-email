@@ -51,9 +51,9 @@ type CreateResult struct {
 	Replayed   bool               `json:"-"`
 }
 
-// CreateMessages valida, filtra por supresion, renderiza y encola. Un mensaje por
-// destinatario cuando hay plantilla o enlace de baja; uno solo con todos los
-// destinatarios cuando el cuerpo llega crudo.
+// CreateMessages valida, filtra por supresion, pide autorizacion a reputation, renderiza y
+// encola. Un mensaje por destinatario cuando hay plantilla o enlace de baja; uno solo con
+// todos los destinatarios cuando el cuerpo llega crudo.
 func (uc *UseCase) CreateMessages(ctx context.Context, cmd CreateMessagesCommand) (*CreateResult, error) {
 	if err := uc.validateCreate(&cmd); err != nil {
 		return nil, err
@@ -69,6 +69,11 @@ func (uc *UseCase) CreateMessages(ctx context.Context, cmd CreateMessagesCommand
 
 	suppressed, err := uc.filterSuppressed(ctx, cmd.TenantID, &cmd.To, &cmd.Cc, &cmd.Bcc)
 	if err != nil {
+		return nil, err
+	}
+	// En el carril transaccional una caida de reputation no bloquea (failOpen), pero una
+	// denegacion explicita si.
+	if err := uc.authorize(ctx, cmd.TenantID, domain.ClassTransactional, recipientCount(cmd), true); err != nil {
 		return nil, err
 	}
 	result := &CreateResult{Suppressed: suppressed}
@@ -91,7 +96,10 @@ func (uc *UseCase) CreateMessages(ctx context.Context, cmd CreateMessagesCommand
 			for i, m := range messages {
 				ids[i] = m.ID
 			}
-			sub := &domain.Submission{ID: uuid.New(), TenantID: cmd.TenantID, IdempotencyKey: cmd.IdempotencyKey, MessageIDs: ids}
+			sub := &domain.Submission{
+				ID: uuid.New(), TenantID: cmd.TenantID, IdempotencyKey: cmd.IdempotencyKey,
+				Class: domain.ClassTransactional, MessageIDs: ids, Suppressed: suppressed,
+			}
 			inserted, err := uc.repo.InsertSubmission(ctx, sub)
 			if err != nil {
 				return err
@@ -151,7 +159,9 @@ type InternalSendResult struct {
 }
 
 // InternalSend crea y encola un correo de la propia plataforma con el remitente de
-// PLATFORM_FROM_EMAIL. La supresion se respeta igual que en el API.
+// PLATFORM_FROM_EMAIL. La supresion se respeta igual que en el API. No pasa por
+// reputation: son correos de la plataforma (codigos de acceso, restablecimientos), no
+// practica de envio de la empresa, y no pueden quedar bloqueados por su reputacion.
 func (uc *UseCase) InternalSend(ctx context.Context, cmd InternalSendCommand) (*InternalSendResult, error) {
 	if uc.cfg.PlatformFromEmail == "" {
 		return nil, domain.NewValidationError("PLATFORM_FROM_EMAIL no esta configurado")
@@ -253,7 +263,7 @@ func (uc *UseCase) validateCreate(cmd *CreateMessagesCommand) error {
 	if len(cmd.HTML)+len(cmd.Text) > domain.MaxBodyBytes {
 		return domain.NewValidationError("el cuerpo supera el limite de %d bytes", domain.MaxBodyBytes)
 	}
-	if (cmd.TemplateID != nil || cmd.Unsubscribable) && (len(cmd.Cc) > 0 || len(cmd.Bcc) > 0) {
+	if fansOut(*cmd) && (len(cmd.Cc) > 0 || len(cmd.Bcc) > 0) {
 		// Con plantilla o enlace de baja cada destinatario recibe su propio mensaje; un
 		// cc o bcc recibiria una copia por cada uno.
 		return domain.NewValidationError("cc and bcc are not allowed with template_id or unsubscribable")
@@ -287,6 +297,8 @@ func duplicateRecipient(lists ...[]domain.Recipient) string {
 	return ""
 }
 
+// replaySubmission devuelve lo creado por una peticion con la misma clave. Una clave que
+// ya identifica un lote de marketing no es una peticion transaccional: se rechaza.
 func (uc *UseCase) replaySubmission(ctx context.Context, tenantID uuid.UUID, key string) (*CreateResult, error) {
 	sub, err := uc.repo.GetSubmission(ctx, tenantID, key)
 	if errors.Is(err, domain.ErrNotFound) {
@@ -295,11 +307,17 @@ func (uc *UseCase) replaySubmission(ctx context.Context, tenantID uuid.UUID, key
 	if err != nil {
 		return nil, err
 	}
+	if domain.ClassOrDefault(sub.Class) != domain.ClassTransactional {
+		return nil, domain.ErrIdempotencyKeyReused
+	}
 	msgs, err := uc.repo.GetMessages(ctx, tenantID, sub.MessageIDs)
 	if err != nil {
 		return nil, err
 	}
-	result := &CreateResult{Replayed: true, Suppressed: []ports.Suppressed{}}
+	result := &CreateResult{Replayed: true, Suppressed: sub.Suppressed}
+	if result.Suppressed == nil {
+		result.Suppressed = []ports.Suppressed{}
+	}
 	for _, m := range msgs {
 		result.Messages = append(result.Messages, MessageSummary{ID: m.ID, Status: m.Status, To: m.To})
 	}
@@ -333,19 +351,14 @@ func (uc *UseCase) requirePlatformDomain(ctx context.Context, tenantID uuid.UUID
 	return err
 }
 
-// filterSuppressed consulta suppression con todos los destinatarios y quita los
-// suprimidos de cada lista. Sin respuesta de suppression no se encola nada.
-func (uc *UseCase) filterSuppressed(ctx context.Context, tenantID uuid.UUID, lists ...*[]domain.Recipient) ([]ports.Suppressed, error) {
-	var emails []string
-	for _, l := range lists {
-		for _, r := range *l {
-			emails = append(emails, r.Email)
-		}
-	}
+// checkSuppressed consulta suppression con todas las direcciones y devuelve las
+// suprimidas y el conjunto (en minusculas) que hay que retirar. Sin respuesta de
+// suppression no se encola nada.
+func (uc *UseCase) checkSuppressed(ctx context.Context, tenantID uuid.UUID, emails []string) ([]ports.Suppressed, map[string]bool, error) {
 	suppressed, err := uc.suppression.Check(ctx, tenantID, emails)
 	if err != nil {
 		uc.logger.Warn("transactional: suppression no respondio; no se encola", zap.Error(err))
-		return nil, domain.ErrSuppressionUnavailable
+		return nil, nil, domain.ErrSuppressionUnavailable
 	}
 	if suppressed == nil {
 		suppressed = []ports.Suppressed{}
@@ -353,6 +366,22 @@ func (uc *UseCase) filterSuppressed(ctx context.Context, tenantID uuid.UUID, lis
 	blocked := make(map[string]bool, len(suppressed))
 	for _, s := range suppressed {
 		blocked[strings.ToLower(s.Email)] = true
+	}
+	return suppressed, blocked, nil
+}
+
+// filterSuppressed consulta suppression con todos los destinatarios y quita los
+// suprimidos de cada lista.
+func (uc *UseCase) filterSuppressed(ctx context.Context, tenantID uuid.UUID, lists ...*[]domain.Recipient) ([]ports.Suppressed, error) {
+	var emails []string
+	for _, l := range lists {
+		for _, r := range *l {
+			emails = append(emails, r.Email)
+		}
+	}
+	suppressed, blocked, err := uc.checkSuppressed(ctx, tenantID, emails)
+	if err != nil {
+		return nil, err
 	}
 	for _, l := range lists {
 		kept := (*l)[:0]
@@ -366,12 +395,27 @@ func (uc *UseCase) filterSuppressed(ctx context.Context, tenantID uuid.UUID, lis
 	return suppressed, nil
 }
 
+// fansOut dice si la peticion produce un mensaje por destinatario: con plantilla o con
+// enlace de baja, las variables reservadas y la baja son por persona.
+func fansOut(cmd CreateMessagesCommand) bool {
+	return cmd.TemplateID != nil || cmd.Unsubscribable
+}
+
+// recipientCount es el numero de destinatarios que saldran de la peticion ya filtrada: la
+// unidad que autoriza reputation, que cuenta los envios por destinatario (el campo to de
+// transactional.email.sent lleva to, cc y bcc). Sin to no sale nada.
+func recipientCount(cmd CreateMessagesCommand) int {
+	if len(cmd.To) == 0 {
+		return 0
+	}
+	return len(cmd.To) + len(cmd.Cc) + len(cmd.Bcc)
+}
+
 // buildMessages materializa los mensajes: uno por destinatario con plantilla o baja
 // (renderizando por destinatario, porque las variables reservadas cambian), uno con
 // todos los destinatarios si el cuerpo llega crudo.
 func (uc *UseCase) buildMessages(ctx context.Context, cmd CreateMessagesCommand) ([]*domain.Message, error) {
-	fanOut := cmd.TemplateID != nil || cmd.Unsubscribable
-	if !fanOut {
+	if !fansOut(cmd) {
 		return []*domain.Message{uc.newMessage(cmd, cmd.To)}, nil
 	}
 	messages := make([]*domain.Message, 0, len(cmd.To))
@@ -424,6 +468,7 @@ func (uc *UseCase) newMessage(cmd CreateMessagesCommand, to []domain.Recipient) 
 		Headers:         cmd.Headers,
 		Tags:            cmd.Tags,
 		Unsubscribable:  cmd.Unsubscribable,
+		Class:           domain.ClassTransactional,
 		Status:          domain.StatusQueued,
 		ScheduledAt:     cmd.ScheduledAt,
 		CreatedBy:       cmd.CreatedBy,
@@ -449,11 +494,22 @@ func (uc *UseCase) newMessage(cmd CreateMessagesCommand, to []domain.Recipient) 
 	return msg
 }
 
+// publishQueued encola el mensaje en la cola de su clase: cada carril tiene su subject, su
+// consumidor durable, su configuration set y su tasa, y nunca comparten reputacion.
 func (uc *UseCase) publishQueued(ctx context.Context, m *domain.Message) error {
-	if err := uc.events.Publish(ctx, "transactional.message.queued", m.TenantID, map[string]any{
-		"tenant_id":  m.TenantID.String(),
-		"message_id": m.ID.String(),
-	}); err != nil {
+	var err error
+	if domain.ClassOrDefault(m.Class) == domain.ClassMarketing {
+		err = uc.events.Publish(ctx, "transactional.marketing.queued", m.TenantID, map[string]any{
+			"tenant_id":  m.TenantID.String(),
+			"message_id": m.ID.String(),
+		})
+	} else {
+		err = uc.events.Publish(ctx, "transactional.message.queued", m.TenantID, map[string]any{
+			"tenant_id":  m.TenantID.String(),
+			"message_id": m.ID.String(),
+		})
+	}
+	if err != nil {
 		return fmt.Errorf("encolar mensaje %s: %w", m.ID, err)
 	}
 	return nil

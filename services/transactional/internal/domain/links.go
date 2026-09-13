@@ -56,6 +56,14 @@ func (s *LinkSigner) Verify(c UnsubscribeClaims, signature string) bool {
 	return subtle.ConstantTimeCompare([]byte(expected), []byte(signature)) == 1
 }
 
+// ContainsUnsubscribeLink dice si el contenido renderizado lleva el enlace de baja de ese
+// mensaje. Se busca por el prefijo de la ruta y por el identificador del mensaje, que
+// ningun escapado de html/template altera (el resto de la URL puede llegar con & como
+// &amp; o = como &#61;).
+func (s *LinkSigner) ContainsUnsubscribeLink(content string, messageID uuid.UUID) bool {
+	return strings.Contains(content, s.baseURL+UnsubscribePath) && strings.Contains(content, messageID.String())
+}
+
 // UnsubscribeURL construye el enlace completo que viaja en el correo.
 func (s *LinkSigner) UnsubscribeURL(c UnsubscribeClaims) string {
 	q := url.Values{}

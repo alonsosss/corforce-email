@@ -286,18 +286,21 @@ func TestIdempotencyKeyConcurrentWinner(t *testing.T) {
 
 func TestCreateValidation(t *testing.T) {
 	cases := map[string]func(c *CreateMessagesCommand){
-		"plantilla y cuerpo":            func(c *CreateMessagesCommand) { id := uuid.New(); c.TemplateID = &id },
-		"sin plantilla ni cuerpo":       func(c *CreateMessagesCommand) { c.HTML = "" },
-		"sin asunto":                    func(c *CreateMessagesCommand) { c.Subject = " " },
-		"version sin plantilla":         func(c *CreateMessagesCommand) { v := 2; c.TemplateVersion = &v },
-		"from invalido":                 func(c *CreateMessagesCommand) { c.From.Email = "no-es-email" },
-		"reply_to invalido":             func(c *CreateMessagesCommand) { c.ReplyTo = "x@" },
-		"to vacio":                      func(c *CreateMessagesCommand) { c.To = nil },
-		"to invalido":                   func(c *CreateMessagesCommand) { c.To[0].Email = "ana@@example.com" },
-		"destinatario repetido":         func(c *CreateMessagesCommand) { c.Cc = []domain.Recipient{{Email: "ANA@example.com"}} },
-		"cabecera estandar":             func(c *CreateMessagesCommand) { c.Headers = map[string]string{"Bcc": "x@example.com"} },
-		"etiqueta reservada":            func(c *CreateMessagesCommand) { c.Tags = map[string]string{"message_id": "x"} },
-		"cc con baja":                   func(c *CreateMessagesCommand) { c.Unsubscribable = true; c.Cc = []domain.Recipient{{Email: "c@example.com"}} },
+		"plantilla y cuerpo":      func(c *CreateMessagesCommand) { id := uuid.New(); c.TemplateID = &id },
+		"sin plantilla ni cuerpo": func(c *CreateMessagesCommand) { c.HTML = "" },
+		"sin asunto":              func(c *CreateMessagesCommand) { c.Subject = " " },
+		"version sin plantilla":   func(c *CreateMessagesCommand) { v := 2; c.TemplateVersion = &v },
+		"from invalido":           func(c *CreateMessagesCommand) { c.From.Email = "no-es-email" },
+		"reply_to invalido":       func(c *CreateMessagesCommand) { c.ReplyTo = "x@" },
+		"to vacio":                func(c *CreateMessagesCommand) { c.To = nil },
+		"to invalido":             func(c *CreateMessagesCommand) { c.To[0].Email = "ana@@example.com" },
+		"destinatario repetido":   func(c *CreateMessagesCommand) { c.Cc = []domain.Recipient{{Email: "ANA@example.com"}} },
+		"cabecera estandar":       func(c *CreateMessagesCommand) { c.Headers = map[string]string{"Bcc": "x@example.com"} },
+		"etiqueta reservada":      func(c *CreateMessagesCommand) { c.Tags = map[string]string{"message_id": "x"} },
+		"cc con baja": func(c *CreateMessagesCommand) {
+			c.Unsubscribable = true
+			c.Cc = []domain.Recipient{{Email: "c@example.com"}}
+		},
 		"programado a mas de 30 dias":   func(c *CreateMessagesCommand) { t := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC); c.ScheduledAt = &t },
 		"cuerpo por encima de 10 MiB":   func(c *CreateMessagesCommand) { c.HTML = strings.Repeat("a", domain.MaxBodyBytes+1) },
 		"clave de idempotencia enorme":  func(c *CreateMessagesCommand) { c.IdempotencyKey = strings.Repeat("k", 201) },

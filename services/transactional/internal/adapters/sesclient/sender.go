@@ -75,6 +75,13 @@ func OptionsFromEnv() Options {
 	}
 }
 
+// WithConfigurationSet devuelve un emisor que comparte cliente y credenciales pero sale por
+// otro configuration set: cada carril (transaccional, marketing) tiene el suyo, y SES
+// separa por el sus eventos, sus metricas y el seguimiento de aperturas y clics.
+func (s *Sender) WithConfigurationSet(name string) *Sender {
+	return &Sender{client: s.client, configSet: name}
+}
+
 func (s *Sender) Send(ctx context.Context, email domain.OutgoingEmail) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, sendTimeout)
 	defer cancel()

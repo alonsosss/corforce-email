@@ -33,8 +33,8 @@ func (r *Repository) Transact(ctx context.Context, fn func(ctx context.Context) 
 
 const messageColumns = `id, tenant_id, submission_id, idempotency_key, from_email, from_name, reply_to,
 	"to", cc, bcc, subject, template_id, template_version, variables, html, text, headers, tags,
-	unsubscribable, status, ses_message_id, error, attempts, scheduled_at, sent_at, created_by,
-	created_at, updated_at`
+	unsubscribable, class, campaign_id, contact_id, status, ses_message_id, error, attempts, scheduled_at,
+	sent_at, created_by, created_at, updated_at`
 
 type rowScanner interface {
 	Scan(dest ...any) error
@@ -44,8 +44,8 @@ func scanMessage(row rowScanner) (*domain.Message, error) {
 	var m domain.Message
 	err := row.Scan(&m.ID, &m.TenantID, &m.SubmissionID, &m.IdempotencyKey, &m.FromEmail, &m.FromName, &m.ReplyTo,
 		&m.To, &m.Cc, &m.Bcc, &m.Subject, &m.TemplateID, &m.TemplateVersion, &m.Variables, &m.HTML, &m.Text,
-		&m.Headers, &m.Tags, &m.Unsubscribable, &m.Status, &m.SESMessageID, &m.Error, &m.Attempts,
-		&m.ScheduledAt, &m.SentAt, &m.CreatedBy, &m.CreatedAt, &m.UpdatedAt)
+		&m.Headers, &m.Tags, &m.Unsubscribable, &m.Class, &m.CampaignID, &m.ContactID, &m.Status, &m.SESMessageID,
+		&m.Error, &m.Attempts, &m.ScheduledAt, &m.SentAt, &m.CreatedBy, &m.CreatedAt, &m.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, domain.ErrNotFound
 	}
@@ -81,14 +81,15 @@ func (r *Repository) InsertMessage(ctx context.Context, m *domain.Message) error
 	if m.Tags == nil {
 		m.Tags = map[string]string{}
 	}
+	m.Class = domain.ClassOrDefault(m.Class)
 	_, err := r.pool.Exec(ctx, `INSERT INTO transactional.messages (
 		id, tenant_id, submission_id, idempotency_key, from_email, from_name, reply_to,
 		"to", cc, bcc, subject, template_id, template_version, variables, html, text, headers, tags,
-		unsubscribable, status, attempts, scheduled_at, created_by, created_at, updated_at
-	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)`,
+		unsubscribable, class, campaign_id, contact_id, status, attempts, scheduled_at, created_by, created_at, updated_at
+	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28)`,
 		m.ID, m.TenantID, m.SubmissionID, m.IdempotencyKey, m.FromEmail, m.FromName, m.ReplyTo,
 		m.To, m.Cc, m.Bcc, m.Subject, m.TemplateID, m.TemplateVersion, m.Variables, m.HTML, m.Text, m.Headers, m.Tags,
-		m.Unsubscribable, m.Status, m.Attempts, m.ScheduledAt, m.CreatedBy, m.CreatedAt, m.UpdatedAt)
+		m.Unsubscribable, m.Class, m.CampaignID, m.ContactID, m.Status, m.Attempts, m.ScheduledAt, m.CreatedBy, m.CreatedAt, m.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("insert message: %w", err)
 	}
@@ -98,6 +99,19 @@ func (r *Repository) InsertMessage(ctx context.Context, m *domain.Message) error
 func (r *Repository) GetMessage(ctx context.Context, tenantID, id uuid.UUID) (*domain.Message, error) {
 	row := r.pool.QueryRow(ctx, `SELECT `+messageColumns+` FROM transactional.messages WHERE tenant_id = $1 AND id = $2`, tenantID, id)
 	return scanMessage(row)
+}
+
+func (r *Repository) GetAttribution(ctx context.Context, tenantID, id uuid.UUID) (*domain.MessageAttribution, error) {
+	var a domain.MessageAttribution
+	err := r.pool.QueryRow(ctx, `SELECT class, campaign_id, contact_id FROM transactional.messages
+		WHERE tenant_id = $1 AND id = $2`, tenantID, id).Scan(&a.Class, &a.CampaignID, &a.ContactID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, domain.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &a, nil
 }
 
 func (r *Repository) LockQueuedMessage(ctx context.Context, tenantID, id uuid.UUID) (*domain.Message, error) {
@@ -139,6 +153,9 @@ func (r *Repository) ListMessages(ctx context.Context, tenantID uuid.UUID, f dom
 	}
 	if f.Status != "" {
 		add("status = $%d", f.Status)
+	}
+	if f.Class != "" {
+		add("class = $%d", f.Class)
 	}
 	if f.From != "" {
 		add("from_email = $%d", f.From)
@@ -282,9 +299,9 @@ func (r *Repository) ListEvents(ctx context.Context, tenantID, messageID uuid.UU
 
 func (r *Repository) GetSubmission(ctx context.Context, tenantID uuid.UUID, key string) (*domain.Submission, error) {
 	var s domain.Submission
-	err := r.pool.QueryRow(ctx, `SELECT id, tenant_id, idempotency_key, message_ids, created_at
+	err := r.pool.QueryRow(ctx, `SELECT id, tenant_id, idempotency_key, class, message_ids, suppressed, created_at
 		FROM transactional.submissions WHERE tenant_id = $1 AND idempotency_key = $2`, tenantID, key).
-		Scan(&s.ID, &s.TenantID, &s.IdempotencyKey, &s.MessageIDs, &s.CreatedAt)
+		Scan(&s.ID, &s.TenantID, &s.IdempotencyKey, &s.Class, &s.MessageIDs, &s.Suppressed, &s.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, domain.ErrNotFound
 	}
@@ -295,13 +312,17 @@ func (r *Repository) GetSubmission(ctx context.Context, tenantID uuid.UUID, key 
 }
 
 func (r *Repository) InsertSubmission(ctx context.Context, s *domain.Submission) (bool, error) {
-	// pgx envia un slice nil como SQL NULL y la columna no lo admite.
+	// pgx envia un slice nil como SQL NULL y las columnas no lo admiten.
 	if s.MessageIDs == nil {
 		s.MessageIDs = []uuid.UUID{}
 	}
-	tag, err := r.pool.Exec(ctx, `INSERT INTO transactional.submissions (id, tenant_id, idempotency_key, message_ids, created_at)
-		VALUES ($1, $2, $3, $4, now()) ON CONFLICT (tenant_id, idempotency_key) DO NOTHING`,
-		s.ID, s.TenantID, s.IdempotencyKey, s.MessageIDs)
+	if s.Suppressed == nil {
+		s.Suppressed = []domain.SuppressedRecipient{}
+	}
+	s.Class = domain.ClassOrDefault(s.Class)
+	tag, err := r.pool.Exec(ctx, `INSERT INTO transactional.submissions (id, tenant_id, idempotency_key, class, message_ids, suppressed, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, now()) ON CONFLICT (tenant_id, idempotency_key) DO NOTHING`,
+		s.ID, s.TenantID, s.IdempotencyKey, s.Class, s.MessageIDs, s.Suppressed)
 	if err != nil {
 		return false, fmt.Errorf("insert submission: %w", err)
 	}

@@ -3,6 +3,7 @@ package http
 import (
 	"encoding/json"
 	"errors"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -27,6 +28,8 @@ const (
 	maxSNSBody = 1 << 20
 	// maxUnsubscribeBody acota el POST de baja (One-Click manda una linea).
 	maxUnsubscribeBody = 4 << 10
+	// maxBatchBody acota un lote de campana: hasta 500 destinatarios con sus variables.
+	maxBatchBody = 8 << 20
 
 	permModule     = "transactional"
 	defaultPerPage = 25
@@ -63,7 +66,8 @@ func NewHandler(d Deps) *Handler {
 }
 
 // Routes monta tres superficies: el API con sesion (por el gateway), las rutas publicas
-// (webhook de SNS y enlace de baja, sin sesion) y el endpoint interno para la plataforma.
+// (webhook de SNS y enlace de baja, sin sesion) y los endpoints internos (envio de la
+// plataforma y lotes de campana).
 func (h *Handler) Routes() http.Handler {
 	r := chi.NewRouter()
 	apiLimiter := middleware.NewRateLimiter(120, time.Minute)
@@ -97,6 +101,7 @@ func (h *Handler) Routes() http.Handler {
 		r.Use(middleware.InjectFromGateway)
 		r.Use(db.TenantHeaderPoolMiddleware(h.tenantDB))
 		r.Post("/send-email", h.InternalSendEmail)
+		r.Post("/transactional/batch", h.MarketingBatch)
 	})
 	return r
 }
@@ -200,6 +205,7 @@ func (h *Handler) ListMessages(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	filter := domain.MessageFilter{
 		Status: strings.TrimSpace(q.Get("status")),
+		Class:  strings.TrimSpace(q.Get("class")),
 		To:     domain.NormalizeEmail(q.Get("to")),
 		From:   domain.NormalizeEmail(q.Get("from")),
 	}
@@ -336,6 +342,75 @@ func (h *Handler) InternalSendEmail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response.JSON(w, http.StatusOK, result)
+}
+
+type batchRecipientDTO struct {
+	Email     string         `json:"email"`
+	Name      string         `json:"name,omitempty"`
+	ContactID *uuid.UUID     `json:"contact_id"`
+	Variables map[string]any `json:"variables,omitempty"`
+}
+
+type batchRequest struct {
+	Class           string              `json:"class"`
+	CampaignID      *uuid.UUID          `json:"campaign_id"`
+	IdempotencyKey  string              `json:"idempotency_key"`
+	From            recipientDTO        `json:"from"`
+	ReplyTo         string              `json:"reply_to,omitempty"`
+	TemplateID      *uuid.UUID          `json:"template_id"`
+	TemplateVersion *int                `json:"template_version"`
+	Recipients      []batchRecipientDTO `json:"recipients"`
+	Tags            map[string]string   `json:"tags,omitempty"`
+}
+
+// MarketingBatch es el contrato que usa campaigns: 202 al crear el lote (tambien con todos
+// los destinatarios suprimidos, accepted 0), 200 con el mismo cuerpo ante una repeticion
+// de la clave. Las denegaciones de reputation y las caidas se traducen en writeError.
+func (h *Handler) MarketingBatch(w http.ResponseWriter, r *http.Request) {
+	tenantID, err := uuid.Parse(r.Header.Get("X-Tenant-ID"))
+	if err != nil {
+		response.ErrUnauthorized(w, "invalid tenant")
+		return
+	}
+	var req batchRequest
+	if err := validate.DecodeJSONLimit(w, r, &req, maxBatchBody); err != nil {
+		response.ErrBadRequest(w, err.Error())
+		return
+	}
+	cmd := app.MarketingBatchCommand{
+		TenantID:       tenantID,
+		Class:          strings.TrimSpace(req.Class),
+		IdempotencyKey: req.IdempotencyKey,
+		From:           domain.Recipient(req.From),
+		ReplyTo:        req.ReplyTo,
+		Tags:           req.Tags,
+		Recipients:     make([]app.MarketingRecipient, len(req.Recipients)),
+	}
+	if req.CampaignID != nil {
+		cmd.CampaignID = *req.CampaignID
+	}
+	if req.TemplateID != nil {
+		cmd.TemplateID = *req.TemplateID
+	}
+	if req.TemplateVersion != nil {
+		cmd.TemplateVersion = *req.TemplateVersion
+	}
+	for i, rcpt := range req.Recipients {
+		cmd.Recipients[i] = app.MarketingRecipient{Email: rcpt.Email, Name: rcpt.Name, Variables: rcpt.Variables}
+		if rcpt.ContactID != nil {
+			cmd.Recipients[i].ContactID = *rcpt.ContactID
+		}
+	}
+	result, err := h.uc.CreateMarketingBatch(r.Context(), cmd)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	status := http.StatusAccepted
+	if result.Replayed {
+		status = http.StatusOK
+	}
+	response.JSON(w, status, result)
 }
 
 // ── Webhook de SNS (eventos de SES) ──────────────────────────────────────────
@@ -562,8 +637,47 @@ func pagination(pageStr, perPageStr string) (int, int) {
 	return page, perPage
 }
 
-func writeError(w http.ResponseWriter, err error) {
+// writeDenied traduce una denegacion de reputation. El mensaje es el motivo tal cual lo da
+// reputation, para que el llamador pueda decidir:
+//   - rate_limited con espera: 429 RATE_LIMITED y Retry-After en segundos;
+//   - rate_limited sin espera (lo pedido supera el propio limite de la ventana):
+//     403 SENDING_RESTRICTED, porque reintentar igual nunca pasara;
+//   - suspended y reputation_restricted: 403 SENDING_RESTRICTED;
+//   - cualquier otro motivo es del plan (billing): 403 PLAN_LIMIT_REACHED.
+func writeDenied(w http.ResponseWriter, d *domain.SendingDeniedError) {
 	switch {
+	case d.RateLimited():
+		seconds := int(math.Ceil(d.RetryAfter.Seconds()))
+		if seconds < 1 {
+			seconds = 1
+		}
+		w.Header().Set("Retry-After", strconv.Itoa(seconds))
+		response.Err(w, http.StatusTooManyRequests, "RATE_LIMITED", d.Reason)
+	case d.ExceedsRateWindow():
+		response.Err(w, http.StatusForbidden, "SENDING_RESTRICTED",
+			d.Reason+": lo pedido supera el limite de tasa de la ventana; esperar no basta, hay que partir el envio")
+	case d.Restricted():
+		response.Err(w, http.StatusForbidden, "SENDING_RESTRICTED", d.Reason)
+	default:
+		reason := d.Reason
+		if reason == "" {
+			reason = domain.DenyPlanDenied
+		}
+		response.Err(w, http.StatusForbidden, "PLAN_LIMIT_REACHED", reason)
+	}
+}
+
+func writeError(w http.ResponseWriter, err error) {
+	var denied *domain.SendingDeniedError
+	switch {
+	case errors.As(err, &denied):
+		writeDenied(w, denied)
+	case errors.Is(err, domain.ErrReputationUnavailable):
+		response.Err(w, http.StatusServiceUnavailable, "REPUTATION_UNAVAILABLE", "reputation no respondio; no se encolo nada")
+	case errors.Is(err, domain.ErrTemplateNotMarketing):
+		response.Err(w, http.StatusUnprocessableEntity, "TEMPLATE_NOT_MARKETING", "la plantilla no lleva el enlace de baja obligatorio en marketing")
+	case errors.Is(err, domain.ErrIdempotencyKeyReused):
+		response.Err(w, http.StatusConflict, "IDEMPOTENCY_KEY_REUSED", "la clave de idempotencia ya identifica una peticion de otra clase")
 	case errors.Is(err, domain.ErrNotFound):
 		response.ErrNotFound(w, "recurso no encontrado")
 	case errors.Is(err, domain.ErrAttachmentsNotSupported):

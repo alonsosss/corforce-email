@@ -19,6 +19,7 @@ import (
 	handler "github.com/alonsosss/corforce-email/services/transactional/internal/adapters/http"
 	natsadapter "github.com/alonsosss/corforce-email/services/transactional/internal/adapters/nats"
 	"github.com/alonsosss/corforce-email/services/transactional/internal/adapters/postgres"
+	"github.com/alonsosss/corforce-email/services/transactional/internal/adapters/reputationclient"
 	"github.com/alonsosss/corforce-email/services/transactional/internal/adapters/sesclient"
 	"github.com/alonsosss/corforce-email/services/transactional/internal/adapters/sns"
 	"github.com/alonsosss/corforce-email/services/transactional/internal/adapters/suppressionclient"
@@ -31,9 +32,11 @@ import (
 )
 
 const (
-	defaultPort     = 8045
-	defaultWorkers  = 4
-	defaultSendRate = 10.0
+	defaultPort              = 8045
+	defaultWorkers           = 4
+	defaultSendRate          = 10.0
+	defaultMarketingWorkers  = 4
+	defaultMarketingSendRate = 10.0
 	// releaseInterval es la cadencia con la que se encolan los programados vencidos.
 	releaseInterval = time.Minute
 )
@@ -72,20 +75,38 @@ func main() {
 		log.Fatalf("MAIL_LINK_SIGNING_KEY: %v", err)
 	}
 
-	sender, err := sesclient.New(ctx, sesclient.OptionsFromEnv())
+	sesOpts := sesclient.OptionsFromEnv()
+	sender, err := sesclient.New(ctx, sesOpts)
 	if err != nil {
 		log.Fatalf("configurar SES: %v", err)
 	}
+	// El marketing sale por su propio configuration set: sin el, o con el mismo que el
+	// transaccional, las dos clases compartirian reputacion y eventos en SES.
+	marketingSet := strings.TrimSpace(os.Getenv("SES_CONFIG_SET_MARKETING"))
+	if marketingSet == "" || marketingSet == strings.TrimSpace(sesOpts.ConfigurationSet) {
+		log.Fatal("SES_CONFIG_SET_MARKETING es obligatoria y distinta de SES_CONFIG_SET_TRANSACTIONAL")
+	}
 
 	internalToken := os.Getenv("INTERNAL_GATEWAY_TOKEN")
+	reputationURL := strings.TrimSpace(os.Getenv("REPUTATION_URL"))
+	if reputationURL == "" {
+		logger.Error("transactional: REPUTATION_URL no configurada; el marketing respondera 503 y el transaccional saldra sin autorizacion previa")
+	}
+	sendRate := envFloat("SES_MAX_SEND_RATE", defaultSendRate)
+	marketingRate := envFloat("SES_MAX_SEND_RATE_MARKETING", defaultMarketingSendRate)
 	uc := app.New(app.Deps{
 		Repo:        postgres.NewRepository(ctxPool),
 		Events:      postgres.NewOutboxPublisher(ctxPool),
 		Suppression: suppressionclient.New(os.Getenv("SUPPRESSION_URL"), internalToken),
 		Templates:   templatesclient.New(os.Getenv("TEMPLATES_URL"), internalToken),
+		Reputation:  reputationclient.New(reputationURL, internalToken),
 		Sender:      sender,
-		Limiter:     natsadapter.NewTokenBucket(envFloat("SES_MAX_SEND_RATE", defaultSendRate), int(envFloat("SES_MAX_SEND_RATE", defaultSendRate))),
-		Links:       links,
+		Limiter:     natsadapter.NewTokenBucket(sendRate, int(sendRate)),
+		Marketing: app.Lane{
+			Sender:  sender.WithConfigurationSet(marketingSet),
+			Limiter: natsadapter.NewTokenBucket(marketingRate, int(marketingRate)),
+		},
+		Links: links,
 		Config: app.Config{
 			PlatformFromEmail:           os.Getenv("PLATFORM_FROM_EMAIL"),
 			PlatformFromName:            os.Getenv("PLATFORM_FROM_NAME"),
@@ -109,6 +130,13 @@ func main() {
 			logger.Error("transactional: el worker de envio no arranco", zap.Error(err))
 		} else {
 			defer senderWorker.Stop()
+		}
+		marketingWorkers := envInt("TRANSACTIONAL_MARKETING_WORKERS", defaultMarketingWorkers)
+		marketingWorker := natsadapter.NewMarketingSenderWorker(bus, uc, tenantDB, marketingWorkers, logger)
+		if err := marketingWorker.Start(); err != nil {
+			logger.Error("transactional: el worker de marketing no arranco", zap.Error(err))
+		} else {
+			defer marketingWorker.Stop()
 		}
 		domainsConsumer := natsadapter.NewDomainsConsumer(bus, uc, tenantDB, logger)
 		if err := domainsConsumer.Start(); err != nil {

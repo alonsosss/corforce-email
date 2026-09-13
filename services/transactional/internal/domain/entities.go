@@ -59,9 +59,33 @@ const (
 	DomainPurposeBoth    = "both"
 )
 
+// Clases de envio. Cada una sale por su carril (cola, configuration set y tasa propios) y
+// reputation la juzga por separado: la practica de una nunca frena a la otra.
+const (
+	ClassTransactional = "transactional"
+	ClassMarketing     = "marketing"
+)
+
+// ClassOrDefault aplica el contrato heredado: un mensaje o una peticion sin clase es
+// transaccional.
+func ClassOrDefault(class string) string {
+	if class == "" {
+		return ClassTransactional
+	}
+	return class
+}
+
+// ValidClass dice si la clase es una de las conocidas.
+func ValidClass(class string) bool {
+	return class == ClassTransactional || class == ClassMarketing
+}
+
 // Limites de una peticion de envio.
 const (
-	MaxRecipients = 50
+	// MaxBatchRecipients acota un lote de campana: un destinatario es un mensaje, un
+	// render y una fila en la misma transaccion.
+	MaxBatchRecipients = 500
+	MaxRecipients      = 50
 	// MaxBodyBytes es el tope del cuerpo total (html + texto): el limite de SES v2 sin
 	// adjuntos. Los adjuntos no se admiten en esta fase.
 	MaxBodyBytes = 10 << 20
@@ -95,6 +119,9 @@ type Message struct {
 	Headers         map[string]string `json:"headers"`
 	Tags            map[string]string `json:"tags"`
 	Unsubscribable  bool              `json:"unsubscribable"`
+	Class           string            `json:"class"`
+	CampaignID      *uuid.UUID        `json:"campaign_id,omitempty"`
+	ContactID       *uuid.UUID        `json:"contact_id,omitempty"`
 	Status          string            `json:"status"`
 	SESMessageID    *string           `json:"ses_message_id,omitempty"`
 	Error           *string           `json:"error,omitempty"`
@@ -117,6 +144,19 @@ func (m *Message) AllRecipients() []string {
 	return out
 }
 
+// Attribution devuelve la clase, la campana y el contacto del mensaje.
+func (m *Message) Attribution() MessageAttribution {
+	return MessageAttribution{Class: ClassOrDefault(m.Class), CampaignID: m.CampaignID, ContactID: m.ContactID}
+}
+
+// MessageAttribution es lo que viaja en todos los eventos transactional.email.*:
+// reputation lee la clase; campaigns y analytics, la campana y el contacto.
+type MessageAttribution struct {
+	Class      string
+	CampaignID *uuid.UUID
+	ContactID  *uuid.UUID
+}
+
 type Event struct {
 	ID           uuid.UUID      `json:"id"`
 	TenantID     uuid.UUID      `json:"tenant_id"`
@@ -129,13 +169,23 @@ type Event struct {
 	CreatedAt    time.Time      `json:"created_at"`
 }
 
-// Submission es una peticion de envio con clave de idempotencia y los mensajes que creo.
+// Submission es una peticion de envio con clave de idempotencia, su clase, los mensajes
+// que creo y los destinatarios que la supresion retiro (una repeticion devuelve la misma
+// respuesta).
 type Submission struct {
-	ID             uuid.UUID   `json:"id"`
-	TenantID       uuid.UUID   `json:"tenant_id"`
-	IdempotencyKey string      `json:"idempotency_key"`
-	MessageIDs     []uuid.UUID `json:"message_ids"`
-	CreatedAt      time.Time   `json:"created_at"`
+	ID             uuid.UUID             `json:"id"`
+	TenantID       uuid.UUID             `json:"tenant_id"`
+	IdempotencyKey string                `json:"idempotency_key"`
+	Class          string                `json:"class"`
+	MessageIDs     []uuid.UUID           `json:"message_ids"`
+	Suppressed     []SuppressedRecipient `json:"suppressed"`
+	CreatedAt      time.Time             `json:"created_at"`
+}
+
+// SuppressedRecipient es una direccion que la lista de supresion rechazo, con su causa.
+type SuppressedRecipient struct {
+	Email  string `json:"email"`
+	Reason string `json:"reason"`
 }
 
 // SendingDomain es la proyeccion local de un dominio publicado por domain-service.
@@ -166,6 +216,7 @@ type Unsubscribe struct {
 // MessageFilter acota un listado.
 type MessageFilter struct {
 	Status   string
+	Class    string
 	To       string
 	From     string
 	DateFrom *time.Time

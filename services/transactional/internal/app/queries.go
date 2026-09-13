@@ -27,6 +27,9 @@ func (uc *UseCase) ListMessages(ctx context.Context, tenantID uuid.UUID, f domai
 			return nil, 0, domain.NewValidationError("status must be one of the known statuses")
 		}
 	}
+	if f.Class != "" && !domain.ValidClass(f.Class) {
+		return nil, 0, domain.NewValidationError("class must be %q or %q", domain.ClassTransactional, domain.ClassMarketing)
+	}
 	return uc.repo.ListMessages(ctx, tenantID, f, (page-1)*perPage, perPage)
 }
 

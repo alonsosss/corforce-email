@@ -4,8 +4,8 @@
 //
 //	TRANSACTIONAL_TEST_DSN=postgres://... go test -tags integration ./services/transactional/...
 //
-// Cada prueba aplica la outbox de plataforma y la migracion del servicio DOS veces, que es
-// lo que garantiza que la migracion tolera re-ejecutarse.
+// Cada prueba aplica la outbox de plataforma y las migraciones del servicio DOS veces, que
+// es lo que garantiza que toleran re-ejecutarse.
 package postgres
 
 import (
@@ -14,13 +14,17 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/alonsosss/corforce-email/pkg/db"
+	"github.com/alonsosss/corforce-email/services/transactional/internal/app"
 	"github.com/alonsosss/corforce-email/services/transactional/internal/domain"
+	"github.com/alonsosss/corforce-email/services/transactional/internal/ports"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"go.uber.org/zap"
 )
 
 func setup(t *testing.T) (context.Context, *pgxpool.Pool, *Repository) {
@@ -38,11 +42,12 @@ func setup(t *testing.T) (context.Context, *pgxpool.Pool, *Repository) {
 
 	_, file, _, _ := runtime.Caller(0)
 	root := filepath.Join(filepath.Dir(file), "..", "..", "..", "..", "..")
-	for _, rel := range []string{
+	migrations := []string{
 		"migrations/tenant/canonical/platform/00_outbox.sql",
 		"migrations/tenant/canonical/transactional/01_transactional.sql",
-		"migrations/tenant/canonical/transactional/01_transactional.sql",
-	} {
+		"migrations/tenant/canonical/transactional/02_marketing_lane.sql",
+	}
+	for _, rel := range append(migrations, migrations...) {
 		sql, err := os.ReadFile(filepath.Join(root, rel))
 		if err != nil {
 			t.Fatal(err)
@@ -84,6 +89,202 @@ func TestMigrationObjects(t *testing.T) {
 	var triggers int
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM pg_trigger WHERE tgname = 'trg_transactional_messages_updated'`).Scan(&triggers); err != nil || triggers != 1 {
 		t.Fatalf("trigger de updated_at: %d, %v", triggers, err)
+	}
+	var constraints int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM pg_constraint WHERE conname IN
+		('messages_class_check', 'messages_marketing_check', 'submissions_class_check')`).Scan(&constraints); err != nil || constraints != 3 {
+		t.Fatalf("restricciones del carril de marketing (una sola vez cada una): %d, %v", constraints, err)
+	}
+	var index *string
+	if err := pool.QueryRow(ctx, `SELECT to_regclass('transactional.idx_transactional_messages_tenant_campaign')::text`).Scan(&index); err != nil || index == nil {
+		t.Fatalf("indice por campana: %v", err)
+	}
+}
+
+func marketingMessage(tenant uuid.UUID, to ...string) *domain.Message {
+	m := newMessage(tenant, domain.StatusQueued, to...)
+	campaign, contact := uuid.New(), uuid.New()
+	m.Class, m.CampaignID, m.ContactID, m.Unsubscribable = domain.ClassMarketing, &campaign, &contact, true
+	return m
+}
+
+func TestMarketingColumnsAndInvariants(t *testing.T) {
+	ctx, _, repo := setup(t)
+	tenant := uuid.New()
+	m := marketingMessage(tenant, "ana@example.com")
+	if err := repo.InsertMessage(ctx, m); err != nil {
+		t.Fatal(err)
+	}
+	got, err := repo.GetMessage(ctx, tenant, m.ID)
+	if err != nil || got.Class != domain.ClassMarketing || *got.CampaignID != *m.CampaignID || *got.ContactID != *m.ContactID {
+		t.Fatalf("clase, campana y contacto sobreviven al viaje: %+v %v", got, err)
+	}
+	attr, err := repo.GetAttribution(ctx, tenant, m.ID)
+	if err != nil || attr.Class != domain.ClassMarketing || *attr.CampaignID != *m.CampaignID || *attr.ContactID != *m.ContactID {
+		t.Fatalf("GetAttribution: %+v %v", attr, err)
+	}
+	if _, err := repo.GetAttribution(ctx, uuid.New(), m.ID); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatal("la atribucion no se ve desde otra empresa")
+	}
+
+	plain := newMessage(tenant, domain.StatusQueued, "eva@example.com")
+	if err := repo.InsertMessage(ctx, plain); err != nil {
+		t.Fatal(err)
+	}
+	if a, _ := repo.GetAttribution(ctx, tenant, plain.ID); a.Class != domain.ClassTransactional || a.CampaignID != nil || a.ContactID != nil {
+		t.Fatalf("un mensaje sin clase es transaccional y sin campana: %+v", a)
+	}
+	list, total, err := repo.ListMessages(ctx, tenant, domain.MessageFilter{Class: domain.ClassMarketing}, 0, 10)
+	if err != nil || total != 1 || list[0].ID != m.ID {
+		t.Fatalf("filtro por clase: total=%d %v", total, err)
+	}
+
+	for name, mutate := range map[string]func(m *domain.Message){
+		"clase desconocida":      func(m *domain.Message) { m.Class = "promo" },
+		"marketing sin campana":  func(m *domain.Message) { m.CampaignID = nil },
+		"marketing sin contacto": func(m *domain.Message) { m.ContactID = nil },
+		"marketing sin baja":     func(m *domain.Message) { m.Unsubscribable = false },
+		"marketing a dos":        func(m *domain.Message) { m.To = append(m.To, domain.Recipient{Email: "eva@example.com"}) },
+		"marketing con copia":    func(m *domain.Message) { m.Cc = []domain.Recipient{{Email: "eva@example.com"}} },
+	} {
+		bad := marketingMessage(tenant, "luis@example.com")
+		mutate(bad)
+		if err := repo.InsertMessage(ctx, bad); err == nil {
+			t.Errorf("%s: la base debe rechazarlo", name)
+		}
+	}
+}
+
+func TestSubmissionClassAndSuppressed(t *testing.T) {
+	ctx, _, repo := setup(t)
+	tenant := uuid.New()
+	s := &domain.Submission{ID: uuid.New(), TenantID: tenant, IdempotencyKey: "lote-1", Class: domain.ClassMarketing,
+		MessageIDs: []uuid.UUID{uuid.New()}, Suppressed: []domain.SuppressedRecipient{{Email: "eva@example.com", Reason: "complaint"}}}
+	if ok, err := repo.InsertSubmission(ctx, s); err != nil || !ok {
+		t.Fatalf("InsertSubmission: %v %v", ok, err)
+	}
+	got, err := repo.GetSubmission(ctx, tenant, "lote-1")
+	if err != nil || got.Class != domain.ClassMarketing || len(got.Suppressed) != 1 || got.Suppressed[0].Reason != "complaint" {
+		t.Fatalf("clase y suprimidos sobreviven al viaje: %+v %v", got, err)
+	}
+	if ok, err := repo.InsertSubmission(ctx, &domain.Submission{ID: uuid.New(), TenantID: tenant, IdempotencyKey: "api-1"}); err != nil || !ok {
+		t.Fatalf("sin clase ni suprimidos (peticion transaccional): %v %v", ok, err)
+	}
+	if got, _ := repo.GetSubmission(ctx, tenant, "api-1"); got.Class != domain.ClassTransactional || got.Suppressed == nil {
+		t.Fatalf("una peticion sin clase es transaccional: %+v", got)
+	}
+}
+
+// Dobles minimos para correr el caso de uso del lote contra la base real.
+type stubSuppression map[string]string
+
+func (s stubSuppression) Check(_ context.Context, _ uuid.UUID, emails []string) ([]ports.Suppressed, error) {
+	out := []ports.Suppressed{}
+	for _, e := range emails {
+		if reason, ok := s[strings.ToLower(e)]; ok {
+			out = append(out, ports.Suppressed{Email: e, Reason: reason})
+		}
+	}
+	return out, nil
+}
+
+func (stubSuppression) Add(context.Context, uuid.UUID, ports.SuppressionEntry) error { return nil }
+
+type linkTemplates struct{}
+
+func (linkTemplates) Render(_ context.Context, _ uuid.UUID, req ports.RenderRequest) (*ports.Rendered, error) {
+	return &ports.Rendered{Subject: "Otono", HTML: `<a href="` + req.Reserved.UnsubscribeURL + `">Baja</a>`, Version: *req.Version}, nil
+}
+
+type allowReputation struct{}
+
+func (allowReputation) Authorize(_ context.Context, _ uuid.UUID, class string, _ int) (*ports.Authorization, error) {
+	return &ports.Authorization{Allowed: true, Class: class}, nil
+}
+
+// failingRepo falla en la insercion numero failAt, a mitad de la transaccion del lote.
+type failingRepo struct {
+	*Repository
+	failAt, n int
+}
+
+func (r *failingRepo) InsertMessage(ctx context.Context, m *domain.Message) error {
+	r.n++
+	if r.n == r.failAt {
+		return errors.New("fallo a mitad del lote")
+	}
+	return r.Repository.InsertMessage(ctx, m)
+}
+
+func TestMarketingBatchWritesMessagesAndOutboxInOneTransaction(t *testing.T) {
+	ctx, pool, repo := setup(t)
+	tenant := uuid.New()
+	if err := repo.UpsertSendingDomain(ctx, &domain.SendingDomain{TenantID: tenant, Domain: "shop.example.com", Status: "verified", Purpose: "both", UpdatedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	links, err := domain.NewLinkSigner("0123456789abcdef0123456789abcdef-integration", "https://app.example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	newUC := func(r ports.Repository) *app.UseCase {
+		return app.New(app.Deps{
+			Repo: r, Events: NewOutboxPublisher(&db.ContextPool{}), Suppression: stubSuppression{"eva@example.com": "hard_bounce"},
+			Templates: linkTemplates{}, Reputation: allowReputation{}, Links: links, Logger: zap.NewNop(),
+		})
+	}
+	batch := func(key string) app.MarketingBatchCommand {
+		cmd := app.MarketingBatchCommand{
+			TenantID: tenant, Class: domain.ClassMarketing, CampaignID: uuid.New(), IdempotencyKey: key,
+			From: domain.Recipient{Email: "news@shop.example.com", Name: "Tienda"}, TemplateID: uuid.New(), TemplateVersion: 2,
+		}
+		for _, e := range []string{"ana@example.com", "eva@example.com", "luis@example.com", "sara@example.com"} {
+			cmd.Recipients = append(cmd.Recipients, app.MarketingRecipient{Email: e, ContactID: uuid.New()})
+		}
+		return cmd
+	}
+	counts := func(campaign uuid.UUID) (messages, outbox, submissions int) {
+		t.Helper()
+		_ = pool.QueryRow(ctx, `SELECT count(*) FROM transactional.messages WHERE tenant_id = $1 AND campaign_id = $2 AND class = 'marketing'`, tenant, campaign).Scan(&messages)
+		_ = pool.QueryRow(ctx, `SELECT count(*) FROM platform.event_outbox o JOIN transactional.messages m
+			ON m.id::text = o.payload->'data'->>'message_id'
+			WHERE o.subject = 'transactional.marketing.queued' AND m.campaign_id = $1`, campaign).Scan(&outbox)
+		_ = pool.QueryRow(ctx, `SELECT count(*) FROM transactional.submissions s WHERE s.tenant_id = $1 AND EXISTS (
+			SELECT 1 FROM transactional.messages m WHERE m.submission_id = s.id AND m.campaign_id = $2)`, tenant, campaign).Scan(&submissions)
+		return
+	}
+
+	// Un fallo en la tercera insercion deshace el lote entero: mensajes, peticion y eventos.
+	failed := batch("lote-fallido")
+	if _, err := newUC(&failingRepo{Repository: repo, failAt: 3}).CreateMarketingBatch(ctx, failed); err == nil {
+		t.Fatal("se esperaba el fallo a mitad del lote")
+	}
+	var leftovers int
+	_ = pool.QueryRow(ctx, `SELECT count(*) FROM transactional.messages WHERE campaign_id = $1`, failed.CampaignID).Scan(&leftovers)
+	if _, err := repo.GetSubmission(ctx, tenant, "lote-fallido"); leftovers != 0 || !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("un lote fallido no deja nada: mensajes=%d peticion=%v", leftovers, err)
+	}
+
+	uc := newUC(repo)
+	cmd := batch("lote-1")
+	res, err := uc.CreateMarketingBatch(ctx, cmd)
+	if err != nil || res.Accepted != 3 || len(res.Suppressed) != 1 {
+		t.Fatalf("lote: %+v %v", res, err)
+	}
+	if m, o, s := counts(cmd.CampaignID); m != 3 || o != 3 || s != 1 {
+		t.Fatalf("N filas de marketing y N eventos de outbox en la misma transaccion: mensajes=%d outbox=%d peticiones=%d", m, o, s)
+	}
+	var outboxTenant string
+	_ = pool.QueryRow(ctx, `SELECT DISTINCT tenant_id::text FROM platform.event_outbox WHERE payload->'data'->>'message_id' = $1`, res.MessageIDs[0].String()).Scan(&outboxTenant)
+	if outboxTenant != tenant.String() {
+		t.Fatalf("el evento lleva la empresa: %q", outboxTenant)
+	}
+
+	replay, err := uc.CreateMarketingBatch(ctx, cmd)
+	if err != nil || !replay.Replayed || replay.Accepted != 3 || len(replay.Suppressed) != 1 || replay.MessageIDs[2] != res.MessageIDs[2] {
+		t.Fatalf("repeticion: %+v %v", replay, err)
+	}
+	if m, o, s := counts(cmd.CampaignID); m != 3 || o != 3 || s != 1 {
+		t.Fatalf("la repeticion no crea nada: mensajes=%d outbox=%d peticiones=%d", m, o, s)
 	}
 }
 

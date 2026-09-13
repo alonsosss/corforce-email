@@ -9,9 +9,17 @@ import (
 	"go.uber.org/zap"
 )
 
-// RateLimiter acota la tasa de envio al proveedor (SES_MAX_SEND_RATE por segundo).
+// RateLimiter acota la tasa de envio al proveedor de un carril (SES_MAX_SEND_RATE o
+// SES_MAX_SEND_RATE_MARKETING por segundo).
 type RateLimiter interface {
 	Wait(ctx context.Context) error
+}
+
+// Lane es el carril de salida de una clase: su emisor (con su configuration set) y su
+// limitador de tasa. Las clases nunca comparten carril.
+type Lane struct {
+	Sender  ports.Sender
+	Limiter RateLimiter
 }
 
 // Config son los parametros de negocio que llegan del entorno.
@@ -33,11 +41,16 @@ type Deps struct {
 	Events      ports.EventPublisher
 	Suppression ports.SuppressionClient
 	Templates   ports.TemplateRenderer
-	Sender      ports.Sender
-	Limiter     RateLimiter
-	Links       *domain.LinkSigner
-	Config      Config
-	Logger      *zap.Logger
+	Reputation  ports.ReputationClient
+	// Sender y Limiter son el carril transaccional.
+	Sender  ports.Sender
+	Limiter RateLimiter
+	// Marketing es el carril de marketing; sin el, los mensajes de marketing esperan en
+	// la cola en vez de salir por el transaccional.
+	Marketing Lane
+	Links     *domain.LinkSigner
+	Config    Config
+	Logger    *zap.Logger
 	// Now permite fijar el reloj en pruebas; nil usa time.Now.
 	Now func() time.Time
 }
@@ -47,8 +60,8 @@ type UseCase struct {
 	events      ports.EventPublisher
 	suppression ports.SuppressionClient
 	templates   ports.TemplateRenderer
-	sender      ports.Sender
-	limiter     RateLimiter
+	reputation  ports.ReputationClient
+	lanes       map[string]Lane
 	links       *domain.LinkSigner
 	cfg         Config
 	logger      *zap.Logger
@@ -68,11 +81,24 @@ func New(d Deps) *UseCase {
 		events:      d.Events,
 		suppression: d.Suppression,
 		templates:   d.Templates,
-		sender:      d.Sender,
-		limiter:     d.Limiter,
-		links:       d.Links,
-		cfg:         d.Config,
-		logger:      d.Logger,
-		now:         now,
+		reputation:  d.Reputation,
+		lanes: map[string]Lane{
+			domain.ClassTransactional: {Sender: d.Sender, Limiter: d.Limiter},
+			domain.ClassMarketing:     d.Marketing,
+		},
+		links:  d.Links,
+		cfg:    d.Config,
+		logger: d.Logger,
+		now:    now,
 	}
+}
+
+// laneFor devuelve el carril de la clase del mensaje. Una clase sin carril completo es un
+// error de configuracion: el mensaje no sale por el carril de otra clase.
+func (uc *UseCase) laneFor(class string) (Lane, error) {
+	lane, ok := uc.lanes[domain.ClassOrDefault(class)]
+	if !ok || lane.Sender == nil || lane.Limiter == nil {
+		return Lane{}, domain.ErrLaneNotConfigured
+	}
+	return lane, nil
 }

@@ -187,6 +187,25 @@ func TestSend(t *testing.T) {
 	}
 }
 
+func TestWithConfigurationSetSeparatesLanes(t *testing.T) {
+	api := &fakeAPI{out: &sesv2.SendEmailOutput{MessageId: aws.String("0100018f-abc")}}
+	transactional := &Sender{client: api, configSet: "cfm-transactional"}
+	marketing := transactional.WithConfigurationSet("cfm-marketing")
+
+	if _, err := marketing.Send(context.Background(), outgoing()); err != nil {
+		t.Fatal(err)
+	}
+	if aws.ToString(api.in.ConfigurationSetName) != "cfm-marketing" {
+		t.Fatalf("el carril de marketing sale por su set: %q", aws.ToString(api.in.ConfigurationSetName))
+	}
+	if _, err := transactional.Send(context.Background(), outgoing()); err != nil {
+		t.Fatal(err)
+	}
+	if aws.ToString(api.in.ConfigurationSetName) != "cfm-transactional" {
+		t.Fatalf("el emisor transaccional no cambia de set: %q", aws.ToString(api.in.ConfigurationSetName))
+	}
+}
+
 func TestNewRequiresRegionAndPairedKeys(t *testing.T) {
 	if _, err := New(context.Background(), Options{}); err == nil {
 		t.Error("sin region debe fallar")

@@ -17,6 +17,9 @@ type Repository interface {
 
 	InsertMessage(ctx context.Context, m *domain.Message) error
 	GetMessage(ctx context.Context, tenantID, id uuid.UUID) (*domain.Message, error)
+	// GetAttribution lee solo la clase, la campana y el contacto del mensaje: es lo que
+	// necesitan los eventos de la ingesta y de la baja, sin cargar el cuerpo.
+	GetAttribution(ctx context.Context, tenantID, id uuid.UUID) (*domain.MessageAttribution, error)
 	GetMessages(ctx context.Context, tenantID uuid.UUID, ids []uuid.UUID) ([]domain.Message, error)
 	ListMessages(ctx context.Context, tenantID uuid.UUID, f domain.MessageFilter, offset, limit int) ([]domain.Message, int64, error)
 	// LockQueuedMessage carga el mensaje bloqueando su fila (FOR UPDATE) para que dos
@@ -56,11 +59,9 @@ type EventPublisher interface {
 	Publish(ctx context.Context, subject string, tenantID uuid.UUID, payload map[string]any) error
 }
 
-// Suppressed es una direccion que la lista de supresion rechaza.
-type Suppressed struct {
-	Email  string `json:"email"`
-	Reason string `json:"reason"`
-}
+// Suppressed es una direccion que la lista de supresion rechaza. Es el mismo tipo que
+// guarda la peticion para repetir su respuesta.
+type Suppressed = domain.SuppressedRecipient
 
 // SuppressionClient consulta y alimenta la lista de supresion de la empresa.
 type SuppressionClient interface {
@@ -75,6 +76,25 @@ type SuppressionEntry struct {
 	Source    string `json:"source"`
 	Detail    string `json:"detail,omitempty"`
 	MessageID string `json:"message_id,omitempty"`
+	// CampaignID atribuye la exclusion a la campana cuando el mensaje es de marketing.
+	CampaignID string `json:"campaign_id,omitempty"`
+}
+
+// Authorization es la respuesta de reputation a "puede esta empresa enviar a N
+// destinatarios de esta clase ahora". Una denegacion llega con Allowed false y su Reason.
+type Authorization struct {
+	Allowed bool
+	Class   string
+	State   string
+	Reason  string
+	// RetryAfterSeconds es nil cuando reputation no da espera (esperar no serviria).
+	RetryAfterSeconds *int
+}
+
+// ReputationClient pide la autorizacion previa a un envio. Un error significa que
+// reputation no dio respuesta (caido, 5xx, cuerpo ilegible), nunca una denegacion.
+type ReputationClient interface {
+	Authorize(ctx context.Context, tenantID uuid.UUID, class string, count int) (*Authorization, error)
 }
 
 // RenderRequest es lo que se le pide a templates por destinatario.
