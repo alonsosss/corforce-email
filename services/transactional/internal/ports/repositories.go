@@ -113,12 +113,14 @@ type ReservedVariables struct {
 	TenantName       string `json:"tenant_name"`
 }
 
-// Rendered es la salida de templates.
+// Rendered es la salida de templates. Kind es el tipo de la plantilla
+// (domain.TemplateKind*); vacio si la version desplegada de templates no lo informa.
 type Rendered struct {
 	Subject string
 	HTML    string
 	Text    string
 	Version int
+	Kind    string
 }
 
 // TemplateRenderer renderiza una plantilla en templates.

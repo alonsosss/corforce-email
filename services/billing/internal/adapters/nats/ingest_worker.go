@@ -234,10 +234,66 @@ func (w *IngestWorker) onDomainDeleted(evt events.Event, ack func()) {
 		domainKey(str(data["domain"])), sourceDomainService)
 }
 
-// onEmailSent cuenta un mensaje por evento: transactional publica uno por mensaje enviado.
+// onEmailSent cuenta los destinatarios del mensaje (to, cc y bcc) en el contador de su
+// clase. Reputation pide a billing el derecho por destinatarios (quantity de
+// entitlements/check); contar por mensaje dejaria el contador por debajo de lo autorizado.
 func (w *IngestWorker) onEmailSent(evt events.Event, ack func()) {
 	data, _ := evt.Data.(map[string]interface{})
-	w.count(evt, ack, SubjectEmailSent, str(data["tenant_id"]), domain.ResourceTransactionalMessages, 1, "", "")
+	sent := translateEmailSent(data["class"], data["to"])
+	if !sent.known {
+		w.logger.Warn("billing: transactional.email.sent con una clase desconocida; se descarta sin contar",
+			zap.String("event_id", evt.ID), zap.Any("class", data["class"]))
+		ack()
+		return
+	}
+	if sent.defaulted {
+		w.logger.Warn("billing: transactional.email.sent sin destinatarios legibles; se cuenta uno",
+			zap.String("event_id", evt.ID))
+	}
+	w.count(evt, ack, SubjectEmailSent, str(data["tenant_id"]), sent.resource, sent.units, "", "")
+}
+
+// Clases de transactional.email.sent segun el contrato de transactional.
+const (
+	classTransactional = "transactional"
+	classMarketing     = "marketing"
+)
+
+// emailSent es lo que un transactional.email.sent suma al consumo.
+type emailSent struct {
+	resource domain.Resource
+	units    int64
+	// known es false con una clase que billing no reconoce: no se sabe a que contador va.
+	known bool
+	// defaulted indica que el evento no traia destinatarios legibles y se cuenta uno.
+	defaulted bool
+}
+
+// translateEmailSent traduce la clase y los destinatarios del evento, tal como los deja
+// el JSON, a recurso y unidades. Sin clase (o vacia, como la trata transactional) el
+// evento es del contrato anterior a la via de marketing y es transaccional.
+func translateEmailSent(class, to interface{}) emailSent {
+	var out emailSent
+	switch c := class.(type) {
+	case nil:
+		out.resource, out.known = domain.ResourceTransactionalMessages, true
+	case string:
+		switch c {
+		case "", classTransactional:
+			out.resource, out.known = domain.ResourceTransactionalMessages, true
+		case classMarketing:
+			out.resource, out.known = domain.ResourceMarketingMessages, true
+		}
+	}
+	if !out.known {
+		return out
+	}
+	if list, ok := to.([]interface{}); ok && len(list) > 0 {
+		out.units = int64(len(list))
+	} else {
+		out.units, out.defaulted = 1, true
+	}
+	return out
 }
 
 func (w *IngestWorker) onContactCreated(evt events.Event, ack func()) {

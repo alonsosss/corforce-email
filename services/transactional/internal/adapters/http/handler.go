@@ -675,7 +675,11 @@ func writeError(w http.ResponseWriter, err error) {
 	case errors.Is(err, domain.ErrReputationUnavailable):
 		response.Err(w, http.StatusServiceUnavailable, "REPUTATION_UNAVAILABLE", "reputation no respondio; no se encolo nada")
 	case errors.Is(err, domain.ErrTemplateNotMarketing):
-		response.Err(w, http.StatusUnprocessableEntity, "TEMPLATE_NOT_MARKETING", "la plantilla no lleva el enlace de baja obligatorio en marketing")
+		response.Err(w, http.StatusUnprocessableEntity, "TEMPLATE_NOT_MARKETING", "la plantilla no es de tipo marketing")
+	case errors.Is(err, domain.ErrTemplateMissingUnsubscribe):
+		response.Err(w, http.StatusUnprocessableEntity, "TEMPLATE_MISSING_UNSUBSCRIBE", "la plantilla de marketing no lleva el enlace de baja obligatorio")
+	case errors.Is(err, domain.ErrTemplateNotTransactional):
+		response.Err(w, http.StatusUnprocessableEntity, "TEMPLATE_NOT_TRANSACTIONAL", "la plantilla es de marketing: una campana sale por la via de marketing")
 	case errors.Is(err, domain.ErrIdempotencyKeyReused):
 		response.Err(w, http.StatusConflict, "IDEMPOTENCY_KEY_REUSED", "la clave de idempotencia ya identifica una peticion de otra clase")
 	case errors.Is(err, domain.ErrNotFound):

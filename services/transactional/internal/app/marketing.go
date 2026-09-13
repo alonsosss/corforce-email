@@ -270,11 +270,11 @@ func (uc *UseCase) newMarketingMessage(cmd MarketingBatchCommand, r MarketingRec
 	return msg
 }
 
-// renderMarketing renderiza el mensaje en templates y comprueba que la plantilla sea de
-// marketing. El render interno no informa del tipo de plantilla (solo asunto, cuerpos y
-// version) y la lectura que lo informa exige sesion de usuario; por eso se exige lo que
-// define a una plantilla de marketing: que el contenido visible lleve el enlace de baja
-// de este mensaje (la variable reservada unsubscribe_url).
+// renderMarketing renderiza el mensaje en templates y exige dos reglas distintas: que la
+// plantilla sea de tipo marketing segun templates, y que su contenido visible lleve el
+// enlace de baja de este mensaje (RFC 8058). La primera impide que una plantilla
+// transaccional que use unsubscribe_url salga como campana; la segunda, que salga una de
+// marketing sin enlace de baja.
 func (uc *UseCase) renderMarketing(ctx context.Context, tenantID uuid.UUID, msg *domain.Message) error {
 	rcpt := msg.To[0].Email
 	rendered, err := uc.templates.Render(ctx, tenantID, ports.RenderRequest{
@@ -289,6 +289,15 @@ func (uc *UseCase) renderMarketing(ctx context.Context, tenantID uuid.UUID, msg 
 	if err != nil {
 		return err
 	}
+	switch rendered.Kind {
+	case domain.TemplateKindMarketing:
+	case "":
+		// Templates desplegado sin el campo kind: sin el tipo no se puede probar que la
+		// plantilla sea de marketing y el lote falla cerrado.
+		return fmt.Errorf("%w: el render no informa el tipo de plantilla", domain.ErrTemplatesUnavailable)
+	default:
+		return domain.ErrTemplateNotMarketing
+	}
 	if len(rendered.HTML)+len(rendered.Text) > domain.MaxBodyBytes {
 		return domain.NewValidationError("la plantilla renderizada supera el limite de %d bytes", domain.MaxBodyBytes)
 	}
@@ -297,7 +306,7 @@ func (uc *UseCase) renderMarketing(ctx context.Context, tenantID uuid.UUID, msg 
 		visible = rendered.Text
 	}
 	if !uc.links.ContainsUnsubscribeLink(visible, msg.ID) {
-		return domain.ErrTemplateNotMarketing
+		return domain.ErrTemplateMissingUnsubscribe
 	}
 	msg.Subject = rendered.Subject
 	msg.HTML = optional(rendered.HTML)

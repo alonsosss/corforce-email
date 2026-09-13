@@ -82,11 +82,16 @@ func TestValidacionDeUnCambioDeConsumo(t *testing.T) {
 	if err := valid.Validate(); err != nil {
 		t.Fatalf("cambio valido rechazado: %v", err)
 	}
+	envio := UsageChange{EventID: "e-2", Subject: "transactional.email.sent", TenantID: uuid.New(), Resource: ResourceMarketingMessages, Delta: 3}
+	if err := envio.Validate(); err != nil {
+		t.Fatalf("un envio a tres destinatarios suma tres: %v", err)
+	}
 	bad := map[string]func(c *UsageChange){
 		"sin id":              func(c *UsageChange) { c.EventID = " " },
 		"sin empresa":         func(c *UsageChange) { c.TenantID = uuid.Nil },
 		"recurso desconocido": func(c *UsageChange) { c.Resource = "gigas" },
-		"delta de dos":        func(c *UsageChange) { c.Delta = 2 },
+		"stock de dos":        func(c *UsageChange) { c.Delta = 2 },
+		"flujo en cero":       func(c *UsageChange) { c.Resource, c.Delta = ResourceTransactionalMessages, 0 },
 		"flujo que resta":     func(c *UsageChange) { c.Resource, c.Delta = ResourceTransactionalMessages, -1 },
 		"flujo con objeto":    func(c *UsageChange) { c.Resource, c.ItemKey, c.Source = ResourceTransactionalMessages, "x", "y" },
 		"objeto sin fuente":   func(c *UsageChange) { c.ItemKey = "a.test" },

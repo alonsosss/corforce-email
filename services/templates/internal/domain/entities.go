@@ -106,10 +106,11 @@ type Content struct {
 	Variables []Variable
 }
 
-// Rendered es la salida de un renderizado.
+// Rendered es la salida de un renderizado. Kind es el tipo de la plantilla renderizada.
 type Rendered struct {
 	Subject string
 	HTML    string
 	Text    string
 	Version int
+	Kind    string
 }

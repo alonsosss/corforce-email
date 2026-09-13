@@ -18,6 +18,7 @@ func newMarketingFixture(t *testing.T) *fixture {
 	t.Helper()
 	f := newFixture(t, Config{})
 	f.setDomain(f.tenant, shopDomain, "verified", "both")
+	f.tpl.kind = domain.TemplateKindMarketing
 	return f
 }
 
@@ -261,12 +262,14 @@ func TestMarketingBatchFailsClosedWhenSuppressionIsDown(t *testing.T) {
 }
 
 func TestMarketingBatchRejectsNonMarketingTemplate(t *testing.T) {
+	// La plantilla transaccional usa unsubscribe_url y su cuerpo lleva el enlace de baja del
+	// mensaje: lo que decide es el tipo que declara templates, no el contenido.
 	f := newMarketingFixture(t)
-	f.tpl.withoutUnsubscribe = true
+	f.tpl.kind = domain.TemplateKindTransactional
 	if _, err := f.uc.CreateMarketingBatch(ctx, batchCommand(f, "ana@example.com", "eva@example.com", "luis@example.com")); !errors.Is(err, domain.ErrTemplateNotMarketing) {
-		t.Fatalf("una plantilla sin unsubscribe_url no es de marketing: %v", err)
+		t.Fatalf("una plantilla transaccional no sale por marketing aunque lleve el enlace de baja: %v", err)
 	}
-	nothingCreated(t, f, "plantilla no marketing")
+	nothingCreated(t, f, "plantilla transaccional")
 
 	f = newMarketingFixture(t)
 	f.tpl.err = domain.ErrTemplateNotFound
@@ -274,6 +277,49 @@ func TestMarketingBatchRejectsNonMarketingTemplate(t *testing.T) {
 		t.Fatalf("plantilla inexistente: %v", err)
 	}
 	nothingCreated(t, f, "plantilla inexistente")
+}
+
+func TestMarketingBatchRejectsTemplateWithoutUnsubscribe(t *testing.T) {
+	f := newMarketingFixture(t)
+	f.tpl.withoutUnsubscribe = true
+	_, err := f.uc.CreateMarketingBatch(ctx, batchCommand(f, "ana@example.com", "eva@example.com"))
+	if !errors.Is(err, domain.ErrTemplateMissingUnsubscribe) || errors.Is(err, domain.ErrTemplateNotMarketing) {
+		t.Fatalf("una plantilla de marketing sin enlace de baja es otra regla: %v", err)
+	}
+	nothingCreated(t, f, "marketing sin enlace de baja")
+}
+
+func TestMarketingBatchFailsClosedWithoutTemplateKind(t *testing.T) {
+	f := newMarketingFixture(t)
+	f.tpl.kind = ""
+	if _, err := f.uc.CreateMarketingBatch(ctx, batchCommand(f, "ana@example.com")); !errors.Is(err, domain.ErrTemplatesUnavailable) {
+		t.Fatalf("sin el tipo de plantilla el lote falla cerrado: %v", err)
+	}
+	nothingCreated(t, f, "templates sin kind")
+}
+
+func TestTransactionalRejectsMarketingTemplate(t *testing.T) {
+	f := newFixture(t, Config{})
+	f.setDomain(f.tenant, shopDomain, "verified", "sending")
+	f.tpl.kind = domain.TemplateKindMarketing
+	cmd := templateCommand(f, "ana@example.com", "eva@example.com")
+	cmd.IdempotencyKey = "k-campana"
+	if _, err := f.uc.CreateMessages(ctx, cmd); !errors.Is(err, domain.ErrTemplateNotTransactional) {
+		t.Fatalf("una plantilla de marketing no sale por el carril transaccional: %v", err)
+	}
+	if len(f.repo.messages) != 0 || len(f.repo.submissions) != 0 || len(f.repo.outbox) != 0 {
+		t.Fatal("el rechazo no deja mensajes, peticion ni eventos")
+	}
+}
+
+func TestTransactionalContinuesWithoutTemplateKind(t *testing.T) {
+	f := newFixture(t, Config{})
+	f.setDomain(f.tenant, shopDomain, "verified", "sending")
+	f.tpl.kind = ""
+	res, err := f.uc.CreateMessages(ctx, templateCommand(f, "ana@example.com"))
+	if err != nil || len(res.Messages) != 1 || res.Messages[0].Status != domain.StatusQueued {
+		t.Fatalf("un templates sin kind no para el carril transaccional: %+v, %v", res, err)
+	}
 }
 
 func TestMarketingBatchRequiresVerifiedSendingDomain(t *testing.T) {

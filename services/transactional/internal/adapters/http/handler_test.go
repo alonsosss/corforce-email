@@ -304,6 +304,9 @@ func TestWriteErrorTranslatesSendingDecisions(t *testing.T) {
 		{"reputation caido", domain.ErrReputationUnavailable, 503, "REPUTATION_UNAVAILABLE", "", ""},
 		{"suppression caido", domain.ErrSuppressionUnavailable, 503, "SUPPRESSION_UNAVAILABLE", "", ""},
 		{"plantilla no marketing", domain.ErrTemplateNotMarketing, 422, "TEMPLATE_NOT_MARKETING", "", ""},
+		{"marketing sin enlace de baja", domain.ErrTemplateMissingUnsubscribe, 422, "TEMPLATE_MISSING_UNSUBSCRIBE", "", ""},
+		{"plantilla de marketing en el carril transaccional", domain.ErrTemplateNotTransactional, 422, "TEMPLATE_NOT_TRANSACTIONAL", "", ""},
+		{"templates sin kind", fmt.Errorf("%w: el render no informa el tipo de plantilla", domain.ErrTemplatesUnavailable), 503, "TEMPLATES_UNAVAILABLE", "", ""},
 		{"clave de otra clase", domain.ErrIdempotencyKeyReused, 409, "IDEMPOTENCY_KEY_REUSED", "", ""},
 		{"dominio sin verificar", domain.ErrSendingDomainNotVerified, 422, "SENDING_DOMAIN_NOT_VERIFIED", "", ""},
 	}

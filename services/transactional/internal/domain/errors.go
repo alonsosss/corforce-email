@@ -27,9 +27,16 @@ var (
 	// ErrReputationUnavailable: reputation no respondio a la autorizacion previa. El
 	// marketing falla cerrado con este error; el transaccional nunca lo devuelve.
 	ErrReputationUnavailable = errors.New("reputation service unavailable")
-	// ErrTemplateNotMarketing: la plantilla renderizada no lleva el enlace de baja del
-	// mensaje, obligatorio en toda plantilla de marketing.
+	// ErrTemplateNotMarketing: la via de marketing recibio una plantilla que templates no
+	// declara de tipo marketing.
 	ErrTemplateNotMarketing = errors.New("template is not a marketing template")
+	// ErrTemplateMissingUnsubscribe: la plantilla de marketing renderizada no lleva el
+	// enlace de baja del mensaje (RFC 8058); sin el no puede salir.
+	ErrTemplateMissingUnsubscribe = errors.New("marketing template does not include the unsubscribe link")
+	// ErrTemplateNotTransactional: el carril transaccional recibio una plantilla de
+	// marketing; una campana solo sale por la via de marketing, con su supresion y su
+	// consentimiento.
+	ErrTemplateNotTransactional = errors.New("template is a marketing template")
 	// ErrIdempotencyKeyReused: la clave ya identifica una peticion de la otra clase.
 	ErrIdempotencyKeyReused = errors.New("idempotency key already used by a request of another class")
 	// ErrLaneNotConfigured: la clase del mensaje no tiene proveedor ni limitador propios.

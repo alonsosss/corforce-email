@@ -80,12 +80,16 @@ func (c *Client) Render(ctx context.Context, tenantID uuid.UUID, r ports.RenderR
 			HTML    string `json:"html"`
 			Text    string `json:"text"`
 			Version int    `json:"version"`
+			Kind    string `json:"kind"`
 		} `json:"data"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		return nil, fmt.Errorf("%w: respuesta ilegible: %v", domain.ErrTemplatesUnavailable, err)
 	}
-	return &ports.Rendered{Subject: out.Data.Subject, HTML: out.Data.HTML, Text: out.Data.Text, Version: out.Data.Version}, nil
+	return &ports.Rendered{
+		Subject: out.Data.Subject, HTML: out.Data.HTML, Text: out.Data.Text,
+		Version: out.Data.Version, Kind: out.Data.Kind,
+	}, nil
 }
 
 // errorMessage extrae el mensaje del envelope de error de pkg/response.

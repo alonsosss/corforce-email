@@ -66,6 +66,14 @@ const (
 	ClassMarketing     = "marketing"
 )
 
+// Tipos de plantilla que informa templates en su render interno. Cada via solo acepta el
+// suyo: una campana no sale por el carril transaccional ni un transaccional por el de
+// marketing.
+const (
+	TemplateKindTransactional = "transactional"
+	TemplateKindMarketing     = "marketing"
+)
+
 // ClassOrDefault aplica el contrato heredado: un mensaje o una peticion sin clase es
 // transaccional.
 func ClassOrDefault(class string) string {

@@ -517,7 +517,11 @@ func (h *Handler) InternalRender(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	response.JSON(w, http.StatusOK, renderedResponse(out))
+	// kind es el tipo real de la plantilla: transactional lo exige para que una plantilla
+	// transaccional no salga por la via de marketing ni una de marketing por la transaccional.
+	res := renderedResponse(out)
+	res["kind"] = out.Kind
+	response.JSON(w, http.StatusOK, res)
 }
 
 // ── Respuestas ───────────────────────────────────────────────────────────────

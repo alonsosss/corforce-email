@@ -278,18 +278,19 @@ func TestCierreDePeriodoPublicaElConsumo(t *testing.T) {
 	if _, _, err := uc.PutSubscription(ctx, tenant, app.PutSubscriptionInput{PlanCode: code}); err != nil {
 		t.Fatal(err)
 	}
-	send := func() {
+	// Cada envio suma sus destinatarios, como lo traduce el consumidor de transactional.email.sent.
+	send := func(recipients int64) {
 		t.Helper()
 		if _, err := uc.RecordUsage(ctx, domain.UsageChange{EventID: uuid.NewString(), Subject: "transactional.email.sent",
-			TenantID: tenant, Resource: domain.ResourceTransactionalMessages, Delta: 1}); err != nil {
+			TenantID: tenant, Resource: domain.ResourceTransactionalMessages, Delta: recipients}); err != nil {
 			t.Fatal(err)
 		}
 	}
 	c.Set(time.Date(2026, 2, 10, 9, 0, 0, 0, time.UTC))
-	send()
+	send(1)
 	c.Set(time.Date(2026, 3, 5, 9, 0, 0, 0, time.UTC))
-	send()
-	send()
+	send(2)
+	send(1)
 
 	c.Set(time.Date(2026, 4, 2, 6, 0, 0, 0, time.UTC))
 	if rep, err := uc.SweepPeriods(ctx); err != nil || rep.Failed != 0 || rep.Closed < 2 {
@@ -299,7 +300,7 @@ func TestCierreDePeriodoPublicaElConsumo(t *testing.T) {
 	if len(closed) != 2 {
 		t.Fatalf("un cierre por periodo vencido: %d", len(closed))
 	}
-	want := []struct{ start, end, sent string }{{"2026-01-31", "2026-02-28", "1"}, {"2026-02-28", "2026-03-31", "2"}}
+	want := []struct{ start, end, sent string }{{"2026-01-31", "2026-02-28", "1"}, {"2026-02-28", "2026-03-31", "3"}}
 	for i, w := range want {
 		usage, _ := closed[i]["usage"].(map[string]interface{})
 		if closed[i]["period_start"] != w.start || closed[i]["period_end"] != w.end ||

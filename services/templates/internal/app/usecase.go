@@ -332,6 +332,7 @@ func (uc *UseCase) Render(ctx context.Context, tenantID, templateID uuid.UUID, i
 		return nil, err
 	}
 	out.Version = v.Version
+	out.Kind = t.Kind
 	return &out, nil
 }
 

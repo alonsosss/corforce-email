@@ -434,6 +434,11 @@ func (uc *UseCase) buildMessages(ctx context.Context, cmd CreateMessagesCommand)
 			if err != nil {
 				return nil, err
 			}
+			// Solo se rechaza lo que templates declara de marketing. Un kind vacio (templates
+			// desplegado sin el campo) no para el carril transaccional.
+			if rendered.Kind == domain.TemplateKindMarketing {
+				return nil, domain.ErrTemplateNotTransactional
+			}
 			if len(rendered.HTML)+len(rendered.Text) > domain.MaxBodyBytes {
 				return nil, domain.NewValidationError("la plantilla renderizada supera el limite de %d bytes", domain.MaxBodyBytes)
 			}

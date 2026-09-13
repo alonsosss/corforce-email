@@ -24,7 +24,7 @@ func TestRenderContract(t *testing.T) {
 			t.Errorf("cabeceras internas ausentes")
 		}
 		_ = json.NewDecoder(r.Body).Decode(&body)
-		_, _ = w.Write([]byte(`{"data":{"subject":"Hola","html":"<p>Hola</p>","text":"Hola","version":4}}`))
+		_, _ = w.Write([]byte(`{"data":{"subject":"Hola","html":"<p>Hola</p>","text":"Hola","version":4,"kind":"marketing"}}`))
 	}))
 	defer srv.Close()
 
@@ -33,7 +33,8 @@ func TestRenderContract(t *testing.T) {
 		TemplateID: tpl, Version: &version, Variables: map[string]any{"name": "Ana"},
 		Reserved: ports.ReservedVariables{UnsubscribeURL: "https://u", RecipientEmail: "ana@example.com"},
 	})
-	if err != nil || out.Subject != "Hola" || out.HTML != "<p>Hola</p>" || out.Text != "Hola" || out.Version != 4 {
+	if err != nil || out.Subject != "Hola" || out.HTML != "<p>Hola</p>" || out.Text != "Hola" || out.Version != 4 ||
+		out.Kind != domain.TemplateKindMarketing {
 		t.Fatalf("Render: %+v %v", out, err)
 	}
 	reserved, _ := body["reserved"].(map[string]any)
@@ -42,6 +43,19 @@ func TestRenderContract(t *testing.T) {
 	}
 	if _, ok := reserved["view_in_browser_url"]; !ok {
 		t.Fatal("las cuatro variables reservadas viajan siempre")
+	}
+}
+
+// Una version de templates anterior al campo kind responde sin el: el cliente lo deja
+// vacio y cada via decide (marketing falla cerrado, el transaccional sigue).
+func TestRenderWithoutKind(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"data":{"subject":"Hola","html":"<p>Hola</p>","text":"Hola","version":1}}`))
+	}))
+	defer srv.Close()
+	out, err := New(srv.URL, "tok").Render(context.Background(), uuid.New(), ports.RenderRequest{TemplateID: uuid.New()})
+	if err != nil || out.Kind != "" || out.Subject != "Hola" {
+		t.Fatalf("Render sin kind: %+v %v", out, err)
 	}
 }
 

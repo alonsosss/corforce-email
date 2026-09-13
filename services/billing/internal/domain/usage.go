@@ -54,11 +54,13 @@ func (c UsageChange) Validate() error {
 	if _, err := ParseResource(string(c.Resource)); err != nil {
 		return fmt.Errorf("%w: %v", ErrInvalidEvent, err)
 	}
-	if c.Delta != 1 && c.Delta != -1 {
-		return fmt.Errorf("%w: un evento suma o resta una unidad", ErrInvalidEvent)
-	}
-	if c.Resource.IsFlow() && (c.Delta < 0 || c.ItemKey != "") {
-		return fmt.Errorf("%w: un recurso de flujo solo suma y no identifica objetos", ErrInvalidEvent)
+	// Un envio suma tantas unidades como destinatarios; un objeto de stock existe o no.
+	if c.Resource.IsFlow() {
+		if c.Delta < 1 || c.ItemKey != "" {
+			return fmt.Errorf("%w: un recurso de flujo solo suma y no identifica objetos", ErrInvalidEvent)
+		}
+	} else if c.Delta != 1 && c.Delta != -1 {
+		return fmt.Errorf("%w: un evento de stock suma o resta una unidad", ErrInvalidEvent)
 	}
 	if (c.ItemKey == "") != (c.Source == "") {
 		return fmt.Errorf("%w: objeto y fuente van juntos", ErrInvalidEvent)

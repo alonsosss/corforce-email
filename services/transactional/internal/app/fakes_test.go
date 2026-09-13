@@ -384,14 +384,16 @@ type fakeTemplates struct {
 	mu    sync.Mutex
 	calls []ports.RenderRequest
 	err   error
-	// withoutUnsubscribe simula una plantilla que no usa unsubscribe_url (transaccional).
+	// withoutUnsubscribe simula una plantilla que no usa unsubscribe_url.
 	withoutUnsubscribe bool
+	// kind es el tipo que informa templates; vacio simula una version sin el campo.
+	kind string
 }
 
 func (f *fakeTemplates) Render(_ context.Context, _ uuid.UUID, req ports.RenderRequest) (*ports.Rendered, error) {
 	f.mu.Lock()
 	f.calls = append(f.calls, req)
-	err, without := f.err, f.withoutUnsubscribe
+	err, without, kind := f.err, f.withoutUnsubscribe, f.kind
 	f.mu.Unlock()
 	if err != nil {
 		return nil, err
@@ -406,7 +408,7 @@ func (f *fakeTemplates) Render(_ context.Context, _ uuid.UUID, req ports.RenderR
 	if req.Version != nil {
 		version = *req.Version
 	}
-	return &ports.Rendered{Subject: "Hola " + req.Reserved.RecipientEmail, HTML: html.String(), Text: "Pedido", Version: version}, nil
+	return &ports.Rendered{Subject: "Hola " + req.Reserved.RecipientEmail, HTML: html.String(), Text: "Pedido", Version: version, Kind: kind}, nil
 }
 
 func (f *fakeTemplates) callFor(email string) (ports.RenderRequest, bool) {
@@ -502,7 +504,7 @@ func newFixture(t *testing.T, cfg Config) *fixture {
 	f := &fixture{
 		repo:     newFakeRepo(),
 		supp:     &fakeSuppression{suppressed: map[string]string{}},
-		tpl:      &fakeTemplates{},
+		tpl:      &fakeTemplates{kind: domain.TemplateKindTransactional},
 		rep:      &fakeReputation{},
 		sender:   &fakeSender{},
 		limiter:  &fakeLimiter{},
