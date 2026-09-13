@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/alonsosss/corforce-email/pkg/authz"
 	"github.com/alonsosss/corforce-email/pkg/middleware"
 	"github.com/alonsosss/corforce-email/pkg/response"
 	"github.com/alonsosss/corforce-email/pkg/validate"
@@ -16,41 +17,48 @@ import (
 	"github.com/google/uuid"
 )
 
+const permModule = "audit"
+
 type Handler struct {
-	uc *app.AuditUseCase
+	uc    *app.AuditUseCase
+	authz *authz.Checker
 }
 
-func NewHandler(uc *app.AuditUseCase) *Handler {
-	return &Handler{uc: uc}
+func NewHandler(uc *app.AuditUseCase, checker *authz.Checker) *Handler {
+	return &Handler{uc: uc, authz: checker}
 }
 
+func (h *Handler) perm(resource, action string) func(http.Handler) http.Handler {
+	return h.authz.RequirePermission(permModule, resource, action)
+}
+
+// Routes: el rastro, los eventos de seguridad y la cadena de integridad son de la propia
+// empresa (su base solo guarda los suyos), asi que cada ruta exige un permiso de alcance
+// tenant y ninguna necesita el rol superadmin. Leer el rastro es leer la actividad de
+// todos los usuarios de la empresa: ningun rol lo tiene salvo que se le conceda.
+//
+// Los apuntes del API no entran por aqui, llegan por el bus (audit.api.write): negar una
+// ruta no deja ninguna accion sin registrar.
 func (h *Handler) Routes() chi.Router {
 	r := chi.NewRouter()
-	r.Use(soloAdministracion)
 	r.Route("/logs", func(r chi.Router) {
-		r.Get("/", h.searchLogs)
-		r.Post("/", h.createLog)
-		r.Post("/bulk", h.bulkCreateLogs)
-		r.Get("/{id}", h.getLog)
+		r.With(h.perm("logs", "read")).Get("/", h.searchLogs)
+		r.With(h.perm("logs", "create")).Post("/", h.createLog)
+		r.With(h.perm("logs", "create")).Post("/bulk", h.bulkCreateLogs)
+		r.With(h.perm("logs", "read")).Get("/{id}", h.getLog)
 	})
-	// Los eventos de seguridad (IPs, patrones de ataque, bloqueos) son material
-	// sensible: solo el administrador de la empresa (y el superadmin de
-	// plataforma, que RequireRoles admite siempre), validado EN el servicio
-	// porque el gateway no gatea lecturas por modulo.
 	r.Route("/security-events", func(r chi.Router) {
-		r.Use(middleware.RequireRoles(middleware.RoleTenantAdmin))
-		r.Get("/", h.listSecurityEvents)
-		r.Get("/unacknowledged", h.getUnacknowledged)
-		r.Get("/{id}", h.getSecurityEvent)
-		r.Post("/{id}/acknowledge", h.acknowledgeEvent)
+		r.With(h.perm("security_events", "read")).Get("/", h.listSecurityEvents)
+		r.With(h.perm("security_events", "read")).Get("/unacknowledged", h.getUnacknowledged)
+		r.With(h.perm("security_events", "read")).Get("/{id}", h.getSecurityEvent)
+		r.With(h.perm("security_events", "acknowledge")).Post("/{id}/acknowledge", h.acknowledgeEvent)
 	})
-	// Verificacion de integridad de la cadena de hash del rastro: detecta si alguien
-	// edito o borro registros en la base. Mismo criterio que los eventos de seguridad.
-	r.With(middleware.RequireRoles(middleware.RoleTenantAdmin)).
-		Get("/integrity", h.verifyIntegrity)
-	r.Get("/summary", h.getSummary)
-	r.Get("/user-activity/{userId}", h.getUserActivity)
-	r.Get("/changes/{logId}", h.getChanges)
+	// Recorre la cadena de hash entera para detectar registros editados o borrados en
+	// la base: es la accion de verificar, no una lectura de estado guardado.
+	r.With(h.perm("integrity", "verify")).Get("/integrity", h.verifyIntegrity)
+	r.With(h.perm("logs", "read")).Get("/summary", h.getSummary)
+	r.With(h.perm("logs", "read")).Get("/user-activity/{userId}", h.getUserActivity)
+	r.With(h.perm("logs", "read")).Get("/changes/{logId}", h.getChanges)
 	return r
 }
 
@@ -66,24 +74,6 @@ func (h *Handler) verifyIntegrity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response.JSON(w, http.StatusOK, res)
-}
-
-// soloAdministracion cierra el rastro de auditoria. Es el registro de quien
-// hizo que en toda la empresa, incluidos los eventos de seguridad: leerlo es
-// leer la actividad de todos los demas, y por eso solo entra quien tiene
-// autoridad administrativa (IsPrivileged: administrador de la empresa o
-// superadmin de plataforma).
-//
-// Los apuntes no entran por aqui -llegan por el bus, en audit.api.write-, asi
-// que cerrar esta puerta no puede dejar sin registrar ninguna accion.
-func soloAdministracion(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !middleware.IsPrivileged(r.Context()) {
-			response.ErrForbidden(w, "el rastro de auditoria no forma parte de tus modulos")
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
 }
 
 func (h *Handler) searchLogs(w http.ResponseWriter, r *http.Request) {
@@ -159,6 +149,10 @@ type createLogRequest struct {
 	Severity   string  `json:"severity"`
 }
 
+// errOtherUser: con sesion, un apunte solo se registra a nombre de quien la tiene. Solo
+// una llamada interna (sin usuario) puede registrar a nombre de otro.
+const errOtherUser = "no se puede registrar un apunte a nombre de otro usuario"
+
 func (h *Handler) createLog(w http.ResponseWriter, r *http.Request) {
 	tenantID, err := uuid.Parse(middleware.GetTenantID(r.Context()))
 	if err != nil {
@@ -170,6 +164,15 @@ func (h *Handler) createLog(w http.ResponseWriter, r *http.Request) {
 	if err := validate.DecodeJSON(r, &req); err != nil {
 		response.ErrBadRequest(w, err.Error())
 		return
+	}
+
+	sessionUser := middleware.GetUserID(r.Context())
+	if sessionUser != "" {
+		if req.UserID != "" && req.UserID != sessionUser {
+			response.ErrForbidden(w, errOtherUser)
+			return
+		}
+		req.UserID = sessionUser
 	}
 
 	v := validate.New()
@@ -241,9 +244,21 @@ func (h *Handler) bulkCreateLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	sessionUser := middleware.GetUserID(r.Context())
 	var logs []*domain.AuditLog
 	for _, entry := range req.Logs {
-		userID, _ := uuid.Parse(entry.UserID)
+		if sessionUser != "" {
+			if entry.UserID != "" && entry.UserID != sessionUser {
+				response.ErrForbidden(w, errOtherUser)
+				return
+			}
+			entry.UserID = sessionUser
+		}
+		userID, err := uuid.Parse(entry.UserID)
+		if err != nil {
+			response.ErrValidation(w, "user_id no valido")
+			return
+		}
 		l := &domain.AuditLog{
 			TenantID:   tenantID,
 			UserID:     userID,

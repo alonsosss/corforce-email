@@ -66,29 +66,48 @@ func (uc *SchedulerUseCase) ListJobs(ctx context.Context, tenantID *uuid.UUID, i
 	return uc.jobs.List(ctx, tenantID, isActive)
 }
 
+// UpdateJob recibe el trabajo leido con GetJob y ya modificado; su empresa no cambia.
 func (uc *SchedulerUseCase) UpdateJob(ctx context.Context, job *domain.JobDefinition) error {
+	if job.IsPlatform() {
+		return domain.ErrPlatformJob
+	}
 	job.UpdatedAt = time.Now().UTC()
 	return uc.jobs.Update(ctx, job)
 }
 
-func (uc *SchedulerUseCase) EnableJob(ctx context.Context, id, tenantID uuid.UUID) error {
+// tenantJob carga un trabajo que la empresa puede cambiar: el suyo, nunca uno de plataforma.
+func (uc *SchedulerUseCase) tenantJob(ctx context.Context, id, tenantID uuid.UUID) (*domain.JobDefinition, error) {
 	job, err := uc.jobs.GetByID(ctx, id, tenantID)
 	if err != nil {
-		return domain.ErrJobNotFound
+		return nil, domain.ErrJobNotFound
+	}
+	if job.IsPlatform() {
+		return nil, domain.ErrPlatformJob
+	}
+	return job, nil
+}
+
+func (uc *SchedulerUseCase) EnableJob(ctx context.Context, id, tenantID uuid.UUID) error {
+	job, err := uc.tenantJob(ctx, id, tenantID)
+	if err != nil {
+		return err
 	}
 	job.IsActive = true
 	job.UpdatedAt = time.Now().UTC()
 	return uc.jobs.Update(ctx, job)
 }
 
-func (uc *SchedulerUseCase) DisableJob(ctx context.Context, id uuid.UUID) error {
+func (uc *SchedulerUseCase) DisableJob(ctx context.Context, id, tenantID uuid.UUID) error {
+	if _, err := uc.tenantJob(ctx, id, tenantID); err != nil {
+		return err
+	}
 	return uc.jobs.Deactivate(ctx, id)
 }
 
 func (uc *SchedulerUseCase) RunJob(ctx context.Context, tenantID, jobID uuid.UUID) (*domain.JobExecution, error) {
-	job, err := uc.jobs.GetByID(ctx, jobID, tenantID)
+	job, err := uc.tenantJob(ctx, jobID, tenantID)
 	if err != nil {
-		return nil, domain.ErrJobNotFound
+		return nil, err
 	}
 	exec := &domain.JobExecution{
 		ID:        uuid.New(),

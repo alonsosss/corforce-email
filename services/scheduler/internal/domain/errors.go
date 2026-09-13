@@ -10,4 +10,7 @@ var (
 	ErrJobLocked          = errors.New("job is locked")
 	ErrInvalidCron        = errors.New("invalid cron expression")
 	ErrMaxRetriesExceeded = errors.New("max retries exceeded")
+	// ErrPlatformJob: los trabajos de plataforma (sin empresa) los define la plataforma;
+	// por el API de una empresa se leen, pero no se cambian ni se lanzan.
+	ErrPlatformJob = errors.New("platform jobs cannot be changed from a tenant")
 )

@@ -1,10 +1,12 @@
 package http
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 	"time"
 
+	"github.com/alonsosss/corforce-email/pkg/authz"
 	"github.com/alonsosss/corforce-email/pkg/middleware"
 	"github.com/alonsosss/corforce-email/pkg/response"
 	"github.com/alonsosss/corforce-email/pkg/validate"
@@ -14,39 +16,48 @@ import (
 	"github.com/google/uuid"
 )
 
+const permModule = "scheduler"
+
 type Handler struct {
-	uc *app.SchedulerUseCase
+	uc    *app.SchedulerUseCase
+	authz *authz.Checker
 }
 
-func NewHandler(uc *app.SchedulerUseCase) *Handler {
-	return &Handler{uc: uc}
+func NewHandler(uc *app.SchedulerUseCase, checker *authz.Checker) *Handler {
+	return &Handler{uc: uc, authz: checker}
 }
 
+func (h *Handler) perm(resource, action string) func(http.Handler) http.Handler {
+	return h.authz.RequirePermission(permModule, resource, action)
+}
+
+// Routes: cada peticion opera sobre la base de la empresa que llama, de modo que todos los
+// permisos son de alcance tenant. Ver los trabajos dice que procesos corren solos y a que
+// hora; lanzarlos, desactivarlos o cancelarlos mueve procesos de toda la empresa.
 func (h *Handler) Routes() chi.Router {
 	r := chi.NewRouter()
-	r.Use(soloAdministracion)
 	r.Route("/api/v1/scheduler", func(r chi.Router) {
 		r.Route("/jobs", func(r chi.Router) {
-			r.Get("/", h.ListJobs)
-			r.Post("/", h.CreateJob)
-			r.Get("/{id}", h.GetJob)
-			r.Put("/{id}", h.UpdateJob)
-			r.Post("/{id}/enable", h.EnableJob)
-			r.Post("/{id}/disable", h.DisableJob)
-			r.Post("/{id}/run", h.RunJob)
-			r.Get("/{id}/history", h.GetJobHistory)
+			r.With(h.perm("jobs", "read")).Get("/", h.ListJobs)
+			r.With(h.perm("jobs", "create")).Post("/", h.CreateJob)
+			r.With(h.perm("jobs", "read")).Get("/{id}", h.GetJob)
+			r.With(h.perm("jobs", "update")).Put("/{id}", h.UpdateJob)
+			r.With(h.perm("jobs", "update")).Post("/{id}/enable", h.EnableJob)
+			r.With(h.perm("jobs", "update")).Post("/{id}/disable", h.DisableJob)
+			r.With(h.perm("jobs", "run")).Post("/{id}/run", h.RunJob)
+			r.With(h.perm("executions", "read")).Get("/{id}/history", h.GetJobHistory)
 		})
 		r.Route("/executions", func(r chi.Router) {
-			r.Get("/", h.ListRunning)
-			r.Get("/{id}", h.GetExecution)
-			r.Post("/{id}/cancel", h.CancelExecution)
-			r.Post("/{id}/retry", h.RetryExecution)
+			r.With(h.perm("executions", "read")).Get("/", h.ListRunning)
+			r.With(h.perm("executions", "read")).Get("/{id}", h.GetExecution)
+			r.With(h.perm("executions", "cancel")).Post("/{id}/cancel", h.CancelExecution)
+			r.With(h.perm("executions", "retry")).Post("/{id}/retry", h.RetryExecution)
 		})
 		r.Route("/tasks", func(r chi.Router) {
-			r.Get("/", h.ListPendingTasks)
-			r.Post("/", h.ScheduleTask)
-			r.Get("/{id}", h.GetTask)
-			r.Post("/{id}/cancel", h.CancelTask)
+			r.With(h.perm("tasks", "read")).Get("/", h.ListPendingTasks)
+			r.With(h.perm("tasks", "create")).Post("/", h.ScheduleTask)
+			r.With(h.perm("tasks", "read")).Get("/{id}", h.GetTask)
+			r.With(h.perm("tasks", "cancel")).Post("/{id}/cancel", h.CancelTask)
 		})
 	})
 	return r
@@ -153,19 +164,6 @@ func (h *Handler) GetJob(w http.ResponseWriter, r *http.Request) {
 	response.JSON(w, http.StatusOK, jobResponse(job))
 }
 
-// soloAdministracion cierra los trabajos programados. Quien los ve sabe que
-// procesos corren solos y a que hora, y quien los lanza o los desactiva mueve
-// procesos de toda la empresa.
-func soloAdministracion(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !middleware.IsPrivileged(r.Context()) {
-			response.ErrForbidden(w, "los trabajos programados son cosa de administracion")
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
-}
-
 func (h *Handler) ListJobs(w http.ResponseWriter, r *http.Request) {
 	var tenantID *uuid.UUID
 	if t := r.URL.Query().Get("tenant_id"); t != "" {
@@ -229,7 +227,7 @@ func (h *Handler) UpdateJob(w http.ResponseWriter, r *http.Request) {
 	job.MaxRetries = req.MaxRetries
 	job.TimeoutSeconds = req.TimeoutSeconds
 	if err := h.uc.UpdateJob(r.Context(), job); err != nil {
-		response.ErrInternal(w)
+		writeJobError(w, err)
 		return
 	}
 	response.JSON(w, http.StatusOK, jobResponse(job))
@@ -247,7 +245,7 @@ func (h *Handler) EnableJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.uc.EnableJob(r.Context(), id, tenantID); err != nil {
-		response.ErrNotFound(w, "job not found")
+		writeJobError(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -259,8 +257,13 @@ func (h *Handler) DisableJob(w http.ResponseWriter, r *http.Request) {
 		response.ErrBadRequest(w, "invalid id")
 		return
 	}
-	if err := h.uc.DisableJob(r.Context(), id); err != nil {
-		response.ErrInternal(w)
+	tenantID, err := parseTenantID(r)
+	if err != nil {
+		response.ErrUnauthorized(w, "invalid tenant")
+		return
+	}
+	if err := h.uc.DisableJob(r.Context(), id, tenantID); err != nil {
+		writeJobError(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -279,14 +282,21 @@ func (h *Handler) RunJob(w http.ResponseWriter, r *http.Request) {
 	}
 	exec, err := h.uc.RunJob(r.Context(), tenantID, id)
 	if err != nil {
-		if err == domain.ErrJobNotFound {
-			response.ErrNotFound(w, "job not found")
-			return
-		}
-		response.ErrInternal(w)
+		writeJobError(w, err)
 		return
 	}
 	response.JSON(w, http.StatusCreated, executionResponse(exec))
+}
+
+func writeJobError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, domain.ErrJobNotFound):
+		response.ErrNotFound(w, "job not found")
+	case errors.Is(err, domain.ErrPlatformJob):
+		response.ErrForbidden(w, err.Error())
+	default:
+		response.ErrInternal(w)
+	}
 }
 
 func (h *Handler) GetJobHistory(w http.ResponseWriter, r *http.Request) {

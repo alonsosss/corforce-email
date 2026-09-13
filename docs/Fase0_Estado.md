@@ -44,10 +44,10 @@ cambie cualquiera de estas líneas.
   servicios nuevos lo usan desde el principio para sus publicaciones críticas.
 * `pkg/auth` firma HS256 con un secreto compartido por todos los servicios. Decisión:
   pasar a EdDSA con `kid` cuando exista más de un emisor; hoy solo firma identity.
-* La tercera capa (`pkg/authz.RequirePermission`) la usan los servicios nuevos y ya el
-  plano de control: identity, organization y access-control (este en proceso, con su caso
-  de uso de política) exigen el permiso de acción concreto. Siguen con
-  `RequireRoles(tenant_admin)` o `IsPrivileged` audit y scheduler; se migran cuando se toquen.
+* La tercera capa (`pkg/authz.RequirePermission`) la usan los servicios nuevos y todo el
+  plano de control: identity, organization, audit, scheduler y access-control (este en
+  proceso, con su caso de uso de política) exigen el permiso de acción concreto. Ningún
+  handler queda con `IsPrivileged` o `RequireRoles(tenant_admin)` como única comprobación.
 * Enrutado por celda implementado (`db.NewTenantRouting`, aprovisionamiento en la celda de
   la empresa). Queda una credencial por celda (hoy una sola de plataforma).
 * El scheduler crea ejecuciones y publica `scheduler.job.started`, pero ningún ejecutor

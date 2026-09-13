@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/alonsosss/corforce-email/pkg/authz"
 	"github.com/alonsosss/corforce-email/pkg/config"
 	"github.com/alonsosss/corforce-email/pkg/db"
 	"github.com/alonsosss/corforce-email/pkg/events"
@@ -66,7 +67,7 @@ func main() {
 		Logger:   logger,
 	})
 
-	h := handler.NewHandler(uc)
+	h := handler.NewHandler(uc, authz.NewCheckerFromEnv())
 
 	// Detector de seguridad: convierte el flujo de identidad (logins, fallos,
 	// bloqueos, revocaciones) en eventos accionables de audit.security_events.

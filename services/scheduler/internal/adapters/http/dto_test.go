@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alonsosss/corforce-email/pkg/authz"
 	"github.com/alonsosss/corforce-email/pkg/middleware"
 	"github.com/alonsosss/corforce-email/services/scheduler/internal/app"
 	"github.com/alonsosss/corforce-email/services/scheduler/internal/domain"
@@ -73,7 +74,7 @@ func contractServer() (http.Handler, *domain.JobDefinition, *domain.JobExecution
 	})
 	r := chi.NewRouter()
 	r.Use(middleware.InjectFromGateway)
-	r.Mount("/", NewHandler(uc).Routes())
+	r.Mount("/", NewHandler(uc, authz.NewChecker(unreachable, "")).Routes())
 	return r, job, exec, task
 }
 

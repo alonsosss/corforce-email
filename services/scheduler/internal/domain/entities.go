@@ -60,3 +60,6 @@ type JobSchedule struct {
 	LockedBy  *string
 	LockedAt  *time.Time
 }
+
+// IsPlatform indica un trabajo de plataforma: sin empresa, definido por la plataforma.
+func (j *JobDefinition) IsPlatform() bool { return j.TenantID == nil }
