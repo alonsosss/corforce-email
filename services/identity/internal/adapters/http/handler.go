@@ -33,8 +33,8 @@ const (
 
 // Config es lo que el handler necesita del entorno; lo resuelve main, no el adaptador.
 type Config struct {
-	// JWTSecret valida los tokens de step-up en las rutas criticas.
-	JWTSecret string
+	// StepUp valida los tokens de step-up en las rutas criticas.
+	StepUp *auth.Verifier
 	// MFAIssuer es el emisor que ve el usuario en su app TOTP. Vacio: la marca del producto.
 	MFAIssuer string
 }
@@ -44,7 +44,7 @@ type Handler struct {
 	user      *app.UserUseCase
 	reset     *app.PasswordResetUseCase
 	authz     *authz.Checker
-	jwtSecret string
+	stepUp    *auth.Verifier
 	mfaIssuer string
 }
 
@@ -53,7 +53,7 @@ func NewHandler(auth *app.AuthUseCase, user *app.UserUseCase, reset *app.Passwor
 	if issuer == "" {
 		issuer = defaultMFAIssuer
 	}
-	return &Handler{auth: auth, user: user, reset: reset, authz: checker, jwtSecret: cfg.JWTSecret, mfaIssuer: issuer}
+	return &Handler{auth: auth, user: user, reset: reset, authz: checker, stepUp: cfg.StepUp, mfaIssuer: issuer}
 }
 
 func (h *Handler) Routes() chi.Router {
@@ -61,7 +61,7 @@ func (h *Handler) Routes() chi.Router {
 
 	// step-up: re-autenticacion reciente para las acciones mas peligrosas (borrar
 	// usuarios, reset de contrasena ajena y politica de sesion).
-	stepUp := middleware.RequireStepUp(h.jwtSecret)
+	stepUp := middleware.RequireStepUp(h.stepUp)
 
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Route("/auth", func(r chi.Router) {

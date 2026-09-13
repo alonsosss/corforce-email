@@ -38,7 +38,7 @@ func TestSelfAuthenticatedEnrutaSinDebilitarOtrasRutas(t *testing.T) {
 		mountSelfAuthenticated(r, specs, func(string) string { return upstream.URL }, strict, "token-interno")
 		r.Handle("/otro/*", reverseProxy(upstream.URL, "token-interno"))
 		r.Group(func(r chi.Router) {
-			r.Use(middleware.NewJWTAuth("secreto-de-prueba-de-al-menos-treinta-y-dos").Authenticate)
+			r.Use(testJWTAuth(t).Authenticate)
 			r.Route("/mailboxes", func(r chi.Router) {
 				r.Handle("/*", reverseProxy(upstream.URL, "token-interno"))
 			})

@@ -181,24 +181,29 @@ type NATSConfig struct {
 	URL string
 }
 
+// JWTConfig es la vida de los tokens. Las claves no pasan por aqui: la privada solo la lee
+// identity (auth.SignerFromEnv) y las publicas quien verifica (auth.KeySetFromEnv), de modo
+// que ningun otro servicio carga material de firma en su configuracion.
 type JWTConfig struct {
-	Secret     string
 	AccessTTL  time.Duration
 	RefreshTTL time.Duration
+	// AllowEphemeralSigningKey deja que identity, sin JWT_SIGNING_KEY, firme con un par
+	// generado al arrancar. Solo con ENVIRONMENT declarado development o test.
+	AllowEphemeralSigningKey bool
 }
 
 type GatewayConfig struct {
 	Port int
 }
 
-// platformCellFallbackEnvironments son los valores de ENVIRONMENT que admiten que un
-// servicio de celda use la credencial de plataforma. Se exige que ENVIRONMENT los diga:
-// su valor por defecto no cuenta, porque un despliegue que olvida declararlo no puede
-// quedar abierto.
-var platformCellFallbackEnvironments = map[string]bool{"development": true, "test": true}
+// developmentOrTestEnvironments son los valores de ENVIRONMENT que admiten los respaldos de
+// desarrollo: que un servicio de celda use la credencial de plataforma y que identity firme
+// con un par efimero. Se exige que ENVIRONMENT los diga: su valor por defecto no cuenta,
+// porque un despliegue que olvida declararlo no puede quedar abierto.
+var developmentOrTestEnvironments = map[string]bool{"development": true, "test": true}
 
-func platformCellFallbackAllowed(environment string) bool {
-	return platformCellFallbackEnvironments[strings.ToLower(strings.TrimSpace(environment))]
+func declaredDevelopmentOrTest(environment string) bool {
+	return developmentOrTestEnvironments[strings.ToLower(strings.TrimSpace(environment))]
 }
 
 func Load() (*Config, error) {
@@ -215,7 +220,7 @@ func Load() (*Config, error) {
 			CellDBName:                  getEnv("CELL_DB_NAME", ""),
 			CellUser:                    getEnv("CELL_DB_USER", ""),
 			CellPassword:                getEnv("CELL_DB_PASSWORD", ""),
-			AllowPlatformCellCredential: platformCellFallbackAllowed(os.Getenv("ENVIRONMENT")),
+			AllowPlatformCellCredential: declaredDevelopmentOrTest(os.Getenv("ENVIRONMENT")),
 		},
 		Redis: RedisConfig{
 			Host:     getEnv("REDIS_HOST", "localhost"),
@@ -226,21 +231,18 @@ func Load() (*Config, error) {
 			URL: getEnv("NATS_URL", "nats://localhost:4222"),
 		},
 		JWT: JWTConfig{
-			Secret: getEnv("JWT_SECRET", ""),
 			// 5 min (antes 15): al no haber revocacion en caliente del access token, su
 			// duracion ES la ventana en que un token robado o ya revocado sigue sirviendo.
 			// El cliente renueva en memoria, asi que solo cambia la frecuencia de refresco.
-			AccessTTL:  getEnvDuration("JWT_ACCESS_TTL", 5*time.Minute),
-			RefreshTTL: getEnvDuration("JWT_REFRESH_TTL", 168*time.Hour),
+			AccessTTL:                getEnvDuration("JWT_ACCESS_TTL", 5*time.Minute),
+			RefreshTTL:               getEnvDuration("JWT_REFRESH_TTL", 168*time.Hour),
+			AllowEphemeralSigningKey: declaredDevelopmentOrTest(os.Getenv("ENVIRONMENT")),
 		},
 		Gateway: GatewayConfig{
 			Port: getEnvInt("GATEWAY_PORT", 8080),
 		},
 	}
 
-	if cfg.JWT.Secret == "" {
-		return nil, fmt.Errorf("JWT_SECRET is required")
-	}
 	if cfg.Postgres.Password == "" && !cfg.Postgres.hasCellCredential() {
 		return nil, fmt.Errorf("POSTGRES_PASSWORD is required")
 	}

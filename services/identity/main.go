@@ -36,6 +36,11 @@ func main() {
 	if err != nil {
 		log.Fatalf("load config: %v", err)
 	}
+	// Antes de abrir nada: sin clave de firma valida no hay servicio que levantar.
+	tokenSvc, tokenVerifier, err := newTokenService(cfg, logger)
+	if err != nil {
+		log.Fatalf("token keys: %v", err)
+	}
 
 	ctx := context.Background()
 
@@ -62,7 +67,6 @@ func main() {
 	roleRepo := postgres.NewRoleRepo(pool.Pool)
 
 	eventPub := natsadapter.NewEventPublisher(bus)
-	tokenSvc := auth.NewTokenService(cfg.JWT.Secret, cfg.JWT.AccessTTL, cfg.JWT.RefreshTTL)
 
 	authUC := app.NewAuthUseCase(app.AuthDeps{
 		Users:           userRepo,
@@ -108,7 +112,7 @@ func main() {
 	})
 
 	handler := identityhttp.NewHandler(authUC, userUC, resetUC, authz.NewCheckerFromEnv(), identityhttp.Config{
-		JWTSecret: cfg.JWT.Secret,
+		StepUp:    tokenVerifier,
 		MFAIssuer: os.Getenv("MFA_ISSUER"),
 	})
 
@@ -133,4 +137,35 @@ func main() {
 	if err := srv.Run(); err != nil {
 		logger.Fatal("server error", zap.Error(err))
 	}
+}
+
+// newTokenService resuelve la clave de firma (JWT_SIGNING_KEY, solo identity la recibe) y
+// el verificador de los tokens que identity emite y vuelve a leer (reto MFA y step-up).
+func newTokenService(cfg *config.Config, logger *zap.Logger) (*auth.TokenService, *auth.Verifier, error) {
+	signer, ephemeral, err := auth.SignerFromEnv(cfg.JWT.AllowEphemeralSigningKey)
+	if err != nil {
+		return nil, nil, err
+	}
+	keys, err := auth.IssuerKeySet(signer, os.Getenv(auth.EnvPublicKeys))
+	if err != nil {
+		return nil, nil, err
+	}
+	verifier, err := auth.NewVerifier(keys)
+	if err != nil {
+		return nil, nil, err
+	}
+	if ephemeral {
+		// La clave publica no es secreta: se registra para poder publicarla al gateway
+		// en una prueba local. La privada muere con el proceso y nunca se escribe.
+		public, err := auth.EncodePublicKey(signer.PublicKey())
+		if err != nil {
+			return nil, nil, err
+		}
+		logger.Warn("identity firma con un par efimero: solo desarrollo o prueba, los tokens mueren con el proceso",
+			zap.String("jwt_public_keys", signer.KID()+":"+public))
+	} else {
+		logger.Info("clave de firma del token de acceso", zap.String("kid", signer.KID()),
+			zap.Strings("claves_aceptadas", keys.KIDs()))
+	}
+	return auth.NewTokenService(signer, verifier, cfg.JWT.AccessTTL, cfg.JWT.RefreshTTL), verifier, nil
 }

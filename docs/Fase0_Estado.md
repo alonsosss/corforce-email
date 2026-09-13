@@ -53,8 +53,12 @@ cambie cualquiera de estas líneas.
   (`mail-directory`, `mail-security`) encolan en `platform.event_outbox` de la celda y la
   vacía un solo relé por celda (`Relay.RunExclusive` con `db.TryLeaderLock` y
   `outbox.CellRelayLockKey`, compartida por los dos).
-* `pkg/auth` firma HS256 con un secreto compartido por todos los servicios. Decisión:
-  pasar a EdDSA con `kid` cuando exista más de un emisor; hoy solo firma identity.
+* Firma del access token hecha (2026-09-13): `pkg/auth` firma con EdDSA (Ed25519) y `kid`,
+  el verificador fija el algoritmo y exige `kid` conocido y `typ`, solo identity recibe la
+  clave privada (`JWT_SIGNING_KEY`) y el gateway verifica con `JWT_PUBLIC_KEYS`. `JWT_SECRET`
+  desaparece de `pkg/config`, del gateway y del almacén; sin transición HS256 (motivo en
+  `docs/arquitectura/CSP-Y-SESION.md`). Probado en unitarias de `pkg/auth`, identity y
+  gateway y en `make e2e`.
 * La tercera capa (`pkg/authz.RequirePermission`) la usan los servicios nuevos y todo el
   plano de control: identity, organization, audit, scheduler y access-control (este en
   proceso, con su caso de uso de política) exigen el permiso de acción concreto. Ningún

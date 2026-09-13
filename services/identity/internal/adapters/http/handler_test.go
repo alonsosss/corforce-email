@@ -8,7 +8,9 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/alonsosss/corforce-email/pkg/auth"
 	"github.com/alonsosss/corforce-email/pkg/authz"
 	"github.com/alonsosss/corforce-email/pkg/middleware"
 	"github.com/alonsosss/corforce-email/services/identity/internal/app"
@@ -81,10 +83,15 @@ func newTeam() *team {
 
 func (tm *team) server(t *testing.T, accessURL string) http.Handler {
 	t.Helper()
-	t.Setenv("STEP_UP_MODE", "")
+	return tm.serverWith(t, accessURL, Config{}, "")
+}
+
+func (tm *team) serverWith(t *testing.T, accessURL string, cfg Config, stepUpMode string) http.Handler {
+	t.Helper()
+	t.Setenv("STEP_UP_MODE", stepUpMode)
 	authUC := app.NewAuthUseCase(app.AuthDeps{Users: tm.users, Roles: tm.roles, Logger: zap.NewNop()})
 	userUC := app.NewUserUseCase(tm.users, nil, nil, nil, nil, nil, zap.NewNop())
-	h := NewHandler(authUC, userUC, nil, authz.NewChecker(accessURL, ""), Config{JWTSecret: "test"})
+	h := NewHandler(authUC, userUC, nil, authz.NewChecker(accessURL, ""), cfg)
 	r := chi.NewRouter()
 	r.Use(middleware.InjectFromGateway)
 	r.Mount("/", h.Routes())
@@ -93,7 +100,15 @@ func (tm *team) server(t *testing.T, accessURL string) http.Handler {
 
 func (tm *team) call(t *testing.T, srv http.Handler, actor uuid.UUID, roles, method, path, body string) int {
 	t.Helper()
+	return tm.callWith(t, srv, actor, roles, method, path, body, nil)
+}
+
+func (tm *team) callWith(t *testing.T, srv http.Handler, actor uuid.UUID, roles, method, path, body string, headers map[string]string) int {
+	t.Helper()
 	req := httptest.NewRequest(method, path, strings.NewReader(body))
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-User-ID", actor.String())
 	req.Header.Set("X-Tenant-ID", tm.tenant.String())
@@ -182,6 +197,52 @@ func TestRolesDelObjetivoIlegiblesDevuelve503(t *testing.T) {
 	if code := tm.call(t, srv, uuid.New(), "operador", http.MethodPost,
 		"/api/v1/users/"+tm.member.String()+"/reset-password", `{}`); code != http.StatusServiceUnavailable {
 		t.Fatalf("roles del objetivo ilegibles: %d, se esperaba 503", code)
+	}
+}
+
+// En enforce, la accion critica solo pasa con un token de step-up del propio usuario
+// firmado por identity; su token de acceso no vale como step-up.
+func TestStepUpExigeUnTokenDeStepUpPropio(t *testing.T) {
+	signer, err := auth.NewEphemeralSigner()
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys, err := auth.IssuerKeySet(signer, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	verifier, err := auth.NewVerifier(keys)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tokens := auth.NewTokenService(signer, verifier, 5*time.Minute, time.Hour)
+
+	tm := newTeam()
+	srv := tm.serverWith(t, unreachable, Config{StepUp: verifier}, "enforce")
+	path := "/api/v1/users/" + tm.member.String() + "/reset-password"
+	call := func(token string) int {
+		headers := map[string]string{}
+		if token != "" {
+			headers["X-Step-Up"] = token
+		}
+		return tm.callWith(t, srv, tm.admin, middleware.RoleTenantAdmin, http.MethodPost, path, `{}`, headers)
+	}
+
+	propio, _ := tokens.GenerateStepUp(tm.admin.String(), tm.tenant.String())
+	ajeno, _ := tokens.GenerateStepUp(tm.member.String(), tm.tenant.String())
+	acceso, _ := tokens.GeneratePair(tm.admin.String(), tm.tenant.String(), []string{middleware.RoleTenantAdmin})
+
+	if code := call(""); code != http.StatusForbidden {
+		t.Fatalf("sin step-up: %d, se esperaba 403", code)
+	}
+	if code := call(propio); code != http.StatusUnprocessableEntity {
+		t.Fatalf("step-up propio: %d, se esperaba 422 del handler", code)
+	}
+	if code := call(ajeno); code != http.StatusForbidden {
+		t.Fatalf("step-up de otro usuario: %d, se esperaba 403", code)
+	}
+	if code := call(acceso.AccessToken); code != http.StatusForbidden {
+		t.Fatalf("token de acceso como step-up: %d, se esperaba 403", code)
 	}
 }
 

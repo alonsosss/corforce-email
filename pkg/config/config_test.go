@@ -119,13 +119,14 @@ func TestCellConnection(t *testing.T) {
 func setEnv(t *testing.T, vars map[string]string) {
 	t.Helper()
 	for _, key := range []string{"ENVIRONMENT", "JWT_SECRET", "POSTGRES_PASSWORD", "POSTGRES_USER", "CELL_DB_NAME", "CELL_DB_USER", "CELL_DB_PASSWORD"} {
+		// JWT_SECRET queda vacia en todas las pruebas: ningun servicio la necesita ya.
 		t.Setenv(key, vars[key])
 	}
 }
 
 func TestLoadCredencialDeCelda(t *testing.T) {
 	base := func(extra map[string]string) map[string]string {
-		vars := map[string]string{"JWT_SECRET": "jwt-secret-for-tests", "CELL_DB_NAME": "mail_cell_pe_01"}
+		vars := map[string]string{"CELL_DB_NAME": "mail_cell_pe_01"}
 		for k, v := range extra {
 			vars[k] = v
 		}
@@ -183,8 +184,24 @@ func TestLoadCredencialDeCelda(t *testing.T) {
 }
 
 func TestLoadServicioDeEmpresaSigueExigiendoLaDePlataforma(t *testing.T) {
-	setEnv(t, map[string]string{"ENVIRONMENT": "production", "JWT_SECRET": "jwt-secret-for-tests", "CELL_DB_PASSWORD": "cell-pass-0123456789"})
+	setEnv(t, map[string]string{"ENVIRONMENT": "production", "CELL_DB_PASSWORD": "cell-pass-0123456789"})
 	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "POSTGRES_PASSWORD") {
 		t.Fatalf("sin CELL_DB_NAME la credencial de celda no sustituye a la de plataforma: %v", err)
+	}
+}
+
+// Ningun servicio necesita un secreto de firma para cargar su configuracion, y el par
+// efimero de identity solo lo admite un ENVIRONMENT declarado de desarrollo o prueba.
+func TestLoadSinSecretoDeFirma(t *testing.T) {
+	cases := map[string]bool{"development": true, "Test": true, "production": false, "staging": false, "": false}
+	for environment, want := range cases {
+		setEnv(t, map[string]string{"ENVIRONMENT": environment, "POSTGRES_PASSWORD": "platform-pass"})
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("ENVIRONMENT=%q sin JWT_SECRET: %v", environment, err)
+		}
+		if cfg.JWT.AllowEphemeralSigningKey != want {
+			t.Errorf("ENVIRONMENT=%q: par efimero %v, se esperaba %v", environment, cfg.JWT.AllowEphemeralSigningKey, want)
+		}
 	}
 }

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/alonsosss/corforce-email/pkg/auth"
 	"github.com/alonsosss/corforce-email/pkg/middleware"
 	"github.com/alonsosss/corforce-email/pkg/objectstore"
 	"github.com/alonsosss/corforce-email/pkg/observability"
@@ -25,10 +26,11 @@ func main() {
 	logger, _ := zap.NewProduction()
 	defer logger.Sync()
 
-	jwtSecret := os.Getenv("JWT_SECRET")
-	if jwtSecret == "" {
-		log.Fatal("JWT_SECRET is required")
+	jwtAuth, kids, err := jwtAuthFromEnv()
+	if err != nil {
+		log.Fatalf("token keys: %v", err)
 	}
+	logger.Info("claves publicas del token de acceso", zap.Strings("kid", kids))
 	internalToken := os.Getenv("INTERNAL_GATEWAY_TOKEN")
 	if internalToken == "" && os.Getenv("ENVIRONMENT") == "production" {
 		log.Fatal("INTERNAL_GATEWAY_TOKEN is required in production")
@@ -77,7 +79,6 @@ func main() {
 	limiter, authLimiter := newRateLimiters(newRateLimitStore(logger),
 		envInt("API_RATE_LIMIT_PER_MIN", 600), envInt("AUTH_RATE_LIMIT_PER_MIN", 30), logger)
 
-	jwtAuth := middleware.NewJWTAuth(jwtSecret)
 	identity := reverseProxy(table.serviceURL("identity"), internalToken)
 
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
@@ -185,6 +186,20 @@ func main() {
 	if err := srv.ListenAndServe(); err != nil {
 		logger.Fatal("gateway failed", zap.Error(err))
 	}
+}
+
+// jwtAuthFromEnv arma la autenticacion del token de acceso con las claves PUBLICAS de
+// JWT_PUBLIC_KEYS. El gateway no tiene con que firmar, y sin claves no arranca.
+func jwtAuthFromEnv() (*middleware.JWTAuth, []string, error) {
+	keys, err := auth.KeySetFromEnv()
+	if err != nil {
+		return nil, nil, err
+	}
+	verifier, err := auth.NewVerifier(keys)
+	if err != nil {
+		return nil, nil, err
+	}
+	return middleware.NewJWTAuth(verifier), keys.KIDs(), nil
 }
 
 func envInt(key string, fallback int) int {

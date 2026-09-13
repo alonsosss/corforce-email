@@ -9,14 +9,19 @@ V = verificado en el codigo. P = propuesto, todavia no implementado.
 * Contrasena con bcrypt, politica por empresa (longitud, clases, caducidad, historial,
   bloqueo tras N intentos) con valores por defecto cuando la empresa no tiene fila;
   comprobacion contra contrasenas filtradas (HIBP, k-anonimato) al crear o cambiar.
-* Sesion: access token JWT HS256 de 5 minutos con claims `uid`, `tid`, `roles`, `iat`;
+* Sesion: access token JWT de 5 minutos con claims `uid`, `tid`, `roles`, `iat`, firmado
+  por identity con EdDSA (Ed25519, `kid` y `typ` `at+jwt` en la cabecera); solo identity
+  tiene la clave privada (`JWT_SIGNING_KEY`) y el gateway verifica con las publicas
+  (`JWT_PUBLIC_KEYS`), sin poder firmar; HS256 y `none` se rechazan
+  (`docs/arquitectura/CSP-Y-SESION.md`, Firma del access token);
   refresh opaco de 256 bits, hasheado en `identity.sessions`, rotado en cada uso con
   gracia de 60 s para carreras legitimas y revocacion de todas las sesiones si se reutiliza
   uno ya rotado; politica de sesion por empresa (TTL, concurrentes, inactividad).
 * Navegador: refresh en cookie `cf_rt` `HttpOnly; Secure; SameSite=Strict;
   Path=/api/v1/auth`, access solo en memoria (`docs/arquitectura/CSP-Y-SESION.md`).
 * MFA TOTP (setup, activate, disable, reto de 5 minutos); step-up de 5 minutos para
-  acciones criticas (`X-Step-Up`, `STEP_UP_MODE=enforce`).
+  acciones criticas (`X-Step-Up`, `STEP_UP_MODE=enforce`). El reto y el step-up salen de
+  la misma clave con su propio `typ`: ninguno vale como token de acceso ni al reves.
 * Revocacion instantanea: `tokens_valid_from` por usuario; el gateway rechaza cualquier
   access token emitido antes (logout-all, cambio o reinicio de contrasena, MFA
   desactivada).

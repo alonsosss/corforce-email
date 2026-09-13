@@ -33,6 +33,31 @@ opcional y por defecto ese nombre. Alta y rotación, seguidas: publicar el valor
 las conexiones abiertas siguen vivas pero las nuevas con la contraseña retirada fallan.
 Detalle en `docs/Modelo_de_Datos_y_Celdas.md` 5.1.
 
+Clave de firma del token de acceso (`docs/arquitectura/CSP-Y-SESION.md`, Firma del access
+token): `JWT_SIGNING_KEY` va al almacén (obligatoria) y la recibe solo identity;
+`JWT_SIGNING_KID` y `JWT_PUBLIC_KEYS` son configuración del `.env`. `JWT_SECRET` ya no la usa
+nadie: `fetch-secrets.sh` deja de materializarla y se borra del almacén tras el despliegue.
+Alta y rotación, en este orden:
+
+1. `ops/security/jwt-keygen.sh`, en el servidor: imprime el `kid` nuevo y su entrada pública
+   y deja la privada en `/dev/shm/core-force-mail/jwt-signing-key.<kid>` (0600). Nunca la
+   imprime ni la escribe en el repositorio.
+2. Añadir la entrada pública a `JWT_PUBLIC_KEYS` del `.env`, junto a la vigente, y recrear el
+   gateway: acepta las dos.
+3. `add-secret.sh JWT_SIGNING_KEY --desde-env <fichero> --apply`, `shred -u <fichero>`,
+   `JWT_SIGNING_KID=<kid>` en el `.env` y recrear identity. Si el `kid` no está publicado con
+   esa misma clave, identity no arranca.
+4. Pasados `JWT_ACCESS_TTL` y los 5 minutos del reto MFA y del step-up, quitar la entrada
+   anterior de `JWT_PUBLIC_KEYS` y recrear el gateway e identity.
+
+El primer paso a EdDSA hace los pasos 1 a 3 antes del despliegue que trae el código (sin
+`JWT_SIGNING_KEY` en el almacén, `fetch-secrets.sh` aborta antes de recrear nada) y recrea
+todos los servicios en ese mismo despliegue: sus imágenes anteriores exigen `JWT_SECRET` y ya
+no la reciben. Los tokens HS256 vivos reciben 401 y el cliente renueva una vez, sin volver a
+iniciar sesión. Si la clave se compromete, los pasos 2 y 4 van juntos (se publica la nueva y
+se retira la anterior en el mismo paso, recreando gateway e identity a la vez): todos los
+access tokens caen de golpe y se renuevan con el refresh.
+
 ## 3. Arranque de una plataforma vacía
 
 `ops/db/bootstrap-platform.sh` crea la celda inicial, la empresa `platform` y su primer

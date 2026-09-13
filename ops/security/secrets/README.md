@@ -102,7 +102,10 @@ sigue queda como referencia para otro entorno.
 
 Las variables de entorno se fijan al crear el contenedor: reiniciarlo no basta, hay que
 recrearlo. Las llaves de cifrado tienen ademas su propio procedimiento de re-cifrado de
-datos existentes (ver ops/security/secrets/rotate-key.sh).
+datos existentes (ver ops/security/secrets/rotate-key.sh). La clave de firma del token de
+acceso (`JWT_SIGNING_KEY`) tampoco se rota asi: tiene una clave publica que se publica
+antes que ella y un orden propio (`ops/security/jwt-keygen.sh`,
+`docs/Operacion_Despliegue.md` 2).
 
 ## Anadir un secreto nuevo
 

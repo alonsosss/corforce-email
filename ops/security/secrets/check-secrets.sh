@@ -88,3 +88,57 @@ if hallazgos:
 
 print(f"  OK: ninguna de las {len(keys)} credenciales canonicas tiene valor en el repositorio.")
 PY
+
+# --- Regla 2: un secreto de un solo servicio no llega a los demas contenedores -----------
+# Compose entrega el fichero de secretos ENTERO a cada servicio. Un secreto que solo debe
+# tener uno se vacia en los demas con `environment:` (VAR: ""), igual que la credencial de
+# plataforma en los servicios de celda. Un servicio nuevo que no lo haga lo heredaria sin
+# ningun aviso, y con la clave de firma del token podria forjar sesiones: por eso se mira
+# aqui y no se deja a la memoria de quien anade el bloque.
+python3 - "$LISTA" <<'PY'
+import re
+import sys
+
+# Secreto -> servicios de compose que SI lo reciben.
+DESTINATARIOS = {"JWT_SIGNING_KEY": {"identity"}}
+
+servicio_re = re.compile(r"^  ([A-Za-z0-9_.-]+):\s*$")
+hallazgos = []
+for ruta in open(sys.argv[1], "rb").read().split(b"\0"):
+    ruta = ruta.decode()
+    nombre = ruta.rsplit("/", 1)[-1]
+    if not (nombre.startswith("docker-compose") and nombre.endswith((".yml", ".yaml"))):
+        continue
+    try:
+        lineas = open(ruta, encoding="utf-8").read().splitlines()
+    except (UnicodeDecodeError, FileNotFoundError):
+        continue
+    bloques, actual, en_servicios = {}, None, False
+    for linea in lineas:
+        if re.match(r"^\S", linea):
+            en_servicios, actual = linea.rstrip() == "services:", None
+            continue
+        m = servicio_re.match(linea)
+        if en_servicios and m:
+            actual = m.group(1)
+            bloques[actual] = []
+        elif en_servicios and actual:
+            bloques[actual].append(linea.split("#", 1)[0])
+    for servicio, cuerpo in bloques.items():
+        if not any("secrets.env" in l for l in cuerpo):
+            continue
+        for secreto, quienes in DESTINATARIOS.items():
+            if servicio in quienes:
+                continue
+            vaciado = re.compile(r"^\s+(-\s*)?" + secreto + r"""\s*[:=]\s*(""|'')?\s*$""")
+            if not any(vaciado.match(l) for l in cuerpo):
+                hallazgos.append((ruta, servicio, secreto))
+
+if hallazgos:
+    print("Servicios que heredarian un secreto que no es suyo:", file=sys.stderr)
+    for ruta, servicio, secreto in hallazgos:
+        print(f"  {ruta}: {servicio} recibe {secreto}; anadir en environment: {secreto}: \"\"", file=sys.stderr)
+    sys.exit(1)
+
+print("  OK: los secretos de un solo servicio no llegan a los demas contenedores.")
+PY

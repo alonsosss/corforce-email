@@ -6,6 +6,12 @@
 # materializa en memoria desde AWS Secrets Manager. En el entorno local ese fichero no
 # existe y Compose lo omite (required: false), asi que el desarrollo sigue arrancando solo
 # con .env. Ver ops/security/secrets/README.md.
+#
+# El fichero de secretos llega entero a cada servicio, asi que un secreto de un solo
+# servicio se vacia en los demas con `environment:`. La clave de firma del token de acceso
+# (JWT_SIGNING_KEY) solo la recibe identity: con ella se forja cualquier sesion, y el
+# gateway verifica con las claves publicas (JWT_PUBLIC_KEYS). Todo servicio nuevo lleva
+# `JWT_SIGNING_KEY: ""`; ops/security/secrets/check-secrets.sh lo comprueba.
 services:
   postgres-primary:
     image: pgvector/pgvector:pg16
@@ -122,6 +128,8 @@ services:
       - .env
       - path: /dev/shm/core-force-mail/secrets.env
         required: false
+    environment:
+      JWT_SIGNING_KEY: ""
     depends_on:
       pgbouncer:
         condition: service_healthy
@@ -170,6 +178,8 @@ services:
       - .env
       - path: /dev/shm/core-force-mail/secrets.env
         required: false
+    environment:
+      JWT_SIGNING_KEY: ""
     depends_on:
       pgbouncer:
         condition: service_healthy
@@ -191,6 +201,7 @@ services:
       - path: /dev/shm/core-force-mail/secrets.env
         required: false
     environment:
+      JWT_SIGNING_KEY: ""
       # Las migraciones viajan dentro de la imagen del servicio que las aplica.
       TENANT_MIGRATION_DIR: /app/migrations/tenant/canonical
     depends_on:
@@ -213,6 +224,8 @@ services:
       - .env
       - path: /dev/shm/core-force-mail/secrets.env
         required: false
+    environment:
+      JWT_SIGNING_KEY: ""
     depends_on:
       pgbouncer:
         condition: service_healthy
@@ -233,6 +246,8 @@ services:
       - .env
       - path: /dev/shm/core-force-mail/secrets.env
         required: false
+    environment:
+      JWT_SIGNING_KEY: ""
     depends_on:
       pgbouncer:
         condition: service_healthy
@@ -254,6 +269,7 @@ services:
       - path: /dev/shm/core-force-mail/secrets.env
         required: false
     environment:
+      JWT_SIGNING_KEY: ""
       # La credencial de plataforma no llega a los servicios de celda: usan la de su celda
       # (secreto CELL_DB_PASSWORD). Solo en desarrollo, sin rol de celda, se les puede dar
       # la de plataforma con CELL_SERVICES_PLATFORM_PASSWORD; en produccion queda vacia.
@@ -279,6 +295,7 @@ services:
       - path: /dev/shm/core-force-mail/secrets.env
         required: false
     environment:
+      JWT_SIGNING_KEY: ""
       # La credencial de plataforma no llega a los servicios de celda: usan la de su celda
       # (secreto CELL_DB_PASSWORD). Solo en desarrollo, sin rol de celda, se les puede dar
       # la de plataforma con CELL_SERVICES_PLATFORM_PASSWORD; en produccion queda vacia.
@@ -308,6 +325,7 @@ services:
       - path: /dev/shm/core-force-mail/secrets.env
         required: false
     environment:
+      JWT_SIGNING_KEY: ""
       # La credencial de plataforma no llega a los servicios de celda: usan la de su celda
       # (secreto CELL_DB_PASSWORD). Solo en desarrollo, sin rol de celda, se les puede dar
       # la de plataforma con CELL_SERVICES_PLATFORM_PASSWORD; en produccion queda vacia.
@@ -340,6 +358,7 @@ services:
       - path: /dev/shm/core-force-mail/secrets.env
         required: false
     environment:
+      JWT_SIGNING_KEY: ""
       # La credencial de plataforma no llega a los servicios de celda: usan la de su celda
       # (secreto CELL_DB_PASSWORD). Solo en desarrollo, sin rol de celda, se les puede dar
       # la de plataforma con CELL_SERVICES_PLATFORM_PASSWORD; en produccion queda vacia.
@@ -368,6 +387,8 @@ services:
       - .env
       - path: /dev/shm/core-force-mail/secrets.env
         required: false
+    environment:
+      JWT_SIGNING_KEY: ""
     depends_on:
       pgbouncer:
         condition: service_healthy
@@ -388,6 +409,8 @@ services:
       - .env
       - path: /dev/shm/core-force-mail/secrets.env
         required: false
+    environment:
+      JWT_SIGNING_KEY: ""
     depends_on:
       pgbouncer:
         condition: service_healthy
@@ -410,6 +433,8 @@ services:
       - .env
       - path: /dev/shm/core-force-mail/secrets.env
         required: false
+    environment:
+      JWT_SIGNING_KEY: ""
     depends_on:
       pgbouncer:
         condition: service_healthy
@@ -430,6 +455,8 @@ services:
       - .env
       - path: /dev/shm/core-force-mail/secrets.env
         required: false
+    environment:
+      JWT_SIGNING_KEY: ""
     depends_on:
       pgbouncer:
         condition: service_healthy
@@ -450,6 +477,8 @@ services:
       - .env
       - path: /dev/shm/core-force-mail/secrets.env
         required: false
+    environment:
+      JWT_SIGNING_KEY: ""
     depends_on:
       pgbouncer:
         condition: service_healthy
@@ -470,6 +499,8 @@ services:
       - .env
       - path: /dev/shm/core-force-mail/secrets.env
         required: false
+    environment:
+      JWT_SIGNING_KEY: ""
     depends_on:
       pgbouncer:
         condition: service_healthy
@@ -490,6 +521,8 @@ services:
       - .env
       - path: /dev/shm/core-force-mail/secrets.env
         required: false
+    environment:
+      JWT_SIGNING_KEY: ""
     depends_on:
       pgbouncer:
         condition: service_healthy
@@ -512,6 +545,8 @@ services:
       - .env
       - path: /dev/shm/core-force-mail/secrets.env
         required: false
+    environment:
+      JWT_SIGNING_KEY: ""
     depends_on:
       pgbouncer:
         condition: service_healthy
@@ -532,6 +567,8 @@ services:
       - .env
       - path: /dev/shm/core-force-mail/secrets.env
         required: false
+    environment:
+      JWT_SIGNING_KEY: ""
     depends_on:
       pgbouncer:
         condition: service_healthy
@@ -552,6 +589,8 @@ services:
       - .env
       - path: /dev/shm/core-force-mail/secrets.env
         required: false
+    environment:
+      JWT_SIGNING_KEY: ""
     depends_on:
       pgbouncer:
         condition: service_healthy

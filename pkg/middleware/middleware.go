@@ -13,7 +13,6 @@ import (
 
 	"github.com/alonsosss/corforce-email/pkg/auth"
 	"github.com/go-chi/chi/v5/middleware"
-	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
@@ -23,11 +22,11 @@ type contextKey string
 const (
 	CtxUserID contextKey = "user_id"
 	// CtxCSPNonce lleva el nonce de la respuesta en curso hasta quien sirve el HTML.
-	CtxCSPNonce     contextKey = "csp_nonce"
-	CtxTenantID     contextKey = "tenant_id"
-	CtxRoles        contextKey = "roles"
-	CtxRequestID    contextKey = "request_id"
-	CtxClientIP     contextKey = "client_ip"
+	CtxCSPNonce  contextKey = "csp_nonce"
+	CtxTenantID  contextKey = "tenant_id"
+	CtxRoles     contextKey = "roles"
+	CtxRequestID contextKey = "request_id"
+	CtxClientIP  contextKey = "client_ip"
 	// CtxTokenIssuedAt lleva el iat (epoch unix) del access token, para que el gateway
 	// pueda rechazar tokens emitidos antes del epoch de revocacion del usuario.
 	CtxTokenIssuedAt contextKey = "token_iat"
@@ -256,19 +255,14 @@ func SecureHeaders(next http.Handler) http.Handler {
 	})
 }
 
+// JWTAuth autentica el token de acceso con las claves PUBLICAS de identity: quien verifica
+// no tiene con que firmar, asi que un servicio comprometido no puede forjar una sesion.
 type JWTAuth struct {
-	secret []byte
+	verifier *auth.Verifier
 }
 
-func NewJWTAuth(secret string) *JWTAuth {
-	return &JWTAuth{secret: []byte(secret)}
-}
-
-type Claims struct {
-	UserID      string   `json:"uid"`
-	TenantID    string   `json:"tid"`
-	Roles       []string `json:"roles"`
-	jwt.RegisteredClaims
+func NewJWTAuth(verifier *auth.Verifier) *JWTAuth {
+	return &JWTAuth{verifier: verifier}
 }
 
 func (j *JWTAuth) Authenticate(next http.Handler) http.Handler {
@@ -285,14 +279,8 @@ func (j *JWTAuth) Authenticate(next http.Handler) http.Handler {
 			return
 		}
 
-		claims := &Claims{}
-		token, err := jwt.ParseWithClaims(parts[1], claims, func(t *jwt.Token) (interface{}, error) {
-			if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
-				return nil, jwt.ErrSignatureInvalid
-			}
-			return j.secret, nil
-		}, jwt.WithIssuer(auth.Issuer), jwt.WithExpirationRequired())
-		if err != nil || !token.Valid {
+		claims, err := j.verifier.ParseAccess(parts[1])
+		if err != nil {
 			http.Error(w, `{"error":"invalid or expired token"}`, http.StatusUnauthorized)
 			return
 		}
@@ -306,20 +294,6 @@ func (j *JWTAuth) Authenticate(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
-}
-
-func (j *JWTAuth) ParseToken(tokenStr string) (*Claims, error) {
-	claims := &Claims{}
-	token, err := jwt.ParseWithClaims(tokenStr, claims, func(t *jwt.Token) (interface{}, error) {
-		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, jwt.ErrSignatureInvalid
-		}
-		return j.secret, nil
-	}, jwt.WithIssuer(auth.Issuer), jwt.WithExpirationRequired())
-	if err != nil || !token.Valid {
-		return nil, err
-	}
-	return claims, nil
 }
 
 // WithIdentity fija la identidad de un contexto SIN pasar por una petición HTTP.
@@ -395,8 +369,9 @@ func RequireGatewayToken(next http.Handler) http.Handler {
 // obtener el token. Stateless: se valida por firma, sin consultar ningun store, asi
 // que no anade latencia ni depende de infraestructura extra.
 //
-// Debe ir DESPUES de InjectFromGateway (necesita X-User-ID en el contexto).
-func RequireStepUp(secret string) func(http.Handler) http.Handler {
+// Debe ir DESPUES de InjectFromGateway (necesita X-User-ID en el contexto). El verificador
+// es el del emisor (auth.IssuerKeySet); sin el, en enforce, ninguna peticion pasa.
+func RequireStepUp(verifier *auth.Verifier) func(http.Handler) http.Handler {
 	// STEP_UP_MODE: off (default) | enforce. Arranca en off para no romper a los
 	// clientes que aun no piden el token de step-up; se sube a enforce cuando el
 	// frontend ya intercepta STEP_UP_REQUIRED y reenvia la cabecera. Mismo patron
@@ -413,7 +388,7 @@ func RequireStepUp(secret string) func(http.Handler) http.Handler {
 				stepUpRequired(w)
 				return
 			}
-			uid, _, err := auth.ValidateStepUp(secret, tok)
+			uid, _, err := verifier.ParseStepUp(tok)
 			if err != nil {
 				stepUpRequired(w)
 				return

@@ -125,7 +125,13 @@ contains "ni en la base de otra celda" "$(como_celda mail_cell_pe_02)" "permissi
 
 # ── Entorno comun ────────────────────────────────────────────────────────────
 export ENVIRONMENT=development
-export JWT_SECRET; JWT_SECRET="$(rand_hex 48)"
+# Par de firma del token de acceso con la herramienta de operacion. La privada solo la
+# recibe identity (arrancar); el gateway verifica con la publica.
+CLAVES_JWT="$(bash ops/security/jwt-keygen.sh --privada "$WORK/jwt-signing-key" 2>/dev/null)" || { echo "jwt-keygen.sh fallo" >&2; exit 1; }
+export JWT_SIGNING_KID JWT_PUBLIC_KEYS
+JWT_SIGNING_KID="$(sed -n 's/^JWT_SIGNING_KID=//p' <<<"$CLAVES_JWT")"
+JWT_PUBLIC_KEYS="$(sed -n 's/^JWT_PUBLIC_KEY_ENTRY=//p' <<<"$CLAVES_JWT")"
+export JWT_SIGNING_KEY; JWT_SIGNING_KEY="$(sed -n 's/^JWT_SIGNING_KEY=//p' "$WORK/jwt-signing-key")"
 export INTERNAL_GATEWAY_TOKEN; INTERNAL_GATEWAY_TOKEN="$(rand_hex 24)"
 export MAIL_ENCRYPTION_KEY; MAIL_ENCRYPTION_KEY="$(rand_hex 32)"
 export MAIL_LINK_SIGNING_KEY; MAIL_LINK_SIGNING_KEY="$(rand_hex 32)"
@@ -181,11 +187,14 @@ export CAMPAIGNS_TICK=1s
 # Los servicios de la celda arrancan con SU credencial y sin la de plataforma: un permiso que
 # le falte al rol de la celda hace fallar las comprobaciones del correo de mas abajo.
 SERVICIOS_DE_CELDA=" mail-directory mail-auth mail-security "
+# La clave de firma del token solo la recibe identity, como en docker-compose.yml.
 arrancar() {
+  local sin_firma=(-u JWT_SIGNING_KEY)
+  [[ "$1" == identity ]] && sin_firma=()
   if [[ "$SERVICIOS_DE_CELDA" == *" $1 "* ]]; then
-    env -u POSTGRES_PASSWORD CELL_DB_PASSWORD="$CELL_PASS" "$WORK/bin/$1" >"$WORK/log/$1.log" 2>&1 &
+    env -u POSTGRES_PASSWORD "${sin_firma[@]}" CELL_DB_PASSWORD="$CELL_PASS" "$WORK/bin/$1" >"$WORK/log/$1.log" 2>&1 &
   else
-    "$WORK/bin/$1" >"$WORK/log/$1.log" 2>&1 &
+    env "${sin_firma[@]}" "$WORK/bin/$1" >"$WORK/log/$1.log" 2>&1 &
   fi
 }
 esperar_salud() {
@@ -231,6 +240,42 @@ T1=$(echo "$L1" | jget data.access_token)
 [[ -n "$T1" ]] && ok "login del superadmin" || { mal "login del superadmin: ${L1:0:200}"; exit 1; }
 A1="Authorization: Bearer $T1"
 contains "el superadmin lista celdas" "$(curl -s "$GW/cells" -H "$A1")" '"code":"pe-01"'
+
+echo "== Firma del token de acceso"
+cabecera() {
+  python3 -c 'import sys, json, base64; h = sys.argv[1].split(".")[0]; print(json.dumps(json.loads(base64.urlsafe_b64decode(h + "=" * (-len(h) % 4))), sort_keys=True))' "$1" 2>/dev/null
+}
+expect "identity firma con EdDSA y el kid vigente" "$(cabecera "$T1")" "{\"alg\": \"EdDSA\", \"kid\": \"$JWT_SIGNING_KID\", \"typ\": \"at+jwt\"}"
+# forjar <alg>: los mismos claims del superadmin sin la clave de identity. HS256 usa como
+# secreto la clave PUBLICA, que conoce cualquiera: la confusion de algoritmo clasica.
+forjar() {
+  python3 - "$1" "$T1" <<'PY'
+import base64, hashlib, hmac, json, os, sys
+alg, real = sys.argv[1], sys.argv[2]
+b64 = lambda b: base64.urlsafe_b64encode(b).rstrip(b"=").decode()
+kid, publica = os.environ["JWT_PUBLIC_KEYS"].split(":", 1)
+cuerpo = b64(json.dumps({"alg": alg, "kid": kid, "typ": "at+jwt"}).encode()) + "." + real.split(".")[1]
+firma = "" if alg == "none" else b64(hmac.new(base64.b64decode(publica), cuerpo.encode(), hashlib.sha256).digest())
+print(cuerpo + "." + firma)
+PY
+}
+for alg in HS256 none; do
+  expect "un token $alg con los claims del superadmin se rechaza" \
+    "$(curl -s -o /dev/null -w '%{http_code}' "$GW/cells" -H "Authorization: Bearer $(forjar "$alg")")" "401"
+done
+# Sin su material de claves, identity (en produccion) y el gateway no arrancan.
+falla_cerrado() {
+  local nombre="$1" mensaje="$2" log="$WORK/fail-closed-$1.log"; shift 2
+  env "$@" timeout 20 "$WORK/bin/$nombre" >"$log" 2>&1
+  local rc=$?
+  if [[ $rc -ne 0 && $rc -ne 124 ]] && grep -q "$mensaje" "$log"; then
+    ok "sin claves $nombre no arranca"
+  else
+    mal "$nombre sin claves (salida $rc): $(head -c 300 "$log")"
+  fi
+}
+falla_cerrado identity 'JWT_SIGNING_KEY is required' -u JWT_SIGNING_KEY -u JWT_SIGNING_KID ENVIRONMENT=production IDENTITY_PORT=$((BASE + 97))
+falla_cerrado gateway 'JWT_PUBLIC_KEYS is required' -u JWT_PUBLIC_KEYS GATEWAY_PORT=$((BASE + 98))
 
 TENANT_PASS="$(rand_hex 12)Aa1!"
 ORG=$(curl -s -X POST "$GW/organizations" -H "$A1" -H 'Content-Type: application/json' \

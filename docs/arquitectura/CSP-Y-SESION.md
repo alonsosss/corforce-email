@@ -33,6 +33,54 @@ Cada `fe-*` empaqueta su copia de `@cp/api-client`. Uno solo con código viejo (
 `localStorage`) recibe 401 en todas sus llamadas. Reconstruir solo el shell deja media
 aplicación sin sesión.
 
+## Firma del access token
+
+`identity` firma con **EdDSA (Ed25519)** y una clave privada que solo él recibe
+(`JWT_SIGNING_KEY`, almacén de secretos). `docker-compose.yml` la vacía en todos los demás
+servicios y `ops/security/secrets/check-secrets.sh` falla si un servicio la hereda. La
+cabecera lleva `kid` (la clave con que se firmó, `JWT_SIGNING_KID`) y `typ`. El gateway
+verifica con las claves **públicas** de `JWT_PUBLIC_KEYS` (entradas `kid:clave` separadas
+por comas, configuración no secreta): no tiene con qué firmar, así que un servicio
+comprometido, los de celda incluidos, no puede forjar una sesión. Antes todos recibían
+`JWT_SECRET` (HS256) y cualquiera de ellos podía emitir un token que el gateway aceptaba.
+`JWT_SECRET` ya no existe.
+
+El verificador (`pkg/auth.Verifier`) rechaza:
+
+* cualquier `alg` distinto de `EdDSA`: `none`, HS256 (también el firmado con la clave
+  pública como secreto) y el resto. El algoritmo está fijado en código, no se lee del token;
+* un `kid` ausente o que no esté entre las públicas aceptadas, y una firma que no verifica
+  con la clave de ese `kid`;
+* un `typ` distinto del esperado: `at+jwt` (acceso), `mfa-challenge+jwt` (reto MFA) o
+  `step-up+jwt`. Los tres salen de la misma clave. Con HS256 y sin tipo, el token de reto
+  MFA, que se emite tras la contraseña y antes del segundo factor, pasaba el gateway como
+  sesión;
+* un emisor distinto de `core-force-mail`, `exp` ausente o vencido, y un token de acceso
+  sin `uid` o sin `tid`.
+
+Formatos: privada PKCS#8 DER y pública SubjectPublicKeyInfo DER, las dos en base64 estándar
+de una línea (el almacén no admite saltos de línea); `kid` de 1 a 64 caracteres
+`[A-Za-z0-9._-]`. `ops/security/jwt-keygen.sh` genera el par y un `kid` `AAAAMMDD-xxxxxxxx`.
+
+Arranque, fallando cerrado: sin `JWT_PUBLIC_KEYS` el gateway no arranca. Sin clave de firma
+identity tampoco, salvo con `ENVIRONMENT` declarado `development` o `test`, donde firma con
+un par efímero y lo avisa con su clave pública. Si `JWT_PUBLIC_KEYS` está fijada, tiene que
+publicar la clave de firma bajo su `kid`, o identity no arranca: el gateway rechazaría todo
+lo que emite.
+
+Rotación: el verificador acepta varias públicas a la vez y identity firma solo con la
+vigente. Pasos en `docs/Operacion_Despliegue.md` (2).
+
+**Paso de HS256 a EdDSA sin transición.** El gateway nunca acepta HS256, tampoco durante
+el despliegue. El access token dura 5 minutos y el refresh es opaco en base de datos, sin
+firma, así que no le afecta el cambio. El primer 401 lo resuelve el cliente: renueva una
+vez y reintenta (`web/src/api/client.ts`), sin volver a iniciar sesión. Como mucho se
+pierden un reto MFA a medias (se vuelve a escribir la contraseña) y un step-up vigente (se
+reconfirma). Aceptar HS256 durante una ventana habría obligado a devolver al gateway el
+secreto compartido que se quería retirar.
+
+Probado en `pkg/auth`, `services/identity`, `services/gateway` y `make e2e`.
+
 ## CSP
 
 Se fija en `pkg/middleware.SecureHeaders`. `script-src` usa **nonce por respuesta** y
