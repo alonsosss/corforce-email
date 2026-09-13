@@ -71,6 +71,11 @@ administrador de marketing) y un buzon sin usuario (una cuenta compartida). El w
 (fase 2) autentica contra el buzon, no contra identity, y `mail-auth` aplica la misma
 politica de bloqueo y el mismo registro de inicios (`mail.sasl_logins`).
 
+V: `mail-auth` verifica hoy contrasena principal y de aplicacion con bcrypt, deniega
+`active <> 1` y el protocolo sin flag, frena por `(username, IP)` y por IP en Redis y
+escribe `mail.sasl_logins`; expone los inicios de un buzon por
+`GET /internal/mail-auth/logins` acotado por `X-Tenant-ID`. P: el webmail que lo consuma.
+
 ## 6. Auditoria de acceso (V)
 
 Todo inicio, fallo, bloqueo, logout y revocacion publica `identity.*`; el gateway publica

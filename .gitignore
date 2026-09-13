@@ -25,8 +25,20 @@ __pycache__/
 *.pyo
 .venv/
 
-# Binario del gateway compilado a mano en su carpeta (artefacto local)
-services/gateway/gateway
+# Binarios Go compilados a mano (go build sin -o deja el binario en la raiz o en la
+# carpeta del servicio); el codigo vive en services/ y las imagenes se construyen en CI
+/gateway
+/identity
+/access-control
+/organization
+/audit
+/scheduler
+/mail-*
+/domain-service
+/suppression
+/templates
+/transactional
+services/*/gateway
 
 # Artefactos TypeScript sueltos bajo src/ (la salida real va a dist/)
 web/**/src/**/*.js

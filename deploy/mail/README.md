@@ -164,6 +164,23 @@ usuario. El servicio debe validar contrasena principal y `mail.app_passwords`
 `imap_access`/`pop3_access`/`smtp_access`/`sieve_access`, y registrar el login en
 `mail.sasl_logins`. Dovecot cachea resultados 300 s (negativos 60 s).
 
+Lo implementa `services/mail-auth`: listener TLS en `MAIL_AUTH_TLS_PORT` (9082)
+con `MAIL_AUTH_TLS_CERT`/`MAIL_AUTH_TLS_KEY` (sin ellos, certificado autofirmado
+en memoria avisado en log); `POST /` y `POST /auth`; `service` se traduce a flag
+(`imap`, `pop3`, `smtp`/`submission`/`lmtp` -> `smtp_access`,
+`sieve`/`managesieve` -> `sieve_access`; cualquier otro se deniega); bcrypt sobre
+la contrasena principal y despues sobre las de aplicacion activas con ese flag
+(actualiza `last_used_at`); `active = 2` y `active = 0` no entran;
+`force_pw_update` no bloquea. Freno de fuerza bruta en el Redis de la plataforma
+por `(username, real_rip)` y por `real_rip` (`MAIL_AUTH_MAX_FAILURES` 10,
+`MAIL_AUTH_MAX_FAILURES_PER_IP` 50, `MAIL_AUTH_FAILURE_WINDOW` 15m,
+`MAIL_AUTH_LOCK_TTL` 30m); sin Redis arranca sin freno y lo avisa. Metrica
+`mail_auth_attempts_total{service,result}`. El listener HTTP de `MAIL_AUTH_PORT`
+(8041) solo sirve `/healthz`, `/metrics` y
+`GET /internal/mail-auth/logins?username=&limit=` (tras `X-Gateway-Token` +
+`X-Tenant-ID`). El contenedor debe unirse a `mail-engines` con el alias
+`mail-auth`.
+
 ## Contrato HTTP de `mail-policy`
 
 Todos los endpoints son HTTP plano en la red interna. Los cuerpos de respuesta

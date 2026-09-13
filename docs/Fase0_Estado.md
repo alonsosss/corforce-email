@@ -18,9 +18,12 @@ cambie cualquiera de estas líneas.
 
 ## Pendientes que dejan los motores (fase 2)
 
-* `mail-auth` (contrato en `deploy/mail/README.md`: `POST /` JSON, 200/401) y `mail-policy`
-  (8081: `aliasexp`, `bcc`, `footer`, `forwardinghosts`, `settings` con regla `watchdog`;
-  9081: `pipe`, `pipe_rl`) más el contrato Redis (`DOMAIN_MAP`, `DKIM_*`, `RL_VALUE`, ...).
+* `mail-auth` está implementado (`services/mail-auth`, contrato en `deploy/mail/README.md`;
+  probado contra el esquema `mail` real y con Redis, 2026-09-12) pero falta declararlo en
+  `docker-compose.yml` unido a la red `mail-engines` con alias `mail-auth`. Queda
+  `mail-policy` (8081: `aliasexp`, `bcc`, `footer`, `forwardinghosts`, `settings` con regla
+  `watchdog`; 9081: `pipe`, `pipe_rl`) más el contrato Redis (`DOMAIN_MAP`, `DKIM_*`,
+  `RL_VALUE`, ...).
 * Tablas que los motores esperan y el esquema aún no tiene: `quarantine` y las políticas
   antispam por objeto (`mail_security`), pie de página por dominio, `mta_sts` (acme).
 * El gateway debe servir `/.well-known/acme-challenge/` o usarse `ACME_DNS_CHALLENGE=y`.
