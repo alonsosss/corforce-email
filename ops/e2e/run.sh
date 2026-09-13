@@ -4,7 +4,8 @@
 # alta de celda y empresa, acceso por el gateway con sus tres capas, dominio y buzon en
 # la celda, propagacion a Redis por eventos, mapas de los motores, plantillas, supresion,
 # planes y derechos de billing, autorizacion de envio en reputation, alcance de permisos,
-# contactos con su consentimiento y audiencia, y el panel de analitica.
+# contactos con su consentimiento y audiencia, campanas por la via de marketing de
+# transactional (hasta su rechazo por remitente sin verificar, sin SES) y el panel de analitica.
 #
 # Cada paso COMPRUEBA su resultado y la ejecucion termina con error si alguno falla: no
 # basta con que los servicios arranquen, tienen que hablarse. Las credenciales se generan
@@ -13,16 +14,27 @@
 # Uso:
 #   make e2e
 #   E2E_KEEP=1 make e2e          # deja contenedores y binarios para inspeccionar
-#   E2E_PORT_BASE=48000 make e2e # otro rango de puertos si 58000-58099 esta ocupado
+#   E2E_PORT_BASE=26000 make e2e # otro rango si 28000-28099 esta ocupado
+#
+# Los puertos quedan por debajo del rango efimero del sistema: dentro de el, el kernel
+# puede dar el puerto de un servicio a una conexion saliente justo antes de que el
+# servicio lo abra ("address already in use" sin nadie escuchando despues).
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 
-BASE="${E2E_PORT_BASE:-58000}"
+BASE="${E2E_PORT_BASE:-28000}"
 PG_PORT="${E2E_PG_PORT:-$((BASE - 2568))}"
 NATS_PORT="${E2E_NATS_PORT:-$((BASE - 3778))}"
 REDIS_PORT="${E2E_REDIS_PORT:-$((BASE - 1621))}"
+read -r EFIMERO_MIN EFIMERO_MAX < /proc/sys/net/ipv4/ip_local_port_range 2>/dev/null || EFIMERO_MIN=32768 EFIMERO_MAX=60999
+for p in "$PG_PORT" "$NATS_PORT" "$REDIS_PORT" "$BASE" "$((BASE + 99))"; do
+  if (( p >= EFIMERO_MIN && p <= EFIMERO_MAX )); then
+    echo "E2E: el puerto $p cae en el rango efimero $EFIMERO_MIN-$EFIMERO_MAX; usa otro E2E_PORT_BASE" >&2
+    exit 2
+  fi
+done
 WORK="$(mktemp -d)"
 PREFIX="cfm-e2e"
 export PG_CONTAINER="$PREFIX-pg"
@@ -83,7 +95,7 @@ docker run -d --name "$PREFIX-nats" -p "127.0.0.1:$NATS_PORT:4222" nats:2.10-alp
 docker run -d --name "$PREFIX-redis" -p "127.0.0.1:$REDIS_PORT:6379" redis:7.4.10-alpine >/dev/null || exit 1
 for _ in $(seq 1 40); do docker exec "$PREFIX-pg" pg_isready -U mail_admin -d mail_registry >/dev/null 2>&1 && break; sleep 1; done
 
-SERVICES=(organization identity access-control gateway mail-directory mail-auth domain-service mail-security templates suppression billing reputation contacts analytics)
+SERVICES=(organization identity access-control gateway mail-directory mail-auth domain-service mail-security templates suppression billing reputation contacts analytics transactional campaigns)
 echo "== Compilacion (${SERVICES[*]})"
 mkdir -p "$WORK/bin" "$WORK/log"
 for s in "${SERVICES[@]}"; do go build -o "$WORK/bin/$s" "./services/$s" || { echo "no compila $s" >&2; exit 1; }; done
@@ -113,7 +125,7 @@ export CORS_ALLOWED_ORIGINS=http://localhost:3000
 declare -A PORT=(
   [identity]=$((BASE + 1)) [access-control]=$((BASE + 2)) [organization]=$((BASE + 3))
   [mail-directory]=$((BASE + 40)) [mail-auth]=$((BASE + 41)) [mail-security]=$((BASE + 42)) [domain-service]=$((BASE + 43))
-  [suppression]=$((BASE + 46)) [templates]=$((BASE + 47)) [contacts]=$((BASE + 50)) [analytics]=$((BASE + 53)) [reputation]=$((BASE + 54)) [billing]=$((BASE + 55))
+  [suppression]=$((BASE + 46)) [templates]=$((BASE + 47)) [transactional]=$((BASE + 45)) [contacts]=$((BASE + 50)) [campaigns]=$((BASE + 52)) [analytics]=$((BASE + 53)) [reputation]=$((BASE + 54)) [billing]=$((BASE + 55))
   [gateway]=$((BASE + 80))
 )
 MAPS_PORT=$((BASE + 81))
@@ -124,12 +136,13 @@ export IDENTITY_PORT=${PORT[identity]} ACCESS_CONTROL_PORT=${PORT[access-control
 export MAIL_DIRECTORY_PORT=${PORT[mail-directory]} MAIL_SECURITY_PORT=${PORT[mail-security]} DOMAIN_SERVICE_PORT=${PORT[domain-service]}
 export SUPPRESSION_PORT=${PORT[suppression]} TEMPLATES_PORT=${PORT[templates]} GATEWAY_PORT=${PORT[gateway]}
 export BILLING_PORT=${PORT[billing]} REPUTATION_PORT=${PORT[reputation]} CONTACTS_PORT=${PORT[contacts]} ANALYTICS_PORT=${PORT[analytics]}
+export TRANSACTIONAL_PORT=${PORT[transactional]} CAMPAIGNS_PORT=${PORT[campaigns]}
 export MAIL_POLICY_MAPS_PORT=$MAPS_PORT MAIL_POLICY_EXPORT_PORT=$EXPORT_PORT
 export MAIL_AUTH_PORT=${PORT[mail-auth]} MAIL_AUTH_TLS_PORT=$AUTH_TLS_PORT
 export API_ORIGIN="http://localhost:${PORT[gateway]}" PUBLIC_BASE_URL="http://localhost:${PORT[gateway]}"
 # Direcciones internas: las que el gateway lee de routes.json por <SERVICIO>_HOST(_PORT) y
 # las que los servicios usan entre si.
-for s in identity access-control organization mail-directory mail-security domain-service suppression templates billing reputation contacts analytics; do
+for s in identity access-control organization mail-directory mail-security domain-service suppression templates billing reputation contacts analytics transactional campaigns; do
   var="$(echo "$s" | tr 'a-z-' 'A-Z_')_HOST"
   export "$var=127.0.0.1" "${var}_PORT=${PORT[$s]}"
 done
@@ -142,6 +155,12 @@ export BILLING_URL="http://127.0.0.1:${PORT[billing]}" REPUTATION_URL="http://12
 # de produccion (una empresa sin suscripcion no tiene derechos).
 while IFS= read -r linea; do export "$linea"; done < <(grep -E '^REPUTATION_(WINDOW|MIN_VOLUME|BOUNCE|COMPLAINT|DEFAULT)' .env.example)
 export BILLING_ENFORCE=true
+export TRANSACTIONAL_URL="http://127.0.0.1:${PORT[transactional]}" CONTACTS_URL="http://127.0.0.1:${PORT[contacts]}"
+# SES sin credenciales: la prueba nunca llega a enviar (el remitente no esta verificado), y
+# el cliente de AWS solo pide credenciales al enviar.
+export SES_REGION=us-east-1 SES_CONFIG_SET_TRANSACTIONAL=cfm-transactional SES_CONFIG_SET_MARKETING=cfm-marketing
+export PLATFORM_FROM_EMAIL=no-reply@platform.test PLATFORM_FROM_NAME="Core Force Mail" PLATFORM_FROM_ALLOW_UNVERIFIED=false
+export CAMPAIGNS_TICK=1s
 
 arrancar() { "$WORK/bin/$1" >"$WORK/log/$1.log" 2>&1 & }
 esperar_salud() {
@@ -149,7 +168,10 @@ esperar_salud() {
     [[ "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$2/healthz")" == 200 ]] && return 0
     sleep 0.5
   done
-  mal "$1 no responde en /healthz"; tail -5 "$WORK/log/$1.log" >&2; return 1
+  mal "$1 no responde en /healthz"; tail -5 "$WORK/log/$1.log" >&2
+  # Si el puerto lo tiene otro proceso, decir cual: un choque de puertos no se ve en el log.
+  ss -ltnp 2>/dev/null | grep ":$2 " >&2
+  return 1
 }
 
 echo "== Plano de control"
@@ -161,7 +183,7 @@ ADMIN_PASS="$(rand_hex 12)Aa1!"
 PGHOST=127.0.0.1 PLATFORM_ADMIN_EMAIL=root@platform.test PLATFORM_ADMIN_PASSWORD="$ADMIN_PASS" \
   bash ops/db/bootstrap-platform.sh --cell pe-01 --region sa-east-1 >/dev/null || mal "bootstrap-platform.sh"
 
-ARRANQUE=(identity access-control mail-directory mail-auth domain-service mail-security templates suppression billing reputation contacts analytics gateway)
+ARRANQUE=(identity access-control mail-directory mail-auth domain-service mail-security templates suppression billing reputation contacts analytics transactional campaigns gateway)
 for s in "${ARRANQUE[@]}"; do arrancar "$s"; done
 for s in "${ARRANQUE[@]}"; do esperar_salud "$s" "${PORT[$s]}"; done
 
@@ -317,6 +339,33 @@ expect "revocar el consentimiento queda como evidencia" \
 [[ "$(audiencia)" != *lucia@cliente.test* ]] && ok "sin consentimiento sale de la audiencia" || mal "la audiencia conserva un contacto sin consentimiento"
 expect "y no se vuelve a conceder sin doble opt-in" \
   "$(codigo -X POST "$GW/contacts/$CTID/consent" -H "$A2" -H 'Content-Type: application/json' -d '{"status":"granted","method":"api","source":"e2e"}')" "409"
+
+echo "== Campanas (campaigns -> contacts -> transactional)"
+CT2=$(curl -s -X POST "$GW/contacts" -H "$A2" -H 'Content-Type: application/json' \
+  -d '{"email":"marta@cliente.test","first_name":"Marta","source":"api","consent":{"status":"granted","method":"api","source":"e2e"}}' | jget data.id)
+expect "un contacto enviable entra en la lista" \
+  "$(curl -s -X POST "$GW/contacts/lists/$LID/members" -H "$A2" -H 'Content-Type: application/json' -d "{\"contact_ids\":[\"$CT2\"]}" | jget data.added)" "1"
+TMID=$(curl -s -X POST "$GW/templates" -H "$A2" -H 'Content-Type: application/json' \
+  -d '{"name":"novedades","kind":"marketing","subject":"Novedades","html":"<p>Novedades de Acme</p><p><a href=\"{{.unsubscribe_url}}\">Darse de baja</a></p>","variables":[]}' | jget data.id)
+expect "plantilla de marketing publicada" "$(codigo -X POST "$GW/templates/$TMID/versions/1/publish" -H "$A2")" "200"
+CP=$(curl -s -X POST "$GW/campaigns" -H "$A2" -H 'Content-Type: application/json' \
+  -d "{\"name\":\"Lanzamiento\",\"template_id\":\"$TMID\",\"from_email\":\"hola@acme.test\",\"from_name\":\"Acme\",\"audience\":{\"list_ids\":[\"$LID\"]}}")
+CPID=$(echo "$CP" | jget data.id)
+expect "campana en borrador" "$(echo "$CP" | jget data.status)" "draft"
+expect "el envio de prueba respeta el remitente sin verificar" \
+  "$(curl -s -X POST "$GW/campaigns/$CPID/test" -H "$A2" -H 'Content-Type: application/json' -d '{"emails":["qa@cliente.test"],"template_version":1}' | jget error.code)" \
+  "SENDING_DOMAIN_NOT_VERIFIED"
+c=$(codigo -X POST "$GW/campaigns/$CPID/start" -H "$A2" -H 'Content-Type: application/json' -d '{"template_version":1}')
+[[ "$c" =~ ^20[02]$ ]] && ok "la campana arranca" || mal "arranque de campana: $c"
+estado=""
+for _ in $(seq 1 40); do
+  estado=$(curl -s "$GW/campaigns/$CPID" -H "$A2" | jget data.status)
+  [[ "$estado" == failed || "$estado" == completed ]] && break; sleep 0.5
+done
+expect "el orquestador recorre la audiencia y transactional rechaza el lote" "$estado" "failed"
+contains "con el motivo de transactional" "$(curl -s "$GW/campaigns/$CPID" -H "$A2" | jget data.failure_reason)" "SENDING_DOMAIN_NOT_VERIFIED"
+expect "ningun mensaje de marketing llego a encolarse" \
+  "$(sql mail_tenant_acme "SELECT count(*) FROM transactional.messages WHERE class = 'marketing'")" "0"
 
 echo "== Analitica"
 expect "el panel responde sin envios" "$(curl -s "$GW/analytics/overview" -H "$A2" | jget data.totals.sent)" "0"
