@@ -1,0 +1,23 @@
+// Rutas de la aplicacion. Sin imports: lo consumen el enrutador, el menu y las pantallas
+// sin crear ciclos entre modulos.
+export const paths = {
+  home: '/',
+  login: '/login',
+  forgotPassword: '/forgot-password',
+  resetPassword: '/reset-password',
+  sessionExpired: '/session-expired',
+  account: '/account',
+  users: '/users',
+  user: (id: string) => `/users/${encodeURIComponent(id)}`,
+  roles: '/roles',
+  role: (id: string) => `/roles/${encodeURIComponent(id)}`,
+  denials: '/access/denials',
+  sessions: '/sessions',
+  organizations: '/organizations',
+  organization: (id: string) => `/organizations/${encodeURIComponent(id)}`,
+  migrations: '/organizations/migrations',
+  cells: '/cells',
+  auditLogs: '/audit/logs',
+  securityEvents: '/audit/security-events',
+  integrity: '/audit/integrity',
+} as const;

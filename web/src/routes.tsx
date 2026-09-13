@@ -1,0 +1,140 @@
+import { lazy, Suspense, type ComponentType } from 'react';
+import { createBrowserRouter, Navigate, RouterProvider } from 'react-router-dom';
+import { MODULES, type ModuleName } from '@/access/modules';
+import { SYSTEM_ROLES, type SystemRole } from '@/access/roles';
+import { RequireAuth } from '@/layout/RequireAuth';
+import { RequireModule } from '@/layout/RequireModule';
+import { Shell } from '@/layout/Shell';
+import { LoadingBlock } from '@/design/components';
+
+import { paths } from '@/paths';
+
+// Unico lugar donde se declaran las pantallas y como se cargan. El menu (layout/nav.ts)
+// solo puede apuntar a rutas de aqui; un test lo verifica.
+type PageLoader = () => Promise<{ default: ComponentType }>;
+
+export interface ScreenDecl {
+  /** Ruta absoluta; :param para segmentos dinamicos. */
+  path: string;
+  /** Modulo de permiso que debe tener el usuario para entrar. Ausente = cualquier sesion. */
+  module?: ModuleName;
+  /** Rol del sistema que exige el handler ademas del modulo. El superadmin siempre pasa. */
+  role?: SystemRole;
+  load: PageLoader;
+}
+
+export const PUBLIC_SCREENS: readonly ScreenDecl[] = [
+  { path: paths.login, load: () => import('@/pages/auth/LoginPage') },
+  { path: paths.forgotPassword, load: () => import('@/pages/auth/ForgotPasswordPage') },
+  { path: paths.resetPassword, load: () => import('@/pages/auth/ResetPasswordPage') },
+  { path: paths.sessionExpired, load: () => import('@/pages/auth/SessionExpiredPage') },
+];
+
+export const SCREENS: readonly ScreenDecl[] = [
+  { path: paths.home, load: () => import('@/pages/home/HomePage') },
+  { path: paths.account, load: () => import('@/pages/account/AccountPage') },
+  { path: paths.users, module: MODULES.identity, load: () => import('@/pages/users/UsersPage') },
+  {
+    path: `${paths.users}/:id`,
+    module: MODULES.identity,
+    load: () => import('@/pages/users/UserDetailPage'),
+  },
+  { path: paths.roles, module: MODULES.access, load: () => import('@/pages/roles/RolesPage') },
+  {
+    path: `${paths.roles}/:id`,
+    module: MODULES.access,
+    load: () => import('@/pages/roles/RoleDetailPage'),
+  },
+  { path: paths.denials, module: MODULES.access, load: () => import('@/pages/access/DenialsPage') },
+  {
+    path: paths.sessions,
+    module: MODULES.identity,
+    role: SYSTEM_ROLES.tenantAdmin,
+    load: () => import('@/pages/sessions/SessionsPage'),
+  },
+  {
+    path: paths.organizations,
+    module: MODULES.organization,
+    load: () => import('@/pages/organizations/OrganizationsPage'),
+  },
+  {
+    path: paths.migrations,
+    module: MODULES.organization,
+    role: SYSTEM_ROLES.superadmin,
+    load: () => import('@/pages/organizations/MigrationsPage'),
+  },
+  {
+    path: `${paths.organizations}/:id`,
+    module: MODULES.organization,
+    load: () => import('@/pages/organizations/OrganizationDetailPage'),
+  },
+  {
+    path: paths.cells,
+    module: MODULES.organization,
+    role: SYSTEM_ROLES.superadmin,
+    load: () => import('@/pages/cells/CellsPage'),
+  },
+  {
+    path: paths.auditLogs,
+    module: MODULES.audit,
+    load: () => import('@/pages/audit/AuditLogsPage'),
+  },
+  {
+    path: paths.securityEvents,
+    module: MODULES.audit,
+    load: () => import('@/pages/audit/SecurityEventsPage'),
+  },
+  {
+    path: paths.integrity,
+    module: MODULES.audit,
+    load: () => import('@/pages/audit/IntegrityPage'),
+  },
+];
+
+const NotFoundPage = lazy(() => import('@/pages/NotFoundPage'));
+
+function lazyElement(load: PageLoader) {
+  const Page = lazy(load);
+  return (
+    <Suspense fallback={<LoadingBlock />}>
+      <Page />
+    </Suspense>
+  );
+}
+
+export function createAppRouter() {
+  return createBrowserRouter([
+    ...PUBLIC_SCREENS.map((screen) => ({ path: screen.path, element: lazyElement(screen.load) })),
+    {
+      element: <RequireAuth />,
+      children: [
+        {
+          element: <Shell />,
+          children: [
+            ...SCREENS.map((screen) => ({
+              path: screen.path,
+              element: (
+                <RequireModule module={screen.module} role={screen.role}>
+                  {lazyElement(screen.load)}
+                </RequireModule>
+              ),
+            })),
+            {
+              path: '*',
+              element: (
+                <Suspense fallback={<LoadingBlock />}>
+                  <NotFoundPage />
+                </Suspense>
+              ),
+            },
+          ],
+        },
+      ],
+    },
+    { path: '*', element: <Navigate to={paths.home} replace /> },
+  ]);
+}
+
+export function AppRoutes() {
+  return <RouterProvider router={createAppRouter()} />;
+}

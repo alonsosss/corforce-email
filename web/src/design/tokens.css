@@ -1,0 +1,153 @@
+/* Tokens del sistema de diseño. Modo claro por defecto; oscuro por [data-theme="dark"]. */
+
+:root {
+  --cf-brand-50: #eef3fb;
+  --cf-brand-100: #d6e1f3;
+  --cf-brand-200: #aec3e6;
+  --cf-brand-300: #7fa0d4;
+  --cf-brand-400: #4f7cbf;
+  --cf-brand-500: #2a5aa3;
+  --cf-brand-600: #1b3a6b;
+  --cf-brand-700: #152e55;
+  --cf-brand-800: #0f2240;
+  --cf-brand-900: #0a172c;
+
+  --cf-gray-50: #f8fafc;
+  --cf-gray-100: #f1f5f9;
+  --cf-gray-200: #e2e8f0;
+  --cf-gray-300: #cbd5e1;
+  --cf-gray-400: #94a3b8;
+  --cf-gray-500: #64748b;
+  --cf-gray-600: #475569;
+  --cf-gray-700: #334155;
+  --cf-gray-800: #1e293b;
+  --cf-gray-900: #0f172a;
+
+  --cf-success: #1f9d55;
+  --cf-success-soft: #e3f6ea;
+  --cf-success-strong: #146c3a;
+  --cf-warning: #d98b0b;
+  --cf-warning-soft: #fdf1d8;
+  --cf-warning-strong: #96600a;
+  --cf-danger: #d4373b;
+  --cf-danger-soft: #fce7e8;
+  --cf-danger-strong: #9b2226;
+  --cf-info: #1f7fc4;
+  --cf-info-soft: #e1f0fb;
+  --cf-info-strong: #145a8b;
+
+  --cf-bg: #f3f5f8;
+  --cf-surface: #ffffff;
+  --cf-surface-raised: #ffffff;
+  --cf-surface-hover: #f5f7fa;
+  --cf-surface-active: #eceff4;
+  --cf-surface-muted: #f8fafc;
+  --cf-border: #dfe4ec;
+  --cf-border-strong: #c3cbd8;
+  --cf-text: #16223b;
+  --cf-text-secondary: #56637a;
+  --cf-text-muted: #7b8698;
+  --cf-text-inverse: #ffffff;
+  --cf-link: #1b3a6b;
+  --cf-link-hover: #2a5aa3;
+
+  --cf-accent: #1b3a6b;
+  --cf-accent-hover: #152e55;
+  --cf-accent-contrast: #ffffff;
+  --cf-accent-soft: #eef3fb;
+  --cf-accent-soft-border: #d6e1f3;
+
+  --cf-focus-ring: 0 0 0 2px var(--cf-surface), 0 0 0 4px var(--cf-accent);
+  --cf-overlay: rgba(15, 23, 42, 0.45);
+
+  --cf-shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.06);
+  --cf-shadow: 0 1px 3px rgba(16, 24, 40, 0.08);
+  --cf-shadow-md: 0 6px 16px -6px rgba(16, 24, 40, 0.16);
+  --cf-shadow-lg: 0 16px 32px -12px rgba(16, 24, 40, 0.24);
+
+  --cf-space-1: 4px;
+  --cf-space-2: 8px;
+  --cf-space-3: 12px;
+  --cf-space-4: 16px;
+  --cf-space-5: 20px;
+  --cf-space-6: 24px;
+  --cf-space-8: 32px;
+  --cf-space-10: 40px;
+  --cf-space-12: 48px;
+
+  --cf-radius-sm: 3px;
+  --cf-radius: 5px;
+  --cf-radius-md: 7px;
+  --cf-radius-lg: 10px;
+  --cf-radius-full: 9999px;
+
+  --cf-font-sans:
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --cf-font-mono: 'SF Mono', 'Cascadia Code', 'Fira Code', Menlo, Consolas, monospace;
+
+  --cf-text-xs: 0.6875rem;
+  --cf-text-sm: 0.8125rem;
+  --cf-text-base: 0.875rem;
+  --cf-text-lg: 1rem;
+  --cf-text-xl: 1.125rem;
+  --cf-text-2xl: 1.375rem;
+  --cf-text-3xl: 1.75rem;
+
+  --cf-leading-tight: 1.25;
+  --cf-leading-normal: 1.5;
+
+  --cf-weight-normal: 400;
+  --cf-weight-medium: 500;
+  --cf-weight-semibold: 600;
+
+  --cf-duration: 150ms;
+  --cf-ease: cubic-bezier(0.4, 0, 0.2, 1);
+  --cf-transition: var(--cf-duration) var(--cf-ease);
+
+  --cf-sidebar-width: 240px;
+  --cf-topbar-height: 56px;
+  --cf-content-max: 1400px;
+
+  --cf-z-sticky: 900;
+  --cf-z-dropdown: 1000;
+  --cf-z-modal: 1100;
+  --cf-z-toast: 1200;
+}
+
+[data-theme='dark'] {
+  --cf-bg: #0d1220;
+  --cf-surface: #161c2a;
+  --cf-surface-raised: #1d2434;
+  --cf-surface-hover: #1f2738;
+  --cf-surface-active: #283245;
+  --cf-surface-muted: #131927;
+  --cf-border: #293246;
+  --cf-border-strong: #3b475f;
+  --cf-text: #eef2f8;
+  --cf-text-secondary: #a3aec2;
+  --cf-text-muted: #7f8ba3;
+  --cf-text-inverse: #0f172a;
+  --cf-link: #8db0ea;
+  --cf-link-hover: #a9c4f0;
+
+  --cf-accent: #7ea3e6;
+  --cf-accent-hover: #9bb8ec;
+  --cf-accent-contrast: #0d1220;
+  --cf-accent-soft: #1b2740;
+  --cf-accent-soft-border: #2c3c5c;
+
+  --cf-success-soft: #123322;
+  --cf-success-strong: #7ad9a1;
+  --cf-warning-soft: #3a2a0a;
+  --cf-warning-strong: #f0c169;
+  --cf-danger-soft: #3d1416;
+  --cf-danger-strong: #f39a9c;
+  --cf-info-soft: #0f2a3f;
+  --cf-info-strong: #86c2ee;
+
+  --cf-overlay: rgba(0, 0, 0, 0.6);
+  --cf-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --cf-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+  --cf-shadow-md: 0 10px 20px rgba(0, 0, 0, 0.45);
+  --cf-shadow-lg: 0 20px 36px rgba(0, 0, 0, 0.55);
+}
