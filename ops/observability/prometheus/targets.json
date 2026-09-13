@@ -10,11 +10,65 @@
   },
   {
     "targets": [
+      "analytics:8053"
+    ],
+    "labels": {
+      "job": "mail-services",
+      "service": "analytics"
+    }
+  },
+  {
+    "targets": [
       "audit:8030"
     ],
     "labels": {
       "job": "mail-services",
       "service": "audit"
+    }
+  },
+  {
+    "targets": [
+      "automations:8051"
+    ],
+    "labels": {
+      "job": "mail-services",
+      "service": "automations"
+    }
+  },
+  {
+    "targets": [
+      "billing:8055"
+    ],
+    "labels": {
+      "job": "mail-services",
+      "service": "billing"
+    }
+  },
+  {
+    "targets": [
+      "campaigns:8052"
+    ],
+    "labels": {
+      "job": "mail-services",
+      "service": "campaigns"
+    }
+  },
+  {
+    "targets": [
+      "contacts:8050"
+    ],
+    "labels": {
+      "job": "mail-services",
+      "service": "contacts"
+    }
+  },
+  {
+    "targets": [
+      "domain-service:8043"
+    ],
+    "labels": {
+      "job": "mail-services",
+      "service": "domain-service"
     }
   },
   {
@@ -37,6 +91,33 @@
   },
   {
     "targets": [
+      "mail-auth:8041"
+    ],
+    "labels": {
+      "job": "mail-services",
+      "service": "mail-auth"
+    }
+  },
+  {
+    "targets": [
+      "mail-directory:8040"
+    ],
+    "labels": {
+      "job": "mail-services",
+      "service": "mail-directory"
+    }
+  },
+  {
+    "targets": [
+      "mail-security:8042"
+    ],
+    "labels": {
+      "job": "mail-services",
+      "service": "mail-security"
+    }
+  },
+  {
+    "targets": [
       "organization:8003"
     ],
     "labels": {
@@ -46,11 +127,56 @@
   },
   {
     "targets": [
+      "reputation:8054"
+    ],
+    "labels": {
+      "job": "mail-services",
+      "service": "reputation"
+    }
+  },
+  {
+    "targets": [
       "scheduler:8033"
     ],
     "labels": {
       "job": "mail-services",
       "service": "scheduler"
+    }
+  },
+  {
+    "targets": [
+      "suppression:8046"
+    ],
+    "labels": {
+      "job": "mail-services",
+      "service": "suppression"
+    }
+  },
+  {
+    "targets": [
+      "templates:8047"
+    ],
+    "labels": {
+      "job": "mail-services",
+      "service": "templates"
+    }
+  },
+  {
+    "targets": [
+      "transactional:8045"
+    ],
+    "labels": {
+      "job": "mail-services",
+      "service": "transactional"
+    }
+  },
+  {
+    "targets": [
+      "webmail:8044"
+    ],
+    "labels": {
+      "job": "mail-services",
+      "service": "webmail"
     }
   }
 ]

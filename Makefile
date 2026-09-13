@@ -165,10 +165,12 @@ check-service-paths:
 e2e:
 	@bash ops/e2e/run.sh
 
-# make checks  (todo lo que corre CI sin docker, en un solo comando)
+# make checks  (todo lo que corre CI sin docker, en un solo comando; si CI anade un paso,
+# se anade aqui: un check que solo corre en CI deja pasar lo que rompe el despliegue)
 checks: build check-migrations check-migration-drops check-coupling check-silent-errors \
 	check-sql-arity check-streams check-event-contracts check-secrets check-secret-sources \
-	check-compose validate-scaffold
+	check-compose check-compose-images check-observability-targets check-service-paths \
+	check-alertas validate-scaffold
 	@$(GO) vet ./...
 	@echo "checks: OK"
 
