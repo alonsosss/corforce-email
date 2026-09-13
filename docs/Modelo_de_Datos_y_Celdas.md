@@ -528,10 +528,9 @@ lista fija de nombres. El diseno que si aisla:
 servicio en `routes.json`) y no tiene la clave: una celda que no figura va al destino base
 (`MAIL_SECURITY_HOST`, la celda por defecto), y cada instancia solo acepta enlaces de su
 propia celda, con la misma pagina 403 que una firma mala. Un segmento manipulado solo
-llega a una celda que lo rechaza. Con una sola celda la variable queda vacia. Los enlaces
-antiguos sin celda van a la celda por defecto y se verifican con la firma anterior hasta
-caducar (`MAIL_QUARANTINE_LINK_TTL`); ya no se emiten. Solo estas rutas publicas van por
-celda: el API autenticado de `mail-security` y el webmail siguen yendo al destino base
+llega a una celda que lo rechaza. Con una sola celda la variable queda vacia. No hay forma
+sin celda: el gateway no arranca con una ruta publica de un servicio de celda que no lleve
+`{cell}`. Solo estas rutas publicas van por celda: el API autenticado de `mail-security` y el webmail siguen yendo al destino base
 (P: enrutado de empresa a celda para ellos).
 
 ## 6. Limites que condicionan el dimensionado (V, heredados y vigentes)

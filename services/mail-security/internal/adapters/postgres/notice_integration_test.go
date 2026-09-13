@@ -18,7 +18,6 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -285,14 +284,10 @@ func TestIntegracionAvisoDeCuarentena(t *testing.T) {
 			t.Fatal("el enlace de otra celda no toca nada")
 		}
 
-		// Un enlace sin celda de los ya enviados sigue descartando hasta caducar.
-		legacy := srv.URL + domain.QuarantineLinkBasePath + "/discard?" + url.Values{
-			"t": {spammy.TenantID.String()}, "q": {spammy.QHash}, "e": {strconv.FormatInt(claims.ExpiresAt, 10)},
-			"sig": {apptest.LegacyLinkSignature(integrationLinkKey, claims)},
-		}.Encode()
-		oneWinner("descartar con un enlace sin celda dos veces", post(legacy, legacy))
+		// El intento no gasta el enlace: el de esta celda sigue descartando.
+		oneWinner("descartar tras el enlace de otra celda", post(target(spammy, domain.LinkDiscard), target(spammy, domain.LinkDiscard)))
 		if n := count(t, ctx, pool, `SELECT count(*) FROM mail_security.quarantine WHERE id = $1`, spammy.ID); n != 0 {
-			t.Fatal("el enlace sin celda descarta")
+			t.Fatal("el enlace de esta celda descarta")
 		}
 
 		// La constancia se poda con la retencion de la empresa.

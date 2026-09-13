@@ -66,11 +66,7 @@
     {"method": "GET",  "path": "/public/mail-security/quarantine/{cell}/release", "service": "mail-security"},
     {"method": "POST", "path": "/public/mail-security/quarantine/{cell}/release", "service": "mail-security"},
     {"method": "GET",  "path": "/public/mail-security/quarantine/{cell}/discard", "service": "mail-security"},
-    {"method": "POST", "path": "/public/mail-security/quarantine/{cell}/discard", "service": "mail-security"},
-    {"method": "GET",  "path": "/public/mail-security/quarantine/release",    "service": "mail-security", "default_cell": true},
-    {"method": "POST", "path": "/public/mail-security/quarantine/release",    "service": "mail-security", "default_cell": true},
-    {"method": "GET",  "path": "/public/mail-security/quarantine/discard",    "service": "mail-security", "default_cell": true},
-    {"method": "POST", "path": "/public/mail-security/quarantine/discard",    "service": "mail-security", "default_cell": true}
+    {"method": "POST", "path": "/public/mail-security/quarantine/{cell}/discard", "service": "mail-security"}
   ],
   "self_authenticated": [
     {"prefix": "webmail", "service": "webmail", "strict_limit": [{"method": "POST", "path": "/session"}]}

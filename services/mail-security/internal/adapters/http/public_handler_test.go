@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -61,17 +60,6 @@ func (s *linkServer) path(action domain.QuarantineLinkAction, expires time.Time)
 	return u.RequestURI()
 }
 
-// legacyPath es un enlace sin celda de los emitidos antes de llevarla en la ruta.
-func (s *linkServer) legacyPath(action domain.QuarantineLinkAction, expires time.Time) string {
-	claims := domain.QuarantineLinkClaims{TenantID: s.item.TenantID, MessageID: s.item.ID, Action: action, ExpiresAt: expires.Unix()}
-	q := url.Values{}
-	q.Set("t", claims.TenantID.String())
-	q.Set("q", s.item.QHash)
-	q.Set("e", strconv.FormatInt(claims.ExpiresAt, 10))
-	q.Set("sig", apptest.LegacyLinkSignature(testLinkKey, claims))
-	return domain.QuarantineLinkBasePath + "/" + string(action) + "?" + q.Encode()
-}
-
 func do(t *testing.T, method, target string) (int, string) {
 	t.Helper()
 	req, _ := http.NewRequest(method, target, nil)
@@ -118,21 +106,20 @@ func TestEnlaceInvalidoSiempreLaMismaRespuesta(t *testing.T) {
 	if status != http.StatusOK || !strings.Contains(done, "Mensaje descartado") || len(s.q.Items) != 0 {
 		t.Fatalf("descarte: %d %s", status, done)
 	}
-	_, reference := do(t, http.MethodGet, s.srv.URL+"/api/v1/public/mail-security/quarantine/discard?t=x")
+	_, reference := do(t, http.MethodGet, s.srv.URL+"/api/v1/public/mail-security/quarantine/pe-01/discard?t=x")
 	fresh := s.path(domain.LinkRelease, time.Now().Add(30*time.Minute))
 	for name, target := range map[string]string{
 		"usado (GET)":     valid,
 		"firma alterada":  strings.Replace(valid, "sig=", "sig=0", 1),
 		"caducado":        s.path(domain.LinkDiscard, time.Now().Add(-time.Minute)),
 		"accion cruzada":  strings.Replace(valid, "/discard?", "/release?", 1),
-		"sin parametros":  "/api/v1/public/mail-security/quarantine/release",
+		"sin parametros":  "/api/v1/public/mail-security/quarantine/pe-01/release",
 		"empresa ajena":   strings.Replace(valid, "t="+s.item.TenantID.String(), "t="+uuid.NewString(), 1),
 		"caducidad falsa": strings.Replace(valid, "e=", "e=9", 1),
-		// Lo que el gateway manda a esta celda sin ser suyo: otra celda, una desconocida o la
-		// ruta sin celda con una firma nueva. Vigente y sin usar, y aun asi la misma pagina.
-		"otra celda":                   strings.Replace(fresh, "/pe-01/", "/pe-02/", 1),
-		"celda desconocida":            strings.Replace(fresh, "/pe-01/", "/zz-99/", 1),
-		"firma nueva en ruta de antes": strings.Replace(fresh, "/pe-01/release?", "/release?", 1),
+		// Lo que el gateway manda a esta celda sin ser suyo: otra celda o una desconocida.
+		// Vigente y sin usar, y aun asi la misma pagina.
+		"otra celda":        strings.Replace(fresh, "/pe-01/", "/pe-02/", 1),
+		"celda desconocida": strings.Replace(fresh, "/pe-01/", "/zz-99/", 1),
 	} {
 		for _, method := range []string{http.MethodGet, http.MethodPost} {
 			status, body := do(t, method, s.srv.URL+target)
@@ -146,18 +133,16 @@ func TestEnlaceInvalidoSiempreLaMismaRespuesta(t *testing.T) {
 	}
 }
 
-// Un enlace sin celda de los ya enviados sigue mostrando la pagina y liberando hasta caducar.
-func TestEnlaceSinCeldaDeAntesPorHTTP(t *testing.T) {
+// La ruta sin celda no existe: el enlace va siempre a <celda>/<accion>.
+func TestEnlaceSinCeldaNoEsUnaRuta(t *testing.T) {
 	s := newLinkServer(t)
-	legacy := s.legacyPath(domain.LinkRelease, time.Now().Add(30*time.Minute))
-	status, body := do(t, http.MethodGet, s.srv.URL+legacy)
-	if status != http.StatusOK || !strings.Contains(body, "Liberar mensaje") || !strings.Contains(body, strings.ReplaceAll(legacy, "&", "&amp;")) {
-		t.Fatalf("pagina de un enlace de antes: %d %s", status, body)
+	fresh := s.path(domain.LinkRelease, time.Now().Add(30*time.Minute))
+	for _, method := range []string{http.MethodGet, http.MethodPost} {
+		if status, _ := do(t, method, s.srv.URL+strings.Replace(fresh, "/pe-01/release?", "/release?", 1)); status != http.StatusNotFound && status != http.StatusMethodNotAllowed {
+			t.Fatalf("%s sin celda: %d", method, status)
+		}
 	}
-	if status, body := do(t, http.MethodPost, s.srv.URL+legacy); status != http.StatusOK || !strings.Contains(body, "Mensaje liberado") || len(s.q.Items) != 0 {
-		t.Fatalf("liberar con un enlace de antes: %d %s", status, body)
-	}
-	if status, _ := do(t, http.MethodPost, s.srv.URL+legacy); status != http.StatusForbidden {
-		t.Fatalf("un solo uso tambien para los de antes: %d", status)
+	if len(s.q.Items) != 1 {
+		t.Fatal("nada se libera")
 	}
 }

@@ -44,22 +44,28 @@ func TestTablaEmbebidaEsValida(t *testing.T) {
 		t.Errorf("el webmail no se gatea por modulo")
 	}
 
-	// Los enlaces del aviso de cuarentena se enrutan por celda; los de antes, sin celda, van
-	// a la celda por defecto hasta que caduquen.
+	// Los enlaces del aviso de cuarentena se enrutan por celda, y solo esos.
 	if tbl.Services["mail-security"].CellHostsEnv != "MAIL_SECURITY_CELL_HOSTS" {
 		t.Fatalf("mail-security es un servicio de celda: %+v", tbl.Services["mail-security"])
 	}
-	public := map[publicRouteSpec]bool{}
+	var quarantine []publicRouteSpec
 	for _, p := range tbl.Public {
-		public[p] = true
+		if p.Service == "mail-security" {
+			quarantine = append(quarantine, p)
+		}
 	}
+	want := map[publicRouteSpec]bool{}
 	for _, method := range []string{"GET", "POST"} {
 		for _, action := range []string{"release", "discard"} {
-			byCell := publicRouteSpec{Method: method, Path: "/public/mail-security/quarantine/{cell}/" + action, Service: "mail-security"}
-			legacy := publicRouteSpec{Method: method, Path: "/public/mail-security/quarantine/" + action, Service: "mail-security", DefaultCell: true}
-			if !public[byCell] || !public[legacy] {
-				t.Errorf("%s %s: faltan la ruta por celda o la de antes a la celda por defecto", method, action)
-			}
+			want[publicRouteSpec{Method: method, Path: "/public/mail-security/quarantine/{cell}/" + action, Service: "mail-security"}] = true
+		}
+	}
+	if len(quarantine) != len(want) {
+		t.Fatalf("rutas publicas de mail-security: %+v", quarantine)
+	}
+	for _, p := range quarantine {
+		if !want[p] {
+			t.Errorf("ruta publica de mail-security inesperada: %+v", p)
 		}
 	}
 }
@@ -112,16 +118,9 @@ func TestValidacionRechazaIncoherencias(t *testing.T) {
 		"ruta por celda de un servicio que no es de celda": func(t *routeTable) {
 			t.Public = []publicRouteSpec{{Method: "GET", Path: "/public/x/{cell}/y", Service: "identity"}}
 		},
-		"ruta de un servicio de celda sin celda ni default_cell": func(t *routeTable) {
+		"ruta de un servicio de celda sin celda": func(t *routeTable) {
 			cellService(t)
 			t.Public = append(t.Public, publicRouteSpec{Method: "GET", Path: "/public/q/release", Service: "mail-security"})
-		},
-		"default_cell en una ruta con celda": func(t *routeTable) {
-			cellService(t)
-			t.Public[0].DefaultCell = true
-		},
-		"default_cell en un servicio que no es de celda": func(t *routeTable) {
-			t.Public = []publicRouteSpec{{Method: "GET", Path: "/public/x", Service: "identity", DefaultCell: true}}
 		},
 		"celda dos veces": func(t *routeTable) {
 			cellService(t)
@@ -175,13 +174,10 @@ func TestValidacionRechazaIncoherencias(t *testing.T) {
 	}
 }
 
-// cellService anade un servicio de celda con una ruta por celda y la de antes.
+// cellService anade un servicio de celda con una ruta por celda.
 func cellService(t *routeTable) {
 	t.Services["mail-security"] = serviceSpec{HostEnv: "MAIL_SECURITY_HOST", DefaultHost: "mail-security", DefaultPort: "8042", CellHostsEnv: "MAIL_SECURITY_CELL_HOSTS"}
-	t.Public = []publicRouteSpec{
-		{Method: "GET", Path: "/public/q/{cell}/release", Service: "mail-security"},
-		{Method: "GET", Path: "/public/q/release", Service: "mail-security", DefaultCell: true},
-	}
+	t.Public = []publicRouteSpec{{Method: "GET", Path: "/public/q/{cell}/release", Service: "mail-security"}}
 }
 
 func TestServiceURLPrefiereElEntorno(t *testing.T) {

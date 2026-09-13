@@ -86,14 +86,6 @@ func TestFirmaDelEnlaceValidaAlteradaYCaducada(t *testing.T) {
 	}
 }
 
-// legacySignature es la firma de los enlaces emitidos antes de llevar la celda, escrita a
-// mano: fija el formato de los enlaces ya enviados.
-func legacySignature(key string, c QuarantineLinkClaims) string {
-	mac := hmac.New(sha256.New, []byte(key))
-	mac.Write([]byte("quarantine-link\n" + c.TenantID.String() + "\n" + c.MessageID.String() + "\n" + string(c.Action) + "\n" + strconv.FormatInt(c.ExpiresAt, 10)))
-	return hex.EncodeToString(mac.Sum(nil))
-}
-
 // La celda va en la firma: un enlace solo vale en la celda que lo firmo, aunque la otra
 // comparta la clave, y el segmento de la ruta tiene que ser esa celda.
 func TestFirmaDelEnlaceAtadaALaCelda(t *testing.T) {
@@ -127,32 +119,24 @@ func TestFirmaDelEnlaceAtadaALaCelda(t *testing.T) {
 	}
 }
 
-// Los enlaces sin celda ya enviados valen hasta que caducan, con su firma de siempre; la
-// firma de una forma no vale por la otra.
-func TestEnlaceSinCeldaDeAntes(t *testing.T) {
+// El formato firmado es contrato (deploy/mail/README.md) y ops/e2e/mail.sh lo reproduce: se
+// escribe aqui a mano para que cambiarlo sin querer rompa una prueba. Una firma sin la
+// celda no vale.
+func TestFormatoDeLaFirma(t *testing.T) {
 	now := time.Date(2026, 9, 13, 10, 0, 0, 0, time.UTC)
 	s := newTestSigner(t)
 	c := QuarantineLinkClaims{TenantID: uuid.New(), MessageID: uuid.New(), Action: LinkDiscard, ExpiresAt: now.Add(time.Hour).Unix()}
-	legacy := legacySignature(testLinkKey, c)
-	if !s.VerifyLegacy(c, legacy, now) {
-		t.Fatal("un enlace de antes vigente vale")
+	sign := func(fields ...string) string {
+		mac := hmac.New(sha256.New, []byte(testLinkKey))
+		mac.Write([]byte(strings.Join(fields, "\n")))
+		return hex.EncodeToString(mac.Sum(nil))
 	}
-	if s.VerifyLegacy(c, legacy, time.Unix(c.ExpiresAt, 0)) {
-		t.Error("caducado ya no vale")
+	expires := strconv.FormatInt(c.ExpiresAt, 10)
+	if got, want := s.Sign(c), sign("quarantine-link/v2", testCell, c.TenantID.String(), c.MessageID.String(), "discard", expires); got != want {
+		t.Fatalf("firma %s, se esperaba %s", got, want)
 	}
-	other := c
-	other.Action = LinkRelease
-	if s.VerifyLegacy(other, legacy, now) {
-		t.Error("otra accion no vale")
-	}
-	if s.Verify(testCell, c, legacy, now) {
-		t.Error("una firma sin celda no vale en la ruta con celda")
-	}
-	if s.VerifyLegacy(c, s.Sign(c), now) {
-		t.Error("una firma con celda no vale en la ruta sin celda")
-	}
-	if s.VerifyLegacy(c, legacySignature(testLinkKey+"-otra", c), now) {
-		t.Error("una firma de otra clave no vale")
+	if s.Verify(testCell, c, sign("quarantine-link", c.TenantID.String(), c.MessageID.String(), "discard", expires), now) {
+		t.Error("una firma sin celda no vale")
 	}
 }
 

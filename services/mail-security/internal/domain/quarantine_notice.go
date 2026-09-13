@@ -31,8 +31,7 @@ const (
 )
 
 // QuarantineLinkBasePath es la raiz publica de los enlaces. El gateway declara debajo
-// <celda>/<accion>, que enruta a la celda del segmento, y <accion> a secas, la forma de los
-// enlaces emitidos antes de llevar la celda (routes.json, public).
+// <celda>/<accion> y enruta a la celda del segmento (routes.json, public).
 const QuarantineLinkBasePath = "/api/v1/public/mail-security/quarantine"
 
 // Valid dice si la accion existe.
@@ -109,24 +108,11 @@ func (s *QuarantineLinkSigner) canonical(c QuarantineLinkClaims) []byte {
 		string(c.Action) + "\n" + strconv.FormatInt(c.ExpiresAt, 10))
 }
 
-// legacyCanonical es la forma firmada de los enlaces emitidos antes de llevar la celda. Ya
-// no se emite; se verifica mientras quede alguno vigente (como mucho MAIL_QUARANTINE_LINK_TTL
-// desde el despliegue que la retiro). El dominio de separacion distinto impide que una firma
-// de una forma valga por la otra.
-func legacyCanonical(c QuarantineLinkClaims) []byte {
-	return []byte("quarantine-link\n" + c.TenantID.String() + "\n" + c.MessageID.String() + "\n" +
-		string(c.Action) + "\n" + strconv.FormatInt(c.ExpiresAt, 10))
-}
-
-func (s *QuarantineLinkSigner) mac(msg []byte) string {
-	mac := hmac.New(sha256.New, s.key)
-	mac.Write(msg)
-	return hex.EncodeToString(mac.Sum(nil))
-}
-
 // Sign devuelve la firma hexadecimal de las claims en la celda del firmante.
 func (s *QuarantineLinkSigner) Sign(c QuarantineLinkClaims) string {
-	return s.mac(s.canonical(c))
+	mac := hmac.New(sha256.New, s.key)
+	mac.Write(s.canonical(c))
+	return hex.EncodeToString(mac.Sum(nil))
 }
 
 // Verify comprueba que el enlace es de esta celda (cell es el segmento de la ruta), la
@@ -135,20 +121,7 @@ func (s *QuarantineLinkSigner) Verify(cell string, c QuarantineLinkClaims, signa
 	if cell != s.cell || !c.Action.Valid() || c.ExpiresAt <= now.Unix() {
 		return false
 	}
-	return equalSignature(s.Sign(c), signature)
-}
-
-// VerifyLegacy comprueba un enlace de la forma sin celda (ruta <base>/<accion>): accion,
-// caducidad y firma. Solo lo recibe la celda por defecto del gateway, y solo encuentra el
-// mensaje si la empresa esta en esta celda.
-func (s *QuarantineLinkSigner) VerifyLegacy(c QuarantineLinkClaims, signature string, now time.Time) bool {
-	if !c.Action.Valid() || c.ExpiresAt <= now.Unix() {
-		return false
-	}
-	return equalSignature(s.mac(legacyCanonical(c)), signature)
-}
-
-func equalSignature(expected, signature string) bool {
+	expected := s.Sign(c)
 	if len(signature) != len(expected) {
 		return false
 	}

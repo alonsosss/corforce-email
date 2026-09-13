@@ -100,7 +100,6 @@ func TestEnlacesDeCuarentenaSeEnrutanPorCelda(t *testing.T) {
 		{"celda por defecto sin instancia propia", http.MethodPost, base + "pe-01/discard", "pe-01", http.StatusOK},
 		{"celda desconocida a la celda por defecto", http.MethodPost, base + "zz-99/release", "pe-01", http.StatusForbidden},
 		{"segmento con otra forma a la celda por defecto", http.MethodGet, base + "PE-02/release", "pe-01", http.StatusForbidden},
-		{"ruta de antes sin celda a la celda por defecto", http.MethodGet, base + "release", "pe-01", http.StatusForbidden},
 	} {
 		hits = nil
 		got := call(gw, tc.method, tc.path+query)
@@ -113,10 +112,15 @@ func TestEnlacesDeCuarentenaSeEnrutanPorCelda(t *testing.T) {
 		}
 	}
 
-	// Una ruta publica que no existe sigue sin existir: no la atiende ninguna celda.
-	hits = nil
-	if got := call(gw, http.MethodGet, base+"pe-02/learn"+query); got.status != http.StatusNotFound && got.status != http.StatusMethodNotAllowed || len(hits) != 0 {
-		t.Fatalf("accion inexistente: %d %v", got.status, hits)
+	// Una ruta publica que no existe sigue sin existir: no la atiende ninguna celda. Tampoco
+	// la ruta sin celda.
+	for _, path := range []string{base + "pe-02/learn", base + "release", base + "discard"} {
+		hits = nil
+		for _, method := range []string{http.MethodGet, http.MethodPost} {
+			if got := call(gw, method, path+query); got.status != http.StatusNotFound && got.status != http.StatusMethodNotAllowed || len(hits) != 0 {
+				t.Fatalf("%s %s: %d %v", method, path, got.status, hits)
+			}
+		}
 	}
 }
 

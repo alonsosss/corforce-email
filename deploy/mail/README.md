@@ -441,15 +441,8 @@ dos veces; sin prueba de punta a punta con SES.
   que lo rechaza con la misma pagina 403 que una firma alterada: el gateway no responde nada
   propio y no sirve para enumerar celdas. Cada instancia acepta solo su celda, en la ruta y
   en la firma: un segmento cambiado lleva el enlace a una celda que lo rechaza. Con una sola
-  celda la variable queda vacia y todo va al destino base.
-* Enlaces de antes, sin celda (`.../quarantine/release` y `.../discard`, firmados sobre
-  `quarantine-link` sin celda): el gateway los declara con `default_cell` y los manda al
-  destino base, el mismo al que apuntaba el prefijo unico; `mail-security` los verifica con
-  la forma antigua hasta que caducan (como mucho `MAIL_QUARANTINE_LINK_TTL` desde el
-  despliegue, porque ya no se emiten). Con una celda valen todos; con varias, solo los de la
-  celda del destino base, que eran los unicos que llegaban a su celda antes del cambio. La
-  firma de una forma no vale por la otra. Pasada esa ventana, las cuatro rutas
-  `default_cell` y `VerifyLegacy` se retiran.
+  celda la variable queda vacia y todo va al destino base. No hay ruta sin celda: el gateway
+  no arranca con una ruta publica de `mail-security` que no lleve `{cell}`.
 * Caducan a `MAIL_QUARANTINE_LINK_TTL` (72h). GET muestra una confirmacion sin
   JavaScript y POST ejecuta: liberar es el caso de uso de siempre (reinyeccion por el puerto
   590, borrado y evento por la outbox en una transaccion con la fila bloqueada) y descartar
@@ -507,7 +500,11 @@ entrega por LMTP leida por IMAP, firma DKIM de Rspamd con el selector de domain-
 rechazos 553 de `reject_authenticated_sender_login_mismatch` (tambien con la credencial
 maestra), envio como alias con permiso, como dominio alias y por `sender_acl`; un adjunto
 EICAR rechazado al final de DATA (`CLAM_VIRUS` -> `VIRUS_FOUND` -> reject) y guardado en la
-cuarentena del destinatario por `/pipe`; que Rspamd aplica la regla `watchdog` del mapa
+cuarentena del destinatario por `/pipe`; su enlace de liberar, firmado por la prueba con la
+forma `quarantine-link/v2` y seguido por el gateway (la celda cambiada a una desconocida y
+una firma alterada dan la misma pagina 403 byte a byte sin tocar nada; GET confirma sin
+ejecutar; POST libera, registra el uso y la reinyeccion por el 590 lo entrega; usado, el
+mismo 403); que Rspamd aplica la regla `watchdog` del mapa
 `settings` de mail-policy y ve `DOMAIN_MAP`; Unbound con validacion DNSSEC; el webmail por el
 gateway (sesion, carpetas, identidades frente a Postfix, envio idempotente, lectura del
 destinatario, Enviados, remitente ajeno, EICAR, cierre de sesion); y registros sin errores ni
@@ -524,11 +521,11 @@ fichero de configuracion de los motores cambia para la prueba):
 | `SKIP_UNBOUND_HEALTHCHECK=y` | `n` | El chequeo hace ping a resolvers publicos y los runners de CI no dejan salir ICMP; la resolucion con DNSSEC se comprueba aparte |
 | Firmas de ClamAV en un volumen que sobrevive entre ejecuciones | Volumen del despliegue | freshclam actualiza por diferencias en vez de bajar la base entera cada vez (la CDN de ClamAV limita las descargas repetidas) |
 | DNS de `acme.test` servido por un Unbound de la prueba | DNS del cliente | El dominio de la prueba no existe en internet |
-| mail-security sin `TRANSACTIONAL_URL` | Con transactional | El aviso de cuarentena sale por SES; queda desactivado y lo registra como error, que la prueba descuenta |
+| mail-security sin `TRANSACTIONAL_URL` | Con transactional | El aviso de cuarentena sale por SES; queda desactivado y lo registra como error, que la prueba descuenta. El enlace del aviso lo firma la propia prueba con `MAIL_LINK_SIGNING_KEY` de la ejecucion |
 
 En CI corre en su propio flujo (`.github/workflows/mail-engines.yml`), sin bloquear: cuando
 cambia algo de lo que prueba, cada noche y a mano. En local, una ejecucion con las imagenes ya
-construidas tarda menos de dos minutos (156 comprobaciones, 2026-09-13); construirlas desde
+construidas tarda menos de dos minutos (168 comprobaciones, 2026-09-13); construirlas desde
 cero, unos seis mas, y la primera descarga de firmas de ClamAV, uno o dos.
 
 ## Pendientes

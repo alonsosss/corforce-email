@@ -15,8 +15,9 @@
 # mail-security), y buzones, aliases y enrutado por el API de mail-directory. Despues
 # comprueba cada mapa de Postfix con postmap, Dovecot con doveadm e IMAP (tambien el usuario
 # maestro del webmail y su restriccion de red), el envio autenticado con la regla de
-# remitentes, Rspamd con DKIM y el mapa settings de mail-policy, el antivirus, las claves de
-# Redis que escribe mail-security y el webmail por el gateway.
+# remitentes, Rspamd con DKIM y el mapa settings de mail-policy, el antivirus y la cuarentena
+# (con su enlace firmado por el gateway), las claves de Redis que escribe mail-security y el
+# webmail por el gateway.
 #
 # Cada paso escribe OK o FALLA y la ejecucion termina con error si alguno falla. Las
 # credenciales se generan en cada ejecucion; ninguna vive en este fichero.
@@ -495,6 +496,52 @@ en_cuarentena() {
 }
 esperar "y queda en la cuarentena de bea (metadata_exporter -> mail-policy /pipe)" 30 en_cuarentena
 lacks "sin llegar a su INBOX" "$(cliente buscar bea@acme.test "$BEA_PASS" "$TOKEN-eicar" --espera 3)" "OK"
+
+echo "== Enlace del aviso de cuarentena por el gateway (celda en la ruta y en la firma)"
+# Sin transactional no sale el aviso: el enlace se firma aqui con la clave de la ejecucion y la
+# forma quarantine-link/v2 de domain.QuarantineLinkSigner (contrato en deploy/mail/README.md).
+# enlace <celda> <accion> <id> <qhash> <empresa> <caducidad>: ruta bajo /api/v1.
+enlace() {
+  python3 - "$@" <<'PY'
+import hashlib, hmac, os, sys, urllib.parse
+celda, accion, mensaje, qhash, empresa, caducidad = sys.argv[1:]
+canonico = "\n".join(("quarantine-link/v2", celda, empresa, mensaje, accion, caducidad))
+firma = hmac.new(os.environ["MAIL_LINK_SIGNING_KEY"].encode(), canonico.encode(), hashlib.sha256).hexdigest()
+consulta = urllib.parse.urlencode(sorted({"e": caducidad, "q": qhash, "sig": firma, "t": empresa}.items()))
+print(f"/public/mail-security/quarantine/{celda}/{accion}?{consulta}")
+PY
+}
+# pagina <metodo> <ruta> <fichero>: el cuerpo en <fichero>; escribe el codigo HTTP.
+pagina() {
+  local datos=()
+  [[ "$1" == POST ]] && datos=(-d '')
+  curl -s -o "$3" -w '%{http_code}' -X "$1" "$GW$2" "${datos[@]}"
+}
+en_la_fila() { sql mail_cell_pe_01 "SELECT count(*) FROM mail_security.quarantine WHERE id = '$QID'"; }
+read -r QID QHASH < <(sql mail_cell_pe_01 "SELECT id, qhash FROM mail_security.quarantine WHERE rcpt = 'bea@acme.test' AND subject = '$TOKEN-eicar'" | tr '|' ' ')
+LIBERAR=$(enlace pe-01 release "$QID" "$QHASH" "$TID" "$(( $(date +%s) + 3600 ))")
+CELDA_PE01="/pe-01/" CELDA_ZZ99="/zz-99/"
+OTRA_CELDA="${LIBERAR/"$CELDA_PE01"/"$CELDA_ZZ99"}"
+FIRMA="${LIBERAR##*sig=}"; FIRMA="${FIRMA%%&*}"
+[[ "${FIRMA:0:1}" == a ]] && OTRO=b || OTRO=a
+ALTERADA="${LIBERAR/"sig=$FIRMA"/"sig=$OTRO${FIRMA:1}"}"
+expect "la celda cambiada a una desconocida (zz-99) y una firma alterada dan 403" \
+  "$(pagina POST "$OTRA_CELDA" "$WORK/q-celda.html")/$(pagina POST "$ALTERADA" "$WORK/q-firma.html")" "403/403"
+cmp -s "$WORK/q-celda.html" "$WORK/q-firma.html" && ok "con la misma pagina byte a byte: no delata que celdas existen" \
+  || mal "las paginas 403 de la celda desconocida y de la firma alterada difieren"
+contains "la de enlace no valido, servida por mail-security" "$(cat "$WORK/q-firma.html")" "Enlace no valido"
+expect "y el mensaje sigue en cuarentena sin uso registrado" \
+  "$(en_la_fila)/$(sql mail_cell_pe_01 "SELECT count(*) FROM mail_security.quarantine_link_uses WHERE quarantine_id = '$QID'")" "1/0"
+expect "GET del enlace valido por el gateway: 200 y no ejecuta nada" "$(pagina GET "$LIBERAR" "$WORK/q-pagina.html")/$(en_la_fila)" "200/1"
+contains "muestra la confirmacion de liberar" "$(cat "$WORK/q-pagina.html")" "Liberar mensaje"
+expect "POST del enlace: 200" "$(pagina POST "$LIBERAR" "$WORK/q-hecho.html")" "200"
+contains "mensaje liberado" "$(cat "$WORK/q-hecho.html")" "Mensaje liberado"
+expect "la fila sale de la cuarentena y el uso queda registrado" \
+  "$(en_la_fila)/$(sql mail_cell_pe_01 "SELECT action FROM mail_security.quarantine_link_uses WHERE quarantine_id = '$QID'")" "0/release"
+contains "la reinyeccion por el puerto 590 lo entrega en el INBOX de bea" "$(cliente buscar bea@acme.test "$BEA_PASS" "$TOKEN-eicar")" "OK 1"
+expect "el enlace usado ya no vale (403)" "$(pagina POST "$LIBERAR" "$WORK/q-usado.html")" "403"
+cmp -s "$WORK/q-usado.html" "$WORK/q-firma.html" && ok "con la misma pagina que la firma alterada" \
+  || mal "la pagina del enlace usado difiere de la de la firma alterada"
 
 echo "== Rspamd con lo que escribe mail-security"
 correo_rspamc() { printf 'From: <%s>\r\nTo: <%s>\r\nSubject: rspamc\r\nMessage-ID: <%s@e2e.test>\r\nDate: %s\r\n\r\ncuerpo\r\n' "$1" "$2" "$(rand_hex 8)" "$(date -R)"; }

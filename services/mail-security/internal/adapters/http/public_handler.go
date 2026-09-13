@@ -23,28 +23,22 @@ const (
 
 // publicRoutes son los enlaces del aviso de cuarentena, sin sesion: GET muestra la
 // confirmacion y POST ejecuta. El gateway los declara en routes.json (public) y enruta
-// <celda>/<accion> a la celda del segmento. <accion> a secas es la forma de los enlaces
-// emitidos antes de llevar la celda: el gateway la manda a su celda por defecto y vale
-// hasta que caduque el ultimo.
+// <celda>/<accion> a la celda del segmento.
 func (h *Handler) publicRoutes(r chi.Router) {
 	r.Use(h.publicLimiter.Limit)
 	for _, action := range []domain.QuarantineLinkAction{domain.LinkRelease, domain.LinkDiscard} {
-		r.Get("/{cell}/"+string(action), h.linkPage(action, false))
-		r.Post("/{cell}/"+string(action), h.linkSubmit(action, false))
-		r.Get("/"+string(action), h.linkPage(action, true))
-		r.Post("/"+string(action), h.linkSubmit(action, true))
+		r.Get("/{cell}/"+string(action), h.linkPage(action))
+		r.Post("/{cell}/"+string(action), h.linkSubmit(action))
 	}
 }
 
 // linkRequest lee la celda de la ruta y t (empresa), q (qhash), e (caducidad) y sig de la
 // URL o, en el POST, del formulario. Solo comprueba la forma; celda y firma las comprueba
 // el caso de uso.
-func linkRequest(r *http.Request, action domain.QuarantineLinkAction, legacy bool) (app.LinkRequest, bool) {
-	cell := ""
-	if !legacy {
-		if cell = chi.URLParam(r, "cell"); cell == "" {
-			return app.LinkRequest{}, false
-		}
+func linkRequest(r *http.Request, action domain.QuarantineLinkAction) (app.LinkRequest, bool) {
+	cell := chi.URLParam(r, "cell")
+	if cell == "" {
+		return app.LinkRequest{}, false
 	}
 	get := func(name string) string {
 		if v := r.URL.Query().Get(name); v != "" {
@@ -63,7 +57,7 @@ func linkRequest(r *http.Request, action domain.QuarantineLinkAction, legacy boo
 	if err != nil {
 		return app.LinkRequest{}, false
 	}
-	return app.LinkRequest{Cell: cell, Legacy: legacy, TenantID: tenantID, QHash: get("q"), ExpiresAt: expires,
+	return app.LinkRequest{Cell: cell, TenantID: tenantID, QHash: get("q"), ExpiresAt: expires,
 		Signature: get("sig"), Action: action}, true
 }
 
@@ -83,9 +77,9 @@ func linkFailed(w http.ResponseWriter, err error) {
 }
 
 // linkPage (GET) no ejecuta nada: muestra el boton si el enlace sigue sirviendo.
-func (h *Handler) linkPage(action domain.QuarantineLinkAction, legacy bool) http.HandlerFunc {
+func (h *Handler) linkPage(action domain.QuarantineLinkAction) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		req, ok := linkRequest(r, action, legacy)
+		req, ok := linkRequest(r, action)
 		if !ok {
 			writePage(w, http.StatusForbidden, pageInvalidLink)
 			return
@@ -108,10 +102,10 @@ func (h *Handler) linkPage(action domain.QuarantineLinkAction, legacy bool) http
 
 // linkSubmit (POST) libera o descarta y deja constancia con la ip que el gateway puso en
 // X-Real-IP (el cliente no puede escribirla: el gateway la reemite) y el user agent.
-func (h *Handler) linkSubmit(action domain.QuarantineLinkAction, legacy bool) http.HandlerFunc {
+func (h *Handler) linkSubmit(action domain.QuarantineLinkAction) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		r.Body = http.MaxBytesReader(w, r.Body, linkBodyLimit)
-		req, ok := linkRequest(r, action, legacy)
+		req, ok := linkRequest(r, action)
 		if !ok {
 			writePage(w, http.StatusForbidden, pageInvalidLink)
 			return

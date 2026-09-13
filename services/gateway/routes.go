@@ -40,9 +40,9 @@ type routeTable struct {
 	// Public: rutas bajo /api/v1 que se sirven SIN sesion (webhooks de proveedores, bajas
 	// de suscripcion desde el correo). Van con el limitador general y nada mas: la
 	// proteccion es del propio servicio (firma del proveedor, enlace firmado). Metodo y
-	// ruta exactos con la sintaxis de chi; el servicio recibe la misma ruta. Una ruta de un
+	// ruta exactos con la sintaxis de chi; el servicio recibe la misma ruta. Toda ruta de un
 	// servicio de celda (cell_hosts_env) lleva el segmento {cell} y se enruta por el
-	// (cells.go), o declara default_cell y va a la celda por defecto.
+	// (cells.go).
 	Public []publicRouteSpec `json:"public,omitempty"`
 	// SelfAuthenticated: prefijos bajo /api/v1 cuyo servicio autentica cada peticion con
 	// su propia sesion (el webmail, con la cookie del buzon: sus usuarios son buzones, no
@@ -84,9 +84,6 @@ type publicRouteSpec struct {
 	Method  string `json:"method"`
 	Path    string `json:"path"`
 	Service string `json:"service"`
-	// DefaultCell: ruta de un servicio de celda SIN {cell}, que va al destino base (la
-	// celda por defecto). Se declara a proposito para que olvidar {cell} no arranque.
-	DefaultCell bool `json:"default_cell,omitempty"`
 }
 
 type serviceSpec struct {

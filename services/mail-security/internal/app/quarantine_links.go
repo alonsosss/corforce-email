@@ -11,11 +11,9 @@ import (
 
 // LinkRequest es lo que trae un enlace del aviso de cuarentena. La accion y la celda salen
 // de la ruta: la firma incluye las dos, asi que un enlace de liberar no descarta y uno de
-// otra celda no vale aqui. Legacy es la ruta sin celda de los enlaces emitidos antes; Cell
-// no cuenta en ella.
+// otra celda no vale aqui.
 type LinkRequest struct {
 	Cell      string
-	Legacy    bool
 	TenantID  uuid.UUID
 	QHash     string
 	ExpiresAt int64
@@ -101,11 +99,7 @@ func (uc *QuarantineUseCase) findLinked(ctx context.Context, req LinkRequest) (*
 		return nil, err
 	}
 	claims := domain.QuarantineLinkClaims{TenantID: req.TenantID, MessageID: item.ID, Action: req.Action, ExpiresAt: req.ExpiresAt}
-	valid := uc.links.Verify(req.Cell, claims, req.Signature, uc.now())
-	if req.Legacy {
-		valid = uc.links.VerifyLegacy(claims, req.Signature, uc.now())
-	}
-	if !valid {
+	if !uc.links.Verify(req.Cell, claims, req.Signature, uc.now()) {
 		return nil, domain.ErrInvalidLink
 	}
 	return item, nil

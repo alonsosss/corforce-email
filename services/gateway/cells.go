@@ -65,8 +65,9 @@ func (t *routeTable) validateCellHostsEnv() error {
 	return nil
 }
 
-// validatePublicCell: {cell} solo como segmento entero, una vez y en un servicio de celda;
-// una ruta de un servicio de celda sin {cell} tiene que declarar default_cell.
+// validatePublicCell: {cell} solo como segmento entero y una vez, en toda ruta de un
+// servicio de celda y solo en ellas. Una ruta de celda sin {cell} iria siempre a la celda
+// por defecto, que rechaza los enlaces de las demas.
 func (t *routeTable) validatePublicCell(p publicRouteSpec) error {
 	byCell := cellSegment(p.Path)
 	if strings.Count(p.Path, "{"+cellParam) > 1 || (!byCell && strings.Contains(p.Path, "{"+cellParam)) {
@@ -76,12 +77,8 @@ func (t *routeTable) validatePublicCell(p publicRouteSpec) error {
 	switch {
 	case byCell && !cellService:
 		return fmt.Errorf("tabla de rutas: %q enruta por celda y el servicio %q no declara cell_hosts_env", p.Path, p.Service)
-	case byCell && p.DefaultCell:
-		return fmt.Errorf("tabla de rutas: %q lleva {%s} y default_cell a la vez", p.Path, cellParam)
-	case !byCell && cellService && !p.DefaultCell:
-		return fmt.Errorf("tabla de rutas: %q es de un servicio de celda: necesita {%s} o default_cell", p.Path, cellParam)
-	case !byCell && !cellService && p.DefaultCell:
-		return fmt.Errorf("tabla de rutas: default_cell en %q, y %q no es un servicio de celda", p.Path, p.Service)
+	case !byCell && cellService:
+		return fmt.Errorf("tabla de rutas: %q es de un servicio de celda y no lleva {%s}", p.Path, cellParam)
 	}
 	return nil
 }

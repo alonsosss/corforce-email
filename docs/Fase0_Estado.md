@@ -43,9 +43,11 @@ cambie cualquiera de estas líneas.
   `deploy/mail/README.md`). `clean_q_aged.sh` de Dovecot no hace nada (busca
   `mail.quarantine`, que no existe): la poda la hace el servicio.
 * Enlaces publicos de cuarentena por celda (2026-09-13, unitarias, integracion contra
-  Postgres, `make e2e` y `make e2e-mail`): la celda va en la ruta y en la firma, el gateway
-  enruta con `MAIL_SECURITY_CELL_HOSTS` sin la clave de los enlaces y cada `mail-security`
-  solo acepta los de su celda (`Modelo_de_Datos_y_Celdas.md`, 5.3).
+  Postgres, `make e2e` y `make e2e-mail`, que firma el enlace del EICAR en cuarentena y lo
+  sigue por el gateway): la celda va en la ruta y en la firma, el gateway enruta con
+  `MAIL_SECURITY_CELL_HOSTS` sin la clave de los enlaces y cada `mail-security` solo acepta
+  los de su celda (`Modelo_de_Datos_y_Celdas.md`, 5.3). No hay forma sin celda: nada se
+  desplego con la anterior y se retiro sin ventana de compatibilidad.
 * El gateway debe servir `/.well-known/acme-challenge/` o usarse `ACME_DNS_CHALLENGE=y`.
 * Primer despliegue: smoke test con `postmap -q` y `doveadm user` sobre la celda.
 * Corregido con la prueba de los motores (2026-09-13): `mail-policy` responde al `HEAD` con el
