@@ -5,7 +5,8 @@
 # la celda, propagacion a Redis por eventos, mapas de los motores, plantillas, supresion,
 # planes y derechos de billing, autorizacion de envio en reputation, alcance de permisos,
 # contactos con su consentimiento y audiencia, campanas por la via de marketing de
-# transactional (hasta su rechazo por remitente sin verificar, sin SES) y el panel de analitica.
+# transactional (hasta su rechazo por remitente sin verificar, sin SES), el doble opt-in por
+# automations y el panel de analitica.
 #
 # Cada paso COMPRUEBA su resultado y la ejecucion termina con error si alguno falla: no
 # basta con que los servicios arranquen, tienen que hablarse. Las credenciales se generan
@@ -95,7 +96,7 @@ docker run -d --name "$PREFIX-nats" -p "127.0.0.1:$NATS_PORT:4222" nats:2.10-alp
 docker run -d --name "$PREFIX-redis" -p "127.0.0.1:$REDIS_PORT:6379" redis:7.4.10-alpine >/dev/null || exit 1
 for _ in $(seq 1 40); do docker exec "$PREFIX-pg" pg_isready -U mail_admin -d mail_registry >/dev/null 2>&1 && break; sleep 1; done
 
-SERVICES=(organization identity access-control gateway mail-directory mail-auth domain-service mail-security templates suppression billing reputation contacts analytics transactional campaigns)
+SERVICES=(organization identity access-control gateway mail-directory mail-auth domain-service mail-security templates suppression billing reputation contacts analytics transactional campaigns automations)
 echo "== Compilacion (${SERVICES[*]})"
 mkdir -p "$WORK/bin" "$WORK/log"
 for s in "${SERVICES[@]}"; do go build -o "$WORK/bin/$s" "./services/$s" || { echo "no compila $s" >&2; exit 1; }; done
@@ -125,7 +126,7 @@ export CORS_ALLOWED_ORIGINS=http://localhost:3000
 declare -A PORT=(
   [identity]=$((BASE + 1)) [access-control]=$((BASE + 2)) [organization]=$((BASE + 3))
   [mail-directory]=$((BASE + 40)) [mail-auth]=$((BASE + 41)) [mail-security]=$((BASE + 42)) [domain-service]=$((BASE + 43))
-  [suppression]=$((BASE + 46)) [templates]=$((BASE + 47)) [transactional]=$((BASE + 45)) [contacts]=$((BASE + 50)) [campaigns]=$((BASE + 52)) [analytics]=$((BASE + 53)) [reputation]=$((BASE + 54)) [billing]=$((BASE + 55))
+  [suppression]=$((BASE + 46)) [templates]=$((BASE + 47)) [transactional]=$((BASE + 45)) [contacts]=$((BASE + 50)) [campaigns]=$((BASE + 52)) [automations]=$((BASE + 51)) [analytics]=$((BASE + 53)) [reputation]=$((BASE + 54)) [billing]=$((BASE + 55))
   [gateway]=$((BASE + 80))
 )
 MAPS_PORT=$((BASE + 81))
@@ -136,13 +137,13 @@ export IDENTITY_PORT=${PORT[identity]} ACCESS_CONTROL_PORT=${PORT[access-control
 export MAIL_DIRECTORY_PORT=${PORT[mail-directory]} MAIL_SECURITY_PORT=${PORT[mail-security]} DOMAIN_SERVICE_PORT=${PORT[domain-service]}
 export SUPPRESSION_PORT=${PORT[suppression]} TEMPLATES_PORT=${PORT[templates]} GATEWAY_PORT=${PORT[gateway]}
 export BILLING_PORT=${PORT[billing]} REPUTATION_PORT=${PORT[reputation]} CONTACTS_PORT=${PORT[contacts]} ANALYTICS_PORT=${PORT[analytics]}
-export TRANSACTIONAL_PORT=${PORT[transactional]} CAMPAIGNS_PORT=${PORT[campaigns]}
+export TRANSACTIONAL_PORT=${PORT[transactional]} CAMPAIGNS_PORT=${PORT[campaigns]} AUTOMATIONS_PORT=${PORT[automations]}
 export MAIL_POLICY_MAPS_PORT=$MAPS_PORT MAIL_POLICY_EXPORT_PORT=$EXPORT_PORT
 export MAIL_AUTH_PORT=${PORT[mail-auth]} MAIL_AUTH_TLS_PORT=$AUTH_TLS_PORT
 export API_ORIGIN="http://localhost:${PORT[gateway]}" PUBLIC_BASE_URL="http://localhost:${PORT[gateway]}"
 # Direcciones internas: las que el gateway lee de routes.json por <SERVICIO>_HOST(_PORT) y
 # las que los servicios usan entre si.
-for s in identity access-control organization mail-directory mail-security domain-service suppression templates billing reputation contacts analytics transactional campaigns; do
+for s in identity access-control organization mail-directory mail-security domain-service suppression templates billing reputation contacts analytics transactional campaigns automations; do
   var="$(echo "$s" | tr 'a-z-' 'A-Z_')_HOST"
   export "$var=127.0.0.1" "${var}_PORT=${PORT[$s]}"
 done
@@ -183,7 +184,7 @@ ADMIN_PASS="$(rand_hex 12)Aa1!"
 PGHOST=127.0.0.1 PLATFORM_ADMIN_EMAIL=root@platform.test PLATFORM_ADMIN_PASSWORD="$ADMIN_PASS" \
   bash ops/db/bootstrap-platform.sh --cell pe-01 --region sa-east-1 >/dev/null || mal "bootstrap-platform.sh"
 
-ARRANQUE=(identity access-control mail-directory mail-auth domain-service mail-security templates suppression billing reputation contacts analytics transactional campaigns gateway)
+ARRANQUE=(identity access-control mail-directory mail-auth domain-service mail-security templates suppression billing reputation contacts analytics transactional campaigns automations gateway)
 for s in "${ARRANQUE[@]}"; do arrancar "$s"; done
 for s in "${ARRANQUE[@]}"; do esperar_salud "$s" "${PORT[$s]}"; done
 
@@ -366,6 +367,25 @@ expect "el orquestador recorre la audiencia y transactional rechaza el lote" "$e
 contains "con el motivo de transactional" "$(curl -s "$GW/campaigns/$CPID" -H "$A2" | jget data.failure_reason)" "SENDING_DOMAIN_NOT_VERIFIED"
 expect "ningun mensaje de marketing llego a encolarse" \
   "$(sql mail_tenant_acme "SELECT count(*) FROM transactional.messages WHERE class = 'marketing'")" "0"
+
+echo "== Doble opt-in (contacts -> automations -> transactional)"
+TD=$(curl -s -X POST "$GW/templates" -H "$A2" -H 'Content-Type: application/json' \
+  -d '{"name":"confirmacion","kind":"transactional","subject":"Confirma tu suscripcion","html":"<p><a href=\"{{.confirm_url}}\">Confirmar</a></p>","variables":[{"name":"confirm_url","type":"url","required":true}]}' | jget data.id)
+expect "plantilla de confirmacion publicada" "$(codigo -X POST "$GW/templates/$TD/versions/1/publish" -H "$A2")" "200"
+expect "ajustes del doble opt-in (la plantilla se comprueba al guardar)" \
+  "$(codigo -X PUT "$GW/automations/double-opt-in" -H "$A2" -H 'Content-Type: application/json' -d "{\"enabled\":true,\"template_id\":\"$TD\",\"from_email\":\"hola@acme.test\",\"from_name\":\"Acme\"}")" "200"
+CT3=$(curl -s -X POST "$GW/contacts" -H "$A2" -H 'Content-Type: application/json' -d '{"email":"pedro@cliente.test","first_name":"Pedro","source":"api"}' | jget data.id)
+expect "la empresa pide el doble opt-in" \
+  "$(codigo -X POST "$GW/contacts/$CT3/consent/request" -H "$A2" -H 'Content-Type: application/json' -d '{"source":"e2e"}')" "202"
+estado=""; ENT=""
+for _ in $(seq 1 40); do
+  ENT=$(curl -s "$GW/automations/double-opt-in/deliveries" -H "$A2")
+  estado=$(echo "$ENT" | jget data.0.status)
+  [[ "$estado" == failed || "$estado" == sent ]] && break; sleep 0.5
+done
+expect "automations intenta el correo y transactional rechaza el remitente sin verificar" "$estado" "failed"
+contains "con el motivo de transactional" "$(echo "$ENT" | jget data.0.reason)" "SENDING_DOMAIN_NOT_VERIFIED"
+[[ "$ENT" != *confirm* ]] && ok "el historial no expone el enlace de confirmacion" || mal "el historial expone el enlace de confirmacion"
 
 echo "== Analitica"
 expect "el panel responde sin envios" "$(curl -s "$GW/analytics/overview" -H "$A2" | jget data.totals.sent)" "0"
