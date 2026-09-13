@@ -268,10 +268,19 @@ func retryAfterSeconds(reset time.Duration) string {
 // arbitrario elegido por quien hace la peticion.
 func ipIdentity(raw string) string {
 	if ip := net.ParseIP(raw); ip != nil {
-		return "ip:" + ip.String()
+		// Un cliente IPv6 suele disponer de un /64 entero: contar por direccion le daria un
+		// cupo por cada una. IPv6 se agrupa por /64; IPv4 (tambien la mapeada en IPv6) va
+		// por direccion.
+		if v4 := ip.To4(); v4 != nil {
+			return "ip:" + v4.String()
+		}
+		return "ip6:" + ip.Mask(net.CIDRMask(ipv6ClientPrefix, 128)).String() + "/64"
 	}
 	return "id:" + digest(raw)
 }
+
+// ipv6ClientPrefix es el prefijo que se asigna normalmente a un solo cliente IPv6.
+const ipv6ClientPrefix = 64
 
 // digest resume un identificador para que no quede en claro en el almacen compartido.
 func digest(s string) string {
