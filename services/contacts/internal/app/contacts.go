@@ -62,6 +62,12 @@ func (uc *UseCase) newConsent(tenantID, contactID uuid.UUID, in ConsentInput) (*
 	}, nil
 }
 
+// CreateContact da de alta el contacto con el estado que implican las causas vigentes de su
+// direccion en suppression (domain.AdmitSuppression); sin ellas no escribe nada
+// (ErrSuppressionUnavailable). El consentimiento declarado se decide sobre ese estado con la
+// regla de RecordConsent (domain.CheckGrant): a quien se dio de baja solo lo devuelve un
+// formulario con ip, que lo reactiva y publica contacts.contact.resubscribed para que
+// suppression retire la baja.
 func (uc *UseCase) CreateContact(ctx context.Context, tenantID uuid.UUID, in CreateContactInput) (*domain.Contact, error) {
 	email, err := domain.NormalizeEmail(in.Email)
 	if err != nil {
@@ -112,6 +118,16 @@ func (uc *UseCase) CreateContact(ctx context.Context, tenantID uuid.UUID, in Cre
 			return nil, domain.ErrInvalidConsentStatus
 		}
 	}
+	active, err := uc.admissionCauses(ctx, tenantID, []string{email})
+	if err != nil {
+		return nil, err
+	}
+	c.AdmitSuppression(active[email])
+	if consent != nil {
+		if err := domain.CheckGrant(c, consent.Method, consent.IP); err != nil {
+			return nil, err
+		}
+	}
 
 	err = uc.tx.Transact(ctx, func(ctx context.Context) error {
 		if err := uc.contacts.Insert(ctx, c); err != nil {
@@ -124,11 +140,7 @@ func (uc *UseCase) CreateContact(ctx context.Context, tenantID uuid.UUID, in Cre
 			return nil
 		}
 		consent.ContactID = c.ID
-		if err := uc.consents.Append(ctx, consent); err != nil {
-			return err
-		}
-		c.ConsentStatus = consent.Status
-		return uc.events.ConsentGranted(ctx, consent)
+		return uc.appendConsent(ctx, c, consent)
 	})
 	if err != nil {
 		return nil, err

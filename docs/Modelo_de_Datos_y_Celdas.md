@@ -326,8 +326,58 @@ evento, publicando `contacts.contact.updated`. Nunca revoca: sin el evento no sa
 vigente sobre un `active` es nueva o ya la levanto un reconsentimiento. El barrido completo
 recupera tambien lo que no llego por evento: los contactos que ya tenian una `manual` o
 `invalid` vigente antes de estos estados (siguen `active` hasta la primera pasada completa
-tras el despliegue), los creados o importados con la direccion ya excluida (el alta no
-consulta suppression) y los eventos perdidos.
+tras el despliegue), los creados o importados antes de que el alta consultara suppression
+(salvo una baja: ver la carrera residual del parrafo siguiente) y los eventos perdidos.
+
+Alta e importacion (V, 2026-09-13, `app.CreateContact`, `app.Import`,
+`domain.AdmitSuppression` y `domain.ImportMayGrant`): antes de escribir, el alta por API y
+cada lote de la importacion consultan `POST /internal/suppression/check` fuera de la
+transaccion (el alta con su direccion; la importacion una consulta por lote de 500, bajo el
+tope de 1000, asi que `CONTACTS_IMPORT_MAX_ROWS` filas son `ceil(filas / 500)` consultas de 5 s
+como maximo cada una), y cada contacto nuevo entra con el estado de su causa vigente mas
+grave. Es la decision de `ReconcileSuppression` con la baja vigente siempre en vigor: un
+contacto sin historial no tiene reconsentimiento que la haya levantado. No se escribe
+evidencia por la baja (una revocacion sobre quien nunca consintio no prueba nada; si su evento
+llega despues, el consumidor la registra como a cualquier contacto). El consentimiento
+declarado se decide sobre ese estado con las reglas de siempre: `CheckGrant` en el alta (la de
+`POST /contacts/{id}/consent`) e `ImportMayGrant` en la importacion, que solo concede a quien
+queda `active` y ademas nunca sobre una baja vigente, tambien en un contacto existente que aun
+no la refleja (su estado no se toca: lo fijan sus eventos).
+
+| Causas vigentes | Estado con que entra | Alta con consentimiento `api`, o `form` sin ip | Alta con `form` e ip | Importacion con base legal |
+|---|---|---|---|---|
+| ninguna | `active` | se registra; enviable | se registra; enviable | se concede |
+| `unsubscribe` (sola o con `invalid`/`manual`) | `unsubscribed` | 409 `RESUBSCRIBE_REQUIRES_OPT_IN`, nada escrito | se registra, vuelve a `active` y publica `contacts.contact.resubscribed` (suppression retira la baja) | no se concede |
+| `complaint` / `hard_bounce` (con o sin baja) | `complained` / `bounced` | se registra; no enviable | se registra; no enviable | no se concede |
+| `invalid` | `invalid` | se registra; no enviable | se registra; no enviable | no se concede |
+| `manual` | `excluded` | se registra; enviable cuando caduque o se retire | igual | no se concede |
+| solo desconocidas | `active`, como un active existente | se registra | se registra | se concede |
+
+La importacion responde, y `GET /contacts/imports[/{id}]` devuelve, `suppressed: {estado: n}`
+(aditivo, siempre un objeto): de los creados, cuantos entraron ya excluidos, por estado, sin los
+`active`. Lo guarda `contacts.imports.suppressed` (`jsonb` con CHECK de objeto,
+`contacts/03_import_suppressed.sql`; `{}` en las importaciones anteriores, que no comprobaban
+nada). La interfaz lo muestra con las etiquetas de estado de `GET /contacts/meta`.
+
+Con suppression caido (un intento de 5 s) no se escribe ningun contacto sin comprobar: el alta
+responde 503 `SUPPRESSION_UNAVAILABLE` sin escribir nada, y la importacion se corta en el lote
+que no pudo comprobar con el mismo 503. Si falla desde el primer lote no escribe ningun
+contacto; si cae a mitad quedan los lotes anteriores, cada uno comprobado, y el rastro queda
+`failed` con lo que confirmo, como ante cualquier fallo a mitad; repetirla es idempotente (los
+ya creados cuentan como omitidos o se actualizan sin conceder dos veces). Escribir el contacto
+en un estado de espera no es seguro: `active` dejaria enviable a quien se dio de baja, y
+`ReconcileSuppression` no cuenta la baja vigente de un `excluded` o un `invalid`, asi que el
+barrido lo devolveria a `active`.
+
+Carrera residual (no cubierta): una causa que suppression registra entre la consulta y la
+confirmacion del alta o del lote, y cuyo evento se consume antes de esa confirmacion, se ignora
+(el consumidor no ve la fila sin confirmar). La ventana es la transaccion del alta o del lote,
+frente al intervalo de 2 s del rele de la outbox de suppression. El barrido completo la corrige,
+salvo una baja: el barrido no aplica una baja vigente a un `active`, porque sin el evento no la
+distingue de una que ya levanto un reconsentimiento. Por la misma razon, los contactos creados
+`active` sobre una baja antes de este cambio siguen `active` (transactional no les envia nada).
+Corregirlos pide una pasada que distinga las dos con el historial de consentimiento
+(`UnsubscribeRevokes`) (P).
 Tambien `automations` (2026-09-13): `automations.doi_settings` (una fila por empresa,
 `UNIQUE (tenant_id)`; activado exige plantilla y remitente por CHECK);
 `automations.doi_deliveries`, un intento por evento `contacts.consent.requested` con

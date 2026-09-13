@@ -262,16 +262,20 @@ type ImportError struct {
 
 // Import es el rastro de una importacion.
 type Import struct {
-	ID           uuid.UUID     `json:"id"`
-	TenantID     uuid.UUID     `json:"tenant_id"`
-	Status       ImportStatus  `json:"status"`
-	Total        int           `json:"total"`
-	Created      int           `json:"created"`
-	Updated      int           `json:"updated"`
-	Skipped      int           `json:"skipped"`
-	Errors       []ImportError `json:"errors"`
-	ConsentBasis string        `json:"consent_basis"`
-	ListID       *uuid.UUID    `json:"list_id"`
-	CreatedBy    uuid.UUID     `json:"created_by"`
-	CreatedAt    time.Time     `json:"created_at"`
+	ID       uuid.UUID     `json:"id"`
+	TenantID uuid.UUID     `json:"tenant_id"`
+	Status   ImportStatus  `json:"status"`
+	Total    int           `json:"total"`
+	Created  int           `json:"created"`
+	Updated  int           `json:"updated"`
+	Skipped  int           `json:"skipped"`
+	Errors   []ImportError `json:"errors"`
+	// Suppressed cuenta, por estado, los contactos creados que entraron ya excluidos por una
+	// causa vigente en suppression (AdmitSuppression); sin los active. Esos nunca reciben el
+	// consentimiento de la importacion (ImportMayGrant).
+	Suppressed   map[Status]int `json:"suppressed"`
+	ConsentBasis string         `json:"consent_basis"`
+	ListID       *uuid.UUID     `json:"list_id"`
+	CreatedBy    uuid.UUID      `json:"created_by"`
+	CreatedAt    time.Time      `json:"created_at"`
 }

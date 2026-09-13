@@ -381,16 +381,16 @@ func NewImportRepository(pool *db.ContextPool) *ImportRepository {
 	return &ImportRepository{pool: pool}
 }
 
-const importColumns = `id, tenant_id, status, total, created, updated, skipped, errors, consent_basis, list_id, created_by, created_at`
+const importColumns = `id, tenant_id, status, total, created, updated, skipped, errors, suppressed, consent_basis, list_id, created_by, created_at`
 
 func scanImport(row pgx.Row) (*domain.Import, error) {
 	var (
-		imp    domain.Import
-		errs   []byte
-		parsed []domain.ImportError
+		imp        domain.Import
+		errs, supp []byte
+		parsed     []domain.ImportError
 	)
 	if err := row.Scan(&imp.ID, &imp.TenantID, &imp.Status, &imp.Total, &imp.Created, &imp.Updated, &imp.Skipped,
-		&errs, &imp.ConsentBasis, &imp.ListID, &imp.CreatedBy, &imp.CreatedAt); err != nil {
+		&errs, &supp, &imp.ConsentBasis, &imp.ListID, &imp.CreatedBy, &imp.CreatedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, domain.ErrImportNotFound
 		}
@@ -400,6 +400,9 @@ func scanImport(row pgx.Row) (*domain.Import, error) {
 		return nil, err
 	}
 	imp.Errors = parsed
+	if err := unmarshalImportSuppressed(supp, &imp.Suppressed); err != nil {
+		return nil, err
+	}
 	return &imp, nil
 }
 
@@ -408,11 +411,15 @@ func (r *ImportRepository) Create(ctx context.Context, imp *domain.Import) error
 	if err != nil {
 		return err
 	}
+	supp, err := marshalImportSuppressed(imp.Suppressed)
+	if err != nil {
+		return err
+	}
 	return r.pool.QueryRow(ctx,
-		`INSERT INTO contacts.imports (id, tenant_id, status, total, created, updated, skipped, errors, consent_basis, list_id, created_by)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		`INSERT INTO contacts.imports (id, tenant_id, status, total, created, updated, skipped, errors, suppressed, consent_basis, list_id, created_by)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 		 RETURNING created_at`,
-		imp.ID, imp.TenantID, imp.Status, imp.Total, imp.Created, imp.Updated, imp.Skipped, errs,
+		imp.ID, imp.TenantID, imp.Status, imp.Total, imp.Created, imp.Updated, imp.Skipped, errs, supp,
 		imp.ConsentBasis, imp.ListID, imp.CreatedBy,
 	).Scan(&imp.CreatedAt)
 }

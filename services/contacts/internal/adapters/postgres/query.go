@@ -143,3 +143,18 @@ func unmarshalImportErrors(b []byte, dst *[]domain.ImportError) error {
 	}
 	return json.Unmarshal(b, dst)
 }
+
+func marshalImportSuppressed(counts map[domain.Status]int) ([]byte, error) {
+	if counts == nil {
+		counts = map[domain.Status]int{}
+	}
+	return json.Marshal(counts)
+}
+
+func unmarshalImportSuppressed(b []byte, dst *map[domain.Status]int) error {
+	*dst = map[domain.Status]int{}
+	if len(b) == 0 {
+		return nil
+	}
+	return json.Unmarshal(b, dst)
+}

@@ -12,6 +12,47 @@ import (
 	"time"
 )
 
+// Un contacto nuevo entra con el estado de la causa vigente mas grave; la baja cuenta
+// siempre, porque sin historial no hay reconsentimiento que la haya levantado. Es la misma
+// decision que ReconcileSuppression con la baja registrada, y nunca toca el consentimiento.
+func TestAdmitSuppression(t *testing.T) {
+	at := time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC)
+	cases := []struct {
+		name   string
+		causes []SuppressionCause
+		want   Status
+	}{
+		{"libre", nil, StatusActive},
+		{"queja", []SuppressionCause{CauseComplaint}, StatusComplained},
+		{"rebote", []SuppressionCause{CauseHardBounce}, StatusBounced},
+		{"baja", []SuppressionCause{CauseUnsubscribe}, StatusUnsubscribed},
+		{"direccion no valida", []SuppressionCause{CauseInvalid}, StatusInvalid},
+		{"exclusion manual", []SuppressionCause{CauseManual}, StatusExcluded},
+		{"la baja pesa mas que manual e invalid", []SuppressionCause{CauseManual, CauseInvalid, CauseUnsubscribe}, StatusUnsubscribed},
+		{"el rebote pesa mas que la baja", []SuppressionCause{CauseUnsubscribe, CauseHardBounce}, StatusBounced},
+		{"la queja, la mas grave", []SuppressionCause{CauseInvalid, CauseComplaint, CauseHardBounce}, StatusComplained},
+		{"causa desconocida: como un active existente", []SuppressionCause{"futura"}, StatusActive},
+		{"causa desconocida con manual", []SuppressionCause{"futura", CauseManual}, StatusExcluded},
+	}
+	for _, tc := range cases {
+		active := make([]ActiveCause, len(tc.causes))
+		for i, cause := range tc.causes {
+			active[i] = ActiveCause{Cause: cause, RegisteredAt: at}
+		}
+		c := &Contact{Status: StatusActive, ConsentStatus: ConsentNone}
+		c.AdmitSuppression(active)
+		if c.Status != tc.want || c.ConsentStatus != ConsentNone {
+			t.Errorf("%s: %s/%s, se esperaba %s sin tocar el consentimiento", tc.name, c.Status, c.ConsentStatus, tc.want)
+		}
+		_, unsubscribed := CauseRegisteredAt(active, CauseUnsubscribe)
+		same := &Contact{Status: StatusActive}
+		same.ReconcileSuppression(CausesOf(active), unsubscribed && UnsubscribeRevokes(at, nil))
+		if same.Status != c.Status {
+			t.Errorf("%s: el alta decide %s y ReconcileSuppression %s", tc.name, c.Status, same.Status)
+		}
+	}
+}
+
 func TestReconcileSuppression(t *testing.T) {
 	cases := []struct {
 		name       string

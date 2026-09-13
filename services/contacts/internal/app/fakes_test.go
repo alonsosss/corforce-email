@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"sort"
 	"strings"
 	"testing"
@@ -615,12 +616,16 @@ func (f fakeImports) List(_ context.Context, tenantID uuid.UUID, _, _ int) ([]do
 // el momento de la consulta, con su hora de alta, que el test fija antes de aplicar cada
 // evento. batch, si no es nil, es lo que devuelve la consulta en bloque del barrido: la
 // foto que el barrido leyo sin bloquear, que puede haber cambiado al bloquear la fila.
+//
+// failFromBatch, si es mayor que cero, hace fallar la consulta en bloque con ese numero de
+// orden y las siguientes: suppression que cae a mitad de una importacion.
 type fakeSuppression struct {
-	causes     map[string][]domain.ActiveCause
-	batch      map[string][]domain.ActiveCause
-	err        error
-	calls      int
-	batchSizes []int
+	causes        map[string][]domain.ActiveCause
+	batch         map[string][]domain.ActiveCause
+	err           error
+	failFromBatch int
+	calls         int
+	batchSizes    []int
 }
 
 func (f *fakeSuppression) ActiveCauses(_ context.Context, _ uuid.UUID, email string) ([]domain.ActiveCause, error) {
@@ -635,6 +640,9 @@ func (f *fakeSuppression) ActiveCausesOf(_ context.Context, _ uuid.UUID, emails 
 	f.batchSizes = append(f.batchSizes, len(emails))
 	if f.err != nil {
 		return nil, f.err
+	}
+	if f.failFromBatch > 0 && len(f.batchSizes) >= f.failFromBatch {
+		return nil, errors.New("suppression: status 503")
 	}
 	source := f.causes
 	if f.batch != nil {

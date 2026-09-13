@@ -7,7 +7,32 @@ import (
 
 	"github.com/alonsosss/corforce-email/services/contacts/internal/domain"
 	"github.com/google/uuid"
+	"go.uber.org/zap"
 )
+
+// ErrSuppressionUnavailable: suppression no devolvio las causas vigentes con que se decide
+// el estado de un contacto nuevo o el consentimiento de una importacion. El alta y cada lote
+// de la importacion fallan sin escribir nada (admissionCauses).
+var ErrSuppressionUnavailable = errors.New("la lista de exclusiones no respondio: no se escribio ningun contacto sin comprobarla; vuelve a intentarlo")
+
+// admissionCauses lee de suppression las causas vigentes de las direcciones que entran por
+// el alta o por un lote de la importacion, fuera de la transaccion (la llamada no retiene
+// una conexion ni bloqueos). Si no responde no hay estado seguro que escribir: active
+// dejaria enviable a quien se dio de baja, y ningun estado de exclusion sirve de espera,
+// porque ReconcileSuppression no cuenta la baja vigente de un excluded o un invalid y el
+// barrido lo devolveria a active.
+func (uc *UseCase) admissionCauses(ctx context.Context, tenantID uuid.UUID, emails []string) (map[string][]domain.ActiveCause, error) {
+	if uc.suppression == nil {
+		return nil, fmt.Errorf("%w: sin lector del estado de suppression", ErrSuppressionUnavailable)
+	}
+	active, err := uc.suppression.ActiveCausesOf(ctx, tenantID, emails)
+	if err != nil {
+		uc.logger.Warn("contacts: suppression no respondio; no se escriben contactos nuevos",
+			zap.String("tenant_id", tenantID.String()), zap.Int("emails", len(emails)), zap.Error(err))
+		return nil, fmt.Errorf("%w: %w", ErrSuppressionUnavailable, err)
+	}
+	return active, nil
+}
 
 // Subjects que este servicio consume. Los publica suppression (stream SUPPRESSION) por
 // su outbox con Data {tenant_id, email, reason, source, reasons}: reason es la causa que

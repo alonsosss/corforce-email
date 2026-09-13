@@ -143,3 +143,14 @@ func (c *Contact) ReconcileSuppression(causes []SuppressionCause, unsubscribeReg
 	c.Status = next
 	return true
 }
+
+// AdmitSuppression fija el estado con que entra un contacto nuevo (alta por API o
+// importacion) segun las causas vigentes de su direccion: es ReconcileSuppression sobre un
+// active con la baja vigente en vigor, porque un contacto sin historial no tiene
+// reconsentimiento que la haya levantado (UnsubscribeRevokes, sin consentimientos, revoca
+// siempre). No toca el consentimiento: un contacto nuevo no tiene ninguno que revocar, y
+// una revocacion sobre quien nunca consintio no es evidencia de nada.
+func (c *Contact) AdmitSuppression(active []ActiveCause) {
+	_, unsubscribed := CauseRegisteredAt(active, CauseUnsubscribe)
+	c.ReconcileSuppression(CausesOf(active), unsubscribed)
+}

@@ -1818,6 +1818,7 @@ export const es = {
   'contacts.import.consentColumn': 'Consentimiento',
   'contacts.import.withBasis': 'Con base legal',
   'contacts.import.withoutConsent': 'Sin consentimiento',
+  'contacts.import.suppressedTitle': 'Creados ya excluidos por la lista de supresion',
   'contacts.import.status.completed': 'Completada',
   'contacts.import.status.failed': 'Interrumpida',
 

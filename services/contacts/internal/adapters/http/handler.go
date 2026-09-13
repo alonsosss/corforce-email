@@ -550,6 +550,8 @@ type importResponse struct {
 	Updated int                  `json:"updated"`
 	Skipped int                  `json:"skipped"`
 	Errors  []domain.ImportError `json:"errors"`
+	// Suppressed: de los creados, cuantos entraron ya excluidos, por estado.
+	Suppressed map[domain.Status]int `json:"suppressed"`
 }
 
 func (h *Handler) Import(w http.ResponseWriter, r *http.Request) {
@@ -606,7 +608,7 @@ func (h *Handler) Import(w http.ResponseWriter, r *http.Request) {
 	}
 	response.JSON(w, http.StatusCreated, importResponse{
 		ID: imp.ID, Status: imp.Status, Total: imp.Total, Created: imp.Created,
-		Updated: imp.Updated, Skipped: imp.Skipped, Errors: imp.Errors,
+		Updated: imp.Updated, Skipped: imp.Skipped, Errors: imp.Errors, Suppressed: imp.Suppressed,
 	})
 }
 
@@ -1364,6 +1366,10 @@ func writeError(w http.ResponseWriter, err error) {
 		response.Err(w, http.StatusConflict, "CONSENT_ALREADY_GRANTED", err.Error())
 	case errors.Is(err, domain.ErrContactNotReachable):
 		response.Err(w, http.StatusConflict, "CONTACT_NOT_REACHABLE", err.Error())
+	// Antes que DeadlineExceeded: el plazo agotado de la llamada a suppression no es una
+	// consulta de segmento lenta.
+	case errors.Is(err, app.ErrSuppressionUnavailable):
+		response.Err(w, http.StatusServiceUnavailable, "SUPPRESSION_UNAVAILABLE", app.ErrSuppressionUnavailable.Error())
 	case errors.Is(err, context.DeadlineExceeded):
 		response.Err(w, http.StatusServiceUnavailable, "QUERY_TIMEOUT", "la consulta supero el tiempo maximo; acota el segmento")
 	case isValidationError(err):

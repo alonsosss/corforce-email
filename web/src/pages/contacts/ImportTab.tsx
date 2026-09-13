@@ -30,6 +30,7 @@ import {
 } from '@/design/components';
 import { formatDateTime } from '@/lib/format';
 import { getLocale, t, tEnum } from '@/i18n';
+import { ContactStatusBadge } from './contactStatus';
 import { rowsFromCsv, TAG_SEPARATOR } from './importRows';
 
 export function ImportTab() {
@@ -314,6 +315,7 @@ export function ImportTab() {
 function ImportSummary({ result }: { result: ImportResult }) {
   const format = new Intl.NumberFormat(getLocale());
   const errors = result.errors ?? [];
+  const suppressed = Object.entries(result.suppressed ?? {}).filter(([, n]) => n > 0);
   return (
     <div className="cf-stack" style={{ gap: 'var(--cf-space-3)' }}>
       <Alert
@@ -327,6 +329,27 @@ function ImportSummary({ result }: { result: ImportResult }) {
           skipped: format.format(result.skipped),
         })}
       </Alert>
+      {suppressed.length ? (
+        <Card title={t('contacts.import.suppressedTitle')}>
+          <DataTable
+            columns={[
+              {
+                key: 'status',
+                header: t('common.status'),
+                render: ([status]) => <ContactStatusBadge status={status} />,
+              },
+              {
+                key: 'created',
+                header: t('contacts.import.created'),
+                align: 'right',
+                render: ([, n]) => format.format(n),
+              },
+            ]}
+            rows={suppressed}
+            rowKey={([status]) => status}
+          />
+        </Card>
+      ) : null}
       {errors.length ? (
         <DataTable
           columns={[

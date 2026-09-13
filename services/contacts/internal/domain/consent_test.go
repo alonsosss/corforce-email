@@ -117,19 +117,32 @@ func TestImportMayGrant(t *testing.T) {
 	cases := []struct {
 		status  Status
 		consent ConsentStatus
+		causes  []SuppressionCause
 		want    bool
 	}{
-		{StatusActive, ConsentNone, true},
-		{StatusActive, ConsentPending, true},
-		{StatusActive, ConsentGranted, false},
-		{StatusActive, ConsentRevoked, false},
-		{StatusUnsubscribed, ConsentNone, false},
-		{StatusBounced, ConsentNone, false},
-		{StatusComplained, ConsentPending, false},
+		{StatusActive, ConsentNone, nil, true},
+		{StatusActive, ConsentPending, nil, true},
+		{StatusActive, ConsentGranted, nil, false},
+		{StatusActive, ConsentRevoked, nil, false},
+		{StatusUnsubscribed, ConsentNone, nil, false},
+		{StatusBounced, ConsentNone, nil, false},
+		{StatusComplained, ConsentPending, nil, false},
+		{StatusInvalid, ConsentNone, nil, false},
+		{StatusExcluded, ConsentNone, nil, false},
+		// Una baja vigente que el contacto aun no refleja impide conceder: la importacion
+		// no prueba que lo pidiera la persona.
+		{StatusActive, ConsentNone, []SuppressionCause{CauseUnsubscribe}, false},
+		{StatusActive, ConsentPending, []SuppressionCause{CauseManual, CauseUnsubscribe}, false},
+		// Las demas causas deciden por el estado, que en un existente fijan sus eventos.
+		{StatusActive, ConsentNone, []SuppressionCause{CauseManual}, true},
 	}
 	for _, tc := range cases {
-		if got := ImportMayGrant(&Contact{Status: tc.status, ConsentStatus: tc.consent}); got != tc.want {
-			t.Errorf("%s/%s: %v, se esperaba %v", tc.status, tc.consent, got, tc.want)
+		active := make([]ActiveCause, len(tc.causes))
+		for i, cause := range tc.causes {
+			active[i] = ActiveCause{Cause: cause}
+		}
+		if got := ImportMayGrant(&Contact{Status: tc.status, ConsentStatus: tc.consent}, active); got != tc.want {
+			t.Errorf("%s/%s/%v: %v, se esperaba %v", tc.status, tc.consent, tc.causes, got, tc.want)
 		}
 	}
 }

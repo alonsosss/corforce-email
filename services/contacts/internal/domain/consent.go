@@ -114,9 +114,17 @@ func (c *Contact) Reactivate() bool {
 }
 
 // ImportMayGrant decide si una importacion con base legal declarada puede conceder el
-// consentimiento a un contacto que ya existia. Nunca re-suscribe (baja, rebote, queja o
-// consentimiento retirado) y no duplica uno ya concedido.
-func ImportMayGrant(c *Contact) bool {
+// consentimiento al contacto, nuevo (con el estado de AdmitSuppression) o existente, dadas
+// las causas vigentes de su direccion en suppression. Solo a un active: nunca re-suscribe
+// (baja, rebote, queja, direccion no valida, exclusion manual o consentimiento retirado) y
+// no duplica uno ya concedido. Una baja vigente la impide aunque el contacto aun no la
+// refleje (su evento no llego, o es anterior al contacto): la importacion no prueba que lo
+// pidiera la persona (provesOwnRequest), y a quien la levanto un reconsentimiento ya lo
+// tiene concedido.
+func ImportMayGrant(c *Contact, active []ActiveCause) bool {
+	if _, unsubscribed := CauseRegisteredAt(active, CauseUnsubscribe); unsubscribed {
+		return false
+	}
 	return c.Status == StatusActive && c.ConsentStatus != ConsentRevoked && c.ConsentStatus != ConsentGranted
 }
 

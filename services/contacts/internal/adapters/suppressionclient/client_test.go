@@ -154,6 +154,44 @@ func TestActiveCausesOfEnBloque(t *testing.T) {
 	}
 }
 
+// El alta y la importacion consultan en bloque: ninguna peticion supera el tope de
+// suppression (max_check_emails, 1000), que responde 422 por encima, tampoco en el borde.
+func TestActiveCausesOfRespetaElTopeDeSuppression(t *testing.T) {
+	const maxCheckEmails = 1000
+	var sizes []int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req map[string][]string
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		sizes = append(sizes, len(req["emails"]))
+		if len(req["emails"]) > maxCheckEmails {
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			return
+		}
+		_, _ = w.Write([]byte(`{"data":{"suppressed":[]}}`))
+	}))
+	defer srv.Close()
+	c := New(srv.URL, "tok")
+	for _, tc := range []struct {
+		n    int
+		want []int
+	}{
+		{maxCheckEmails, []int{checkBatch, checkBatch}},
+		{maxCheckEmails + 1, []int{checkBatch, checkBatch, 1}},
+	} {
+		sizes = nil
+		emails := make([]string, tc.n)
+		for i := range emails {
+			emails[i] = fmt.Sprintf("c%04d@example.com", i)
+		}
+		if got, err := c.ActiveCausesOf(context.Background(), uuid.New(), emails); err != nil || len(got) != 0 {
+			t.Fatalf("%d direcciones: %v %v", tc.n, got, err)
+		}
+		if !reflect.DeepEqual(sizes, tc.want) {
+			t.Fatalf("%d direcciones: peticiones de %v, se esperaban %v", tc.n, sizes, tc.want)
+		}
+	}
+}
+
 func TestActiveCausesSinReintentos(t *testing.T) {
 	requests := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

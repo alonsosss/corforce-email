@@ -432,6 +432,21 @@ expect "revocar el consentimiento queda como evidencia" \
 [[ "$(audiencia)" != *lucia@cliente.test* ]] && ok "sin consentimiento sale de la audiencia" || mal "la audiencia conserva un contacto sin consentimiento"
 expect "y no se vuelve a conceder sin doble opt-in" \
   "$(codigo -X POST "$GW/contacts/$CTID/consent" -H "$A2" -H 'Content-Type: application/json' -d '{"status":"granted","method":"api","source":"e2e"}')" "409"
+# baja@otro.test tiene la exclusion manual de "Supresion"; la baja se registra por el endpoint
+# interno de suppression, como la registraria el enlace de baja.
+expect "un contacto nuevo con la direccion ya excluida entra excluded (el alta consulta suppression)" \
+  "$(curl -s -X POST "$GW/contacts" -H "$A2" -H 'Content-Type: application/json' \
+    -d '{"email":"baja@otro.test","source":"api","consent":{"status":"granted","method":"api","source":"e2e"}}' | jget data.status)" "excluded"
+expect "suppression registra una baja" \
+  "$(interno "${PORT[suppression]}/internal/suppression/add" '{"email":"se-fue@cliente.test","reason":"unsubscribe","source":"e2e"}' | jget data.added)" "True"
+expect "el alta con consentimiento sin prueba sobre esa baja se rechaza" \
+  "$(codigo -X POST "$GW/contacts" -H "$A2" -H 'Content-Type: application/json' -d '{"email":"se-fue@cliente.test","source":"api","consent":{"status":"granted","method":"api","source":"e2e"}}')" "409"
+IMP=$(curl -s -X POST "$GW/contacts/imports" -H "$A2" -H 'Content-Type: application/json' \
+  -d '{"rows":[{"email":"se-fue@cliente.test"},{"email":"nueva@cliente.test"}],"consent":{"status":"granted","basis":"e2e"}}')
+expect "la importacion cuenta la baja entre los creados ya excluidos" "$(echo "$IMP" | jget data.suppressed.unsubscribed)" "1"
+SEFUE=$(curl -s "$GW/contacts?search=se-fue" -H "$A2")
+expect "y la deja unsubscribed aunque declare consentimiento" "$(echo "$SEFUE" | jget data.0.status)" "unsubscribed"
+[[ "$(echo "$SEFUE" | jget data.0.consent_status)" != granted ]] && ok "sin el consentimiento de la importacion" || mal "la importacion concedio el consentimiento a una baja"
 
 echo "== Campanas (campaigns -> contacts -> transactional)"
 CT2=$(curl -s -X POST "$GW/contacts" -H "$A2" -H 'Content-Type: application/json' \

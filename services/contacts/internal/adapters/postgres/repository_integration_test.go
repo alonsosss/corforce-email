@@ -590,7 +590,7 @@ func containsTag(tags []string, tag string) bool {
 }
 
 func TestCatalogo(t *testing.T) {
-	_, ctx := testPool(t)
+	pool, ctx := testPool(t)
 	cp := &db.ContextPool{}
 	lists := NewListRepository(cp)
 	attrs := NewAttributeRepository(cp)
@@ -646,5 +646,31 @@ func TestCatalogo(t *testing.T) {
 	got, err := imports.Get(ctx, tenant, imp.ID)
 	if err != nil || len(got.Errors) != 1 || got.Errors[0].Line != 2 || got.ListID != nil {
 		t.Fatalf("importacion: %+v %v", got, err)
+	}
+	if got.Suppressed == nil || len(got.Suppressed) != 0 {
+		t.Fatalf("sin excluidos, suppressed es un objeto vacio: %v", got.Suppressed)
+	}
+
+	// Los creados ya excluidos se guardan por estado (03_import_suppressed.sql).
+	withSuppressed := &domain.Import{ID: uuid.New(), TenantID: tenant, Status: domain.ImportCompleted, Total: 3, Created: 3,
+		Suppressed: map[domain.Status]int{domain.StatusUnsubscribed: 2, domain.StatusExcluded: 1}, CreatedBy: uuid.New()}
+	if err := imports.Create(ctx, withSuppressed); err != nil {
+		t.Fatal(err)
+	}
+	got, err = imports.Get(ctx, tenant, withSuppressed.ID)
+	if err != nil || len(got.Suppressed) != 2 || got.Suppressed[domain.StatusUnsubscribed] != 2 || got.Suppressed[domain.StatusExcluded] != 1 {
+		t.Fatalf("suppressed guardado: %+v %v", got, err)
+	}
+	// Una importacion anterior a la columna la lee vacia, y el CHECK solo admite un objeto.
+	legacy := uuid.New()
+	if _, err := pool.Exec(ctx, `INSERT INTO contacts.imports (id, tenant_id, status, total, created, updated, skipped, created_by)
+		VALUES ($1, $2, 'completed', 0, 0, 0, 0, $3)`, legacy, tenant, uuid.New()); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := imports.Get(ctx, tenant, legacy); err != nil || got.Suppressed == nil || len(got.Suppressed) != 0 {
+		t.Fatalf("importacion anterior: %+v %v", got, err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE contacts.imports SET suppressed = '[]'::jsonb WHERE id = $1`, legacy); sqlState(err) != "23514" {
+		t.Fatalf("el CHECK rechaza lo que no es un objeto: %v", err)
 	}
 }

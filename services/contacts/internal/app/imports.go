@@ -16,7 +16,8 @@ import (
 const (
 	// importBatchSize es el tamano de cada transaccion de la importacion: un fallo a
 	// mitad deja confirmados los lotes anteriores y no retiene bloqueos sobre miles de
-	// filas a la vez.
+	// filas a la vez. Es tambien la consulta de cada lote a suppression, por debajo de su
+	// tope de 1000 direcciones.
 	importBatchSize = 500
 	// MaxImportErrors es el tope de filas de error guardadas y devueltas.
 	MaxImportErrors = 100
@@ -41,7 +42,8 @@ type ImportInput struct {
 	ListID         *uuid.UUID
 	UpdateExisting bool
 	// GrantConsent registra consentimiento concedido (method import) con la base legal
-	// declarada; nunca para quien se dio de baja, rebota, se quejo o lo retiro.
+	// declarada, solo a los contactos que quedan active y sin baja vigente
+	// (domain.ImportMayGrant).
 	GrantConsent bool
 	ConsentBasis string
 	CreatedBy    uuid.UUID
@@ -59,6 +61,7 @@ type importRow struct {
 type batchResult struct {
 	created, updated, skipped int
 	errors                    []domain.ImportError
+	suppressed                map[domain.Status]int
 }
 
 func (uc *UseCase) Import(ctx context.Context, tenantID uuid.UUID, in ImportInput) (*domain.Import, error) {
@@ -88,26 +91,37 @@ func (uc *UseCase) Import(ctx context.Context, tenantID uuid.UUID, in ImportInpu
 	imp := &domain.Import{
 		ID: uuid.New(), TenantID: tenantID, Status: domain.ImportCompleted, Total: len(in.Rows),
 		ConsentBasis: basis, ListID: in.ListID, CreatedBy: in.CreatedBy, Errors: []domain.ImportError{},
+		Suppressed: map[domain.Status]int{},
 	}
 	rows := prepareRows(in.Rows, defs, imp)
 
+	// Cada lote lee sus causas vigentes justo antes de su transaccion: una causa registrada
+	// despues llega por evento al contacto ya confirmado. Si suppression no responde, el
+	// lote no se escribe y la importacion se corta como ante cualquier fallo a mitad: quedan
+	// los lotes anteriores, cada uno comprobado, y el rastro queda failed.
 	for start := 0; start < len(rows); start += importBatchSize {
-		end := min(start+importBatchSize, len(rows))
+		batch := rows[start:min(start+importBatchSize, len(rows))]
 		var res batchResult
-		err := uc.tx.Transact(ctx, func(ctx context.Context) error {
-			res = batchResult{}
-			return uc.importBatch(ctx, tenantID, in, basis, imp.ID, defs, rows[start:end], &res)
-		})
+		active, err := uc.admissionCauses(ctx, tenantID, emailsOf(batch))
+		if err == nil {
+			err = uc.tx.Transact(ctx, func(ctx context.Context) error {
+				res = batchResult{suppressed: map[domain.Status]int{}}
+				return uc.importBatch(ctx, tenantID, in, basis, imp.ID, defs, batch, active, &res)
+			})
+		}
 		if err != nil {
 			imp.Status = domain.ImportFailed
 			uc.saveFailedImport(ctx, imp)
-			return nil, fmt.Errorf("importacion %s: lote desde la fila %d: %w", imp.ID, rows[start].line, err)
+			return nil, fmt.Errorf("importacion %s: lote desde la fila %d: %w", imp.ID, batch[0].line, err)
 		}
 		imp.Created += res.created
 		imp.Updated += res.updated
 		imp.Skipped += res.skipped
 		for _, e := range res.errors {
 			addImportError(imp, e)
+		}
+		for st, n := range res.suppressed {
+			imp.Suppressed[st] += n
 		}
 	}
 
@@ -187,15 +201,21 @@ func prepareRows(in []ImportRow, defs domain.Definitions, imp *domain.Import) []
 	return out
 }
 
+func emailsOf(batch []importRow) []string {
+	out := make([]string, len(batch))
+	for i, r := range batch {
+		out[i] = r.contact.Email
+	}
+	return out
+}
+
 // importBatch aplica un lote dentro de su transaccion. Los contactos existentes quedan
 // bloqueados desde la lectura, asi que el estado con el que se decide si se concede el
-// consentimiento es el que se confirma.
-func (uc *UseCase) importBatch(ctx context.Context, tenantID uuid.UUID, in ImportInput, basis string, importID uuid.UUID, defs domain.Definitions, batch []importRow, res *batchResult) error {
-	emails := make([]string, len(batch))
-	for i, r := range batch {
-		emails[i] = r.contact.Email
-	}
-	existing, err := uc.contacts.FindByEmailsForUpdate(ctx, tenantID, emails)
+// consentimiento es el que se confirma; su estado no se toca (lo fijan los eventos de
+// suppression). Los nuevos entran con el estado que implican sus causas vigentes (active,
+// de suppression, por direccion).
+func (uc *UseCase) importBatch(ctx context.Context, tenantID uuid.UUID, in ImportInput, basis string, importID uuid.UUID, defs domain.Definitions, batch []importRow, active map[string][]domain.ActiveCause, res *batchResult) error {
+	existing, err := uc.contacts.FindByEmailsForUpdate(ctx, tenantID, emailsOf(batch))
 	if err != nil {
 		return err
 	}
@@ -230,7 +250,7 @@ func (uc *UseCase) importBatch(ctx context.Context, tenantID uuid.UUID, in Impor
 			}
 			updates = append(updates, merged)
 			res.updated++
-			if in.GrantConsent && domain.ImportMayGrant(&ex) {
+			if in.GrantConsent && domain.ImportMayGrant(&ex, active[ex.Email]) {
 				grant(ex.ID)
 			}
 			if in.ListID != nil {
@@ -246,6 +266,7 @@ func (uc *UseCase) importBatch(ctx context.Context, tenantID uuid.UUID, in Impor
 		c := r.contact
 		c.TenantID = tenantID
 		c.Attributes = r.attrs
+		c.AdmitSuppression(active[c.Email])
 		inserts = append(inserts, c)
 	}
 
@@ -258,7 +279,10 @@ func (uc *UseCase) importBatch(ctx context.Context, tenantID uuid.UUID, in Impor
 		// Una direccion que otro creo entre la lectura y la escritura no se pisa.
 		res.skipped += len(inserts) - len(inserted)
 		for _, c := range inserted {
-			if in.GrantConsent {
+			if c.Status != domain.StatusActive {
+				res.suppressed[c.Status]++
+			}
+			if in.GrantConsent && domain.ImportMayGrant(&c, active[c.Email]) {
 				grant(c.ID)
 			}
 			if in.ListID != nil {

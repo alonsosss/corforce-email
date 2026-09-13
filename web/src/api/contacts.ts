@@ -122,6 +122,13 @@ export interface ImportRowError {
 
 export type ImportStatus = 'completed' | 'failed';
 
+/**
+ * De los contactos creados, cuantos entraron ya excluidos por una causa vigente en
+ * suppression, por estado (sin active). Siempre un objeto; vacio en las importaciones
+ * anteriores a la comprobacion.
+ */
+export type ImportSuppressedCounts = Record<ContactStatus, number>;
+
 export interface ContactImport {
   id: string;
   tenant_id: string;
@@ -131,6 +138,7 @@ export interface ContactImport {
   updated: number;
   skipped: number;
   errors: ImportRowError[] | null;
+  suppressed?: ImportSuppressedCounts;
   consent_basis: string;
   list_id: string | null;
   created_by: string;
@@ -145,6 +153,7 @@ export interface ImportResult {
   updated: number;
   skipped: number;
   errors: ImportRowError[] | null;
+  suppressed?: ImportSuppressedCounts;
 }
 
 export interface ContactExport {
