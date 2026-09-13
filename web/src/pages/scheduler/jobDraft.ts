@@ -1,4 +1,4 @@
-import { ERROR_CODES, isApiError } from '@/api/errors';
+import { ERROR_CODES, errorDetail, isApiError } from '@/api/errors';
 import {
   PLATFORM_SCOPE,
   TENANT_SCOPE,
@@ -9,8 +9,9 @@ import {
   type SchedulerMeta,
   type UpdateJobRequest,
 } from '@/api/scheduler';
-import { t } from '@/i18n';
-import { rules, type FieldErrors } from '@/lib/validate';
+import { t, type MessageKey } from '@/i18n';
+import { formatBytes } from '@/lib/quota';
+import { type FieldErrors } from '@/lib/validate';
 import { formatSeconds } from './schedulerFormat';
 
 /** Estado del formulario de un trabajo: lo que se escribe, antes de convertirlo al cuerpo. */
@@ -84,11 +85,6 @@ export function draftFromJob(job: SchedulerJob): JobDraft {
   };
 }
 
-/** interval_minutes minimo: la resolucion del planificador que publica la meta, en minutos. */
-export function minIntervalMinutes(meta: SchedulerMeta): number {
-  return Math.max(1, Math.ceil(meta.cron.min_every_seconds / 60));
-}
-
 /** Longitud en bytes UTF-8: el servicio mide con len() de Go. */
 export function utf8Length(value: string): number {
   let bytes = 0;
@@ -97,6 +93,17 @@ export function utf8Length(value: string): number {
     bytes += cp < 0x80 ? 1 : cp < 0x800 ? 2 : cp < 0x10000 ? 3 : 4;
   }
   return bytes;
+}
+
+/** Longitud en caracteres (puntos de codigo): el servicio mide con utf8.RuneCountInString. */
+export function charLength(value: string): number {
+  return Array.from(value).length;
+}
+
+/** Plazo maximo que admite el trabajo: el del manejador, dentro del tope general de la meta. */
+export function maxTimeoutSeconds(meta: SchedulerMeta, handler: SchedulerHandler | null): number {
+  const general = meta.limits.max_timeout_seconds;
+  return handler ? Math.min(handler.max_timeout_seconds, general) : general;
 }
 
 const EVERY_PREFIX = '@every ';
@@ -157,68 +164,104 @@ export function timeZoneSuggestions(fallback: string): string[] {
   return zones.includes(fallback) ? zones : [fallback, ...zones];
 }
 
-function cronError(value: string, meta: SchedulerMeta): string | null {
+/** Texto que el cuerpo lleva recortado: se mide tal como viaja. */
+function textError(value: string, max: number, required: boolean): string | undefined {
+  const text = value.trim();
+  if (required && !text) return t('validation.required');
+  return charLength(text) > max ? t('validation.maxLength', { n: max }) : undefined;
+}
+
+function integerError(value: string, min: number, max: number): string | undefined {
+  const n = Number(value);
+  return value.trim() !== '' && Number.isSafeInteger(n) && n >= min && n <= max
+    ? undefined
+    : t('validation.range', { min, max });
+}
+
+function cronError(value: string, meta: SchedulerMeta): string | undefined {
   const spec = value.trim();
   if (!spec) return t('validation.required');
   if (utf8Length(spec) > meta.cron.max_length) {
     return t('validation.maxLength', { n: meta.cron.max_length });
   }
-  if (!spec.startsWith('@') || meta.cron.descriptors.includes(spec)) return null;
+  if (!spec.startsWith('@') || meta.cron.descriptors.includes(spec)) return undefined;
   if (spec.startsWith(EVERY_PREFIX)) {
     const seconds = parseGoDurationSeconds(spec.slice(EVERY_PREFIX.length));
     return seconds !== null && seconds < meta.cron.min_every_seconds
       ? t('scheduler.validation.everyMin', { min: formatSeconds(meta.cron.min_every_seconds) })
-      : null;
+      : undefined;
   }
   return t('scheduler.validation.descriptor', { list: meta.cron.descriptors.join(', ') });
 }
 
-function timezoneError(value: string, meta: SchedulerMeta): string | null {
+function timezoneError(value: string, meta: SchedulerMeta): string | undefined {
   const zone = value.trim();
   if (!zone) return t('validation.required');
   if (utf8Length(zone) > meta.timezone.max_length) {
     return t('validation.maxLength', { n: meta.timezone.max_length });
   }
   const pattern = timezonePattern(meta);
-  return pattern && !pattern.test(zone) ? t('scheduler.validation.timezoneFormat') : null;
+  return pattern && !pattern.test(zone) ? t('scheduler.validation.timezoneFormat') : undefined;
 }
 
-function intervalError(value: string, meta: SchedulerMeta): string | null {
-  const min = minIntervalMinutes(meta);
-  const n = Number(value);
-  return value.trim() !== '' && Number.isSafeInteger(n) && n >= min
-    ? null
-    : t('scheduler.validation.intervalMin', { n: min });
+function timeoutError(
+  value: string,
+  meta: SchedulerMeta,
+  handler: SchedulerHandler | null,
+): string | undefined {
+  const range = integerError(value, 0, meta.limits.max_timeout_seconds);
+  if (range) return range;
+  const max = maxTimeoutSeconds(meta, handler);
+  return Number(value) > max
+    ? t('scheduler.validation.timeoutHandlerMax', { value: formatSeconds(max) })
+    : undefined;
 }
 
-function payloadError(value: string): string | null {
+function payloadError(value: string, maxBytes: number): string | undefined {
   const text = value.trim();
-  if (!text) return null;
+  if (!text) return undefined;
+  if (utf8Length(text) > maxBytes) {
+    return t('scheduler.validation.payloadSize', { max: formatBytes(maxBytes) });
+  }
   try {
     JSON.parse(text);
-    return null;
+    return undefined;
   } catch {
     return t('scheduler.validation.payloadJson');
   }
 }
 
-/** Comprueba lo que la meta permite comprobar antes de enviar; el resto lo decide el servidor. */
-export function validateDraft(draft: JobDraft, meta: SchedulerMeta, mode: DraftMode): JobErrors {
+/**
+ * Comprueba lo que la meta y el manejador elegido permiten comprobar antes de enviar; el resto
+ * lo decide el servidor. handler es null si el trabajo apunta a uno fuera del catalogo.
+ */
+export function validateDraft(
+  draft: JobDraft,
+  meta: SchedulerMeta,
+  mode: DraftMode,
+  handler: SchedulerHandler | null,
+): JobErrors {
+  const { limits } = meta;
   const errors: JobErrors = {
-    name: rules.required(draft.name) ?? undefined,
-    code: mode === 'create' ? (rules.required(draft.code) ?? undefined) : undefined,
+    name: textError(draft.name, limits.max_name_length, true),
+    code: mode === 'create' ? textError(draft.code, limits.max_code_length, true) : undefined,
+    description: textError(draft.description, limits.max_description_length, false),
     handler: draft.handler ? undefined : t('validation.required'),
     job_type: draft.job_type ? undefined : t('validation.required'),
-    timezone: timezoneError(draft.timezone, meta) ?? undefined,
-    max_retries: rules.nonNegativeInteger(draft.max_retries) ?? undefined,
-    timeout_seconds: rules.nonNegativeInteger(draft.timeout_seconds) ?? undefined,
-    payload: payloadError(draft.payload) ?? undefined,
+    timezone: timezoneError(draft.timezone, meta),
+    max_retries: integerError(draft.max_retries, 0, limits.max_retries),
+    timeout_seconds: timeoutError(draft.timeout_seconds, meta, handler),
+    payload: payloadError(draft.payload, limits.max_payload_bytes),
   };
   if (draft.job_type === 'cron') {
-    errors.cron_expression = cronError(draft.cron_expression, meta) ?? undefined;
+    errors.cron_expression = cronError(draft.cron_expression, meta);
   }
   if (draft.job_type === 'interval') {
-    errors.interval_minutes = intervalError(draft.interval_minutes, meta) ?? undefined;
+    errors.interval_minutes = integerError(
+      draft.interval_minutes,
+      limits.min_interval_minutes,
+      limits.max_interval_minutes,
+    );
   }
   return errors;
 }
@@ -248,55 +291,45 @@ export function toUpdateRequest(draft: JobDraft, jobType: JobType): UpdateJobReq
   return toUpdateBody(draft, jobType);
 }
 
-// El scheduler responde 422 VALIDATION_ERROR sin campo en error.details: el mensaje empieza
-// por el error del dominio (domain/errors.go) o por "<campo> is required" de pkg/validate,
-// varios unidos por "; ". Esos prefijos son el contrato que se puede leer.
-const REQUIRED = /^(name|code|job_type|handler) is required$/;
-const INVALID_JOB =
-  /^invalid job: (job_type|interval_minutes|max_retries|timeout_seconds|payload)\b/;
-const CRON_PREFIX = 'invalid cron expression';
-const HANDLER_PREFIX = 'handler not allowed';
-const TIMEZONE_PREFIX = 'invalid time zone';
-const JOB_PREFIX = 'invalid job';
+/** Clave de error.details con la que el scheduler nombra el campo que fallo. */
+const FIELD_DETAIL = 'field';
 
-function detailAfter(message: string, prefix: string): string {
-  const detail = message.slice(prefix.length).replace(/^:\s*/, '').trim();
-  return detail || message;
-}
+const FORM_FIELDS: ReadonlySet<string> = new Set<JobField>([
+  'name',
+  'code',
+  'description',
+  'handler',
+  'job_type',
+  'cron_expression',
+  'timezone',
+  'interval_minutes',
+  'max_retries',
+  'timeout_seconds',
+  'payload',
+]);
 
-/** Errores del servidor asociados a su campo; vacio si el error no es de un campo. */
+const isFormField = (field: string): field is JobField => FORM_FIELDS.has(field);
+
+const REJECTED: Partial<Record<JobField, MessageKey>> = {
+  cron_expression: 'scheduler.form.cronRejected',
+  timezone: 'scheduler.form.timezoneRejected',
+};
+
+/**
+ * Error del servidor asociado al campo que nombra error.details.field. Vacio si no nombra un
+ * campo del formulario: entonces se muestra como error general.
+ */
 export function serverFieldErrors(err: unknown): JobErrors {
-  if (!isApiError(err)) return {};
-  if (err.code === ERROR_CODES.INVALID_TIMEZONE) {
-    return {
-      timezone: t('scheduler.form.timezoneRejected', {
-        detail: detailAfter(err.message, TIMEZONE_PREFIX),
-      }),
-    };
+  const field = errorDetail(err, FIELD_DETAIL);
+  if (!isApiError(err) || !field || !isFormField(field)) return {};
+  // El unico 409 con campo es el codigo repetido del alta (ErrJobAlreadyExists).
+  if (err.code === ERROR_CODES.CONFLICT) {
+    return field === 'code' ? { code: t('scheduler.error.codeTaken') } : {};
   }
-  // El alta solo responde 409 cuando el codigo ya existe (ErrJobAlreadyExists).
-  if (err.code === ERROR_CODES.CONFLICT) return { code: t('scheduler.error.codeTaken') };
-  if (err.code !== ERROR_CODES.VALIDATION_ERROR) return {};
-  const errors: JobErrors = {};
-  for (const part of err.message.split(';')) {
-    const message = part.trim();
-    const required = REQUIRED.exec(message)?.[1] as JobField | undefined;
-    if (required) {
-      errors[required] = t('validation.required');
-    } else if (message.startsWith(CRON_PREFIX)) {
-      errors.cron_expression = t('scheduler.form.cronRejected', {
-        detail: detailAfter(message, CRON_PREFIX),
-      });
-    } else if (message.startsWith(HANDLER_PREFIX)) {
-      errors.handler = t('scheduler.error.handlerNotAllowed');
-    } else {
-      const field = INVALID_JOB.exec(message)?.[1] as JobField | undefined;
-      if (field) {
-        errors[field] = t('scheduler.form.serverRejected', {
-          detail: detailAfter(message, JOB_PREFIX),
-        });
-      }
-    }
+  if (err.code !== ERROR_CODES.VALIDATION_ERROR && err.code !== ERROR_CODES.INVALID_TIMEZONE) {
+    return {};
   }
-  return errors;
+  return {
+    [field]: t(REJECTED[field] ?? 'scheduler.form.serverRejected', { detail: err.message }),
+  };
 }

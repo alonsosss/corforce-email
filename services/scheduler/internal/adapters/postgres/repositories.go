@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/alonsosss/corforce-email/pkg/db"
@@ -45,11 +46,36 @@ func NewJobDefinitionRepo(pool *db.ContextPool) *JobDefinitionRepo {
 
 const jobColumns = `id,tenant_id,name,code,description,job_type,cron_expression,timezone,interval_minutes,handler,payload,is_active,max_retries,timeout_seconds,created_at,updated_at`
 
+// jobColumnsJD son las mismas columnas con el alias jd de job_definitions.
+var jobColumnsJD = "jd." + strings.ReplaceAll(jobColumns, ",", ",jd.")
+
+// jobVisibleTo es la condicion de los trabajos que ve una empresa: los suyos y los de
+// plataforma. El parametro $1 es la empresa.
+const jobVisibleTo = ` WHERE (jd.tenant_id=$1 OR jd.tenant_id IS NULL)`
+
+// overviewSelect lee cada trabajo con su calendario y su ultima ejecucion (la creada mas
+// reciente, por idx_job_executions_job) en la misma consulta: un listado no hace una lectura
+// por trabajo.
+var overviewSelect = `SELECT ` + jobColumnsJD + `, js.next_run_at, js.last_run_at,
+       le.id, le.status, le.completed_at, le.failure_reason
+  FROM scheduler.job_definitions jd
+  LEFT JOIN scheduler.job_schedules js ON js.job_id = jd.id
+  LEFT JOIN LATERAL (
+       SELECT e.id, e.status, e.completed_at, e.failure_reason
+         FROM scheduler.job_executions e
+        WHERE e.job_id = jd.id
+        ORDER BY e.created_at DESC, e.id DESC
+        LIMIT 1) le ON true`
+
+func jobDest(j *domain.JobDefinition) []any {
+	return []any{&j.ID, &j.TenantID, &j.Name, &j.Code, &j.Description, &j.JobType, &j.CronExpression,
+		&j.Timezone, &j.IntervalMinutes, &j.Handler, &j.Payload, &j.IsActive, &j.MaxRetries, &j.TimeoutSeconds,
+		&j.CreatedAt, &j.UpdatedAt}
+}
+
 func scanJob(row pgx.Row) (*domain.JobDefinition, error) {
 	j := &domain.JobDefinition{}
-	err := row.Scan(&j.ID, &j.TenantID, &j.Name, &j.Code, &j.Description, &j.JobType, &j.CronExpression,
-		&j.Timezone, &j.IntervalMinutes, &j.Handler, &j.Payload, &j.IsActive, &j.MaxRetries, &j.TimeoutSeconds,
-		&j.CreatedAt, &j.UpdatedAt)
+	err := row.Scan(jobDest(j)...)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, domain.ErrJobNotFound
 	}
@@ -57,6 +83,25 @@ func scanJob(row pgx.Row) (*domain.JobDefinition, error) {
 		return nil, err
 	}
 	return j, nil
+}
+
+func scanOverview(row pgx.Row) (*domain.JobOverview, error) {
+	var j domain.JobDefinition
+	var nextRunAt, lastRunAt, completedAt *time.Time
+	var execID *uuid.UUID
+	var status, failureReason *string
+	err := row.Scan(append(jobDest(&j), &nextRunAt, &lastRunAt, &execID, &status, &completedAt, &failureReason)...)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, domain.ErrJobNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	var last *domain.ExecutionSummary
+	if execID != nil && status != nil {
+		last = &domain.ExecutionSummary{ID: *execID, Status: *status, CompletedAt: completedAt, FailureReason: failureReason}
+	}
+	return domain.NewJobOverview(j, nextRunAt, lastRunAt, last), nil
 }
 
 func (r *JobDefinitionRepo) Create(ctx context.Context, job *domain.JobDefinition) error {
@@ -82,37 +127,47 @@ func (r *JobDefinitionRepo) GetByCode(ctx context.Context, code string) (*domain
 	return scanJob(r.pool.QueryRow(ctx, `SELECT `+jobColumns+` FROM scheduler.job_definitions WHERE code=$1`, code))
 }
 
-func (r *JobDefinitionRepo) List(ctx context.Context, tenantID *uuid.UUID, isActive *bool) ([]*domain.JobDefinition, error) {
-	q := `SELECT ` + jobColumns + ` FROM scheduler.job_definitions WHERE 1=1`
-	args := []interface{}{}
-	n := 0
-	if tenantID != nil {
-		n++
-		q += ` AND tenant_id=$` + strconv.Itoa(n)
-		args = append(args, *tenantID)
-	}
-	if isActive != nil {
-		n++
-		q += ` AND is_active=$` + strconv.Itoa(n)
-		args = append(args, *isActive)
-	}
-	q += ` ORDER BY name`
+func (r *JobDefinitionRepo) GetOverview(ctx context.Context, id, tenantID uuid.UUID) (*domain.JobOverview, error) {
+	return scanOverview(r.pool.QueryRow(ctx, overviewSelect+jobVisibleTo+` AND jd.id=$2`, tenantID, id))
+}
 
-	rows, err := r.pool.Query(ctx, q, args...)
+// List cuenta y lee la pagina con dos consultas, sea cual sea el numero de trabajos. El orden
+// por nombre desempata por id para que las paginas no se solapen.
+func (r *JobDefinitionRepo) List(ctx context.Context, f domain.JobFilter) ([]*domain.JobOverview, int64, error) {
+	where := jobVisibleTo
+	args := []any{f.TenantID}
+	if f.IsActive != nil {
+		args = append(args, *f.IsActive)
+		where += ` AND jd.is_active=$` + strconv.Itoa(len(args))
+	}
+	var total int64
+	if err := r.pool.QueryRow(ctx, `SELECT count(*) FROM scheduler.job_definitions jd`+where, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	if total == 0 {
+		return nil, 0, nil
+	}
+	n := len(args)
+	rows, err := r.pool.Query(ctx,
+		overviewSelect+where+` ORDER BY jd.name, jd.id LIMIT $`+strconv.Itoa(n+1)+` OFFSET $`+strconv.Itoa(n+2),
+		append(args, f.PerPage, f.Offset())...)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer rows.Close()
 
-	var list []*domain.JobDefinition
+	var list []*domain.JobOverview
 	for rows.Next() {
-		j, err := scanJob(rows)
+		o, err := scanOverview(rows)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
-		list = append(list, j)
+		list = append(list, o)
 	}
-	return list, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+	return list, total, nil
 }
 
 func (r *JobDefinitionRepo) Update(ctx context.Context, job *domain.JobDefinition) error {
@@ -324,11 +379,13 @@ func NewJobScheduleRepo(pool *db.ContextPool) *JobScheduleRepo {
 	return &JobScheduleRepo{pool: pool}
 }
 
-func (r *JobScheduleRepo) UpdateNextRun(ctx context.Context, jobID uuid.UUID, nextRunAt time.Time) error {
+// UpdateNextRun anota last_run_at con la hora del caso de uso y no con la de la base: es la
+// misma que lleva la ejecucion despachada.
+func (r *JobScheduleRepo) UpdateNextRun(ctx context.Context, jobID uuid.UUID, nextRunAt, ranAt time.Time) error {
 	_, err := r.pool.Exec(ctx,
-		`INSERT INTO scheduler.job_schedules (job_id,next_run_at,is_locked) VALUES ($1,$2,false)
- ON CONFLICT (job_id) DO UPDATE SET next_run_at=$2, last_run_at=NOW()`,
-		jobID, nextRunAt,
+		`INSERT INTO scheduler.job_schedules (job_id,next_run_at,last_run_at,is_locked) VALUES ($1,$2,$3,false)
+ ON CONFLICT (job_id) DO UPDATE SET next_run_at=EXCLUDED.next_run_at, last_run_at=EXCLUDED.last_run_at`,
+		jobID, nextRunAt, ranAt,
 	)
 	return err
 }

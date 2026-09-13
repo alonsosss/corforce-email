@@ -1,10 +1,14 @@
 package domain
 
 import (
+	"math"
 	"time"
 
 	"github.com/google/uuid"
 )
+
+// PendingTasksWindow es cuanto hacia adelante mira el listado de tareas puntuales pendientes.
+const PendingTasksWindow = 24 * time.Hour
 
 // Estados de una ejecucion. pending espera su intento (un reintento con espera todavia no
 // despachado); running esta despachada y corre el plazo de su manejador; los otros tres
@@ -106,6 +110,56 @@ type CronJobSchedule struct {
 	Expression string
 	Timezone   string
 	NextRunAt  time.Time
+}
+
+// JobOverview es un trabajo tal como se lee: con su calendario y su ultima ejecucion.
+type JobOverview struct {
+	Job JobDefinition
+	// NextRunAt es la proxima ejecucion que preve el calendario; nil si el trabajo esta
+	// inactivo o no tiene calendario.
+	NextRunAt *time.Time
+	// LastRunAt es la ultima vez que el calendario lo despacho; lanzarlo a mano no la cambia.
+	LastRunAt *time.Time
+	// LastExecution es su ejecucion creada mas reciente: programada, manual o reintento.
+	LastExecution *ExecutionSummary
+}
+
+// NewJobOverview arma la lectura de un trabajo. Un trabajo inactivo conserva la fila de su
+// calendario, pero esa hora ya no es una ejecucion prevista.
+func NewJobOverview(job JobDefinition, nextRunAt, lastRunAt *time.Time, last *ExecutionSummary) *JobOverview {
+	if !job.IsActive {
+		nextRunAt = nil
+	}
+	return &JobOverview{Job: job, NextRunAt: nextRunAt, LastRunAt: lastRunAt, LastExecution: last}
+}
+
+// ExecutionSummary es lo que el listado de trabajos muestra de una ejecucion.
+type ExecutionSummary struct {
+	ID            uuid.UUID
+	Status        string
+	CompletedAt   *time.Time
+	FailureReason *string
+}
+
+// JobFilter es una pagina del listado de trabajos de una empresa: los suyos y los de
+// plataforma.
+type JobFilter struct {
+	TenantID uuid.UUID
+	IsActive *bool
+	Page     int
+	PerPage  int
+}
+
+// Offset es el desplazamiento de la pagina. Una pagina que no cabe en un int64 satura: no
+// tiene filas, en vez de desbordar a un desplazamiento negativo.
+func (f JobFilter) Offset() int64 {
+	if f.Page <= 1 || f.PerPage <= 0 {
+		return 0
+	}
+	if int64(f.Page-1) > math.MaxInt64/int64(f.PerPage) {
+		return math.MaxInt64
+	}
+	return int64(f.Page-1) * int64(f.PerPage)
 }
 
 // CronExpr es la expresion del trabajo, vacia si no tiene.

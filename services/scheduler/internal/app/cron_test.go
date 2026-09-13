@@ -52,7 +52,7 @@ func TestCrearUnCronLoPlanificaEnSuOcurrencia(t *testing.T) {
 			CronExpression: &expr, Timezone: domain.DefaultTimezone, Handler: tenantHandler, TimeoutSeconds: 60}
 	}
 	daily := newJob("diario", "0 3 * * *")
-	if err := f.uc.CreateJob(ctx, daily); err != nil {
+	if _, err := f.uc.CreateJob(ctx, daily); err != nil {
 		t.Fatal(err)
 	}
 	if got := f.nextRunOf(*daily); !got.Equal(time.Date(2026, 9, 14, 3, 0, 0, 0, time.UTC)) {
@@ -60,7 +60,7 @@ func TestCrearUnCronLoPlanificaEnSuOcurrencia(t *testing.T) {
 	}
 
 	for _, expr := range []string{"", "0 25 * * *", "@every 30s"} {
-		if err := f.uc.CreateJob(ctx, newJob("malo-"+expr, expr)); !errors.Is(err, domain.ErrInvalidCron) {
+		if _, err := f.uc.CreateJob(ctx, newJob("malo-"+expr, expr)); !errors.Is(err, domain.ErrInvalidCron) {
 			t.Errorf("crear con %q: %v", expr, err)
 		}
 	}
@@ -71,7 +71,7 @@ func TestCrearUnCronLoPlanificaEnSuOcurrencia(t *testing.T) {
 	five := 5
 	interval := &domain.JobDefinition{TenantID: &tenant, Name: "n", Code: "intervalo", JobType: domain.JobTypeInterval,
 		Timezone: domain.DefaultTimezone, IntervalMinutes: &five, Handler: tenantHandler, TimeoutSeconds: 60}
-	if err := f.uc.CreateJob(ctx, interval); err != nil {
+	if _, err := f.uc.CreateJob(ctx, interval); err != nil {
 		t.Fatal(err)
 	}
 	if got := f.nextRunOf(*interval); !got.Equal(f.clock.now().Add(5 * time.Minute)) {
@@ -130,7 +130,7 @@ func TestEditarElCalendarioDeUnCronLoReplanifica(t *testing.T) {
 
 	edited := job
 	edited.Name = "Otro nombre"
-	if err := f.uc.UpdateJob(ctx, &edited); err != nil {
+	if _, err := f.uc.UpdateJob(ctx, &edited); err != nil {
 		t.Fatal(err)
 	}
 	if got := f.nextRunOf(job); !got.Equal(due) || f.store.planned != 0 {
@@ -139,7 +139,7 @@ func TestEditarElCalendarioDeUnCronLoReplanifica(t *testing.T) {
 
 	expr := "30 12 * * *"
 	edited.CronExpression = &expr
-	if err := f.uc.UpdateJob(ctx, &edited); err != nil {
+	if _, err := f.uc.UpdateJob(ctx, &edited); err != nil {
 		t.Fatal(err)
 	}
 	if got := f.nextRunOf(job); !got.Equal(at(12, 30, 0)) {
@@ -150,7 +150,7 @@ func TestEditarElCalendarioDeUnCronLoReplanifica(t *testing.T) {
 	f.schedule(interval, at(10, 3, 0))
 	toCron := interval
 	cronJob("0 * * * *")(&toCron)
-	if err := f.uc.UpdateJob(ctx, &toCron); err != nil {
+	if _, err := f.uc.UpdateJob(ctx, &toCron); err != nil {
 		t.Fatal(err)
 	}
 	if got := f.nextRunOf(interval); !got.Equal(at(11, 0, 0)) {
@@ -160,7 +160,7 @@ func TestEditarElCalendarioDeUnCronLoReplanifica(t *testing.T) {
 	bad := "0 3 * *"
 	broken := f.store.jobs[job.ID]
 	broken.CronExpression = &bad
-	if err := f.uc.UpdateJob(ctx, &broken); !errors.Is(err, domain.ErrInvalidCron) {
+	if _, err := f.uc.UpdateJob(ctx, &broken); !errors.Is(err, domain.ErrInvalidCron) {
 		t.Fatalf("editar con una expresion invalida: %v", err)
 	}
 	if stored := f.store.jobs[job.ID]; stored.CronExpr() != expr {

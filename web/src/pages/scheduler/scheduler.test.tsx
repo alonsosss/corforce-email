@@ -4,18 +4,24 @@ import userEvent, { type UserEvent } from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import type { PermissionTriple } from '@/api/access';
 import { ApiError, ERROR_CODES } from '@/api/errors';
+import { errorMessage } from '@/api/messages';
 import {
   schedulerApi,
   schedulerHandlers,
   schedulerMeta,
   type JobExecution,
+  type LastExecution,
   type ScheduledTask,
   type SchedulerHandler,
+  type SchedulerJob,
+  type SchedulerMeta,
 } from '@/api/scheduler';
+import type { Page } from '@/api/types';
 import { MODULES } from '@/access/modules';
 import { PERMISSIONS } from '@/access/permissions';
 import { useAccessStore } from '@/access/store';
 import { ToastProvider } from '@/design/components';
+import { DEFAULT_PER_PAGE } from '@/hooks/usePagination';
 import { formatDateTime } from '@/lib/format';
 import { t } from '@/i18n';
 import { paths } from '@/paths';
@@ -55,9 +61,27 @@ function grant(...triples: Triple[]) {
 
 function mockCatalogs(
   handlers: SchedulerHandler[] = [tenantHandlerFixture, platformHandlerFixture],
+  meta: SchedulerMeta = META,
 ) {
-  vi.spyOn(schedulerMeta, 'get').mockResolvedValue(META);
+  vi.spyOn(schedulerMeta, 'get').mockResolvedValue(meta);
   return vi.spyOn(schedulerHandlers, 'get').mockResolvedValue(handlers);
+}
+
+function pageOf(jobs: SchedulerJob[], extra: Partial<Page<SchedulerJob>> = {}): Page<SchedulerJob> {
+  return {
+    items: jobs,
+    page: 1,
+    perPage: DEFAULT_PER_PAGE,
+    total: jobs.length,
+    totalPages: jobs.length > 0 ? 1 : 0,
+    ...extra,
+  };
+}
+
+/** Un error como lo arma client.ts: el cuerpo entero queda en body para errorDetail. */
+function rejected(status: number, code: string, message: string, field?: string): ApiError {
+  const error = { code, message, ...(field ? { details: { field } } : {}) };
+  return new ApiError(status, error, { error });
 }
 
 function renderWith(ui: JSX.Element) {
@@ -121,16 +145,13 @@ describe('formulario de un trabajo', () => {
     expect(create).not.toHaveBeenCalled();
   });
 
-  it('el 422 del servidor va al campo que lo causa, una sola vez, y se retira al corregirlo', async () => {
+  it('el 422 va al campo de error.details.field, una sola vez, y se retira al corregirlo', async () => {
     const user = userEvent.setup();
     mockCatalogs();
-    const detail = 'expected exactly 5 fields, found 3: [0 7 *]';
-    const create = vi.spyOn(schedulerApi, 'createJob').mockRejectedValue(
-      new ApiError(422, {
-        code: ERROR_CODES.VALIDATION_ERROR,
-        message: `invalid cron expression: ${detail}`,
-      }),
-    );
+    const detail = 'invalid cron expression: expected exactly 5 fields, found 3: [0 7 *]';
+    const create = vi
+      .spyOn(schedulerApi, 'createJob')
+      .mockRejectedValue(rejected(422, ERROR_CODES.VALIDATION_ERROR, detail, 'cron_expression'));
     renderWith(<JobForm job={null} onClose={vi.fn()} onSaved={vi.fn()} />);
 
     await fillCronForm(user, '0 7 *');
@@ -160,11 +181,9 @@ describe('formulario de un trabajo', () => {
   it('una zona que el servidor no carga (INVALID_TIMEZONE) se pinta junto a la zona', async () => {
     const user = userEvent.setup();
     mockCatalogs();
+    const detail = 'invalid time zone: "Mars/Olympus" is not in the time zone database';
     vi.spyOn(schedulerApi, 'createJob').mockRejectedValue(
-      new ApiError(422, {
-        code: ERROR_CODES.INVALID_TIMEZONE,
-        message: 'invalid time zone: "Mars/Olympus" is not in the time zone database',
-      }),
+      rejected(422, ERROR_CODES.INVALID_TIMEZONE, detail, 'timezone'),
     );
     renderWith(<JobForm job={null} onClose={vi.fn()} onSaved={vi.fn()} />);
 
@@ -174,13 +193,79 @@ describe('formulario de un trabajo', () => {
     await user.click(submitButton());
 
     expect(
-      await screen.findByText(
-        t('scheduler.form.timezoneRejected', {
-          detail: '"Mars/Olympus" is not in the time zone database',
-        }),
-      ),
+      await screen.findByText(t('scheduler.form.timezoneRejected', { detail })),
     ).toHaveAttribute('id', 'job-timezone-error');
     expect(field(t('scheduler.form.timezone'))).toHaveAttribute('aria-invalid', 'true');
+  });
+
+  it('el codigo repetido (409 con field code) se pinta junto al codigo', async () => {
+    const user = userEvent.setup();
+    mockCatalogs();
+    vi.spyOn(schedulerApi, 'createJob').mockRejectedValue(
+      rejected(409, ERROR_CODES.CONFLICT, 'job already exists', 'code'),
+    );
+    renderWith(<JobForm job={null} onClose={vi.fn()} onSaved={vi.fn()} />);
+
+    await fillCronForm(user, '0 7 * * *');
+    await user.click(submitButton());
+    expect(await screen.findByText(t('scheduler.error.codeTaken'))).toHaveAttribute(
+      'id',
+      'job-code-error',
+    );
+  });
+
+  it('un 422 sin campo queda como error general del formulario', async () => {
+    const user = userEvent.setup();
+    mockCatalogs();
+    const err = rejected(422, ERROR_CODES.VALIDATION_ERROR, 'invalid job: unexpected');
+    vi.spyOn(schedulerApi, 'createJob').mockRejectedValue(err);
+    renderWith(<JobForm job={null} onClose={vi.fn()} onSaved={vi.fn()} />);
+
+    await fillCronForm(user, '0 7 * * *');
+    await user.click(submitButton());
+    expect(await screen.findByRole('alert')).toHaveTextContent(errorMessage(err));
+    expect(field(t('scheduler.form.cron'))).not.toHaveAttribute('aria-invalid', 'true');
+  });
+
+  it('ofrece los tipos de trabajo que publica la meta, en su orden', async () => {
+    mockCatalogs(undefined, { ...META, job_types: ['interval', 'cron'] });
+    renderWith(<JobForm job={null} onClose={vi.fn()} onSaved={vi.fn()} />);
+
+    const select = await screen.findByLabelText(
+      new RegExp(`^${escape(t('scheduler.column.type'))}`),
+    );
+    const values = within(select)
+      .getAllByRole('option')
+      .map((option) => (option as HTMLOptionElement).value)
+      .filter(Boolean);
+    expect(values).toEqual(['interval', 'cron']);
+  });
+
+  it('aplica los topes de la meta y el plazo maximo del manejador sin llamar al API', async () => {
+    const user = userEvent.setup();
+    mockCatalogs(undefined, { ...META, limits: { ...META.limits, max_name_length: 5 } });
+    const create = vi.spyOn(schedulerApi, 'createJob');
+    renderWith(<JobForm job={null} onClose={vi.fn()} onSaved={vi.fn()} />);
+
+    await fillCronForm(user, '0 7 * * *');
+    const handlerMax = tenantHandlerFixture.max_timeout_seconds;
+    expect(
+      screen.getByText(t('scheduler.form.timeoutHintMax', { value: formatSeconds(handlerMax) })),
+    ).toBeInTheDocument();
+    await user.clear(field(t('scheduler.form.timeout')));
+    await user.type(field(t('scheduler.form.timeout')), String(handlerMax + 1));
+    await user.click(submitButton());
+
+    expect(await screen.findByText(t('validation.maxLength', { n: 5 }))).toHaveAttribute(
+      'id',
+      'job-name-error',
+    );
+    expect(
+      screen.getByText(
+        t('scheduler.validation.timeoutHandlerMax', { value: formatSeconds(handlerMax) }),
+      ),
+    ).toHaveAttribute('id', 'job-timeout-error');
+    expect(create).not.toHaveBeenCalled();
   });
 
   it('sin manejadores de empresa en el catalogo lo explica y no deja enviar', async () => {
@@ -257,20 +342,30 @@ describe('listado de trabajos y permisos', () => {
     grant(PERMISSIONS.schedulerJobs.read);
     const handlers = mockCatalogs();
     const tasks = vi.spyOn(schedulerApi, 'listPendingTasks');
-    vi.spyOn(schedulerApi, 'listJobs').mockResolvedValue([
-      jobFixture(),
-      jobFixture({
-        id: 'p-1',
-        tenant_id: null,
-        name: 'Limpieza',
-        code: 'cleanup',
-        job_type: 'interval',
-        cron_expression: null,
-        interval_minutes: 30,
-        is_active: false,
-        handler: platformHandlerFixture.name,
-      }),
-    ]);
+    const last: LastExecution = {
+      id: 'e-1',
+      status: 'failed',
+      completed_at: '2026-09-13T10:00:05Z',
+      failure_reason: 'timeout',
+    };
+    const active = jobFixture({ last_execution: last });
+    vi.spyOn(schedulerApi, 'listJobs').mockResolvedValue(
+      pageOf([
+        active,
+        jobFixture({
+          id: 'p-1',
+          tenant_id: null,
+          name: 'Limpieza',
+          code: 'cleanup',
+          job_type: 'interval',
+          cron_expression: null,
+          interval_minutes: 30,
+          is_active: false,
+          next_run_at: null,
+          handler: platformHandlerFixture.name,
+        }),
+      ]),
+    );
     renderWith(<SchedulerPage />);
 
     const table = await screen.findByRole('table');
@@ -282,28 +377,75 @@ describe('listado de trabajos y permisos', () => {
     ).toBeInTheDocument();
     expect(within(table).getByText(t('scheduler.platform'))).toBeInTheDocument();
     expect(within(table).getByText(t('common.inactive'))).toBeInTheDocument();
+    expect(within(table).getByText(formatDateTime(active.next_run_at))).toBeInTheDocument();
+    expect(within(table).getByText(t('scheduler.executionStatus.failed'))).toBeInTheDocument();
+    expect(within(table).getByText(formatDateTime(last.completed_at))).toBeInTheDocument();
+    expect(within(table).getByText(t('scheduler.nextRun.inactive'))).toBeInTheDocument();
+    expect(within(table).getByText(t('scheduler.lastExecution.none'))).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: t('scheduler.new') })).toBeNull();
     expect(screen.queryByRole('tab')).toBeNull();
     expect(handlers).not.toHaveBeenCalled();
     expect(tasks).not.toHaveBeenCalled();
   });
 
-  it('el filtro de estado viaja como is_active', async () => {
+  it('el filtro de estado viaja como is_active junto a la pagina', async () => {
     const user = userEvent.setup();
     grant(PERMISSIONS.schedulerJobs.read);
-    const list = vi.spyOn(schedulerApi, 'listJobs').mockResolvedValue([]);
+    const list = vi.spyOn(schedulerApi, 'listJobs').mockResolvedValue(pageOf([]));
     renderWith(<SchedulerPage />);
 
     expect(await screen.findByText(t('scheduler.empty'))).toBeInTheDocument();
-    expect(list).toHaveBeenCalledWith({ is_active: undefined });
+    expect(list).toHaveBeenCalledWith({
+      is_active: undefined,
+      page: 1,
+      per_page: DEFAULT_PER_PAGE,
+    });
     await user.selectOptions(screen.getByLabelText(t('common.status')), 'false');
-    await waitFor(() => expect(list).toHaveBeenLastCalledWith({ is_active: false }));
+    await waitFor(() =>
+      expect(list).toHaveBeenLastCalledWith({
+        is_active: false,
+        page: 1,
+        per_page: DEFAULT_PER_PAGE,
+      }),
+    );
+  });
+
+  it('pagina en el servidor y un cambio de filtro vuelve a la primera pagina', async () => {
+    const user = userEvent.setup();
+    grant(PERMISSIONS.schedulerJobs.read);
+    const list = vi.spyOn(schedulerApi, 'listJobs').mockImplementation(async (query) => {
+      const page = query.page ?? 1;
+      return pageOf([jobFixture({ id: `job-${page}`, name: `Trabajo ${page}` })], {
+        page,
+        total: DEFAULT_PER_PAGE + 1,
+        totalPages: 2,
+      });
+    });
+    renderWith(<SchedulerPage />);
+
+    expect(await screen.findByText('Trabajo 1')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: t('common.next') }));
+    expect(await screen.findByText('Trabajo 2')).toBeInTheDocument();
+    expect(list).toHaveBeenLastCalledWith({
+      is_active: undefined,
+      page: 2,
+      per_page: DEFAULT_PER_PAGE,
+    });
+
+    await user.selectOptions(screen.getByLabelText(t('common.status')), 'true');
+    await waitFor(() =>
+      expect(list).toHaveBeenLastCalledWith({
+        is_active: true,
+        page: 1,
+        per_page: DEFAULT_PER_PAGE,
+      }),
+    );
   });
 
   it('con jobs/create ofrece crear y avisa si el catalogo esta vacio', async () => {
     grant(PERMISSIONS.schedulerJobs.read, PERMISSIONS.schedulerJobs.create);
     mockCatalogs([]);
-    vi.spyOn(schedulerApi, 'listJobs').mockResolvedValue([]);
+    vi.spyOn(schedulerApi, 'listJobs').mockResolvedValue(pageOf([]));
     renderWith(<SchedulerPage />);
 
     expect(await screen.findByText(t('scheduler.catalogEmpty.title'))).toBeInTheDocument();
@@ -313,7 +455,8 @@ describe('listado de trabajos y permisos', () => {
   it('las tareas puntuales exigen tasks/read, y cancelarlas tasks/cancel', async () => {
     const user = userEvent.setup();
     grant(PERMISSIONS.schedulerJobs.read, PERMISSIONS.schedulerTasks.read);
-    vi.spyOn(schedulerApi, 'listJobs').mockResolvedValue([]);
+    mockCatalogs();
+    vi.spyOn(schedulerApi, 'listJobs').mockResolvedValue(pageOf([]));
     const tasks = vi.spyOn(schedulerApi, 'listPendingTasks').mockResolvedValue([TASK]);
     renderWith(<SchedulerPage />);
 
@@ -326,10 +469,29 @@ describe('listado de trabajos y permisos', () => {
     ).toBeNull();
   });
 
+  it('la ventana de las tareas pendientes sale de la meta', async () => {
+    const user = userEvent.setup();
+    grant(PERMISSIONS.schedulerJobs.read, PERMISSIONS.schedulerTasks.read);
+    mockCatalogs(undefined, { ...META, tasks: { pending_window_seconds: 7_200 } });
+    vi.spyOn(schedulerApi, 'listJobs').mockResolvedValue(pageOf([]));
+    vi.spyOn(schedulerApi, 'listPendingTasks').mockResolvedValue([]);
+    renderWith(<SchedulerPage />);
+
+    await user.click(screen.getByRole('tab', { name: t('scheduler.tab.tasks') }));
+    const window = formatSeconds(7_200);
+    expect(
+      await screen.findByText(t('scheduler.tasks.descriptionWindow', { window })),
+    ).toBeInTheDocument();
+    expect(
+      await screen.findByText(t('scheduler.tasks.emptyWindow', { window })),
+    ).toBeInTheDocument();
+  });
+
   it('con tasks/cancel se cancela una tarea tras confirmarlo', async () => {
     const user = userEvent.setup();
     grant(PERMISSIONS.schedulerTasks.read, PERMISSIONS.schedulerTasks.cancel);
     const jobs = vi.spyOn(schedulerApi, 'listJobs');
+    const meta = vi.spyOn(schedulerMeta, 'get');
     vi.spyOn(schedulerApi, 'listPendingTasks').mockResolvedValue([TASK]);
     const cancel = vi.spyOn(schedulerApi, 'cancelTask').mockResolvedValue({ data: null });
     renderWith(<SchedulerPage />);
@@ -344,6 +506,9 @@ describe('listado de trabajos y permisos', () => {
     );
     await waitFor(() => expect(cancel).toHaveBeenCalledWith(TASK.id));
     expect(jobs).not.toHaveBeenCalled();
+    // Sin jobs/read no se pide la meta: la pestana se describe sin ventana.
+    expect(meta).not.toHaveBeenCalled();
+    expect(screen.getByText(t('scheduler.tasks.description'))).toBeInTheDocument();
   });
 });
 
@@ -417,6 +582,41 @@ describe('detalle de un trabajo', () => {
     e: JobExecution,
   ) => t(key, { n: e.retry_count + 1, date: formatDateTime(e.created_at) });
 
+  it('muestra la proxima ejecucion, el ultimo lanzamiento y el resultado de la ultima', async () => {
+    grant(PERMISSIONS.schedulerJobs.read);
+    mockCatalogs();
+    const job = jobFixture({
+      last_run_at: '2026-09-13T07:00:00Z',
+      last_execution: {
+        id: 'e-last',
+        status: 'failed',
+        completed_at: '2026-09-13T07:10:00Z',
+        failure_reason: 'timeout',
+      },
+    });
+    vi.spyOn(schedulerApi, 'getJob').mockResolvedValue({ data: job });
+    renderDetail();
+
+    expect(await screen.findByRole('heading', { name: job.name })).toBeInTheDocument();
+    expect(screen.getByText(formatDateTime(job.next_run_at))).toBeInTheDocument();
+    expect(screen.getByText(formatDateTime(job.last_run_at))).toBeInTheDocument();
+    expect(screen.getByText(t('scheduler.detail.lastRunHint'))).toBeInTheDocument();
+    expect(screen.getByText(t('scheduler.executionStatus.failed'))).toBeInTheDocument();
+    expect(screen.getByText(formatDateTime('2026-09-13T07:10:00Z'))).toBeInTheDocument();
+    expect(screen.getByText(t('scheduler.failureReason.timeout'))).toBeInTheDocument();
+  });
+
+  it('un trabajo inactivo y sin ejecuciones lo dice en vez de dejar fechas vacias', async () => {
+    grant(PERMISSIONS.schedulerJobs.read);
+    mockCatalogs();
+    const job = jobFixture({ is_active: false, next_run_at: null });
+    vi.spyOn(schedulerApi, 'getJob').mockResolvedValue({ data: job });
+    renderDetail();
+
+    expect(await screen.findByText(t('scheduler.nextRun.inactive'))).toBeInTheDocument();
+    expect(screen.getByText(t('scheduler.lastExecution.none'))).toBeInTheDocument();
+  });
+
   it('con solo jobs/read no ofrece acciones ni pide el historial', async () => {
     grant(PERMISSIONS.schedulerJobs.read);
     mockCatalogs();
@@ -436,7 +636,7 @@ describe('detalle de un trabajo', () => {
     const user = userEvent.setup();
     grant(...ALL);
     mockCatalogs();
-    vi.spyOn(schedulerApi, 'getJob').mockResolvedValue({ data: JOB });
+    const get = vi.spyOn(schedulerApi, 'getJob').mockResolvedValue({ data: JOB });
     const history = mockHistory([RUNNING, FAILED, COMPLETED]);
     const run = vi
       .spyOn(schedulerApi, 'runJob')
@@ -468,6 +668,8 @@ describe('detalle de un trabajo', () => {
     );
     await waitFor(() => expect(run).toHaveBeenCalledWith(JOB.id));
     await waitFor(() => expect(history).toHaveBeenCalledTimes(2));
+    // El trabajo se relee: su ultima ejecucion es la que se acaba de lanzar.
+    await waitFor(() => expect(get).toHaveBeenCalledTimes(2));
   });
 
   it('sin executions/cancel ni retry no hay acciones por ejecucion', async () => {

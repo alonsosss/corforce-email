@@ -27,6 +27,19 @@ type jobDTO struct {
 	TimeoutSeconds  int        `json:"timeout_seconds"`
 	CreatedAt       time.Time  `json:"created_at"`
 	UpdatedAt       time.Time  `json:"updated_at"`
+	// NextRunAt es null si el trabajo esta inactivo; LastRunAt es la ultima vez que lo
+	// despacho el calendario (no un lanzamiento manual); LastExecution, la ejecucion mas
+	// reciente de cualquier origen, o null.
+	NextRunAt     *time.Time        `json:"next_run_at"`
+	LastRunAt     *time.Time        `json:"last_run_at"`
+	LastExecution *lastExecutionDTO `json:"last_execution"`
+}
+
+type lastExecutionDTO struct {
+	ID            uuid.UUID  `json:"id"`
+	Status        string     `json:"status"`
+	CompletedAt   *time.Time `json:"completed_at"`
+	FailureReason *string    `json:"failure_reason"`
 }
 
 type executionDTO struct {
@@ -71,16 +84,22 @@ type handlerDTO struct {
 	Scopes            []string `json:"scopes"`
 }
 
-func jobResponse(j *domain.JobDefinition) jobDTO {
-	return jobDTO{
+func jobResponse(o *domain.JobOverview) jobDTO {
+	j := o.Job
+	dto := jobDTO{
 		ID: j.ID, TenantID: j.TenantID, Name: j.Name, Code: j.Code, Description: j.Description,
 		JobType: j.JobType, CronExpression: j.CronExpression, Timezone: j.Timezone, IntervalMinutes: j.IntervalMinutes,
 		Handler: j.Handler, Payload: j.Payload, IsActive: j.IsActive, MaxRetries: j.MaxRetries,
 		TimeoutSeconds: j.TimeoutSeconds, CreatedAt: j.CreatedAt, UpdatedAt: j.UpdatedAt,
+		NextRunAt: o.NextRunAt, LastRunAt: o.LastRunAt,
 	}
+	if e := o.LastExecution; e != nil {
+		dto.LastExecution = &lastExecutionDTO{ID: e.ID, Status: e.Status, CompletedAt: e.CompletedAt, FailureReason: e.FailureReason}
+	}
+	return dto
 }
 
-func jobsResponse(jobs []*domain.JobDefinition) []jobDTO {
+func jobsResponse(jobs []*domain.JobOverview) []jobDTO {
 	out := make([]jobDTO, 0, len(jobs))
 	for _, j := range jobs {
 		out = append(out, jobResponse(j))

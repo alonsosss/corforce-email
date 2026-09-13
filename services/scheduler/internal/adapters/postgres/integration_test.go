@@ -138,7 +138,7 @@ func (e *env) createJob(t *testing.T, maxRetries int) *domain.JobDefinition {
 		TenantID: &tenant, Name: "Informe", Code: "it-" + uuid.NewString(), JobType: domain.JobTypeInterval,
 		Timezone: domain.DefaultTimezone, IntervalMinutes: &five, Handler: "it.report", MaxRetries: maxRetries, TimeoutSeconds: 30,
 	}
-	if err := e.uc.CreateJob(e.ctx, job); err != nil {
+	if _, err := e.uc.CreateJob(e.ctx, job); err != nil {
 		t.Fatal(err)
 	}
 	return job
@@ -407,7 +407,7 @@ func TestCronSeDespachaEnSuOcurrenciaSinDeriva(t *testing.T) {
 	tenant, expr := e.tenant, "*/5 * * * *"
 	job := &domain.JobDefinition{TenantID: &tenant, Name: "Cron", Code: "it-" + uuid.NewString(), JobType: domain.JobTypeCron,
 		CronExpression: &expr, Timezone: domain.DefaultTimezone, Handler: "it.report", TimeoutSeconds: 30}
-	if err := e.uc.CreateJob(e.ctx, job); err != nil {
+	if _, err := e.uc.CreateJob(e.ctx, job); err != nil {
 		t.Fatal(err)
 	}
 	first := mustNextRun(t, expr, e.clock.now())
@@ -430,7 +430,7 @@ func TestCronSeDespachaEnSuOcurrenciaSinDeriva(t *testing.T) {
 	ranAt := *last
 	daily := "0 3 * * *"
 	job.CronExpression = &daily
-	if err := e.uc.UpdateJob(e.ctx, job); err != nil {
+	if _, err := e.uc.UpdateJob(e.ctx, job); err != nil {
 		t.Fatal(err)
 	}
 	next, last = e.schedule(t, job.ID)
@@ -440,7 +440,7 @@ func TestCronSeDespachaEnSuOcurrenciaSinDeriva(t *testing.T) {
 
 	bad := "0 3 * *"
 	job.CronExpression = &bad
-	if err := e.uc.UpdateJob(e.ctx, job); !errors.Is(err, domain.ErrInvalidCron) {
+	if _, err := e.uc.UpdateJob(e.ctx, job); !errors.Is(err, domain.ErrInvalidCron) {
 		t.Fatalf("editar con una expresion invalida: %v", err)
 	}
 	if n := e.count(t, `SELECT count(*) FROM scheduler.job_definitions WHERE id = $1 AND cron_expression = $2`, job.ID, daily); n != 1 {

@@ -206,20 +206,23 @@ Reglas de la interfaz que no se relajan:
   `executions/read`, cancelar y reintentar una ejecucion `executions/cancel` y
   `executions/retry`; tareas puntuales `tasks/read` y `tasks/cancel`. Un trabajo de
   plataforma (`tenant_id` nulo) se lee sin acciones: el servicio responde 403.
-- `GET /scheduler/jobs` devuelve la lista completa (filtro `is_active`): se pagina en el
-  cliente con `lib/localPage.ts`. El historial si llega paginado con su meta.
-- El formulario ofrece solo los manejadores de alcance `tenant` de `GET /scheduler/handlers`.
-  Con el catalogo vacio lo dice y no deja enviar: el servidor rechazaria cualquier trabajo.
-  Las zonas de `Intl.supportedValuesOf('timeZone')` son solo sugerencias; decide el servidor.
-- Los 422 van junto a su campo: `INVALID_TIMEZONE` a la zona y `VALIDATION_ERROR` por el
-  prefijo del mensaje (`invalid cron expression`, `handler not allowed`, `invalid job: <campo>`,
-  `<campo> is required`), porque el servicio no manda `error.details`.
-- Contratos que faltan: la proxima y la ultima ejecucion de cada trabajo (`next_run_at`,
-  `last_run_at` y el estado de la ultima ejecucion) no estan en el DTO del trabajo, asi que el
-  listado no las muestra; `GET /scheduler/jobs` no pagina; la meta no publica `job_types` (el
-  formulario usa `JOB_TYPES` de `api/scheduler.ts`, espejo de `domain/entities.go`) ni los
-  topes de nombre, codigo, intervalo, reintentos y plazo; las tareas puntuales no estan
-  ligadas a un trabajo.
+- `GET /scheduler/jobs` pagina en el servidor (`page`, `per_page`, filtro `is_active`) y la
+  pagina que se muestra es la del meta del envelope. Cada trabajo trae `next_run_at` (nulo si
+  esta inactivo), `last_run_at` (solo lanzamientos del calendario) y `last_execution`: el
+  listado y el detalle muestran la proxima ejecucion y el resultado de la ultima.
+- `GET /scheduler/tasks` no pagina: lista las pendientes que vencen dentro de
+  `tasks.pending_window_seconds` de la meta y se pagina en el cliente con `lib/localPage.ts`.
+  La meta exige `jobs/read`; sin ese permiso la pestana no muestra la ventana.
+- El formulario ofrece los tipos de `job_types` y solo los manejadores de alcance `tenant` de
+  `GET /scheduler/handlers`. Con el catalogo vacio lo dice y no deja enviar: el servidor
+  rechazaria cualquier trabajo. Valida en el cliente los topes de `limits` (texto en
+  caracteres, payload en bytes, intervalo, reintentos) y el plazo contra el
+  `max_timeout_seconds` del manejador elegido; el servidor sigue decidiendo. Las zonas de
+  `Intl.supportedValuesOf('timeZone')` son solo sugerencias.
+- Los 422 (`VALIDATION_ERROR` e `INVALID_TIMEZONE`) y el 409 del codigo repetido van junto al
+  campo que nombra `error.details.field`; sin campo, el error se muestra en el formulario.
+- Contratos que faltan: las tareas puntuales no estan ligadas a un trabajo, `GET /tasks` no
+  pagina y su ventana solo se lee con `jobs/read` (la meta).
 
 ## Webmail
 

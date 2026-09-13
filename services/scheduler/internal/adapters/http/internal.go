@@ -65,13 +65,12 @@ func (h *Handler) FailExecution(w http.ResponseWriter, r *http.Request) {
 		response.ErrBadRequest(w, err.Error())
 		return
 	}
-	v := validate.New()
-	v.Required("error", strings.TrimSpace(req.Error))
-	if req.Retryable == nil {
-		v.Add("retryable", "is required")
+	if strings.TrimSpace(req.Error) == "" {
+		fieldError(w, codeValidation, "error", "error is required")
+		return
 	}
-	if !v.Valid() {
-		response.ErrValidation(w, v.Error())
+	if req.Retryable == nil {
+		fieldError(w, codeValidation, "retryable", "retryable is required")
 		return
 	}
 	exec, err := h.uc.FailExecution(r.Context(), id, tenantID, req.Error, *req.Retryable)

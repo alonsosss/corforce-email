@@ -26,7 +26,14 @@ import { ActiveBadge } from '@/pages/shared/StatusBadges';
 import { ExecutionsCard } from './ExecutionsCard';
 import { JobForm } from './JobForm';
 import { handlerOf, isPlatformJob } from './jobDraft';
-import { formatSeconds, JobTypeBadge, prettyPayload, ScheduleLabel } from './schedulerFormat';
+import {
+  formatSeconds,
+  JobTypeBadge,
+  LastExecutionLabel,
+  NextRunLabel,
+  prettyPayload,
+  ScheduleLabel,
+} from './schedulerFormat';
 
 type Dialog = 'edit' | 'activate' | 'deactivate' | 'run' | null;
 
@@ -160,6 +167,22 @@ export default function JobDetailPage() {
                 value: <span className="cf-mono">{j.code}</span>,
               },
               { label: t('scheduler.column.schedule'), value: <ScheduleLabel job={j} /> },
+              { label: t('scheduler.column.nextRun'), value: <NextRunLabel job={j} /> },
+              {
+                label: t('scheduler.detail.lastRun'),
+                value: (
+                  <span className="cf-cell-stack">
+                    <span>{formatDateTime(j.last_run_at)}</span>
+                    <span className="cf-text-muted cf-text-sm">
+                      {t('scheduler.detail.lastRunHint')}
+                    </span>
+                  </span>
+                ),
+              },
+              {
+                label: t('scheduler.column.lastExecution'),
+                value: <LastExecutionLabel execution={j.last_execution} detailed />,
+              },
               {
                 label: t('scheduler.column.handler'),
                 value: (
@@ -187,7 +210,7 @@ export default function JobDetailPage() {
             ]}
           />
         </Card>
-        <ExecutionsCard job={j} refreshKey={historyKey} />
+        <ExecutionsCard job={j} refreshKey={historyKey} onChange={job.reload} />
       </div>
 
       {dialog === 'edit' ? (
@@ -212,6 +235,7 @@ export default function JobDetailPage() {
           await schedulerApi.runJob(j.id);
           toast.success(t('scheduler.launched'));
           close();
+          job.reload();
           setHistoryKey((k) => k + 1);
         }}
       />

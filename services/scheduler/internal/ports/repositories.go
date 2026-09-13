@@ -18,7 +18,11 @@ type JobDefinitionRepository interface {
 	Create(ctx context.Context, job *domain.JobDefinition) error
 	GetByID(ctx context.Context, id, tenantID uuid.UUID) (*domain.JobDefinition, error)
 	GetByCode(ctx context.Context, code string) (*domain.JobDefinition, error)
-	List(ctx context.Context, tenantID *uuid.UUID, isActive *bool) ([]*domain.JobDefinition, error)
+	// GetOverview lee el trabajo con su calendario y su ultima ejecucion.
+	GetOverview(ctx context.Context, id, tenantID uuid.UUID) (*domain.JobOverview, error)
+	// List devuelve una pagina del listado con el total de filas que cumplen el filtro, en
+	// una sola consulta por pagina: sin una lectura por trabajo.
+	List(ctx context.Context, filter domain.JobFilter) ([]*domain.JobOverview, int64, error)
 	Update(ctx context.Context, job *domain.JobDefinition) error
 	// Deactivate desactiva el trabajo con updatedAt como hora del cambio, igual que Update.
 	Deactivate(ctx context.Context, id uuid.UUID, updatedAt time.Time) error
@@ -49,8 +53,9 @@ type ScheduledTaskRepository interface {
 }
 
 type JobScheduleRepository interface {
-	// UpdateNextRun reprograma tras lanzar el trabajo: fija next_run_at y marca last_run_at.
-	UpdateNextRun(ctx context.Context, jobID uuid.UUID, nextRunAt time.Time) error
+	// UpdateNextRun reprograma tras lanzar el trabajo: fija next_run_at y anota ranAt en
+	// last_run_at.
+	UpdateNextRun(ctx context.Context, jobID uuid.UUID, nextRunAt, ranAt time.Time) error
 	// SetNextRun planifica el trabajo sin marcar una ejecucion (alta, edicion, reactivacion,
 	// reconciliacion): last_run_at no cambia.
 	SetNextRun(ctx context.Context, jobID uuid.UUID, nextRunAt time.Time) error

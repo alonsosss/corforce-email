@@ -118,9 +118,16 @@ cambie cualquiera de estas líneas.
   contrato; la duración sale como `duration_ms`). `web/` lo consume (2026-09-13, pruebas
   unitarias y de componente en jsdom; P: en navegador real contra el servicio): `/scheduler`
   y `/scheduler/:id` con trabajos, alta y edición, historial de ejecuciones y tareas
-  puntuales. Faltan en el API: la próxima y la última ejecución de cada trabajo en su DTO,
-  la paginación de `GET /scheduler/jobs`, y `job_types` y los topes de nombre, código,
-  intervalo, reintentos y plazo en `GET /scheduler/meta`.
+  puntuales. El API los sirve (2026-09-13, unitarias, contrato e integración contra
+  Postgres 16) y `web/` los consume: el trabajo lleva `next_run_at` (null si está inactivo),
+  `last_run_at` (última pasada del calendario) y `last_execution` (`id`, `status`,
+  `completed_at`, `failure_reason` o null), leídos con dos consultas por página;
+  `GET /scheduler/jobs` pagina con `page` y `per_page` (20 por defecto, tope 100) sobre la
+  empresa del token; `GET /scheduler/meta` publica `job_types`, `limits`, `pagination` y
+  `tasks.pending_window_seconds` desde `domain/validation.go`. Todo 422 del scheduler lleva
+  `error.details.field` (también `INVALID_TIMEZONE`) y el 409 de código repetido
+  `details.field = code`; un campo fuera de su columna ya no es un 500. Falta paginar
+  `GET /scheduler/tasks`.
 * Lecturas del registro entre esquemas, todas por vistas publicadas: `identity` resuelve la
   empresa del login y el nombre de la empresa del listado de sesiones por
   `organization.v_tenants` (`025_organization_tenants_view.sql`, sin `db_name`, `cell_id`

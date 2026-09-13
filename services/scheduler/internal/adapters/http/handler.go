@@ -18,6 +18,24 @@ import (
 
 const permModule = "scheduler"
 
+// Paginacion de los listados: pedir mas de maxPerPage se RECORTA al maximo. Caer al valor
+// por defecto hacia que el cliente recibiera 20 filas creyendo que pedia mas.
+const (
+	defaultPerPage = 20
+	maxPerPage     = 100
+)
+
+// maxRequestBody acota el cuerpo de un trabajo o una tarea. El payload viaja como texto
+// JSON dentro del cuerpo, y el escapado puede duplicar su tamano.
+const maxRequestBody = 8 * domain.MaxPayloadBytes
+
+// Codigos de un 422 y la clave de error.details que nombra el campo que fallo.
+const (
+	codeValidation      = "VALIDATION_ERROR"
+	codeInvalidTimezone = "INVALID_TIMEZONE"
+	detailField         = "field"
+)
+
 // Deps del adaptador HTTP. Los middlewares de cada superficie los decide main.go: el pool
 // de la empresa sale del token en el API y de X-Tenant-ID en las rutas internas.
 type Deps struct {
@@ -106,35 +124,49 @@ func parsePage(r *http.Request) (int, int) {
 		page = 1
 	}
 	if pageSize < 1 {
-		pageSize = 20
+		pageSize = defaultPerPage
 	}
-	// Pedir mas de lo permitido se RECORTA al maximo. Antes caia al valor por
-	// defecto y el cliente recibia 20 filas creyendo que pedia mas.
-	if pageSize > 100 {
-		pageSize = 100
+	if pageSize > maxPerPage {
+		pageSize = maxPerPage
 	}
 	return page, pageSize
+}
+
+// fieldError responde 422 nombrando en error.details.field el campo que fallo.
+func fieldError(w http.ResponseWriter, code, field, message string) {
+	response.ErrWithDetails(w, http.StatusUnprocessableEntity, code, message, map[string]string{detailField: field})
 }
 
 // writeError traduce los errores del caso de uso. Lo no clasificado es un 500 que queda
 // registrado.
 func writeError(w http.ResponseWriter, err error) {
+	var ferr *domain.FieldError
 	switch {
+	case errors.As(err, &ferr):
+		code := codeValidation
+		if errors.Is(err, domain.ErrInvalidTimezone) {
+			code = codeInvalidTimezone
+		}
+		fieldError(w, code, ferr.Field, err.Error())
 	case errors.Is(err, domain.ErrJobNotFound):
 		response.ErrNotFound(w, "job not found")
 	case errors.Is(err, domain.ErrExecutionNotFound):
 		response.ErrNotFound(w, "execution not found")
 	case errors.Is(err, domain.ErrPlatformJob):
 		response.ErrForbidden(w, err.Error())
+	case errors.Is(err, domain.ErrJobAlreadyExists):
+		response.ErrWithDetails(w, http.StatusConflict, "CONFLICT", err.Error(), map[string]string{detailField: domain.FieldCode})
+	// El dominio nombra el campo de todo error de validacion; estos casos solo cubren uno que
+	// llegara sin el, que sigue siendo un 422 y no un 500.
 	case errors.Is(err, domain.ErrInvalidTimezone):
-		response.Err(w, http.StatusUnprocessableEntity, "INVALID_TIMEZONE", err.Error())
+		response.Err(w, http.StatusUnprocessableEntity, codeInvalidTimezone, err.Error())
 	case errors.Is(err, domain.ErrHandlerNotAllowed),
 		errors.Is(err, domain.ErrInvalidJob),
+		errors.Is(err, domain.ErrInvalidTask),
 		errors.Is(err, domain.ErrInvalidCron),
 		errors.Is(err, domain.ErrInvalidReport):
 		response.ErrValidation(w, err.Error())
-	case errors.Is(err, domain.ErrJobAlreadyExists),
-		errors.Is(err, domain.ErrExecutionConflict),
+	case errors.Is(err, domain.ErrExecutionConflict),
 		errors.Is(err, domain.ErrExecutionClosed),
 		errors.Is(err, domain.ErrExecutionNotRetryable),
 		errors.Is(err, domain.ErrAlreadyRetried),
@@ -165,19 +197,11 @@ type createJobReq struct {
 	TimeoutSeconds  int     `json:"timeout_seconds"`
 }
 
+// CreateJob no valida los campos: lo hace el dominio, que nombra el que falla.
 func (h *Handler) CreateJob(w http.ResponseWriter, r *http.Request) {
 	var req createJobReq
-	if err := validate.DecodeJSON(r, &req); err != nil {
+	if err := validate.DecodeJSONLimit(w, r, &req, maxRequestBody); err != nil {
 		response.ErrBadRequest(w, err.Error())
-		return
-	}
-	v := validate.New()
-	v.Required("name", req.Name)
-	v.Required("code", req.Code)
-	v.Required("job_type", req.JobType)
-	v.Required("handler", req.Handler)
-	if !v.Valid() {
-		response.ErrValidation(w, v.Error())
 		return
 	}
 	// Por el API solo se crean trabajos de la empresa que llama: sin empresa legible no
@@ -205,11 +229,12 @@ func (h *Handler) CreateJob(w http.ResponseWriter, r *http.Request) {
 		MaxRetries:      req.MaxRetries,
 		TimeoutSeconds:  req.TimeoutSeconds,
 	}
-	if err := h.uc.CreateJob(r.Context(), job); err != nil {
+	created, err := h.uc.CreateJob(r.Context(), job)
+	if err != nil {
 		writeError(w, err)
 		return
 	}
-	response.JSON(w, http.StatusCreated, jobResponse(job))
+	response.JSON(w, http.StatusCreated, jobResponse(created))
 }
 
 func (h *Handler) GetJob(w http.ResponseWriter, r *http.Request) {
@@ -223,7 +248,7 @@ func (h *Handler) GetJob(w http.ResponseWriter, r *http.Request) {
 		response.ErrUnauthorized(w, "invalid tenant")
 		return
 	}
-	job, err := h.uc.GetJob(r.Context(), id, tenantID)
+	job, err := h.uc.GetJobOverview(r.Context(), id, tenantID)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -231,24 +256,30 @@ func (h *Handler) GetJob(w http.ResponseWriter, r *http.Request) {
 	response.JSON(w, http.StatusOK, jobResponse(job))
 }
 
+// ListJobs pagina los trabajos que ve la empresa que llama: los suyos y los de plataforma.
+// La empresa sale del token; ninguna query elige otra.
 func (h *Handler) ListJobs(w http.ResponseWriter, r *http.Request) {
-	var tenantID *uuid.UUID
-	if t := r.URL.Query().Get("tenant_id"); t != "" {
-		if id, err := uuid.Parse(t); err == nil {
-			tenantID = &id
-		}
+	tenantID, err := parseTenantID(r)
+	if err != nil {
+		response.ErrUnauthorized(w, "invalid tenant")
+		return
 	}
-	var isActive *bool
+	filter := domain.JobFilter{TenantID: tenantID}
 	if a := r.URL.Query().Get("is_active"); a != "" {
-		b := a == "true"
-		isActive = &b
+		active, err := strconv.ParseBool(a)
+		if err != nil {
+			fieldError(w, codeValidation, "is_active", "is_active must be true or false")
+			return
+		}
+		filter.IsActive = &active
 	}
-	jobs, err := h.uc.ListJobs(r.Context(), tenantID, isActive)
+	filter.Page, filter.PerPage = parsePage(r)
+	jobs, total, err := h.uc.ListJobs(r.Context(), filter)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	response.JSON(w, http.StatusOK, jobsResponse(jobs))
+	response.JSONWithMeta(w, http.StatusOK, jobsResponse(jobs), response.PageMeta(total, filter.Page, filter.PerPage))
 }
 
 type updateJobReq struct {
@@ -273,7 +304,7 @@ func (h *Handler) UpdateJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req updateJobReq
-	if err := validate.DecodeJSON(r, &req); err != nil {
+	if err := validate.DecodeJSONLimit(w, r, &req, maxRequestBody); err != nil {
 		response.ErrBadRequest(w, err.Error())
 		return
 	}
@@ -299,11 +330,12 @@ func (h *Handler) UpdateJob(w http.ResponseWriter, r *http.Request) {
 	job.Payload = req.Payload
 	job.MaxRetries = req.MaxRetries
 	job.TimeoutSeconds = req.TimeoutSeconds
-	if err := h.uc.UpdateJob(r.Context(), job); err != nil {
+	updated, err := h.uc.UpdateJob(r.Context(), job)
+	if err != nil {
 		writeError(w, err)
 		return
 	}
-	response.JSON(w, http.StatusOK, jobResponse(job))
+	response.JSON(w, http.StatusOK, jobResponse(updated))
 }
 
 func (h *Handler) EnableJob(w http.ResponseWriter, r *http.Request) {
@@ -451,22 +483,19 @@ type scheduleTaskReq struct {
 
 func (h *Handler) ScheduleTask(w http.ResponseWriter, r *http.Request) {
 	var req scheduleTaskReq
-	if err := validate.DecodeJSON(r, &req); err != nil {
+	if err := validate.DecodeJSONLimit(w, r, &req, maxRequestBody); err != nil {
 		response.ErrBadRequest(w, err.Error())
 		return
 	}
-	v := validate.New()
-	v.Required("name", req.Name)
-	v.Required("trigger_at", req.TriggerAt)
-	v.Required("handler", req.Handler)
-	if !v.Valid() {
-		response.ErrValidation(w, v.Error())
-		return
-	}
-	triggerAt, err := time.Parse(time.RFC3339, req.TriggerAt)
-	if err != nil {
-		response.ErrBadRequest(w, "invalid trigger_at format")
-		return
+	// Una fecha vacia llega al dominio como cero, que la exige; una ilegible no llega.
+	var triggerAt time.Time
+	if req.TriggerAt != "" {
+		t, err := time.Parse(time.RFC3339, req.TriggerAt)
+		if err != nil {
+			writeError(w, domain.NewFieldError(domain.FieldTriggerAt, domain.ErrInvalidTask, "trigger_at must be an RFC 3339 date-time"))
+			return
+		}
+		triggerAt = t
 	}
 	tenantID, err := parseTenantID(r)
 	if err != nil {

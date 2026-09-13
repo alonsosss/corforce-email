@@ -65,8 +65,8 @@ var rutas = []ruta{
 
 type jobsVacios struct{ ports.JobDefinitionRepository }
 
-func (jobsVacios) List(context.Context, *uuid.UUID, *bool) ([]*domain.JobDefinition, error) {
-	return nil, nil
+func (jobsVacios) List(context.Context, domain.JobFilter) ([]*domain.JobOverview, int64, error) {
+	return nil, 0, nil
 }
 
 type ejecucionesVacias struct{ ports.JobExecutionRepository }

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { schedulerApi, type ScheduledTask } from '@/api/scheduler';
+import { schedulerApi, schedulerMeta, type ScheduledTask } from '@/api/scheduler';
 import { PERMISSIONS } from '@/access/permissions';
 import { useAccess } from '@/access/useAccess';
 import { usePagination } from '@/hooks/usePagination';
@@ -17,6 +17,7 @@ import { IconRefresh } from '@/design/icons';
 import { formatDateTime } from '@/lib/format';
 import { localPage } from '@/lib/localPage';
 import { t, tEnum } from '@/i18n';
+import { formatSeconds } from './schedulerFormat';
 
 /** Tareas puntuales pendientes de la empresa (GET /scheduler/tasks, sin paginar). */
 export function TasksTab() {
@@ -27,6 +28,12 @@ export function TasksTab() {
   const canCancel = can(...PERMISSIONS.schedulerTasks.cancel);
   const tasks = useQuery(() => schedulerApi.listPendingTasks(), []);
   const page = localPage(tasks.data ?? [], pager.page, pager.perPage);
+  // La ventana del listado la publica GET /scheduler/meta, que exige jobs/read. Sin ella, o si
+  // la meta no carga, se describe el listado sin plazo.
+  const canReadMeta = can(...PERMISSIONS.schedulerJobs.read);
+  const meta = useQuery(async () => (canReadMeta ? schedulerMeta.get() : null), [canReadMeta]);
+  const windowSeconds = meta.data?.tasks.pending_window_seconds;
+  const windowLabel = windowSeconds ? formatSeconds(windowSeconds) : null;
 
   const columns: Column<ScheduledTask>[] = [
     {
@@ -86,7 +93,11 @@ export function TasksTab() {
     <Card
       flush
       title={t('scheduler.tasks.title')}
-      description={t('scheduler.tasks.description')}
+      description={
+        windowLabel
+          ? t('scheduler.tasks.descriptionWindow', { window: windowLabel })
+          : t('scheduler.tasks.description')
+      }
       actions={
         <Button variant="ghost" icon={<IconRefresh size={16} />} onClick={tasks.reload}>
           {t('common.refresh')}
@@ -100,7 +111,12 @@ export function TasksTab() {
         loading={tasks.loading}
         error={tasks.error}
         onRetry={tasks.reload}
-        empty={{ title: t('scheduler.tasks.empty') }}
+        empty={{
+          title: t('scheduler.tasks.empty'),
+          description: windowLabel
+            ? t('scheduler.tasks.emptyWindow', { window: windowLabel })
+            : undefined,
+        }}
         pagination={{
           page: page.page,
           perPage: page.perPage,

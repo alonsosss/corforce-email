@@ -53,7 +53,7 @@ func TestCronEnLaZonaDelTrabajoContraLaBase(t *testing.T) {
 	tenant, expr := e.tenant, "30 1 * * *"
 	job := &domain.JobDefinition{TenantID: &tenant, Name: "Cierre", Code: "it-" + uuid.NewString(), JobType: domain.JobTypeCron,
 		CronExpression: &expr, Timezone: "America/New_York", Handler: "it.report", TimeoutSeconds: 30}
-	if err := e.uc.CreateJob(e.ctx, job); err != nil {
+	if _, err := e.uc.CreateJob(e.ctx, job); err != nil {
 		t.Fatal(err)
 	}
 	if stored, err := e.uc.GetJob(e.ctx, job.ID, e.tenant); err != nil || stored.Timezone != "America/New_York" {
@@ -81,7 +81,7 @@ func TestCronEnLaZonaDelTrabajoContraLaBase(t *testing.T) {
 
 	// Cambiar solo la zona replanifica: las 01:30 pasan a ser las de Berlin.
 	job.Timezone = "Europe/Berlin"
-	if err := e.uc.UpdateJob(e.ctx, job); err != nil {
+	if _, err := e.uc.UpdateJob(e.ctx, job); err != nil {
 		t.Fatal(err)
 	}
 	if n := e.count(t, `SELECT count(*) FROM scheduler.job_definitions WHERE id = $1 AND timezone = 'Europe/Berlin'`, job.ID); n != 1 {

@@ -22,7 +22,21 @@ import (
 // storedJobs guarda un solo trabajo: el que se crea o se edita por el API.
 type storedJobs struct {
 	ports.JobDefinitionRepository
-	job *domain.JobDefinition
+	job       *domain.JobDefinition
+	schedules *plannedSchedules
+}
+
+func (r *storedJobs) GetOverview(ctx context.Context, id, tenantID uuid.UUID) (*domain.JobOverview, error) {
+	job, err := r.GetByID(ctx, id, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	var next *time.Time
+	if r.schedules != nil && !r.schedules.next.IsZero() {
+		n := r.schedules.next
+		next = &n
+	}
+	return domain.NewJobOverview(*job, next, nil, nil), nil
 }
 
 func (r *storedJobs) GetByCode(context.Context, string) (*domain.JobDefinition, error) {
@@ -65,13 +79,21 @@ func (inlineTx) Transact(ctx context.Context, fn func(ctx context.Context) error
 
 func timezoneServer(t *testing.T) (http.Handler, *storedJobs, *plannedSchedules) {
 	t.Helper()
+	schedules := &plannedSchedules{}
+	jobs := &storedJobs{schedules: schedules}
+	return newJobServer(t, jobs, schedules), jobs, schedules
+}
+
+// newJobServer sirve el API con un catalogo de un manejador de empresa (plazo maximo 600 s)
+// y el reloj fijo en 2026-09-13 10:00 UTC.
+func newJobServer(t *testing.T, jobs ports.JobDefinitionRepository, schedules ports.JobScheduleRepository) http.Handler {
+	t.Helper()
 	catalog, err := domain.NewHandlerCatalog([]domain.HandlerSpec{{
 		Name: "reports.daily", Service: "reports", MaxTimeoutSeconds: 600, Scopes: []domain.HandlerScope{domain.ScopeTenant},
 	}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	jobs, schedules := &storedJobs{}, &plannedSchedules{}
 	uc := app.NewSchedulerUseCase(app.SchedulerDeps{
 		Jobs: jobs, Schedules: schedules, Tx: inlineTx{}, Catalog: catalog,
 		Now:    func() time.Time { return time.Date(2026, 9, 13, 10, 0, 0, 0, time.UTC) },
@@ -80,13 +102,15 @@ func timezoneServer(t *testing.T) (http.Handler, *storedJobs, *plannedSchedules)
 	r := chi.NewRouter()
 	r.Use(middleware.InjectFromGateway)
 	r.Mount("/", NewHandler(Deps{UC: uc, Perms: authz.NewChecker(unreachable, "")}).Routes())
-	return r, jobs, schedules
+	return r
 }
 
 type envelope struct {
 	Data  map[string]json.RawMessage `json:"data"`
 	Error *struct {
-		Code string `json:"code"`
+		Code    string            `json:"code"`
+		Message string            `json:"message"`
+		Details map[string]string `json:"details"`
 	} `json:"error"`
 }
 
@@ -123,6 +147,9 @@ func TestCrearUnTrabajoConZona(t *testing.T) {
 	if jobs.job.Timezone != "America/Lima" || !schedules.next.Equal(time.Date(2026, 9, 13, 13, 0, 0, 0, time.UTC)) {
 		t.Fatalf("guardado %q, planificado %v", jobs.job.Timezone, schedules.next)
 	}
+	if string(env.Data["next_run_at"]) != `"2026-09-13T13:00:00Z"` || string(env.Data["last_execution"]) != "null" {
+		t.Fatalf("el alta devuelve su calendario: next_run_at %s, last_execution %s", env.Data["next_run_at"], env.Data["last_execution"])
+	}
 
 	for _, body := range []string{createBody(""), createBody(`,"timezone":null`)} {
 		code, env = send(t, srv, http.MethodPost, "/api/v1/scheduler/jobs", body)
@@ -136,7 +163,7 @@ func TestZonaInvalidaResponde422ConSuCodigo(t *testing.T) {
 	srv, jobs, _ := timezoneServer(t)
 	for _, tz := range []string{`""`, `"+05:00"`, `"UTC-5"`, `"Local"`, `"America/Nowhere"`, `" America/Lima"`} {
 		code, env := send(t, srv, http.MethodPost, "/api/v1/scheduler/jobs", createBody(`,"timezone":`+tz))
-		if code != http.StatusUnprocessableEntity || env.Error == nil || env.Error.Code != "INVALID_TIMEZONE" {
+		if code != http.StatusUnprocessableEntity || env.Error == nil || env.Error.Code != "INVALID_TIMEZONE" || env.Error.Details["field"] != "timezone" {
 			t.Errorf("crear con %s: %d %+v", tz, code, env.Error)
 		}
 	}
@@ -171,8 +198,31 @@ func TestEditarConservaOCambiaLaZona(t *testing.T) {
 func TestContratoDeLaMeta(t *testing.T) {
 	srv, _, _ := timezoneServer(t)
 	obj, got := keysOf(t, getData(t, srv, "/api/v1/scheduler/meta"))
-	if got != "cron,timezone" {
+	if got != "cron,job_types,limits,pagination,tasks,timezone" {
 		t.Fatalf("claves: %s", got)
+	}
+	if string(obj["job_types"]) != `["cron","interval","one_time"]` {
+		t.Fatalf("job_types: %s", obj["job_types"])
+	}
+	limits, got := keysOf(t, obj["limits"])
+	if got != "max_code_length,max_description_length,max_handler_length,max_interval_minutes,max_name_length,max_payload_bytes,max_retries,max_timeout_seconds,min_interval_minutes" {
+		t.Fatalf("claves de limits: %s", got)
+	}
+	for key, want := range map[string]string{
+		"max_name_length": "255", "max_code_length": "100", "max_description_length": "2000", "max_handler_length": "255",
+		"max_payload_bytes": "65536", "min_interval_minutes": "1", "max_interval_minutes": "525600", "max_retries": "10",
+		"max_timeout_seconds": "604800",
+	} {
+		if string(limits[key]) != want {
+			t.Errorf("limits.%s: %s, se esperaba %s", key, limits[key], want)
+		}
+	}
+	if pages, got := keysOf(t, obj["pagination"]); got != "default_per_page,max_per_page" ||
+		string(pages["default_per_page"]) != "20" || string(pages["max_per_page"]) != "100" {
+		t.Fatalf("pagination: %s", obj["pagination"])
+	}
+	if tasks, got := keysOf(t, obj["tasks"]); got != "pending_window_seconds" || string(tasks["pending_window_seconds"]) != "86400" {
+		t.Fatalf("tasks: %s", obj["tasks"])
 	}
 	tz, got := keysOf(t, obj["timezone"])
 	if got != "default,format,max_length,pattern" {

@@ -201,7 +201,8 @@ func TestReconciliarUnCalendario(t *testing.T) {
 
 func TestDefinicionCronValida(t *testing.T) {
 	daily, bad, empty := "0 3 * * *", "0 25 * * *", ""
-	ok := JobDefinition{JobType: JobTypeCron, CronExpression: &daily, Timezone: DefaultTimezone}
+	ok := JobDefinition{Name: "Informe", Code: "informe", Handler: "reports.daily", JobType: JobTypeCron,
+		CronExpression: &daily, Timezone: DefaultTimezone}
 	if err := ok.Validate(); err != nil {
 		t.Fatal(err)
 	}
@@ -225,7 +226,8 @@ func TestDefinicionCronValida(t *testing.T) {
 		}
 	}
 	five := 5
-	interval := JobDefinition{JobType: JobTypeInterval, IntervalMinutes: &five, CronExpression: &bad, Timezone: DefaultTimezone}
+	interval := JobDefinition{Name: "Informe", Code: "intervalo", Handler: "reports.daily", JobType: JobTypeInterval,
+		IntervalMinutes: &five, CronExpression: &bad, Timezone: DefaultTimezone}
 	if err := interval.Validate(); err != nil {
 		t.Errorf("un trabajo de intervalo no depende de cron_expression: %v", err)
 	}

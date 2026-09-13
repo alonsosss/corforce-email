@@ -1,11 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { setAccessToken } from './client';
-import { ApiError, ERROR_CODES } from './errors';
+import { ApiError, ERROR_CODES, errorDetail } from './errors';
 import {
   schedulerApi,
   type CreateJobRequest,
   type JobExecution,
   type SchedulerJob,
+  type SchedulerMeta,
 } from './scheduler';
 
 function jsonResponse(status: number, body: unknown): Response {
@@ -56,6 +57,14 @@ const JOB: SchedulerJob = {
   timeout_seconds: 60,
   created_at: '2026-09-13T10:00:00Z',
   updated_at: '2026-09-13T10:00:00Z',
+  next_run_at: '2026-09-13T11:00:00Z',
+  last_run_at: '2026-09-13T09:00:00Z',
+  last_execution: {
+    id: 'exec-1',
+    status: 'failed',
+    completed_at: '2026-09-13T10:00:00Z',
+    failure_reason: 'timeout',
+  },
 };
 
 const EXECUTION: JobExecution = {
@@ -94,16 +103,32 @@ describe('cliente del scheduler', () => {
   beforeEach(() => setAccessToken(null));
   afterEach(() => vi.unstubAllGlobals());
 
-  it('lista los trabajos con el filtro is_active y sin paginar; un slice nulo es []', async () => {
-    const calls = mockFetch(() => jsonResponse(200, { data: null }));
-    expect(await schedulerApi.listJobs({ is_active: false })).toEqual([]);
-    await schedulerApi.listJobs({ is_active: true });
-    await schedulerApi.listJobs({});
+  it('pagina los trabajos con is_active, page y per_page y manda el meta del servicio', async () => {
+    const calls = mockFetch(() =>
+      jsonResponse(200, {
+        data: [JOB],
+        meta: { page: 2, per_page: 20, total: 21, total_pages: 2 },
+      }),
+    );
+    const page = await schedulerApi.listJobs({ is_active: false, page: 2, per_page: 20 });
+    await schedulerApi.listJobs({ page: 1, per_page: 20 });
     expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
-      'GET /api/v1/scheduler/jobs?is_active=false',
-      'GET /api/v1/scheduler/jobs?is_active=true',
-      'GET /api/v1/scheduler/jobs',
+      'GET /api/v1/scheduler/jobs?is_active=false&page=2&per_page=20',
+      'GET /api/v1/scheduler/jobs?page=1&per_page=20',
     ]);
+    expect(page).toMatchObject({ page: 2, perPage: 20, total: 21, totalPages: 2 });
+    expect(page.items[0]).toEqual(JOB);
+  });
+
+  it('sin trabajos el meta omite total y total_pages (omitempty): la pagina queda en 0', async () => {
+    mockFetch(() => jsonResponse(200, { data: [], meta: { page: 1, per_page: 20 } }));
+    expect(await schedulerApi.listJobs({ page: 1, per_page: 20 })).toEqual({
+      items: [],
+      page: 1,
+      perPage: 20,
+      total: 0,
+      totalPages: 0,
+    });
   });
 
   it('crea con los campos exactos de createJobReq y devuelve el trabajo', async () => {
@@ -173,9 +198,23 @@ describe('cliente del scheduler', () => {
   });
 
   it('lee la meta, el catalogo de manejadores y las tareas pendientes', async () => {
-    const meta = {
+    const meta: SchedulerMeta = {
       timezone: { default: 'UTC', format: 'iana', pattern: '^x$', max_length: 64 },
       cron: { descriptors: ['@daily'], min_every_seconds: 60, max_length: 100 },
+      job_types: ['cron', 'interval', 'one_time'],
+      limits: {
+        max_name_length: 255,
+        max_code_length: 100,
+        max_description_length: 2000,
+        max_handler_length: 255,
+        max_payload_bytes: 65536,
+        min_interval_minutes: 1,
+        max_interval_minutes: 525600,
+        max_retries: 10,
+        max_timeout_seconds: 604800,
+      },
+      pagination: { default_per_page: 20, max_per_page: 100 },
+      tasks: { pending_window_seconds: 86400 },
     };
     const calls = mockFetch((call) =>
       call.url.endsWith('/meta') ? jsonResponse(200, { data: meta }) : jsonResponse(200, {}),
@@ -190,11 +229,27 @@ describe('cliente del scheduler', () => {
     ]);
   });
 
-  it('una zona invalida llega como 422 INVALID_TIMEZONE con el mensaje del servicio', async () => {
+  it('una zona invalida llega como 422 INVALID_TIMEZONE con el campo en error.details', async () => {
     const message = 'invalid time zone: "Mars/Olympus" is not in the time zone database';
-    mockFetch(() => jsonResponse(422, { error: { code: 'INVALID_TIMEZONE', message } }));
+    mockFetch(() =>
+      jsonResponse(422, {
+        error: { code: 'INVALID_TIMEZONE', message, details: { field: 'timezone' } },
+      }),
+    );
     const err = await schedulerApi.createJob(CREATE).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ApiError);
     expect(err).toMatchObject({ status: 422, code: ERROR_CODES.INVALID_TIMEZONE, message });
+    expect(errorDetail(err, 'field')).toBe('timezone');
+  });
+
+  it('el codigo repetido es un 409 CONFLICT que nombra el campo code', async () => {
+    mockFetch(() =>
+      jsonResponse(409, {
+        error: { code: 'CONFLICT', message: 'job already exists', details: { field: 'code' } },
+      }),
+    );
+    const err = await schedulerApi.createJob(CREATE).catch((e: unknown) => e);
+    expect(err).toMatchObject({ status: 409, code: ERROR_CODES.CONFLICT });
+    expect(errorDetail(err, 'field')).toBe('code');
   });
 });

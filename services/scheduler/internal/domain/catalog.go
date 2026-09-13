@@ -60,15 +60,12 @@ var (
 	serviceNameRe = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 )
 
-// maxHandlerNameLength es el ancho de job_definitions.handler.
-const maxHandlerNameLength = 255
-
 // NewHandlerCatalog valida el catalogo entero y falla ante la primera incoherencia: un
 // catalogo mal escrito es un error de despliegue que tiene que verse al arrancar.
 func NewHandlerCatalog(specs []HandlerSpec) (*HandlerCatalog, error) {
 	c := &HandlerCatalog{byName: make(map[string]HandlerSpec, len(specs))}
 	for _, s := range specs {
-		if len(s.Name) > maxHandlerNameLength || !handlerNameRe.MatchString(s.Name) {
+		if len(s.Name) > MaxHandlerNameLength || !handlerNameRe.MatchString(s.Name) {
 			return nil, fmt.Errorf("catalogo de manejadores: nombre invalido %q", s.Name)
 		}
 		if _, dup := c.byName[s.Name]; dup {
@@ -105,18 +102,18 @@ func NewHandlerCatalog(specs []HandlerSpec) (*HandlerCatalog, error) {
 // Resolve devuelve el manejador si existe y acepta el tipo del trabajo.
 func (c *HandlerCatalog) Resolve(name string, platformJob bool) (HandlerSpec, error) {
 	if c == nil {
-		return HandlerSpec{}, fmt.Errorf("%w: %q is not in the catalog", ErrHandlerNotAllowed, name)
+		return HandlerSpec{}, invalidField(FieldHandler, ErrHandlerNotAllowed, "%q is not in the catalog", name)
 	}
 	spec, ok := c.byName[name]
 	if !ok {
-		return HandlerSpec{}, fmt.Errorf("%w: %q is not in the catalog", ErrHandlerNotAllowed, name)
+		return HandlerSpec{}, invalidField(FieldHandler, ErrHandlerNotAllowed, "%q is not in the catalog", name)
 	}
 	scope := ScopeTenant
 	if platformJob {
 		scope = ScopePlatform
 	}
 	if !spec.Allows(scope) {
-		return HandlerSpec{}, fmt.Errorf("%w: %q does not accept %s jobs", ErrHandlerNotAllowed, name, scope)
+		return HandlerSpec{}, invalidField(FieldHandler, ErrHandlerNotAllowed, "%q does not accept %s jobs", name, scope)
 	}
 	return spec, nil
 }

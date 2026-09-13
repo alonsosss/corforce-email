@@ -64,8 +64,15 @@ function ReasonCell({ execution: e }: { execution: JobExecution }) {
   );
 }
 
+interface ExecutionsCardProps {
+  job: SchedulerJob;
+  refreshKey: number;
+  /** Tras cancelar o reintentar: la ultima ejecucion del trabajo puede haber cambiado. */
+  onChange: () => void;
+}
+
 /** Historial paginado de un trabajo (GET /scheduler/jobs/{id}/history). */
-export function ExecutionsCard({ job, refreshKey }: { job: SchedulerJob; refreshKey: number }) {
+export function ExecutionsCard({ job, refreshKey, onChange }: ExecutionsCardProps) {
   const toast = useToast();
   const { can } = useAccess();
   const pager = usePagination();
@@ -158,6 +165,7 @@ export function ExecutionsCard({ job, refreshKey }: { job: SchedulerJob; refresh
     toast.success(message);
     setPending(null);
     history.reload();
+    onChange();
   };
 
   return (

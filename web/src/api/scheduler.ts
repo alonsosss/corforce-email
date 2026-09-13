@@ -10,12 +10,10 @@ import type { Page, PageQuery } from './types';
 // llevan exactamente estos campos.
 
 /**
- * Tipos de trabajo de domain/entities.go (JobTypeCron, JobTypeInterval, JobTypeOneTime).
- * GET /scheduler/meta no los publica; el formulario los necesita porque cada tipo tiene sus
- * propios campos.
+ * Tipos de trabajo de domain/entities.go. Los que se ofrecen, y en que orden, los publica
+ * GET /scheduler/meta (job_types); la union existe porque cada tipo tiene sus propios campos.
  */
-export const JOB_TYPES = ['cron', 'interval', 'one_time'] as const;
-export type JobType = (typeof JOB_TYPES)[number];
+export type JobType = 'cron' | 'interval' | 'one_time';
 
 export type ExecutionStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
 export type FailureReason = 'executor' | 'timeout' | 'handler_not_allowed';
@@ -46,6 +44,19 @@ export interface SchedulerJob {
   timeout_seconds: number;
   created_at: string;
   updated_at: string;
+  /** Proximo lanzamiento del calendario; null si el trabajo esta inactivo. */
+  next_run_at: string | null;
+  /** Ultima vez que lo despacho el calendario; un lanzamiento manual no cuenta. */
+  last_run_at: string | null;
+  /** Ejecucion mas reciente de cualquier origen, o null si nunca se ejecuto. */
+  last_execution: LastExecution | null;
+}
+
+export interface LastExecution {
+  id: string;
+  status: ExecutionStatus;
+  completed_at: string | null;
+  failure_reason: FailureReason | null;
 }
 
 export interface JobExecution {
@@ -88,7 +99,10 @@ export interface SchedulerHandler {
   scopes: HandlerScope[];
 }
 
-/** GET /scheduler/meta: reglas de domain/timezone.go y domain/cron.go. */
+/**
+ * GET /scheduler/meta: reglas de domain/timezone.go, domain/cron.go y domain/validation.go.
+ * Los topes de texto cuentan caracteres; max_payload_bytes, bytes UTF-8.
+ */
 export interface SchedulerMeta {
   timezone: {
     default: string;
@@ -103,6 +117,28 @@ export interface SchedulerMeta {
     /** Periodo minimo de @every; tambien la resolucion de interval_minutes. */
     min_every_seconds: number;
     max_length: number;
+  };
+  job_types: JobType[];
+  limits: {
+    /** Tambien vale para una tarea puntual, como max_handler_length. */
+    max_name_length: number;
+    max_code_length: number;
+    max_description_length: number;
+    max_handler_length: number;
+    max_payload_bytes: number;
+    min_interval_minutes: number;
+    max_interval_minutes: number;
+    max_retries: number;
+    /** Tope general; el de cada manejador (max_timeout_seconds de /handlers) puede ser menor. */
+    max_timeout_seconds: number;
+  };
+  pagination: {
+    default_per_page: number;
+    max_per_page: number;
+  };
+  tasks: {
+    /** GET /tasks lista las tareas pendientes que vencen dentro de esta ventana. */
+    pending_window_seconds: number;
   };
 }
 
@@ -123,7 +159,7 @@ export interface CreateJobRequest {
 /** PUT reemplaza la definicion entera; el codigo no se cambia. */
 export type UpdateJobRequest = Omit<CreateJobRequest, 'code'>;
 
-export interface JobListQuery {
+export interface JobListQuery extends PageQuery {
   is_active?: boolean;
 }
 
@@ -133,9 +169,9 @@ export const schedulerApi = {
   handlers: (): Promise<SchedulerHandler[]> =>
     fetchList<SchedulerHandler>(endpoints.scheduler.handlers),
 
-  /** El servicio devuelve la lista completa de la empresa, sin paginar. */
-  listJobs: (query: JobListQuery): Promise<SchedulerJob[]> =>
-    fetchList<SchedulerJob>(endpoints.scheduler.jobs.collection, { is_active: query.is_active }),
+  /** Trabajos de la empresa y de plataforma; la empresa sale del token, no de la query. */
+  listJobs: (query: JobListQuery): Promise<Page<SchedulerJob>> =>
+    fetchPage<SchedulerJob>(endpoints.scheduler.jobs.collection, { ...query }),
   getJob: (id: string) => api.get<SchedulerJob>(endpoints.scheduler.jobs.byId(id)),
   createJob: (input: CreateJobRequest) =>
     api.post<SchedulerJob>(endpoints.scheduler.jobs.collection, { body: input }),
@@ -150,6 +186,7 @@ export const schedulerApi = {
   cancelExecution: (id: string) => api.post<null>(endpoints.scheduler.cancelExecution(id)),
   retryExecution: (id: string) => api.post<JobExecution>(endpoints.scheduler.retryExecution(id)),
 
+  /** Sin paginar: las pendientes dentro de meta.tasks.pending_window_seconds. */
   listPendingTasks: (): Promise<ScheduledTask[]> =>
     fetchList<ScheduledTask>(endpoints.scheduler.tasks.collection),
   cancelTask: (id: string) => api.post<null>(endpoints.scheduler.cancelTask(id)),

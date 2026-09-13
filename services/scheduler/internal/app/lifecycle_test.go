@@ -21,7 +21,7 @@ func TestManejadorDesconocidoONoPermitidoSeRechaza(t *testing.T) {
 			Timezone: domain.DefaultTimezone, IntervalMinutes: &five, Handler: handler, TimeoutSeconds: 60}
 	}
 	for _, h := range []string{"no.existe", platformHandler} {
-		if err := f.uc.CreateJob(ctx, newJob(h)); !errors.Is(err, domain.ErrHandlerNotAllowed) {
+		if _, err := f.uc.CreateJob(ctx, newJob(h)); !errors.Is(err, domain.ErrHandlerNotAllowed) {
 			t.Errorf("crear con %q: %v", h, err)
 		}
 	}
@@ -31,7 +31,7 @@ func TestManejadorDesconocidoONoPermitidoSeRechaza(t *testing.T) {
 
 	own := f.addJob(nil)
 	own.Handler = "no.existe"
-	if err := f.uc.UpdateJob(ctx, &own); !errors.Is(err, domain.ErrHandlerNotAllowed) {
+	if _, err := f.uc.UpdateJob(ctx, &own); !errors.Is(err, domain.ErrHandlerNotAllowed) {
 		t.Errorf("editar con un manejador desconocido: %v", err)
 	}
 	if f.store.jobUpdates != 0 {
@@ -39,7 +39,7 @@ func TestManejadorDesconocidoONoPermitidoSeRechaza(t *testing.T) {
 	}
 
 	ok := newJob(tenantHandler)
-	if err := f.uc.CreateJob(ctx, ok); err != nil {
+	if _, err := f.uc.CreateJob(ctx, ok); err != nil {
 		t.Fatalf("crear con un manejador del catalogo: %v", err)
 	}
 	if _, scheduled := f.store.schedules[ok.ID]; !scheduled {

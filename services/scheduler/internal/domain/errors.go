@@ -1,6 +1,9 @@
 package domain
 
-import "errors"
+import (
+	"errors"
+	"fmt"
+)
 
 var (
 	ErrJobNotFound       = errors.New("job not found")
@@ -20,6 +23,8 @@ var (
 	ErrHandlerNotAllowed = errors.New("handler not allowed")
 	// ErrInvalidJob envuelve el motivo concreto por el que una definicion no es valida.
 	ErrInvalidJob = errors.New("invalid job")
+	// ErrInvalidTask envuelve el motivo concreto por el que una tarea puntual no es valida.
+	ErrInvalidTask = errors.New("invalid task")
 	// ErrInvalidReport: el cierre que informa un ejecutor no se puede guardar tal cual.
 	ErrInvalidReport = errors.New("invalid execution report")
 	// ErrExecutionConflict: se informa un resultado contrario al que ya consta (completar
@@ -32,3 +37,27 @@ var (
 	// ErrAlreadyRetried: la ejecucion ya tiene un reintento, automatico o manual.
 	ErrAlreadyRetried = errors.New("execution already has a retry")
 )
+
+// FieldError es un dato de la peticion que no cumple su regla. Field es el nombre del campo
+// en el contrato del API, para que el cliente lo senale sin interpretar el mensaje. Envuelve
+// el error del dominio (ErrInvalidJob, ErrInvalidCron, ...), asi que errors.Is sigue
+// reconociendolo.
+type FieldError struct {
+	Field  string
+	cause  error
+	detail string
+}
+
+func (e *FieldError) Error() string { return e.cause.Error() + ": " + e.detail }
+
+func (e *FieldError) Unwrap() error { return e.cause }
+
+func invalidField(field string, cause error, format string, args ...any) error {
+	return &FieldError{Field: field, cause: cause, detail: fmt.Sprintf(format, args...)}
+}
+
+// NewFieldError construye un FieldError desde fuera del dominio: un dato que se lee antes de
+// llegar a el, como la fecha de una tarea o el cierre que informa un ejecutor.
+func NewFieldError(field string, cause error, detail string) error {
+	return invalidField(field, cause, "%s", detail)
+}

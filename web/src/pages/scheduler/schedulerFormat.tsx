@@ -1,5 +1,6 @@
-import type { ExecutionStatus, JobType, SchedulerJob } from '@/api/scheduler';
+import type { ExecutionStatus, JobType, LastExecution, SchedulerJob } from '@/api/scheduler';
 import { Badge, type BadgeTone } from '@/design/components';
+import { formatDateTime } from '@/lib/format';
 import { getLocale, t, tEnum } from '@/i18n';
 
 export function executionStatusTone(status: ExecutionStatus): BadgeTone {
@@ -38,6 +39,42 @@ export function ScheduleLabel({ job }: { job: SchedulerJob }) {
     );
   }
   return <>{t('scheduler.schedule.oneTime')}</>;
+}
+
+/** Proximo lanzamiento del calendario; un trabajo inactivo no tiene. */
+export function NextRunLabel({ job }: { job: SchedulerJob }) {
+  if (job.next_run_at) return <>{formatDateTime(job.next_run_at)}</>;
+  return (
+    <span className="cf-text-muted">
+      {job.is_active ? t('common.dash') : t('scheduler.nextRun.inactive')}
+    </span>
+  );
+}
+
+/** Estado de la ultima ejecucion y cuando termino; con detailed, tambien por que fallo. */
+export function LastExecutionLabel({
+  execution,
+  detailed = false,
+}: {
+  execution: LastExecution | null;
+  detailed?: boolean;
+}) {
+  if (!execution) {
+    return <span className="cf-text-muted">{t('scheduler.lastExecution.none')}</span>;
+  }
+  return (
+    <span className="cf-cell-stack">
+      <ExecutionStatusBadge status={execution.status} />
+      {execution.completed_at ? (
+        <span className="cf-text-muted cf-text-sm">{formatDateTime(execution.completed_at)}</span>
+      ) : null}
+      {detailed && execution.failure_reason ? (
+        <span className="cf-text-sm">
+          {tEnum('scheduler.failureReason', execution.failure_reason)}
+        </span>
+      ) : null}
+    </span>
+  );
 }
 
 const number = () => new Intl.NumberFormat(getLocale(), { maximumFractionDigits: 1 });

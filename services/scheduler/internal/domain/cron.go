@@ -45,39 +45,43 @@ type CronSpec struct {
 // zona IANA en la que se evalua.
 func ParseCron(expr, timezone string) (CronSpec, error) {
 	if len(expr) > MaxCronExpressionLength {
-		return CronSpec{}, fmt.Errorf("%w: longer than %d characters", ErrInvalidCron, MaxCronExpressionLength)
+		return CronSpec{}, invalidCron("longer than %d characters", MaxCronExpressionLength)
 	}
 	spec := strings.TrimSpace(expr)
 	if spec == "" {
-		return CronSpec{}, fmt.Errorf("%w: cron_expression is required for cron jobs", ErrInvalidCron)
+		return CronSpec{}, invalidCron("cron_expression is required for cron jobs")
 	}
 	// La libreria aceptaria un prefijo TZ=/CRON_TZ= y cargaria la zona por su cuenta: la zona
 	// no es parte de la expresion, es el campo timezone del trabajo.
 	if strings.HasPrefix(spec, "TZ=") || strings.HasPrefix(spec, "CRON_TZ=") {
-		return CronSpec{}, fmt.Errorf("%w: the time zone goes in the timezone field, not in the expression", ErrInvalidCron)
+		return CronSpec{}, invalidCron("the time zone goes in the timezone field, not in the expression")
 	}
 	if strings.HasPrefix(spec, "@") && !cronDescriptors[spec] && !strings.HasPrefix(spec, everyPrefix) {
-		return CronSpec{}, fmt.Errorf("%w: descriptor must be @hourly, @daily, @weekly, @monthly or @every <duration>", ErrInvalidCron)
+		return CronSpec{}, invalidCron("descriptor must be @hourly, @daily, @weekly, @monthly or @every <duration>")
 	}
 	schedule, err := cronParser.Parse(spec)
 	if err != nil {
-		return CronSpec{}, fmt.Errorf("%w: %s", ErrInvalidCron, err.Error())
+		return CronSpec{}, invalidCron("%s", err.Error())
 	}
 	var every time.Duration
 	if delay, ok := schedule.(cron.ConstantDelaySchedule); ok {
 		// La libreria sube a un segundo cualquier periodo menor, cero o negativo incluidos.
 		if delay.Delay < MinCronEvery {
-			return CronSpec{}, fmt.Errorf("%w: @every must be at least %s", ErrInvalidCron, MinCronEvery)
+			return CronSpec{}, invalidCron("@every must be at least %s", MinCronEvery)
 		}
 		every = delay.Delay
 	} else if schedule.Next(neverProbe).IsZero() {
-		return CronSpec{}, fmt.Errorf("%w: the expression never matches a date", ErrInvalidCron)
+		return CronSpec{}, invalidCron("the expression never matches a date")
 	}
 	loc, err := LoadTimezone(timezone)
 	if err != nil {
 		return CronSpec{}, err
 	}
 	return CronSpec{schedule: schedule, every: every, loc: loc}, nil
+}
+
+func invalidCron(format string, args ...any) error {
+	return invalidField(FieldCronExpression, ErrInvalidCron, format, args...)
 }
 
 // CronDescriptors devuelve los descriptores admitidos, ademas de @every, ordenados.
@@ -123,7 +127,7 @@ func (c CronSpec) Next(after time.Time) (time.Time, error) {
 	for {
 		wall = c.schedule.Next(wall)
 		if wall.IsZero() {
-			return time.Time{}, fmt.Errorf("%w: the expression never matches a date", ErrInvalidCron)
+			return time.Time{}, invalidCron("the expression never matches a date")
 		}
 		// Solo vuelve a pasar en la segunda pasada de una hora repetida: esas horas de pared
 		// ya se lanzaron en la primera.

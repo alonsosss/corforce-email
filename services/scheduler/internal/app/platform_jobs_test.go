@@ -25,7 +25,7 @@ func TestLosTrabajosDePlataformaNoSeCambianDesdeUnaEmpresa(t *testing.T) {
 	if _, err := f.uc.RunJob(ctx, f.tenantID, platform.ID); !errors.Is(err, domain.ErrPlatformJob) {
 		t.Errorf("run: %v", err)
 	}
-	if err := f.uc.UpdateJob(ctx, &platform); !errors.Is(err, domain.ErrPlatformJob) {
+	if _, err := f.uc.UpdateJob(ctx, &platform); !errors.Is(err, domain.ErrPlatformJob) {
 		t.Errorf("update: %v", err)
 	}
 	if err := f.uc.CancelExecution(ctx, exec.ID, f.tenantID); !errors.Is(err, domain.ErrPlatformJob) {

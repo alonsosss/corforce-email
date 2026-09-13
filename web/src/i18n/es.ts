@@ -2454,6 +2454,10 @@ export const es = {
   'scheduler.column.type': 'Tipo',
   'scheduler.column.schedule': 'Programacion',
   'scheduler.column.handler': 'Manejador',
+  'scheduler.column.nextRun': 'Proxima ejecucion',
+  'scheduler.column.lastExecution': 'Ultima ejecucion',
+  'scheduler.nextRun.inactive': 'Sin programar (inactivo)',
+  'scheduler.lastExecution.none': 'Nunca se ha ejecutado',
   'scheduler.platform': 'Plataforma',
   'scheduler.platformHint':
     'Trabajo de la plataforma: se consulta desde la empresa, pero no se cambia ni se lanza.',
@@ -2490,6 +2494,8 @@ export const es = {
   'scheduler.detail.timeoutHandlerMaxUnknown': 'El maximo del manejador',
   'scheduler.detail.timeoutCapped': '{value}, acotado al maximo del manejador ({max})',
   'scheduler.detail.payload': 'Datos para el manejador',
+  'scheduler.detail.lastRun': 'Ultimo lanzamiento programado',
+  'scheduler.detail.lastRunHint': 'Los lanzamientos manuales no cuentan.',
   'scheduler.handler.outOfCatalog': 'Fuera del catalogo',
   'scheduler.handler.outOfCatalogHint':
     'El manejador no esta en el catalogo del servicio o no admite este tipo de trabajo: sus ejecuciones fallan sin despacharse.',
@@ -2507,17 +2513,16 @@ export const es = {
   'scheduler.form.timezoneHint':
     'Nombre {format} (Area/Lugar), hasta {max} caracteres. Solo afecta a las expresiones cron de calendario; @every, el intervalo y una vez cuentan tiempo transcurrido. Por defecto {default}.',
   'scheduler.form.interval': 'Intervalo (minutos)',
-  'scheduler.form.intervalHint': 'Minimo {n} min.',
+  'scheduler.form.intervalHint': 'Entre {min} min y {max}.',
   'scheduler.form.maxRetries': 'Reintentos maximos',
   'scheduler.form.maxRetriesHint':
-    'Reintentos automaticos de una ejecucion fallida, con espera creciente. 0 no reintenta.',
+    'Reintentos automaticos de una ejecucion fallida, con espera creciente, hasta {max}. 0 no reintenta.',
   'scheduler.form.timeout': 'Plazo (segundos)',
-  'scheduler.form.timeoutHint': '0 usa el maximo del manejador.',
-  'scheduler.form.timeoutHintMax': '0 usa el maximo del manejador ({value}).',
-  'scheduler.form.timeoutCapped': 'Supera el maximo del manejador: se aplicara {value}.',
+  'scheduler.form.timeoutHint': 'Hasta {max}; 0 usa el maximo del manejador.',
+  'scheduler.form.timeoutHintMax': 'Hasta {value}, el maximo del manejador; 0 lo usa entero.',
   'scheduler.form.payload': 'Datos para el manejador (JSON)',
   'scheduler.form.payloadHint':
-    'Documento JSON opcional que recibe el manejador en cada ejecucion.',
+    'Documento JSON opcional que recibe el manejador en cada ejecucion, hasta {max}.',
   'scheduler.form.cronRejected': 'El servidor rechazo la expresion: {detail}',
   'scheduler.form.timezoneRejected': 'El servidor rechazo la zona: {detail}',
   'scheduler.form.serverRejected': 'El servidor rechazo el valor: {detail}',
@@ -2525,8 +2530,10 @@ export const es = {
   'scheduler.validation.descriptor': 'Los descriptores admitidos son {list} y @every <duracion>.',
   'scheduler.validation.everyMin': '@every debe ser de al menos {min}.',
   'scheduler.validation.timezoneFormat': 'No es un nombre de zona IANA (Area/Lugar).',
-  'scheduler.validation.intervalMin': 'Debe ser un numero entero de al menos {n}.',
   'scheduler.validation.payloadJson': 'Debe ser un documento JSON valido.',
+  'scheduler.validation.payloadSize': 'No puede superar {max}.',
+  'scheduler.validation.timeoutHandlerMax':
+    'Supera el plazo maximo del manejador ({value}). Con 0 se usa ese maximo.',
   'scheduler.error.codeTaken': 'Ya existe un trabajo con ese codigo.',
   'scheduler.error.handlerNotAllowed':
     'El manejador no esta en el catalogo del servicio o no admite trabajos de empresa.',
@@ -2578,7 +2585,10 @@ export const es = {
   'scheduler.tasks.title': 'Tareas puntuales pendientes',
   'scheduler.tasks.description':
     'Tareas de una sola ejecucion programadas para una hora concreta, tal como las lista el servicio.',
+  'scheduler.tasks.descriptionWindow':
+    'Tareas de una sola ejecucion que vencen en {window} o antes; las que vencen mas tarde aun no se listan.',
   'scheduler.tasks.empty': 'No hay tareas puntuales pendientes',
+  'scheduler.tasks.emptyWindow': 'Ninguna tarea pendiente vence en {window} o antes.',
   'scheduler.tasks.triggerAt': 'Prevista',
   'scheduler.tasks.cancel': 'Cancelar tarea',
   'scheduler.tasks.cancelLabel': 'Cancelar la tarea {name}',

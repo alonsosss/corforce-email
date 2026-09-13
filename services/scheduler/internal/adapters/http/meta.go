@@ -23,9 +23,39 @@ type metaCron struct {
 	MaxLength       int      `json:"max_length"`
 }
 
+// metaLimits son los topes de un trabajo. max_name_length y max_handler_length valen tambien
+// para una tarea puntual; timeout_seconds 0 toma el maximo del manejador, que ademas no
+// puede superarse (max_timeout_seconds de GET /handlers). Los topes de la expresion cron y
+// de la zona van en cron y timezone.
+type metaLimits struct {
+	MaxNameLength        int `json:"max_name_length"`
+	MaxCodeLength        int `json:"max_code_length"`
+	MaxDescriptionLength int `json:"max_description_length"`
+	MaxHandlerLength     int `json:"max_handler_length"`
+	MaxPayloadBytes      int `json:"max_payload_bytes"`
+	MinIntervalMinutes   int `json:"min_interval_minutes"`
+	MaxIntervalMinutes   int `json:"max_interval_minutes"`
+	MaxRetries           int `json:"max_retries"`
+	MaxTimeoutSeconds    int `json:"max_timeout_seconds"`
+}
+
+type metaPagination struct {
+	DefaultPerPage int `json:"default_per_page"`
+	MaxPerPage     int `json:"max_per_page"`
+}
+
+// metaTasks: GET /tasks lista las tareas pendientes que vencen dentro de esta ventana.
+type metaTasks struct {
+	PendingWindowSeconds int `json:"pending_window_seconds"`
+}
+
 type metaResponse struct {
-	Timezone metaTimezone `json:"timezone"`
-	Cron     metaCron     `json:"cron"`
+	Timezone   metaTimezone   `json:"timezone"`
+	Cron       metaCron       `json:"cron"`
+	JobTypes   []string       `json:"job_types"`
+	Limits     metaLimits     `json:"limits"`
+	Pagination metaPagination `json:"pagination"`
+	Tasks      metaTasks      `json:"tasks"`
 }
 
 // timezoneFormat nombra la base de la que salen las zonas validas.
@@ -49,5 +79,19 @@ func buildMeta() metaResponse {
 			MinEverySeconds: int(domain.MinCronEvery / time.Second),
 			MaxLength:       domain.MaxCronExpressionLength,
 		},
+		JobTypes: domain.JobTypes(),
+		Limits: metaLimits{
+			MaxNameLength:        domain.MaxNameLength,
+			MaxCodeLength:        domain.MaxCodeLength,
+			MaxDescriptionLength: domain.MaxDescriptionLength,
+			MaxHandlerLength:     domain.MaxHandlerNameLength,
+			MaxPayloadBytes:      domain.MaxPayloadBytes,
+			MinIntervalMinutes:   domain.MinIntervalMinutes,
+			MaxIntervalMinutes:   domain.MaxIntervalMinutes,
+			MaxRetries:           domain.MaxJobRetries,
+			MaxTimeoutSeconds:    domain.MaxHandlerTimeoutSeconds,
+		},
+		Pagination: metaPagination{DefaultPerPage: defaultPerPage, MaxPerPage: maxPerPage},
+		Tasks:      metaTasks{PendingWindowSeconds: int(domain.PendingTasksWindow / time.Second)},
 	}
 }

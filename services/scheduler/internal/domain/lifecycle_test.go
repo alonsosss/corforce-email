@@ -134,7 +134,8 @@ func TestResultadoDelEjecutor(t *testing.T) {
 func TestDefinicionValida(t *testing.T) {
 	five, zero := 5, 0
 	bad := `{"a":`
-	ok := JobDefinition{JobType: JobTypeInterval, IntervalMinutes: &five, MaxRetries: 1, TimeoutSeconds: 10, Timezone: DefaultTimezone}
+	ok := JobDefinition{Name: "Informe", Code: "informe", Handler: "reports.daily", JobType: JobTypeInterval,
+		IntervalMinutes: &five, MaxRetries: 1, TimeoutSeconds: 10, Timezone: DefaultTimezone}
 	if err := ok.Validate(); err != nil {
 		t.Fatal(err)
 	}

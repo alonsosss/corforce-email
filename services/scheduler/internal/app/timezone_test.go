@@ -27,7 +27,7 @@ func TestUnCronSePlanificaEnLaZonaDelTrabajo(t *testing.T) {
 	tenant, expr := f.tenantID, "0 8 * * *"
 	job := &domain.JobDefinition{TenantID: &tenant, Name: "n", Code: "lima", JobType: domain.JobTypeCron,
 		CronExpression: &expr, Timezone: "America/Lima", Handler: tenantHandler, TimeoutSeconds: 60}
-	if err := f.uc.CreateJob(ctx, job); err != nil {
+	if _, err := f.uc.CreateJob(ctx, job); err != nil {
 		t.Fatal(err)
 	}
 	if got := f.nextRunOf(*job); !got.Equal(at(13, 0, 0)) {
@@ -37,7 +37,7 @@ func TestUnCronSePlanificaEnLaZonaDelTrabajo(t *testing.T) {
 	for _, tz := range []string{"", "+05:00", "Local", "America/Nowhere"} {
 		bad := *job
 		bad.Code, bad.Timezone = "malo-"+tz, tz
-		if err := f.uc.CreateJob(ctx, &bad); !errors.Is(err, domain.ErrInvalidTimezone) {
+		if _, err := f.uc.CreateJob(ctx, &bad); !errors.Is(err, domain.ErrInvalidTimezone) {
 			t.Errorf("crear con la zona %q: %v", tz, err)
 		}
 	}
@@ -53,7 +53,7 @@ func TestCambiarLaZonaReplanifica(t *testing.T) {
 
 	edited := job
 	edited.Timezone = "America/Lima"
-	if err := f.uc.UpdateJob(ctx, &edited); err != nil {
+	if _, err := f.uc.UpdateJob(ctx, &edited); err != nil {
 		t.Fatal(err)
 	}
 	if got := f.nextRunOf(job); !got.Equal(utcAt(2026, 9, 14, 8, 0, 0)) {
@@ -61,7 +61,7 @@ func TestCambiarLaZonaReplanifica(t *testing.T) {
 	}
 
 	edited.Timezone = "UTC+5"
-	if err := f.uc.UpdateJob(ctx, &edited); !errors.Is(err, domain.ErrInvalidTimezone) {
+	if _, err := f.uc.UpdateJob(ctx, &edited); !errors.Is(err, domain.ErrInvalidTimezone) {
 		t.Fatalf("editar con una zona invalida: %v", err)
 	}
 	if stored := f.store.jobs[job.ID]; stored.Timezone != "America/Lima" {
@@ -91,7 +91,7 @@ func TestCambioDeHoraSeLanzaUnaSolaVez(t *testing.T) {
 		tenant, expr := f.tenantID, tc.expr
 		job := &domain.JobDefinition{TenantID: &tenant, Name: "n", Code: "nueva-york", JobType: domain.JobTypeCron,
 			CronExpression: &expr, Timezone: "America/New_York", Handler: tenantHandler, TimeoutSeconds: 60}
-		if err := f.uc.CreateJob(ctx, job); err != nil {
+		if _, err := f.uc.CreateJob(ctx, job); err != nil {
 			t.Fatal(err)
 		}
 		for _, tick := range tc.ticks {

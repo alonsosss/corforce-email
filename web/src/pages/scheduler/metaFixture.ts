@@ -13,6 +13,20 @@ export const schedulerMetaFixture: SchedulerMeta = {
     min_every_seconds: 60,
     max_length: 100,
   },
+  job_types: ['cron', 'interval', 'one_time'],
+  limits: {
+    max_name_length: 255,
+    max_code_length: 100,
+    max_description_length: 2000,
+    max_handler_length: 255,
+    max_payload_bytes: 65536,
+    min_interval_minutes: 1,
+    max_interval_minutes: 525600,
+    max_retries: 10,
+    max_timeout_seconds: 604800,
+  },
+  pagination: { default_per_page: 20, max_per_page: 100 },
+  tasks: { pending_window_seconds: 86400 },
 };
 
 export const tenantHandlerFixture: SchedulerHandler = {
@@ -49,6 +63,9 @@ export function jobFixture(extra: Partial<SchedulerJob> = {}): SchedulerJob {
     timeout_seconds: 0,
     created_at: '2026-09-13T10:00:00Z',
     updated_at: '2026-09-13T10:00:00Z',
+    next_run_at: '2026-09-14T12:00:00Z',
+    last_run_at: null,
+    last_execution: null,
     ...extra,
   };
 }

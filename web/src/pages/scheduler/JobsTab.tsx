@@ -16,14 +16,12 @@ import {
   type Column,
 } from '@/design/components';
 import { IconPlus, IconRefresh } from '@/design/icons';
-import { formatDateTime } from '@/lib/format';
-import { localPage } from '@/lib/localPage';
 import { t } from '@/i18n';
 import { paths } from '@/paths';
 import { ActiveBadge } from '@/pages/shared/StatusBadges';
 import { JobForm } from './JobForm';
 import { isPlatformJob, tenantHandlers } from './jobDraft';
-import { JobTypeBadge, ScheduleLabel } from './schedulerFormat';
+import { JobTypeBadge, LastExecutionLabel, NextRunLabel, ScheduleLabel } from './schedulerFormat';
 
 /** Valor del filtro is_active tal como viaja en la query; vacio es sin filtro. */
 type ActiveFilter = '' | 'true' | 'false';
@@ -38,14 +36,17 @@ export function JobsTab() {
   const canCreate = can(...PERMISSIONS.schedulerJobs.create);
 
   const jobs = useQuery(
-    () => schedulerApi.listJobs({ is_active: active === '' ? undefined : active === 'true' }),
-    [active],
+    () =>
+      schedulerApi.listJobs({
+        is_active: active === '' ? undefined : active === 'true',
+        page: pager.page,
+        per_page: pager.perPage,
+      }),
+    [active, pager.page, pager.perPage],
   );
   // Solo quien puede crear necesita saber si hay manejadores a los que apuntar.
   const catalog = useQuery(async () => (canCreate ? schedulerHandlers.get() : null), [canCreate]);
   const catalogEmpty = catalog.data !== null && tenantHandlers(catalog.data).length === 0;
-  // GET /scheduler/jobs devuelve la lista completa: se pagina en el cliente.
-  const page = localPage(jobs.data ?? [], pager.page, pager.perPage);
 
   const columns: Column<SchedulerJob>[] = [
     {
@@ -86,9 +87,14 @@ export function JobsTab() {
       ),
     },
     {
-      key: 'updated',
-      header: t('common.updatedAt'),
-      render: (job) => formatDateTime(job.updated_at),
+      key: 'next',
+      header: t('scheduler.column.nextRun'),
+      render: (job) => <NextRunLabel job={job} />,
+    },
+    {
+      key: 'last',
+      header: t('scheduler.column.lastExecution'),
+      render: (job) => <LastExecutionLabel execution={job.last_execution} />,
     },
   ];
 
@@ -141,7 +147,7 @@ export function JobsTab() {
         </div>
         <DataTable
           columns={columns}
-          rows={page.items}
+          rows={jobs.data?.items ?? []}
           rowKey={(job) => job.id}
           loading={jobs.loading}
           error={jobs.error}
@@ -149,10 +155,10 @@ export function JobsTab() {
           empty={{ title: t('scheduler.empty'), description: t('scheduler.emptyDescription') }}
           onRowClick={(job) => navigate(paths.schedulerJob(job.id))}
           pagination={{
-            page: page.page,
-            perPage: page.perPage,
-            total: page.total,
-            totalPages: page.totalPages,
+            page: jobs.data?.page ?? pager.page,
+            perPage: pager.perPage,
+            total: jobs.data?.total ?? 0,
+            totalPages: jobs.data?.totalPages ?? 0,
             onPageChange: pager.setPage,
           }}
         />

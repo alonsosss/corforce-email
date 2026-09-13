@@ -1,12 +1,14 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { ApiError, ERROR_CODES } from '@/api/errors';
-import type { SchedulerMeta } from '@/api/scheduler';
+import type { SchedulerHandler, SchedulerMeta } from '@/api/scheduler';
 import { getLocale, t } from '@/i18n';
+import { formatBytes } from '@/lib/quota';
 import {
+  charLength,
   draftFromJob,
   emptyDraft,
   handlerOf,
-  minIntervalMinutes,
+  maxTimeoutSeconds,
   parseGoDurationSeconds,
   serverFieldErrors,
   tenantHandlers,
@@ -35,8 +37,19 @@ const draft = (extra: Partial<JobDraft> = {}): JobDraft => ({
   ...extra,
 });
 
+const validate = (
+  extra: Partial<JobDraft>,
+  meta: SchedulerMeta = META,
+  handler: SchedulerHandler | null = tenantHandlerFixture,
+) => validateDraft(draft(extra), meta, 'create', handler);
+
 const cronError = (cron: string, meta: SchedulerMeta = META) =>
-  validateDraft(draft({ cron_expression: cron }), meta, 'create').cron_expression;
+  validate({ cron_expression: cron }, meta).cron_expression;
+
+const withLimits = (limits: Partial<SchedulerMeta['limits']>): SchedulerMeta => ({
+  ...META,
+  limits: { ...META.limits, ...limits },
+});
 
 describe('validacion con las reglas de GET /scheduler/meta', () => {
   it('acepta los descriptores de la meta; el resto de expresiones las decide el servidor', () => {
@@ -73,7 +86,7 @@ describe('validacion con las reglas de GET /scheduler/meta', () => {
 
   it('valida la zona con el patron y la longitud de la meta', () => {
     const zoneError = (timezone: string, meta: SchedulerMeta = META) =>
-      validateDraft(draft({ timezone }), meta, 'create').timezone;
+      validate({ timezone }, meta).timezone;
     for (const zone of ['UTC', 'America/Lima', 'Etc/GMT+5', 'America/Argentina/Buenos_Aires']) {
       expect(zoneError(zone), zone).toBeUndefined();
     }
@@ -86,30 +99,84 @@ describe('validacion con las reglas de GET /scheduler/meta', () => {
     expect(zoneError('+05:00', unreadable)).toBeUndefined();
   });
 
-  it('el intervalo minimo sale de la resolucion que publica la meta', () => {
-    expect(minIntervalMinutes(META)).toBe(1);
-    expect(minIntervalMinutes({ ...META, cron: { ...META.cron, min_every_seconds: 90 } })).toBe(2);
-    const intervalError = (value: string) =>
-      validateDraft(draft({ job_type: 'interval', interval_minutes: value }), META, 'create')
-        .interval_minutes;
+  it('el intervalo va de min_interval_minutes a max_interval_minutes de la meta', () => {
+    const intervalError = (value: string, meta: SchedulerMeta = META) =>
+      validate({ job_type: 'interval', interval_minutes: value }, meta).interval_minutes;
+    const range = t('validation.range', { min: 1, max: META.limits.max_interval_minutes });
     expect(intervalError('15')).toBeUndefined();
-    for (const value of ['0', '1.5', '', 'x']) {
-      expect(intervalError(value), value).toBe(t('scheduler.validation.intervalMin', { n: 1 }));
+    expect(intervalError(String(META.limits.max_interval_minutes))).toBeUndefined();
+    for (const value of ['0', '1.5', '', 'x', String(META.limits.max_interval_minutes + 1)]) {
+      expect(intervalError(value), value).toBe(range);
     }
+    const narrow = withLimits({ min_interval_minutes: 5, max_interval_minutes: 60 });
+    expect(intervalError('4', narrow)).toBe(t('validation.range', { min: 5, max: 60 }));
+    expect(intervalError('61', narrow)).toBe(t('validation.range', { min: 5, max: 60 }));
   });
 
-  it('exige obligatorios, enteros no negativos y un payload JSON; el codigo solo en el alta', () => {
-    const errors = validateDraft(
-      draft({ name: ' ', code: '', handler: '', max_retries: '-1', payload: '{nope' }),
-      META,
-      'create',
-    );
+  it('los textos se miden en caracteres, ya recortados, con los topes de la meta', () => {
+    const meta = withLimits({ max_name_length: 5, max_code_length: 3, max_description_length: 4 });
+    expect(charLength('ñandú')).toBe(5);
+    expect(validate({ name: ' ñandú ', code: 'abc', description: 'abcd' }, meta)).toMatchObject({
+      name: undefined,
+      code: undefined,
+      description: undefined,
+    });
+    const errors = validate({ name: 'ñandús', code: 'abcd', description: 'abcde' }, meta);
+    expect(errors.name).toBe(t('validation.maxLength', { n: 5 }));
+    expect(errors.code).toBe(t('validation.maxLength', { n: 3 }));
+    expect(errors.description).toBe(t('validation.maxLength', { n: 4 }));
+    expect(validateDraft(draft({ code: 'abcd' }), meta, 'edit', null).code).toBeUndefined();
+  });
+
+  it('exige obligatorios, reintentos dentro del tope y un payload JSON; el codigo solo en el alta', () => {
+    const errors = validate({
+      name: ' ',
+      code: '',
+      handler: '',
+      max_retries: '-1',
+      payload: '{nope',
+    });
     expect(errors.name).toBe(t('validation.required'));
     expect(errors.code).toBe(t('validation.required'));
     expect(errors.handler).toBe(t('validation.required'));
-    expect(errors.max_retries).toBe(t('validation.nonNegativeInteger'));
+    expect(errors.max_retries).toBe(
+      t('validation.range', { min: 0, max: META.limits.max_retries }),
+    );
     expect(errors.payload).toBe(t('scheduler.validation.payloadJson'));
-    expect(validateDraft(draft({ code: '' }), META, 'edit').code).toBeUndefined();
+    expect(validate({ max_retries: String(META.limits.max_retries) }).max_retries).toBeUndefined();
+    expect(validate({ max_retries: String(META.limits.max_retries + 1) }).max_retries).toBe(
+      t('validation.range', { min: 0, max: META.limits.max_retries }),
+    );
+    expect(validateDraft(draft({ code: '' }), META, 'edit', null).code).toBeUndefined();
+  });
+
+  it('el payload no supera max_payload_bytes, medido en bytes UTF-8', () => {
+    const meta = withLimits({ max_payload_bytes: 10 });
+    // 10 bytes caben; 12 bytes no, aunque sean solo 7 caracteres.
+    expect(validate({ payload: '"ññññ"' }, meta).payload).toBeUndefined();
+    expect(validate({ payload: '"ñññññ"' }, meta).payload).toBe(
+      t('scheduler.validation.payloadSize', { max: formatBytes(10) }),
+    );
+  });
+
+  it('el plazo no supera el maximo del manejador elegido ni el tope general de la meta', () => {
+    const handlerMax = tenantHandlerFixture.max_timeout_seconds;
+    expect(maxTimeoutSeconds(META, tenantHandlerFixture)).toBe(handlerMax);
+    expect(maxTimeoutSeconds(META, null)).toBe(META.limits.max_timeout_seconds);
+    expect(validate({ timeout_seconds: '0' }).timeout_seconds).toBeUndefined();
+    expect(validate({ timeout_seconds: String(handlerMax) }).timeout_seconds).toBeUndefined();
+    expect(validate({ timeout_seconds: String(handlerMax + 1) }).timeout_seconds).toBe(
+      t('scheduler.validation.timeoutHandlerMax', { value: formatSeconds(handlerMax) }),
+    );
+    const general = META.limits.max_timeout_seconds;
+    const range = t('validation.range', { min: 0, max: general });
+    expect(validate({ timeout_seconds: String(handlerMax + 1) }, META, null).timeout_seconds).toBe(
+      undefined,
+    );
+    expect(validate({ timeout_seconds: String(general + 1) }, META, null).timeout_seconds).toBe(
+      range,
+    );
+    expect(validate({ timeout_seconds: '-1' }).timeout_seconds).toBe(range);
   });
 
   it('lee duraciones de Go y deja al servidor las que no entiende', () => {
@@ -170,74 +237,49 @@ describe('cuerpos del API', () => {
   });
 });
 
-describe('errores del servidor por campo', () => {
-  const validation = (message: string) =>
-    new ApiError(422, { code: ERROR_CODES.VALIDATION_ERROR, message });
+describe('errores del servidor por campo (error.details.field)', () => {
+  const rejected = (status: number, code: string, message: string, field?: string) => {
+    const error = { code, message, ...(field ? { details: { field } } : {}) };
+    return new ApiError(status, error, { error });
+  };
+  const validation = (message: string, field?: string) =>
+    rejected(422, ERROR_CODES.VALIDATION_ERROR, message, field);
 
-  it('la expresion invalida va al campo cron con el detalle del servicio', () => {
-    expect(
-      serverFieldErrors(
-        validation('invalid cron expression: expected exactly 5 fields, found 2: [0 7]'),
-      ),
-    ).toEqual({
-      cron_expression: t('scheduler.form.cronRejected', {
-        detail: 'expected exactly 5 fields, found 2: [0 7]',
-      }),
+  it('cada 422 va al campo que nombra el servidor, con su mensaje', () => {
+    const message = 'invalid job: max_retries must be between 0 and 10';
+    expect(serverFieldErrors(validation(message, 'max_retries'))).toEqual({
+      max_retries: t('scheduler.form.serverRejected', { detail: message }),
+    });
+    const handler = 'handler not allowed: "x" is not in the catalog';
+    expect(serverFieldErrors(validation(handler, 'handler'))).toEqual({
+      handler: t('scheduler.form.serverRejected', { detail: handler }),
     });
   });
 
-  it('INVALID_TIMEZONE va a la zona', () => {
-    const err = new ApiError(422, {
-      code: ERROR_CODES.INVALID_TIMEZONE,
-      message: 'invalid time zone: "Mars/Olympus" is not in the time zone database',
+  it('la expresion y la zona llevan su propio texto', () => {
+    const cron = 'invalid cron expression: expected exactly 5 fields, found 2: [0 7]';
+    expect(serverFieldErrors(validation(cron, 'cron_expression'))).toEqual({
+      cron_expression: t('scheduler.form.cronRejected', { detail: cron }),
     });
-    expect(serverFieldErrors(err)).toEqual({
-      timezone: t('scheduler.form.timezoneRejected', {
-        detail: '"Mars/Olympus" is not in the time zone database',
-      }),
-    });
+    const zone = 'invalid time zone: "Mars/Olympus" is not in the time zone database';
+    expect(
+      serverFieldErrors(rejected(422, ERROR_CODES.INVALID_TIMEZONE, zone, 'timezone')),
+    ).toEqual({ timezone: t('scheduler.form.timezoneRejected', { detail: zone }) });
   });
 
-  it('un manejador fuera del catalogo va al manejador', () => {
-    expect(serverFieldErrors(validation('handler not allowed: "x" is not in the catalog'))).toEqual(
-      { handler: t('scheduler.error.handlerNotAllowed') },
-    );
-  });
-
-  it('separa los obligatorios de pkg/validate y los invalid job de cada campo', () => {
-    expect(serverFieldErrors(validation('name is required; handler is required'))).toEqual({
-      name: t('validation.required'),
-      handler: t('validation.required'),
-    });
+  it('el 409 que nombra code es el codigo repetido', () => {
     expect(
-      serverFieldErrors(
-        validation('invalid job: interval_minutes must be positive for interval jobs'),
-      ),
-    ).toEqual({
-      interval_minutes: t('scheduler.form.serverRejected', {
-        detail: 'interval_minutes must be positive for interval jobs',
-      }),
-    });
-    expect(
-      Object.keys(
-        serverFieldErrors(validation('invalid job: payload must be a valid JSON document')),
-      ),
-    ).toEqual(['payload']);
-  });
-
-  it('el 409 del alta es el codigo repetido', () => {
-    expect(
-      serverFieldErrors(
-        new ApiError(409, { code: ERROR_CODES.CONFLICT, message: 'job already exists' }),
-      ),
+      serverFieldErrors(rejected(409, ERROR_CODES.CONFLICT, 'job already exists', 'code')),
     ).toEqual({ code: t('scheduler.error.codeTaken') });
+    expect(serverFieldErrors(rejected(409, ERROR_CODES.CONFLICT, 'job is locked'))).toEqual({});
   });
 
-  it('lo que no nombra un campo no se asocia a ninguno', () => {
-    expect(serverFieldErrors(validation('something unexpected'))).toEqual({});
-    expect(serverFieldErrors(new ApiError(500, { code: 'INTERNAL_ERROR', message: 'x' }))).toEqual(
+  it('sin campo, o con uno que no esta en el formulario, queda como error general', () => {
+    expect(serverFieldErrors(validation('invalid cron expression: x'))).toEqual({});
+    expect(serverFieldErrors(validation('is_active must be true or false', 'is_active'))).toEqual(
       {},
     );
+    expect(serverFieldErrors(rejected(500, ERROR_CODES.INTERNAL_ERROR, 'x', 'name'))).toEqual({});
     expect(serverFieldErrors(new Error('invalid cron expression: x'))).toEqual({});
     expect(serverFieldErrors(null)).toEqual({});
   });

@@ -11,9 +11,6 @@ import (
 	"go.uber.org/zap"
 )
 
-// pendingTasksHorizon es cuanto hacia adelante mira el listado de tareas pendientes.
-const pendingTasksHorizon = 24 * time.Hour
-
 type SchedulerUseCase struct {
 	jobs       ports.JobDefinitionRepository
 	executions ports.JobExecutionRepository
@@ -66,25 +63,30 @@ func (uc *SchedulerUseCase) ListHandlers() []domain.HandlerSpec {
 	return uc.catalog.List()
 }
 
-// checkDefinition valida la definicion y que su manejador este permitido para su tipo.
+// checkDefinition valida la definicion, que su manejador este permitido para su tipo y que
+// su plazo quepa en el del manejador.
 func (uc *SchedulerUseCase) checkDefinition(job *domain.JobDefinition) error {
 	if err := job.Validate(); err != nil {
 		return err
 	}
-	_, err := uc.catalog.Resolve(job.Handler, job.IsPlatform())
-	return err
+	spec, err := uc.catalog.Resolve(job.Handler, job.IsPlatform())
+	if err != nil {
+		return err
+	}
+	return job.CheckTimeoutFor(spec)
 }
 
-func (uc *SchedulerUseCase) CreateJob(ctx context.Context, job *domain.JobDefinition) error {
+// CreateJob guarda y planifica el trabajo, y lo devuelve leido en la misma transaccion.
+func (uc *SchedulerUseCase) CreateJob(ctx context.Context, job *domain.JobDefinition) (*domain.JobOverview, error) {
 	if err := uc.checkDefinition(job); err != nil {
-		return err
+		return nil, err
 	}
 	existing, err := uc.jobs.GetByCode(ctx, job.Code)
 	if existing != nil {
-		return domain.ErrJobAlreadyExists
+		return nil, domain.ErrJobAlreadyExists
 	}
 	if err != nil && !errors.Is(err, domain.ErrJobNotFound) {
-		return err
+		return nil, err
 	}
 	job.ID = uuid.New()
 	job.IsActive = true
@@ -92,37 +94,54 @@ func (uc *SchedulerUseCase) CreateJob(ctx context.Context, job *domain.JobDefini
 	job.UpdatedAt = job.CreatedAt
 	next, err := uc.nextRun(job, nil, job.CreatedAt)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return uc.tx.Transact(ctx, func(ctx context.Context) error {
+	var out *domain.JobOverview
+	err = uc.tx.Transact(ctx, func(ctx context.Context) error {
 		if err := uc.jobs.Create(ctx, job); err != nil {
 			return err
 		}
-		return uc.schedules.SetNextRun(ctx, job.ID, next)
+		if err := uc.schedules.SetNextRun(ctx, job.ID, next); err != nil {
+			return err
+		}
+		overview, err := uc.jobs.GetOverview(ctx, job.ID, tenantOrNil(job.TenantID))
+		out = overview
+		return err
 	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (uc *SchedulerUseCase) GetJob(ctx context.Context, id, tenantID uuid.UUID) (*domain.JobDefinition, error) {
 	return uc.jobs.GetByID(ctx, id, tenantID)
 }
 
-func (uc *SchedulerUseCase) ListJobs(ctx context.Context, tenantID *uuid.UUID, isActive *bool) ([]*domain.JobDefinition, error) {
-	return uc.jobs.List(ctx, tenantID, isActive)
+// GetJobOverview lee el trabajo con su calendario y su ultima ejecucion.
+func (uc *SchedulerUseCase) GetJobOverview(ctx context.Context, id, tenantID uuid.UUID) (*domain.JobOverview, error) {
+	return uc.jobs.GetOverview(ctx, id, tenantID)
+}
+
+// ListJobs devuelve una pagina de los trabajos que ve la empresa y el total del filtro.
+func (uc *SchedulerUseCase) ListJobs(ctx context.Context, filter domain.JobFilter) ([]*domain.JobOverview, int64, error) {
+	return uc.jobs.List(ctx, filter)
 }
 
 // UpdateJob recibe el trabajo leido con GetJob y ya modificado; su empresa no cambia. Si
 // cambia el calendario de un cron (pasa a cron, cambia su expresion o su zona) se
 // replanifica en la misma transaccion; una edicion que no lo toca respeta la ejecucion ya
-// prevista.
-func (uc *SchedulerUseCase) UpdateJob(ctx context.Context, job *domain.JobDefinition) error {
+// prevista. Devuelve el trabajo leido en esa transaccion.
+func (uc *SchedulerUseCase) UpdateJob(ctx context.Context, job *domain.JobDefinition) (*domain.JobOverview, error) {
 	if job.IsPlatform() {
-		return domain.ErrPlatformJob
+		return nil, domain.ErrPlatformJob
 	}
 	if err := uc.checkDefinition(job); err != nil {
-		return err
+		return nil, err
 	}
 	job.UpdatedAt = uc.now()
-	return uc.tx.Transact(ctx, func(ctx context.Context) error {
+	var out *domain.JobOverview
+	err := uc.tx.Transact(ctx, func(ctx context.Context) error {
 		stored, err := uc.jobs.GetByID(ctx, job.ID, *job.TenantID)
 		if err != nil {
 			return err
@@ -130,15 +149,23 @@ func (uc *SchedulerUseCase) UpdateJob(ctx context.Context, job *domain.JobDefini
 		if err := uc.jobs.Update(ctx, job); err != nil {
 			return err
 		}
-		if job.JobType != domain.JobTypeCron || (stored.JobType == job.JobType && stored.CronExpr() == job.CronExpr() && stored.Timezone == job.Timezone) {
-			return nil
+		if job.JobType == domain.JobTypeCron && (stored.JobType != job.JobType || stored.CronExpr() != job.CronExpr() || stored.Timezone != job.Timezone) {
+			next, err := uc.nextRun(job, nil, job.UpdatedAt)
+			if err != nil {
+				return err
+			}
+			if err := uc.schedules.SetNextRun(ctx, job.ID, next); err != nil {
+				return err
+			}
 		}
-		next, err := uc.nextRun(job, nil, job.UpdatedAt)
-		if err != nil {
-			return err
-		}
-		return uc.schedules.SetNextRun(ctx, job.ID, next)
+		overview, err := uc.jobs.GetOverview(ctx, job.ID, *job.TenantID)
+		out = overview
+		return err
 	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // tenantJob carga un trabajo que la empresa puede cambiar: el suyo, nunca uno de plataforma.
@@ -206,6 +233,9 @@ func (uc *SchedulerUseCase) RunJob(ctx context.Context, tenantID, jobID uuid.UUI
 }
 
 func (uc *SchedulerUseCase) ScheduleTask(ctx context.Context, task *domain.ScheduledTask) error {
+	if err := task.Validate(); err != nil {
+		return err
+	}
 	task.ID = uuid.New()
 	task.Status = "scheduled"
 	task.CreatedAt = uc.now()
@@ -282,7 +312,7 @@ func (uc *SchedulerUseCase) runDue(ctx context.Context, s *domain.JobSchedule) e
 		} else if err := uc.dispatch(ctx, job, spec, exec, now, true); err != nil {
 			return err
 		}
-		if err := uc.schedules.UpdateNextRun(ctx, job.ID, next); err != nil {
+		if err := uc.schedules.UpdateNextRun(ctx, job.ID, next, now); err != nil {
 			return err
 		}
 		if job.JobType == domain.JobTypeOneTime {
@@ -381,9 +411,9 @@ func (uc *SchedulerUseCase) nextRun(job *domain.JobDefinition, scheduled *time.T
 }
 
 // ListPendingTasks lista las tareas puntuales pendientes que vencen dentro de
-// pendingTasksHorizon, vistas desde el reloj del caso de uso.
+// domain.PendingTasksWindow, vistas desde el reloj del caso de uso.
 func (uc *SchedulerUseCase) ListPendingTasks(ctx context.Context) ([]*domain.ScheduledTask, error) {
-	return uc.tasks.ListPending(ctx, uc.now().Add(pendingTasksHorizon))
+	return uc.tasks.ListPending(ctx, uc.now().Add(domain.PendingTasksWindow))
 }
 
 func newExecution(job *domain.JobDefinition, now time.Time) *domain.JobExecution {

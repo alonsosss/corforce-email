@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -20,38 +19,6 @@ const MaxErrorMessageRunes = 4000
 // lo admite y jsonb lo rechaza, asi que se filtra antes de llegar a la base.
 var nulEscape = []byte{'\\', 'u', '0', '0', '0', '0'}
 
-// Validate comprueba lo que el ciclo de vida da por hecho de una definicion.
-func (j *JobDefinition) Validate() error {
-	if _, err := LoadTimezone(j.Timezone); err != nil {
-		return err
-	}
-	switch j.JobType {
-	case JobTypeCron:
-		if _, err := ParseCron(j.CronExpr(), j.Timezone); err != nil {
-			return err
-		}
-	case JobTypeOneTime:
-	case JobTypeInterval:
-		if j.IntervalMinutes == nil || *j.IntervalMinutes <= 0 {
-			return fmt.Errorf("%w: interval_minutes must be positive for interval jobs", ErrInvalidJob)
-		}
-	default:
-		return fmt.Errorf("%w: job_type must be %s, %s or %s", ErrInvalidJob, JobTypeCron, JobTypeInterval, JobTypeOneTime)
-	}
-	if j.MaxRetries < 0 {
-		return fmt.Errorf("%w: max_retries must not be negative", ErrInvalidJob)
-	}
-	if j.TimeoutSeconds < 0 {
-		return fmt.Errorf("%w: timeout_seconds must not be negative", ErrInvalidJob)
-	}
-	if j.Payload != nil {
-		if err := validJSONDocument([]byte(*j.Payload)); err != nil {
-			return fmt.Errorf("%w: payload %s", ErrInvalidJob, err.Error())
-		}
-	}
-	return nil
-}
-
 // NormalizeResult prepara el resultado que informa un ejecutor para la columna jsonb: nil
 // si no hay resultado, error si no se podria guardar.
 func NormalizeResult(raw json.RawMessage) (*string, error) {
@@ -60,7 +27,7 @@ func NormalizeResult(raw json.RawMessage) (*string, error) {
 		return nil, nil
 	}
 	if err := validJSONDocument(trimmed); err != nil {
-		return nil, fmt.Errorf("%w: result %s", ErrInvalidReport, err.Error())
+		return nil, invalidField(FieldResult, ErrInvalidReport, "result %s", err.Error())
 	}
 	s := string(trimmed)
 	return &s, nil

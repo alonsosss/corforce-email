@@ -1,6 +1,5 @@
 import { useMemo, useState } from 'react';
 import {
-  JOB_TYPES,
   schedulerApi,
   schedulerHandlers,
   schedulerMeta,
@@ -12,6 +11,7 @@ import {
 import { useAction } from '@/hooks/useAction';
 import { useResource } from '@/hooks/useResource';
 import { Alert, FormField, Input, Select, Textarea } from '@/design/components';
+import { formatBytes } from '@/lib/quota';
 import { hasErrors } from '@/lib/validate';
 import { t, tEnum } from '@/i18n';
 import { FormModal } from '@/pages/shared/FormModal';
@@ -19,7 +19,7 @@ import { ResourceGate } from '@/pages/shared/ResourceGate';
 import {
   draftFromJob,
   emptyDraft,
-  minIntervalMinutes,
+  maxTimeoutSeconds,
   serverFieldErrors,
   tenantHandlers,
   timeZoneSuggestions,
@@ -96,7 +96,7 @@ function Form({ job, onClose, onSaved, meta, handlers, title }: FormProps) {
   const submit = async () => {
     action.clearError();
     setTouched(new Set());
-    const next = validateDraft(draft, meta, job ? 'edit' : 'create');
+    const next = validateDraft(draft, meta, job ? 'edit' : 'create', selected);
     setErrors(next);
     if (hasErrors(next) || !draft.job_type) return;
     await action.run(draft, draft.job_type);
@@ -124,12 +124,12 @@ function Form({ job, onClose, onSaved, meta, handlers, title }: FormProps) {
     : draft.handler
       ? t('scheduler.handler.outOfCatalogHint')
       : undefined;
-  const timeoutHint = !selected
-    ? t('scheduler.form.timeoutHint')
-    : Number(draft.timeout_seconds) > selected.max_timeout_seconds
-      ? t('scheduler.form.timeoutCapped', { value: formatSeconds(selected.max_timeout_seconds) })
-      : t('scheduler.form.timeoutHintMax', { value: formatSeconds(selected.max_timeout_seconds) });
-  const minInterval = minIntervalMinutes(meta);
+  const { limits } = meta;
+  const timeoutHint = selected
+    ? t('scheduler.form.timeoutHintMax', {
+        value: formatSeconds(maxTimeoutSeconds(meta, selected)),
+      })
+    : t('scheduler.form.timeoutHint', { max: formatSeconds(limits.max_timeout_seconds) });
 
   return (
     <FormModal
@@ -178,12 +178,18 @@ function Form({ job, onClose, onSaved, meta, handlers, title }: FormProps) {
           />
         </FormField>
       </div>
-      <FormField label={t('common.description')} htmlFor="job-description">
+      <FormField
+        label={t('common.description')}
+        htmlFor="job-description"
+        error={errorOf('description')}
+      >
         <Textarea
           id="job-description"
           rows={2}
           value={draft.description}
           onChange={(e) => update('description', e.target.value)}
+          invalid={Boolean(errorOf('description'))}
+          aria-describedby={describedBy('job-description', errorOf('description'))}
         />
       </FormField>
       <div className="cf-form__row">
@@ -217,7 +223,7 @@ function Form({ job, onClose, onSaved, meta, handlers, title }: FormProps) {
           <Select
             id="job-type"
             placeholder={t('common.select')}
-            options={JOB_TYPES.map((type) => ({
+            options={meta.job_types.map((type) => ({
               value: type,
               label: tEnum('scheduler.jobType', type),
             }))}
@@ -258,13 +264,16 @@ function Form({ job, onClose, onSaved, meta, handlers, title }: FormProps) {
           htmlFor="job-interval"
           required
           error={errorOf('interval_minutes')}
-          hint={t('scheduler.form.intervalHint', { n: minInterval })}
+          hint={t('scheduler.form.intervalHint', {
+            min: limits.min_interval_minutes,
+            max: formatSeconds(limits.max_interval_minutes * 60),
+          })}
         >
           <Input
             id="job-interval"
             type="number"
             inputMode="numeric"
-            min={minInterval}
+            min={limits.min_interval_minutes}
             step={1}
             value={draft.interval_minutes}
             onChange={(e) => update('interval_minutes', e.target.value)}
@@ -306,7 +315,7 @@ function Form({ job, onClose, onSaved, meta, handlers, title }: FormProps) {
           htmlFor="job-max-retries"
           required
           error={errorOf('max_retries')}
-          hint={t('scheduler.form.maxRetriesHint')}
+          hint={t('scheduler.form.maxRetriesHint', { max: limits.max_retries })}
         >
           <Input
             id="job-max-retries"
@@ -344,7 +353,7 @@ function Form({ job, onClose, onSaved, meta, handlers, title }: FormProps) {
         label={t('scheduler.form.payload')}
         htmlFor="job-payload"
         error={errorOf('payload')}
-        hint={t('scheduler.form.payloadHint')}
+        hint={t('scheduler.form.payloadHint', { max: formatBytes(limits.max_payload_bytes) })}
       >
         <Textarea
           id="job-payload"

@@ -121,8 +121,34 @@ func (r memJobs) GetByCode(_ context.Context, code string) (*domain.JobDefinitio
 	return nil, domain.ErrJobNotFound
 }
 
-func (r memJobs) List(context.Context, *uuid.UUID, *bool) ([]*domain.JobDefinition, error) {
-	return nil, nil
+func (r memJobs) List(context.Context, domain.JobFilter) ([]*domain.JobOverview, int64, error) {
+	return nil, 0, nil
+}
+
+// GetOverview lee como el repositorio: el calendario y la ejecucion creada mas reciente.
+func (r memJobs) GetOverview(_ context.Context, id, tenantID uuid.UUID) (*domain.JobOverview, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	j, ok := r.jobs[id]
+	if !ok || !visible(j.TenantID, tenantID) {
+		return nil, domain.ErrJobNotFound
+	}
+	var next, last *time.Time
+	if s, ok := r.schedules[id]; ok {
+		n := s.NextRunAt
+		next, last = &n, s.LastRunAt
+	}
+	var latest *domain.JobExecution
+	for _, e := range r.execs {
+		if e.JobID == id && (latest == nil || e.CreatedAt.After(latest.CreatedAt)) {
+			latest = &e
+		}
+	}
+	var summary *domain.ExecutionSummary
+	if latest != nil {
+		summary = &domain.ExecutionSummary{ID: latest.ID, Status: latest.Status, CompletedAt: latest.CompletedAt, FailureReason: latest.FailureReason}
+	}
+	return domain.NewJobOverview(j, next, last, summary), nil
 }
 
 func (r memJobs) Update(_ context.Context, j *domain.JobDefinition) error {
@@ -228,11 +254,11 @@ func (r memExecs) ClaimDispatchable(_ context.Context, now time.Time) (*domain.J
 
 type memSchedules struct{ *memStore }
 
-func (r memSchedules) UpdateNextRun(_ context.Context, jobID uuid.UUID, next time.Time) error {
+func (r memSchedules) UpdateNextRun(_ context.Context, jobID uuid.UUID, next, ranAt time.Time) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	s := r.schedules[jobID]
-	s.JobID, s.NextRunAt = jobID, next
+	s.JobID, s.NextRunAt, s.LastRunAt = jobID, next, &ranAt
 	r.schedules[jobID] = s
 	return nil
 }
