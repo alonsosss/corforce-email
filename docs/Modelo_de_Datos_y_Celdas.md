@@ -233,7 +233,17 @@ en su transaccion); `contacts.confirmation_tokens` guarda solo el sha256 del tok
 opt-in; `contacts.lists`, `contacts.list_members`, `contacts.segments` (el DSL validado,
 nunca SQL) y `contacts.imports`. El indice parcial `idx_contacts_contacts_sendable
 (tenant_id, id) WHERE status = 'active' AND marketing_consent = 'granted'` sirve la audiencia
-por keyset y la consulta interna de enviables por id.
+por keyset y la consulta interna de enviables por id. El `status` que implica la supresion
+(V, 2026-09-13) lo decide el consumidor de `suppression.entry.added|removed` con las causas
+vigentes de la direccion, que lee de `POST /internal/suppression/check` con la fila del
+contacto bloqueada (5 s, un intento; si falla, el evento queda sin confirmar y JetStream lo
+reentrega), no con la causa ni la foto de `reasons` del evento, que puede llegar
+desordenada: una queja o un rebote vigentes fijan el estado del mas grave; una baja vigente
+deja `unsubscribed` a quien estaba en un estado mas grave o la acaba de registrar, y solo
+entonces revoca el consentimiento; sin ninguna causa vigente `bounced` y `complained`
+vuelven a `active` (una `manual` o `invalid` vigente lo impide) y `unsubscribed` no, ni se
+reconcede el consentimiento: eso solo lo hace un doble opt-in. Un evento sin `reasons`
+(productor anterior) se aplica por su causa, con un aviso limitado en el log.
 Tambien `automations` (2026-09-13): `automations.doi_settings` (una fila por empresa,
 `UNIQUE (tenant_id)`; activado exige plantilla y remitente por CHECK);
 `automations.doi_deliveries`, un intento por evento `contacts.consent.requested` con
