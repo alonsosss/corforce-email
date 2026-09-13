@@ -13,16 +13,18 @@ import (
 )
 
 // fakeRepo guarda dominios y comprobaciones en memoria, con la misma semantica de
-// errores que el repositorio real.
+// errores que el repositorio real. now hace de reloj de la base: created_at sale del mismo
+// reloj que el caso de uso, o las ventanas de tiempo dependerian del dia en que se corre.
 type fakeRepo struct {
 	mu      sync.Mutex
 	domains map[uuid.UUID]*domain.Domain
 	checks  []domain.DNSCheck
 	updates int
+	now     func() time.Time
 }
 
-func newFakeRepo() *fakeRepo {
-	return &fakeRepo{domains: make(map[uuid.UUID]*domain.Domain)}
+func newFakeRepo(now func() time.Time) *fakeRepo {
+	return &fakeRepo{domains: make(map[uuid.UUID]*domain.Domain), now: now}
 }
 
 func clone(d *domain.Domain) *domain.Domain {
@@ -38,7 +40,7 @@ func (r *fakeRepo) Create(_ context.Context, d *domain.Domain) error {
 			return domain.ErrDomainAlreadyExists
 		}
 	}
-	d.CreatedAt, d.UpdatedAt = time.Now(), time.Now()
+	d.CreatedAt, d.UpdatedAt = r.now(), r.now()
 	r.domains[d.ID] = clone(d)
 	return nil
 }

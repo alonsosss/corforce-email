@@ -53,12 +53,13 @@ func testKeyRing(t *testing.T, active, old string) *crypto.KeyRing {
 func newHarness(t *testing.T) *harness {
 	t.Helper()
 	h := &harness{
-		repo: newFakeRepo(), dns: newFakeDNS(), directory: &fakeDirectory{},
+		dns: newFakeDNS(), directory: &fakeDirectory{},
 		security: &fakeSecurity{}, events: &fakePublisher{},
 		keyRing:  testKeyRing(t, testActiveKey, ""),
 		tenantID: uuid.New(),
 		now:      time.Date(2026, 9, 12, 10, 0, 0, 0, time.UTC),
 	}
+	h.repo = newFakeRepo(func() time.Time { return h.now })
 	h.uc = New(Deps{
 		Repo: h.repo, DNS: h.dns, Cipher: h.keyRing,
 		MailDirectory: h.directory, MailSecurity: h.security, Events: h.events,
