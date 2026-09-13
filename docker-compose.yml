@@ -474,6 +474,26 @@ services:
     networks:
       - mail-internal
 
+  automations:
+    build:
+      context: .
+      dockerfile: ./services/automations/Dockerfile
+    ports:
+      - "127.0.0.1:${AUTOMATIONS_PORT:-8051}:8051"
+    env_file:
+      - .env
+      - path: /dev/shm/core-force-mail/secrets.env
+        required: false
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+    restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    networks:
+      - mail-internal
+
   analytics:
     build:
       context: .
@@ -497,26 +517,6 @@ services:
   web:
     build:
       context: ./web
-
-  automations:
-    build:
-      context: .
-      dockerfile: ./services/automations/Dockerfile
-    ports:
-      - "127.0.0.1:${AUTOMATIONS_PORT:-8051}:8051"
-    env_file:
-      - .env
-      - path: /dev/shm/core-force-mail/secrets.env
-        required: false
-    depends_on:
-      pgbouncer:
-        condition: service_healthy
-      nats:
-        condition: service_healthy
-    restart: unless-stopped
-    security_opt: ["no-new-privileges:true"]
-    networks:
-      - mail-internal
       dockerfile: Dockerfile
     restart: unless-stopped
     security_opt: ["no-new-privileges:true"]
