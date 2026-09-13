@@ -167,8 +167,25 @@ func TestRunExclusiveSoloVaciaConElCerrojo(t *testing.T) {
 	}
 	release()
 
-	correr()
-	_ = pool.QueryRow(ctx, "SELECT count(*) FROM platform.event_outbox").Scan(&filas)
+	// Con el cerrojo libre se espera a la condicion y no a un plazo fijo: en un runner lento
+	// con -race el plazo vencia entre el vaciado y la poda, que se cancelaba sin error. La
+	// poda corre despues del vaciado en la misma vuelta, asi que una sola fila implica las dos.
+	c, cancel := context.WithCancel(ctx)
+	terminado := make(chan struct{})
+	go func() {
+		relay.RunExclusive(c, lock)
+		close(terminado)
+	}()
+	limite := time.Now().Add(10 * time.Second)
+	for {
+		_ = pool.QueryRow(ctx, "SELECT count(*) FROM platform.event_outbox").Scan(&filas)
+		if filas == 1 || time.Now().After(limite) {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	cancel()
+	<-terminado
 	if len(pub.vistos) != 1 || pub.vistos[0] != "a.b.nuevo|"+nuevo.ID || filas != 1 {
 		t.Fatalf("con el cerrojo se publica lo pendiente y se poda lo viejo: publicados=%v filas=%d", pub.vistos, filas)
 	}
