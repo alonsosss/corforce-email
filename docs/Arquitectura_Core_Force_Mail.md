@@ -78,7 +78,7 @@ buzones (RLS).
 | `suppression` | Lista por empresa y global: rebotes duros, quejas, bajas; consulta previa a cualquier encolado |
 | `reputation` | Tasas de rebote y queja por empresa y clase de envio, restricciones automaticas y cuotas de envio por periodo: responde a "puede esta empresa enviar N mensajes de esta clase ahora" (absorbe al `policy-service` del informe) |
 | `contacts` | Contactos con atributos declarados, consentimiento como evidencia append-only (doble opt-in), listas estaticas y segmentos dinamicos con un DSL compilado a SQL parametrizado; entrega audiencias paginadas a `campaigns` |
-| `campaigns` | Campanas, estados, programacion; `sender-orchestrator` (expansion, politicas, `email.requested` a NATS) y `sender-worker` (consumo durable, claim-before-send) |
+| `campaigns` | Campanas, estados y programacion; orquestador que recorre la audiencia de `contacts` por lotes con cursor guardado antes de enviar (claim-before-send) y entrega cada lote a la via de marketing de `transactional` con clave idempotente por lote; estadisticas por campana desde los eventos `transactional.email.*` |
 | `automations` | Flujos disparados por eventos |
 | `analytics` | Agregados por empresa, campana y dia sobre Postgres; ClickHouse cuando el volumen lo exija, con ADR |
 | `billing` | Plano de control: planes con limites por recurso, suscripcion por empresa, contadores de consumo alimentados por eventos (idempotentes por id de evento) y consulta de derechos (`entitlements/check`) |
@@ -109,8 +109,8 @@ migraciones conectan directo.
 | 0 | Copia y limpieza del plano de control, `pkg/`, operativa; motores de mailcow en `deploy/mail/`; esquema `mail` de celda; documentos | En curso: `Fase0_Estado.md` |
 | 1 | `web/` (React + TypeScript, una sola aplicacion): login, MFA, usuarios, roles, empresas, celdas | En curso |
 | 2 | Correo corporativo: `mail-directory`, `mail-auth`, `mail-security`, `domain-service`; motores levantados contra la celda; webmail | En curso |
-| 3 | Transaccional: `transactional`, `templates`, `suppression`, `reputation`, ingesta SES, `billing` | Pendiente |
-| 4 | Marketing: `contacts`, `segments`, `campaigns`, `automations`, `analytics` con ClickHouse, `policy` | Pendiente |
+| 3 | Transaccional: `transactional`, `templates`, `suppression`, `reputation`, ingesta SES, `billing` | En curso: `transactional`, `templates` y `suppression` hechos |
+| 4 | Marketing: `contacts` (con segmentos), `campaigns`, `automations`, `analytics` | En curso |
 | 5 | pgvector: busqueda semantica, clasificacion, resumen, segmentacion asistida | Pendiente |
 
 ## 6. Decisiones que se apartan del informe
@@ -126,3 +126,4 @@ migraciones conectan directo.
 | `contact-service` y `segment-service` | `contacts` con listas y segmentos | Evaluar un segmento es filtrar contactos: separarlos obliga a leer tablas ajenas o a copiar la base de contactos |
 | `policy-service` | Dentro de `reputation` | Un envio necesita una sola respuesta (cuota del plan y restriccion por reputacion); dos servicios serian dos llamadas y dos verdades |
 | ClickHouse desde el principio | Agregados en Postgres; ClickHouse con ADR | Sin volumen medido no se introduce infraestructura nueva (`CLAUDE.md`) |
+| `sender-orchestrator` y `sender-worker` con `email.requested` | `campaigns` entrega lotes a la via de marketing de `transactional` | Un solo servicio habla con SES, aplica supresion, reputacion y bajas RFC 8058; un segundo emisor duplicaria esas garantias y abriria un camino que se las salta |

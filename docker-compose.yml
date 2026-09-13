@@ -474,6 +474,26 @@ services:
     networks:
       - mail-internal
 
+  analytics:
+    build:
+      context: .
+      dockerfile: ./services/analytics/Dockerfile
+    ports:
+      - "127.0.0.1:${ANALYTICS_PORT:-8053}:8053"
+    env_file:
+      - .env
+      - path: /dev/shm/core-force-mail/secrets.env
+        required: false
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+    restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    networks:
+      - mail-internal
+
   web:
     build:
       context: ./web

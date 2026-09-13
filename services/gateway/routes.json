@@ -15,6 +15,7 @@
     "billing":        {"host_env": "BILLING_HOST",        "default_host": "billing",        "default_port": "8055"},
     "reputation":     {"host_env": "REPUTATION_HOST",     "default_host": "reputation",     "default_port": "8054"},
     "campaigns":      {"host_env": "CAMPAIGNS_HOST",      "default_host": "campaigns",      "default_port": "8052"},
+    "analytics":      {"host_env": "ANALYTICS_HOST",      "default_host": "analytics",      "default_port": "8053"},
     "web":            {"host_env": "WEB_HOST",            "default_host": "web",            "default_port": "80"}
   },
   "routes": [
@@ -42,7 +43,8 @@
     {"prefix": "segments",      "service": "contacts",       "module": "segments"},
     {"prefix": "billing",       "service": "billing",        "module": "billing"},
     {"prefix": "reputation",    "service": "reputation",     "module": "reputation"},
-    {"prefix": "campaigns",     "service": "campaigns",      "module": "campaigns"}
+    {"prefix": "campaigns",     "service": "campaigns",      "module": "campaigns"},
+    {"prefix": "analytics",     "service": "analytics",      "module": "analytics"}
   ],
   "read_posts": [
     {"prefix": "suppression", "action": "check"},
