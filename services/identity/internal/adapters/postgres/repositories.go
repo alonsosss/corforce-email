@@ -270,15 +270,14 @@ func (r *SessionRepo) ListByUser(ctx context.Context, userID uuid.UUID) ([]*doma
 }
 
 // sessionInfoCols son las columnas del listado de dispositivos: la sesion, su dueno y
-// (para la vista de plataforma) la empresa. organization.tenants vive en la misma base
-// de registro, igual que el resto de lecturas entre esquemas de identity.
+// (para la vista de plataforma) la empresa, por la vista publicada organization.v_tenants.
 const sessionInfoCols = `s.id, s.user_id, TRIM(u.first_name || ' ' || u.last_name), u.email,
 	u.tenant_id, COALESCE(t.name, ''), host(s.ip_address), s.user_agent,
 	COALESCE(s.login_at, s.created_at), s.created_at, s.expires_at, s.revoked, s.revoked_at`
 
 const sessionInfoFrom = ` FROM identity.sessions s
 	JOIN identity.users u ON u.id = s.user_id
-	LEFT JOIN organization.tenants t ON t.id = u.tenant_id`
+	LEFT JOIN organization.v_tenants t ON t.tenant_id = u.tenant_id`
 
 func scanSessionInfo(rows pgx.Rows) (*domain.SessionInfo, error) {
 	si := &domain.SessionInfo{}
@@ -569,8 +568,7 @@ func (r *AuditRepo) Log(ctx context.Context, e *domain.AuditEntry) error {
 	return err
 }
 
-// TenantRepo resuelve la empresa del login. organization.tenants es del servicio
-// organization y esta en la misma base de registro; aqui solo se lee el id.
+// TenantRepo resuelve la empresa del login por la vista publicada organization.v_tenants.
 type TenantRepo struct {
 	pool *pgxpool.Pool
 }
@@ -582,7 +580,7 @@ func NewTenantRepo(pool *pgxpool.Pool) *TenantRepo {
 func (r *TenantRepo) GetIDBySlug(ctx context.Context, slug string) (uuid.UUID, error) {
 	var id uuid.UUID
 	err := r.pool.QueryRow(ctx,
-		`SELECT id FROM organization.tenants WHERE slug = $1 AND status = 'active'`, slug,
+		`SELECT tenant_id FROM organization.v_tenants WHERE slug = $1 AND status = 'active'`, slug,
 	).Scan(&id)
 	if err != nil {
 		return uuid.Nil, domain.ErrTenantNotFound

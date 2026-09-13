@@ -90,12 +90,14 @@ cambie cualquiera de estas líneas.
   evaluaba la expresión y desactiva los que tienen una expresión inválida.
 * Contrato JSON del scheduler fijado en snake_case (DTOs del adaptador HTTP, con test de
   contrato; la duración sale como `duration_ms`). `web/` todavía no lo consume.
-* Lecturas del registro que todavía van a tablas ajenas, sancionadas con motivo en
-  `ops/scaffold/coupling-allowlist.txt`: `identity` lee `organization.tenants` (slug y
-  nombre de la empresa); falta la vista de `organization`. `access-control` ya lee el
-  catálogo de módulos y su estado por empresa por `organization.v_module_catalog` y
-  `organization.v_tenant_modules` (`024_organization_published_views.sql`) y salió de la
-  allowlist: si vuelve a leer las tablas, `check-coupling` falla. `organization` además escribe en
+* Lecturas del registro entre esquemas, todas por vistas publicadas: `identity` resuelve la
+  empresa del login y el nombre de la empresa del listado de sesiones por
+  `organization.v_tenants` (`025_organization_tenants_view.sql`, sin `db_name`, `cell_id`
+  ni `settings`), y `access-control` lee el catálogo de módulos y su estado por empresa por
+  `organization.v_module_catalog` y `organization.v_tenant_modules`
+  (`024_organization_published_views.sql`). Ninguno de los dos figura ya en
+  `ops/scaffold/coupling-allowlist.txt`: si vuelven a leer las tablas, `check-coupling`
+  falla. Lo que queda en la allowlist son las escrituras de organización. `organization` además escribe en
   `identity` y `access_control` al sembrar y borrar una empresa
   (`coupling-writes-allowlist.txt`); falta que esos servicios expongan la operación.
 

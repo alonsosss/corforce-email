@@ -4,6 +4,7 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -13,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alonsosss/corforce-email/services/identity/internal/domain"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -175,6 +177,94 @@ func TestRoleNamesPorVistaPublicadaIgualQueJoinDirecto(t *testing.T) {
 		if !slices.Equal(got, expected) {
 			t.Fatalf("usuario %s: roles %v, se esperaba %v", user, got, expected)
 		}
+	}
+}
+
+// TestEmpresaPorVistaPublicada comprueba que el login y el listado de sesiones leen la
+// empresa por organization.v_tenants con el mismo resultado que la tabla: solo una empresa
+// activa resuelve el login, y el nombre sale aunque la empresa este suspendida o vacio si
+// el usuario no tiene empresa en el registro (el LEFT JOIN de antes).
+func TestEmpresaPorVistaPublicada(t *testing.T) {
+	pool := registryDB(t)
+	ctx := context.Background()
+
+	if got, want := viewColumns(ctx, t, pool, "organization", "v_tenants"),
+		[]string{"tenant_id", "slug", "name", "status"}; !slices.Equal(got, want) {
+		t.Fatalf("columnas de v_tenants = %v, se esperaba %v", got, want)
+	}
+
+	suffix := strings.ReplaceAll(uuid.NewString(), "-", "")[:12]
+	tenant := func(slug, name, status string) uuid.UUID {
+		t.Helper()
+		var id uuid.UUID
+		if err := pool.QueryRow(ctx,
+			`INSERT INTO organization.tenants (slug, name, db_name, status, cell_id)
+			 VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+			slug, name, "mail_tenant_"+strings.ReplaceAll(slug, "-", "_"), status, uuid.New()).Scan(&id); err != nil {
+			t.Fatalf("empresa %s: %v", slug, err)
+		}
+		return id
+	}
+	activeSlug, suspendedSlug := "it-activa-"+suffix, "it-suspendida-"+suffix
+	active := tenant(activeSlug, "Activa "+suffix, "active")
+	suspended := tenant(suspendedSlug, "Suspendida "+suffix, "suspended")
+	orphan := uuid.New()
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(),
+			`DELETE FROM identity.users WHERE tenant_id = ANY($1)`, []uuid.UUID{active, suspended, orphan})
+		_, _ = pool.Exec(context.Background(),
+			`DELETE FROM organization.tenants WHERE id = ANY($1)`, []uuid.UUID{active, suspended})
+	})
+
+	tenants := NewTenantRepo(pool)
+	if got, err := tenants.GetIDBySlug(ctx, activeSlug); err != nil || got != active {
+		t.Fatalf("GetIDBySlug activa = %v, %v; se esperaba %v", got, err, active)
+	}
+	for _, slug := range []string{suspendedSlug, "it-inexistente-" + suffix} {
+		if _, err := tenants.GetIDBySlug(ctx, slug); !errors.Is(err, domain.ErrTenantNotFound) {
+			t.Fatalf("GetIDBySlug %s: %v, se esperaba ErrTenantNotFound", slug, err)
+		}
+	}
+
+	session := func(tenant uuid.UUID) uuid.UUID {
+		t.Helper()
+		var user, id uuid.UUID
+		if err := pool.QueryRow(ctx,
+			`INSERT INTO identity.users (tenant_id, email, password_hash, first_name, last_name)
+			 VALUES ($1, $2, 'x', 'Prueba', 'Vista') RETURNING id`,
+			tenant, uuid.NewString()+"@example.test").Scan(&user); err != nil {
+			t.Fatalf("usuario: %v", err)
+		}
+		if err := pool.QueryRow(ctx,
+			`INSERT INTO identity.sessions (user_id, refresh_token_hash, expires_at)
+			 VALUES ($1, $2, now() + interval '1 hour') RETURNING id`,
+			user, uuid.NewString()).Scan(&id); err != nil {
+			t.Fatalf("sesion: %v", err)
+		}
+		return id
+	}
+	sessions := NewSessionRepo(pool)
+	want := map[uuid.UUID]string{
+		session(active):    "Activa " + suffix,
+		session(suspended): "Suspendida " + suffix,
+		session(orphan):    "",
+	}
+	for id, name := range want {
+		info, err := sessions.GetInfo(ctx, id)
+		if err != nil {
+			t.Fatalf("GetInfo %s: %v", id, err)
+		}
+		if info.TenantName != name {
+			t.Fatalf("sesion %s: empresa %q, se esperaba %q", id, info.TenantName, name)
+		}
+	}
+
+	list, total, err := sessions.ListInfo(ctx, domain.SessionFilter{TenantID: &active, Limit: 10})
+	if err != nil {
+		t.Fatalf("ListInfo: %v", err)
+	}
+	if total != 1 || len(list) != 1 || list[0].TenantName != "Activa "+suffix {
+		t.Fatalf("ListInfo de la empresa activa: total %d, %d filas", total, len(list))
 	}
 }
 
