@@ -454,6 +454,26 @@ services:
     networks:
       - mail-internal
 
+  campaigns:
+    build:
+      context: .
+      dockerfile: ./services/campaigns/Dockerfile
+    ports:
+      - "127.0.0.1:${CAMPAIGNS_PORT:-8052}:8052"
+    env_file:
+      - .env
+      - path: /dev/shm/core-force-mail/secrets.env
+        required: false
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+    restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    networks:
+      - mail-internal
+
   web:
     build:
       context: ./web

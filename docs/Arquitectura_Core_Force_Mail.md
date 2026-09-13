@@ -69,7 +69,7 @@ Verificado de punta a punta con binarios reales (2026-09-12): alta de dominio po
 Postfix/Dovecot leen bajo el rol `mail_engine` con su ruta Maildir; otra empresa lista cero
 buzones (RLS).
 
-### 2.3 Transaccional y marketing (empresa). Estado: `suppression` y `templates` verificados; `transactional` en construccion; fase 4 pendiente
+### 2.3 Transaccional y marketing (empresa). Estado: `transactional`, `templates` y `suppression` verificados (2026-09-12); fase 4 en construccion (`contacts`, `billing`, `reputation`; despues `campaigns`, `analytics`, `automations`)
 
 | Servicio | Responsabilidad |
 |---|---|

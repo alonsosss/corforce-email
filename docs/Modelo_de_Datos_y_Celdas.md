@@ -105,7 +105,7 @@ por `POST /internal/suppression/check`) y `templates` (plantillas de correo por 
 una sola version publicada por plantilla garantizada por el indice parcial
 `uq_versions_one_published`, las anteriores quedan `superseded`; renderizado interno por
 `POST /internal/templates/{id}/render` y evento `templates.template.published` por la
-outbox).
+outbox), `transactional` (mensajes, eventos de SES, proyeccion de dominios de envio, bajas).
 
 ## 5. Enrutado por peticion y por celda (V)
 
