@@ -212,6 +212,10 @@ contratos de eventos, secretos, scaffold) y `make clean-copy`. Con docker: `make
 (con `-race`) y `make e2e`, que levanta Postgres, NATS y Redis desechables, compila los
 servicios integrados y recorre la plataforma de punta a punta con comprobaciones que
 fallan: un servicio nuevo que otro consume se añade a `ops/e2e/run.sh` en la misma tarea.
+Cada una corre de una en una: la reserva de `ops/e2e/lib.sh` (`e2e_reservar`) hace salir con 3
+una segunda `make e2e` (o `make e2e-mail`) sin tocar los contenedores de la primera; una
+reserva cuyo proceso ya no existe es un resto y se reemplaza. `make e2e` y `make e2e-mail`
+pueden correr a la vez, con prefijos y puertos distintos.
 `make test-integration` (también un job de CI) corre las pruebas `//go:build integration`
 contra un Postgres y un Redis desechables, con una base por variable `*_TEST_DSN` y los
 paquetes en serie; una prueba que se salta cuenta como fallo. Una prueba de integración

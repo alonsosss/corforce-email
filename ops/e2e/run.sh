@@ -18,6 +18,9 @@
 #   E2E_KEEP=1 make e2e          # deja contenedores y binarios para inspeccionar
 #   E2E_PORT_BASE=26000 make e2e # otro rango si 28000-28099 esta ocupado
 #
+# Una sola ejecucion a la vez (puede correr junto a make e2e-mail, que usa otro prefijo y
+# otros puertos): con otra en marcha sale con 3 sin tocar nada (e2e_reservar en ops/e2e/lib.sh).
+#
 # Los puertos quedan por debajo del rango efimero del sistema: dentro de el, el kernel
 # puede dar el puerto de un servicio a una conexion saliente justo antes de que el
 # servicio lo abra ("address already in use" sin nadie escuchando despues).
@@ -25,97 +28,46 @@ set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
+E2E_PREFIX=cfm-e2e
+# shellcheck source=ops/e2e/lib.sh
+source ops/e2e/lib.sh
 
 BASE="${E2E_PORT_BASE:-28000}"
 PG_PORT="${E2E_PG_PORT:-$((BASE - 2568))}"
 NATS_PORT="${E2E_NATS_PORT:-$((BASE - 3778))}"
 REDIS_PORT="${E2E_REDIS_PORT:-$((BASE - 1621))}"
-read -r EFIMERO_MIN EFIMERO_MAX < /proc/sys/net/ipv4/ip_local_port_range 2>/dev/null || EFIMERO_MIN=32768 EFIMERO_MAX=60999
-for p in "$PG_PORT" "$NATS_PORT" "$REDIS_PORT" "$BASE" "$((BASE + 99))"; do
-  if (( p >= EFIMERO_MIN && p <= EFIMERO_MAX )); then
-    echo "E2E: el puerto $p cae en el rango efimero $EFIMERO_MIN-$EFIMERO_MAX; usa otro E2E_PORT_BASE" >&2
-    exit 2
-  fi
-done
+e2e_fuera_del_rango_efimero "$PG_PORT" "$NATS_PORT" "$REDIS_PORT" "$BASE" "$((BASE + 99))"
+e2e_reservar
 WORK="$(mktemp -d)"
-PREFIX="cfm-e2e"
-export PG_CONTAINER="$PREFIX-pg"
-
-rand_hex() { head -c "$1" /dev/urandom | od -An -tx1 | tr -d ' \n'; }
-
-fallos=0
-ok()   { printf '  OK    %s\n' "$1"; }
-mal()  { printf '  FALLA %s\n' "$1" >&2; fallos=$((fallos + 1)); }
-# expect <descripcion> <obtenido> <esperado>
-expect() { if [[ "$2" == "$3" ]]; then ok "$1"; else mal "$1 (obtenido: '$2', esperado: '$3')"; fi; }
-# contains <descripcion> <texto> <fragmento>
-contains() { if [[ "$2" == *"$3"* ]]; then ok "$1"; else mal "$1 (no contiene '$3': ${2:0:300})"; fi; }
-
-# jget <ruta.con.puntos>: extrae un campo del JSON de stdin; vacio si no existe.
-jget() {
-  python3 -c '
-import sys, json
-try:
-    d = json.load(sys.stdin)
-except Exception:
-    print(""); sys.exit(0)
-for k in sys.argv[1].split("."):
-    if not k:
-        continue
-    if isinstance(d, list):
-        d = d[int(k)] if k.isdigit() and int(k) < len(d) else None
-    elif isinstance(d, dict):
-        d = d.get(k)
-    else:
-        d = None
-print("" if d is None else (json.dumps(d) if isinstance(d, (dict, list)) else d))' "$1" 2>/dev/null
-}
 
 limpiar() {
   pkill -f "$WORK/bin/" 2>/dev/null
   if [[ "${E2E_KEEP:-0}" != "1" ]]; then
-    docker rm -f "$PREFIX-pg" "$PREFIX-nats" "$PREFIX-redis" >/dev/null 2>&1
+    docker rm -f "$E2E_PREFIX-pg" "$E2E_PREFIX-nats" "$E2E_PREFIX-redis" >/dev/null 2>&1
     rm -rf "$WORK"
   else
-    echo "E2E_KEEP=1: contenedores $PREFIX-* y registros en $WORK/log"
+    echo "E2E_KEEP=1: contenedores $E2E_PREFIX-* y registros en $WORK/log"
   fi
+  e2e_liberar
 }
 trap limpiar EXIT
 
-# psql sin cliente local: el de dentro del contenedor. Exportada para que la use tambien
-# ops/db/bootstrap-platform.sh, que es parte de lo que se prueba.
-psql() { docker exec -i -e PGPASSWORD="${PGPASSWORD:-}" "$PG_CONTAINER" psql -U "${PGUSER:-mail_admin}" "$@"; }
-export -f psql
-sql() { psql -v ON_ERROR_STOP=1 -q -At -d "$1" -c "$2"; }
-
 echo "== Infraestructura desechable"
-docker rm -f "$PREFIX-pg" "$PREFIX-nats" "$PREFIX-redis" >/dev/null 2>&1
-export POSTGRES_PASSWORD; POSTGRES_PASSWORD="$(rand_hex 16)"
-docker run -d --name "$PREFIX-pg" -e POSTGRES_USER=mail_admin -e POSTGRES_PASSWORD="$POSTGRES_PASSWORD" \
-  -e POSTGRES_DB=mail_registry -p "127.0.0.1:$PG_PORT:5432" pgvector/pgvector:pg16 >/dev/null || exit 1
-docker run -d --name "$PREFIX-nats" -p "127.0.0.1:$NATS_PORT:4222" nats:2.10-alpine -js >/dev/null || exit 1
-docker run -d --name "$PREFIX-redis" -p "127.0.0.1:$REDIS_PORT:6379" redis:7.4.10-alpine >/dev/null || exit 1
-for _ in $(seq 1 40); do docker exec "$PREFIX-pg" pg_isready -U mail_admin -d mail_registry >/dev/null 2>&1 && break; sleep 1; done
+e2e_infra_up || exit 1
 
 SERVICES=(organization identity access-control gateway mail-directory mail-auth domain-service mail-security templates suppression billing reputation contacts analytics transactional campaigns automations)
 echo "== Compilacion (${SERVICES[*]})"
-mkdir -p "$WORK/bin" "$WORK/log"
-for s in "${SERVICES[@]}"; do go build -o "$WORK/bin/$s" "./services/$s" || { echo "no compila $s" >&2; exit 1; }; done
+e2e_compilar "${SERVICES[@]}" || exit 1
 
 echo "== Bases de las celdas pe-01 y pe-02"
-export PGUSER=mail_admin PGPASSWORD="$POSTGRES_PASSWORD"
-for celda in mail_cell_pe_01 mail_cell_pe_02; do
-  sql mail_registry "CREATE DATABASE $celda" >/dev/null
-  for f in migrations/cell/canonical/platform/*.sql migrations/cell/canonical/mail-directory/*.sql migrations/cell/canonical/mail-security/*.sql; do
-    psql -v ON_ERROR_STOP=1 -q -d "$celda" < "$f" >/dev/null 2>&1 || { mal "migracion de celda $f en $celda"; }
-  done
-done
+e2e_celda pe-01
+e2e_celda pe-02
 
 echo "== Credencial propia de cada celda (ops/db/cell-service-role.sh)"
 CELL_ROLE=mail_cell_pe_01_svc
 CELL_PASS="$(rand_hex 24)"
-PGHOST=127.0.0.1 CELL_DB_PASSWORD="$CELL_PASS" bash ops/db/cell-service-role.sh --cell pe-01 >/dev/null || mal "cell-service-role.sh pe-01"
-PGHOST=127.0.0.1 CELL_DB_PASSWORD="$(rand_hex 24)" bash ops/db/cell-service-role.sh --cell pe-02 >/dev/null || mal "cell-service-role.sh pe-02"
+e2e_credencial_celda pe-01 "$CELL_PASS"
+e2e_credencial_celda pe-02 "$(rand_hex 24)"
 # Por el socket del contenedor: lo que se prueba es el privilegio CONNECT, no la contrasena
 # (la prueban los servicios de la celda, que entran por TCP).
 como_celda() { psql -U "$CELL_ROLE" -d "$1" -At -c 'SELECT current_user' 2>&1; }
@@ -124,23 +76,9 @@ contains "pero no en el registro" "$(como_celda mail_registry)" "permission deni
 contains "ni en la base de otra celda" "$(como_celda mail_cell_pe_02)" "permission denied for database"
 
 # ── Entorno comun ────────────────────────────────────────────────────────────
-export ENVIRONMENT=development
-# Par de firma del token de acceso con la herramienta de operacion. La privada solo la
-# recibe identity (arrancar); el gateway verifica con la publica.
-CLAVES_JWT="$(bash ops/security/jwt-keygen.sh --privada "$WORK/jwt-signing-key" 2>/dev/null)" || { echo "jwt-keygen.sh fallo" >&2; exit 1; }
-export JWT_SIGNING_KID JWT_PUBLIC_KEYS
-JWT_SIGNING_KID="$(sed -n 's/^JWT_SIGNING_KID=//p' <<<"$CLAVES_JWT")"
-JWT_PUBLIC_KEYS="$(sed -n 's/^JWT_PUBLIC_KEY_ENTRY=//p' <<<"$CLAVES_JWT")"
-export JWT_SIGNING_KEY; JWT_SIGNING_KEY="$(sed -n 's/^JWT_SIGNING_KEY=//p' "$WORK/jwt-signing-key")"
-export INTERNAL_GATEWAY_TOKEN; INTERNAL_GATEWAY_TOKEN="$(rand_hex 24)"
-export MAIL_ENCRYPTION_KEY; MAIL_ENCRYPTION_KEY="$(rand_hex 32)"
-export MAIL_LINK_SIGNING_KEY; MAIL_LINK_SIGNING_KEY="$(rand_hex 32)"
-export POSTGRES_HOST=127.0.0.1 POSTGRES_PORT="$PG_PORT" POSTGRES_USER=mail_admin POSTGRES_DB=mail_registry
-export NATS_URL="nats://127.0.0.1:$NATS_PORT" REDIS_HOST=127.0.0.1 REDIS_PORT="$REDIS_PORT"
+e2e_entorno_comun || exit 1
 export MAIL_REDIS_HOST=127.0.0.1 MAIL_REDIS_PORT="$REDIS_PORT"
 export DEFAULT_CELL_CODE=pe-01 CELL_CODE=pe-01 CELL_DB_NAME=mail_cell_pe_01
-export REGISTRY_MIGRATION_DIR="$ROOT/migrations/registry" TENANT_MIGRATION_DIR="$ROOT/migrations/tenant/canonical"
-export AUTH_COOKIE_SECURE=false PASSWORD_BREACH_CHECK=off MFA_ISSUER="Core Force Mail"
 export MAIL_HOSTNAME=mail.cfm.test MAIL_MX_HOSTNAME=mail.cfm.test MAIL_SPF_INCLUDE=include:spf.cfm.test MAIL_DMARC_RUA=dmarc@cfm.test
 export CORS_ALLOWED_ORIGINS=http://localhost:3000
 
@@ -190,35 +128,13 @@ export SUPPRESSION_EXPIRY_SWEEP_INTERVAL=1s
 # Los servicios de la celda arrancan con SU credencial y sin la de plataforma: un permiso que
 # le falte al rol de la celda hace fallar las comprobaciones del correo de mas abajo.
 SERVICIOS_DE_CELDA=" mail-directory mail-auth mail-security "
-# La clave de firma del token solo la recibe identity, como en docker-compose.yml.
-arrancar() {
-  local sin_firma=(-u JWT_SIGNING_KEY)
-  [[ "$1" == identity ]] && sin_firma=()
-  if [[ "$SERVICIOS_DE_CELDA" == *" $1 "* ]]; then
-    env -u POSTGRES_PASSWORD "${sin_firma[@]}" CELL_DB_PASSWORD="$CELL_PASS" "$WORK/bin/$1" >"$WORK/log/$1.log" 2>&1 &
-  else
-    env "${sin_firma[@]}" "$WORK/bin/$1" >"$WORK/log/$1.log" 2>&1 &
-  fi
-}
-esperar_salud() {
-  for _ in $(seq 1 40); do
-    [[ "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$2/healthz")" == 200 ]] && return 0
-    sleep 0.5
-  done
-  mal "$1 no responde en /healthz"; tail -5 "$WORK/log/$1.log" >&2
-  # Si el puerto lo tiene otro proceso, decir cual: un choque de puertos no se ve en el log.
-  ss -ltnp 2>/dev/null | grep ":$2 " >&2
-  return 1
-}
 
 echo "== Plano de control"
 arrancar organization
 esperar_salud organization "${PORT[organization]}" || exit 1
 
 echo "== Arranque de una plataforma vacia (ops/db/bootstrap-platform.sh)"
-ADMIN_PASS="$(rand_hex 12)Aa1!"
-PGHOST=127.0.0.1 PLATFORM_ADMIN_EMAIL=root@platform.test PLATFORM_ADMIN_PASSWORD="$ADMIN_PASS" \
-  bash ops/db/bootstrap-platform.sh --cell pe-01 --region sa-east-1 >/dev/null || mal "bootstrap-platform.sh"
+e2e_plataforma pe-01
 
 ARRANQUE=(identity access-control mail-directory mail-auth domain-service mail-security templates suppression billing reputation contacts analytics transactional campaigns automations gateway)
 for s in "${ARRANQUE[@]}"; do arrancar "$s"; done
@@ -238,7 +154,7 @@ else
 fi
 
 echo "== Identidad y acceso"
-L1=$(curl -s -X POST "$GW/auth/login" -H 'Content-Type: application/json' -d "{\"email\":\"root@platform.test\",\"password\":\"$ADMIN_PASS\"}")
+L1=$(e2e_login "$ADMIN_EMAIL" "$ADMIN_PASS")
 T1=$(echo "$L1" | jget data.access_token)
 [[ -n "$T1" ]] && ok "login del superadmin" || { mal "login del superadmin: ${L1:0:200}"; exit 1; }
 A1="Authorization: Bearer $T1"
@@ -290,13 +206,19 @@ else
 fi
 
 TENANT_PASS="$(rand_hex 12)Aa1!"
-ORG=$(curl -s -X POST "$GW/organizations" -H "$A1" -H 'Content-Type: application/json' \
-  -d "{\"slug\":\"acme\",\"name\":\"Acme\",\"cell_code\":\"pe-01\",\"admin_email\":\"admin@acme.test\",\"admin_password\":\"$TENANT_PASS\",\"admin_first_name\":\"Ana\",\"admin_last_name\":\"Perez\"}")
+ORG=$(e2e_alta_empresa "$T1" acme pe-01 admin@acme.test "$TENANT_PASS")
 expect "alta de empresa en su celda" "$(echo "$ORG" | jget data.slug)" "acme"
 expect "base de la empresa creada y migrada" "$(sql mail_registry "SELECT count(*) FROM pg_database WHERE datname = 'mail_tenant_acme'")" "1"
 contains "organization la cierra: el rol de la celda no la abre" "$(como_celda mail_tenant_acme)" "permission denied for database"
+expect "la saga de acme queda completada" \
+  "$(sql mail_registry "SELECT s.state || '/' || s.step FROM organization.tenant_sagas s JOIN organization.tenants t ON t.id = s.tenant_id WHERE t.slug = 'acme'")" "completed/activated"
+# Un alta que falla a mitad (identity rechaza al primer administrador) se deshace entera.
+REJ=$(e2e_alta_empresa "$T1" rechazada pe-01 admin@rechazada.test solominusculas-sin-mas)
+expect "identity rechaza la contrasena del primer administrador" "$(echo "$REJ" | jget error.code)" "PASSWORD_POLICY"
+expect "la saga deshace su base" "$(sql mail_registry "SELECT count(*) FROM pg_database WHERE datname = 'mail_tenant_rechazada'")" "0"
+expect "y no deja la empresa" "$(sql mail_registry "SELECT count(*) FROM organization.tenants WHERE slug = 'rechazada'")" "0"
 
-L2=$(curl -s -X POST "$GW/auth/login" -H 'Content-Type: application/json' -d "{\"email\":\"admin@acme.test\",\"password\":\"$TENANT_PASS\"}")
+L2=$(e2e_login admin@acme.test "$TENANT_PASS")
 T2=$(echo "$L2" | jget data.access_token)
 TID=$(echo "$L2" | jget data.tenant_id)
 [[ -n "$T2" ]] && ok "login del tenant_admin" || { mal "login del tenant_admin: ${L2:0:200}"; exit 1; }
@@ -339,7 +261,7 @@ expect "los inicios quedan en mail.sasl_logins" \
 expect "otra empresa no ve el buzon (RLS)" "$(curl -s "$GW/mailboxes" -H "$A1" | jget data)" "[]"
 
 dm=""
-for _ in $(seq 1 20); do dm=$(docker exec "$PREFIX-redis" redis-cli HGET DOMAIN_MAP acme.test); [[ -n "$dm" ]] && break; sleep 0.5; done
+for _ in $(seq 1 20); do dm=$(docker exec "$E2E_PREFIX-redis" redis-cli HGET DOMAIN_MAP acme.test); [[ -n "$dm" ]] && break; sleep 0.5; done
 expect "el dominio llega a DOMAIN_MAP (directorio -> NATS -> mail-security -> Redis)" "$dm" "1"
 expect "aliasexp resuelve el buzon final para Rspamd" \
   "$(curl -s -X POST "http://127.0.0.1:$MAPS_PORT/aliasexp" -H 'Rcpt: ana@acme.test')" "ana@acme.test"
@@ -518,10 +440,7 @@ expect "el panel responde sin envios" "$(curl -s "$GW/analytics/overview" -H "$A
 expect "un rango invertido se rechaza" "$(codigo "$GW/analytics/overview?from=2026-09-10&to=2026-09-01" -H "$A2")" "422"
 
 echo "== Registros"
-errores=$(grep -l '"level":"error"' "$WORK"/log/*.log 2>/dev/null)
-if [[ -z "$errores" ]]; then ok "ningun servicio registro errores"; else
-  for f in $errores; do mal "errores en $(basename "$f")"; grep '"level":"error"' "$f" | head -3 >&2; done
-fi
+e2e_registros_sin_errores
 
 echo
 if [[ $fallos -gt 0 ]]; then echo "E2E: $fallos fallos" >&2; exit 1; fi

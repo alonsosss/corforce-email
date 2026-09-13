@@ -69,6 +69,38 @@ e2e_puertos_libres() {
   done
 }
 
+# e2e_reservar: una sola ejecucion por prefijo a la vez; una segunda recrearia los contenedores
+# de la primera en sus mismos puertos y, al terminar, se los borraria. La reserva es el
+# contenedor $E2E_PREFIX-lock (creado, nunca arrancado) con el pid de su dueno: docker no admite
+# dos contenedores con el mismo nombre, asi que dos ejecuciones que arrancan a la vez no reservan
+# las dos, y la reserva existe desde el principio aunque los contenedores de la prueba lleguen
+# minutos despues (mail.sh construye antes sus imagenes). Se llama ANTES de instalar la limpieza,
+# que si no borraria los ajenos, y con un dueno vivo sale con 3. Una reserva sin dueno vivo es el
+# resto de una ejecucion cortada y se reemplaza, por id para no borrar la que otra acabe de crear.
+e2e_reservar() {
+  local id dueno error=""
+  for _ in 1 2 3 4 5; do
+    error=$(docker create --name "$E2E_PREFIX-lock" --label "cfm-e2e.pid=$$" redis:7.4.10-alpine 2>&1 >/dev/null) && return 0
+    read -r id dueno < <(docker inspect -f '{{.Id}} {{index .Config.Labels "cfm-e2e.pid"}}' "$E2E_PREFIX-lock" 2>/dev/null) || continue
+    if [[ "$dueno" =~ ^[0-9]+$ ]] && ps -p "$dueno" >/dev/null 2>&1; then
+      echo "E2E: otra ejecucion (pid $dueno) esta usando los contenedores $E2E_PREFIX-*; espera a que termine o detenla" >&2
+      echo "     (si ese pid no es una prueba, la reserva es un resto: docker rm -f $E2E_PREFIX-lock)" >&2
+      exit 3
+    fi
+    docker rm -f "$id" >/dev/null 2>&1
+  done
+  echo "E2E: no se pudo reservar $E2E_PREFIX-lock: ${error:0:300}" >&2
+  exit 1
+}
+
+# e2e_liberar: retira la reserva si es de esta ejecucion. Va al final de la limpieza, despues de
+# borrar los contenedores: si no, la siguiente ejecucion podria crear los suyos antes.
+e2e_liberar() {
+  [[ "$(docker inspect -f '{{index .Config.Labels "cfm-e2e.pid"}}' "$E2E_PREFIX-lock" 2>/dev/null)" == "$$" ]] &&
+    docker rm -f "$E2E_PREFIX-lock" >/dev/null 2>&1
+  return 0
+}
+
 # psql sin cliente local: el de dentro del contenedor. Exportada para que la use tambien
 # ops/db/bootstrap-platform.sh y ops/db/cell-service-role.sh, que son parte de lo que se prueba.
 psql() { docker exec -i -e PGPASSWORD="${PGPASSWORD:-}" "$PG_CONTAINER" psql -U "${PGUSER:-mail_admin}" "$@"; }

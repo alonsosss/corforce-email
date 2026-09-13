@@ -27,6 +27,9 @@
 #   E2E_MAIL_PORT_BASE=29100 make e2e-mail    # otro rango si 29000-29099 esta ocupado
 #   E2E_MAIL_IPV4_NETWORK=172.31.29 make e2e-mail  # otra subred /24 para la red de los motores
 #
+# Una sola ejecucion a la vez (puede correr junto a make e2e, que usa otro prefijo y otros
+# puertos): con otra en marcha sale con 3 sin tocar nada (e2e_reservar en ops/e2e/lib.sh).
+#
 # Las firmas de ClamAV quedan en el volumen E2E_MAIL_CLAMAV_VOLUME (por defecto
 # cfm-e2e-mail-clamav-signatures) entre ejecuciones; E2E_MAIL_PURGE_SIGNATURES=1 lo borra al
 # terminar. Motivo y diferencias con produccion: deploy/mail/README.md.
@@ -53,6 +56,7 @@ export E2E_MAIL_NETWORK="${E2E_MAIL_NETWORK:-cfm-e2e-mail-engines}"
 export E2E_MAIL_BRIDGE="${E2E_MAIL_BRIDGE:-br-cfme2email}"
 export IPV4_NETWORK="${E2E_MAIL_IPV4_NETWORK:-172.30.29}"
 export E2E_MAIL_CLAMAV_VOLUME="${E2E_MAIL_CLAMAV_VOLUME:-cfm-e2e-mail-clamav-signatures}"
+e2e_reservar
 WORK="$(mktemp -d)"
 MAILDIR="$WORK/repo/deploy/mail"
 TLS="$WORK/tls"
@@ -93,6 +97,7 @@ limpiar() {
   pkill -f "$WORK/bin/" 2>/dev/null
   if [[ "${E2E_KEEP:-0}" == "1" ]]; then
     echo "E2E_KEEP=1: contenedores $E2E_PREFIX-*, red $E2E_MAIL_NETWORK y registros en $WORK"
+    e2e_liberar
     return
   fi
   restos
@@ -100,6 +105,7 @@ limpiar() {
   # Los entrypoints de los motores escriben como root en su copia de la configuracion.
   docker run --rm -v "$WORK:/w" --entrypoint /bin/sh redis:7.4.10-alpine -c 'rm -rf /w/repo' >/dev/null 2>&1
   rm -rf "$WORK"
+  e2e_liberar
 }
 trap limpiar EXIT
 
