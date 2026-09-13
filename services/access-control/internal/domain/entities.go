@@ -54,13 +54,9 @@ func (ap *AccessPolicy) HasPermission(module, resource, action string) bool {
 		if p.Module != module {
 			continue
 		}
-		if p.Resource == resource && p.Action == action {
-			return true
-		}
-		if p.Resource == "*" && p.Action == "*" {
-			return true
-		}
-		if p.Resource == resource && p.Action == "*" {
+		// Comodines independientes en recurso y accion, igual que pkg/authz: dos reglas
+		// distintas para la misma pregunta darian permisos distintos segun quien pregunte.
+		if (p.Resource == resource || p.Resource == "*") && (p.Action == action || p.Action == "*") {
 			return true
 		}
 	}

@@ -205,6 +205,7 @@ func TestHasPermissionAdmiteComodines(t *testing.T) {
 		{Module: "campaigns", Resource: "*", Action: "*"},
 		{Module: "mailboxes", Resource: "aliases", Action: "*"},
 		{Module: "domains", Resource: "dns", Action: "read"},
+		{Module: "contacts", Resource: "*", Action: "read"},
 	}}
 	cases := []struct {
 		module, resource, action string
@@ -216,6 +217,12 @@ func TestHasPermissionAdmiteComodines(t *testing.T) {
 		{"domains", "dns", "read", true},
 		{"domains", "dns", "update", false},
 		{"templates", "*", "read", false},
+		{"contacts", "lists", "read", true},
+		{"contacts", "lists", "delete", false},
+		// Un comodin estrecho no cubre uno mas amplio: quien tiene contacts/*/read no
+		// puede conceder contacts/*/*.
+		{"contacts", "*", "*", false},
+		{"mailboxes", "*", "*", false},
 	}
 	for _, c := range cases {
 		if got := policy.HasPermission(c.module, c.resource, c.action); got != c.want {
