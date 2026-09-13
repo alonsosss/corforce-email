@@ -231,6 +231,44 @@ func (r *Repository) Delete(ctx context.Context, tenantID, id uuid.UUID) error {
 	return nil
 }
 
+// expiryPendingWhere repite tal cual el predicado de idx_suppression_entries_expiry_pending
+// para que el planificador pueda usar el indice parcial. Parametros: $1 empresa, $2 ahora.
+const expiryPendingWhere = `tenant_id = $1 AND expires_at IS NOT NULL AND expires_at <= $2
+	AND announced_expires_at IS DISTINCT FROM expires_at`
+
+func (r *Repository) ListExpiryPending(ctx context.Context, tenantID uuid.UUID, now time.Time, after *ports.ExpiryCursor, limit int) ([]domain.Entry, error) {
+	var (
+		afterAt *time.Time
+		afterID *uuid.UUID
+	)
+	if after != nil {
+		afterAt, afterID = &after.ExpiresAt, &after.ID
+	}
+	rows, err := r.pool.Query(ctx,
+		`SELECT `+entryColumns+` FROM suppression.entries
+		  WHERE `+expiryPendingWhere+`
+		    AND ($3::timestamptz IS NULL OR (expires_at, id) > ($3::timestamptz, $4::uuid))
+		  ORDER BY expires_at, id
+		  LIMIT $5`,
+		tenantID, now, afterAt, afterID, limit)
+	if err != nil {
+		return nil, err
+	}
+	return collectEntries(rows)
+}
+
+// ClaimExpiry reclama con un UPDATE condicional: si otra transaccion tiene la fila, este
+// espera su bloqueo y vuelve a evaluar la condicion sobre la version confirmada, asi que de
+// dos replicas que reclaman a la vez solo una la devuelve. El trigger comun mueve
+// updated_at: la fila registra cuando se anuncio su caducidad.
+func (r *Repository) ClaimExpiry(ctx context.Context, tenantID, id uuid.UUID, now time.Time) (*domain.Entry, error) {
+	return scanEntry(r.pool.QueryRow(ctx,
+		`UPDATE suppression.entries SET announced_expires_at = expires_at
+		  WHERE `+expiryPendingWhere+` AND id = $3
+		  RETURNING `+entryColumns,
+		tenantID, now, id))
+}
+
 func (r *Repository) CountByReason(ctx context.Context, tenantID uuid.UUID, now time.Time) ([]domain.ReasonCount, error) {
 	rows, err := r.pool.Query(ctx,
 		`SELECT reason, count(*) FROM (

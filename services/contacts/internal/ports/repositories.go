@@ -35,9 +35,9 @@ type ContactRepository interface {
 	Update(ctx context.Context, c *domain.Contact) error
 	List(ctx context.Context, tenantID uuid.UUID, f ContactFilter) ([]domain.Contact, int64, error)
 	// ListAfter devuelve hasta limit contactos de la empresa en orden de id, despues de
-	// after (uuid.Nil = desde el principio); status vacio = todos. Es el recorrido del
-	// barrido que contrasta los estados con suppression.
-	ListAfter(ctx context.Context, tenantID uuid.UUID, status domain.Status, after uuid.UUID, limit int) ([]domain.Contact, error)
+	// after (uuid.Nil = desde el principio). Es el recorrido del barrido diario que
+	// contrasta los estados con suppression.
+	ListAfter(ctx context.Context, tenantID uuid.UUID, after uuid.UUID, limit int) ([]domain.Contact, error)
 	// FindByEmailsForUpdate devuelve y bloquea los contactos existentes de esas
 	// direcciones (importacion por lotes).
 	FindByEmailsForUpdate(ctx context.Context, tenantID uuid.UUID, emails []string) ([]domain.Contact, error)

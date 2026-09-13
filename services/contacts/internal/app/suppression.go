@@ -36,11 +36,19 @@ func (uc *UseCase) admissionCauses(ctx context.Context, tenantID uuid.UUID, emai
 
 // Subjects que este servicio consume. Los publica suppression (stream SUPPRESSION) por
 // su outbox con Data {tenant_id, email, reason, source, reasons}: reason es la causa que
-// entro o salio y reasons las vigentes que le quedan a la direccion.
+// entro, salio o caduco y reasons las vigentes que le quedan a la direccion. expired lleva
+// ademas expires_at, que aqui no se lee: el estado se decide con las causas vigentes.
 const (
 	SubjectSuppressionAdded   = "suppression.entry.added"
 	SubjectSuppressionRemoved = "suppression.entry.removed"
+	SubjectSuppressionExpired = "suppression.entry.expired"
 )
+
+// liftsCause dice si el subject anuncia que la causa del evento dejo de contar: la retiro
+// un operador o caduco. Los dos se aplican igual.
+func liftsCause(subject string) bool {
+	return subject == SubjectSuppressionRemoved || subject == SubjectSuppressionExpired
+}
 
 // SuppressionEvent es un evento de suppression tal como lo lee este servicio.
 type SuppressionEvent struct {
@@ -69,10 +77,11 @@ func IsInputError(err error) bool {
 	return errors.Is(err, domain.ErrInvalidEmail)
 }
 
-// ApplySuppression refleja en el contacto un alta o una baja de la lista de exclusiones.
-// Idempotente: reentregar el mismo evento no cambia nada la segunda vez.
+// ApplySuppression refleja en el contacto el alta, la retirada o la caducidad de una causa
+// de la lista de exclusiones. Idempotente: reentregar el mismo evento no cambia nada la
+// segunda vez.
 //
-// Un evento con reasons no se aplica por su causa ni por su foto de causas: los dos
+// Un evento con reasons no se aplica por su causa ni por su foto de causas: los tres
 // subjects llegan por durables distintos y una reentrega puede adelantar a un evento
 // anterior, asi que el ultimo en aplicarse podria traer una foto vieja. Se decide con las
 // causas vigentes que devuelve suppression, leidas con la fila del contacto bloqueada:
@@ -84,7 +93,7 @@ func (uc *UseCase) ApplySuppression(ctx context.Context, ev SuppressionEvent) (S
 	if err != nil {
 		return SuppressionResult{}, err
 	}
-	if ev.Subject != SubjectSuppressionAdded && ev.Subject != SubjectSuppressionRemoved {
+	if ev.Subject != SubjectSuppressionAdded && !liftsCause(ev.Subject) {
 		return SuppressionResult{Ignored: true}, nil
 	}
 	if !ev.HasReasons {
@@ -152,8 +161,9 @@ func (uc *UseCase) unsubscribeRegistered(ctx context.Context, c *domain.Contact,
 
 // applySuppressionByReason es la regla de un productor sin reasons, que guardaba una
 // sola fila por direccion: el estado sale de la causa del evento, sin degradar uno mas
-// grave, y retirar un rebote, una queja, una direccion no valida o una exclusion manual
-// reactiva a quien estaba en ese estado. Solo la baja revoca el consentimiento.
+// grave, y retirar (o que caduque) un rebote, una queja, una direccion no valida o una
+// exclusion manual reactiva a quien estaba en ese estado. Solo la baja revoca el
+// consentimiento.
 func (uc *UseCase) applySuppressionByReason(ctx context.Context, ev SuppressionEvent, email string) (SuppressionResult, error) {
 	cause := domain.SuppressionCause(ev.Reason)
 	target, _ := domain.StatusForCause(cause)
@@ -162,7 +172,7 @@ func (uc *UseCase) applySuppressionByReason(ctx context.Context, ev SuppressionE
 	}
 	// Retirar una baja no reactiva por aqui: eso lo hace el nuevo consentimiento, que es
 	// quien la pide (contacts.contact.resubscribed).
-	if ev.Subject == SubjectSuppressionRemoved && cause == domain.CauseUnsubscribe {
+	if liftsCause(ev.Subject) && cause == domain.CauseUnsubscribe {
 		return SuppressionResult{Ignored: true}, nil
 	}
 
@@ -176,7 +186,7 @@ func (uc *UseCase) applySuppressionByReason(ctx context.Context, ev SuppressionE
 		if err != nil {
 			return err
 		}
-		if ev.Subject == SubjectSuppressionRemoved {
+		if liftsCause(ev.Subject) {
 			if !c.LiftSuppression(target) {
 				return nil
 			}

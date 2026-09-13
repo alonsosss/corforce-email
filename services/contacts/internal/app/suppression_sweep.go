@@ -18,25 +18,25 @@ type SweepReport struct {
 	Changed int
 }
 
-// SweepSuppression contrasta con suppression el estado de los contactos de la empresa
-// (solo los de estado only; todos si only es vacio) y corrige los que no coinciden. Cubre
-// lo que no llega por evento: una exclusion manual que caduca (suppression deja de
-// devolverla sin publicar nada), un contacto creado cuando su direccion ya estaba excluida
-// y los contactos anteriores a los estados invalid y excluded.
+// SweepSuppression contrasta con suppression el estado de todos los contactos de la
+// empresa y corrige los que no coinciden. Cubre lo que no llego a aplicarse por evento: un
+// evento de suppression perdido (tambien el anuncio de una caducidad,
+// suppression.entry.expired), un contacto creado cuando su direccion ya estaba excluida y
+// los contactos anteriores a los estados invalid y excluded.
 //
 // Cada pagina se consulta en bloque sin bloquear filas; solo el contacto cuyo estado
 // cambiaria se vuelve a decidir como un evento, con su fila bloqueada y sus causas leidas
 // despues del bloqueo, para no pisar un evento aplicado entre medias. Nunca revoca el
 // consentimiento: sin el evento no se sabe si una baja vigente se acaba de pedir o ya la
 // levanto un reconsentimiento, y se decide como ReconcileSuppression sin baja registrada.
-func (uc *UseCase) SweepSuppression(ctx context.Context, tenantID uuid.UUID, only domain.Status) (SweepReport, error) {
+func (uc *UseCase) SweepSuppression(ctx context.Context, tenantID uuid.UUID) (SweepReport, error) {
 	var rep SweepReport
 	if uc.suppression == nil {
 		return rep, errors.New("contacts: sin lector del estado de suppression")
 	}
 	after := uuid.Nil
 	for {
-		page, err := uc.contacts.ListAfter(ctx, tenantID, only, after, suppressionSweepPage)
+		page, err := uc.contacts.ListAfter(ctx, tenantID, after, suppressionSweepPage)
 		if err != nil {
 			return rep, err
 		}

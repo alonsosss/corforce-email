@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"testing"
 	"time"
+
+	"github.com/alonsosss/corforce-email/services/contacts/internal/app"
 )
 
 func TestHasReasons(t *testing.T) {
@@ -22,6 +24,28 @@ func TestHasReasons(t *testing.T) {
 		if got := hasReasons(data); got != want {
 			t.Errorf("%s: %v", raw, got)
 		}
+	}
+}
+
+// Cada subject de suppression que cambia el estado de un contacto tiene su durable, y
+// ninguno se comparte: JetStream filtra cada consumidor por un unico subject.
+func TestSuscripcionesDeSuppression(t *testing.T) {
+	want := map[string]bool{
+		app.SubjectSuppressionAdded: true, app.SubjectSuppressionRemoved: true, app.SubjectSuppressionExpired: true,
+	}
+	durables := map[string]bool{}
+	for _, s := range subscriptions {
+		if !want[s.subject] {
+			t.Fatalf("subject inesperado o repetido: %s", s.subject)
+		}
+		delete(want, s.subject)
+		if s.durable == "" || durables[s.durable] {
+			t.Fatalf("durable vacio o repetido: %q", s.durable)
+		}
+		durables[s.durable] = true
+	}
+	if len(want) != 0 {
+		t.Fatalf("sin suscripcion: %v", want)
 	}
 }
 

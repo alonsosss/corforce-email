@@ -6,7 +6,6 @@ import (
 	"context"
 	"path/filepath"
 	"reflect"
-	"strings"
 	"testing"
 	"time"
 
@@ -34,32 +33,8 @@ func snapshotEntries(t *testing.T, ctx context.Context, pool *pgxpool.Pool) []st
 // perder ni cambiar ninguna fila, las migraciones se pueden repetir, y despues la direccion
 // admite una fila por causa. Corre en una base temporal que crea y borra la propia prueba.
 func TestMigracionAUnaFilaPorCausaConservaLosDatos(t *testing.T) {
-	dsn := integrationEnv(t, "SUPPRESSION_TEST_DSN")
 	ctx := context.Background()
-	admin, err := pgx.Connect(ctx, dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	name := "suppression_migration_" + strings.ReplaceAll(uuid.NewString(), "-", "")
-	if _, err := admin.Exec(ctx, `CREATE DATABASE `+name); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if _, err := admin.Exec(ctx, `DROP DATABASE IF EXISTS `+name+` WITH (FORCE)`); err != nil {
-			t.Errorf("borrar la base temporal %s: %v", name, err)
-		}
-		admin.Close(ctx)
-	})
-	cfg, err := pgxpool.ParseConfig(dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	cfg.ConnConfig.Database = name
-	pool, err := pgxpool.NewWithConfig(ctx, cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(pool.Close)
+	pool := tempDatabase(t, ctx)
 
 	migrations := suppressionMigrations(t)
 	if filepath.Base(migrations[0]) != "01_suppression.sql" {

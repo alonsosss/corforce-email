@@ -68,10 +68,6 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	expiryEvery, err := envDuration("CONTACTS_EXPIRY_SWEEP_INTERVAL", sweep.DefaultExpiryInterval, time.Minute, 24*time.Hour)
-	if err != nil {
-		log.Fatal(err)
-	}
 	fullSweepAt, err := envDuration("CONTACTS_FULL_SWEEP_AT", sweep.DefaultFullAt, 0, 24*time.Hour)
 	if err != nil {
 		log.Fatal(err)
@@ -117,6 +113,11 @@ func main() {
 		if err := bus.EnsureStream("CONTACTS", []string{"contacts.>"}); err != nil {
 			logger.Warn("ensure stream CONTACTS", zap.Error(err))
 		}
+		// El consumidor declara el stream que lee (la misma definicion que su dueno): sin
+		// el, las suscripciones a suppression esperarian a que suppression arrancara.
+		if err := bus.EnsureStream("SUPPRESSION", []string{"suppression.>"}); err != nil {
+			logger.Warn("ensure stream SUPPRESSION", zap.Error(err))
+		}
 		go outbox.RunForTenants(ctx, tenantDB, db.PoolFromCtx, bus, logger, outbox.Options{})
 
 		worker := natsadapter.NewSuppressionWorker(bus, uc, tenantDB, logger)
@@ -124,9 +125,10 @@ func main() {
 		defer worker.Stop()
 	}
 
-	// Sin evento de suppression cuando caduca una exclusion manual: el estado lo alcanza el
-	// barrido. No depende de NATS: consulta suppression por HTTP y publica por la outbox.
-	go sweep.New(registryPool.Pool, tenantDB, uc, logger, expiryEvery, fullSweepAt).Run(ctx)
+	// La caducidad de una exclusion manual llega por suppression.entry.expired; el barrido
+	// diario contrasta todos los contactos con suppression y corrige lo que no llego por
+	// evento. No depende de NATS: consulta suppression por HTTP y publica por la outbox.
+	go sweep.New(registryPool.Pool, tenantDB, uc, logger, fullSweepAt).Run(ctx)
 
 	h := handler.NewHandler(handler.Deps{UC: uc, Perms: authz.NewCheckerFromEnv(), TenantDB: tenantDB, Logger: logger})
 

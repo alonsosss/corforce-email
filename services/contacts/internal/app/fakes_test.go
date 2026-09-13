@@ -125,10 +125,10 @@ func (f fakeContacts) List(_ context.Context, tenantID uuid.UUID, fl ports.Conta
 }
 
 // ListAfter recorre en orden de id, como el keyset de la base.
-func (f fakeContacts) ListAfter(_ context.Context, tenantID uuid.UUID, status domain.Status, after uuid.UUID, limit int) ([]domain.Contact, error) {
+func (f fakeContacts) ListAfter(_ context.Context, tenantID uuid.UUID, after uuid.UUID, limit int) ([]domain.Contact, error) {
 	var out []domain.Contact
 	for _, c := range f.s.contacts {
-		if c.TenantID != tenantID || (status != "" && c.Status != status) || bytes.Compare(c.ID[:], after[:]) <= 0 {
+		if c.TenantID != tenantID || bytes.Compare(c.ID[:], after[:]) <= 0 {
 			continue
 		}
 		out = append(out, *copyContact(c))

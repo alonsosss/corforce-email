@@ -16,8 +16,8 @@ import (
 // Los estados invalid y excluded contra la base real: el CHECK de 02_status_exclusions.sql
 // los admite y sigue rechazando lo que no es un estado; la regla de enviable los deja
 // fuera de la audiencia y de la consulta por id aunque tengan consentimiento; el listado y
-// los segmentos filtran por ellos; y el recorrido del barrido pagina por id, con y sin
-// estado, sin salir de la empresa.
+// los segmentos filtran por ellos; y el recorrido del barrido pagina por id sin salir de
+// la empresa.
 func TestEstadosDeExclusionEnLaBase(t *testing.T) {
 	_, ctx := testPool(t)
 	cp := &db.ContextPool{}
@@ -103,14 +103,10 @@ func TestEstadosDeExclusionEnLaBase(t *testing.T) {
 		t.Fatalf("el listado filtra por excluded: %+v %d %v", listed, total, err)
 	}
 
-	only, err := contacts.ListAfter(ctx, tenant, domain.StatusExcluded, uuid.Nil, 10)
-	if err != nil || len(only) != 1 || only[0].ID != byStatus[domain.StatusExcluded].ID {
-		t.Fatalf("el recorrido por estado no sale de la empresa: %+v %v", only, err)
-	}
 	var walked []domain.Contact
 	after := uuid.Nil
 	for {
-		page, err := contacts.ListAfter(ctx, tenant, "", after, 2)
+		page, err := contacts.ListAfter(ctx, tenant, after, 2)
 		if err != nil {
 			t.Fatal(err)
 		}

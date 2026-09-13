@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/alonsosss/corforce-email/pkg/authz"
@@ -19,6 +21,7 @@ import (
 	natsadapter "github.com/alonsosss/corforce-email/services/suppression/internal/adapters/nats"
 	outboxadapter "github.com/alonsosss/corforce-email/services/suppression/internal/adapters/outbox"
 	"github.com/alonsosss/corforce-email/services/suppression/internal/adapters/postgres"
+	"github.com/alonsosss/corforce-email/services/suppression/internal/adapters/sweep"
 	"github.com/alonsosss/corforce-email/services/suppression/internal/app"
 	"github.com/go-chi/chi/v5"
 	"go.uber.org/zap"
@@ -32,6 +35,10 @@ func main() {
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatalf("load config: %v", err)
+	}
+	expiryEvery, err := envDuration("SUPPRESSION_EXPIRY_SWEEP_INTERVAL", sweep.DefaultInterval, time.Second, time.Hour)
+	if err != nil {
+		log.Fatal(err)
 	}
 
 	// ctx gobierna los trabajos de fondo (rele de la outbox, consumidor de eventos): se
@@ -74,6 +81,10 @@ func main() {
 		defer ingest.Stop()
 	}
 
+	// La caducidad de una exclusion manual se anuncia por la outbox: no depende de NATS, y
+	// lo que se encole sin bus sale cuando el rele vuelva.
+	go sweep.New(registryPool.Pool, tenantDB, uc, logger, expiryEvery).Run(ctx)
+
 	h := handler.NewHandler(uc, authz.NewCheckerFromEnv())
 
 	r := chi.NewRouter()
@@ -108,4 +119,16 @@ func main() {
 	if err := srv.Run(); err != nil {
 		logger.Fatal("server error", zap.Error(err))
 	}
+}
+
+func envDuration(key string, def, min, max time.Duration) (time.Duration, error) {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return def, nil
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil || d < min || d > max {
+		return 0, fmt.Errorf("%s debe ser una duracion entre %s y %s", key, min, max)
+	}
+	return d, nil
 }

@@ -1,7 +1,9 @@
 package app
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"sort"
 	"strings"
 	"time"
@@ -19,6 +21,65 @@ type fakeEntryRepo struct {
 	// now es el reloj de la base (el DEFAULT y el clock_timestamp() de created_at): el de
 	// la fixture, para que ninguna prueba dependa de la fecha real.
 	now func() time.Time
+	// announced es announced_expires_at: la caducidad ya anunciada de cada causa por id.
+	announced map[uuid.UUID]time.Time
+	// beforeClaim, si no es nil, corre al entrar en ClaimExpiry: lo que otra transaccion
+	// cambio entre la lectura del barrido y el reclamo.
+	beforeClaim func(id uuid.UUID)
+	claimErr    error
+}
+
+// expiryPending es el predicado de idx_suppression_entries_expiry_pending.
+func (f *fakeEntryRepo) expiryPending(e *domain.Entry, now time.Time) bool {
+	if e.ExpiresAt == nil || e.Active(now) {
+		return false
+	}
+	at, ok := f.announced[e.ID]
+	return !ok || !at.Equal(*e.ExpiresAt)
+}
+
+func (f *fakeEntryRepo) ListExpiryPending(_ context.Context, tenantID uuid.UUID, now time.Time, after *ports.ExpiryCursor, limit int) ([]domain.Entry, error) {
+	var out []domain.Entry
+	for _, e := range f.entries {
+		if e.TenantID != tenantID || !f.expiryPending(e, now) {
+			continue
+		}
+		if after != nil && (e.ExpiresAt.Before(after.ExpiresAt) ||
+			(e.ExpiresAt.Equal(after.ExpiresAt) && bytes.Compare(e.ID[:], after.ID[:]) <= 0)) {
+			continue
+		}
+		out = append(out, *e)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].ExpiresAt.Equal(*out[j].ExpiresAt) {
+			return out[i].ExpiresAt.Before(*out[j].ExpiresAt)
+		}
+		return bytes.Compare(out[i].ID[:], out[j].ID[:]) < 0
+	})
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
+func (f *fakeEntryRepo) ClaimExpiry(_ context.Context, tenantID, id uuid.UUID, now time.Time) (*domain.Entry, error) {
+	if f.beforeClaim != nil {
+		f.beforeClaim(id)
+	}
+	if f.claimErr != nil {
+		return nil, f.claimErr
+	}
+	for _, e := range f.entries {
+		if e.TenantID == tenantID && e.ID == id && f.expiryPending(e, now) {
+			if f.announced == nil {
+				f.announced = map[uuid.UUID]time.Time{}
+			}
+			f.announced[e.ID] = *e.ExpiresAt
+			out := *e
+			return &out, nil
+		}
+	}
+	return nil, domain.ErrEntryNotFound
 }
 
 func (f *fakeEntryRepo) find(tenantID uuid.UUID, email string, reason domain.Reason) *domain.Entry {
@@ -224,6 +285,15 @@ func (f *fakePublisher) EntryAdded(_ context.Context, e *domain.Entry, reasons [
 
 func (f *fakePublisher) EntryRemoved(_ context.Context, e *domain.Entry, reasons []domain.Reason) error {
 	f.events = append(f.events, "removed|"+e.Email+"|"+string(e.Reason)+"|"+joinReasons(reasons))
+	return nil
+}
+
+// EntryExpired anade la caducidad anunciada: "expired|email|reason|restantes|expires_at".
+func (f *fakePublisher) EntryExpired(_ context.Context, e *domain.Entry, reasons []domain.Reason) error {
+	if e.ExpiresAt == nil {
+		return errors.New("caducidad sin expires_at")
+	}
+	f.events = append(f.events, "expired|"+e.Email+"|"+string(e.Reason)+"|"+joinReasons(reasons)+"|"+e.ExpiresAt.UTC().Format(time.RFC3339))
 	return nil
 }
 

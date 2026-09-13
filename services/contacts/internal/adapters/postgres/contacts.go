@@ -138,26 +138,12 @@ func (r *ContactRepository) List(ctx context.Context, tenantID uuid.UUID, f port
 	return out, total, nil
 }
 
-// ListAfter pagina por keyset sobre id. Con estado es una consulta aparte y no un filtro
-// opcional: el barrido de caducidad corre a menudo sobre un conjunto pequeno y tiene que
-// poder usar idx_contacts_contacts_tenant_status, que un plan generico con el estado como
-// filtro opcional (vacio o igual) no usaria.
-func (r *ContactRepository) ListAfter(ctx context.Context, tenantID uuid.UUID, status domain.Status, after uuid.UUID, limit int) ([]domain.Contact, error) {
-	var (
-		rows pgx.Rows
-		err  error
-	)
-	if status == "" {
-		rows, err = r.pool.Query(ctx,
-			`SELECT `+contactColumns+` FROM contacts.contacts c
-			  WHERE c.tenant_id = $1 AND c.id > $2
-			  ORDER BY c.id LIMIT $3`, tenantID, after, limit)
-	} else {
-		rows, err = r.pool.Query(ctx,
-			`SELECT `+contactColumns+` FROM contacts.contacts c
-			  WHERE c.tenant_id = $1 AND c.status = $2 AND c.id > $3
-			  ORDER BY c.id LIMIT $4`, tenantID, string(status), after, limit)
-	}
+// ListAfter pagina por keyset sobre id.
+func (r *ContactRepository) ListAfter(ctx context.Context, tenantID uuid.UUID, after uuid.UUID, limit int) ([]domain.Contact, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT `+contactColumns+` FROM contacts.contacts c
+		  WHERE c.tenant_id = $1 AND c.id > $2
+		  ORDER BY c.id LIMIT $3`, tenantID, after, limit)
 	if err != nil {
 		return nil, err
 	}

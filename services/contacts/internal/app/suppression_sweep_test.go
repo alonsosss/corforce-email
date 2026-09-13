@@ -10,35 +10,32 @@ import (
 	"github.com/alonsosss/corforce-email/services/contacts/internal/domain"
 )
 
-func (f *fixture) sweep(t *testing.T, only domain.Status) SweepReport {
+func (f *fixture) sweep(t *testing.T) SweepReport {
 	t.Helper()
-	rep, err := f.uc.SweepSuppression(context.Background(), f.tenant, only)
+	rep, err := f.uc.SweepSuppression(context.Background(), f.tenant)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return rep
 }
 
-// La exclusion manual caduca sin evento: suppression deja de devolverla. El barrido de
-// los excluded devuelve a active a quien ya no tiene causa, deja excluded a quien la
-// conserva y pasa a invalid a quien solo le queda una direccion no valida.
-func TestBarridoDeCaducidad(t *testing.T) {
+// Si el anuncio de una caducidad no llego a aplicarse, el barrido diario lo alcanza: el
+// excluded sin causa vuelve a active, el que conserva la manual sigue excluded y el que
+// solo tiene una direccion no valida pasa a invalid.
+func TestBarridoRecuperaUnaCaducidadSinEvento(t *testing.T) {
 	f := newFixture(t)
 	caducada := f.addContact(t, "caducada@example.com", domain.StatusExcluded, domain.ConsentGranted)
 	vigente := f.addContact(t, "vigente@example.com", domain.StatusExcluded, domain.ConsentGranted)
 	invalida := f.addContact(t, "invalida@example.com", domain.StatusExcluded, domain.ConsentGranted)
-	fuera := f.addContact(t, "fuera@example.com", domain.StatusActive, domain.ConsentGranted)
 	f.suppressed(vigente.Email, domain.CauseManual)
 	f.suppressed(invalida.Email, domain.CauseInvalid)
-	f.suppressed(fuera.Email, domain.CauseManual)
 
-	rep := f.sweep(t, domain.StatusExcluded)
+	rep := f.sweep(t)
 	if rep.Checked != 3 || rep.Changed != 2 {
-		t.Fatalf("revisa solo los excluded y cambia los que ya no lo son: %+v", rep)
+		t.Fatalf("revisa todos y cambia los que no coinciden: %+v", rep)
 	}
 	want := map[*domain.Contact]domain.Status{
-		caducada: domain.StatusActive, vigente: domain.StatusExcluded,
-		invalida: domain.StatusInvalid, fuera: domain.StatusActive,
+		caducada: domain.StatusActive, vigente: domain.StatusExcluded, invalida: domain.StatusInvalid,
 	}
 	for c, st := range want {
 		if got := f.contact(t, c.ID); got.Status != st || got.ConsentStatus != domain.ConsentGranted {
@@ -52,19 +49,19 @@ func TestBarridoDeCaducidad(t *testing.T) {
 		t.Fatalf("un evento por cambio y ninguna evidencia: %v %+v", f.ev.events, f.s.consents)
 	}
 	if !reflect.DeepEqual(f.sup.batchSizes, []int{3}) {
-		t.Fatalf("una consulta en bloque con los excluded: %v", f.sup.batchSizes)
+		t.Fatalf("una consulta en bloque: %v", f.sup.batchSizes)
 	}
 
 	// Una segunda pasada no cambia nada.
 	events := len(f.ev.events)
-	if rep := f.sweep(t, domain.StatusExcluded); rep.Changed != 0 || len(f.ev.events) != events {
+	if rep := f.sweep(t); rep.Changed != 0 || len(f.ev.events) != events {
 		t.Fatalf("idempotente: %+v", rep)
 	}
 }
 
-// El barrido completo corrige lo que no llego por evento (contactos anteriores a los
-// estados invalid y excluded, creados con la direccion ya excluida, eventos perdidos) sin
-// revocar nunca: una baja vigente sobre un active no se aplica sin su evento.
+// El barrido corrige lo que no llego por evento (contactos anteriores a los estados
+// invalid y excluded, creados con la direccion ya excluida, eventos perdidos) sin revocar
+// nunca: una baja vigente sobre un active no se aplica sin su evento.
 func TestBarridoCompleto(t *testing.T) {
 	f := newFixture(t)
 	manual := f.addContact(t, "m@example.com", domain.StatusActive, domain.ConsentGranted)
@@ -80,7 +77,7 @@ func TestBarridoCompleto(t *testing.T) {
 	f.suppressed(reconsintio.Email, domain.CauseUnsubscribe)
 	f.suppressed(queja.Email, domain.CauseComplaint)
 
-	rep := f.sweep(t, "")
+	rep := f.sweep(t)
 	if rep.Checked != 7 || rep.Changed != 4 {
 		t.Fatalf("revisa todos: %+v", rep)
 	}
@@ -107,7 +104,7 @@ func TestBarridoNoPisaUnEventoAplicadoEntreMedias(t *testing.T) {
 	f.sup.batch = map[string][]domain.ActiveCause{}
 	f.suppressed(c.Email, domain.CauseManual)
 
-	if rep := f.sweep(t, domain.StatusExcluded); rep.Checked != 1 || rep.Changed != 0 {
+	if rep := f.sweep(t); rep.Checked != 1 || rep.Changed != 0 {
 		t.Fatalf("la foto decia caducada, pero la manual se renovo: %+v", rep)
 	}
 	if got := f.contact(t, c.ID); got.Status != domain.StatusExcluded || len(f.ev.events) != 0 {
@@ -125,7 +122,7 @@ func TestBarridoPagina(t *testing.T) {
 	for i := 0; i < n; i++ {
 		f.addContact(t, fmt.Sprintf("p%04d@example.com", i), domain.StatusExcluded, domain.ConsentGranted)
 	}
-	rep := f.sweep(t, domain.StatusExcluded)
+	rep := f.sweep(t)
 	if rep.Checked != n || rep.Changed != n {
 		t.Fatalf("todas las paginas: %+v", rep)
 	}
@@ -143,7 +140,7 @@ func TestBarridoConSuppressionCaido(t *testing.T) {
 	f := newFixture(t)
 	c := f.addContact(t, "caido@example.com", domain.StatusExcluded, domain.ConsentGranted)
 	f.sup.err = errors.New("timeout")
-	if _, err := f.uc.SweepSuppression(context.Background(), f.tenant, domain.StatusExcluded); err == nil {
+	if _, err := f.uc.SweepSuppression(context.Background(), f.tenant); err == nil {
 		t.Fatal("el fallo de suppression se devuelve para reintentar en la siguiente pasada")
 	}
 	if got := f.contact(t, c.ID); got.Status != domain.StatusExcluded || len(f.ev.events) != 0 {

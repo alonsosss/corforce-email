@@ -1,5 +1,5 @@
 // Package nats consume los hechos de suppression que cambian el estado de un contacto:
-// el alta y la retirada de cada causa de exclusion.
+// el alta, la retirada y la caducidad de cada causa de exclusion.
 package nats
 
 import (
@@ -18,8 +18,8 @@ import (
 const (
 	// resolveTimeout acota resolver la base de la empresa y aplicar el cambio.
 	resolveTimeout = 15 * time.Second
-	// subscribeRetry: el stream SUPPRESSION lo declara su dueno; si este servicio
-	// arranca antes, la suscripcion falla y se reintenta sin bloquear el HTTP.
+	// subscribeRetry: main declara el stream SUPPRESSION antes de suscribir; si esa
+	// declaracion fallo, la suscripcion falla y se reintenta sin bloquear el HTTP.
 	subscribeRetry = 10 * time.Second
 	// legacyWarnEvery acota el aviso de eventos sin reasons: en un despliegue escalonado
 	// llegan en rafaga y basta con saber que siguen llegando y cuantos.
@@ -64,6 +64,7 @@ type subscription struct {
 var subscriptions = []subscription{
 	{subject: app.SubjectSuppressionAdded, durable: "contacts-suppression"},
 	{subject: app.SubjectSuppressionRemoved, durable: "contacts-suppression-removed"},
+	{subject: app.SubjectSuppressionExpired, durable: "contacts-suppression-expired"},
 }
 
 type SuppressionWorker struct {

@@ -188,8 +188,11 @@ listado, de la consulta de una exclusion y de la consulta previa a todo envio po
 previa anade ademas `causes: [{reason, created_at}]` (V, 2026-09-13), las mismas causas de
 `reasons` en su orden con la hora de alta de su fila, el reloj de la base de la empresa;
 el listado
-filtra y las estadisticas cuentan por la principal; `suppression.entry.added` y `.removed`
-llevan la causa que entro o salio en `reason` y las vigentes que quedan en `reasons`.
+filtra y las estadisticas cuentan por la principal; `suppression.entry.added`, `.removed` y
+`.expired` llevan la causa que entro, salio o caduco en `reason` y las vigentes que quedan en
+`reasons`; `.expired` lleva ademas `expires_at`, la caducidad anunciada (V, 2026-09-13; ver
+"Caducidad y barrido" mas abajo), y `announced_expires_at` guarda en la fila la caducidad ya
+anunciada (`suppression/04_expiry_announced.sql`).
 Horas de alta y resuscripcion (V, 2026-09-13): `created_at` y `updated_at` tienen DEFAULT
 `clock_timestamp()` desde `suppression/03_clock_timestamp.sql` (las filas existentes no
 cambian), la hora de la sentencia que escribe la fila y no la del inicio de su transaccion,
@@ -254,7 +257,7 @@ opt-in; `contacts.lists`, `contacts.list_members`, `contacts.segments` (el DSL v
 nunca SQL) y `contacts.imports`. El indice parcial `idx_contacts_contacts_sendable
 (tenant_id, id) WHERE status = 'active' AND marketing_consent = 'granted'` sirve la audiencia
 por keyset y la consulta interna de enviables por id. El `status` que implica la supresion
-(V, 2026-09-13) lo decide el consumidor de `suppression.entry.added|removed` con las causas
+(V, 2026-09-13) lo decide el consumidor de `suppression.entry.added|removed|expired` con las causas
 vigentes de la direccion, que lee de `POST /internal/suppression/check` con la fila del
 contacto bloqueada (5 s, un intento; si falla, el evento queda sin confirmar y JetStream lo
 reentrega), no con la causa ni la foto de `reasons` del evento, que puede llegar
@@ -314,20 +317,54 @@ fila existente lo incumple). `GET /contacts/meta` publica `status_details: [{sta
 lifted_by}]` en el orden de `statuses`; la interfaz etiqueta cada estado por su valor y decide
 el tono por `lifted_by`, sin lista de estados propia.
 
-Caducidad y barrido (V, 2026-09-13, `app.SweepSuppression` y `adapters/sweep`): suppression no
-publica nada cuando caduca una exclusion manual (`expires_at` solo se compara al leer), asi que
-contacts barre en segundo plano, cada barrido en una sola replica (cerrojo de lider sobre el
-registro): cada `CONTACTS_EXPIRY_SWEEP_INTERVAL` (5m por defecto, de 1m a 24h) los contactos
-`excluded`, y una vez al dia, `CONTACTS_FULL_SWEEP_AT` despues de la medianoche UTC (4h por
-defecto), todos. Pagina de 500 por id, consulta `POST /internal/suppression/check` en bloque
-(tandas de 500, bajo el tope de 1000 de suppression) y solo al contacto cuyo estado cambiaria
-lo vuelve a decidir con su fila bloqueada y sus causas leidas despues del bloqueo, como un
-evento, publicando `contacts.contact.updated`. Nunca revoca: sin el evento no sabe si una baja
-vigente sobre un `active` es nueva o ya la levanto un reconsentimiento. El barrido completo
-recupera tambien lo que no llego por evento: los contactos que ya tenian una `manual` o
-`invalid` vigente antes de estos estados (siguen `active` hasta la primera pasada completa
-tras el despliegue), los creados o importados antes de que el alta consultara suppression
-(salvo una baja: ver la carrera residual del parrafo siguiente) y los eventos perdidos.
+Caducidad y barrido (V, 2026-09-13; en suppression `app.AnnounceExpired` y `adapters/sweep`, en
+contacts `app.SweepSuppression` y `adapters/sweep`): la caducidad de una exclusion manual la
+anuncia su dueno. Cada `SUPPRESSION_EXPIRY_SWEEP_INTERVAL` (1m por defecto, de 1s a 1h), en una
+sola replica (cerrojo de lider sobre el registro), suppression busca en cada empresa las causas
+con `expires_at` ya pasado y `announced_expires_at` distinto de `expires_at` (indice parcial
+`idx_suppression_entries_expiry_pending`, de `suppression/04_expiry_announced.sql`), en paginas
+de 200 por `(expires_at, id)`, y anuncia cada una en su propia transaccion: bloqueo de la
+direccion, reclamo por `UPDATE ... SET announced_expires_at = expires_at` condicional y
+`suppression.entry.expired` por la outbox, con el payload de `added` y `removed` mas
+`expires_at` en RFC 3339 y UTC. Una transaccion por causa, con el orden de bloqueos de las altas
+y retiradas, para no cruzarse con una carga masiva, que bloquea filas en su propio orden. La
+marca guarda la caducidad anunciada y no un booleano: una manual renovada con otra caducidad, o
+reactivada sin ella, deja de coincidir y la nueva se anuncia cuando caduca, sin que ninguna
+escritura limpie la marca. Es idempotente ante reintentos (sin commit no hay marca ni evento, y
+la siguiente pasada lo repite) y ante replicas (el reclamo reevalua la condicion sobre la version
+confirmada de la fila: solo una lo gana; el cerrojo solo evita trabajo repetido). La vigencia se
+juzga con el reloj del servicio, el mismo con que `POST /internal/suppression/check` decide si la
+causa sigue vigente. La marca mueve `updated_at` de la fila. Las filas anteriores a la migracion
+quedan sin marca, y la primera pasada anuncia las manuales que ya habian caducado (contacts las
+aplica de forma idempotente).
+
+contacts consume `suppression.entry.expired` (durable `contacts-suppression-expired`; declara el
+stream `SUPPRESSION` con `EnsureStream`, con la misma definicion que su dueno) exactamente como
+`suppression.entry.removed`: con la fila del contacto bloqueada y las causas vigentes que lee de
+suppression despues del bloqueo, sin revocar nunca el consentimiento. Sin causa que cuente, el
+`excluded` vuelve a `active` con el consentimiento que tenia; una causa mas nueva (la manual
+renovada, una queja) manda aunque el evento llegue tarde; la reentrega no cambia nada. Un evento
+sin `reasons` levanta como una retirada. El barrido de los `excluded` cada
+`CONTACTS_EXPIRY_SWEEP_INTERVAL` se retiro con este cambio: consultaba suppression por HTTP y su
+coste crecia con los contactos excluidos de todas las empresas. La variable ya no se lee.
+
+Garantias que quedan: el anuncio se entrega al menos una vez (outbox y JetStream, hasta 20
+entregas y despues la DLQ), y lo que no llegue a aplicarse lo corrige el barrido diario de
+contacts, `CONTACTS_FULL_SWEEP_AT` despues de la medianoche UTC (4h por defecto), en una sola
+replica: recorre todos los contactos en paginas de 500 por id, consulta
+`POST /internal/suppression/check` en bloque (tandas de 500, bajo el tope de 1000 de
+suppression) y solo al contacto cuyo estado cambiaria lo vuelve a decidir con su fila bloqueada y
+sus causas leidas despues del bloqueo, como un evento, publicando `contacts.contact.updated`.
+Nunca revoca: sin el evento no sabe si una baja vigente sobre un `active` es nueva o ya la
+levanto un reconsentimiento. Un contacto vuelve a `active` en el intervalo de suppression mas el
+rele de la outbox (2 s) y la entrega; como mucho, en el barrido diario. Riesgo residual: si el
+reloj de la replica de suppression que atiende la consulta de contacts va por detras del de la
+que anuncio en mas que esa latencia, contacts aun ve la manual vigente y el contacto sigue
+`excluded` hasta el barrido diario. El barrido diario recupera tambien lo que nunca tuvo evento:
+los contactos que ya tenian una `manual` o `invalid` vigente antes de estos estados (siguen
+`active` hasta la primera pasada tras el despliegue), los creados o importados antes de que el
+alta consultara suppression (salvo una baja: ver la carrera residual mas abajo) y los eventos
+que agotaron sus entregas.
 
 Alta e importacion (V, 2026-09-13, `app.CreateContact`, `app.Import`,
 `domain.AdmitSuppression` y `domain.ImportMayGrant`): antes de escribir, el alta por API y

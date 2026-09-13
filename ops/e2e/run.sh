@@ -183,6 +183,9 @@ export TRANSACTIONAL_URL="http://127.0.0.1:${PORT[transactional]}" CONTACTS_URL=
 export SES_REGION=us-east-1 SES_CONFIG_SET_TRANSACTIONAL=cfm-transactional SES_CONFIG_SET_MARKETING=cfm-marketing
 export PLATFORM_FROM_EMAIL=no-reply@platform.test PLATFORM_FROM_NAME="Core Force Mail" PLATFORM_FROM_ALLOW_UNVERIFIED=false
 export CAMPAIGNS_TICK=1s
+# El anuncio de caducidades de suppression cada segundo: la prueba de una exclusion manual que
+# caduca espera segundos, no el minuto por defecto.
+export SUPPRESSION_EXPIRY_SWEEP_INTERVAL=1s
 
 # Los servicios de la celda arrancan con SU credencial y sin la de plataforma: un permiso que
 # le falte al rol de la celda hace fallar las comprobaciones del correo de mas abajo.
@@ -447,6 +450,22 @@ expect "la importacion cuenta la baja entre los creados ya excluidos" "$(echo "$
 SEFUE=$(curl -s "$GW/contacts?search=se-fue" -H "$A2")
 expect "y la deja unsubscribed aunque declare consentimiento" "$(echo "$SEFUE" | jget data.0.status)" "unsubscribed"
 [[ "$(echo "$SEFUE" | jget data.0.consent_status)" != granted ]] && ok "sin el consentimiento de la importacion" || mal "la importacion concedio el consentimiento a una baja"
+# Una exclusion manual que caduca: suppression anuncia la caducidad (suppression.entry.expired)
+# y contacts devuelve el contacto a active con su consentimiento, sin barrido propio.
+CADUCA=$(date -u -d '+8 seconds' +%Y-%m-%dT%H:%M:%SZ)
+expect "exclusion manual con caducidad" "$(codigo -X POST "$GW/suppression/entries" -H "$A2" -H 'Content-Type: application/json' \
+  -d "{\"email\":\"temporal@cliente.test\",\"reason\":\"manual\",\"expires_at\":\"$CADUCA\"}")" "201"
+expect "el contacto de esa direccion entra excluded" \
+  "$(curl -s -X POST "$GW/contacts" -H "$A2" -H 'Content-Type: application/json' \
+    -d '{"email":"temporal@cliente.test","source":"api","consent":{"status":"granted","method":"api","source":"e2e"}}' | jget data.status)" "excluded"
+estado=""
+for _ in $(seq 1 60); do
+  estado=$(curl -s "$GW/contacts?search=temporal" -H "$A2" | jget data.0.status)
+  [[ "$estado" == active ]] && break
+  sleep 0.5
+done
+expect "al caducar, el anuncio de suppression lo devuelve a active" "$estado" "active"
+expect "con el consentimiento que tenia" "$(curl -s "$GW/contacts?search=temporal" -H "$A2" | jget data.0.consent_status)" "granted"
 
 echo "== Campanas (campaigns -> contacts -> transactional)"
 CT2=$(curl -s -X POST "$GW/contacts" -H "$A2" -H 'Content-Type: application/json' \

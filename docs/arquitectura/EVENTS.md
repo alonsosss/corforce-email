@@ -6,7 +6,7 @@ Convencion de subject: `<dominio>.<entidad>.<accion>`. Un subject tiene UN dueno
 Publicar incluye encolar en la outbox (`outbox.Enqueue`); un consumidor con comodin
 (`*`, `>`) figura en cada subject publicado que recibe.
 
-Resumen: 76 publicaciones, 32 suscripciones, 76 subjects distintos.
+Resumen: 77 publicaciones, 33 suscripciones, 77 subjects distintos.
 
 ## Cruce por subject (dueno -> consumidores)
 
@@ -76,6 +76,7 @@ Resumen: 76 publicaciones, 32 suscripciones, 76 subjects distintos.
 | `scheduler.job.failed` | scheduler | - |
 | `scheduler.job.started` | scheduler | - |
 | `suppression.entry.added` | suppression | contacts |
+| `suppression.entry.expired` | suppression | contacts |
 | `suppression.entry.removed` | suppression | contacts |
 | `templates.template.published` | templates | - |
 | `transactional.email.bounced` | transactional | analytics, campaigns, reputation, suppression |
@@ -112,7 +113,7 @@ Resumen: 76 publicaciones, 32 suscripciones, 76 subjects distintos.
 
 ### contacts
 - Publica: `contacts.consent.granted`, `contacts.consent.requested`, `contacts.consent.revoked`, `contacts.contact.created`, `contacts.contact.deleted`, `contacts.contact.resubscribed`, `contacts.contact.updated`, `contacts.import.completed`
-- Consume: `suppression.entry.added`, `suppression.entry.removed`
+- Consume: `suppression.entry.added`, `suppression.entry.expired`, `suppression.entry.removed`
 
 ### domain-service
 - Publica: `domains.domain.created`, `domains.domain.deleted`, `domains.domain.dkim_rotated`, `domains.domain.failed`, `domains.domain.verified`
@@ -141,7 +142,7 @@ Resumen: 76 publicaciones, 32 suscripciones, 76 subjects distintos.
 - Publica: `scheduler.job.completed`, `scheduler.job.failed`, `scheduler.job.started`
 
 ### suppression
-- Publica: `suppression.entry.added`, `suppression.entry.removed`
+- Publica: `suppression.entry.added`, `suppression.entry.expired`, `suppression.entry.removed`
 - Consume: `contacts.contact.resubscribed`, `transactional.email.bounced`, `transactional.email.complained`
 
 ### templates

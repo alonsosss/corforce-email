@@ -76,6 +76,7 @@ subject y payload. `opaco` = el payload no se puede leer estaticamente.
 | `scheduler.job.failed` | scheduler | `attempt`, `error`, `execution_id`, `handler`, `job_id`, `reason`, `retry_at`, `retry_execution_id`, `tenant_id` |
 | `scheduler.job.started` | scheduler | `attempt`, `execution_id`, `handler`, `job_id`, `payload`, `tenant_id`, `timeout_seconds` |
 | `suppression.entry.added` | suppression | `email`, `reason`, `reasons`, `source`, `tenant_id` |
+| `suppression.entry.expired` | suppression | `email`, `expires_at`, `reason`, `reasons`, `source`, `tenant_id` |
 | `suppression.entry.removed` | suppression | `email`, `reason`, `reasons`, `source`, `tenant_id` |
 | `templates.template.published` | templates | `template_id`, `tenant_id`, `version` |
 | `transactional.email.bounced` | transactional | `bounce_type`, `campaign_id`, `class`, `contact_id`, `detail`, `email`, `message_id`, `occurred_at`, `tenant_id`, `test` |
@@ -113,6 +114,7 @@ subject y payload. `opaco` = el payload no se puede leer estaticamente.
 | `organization.tenant.created` | billing | `tenant_id` |
 | `organization.tenant.status_changed` | billing | `status`, `tenant_id` |
 | `suppression.entry.added` | contacts | `email`, `reason`, `reasons`, `source`, `tenant_id` |
+| `suppression.entry.expired` | contacts | `email`, `reason`, `reasons`, `source`, `tenant_id` |
 | `suppression.entry.removed` | contacts | `email`, `reason`, `reasons`, `source`, `tenant_id` |
 | `transactional.email.*` | analytics | `bounce_type`, `campaign_id`, `class`, `email`, `message_id`, `occurred_at`, `tenant_id`, `test`, `to` |
 | `transactional.email.>` | campaigns | _opaco_ |

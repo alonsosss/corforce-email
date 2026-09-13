@@ -49,6 +49,21 @@ type EntryRepository interface {
 	Delete(ctx context.Context, tenantID, id uuid.UUID) error
 	// CountByReason cuenta las direcciones con alguna causa vigente por su causa principal.
 	CountByReason(ctx context.Context, tenantID uuid.UUID, now time.Time) ([]domain.ReasonCount, error)
+	// ListExpiryPending devuelve, en orden de (expires_at, id) y despues de after (nil =
+	// desde el principio), hasta limit causas cuya caducidad ya paso en now y aun no se
+	// anuncio. Lee sin bloquear: cada una se reclama despues con ClaimExpiry.
+	ListExpiryPending(ctx context.Context, tenantID uuid.UUID, now time.Time, after *ExpiryCursor, limit int) ([]domain.Entry, error)
+	// ClaimExpiry anota como anunciada la caducidad de la causa id si sigue caducada en now
+	// y sin anunciar, y la devuelve. domain.ErrEntryNotFound si ya no hay nada que anunciar
+	// (otra replica la anuncio, se renovo o se retiro). Solo tiene sentido dentro de
+	// Transact, junto con el evento que la anuncia.
+	ClaimExpiry(ctx context.Context, tenantID, id uuid.UUID, now time.Time) (*domain.Entry, error)
+}
+
+// ExpiryCursor es la posicion del recorrido de ListExpiryPending: la ultima causa leida.
+type ExpiryCursor struct {
+	ExpiresAt time.Time
+	ID        uuid.UUID
 }
 
 // ImportRepository guarda el rastro de las cargas masivas.
@@ -63,9 +78,12 @@ type Transactor interface {
 }
 
 // EventPublisher encola los eventos del dominio. Se llama DENTRO de la transaccion: el
-// evento existe si y solo si el cambio existe (outbox). e es la causa que entro o se
-// retiro; reasons, las causas vigentes que le quedan a la direccion tras el cambio.
+// evento existe si y solo si el cambio existe (outbox). e es la causa que entro, se
+// retiro o caduco; reasons, las causas vigentes que le quedan a la direccion tras el
+// cambio.
 type EventPublisher interface {
 	EntryAdded(ctx context.Context, e *domain.Entry, reasons []domain.Reason) error
 	EntryRemoved(ctx context.Context, e *domain.Entry, reasons []domain.Reason) error
+	// EntryExpired anuncia la caducidad de una manual; e.ExpiresAt es la que caduco.
+	EntryExpired(ctx context.Context, e *domain.Entry, reasons []domain.Reason) error
 }
