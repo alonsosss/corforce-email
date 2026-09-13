@@ -562,7 +562,8 @@ si falta `organization` entre los servicios.
   organization no conoce, 403; celda sin respuesta aplicable, 503 `CELL_UNAVAILABLE`; celda
   sin instancia declarada de ese servicio, 503 `CELL_UNAVAILABLE`.
   `cell_routing_failures_total{service, reason}` con `unknown_tenant`, `unresolved` y
-  `not_served`.
+  `not_served`. Alertas `CeldaSinInstancia` (al primer `not_served`) y
+  `ResolucionDeCeldaFallida` (`unresolved` sostenido; `docs/arquitectura/OBSERVABILIDAD.md`).
 * Arranque: con alguna instancia declarada, `GATEWAY_BASE_CELL_CODE` es obligatorio, con forma
   de codigo de celda y sin repetirse como instancia. Una celda declarada para un servicio de
   celda y no para otro se avisa en el registro; no impide arrancar (una celda puede abrirse
@@ -631,7 +632,8 @@ si falta `organization` entre los servicios.
     `<SERVICIO>_CELL_HOSTS`), o un despliegue sin `GATEWAY_BASE_CELL_CODE`, 503 `CELL_UNAVAILABLE`.
     Ningun rechazo sale hacia una instancia, vuelve a la celda de la empresa ni pregunta a
     organization; `cell_target_refusals_total{reason}` (`not_operator`, `malformed`,
-    `not_cell_service`, `not_served`, nacen a cero). La celda se valida contra las instancias que el
+    `not_cell_service`, `not_served`, nacen a cero; alerta `CeldaDestinoSinSuperadmin` al primer
+    `not_operator`). La celda se valida contra las instancias que el
     gateway tiene, no contra el registro de organization: una celda registrada sin instancia recibe
     503, y una instancia declarada con una celda equivocada la rechaza la propia instancia por su
     `CELL_CODE` (punto siguiente).
@@ -681,7 +683,9 @@ si falta `organization` entre los servicios.
     declarada del servicio no salen hacia ninguna instancia, y un 403 `TENANT_NOT_IN_CELL` de la
     instancia es un error de configuracion. Ninguno cuenta como hecho ni como 404: el paso falla.
     `cell_call_failures_total{service, reason}` (`unresolved`, `unknown_tenant`, `not_served`,
-    `not_in_cell`, nacen a cero) y registro con empresa y celda (nivel error para `not_served` y
+    `not_in_cell`, nacen a cero; alertas `CeldaSinInstancia` y `MapaDeCeldasDesalineado` al primer
+    `not_served` o `not_in_cell`, y `BarridoDeDominiosSinCelda` con `unresolved` en dos barridos
+    seguidos) y registro con empresa y celda (nivel error para `not_served` y
     `not_in_cell`, que son de despliegue). Un circuito de `pkg/httpclient` por instancia: una celda
     caida no corta las llamadas a las demas.
   * Reintento: el estado de un dominio sale solo del DNS, asi que un fallo de celda nunca lo marca

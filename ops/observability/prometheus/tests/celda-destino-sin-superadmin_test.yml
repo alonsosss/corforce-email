@@ -1,0 +1,56 @@
+# Pruebas de la alerta CeldaDestinoSinSuperadmin.
+#
+# Ningun cliente legitimo manda X-Target-Cell sin el rol superadmin: el primer rechazo avisa y
+# el aviso cesa diez minutos despues del ultimo. Los rechazos que sufre un superadmin (celda
+# mal escrita, celda sin instancia) son errores suyos y no avisan.
+#
+#   make check-alertas
+
+rule_files:
+  - ../rules/plataforma.yml
+
+evaluation_interval: 1m
+
+tests:
+  # ── Sin intentos: el contador nace a cero y no se mueve ───────────────────
+  - interval: 1m
+    input_series:
+      - series: 'cell_target_refusals_total{job="mail-services",service="gateway",reason="not_operator"}'
+        values: '0x60'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: CeldaDestinoSinSuperadmin
+        exp_alerts: []
+
+  # ── Un solo intento avisa, y el aviso cesa diez minutos despues ───────────
+  - interval: 1m
+    input_series:
+      - series: 'cell_target_refusals_total{job="mail-services",service="gateway",reason="not_operator"}'
+        values: '0x10 1x50'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: CeldaDestinoSinSuperadmin
+        exp_alerts:
+          - exp_labels:
+              severidad: alta
+              service: gateway
+            exp_annotations:
+              resumen: "Una sesion sin rol superadmin intento operar otra celda con X-Target-Cell"
+              detalle: "El gateway la rechazo con 403 TARGET_CELL_FORBIDDEN sin enviarla a ninguna celda. Ningun cliente legitimo manda esa cabecera sin el rol superadmin: el registro del gateway (celda destino rechazada, not_operator) y el rastro de auditoria (target_cell) dicen que cuenta, de que empresa y en que ruta. Si no tiene explicacion, revocar sus sesiones."
+      - eval_time: 40m
+        alertname: CeldaDestinoSinSuperadmin
+        exp_alerts: []
+
+  # ── Rechazos de un superadmin: no avisan ──────────────────────────────────
+  - interval: 1m
+    input_series:
+      - series: 'cell_target_refusals_total{job="mail-services",service="gateway",reason="malformed"}'
+        values: '0+1x60'
+      - series: 'cell_target_refusals_total{job="mail-services",service="gateway",reason="not_served"}'
+        values: '0+1x60'
+      - series: 'cell_target_refusals_total{job="mail-services",service="gateway",reason="not_operator"}'
+        values: '0x60'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: CeldaDestinoSinSuperadmin
+        exp_alerts: []

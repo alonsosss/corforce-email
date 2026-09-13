@@ -1,0 +1,57 @@
+# Pruebas de la alerta MapaDeCeldasDesalineado.
+#
+# Que una instancia de celda responda TENANT_NOT_IN_CELL a domain-service significa que su mapa
+# de celdas no casa con el de la instancia: avisa en el primer rechazo y deja de avisar diez
+# minutos despues del ultimo. Los demas motivos no son este problema.
+#
+#   make check-alertas
+
+rule_files:
+  - ../rules/plataforma.yml
+
+evaluation_interval: 1m
+
+tests:
+  # ── Sin rechazos: el contador nace a cero y no se mueve ───────────────────
+  - interval: 1m
+    input_series:
+      - series: 'cell_call_failures_total{job="mail-services",service="domain-service",exported_service="mail-security",reason="not_in_cell"}'
+        values: '0x60'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: MapaDeCeldasDesalineado
+        exp_alerts: []
+
+  # ── Un solo rechazo avisa, y el aviso cesa diez minutos despues ───────────
+  - interval: 1m
+    input_series:
+      - series: 'cell_call_failures_total{job="mail-services",service="domain-service",exported_service="mail-security",reason="not_in_cell"}'
+        values: '0x10 1x50'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: MapaDeCeldasDesalineado
+        exp_alerts:
+          - exp_labels:
+              severidad: alta
+              service: domain-service
+              exported_service: mail-security
+            exp_annotations:
+              resumen: "domain-service envia empresas a una instancia de mail-security que no es de su celda"
+              detalle: "La instancia respondio 403 TENANT_NOT_IN_CELL y no se escribio nada, pero los pasos de dominios y DKIM de esa empresa fallan hasta corregirlo. Comparar GATEWAY_BASE_CELL_CODE, <SERVICIO>_CELL_HOSTS y los destinos base (MAIL_DIRECTORY_URL, MAIL_SECURITY_URL) de domain-service con los del gateway y con el CELL_CODE y ORGANIZATION_URL de cada instancia; el registro de domain-service nombra la empresa y la celda."
+      - eval_time: 40m
+        alertname: MapaDeCeldasDesalineado
+        exp_alerts: []
+
+  # ── Otros motivos: sin celda resuelta o celda sin instancia ───────────────
+  - interval: 1m
+    input_series:
+      - series: 'cell_call_failures_total{job="mail-services",service="domain-service",exported_service="mail-directory",reason="unresolved"}'
+        values: '0+2x60'
+      - series: 'cell_call_failures_total{job="mail-services",service="domain-service",exported_service="mail-directory",reason="not_served"}'
+        values: '0+1x60'
+      - series: 'cell_call_failures_total{job="mail-services",service="domain-service",exported_service="mail-directory",reason="not_in_cell"}'
+        values: '0x60'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: MapaDeCeldasDesalineado
+        exp_alerts: []

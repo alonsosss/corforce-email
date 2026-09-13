@@ -348,3 +348,84 @@ groups:
         annotations:
           resumen: "{{ $labels.service }} rechaza peticiones de empresas de otra celda"
           detalle: "Una empresa de otra celda llego a esta instancia y recibio 403 TENANT_NOT_IN_CELL. Revisar GATEWAY_BASE_CELL_CODE y <SERVICIO>_CELL_HOSTS del gateway y las URL de servicio de celda de quien llama (domain-service), y el registro del servicio (tenant_id y tenant_cell)."
+
+      # cell_routing_failures_total (gateway) y cell_call_failures_total (domain-service) llevan
+      # el servicio de celda de destino en su propia etiqueta 'service', que choca con la que el
+      # recolector pone al objetivo: Prometheus la guarda como 'exported_service' (comprobado
+      # con v3.1.0). En las reglas siguientes 'service' es quien no pudo llamar y
+      # 'exported_service', a que servicio.
+      #
+      # Una celda sin instancia declarada de un servicio es un error de despliegue que no se
+      # corrige solo: la empresa no llega a ninguna instancia. Avisa al primer fallo. El gateway
+      # no crea la serie hasta su primer fallo y un contador que nace ya en 1 no da increase():
+      # el segundo termino caza la serie que hace diez minutos no existia. Tras reiniciar
+      # Prometheus puede repetir un fallo anterior del mismo proceso, cuya configuracion, que
+      # sale del entorno, sigue siendo la que fallo.
+      - alert: CeldaSinInstancia
+        expr: |
+          sum by (service, exported_service) (increase(cell_routing_failures_total{reason="not_served"}[10m])) > 0
+            or sum by (service, exported_service) (
+                 cell_routing_failures_total{reason="not_served"} > 0
+                   unless cell_routing_failures_total{reason="not_served"} offset 10m)
+            or sum by (service, exported_service) (increase(cell_call_failures_total{reason="not_served"}[10m])) > 0
+        labels:
+          severidad: alta
+        annotations:
+          resumen: "{{ $labels.service }} no encuentra instancia de {{ $labels.exported_service }} en la celda de una empresa"
+          detalle: "Esa celda no tiene instancia declarada de {{ $labels.exported_service }}: por el gateway sus empresas reciben 503 CELL_UNAVAILABLE y en domain-service su activacion de dominios y su entrega DKIM fallan en cada barrido. Declararla en <SERVICIO>_CELL_HOSTS, junto a GATEWAY_BASE_CELL_CODE, en el gateway y en domain-service, que leen las mismas variables; el registro de {{ $labels.service }} nombra la empresa y la celda."
+
+      # domain-service elige la instancia de cada empresa con las mismas variables que el
+      # gateway. Si la instancia responde TENANT_NOT_IN_CELL, su mapa de celdas no casa con el
+      # CELL_CODE de la instancia: deriva de configuracion que no se corrige sola, al primer
+      # rechazo. Si la instancia lo cuenta como foreign_tenant, EmpresaEnCeldaAjena suena a la
+      # vez; esta dice quien la envio.
+      - alert: MapaDeCeldasDesalineado
+        expr: sum by (service, exported_service) (increase(cell_call_failures_total{reason="not_in_cell"}[10m])) > 0
+        labels:
+          severidad: alta
+        annotations:
+          resumen: "{{ $labels.service }} envia empresas a una instancia de {{ $labels.exported_service }} que no es de su celda"
+          detalle: "La instancia respondio 403 TENANT_NOT_IN_CELL y no se escribio nada, pero los pasos de dominios y DKIM de esa empresa fallan hasta corregirlo. Comparar GATEWAY_BASE_CELL_CODE, <SERVICIO>_CELL_HOSTS y los destinos base (MAIL_DIRECTORY_URL, MAIL_SECURITY_URL) de {{ $labels.service }} con los del gateway y con el CELL_CODE y ORGANIZATION_URL de cada instancia; el registro de {{ $labels.service }} nombra la empresa y la celda."
+
+      # Sin respuesta de organization el gateway sirve la ultima celda conocida hasta una hora
+      # despues de caducar (pkg/tenantcell): un reinicio o un corte breve solo falla a las
+      # empresas sin cache y a quien corta la peticion durante la consulta. Con ventana de diez
+      # minutos y quince de espera avisa cuando los fallos duran mas de cinco, mas que un
+      # despliegue de organization, y tolera huecos de diez minutos entre peticiones de empresas
+      # sin cache, que con poco trafico son escasas.
+      - alert: ResolucionDeCeldaFallida
+        expr: sum by (service, exported_service) (increase(cell_routing_failures_total{reason="unresolved"}[10m])) > 0
+        for: 15m
+        labels:
+          severidad: alta
+        annotations:
+          resumen: "{{ $labels.service }} no obtiene de organization la celda de las empresas para {{ $labels.exported_service }}"
+          detalle: "Fallos sostenidos al resolver la celda: las empresas sin celda en cache reciben 503 CELL_UNAVAILABLE y, una hora despues de caducar su ultima respuesta, todas. Revisar organization (ServicioCaido), ORGANIZATION_HOST y el token interno del gateway y la red entre los dos; cell_resolution_stale_total cuenta las resoluciones servidas con la ultima celda conocida."
+
+      # domain-service no llama de forma continua: un barrido cada DOMAIN_RECHECK_INTERVAL (6 h
+      # por defecto) y las acciones de las personas. De un barrido al siguiente su cache ya ha
+      # caducado, asi que un corte de organization durante uno falla sus pasos, que el siguiente
+      # repite: un barrido fallido no avisa. La ventana supera el intervalo y la espera supera
+      # la ventana: avisa con fallos en dos barridos seguidos o sostenidos mas de media hora. Si
+      # se alarga DOMAIN_RECHECK_INTERVAL hay que alargar las dos.
+      - alert: BarridoDeDominiosSinCelda
+        expr: sum by (service, exported_service) (increase(cell_call_failures_total{reason="unresolved"}[6h30m])) > 0
+        for: 7h
+        labels:
+          severidad: media
+        annotations:
+          resumen: "{{ $labels.service }} no obtiene de organization la celda de las empresas en barridos seguidos para {{ $labels.exported_service }}"
+          detalle: "Sin la celda no sale ninguna llamada: la activacion de dominios, la entrega y retirada de claves DKIM y las desactivaciones pendientes esperan al barrido siguiente, y las verificaciones de las personas devuelven integration_errors. Revisar organization, ORGANIZATION_URL y el token interno de domain-service y la red entre los dos."
+
+      # Solo el superadmin nombra otra celda en X-Target-Cell y ningun cliente legitimo la
+      # manda sin ese rol (la web no la manda nunca): el rechazo es alguien con una sesion
+      # valida de una empresa tanteando el aislamiento entre celdas, o una sesion robada. El
+      # gateway respondio 403 sin salir hacia ninguna celda, pero hay una cuenta que revisar:
+      # al primer intento y con severidad alta.
+      - alert: CeldaDestinoSinSuperadmin
+        expr: sum by (service) (increase(cell_target_refusals_total{reason="not_operator"}[10m])) > 0
+        labels:
+          severidad: alta
+        annotations:
+          resumen: "Una sesion sin rol superadmin intento operar otra celda con X-Target-Cell"
+          detalle: "El gateway la rechazo con 403 TARGET_CELL_FORBIDDEN sin enviarla a ninguna celda. Ningun cliente legitimo manda esa cabecera sin el rol superadmin: el registro del gateway (celda destino rechazada, not_operator) y el rastro de auditoria (target_cell) dicen que cuenta, de que empresa y en que ruta. Si no tiene explicacion, revocar sus sesiones."

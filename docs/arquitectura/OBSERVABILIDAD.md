@@ -21,11 +21,16 @@ Cada servicio expone `/metrics` en su propio puerto, en formato Prometheus:
 | `pgx_pool_acquire_waits_total` | Veces que una peticion espero conexion libre: el aviso temprano del agotamiento. |
 | `rbac_denials_total{module,action,enforced}` | Escrituras denegadas por el control de acceso (solo en el gateway). |
 | `rate_limit_degraded_total{limiter}` | Decisiones de un limitador compartido (`gateway:api`, `gateway:auth`) tomadas en memoria del proceso porque Redis no respondia: mientras crece, cada replica aplica su propio cupo (`docs/arquitectura/CSP-Y-SESION.md`). |
+| `cell_routing_failures_total`, `cell_call_failures_total`, `cell_target_refusals_total`, `cell_membership_refusals_total`, `cell_resolution_stale_total` | Enrutado por celda: peticiones que el gateway o domain-service no enviaron a ninguna celda, celdas destino rechazadas, empresas que una instancia rechazo y resoluciones servidas con la ultima celda conocida (`Modelo_de_Datos_y_Celdas.md`, 5.4). |
 | `go_*`, `process_*` | Memoria, goroutines, arranques del proceso (detecta reinicios en bucle). |
 
 La identidad del servicio **no** viaja dentro de la metrica: la aporta el recolector desde
 la definicion del objetivo. Es la convencion de Prometheus y evita que la etiqueta se
-duplique como `exported_service`.
+duplique como `exported_service`. Hay una excepcion: `cell_routing_failures_total` y
+`cell_call_failures_total` llevan en su propia etiqueta `service` el servicio de celda de
+destino, que choca con la del objetivo, y Prometheus la guarda como `exported_service`
+(comprobado con v3.1.0). Asi la leen las alertas de celdas: `service` es quien llama y
+`exported_service`, a que servicio.
 
 ## Como queda instrumentado un servicio
 
@@ -99,10 +104,31 @@ entraba al monitoreo, y sin ningun error — simplemente no aparecia.
 
 ## Alertas
 
-Las reglas viven en `ops/observability/prometheus/rules/plataforma.yml` y cubren cinco
-familias: disponibilidad (servicio caido, reinicios en bucle), trafico (errores 5xx,
-latencia), base de datos (pool al limite, esperas), seguridad (pico de denegaciones RBAC) y
-host (disco, memoria, CPU).
+Las reglas viven en `ops/observability/prometheus/rules/plataforma.yml`, agrupadas por
+familia: disponibilidad (servicio caido, reinicios en bucle), version desplegada (imagen
+compilada en el servidor), trafico (errores 5xx, latencia), base de datos (pool al limite,
+esperas), seguridad (pico de denegaciones RBAC), host (disco, memoria, CPU, robo de CPU, swap),
+chat, vigilancia del propio aviso, parcheado del host, limites de peticiones (limitador sin
+Redis) y celdas (abajo).
+
+Una alerta mal escrita no falla: se queda callada. Las reglas nuevas llevan su prueba de
+promtool en `ops/observability/prometheus/tests/<alerta>_test.yml`, que `make check-alertas`
+(dentro de `make checks`) ejecuta con la misma imagen de Prometheus que produccion.
+
+### Celdas
+
+Salvo `EmpresaEnCeldaAjena`, que la emiten las instancias de celda, las emiten el gateway y
+domain-service. Las esperas separan lo que es un error de despliegue, que no se corrige solo y
+avisa al primer caso, de lo que puede ser un corte breve de organization.
+
+| Alerta | Cuando | Espera | Severidad | Por que |
+|---|---|---|---|---|
+| `EmpresaEnCeldaAjena` | sube `cell_membership_refusals_total{reason="foreign_tenant"}` | ninguna | alta | Una empresa llego a la instancia de otra celda: enrutado del gateway o URL de un servicio de celda mal desplegados. |
+| `CeldaSinInstancia` | sube `not_served` en `cell_routing_failures_total` (gateway) o `cell_call_failures_total` (domain-service) | ninguna | alta | La celda de la empresa no tiene instancia declarada del servicio. El gateway crea la serie en su primer fallo, que nace en 1 y no da `increase()`: la regla detecta tambien la serie nueva. |
+| `MapaDeCeldasDesalineado` | sube `cell_call_failures_total{reason="not_in_cell"}` | ninguna | alta | La instancia elegida por domain-service rechaza a la empresa: su mapa de celdas no casa con el `CELL_CODE` de la instancia. |
+| `ResolucionDeCeldaFallida` | `cell_routing_failures_total{reason="unresolved"}` sube en cada ventana de 10 min | 15 min | alta | El gateway sirve la ultima celda conocida hasta una hora despues de caducar: solo fallan las empresas sin cache, y un corte de menos de cinco minutos no avisa. |
+| `BarridoDeDominiosSinCelda` | `cell_call_failures_total{reason="unresolved"}` sube en cada ventana de 6 h 30 min | 7 h | media | domain-service llama en barridos (`DOMAIN_RECHECK_INTERVAL`, 6 h) y un barrido fallido se repite en el siguiente: avisa con dos seguidos. La ventana debe superar el intervalo y la espera, la ventana. |
+| `CeldaDestinoSinSuperadmin` | sube `cell_target_refusals_total{reason="not_operator"}` | ninguna | alta | Ningun cliente legitimo manda `X-Target-Cell` sin el rol superadmin: alguien con una sesion valida tantea el aislamiento entre celdas. |
 
 ### Entrega de las alertas
 

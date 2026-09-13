@@ -1,0 +1,62 @@
+# Pruebas de la alerta BarridoDeDominiosSinCelda.
+#
+# domain-service llama a las celdas en un barrido cada DOMAIN_RECHECK_INTERVAL (6 h por
+# defecto): sus fallos llegan en rafagas separadas por horas, no de forma continua. Un barrido
+# que falla porque organization no respondio se repite en el siguiente y no debe avisar; dos
+# barridos seguidos sin celda si. Las muestras van cada diez minutos.
+#
+#   make check-alertas
+
+rule_files:
+  - ../rules/plataforma.yml
+
+evaluation_interval: 1m
+
+tests:
+  # ── Barridos sanos ────────────────────────────────────────────────────────
+  - interval: 10m
+    input_series:
+      - series: 'cell_call_failures_total{job="mail-services",service="domain-service",exported_service="mail-directory",reason="unresolved"}'
+        values: '0x80'
+    alert_rule_test:
+      - eval_time: 8h
+        alertname: BarridoDeDominiosSinCelda
+        exp_alerts: []
+
+  # ── Un solo barrido fallido: el siguiente lo repite ───────────────────────
+  - interval: 10m
+    input_series:
+      - series: 'cell_call_failures_total{job="mail-services",service="domain-service",exported_service="mail-directory",reason="unresolved"}'
+        values: '0 3x80'
+    alert_rule_test:
+      - eval_time: 7h20m
+        alertname: BarridoDeDominiosSinCelda
+        exp_alerts: []
+      - eval_time: 12h
+        alertname: BarridoDeDominiosSinCelda
+        exp_alerts: []
+
+  # ── Dos barridos seguidos, a los 10 min y a las 6 h 10 min ────────────────
+  - interval: 10m
+    input_series:
+      - series: 'cell_call_failures_total{job="mail-services",service="domain-service",exported_service="mail-security",reason="unresolved"}'
+        values: '0 3x35 6x40'
+    alert_rule_test:
+      # Ya fallo el segundo, pero la espera no se ha cumplido.
+      - eval_time: 6h50m
+        alertname: BarridoDeDominiosSinCelda
+        exp_alerts: []
+      - eval_time: 7h20m
+        alertname: BarridoDeDominiosSinCelda
+        exp_alerts:
+          - exp_labels:
+              severidad: media
+              service: domain-service
+              exported_service: mail-security
+            exp_annotations:
+              resumen: "domain-service no obtiene de organization la celda de las empresas en barridos seguidos para mail-security"
+              detalle: "Sin la celda no sale ninguna llamada: la activacion de dominios, la entrega y retirada de claves DKIM y las desactivaciones pendientes esperan al barrido siguiente, y las verificaciones de las personas devuelven integration_errors. Revisar organization, ORGANIZATION_URL y el token interno de domain-service y la red entre los dos."
+      # Sin un tercer fallo, la alerta cesa cuando el segundo sale de la ventana.
+      - eval_time: 13h
+        alertname: BarridoDeDominiosSinCelda
+        exp_alerts: []

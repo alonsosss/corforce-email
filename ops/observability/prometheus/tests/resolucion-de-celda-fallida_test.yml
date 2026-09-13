@@ -1,0 +1,59 @@
+# Pruebas de la alerta ResolucionDeCeldaFallida.
+#
+# Con organization sin responder el gateway sirve la ultima celda conocida hasta una hora
+# despues de caducar: un corte breve solo falla a las empresas sin cache y no debe avisar. La
+# prueba comprueba que un corte de dos minutos no molesta, que los fallos sostenidos avisan
+# pasado el cuarto de hora con el servicio de destino en el texto, y que antes de eso la alerta
+# solo esta en espera. El gateway no crea la serie hasta el primer fallo.
+#
+#   make check-alertas
+
+rule_files:
+  - ../rules/plataforma.yml
+
+evaluation_interval: 1m
+
+tests:
+  # ── Corte de dos minutos de organization: la cache lo absorbe ─────────────
+  - interval: 1m
+    input_series:
+      - series: 'cell_routing_failures_total{job="mail-services",service="gateway",exported_service="mail-directory",reason="unresolved"}'
+        values: '_x10 1+3x2 7x47'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: ResolucionDeCeldaFallida
+        exp_alerts: []
+      - eval_time: 40m
+        alertname: ResolucionDeCeldaFallida
+        exp_alerts: []
+
+  # ── organization inalcanzable desde el gateway: fallos en cada minuto ─────
+  - interval: 1m
+    input_series:
+      - series: 'cell_routing_failures_total{job="mail-services",service="gateway",exported_service="mail-directory",reason="unresolved"}'
+        values: '_x5 1+2x55'
+    alert_rule_test:
+      # Diez minutos de fallos: en espera, no disparada.
+      - eval_time: 16m
+        alertname: ResolucionDeCeldaFallida
+        exp_alerts: []
+      - eval_time: 25m
+        alertname: ResolucionDeCeldaFallida
+        exp_alerts:
+          - exp_labels:
+              severidad: alta
+              service: gateway
+              exported_service: mail-directory
+            exp_annotations:
+              resumen: "gateway no obtiene de organization la celda de las empresas para mail-directory"
+              detalle: "Fallos sostenidos al resolver la celda: las empresas sin celda en cache reciben 503 CELL_UNAVAILABLE y, una hora despues de caducar su ultima respuesta, todas. Revisar organization (ServicioCaido), ORGANIZATION_HOST y el token interno del gateway y la red entre los dos; cell_resolution_stale_total cuenta las resoluciones servidas con la ultima celda conocida."
+
+  # ── Empresas desconocidas: no es un fallo de resolucion ───────────────────
+  - interval: 1m
+    input_series:
+      - series: 'cell_routing_failures_total{job="mail-services",service="gateway",exported_service="mail-security",reason="unknown_tenant"}'
+        values: '_x5 1+2x55'
+    alert_rule_test:
+      - eval_time: 40m
+        alertname: ResolucionDeCeldaFallida
+        exp_alerts: []
