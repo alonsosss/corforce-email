@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -10,27 +11,60 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/alonsosss/corforce-email/pkg/middleware"
+	"github.com/alonsosss/corforce-email/pkg/response"
 	"github.com/go-chi/chi/v5"
+	"github.com/prometheus/client_golang/prometheus"
+	"go.uber.org/zap"
 )
 
-// Rutas publicas por celda.
+// Enrutado por celda.
 //
-// Un servicio de celda (mail-security) se despliega una vez por celda y solo atiende a las
-// empresas de la suya. Un enlace que llega por correo sin sesion lleva la celda como segmento
+// Un servicio de celda (cell_hosts_env en routes.json) se despliega una vez por celda y solo
+// atiende a las empresas de la suya: TODA ruta suya se enruta por celda, y la validacion de la
+// tabla impide declararle una que no se pueda.
+//
+// Rutas con sesion: la celda es la de la empresa del token, que resuelve organization
+// (cellresolver.go). El destino base (<SERVICIO>_HOST) sirve la celda GATEWAY_BASE_CELL_CODE y
+// <SERVICIO>_CELL_HOSTS las demas; una empresa de una celda sin instancia declarada, o cuya
+// celda no se puede resolver, recibe 503 y no sale hacia ninguna instancia. Sin
+// GATEWAY_BASE_CELL_CODE ni instancias declaradas el despliegue es de una celda y todo va al
+// destino base sin preguntar a nadie.
+//
+// Rutas publicas: un enlace que llega por correo sin sesion lleva la celda como segmento
 // {cell} de la ruta, SIN firmar: el gateway enruta por el y no verifica nada, asi que no
 // recibe la clave de los enlaces. La firma del enlace incluye la celda y la comprueba el
 // servicio de destino: un segmento cambiado lleva el enlace a una celda que lo rechaza.
-//
-// Cualquier segmento que no sea una celda declarada va al destino base del servicio (la
-// celda por defecto), que lo rechaza con la misma respuesta que a una firma alterada: el
-// gateway no responde nada propio y no sirve para averiguar que celdas existen.
+// Cualquier segmento que no sea una celda declarada va al destino base, que lo rechaza con la
+// misma respuesta que a una firma alterada: el gateway no responde nada propio y no sirve para
+// averiguar que celdas existen.
 
-const cellParam = "cell"
+const (
+	cellParam = "cell"
+	// baseCellEnv nombra la celda que sirven los destinos base de los servicios de celda.
+	baseCellEnv = "GATEWAY_BASE_CELL_CODE"
+	// cellDirectoryService es el servicio que sabe en que celda vive cada empresa.
+	cellDirectoryService = "organization"
+)
 
 // Codigo de celda: el mismo formato que admite organization al darla de alta.
 var cellCodeRe = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
 
 const maxCellCodeLen = 63
+
+func validCellCode(code string) bool {
+	return len(code) <= maxCellCodeLen && cellCodeRe.MatchString(code)
+}
+
+// cellRoutingFailures cuenta las peticiones con sesion que no salieron hacia ninguna celda.
+// reason: unresolved (organization no dio la celda), unknown_tenant (la empresa no existe) o
+// not_served (la celda no tiene instancia declarada de ese servicio: error de despliegue).
+var cellRoutingFailures = prometheus.NewCounterVec(prometheus.CounterOpts{
+	Name: "cell_routing_failures_total",
+	Help: "Peticiones con sesion a un servicio de celda que el gateway no envio a ninguna celda.",
+}, []string{"service", "reason"})
+
+func init() { prometheus.MustRegister(cellRoutingFailures) }
 
 // cellSegment dice si la ruta lleva {cell} como segmento entero.
 func cellSegment(path string) bool {
@@ -45,10 +79,11 @@ func cellSegment(path string) bool {
 // validateCellHostsEnv: la variable de instancias por celda tiene forma de variable, es de
 // un solo servicio y no pisa el host ni el puerto de ninguno.
 func (t *routeTable) validateCellHostsEnv() error {
-	taken := make(map[string]bool, 2*len(t.Services))
+	taken := make(map[string]bool, 2*len(t.Services)+1)
 	for _, s := range t.Services {
 		taken[s.HostEnv], taken[s.HostEnv+"_PORT"] = true, true
 	}
+	taken[baseCellEnv] = true
 	seen := map[string]string{}
 	for name, s := range t.Services {
 		if s.CellHostsEnv == "" {
@@ -83,37 +118,80 @@ func (t *routeTable) validatePublicCell(p publicRouteSpec) error {
 	return nil
 }
 
-// validateCellServicesRouted: declarar cell_hosts_env sin ninguna ruta con {cell} no
-// enrutaria nada por celda y dejaria una variable que nadie lee.
-func (t *routeTable) validateCellServicesRouted() error {
+// validateCellServices: un servicio de celda tiene alguna ruta, y todas se pueden enrutar por
+// celda (con sesion, por la empresa; publicas, por {cell}). Un prefijo que autentica el propio
+// servicio o el frontend no llevan ni empresa verificada ni celda en la ruta: irian siempre al
+// destino base, que es otra celda para las empresas de las demas.
+func (t *routeTable) validateCellServices() error {
 	routed := map[string]bool{}
+	for _, r := range t.Routes {
+		routed[r.Service] = true
+	}
 	for _, p := range t.Public {
 		if cellSegment(p.Path) {
 			routed[p.Service] = true
 		}
 	}
+	for _, s := range t.SelfAuthenticated {
+		if t.Services[s.Service].CellHostsEnv != "" {
+			return fmt.Errorf("tabla de rutas: el prefijo autenticado por el servicio %q apunta al servicio de celda %q, que el gateway no sabe enrutar por celda", s.Prefix, s.Service)
+		}
+	}
+	if t.Frontend != "" && t.Services[t.Frontend].CellHostsEnv != "" {
+		return fmt.Errorf("tabla de rutas: el frontend %q no puede ser un servicio de celda", t.Frontend)
+	}
+	if _, ok := t.Services[cellDirectoryService]; !ok {
+		for name, s := range t.Services {
+			if s.CellHostsEnv != "" {
+				return fmt.Errorf("tabla de rutas: el servicio de celda %q necesita %q en services para resolver la celda de cada empresa", name, cellDirectoryService)
+			}
+		}
+	}
 	for name, s := range t.Services {
 		if s.CellHostsEnv != "" && !routed[name] {
-			return fmt.Errorf("tabla de rutas: %q declara cell_hosts_env sin ninguna ruta publica con {%s}", name, cellParam)
+			return fmt.Errorf("tabla de rutas: %q declara cell_hosts_env sin ninguna ruta con sesion ni publica con {%s}", name, cellParam)
 		}
 	}
 	return nil
 }
 
-// loadCellTargets lee del entorno las instancias por celda de cada servicio de celda. Una
-// entrada mal formada impide arrancar.
+// loadCellTargets lee del entorno las instancias por celda de cada servicio de celda y la
+// celda de los destinos base. Una entrada mal formada, instancias sin celda base o la celda
+// base declarada tambien como instancia impiden arrancar.
 func (t *routeTable) loadCellTargets() error {
 	t.cellTargets = map[string]map[string]string{}
+	var envs []string
+	declared := false
 	for name, s := range t.Services {
 		if s.CellHostsEnv == "" {
 			continue
 		}
+		envs = append(envs, s.CellHostsEnv)
 		targets, err := parseCellHosts(s.CellHostsEnv, os.Getenv(s.CellHostsEnv))
 		if err != nil {
 			return err
 		}
 		t.cellTargets[name] = targets
+		declared = declared || len(targets) > 0
 	}
+	sort.Strings(envs)
+
+	base := strings.TrimSpace(os.Getenv(baseCellEnv))
+	switch {
+	case base == "" && declared:
+		return fmt.Errorf("%s es obligatorio cuando %s declaran instancias: sin el no se sabe que celda sirven los destinos base", baseCellEnv, strings.Join(envs, " o "))
+	case base == "":
+		return nil
+	case !validCellCode(base):
+		return fmt.Errorf("%s: %q no es un codigo de celda", baseCellEnv, base)
+	}
+	for name, targets := range t.cellTargets {
+		if _, dup := targets[base]; dup {
+			return fmt.Errorf("%s: la celda %q es la de los destinos base (%s) y no se declara tambien como instancia de %q",
+				t.Services[name].CellHostsEnv, base, baseCellEnv, name)
+		}
+	}
+	t.baseCell = base
 	return nil
 }
 
@@ -131,6 +209,33 @@ func (t *routeTable) cellCodes() map[string][]string {
 	return out
 }
 
+// cellCoverageGaps devuelve, por servicio de celda, las celdas que otro servicio de celda
+// declara y el no. No impide arrancar (una celda puede abrirse servicio a servicio), pero sus
+// empresas reciben 503 en ese servicio hasta que se declare.
+func (t *routeTable) cellCoverageGaps() map[string][]string {
+	all := map[string]bool{}
+	for _, targets := range t.cellTargets {
+		for code := range targets {
+			all[code] = true
+		}
+	}
+	gaps := map[string][]string{}
+	for name, targets := range t.cellTargets {
+		for code := range all {
+			if _, ok := targets[code]; !ok {
+				gaps[name] = append(gaps[name], code)
+			}
+		}
+		sort.Strings(gaps[name])
+	}
+	for name, missing := range gaps {
+		if len(missing) == 0 {
+			delete(gaps, name)
+		}
+	}
+	return gaps
+}
+
 // parseCellHosts interpreta "celda=host:puerto" separados por comas. Vacia no declara
 // ninguna instancia por celda.
 func parseCellHosts(envName, raw string) (map[string]string, error) {
@@ -141,7 +246,7 @@ func parseCellHosts(envName, raw string) (map[string]string, error) {
 	for _, entry := range strings.Split(raw, ",") {
 		code, hostport, ok := strings.Cut(strings.TrimSpace(entry), "=")
 		code, hostport = strings.TrimSpace(code), strings.TrimSpace(hostport)
-		if !ok || len(code) > maxCellCodeLen || !cellCodeRe.MatchString(code) {
+		if !ok || !validCellCode(code) {
 			return nil, fmt.Errorf("%s: entrada %q: se espera celda=host:puerto con el codigo de la celda", envName, entry)
 		}
 		if _, dup := out[code]; dup {
@@ -201,4 +306,65 @@ func mountPublic(r chi.Router, t *routeTable, internalToken string) {
 		}
 		r.Method(p.Method, p.Path, h)
 	}
+}
+
+// sessionHandlers devuelve, por servicio, el manejador final de sus rutas con sesion: su
+// destino base o, para un servicio de celda con el enrutado por celda activo
+// (GATEWAY_BASE_CELL_CODE), el que elige la instancia por la celda de la empresa. cells es
+// nil exactamente cuando no hay celda base.
+func sessionHandlers(t *routeTable, internalToken string, cells *cellResolver, logger *zap.Logger) map[string]http.Handler {
+	out := make(map[string]http.Handler, len(t.Services))
+	for name, s := range t.Services {
+		base := reverseProxy(t.serviceURL(name), internalToken)
+		if s.CellHostsEnv == "" || cells == nil {
+			out[name] = base
+			continue
+		}
+		byCell := map[string]http.Handler{t.baseCell: base}
+		for code, target := range t.cellTargets[name] {
+			byCell[code] = reverseProxy(target, internalToken)
+		}
+		out[name] = tenantCellRouter{service: name, byCell: byCell, cells: cells, logger: logger}
+	}
+	return out
+}
+
+// tenantCellRouter lleva una peticion con sesion a la instancia de la celda de su empresa.
+// Va al final de la cadena, despues de la sesion y del RBAC: una peticion denegada no llega
+// a preguntar la celda.
+type tenantCellRouter struct {
+	service string
+	byCell  map[string]http.Handler
+	cells   *cellResolver
+	logger  *zap.Logger
+}
+
+func (c tenantCellRouter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	tenantID := middleware.GetTenantID(r.Context())
+	cell, err := c.cells.cellOf(r.Context(), tenantID)
+	if err != nil {
+		if errors.Is(err, errUnknownTenant) {
+			c.refuse(w, "unknown_tenant", tenantID, "")
+			response.Err(w, http.StatusForbidden, "FORBIDDEN", "la sesion no corresponde a ninguna empresa")
+			return
+		}
+		c.refuse(w, "unresolved", tenantID, "")
+		response.Err(w, http.StatusServiceUnavailable, "CELL_UNAVAILABLE", "no se pudo determinar la celda de tu empresa; intentalo de nuevo")
+		return
+	}
+	h, ok := c.byCell[cell]
+	if !ok {
+		c.refuse(w, "not_served", tenantID, cell)
+		response.Err(w, http.StatusServiceUnavailable, "CELL_UNAVAILABLE", "el servicio no esta disponible para la celda de tu empresa")
+		return
+	}
+	h.ServeHTTP(w, r)
+}
+
+func (c tenantCellRouter) refuse(w http.ResponseWriter, reason, tenantID, cell string) {
+	cellRoutingFailures.WithLabelValues(c.service, reason).Inc()
+	w.Header().Set("Cache-Control", "no-store")
+	c.logger.Warn("celdas: peticion no enviada a ninguna celda",
+		zap.String("service", c.service), zap.String("reason", reason),
+		zap.String("tenant_id", tenantID), zap.String("cell", cell))
 }

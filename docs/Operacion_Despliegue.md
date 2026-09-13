@@ -115,11 +115,17 @@ para llamar a la API hace falta ya un superadmin. Después, todo por API: `POST 
 * Celda: `ops/db/apply-migration.sh` contra `mail_cell_<code>` (P: runner propio en
   `mail-directory`). Al abrir una celda, en el mismo paso y tras sus migraciones,
   `ops/db/cell-service-role.sh --cell <code>`: crea el rol de sus servicios y cierra a
-  PUBLIC las bases del cluster (necesita `mail_service`, de las migraciones 06). Su
-  `mail-security` arranca con `CELL_CODE=<code>` y el gateway recibe su entrada en
-  `MAIL_SECURITY_CELL_HOSTS` (`<code>=host:puerto`): sin ella, los enlaces de cuarentena de
-  esa celda llegan a la celda por defecto, que los rechaza (`Modelo_de_Datos_y_Celdas.md`,
-  5.3).
+  PUBLIC las bases del cluster (necesita `mail_service`, de las migraciones 06). Sus
+  `mail-directory` y `mail-security` arrancan con `CELL_CODE=<code>` y el gateway recibe sus
+  entradas en `MAIL_DIRECTORY_CELL_HOSTS` y `MAIL_SECURITY_CELL_HOSTS` (`<code>=host:puerto`),
+  mas `GATEWAY_BASE_CELL_CODE` con la celda de los destinos base (`MAIL_DIRECTORY_HOST`,
+  `MAIL_SECURITY_HOST`), obligatoria en cuanto hay una entrada. Con varias celdas el gateway
+  pregunta a `organization` (`ORGANIZATION_HOST`) la celda de cada empresa. Sin la entrada de un
+  servicio, las empresas de esa celda reciben 503 en el (y el gateway lo avisa al arrancar) y sus
+  enlaces de cuarentena llegan a la celda base, que los rechaza (`Modelo_de_Datos_y_Celdas.md`,
+  5.3 y 5.4). `GATEWAY_BASE_CELL_CODE` se fija al registrar la segunda celda en organization,
+  antes de dar de alta empresas en ella: sin el, el gateway da por hecho una sola celda y las
+  mandaria a la base. El webmail todavia no se enruta por celda (5.5).
 * Reglas: idempotentes y aditivas (`make check-migrations` cubre empresa y celda), cabecera
   `-- Schema | Service`, nunca cambiar el tipo de una columna sin
   `ops/maintenance/pgbouncer-reconnect.sh` después (los planes preparados viven en el pooler).

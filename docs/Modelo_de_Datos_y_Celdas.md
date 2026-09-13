@@ -526,12 +526,94 @@ lista fija de nombres. El diseno que si aisla:
 `CELL_CODE` de la instancia que lo emite. El gateway enruta por ese segmento con
 `MAIL_SECURITY_CELL_HOSTS` (`celda=host:puerto,...`, declarado como `cell_hosts_env` del
 servicio en `routes.json`) y no tiene la clave: una celda que no figura va al destino base
-(`MAIL_SECURITY_HOST`, la celda por defecto), y cada instancia solo acepta enlaces de su
+(`MAIL_SECURITY_HOST`, la celda `GATEWAY_BASE_CELL_CODE`), y cada instancia solo acepta enlaces de su
 propia celda, con la misma pagina 403 que una firma mala. Un segmento manipulado solo
 llega a una celda que lo rechaza. Con una sola celda la variable queda vacia. No hay forma
 sin celda: el gateway no arranca con una ruta publica de un servicio de celda que no lleve
-`{cell}`. Solo estas rutas publicas van por celda: el API autenticado de `mail-security` y el webmail siguen yendo al destino base
-(P: enrutado de empresa a celda para ellos).
+`{cell}`. Las rutas con sesion de los servicios de celda van por la empresa (5.4); el webmail,
+todavia no (5.5).
+
+### 5.4 Rutas con sesion por celda (V, 2026-09-13)
+
+`mail-directory` y `mail-security` declaran `cell_hosts_env` en `routes.json`
+(`MAIL_DIRECTORY_CELL_HOSTS`, `MAIL_SECURITY_CELL_HOSTS`): TODAS sus rutas se enrutan por celda.
+El gateway no arranca si un servicio de celda es el destino de un prefijo `self_authenticated`
+o del `frontend` (no llevan empresa verificada ni celda en la ruta), si no tiene ninguna ruta o
+si falta `organization` entre los servicios.
+
+* Celda de la empresa: el token lleva la empresa, no la celda (`v_tenants` excluye `cell_id`).
+  El gateway la pregunta a `organization` en `GET /internal/organization/tenants/{id}/cell`
+  (token interno y `RequireInternalCaller`: 403 a una peticion con usuario; responde
+  `{tenant_id, cell_code}` o 404 `TENANT_NOT_FOUND`, nunca el host de la base; la ruta interna
+  queda fuera del limitador por IP de organization, porque todas sus consultas salen del
+  gateway). Cache en el gateway: LRU de 10 000 empresas, 5 minutos la respuesta positiva, 30 s
+  la negativa, una sola consulta para las peticiones simultaneas de la misma empresa. Si
+  organization no responde vale la ultima celda que dio, hasta una hora despues de caducar
+  (`cell_resolution_stale_total`); nunca una negativa ni una suposicion.
+* Destinos: `GATEWAY_BASE_CELL_CODE` es la celda que sirven los destinos base
+  (`<SERVICIO>_HOST`); `<SERVICIO>_CELL_HOSTS`, las demas. El enrutado es el ultimo paso, despues
+  de la sesion, el RBAC y el rastro de auditoria: una peticion denegada no pregunta la celda.
+* Falla cerrado sin salir hacia ninguna instancia: sesion sin empresa valida o empresa que
+  organization no conoce, 403; celda sin respuesta aplicable, 503 `CELL_UNAVAILABLE`; celda
+  sin instancia declarada de ese servicio, 503 `CELL_UNAVAILABLE`.
+  `cell_routing_failures_total{service, reason}` con `unknown_tenant`, `unresolved` y
+  `not_served`.
+* Arranque: con alguna instancia declarada, `GATEWAY_BASE_CELL_CODE` es obligatorio, con forma
+  de codigo de celda y sin repetirse como instancia. Una celda declarada para un servicio de
+  celda y no para otro se avisa en el registro; no impide arrancar (una celda puede abrirse
+  servicio a servicio) y sus empresas reciben 503 en el que falta.
+* Una celda: sin `GATEWAY_BASE_CELL_CODE` ni instancias todo va al destino base y el gateway no
+  pregunta a organization; no hace falta configuracion nueva. En ese modo una empresa de una
+  celda registrada despues llegaria a la celda base (sus datos no, por RLS, pero sus escrituras
+  si): `GATEWAY_BASE_CELL_CODE` se fija en cuanto el registro tiene una segunda celda, aunque aun
+  no tenga instancias, y entonces sus empresas reciben 503.
+* Probado: unitarias del gateway (resolucion, cache y su cota, caducidad, respuesta negativa,
+  margen con organization caido, respuestas fuera de contrato, consultas simultaneas, cada ruta
+  con sesion de cada servicio de celda, una celda sin consultas a organization, validacion de la
+  tabla y del entorno) y de organization (contrato de la ruta interna y caso de uso); `make e2e`
+  con un segundo gateway: acme (pe-01) va al destino base, beta (pe-02) a una segunda instancia
+  de `mail-directory` sobre `mail_cell_pe_02`, gamma (pe-03, sin instancias) recibe 503 sin
+  llegar a ninguna y la metrica lo cuenta; beta recibe 503 en `mail-security`, que no declara
+  pe-02.
+
+Pendiente (P):
+
+* El superadmin opera sobre la celda de su empresa (`platform`): el cortafuegos de otra celda
+  (`/api/v1/mail-security/firewall/*`) no se alcanza por el gateway. Diseno: una celda de destino
+  explicita que el gateway acepte solo con el rol `superadmin` y solo si organization la tiene
+  registrada.
+* Llamadas entre servicios hacia la celda: `domain-service` activa dominios y entrega DKIM en
+  una sola instancia (`MAIL_DIRECTORY_URL`, `MAIL_SECURITY_URL`). Diseno: el mismo contrato de
+  organization con cache y un mapa de instancias por celda en `domain-service`, fallando cerrado
+  igual que el gateway.
+* Traslado de una empresa de celda: el gateway lo ve al caducar su entrada (5 minutos); falta
+  invalidarla con el evento del traslado.
+
+### 5.5 Webmail por celda (P)
+
+`webmail` sigue yendo al destino base: con varias celdas solo los buzones de la celda base usan
+el webmail por el gateway. Un buzon de otra celda recibe el mismo 401 que una contrasena mala
+(`mail-auth` de la celda base no lo conoce): no hay datos cruzados ni se revela si el buzon
+existe. La tabla no admite declarar el webmail como servicio de celda hasta que esto exista.
+Diseno:
+
+1. Indice global dominio -> celda en el registro: tabla de organization con el dominio (unico),
+   la empresa y la celda, que `domain-service` escribe por la API interna de organization al
+   activar o retirar un dominio, y `GET /internal/organization/mail-domains/{dominio}/cell`. Da
+   ademas la unicidad de los dominios activos entre celdas, que hoy solo se garantiza dentro de
+   una (`mail.name_in_use`).
+2. Inicio de sesion (`POST /api/v1/webmail/session`, sin cookie): el gateway lee `username` del
+   cuerpo (tope de 8 KiB, el del servicio), resuelve su dominio con cache y reenvia el cuerpo a
+   la instancia de esa celda. Un dominio desconocido va a la celda base, que responde el mismo
+   401 que a una contrasena mala: el gateway no responde nada propio. Los limitadores (el
+   estricto del gateway y el de `mail-auth` por buzon e IP real) no cambian.
+3. Despues del inicio: el token de `cf_wm` lleva la celda como prefijo (`<celda>.<256 bits>`),
+   con los mismos atributos de cookie. El gateway enruta por el prefijo y el webmail rechaza un
+   token cuyo prefijo no es su `CELL_CODE` antes de buscarlo; un prefijo cambiado solo llega a
+   otra celda, donde la sesion no existe (claves `webmail:<celda>:`), o a la base si la celda es
+   desconocida: 401 y la cookie se borra. `DELETE /session` igual.
+4. La autenticacion y la CSP del servicio no cambian: sin JWT ni RBAC en el prefijo y con la
+   politica del servicio (`keepUpstreamCSP`).
 
 ## 6. Limites que condicionan el dimensionado (V, heredados y vigentes)
 
@@ -556,5 +638,7 @@ sin celda: el gateway no arranca con una ruta publica de un servicio de celda qu
 | RLS en la celda para los servicios Go | V (politicas y roles; `mail-directory` y el API de administracion de `mail-security` las usan en toda lectura y escritura) |
 | Una celda no lee otra celda: sus servicios abren solo `CELL_DB_NAME` con el rol `<CELL_DB_NAME>_svc`, sin CONNECT al registro, a otra celda ni a una empresa (5.1); claves de cifrado por celda | V / P (claves; reparto de secretos por servicio) |
 | Un enlace publico de cuarentena solo actua en la celda que lo firmo: la celda va en la firma, el gateway enruta sin la clave y una celda desconocida responde igual que una firma mala (5.3) | V (2026-09-13) |
+| Una peticion con sesion a un servicio de celda solo llega a la instancia de la celda de su empresa; sin celda resoluble o sin instancia declarada no sale hacia ninguna (5.4) | V (2026-09-13; con `GATEWAY_BASE_CELL_CODE`) |
+| El webmail de un buzon se sirve en la celda de su dominio (5.5) | P |
 | Un servicio de empresa solo abre su esquema y no el registro (credencial por servicio) | P (5.2) |
 | Respaldo por base y restauracion probada semanalmente (`ops/backup`) | V (scripts), P (programados en este entorno) |

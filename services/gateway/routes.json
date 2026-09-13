@@ -5,7 +5,7 @@
     "organization":   {"host_env": "ORGANIZATION_HOST",   "default_host": "organization",   "default_port": "8003"},
     "audit":          {"host_env": "AUDIT_HOST",          "default_host": "audit",          "default_port": "8030"},
     "scheduler":      {"host_env": "SCHEDULER_HOST",      "default_host": "scheduler",      "default_port": "8033"},
-    "mail-directory": {"host_env": "MAIL_DIRECTORY_HOST", "default_host": "mail-directory", "default_port": "8040"},
+    "mail-directory": {"host_env": "MAIL_DIRECTORY_HOST", "default_host": "mail-directory", "default_port": "8040", "cell_hosts_env": "MAIL_DIRECTORY_CELL_HOSTS"},
     "mail-security":  {"host_env": "MAIL_SECURITY_HOST",  "default_host": "mail-security",  "default_port": "8042", "cell_hosts_env": "MAIL_SECURITY_CELL_HOSTS"},
     "domain-service": {"host_env": "DOMAIN_SERVICE_HOST", "default_host": "domain-service", "default_port": "8043"},
     "transactional":  {"host_env": "TRANSACTIONAL_HOST",  "default_host": "transactional",  "default_port": "8045"},

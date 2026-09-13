@@ -61,10 +61,18 @@ func TestTablaEmbebidaEsValida(t *testing.T) {
 		t.Errorf("el webmail no se gatea por modulo")
 	}
 
-	// Los enlaces del aviso de cuarentena se enrutan por celda, y solo esos.
-	if tbl.Services["mail-security"].CellHostsEnv != "MAIL_SECURITY_CELL_HOSTS" {
-		t.Fatalf("mail-security es un servicio de celda: %+v", tbl.Services["mail-security"])
+	// Los servicios cuya base es la celda se enrutan por celda en todas sus rutas.
+	celda := map[string]string{}
+	for name, s := range tbl.Services {
+		if s.CellHostsEnv != "" {
+			celda[name] = s.CellHostsEnv
+		}
 	}
+	if len(celda) != 2 || celda["mail-security"] != "MAIL_SECURITY_CELL_HOSTS" || celda["mail-directory"] != "MAIL_DIRECTORY_CELL_HOSTS" {
+		t.Fatalf("servicios de celda: %v", celda)
+	}
+
+	// Los enlaces del aviso de cuarentena son las unicas rutas publicas por celda.
 	var quarantine []publicRouteSpec
 	for _, p := range tbl.Public {
 		if p.Service == "mail-security" {
@@ -172,6 +180,24 @@ func TestValidacionRechazaIncoherencias(t *testing.T) {
 			t.Services["webmail"] = serviceSpec{HostEnv: "WEBMAIL_HOST", DefaultHost: "webmail", DefaultPort: "8044", CellHostsEnv: "MAIL_SECURITY_CELL_HOSTS"}
 			t.Public = append(t.Public, publicRouteSpec{Method: "GET", Path: "/public/w/{cell}/x", Service: "webmail"})
 		},
+		"cell_hosts_env que es la celda base": func(t *routeTable) {
+			cellService(t)
+			s := t.Services["mail-security"]
+			s.CellHostsEnv = baseCellEnv
+			t.Services["mail-security"] = s
+		},
+		"autenticada por el servicio sobre un servicio de celda": func(t *routeTable) {
+			cellService(t)
+			t.SelfAuthenticated = []selfAuthSpec{{Prefix: "inbox", Service: "mail-security"}}
+		},
+		"frontend de celda": func(t *routeTable) {
+			cellService(t)
+			t.Frontend = "mail-security"
+		},
+		"servicio de celda sin organization para resolver la celda": func(t *routeTable) {
+			cellService(t)
+			delete(t.Services, cellDirectoryService)
+		},
 	}
 	for nombre, romper := range casos {
 		tbl := base()
@@ -189,11 +215,21 @@ func TestValidacionRechazaIncoherencias(t *testing.T) {
 	if err := tbl.validate(); err != nil {
 		t.Fatalf("la tabla con un servicio de celda debe validar: %v", err)
 	}
+	// Un servicio de celda sin rutas publicas: basta con sus rutas con sesion.
+	tbl = base()
+	cellService(&tbl)
+	tbl.Public = nil
+	tbl.Routes = append(tbl.Routes, routeSpec{Prefix: "mail-security", Service: "mail-security", Module: "mail_security"})
+	if err := tbl.validate(); err != nil {
+		t.Fatalf("un servicio de celda solo con rutas con sesion debe validar: %v", err)
+	}
 }
 
-// cellService anade un servicio de celda con una ruta por celda.
+// cellService anade un servicio de celda con una ruta por celda y organization, que resuelve
+// la celda de cada empresa.
 func cellService(t *routeTable) {
 	t.Services["mail-security"] = serviceSpec{HostEnv: "MAIL_SECURITY_HOST", DefaultHost: "mail-security", DefaultPort: "8042", CellHostsEnv: "MAIL_SECURITY_CELL_HOSTS"}
+	t.Services[cellDirectoryService] = serviceSpec{HostEnv: "ORGANIZATION_HOST", DefaultHost: "organization", DefaultPort: "8003"}
 	t.Public = []publicRouteSpec{{Method: "GET", Path: "/public/q/{cell}/release", Service: "mail-security"}}
 }
 

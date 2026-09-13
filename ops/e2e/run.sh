@@ -67,7 +67,8 @@ echo "== Credencial propia de cada celda (ops/db/cell-service-role.sh)"
 CELL_ROLE=mail_cell_pe_01_svc
 CELL_PASS="$(rand_hex 24)"
 e2e_credencial_celda pe-01 "$CELL_PASS"
-e2e_credencial_celda pe-02 "$(rand_hex 24)"
+CELL2_PASS="$(rand_hex 24)"
+e2e_credencial_celda pe-02 "$CELL2_PASS"
 # Por el socket del contenedor: lo que se prueba es el privilegio CONNECT, no la contrasena
 # (la prueban los servicios de la celda, que entran por TCP).
 como_celda() { psql -U "$CELL_ROLE" -d "$1" -At -c 'SELECT current_user' 2>&1; }
@@ -484,6 +485,52 @@ expect "su token ya no lista sus sesiones" \
   "$(sesion "$GW/sessions/mine" -H "Authorization: Bearer $T_INACTIVA")" "SESSION_REVOKED 401"
 expect "ni pide un step-up" \
   "$(sesion -X POST "$GW/auth/step-up" -H "Authorization: Bearer $T_INACTIVA" -H 'Content-Type: application/json' -d '{"current_password":"x"}')" "SESSION_REVOKED 401"
+
+echo "== Rutas con sesion por celda (segundo gateway, dos celdas)"
+# El gateway de arriba no declara celdas: todo va al destino base. Este segundo gateway declara
+# la celda base (GATEWAY_BASE_CELL_CODE) y una instancia de mail-directory sobre mail_cell_pe_02:
+# cada peticion con sesion va a la celda de su empresa, que pregunta a organization, y una celda
+# sin instancia declarada no llega a ninguna. Tokens nuevos: los de arriba caducan a los 5 min.
+MD2_PORT=$((BASE + 60)) GW2_PORT=$((BASE + 61))
+T1N=$(e2e_login "$ADMIN_EMAIL" "$ADMIN_PASS" | jget data.access_token)
+A2N="Authorization: Bearer $(e2e_login admin@acme.test "$TENANT_PASS" | jget data.access_token)"
+for c in pe-02 pe-03; do
+  expect "el superadmin registra la celda $c" "$(codigo -X POST "$GW/cells" -H "Authorization: Bearer $T1N" -H 'Content-Type: application/json' \
+    -d "{\"code\":\"$c\",\"region\":\"sa-east-1\",\"db_host\":\"127.0.0.1\",\"db_port\":5432}")" "201"
+done
+CELDAS_PASS="$(rand_hex 12)Aa1!"
+expect "alta de beta en pe-02" "$(e2e_alta_empresa "$T1N" beta pe-02 admin@beta.test "$CELDAS_PASS" | jget data.slug)" "beta"
+expect "alta de gamma en pe-03, celda sin instancias" "$(e2e_alta_empresa "$T1N" gamma pe-03 admin@gamma.test "$CELDAS_PASS" | jget data.slug)" "gamma"
+LB=$(e2e_login admin@beta.test "$CELDAS_PASS")
+BID=$(echo "$LB" | jget data.tenant_id)
+AB="Authorization: Bearer $(echo "$LB" | jget data.access_token)"
+AG="Authorization: Bearer $(e2e_login admin@gamma.test "$CELDAS_PASS" | jget data.access_token)"
+
+ORG_INTERNA="http://127.0.0.1:${PORT[organization]}/internal/organization/tenants/$BID/cell"
+expect "organization da la celda de beta con el token interno" \
+  "$(curl -s "$ORG_INTERNA" -H "X-Gateway-Token: $INTERNAL_GATEWAY_TOKEN" | jget data.cell_code)" "pe-02"
+expect "a una peticion con usuario no" \
+  "$(codigo "$ORG_INTERNA" -H "X-Gateway-Token: $INTERNAL_GATEWAY_TOKEN" -H "X-User-ID: $U_VIGENTE")" "403"
+expect "ni sin el token interno" "$(codigo "$ORG_INTERNA")" "401"
+
+env -u POSTGRES_PASSWORD -u JWT_SIGNING_KEY CELL_CODE=pe-02 CELL_DB_NAME=mail_cell_pe_02 CELL_DB_PASSWORD="$CELL2_PASS" \
+  MAIL_DIRECTORY_PORT="$MD2_PORT" "$WORK/bin/mail-directory" >"$WORK/log/mail-directory-pe-02.log" 2>&1 &
+env -u JWT_SIGNING_KEY GATEWAY_PORT="$GW2_PORT" GATEWAY_BASE_CELL_CODE=pe-01 MAIL_DIRECTORY_CELL_HOSTS="pe-02=127.0.0.1:$MD2_PORT" \
+  "$WORK/bin/gateway" >"$WORK/log/gateway-celdas.log" 2>&1 &
+esperar_salud mail-directory-pe-02 "$MD2_PORT"
+esperar_salud gateway-celdas "$GW2_PORT"
+GW2="http://127.0.0.1:$GW2_PORT/api/v1"
+en_pe02() { grep -c '"path":"/api/v1/mailboxes"' "$WORK/log/mail-directory-pe-02.log"; }
+contains "acme (pe-01) va al destino base" "$(curl -s "$GW2/mailboxes" -H "$A2N")" '"ana@acme.test"'
+expect "sin pasar por la instancia de pe-02" "$(en_pe02)" "0"
+expect "beta (pe-02) va a la instancia de su celda" "$(curl -s "$GW2/mailboxes" -H "$AB" | jget data)" "[]"
+expect "que es la que la atiende" "$(en_pe02)" "1"
+expect "gamma (pe-03, sin instancia) no llega a ninguna" "$(sesion "$GW2/mailboxes" -H "$AG")" "CELL_UNAVAILABLE 503"
+expect "ni a la de pe-02" "$(en_pe02)" "1"
+expect "beta tampoco llega a mail-security, que no declara pe-02" "$(sesion "$GW2/mail-security/quarantine" -H "$AB")" "CELL_UNAVAILABLE 503"
+expect "acme si, en la celda base" "$(codigo "$GW2/mail-security/quarantine" -H "$A2N")" "200"
+contains "el gateway cuenta la celda sin instancia" "$(curl -s "http://127.0.0.1:$GW2_PORT/metrics")" \
+  'cell_routing_failures_total{reason="not_served",service="mail-directory"} 1'
 
 echo "== Registros"
 e2e_registros_sin_errores

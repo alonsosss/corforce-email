@@ -312,9 +312,14 @@ func main() {
 	r.Use(middleware.InjectFromGateway)
 	r.Use(middleware.SecureHeaders)
 	r.Use(middleware.Logger(logger))
-	limiter := middleware.NewRateLimiter(100, time.Minute)
-	r.Use(limiter.Limit)
-	r.Mount("/", h.Routes())
+	// Interno: la celda de cada empresa, que pregunta el gateway. Fuera del limitador por IP a
+	// proposito: todas sus consultas salen de las pocas IP del gateway, y un 429 ahi dejaria sin
+	// celda (503) a las empresas cuya entrada caduco. Lo protege el token interno.
+	r.Mount("/internal/organization", handler.NewInternalHandler(uc).Routes())
+	r.Group(func(r chi.Router) {
+		r.Use(middleware.NewRateLimiter(100, time.Minute).Limit)
+		r.Mount("/", h.Routes())
+	})
 
 	port := defaultPort
 	if p := os.Getenv("ORGANIZATION_PORT"); p != "" {

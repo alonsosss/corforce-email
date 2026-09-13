@@ -43,6 +43,17 @@ func main() {
 	for service, cells := range table.cellCodes() {
 		logger.Info("instancias por celda", zap.String("service", service), zap.Strings("cells", cells))
 	}
+	// Enrutado con sesion por celda: solo con celda base declarada. Sin ella el despliegue es
+	// de una celda y el gateway no pregunta a organization.
+	var cells *cellResolver
+	if table.baseCell != "" {
+		cells = newCellResolver(table.serviceURL(cellDirectoryService), internalToken, logger)
+		logger.Info("enrutado con sesion por celda", zap.String("base_cell", table.baseCell))
+	}
+	for service, missing := range table.cellCoverageGaps() {
+		logger.Warn("celdas sin instancia de un servicio de celda: sus empresas recibiran 503 en el",
+			zap.String("service", service), zap.Strings("cells", missing))
+	}
 
 	corsOrigins := os.Getenv("CORS_ALLOWED_ORIGINS")
 	var allowedOrigins []string
@@ -164,8 +175,10 @@ func main() {
 			trail := newAuditTrail(modules, logger)
 			r.Use(trail.middleware)
 
+			// Los servicios de celda van a la instancia de la celda de la empresa (cells.go).
+			handlers := sessionHandlers(table, internalToken, cells, logger)
 			for _, rt := range table.Routes {
-				proxy := reverseProxy(table.serviceURL(rt.Service), internalToken)
+				proxy := handlers[rt.Service]
 				r.Route("/"+rt.Prefix, func(r chi.Router) {
 					r.Handle("/*", proxy)
 				})

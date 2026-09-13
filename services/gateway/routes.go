@@ -43,8 +43,8 @@ type routeTable struct {
 	// Public: rutas bajo /api/v1 que se sirven SIN sesion (webhooks de proveedores, bajas
 	// de suscripcion desde el correo). Van con el limitador general y nada mas: la
 	// proteccion es del propio servicio (firma del proveedor, enlace firmado). Metodo y
-	// ruta exactos con la sintaxis de chi; el servicio recibe la misma ruta. Toda ruta de un
-	// servicio de celda (cell_hosts_env) lleva el segmento {cell} y se enruta por el
+	// ruta exactos con la sintaxis de chi; el servicio recibe la misma ruta. Toda ruta publica
+	// de un servicio de celda (cell_hosts_env) lleva el segmento {cell} y se enruta por el
 	// (cells.go).
 	Public []publicRouteSpec `json:"public,omitempty"`
 	// SelfAuthenticated: prefijos bajo /api/v1 cuyo servicio autentica cada peticion con
@@ -58,9 +58,11 @@ type routeTable struct {
 	// el gateway solo expone el API.
 	Frontend string `json:"frontend,omitempty"`
 
-	// cellTargets: servicio de celda -> celda -> URL de su instancia, leido del entorno al
-	// cargar la tabla (loadCellTargets).
+	// cellTargets: servicio de celda -> celda -> URL de su instancia, y baseCell: la celda que
+	// sirven los destinos base (GATEWAY_BASE_CELL_CODE; vacia, despliegue de una celda). Se
+	// leen del entorno al cargar la tabla (loadCellTargets).
 	cellTargets map[string]map[string]string
+	baseCell    string
 }
 
 type selfAuthSpec struct {
@@ -93,9 +95,10 @@ type serviceSpec struct {
 	HostEnv     string `json:"host_env"`
 	DefaultHost string `json:"default_host"`
 	DefaultPort string `json:"default_port"`
-	// CellHostsEnv marca un servicio desplegado por celda y nombra la variable con sus
-	// instancias por celda ("celda=host:puerto,..."). El destino base (HostEnv) es el de la
-	// celda por defecto; vacia, todas las celdas van a el (despliegue de una celda).
+	// CellHostsEnv marca un servicio desplegado por celda, cuyas rutas se enrutan todas por
+	// celda, y nombra la variable con sus instancias por celda ("celda=host:puerto,..."). El
+	// destino base (HostEnv) sirve la celda GATEWAY_BASE_CELL_CODE; sin celdas declaradas ni
+	// celda base, todas van a el (despliegue de una celda).
 	CellHostsEnv string `json:"cell_hosts_env,omitempty"`
 }
 
@@ -204,9 +207,6 @@ func (t *routeTable) validate() error {
 			return err
 		}
 	}
-	if err := t.validateCellServicesRouted(); err != nil {
-		return err
-	}
 	for _, s := range t.SelfAuthenticated {
 		if !prefixRe.MatchString(s.Prefix) {
 			return fmt.Errorf("tabla de rutas: prefijo autenticado por el servicio invalido %q", s.Prefix)
@@ -235,7 +235,7 @@ func (t *routeTable) validate() error {
 			return fmt.Errorf("tabla de rutas: frontend %q no esta en services", t.Frontend)
 		}
 	}
-	return nil
+	return t.validateCellServices()
 }
 
 // serviceURL resuelve la URL interna de un servicio: el entorno manda y los

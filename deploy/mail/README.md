@@ -437,7 +437,7 @@ dos veces; sin prueba de punta a punta con SES.
   `routes.json` `cell_hosts_env: MAIL_SECURITY_CELL_HOSTS`, variable del gateway con las
   instancias por celda (`pe-02=mail-security-pe-02:8042,eu-west-1=10.0.2.15:8042`; mal
   formada, el gateway no arranca). Una celda listada va a su instancia; cualquier otro
-  segmento, conocido o no, va al destino base (`MAIL_SECURITY_HOST`, la celda por defecto),
+  segmento, conocido o no, va al destino base (`MAIL_SECURITY_HOST`, la celda `GATEWAY_BASE_CELL_CODE`),
   que lo rechaza con la misma pagina 403 que una firma alterada: el gateway no responde nada
   propio y no sirve para enumerar celdas. Cada instancia acepta solo su celda, en la ruta y
   en la firma: un segmento cambiado lleva el enlace a una celda que lo rechaza. Con una sola

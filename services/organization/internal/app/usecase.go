@@ -217,6 +217,22 @@ func (uc *OrganizationUseCase) GetTenant(ctx context.Context, id uuid.UUID) (*do
 	return uc.tenants.GetByID(ctx, id)
 }
 
+// TenantCell devuelve la celda donde vive la empresa, sea cual sea su estado: la celda se fija
+// al registrarla y el gateway la necesita para llevar cada peticion a los servicios de esa
+// celda. ErrTenantNotFound si la empresa no existe; una celda que falta en el directorio es un
+// registro incoherente y sale como error inesperado, nunca como "sin celda".
+func (uc *OrganizationUseCase) TenantCell(ctx context.Context, tenantID uuid.UUID) (*domain.Cell, error) {
+	tenant, err := uc.tenants.GetByID(ctx, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	cell, err := uc.cells.GetByID(ctx, tenant.CellID)
+	if err != nil {
+		return nil, fmt.Errorf("celda %s de la empresa %s: %w", tenant.CellID, tenant.Slug, err)
+	}
+	return cell, nil
+}
+
 // ReseedAllRoles pide a access-control que conceda a los roles del sistema de todas las
 // empresas los permisos del catalogo que les falten. Corre al arrancar, despues de migrar el
 // registro: es lo que hace que un permiso nuevo llegue a las empresas que ya existian sin
