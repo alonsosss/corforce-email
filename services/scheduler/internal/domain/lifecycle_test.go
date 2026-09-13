@@ -139,12 +139,12 @@ func TestDefinicionValida(t *testing.T) {
 		t.Fatal(err)
 	}
 	cases := map[string]func(j *JobDefinition){
-		"tipo desconocido":     func(j *JobDefinition) { j.JobType = "weekly" },
+		"tipo desconocido":      func(j *JobDefinition) { j.JobType = "weekly" },
 		"intervalo sin minutos": func(j *JobDefinition) { j.IntervalMinutes = nil },
-		"intervalo cero":       func(j *JobDefinition) { j.IntervalMinutes = &zero },
-		"reintentos negativos": func(j *JobDefinition) { j.MaxRetries = -1 },
-		"plazo negativo":       func(j *JobDefinition) { j.TimeoutSeconds = -1 },
-		"payload ilegible":     func(j *JobDefinition) { j.Payload = &bad },
+		"intervalo cero":        func(j *JobDefinition) { j.IntervalMinutes = &zero },
+		"reintentos negativos":  func(j *JobDefinition) { j.MaxRetries = -1 },
+		"plazo negativo":        func(j *JobDefinition) { j.TimeoutSeconds = -1 },
+		"payload ilegible":      func(j *JobDefinition) { j.Payload = &bad },
 	}
 	for name, mut := range cases {
 		j := ok

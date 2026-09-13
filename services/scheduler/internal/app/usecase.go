@@ -87,11 +87,15 @@ func (uc *SchedulerUseCase) CreateJob(ctx context.Context, job *domain.JobDefini
 	job.IsActive = true
 	job.CreatedAt = uc.now()
 	job.UpdatedAt = job.CreatedAt
+	next, err := uc.nextRun(job, nil, job.CreatedAt)
+	if err != nil {
+		return err
+	}
 	return uc.tx.Transact(ctx, func(ctx context.Context) error {
 		if err := uc.jobs.Create(ctx, job); err != nil {
 			return err
 		}
-		return uc.schedules.UpdateNextRun(ctx, job.ID, uc.calculateNextRun(job))
+		return uc.schedules.SetNextRun(ctx, job.ID, next)
 	})
 }
 
@@ -103,7 +107,9 @@ func (uc *SchedulerUseCase) ListJobs(ctx context.Context, tenantID *uuid.UUID, i
 	return uc.jobs.List(ctx, tenantID, isActive)
 }
 
-// UpdateJob recibe el trabajo leido con GetJob y ya modificado; su empresa no cambia.
+// UpdateJob recibe el trabajo leido con GetJob y ya modificado; su empresa no cambia. Si
+// cambia el calendario de un cron (pasa a cron o cambia su expresion) se replanifica en la
+// misma transaccion; una edicion que no lo toca respeta la ejecucion ya prevista.
 func (uc *SchedulerUseCase) UpdateJob(ctx context.Context, job *domain.JobDefinition) error {
 	if job.IsPlatform() {
 		return domain.ErrPlatformJob
@@ -112,7 +118,23 @@ func (uc *SchedulerUseCase) UpdateJob(ctx context.Context, job *domain.JobDefini
 		return err
 	}
 	job.UpdatedAt = uc.now()
-	return uc.jobs.Update(ctx, job)
+	return uc.tx.Transact(ctx, func(ctx context.Context) error {
+		stored, err := uc.jobs.GetByID(ctx, job.ID, *job.TenantID)
+		if err != nil {
+			return err
+		}
+		if err := uc.jobs.Update(ctx, job); err != nil {
+			return err
+		}
+		if job.JobType != domain.JobTypeCron || (stored.JobType == job.JobType && stored.CronExpr() == job.CronExpr()) {
+			return nil
+		}
+		next, err := uc.nextRun(job, nil, job.UpdatedAt)
+		if err != nil {
+			return err
+		}
+		return uc.schedules.SetNextRun(ctx, job.ID, next)
+	})
 }
 
 // tenantJob carga un trabajo que la empresa puede cambiar: el suyo, nunca uno de plataforma.
@@ -127,14 +149,29 @@ func (uc *SchedulerUseCase) tenantJob(ctx context.Context, id, tenantID uuid.UUI
 	return job, nil
 }
 
+// EnableJob reactiva un trabajo. Un cron que estaba desactivado se replanifica desde ahora:
+// las ocurrencias de mientras estuvo parado no se lanzan al reactivarlo.
 func (uc *SchedulerUseCase) EnableJob(ctx context.Context, id, tenantID uuid.UUID) error {
 	job, err := uc.tenantJob(ctx, id, tenantID)
 	if err != nil {
 		return err
 	}
+	wasActive := job.IsActive
 	job.IsActive = true
 	job.UpdatedAt = uc.now()
-	return uc.jobs.Update(ctx, job)
+	if wasActive || job.JobType != domain.JobTypeCron {
+		return uc.jobs.Update(ctx, job)
+	}
+	next, err := uc.nextRun(job, nil, job.UpdatedAt)
+	if err != nil {
+		return err
+	}
+	return uc.tx.Transact(ctx, func(ctx context.Context) error {
+		if err := uc.jobs.Update(ctx, job); err != nil {
+			return err
+		}
+		return uc.schedules.SetNextRun(ctx, job.ID, next)
+	})
 }
 
 func (uc *SchedulerUseCase) DisableJob(ctx context.Context, id, tenantID uuid.UUID) error {
@@ -213,7 +250,7 @@ func (uc *SchedulerUseCase) ProcessDueJobs(ctx context.Context) {
 func (uc *SchedulerUseCase) runDue(ctx context.Context, s *domain.JobSchedule) error {
 	return uc.tx.Transact(ctx, func(ctx context.Context) error {
 		now := uc.now()
-		claimed, err := uc.schedules.ClaimDue(ctx, s.JobID, now)
+		scheduled, claimed, err := uc.schedules.ClaimDue(ctx, s.JobID, now)
 		if err != nil || !claimed {
 			return err
 		}
@@ -223,6 +260,13 @@ func (uc *SchedulerUseCase) runDue(ctx context.Context, s *domain.JobSchedule) e
 		}
 		if !job.IsActive {
 			return nil
+		}
+		next, err := uc.nextRun(job, &scheduled, now)
+		if errors.Is(err, domain.ErrInvalidCron) {
+			return uc.deactivateUnschedulable(ctx, job.ID, err)
+		}
+		if err != nil {
+			return err
 		}
 		exec := newExecution(job, now)
 		if spec, rerr := uc.catalog.Resolve(job.Handler, job.IsPlatform()); rerr != nil {
@@ -234,7 +278,7 @@ func (uc *SchedulerUseCase) runDue(ctx context.Context, s *domain.JobSchedule) e
 		} else if err := uc.dispatch(ctx, job, spec, exec, now, true); err != nil {
 			return err
 		}
-		if err := uc.schedules.UpdateNextRun(ctx, job.ID, uc.calculateNextRun(job)); err != nil {
+		if err := uc.schedules.UpdateNextRun(ctx, job.ID, next); err != nil {
 			return err
 		}
 		if job.JobType == domain.JobTypeOneTime {
@@ -242,6 +286,55 @@ func (uc *SchedulerUseCase) runDue(ctx context.Context, s *domain.JobSchedule) e
 		}
 		return nil
 	})
+}
+
+// deactivateUnschedulable desactiva un cron cuya expresion guardada no se puede evaluar
+// (escrita antes de que se validara): lanzarlo seria hacerlo a deshora. Reactivarlo exige
+// corregir antes la expresion.
+func (uc *SchedulerUseCase) deactivateUnschedulable(ctx context.Context, jobID uuid.UUID, cause error) error {
+	uc.logger.Error("scheduler: trabajo cron con expresion invalida; se desactiva",
+		zap.String("job_id", jobID.String()), zap.Error(cause))
+	return uc.jobs.Deactivate(ctx, jobID)
+}
+
+// ReconcileCronSchedules corrige en la base del contexto los calendarios cron que no salen
+// de su expresion, como los escritos cuando el scheduler no la evaluaba (cada hora desde la
+// ultima pasada), y desactiva los cron con una expresion invalida. Devuelve cuantos cambio.
+// Es idempotente. Salta los calendarios que otra transaccion tiene bloqueados: son
+// despachos en curso, que ya dejan la siguiente ejecucion bien calculada.
+func (uc *SchedulerUseCase) ReconcileCronSchedules(ctx context.Context) (int, error) {
+	fixed := 0
+	err := uc.tx.Transact(ctx, func(ctx context.Context) error {
+		fixed = 0
+		schedules, err := uc.schedules.LockActiveCron(ctx)
+		if err != nil {
+			return err
+		}
+		now := uc.now()
+		for _, s := range schedules {
+			spec, err := domain.ParseCron(s.Expression)
+			if err != nil {
+				if err := uc.deactivateUnschedulable(ctx, s.JobID, err); err != nil {
+					return err
+				}
+				fixed++
+				continue
+			}
+			want, err := spec.Reconcile(s.NextRunAt, now)
+			if err != nil {
+				return err
+			}
+			if want.Equal(s.NextRunAt) {
+				continue
+			}
+			if err := uc.schedules.SetNextRun(ctx, s.JobID, want); err != nil {
+				return err
+			}
+			fixed++
+		}
+		return nil
+	})
+	return fixed, err
 }
 
 func (uc *SchedulerUseCase) ProcessPendingTasks(ctx context.Context) {
@@ -258,17 +351,28 @@ func (uc *SchedulerUseCase) ProcessPendingTasks(ctx context.Context) {
 	}
 }
 
-func (uc *SchedulerUseCase) calculateNextRun(job *domain.JobDefinition) time.Time {
-	now := uc.now()
+// nextRun es la proxima ejecucion del trabajo vista en now. scheduled es la ejecucion
+// prevista que se acaba de despachar, o nil al crear, editar o reactivar el trabajo; un
+// cron cuenta desde ella (ver domain.CronSpec.NextAfterDispatch).
+func (uc *SchedulerUseCase) nextRun(job *domain.JobDefinition, scheduled *time.Time, now time.Time) (time.Time, error) {
 	switch job.JobType {
+	case domain.JobTypeCron:
+		spec, err := domain.ParseCron(job.CronExpr())
+		if err != nil {
+			return time.Time{}, err
+		}
+		if scheduled == nil {
+			return spec.Next(now)
+		}
+		return spec.NextAfterDispatch(*scheduled, now)
 	case domain.JobTypeInterval:
 		if job.IntervalMinutes != nil {
-			return now.Add(time.Duration(*job.IntervalMinutes) * time.Minute)
+			return now.Add(time.Duration(*job.IntervalMinutes) * time.Minute), nil
 		}
 	case domain.JobTypeOneTime:
-		return now
+		return now, nil
 	}
-	return now.Add(time.Hour)
+	return now.Add(time.Hour), nil
 }
 
 func (uc *SchedulerUseCase) ListPendingTasks(ctx context.Context, before time.Time) ([]*domain.ScheduledTask, error) {

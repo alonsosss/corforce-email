@@ -127,6 +127,7 @@ func writeError(w http.ResponseWriter, err error) {
 		response.ErrForbidden(w, err.Error())
 	case errors.Is(err, domain.ErrHandlerNotAllowed),
 		errors.Is(err, domain.ErrInvalidJob),
+		errors.Is(err, domain.ErrInvalidCron),
 		errors.Is(err, domain.ErrInvalidReport):
 		response.ErrValidation(w, err.Error())
 	case errors.Is(err, domain.ErrJobAlreadyExists),

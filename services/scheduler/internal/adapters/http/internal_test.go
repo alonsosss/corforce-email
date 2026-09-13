@@ -86,6 +86,7 @@ type internalFixture struct {
 	execs  *oneExec
 	events *countEvents
 	id     uuid.UUID
+	jobID  uuid.UUID
 	tenant string
 }
 
@@ -109,7 +110,7 @@ func newInternalFixture(t *testing.T, status string) internalFixture {
 	r := chi.NewRouter()
 	r.Use(middleware.InjectFromGateway)
 	r.Mount("/", NewHandler(Deps{UC: uc, Perms: authz.NewChecker(unreachable, "")}).Routes())
-	return internalFixture{srv: r, execs: execs, events: events, id: exec.ID, tenant: tenant.String()}
+	return internalFixture{srv: r, execs: execs, events: events, id: exec.ID, jobID: job.ID, tenant: tenant.String()}
 }
 
 func (f internalFixture) post(t *testing.T, action, body string) *httptest.ResponseRecorder {
@@ -213,17 +214,48 @@ func TestLasRutasInternasValidanLaPeticion(t *testing.T) {
 	}
 }
 
-func TestCrearUnTrabajoConManejadorDesconocidoEs422(t *testing.T) {
-	f := newInternalFixture(t, domain.StatusRunning)
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/scheduler/jobs",
-		strings.NewReader(`{"name":"n","code":"c","job_type":"cron","handler":"no.existe"}`))
+func (f internalFixture) api(t *testing.T, method, path, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(method, path, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-User-ID", uuid.NewString())
 	req.Header.Set("X-Tenant-ID", f.tenant)
 	req.Header.Set("X-User-Roles", middleware.RoleTenantAdmin)
 	rec := httptest.NewRecorder()
 	f.srv.ServeHTTP(rec, req)
+	return rec
+}
+
+func TestCrearUnTrabajoConManejadorDesconocidoEs422(t *testing.T) {
+	f := newInternalFixture(t, domain.StatusRunning)
+	rec := f.api(t, http.MethodPost, "/api/v1/scheduler/jobs",
+		`{"name":"n","code":"c","job_type":"cron","cron_expression":"0 3 * * *","handler":"no.existe"}`)
 	if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), "handler not allowed") {
 		t.Fatalf("manejador desconocido: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestUnCronConExpresionInvalidaEs422(t *testing.T) {
+	f := newInternalFixture(t, domain.StatusRunning)
+	for name, expr := range map[string]string{
+		"sin expresion":  ``,
+		"vacia":          `,"cron_expression":"  "`,
+		"hora 25":        `,"cron_expression":"0 25 * * *"`,
+		"@every corto":   `,"cron_expression":"@every 10s"`,
+		"con zona":       `,"cron_expression":"CRON_TZ=America/Lima 0 9 * * *"`,
+		"nunca ocurre":   `,"cron_expression":"0 0 30 2 *"`,
+		"cuatro campos":  `,"cron_expression":"0 3 * *"`,
+		"no admitido":    `,"cron_expression":"@yearly"`,
+		"seis campos":    `,"cron_expression":"0 0 3 * * *"`,
+		"texto cualquie": `,"cron_expression":"todos los dias"`,
+	} {
+		body := `{"name":"n","job_type":"cron","handler":"reports.daily"` + expr + `}`
+		create := f.api(t, http.MethodPost, "/api/v1/scheduler/jobs", strings.Replace(body, `{`, `{"code":"c",`, 1))
+		update := f.api(t, http.MethodPut, "/api/v1/scheduler/jobs/"+f.jobID.String(), body)
+		for op, rec := range map[string]*httptest.ResponseRecorder{"crear": create, "editar": update} {
+			if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), domain.ErrInvalidCron.Error()) {
+				t.Errorf("%s con %s: %d %s", op, name, rec.Code, rec.Body.String())
+			}
+		}
 	}
 }

@@ -368,3 +368,140 @@ func TestTrabajoVencidoSeLanzaUnaSolaVez(t *testing.T) {
 		t.Fatalf("eventos de inicio: %d", n)
 	}
 }
+
+func (e *env) schedule(t *testing.T, jobID uuid.UUID) (time.Time, *time.Time) {
+	t.Helper()
+	var next time.Time
+	var last *time.Time
+	if err := e.pool.QueryRow(context.Background(),
+		`SELECT next_run_at, last_run_at FROM scheduler.job_schedules WHERE job_id = $1`, jobID).Scan(&next, &last); err != nil {
+		t.Fatal(err)
+	}
+	return next, last
+}
+
+func mustNextRun(t *testing.T, expr string, after time.Time) time.Time {
+	t.Helper()
+	next, err := domain.NextRun(expr, after)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return next
+}
+
+func TestCronSeDespachaEnSuOcurrenciaSinDeriva(t *testing.T) {
+	e := setup(t)
+	tenant, expr := e.tenant, "*/5 * * * *"
+	job := &domain.JobDefinition{TenantID: &tenant, Name: "Cron", Code: "it-" + uuid.NewString(), JobType: domain.JobTypeCron,
+		CronExpression: &expr, Handler: "it.report", TimeoutSeconds: 30}
+	if err := e.uc.CreateJob(e.ctx, job); err != nil {
+		t.Fatal(err)
+	}
+	first := mustNextRun(t, expr, e.clock.now())
+	if next, last := e.schedule(t, job.ID); !next.Equal(first) || last != nil {
+		t.Fatalf("alta: next_run_at %v (se esperaba %v), last_run_at %v", next, first, last)
+	}
+
+	// El ticker llega 29 s despues de la hora prevista.
+	e.clock.advance(first.Sub(e.clock.now()) + 29*time.Second)
+	e.uc.ProcessDueJobs(e.ctx)
+	next, last := e.schedule(t, job.ID)
+	if !next.Equal(first.Add(5*time.Minute)) || last == nil {
+		t.Fatalf("tras despachar: next_run_at %v (se esperaba %v), last_run_at %v", next, first.Add(5*time.Minute), last)
+	}
+	if n := e.count(t, `SELECT count(*) FROM scheduler.job_executions WHERE job_id = $1`, job.ID); n != 1 {
+		t.Fatalf("ejecuciones: %d", n)
+	}
+
+	// Cambiar la expresion replanifica sin anotar una ejecucion que no hubo.
+	ranAt := *last
+	daily := "0 3 * * *"
+	job.CronExpression = &daily
+	if err := e.uc.UpdateJob(e.ctx, job); err != nil {
+		t.Fatal(err)
+	}
+	next, last = e.schedule(t, job.ID)
+	if want := mustNextRun(t, daily, e.clock.now()); !next.Equal(want) || last == nil || !last.Equal(ranAt) {
+		t.Fatalf("editar: next_run_at %v (se esperaba %v), last_run_at %v (era %v)", next, want, last, ranAt)
+	}
+
+	bad := "0 3 * *"
+	job.CronExpression = &bad
+	if err := e.uc.UpdateJob(e.ctx, job); !errors.Is(err, domain.ErrInvalidCron) {
+		t.Fatalf("editar con una expresion invalida: %v", err)
+	}
+	if n := e.count(t, `SELECT count(*) FROM scheduler.job_definitions WHERE id = $1 AND cron_expression = $2`, job.ID, daily); n != 1 {
+		t.Fatal("la edicion rechazada no se guarda")
+	}
+}
+
+// insertLegacyJob guarda un trabajo y su calendario como los dejaba la version que no
+// evaluaba la expresion.
+func (e *env) insertLegacyJob(t *testing.T, jobType string, expr *string, minutes *int, next time.Time) uuid.UUID {
+	t.Helper()
+	id := uuid.New()
+	if _, err := e.pool.Exec(context.Background(),
+		`INSERT INTO scheduler.job_definitions (id, tenant_id, name, code, job_type, cron_expression, interval_minutes, handler)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+		id, e.tenant, "Heredado", "it-"+id.String(), jobType, expr, minutes, "it.report"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.pool.Exec(context.Background(),
+		`INSERT INTO scheduler.job_schedules (job_id, next_run_at) VALUES ($1, $2)`, id, next); err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+func TestReconciliarLosCalendariosCronHeredados(t *testing.T) {
+	e := setup(t)
+	now := e.clock.now()
+	daily, quarter, broken, five := "0 3 * * *", "*/15 * * * *", "cada hora", 5
+	offGrid := now.Add(37*time.Minute + 12*time.Second + 345*time.Microsecond)
+	legacy := e.insertLegacyJob(t, domain.JobTypeCron, &daily, nil, offGrid)
+	correct := e.insertLegacyJob(t, domain.JobTypeCron, &quarter, nil, mustNextRun(t, quarter, now))
+	invalid := e.insertLegacyJob(t, domain.JobTypeCron, &broken, nil, offGrid)
+	interval := e.insertLegacyJob(t, domain.JobTypeInterval, nil, &five, offGrid)
+
+	fixed, err := e.uc.ReconcileCronSchedules(e.ctx)
+	if err != nil || fixed != 2 {
+		t.Fatalf("corregidos %d (%v), se esperaban 2", fixed, err)
+	}
+	for id, want := range map[uuid.UUID]time.Time{
+		legacy: mustNextRun(t, daily, now), correct: mustNextRun(t, quarter, now), interval: offGrid,
+	} {
+		if next, last := e.schedule(t, id); !next.Equal(want) || last != nil {
+			t.Errorf("trabajo %s: next_run_at %v (se esperaba %v), last_run_at %v", id, next, want, last)
+		}
+	}
+	if n := e.count(t, `SELECT count(*) FROM scheduler.job_definitions WHERE id = $1 AND NOT is_active`, invalid); n != 1 {
+		t.Fatal("un cron con una expresion invalida se desactiva")
+	}
+	if fixed, err := e.uc.ReconcileCronSchedules(e.ctx); err != nil || fixed != 0 {
+		t.Fatalf("reconciliar dos veces no cambia nada: %d (%v)", fixed, err)
+	}
+
+	// Un calendario bloqueado por otra transaccion (un despacho en curso) se salta sin esperar.
+	if _, err := e.pool.Exec(context.Background(), `UPDATE scheduler.job_schedules SET next_run_at = $1 WHERE job_id = $2`, offGrid, legacy); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := e.pool.Begin(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(context.Background(), `SELECT 1 FROM scheduler.job_schedules WHERE job_id = $1 FOR UPDATE`, legacy); err != nil {
+		t.Fatal(err)
+	}
+	lockedCtx, cancel := context.WithTimeout(e.ctx, 5*time.Second)
+	defer cancel()
+	fixed, err = e.uc.ReconcileCronSchedules(lockedCtx)
+	if rerr := tx.Rollback(context.Background()); rerr != nil {
+		t.Fatal(rerr)
+	}
+	if err != nil || fixed != 0 {
+		t.Fatalf("con el calendario bloqueado: %d (%v)", fixed, err)
+	}
+	if fixed, err := e.uc.ReconcileCronSchedules(e.ctx); err != nil || fixed != 1 {
+		t.Fatalf("liberado el bloqueo se corrige: %d (%v)", fixed, err)
+	}
+}

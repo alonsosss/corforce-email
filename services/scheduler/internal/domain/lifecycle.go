@@ -23,7 +23,11 @@ var nulEscape = []byte{'\\', 'u', '0', '0', '0', '0'}
 // Validate comprueba lo que el ciclo de vida da por hecho de una definicion.
 func (j *JobDefinition) Validate() error {
 	switch j.JobType {
-	case JobTypeCron, JobTypeOneTime:
+	case JobTypeCron:
+		if _, err := ParseCron(j.CronExpr()); err != nil {
+			return err
+		}
+	case JobTypeOneTime:
 	case JobTypeInterval:
 		if j.IntervalMinutes == nil || *j.IntervalMinutes <= 0 {
 			return fmt.Errorf("%w: interval_minutes must be positive for interval jobs", ErrInvalidJob)

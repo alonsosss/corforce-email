@@ -48,12 +48,20 @@ type ScheduledTaskRepository interface {
 }
 
 type JobScheduleRepository interface {
+	// UpdateNextRun reprograma tras lanzar el trabajo: fija next_run_at y marca last_run_at.
 	UpdateNextRun(ctx context.Context, jobID uuid.UUID, nextRunAt time.Time) error
+	// SetNextRun planifica el trabajo sin marcar una ejecucion (alta, edicion, reactivacion,
+	// reconciliacion): last_run_at no cambia.
+	SetNextRun(ctx context.Context, jobID uuid.UUID, nextRunAt time.Time) error
 	// GetDue lista los calendarios vencidos de trabajos activos, sin bloquearlos.
 	GetDue(ctx context.Context, now time.Time) ([]*domain.JobSchedule, error)
 	// ClaimDue bloquea el calendario del trabajo si sigue vencido y ninguna otra
-	// transaccion lo tiene. Es el bloqueo por trabajo: dura lo que la transaccion.
-	ClaimDue(ctx context.Context, jobID uuid.UUID, now time.Time) (bool, error)
+	// transaccion lo tiene. Es el bloqueo por trabajo: dura lo que la transaccion. Devuelve
+	// la hora prevista que quedo bloqueada, de la que se cuenta la siguiente.
+	ClaimDue(ctx context.Context, jobID uuid.UUID, now time.Time) (scheduled time.Time, claimed bool, err error)
+	// LockActiveCron bloquea los calendarios de los trabajos cron activos hasta el final de
+	// la transaccion, saltando los que otra ya tiene.
+	LockActiveCron(ctx context.Context) ([]*domain.CronJobSchedule, error)
 }
 
 // EventPublisher encola los eventos del scheduler en la outbox. Debe llamarse dentro de

@@ -333,19 +333,57 @@ func (r *JobScheduleRepo) UpdateNextRun(ctx context.Context, jobID uuid.UUID, ne
 	return err
 }
 
+func (r *JobScheduleRepo) SetNextRun(ctx context.Context, jobID uuid.UUID, nextRunAt time.Time) error {
+	_, err := r.pool.Exec(ctx,
+		`INSERT INTO scheduler.job_schedules (job_id,next_run_at,is_locked) VALUES ($1,$2,false)
+ ON CONFLICT (job_id) DO UPDATE SET next_run_at=EXCLUDED.next_run_at`,
+		jobID, nextRunAt,
+	)
+	return err
+}
+
 // ClaimDue toma la fila del calendario con FOR UPDATE SKIP LOCKED y vuelve a comprobar que
 // sigue vencida: la replica que llega despues de otra la ve ya reprogramada y la salta.
 // is_locked/locked_by/locked_at ya no se escriben; el cerrojo es el de la fila.
-func (r *JobScheduleRepo) ClaimDue(ctx context.Context, jobID uuid.UUID, now time.Time) (bool, error) {
-	var one int
+func (r *JobScheduleRepo) ClaimDue(ctx context.Context, jobID uuid.UUID, now time.Time) (time.Time, bool, error) {
+	var scheduled time.Time
 	err := r.pool.QueryRow(ctx,
-		`SELECT 1 FROM scheduler.job_schedules WHERE job_id=$1 AND next_run_at <= $2 FOR UPDATE SKIP LOCKED`,
+		`SELECT next_run_at FROM scheduler.job_schedules WHERE job_id=$1 AND next_run_at <= $2 FOR UPDATE SKIP LOCKED`,
 		jobID, now,
-	).Scan(&one)
+	).Scan(&scheduled)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return false, nil
+		return time.Time{}, false, nil
 	}
-	return err == nil, err
+	if err != nil {
+		return time.Time{}, false, err
+	}
+	return scheduled.UTC(), true, nil
+}
+
+func (r *JobScheduleRepo) LockActiveCron(ctx context.Context) ([]*domain.CronJobSchedule, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT js.job_id, COALESCE(jd.cron_expression, ''), js.next_run_at
+ FROM scheduler.job_schedules js
+ JOIN scheduler.job_definitions jd ON jd.id = js.job_id
+ WHERE jd.job_type = $1 AND jd.is_active
+ ORDER BY js.job_id
+ FOR UPDATE OF js SKIP LOCKED`, domain.JobTypeCron,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var list []*domain.CronJobSchedule
+	for rows.Next() {
+		s := &domain.CronJobSchedule{}
+		if err := rows.Scan(&s.JobID, &s.Expression, &s.NextRunAt); err != nil {
+			return nil, err
+		}
+		s.NextRunAt = s.NextRunAt.UTC()
+		list = append(list, s)
+	}
+	return list, rows.Err()
 }
 
 func (r *JobScheduleRepo) GetDue(ctx context.Context, now time.Time) ([]*domain.JobSchedule, error) {

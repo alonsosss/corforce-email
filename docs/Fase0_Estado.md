@@ -66,8 +66,17 @@ cambie cualquiera de estas líneas.
   catálogo de manejadores (`services/scheduler/handlers.json`) está vacío porque ningún
   servicio consume hoy `scheduler.job.started`: hasta que un ejecutor se declare, crear o
   editar un trabajo responde 422. Pendiente del scheduler: las tareas puntuales
-  (`scheduled_tasks`) se marcan `executed` sin despachar nada y `cron_expression` no se
-  evalúa (un trabajo `cron` corre cada hora).
+  (`scheduled_tasks`) se marcan `executed` sin despachar nada, y no hay zona horaria por
+  trabajo (el modelo no tiene columna de zona: toda expresión cron se evalúa en UTC).
+* `cron_expression` evaluada (2026-09-13, unitarias e integración contra Postgres 16) con
+  el parser de `github.com/robfig/cron/v3` v3.0.1; la planificación sigue en la base. Se
+  admiten los cinco campos estándar y `@hourly`, `@daily`, `@weekly`, `@monthly` y
+  `@every <duración>` (mínimo 1 minuto). Crear, editar o reactivar un `cron` con una
+  expresión vacía, inválida o que nunca ocurre responde 422 (`ErrInvalidCron`). La
+  siguiente ejecución se cuenta desde la hora prevista, no desde la real (sin deriva), y
+  las ocurrencias que una caída se saltó se lanzan una sola vez. La primera vuelta de cada
+  proceso por empresa reconcilia los calendarios `cron` que dejó la versión que no
+  evaluaba la expresión y desactiva los que tienen una expresión inválida.
 * Contrato JSON del scheduler fijado en snake_case (DTOs del adaptador HTTP, con test de
   contrato; la duración sale como `duration_ms`). `web/` todavía no lo consume.
 * Lecturas del registro que todavía van a tablas ajenas, sancionadas con motivo en

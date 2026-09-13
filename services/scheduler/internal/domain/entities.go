@@ -96,5 +96,21 @@ type JobSchedule struct {
 	LockedAt  *time.Time
 }
 
+// CronJobSchedule es el calendario de un trabajo cron activo con la expresion de la que
+// deberia salir su next_run_at.
+type CronJobSchedule struct {
+	JobID      uuid.UUID
+	Expression string
+	NextRunAt  time.Time
+}
+
+// CronExpr es la expresion del trabajo, vacia si no tiene.
+func (j *JobDefinition) CronExpr() string {
+	if j.CronExpression == nil {
+		return ""
+	}
+	return *j.CronExpression
+}
+
 // IsPlatform indica un trabajo de plataforma: sin empresa, definido por la plataforma.
 func (j *JobDefinition) IsPlatform() bool { return j.TenantID == nil }

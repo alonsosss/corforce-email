@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/alonsosss/corforce-email/pkg/authz"
@@ -139,16 +140,33 @@ func main() {
 // llegarian tarde en cuanto una base lenta o caida bloquease a las demas. Con el pool de
 // trabajadores el ciclo dura aproximadamente lo que el lote mas lento, y el timeout aisla a
 // cada tenant: una base que no responde pierde su turno, no el de todos.
+//
+// La primera vuelta que alcanza a cada empresa reconcilia antes sus calendarios cron, que
+// hasta que el scheduler evaluo la expresion se escribian cada hora desde la ultima pasada.
+// SQL no sabe evaluar una expresion cron, por eso no es una migracion. Se anota por proceso
+// y no se repite; una empresa que falla lo reintenta en la vuelta siguiente.
 func runTicker(ctx context.Context, tenantDB *db.TenantDB, uc *app.SchedulerUseCase, concurrency int, perTenant time.Duration, logger *zap.Logger) {
 	ticker := time.NewTicker(tickInterval)
 	defer ticker.Stop()
+	var reconciled sync.Map
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
 		}
-		err := tenantDB.ForEachActiveTenantConcurrent(ctx, concurrency, perTenant, func(tCtx context.Context, _ string) {
+		err := tenantDB.ForEachActiveTenantConcurrent(ctx, concurrency, perTenant, func(tCtx context.Context, tenantID string) {
+			if _, done := reconciled.Load(tenantID); !done {
+				fixed, err := uc.ReconcileCronSchedules(tCtx)
+				if err != nil {
+					logger.Error("scheduler: no se reconciliaron los calendarios cron", zap.String("tenant_id", tenantID), zap.Error(err))
+				} else {
+					reconciled.Store(tenantID, struct{}{})
+					if fixed > 0 {
+						logger.Info("scheduler: calendarios cron reconciliados", zap.String("tenant_id", tenantID), zap.Int("corregidos", fixed))
+					}
+				}
+			}
 			uc.ProcessDueJobs(tCtx)
 			uc.ProcessPendingTasks(tCtx)
 			sweep(tCtx, uc)

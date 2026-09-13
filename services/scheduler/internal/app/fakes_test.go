@@ -26,6 +26,8 @@ type memStore struct {
 	failPublish error
 	jobUpdates  int
 	deactivated int
+	// planned cuenta las planificaciones sin ejecucion (SetNextRun).
+	planned int
 }
 
 type recorded struct {
@@ -209,7 +211,9 @@ func (r memExecs) first(ok func(e domain.JobExecution) bool, key func(e domain.J
 
 func (r memExecs) ClaimOverdue(_ context.Context, now time.Time) (*domain.JobExecution, error) {
 	return r.first(
-		func(e domain.JobExecution) bool { return e.IsActive() && e.DeadlineAt != nil && !e.DeadlineAt.After(now) },
+		func(e domain.JobExecution) bool {
+			return e.IsActive() && e.DeadlineAt != nil && !e.DeadlineAt.After(now)
+		},
 		func(e domain.JobExecution) time.Time { return *e.DeadlineAt }), nil
 }
 
@@ -246,11 +250,39 @@ func (r memSchedules) GetDue(_ context.Context, now time.Time) ([]*domain.JobSch
 	return out, nil
 }
 
-func (r memSchedules) ClaimDue(_ context.Context, jobID uuid.UUID, now time.Time) (bool, error) {
+// SetNextRun planifica sin marcar ejecucion; UpdateNextRun, en cambio, anota last_run_at.
+func (r memSchedules) SetNextRun(_ context.Context, jobID uuid.UUID, next time.Time) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	s := r.schedules[jobID]
+	s.JobID, s.NextRunAt = jobID, next
+	r.schedules[jobID] = s
+	r.planned++
+	return nil
+}
+
+func (r memSchedules) ClaimDue(_ context.Context, jobID uuid.UUID, now time.Time) (time.Time, bool, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	s, ok := r.schedules[jobID]
-	return ok && !s.NextRunAt.After(now), nil
+	if !ok || s.NextRunAt.After(now) {
+		return time.Time{}, false, nil
+	}
+	return s.NextRunAt, true, nil
+}
+
+func (r memSchedules) LockActiveCron(context.Context) ([]*domain.CronJobSchedule, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []*domain.CronJobSchedule
+	for id, s := range r.schedules {
+		j := r.jobs[id]
+		if j.IsActive && j.JobType == domain.JobTypeCron {
+			out = append(out, &domain.CronJobSchedule{JobID: id, Expression: j.CronExpr(), NextRunAt: s.NextRunAt})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].JobID.String() < out[j].JobID.String() })
+	return out, nil
 }
 
 type memEvents struct{ *memStore }
