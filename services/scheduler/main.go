@@ -2,7 +2,10 @@ package main
 
 import (
 	"context"
+	_ "embed"
+	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"strconv"
 	"time"
@@ -12,26 +15,58 @@ import (
 	"github.com/alonsosss/corforce-email/pkg/db"
 	"github.com/alonsosss/corforce-email/pkg/events"
 	"github.com/alonsosss/corforce-email/pkg/middleware"
+	"github.com/alonsosss/corforce-email/pkg/outbox"
+	"github.com/alonsosss/corforce-email/pkg/response"
 	"github.com/alonsosss/corforce-email/pkg/server"
+	catalogadapter "github.com/alonsosss/corforce-email/services/scheduler/internal/adapters/catalog"
 	handler "github.com/alonsosss/corforce-email/services/scheduler/internal/adapters/http"
-	natsadapter "github.com/alonsosss/corforce-email/services/scheduler/internal/adapters/nats"
+	outboxadapter "github.com/alonsosss/corforce-email/services/scheduler/internal/adapters/outbox"
 	"github.com/alonsosss/corforce-email/services/scheduler/internal/adapters/postgres"
 	"github.com/alonsosss/corforce-email/services/scheduler/internal/app"
+	"github.com/alonsosss/corforce-email/services/scheduler/internal/domain"
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 	"go.uber.org/zap"
+)
+
+// handlers.json es el catalogo de manejadores por defecto, embebido en el binario;
+// SCHEDULER_HANDLERS_FILE lo sustituye entero (no lo mezcla) para otro despliegue.
+//
+//go:embed handlers.json
+var defaultHandlers []byte
+
+// sweepLockKey es el cerrojo de lider del barrido de vencidas y reintentos en la base de
+// cada empresa.
+const sweepLockKey int64 = 0x7363686564737770 // "schedswp"
+
+const (
+	defaultPort  = 8033
+	tickInterval = 30 * time.Second
 )
 
 func main() {
 	logger, _ := zap.NewProduction()
 	defer logger.Sync()
+	response.SetUnexpectedLogger(logger)
 
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatalf("load config: %v", err)
 	}
 
-	ctx := context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	catalog, err := loadCatalog()
+	if err != nil {
+		log.Fatalf("%v", err)
+	}
+	retry := domain.RetryPolicy{
+		BaseDelay: envDuration("SCHEDULER_RETRY_BASE_DELAY", 30*time.Second),
+		MaxDelay:  envDuration("SCHEDULER_RETRY_MAX_DELAY", time.Hour),
+	}
+	if err := retry.Validate(); err != nil {
+		log.Fatalf("SCHEDULER_RETRY_BASE_DELAY / SCHEDULER_RETRY_MAX_DELAY: %v", err)
+	}
 
 	registryPool, err := db.NewPool(ctx, cfg.Postgres.DSN(), logger)
 	if err != nil {
@@ -43,74 +78,114 @@ func main() {
 	defer mgr.CloseAll()
 	ctxPool := &db.ContextPool{}
 
-	bus, err := events.NewBus(cfg.NATS.URL, logger)
-	if err != nil {
-		log.Fatalf("connect nats: %v", err)
-	}
-	defer bus.Close()
-
-	jobRepo := postgres.NewJobDefinitionRepo(ctxPool)
-	execRepo := postgres.NewJobExecutionRepo(ctxPool)
-	taskRepo := postgres.NewScheduledTaskRepo(ctxPool)
-	scheduleRepo := postgres.NewJobScheduleRepo(ctxPool)
-	eventPub := natsadapter.NewEventPublisher(bus)
-
 	uc := app.NewSchedulerUseCase(app.SchedulerDeps{
-		Jobs:       jobRepo,
-		Executions: execRepo,
-		Tasks:      taskRepo,
-		Schedules:  scheduleRepo,
-		Events:     eventPub,
+		Jobs:       postgres.NewJobDefinitionRepo(ctxPool),
+		Executions: postgres.NewJobExecutionRepo(ctxPool),
+		Tasks:      postgres.NewScheduledTaskRepo(ctxPool),
+		Schedules:  postgres.NewJobScheduleRepo(ctxPool),
+		Events:     outboxadapter.NewPublisher(ctxPool),
+		Tx:         postgres.NewTransactor(ctxPool),
+		Catalog:    catalog,
+		Retry:      retry,
 		Logger:     logger,
 	})
+	logger.Info("scheduler: catalogo de manejadores cargado", zap.Int("manejadores", len(catalog.List())))
 
-	// El barrido de tenants es concurrente y con timeout por tenant. En una
-	// plataforma multitenant el numero de bases crece con los clientes: recorrerlas
-	// en serie haria que el ciclo durase la suma de todas y, con un ticker de 30 s,
-	// los trabajos de las ultimas bases llegarian tarde en cuanto una base lenta
-	// o caida bloquease a las demas. Con el pool de trabajadores el ciclo dura
-	// aproximadamente lo que el lote mas lento, y el timeout aisla a cada tenant:
-	// una base que no responde pierde su turno, no el de todos.
-	tenantConcurrency := envInt("SCHEDULER_TENANT_CONCURRENCY", 4)
-	tenantTimeout := envDuration("SCHEDULER_TENANT_TIMEOUT", 20*time.Second)
-	lockerID := uuid.New().String()
-	go func() {
-		ticker := time.NewTicker(30 * time.Second)
-		defer ticker.Stop()
-		for range ticker.C {
-			if err := tenantDB.ForEachActiveTenantConcurrent(ctx, tenantConcurrency, tenantTimeout, func(tCtx context.Context, _ string) {
-				uc.ProcessDueJobs(tCtx, lockerID)
-				uc.ProcessPendingTasks(tCtx)
-			}); err != nil {
-				logger.Error("scheduler: list tenants", zap.Error(err))
-			}
+	// Sin NATS el scheduler sigue despachando y cerrando: los eventos esperan en la outbox
+	// de cada empresa hasta que el bus vuelva.
+	if bus, err := events.NewBus(cfg.NATS.URL, logger); err != nil {
+		logger.Error("scheduler: NATS no disponible; los eventos quedan en la outbox", zap.Error(err))
+	} else {
+		defer bus.Close()
+		if err := bus.EnsureStream(outboxadapter.StreamName, []string{outboxadapter.StreamSubjects}); err != nil {
+			logger.Error("scheduler: no se pudo asegurar el stream", zap.Error(err))
 		}
-	}()
+		go outbox.RunForTenants(ctx, tenantDB, db.PoolFromCtx, bus, logger, outbox.Options{})
+	}
 
-	h := handler.NewHandler(uc, authz.NewCheckerFromEnv())
+	go runTicker(ctx, tenantDB, uc, envInt("SCHEDULER_TENANT_CONCURRENCY", 4), envDuration("SCHEDULER_TENANT_TIMEOUT", 20*time.Second), logger)
+
+	h := handler.NewHandler(handler.Deps{
+		UC:    uc,
+		Perms: authz.NewCheckerFromEnv(),
+		API: []func(http.Handler) http.Handler{
+			db.TenantPoolMiddleware(tenantDB),
+			middleware.NewRateLimiter(60, time.Minute).Limit,
+		},
+		Internal: []func(http.Handler) http.Handler{
+			db.TenantHeaderPoolMiddleware(tenantDB),
+		},
+	})
 
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
 	r.Use(middleware.RequireGatewayToken)
 	r.Use(middleware.InjectFromGateway)
-	r.Use(db.TenantPoolMiddleware(tenantDB))
 	r.Use(middleware.SecureHeaders)
 	r.Use(middleware.Logger(logger))
-	limiter := middleware.NewRateLimiter(60, time.Minute)
-	r.Use(limiter.Limit)
 	r.Mount("/", h.Routes())
 
-	port := 8033
-	if p := os.Getenv("SCHEDULER_PORT"); p != "" {
-		if v, err := strconv.Atoi(p); err == nil {
-			port = v
-		}
-	}
-
-	srv := server.New(port, r, logger)
+	srv := server.New(envInt("SCHEDULER_PORT", defaultPort), r, logger)
 	if err := srv.Run(); err != nil {
 		logger.Fatal("server error", zap.Error(err))
 	}
+}
+
+// runTicker recorre las empresas activas cada tickInterval.
+//
+// El barrido de tenants es concurrente y con timeout por tenant. En una plataforma
+// multitenant el numero de bases crece con los clientes: recorrerlas en serie haria que el
+// ciclo durase la suma de todas y, con un ticker de 30 s, los trabajos de las ultimas bases
+// llegarian tarde en cuanto una base lenta o caida bloquease a las demas. Con el pool de
+// trabajadores el ciclo dura aproximadamente lo que el lote mas lento, y el timeout aisla a
+// cada tenant: una base que no responde pierde su turno, no el de todos.
+func runTicker(ctx context.Context, tenantDB *db.TenantDB, uc *app.SchedulerUseCase, concurrency int, perTenant time.Duration, logger *zap.Logger) {
+	ticker := time.NewTicker(tickInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+		err := tenantDB.ForEachActiveTenantConcurrent(ctx, concurrency, perTenant, func(tCtx context.Context, _ string) {
+			uc.ProcessDueJobs(tCtx)
+			uc.ProcessPendingTasks(tCtx)
+			sweep(tCtx, uc)
+		})
+		if err != nil && ctx.Err() == nil {
+			logger.Error("scheduler: list tenants", zap.Error(err))
+		}
+	}
+}
+
+// sweep vence y despacha reintentos en la base del contexto con el cerrojo de lider. Las
+// filas ya se toman con SKIP LOCKED; el cerrojo evita ademas que todas las replicas
+// recorran la misma base en la misma vuelta.
+func sweep(ctx context.Context, uc *app.SchedulerUseCase) {
+	pool, ok := db.PoolFromCtx(ctx)
+	if !ok {
+		return
+	}
+	release, ok := db.TryLeaderLock(ctx, pool, sweepLockKey)
+	if !ok {
+		return
+	}
+	defer release()
+	uc.ExpireOverdue(ctx)
+	uc.DispatchRetries(ctx)
+}
+
+func loadCatalog() (*domain.HandlerCatalog, error) {
+	raw := defaultHandlers
+	if path := os.Getenv("SCHEDULER_HANDLERS_FILE"); path != "" {
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return nil, fmt.Errorf("leer SCHEDULER_HANDLERS_FILE: %w", err)
+		}
+		raw = b
+	}
+	return catalogadapter.Parse(raw)
 }
 
 func envInt(key string, def int) int {

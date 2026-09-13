@@ -18,25 +18,47 @@ import (
 
 const permModule = "scheduler"
 
-type Handler struct {
-	uc    *app.SchedulerUseCase
-	authz *authz.Checker
+// Deps del adaptador HTTP. Los middlewares de cada superficie los decide main.go: el pool
+// de la empresa sale del token en el API y de X-Tenant-ID en las rutas internas.
+type Deps struct {
+	UC    *app.SchedulerUseCase
+	Perms *authz.Checker
+	// API son los middlewares del API con sesion (pool de la empresa, limitador).
+	API []func(http.Handler) http.Handler
+	// Internal son los de las rutas servicio a servicio (pool de la empresa de X-Tenant-ID).
+	Internal []func(http.Handler) http.Handler
 }
 
-func NewHandler(uc *app.SchedulerUseCase, checker *authz.Checker) *Handler {
-	return &Handler{uc: uc, authz: checker}
+type Handler struct {
+	uc       *app.SchedulerUseCase
+	authz    *authz.Checker
+	api      []func(http.Handler) http.Handler
+	internal []func(http.Handler) http.Handler
+}
+
+func NewHandler(d Deps) *Handler {
+	return &Handler{uc: d.UC, authz: d.Perms, api: d.API, internal: d.Internal}
 }
 
 func (h *Handler) perm(resource, action string) func(http.Handler) http.Handler {
 	return h.authz.RequirePermission(permModule, resource, action)
 }
 
-// Routes: cada peticion opera sobre la base de la empresa que llama, de modo que todos los
-// permisos son de alcance tenant. Ver los trabajos dice que procesos corren solos y a que
-// hora; lanzarlos, desactivarlos o cancelarlos mueve procesos de toda la empresa.
+// Routes monta dos superficies.
+//
+// El API (/api/v1/scheduler, por el gateway) opera sobre la base de la empresa que llama,
+// de modo que todos los permisos son de alcance tenant. Ver los trabajos dice que procesos
+// corren solos y a que hora; lanzarlos, desactivarlos o cancelarlos mueve procesos de toda
+// la empresa.
+//
+// Las rutas internas (/internal/scheduler) las llaman los servicios ejecutores para cerrar
+// lo que el scheduler les despacho. No pasan por el gateway: main.go exige el token interno
+// y la empresa llega en X-Tenant-ID.
 func (h *Handler) Routes() chi.Router {
 	r := chi.NewRouter()
 	r.Route("/api/v1/scheduler", func(r chi.Router) {
+		r.Use(h.api...)
+		r.With(h.perm("jobs", "read")).Get("/handlers", h.ListHandlers)
 		r.Route("/jobs", func(r chi.Router) {
 			r.With(h.perm("jobs", "read")).Get("/", h.ListJobs)
 			r.With(h.perm("jobs", "create")).Post("/", h.CreateJob)
@@ -59,6 +81,11 @@ func (h *Handler) Routes() chi.Router {
 			r.With(h.perm("tasks", "read")).Get("/{id}", h.GetTask)
 			r.With(h.perm("tasks", "cancel")).Post("/{id}/cancel", h.CancelTask)
 		})
+	})
+	r.Route("/internal/scheduler/executions/{id}", func(r chi.Router) {
+		r.Use(h.internal...)
+		r.Post("/complete", h.CompleteExecution)
+		r.Post("/fail", h.FailExecution)
 	})
 	return r
 }
@@ -86,6 +113,37 @@ func parsePage(r *http.Request) (int, int) {
 		pageSize = 100
 	}
 	return page, pageSize
+}
+
+// writeError traduce los errores del caso de uso. Lo no clasificado es un 500 que queda
+// registrado.
+func writeError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, domain.ErrJobNotFound):
+		response.ErrNotFound(w, "job not found")
+	case errors.Is(err, domain.ErrExecutionNotFound):
+		response.ErrNotFound(w, "execution not found")
+	case errors.Is(err, domain.ErrPlatformJob):
+		response.ErrForbidden(w, err.Error())
+	case errors.Is(err, domain.ErrHandlerNotAllowed),
+		errors.Is(err, domain.ErrInvalidJob),
+		errors.Is(err, domain.ErrInvalidReport):
+		response.ErrValidation(w, err.Error())
+	case errors.Is(err, domain.ErrJobAlreadyExists),
+		errors.Is(err, domain.ErrExecutionConflict),
+		errors.Is(err, domain.ErrExecutionClosed),
+		errors.Is(err, domain.ErrExecutionNotRetryable),
+		errors.Is(err, domain.ErrAlreadyRetried),
+		errors.Is(err, domain.ErrMaxRetriesExceeded):
+		response.ErrConflict(w, err.Error())
+	default:
+		response.Unexpected(w, err)
+	}
+}
+
+// ListHandlers expone el catalogo de manejadores para que la UI no copie la lista.
+func (h *Handler) ListHandlers(w http.ResponseWriter, r *http.Request) {
+	response.JSON(w, http.StatusOK, handlersResponse(h.uc.ListHandlers()))
 }
 
 type createJobReq struct {
@@ -116,13 +174,15 @@ func (h *Handler) CreateJob(w http.ResponseWriter, r *http.Request) {
 		response.ErrValidation(w, v.Error())
 		return
 	}
-	tenantID, _ := parseTenantID(r)
-	var tid *uuid.UUID
-	if tenantID != uuid.Nil {
-		tid = &tenantID
+	// Por el API solo se crean trabajos de la empresa que llama: sin empresa legible no
+	// hay trabajo, nunca uno de plataforma.
+	tenantID, err := parseTenantID(r)
+	if err != nil {
+		response.ErrUnauthorized(w, "invalid tenant")
+		return
 	}
 	job := &domain.JobDefinition{
-		TenantID:        tid,
+		TenantID:        &tenantID,
 		Name:            req.Name,
 		Code:            req.Code,
 		Description:     req.Description,
@@ -135,11 +195,7 @@ func (h *Handler) CreateJob(w http.ResponseWriter, r *http.Request) {
 		TimeoutSeconds:  req.TimeoutSeconds,
 	}
 	if err := h.uc.CreateJob(r.Context(), job); err != nil {
-		if err == domain.ErrJobAlreadyExists {
-			response.ErrConflict(w, err.Error())
-			return
-		}
-		response.ErrInternal(w)
+		writeError(w, err)
 		return
 	}
 	response.JSON(w, http.StatusCreated, jobResponse(job))
@@ -158,7 +214,7 @@ func (h *Handler) GetJob(w http.ResponseWriter, r *http.Request) {
 	}
 	job, err := h.uc.GetJob(r.Context(), id, tenantID)
 	if err != nil {
-		response.ErrNotFound(w, "job not found")
+		writeError(w, err)
 		return
 	}
 	response.JSON(w, http.StatusOK, jobResponse(job))
@@ -178,7 +234,7 @@ func (h *Handler) ListJobs(w http.ResponseWriter, r *http.Request) {
 	}
 	jobs, err := h.uc.ListJobs(r.Context(), tenantID, isActive)
 	if err != nil {
-		response.ErrInternal(w)
+		writeError(w, err)
 		return
 	}
 	response.JSON(w, http.StatusOK, jobsResponse(jobs))
@@ -214,7 +270,7 @@ func (h *Handler) UpdateJob(w http.ResponseWriter, r *http.Request) {
 	}
 	job, err := h.uc.GetJob(r.Context(), id, tenantID)
 	if err != nil {
-		response.ErrNotFound(w, "job not found")
+		writeError(w, err)
 		return
 	}
 	job.Name = req.Name
@@ -227,7 +283,7 @@ func (h *Handler) UpdateJob(w http.ResponseWriter, r *http.Request) {
 	job.MaxRetries = req.MaxRetries
 	job.TimeoutSeconds = req.TimeoutSeconds
 	if err := h.uc.UpdateJob(r.Context(), job); err != nil {
-		writeJobError(w, err)
+		writeError(w, err)
 		return
 	}
 	response.JSON(w, http.StatusOK, jobResponse(job))
@@ -245,7 +301,7 @@ func (h *Handler) EnableJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.uc.EnableJob(r.Context(), id, tenantID); err != nil {
-		writeJobError(w, err)
+		writeError(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -263,7 +319,7 @@ func (h *Handler) DisableJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.uc.DisableJob(r.Context(), id, tenantID); err != nil {
-		writeJobError(w, err)
+		writeError(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -282,21 +338,10 @@ func (h *Handler) RunJob(w http.ResponseWriter, r *http.Request) {
 	}
 	exec, err := h.uc.RunJob(r.Context(), tenantID, id)
 	if err != nil {
-		writeJobError(w, err)
+		writeError(w, err)
 		return
 	}
 	response.JSON(w, http.StatusCreated, executionResponse(exec))
-}
-
-func writeJobError(w http.ResponseWriter, err error) {
-	switch {
-	case errors.Is(err, domain.ErrJobNotFound):
-		response.ErrNotFound(w, "job not found")
-	case errors.Is(err, domain.ErrPlatformJob):
-		response.ErrForbidden(w, err.Error())
-	default:
-		response.ErrInternal(w)
-	}
 }
 
 func (h *Handler) GetJobHistory(w http.ResponseWriter, r *http.Request) {
@@ -308,16 +353,16 @@ func (h *Handler) GetJobHistory(w http.ResponseWriter, r *http.Request) {
 	page, pageSize := parsePage(r)
 	execs, total, err := h.uc.GetJobHistory(r.Context(), id, page, pageSize)
 	if err != nil {
-		response.ErrInternal(w)
+		writeError(w, err)
 		return
 	}
-	response.JSONWithMeta(w, http.StatusOK, executionsResponse(execs),response.PageMeta(total, page, pageSize))
+	response.JSONWithMeta(w, http.StatusOK, executionsResponse(execs), response.PageMeta(total, page, pageSize))
 }
 
 func (h *Handler) ListRunning(w http.ResponseWriter, r *http.Request) {
 	execs, err := h.uc.GetRunningJobs(r.Context())
 	if err != nil {
-		response.ErrInternal(w)
+		writeError(w, err)
 		return
 	}
 	response.JSON(w, http.StatusOK, executionsResponse(execs))
@@ -336,7 +381,7 @@ func (h *Handler) GetExecution(w http.ResponseWriter, r *http.Request) {
 	}
 	exec, err := h.uc.GetExecution(r.Context(), id, tenantID)
 	if err != nil {
-		response.ErrNotFound(w, "execution not found")
+		writeError(w, err)
 		return
 	}
 	response.JSON(w, http.StatusOK, executionResponse(exec))
@@ -354,11 +399,7 @@ func (h *Handler) CancelExecution(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.uc.CancelExecution(r.Context(), id, tenantID); err != nil {
-		if err == domain.ErrExecutionNotFound {
-			response.ErrNotFound(w, "execution not found")
-			return
-		}
-		response.ErrInternal(w)
+		writeError(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -377,15 +418,7 @@ func (h *Handler) RetryExecution(w http.ResponseWriter, r *http.Request) {
 	}
 	exec, err := h.uc.RetryFailedExecution(r.Context(), id, tenantID)
 	if err != nil {
-		if err == domain.ErrExecutionNotFound || err == domain.ErrJobNotFound {
-			response.ErrNotFound(w, err.Error())
-			return
-		}
-		if err == domain.ErrMaxRetriesExceeded {
-			response.ErrConflict(w, err.Error())
-			return
-		}
-		response.ErrInternal(w)
+		writeError(w, err)
 		return
 	}
 	response.JSON(w, http.StatusCreated, executionResponse(exec))
@@ -432,7 +465,7 @@ func (h *Handler) ScheduleTask(w http.ResponseWriter, r *http.Request) {
 		Payload:     req.Payload,
 	}
 	if err := h.uc.ScheduleTask(r.Context(), task); err != nil {
-		response.ErrInternal(w)
+		writeError(w, err)
 		return
 	}
 	response.JSON(w, http.StatusCreated, taskResponse(task))
@@ -464,7 +497,7 @@ func (h *Handler) CancelTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.uc.CancelTask(r.Context(), id); err != nil {
-		response.ErrInternal(w)
+		writeError(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -473,7 +506,7 @@ func (h *Handler) CancelTask(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) ListPendingTasks(w http.ResponseWriter, r *http.Request) {
 	tasks, err := h.uc.ListPendingTasks(r.Context(), time.Now().UTC().Add(24*time.Hour))
 	if err != nil {
-		response.ErrInternal(w)
+		writeError(w, err)
 		return
 	}
 	response.JSON(w, http.StatusOK, tasksResponse(tasks))

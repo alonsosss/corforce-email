@@ -8,6 +8,12 @@ import (
 	"github.com/google/uuid"
 )
 
+// Transactor abre una transaccion en la base de la empresa del contexto. Todo lo que fn
+// escribe, tambien la outbox, se confirma o se descarta junto.
+type Transactor interface {
+	Transact(ctx context.Context, fn func(ctx context.Context) error) error
+}
+
 type JobDefinitionRepository interface {
 	Create(ctx context.Context, job *domain.JobDefinition) error
 	GetByID(ctx context.Context, id, tenantID uuid.UUID) (*domain.JobDefinition, error)
@@ -18,12 +24,19 @@ type JobDefinitionRepository interface {
 }
 
 type JobExecutionRepository interface {
+	// Create devuelve domain.ErrAlreadyRetried si exec.RetryOf ya tiene un reintento.
 	Create(ctx context.Context, exec *domain.JobExecution) error
 	GetByID(ctx context.Context, id, tenantID uuid.UUID) (*domain.JobExecution, error)
+	// GetForUpdate carga la ejecucion bloqueando su fila hasta el final de la transaccion.
+	GetForUpdate(ctx context.Context, id, tenantID uuid.UUID) (*domain.JobExecution, error)
 	GetByJob(ctx context.Context, jobID uuid.UUID, page, pageSize int) ([]*domain.JobExecution, int64, error)
 	Update(ctx context.Context, exec *domain.JobExecution) error
-	GetLastByJob(ctx context.Context, jobID uuid.UUID) (*domain.JobExecution, error)
 	ListRunning(ctx context.Context) ([]*domain.JobExecution, error)
+	// ClaimOverdue bloquea la ejecucion activa con el plazo vencido mas antiguo, saltando
+	// las que otra transaccion ya tiene; nil si no queda ninguna.
+	ClaimOverdue(ctx context.Context, now time.Time) (*domain.JobExecution, error)
+	// ClaimDispatchable bloquea el reintento en espera cuya hora ya llego; nil si no hay.
+	ClaimDispatchable(ctx context.Context, now time.Time) (*domain.JobExecution, error)
 }
 
 type ScheduledTaskRepository interface {
@@ -35,15 +48,19 @@ type ScheduledTaskRepository interface {
 }
 
 type JobScheduleRepository interface {
-	GetByJob(ctx context.Context, jobID uuid.UUID) (*domain.JobSchedule, error)
 	UpdateNextRun(ctx context.Context, jobID uuid.UUID, nextRunAt time.Time) error
-	Lock(ctx context.Context, jobID uuid.UUID, lockerID string) (bool, error)
-	Unlock(ctx context.Context, jobID uuid.UUID) error
+	// GetDue lista los calendarios vencidos de trabajos activos, sin bloquearlos.
 	GetDue(ctx context.Context, now time.Time) ([]*domain.JobSchedule, error)
+	// ClaimDue bloquea el calendario del trabajo si sigue vencido y ninguna otra
+	// transaccion lo tiene. Es el bloqueo por trabajo: dura lo que la transaccion.
+	ClaimDue(ctx context.Context, jobID uuid.UUID, now time.Time) (bool, error)
 }
 
+// EventPublisher encola los eventos del scheduler en la outbox. Debe llamarse dentro de
+// Transactor.Transact: el evento existe si y solo si el cambio de la ejecucion existe.
 type EventPublisher interface {
-	PublishJobStarted(tenantID, jobID, executionID string) error
-	PublishJobCompleted(tenantID, jobID, executionID string) error
-	PublishJobFailed(tenantID, jobID, executionID, errMsg string) error
+	JobStarted(ctx context.Context, job *domain.JobDefinition, exec *domain.JobExecution, timeoutSeconds int) error
+	JobCompleted(ctx context.Context, job *domain.JobDefinition, exec *domain.JobExecution) error
+	// JobFailed lleva el reintento programado, o nil si no habra otro intento.
+	JobFailed(ctx context.Context, job *domain.JobDefinition, exec, retry *domain.JobExecution) error
 }

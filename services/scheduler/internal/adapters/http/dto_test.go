@@ -74,7 +74,7 @@ func contractServer() (http.Handler, *domain.JobDefinition, *domain.JobExecution
 	})
 	r := chi.NewRouter()
 	r.Use(middleware.InjectFromGateway)
-	r.Mount("/", NewHandler(uc, authz.NewChecker(unreachable, "")).Routes())
+	r.Mount("/", NewHandler(Deps{UC: uc, Perms: authz.NewChecker(unreachable, "")}).Routes())
 	return r, job, exec, task
 }
 
@@ -124,7 +124,7 @@ func TestContratoJSONEnSnakeCase(t *testing.T) {
 			"code,created_at,cron_expression,description,handler,id,interval_minutes,is_active,job_type,max_retries,name,payload,tenant_id,timeout_seconds,updated_at",
 			job.ID},
 		{"/api/v1/scheduler/executions/" + exec.ID.String(),
-			"completed_at,created_at,duration_ms,error_message,id,job_id,result,retry_count,started_at,status,tenant_id",
+			"completed_at,created_at,deadline_at,duration_ms,error_message,failure_reason,id,job_id,next_attempt_at,result,retry_count,retry_of,started_at,status,tenant_id",
 			exec.ID},
 		{"/api/v1/scheduler/tasks/" + task.ID.String(),
 			"created_at,description,executed_at,handler,id,name,payload,status,tenant_id,trigger_at",
@@ -148,7 +148,35 @@ func TestContratoJSONEnSnakeCase(t *testing.T) {
 
 func TestListadoVacioEsArray(t *testing.T) {
 	srv, _, _, _ := contractServer()
-	if data := getData(t, srv, "/api/v1/scheduler/jobs"); string(data) != "[]" {
-		t.Fatalf("listado vacio: %s, se esperaba []", data)
+	for _, path := range []string{"/api/v1/scheduler/jobs", "/api/v1/scheduler/handlers"} {
+		if data := getData(t, srv, path); string(data) != "[]" {
+			t.Fatalf("listado vacio en %s: %s, se esperaba []", path, data)
+		}
+	}
+}
+
+func TestContratoDelCatalogoDeManejadores(t *testing.T) {
+	catalog, err := domain.NewHandlerCatalog([]domain.HandlerSpec{{
+		Name: "reports.daily", Service: "reports", Description: "Informe diario", MaxTimeoutSeconds: 600,
+		Scopes: []domain.HandlerScope{domain.ScopeTenant},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	uc := app.NewSchedulerUseCase(app.SchedulerDeps{Catalog: catalog, Logger: zap.NewNop()})
+	r := chi.NewRouter()
+	r.Use(middleware.InjectFromGateway)
+	r.Mount("/", NewHandler(Deps{UC: uc, Perms: authz.NewChecker(unreachable, "")}).Routes())
+
+	var list []json.RawMessage
+	if err := json.Unmarshal(getData(t, r, "/api/v1/scheduler/handlers"), &list); err != nil || len(list) != 1 {
+		t.Fatalf("catalogo: %v %d", err, len(list))
+	}
+	obj, got := keysOf(t, list[0])
+	if got != "description,max_timeout_seconds,name,scopes,service" {
+		t.Fatalf("claves: %s", got)
+	}
+	if string(obj["scopes"]) != `["tenant"]` || string(obj["max_timeout_seconds"]) != "600" {
+		t.Fatalf("manejador: %v", obj)
 	}
 }

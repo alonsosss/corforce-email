@@ -59,6 +59,7 @@ var rutas = []ruta{
 	{http.MethodPost, base + "/tasks", `{}`, "scheduler/tasks/create", http.StatusUnprocessableEntity},
 	{http.MethodGet, base + "/tasks/no-es-uuid", "", "scheduler/tasks/read", http.StatusBadRequest},
 	{http.MethodPost, base + "/tasks/no-es-uuid/cancel", "", "scheduler/tasks/cancel", http.StatusBadRequest},
+	{http.MethodGet, base + "/handlers", "", "scheduler/jobs/read", http.StatusOK},
 }
 
 type jobsVacios struct{ ports.JobDefinitionRepository }
@@ -112,7 +113,7 @@ func authzServer(accessURL string) http.Handler {
 	})
 	r := chi.NewRouter()
 	r.Use(middleware.InjectFromGateway)
-	r.Mount("/", NewHandler(uc, authz.NewChecker(accessURL, "")).Routes())
+	r.Mount("/", NewHandler(Deps{UC: uc, Perms: authz.NewChecker(accessURL, "")}).Routes())
 	return r
 }
 

@@ -6,6 +6,34 @@ import (
 	"github.com/google/uuid"
 )
 
+// Estados de una ejecucion. pending espera su intento (un reintento con espera todavia no
+// despachado); running esta despachada y corre el plazo de su manejador; los otros tres
+// son terminales.
+const (
+	StatusPending   = "pending"
+	StatusRunning   = "running"
+	StatusCompleted = "completed"
+	StatusFailed    = "failed"
+	StatusCancelled = "cancelled"
+)
+
+const (
+	JobTypeCron     = "cron"
+	JobTypeInterval = "interval"
+	JobTypeOneTime  = "one_time"
+)
+
+// Motivos de una ejecucion fallida (columna failure_reason).
+const (
+	// FailureExecutor: el servicio ejecutor informo el fallo.
+	FailureExecutor = "executor"
+	// FailureTimeout: nadie cerro la ejecucion antes de su plazo.
+	FailureTimeout = "timeout"
+	// FailureHandlerNotAllowed: el manejador del trabajo ya no esta en el catalogo, asi que
+	// no hay a quien despacharla.
+	FailureHandlerNotAllowed = "handler_not_allowed"
+)
+
 type JobDefinition struct {
 	ID              uuid.UUID
 	TenantID        *uuid.UUID
@@ -36,6 +64,13 @@ type JobExecution struct {
 	ErrorMessage *string
 	RetryCount   int
 	CreatedAt    time.Time
+	// DeadlineAt es el limite para recibir el cierre de una ejecucion despachada.
+	DeadlineAt *time.Time
+	// NextAttemptAt es cuando se despacha un reintento que espera en pending.
+	NextAttemptAt *time.Time
+	// RetryOf es la ejecucion fallida de la que esta es el reintento.
+	RetryOf       *uuid.UUID
+	FailureReason *string
 }
 
 type ScheduledTask struct {

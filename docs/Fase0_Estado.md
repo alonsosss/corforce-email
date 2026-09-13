@@ -58,8 +58,16 @@ cambie cualquiera de estas líneas.
   handler queda con `IsPrivileged` o `RequireRoles(tenant_admin)` como única comprobación.
 * Enrutado por celda implementado (`db.NewTenantRouting`, aprovisionamiento en la celda de
   la empresa). Queda una credencial por celda (hoy una sola de plataforma).
-* El scheduler crea ejecuciones y publica `scheduler.job.started`, pero ningún ejecutor
-  las cierra: hace falta definir el consumidor.
+* Ciclo de vida de una ejecución del scheduler cerrado (2026-09-13, unitarias e integración
+  contra Postgres 16): `scheduler.job.started`, `.completed` y `.failed` salen por la outbox
+  en la transacción que cambia la ejecución (stream `SCHEDULER`); el ejecutor cierra por
+  `POST /internal/scheduler/executions/{id}/complete|fail` y un barrido con
+  `db.TryLeaderLock` vence por timeout y despacha los reintentos con espera creciente. El
+  catálogo de manejadores (`services/scheduler/handlers.json`) está vacío porque ningún
+  servicio consume hoy `scheduler.job.started`: hasta que un ejecutor se declare, crear o
+  editar un trabajo responde 422. Pendiente del scheduler: las tareas puntuales
+  (`scheduled_tasks`) se marcan `executed` sin despachar nada y `cron_expression` no se
+  evalúa (un trabajo `cron` corre cada hora).
 * Contrato JSON del scheduler fijado en snake_case (DTOs del adaptador HTTP, con test de
   contrato; la duración sale como `duration_ms`). `web/` todavía no lo consume.
 * `identity` lee `access_control.roles`/`user_roles` por join directo dentro del registro;

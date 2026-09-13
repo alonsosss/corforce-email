@@ -41,6 +41,12 @@ type executionDTO struct {
 	ErrorMessage *string   `json:"error_message"`
 	RetryCount   int       `json:"retry_count"`
 	CreatedAt    time.Time `json:"created_at"`
+	// DeadlineAt es el limite para recibir el cierre; NextAttemptAt, la hora de un reintento
+	// que espera en pending.
+	DeadlineAt    *time.Time `json:"deadline_at"`
+	NextAttemptAt *time.Time `json:"next_attempt_at"`
+	RetryOf       *uuid.UUID `json:"retry_of"`
+	FailureReason *string    `json:"failure_reason"`
 }
 
 type taskDTO struct {
@@ -54,6 +60,14 @@ type taskDTO struct {
 	Status      string     `json:"status"`
 	ExecutedAt  *time.Time `json:"executed_at"`
 	CreatedAt   time.Time  `json:"created_at"`
+}
+
+type handlerDTO struct {
+	Name              string   `json:"name"`
+	Service           string   `json:"service"`
+	Description       string   `json:"description"`
+	MaxTimeoutSeconds int      `json:"max_timeout_seconds"`
+	Scopes            []string `json:"scopes"`
 }
 
 func jobResponse(j *domain.JobDefinition) jobDTO {
@@ -78,6 +92,8 @@ func executionResponse(e *domain.JobExecution) executionDTO {
 		ID: e.ID, JobID: e.JobID, TenantID: e.TenantID, Status: e.Status, StartedAt: e.StartedAt,
 		CompletedAt: e.CompletedAt, DurationMS: e.Duration, Result: e.Result,
 		ErrorMessage: e.ErrorMessage, RetryCount: e.RetryCount, CreatedAt: e.CreatedAt,
+		DeadlineAt: e.DeadlineAt, NextAttemptAt: e.NextAttemptAt, RetryOf: e.RetryOf,
+		FailureReason: e.FailureReason,
 	}
 }
 
@@ -101,6 +117,21 @@ func tasksResponse(tasks []*domain.ScheduledTask) []taskDTO {
 	out := make([]taskDTO, 0, len(tasks))
 	for _, t := range tasks {
 		out = append(out, taskResponse(t))
+	}
+	return out
+}
+
+func handlersResponse(specs []domain.HandlerSpec) []handlerDTO {
+	out := make([]handlerDTO, 0, len(specs))
+	for _, s := range specs {
+		scopes := make([]string, 0, len(s.Scopes))
+		for _, sc := range s.Scopes {
+			scopes = append(scopes, string(sc))
+		}
+		out = append(out, handlerDTO{
+			Name: s.Name, Service: s.Service, Description: s.Description,
+			MaxTimeoutSeconds: s.MaxTimeoutSeconds, Scopes: scopes,
+		})
 	}
 	return out
 }

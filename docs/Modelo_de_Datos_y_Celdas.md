@@ -132,7 +132,15 @@ Base `mail_tenant_<slug>` creada por `organization` al dar de alta la empresa
 (`CREATE DATABASE` + todas las canonicas en orden, con advisory lock sobre conexion
 directa sin PgBouncer, `public.schema_migrations`, baseline para bases preexistentes).
 Barrido en segundo plano al arrancar (`RUN_TENANT_MIGRATIONS`). Hoy contiene `audit`,
-`scheduler`, `domains`, `suppression` (lista de exclusiones de envio: una fila por
+`scheduler` (`scheduler.job_definitions`, con el `handler` validado contra la lista blanca
+`services/scheduler/handlers.json`; `scheduler.job_schedules`, cuyo bloqueo por trabajo es
+el `FOR UPDATE SKIP LOCKED` de la transaccion que lo despacha, sin escribir ya `is_locked`;
+`scheduler.job_executions` con estado `pending|running|completed|failed|cancelled` por
+CHECK, `deadline_at` para el vencimiento, `next_attempt_at` para el reintento en espera,
+`retry_of` con el indice unico parcial `uq_job_executions_retry_of`, un solo reintento por
+ejecucion, y `failure_reason` `executor|timeout|handler_not_allowed` por CHECK; cada cambio
+de estado encola `scheduler.job.started|completed|failed` en la outbox en la misma
+transaccion; `scheduler.scheduled_tasks`), `domains`, `suppression` (lista de exclusiones de envio: una fila por
 direccion y empresa, causa vigente por orden de gravedad, consulta previa a todo envio
 por `POST /internal/suppression/check`) y `templates` (plantillas de correo por empresa:
 `templates.templates` con nombre unico por empresa y `current_version`, y

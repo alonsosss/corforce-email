@@ -38,7 +38,7 @@ con volumen medido y ADR (seccion 6).
 | `access-control` | Roles por empresa, permisos `(module, resource, action)`, politica efectiva con cache Redis, gateo de modulos contratados, denegaciones | `access_control` |
 | `organization` | Empresas, celdas, modulos por empresa, aprovisionamiento de bases y migraciones (registro, empresa), siembra de `tenant_admin` y del primer usuario | `organization` |
 | `audit` | Rastro append-only con cadena SHA-256, eventos de seguridad, detector (fuerza bruta, dispositivo nuevo, exfiltracion) | `audit` (por empresa) |
-| `scheduler` | Trabajos cron y tareas programadas por empresa con bloqueo en base | `scheduler` (por empresa) |
+| `scheduler` | Trabajos programados por empresa. No ejecuta nada: despacha cada ejecucion a un manejador de la lista blanca `handlers.json` con `scheduler.job.started` por outbox, recibe el cierre por HTTP interno (`/internal/scheduler/executions/{id}/complete` o `/fail`), vence por timeout con cerrojo de lider y reintenta con espera creciente | `scheduler` (por empresa) |
 
 Difiere del informe: `tenant-service` se llama `organization` (nombre heredado, esquema
 `organization`); `billing-service` es `billing` (tabla de 2.3; su esquema `billing` vive en

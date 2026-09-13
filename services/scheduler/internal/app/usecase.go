@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/alonsosss/corforce-email/services/scheduler/internal/domain"
@@ -16,6 +17,10 @@ type SchedulerUseCase struct {
 	tasks      ports.ScheduledTaskRepository
 	schedules  ports.JobScheduleRepository
 	events     ports.EventPublisher
+	tx         ports.Transactor
+	catalog    *domain.HandlerCatalog
+	retry      domain.RetryPolicy
+	now        func() time.Time
 	logger     *zap.Logger
 }
 
@@ -25,37 +30,69 @@ type SchedulerDeps struct {
 	Tasks      ports.ScheduledTaskRepository
 	Schedules  ports.JobScheduleRepository
 	Events     ports.EventPublisher
-	Logger     *zap.Logger
+	Tx         ports.Transactor
+	// Catalog es la lista blanca de manejadores; nil equivale a un catalogo vacio.
+	Catalog *domain.HandlerCatalog
+	Retry   domain.RetryPolicy
+	// Now es el reloj; nil usa la hora del sistema en UTC.
+	Now    func() time.Time
+	Logger *zap.Logger
 }
 
 func NewSchedulerUseCase(deps SchedulerDeps) *SchedulerUseCase {
+	now := deps.Now
+	if now == nil {
+		now = func() time.Time { return time.Now().UTC() }
+	}
 	return &SchedulerUseCase{
 		jobs:       deps.Jobs,
 		executions: deps.Executions,
 		tasks:      deps.Tasks,
 		schedules:  deps.Schedules,
 		events:     deps.Events,
+		tx:         deps.Tx,
+		catalog:    deps.Catalog,
+		retry:      deps.Retry,
+		now:        now,
 		logger:     deps.Logger,
 	}
 }
 
+// ListHandlers devuelve el catalogo de manejadores a los que puede apuntar un trabajo.
+func (uc *SchedulerUseCase) ListHandlers() []domain.HandlerSpec {
+	return uc.catalog.List()
+}
+
+// checkDefinition valida la definicion y que su manejador este permitido para su tipo.
+func (uc *SchedulerUseCase) checkDefinition(job *domain.JobDefinition) error {
+	if err := job.Validate(); err != nil {
+		return err
+	}
+	_, err := uc.catalog.Resolve(job.Handler, job.IsPlatform())
+	return err
+}
+
 func (uc *SchedulerUseCase) CreateJob(ctx context.Context, job *domain.JobDefinition) error {
-	existing, _ := uc.jobs.GetByCode(ctx, job.Code)
+	if err := uc.checkDefinition(job); err != nil {
+		return err
+	}
+	existing, err := uc.jobs.GetByCode(ctx, job.Code)
 	if existing != nil {
 		return domain.ErrJobAlreadyExists
 	}
-	job.ID = uuid.New()
-	job.IsActive = true
-	job.CreatedAt = time.Now().UTC()
-	job.UpdatedAt = job.CreatedAt
-	if err := uc.jobs.Create(ctx, job); err != nil {
+	if err != nil && !errors.Is(err, domain.ErrJobNotFound) {
 		return err
 	}
-	schedule := &domain.JobSchedule{
-		JobID:     job.ID,
-		NextRunAt: uc.calculateNextRun(job),
-	}
-	return uc.schedules.UpdateNextRun(ctx, schedule.JobID, schedule.NextRunAt)
+	job.ID = uuid.New()
+	job.IsActive = true
+	job.CreatedAt = uc.now()
+	job.UpdatedAt = job.CreatedAt
+	return uc.tx.Transact(ctx, func(ctx context.Context) error {
+		if err := uc.jobs.Create(ctx, job); err != nil {
+			return err
+		}
+		return uc.schedules.UpdateNextRun(ctx, job.ID, uc.calculateNextRun(job))
+	})
 }
 
 func (uc *SchedulerUseCase) GetJob(ctx context.Context, id, tenantID uuid.UUID) (*domain.JobDefinition, error) {
@@ -71,7 +108,10 @@ func (uc *SchedulerUseCase) UpdateJob(ctx context.Context, job *domain.JobDefini
 	if job.IsPlatform() {
 		return domain.ErrPlatformJob
 	}
-	job.UpdatedAt = time.Now().UTC()
+	if err := uc.checkDefinition(job); err != nil {
+		return err
+	}
+	job.UpdatedAt = uc.now()
 	return uc.jobs.Update(ctx, job)
 }
 
@@ -79,7 +119,7 @@ func (uc *SchedulerUseCase) UpdateJob(ctx context.Context, job *domain.JobDefini
 func (uc *SchedulerUseCase) tenantJob(ctx context.Context, id, tenantID uuid.UUID) (*domain.JobDefinition, error) {
 	job, err := uc.jobs.GetByID(ctx, id, tenantID)
 	if err != nil {
-		return nil, domain.ErrJobNotFound
+		return nil, err
 	}
 	if job.IsPlatform() {
 		return nil, domain.ErrPlatformJob
@@ -93,7 +133,7 @@ func (uc *SchedulerUseCase) EnableJob(ctx context.Context, id, tenantID uuid.UUI
 		return err
 	}
 	job.IsActive = true
-	job.UpdatedAt = time.Now().UTC()
+	job.UpdatedAt = uc.now()
 	return uc.jobs.Update(ctx, job)
 }
 
@@ -104,44 +144,30 @@ func (uc *SchedulerUseCase) DisableJob(ctx context.Context, id, tenantID uuid.UU
 	return uc.jobs.Deactivate(ctx, id)
 }
 
+// RunJob lanza a mano un trabajo de la empresa: la ejecucion nace despachada.
 func (uc *SchedulerUseCase) RunJob(ctx context.Context, tenantID, jobID uuid.UUID) (*domain.JobExecution, error) {
 	job, err := uc.tenantJob(ctx, jobID, tenantID)
 	if err != nil {
 		return nil, err
 	}
-	exec := &domain.JobExecution{
-		ID:        uuid.New(),
-		JobID:     job.ID,
-		TenantID:  job.TenantID,
-		Status:    "pending",
-		CreatedAt: time.Now().UTC(),
-	}
-	if err := uc.executions.Create(ctx, exec); err != nil {
+	spec, err := uc.catalog.Resolve(job.Handler, job.IsPlatform())
+	if err != nil {
 		return nil, err
 	}
-	tid := ""
-	if job.TenantID != nil {
-		tid = job.TenantID.String()
+	now := uc.now()
+	exec := newExecution(job, now)
+	if err := uc.tx.Transact(ctx, func(ctx context.Context) error {
+		return uc.dispatch(ctx, job, spec, exec, now, true)
+	}); err != nil {
+		return nil, err
 	}
-	_ = uc.events.PublishJobStarted(tid, job.ID.String(), exec.ID.String())
 	return exec, nil
-}
-
-func (uc *SchedulerUseCase) CancelExecution(ctx context.Context, id, tenantID uuid.UUID) error {
-	exec, err := uc.executions.GetByID(ctx, id, tenantID)
-	if err != nil {
-		return domain.ErrExecutionNotFound
-	}
-	exec.Status = "cancelled"
-	now := time.Now().UTC()
-	exec.CompletedAt = &now
-	return uc.executions.Update(ctx, exec)
 }
 
 func (uc *SchedulerUseCase) ScheduleTask(ctx context.Context, task *domain.ScheduledTask) error {
 	task.ID = uuid.New()
 	task.Status = "scheduled"
-	task.CreatedAt = time.Now().UTC()
+	task.CreatedAt = uc.now()
 	return uc.tasks.Create(ctx, task)
 }
 
@@ -165,88 +191,61 @@ func (uc *SchedulerUseCase) GetExecution(ctx context.Context, id, tenantID uuid.
 	return uc.executions.GetByID(ctx, id, tenantID)
 }
 
-func (uc *SchedulerUseCase) RetryFailedExecution(ctx context.Context, id, tenantID uuid.UUID) (*domain.JobExecution, error) {
-	exec, err := uc.executions.GetByID(ctx, id, tenantID)
-	if err != nil {
-		return nil, domain.ErrExecutionNotFound
-	}
-	var execTenantID uuid.UUID
-	if exec.TenantID != nil {
-		execTenantID = *exec.TenantID
-	}
-	job, err := uc.jobs.GetByID(ctx, exec.JobID, execTenantID)
-	if err != nil {
-		return nil, domain.ErrJobNotFound
-	}
-	if exec.RetryCount >= job.MaxRetries {
-		return nil, domain.ErrMaxRetriesExceeded
-	}
-	newExec := &domain.JobExecution{
-		ID:         uuid.New(),
-		JobID:      exec.JobID,
-		TenantID:   exec.TenantID,
-		Status:     "pending",
-		RetryCount: exec.RetryCount + 1,
-		CreatedAt:  time.Now().UTC(),
-	}
-	if err := uc.executions.Create(ctx, newExec); err != nil {
-		return nil, err
-	}
-	tid := ""
-	if job.TenantID != nil {
-		tid = job.TenantID.String()
-	}
-	_ = uc.events.PublishJobStarted(tid, job.ID.String(), newExec.ID.String())
-	return newExec, nil
-}
-
-func (uc *SchedulerUseCase) ProcessDueJobs(ctx context.Context, lockerID string) {
-	now := time.Now().UTC()
-	due, err := uc.schedules.GetDue(ctx, now)
+// ProcessDueJobs despacha los trabajos vencidos de la base del contexto. Cada trabajo va en
+// su propia transaccion, que bloquea su calendario (ClaimDue): dos replicas no lanzan el
+// mismo trabajo, y si el proceso cae a medias el bloqueo se suelta con el rollback.
+func (uc *SchedulerUseCase) ProcessDueJobs(ctx context.Context) {
+	due, err := uc.schedules.GetDue(ctx, uc.now())
 	if err != nil {
 		uc.logger.Error("get due jobs", zap.Error(err))
 		return
 	}
 	for _, s := range due {
-		locked, err := uc.schedules.Lock(ctx, s.JobID, lockerID)
-		if err != nil || !locked {
-			continue
+		if ctx.Err() != nil {
+			return
 		}
-		var jobTenantID uuid.UUID
-		if s.TenantID != nil {
-			jobTenantID = *s.TenantID
+		if err := uc.runDue(ctx, s); err != nil {
+			uc.logger.Error("scheduler: no se lanzo el trabajo vencido", zap.String("job_id", s.JobID.String()), zap.Error(err))
 		}
-		job, err := uc.jobs.GetByID(ctx, s.JobID, jobTenantID)
-		if err != nil || !job.IsActive {
-			_ = uc.schedules.Unlock(ctx, s.JobID)
-			continue
-		}
-		exec := &domain.JobExecution{
-			ID:        uuid.New(),
-			JobID:     job.ID,
-			TenantID:  job.TenantID,
-			Status:    "running",
-			CreatedAt: now,
-		}
-		startedAt := now
-		exec.StartedAt = &startedAt
-		if err := uc.executions.Create(ctx, exec); err != nil {
-			_ = uc.schedules.Unlock(ctx, s.JobID)
-			continue
-		}
-		tid := ""
-		if job.TenantID != nil {
-			tid = job.TenantID.String()
-		}
-		_ = uc.events.PublishJobStarted(tid, job.ID.String(), exec.ID.String())
-		nextRun := uc.calculateNextRun(job)
-		_ = uc.schedules.UpdateNextRun(ctx, s.JobID, nextRun)
-		_ = uc.schedules.Unlock(ctx, s.JobID)
 	}
 }
 
+func (uc *SchedulerUseCase) runDue(ctx context.Context, s *domain.JobSchedule) error {
+	return uc.tx.Transact(ctx, func(ctx context.Context) error {
+		now := uc.now()
+		claimed, err := uc.schedules.ClaimDue(ctx, s.JobID, now)
+		if err != nil || !claimed {
+			return err
+		}
+		job, err := uc.jobs.GetByID(ctx, s.JobID, tenantOrNil(s.TenantID))
+		if err != nil {
+			return err
+		}
+		if !job.IsActive {
+			return nil
+		}
+		exec := newExecution(job, now)
+		if spec, rerr := uc.catalog.Resolve(job.Handler, job.IsPlatform()); rerr != nil {
+			// El manejador salio del catalogo despues de crearse el trabajo: la ejecucion
+			// queda fallida en el historial en vez de despacharse sin nadie que la cierre.
+			if err := uc.failUndispatched(ctx, job, exec, now, rerr, true); err != nil {
+				return err
+			}
+		} else if err := uc.dispatch(ctx, job, spec, exec, now, true); err != nil {
+			return err
+		}
+		if err := uc.schedules.UpdateNextRun(ctx, job.ID, uc.calculateNextRun(job)); err != nil {
+			return err
+		}
+		if job.JobType == domain.JobTypeOneTime {
+			return uc.jobs.Deactivate(ctx, job.ID)
+		}
+		return nil
+	})
+}
+
 func (uc *SchedulerUseCase) ProcessPendingTasks(ctx context.Context) {
-	now := time.Now().UTC()
+	now := uc.now()
 	tasks, err := uc.tasks.ListPending(ctx, now)
 	if err != nil {
 		uc.logger.Error("list pending tasks", zap.Error(err))
@@ -260,13 +259,13 @@ func (uc *SchedulerUseCase) ProcessPendingTasks(ctx context.Context) {
 }
 
 func (uc *SchedulerUseCase) calculateNextRun(job *domain.JobDefinition) time.Time {
-	now := time.Now().UTC()
+	now := uc.now()
 	switch job.JobType {
-	case "interval":
+	case domain.JobTypeInterval:
 		if job.IntervalMinutes != nil {
 			return now.Add(time.Duration(*job.IntervalMinutes) * time.Minute)
 		}
-	case "one_time":
+	case domain.JobTypeOneTime:
 		return now
 	}
 	return now.Add(time.Hour)
@@ -274,4 +273,23 @@ func (uc *SchedulerUseCase) calculateNextRun(job *domain.JobDefinition) time.Tim
 
 func (uc *SchedulerUseCase) ListPendingTasks(ctx context.Context, before time.Time) ([]*domain.ScheduledTask, error) {
 	return uc.tasks.ListPending(ctx, before)
+}
+
+func newExecution(job *domain.JobDefinition, now time.Time) *domain.JobExecution {
+	return &domain.JobExecution{
+		ID:        uuid.New(),
+		JobID:     job.ID,
+		TenantID:  job.TenantID,
+		Status:    domain.StatusPending,
+		CreatedAt: now,
+	}
+}
+
+// tenantOrNil es la empresa con la que se busca un trabajo: la suya, o ninguna si es de
+// plataforma (las consultas por empresa aceptan tambien tenant_id NULL).
+func tenantOrNil(id *uuid.UUID) uuid.UUID {
+	if id == nil {
+		return uuid.Nil
+	}
+	return *id
 }
