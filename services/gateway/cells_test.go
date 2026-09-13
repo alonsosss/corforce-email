@@ -12,10 +12,35 @@ import (
 	"testing"
 
 	"github.com/alonsosss/corforce-email/pkg/middleware"
+	"github.com/alonsosss/corforce-email/pkg/tenantcell"
+	"github.com/alonsosss/corforce-email/pkg/tenantcell/tenantcelltest"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 )
+
+func counterValue(name string, labels map[string]string) float64 {
+	mfs, err := prometheus.DefaultGatherer.Gather()
+	if err != nil {
+		return -1
+	}
+	for _, mf := range mfs {
+		if mf.GetName() != name {
+			continue
+		}
+	metric:
+		for _, m := range mf.GetMetric() {
+			for _, l := range m.GetLabel() {
+				if want, ok := labels[l.GetName()]; ok && want != l.GetValue() {
+					continue metric
+				}
+			}
+			return m.GetCounter().GetValue()
+		}
+	}
+	return 0
+}
 
 // fakeCell hace de mail-security de una celda: acepta el enlace de su celda con la firma
 // buena y responde a todo lo demas con la misma pagina, como el servicio real.
@@ -310,9 +335,9 @@ func newSessionGateway(t *testing.T, g *grabador, orgURL, base string) http.Hand
 	if err != nil {
 		t.Fatal(err)
 	}
-	var cells *cellResolver
+	var cells *tenantcell.Resolver
 	if tbl.baseCell != "" {
-		cells = newCellResolver(tbl.serviceURL(cellDirectoryService), "token-interno", zap.NewNop())
+		cells = tenantcell.NewResolver(tbl.serviceURL(cellDirectoryService), "token-interno", zap.NewNop())
 	}
 	handlers := sessionHandlers(tbl, "token-interno", cells, zap.NewNop())
 	r := chi.NewRouter()
@@ -355,9 +380,9 @@ func codigoDeError(rec *httptest.ResponseRecorder) string {
 // ninguna. Los servicios que no son de celda no preguntan la celda.
 func TestLasRutasConSesionDeCadaServicioDeCeldaVanASuCelda(t *testing.T) {
 	t01, t02, t03, nadie := uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString()
-	org, orgSrv := newOrganizationFake(t, map[string]string{t01: "pe-01", t02: "pe-02", t03: "pe-03"})
+	org, orgURL := tenantcelltest.New(t, "token-interno", map[string]string{t01: "pe-01", t02: "pe-02", t03: "pe-03"})
 	g := &grabador{}
-	gw := newSessionGateway(t, g, orgSrv.URL, "pe-01")
+	gw := newSessionGateway(t, g, orgURL, "pe-01")
 	tbl, err := loadRouteTable()
 	if err != nil {
 		t.Fatal(err)
@@ -398,17 +423,18 @@ func TestLasRutasConSesionDeCadaServicioDeCeldaVanASuCelda(t *testing.T) {
 		t.Fatalf("servicios de celda recorridos: %v", cubiertos)
 	}
 
-	antes := org.llamadas()
+	antes := org.Calls()
 	if rec := pedirComo(gw, t02, "/api/v1/templates/x"); rec.Code != http.StatusOK || strings.Join(g.take(), "") != "templates GET /api/v1/templates/x tenant="+t02+" token=token-interno" {
 		t.Fatalf("un servicio que no es de celda va a su destino: %d", rec.Code)
 	}
-	if org.llamadas() != antes {
+	if org.Calls() != antes {
 		t.Fatalf("un servicio que no es de celda pregunto la celda")
 	}
 
 	// organization caido y sin respuesta previa: 503, a ninguna instancia.
 	sinRespuesta := uuid.NewString()
-	org.set(func(f *organizationFake) { f.down = true; f.cells[sinRespuesta] = "pe-01" })
+	org.SetDown(true)
+	org.SetCell(sinRespuesta, "pe-01")
 	antes2 := counterValue("cell_routing_failures_total", map[string]string{"service": "mail-directory", "reason": "unresolved"})
 	rec := pedirComo(gw, sinRespuesta, "/api/v1/mailboxes/x")
 	if rec.Code != http.StatusServiceUnavailable || codigoDeError(rec) != "CELL_UNAVAILABLE" || len(g.take()) != 0 {
@@ -426,9 +452,9 @@ func TestLasRutasConSesionDeCadaServicioDeCeldaVanASuCelda(t *testing.T) {
 // Sin celda base ni instancias (una celda), todo va al destino base y organization no se
 // consulta: el despliegue de una celda no necesita configuracion nueva.
 func TestUnaSolaCeldaNoPreguntaLaCelda(t *testing.T) {
-	org, orgSrv := newOrganizationFake(t, map[string]string{})
+	org, orgURL := tenantcelltest.New(t, "token-interno", map[string]string{})
 	g := &grabador{}
-	gw := newSessionGateway(t, g, orgSrv.URL, "")
+	gw := newSessionGateway(t, g, orgURL, "")
 	tenant := uuid.NewString()
 	for _, path := range []string{"/api/v1/mailboxes/x", "/api/v1/mail-domains", "/api/v1/mail-security/quarantine", "/api/v1/templates/x"} {
 		rec := pedirComo(gw, tenant, path)
@@ -437,7 +463,7 @@ func TestUnaSolaCeldaNoPreguntaLaCelda(t *testing.T) {
 			t.Fatalf("%s: %d %v", path, rec.Code, hits)
 		}
 	}
-	if org.llamadas() != 0 {
-		t.Fatalf("una celda pregunto %d veces a organization", org.llamadas())
+	if org.Calls() != 0 {
+		t.Fatalf("una celda pregunto %d veces a organization", org.Calls())
 	}
 }

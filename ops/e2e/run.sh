@@ -557,6 +557,30 @@ expect "acme si, en la celda base" "$(codigo "$GW2/mail-security/quarantine" -H 
 contains "el gateway cuenta la celda sin instancia" "$(curl -s "http://127.0.0.1:$GW2_PORT/metrics")" \
   'cell_routing_failures_total{reason="not_served",service="mail-directory"} 1'
 
+echo "== Segunda barrera: cada instancia solo atiende a las empresas de su celda"
+# El primer gateway no declara celdas y lo lleva todo a pe-01, como uno al que le falta
+# GATEWAY_BASE_CELL_CODE: beta (pe-02) llega a las instancias de pe-01, que preguntan a
+# organization y la rechazan sin atenderla ni escribir nada.
+expect "beta por el gateway sin celdas: mail-directory de pe-01 no la atiende" "$(sesion "$GW/mailboxes" -H "$AB")" "TENANT_NOT_IN_CELL 403"
+expect "ni una escritura" "$(sesion -X POST "$GW/mail-routing/relayhosts" -H "$AB" -H 'Content-Type: application/json' \
+  -d "{\"hostname\":\"smtp.beta.test:587\",\"username\":\"beta\",\"password\":\"$(rand_hex 12)\"}")" "TENANT_NOT_IN_CELL 403"
+expect "mail-security de pe-01 tampoco" "$(sesion -X PUT "$GW/mail-security/quarantine-settings" -H "$AB" -H 'Content-Type: application/json' \
+  -d '{"max_size_bytes":1048576,"max_age_days":30,"retention_size":10,"exclude_domains":[],"notify":{}}')" "TENANT_NOT_IN_CELL 403"
+expect "ni la activacion interna de domain-service con la empresa de beta" \
+  "$(sesion -X PUT "http://127.0.0.1:${PORT[mail-directory]}/internal/mail-directory/domains/beta.test/activation" \
+    -H "X-Gateway-Token: $INTERNAL_GATEWAY_TOKEN" -H "X-Tenant-ID: $BID" -H 'Content-Type: application/json' -d '{"active":true}')" "TENANT_NOT_IN_CELL 403"
+expect "la base de pe-01 no guarda nada de beta" \
+  "$(sql mail_cell_pe_01 "SELECT (SELECT count(*) FROM mail.relayhosts WHERE tenant_id = '$BID') + (SELECT count(*) FROM mail_security.quarantine_settings WHERE tenant_id = '$BID') + (SELECT count(*) FROM mail.domains WHERE tenant_id = '$BID')")" "0"
+ACME_ID=$(sql mail_registry "SELECT id FROM organization.tenants WHERE slug = 'acme'")
+expect "y la instancia de pe-02 no atiende a acme aunque le llegue directa" \
+  "$(sesion "http://127.0.0.1:$MD2_PORT/api/v1/mailboxes" -H "X-Gateway-Token: $INTERNAL_GATEWAY_TOKEN" \
+    -H "X-Tenant-ID: $ACME_ID" -H "X-User-ID: $U_VIGENTE" -H 'X-User-Roles: tenant_admin')" "TENANT_NOT_IN_CELL 403"
+contains "mail-directory de pe-01 cuenta sus tres rechazos" "$(curl -s "http://127.0.0.1:${PORT[mail-directory]}/metrics")" \
+  'cell_membership_refusals_total{reason="foreign_tenant"} 3'
+contains "y mail-security el suyo" "$(curl -s "http://127.0.0.1:${PORT[mail-security]}/metrics")" \
+  'cell_membership_refusals_total{reason="foreign_tenant"} 1'
+expect "acme sigue entrando por el gateway sin celdas" "$(codigo "$GW/mailboxes" -H "$A2N")" "200"
+
 echo "== Registros"
 e2e_registros_sin_errores
 

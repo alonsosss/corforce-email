@@ -68,6 +68,9 @@ services:
     environment:
       <<: *celda
       MAIL_DIRECTORY_PORT: "8040"
+      ORGANIZATION_URL: http://host.docker.internal:${E2E_PORT_ORGANIZATION:?lo fija ops/e2e/mail.sh}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "127.0.0.1:${E2E_PORT_MAIL_DIRECTORY:?lo fija ops/e2e/mail.sh}:8040"
     networks:
@@ -107,6 +110,9 @@ services:
       MAIL_HOSTNAME: ${MAIL_HOSTNAME:?lo fija ops/e2e/mail.sh}
       MAIL_LINK_SIGNING_KEY: ${MAIL_LINK_SIGNING_KEY:?lo fija ops/e2e/mail.sh}
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:?lo fija ops/e2e/mail.sh}
+      ORGANIZATION_URL: http://host.docker.internal:${E2E_PORT_ORGANIZATION:?lo fija ops/e2e/mail.sh}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "127.0.0.1:${E2E_PORT_MAIL_SECURITY:?lo fija ops/e2e/mail.sh}:8042"
     networks:

@@ -6,13 +6,13 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/alonsosss/corforce-email/pkg/middleware"
 	"github.com/alonsosss/corforce-email/pkg/response"
+	"github.com/alonsosss/corforce-email/pkg/tenantcell"
 	"github.com/go-chi/chi/v5"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
@@ -22,10 +22,11 @@ import (
 //
 // Un servicio de celda (cell_hosts_env en routes.json) se despliega una vez por celda y solo
 // atiende a las empresas de la suya: TODA ruta suya se enruta por celda, y la validacion de la
-// tabla impide declararle una que no se pueda.
+// tabla impide declararle una que no se pueda. Cada instancia comprueba ademas que la empresa
+// es de su celda (tenantcell.Membership): este enrutado es la primera barrera, no la unica.
 //
 // Rutas con sesion: la celda es la de la empresa del token, que resuelve organization
-// (cellresolver.go). El destino base (<SERVICIO>_HOST) sirve la celda GATEWAY_BASE_CELL_CODE y
+// (pkg/tenantcell). El destino base (<SERVICIO>_HOST) sirve la celda GATEWAY_BASE_CELL_CODE y
 // <SERVICIO>_CELL_HOSTS las demas; una empresa de una celda sin instancia declarada, o cuya
 // celda no se puede resolver, recibe 503 y no sale hacia ninguna instancia. Sin
 // GATEWAY_BASE_CELL_CODE ni instancias declaradas el despliegue es de una celda y todo va al
@@ -46,15 +47,6 @@ const (
 	// cellDirectoryService es el servicio que sabe en que celda vive cada empresa.
 	cellDirectoryService = "organization"
 )
-
-// Codigo de celda: el mismo formato que admite organization al darla de alta.
-var cellCodeRe = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
-
-const maxCellCodeLen = 63
-
-func validCellCode(code string) bool {
-	return len(code) <= maxCellCodeLen && cellCodeRe.MatchString(code)
-}
 
 // cellRoutingFailures cuenta las peticiones con sesion que no salieron hacia ninguna celda.
 // reason: unresolved (organization no dio la celda), unknown_tenant (la empresa no existe) o
@@ -182,7 +174,7 @@ func (t *routeTable) loadCellTargets() error {
 		return fmt.Errorf("%s es obligatorio cuando %s declaran instancias: sin el no se sabe que celda sirven los destinos base", baseCellEnv, strings.Join(envs, " o "))
 	case base == "":
 		return nil
-	case !validCellCode(base):
+	case !tenantcell.ValidCode(base):
 		return fmt.Errorf("%s: %q no es un codigo de celda", baseCellEnv, base)
 	}
 	for name, targets := range t.cellTargets {
@@ -246,7 +238,7 @@ func parseCellHosts(envName, raw string) (map[string]string, error) {
 	for _, entry := range strings.Split(raw, ",") {
 		code, hostport, ok := strings.Cut(strings.TrimSpace(entry), "=")
 		code, hostport = strings.TrimSpace(code), strings.TrimSpace(hostport)
-		if !ok || !validCellCode(code) {
+		if !ok || !tenantcell.ValidCode(code) {
 			return nil, fmt.Errorf("%s: entrada %q: se espera celda=host:puerto con el codigo de la celda", envName, entry)
 		}
 		if _, dup := out[code]; dup {
@@ -312,7 +304,7 @@ func mountPublic(r chi.Router, t *routeTable, internalToken string) {
 // destino base o, para un servicio de celda con el enrutado por celda activo
 // (GATEWAY_BASE_CELL_CODE), el que elige la instancia por la celda de la empresa. cells es
 // nil exactamente cuando no hay celda base.
-func sessionHandlers(t *routeTable, internalToken string, cells *cellResolver, logger *zap.Logger) map[string]http.Handler {
+func sessionHandlers(t *routeTable, internalToken string, cells *tenantcell.Resolver, logger *zap.Logger) map[string]http.Handler {
 	out := make(map[string]http.Handler, len(t.Services))
 	for name, s := range t.Services {
 		base := reverseProxy(t.serviceURL(name), internalToken)
@@ -335,15 +327,15 @@ func sessionHandlers(t *routeTable, internalToken string, cells *cellResolver, l
 type tenantCellRouter struct {
 	service string
 	byCell  map[string]http.Handler
-	cells   *cellResolver
+	cells   *tenantcell.Resolver
 	logger  *zap.Logger
 }
 
 func (c tenantCellRouter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	tenantID := middleware.GetTenantID(r.Context())
-	cell, err := c.cells.cellOf(r.Context(), tenantID)
+	cell, err := c.cells.CellOf(r.Context(), tenantID)
 	if err != nil {
-		if errors.Is(err, errUnknownTenant) {
+		if errors.Is(err, tenantcell.ErrUnknownTenant) {
 			c.refuse(w, "unknown_tenant", tenantID, "")
 			response.Err(w, http.StatusForbidden, "FORBIDDEN", "la sesion no corresponde a ninguna empresa")
 			return

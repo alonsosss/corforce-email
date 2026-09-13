@@ -20,6 +20,7 @@ import (
 	"github.com/alonsosss/corforce-email/pkg/outbox"
 	"github.com/alonsosss/corforce-email/pkg/response"
 	"github.com/alonsosss/corforce-email/pkg/server"
+	"github.com/alonsosss/corforce-email/pkg/tenantcell"
 	handler "github.com/alonsosss/corforce-email/services/mail-security/internal/adapters/http"
 	natsadapter "github.com/alonsosss/corforce-email/services/mail-security/internal/adapters/nats"
 	outboxadapter "github.com/alonsosss/corforce-email/services/mail-security/internal/adapters/outbox"
@@ -31,6 +32,7 @@ import (
 	"github.com/alonsosss/corforce-email/services/mail-security/internal/app"
 	"github.com/alonsosss/corforce-email/services/mail-security/internal/domain"
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 )
 
@@ -106,6 +108,10 @@ func main() {
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatalf("load config: %v", err)
+	}
+	membership, err := tenantcell.MembershipFromEnv(logger)
+	if err != nil {
+		log.Fatalf("celda de la instancia: %v", err)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -222,17 +228,10 @@ func main() {
 	}
 
 	// Superficie A: API de administracion tras el gateway (y rutas internas con token).
-	r := chi.NewRouter()
-	r.Use(middleware.RequestID)
-	r.Use(middleware.RequireGatewayToken)
-	r.Use(middleware.InjectFromGateway)
-	r.Use(db.StaticPoolMiddleware(pool.Pool))
-	r.Use(middleware.SecureHeaders)
-	r.Use(middleware.Logger(logger))
-	r.Use(middleware.NewRateLimiter(120, time.Minute).Limit)
-	r.Mount("/", handler.NewHandler(policyUC, quarantineUC, firewallUC, authz.NewCheckerFromEnv()).Routes())
+	r := apiRouter(pool.Pool, membership, handler.NewHandler(policyUC, quarantineUC, firewallUC, authz.NewCheckerFromEnv()).Routes(), logger)
 
-	// Superficie B: listeners de los motores, sin gateway ni JWT, acotados por IP.
+	// Superficie B: listeners de los motores, sin gateway ni JWT, acotados por IP. No llevan
+	// empresa (Postfix, Dovecot y Rspamd no saben de ellas): no pasan por Membership.
 	allowedCIDRs := os.Getenv("MAIL_ENGINE_ALLOWED_CIDRS")
 	pipeMaxBody := int64(envInt("MAIL_QUARANTINE_MAX_BODY_MB", defaultPipeMaxBodyMiB)) * 1024 * 1024
 	maps := engineListener(envInt("MAIL_POLICY_MAPS_PORT", defaultMapsPort),
@@ -265,6 +264,24 @@ func main() {
 	if runErr != nil {
 		logger.Fatal("server error", zap.Error(runErr))
 	}
+}
+
+// apiRouter monta la superficie A: el API de administracion que llega por el gateway, los
+// enlaces publicos de cuarentena y las rutas internas de domain-service, todo tras el token
+// interno. Una peticion por una empresa que no es de esta celda se rechaza antes de llegar a
+// ninguna ruta (tenantcell.Membership).
+func apiRouter(pool *pgxpool.Pool, membership *tenantcell.Membership, routes http.Handler, logger *zap.Logger) http.Handler {
+	r := chi.NewRouter()
+	r.Use(middleware.RequestID)
+	r.Use(middleware.RequireGatewayToken)
+	r.Use(middleware.InjectFromGateway)
+	r.Use(db.StaticPoolMiddleware(pool))
+	r.Use(middleware.SecureHeaders)
+	r.Use(middleware.Logger(logger))
+	r.Use(middleware.NewRateLimiter(120, time.Minute).Limit)
+	r.Use(membership.Require)
+	r.Mount("/", routes)
+	return r
 }
 
 // runCellRelay vacia la outbox de la celda hacia JetStream. Antes asegura el stream de sus

@@ -17,6 +17,7 @@ import (
 	"github.com/alonsosss/corforce-email/pkg/objectstore"
 	"github.com/alonsosss/corforce-email/pkg/observability"
 	"github.com/alonsosss/corforce-email/pkg/response"
+	"github.com/alonsosss/corforce-email/pkg/tenantcell"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/cors"
 	"go.uber.org/zap"
@@ -45,9 +46,9 @@ func main() {
 	}
 	// Enrutado con sesion por celda: solo con celda base declarada. Sin ella el despliegue es
 	// de una celda y el gateway no pregunta a organization.
-	var cells *cellResolver
+	var cells *tenantcell.Resolver
 	if table.baseCell != "" {
-		cells = newCellResolver(table.serviceURL(cellDirectoryService), internalToken, logger)
+		cells = tenantcell.NewResolver(table.serviceURL(cellDirectoryService), internalToken, logger)
 		logger.Info("enrutado con sesion por celda", zap.String("base_cell", table.baseCell))
 	}
 	for service, missing := range table.cellCoverageGaps() {

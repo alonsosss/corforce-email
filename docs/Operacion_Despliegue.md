@@ -116,7 +116,9 @@ para llamar a la API hace falta ya un superadmin. Después, todo por API: `POST 
   `mail-directory`). Al abrir una celda, en el mismo paso y tras sus migraciones,
   `ops/db/cell-service-role.sh --cell <code>`: crea el rol de sus servicios y cierra a
   PUBLIC las bases del cluster (necesita `mail_service`, de las migraciones 06). Sus
-  `mail-directory` y `mail-security` arrancan con `CELL_CODE=<code>` y el gateway recibe sus
+  `mail-directory` y `mail-security` arrancan con `CELL_CODE=<code>` y `ORGANIZATION_URL` (sin
+  las dos no arrancan: cada instancia pregunta a `organization` la celda de cada empresa y
+  rechaza con 403 `TENANT_NOT_IN_CELL` a la que no es de la suya) y el gateway recibe sus
   entradas en `MAIL_DIRECTORY_CELL_HOSTS` y `MAIL_SECURITY_CELL_HOSTS` (`<code>=host:puerto`),
   mas `GATEWAY_BASE_CELL_CODE` con la celda de los destinos base (`MAIL_DIRECTORY_HOST`,
   `MAIL_SECURITY_HOST`), obligatoria en cuanto hay una entrada. Con varias celdas el gateway

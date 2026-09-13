@@ -1,0 +1,54 @@
+# Pruebas de la alerta EmpresaEnCeldaAjena.
+#
+# Un rechazo por empresa de otra celda es un error de despliegue (enrutado del gateway o URL
+# de un servicio de celda): avisa en el primer rechazo y deja de avisar cuando cesan. Los
+# rechazos por empresa desconocida (un token de una empresa recien borrada) no avisan.
+#
+#   make check-alertas
+
+rule_files:
+  - ../rules/plataforma.yml
+
+evaluation_interval: 1m
+
+tests:
+  # ── Sin rechazos: el contador nace a cero y no se mueve ───────────────────
+  - interval: 1m
+    input_series:
+      - series: 'cell_membership_refusals_total{job="mail-services",service="mail-directory",reason="foreign_tenant"}'
+        values: '0x60'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: EmpresaEnCeldaAjena
+        exp_alerts: []
+
+  # ── Un solo rechazo avisa, y el aviso cesa cuando pasan diez minutos sin otro ─
+  - interval: 1m
+    input_series:
+      - series: 'cell_membership_refusals_total{job="mail-services",service="mail-directory",reason="foreign_tenant"}'
+        values: '0x10 1x50'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: EmpresaEnCeldaAjena
+        exp_alerts:
+          - exp_labels:
+              severidad: alta
+              service: mail-directory
+            exp_annotations:
+              resumen: "mail-directory rechaza peticiones de empresas de otra celda"
+              detalle: "Una empresa de otra celda llego a esta instancia y recibio 403 TENANT_NOT_IN_CELL. Revisar GATEWAY_BASE_CELL_CODE y <SERVICIO>_CELL_HOSTS del gateway y las URL de servicio de celda de quien llama (domain-service), y el registro del servicio (tenant_id y tenant_cell)."
+      - eval_time: 40m
+        alertname: EmpresaEnCeldaAjena
+        exp_alerts: []
+
+  # ── Empresas desconocidas: no es un error de despliegue ───────────────────
+  - interval: 1m
+    input_series:
+      - series: 'cell_membership_refusals_total{job="mail-services",service="mail-security",reason="unknown_tenant"}'
+        values: '0+3x60'
+      - series: 'cell_membership_refusals_total{job="mail-services",service="mail-security",reason="foreign_tenant"}'
+        values: '0x60'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: EmpresaEnCeldaAjena
+        exp_alerts: []

@@ -333,3 +333,18 @@ groups:
         annotations:
           resumen: "El limitador {{ $labels.limiter }} de {{ $labels.service }} cuenta en memoria"
           detalle: "Redis no responde al limitador desde hace 10 minutos: cada replica aplica el cupo por su cuenta y el total se multiplica por el numero de replicas, tambien en el inicio de sesion. Revisar Redis y la red del servicio."
+
+  - name: celdas
+    rules:
+      # Un servicio de celda solo recibe una empresa de otra celda si alguien la envio a la
+      # instancia equivocada: el gateway sin GATEWAY_BASE_CELL_CODE con una segunda celda
+      # registrada, un <SERVICIO>_CELL_HOSTS cruzado u otro servicio que llama a una sola
+      # instancia para todas las celdas. El servicio la rechaza sin escribir nada, pero esa
+      # empresa no puede operar hasta que se corrija el despliegue: avisa al primer rechazo.
+      - alert: EmpresaEnCeldaAjena
+        expr: sum by (service) (increase(cell_membership_refusals_total{reason="foreign_tenant"}[10m])) > 0
+        labels:
+          severidad: alta
+        annotations:
+          resumen: "{{ $labels.service }} rechaza peticiones de empresas de otra celda"
+          detalle: "Una empresa de otra celda llego a esta instancia y recibio 403 TENANT_NOT_IN_CELL. Revisar GATEWAY_BASE_CELL_CODE y <SERVICIO>_CELL_HOSTS del gateway y las URL de servicio de celda de quien llama (domain-service), y el registro del servicio (tenant_id y tenant_cell)."

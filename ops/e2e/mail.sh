@@ -176,6 +176,9 @@ export E2E_REPO_ROOT="$ROOT" E2E_TLS_DIR="$TLS"
 export E2E_PG_HOST="$E2E_PREFIX-pg" E2E_NATS_HOST="$E2E_PREFIX-nats" E2E_REDIS_HOST="$E2E_PREFIX-redis"
 export E2E_PORT_MAIL_DIRECTORY=${PORT[mail-directory]} E2E_PORT_MAIL_AUTH=${PORT[mail-auth]}
 export E2E_PORT_MAIL_SECURITY=${PORT[mail-security]} E2E_PORT_WEBMAIL=${PORT[webmail]}
+# organization corre en el host; mail-directory y mail-security le preguntan desde la red de
+# los motores si cada empresa es de su celda.
+export E2E_PORT_ORGANIZATION=${PORT[organization]}
 export MAIL_DB_HOST="$E2E_PREFIX-pg" MAIL_DB_PORT=5432 MAIL_DB_NAME=mail_cell_pe_01 MAIL_DB_USER=mail_engine
 export ENABLE_IPV6=false TZ=UTC SKIP_LETS_ENCRYPT=y SKIP_CLAMD=n SKIP_OLEFY=n
 # El chequeo de salud de Unbound hace ping a resolvers publicos; los runners de CI no dejan

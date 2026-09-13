@@ -567,17 +567,49 @@ si falta `organization` entre los servicios.
   servicio a servicio) y sus empresas reciben 503 en el que falta.
 * Una celda: sin `GATEWAY_BASE_CELL_CODE` ni instancias todo va al destino base y el gateway no
   pregunta a organization; no hace falta configuracion nueva. En ese modo una empresa de una
-  celda registrada despues llegaria a la celda base (sus datos no, por RLS, pero sus escrituras
-  si): `GATEWAY_BASE_CELL_CODE` se fija en cuanto el registro tiene una segunda celda, aunque aun
-  no tenga instancias, y entonces sus empresas reciben 503.
-* Probado: unitarias del gateway (resolucion, cache y su cota, caducidad, respuesta negativa,
-  margen con organization caido, respuestas fuera de contrato, consultas simultaneas, cada ruta
-  con sesion de cada servicio de celda, una celda sin consultas a organization, validacion de la
-  tabla y del entorno) y de organization (contrato de la ruta interna y caso de uso); `make e2e`
-  con un segundo gateway: acme (pe-01) va al destino base, beta (pe-02) a una segunda instancia
-  de `mail-directory` sobre `mail_cell_pe_02`, gamma (pe-03, sin instancias) recibe 503 sin
-  llegar a ninguna y la metrica lo cuenta; beta recibe 503 en `mail-security`, que no declara
-  pe-02.
+  celda registrada despues llegaria a la celda base, que la rechaza (punto siguiente):
+  `GATEWAY_BASE_CELL_CODE` se fija en cuanto el registro tiene una segunda celda, aunque aun no
+  tenga instancias, y entonces sus empresas reciben 503 en el gateway en vez de 403 en la celda.
+* Segunda barrera en la celda (V, 2026-09-13, `pkg/tenantcell`): el enrutado del gateway no es
+  la unica defensa. `mail-directory` y `mail-security` montan `tenantcell.Membership` detras de
+  `RequireGatewayToken` e `InjectFromGateway` y antes de cualquier ruta. Toda peticion que actua
+  por una empresa (trae `X-Tenant-ID`, sea de una persona por el gateway o de domain-service, o
+  trae usuario) solo pasa si organization situa esa empresa en el `CELL_CODE` de la instancia,
+  por la misma ruta interna y con la misma cache que el gateway (`tenantcell.Resolver`, que el
+  gateway tambien usa). Empresa de otra celda, empresa que organization no conoce, persona sin
+  empresa o identificador mal formado: 403 `TENANT_NOT_IN_CELL`, sin llegar a ningun handler, sin
+  datos y con `Cache-Control: no-store`. Sin respuesta aplicable: 503 `CELL_UNAVAILABLE`. Con
+  organization caido solo pasan las empresas ya comprobadas en esa instancia, hasta una hora
+  despues de caducar su entrada; la ultima respuesta de otra celda sigue rechazando y una empresa
+  sin comprobar nunca pasa (tras reiniciar la instancia con organization caido, ninguna). Sin
+  empresa ni usuario no hay nada que comprobar: la consulta de remitentes del webmail y los
+  enlaces publicos de cuarentena (atados a la celda por su firma, 5.3) pasan, y los listeners de
+  los motores (`mail-auth`, mapas y exportacion de `mail-policy`) no pasan por la barrera. Los dos
+  servicios no arrancan sin `CELL_CODE` valido ni `ORGANIZATION_URL`, ni sin token interno fuera
+  de desarrollo o prueba. Metrica `cell_membership_refusals_total{reason}` (`foreign_tenant`,
+  `unknown_tenant`, `unresolved`, nacen a cero) y alerta `EmpresaEnCeldaAjena` al primer
+  `foreign_tenant`, que es siempre un error de despliegue. Descartado: que organization copie en
+  la base de la celda la lista de sus empresas al darlas de alta. Seria organization escribiendo
+  en el esquema de mail-directory, o necesitaria un mapa de instancias por celda en organization
+  (el problema de domain-service, abajo), y las empresas ya existentes pedirian un relleno; a
+  cambio solo se ganaria sobrevivir a un reinicio de la instancia con organization caido.
+* Probado: unitarias del gateway (cada ruta con sesion de cada servicio de celda, una celda sin
+  consultas a organization, validacion de la tabla y del entorno), de `pkg/tenantcell`
+  (resolucion, cache y su cota, caducidad, respuesta negativa, margen con organization caido,
+  respuestas fuera de contrato, consultas simultaneas; barrera con empresa de la celda, de otra
+  celda, desconocida o mal formada, persona sin empresa, peticion sin empresa, organization caido
+  con y sin la empresa comprobada y configuracion que falla cerrado) y de organization (contrato
+  de la ruta interna y caso de uso); las rutas de los dos servicios tal como las monta `main`
+  (cada ruta, como persona y como servicio, rechaza a una empresa de otra celda y a una
+  desconocida sin ejecutar ningun handler); `make e2e` con un segundo gateway: acme (pe-01) va al
+  destino base, beta (pe-02) a una segunda instancia de `mail-directory` sobre `mail_cell_pe_02`,
+  gamma (pe-03, sin instancias) recibe 503 sin llegar a ninguna y la metrica lo cuenta; beta
+  recibe 503 en `mail-security`, que no declara pe-02. Por el primer gateway, sin celdas, beta
+  llega a las instancias de pe-01, que responden 403 `TENANT_NOT_IN_CELL` a una lectura, a un
+  relayhost, a los ajustes de cuarentena y a la activacion interna con su empresa sin dejar
+  ninguna fila en `mail_cell_pe_01`; la instancia de pe-02 rechaza a acme y las metricas lo
+  cuentan. `make e2e-mail`: los servicios de celda en contenedores preguntan a organization en el
+  host.
 
 Pendiente (P):
 
@@ -586,11 +618,13 @@ Pendiente (P):
   explicita que el gateway acepte solo con el rol `superadmin` y solo si organization la tiene
   registrada.
 * Llamadas entre servicios hacia la celda: `domain-service` activa dominios y entrega DKIM en
-  una sola instancia (`MAIL_DIRECTORY_URL`, `MAIL_SECURITY_URL`). Diseno: el mismo contrato de
-  organization con cache y un mapa de instancias por celda en `domain-service`, fallando cerrado
-  igual que el gateway.
-* Traslado de una empresa de celda: el gateway lo ve al caducar su entrada (5 minutos); falta
-  invalidarla con el evento del traslado.
+  una sola instancia (`MAIL_DIRECTORY_URL`, `MAIL_SECURITY_URL`). Con varias celdas, la instancia
+  responde 403 `TENANT_NOT_IN_CELL` a la empresa de otra celda y el paso falla en vez de escribir
+  en la celda equivocada (antes, desactivar respondia 404 y domain-service lo daba por hecho).
+  Diseno: `tenantcell.Resolver` y un mapa de instancias por celda en `domain-service`, fallando
+  cerrado igual que el gateway.
+* Traslado de una empresa de celda: el gateway y las instancias de celda lo ven al caducar su
+  entrada (5 minutos); falta invalidarla con el evento del traslado.
 
 ### 5.5 Webmail por celda (P)
 
@@ -598,6 +632,17 @@ Pendiente (P):
 el webmail por el gateway. Un buzon de otra celda recibe el mismo 401 que una contrasena mala
 (`mail-auth` de la celda base no lo conoce): no hay datos cruzados ni se revela si el buzon
 existe. La tabla no admite declarar el webmail como servicio de celda hasta que esto exista.
+
+El webmail no monta la segunda barrera de 5.4 y no la necesita (V, decision del 2026-09-13): no
+recibe empresa del gateway (prefijo `self_authenticated`, sin `X-Tenant-ID` ni usuario de la
+plataforma), su identidad es un buzon que `mail-auth` verifica contra el directorio de su propia
+celda, y su sesion (claves `webmail:<CELL_CODE>:`) y el usuario maestro de Dovecot son de esa
+celda. Un buzon de otra celda no existe ahi y recibe 401; no hay una empresa que el cliente
+controle ni forma de escribir en otra celda. Lo que falta aqui es enrutar, no aislar. Su consulta
+de remitentes a `mail-directory` va sin empresa y pasa la barrera, y `MAIL_DIRECTORY_URL` debe
+ser la instancia de su misma celda (un error ahi deja al buzon sin remitentes, no con los de
+otro).
+
 Diseno:
 
 1. Indice global dominio -> celda en el registro: tabla de organization con el dominio (unico),
@@ -642,6 +687,7 @@ Diseno:
 | Una celda no lee otra celda: sus servicios abren solo `CELL_DB_NAME` con el rol `<CELL_DB_NAME>_svc`, sin CONNECT al registro, a otra celda ni a una empresa (5.1); claves de cifrado por celda | V / P (claves; reparto de secretos por servicio) |
 | Un enlace publico de cuarentena solo actua en la celda que lo firmo: la celda va en la firma, el gateway enruta sin la clave y una celda desconocida responde igual que una firma mala (5.3) | V (2026-09-13) |
 | Una peticion con sesion a un servicio de celda solo llega a la instancia de la celda de su empresa; sin celda resoluble o sin instancia declarada no sale hacia ninguna (5.4) | V (2026-09-13; con `GATEWAY_BASE_CELL_CODE`) |
+| Una instancia de celda solo atiende a las empresas de su celda aunque le lleguen de otra (gateway mal configurado, llamada de servicio a la instancia equivocada): pregunta a organization y rechaza con 403 antes de cualquier ruta, sin escribir nada; con organization caido solo las ya comprobadas (5.4) | V (2026-09-13, `mail-directory` y `mail-security`; el webmail no la necesita, 5.5) |
 | El webmail de un buzon se sirve en la celda de su dominio (5.5) | P |
 | Un servicio de empresa solo abre su esquema y no el registro (credencial por servicio) | P (5.2) |
 | Respaldo por base y restauracion probada semanalmente (`ops/backup`) | V (scripts), P (programados en este entorno) |

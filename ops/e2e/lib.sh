@@ -171,10 +171,12 @@ e2e_compilar() {
 
 # arrancar <servicio>: binario de $WORK/bin en segundo plano con registro en $WORK/log. La clave
 # de firma del token solo la recibe identity; los de SERVICIOS_DE_CELDA arrancan con la
-# credencial de su celda (CELL_PASS) y sin la de plataforma.
+# credencial de su celda (CELL_PASS) y sin la de plataforma. Al arrancar organization deja
+# exportada ORGANIZATION_URL: los servicios de celda le preguntan si cada empresa es de su celda.
 arrancar() {
   local sin_firma=(-u JWT_SIGNING_KEY)
   [[ "$1" == identity ]] && sin_firma=()
+  [[ "$1" == organization ]] && export ORGANIZATION_URL="http://127.0.0.1:${PORT[organization]}"
   if [[ "${SERVICIOS_DE_CELDA:-}" == *" $1 "* ]]; then
     env -u POSTGRES_PASSWORD "${sin_firma[@]}" CELL_DB_PASSWORD="$CELL_PASS" "$WORK/bin/$1" >"$WORK/log/$1.log" 2>&1 &
   else

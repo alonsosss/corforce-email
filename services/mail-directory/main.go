@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log"
+	"net/http"
 	"os"
 	"strconv"
 	"time"
@@ -15,12 +16,14 @@ import (
 	"github.com/alonsosss/corforce-email/pkg/outbox"
 	"github.com/alonsosss/corforce-email/pkg/response"
 	"github.com/alonsosss/corforce-email/pkg/server"
+	"github.com/alonsosss/corforce-email/pkg/tenantcell"
 	handler "github.com/alonsosss/corforce-email/services/mail-directory/internal/adapters/http"
 	outboxadapter "github.com/alonsosss/corforce-email/services/mail-directory/internal/adapters/outbox"
 	"github.com/alonsosss/corforce-email/services/mail-directory/internal/adapters/postgres"
 	"github.com/alonsosss/corforce-email/services/mail-directory/internal/adapters/secrets"
 	"github.com/alonsosss/corforce-email/services/mail-directory/internal/app"
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 )
 
@@ -43,6 +46,10 @@ func main() {
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatalf("load config: %v", err)
+	}
+	membership, err := tenantcell.MembershipFromEnv(logger)
+	if err != nil {
+		log.Fatalf("celda de la instancia: %v", err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -83,15 +90,7 @@ func main() {
 		Logger:       logger,
 	})
 
-	r := chi.NewRouter()
-	r.Use(middleware.RequestID)
-	r.Use(middleware.RequireGatewayToken)
-	r.Use(middleware.InjectFromGateway)
-	r.Use(db.StaticPoolMiddleware(pool.Pool))
-	r.Use(middleware.SecureHeaders)
-	r.Use(middleware.Logger(logger))
-	r.Use(middleware.NewRateLimiter(120, time.Minute).Limit)
-	r.Mount("/", handler.NewHandler(uc, authz.NewCheckerFromEnv()).Routes())
+	r := apiRouter(pool.Pool, membership, handler.NewHandler(uc, authz.NewCheckerFromEnv()).Routes(), logger)
 
 	port := defaultPort
 	if p := os.Getenv("MAIL_DIRECTORY_PORT"); p != "" {
@@ -106,6 +105,23 @@ func main() {
 	if runErr != nil {
 		logger.Fatal("server error", zap.Error(runErr))
 	}
+}
+
+// apiRouter monta todo lo que el servicio sirve tras el token interno: el API con sesion que
+// llega por el gateway y las rutas servicio a servicio. Una peticion por una empresa que no es
+// de esta celda se rechaza antes de llegar a ninguna ruta (tenantcell.Membership).
+func apiRouter(pool *pgxpool.Pool, membership *tenantcell.Membership, routes http.Handler, logger *zap.Logger) http.Handler {
+	r := chi.NewRouter()
+	r.Use(middleware.RequestID)
+	r.Use(middleware.RequireGatewayToken)
+	r.Use(middleware.InjectFromGateway)
+	r.Use(db.StaticPoolMiddleware(pool))
+	r.Use(middleware.SecureHeaders)
+	r.Use(middleware.Logger(logger))
+	r.Use(middleware.NewRateLimiter(120, time.Minute).Limit)
+	r.Use(membership.Require)
+	r.Mount("/", routes)
+	return r
 }
 
 // runCellRelay vacia la outbox de la celda hacia JetStream. Antes asegura el stream de sus
