@@ -202,14 +202,25 @@ contrasena (la comprueba `mail-auth` con service `webmail` al abrir la sesion):
   la misma credencial. Postfix delega el SASL en Dovecot, que devuelve el nombre del BUZON;
   `reject_authenticated_sender_login_mismatch` con `smtpd_sender_login_maps` decide si el
   remitente le pertenece (el propio buzon, sus aliases con `sender_allowed` o `sender_acl`).
-  El webmail escribe el mismo remitente en el sobre y en la cabecera From.
+  El webmail escribe el mismo remitente en el sobre y en la cabecera From, y solo ofrece y
+  admite las direcciones concretas que esa misma regla acepta (`mail.sender_identities`, que
+  le sirve `GET /internal/mail-directory/sender-identities`); los comodines (catch-all con
+  `sender_allowed`, `@dominio` o `*` en `sender_acl`) valen por SMTP pero no se enumeran.
+* **Envio sin duplicados**: cada envio del webmail lleva una clave de idempotencia. Si la
+  conexion con el submission se corta despues del punto final de DATA sin respuesta, el
+  mensaje pudo quedar en cola (RFC 5321, 6.1): el webmail no lo reintenta con esa clave y
+  responde `DELIVERY_UNCERTAIN`. Una respuesta 4xx o 5xx al final de DATA si es definitiva.
 * **Puerto 588**: se retiro `check_sasl_access regexp:allow_platform_local.regexp`, que
   dejaba a cualquier nombre SASL `*@platform.local` enviar como cualquier remitente (y cuya
   expresion, sin anclar ni escapar el punto, casaba tambien con dominios como
   `platformXlocal.com`). Sin SOGo nadie la necesitaba y el usuario maestro ya no es inutil.
-* **`pgsql_virtual_sender_acl`** incluye el propio buzon (`mail.mailboxes`, `active = 1`):
-  mail-directory no crea el alias `buzon -> buzon` que mailcow daba por supuesto, y sin el
-  todo envio autenticado desde la direccion del propio buzon se rechazaba.
+* **`pgsql_virtual_sender_acl`** llama a `mail.sender_login_owners('%s')`
+  (`migrations/cell/canonical/mail-directory/07_sender_identities.sql`, con `EXECUTE` para
+  `mail_engine`): es la consulta que tenia el mapa, sin cambios de logica, movida a la base
+  de la celda para que el webmail use la misma regla. Incluye el propio buzon
+  (`mail.mailboxes`, `active = 1`): mail-directory no crea el alias `buzon -> buzon` que
+  mailcow daba por supuesto, y sin el todo envio autenticado desde la direccion del propio
+  buzon se rechazaba.
 * **ClamAV**: el webmail analiza cada adjunto con `clamd:3310` (INSTREAM, `StreamMaxLength`
   25M) antes de enviarlo o guardarlo en Borradores o Enviados: el APPEND por IMAP no pasa
   por Rspamd.
@@ -219,9 +230,13 @@ contrasena (la comprueba `mail-auth` con service `webmail` al abrir la sesion):
 
 P (no verificado contra Dovecot y Postfix reales): que `allow_nets` se aplique a la passdb
 maestra, que el nombre SASL que ve Postfix con `buzon*maestro` sea el del buzon, el rechazo
-553 de un remitente ajeno y la nueva fila de `pgsql_virtual_sender_acl`. La prueba de
-integracion del webmail emula ese comportamiento con un IMAP en memoria y un SMTP en
-proceso.
+553 de un remitente ajeno y el mapa `pgsql_virtual_sender_acl` llamando a la funcion. La
+prueba de integracion del webmail emula ese comportamiento con un IMAP en memoria y un SMTP
+en proceso. V contra Postgres: que `mail.sender_login_owners` devuelve los mismos duenos que
+la consulta anterior del mapa para cada caso (alias exacto y catch-all, `active` 1, 2 y 0,
+dominios y dominios alias activos e inactivos, `sender_acl` concreta, `@dominio` y `*`), que
+`mail_engine` puede llamarla y que `mail_app` no puede enumerar remitentes
+(`services/mail-directory/internal/adapters/postgres/sender_identities_integration_test.go`).
 
 ## Contrato HTTP de `mail-policy`
 
@@ -324,7 +339,9 @@ mapa (`pgsql_relay_ne`, `pgsql_relay_recipient_maps`,
 `pgsql_mbr_access_maps`, `pgsql_virtual_spamalias_maps`). Todas usan
 `hosts = ${MAIL_DB_HOST}:${MAIL_DB_PORT}` y las tablas `mail.*`; el tri-estado
 `active` de buzones y aliases se respeta (`IN (1, 2)` para recibir, `= 1` para
-enviar).
+enviar). `pgsql_virtual_sender_acl` no lleva la consulta sino la llamada a
+`mail.sender_login_owners('%s')`: la regla de `smtpd_sender_login_maps` vive en la base de la
+celda porque el webmail la necesita al reves (`mail.sender_identities`).
 
 Dovecot: `dovecot/docker-entrypoint.sh` genera `sql/dovecot-dict-sql-userdb.conf`
 (`user_query`/`iterate_query` contra `mail.mailboxes`), el dict de cuota contra

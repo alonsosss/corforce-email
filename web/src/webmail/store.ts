@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { ERROR_CODES, errorCode } from '@/api/errors';
 import { onWebmailSessionExpired, webmailApi, type WebmailSession } from '@/api/webmail';
+import { resetWebmailCatalogs } from './catalogs';
 
 /*
  * Sesion del buzon en el webmail. Independiente de la de la plataforma (auth/store.ts):
@@ -32,6 +33,7 @@ export const useWebmailStore = create<WebmailState>((set, get) => {
 
   onWebmailSessionExpired(() => {
     if (get().status === 'authenticated') {
+      resetWebmailCatalogs();
       set({ ...signedOut, status: 'anonymous', expired: true });
     }
   });
@@ -43,6 +45,7 @@ export const useWebmailStore = create<WebmailState>((set, get) => {
       set({ status: 'authenticated', session, expired: false, checkError: null });
     } catch (err) {
       if (errorCode(err) === ERROR_CODES.SESSION_EXPIRED) {
+        resetWebmailCatalogs();
         set({ ...signedOut, status: 'anonymous' });
       } else {
         set({ ...signedOut, status: 'unavailable', checkError: err });
@@ -65,6 +68,7 @@ export const useWebmailStore = create<WebmailState>((set, get) => {
 
     login: async (username, password) => {
       const session = await webmailApi.login(username, password);
+      resetWebmailCatalogs();
       set({ status: 'authenticated', session, expired: false, checkError: null });
       // El inicio de sesion no trae la cuota; se pide aparte sin bloquear la entrada.
       void get().refresh();
@@ -78,6 +82,7 @@ export const useWebmailStore = create<WebmailState>((set, get) => {
         // cierre. Una sesion ya caducada si cuenta como cerrada.
         if (errorCode(err) !== ERROR_CODES.SESSION_EXPIRED) throw err;
       }
+      resetWebmailCatalogs();
       set({ ...signedOut, status: 'anonymous', expired: false });
     },
 

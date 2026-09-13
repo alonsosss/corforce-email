@@ -18,6 +18,9 @@ const (
 	RoleArchive FolderRole = "archive"
 )
 
+// SpecialRoles son los papeles que reconoce el webmail, en el orden en que se presentan.
+var SpecialRoles = []FolderRole{RoleInbox, RoleDrafts, RoleSent, RoleArchive, RoleJunk, RoleTrash}
+
 // Folder es una carpeta del buzon. Total y Unread son cero cuando no se pidieron.
 type Folder struct {
 	Name       string

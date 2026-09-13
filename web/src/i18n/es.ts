@@ -1429,6 +1429,10 @@ export const es = {
   'error.code.ATTACHMENT_INFECTED': 'Un adjunto contiene malware: no se envio ni se guardo nada.',
   'error.code.SCAN_UNAVAILABLE':
     'No se pudieron analizar los adjuntos. Vuelve a intentarlo en unos minutos.',
+  'error.code.RECIPIENT_REJECTED': 'El servidor de correo rechazo un destinatario.',
+  'error.code.SEND_IN_PROGRESS': 'Este mensaje ya se esta enviando. Espera unos segundos.',
+  'error.code.DELIVERY_UNCERTAIN':
+    'No se pudo confirmar si el mensaje salio: pudo quedar en cola. Revisa Enviados o pregunta a los destinatarios antes de volver a enviarlo.',
 
   'webmail.title': 'Correo web',
   'webmail.checking': 'Comprobando la sesion del buzon',
@@ -1471,6 +1475,7 @@ export const es = {
   'webmail.list.flagged': 'Destacado',
   'webmail.list.noSender': '(sin remitente)',
   'webmail.list.noRecipients': '(sin destinatarios)',
+  'webmail.list.searchTooLong': 'La busqueda es demasiado larga: acortala.',
   'webmail.reader.label': 'Lectura del mensaje',
   'webmail.reader.none': 'Ningun mensaje seleccionado',
   'webmail.reader.noneHint': 'Elige un mensaje de la lista para leerlo.',
@@ -1531,6 +1536,18 @@ export const es = {
     'Cada adjunto se analiza en busca de malware antes de enviarse o guardarse.',
   'webmail.compose.attachmentsTotal':
     '{n} adjuntos, {size} en total. Se analizan antes de enviarse o guardarse.',
+  'webmail.compose.attachmentsLimits': 'Hasta {n} adjuntos y {size} por mensaje.',
+  'webmail.compose.tooManyRecipients': 'Hay {n} destinatarios distintos; el maximo es {max}.',
+  'webmail.compose.subjectTooLong': 'El asunto supera los {max} caracteres.',
+  'webmail.compose.tooManyAttachments': 'Hay {n} adjuntos; el maximo es {max}.',
+  'webmail.compose.tooLarge': 'El mensaje ocupa {size}; el maximo es {max}.',
+  'webmail.compose.identitiesUnavailable':
+    'No se pudieron cargar tus remitentes: el mensaje sale desde tu buzon.',
+  'webmail.compose.recipientRejected': 'El servidor de correo rechazo el destinatario {address}.',
+  'webmail.compose.sendAnyway': 'Enviar de todas formas',
+  'webmail.compose.alreadySent': 'El mensaje ya se habia enviado; no se envio de nuevo.',
+  'webmail.compose.draftKept':
+    'El borrador se conservo en Borradores: no se pudo guardar la copia en Enviados o retirarlo.',
   'webmail.compose.removeAttachment': 'Quitar {name}',
   'webmail.compose.send': 'Enviar',
   'webmail.compose.saveDraft': 'Guardar borrador',

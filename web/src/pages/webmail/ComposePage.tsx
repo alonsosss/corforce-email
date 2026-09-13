@@ -1,9 +1,16 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { FOLDER_ROLES, webmailApi, type ComposeInput, type MailMessage } from '@/api/webmail';
-import { errorMessage } from '@/api/messages';
+import {
+  FOLDER_ROLES,
+  webmailApi,
+  type ComposeInput,
+  type MessagePart,
+  type WebmailMeta,
+} from '@/api/webmail';
+import { ERROR_CODES, errorCode } from '@/api/errors';
 import { useAction } from '@/hooks/useAction';
 import { useQuery } from '@/hooks/useQuery';
+import { useResource } from '@/hooks/useResource';
 import {
   Button,
   ChipsInput,
@@ -12,6 +19,7 @@ import {
   ErrorState,
   FormField,
   Input,
+  Select,
   Skeleton,
   Textarea,
   useToast,
@@ -20,18 +28,25 @@ import { IconChevronLeft, IconPaperclip, IconSend, IconX } from '@/design/icons'
 import { formatBytes } from '@/lib/quota';
 import { t, type MessageKey } from '@/i18n';
 import { paths } from '@/paths';
+import { senderIdentities, webmailMeta } from '@/webmail/catalogs';
 import { useWebmailStore } from '@/webmail/store';
 import {
   buildDraft,
+  composeErrorMessage,
+  composeProblems,
   EMPTY_DRAFT,
+  forwardableParts,
+  identityLabel,
   normalizeRecipient,
   parseComposeMode,
+  pickSender,
+  sendSignature,
   type ComposeMode,
   type DraftSeed,
+  type ServerAttachments,
 } from './compose';
 import { folderWithRole } from './folders';
 import { displayFilename, parsePositiveInt } from './format';
-import { referencedInlineParts } from './inlineImages';
 import { useWebmailOutlet } from './webmailContext';
 
 const TITLES: Record<ComposeMode | 'new', MessageKey> = {
@@ -42,28 +57,6 @@ const TITLES: Record<ComposeMode | 'new', MessageKey> = {
   draft: 'webmail.compose.title.draft',
 };
 
-/**
- * Adjuntos del original para reenviar o seguir un borrador: se descargan con la sesion y
- * se vuelven a subir, y el servicio los analiza de nuevo antes de enviarlos o guardarlos.
- * Las imagenes en linea del HTML no se reenvian: el reenvio va en texto.
- */
-async function originalAttachments(message: MailMessage, signal: AbortSignal): Promise<File[]> {
-  const inline = new Set(referencedInlineParts(message).values());
-  const parts = message.attachments.filter((part) => !inline.has(part));
-  return Promise.all(
-    parts.map(async (part) => {
-      const { blob, filename } = await webmailApi.downloadPart(
-        message.folder,
-        message.uid,
-        part.part,
-        signal,
-      );
-      const name = displayFilename(filename ?? part.filename, t('webmail.attachments.unnamed'));
-      return new File([blob], name, { type: part.content_type || blob.type });
-    }),
-  );
-}
-
 export default function ComposePage() {
   const [params] = useSearchParams();
   const rawMode = params.get('mode');
@@ -72,14 +65,13 @@ export default function ComposePage() {
   const uid = parsePositiveInt(params.get('uid'));
   const username = useWebmailStore((s) => s.session?.username ?? '');
 
+  // Los adjuntos del original no se descargan: el servicio los toma del buzon al enviar o
+  // guardar (source_folder, source_uid, source_parts) y los analiza como cualquier otro.
   const source = useQuery(
-    async (signal) => {
-      if (!mode || !folder || !uid) return null;
-      const message = await webmailApi.message(folder, uid, { peek: true }, signal);
-      const files =
-        mode === 'forward' || mode === 'draft' ? await originalAttachments(message, signal) : [];
-      return { message, files };
-    },
+    (signal) =>
+      mode && folder && uid
+        ? webmailApi.message(folder, uid, { peek: true }, signal)
+        : Promise.resolve(null),
     [mode, folder, uid],
   );
 
@@ -112,7 +104,7 @@ export default function ComposePage() {
     );
   }
 
-  const seed = mode && source.data ? buildDraft(mode, source.data.message, username) : EMPTY_DRAFT;
+  const seed = mode && source.data ? buildDraft(mode, source.data, username) : EMPTY_DRAFT;
   const backHref =
     folder && uid
       ? paths.webmailView({ folder, uid: mode === 'draft' ? undefined : uid })
@@ -122,38 +114,47 @@ export default function ComposePage() {
       key={`${mode ?? 'new'}:${folder ?? ''}:${uid ?? ''}`}
       mode={mode}
       seed={seed}
-      initialFiles={source.data?.files ?? []}
       backHref={backHref}
     />
   );
 }
 
+/** Clave de idempotencia del envio y el contenido para el que se genero. */
+interface SendAttempt {
+  key: string;
+  signature: string;
+}
+
 function ComposeForm({
   mode,
   seed,
-  initialFiles,
   backHref,
 }: {
   mode: ComposeMode | null;
   seed: DraftSeed;
-  initialFiles: File[];
   backHref: string;
 }) {
   const toast = useToast();
   const navigate = useNavigate();
   const { folders, reloadFolders } = useWebmailOutlet();
   const refreshSession = useWebmailStore((s) => s.refresh);
+  const meta = useResource(webmailMeta);
+  const identities = useResource(senderIdentities);
+  const [chosenFrom, setChosenFrom] = useState<string | null>(null);
   const [to, setTo] = useState(seed.to);
   const [cc, setCc] = useState(seed.cc);
   const [bcc, setBcc] = useState(seed.bcc);
   const [showCopies, setShowCopies] = useState(seed.cc.length > 0 || seed.bcc.length > 0);
   const [subject, setSubject] = useState(seed.subject);
   const [text, setText] = useState(seed.text);
-  const [files, setFiles] = useState<File[]>(initialFiles);
+  const [files, setFiles] = useState<File[]>([]);
+  const [server, setServer] = useState<ServerAttachments | undefined>(seed.source);
   const [draftUid, setDraftUid] = useState(seed.draftUid);
   const [recipientError, setRecipientError] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
   const [confirmDiscard, setConfirmDiscard] = useState(false);
+  const [uncertain, setUncertain] = useState(false);
+  const attempt = useRef<SendAttempt | null>(null);
   const bodyRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
@@ -166,6 +167,16 @@ function ComposeForm({
     }
   }, [seed.inReplyTo]);
 
+  const senders = identities.data ?? [];
+  const from = chosenFrom ?? pickSender(senders, seed.fromCandidates ?? []);
+  const serverParts = server?.parts ?? [];
+  const limits = meta.data?.limits ?? null;
+  const problems = composeProblems(
+    { to, cc, bcc, subject: subject.trim(), text, files, serverParts },
+    limits,
+  );
+  const blocked = Boolean(problems.recipients || problems.subject || problems.attachments);
+
   const edit =
     <T,>(setter: (value: T) => void) =>
     (value: T) => {
@@ -174,6 +185,7 @@ function ComposeForm({
     };
 
   const input = (): ComposeInput => ({
+    from: from || undefined,
     to,
     cc,
     bcc,
@@ -181,22 +193,54 @@ function ComposeForm({
     text,
     inReplyTo: seed.inReplyTo,
     attachments: files,
+    source: server?.parts.length
+      ? { folder: server.folder, uid: server.uid, parts: server.parts.map((p) => p.part) }
+      : undefined,
   });
 
-  const send = useAction(async () => {
-    const result = await webmailApi.send(input());
-    toast.success(t('webmail.compose.sent'));
-    if (!result.saved_to_sent) toast.info(t('webmail.compose.notSavedToSent'));
-    const drafts = folders.data ? folderWithRole(folders.data, FOLDER_ROLES.drafts) : undefined;
-    if (draftUid && drafts) {
-      // El servicio no retira el borrador al enviar: se lleva a la papelera. Si falla, el
-      // mensaje ya salio y el borrador solo queda de mas.
-      await webmailApi.remove(drafts.name, draftUid).catch(() => undefined);
+  // La clave de idempotencia se conserva mientras se reintenta el mismo contenido: un
+  // reintento tras un corte no entrega el mensaje dos veces. Otro contenido, o reenviar a
+  // proposito un envio en duda, estrena clave.
+  const send = useAction(async (forceNewKey: boolean) => {
+    const payload = input();
+    const signature = sendSignature(payload, draftUid);
+    let current = attempt.current;
+    if (forceNewKey || !current || current.signature !== signature) {
+      current = { key: crypto.randomUUID(), signature };
+      attempt.current = current;
+    }
+    setUncertain(false);
+    try {
+      const result = await webmailApi.send(payload, {
+        idempotencyKey: current.key,
+        replaceUid: draftUid,
+      });
+      toast.success(t(result.replayed ? 'webmail.compose.alreadySent' : 'webmail.compose.sent'));
+      if (!result.saved_to_sent) toast.info(t('webmail.compose.notSavedToSent'));
+      if (draftUid && !result.draft_removed) toast.info(t('webmail.compose.draftKept'));
+    } catch (err) {
+      if (errorCode(err) === ERROR_CODES.DELIVERY_UNCERTAIN) setUncertain(true);
+      throw err;
     }
     reloadFolders();
     void refreshSession();
     navigate(backHref, { replace: true });
   });
+
+  // El borrador guardado ya lleva todos los adjuntos: desde aqui salen de el en el servidor
+  // y no se vuelven a subir. El borrador anterior, y con el sus partes, ya no existe.
+  const rebaseOnDraft = async (uid: number) => {
+    const drafts = folders.data ? folderWithRole(folders.data, FOLDER_ROLES.drafts) : undefined;
+    if (!uid || !drafts) return;
+    try {
+      const saved = await webmailApi.message(drafts.name, uid, { peek: true });
+      const parts = forwardableParts(saved);
+      setServer(parts.length ? { folder: drafts.name, uid, parts } : undefined);
+      setFiles([]);
+    } catch {
+      // Se conserva lo que habia; si el origen era el borrador reemplazado, el envio lo dira.
+    }
+  };
 
   const save = useAction(async () => {
     const { uid } = await webmailApi.saveDraft(input(), draftUid);
@@ -205,6 +249,7 @@ function ComposeForm({
     toast.success(t('webmail.compose.draftSaved'));
     reloadFolders();
     void refreshSession();
+    await rebaseOnDraft(uid);
   });
 
   const submit = async (e: FormEvent) => {
@@ -214,8 +259,9 @@ function ComposeForm({
       return;
     }
     setRecipientError(null);
+    if (blocked) return;
     save.clearError();
-    await send.run();
+    await send.run(false);
   };
 
   const busy = send.busy || save.busy;
@@ -245,7 +291,28 @@ function ComposeForm({
           {t(TITLES[mode ?? 'new'])}
         </h1>
       </div>
-      <FormField label={t('webmail.header.to')} htmlFor="compose-to" error={recipientError}>
+      {senders.length > 1 ? (
+        <FormField label={t('webmail.header.from')} htmlFor="compose-from">
+          <Select
+            id="compose-from"
+            options={senders.map((identity) => ({
+              value: identity.email,
+              label: identityLabel(identity),
+            }))}
+            value={from}
+            onChange={(e) => edit(setChosenFrom)(e.target.value)}
+            disabled={busy}
+          />
+        </FormField>
+      ) : null}
+      {identities.error ? (
+        <p className="cf-field__hint">{t('webmail.compose.identitiesUnavailable')}</p>
+      ) : null}
+      <FormField
+        label={t('webmail.header.to')}
+        htmlFor="compose-to"
+        error={recipientError ?? problems.recipients ?? null}
+      >
         <ChipsInput
           id="compose-to"
           values={to}
@@ -253,7 +320,7 @@ function ComposeForm({
             edit(setTo)(values);
             setRecipientError(null);
           }}
-          invalid={Boolean(recipientError)}
+          invalid={Boolean(recipientError ?? problems.recipients)}
           {...chips}
         />
       </FormField>
@@ -273,7 +340,11 @@ function ComposeForm({
           </Button>
         </div>
       )}
-      <FormField label={t('webmail.header.subject')} htmlFor="compose-subject">
+      <FormField
+        label={t('webmail.header.subject')}
+        htmlFor="compose-subject"
+        error={problems.subject ?? null}
+      >
         <Input
           id="compose-subject"
           value={subject}
@@ -291,10 +362,27 @@ function ComposeForm({
           disabled={busy}
         />
       </FormField>
-      <AttachmentPicker files={files} onChange={edit(setFiles)} disabled={busy} />
-      {error ? (
+      <AttachmentPicker
+        files={files}
+        serverParts={serverParts}
+        onFiles={edit(setFiles)}
+        onServerParts={(parts) =>
+          edit(setServer)(server && parts.length ? { ...server, parts } : undefined)
+        }
+        limits={limits}
+        error={problems.attachments ?? null}
+        disabled={busy}
+      />
+      {uncertain ? (
         <div className="cf-form__error" role="alert">
-          {errorMessage(error)}
+          <span>{t('error.code.DELIVERY_UNCERTAIN')}</span>{' '}
+          <Button size="sm" disabled={busy} onClick={() => void send.run(true)}>
+            {t('webmail.compose.sendAnyway')}
+          </Button>
+        </div>
+      ) : error ? (
+        <div className="cf-form__error" role="alert">
+          {composeErrorMessage(error)}
         </div>
       ) : null}
       <div className="cf-form__actions cf-wm-compose__actions">
@@ -307,9 +395,10 @@ function ComposeForm({
         </Button>
         <Button
           loading={save.busy}
-          disabled={send.busy}
+          disabled={send.busy || blocked}
           onClick={() => {
             send.clearError();
+            setUncertain(false);
             void save.run();
           }}
         >
@@ -342,19 +431,61 @@ function ComposeForm({
 }
 
 /**
- * Ficheros adjuntos. El webmail no publica sus topes (numero ni tamano): el servicio los
- * aplica al enviar y responde MESSAGE_TOO_LARGE, que la pantalla muestra.
+ * Adjuntos: los del mensaje de origen, que el servicio toma del buzon, y los ficheros que
+ * se suben. Numero y tamano maximos llegan en la meta del servicio.
  */
 function AttachmentPicker({
   files,
-  onChange,
+  serverParts,
+  onFiles,
+  onServerParts,
+  limits,
+  error,
   disabled,
 }: {
   files: File[];
-  onChange: (files: File[]) => void;
+  serverParts: readonly MessagePart[];
+  onFiles: (files: File[]) => void;
+  onServerParts: (parts: MessagePart[]) => void;
+  limits: WebmailMeta['limits'] | null;
+  error: string | null;
   disabled: boolean;
 }) {
-  const total = files.reduce((sum, file) => sum + file.size, 0);
+  const count = files.length + serverParts.length;
+  const total =
+    files.reduce((sum, file) => sum + file.size, 0) +
+    serverParts.reduce((sum, part) => sum + part.size, 0);
+  const unnamed = t('webmail.attachments.unnamed');
+  const hint = [
+    count
+      ? t('webmail.compose.attachmentsTotal', { n: count, size: formatBytes(total) })
+      : t('webmail.compose.attachmentsHint'),
+    limits
+      ? t('webmail.compose.attachmentsLimits', {
+          n: limits.max_attachments,
+          size: formatBytes(limits.max_message_bytes),
+        })
+      : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
+  const item = (key: string, name: string, size: number, onRemove: () => void) => (
+    <li key={key} className="cf-wm-attachment">
+      <IconPaperclip size={16} />
+      <span className="cf-wm-attachment__name">{name}</span>
+      <span className="cf-text-sm cf-text-muted">{formatBytes(size)}</span>
+      <Button
+        size="sm"
+        variant="ghost"
+        iconOnly
+        icon={<IconX size={14} />}
+        disabled={disabled}
+        onClick={onRemove}
+      >
+        {t('webmail.compose.removeAttachment', { name })}
+      </Button>
+    </li>
+  );
   return (
     <div className="cf-field">
       <label className="cf-field__label" htmlFor="compose-files">
@@ -369,39 +500,35 @@ function AttachmentPicker({
         aria-describedby="compose-files-hint"
         onChange={(e) => {
           const picked = Array.from(e.target.files ?? []);
-          if (picked.length) onChange([...files, ...picked]);
+          if (picked.length) onFiles([...files, ...picked]);
           e.target.value = '';
         }}
       />
-      {files.length ? (
+      {count ? (
         <ul className="cf-wm-attachments">
-          {files.map((file, index) => {
-            const name = displayFilename(file.name, t('webmail.attachments.unnamed'));
-            return (
-              <li key={`${index}:${file.name}:${file.size}`} className="cf-wm-attachment">
-                <IconPaperclip size={16} />
-                <span className="cf-wm-attachment__name">{name}</span>
-                <span className="cf-text-sm cf-text-muted">{formatBytes(file.size)}</span>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  iconOnly
-                  icon={<IconX size={14} />}
-                  disabled={disabled}
-                  onClick={() => onChange(files.filter((_, i) => i !== index))}
-                >
-                  {t('webmail.compose.removeAttachment', { name })}
-                </Button>
-              </li>
-            );
-          })}
+          {serverParts.map((part) =>
+            item(`s:${part.part}`, displayFilename(part.filename, unnamed), part.size, () =>
+              onServerParts(serverParts.filter((p) => p.part !== part.part)),
+            ),
+          )}
+          {files.map((file, index) =>
+            item(
+              `f:${index}:${file.name}:${file.size}`,
+              displayFilename(file.name, unnamed),
+              file.size,
+              () => onFiles(files.filter((_, i) => i !== index)),
+            ),
+          )}
         </ul>
       ) : null}
       <span id="compose-files-hint" className="cf-field__hint">
-        {files.length
-          ? t('webmail.compose.attachmentsTotal', { n: files.length, size: formatBytes(total) })
-          : t('webmail.compose.attachmentsHint')}
+        {hint}
       </span>
+      {error ? (
+        <div className="cf-form__error" role="alert">
+          {error}
+        </div>
+      ) : null}
     </div>
   );
 }

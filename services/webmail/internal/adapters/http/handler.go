@@ -73,6 +73,8 @@ func (h *Handler) Routes() http.Handler {
 		r.Group(func(r chi.Router) {
 			r.Use(h.requireSession)
 			r.Get("/session", h.Session)
+			r.Get("/meta", h.Meta)
+			r.Get("/identities", h.Identities)
 			r.Get("/folders", h.Folders)
 			r.Get("/folders/{folder}/messages", h.ListMessages)
 			r.Get("/folders/{folder}/messages/{uid}", h.ReadMessage)
@@ -120,9 +122,17 @@ func writeError(w http.ResponseWriter, err error) {
 	var rcpt *domain.RecipientRejectedError
 	switch {
 	case errors.As(err, &verr):
-		response.ErrValidation(w, verr.Error())
+		response.ErrWithDetails(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", verr.Error(),
+			map[string]string{"field": verr.Field})
 	case errors.As(err, &rcpt):
-		response.Err(w, http.StatusUnprocessableEntity, "RECIPIENT_REJECTED", rcpt.Error())
+		response.ErrWithDetails(w, http.StatusUnprocessableEntity, "RECIPIENT_REJECTED", rcpt.Error(),
+			map[string]string{"address": rcpt.Address})
+	case errors.Is(err, domain.ErrSendInProgress):
+		response.Err(w, http.StatusConflict, "SEND_IN_PROGRESS", domain.ErrSendInProgress.Error())
+	case errors.Is(err, domain.ErrDeliveryUncertain):
+		response.Err(w, http.StatusConflict, "DELIVERY_UNCERTAIN", domain.ErrDeliveryUncertain.Error())
+	case errors.Is(err, domain.ErrIdempotencyKeyReused):
+		response.Err(w, http.StatusUnprocessableEntity, "IDEMPOTENCY_KEY_REUSED", domain.ErrIdempotencyKeyReused.Error())
 	case errors.Is(err, domain.ErrInvalidCredentials):
 		response.Err(w, http.StatusUnauthorized, "INVALID_CREDENTIALS", domain.ErrInvalidCredentials.Error())
 	case errors.Is(err, domain.ErrSessionInvalid):

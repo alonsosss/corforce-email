@@ -1,13 +1,32 @@
-import type { MailAddress, MailMessage, ReplyTarget } from '@/api/webmail';
+import { ERROR_CODES, errorCode, errorDetail } from '@/api/errors';
+import { errorMessage } from '@/api/messages';
+import type {
+  ComposeInput,
+  MailAddress,
+  MailMessage,
+  MessagePart,
+  ReplyTarget,
+  SenderIdentity,
+  WebmailMeta,
+} from '@/api/webmail';
 import { formatDateTime } from '@/lib/format';
+import { formatBytes } from '@/lib/quota';
 import { t } from '@/i18n';
-import { addressList } from './format';
+import { addressList, utf8Length } from './format';
+import { referencedInlineParts } from './inlineImages';
 
 export const COMPOSE_MODES = ['reply', 'replyAll', 'forward', 'draft'] as const;
 export type ComposeMode = (typeof COMPOSE_MODES)[number];
 
 export function parseComposeMode(raw: string | null): ComposeMode | null {
   return COMPOSE_MODES.find((mode) => mode === raw) ?? null;
+}
+
+/** Adjuntos de un mensaje del buzon que el servicio adjunta sin pasar por el navegador. */
+export interface ServerAttachments {
+  folder: string;
+  uid: number;
+  parts: MessagePart[];
 }
 
 /** Punto de partida de una redaccion. */
@@ -19,8 +38,15 @@ export interface DraftSeed {
   text: string;
   /** Mensaje al que se responde: el servicio encadena In-Reply-To y References. */
   inReplyTo?: ReplyTarget;
-  /** Borrador que se esta editando: se reemplaza al guardar. */
+  /** Borrador que se esta editando: se reemplaza al guardar y se retira al enviar. */
   draftUid?: number;
+  /**
+   * Direcciones que, si son remitentes del buzon, se proponen como remitente: la del
+   * borrador que se sigue, o aquellas a las que llego el original que se responde.
+   */
+  fromCandidates?: string[];
+  /** Adjuntos del original (reenvio) o del borrador que se sigue redactando. */
+  source?: ServerAttachments;
 }
 
 export const EMPTY_DRAFT: DraftSeed = { to: [], cc: [], bcc: [], subject: '', text: '' };
@@ -137,6 +163,20 @@ export function messagePlainText(message: Pick<MailMessage, 'text' | 'html'>): s
   return message.html ? htmlToPlainText(message.html) : '';
 }
 
+/**
+ * Adjuntos del original que se reenvian o que un borrador conserva: todos menos las
+ * imagenes en linea que su HTML muestra (el reenvio va en texto).
+ */
+export function forwardableParts(message: MailMessage): MessagePart[] {
+  const inline = new Set(referencedInlineParts(message).values());
+  return message.attachments.filter((part) => !inline.has(part));
+}
+
+function serverAttachments(message: MailMessage): ServerAttachments | undefined {
+  const parts = forwardableParts(message);
+  return parts.length ? { folder: message.folder, uid: message.uid, parts } : undefined;
+}
+
 /** Borrador inicial para responder, responder a todos, reenviar o seguir un borrador. */
 export function buildDraft(mode: ComposeMode, message: MailMessage, ownAddress: string): DraftSeed {
   const body = messagePlainText(message);
@@ -151,6 +191,8 @@ export function buildDraft(mode: ComposeMode, message: MailMessage, ownAddress: 
       subject: message.subject,
       text: body,
       draftUid: message.uid,
+      fromCandidates: message.from.map((a) => a.email),
+      source: serverAttachments(message),
     };
   }
 
@@ -166,6 +208,7 @@ export function buildDraft(mode: ComposeMode, message: MailMessage, ownAddress: 
       ...EMPTY_DRAFT,
       subject: prefixedSubject(t('webmail.compose.forwardPrefix'), message.subject),
       text: ['', '', ...header, '', body].join('\n'),
+      source: serverAttachments(message),
     };
   }
 
@@ -186,5 +229,108 @@ export function buildDraft(mode: ComposeMode, message: MailMessage, ownAddress: 
     subject: prefixedSubject(t('webmail.compose.replyPrefix'), message.subject),
     text: `\n\n${t('webmail.compose.replyHeader', { date, sender })}\n${quote(body)}`,
     inReplyTo: { folder: message.folder, uid: message.uid },
+    fromCandidates: [...message.to, ...message.cc].map((a) => a.email),
   };
+}
+
+/**
+ * Remitente con el que se abre la redaccion: el primer candidato que sea uno de los
+ * remitentes del buzon; si no, el propio buzon. Sin lista, vacio: el servicio usa el buzon.
+ */
+export function pickSender(
+  identities: readonly SenderIdentity[],
+  candidates: readonly string[],
+): string {
+  for (const candidate of candidates) {
+    const match = identities.find((identity) => same(identity.email, candidate));
+    if (match) return match.email;
+  }
+  return identities.find((identity) => identity.primary)?.email ?? '';
+}
+
+/** "Nombre <direccion>" o la direccion sola. */
+export function identityLabel(identity: SenderIdentity): string {
+  const name = identity.name.trim();
+  return name ? `${name} <${identity.email}>` : identity.email;
+}
+
+/** Lo que se mide antes de enviar. */
+export interface ComposeCheck {
+  to: readonly string[];
+  cc: readonly string[];
+  bcc: readonly string[];
+  subject: string;
+  text: string;
+  files: readonly File[];
+  serverParts: readonly MessagePart[];
+}
+
+export interface ComposeProblems {
+  recipients?: string;
+  subject?: string;
+  attachments?: string;
+}
+
+/**
+ * Topes del servicio (GET /webmail/meta) aplicados antes de enviar. Cuentan como el
+ * servicio: destinatarios distintos sin mayusculas, asunto en caracteres, y el tamano con
+ * el texto en UTF-8 y los adjuntos; el de los adjuntos del buzon es el que declara su
+ * estructura. Sin meta no se comprueba nada aqui: el servicio lo hace siempre.
+ */
+export function composeProblems(
+  input: ComposeCheck,
+  limits: WebmailMeta['limits'] | null,
+): ComposeProblems {
+  if (!limits) return {};
+  const problems: ComposeProblems = {};
+  const unique = new Set([...input.to, ...input.cc, ...input.bcc].map((a) => a.toLowerCase()));
+  if (unique.size > limits.max_recipients) {
+    problems.recipients = t('webmail.compose.tooManyRecipients', {
+      n: unique.size,
+      max: limits.max_recipients,
+    });
+  }
+  if (Array.from(input.subject).length > limits.max_subject_chars) {
+    problems.subject = t('webmail.compose.subjectTooLong', { max: limits.max_subject_chars });
+  }
+  const count = input.files.length + input.serverParts.length;
+  const bytes =
+    utf8Length(input.subject) +
+    utf8Length(input.text) +
+    input.files.reduce((sum, file) => sum + file.size, 0) +
+    input.serverParts.reduce((sum, part) => sum + part.size, 0);
+  if (count > limits.max_attachments) {
+    problems.attachments = t('webmail.compose.tooManyAttachments', {
+      n: count,
+      max: limits.max_attachments,
+    });
+  } else if (bytes > limits.max_message_bytes) {
+    problems.attachments = t('webmail.compose.tooLarge', {
+      size: formatBytes(bytes),
+      max: formatBytes(limits.max_message_bytes),
+    });
+  }
+  return problems;
+}
+
+/**
+ * Huella de lo que se envia. Mientras no cambie, un reintento conserva la clave de
+ * idempotencia y el servicio no vuelve a entregar el mensaje; otro contenido estrena clave.
+ */
+export function sendSignature(input: ComposeInput, replaceUid?: number): string {
+  const { attachments, ...rest } = input;
+  return JSON.stringify({
+    ...rest,
+    attachments: attachments.map((file) => [file.name, file.size, file.lastModified, file.type]),
+    replaceUid: replaceUid ?? 0,
+  });
+}
+
+/** Texto del error de un envio; un destinatario rechazado se nombra. */
+export function composeErrorMessage(err: unknown): string {
+  if (errorCode(err) === ERROR_CODES.RECIPIENT_REJECTED) {
+    const address = errorDetail(err, 'address');
+    if (address) return t('webmail.compose.recipientRejected', { address });
+  }
+  return errorMessage(err);
 }

@@ -35,6 +35,7 @@ type Deps struct {
 	TLSPolicies  ports.TLSPolicyRepository
 	RecipientMap ports.RecipientMapRepository
 	BCCMaps      ports.BCCMapRepository
+	Senders      ports.SenderIdentityRepository
 	Secrets      ports.Secrets
 	Events       ports.EventPublisher
 	Logger       *zap.Logger
@@ -55,6 +56,7 @@ type UseCase struct {
 	tlsPolicies  ports.TLSPolicyRepository
 	recipientMap ports.RecipientMapRepository
 	bccMaps      ports.BCCMapRepository
+	senders      ports.SenderIdentityRepository
 	secrets      ports.Secrets
 	events       ports.EventPublisher
 	logger       *zap.Logger
@@ -70,7 +72,7 @@ func New(d Deps) *UseCase {
 		appPasswords: d.AppPasswords, sieve: d.Sieve, aliases: d.Aliases, spamAliases: d.SpamAliases,
 		senderACL: d.SenderACL, relayhosts: d.Relayhosts, transports: d.Transports,
 		tlsPolicies: d.TLSPolicies, recipientMap: d.RecipientMap, bccMaps: d.BCCMaps,
-		secrets: d.Secrets, events: d.Events, logger: logger,
+		senders: d.Senders, secrets: d.Secrets, events: d.Events, logger: logger,
 	}
 }
 

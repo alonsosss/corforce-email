@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"errors"
 	"mime"
 	"net/mail"
 	"regexp"
@@ -49,6 +50,46 @@ type ReplyTarget struct {
 	UID    uint32
 }
 
+// PartSource son partes de un mensaje del propio buzon que se adjuntan tomadas del
+// servidor (reenvio, borrador que se sigue redactando): no pasan por el navegador y se
+// analizan con ClamAV igual que un adjunto subido.
+type PartSource struct {
+	Folder string
+	UID    uint32
+	Parts  []string
+}
+
+// NewPartSource valida la referencia: carpeta, UID y numeros de seccion sin repetir.
+func NewPartSource(folder string, uid uint32, parts []string) (*PartSource, error) {
+	if err := ValidateFolderName(folder); err != nil {
+		var verr *ValidationError
+		if errors.As(err, &verr) {
+			return nil, invalid("source_folder", verr.Reason)
+		}
+		return nil, err
+	}
+	if uid == 0 {
+		return nil, invalid("source_uid", "debe ser el UID del mensaje de origen")
+	}
+	if len(parts) == 0 {
+		return nil, invalid("source_parts", "hace falta al menos una parte")
+	}
+	if len(parts) > MaxAttachments {
+		return nil, invalid("source_parts", "demasiadas partes")
+	}
+	seen := make(map[string]bool, len(parts))
+	for _, p := range parts {
+		if _, err := ParsePartID(p); err != nil {
+			return nil, invalid("source_parts", "identificador de parte invalido")
+		}
+		if seen[p] {
+			return nil, invalid("source_parts", "parte repetida")
+		}
+		seen[p] = true
+	}
+	return &PartSource{Folder: folder, UID: uid, Parts: append([]string(nil), parts...)}, nil
+}
+
 // Draft es un mensaje redactado en el webmail, para enviar o para guardar como borrador.
 type Draft struct {
 	From        Address
@@ -60,6 +101,8 @@ type Draft struct {
 	HTML        string
 	Attachments []Attachment
 	InReplyTo   *ReplyTarget
+	// Source son adjuntos que el servicio toma del buzon; al resolverse pasan a Attachments.
+	Source *PartSource
 }
 
 // Outgoing es el borrador ya fechado e identificado, listo para componer.
@@ -71,10 +114,14 @@ type Outgoing struct {
 	References []string
 }
 
-// SendResult es el desenlace de un envio.
+// SendResult es el desenlace de un envio. DraftRemoved solo es true si se pidio retirar un
+// borrador y ya no esta en Borradores; Replayed indica que la peticion repetia un envio ya
+// hecho con la misma clave y que no salio nada nuevo.
 type SendResult struct {
-	MessageID   string
-	SavedToSent bool
+	MessageID    string
+	SavedToSent  bool
+	DraftRemoved bool
+	Replayed     bool
 }
 
 // ValidateForSend exige al menos un destinatario ademas de las reglas comunes.
@@ -109,7 +156,7 @@ func (d Draft) validate(l Limits) error {
 	if !utf8.ValidString(d.HTML) {
 		return invalid("html", "no es UTF-8 valido")
 	}
-	if len(d.Attachments) > MaxAttachments {
+	if len(d.Attachments)+d.pendingParts() > MaxAttachments {
 		return invalid("attachments", "demasiados adjuntos")
 	}
 	if n := len(d.Recipients()); n > l.MaxRecipients {
@@ -119,6 +166,13 @@ func (d Draft) validate(l Limits) error {
 		return ErrMessageTooLarge
 	}
 	return nil
+}
+
+func (d Draft) pendingParts() int {
+	if d.Source == nil {
+		return 0
+	}
+	return len(d.Source.Parts)
 }
 
 // Recipients son las direcciones del sobre SMTP: To, Cc y Bcc sin repetir.

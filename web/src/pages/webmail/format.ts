@@ -62,6 +62,13 @@ export function displayFilename(name: string, fallback: string): string {
   return visible || fallback;
 }
 
+const utf8 = new TextEncoder();
+
+/** Bytes UTF-8 de un texto: los topes del servicio cuentan bytes, no caracteres. */
+export function utf8Length(text: string): number {
+  return utf8.encode(text).length;
+}
+
 /** Entero positivo de un parametro de la URL; null si falta o no lo es. */
 export function parsePositiveInt(raw: string | null): number | null {
   if (!raw || !/^\d{1,10}$/.test(raw)) return null;

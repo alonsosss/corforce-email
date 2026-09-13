@@ -5,6 +5,8 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"fmt"
+	"io"
 	"strings"
 	"time"
 
@@ -17,20 +19,122 @@ const (
 	// maxReferences acota la cadena References de una respuesta: los hilos largos la
 	// hacen crecer sin limite y solo importan los ultimos eslabones.
 	maxReferences = 20
-	// postSendTimeout es lo que se dedica a guardar la copia en Enviados. Corre sin la
-	// cancelacion de la peticion: el mensaje ya salio y su copia no debe perderse porque
-	// el navegador cierre la conexion.
+	// postSendTimeout es lo que se dedica a guardar la copia en Enviados y retirar el
+	// borrador. Corre sin la cancelacion de la peticion: el mensaje ya salio y su copia no
+	// debe perderse porque el navegador cierre la conexion.
 	postSendTimeout = 30 * time.Second
 )
 
-// Send entrega el borrador por el submission de la celda y guarda la copia en Enviados.
+// Send entrega el borrador por el submission de la celda, guarda la copia en Enviados y
+// retira el borrador que reemplaza (opts.ReplaceUID).
 //
-// El remitente es el propio buzon salvo que el cliente pida otro; en ese caso lo decide
-// Postfix con smtpd_sender_login_maps (el propio buzon o lo que permita sender_acl), no
-// el webmail. El From de la cabecera es siempre el mismo que el del sobre.
-func (s *Service) Send(ctx context.Context, sess domain.Session, d domain.Draft) (domain.SendResult, error) {
-	if err := s.prepare(ctx, sess, &d, true); err != nil {
+// Idempotencia: la clave del cliente se reserva en el registro de envios antes de tocar
+// nada. Mientras el envio esta en curso, otra peticion con la misma clave recibe
+// ErrSendInProgress. En cuanto Postfix acepta el mensaje la clave queda como enviada, antes
+// de guardar la copia o retirar el borrador: un reintento con la misma clave devuelve el
+// resultado guardado sin entregar nada y, si el borrador no se pudo retirar, lo vuelve a
+// intentar. Si el mensaje no salio (validacion, adjunto, rechazo de Postfix) la clave se
+// libera y se puede reintentar con ella. Si la respuesta de Postfix al final de DATA se
+// pierde, la clave queda en estado incierto y no se reintenta sola: el mensaje pudo quedar
+// en cola, y reenviarlo lo decide el usuario con otra clave.
+//
+// El remitente es el propio buzon salvo que el cliente pida otro de sus remitentes (los que
+// el directorio de la celda le permite con la regla de Postfix). Postfix vuelve a aplicar
+// smtpd_sender_login_maps al buzon real: el webmail no puede saltarsela. El From de la
+// cabecera es siempre el mismo que el del sobre.
+func (s *Service) Send(ctx context.Context, sess domain.Session, d domain.Draft, opts domain.SendOptions) (domain.SendResult, error) {
+	if err := domain.ValidateIdempotencyKey(opts.IdempotencyKey); err != nil {
 		return domain.SendResult{}, err
+	}
+	ctx, cancel := context.WithTimeout(ctx, s.cfg.SendTimeout)
+	defer cancel()
+
+	key := sendKey(sess.Username, opts.IdempotencyKey)
+	fp := fingerprint(d, opts.ReplaceUID)
+	rec, reserved, err := s.ledger.Reserve(ctx, key,
+		domain.SendRecord{State: domain.SendPending, Fingerprint: fp}, s.cfg.SendTimeout+pendingMargin)
+	if err != nil {
+		s.logger.Error("webmail: no se pudo reservar la clave del envio", zap.String("username", sess.Username), zap.Error(err))
+		return domain.SendResult{}, unavailable(err)
+	}
+	if !reserved {
+		return s.replay(ctx, sess, key, rec, fp, opts.ReplaceUID)
+	}
+	return s.deliver(ctx, sess, d, opts.ReplaceUID, key, rec)
+}
+
+// deliver hace el envio de una clave recien reservada.
+func (s *Service) deliver(ctx context.Context, sess domain.Session, d domain.Draft, replaceUID uint32, key string, rec domain.SendRecord) (domain.SendResult, error) {
+	out, wire, stored, err := s.build(ctx, sess, d)
+	if err != nil {
+		s.release(ctx, key, rec.Token)
+		return domain.SendResult{}, err
+	}
+	recipients := out.Recipients()
+	if err := s.sender.Send(ctx, sess.Username, out.From.Email, recipients, wire); err != nil {
+		if errors.Is(err, domain.ErrDeliveryUncertain) {
+			rec.State = domain.SendUncertain
+			s.record(ctx, key, rec)
+			s.logger.Error("webmail: no se pudo confirmar el envio; la clave no se reintenta", zap.String("username", sess.Username),
+				zap.String("message_id", out.MessageID), zap.Error(err))
+			return domain.SendResult{}, err
+		}
+		s.release(ctx, key, rec.Token)
+		s.logger.Warn("webmail: envio rechazado", zap.String("username", sess.Username),
+			zap.String("from", out.From.Email), zap.Int("recipients", len(recipients)), zap.Error(err))
+		return domain.SendResult{}, err
+	}
+	s.logger.Info("webmail: mensaje enviado", zap.String("username", sess.Username),
+		zap.String("message_id", out.MessageID), zap.Int("recipients", len(recipients)))
+
+	rec.State, rec.MessageID = domain.SendSent, out.MessageID
+	s.record(ctx, key, rec)
+	rec.SavedToSent, rec.DraftRemoved = s.afterSend(ctx, sess, stored, out, replaceUID)
+	s.record(ctx, key, rec)
+	return domain.SendResult{MessageID: out.MessageID, SavedToSent: rec.SavedToSent, DraftRemoved: rec.DraftRemoved}, nil
+}
+
+// replay responde a una clave que ya tenia registro sin entregar nada.
+func (s *Service) replay(ctx context.Context, sess domain.Session, key string, rec domain.SendRecord, fp string, replaceUID uint32) (domain.SendResult, error) {
+	if rec.Fingerprint != fp {
+		s.logger.Warn("webmail: clave de envio repetida con otro mensaje", zap.String("username", sess.Username))
+		return domain.SendResult{}, domain.ErrIdempotencyKeyReused
+	}
+	switch rec.State {
+	case domain.SendPending:
+		return domain.SendResult{}, domain.ErrSendInProgress
+	case domain.SendUncertain:
+		return domain.SendResult{}, domain.ErrDeliveryUncertain
+	case domain.SendSent:
+	default:
+		return domain.SendResult{}, unavailable(fmt.Errorf("estado de envio desconocido %q", rec.State))
+	}
+	if replaceUID != 0 && rec.SavedToSent && !rec.DraftRemoved {
+		err := s.withMailbox(ctx, sess, func(mb ports.Mailbox) error {
+			folders, err := mb.Folders(ctx, false)
+			if err != nil {
+				return err
+			}
+			rec.DraftRemoved, err = s.retireDraft(ctx, mb, folders, replaceUID)
+			return err
+		})
+		if err != nil {
+			s.logger.Warn("webmail: el reintento no pudo retirar el borrador", zap.String("username", sess.Username),
+				zap.Uint32("uid", replaceUID), zap.Error(err))
+		}
+		if rec.DraftRemoved {
+			s.record(ctx, key, rec)
+		}
+	}
+	s.logger.Info("webmail: envio repetido con la misma clave; no se entrega de nuevo",
+		zap.String("username", sess.Username), zap.String("message_id", rec.MessageID))
+	return domain.SendResult{MessageID: rec.MessageID, SavedToSent: rec.SavedToSent, DraftRemoved: rec.DraftRemoved, Replayed: true}, nil
+}
+
+// build prepara el borrador y compone la version que viaja (sin Bcc) y la que se guarda.
+func (s *Service) build(ctx context.Context, sess domain.Session, d domain.Draft) (domain.Outgoing, []byte, []byte, error) {
+	if err := s.prepare(ctx, sess, &d, true); err != nil {
+		return domain.Outgoing{}, nil, nil, err
 	}
 	out := s.outgoing(d)
 	if d.InReplyTo != nil {
@@ -38,28 +142,18 @@ func (s *Service) Send(ctx context.Context, sess domain.Session, d domain.Draft)
 			return s.chainReply(ctx, mb, &out)
 		})
 		if err != nil {
-			return domain.SendResult{}, err
+			return domain.Outgoing{}, nil, nil, err
 		}
 	}
 	wire, err := s.compose(out, false)
 	if err != nil {
-		return domain.SendResult{}, err
+		return domain.Outgoing{}, nil, nil, err
 	}
 	stored, err := s.compose(out, true)
 	if err != nil {
-		return domain.SendResult{}, err
+		return domain.Outgoing{}, nil, nil, err
 	}
-
-	recipients := d.Recipients()
-	if err := s.sender.Send(ctx, sess.Username, d.From.Email, recipients, wire); err != nil {
-		s.logger.Warn("webmail: envio rechazado", zap.String("username", sess.Username),
-			zap.String("from", d.From.Email), zap.Int("recipients", len(recipients)), zap.Error(err))
-		return domain.SendResult{}, err
-	}
-	s.logger.Info("webmail: mensaje enviado", zap.String("username", sess.Username),
-		zap.String("message_id", out.MessageID), zap.Int("recipients", len(recipients)))
-
-	return domain.SendResult{MessageID: out.MessageID, SavedToSent: s.afterSend(ctx, sess, stored, out)}, nil
+	return out, wire, stored, nil
 }
 
 // SaveDraft guarda el borrador en la carpeta de borradores. replaceUID es el borrador
@@ -103,7 +197,9 @@ func (s *Service) SaveDraft(ctx context.Context, sess domain.Session, d domain.D
 	return uid, err
 }
 
-// prepare completa el remitente, sanea el HTML propio, valida y analiza los adjuntos.
+// prepare completa el remitente, sanea el HTML propio, valida, comprueba el remitente,
+// trae los adjuntos del buzon y analiza todos los adjuntos. Lo barato va primero: una
+// peticion invalida no llega al directorio, a Dovecot ni a ClamAV.
 func (s *Service) prepare(ctx context.Context, sess domain.Session, d *domain.Draft, forSend bool) error {
 	switch {
 	case d.From.Email == "":
@@ -122,11 +218,13 @@ func (s *Service) prepare(ctx context.Context, sess domain.Session, d *domain.Dr
 		d.Attachments[i].Filename = domain.SanitizeFilename(d.Attachments[i].Filename)
 		d.Attachments[i].ContentType = domain.NormalizeAttachmentType(d.Attachments[i].ContentType)
 	}
-	validate := d.ValidateForSave
-	if forSend {
-		validate = d.ValidateForSend
+	validate := func() error {
+		if forSend {
+			return d.ValidateForSend(s.cfg.Limits)
+		}
+		return d.ValidateForSave(s.cfg.Limits)
 	}
-	if err := validate(s.cfg.Limits); err != nil {
+	if err := validate(); err != nil {
 		return err
 	}
 	if d.InReplyTo != nil {
@@ -137,7 +235,93 @@ func (s *Service) prepare(ctx context.Context, sess domain.Session, d *domain.Dr
 			return domain.NewValidationError("in_reply_to", "debe ser un UID valido")
 		}
 	}
+	if err := s.checkSender(ctx, sess, &d.From); err != nil {
+		return err
+	}
+	if d.Source != nil {
+		if err := s.resolveSource(ctx, sess, d); err != nil {
+			return err
+		}
+		if err := validate(); err != nil {
+			return err
+		}
+	}
 	return s.scan(ctx, sess, d.Attachments)
+}
+
+// checkSender admite el propio buzon y las direcciones concretas que el directorio de la
+// celda le permite con la regla de Postfix; cualquier otra se rechaza antes de llegar a
+// Postfix. El propio buzon no consulta el directorio: enviar como uno mismo no depende de
+// que mail-directory responda.
+func (s *Service) checkSender(ctx context.Context, sess domain.Session, from *domain.Address) error {
+	if strings.EqualFold(from.Email, sess.Username) {
+		from.Email = sess.Username
+		return nil
+	}
+	identities, err := s.directory.SenderIdentities(ctx, sess.Username)
+	if err != nil {
+		s.logger.Error("webmail: no se pudieron leer los remitentes del buzon", zap.String("username", sess.Username), zap.Error(err))
+		return unavailable(err)
+	}
+	for _, id := range identities {
+		if strings.EqualFold(id, from.Email) {
+			from.Email = strings.ToLower(id)
+			return nil
+		}
+	}
+	s.logger.Warn("webmail: remitente que el buzon no puede usar", zap.String("username", sess.Username), zap.String("from", from.Email))
+	return domain.ErrSenderNotAllowed
+}
+
+// resolveSource trae del buzon las partes pedidas y las anade como adjuntos. Cada parte se
+// lee acotada por el tope de descarga y por lo que le queda al mensaje; su nombre y su tipo
+// salen de la estructura del mensaje guardado, no de lo que diga el cliente.
+func (s *Service) resolveSource(ctx context.Context, sess domain.Session, d *domain.Draft) error {
+	src := d.Source
+	budget := s.cfg.Limits.MaxMessageBytes - d.ContentBytes()
+	err := s.withMailbox(ctx, sess, func(mb ports.Mailbox) error {
+		for _, id := range src.Parts {
+			limit := min(s.cfg.MaxAttachmentBytes, budget)
+			if limit < 1 {
+				return domain.ErrMessageTooLarge
+			}
+			part, data, err := readSourcePart(ctx, mb, src, id, limit)
+			if errors.Is(err, domain.ErrPartTooLarge) && budget <= s.cfg.MaxAttachmentBytes {
+				return domain.ErrMessageTooLarge
+			}
+			if err != nil {
+				return err
+			}
+			budget -= int64(len(data))
+			d.Attachments = append(d.Attachments, domain.Attachment{
+				Filename:    domain.SanitizeFilename(part.Filename),
+				ContentType: domain.NormalizeAttachmentType(part.ContentType),
+				Data:        data,
+			})
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	d.Source = nil
+	return nil
+}
+
+func readSourcePart(ctx context.Context, mb ports.Mailbox, src *domain.PartSource, id string, limit int64) (domain.Part, []byte, error) {
+	part, body, err := mb.OpenPart(ctx, src.Folder, src.UID, id, limit)
+	if err != nil {
+		return domain.Part{}, nil, err
+	}
+	defer body.Close()
+	data, err := io.ReadAll(body)
+	if err != nil {
+		if errors.Is(err, domain.ErrPartTooLarge) {
+			return domain.Part{}, nil, err
+		}
+		return domain.Part{}, nil, unavailable(err)
+	}
+	return part, data, nil
 }
 
 // scan analiza cada adjunto antes de enviarlo o guardarlo en el buzon. Falla cerrado:
@@ -201,12 +385,13 @@ func (s *Service) compose(out domain.Outgoing, includeBcc bool) ([]byte, error) 
 	return raw, nil
 }
 
-// afterSend guarda la copia en Enviados y marca como respondido el original. Nada de
-// esto deshace el envio: un fallo se registra y el cliente lo ve en saved_to_sent.
-func (s *Service) afterSend(ctx context.Context, sess domain.Session, stored []byte, out domain.Outgoing) bool {
+// afterSend guarda la copia en Enviados, marca como respondido el original y retira el
+// borrador que el envio reemplaza. Nada de esto deshace el envio: un fallo se registra y el
+// cliente lo ve en saved_to_sent y draft_removed. El borrador solo se retira si la copia
+// quedo en Enviados: si no, es el unico registro de lo que salio.
+func (s *Service) afterSend(ctx context.Context, sess domain.Session, stored []byte, out domain.Outgoing, replaceUID uint32) (saved, removed bool) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), postSendTimeout)
 	defer cancel()
-	saved := false
 	err := s.withMailbox(ctx, sess, func(mb ports.Mailbox) error {
 		folders, err := mb.Folders(ctx, false)
 		if err != nil {
@@ -227,12 +412,32 @@ func (s *Service) afterSend(ctx context.Context, sess domain.Session, stored []b
 				s.logger.Warn("webmail: no se pudo marcar el original como respondido", zap.String("username", sess.Username), zap.Error(err))
 			}
 		}
+		if replaceUID != 0 && saved {
+			if removed, err = s.retireDraft(ctx, mb, folders, replaceUID); err != nil {
+				s.logger.Warn("webmail: no se pudo retirar el borrador enviado", zap.String("username", sess.Username),
+					zap.Uint32("uid", replaceUID), zap.Error(err))
+			}
+		}
 		return nil
 	})
 	if err != nil {
 		s.logger.Warn("webmail: no se pudo abrir el buzon tras el envio", zap.String("username", sess.Username), zap.Error(err))
 	}
-	return saved
+	return saved, removed
+}
+
+// retireDraft borra de Borradores el borrador que el envio reemplaza. Si ya no estaba,
+// cuenta como retirado.
+func (s *Service) retireDraft(ctx context.Context, mb ports.Mailbox, folders []domain.Folder, uid uint32) (bool, error) {
+	drafts, ok := domain.FolderWithRole(folders, domain.RoleDrafts)
+	if !ok {
+		return false, domain.ErrDraftsNotFound
+	}
+	err := mb.Expunge(ctx, drafts.Name, uid)
+	if err == nil || errors.Is(err, domain.ErrMessageNotFound) {
+		return true, nil
+	}
+	return false, err
 }
 
 // newMessageID genera un Message-ID con el dominio del remitente (sin corchetes).

@@ -245,6 +245,8 @@ export const endpoints = {
   // decodifica.
   webmail: {
     session: `${API_PREFIX}/webmail/session`,
+    meta: `${API_PREFIX}/webmail/meta`,
+    identities: `${API_PREFIX}/webmail/identities`,
     folders: `${API_PREFIX}/webmail/folders`,
     messages: (folder: string) => `${API_PREFIX}/webmail/folders/${seg(folder)}/messages`,
     message: (folder: string, uid: number) =>

@@ -128,16 +128,29 @@ func (s *Sender) Send(ctx context.Context, username, envelopeFrom string, recipi
 		return classify(err, "")
 	}
 	if _, err := w.Write(raw); err != nil {
+		// Sin el punto final Postfix descarta lo recibido: el mensaje no salio.
 		return fmt.Errorf("%w: DATA: %v", domain.ErrUnavailable, err)
 	}
 	if err := w.Close(); err != nil {
-		return classify(err, "")
+		return classifyEndOfData(err)
 	}
 	if err := c.Quit(); err != nil {
 		// El mensaje ya fue aceptado (250 tras el punto): un QUIT fallido no lo deshace.
 		s.logger.Debug("webmail: QUIT del submission", zap.Error(err))
 	}
 	return nil
+}
+
+// classifyEndOfData traduce el cierre de DATA. Una respuesta de Postfix (4xx o 5xx) dice que
+// el mensaje no se acepto. Sin respuesta (conexion cortada, plazo vencido) el mensaje pudo
+// quedar en cola y no hay forma de saberlo: reintentarlo podria entregarlo dos veces
+// (RFC 5321, 4.1.1.4 y 6.1).
+func classifyEndOfData(err error) error {
+	var te *textproto.Error
+	if errors.As(err, &te) {
+		return classify(err, "")
+	}
+	return fmt.Errorf("%w: %v", domain.ErrDeliveryUncertain, err)
 }
 
 // classify traduce la respuesta de Postfix. Con smtpd_delay_reject=yes el rechazo del

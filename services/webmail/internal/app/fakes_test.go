@@ -149,18 +149,35 @@ type appended struct {
 	flags  []domain.Flag
 }
 
+// storedPart es una parte de un mensaje del buzon que OpenPart entrega.
+type storedPart struct {
+	part domain.Part
+	data []byte
+}
+
+type partRequest struct {
+	folder string
+	uid    uint32
+	part   string
+	limit  int64
+}
+
 type fakeMailbox struct {
-	username  string
-	folders   []domain.Folder
-	raw       *domain.RawMessage
-	reply     domain.ReplyReference
-	appended  []appended
-	appendUID uint32
-	moved     []string
-	expunged  []string
-	flagged   []domain.FlagChange
-	listed    string
-	closed    int
+	username   string
+	folders    []domain.Folder
+	raw        *domain.RawMessage
+	reply      domain.ReplyReference
+	appended   []appended
+	appendUID  uint32
+	appendErr  map[string]error
+	parts      map[string]storedPart
+	partReqs   []partRequest
+	moved      []string
+	expunged   []string
+	expungeErr error
+	flagged    []domain.FlagChange
+	listed     string
+	closed     int
 }
 
 func (m *fakeMailbox) Close() error { m.closed++; return nil }
@@ -178,8 +195,21 @@ func (m *fakeMailbox) Read(context.Context, string, uint32, domain.ReadOptions) 
 	}
 	return m.raw, nil
 }
-func (m *fakeMailbox) OpenPart(context.Context, string, uint32, string, int64) (domain.Part, io.ReadCloser, error) {
-	return domain.Part{ID: "2"}, io.NopCloser(strings.NewReader("datos")), nil
+
+// OpenPart aplica el tope como el adaptador IMAP: una parte mayor que maxBytes no se abre.
+func (m *fakeMailbox) OpenPart(_ context.Context, folder string, uid uint32, partID string, maxBytes int64) (domain.Part, io.ReadCloser, error) {
+	m.partReqs = append(m.partReqs, partRequest{folder: folder, uid: uid, part: partID, limit: maxBytes})
+	if m.parts == nil {
+		return domain.Part{ID: "2"}, io.NopCloser(strings.NewReader("datos")), nil
+	}
+	p, ok := m.parts[partID]
+	if !ok {
+		return domain.Part{}, nil, domain.ErrPartNotFound
+	}
+	if int64(len(p.data)) > maxBytes {
+		return domain.Part{}, nil, domain.ErrPartTooLarge
+	}
+	return p.part, io.NopCloser(strings.NewReader(string(p.data))), nil
 }
 func (m *fakeMailbox) ReplyReference(context.Context, string, uint32) (domain.ReplyReference, error) {
 	return m.reply, nil
@@ -193,10 +223,16 @@ func (m *fakeMailbox) Move(_ context.Context, folder string, uid uint32, dest st
 	return nil
 }
 func (m *fakeMailbox) Expunge(_ context.Context, folder string, uid uint32) error {
+	if m.expungeErr != nil {
+		return m.expungeErr
+	}
 	m.expunged = append(m.expunged, fmt.Sprintf("%s:%d", folder, uid))
 	return nil
 }
 func (m *fakeMailbox) Append(_ context.Context, folder string, raw []byte, flags []domain.Flag, _ time.Time) (uint32, error) {
+	if err := m.appendErr[folder]; err != nil {
+		return 0, err
+	}
 	m.appended = append(m.appended, appended{folder: folder, raw: raw, flags: flags})
 	return m.appendUID, nil
 }
@@ -215,6 +251,63 @@ type fakeSender struct {
 func (s *fakeSender) Send(_ context.Context, username, from string, rcpts []string, raw []byte) error {
 	s.calls = append(s.calls, sendCall{username: username, from: from, rcpts: rcpts, raw: raw})
 	return s.err
+}
+
+// fakeDirectory hace de mail-directory: los remitentes que la regla de Postfix permite.
+type fakeDirectory struct {
+	ids   []string
+	err   error
+	calls int
+}
+
+func (d *fakeDirectory) SenderIdentities(context.Context, string) ([]string, error) {
+	d.calls++
+	return d.ids, d.err
+}
+
+// fakeLedger imita el registro de envios de Redis: reservar si no existe y actualizar o
+// liberar solo con la marca de quien reservo.
+type fakeLedger struct {
+	mu          sync.Mutex
+	records     map[string]domain.SendRecord
+	seq         int
+	failReserve error
+}
+
+func newFakeLedger() *fakeLedger { return &fakeLedger{records: map[string]domain.SendRecord{}} }
+
+func (l *fakeLedger) Reserve(_ context.Context, key string, rec domain.SendRecord, _ time.Duration) (domain.SendRecord, bool, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.failReserve != nil {
+		return domain.SendRecord{}, false, l.failReserve
+	}
+	if current, ok := l.records[key]; ok {
+		return current, false, nil
+	}
+	l.seq++
+	rec.Token = fmt.Sprintf("marca-%d", l.seq)
+	l.records[key] = rec
+	return rec, true, nil
+}
+
+func (l *fakeLedger) Update(_ context.Context, key string, rec domain.SendRecord, _ time.Duration) (bool, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if current, ok := l.records[key]; !ok || current.Token != rec.Token {
+		return false, nil
+	}
+	l.records[key] = rec
+	return true, nil
+}
+
+func (l *fakeLedger) Release(_ context.Context, key, token string) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if current, ok := l.records[key]; ok && current.Token == token {
+		delete(l.records, key)
+	}
+	return nil
 }
 
 // fakeComposer marca cada composicion con si lleva Bcc; size fuerza el tamano.
@@ -250,11 +343,16 @@ func (f *fakeSanitizer) Outgoing(html string) (string, string) {
 
 type fakeScanner struct {
 	err     error
+	infect  string
 	scanned []string
 }
 
+// Scan falla con err, o solo con el adjunto llamado infect.
 func (s *fakeScanner) Scan(_ context.Context, name string, _ []byte) error {
 	s.scanned = append(s.scanned, name)
+	if s.infect != "" && name == s.infect {
+		return fmt.Errorf("%w: Eicar-Test-Signature", domain.ErrAttachmentInfected)
+	}
 	return s.err
 }
 
@@ -265,6 +363,8 @@ type harness struct {
 	mail      *fakeMail
 	mb        *fakeMailbox
 	sender    *fakeSender
+	directory *fakeDirectory
+	ledger    *fakeLedger
 	composer  *fakeComposer
 	sanitizer *fakeSanitizer
 	scanner   *fakeScanner
@@ -285,6 +385,8 @@ func newHarness(t *testing.T) *harness {
 		store:     newFakeStore(clock),
 		mb:        &fakeMailbox{appendUID: 7},
 		sender:    &fakeSender{},
+		directory: &fakeDirectory{},
+		ledger:    newFakeLedger(),
 		composer:  &fakeComposer{},
 		sanitizer: &fakeSanitizer{},
 		scanner:   &fakeScanner{},
@@ -298,8 +400,8 @@ func newHarness(t *testing.T) *harness {
 	}
 	h.mail = &fakeMail{mb: h.mb}
 	svc, err := New(Deps{
-		Auth: h.auth, Sessions: h.store, Mail: h.mail, Sender: h.sender, Composer: h.composer,
-		Sanitizer: h.sanitizer, Scanner: h.scanner,
+		Auth: h.auth, Sessions: h.store, Mail: h.mail, Sender: h.sender, Directory: h.directory, Ledger: h.ledger,
+		Composer: h.composer, Sanitizer: h.sanitizer, Scanner: h.scanner,
 		PartURL: func(folder string, uid uint32, part string) string {
 			return fmt.Sprintf("/parts/%s/%d/%s", folder, uid, part)
 		},
@@ -310,6 +412,7 @@ func newHarness(t *testing.T) *harness {
 			Limits:             domain.Limits{MaxRecipients: 3, MaxMessageBytes: 1000},
 			MaxBodyPartBytes:   1 << 20,
 			MaxAttachmentBytes: 1 << 20,
+			SendTimeout:        time.Minute,
 		},
 	})
 	if err != nil {
@@ -326,4 +429,12 @@ func (h *harness) login(t *testing.T) (string, domain.Session) {
 		t.Fatalf("login: %v", err)
 	}
 	return token, sess
+}
+
+var keySeq int
+
+// sendOpts da una clave de idempotencia nueva en cada llamada.
+func sendOpts(replaceUID uint32) domain.SendOptions {
+	keySeq++
+	return domain.SendOptions{IdempotencyKey: fmt.Sprintf("clave-de-prueba-%06d", keySeq), ReplaceUID: replaceUID}
 }

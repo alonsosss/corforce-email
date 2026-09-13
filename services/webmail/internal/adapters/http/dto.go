@@ -3,6 +3,7 @@ package http
 import (
 	"time"
 
+	"github.com/alonsosss/corforce-email/services/webmail/internal/app"
 	"github.com/alonsosss/corforce-email/services/webmail/internal/domain"
 )
 
@@ -153,8 +154,73 @@ type deleteDTO struct {
 }
 
 type sendDTO struct {
-	MessageID   string `json:"message_id"`
-	SavedToSent bool   `json:"saved_to_sent"`
+	MessageID    string `json:"message_id"`
+	SavedToSent  bool   `json:"saved_to_sent"`
+	DraftRemoved bool   `json:"draft_removed"`
+	Replayed     bool   `json:"replayed"`
+}
+
+type metaDTO struct {
+	Limits       metaLimitsDTO     `json:"limits"`
+	Pagination   metaPaginationDTO `json:"pagination"`
+	FolderRoles  []string          `json:"folder_roles"`
+	MutableFlags []string          `json:"mutable_flags"`
+	Session      metaSessionDTO    `json:"session"`
+}
+
+type metaLimitsDTO struct {
+	MaxRecipients      int   `json:"max_recipients"`
+	MaxMessageBytes    int64 `json:"max_message_bytes"`
+	MaxAttachments     int   `json:"max_attachments"`
+	MaxDownloadBytes   int64 `json:"max_download_bytes"`
+	MaxBodyPartBytes   int64 `json:"max_body_part_bytes"`
+	MaxSubjectChars    int   `json:"max_subject_chars"`
+	MaxSearchBytes     int   `json:"max_search_bytes"`
+	MaxFolderNameBytes int   `json:"max_folder_name_bytes"`
+}
+
+type metaPaginationDTO struct {
+	DefaultPageSize int `json:"default_page_size"`
+	MaxPageSize     int `json:"max_page_size"`
+}
+
+type metaSessionDTO struct {
+	IdleTimeoutSeconds int64 `json:"idle_timeout_seconds"`
+	MaxLifetimeSeconds int64 `json:"max_lifetime_seconds"`
+}
+
+func toMetaDTO(m app.Meta) metaDTO {
+	roles := make([]string, len(m.FolderRoles))
+	for i, r := range m.FolderRoles {
+		roles[i] = string(r)
+	}
+	return metaDTO{
+		Limits: metaLimitsDTO{
+			MaxRecipients: m.MaxRecipients, MaxMessageBytes: m.MaxMessageBytes, MaxAttachments: m.MaxAttachments,
+			MaxDownloadBytes: m.MaxDownloadBytes, MaxBodyPartBytes: m.MaxBodyPartBytes, MaxSubjectChars: m.MaxSubjectChars,
+			MaxSearchBytes: m.MaxSearchBytes, MaxFolderNameBytes: m.MaxFolderNameBytes,
+		},
+		Pagination:   metaPaginationDTO{DefaultPageSize: m.DefaultPageSize, MaxPageSize: m.MaxPageSize},
+		FolderRoles:  roles,
+		MutableFlags: toFlagStrings(m.MutableFlags),
+		Session: metaSessionDTO{
+			IdleTimeoutSeconds: int64(m.SessionIdle.Seconds()), MaxLifetimeSeconds: int64(m.SessionMax.Seconds()),
+		},
+	}
+}
+
+type identityDTO struct {
+	Email   string `json:"email"`
+	Name    string `json:"name"`
+	Primary bool   `json:"primary"`
+}
+
+func toIdentityDTOs(list []domain.SenderIdentity) []identityDTO {
+	out := make([]identityDTO, len(list))
+	for i, id := range list {
+		out[i] = identityDTO{Email: id.Address, Name: id.Name, Primary: id.Primary}
+	}
+	return out
 }
 
 type draftDTO struct {

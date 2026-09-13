@@ -1,14 +1,21 @@
 import { describe, expect, it } from 'vitest';
-import type { MailMessage } from '@/api/webmail';
+import { ApiError, ERROR_CODES } from '@/api/errors';
+import type { MailMessage, MessagePart, SenderIdentity, WebmailMeta } from '@/api/webmail';
+import { formatBytes } from '@/lib/quota';
 import { t } from '@/i18n';
 import {
   buildDraft,
+  composeErrorMessage,
+  composeProblems,
   htmlToPlainText,
+  identityLabel,
   messagePlainText,
   normalizeRecipient,
   parseComposeMode,
+  pickSender,
   prefixedSubject,
   quote,
+  sendSignature,
 } from './compose';
 
 const OWN = 'ana@empresa.com';
@@ -147,5 +154,175 @@ describe('borrador inicial', () => {
     expect(draft.text).toBe('Linea 1\nLinea 2');
     expect(draft.draftUid).toBe(42);
     expect(draft.inReplyTo).toBeUndefined();
+    expect(draft.fromCandidates).toEqual(['luis@cliente.com']);
+    expect(draft.source).toBeUndefined();
+  });
+
+  it('reenviar y seguir un borrador llevan los adjuntos del servidor, sin las imagenes en linea', () => {
+    const pdf = part({ part: '2', filename: 'informe.pdf' });
+    const logo = part({
+      part: '1.2',
+      content_id: 'logo@x',
+      inline: true,
+      content_type: 'image/png',
+    });
+    const withParts = message({
+      folder: 'INBOX',
+      uid: 42,
+      html: '<p>Hola</p><img src="/api/v1/webmail/folders/INBOX/messages/42/parts/1.2">',
+      attachments: [pdf, logo],
+    });
+    expect(buildDraft('forward', withParts, OWN).source).toEqual({
+      folder: 'INBOX',
+      uid: 42,
+      parts: [pdf],
+    });
+    expect(buildDraft('draft', withParts, OWN).source?.parts).toEqual([pdf]);
+    expect(buildDraft('reply', withParts, OWN).source).toBeUndefined();
+  });
+
+  it('responder propone como remitente la direccion a la que llego el original', () => {
+    const draft = buildDraft(
+      'reply',
+      message({ to: [{ name: '', email: 'Ventas@empresa.com' }], cc: [] }),
+      OWN,
+    );
+    expect(draft.fromCandidates).toEqual(['Ventas@empresa.com']);
+  });
+});
+
+function part(overrides: Partial<MessagePart> = {}): MessagePart {
+  return {
+    part: '2',
+    filename: '',
+    content_type: 'application/pdf',
+    size: 1000,
+    content_id: '',
+    inline: false,
+    ...overrides,
+  };
+}
+
+const IDENTITIES: SenderIdentity[] = [
+  { email: OWN, name: 'Ana', primary: true },
+  { email: 'ventas@empresa.com', name: '', primary: false },
+];
+
+describe('remitente', () => {
+  it('elige el primer candidato que sea remitente del buzon, sin distinguir mayusculas', () => {
+    expect(pickSender(IDENTITIES, ['luis@cliente.com', 'VENTAS@empresa.com'])).toBe(
+      'ventas@empresa.com',
+    );
+  });
+
+  it('sin candidato valido es el propio buzon; sin lista, vacio', () => {
+    expect(pickSender(IDENTITIES, ['otro@empresa.com'])).toBe(OWN);
+    expect(pickSender([], [OWN])).toBe('');
+  });
+
+  it('muestra el nombre si lo hay', () => {
+    expect(identityLabel(IDENTITIES[0]!)).toBe(`Ana <${OWN}>`);
+    expect(identityLabel(IDENTITIES[1]!)).toBe('ventas@empresa.com');
+  });
+});
+
+const LIMITS: WebmailMeta['limits'] = {
+  max_recipients: 2,
+  max_message_bytes: 1000,
+  max_attachments: 2,
+  max_download_bytes: 2000,
+  max_body_part_bytes: 500,
+  max_subject_chars: 5,
+  max_search_bytes: 10,
+  max_folder_name_bytes: 20,
+};
+
+const CHECK = {
+  to: ['a@x.com'],
+  cc: [],
+  bcc: [],
+  subject: 'Hola',
+  text: 'cuerpo',
+  files: [] as File[],
+  serverParts: [] as MessagePart[],
+};
+
+describe('topes del servicio antes de enviar', () => {
+  it('sin meta no se comprueba nada: el servicio lo hace siempre', () => {
+    expect(composeProblems({ ...CHECK, to: ['a@x.com', 'b@x.com', 'c@x.com'] }, null)).toEqual({});
+  });
+
+  it('cuenta destinatarios distintos como el servicio', () => {
+    expect(
+      composeProblems({ ...CHECK, to: ['a@x.com', 'A@X.com'], cc: ['b@x.com'] }, LIMITS),
+    ).toEqual({});
+    expect(
+      composeProblems({ ...CHECK, to: ['a@x.com'], cc: ['b@x.com'], bcc: ['c@x.com'] }, LIMITS)
+        .recipients,
+    ).toBe(t('webmail.compose.tooManyRecipients', { n: 3, max: 2 }));
+  });
+
+  it('el asunto se mide en caracteres', () => {
+    expect(composeProblems({ ...CHECK, subject: 'año!!' }, LIMITS).subject).toBeUndefined();
+    expect(composeProblems({ ...CHECK, subject: 'seis!!' }, LIMITS).subject).toBe(
+      t('webmail.compose.subjectTooLong', { max: 5 }),
+    );
+  });
+
+  it('adjuntos subidos y del servidor cuentan juntos en numero y en tamano', () => {
+    const file = new File(['x'.repeat(600)], 'a.txt');
+    expect(
+      composeProblems(
+        { ...CHECK, files: [file], serverParts: [part(), part({ part: '3' })] },
+        LIMITS,
+      ).attachments,
+    ).toBe(t('webmail.compose.tooManyAttachments', { n: 3, max: 2 }));
+    // Asunto (4) y texto (6) en UTF-8, el fichero (600) y la parte del servidor (500).
+    const big = composeProblems(
+      { ...CHECK, files: [file], serverParts: [part({ size: 500 })] },
+      LIMITS,
+    );
+    expect(big.attachments).toBe(
+      t('webmail.compose.tooLarge', { size: formatBytes(1110), max: formatBytes(1000) }),
+    );
+    expect(composeProblems({ ...CHECK, serverParts: [part({ size: 900 })] }, LIMITS)).toEqual({});
+  });
+});
+
+describe('clave de idempotencia', () => {
+  const input = {
+    to: ['a@x.com'],
+    cc: [],
+    bcc: [],
+    subject: 'Hola',
+    text: 'cuerpo',
+    attachments: [new File(['hola'], 'nota.txt', { lastModified: 1 })],
+  };
+
+  it('el mismo contenido da la misma huella; otro contenido u otro borrador, otra', () => {
+    expect(sendSignature(input, 5)).toBe(sendSignature({ ...input }, 5));
+    expect(sendSignature({ ...input, text: 'otro' }, 5)).not.toBe(sendSignature(input, 5));
+    expect(sendSignature(input, 6)).not.toBe(sendSignature(input, 5));
+    expect(
+      sendSignature({
+        ...input,
+        attachments: [new File(['hola!'], 'nota.txt', { lastModified: 1 })],
+      }),
+    ).not.toBe(sendSignature(input));
+  });
+});
+
+describe('error del envio', () => {
+  it('nombra al destinatario que rechazo el servidor', () => {
+    const err = new ApiError(
+      422,
+      { code: ERROR_CODES.RECIPIENT_REJECTED, message: 'x' },
+      { error: { code: 'RECIPIENT_REJECTED', message: 'x', details: { address: 'nadie@x.com' } } },
+    );
+    expect(composeErrorMessage(err)).toBe(
+      t('webmail.compose.recipientRejected', { address: 'nadie@x.com' }),
+    );
+    const bare = new ApiError(422, { code: ERROR_CODES.RECIPIENT_REJECTED, message: 'x' }, {});
+    expect(composeErrorMessage(bare)).toBe(t('error.code.RECIPIENT_REJECTED'));
   });
 });

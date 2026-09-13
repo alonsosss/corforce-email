@@ -50,6 +50,8 @@ export const ERROR_CODES = {
   SESSION_EXPIRED: 'SESSION_EXPIRED',
   INVALID_CREDENTIALS: 'INVALID_CREDENTIALS',
   RECIPIENT_REJECTED: 'RECIPIENT_REJECTED',
+  DELIVERY_UNCERTAIN: 'DELIVERY_UNCERTAIN',
+  SEND_IN_PROGRESS: 'SEND_IN_PROGRESS',
   // Fabricados por el cliente: sin respuesta o respuesta que no es JSON.
   NETWORK_ERROR: 'NETWORK_ERROR',
   INVALID_RESPONSE: 'INVALID_RESPONSE',
@@ -81,4 +83,13 @@ export function isApiError(err: unknown): err is ApiError {
 
 export function errorCode(err: unknown): string {
   return isApiError(err) ? err.code : '';
+}
+
+/** Un dato de error.details de la respuesta, si el servidor lo trajo. */
+export function errorDetail(err: unknown, key: string): string | null {
+  if (!isApiError(err) || typeof err.body !== 'object' || err.body === null) return null;
+  const details = (err.body as { error?: { details?: unknown } }).error?.details;
+  if (typeof details !== 'object' || details === null) return null;
+  const value = (details as Record<string, unknown>)[key];
+  return typeof value === 'string' && value ? value : null;
 }

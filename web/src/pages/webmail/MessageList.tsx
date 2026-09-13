@@ -4,11 +4,13 @@ import { FLAGS, hasFlag, type MessageEnvelope } from '@/api/webmail';
 import type { Page } from '@/api/types';
 import { errorMessage } from '@/api/messages';
 import type { QueryState } from '@/hooks/useQuery';
+import { useResource } from '@/hooks/useResource';
 import { Button, EmptyState, ErrorState, Input, Pagination, Skeleton } from '@/design/components';
 import { IconPaperclip, IconRefresh, IconSearch, IconStar } from '@/design/icons';
 import { t } from '@/i18n';
+import { webmailMeta } from '@/webmail/catalogs';
 import { showsRecipients } from './folders';
-import { addressLabel, formatMailDate } from './format';
+import { addressLabel, formatMailDate, utf8Length } from './format';
 
 const SKELETON_ROWS = 6;
 
@@ -38,6 +40,9 @@ export function MessageList({
   onRefresh,
 }: MessageListProps) {
   const [draft, setDraft] = useState(search);
+  const [searchError, setSearchError] = useState<string | null>(null);
+  // El tope de la busqueda es el del servicio (bytes UTF-8), no uno copiado aqui.
+  const maxSearchBytes = useResource(webmailMeta).data?.limits.max_search_bytes ?? null;
   const data = list.data;
   const items = data?.items ?? [];
   const recipients = showsRecipients(role);
@@ -65,7 +70,13 @@ export function MessageList({
           className="cf-wm-search"
           onSubmit={(e) => {
             e.preventDefault();
-            onSearch(draft.trim());
+            const query = draft.trim();
+            if (maxSearchBytes !== null && utf8Length(query) > maxSearchBytes) {
+              setSearchError(t('webmail.list.searchTooLong'));
+              return;
+            }
+            setSearchError(null);
+            onSearch(query);
           }}
         >
           <label htmlFor="wm-search" className="cf-visually-hidden">
@@ -75,13 +86,23 @@ export function MessageList({
             id="wm-search"
             type="search"
             value={draft}
-            onChange={(e) => setDraft(e.target.value)}
+            invalid={Boolean(searchError)}
+            aria-describedby={searchError ? 'wm-search-error' : undefined}
+            onChange={(e) => {
+              setDraft(e.target.value);
+              setSearchError(null);
+            }}
             placeholder={t('webmail.list.searchPlaceholder')}
           />
           <Button type="submit" iconOnly icon={<IconSearch size={16} />}>
             {t('common.search')}
           </Button>
         </form>
+        {searchError ? (
+          <div id="wm-search-error" className="cf-form__error" role="alert">
+            {searchError}
+          </div>
+        ) : null}
         {search ? (
           <div className="cf-wm-listbar__filter">
             <span className="cf-text-sm cf-truncate">

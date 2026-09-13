@@ -245,64 +245,16 @@ ${PGSQL_MAP_HEADER}
 query = SELECT domain FROM mail.domains WHERE domain = '%s' AND backupmx AND active
 EOF
 
-# smtpd_sender_login_maps: quien puede enviar como '%s'. El propio buzon figura como dueno de
-# su direccion: mail-directory no crea un alias buzon -> buzon, y sin esta fila
-# reject_authenticated_sender_login_mismatch rechazaba todo envio autenticado.
+# smtpd_sender_login_maps: quien puede enviar como '%s'. La regla vive en la base de la celda
+# (mail.sender_login_owners, migrations/cell/canonical/mail-directory/07_sender_identities.sql)
+# porque el webmail ofrece sus remitentes con ella misma (mail.sender_identities): dos copias
+# acabarian diciendo cosas distintas. Es la consulta que habia aqui, sin cambios de logica;
+# el propio buzon figura como dueno de su direccion (mail-directory no crea un alias
+# buzon -> buzon, y sin esa fila reject_authenticated_sender_login_mismatch rechazaba todo
+# envio autenticado).
 cat <<EOF > /opt/postfix/conf/sql/pgsql_virtual_sender_acl.cf
 ${PGSQL_MAP_HEADER}
-# First select queries domain and alias_domain to determine if domains are active.
-query = SELECT goto FROM mail.aliases
-  WHERE id IN (
-      SELECT COALESCE (
-        (
-          SELECT id FROM mail.aliases
-            WHERE address = '%s'
-            AND active IN (1, 2)
-            AND sender_allowed
-        ), (
-          SELECT id FROM mail.aliases
-            WHERE address = '@%d'
-            AND active IN (1, 2)
-            AND sender_allowed
-        )
-      )
-    )
-    AND active = 1
-    AND sender_allowed
-    AND (domain IN
-      (SELECT domain FROM mail.domains
-        WHERE domain = '%d'
-          AND active)
-      OR domain IN (
-        SELECT alias_domain FROM mail.alias_domains
-          WHERE alias_domain = '%d'
-            AND active
-      )
-    )
-  UNION
-  SELECT logged_in_as FROM mail.sender_acl
-    WHERE send_as = '@%d'
-      OR send_as = '%s'
-      OR send_as = '*'
-      OR send_as IN (
-        SELECT '@' || target_domain FROM mail.alias_domains
-          WHERE alias_domain = '%d')
-      OR send_as IN (
-        SELECT '%u' || '@' || target_domain FROM mail.alias_domains
-          WHERE alias_domain = '%d')
-      AND logged_in_as NOT IN (
-        SELECT goto FROM mail.aliases
-          WHERE address = '%s')
-  UNION
-  SELECT username FROM mail.mailboxes
-    WHERE username = '%s'
-      AND active = 1
-  UNION
-  SELECT m.username FROM mail.mailboxes m, mail.alias_domains ad
-    WHERE ad.alias_domain = '%d'
-      AND m.username = '%u' || '@' || ad.target_domain
-      AND m.active IN (1, 2)
-      AND ad.active
+query = SELECT owner FROM mail.sender_login_owners('%s') AS owner
 EOF
 
 # MX based routing

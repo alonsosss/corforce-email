@@ -355,18 +355,16 @@ func roleOf(d *imaplib.ListData, specialUse bool) domain.FolderRole {
 	return domain.RoleNone
 }
 
-var roleOrder = map[domain.FolderRole]int{
-	domain.RoleInbox: 0, domain.RoleDrafts: 1, domain.RoleSent: 2,
-	domain.RoleArchive: 3, domain.RoleJunk: 4, domain.RoleTrash: 5,
-}
-
-// sortFolders deja primero las especiales en un orden fijo y despues el resto por nombre.
+// sortFolders deja primero las especiales en el orden de domain.SpecialRoles y despues el
+// resto por nombre.
 func sortFolders(folders []domain.Folder) {
 	rank := func(f domain.Folder) int {
-		if r, ok := roleOrder[f.Role]; ok {
-			return r
+		for i, role := range domain.SpecialRoles {
+			if f.Role == role {
+				return i
+			}
 		}
-		return len(roleOrder)
+		return len(domain.SpecialRoles)
 	}
 	sort.SliceStable(folders, func(i, j int) bool {
 		ri, rj := rank(folders[i]), rank(folders[j])

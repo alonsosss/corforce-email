@@ -77,6 +77,7 @@ func main() {
 		TLSPolicies:  postgres.NewTLSPolicyRepo(ctxPool),
 		RecipientMap: postgres.NewRecipientMapRepo(ctxPool),
 		BCCMaps:      postgres.NewBCCMapRepo(ctxPool),
+		Senders:      postgres.NewSenderIdentityRepo(ctxPool),
 		Secrets:      secrets.New(),
 		Events:       outboxadapter.NewPublisher(ctxPool),
 		Logger:       logger,

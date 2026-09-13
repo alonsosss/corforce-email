@@ -191,7 +191,7 @@ func TestSendRemitenteBccYCopiaEnEnviados(t *testing.T) {
 	res, err := h.svc.Send(ctx, sess, domain.Draft{
 		To: []domain.Address{{Email: "luis@x.com"}}, Bcc: []domain.Address{{Email: "oculto@x.com"}},
 		Subject: "Hola", Text: "cuerpo",
-	})
+	}, sendOpts(0))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -222,12 +222,12 @@ func TestSendAplicaLosLimites(t *testing.T) {
 	_, sess := h.login(t)
 
 	many := domain.Draft{To: []domain.Address{{Email: "a@x.com"}, {Email: "b@x.com"}, {Email: "c@x.com"}, {Email: "d@x.com"}}}
-	if _, err := h.svc.Send(ctx, sess, many); !errors.Is(err, domain.ErrTooManyRecipients) {
+	if _, err := h.svc.Send(ctx, sess, many, sendOpts(0)); !errors.Is(err, domain.ErrTooManyRecipients) {
 		t.Fatalf("destinatarios: %v", err)
 	}
 
 	h.composer.size = 2000
-	if _, err := h.svc.Send(ctx, sess, domain.Draft{To: []domain.Address{{Email: "a@x.com"}}, Text: "x"}); !errors.Is(err, domain.ErrMessageTooLarge) {
+	if _, err := h.svc.Send(ctx, sess, domain.Draft{To: []domain.Address{{Email: "a@x.com"}}, Text: "x"}, sendOpts(0)); !errors.Is(err, domain.ErrMessageTooLarge) {
 		t.Fatalf("tamano del mensaje compuesto: %v", err)
 	}
 	if len(h.sender.calls) != 0 {
@@ -244,11 +244,11 @@ func TestSendAnalizaLosAdjuntos(t *testing.T) {
 	}
 
 	h.scanner.err = fmt.Errorf("%w: Eicar-Test-Signature", domain.ErrAttachmentInfected)
-	if _, err := h.svc.Send(ctx, sess, draft); err != domain.ErrAttachmentInfected {
+	if _, err := h.svc.Send(ctx, sess, draft, sendOpts(0)); err != domain.ErrAttachmentInfected {
 		t.Fatalf("adjunto infectado: %v", err)
 	}
 	h.scanner.err = fmt.Errorf("%w: clamd caido", domain.ErrScanUnavailable)
-	if _, err := h.svc.Send(ctx, sess, draft); err != domain.ErrScanUnavailable {
+	if _, err := h.svc.Send(ctx, sess, draft, sendOpts(0)); err != domain.ErrScanUnavailable {
 		t.Fatalf("sin analisis no se envia: %v", err)
 	}
 	if len(h.sender.calls) != 0 {
@@ -266,7 +266,7 @@ func TestSendRespuestaEncadenaYMarcaRespondido(t *testing.T) {
 	_, err := h.svc.Send(ctx, sess, domain.Draft{
 		To: []domain.Address{{Email: "luis@x.com"}}, Text: "ok",
 		InReplyTo: &domain.ReplyTarget{Folder: "INBOX", UID: 9},
-	})
+	}, sendOpts(0))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -278,16 +278,20 @@ func TestSendRespuestaEncadenaYMarcaRespondido(t *testing.T) {
 	}
 }
 
-func TestSendRemitenteAjenoLoRechazaPostfix(t *testing.T) {
+// Aunque el directorio de la celda permita el remitente (un cambio que el webmail ve antes
+// que Postfix, por ejemplo), Postfix sigue siendo la ultima palabra: su rechazo llega tal
+// cual y no se guarda nada.
+func TestSendRemitenteQuePostfixRechaza(t *testing.T) {
 	h := newHarness(t)
 	_, sess := h.login(t)
+	h.directory.ids = []string{"director@empresa.pe"}
 	h.sender.err = fmt.Errorf("%w: 553 Sender address rejected", domain.ErrSenderNotAllowed)
-	_, err := h.svc.Send(ctx, sess, domain.Draft{From: domain.Address{Email: "director@empresa.pe"}, To: []domain.Address{{Email: "a@x.com"}}})
+	_, err := h.svc.Send(ctx, sess, domain.Draft{From: domain.Address{Email: "director@empresa.pe"}, To: []domain.Address{{Email: "a@x.com"}}}, sendOpts(0))
 	if !errors.Is(err, domain.ErrSenderNotAllowed) {
 		t.Fatalf("got %v", err)
 	}
 	if h.sender.calls[0].from != "director@empresa.pe" {
-		t.Fatal("el remitente pedido llega a Postfix, que es quien decide")
+		t.Fatal("el remitente permitido llega a Postfix, que vuelve a decidir")
 	}
 	if len(h.mb.appended) != 0 {
 		t.Fatal("un envio rechazado no se guarda en Enviados")

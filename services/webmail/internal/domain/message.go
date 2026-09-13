@@ -30,13 +30,20 @@ const (
 // otros clientes no salen: son texto arbitrario sin significado para el webmail.
 var SystemFlags = []Flag{FlagSeen, FlagAnswered, FlagFlagged, FlagDraft, FlagDeleted}
 
-// mutableFlags son los unicos que el cliente puede cambiar. \Deleted y \Draft los
+// MutableFlags son los unicos que el cliente puede cambiar. \Deleted y \Draft los
 // gobiernan borrar y guardar borrador: dejarlos sueltos permitiria marcar para borrar sin
 // pasar por la papelera o disfrazar un mensaje recibido de borrador propio.
-var mutableFlags = map[string]Flag{
-	`\seen`:     FlagSeen,
-	`\flagged`:  FlagFlagged,
-	`\answered`: FlagAnswered,
+var MutableFlags = []Flag{FlagSeen, FlagFlagged, FlagAnswered}
+
+// mutableFlag reconoce un flag modificable sin distinguir mayusculas (RFC 3501).
+func mutableFlag(raw string) (Flag, bool) {
+	raw = strings.TrimSpace(raw)
+	for _, f := range MutableFlags {
+		if strings.EqualFold(raw, string(f)) {
+			return f, true
+		}
+	}
+	return "", false
 }
 
 // maxFlagChanges acota la peticion: solo hay tres flags validos.
@@ -60,7 +67,7 @@ func NewFlagChange(add, remove []string) (FlagChange, error) {
 		seen := map[Flag]bool{}
 		var out []Flag
 		for _, r := range raw {
-			f, ok := mutableFlags[strings.ToLower(strings.TrimSpace(r))]
+			f, ok := mutableFlag(r)
 			if !ok {
 				return nil, nil, invalid(field, `solo se admiten \Seen, \Flagged y \Answered`)
 			}

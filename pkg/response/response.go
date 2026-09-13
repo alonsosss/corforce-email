@@ -29,6 +29,9 @@ type Envelope struct {
 type APIError struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
+	// Details son datos con los que el cliente explica el error en su idioma (el campo que
+	// fallo, la direccion rechazada). Solo lo que el cliente envio o ya puede ver.
+	Details map[string]string `json:"details,omitempty"`
 }
 
 type Meta struct {
@@ -127,4 +130,13 @@ func Unexpected(w http.ResponseWriter, err error) {
 
 func ErrValidation(w http.ResponseWriter, message string) {
 	Err(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", message)
+}
+
+// ErrWithDetails es Err con datos del error en error.details.
+func ErrWithDetails(w http.ResponseWriter, status int, code, message string, details map[string]string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(Envelope{
+		Error: &APIError{Code: code, Message: message, Details: details},
+	})
 }

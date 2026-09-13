@@ -52,6 +52,8 @@ func (h *Handler) Routes() chi.Router {
 	// Ruta servicio-a-servicio: la protege RequireGatewayToken en main y toma la empresa
 	// de X-Tenant-ID; no pasa por el gateway ni por permisos de usuario.
 	r.Put("/internal/mail-directory/domains/{domain}/activation", h.SetDomainActivation)
+	// La pide el webmail, que no conoce la empresa del buzon: no lleva X-Tenant-ID.
+	r.Get("/internal/mail-directory/sender-identities", h.SenderIdentities)
 	return r
 }
 

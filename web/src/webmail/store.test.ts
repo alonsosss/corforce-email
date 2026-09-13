@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError, ERROR_CODES } from '@/api/errors';
 import { webmailApi, type WebmailSession } from '@/api/webmail';
+import { resetWebmailCatalogs, senderIdentities } from './catalogs';
 import { useWebmailStore } from './store';
 
 const SESSION: WebmailSession = {
@@ -16,6 +17,7 @@ const expired = () =>
 
 describe('sesion del webmail', () => {
   beforeEach(() => {
+    resetWebmailCatalogs();
     useWebmailStore.setState({
       status: 'anonymous',
       session: null,
@@ -85,6 +87,21 @@ describe('sesion del webmail', () => {
     );
     await expect(useWebmailStore.getState().logout()).rejects.toBeInstanceOf(ApiError);
     expect(useWebmailStore.getState().status).toBe('authenticated');
+  });
+
+  it('al cerrar la sesion se descartan los remitentes y la meta del buzon anterior', async () => {
+    useWebmailStore.setState({ status: 'authenticated', session: SESSION });
+    const identities = vi
+      .spyOn(webmailApi, 'identities')
+      .mockResolvedValueOnce([{ email: 'ana@empresa.com', name: 'Ana', primary: true }])
+      .mockResolvedValueOnce([{ email: 'luis@empresa.com', name: 'Luis', primary: true }]);
+    vi.spyOn(webmailApi, 'logout').mockResolvedValue(null);
+
+    await expect(senderIdentities.get()).resolves.toMatchObject([{ email: 'ana@empresa.com' }]);
+    await expect(senderIdentities.get()).resolves.toMatchObject([{ email: 'ana@empresa.com' }]);
+    await useWebmailStore.getState().logout();
+    await expect(senderIdentities.get()).resolves.toMatchObject([{ email: 'luis@empresa.com' }]);
+    expect(identities).toHaveBeenCalledTimes(2);
   });
 
   it('cerrar una sesion que ya habia caducado cuenta como cerrada', async () => {

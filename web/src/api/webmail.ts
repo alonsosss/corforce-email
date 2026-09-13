@@ -27,7 +27,7 @@ export const FOLDER_ROLES = {
   archive: 'archive',
 } as const;
 
-/** Flags de sistema IMAP (RFC 3501) del API. El cliente solo cambia seen, flagged y answered. */
+/** Flags de sistema IMAP (RFC 3501) del API. Los que el cliente puede cambiar llegan en la meta. */
 export const FLAGS = {
   seen: '\\Seen',
   answered: '\\Answered',
@@ -51,6 +51,39 @@ export interface WebmailSession {
   idle_timeout_seconds: number;
   /** null si Dovecot no respondio la cuota: es informativa. */
   quota: WebmailQuota | null;
+}
+
+/**
+ * GET /webmail/meta (app.Meta): los topes y catalogos que el servicio aplica, sacados de su
+ * dominio y su configuracion. La interfaz valida con ellos antes de enviar; no los copia.
+ */
+export interface WebmailMeta {
+  limits: {
+    max_recipients: number;
+    max_message_bytes: number;
+    max_attachments: number;
+    /** Tope de descarga de una parte; tambien acota cada adjunto tomado del buzon. */
+    max_download_bytes: number;
+    /** Lo que se lee de un cuerpo de texto o HTML; mas alla, text_truncated/html_truncated. */
+    max_body_part_bytes: number;
+    max_subject_chars: number;
+    max_search_bytes: number;
+    max_folder_name_bytes: number;
+  };
+  pagination: { default_page_size: number; max_page_size: number };
+  folder_roles: string[];
+  mutable_flags: string[];
+  session: { idle_timeout_seconds: number; max_lifetime_seconds: number };
+}
+
+/**
+ * GET /webmail/identities: direcciones con las que el buzon puede enviar, las mismas que
+ * Postfix le acepta (smtpd_sender_login_maps). El propio buzon va primero (primary).
+ */
+export interface SenderIdentity {
+  email: string;
+  name: string;
+  primary: boolean;
 }
 
 export interface WebmailFolder {
@@ -126,8 +159,20 @@ export interface ReplyTarget {
   uid: number;
 }
 
+/**
+ * Partes de un mensaje del buzon que el servicio adjunta tomandolas del servidor (reenvio,
+ * borrador que se sigue redactando): no se descargan ni se vuelven a subir.
+ */
+export interface PartSource {
+  folder: string;
+  uid: number;
+  parts: string[];
+}
+
 /** Lo que se redacta. Las direcciones van ya validadas; el servicio las vuelve a validar. */
 export interface ComposeInput {
+  /** Uno de los remitentes del buzon; sin el, el propio buzon. */
+  from?: string;
   to: string[];
   cc: string[];
   bcc: string[];
@@ -135,12 +180,24 @@ export interface ComposeInput {
   text: string;
   inReplyTo?: ReplyTarget;
   attachments: File[];
+  source?: PartSource;
+}
+
+export interface SendOptions {
+  /** Identifica el intento: repetirlo con la misma clave no vuelve a entregar el mensaje. */
+  idempotencyKey: string;
+  /** Borrador que el envio retira de Borradores en la misma operacion. */
+  replaceUid?: number;
 }
 
 export interface SendResult {
   message_id: string;
   /** false si el mensaje salio pero no se pudo guardar la copia en Enviados. */
   saved_to_sent: boolean;
+  /** true si se pidio retirar un borrador y ya no esta en Borradores. */
+  draft_removed: boolean;
+  /** La peticion repetia un envio ya hecho con la misma clave: no salio nada nuevo. */
+  replayed: boolean;
 }
 
 export interface DownloadedPart {
@@ -156,6 +213,7 @@ interface RequestInit {
   params?: Record<string, string | number | boolean | undefined>;
   json?: unknown;
   form?: FormData;
+  headers?: Record<string, string>;
   signal?: AbortSignal;
 }
 
@@ -199,7 +257,7 @@ async function toError(res: Response): Promise<ApiError> {
 }
 
 async function send(method: Method, path: string, init: RequestInit, accept: string) {
-  const headers: Record<string, string> = { Accept: accept };
+  const headers: Record<string, string> = { ...init.headers, Accept: accept };
   let body: BodyInit | undefined;
   if (init.json !== undefined) {
     headers['Content-Type'] = 'application/json';
@@ -265,13 +323,15 @@ export function filenameFromDisposition(header: string | null): string | null {
 
 /**
  * Formulario multipart de redaccion (compose_handler.go). Cada campo de direcciones viaja
- * como UNA lista separada por comas: el servicio admite listas RFC 5322 por valor.
+ * como UNA lista separada por comas: el servicio admite listas RFC 5322 por valor. Cada
+ * parte del mensaje de origen va en su propio source_parts.
  */
 export function composeFormData(input: ComposeInput, replaceUid?: number): FormData {
   const form = new FormData();
   const list = (name: string, addresses: string[]) => {
     if (addresses.length) form.append(name, addresses.join(', '));
   };
+  if (input.from) form.append('from', input.from);
   list('to', input.to);
   list('cc', input.cc);
   list('bcc', input.bcc);
@@ -282,6 +342,11 @@ export function composeFormData(input: ComposeInput, replaceUid?: number): FormD
     form.append('in_reply_to_folder', input.inReplyTo.folder);
   }
   if (replaceUid) form.append('replace_uid', String(replaceUid));
+  if (input.source?.parts.length) {
+    form.append('source_folder', input.source.folder);
+    form.append('source_uid', String(input.source.uid));
+    for (const part of input.source.parts) form.append('source_parts', part);
+  }
   for (const file of input.attachments) form.append('attachments', file, file.name);
   return form;
 }
@@ -293,6 +358,13 @@ export const webmailApi = {
     request<WebmailSession>('POST', wm.session, { json: { username, password } }),
   session: (signal?: AbortSignal) => request<WebmailSession>('GET', wm.session, { signal }),
   logout: () => request<null>('DELETE', wm.session),
+
+  /** Topes y catalogos del servicio. Se leen por sesion con webmail/catalogs.ts. */
+  meta: (signal?: AbortSignal) => request<WebmailMeta>('GET', wm.meta, { signal }),
+
+  /** Remitentes del buzon, el propio primero. Se leen por sesion con webmail/catalogs.ts. */
+  identities: async (signal?: AbortSignal): Promise<SenderIdentity[]> =>
+    (await request<SenderIdentity[] | null>('GET', wm.identities, { signal })) ?? [],
 
   folders: async (signal?: AbortSignal): Promise<WebmailFolder[]> =>
     (await request<WebmailFolder[] | null>('GET', wm.folders, { signal })) ?? [],
@@ -353,8 +425,12 @@ export const webmailApi = {
     };
   },
 
-  send: (input: ComposeInput) =>
-    request<SendResult>('POST', wm.send, { form: composeFormData(input) }),
+  /** Envia y, con replaceUid, retira ese borrador en la misma operacion. */
+  send: (input: ComposeInput, options: SendOptions) =>
+    request<SendResult>('POST', wm.send, {
+      form: composeFormData(input, options.replaceUid),
+      headers: { 'Idempotency-Key': options.idempotencyKey },
+    }),
 
   /** Guarda en Borradores; replaceUid es el borrador anterior del mismo mensaje. */
   saveDraft: (input: ComposeInput, replaceUid?: number) =>

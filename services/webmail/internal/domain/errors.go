@@ -27,6 +27,15 @@ var (
 	ErrMessageRejected    = errors.New("el servidor de correo rechazo el mensaje")
 	ErrAttachmentInfected = errors.New("un adjunto contiene malware")
 	ErrScanUnavailable    = errors.New("no se pudo analizar un adjunto")
+
+	// ErrSendInProgress es otra peticion con la misma clave de idempotencia que aun no
+	// termino.
+	ErrSendInProgress = errors.New("ese envio ya esta en curso")
+	// ErrDeliveryUncertain es un envio cuya respuesta final de Postfix se perdio: el mensaje
+	// pudo quedar en cola. Con la misma clave no se vuelve a intentar.
+	ErrDeliveryUncertain = errors.New("no se pudo confirmar si el servidor de correo acepto el mensaje")
+	// ErrIdempotencyKeyReused es una clave de idempotencia que ya se uso con otro mensaje.
+	ErrIdempotencyKeyReused = errors.New("la clave de idempotencia ya se uso con otro mensaje")
 )
 
 // ValidationError es una entrada del cliente que no cumple una regla.

@@ -123,6 +123,13 @@ type SenderACLRepository interface {
 	DeleteByLoggedInAs(ctx context.Context, tenantID uuid.UUID, username string) error
 }
 
+// SenderIdentityRepository resuelve con que direcciones concretas puede enviar un buzon
+// segun la misma regla que aplica Postfix (mail.sender_identities). Lee toda la celda: el
+// buzon es unico en ella y quien pregunta (el webmail) no conoce la empresa.
+type SenderIdentityRepository interface {
+	ForLogin(ctx context.Context, username string, limit int) ([]string, error)
+}
+
 // Las contrasenas de relayhost y transporte viajan aparte de la entidad: entran en la
 // escritura y no se leen nunca. Un puntero nil en Update las deja como estan.
 type RelayhostRepository interface {

@@ -4,6 +4,8 @@
 export interface ApiErrorBody {
   code: string;
   message: string;
+  /** Datos para explicar el error (el campo que fallo, la direccion rechazada). */
+  details?: Record<string, string>;
 }
 
 export interface Meta {

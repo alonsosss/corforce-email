@@ -18,6 +18,9 @@ type Config struct {
 	Limits             domain.Limits
 	MaxBodyPartBytes   int64
 	MaxAttachmentBytes int64
+	// SendTimeout acota un envio de principio a fin (adjuntos del buzon, ClamAV y SMTP); de
+	// el sale cuanto vive la reserva de su clave de idempotencia.
+	SendTimeout time.Duration
 }
 
 type Deps struct {
@@ -25,6 +28,8 @@ type Deps struct {
 	Sessions  ports.SessionStore
 	Mail      ports.MailStore
 	Sender    ports.Sender
+	Directory ports.SenderDirectory
+	Ledger    ports.SendLedger
 	Composer  ports.Composer
 	Sanitizer ports.HTMLSanitizer
 	// Scanner solo puede faltar si main lo decidio de forma explicita (desarrollo sin
@@ -42,6 +47,8 @@ type Service struct {
 	sessions  ports.SessionStore
 	mail      ports.MailStore
 	sender    ports.Sender
+	directory ports.SenderDirectory
+	ledger    ports.SendLedger
 	composer  ports.Composer
 	sanitizer ports.HTMLSanitizer
 	scanner   ports.VirusScanner
@@ -53,9 +60,12 @@ type Service struct {
 
 // New valida la configuracion y las dependencias: un webmail a medio cablear no arranca.
 func New(d Deps) (*Service, error) {
-	if d.Auth == nil || d.Sessions == nil || d.Mail == nil || d.Sender == nil ||
-		d.Composer == nil || d.Sanitizer == nil || d.PartURL == nil || d.Logger == nil {
+	if d.Auth == nil || d.Sessions == nil || d.Mail == nil || d.Sender == nil || d.Directory == nil ||
+		d.Ledger == nil || d.Composer == nil || d.Sanitizer == nil || d.PartURL == nil || d.Logger == nil {
 		return nil, errors.New("webmail: faltan dependencias del caso de uso")
+	}
+	if d.Config.SendTimeout <= 0 {
+		return nil, errors.New("webmail: el plazo de envio debe ser positivo")
 	}
 	if err := d.Config.Sessions.Validate(); err != nil {
 		return nil, err
@@ -71,9 +81,9 @@ func New(d Deps) (*Service, error) {
 		clock = time.Now
 	}
 	return &Service{
-		auth: d.Auth, sessions: d.Sessions, mail: d.Mail, sender: d.Sender, composer: d.Composer,
-		sanitizer: d.Sanitizer, scanner: d.Scanner, partURL: d.PartURL, clock: clock, logger: d.Logger,
-		cfg: d.Config,
+		auth: d.Auth, sessions: d.Sessions, mail: d.Mail, sender: d.Sender, directory: d.Directory,
+		ledger: d.Ledger, composer: d.Composer, sanitizer: d.Sanitizer, scanner: d.Scanner,
+		partURL: d.PartURL, clock: clock, logger: d.Logger, cfg: d.Config,
 	}, nil
 }
 

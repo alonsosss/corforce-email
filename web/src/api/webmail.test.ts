@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { setAccessToken } from './client';
 import { endpoints } from './endpoints';
-import { ApiError, ERROR_CODES } from './errors';
+import { ApiError, ERROR_CODES, errorDetail } from './errors';
 import {
   composeFormData,
   filenameFromDisposition,
@@ -149,20 +149,59 @@ describe('cliente del webmail', () => {
     expect(await part.blob.text()).toBe('%PDF');
   });
 
-  it('envia multipart sin fijar Content-Type: la frontera la pone el navegador', async () => {
-    const calls = mockFetch(() => json(202, { data: { message_id: 'm@x', saved_to_sent: true } }));
-    const result = await webmailApi.send({
-      to: ['a@x.com'],
-      cc: [],
-      bcc: [],
-      subject: 'Hola',
-      text: 'Cuerpo',
-      attachments: [],
-    });
-    expect(result.saved_to_sent).toBe(true);
-    expect(calls[0]?.init.body).toBeInstanceOf(FormData);
+  it('envia multipart con la clave de idempotencia y el borrador que retira', async () => {
+    const calls = mockFetch(() =>
+      json(202, {
+        data: { message_id: 'm@x', saved_to_sent: true, draft_removed: true, replayed: false },
+      }),
+    );
+    const result = await webmailApi.send(
+      { to: ['a@x.com'], cc: [], bcc: [], subject: 'Hola', text: 'Cuerpo', attachments: [] },
+      { idempotencyKey: 'clave-de-prueba-0001', replaceUid: 12 },
+    );
+    expect(result).toMatchObject({ saved_to_sent: true, draft_removed: true, replayed: false });
+    expect(calls[0]?.url).toBe(endpoints.webmail.send);
+    const body = calls[0]?.init.body;
+    expect(body).toBeInstanceOf(FormData);
+    expect((body as FormData).get('replace_uid')).toBe('12');
     const headers = (calls[0]?.init.headers ?? {}) as Record<string, string>;
+    expect(headers['Idempotency-Key']).toBe('clave-de-prueba-0001');
+    // Sin Content-Type: la frontera multipart la pone el navegador.
     expect(headers['Content-Type']).toBeUndefined();
+  });
+
+  it('lee la meta y los remitentes del servicio con la sesion del buzon', async () => {
+    const calls = mockFetch((call) =>
+      call.url === endpoints.webmail.meta
+        ? json(200, { data: { limits: { max_recipients: 100 } } })
+        : json(200, { data: [{ email: 'ana@empresa.com', name: 'Ana', primary: true }] }),
+    );
+    const meta = await webmailApi.meta();
+    const identities = await webmailApi.identities();
+    expect(meta.limits.max_recipients).toBe(100);
+    expect(identities).toEqual([{ email: 'ana@empresa.com', name: 'Ana', primary: true }]);
+    expect(calls.map((c) => c.url)).toEqual([endpoints.webmail.meta, endpoints.webmail.identities]);
+    expect(calls.every((c) => c.init.credentials === 'include')).toBe(true);
+  });
+
+  it('un destinatario rechazado trae la direccion en error.details', async () => {
+    mockFetch(() =>
+      json(422, {
+        error: {
+          code: 'RECIPIENT_REJECTED',
+          message: 'destinatario rechazado',
+          details: { address: 'nadie@empresa.com' },
+        },
+      }),
+    );
+    const err = await webmailApi
+      .send(
+        { to: ['nadie@empresa.com'], cc: [], bcc: [], subject: '', text: '', attachments: [] },
+        { idempotencyKey: 'clave-de-prueba-0002' },
+      )
+      .catch((e: unknown) => e);
+    expect(errorDetail(err, 'address')).toBe('nadie@empresa.com');
+    expect(errorDetail(err, 'field')).toBeNull();
   });
 });
 
@@ -190,7 +229,25 @@ describe('formulario de redaccion', () => {
     expect((form.get('attachments') as File).name).toBe('nota.txt');
   });
 
-  it('sin borrador anterior no manda replace_uid, que send rechazaria', () => {
+  it('el remitente y los adjuntos del servidor viajan en sus campos, una parte por valor', () => {
+    const form = composeFormData({
+      from: 'ventas@empresa.com',
+      to: ['a@x.com'],
+      cc: [],
+      bcc: [],
+      subject: 'Fwd: Pedido',
+      text: '',
+      attachments: [],
+      source: { folder: 'INBOX/Proyectos', uid: 42, parts: ['2', '1.3'] },
+    });
+    expect(form.get('from')).toBe('ventas@empresa.com');
+    expect(form.get('source_folder')).toBe('INBOX/Proyectos');
+    expect(form.get('source_uid')).toBe('42');
+    expect(form.getAll('source_parts')).toEqual(['2', '1.3']);
+    expect(form.has('attachments')).toBe(false);
+  });
+
+  it('sin borrador anterior ni origen no manda sus campos', () => {
     const form = composeFormData({
       to: ['a@x.com'],
       cc: [],
@@ -201,6 +258,8 @@ describe('formulario de redaccion', () => {
     });
     expect(form.has('replace_uid')).toBe(false);
     expect(form.has('in_reply_to')).toBe(false);
+    expect(form.has('from')).toBe(false);
+    expect(form.has('source_folder')).toBe(false);
   });
 });
 

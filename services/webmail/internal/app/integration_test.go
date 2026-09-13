@@ -19,6 +19,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"io"
 	"math/big"
 	"net"
@@ -71,11 +72,13 @@ func TestIntegracionWebmailContraIMAPYSMTP(t *testing.T) {
 	}
 	svc, err := app.New(app.Deps{
 		Auth: staticAuth{}, Sessions: newMemSessions(), Mail: store, Sender: sender,
+		Directory: staticDirectory{ids: []string{"ventas@empresa.test"}}, Ledger: newMemLedger(),
 		Composer: rfc5322.New(), Sanitizer: htmlsafe.New(), PartURL: handler.PartURL, Logger: zap.NewNop(),
 		Config: app.Config{
 			Sessions:         domain.SessionPolicy{Idle: 30 * time.Minute, Max: 12 * time.Hour},
 			Limits:           domain.Limits{MaxRecipients: 10, MaxMessageBytes: 1 << 20},
 			MaxBodyPartBytes: 64 << 10, MaxAttachmentBytes: 1 << 20,
+			SendTimeout: time.Minute,
 		},
 	})
 	if err != nil {
@@ -217,7 +220,7 @@ func TestIntegracionWebmailContraIMAPYSMTP(t *testing.T) {
 		HTML:        `<p>Gracias</p><script>alert(1)</script>`,
 		Attachments: []domain.Attachment{{Filename: "nota.txt", ContentType: "text/plain", Data: []byte("hola")}},
 		InReplyTo:   &domain.ReplyTarget{Folder: "INBOX", UID: 2},
-	})
+	}, domain.SendOptions{IdempotencyKey: "integracion-respuesta-0001"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -250,10 +253,15 @@ func TestIntegracionWebmailContraIMAPYSMTP(t *testing.T) {
 		t.Fatalf("el original queda respondido: %+v", original)
 	}
 
-	// Un remitente que el buzon no posee lo rechaza el servidor de envio.
-	_, err = svc.Send(ctx, sess, domain.Draft{From: domain.Address{Email: "director@empresa.test"}, To: []domain.Address{{Email: "luis@x.test"}}, Text: "x"})
-	if !errors.Is(err, domain.ErrSenderNotAllowed) {
-		t.Fatalf("suplantacion: %v", err)
+	// Un remitente que el directorio no le da al buzon no llega a Postfix. Uno que el
+	// directorio le da pero Postfix rechaza (el SMTP de prueba solo acepta el propio buzon)
+	// tampoco sale: Postfix sigue siendo la ultima palabra.
+	for i, from := range []string{"director@empresa.test", "ventas@empresa.test"} {
+		_, err = svc.Send(ctx, sess, domain.Draft{From: domain.Address{Email: from}, To: []domain.Address{{Email: "luis@x.test"}}, Text: "x"},
+			domain.SendOptions{IdempotencyKey: fmt.Sprintf("integracion-remitente-%04d", i)})
+		if !errors.Is(err, domain.ErrSenderNotAllowed) {
+			t.Fatalf("suplantacion con %s: %v", from, err)
+		}
 	}
 	if len(smtpSrv.received()) != 1 || len(listAll(t, svc, sess, "Sent")) != 1 {
 		t.Fatal("un envio rechazado no se entrega ni se guarda")
@@ -271,6 +279,81 @@ func TestIntegracionWebmailContraIMAPYSMTP(t *testing.T) {
 	drafts := listAll(t, svc, sess, "Drafts")
 	if len(drafts) != 1 || drafts[0].UID != second || !hasFlag(drafts[0].Flags, domain.FlagDraft) {
 		t.Fatalf("borradores: %+v", drafts)
+	}
+
+	// Un borrador con adjunto se envia tomando el adjunto del propio borrador en el servidor
+	// y se retira en la misma operacion; el reintento con la misma clave no entrega nada.
+	anexo := []byte("contenido del anexo")
+	withFile, err := svc.SaveDraft(ctx, sess, domain.Draft{
+		To: []domain.Address{{Email: "luis@x.test"}}, Subject: "Con anexo", Text: "v3",
+		Attachments: []domain.Attachment{{Filename: "anexo.txt", ContentType: "text/plain", Data: anexo}},
+	}, second)
+	if err != nil || withFile == 0 {
+		t.Fatalf("borrador con adjunto: %d %v", withFile, err)
+	}
+	saved, err := svc.ReadMessage(ctx, sess, "Drafts", withFile, true, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var anexoPart string
+	for _, p := range saved.Attachments {
+		if p.Filename == "anexo.txt" {
+			anexoPart = p.ID
+		}
+	}
+	if anexoPart == "" {
+		t.Fatalf("el borrador guarda el adjunto: %+v", saved.Attachments)
+	}
+	draftSend := domain.Draft{
+		To: []domain.Address{{Email: "luis@x.test"}}, Subject: "Con anexo", Text: "v3",
+		Source: &domain.PartSource{Folder: "Drafts", UID: withFile, Parts: []string{anexoPart}},
+	}
+	opts := domain.SendOptions{IdempotencyKey: "integracion-borrador-0001", ReplaceUID: withFile}
+	res, err = svc.Send(ctx, sess, draftSend, opts)
+	if err != nil || !res.SavedToSent || !res.DraftRemoved || res.Replayed {
+		t.Fatalf("envio del borrador: %+v %v", res, err)
+	}
+	if left := listAll(t, svc, sess, "Drafts"); len(left) != 0 {
+		t.Fatalf("el borrador enviado se retira: %+v", left)
+	}
+	delivered = smtpSrv.received()
+	if len(delivered) != 2 || !strings.Contains(string(delivered[1].data), "anexo.txt") ||
+		!strings.Contains(string(delivered[1].data), base64.StdEncoding.EncodeToString(anexo)) {
+		t.Fatalf("el adjunto del borrador sale con el mensaje:\n%s", delivered[len(delivered)-1].data)
+	}
+	res, err = svc.Send(ctx, sess, draftSend, opts)
+	if err != nil || !res.Replayed || !res.DraftRemoved || len(smtpSrv.received()) != 2 {
+		t.Fatalf("reintento: %+v %v", res, err)
+	}
+
+	// Reenvio con el adjunto del original tomado del servidor, sin pasar por el navegador.
+	_, err = svc.Send(ctx, sess, domain.Draft{
+		To: []domain.Address{{Email: "luis@x.test"}}, Subject: "Fwd: Novedades", Text: "reenvio",
+		Source: &domain.PartSource{Folder: "INBOX", UID: 2, Parts: []string{"2"}},
+	}, domain.SendOptions{IdempotencyKey: "integracion-reenvio-0001"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	delivered = smtpSrv.received()
+	if len(delivered) != 3 || !strings.Contains(string(delivered[2].data), "informe.pdf") ||
+		!strings.Contains(string(delivered[2].data), "JVBERi0xLjQK") {
+		t.Fatalf("reenvio:\n%s", delivered[len(delivered)-1].data)
+	}
+
+	// Si la conexion se corta tras el punto final de DATA el envio queda en duda y la misma
+	// clave no lo repite.
+	smtpSrv.setDropAfterData(true)
+	corte := domain.Draft{To: []domain.Address{{Email: "luis@x.test"}}, Subject: "Corte", Text: "x"}
+	uncertain := domain.SendOptions{IdempotencyKey: "integracion-incierto-0001"}
+	if _, err := svc.Send(ctx, sess, corte, uncertain); !errors.Is(err, domain.ErrDeliveryUncertain) {
+		t.Fatalf("corte tras DATA: %v", err)
+	}
+	smtpSrv.setDropAfterData(false)
+	if _, err := svc.Send(ctx, sess, corte, uncertain); !errors.Is(err, domain.ErrDeliveryUncertain) {
+		t.Fatalf("reintento de un envio en duda: %v", err)
+	}
+	if got := len(smtpSrv.received()); got != 4 {
+		t.Fatalf("el envio en duda llego una sola vez al servidor: %d", got)
 	}
 }
 
@@ -406,6 +489,53 @@ func (s *memSessions) RevokedAt(_ context.Context, username string) (time.Time, 
 	return s.revoked[username], nil
 }
 
+// staticDirectory hace de mail-directory: los remitentes que la regla de Postfix le da al buzon.
+type staticDirectory struct{ ids []string }
+
+func (d staticDirectory) SenderIdentities(context.Context, string) ([]string, error) {
+	return d.ids, nil
+}
+
+// memLedger es el registro de envios en memoria (el de Redis tiene su propia prueba).
+type memLedger struct {
+	mu  sync.Mutex
+	m   map[string]domain.SendRecord
+	seq int
+}
+
+func newMemLedger() *memLedger { return &memLedger{m: map[string]domain.SendRecord{}} }
+
+func (l *memLedger) Reserve(_ context.Context, key string, rec domain.SendRecord, _ time.Duration) (domain.SendRecord, bool, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if current, ok := l.m[key]; ok {
+		return current, false, nil
+	}
+	l.seq++
+	rec.Token = fmt.Sprintf("marca-%d", l.seq)
+	l.m[key] = rec
+	return rec, true, nil
+}
+
+func (l *memLedger) Update(_ context.Context, key string, rec domain.SendRecord, _ time.Duration) (bool, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if current, ok := l.m[key]; !ok || current.Token != rec.Token {
+		return false, nil
+	}
+	l.m[key] = rec
+	return true, nil
+}
+
+func (l *memLedger) Release(_ context.Context, key, token string) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if current, ok := l.m[key]; ok && current.Token == token {
+		delete(l.m, key)
+	}
+	return nil
+}
+
 // testTLS genera un certificado autofirmado para localhost y 127.0.0.1.
 func testTLS(t *testing.T) (*tls.Config, *tls.Config) {
 	t.Helper()
@@ -481,6 +611,15 @@ type smtpServer struct {
 	tlsCfg *tls.Config
 	mu     sync.Mutex
 	msgs   []delivery
+	// drop cierra la conexion tras recibir DATA sin responder, como un corte de red
+	// despues del punto final.
+	drop bool
+}
+
+func (s *smtpServer) setDropAfterData(v bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.drop = v
 }
 
 func startSMTP(t *testing.T, tlsCfg *tls.Config) *smtpServer {
@@ -574,7 +713,11 @@ func (s *smtpServer) handle(conn net.Conn) {
 			}
 			s.mu.Lock()
 			s.msgs = append(s.msgs, delivery{authUser: authUser, from: from, rcpts: rcpts, data: data})
+			drop := s.drop
 			s.mu.Unlock()
+			if drop {
+				return
+			}
 			_ = tp.PrintfLine("250 2.0.0 Ok: queued")
 		case "RSET":
 			from, rcpts = "", nil

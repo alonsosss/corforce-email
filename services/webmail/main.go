@@ -30,6 +30,7 @@ import (
 	handler "github.com/alonsosss/corforce-email/services/webmail/internal/adapters/http"
 	imapadapter "github.com/alonsosss/corforce-email/services/webmail/internal/adapters/imap"
 	"github.com/alonsosss/corforce-email/services/webmail/internal/adapters/mailauth"
+	"github.com/alonsosss/corforce-email/services/webmail/internal/adapters/maildirectorycli"
 	natsadapter "github.com/alonsosss/corforce-email/services/webmail/internal/adapters/nats"
 	redisadapter "github.com/alonsosss/corforce-email/services/webmail/internal/adapters/redis"
 	"github.com/alonsosss/corforce-email/services/webmail/internal/adapters/rfc5322"
@@ -83,6 +84,8 @@ type settings struct {
 	cookieSecure       bool
 	origins            []string
 	heloName           string
+	mailDirectoryURL   string
+	internalToken      string
 }
 
 func main() {
@@ -150,6 +153,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("webmail: %v", err)
 	}
+	directory, err := maildirectorycli.New(st.mailDirectoryURL, st.internalToken)
+	if err != nil {
+		log.Fatalf("webmail: %v", err)
+	}
 	var scanner ports.VirusScanner
 	if st.clamdAddr != "" {
 		scanner = clamav.New(st.clamdAddr, clamdTimeout)
@@ -162,6 +169,8 @@ func main() {
 		Sessions:  redisadapter.NewSessionStore(rdb, st.cellCode, st.sessions.Max),
 		Mail:      store,
 		Sender:    sender,
+		Directory: directory,
+		Ledger:    redisadapter.NewSendLedger(rdb, st.cellCode),
 		Composer:  rfc5322.New(),
 		Sanitizer: htmlsafe.New(),
 		Scanner:   scanner,
@@ -170,6 +179,7 @@ func main() {
 		Config: app.Config{
 			Sessions: st.sessions, Limits: st.limits,
 			MaxBodyPartBytes: st.maxBodyPartBytes, MaxAttachmentBytes: st.maxAttachmentBytes,
+			SendTimeout: transferTimeout,
 		},
 	})
 	if err != nil {
@@ -298,6 +308,15 @@ func loadSettings(environment string) (settings, error) {
 	}
 	st.origins = append(strings.Split(os.Getenv("CORS_ALLOWED_ORIGINS"), ","), os.Getenv("API_ORIGIN"))
 	st.heloName = envString("MAIL_HOSTNAME", "localhost")
+
+	// Los remitentes del buzon los resuelve mail-directory con la regla de Postfix.
+	if st.mailDirectoryURL, err = required("MAIL_DIRECTORY_URL"); err != nil {
+		return st, err
+	}
+	st.internalToken = os.Getenv("INTERNAL_GATEWAY_TOKEN")
+	if production && st.internalToken == "" {
+		return st, errors.New("INTERNAL_GATEWAY_TOKEN es obligatorio en produccion: sin el mail-directory rechaza la consulta de remitentes")
+	}
 	return st, nil
 }
 

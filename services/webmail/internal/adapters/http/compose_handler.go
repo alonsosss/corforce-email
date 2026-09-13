@@ -20,40 +20,55 @@ const (
 	maxListValues     = 200
 )
 
+// idempotencyHeader identifica el intento de envio del cliente: un reintento con la misma
+// clave no vuelve a entregar el mensaje.
+const idempotencyHeader = "Idempotency-Key"
+
 // composeFields son los campos de texto admitidos; cualquier otro se rechaza.
 var composeFields = map[string]bool{
 	"from": true, "to": true, "cc": true, "bcc": true, "subject": true, "text": true, "html": true,
 	"in_reply_to": true, "in_reply_to_folder": true, "replace_uid": true,
+	"source_folder": true, "source_uid": true, "source_parts": true,
 }
 
-// listFields admiten varios valores (y cada valor, una lista separada por comas).
-var listFields = map[string]bool{"to": true, "cc": true, "bcc": true}
+// listFields admiten varios valores (y las direcciones, cada valor una lista separada por
+// comas).
+var listFields = map[string]bool{"to": true, "cc": true, "bcc": true, "source_parts": true}
 
 type composeForm struct {
 	draft      domain.Draft
 	replaceUID uint32
 }
 
+// Send entrega el mensaje. replace_uid retira ese borrador en la misma operacion y
+// source_folder, source_uid y source_parts adjuntan partes de un mensaje del buzon.
 func (h *Handler) Send(w http.ResponseWriter, r *http.Request) {
+	key := strings.TrimSpace(r.Header.Get(idempotencyHeader))
+	if err := domain.ValidateIdempotencyKey(key); err != nil {
+		writeError(w, err)
+		return
+	}
 	extendDeadlines(w, h.cfg.TransferTimeout)
-	form, err := h.readCompose(w, r, false)
+	form, err := h.readCompose(w, r)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), h.cfg.TransferTimeout)
 	defer cancel()
-	result, err := h.app.Send(ctx, sessionFrom(r), form.draft)
+	result, err := h.app.Send(ctx, sessionFrom(r), form.draft, domain.SendOptions{IdempotencyKey: key, ReplaceUID: form.replaceUID})
 	if err != nil {
 		h.fail(w, r, err)
 		return
 	}
-	response.JSON(w, http.StatusAccepted, sendDTO{MessageID: result.MessageID, SavedToSent: result.SavedToSent})
+	response.JSON(w, http.StatusAccepted, sendDTO{
+		MessageID: result.MessageID, SavedToSent: result.SavedToSent, DraftRemoved: result.DraftRemoved, Replayed: result.Replayed,
+	})
 }
 
 func (h *Handler) SaveDraft(w http.ResponseWriter, r *http.Request) {
 	extendDeadlines(w, h.cfg.TransferTimeout)
-	form, err := h.readCompose(w, r, true)
+	form, err := h.readCompose(w, r)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -71,7 +86,7 @@ func (h *Handler) SaveDraft(w http.ResponseWriter, r *http.Request) {
 // readCompose lee el formulario multipart parte a parte, con un tope total. No usa
 // ParseMultipartForm: volcaria los ficheros grandes a un temporal en disco, y la imagen
 // del servicio no tiene /tmp ni debe dejar adjuntos sin analizar en disco.
-func (h *Handler) readCompose(w http.ResponseWriter, r *http.Request, allowReplace bool) (composeForm, error) {
+func (h *Handler) readCompose(w http.ResponseWriter, r *http.Request) (composeForm, error) {
 	limit := h.cfg.MaxMessageBytes + multipartOverhead
 	r.Body = http.MaxBytesReader(w, r.Body, limit)
 	mr, err := r.MultipartReader()
@@ -104,7 +119,7 @@ func (h *Handler) readCompose(w http.ResponseWriter, r *http.Request, allowRepla
 			})
 			continue
 		}
-		if !composeFields[name] || (name == "replace_uid" && !allowReplace) {
+		if !composeFields[name] {
 			return composeForm{}, domain.NewValidationError(name, "campo no admitido")
 		}
 		if part.FileName() != "" {
@@ -168,6 +183,16 @@ func buildComposeForm(fields map[string][]string, attachments []domain.Attachmen
 			return composeForm{}, domain.NewValidationError("replace_uid", "debe ser el UID del borrador anterior")
 		}
 		form.replaceUID = uid
+	}
+	folder, rawUID, parts := single(fields, "source_folder"), single(fields, "source_uid"), fields["source_parts"]
+	if folder != "" || rawUID != "" || len(parts) > 0 {
+		uid, err := domain.ParseUID(rawUID)
+		if err != nil {
+			return composeForm{}, domain.NewValidationError("source_uid", "debe ser el UID del mensaje de origen")
+		}
+		if d.Source, err = domain.NewPartSource(folder, uid, parts); err != nil {
+			return composeForm{}, err
+		}
 	}
 	return form, nil
 }

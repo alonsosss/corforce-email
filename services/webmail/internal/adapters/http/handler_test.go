@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -71,14 +72,20 @@ type stubMail struct{ mb *stubMailbox }
 func (m stubMail) Open(context.Context, string) (ports.Mailbox, error) { return m.mb, nil }
 
 type stubMailbox struct {
-	listed string
-	part   domain.Part
-	body   string
+	listed   string
+	part     domain.Part
+	body     string
+	expunged []uint32
+	partReqs []string
 }
 
 func (m *stubMailbox) Close() error { return nil }
 func (m *stubMailbox) Folders(context.Context, bool) ([]domain.Folder, error) {
-	return []domain.Folder{{Name: "INBOX", Role: domain.RoleInbox, Selectable: true}}, nil
+	return []domain.Folder{
+		{Name: "INBOX", Role: domain.RoleInbox, Selectable: true},
+		{Name: "Sent", Role: domain.RoleSent, Selectable: true},
+		{Name: "Drafts", Role: domain.RoleDrafts, Selectable: true},
+	}, nil
 }
 func (m *stubMailbox) Quota(context.Context) (*domain.Quota, error) { return nil, nil }
 func (m *stubMailbox) List(_ context.Context, folder string, _ domain.ListQuery) (domain.MessagePage, error) {
@@ -88,7 +95,8 @@ func (m *stubMailbox) List(_ context.Context, folder string, _ domain.ListQuery)
 func (m *stubMailbox) Read(context.Context, string, uint32, domain.ReadOptions) (*domain.RawMessage, error) {
 	return nil, domain.ErrMessageNotFound
 }
-func (m *stubMailbox) OpenPart(context.Context, string, uint32, string, int64) (domain.Part, io.ReadCloser, error) {
+func (m *stubMailbox) OpenPart(_ context.Context, _ string, _ uint32, partID string, _ int64) (domain.Part, io.ReadCloser, error) {
+	m.partReqs = append(m.partReqs, partID)
 	return m.part, io.NopCloser(strings.NewReader(m.body)), nil
 }
 func (m *stubMailbox) ReplyReference(context.Context, string, uint32) (domain.ReplyReference, error) {
@@ -96,7 +104,10 @@ func (m *stubMailbox) ReplyReference(context.Context, string, uint32) (domain.Re
 }
 func (m *stubMailbox) SetFlags(context.Context, string, uint32, domain.FlagChange) error { return nil }
 func (m *stubMailbox) Move(context.Context, string, uint32, string) error                { return nil }
-func (m *stubMailbox) Expunge(context.Context, string, uint32) error                     { return nil }
+func (m *stubMailbox) Expunge(_ context.Context, _ string, uid uint32) error {
+	m.expunged = append(m.expunged, uid)
+	return nil
+}
 func (m *stubMailbox) Append(context.Context, string, []byte, []domain.Flag, time.Time) (uint32, error) {
 	return 1, nil
 }
@@ -116,17 +127,69 @@ func (nopSanitizer) Incoming(html string, _ domain.SanitizeOptions) domain.Sanit
 }
 func (nopSanitizer) Outgoing(html string) (string, string) { return html, html }
 
+// stubDirectory hace de mail-directory: el buzon de prueba puede enviar tambien como ventas.
+type stubDirectory struct{}
+
+func (stubDirectory) SenderIdentities(context.Context, string) ([]string, error) {
+	return []string{"ventas@empresa.pe"}, nil
+}
+
+// memLedger es el registro de envios en memoria, con la misma semantica que el de Redis.
+type memLedger struct {
+	mu  sync.Mutex
+	m   map[string]domain.SendRecord
+	seq int
+}
+
+func (l *memLedger) Reserve(_ context.Context, key string, rec domain.SendRecord, _ time.Duration) (domain.SendRecord, bool, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if current, ok := l.m[key]; ok {
+		return current, false, nil
+	}
+	l.seq++
+	rec.Token = fmt.Sprintf("marca-%d", l.seq)
+	l.m[key] = rec
+	return rec, true, nil
+}
+
+func (l *memLedger) Update(_ context.Context, key string, rec domain.SendRecord, _ time.Duration) (bool, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if current, ok := l.m[key]; !ok || current.Token != rec.Token {
+		return false, nil
+	}
+	l.m[key] = rec
+	return true, nil
+}
+
+func (l *memLedger) Release(_ context.Context, key, token string) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if current, ok := l.m[key]; ok && current.Token == token {
+		delete(l.m, key)
+	}
+	return nil
+}
+
 func newTestHandler(t *testing.T) (http.Handler, *stubMailbox) {
+	t.Helper()
+	return newTestHandlerWith(t, nopSender{})
+}
+
+func newTestHandlerWith(t *testing.T, sender ports.Sender) (http.Handler, *stubMailbox) {
 	t.Helper()
 	mb := &stubMailbox{}
 	svc, err := app.New(app.Deps{
 		Auth: stubAuth{}, Sessions: &memStore{m: map[string]domain.Session{}}, Mail: stubMail{mb: mb},
-		Sender: nopSender{}, Composer: nopComposer{}, Sanitizer: nopSanitizer{}, PartURL: PartURL,
+		Sender: sender, Directory: stubDirectory{}, Ledger: &memLedger{m: map[string]domain.SendRecord{}},
+		Composer: nopComposer{}, Sanitizer: nopSanitizer{}, PartURL: PartURL,
 		Logger: zap.NewNop(),
 		Config: app.Config{
 			Sessions:         domain.SessionPolicy{Idle: 30 * time.Minute, Max: 12 * time.Hour},
 			Limits:           domain.Limits{MaxRecipients: 2, MaxMessageBytes: 4096},
 			MaxBodyPartBytes: 1024, MaxAttachmentBytes: 1024,
+			SendTimeout: 5 * time.Second,
 		},
 	})
 	if err != nil {
@@ -380,17 +443,17 @@ func TestEnvioAplicaLimitesYRechazaInyeccion(t *testing.T) {
 	}
 	for _, c := range cases {
 		body, ctype := multipartBody(t, c.fields, c.fileSize)
-		rec := do(h, http.MethodPost, BasePath+"/send", body, map[string]string{"Origin": allowedOrigin, "Content-Type": ctype}, cookie)
+		rec := do(h, http.MethodPost, BasePath+"/send", body, sendHeaders(ctype), cookie)
 		if rec.Code != c.status || errorCode(t, rec) != c.code {
 			t.Errorf("%s: %d %s", c.name, rec.Code, rec.Body.String())
 		}
 	}
 	body, ctype := multipartBody(t, map[string]string{"to": "a@x.com", "subject": "Hola", "text": "cuerpo"}, 10)
-	rec := do(h, http.MethodPost, BasePath+"/send", body, map[string]string{"Origin": allowedOrigin, "Content-Type": ctype}, cookie)
+	rec := do(h, http.MethodPost, BasePath+"/send", body, sendHeaders(ctype), cookie)
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("envio valido: %d %s", rec.Code, rec.Body.String())
 	}
-	rec = do(h, http.MethodPost, BasePath+"/send", strings.NewReader(`{"to":"a@x.com"}`), map[string]string{"Origin": allowedOrigin, "Content-Type": "application/json"}, cookie)
+	rec = do(h, http.MethodPost, BasePath+"/send", strings.NewReader(`{"to":"a@x.com"}`), sendHeaders("application/json"), cookie)
 	if rec.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("un envio que no es multipart se rechaza: %d", rec.Code)
 	}

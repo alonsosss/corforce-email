@@ -64,6 +64,26 @@ type Sender interface {
 	Send(ctx context.Context, username, envelopeFrom string, recipients []string, raw []byte) error
 }
 
+// SenderDirectory dice con que direcciones concretas puede enviar un buzon segun el
+// directorio de la celda, con la misma regla que aplica Postfix (smtpd_sender_login_maps).
+// Un fallo es domain.ErrUnavailable.
+type SenderDirectory interface {
+	SenderIdentities(ctx context.Context, username string) ([]string, error)
+}
+
+// SendLedger recuerda cada envio por su clave de idempotencia para que un reintento del
+// cliente nunca entregue el mensaje dos veces.
+type SendLedger interface {
+	// Reserve guarda rec si la clave no tenia registro (reserved true; current lleva el Token
+	// nuevo). Si ya lo tenia, lo devuelve sin tocarlo.
+	Reserve(ctx context.Context, key string, rec domain.SendRecord, ttl time.Duration) (current domain.SendRecord, reserved bool, err error)
+	// Update sobrescribe el registro si sigue siendo de rec.Token; false si ya no lo es.
+	Update(ctx context.Context, key string, rec domain.SendRecord, ttl time.Duration) (bool, error)
+	// Release borra el registro si sigue siendo de token: el mensaje no salio y la clave
+	// queda libre para reintentar.
+	Release(ctx context.Context, key, token string) error
+}
+
 // Composer arma el mensaje RFC 5322. includeBcc solo para la copia que se guarda: el Bcc
 // nunca viaja en el mensaje que se entrega.
 type Composer interface {
