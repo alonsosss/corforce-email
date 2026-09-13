@@ -35,6 +35,7 @@ construye fuera del literal y no se puede leer estaticamente.
 | `mail.domain.deleted` | mail-directory | `active`, `backupmx`, `domain`, `id`, `tenant_id` |
 | `mail.domain.updated` | mail-directory | `active`, `backupmx`, `domain`, `id`, `tenant_id` |
 | `mail.mailbox.created` | mail-directory | `active`, `domain`, `id`, `kind`, `tenant_id`, `username` |
+| `mail.mailbox.credentials_changed` | mail-directory | `changed_at`, `id`, `tenant_id`, `username` |
 | `mail.mailbox.deleted` | mail-directory | `active`, `domain`, `id`, `kind`, `tenant_id`, `username` |
 | `mail.mailbox.updated` | mail-directory | `active`, `domain`, `id`, `kind`, `tenant_id`, `username` |
 | `organization.tenant.created` | organization | `cell_id`, `db_name`, `name`, `slug`, `status`, `tenant_id` |
