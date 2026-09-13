@@ -260,6 +260,7 @@ func main() {
 		Identity:        identitycli.New(serviceURL("IDENTITY", "identity", "8001"), internalToken),
 		Modules:         postgres.NewModulesRepo(pool.Pool),
 		Publisher:       publisher,
+		MailDomains:     postgres.NewMailDomainRepo(pool.Pool),
 		DefaultCellCode: defaultCellCode,
 		SagaLease:       envDuration("ORGANIZATION_SAGA_LEASE", 5*time.Minute, logger),
 		Logger:          logger,
@@ -312,9 +313,11 @@ func main() {
 	r.Use(middleware.InjectFromGateway)
 	r.Use(middleware.SecureHeaders)
 	r.Use(middleware.Logger(logger))
-	// Interno: la celda de cada empresa, que pregunta el gateway. Fuera del limitador por IP a
-	// proposito: todas sus consultas salen de las pocas IP del gateway, y un 429 ahi dejaria sin
-	// celda (503) a las empresas cuya entrada caduco. Lo protege el token interno.
+	// Interno: la celda de cada empresa y de cada dominio de correo, que preguntan el gateway y los
+	// servicios de celda, y el indice de dominios, que escribe domain-service. Fuera del limitador
+	// por IP a proposito: todas sus consultas salen de las pocas IP de esos servicios, y un 429 ahi
+	// dejaria sin celda (503) a las empresas y buzones cuya entrada caduco. Lo protege el token
+	// interno.
 	r.Mount("/internal/organization", handler.NewInternalHandler(uc).Routes())
 	r.Group(func(r chi.Router) {
 		r.Use(middleware.NewRateLimiter(100, time.Minute).Limit)

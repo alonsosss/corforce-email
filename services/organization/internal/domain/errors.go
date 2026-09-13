@@ -44,6 +44,14 @@ var (
 	ErrAdminRejected = errors.New("identity rechazo al primer administrador")
 	// ErrAdminUserConflict: identity ya tiene otro primer usuario para la empresa.
 	ErrAdminUserConflict = errors.New("la empresa ya tiene un primer administrador distinto")
+
+	// ErrInvalidMailDomain: el nombre no es un dominio de correo (nombre DNS de dos etiquetas o mas).
+	ErrInvalidMailDomain = errors.New("nombre de dominio de correo no valido")
+	// ErrMailDomainNotFound: el dominio no esta activo en ninguna celda (no esta en el indice).
+	ErrMailDomainNotFound = errors.New("el dominio de correo no esta activo en ninguna celda")
+	// ErrMailDomainClaimed: el dominio ya esta activo para otra empresa. Un dominio solo se activa
+	// en una celda y para una empresa.
+	ErrMailDomainClaimed = errors.New("el dominio de correo ya esta activo en otra empresa")
 )
 
 // AdminRejectedError lleva el codigo y el mensaje con los que identity rechazo al primer

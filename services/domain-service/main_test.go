@@ -26,7 +26,7 @@ func setSettingsEnv(t *testing.T, environment, token string) {
 		tenantcell.BaseCellEnv:    "",
 		mailDirectoryCellHostsEnv: "",
 		mailSecurityCellHostsEnv:  "",
-		"ORGANIZATION_URL":        "",
+		"ORGANIZATION_URL":        "http://organization:8003",
 	} {
 		t.Setenv(key, value)
 	}
@@ -57,19 +57,22 @@ func TestLoadSettingsConTokenInterno(t *testing.T) {
 	}
 }
 
-// Las instancias por celda se declaran con las mismas variables y reglas que el gateway; con
-// varias celdas hace falta organization, y con una no se pregunta a nadie.
+// Las instancias por celda se declaran con las mismas variables y reglas que el gateway.
+// organization hace falta siempre (el indice de dominios); con una celda no se le pregunta la
+// celda de ninguna empresa.
 func TestLoadSettingsCeldas(t *testing.T) {
 	for nombre, c := range map[string]struct {
 		base, directory, security, org, err string
 	}{
-		"una celda: nada que declarar ni organization": {},
-		"varias celdas":                     {"pe-01", "pe-02=md-pe-02:8040", "pe-02=ms-pe-02:8042,pe-03=ms-pe-03:8042", "http://organization:8003", ""},
-		"varias celdas sin organization":    {"pe-01", "pe-02=md-pe-02:8040", "", "", "ORGANIZATION_URL"},
-		"solo la celda base":                {"pe-01", "", "", "http://organization:8003", ""},
-		"instancias sin celda base":         {"", "pe-02=md-pe-02:8040", "", "http://organization:8003", tenantcell.BaseCellEnv},
-		"celda base tambien como instancia": {"pe-01", "", "pe-01=ms-pe-01:8042", "http://organization:8003", mailSecurityCellHostsEnv},
-		"instancia mal formada":             {"pe-01", "pe-02", "", "http://organization:8003", mailDirectoryCellHostsEnv},
+		"una celda: nada que declarar":         {"", "", "", "http://organization:8003", ""},
+		"una celda sin organization":           {"", "", "", "", "ORGANIZATION_URL"},
+		"organization con una URL sin esquema": {"", "", "", "organization:8003", "ORGANIZATION_URL"},
+		"varias celdas":                        {"pe-01", "pe-02=md-pe-02:8040", "pe-02=ms-pe-02:8042,pe-03=ms-pe-03:8042", "http://organization:8003", ""},
+		"varias celdas sin organization":       {"pe-01", "pe-02=md-pe-02:8040", "", "", "ORGANIZATION_URL"},
+		"solo la celda base":                   {"pe-01", "", "", "http://organization:8003", ""},
+		"instancias sin celda base":            {"", "pe-02=md-pe-02:8040", "", "http://organization:8003", tenantcell.BaseCellEnv},
+		"celda base tambien como instancia":    {"pe-01", "", "pe-01=ms-pe-01:8042", "http://organization:8003", mailSecurityCellHostsEnv},
+		"instancia mal formada":                {"pe-01", "pe-02", "", "http://organization:8003", mailDirectoryCellHostsEnv},
 	} {
 		setSettingsEnv(t, "staging", "gateway-token-0123456789")
 		t.Setenv(tenantcell.BaseCellEnv, c.base)

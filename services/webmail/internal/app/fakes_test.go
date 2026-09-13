@@ -408,6 +408,7 @@ func newHarness(t *testing.T) *harness {
 		Clock:  clock.Now,
 		Logger: zap.NewNop(),
 		Config: Config{
+			CellCode:           testCell,
 			Sessions:           domain.SessionPolicy{Idle: 30 * time.Minute, Max: 12 * time.Hour},
 			Limits:             domain.Limits{MaxRecipients: 3, MaxMessageBytes: 1000},
 			MaxBodyPartBytes:   1 << 20,

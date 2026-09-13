@@ -221,6 +221,7 @@ func TestCeldasSinInstanciaDeUnServicio(t *testing.T) {
 	t.Setenv(baseCellEnv, "pe-01")
 	t.Setenv("MAIL_DIRECTORY_CELL_HOSTS", "pe-02=md-pe-02:8040")
 	t.Setenv("MAIL_SECURITY_CELL_HOSTS", "pe-02=ms-pe-02:8042,pe-03=ms-pe-03:8042")
+	t.Setenv("WEBMAIL_CELL_HOSTS", "pe-02=wm-pe-02:8044,pe-03=wm-pe-03:8044")
 	tbl, err := loadRouteTable()
 	if err != nil {
 		t.Fatal(err)

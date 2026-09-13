@@ -24,6 +24,7 @@ const (
 	allowedOrigin = "https://app.example.com"
 	testUser      = "ana@empresa.pe"
 	testPass      = "correcta-larga"
+	testCell      = "pe-01"
 )
 
 type stubAuth struct{}
@@ -186,6 +187,7 @@ func newTestHandlerWith(t *testing.T, sender ports.Sender) (http.Handler, *stubM
 		Composer: nopComposer{}, Sanitizer: nopSanitizer{}, PartURL: PartURL,
 		Logger: zap.NewNop(),
 		Config: app.Config{
+			CellCode:         testCell,
 			Sessions:         domain.SessionPolicy{Idle: 30 * time.Minute, Max: 12 * time.Hour},
 			Limits:           domain.Limits{MaxRecipients: 2, MaxMessageBytes: 4096},
 			MaxBodyPartBytes: 1024, MaxAttachmentBytes: 1024,
@@ -286,8 +288,8 @@ func TestLoginEmiteCookieSegura(t *testing.T) {
 	if c == nil || !c.HttpOnly || !c.Secure || c.SameSite != http.SameSiteStrictMode || c.Path != BasePath || c.MaxAge != 12*3600 {
 		t.Fatalf("cookie: %+v", c)
 	}
-	if len(c.Value) != 43 {
-		t.Fatalf("token de 256 bits en base64url: %q", c.Value)
+	if !strings.HasPrefix(c.Value, testCell+".") || len(c.Value) != len(testCell)+1+43 {
+		t.Fatalf("token: la celda y 256 bits en base64url: %q", c.Value)
 	}
 	if strings.Contains(rec.Body.String(), c.Value) {
 		t.Fatal("el token no viaja en el cuerpo")
@@ -456,5 +458,34 @@ func TestEnvioAplicaLimitesYRechazaInyeccion(t *testing.T) {
 	rec = do(h, http.MethodPost, BasePath+"/send", strings.NewReader(`{"to":"a@x.com"}`), sendHeaders("application/json"), cookie)
 	if rec.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("un envio que no es multipart se rechaza: %d", rec.Code)
+	}
+}
+
+// Un token de otra celda (el prefijo cambiado de uno valido, o uno de otra instancia) no abre
+// nada aqui: 401 como una sesion caducada y la cookie se borra. Cerrar sesion con el solo la
+// borra. Un token sin celda, el formato anterior, tampoco vale.
+func TestTokenDeOtraCeldaSeRechazaYBorraLaCookie(t *testing.T) {
+	h, _ := newTestHandler(t)
+	valid := login(t, h)
+	_, secret, _ := strings.Cut(valid.Value, ".")
+	for caso, value := range map[string]string{
+		"prefijo de otra celda": "pe-02." + secret,
+		"celda mal formada":     "PE-01." + secret,
+		"sin celda":             secret,
+	} {
+		rec := do(h, http.MethodGet, BasePath+"/session", nil, nil, &http.Cookie{Name: cookieName, Value: value})
+		if rec.Code != http.StatusUnauthorized || errorCode(t, rec) != "SESSION_EXPIRED" {
+			t.Fatalf("%s: %d %s", caso, rec.Code, rec.Body)
+		}
+		if c := sessionCookie(rec); c == nil || c.MaxAge >= 0 {
+			t.Fatalf("%s: la cookie se borra: %+v", caso, c)
+		}
+	}
+	rec := do(h, http.MethodDelete, BasePath+"/session", nil, map[string]string{"Origin": allowedOrigin}, &http.Cookie{Name: cookieName, Value: "pe-02." + secret})
+	if rec.Code != http.StatusNoContent || sessionCookie(rec) == nil || sessionCookie(rec).MaxAge >= 0 {
+		t.Fatalf("cerrar sesion con un token de otra celda: %d", rec.Code)
+	}
+	if rec := do(h, http.MethodGet, BasePath+"/session", nil, nil, valid); rec.Code != http.StatusOK {
+		t.Fatalf("la sesion real sigue abierta: %d", rec.Code)
 	}
 }

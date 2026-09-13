@@ -55,6 +55,18 @@ type MailDirectoryClient interface {
 	SetActivation(ctx context.Context, tenantID uuid.UUID, name string, active bool) error
 }
 
+// DomainIndex es el indice global de los dominios de correo activos que sirve organization
+// (dominio -> empresa; la celda es la de la empresa). Un dominio se reclama antes de activarlo en
+// el directorio de la celda y se suelta despues de desactivarlo: es lo que lleva el webmail de
+// cada buzon a su celda y lo que impide activar el mismo dominio en dos celdas. Las dos llamadas
+// son idempotentes.
+type DomainIndex interface {
+	// Claim devuelve domain.ErrDomainClaimedElsewhere si otra empresa tiene el dominio activo.
+	Claim(ctx context.Context, tenantID uuid.UUID, name string) error
+	// Release no falla si la empresa no tiene el dominio reclamado.
+	Release(ctx context.Context, tenantID uuid.UUID, name string) error
+}
+
 // DKIMKey es una clave privada lista para publicar. Solo existe en memoria.
 type DKIMKey struct {
 	Selector      string

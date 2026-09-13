@@ -177,7 +177,7 @@ func main() {
 		PartURL:   handler.PartURL,
 		Logger:    logger,
 		Config: app.Config{
-			Sessions: st.sessions, Limits: st.limits,
+			CellCode: st.cellCode, Sessions: st.sessions, Limits: st.limits,
 			MaxBodyPartBytes: st.maxBodyPartBytes, MaxAttachmentBytes: st.maxAttachmentBytes,
 			SendTimeout: transferTimeout,
 		},
@@ -228,8 +228,8 @@ func loadSettings() (settings, error) {
 	if st.port, err = envInt("WEBMAIL_PORT", defaultPort); err != nil {
 		return st, err
 	}
-	if st.cellCode = strings.TrimSpace(os.Getenv("CELL_CODE")); st.cellCode == "" {
-		return st, errors.New("CELL_CODE es obligatorio: el webmail es un servicio de celda")
+	if st.cellCode = strings.TrimSpace(os.Getenv("CELL_CODE")); !domain.ValidCellCode(st.cellCode) {
+		return st, fmt.Errorf("CELL_CODE %q no es un codigo de celda: el webmail es un servicio de celda y la celda va en cada token de sesion", st.cellCode)
 	}
 	if st.mailAuthURL, err = required("MAIL_AUTH_URL"); err != nil {
 		return st, err

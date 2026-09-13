@@ -100,10 +100,15 @@ func ParseInstances(envName, raw string) (map[string]string, error) {
 	return out, nil
 }
 
+// OrganizationURLFromEnv lee y valida ORGANIZATION_URL, la URL interna de organization.
+func OrganizationURLFromEnv() (string, error) {
+	return organizationURL(os.Getenv("ORGANIZATION_URL"))
+}
+
 // ResolverFromEnv pregunta a organization en ORGANIZATION_URL con el token interno. Sin URL
 // valida, o sin token fuera de desarrollo o prueba, es un error.
 func ResolverFromEnv(logger *zap.Logger) (*Resolver, error) {
-	orgURL, err := organizationURL(os.Getenv("ORGANIZATION_URL"))
+	orgURL, err := OrganizationURLFromEnv()
 	if err != nil {
 		return nil, err
 	}

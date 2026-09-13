@@ -5,7 +5,31 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/alonsosss/corforce-email/pkg/mailcell"
 )
+
+// Token de sesion: "<celda>.<secreto>", con la celda de la instancia que abrio la sesion y un
+// secreto de 256 bits en base64url sin relleno. La celda deja al gateway llevar cada peticion a
+// la instancia de su celda sin guardar nada; no autoriza nada, porque la sesion solo existe en
+// el almacen de esa celda y cada instancia rechaza, sin buscarlo, el token de otra.
+const sessionTokenSeparator = "."
+
+var sessionSecretPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{43}$`)
+
+// ValidCellCode dice si code puede ser la celda de un token de sesion.
+func ValidCellCode(code string) bool { return mailcell.ValidCode(code) }
+
+// NewSessionToken compone el token de la celda con su secreto.
+func NewSessionToken(cell, secret string) string {
+	return cell + sessionTokenSeparator + secret
+}
+
+// ParseSessionToken separa la celda del token; ok es false si el token no tiene la forma de uno.
+func ParseSessionToken(token string) (cell string, ok bool) {
+	cell, secret, found := strings.Cut(token, sessionTokenSeparator)
+	return cell, found && ValidCellCode(cell) && sessionSecretPattern.MatchString(secret)
+}
 
 // Identity es lo que la verificacion del buzon devuelve al abrir el webmail.
 type Identity struct {

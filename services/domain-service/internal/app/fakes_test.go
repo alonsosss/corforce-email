@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sort"
 	"sync"
 	"time"
@@ -236,13 +237,55 @@ type activation struct {
 type fakeDirectory struct {
 	calls []activation
 	err   error
+	// seq, si no es nil, anota el orden de las llamadas junto a las del indice.
+	seq *[]string
 }
 
 func (f *fakeDirectory) SetActivation(_ context.Context, _ uuid.UUID, name string, active bool) error {
+	if f.seq != nil {
+		*f.seq = append(*f.seq, fmt.Sprintf("activar %s %v", name, active))
+	}
 	if f.err != nil {
 		return f.err
 	}
 	f.calls = append(f.calls, activation{domain: name, active: active})
+	return nil
+}
+
+// fakeIndex es el indice global de dominios de organization: un dominio es de una sola empresa.
+type fakeIndex struct {
+	owners     map[string]uuid.UUID
+	claimErr   error
+	releaseErr error
+	seq        *[]string
+}
+
+func newFakeIndex() *fakeIndex { return &fakeIndex{owners: map[string]uuid.UUID{}} }
+
+func (f *fakeIndex) Claim(_ context.Context, tenantID uuid.UUID, name string) error {
+	if f.seq != nil {
+		*f.seq = append(*f.seq, "reclamar "+name)
+	}
+	if f.claimErr != nil {
+		return f.claimErr
+	}
+	if owner, ok := f.owners[name]; ok && owner != tenantID {
+		return domain.ErrDomainClaimedElsewhere
+	}
+	f.owners[name] = tenantID
+	return nil
+}
+
+func (f *fakeIndex) Release(_ context.Context, tenantID uuid.UUID, name string) error {
+	if f.seq != nil {
+		*f.seq = append(*f.seq, "soltar "+name)
+	}
+	if f.releaseErr != nil {
+		return f.releaseErr
+	}
+	if f.owners[name] == tenantID {
+		delete(f.owners, name)
+	}
 	return nil
 }
 

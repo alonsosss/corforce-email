@@ -45,11 +45,13 @@ func main() {
 	for service, cells := range table.cellCodes() {
 		logger.Info("instancias por celda", zap.String("service", service), zap.Strings("cells", cells))
 	}
-	// Enrutado con sesion por celda: solo con celda base declarada. Sin ella el despliegue es
-	// de una celda y el gateway no pregunta a organization.
-	var cells *tenantcell.Resolver
+	// Enrutado por celda: solo con celda base declarada. Sin ella el despliegue es de una celda y
+	// el gateway no pregunta a organization. cells resuelve la celda de la empresa de una sesion y
+	// domains la del dominio de un buzon (inicio de sesion del webmail).
+	var cells, domains *tenantcell.Resolver
 	if table.baseCell != "" {
 		cells = tenantcell.NewResolver(table.serviceURL(cellDirectoryService), internalToken, logger)
+		domains = tenantcell.NewDomainResolver(table.serviceURL(cellDirectoryService), internalToken, logger)
 		logger.Info("enrutado con sesion por celda", zap.String("base_cell", table.baseCell))
 	}
 	for service, missing := range table.cellCoverageGaps() {
@@ -152,8 +154,9 @@ func main() {
 		mountPublic(r, table, internalToken)
 
 		// Prefijos que autentica el propio servicio con su sesion (el webmail): sin JWT
-		// ni RBAC, con el limitador general y el estricto en su inicio de sesion.
-		mountSelfAuthenticated(r, table.SelfAuthenticated, table.serviceURL, authLimiter.Limit, internalToken)
+		// ni RBAC, con el limitador general y el estricto en su inicio de sesion, y los de un
+		// servicio de celda por la celda del buzon (selfauthcells.go).
+		mountSelfAuthenticated(r, table, authLimiter.Limit, internalToken, domains, logger)
 
 		// Toda ruta con sesion pasa por la misma comprobacion de la sesion (cuenta cerrada o
 		// token revocado), con la cache del RBAC.

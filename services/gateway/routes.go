@@ -52,7 +52,8 @@ type routeTable struct {
 	// usuarios de la plataforma). El gateway no exige JWT ni aplica RBAC por modulo, pero
 	// si el limitador general, las cabeceras de seguridad y el token interno hacia el
 	// servicio. StrictLimit son las rutas atacables por fuerza bruta (el inicio de
-	// sesion), que ademas pasan por el limitador de autenticacion.
+	// sesion), que ademas pasan por el limitador de autenticacion. Un prefijo de un servicio
+	// de celda declara como se enruta por celda (CellLogin y CellCookie, selfauthcells.go).
 	SelfAuthenticated []selfAuthSpec `json:"self_authenticated,omitempty"`
 	// Frontend: servicio que sirve la aplicacion web (comodin /*). Opcional: sin el,
 	// el gateway solo expone el API.
@@ -69,6 +70,17 @@ type selfAuthSpec struct {
 	Prefix      string           `json:"prefix"`
 	Service     string           `json:"service"`
 	StrictLimit []methodPathSpec `json:"strict_limit,omitempty"`
+	// CellLogin es el inicio de sesion, que se enruta por el dominio del nombre de usuario que
+	// lleva su cuerpo; CellCookie, la cookie de sesion cuyo token lleva la celda como prefijo,
+	// por la que se enruta el resto. Solo en un servicio de celda, y los dos juntos.
+	CellLogin  *cellLoginSpec `json:"cell_login,omitempty"`
+	CellCookie string         `json:"cell_cookie,omitempty"`
+}
+
+type cellLoginSpec struct {
+	Method        string `json:"method"`
+	Path          string `json:"path"`
+	UsernameField string `json:"username_field"`
 }
 
 type methodPathSpec struct {
@@ -112,6 +124,8 @@ var (
 	prefixRe  = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 	moduleRe  = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
 	hostEnvRe = regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)
+	// fieldRe: un campo del cuerpo JSON o el nombre de una cookie de la tabla.
+	fieldRe = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
 )
 
 // loadRouteTable lee y valida la tabla. Falla en vez de degradar: una ruta sin
@@ -228,6 +242,9 @@ func (t *routeTable) validate() error {
 			if !strings.HasPrefix(l.Path, "/") || strings.Contains(l.Path, "..") {
 				return fmt.Errorf("tabla de rutas: ruta invalida %q en strict_limit de %q", l.Path, s.Prefix)
 			}
+		}
+		if err := t.validateSelfAuthCell(s); err != nil {
+			return err
 		}
 	}
 	if t.Frontend != "" {

@@ -8,6 +8,7 @@ import (
 
 	"github.com/alonsosss/corforce-email/pkg/middleware"
 	"github.com/go-chi/chi/v5"
+	"go.uber.org/zap"
 )
 
 // El prefijo autenticado por el servicio llega sin JWT, con el token interno y la ruta
@@ -22,6 +23,9 @@ func TestSelfAuthenticatedEnrutaSinDebilitarOtrasRutas(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer upstream.Close()
+	host, port := hostPort(t, upstream.URL)
+	t.Setenv("WEBMAIL_HOST", host)
+	t.Setenv("WEBMAIL_HOST_PORT", port)
 
 	strictHits := 0
 	strict := func(next http.Handler) http.Handler {
@@ -30,12 +34,17 @@ func TestSelfAuthenticatedEnrutaSinDebilitarOtrasRutas(t *testing.T) {
 			next.ServeHTTP(w, r)
 		})
 	}
-	specs := []selfAuthSpec{{Prefix: "webmail", Service: "webmail", StrictLimit: []methodPathSpec{{Method: "POST", Path: "/session"}}}}
+	tbl := &routeTable{
+		Services: map[string]serviceSpec{"webmail": {HostEnv: "WEBMAIL_HOST", DefaultHost: "webmail", DefaultPort: "8044"}},
+		SelfAuthenticated: []selfAuthSpec{
+			{Prefix: "webmail", Service: "webmail", StrictLimit: []methodPathSpec{{Method: "POST", Path: "/session"}}},
+		},
+	}
 
 	r := chi.NewRouter()
 	r.Use(middleware.SecureHeaders)
 	r.Route("/api/v1", func(r chi.Router) {
-		mountSelfAuthenticated(r, specs, func(string) string { return upstream.URL }, strict, "token-interno")
+		mountSelfAuthenticated(r, tbl, strict, "token-interno", nil, zap.NewNop())
 		r.Handle("/otro/*", reverseProxy(upstream.URL, "token-interno"))
 		r.Group(func(r chi.Router) {
 			r.Use(testJWTAuth(t).Authenticate)

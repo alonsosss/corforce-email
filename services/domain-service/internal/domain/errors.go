@@ -16,4 +16,7 @@ var (
 	// ErrIntegrationUnavailable: mail-directory o mail-security no respondieron y la
 	// operacion no puede dejar la fila en un estado que ellos no reflejan.
 	ErrIntegrationUnavailable = errors.New("un servicio de correo no esta disponible; reintente")
+	// ErrDomainClaimedElsewhere: el indice global de dominios de organization tiene el dominio
+	// activo para otra empresa. No se activa en el directorio de la celda de esta.
+	ErrDomainClaimedElsewhere = errors.New("el dominio ya esta activo en otra empresa de la plataforma")
 )

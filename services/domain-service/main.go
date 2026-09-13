@@ -25,6 +25,7 @@ import (
 	"github.com/alonsosss/corforce-email/services/domain-service/internal/adapters/maildirectorycli"
 	"github.com/alonsosss/corforce-email/services/domain-service/internal/adapters/mailsecuritycli"
 	natsadapter "github.com/alonsosss/corforce-email/services/domain-service/internal/adapters/nats"
+	"github.com/alonsosss/corforce-email/services/domain-service/internal/adapters/organizationcli"
 	"github.com/alonsosss/corforce-email/services/domain-service/internal/adapters/postgres"
 	"github.com/alonsosss/corforce-email/services/domain-service/internal/app"
 	"github.com/alonsosss/corforce-email/services/domain-service/internal/domain"
@@ -56,6 +57,9 @@ type settings struct {
 	platform         domain.PlatformDNS
 	mailDirectoryURL string
 	mailSecurityURL  string
+	// organizationURL sirve el indice global de dominios y, con varias celdas, la celda de cada
+	// empresa.
+	organizationURL string
 	// directoryTargets y securityTargets eligen la instancia de la celda de cada empresa.
 	directoryTargets *tenantcell.Targets
 	securityTargets  *tenantcell.Targets
@@ -69,8 +73,10 @@ type settings struct {
 	port             int
 }
 
-// loadSettings lee y valida la configuracion. Con varias celdas (tenantcell.BaseCellEnv)
-// necesita ORGANIZATION_URL para resolver la celda de cada empresa; con una no pregunta a nadie.
+// loadSettings lee y valida la configuracion. Siempre necesita ORGANIZATION_URL: cada dominio se
+// reclama en el indice global de organization antes de activarlo. Con varias celdas
+// (tenantcell.BaseCellEnv) organization da ademas la celda de cada empresa; con una, las llamadas
+// a los servicios de celda van al destino base sin preguntarla.
 func loadSettings(logger *zap.Logger) (settings, error) {
 	var missing []string
 	require := func(key string) string {
@@ -108,6 +114,9 @@ func loadSettings(logger *zap.Logger) (settings, error) {
 		return s, err
 	}
 	s.internalToken = token
+	if s.organizationURL, err = tenantcell.OrganizationURLFromEnv(); err != nil {
+		return s, fmt.Errorf("domain-service reclama cada dominio en el indice de organization antes de activarlo: %w", err)
+	}
 
 	cells, err := tenantcell.LoadInstances(os.Getenv, tenantcell.BaseCellEnv, mailDirectoryCellHostsEnv, mailSecurityCellHostsEnv)
 	if err != nil {
@@ -115,9 +124,7 @@ func loadSettings(logger *zap.Logger) (settings, error) {
 	}
 	var resolver *tenantcell.Resolver
 	if cells.BaseCell != "" {
-		if resolver, err = tenantcell.ResolverFromEnv(logger); err != nil {
-			return s, fmt.Errorf("con %s hace falta preguntar a organization la celda de cada empresa: %w", tenantcell.BaseCellEnv, err)
-		}
+		resolver = tenantcell.NewResolver(s.organizationURL, token, logger)
 	}
 	if s.directoryTargets, err = cells.Targets(mailDirectoryCellHostsEnv, s.mailDirectoryURL, resolver); err != nil {
 		return s, err
@@ -195,6 +202,7 @@ func main() {
 		Cipher:               keyRing,
 		MailDirectory:        maildirectorycli.New(cellcli.New("mail-directory", st.directoryTargets, st.internalToken, logger)),
 		MailSecurity:         mailsecuritycli.New(cellcli.New("mail-security", st.securityTargets, st.internalToken, logger)),
+		DomainIndex:          organizationcli.New(st.organizationURL, st.internalToken),
 		Events:               publisher,
 		Platform:             st.platform,
 		PlatformHostname:     st.platformHostname,

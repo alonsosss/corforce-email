@@ -41,6 +41,13 @@ func (s *memStore) Hit(_ context.Context, key string, window time.Duration) (int
 func TestLimitesCompartidosEntreReplicas(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}))
 	defer upstream.Close()
+	host, port := hostPort(t, upstream.URL)
+	t.Setenv("WEBMAIL_HOST", host)
+	t.Setenv("WEBMAIL_HOST_PORT", port)
+	webmailTable := &routeTable{
+		Services:          map[string]serviceSpec{"webmail": {HostEnv: "WEBMAIL_HOST", DefaultHost: "webmail", DefaultPort: "8044"}},
+		SelfAuthenticated: []selfAuthSpec{{Prefix: "webmail", Service: "webmail", StrictLimit: []methodPathSpec{{Method: "POST", Path: "/session"}}}},
+	}
 
 	store := &memStore{counts: map[string]int64{}, ends: map[string]time.Time{}, keys: map[string]bool{}}
 	replica := func() http.Handler {
@@ -51,9 +58,7 @@ func TestLimitesCompartidosEntreReplicas(t *testing.T) {
 		r.Route("/api/v1", func(r chi.Router) {
 			r.Use(api.Limit)
 			r.With(auth.Limit).Post("/auth/login", func(w http.ResponseWriter, _ *http.Request) {})
-			mountSelfAuthenticated(r,
-				[]selfAuthSpec{{Prefix: "webmail", Service: "webmail", StrictLimit: []methodPathSpec{{Method: "POST", Path: "/session"}}}},
-				func(string) string { return upstream.URL }, auth.Limit, "token-interno")
+			mountSelfAuthenticated(r, webmailTable, auth.Limit, "token-interno", nil, zap.NewNop())
 		})
 		return r
 	}

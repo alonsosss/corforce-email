@@ -127,12 +127,20 @@ para llamar a la API hace falta ya un superadmin. Después, todo por API: `POST 
   enlaces de cuarentena llegan a la celda base, que los rechaza (`Modelo_de_Datos_y_Celdas.md`,
   5.3 y 5.4). `GATEWAY_BASE_CELL_CODE` se fija al registrar la segunda celda en organization,
   antes de dar de alta empresas en ella: sin el, el gateway da por hecho una sola celda y las
-  mandaria a la base. El webmail todavia no se enruta por celda (5.5). `domain-service` lee las
-  mismas tres variables, con `MAIL_DIRECTORY_URL` y `MAIL_SECURITY_URL` como destinos base, y con
-  `GATEWAY_BASE_CELL_CODE` necesita `ORGANIZATION_URL` (sin ella no arranca): activa dominios y
-  entrega las claves DKIM en la instancia de la celda de cada empresa. Si esa celda no tiene
-  instancia declarada de un servicio, sus pasos fallan, se reintentan en el barrido y se cuentan
-  en `cell_call_failures_total{service, reason}`.
+  mandaria a la base. El webmail de cada celda arranca con su `CELL_CODE` (va en cada token de
+  sesion) y sus motores; el gateway recibe el de la celda base en `WEBMAIL_HOST` y los demas en
+  `WEBMAIL_CELL_HOSTS`, y lleva cada inicio de sesion a la celda del dominio del buzon (lo pregunta
+  a organization) y el resto por la celda del token; una celda sin webmail declarado recibe 503 en
+  el inicio de sesion (5.5). `domain-service` lee las mismas variables de mail-directory y
+  mail-security, con `MAIL_DIRECTORY_URL` y `MAIL_SECURITY_URL` como destinos base, y necesita
+  siempre `ORGANIZATION_URL` (sin ella no arranca): reclama cada dominio en el indice global de
+  organization antes de activarlo y, con `GATEWAY_BASE_CELL_CODE`, pregunta la celda de cada
+  empresa; activa dominios y entrega las claves DKIM en la instancia de la celda de cada empresa.
+  Si esa celda no tiene instancia declarada de un servicio, sus pasos fallan, se reintentan en el
+  barrido y se cuentan en `cell_call_failures_total{service, reason}`. Orden de despliegue del
+  indice: organization (migracion 029 y sus rutas internas) antes que el `domain-service` nuevo,
+  que sin ellas no activa ningun dominio nuevo (los ya activos siguen); el webmail nuevo, con la
+  celda en el token, cierra las sesiones abiertas con el anterior.
 * Reglas: idempotentes y aditivas (`make check-migrations` cubre empresa y celda), cabecera
   `-- Schema | Service`, nunca cambiar el tipo de una columna sin
   `ops/maintenance/pgbouncer-reconnect.sh` después (los planes preparados viven en el pooler).

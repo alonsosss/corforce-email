@@ -164,7 +164,8 @@ entre cargas, ni con `'unsafe-inline'`, que anularía la protección.
 ## Sesión del webmail
 
 El webmail (`services/webmail`) no usa la sesión de la plataforma: sus usuarios son buzones
-de correo, no usuarios de identity. Token opaco de 256 bits en la cookie `cf_wm` con
+de correo, no usuarios de identity. Token opaco en la cookie `cf_wm`, `<celda>.<secreto>`: la
+celda de la instancia que abrió la sesión y 256 bits aleatorios en base64url, con
 `HttpOnly`, `Secure` (misma variable `AUTH_COOKIE_SECURE`), `SameSite=Strict` y
 `Path=/api/v1/webmail`. En Redis solo está su SHA-256, con la inactividad como TTL
 (`WEBMAIL_SESSION_IDLE`) y una vida máxima (`WEBMAIL_SESSION_MAX`) que aplica el servicio
@@ -183,6 +184,12 @@ aplicación, y su política (`default-src 'none'; sandbox`) es más estricta, as
 intersección que aplica el navegador es la del servicio. Los adjuntos salen siempre con
 `Content-Disposition: attachment`, `nosniff` y un tipo inofensivo (`application/octet-stream`
 salvo imágenes de mapa de bits, PDF y texto plano).
+
+Con varias celdas el gateway lleva el inicio de sesión a la instancia de la celda del dominio
+del buzón y el resto de peticiones a la de la celda del token, sin JWT ni RBAC y con la misma
+CSP del servicio en toda instancia. La celda del token enruta y no autoriza nada: cada instancia
+rechaza, sin buscarlo en Redis, el token de otra celda (401 y la cookie se borra), y un prefijo
+cambiado solo llega a una celda donde esa sesión no existe (`Modelo_de_Datos_y_Celdas.md`, 5.5).
 
 El HTML de un mensaje llega ya saneado (bluemonday) dentro del JSON. La interfaz debe
 pintarlo en un `<iframe sandbox>` sin `allow-scripts` ni `allow-same-origin`: el saneado es

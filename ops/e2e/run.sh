@@ -8,7 +8,9 @@
 # transactional (hasta su rechazo por remitente sin verificar, sin SES), el doble opt-in por
 # automations, el panel de analitica y el rechazo del token de una cuenta borrada o desactivada. Los servicios de la celda corren con la credencial
 # propia de la celda (ops/db/cell-service-role.sh), sin la de plataforma. domain-service verifica
-# contra un DNS de la prueba (ops/e2e/dns_prueba.py) y activa cada dominio en la celda de su empresa.
+# contra un DNS de la prueba (ops/e2e/dns_prueba.py), reclama cada dominio en el indice global de
+# organization y lo activa en la celda de su empresa; el webmail de cada celda recibe a sus buzones
+# por el gateway de las celdas.
 #
 # Cada paso COMPRUEBA su resultado y la ejecucion termina con error si alguno falla: no
 # basta con que los servicios arranquen, tienen que hablarse. Las credenciales se generan
@@ -56,7 +58,7 @@ trap limpiar EXIT
 echo "== Infraestructura desechable"
 e2e_infra_up || exit 1
 
-SERVICES=(organization identity access-control gateway mail-directory mail-auth domain-service mail-security templates suppression billing reputation contacts analytics transactional campaigns automations)
+SERVICES=(organization identity access-control gateway mail-directory mail-auth domain-service mail-security templates suppression billing reputation contacts analytics transactional campaigns automations webmail)
 echo "== Compilacion (${SERVICES[*]})"
 e2e_compilar "${SERVICES[@]}" || exit 1
 
@@ -91,7 +93,7 @@ export AUTH_RATE_LIMIT_PER_MIN=50
 
 declare -A PORT=(
   [identity]=$((BASE + 1)) [access-control]=$((BASE + 2)) [organization]=$((BASE + 3))
-  [mail-directory]=$((BASE + 40)) [mail-auth]=$((BASE + 41)) [mail-security]=$((BASE + 42)) [domain-service]=$((BASE + 43))
+  [mail-directory]=$((BASE + 40)) [mail-auth]=$((BASE + 41)) [mail-security]=$((BASE + 42)) [domain-service]=$((BASE + 43)) [webmail]=$((BASE + 44))
   [suppression]=$((BASE + 46)) [templates]=$((BASE + 47)) [transactional]=$((BASE + 45)) [contacts]=$((BASE + 50)) [campaigns]=$((BASE + 52)) [automations]=$((BASE + 51)) [analytics]=$((BASE + 53)) [reputation]=$((BASE + 54)) [billing]=$((BASE + 55))
   [gateway]=$((BASE + 80))
 )
@@ -113,7 +115,7 @@ export MAIL_DNS_RESOLVER="127.0.0.1:$DNS_PORT"
 export API_ORIGIN="http://localhost:${PORT[gateway]}" PUBLIC_BASE_URL="http://localhost:${PORT[gateway]}"
 # Direcciones internas: las que el gateway lee de routes.json por <SERVICIO>_HOST(_PORT) y
 # las que los servicios usan entre si.
-for s in identity access-control organization mail-directory mail-security domain-service suppression templates billing reputation contacts analytics transactional campaigns automations; do
+for s in identity access-control organization mail-directory mail-security domain-service suppression templates billing reputation contacts analytics transactional campaigns automations webmail; do
   var="$(echo "$s" | tr 'a-z-' 'A-Z_')_HOST"
   export "$var=127.0.0.1" "${var}_PORT=${PORT[$s]}"
 done
@@ -586,6 +588,7 @@ echo "== Rutas con sesion por celda (segundo gateway, dos celdas)"
 # cada peticion con sesion va a la celda de su empresa, que pregunta a organization, y una celda
 # sin instancia declarada no llega a ninguna. Tokens nuevos: los de arriba caducan a los 5 min.
 MD2_PORT=$((BASE + 60)) GW2_PORT=$((BASE + 61)) MS2_PORT=$((BASE + 62)) REDIS2_PORT=$((BASE - 1620)) DS2_PORT=$((BASE + 66))
+MA2_PORT=$((BASE + 67)) MA2_TLS_PORT=$((BASE + 68)) WM2_PORT=$((BASE + 69))
 T1N=$(e2e_login "$ADMIN_EMAIL" "$ADMIN_PASS" | jget data.access_token)
 A2N="Authorization: Bearer $(e2e_login admin@acme.test "$TENANT_PASS" | jget data.access_token)"
 for c in pe-02 pe-03; do
@@ -620,7 +623,8 @@ env -u POSTGRES_PASSWORD -u JWT_SIGNING_KEY CELL_CODE=pe-02 CELL_DB_NAME=mail_ce
 env -u JWT_SIGNING_KEY DOMAIN_SERVICE_PORT="$DS2_PORT" GATEWAY_BASE_CELL_CODE=pe-01 MAIL_DIRECTORY_CELL_HOSTS="pe-02=127.0.0.1:$MD2_PORT" \
   "$WORK/bin/domain-service" >"$WORK/log/domain-service-celdas.log" 2>&1 &
 env -u JWT_SIGNING_KEY GATEWAY_PORT="$GW2_PORT" GATEWAY_BASE_CELL_CODE=pe-01 MAIL_DIRECTORY_CELL_HOSTS="pe-02=127.0.0.1:$MD2_PORT" \
-  MAIL_SECURITY_CELL_HOSTS="pe-02=127.0.0.1:$MS2_PORT" DOMAIN_SERVICE_HOST_PORT="$DS2_PORT" "$WORK/bin/gateway" >"$WORK/log/gateway-celdas.log" 2>&1 &
+  MAIL_SECURITY_CELL_HOSTS="pe-02=127.0.0.1:$MS2_PORT" WEBMAIL_CELL_HOSTS="pe-02=127.0.0.1:$WM2_PORT" \
+  DOMAIN_SERVICE_HOST_PORT="$DS2_PORT" "$WORK/bin/gateway" >"$WORK/log/gateway-celdas.log" 2>&1 &
 esperar_salud mail-directory-pe-02 "$MD2_PORT"
 esperar_salud mail-security-pe-02 "$MS2_PORT"
 esperar_salud domain-service-celdas "$DS2_PORT"
@@ -730,6 +734,80 @@ expect "las claves DKIM no salen hacia ninguna instancia: mail-security no decla
 M_DS2=$(curl -s "http://127.0.0.1:$DS2_PORT/metrics")
 contains "y lo cuenta como celda sin instancia" "$M_DS2" 'cell_call_failures_total{reason="not_served",service="mail-security"} 1'
 contains "sin llamar a ninguna instancia de otra celda" "$M_DS2" 'cell_call_failures_total{reason="not_in_cell",service="mail-directory"} 0'
+
+echo "== Webmail por celda (indice global de dominios y celda en el token)"
+# domain-service reclamo beta.test en el indice global de organization al activarlo en pe-02. Un
+# webmail por celda, cada uno con su mail-auth y su CELL_CODE; sin IMAP ni SMTP: aqui solo se abre,
+# se usa y se cierra la sesion. Cada inicio sale de su propia IP de documentacion para no gastar el
+# cupo estricto de 127.0.0.1.
+ORG_HOST="http://127.0.0.1:${PORT[organization]}/internal/organization"
+expect "beta.test queda en el indice global con la empresa de beta" \
+  "$(sql mail_registry "SELECT tenant_id FROM organization.mail_domain_cells WHERE domain = 'beta.test'")" "$BID"
+expect "organization da al gateway la celda de beta.test" \
+  "$(curl -s "$ORG_HOST/mail-domains/beta.test/cell" -H "X-Gateway-Token: $INTERNAL_GATEWAY_TOKEN" | jget data.cell_code)" "pe-02"
+expect "y no deja que otra empresa lo active" \
+  "$(sesion -X PUT "$ORG_HOST/tenants/$ACME_ID/mail-domains/beta.test" -H "X-Gateway-Token: $INTERNAL_GATEWAY_TOKEN")" "MAIL_DOMAIN_CLAIMED 409"
+env -u POSTGRES_PASSWORD -u JWT_SIGNING_KEY CELL_CODE=pe-02 CELL_DB_NAME=mail_cell_pe_02 CELL_DB_PASSWORD="$CELL2_PASS" \
+  MAIL_AUTH_PORT="$MA2_PORT" MAIL_AUTH_TLS_PORT="$MA2_TLS_PORT" "$WORK/bin/mail-auth" >"$WORK/log/mail-auth-pe-02.log" 2>&1 &
+WM_MASTER_USER="e2e-webmail@platform.local"
+WM_MASTER_PASS=$(rand_hex 20)
+# webmail_de <celda> <puerto> <puerto TLS de su mail-auth> <mail-directory de su celda>. El webmail
+# no abre ninguna base, pero config.Load exige una credencial: conserva la de la prueba.
+webmail_de() {
+  env -u JWT_SIGNING_KEY CELL_CODE="$1" WEBMAIL_PORT="$2" MAIL_AUTH_URL="https://127.0.0.1:$3" \
+    MAIL_DIRECTORY_URL="$4" WEBMAIL_IMAP_ADDR=127.0.0.1:1 WEBMAIL_IMAP_TLS=none WEBMAIL_SMTP_ADDR=127.0.0.1:1 \
+    WEBMAIL_TLS_INSECURE_SKIP_VERIFY=true WEBMAIL_ALLOW_UNSCANNED_ATTACHMENTS=true NATS_URL=nats://127.0.0.1:1 \
+    WEBMAIL_MASTER_USER="${WM_MASTER_USER}" WEBMAIL_MASTER_PASSWORD="${WM_MASTER_PASS}" \
+    "$WORK/bin/webmail" >"$WORK/log/webmail-$1.log" 2>&1 &
+}
+webmail_de pe-01 "${PORT[webmail]}" "$AUTH_TLS_PORT" "$MAIL_DIRECTORY_URL"
+webmail_de pe-02 "$WM2_PORT" "$MA2_TLS_PORT" "http://127.0.0.1:$MD2_PORT"
+esperar_salud mail-auth-pe-02 "$MA2_PORT"
+esperar_salud webmail-pe-01 "${PORT[webmail]}"
+esperar_salud webmail-pe-02 "$WM2_PORT"
+
+AB="Authorization: Bearer $(e2e_login admin@beta.test "$CELDAS_PASS" | jget data.access_token)"
+EVA_PASS="$(rand_hex 10)Aa1!"
+expect "alta del buzon eva@beta.test en pe-02 por el gateway de las celdas" "$(curl -s -X POST "$GW2/mailboxes" -H "$AB" -H 'Content-Type: application/json' \
+  -d "{\"local_part\":\"eva\",\"domain\":\"beta.test\",\"password\":\"$EVA_PASS\",\"display_name\":\"Eva Rios\"}" | jget data.username)" "eva@beta.test"
+# wm <url> <tarro> <metodo> [curl...]: codigo HTTP; el cuerpo queda en $WORK/wm.json.
+wm() {
+  local url="$1" tarro="$2" metodo="$3"
+  shift 3
+  curl -s -o "$WORK/wm.json" -w '%{http_code}' -b "$tarro" -c "$tarro" -X "$metodo" "$url" -H "Origin: $API_ORIGIN" -H 'X-Real-IP: 198.51.100.40' "$@"
+}
+# entrar_wm <gateway> <tarro> <buzon> <contrasena>
+entrar_wm() { wm "$1/webmail/session" "$2" POST -H 'Content-Type: application/json' -d "{\"username\":\"$3\",\"password\":\"$4\"}"; }
+celda_de_la_cookie() { awk '$6 == "cf_wm" {print $7}' "$1" | tail -1 | cut -d. -f1; }
+TARRO_EVA="$WORK/eva.cookies"
+expect "eva inicia sesion en el webmail por el gateway de las celdas" \
+  "$(entrar_wm "$GW2" "$TARRO_EVA" eva@beta.test "$EVA_PASS")/$(jget data.username <"$WORK/wm.json")" "200/eva@beta.test"
+expect "su cookie lleva la celda pe-02" "$(celda_de_la_cookie "$TARRO_EVA")" "pe-02"
+contains "la abrio el webmail de pe-02" "$(cat "$WORK/log/webmail-pe-02.log")" '"username":"eva@beta.test"'
+expect "y el gateway la lleva despues a su celda por el token" \
+  "$(wm "$GW2/webmail/session" "$TARRO_EVA" GET)/$(jget data.username <"$WORK/wm.json")" "200/eva@beta.test"
+sed 's/\tpe-02\./\tpe-01./' "$TARRO_EVA" >"$WORK/eva-cambiada.cookies"
+CAMBIADA=$(curl -s -D - -o "$WORK/wm.json" -b "$WORK/eva-cambiada.cookies" "$GW2/webmail/session" -H 'X-Real-IP: 198.51.100.40')
+expect "con la celda del token cambiada a pe-01 la sesion no existe" "$(jget error.code <"$WORK/wm.json") $(head -1 <<<"$CAMBIADA" | cut -d' ' -f2)" "SESSION_EXPIRED 401"
+contains "y la cookie se borra" "$CAMBIADA" "cf_wm=;"
+# El gateway sin celdas lo lleva todo a pe-01: el token real de pe-02 llega a la instancia de otra
+# celda, que lo rechaza sin buscarlo (segunda barrera).
+AJENA=$(curl -s -D - -o "$WORK/wm.json" -b "$TARRO_EVA" "$GW/webmail/session" -H 'X-Real-IP: 198.51.100.40')
+expect "por el gateway sin celdas el token de pe-02 llega a pe-01, que no lo acepta" "$(jget error.code <"$WORK/wm.json") $(head -1 <<<"$AJENA" | cut -d' ' -f2)" "SESSION_EXPIRED 401"
+contains "sin buscarlo en su almacen" "$(cat "$WORK/log/webmail-pe-01.log")" '"token_cell":"pe-02"'
+entrar_wm "$GW2" "$WORK/nadie.cookies" nadie@desconocido.test "no-es-$EVA_PASS" >/dev/null
+DESCONOCIDO=$(cat "$WORK/wm.json")
+expect "una contrasena mala de eva recibe 401" "$(entrar_wm "$GW2" "$WORK/eva-mala.cookies" eva@beta.test "no-es-$EVA_PASS")" "401"
+expect "y un dominio desconocido recibe exactamente la misma respuesta" "$DESCONOCIDO" "$(cat "$WORK/wm.json")"
+TARRO_ANA="$WORK/ana.cookies"
+expect "ana (acme.test, fuera del indice) entra en la celda base por el gateway de las celdas" \
+  "$(entrar_wm "$GW2" "$TARRO_ANA" ana@acme.test "$MBX_PASS")" "200"
+expect "con la celda pe-01 en su cookie" "$(celda_de_la_cookie "$TARRO_ANA")" "pe-01"
+expect "por el gateway sin celdas eva no entra: la celda base no conoce su buzon" \
+  "$(entrar_wm "$GW" "$WORK/eva-sin-celdas.cookies" eva@beta.test "$EVA_PASS")/$(jget error.code <"$WORK/wm.json")" "401/INVALID_CREDENTIALS"
+expect "eva cierra sesion" "$(wm "$GW2/webmail/session" "$TARRO_EVA" DELETE)" "204"
+expect "y su cookie ya no abre nada" "$(wm "$GW2/webmail/session" "$TARRO_EVA" GET)" "401"
+lacks "el gateway de las celdas no dejo ningun inicio de sesion sin celda" "$(curl -s "http://127.0.0.1:$GW2_PORT/metrics")" 'service="webmail"'
 
 echo "== Registros"
 # Los unicos errores esperados son los que la prueba provoca a proposito: los pasos de

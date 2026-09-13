@@ -85,7 +85,10 @@ cambie cualquiera de estas líneas.
   la instancia de la celda de la empresa (2026-09-13, `make e2e` con dos celdas; 5.4), y cada
   instancia rechaza por su cuenta a la empresa que organization no situa en su celda (403
   `TENANT_NOT_IN_CELL` sin escribir nada, `pkg/tenantcell`; `make e2e` manda una empresa de
-  pe-02 a pe-01 por un gateway sin celdas); el webmail sigue en la celda base (P, 5.5). Credencial propia por celda para los servicios de celda hecha (2026-09-13:
+  pe-02 a pe-01 por un gateway sin celdas); el webmail va a la celda del dominio del buzon y
+  despues a la de su token, con el indice global de dominios activos de organization, que da
+  tambien la unicidad de un dominio entre celdas (2026-09-13, `make e2e` con un webmail por
+  celda; 5.5). Credencial propia por celda para los servicios de celda hecha (2026-09-13:
   `ops/db/cell-service-role.sh`, `db.NewCellPool`, falla cerrado fuera de desarrollo;
   `Modelo_de_Datos_y_Celdas.md` 5.1). Pendiente: reparto de secretos por servicio en
   compose, la entrada del rol en `userlist.txt` de PgBouncer, `mail_engine` por celda y la

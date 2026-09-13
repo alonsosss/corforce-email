@@ -12,8 +12,11 @@ import (
 	"go.uber.org/zap"
 )
 
-// Config son la politica de sesion y los topes del webmail.
+// Config son la celda, la politica de sesion y los topes del webmail.
 type Config struct {
+	// CellCode es la celda de esta instancia: va en cada token de sesion que abre, y solo los
+	// tokens de esta celda se buscan en el almacen.
+	CellCode           string
 	Sessions           domain.SessionPolicy
 	Limits             domain.Limits
 	MaxBodyPartBytes   int64
@@ -63,6 +66,9 @@ func New(d Deps) (*Service, error) {
 	if d.Auth == nil || d.Sessions == nil || d.Mail == nil || d.Sender == nil || d.Directory == nil ||
 		d.Ledger == nil || d.Composer == nil || d.Sanitizer == nil || d.PartURL == nil || d.Logger == nil {
 		return nil, errors.New("webmail: faltan dependencias del caso de uso")
+	}
+	if !domain.ValidCellCode(d.Config.CellCode) {
+		return nil, fmt.Errorf("webmail: %q no es un codigo de celda", d.Config.CellCode)
 	}
 	if d.Config.SendTimeout <= 0 {
 		return nil, errors.New("webmail: el plazo de envio debe ser positivo")

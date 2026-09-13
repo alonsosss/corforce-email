@@ -33,6 +33,7 @@ type harness struct {
 	dns       *fakeDNS
 	directory *fakeDirectory
 	security  *fakeSecurity
+	index     *fakeIndex
 	events    *fakePublisher
 	keyRing   *crypto.KeyRing
 	tenantID  uuid.UUID
@@ -54,7 +55,7 @@ func newHarness(t *testing.T) *harness {
 	t.Helper()
 	h := &harness{
 		dns: newFakeDNS(), directory: &fakeDirectory{},
-		security: &fakeSecurity{}, events: &fakePublisher{},
+		security: &fakeSecurity{}, index: newFakeIndex(), events: &fakePublisher{},
 		keyRing:  testKeyRing(t, testActiveKey, ""),
 		tenantID: uuid.New(),
 		now:      time.Date(2026, 9, 12, 10, 0, 0, 0, time.UTC),
@@ -62,7 +63,7 @@ func newHarness(t *testing.T) *harness {
 	h.repo = newFakeRepo(func() time.Time { return h.now })
 	h.uc = New(Deps{
 		Repo: h.repo, DNS: h.dns, Cipher: h.keyRing,
-		MailDirectory: h.directory, MailSecurity: h.security, Events: h.events,
+		MailDirectory: h.directory, MailSecurity: h.security, DomainIndex: h.index, Events: h.events,
 		Platform: testPlatform, PlatformHostname: platformHost,
 		DKIMRotationGrace: 72 * time.Hour,
 		Now:               func() time.Time { return h.now },

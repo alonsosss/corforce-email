@@ -27,6 +27,20 @@ type CellRepository interface {
 	Update(ctx context.Context, cell *domain.Cell) error
 }
 
+// MailDomainIndex es el indice global de los dominios de correo activos: dominio -> empresa. La
+// celda del dominio es la de su empresa. Lo escribe domain-service por la API interna al activar
+// y retirar dominios; lo lee el gateway para llevar el webmail de cada buzon a su celda.
+type MailDomainIndex interface {
+	// Claim registra el dominio para la empresa; si ya es suyo solo lo confirma.
+	// ErrMailDomainClaimed si es de otra empresa; ErrTenantNotFound si la empresa no existe.
+	Claim(ctx context.Context, name string, tenantID uuid.UUID) error
+	// Release retira el dominio si es de la empresa y dice si lo retiro. Si no esta, o es de
+	// otra empresa, no hace nada.
+	Release(ctx context.Context, name string, tenantID uuid.UUID) (bool, error)
+	// TenantOf devuelve la empresa del dominio o ErrMailDomainNotFound.
+	TenantOf(ctx context.Context, name string) (uuid.UUID, error)
+}
+
 type TenantDBProvisioner interface {
 	// CreateDatabase crea la base de la empresa, la marca como suya y la cierra a PUBLIC. Si
 	// ya existe con la marca de esa empresa (un intento anterior del alta) la adopta; si

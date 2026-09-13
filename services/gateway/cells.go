@@ -108,10 +108,47 @@ func (t *routeTable) validatePublicCell(p publicRouteSpec) error {
 	return nil
 }
 
+// validateSelfAuthCell: un prefijo que autentica el propio servicio no lleva empresa verificada
+// ni celda en la ruta. Solo puede ser de un servicio de celda si declara como se enruta por celda
+// (selfauthcells.go): el inicio de sesion (metodo con cuerpo, ruta fija, campo del nombre de
+// usuario), que ademas va con el limitador estricto porque cada intento pregunta a organization,
+// y la cookie cuyo token lleva la celda. Sin eso iria siempre al destino base, que es otra celda
+// para los buzones de las demas. En un servicio que no es de celda esas claves no significan nada
+// y tampoco se admiten.
+func (t *routeTable) validateSelfAuthCell(s selfAuthSpec) error {
+	cellService := t.Services[s.Service].CellHostsEnv != ""
+	declared := s.CellLogin != nil || s.CellCookie != ""
+	switch {
+	case !cellService && declared:
+		return fmt.Errorf("tabla de rutas: el prefijo %q declara cell_login o cell_cookie y %q no es un servicio de celda", s.Prefix, s.Service)
+	case !cellService:
+		return nil
+	case s.CellLogin == nil || s.CellCookie == "":
+		return fmt.Errorf("tabla de rutas: el prefijo autenticado por el servicio %q apunta al servicio de celda %q sin cell_login y cell_cookie: el gateway no sabria a que celda llevar el inicio de sesion ni la sesion", s.Prefix, s.Service)
+	}
+	l := s.CellLogin
+	if l.Method != "POST" && l.Method != "PUT" {
+		return fmt.Errorf("tabla de rutas: cell_login de %q con metodo %q: el nombre de usuario viaja en el cuerpo (POST o PUT)", s.Prefix, l.Method)
+	}
+	if !strings.HasPrefix(l.Path, "/") || strings.Contains(l.Path, "..") || strings.ContainsAny(l.Path, "{}*") {
+		return fmt.Errorf("tabla de rutas: ruta invalida %q en cell_login de %q", l.Path, s.Prefix)
+	}
+	if !fieldRe.MatchString(l.UsernameField) || !fieldRe.MatchString(s.CellCookie) {
+		return fmt.Errorf("tabla de rutas: username_field %q o cell_cookie %q invalidos en %q", l.UsernameField, s.CellCookie, s.Prefix)
+	}
+	for _, strict := range s.StrictLimit {
+		if strict.Method == l.Method && strict.Path == l.Path {
+			return nil
+		}
+	}
+	return fmt.Errorf("tabla de rutas: el inicio de sesion por celda %s %s de %q debe ir tambien en strict_limit: cada intento pregunta la celda a organization", l.Method, l.Path, s.Prefix)
+}
+
 // validateCellServices: un servicio de celda tiene alguna ruta, y todas se pueden enrutar por
-// celda (con sesion, por la empresa; publicas, por {cell}). Un prefijo que autentica el propio
-// servicio o el frontend no llevan ni empresa verificada ni celda en la ruta: irian siempre al
-// destino base, que es otra celda para las empresas de las demas.
+// celda (con sesion, por la empresa; publicas, por {cell}; autenticadas por el servicio, por el
+// dominio del buzon y la cookie, validateSelfAuthCell). El frontend no lleva ni empresa
+// verificada ni celda en la ruta: iria siempre al destino base, que es otra celda para las
+// empresas de las demas.
 func (t *routeTable) validateCellServices() error {
 	routed := map[string]bool{}
 	for _, r := range t.Routes {
@@ -123,8 +160,8 @@ func (t *routeTable) validateCellServices() error {
 		}
 	}
 	for _, s := range t.SelfAuthenticated {
-		if t.Services[s.Service].CellHostsEnv != "" {
-			return fmt.Errorf("tabla de rutas: el prefijo autenticado por el servicio %q apunta al servicio de celda %q, que el gateway no sabe enrutar por celda", s.Prefix, s.Service)
+		if s.CellLogin != nil && t.Services[s.Service].CellHostsEnv != "" {
+			routed[s.Service] = true
 		}
 	}
 	if t.Frontend != "" && t.Services[t.Frontend].CellHostsEnv != "" {
@@ -139,7 +176,7 @@ func (t *routeTable) validateCellServices() error {
 	}
 	for name, s := range t.Services {
 		if s.CellHostsEnv != "" && !routed[name] {
-			return fmt.Errorf("tabla de rutas: %q declara cell_hosts_env sin ninguna ruta con sesion ni publica con {%s}", name, cellParam)
+			return fmt.Errorf("tabla de rutas: %q declara cell_hosts_env sin ninguna ruta con sesion, publica con {%s} ni autenticada por el servicio con cell_login", name, cellParam)
 		}
 	}
 	return nil

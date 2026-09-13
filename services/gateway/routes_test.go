@@ -60,6 +60,11 @@ func TestTablaEmbebidaEsValida(t *testing.T) {
 	if idx["webmail"] != "" {
 		t.Errorf("el webmail no se gatea por modulo")
 	}
+	// El webmail es de celda: su inicio de sesion se enruta por el dominio del buzon y el resto
+	// por la celda del token de su cookie.
+	if webmail.CellLogin == nil || *webmail.CellLogin != (cellLoginSpec{Method: "POST", Path: "/session", UsernameField: "username"}) || webmail.CellCookie != "cf_wm" {
+		t.Errorf("enrutado por celda del webmail: %+v %q", webmail.CellLogin, webmail.CellCookie)
+	}
 
 	// Los servicios cuya base es la celda se enrutan por celda en todas sus rutas.
 	celda := map[string]string{}
@@ -68,7 +73,8 @@ func TestTablaEmbebidaEsValida(t *testing.T) {
 			celda[name] = s.CellHostsEnv
 		}
 	}
-	if len(celda) != 2 || celda["mail-security"] != "MAIL_SECURITY_CELL_HOSTS" || celda["mail-directory"] != "MAIL_DIRECTORY_CELL_HOSTS" {
+	if len(celda) != 3 || celda["mail-security"] != "MAIL_SECURITY_CELL_HOSTS" || celda["mail-directory"] != "MAIL_DIRECTORY_CELL_HOSTS" ||
+		celda["webmail"] != "WEBMAIL_CELL_HOSTS" {
 		t.Fatalf("servicios de celda: %v", celda)
 	}
 
@@ -190,6 +196,44 @@ func TestValidacionRechazaIncoherencias(t *testing.T) {
 			cellService(t)
 			t.SelfAuthenticated = []selfAuthSpec{{Prefix: "inbox", Service: "mail-security"}}
 		},
+		"autenticada por un servicio de celda sin cell_cookie": func(t *routeTable) {
+			webmailCell(t)
+			t.SelfAuthenticated[0].CellCookie = ""
+		},
+		"autenticada por un servicio de celda sin cell_login": func(t *routeTable) {
+			webmailCell(t)
+			t.SelfAuthenticated[0].CellLogin = nil
+		},
+		"cell_login en un servicio que no es de celda": func(t *routeTable) {
+			t.SelfAuthenticated = []selfAuthSpec{{Prefix: "inbox", Service: "identity",
+				StrictLimit: []methodPathSpec{{Method: "POST", Path: "/session"}},
+				CellLogin:   &cellLoginSpec{Method: "POST", Path: "/session", UsernameField: "username"}}}
+		},
+		"cell_cookie en un servicio que no es de celda": func(t *routeTable) {
+			t.SelfAuthenticated = []selfAuthSpec{{Prefix: "inbox", Service: "identity", CellCookie: "cf_wm"}}
+		},
+		"cell_login fuera del limitador estricto": func(t *routeTable) {
+			webmailCell(t)
+			t.SelfAuthenticated[0].StrictLimit = []methodPathSpec{{Method: "POST", Path: "/otra"}}
+		},
+		"cell_login con un metodo sin cuerpo": func(t *routeTable) {
+			webmailCell(t)
+			t.SelfAuthenticated[0].CellLogin.Method = "GET"
+			t.SelfAuthenticated[0].StrictLimit[0].Method = "GET"
+		},
+		"cell_login con parametro en la ruta": func(t *routeTable) {
+			webmailCell(t)
+			t.SelfAuthenticated[0].CellLogin.Path = "/session/{id}"
+			t.SelfAuthenticated[0].StrictLimit[0].Path = "/session/{id}"
+		},
+		"cell_login con un campo invalido": func(t *routeTable) {
+			webmailCell(t)
+			t.SelfAuthenticated[0].CellLogin.UsernameField = "User-Name"
+		},
+		"cell_cookie invalida": func(t *routeTable) {
+			webmailCell(t)
+			t.SelfAuthenticated[0].CellCookie = "cf wm"
+		},
 		"frontend de celda": func(t *routeTable) {
 			cellService(t)
 			t.Frontend = "mail-security"
@@ -223,6 +267,25 @@ func TestValidacionRechazaIncoherencias(t *testing.T) {
 	if err := tbl.validate(); err != nil {
 		t.Fatalf("un servicio de celda solo con rutas con sesion debe validar: %v", err)
 	}
+	// Un servicio de celda cuyo unico prefijo lo autentica el propio servicio, con su enrutado.
+	tbl = base()
+	webmailCell(&tbl)
+	if err := tbl.validate(); err != nil {
+		t.Fatalf("un servicio de celda autenticado por el servicio con cell_login y cell_cookie debe validar: %v", err)
+	}
+}
+
+// webmailCell anade el webmail como servicio de celda autenticado por el servicio, con su
+// enrutado por celda completo, y organization.
+func webmailCell(t *routeTable) {
+	t.Services["webmail"] = serviceSpec{HostEnv: "WEBMAIL_HOST", DefaultHost: "webmail", DefaultPort: "8044", CellHostsEnv: "WEBMAIL_CELL_HOSTS"}
+	t.Services[cellDirectoryService] = serviceSpec{HostEnv: "ORGANIZATION_HOST", DefaultHost: "organization", DefaultPort: "8003"}
+	t.SelfAuthenticated = []selfAuthSpec{{
+		Prefix: "webmail", Service: "webmail",
+		StrictLimit: []methodPathSpec{{Method: "POST", Path: "/session"}},
+		CellLogin:   &cellLoginSpec{Method: "POST", Path: "/session", UsernameField: "username"},
+		CellCookie:  "cf_wm",
+	}}
 }
 
 // cellService anade un servicio de celda con una ruta por celda y organization, que resuelve

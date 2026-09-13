@@ -32,7 +32,9 @@ type Deps struct {
 	Cipher        ports.Cipher
 	MailDirectory ports.MailDirectoryClient
 	MailSecurity  ports.MailSecurityClient
-	Events        ports.EventPublisher
+	// DomainIndex es el indice global de dominios activos de organization.
+	DomainIndex ports.DomainIndex
+	Events      ports.EventPublisher
 	// Platform son los valores que aparecen en los registros del cliente.
 	Platform domain.PlatformDNS
 	// PlatformHostname es MAIL_HOSTNAME: ni el ni sus subdominios se dan de alta.
@@ -51,6 +53,7 @@ type UseCase struct {
 	cipher        ports.Cipher
 	mailDirectory ports.MailDirectoryClient
 	mailSecurity  ports.MailSecurityClient
+	index         ports.DomainIndex
 	events        ports.EventPublisher
 	platform      domain.PlatformDNS
 	platformHost  string
@@ -64,7 +67,7 @@ type UseCase struct {
 func New(d Deps) *UseCase {
 	uc := &UseCase{
 		repo: d.Repo, dns: d.DNS, cipher: d.Cipher,
-		mailDirectory: d.MailDirectory, mailSecurity: d.MailSecurity, events: d.Events,
+		mailDirectory: d.MailDirectory, mailSecurity: d.MailSecurity, index: d.DomainIndex, events: d.Events,
 		platform: d.Platform, platformHost: d.PlatformHostname,
 		rotationGrace: d.DKIMRotationGrace, pendingWindow: d.PendingRecheckWindow,
 		retention: d.CheckRetention, logger: d.Logger, now: d.Now,
@@ -175,7 +178,8 @@ type UpdateRequest struct {
 
 // Update cambia el uso o la politica DMARC. Anadir el uso corporativo exige un MX que
 // todavia no se ha comprobado, asi que un dominio verificado vuelve a pending; quitarlo
-// lo desactiva en el directorio de la celda, y mail-directory se niega si quedan buzones.
+// lo desactiva en el directorio de la celda (mail-directory se niega si quedan buzones) y lo
+// suelta del indice global de dominios.
 func (uc *UseCase) Update(ctx context.Context, tenantID, id uuid.UUID, req UpdateRequest) (*domain.Domain, error) {
 	if req.Purpose == nil && req.DMARCPolicy == nil {
 		return nil, domain.ErrNothingToUpdate
@@ -203,8 +207,8 @@ func (uc *UseCase) Update(ctx context.Context, tenantID, id uuid.UUID, req Updat
 			d.Status = domain.StatusPending
 			d.VerifiedAt = nil
 		case d.Status == domain.StatusVerified && wasCorporate && !isCorporate:
-			if err := uc.mailDirectory.SetActivation(ctx, tenantID, d.Domain, false); err != nil {
-				return nil, integrationError("desactivar en mail-directory", err)
+			if err := uc.retireFromDirectory(ctx, d); err != nil {
+				return nil, integrationError("retirar del directorio de la celda", err)
 			}
 		}
 	}
@@ -215,17 +219,19 @@ func (uc *UseCase) Update(ctx context.Context, tenantID, id uuid.UUID, req Updat
 }
 
 // Delete retira el dominio: primero lo desactiva en el directorio (409 si hay buzones), tambien
-// si ya no es corporativo pero su desactivacion seguia pendiente, y borra sus claves del Redis
-// de los motores; solo entonces borra la fila. Si un servicio no responde, la fila se queda:
-// una clave de firma huerfana en Redis es peor que un dominio que tarda en borrarse.
+// si ya no es corporativo pero su desactivacion seguia pendiente, y lo suelta del indice global
+// de dominios; despues borra sus claves del Redis de los motores y solo entonces borra la fila.
+// Si un servicio no responde, la fila se queda: una clave de firma huerfana en Redis o un dominio
+// que sigue reclamado por una empresa que ya no lo tiene son peores que un dominio que tarda en
+// borrarse.
 func (uc *UseCase) Delete(ctx context.Context, tenantID, id uuid.UUID) error {
 	d, err := uc.repo.GetByID(ctx, tenantID, id)
 	if err != nil {
 		return err
 	}
 	if d.Purpose.IncludesCorporate() || d.DirectoryDeactivationPending {
-		if err := uc.mailDirectory.SetActivation(ctx, tenantID, d.Domain, false); err != nil {
-			return integrationError("desactivar en mail-directory", err)
+		if err := uc.retireFromDirectory(ctx, d); err != nil {
+			return integrationError("retirar del directorio de la celda", err)
 		}
 	}
 	if err := uc.mailSecurity.DeleteDKIM(ctx, tenantID, d.Domain); err != nil {

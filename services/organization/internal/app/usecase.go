@@ -41,6 +41,8 @@ type Dependencies struct {
 	Identity  ports.Identity
 	Modules   ports.ModulesRepository
 	Publisher ports.TenantEventPublisher
+	// MailDomains es el indice global dominio de correo -> empresa.
+	MailDomains ports.MailDomainIndex
 	// DefaultCellCode es la celda donde nacen los tenants cuya alta no indica una.
 	// Vacio significa que no hay celda por defecto y toda alta debe indicarla.
 	DefaultCellCode string
@@ -59,6 +61,7 @@ type OrganizationUseCase struct {
 	identity        ports.Identity
 	modules         ports.ModulesRepository
 	publisher       ports.TenantEventPublisher
+	mailDomains     ports.MailDomainIndex
 	defaultCellCode string
 	sagaLease       time.Duration
 	logger          *zap.Logger
@@ -78,6 +81,7 @@ func NewOrganizationUseCase(deps Dependencies) *OrganizationUseCase {
 		cells:           deps.Cells,
 		sagas:           deps.Sagas,
 		provisioner:     deps.Provisioner,
+		mailDomains:     deps.MailDomains,
 		access:          deps.Access,
 		identity:        deps.Identity,
 		modules:         deps.Modules,

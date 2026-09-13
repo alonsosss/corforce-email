@@ -103,3 +103,17 @@ func TestLoadSettingsSinClamAVNiOptOut(t *testing.T) {
 func errorMentions(fragment string) func(error) bool {
 	return func(err error) bool { return err != nil && strings.Contains(err.Error(), fragment) }
 }
+
+// La celda va en cada token de sesion: un CELL_CODE que no es un codigo de celda no arranca.
+func TestLoadSettingsCeldaInvalida(t *testing.T) {
+	for _, cell := range []string{"", "PE-01", "pe.01", "pe_01", "pe-01 x"} {
+		setSettingsEnv(t, "production", map[string]string{"CELL_CODE": cell})
+		if _, err := loadSettings(); err == nil || !strings.Contains(err.Error(), "CELL_CODE") {
+			t.Errorf("CELL_CODE=%q: %v", cell, err)
+		}
+	}
+	setSettingsEnv(t, "production", map[string]string{"CELL_CODE": "pe-02"})
+	if st, err := loadSettings(); err != nil || st.cellCode != "pe-02" {
+		t.Fatalf("CELL_CODE=pe-02: %q %v", st.cellCode, err)
+	}
+}

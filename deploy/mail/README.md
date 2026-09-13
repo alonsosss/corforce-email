@@ -186,7 +186,10 @@ por `(username, real_rip)` y por `real_rip` (`MAIL_AUTH_MAX_FAILURES` 10,
 ## Webmail (usuario maestro y envio)
 
 `services/webmail` lee por IMAP y envia por submission en nombre del buzon sin guardar su
-contrasena (la comprueba `mail-auth` con service `webmail` al abrir la sesion):
+contrasena (la comprueba `mail-auth` con service `webmail` al abrir la sesion). Cada celda
+despliega el suyo contra sus motores y su `mail-auth`, con su `CELL_CODE`, que va en cada token
+de sesion; el gateway lleva cada buzon al de la celda de su dominio (`WEBMAIL_CELL_HOSTS`,
+`docs/Modelo_de_Datos_y_Celdas.md` 5.5):
 
 * **IMAP**: `LOGIN "<buzon>*<maestro>@platform.local" <contrasena maestra>` contra
   `WEBMAIL_IMAP_ADDR` (`dovecot:993`, TLS implicito verificado contra `MAIL_HOSTNAME`). La

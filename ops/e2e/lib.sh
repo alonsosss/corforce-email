@@ -117,8 +117,10 @@ e2e_infra_up() {
   export PG_CONTAINER="$E2E_PREFIX-pg"
   docker rm -f "$E2E_PREFIX-pg" "$E2E_PREFIX-nats" "$E2E_PREFIX-redis" >/dev/null 2>&1
   export POSTGRES_PASSWORD; POSTGRES_PASSWORD="$(rand_hex 16)"
+  # Una veintena de servicios, las instancias de una segunda celda y un pool por base de empresa,
+  # de hasta 10 conexiones cada uno: el tope por defecto de Postgres (100) se queda corto.
   docker run -d --name "$E2E_PREFIX-pg" "${red[@]}" -e POSTGRES_USER=mail_admin -e POSTGRES_PASSWORD="$POSTGRES_PASSWORD" \
-    -e POSTGRES_DB=mail_registry -p "127.0.0.1:$PG_PORT:5432" pgvector/pgvector:pg16 >/dev/null || return 1
+    -e POSTGRES_DB=mail_registry -p "127.0.0.1:$PG_PORT:5432" pgvector/pgvector:pg16 -c max_connections=300 >/dev/null || return 1
   docker run -d --name "$E2E_PREFIX-nats" "${red[@]}" -p "127.0.0.1:$NATS_PORT:4222" nats:2.10-alpine -js >/dev/null || return 1
   docker run -d --name "$E2E_PREFIX-redis" "${red[@]}" -p "127.0.0.1:$REDIS_PORT:6379" redis:7.4.10-alpine >/dev/null || return 1
   for _ in $(seq 1 60); do

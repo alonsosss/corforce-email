@@ -8,10 +8,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/alonsosss/corforce-email/pkg/mailcell"
 	"github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
@@ -21,7 +23,8 @@ import (
 // dentro de staleGrace cuando organization no responde, no hay celda.
 //
 // Una empresa no cambia de celda mientras no exista el traslado (Modelo_de_Datos_y_Celdas.md,
-// 5): el TTL acota cuanto tarda en verse una baja, no un cambio de celda.
+// 5), y un dominio vive en la celda de su empresa: el TTL acota cuanto tarda en verse una baja o
+// un dominio nuevo, no un cambio de celda.
 
 const (
 	cacheTTL       = 5 * time.Minute
@@ -36,14 +39,48 @@ const (
 // organization no respondio: un valor sostenido es organization caido.
 var staleAnswers = prometheus.NewCounter(prometheus.CounterOpts{
 	Name: "cell_resolution_stale_total",
-	Help: "Resoluciones de celda respondidas con la ultima celda conocida de su empresa porque organization no respondio.",
+	Help: "Resoluciones de celda (de una empresa o de un dominio de correo) respondidas con la ultima celda conocida porque organization no respondio.",
 })
 
 func init() { prometheus.MustRegister(staleAnswers) }
 
+// subject es lo que se resuelve: como se normaliza la clave, donde la sirve organization, que
+// campo de la respuesta la repite y que respuesta es la negativa definitiva.
+type subject struct {
+	field        string
+	normalize    func(string) (string, bool)
+	path         func(key string) string
+	notFoundCode string
+	notFound     error
+}
+
+var tenantSubject = subject{
+	field: "tenant_id",
+	normalize: func(raw string) (string, bool) {
+		id, err := uuid.Parse(raw)
+		if err != nil {
+			return "", false
+		}
+		return id.String(), true
+	},
+	path:         func(id string) string { return "/internal/organization/tenants/" + id + "/cell" },
+	notFoundCode: "TENANT_NOT_FOUND",
+	notFound:     ErrUnknownTenant,
+}
+
+var domainSubject = subject{
+	field:     "domain",
+	normalize: mailcell.NormalizeDomain,
+	path: func(name string) string {
+		return "/internal/organization/mail-domains/" + url.PathEscape(name) + "/cell"
+	},
+	notFoundCode: "MAIL_DOMAIN_NOT_FOUND",
+	notFound:     ErrUnknownDomain,
+}
+
 type entry struct {
-	tenantID string
-	// cell vacia: organization respondio que la empresa no existe.
+	key string
+	// cell vacia: organization respondio que la clave no existe.
 	cell    string
 	fetched time.Time
 }
@@ -61,25 +98,26 @@ func (e entry) usableWhenDown(now time.Time) bool {
 	return e.cell != "" && now.Before(e.freshUntil().Add(staleGrace))
 }
 
-func (e entry) answer() (string, error) {
+func (e entry) answer(notFound error) (string, error) {
 	if e.cell == "" {
-		return "", ErrUnknownTenant
+		return "", notFound
 	}
 	return e.cell, nil
 }
 
-// lookup es una consulta en curso: las peticiones de la misma empresa que llegan mientras
-// tanto esperan su respuesta en vez de lanzar otra.
+// lookup es una consulta en curso: las peticiones de la misma clave que llegan mientras tanto
+// esperan su respuesta en vez de lanzar otra.
 type lookup struct {
 	done chan struct{}
 	cell string
 	err  error
 }
 
-// Resolver resuelve la celda de una empresa contra organization con cache LRU acotada: 5
-// minutos la respuesta positiva, 30 s la negativa y una sola consulta para las peticiones
-// simultaneas de la misma empresa.
+// Resolver resuelve la celda de una empresa o de un dominio de correo contra organization con
+// cache LRU acotada: 5 minutos la respuesta positiva, 30 s la negativa y una sola consulta para
+// las peticiones simultaneas de la misma clave.
 type Resolver struct {
+	subject subject
 	baseURL string
 	token   string
 	client  *http.Client
@@ -93,10 +131,21 @@ type Resolver struct {
 	inflight map[string]*lookup
 }
 
-// NewResolver pregunta a organization en organizationURL (URL interna, sin la ruta) con el
-// token interno.
+// NewResolver resuelve la celda de cada empresa preguntando a organization en organizationURL
+// (URL interna, sin la ruta) con el token interno.
 func NewResolver(organizationURL, token string, logger *zap.Logger) *Resolver {
+	return newResolver(tenantSubject, organizationURL, token, logger)
+}
+
+// NewDomainResolver resuelve la celda de cada dominio de correo activo con el indice global
+// dominio -> celda de organization. Sus errores son ErrUnknownDomain y ErrUnresolved.
+func NewDomainResolver(organizationURL, token string, logger *zap.Logger) *Resolver {
+	return newResolver(domainSubject, organizationURL, token, logger)
+}
+
+func newResolver(s subject, organizationURL, token string, logger *zap.Logger) *Resolver {
 	return &Resolver{
+		subject:  s,
 		baseURL:  strings.TrimRight(organizationURL, "/"),
 		token:    token,
 		client:   &http.Client{Timeout: resolveTimeout},
@@ -109,19 +158,20 @@ func NewResolver(organizationURL, token string, logger *zap.Logger) *Resolver {
 	}
 }
 
-// CellOf devuelve el codigo de la celda de la empresa, ErrUnknownTenant o ErrUnresolved.
-func (c *Resolver) CellOf(ctx context.Context, tenantID string) (string, error) {
-	id, err := uuid.Parse(tenantID)
-	if err != nil {
-		return "", ErrUnknownTenant
+// CellOf devuelve el codigo de la celda de la clave (una empresa o un dominio, segun el
+// Resolver), la negativa definitiva (ErrUnknownTenant o ErrUnknownDomain) o ErrUnresolved. Una
+// clave sin la forma debida es la negativa sin preguntar a nadie.
+func (c *Resolver) CellOf(ctx context.Context, raw string) (string, error) {
+	key, ok := c.subject.normalize(raw)
+	if !ok {
+		return "", c.subject.notFound
 	}
-	key := id.String()
 
 	c.mu.Lock()
 	cachedEntry, cached := c.get(key)
 	if cached && c.now().Before(cachedEntry.freshUntil()) {
 		c.mu.Unlock()
-		return cachedEntry.answer()
+		return cachedEntry.answer(c.subject.notFound)
 	}
 	look, running := c.inflight[key]
 	if !running {
@@ -136,7 +186,7 @@ func (c *Resolver) CellOf(ctx context.Context, tenantID string) (string, error) 
 	case <-ctx.Done():
 		return "", ErrUnresolved
 	}
-	if look.err == nil || errors.Is(look.err, ErrUnknownTenant) {
+	if look.err == nil || errors.Is(look.err, c.subject.notFound) {
 		return look.cell, look.err
 	}
 	if cached && cachedEntry.usableWhenDown(c.now()) {
@@ -155,10 +205,10 @@ func (c *Resolver) lookup(key string, look *lookup) {
 
 	c.mu.Lock()
 	switch {
-	case err == nil, errors.Is(err, ErrUnknownTenant):
-		c.put(entry{tenantID: key, cell: cell, fetched: c.now()})
+	case err == nil, errors.Is(err, c.subject.notFound):
+		c.put(entry{key: key, cell: cell, fetched: c.now()})
 	default:
-		c.logger.Warn("celdas: organization no dio la celda de la empresa", zap.String("tenant_id", key), zap.Error(err))
+		c.logger.Warn("celdas: organization no dio la celda", zap.String(c.subject.field, key), zap.Error(err))
 	}
 	delete(c.inflight, key)
 	look.cell, look.err = cell, err
@@ -166,22 +216,20 @@ func (c *Resolver) lookup(key string, look *lookup) {
 	close(look.done)
 }
 
-// tenantCellPayload es el contrato de GET /internal/organization/tenants/{id}/cell.
-type tenantCellPayload struct {
-	Data struct {
-		TenantID string `json:"tenant_id"`
-		CellCode string `json:"cell_code"`
-	} `json:"data"`
+// cellPayload es el contrato de las rutas de celda de organization: data lleva la clave
+// preguntada (tenant_id o domain) y cell_code.
+type cellPayload struct {
+	Data  map[string]string `json:"data"`
 	Error struct {
 		Code string `json:"code"`
 	} `json:"error"`
 }
 
-// fetch solo toma por definitiva la respuesta del contrato: 200 con la misma empresa y un
-// codigo de celda bien formado, o 404 TENANT_NOT_FOUND. Cualquier otra, tambien el 404 de una
-// ruta que organization no sirve, es "no se pudo determinar".
-func (c *Resolver) fetch(ctx context.Context, tenantID string) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/internal/organization/tenants/"+tenantID+"/cell", nil)
+// fetch solo toma por definitiva la respuesta del contrato: 200 con la misma clave y un codigo
+// de celda bien formado, o 404 con el codigo de la negativa. Cualquier otra, tambien el 404 de
+// una ruta que organization no sirve, es "no se pudo determinar".
+func (c *Resolver) fetch(ctx context.Context, key string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+c.subject.path(key), nil)
 	if err != nil {
 		return "", fmt.Errorf("%w: %v", ErrUnresolved, err)
 	}
@@ -192,19 +240,19 @@ func (c *Resolver) fetch(ctx context.Context, tenantID string) (string, error) {
 	}
 	defer resp.Body.Close()
 
-	var payload tenantCellPayload
+	var payload cellPayload
 	decodeErr := json.NewDecoder(io.LimitReader(resp.Body, maxResponse)).Decode(&payload)
 	switch {
-	case resp.StatusCode == http.StatusNotFound && decodeErr == nil && payload.Error.Code == "TENANT_NOT_FOUND":
-		return "", ErrUnknownTenant
+	case resp.StatusCode == http.StatusNotFound && decodeErr == nil && payload.Error.Code == c.subject.notFoundCode:
+		return "", c.subject.notFound
 	case resp.StatusCode != http.StatusOK:
 		return "", fmt.Errorf("%w: organization respondio %d", ErrUnresolved, resp.StatusCode)
 	case decodeErr != nil:
 		return "", fmt.Errorf("%w: respuesta ilegible: %v", ErrUnresolved, decodeErr)
-	case payload.Data.TenantID != tenantID || !ValidCode(payload.Data.CellCode):
+	case payload.Data[c.subject.field] != key || !ValidCode(payload.Data["cell_code"]):
 		return "", fmt.Errorf("%w: respuesta fuera de contrato", ErrUnresolved)
 	}
-	return payload.Data.CellCode, nil
+	return payload.Data["cell_code"], nil
 }
 
 // get y put mantienen la cache como LRU acotada a max entradas. Con c.mu tomado.
@@ -218,15 +266,15 @@ func (c *Resolver) get(key string) (entry, bool) {
 }
 
 func (c *Resolver) put(e entry) {
-	if el, ok := c.entries[e.tenantID]; ok {
+	if el, ok := c.entries[e.key]; ok {
 		el.Value = e
 		c.order.MoveToFront(el)
 		return
 	}
-	c.entries[e.tenantID] = c.order.PushFront(e)
+	c.entries[e.key] = c.order.PushFront(e)
 	for c.order.Len() > c.max {
 		oldest := c.order.Back()
 		c.order.Remove(oldest)
-		delete(c.entries, oldest.Value.(entry).tenantID)
+		delete(c.entries, oldest.Value.(entry).key)
 	}
 }

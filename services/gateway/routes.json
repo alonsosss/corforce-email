@@ -17,7 +17,7 @@
     "reputation":     {"host_env": "REPUTATION_HOST",     "default_host": "reputation",     "default_port": "8054"},
     "campaigns":      {"host_env": "CAMPAIGNS_HOST",      "default_host": "campaigns",      "default_port": "8052"},
     "analytics":      {"host_env": "ANALYTICS_HOST",      "default_host": "analytics",      "default_port": "8053"},
-    "webmail":        {"host_env": "WEBMAIL_HOST",        "default_host": "webmail",        "default_port": "8044"},
+    "webmail":        {"host_env": "WEBMAIL_HOST",        "default_host": "webmail",        "default_port": "8044", "cell_hosts_env": "WEBMAIL_CELL_HOSTS"},
     "web":            {"host_env": "WEB_HOST",            "default_host": "web",            "default_port": "80"}
   },
   "routes": [
@@ -69,7 +69,10 @@
     {"method": "POST", "path": "/public/mail-security/quarantine/{cell}/discard", "service": "mail-security"}
   ],
   "self_authenticated": [
-    {"prefix": "webmail", "service": "webmail", "strict_limit": [{"method": "POST", "path": "/session"}]}
+    {"prefix": "webmail", "service": "webmail",
+     "strict_limit": [{"method": "POST", "path": "/session"}],
+     "cell_login": {"method": "POST", "path": "/session", "username_field": "username"},
+     "cell_cookie": "cf_wm"}
   ],
   "frontend": "web"
 }

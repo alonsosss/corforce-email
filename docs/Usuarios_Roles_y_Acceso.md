@@ -228,7 +228,10 @@ contrasena mala y frena por (buzon, IP real que llega del gateway en `X-Real-IP`
 JWT de la plataforma ni pasa por el RBAC por modulo: el gateway lo enruta como prefijo
 `self_authenticated` (`services/gateway/routes.json`, limitador estricto en
 `POST /api/v1/webmail/session`) y el servicio autentica cada peticion con su cookie `cf_wm`
-y exige un `Origin` permitido en toda escritura (`docs/arquitectura/CSP-Y-SESION.md`). Las
+y exige un `Origin` permitido en toda escritura (`docs/arquitectura/CSP-Y-SESION.md`). Con
+varias celdas el gateway lleva el inicio de sesion a la celda del dominio del buzon y el resto a
+la celda del token de la cookie, que enruta y no autoriza: cada instancia solo acepta tokens de
+su celda (V, 2026-09-13; `Modelo_de_Datos_y_Celdas.md` 5.5). Las
 sesiones de un buzon se revocan al actualizarse o borrarse (`mail.mailbox.updated`,
 `mail.mailbox.deleted`) y al cambiar su contrasena (`mail.mailbox.credentials_changed`, P
 hasta que mail-directory lo emita). P: la verificacion contra Dovecot y Postfix reales.

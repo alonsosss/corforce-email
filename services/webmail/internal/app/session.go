@@ -7,7 +7,6 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
-	"regexp"
 	"time"
 
 	"github.com/alonsosss/corforce-email/services/webmail/internal/domain"
@@ -20,10 +19,8 @@ const (
 	maxPasswordBytes = 1024
 )
 
-// tokenPattern es un token de 256 bits en base64url sin relleno.
-var tokenPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{43}$`)
-
-// Login verifica la credencial contra mail-auth y abre una sesion nueva.
+// Login verifica la credencial contra mail-auth y abre una sesion nueva, con un token que lleva
+// la celda de esta instancia (domain.NewSessionToken).
 //
 // previousToken es la cookie que el navegador ya traia: se destruye para que un inicio
 // de sesion rote SIEMPRE el token (una cookie fijada por un tercero antes del login no
@@ -48,11 +45,11 @@ func (s *Service) Login(ctx context.Context, rawUsername, password, remoteIP, pr
 
 	s.discard(ctx, previousToken)
 
-	token, err := newToken()
+	token, err := s.newToken()
 	if err != nil {
 		return "", domain.Session{}, unavailable(err)
 	}
-	key, _ := sessionKey(token)
+	key, _ := s.sessionKey(token)
 	sess := s.cfg.Sessions.Open(id, started)
 	ttl, alive := s.cfg.Sessions.Remaining(sess, s.clock())
 	if !alive {
@@ -69,10 +66,14 @@ func (s *Service) Login(ctx context.Context, rawUsername, password, remoteIP, pr
 
 // Authenticate resuelve la sesion de un token y renueva su inactividad. Una sesion
 // caducada o revocada se borra y se rechaza. Si el almacen no responde se falla cerrado:
-// sin poder comprobar la revocacion no se sirve el buzon.
+// sin poder comprobar la revocacion no se sirve el buzon. El token de otra celda se rechaza
+// sin buscarlo: aqui esa sesion no existe.
 func (s *Service) Authenticate(ctx context.Context, token string) (domain.Session, error) {
-	key, ok := sessionKey(token)
+	key, ok := s.sessionKey(token)
 	if !ok {
+		if cell, parsed := domain.ParseSessionToken(token); parsed && cell != s.cfg.CellCode {
+			s.logger.Warn("webmail: token de otra celda rechazado sin buscarlo", zap.String("token_cell", cell))
+		}
 		return domain.Session{}, domain.ErrSessionInvalid
 	}
 	sess, err := s.sessions.Get(ctx, key)
@@ -104,7 +105,7 @@ func (s *Service) Authenticate(ctx context.Context, token string) (domain.Sessio
 
 // Logout destruye la sesion del token. Es idempotente.
 func (s *Service) Logout(ctx context.Context, token string) error {
-	key, ok := sessionKey(token)
+	key, ok := s.sessionKey(token)
 	if !ok {
 		return nil
 	}
@@ -137,7 +138,7 @@ func (s *Service) discard(ctx context.Context, token string) {
 	if token == "" {
 		return
 	}
-	key, ok := sessionKey(token)
+	key, ok := s.sessionKey(token)
 	if !ok {
 		return
 	}
@@ -154,20 +155,22 @@ func (s *Service) drop(ctx context.Context, key, username, reason string) {
 	}
 }
 
-// sessionKey es la clave de almacen de un token: su SHA-256. Un volcado de Redis no
-// entrega tokens utilizables.
-func sessionKey(token string) (string, bool) {
-	if !tokenPattern.MatchString(token) {
+// sessionKey es la clave de almacen de un token de esta celda: su SHA-256. Un token de otra
+// celda, o sin la forma de uno, no tiene clave y no se busca. Un volcado de Redis no entrega
+// tokens utilizables.
+func (s *Service) sessionKey(token string) (string, bool) {
+	cell, ok := domain.ParseSessionToken(token)
+	if !ok || cell != s.cfg.CellCode {
 		return "", false
 	}
 	sum := sha256.Sum256([]byte(token))
 	return hex.EncodeToString(sum[:]), true
 }
 
-func newToken() (string, error) {
+func (s *Service) newToken() (string, error) {
 	b := make([]byte, tokenBytes)
 	if _, err := rand.Read(b); err != nil {
 		return "", err
 	}
-	return base64.RawURLEncoding.EncodeToString(b), nil
+	return domain.NewSessionToken(s.cfg.CellCode, base64.RawURLEncoding.EncodeToString(b)), nil
 }

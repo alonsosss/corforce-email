@@ -113,16 +113,22 @@ func lostRoutingRecord(checks []domain.DNSCheck) bool {
 	return false
 }
 
-// syncVerified aplica lo que un dominio verificado debe tener fuera de esta base: activo
-// en el directorio de la celda si recibe correo, y sus claves DKIM en los motores. Ambas
-// llamadas son idempotentes y se repiten en cada barrido, que es lo que las cura si aqui
-// fallan (tambien si no llegan a la celda de la empresa: el estado sale solo del DNS).
+// syncVerified aplica lo que un dominio verificado debe tener fuera de esta base: reclamado en
+// el indice global de dominios y activo en el directorio de la celda si recibe correo, y sus
+// claves DKIM en los motores. Todas las llamadas son idempotentes y se repiten en cada barrido,
+// que es lo que las cura si aqui fallan (tambien si no llegan a la celda de la empresa: el
+// estado sale solo del DNS) y lo que hace converger el indice.
 func (uc *UseCase) syncVerified(ctx context.Context, d *domain.Domain, signWithPrevious bool) []string {
 	var failures []string
 	if d.Purpose.IncludesCorporate() {
-		if err := uc.mailDirectory.SetActivation(ctx, d.TenantID, d.Domain, true); err != nil {
-			uc.logger.Error("no se pudo activar el dominio en mail-directory; se reintenta en el barrido",
-				zap.String("domain", d.Domain), zap.String("tenant_id", d.TenantID.String()), zap.Error(err))
+		if err := uc.activateInDirectory(ctx, d); err != nil {
+			if errors.Is(err, domain.ErrDomainClaimedElsewhere) {
+				uc.logger.Warn("el dominio ya esta activo en otra empresa: no se activa en el directorio de la celda",
+					zap.String("domain", d.Domain), zap.String("tenant_id", d.TenantID.String()))
+			} else {
+				uc.logger.Error("no se pudo activar el dominio en mail-directory; se reintenta en el barrido",
+					zap.String("domain", d.Domain), zap.String("tenant_id", d.TenantID.String()), zap.Error(err))
+			}
 			failures = append(failures, "activar en mail-directory: "+err.Error())
 		}
 	}
@@ -134,10 +140,11 @@ func (uc *UseCase) syncVerified(ctx context.Context, d *domain.Domain, signWithP
 	return failures
 }
 
-// completeDeactivation desactiva en el directorio de la celda un dominio que ya no debe recibir
-// y, confirmado, quita la marca. Si no se confirma, la marca queda y el barrido lo repite.
+// completeDeactivation desactiva en el directorio de la celda un dominio que ya no debe recibir,
+// lo suelta del indice global de dominios y, confirmado, quita la marca. Si no se confirma, la
+// marca queda y el barrido lo repite.
 func (uc *UseCase) completeDeactivation(ctx context.Context, d *domain.Domain) error {
-	if err := uc.mailDirectory.SetActivation(ctx, d.TenantID, d.Domain, false); err != nil {
+	if err := uc.retireFromDirectory(ctx, d); err != nil {
 		return err
 	}
 	d.DirectoryDeactivationPending = false
