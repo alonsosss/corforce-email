@@ -119,14 +119,31 @@ outbox), `transactional` (mensajes de las dos clases en `transactional.messages.
 restriccion `messages_marketing_check` exige campana, contacto, enlace de baja y un solo
 destinatario; peticiones idempotentes en `transactional.submissions` con su clase y los
 suprimidos de la respuesta, para que una repeticion devuelva lo mismo y una clave no cruce
-de clase; eventos de SES, proyeccion de dominios de envio, bajas)
-y `reputation` (contadores por dia UTC y clase en `reputation.daily_stats`, con los envios
+de clase; eventos de SES, proyeccion de dominios de envio, bajas),
+`analytics` (agregados diarios por dia UTC en `analytics.daily_class_stats`,
+`daily_campaign_stats` y `daily_domain_stats`, cada uno con sus dimensiones sin NULL
+ambiguos y contadores con CHECK de no negativos; `analytics.message_facts`, una fila por
+mensaje con la primera ocurrencia de cada hito y solo el dominio del destinatario, nunca
+la direccion, podada por `ANALYTICS_MESSAGE_RETENTION_DAYS`; `processed_events` para la
+deduplicacion por id de evento, podada a los 30 dias; `campaigns_seen` con el estado de
+cada campana segun sus eventos) y `reputation` (contadores por dia UTC y clase en `reputation.daily_stats`, con los envios
 contados por destinatario igual que rebotes permanentes y quejas; estado vigente por clase
 en `reputation.states` con la marca `manual` de una decision del superadmin que la
 evaluacion no pisa; `reputation.state_history` de solo insercion, protegido por trigger;
 limites de tasa propios en `reputation.limit_overrides`; ids de evento ya contados en
 `reputation.processed_events` para que la reentrega no sume dos veces; cada cambio de
 estado sale por la outbox como `reputation.tenant.state_changed`).
+Tambien `contacts` (audiencia de marketing, 2026-09-13): `contacts.contacts` con
+`UNIQUE (tenant_id, email)`, atributos en `jsonb` validados contra
+`contacts.attribute_definitions`, etiquetas `text[]`, `status` y `marketing_consent`, que es
+la proyeccion del consentimiento vigente mantenida por un trigger de `contacts.consents`;
+`contacts.consents` es evidencia de solo insercion (un trigger rechaza UPDATE, DELETE y
+TRUNCATE salvo la seudonimizacion del borrado del titular, con `SET LOCAL app.erasure = 'on'`
+en su transaccion); `contacts.confirmation_tokens` guarda solo el sha256 del token del doble
+opt-in; `contacts.lists`, `contacts.list_members`, `contacts.segments` (el DSL validado,
+nunca SQL) y `contacts.imports`. El indice parcial `idx_contacts_contacts_sendable
+(tenant_id, id) WHERE status = 'active' AND marketing_consent = 'granted'` sirve la audiencia
+por keyset.
 
 ## 5. Enrutado por peticion y por celda (V)
 
