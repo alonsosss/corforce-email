@@ -1,7 +1,7 @@
 # Actualizaciones de dependencias con la cadencia justa para que se lean y no se ignoren.
 #
-# govulncheck y pnpm audit en el CI ya cortan lo EXPLOTABLE; esto cubre lo que aquellos no
-# ven: una version con arreglo de seguridad que aun no tiene CVE publicado, y la deuda de
+# govulncheck en el CI ya corta lo EXPLOTABLE del codigo Go; esto cubre lo que no ve, en
+# Go y en la aplicacion web: una version con arreglo de seguridad que aun no tiene CVE publicado, y la deuda de
 # ir quedandose atras hasta que actualizar sea una migracion. Semanal y agrupado por
 # ecosistema: un PR por semana y familia, no uno por paquete. Los mayores (major) no se
 # agrupan a proposito: cada uno merece leerse solo.
@@ -21,13 +21,13 @@ updates:
     labels: [dependencias, go]
 
   - package-ecosystem: npm
-    directory: /frontend
+    directory: /web
     schedule: { interval: weekly, day: monday, time: "07:00", timezone: America/Lima }
     open-pull-requests-limit: 3
     groups:
-      frontend-menores:
+      web-menores:
         update-types: [minor, patch]
-    labels: [dependencias, frontend]
+    labels: [dependencias, web]
 
   - package-ecosystem: github-actions
     directory: /

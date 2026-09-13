@@ -2,44 +2,44 @@
 # Uso: docker compose -f docker-compose.yml -f docker-compose.images.yml pull <svc> && up -d
 services:
   gateway:
-    image: ${ECR_REGISTRY:?definir en .env}/core-force/gateway:${DEPLOY_TAG:-latest}
+    image: ${ECR_REGISTRY:?definir en .env}/core-force-mail/gateway:${DEPLOY_TAG:-latest}
   identity:
-    image: ${ECR_REGISTRY:?definir en .env}/core-force/identity:${DEPLOY_TAG:-latest}
+    image: ${ECR_REGISTRY:?definir en .env}/core-force-mail/identity:${DEPLOY_TAG:-latest}
   access-control:
-    image: ${ECR_REGISTRY:?definir en .env}/core-force/access-control:${DEPLOY_TAG:-latest}
+    image: ${ECR_REGISTRY:?definir en .env}/core-force-mail/access-control:${DEPLOY_TAG:-latest}
   organization:
-    image: ${ECR_REGISTRY:?definir en .env}/core-force/organization:${DEPLOY_TAG:-latest}
+    image: ${ECR_REGISTRY:?definir en .env}/core-force-mail/organization:${DEPLOY_TAG:-latest}
   audit:
-    image: ${ECR_REGISTRY:?definir en .env}/core-force/audit:${DEPLOY_TAG:-latest}
+    image: ${ECR_REGISTRY:?definir en .env}/core-force-mail/audit:${DEPLOY_TAG:-latest}
   scheduler:
-    image: ${ECR_REGISTRY:?definir en .env}/core-force/scheduler:${DEPLOY_TAG:-latest}
+    image: ${ECR_REGISTRY:?definir en .env}/core-force-mail/scheduler:${DEPLOY_TAG:-latest}
   mail-directory:
-    image: ${ECR_REGISTRY:?definir en .env}/core-force/mail-directory:${DEPLOY_TAG:-latest}
+    image: ${ECR_REGISTRY:?definir en .env}/core-force-mail/mail-directory:${DEPLOY_TAG:-latest}
   mail-auth:
-    image: ${ECR_REGISTRY:?definir en .env}/core-force/mail-auth:${DEPLOY_TAG:-latest}
+    image: ${ECR_REGISTRY:?definir en .env}/core-force-mail/mail-auth:${DEPLOY_TAG:-latest}
   mail-security:
-    image: ${ECR_REGISTRY:?definir en .env}/core-force/mail-security:${DEPLOY_TAG:-latest}
+    image: ${ECR_REGISTRY:?definir en .env}/core-force-mail/mail-security:${DEPLOY_TAG:-latest}
   webmail:
-    image: ${ECR_REGISTRY:?definir en .env}/core-force/webmail:${DEPLOY_TAG:-latest}
+    image: ${ECR_REGISTRY:?definir en .env}/core-force-mail/webmail:${DEPLOY_TAG:-latest}
   domain-service:
-    image: ${ECR_REGISTRY:?definir en .env}/core-force/domain-service:${DEPLOY_TAG:-latest}
+    image: ${ECR_REGISTRY:?definir en .env}/core-force-mail/domain-service:${DEPLOY_TAG:-latest}
   transactional:
-    image: ${ECR_REGISTRY:?definir en .env}/core-force/transactional:${DEPLOY_TAG:-latest}
+    image: ${ECR_REGISTRY:?definir en .env}/core-force-mail/transactional:${DEPLOY_TAG:-latest}
   suppression:
-    image: ${ECR_REGISTRY:?definir en .env}/core-force/suppression:${DEPLOY_TAG:-latest}
+    image: ${ECR_REGISTRY:?definir en .env}/core-force-mail/suppression:${DEPLOY_TAG:-latest}
   templates:
-    image: ${ECR_REGISTRY:?definir en .env}/core-force/templates:${DEPLOY_TAG:-latest}
+    image: ${ECR_REGISTRY:?definir en .env}/core-force-mail/templates:${DEPLOY_TAG:-latest}
   contacts:
-    image: ${ECR_REGISTRY:?definir en .env}/core-force/contacts:${DEPLOY_TAG:-latest}
+    image: ${ECR_REGISTRY:?definir en .env}/core-force-mail/contacts:${DEPLOY_TAG:-latest}
   billing:
-    image: ${ECR_REGISTRY:?definir en .env}/core-force/billing:${DEPLOY_TAG:-latest}
+    image: ${ECR_REGISTRY:?definir en .env}/core-force-mail/billing:${DEPLOY_TAG:-latest}
   reputation:
-    image: ${ECR_REGISTRY:?definir en .env}/core-force/reputation:${DEPLOY_TAG:-latest}
+    image: ${ECR_REGISTRY:?definir en .env}/core-force-mail/reputation:${DEPLOY_TAG:-latest}
   campaigns:
-    image: ${ECR_REGISTRY:?definir en .env}/core-force/campaigns:${DEPLOY_TAG:-latest}
+    image: ${ECR_REGISTRY:?definir en .env}/core-force-mail/campaigns:${DEPLOY_TAG:-latest}
   automations:
-    image: ${ECR_REGISTRY:?definir en .env}/core-force/automations:${DEPLOY_TAG:-latest}
+    image: ${ECR_REGISTRY:?definir en .env}/core-force-mail/automations:${DEPLOY_TAG:-latest}
   analytics:
-    image: ${ECR_REGISTRY:?definir en .env}/core-force/analytics:${DEPLOY_TAG:-latest}
+    image: ${ECR_REGISTRY:?definir en .env}/core-force-mail/analytics:${DEPLOY_TAG:-latest}
   web:
-    image: ${ECR_REGISTRY:?definir en .env}/core-force/web:${DEPLOY_TAG:-latest}
+    image: ${ECR_REGISTRY:?definir en .env}/core-force-mail/web:${DEPLOY_TAG:-latest}

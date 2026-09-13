@@ -22,7 +22,7 @@ while IFS= read -r line; do
   if [[ "$img" == *:latest || "$img" != *:* && "$img" != *@sha256:* ]]; then
     echo "  FALLA: $file:$num usa '$img' (etiqueta flotante)"; FAIL=1
   fi
-done < <(grep -rn "^FROM " --include=Dockerfile "$ROOT/services" "$ROOT/frontend" "$ROOT/ops" "$ROOT/storefront-web" 2>/dev/null \
+done < <(grep -rn "^FROM " --include=Dockerfile "$ROOT/services" "$ROOT/web" "$ROOT/ops" 2>/dev/null \
          | sed "s|^$ROOT/||")
 
 while IFS= read -r line; do

@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Setup UNICO para D-3: rol IAM que GitHub Actions asume via OIDC (sin secretos
-# estaticos) con permiso de push a ECR. Ejecutar UNA vez con credenciales admin de la
-# cuenta (CloudShell de la consola AWS es lo mas simple). Luego, en GitHub:
-#   Settings > Secrets and variables > Actions:
-#     - Variable AWS_ECR_ROLE_ARN = <arn que imprime este script>
-#     - Secret  DEPLOY_SSH_KEY    = contenido de ~/.ssh/core-force-mail-prod.pem
-#   Settings > Environments > "production" > Required reviewers (el clic de aprobacion).
+# Setup UNICO para .github/workflows/release.yml: rol IAM que GitHub Actions asume via
+# OIDC (sin secretos estaticos) con permiso de push a ECR. Ejecutar UNA vez con
+# credenciales admin de la cuenta (CloudShell de la consola AWS es lo mas simple). Luego,
+# en GitHub, Settings > Secrets and variables > Actions > Variables:
+#   - AWS_ECR_ROLE_ARN = <arn que imprime este script>
+# Hasta entonces el workflow detecta los servicios y no publica. El despliegue desde
+# GitHub necesita ademas ops/aws/setup-github-deploy.sh (variable DEPLOY_INSTANCE_ID).
 set -euo pipefail
 REPO="${1:-alonsosss/corforce-email}"
 ACC=$(aws sts get-caller-identity --query Account --output text)
@@ -31,9 +31,9 @@ cat > /tmp/ecr.json <<EOF
  {"Effect":"Allow","Action":["ecr:BatchCheckLayerAvailability","ecr:PutImage",
   "ecr:InitiateLayerUpload","ecr:UploadLayerPart","ecr:CompleteLayerUpload",
   "ecr:BatchGetImage","ecr:GetDownloadUrlForLayer","ecr:CreateRepository","ecr:DescribeRepositories"],
-  "Resource":"arn:aws:ecr:us-east-1:${ACC}:repository/core-force/*"}]}
+  "Resource":"arn:aws:ecr:us-east-1:${ACC}:repository/core-force-mail/*"}]}
 EOF
 aws iam put-role-policy --role-name github-ecr-push \
-  --policy-name ecr-push-core-force --policy-document file:///tmp/ecr.json
+  --policy-name ecr-push-core-force-mail --policy-document file:///tmp/ecr.json
 
 echo "LISTO. Variable de repo AWS_ECR_ROLE_ARN = arn:aws:iam::${ACC}:role/github-ecr-push"

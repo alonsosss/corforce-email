@@ -1,17 +1,18 @@
 name: Release (build -> ECR -> deploy)
 
-# D-3 (PLAN-DESPLIEGUE-RAPIDO): en cada push a main, GitHub construye en paralelo las
-# imagenes de los servicios AFECTADOS (o todos via workflow_dispatch), las publica a ECR
-# etiquetadas por commit (OIDC, sin secretos estaticos de AWS) y deja el deploy a un
-# clic (job con environment "production"). El server solo hace pull.
+# En cada push a main, GitHub construye en paralelo las imagenes de los servicios
+# AFECTADOS (o todos via workflow_dispatch), las publica a ECR etiquetadas por commit
+# (OIDC, sin secretos estaticos de AWS) y deja el deploy a un clic (job con environment
+# "production"). El server solo hace pull.
 #
 # ESCALABLE POR DISENO: la lista de servicios se deriva de docker-compose.yml (los que
 # tienen build:), igual que ops/ecr/lib.sh -> un microservicio nuevo creado con
 # `make new-service` entra al pipeline automaticamente, sin tocar este archivo.
 #
-# Setup unico (una vez, ver ops/aws/setup-github-oidc.sh):
-#   - Rol IAM con OIDC de GitHub -> variable de repo AWS_ECR_ROLE_ARN
-#   - Secreto DEPLOY_SSH_KEY (llave del usuario deploy) para el job de deploy
+# Setup unico, con credenciales de administrador de la cuenta de AWS:
+#   - ops/aws/setup-github-oidc.sh: rol IAM con OIDC de GitHub -> variable de repo AWS_ECR_ROLE_ARN
+#   - ops/aws/setup-github-deploy.sh: permisos de SSM -> variable de repo DEPLOY_INSTANCE_ID
+# Sin AWS_ECR_ROLE_ARN la publicacion queda desactivada (paso "publish").
 
 # El filtro de rutas tiene que cubrir TODO lo que una imagen hornea, no solo la carpeta
 # del servicio: si un cambio no dispara el workflow, no se construye nada y el arreglo se
@@ -70,9 +71,9 @@ jobs:
         run: echo "tag=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
 
       # Servicios afectados: el mapa ruta->servicio derivado del compose
-      # (ops/scaffold/service-paths.sh, el mismo que usan deploy-fast y deploy-ecr y que
-      # el CI verifica con check-service-paths). Una sola fuente: cubre contextos propios
-      # de los Python, los 21 frontends cuando cambia frontend/packages, y pkg/ -> Go.
+      # (ops/scaffold/service-paths.sh, el mismo que usa scripts/deploy-ecr.sh y que el CI
+      # verifica con check-service-paths). Una sola fuente: cubre el contexto propio de web/,
+      # migrations/ -> el servicio que las hornea, y pkg/ -> Go.
       #
       # El rango es TODO lo que entra en el push, no solo el ultimo commit. Con "HEAD^ HEAD"
       # un push de varios commits solo construia los servicios que tocara el ultimo: los
@@ -88,7 +89,7 @@ jobs:
           if [ -n "$EXPLICITOS" ]; then
             # Lista explicita, como "scripts/deploy-ecr.sh svc1 svc2". Sirve para reconstruir
             # un servicio que se quedo atras sin tener que fabricar un commit vacio ni
-            # construir los ciento doce. Se valida contra el mapa: un nombre mal escrito
+            # construir todos. Se valida contra el mapa: un nombre mal escrito
             # produciria un job verde que no construye nada.
             conocidos=$(bash ops/scaffold/service-paths.sh --map | cut -f1)
             for s in $EXPLICITOS; do
@@ -112,23 +113,47 @@ jobs:
           echo "services=$(echo $svcs)" >> "$GITHUB_OUTPUT"
           echo "A construir: $svcs"
 
-      - if: steps.detect.outputs.services != ''
+      # Publicar exige el rol OIDC (vars.AWS_ECR_ROLE_ARN). Mientras no exista, un push
+      # termina en verde con un aviso en vez de en rojo en cada commit, que tapaba los fallos
+      # reales; al definir la variable la publicacion se activa sola, sin tocar este archivo.
+      # Un despliegue manual sin rol falla aqui: pedir un despliegue y que no haga nada es
+      # peor que un error.
+      - id: publish
+        env:
+          ROL: ${{ vars.AWS_ECR_ROLE_ARN }}
+          DESPLEGAR: ${{ github.event_name == 'workflow_dispatch' && inputs.deploy }}
+          SVCS: ${{ steps.detect.outputs.services }}
+        run: |
+          if [ -n "${ROL//[[:space:]]/}" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "enabled=false" >> "$GITHUB_OUTPUT"
+          if [ "$DESPLEGAR" = "true" ]; then
+            echo "::error title=Despliegue no disponible::Falta la variable de repositorio AWS_ECR_ROLE_ARN: sin el rol OIDC no se puede publicar a ECR ni desplegar. Crealo con ops/aws/setup-github-oidc.sh (y los permisos de SSM con ops/aws/setup-github-deploy.sh) y guarda su ARN en esa variable."
+            exit 1
+          fi
+          if [ -n "$SVCS" ]; then
+            echo "::notice title=Publicacion a ECR desactivada::Falta la variable de repositorio AWS_ECR_ROLE_ARN; no se construye ni se publica: $SVCS. Se activa sola al crear el rol OIDC con ops/aws/setup-github-oidc.sh y guardar su ARN en esa variable."
+          fi
+
+      - if: steps.detect.outputs.services != '' && steps.publish.outputs.enabled == 'true'
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.AWS_ECR_ROLE_ARN }}
           aws-region: ${{ env.ECR_REGION }}
 
-      - if: steps.detect.outputs.services != ''
+      - if: steps.detect.outputs.services != '' && steps.publish.outputs.enabled == 'true'
         id: ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      - if: steps.detect.outputs.services != ''
+      - if: steps.detect.outputs.services != '' && steps.publish.outputs.enabled == 'true'
         uses: docker/setup-buildx-action@v3
 
-      # Build+push en paralelo (xargs -P) con la cache D-1 de los Dockerfiles. El contexto
-      # y el Dockerfile de cada servicio salen del mapa, no de adivinar por carpeta: los 8
-      # Python declaran contexto propio (services/<s>) y con contexto raiz su COPY falla.
-      - if: steps.detect.outputs.services != ''
+      # Build+push en paralelo (xargs -P) con la cache de BuildKit de los Dockerfiles. El
+      # contexto y el Dockerfile de cada servicio salen del mapa, no de adivinar por carpeta:
+      # web declara contexto propio (web/) y con contexto raiz su COPY falla.
+      - if: steps.detect.outputs.services != '' && steps.publish.outputs.enabled == 'true'
         run: |
           REG='${{ steps.ecr.outputs.registry }}'; TAG='${{ steps.meta.outputs.tag }}'
           bash ops/scaffold/service-paths.sh --map > /tmp/svc-map.tsv
@@ -136,15 +161,12 @@ jobs:
             s="$1"
             path=$(awk -F'\t' -v s="$s" '$1==s{print $2}' /tmp/svc-map.tsv)
             class=$(awk -F'\t' -v s="$s" '$1==s{print $3}' /tmp/svc-map.tsv)
-            extra=""
             case "$class" in
               go)         ctx=.; df="services/$s/Dockerfile" ;;
               standalone) ctx="$path"; df="$path/Dockerfile" ;;
-              frontend)   ctx=frontend; df="frontend/Dockerfile"
-                          extra="--build-arg APP_DIR=${path#frontend/} --build-arg PACKAGE_NAME=@cp/${s#fe-}" ;;
               *) echo "servicio $s fuera del mapa (correr make check-service-paths)"; return 1 ;;
             esac
-            docker buildx build -f "$df" $extra \
+            docker buildx build -f "$df" \
               -t "$REG/$ECR_NS/$s:$TAG" -t "$REG/$ECR_NS/$s:latest" \
               --push "$ctx"
           }

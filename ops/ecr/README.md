@@ -7,7 +7,7 @@ EC2 de producción; estos scripts solo etiquetan y publican lo ya construido.
 
 - **Cuenta:** descubierta con STS (no fijada en código).
 - **Región:** `us-east-1` (override con `ECR_REGION`).
-- **Namespace:** `core-force` → repos `core-force/<servicio>`.
+- **Namespace:** `core-force-mail` → repos `core-force-mail/<servicio>`.
 - **Auth:** rol IAM de la instancia `core-force-mail-ec2-role` (política
   `core-force-ecr-build-push`). No se usan claves estáticas.
 
@@ -26,7 +26,7 @@ DOCKER="sudo docker" ./push.sh
 DOCKER="sudo docker" IMAGE_TAG=2026-06-29 ./push.sh
 
 # Publicar solo algunos servicios
-DOCKER="sudo docker" ./push.sh gateway identity fe-shell
+DOCKER="sudo docker" ./push.sh gateway identity web
 ```
 
 ## Lifecycle policy
@@ -34,12 +34,12 @@ DOCKER="sudo docker" ./push.sh gateway identity fe-shell
 `lifecycle-policy.json`: expira imágenes sin tag a los 7 días y conserva las
 últimas 10 etiquetadas por repo, para acotar el costo de almacenamiento.
 
-**Los repos creados desde que se separaron las credenciales no la tienen.** Ni
+**Los repos que crea una identidad sin ese permiso quedan sin ella.** Ni
 `core-force-deploy-local` (el usuario del PC que publica) ni `core-force-mail-ec2-role`
 pueden llamar a `ecr:PutLifecyclePolicy`, así que `create-repos.sh` crea el repo
-y falla al aplicarle la retención. Los repos antiguos sí la llevan porque se
-crearon con una identidad de administrador. `core-force/scale` es el primero que
-quedó sin ella; lo será cada servicio nuevo hasta que se conceda el permiso.
+y falla al aplicarle la retención. Solo la llevan los repos creados con una
+identidad de administrador; cada servicio nuevo quedará sin ella hasta que se
+conceda el permiso.
 
 No da síntoma: las imágenes se acumulan sin límite y sólo aparece en la factura.
 Adjunta `iam-policy-lifecycle.json` a cualquiera de las dos identidades y
@@ -49,7 +49,7 @@ permiso de lectura que la política concede.
 
 ## Escaneo de vulnerabilidades (bloqueado por permisos)
 
-`enable-scanning.sh` activa el escaneo continuo de ECR sobre `core-force/*` e informa los
+`enable-scanning.sh` activa el escaneo continuo de ECR sobre `core-force-mail/*` e informa los
 hallazgos. **Hoy no se puede ejecutar**: el rol de la instancia (`core-force-mail-ec2-role`)
 puede publicar imágenes pero no configurar el escaneo —`ecr:GetRegistryScanningConfiguration`
 y `ecr:PutRegistryScanningConfiguration` están denegados—. Adjunta
@@ -61,13 +61,13 @@ dice a nadie.
 
 Complementa a `govulncheck`, no lo duplica: govulncheck analiza nuestro código Go y sus
 dependencias, esto analiza la imagen entera. Las imágenes `FROM scratch` saldrán limpias
-por construcción (no traen paquetes de sistema); las de los micro-frontends, que corren
-sobre nginx, son las que este escaneo cubre de verdad.
+por construcción (no traen paquetes de sistema); la de la aplicación web (`web`), que
+corre sobre nginx, es la que este escaneo cubre de verdad.
 
 ## Pull desde otros servidores (pendiente)
 
 Los servidores solo-pull necesitan una política IAM de lectura
 (`ecr:GetAuthorizationToken`, `BatchGetImage`, `GetDownloadUrlForLayer`,
 `BatchCheckLayerAvailability`) y un compose que referencie
-`image: <account>.dkr.ecr.us-east-1.amazonaws.com/core-force/<servicio>:<tag>`
+`image: <account>.dkr.ecr.us-east-1.amazonaws.com/core-force-mail/<servicio>:<tag>`
 sin sección `build:`. Se definirá al aprovisionar el primer servidor de pull.

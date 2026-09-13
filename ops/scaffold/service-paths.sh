@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Fuente unica del mapa "ruta del repositorio -> servicio de Compose". Se deriva de
-# docker-compose.yml (context / dockerfile / APP_DIR), nunca de una lista escrita a mano:
+# docker-compose.yml (context / dockerfile), nunca de una lista escrita a mano:
 # un microservicio nuevo queda cubierto por los despliegues sin editar ningun script.
 #
 #   ops/scaffold/service-paths.sh                     # servicio<TAB>ruta<TAB>clase
@@ -10,8 +10,7 @@
 #
 # Clases (determinan que cambios compartidos afectan a que servicios):
 #   go          context "." + dockerfile services/<svc>/Dockerfile -> comparte pkg/ y go.mod
-#   frontend    context ./frontend + APP_DIR              -> comparte frontend/packages
-#   standalone  context propio ./services/<svc>           -> solo su carpeta
+#   standalone  context propio (./web)                    -> solo su carpeta
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -19,17 +18,11 @@ COMPOSE_FILE="${COMPOSE_FILE:-$ROOT/docker-compose.yml}"
 
 # Raices compartidas: un cambio aqui invalida la imagen de TODOS los servicios de la clase.
 GO_SHARED_RE='^(pkg/|go\.mod$|go\.sum$)'
-# nginx.conf entra aqui porque frontend/Dockerfile lo hornea en LAS 24 imagenes
-# (COPY nginx.conf /etc/nginx/conf.d/default.conf). Sin el, un cambio de politica de
-# cache no despertaba a ningun servicio y no llegaba nunca a produccion, aunque el
-# manual dijera que reconstruye los frontends.
-FRONTEND_SHARED_RE='^frontend/(packages/|package\.json$|pnpm-lock\.yaml$|pnpm-workspace\.yaml$|Dockerfile$|nginx\.conf$|tsconfig)'
 
 # Las migraciones viajan DENTRO de la imagen del servicio que las aplica, asi que una
 # canonica nueva solo llega a las empresas si esa imagen se reconstruye. Sin esta raiz, un
-# commit que solo anade un .sql no despertaba a ningun servicio: los ficheros llegaban al
-# servidor por rsync pero nadie los aplicaba, y habia que meterlos a mano en cada base.
-# Es el origen del atasco de 43 canonicas de 2026-08-08.
+# commit que solo anade un .sql no despierta a ningun servicio: los ficheros llegan al
+# servidor por rsync pero nadie los aplica, y habria que meterlos a mano en cada base.
 MIGRATIONS_SHARED_RE='^migrations/(tenant|registry)/'
 
 service_map() {
@@ -37,22 +30,19 @@ service_map() {
     # Clave de servicio (2 espacios de indentacion).
     /^  [a-z0-9][a-z0-9_-]*:[[:space:]]*$/ {
       flush()
-      svc = $1; sub(/:.*/, "", svc); build = 0; ctx = ""; dfile = ""; appdir = ""
+      svc = $1; sub(/:.*/, "", svc); build = 0; ctx = ""; dfile = ""
       next
     }
     /^    build:[[:space:]]*$/ { build = 1; next }
     build && /^      context:/    { ctx = $2; next }
     build && /^      dockerfile:/ { dfile = $2; next }
-    build && /^        APP_DIR:/  { appdir = $2; next }
     # Cualquier otra clave de 4 espacios cierra la seccion build.
     /^    [a-z]/ { build = 0 }
     END { flush() }
 
     function flush(   path, class) {
       if (svc == "" || (ctx == "" && dfile == "")) { svc = ""; return }
-      if (appdir != "") {
-        path = "frontend/" appdir; class = "frontend"
-      } else if (ctx != "" && ctx != ".") {
+      if (ctx != "" && ctx != ".") {
         path = ctx; class = "standalone"
       } else {
         path = dfile; sub(/\/[^\/]*$/, "", path); class = "go"
@@ -83,11 +73,9 @@ migration_services() {
 
 # Rutas del repositorio que una imagen COPIA desde fuera de su propia carpeta.
 #
-# Existe por un caso real: production-labeling entrega el agente de impresion y
-# su Dockerfile lo compila desde edge/xp365b/. Esa ruta no esta bajo
-# services/production-labeling, asi que tocar el agente no despertaba al
-# servicio que lo sirve: los equipos de planta seguian bajando el binario
-# anterior, sin error y sin nada que lo delatara.
+# Si un Dockerfile hornea una carpeta que no esta bajo services/<svc>, tocarla no
+# despierta a ese servicio: la imagen publicada sigue con la version anterior, sin
+# error y sin nada que lo delate.
 #
 # Se lee del propio Dockerfile, como el resto del mapa, para que el siguiente
 # servicio que copie de una carpeta compartida quede cubierto sin editar esto.
@@ -105,11 +93,8 @@ extra_roots() {
       # COPY [--flags] origen... destino: se descarta el destino, las banderas y
       # los COPY --from=<etapa>, que no traen nada del repositorio.
       #
-      # Un RUN tambien puede traer una ruta del repositorio a la imagen, y hasta ahora
-      # no se miraba: carrier-integration hornea la extension del navegador con
-      # "RUN cp -a extensions/carrier-shalom/. ...", asi que tocarla no despertaba al
-      # servicio que la sirve y la plataforma seguia repartiendo la version anterior, sin error
-      # y sin nada que lo delatara. De un RUN solo se toman los tokens con barra; el
+      # Un RUN tambien puede traer una ruta del repositorio a la imagen ("RUN cp -a
+      # <carpeta>/. ..."), con el mismo fallo mudo. De un RUN solo se toman los tokens con barra; el
       # filtrado de verdad (que exista, que no sea su propia carpeta, que no sea una raiz
       # compartida) lo hace el llamador, de modo que colar un token de mas no pasa de una
       # reconstruccion extra, que es el lado seguro en el que equivocarse.
@@ -141,7 +126,7 @@ extra_roots() {
       [[ -z "$origen" || "$origen" == "." ]] && continue
       # Lo que ya cubren las raices compartidas o su propia carpeta, no se repite.
       [[ "$origen" == "$path"/* || "$origen" == "$path" ]] && continue
-      [[ "$origen" =~ $GO_SHARED_RE || "$origen" =~ ^migrations/ || "$origen" == frontend/* ]] && continue
+      [[ "$origen" =~ $GO_SHARED_RE || "$origen" =~ ^migrations/ ]] && continue
       # Y tiene que existir: filtra lo que no sea una ruta de verdad.
       [[ -e "$ROOT/$origen" ]] || continue
       printf '%s\t%s\n' "$svc" "$origen"
@@ -153,7 +138,7 @@ changed_services() {
   local map; map="$(service_map)"
   local mig; mig="$(migration_services | paste -sd' ' -)"
   local extra; extra="$(extra_roots)"
-  awk -v map="$map" -v go_shared="$GO_SHARED_RE" -v fe_shared="$FRONTEND_SHARED_RE" \
+  awk -v map="$map" -v go_shared="$GO_SHARED_RE" \
       -v mig_shared="$MIGRATIONS_SHARED_RE" -v mig_services="$mig" -v extra="$extra" '
     BEGIN {
       n = split(map, lines, "\n")
@@ -175,14 +160,13 @@ changed_services() {
       if ($0 == "") next
       # Cambio en una raiz compartida: afecta a toda la clase.
       if ($0 ~ go_shared) { for (i = 1; i <= total; i++) if (class[i] == "go") hit[svc[i]] = 1; next }
-      if ($0 ~ fe_shared) { for (i = 1; i <= total; i++) if (class[i] == "frontend") hit[svc[i]] = 1; next }
       if ($0 ~ mig_shared) { m = split(mig_services, ms, " "); for (i = 1; i <= m; i++) hit[ms[i]] = 1; next }
       # Lo que una imagen copia de fuera de su carpeta la afecta igual. No lleva
       # "next": una misma ruta puede alimentar a varios servicios.
       for (i = 1; i <= extraTotal; i++) {
         if ($0 == extraPath[i] || index($0, extraPath[i] "/") == 1) hit[extraSvc[i]] = 1
       }
-      # Cambio concreto: gana la ruta mas especifica (frontend/remotes/admin sobre frontend).
+      # Cambio concreto: gana la ruta mas especifica si una carpeta de servicio contiene a otra.
       best = ""; bestlen = 0
       for (i = 1; i <= total; i++) {
         p = path[i]
@@ -227,6 +211,6 @@ case "${1:---map}" in
   --changed)    changed_services ;;
   --check)      check_map ;;
   --migrations) migration_services ;;
-  --class)   service_map | awk -F'\t' -v c="${2:?indica la clase: go|frontend|standalone}" '$3==c{print $1}' ;;
-  *)            echo "uso: $0 [--map | --changed | --check | --migrations | --class go|frontend|standalone]" >&2; exit 2 ;;
+  --class)   service_map | awk -F'\t' -v c="${2:?indica la clase: go|standalone}" '$3==c{print $1}' ;;
+  *)            echo "uso: $0 [--map | --changed | --check | --migrations | --class go|standalone]" >&2; exit 2 ;;
 esac

@@ -4,8 +4,8 @@
 # Complementa a govulncheck, no lo repite: govulncheck mira NUESTRO codigo Go y sus
 # dependencias; esto mira la imagen entera, incluido lo que trae la base (nginx, alpine)
 # y lo que se instale por fuera del modulo Go. Las imagenes `FROM scratch` no tienen
-# paquetes de sistema y saldran limpias; las de los micro-frontends, que corren sobre
-# nginx, son las que este escaneo cubre de verdad.
+# paquetes de sistema y saldran limpias; la de la aplicacion web, que corre sobre nginx,
+# es la que este escaneo cubre de verdad.
 #
 # Requiere los permisos de ops/ecr/iam-policy-scanning.json en el rol que lo ejecute.
 # El rol de la instancia (core-force-mail-ec2-role) hoy solo puede publicar, no configurar.

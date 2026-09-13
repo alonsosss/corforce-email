@@ -14,7 +14,10 @@
 # emergencia: si el agente de SSM muriera y este fuera el unico camino, la unica salida
 # seria parar la instancia y montar su disco en otra. Para usarla:
 #
-#   DEPLOY_HOST=23.22.171.91 scripts/deploy-ecr.sh
+#   DEPLOY_HOST=<ip-publica-de-la-instancia> scripts/deploy-ecr.sh
+#
+# Uso: CF_SSM_INSTANCE=<id-de-instancia> ops/aws/setup-ssm-local.sh
+# (el id lo imprime ops/aws/setup-github-deploy.sh).
 #
 # No necesita sudo: el plugin se instala en ~/.local/bin.
 #
@@ -23,7 +26,7 @@
 set -euo pipefail
 
 ALIAS="${CF_SSM_ALIAS:-core-force-mail-ssm}"
-INSTANCIA="${CF_SSM_INSTANCE:-i-0f87bab0b228634f5}"
+INSTANCIA="${CF_SSM_INSTANCE:?define CF_SSM_INSTANCE con el id de la instancia de produccion}"
 REGION="${AWS_REGION:-us-east-1}"
 LLAVE="${DEPLOY_SSH_KEY:-$HOME/.ssh/core-force-mail-prod.pem}"
 USUARIO="${DEPLOY_USER:-deploy}"
@@ -66,7 +69,7 @@ else
   cat >> "$CONFIG" <<EOF
 
 # Produccion por SSM. Camino DIARIO del despliegue; el 22 queda como emergencia:
-#   DEPLOY_HOST=23.22.171.91 scripts/deploy-ecr.sh
+#   DEPLOY_HOST=<ip-publica-de-la-instancia> scripts/deploy-ecr.sh
 # Lo instala ops/aws/setup-ssm-local.sh
 Host $ALIAS
     HostName $INSTANCIA
@@ -90,7 +93,7 @@ else
   echo "  Comprueba, en este orden:" >&2
   echo "    - que la credencial tenga la politica core-force-ssm-terminal (ops/aws/setup-iam.sh)" >&2
   echo "    - que el agente responda: aws ssm describe-instance-information --region $REGION" >&2
-  echo "  Mientras tanto el puerto 22 sigue abierto: DEPLOY_HOST=23.22.171.91 scripts/deploy-ecr.sh" >&2
+  echo "  Mientras tanto el puerto 22 sigue abierto: DEPLOY_HOST=<ip-publica-de-la-instancia> scripts/deploy-ecr.sh" >&2
   exit 1
 fi
 

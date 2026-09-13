@@ -93,7 +93,7 @@ func TestTodaMetaPaginadaLlevaTotalPages(t *testing.T) {
 	})
 	if len(malos) > 0 {
 		t.Errorf("estas metas de listado no llevan total_pages:\n\n  %s\n\n"+
-			"El cliente que recorre paginas (collectAllPages en @cp/api-client) lo usa para\n"+
+			"Un cliente que recorre paginas lo usa para\n"+
 			"saber si quedan mas; sin el se detiene en la primera y la pantalla muestra 100\n"+
 			"filas creyendo que son todas. Usa response.PageMeta(total, page, perPage), que lo\n"+
 			"calcula, en vez de armar el literal a mano.\n",

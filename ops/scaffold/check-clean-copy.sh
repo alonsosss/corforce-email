@@ -26,6 +26,8 @@ buscar() {
 # Codigo y migraciones: nada de la base de referencia.
 buscar 'capitalpillar|\berp\b|erp_|erp-' pkg services migrations ops/scaffold/*.sh ops/scaffold/eventcontracts ops/security/secrets ops/db ops/backup ops/ecr ops/observability ops/server-template ops/maintenance ops/aws ops/e2e pgbouncer scripts .github Makefile docker-compose.yml .env.example
 buscar 'sunat|sucursal|\bsede\b|branch_id|branchscope|socio_id|employee_id' pkg services migrations
+# Paquetes del frontend federado de la base de referencia (@cp/<paquete>): aqui no existen.
+buscar '@cp/' pkg services migrations ops scripts .github web/src web/package.json Makefile docker-compose.yml
 # Codigo Go y migraciones: nada de la capa que mailcow reemplaza.
 buscar 'mysql|mariadb|sogo|phpfpm|mailcowauth' pkg services migrations
 

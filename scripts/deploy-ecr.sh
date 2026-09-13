@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Deploy rapido (PLAN-DESPLIEGUE-RAPIDO D-2): construye EN LOCAL (paralelo + cache
-# BuildKit D-1), publica las imagenes etiquetadas por commit y el servidor solo hace
+# Deploy rapido: construye EN LOCAL (paralelo + cache de BuildKit), publica las
+# imagenes etiquetadas por commit y el servidor solo hace
 # pull && up (nunca compila). Rollback: DEPLOY_TAG=<sha-anterior> en el server.
 #
 # Uso:
@@ -19,14 +19,14 @@ ROOT="$(git -C "$(dirname "$0")" rev-parse --show-toplevel)"; cd "$ROOT"
 # ssh, scp y rsync no cambian, solo el transporte por debajo.
 #
 # El 22 sigue abierto como puerta de emergencia. Si SSM fallara:
-#   DEPLOY_HOST=23.22.171.91 scripts/deploy-ecr.sh
+#   DEPLOY_HOST=<ip-publica-de-la-instancia> scripts/deploy-ecr.sh
 DEPLOY_HOST="${DEPLOY_HOST:-core-force-mail-ssm}"; DEPLOY_USER="${DEPLOY_USER:-deploy}"
 DEPLOY_PATH="${DEPLOY_PATH:-/opt/core-force-mail/app}"
 SSH_KEY="${DEPLOY_SSH_KEY:-$HOME/.ssh/core-force-mail-prod.pem}"
 SSH=(ssh -o StrictHostKeyChecking=accept-new -o IdentitiesOnly=yes -i "$SSH_KEY" "$DEPLOY_USER@$DEPLOY_HOST")
 TRANSPORT="${TRANSPORT:-ecr}"   # ecr | save
 TAG="$(git rev-parse --short HEAD)"
-ECR_REGION="${ECR_REGION:-us-east-1}"; NS=core-force
+ECR_REGION="${ECR_REGION:-us-east-1}"; NS=core-force-mail
 
 remote() { "${SSH[@]}" "cd $DEPLOY_PATH && $*"; }
 
@@ -40,7 +40,7 @@ if ! "${SSH[@]}" -o ConnectTimeout=45 true 2>/dev/null; then
     echo "    ops/aws/setup-ssm-local.sh        # instala el plugin y el alias, y lo prueba" >&2
     echo "    aws ssm describe-instance-information --region $ECR_REGION" >&2
     echo "  Puerta de emergencia (el 22 sigue abierto a tu IP):" >&2
-    echo "    DEPLOY_HOST=23.22.171.91 $0 $*" >&2
+    echo "    DEPLOY_HOST=<ip-publica-de-la-instancia> $0 $*" >&2
   else
     echo "  Transporte directo por el puerto 22: casi siempre es que tu IP cambio." >&2
     echo "    curl -s https://checkip.amazonaws.com   # contrastala con la regla del grupo" >&2
@@ -77,21 +77,14 @@ fi
 # Ficheros que viajan al servidor: SIEMPRE desde HEAD (git archive), nunca desde el
 # arbol de trabajo. Una migracion nueva sin commitear no puede colarse a produccion.
 #
-# ops/edge-proxy va aqui porque su nginx.conf se MONTA como volumen y no se hornea en
-# ninguna imagen: si no viaja en este rsync no llega por ningun otro camino, y el cambio
-# se queda en el repositorio sin que nada lo delate.
-#
-# ops/ecr y ops/security por el mismo motivo: sus scripts se EJECUTAN en el servidor
-# -la limpieza de imagenes y el almacen de secretos- y, sobre todo, Declarar ahi una clave nueva en el repositorio
-# no servia de nada -add-secret.sh la rechazaba por no estar declarada- hasta copiarla a
-# mano, que es un paso que nadie recuerda. Ojo ademas al recrear: el montaje es
-# de un fichero suelto, asi que queda anclado al inodo y rsync lo reemplaza por otro; hay
-# que recrear el contenedor, no basta con recargar nginx.
+# Lo que no se hornea en ninguna imagen solo llega al servidor por este rsync. ops/ecr y
+# ops/security van aqui porque sus scripts se EJECUTAN en el servidor -la limpieza de
+# imagenes y el almacen de secretos-: una clave nueva declarada en el repositorio no sirve
+# de nada hasta que llega, porque add-secret.sh rechaza las que no estan declaradas alli.
 # ops/observability por lo mismo, y con una vuelta de tuerca: Prometheus MONTA
-# /opt/core-force-mail/app/ops/observability/prometheus como su configuracion, asi que sus reglas
-# de alerta viven en el arbol que sincroniza este rsync... pero la ruta no estaba en la lista,
-# de modo que una regla nueva escrita en el repositorio no llegaba nunca. Las que hay hoy se
-# copiaron a mano. Una alerta que no llega no falla: simplemente no suena.
+# /opt/core-force-mail/app/ops/observability/prometheus como su configuracion, asi que sus
+# reglas de alerta viven en el arbol que sincroniza este rsync. Una alerta que no llega no
+# falla: simplemente no suena.
 #
 # La limpieza es UNA rutina y UN trap: traps sueltos se pisan entre si, y un
 # fallo a mitad dejaba el candado puesto o el token de ECR en el servidor.
@@ -123,8 +116,8 @@ fi
 
 # El transporte ecr exige credenciales AWS locales (access key IAM). Sin ellas el
 # camino correcto sigue siendo compilar aqui: se degrada a save (docker save | ssh load)
-# en vez de abortar, porque la alternativa real seria compilar en el servidor de 2 vCPU
-# y eso satura produccion (ver docs/aws/RUNBOOK-ESCALADO-EC2.md).
+# en vez de abortar, porque la alternativa real seria compilar en el servidor, y eso
+# compite por CPU con lo que esta sirviendo produccion.
 if [[ "$TRANSPORT" == "ecr" ]] && ! aws sts get-caller-identity >/dev/null 2>&1; then
   echo ">> sin credenciales AWS locales (o sesion expirada): se usa save." >&2
   echo ">> para habilitar ecr: ops/aws/setup-iam.sh crea el usuario core-force-deploy-local;" >&2
@@ -148,11 +141,10 @@ cambiados_desde() {
 # rezagados encuentra los servicios que se quedaron atras aunque .deployed-tag diga otra cosa.
 #
 # El archivo .deployed-tag lo escribe TODO despliegue, incluidos los que llevan una lista
-# explicita de servicios. Un despliegue de dos servicios avanza el archivo para los ciento
-# doce, de modo que lo que cambio y no estaba en esa lista se vuelve invisible para las
-# detecciones siguientes: nadie lo vuelve a mirar. Ya paso -asociaciones e identity se
-# quedaron corriendo imagenes de dias antes con el archivo al dia- y no lo delata nada,
-# porque check-image-drift vigila RETROCESOS, no rezagos.
+# explicita de servicios. Un despliegue de dos servicios avanza el archivo para todos, de
+# modo que lo que cambio y no estaba en esa lista se vuelve invisible para las detecciones
+# siguientes: nadie lo vuelve a mirar, y no lo delata nada, porque check-image-drift vigila
+# RETROCESOS, no rezagos.
 #
 # Aqui la base de comparacion de cada servicio es el commit que ese contenedor corre de
 # verdad. Solo se juzga a los que corren un tag conocido del repositorio: los que estan en
@@ -177,8 +169,8 @@ else
     echo "sin .deployed-tag valido en el server: indica servicios explicitos" >&2; exit 1
   fi
   # El mapa ruta->servicio se deriva del compose (ops/scaffold/service-paths.sh): cubre
-  # backend, frontends y las raices compartidas (pkg/, go.mod, frontend/packages) sin
-  # listas escritas a mano, de modo que un servicio nuevo entra solo.
+  # los servicios Go, la aplicacion web y las raices compartidas (pkg/, go.mod,
+  # migrations/) sin listas escritas a mano, de modo que un servicio nuevo entra solo.
   CORRIENDO="$(remote "docker ps --format '{{.Names}} {{.Image}}'" || true)"
   mapfile -t SVCS < <(
     { cambiados_desde "$BASE" | tr ' ' '\n'; rezagados "$CORRIENDO"; } | grep -v '^$' | sort -u
@@ -196,7 +188,7 @@ fi
 # Desplegar un commit ANTERIOR al que ya corre es un retroceso de version que
 # nada delata: el deploy termina "bien", check-image-drift no lo ve (solo compara
 # ECR contra imagen local) y el sintoma es una funcionalidad que desaparece de la
-# pantalla horas despues. Ya ocurrio con dos sesiones desplegando fe-hr.
+# pantalla horas despues. Basta con dos sesiones desplegando a la vez desde commits distintos.
 #
 # Se comprueba DOS veces: aqui, para fallar antes de gastar el build, y otra vez
 # con el candado del servidor en la mano, porque dos despliegues en carrera
@@ -282,25 +274,19 @@ if [[ "${SOLO_FICHEROS:-0}" == "1" ]]; then
   exit 0
 fi
 
-# ── 2. build local en paralelo (BuildKit + cache D-1) ────────────────────────
+# ── 2. build local en paralelo (BuildKit + cache) ───────────────────────────
 # Se construye a traves de Compose y no con "docker build" a mano: cada servicio declara
-# su propio context, dockerfile y build args (los Python usan ./services/<svc>, los
-# frontends ./frontend con APP_DIR/PACKAGE_NAME/VITE_*). Compose es la unica fuente que
-# los conoce todos.
+# su propio context y dockerfile (los Go usan la raiz, la aplicacion web ./web). Compose
+# es la unica fuente que los conoce todos.
 export DOCKER_BUILDKIT=1
 export COMPOSE_PROJECT_NAME=app   # fija el nombre de imagen local app-<svc> (el directorio del repo no lo garantiza)
 
 # Compose lanza TODOS los builds a la vez. En un despliegue acotado da igual, pero
-# cuando el cambio toca pkg/ o el api-client la lista son ~100 servicios y el PC de
-# trabajo se queda sin RAM (swap) e inusable. Se construye en lotes: mismo resultado
-# y misma cache, con el pico de CPU/RAM acotado. Ajustable con DEPLOY_BUILD_LOTE.
-#
-# El tamano sale de medir builds en frio, no de estimarlo: un servicio Go pica 2,1 GiB
-# y un frontend 1,6 GiB, pero el pico NO es la suma -comparten cache de modulos y se
-# solapan poco-. Con 12 en paralelo el pico real fue 6,4 GiB (5,4 GiB con doce
-# frontends, el caso que dispara tocar nginx.conf) y el tiempo por servicio bajo de
-# 13,8 s a 8,3 s frente a lotes de cuatro. El techo ya no es la RAM sino los hilos de
-# CPU, asi que subirlo mas rinde poco. En una maquina de 16 GB conviene bajarlo a 4.
+# cuando el cambio toca pkg/ la lista son todos los servicios Go y el PC de trabajo se
+# queda sin RAM (swap) e inusable. Se construye en lotes: mismo resultado y misma cache,
+# con el pico de CPU/RAM acotado. Ajustable con DEPLOY_BUILD_LOTE; los builds Go
+# comparten la cache de modulos, asi que el pico no es la suma, pero en una maquina de
+# 16 GB conviene bajarlo a 4.
 BUILD_LOTE="${DEPLOY_BUILD_LOTE:-12}"
 build_en_lotes() {
   local total=${#SVCS[@]} i
@@ -310,19 +296,11 @@ build_en_lotes() {
   done
 }
 
-# El build va en lotes desde ayer por la RAM del PC. La RECREACION en el servidor no,
-# y ahi el pico es de CPU: `up -d` con la lista entera arranca todos los contenedores a
-# la vez. Medido el 2026-09-06 con un despliegue de 94 servicios: la CPU de la instancia
-# -dos nucleos- llego al 88% durante cinco minutos, en horario de oficina. Es el mismo
-# pico que produce un reinicio (99,9% el 05-09, con los 130 arrancando de golpe).
-#
-# Los creditos lo absorben y no hay caida, pero un pico al tope con dos nucleos es una
-# cola de peticiones para quien esta usando la plataforma en ese momento.
-#
-# En lotes el trabajo total es el mismo y tarda algo mas; lo que cambia es que el pico
-# se reparte. 20 sale de que el consumo medido en reposo es de 0,19% de un nucleo por
-# contenedor y arrancar cuesta un orden de magnitud mas: un lote de 20 cabe holgado en
-# dos nucleos sin dejar sin turno a lo que ya esta sirviendo.
+# La RECREACION en el servidor tambien va en lotes, y ahi el pico es de CPU: `up -d` con
+# la lista entera arranca todos los contenedores a la vez, y en una instancia pequena un
+# pico al tope es una cola de peticiones para quien esta usando la plataforma en ese
+# momento. En lotes el trabajo total es el mismo y tarda algo mas; lo que cambia es que
+# el pico se reparte. Ajustable con DEPLOY_UP_LOTE.
 UP_LOTE="${DEPLOY_UP_LOTE:-20}"
 por_lotes_remoto() {
   local prefijo="$1"; shift
@@ -450,23 +428,12 @@ scripts/check-image-drift.sh || echo ">> revisa la deriva de imagenes antes del 
 remote "ops/ecr/prune-local-images.sh --apply" || echo ">> no se pudo retirar las imagenes viejas del servidor"
 
 # Los parches de kernel y de libc se instalan solos (unattended-upgrades) pero no protegen
-# hasta reiniciar, y nada lo decia: el servidor acumulo 68 dias y tres kernels sin aplicar
-# (2026-09-05). El despliegue es el momento en que alguien mira la consola, asi que se
-# avisa aqui. Solo informa: reiniciar es una ventana aparte (docs/PLAN-ENDURECIMIENTO-2026-09.md, seccion 6).
+# hasta reiniciar, y sin este aviso nada lo dice. El despliegue es el momento en que
+# alguien mira la consola, asi que se avisa aqui. Solo informa: reiniciar es una ventana
+# aparte.
 if remote "test -f /var/run/reboot-required" 2>/dev/null; then
   echo ">> AVISO: el servidor tiene parches instalados que exigen REINICIO ($(remote "sort -u /var/run/reboot-required.pkgs 2>/dev/null | tr '\n' ' '"))" >&2
-  echo ">>        no protegen hasta reiniciar; planifica la ventana (seccion 6 del plan de endurecimiento)" >&2
+  echo ">>        no protegen hasta reiniciar; planifica una ventana de reinicio" >&2
 fi
-
-# Si en esta tanda va el servicio que hornea las migraciones, se confirma que el barrido
-# llego al final en todas las empresas. Aplicarlas automaticamente no basta: un barrido que
-# aborta a la mitad deja empresas sin la migracion y sin las posteriores, y solo lo delata
-# una linea de log. Tampoco aborta: lo desplegado quedo verificado arriba.
-for svc in "${SVCS[@]}"; do
-  if ops/scaffold/service-paths.sh --migrations | grep -qx "$svc"; then
-    scripts/check-migrations-applied.sh || echo ">> revisa las migraciones antes del proximo cambio"
-    break
-  fi
-done
 
 echo ">> DEPLOY $TAG COMPLETO"

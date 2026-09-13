@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Retira del SERVIDOR las copias locales antiguas de las imagenes de core-force.
+# Retira del SERVIDOR las copias locales antiguas de las imagenes de core-force-mail.
 #
 # Por que existe: la politica de ciclo de vida de ECR (ops/ecr/lifecycle-policy.json) limpia
 # el registro en AWS, pero no sabe nada del disco de la maquina. Cada despliegue hace un
-# pull y esa copia se queda en /var/lib/docker para siempre. Con ciento y pico servicios y
-# varios despliegues al dia, el disco se llena; y cuando se llena no falla el despliegue:
+# pull y esa copia se queda en /var/lib/docker para siempre. Con una imagen por servicio y
+# por despliegue, el disco se llena; y cuando se llena no falla el despliegue:
 # falla Postgres, que es mucho peor.
 #
 # Mismo criterio que ya se decidio para ECR -conservar las ultimas, borrar el resto- pero
@@ -36,9 +36,8 @@ esta_en_uso() {
 
 # UNA sola llamada a docker y una pasada.
 #
-# La version anterior preguntaba repositorio por repositorio: con ciento y pico servicios
-# eran ciento y pico invocaciones sobre una maquina de dos nucleos, y tardaba minutos. Aqui
-# se pide todo de golpe y se agrupa en awk, que ademas deja el orden por fecha ya resuelto.
+# Preguntar repositorio por repositorio seria una invocacion por servicio sobre una maquina
+# pequena, y tardaria minutos. Aqui se pide todo de golpe y se agrupa en awk, que ademas deja el orden por fecha ya resuelto.
 #
 # El orden importa: se conservan las mas NUEVAS, que son las candidatas a un retroceso con
 # DEPLOY_TAG=<sha-anterior>.

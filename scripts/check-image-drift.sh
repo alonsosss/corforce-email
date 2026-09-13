@@ -6,9 +6,8 @@
 # solo hace pull. Cualquier `docker compose build/up --build` ejecutado EN el servidor
 # compila con la copia de /opt/core-force-mail/app, que llega por rsync selectivo y puede estar
 # atrasada: el contenedor queda sano, el deploy "sale bien" y dentro corre codigo ANTERIOR
-# al ya desplegado. Ya paso en este repo (pagina en blanco en produccion, imagen local
-# app-fe-crm). Es la unica forma en que la plataforma puede retroceder de version en bloque sin
-# que nadie lo note, y por tanto la unica que puede devolver un diseno viejo a todos.
+# al ya desplegado. Es la unica forma en que la plataforma puede retroceder de version en
+# bloque sin que nadie lo note, y por tanto la unica que puede devolver un diseno viejo a todos.
 #
 # Lo que se vigila NO es "la imagen no viene de ECR": muchos servicios nunca se han vuelto
 # a desplegar desde que existe el registro y corren su imagen local sin ningun problema.
@@ -25,7 +24,9 @@
 set -euo pipefail
 
 ROOT="$(git -C "$(dirname "$0")" rev-parse --show-toplevel)"; cd "$ROOT"
-DEPLOY_HOST="${DEPLOY_HOST:-23.22.171.91}"; DEPLOY_USER="${DEPLOY_USER:-deploy}"
+# Mismo destino por defecto que scripts/deploy-ecr.sh: el alias SSM que instala
+# ops/aws/setup-ssm-local.sh.
+DEPLOY_HOST="${DEPLOY_HOST:-core-force-mail-ssm}"; DEPLOY_USER="${DEPLOY_USER:-deploy}"
 DEPLOY_PATH="${DEPLOY_PATH:-/opt/core-force-mail/app}"
 SSH_KEY="${DEPLOY_SSH_KEY:-$HOME/.ssh/core-force-mail-prod.pem}"
 SSH=(ssh -o StrictHostKeyChecking=accept-new -o IdentitiesOnly=yes -i "$SSH_KEY" "$DEPLOY_USER@$DEPLOY_HOST")
@@ -44,15 +45,15 @@ fi
 mapfile -t SVCS < <(grep -E '^  [a-z0-9-]+:$' docker-compose.images.yml | tr -d ' :')
 [[ ${#SVCS[@]} -eq 0 ]] && { echo "no se pudo leer la lista de servicios de docker-compose.images.yml" >&2; exit 2; }
 
-# Una sola sesion para los ~108 servicios: lee el estado anterior y la imagen actual.
+# Una sola sesion para todos los servicios: lee el estado anterior y la imagen actual.
 OUT="$(remoto <<REMOTO
 cd $DEPLOY_PATH
 cat $STATE_FILE 2>/dev/null | sed 's/^/PREV /'
 for s in ${SVCS[*]}; do
   # Se busca por la ETIQUETA de compose y no por el nombre del contenedor. Docker renombra
   # el contenedor a "<id>_<nombre>" cuando una recreacion se cruza consigo misma, y con el
-  # nombre roto este chequeo no encontraba nada: daba 83 de 121 servicios por "locales" y
-  # seguia diciendo OK, es decir, dejaba de vigilar justo lo que existe para vigilar.
+  # nombre roto este chequeo no encontraria nada: daria esos servicios por "locales" y
+  # seguiria diciendo OK, es decir, dejaria de vigilar justo lo que existe para vigilar.
   img=\$(docker ps -a --filter "label=com.docker.compose.service=\$s" --filter "label=com.docker.compose.project=app" --format '{{.Image}}' 2>/dev/null | head -1)
   [ -z "\$img" ] && img='-'
   echo "NOW \$s \$img"
@@ -102,8 +103,8 @@ done
 # ── Rezagados ────────────────────────────────────────────────────────────────
 # Distinto del retroceso: aqui la imagen si viene de ECR, pero es de un commit anterior y
 # desde entonces cambio codigo suyo. Pasa porque .deployed-tag lo escribe TODO despliegue,
-# tambien los que llevan lista explicita de servicios: el archivo avanza para los ciento
-# doce aunque solo se hayan desplegado dos, y lo que cambio y no estaba en la lista deja de
+# tambien los que llevan lista explicita de servicios: el archivo avanza para todos
+# aunque solo se hayan desplegado dos, y lo que cambio y no estaba en la lista deja de
 # aparecer en las detecciones siguientes. Es un aviso, no un fallo: puede ser deliberado.
 REZAGADOS=()
 declare -A CAMBIADOS=()

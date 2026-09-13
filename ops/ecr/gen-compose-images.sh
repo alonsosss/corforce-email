@@ -2,7 +2,7 @@
 # Genera docker-compose.images.yml: override que fija image: de ECR para cada servicio
 # propio (los que tienen build: en el compose). Con este override, el servidor levanta
 # con `-f docker-compose.yml -f docker-compose.images.yml` y hace PULL en lugar de
-# compilar (fase D-2 de PLAN-DESPLIEGUE-RAPIDO). Requiere ECR_REGISTRY en el entorno
+# compilar. Requiere ECR_REGISTRY en el entorno
 # (p. ej. <account>.dkr.ecr.us-east-1.amazonaws.com) y DEPLOY_TAG opcional (def latest).
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -20,7 +20,7 @@ services=$(awk '
   echo "# Uso: docker compose -f docker-compose.yml -f docker-compose.images.yml pull <svc> && up -d"
   echo "services:"
   for s in $services; do
-    printf '  %s:\n    image: ${ECR_REGISTRY:?definir en .env}/core-force/%s:${DEPLOY_TAG:-latest}\n' "$s" "$s"
+    printf '  %s:\n    image: ${ECR_REGISTRY:?definir en .env}/core-force-mail/%s:${DEPLOY_TAG:-latest}\n' "$s" "$s"
   done
 } > "$OUT"
 echo "generado: $OUT ($(echo "$services" | wc -l) servicios)"

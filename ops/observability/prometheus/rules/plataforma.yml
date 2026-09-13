@@ -35,11 +35,9 @@ groups:
       # contenedor queda "Up", el despliegue parecio salir bien y dentro corre codigo
       # ANTERIOR al desplegado.
       #
-      # Paso el 2026-08-16 con el gateway: se recreo desde una imagen local diez minutos
-      # despues de un despliegue, su binario era previo a la ruta /remotes/asociaciones y ese
-      # modulo dejo de cargar. Trece remotes daban 200 y uno 404. Nadie se entero hasta que
-      # alguien abrio esa pantalla, porque el unico que compara -check-image-drift.sh- corre
-      # DENTRO del despliegue y aqui el retroceso llego despues.
+      # Nadie se entera hasta que alguien abre la pantalla afectada, porque el unico que
+      # compara -check-image-drift.sh- corre DENTRO del despliegue y un contenedor recreado
+      # desde una imagen local minutos despues ya no tiene nada mirando.
       #
       # La ventana es amplia porque durante un despliegue el contenedor se recrea y la
       # metrica puede faltar un momento; diez minutos no los aguanta ningun despliegue.

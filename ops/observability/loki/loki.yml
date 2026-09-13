@@ -2,11 +2,11 @@
 #
 # POR QUE. Los logs viven en el disco de cada contenedor con rotacion de 20 MB x 5, asi que
 # un incidente de hace dos semanas NO se puede reconstruir: para cuando alguien pregunta
-# que paso, la evidencia ya se rotó. Es la pieza que faltaba desde julio.
+# que paso, la evidencia ya se rotó.
 #
-# Modo binario unico y almacenamiento en fichero: para 130 contenedores que en total
-# generan 48 MB de log rotado, montar el modo distribuido con S3 seria complejidad sin
-# ninguna contrapartida. Cuando el volumen lo pida se cambia el backend sin tocar quien
+# Modo binario unico y almacenamiento en fichero: con el volumen de log de una sola
+# instancia, montar el modo distribuido con S3 seria complejidad sin ninguna
+# contrapartida. Cuando el volumen lo pida se cambia el backend sin tocar quien
 # escribe ni quien consulta.
 auth_enabled: false
 

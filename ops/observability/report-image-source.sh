@@ -7,17 +7,13 @@
 # `docker compose build/up` ejecutado EN el servidor compila con la copia de
 # /opt/core-force-mail/app, que llega por rsync selectivo y puede estar atrasada: el contenedor
 # queda sano, `docker ps` lo muestra "Up", y dentro corre codigo ANTERIOR al desplegado. Es
-# la unica forma en que la plataforma retrocede de version sin sintoma visible.
-#
-# Ya paso dos veces. La segunda, el 2026-08-16, el gateway se recreo desde una imagen local
-# diez minutos despues de un despliegue: su binario era anterior a la ruta /remotes/
-# asociaciones, asi que ese modulo -y solo ese- dejo de cargar. Trece remotes respondian 200
-# y uno daba 404. Nadie se entero hasta que alguien abrio esa pantalla.
+# la unica forma en que la plataforma retrocede de version sin sintoma visible: una ruta
+# publicada deja de responder y nadie se entera hasta que alguien abre esa pantalla.
 #
 # POR QUE NO BASTA scripts/check-image-drift.sh
 #
-# Aquel compara y avisa, pero corre DENTRO del despliegue. El retroceso de arriba ocurrio
-# diez minutos DESPUES del ultimo, asi que no habia nada mirando. Esto corre por cron y
+# Aquel compara y avisa, pero corre DENTRO del despliegue. Un contenedor recreado desde una
+# imagen local minutos DESPUES de un despliegue no tiene nada mirando. Esto corre por cron y
 # convierte un fallo mudo en una alerta.
 #
 # QUE SE PUBLICA Y QUE NO
@@ -49,8 +45,8 @@ if [[ ${#SVCS[@]} -eq 0 ]]; then
   exit 2
 fi
 
-# Una sola llamada a docker para los ~112 contenedores. Un `docker inspect` por servicio
-# tardaba mas de un minuto y este script corre cada cinco.
+# Una sola llamada a docker para todos los contenedores. Un `docker inspect` por servicio
+# crece con cada servicio nuevo y este script corre cada cinco minutos.
 declare -A IMAGEN=()
 while IFS=$'\t' read -r nombre img; do
   IMAGEN["$nombre"]="$img"

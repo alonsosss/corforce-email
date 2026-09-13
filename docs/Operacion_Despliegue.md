@@ -87,8 +87,10 @@ para llamar a la API hace falta ya un superadmin. Después, todo por API: `POST 
   (`scripts/check-image-drift.sh` lo delata).
 * GitHub Actions (`release.yml`): construye en paralelo las imágenes de los servicios
   afectados (detectados con `ops/scaffold/service-paths.sh`), con OIDC hacia AWS y sin
-  claves estáticas; el despliegue es un `workflow_dispatch` con `deploy=true` que entra por
-  SSM, nunca por SSH.
+  claves estáticas, a los repositorios `core-force-mail/<servicio>` de ECR; el despliegue es
+  un `workflow_dispatch` con `deploy=true` que entra por SSM, nunca por SSH. Sin la variable
+  de repositorio `AWS_ECR_ROLE_ARN` (la crea `ops/aws/setup-github-oidc.sh`) no se publica:
+  un push termina en verde con un aviso y un `deploy=true` falla con el motivo.
 * Todo lo que el servidor ejecuta o monta viaja en el rsync de `stage_head_files` desde
   `git archive` de HEAD: compose, `migrations/`, `ops/security`, `ops/ecr`,
   `ops/observability`, `ops/maintenance`, `ops/backup`, `pgbouncer`.
