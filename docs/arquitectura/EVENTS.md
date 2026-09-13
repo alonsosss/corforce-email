@@ -4,7 +4,7 @@ Generado por `ops/scaffold/gen-events.sh` desde el codigo. NO editar a mano.
 Convencion de subject: `<dominio>.<entidad>.<accion>`. Un subject tiene UN dueno
 (el servicio que lo publica); los demas solo lo consumen (regla no-fork).
 
-Resumen: 20 publicaciones, 2 suscripciones, 20 subjects distintos.
+Resumen: 22 publicaciones, 2 suscripciones, 22 subjects distintos.
 
 ## Cruce por subject (dueno -> consumidores)
 
@@ -20,6 +20,8 @@ Resumen: 20 publicaciones, 2 suscripciones, 20 subjects distintos.
 | `identity.user.logged_out` | identity | - |
 | `identity.user.login_failed` | identity | - |
 | `identity.user.password_changed` | identity | - |
+| `mail_security.quarantine.released` | mail-security | - |
+| `mail_security.quarantine.stored` | mail-security | - |
 | `scheduler.job.completed` | scheduler | - |
 | `scheduler.job.failed` | scheduler | - |
 | `scheduler.job.started` | scheduler | - |
@@ -42,6 +44,9 @@ Resumen: 20 publicaciones, 2 suscripciones, 20 subjects distintos.
 
 ### identity
 - Publica: `identity.session.revoked_by_admin`,`identity.user.created` `identity.user.locked`,`identity.user.logged_in` `identity.user.logged_out`,`identity.user.login_failed` `identity.user.password_changed`
+
+### mail-security
+- Publica: `mail_security.quarantine.released`,`mail_security.quarantine.stored`
 
 ### scheduler
 - Publica: `scheduler.job.completed`,`scheduler.job.failed` `scheduler.job.started`

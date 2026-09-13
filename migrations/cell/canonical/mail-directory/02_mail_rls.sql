@@ -75,11 +75,11 @@ CREATE POLICY engine_all ON mail.quota_usage FOR ALL TO mail_engine USING (true)
 -- Vistas publicadas para los servicios vecinos de la celda (mail-security resuelve
 -- destinatarios finales): columnas enumeradas, sin credenciales ni cuotas.
 CREATE OR REPLACE VIEW mail.v_routing_aliases AS
-    SELECT tenant_id, address, goto, domain, active FROM mail.aliases;
+    SELECT tenant_id, address, goto, domain, active, internal FROM mail.aliases;
 CREATE OR REPLACE VIEW mail.v_routing_alias_domains AS
     SELECT tenant_id, alias_domain, target_domain, active FROM mail.alias_domains;
 CREATE OR REPLACE VIEW mail.v_routing_mailboxes AS
-    SELECT tenant_id, username, local_part, domain, active, kind FROM mail.mailboxes;
+    SELECT tenant_id, username, local_part, domain, active, kind, attributes FROM mail.mailboxes;
 CREATE OR REPLACE VIEW mail.v_routing_domains AS
     SELECT tenant_id, domain, active, backupmx FROM mail.domains;
 GRANT SELECT ON mail.v_routing_aliases, mail.v_routing_alias_domains, mail.v_routing_mailboxes, mail.v_routing_domains TO mail_app;

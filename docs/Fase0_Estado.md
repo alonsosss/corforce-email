@@ -22,8 +22,18 @@ cambie cualquiera de estas líneas.
   alias `mail-auth` (probado contra el esquema `mail` real y con Redis, 2026-09-12). Los
   mapas HTTP de los motores (8081/9081) y el contrato Redis los sirve `mail-security` con
   alias `mail-policy`.
-* Tablas que los motores esperan y el esquema aún no tiene: `quarantine` y las políticas
-  antispam por objeto (`mail_security`), pie de página por dominio, `mta_sts` (acme).
+* Tablas que los motores esperan y el esquema aún no tiene: `mta_sts` (acme). La
+  cuarentena, las políticas antispam por objeto, el pie por dominio y las alias internas
+  viven en `mail_security` o se leen de las vistas `mail.v_routing_*` (probado contra
+  Postgres y Redis reales, 2026-09-12).
+* Restricción de operación de `mail-security`: `/settings` guarda en memoria el instante
+  del último cambio del documento, así que se despliega con UNA réplica hasta que ese
+  marcador viva en la base (con varias, una réplica recién arrancada podría responder 304
+  a un Rspamd con reglas viejas).
+* Pendiente en `mail-security`: el aviso de cuarentena al buzón (hay ajustes y columna
+  `notified`, falta el emisor), `SMTP_LIMITED_ACCESS` / `SMTP_ALLOW_NETS_*`, las claves
+  `F2B_*` de netfilter y pasar sus eventos a `pkg/outbox`. `clean_q_aged.sh` de Dovecot no
+  hace nada (busca `mail.quarantine`, que no existe): la poda la hace el servicio.
 * El gateway debe servir `/.well-known/acme-challenge/` o usarse `ACME_DNS_CHALLENGE=y`.
 * Primer despliegue: smoke test con `postmap -q` y `doveadm user` sobre la celda.
 

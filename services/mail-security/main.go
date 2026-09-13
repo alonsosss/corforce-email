@@ -1,0 +1,209 @@
+package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log"
+	"net"
+	"net/http"
+	"os"
+	"strconv"
+	"time"
+
+	"github.com/alonsosss/corforce-email/pkg/authz"
+	"github.com/alonsosss/corforce-email/pkg/config"
+	"github.com/alonsosss/corforce-email/pkg/db"
+	"github.com/alonsosss/corforce-email/pkg/events"
+	"github.com/alonsosss/corforce-email/pkg/middleware"
+	"github.com/alonsosss/corforce-email/pkg/response"
+	"github.com/alonsosss/corforce-email/pkg/server"
+	handler "github.com/alonsosss/corforce-email/services/mail-security/internal/adapters/http"
+	natsadapter "github.com/alonsosss/corforce-email/services/mail-security/internal/adapters/nats"
+	"github.com/alonsosss/corforce-email/services/mail-security/internal/adapters/postgres"
+	redisadapter "github.com/alonsosss/corforce-email/services/mail-security/internal/adapters/redis"
+	"github.com/alonsosss/corforce-email/services/mail-security/internal/adapters/rspamd"
+	smtpadapter "github.com/alonsosss/corforce-email/services/mail-security/internal/adapters/smtp"
+	"github.com/alonsosss/corforce-email/services/mail-security/internal/app"
+	"github.com/alonsosss/corforce-email/services/mail-security/internal/domain"
+	"github.com/go-chi/chi/v5"
+	"go.uber.org/zap"
+)
+
+// Puertos: el de administracion lo enruta el gateway; los dos de los motores son los
+// que la configuracion copiada de Rspamd y Postfix espera en el host mail-policy.
+const (
+	defaultPort       = 8042
+	defaultMapsPort   = 8081
+	defaultExportPort = 9081
+
+	defaultRedisHost         = "redis"
+	defaultRedisPort         = 6379
+	defaultReconcileInterval = 10 * time.Minute
+	defaultLogLines          = 9999
+	defaultReinjectHost      = "postfix"
+	defaultReinjectPort      = 590
+	defaultControllerURL     = "http://rspamd:11334"
+	defaultPipeMaxBodyMiB    = 50
+)
+
+func envOrDefault(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
+}
+
+func envInt(key string, fallback int) int {
+	if v, err := strconv.Atoi(os.Getenv(key)); err == nil && v > 0 {
+		return v
+	}
+	return fallback
+}
+
+func envDuration(key string, fallback time.Duration) time.Duration {
+	if v, err := time.ParseDuration(os.Getenv(key)); err == nil && v > 0 {
+		return v
+	}
+	return fallback
+}
+
+// engineListener levanta un listener HTTP interno para los motores con timeouts propios:
+// /pipe recibe mensajes completos y necesita mas margen que un mapa dinamico.
+func engineListener(port int, h http.Handler, readTimeout time.Duration) *http.Server {
+	return &http.Server{
+		Addr:              fmt.Sprintf(":%d", port),
+		Handler:           h,
+		ReadTimeout:       readTimeout,
+		ReadHeaderTimeout: 5 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       60 * time.Second,
+		MaxHeaderBytes:    64 * 1024,
+	}
+}
+
+func main() {
+	logger, _ := zap.NewProduction()
+	defer logger.Sync()
+	response.SetUnexpectedLogger(logger)
+
+	cfg, err := config.Load()
+	if err != nil {
+		log.Fatalf("load config: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Servicio de CELDA: un solo pool fijo a la base de la celda. La empresa viaja en
+	// el contexto (InjectFromGateway) y es lo que leen las politicas RLS.
+	cellDSN, err := cfg.Postgres.CellDSN()
+	if err != nil {
+		log.Fatalf("cell dsn: %v", err)
+	}
+	pool, err := db.NewNamedPool(ctx, cellDSN, "cell", logger)
+	if err != nil {
+		log.Fatalf("connect cell db: %v", err)
+	}
+	defer pool.Close()
+	ctxPool := &db.ContextPool{}
+	withPool := func(c context.Context) context.Context { return db.WithPool(c, pool.Pool) }
+
+	// Redis de los motores (no el de la plataforma): este servicio es su unico escritor.
+	store := redisadapter.New(redisadapter.Config{
+		Host:     envOrDefault("MAIL_REDIS_HOST", defaultRedisHost),
+		Port:     envInt("MAIL_REDIS_PORT", defaultRedisPort),
+		Password: os.Getenv("MAIL_REDIS_PASSWORD"),
+	})
+	defer store.Close()
+	if err := store.Ping(ctx); err != nil {
+		logger.Warn("redis de los motores no responde al arrancar; se reintentara en la reconciliacion", zap.Error(err))
+	}
+
+	var bus *events.Bus
+	publisher := natsadapter.NewPublisher(nil, logger)
+	if b, err := events.NewBus(cfg.NATS.URL, logger); err != nil {
+		logger.Warn("NATS no disponible: sin eventos ni consumo del directorio", zap.Error(err))
+	} else {
+		bus = b
+		defer bus.Close()
+		if err := bus.EnsureStream(domain.StreamName, []string{domain.SubjectQuarantineStored, domain.SubjectQuarantineReleased}); err != nil {
+			logger.Warn("ensure stream MAIL_SECURITY", zap.Error(err))
+		}
+		publisher = natsadapter.NewPublisher(bus, logger)
+	}
+
+	directory := postgres.NewDirectoryRepository(ctxPool)
+	policyReader := postgres.NewPolicyReader(ctxPool)
+	quarantineRepo := postgres.NewQuarantineRepository(ctxPool)
+	redisSync := app.NewRedisSync(store, directory, policyReader, logger)
+
+	policyUC := app.NewPolicyUseCase(app.PolicyDeps{
+		Tx: ctxPool, Repo: postgres.NewPolicyRepository(ctxPool), Directory: directory, Sync: redisSync, Logger: logger,
+	})
+	quarantineUC := app.NewQuarantineUseCase(app.QuarantineDeps{
+		Tx:         ctxPool,
+		Repo:       quarantineRepo,
+		Reinjector: smtpadapter.New(
+			net.JoinHostPort(envOrDefault("MAIL_QUARANTINE_REINJECT_HOST", defaultReinjectHost), strconv.Itoa(envInt("MAIL_QUARANTINE_REINJECT_PORT", defaultReinjectPort))),
+			envOrDefault("MAIL_HOSTNAME", "mail-security")),
+		Learner:    rspamd.New(envOrDefault("RSPAMD_CONTROLLER_URL", defaultControllerURL), os.Getenv("RSPAMD_CONTROLLER_PASSWORD")),
+		Events:     publisher,
+		Logger:     logger,
+	})
+	engineUC := app.NewEngineUseCase(app.EngineDeps{
+		Directory: directory, Policy: policyReader, Quarantine: quarantineRepo, Sync: redisSync,
+		Store: store, Events: publisher, Logger: logger, LogLines: int64(envInt("MAIL_LOG_LINES", defaultLogLines)),
+	})
+
+	// Reconciliacion de Redis al arrancar y periodica, y consumo de eventos del
+	// directorio. Ambos corren fuera de cualquier peticion: el pool va en el contexto.
+	go app.NewReconciler(redisSync, policyReader, quarantineRepo,
+		envDuration("MAIL_REDIS_RECONCILE_INTERVAL", defaultReconcileInterval), logger).Run(withPool(ctx))
+	go natsadapter.NewDirectoryConsumer(bus, redisSync, policyReader, withPool, logger).Run(ctx)
+
+	// Superficie A: API de administracion tras el gateway (y rutas internas con token).
+	r := chi.NewRouter()
+	r.Use(middleware.RequestID)
+	r.Use(middleware.RequireGatewayToken)
+	r.Use(middleware.InjectFromGateway)
+	r.Use(db.StaticPoolMiddleware(pool.Pool))
+	r.Use(middleware.SecureHeaders)
+	r.Use(middleware.Logger(logger))
+	r.Use(middleware.NewRateLimiter(120, time.Minute).Limit)
+	r.Mount("/", handler.NewHandler(policyUC, quarantineUC, authz.NewCheckerFromEnv()).Routes())
+
+	// Superficie B: listeners de los motores, sin gateway ni JWT, acotados por IP.
+	allowedCIDRs := os.Getenv("MAIL_ENGINE_ALLOWED_CIDRS")
+	pipeMaxBody := int64(envInt("MAIL_QUARANTINE_MAX_BODY_MB", defaultPipeMaxBodyMiB)) * 1024 * 1024
+	maps := engineListener(envInt("MAIL_POLICY_MAPS_PORT", defaultMapsPort),
+		db.StaticPoolMiddleware(pool.Pool)(handler.NewEngineHandler(engineUC, logger).Routes(allowedCIDRs)), 15*time.Second)
+	export := engineListener(envInt("MAIL_POLICY_EXPORT_PORT", defaultExportPort),
+		db.StaticPoolMiddleware(pool.Pool)(handler.NewExporterHandler(engineUC, pipeMaxBody, logger).Routes(allowedCIDRs)), 120*time.Second)
+	for _, srv := range []*http.Server{maps, export} {
+		go func(s *http.Server) {
+			logger.Info("engine listener starting", zap.String("addr", s.Addr))
+			if err := s.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				logger.Fatal("engine listener failed", zap.String("addr", s.Addr), zap.Error(err))
+			}
+		}(srv)
+	}
+
+	port := envInt("MAIL_SECURITY_PORT", defaultPort)
+	srv := server.New(port, r, logger)
+	runErr := srv.Run()
+
+	// El servidor principal ya atendio la senal de parada: se apagan los listeners de
+	// los motores con el mismo margen y se detienen las tareas de fondo.
+	cancel()
+	shutdownCtx, stop := context.WithTimeout(context.Background(), 30*time.Second)
+	defer stop()
+	for _, s := range []*http.Server{maps, export} {
+		if err := s.Shutdown(shutdownCtx); err != nil {
+			logger.Warn("engine listener shutdown", zap.String("addr", s.Addr), zap.Error(err))
+		}
+	}
+	if runErr != nil {
+		logger.Fatal("server error", zap.Error(runErr))
+	}
+}

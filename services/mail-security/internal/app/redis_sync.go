@@ -1,0 +1,293 @@
+package app
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"strconv"
+	"strings"
+
+	"github.com/alonsosss/corforce-email/services/mail-security/internal/domain"
+	"github.com/alonsosss/corforce-email/services/mail-security/internal/ports"
+	"go.uber.org/zap"
+)
+
+// RedisSync es el unico escritor de las claves de Redis que los motores leen. Cada
+// cambio por API escribe su clave al momento; la reconciliacion periodica recalcula
+// todo desde la base para que un Redis vaciado se recupere solo.
+type RedisSync struct {
+	store  ports.EngineStore
+	dir    ports.DirectoryReader
+	policy ports.PolicyReader
+	logger *zap.Logger
+}
+
+func NewRedisSync(store ports.EngineStore, dir ports.DirectoryReader, policy ports.PolicyReader, logger *zap.Logger) *RedisSync {
+	return &RedisSync{store: store, dir: dir, policy: policy, logger: logger}
+}
+
+// ReconcileAll recalcula todas las claves derivadas de la base. Las claves DKIM no se
+// reconstruyen: este servicio no guarda las claves privadas, las publica domain-service.
+func (s *RedisSync) ReconcileAll(ctx context.Context) error {
+	var firstErr error
+	keep := func(err error, what string) {
+		if err != nil {
+			s.logger.Error("reconciliacion de redis", zap.String("clave", what), zap.Error(err))
+			if firstErr == nil {
+				firstErr = err
+			}
+		}
+	}
+	keep(s.ReconcileDomains(ctx), domain.RedisDomainMap)
+	keep(s.reconcileRateLimits(ctx), domain.RedisRateLimitValue)
+	keep(s.reconcileForwardingHosts(ctx), domain.RedisWhitelistedFwdHost)
+	keep(s.reconcileMailboxTags(ctx), domain.RedisWantsSubjectTag)
+	keep(s.SyncQuarantineTop(ctx), domain.RedisQuarantineMaxSize)
+	return firstErr
+}
+
+// ReconcileDomains deja DOMAIN_MAP exactamente igual a los dominios y dominios alias
+// activos de la celda.
+func (s *RedisSync) ReconcileDomains(ctx context.Context) error {
+	domains, err := s.dir.ActiveDomains(ctx)
+	if err != nil {
+		return fmt.Errorf("dominios activos: %w", err)
+	}
+	want := make(map[string]string, len(domains))
+	for _, d := range domains {
+		want[d] = "1"
+	}
+	return s.reconcileHash(ctx, domain.RedisDomainMap, want)
+}
+
+// RefreshDomain actualiza un dominio (o dominio alias) tras un evento del directorio y,
+// en cascada, los dominios alias que apuntan a el: desactivar un dominio deja sin
+// destino a sus alias. Se lee el estado real de las vistas y no el del evento, asi que
+// es idempotente y no depende de que el payload lleve el campo active.
+func (s *RedisSync) RefreshDomain(ctx context.Context, domainName string) error {
+	aliases, err := s.dir.AliasDomainsOf(ctx, domainName)
+	if err != nil {
+		return err
+	}
+	for _, d := range append([]string{domainName}, aliases...) {
+		active, err := s.dir.DomainActive(ctx, d)
+		if err != nil {
+			return err
+		}
+		if active {
+			err = s.store.HSet(ctx, domain.RedisDomainMap, d, "1")
+		} else {
+			err = s.store.HDel(ctx, domain.RedisDomainMap, d)
+		}
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *RedisSync) SyncRateLimit(ctx context.Context, r domain.RateLimit) error {
+	return s.store.HSet(ctx, domain.RedisRateLimitValue, r.Object, r.Value)
+}
+
+func (s *RedisSync) RemoveRateLimit(ctx context.Context, object string) error {
+	return s.store.HDel(ctx, domain.RedisRateLimitValue, object)
+}
+
+func (s *RedisSync) reconcileRateLimits(ctx context.Context) error {
+	all, err := s.policy.AllRateLimits(ctx)
+	if err != nil {
+		return err
+	}
+	want := make(map[string]string, len(all))
+	for _, r := range all {
+		want[r.Object] = r.Value
+	}
+	return s.reconcileHash(ctx, domain.RedisRateLimitValue, want)
+}
+
+// SyncForwardingHost publica el host de confianza y, si su spam no se filtra, lo anade
+// a KEEP_SPAM (Rspamd acepta sin analizar lo que venga de ahi).
+func (s *RedisSync) SyncForwardingHost(ctx context.Context, h domain.ForwardingHost) error {
+	if err := s.store.HSet(ctx, domain.RedisWhitelistedFwdHost, h.Host, h.Source); err != nil {
+		return err
+	}
+	if h.FilterSpam {
+		return s.store.HDel(ctx, domain.RedisKeepSpam, h.Host)
+	}
+	return s.store.HSet(ctx, domain.RedisKeepSpam, h.Host, "1")
+}
+
+func (s *RedisSync) RemoveForwardingHost(ctx context.Context, host string) error {
+	if err := s.store.HDel(ctx, domain.RedisWhitelistedFwdHost, host); err != nil {
+		return err
+	}
+	return s.store.HDel(ctx, domain.RedisKeepSpam, host)
+}
+
+func (s *RedisSync) reconcileForwardingHosts(ctx context.Context) error {
+	all, err := s.policy.AllForwardingHosts(ctx)
+	if err != nil {
+		return err
+	}
+	hosts := make(map[string]string, len(all))
+	keep := map[string]string{}
+	for _, h := range all {
+		hosts[h.Host] = h.Source
+		if !h.FilterSpam {
+			keep[h.Host] = "1"
+		}
+	}
+	if err := s.reconcileHash(ctx, domain.RedisWhitelistedFwdHost, hosts); err != nil {
+		return err
+	}
+	return s.reconcileHash(ctx, domain.RedisKeepSpam, keep)
+}
+
+func (s *RedisSync) SyncMailboxTags(ctx context.Context, t domain.MailboxTags) error {
+	if err := s.syncFlag(ctx, domain.RedisWantsSubjectTag, t.Username, t.SubjectTag); err != nil {
+		return err
+	}
+	return s.syncFlag(ctx, domain.RedisWantsSubfolderTag, t.Username, t.SubfolderTag)
+}
+
+func (s *RedisSync) RemoveMailboxTags(ctx context.Context, username string) error {
+	if err := s.store.HDel(ctx, domain.RedisWantsSubjectTag, username); err != nil {
+		return err
+	}
+	return s.store.HDel(ctx, domain.RedisWantsSubfolderTag, username)
+}
+
+func (s *RedisSync) reconcileMailboxTags(ctx context.Context) error {
+	all, err := s.policy.AllMailboxTags(ctx)
+	if err != nil {
+		return err
+	}
+	subject, subfolder := map[string]string{}, map[string]string{}
+	for _, t := range all {
+		if t.SubjectTag {
+			subject[t.Username] = "1"
+		}
+		if t.SubfolderTag {
+			subfolder[t.Username] = "1"
+		}
+	}
+	if err := s.reconcileHash(ctx, domain.RedisWantsSubjectTag, subject); err != nil {
+		return err
+	}
+	return s.reconcileHash(ctx, domain.RedisWantsSubfolderTag, subfolder)
+}
+
+// SyncQuarantineTop escribe en Q_* el tope de la celda (maximo entre empresas y union
+// de dominios excluidos). Los limites por empresa los aplica /pipe con su propia fila.
+func (s *RedisSync) SyncQuarantineTop(ctx context.Context) error {
+	all, err := s.policy.AllQuarantineSettings(ctx)
+	if err != nil {
+		return err
+	}
+	top := domain.ComputeCellQuarantineTop(all)
+	exclude, err := json.Marshal(top.ExcludeDomains)
+	if err != nil {
+		return err
+	}
+	for key, value := range map[string]string{
+		domain.RedisQuarantineMaxSize: strconv.FormatInt(top.MaxSizeMiB, 10),
+		domain.RedisQuarantineMaxAge:  strconv.Itoa(top.MaxAgeDays),
+		domain.RedisQuarantineRetain:  strconv.Itoa(top.RetentionSize),
+		domain.RedisQuarantineExclude: string(exclude),
+	} {
+		if err := s.store.Set(ctx, key, value); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// SyncDKIM publica la clave privada y deja el selector activo apuntando a ella. Las
+// claves de otros selectores del mismo dominio se conservan: durante una rotacion
+// conviven dos hasta que domain-service retira la vieja. La clave solo pasa por aqui:
+// no se guarda en la base de este servicio.
+func (s *RedisSync) SyncDKIM(ctx context.Context, k domain.DKIMKey) error {
+	if err := s.store.HSet(ctx, domain.RedisDKIMPrivKeys, k.Selector+"."+k.Domain, k.PrivateKeyPEM); err != nil {
+		return err
+	}
+	return s.store.HSet(ctx, domain.RedisDKIMSelectors, k.Domain, k.Selector)
+}
+
+// RemoveDKIMSelector retira solo esa clave; el selector activo se retira si apuntaba a
+// ella (Rspamd deja de firmar el dominio hasta que se publique otra).
+func (s *RedisSync) RemoveDKIMSelector(ctx context.Context, domainName, selector string) error {
+	if err := s.store.HDel(ctx, domain.RedisDKIMPrivKeys, selector+"."+domainName); err != nil {
+		return err
+	}
+	active, ok, err := s.store.HGet(ctx, domain.RedisDKIMSelectors, domainName)
+	if err != nil {
+		return err
+	}
+	if ok && active == selector {
+		return s.store.HDel(ctx, domain.RedisDKIMSelectors, domainName)
+	}
+	return nil
+}
+
+// RemoveDKIMDomain retira todas las claves del dominio y su selector activo.
+func (s *RedisSync) RemoveDKIMDomain(ctx context.Context, domainName string) error {
+	fields, err := s.store.HKeys(ctx, domain.RedisDKIMPrivKeys, "*."+domainName)
+	if err != nil {
+		return err
+	}
+	// El patron glob casa tambien con sub.dominio: se filtra por sufijo exacto.
+	var own []string
+	for _, f := range fields {
+		if strings.HasSuffix(f, "."+domainName) && !strings.Contains(strings.TrimSuffix(f, "."+domainName), ".") {
+			own = append(own, f)
+		}
+	}
+	if err := s.store.HDel(ctx, domain.RedisDKIMPrivKeys, own...); err != nil {
+		return err
+	}
+	return s.store.HDel(ctx, domain.RedisDKIMSelectors, domainName)
+}
+
+// PushRateLimitLog apila una linea en RL_LOG recortando la lista a maxLen.
+func (s *RedisSync) PushRateLimitLog(ctx context.Context, entry domain.RateLimitLog, maxLen int64) error {
+	data, err := json.Marshal(entry)
+	if err != nil {
+		return err
+	}
+	return s.store.LPushTrim(ctx, domain.RedisRateLimitLog, string(data), maxLen)
+}
+
+func (s *RedisSync) syncFlag(ctx context.Context, key, field string, on bool) error {
+	if on {
+		return s.store.HSet(ctx, key, field, "1")
+	}
+	return s.store.HDel(ctx, key, field)
+}
+
+// reconcileHash deja un hash exactamente con los campos deseados: escribe lo que falta
+// o difiere y borra lo que sobra. No se vacia y se rellena porque los motores leen el
+// hash en cualquier momento y un vacio intermedio seria un dominio desconocido.
+func (s *RedisSync) reconcileHash(ctx context.Context, key string, want map[string]string) error {
+	have, err := s.store.HGetAll(ctx, key)
+	if err != nil {
+		return err
+	}
+	for field, value := range want {
+		if have[field] != value {
+			if err := s.store.HSet(ctx, key, field, value); err != nil {
+				return err
+			}
+		}
+	}
+	var stale []string
+	for field := range have {
+		if _, ok := want[field]; !ok {
+			stale = append(stale, field)
+		}
+	}
+	if len(stale) > 0 {
+		return s.store.HDel(ctx, key, stale...)
+	}
+	return nil
+}

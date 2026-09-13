@@ -24,6 +24,8 @@ construye fuera del literal y no se puede leer estaticamente.
 | `identity.user.logged_out` | identity | _opaco_ |
 | `identity.user.login_failed` | identity | `email`, `ip`, `user_agent` |
 | `identity.user.password_changed` | identity | _opaco_ |
+| `mail_security.quarantine.released` | mail-security | `id`, `rcpt`, `tenant_id`, `user_id` |
+| `mail_security.quarantine.stored` | mail-security | `id`, `qid`, `rcpt`, `score`, `sender`, `subject`, `tenant_id` |
 | `organization.tenant.created` | organization | `cell_id`, `db_name`, `name`, `slug`, `status`, `tenant_id` |
 | `organization.tenant.modules_changed` | organization | `disabled`, `enabled`, `tenant_id` |
 | `organization.tenant.status_changed` | organization | `previous_status`, `slug`, `status`, `tenant_id` |

@@ -1,0 +1,142 @@
+package ports
+
+import (
+	"context"
+	"time"
+
+	"github.com/alonsosss/corforce-email/services/mail-security/internal/domain"
+	"github.com/google/uuid"
+)
+
+// PolicyRepository son las tablas propias vistas desde el API de administracion: cada
+// metodo va acotado por empresa y corre dentro de TransactRLS.
+type PolicyRepository interface {
+	ListSpamScores(ctx context.Context, tenantID uuid.UUID) ([]domain.SpamScore, error)
+	GetSpamScore(ctx context.Context, tenantID uuid.UUID, object string) (*domain.SpamScore, error)
+	UpsertSpamScore(ctx context.Context, s *domain.SpamScore) error
+	DeleteSpamScore(ctx context.Context, tenantID uuid.UUID, object string) error
+
+	ListAddressLists(ctx context.Context, tenantID uuid.UUID, object string, kind domain.ListKind) ([]domain.AddressListEntry, error)
+	CreateAddressList(ctx context.Context, e *domain.AddressListEntry) error
+	DeleteAddressList(ctx context.Context, tenantID, id uuid.UUID) error
+
+	ListSettingsMaps(ctx context.Context, tenantID uuid.UUID) ([]domain.SettingsMap, error)
+	GetSettingsMap(ctx context.Context, tenantID, id uuid.UUID) (*domain.SettingsMap, error)
+	CreateSettingsMap(ctx context.Context, m *domain.SettingsMap) error
+	UpdateSettingsMap(ctx context.Context, m *domain.SettingsMap) error
+	DeleteSettingsMap(ctx context.Context, tenantID, id uuid.UUID) error
+
+	ListFooters(ctx context.Context, tenantID uuid.UUID) ([]domain.DomainFooter, error)
+	GetFooter(ctx context.Context, tenantID uuid.UUID, domainName string) (*domain.DomainFooter, error)
+	UpsertFooter(ctx context.Context, f *domain.DomainFooter) error
+	DeleteFooter(ctx context.Context, tenantID uuid.UUID, domainName string) error
+
+	ListForwardingHosts(ctx context.Context, tenantID uuid.UUID) ([]domain.ForwardingHost, error)
+	GetForwardingHost(ctx context.Context, tenantID, id uuid.UUID) (*domain.ForwardingHost, error)
+	CreateForwardingHost(ctx context.Context, h *domain.ForwardingHost) error
+	DeleteForwardingHost(ctx context.Context, tenantID, id uuid.UUID) error
+
+	ListRateLimits(ctx context.Context, tenantID uuid.UUID) ([]domain.RateLimit, error)
+	GetRateLimit(ctx context.Context, tenantID uuid.UUID, object string) (*domain.RateLimit, error)
+	UpsertRateLimit(ctx context.Context, r *domain.RateLimit) error
+	DeleteRateLimit(ctx context.Context, tenantID uuid.UUID, object string) error
+
+	ListMailboxTags(ctx context.Context, tenantID uuid.UUID) ([]domain.MailboxTags, error)
+	GetMailboxTags(ctx context.Context, tenantID uuid.UUID, username string) (*domain.MailboxTags, error)
+	UpsertMailboxTags(ctx context.Context, t *domain.MailboxTags) error
+
+	GetQuarantineSettings(ctx context.Context, tenantID uuid.UUID) (*domain.QuarantineSettings, error)
+	UpsertQuarantineSettings(ctx context.Context, s *domain.QuarantineSettings) error
+}
+
+// PolicyReader son las mismas tablas leidas para los motores y la reconciliacion de
+// Redis: sin empresa en la peticion, como duena del pool y a lo ancho de la celda.
+type PolicyReader interface {
+	AllSpamScores(ctx context.Context) ([]domain.SpamScore, error)
+	AllAddressLists(ctx context.Context) ([]domain.AddressListEntry, error)
+	AllActiveSettingsMaps(ctx context.Context) ([]domain.SettingsMap, error)
+	// PolicyUpdatedAt es el ultimo updated_at de las tablas que alimentan /settings.
+	PolicyUpdatedAt(ctx context.Context) (time.Time, error)
+	FooterByDomain(ctx context.Context, domainName string) (*domain.DomainFooter, error)
+	AllForwardingHosts(ctx context.Context) ([]domain.ForwardingHost, error)
+	AllRateLimits(ctx context.Context) ([]domain.RateLimit, error)
+	AllMailboxTags(ctx context.Context) ([]domain.MailboxTags, error)
+	AllQuarantineSettings(ctx context.Context) ([]domain.QuarantineSettings, error)
+	QuarantineSettingsFor(ctx context.Context, tenantID uuid.UUID) (*domain.QuarantineSettings, error)
+	DeleteMailboxTagsByUsername(ctx context.Context, username string) error
+}
+
+// QuarantineRepository es la cuarentena. Insert y las podas las usa el exportador (sin
+// empresa en el contexto); el resto, el API de administracion bajo RLS.
+type QuarantineRepository interface {
+	Insert(ctx context.Context, item *domain.QuarantineItem) error
+	PruneRcpt(ctx context.Context, tenantID uuid.UUID, rcpt string, keep int) (int64, error)
+	PruneAged(ctx context.Context, tenantID uuid.UUID, maxAgeDays int) (int64, error)
+	List(ctx context.Context, tenantID uuid.UUID, f domain.QuarantineFilter) ([]domain.QuarantineItem, int64, error)
+	Get(ctx context.Context, tenantID, id uuid.UUID) (*domain.QuarantineItem, error)
+	GetMessage(ctx context.Context, tenantID, id uuid.UUID) ([]byte, error)
+	Delete(ctx context.Context, tenantID, id uuid.UUID) error
+}
+
+// DirectoryReader es lo que este servicio lee del directorio de correo: solo las vistas
+// publicadas mail.v_routing_* (columnas enumeradas por mail-directory).
+type DirectoryReader interface {
+	// AliasGoto devuelve el destino (lista separada por comas) de un alias que recibe.
+	AliasGoto(ctx context.Context, address string) (string, bool, error)
+	// AliasDomainTarget devuelve el dominio destino de un dominio alias activo.
+	AliasDomainTarget(ctx context.Context, domainName string) (string, bool, error)
+	// MailboxByUsername devuelve el buzon (cualquier estado) o ErrNotFound.
+	MailboxByUsername(ctx context.Context, username string) (*domain.Mailbox, error)
+	// ActiveDomains lista dominios activos y dominios alias activos de la celda.
+	ActiveDomains(ctx context.Context) ([]string, error)
+	// DomainActive dice si un dominio (o dominio alias) concreto esta activo.
+	DomainActive(ctx context.Context, domainName string) (bool, error)
+	// ObjectOwnedBy comprueba que un buzon o dominio pertenece a la empresa.
+	ObjectOwnedBy(ctx context.Context, tenantID uuid.UUID, object string) (bool, error)
+	// DomainOwner devuelve la empresa duena de un dominio del directorio; found=false si
+	// el dominio aun no figura (domain-service publica DKIM antes de activarlo).
+	DomainOwner(ctx context.Context, domainName string) (uuid.UUID, bool, error)
+	// AliasDomainsOf lista los dominios alias que apuntan a un dominio.
+	AliasDomainsOf(ctx context.Context, targetDomain string) ([]string, error)
+	// AliasesTargeting lista las direcciones de alias cuyo destino incluye el buzon.
+	AliasesTargeting(ctx context.Context, username string) ([]string, error)
+	// BCCDestination consulta mail.v_routing_bcc_maps (kind 'rcpt' o 'sender').
+	BCCDestination(ctx context.Context, kind, localDest string) (string, bool, error)
+	// InternalAliases lista los aliases activos marcados como internos de la celda.
+	InternalAliases(ctx context.Context) ([]domain.InternalAlias, error)
+}
+
+// EngineStore es Redis visto desde este servicio: el unico escritor de las claves que
+// los motores leen.
+type EngineStore interface {
+	Ping(ctx context.Context) error
+	HSet(ctx context.Context, key, field, value string) error
+	HDel(ctx context.Context, key string, fields ...string) error
+	HGet(ctx context.Context, key, field string) (string, bool, error)
+	HGetAll(ctx context.Context, key string) (map[string]string, error)
+	// HKeys lista los campos de un hash que casan con un patron glob (HSCAN MATCH).
+	HKeys(ctx context.Context, key, pattern string) ([]string, error)
+	Set(ctx context.Context, key, value string) error
+	LPushTrim(ctx context.Context, key, value string, maxLen int64) error
+}
+
+// EventPublisher desacopla la emision de eventos del bus concreto.
+type EventPublisher interface {
+	Publish(subject string, payload map[string]any)
+}
+
+// Reinjector devuelve un mensaje de cuarentena al flujo de entrega (SMTP interno).
+type Reinjector interface {
+	Reinject(ctx context.Context, sender, rcpt string, msg []byte) error
+}
+
+// SpamLearner entrena el clasificador de Rspamd con un mensaje.
+type SpamLearner interface {
+	LearnSpam(ctx context.Context, msg []byte) error
+}
+
+// Transactor abre la transaccion bajo la que corre el API de administracion: cambia al
+// rol sujeto a RLS y fija la empresa de la peticion (pkg/db.ContextPool.TransactRLS).
+type Transactor interface {
+	TransactRLS(ctx context.Context, fn func(ctx context.Context) error) error
+}
