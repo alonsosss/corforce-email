@@ -3,6 +3,7 @@ import {
   isRemovable,
   suppressionApi,
   type CreateSuppressionRequest,
+  type SuppressionCause,
   type SuppressionEntry,
   type SuppressionMeta,
   type SuppressionReason,
@@ -14,6 +15,7 @@ import { useAction } from '@/hooks/useAction';
 import { usePagination } from '@/hooks/usePagination';
 import { useQuery } from '@/hooks/useQuery';
 import {
+  Badge,
   Button,
   Card,
   ConfirmDialog,
@@ -24,16 +26,30 @@ import {
   useToast,
   type Column,
 } from '@/design/components';
-import { IconPlus } from '@/design/icons';
+import { IconLock, IconPlus, IconTrash } from '@/design/icons';
 import { isPast } from '@/lib/datetime';
 import { formatDateTime, localToRfc3339 } from '@/lib/format';
 import { rules, validateField } from '@/lib/validate';
 import { t, tEnum } from '@/i18n';
 import { FormModal } from '@/pages/shared/FormModal';
-import { RowActions } from '@/pages/shared/RowActions';
+import { activeCausesAfterRemoving, causeViews } from './causes';
 import { ReasonBadge } from './suppressionReason';
 
 const SEARCH_DEBOUNCE_MS = 300;
+
+interface Removal {
+  entry: SuppressionEntry;
+  cause: SuppressionCause;
+  active: boolean;
+}
+
+function removalMessage({ entry, cause, active }: Removal): string {
+  const vars = { reason: tEnum('suppression.reason', cause.reason), email: entry.email };
+  if (!active) return t('suppression.cause.removeConfirmExpired', vars);
+  return activeCausesAfterRemoving(entry, cause.id) > 0
+    ? t('suppression.cause.removeConfirm', vars)
+    : t('suppression.cause.removeConfirmLast', vars);
+}
 
 export function EntriesTab({ meta }: { meta: SuppressionMeta }) {
   const toast = useToast();
@@ -43,7 +59,7 @@ export function EntriesTab({ meta }: { meta: SuppressionMeta }) {
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
   const [creating, setCreating] = useState(false);
-  const [removing, setRemoving] = useState<SuppressionEntry | null>(null);
+  const [removing, setRemoving] = useState<Removal | null>(null);
 
   useEffect(() => {
     const handle = window.setTimeout(() => {
@@ -72,39 +88,21 @@ export function EntriesTab({ meta }: { meta: SuppressionMeta }) {
     {
       key: 'email',
       header: t('common.email'),
-      render: (e) => <strong className="cf-mono">{e.email}</strong>,
+      render: (e) => <strong className="cf-mono cf-break">{e.email}</strong>,
     },
     {
-      key: 'reason',
-      header: t('suppression.column.reason'),
-      render: (e) => <ReasonBadge reason={e.reason} />,
-    },
-    {
-      key: 'source',
-      header: t('suppression.column.source'),
-      render: (e) => e.source || t('common.dash'),
-    },
-    {
-      key: 'detail',
-      header: t('suppression.column.detail'),
-      render: (e) => (e.detail ? <span className="cf-text-sm">{e.detail}</span> : t('common.dash')),
-    },
-    {
-      key: 'expires',
-      header: t('suppression.column.expires'),
-      render: (e) => (e.expires_at ? formatDateTime(e.expires_at) : t('suppression.noExpiry')),
-    },
-    { key: 'created', header: t('common.createdAt'), render: (e) => formatDateTime(e.created_at) },
-    {
-      key: 'actions',
-      header: '',
-      align: 'right',
+      key: 'causes',
+      header: t('suppression.column.causes'),
       render: (e) => (
-        <RowActions
-          onDelete={canDelete && isRemovable(meta, e.reason) ? () => setRemoving(e) : undefined}
+        <CauseList
+          entry={e}
+          meta={meta}
+          canDelete={canDelete}
+          onRemove={(cause, active) => setRemoving({ entry: e, cause, active })}
         />
       ),
     },
+    { key: 'created', header: t('common.createdAt'), render: (e) => formatDateTime(e.created_at) },
   ];
 
   return (
@@ -180,21 +178,93 @@ export function EntriesTab({ meta }: { meta: SuppressionMeta }) {
       ) : null}
       <ConfirmDialog
         open={removing !== null}
-        title={t('suppression.delete')}
-        message={t('suppression.deleteConfirm', { email: removing?.email ?? '' })}
-        confirmLabel={t('suppression.delete')}
+        title={t('suppression.cause.removeTitle')}
+        message={removing ? removalMessage(removing) : ''}
+        confirmLabel={t('suppression.cause.removeAction')}
         danger
         errorOverrides={{ [ERROR_CODES.UNSUBSCRIBE_PROTECTED]: 'error.unsubscribeProtected' }}
         onCancel={() => setRemoving(null)}
         onConfirm={async () => {
           if (!removing) return;
-          await suppressionApi.remove(removing.id);
-          toast.success(t('suppression.deleted'));
+          await suppressionApi.remove(removing.cause.id);
+          toast.success(t('suppression.cause.removed'));
           setRemoving(null);
           entries.reload();
         }}
       />
     </Card>
+  );
+}
+
+/**
+ * Todas las causas de la direccion: la principal destacada, despues las demas vigentes y
+ * al final las manuales caducadas. Cada causa se retira por su propio id; el catalogo dice
+ * que motivos puede retirar un operador (una baja pedida por la persona, no).
+ */
+function CauseList({
+  entry,
+  meta,
+  canDelete,
+  onRemove,
+}: {
+  entry: SuppressionEntry;
+  meta: SuppressionMeta;
+  canDelete: boolean;
+  onRemove: (cause: SuppressionCause, active: boolean) => void;
+}) {
+  return (
+    <ul className="cf-cause-list">
+      {causeViews(entry).map(({ cause, primary, active }) => {
+        const removable = isRemovable(meta, cause.reason);
+        const reasonLabel = tEnum('suppression.reason', cause.reason);
+        const origin = [cause.source, cause.detail].filter(Boolean).join(' - ');
+        return (
+          <li
+            key={cause.id}
+            className={[
+              'cf-cause',
+              primary ? 'cf-cause--primary' : '',
+              active ? '' : 'cf-cause--expired',
+            ]
+              .filter(Boolean)
+              .join(' ')}
+          >
+            <div className="cf-cause__head">
+              <ReasonBadge reason={cause.reason} />
+              {primary ? <Badge tone="accent">{t('suppression.cause.primary')}</Badge> : null}
+              {cause.expires_at ? (
+                <span className="cf-text-sm cf-text-muted">
+                  {t(active ? 'suppression.cause.expires' : 'suppression.cause.expired', {
+                    date: formatDateTime(cause.expires_at),
+                  })}
+                </span>
+              ) : null}
+              {canDelete && removable ? (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  iconOnly
+                  icon={<IconTrash size={14} />}
+                  onClick={() => onRemove(cause, active)}
+                >
+                  {t('suppression.cause.remove', { reason: reasonLabel, email: entry.email })}
+                </Button>
+              ) : null}
+              {canDelete && !removable ? (
+                <IconLock
+                  size={14}
+                  className="cf-text-muted"
+                  title={t('suppression.cause.protected')}
+                />
+              ) : null}
+            </div>
+            {origin ? (
+              <span className="cf-text-sm cf-text-secondary cf-break">{origin}</span>
+            ) : null}
+          </li>
+        );
+      })}
+    </ul>
   );
 }
 

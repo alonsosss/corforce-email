@@ -1,6 +1,34 @@
 // Rutas de la aplicacion. Sin imports: lo consumen el enrutador, el menu y las pantallas
 // sin crear ciclos entre modulos.
+
+function withQuery(path: string, query: Record<string, string | number | undefined>): string {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(query)) {
+    if (value === undefined || value === '') continue;
+    params.set(key, String(value));
+  }
+  const qs = params.toString();
+  return qs ? `${path}?${qs}` : path;
+}
+
+export interface WebmailView {
+  folder?: string;
+  uid?: number;
+  page?: number;
+  q?: string;
+}
+
 export const paths = {
+  // Webmail: otra sesion (la del buzon), fuera del layout de la plataforma. La carpeta, el
+  // mensaje, la pagina y la busqueda viajan en la query: un nombre de carpeta puede llevar
+  // el separador "/".
+  webmail: '/webmail',
+  webmailLogin: '/webmail/login',
+  webmailCompose: '/webmail/compose',
+  webmailView: (view: WebmailView) => withQuery('/webmail', { ...view }),
+  webmailComposeFrom: (mode: string, folder: string, uid: number) =>
+    withQuery('/webmail/compose', { mode, folder, uid }),
+
   home: '/',
   login: '/login',
   forgotPassword: '/forgot-password',

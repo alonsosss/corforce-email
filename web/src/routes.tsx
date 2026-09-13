@@ -2,6 +2,7 @@ import { lazy, Suspense, type ComponentType } from 'react';
 import { createBrowserRouter, Navigate, RouterProvider } from 'react-router-dom';
 import { MODULES, type ModuleName } from '@/access/modules';
 import { SYSTEM_ROLES, type SystemRole } from '@/access/roles';
+import { PlatformSession } from '@/layout/PlatformSession';
 import { RequireAuth } from '@/layout/RequireAuth';
 import { RequireModule } from '@/layout/RequireModule';
 import { Shell } from '@/layout/Shell';
@@ -239,36 +240,51 @@ function lazyElement(load: PageLoader) {
   );
 }
 
+/**
+ * El webmail es otra sesion (la del buzon, cookie cf_wm): vive fuera del layout y de la
+ * sesion de la plataforma, en su propio chunk, con sus propias rutas.
+ */
+export const WEBMAIL_ROUTE = `${paths.webmail}/*`;
+
 export function createAppRouter() {
   return createBrowserRouter([
-    ...PUBLIC_SCREENS.map((screen) => ({ path: screen.path, element: lazyElement(screen.load) })),
+    { path: WEBMAIL_ROUTE, element: lazyElement(() => import('@/pages/webmail/WebmailApp')) },
     {
-      element: <RequireAuth />,
+      element: <PlatformSession />,
       children: [
+        ...PUBLIC_SCREENS.map((screen) => ({
+          path: screen.path,
+          element: lazyElement(screen.load),
+        })),
         {
-          element: <Shell />,
+          element: <RequireAuth />,
           children: [
-            ...SCREENS.map((screen) => ({
-              path: screen.path,
-              element: (
-                <RequireModule module={screen.module} role={screen.role}>
-                  {lazyElement(screen.load)}
-                </RequireModule>
-              ),
-            })),
             {
-              path: '*',
-              element: (
-                <Suspense fallback={<LoadingBlock />}>
-                  <NotFoundPage />
-                </Suspense>
-              ),
+              element: <Shell />,
+              children: [
+                ...SCREENS.map((screen) => ({
+                  path: screen.path,
+                  element: (
+                    <RequireModule module={screen.module} role={screen.role}>
+                      {lazyElement(screen.load)}
+                    </RequireModule>
+                  ),
+                })),
+                {
+                  path: '*',
+                  element: (
+                    <Suspense fallback={<LoadingBlock />}>
+                      <NotFoundPage />
+                    </Suspense>
+                  ),
+                },
+              ],
             },
           ],
         },
+        { path: '*', element: <Navigate to={paths.home} replace /> },
       ],
     },
-    { path: '*', element: <Navigate to={paths.home} replace /> },
   ]);
 }
 

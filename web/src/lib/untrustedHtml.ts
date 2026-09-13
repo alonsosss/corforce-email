@@ -1,7 +1,7 @@
-// Prepara HTML que no es de la aplicacion (plantillas, pies de pagina, avisos) antes de
-// darselo a un iframe aislado. El iframe hereda la CSP del gateway, que permite img-src
-// https:, asi que una imagen remota se cargaria al abrir la vista previa: un pixel de
-// seguimiento sabria quien mira y desde que IP. Por defecto se quitan todas las
+// Prepara HTML que no es de la aplicacion (plantillas, pies de pagina, avisos, correo
+// recibido) antes de darselo a un iframe aislado. El iframe hereda la CSP del gateway, que
+// permite img-src https:, asi que una imagen remota se cargaria al abrir la vista previa:
+// un pixel de seguimiento sabria quien mira y desde que IP. Por defecto se quitan todas las
 // referencias remotas; las imagenes se muestran solo si quien mira lo pide.
 //
 // Dos capas: se reescriben las referencias en el documento y ademas se le pone una CSP
@@ -15,6 +15,16 @@ export interface PreparedHtml {
 
 export interface PrepareOptions {
   allowRemoteImages: boolean;
+  /**
+   * Imagenes propias del documento ya resueltas: URL tal como aparece en el HTML -> data:
+   * de mapa de bits (las cid: de un correo). Se sustituyen y no cuentan como remotas.
+   */
+  inlineImages?: ReadonlyMap<string, string>;
+  /**
+   * Los enlaces se abren en una pestana nueva (base target) y no dentro del marco. Solo
+   * tiene efecto si el iframe admite ventanas emergentes.
+   */
+  openLinksInNewTab?: boolean;
 }
 
 // Elementos que cargan algo por si solos y no son imagenes: se quitan siempre. meta
@@ -41,6 +51,8 @@ const IMAGE_ATTRIBUTES = ['src', 'background', 'lowsrc', 'dynsrc', 'poster'];
 const SVG_IMAGE_SELECTOR = 'image, feImage, use';
 const CSS_URL = /url\(\s*(['"]?)(.*?)\1\s*\)/gi;
 const CSS_IMPORT = /@import[^;]*;?/gi;
+// Las unicas imagenes incrustadas que se aceptan como sustitucion: mapas de bits.
+const INLINE_BITMAP = /^data:image\/(png|jpeg|gif|webp);base64,/i;
 
 function isInline(url: string): boolean {
   return /^data:/i.test(url.trim());
@@ -84,6 +96,11 @@ export function prepareUntrustedHtml(source: string, options: PrepareOptions): P
     return allow && isWebImage(url);
   };
 
+  const inlined = (url: string): string | undefined => {
+    const value = options.inlineImages?.get(url.trim());
+    return value !== undefined && INLINE_BITMAP.test(value) ? value : undefined;
+  };
+
   const rewriteCss = (css: string): string =>
     css.replace(CSS_IMPORT, '').replace(CSS_URL, (whole, _q: string, url: string) => {
       if (url.startsWith('#')) return whole;
@@ -95,7 +112,10 @@ export function prepareUntrustedHtml(source: string, options: PrepareOptions): P
   doc.querySelectorAll('*').forEach((el) => {
     for (const name of IMAGE_ATTRIBUTES) {
       const value = el.getAttribute(name);
-      if (value !== null && !keepImage(value)) el.removeAttribute(name);
+      if (value === null) continue;
+      const replacement = inlined(value);
+      if (replacement !== undefined) el.setAttribute(name, replacement);
+      else if (!keepImage(value)) el.removeAttribute(name);
     }
     const srcset = el.getAttribute('srcset');
     if (srcset !== null) {
@@ -119,6 +139,17 @@ export function prepareUntrustedHtml(source: string, options: PrepareOptions): P
     el.textContent = rewriteCss(el.textContent ?? '');
   });
 
+  // Base sin href: solo fija el destino de los enlaces, no carga nada (base-uri 'none'
+  // prohibe cualquier href).
+  if (options.openLinksInNewTab) {
+    const base = doc.createElement('base');
+    base.setAttribute('target', '_blank');
+    doc.head.prepend(base);
+  }
+  const referrer = doc.createElement('meta');
+  referrer.setAttribute('name', 'referrer');
+  referrer.setAttribute('content', 'no-referrer');
+  doc.head.prepend(referrer);
   const csp = doc.createElement('meta');
   csp.setAttribute('http-equiv', 'Content-Security-Policy');
   csp.setAttribute('content', contentSecurityPolicy(allow));

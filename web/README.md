@@ -5,7 +5,8 @@ el plano de control (acceso, cuenta, usuarios, roles y permisos, sesiones, empre
 y auditoria), el correo corporativo (dominios, directorio de la celda, buzones, enrutado,
 seguridad y cuarentena), los envios (plantillas, supresion y reputacion), el marketing
 (contactos, segmentos, campanas y analitica) y el plan de la empresa. El superadmin opera
-ademas el catalogo de planes, las suscripciones y la reputacion de todas las empresas.
+ademas el catalogo de planes, las suscripciones y la reputacion de todas las empresas. Bajo
+`/webmail` vive el correo web del buzon, con su propia sesion (ver Webmail).
 
 ## Desarrollo
 
@@ -65,8 +66,10 @@ Detalle en `docs/arquitectura/CSP-Y-SESION.md`.
 src/
   api/          client.ts (fetch, sesion, step-up), endpoints.ts (TODAS las rutas del API),
                 errors.ts (ApiError con code), messages.ts (codigo -> texto),
-                identity.ts, access.ts, organization.ts, audit.ts (DTO de los handlers Go)
+                identity.ts, access.ts, organization.ts, audit.ts (DTO de los handlers Go),
+                webmail.ts (cliente propio del webmail: cookie cf_wm, sin access token)
   auth/         store de sesion (hydrate, login, completeMfa, logout), StepUpModal
+  webmail/      store de la sesion del buzon (check, login, logout, refresh), en memoria
   access/       useAccess() con modules, roles, isAdmin y can(module, resource, action);
                 modules.ts, roles.ts y permissions.ts (triples del catalogo sembrado)
   i18n/         es.ts con todos los textos; t('clave', {vars})
@@ -74,7 +77,8 @@ src/
                 propios (Button, Input, Select, Checkbox, DataTable, Modal, Toast, Tabs,
                 Badge, EmptyState, ErrorState, Skeleton, PageHeader, FormField,
                 ConfirmDialog) e icons/ (un SVG por fichero, stroke="currentColor")
-  layout/       Shell, Sidebar, Topbar, nav.ts (declaracion NAV filtrada por modulos)
+  layout/       Shell, Sidebar, Topbar, nav.ts (declaracion NAV filtrada por modulos),
+                PlatformSession (restaura la sesion de la plataforma solo en sus rutas)
   pages/        una carpeta por modulo
   hooks/        useQuery, useAction, usePagination
   lib/          fechas, validacion, reglas de contrasena, lectura de claims
@@ -145,10 +149,12 @@ Catalogos del API en lugar de constantes copiadas:
 - `GET /reputation/meta`: estados de menos a mas grave, clases de envio, motivos y topes.
 - `GET /mail-directory/meta`: estados activos, politicas TLS, tipos de mapa BCC, longitudes
   de contrasena y de nombre, tamano de sieve y pagina maxima del directorio.
+- `GET /analytics/meta`: clases de envio, zona en la que se cuentan los dias, rango maximo y
+  por defecto, tope y valor por defecto del ranking de dominios y tamano de pagina. El filtro
+  de clase, los atajos de rango, el tamano del ranking y la zona visible salen de aqui.
 
-Se leen con `cachedResource` (una peticion por sesion) y `useResource`. La unica lista que
-queda copiada es la de clases de envio del filtro de analitica (`api/sendClass.ts`):
-analytics no publica catalogo y el de reputation pertenece a otro modulo de permisos.
+Se leen con `cachedResource` (una peticion por sesion) y `useResource`. `api/sendClass.ts`
+solo conserva el tipo de los DTO: ninguna pantalla ofrece una lista de clases copiada.
 
 Reglas de la interfaz que no se relajan:
 
@@ -175,3 +181,46 @@ Reglas de la interfaz que no se relajan:
   permiso para leer el directorio, el dominio se escribe a mano.
 - El historial del doble opt-in no muestra ni pide el enlace de confirmacion: es una
   credencial y el servicio no lo guarda.
+- Supresion: cada direccion muestra todas sus causas (`causes`), la principal destacada y
+  las manuales caducadas atenuadas, y cada causa se retira por su propio `id`. Que motivo se
+  puede retirar lo dice `removable` en `GET /suppression/meta` (una baja pedida por la
+  persona no). El comprobador muestra todas las causas vigentes (`reasons`).
+- Aviso de cuarentena: con el aviso activo, `PUT /mail-security/quarantine-settings` responde
+  422 `VALIDATION_ERROR` con el campo al principio del mensaje (`notify.sender`,
+  `notify.subject`, `notify.html_template`); la pantalla lo pinta junto a ese campo. Las
+  variables de la plantilla (`domain.QuarantineNoticeData`) se listan en
+  `QUARANTINE_NOTICE_TEMPLATE` porque mail-security no publica un catalogo de ellas.
+
+## Webmail
+
+Pantallas bajo `/webmail`, en su propio chunk (`pages/webmail/WebmailApp.tsx`), fuera del
+layout y de la sesion de la plataforma:
+
+| Ruta                                  | Pantalla                                                   |
+| ------------------------------------- | ---------------------------------------------------------- |
+| `/webmail/login`                      | Inicio de sesion del buzon (direccion completa y clave)    |
+| `/webmail?folder=&uid=&page=&q=`      | Carpetas, lista paginada con busqueda y lectura            |
+| `/webmail/compose?mode=&folder=&uid=` | Redactar, responder, responder a todos, reenviar, borrador |
+
+- Sesion: la cookie `cf_wm` (HttpOnly, SameSite=Strict, `Path=/api/v1/webmail`) la ponen
+  `POST`, `GET` y `DELETE /api/v1/webmail/session`. `api/webmail.ts` usa
+  `credentials: 'include'` solo para esas rutas, no importa `client.ts` ni manda el access
+  token de la plataforma, y no guarda nada en el navegador. Un `SESSION_EXPIRED` en cualquier
+  peticion devuelve al inicio del buzon con aviso. `PlatformSession` no restaura la sesion de
+  la plataforma en `/webmail`: el webmail nunca llama a `/api/v1/auth`.
+- CSRF: SameSite=Strict mas el `Origin` que el navegador pone en toda escritura y que el
+  servicio exige (`ORIGIN_NOT_ALLOWED`).
+- HTML: el servicio lo sanea y la pantalla lo pinta solo en `HtmlPreviewFrame` con
+  `sandbox="allow-popups allow-popups-to-escape-sandbox"` (los enlaces se abren en otra
+  pestana; sin scripts, formularios, mismo origen ni navegacion de la pagina), limpiado otra
+  vez por `lib/untrustedHtml.ts`. Las imagenes remotas siguen bloqueadas hasta pulsar
+  "Mostrar imagenes remotas", que vuelve a pedir ese mensaje con `?remote_images=allow` y
+  `peek=true`. Las imagenes `cid:` se piden con la sesion y se incrustan como `data:` de mapa
+  de bits (png, jpeg, gif, webp): desde el marco aislado la cookie no viajaria.
+- Adjuntos: siempre como descarga, pedidos con la sesion y guardados como
+  `application/octet-stream` con el nombre que sanea el servicio; nunca un enlace a la parte.
+  El nombre visible se muestra sin caracteres de control ni de direccion de texto.
+- Topes: el webmail no publica maximo de destinatarios, tamano de mensaje ni numero de
+  adjuntos. La interfaz no los copia: muestra `TOO_MANY_RECIPIENTS`, `MESSAGE_TOO_LARGE`,
+  `ATTACHMENT_INFECTED`, `SENDER_NOT_ALLOWED`, `QUOTA_EXCEEDED` y el resto de codigos del
+  servicio traducidos en `i18n/es.ts`. Falta un `GET /api/v1/webmail/meta`.

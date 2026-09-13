@@ -36,6 +36,20 @@ export default tseslint.config(
         { object: 'window', property: 'sessionStorage' },
       ],
       'no-console': ['error', { allow: ['warn', 'error'] }],
+      // HTML ajeno (correo, plantillas) solo se pinta en un iframe aislado
+      // (HtmlPreviewFrame); nunca entra en el DOM de la aplicacion.
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: "JSXAttribute[name.name='dangerouslySetInnerHTML']",
+          message: 'Prohibido: el HTML ajeno se pinta solo en HtmlPreviewFrame.',
+        },
+        {
+          selector:
+            "MemberExpression[property.name=/^(innerHTML|outerHTML)$/][parent.type='AssignmentExpression']",
+          message: 'Prohibido asignar innerHTML u outerHTML.',
+        },
+      ],
     },
   },
   {

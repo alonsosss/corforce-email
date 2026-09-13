@@ -1,11 +1,21 @@
 import { api } from './client';
 import { endpoints } from './endpoints';
 import { fetchPage } from './paging';
+import { cachedResource } from './resource';
 import type { SendClass } from './sendClass';
 import type { Page, PageQuery } from './types';
 
-// DTOs de services/analytics/internal/adapters/http/handler.go y domain/counters.go. Los
-// dias son dias de la zona que devuelve el servicio en `timezone`.
+// DTOs de services/analytics/internal/adapters/http/handler.go, meta.go y
+// domain/counters.go. Los dias son dias de la zona que devuelve el servicio en `timezone`.
+
+/** GET /analytics/meta: clases de envio, zona de los dias y limites de las consultas. */
+export interface AnalyticsMeta {
+  classes: SendClass[];
+  timezone: string;
+  range: { max_days: number; default_days: number };
+  domains: { default_limit: number; max_limit: number };
+  pagination: { default_per_page: number; max_per_page: number };
+}
 
 export interface Counters {
   sent: number;
@@ -89,4 +99,8 @@ export const analyticsApi = {
     fetchPage<CampaignReport>(endpoints.analytics.campaigns.collection, { ...query }),
   domains: async (query: RangeQuery & { limit?: number }): Promise<DomainsReport> =>
     (await api.get<DomainsReport>(endpoints.analytics.domains, { params: { ...query } })).data,
+  meta: async (): Promise<AnalyticsMeta> =>
+    (await api.get<AnalyticsMeta>(endpoints.analytics.meta)).data,
 };
+
+export const analyticsMeta = cachedResource(analyticsApi.meta);

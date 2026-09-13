@@ -9,7 +9,8 @@ import type { Page, PageQuery } from './types';
 
 export type SuppressionReason = 'complaint' | 'hard_bounce' | 'unsubscribe' | 'invalid' | 'manual';
 
-export interface SuppressionEntry {
+/** Una causa de exclusion (domain.Entry): una fila por (empresa, direccion, causa). */
+export interface SuppressionCause {
   id: string;
   tenant_id: string;
   email: string;
@@ -21,6 +22,17 @@ export interface SuppressionEntry {
   expires_at?: string;
   created_at: string;
   updated_at: string;
+}
+
+/**
+ * Direccion excluida con todas sus causas (domain.Address): los campos de primer nivel son
+ * los de la causa principal (la vigente mas grave), `reasons` las causas vigentes de mas a
+ * menos grave y `causes` todas las filas, tambien una manual caducada, cada una con el id
+ * con que se retira.
+ */
+export interface SuppressionEntry extends SuppressionCause {
+  reasons: SuppressionReason[] | null;
+  causes: SuppressionCause[] | null;
 }
 
 export interface SuppressionQuery extends PageQuery {
@@ -57,9 +69,14 @@ export interface SuppressionImport {
   created_at: string;
 }
 
+/**
+ * Respuesta de POST /suppression/check por direccion: `reason` es la causa vigente mas
+ * grave y `reasons` todas las vigentes, de mas a menos grave.
+ */
 export interface SuppressedAddress {
   email: string;
   reason: SuppressionReason;
+  reasons: SuppressionReason[] | null;
 }
 
 export interface SuppressionStats {

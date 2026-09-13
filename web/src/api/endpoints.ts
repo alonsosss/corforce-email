@@ -212,6 +212,7 @@ export const endpoints = {
     deliveries: `${API_PREFIX}/automations/double-opt-in/deliveries`,
   },
   analytics: {
+    meta: `${API_PREFIX}/analytics/meta`,
     overview: `${API_PREFIX}/analytics/overview`,
     timeseries: `${API_PREFIX}/analytics/timeseries`,
     campaigns: collectionOf('/analytics/campaigns'),
@@ -237,5 +238,24 @@ export const endpoints = {
       `${API_PREFIX}/reputation/tenants/${seg(tenantId)}/${seg(sendClass)}/suspend`,
     release: (tenantId: string, sendClass: string) =>
       `${API_PREFIX}/reputation/tenants/${seg(tenantId)}/${seg(sendClass)}/release`,
+  },
+  // services/webmail: prefijo autenticado por el propio servicio con la cookie cf_wm, sin
+  // el access token de la plataforma. Solo lo usa api/webmail.ts. El nombre de carpeta va
+  // codificado entero (una subcarpeta lleva el separador como %2F) y el servicio lo
+  // decodifica.
+  webmail: {
+    session: `${API_PREFIX}/webmail/session`,
+    folders: `${API_PREFIX}/webmail/folders`,
+    messages: (folder: string) => `${API_PREFIX}/webmail/folders/${seg(folder)}/messages`,
+    message: (folder: string, uid: number) =>
+      `${API_PREFIX}/webmail/folders/${seg(folder)}/messages/${uid}`,
+    flags: (folder: string, uid: number) =>
+      `${API_PREFIX}/webmail/folders/${seg(folder)}/messages/${uid}/flags`,
+    move: (folder: string, uid: number) =>
+      `${API_PREFIX}/webmail/folders/${seg(folder)}/messages/${uid}/move`,
+    part: (folder: string, uid: number, part: string) =>
+      `${API_PREFIX}/webmail/folders/${seg(folder)}/messages/${uid}/parts/${seg(part)}`,
+    send: `${API_PREFIX}/webmail/send`,
+    drafts: `${API_PREFIX}/webmail/drafts`,
   },
 } as const;

@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react';
 import {
   mailSecurityApi,
+  QUARANTINE_NOTICE_TEMPLATE,
   type QuarantineSettings,
   type QuarantineSettingsInput,
 } from '@/api/mailSecurity';
@@ -29,6 +30,7 @@ import { rules, validateField } from '@/lib/validate';
 import { t } from '@/i18n';
 import { QuotaField, readQuota } from '@/pages/shared/QuotaField';
 import { isDecimal } from './policyObject';
+import { noticeFieldError, type NoticeField } from './quarantineNotice';
 
 export function QuarantineSettingsTab() {
   const settings = useQuery(async () => (await mailSecurityApi.getQuarantineSettings()).data, []);
@@ -52,6 +54,27 @@ export function QuarantineSettingsTab() {
       initial={settings.data}
       onSaved={settings.setData}
     />
+  );
+}
+
+/** Variables de la plantilla del aviso, tal como las documenta mail-security. */
+function NoticeTemplateVariables() {
+  const code = (name: string) => <code key={name} className="cf-mono">{`{{${name}}}`}</code>;
+  return (
+    <div className="cf-field__hint cf-stack" style={{ gap: 'var(--cf-space-1)' }}>
+      <span>
+        {t('security.quarantineSettings.templateVariables')}{' '}
+        <span className="cf-inline-list">{QUARANTINE_NOTICE_TEMPLATE.fields.map(code)}</span>
+      </span>
+      <span>
+        {t('security.quarantineSettings.templateItems', {
+          range: `{{range ${QUARANTINE_NOTICE_TEMPLATE.list}}}`,
+          end: '{{end}}',
+        })}{' '}
+        <span className="cf-inline-list">{QUARANTINE_NOTICE_TEMPLATE.itemFields.map(code)}</span>
+      </span>
+      <span>{t('security.quarantineSettings.templateEscaping')}</span>
+    </div>
   );
 }
 
@@ -82,15 +105,31 @@ function QuarantineSettingsForm({
     toast.success(t('security.saved'));
   });
 
+  // Con el aviso activo, mail-security valida remitente, asunto y plantilla y responde 422
+  // nombrando el campo: el mensaje se pinta junto a ese campo.
+  const noticeError = noticeFieldError(save.error);
+  const fieldError = (field: NoticeField, local?: string) =>
+    local ?? (noticeError?.field === field ? noticeError.message : undefined);
+  const editNotice = (setter: (value: string) => void) => (value: string) => {
+    setter(value);
+    if (noticeError) save.clearError();
+  };
+
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     const size = readQuota(maxSize);
+    const required = (value: string) =>
+      notifyEnabled && !value.trim() ? t('validation.required') : undefined;
     const next = {
       max_size: size.error ?? undefined,
       max_age: validateField(maxAge, rules.required, rules.nonNegativeInteger) ?? undefined,
       retention: validateField(retention, rules.required, rules.nonNegativeInteger) ?? undefined,
       max_score: isDecimal(maxScore) ? undefined : t('validation.decimal'),
-      sender: !sender.trim() || normalizeEmail(sender) ? undefined : t('validation.email'),
+      sender:
+        required(sender) ??
+        (!sender.trim() || normalizeEmail(sender) ? undefined : t('validation.email')),
+      subject: required(subject),
+      html_template: required(template),
     };
     setErrors(next);
     if (Object.values(next).some(Boolean) || size.bytes === undefined) return;
@@ -108,6 +147,10 @@ function QuarantineSettingsForm({
       },
     });
   };
+
+  const senderError = fieldError('sender', errors.sender);
+  const subjectError = fieldError('subject', errors.subject);
+  const templateError = fieldError('html_template', errors.html_template);
 
   return (
     <Card
@@ -206,37 +249,60 @@ function QuarantineSettingsForm({
           <FormField
             label={t('security.quarantineSettings.notifySender')}
             htmlFor="q-sender"
-            error={errors.sender}
+            required={notifyEnabled}
+            error={senderError}
           >
             <Input
               id="q-sender"
               className="cf-mono"
               value={sender}
-              onChange={(e) => setSender(e.target.value)}
+              onChange={(e) => editNotice(setSender)(e.target.value)}
               disabled={!editable}
-              invalid={Boolean(errors.sender)}
+              invalid={Boolean(senderError)}
+              aria-describedby={senderError ? 'q-sender-error' : undefined}
             />
           </FormField>
         </div>
-        <FormField label={t('security.quarantineSettings.notifySubject')} htmlFor="q-subject">
+        <FormField
+          label={t('security.quarantineSettings.notifySubject')}
+          htmlFor="q-subject"
+          required={notifyEnabled}
+          error={subjectError}
+        >
           <Input
             id="q-subject"
             value={subject}
-            onChange={(e) => setSubject(e.target.value)}
+            onChange={(e) => editNotice(setSubject)(e.target.value)}
             disabled={!editable}
+            invalid={Boolean(subjectError)}
+            aria-describedby={subjectError ? 'q-subject-error' : undefined}
           />
         </FormField>
         <div className="cf-split">
-          <FormField label={t('security.quarantineSettings.notifyTemplate')} htmlFor="q-template">
-            <Textarea
-              id="q-template"
-              mono
-              rows={12}
-              value={template}
-              onChange={(e) => setTemplate(e.target.value)}
-              readOnly={!editable}
-            />
-          </FormField>
+          <div className="cf-stack" style={{ gap: 'var(--cf-space-2)' }}>
+            <FormField
+              label={t('security.quarantineSettings.notifyTemplate')}
+              htmlFor="q-template"
+              required={notifyEnabled}
+              error={templateError}
+            >
+              <Textarea
+                id="q-template"
+                mono
+                rows={12}
+                value={template}
+                onChange={(e) => editNotice(setTemplate)(e.target.value)}
+                readOnly={!editable}
+                invalid={Boolean(templateError)}
+                aria-describedby={
+                  templateError ? 'q-template-error q-template-vars' : 'q-template-vars'
+                }
+              />
+            </FormField>
+            <div id="q-template-vars">
+              <NoticeTemplateVariables />
+            </div>
+          </div>
           <div className="cf-field">
             <span className="cf-field__label">{t('common.preview')}</span>
             <HtmlPreviewFrame
@@ -246,7 +312,7 @@ function QuarantineSettingsForm({
             />
           </div>
         </div>
-        {save.error ? (
+        {save.error && !noticeError ? (
           <div className="cf-form__error" role="alert">
             {errorMessage(save.error)}
           </div>

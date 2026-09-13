@@ -1117,6 +1117,34 @@
   padding: var(--cf-space-2);
 }
 
+/* Causas de una exclusion: la principal destacada, las caducadas atenuadas */
+.cf-cause-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--cf-space-2);
+}
+.cf-cause {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.cf-cause__head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--cf-space-1) var(--cf-space-2);
+}
+.cf-cause--primary .cf-badge:first-child {
+  font-weight: var(--cf-weight-semibold);
+}
+.cf-cause--expired {
+  opacity: 0.7;
+}
+
 .cf-steps {
   list-style: none;
   margin: 0;

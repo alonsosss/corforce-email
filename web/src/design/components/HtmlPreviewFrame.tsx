@@ -7,25 +7,56 @@ import { t } from '@/i18n';
 export interface HtmlPreviewFrameProps {
   html: string;
   title: string;
-  height?: number;
+  /** Alto del marco: pixeles o cualquier longitud CSS. */
+  height?: number | string;
+  /**
+   * Decision sobre las imagenes remotas tomada fuera del marco (el webmail: el servicio ya
+   * las bloquea y quien lee las pide por mensaje). Sin ella, el propio marco ofrece
+   * mostrarlas en esta vista.
+   */
+  allowRemoteImages?: boolean;
+  /** Imagenes propias del documento ya resueltas a data: (las cid: de un correo). */
+  inlineImages?: ReadonlyMap<string, string>;
+  /**
+   * Deja abrir los enlaces en una pestana nueva (allow-popups). El marco sigue sin
+   * scripts, formularios, navegacion de la pagina ni mismo origen. Solo para correo
+   * recibido, cuyos enlaces ya saneo el servicio (http, https y mailto, noopener).
+   */
+  allowLinks?: boolean;
 }
+
+const LINKS_SANDBOX = 'allow-popups allow-popups-to-escape-sandbox';
 
 /**
  * Unico sitio donde se pinta HTML que no es de la aplicacion (plantillas, pies de pagina,
- * avisos): un iframe con sandbox vacio, sin scripts, formularios, ventanas, navegacion ni
- * mismo origen, y el documento en srcdoc. Ese HTML nunca entra en el DOM de la pagina.
- * Las imagenes remotas se bloquean hasta que quien mira las pide en esta vista.
+ * avisos, correo): un iframe con sandbox sin scripts, formularios, navegacion de la pagina
+ * ni mismo origen, y el documento en srcdoc. Ese HTML nunca entra en el DOM de la pagina.
+ * Las imagenes remotas se bloquean hasta que quien mira las pide.
  */
-export function HtmlPreviewFrame({ html, title, height = 360 }: HtmlPreviewFrameProps) {
+export function HtmlPreviewFrame({
+  html,
+  title,
+  height = 360,
+  allowRemoteImages,
+  inlineImages,
+  allowLinks = false,
+}: HtmlPreviewFrameProps) {
   const [showRemote, setShowRemote] = useState(false);
+  const controlled = allowRemoteImages !== undefined;
+  const allow = controlled ? allowRemoteImages : showRemote;
   const prepared = useMemo(
-    () => prepareUntrustedHtml(html, { allowRemoteImages: showRemote }),
-    [html, showRemote],
+    () =>
+      prepareUntrustedHtml(html, {
+        allowRemoteImages: allow,
+        inlineImages,
+        openLinksInNewTab: allowLinks,
+      }),
+    [html, allow, inlineImages, allowLinks],
   );
 
   return (
     <div className="cf-preview">
-      {prepared.remoteImages > 0 ? (
+      {!controlled && prepared.remoteImages > 0 ? (
         <div className="cf-preview__bar" role="status">
           <span className="cf-inline">
             <IconImage size={16} />
@@ -41,7 +72,7 @@ export function HtmlPreviewFrame({ html, title, height = 360 }: HtmlPreviewFrame
       <iframe
         className="cf-preview-frame"
         title={title}
-        sandbox=""
+        sandbox={allowLinks ? LINKS_SANDBOX : ''}
         referrerPolicy="no-referrer"
         srcDoc={prepared.html}
         style={{ height }}

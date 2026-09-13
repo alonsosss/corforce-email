@@ -37,6 +37,7 @@ import {
   type Column,
 } from '@/design/components';
 import { IconDownload, IconEdit, IconMail, IconShieldCheck, IconTrash } from '@/design/icons';
+import { saveBlob } from '@/lib/download';
 import { formatDateTime, fullName, summarizeUserAgent } from '@/lib/format';
 import { rules, validateField } from '@/lib/validate';
 import { getLocale, t, tEnum } from '@/i18n';
@@ -358,14 +359,7 @@ function ConsentsTab({ contactId, version }: { contactId: string; version: strin
 }
 
 function downloadJson(filename: string, data: unknown) {
-  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = filename;
-  link.rel = 'noopener';
-  link.click();
-  URL.revokeObjectURL(url);
+  saveBlob(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }), filename);
 }
 
 function ExportTab({ contact }: { contact: Contact }) {

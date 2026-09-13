@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { MODULES } from '@/access/modules';
 import { SYSTEM_ROLES } from '@/access/roles';
 import { paths } from '@/paths';
-import { PUBLIC_SCREENS, SCREENS } from '@/routes';
+import { PUBLIC_SCREENS, SCREENS, WEBMAIL_ROUTE } from '@/routes';
 import { NAV, visibleNav } from './nav';
 
 const allItems = NAV.flatMap((group) => group.items);
@@ -137,5 +137,26 @@ describe('menu frente a rutas', () => {
       const detailScreen = SCREENS.find((s) => s.path === detail);
       expect(detailScreen?.module, detail).toBe(listScreen?.module);
     }
+  });
+});
+
+describe('webmail frente a la plataforma', () => {
+  it('es otra sesion: ni pantalla ni entrada de menu de la plataforma bajo /webmail', () => {
+    const platform = [...PUBLIC_SCREENS, ...SCREENS].map((s) => s.path);
+    expect(platform.filter((p) => p.startsWith(paths.webmail))).toEqual([]);
+    expect(allItems.filter((i) => i.to.startsWith(paths.webmail))).toEqual([]);
+    expect(WEBMAIL_ROUTE).toBe(`${paths.webmail}/*`);
+  });
+
+  it('la vista del buzon lleva carpeta, mensaje, pagina y busqueda en la query', () => {
+    expect(paths.webmailView({ folder: 'INBOX/Proyectos' })).toBe(
+      '/webmail?folder=INBOX%2FProyectos',
+    );
+    expect(paths.webmailView({ folder: 'INBOX', uid: 7, q: 'factura' })).toBe(
+      '/webmail?folder=INBOX&uid=7&q=factura',
+    );
+    expect(paths.webmailComposeFrom('reply', 'Enviados', 3)).toBe(
+      '/webmail/compose?mode=reply&folder=Enviados&uid=3',
+    );
   });
 });

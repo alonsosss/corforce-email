@@ -13,7 +13,7 @@ import {
 } from '@/design/components';
 import { splitLines } from '@/lib/listInput';
 import { getLocale, t } from '@/i18n';
-import { ReasonBadge } from './suppressionReason';
+import { ReasonList } from './suppressionReason';
 
 interface CheckResult {
   checked: number;
@@ -24,12 +24,12 @@ const columns: Column<SuppressedAddress>[] = [
   {
     key: 'email',
     header: t('common.email'),
-    render: (s) => <strong className="cf-mono">{s.email}</strong>,
+    render: (s) => <strong className="cf-mono cf-break">{s.email}</strong>,
   },
   {
-    key: 'reason',
-    header: t('suppression.column.reason'),
-    render: (s) => <ReasonBadge reason={s.reason} />,
+    key: 'reasons',
+    header: t('suppression.check.reasons'),
+    render: (s) => <ReasonList reasons={s.reasons} primary={s.reason} />,
   },
 ];
 

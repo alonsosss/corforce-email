@@ -148,6 +148,17 @@ export interface QuarantineNotify {
   html_template: string;
 }
 
+/**
+ * Datos que recibe notify.html_template (domain.QuarantineNoticeData, html/template de Go,
+ * que escapa todo segun el contexto). mail-security no publica un catalogo de variables:
+ * esto es el contrato que documenta su dominio y hay que mantenerlo a la par.
+ */
+export const QUARANTINE_NOTICE_TEMPLATE = {
+  fields: ['.Mailbox', '.Count', '.LinksExpireAt'],
+  list: '.Messages',
+  itemFields: ['.Subject', '.Sender', '.Date', '.Score', '.ReleaseURL', '.DiscardURL'],
+} as const;
+
 export interface QuarantineSettings {
   tenant_id: string;
   max_size_bytes: number;

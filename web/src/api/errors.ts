@@ -45,6 +45,11 @@ export const ERROR_CODES = {
   PLAN_CODE_TAKEN: 'PLAN_CODE_TAKEN',
   PLAN_IN_USE: 'PLAN_IN_USE',
   PLAN_RETIRED: 'PLAN_RETIRED',
+  // webmail (services/webmail/internal/adapters/http/handler.go, writeError). El resto de
+  // sus codigos solo se muestran y se traducen con error.code.<CODIGO>.
+  SESSION_EXPIRED: 'SESSION_EXPIRED',
+  INVALID_CREDENTIALS: 'INVALID_CREDENTIALS',
+  RECIPIENT_REJECTED: 'RECIPIENT_REJECTED',
   // Fabricados por el cliente: sin respuesta o respuesta que no es JSON.
   NETWORK_ERROR: 'NETWORK_ERROR',
   INVALID_RESPONSE: 'INVALID_RESPONSE',
