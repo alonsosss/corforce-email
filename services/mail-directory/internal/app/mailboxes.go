@@ -292,10 +292,14 @@ func (uc *UseCase) SetMailboxPassword(ctx context.Context, tenantID, id uuid.UUI
 		return err
 	}
 	return uc.tx.InTx(ctx, func(ctx context.Context) error {
-		if _, err := uc.mailboxes.Get(ctx, tenantID, id); err != nil {
+		m, err := uc.mailboxes.Get(ctx, tenantID, id)
+		if err != nil {
 			return err
 		}
-		return uc.mailboxes.UpdatePassword(ctx, tenantID, id, hash)
+		if err := uc.mailboxes.UpdatePassword(ctx, tenantID, id, hash); err != nil {
+			return err
+		}
+		return uc.events.MailboxCredentialsChanged(ctx, m)
 	})
 }
 

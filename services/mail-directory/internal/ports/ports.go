@@ -187,6 +187,7 @@ type EventPublisher interface {
 	MailboxCreated(ctx context.Context, m *domain.Mailbox) error
 	MailboxUpdated(ctx context.Context, m *domain.Mailbox) error
 	MailboxDeleted(ctx context.Context, m *domain.Mailbox) error
+	MailboxCredentialsChanged(ctx context.Context, m *domain.Mailbox) error
 	AliasCreated(ctx context.Context, a *domain.Alias) error
 	AliasUpdated(ctx context.Context, a *domain.Alias) error
 	AliasDeleted(ctx context.Context, a *domain.Alias) error

@@ -128,3 +128,32 @@ func TestListadosNormalizanLaBusqueda(t *testing.T) {
 		t.Fatalf("filtro de dominios: %+v", h.domains.lastFilter)
 	}
 }
+
+// El cambio de la contrasena principal avisa a quien guarda sesiones del buzon (el
+// webmail las revoca); si el aviso no se puede encolar, la contrasena no cambia.
+func TestCambiarLaContrasenaAvisaEnLaTransaccion(t *testing.T) {
+	h := newHarness()
+	ctx := context.Background()
+	tenant := uuid.New()
+	h.addDomain(tenant, "acme.com", domain.DomainLimits{})
+	m, err := h.uc.CreateMailbox(ctx, tenant, CreateMailboxRequest{LocalPart: "ana", Domain: "acme.com", Password: "contrasena-larga-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := h.uc.SetMailboxPassword(ctx, tenant, m.ID, "otra-contrasena-larga-2"); err != nil {
+		t.Fatal(err)
+	}
+	if h.published("mail.mailbox.credentials_changed") != 1 || len(h.events.outside) != 0 {
+		t.Fatalf("eventos: %v, fuera de la transaccion: %v", h.events.subjects, h.events.outside)
+	}
+
+	caida := errors.New("outbox: encolar: permission denied for table event_outbox")
+	h.events.fail = caida
+	antes := h.tx.rolledBack
+	if err := h.uc.SetMailboxPassword(ctx, tenant, m.ID, "tercera-contrasena-3"); !errors.Is(err, caida) {
+		t.Fatalf("el fallo de la outbox debe llegar al llamante: %v", err)
+	}
+	if h.tx.rolledBack != antes+1 || h.published("mail.mailbox.credentials_changed") != 1 {
+		t.Fatalf("el cambio debe revertirse: rollbacks=%d eventos=%v", h.tx.rolledBack, h.events.subjects)
+	}
+}

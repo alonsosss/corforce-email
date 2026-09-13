@@ -11,6 +11,7 @@ package outbox
 
 import (
 	"context"
+	"time"
 
 	"github.com/alonsosss/corforce-email/pkg/events"
 	"github.com/alonsosss/corforce-email/pkg/outbox"
@@ -32,9 +33,12 @@ const (
 	SubjectMailboxCreated     = "mail.mailbox.created"
 	SubjectMailboxUpdated     = "mail.mailbox.updated"
 	SubjectMailboxDeleted     = "mail.mailbox.deleted"
-	SubjectAliasCreated       = "mail.alias.created"
-	SubjectAliasUpdated       = "mail.alias.updated"
-	SubjectAliasDeleted       = "mail.alias.deleted"
+	// SubjectMailboxCredentialsChanged: cambio de la contrasena principal del buzon. Quien
+	// guarda sesiones del buzon (el webmail) las revoca al recibirlo.
+	SubjectMailboxCredentialsChanged = "mail.mailbox.credentials_changed"
+	SubjectAliasCreated              = "mail.alias.created"
+	SubjectAliasUpdated              = "mail.alias.updated"
+	SubjectAliasDeleted              = "mail.alias.deleted"
 
 	source = "mail-directory"
 )
@@ -116,6 +120,13 @@ func (p *Publisher) MailboxDeleted(ctx context.Context, m *domain.Mailbox) error
 	return p.in(ctx).Publish(SubjectMailboxDeleted, events.Event{TenantID: m.TenantID.String(), Data: map[string]interface{}{
 		"tenant_id": m.TenantID.String(), "id": m.ID.String(), "username": m.Username, "domain": m.Domain,
 		"active": m.Active, "kind": m.Kind,
+	}})
+}
+
+func (p *Publisher) MailboxCredentialsChanged(ctx context.Context, m *domain.Mailbox) error {
+	return p.in(ctx).Publish(SubjectMailboxCredentialsChanged, events.Event{TenantID: m.TenantID.String(), Data: map[string]interface{}{
+		"tenant_id": m.TenantID.String(), "id": m.ID.String(), "username": m.Username,
+		"changed_at": time.Now().UTC().Format(time.RFC3339),
 	}})
 }
 

@@ -95,6 +95,9 @@ func (f *fakeEvents) MailboxUpdated(context.Context, *domain.Mailbox) error {
 func (f *fakeEvents) MailboxDeleted(context.Context, *domain.Mailbox) error {
 	return f.record("mail.mailbox.deleted")
 }
+func (f *fakeEvents) MailboxCredentialsChanged(context.Context, *domain.Mailbox) error {
+	return f.record("mail.mailbox.credentials_changed")
+}
 func (f *fakeEvents) AliasCreated(context.Context, *domain.Alias) error {
 	return f.record("mail.alias.created")
 }
