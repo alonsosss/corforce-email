@@ -12,14 +12,15 @@ import (
 	"go.uber.org/zap"
 )
 
-// Reintento de la suscripcion mientras mail-directory no haya declarado su stream.
-const subscribeRetry = 30 * time.Second
+// Reintento de la suscripcion si NATS no responde al arrancar.
+const subscribeRetry = 5 * time.Second
 
 // DirectoryConsumer sigue los eventos del directorio (mail.>) y mantiene al dia las
-// claves de Redis que dependen de el. El stream MAIL_DIRECTORY lo declara
-// mail-directory; aqui solo se declara el consumidor durable. Si el stream aun no
-// existe, se reintenta: el servicio arranca igual y la reconciliacion periodica cubre
-// el hueco.
+// claves de Redis que dependen de el. Declara el stream MAIL_DIRECTORY con los mismos
+// subjects que mail-directory antes de suscribirse: si esperara a que lo declarase el
+// productor, un arranque simultaneo retrasaba la suscripcion y un dominio recien
+// activado tardaba en llegar a DOMAIN_MAP. Si NATS falla, se reintenta y el servicio
+// arranca igual; la reconciliacion periodica cubre el hueco.
 type DirectoryConsumer struct {
 	bus    *events.Bus
 	sync   *app.RedisSync
@@ -40,12 +41,15 @@ func (c *DirectoryConsumer) Run(ctx context.Context) {
 		return
 	}
 	for {
-		_, err := c.bus.DurableQueueSubscribe(domain.DirectorySubjectPattern, domain.DirectoryConsumer, c.handle)
+		err := c.bus.EnsureStream(domain.DirectoryStreamName, []string{domain.DirectorySubjectPattern})
+		if err == nil {
+			_, err = c.bus.DurableQueueSubscribe(domain.DirectorySubjectPattern, domain.DirectoryConsumer, c.handle)
+		}
 		if err == nil {
 			c.logger.Info("suscrito a los eventos del directorio", zap.String("consumer", domain.DirectoryConsumer))
 			return
 		}
-		c.logger.Warn("sin stream del directorio todavia; se reintenta", zap.Error(err))
+		c.logger.Warn("no se pudo suscribir a los eventos del directorio; se reintenta", zap.Error(err))
 		select {
 		case <-ctx.Done():
 			return

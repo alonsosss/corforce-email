@@ -9,6 +9,9 @@ const (
 	SubjectQuarantineReleased = "mail_security.quarantine.released"
 
 	// Consumidor durable de los eventos del directorio que alteran las claves de Redis.
+	// DirectoryStreamName y DirectorySubjectPattern repiten la declaracion de
+	// mail-directory: el consumidor declara su stream (la union de subjects es idempotente).
+	DirectoryStreamName     = "MAIL_DIRECTORY"
 	DirectorySubjectPattern = "mail.>"
 	DirectoryConsumer       = "mail-security-redis"
 )
