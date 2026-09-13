@@ -15,16 +15,40 @@ type UserRepository interface {
 	List(ctx context.Context, tenantID uuid.UUID, offset, limit int, search string) ([]*domain.User, int64, error)
 	Update(ctx context.Context, user *domain.User) error
 	Delete(ctx context.Context, id uuid.UUID) error
-	IncrementFailedAttempts(ctx context.Context, id uuid.UUID) error
+	// IncrementFailedAttempts cuenta un inicio fallido en now con la regla de
+	// domain.LoginFailures (desde uno si el contador estaba olvidado) y devuelve el contador.
+	IncrementFailedAttempts(ctx context.Context, id uuid.UUID, now time.Time) (int, error)
 	ResetFailedAttempts(ctx context.Context, id uuid.UUID) error
 	LockUser(ctx context.Context, id uuid.UUID, until *time.Time) error
-	UpdateLastLogin(ctx context.Context, id uuid.UUID) error
+	// RecordLogin apunta un inicio de sesion correcto en una sola sentencia: retira el bloqueo
+	// y los intentos como ResetFailedAttempts, fija last_login_at y, con rehash, cambia el hash.
+	RecordLogin(ctx context.Context, id uuid.UUID, rehash *PasswordRehash) error
 	UpdatePassword(ctx context.Context, id uuid.UUID, hash string) error
 	EnableMFA(ctx context.Context, id uuid.UUID, secret string) error
 	DisableMFA(ctx context.Context, id uuid.UUID) error
 	// BumpTokenEpoch adelanta tokens_valid_from a ahora: invalida al instante todos los
 	// access token del usuario emitidos antes (revocacion instantanea via el gateway).
 	BumpTokenEpoch(ctx context.Context, id uuid.UUID) error
+}
+
+// PasswordRehash sustituye el hash de una cuenta por el de la misma contrasena con el coste
+// vigente. Solo se aplica si la cuenta conserva Current: un cambio de contrasena simultaneo no
+// se pisa con la anterior.
+type PasswordRehash struct {
+	Current     string
+	Replacement string
+}
+
+// UnknownLoginRepository guarda los contadores de inicios fallidos de los correos sin cuenta,
+// con la regla, el umbral y el plazo de las cuentas: el bloqueo no distingue unos de otras.
+// Nunca crea filas en identity.users.
+type UnknownLoginRepository interface {
+	// RecordFailure aplica en una sola sentencia domain.LoginFailures.RecordFailure al
+	// contador de subject (su clave, sin el correo en claro). wasLocked es true si el bloqueo
+	// seguia vigente en now: entonces el intento no cuenta.
+	RecordFailure(ctx context.Context, subject string, now time.Time, maxAttempts int, lockout time.Duration) (wasLocked bool, err error)
+	// PruneForgotten borra hasta limit contadores ya olvidados en now y devuelve cuantos borro.
+	PruneForgotten(ctx context.Context, now time.Time, limit int) (int64, error)
 }
 
 // RoleLookup resuelve los nombres de los roles vigentes de un usuario para sellarlos en

@@ -26,9 +26,11 @@ foraneas entre esquemas, cabecera `-- Schema: x | Service: y`, idempotentes y ad
   `organization.tenant_modules(tenant_id, module, enabled)`. Modulos: `corporate_mail`,
   `transactional`, `marketing`. `permission_modules` agrupa los modulos de permiso que cada
   uno habilita; access-control y el gateway lo leen de ahi, no del codigo.
-* `identity.users` (con `tokens_valid_from`), `sessions`, `token_blocklist`,
-  `password_policies`, `password_history`, `password_reset_tokens`, `session_policies`,
-  `audit_log`.
+* `identity.users` (con `tokens_valid_from` y `last_failed_login_at`), `sessions`,
+  `token_blocklist`, `password_policies`, `password_history`, `password_reset_tokens`,
+  `session_policies`, `audit_log` y `unknown_login_failures` (contadores de inicios fallidos de
+  los correos sin cuenta, bajo el SHA-256 del ambito y del correo;
+  `028_identity_login_failures.sql`, regla en `docs/Usuarios_Roles_y_Acceso.md`, 1).
 * `access_control.roles` (`is_system`), `permissions(module, resource, action)`,
   `role_permissions`, `user_roles`, `access_denials`.
 * Semilla de permisos del plano de control en `005_seed_permissions.sql`; cada servicio

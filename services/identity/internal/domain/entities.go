@@ -28,10 +28,17 @@ type User struct {
 	MFASecret           string
 	PasswordChangedAt   *time.Time
 	FailedLoginAttempts int
+	LastFailedLoginAt   *time.Time
 	LockedUntil         *time.Time
 	LastLoginAt         *time.Time
 	CreatedAt           time.Time
 	UpdatedAt           time.Time
+}
+
+// Failures es el contador de inicios fallidos de la cuenta, con la regla comun a los correos
+// sin cuenta.
+func (u *User) Failures() LoginFailures {
+	return LoginFailures{Attempts: u.FailedLoginAttempts, LastFailedAt: u.LastFailedLoginAt, LockedUntil: u.LockedUntil}
 }
 
 // LockActive dice si el bloqueo por intentos fallidos sigue vigente en now. El bloqueo es

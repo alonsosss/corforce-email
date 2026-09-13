@@ -35,6 +35,7 @@ type AuthUseCase struct {
 	tenants         ports.TenantRepository
 	roles           ports.RoleLookup
 	hasher          ports.PasswordHasher
+	unknownLogins   ports.UnknownLoginRepository
 	// decoyHash es un hash del hasher, de una contrasena aleatoria que no se guarda: el
 	// inicio de sesion que no tiene hash de cuenta que comparar compara contra el.
 	decoyHash string
@@ -57,7 +58,10 @@ type AuthDeps struct {
 	// Hasher es el mismo que escribe las contrasenas: de el sale el hash de relleno, con su
 	// coste, al construir el caso de uso.
 	Hasher ports.PasswordHasher
-	Logger *zap.Logger
+	// UnknownLogins cuenta los fallos de los correos sin cuenta: sin el, el bloqueo por
+	// intentos confirmaria que la cuenta existe.
+	UnknownLogins ports.UnknownLoginRepository
+	Logger        *zap.Logger
 	// Now es el reloj de las decisiones de sesion y bloqueo; nil es time.Now.
 	Now func() time.Time
 }
@@ -65,6 +69,9 @@ type AuthDeps struct {
 func NewAuthUseCase(deps AuthDeps) (*AuthUseCase, error) {
 	if deps.Hasher == nil {
 		return nil, errors.New("auth: falta el hasher de contrasenas")
+	}
+	if deps.UnknownLogins == nil {
+		return nil, errors.New("auth: faltan los contadores de los correos sin cuenta")
 	}
 	decoy, err := deps.Hasher.Hash(rand.Text())
 	if err != nil {
@@ -76,6 +83,7 @@ func NewAuthUseCase(deps AuthDeps) (*AuthUseCase, error) {
 	}
 	return &AuthUseCase{
 		hasher:          deps.Hasher,
+		unknownLogins:   deps.UnknownLogins,
 		decoyHash:       decoy,
 		now:             now,
 		users:           deps.Users,
@@ -95,24 +103,28 @@ func NewAuthUseCase(deps AuthDeps) (*AuthUseCase, error) {
 
 // Login compara la contrasena exactamente una vez en todo intento: contra el hash de la
 // cuenta si puede tener sesion y, si no hay cuenta, empresa o sesion posible, contra el de
-// relleno. Asi el tiempo de un fallo no dice si el correo existe ni si resuelve empresa.
+// relleno. Asi el tiempo de un fallo no dice si el correo existe ni si resuelve empresa. Un
+// correo sin cuenta cuenta sus fallos como una cuenta y se bloquea al mismo umbral, con la
+// misma respuesta: el bloqueo tampoco lo dice.
 func (uc *AuthUseCase) Login(ctx context.Context, req ports.LoginRequest) (*ports.LoginResponse, error) {
 	var tenantID uuid.UUID
 	var err error
+	scope := scopeNoTenant
 	if req.TenantSlug != "" {
 		tenantID, err = uc.tenants.GetIDBySlug(ctx, req.TenantSlug)
+		scope = scopeSlug + req.TenantSlug
 	} else {
 		tenantID, err = uc.tenants.GetIDByEmail(ctx, req.Email)
 	}
 	if err != nil {
 		uc.compareDecoy(req.Password)
-		return nil, domain.ErrTenantNotFound
+		return nil, uc.unknownFailure(ctx, scope, uuid.Nil, req.Email, domain.ErrTenantNotFound)
 	}
 
 	user, err := uc.users.GetByEmail(ctx, tenantID, req.Email)
 	if err != nil {
 		uc.compareDecoy(req.Password)
-		return nil, domain.ErrInvalidCredentials
+		return nil, uc.unknownFailure(ctx, scopeTenant+tenantID.String(), tenantID, req.Email, domain.ErrInvalidCredentials)
 	}
 
 	// Una cuenta que no puede tener sesion (inactive, pending o con el bloqueo vigente) se
@@ -130,8 +142,7 @@ func (uc *AuthUseCase) Login(ctx context.Context, req ports.LoginRequest) (*port
 		return nil, domain.ErrInvalidCredentials
 	}
 
-	uc.users.ResetFailedAttempts(ctx, user.ID)
-	uc.users.UpdateLastLogin(ctx, user.ID)
+	uc.recordLogin(ctx, user, req.Password)
 
 	// Con MFA activo no se entrega el par todavia: sale un token de desafio de corta
 	// vida y la sesion se abre al validar el codigo (VerifyMFAChallenge).
@@ -389,20 +400,25 @@ func (uc *AuthUseCase) LogoutAll(ctx context.Context, userID uuid.UUID) error {
 }
 
 func (uc *AuthUseCase) handleFailedLogin(ctx context.Context, user *domain.User, tenantID uuid.UUID, ip, userAgent string) {
-	uc.users.IncrementFailedAttempts(ctx, user.ID)
-	user.FailedLoginAttempts++
+	now := uc.now()
+	attempts, countErr := uc.users.IncrementFailedAttempts(ctx, user.ID, now)
 
 	// Rastro para el detector de fuerza bruta (servicio audit): cada intento
 	// fallido con su IP y dispositivo.
 	uc.events.PublishLoginFailed(tenantID.String(), user.ID.String(), user.Email, ip, userAgent)
 
+	if countErr != nil {
+		uc.logger.Warn("no se pudo contar el inicio fallido",
+			zap.String("user_id", user.ID.String()), zap.Error(countErr))
+		return
+	}
 	policy, err := uc.policies.Get(ctx, tenantID)
 	if err != nil {
 		return
 	}
 
-	if user.FailedLoginAttempts >= policy.MaxFailedAttempts {
-		lockUntil := uc.now().Add(time.Duration(policy.LockoutDurationMinutes) * time.Minute)
+	if attempts >= policy.MaxFailedAttempts {
+		lockUntil := now.Add(time.Duration(policy.LockoutDurationMinutes) * time.Minute)
 		uc.users.LockUser(ctx, user.ID, &lockUntil)
 		uc.events.PublishUserLocked(tenantID.String(), user.ID.String())
 		uc.audit.Log(ctx, &domain.AuditEntry{
@@ -413,8 +429,68 @@ func (uc *AuthUseCase) handleFailedLogin(ctx context.Context, user *domain.User,
 			Resource:   "user",
 			ResourceID: user.ID.String(),
 			IPAddress:  ip,
-			CreatedAt:  uc.now(),
+			CreatedAt:  now,
 		})
+	}
+}
+
+// Ambitos del contador de un correo sin cuenta: la empresa en que se busco, el slug que no
+// resolvio ninguna o, sin slug, ninguna empresa. Una cuenta comparte su contador entre los
+// caminos que llegan a ella; un correo sin cuenta se comporta como una cuenta de una empresa
+// que no se nombra.
+const (
+	scopeTenant   = "tenant:"
+	scopeSlug     = "slug:"
+	scopeNoTenant = "none"
+)
+
+// unknownFailure cuenta el fallo de un correo sin cuenta con la politica que tendria la cuenta:
+// la de la empresa si se resolvio y, sin empresa, la que el repositorio da a uuid.Nil (la de por
+// defecto). Pasado el umbral responde ErrAccountLocked, como una cuenta bloqueada; si no, failure.
+func (uc *AuthUseCase) unknownFailure(ctx context.Context, scope string, tenantID uuid.UUID, email string, failure error) error {
+	policy, err := uc.policies.Get(ctx, tenantID)
+	if err != nil {
+		return failure
+	}
+	lockout := time.Duration(policy.LockoutDurationMinutes) * time.Minute
+	wasLocked, err := uc.unknownLogins.RecordFailure(ctx, unknownSubject(scope, email), uc.now(), policy.MaxFailedAttempts, lockout)
+	if err != nil {
+		uc.logger.Warn("no se pudo contar el inicio fallido de un correo sin cuenta", zap.Error(err))
+		return failure
+	}
+	if wasLocked {
+		return domain.ErrAccountLocked
+	}
+	return failure
+}
+
+// unknownSubject es la clave del contador de un correo sin cuenta: el ambito y el correo tal
+// como se buscaron, sin normalizar, porque la busqueda tampoco normaliza (dos grafias de una
+// cuenta real llegan a contadores distintos, y las de un correo sin cuenta tambien). Solo se
+// guarda su SHA-256; la longitud del ambito separa las dos partes sin ambiguedad.
+func unknownSubject(scope, email string) string {
+	sum := sha256.Sum256([]byte(fmt.Sprintf("%d:%s%s", len(scope), scope, email)))
+	return hex.EncodeToString(sum[:])
+}
+
+// recordLogin apunta el inicio correcto. Si el hash de la cuenta tiene otro coste que el del
+// hasher lo rehace con la contrasena que acaba de coincidir y lo guarda en la misma sentencia:
+// una cuenta con otro coste se distinguia por el tiempo de un fallo. La contrasena no se
+// registra en ningun caso.
+func (uc *AuthUseCase) recordLogin(ctx context.Context, user *domain.User, password string) {
+	var rehash *ports.PasswordRehash
+	if uc.hasher.NeedsRehash(user.PasswordHash) {
+		hash, err := uc.hasher.Hash(password)
+		if err != nil {
+			uc.logger.Warn("no se pudo rehacer el hash con el coste vigente",
+				zap.String("user_id", user.ID.String()), zap.Error(err))
+		} else {
+			rehash = &ports.PasswordRehash{Current: user.PasswordHash, Replacement: hash}
+		}
+	}
+	if err := uc.users.RecordLogin(ctx, user.ID, rehash); err != nil {
+		uc.logger.Warn("no se pudo apuntar el inicio de sesion",
+			zap.String("user_id", user.ID.String()), zap.Error(err))
 	}
 }
 

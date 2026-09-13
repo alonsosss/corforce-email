@@ -23,6 +23,7 @@ import (
 	"github.com/alonsosss/corforce-email/services/identity/internal/adapters/passwordhash"
 	"github.com/alonsosss/corforce-email/services/identity/internal/adapters/postgres"
 	"github.com/alonsosss/corforce-email/services/identity/internal/adapters/pwned"
+	"github.com/alonsosss/corforce-email/services/identity/internal/adapters/resetqueue"
 	"github.com/alonsosss/corforce-email/services/identity/internal/app"
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -69,6 +70,7 @@ func main() {
 	auditRepo := postgres.NewAuditRepo(pool.Pool)
 	tenantRepo := postgres.NewTenantRepo(pool.Pool)
 	roleRepo := postgres.NewRoleRepo(pool.Pool)
+	unknownLoginRepo := postgres.NewUnknownLoginRepo(pool.Pool)
 
 	eventPub := natsadapter.NewEventPublisher(bus)
 
@@ -89,6 +91,7 @@ func main() {
 		Tenants:         tenantRepo,
 		Roles:           roleRepo,
 		Hasher:          hasher,
+		UnknownLogins:   unknownLoginRepo,
 		Logger:          logger,
 	})
 	if err != nil {
@@ -133,7 +136,13 @@ func main() {
 	if publicBaseURL == "" {
 		logger.Warn("PUBLIC_BASE_URL sin configurar: la recuperacion de contrasena no puede construir el enlace")
 	}
-	resetUC := app.NewPasswordResetUseCase(app.PasswordResetDeps{
+	resetQueue, err := resetqueue.New(resetqueue.Options{
+		Capacity: resetQueueCapacity, Workers: resetWorkers, JobTimeout: resetJobTimeout, DrainTimeout: resetDrainTimeout,
+	}, logger)
+	if err != nil {
+		log.Fatalf("password reset queue: %v", err)
+	}
+	resetUC, err := app.NewPasswordResetUseCase(app.PasswordResetDeps{
 		Users:         userRepo,
 		Resets:        postgres.NewPasswordResetRepo(pool.Pool),
 		Policies:      policyRepo,
@@ -145,9 +154,22 @@ func main() {
 		Events:        eventPub,
 		Mailer:        mailer,
 		Tenants:       tenantRepo,
+		Queue:         resetQueue,
 		Logger:        logger,
 		PublicBaseURL: publicBaseURL,
 	})
+	if err != nil {
+		log.Fatalf("password reset use case: %v", err)
+	}
+	// El trabajo de fondo que depende de la base se para despues del servidor HTTP: lo que la
+	// cola ya acepto se atiende antes de cerrar el pool.
+	workCtx, stopWork := context.WithCancel(ctx)
+	resetDone := make(chan struct{})
+	go func() {
+		defer close(resetDone)
+		resetQueue.Run(workCtx, resetUC.ProcessReset)
+	}()
+	go runUnknownLoginPrune(workCtx, unknownLoginRepo, logger)
 
 	handler := identityhttp.NewHandler(authUC, userUC, resetUC, authz.NewCheckerFromEnv(), identityhttp.Config{
 		StepUp:    tokenVerifier,
@@ -178,6 +200,8 @@ func main() {
 	if err := srv.Run(); err != nil {
 		logger.Fatal("server error", zap.Error(err))
 	}
+	stopWork()
+	<-resetDone
 }
 
 const (
@@ -185,7 +209,47 @@ const (
 	streamRetry = 5 * time.Second
 	// outboxRetention conserva lo publicado lo mismo que el stream (EnsureStream: 7 dias).
 	outboxRetention = 7 * 24 * time.Hour
+
+	// La cola de "olvide mi contrasena" acota su memoria; lo que llega a ella lo limitan antes
+	// el cupo estricto del gateway (AUTH_RATE_LIMIT_PER_MIN) y el de identity, por IP.
+	resetQueueCapacity = 256
+	resetWorkers       = 4
+	// resetJobTimeout cubre la busqueda, el enlace y la llamada a transactional (15 s en
+	// mailerclient); resetDrainTimeout es cuanto se atiende lo encolado al apagar.
+	resetJobTimeout   = 30 * time.Second
+	resetDrainTimeout = 10 * time.Second
+
+	// Los contadores de correos sin cuenta olvidados se borran cada hora, en lotes.
+	unknownLoginPruneEvery = time.Hour
+	unknownLoginPruneBatch = 1000
 )
+
+// runUnknownLoginPrune borra los contadores de correos sin cuenta que ya no cuentan: sin ella,
+// cada correo inventado que alguien prueba dejaria su fila para siempre. Borrarlos no cambia
+// ninguna respuesta (domain.FailedLoginWindow).
+func runUnknownLoginPrune(ctx context.Context, repo *postgres.UnknownLoginRepo, logger *zap.Logger) {
+	t := time.NewTicker(unknownLoginPruneEvery)
+	defer t.Stop()
+	for {
+		for {
+			n, err := repo.PruneForgotten(ctx, time.Now(), unknownLoginPruneBatch)
+			if err != nil {
+				if ctx.Err() == nil {
+					logger.Warn("no se pudieron podar los contadores de correos sin cuenta", zap.Error(err))
+				}
+				break
+			}
+			if n < unknownLoginPruneBatch {
+				break
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+	}
+}
 
 // runAccountEventRelay declara el stream IDENTITY y despues vacia la outbox del registro. Sin
 // NATS reintenta: los eventos esperan en la outbox, no se pierden. billing vacia la misma

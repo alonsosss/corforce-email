@@ -5,8 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -56,13 +59,29 @@ func (s *lgUsers) GetByID(_ context.Context, id uuid.UUID) (*domain.User, error)
 	return nil, domain.ErrUserNotFound
 }
 
-func (s *lgUsers) IncrementFailedAttempts(context.Context, uuid.UUID) error {
+// IncrementFailedAttempts y LockUser dejan en la cuenta lo que dejaria la base, con la regla del
+// dominio.
+func (s *lgUsers) IncrementFailedAttempts(_ context.Context, id uuid.UUID, now time.Time) (int, error) {
 	s.increments++
+	u, ok := s.users[id]
+	if !ok {
+		return 0, domain.ErrUserNotFound
+	}
+	u.FailedLoginAttempts = u.Failures().AttemptsAfterFailure(now)
+	u.LastFailedLoginAt = &now
+	return u.FailedLoginAttempts, nil
+}
+func (s *lgUsers) ResetFailedAttempts(context.Context, uuid.UUID) error { return nil }
+func (s *lgUsers) RecordLogin(context.Context, uuid.UUID, *ports.PasswordRehash) error {
 	return nil
 }
-func (s *lgUsers) ResetFailedAttempts(context.Context, uuid.UUID) error  { return nil }
-func (s *lgUsers) UpdateLastLogin(context.Context, uuid.UUID) error      { return nil }
-func (s *lgUsers) LockUser(context.Context, uuid.UUID, *time.Time) error { return nil }
+func (s *lgUsers) LockUser(_ context.Context, id uuid.UUID, until *time.Time) error {
+	if u, ok := s.users[id]; ok && (u.Status == domain.UserStatusActive || u.Status == domain.UserStatusLocked) {
+		u.Status, u.LockedUntil = domain.UserStatusLocked, until
+	}
+	return nil
+}
+
 func (s *lgUsers) Delete(_ context.Context, id uuid.UUID) error {
 	if s.deleteErr != nil {
 		return s.deleteErr
@@ -70,6 +89,21 @@ func (s *lgUsers) Delete(_ context.Context, id uuid.UUID) error {
 	delete(s.users, id)
 	return nil
 }
+
+// lgUnknown guarda los contadores de los correos sin cuenta con la regla del dominio.
+type lgUnknown struct {
+	counters map[string]domain.LoginFailures
+}
+
+func (s *lgUnknown) RecordFailure(_ context.Context, subject string, now time.Time, maxAttempts int, lockout time.Duration) (bool, error) {
+	if s.counters == nil {
+		s.counters = map[string]domain.LoginFailures{}
+	}
+	next, wasLocked := s.counters[subject].RecordFailure(now, maxAttempts, lockout)
+	s.counters[subject] = next
+	return wasLocked, nil
+}
+func (s *lgUnknown) PruneForgotten(context.Context, time.Time, int) (int64, error) { return 0, nil }
 
 // lgTenants resuelve la empresa solo por slug: sin slug, el correo no resuelve ninguna, que
 // es lo que responde el registro a un correo desconocido (o de una cuenta inactive o pending).
@@ -170,7 +204,7 @@ func newLoginFixture(t *testing.T) *lgFixture {
 	authUC, err := app.NewAuthUseCase(app.AuthDeps{
 		Users: f.users, Sessions: lgSessions{}, Policies: lgPolicies{}, Audit: lgAudit{}, Events: lgEvents{},
 		Tokens: f.tokens, Tenants: lgTenants{id: f.tenant}, Roles: &roleStore{}, Hasher: testHasher(t),
-		Logger: zap.NewNop(), Now: func() time.Time { return loginNow },
+		UnknownLogins: &lgUnknown{}, Logger: zap.NewNop(), Now: func() time.Time { return loginNow },
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -277,6 +311,34 @@ func TestLoginDeCuentasSinSesion(t *testing.T) {
 	}
 	if f.users.increments != 0 {
 		t.Errorf("%d intentos fallidos contados, se esperaba ninguno", f.users.increments)
+	}
+}
+
+// Un correo sin cuenta llega al bloqueo tras los mismos intentos que una cuenta real y con la
+// misma respuesta, byte a byte, busque con la empresa, sin ella o con un slug que no existe: el
+// 403 ACCOUNT_LOCKED ya no confirma que la cuenta exista.
+func TestUnCorreoSinCuentaLlegaAlBloqueoComoUnaCuenta(t *testing.T) {
+	maxAttempts := domain.DefaultPasswordPolicy(uuid.Nil).MaxFailedAttempts
+	attempts := func(f *lgFixture, email, slug string) []string {
+		out := make([]string, 0, maxAttempts+2)
+		for range maxAttempts + 2 {
+			rec := f.login(t, email, "no-es-la-contrasena", slug)
+			out = append(out, fmt.Sprintf("%d %s", rec.Code, rec.Body.String()))
+		}
+		return out
+	}
+	known := newLoginFixture(t)
+	want := attempts(known, known.account(domain.UserStatusActive, nil).Email, loginSlug)
+	locked := fmt.Sprintf("%d ", http.StatusForbidden)
+	for i, got := range want {
+		if (i < maxAttempts) == strings.HasPrefix(got, locked) || (i >= maxAttempts && !strings.Contains(got, `"ACCOUNT_LOCKED"`)) {
+			t.Fatalf("cuenta real, intento %d: %s", i+1, got)
+		}
+	}
+	for name, slug := range map[string]string{"en la empresa": loginSlug, "sin empresa": "", "con un slug que no existe": "no-existe"} {
+		if got := attempts(newLoginFixture(t), "nadie@example.test", slug); !slices.Equal(got, want) {
+			t.Errorf("correo sin cuenta %s:\n%v\nla cuenta real da\n%v", name, got, want)
+		}
 	}
 }
 

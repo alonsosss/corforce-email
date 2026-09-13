@@ -62,12 +62,30 @@ type PasswordHasher interface {
 	Hash(password string) (string, error)
 	// Compare devuelve nil solo si password corresponde a hash.
 	Compare(hash, password string) error
+	// NeedsRehash dice si un hash valido se calculo con otro coste que el vigente.
+	NeedsRehash(hash string) bool
 }
 
 // TransactionalMailer envia los correos transaccionales del flujo de identidad
 // (recuperacion de contrasena) a traves del servicio de correo transaccional.
 type TransactionalMailer interface {
 	Send(ctx context.Context, tenantID uuid.UUID, to, subject, htmlBody string) error
+	// Configured dice si hay a donde enviar; no depende de ningun destinatario.
+	Configured() bool
+}
+
+// PasswordResetRequest es una solicitud de "olvide mi contrasena" tal como llego, sin haber
+// buscado todavia la cuenta.
+type PasswordResetRequest struct {
+	Email     string
+	IPAddress string
+}
+
+// PasswordResetQueue lleva las solicitudes de reinicio al trabajador que las atiende fuera de
+// la peticion, para que la respuesta no espere a nada que dependa de la cuenta.
+type PasswordResetQueue interface {
+	// Enqueue no espera: false si la cola esta llena o cerrada, y la solicitud se descarta.
+	Enqueue(req PasswordResetRequest) bool
 }
 
 type UpdateUserRequest struct {

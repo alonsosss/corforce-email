@@ -178,17 +178,22 @@ echo "== Limite de inicios de sesion por IP"
 # seguir chocando con el, o la holgura esconderia un limitador roto. Sale desde una IP de
 # documentacion por X-Real-IP, que el gateway acepta de loopback como de su proxy de borde
 # (TRUSTED_PROXY_CIDRS por defecto): no gasta el cupo de 127.0.0.1 del resto de pasos, y el
-# limite propio de identity, que cuenta por la IP que le pasa el gateway, la ve nueva.
+# limite propio de identity, que cuenta por la IP que le pasa el gateway, la ve nueva. Cada
+# intento lleva su propio correo: desde el quinto fallo del mismo, identity responde el bloqueo
+# (403), tambien a un correo sin cuenta, y eso no es el limitador.
+# rafaga <correo> <curl args>
 rafaga() {
+  local email="$1"
+  shift
   curl -s "$@" -X POST "$GW/auth/login" -H 'X-Real-IP: 198.51.100.23' -H 'Content-Type: application/json' \
-    -d '{"email":"nadie@rafaga.test","password":"no-es-la-contrasena"}'
+    -d "{\"email\":\"$email\",\"password\":\"no-es-la-contrasena\"}"
 }
 pasan=0
-for _ in $(seq 1 "$AUTH_RATE_LIMIT_PER_MIN"); do
-  [[ "$(rafaga -o /dev/null -w '%{http_code}')" == 401 ]] && pasan=$((pasan + 1))
+for i in $(seq 1 "$AUTH_RATE_LIMIT_PER_MIN"); do
+  [[ "$(rafaga "nadie$i@rafaga.test" -o /dev/null -w '%{http_code}')" == 401 ]] && pasan=$((pasan + 1))
 done
 expect "los $AUTH_RATE_LIMIT_PER_MIN inicios del cupo llegan a identity (401)" "$pasan" "$AUTH_RATE_LIMIT_PER_MIN"
-EXCESO=$(rafaga -o /dev/null -D -)
+EXCESO=$(rafaga nadie@rafaga.test -o /dev/null -D -)
 contains "el siguiente recibe 429 del gateway" "$EXCESO" " 429"
 contains "con Retry-After" "$EXCESO" "Retry-After:"
 
@@ -542,6 +547,39 @@ expect "sin empresa responde igual que un correo desconocido" \
   "$(curl -s -w ' %{http_code}' -X POST "$GW/auth/login" -H 'Content-Type: application/json' -d "{\"email\":\"pendiente@acme.test\",\"password\":\"$pend_pass\"}")" \
   "$(curl -s -w ' %{http_code}' -X POST "$GW/auth/login" -H 'Content-Type: application/json' -d "{\"email\":\"nadie@acme.test\",\"password\":\"$pend_pass\"}")"
 expect "su token anterior ya no abre su ficha" "$(sesion "$GW/users/$U_PEND" -H "Authorization: Bearer $T_PEND")" "SESSION_REVOKED 401"
+
+echo "== Enumeracion de cuentas: recuperacion de contrasena y bloqueo"
+# forgot-password responde lo mismo, estado y cuerpo, exista o no el correo: la peticion solo
+# encola. Cada paso sale de su propia IP de documentacion por X-Real-IP, como la rafaga del
+# limitador, para no gastar el cupo estricto de 127.0.0.1.
+olvido() {
+  curl -s -w ' %{http_code}' -X POST "$GW/auth/forgot-password" -H 'X-Real-IP: 198.51.100.31' \
+    -H 'Content-Type: application/json' -d "{\"email\":\"$1\"}"
+}
+OLVIDO=$(olvido admin@acme.test)
+contains "forgot-password con un correo registrado responde 200" "$OLVIDO" " 200"
+expect "y un correo desconocido recibe lo mismo" "$(olvido nadie@acme.test)" "$OLVIDO"
+# Un correo sin cuenta llega al bloqueo tras los mismos intentos que una cuenta real y con la
+# misma respuesta, con la empresa y sin ella.
+bloq_pass="$(rand_hex 10)Aa1!"
+A2B="Authorization: Bearer $(e2e_login admin@acme.test "$TENANT_PASS" | jget data.access_token)"
+expect "alta de la cuenta que se va a bloquear" "$(codigo -X POST "$GW/users" -H "$A2B" -H 'Content-Type: application/json' \
+  -d "{\"email\":\"bloqueo@acme.test\",\"password\":\"$bloq_pass\",\"first_name\":\"Luis\",\"last_name\":\"Rios\"}")" "201"
+# serie <ip> <email> [slug]: las respuestas de 8 intentos con una contrasena mala.
+serie() {
+  local slug="" out="" _
+  [[ -n "${3:-}" ]] && slug=",\"tenant_slug\":\"$3\""
+  for _ in $(seq 1 8); do
+    out+="$(sesion -X POST "$GW/auth/login" -H "X-Real-IP: $1" -H 'Content-Type: application/json' \
+      -d "{\"email\":\"$2\",\"password\":\"no-es-la-contrasena\"$slug}")|"
+  done
+  echo "$out"
+}
+REAL=$(serie 198.51.100.32 bloqueo@acme.test acme)
+contains "la cuenta real llega al bloqueo" "$REAL" "ACCOUNT_LOCKED 403"
+expect "un correo sin cuenta en la empresa recibe la misma serie" "$(serie 198.51.100.33 nadie-bloqueo@acme.test acme)" "$REAL"
+expect "y sin empresa, tambien" "$(serie 198.51.100.34 nadie-bloqueo@acme.test)" "$REAL"
+
 echo "== Rutas con sesion por celda (segundo gateway, dos celdas)"
 # El gateway de arriba no declara celdas: todo va al destino base. Este segundo gateway declara
 # la celda base (GATEWAY_BASE_CELL_CODE) y una instancia de mail-directory sobre mail_cell_pe_02:

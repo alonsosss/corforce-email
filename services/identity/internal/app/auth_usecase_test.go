@@ -38,6 +38,7 @@ type authUsers struct {
 	increments int
 	resets     int
 	lockedTo   *time.Time
+	logins     []*ports.PasswordRehash
 }
 
 func (s *authUsers) GetByEmail(_ context.Context, tenant uuid.UUID, email string) (*domain.User, error) {
@@ -58,16 +59,57 @@ func (s *authUsers) GetByID(_ context.Context, id uuid.UUID) (*domain.User, erro
 	return nil, domain.ErrUserNotFound
 }
 
-func (s *authUsers) IncrementFailedAttempts(context.Context, uuid.UUID) error {
+// IncrementFailedAttempts, LockUser y RecordLogin dejan en la cuenta lo que dejaria la base, con
+// la regla del dominio: las pruebas de integracion comprueban que las sentencias reales la siguen.
+func (s *authUsers) IncrementFailedAttempts(_ context.Context, id uuid.UUID, now time.Time) (int, error) {
 	s.increments++
-	return nil
+	u, ok := s.users[id]
+	if !ok {
+		return 0, domain.ErrUserNotFound
+	}
+	u.FailedLoginAttempts = u.Failures().AttemptsAfterFailure(now)
+	u.LastFailedLoginAt = &now
+	return u.FailedLoginAttempts, nil
 }
 func (s *authUsers) ResetFailedAttempts(context.Context, uuid.UUID) error { s.resets++; return nil }
-func (s *authUsers) UpdateLastLogin(context.Context, uuid.UUID) error     { return nil }
-func (s *authUsers) LockUser(_ context.Context, _ uuid.UUID, until *time.Time) error {
+func (s *authUsers) LockUser(_ context.Context, id uuid.UUID, until *time.Time) error {
 	s.lockedTo = until
+	if u, ok := s.users[id]; ok && (u.Status == domain.UserStatusActive || u.Status == domain.UserStatusLocked) {
+		u.Status, u.LockedUntil = domain.UserStatusLocked, until
+	}
 	return nil
 }
+func (s *authUsers) RecordLogin(_ context.Context, id uuid.UUID, rehash *ports.PasswordRehash) error {
+	s.resets++
+	s.logins = append(s.logins, rehash)
+	if u, ok := s.users[id]; ok {
+		u.FailedLoginAttempts, u.LastFailedLoginAt, u.LockedUntil = 0, nil, nil
+		if u.Status == domain.UserStatusLocked {
+			u.Status = domain.UserStatusActive
+		}
+		if rehash != nil && u.PasswordHash == rehash.Current {
+			u.PasswordHash = rehash.Replacement
+		}
+	}
+	return nil
+}
+
+// authUnknown guarda los contadores de los correos sin cuenta con la regla del dominio.
+type authUnknown struct {
+	counters map[string]domain.LoginFailures
+	calls    int
+}
+
+func (s *authUnknown) RecordFailure(_ context.Context, subject string, now time.Time, maxAttempts int, lockout time.Duration) (bool, error) {
+	s.calls++
+	if s.counters == nil {
+		s.counters = map[string]domain.LoginFailures{}
+	}
+	next, wasLocked := s.counters[subject].RecordFailure(now, maxAttempts, lockout)
+	s.counters[subject] = next
+	return wasLocked, nil
+}
+func (s *authUnknown) PruneForgotten(context.Context, time.Time, int) (int64, error) { return 0, nil }
 
 // authTenants resuelve la misma empresa por slug y por correo; con missing, ninguna.
 type authTenants struct {
@@ -103,6 +145,11 @@ func (h *countingHasher) Hash(password string) (string, error) {
 func (h *countingHasher) Compare(hash, password string) error {
 	h.compared = append(h.compared, hash)
 	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(password))
+}
+
+func (h *countingHasher) NeedsRehash(hash string) bool {
+	cost, err := bcrypt.Cost([]byte(hash))
+	return err == nil && cost != h.cost
 }
 
 type authSessions struct {
@@ -158,6 +205,9 @@ type authFixture struct {
 	tenant   uuid.UUID
 	tenants  *authTenants
 	hasher   *countingHasher
+	unknown  *authUnknown
+	// clock es la hora del caso de uso; empieza en authNow y la prueba la adelanta.
+	clock time.Time
 }
 
 func newAuthFixture(t *testing.T) *authFixture {
@@ -181,12 +231,14 @@ func newAuthFixture(t *testing.T) *authFixture {
 		tokens:   auth.NewTokenService(signer, verifier, 5*time.Minute, time.Hour),
 		tenant:   uuid.New(),
 		hasher:   &countingHasher{cost: bcrypt.MinCost},
+		unknown:  &authUnknown{},
+		clock:    authNow,
 	}
 	f.tenants = &authTenants{id: f.tenant}
 	uc, err := NewAuthUseCase(AuthDeps{
 		Users: f.users, Sessions: f.sessions, Policies: authPolicies{}, Audit: nopAudit{},
 		Events: f.events, Tokens: f.tokens, Tenants: f.tenants, Roles: noRoles{}, Hasher: f.hasher,
-		Logger: zap.NewNop(), Now: func() time.Time { return authNow },
+		UnknownLogins: f.unknown, Logger: zap.NewNop(), Now: func() time.Time { return f.clock },
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -396,7 +448,7 @@ func TestCadaLoginComparaUnaContrasena(t *testing.T) {
 func TestElHashDeRellenoTieneElCosteDelHasher(t *testing.T) {
 	for _, cost := range []int{bcrypt.MinCost, bcrypt.MinCost + 1} {
 		h := &countingHasher{cost: cost}
-		uc, err := NewAuthUseCase(AuthDeps{Hasher: h, Logger: zap.NewNop()})
+		uc, err := NewAuthUseCase(AuthDeps{Hasher: h, UnknownLogins: &authUnknown{}, Logger: zap.NewNop()})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -404,7 +456,11 @@ func TestElHashDeRellenoTieneElCosteDelHasher(t *testing.T) {
 			t.Errorf("coste %d: %d hashes al construir, relleno con coste %d (%v)", cost, h.hashes, got, err)
 		}
 	}
-	if _, err := NewAuthUseCase(AuthDeps{Logger: zap.NewNop()}); err == nil {
+	if _, err := NewAuthUseCase(AuthDeps{UnknownLogins: &authUnknown{}, Logger: zap.NewNop()}); err == nil {
 		t.Fatal("sin hasher el caso de uso no debe construirse")
+	}
+	// Sin los contadores de los correos sin cuenta, el bloqueo delataria las cuentas.
+	if _, err := NewAuthUseCase(AuthDeps{Hasher: &countingHasher{cost: bcrypt.MinCost}, Logger: zap.NewNop()}); err == nil {
+		t.Fatal("sin contadores de correos sin cuenta el caso de uso no debe construirse")
 	}
 }

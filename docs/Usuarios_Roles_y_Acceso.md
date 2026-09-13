@@ -39,7 +39,9 @@ V = verificado en el codigo. P = propuesto, todavia no implementado.
   cuenta efectivamente activa abre o conserva sesion. El bloqueo por intentos fallidos es
   temporal: con `locked_until` vencido, o sin fecha, la cuenta cuenta como `active` sin que
   nada escriba en ella; el siguiente inicio de sesion correcto lo retira (estado a `active`,
-  intentos a cero) y una contrasena mala tras vencer vuelve a bloquear desde ese momento. El
+  intentos a cero) y una contrasena mala tras vencer vuelve a bloquear desde ese momento,
+  mientras los fallos no se hayan olvidado (24 horas, ver "Bloqueo por intentos sin
+  enumeracion"). El
   bloqueo solo cae sobre una cuenta `active` o `locked`: nunca convierte en `locked` una
   `inactive` o `pending`, que al vencer quedaria activa. Cerrar una cuenta sin plazo es
   `inactive`. `inactive`, `pending` y cualquier estado desconocido se rechazan antes de mirar
@@ -57,20 +59,66 @@ V = verificado en el codigo. P = propuesto, todavia no implementado.
   (`services/identity/internal/adapters/passwordhash`, bcrypt 10; el superadmin que siembra
   `ops/db/bootstrap-platform.sh` lleva ese coste y una prueba del paquete lo vigila). El tiempo
   no dice si el correo existe ni si resuelve empresa, el de una cuenta sin sesion no dice mas
-  que su cuerpo, y su contrasena sigue sin mirarse. Queda: (1) la contrasena mala de una
-  cuenta existente anade despues el apunte del intento (contador, evento, politica y, en el
-  umbral, el bloqueo), milisegundos frente a las decenas del bcrypt, que solo se miden con
-  muchas muestras y las cortan el limite por IP y el bloqueo; (2) ese bloqueo, a los N fallos,
-  responde 403 `ACCOUNT_LOCKED` y delata la cuenta por el cuerpo; (3) una cuenta con un hash
-  de otro coste (el superadmin de una plataforma arrancada antes de este cambio, con 12) se
-  distingue por el tiempo hasta que cambie su contrasena; (4) cada intento sin cuenta cuesta
-  ahora un bcrypt de CPU, que acotan los mismos limites. El reto MFA no compara contrasena ni
-  sirve para enumerar: pide un token de reto firmado, que solo sale con la contrasena correcta.
-  La solicitud de reinicio (`forgot-password`) responde igual, pero con cuenta guarda el enlace
-  y llama al servicio transaccional antes de responder: su tiempo si delata la cuenta (P).
-* Reinicio de contrasena por enlace de un solo uso, respuesta identica exista o no el
-  correo; enviado por el servicio transaccional (`TRANSACTIONAL_MAIL_URL`, P hasta que
-  exista).
+  que su cuerpo, y su contrasena sigue sin mirarse. Una cuenta con un hash de otro coste (el
+  superadmin de una plataforma arrancada antes de 7172693, con 12) lo cambia por uno del coste
+  vigente en su primer inicio correcto, en la misma sentencia que apunta el inicio y retira los
+  intentos (`UserRepo.RecordLogin`), solo si la fila conserva el hash que se comparo (un cambio
+  de contrasena simultaneo no se pisa) y sin tocar `password_changed_at`, porque la contrasena
+  es la misma; hasta ese inicio se sigue distinguiendo por el tiempo. Queda: (1) tras comparar,
+  la contrasena mala de una cuenta apunta el fallo en su fila y lee la politica, y un correo
+  sin cuenta lee la politica y apunta el fallo en su contador: dos sentencias ligeras en los dos
+  casos, milisegundos frente a las decenas del bcrypt; en el umbral la cuenta anade el bloqueo,
+  su evento y su apunte, y durante un bloqueo la cuenta no escribe nada mientras el correo sin
+  cuenta lee la politica y consulta su contador; solo se miden con muchas muestras, que cortan
+  el limite por IP y el bloqueo; (2) cada intento sin cuenta cuesta un bcrypt de CPU y una
+  escritura, que acotan los mismos limites. El reto MFA no compara contrasena ni sirve para
+  enumerar: pide un token de reto firmado, que solo sale con la contrasena correcta.
+* Bloqueo por intentos sin enumeracion (V, 2026-09-13): un correo sin cuenta cuenta sus fallos
+  como una cuenta y llega al mismo 403 `ACCOUNT_LOCKED`, con el mismo cuerpo, tras los mismos
+  intentos, con `tenant_slug` o sin el, con un slug que no existe o con un correo que no
+  resuelve empresa. Su contador vive en `identity.unknown_login_failures`
+  (`028_identity_login_failures.sql`), nunca en `identity.users`, bajo el SHA-256 del ambito en
+  que se busco (la empresa resuelta, el slug que no resolvio o ninguna empresa) y del correo tal
+  como se busco, sin normalizar, porque la busqueda tampoco normaliza: la tabla no guarda lo que
+  alguien probo. Umbral y plazo son los de la politica de la empresa resuelta y, sin empresa,
+  los de por defecto (5 intentos, 30 minutos). La regla es una (`domain.LoginFailures`) y la
+  base la aplica en una sentencia a los dos: un intento durante el bloqueo no cuenta, al vencer
+  el siguiente fallo vuelve a bloquear, y los fallos se olvidan pasadas 24 horas
+  (`domain.FailedLoginWindow`) desde el ultimo fallo contado y desde el final del ultimo
+  bloqueo. Por eso `identity.users` lleva `last_failed_login_at` (una cuenta con fallos
+  anteriores a la 028, sin esa fecha, los conserva hasta su siguiente fallo), y por eso identity
+  borra cada hora, en lotes, los contadores de correos sin cuenta ya olvidados sin cambiar
+  ninguna respuesta. Antes una cuenta no olvidaba nunca: una contrasena mala meses despues de
+  cuatro fallos la bloqueaba. La ventana no sube el ritmo de un ataque sostenido, que al vencer
+  cada bloqueo vuelve a bloquear al primer fallo. El mensaje sigue distinto del de la contrasena
+  mala a proposito: ya no confirma la cuenta, y a quien si la tiene le dice por que no entra y
+  que el reinicio de contrasena lo retira. El bloqueo de un correo sin cuenta no corta ninguna
+  sesion ni publica `identity.user.locked`. Queda: (1) combinar intentos con y sin
+  `tenant_slug` para el mismo correo, nombrando su empresa, revela si la cuenta es de esa
+  empresa: la cuenta comparte su contador entre los dos caminos y un correo sin cuenta tiene uno
+  por ambito (se comporta como la cuenta de una empresa que no se nombra); (2) sin
+  `tenant_slug`, la cuenta de una empresa con umbral o plazo propios se bloquea con los suyos y
+  un correo sin cuenta con los de por defecto; (3) una cuenta con fallos propios recientes
+  (menos de 24 horas sin un inicio correcto despues) se bloquea antes que un correo sin cuenta.
+* Recuperacion de contrasena sin enumeracion (V, 2026-09-13): `POST /auth/forgot-password`
+  responde el mismo 200 con el mismo cuerpo exista o no el correo y ya no tarda distinto: la
+  peticion valida el formato y encola la solicitud (correo en minusculas e IP) sin buscar la
+  cuenta, en una cola acotada en memoria de identity (`adapters/resetqueue`: 256 en espera, 4
+  trabajadores, 30 s por solicitud, con un contexto propio que no depende de la peticion).
+  Buscar la cuenta, invalidar los enlaces anteriores, guardar el nuevo y llamar al servicio
+  transaccional ocurre en el trabajador (`PasswordResetUseCase.ProcessReset`). El enlace sigue
+  siendo de un solo uso, caduca a los 30 minutos y solo se guarda su SHA-256; los limites de
+  peticiones no cambian (`gateway:auth` y los 60 por minuto e IP de identity). Antes de encolar
+  solo se decide lo que no depende del correo: sin `PUBLIC_BASE_URL` o sin
+  `TRANSACTIONAL_MAIL_URL` no se encola nada. Es una cola en proceso y no la outbox porque no
+  hay un cambio de negocio con el que confirmarse (con un correo desconocido no se escribe
+  nada) y la outbox y el stream guardarian 7 dias cada correo que alguien teclea. Con la cola
+  llena la solicitud se descarta con un aviso en el registro y la respuesta es la misma; al
+  apagar, identity atiende lo encolado durante 10 s despues de cerrar el servidor. Queda: una
+  caida pierde las solicitudes en espera (el usuario la repite: la respuesta nunca prometio el
+  envio), y el trabajo del trabajador comparte base y CPU con las peticiones, un efecto que no
+  se atribuye a ninguna. El envio por transactional (`POST /internal/send-email`) no lo recorre
+  ninguna prueba de punta a punta (P).
 
 ## 2. Roles (V)
 

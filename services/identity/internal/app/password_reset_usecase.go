@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net/url"
 	"strings"
@@ -24,7 +25,7 @@ const productName = "Core Force Mail"
 // PasswordResetUseCase implementa el flujo self-service "olvide mi contrasena":
 // solicitud por email (token de un solo uso enviado por correo) y confirmacion con
 // contrasena nueva. Disenado contra enumeracion de cuentas: la solicitud responde
-// siempre igual, exista o no el correo.
+// siempre igual y en el mismo tiempo, exista o no el correo, porque solo se encola.
 type PasswordResetUseCase struct {
 	users         ports.UserRepository
 	resets        ports.PasswordResetRepository
@@ -37,7 +38,9 @@ type PasswordResetUseCase struct {
 	events        ports.EventPublisher
 	mailer        ports.TransactionalMailer
 	tenants       ports.TenantRepository
+	queue         ports.PasswordResetQueue
 	logger        *zap.Logger
+	now           func() time.Time
 	publicBaseURL string
 }
 
@@ -53,13 +56,31 @@ type PasswordResetDeps struct {
 	Events   ports.EventPublisher
 	Mailer   ports.TransactionalMailer
 	Tenants  ports.TenantRepository
-	Logger   *zap.Logger
+	// Queue lleva cada solicitud a ProcessReset fuera de la peticion.
+	Queue  ports.PasswordResetQueue
+	Logger *zap.Logger
+	// Now es el reloj de la caducidad de los enlaces; nil es time.Now.
+	Now func() time.Time
 	// PublicBaseURL es el origen publico del frontend donde vive /reset-password. Sin
 	// el no hay enlace que enviar: la solicitud se registra y no sale ningun correo.
 	PublicBaseURL string
 }
 
-func NewPasswordResetUseCase(deps PasswordResetDeps) *PasswordResetUseCase {
+func NewPasswordResetUseCase(deps PasswordResetDeps) (*PasswordResetUseCase, error) {
+	if deps.Queue == nil {
+		return nil, errors.New("password reset: falta la cola de solicitudes")
+	}
+	if deps.Mailer == nil {
+		return nil, errors.New("password reset: falta el cliente de correo transaccional")
+	}
+	now := deps.Now
+	if now == nil {
+		now = time.Now
+	}
+	logger := deps.Logger
+	if logger == nil {
+		logger = zap.NewNop()
+	}
 	return &PasswordResetUseCase{
 		users:         deps.Users,
 		resets:        deps.Resets,
@@ -72,20 +93,35 @@ func NewPasswordResetUseCase(deps PasswordResetDeps) *PasswordResetUseCase {
 		events:        deps.Events,
 		mailer:        deps.Mailer,
 		tenants:       deps.Tenants,
-		logger:        deps.Logger,
+		queue:         deps.Queue,
+		logger:        logger,
+		now:           now,
 		publicBaseURL: strings.TrimRight(strings.TrimSpace(deps.PublicBaseURL), "/"),
-	}
+	}, nil
 }
 
-// RequestReset genera y envia el enlace de recuperacion. Nunca devuelve error de
-// negocio al llamador: si el correo no existe o el envio falla se registra en el
-// log y la respuesta al cliente es identica (anti-enumeracion).
-func (uc *PasswordResetUseCase) RequestReset(ctx context.Context, email, ipAddress string) {
-	email = strings.ToLower(strings.TrimSpace(email))
+// RequestReset deja la solicitud en la cola sin buscar la cuenta: la respuesta no espera a
+// nada que dependa del correo. Lo unico que se decide aqui tampoco depende de el: sin enlace
+// que construir o sin a donde enviarlo no se encola nada. Nunca devuelve error al llamador.
+func (uc *PasswordResetUseCase) RequestReset(_ context.Context, email, ipAddress string) {
 	if uc.publicBaseURL == "" {
 		uc.logger.Error("password reset: PUBLIC_BASE_URL no configurada; no se puede construir el enlace")
 		return
 	}
+	if !uc.mailer.Configured() {
+		uc.logger.Warn("password reset: correo transaccional sin configurar; la solicitud se descarta")
+		return
+	}
+	req := ports.PasswordResetRequest{Email: strings.ToLower(strings.TrimSpace(email)), IPAddress: ipAddress}
+	if !uc.queue.Enqueue(req) {
+		uc.logger.Warn("password reset: cola llena; la solicitud se descarta")
+	}
+}
+
+// ProcessReset atiende una solicitud de la cola: genera y envia el enlace si el correo es de
+// una cuenta que puede recuperarse. Si no lo es o el envio falla, solo queda en el log.
+func (uc *PasswordResetUseCase) ProcessReset(ctx context.Context, req ports.PasswordResetRequest) {
+	email := req.Email
 	tenantID, err := uc.tenants.GetIDByEmail(ctx, email)
 	if err != nil {
 		uc.logger.Info("password reset: correo no registrado", zap.String("email", email))
@@ -107,13 +143,14 @@ func (uc *PasswordResetUseCase) RequestReset(ctx context.Context, email, ipAddre
 	if err := uc.resets.InvalidateForUser(ctx, user.ID); err != nil {
 		uc.logger.Warn("password reset: invalidar tokens previos", zap.Error(err))
 	}
+	now := uc.now()
 	if err := uc.resets.Create(ctx, &domain.PasswordResetToken{
 		ID:        uuid.New(),
 		UserID:    user.ID,
 		TenantID:  tenantID,
 		TokenHash: hashResetToken(token),
-		ExpiresAt: time.Now().Add(resetTokenTTL),
-		CreatedAt: time.Now(),
+		ExpiresAt: now.Add(resetTokenTTL),
+		CreatedAt: now,
 	}); err != nil {
 		uc.logger.Error("password reset: guardar token", zap.Error(err))
 		return
@@ -133,8 +170,8 @@ func (uc *PasswordResetUseCase) RequestReset(ctx context.Context, email, ipAddre
 		UserID:    user.ID,
 		Action:    "password_reset_requested",
 		Resource:  "user",
-		IPAddress: ipAddress,
-		CreatedAt: time.Now(),
+		IPAddress: req.IPAddress,
+		CreatedAt: uc.now(),
 	})
 }
 
@@ -143,7 +180,7 @@ func (uc *PasswordResetUseCase) RequestReset(ctx context.Context, email, ipAddre
 // empresa exige a cualquier contrasena. Un enlace invalido o gastado no devuelve reglas.
 func (uc *PasswordResetUseCase) RulesForToken(ctx context.Context, token string) (domain.PasswordRules, error) {
 	prt, err := uc.resets.GetByTokenHash(ctx, hashResetToken(token))
-	if err != nil || prt.UsedAt != nil || time.Now().After(prt.ExpiresAt) {
+	if err != nil || prt.UsedAt != nil || uc.now().After(prt.ExpiresAt) {
 		return domain.PasswordRules{}, domain.ErrResetTokenInvalid
 	}
 	user, err := uc.users.GetByID(ctx, prt.UserID)
@@ -162,7 +199,7 @@ func (uc *PasswordResetUseCase) RulesForToken(ctx context.Context, token string)
 // comprometida, lo pierde en el acto).
 func (uc *PasswordResetUseCase) ConfirmReset(ctx context.Context, token, newPassword string) error {
 	prt, err := uc.resets.GetByTokenHash(ctx, hashResetToken(token))
-	if err != nil || prt.UsedAt != nil || time.Now().After(prt.ExpiresAt) {
+	if err != nil || prt.UsedAt != nil || uc.now().After(prt.ExpiresAt) {
 		return domain.ErrResetTokenInvalid
 	}
 	user, err := uc.users.GetByID(ctx, prt.UserID)
@@ -209,7 +246,7 @@ func (uc *PasswordResetUseCase) ConfirmReset(ctx context.Context, token, newPass
 		Action:     "password_reset_completed",
 		Resource:   "user",
 		ResourceID: user.ID.String(),
-		CreatedAt:  time.Now(),
+		CreatedAt:  uc.now(),
 	})
 	return nil
 }

@@ -40,6 +40,31 @@ func TestHashConElCosteConfigurado(t *testing.T) {
 	}
 }
 
+// Solo un hash valido de otro coste se rehace; uno que no es de bcrypt lo rechaza Compare.
+func TestNeedsRehashSoloConOtroCoste(t *testing.T) {
+	h, err := NewBcrypt(bcrypt.MinCost)
+	if err != nil {
+		t.Fatal(err)
+	}
+	same, err := h.Hash("Correcta-2026!")
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := bcrypt.GenerateFromPassword([]byte("Correcta-2026!"), bcrypt.MinCost+1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h.NeedsRehash(same) {
+		t.Error("un hash del coste vigente se rehace")
+	}
+	if !h.NeedsRehash(string(other)) {
+		t.Error("un hash de otro coste no se rehace")
+	}
+	if h.NeedsRehash("no-es-bcrypt") {
+		t.Error("un hash que no es de bcrypt se rehace")
+	}
+}
+
 // El superadmin que siembra el arranque de la plataforma lleva el mismo coste que las cuentas
 // que crea identity: si no, su inicio de sesion fallido tarda distinto y lo delata.
 func TestElArranqueDeLaPlataformaUsaElMismoCoste(t *testing.T) {

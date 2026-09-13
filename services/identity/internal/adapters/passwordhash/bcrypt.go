@@ -40,4 +40,12 @@ func (b *Bcrypt) Compare(hash, password string) error {
 	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(password))
 }
 
+// NeedsRehash detecta un hash de otro coste, como el del superadmin sembrado con 12 antes de
+// fijar BcryptCost: su inicio de sesion fallido tarda distinto y lo delata. Un hash que no es
+// de bcrypt no se rehace: Compare ya lo rechaza.
+func (b *Bcrypt) NeedsRehash(hash string) bool {
+	cost, err := bcrypt.Cost([]byte(hash))
+	return err == nil && cost != b.cost
+}
+
 var _ ports.PasswordHasher = (*Bcrypt)(nil)

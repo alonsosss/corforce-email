@@ -9,6 +9,7 @@ import (
 
 	"github.com/alonsosss/corforce-email/pkg/db"
 	"github.com/alonsosss/corforce-email/services/identity/internal/domain"
+	"github.com/alonsosss/corforce-email/services/identity/internal/ports"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -80,12 +81,12 @@ func (r *UserRepo) GetByID(ctx context.Context, id uuid.UUID) (*domain.User, err
 	err := r.pool.QueryRow(ctx,
 		`SELECT id, tenant_id, email, password_hash, first_name, last_name, COALESCE(avatar_url, ''), status,
 mfa_enabled, COALESCE(mfa_secret, ''), password_changed_at, failed_login_attempts,
-locked_until, last_login_at, created_at, updated_at
+last_failed_login_at, locked_until, last_login_at, created_at, updated_at
  FROM identity.users WHERE id = $1`, id,
 	).Scan(
 		&u.ID, &u.TenantID, &u.Email, &u.PasswordHash, &u.FirstName, &u.LastName, &u.AvatarURL, &u.Status,
 		&u.MFAEnabled, &u.MFASecret, &u.PasswordChangedAt, &u.FailedLoginAttempts,
-		&u.LockedUntil, &u.LastLoginAt, &u.CreatedAt, &u.UpdatedAt,
+		&u.LastFailedLoginAt, &u.LockedUntil, &u.LastLoginAt, &u.CreatedAt, &u.UpdatedAt,
 	)
 	if err != nil {
 		return nil, domain.ErrUserNotFound
@@ -98,12 +99,12 @@ func (r *UserRepo) GetByEmail(ctx context.Context, tenantID uuid.UUID, email str
 	err := r.pool.QueryRow(ctx,
 		`SELECT id, tenant_id, email, password_hash, first_name, last_name, COALESCE(avatar_url, ''), status,
 mfa_enabled, COALESCE(mfa_secret, ''), password_changed_at, failed_login_attempts,
-locked_until, last_login_at, created_at, updated_at
+last_failed_login_at, locked_until, last_login_at, created_at, updated_at
  FROM identity.users WHERE tenant_id = $1 AND email = $2`, tenantID, email,
 	).Scan(
 		&u.ID, &u.TenantID, &u.Email, &u.PasswordHash, &u.FirstName, &u.LastName, &u.AvatarURL, &u.Status,
 		&u.MFAEnabled, &u.MFASecret, &u.PasswordChangedAt, &u.FailedLoginAttempts,
-		&u.LockedUntil, &u.LastLoginAt, &u.CreatedAt, &u.UpdatedAt,
+		&u.LastFailedLoginAt, &u.LockedUntil, &u.LastLoginAt, &u.CreatedAt, &u.UpdatedAt,
 	)
 	if err != nil {
 		return nil, domain.ErrUserNotFound
@@ -197,21 +198,53 @@ mfa_enabled, last_login_at, created_at, updated_at
 	return users, total, rows.Err()
 }
 
-func (r *UserRepo) IncrementFailedAttempts(ctx context.Context, id uuid.UUID) error {
-	_, err := r.pool.Exec(ctx,
-		`UPDATE identity.users SET failed_login_attempts = failed_login_attempts + 1 WHERE id = $1`, id,
-	)
-	return err
+// IncrementFailedAttempts aplica domain.LoginFailures.AttemptsAfterFailure en la fila: el
+// contador vuelve a uno si el ultimo fallo y el final del bloqueo quedan fuera de la ventana
+// (GREATEST ignora el NULL; sin ninguna de las dos fechas se conserva). Es la misma expresion que
+// usa UnknownLoginRepo.RecordFailure.
+func (r *UserRepo) IncrementFailedAttempts(ctx context.Context, id uuid.UUID, now time.Time) (int, error) {
+	var attempts int
+	err := r.pool.QueryRow(ctx,
+		`UPDATE identity.users
+		    SET failed_login_attempts = CASE WHEN GREATEST(last_failed_login_at, locked_until) < $3 THEN 1
+		                                     ELSE failed_login_attempts + 1 END,
+		        last_failed_login_at = $2
+		  WHERE id = $1
+		RETURNING failed_login_attempts`, id, now, now.Add(-domain.FailedLoginWindow),
+	).Scan(&attempts)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, domain.ErrUserNotFound
+	}
+	return attempts, err
 }
 
-// ResetFailedAttempts retira el bloqueo por intentos: contador a cero, sin fecha y, si la fila
+// ResetFailedAttempts retira el bloqueo por intentos: contador a cero, sin fechas y, si la fila
 // seguia en locked, de vuelta a active. inactive y pending no se tocan.
 func (r *UserRepo) ResetFailedAttempts(ctx context.Context, id uuid.UUID) error {
 	_, err := r.pool.Exec(ctx,
 		`UPDATE identity.users
-		    SET failed_login_attempts = 0, locked_until = NULL,
+		    SET failed_login_attempts = 0, locked_until = NULL, last_failed_login_at = NULL,
 		        status = CASE WHEN status = 'locked' THEN 'active' ELSE status END
 		  WHERE id = $1`, id,
+	)
+	return err
+}
+
+// RecordLogin es ResetFailedAttempts mas last_login_at y, si llega, el hash rehecho, en una
+// sola sentencia. El hash solo cambia si la fila conserva el que se comparo: una contrasena
+// cambiada entre tanto no se pisa. No toca password_changed_at: la contrasena es la misma.
+func (r *UserRepo) RecordLogin(ctx context.Context, id uuid.UUID, rehash *ports.PasswordRehash) error {
+	var current, replacement *string
+	if rehash != nil {
+		current, replacement = &rehash.Current, &rehash.Replacement
+	}
+	_, err := r.pool.Exec(ctx,
+		`UPDATE identity.users
+		    SET failed_login_attempts = 0, locked_until = NULL, last_failed_login_at = NULL,
+		        status = CASE WHEN status = 'locked' THEN 'active' ELSE status END,
+		        last_login_at = NOW(),
+		        password_hash = COALESCE(CASE WHEN password_hash = $2::varchar THEN $3::varchar END, password_hash)
+		  WHERE id = $1`, id, current, replacement,
 	)
 	return err
 }
@@ -224,13 +257,6 @@ func (r *UserRepo) LockUser(ctx context.Context, id uuid.UUID, until *time.Time)
 	_, err := r.pool.Exec(ctx,
 		`UPDATE identity.users SET status = 'locked', locked_until = $1
 		  WHERE id = $2 AND status IN ('active', 'locked')`, until, id,
-	)
-	return err
-}
-
-func (r *UserRepo) UpdateLastLogin(ctx context.Context, id uuid.UUID) error {
-	_, err := r.pool.Exec(ctx,
-		`UPDATE identity.users SET last_login_at = NOW() WHERE id = $1`, id,
 	)
 	return err
 }
