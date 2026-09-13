@@ -22,8 +22,8 @@ const (
 
 	// Topes de cuerpo: la consulta previa al envio lleva hasta 1000 direcciones y la
 	// carga masiva hasta 10000 (unos 320 bytes por direccion en el peor caso).
-	checkBodyLimit  = 512 << 10
-	importBodyLimit = 4 << 20
+	checkBodyLimit   = 512 << 10
+	importBodyLimit  = 4 << 20
 	defaultBodyLimit = 64 << 10
 
 	defaultPerPage = 20

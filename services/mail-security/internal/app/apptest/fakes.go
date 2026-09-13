@@ -146,7 +146,9 @@ type PolicyReader struct {
 	FwOptions    *domain.FirewallOptions
 }
 
-func (f *PolicyReader) AllSMTPAccess(context.Context) ([]domain.SMTPAccess, error) { return f.SMTP, nil }
+func (f *PolicyReader) AllSMTPAccess(context.Context) ([]domain.SMTPAccess, error) {
+	return f.SMTP, nil
+}
 func (f *PolicyReader) DeleteSMTPAccessByUsername(_ context.Context, username string) error {
 	kept := f.SMTP[:0]
 	for _, a := range f.SMTP {
@@ -172,7 +174,9 @@ func NewPolicyReader() *PolicyReader {
 	return &PolicyReader{Footers: map[string]domain.DomainFooter{}, QSettings: map[uuid.UUID]domain.QuarantineSettings{}}
 }
 
-func (f *PolicyReader) AllSpamScores(context.Context) ([]domain.SpamScore, error) { return f.Scores, nil }
+func (f *PolicyReader) AllSpamScores(context.Context) ([]domain.SpamScore, error) {
+	return f.Scores, nil
+}
 func (f *PolicyReader) AllAddressLists(context.Context) ([]domain.AddressListEntry, error) {
 	return f.Lists, nil
 }

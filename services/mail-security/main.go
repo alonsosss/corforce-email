@@ -163,16 +163,16 @@ func main() {
 		Tx: ctxPool, Repo: postgres.NewPolicyRepository(ctxPool), Directory: directory, Sync: redisSync, Logger: logger,
 	})
 	quarantineUC := app.NewQuarantineUseCase(app.QuarantineDeps{
-		Tx:         ctxPool,
-		Repo:       quarantineRepo,
+		Tx:   ctxPool,
+		Repo: quarantineRepo,
 		Reinjector: smtpadapter.New(
 			net.JoinHostPort(envOrDefault("MAIL_QUARANTINE_REINJECT_HOST", defaultReinjectHost), strconv.Itoa(envInt("MAIL_QUARANTINE_REINJECT_PORT", defaultReinjectPort))),
 			envOrDefault("MAIL_HOSTNAME", "mail-security")),
-		Learner:    rspamd.New(envOrDefault("RSPAMD_CONTROLLER_URL", defaultControllerURL), os.Getenv("RSPAMD_CONTROLLER_PASSWORD")),
-		Events:     publisher,
-		Notices:    noticeRepo,
-		Links:      quarantineLinks,
-		Logger:     logger,
+		Learner: rspamd.New(envOrDefault("RSPAMD_CONTROLLER_URL", defaultControllerURL), os.Getenv("RSPAMD_CONTROLLER_PASSWORD")),
+		Events:  publisher,
+		Notices: noticeRepo,
+		Links:   quarantineLinks,
+		Logger:  logger,
 	})
 	engineUC := app.NewEngineUseCase(app.EngineDeps{
 		Tx: ctxPool, Documents: postgres.NewDocumentRepository(ctxPool),

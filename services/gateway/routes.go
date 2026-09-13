@@ -93,8 +93,8 @@ type routeSpec struct {
 }
 
 var (
-	prefixRe = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
-	moduleRe = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
+	prefixRe  = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
+	moduleRe  = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
 	hostEnvRe = regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)
 )
 

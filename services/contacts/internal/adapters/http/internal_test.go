@@ -15,11 +15,11 @@ import (
 func TestRutasInternasDeAutomations(t *testing.T) {
 	h := NewHandler(Deps{})
 	want := map[string]bool{
-		"POST /audience":                       false,
-		"POST /sendable":                       false,
-		"POST /lists/{listID}/members":         false,
-		"POST /lists/{listID}/members/remove":  false,
-		"POST /lists/{listID}/members/check":   false,
+		"POST /audience":                      false,
+		"POST /sendable":                      false,
+		"POST /lists/{listID}/members":        false,
+		"POST /lists/{listID}/members/remove": false,
+		"POST /lists/{listID}/members/check":  false,
 	}
 	err := chi.Walk(h.InternalRoutes().(chi.Routes), func(method, route string, _ nethttp.Handler, _ ...func(nethttp.Handler) nethttp.Handler) error {
 		key := method + " " + strings.TrimSuffix(route, "/")

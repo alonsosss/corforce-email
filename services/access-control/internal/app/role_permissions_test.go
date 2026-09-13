@@ -23,8 +23,8 @@ func (f *fakeRoles) GetByName(context.Context, uuid.UUID, string) (*domain.Role,
 	return nil, domain.ErrRoleNotFound
 }
 func (f *fakeRoles) List(context.Context, uuid.UUID) ([]*domain.Role, error) { return nil, nil }
-func (f *fakeRoles) Update(context.Context, *domain.Role) error             { return nil }
-func (f *fakeRoles) Delete(context.Context, uuid.UUID) error                { return nil }
+func (f *fakeRoles) Update(context.Context, *domain.Role) error              { return nil }
+func (f *fakeRoles) Delete(context.Context, uuid.UUID) error                 { return nil }
 
 type fakePerms struct{ all []*domain.Permission }
 

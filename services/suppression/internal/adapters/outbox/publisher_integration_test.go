@@ -49,10 +49,10 @@ func TestPublicadorEncolaEnLaTransaccion(t *testing.T) {
 		t.Fatalf("subject %q", subject)
 	}
 	var evt struct {
-		Type     string            `json:"type"`
-		Source   string            `json:"source"`
-		TenantID string            `json:"tenant_id"`
-		UserID   string            `json:"user_id"`
+		Type     string         `json:"type"`
+		Source   string         `json:"source"`
+		TenantID string         `json:"tenant_id"`
+		UserID   string         `json:"user_id"`
 		Data     map[string]any `json:"data"`
 	}
 	if err := json.Unmarshal(payload, &evt); err != nil {

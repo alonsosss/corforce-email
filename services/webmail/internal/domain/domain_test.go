@@ -231,12 +231,12 @@ func TestParsePartIDYUID(t *testing.T) {
 
 func TestSafeDownloadType(t *testing.T) {
 	cases := map[string]string{
-		"image/PNG":                     "image/png",
-		"application/pdf; name=x.pdf":   "application/pdf",
-		"text/html":                     "application/octet-stream",
-		"image/svg+xml":                 "application/octet-stream",
-		"application/x-msdownload":      "application/octet-stream",
-		"no es un tipo":                 "application/octet-stream",
+		"image/PNG":                      "image/png",
+		"application/pdf; name=x.pdf":    "application/pdf",
+		"text/html":                      "application/octet-stream",
+		"image/svg+xml":                  "application/octet-stream",
+		"application/x-msdownload":       "application/octet-stream",
+		"no es un tipo":                  "application/octet-stream",
 		"text/plain; charset=iso-8859-1": "text/plain",
 	}
 	for in, want := range cases {

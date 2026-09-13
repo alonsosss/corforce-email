@@ -16,7 +16,9 @@ type DocumentRepository struct {
 	pool *db.ContextPool
 }
 
-func NewDocumentRepository(pool *db.ContextPool) *DocumentRepository { return &DocumentRepository{pool: pool} }
+func NewDocumentRepository(pool *db.ContextPool) *DocumentRepository {
+	return &DocumentRepository{pool: pool}
+}
 
 const documentColumns = `document, content_hash, last_modified`
 

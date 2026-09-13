@@ -35,8 +35,8 @@ type moduleGateFixture struct {
 	// solo tiene filas apagadas, y other comparte modulos con explicit en sentido contrario
 	// para que un JOIN que no filtre por empresa se note.
 	explicit, implicit, disabledOnly, other uuid.UUID
-	core, optional, partner, idle         string
-	permOptional, permShared              string
+	core, optional, partner, idle           string
+	permOptional, permShared                string
 }
 
 func seedModuleGate(ctx context.Context, t *testing.T, pool *pgxpool.Pool) *moduleGateFixture {

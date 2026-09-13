@@ -173,10 +173,10 @@ func TestRecordDeliveryEventosInvalidos(t *testing.T) {
 	h := newHarness()
 	tenant := uuid.New()
 	cases := map[string]DeliveryEvent{
-		"sin id":           {TenantID: tenant, Kind: KindSent, Class: domain.ClassMarketing},
-		"id enorme":        {EventID: string(make([]byte, maxEventIDLength+1)), TenantID: tenant, Kind: KindSent, Class: domain.ClassMarketing},
-		"sin empresa":      {EventID: "x", Kind: KindSent, Class: domain.ClassMarketing},
-		"clase invalida":   {EventID: "x", TenantID: tenant, Kind: KindSent, Class: "newsletter"},
+		"sin id":            {TenantID: tenant, Kind: KindSent, Class: domain.ClassMarketing},
+		"id enorme":         {EventID: string(make([]byte, maxEventIDLength+1)), TenantID: tenant, Kind: KindSent, Class: domain.ClassMarketing},
+		"sin empresa":       {EventID: "x", Kind: KindSent, Class: domain.ClassMarketing},
+		"clase invalida":    {EventID: "x", TenantID: tenant, Kind: KindSent, Class: "newsletter"},
 		"hecho desconocido": {EventID: "x", TenantID: tenant, Kind: "opened", Class: domain.ClassMarketing},
 	}
 	for name, ev := range cases {

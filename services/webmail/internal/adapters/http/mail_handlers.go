@@ -239,4 +239,3 @@ func optionalInt(raw, field string) (int, error) {
 	}
 	return v, nil
 }
-

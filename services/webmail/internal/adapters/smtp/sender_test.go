@@ -42,11 +42,11 @@ func TestNewSenderExigeTLSYCredencial(t *testing.T) {
 		t.Fatal(err)
 	}
 	for name, mutate := range map[string]func(*Config){
-		"sin TLS":          func(c *Config) { c.TLSMode = "none" },
-		"sin nombre TLS":   func(c *Config) { c.TLSConfig = &tls.Config{} },
-		"sin maestro":      func(c *Config) { c.MasterUser = "" },
-		"sin contrasena":   func(c *Config) { c.MasterPassword = "" },
-		"sin direccion":    func(c *Config) { c.Addr = "" },
+		"sin TLS":        func(c *Config) { c.TLSMode = "none" },
+		"sin nombre TLS": func(c *Config) { c.TLSConfig = &tls.Config{} },
+		"sin maestro":    func(c *Config) { c.MasterUser = "" },
+		"sin contrasena": func(c *Config) { c.MasterPassword = "" },
+		"sin direccion":  func(c *Config) { c.Addr = "" },
 	} {
 		c := ok
 		mutate(&c)

@@ -408,8 +408,8 @@ func (f *fakeSpamAliases) List(context.Context, uuid.UUID, ports.Page) ([]domain
 func (f *fakeSpamAliases) Get(context.Context, uuid.UUID, uuid.UUID) (*domain.SpamAlias, error) {
 	return nil, domain.ErrNotFound
 }
-func (f *fakeSpamAliases) Create(context.Context, *domain.SpamAlias) error   { return nil }
-func (f *fakeSpamAliases) Update(context.Context, *domain.SpamAlias) error   { return nil }
+func (f *fakeSpamAliases) Create(context.Context, *domain.SpamAlias) error    { return nil }
+func (f *fakeSpamAliases) Update(context.Context, *domain.SpamAlias) error    { return nil }
 func (f *fakeSpamAliases) Delete(context.Context, uuid.UUID, uuid.UUID) error { return nil }
 func (f *fakeSpamAliases) DeleteByGoto(context.Context, uuid.UUID, string) error {
 	f.deletedByGoto++
@@ -424,8 +424,8 @@ func (f *fakeSenderACL) List(context.Context, uuid.UUID, ports.Page) ([]domain.S
 func (f *fakeSenderACL) Get(context.Context, uuid.UUID, uuid.UUID) (*domain.SenderACL, error) {
 	return nil, domain.ErrNotFound
 }
-func (f *fakeSenderACL) Create(context.Context, *domain.SenderACL) error   { return nil }
-func (f *fakeSenderACL) Update(context.Context, *domain.SenderACL) error   { return nil }
+func (f *fakeSenderACL) Create(context.Context, *domain.SenderACL) error    { return nil }
+func (f *fakeSenderACL) Update(context.Context, *domain.SenderACL) error    { return nil }
 func (f *fakeSenderACL) Delete(context.Context, uuid.UUID, uuid.UUID) error { return nil }
 func (f *fakeSenderACL) DeleteByLoggedInAs(context.Context, uuid.UUID, string) error {
 	f.deletedByUser++
@@ -445,9 +445,9 @@ func (f *fakeRelayhosts) Get(_ context.Context, tenantID, id uuid.UUID) (*domain
 	}
 	return nil, domain.ErrNotFound
 }
-func (f *fakeRelayhosts) Create(context.Context, *domain.Relayhost, string) error    { return nil }
-func (f *fakeRelayhosts) Update(context.Context, *domain.Relayhost, *string) error   { return nil }
-func (f *fakeRelayhosts) Delete(context.Context, uuid.UUID, uuid.UUID) error          { return nil }
+func (f *fakeRelayhosts) Create(context.Context, *domain.Relayhost, string) error  { return nil }
+func (f *fakeRelayhosts) Update(context.Context, *domain.Relayhost, *string) error { return nil }
+func (f *fakeRelayhosts) Delete(context.Context, uuid.UUID, uuid.UUID) error       { return nil }
 
 type fakeTransports struct{ items []*domain.Transport }
 

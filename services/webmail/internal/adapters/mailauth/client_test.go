@@ -81,9 +81,11 @@ func TestVerifyFallosSonNoDisponible(t *testing.T) {
 	defer target.Close()
 
 	for name, h := range map[string]http.HandlerFunc{
-		"500":          func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusInternalServerError) },
-		"json roto":    func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(`{"success":`)) },
-		"redireccion":  func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, target.URL, http.StatusTemporaryRedirect) },
+		"500":       func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusInternalServerError) },
+		"json roto": func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(`{"success":`)) },
+		"redireccion": func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, target.URL, http.StatusTemporaryRedirect)
+		},
 		"cuerpo vacio": func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusBadRequest) },
 	} {
 		srv, cfg := tlsServer(t, h)

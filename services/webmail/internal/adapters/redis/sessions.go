@@ -50,7 +50,7 @@ type record struct {
 	ExpiresAt   int64  `json:"e"`
 }
 
-func (s *SessionStore) sessionKey(key string) string     { return s.prefix + "s:" + key }
+func (s *SessionStore) sessionKey(key string) string      { return s.prefix + "s:" + key }
 func (s *SessionStore) userKey(username string) string    { return s.prefix + "u:" + username }
 func (s *SessionStore) revokedKey(username string) string { return s.prefix + "r:" + username }
 

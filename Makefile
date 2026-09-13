@@ -72,7 +72,7 @@ check-migration-drops:
 	@bash ops/scaffold/check-migration-drops.sh
 
 # ── Guardarrailes de codigo ──────────────────────────────────────────────────
-.PHONY: check-coupling check-silent-errors check-sql-arity check-streams check-base-images
+.PHONY: check-coupling check-silent-errors check-sql-arity check-streams check-base-images check-gofmt
 
 # make check-coupling  (un servicio no lee tablas de otro contexto; solo vistas v_*)
 check-coupling:
@@ -93,6 +93,13 @@ check-streams:
 # make check-base-images  (imagenes fijadas por version o digest)
 check-base-images:
 	@bash ops/scaffold/check-base-images.sh
+
+# make check-gofmt  (codigo Go sin gofmt, versionado o nuevo sin ignorar: el formato a mano
+# se desalinea y cada gofmt posterior mete ruido en diffs ajenos)
+check-gofmt:
+	@out=$$(git ls-files --cached --others --exclude-standard -- '*.go' | \
+		while IFS= read -r f; do [ -f "$$f" ] && printf '%s\n' "$$f"; done | xargs -r -d '\n' gofmt -l); \
+		if [ -n "$$out" ]; then echo "sin gofmt (corre 'gofmt -w' sobre estos):" >&2; echo "$$out" >&2; exit 1; fi
 
 # make gen-event-contracts (regenera docs/arquitectura/EVENT-CONTRACTS.md) /
 # make check-event-contracts (drift + campo que un consumidor lee y su emisor no publica)
@@ -167,7 +174,7 @@ e2e:
 
 # make checks  (todo lo que corre CI sin docker, en un solo comando; si CI anade un paso,
 # se anade aqui: un check que solo corre en CI deja pasar lo que rompe el despliegue)
-checks: build check-migrations check-migration-drops check-coupling check-silent-errors \
+checks: build check-gofmt check-migrations check-migration-drops check-coupling check-silent-errors \
 	check-sql-arity check-streams check-event-contracts check-secrets check-secret-sources \
 	check-compose check-compose-images check-observability-targets check-service-paths \
 	check-alertas validate-scaffold

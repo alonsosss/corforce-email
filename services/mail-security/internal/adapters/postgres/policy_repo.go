@@ -18,7 +18,9 @@ type PolicyRepository struct {
 	pool *db.ContextPool
 }
 
-func NewPolicyRepository(pool *db.ContextPool) *PolicyRepository { return &PolicyRepository{pool: pool} }
+func NewPolicyRepository(pool *db.ContextPool) *PolicyRepository {
+	return &PolicyRepository{pool: pool}
+}
 
 func notFound(err error) error {
 	if errors.Is(err, pgx.ErrNoRows) {

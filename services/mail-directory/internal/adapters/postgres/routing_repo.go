@@ -237,7 +237,9 @@ type RecipientMapRepo struct {
 	pool *db.ContextPool
 }
 
-func NewRecipientMapRepo(pool *db.ContextPool) *RecipientMapRepo { return &RecipientMapRepo{pool: pool} }
+func NewRecipientMapRepo(pool *db.ContextPool) *RecipientMapRepo {
+	return &RecipientMapRepo{pool: pool}
+}
 
 const recipientMapColumns = `id, tenant_id, old_dest, new_dest, active, created_at, updated_at`
 

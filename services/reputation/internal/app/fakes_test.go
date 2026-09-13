@@ -14,7 +14,9 @@ import (
 
 var errBoom = errors.New("dependencia caida")
 
-func key(tenantID uuid.UUID, class domain.Class) string { return tenantID.String() + ":" + string(class) }
+func key(tenantID uuid.UUID, class domain.Class) string {
+	return tenantID.String() + ":" + string(class)
+}
 
 func dec(s string) decimal.Decimal { return decimal.RequireFromString(s) }
 
@@ -81,7 +83,9 @@ func (f *fakeStats) WindowCountsByClass(ctx context.Context, tenantID uuid.UUID,
 	return out, nil
 }
 
-func (f *fakeStats) Prune(context.Context, time.Time, time.Time) (int64, int64, error) { return 0, 0, nil }
+func (f *fakeStats) Prune(context.Context, time.Time, time.Time) (int64, int64, error) {
+	return 0, 0, nil
+}
 
 // day devuelve lo contado para la clase en un dia concreto.
 func (f *fakeStats) day(tenantID uuid.UUID, class domain.Class, day time.Time) domain.Counts {

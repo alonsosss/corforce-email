@@ -93,12 +93,12 @@ func TestRenderSettingsPegaLosBloquesAdicionalesIndentados(t *testing.T) {
 
 func TestValidateSettingsMapContent(t *testing.T) {
 	cases := map[string]bool{
-		"rule { priority = 1; }":       true,
-		"settings { rule { } }":        false,
-		"settings   {":                 false,
-		"rule { ":                      false,
-		"rule } {":                     false,
-		"":                             false,
+		"rule { priority = 1; }":        true,
+		"settings { rule { } }":         false,
+		"settings   {":                  false,
+		"rule { ":                       false,
+		"rule } {":                      false,
+		"":                              false,
 		"rule {\n  apply { x = 1; }\n}": true,
 	}
 	for content, ok := range cases {

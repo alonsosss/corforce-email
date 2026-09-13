@@ -350,9 +350,9 @@ type fakeSuppression struct {
 	causes         map[string][]string
 	withoutReasons bool
 	checks         [][]string
-	added      []ports.SuppressionEntry
-	checkErr   error
-	addErr     error
+	added          []ports.SuppressionEntry
+	checkErr       error
+	addErr         error
 }
 
 func (s *fakeSuppression) Check(_ context.Context, _ uuid.UUID, emails []string) ([]ports.Suppressed, error) {

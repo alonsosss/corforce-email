@@ -27,7 +27,7 @@ func NewRepository(pool *db.ContextPool) *Repository {
 }
 
 const (
-	uniqueViolation       = "23505"
+	uniqueViolation        = "23505"
 	templateNameConstraint = "templates_tenant_name_key"
 
 	templateColumns = `id, tenant_id, name, description, kind, status, current_version, created_by, created_at, updated_at`

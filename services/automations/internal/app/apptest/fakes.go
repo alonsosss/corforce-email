@@ -596,7 +596,9 @@ func (f Processed) MarkProcessed(_ context.Context, tenantID uuid.UUID, eventID 
 	return true, nil
 }
 
-func (f Processed) PruneProcessed(context.Context, uuid.UUID, time.Time) (int64, error) { return 0, nil }
+func (f Processed) PruneProcessed(context.Context, uuid.UUID, time.Time) (int64, error) {
+	return 0, nil
+}
 
 // ── Vecinos ──────────────────────────────────────────────────────────────────
 

@@ -19,7 +19,9 @@ type FirewallRepository struct {
 	pool *db.ContextPool
 }
 
-func NewFirewallRepository(pool *db.ContextPool) *FirewallRepository { return &FirewallRepository{pool: pool} }
+func NewFirewallRepository(pool *db.ContextPool) *FirewallRepository {
+	return &FirewallRepository{pool: pool}
+}
 
 const firewallNetworkColumns = `id, list, network, note, created_at`
 

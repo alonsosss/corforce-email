@@ -95,8 +95,8 @@ func (m *stubMailbox) ReplyReference(context.Context, string, uint32) (domain.Re
 	return domain.ReplyReference{}, nil
 }
 func (m *stubMailbox) SetFlags(context.Context, string, uint32, domain.FlagChange) error { return nil }
-func (m *stubMailbox) Move(context.Context, string, uint32, string) error              { return nil }
-func (m *stubMailbox) Expunge(context.Context, string, uint32) error                   { return nil }
+func (m *stubMailbox) Move(context.Context, string, uint32, string) error                { return nil }
+func (m *stubMailbox) Expunge(context.Context, string, uint32) error                     { return nil }
 func (m *stubMailbox) Append(context.Context, string, []byte, []domain.Flag, time.Time) (uint32, error) {
 	return 1, nil
 }

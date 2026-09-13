@@ -30,7 +30,7 @@ func ActiveStates() []ActiveState {
 	}
 }
 
-// Kinds de buzon: '' para personas; los recursos no reciben correo.
+// Kinds de buzon: ” para personas; los recursos no reciben correo.
 var mailboxKinds = []string{"", "location", "thing", "group"}
 
 func MailboxKinds() []string { return append([]string(nil), mailboxKinds...) }

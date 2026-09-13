@@ -58,7 +58,11 @@ func TestValidacionRechazaIncoherencias(t *testing.T) {
 		"prefijo invalido":     func(t *routeTable) { t.Routes[0].Prefix = "Users" },
 		"modulo invalido":      func(t *routeTable) { t.Routes[0].Module = "mail-boxes" },
 		"frontend desconocido": func(t *routeTable) { t.Frontend = "web" },
-		"host_env invalido":    func(t *routeTable) { s := t.Services["identity"]; s.HostEnv = "identity_host"; t.Services["identity"] = s },
+		"host_env invalido": func(t *routeTable) {
+			s := t.Services["identity"]
+			s.HostEnv = "identity_host"
+			t.Services["identity"] = s
+		},
 		"publica fuera de /public": func(t *routeTable) {
 			t.Public = []publicRouteSpec{{Method: "POST", Path: "/auth/login", Service: "identity"}}
 		},

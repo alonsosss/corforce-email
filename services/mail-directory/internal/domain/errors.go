@@ -32,7 +32,7 @@ var (
 	// ErrDomainNotOwned: el dominio no pertenece a la empresa de la peticion (o no existe).
 	ErrDomainNotOwned = errors.New("el dominio no pertenece a la empresa")
 	// ErrMailboxNotOwned: el destino no es un buzon de la empresa.
-	ErrMailboxNotOwned = errors.New("el buzon no pertenece a la empresa")
+	ErrMailboxNotOwned   = errors.New("el buzon no pertenece a la empresa")
 	ErrRelayhostNotOwned = errors.New("el relayhost no pertenece a la empresa")
 	// ErrDomainInUse: no se borra un dominio con buzones, aliases o dominios alias.
 	ErrDomainInUse = errors.New("el dominio tiene buzones, aliases o dominios alias")

@@ -60,7 +60,7 @@ func affected(tag pgconn.CommandTag, err error) error {
 var likeEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
 
 // likePattern arma el patron de una busqueda por subcadena para ILIKE ... ESCAPE '\'.
-// Vacio no filtra: las consultas comparan el parametro con ''.
+// Vacio no filtra: las consultas comparan el parametro con ”.
 func likePattern(search string) string {
 	if search == "" {
 		return ""

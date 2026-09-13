@@ -135,14 +135,14 @@ func TestIntegracionCelda(t *testing.T) {
 	t.Run("expansion de aliases sobre las vistas", func(t *testing.T) {
 		ex := app.NewExpander(directory)
 		cases := map[string][]string{
-			"ventas+tag@ACME.com":  {"ana@acme.com", "luis@acme.com"},
-			"solo@acme-alias.com":  {"ana@acme.com"},
-			"cualquiera@acme.com":  {"ana@acme.com"},
-			"sala@acme.com":        nil,
-			"bucle1@acme.com":      nil,
-			"x@desconocido.com":    nil,
-			"pepe@otra.com":        {"pepe@otra.com"},
-			"alguien@baja.com":     nil,
+			"ventas+tag@ACME.com": {"ana@acme.com", "luis@acme.com"},
+			"solo@acme-alias.com": {"ana@acme.com"},
+			"cualquiera@acme.com": {"ana@acme.com"},
+			"sala@acme.com":       nil,
+			"bucle1@acme.com":     nil,
+			"x@desconocido.com":   nil,
+			"pepe@otra.com":       {"pepe@otra.com"},
+			"alguien@baja.com":    nil,
 		}
 		for in, want := range cases {
 			boxes, err := ex.Expand(engineCtx, in)

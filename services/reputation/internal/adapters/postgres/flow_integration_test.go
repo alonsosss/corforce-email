@@ -47,9 +47,9 @@ func (sameBase) ForEachActive(context.Context, time.Duration, func(context.Conte
 
 type noMetrics struct{}
 
-func (noMetrics) Authorize(domain.Class, string)            {}
+func (noMetrics) Authorize(domain.Class, string)          {}
 func (noMetrics) StateChanged(domain.Class, domain.State) {}
-func (noMetrics) Degraded(string)                           {}
+func (noMetrics) Degraded(string)                         {}
 
 // TestFlujoCompletoSobrePostgres ejercita el caso de uso con los repositorios reales y la
 // outbox: contar, deduplicar, reevaluar bajo bloqueo, historial y evento en la misma

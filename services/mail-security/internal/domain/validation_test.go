@@ -36,11 +36,11 @@ func TestNormalizeAddressQuitaEtiquetaYMinusculas(t *testing.T) {
 
 func TestNormalizeHost(t *testing.T) {
 	cases := map[string]string{
-		"10.1.2.3":       "10.1.2.3/32",
-		"10.1.2.0/24":    "10.1.2.0/24",
-		"10.1.2.7/24":    "10.1.2.0/24",
-		"2001:db8::1":    "2001:db8::1/128",
-		"2001:db8::/32":  "2001:db8::/32",
+		"10.1.2.3":      "10.1.2.3/32",
+		"10.1.2.0/24":   "10.1.2.0/24",
+		"10.1.2.7/24":   "10.1.2.0/24",
+		"2001:db8::1":   "2001:db8::1/128",
+		"2001:db8::/32": "2001:db8::/32",
 	}
 	for in, want := range cases {
 		got, err := NormalizeHost(in)

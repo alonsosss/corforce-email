@@ -143,7 +143,7 @@ func filenameOf(single *imaplib.BodyStructureSinglePart) string {
 }
 
 // decodedParam devuelve el parametro en claro. Los servidores entregan en BODYSTRUCTURE
-// la forma extendida tal cual (name*=utf-8''..., o partida en name*0*, name*1*), y es
+// la forma extendida tal cual (name*=utf-8”..., o partida en name*0*, name*1*), y es
 // mime.ParseMediaType quien sabe reensamblarla.
 func decodedParam(params map[string]string, name string) string {
 	if v := strings.TrimSpace(params[name]); v != "" {

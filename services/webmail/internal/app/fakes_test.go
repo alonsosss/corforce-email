@@ -48,15 +48,15 @@ type storedSession struct {
 // fakeStore imita a Redis: la inactividad es el TTL de la clave. ignoreTTL deja las
 // claves vivas para comprobar que la vida maxima la aplica el caso de uso.
 type fakeStore struct {
-	mu             sync.Mutex
-	clock          *testClock
-	sessions       map[string]storedSession
-	revoked        map[string]time.Time
-	touches        []time.Duration
-	ignoreTTL      bool
-	failRevokedAt  error
-	failGet        error
-	failCreate     error
+	mu            sync.Mutex
+	clock         *testClock
+	sessions      map[string]storedSession
+	revoked       map[string]time.Time
+	touches       []time.Duration
+	ignoreTTL     bool
+	failRevokedAt error
+	failGet       error
+	failCreate    error
 }
 
 func newFakeStore(clock *testClock) *fakeStore {
@@ -244,7 +244,9 @@ func (f *fakeSanitizer) Incoming(html string, opts domain.SanitizeOptions) domai
 	return domain.SanitizedHTML{HTML: "limpio:" + html, RemoteImages: f.remote}
 }
 
-func (f *fakeSanitizer) Outgoing(html string) (string, string) { return "limpio:" + html, "texto plano" }
+func (f *fakeSanitizer) Outgoing(html string) (string, string) {
+	return "limpio:" + html, "texto plano"
+}
 
 type fakeScanner struct {
 	err     error
