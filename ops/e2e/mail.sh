@@ -63,8 +63,8 @@ en() { local s="$1"; shift; docker exec -i "$(c "$s")" "$@"; }
 # Los secretos de los motores y de la celda solo llegan a compose, no al entorno de los
 # binarios del host.
 compose() {
-  CELL_DB_PASSWORD="$CELL_PASS" MAIL_DB_PASSWORD="$MAIL_DB_PASS" MAIL_REDIS_PASSWORD="$MAIL_REDIS_PASS" \
-    DOVECOT_MASTER_USER="$MASTER_USER" DOVECOT_MASTER_PASS="$MASTER_PASS" \
+  CELL_DB_PASSWORD="${CELL_PASS}" MAIL_DB_PASSWORD="$MAIL_DB_PASS" MAIL_REDIS_PASSWORD="$MAIL_REDIS_PASS" \
+    DOVECOT_MASTER_USER="${MASTER_USER}" DOVECOT_MASTER_PASS="$MASTER_PASS" \
     docker compose -p "$PROYECTO" -f "$MAILDIR/docker-compose.mail.yml" -f "$MAILDIR/docker-compose.e2e.yml" "$@"
 }
 

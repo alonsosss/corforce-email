@@ -120,7 +120,7 @@ e2e_entorno_comun() {
   export JWT_SIGNING_KID JWT_PUBLIC_KEYS JWT_SIGNING_KEY
   JWT_SIGNING_KID="$(sed -n 's/^JWT_SIGNING_KID=//p' <<<"$claves")"
   JWT_PUBLIC_KEYS="$(sed -n 's/^JWT_PUBLIC_KEY_ENTRY=//p' <<<"$claves")"
-  JWT_SIGNING_KEY="$(sed -n 's/^JWT_SIGNING_KEY=//p' "$WORK/jwt-signing-key")"
+  JWT_SIGNING_KEY=$(sed -n 's/^JWT_SIGNING_KEY=//p' "$WORK/jwt-signing-key")
   export INTERNAL_GATEWAY_TOKEN; INTERNAL_GATEWAY_TOKEN="$(rand_hex 24)"
   export MAIL_ENCRYPTION_KEY; MAIL_ENCRYPTION_KEY="$(rand_hex 32)"
   export MAIL_LINK_SIGNING_KEY; MAIL_LINK_SIGNING_KEY="$(rand_hex 32)"
