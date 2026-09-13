@@ -152,7 +152,13 @@ check-service-paths:
 	@bash ops/scaffold/service-paths.sh --check
 
 # ── Agregados ────────────────────────────────────────────────────────────────
-.PHONY: checks clean-copy
+.PHONY: checks clean-copy e2e
+
+# make e2e  (binarios reales contra Postgres, NATS y Redis desechables: plataforma vacia,
+# empresa, acceso por el gateway, correo en la celda, Redis de los motores, plantillas y
+# supresion; necesita docker y termina con error si un paso no cuadra)
+e2e:
+	@bash ops/e2e/run.sh
 
 # make checks  (todo lo que corre CI sin docker, en un solo comando)
 checks: build check-migrations check-migration-drops check-coupling check-silent-errors \

@@ -90,5 +90,7 @@ el propio binario con `--healthcheck <puerto>`.
 ## 9. Checks antes de dar por terminada una tarea
 
 `make checks` (build, vet, migraciones, acoplamiento, errores mudos, aridad SQL, streams,
-contratos de eventos, secretos, scaffold) y `make clean-copy`. Con docker:
-`make test` ya corre con `-race`.
+contratos de eventos, secretos, scaffold) y `make clean-copy`. Con docker: `make test`
+(con `-race`) y `make e2e`, que levanta Postgres, NATS y Redis desechables, compila los
+servicios integrados y recorre la plataforma de punta a punta con comprobaciones que
+fallan: un servicio nuevo que otro consume se añade a `ops/e2e/run.sh` en la misma tarea.

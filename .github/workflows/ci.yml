@@ -75,6 +75,19 @@ jobs:
             ( echo "docs/arquitectura/EVENTS.md desactualizado: corre 'make gen-events'" >&2; \
               git --no-pager diff -- docs/arquitectura/EVENTS.md; exit 1 )
 
+  e2e:
+    name: Punta a punta (binarios reales, Postgres, NATS y Redis desechables)
+    runs-on: ubuntu-latest
+    needs: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache: true
+      - name: make e2e
+        run: make e2e
+
   web:
     name: Aplicacion web (lint, typecheck, tests, build)
     runs-on: ubuntu-latest
