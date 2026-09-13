@@ -1,0 +1,60 @@
+package main
+
+import (
+	"context"
+	"net"
+	"os"
+	"time"
+
+	"github.com/alonsosss/corforce-email/pkg/middleware"
+	"github.com/redis/go-redis/v9"
+	"go.uber.org/zap"
+)
+
+// Nombres de los limitadores del gateway. Forman la clave en Redis (rl:<nombre>:ip:<ip>),
+// asi que todas las replicas deben usar los mismos y cambiarlos reinicia los cupos.
+const (
+	apiLimiterName  = "gateway:api"
+	authLimiterName = "gateway:auth"
+)
+
+// newRateLimitStore abre el Redis de la plataforma (REDIS_*) para los cupos del gateway,
+// compartidos entre replicas. Tiempos cortos: el limitador va delante de cada peticion y,
+// si Redis no responde, decide en memoria en vez de esperar. Un Redis caido al arrancar no
+// impide el arranque; el cliente reconecta solo.
+func newRateLimitStore(logger *zap.Logger) *middleware.RedisRateLimitStore {
+	host := os.Getenv("REDIS_HOST")
+	if host == "" {
+		host = "localhost"
+	}
+	port := os.Getenv("REDIS_PORT")
+	if port == "" {
+		port = "6379"
+	}
+	rdb := redis.NewClient(&redis.Options{
+		Addr:                  net.JoinHostPort(host, port),
+		Password:              os.Getenv("REDIS_PASSWORD"),
+		DialTimeout:           time.Second,
+		ReadTimeout:           250 * time.Millisecond,
+		WriteTimeout:          250 * time.Millisecond,
+		PoolTimeout:           250 * time.Millisecond,
+		ContextTimeoutEnabled: true,
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := rdb.Ping(ctx).Err(); err != nil {
+		logger.Warn("gateway: Redis no disponible al arrancar; los limites se cuentan en memoria de cada replica hasta que vuelva", zap.Error(err))
+	}
+	return middleware.NewRedisRateLimitStore(rdb)
+}
+
+// newRateLimiters crea el limitador general (todo /api/v1) y el estricto de
+// autenticacion (/auth y los inicios de sesion de los prefijos self_authenticated) sobre
+// el mismo almacen. Ante Redis caido los dos caen a memoria con el mismo cupo por replica:
+// en el estricto no se deja pasar sin limite, pero tampoco se tumba el inicio de sesion,
+// que ademas tiene el bloqueo por cuenta de identity y el freno de mail-auth.
+func newRateLimiters(store middleware.RateLimitStore, apiRate, authRate int, logger *zap.Logger) (api, auth *middleware.RateLimiter) {
+	api = middleware.NewSharedRateLimiter(store, apiLimiterName, apiRate, time.Minute, logger)
+	auth = middleware.NewSharedRateLimiter(store, authLimiterName, authRate, time.Minute, logger)
+	return api, auth
+}

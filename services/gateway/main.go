@@ -65,15 +65,17 @@ func main() {
 		MaxAge:           86400,
 	}))
 
-	limiter := middleware.NewRateLimiter(envInt("API_RATE_LIMIT_PER_MIN", 600), time.Minute)
-
-	// Limitador dedicado y estricto para las rutas de autenticacion (login, reto
-	// MFA, recuperacion de contrasena). El general es demasiado holgado para frenar
-	// fuerza bruta o credential spraying lanzado desde un fetch en la consola del
+	// Los cupos son por IP y comunes a todas las replicas (Redis de la plataforma): con
+	// N replicas un cliente no obtiene N veces su cupo.
+	//
+	// El de autenticacion es dedicado y estricto (login, reto MFA, recuperacion de
+	// contrasena, inicio de sesion del webmail). El general es demasiado holgado para
+	// frenar fuerza bruta o credential spraying lanzado desde un fetch en la consola del
 	// navegador. El bloqueo por cuenta ya frena el ataque a UNA cuenta; esto ademas
 	// frena el barrido de MUCHAS cuentas desde una misma IP. El valor por defecto
 	// aguanta el pico de una oficina tras NAT.
-	authLimiter := middleware.NewRateLimiter(envInt("AUTH_RATE_LIMIT_PER_MIN", 30), time.Minute)
+	limiter, authLimiter := newRateLimiters(newRateLimitStore(logger),
+		envInt("API_RATE_LIMIT_PER_MIN", 600), envInt("AUTH_RATE_LIMIT_PER_MIN", 30), logger)
 
 	jwtAuth := middleware.NewJWTAuth(jwtSecret)
 	identity := reverseProxy(table.serviceURL("identity"), internalToken)

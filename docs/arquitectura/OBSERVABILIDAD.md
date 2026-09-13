@@ -20,6 +20,7 @@ Cada servicio expone `/metrics` en su propio puerto, en formato Prometheus:
 | `pgx_pool_max_connections` | Tope del pool, para leer el uso como porcentaje. |
 | `pgx_pool_acquire_waits_total` | Veces que una peticion espero conexion libre: el aviso temprano del agotamiento. |
 | `rbac_denials_total{module,action,enforced}` | Escrituras denegadas por el control de acceso (solo en el gateway). |
+| `rate_limit_degraded_total{limiter}` | Decisiones de un limitador compartido (`gateway:api`, `gateway:auth`) tomadas en memoria del proceso porque Redis no respondia: mientras crece, cada replica aplica su propio cupo (`docs/arquitectura/CSP-Y-SESION.md`). |
 | `go_*`, `process_*` | Memoria, goroutines, arranques del proceso (detecta reinicios en bucle). |
 
 La identidad del servicio **no** viaja dentro de la metrica: la aporta el recolector desde
