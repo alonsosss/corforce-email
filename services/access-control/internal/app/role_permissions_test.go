@@ -52,13 +52,36 @@ func (f *fakePerms) GetByIDs(_ context.Context, ids []uuid.UUID) ([]*domain.Perm
 
 type fakeRolePerms struct {
 	replaced [][]uuid.UUID
+	perms    []*domain.Permission
 }
 
 func (f *fakeRolePerms) ListPermissions(context.Context, uuid.UUID) ([]*domain.Permission, error) {
-	return nil, nil
+	return f.perms, nil
 }
 func (f *fakeRolePerms) ReplaceAll(_ context.Context, _ uuid.UUID, ids []uuid.UUID) error {
 	f.replaced = append(f.replaced, ids)
+	return nil
+}
+
+var admin = Actor{UserID: uuid.New(), Privileged: true}
+
+// fakeGrants es la politica de quien concede y lo que asigna o retira.
+type fakeGrants struct {
+	fakeUserRoles
+	held     []domain.Permission
+	assigned int
+	revoked  int
+}
+
+func (f *fakeGrants) GetAccessPolicy(context.Context, uuid.UUID, uuid.UUID) (*domain.AccessPolicy, error) {
+	return &domain.AccessPolicy{Permissions: f.held}, nil
+}
+func (f *fakeGrants) Assign(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) error {
+	f.assigned++
+	return nil
+}
+func (f *fakeGrants) Revoke(context.Context, uuid.UUID, uuid.UUID) error {
+	f.revoked++
 	return nil
 }
 
@@ -69,6 +92,8 @@ type rolePermsFixture struct {
 	roleID    uuid.UUID
 	tenantP   *domain.Permission
 	platformP *domain.Permission
+	grants    *fakeGrants
+	roles     *fakeRoles
 }
 
 func newRolePermsFixture() rolePermsFixture {
@@ -77,14 +102,15 @@ func newRolePermsFixture() rolePermsFixture {
 	platformP := &domain.Permission{ID: uuid.New(), Module: "billing", Resource: "plans", Action: "create", Scope: domain.PermissionScopePlatform}
 	roles := &fakeRoles{byID: map[uuid.UUID]*domain.Role{roleID: {ID: roleID, TenantID: tenantID, Name: "finanzas"}}}
 	rolePerms := &fakeRolePerms{}
-	uc := NewRBACUseCase(roles, &fakePerms{all: []*domain.Permission{tenantP, platformP}}, rolePerms, nil, nil, nil,
+	grants := &fakeGrants{}
+	uc := NewRBACUseCase(roles, &fakePerms{all: []*domain.Permission{tenantP, platformP}}, rolePerms, grants, nil, nil,
 		SystemRoles{Superadmin: testSuperadmin, TenantAdmin: testTenantAdmin}, zap.NewNop())
-	return rolePermsFixture{uc: uc, rolePerms: rolePerms, tenantID: tenantID, roleID: roleID, tenantP: tenantP, platformP: platformP}
+	return rolePermsFixture{uc: uc, rolePerms: rolePerms, tenantID: tenantID, roleID: roleID, tenantP: tenantP, platformP: platformP, grants: grants, roles: roles}
 }
 
 func TestUnRolDeEmpresaNoRecibePermisosDePlataforma(t *testing.T) {
 	f := newRolePermsFixture()
-	err := f.uc.SetRolePermissions(context.Background(), f.tenantID, f.roleID, []uuid.UUID{f.tenantP.ID, f.platformP.ID})
+	err := f.uc.SetRolePermissions(context.Background(), admin, f.tenantID, f.roleID, []uuid.UUID{f.tenantP.ID, f.platformP.ID})
 	if !errors.Is(err, domain.ErrPlatformPermission) {
 		t.Fatalf("err = %v, want ErrPlatformPermission", err)
 	}
@@ -95,7 +121,7 @@ func TestUnRolDeEmpresaNoRecibePermisosDePlataforma(t *testing.T) {
 
 func TestUnPermisoInexistenteSeRechazaSinEscribir(t *testing.T) {
 	f := newRolePermsFixture()
-	err := f.uc.SetRolePermissions(context.Background(), f.tenantID, f.roleID, []uuid.UUID{f.tenantP.ID, uuid.New()})
+	err := f.uc.SetRolePermissions(context.Background(), admin, f.tenantID, f.roleID, []uuid.UUID{f.tenantP.ID, uuid.New()})
 	if !errors.Is(err, domain.ErrPermissionNotFound) {
 		t.Fatalf("err = %v, want ErrPermissionNotFound", err)
 	}
@@ -106,7 +132,7 @@ func TestUnPermisoInexistenteSeRechazaSinEscribir(t *testing.T) {
 
 func TestLosPermisosRepetidosSeAsignanUnaVez(t *testing.T) {
 	f := newRolePermsFixture()
-	if err := f.uc.SetRolePermissions(context.Background(), f.tenantID, f.roleID, []uuid.UUID{f.tenantP.ID, f.tenantP.ID}); err != nil {
+	if err := f.uc.SetRolePermissions(context.Background(), admin, f.tenantID, f.roleID, []uuid.UUID{f.tenantP.ID, f.tenantP.ID}); err != nil {
 		t.Fatalf("SetRolePermissions: %v", err)
 	}
 	if got := f.rolePerms.replaced; len(got) != 1 || len(got[0]) != 1 || got[0][0] != f.tenantP.ID {
@@ -116,7 +142,7 @@ func TestLosPermisosRepetidosSeAsignanUnaVez(t *testing.T) {
 
 func TestVaciarLosPermisosDeUnRolNoConsultaElCatalogo(t *testing.T) {
 	f := newRolePermsFixture()
-	if err := f.uc.SetRolePermissions(context.Background(), f.tenantID, f.roleID, nil); err != nil {
+	if err := f.uc.SetRolePermissions(context.Background(), admin, f.tenantID, f.roleID, nil); err != nil {
 		t.Fatalf("SetRolePermissions: %v", err)
 	}
 	if len(f.rolePerms.replaced) != 1 || len(f.rolePerms.replaced[0]) != 0 {
@@ -139,5 +165,59 @@ func TestElCatalogoOcultaLosPermisosDePlataformaAQuienNoOperaLaPlataforma(t *tes
 	}
 	if len(platformView) != 2 {
 		t.Fatalf("vista de plataforma = %d permisos, want 2", len(platformView))
+	}
+}
+
+func operator() Actor { return Actor{UserID: uuid.New()} }
+
+func TestNadieConcedeUnPermisoQueNoTiene(t *testing.T) {
+	f := newRolePermsFixture()
+	err := f.uc.SetRolePermissions(context.Background(), operator(), f.tenantID, f.roleID, []uuid.UUID{f.tenantP.ID})
+	if !errors.Is(err, domain.ErrPermissionNotHeld) {
+		t.Fatalf("err = %v, want ErrPermissionNotHeld", err)
+	}
+	if len(f.rolePerms.replaced) != 0 {
+		t.Fatal("se escribieron permisos pese al rechazo")
+	}
+}
+
+func TestSeConcedeLoQueSeTieneAunqueSeaPorComodin(t *testing.T) {
+	f := newRolePermsFixture()
+	f.grants.held = []domain.Permission{{Module: "billing", Resource: "*", Action: "*"}}
+	if err := f.uc.SetRolePermissions(context.Background(), operator(), f.tenantID, f.roleID, []uuid.UUID{f.tenantP.ID}); err != nil {
+		t.Fatalf("SetRolePermissions: %v", err)
+	}
+}
+
+func TestSoloUnRolDelSistemaMueveUnRolDelSistema(t *testing.T) {
+	f := newRolePermsFixture()
+	sysID := uuid.New()
+	f.roles.byID[sysID] = &domain.Role{ID: sysID, TenantID: f.tenantID, Name: testTenantAdmin, IsSystem: true}
+	if err := f.uc.AssignRoleToUser(context.Background(), operator(), f.tenantID, uuid.New(), sysID); !errors.Is(err, domain.ErrSystemRoleAssignment) {
+		t.Fatalf("asignar: err = %v, want ErrSystemRoleAssignment", err)
+	}
+	if err := f.uc.RevokeRoleFromUser(context.Background(), operator(), f.tenantID, uuid.New(), sysID); !errors.Is(err, domain.ErrSystemRoleAssignment) {
+		t.Fatalf("retirar: err = %v, want ErrSystemRoleAssignment", err)
+	}
+	if err := f.uc.AssignRoleToUser(context.Background(), admin, f.tenantID, uuid.New(), sysID); err != nil {
+		t.Fatalf("el administrador asigna: %v", err)
+	}
+	if f.grants.assigned != 1 || f.grants.revoked != 0 {
+		t.Fatalf("assigned=%d revoked=%d, want 1 y 0", f.grants.assigned, f.grants.revoked)
+	}
+}
+
+func TestNoSeAsignaUnRolConPermisosQueNoSeTienen(t *testing.T) {
+	f := newRolePermsFixture()
+	f.rolePerms.perms = []*domain.Permission{f.tenantP}
+	if err := f.uc.AssignRoleToUser(context.Background(), operator(), f.tenantID, uuid.New(), f.roleID); !errors.Is(err, domain.ErrPermissionNotHeld) {
+		t.Fatalf("err = %v, want ErrPermissionNotHeld", err)
+	}
+	f.grants.held = []domain.Permission{{Module: "billing", Resource: "usage", Action: "read"}}
+	if err := f.uc.AssignRoleToUser(context.Background(), operator(), f.tenantID, uuid.New(), f.roleID); err != nil {
+		t.Fatalf("con el permiso en su politica: %v", err)
+	}
+	if f.grants.assigned != 1 {
+		t.Fatalf("assigned = %d, want 1", f.grants.assigned)
 	}
 }

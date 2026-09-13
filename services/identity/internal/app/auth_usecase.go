@@ -197,6 +197,12 @@ func (uc *AuthUseCase) roleNames(ctx context.Context, userID uuid.UUID) []string
 	return roles
 }
 
+// RoleNamesOf devuelve los roles vigentes de un usuario. A diferencia de roleNames, el
+// fallo se propaga: quien pregunta decide una autorizacion y no puede suponer "sin roles".
+func (uc *AuthUseCase) RoleNamesOf(ctx context.Context, userID uuid.UUID) ([]string, error) {
+	return uc.roles.RoleNames(ctx, userID)
+}
+
 // sessionPolicy lee la politica de la empresa. Nunca falla la autenticacion por esto:
 // si la consulta no responde se opera con los valores por defecto, que son el
 // comportamiento historico. Endurecer la sesion no puede convertirse en no poder entrar.

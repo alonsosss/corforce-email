@@ -23,6 +23,14 @@ type SystemRoles struct {
 	TenantAdmin string
 }
 
+// Actor es quien pide un cambio de roles o permisos. Privileged es un rol del sistema
+// (superadmin o tenant_admin): los demas solo conceden lo que ellos mismos tienen, para
+// que un permiso de gestion de roles no se convierta en una escalada a administrador.
+type Actor struct {
+	UserID     uuid.UUID
+	Privileged bool
+}
+
 type RBACUseCase struct {
 	roles       ports.RoleRepository
 	perms       ports.PermissionRepository
@@ -155,7 +163,7 @@ func (uc *RBACUseCase) DeleteRole(ctx context.Context, tenantID, id uuid.UUID) e
 	return uc.roles.Delete(ctx, id)
 }
 
-func (uc *RBACUseCase) SetRolePermissions(ctx context.Context, tenantID, roleID uuid.UUID, permissionIDs []uuid.UUID) error {
+func (uc *RBACUseCase) SetRolePermissions(ctx context.Context, actor Actor, tenantID, roleID uuid.UUID, permissionIDs []uuid.UUID) error {
 	role, err := uc.tenantRole(ctx, tenantID, roleID)
 	if err != nil {
 		return err
@@ -184,8 +192,46 @@ func (uc *RBACUseCase) SetRolePermissions(ctx context.Context, tenantID, roleID 
 				return domain.ErrPlatformPermission
 			}
 		}
+		if err := uc.requireHeld(ctx, actor, tenantID, found); err != nil {
+			return err
+		}
 	}
 	return uc.rolePerms.ReplaceAll(ctx, roleID, unique)
+}
+
+// requireHeld exige que un actor no privilegiado tenga cada uno de los permisos que
+// concede. Se evalua con la misma regla de comodines que la politica efectiva.
+func (uc *RBACUseCase) requireHeld(ctx context.Context, actor Actor, tenantID uuid.UUID, perms []*domain.Permission) error {
+	if actor.Privileged || len(perms) == 0 {
+		return nil
+	}
+	policy, err := uc.userRoles.GetAccessPolicy(ctx, actor.UserID, tenantID)
+	if err != nil {
+		return fmt.Errorf("leer la politica de quien concede: %w", err)
+	}
+	for _, p := range perms {
+		if !policy.HasPermission(p.Module, p.Resource, p.Action) {
+			return domain.ErrPermissionNotHeld
+		}
+	}
+	return nil
+}
+
+// checkRoleGrant aplica a asignar y retirar un rol las mismas reglas que a editarlo: un
+// rol del sistema solo lo mueve un rol del sistema, y un rol propio solo quien tiene todo
+// lo que el rol concede.
+func (uc *RBACUseCase) checkRoleGrant(ctx context.Context, actor Actor, tenantID uuid.UUID, role *domain.Role) error {
+	if actor.Privileged {
+		return nil
+	}
+	if role.IsSystem {
+		return domain.ErrSystemRoleAssignment
+	}
+	perms, err := uc.rolePerms.ListPermissions(ctx, role.ID)
+	if err != nil {
+		return fmt.Errorf("leer permisos del rol: %w", err)
+	}
+	return uc.requireHeld(ctx, actor, tenantID, perms)
 }
 
 func (uc *RBACUseCase) GetRolePermissions(ctx context.Context, tenantID, roleID uuid.UUID) ([]*domain.Permission, error) {
@@ -195,15 +241,23 @@ func (uc *RBACUseCase) GetRolePermissions(ctx context.Context, tenantID, roleID 
 	return uc.rolePerms.ListPermissions(ctx, roleID)
 }
 
-func (uc *RBACUseCase) AssignRoleToUser(ctx context.Context, tenantID, userID, roleID, assignedBy uuid.UUID) error {
-	if _, err := uc.tenantRole(ctx, tenantID, roleID); err != nil {
+func (uc *RBACUseCase) AssignRoleToUser(ctx context.Context, actor Actor, tenantID, userID, roleID uuid.UUID) error {
+	role, err := uc.tenantRole(ctx, tenantID, roleID)
+	if err != nil {
 		return err
 	}
-	return uc.userRoles.Assign(ctx, userID, roleID, assignedBy)
+	if err := uc.checkRoleGrant(ctx, actor, tenantID, role); err != nil {
+		return err
+	}
+	return uc.userRoles.Assign(ctx, userID, roleID, actor.UserID)
 }
 
-func (uc *RBACUseCase) RevokeRoleFromUser(ctx context.Context, tenantID, userID, roleID uuid.UUID) error {
-	if _, err := uc.tenantRole(ctx, tenantID, roleID); err != nil {
+func (uc *RBACUseCase) RevokeRoleFromUser(ctx context.Context, actor Actor, tenantID, userID, roleID uuid.UUID) error {
+	role, err := uc.tenantRole(ctx, tenantID, roleID)
+	if err != nil {
+		return err
+	}
+	if err := uc.checkRoleGrant(ctx, actor, tenantID, role); err != nil {
 		return err
 	}
 	return uc.userRoles.Revoke(ctx, userID, roleID)

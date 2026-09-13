@@ -1,12 +1,14 @@
 package http
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"github.com/alonsosss/corforce-email/pkg/auth"
+	"github.com/alonsosss/corforce-email/pkg/authz"
 	"github.com/alonsosss/corforce-email/pkg/middleware"
 	"github.com/alonsosss/corforce-email/pkg/response"
 	"github.com/alonsosss/corforce-email/pkg/validate"
@@ -25,6 +27,8 @@ const (
 	// defaultMFAIssuer es el nombre que muestra la app de autenticacion cuando el
 	// despliegue no fija MFA_ISSUER.
 	defaultMFAIssuer = "Core Force Mail"
+
+	permModule = "identity"
 )
 
 // Config es lo que el handler necesita del entorno; lo resuelve main, no el adaptador.
@@ -39,16 +43,17 @@ type Handler struct {
 	auth      *app.AuthUseCase
 	user      *app.UserUseCase
 	reset     *app.PasswordResetUseCase
+	authz     *authz.Checker
 	jwtSecret string
 	mfaIssuer string
 }
 
-func NewHandler(auth *app.AuthUseCase, user *app.UserUseCase, reset *app.PasswordResetUseCase, cfg Config) *Handler {
+func NewHandler(auth *app.AuthUseCase, user *app.UserUseCase, reset *app.PasswordResetUseCase, checker *authz.Checker, cfg Config) *Handler {
 	issuer := strings.TrimSpace(cfg.MFAIssuer)
 	if issuer == "" {
 		issuer = defaultMFAIssuer
 	}
-	return &Handler{auth: auth, user: user, reset: reset, jwtSecret: cfg.JWTSecret, mfaIssuer: issuer}
+	return &Handler{auth: auth, user: user, reset: reset, authz: checker, jwtSecret: cfg.JWTSecret, mfaIssuer: issuer}
 }
 
 func (h *Handler) Routes() chi.Router {
@@ -79,14 +84,20 @@ func (h *Handler) Routes() chi.Router {
 			})
 		})
 
+		// El permiso va antes que el step-up: no se pide reconfirmar la identidad a quien
+		// de todos modos no puede hacer la operacion.
 		r.Route("/users", func(r chi.Router) {
-			r.Get("/", h.ListUsers)
-			r.Post("/", h.CreateUser)
-			r.Get("/{id}", h.GetUser)
+			r.With(h.perm("users", "read")).Get("/", h.ListUsers)
+			r.With(h.perm("users", "create")).Post("/", h.CreateUser)
+			// La ficha propia es autoservicio; la de otro usuario exige el permiso.
+			r.With(h.selfOrPerm("users", "read")).Get("/{id}", h.GetUser)
+			// UpdateUser decide dentro: el perfil propio es autoservicio y el de otro no.
 			r.Patch("/{id}", h.UpdateUser)
-			r.Post("/{id}/deactivate", h.DeactivateUser)
-			r.With(stepUp).Delete("/{id}", h.DeleteUser)
-			r.With(stepUp).Post("/{id}/reset-password", h.ResetPassword)
+			// users/delete es "Desactivar usuarios": cubre la baja logica y el borrado.
+			r.With(h.perm("users", "delete")).Post("/{id}/deactivate", h.DeactivateUser)
+			r.With(h.perm("users", "delete"), stepUp).Delete("/{id}", h.DeleteUser)
+			r.With(h.perm("users", "reset_password"), stepUp).Post("/{id}/reset-password", h.ResetPassword)
+			// Autoservicio: la propia contrasena y las reglas que debe cumplir.
 			r.Post("/change-password", h.ChangePassword)
 			r.Get("/password-policy", h.GetPasswordPolicy)
 		})
@@ -96,21 +107,15 @@ func (h *Handler) Routes() chi.Router {
 			r.Post("/logout-all", h.LogoutAll)
 			// Dispositivos del propio usuario: cualquier sesion autenticada.
 			r.Get("/mine", h.MySessions)
-			// Vista de plataforma: cross-tenant, solo superadmin (RequireRoles sin
-			// argumentos deja pasar unicamente al superadmin).
-			r.Group(func(r chi.Router) {
-				r.Use(middleware.RequireRoles())
-				r.Get("/platform", h.ListPlatformSessions)
-			})
-			// Vista por empresa y revocacion: el administrador del tenant. El RBAC fino
-			// vive aqui (el gateway no gatea /sessions por modulo).
-			r.Group(func(r chi.Router) {
-				r.Use(middleware.RequireRoles(middleware.RoleTenantAdmin))
-				r.Get("/", h.ListSessions)
-				r.Get("/policy", h.GetSessionPolicy)
-				r.With(stepUp).Put("/policy", h.SaveSessionPolicy)
-				r.Delete("/{id}", h.RevokeSession)
-			})
+			// Vista de plataforma: sesiones de todas las empresas, solo superadmin.
+			r.With(middleware.RequireRoles(middleware.RoleSuperadmin), h.perm("platform_sessions", "read")).
+				Get("/platform", h.ListPlatformSessions)
+			// Vista por empresa, politica y revocacion. El gateway trata /sessions como
+			// autoservicio y no lo gatea por modulo: el permiso de aqui es la unica barrera.
+			r.With(h.perm("sessions", "read")).Get("/", h.ListSessions)
+			r.With(h.perm("session_policies", "read")).Get("/policy", h.GetSessionPolicy)
+			r.With(h.perm("session_policies", "update"), stepUp).Put("/policy", h.SaveSessionPolicy)
+			r.With(h.perm("sessions", "revoke")).Delete("/{id}", h.RevokeSession)
 		})
 	})
 
@@ -561,16 +566,60 @@ func (h *Handler) RevokeSession(w http.ResponseWriter, r *http.Request) {
 	response.JSON(w, http.StatusOK, map[string]string{"status": "session revoked"})
 }
 
-// requireAdmin reserva la administracion del equipo (crear/suspender/borrar/editar a
-// otros usuarios) a quien tiene autoridad administrativa. El autoservicio (editar el
-// propio nombre/foto y cambiar la propia contrasena) no la requiere. Que rol la tiene es
-// cosa de middleware.IsPrivileged, nunca de una lista de nombres aqui.
-func requireAdmin(w http.ResponseWriter, r *http.Request) bool {
-	if middleware.IsPrivileged(r.Context()) {
+func (h *Handler) perm(resource, action string) func(http.Handler) http.Handler {
+	return h.authz.RequirePermission(permModule, resource, action)
+}
+
+// selfOrPerm deja pasar al usuario sobre su propia ficha ({id} de la ruta) y exige el
+// permiso cuando la ficha es de otro.
+func (h *Handler) selfOrPerm(resource, action string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		guarded := h.perm(resource, action)(next)
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if chi.URLParam(r, "id") == middleware.GetUserID(r.Context()) {
+				next.ServeHTTP(w, r)
+				return
+			}
+			guarded.ServeHTTP(w, r)
+		})
+	}
+}
+
+// permitted es la comprobacion de permiso cuando depende del cuerpo de la peticion.
+// Responde lo mismo que RequirePermission: 403 sin permiso, 503 si no se pudo comprobar.
+func (h *Handler) permitted(w http.ResponseWriter, r *http.Request, resource, action string) bool {
+	ok, err := h.authz.Allowed(r.Context(), permModule, resource, action)
+	if err != nil {
+		response.Err(w, http.StatusServiceUnavailable, "AUTHZ_UNAVAILABLE", "no se pudo comprobar el permiso")
+		return false
+	}
+	if !ok {
+		response.ErrForbidden(w, "su rol no tiene permiso para esta operacion")
+		return false
+	}
+	return true
+}
+
+// canManage impide que un rol de empresa con permisos sobre usuarios actue sobre una
+// cuenta con rol del sistema: fijarle la contrasena al tenant_admin, desactivarlo o
+// editarlo seria hacerse administrador por la puerta de atras. Los roles del sistema no
+// tienen ese limite. Si los roles del objetivo no se pueden leer, no se concede.
+func (h *Handler) canManage(w http.ResponseWriter, r *http.Request, target *domain.User) bool {
+	ctx := r.Context()
+	if middleware.IsPrivileged(ctx) {
 		return true
 	}
-	response.ErrForbidden(w, "requiere permisos de administracion")
-	return false
+	roles, err := h.auth.RoleNamesOf(ctx, target.ID)
+	if err != nil {
+		response.Err(w, http.StatusServiceUnavailable, "AUTHZ_UNAVAILABLE", "no se pudo comprobar el permiso")
+		return false
+	}
+	// El mismo criterio unico que se aplica a quien llama, sobre los roles del objetivo.
+	if middleware.IsPrivileged(context.WithValue(ctx, middleware.CtxRoles, roles)) {
+		response.ErrForbidden(w, "solo un rol del sistema puede administrar a un administrador")
+		return false
+	}
+	return true
 }
 
 // tenantUser carga el usuario de la ruta comprobando que pertenece al tenant del actor.
@@ -602,9 +651,6 @@ type createUserRequest struct {
 }
 
 func (h *Handler) CreateUser(w http.ResponseWriter, r *http.Request) {
-	if !requireAdmin(w, r) {
-		return
-	}
 	var req createUserRequest
 	if err := validate.DecodeJSON(r, &req); err != nil {
 		response.ErrBadRequest(w, err.Error())
@@ -716,15 +762,22 @@ func (h *Handler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Autorizacion: un no-admin solo puede editar su propio perfil (nombre/foto)
-	// y nunca su propio estado. Cambiar a otros o el estado requiere ser admin.
-	if !middleware.IsPrivileged(r.Context()) {
-		if existing.ID.String() != middleware.GetUserID(r.Context()) {
-			response.ErrForbidden(w, "solo puedes editar tu propio perfil")
+	// El propio perfil (nombre, foto) es autoservicio; el propio estado solo lo cambia un
+	// rol del sistema. Editar a otro exige users/update, y cambiarle el estado es activarlo
+	// o desactivarlo, que exige ademas users/delete.
+	if existing.ID.String() == middleware.GetUserID(r.Context()) {
+		if req.Status != nil && !middleware.IsPrivileged(r.Context()) {
+			response.ErrForbidden(w, "no puedes cambiar tu propio estado")
 			return
 		}
-		if req.Status != nil {
-			response.ErrForbidden(w, "no puedes cambiar tu propio estado")
+	} else {
+		if !h.permitted(w, r, "users", "update") {
+			return
+		}
+		if req.Status != nil && !h.permitted(w, r, "users", "delete") {
+			return
+		}
+		if !h.canManage(w, r, existing) {
 			return
 		}
 	}
@@ -744,11 +797,8 @@ func (h *Handler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) DeactivateUser(w http.ResponseWriter, r *http.Request) {
-	if !requireAdmin(w, r) {
-		return
-	}
 	existing, ok := h.tenantUser(w, r)
-	if !ok {
+	if !ok || !h.canManage(w, r, existing) {
 		return
 	}
 	if err := h.user.Deactivate(r.Context(), existing.ID); err != nil {
@@ -759,11 +809,8 @@ func (h *Handler) DeactivateUser(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) DeleteUser(w http.ResponseWriter, r *http.Request) {
-	if !requireAdmin(w, r) {
-		return
-	}
 	existing, ok := h.tenantUser(w, r)
-	if !ok {
+	if !ok || !h.canManage(w, r, existing) {
 		return
 	}
 	if err := h.user.Delete(r.Context(), existing.ID); err != nil {
@@ -829,14 +876,12 @@ type resetPasswordRequest struct {
 }
 
 // ResetPassword permite a un administrador fijar una contrasena nueva para otro
-// usuario sin conocer la actual (recuperacion de acceso). Requiere permisos de
-// administracion y que el usuario objetivo pertenezca al mismo tenant.
+// usuario sin conocer la actual (recuperacion de acceso). Requiere users/reset_password
+// (la ruta lo exige), que el objetivo sea de la misma empresa y que no sea un
+// administrador si quien llama no lo es.
 func (h *Handler) ResetPassword(w http.ResponseWriter, r *http.Request) {
-	if !requireAdmin(w, r) {
-		return
-	}
 	existing, ok := h.tenantUser(w, r)
-	if !ok {
+	if !ok || !h.canManage(w, r, existing) {
 		return
 	}
 

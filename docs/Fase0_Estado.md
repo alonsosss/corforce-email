@@ -44,15 +44,16 @@ cambie cualquiera de estas líneas.
   servicios nuevos lo usan desde el principio para sus publicaciones críticas.
 * `pkg/auth` firma HS256 con un secreto compartido por todos los servicios. Decisión:
   pasar a EdDSA con `kid` cuando exista más de un emisor; hoy solo firma identity.
-* La tercera capa existe (`pkg/authz.RequirePermission`) y la usan los servicios nuevos;
-  los copiados en fase 0 (identity, access-control, organization, audit, scheduler) siguen
-  con `RequireRoles(tenant_admin)` o `IsPrivileged` y se migran cuando se toquen.
+* La tercera capa (`pkg/authz.RequirePermission`) la usan los servicios nuevos y ya el
+  plano de control: identity, organization y access-control (este en proceso, con su caso
+  de uso de política) exigen el permiso de acción concreto. Siguen con
+  `RequireRoles(tenant_admin)` o `IsPrivileged` audit y scheduler; se migran cuando se toquen.
 * Enrutado por celda implementado (`db.NewTenantRouting`, aprovisionamiento en la celda de
   la empresa). Queda una credencial por celda (hoy una sola de plataforma).
 * El scheduler crea ejecuciones y publica `scheduler.job.started`, pero ningún ejecutor
   las cierra: hace falta definir el consumidor.
-* El scheduler serializa sus entidades en PascalCase (sin etiquetas JSON); fijar el
-  contrato antes de que lo consuma `web/`.
+* Contrato JSON del scheduler fijado en snake_case (DTOs del adaptador HTTP, con test de
+  contrato; la duración sale como `duration_ms`). `web/` todavía no lo consume.
 * `identity` lee `access_control.roles`/`user_roles` por join directo dentro del registro;
   conviene una vista publicada `v_user_roles`.
 * Rate limiting en memoria por proceso (no se comparte entre réplicas del gateway).

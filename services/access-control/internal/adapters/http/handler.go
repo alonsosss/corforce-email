@@ -1,6 +1,7 @@
 package http
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 	"time"
@@ -27,35 +28,36 @@ func (h *Handler) Routes() chi.Router {
 
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Route("/roles", func(r chi.Router) {
-			r.Get("/", h.ListRoles)
-			r.Post("/", h.CreateRole)
-			r.Get("/{id}", h.GetRole)
-			r.Put("/{id}", h.UpdateRole)
-			r.Delete("/{id}", h.DeleteRole)
-			r.Put("/{id}/permissions", h.SetRolePermissions)
-			r.Get("/{id}/permissions", h.GetRolePermissions)
+			r.With(h.perm("roles", "read")).Get("/", h.ListRoles)
+			r.With(h.perm("roles", "create")).Post("/", h.CreateRole)
+			r.With(h.perm("roles", "read")).Get("/{id}", h.GetRole)
+			r.With(h.perm("roles", "update")).Put("/{id}", h.UpdateRole)
+			r.With(h.perm("roles", "delete")).Delete("/{id}", h.DeleteRole)
+			r.With(h.perm("roles", "update")).Put("/{id}/permissions", h.SetRolePermissions)
+			r.With(h.perm("roles", "read")).Get("/{id}/permissions", h.GetRolePermissions)
 		})
 
 		r.Route("/permissions", func(r chi.Router) {
-			r.Get("/", h.ListPermissions)
+			r.With(h.perm("permissions", "read")).Get("/", h.ListPermissions)
 		})
 
 		r.Route("/user-roles", func(r chi.Router) {
-			r.Post("/assign", h.AssignRole)
-			r.Post("/revoke", h.RevokeRole)
-			r.Get("/user/{userID}", h.GetUserRoles)
+			r.With(h.perm("user_roles", "assign")).Post("/assign", h.AssignRole)
+			r.With(h.perm("user_roles", "revoke")).Post("/revoke", h.RevokeRole)
+			r.With(h.selfOrPerm("userID", "user_roles", "read")).Get("/user/{userID}", h.GetUserRoles)
 		})
 
+		// Consultar el acceso propio es autoservicio; el de otro usuario exige ver sus roles.
 		r.Post("/check-access", h.CheckAccess)
-		r.Get("/policy/{userID}", h.GetAccessPolicy)
+		r.With(h.selfOrPerm("userID", "user_roles", "read")).Get("/policy/{userID}", h.GetAccessPolicy)
 		// Acceso operativo del usuario actual (para filtrar el menu segun su rol).
 		r.Get("/access/my-modules", h.MyModules)
 		// Metricas de accesos denegados por RBAC: registro (interno, desde el gateway)
 		// y consulta (administracion).
-		r.Post("/access/denials", h.RecordDenial)
-		r.Get("/access/denials", h.GetDenials)
+		r.With(internalOnly).Post("/access/denials", h.RecordDenial)
+		r.With(h.perm("denials", "read")).Get("/access/denials", h.GetDenials)
 		// Destinatarios de un aviso, resueltos por permiso (uso interno entre servicios).
-		r.Get("/access/users-with-permission", h.UsersWithPermission)
+		r.With(h.internalOrPerm("user_roles", "read")).Get("/access/users-with-permission", h.UsersWithPermission)
 	})
 
 	return r
@@ -72,6 +74,26 @@ func requestTenant(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
 }
 
 // requestUser devuelve el usuario inyectado por el gateway o responde 401 y false.
+// requestActor es el usuario que pide un cambio de roles y si tiene un rol del sistema.
+func requestActor(w http.ResponseWriter, r *http.Request) (app.Actor, bool) {
+	userID, ok := requestUser(w, r)
+	if !ok {
+		return app.Actor{}, false
+	}
+	return app.Actor{UserID: userID, Privileged: middleware.IsPrivileged(r.Context())}, true
+}
+
+func writeRoleGrantError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, domain.ErrRoleNotFound):
+		response.ErrNotFound(w, "role not found")
+	case errors.Is(err, domain.ErrSystemRoleAssignment), errors.Is(err, domain.ErrPermissionNotHeld):
+		response.ErrForbidden(w, err.Error())
+	default:
+		response.ErrInternal(w)
+	}
+}
+
 func requestUser(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
 	userID, err := uuid.Parse(middleware.GetUserID(r.Context()))
 	if err != nil {
@@ -256,7 +278,11 @@ func (h *Handler) SetRolePermissions(w http.ResponseWriter, r *http.Request) {
 		permIDs = append(permIDs, id)
 	}
 
-	if err := h.rbac.SetRolePermissions(r.Context(), tenantID, roleID, permIDs); err != nil {
+	actor, ok := requestActor(w, r)
+	if !ok {
+		return
+	}
+	if err := h.rbac.SetRolePermissions(r.Context(), actor, tenantID, roleID, permIDs); err != nil {
 		switch err {
 		case domain.ErrRoleNotFound:
 			response.ErrNotFound(w, "role not found")
@@ -264,8 +290,8 @@ func (h *Handler) SetRolePermissions(w http.ResponseWriter, r *http.Request) {
 			response.ErrForbidden(w, "cannot modify system role permissions")
 		case domain.ErrPermissionNotFound:
 			response.ErrBadRequest(w, "unknown permission id")
-		case domain.ErrPlatformPermission:
-			response.ErrForbidden(w, domain.ErrPlatformPermission.Error())
+		case domain.ErrPlatformPermission, domain.ErrPermissionNotHeld:
+			response.ErrForbidden(w, err.Error())
 		default:
 			response.ErrInternal(w)
 		}
@@ -352,17 +378,13 @@ func (h *Handler) AssignRole(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	assignedBy, ok := requestUser(w, r)
+	actor, ok := requestActor(w, r)
 	if !ok {
 		return
 	}
 
-	if err := h.rbac.AssignRoleToUser(r.Context(), tenantID, userID, roleID, assignedBy); err != nil {
-		if err == domain.ErrRoleNotFound {
-			response.ErrNotFound(w, "role not found")
-			return
-		}
-		response.ErrInternal(w)
+	if err := h.rbac.AssignRoleToUser(r.Context(), actor, tenantID, userID, roleID); err != nil {
+		writeRoleGrantError(w, err)
 		return
 	}
 
@@ -384,12 +406,12 @@ func (h *Handler) RevokeRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.rbac.RevokeRoleFromUser(r.Context(), tenantID, userID, roleID); err != nil {
-		if err == domain.ErrRoleNotFound {
-			response.ErrNotFound(w, "role not found")
-			return
-		}
-		response.ErrInternal(w)
+	actor, ok := requestActor(w, r)
+	if !ok {
+		return
+	}
+	if err := h.rbac.RevokeRoleFromUser(r.Context(), actor, tenantID, userID, roleID); err != nil {
+		writeRoleGrantError(w, err)
 		return
 	}
 
@@ -434,6 +456,9 @@ func (h *Handler) CheckAccess(w http.ResponseWriter, r *http.Request) {
 	userID, err := uuid.Parse(req.UserID)
 	if err != nil {
 		response.ErrBadRequest(w, "invalid user_id")
+		return
+	}
+	if !isSelf(r, userID) && !h.allowed(w, r, "user_roles", "read") {
 		return
 	}
 

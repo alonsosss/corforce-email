@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/alonsosss/corforce-email/pkg/authz"
 	"github.com/alonsosss/corforce-email/pkg/config"
 	"github.com/alonsosss/corforce-email/pkg/db"
 	"github.com/alonsosss/corforce-email/pkg/events"
@@ -194,7 +195,7 @@ func main() {
 		}()
 	}
 
-	h := handler.NewHandler(uc)
+	h := handler.NewHandler(uc, authz.NewCheckerFromEnv())
 
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)

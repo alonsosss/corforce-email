@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/alonsosss/corforce-email/pkg/authz"
 	"github.com/alonsosss/corforce-email/pkg/middleware"
 	"github.com/alonsosss/corforce-email/pkg/response"
 	"github.com/alonsosss/corforce-email/pkg/validate"
@@ -14,49 +15,66 @@ import (
 	"github.com/google/uuid"
 )
 
+const (
+	permModule = "organization"
+	// accessModule es el modulo de permisos de los roles: reparar el rol de sistema
+	// reescribe sus permisos.
+	accessModule = "access"
+)
+
 type Handler struct {
-	uc *app.OrganizationUseCase
+	uc    *app.OrganizationUseCase
+	authz *authz.Checker
 }
 
-func NewHandler(uc *app.OrganizationUseCase) *Handler {
-	return &Handler{uc: uc}
+func NewHandler(uc *app.OrganizationUseCase, checker *authz.Checker) *Handler {
+	return &Handler{uc: uc, authz: checker}
 }
 
+func (h *Handler) perm(resource, action string) func(http.Handler) http.Handler {
+	return h.authz.RequirePermission(permModule, resource, action)
+}
+
+// Routes: los permisos de organization son de alcance plataforma y ningun rol de empresa
+// los recibe. Las rutas que operan sobre la plataforma o sobre otra empresa exigen ademas
+// el rol superadmin; el permiso de accion documenta y cierra la accion concreta.
 func (h *Handler) Routes() chi.Router {
 	r := chi.NewRouter()
 
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Route("/organizations", func(r chi.Router) {
 			// Lectura: el superadmin ve todos los tenants; un usuario de tenant, solo el
-			// suyo. El resto del plano de control es exclusivo del superadmin.
-			r.Get("/", h.ListTenants)
-			r.Get("/{id}", h.GetTenant)
+			// suyo, y fuera de los roles del sistema nadie tiene tenants/read.
+			r.With(h.perm("tenants", "read")).Get("/", h.ListTenants)
+			r.With(h.perm("tenants", "read")).Get("/{id}", h.GetTenant)
 			// Reparar los permisos del rol de sistema: el superadmin sobre cualquier
-			// tenant, el administrador sobre el suyo.
-			r.With(middleware.RequireRoles(middleware.RoleTenantAdmin)).Post("/{id}/reseed-roles", h.ReseedRoles)
+			// tenant, el administrador sobre el suyo. Sigue reservado a los roles del
+			// sistema porque un rol de empresa no puede tocar el rol de sistema.
+			r.With(middleware.RequireRoles(middleware.RoleTenantAdmin),
+				h.authz.RequirePermission(accessModule, "roles", "update")).Post("/{id}/reseed-roles", h.ReseedRoles)
 
 			r.Group(func(r chi.Router) {
 				r.Use(middleware.RequireRoles(middleware.RoleSuperadmin))
-				r.Post("/", h.CreateTenant)
-				r.Patch("/{id}", h.UpdateTenant)
-				r.Delete("/{id}", h.DeleteTenant)
+				r.With(h.perm("tenants", "create")).Post("/", h.CreateTenant)
+				r.With(h.perm("tenants", "update")).Patch("/{id}", h.UpdateTenant)
+				r.With(h.perm("tenants", "delete")).Delete("/{id}", h.DeleteTenant)
 				// Migraciones canonicas: barrido de todos, estado por tenant y reintento
 				// de uno solo.
-				r.Post("/migrate", h.MigrateTenants)
-				r.Get("/migrations/status", h.TenantMigrationStatus)
-				r.Post("/{id}/migrate", h.MigrateTenant)
+				r.With(h.perm("migrations", "run")).Post("/migrate", h.MigrateTenants)
+				r.With(h.perm("migrations", "read")).Get("/migrations/status", h.TenantMigrationStatus)
+				r.With(h.perm("migrations", "run")).Post("/{id}/migrate", h.MigrateTenant)
 				// Modulos habilitados por tenant.
-				r.Get("/{id}/modules", h.GetTenantModules)
-				r.Put("/{id}/modules", h.SetTenantModule)
+				r.With(h.perm("modules", "read")).Get("/{id}/modules", h.GetTenantModules)
+				r.With(h.perm("modules", "update")).Put("/{id}/modules", h.SetTenantModule)
 			})
 		})
 
 		// Directorio de celdas: solo plataforma.
 		r.Route("/cells", func(r chi.Router) {
 			r.Use(middleware.RequireRoles(middleware.RoleSuperadmin))
-			r.Get("/", h.ListCells)
-			r.Post("/", h.CreateCell)
-			r.Patch("/{id}", h.UpdateCell)
+			r.With(h.perm("cells", "read")).Get("/", h.ListCells)
+			r.With(h.perm("cells", "create")).Post("/", h.CreateCell)
+			r.With(h.perm("cells", "update")).Patch("/{id}", h.UpdateCell)
 		})
 	})
 

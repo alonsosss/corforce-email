@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/alonsosss/corforce-email/pkg/auth"
+	"github.com/alonsosss/corforce-email/pkg/authz"
 	"github.com/alonsosss/corforce-email/pkg/config"
 	"github.com/alonsosss/corforce-email/pkg/db"
 	"github.com/alonsosss/corforce-email/pkg/events"
@@ -106,7 +107,7 @@ func main() {
 		PublicBaseURL: publicBaseURL,
 	})
 
-	handler := identityhttp.NewHandler(authUC, userUC, resetUC, identityhttp.Config{
+	handler := identityhttp.NewHandler(authUC, userUC, resetUC, authz.NewCheckerFromEnv(), identityhttp.Config{
 		JWTSecret: cfg.JWT.Secret,
 		MFAIssuer: os.Getenv("MFA_ISSUER"),
 	})

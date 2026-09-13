@@ -131,7 +131,7 @@ func (h *Handler) CreateJob(w http.ResponseWriter, r *http.Request) {
 		response.ErrInternal(w)
 		return
 	}
-	response.JSON(w, http.StatusCreated, job)
+	response.JSON(w, http.StatusCreated, jobResponse(job))
 }
 
 func (h *Handler) GetJob(w http.ResponseWriter, r *http.Request) {
@@ -150,7 +150,7 @@ func (h *Handler) GetJob(w http.ResponseWriter, r *http.Request) {
 		response.ErrNotFound(w, "job not found")
 		return
 	}
-	response.JSON(w, http.StatusOK, job)
+	response.JSON(w, http.StatusOK, jobResponse(job))
 }
 
 // soloAdministracion cierra los trabajos programados. Quien los ve sabe que
@@ -183,7 +183,7 @@ func (h *Handler) ListJobs(w http.ResponseWriter, r *http.Request) {
 		response.ErrInternal(w)
 		return
 	}
-	response.JSON(w, http.StatusOK, jobs)
+	response.JSON(w, http.StatusOK, jobsResponse(jobs))
 }
 
 type updateJobReq struct {
@@ -232,7 +232,7 @@ func (h *Handler) UpdateJob(w http.ResponseWriter, r *http.Request) {
 		response.ErrInternal(w)
 		return
 	}
-	response.JSON(w, http.StatusOK, job)
+	response.JSON(w, http.StatusOK, jobResponse(job))
 }
 
 func (h *Handler) EnableJob(w http.ResponseWriter, r *http.Request) {
@@ -286,7 +286,7 @@ func (h *Handler) RunJob(w http.ResponseWriter, r *http.Request) {
 		response.ErrInternal(w)
 		return
 	}
-	response.JSON(w, http.StatusCreated, exec)
+	response.JSON(w, http.StatusCreated, executionResponse(exec))
 }
 
 func (h *Handler) GetJobHistory(w http.ResponseWriter, r *http.Request) {
@@ -301,7 +301,7 @@ func (h *Handler) GetJobHistory(w http.ResponseWriter, r *http.Request) {
 		response.ErrInternal(w)
 		return
 	}
-	response.JSONWithMeta(w, http.StatusOK, execs, response.PageMeta(total, page, pageSize))
+	response.JSONWithMeta(w, http.StatusOK, executionsResponse(execs),response.PageMeta(total, page, pageSize))
 }
 
 func (h *Handler) ListRunning(w http.ResponseWriter, r *http.Request) {
@@ -310,7 +310,7 @@ func (h *Handler) ListRunning(w http.ResponseWriter, r *http.Request) {
 		response.ErrInternal(w)
 		return
 	}
-	response.JSON(w, http.StatusOK, execs)
+	response.JSON(w, http.StatusOK, executionsResponse(execs))
 }
 
 func (h *Handler) GetExecution(w http.ResponseWriter, r *http.Request) {
@@ -329,7 +329,7 @@ func (h *Handler) GetExecution(w http.ResponseWriter, r *http.Request) {
 		response.ErrNotFound(w, "execution not found")
 		return
 	}
-	response.JSON(w, http.StatusOK, exec)
+	response.JSON(w, http.StatusOK, executionResponse(exec))
 }
 
 func (h *Handler) CancelExecution(w http.ResponseWriter, r *http.Request) {
@@ -378,7 +378,7 @@ func (h *Handler) RetryExecution(w http.ResponseWriter, r *http.Request) {
 		response.ErrInternal(w)
 		return
 	}
-	response.JSON(w, http.StatusCreated, exec)
+	response.JSON(w, http.StatusCreated, executionResponse(exec))
 }
 
 type scheduleTaskReq struct {
@@ -425,7 +425,7 @@ func (h *Handler) ScheduleTask(w http.ResponseWriter, r *http.Request) {
 		response.ErrInternal(w)
 		return
 	}
-	response.JSON(w, http.StatusCreated, task)
+	response.JSON(w, http.StatusCreated, taskResponse(task))
 }
 
 func (h *Handler) GetTask(w http.ResponseWriter, r *http.Request) {
@@ -444,7 +444,7 @@ func (h *Handler) GetTask(w http.ResponseWriter, r *http.Request) {
 		response.ErrNotFound(w, "task not found")
 		return
 	}
-	response.JSON(w, http.StatusOK, task)
+	response.JSON(w, http.StatusOK, taskResponse(task))
 }
 
 func (h *Handler) CancelTask(w http.ResponseWriter, r *http.Request) {
@@ -466,5 +466,5 @@ func (h *Handler) ListPendingTasks(w http.ResponseWriter, r *http.Request) {
 		response.ErrInternal(w)
 		return
 	}
-	response.JSON(w, http.StatusOK, tasks)
+	response.JSON(w, http.StatusOK, tasksResponse(tasks))
 }
