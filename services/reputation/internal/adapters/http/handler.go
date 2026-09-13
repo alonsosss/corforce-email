@@ -43,13 +43,19 @@ func (h *Handler) PublicRoutes() http.Handler {
 	r.Get("/health", h.Health)
 	r.With(h.authz.RequirePermission(permModule, "status", "read")).Get("/status", h.Status)
 	r.With(h.authz.RequirePermission(permModule, "history", "read")).Get("/history", h.History)
-	r.Route("/tenants", func(r chi.Router) {
-		r.Use(middleware.RequireRoles(middleware.RoleSuperadmin))
-		r.With(h.authz.RequirePermission(permModule, "tenants", "read")).Get("/", h.ListTenants)
-		r.With(h.authz.RequirePermission(permModule, "tenants", "update")).Put("/{tenantID}/limits/{class}", h.SetLimits)
-		r.With(h.authz.RequirePermission(permModule, "tenants", "update")).Post("/{tenantID}/{class}/suspend", h.Suspend)
-		r.With(h.authz.RequirePermission(permModule, "tenants", "update")).Post("/{tenantID}/{class}/release", h.Release)
-	})
+	return r
+}
+
+// PlatformRoutes operan sobre la empresa de la ruta, no sobre la del token: el superadmin
+// pertenece a la empresa de plataforma, que no tiene base de empresa. Por eso se montan
+// sin el pool de la empresa de la sesion y cada caso de uso resuelve la base de destino.
+func (h *Handler) PlatformRoutes() http.Handler {
+	r := chi.NewRouter()
+	r.Use(middleware.RequireRoles(middleware.RoleSuperadmin))
+	r.With(h.authz.RequirePermission(permModule, "tenants", "read")).Get("/", h.ListTenants)
+	r.With(h.authz.RequirePermission(permModule, "tenants", "update")).Put("/{tenantID}/limits/{class}", h.SetLimits)
+	r.With(h.authz.RequirePermission(permModule, "tenants", "update")).Post("/{tenantID}/{class}/suspend", h.Suspend)
+	r.With(h.authz.RequirePermission(permModule, "tenants", "update")).Post("/{tenantID}/{class}/release", h.Release)
 	return r
 }
 

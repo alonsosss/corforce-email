@@ -122,6 +122,11 @@ func main() {
 		r.Use(middleware.NewRateLimiter(120, time.Minute).Limit)
 		r.Mount("/api/v1/reputation", h.PublicRoutes())
 	})
+	// Plataforma: por el gateway, solo superadmin; la empresa es la de la ruta.
+	r.Group(func(r chi.Router) {
+		r.Use(middleware.NewRateLimiter(120, time.Minute).Limit)
+		r.Mount("/api/v1/reputation/tenants", h.PlatformRoutes())
+	})
 	// Interno: servicio a servicio con el token interno; la empresa viaja en la cabecera.
 	// Sin limite por IP: la autorizacion acompana a cada envio y llega toda desde los
 	// mismos servicios.

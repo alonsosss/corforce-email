@@ -2,7 +2,8 @@
 # Prueba de punta a punta de la plataforma con binarios reales contra Postgres, NATS y
 # Redis desechables. Recorre lo que ya esta integrado: arranque de una plataforma vacia,
 # alta de celda y empresa, acceso por el gateway con sus tres capas, dominio y buzon en
-# la celda, propagacion a Redis por eventos, mapas de los motores, plantillas y supresion.
+# la celda, propagacion a Redis por eventos, mapas de los motores, plantillas, supresion,
+# planes y derechos de billing, autorizacion de envio en reputation y alcance de permisos.
 #
 # Cada paso COMPRUEBA su resultado y la ejecucion termina con error si alguno falla: no
 # basta con que los servicios arranquen, tienen que hablarse. Las credenciales se generan
@@ -81,7 +82,7 @@ docker run -d --name "$PREFIX-nats" -p "127.0.0.1:$NATS_PORT:4222" nats:2.10-alp
 docker run -d --name "$PREFIX-redis" -p "127.0.0.1:$REDIS_PORT:6379" redis:7.4.10-alpine >/dev/null || exit 1
 for _ in $(seq 1 40); do docker exec "$PREFIX-pg" pg_isready -U mail_admin -d mail_registry >/dev/null 2>&1 && break; sleep 1; done
 
-SERVICES=(organization identity access-control gateway mail-directory mail-auth domain-service mail-security templates suppression)
+SERVICES=(organization identity access-control gateway mail-directory mail-auth domain-service mail-security templates suppression billing reputation)
 echo "== Compilacion (${SERVICES[*]})"
 mkdir -p "$WORK/bin" "$WORK/log"
 for s in "${SERVICES[@]}"; do go build -o "$WORK/bin/$s" "./services/$s" || { echo "no compila $s" >&2; exit 1; }; done
@@ -111,7 +112,8 @@ export CORS_ALLOWED_ORIGINS=http://localhost:3000
 declare -A PORT=(
   [identity]=$((BASE + 1)) [access-control]=$((BASE + 2)) [organization]=$((BASE + 3))
   [mail-directory]=$((BASE + 40)) [mail-auth]=$((BASE + 41)) [mail-security]=$((BASE + 42)) [domain-service]=$((BASE + 43))
-  [suppression]=$((BASE + 46)) [templates]=$((BASE + 47)) [gateway]=$((BASE + 80))
+  [suppression]=$((BASE + 46)) [templates]=$((BASE + 47)) [reputation]=$((BASE + 54)) [billing]=$((BASE + 55))
+  [gateway]=$((BASE + 80))
 )
 MAPS_PORT=$((BASE + 81))
 AUTH_TLS_PORT=$((BASE + 82))
@@ -120,12 +122,13 @@ GW="http://127.0.0.1:${PORT[gateway]}/api/v1"
 export IDENTITY_PORT=${PORT[identity]} ACCESS_CONTROL_PORT=${PORT[access-control]} ORGANIZATION_PORT=${PORT[organization]}
 export MAIL_DIRECTORY_PORT=${PORT[mail-directory]} MAIL_SECURITY_PORT=${PORT[mail-security]} DOMAIN_SERVICE_PORT=${PORT[domain-service]}
 export SUPPRESSION_PORT=${PORT[suppression]} TEMPLATES_PORT=${PORT[templates]} GATEWAY_PORT=${PORT[gateway]}
+export BILLING_PORT=${PORT[billing]} REPUTATION_PORT=${PORT[reputation]}
 export MAIL_POLICY_MAPS_PORT=$MAPS_PORT MAIL_POLICY_EXPORT_PORT=$EXPORT_PORT
 export MAIL_AUTH_PORT=${PORT[mail-auth]} MAIL_AUTH_TLS_PORT=$AUTH_TLS_PORT
 export API_ORIGIN="http://localhost:${PORT[gateway]}" PUBLIC_BASE_URL="http://localhost:${PORT[gateway]}"
 # Direcciones internas: las que el gateway lee de routes.json por <SERVICIO>_HOST(_PORT) y
 # las que los servicios usan entre si.
-for s in identity access-control organization mail-directory mail-security domain-service suppression templates; do
+for s in identity access-control organization mail-directory mail-security domain-service suppression templates billing reputation; do
   var="$(echo "$s" | tr 'a-z-' 'A-Z_')_HOST"
   export "$var=127.0.0.1" "${var}_PORT=${PORT[$s]}"
 done
@@ -133,6 +136,11 @@ export WEB_HOST=127.0.0.1 WEB_HOST_PORT=1
 export ACCESS_CONTROL_URL="http://127.0.0.1:${PORT[access-control]}"
 export MAIL_DIRECTORY_URL="http://127.0.0.1:${PORT[mail-directory]}" MAIL_SECURITY_URL="http://127.0.0.1:${PORT[mail-security]}"
 export SUPPRESSION_URL="http://127.0.0.1:${PORT[suppression]}" TEMPLATES_URL="http://127.0.0.1:${PORT[templates]}"
+export BILLING_URL="http://127.0.0.1:${PORT[billing]}" REPUTATION_URL="http://127.0.0.1:${PORT[reputation]}"
+# Umbrales y limites de reputation: los mismos que documenta .env.example. Billing en modo
+# de produccion (una empresa sin suscripcion no tiene derechos).
+while IFS= read -r linea; do export "$linea"; done < <(grep -E '^REPUTATION_(WINDOW|MIN_VOLUME|BOUNCE|COMPLAINT|DEFAULT)' .env.example)
+export BILLING_ENFORCE=true
 
 arrancar() { "$WORK/bin/$1" >"$WORK/log/$1.log" 2>&1 & }
 esperar_salud() {
@@ -152,8 +160,9 @@ ADMIN_PASS="$(rand_hex 12)Aa1!"
 PGHOST=127.0.0.1 PLATFORM_ADMIN_EMAIL=root@platform.test PLATFORM_ADMIN_PASSWORD="$ADMIN_PASS" \
   bash ops/db/bootstrap-platform.sh --cell pe-01 --region sa-east-1 >/dev/null || mal "bootstrap-platform.sh"
 
-for s in identity access-control mail-directory mail-auth domain-service mail-security templates suppression gateway; do arrancar "$s"; done
-for s in identity access-control mail-directory mail-auth domain-service mail-security templates suppression gateway; do esperar_salud "$s" "${PORT[$s]}"; done
+ARRANQUE=(identity access-control mail-directory mail-auth domain-service mail-security templates suppression billing reputation gateway)
+for s in "${ARRANQUE[@]}"; do arrancar "$s"; done
+for s in "${ARRANQUE[@]}"; do esperar_salud "$s" "${PORT[$s]}"; done
 
 echo "== Identidad y acceso"
 L1=$(curl -s -X POST "$GW/auth/login" -H 'Content-Type: application/json' -d "{\"email\":\"root@platform.test\",\"password\":\"$ADMIN_PASS\"}")
@@ -234,6 +243,58 @@ expect "exclusion manual" "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$GW
 expect "comprobacion masiva normaliza y filtra" \
   "$(curl -s -X POST "$GW/suppression/check" -H "$A2" -H 'Content-Type: application/json' -d '{"emails":["BAJA@otro.test","alta@otro.test"]}' | jget data.suppressed.0.email)" \
   "baja@otro.test"
+
+echo "== Planes y derechos (billing)"
+limites=""
+for r in users domains mailboxes storage_bytes contacts transactional_messages marketing_messages; do
+  limites+="${limites:+,}{\"resource\":\"$r\",\"included\":1000,\"hard_limit\":true,\"overage_unit_price\":null}"
+done
+plan() { echo "{\"code\":\"$1\",\"name\":\"Base\",\"description\":\"Plan de la prueba\",\"currency\":\"USD\",\"base_price\":\"49.00\",\"billing_period\":\"monthly\",\"limits\":[$limites]}"; }
+codigo() { curl -s -o /dev/null -w '%{http_code}' "$@"; }
+expect "el superadmin crea un plan" \
+  "$(codigo -X POST "$GW/billing/plans" -H "$A1" -H 'Content-Type: application/json' -d "$(plan e2e-base)")" "201"
+expect "el tenant_admin no crea planes" \
+  "$(codigo -X POST "$GW/billing/plans" -H "$A2" -H 'Content-Type: application/json' -d "$(plan e2e-otro)")" "403"
+expect "el superadmin asigna el plan a la empresa" \
+  "$(codigo -X PUT "$GW/billing/subscriptions/$TID" -H "$A1" -H 'Content-Type: application/json' -d '{"plan_code":"e2e-base"}')" "201"
+expect "la empresa ve su plan" "$(curl -s "$GW/billing/subscription" -H "$A2" | jget data.plan_code)" "e2e-base"
+interno() {
+  curl -s -X POST "http://127.0.0.1:$1" -H "X-Gateway-Token: $INTERNAL_GATEWAY_TOKEN" -H "X-Tenant-ID: $TID" \
+    -H 'Content-Type: application/json' -d "$2"
+}
+expect "billing concede un buzon mas dentro del plan" \
+  "$(interno "${PORT[billing]}/internal/billing/entitlements/check" '{"resource":"mailboxes","quantity":1}' | jget data.allowed)" "True"
+expect "y lo niega por encima del limite duro" \
+  "$(interno "${PORT[billing]}/internal/billing/entitlements/check" '{"resource":"mailboxes","quantity":5000}' | jget data.allowed)" "False"
+
+echo "== Autorizacion de envio (reputation)"
+expect "reputation autoriza un envio transaccional con el derecho de billing" \
+  "$(interno "${PORT[reputation]}/internal/reputation/authorize" '{"class":"transactional","count":1}' | jget data.allowed)" "True"
+expect "el superadmin fija un limite por hora de marketing" \
+  "$(codigo -X PUT "$GW/reputation/tenants/$TID/limits/marketing" -H "$A1" -H 'Content-Type: application/json' -d '{"hourly":3,"daily":null}')" "200"
+expect "el tenant_admin no toca los limites de su propia reputacion" \
+  "$(codigo -X PUT "$GW/reputation/tenants/$TID/limits/marketing" -H "$A2" -H 'Content-Type: application/json' -d '{"hourly":9000,"daily":null}')" "403"
+expect "un lote dentro del limite pasa" \
+  "$(interno "${PORT[reputation]}/internal/reputation/authorize" '{"class":"marketing","count":2}' | jget data.allowed)" "True"
+R=$(interno "${PORT[reputation]}/internal/reputation/authorize" '{"class":"marketing","count":2}')
+expect "el siguiente lote choca con el limite por hora" "$(echo "$R" | jget data.reason)" "rate_limited"
+[[ "$(echo "$R" | jget data.retry_after_seconds)" =~ ^[1-9][0-9]*$ ]] && ok "y trae el tiempo de espera" || mal "sin retry_after_seconds: ${R:0:200}"
+
+echo "== Alcance de permisos"
+contains "el superadmin ve los permisos de plataforma" "$(curl -s "$GW/permissions" -H "$A1")" '"scope":"platform"'
+CAT=$(curl -s "$GW/permissions" -H "$A2")
+contains "la empresa ve su catalogo" "$CAT" '"scope":"tenant"'
+[[ "$CAT" != *'"scope":"platform"'* ]] && ok "sin los permisos de plataforma" || mal "el tenant_admin ve permisos de plataforma"
+RID=$(curl -s -X POST "$GW/roles" -H "$A2" -H 'Content-Type: application/json' -d '{"name":"finanzas","description":"Consulta de consumo"}' | jget data.id)
+[[ -n "$RID" ]] && ok "la empresa crea un rol propio" || mal "alta de rol"
+P_PLAT=$(sql mail_registry "SELECT id FROM access_control.permissions WHERE module = 'billing' AND resource = 'plans' AND action = 'create'")
+P_EMP=$(sql mail_registry "SELECT id FROM access_control.permissions WHERE module = 'billing' AND resource = 'usage' AND action = 'read'")
+expect "un rol de empresa no recibe permisos de plataforma" \
+  "$(codigo -X PUT "$GW/roles/$RID/permissions" -H "$A2" -H 'Content-Type: application/json' -d "{\"permission_ids\":[\"$P_EMP\",\"$P_PLAT\"]}")" "403"
+expect "y si los de empresa" \
+  "$(codigo -X PUT "$GW/roles/$RID/permissions" -H "$A2" -H 'Content-Type: application/json' -d "{\"permission_ids\":[\"$P_EMP\"]}")" "200"
+expect "el tenant_admin sembrado no tiene permisos de plataforma" \
+  "$(sql mail_registry "SELECT count(*) FROM access_control.role_permissions rp JOIN access_control.permissions p ON p.id = rp.permission_id JOIN access_control.roles r ON r.id = rp.role_id WHERE r.tenant_id = '$TID' AND p.scope = 'platform'")" "0"
 
 echo "== Registros"
 errores=$(grep -l '"level":"error"' "$WORK"/log/*.log 2>/dev/null)
