@@ -139,6 +139,9 @@ type Message struct {
 	CreatedBy       *uuid.UUID        `json:"created_by,omitempty"`
 	CreatedAt       time.Time         `json:"created_at"`
 	UpdatedAt       time.Time         `json:"updated_at"`
+	// Test: envio de prueba de una campana (ver IsTestSend). Viaja en todos los eventos
+	// transactional.email.* para que la analitica no lo cuente.
+	Test bool `json:"test"`
 }
 
 // AllRecipients devuelve las direcciones de to, cc y bcc en ese orden.
@@ -152,17 +155,33 @@ func (m *Message) AllRecipients() []string {
 	return out
 }
 
-// Attribution devuelve la clase, la campana y el contacto del mensaje.
+// Attribution devuelve la clase, la campana, el contacto y la marca de prueba del mensaje.
 func (m *Message) Attribution() MessageAttribution {
-	return MessageAttribution{Class: ClassOrDefault(m.Class), CampaignID: m.CampaignID, ContactID: m.ContactID}
+	return MessageAttribution{Class: ClassOrDefault(m.Class), CampaignID: m.CampaignID, ContactID: m.ContactID, Test: m.Test}
 }
 
 // MessageAttribution es lo que viaja en todos los eventos transactional.email.*:
-// reputation lee la clase; campaigns y analytics, la campana y el contacto.
+// reputation lee la clase; campaigns y analytics, la campana y el contacto; analytics
+// descarta lo marcado como prueba.
 type MessageAttribution struct {
 	Class      string
 	CampaignID *uuid.UUID
 	ContactID  *uuid.UUID
+	Test       bool
+}
+
+// Marca de envio de prueba. campaigns manda sus pruebas por el lote interno
+// (POST /internal/transactional/batch) con esta etiqueta, y solo ese carril la interpreta.
+// En el API publico es una etiqueta mas de SES (la empresa puede usarla para lo suyo) y no
+// marca nada: una empresa no puede sacar envios reales de la analitica etiquetandolos.
+const (
+	TestSendTag   = "test"
+	TestSendValue = "true"
+)
+
+// IsTestSend dice si las etiquetas de un lote interno lo marcan como envio de prueba.
+func IsTestSend(tags map[string]string) bool {
+	return tags[TestSendTag] == TestSendValue
 }
 
 type Event struct {
@@ -190,10 +209,13 @@ type Submission struct {
 	CreatedAt      time.Time             `json:"created_at"`
 }
 
-// SuppressedRecipient es una direccion que la lista de supresion rechazo, con su causa.
+// SuppressedRecipient es una direccion que la lista de supresion rechazo. Reason es su
+// causa principal (la vigente mas grave); Reasons, todas sus causas vigentes tal como las
+// devuelve suppression. Una respuesta guardada antes de existir Reasons no lo lleva.
 type SuppressedRecipient struct {
-	Email  string `json:"email"`
-	Reason string `json:"reason"`
+	Email   string   `json:"email"`
+	Reason  string   `json:"reason"`
+	Reasons []string `json:"reasons,omitempty"`
 }
 
 // SendingDomain es la proyeccion local de un dominio publicado por domain-service.

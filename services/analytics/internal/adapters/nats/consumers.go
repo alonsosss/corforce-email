@@ -119,8 +119,9 @@ func (c *Consumers) Stop() {
 }
 
 // onEmailEvent cuenta un hito de transactional.email.<accion>. Payload:
-// {tenant_id, message_id, email | to[], class?, campaign_id?, bounce_type?, occurred_at?}.
-// De la direccion solo se conserva el dominio.
+// {tenant_id, message_id, email | to[], class?, campaign_id?, bounce_type?, occurred_at?,
+// test?}. De la direccion solo se conserva el dominio. Un envio de prueba (test: true) se
+// confirma sin contarlo; sin el campo, o con otro valor que no sea el booleano true, cuenta.
 func (c *Consumers) onEmailEvent(evt events.Event, ack func()) {
 	milestone, ok := domain.MilestoneFromAction(actionOf(evt.Type))
 	if !ok {
@@ -158,8 +159,15 @@ func (c *Consumers) onEmailEvent(evt events.Event, ack func()) {
 		CampaignID:      campaignID,
 		RecipientDomain: domain.RecipientDomain(email),
 		BounceKind:      domain.BounceKindFromProvider(str(data["bounce_type"])),
+		Test:            data["test"] == true,
 		OccurredAt:      parseTime(str(data["occurred_at"])),
 		PublishedAt:     evt.Timestamp,
+	}
+	if ev.Test {
+		c.logger.Debug("analytics: envio de prueba; no se cuenta",
+			zap.String("type", evt.Type), zap.String("event_id", evt.ID))
+		ack()
+		return
 	}
 	c.process(evt, tenantID, ack, func(ctx context.Context) error {
 		_, err := c.uc.IngestMessageEvent(ctx, ev)

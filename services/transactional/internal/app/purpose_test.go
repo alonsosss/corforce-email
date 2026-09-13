@@ -63,6 +63,82 @@ func TestDoubleOptInSigueBloqueadoPorRebotesQuejasYExclusiones(t *testing.T) {
 	}
 }
 
+// Con el doble opt-in una direccion solo pasa si TODAS sus causas vigentes son una baja
+// voluntaria. La causa principal sola no basta: una baja con una exclusion manual detras
+// tiene la baja como principal y aun asi bloquea.
+func TestDoubleOptInExigeQueTodasLasCausasSeanBaja(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		reason  string
+		causes  []string
+		queued  bool
+		reasons []string
+	}{
+		{name: "baja sola", reason: "unsubscribe", causes: []string{"unsubscribe"}, queued: true},
+		{name: "baja y manual", reason: "unsubscribe", causes: []string{"unsubscribe", "manual"}, reasons: []string{"unsubscribe", "manual"}},
+		{name: "baja e invalida", reason: "unsubscribe", causes: []string{"unsubscribe", "invalid"}, reasons: []string{"unsubscribe", "invalid"}},
+		{name: "manual sola", reason: "manual", causes: []string{"manual"}, reasons: []string{"manual"}},
+		{name: "rebote duro", reason: "hard_bounce", causes: []string{"hard_bounce"}, reasons: []string{"hard_bounce"}},
+		{name: "rebote duro y baja", reason: "hard_bounce", causes: []string{"hard_bounce", "unsubscribe"}, reasons: []string{"hard_bounce", "unsubscribe"}},
+		{name: "queja", reason: "complaint", causes: []string{"complaint"}, reasons: []string{"complaint"}},
+		{name: "queja y baja", reason: "complaint", causes: []string{"complaint", "unsubscribe"}, reasons: []string{"complaint", "unsubscribe"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFixture(t, Config{})
+			f.setDomain(f.tenant, shopDomain, "verified", "sending")
+			f.supp.suppressed["ana@example.com"] = tc.reason
+			f.supp.causes = map[string][]string{"ana@example.com": tc.causes}
+
+			res, err := f.uc.CreateMessages(ctx, doiCommand(f, "ana@example.com"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			queued := len(f.repo.published("transactional.message.queued"))
+			if tc.queued {
+				if len(res.Messages) != 1 || res.Messages[0].Status != domain.StatusQueued || queued != 1 || len(res.Suppressed) != 0 {
+					t.Fatalf("debe encolarse: %+v suprimidos=%+v", res.Messages, res.Suppressed)
+				}
+				return
+			}
+			if len(res.Messages) != 1 || res.Messages[0].Status != domain.StatusSuppressed || queued != 0 {
+				t.Fatalf("debe bloquearse: %+v", res.Messages)
+			}
+			if len(res.Suppressed) != 1 || res.Suppressed[0].Reason != tc.reason || !equalStrings(res.Suppressed[0].Reasons, tc.reasons) {
+				t.Fatalf("la respuesta dice por que, con todas las causas: %+v", res.Suppressed)
+			}
+		})
+	}
+}
+
+// Un suppression que aun no devuelve reasons no permite descartar otra causa detras de la
+// baja: el doble opt-in falla cerrado.
+func TestDoubleOptInSinListaDeCausasBloquea(t *testing.T) {
+	f := newFixture(t, Config{})
+	f.setDomain(f.tenant, shopDomain, "verified", "sending")
+	f.supp.suppressed["ana@example.com"] = domain.SuppressionReasonUnsubscribe
+	f.supp.withoutReasons = true
+
+	res, err := f.uc.CreateMessages(ctx, doiCommand(f, "ana@example.com"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Messages) != 1 || res.Messages[0].Status != domain.StatusSuppressed {
+		t.Fatalf("sin reasons la baja bloquea: %+v", res.Messages)
+	}
+}
+
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 func TestSinPropositoLaBajaBloquea(t *testing.T) {
 	f := newFixture(t, Config{})
 	f.setDomain(f.tenant, shopDomain, "verified", "sending")

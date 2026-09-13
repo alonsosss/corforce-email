@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"sort"
 	"strings"
 	"time"
 
@@ -10,18 +11,32 @@ import (
 	"github.com/google/uuid"
 )
 
-// fakeEntryRepo guarda las exclusiones en memoria con la misma unicidad que la tabla.
+// fakeEntryRepo guarda las causas en memoria con la misma unicidad que la tabla: una fila
+// por (empresa, direccion, causa).
 type fakeEntryRepo struct {
 	entries []*domain.Entry
+	locks   []string
 }
 
-func (f *fakeEntryRepo) find(tenantID uuid.UUID, email string) *domain.Entry {
+func (f *fakeEntryRepo) find(tenantID uuid.UUID, email string, reason domain.Reason) *domain.Entry {
 	for _, e := range f.entries {
-		if e.TenantID == tenantID && e.Email == email {
+		if e.TenantID == tenantID && e.Email == email && e.Reason == reason {
 			return e
 		}
 	}
 	return nil
+}
+
+// reasonsOf devuelve las causas guardadas de una direccion, vigentes o no, ordenadas.
+func (f *fakeEntryRepo) reasonsOf(tenantID uuid.UUID, email string) []string {
+	var out []string
+	for _, e := range f.entries {
+		if e.TenantID == tenantID && e.Email == email {
+			out = append(out, string(e.Reason))
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 func (f *fakeEntryRepo) GetByID(_ context.Context, tenantID, id uuid.UUID) (*domain.Entry, error) {
@@ -33,8 +48,13 @@ func (f *fakeEntryRepo) GetByID(_ context.Context, tenantID, id uuid.UUID) (*dom
 	return nil, domain.ErrEntryNotFound
 }
 
-func (f *fakeEntryRepo) GetByEmailForUpdate(_ context.Context, tenantID uuid.UUID, email string) (*domain.Entry, error) {
-	if e := f.find(tenantID, email); e != nil {
+func (f *fakeEntryRepo) LockAddress(_ context.Context, tenantID uuid.UUID, email string) error {
+	f.locks = append(f.locks, tenantID.String()+":"+email)
+	return nil
+}
+
+func (f *fakeEntryRepo) GetCauseForUpdate(_ context.Context, tenantID uuid.UUID, email string, reason domain.Reason) (*domain.Entry, error) {
+	if e := f.find(tenantID, email, reason); e != nil {
 		return e, nil
 	}
 	return nil, domain.ErrEntryNotFound
@@ -43,32 +63,33 @@ func (f *fakeEntryRepo) GetByEmailForUpdate(_ context.Context, tenantID uuid.UUI
 func (f *fakeEntryRepo) FindByEmails(_ context.Context, tenantID uuid.UUID, emails []string) ([]domain.Entry, error) {
 	var out []domain.Entry
 	for _, email := range emails {
-		if e := f.find(tenantID, email); e != nil {
-			out = append(out, *e)
+		for _, e := range f.entries {
+			if e.TenantID == tenantID && e.Email == email {
+				out = append(out, *e)
+			}
 		}
 	}
 	return out, nil
 }
 
-func (f *fakeEntryRepo) List(_ context.Context, tenantID uuid.UUID, fl ports.ListFilter) ([]domain.Entry, int64, error) {
-	var out []domain.Entry
+func (f *fakeEntryRepo) ListAddresses(ctx context.Context, tenantID uuid.UUID, fl ports.ListFilter, now time.Time) ([]string, int64, error) {
+	var all []domain.Entry
 	for _, e := range f.entries {
-		if e.TenantID != tenantID {
-			continue
+		if e.TenantID == tenantID && (fl.Search == "" || strings.Contains(e.Email, fl.Search)) {
+			all = append(all, *e)
 		}
-		if fl.Reason != "" && e.Reason != fl.Reason {
-			continue
+	}
+	var out []string
+	for _, a := range domain.Aggregate(all, now) {
+		if fl.Reason == "" || a.Reason == fl.Reason {
+			out = append(out, a.Email)
 		}
-		if fl.Search != "" && !strings.Contains(e.Email, fl.Search) {
-			continue
-		}
-		out = append(out, *e)
 	}
 	return out, int64(len(out)), nil
 }
 
 func (f *fakeEntryRepo) Insert(_ context.Context, e *domain.Entry) error {
-	if f.find(e.TenantID, e.Email) != nil {
+	if f.find(e.TenantID, e.Email, e.Reason) != nil {
 		return domain.ErrEntryAlreadyExists
 	}
 	e.ID = uuid.New()
@@ -78,12 +99,20 @@ func (f *fakeEntryRepo) Insert(_ context.Context, e *domain.Entry) error {
 	return nil
 }
 
-func (f *fakeEntryRepo) InsertMissing(ctx context.Context, tenantID uuid.UUID, emails []string, reason domain.Reason, source, detail string) ([]domain.Entry, error) {
+func (f *fakeEntryRepo) InsertMissing(ctx context.Context, tenantID uuid.UUID, emails []string, reason domain.Reason, source, detail string, now time.Time) ([]domain.Entry, error) {
 	var added []domain.Entry
 	for _, email := range emails {
+		if cur := f.find(tenantID, email, reason); cur != nil {
+			if cur.Active(now) {
+				continue
+			}
+			cur.Source, cur.Detail, cur.MessageID, cur.CampaignID, cur.ExpiresAt = source, detail, nil, nil, nil
+			added = append(added, *cur)
+			continue
+		}
 		e := &domain.Entry{TenantID: tenantID, Email: email, Reason: reason, Source: source, Detail: detail}
 		if err := f.Insert(ctx, e); err != nil {
-			continue
+			return nil, err
 		}
 		added = append(added, *e)
 	}
@@ -111,10 +140,16 @@ func (f *fakeEntryRepo) Delete(_ context.Context, tenantID, id uuid.UUID) error 
 }
 
 func (f *fakeEntryRepo) CountByReason(_ context.Context, tenantID uuid.UUID, now time.Time) ([]domain.ReasonCount, error) {
-	counts := map[domain.Reason]int64{}
+	var all []domain.Entry
 	for _, e := range f.entries {
-		if e.TenantID == tenantID && e.Active(now) {
-			counts[e.Reason]++
+		if e.TenantID == tenantID {
+			all = append(all, *e)
+		}
+	}
+	counts := map[domain.Reason]int64{}
+	for _, a := range domain.Aggregate(all, now) {
+		if a.Active() {
+			counts[a.Reason]++
 		}
 	}
 	var out []domain.ReasonCount
@@ -152,18 +187,27 @@ func (fakeTx) Transact(ctx context.Context, fn func(ctx context.Context) error) 
 	return fn(ctx)
 }
 
-// fakePublisher registra los eventos encolados como "subject|email|reason".
+// fakePublisher registra los eventos encolados como "subject|email|reason|restantes",
+// con las causas restantes separadas por comas.
 type fakePublisher struct {
 	events []string
 }
 
-func (f *fakePublisher) EntryAdded(_ context.Context, e *domain.Entry) error {
-	f.events = append(f.events, "added|"+e.Email+"|"+string(e.Reason))
+func joinReasons(reasons []domain.Reason) string {
+	parts := make([]string, len(reasons))
+	for i, r := range reasons {
+		parts[i] = string(r)
+	}
+	return strings.Join(parts, ",")
+}
+
+func (f *fakePublisher) EntryAdded(_ context.Context, e *domain.Entry, reasons []domain.Reason) error {
+	f.events = append(f.events, "added|"+e.Email+"|"+string(e.Reason)+"|"+joinReasons(reasons))
 	return nil
 }
 
-func (f *fakePublisher) EntryRemoved(_ context.Context, e *domain.Entry) error {
-	f.events = append(f.events, "removed|"+e.Email+"|"+string(e.Reason))
+func (f *fakePublisher) EntryRemoved(_ context.Context, e *domain.Entry, reasons []domain.Reason) error {
+	f.events = append(f.events, "removed|"+e.Email+"|"+string(e.Reason)+"|"+joinReasons(reasons))
 	return nil
 }
 
@@ -189,4 +233,11 @@ func newFixture() *fixture {
 		Now: func() time.Time { return f.now },
 	})
 	return f
+}
+
+// cause crea una fila ya guardada, como la dejaria el repositorio.
+func (f *fixture) cause(email string, reason domain.Reason, expiresAt *time.Time) *domain.Entry {
+	e := &domain.Entry{ID: uuid.New(), TenantID: f.tenant, Email: email, Reason: reason, Source: "seed", ExpiresAt: expiresAt}
+	f.entries.entries = append(f.entries.entries, e)
+	return e
 }

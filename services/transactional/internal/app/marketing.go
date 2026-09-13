@@ -267,6 +267,7 @@ func (uc *UseCase) newMarketingMessage(cmd MarketingBatchCommand, r MarketingRec
 	msg.Class = domain.ClassMarketing
 	msg.CampaignID = &campaignID
 	msg.ContactID = &contactID
+	msg.Test = domain.IsTestSend(cmd.Tags)
 	return msg
 }
 

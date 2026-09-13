@@ -27,17 +27,23 @@ type Publisher struct {
 // NewPublisher recibe el db.ContextPool: Enqueue escribe por la transaccion del contexto.
 func NewPublisher(q outbox.Execer) *Publisher { return &Publisher{q: q} }
 
-func (p *Publisher) EntryAdded(ctx context.Context, e *domain.Entry) error {
-	return p.enqueue(ctx, SubjectEntryAdded, e)
+func (p *Publisher) EntryAdded(ctx context.Context, e *domain.Entry, reasons []domain.Reason) error {
+	return p.enqueue(ctx, SubjectEntryAdded, e, reasons)
 }
 
-func (p *Publisher) EntryRemoved(ctx context.Context, e *domain.Entry) error {
-	return p.enqueue(ctx, SubjectEntryRemoved, e)
+func (p *Publisher) EntryRemoved(ctx context.Context, e *domain.Entry, reasons []domain.Reason) error {
+	return p.enqueue(ctx, SubjectEntryRemoved, e, reasons)
 }
 
-// enqueue arma el envelope. UserID lleva a quien actuo cuando la operacion vino de una
-// persona (borrado manual): es la pista de auditoria de una reactivacion.
-func (p *Publisher) enqueue(ctx context.Context, subject string, e *domain.Entry) error {
+// enqueue arma el envelope. reason es la causa que entro o se retiro; reasons, las causas
+// vigentes que le quedan a la direccion despues (vacio si quedo libre). UserID lleva a
+// quien actuo cuando la operacion vino de una persona (borrado manual): es la pista de
+// auditoria de una reactivacion.
+func (p *Publisher) enqueue(ctx context.Context, subject string, e *domain.Entry, reasons []domain.Reason) error {
+	remaining := make([]string, len(reasons))
+	for i, r := range reasons {
+		remaining[i] = string(r)
+	}
 	return outbox.Enqueue(ctx, p.q, subject, events.Event{
 		Type:     subject,
 		Source:   source,
@@ -48,6 +54,7 @@ func (p *Publisher) enqueue(ctx context.Context, subject string, e *domain.Entry
 			"email":     e.Email,
 			"reason":    string(e.Reason),
 			"source":    e.Source,
+			"reasons":   remaining,
 		},
 	})
 }

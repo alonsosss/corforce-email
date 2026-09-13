@@ -45,7 +45,7 @@ type IngestResult struct {
 	// Ignored: el evento no describe un hecho definitivo (rebote transitorio o subject
 	// que no suprime) y no se toca la lista.
 	Ignored bool
-	// Added: la direccion entro o subio de gravedad; false si ya estaba igual o peor.
+	// Added: la causa entro (o se reactivo); false si la direccion ya la tenia vigente.
 	Added bool
 }
 

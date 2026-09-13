@@ -240,3 +240,31 @@ func TestSerieDeCampanaPorDefecto(t *testing.T) {
 		t.Fatalf("campana desconocida: %v", err)
 	}
 }
+
+// Un envio de prueba de una campana (transactional lo marca con test) no suma en ningun
+// agregado ni queda registrado; un envio real de la misma campana si cuenta.
+func TestEnvioDePruebaNoSeCuenta(t *testing.T) {
+	h := newHarness(t)
+	campaign := uuid.New()
+	msg := uuid.New()
+	for _, m := range []domain.Milestone{domain.MilestoneSent, domain.MilestoneDelivered, domain.MilestoneOpened, domain.MilestoneClicked, domain.MilestoneBounced} {
+		ev := h.event(msg, m, now.Add(-time.Hour))
+		ev.Class, ev.CampaignID, ev.Test = domain.ClassMarketing, &campaign, true
+		if res := h.ingest(ev); !res.Test || res.Changed || res.Duplicate {
+			t.Fatalf("%s de prueba: %+v", m, res)
+		}
+	}
+	if len(h.store.processed) != 0 || len(h.store.facts) != 0 || len(h.store.class) != 0 || len(h.store.campaign) != 0 || len(h.store.domains) != 0 {
+		t.Fatalf("un envio de prueba no deja rastro: processed=%d facts=%d class=%d campaign=%d domains=%d",
+			len(h.store.processed), len(h.store.facts), len(h.store.class), len(h.store.campaign), len(h.store.domains))
+	}
+
+	real := h.event(uuid.New(), domain.MilestoneSent, now.Add(-time.Hour))
+	real.Class, real.CampaignID = domain.ClassMarketing, &campaign
+	if res := h.ingest(real); res.Test || !res.Changed {
+		t.Fatalf("envio real: %+v", res)
+	}
+	if got := h.totals(); got.Sent != 1 || got.Delivered != 0 || got.OpenedUnique != 0 {
+		t.Fatalf("solo cuenta el envio real: %+v", got)
+	}
+}

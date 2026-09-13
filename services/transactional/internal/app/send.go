@@ -75,6 +75,7 @@ func (uc *UseCase) SendQueued(ctx context.Context, tenantID, messageID uuid.UUID
 				"class":          attr.Class,
 				"campaign_id":    nullableID(attr.CampaignID),
 				"contact_id":     nullableID(attr.ContactID),
+				"test":           attr.Test,
 				"occurred_at":    eventTime(sentAt),
 			})
 		}
@@ -123,6 +124,7 @@ func (uc *UseCase) failMessage(ctx context.Context, tenantID uuid.UUID, msg *dom
 		"class":       attr.Class,
 		"campaign_id": nullableID(attr.CampaignID),
 		"contact_id":  nullableID(attr.ContactID),
+		"test":        attr.Test,
 		"occurred_at": eventTime(uc.now()),
 	})
 }

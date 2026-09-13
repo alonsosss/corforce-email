@@ -370,8 +370,10 @@ type internalAddRequest struct {
 }
 
 type internalAddResponse struct {
-	Entry *domain.Entry `json:"entry"`
-	// Added: la direccion entro o subio de gravedad; false si ya estaba igual o peor.
+	// Entry es la direccion con todas sus causas: reason es la principal, que puede ser
+	// otra mas grave que la registrada.
+	Entry *domain.Address `json:"entry"`
+	// Added: la causa entro (o se reactivo); false si la direccion ya la tenia vigente.
 	Added bool `json:"added"`
 }
 

@@ -147,6 +147,9 @@ type MessageEvent struct {
 	CampaignID      *uuid.UUID
 	RecipientDomain string
 	BounceKind      BounceKind
+	// Test: el mensaje es un envio de prueba de una campana (lo marca transactional en su
+	// lote interno). No es actividad real y no se cuenta.
+	Test bool
 	// OccurredAt es el instante declarado por el emisor (cero si no lo trae) y
 	// PublishedAt el del sobre del evento; la ingesta elige con OccurredAt().
 	OccurredAt  time.Time

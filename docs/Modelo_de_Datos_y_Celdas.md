@@ -149,9 +149,18 @@ CHECK, `deadline_at` para el vencimiento, `next_attempt_at` para el reintento en
 `retry_of` con el indice unico parcial `uq_job_executions_retry_of`, un solo reintento por
 ejecucion, y `failure_reason` `executor|timeout|handler_not_allowed` por CHECK; cada cambio
 de estado encola `scheduler.job.started|completed|failed` en la outbox en la misma
-transaccion; `scheduler.scheduled_tasks`), `domains`, `suppression` (lista de exclusiones de envio: una fila por
-direccion y empresa, causa vigente por orden de gravedad, consulta previa a todo envio
-por `POST /internal/suppression/check`) y `templates` (plantillas de correo por empresa:
+transaccion; `scheduler.scheduled_tasks`), `domains`, `suppression` (lista de exclusiones de envio,
+V 2026-09-13: una fila por causa, `UNIQUE (tenant_id, email, reason)` desde
+`suppression/02_causes.sql`, que conservo tal cual las filas del modelo anterior de una
+fila por direccion; cada causa (`hard_bounce`, `complaint`, `unsubscribe`, `invalid`,
+`manual`) guarda su origen, detalle y caducidad y se registra y se retira por separado,
+con un bloqueo consultivo por direccion en la transaccion; la causa principal, la vigente
+mas grave por el orden de `domain.Reasons()`, se calcula al leer y es el `reason` del
+listado, de la consulta de una exclusion y de la consulta previa a todo envio por
+`POST /internal/suppression/check`, que anaden `reasons` con todas las vigentes; el listado
+filtra y las estadisticas cuentan por la principal; `suppression.entry.added` y `.removed`
+llevan la causa que entro o salio en `reason` y las vigentes que quedan en `reasons`) y
+`templates` (plantillas de correo por empresa:
 `templates.templates` con nombre unico por empresa y `current_version`, y
 `templates.versions` con asunto, HTML, texto opcional y variables declaradas en `jsonb`;
 una sola version publicada por plantilla garantizada por el indice parcial
@@ -160,7 +169,10 @@ una sola version publicada por plantilla garantizada por el indice parcial
 outbox), `transactional` (mensajes de las dos clases en `transactional.messages.class`,
 `transactional` o `marketing`; los de marketing llevan `campaign_id` y `contact_id` y la
 restriccion `messages_marketing_check` exige campana, contacto, enlace de baja y un solo
-destinatario; peticiones idempotentes en `transactional.submissions` con su clase y los
+destinatario; `is_test` marca los envios de prueba de campaigns (solo el lote interno con
+la etiqueta `test=true` la fija, `messages_test_marketing_check` la limita a marketing, y
+viaja como `test` en todos los `transactional.email.*`, que analytics no cuenta);
+peticiones idempotentes en `transactional.submissions` con su clase y los
 suprimidos de la respuesta, para que una repeticion devuelva lo mismo y una clave no cruce
 de clase; eventos de SES, proyeccion de dominios de envio, bajas),
 `campaigns` (`campaigns.campaigns` con nombre unico por empresa sin distinguir mayusculas,

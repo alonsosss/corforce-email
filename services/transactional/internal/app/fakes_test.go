@@ -344,8 +344,12 @@ func (r *fakeRepo) InsertUnsubscribe(_ context.Context, u *domain.Unsubscribe) (
 
 // fakeSuppression es la lista de supresion de la empresa.
 type fakeSuppression struct {
-	suppressed map[string]string // email en minusculas -> reason
-	checks     [][]string
+	suppressed map[string]string // email en minusculas -> reason principal
+	// causes fija todas las causas vigentes de una direccion; sin entrada, la unica es
+	// la principal. withoutReasons simula un suppression anterior al campo reasons.
+	causes         map[string][]string
+	withoutReasons bool
+	checks         [][]string
 	added      []ports.SuppressionEntry
 	checkErr   error
 	addErr     error
@@ -358,9 +362,18 @@ func (s *fakeSuppression) Check(_ context.Context, _ uuid.UUID, emails []string)
 	}
 	var out []ports.Suppressed
 	for _, e := range emails {
-		if reason, ok := s.suppressed[strings.ToLower(e)]; ok {
-			out = append(out, ports.Suppressed{Email: e, Reason: reason})
+		reason, ok := s.suppressed[strings.ToLower(e)]
+		if !ok {
+			continue
 		}
+		reasons := s.causes[strings.ToLower(e)]
+		if reasons == nil {
+			reasons = []string{reason}
+		}
+		if s.withoutReasons {
+			reasons = nil
+		}
+		out = append(out, ports.Suppressed{Email: e, Reason: reason, Reasons: reasons})
 	}
 	return out, nil
 }

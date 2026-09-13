@@ -14,10 +14,14 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-// uniqueViolation es el SQLSTATE de un choque con UNIQUE (tenant_id, email).
+// uniqueViolation es el SQLSTATE de un choque con UNIQUE (tenant_id, email, reason).
 const uniqueViolation = "23505"
 
 const entryColumns = `id, tenant_id, email, reason, source, detail, message_id, campaign_id, expires_at, created_at, updated_at`
+
+// addressLockPrefix separa las claves de bloqueo de este servicio de cualquier otro
+// bloqueo consultivo que se tome en la misma base de empresa.
+const addressLockPrefix = "suppression:address:"
 
 // Repository implementa ports.EntryRepository sobre la base de la empresa. El pool o la
 // transaccion salen del contexto (db.ContextPool).
@@ -27,6 +31,18 @@ type Repository struct {
 
 func NewRepository(pool *db.ContextPool) *Repository {
 	return &Repository{pool: pool}
+}
+
+// severityOrder es domain.Reasons() como texto. Las consultas eligen la causa principal
+// de una direccion por la posicion en esta lista, asi que el orden de gravedad vive solo
+// en el dominio.
+func severityOrder() []string {
+	reasons := domain.Reasons()
+	out := make([]string, len(reasons))
+	for i, r := range reasons {
+		out[i] = string(r)
+	}
+	return out
 }
 
 func scanEntry(row pgx.Row) (*domain.Entry, error) {
@@ -63,15 +79,24 @@ func (r *Repository) GetByID(ctx context.Context, tenantID, id uuid.UUID) (*doma
 		tenantID, id))
 }
 
-func (r *Repository) GetByEmailForUpdate(ctx context.Context, tenantID uuid.UUID, email string) (*domain.Entry, error) {
+func (r *Repository) LockAddress(ctx context.Context, tenantID uuid.UUID, email string) error {
+	_, err := r.pool.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`,
+		addressLockPrefix+tenantID.String()+":"+email)
+	return err
+}
+
+func (r *Repository) GetCauseForUpdate(ctx context.Context, tenantID uuid.UUID, email string, reason domain.Reason) (*domain.Entry, error) {
 	return scanEntry(r.pool.QueryRow(ctx,
-		`SELECT `+entryColumns+` FROM suppression.entries WHERE tenant_id = $1 AND email = $2 FOR UPDATE`,
-		tenantID, email))
+		`SELECT `+entryColumns+` FROM suppression.entries
+		  WHERE tenant_id = $1 AND email = $2 AND reason = $3 FOR UPDATE`,
+		tenantID, email, reason))
 }
 
 func (r *Repository) FindByEmails(ctx context.Context, tenantID uuid.UUID, emails []string) ([]domain.Entry, error) {
 	rows, err := r.pool.Query(ctx,
-		`SELECT `+entryColumns+` FROM suppression.entries WHERE tenant_id = $1 AND email = ANY($2::text[])`,
+		`SELECT `+entryColumns+` FROM suppression.entries
+		  WHERE tenant_id = $1 AND email = ANY($2::text[])
+		  ORDER BY email, created_at, id`,
 		tenantID, emails)
 	if err != nil {
 		return nil, err
@@ -85,25 +110,43 @@ func escapeLike(s string) string {
 	return strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(s)
 }
 
-func (r *Repository) List(ctx context.Context, tenantID uuid.UUID, f ports.ListFilter) ([]domain.Entry, int64, error) {
-	where := `WHERE tenant_id = $1 AND ($2 = '' OR reason = $2) AND ($3 = '' OR email LIKE '%' || $3 || '%')`
-	args := []interface{}{tenantID, string(f.Reason), escapeLike(strings.ToLower(strings.TrimSpace(f.Search)))}
+// principalCTE elige la causa principal de cada direccion de la empresa: primero las
+// vigentes y, entre ellas, la mas grave. Parametros: $1 empresa, $3 busqueda, $4 ahora,
+// $5 orden de gravedad.
+const principalCTE = `WITH principal AS (
+	SELECT DISTINCT ON (email) email, reason, created_at, id
+	  FROM suppression.entries
+	 WHERE tenant_id = $1 AND ($3 = '' OR email LIKE '%' || $3 || '%')
+	 ORDER BY email, (expires_at IS NULL OR expires_at > $4) DESC, array_position($5::text[], reason::text), id
+)`
+
+func (r *Repository) ListAddresses(ctx context.Context, tenantID uuid.UUID, f ports.ListFilter, now time.Time) ([]string, int64, error) {
+	where := ` WHERE ($2 = '' OR reason = $2)`
+	args := []interface{}{tenantID, string(f.Reason), escapeLike(strings.ToLower(strings.TrimSpace(f.Search))), now, severityOrder()}
 
 	var total int64
-	if err := r.pool.QueryRow(ctx, `SELECT count(*) FROM suppression.entries `+where, args...).Scan(&total); err != nil {
+	if err := r.pool.QueryRow(ctx, principalCTE+` SELECT count(*) FROM principal`+where, args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 	rows, err := r.pool.Query(ctx,
-		`SELECT `+entryColumns+` FROM suppression.entries `+where+` ORDER BY created_at DESC, id LIMIT $4 OFFSET $5`,
+		principalCTE+` SELECT email FROM principal`+where+` ORDER BY created_at DESC, id LIMIT $6 OFFSET $7`,
 		append(args, f.PerPage, (f.Page-1)*f.PerPage)...)
 	if err != nil {
 		return nil, 0, err
 	}
-	out, err := collectEntries(rows)
-	if err != nil {
+	defer rows.Close()
+	var emails []string
+	for rows.Next() {
+		var email string
+		if err := rows.Scan(&email); err != nil {
+			return nil, 0, err
+		}
+		emails = append(emails, email)
+	}
+	if err := rows.Err(); err != nil {
 		return nil, 0, err
 	}
-	return out, total, nil
+	return emails, total, nil
 }
 
 func (r *Repository) Insert(ctx context.Context, e *domain.Entry) error {
@@ -120,15 +163,19 @@ func (r *Repository) Insert(ctx context.Context, e *domain.Entry) error {
 	return err
 }
 
-// InsertMissing inserta en una sola sentencia; ON CONFLICT DO NOTHING omite las que ya
-// estaban (y las repetidas dentro del propio lote, que el caso de uso ya elimina).
-func (r *Repository) InsertMissing(ctx context.Context, tenantID uuid.UUID, emails []string, reason domain.Reason, source, detail string) ([]domain.Entry, error) {
+// InsertMissing inserta en una sola sentencia. ON CONFLICT solo actua sobre una causa
+// caducada (la reactiva sin caducidad); una vigente no cambia y no se devuelve. DISTINCT
+// protege de una direccion repetida en el lote, que haria fallar el DO UPDATE.
+func (r *Repository) InsertMissing(ctx context.Context, tenantID uuid.UUID, emails []string, reason domain.Reason, source, detail string, now time.Time) ([]domain.Entry, error) {
 	rows, err := r.pool.Query(ctx,
-		`INSERT INTO suppression.entries (tenant_id, email, reason, source, detail)
-		 SELECT $1, e, $3, $4, $5 FROM unnest($2::text[]) AS e
-		 ON CONFLICT (tenant_id, email) DO NOTHING
+		`INSERT INTO suppression.entries AS e (tenant_id, email, reason, source, detail)
+		 SELECT $1, x.email, $3, $4, $5 FROM (SELECT DISTINCT unnest($2::text[]) AS email) AS x
+		 ON CONFLICT (tenant_id, email, reason) DO UPDATE
+		    SET source = EXCLUDED.source, detail = EXCLUDED.detail,
+		        message_id = NULL, campaign_id = NULL, expires_at = NULL
+		  WHERE e.expires_at IS NOT NULL AND e.expires_at <= $6
 		 RETURNING `+entryColumns,
-		tenantID, emails, reason, source, detail)
+		tenantID, emails, reason, source, detail, now)
 	if err != nil {
 		return nil, err
 	}
@@ -146,6 +193,10 @@ func (r *Repository) Update(ctx context.Context, e *domain.Entry) error {
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.ErrEntryNotFound
 	}
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == uniqueViolation {
+		return domain.ErrEntryAlreadyExists
+	}
 	return err
 }
 
@@ -162,10 +213,13 @@ func (r *Repository) Delete(ctx context.Context, tenantID, id uuid.UUID) error {
 
 func (r *Repository) CountByReason(ctx context.Context, tenantID uuid.UUID, now time.Time) ([]domain.ReasonCount, error) {
 	rows, err := r.pool.Query(ctx,
-		`SELECT reason, count(*) FROM suppression.entries
-		  WHERE tenant_id = $1 AND (expires_at IS NULL OR expires_at > $2)
-		  GROUP BY reason`,
-		tenantID, now)
+		`SELECT reason, count(*) FROM (
+		     SELECT DISTINCT ON (email) email, reason FROM suppression.entries
+		      WHERE tenant_id = $1 AND (expires_at IS NULL OR expires_at > $2)
+		      ORDER BY email, array_position($3::text[], reason::text)
+		 ) AS principal
+		 GROUP BY reason`,
+		tenantID, now, severityOrder())
 	if err != nil {
 		return nil, err
 	}

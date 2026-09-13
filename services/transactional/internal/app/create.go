@@ -383,8 +383,9 @@ func (uc *UseCase) checkSuppressed(ctx context.Context, tenantID uuid.UUID, emai
 }
 
 // filterSuppressed consulta suppression con todos los destinatarios y quita los
-// suprimidos de cada lista. Con proposito, las causas que ese proposito no respeta
-// (domain.IgnoresSuppression) ni bloquean ni figuran como suprimidas.
+// suprimidos de cada lista. Con proposito, las direcciones cuyas causas vigentes ese
+// proposito no respeta todas (domain.IgnoresSuppression) ni bloquean ni figuran como
+// suprimidas.
 func (uc *UseCase) filterSuppressed(ctx context.Context, tenantID uuid.UUID, purpose string, lists ...*[]domain.Recipient) ([]ports.Suppressed, error) {
 	var emails []string
 	for _, l := range lists {
@@ -400,7 +401,7 @@ func (uc *UseCase) filterSuppressed(ctx context.Context, tenantID uuid.UUID, pur
 		kept := make([]ports.Suppressed, 0, len(suppressed))
 		blocked = make(map[string]bool, len(suppressed))
 		for _, s := range suppressed {
-			if domain.IgnoresSuppression(purpose, s.Reason) {
+			if domain.IgnoresSuppression(purpose, s) {
 				continue
 			}
 			kept = append(kept, s)

@@ -34,7 +34,7 @@ func (r *Repository) Transact(ctx context.Context, fn func(ctx context.Context) 
 const messageColumns = `id, tenant_id, submission_id, idempotency_key, from_email, from_name, reply_to,
 	"to", cc, bcc, subject, template_id, template_version, variables, html, text, headers, tags,
 	unsubscribable, class, campaign_id, contact_id, status, ses_message_id, error, attempts, scheduled_at,
-	sent_at, created_by, created_at, updated_at`
+	sent_at, created_by, created_at, updated_at, is_test`
 
 type rowScanner interface {
 	Scan(dest ...any) error
@@ -45,7 +45,7 @@ func scanMessage(row rowScanner) (*domain.Message, error) {
 	err := row.Scan(&m.ID, &m.TenantID, &m.SubmissionID, &m.IdempotencyKey, &m.FromEmail, &m.FromName, &m.ReplyTo,
 		&m.To, &m.Cc, &m.Bcc, &m.Subject, &m.TemplateID, &m.TemplateVersion, &m.Variables, &m.HTML, &m.Text,
 		&m.Headers, &m.Tags, &m.Unsubscribable, &m.Class, &m.CampaignID, &m.ContactID, &m.Status, &m.SESMessageID,
-		&m.Error, &m.Attempts, &m.ScheduledAt, &m.SentAt, &m.CreatedBy, &m.CreatedAt, &m.UpdatedAt)
+		&m.Error, &m.Attempts, &m.ScheduledAt, &m.SentAt, &m.CreatedBy, &m.CreatedAt, &m.UpdatedAt, &m.Test)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, domain.ErrNotFound
 	}
@@ -85,11 +85,11 @@ func (r *Repository) InsertMessage(ctx context.Context, m *domain.Message) error
 	_, err := r.pool.Exec(ctx, `INSERT INTO transactional.messages (
 		id, tenant_id, submission_id, idempotency_key, from_email, from_name, reply_to,
 		"to", cc, bcc, subject, template_id, template_version, variables, html, text, headers, tags,
-		unsubscribable, class, campaign_id, contact_id, status, attempts, scheduled_at, created_by, created_at, updated_at
-	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28)`,
+		unsubscribable, class, campaign_id, contact_id, status, attempts, scheduled_at, created_by, created_at, updated_at, is_test
+	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29)`,
 		m.ID, m.TenantID, m.SubmissionID, m.IdempotencyKey, m.FromEmail, m.FromName, m.ReplyTo,
 		m.To, m.Cc, m.Bcc, m.Subject, m.TemplateID, m.TemplateVersion, m.Variables, m.HTML, m.Text, m.Headers, m.Tags,
-		m.Unsubscribable, m.Class, m.CampaignID, m.ContactID, m.Status, m.Attempts, m.ScheduledAt, m.CreatedBy, m.CreatedAt, m.UpdatedAt)
+		m.Unsubscribable, m.Class, m.CampaignID, m.ContactID, m.Status, m.Attempts, m.ScheduledAt, m.CreatedBy, m.CreatedAt, m.UpdatedAt, m.Test)
 	if err != nil {
 		return fmt.Errorf("insert message: %w", err)
 	}
@@ -103,8 +103,8 @@ func (r *Repository) GetMessage(ctx context.Context, tenantID, id uuid.UUID) (*d
 
 func (r *Repository) GetAttribution(ctx context.Context, tenantID, id uuid.UUID) (*domain.MessageAttribution, error) {
 	var a domain.MessageAttribution
-	err := r.pool.QueryRow(ctx, `SELECT class, campaign_id, contact_id FROM transactional.messages
-		WHERE tenant_id = $1 AND id = $2`, tenantID, id).Scan(&a.Class, &a.CampaignID, &a.ContactID)
+	err := r.pool.QueryRow(ctx, `SELECT class, campaign_id, contact_id, is_test FROM transactional.messages
+		WHERE tenant_id = $1 AND id = $2`, tenantID, id).Scan(&a.Class, &a.CampaignID, &a.ContactID, &a.Test)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, domain.ErrNotFound
 	}

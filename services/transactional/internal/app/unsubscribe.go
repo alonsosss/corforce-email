@@ -54,6 +54,7 @@ func (uc *UseCase) Unsubscribe(ctx context.Context, claims domain.UnsubscribeCla
 			"class":       attr.Class,
 			"campaign_id": nullableID(attr.CampaignID),
 			"contact_id":  nullableID(attr.ContactID),
+			"test":        attr.Test,
 			"occurred_at": eventTime(now),
 		})
 	})

@@ -49,9 +49,49 @@ func New(d Deps) *UseCase {
 	return &UseCase{entries: d.Entries, imports: d.Imports, tx: d.Tx, events: d.Events, logger: d.Logger, now: now}
 }
 
-// Check devuelve, de las direcciones dadas, las que estan excluidas y vigentes. Las
-// direcciones se normalizan y las que no son direcciones validas se ignoran: no pueden
-// estar en la lista y quien envia ya las rechaza por su cuenta.
+// addresses lee todas las causas de las direcciones dadas y las agrupa por direccion.
+func (uc *UseCase) addresses(ctx context.Context, tenantID uuid.UUID, emails []string, now time.Time) (map[string]domain.Address, error) {
+	found, err := uc.entries.FindByEmails(ctx, tenantID, emails)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]domain.Address, len(emails))
+	for _, a := range domain.Aggregate(found, now) {
+		out[a.Email] = a
+	}
+	return out, nil
+}
+
+// address devuelve una direccion con todas sus causas; domain.ErrEntryNotFound si no
+// tiene ninguna.
+func (uc *UseCase) address(ctx context.Context, tenantID uuid.UUID, email string, now time.Time) (*domain.Address, error) {
+	byEmail, err := uc.addresses(ctx, tenantID, []string{email}, now)
+	if err != nil {
+		return nil, err
+	}
+	a, ok := byEmail[email]
+	if !ok {
+		return nil, domain.ErrEntryNotFound
+	}
+	return &a, nil
+}
+
+// activeReasons son las causas vigentes de una direccion; vacio si quedo libre.
+func (uc *UseCase) activeReasons(ctx context.Context, tenantID uuid.UUID, email string, now time.Time) ([]domain.Reason, error) {
+	a, err := uc.address(ctx, tenantID, email, now)
+	if errors.Is(err, domain.ErrEntryNotFound) {
+		return []domain.Reason{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return a.Reasons, nil
+}
+
+// Check devuelve, de las direcciones dadas, las que tienen alguna causa vigente, con la
+// principal como reason y todas las vigentes en reasons. Las direcciones se normalizan y
+// las que no son direcciones validas se ignoran: no pueden estar en la lista y quien envia
+// ya las rechaza por su cuenta.
 func (uc *UseCase) Check(ctx context.Context, tenantID uuid.UUID, emails []string) ([]domain.Suppressed, error) {
 	if len(emails) > MaxCheckEmails {
 		return nil, domain.ErrTooManyEmails
@@ -64,11 +104,11 @@ func (uc *UseCase) Check(ctx context.Context, tenantID uuid.UUID, emails []strin
 	if err != nil {
 		return nil, err
 	}
-	now := uc.now()
-	out := make([]domain.Suppressed, 0, len(found))
-	for _, e := range found {
-		if e.Active(now) {
-			out = append(out, domain.Suppressed{Email: e.Email, Reason: e.Reason})
+	addresses := domain.Aggregate(found, uc.now())
+	out := make([]domain.Suppressed, 0, len(addresses))
+	for _, a := range addresses {
+		if a.Active() {
+			out = append(out, domain.Suppressed{Email: a.Email, Reason: a.Reason, Reasons: a.Reasons})
 		}
 	}
 	return out, nil
@@ -84,11 +124,11 @@ type AddInput struct {
 	CampaignID *uuid.UUID
 }
 
-// Add registra una exclusion de forma idempotente. Si la direccion ya esta con una causa
-// igual o mas grave, no cambia nada y devuelve la fila existente (added=false). Si esta
-// con una causa menor, la eleva a la nueva y retira cualquier caducidad: un rebote duro
-// sobre una exclusion manual temporal la convierte en definitiva.
-func (uc *UseCase) Add(ctx context.Context, tenantID uuid.UUID, in AddInput) (*domain.Entry, bool, error) {
+// Add registra una causa de exclusion de forma idempotente. Cada causa se guarda aparte:
+// una baja no absorbe una exclusion manual ni un rebote duro una baja. Si la direccion ya
+// tiene esa causa vigente no cambia nada (added=false); si la tenia caducada (solo una
+// manual caduca) la reactiva sin caducidad. Devuelve la direccion con todas sus causas.
+func (uc *UseCase) Add(ctx context.Context, tenantID uuid.UUID, in AddInput) (*domain.Address, bool, error) {
 	email, err := domain.NormalizeEmail(in.Email)
 	if err != nil {
 		return nil, false, err
@@ -97,12 +137,12 @@ func (uc *UseCase) Add(ctx context.Context, tenantID uuid.UUID, in AddInput) (*d
 		return nil, false, err
 	}
 	var (
-		out   *domain.Entry
+		out   *domain.Address
 		added bool
 	)
-	// Dos registros simultaneos de una direccion NUEVA: el bloqueo de fila no la cubre
-	// porque aun no existia y el segundo Insert choca con el UNIQUE. Se repite una vez;
-	// a la segunda la fila ya existe y entra por la rama de comparacion.
+	// El bloqueo de la direccion serializa las altas por esta via, pero una carga masiva
+	// no lo toma: si inserta la misma causa a la vez, el Insert choca con el UNIQUE. Se
+	// repite una vez; a la segunda la fila ya existe y entra por la rama de comparacion.
 	for attempt := 0; attempt < 2; attempt++ {
 		err = uc.tx.Transact(ctx, func(ctx context.Context) error {
 			return uc.addInTx(ctx, tenantID, email, in, &out, &added)
@@ -117,17 +157,19 @@ func (uc *UseCase) Add(ctx context.Context, tenantID uuid.UUID, in AddInput) (*d
 	return out, added, nil
 }
 
-// addInTx es el cuerpo transaccional de Add: compara con la fila existente (bloqueada) o
-// inserta la nueva, y deja en out/added el resultado.
-func (uc *UseCase) addInTx(ctx context.Context, tenantID uuid.UUID, email string, in AddInput, out **domain.Entry, added *bool) error {
-	existing, err := uc.entries.GetByEmailForUpdate(ctx, tenantID, email)
+// addInTx es el cuerpo transaccional de Add: con la direccion bloqueada, deja la causa
+// como esta si ya es vigente, la reactiva si caduco o la inserta, y deja en out/added el
+// resultado.
+func (uc *UseCase) addInTx(ctx context.Context, tenantID uuid.UUID, email string, in AddInput, out **domain.Address, added *bool) error {
+	if err := uc.entries.LockAddress(ctx, tenantID, email); err != nil {
+		return err
+	}
+	now := uc.now()
+	var changed *domain.Entry
+	existing, err := uc.entries.GetCauseForUpdate(ctx, tenantID, email, in.Reason)
 	switch {
+	case err == nil && existing.Active(now):
 	case err == nil:
-		if existing.Reason.Severity() >= in.Reason.Severity() {
-			*out, *added = existing, false
-			return nil
-		}
-		existing.Reason = in.Reason
 		existing.Source = in.Source
 		existing.Detail = in.Detail
 		existing.MessageID = in.MessageID
@@ -136,8 +178,7 @@ func (uc *UseCase) addInTx(ctx context.Context, tenantID uuid.UUID, email string
 		if err := uc.entries.Update(ctx, existing); err != nil {
 			return err
 		}
-		*out, *added = existing, true
-		return uc.events.EntryAdded(ctx, existing)
+		changed = existing
 	case errors.Is(err, domain.ErrEntryNotFound):
 		e := &domain.Entry{
 			TenantID: tenantID, Email: email, Reason: in.Reason, Source: in.Source,
@@ -146,11 +187,19 @@ func (uc *UseCase) addInTx(ctx context.Context, tenantID uuid.UUID, email string
 		if err := uc.entries.Insert(ctx, e); err != nil {
 			return err
 		}
-		*out, *added = e, true
-		return uc.events.EntryAdded(ctx, e)
+		changed = e
 	default:
 		return err
 	}
+	addr, err := uc.address(ctx, tenantID, email, now)
+	if err != nil {
+		return err
+	}
+	*out, *added = addr, changed != nil
+	if changed == nil {
+		return nil
+	}
+	return uc.events.EntryAdded(ctx, changed, addr.Reasons)
 }
 
 // CreateManualInput es lo que un operador registra por el API publico.
@@ -161,9 +210,12 @@ type CreateManualInput struct {
 	ExpiresAt *time.Time
 }
 
-// CreateManual registra una exclusion manual. Solo manual: las demas causas las
-// registra la plataforma a partir de hechos (rebotes, quejas, bajas), no una persona.
-func (uc *UseCase) CreateManual(ctx context.Context, tenantID uuid.UUID, in CreateManualInput) (*domain.Entry, error) {
+// CreateManual registra una exclusion manual, se sume o no a otras causas de la
+// direccion. Solo manual: las demas causas las registra la plataforma a partir de hechos
+// (rebotes, quejas, bajas), no una persona. Una exclusion manual vigente de la misma
+// direccion es un conflicto; una caducada se renueva con los datos nuevos, porque ya no
+// excluia a nadie y conservarla obligaria a borrarla antes de volver a excluir.
+func (uc *UseCase) CreateManual(ctx context.Context, tenantID uuid.UUID, in CreateManualInput) (*domain.Address, error) {
 	email, err := domain.NormalizeEmail(in.Email)
 	if err != nil {
 		return nil, err
@@ -171,28 +223,51 @@ func (uc *UseCase) CreateManual(ctx context.Context, tenantID uuid.UUID, in Crea
 	if in.Reason != domain.ReasonManual {
 		return nil, domain.ErrManualOnly
 	}
-	if in.ExpiresAt != nil && !in.ExpiresAt.After(uc.now()) {
+	now := uc.now()
+	if in.ExpiresAt != nil && !in.ExpiresAt.After(now) {
 		return nil, domain.ErrExpiryInPast
 	}
-	e := &domain.Entry{
-		TenantID: tenantID, Email: email, Reason: domain.ReasonManual,
-		Source: SourceAPI, Detail: in.Detail, ExpiresAt: in.ExpiresAt,
-	}
+	var out *domain.Address
 	err = uc.tx.Transact(ctx, func(ctx context.Context) error {
-		if err := uc.entries.Insert(ctx, e); err != nil {
+		if err := uc.entries.LockAddress(ctx, tenantID, email); err != nil {
 			return err
 		}
-		return uc.events.EntryAdded(ctx, e)
+		e, err := uc.entries.GetCauseForUpdate(ctx, tenantID, email, domain.ReasonManual)
+		switch {
+		case err == nil && e.Active(now):
+			return domain.ErrEntryAlreadyExists
+		case err == nil:
+			e.Source, e.Detail, e.MessageID, e.CampaignID, e.ExpiresAt = SourceAPI, in.Detail, nil, nil, in.ExpiresAt
+			if err := uc.entries.Update(ctx, e); err != nil {
+				return err
+			}
+		case errors.Is(err, domain.ErrEntryNotFound):
+			e = &domain.Entry{
+				TenantID: tenantID, Email: email, Reason: domain.ReasonManual,
+				Source: SourceAPI, Detail: in.Detail, ExpiresAt: in.ExpiresAt,
+			}
+			if err := uc.entries.Insert(ctx, e); err != nil {
+				return err
+			}
+		default:
+			return err
+		}
+		addr, err := uc.address(ctx, tenantID, email, now)
+		if err != nil {
+			return err
+		}
+		out = addr
+		return uc.events.EntryAdded(ctx, e, addr.Reasons)
 	})
 	if err != nil {
 		return nil, err
 	}
-	return e, nil
+	return out, nil
 }
 
-// Remove retira una exclusion. Una baja pedida por la persona no se retira por aqui;
-// las demas quedan auditadas por el evento suppression.entry.removed, que lleva a quien
-// lo hizo.
+// Remove retira UNA causa de exclusion (la fila id); las demas causas de la direccion
+// siguen vigentes. Una baja pedida por la persona no se retira por aqui; las demas quedan
+// auditadas por el evento suppression.entry.removed, que lleva a quien lo hizo.
 func (uc *UseCase) Remove(ctx context.Context, tenantID, id uuid.UUID) error {
 	return uc.tx.Transact(ctx, func(ctx context.Context) error {
 		e, err := uc.entries.GetByID(ctx, tenantID, id)
@@ -202,16 +277,28 @@ func (uc *UseCase) Remove(ctx context.Context, tenantID, id uuid.UUID) error {
 		if !e.Reason.Removable() {
 			return domain.ErrUnsubscribeProtected
 		}
-		if err := uc.entries.Delete(ctx, tenantID, id); err != nil {
-			return err
-		}
-		return uc.events.EntryRemoved(ctx, e)
+		return uc.removeCause(ctx, e)
 	})
 }
 
+// removeCause borra la fila con la direccion bloqueada y publica las causas que quedan.
+func (uc *UseCase) removeCause(ctx context.Context, e *domain.Entry) error {
+	if err := uc.entries.LockAddress(ctx, e.TenantID, e.Email); err != nil {
+		return err
+	}
+	if err := uc.entries.Delete(ctx, e.TenantID, e.ID); err != nil {
+		return err
+	}
+	reasons, err := uc.activeReasons(ctx, e.TenantID, e.Email, uc.now())
+	if err != nil {
+		return err
+	}
+	return uc.events.EntryRemoved(ctx, e, reasons)
+}
+
 // Resubscribe levanta la baja de una direccion cuando contacts registra un nuevo
-// consentimiento explicito. Solo retira una exclusion por unsubscribe: un rebote duro o
-// una queja siguen vigentes aunque la persona vuelva a consentir. Idempotente.
+// consentimiento explicito. Solo retira la causa unsubscribe: un rebote duro, una queja o
+// una exclusion manual siguen vigentes aunque la persona vuelva a consentir. Idempotente.
 func (uc *UseCase) Resubscribe(ctx context.Context, tenantID uuid.UUID, rawEmail string) (bool, error) {
 	email, err := domain.NormalizeEmail(rawEmail)
 	if err != nil {
@@ -219,36 +306,61 @@ func (uc *UseCase) Resubscribe(ctx context.Context, tenantID uuid.UUID, rawEmail
 	}
 	removed := false
 	err = uc.tx.Transact(ctx, func(ctx context.Context) error {
-		e, err := uc.entries.GetByEmailForUpdate(ctx, tenantID, email)
+		if err := uc.entries.LockAddress(ctx, tenantID, email); err != nil {
+			return err
+		}
+		e, err := uc.entries.GetCauseForUpdate(ctx, tenantID, email, domain.ReasonUnsubscribe)
 		if errors.Is(err, domain.ErrEntryNotFound) {
 			return nil
 		}
 		if err != nil {
 			return err
 		}
-		if e.Reason != domain.ReasonUnsubscribe {
-			return nil
-		}
-		if err := uc.entries.Delete(ctx, tenantID, e.ID); err != nil {
+		if err := uc.removeCause(ctx, e); err != nil {
 			return err
 		}
 		removed = true
-		return uc.events.EntryRemoved(ctx, e)
+		return nil
 	})
 	return removed, err
 }
 
-func (uc *UseCase) Get(ctx context.Context, tenantID, id uuid.UUID) (*domain.Entry, error) {
-	return uc.entries.GetByID(ctx, tenantID, id)
+// Get devuelve la direccion a la que pertenece la causa id, con todas sus causas.
+func (uc *UseCase) Get(ctx context.Context, tenantID, id uuid.UUID) (*domain.Address, error) {
+	e, err := uc.entries.GetByID(ctx, tenantID, id)
+	if err != nil {
+		return nil, err
+	}
+	return uc.address(ctx, tenantID, e.Email, uc.now())
 }
 
-func (uc *UseCase) List(ctx context.Context, tenantID uuid.UUID, f ports.ListFilter) ([]domain.Entry, int64, error) {
+// List pagina las direcciones excluidas. El filtro por causa se aplica a la principal.
+func (uc *UseCase) List(ctx context.Context, tenantID uuid.UUID, f ports.ListFilter) ([]domain.Address, int64, error) {
 	if f.Reason != "" {
 		if _, err := domain.ParseReason(string(f.Reason)); err != nil {
 			return nil, 0, err
 		}
 	}
-	return uc.entries.List(ctx, tenantID, f)
+	now := uc.now()
+	emails, total, err := uc.entries.ListAddresses(ctx, tenantID, f, now)
+	if err != nil {
+		return nil, 0, err
+	}
+	out := make([]domain.Address, 0, len(emails))
+	if len(emails) == 0 {
+		return out, total, nil
+	}
+	byEmail, err := uc.addresses(ctx, tenantID, emails, now)
+	if err != nil {
+		return nil, 0, err
+	}
+	// Una direccion que perdio su ultima causa entre las dos lecturas no se devuelve.
+	for _, email := range emails {
+		if a, ok := byEmail[email]; ok {
+			out = append(out, a)
+		}
+	}
+	return out, total, nil
 }
 
 // ImportInput es una carga masiva de exclusiones manuales.
@@ -259,9 +371,10 @@ type ImportInput struct {
 	CreatedBy uuid.UUID
 }
 
-// Import registra en bloque las direcciones que aun no estan excluidas y deja el rastro
-// de la carga. Las invalidas, las repetidas dentro de la lista y las que ya estaban se
-// cuentan como omitidas; no interrumpen la carga.
+// Import registra en bloque la exclusion manual de las direcciones que aun no la tienen
+// vigente (aunque ya esten excluidas por otra causa) y deja el rastro de la carga. Las
+// invalidas, las repetidas dentro de la lista y las que ya tenian una exclusion manual
+// vigente se cuentan como omitidas; no interrumpen la carga.
 func (uc *UseCase) Import(ctx context.Context, tenantID uuid.UUID, in ImportInput) (*domain.Import, error) {
 	if len(in.Emails) == 0 {
 		return nil, domain.ErrNoEmails
@@ -274,20 +387,31 @@ func (uc *UseCase) Import(ctx context.Context, tenantID uuid.UUID, in ImportInpu
 	}
 	valid, discarded := domain.NormalizeEmails(in.Emails)
 	imp := &domain.Import{TenantID: tenantID, Total: len(in.Emails), CreatedBy: in.CreatedBy}
+	now := uc.now()
 	err := uc.tx.Transact(ctx, func(ctx context.Context) error {
 		var added []domain.Entry
 		if len(valid) > 0 {
 			var err error
-			added, err = uc.entries.InsertMissing(ctx, tenantID, valid, domain.ReasonManual, SourceImport, in.Detail)
+			added, err = uc.entries.InsertMissing(ctx, tenantID, valid, domain.ReasonManual, SourceImport, in.Detail, now)
 			if err != nil {
 				return err
 			}
 		}
 		imp.Added = len(added)
 		imp.Skipped = discarded + (len(valid) - len(added))
-		for i := range added {
-			if err := uc.events.EntryAdded(ctx, &added[i]); err != nil {
+		if len(added) > 0 {
+			emails := make([]string, len(added))
+			for i := range added {
+				emails[i] = added[i].Email
+			}
+			byEmail, err := uc.addresses(ctx, tenantID, emails, now)
+			if err != nil {
 				return err
+			}
+			for i := range added {
+				if err := uc.events.EntryAdded(ctx, &added[i], byEmail[added[i].Email].Reasons); err != nil {
+					return err
+				}
 			}
 		}
 		return uc.imports.Create(ctx, imp)
@@ -302,8 +426,9 @@ func (uc *UseCase) ListImports(ctx context.Context, tenantID uuid.UUID, page, pe
 	return uc.imports.List(ctx, tenantID, page, perPage)
 }
 
-// Stats es el conteo de exclusiones vigentes por causa; todas las causas aparecen,
-// aunque sea con cero.
+// Stats cuenta las direcciones con alguna exclusion vigente, repartidas por su causa
+// principal (la suma de by_reason es total); todas las causas aparecen, aunque sea con
+// cero.
 type Stats struct {
 	Total    int64            `json:"total"`
 	ByReason map[string]int64 `json:"by_reason"`

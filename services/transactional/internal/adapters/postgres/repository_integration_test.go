@@ -40,14 +40,23 @@ func setup(t *testing.T) (context.Context, *pgxpool.Pool, *Repository) {
 	}
 	t.Cleanup(pool.Close)
 
-	_, file, _, _ := runtime.Caller(0)
-	root := filepath.Join(filepath.Dir(file), "..", "..", "..", "..", "..")
 	migrations := []string{
 		"migrations/tenant/canonical/platform/00_outbox.sql",
 		"migrations/tenant/canonical/transactional/01_transactional.sql",
 		"migrations/tenant/canonical/transactional/02_marketing_lane.sql",
+		"migrations/tenant/canonical/transactional/03_test_sends.sql",
 	}
-	for _, rel := range append(migrations, migrations...) {
+	applyMigrations(t, ctx, pool, append(migrations, migrations...)...)
+	return db.WithPool(ctx, pool), pool, NewRepository(&db.ContextPool{})
+}
+
+// applyMigrations aplica, en orden, las migraciones dadas por su ruta desde la raiz del
+// repositorio.
+func applyMigrations(t *testing.T, ctx context.Context, pool *pgxpool.Pool, rels ...string) {
+	t.Helper()
+	_, file, _, _ := runtime.Caller(0)
+	root := filepath.Join(filepath.Dir(file), "..", "..", "..", "..", "..")
+	for _, rel := range rels {
 		sql, err := os.ReadFile(filepath.Join(root, rel))
 		if err != nil {
 			t.Fatal(err)
@@ -56,7 +65,6 @@ func setup(t *testing.T) (context.Context, *pgxpool.Pool, *Repository) {
 			t.Fatalf("aplicar %s: %v", rel, err)
 		}
 	}
-	return db.WithPool(ctx, pool), pool, NewRepository(&db.ContextPool{})
 }
 
 func ptr[T any](v T) *T { return &v }
@@ -193,7 +201,7 @@ func (stubSuppression) Add(context.Context, uuid.UUID, ports.SuppressionEntry) e
 type linkTemplates struct{}
 
 func (linkTemplates) Render(_ context.Context, _ uuid.UUID, req ports.RenderRequest) (*ports.Rendered, error) {
-	return &ports.Rendered{Subject: "Otono", HTML: `<a href="` + req.Reserved.UnsubscribeURL + `">Baja</a>`, Version: *req.Version}, nil
+	return &ports.Rendered{Subject: "Otono", HTML: `<a href="` + req.Reserved.UnsubscribeURL + `">Baja</a>`, Version: *req.Version, Kind: domain.TemplateKindMarketing}, nil
 }
 
 type allowReputation struct{}

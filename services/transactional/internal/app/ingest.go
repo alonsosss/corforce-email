@@ -104,6 +104,7 @@ func (uc *UseCase) publishDeliveryEvents(ctx context.Context, ev domain.InboundE
 				"class":       attr.Class,
 				"campaign_id": nullableID(attr.CampaignID),
 				"contact_id":  nullableID(attr.ContactID),
+				"test":        attr.Test,
 				"occurred_at": eventTime(ev.OccurredAt),
 			}); err != nil {
 				return err
@@ -119,6 +120,7 @@ func (uc *UseCase) publishDeliveryEvents(ctx context.Context, ev domain.InboundE
 				"class":       attr.Class,
 				"campaign_id": nullableID(attr.CampaignID),
 				"contact_id":  nullableID(attr.ContactID),
+				"test":        attr.Test,
 				"occurred_at": eventTime(ev.OccurredAt),
 			}); err != nil {
 				return err
@@ -133,6 +135,7 @@ func (uc *UseCase) publishDeliveryEvents(ctx context.Context, ev domain.InboundE
 				"class":       attr.Class,
 				"campaign_id": nullableID(attr.CampaignID),
 				"contact_id":  nullableID(attr.ContactID),
+				"test":        attr.Test,
 				"occurred_at": eventTime(ev.OccurredAt),
 			}); err != nil {
 				return err
@@ -146,6 +149,7 @@ func (uc *UseCase) publishDeliveryEvents(ctx context.Context, ev domain.InboundE
 			"class":       attr.Class,
 			"campaign_id": nullableID(attr.CampaignID),
 			"contact_id":  nullableID(attr.ContactID),
+			"test":        attr.Test,
 			"occurred_at": eventTime(ev.OccurredAt),
 		})
 	case domain.EventClick:
@@ -157,6 +161,7 @@ func (uc *UseCase) publishDeliveryEvents(ctx context.Context, ev domain.InboundE
 			"class":       attr.Class,
 			"campaign_id": nullableID(attr.CampaignID),
 			"contact_id":  nullableID(attr.ContactID),
+			"test":        attr.Test,
 			"occurred_at": eventTime(ev.OccurredAt),
 		})
 	}

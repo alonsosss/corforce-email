@@ -13,13 +13,18 @@ type IngestResult struct {
 	Duplicate bool
 	// Changed: el evento cambio la fila del mensaje o de la campana.
 	Changed bool
+	// Test: el evento es de un envio de prueba y se descarto sin contarlo.
+	Test bool
 }
 
 // IngestMessageEvent cuenta un hito de un mensaje. Todo ocurre en una transaccion:
 // registrar el id del evento (si ya estaba, no se hace nada mas), bloquear la fila del
 // mensaje, decidir si el hito es nuevo y, solo entonces, mover los agregados. Una
-// reentrega o un segundo evento del mismo hito no suman.
+// reentrega o un segundo evento del mismo hito no suman. Un envio de prueba no toca nada.
 func (uc *UseCase) IngestMessageEvent(ctx context.Context, ev domain.MessageEvent) (IngestResult, error) {
+	if ev.Test {
+		return IngestResult{Test: true}, nil
+	}
 	ev.OccurredAt = domain.OccurredAt(ev.OccurredAt, ev.PublishedAt, uc.now())
 	if err := ev.Validate(); err != nil {
 		return IngestResult{}, err

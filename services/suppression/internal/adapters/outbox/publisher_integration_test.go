@@ -36,7 +36,8 @@ func TestPublicadorEncolaEnLaTransaccion(t *testing.T) {
 	pub := NewPublisher(ctxPool)
 	e := &domain.Entry{TenantID: tenant, Email: "ana@example.com", Reason: domain.ReasonComplaint, Source: "ses"}
 
-	if err := ctxPool.Transact(ctx, func(ctx context.Context) error { return pub.EntryRemoved(ctx, e) }); err != nil {
+	remaining := []domain.Reason{domain.ReasonHardBounce, domain.ReasonManual}
+	if err := ctxPool.Transact(ctx, func(ctx context.Context) error { return pub.EntryRemoved(ctx, e, remaining) }); err != nil {
 		t.Fatal(err)
 	}
 	var subject string
@@ -52,7 +53,7 @@ func TestPublicadorEncolaEnLaTransaccion(t *testing.T) {
 		Source   string            `json:"source"`
 		TenantID string            `json:"tenant_id"`
 		UserID   string            `json:"user_id"`
-		Data     map[string]string `json:"data"`
+		Data     map[string]any `json:"data"`
 	}
 	if err := json.Unmarshal(payload, &evt); err != nil {
 		t.Fatal(err)
@@ -63,12 +64,16 @@ func TestPublicadorEncolaEnLaTransaccion(t *testing.T) {
 	if evt.Data["email"] != "ana@example.com" || evt.Data["reason"] != "complaint" || evt.Data["source"] != "ses" || evt.Data["tenant_id"] != tenant.String() {
 		t.Fatalf("payload: %+v", evt.Data)
 	}
+	if got, _ := json.Marshal(evt.Data["reasons"]); string(got) != `["hard_bounce","manual"]` {
+		t.Fatalf("reasons lleva las causas que quedan: %s", got)
+	}
 
-	// Una transaccion revertida no deja evento.
+	// Una transaccion revertida no deja evento; una direccion que queda libre publica
+	// reasons vacio, no null.
 	otro := uuid.New()
 	e.TenantID = otro
 	_ = ctxPool.Transact(ctx, func(ctx context.Context) error {
-		if err := pub.EntryAdded(ctx, e); err != nil {
+		if err := pub.EntryAdded(ctx, e, nil); err != nil {
 			return err
 		}
 		return context.Canceled

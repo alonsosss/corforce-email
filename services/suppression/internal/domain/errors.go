@@ -4,7 +4,7 @@ import "errors"
 
 var (
 	ErrEntryNotFound      = errors.New("exclusion no encontrada")
-	ErrEntryAlreadyExists = errors.New("la direccion ya esta excluida en esta empresa")
+	ErrEntryAlreadyExists = errors.New("la direccion ya tiene una exclusion vigente por esa causa en esta empresa")
 	ErrInvalidEmail       = errors.New("direccion de correo no valida")
 	ErrInvalidReason      = errors.New("reason debe ser hard_bounce, complaint, unsubscribe, manual o invalid")
 	ErrManualOnly         = errors.New("por el API publico solo se registran exclusiones manuales")
