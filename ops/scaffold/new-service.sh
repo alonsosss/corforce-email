@@ -381,6 +381,8 @@ cat <<EOF
       - .env
       - path: /dev/shm/core-force-mail/secrets.env
         required: false
+    environment:
+      JWT_SIGNING_KEY: ""
     depends_on:
       pgbouncer: { condition: service_healthy }
       nats: { condition: service_healthy }
