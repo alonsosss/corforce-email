@@ -47,6 +47,7 @@ func (h *Handler) Routes() http.Handler {
 	r.Get("/campaigns", h.ListCampaigns)
 	r.Get("/campaigns/{id}", h.GetCampaign)
 	r.Get("/domains", h.Domains)
+	r.Get("/meta", h.Meta)
 	return r
 }
 
