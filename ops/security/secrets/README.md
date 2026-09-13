@@ -24,7 +24,8 @@ version nueva.
 |---|---|
 | `secret-keys.txt` | Lista canonica de variables que SON secreto. La usan los tres scripts y el guardarrail de CI. |
 | `fetch-secrets.sh` | Materializa los secretos en `/dev/shm/core-force-mail/secrets.env` (memoria, 0600). Atomico y todo-o-nada. |
-| `with-secrets.sh` | Envoltorio: materializa, carga al entorno y ejecuta el comando (lo usan los despliegues). |
+| `with-secrets.sh` | Envoltorio: comprueba el entorno declarado, materializa, carga al entorno y ejecuta el comando (lo usan los despliegues). |
+| `require-server-environment.sh` | Guarda que `with-secrets.sh` ejecuta antes que nada: si el `.env` del servidor no dice exactamente `ENVIRONMENT=production` o `staging`, no se despliega (`docs/Operacion_Despliegue.md`, 1). |
 | `push-secrets.sh` | Migracion de una sola vez: sube el contenido del `.env` al almacen y deja el `.env` sin credenciales. |
 | `add-secret.sh` | Anade o actualiza UNA clave. Es la via para introducir un secreto nuevo despues de la migracion, cuando el `.env` ya no tiene las demas y `push-secrets.sh` se niega. El valor no viaja por la linea de comandos. |
 | `load.sh` | Resolvedor sourceable: materializa y carga los secretos al entorno. Lo usan `with-secrets.sh` y los trabajos que necesitan una credencial para si mismos (respaldo, migraciones). |
@@ -34,7 +35,7 @@ version nueva.
 Los permisos del rol de la instancia sobre el almacen no viven aqui: los declara
 `ops/aws/setup-iam.sh`, que los renderiza con la cuenta de quien lo ejecuta, `AWS_REGION` y
 `SECRETS_PREFIX` (por defecto `core-force-mail`, el prefijo de `SECRETS_ID`).
-`core-force-secretos` es la lectura permanente; `core-force-secretos-escritura`, la
+`core-force-mail-secretos` es la lectura permanente; `core-force-mail-secretos-escritura`, la
 escritura que piden `push-secrets.sh`, `add-secret.sh` y `rotate-key.sh`, solo existe
 mientras se corre con `--escritura-secretos`, y la siguiente corrida sin la opcion la retira.
 
@@ -59,8 +60,8 @@ resuelve Compose contra el entorno del proceso.
 > la migracion: el respaldo nocturno habria abortado con un mensaje que no apuntaba a la
 > causa. Desde que el `.env` no tiene credenciales, un `docker compose up`
 > suelto interpola cadenas vacias y levanta el servicio SIN secretos, avisando solo con un
-> `warning` facil de pasar por alto. Los tres caminos de despliegue (`deploy-fast.sh`,
-> `deploy-ecr.sh` y `release.yml`) ya lo hacen; la precaucion es para el uso manual.
+> `warning` facil de pasar por alto. Los dos caminos de despliegue (`scripts/deploy-ecr.sh` y
+> `release.yml`) ya lo hacen; la precaucion es para el uso manual.
 > Consultar estado (`ps`, `logs`) es seguro sin el envoltorio: solo molestan los avisos.
 
 ## Que NO va al almacen

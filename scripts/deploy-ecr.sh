@@ -120,7 +120,7 @@ fi
 # compite por CPU con lo que esta sirviendo produccion.
 if [[ "$TRANSPORT" == "ecr" ]] && ! aws sts get-caller-identity >/dev/null 2>&1; then
   echo ">> sin credenciales AWS locales (o sesion expirada): se usa save." >&2
-  echo ">> para habilitar ecr: ops/aws/setup-iam.sh crea el usuario core-force-deploy-local;" >&2
+  echo ">> para habilitar ecr: ops/aws/setup-iam.sh crea el usuario core-force-mail-deploy-local;" >&2
   echo ">> con su llave, 'aws configure' (region us-east-1) deja credenciales permanentes." >&2
   TRANSPORT=save
 fi
@@ -322,7 +322,7 @@ if [[ "$TRANSPORT" == "ecr" ]]; then
 
   aws ecr get-login-password --region "$ECR_REGION" | docker login --username AWS --password-stdin "$ECR_REGISTRY" >/dev/null
   "${COMPOSE[@]}" push -q "${SVCS[@]}"
-  # "latest" lo consumen el timer core-force-mail-ecr-sync y los servidores solo-pull.
+  # "latest" es la imagen que resuelve docker-compose.images.yml cuando no se da DEPLOY_TAG.
   for s in "${SVCS[@]}"; do
     docker tag "$ECR_REGISTRY/$NS/$s:$TAG" "$ECR_REGISTRY/$NS/$s:latest"
     docker push -q "$ECR_REGISTRY/$NS/$s:latest"

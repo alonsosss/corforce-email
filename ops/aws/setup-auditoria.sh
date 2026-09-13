@@ -2,10 +2,9 @@
 # Reconcilia la auditoria y la deteccion de la cuenta: CloudTrail, GuardDuty y el bloqueo
 # de acceso publico de S3 a nivel de cuenta.
 #
-# Existe porque el 2026-09-05 se comprobo con el usuario raiz que la cuenta no tenia
-# NINGUNA de las tres cosas en ninguna region: solo el historial de 90 dias de eventos de
-# gestion que AWS guarda solo, sin eventos de datos, sin validacion de integridad y que
-# desaparece a los tres meses. Despues de un incidente, "que paso" no tenia respuesta.
+# Sin esto, una cuenta solo tiene el historial de 90 dias de eventos de gestion que AWS
+# guarda por su cuenta: sin eventos de datos, sin validacion de integridad, y desaparece a
+# los tres meses. Despues de un incidente, "que paso" no tendria respuesta.
 #
 # Idempotente: correrlo de nuevo deja todo como dice este archivo y no duplica nada. Como
 # setup-iam.sh, el rol de la instancia NO puede ejecutarlo -si pudiera, comprometer la
@@ -21,12 +20,10 @@
 # cada cien mil, y ese bucket recibe unas decenas de objetos al dia.
 #
 # GuardDuty es OPT-IN (GUARDDUTY=1) y por defecto este script NO lo toca, ni para activar
-# ni para apagar. Se activo y se retiro el mismo dia (2026-09-05) por decision del
-# responsable: mientras el sistema esta en desarrollo activo se prefiere no sumar un coste
-# recurrente aun sin cifra real. Cuando se active: 4 USD por millon de eventos de
-# CloudTrail y 1 USD/GB de flujos VPC y DNS analizados (con descuento por volumen); la
-# prueba gratuita es de treinta dias por cuenta, y ya consumio parte ese dia. La cifra real
-# la da 'aws guardduty get-usage-statistics' pasados unos dias.
+# ni para apagar: suma un coste recurrente, por eventos de CloudTrail y por volumen de
+# flujos VPC y DNS analizados, que se decide por cuenta y por ambiente con la pagina de
+# precios de GuardDuty a la vista. La cifra real la da 'aws guardduty get-usage-statistics'
+# pasados unos dias.
 set -euo pipefail
 
 CHECK=0
@@ -34,7 +31,7 @@ CHECK=0
 GUARDDUTY="${GUARDDUTY:-0}"
 
 REGION="${AWS_REGION:-us-east-1}"
-TRAIL="${TRAIL_NAME:-core-force-auditoria}"
+TRAIL="${TRAIL_NAME:-core-force-mail-auditoria}"
 
 command -v aws >/dev/null 2>&1 || { echo "FALLA: falta el AWS CLI" >&2; exit 1; }
 ACC="$(aws sts get-caller-identity --query Account --output text)" || {
@@ -44,7 +41,7 @@ ACC="$(aws sts get-caller-identity --query Account --output text)" || {
 # saber si alguien los lee o los descarga, que es la pregunta que mas importa tras un
 # incidente. Los demas buckets generan demasiados eventos por lo poco que aportarian.
 : "${AUDIT_BUCKET:=cf-auditoria-${ACC}}"
-: "${BACKUP_BUCKET:=cf-backups-${ACC}}"
+BACKUP_BUCKET="${BACKUP_S3_BUCKET:-cf-backups-${ACC}}"
 : "${RETENCION_DIAS:=400}"   # algo mas de un ano: cubre un ejercicio fiscal con margen
 
 echo "Cuenta $ACC / region $REGION / trail $TRAIL / bucket $AUDIT_BUCKET"
@@ -67,8 +64,8 @@ paso() {
 }
 
 # --- 1. Bloqueo de acceso publico a nivel de CUENTA -----------------------------------
-# Los buckets actuales ya lo tienen cada uno; a nivel de cuenta cubre tambien a cualquier
-# bucket futuro creado con prisa. No afecta a los que ya lo tienen.
+# Cada bucket de la plataforma lo lleva por su cuenta; a nivel de cuenta cubre tambien a
+# cualquier bucket creado despues con prisa. No afecta a los que ya lo tienen.
 pab_ok=0
 if aws s3control get-public-access-block --account-id "$ACC" --region "$REGION" \
      --query 'PublicAccessBlockConfiguration' --output json 2>/dev/null \

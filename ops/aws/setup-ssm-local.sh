@@ -21,7 +21,7 @@
 #
 # No necesita sudo: el plugin se instala en ~/.local/bin.
 #
-# Requiere que la credencial de AWS de esta PC tenga la politica core-force-ssm-terminal
+# Requiere que la credencial de AWS de esta PC tenga la politica core-force-mail-ssm-terminal
 # (la declara ops/aws/setup-iam.sh, que se corre con un administrador de la cuenta).
 set -euo pipefail
 
@@ -91,7 +91,7 @@ if ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=45 "$ALIAS" 'true' 
 else
   echo "  FALLA: no se pudo conectar por SSM." >&2
   echo "  Comprueba, en este orden:" >&2
-  echo "    - que la credencial tenga la politica core-force-ssm-terminal (ops/aws/setup-iam.sh)" >&2
+  echo "    - que la credencial tenga la politica core-force-mail-ssm-terminal (ops/aws/setup-iam.sh)" >&2
   echo "    - que el agente responda: aws ssm describe-instance-information --region $REGION" >&2
   echo "  Mientras tanto el puerto 22 sigue abierto: DEPLOY_HOST=<ip-publica-de-la-instancia> scripts/deploy-ecr.sh" >&2
   exit 1

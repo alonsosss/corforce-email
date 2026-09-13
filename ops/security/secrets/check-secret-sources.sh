@@ -39,13 +39,6 @@ claves = sorted({
 # push-secrets.sh es la migracion de una sola vez: su trabajo ES leer el .env para subirlo.
 EXENTOS = {"ops/security/secrets/push-secrets.sh"}
 
-# Los instaladores de los equipos de BORDE (balanza, facial, oee, telefono de cobros) son
-# instalaciones autonomas en hardware de planta: no tienen rol de AWS ni almacen de
-# secretos, y su credencial de maquina la obtienen canjeando un codigo de alta contra el
-# servidor. Exigirles el envoltorio de secretos seria exigirles algo que ahi no existe.
-def es_instalador_de_borde(ruta):
-    return ruta.startswith("edge/") and "/scripts/" in ruta
-
 alternativa = "|".join(claves)
 patrones = [
     # read_env POSTGRES_PASSWORD  (el ayudante que tenian los scripts de respaldo)
@@ -66,7 +59,7 @@ for ruta in open(sys.argv[2], "rb").read().split(b"\0"):
     if not ruta:
         continue
     ruta = ruta.decode()
-    if not ruta.endswith((".sh", ".bash")) or ruta in EXENTOS or es_instalador_de_borde(ruta):
+    if not ruta.endswith((".sh", ".bash")) or ruta in EXENTOS:
         continue
     try:
         with open(ruta, encoding="utf-8") as fh:
@@ -121,7 +114,7 @@ for ruta in open(sys.argv[2], "rb").read().split(b"\0"):
     if not ruta:
         continue
     ruta = ruta.decode()
-    if not ruta.endswith((".sh", ".bash", ".yml", ".yaml")) or es_instalador_de_borde(ruta):
+    if not ruta.endswith((".sh", ".bash", ".yml", ".yaml")):
         continue
     try:
         contenido = open(ruta, encoding="utf-8").read()

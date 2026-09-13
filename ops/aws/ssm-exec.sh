@@ -37,7 +37,7 @@ printf '{"commands":["%s"]}' "$orden" > "$params"
 
 cid="$(aws ssm send-command --region "$REGION" --instance-ids "$INSTANCE" \
         --document-name AWS-RunShellScript \
-        --comment "despliegue core-force" \
+        --comment "despliegue core-force-mail" \
         --timeout-seconds 600 \
         --parameters "file://$params" \
         --query 'Command.CommandId' --output text)"

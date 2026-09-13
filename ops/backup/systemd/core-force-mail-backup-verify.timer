@@ -1,0 +1,10 @@
+[Unit]
+Description=Prueba semanal de restauracion de Core Force Mail
+
+[Timer]
+# Domingo 04:30 en hora de Lima (UTC-5), despues del respaldo diario.
+OnCalendar=Sun *-*-* 09:30:00 UTC
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -7,7 +7,7 @@
 # paquetes de sistema y saldran limpias; la de la aplicacion web, que corre sobre nginx,
 # es la que este escaneo cubre de verdad.
 #
-# Requiere la politica core-force-ecr-scanning, que ops/aws/setup-iam.sh concede al rol de
+# Requiere la politica core-force-mail-ecr-scanning, que ops/aws/setup-iam.sh concede al rol de
 # la instancia (core-force-mail-ec2-role); tambien sirve una credencial de administrador.
 #
 # Uso:
@@ -32,7 +32,7 @@ if [[ "${1:-}" != "--report" ]]; then
         --rules '[{"scanFrequency":"CONTINUOUS_SCAN","repositoryFilters":[{"filter":"'"$NAMESPACE"'/","filterType":"WILDCARD"}]}]' \
         >/dev/null; then
     echo "FALLA: no se pudo configurar el escaneo. Revisa que el rol tenga la politica" >&2
-    echo "       core-force-ecr-scanning (ops/aws/setup-iam.sh)." >&2
+    echo "       core-force-mail-ecr-scanning (ops/aws/setup-iam.sh)." >&2
     exit 1
   fi
   echo "Escaneo continuo activado para $NAMESPACE/* en $REGION"

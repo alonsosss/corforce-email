@@ -11,9 +11,9 @@ import (
 //
 // La diferencia con FromEnv no es de comodidad: **el bucket nunca cae al
 // compartido**. Si <PREFIJO>_S3_BUCKET no esta definido devuelve (nil, nil) y el
-// servicio degrada -sin poder publicar ni entregar paquetes- en lugar de
-// escribir en el bucket de otra cosa. Un fallback silencioso ahi mezclaria el
-// software de una flota con los adjuntos de la plataforma y nadie lo notaria hasta que
+// servicio degrada -sin poder guardar ni servir esos objetos- en lugar de
+// escribir en el bucket de otra cosa. Un fallback silencioso ahi mezclaria los
+// objetos aislados con los adjuntos de la plataforma y nadie lo notaria hasta que
 // hubiera que borrar uno de los dos.
 //
 // Lo que SI se hereda del entorno compartido cuando no se declara aparte es el
@@ -22,7 +22,7 @@ import (
 // vacias-, no una frontera de datos. Cada uno se puede fijar por separado con
 // <PREFIJO>_S3_* cuando el aislamiento deba llegar tambien a la credencial.
 //
-// Variables, con PREFIJO en mayusculas (por ejemplo OEE):
+// Variables, con PREFIJO en mayusculas:
 //
 //	<PREFIJO>_S3_BUCKET      obligatoria; sin ella no hay almacen
 //	<PREFIJO>_S3_ENDPOINT    opcional, cae a MINIO_ENDPOINT

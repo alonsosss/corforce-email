@@ -31,7 +31,7 @@
 set -euo pipefail
 
 ROLE="${CF_INSTANCE_ROLE:-core-force-mail-ec2-role}"
-DEPLOY_USER="${CF_DEPLOY_USER:-core-force-deploy-local}"
+DEPLOY_USER="${CF_DEPLOY_USER:-core-force-mail-deploy-local}"
 # Instancia sobre la que se permite abrir terminal por SSM. Acotar a una sola es el punto:
 # una credencial filtrada no da acceso a lo que se aprovisione despues. Sin ella no se
 # declara esa politica; el id lo imprime ops/aws/setup-github-deploy.sh.
@@ -219,7 +219,7 @@ fi
 
 # Sin permiso para LEER la IAM no se puede informar nada honesto: "no existe" y "no lo
 # puedo ver" se leerian igual, y el informe diria que falta todo. Se comprueba primero.
-probe="$(aws iam get-role-policy --role-name "$ROLE" --policy-name core-force-secretos 2>&1 || true)"
+probe="$(aws iam get-role-policy --role-name "$ROLE" --policy-name core-force-mail-secretos 2>&1 || true)"
 if grep -q 'AccessDenied' <<<"$probe"; then
   echo "FALLA: estas credenciales no pueden leer la IAM del rol $ROLE." >&2
   echo "       Este script se corre con un administrador de la cuenta; lo mas simple es" >&2
@@ -231,7 +231,7 @@ fi
 # Deja una politica inline como dice su archivo en $out, sobre un rol o un usuario.
 reconcilia() {
   local ambito="$1" titular="$2" pol="$3"   # ambito: role | user
-  local name="core-force-${pol}"
+  local name="core-force-mail-${pol}"
   local actual wanted current
   actual="$(aws iam "get-${ambito}-policy" "--${ambito}-name" "$titular" --policy-name "$name" \
               --query PolicyDocument --output json 2>/dev/null || true)"
@@ -244,31 +244,31 @@ except Exception:
     print("null")')"
 
   if [[ "$current" == "$wanted" ]]; then
-    printf '  %-30s al dia\n' "$name"
+    printf '  %-36s al dia\n' "$name"
     return
   fi
   if [[ $CHECK -eq 1 ]]; then
-    printf '  %-30s %s\n' "$name" "$([[ "$current" == "null" ]] && echo 'FALTA' || echo 'DIFIERE')"
+    printf '  %-36s %s\n' "$name" "$([[ "$current" == "null" ]] && echo 'FALTA' || echo 'DIFIERE')"
     return
   fi
   aws iam "put-${ambito}-policy" "--${ambito}-name" "$titular" --policy-name "$name" \
       --policy-document "file://$out/$pol.json"
-  printf '  %-30s aplicada\n' "$name"
+  printf '  %-36s aplicada\n' "$name"
 }
 
 # Quita una politica gestionada que en esta corrida no corresponde.
 retira() {
-  local ambito="$1" titular="$2" name="core-force-$3"
+  local ambito="$1" titular="$2" name="core-force-mail-$3"
   if ! aws iam "get-${ambito}-policy" "--${ambito}-name" "$titular" --policy-name "$name" >/dev/null 2>&1; then
-    printf '  %-30s no concedida\n' "$name"
+    printf '  %-36s no concedida\n' "$name"
     return
   fi
   if [[ $CHECK -eq 1 ]]; then
-    printf '  %-30s SOBRA\n' "$name"
+    printf '  %-36s SOBRA\n' "$name"
     return
   fi
   aws iam "delete-${ambito}-policy" "--${ambito}-name" "$titular" --policy-name "$name"
-  printf '  %-30s retirada\n' "$name"
+  printf '  %-36s retirada\n' "$name"
 }
 
 for pol in secretos ecr-push ecr-scanning respaldos medios; do
@@ -284,7 +284,7 @@ fi
 # tiene que verse, porque concede permisos igual.
 echo
 otras="$(aws iam list-role-policies --role-name "$ROLE" --query 'PolicyNames[]' --output text 2>/dev/null \
-          | tr '\t' '\n' | grep -v '^core-force-' | grep -v '^$' || true)"
+          | tr '\t' '\n' | grep -v '^core-force-mail-' | grep -v '^$' || true)"
 adjuntas="$(aws iam list-attached-role-policies --role-name "$ROLE" \
              --query 'AttachedPolicies[].PolicyName' --output text 2>/dev/null | tr '\t' '\n' | grep -v '^$' || true)"
 if [[ -n "$otras$adjuntas" ]]; then
@@ -317,7 +317,7 @@ if aws iam get-user --user-name "$DEPLOY_USER" >/dev/null 2>&1; then
   if [[ -n "$SSM_INSTANCE" ]]; then
     reconcilia user "$DEPLOY_USER" ssm-terminal
   else
-    printf '  %-30s sin CF_SSM_INSTANCE: no se declara\n' core-force-ssm-terminal
+    printf '  %-36s sin CF_SSM_INSTANCE: no se declara\n' core-force-mail-ssm-terminal
   fi
 fi
 echo

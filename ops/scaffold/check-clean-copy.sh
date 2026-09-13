@@ -34,6 +34,9 @@ buscar 'capitalpillar|\berp\b|erp_|erp-' pkg services migrations ops/scaffold/*.
 buscar 'sunat|sucursal|\bsede\b|branch_id|branchscope|socio_id|employee_id' pkg services migrations
 # Paquetes del frontend federado de la base de referencia (@cp/<paquete>): aqui no existen.
 buscar '@cp/' pkg services migrations ops scripts .github web/src web/package.json Makefile docker-compose.yml
+# Nombres de la base de referencia: todo lo propio lleva core-force-mail (roles, politicas,
+# usuarios, unidades, rutas, alias). core-force-<otra cosa> o core-force/ viene de la copia.
+buscar 'core-force($|[^-]|-($|[^m]|m($|[^a])|ma($|[^i])|mai($|[^l])))' pkg services migrations ops scripts .github web/src Makefile docker-compose.yml docker-compose.images.yml docker-compose.observability.yml .env.example
 # Codigo Go y migraciones: nada de la capa que mailcow reemplaza.
 buscar 'mysql|mariadb|sogo|phpfpm|mailcowauth' pkg services migrations
 

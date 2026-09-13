@@ -25,6 +25,33 @@ largas de cada guardarraíl están en `ops/scaffold/README.md`, `ops/security/se
   nombre de `REDIS_HOST`. Un valor de `REDIS_TLS` que no es booleano, o una CA o un nombre
   con TLS apagado, detienen el arranque. El Redis de los motores (`MAIL_REDIS_*`) tiene
   las mismas variables, opcionales y apagadas: ver `deploy/mail/README.md`, Contrato Redis.
+* Entorno declarado (`ENVIRONMENT`). Un servidor declara exactamente
+  `ENVIRONMENT=production` o `ENVIRONMENT=staging` en el `.env` de `DEPLOY_PATH`, el que
+  Compose pasa a los contenedores; también el servidor de la cuenta de dev. `development` y
+  `test` son solo locales (`.env.example` trae `development` para `make dev`; `make e2e` lo
+  exporta). `ops/server-template/bootstrap.sh` no aprovisiona sin uno de los dos en
+  `server.env` y lo escribe en ese `.env`. `ops/security/secrets/require-server-environment.sh`,
+  que `with-secrets.sh` ejecuta antes de materializar ningún secreto, se niega a desplegar si
+  la última asignación de `ENVIRONMENT` del `.env` no es exactamente una de las dos (con
+  espacios, un comentario o un CR al final tampoco: el servicio recibiría otro texto). Todo
+  `docker compose` del servidor va por `with-secrets.sh` (`check-secret-sources.sh`), así que
+  es el punto único de `release.yml` y de `scripts/deploy-ecr.sh`. Lo que cambia según el
+  valor:
+
+  | Comportamiento | Se relaja con |
+  |---|---|
+  | Redis de la plataforma en claro (`pkg/config/redis.go`) | `development` o `test` declarados (sin distinguir mayúsculas); sin declarar, no |
+  | Servicios de celda con la credencial de plataforma, sin `CELL_DB_PASSWORD` (`pkg/config/config.go`) | ídem |
+  | identity firma con un par efímero sin `JWT_SIGNING_KEY` (`pkg/config/config.go`, `pkg/auth`) | ídem |
+  | gateway arranca sin `INTERNAL_GATEWAY_TOKEN` (`services/gateway/main.go`) | cualquier valor distinto de `production` exacto, `staging` y sin declarar incluidos |
+  | Sin `INTERNAL_GATEWAY_TOKEN`, `RequireGatewayToken` deja pasar sin comprobar en vez de responder 503 (`pkg/middleware/middleware.go`) | cualquier valor distinto de `production` (sin distinguir mayúsculas) |
+  | domain-service arranca sin `INTERNAL_GATEWAY_TOKEN` (`services/domain-service/main.go`) | ídem |
+  | webmail admite `WEBMAIL_TLS_INSECURE_SKIP_VERIFY=true` y `WEBMAIL_IMAP_TLS=none`, adjuntos sin ClamAV con `WEBMAIL_ALLOW_UNSCANNED_ATTACHMENTS=true` y arranca sin `INTERNAL_GATEWAY_TOKEN` (`services/webmail/main.go`) | ídem |
+
+  Lo del token interno no alcanza a un servidor: `INTERNAL_GATEWAY_TOKEN` es obligatorio en
+  el almacén (`secret-keys.txt`) y sin él `fetch-secrets.sh` detiene el despliegue. Lo demás
+  del webmail sí: en `staging` depende de que el `.env` no lo active. `AUTH_COOKIE_SECURE`
+  no depende de `ENVIRONMENT` (`docs/arquitectura/CSP-Y-SESION.md`).
 
 ## 2. Secretos
 
@@ -97,13 +124,35 @@ para llamar a la API hace falta ya un superadmin. Después, todo por API: `POST 
 * `scripts/deploy-ecr.sh` desde el PC: compila en local, publica a ECR etiquetando por
   commit y el servidor solo hace `pull`. **Nunca `docker compose build` en el servidor** ni
   recrear un contenedor a mano: usaría una imagen local y el servicio correría otro código
-  (`scripts/check-image-drift.sh` lo delata).
+  (`scripts/check-image-drift.sh` lo delata). Tampoco se publica desde el servidor: se
+  retiró `ops/ecr/ecr-sync.sh`, que subía a ECR las imágenes locales del host.
 * GitHub Actions (`release.yml`): construye en paralelo las imágenes de los servicios
   afectados (detectados con `ops/scaffold/service-paths.sh`), con OIDC hacia AWS y sin
   claves estáticas, a los repositorios `core-force-mail/<servicio>` de ECR; el despliegue es
   un `workflow_dispatch` con `deploy=true` que entra por SSM, nunca por SSH. Sin la variable
   de repositorio `AWS_ECR_ROLE_ARN` (la crea `ops/aws/setup-github-oidc.sh`) no se publica:
   un push termina en verde con un aviso y un `deploy=true` falla con el motivo.
+* Guarda de entorno (1, «Entorno declarado»): `release.yml` no sincroniza ficheros y
+  ejecuta la copia de `with-secrets.sh` que ya está en el servidor; la guarda llega con el
+  rsync de `scripts/deploy-ecr.sh`, que en un servidor nuevo es el primer despliegue.
+* Confianza del rol OIDC de GitHub (`ops/aws/setup-github-oidc.sh`): `aud`
+  `sts.amazonaws.com` y `sub` exactamente `repo:<repo>:ref:refs/heads/main` (build-push de
+  un push a main o de un `workflow_dispatch` lanzado desde main) o
+  `repo:<repo>:environment:production` (el job deploy), con `StringEquals`. Ni otra rama ni
+  un `pull_request` asumen el rol, y `release.yml` corta con el motivo una publicación
+  pedida desde otra rama. Formato del claim en
+  https://docs.github.com/en/actions/reference/security/oidc: con environment, el `sub` no
+  lleva la rama, así que otra ejecución que declare `production` obtiene el mismo claim; lo
+  cierra la regla de ramas del environment en GitHub (solo `main`), que se configura aparte.
+  Volver a correr el script reescribe la confianza de un rol que ya existía.
+* Nombres propios en AWS y en el servidor: prefijo `core-force-mail-` (políticas inline
+  `core-force-mail-<capacidad>` y usuario `core-force-mail-deploy-local` de `setup-iam.sh`,
+  trail `core-force-mail-auditoria`, unidades `core-force-mail-backup*`, raíz
+  `/opt/core-force-mail`, alias `core-force-mail-prod`). Los `core-force-*` venían del ERP;
+  nada estaba desplegado, así que no hubo recursos vivos que migrar. En una cuenta donde se
+  hubieran aplicado los nombres anteriores, `setup-iam.sh` no los borra: lista las políticas
+  del rol que no gestiona, y el usuario anterior se retira a mano. `make clean-copy` falla
+  con cualquier `core-force` que no sea `core-force-mail`.
 * Todo lo que el servidor ejecuta o monta viaja en el rsync de `stage_head_files` desde
   `git archive` de HEAD: compose, `migrations/`, `ops/security`, `ops/ecr`,
   `ops/observability`, `ops/maintenance`, `ops/backup`, `pgbouncer`.
@@ -125,9 +174,16 @@ para llamar a la API hace falta ya un superadmin. Después, todo por API: `POST 
 
 `ops/backup/backup-tenants.sh` vuelca cada base (`mail_%`) por separado con `pg_dump -Fc`,
 verifica que `pg_restore --list` lo lee, sube a `BACKUP_S3_BUCKET` (bucket distinto al de
-medios, con Object Lock) y conserva 3 días en local. `verify-restore.sh` restaura el último
-volcado en una base desechable cada semana. Las alertas vigilan la antigüedad del último
-éxito y la ausencia de la serie. Programación: `ops/backup/systemd/`.
+medios, con Object Lock; la misma variable en `ops/aws/setup-iam.sh`, `setup-buckets.sh` y
+`setup-auditoria.sh`) y conserva 3 días en local. Cada semana `verify-restore.sh` restaura
+el último volcado de la empresa con el respaldo más grande (o la base que se le indique) en
+una base desechable y comprueba, sin suponer filas de negocio, que están todos los esquemas y
+tablas del índice del volcado, `platform.event_outbox`, el historial
+`public.schema_migrations` con filas y el esquema que declara cada migración registrada; en
+una celda, que no tiene historial, los esquemas de sus migraciones, y en el registro al menos
+un usuario. Las alertas vigilan la antigüedad del último éxito y la ausencia de la serie.
+Programación: `ops/backup/systemd/` (`core-force-mail-backup.timer` y
+`core-force-mail-backup-verify.timer`, que instala `bootstrap.sh`).
 
 ## 7. Observabilidad
 

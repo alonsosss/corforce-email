@@ -7,8 +7,8 @@ piezas sin leer esto vuelve a abrir un agujero que ya estuvo abierto.
 
 **Refresh token**: cookie `cf_rt` con `HttpOnly`, `Secure`, `SameSite=Strict` y
 `Path=/api/v1/auth`. No viaja en peticiones de negocio (solo renovar y cerrar sesión) y
-ningún script puede leerla. La emite `identity` en login, verificación MFA, renovación y
-cambio de sede.
+ningún script puede leerla. La emite `identity` en login, verificación MFA (`POST /auth/mfa/challenge`) y
+renovación (`POST /auth/refresh`).
 
 En modo cookie el refresh token **se omite del cuerpo** de la respuesta. Si siguiera en el
 JSON, un XSS podría leerlo de la respuesta del login y toda la protección sería
@@ -26,7 +26,8 @@ clientes que no son navegador siguen recibiendo el refresh token en el JSON.
 se ata a `ENVIRONMENT`: un `ENVIRONMENT` mal declarado en un servidor habría sacado la
 cookie sin `Secure` sin que nadie lo notara. Por la misma razón, un servidor declara
 `ENVIRONMENT=production` (o `staging`): con `development` los servicios admiten Redis en
-claro (`docs/Operacion_Despliegue.md`, 1).
+claro, y `with-secrets.sh` se niega a desplegar con cualquier otro valor
+(`docs/Operacion_Despliegue.md`, 1).
 
 ### Al tocar el cliente HTTP
 
@@ -90,7 +91,10 @@ Se fija en `pkg/middleware.SecureHeaders`. `script-src` usa **nonce por respuest
 Con `'strict-dynamic'` el navegador **ignora la lista de orígenes**: no basta con que un
 archivo se sirva desde el propio dominio, tiene que llevar el nonce que el servidor sorteó
 para esa respuesta. La confianza se propaga del script marcado a los que él cargue, que es
-lo que mantiene vivos los remotos federados (`remoteEntry.js` y sus imports dinámicos).
+lo que mantiene viva la aplicación web: `index.html` solo lleva el script de entrada de Vite
+(el gateway le pone el nonce) y cada pantalla es un chunk que ese código carga con
+`import()` (`web/src/routes.tsx`). Por eso `web/vite.config.ts` no deja en el HTML scripts
+inline ni `<link rel="modulepreload">`: sin nonce, quedarían bloqueados.
 
 El gateway marca los `<script>` del documento con ese nonce (`stampCSPNonce`) y pide el
 HTML sin comprimir **solo para el documento** —el navegador manda `text/html` en `Accept`—;
@@ -104,17 +108,14 @@ poner las suyas. Con dos políticas el navegador aplica la intersección, y una 
 repetida termina bloqueando algo sin explicación. Excepción: los prefijos
 `self_authenticated` conservan la CSP del servicio (ver «Sesión del webmail»).
 
-### Los scripts que Cloudflare inyecta en el borde
+### Si un CDN delante inyecta scripts
 
-Cloudflare inserta un script inline para su detección de bots (`challenge-platform`, JS
-Detections). Cuando la política declara un nonce, Cloudflare **marca con él** sus scripts
-inyectados, así que se ejecutan sin que la política tenga que admitir ningún otro inline.
-
-Antes del nonce ese script quedaba bloqueado: no era un problema de seguridad (la CSP
-hacía su trabajo), pero Cloudflare perdía una señal antibot y, el día que se activara un
-Managed Challenge, el desafío habría fallado para usuarios legítimos.
-
-Un hash en la CSP no sirve: el script cambia entre cargas.
+La plataforma no depende de ningún CDN: delante del gateway va el proxy de borde (TLS) de
+`docs/Arquitectura_Core_Force_Mail.md`, 1. Si algún día se pone uno que inserte scripts
+inline en el HTML (la detección de bots de Cloudflare, `challenge-platform`, por ejemplo),
+tiene que marcarlos con el nonce que declara la política, como hace Cloudflare cuando lo
+encuentra; si no, quedan bloqueados. No se resuelve con un hash, porque ese script cambia
+entre cargas, ni con `'unsafe-inline'`, que anularía la protección.
 
 ## Sesión del webmail
 

@@ -118,14 +118,27 @@ jobs:
       # reales; al definir la variable la publicacion se activa sola, sin tocar este archivo.
       # Un despliegue manual sin rol falla aqui: pedir un despliegue y que no haga nada es
       # peor que un error.
+      #
+      # El rol solo confia en main y en el environment production
+      # (ops/aws/setup-github-oidc.sh): pedida desde otra rama, la publicacion moriria en
+      # AssumeRoleWithWebIdentity con un error que no dice por que. Se corta aqui con el motivo.
       - id: publish
         env:
           ROL: ${{ vars.AWS_ECR_ROLE_ARN }}
           DESPLEGAR: ${{ github.event_name == 'workflow_dispatch' && inputs.deploy }}
           SVCS: ${{ steps.detect.outputs.services }}
+          REF: ${{ github.ref }}
         run: |
           if [ -n "${ROL//[[:space:]]/}" ]; then
-            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            if [ "$REF" = "refs/heads/main" ]; then
+              echo "enabled=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            if [ -n "$SVCS" ] || [ "$DESPLEGAR" = "true" ]; then
+              echo "::error title=Publicacion solo desde main::El rol OIDC solo confia en refs/heads/main y esta ejecucion es de $REF. Lanza el workflow desde main."
+              exit 1
+            fi
             exit 0
           fi
           echo "enabled=false" >> "$GITHUB_OUTPUT"
@@ -156,11 +169,12 @@ jobs:
       - if: steps.detect.outputs.services != '' && steps.publish.outputs.enabled == 'true'
         run: |
           REG='${{ steps.ecr.outputs.registry }}'; TAG='${{ steps.meta.outputs.tag }}'
-          bash ops/scaffold/service-paths.sh --map > /tmp/svc-map.tsv
+          MAPA="$RUNNER_TEMP/svc-map.tsv"
+          bash ops/scaffold/service-paths.sh --map > "$MAPA"
           build_one() {
             s="$1"
-            path=$(awk -F'\t' -v s="$s" '$1==s{print $2}' /tmp/svc-map.tsv)
-            class=$(awk -F'\t' -v s="$s" '$1==s{print $3}' /tmp/svc-map.tsv)
+            path=$(awk -F'\t' -v s="$s" '$1==s{print $2}' "$MAPA")
+            class=$(awk -F'\t' -v s="$s" '$1==s{print $3}' "$MAPA")
             case "$class" in
               go)         ctx=.; df="services/$s/Dockerfile" ;;
               standalone) ctx="$path"; df="$path/Dockerfile" ;;
@@ -170,7 +184,7 @@ jobs:
               -t "$REG/$ECR_NS/$s:$TAG" -t "$REG/$ECR_NS/$s:latest" \
               --push "$ctx"
           }
-          export -f build_one; export REG TAG ECR_NS
+          export -f build_one; export REG TAG ECR_NS MAPA
           echo '${{ steps.detect.outputs.services }}' | tr ' ' '\n' | xargs -P 4 -I{} bash -c 'build_one {}'
 
   # El deploy SOLO corre en ejecucion manual con deploy=true (el "clic"): required

@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 #
-# Core Force - plantilla oficial de aprovisionamiento de servidores.
+# Core Force Mail - plantilla de aprovisionamiento de servidores.
 #
-# Convierte una EC2 Ubuntu recien creada en un host de produccion estandar,
-# identico en cada servidor (prod / dev / ia / reportes). Es IDEMPOTENTE: puede
+# Convierte una EC2 Ubuntu recien creada en un host de la plataforma, identico en cada
+# ambiente (una cuenta de AWS por ambiente: dev, staging, prod). Es IDEMPOTENTE: puede
 # ejecutarse varias veces sin romper nada.
 #
 # Que hace:
@@ -16,9 +16,9 @@
 #   - Actualizaciones de seguridad automaticas
 #   - Tuning de kernel (sysctl) y swapfile de seguridad
 #   - Zona horaria y estructura de carpetas de despliegue
+#   - ENVIRONMENT (production o staging) en el .env de la plataforma
 #
-# No toca los puertos 80/443: esos los gobierna el Security Group de AWS (lock
-# primario) y, como defensa en profundidad, ops/security/cloudflare-firewall.sh.
+# No toca los puertos publicos: esos los gobierna el Security Group de AWS.
 #
 # Uso:
 #   cp server.env.example server.env   # ajusta valores
@@ -37,10 +37,11 @@ if [[ -f "$SCRIPT_DIR/server.env" ]]; then
   source "$SCRIPT_DIR/server.env"
 fi
 
+ENVIRONMENT="${ENVIRONMENT:-}"
 SERVER_ROLE="${SERVER_ROLE:-prod}"
 SERVER_HOSTNAME="${SERVER_HOSTNAME:-}"
 DEPLOY_USER="${DEPLOY_USER:-deploy}"
-CORE_ROOT="${CORE_ROOT:-/opt/core-force}"
+CORE_ROOT="${CORE_ROOT:-/opt/core-force-mail}"
 DEPLOY_PATH="${DEPLOY_PATH:-${CORE_ROOT}/app}"
 DEPLOY_PUBKEY="${DEPLOY_PUBKEY:-}"
 SWAP_SIZE="${SWAP_SIZE:-4G}"
@@ -49,6 +50,13 @@ TZ="${TZ:-America/Lima}"
 log()  { printf '\n\033[1;34m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[advertencia]\033[0m %s\n' "$*" >&2; }
 die()  { printf '\033[1;31m[error]\033[0m %s\n' "$*" >&2; exit 1; }
+
+# Sin valor por defecto: un server.env que no lo declara falla aqui, antes de dejar un
+# servidor con los controles de desarrollo (ops/security/secrets/require-server-environment.sh).
+case "$ENVIRONMENT" in
+  production|staging) ;;
+  *) die "ENVIRONMENT en server.env debe ser production o staging (valor: '$ENVIRONMENT'); development y test son solo para local" ;;
+esac
 
 [[ "$(id -u)" -eq 0 ]] || die "ejecuta como root (sudo ./bootstrap.sh)"
 [[ -r /etc/os-release ]] || die "no se pudo leer /etc/os-release"
@@ -65,7 +73,7 @@ log "Actualizando indice de paquetes e instalando base"
 apt-get update -y
 # UFW gestiona el firewall del host y persiste sus propias reglas. No se instala
 # iptables-persistent/netfilter-persistent porque en Ubuntu 24.04 entran en
-# conflicto con ufw; el lockdown de Cloudflare persiste por su systemd unit.
+# conflicto con ufw.
 apt-get install -y --no-install-recommends \
   ca-certificates curl gnupg git jq ufw fail2ban \
   unattended-upgrades chrony htop ncdu
@@ -199,11 +207,33 @@ chmod 0600 "$auth_keys"
 # 6) Estructura de carpetas de despliegue
 # ----------------------------------------------------------------------------
 log "Creando estructura de despliegue en $CORE_ROOT"
-# Estructura estandar Core Force: codigo separado de env, scripts, datos y backups.
+# Codigo separado de logs, datos y respaldos.
 install -d -m 0750 -o "$DEPLOY_USER" -g "$DEPLOY_USER" "$CORE_ROOT"
 for sub in app env docker scripts logs backups data tmp; do
   install -d -o "$DEPLOY_USER" -g "$DEPLOY_USER" "$CORE_ROOT/$sub"
 done
+install -d -o "$DEPLOY_USER" -g "$DEPLOY_USER" "$DEPLOY_PATH"
+
+# ----------------------------------------------------------------------------
+# 6b) Entorno de la plataforma
+# ----------------------------------------------------------------------------
+# .env.example trae ENVIRONMENT=development para el entorno local, y con ese valor los
+# servicios relajan controles. El servidor lo declara aqui, en el .env que Compose pasa a
+# los contenedores, y lo repone si alguien lo cambio; with-secrets.sh se niega a desplegar
+# con otro valor.
+env_app="$DEPLOY_PATH/.env"
+patron_env='^[[:space:]]*(export[[:space:]]+)?ENVIRONMENT[[:space:]]*='
+log "Declarando ENVIRONMENT=$ENVIRONMENT en $env_app"
+[[ -f "$env_app" ]] || install -m 0600 -o "$DEPLOY_USER" -g "$DEPLOY_USER" /dev/null "$env_app"
+if [[ "$(grep -E "$patron_env" "$env_app" || true)" != "ENVIRONMENT=$ENVIRONMENT" ]]; then
+  sed -i -E "/$patron_env/d" "$env_app"
+  if [[ -s "$env_app" && -n "$(tail -c 1 "$env_app")" ]]; then
+    echo >> "$env_app"
+  fi
+  printf 'ENVIRONMENT=%s\n' "$ENVIRONMENT" >> "$env_app"
+fi
+chown "$DEPLOY_USER:$DEPLOY_USER" "$env_app"
+chmod 0600 "$env_app"
 
 # ----------------------------------------------------------------------------
 # 7) Endurecimiento SSH (solo llaves)
@@ -316,7 +346,7 @@ if [[ "${INSTALL_BACKUP_TIMERS:-yes}" == "yes" && -d "$BACKUP_UNITS_DIR" ]]; the
   log "Instalando el respaldo por empresa (systemd)"
   install -m 0644 "$BACKUP_UNITS_DIR"/*.service "$BACKUP_UNITS_DIR"/*.timer /etc/systemd/system/
   systemctl daemon-reload
-  systemctl enable --now core-force-backup.timer core-force-backup-verify.timer >/dev/null
+  systemctl enable --now core-force-mail-backup.timer core-force-mail-backup-verify.timer >/dev/null
 
   # Los timers reemplazan al crontab que se usaba cuando el usuario de despliegue no
   # tenia root. Dejar los dos activos correria el respaldo dos veces: dos volcados
@@ -340,6 +370,7 @@ fi
 log "Aprovisionamiento completado"
 cat <<EOF
 
+  Entorno          : ENVIRONMENT=$ENVIRONMENT en $DEPLOY_PATH/.env
   Rol del servidor : $SERVER_ROLE
   Hostname         : $(hostnamectl --static 2>/dev/null || hostname)
   Docker           : $(docker --version 2>/dev/null)
@@ -348,15 +379,16 @@ cat <<EOF
   Ruta de deploy   : $DEPLOY_PATH
   SSH              : solo llaves (UFW permite 22), fail2ban activo
   Firewall host    : $(ufw status | head -n1)
-  Respaldo         : $(systemctl is-enabled core-force-backup.timer 2>/dev/null || echo 'no instalado')
+  Respaldo         : $(systemctl is-enabled core-force-mail-backup.timer 2>/dev/null || echo 'no instalado')
 
   Siguientes pasos:
-    1) Configura el Security Group (22 desde tu admin, 80/443 desde Cloudflare).
-       Ver ops/security/AWS-DEPLOYMENT.md
-    2) (Defensa en profundidad) instala el lockdown de Cloudflare:
-       sudo ops/security/systemd/install.sh
-    3) Despliega desde tu maquina:
+    1) Security Group: 22 solo desde la IP de administracion; cada puerto publico, solo
+       desde su origen (80/443 desde el proxy de borde).
+    2) Completa $DEPLOY_PATH/.env con la configuracion de .env.example sin copiarlo
+       encima (traeria ENVIRONMENT=development) y publica los secretos en el almacen:
+       ops/security/secrets/README.md.
+    3) Despliega desde tu maquina (el primer despliegue, con la lista de servicios):
        DEPLOY_HOST=<ip> DEPLOY_USER=$DEPLOY_USER DEPLOY_PATH=$DEPLOY_PATH \\
-         ./scripts/deploy-fast.sh
+         ./scripts/deploy-ecr.sh <servicios>
 
 EOF

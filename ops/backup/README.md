@@ -5,8 +5,8 @@ base, no una foto del servidor entero. Es la diferencia entre poder devolver a U
 al estado de ayer y tener que devolver a todas.
 
 RDS ya hace snapshots del servidor, y sirven para el desastre completo. No sirven para
-"a esta empresa le borraron el kardex el martes": restaurar ese snapshot devolvería al
-martes también a las demás empresas.
+"a esta empresa le borraron una lista de contactos el martes": restaurar ese snapshot
+devolvería al martes también a las demás empresas.
 
 ## Los tres scripts
 
@@ -14,10 +14,25 @@ martes también a las demás empresas.
 |---|---|
 | `backup-tenants.sh` | Vuelca cada base a `-Fc`, comprueba que el archivo se puede leer y lo sube a S3 |
 | `restore-tenant.sh` | Restaura UNA base. Por defecto a una base nueva; sobrescribir exige `--force` y confirmación escrita |
-| `verify-restore.sh` | Restaura el último respaldo en una base desechable, comprueba que trae filas de negocio y la borra |
+| `verify-restore.sh` | Restaura el último respaldo en una base desechable, comprueba que trae todo lo que el volcado lista y que es una base de la plataforma, y la borra |
 
 `verify-restore.sh` es el que importa. Un respaldo que nadie restauró nunca es una
 suposición, no una garantía; esto la convierte en un hecho comprobado cada semana.
+
+Qué comprueba, sin suponer filas de negocio (una empresa recién dada de alta no tiene
+ninguna y su respaldo vale lo mismo):
+
+- que cada esquema y cada tabla del índice del volcado (`pg_restore --list`) existe en la
+  base restaurada: `restore-tenant.sh` muestra los errores de `pg_restore`, pero no se
+  detiene en ellos;
+- `platform.event_outbox`, que existe en las tres clases de base;
+- empresa y registro: el historial `public.schema_migrations` con filas (son datos, no
+  esquema) y el esquema que declara la cabecera `-- Schema:` de cada migración registrada,
+  leída de `migrations/` del árbol desplegado; en el registro, además, al menos un usuario;
+- celda: sus migraciones se aplican a mano y no dejan historial, así que se exigen los
+  esquemas que declaran todas las migraciones de celda del árbol desplegado. Una migración
+  de celda con un esquema nuevo, desplegada y aún sin aplicar, hace fallar la verificación
+  de esa celda hasta que se aplica.
 
 ## Uso
 
@@ -35,8 +50,9 @@ ops/backup/restore-tenant.sh mail_tenant_demo --into mail_prueba
 # Reemplazar la base viva (irreversible; pide escribir el nombre para confirmar)
 ops/backup/restore-tenant.sh mail_tenant_demo --force
 
-ops/backup/verify-restore.sh                      # la base con el respaldo más grande
+ops/backup/verify-restore.sh                      # la empresa con el respaldo más grande
 ops/backup/verify-restore.sh mail_tenant_demo
+ops/backup/verify-restore.sh mail_registry        # también el registro o una celda
 ```
 
 Casi siempre lo correcto es restaurar a una base nueva y sacar de ahí lo que falta con
@@ -59,8 +75,9 @@ el dia que las credenciales pasaron al almacen se quedaron con la variable vacia
 respaldo de base de datos y un archivo que sube un usuario no merecen la misma política de
 acceso ni el mismo ciclo de vida.
 
-Por defecto se llama `cf-backups-<id-de-cuenta>`: `ops/aws/setup-iam.sh` y
-`ops/aws/setup-buckets.sh` lo derivan de la cuenta que los ejecuta. Debe estar configurado con:
+Por defecto se llama `cf-backups-<id-de-cuenta>`: `ops/aws/setup-iam.sh`,
+`ops/aws/setup-buckets.sh` y `ops/aws/setup-auditoria.sh` lo derivan de la cuenta que los
+ejecuta y leen el mismo `BACKUP_S3_BUCKET` para cambiarlo. Debe estar configurado con:
 
 - acceso público bloqueado en las cuatro dimensiones;
 - cifrado en reposo por defecto (AES256 con clave de bucket);
@@ -72,31 +89,19 @@ El acceso sale del rol de instancia `core-force-mail-ec2-role`; no hay credencia
 
 ## Programación
 
+`ops/server-template/bootstrap.sh` instala las unidades de `ops/backup/systemd/` y retira
+las entradas de cron que hubiera de antes, que correrían el respaldo dos veces. A mano:
+
 ```bash
 sudo cp ops/backup/systemd/*.service ops/backup/systemd/*.timer /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable --now core-force-backup.timer core-force-backup-verify.timer
-systemctl list-timers 'core-force-*'
+sudo systemctl enable --now core-force-mail-backup.timer core-force-mail-backup-verify.timer
+systemctl list-timers 'core-force-mail-*'
 ```
 
-Respaldo diario (03:15 hora de Lima) y prueba de restauración semanal (domingo 04:30).
-Ambos con prioridad baja de CPU y disco para no competir con la operación.
-
-**En el servidor actual están en el crontab del usuario `deploy`, no en systemd**: instalar
-unidades exige root y el usuario de despliegue no lo tiene (`sudo` pide contrasena).
-
-Cuidado con la zona horaria al comparar los dos: el `OnCalendar` de las unidades esta en
-**UTC** y el crontab corre en la zona del servidor, que es **America/Lima**. Durante un
-tiempo el crontab decia `15 8` -las 08:15 de Lima, con las tiendas abriendo- mientras la
-unidad y esta pagina describian las 03:15. Hoy los dos hacen lo mismo: respaldo a las 03:15
-y prueba de restauracion los domingos a las 04:30, hora de Lima.
-
-Quien tenga root debería mover esto a systemd —queda mejor observado— y al hacerlo tiene
-que **vaciar el crontab**, o el respaldo correría dos veces:
-
-```bash
-crontab -l   # ver lo que hay hoy
-```
+Respaldo diario a las 03:15 hora de Lima y prueba de restauración los domingos a las 04:30.
+El `OnCalendar` de las unidades está en **UTC** (08:15 y 09:30): al cambiarlo, no leerlo
+como hora local. Ambos con prioridad baja de CPU y disco para no competir con el servicio.
 
 ## Vigilancia
 
@@ -113,21 +118,24 @@ monta y Prometheus recoge. Cuatro alertas en
 
 Lo que se vigila es la **marca de tiempo del ultimo exito**, no el codigo de salida. El caso
 peligroso no es el respaldo que falla -ese deja un error- sino el que dejo de ejecutarse:
-temporizador desactivado, servidor reinstalado, crontab vaciado por error. Un servidor sin
-respaldo se ve exactamente igual que uno con respaldo, hasta el dia que hace falta.
+temporizador desactivado, servidor reinstalado. Un servidor sin respaldo se ve exactamente
+igual que uno con respaldo, hasta el dia que hace falta.
 
 Por eso hay dos alertas por trabajo: la de antiguedad no puede dispararse si la serie
 desaparece, porque entonces no hay nada que comparar.
 
 ## Qué revisar cuando falle
 
-Los scripts salen con código distinto de cero ante cualquier problema. Con el crontab
-actual eso queda en `/opt/core-force-mail/logs/backup.log` y `backup-verify.log`; con systemd,
-en `systemctl status core-force-backup.service`. Los fallos que importan:
+Los scripts salen con código distinto de cero ante cualquier problema; la salida queda en
+el journal (`journalctl -u core-force-mail-backup.service`,
+`journalctl -u core-force-mail-backup-verify.service`). Los fallos que importan:
 
 - **`volcado ilegible o vacío`**: el archivo existe pero `pg_restore` no lo entiende. No
   es un respaldo; hay que repetirlo y averiguar por qué.
 - **`quedó respaldado en disco pero no subió a S3`**: sobrevive a un borrado accidental,
   no a la pérdida del servidor.
-- **`la base restaurada no tiene filas`**: el respaldo trae el esquema pero no los datos.
-  Es el fallo más peligroso porque un `ls` del directorio se ve perfectamente normal.
+- **`la base restaurada no tiene lo que el volcado trae`**: la restauración terminó pero
+  faltan esquemas o tablas del índice. Es el fallo más peligroso porque un `ls` del
+  directorio se ve perfectamente normal.
+- **`public.schema_migrations está vacía`** o **`faltan esquemas que declaran sus
+  migraciones`**: la base restaurada no es la que su historial dice que era.

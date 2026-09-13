@@ -11,7 +11,7 @@ imágenes locales que `scripts/check-image-drift.sh` delata.
 - **Región:** `us-east-1` (override con `ECR_REGION`).
 - **Namespace:** `core-force-mail` → repos `core-force-mail/<servicio>`.
 - **Auth:** sin claves estáticas en el servidor. El PC publica con el usuario
-  `core-force-deploy-local` y el servidor usa el rol de la instancia
+  `core-force-mail-deploy-local` y el servidor usa el rol de la instancia
   `core-force-mail-ec2-role`; los permisos de ambos los declara `ops/aws/setup-iam.sh`.
   CI publica con el rol OIDC `github-ecr-push` (`ops/aws/setup-github-oidc.sh`).
 
@@ -41,7 +41,7 @@ ops/ecr/push.sh gateway identity
 últimas 10 etiquetadas por repo, para acotar el costo de almacenamiento.
 
 Aplicarla exige `ecr:PutLifecyclePolicy`, que `ops/aws/setup-iam.sh` concede al usuario
-de deploy (política `core-force-ecr-retencion`). Un repo creado por una identidad sin ese
+de deploy (política `core-force-mail-ecr-retencion`). Un repo creado por una identidad sin ese
 permiso se queda sin retención: `create-repos.sh` lo crea, avisa del fallo al aplicarla y
 sigue.
 
@@ -53,7 +53,7 @@ a todos los repos de una pasada.
 
 `enable-scanning.sh` activa el escaneo continuo de ECR sobre `core-force-mail/*` e informa los
 hallazgos. Configurarlo es una acción de nivel de registro: requiere la política
-`core-force-ecr-scanning`, que `ops/aws/setup-iam.sh` concede al rol de la instancia, así
+`core-force-mail-ecr-scanning`, que `ops/aws/setup-iam.sh` concede al rol de la instancia, así
 que se ejecuta desde el servidor (o con credenciales de administrador).
 
 Se pide `ENHANCED` con `CONTINUOUS_SCAN` y no `BASIC`: el básico mira la imagen una sola

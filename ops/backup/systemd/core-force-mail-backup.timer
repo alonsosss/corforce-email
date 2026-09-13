@@ -1,8 +1,8 @@
 [Unit]
-Description=Respaldo diario de las bases de Core Force
+Description=Respaldo diario de las bases de Core Force Mail
 
 [Timer]
-# De madrugada en hora de Lima, cuando no hay caja abierta.
+# 03:15 en hora de Lima (UTC-5), de madrugada.
 OnCalendar=*-*-* 08:15:00 UTC
 Persistent=true
 RandomizedDelaySec=300

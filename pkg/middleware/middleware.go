@@ -209,12 +209,11 @@ func SecureHeaders(next http.Handler) http.Handler {
 		// Sin 'unsafe-inline' ni 'unsafe-eval' —son justo lo que convierte un XSS en
 		// ejecucion de codigo— y ademas SIN confiar en el origen: con 'strict-dynamic' el
 		// navegador ignora la lista de origenes y solo ejecuta lo que lleve el nonce de
-		// esta respuesta, mas lo que esos scripts carguen (los remotos federados). Un
-		// archivo .js subido al propio dominio deja de ejecutarse solo.
+		// esta respuesta, mas lo que esos scripts carguen (los chunks que la aplicacion web
+		// carga con import()). Un archivo .js subido al propio dominio deja de ejecutarse solo.
 		//
-		// El nonce lo aprovecha tambien Cloudflare: cuando la politica lo declara, marca
-		// con el sus scripts inyectados en el borde, asi que su deteccion de bots vuelve
-		// a funcionar sin abrir la puerta a ningun otro inline.
+		// Un CDN delante que inyecte scripts (la deteccion de bots de Cloudflare, por
+		// ejemplo) tiene que marcarlos con este mismo nonce; ningun otro inline se admite.
 		//
 		// style-src conserva 'unsafe-inline' a proposito: el sistema de diseño inyecta
 		// estilos y la alternativa (nonce en cada regla) no compensa; un estilo inyectado
