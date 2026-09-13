@@ -59,7 +59,8 @@ el dia que las credenciales pasaron al almacen se quedaron con la variable vacia
 respaldo de base de datos y un archivo que sube un usuario no merecen la misma política de
 acceso ni el mismo ciclo de vida.
 
-En producción es `cf-backups-188149024609`, creado para esto y configurado con:
+Por defecto se llama `cf-backups-<id-de-cuenta>`: `ops/aws/setup-iam.sh` y
+`ops/aws/setup-buckets.sh` lo derivan de la cuenta que los ejecuta. Debe estar configurado con:
 
 - acceso público bloqueado en las cuatro dimensiones;
 - cifrado en reposo por defecto (AES256 con clave de bucket);

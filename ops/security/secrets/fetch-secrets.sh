@@ -30,7 +30,7 @@ payload="$(aws secretsmanager get-secret-value \
     --secret-id "$SECRET_ID" --region "$REGION" \
     --query SecretString --output text)" || {
   echo "fetch-secrets: no se pudo leer $SECRET_ID en $REGION." >&2
-  echo "  Revisar que el rol de la instancia tenga la politica de ops/security/secrets/iam-policy.json." >&2
+  echo "  Revisar que el rol de la instancia tenga la politica core-force-secretos (ops/aws/setup-iam.sh)." >&2
   exit 1
 }
 

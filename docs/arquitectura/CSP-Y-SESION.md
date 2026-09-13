@@ -14,24 +14,24 @@ En modo cookie el refresh token **se omite del cuerpo** de la respuesta. Si sigu
 JSON, un XSS podría leerlo de la respuesta del login y toda la protección sería
 decorativa.
 
-**Access token**: solo en memoria, en `window.__cpSession` (propiedad no enumerable). No
-puede ser una variable de módulo: cada micro-frontend carga su propia copia de
-`@cp/api-client` y tendría una sesión distinta por remoto. Tras recargar, la sesión se
-restaura pidiendo un token nuevo con la cookie.
+**Access token**: solo en memoria, en una propiedad no enumerable de `window`
+(`__cfSession`, `web/src/api/client.ts`), nunca en `localStorage` ni en `sessionStorage`. Tras recargar, la
+sesión se restaura pidiendo un token nuevo con la cookie. El webmail no usa este token: su
+sesión es la cookie `cf_wm` de su propio servicio.
 
 **Modo cookie es opt-in** (`cookie_auth: true` o cabecera `X-Auth-Mode: cookie`): los
-clientes que no son navegador —extensión de reuniones, escáner de escritorio— siguen
-recibiendo el refresh token en el JSON.
+clientes que no son navegador siguen recibiendo el refresh token en el JSON.
 
 `AUTH_COOKIE_SECURE` controla el atributo `Secure` y su valor por defecto es **true**. No
-atarlo a `ENVIRONMENT`: el despliegue real corre con `ENVIRONMENT=development` y la cookie
-habría salido sin `Secure` sin que nadie lo notara.
+se ata a `ENVIRONMENT`: un `ENVIRONMENT` mal declarado en un servidor habría sacado la
+cookie sin `Secure` sin que nadie lo notara. Por la misma razón, un servidor declara
+`ENVIRONMENT=production` (o `staging`): con `development` los servicios admiten Redis en
+claro (`docs/Operacion_Despliegue.md`, 1).
 
-### Al tocar el cliente HTTP hay que reconstruir los 21 micro-frontends
+### Al tocar el cliente HTTP
 
-Cada `fe-*` empaqueta su copia de `@cp/api-client`. Uno solo con código viejo (que aún lea
-`localStorage`) recibe 401 en todas sus llamadas. Reconstruir solo el shell deja media
-aplicación sin sesión.
+El cliente HTTP vive en `web/src/api/client.ts`, dentro de la única aplicación web:
+cambiarlo exige reconstruir y desplegar solo la imagen `web`.
 
 ## Firma del access token
 

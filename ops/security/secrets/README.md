@@ -30,8 +30,13 @@ version nueva.
 | `load.sh` | Resolvedor sourceable: materializa y carga los secretos al entorno. Lo usan `with-secrets.sh` y los trabajos que necesitan una credencial para si mismos (respaldo, migraciones). |
 | `check-secrets.sh` | Guardarrail de CI: falla si una credencial canonica tiene valor en un fichero versionado. |
 | `check-secret-sources.sh` | Guardarrail de CI: falla si un script se busca un secreto en el `.env`, o si un `docker compose` que crea contenedores no va por `with-secrets.sh`. |
-| `iam-policy.json` | Politica de LECTURA para el rol de la instancia (estado permanente). |
-| `iam-policy-migracion.json` | Politica de ESCRITURA, solo para la migracion inicial. Se retira despues. |
+
+Los permisos del rol de la instancia sobre el almacen no viven aqui: los declara
+`ops/aws/setup-iam.sh`, que los renderiza con la cuenta de quien lo ejecuta, `AWS_REGION` y
+`SECRETS_PREFIX` (por defecto `core-force-mail`, el prefijo de `SECRETS_ID`).
+`core-force-secretos` es la lectura permanente; `core-force-secretos-escritura`, la
+escritura que piden `push-secrets.sh`, `add-secret.sh` y `rotate-key.sh`, solo existe
+mientras se corre con `--escritura-secretos`, y la siguiente corrida sin la opcion la retira.
 
 ## Como lo consumen los servicios
 
@@ -71,12 +76,11 @@ El almacen resuelve donde viven los secretos de arranque, no todos los secretos.
 
 ## Puesta en marcha
 
-**Hecha en produccion el 2026-08-02**: `core-force-mail/prod` existe con 18 secretos, el `.env`
-del servidor ya no tiene credenciales y el rol de la instancia quedo en solo lectura. Lo que
-sigue queda como referencia para otro entorno.
+Pendiente en todos los entornos: la cuenta de AWS del proyecto aun no existe. Por entorno:
 
-1. **Permiso de escritura temporal.** Adjuntar `iam-policy-migracion.json` al rol
-   `core-force-mail-ec2-role`. La escritura solo hace falta para crear el secreto: desplegar
+1. **Permiso de escritura temporal.** `ops/aws/setup-iam.sh --escritura-secretos`, con
+   credenciales de administrador, concede al rol `core-force-mail-ec2-role` la escritura en
+   `<SECRETS_PREFIX>/*`. La escritura solo hace falta para crear el secreto: desplegar
    necesita unicamente lectura, asi que el permiso se retira en cuanto termina el paso 2.
 2. **Subir los valores actuales.** En el servidor, desde `/opt/core-force-mail/app`:
 
@@ -89,10 +93,11 @@ sigue queda como referencia para otro entorno.
    estaban. El script no reescribe el `.env` hasta releer el secreto y comprobar valor por
    valor que coincide con lo enviado. Deja una copia de rescate `.env.pre-secrets.<fecha>`
    con permisos 0600.
-3. **Retirar el permiso de escritura**, dejando solo `iam-policy.json`.
+3. **Retirar el permiso de escritura:** `ops/aws/setup-iam.sh` sin la opcion deja solo la
+   lectura.
 4. **Verificar.** `fetch-secrets.sh` debe reportar los secretos materializados; recrear un
    servicio via `with-secrets.sh` debe levantarlo sin errores; y con el almacen inaccesible
-   (`SECRETS_ID=core-force/no-existe`) el envoltorio debe **abortar**, no continuar.
+   (`SECRETS_ID=core-force-mail/no-existe`) el envoltorio debe **abortar**, no continuar.
 5. **Borrar la copia de rescate:** `shred -u .env.pre-secrets.*`.
 
 ## Rotar un secreto

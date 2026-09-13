@@ -15,11 +15,9 @@ FAIL=0
 echo "== Streams de JetStream con subjects solapados =="
 
 # Cada declaracion de stream -> lineas "NOMBRE<TAB>subject". Se leen:
-#   Go:     EnsureStream / EnsureStreamWithMaxAge("NOMBRE", []string{...}, ...)
-#           AddStream(&nats.StreamConfig{Name: ..., Subjects: []string{...}})
-#   Python: add_stream(name=..., subjects=[...]) y _ensure_stream(js, NOMBRE, [...], ...)
-# en services/ y en pkg/. Los tres streams del bot (agent-sales, Python) y la DLQ
-# de pkg/events eran invisibles y el guardian daba OK sin mirarlos.
+#   EnsureStream / EnsureStreamWithMaxAge("NOMBRE", []string{...}, ...)
+#   AddStream(&nats.StreamConfig{Name: ..., Subjects: []string{...}})
+# en el codigo Go de services/ y de pkg/, incluida la DLQ de pkg/events.
 # Las constantes se resuelven contra su declaracion en el mismo archivo.
 pairs=$(python3 - "$ROOT" <<'PY'
 import os, re, sys
@@ -38,16 +36,13 @@ func_subjects = re.compile(r'func\s+([A-Za-z_][\w]*)\(\)\s*\[\]string\s*\{[^}]*?
 # Declaracion de listas: `nombre = []string{...}` (dentro o fuera de un bloque var).
 slice_decl = re.compile(r'([A-Za-z_][\w]*)\s*:?=\s*\[\]string\{([^}]*)\}', re.S)
 # Slice de structs cuyo PRIMER campo es el subject, y el bucle que lo vuelca en una
-# lista (`for _, x := range FUENTE { s = append(s, x.subject) }`). Es la forma que usa
-# notification para sus canales de aprobacion.
+# lista (`for _, x := range FUENTE { s = append(s, x.subject) }`).
 struct_src = re.compile(r'var\s+([A-Za-z_][\w]*)\s*=\s*\[\]struct\s*\{.*?\n\}\{(.*?)\n\}', re.S)
 volcado = re.compile(r'range\s+([A-Za-z_][\w]*)\s*\{[^}]*?append\(\s*([A-Za-z_][\w]*)\s*,\s*[A-Za-z_][\w]*\.subject', re.S)
 # Mapa literal stream -> subjects, la forma del range: NOMBRE: {..} o NOMBRE: variable.
 map_range = re.compile(r'map\[string\]\[\]string\{(.*?)\n\s*\}', re.S)
 map_entry = re.compile(r'([A-Za-z_][\w.]*)\s*:\s*(\{[^}]*\}|[A-Za-z_][\w]*)')
 addstream = re.compile(r'StreamConfig\{[^}]*?Name:\s*([^,\n]+),[^}]*?Subjects:\s*\[\]string\{([^}]*)\}', re.S)
-py_add = re.compile(r'add_stream\(\s*name\s*=\s*([^,]+),\s*subjects\s*=\s*\[([^\]]*)\]', re.S)
-py_ensure = re.compile(r'_ensure_stream\(\s*\w+\s*,\s*([^,]+),\s*\[([^\]]*)\]', re.S)
 # Constantes de cadena. Acepta la forma de bloque (`const (\n  X = "..."\n)`) y
 # tambien la de una sola linea (`const X = "..."`), que es igual de valida en Go y
 # hasta ahora dejaba el stream entero invisible para este guardian.
@@ -57,7 +52,7 @@ lit = re.compile(r'"([^"]*)"')
 def walk():
     for base in ('services', 'pkg'):
         for dirpath, _, files in os.walk(os.path.join(root, base)):
-            if 'node_modules' in dirpath or '.venv' in dirpath:
+            if 'node_modules' in dirpath:
                 continue
             for fn in files:
                 yield dirpath, fn
@@ -72,7 +67,7 @@ blobs_subjects = {}
 paquete_re = re.compile(r'^package\s+([A-Za-z_][\w]*)', re.M)
 
 # Constantes por SERVICIO: un subject suele vivir como constante del paquete domain del
-# mismo servicio (domain.SubjectWeighing). Resolverlas solo dentro del fichero dejaba
+# mismo servicio (domain.SubjectCreated). Resolverlas solo dentro del fichero dejaba
 # ciegas esas declaraciones.
 consts_por_ambito = {}
 consts_compartidas = {}
@@ -96,8 +91,8 @@ for dirpath, fn in walk():
     if mp:
         for fn_nombre, blob in func_subjects.findall(texto):
             blobs_subjects[(mp.group(1), fn_nombre)] = blob
-    # Las constantes de pkg/ son COMPARTIDAS por diseno: un stream declarado en
-    # pkg/approvals lo usa services/workflow, y resolver solo dentro del ambito dejaba
+    # Las constantes de pkg/ son COMPARTIDAS por diseno: un stream declarado en un
+    # paquete de pkg/ lo usa un servicio, y resolver solo dentro del ambito dejaba
     # esas declaraciones invisibles para este guardian -- justo las de los paquetes que
     # existen para que varios servicios compartan un contrato.
     if ambito(ruta).startswith('pkg' + os.sep) and mp:
@@ -105,16 +100,12 @@ for dirpath, fn in walk():
             consts_compartidas[(mp.group(1), k)] = v
 
 for dirpath, fn in walk():
-        es_go = fn.endswith('.go') and not fn.endswith('_test.go')
-        es_py = fn.endswith('.py') and not fn.startswith('test_') and '/tests' not in dirpath and '/tools' not in dirpath
-        if not (es_go or es_py):
+        if not fn.endswith('.go') or fn.endswith('_test.go'):
             continue
         path = os.path.join(dirpath, fn)
         rel = os.path.relpath(path, root)
         src = open(path, encoding='utf-8', errors='replace').read()
-        if es_go and 'EnsureStream' not in src and 'StreamConfig{' not in src:
-            continue
-        if es_py and 'add_stream(' not in src and '_ensure_stream(' not in src:
+        if 'EnsureStream' not in src and 'StreamConfig{' not in src:
             continue
         # Constantes visibles: las del propio archivo alcanzan, es donde se declaran.
         consts = dict(const.findall(src))
@@ -128,11 +119,11 @@ for dirpath, fn in walk():
                 return m.group(1)
             if tok in consts:
                 return consts[tok]
-            # domain.SubjectWeighing -> constante del mismo servicio;
-            # approvals.SubjectRequested -> constante de un paquete compartido.
+            # domain.SubjectCreated -> constante del mismo servicio;
+            # contrato.SubjectCreated -> constante de un paquete compartido de pkg/.
             partes = tok.split('.')
             corto = partes[-1]
-            # approvals.Stream y workinbox.Stream son constantes DISTINTAS con el
+            # a.Stream y b.Stream de dos paquetes son constantes DISTINTAS con el
             # mismo nombre corto: sin el paquete, una tapaba a la otra y el stream de
             # la tapada desaparecia de la vigilancia sin que nadie lo notara.
             if len(partes) == 2:
@@ -154,7 +145,7 @@ for dirpath, fn in walk():
 
         # Listas declaradas como variable en el mismo archivo (var X = []string{...}).
         listas = {n: subjects_de(b) for n, b in slice_decl.findall(src)}
-        # Listas que devuelve una funcion de un paquete compartido (approvals.Subjects()).
+        # Listas que devuelve una funcion de un paquete compartido (contrato.Subjects()).
         # El cuerpo puede estar en OTRO archivo: se busca por paquete y nombre.
         def subjects_de_funcion(tok):
             partes = tok.split('.')
@@ -183,39 +174,35 @@ for dirpath, fn in walk():
             if estructuras.get(fuente):
                 listas[destino] = estructuras[fuente]
 
-        found = []
-        if es_go:
-            found += call.findall(src) + addstream.findall(src)
-            # Mapas stream -> subjects (la forma `for s, subj := range map[string][]string{...}`).
-            for cuerpo in map_range.findall(src):
-                for name_tok, val in map_entry.findall(cuerpo):
-                    subj = subjects_de(val) if val.startswith('{') else listas.get(val, [])
-                    if subj:
-                        found.append((name_tok, ','.join('"%s"' % x for x in subj)))
-            # Llamadas cuya lista la da una funcion compartida: EnsureStream(x.Stream, x.Subjects()).
-            for name_tok, fn_tok in call_func.findall(src):
-                subj = subjects_de_funcion(fn_tok)
+        found = call.findall(src) + addstream.findall(src)
+        # Mapas stream -> subjects (la forma `for s, subj := range map[string][]string{...}`).
+        for cuerpo in map_range.findall(src):
+            for name_tok, val in map_entry.findall(cuerpo):
+                subj = subjects_de(val) if val.startswith('{') else listas.get(val, [])
                 if subj:
                     found.append((name_tok, ','.join('"%s"' % x for x in subj)))
-            # Llamadas cuyo segundo argumento es una variable: se resuelven contra el archivo.
-            #
-            # Si NO se resuelve la lista, se reporta; y tambien si no se resuelve el
-            # NOMBRE. Antes solo lo primero: un stream cuyo nombre el guardian no
-            # sabia leer -por ejemplo `const X = "..."` en una sola linea, fuera de
-            # un bloque const- se descartaba en silencio y el stream entero quedaba
-            # sin vigilar, que es justo lo que este guardian existe para impedir.
-            # Una llamada dentro de `for nombre, subjects := range map[...]` no se
-            # puede resolver por sus tokens -son variables del bucle-, pero el
-            # propio mapa ya se leyo mas arriba. Reportarla seria un falso aviso.
-            cubierto_por_mapa = bool(map_range.findall(src))
-            for name_tok, var_tok in call_any.findall(src):
-                subj = listas.get(var_tok)
-                if subj and resolve(name_tok):
-                    found.append((name_tok, ','.join('"%s"' % x for x in subj)))
-                elif not cubierto_por_mapa:
-                    sin_entender.append(f"{rel}: EnsureStream({name_tok}, {var_tok})")
-        else:
-            found = py_add.findall(src) + [m for m in py_ensure.findall(src)]
+        # Llamadas cuya lista la da una funcion compartida: EnsureStream(x.Stream, x.Subjects()).
+        for name_tok, fn_tok in call_func.findall(src):
+            subj = subjects_de_funcion(fn_tok)
+            if subj:
+                found.append((name_tok, ','.join('"%s"' % x for x in subj)))
+        # Llamadas cuyo segundo argumento es una variable: se resuelven contra el archivo.
+        #
+        # Si NO se resuelve la lista, se reporta; y tambien si no se resuelve el
+        # NOMBRE. Antes solo lo primero: un stream cuyo nombre el guardian no
+        # sabia leer -por ejemplo `const X = "..."` en una sola linea, fuera de
+        # un bloque const- se descartaba en silencio y el stream entero quedaba
+        # sin vigilar, que es justo lo que este guardian existe para impedir.
+        # Una llamada dentro de `for nombre, subjects := range map[...]` no se
+        # puede resolver por sus tokens -son variables del bucle-, pero el
+        # propio mapa ya se leyo mas arriba. Reportarla seria un falso aviso.
+        cubierto_por_mapa = bool(map_range.findall(src))
+        for name_tok, var_tok in call_any.findall(src):
+            subj = listas.get(var_tok)
+            if subj and resolve(name_tok):
+                found.append((name_tok, ','.join('"%s"' % x for x in subj)))
+            elif not cubierto_por_mapa:
+                sin_entender.append(f"{rel}: EnsureStream({name_tok}, {var_tok})")
         for name_tok, subj_blob in found:
             name = resolve(name_tok)
             if not name:

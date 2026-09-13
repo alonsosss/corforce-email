@@ -1,32 +1,38 @@
-# ECR — registro central de imágenes de Core Force Mail
+# ECR: registro central de imágenes de Core Force Mail
 
 Publica en Amazon ECR las imágenes propias (servicios con `build:` en
-`docker-compose.yml`) para que cualquier servidor (prod/dev/ia/reportes) las
-consuma por `pull` en lugar de reconstruirlas. El build sigue ocurriendo en el
-EC2 de producción; estos scripts solo etiquetan y publican lo ya construido.
+`docker-compose.yml`) para que los servidores las consuman por `pull`. Las imágenes se
+compilan fuera del servidor: en el PC con `scripts/deploy-ecr.sh` o en GitHub Actions con
+`.github/workflows/release.yml`. **Nunca se compila en el servidor**
+(`docs/Operacion_Despliegue.md`, 5): compite por CPU con lo que está sirviendo y deja
+imágenes locales que `scripts/check-image-drift.sh` delata.
 
 - **Cuenta:** descubierta con STS (no fijada en código).
 - **Región:** `us-east-1` (override con `ECR_REGION`).
 - **Namespace:** `core-force-mail` → repos `core-force-mail/<servicio>`.
-- **Auth:** rol IAM de la instancia `core-force-mail-ec2-role` (política
-  `core-force-ecr-build-push`). No se usan claves estáticas.
+- **Auth:** sin claves estáticas en el servidor. El PC publica con el usuario
+  `core-force-deploy-local` y el servidor usa el rol de la instancia
+  `core-force-mail-ec2-role`; los permisos de ambos los declara `ops/aws/setup-iam.sh`.
+  CI publica con el rol OIDC `github-ecr-push` (`ops/aws/setup-github-oidc.sh`).
 
-## Uso (en el EC2)
+## Uso (desde el PC)
 
-El usuario `ubuntu` necesita `sudo` para docker, por eso `DOCKER="sudo docker"`.
+El despliegue no llama a estos scripts: `scripts/deploy-ecr.sh` compila, etiqueta por
+commit y publica. Lo que queda aquí prepara el registro y cubre casos puntuales, con la
+credencial del PC:
 
 ```bash
 # 1) Crear los repos (idempotente) + lifecycle policy
-ECR_REGION=us-east-1 ./create-repos.sh
+ops/ecr/create-repos.sh
 
-# 2) Login + publicar todas las imágenes con tag latest
-DOCKER="sudo docker" ./push.sh
+# 2) Publicar imágenes ya compiladas en esta máquina (<COMPOSE_PROJECT>-<servicio>:latest)
+ops/ecr/push.sh
 
 # Publicar una versión concreta (además reetiqueta latest)
-DOCKER="sudo docker" IMAGE_TAG=2026-06-29 ./push.sh
+IMAGE_TAG=2026-06-29 ops/ecr/push.sh
 
 # Publicar solo algunos servicios
-DOCKER="sudo docker" ./push.sh gateway identity web
+ops/ecr/push.sh gateway identity
 ```
 
 ## Lifecycle policy
@@ -34,26 +40,21 @@ DOCKER="sudo docker" ./push.sh gateway identity web
 `lifecycle-policy.json`: expira imágenes sin tag a los 7 días y conserva las
 últimas 10 etiquetadas por repo, para acotar el costo de almacenamiento.
 
-**Los repos que crea una identidad sin ese permiso quedan sin ella.** Ni
-`core-force-deploy-local` (el usuario del PC que publica) ni `core-force-mail-ec2-role`
-pueden llamar a `ecr:PutLifecyclePolicy`, así que `create-repos.sh` crea el repo
-y falla al aplicarle la retención. Solo la llevan los repos creados con una
-identidad de administrador; cada servicio nuevo quedará sin ella hasta que se
-conceda el permiso.
+Aplicarla exige `ecr:PutLifecyclePolicy`, que `ops/aws/setup-iam.sh` concede al usuario
+de deploy (política `core-force-ecr-retencion`). Un repo creado por una identidad sin ese
+permiso se queda sin retención: `create-repos.sh` lo crea, avisa del fallo al aplicarla y
+sigue.
 
 No da síntoma: las imágenes se acumulan sin límite y sólo aparece en la factura.
-Adjunta `iam-policy-lifecycle.json` a cualquiera de las dos identidades y
-reejecuta `create-repos.sh`, que es idempotente y aplica la política a todos los
-repos de una pasada. Para comprobar cuáles siguen sin ella hace falta el mismo
-permiso de lectura que la política concede.
+`create-repos.sh` es idempotente: reejecutarlo con la credencial del PC aplica la política
+a todos los repos de una pasada.
 
-## Escaneo de vulnerabilidades (bloqueado por permisos)
+## Escaneo de vulnerabilidades
 
 `enable-scanning.sh` activa el escaneo continuo de ECR sobre `core-force-mail/*` e informa los
-hallazgos. **Hoy no se puede ejecutar**: el rol de la instancia (`core-force-mail-ec2-role`)
-puede publicar imágenes pero no configurar el escaneo —`ecr:GetRegistryScanningConfiguration`
-y `ecr:PutRegistryScanningConfiguration` están denegados—. Adjunta
-`iam-policy-scanning.json` al rol y el script funciona sin cambios.
+hallazgos. Configurarlo es una acción de nivel de registro: requiere la política
+`core-force-ecr-scanning`, que `ops/aws/setup-iam.sh` concede al rol de la instancia, así
+que se ejecuta desde el servidor (o con credenciales de administrador).
 
 Se pide `ENHANCED` con `CONTINUOUS_SCAN` y no `BASIC`: el básico mira la imagen una sola
 vez, al subirla, así que una imagen que era limpia ayer y hoy tiene un CVE nuevo no se lo
@@ -69,5 +70,5 @@ corre sobre nginx, es la que este escaneo cubre de verdad.
 Los servidores solo-pull necesitan una política IAM de lectura
 (`ecr:GetAuthorizationToken`, `BatchGetImage`, `GetDownloadUrlForLayer`,
 `BatchCheckLayerAvailability`) y un compose que referencie
-`image: <account>.dkr.ecr.us-east-1.amazonaws.com/core-force-mail/<servicio>:<tag>`
+`image: <cuenta>.dkr.ecr.<región>.amazonaws.com/core-force-mail/<servicio>:<tag>`
 sin sección `build:`. Se definirá al aprovisionar el primer servidor de pull.

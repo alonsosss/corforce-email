@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# R1 (PLAN-MAESTRO-ARQUITECTURA): congela el acoplamiento de datos entre bounded contexts.
+# Congela el acoplamiento de datos entre bounded contexts.
 # Detecta referencias SQL a schemas AJENOS en el codigo Go de cada servicio y las compara
 # contra la allowlist del acoplamiento historico sancionado (coupling-allowlist.txt).
 # Un acceso cross-schema NUEVO (no listado) hace fallar el CI: el acoplamiento existente
@@ -7,9 +7,8 @@
 #
 # Heuristica: lineas de .go bajo services/*/internal/ con patron SQL
 #   (FROM|JOIN|INTO|UPDATE) <schema>.<tabla>
-# Los servicios SIN carpeta internal/ son los Python (intelligence, agent-sales,
-# procurement-ai*, ai-*): en ellos se escanean los .py de todo el servicio con el
-# mismo patron. No captura SQL construido dinamicamente (raro en el codigo actual).
+# Un servicio sin internal/ (el gateway) no tiene adaptadores de datos y no se escanea.
+# No captura SQL construido dinamicamente (raro en el codigo actual).
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 ALLOW="$ROOT/ops/scaffold/coupling-allowlist.txt"
@@ -40,13 +39,9 @@ FOUND="$(mktemp)"; FOUND_W="$(mktemp)"; trap 'rm -f "$FOUND" "$FOUND_W"' EXIT
 
 for d in "$ROOT/services"/*/; do
   svc="$(basename "$d")"
-  # Servicios Go: el SQL vive bajo internal/. Servicios sin internal/ (Python): se
-  # escanea el .py de todo el servicio, mismo patron y misma exclusion de vistas.
-  if [ -d "${d}internal" ]; then
-    scan_dir="${d}internal"; scan_glob='*.go'
-  else
-    scan_dir="$d"; scan_glob='*.py'
-  fi
+  # El SQL de un servicio vive en sus adaptadores, bajo internal/.
+  [ -d "${d}internal" ] || continue
+  scan_dir="${d}internal"
   owned=" $(owned_schemas "$svc") "
   for schema in $SCHEMAS; do
     case "$owned" in *" $schema "*) continue ;; esac
@@ -57,12 +52,12 @@ for d in "$ROOT/services"/*/; do
     # Los *_test.go quedan fuera: un test de integracion siembra las tablas de otro
     # contexto en su Postgres DESECHABLE para montar el escenario; eso no acopla a
     # produccion. Lo que si acopla es el codigo que se despliega.
-    if grep -rqiP "(from|join|into|update)\s+${schema}\.(?!v_)" "$scan_dir" --include="$scan_glob" --exclude='*_test.go' --exclude='*_test.py' 2>/dev/null; then
+    if grep -rqiP "(from|join|into|update)\s+${schema}\.(?!v_)" "$scan_dir" --include='*.go' --exclude='*_test.go' 2>/dev/null; then
       echo "$svc $schema" >> "$FOUND"
     fi
     # La ESCRITURA cruzada se mide aparte: leer la tabla de otro contexto se retira
     # publicando una vista, escribirla obliga a rehacer quien es el dueño del dato.
-    if grep -rqiE "(insert into|update|delete from)[[:space:]]+${schema}\.[a-z_]" "$scan_dir" --include="$scan_glob" --exclude='*_test.go' --exclude='*_test.py' 2>/dev/null; then
+    if grep -rqiE "(insert into|update|delete from)[[:space:]]+${schema}\.[a-z_]" "$scan_dir" --include='*.go' --exclude='*_test.go' 2>/dev/null; then
       echo "$svc $schema" >> "$FOUND_W"
     fi
   done

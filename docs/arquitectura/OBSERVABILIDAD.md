@@ -72,14 +72,14 @@ del almacen de secretos.
 
 Va en un compose aparte a proposito: se actualiza o se apaga sin tocar los servicios del
 plataforma, y una caida del monitoreo no puede arrastrar al producto. Se une a la red del
-despliegue principal como red **externa** (`APP_NETWORK`, por defecto `mail_mail-internal`),
+despliegue principal como red **externa** (`APP_NETWORK`, por defecto `app_mail-internal`),
 de donde salen dos reglas de operacion:
 
 - **Orden de apagado.** El stack de observabilidad se baja primero. Con Prometheus arriba,
   un `docker compose down` del despliegue principal falla al borrar la red porque sigue en
   uso; usa `docker compose stop` o baja antes el monitoreo.
 - **Si cambia el nombre del proyecto Compose** (por defecto `app`, del directorio de
-  despliegue `/opt/core-force/app`), hay que fijar `APP_NETWORK` acorde o Prometheus no
+  despliegue `/opt/core-force-mail/app`), hay que fijar `APP_NETWORK` acorde o Prometheus no
   encontrara la red.
 
 ## Objetivos

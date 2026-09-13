@@ -2,7 +2,7 @@
 # Reconcilia la proteccion de los buckets de la plataforma: versionado, caducidad de
 # versiones antiguas y candado de retencion sobre los respaldos.
 #
-# Los buckets se crearon a mano en su dia (medios, respaldos, flota) y su configuracion
+# Los buckets se crearon a mano en su dia (medios, respaldos) y su configuracion
 # vivia solo en la consola. El 2026-09-05 se comprobo con el usuario raiz que solo el de
 # respaldos versionaba, que ninguno tenia Object Lock, y que un objeto borrado en medios
 # desaparecia sin vuelta atras. Aqui queda como codigo, idempotente: correrlo de nuevo
@@ -26,7 +26,8 @@ ACC="$(aws sts get-caller-identity --query Account --output text)" || {
 
 : "${MEDIA_BUCKET:=cf-media-${ACC}}"
 : "${BACKUP_BUCKET:=cf-backups-${ACC}}"
-: "${FLEET_BUCKET:=cf-oee-flota-${ACC}}"
+
+tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
 
 # Retencion del candado sobre cada respaldo nuevo. Modo GOBERNANZA, no cumplimiento: el
 # usuario raiz puede saltarselo con s3:BypassGovernanceRetention si de verdad hace falta,
@@ -68,7 +69,7 @@ poner_ciclo() {
   regla='{"ID":"versiones-antiguas","Status":"Enabled","Filter":{"Prefix":""},
           "NoncurrentVersionExpiration":{"NoncurrentDays":30},
           "AbortIncompleteMultipartUpload":{"DaysAfterInitiation":7}}'
-  python3 - "$actual" "$regla" > /tmp/ciclo-$$.json <<'PY'
+  python3 - "$actual" "$regla" > "$tmp/ciclo.json" <<'PY'
 import json, sys
 actual = json.loads(sys.argv[1]); nueva = json.loads(sys.argv[2])
 reglas = [r for r in actual.get("Rules", []) if r.get("ID") != nueva["ID"]]
@@ -81,8 +82,7 @@ else:
     reglas.append(nueva)
 print(json.dumps({"Rules": reglas}))
 PY
-  aws s3api put-bucket-lifecycle-configuration --bucket "$b" --lifecycle-configuration "file:///tmp/ciclo-$$.json" >/dev/null
-  rm -f "/tmp/ciclo-$$.json"
+  aws s3api put-bucket-lifecycle-configuration --bucket "$b" --lifecycle-configuration "file://$tmp/ciclo.json" >/dev/null
 }
 
 # --- Medios: lo que suben los usuarios. Sin versionado, un borrado o una sobreescritura
@@ -109,15 +109,6 @@ poner_candado() {
     "{\"ObjectLockEnabled\":\"Enabled\",\"Rule\":{\"DefaultRetention\":{\"Mode\":\"GOVERNANCE\",\"Days\":$BACKUP_LOCK_DAYS}}}"
 }
 paso "respaldos: candado de retencion ($BACKUP_LOCK_DAYS d, gobernanza)" "$lock_ok" poner_candado
-
-# --- Flota: los paquetes llevan el hash en el nombre y no se sobreescriben nunca, asi que
-# el versionado no aportaria nada y cada version pesa gigas. Solo se protege lo abortado.
-c=0; aws s3api get-bucket-lifecycle-configuration --bucket "$FLEET_BUCKET" --output json 2>/dev/null | grep -q DaysAfterInitiation && c=1
-poner_ciclo_flota() {
-  aws s3api put-bucket-lifecycle-configuration --bucket "$FLEET_BUCKET" --lifecycle-configuration \
-    '{"Rules":[{"ID":"subidas-abortadas","Status":"Enabled","Filter":{"Prefix":""},"AbortIncompleteMultipartUpload":{"DaysAfterInitiation":7}}]}' >/dev/null
-}
-paso "flota: subidas a medias se abortan (7 d)" "$c" poner_ciclo_flota
 
 echo
 if [[ $CHECK -eq 1 ]]; then

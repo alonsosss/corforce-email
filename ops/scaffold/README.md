@@ -33,7 +33,7 @@ en `migrations/cell/canonical/<name>/` en vez de `tenant/`.
 | `check-base-images.sh` | Imágenes fijadas por versión o digest |
 | `check-sql-arity.sh` | `INSERT` con columnas y valores descuadrados |
 | `check-silent-errors.sh` | Ningún 500 sin motivo registrado (`response.Unexpected`) |
-| `check-clean-copy.sh` | Sin restos de las bases de referencia (ERP de origen y capa PHP/MySQL de mailcow) |
+| `check-clean-copy.sh` | Sin restos de las bases de referencia (ERP de origen y capa PHP/MySQL de mailcow) ni cuentas de AWS concretas en ARNs o registros de ECR |
 | `eventcontracts/` | Campos del payload por subject; un consumidor no lee lo que su emisor no publica |
 | `gen-events.sh` | Regenera `docs/arquitectura/EVENTS.md`; CI falla si queda atrás |
 | `service-paths.sh` | Mapa ruta -> servicio derivado de `docker-compose.yml`, base de la detección de cambios en el despliegue |

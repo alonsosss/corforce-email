@@ -7,8 +7,8 @@
 # paquetes de sistema y saldran limpias; la de la aplicacion web, que corre sobre nginx,
 # es la que este escaneo cubre de verdad.
 #
-# Requiere los permisos de ops/ecr/iam-policy-scanning.json en el rol que lo ejecute.
-# El rol de la instancia (core-force-mail-ec2-role) hoy solo puede publicar, no configurar.
+# Requiere la politica core-force-ecr-scanning, que ops/aws/setup-iam.sh concede al rol de
+# la instancia (core-force-mail-ec2-role); tambien sirve una credencial de administrador.
 #
 # Uso:
 #   ops/ecr/enable-scanning.sh            # activa escaneo continuo
@@ -31,8 +31,8 @@ if [[ "${1:-}" != "--report" ]]; then
         --scan-type ENHANCED \
         --rules '[{"scanFrequency":"CONTINUOUS_SCAN","repositoryFilters":[{"filter":"'"$NAMESPACE"'/","filterType":"WILDCARD"}]}]' \
         >/dev/null; then
-    echo "FALLA: no se pudo configurar el escaneo. Revisa que el rol tenga" >&2
-    echo "       ops/ecr/iam-policy-scanning.json adjunta." >&2
+    echo "FALLA: no se pudo configurar el escaneo. Revisa que el rol tenga la politica" >&2
+    echo "       core-force-ecr-scanning (ops/aws/setup-iam.sh)." >&2
     exit 1
   fi
   echo "Escaneo continuo activado para $NAMESPACE/* en $REGION"

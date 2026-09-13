@@ -32,17 +32,19 @@ fi
 SCRATCH="verify_restore_$(date -u +%Y%m%d%H%M%S)"
 echo "Verificando el respaldo de $DB restaurándolo en $SCRATCH"
 
+log="$(mktemp)"
 cleanup() {
   psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d postgres -q \
     -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='$SCRATCH' AND pid<>pg_backend_pid()" >/dev/null 2>&1
   psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d postgres -q \
     -c "DROP DATABASE IF EXISTS \"$SCRATCH\"" >/dev/null 2>&1
+  rm -f "$log"
 }
 trap cleanup EXIT
 
-if ! bash "$HERE/restore-tenant.sh" "$DB" --into "$SCRATCH" > /tmp/verify-restore.log 2>&1; then
+if ! bash "$HERE/restore-tenant.sh" "$DB" --into "$SCRATCH" > "$log" 2>&1; then
   echo "FALLA: el respaldo de $DB no se pudo restaurar" >&2
-  tail -15 /tmp/verify-restore.log >&2
+  tail -15 "$log" >&2
   exit 1
 fi
 
