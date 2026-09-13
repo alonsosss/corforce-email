@@ -81,7 +81,7 @@ docker run -d --name "$PREFIX-nats" -p "127.0.0.1:$NATS_PORT:4222" nats:2.10-alp
 docker run -d --name "$PREFIX-redis" -p "127.0.0.1:$REDIS_PORT:6379" redis:7.4.10-alpine >/dev/null || exit 1
 for _ in $(seq 1 40); do docker exec "$PREFIX-pg" pg_isready -U mail_admin -d mail_registry >/dev/null 2>&1 && break; sleep 1; done
 
-SERVICES=(organization identity access-control gateway mail-directory domain-service mail-security templates suppression)
+SERVICES=(organization identity access-control gateway mail-directory mail-auth domain-service mail-security templates suppression)
 echo "== Compilacion (${SERVICES[*]})"
 mkdir -p "$WORK/bin" "$WORK/log"
 for s in "${SERVICES[@]}"; do go build -o "$WORK/bin/$s" "./services/$s" || { echo "no compila $s" >&2; exit 1; }; done
@@ -110,16 +110,18 @@ export CORS_ALLOWED_ORIGINS=http://localhost:3000
 
 declare -A PORT=(
   [identity]=$((BASE + 1)) [access-control]=$((BASE + 2)) [organization]=$((BASE + 3))
-  [mail-directory]=$((BASE + 40)) [mail-security]=$((BASE + 42)) [domain-service]=$((BASE + 43))
+  [mail-directory]=$((BASE + 40)) [mail-auth]=$((BASE + 41)) [mail-security]=$((BASE + 42)) [domain-service]=$((BASE + 43))
   [suppression]=$((BASE + 46)) [templates]=$((BASE + 47)) [gateway]=$((BASE + 80))
 )
 MAPS_PORT=$((BASE + 81))
+AUTH_TLS_PORT=$((BASE + 82))
 EXPORT_PORT=$((BASE + 91))
 GW="http://127.0.0.1:${PORT[gateway]}/api/v1"
 export IDENTITY_PORT=${PORT[identity]} ACCESS_CONTROL_PORT=${PORT[access-control]} ORGANIZATION_PORT=${PORT[organization]}
 export MAIL_DIRECTORY_PORT=${PORT[mail-directory]} MAIL_SECURITY_PORT=${PORT[mail-security]} DOMAIN_SERVICE_PORT=${PORT[domain-service]}
 export SUPPRESSION_PORT=${PORT[suppression]} TEMPLATES_PORT=${PORT[templates]} GATEWAY_PORT=${PORT[gateway]}
 export MAIL_POLICY_MAPS_PORT=$MAPS_PORT MAIL_POLICY_EXPORT_PORT=$EXPORT_PORT
+export MAIL_AUTH_PORT=${PORT[mail-auth]} MAIL_AUTH_TLS_PORT=$AUTH_TLS_PORT
 export API_ORIGIN="http://localhost:${PORT[gateway]}" PUBLIC_BASE_URL="http://localhost:${PORT[gateway]}"
 # Direcciones internas: las que el gateway lee de routes.json por <SERVICIO>_HOST(_PORT) y
 # las que los servicios usan entre si.
@@ -150,8 +152,8 @@ ADMIN_PASS="$(rand_hex 12)Aa1!"
 PGHOST=127.0.0.1 PLATFORM_ADMIN_EMAIL=root@platform.test PLATFORM_ADMIN_PASSWORD="$ADMIN_PASS" \
   bash ops/db/bootstrap-platform.sh --cell pe-01 --region sa-east-1 >/dev/null || mal "bootstrap-platform.sh"
 
-for s in identity access-control mail-directory domain-service mail-security templates suppression gateway; do arrancar "$s"; done
-for s in identity access-control mail-directory domain-service mail-security templates suppression gateway; do esperar_salud "$s" "${PORT[$s]}"; done
+for s in identity access-control mail-directory mail-auth domain-service mail-security templates suppression gateway; do arrancar "$s"; done
+for s in identity access-control mail-directory mail-auth domain-service mail-security templates suppression gateway; do esperar_salud "$s" "${PORT[$s]}"; done
 
 echo "== Identidad y acceso"
 L1=$(curl -s -X POST "$GW/auth/login" -H 'Content-Type: application/json' -d "{\"email\":\"root@platform.test\",\"password\":\"$ADMIN_PASS\"}")
@@ -189,6 +191,23 @@ expect "alta de buzon" "$(echo "$MB" | jget data.username)" "ana@acme.test"
 expect "Postfix y Dovecot ven el buzon (rol mail_engine)" \
   "$(sql mail_cell_pe_01 "SET ROLE mail_engine; SELECT mailbox_format || path_prefix || domain || '/' || local_part || '/' FROM mail.mailboxes WHERE username = 'ana@acme.test'" | tail -1)" \
   "maildir:/var/vmail/acme.test/ana/"
+# El verificador que usa Dovecot (passwd-verify.lua) contra la contrasena que guardo
+# mail-directory: es la costura entre el directorio y los motores.
+dovecot_auth() {
+  curl -sk -o /dev/null -w '%{http_code}' -X POST "https://127.0.0.1:$AUTH_TLS_PORT/" -H 'Content-Type: application/json' \
+    -d "{\"username\":\"$1\",\"password\":\"$2\",\"real_rip\":\"10.20.0.5\",\"service\":\"$3\"}"
+}
+expect "Dovecot autentica el buzon por IMAP (mail-auth)" "$(dovecot_auth ana@acme.test "$MBX_PASS" imap)" "200"
+expect "una contrasena incorrecta se rechaza" "$(dovecot_auth ana@acme.test "no-es-$MBX_PASS" imap)" "401"
+MBID=$(echo "$MB" | jget data.id)
+AP=$(curl -s -X POST "$GW/mailboxes/$MBID/app-passwords" -H "$A2" -H 'Content-Type: application/json' \
+  -d '{"name":"movil","imap_access":false,"smtp_access":true}')
+APP_PASS=$(echo "$AP" | jget data.password)
+[[ -n "$APP_PASS" ]] && ok "contrasena de aplicacion generada y mostrada una vez" || mal "contrasena de aplicacion: ${AP:0:200}"
+expect "la contrasena de aplicacion entra por SMTP" "$(dovecot_auth ana@acme.test "$APP_PASS" smtp)" "200"
+expect "y no por IMAP, que no tiene concedido" "$(dovecot_auth ana@acme.test "$APP_PASS" imap)" "401"
+expect "los inicios quedan en mail.sasl_logins" \
+  "$(sql mail_cell_pe_01 "SELECT count(*) FROM mail.sasl_logins WHERE username = 'ana@acme.test'")" "2"
 expect "otra empresa no ve el buzon (RLS)" "$(curl -s "$GW/mailboxes" -H "$A1" | jget data)" "[]"
 
 dm=""
