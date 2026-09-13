@@ -1,11 +1,12 @@
 import { useMemo, useState } from 'react';
 import {
-  CONSENT_API_METHODS,
   contactsApi,
+  contactsMeta,
   type AttributeDefinition,
   type AttributeValue,
   type ConsentApiMethod,
   type Contact,
+  type ContactsMeta,
   type CreateContactRequest,
   type UpdateContactRequest,
 } from '@/api/contacts';
@@ -45,14 +46,17 @@ function normalizeTag(raw: string): string | null {
 export function ContactForm(props: ContactFormProps) {
   const { can } = useAccess();
   const canReadAttributes = can(...PERMISSIONS.contactAttributes.read);
-  const definitions = useQuery(
-    () => (canReadAttributes ? contactsApi.listAttributes() : Promise.resolve([])),
-    [canReadAttributes],
-  );
+  const loaded = useQuery(async () => {
+    const [definitions, meta] = await Promise.all([
+      canReadAttributes ? contactsApi.listAttributes() : Promise.resolve([]),
+      contactsMeta.get(),
+    ]);
+    return { definitions, meta };
+  }, [canReadAttributes]);
   const title = props.contact ? t('contacts.form.editTitle') : t('contacts.form.createTitle');
   return (
-    <ResourceGate resource={definitions} modal={{ title, onClose: props.onClose }}>
-      {(defs) => <Form {...props} definitions={defs} title={title} />}
+    <ResourceGate resource={loaded} modal={{ title, onClose: props.onClose }}>
+      {(data) => <Form {...props} definitions={data.definitions} meta={data.meta} title={title} />}
     </ResourceGate>
   );
 }
@@ -60,10 +64,15 @@ export function ContactForm(props: ContactFormProps) {
 function Form({
   contact,
   definitions,
+  meta,
   title,
   onClose,
   onSaved,
-}: ContactFormProps & { definitions: AttributeDefinition[]; title: string }) {
+}: ContactFormProps & {
+  definitions: AttributeDefinition[];
+  meta: ContactsMeta;
+  title: string;
+}) {
   const [email, setEmail] = useState('');
   const [firstName, setFirstName] = useState(contact?.first_name ?? '');
   const [lastName, setLastName] = useState(contact?.last_name ?? '');
@@ -76,7 +85,9 @@ function Form({
     ),
   );
   const [consentOn, setConsentOn] = useState(false);
-  const [consentMethod, setConsentMethod] = useState<ConsentApiMethod>('form');
+  const [consentMethod, setConsentMethod] = useState<ConsentApiMethod | ''>(
+    meta.api_consent_methods[0] ?? '',
+  );
   const [consentSource, setConsentSource] = useState('');
   const [errors, setErrors] = useState<Record<string, string | undefined>>({});
   const timezones = useMemo(browserTimezones, []);
@@ -102,6 +113,7 @@ function Form({
       email: contact ? undefined : (validateField(email, rules.required, rules.email) ?? undefined),
       consentSource:
         !contact && consentOn && !consentSource.trim() ? t('validation.required') : undefined,
+      consentMethod: !contact && consentOn && !consentMethod ? t('validation.required') : undefined,
     };
     setErrors(next);
     if (Object.values(next).some(Boolean)) return;
@@ -120,9 +132,10 @@ function Form({
         timezone: timezone.trim() || undefined,
         tags: tags.length ? tags : undefined,
         attributes: Object.keys(attributes).length ? attributes : undefined,
-        consent: consentOn
-          ? { status: 'granted', method: consentMethod, source: consentSource.trim() }
-          : undefined,
+        consent:
+          consentOn && consentMethod
+            ? { status: 'granted', method: consentMethod, source: consentSource.trim() }
+            : undefined,
       });
       return;
     }
@@ -262,10 +275,17 @@ function Form({
           />
           {consentOn ? (
             <div className="cf-form__row">
-              <FormField label={t('contacts.consent.method')} htmlFor="contact-consent-method">
+              <FormField
+                label={t('contacts.consent.method')}
+                htmlFor="contact-consent-method"
+                required
+                error={errors.consentMethod}
+              >
                 <Select
                   id="contact-consent-method"
-                  options={CONSENT_API_METHODS.map((m) => ({
+                  placeholder={t('common.select')}
+                  invalid={Boolean(errors.consentMethod)}
+                  options={meta.api_consent_methods.map((m) => ({
                     value: m,
                     label: tEnum('contacts.consentMethod', m),
                   }))}

@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import {
-  SIEVE_SCRIPT_MAX_BYTES,
+  directoryMeta,
   mailDirectoryApi,
   type Mailbox,
   type MailboxSieve,
@@ -13,6 +13,7 @@ import { PERMISSIONS } from '@/access/permissions';
 import { useAccess } from '@/access/useAccess';
 import { useAction } from '@/hooks/useAction';
 import { useQuery } from '@/hooks/useQuery';
+import { useResource } from '@/hooks/useResource';
 import {
   Alert,
   Button,
@@ -56,15 +57,23 @@ export function SieveTab({ mailbox }: { mailbox: Mailbox }) {
     async () => (await mailDirectoryApi.getSieve(mailbox.id)).data,
     [mailbox.id],
   );
+  const meta = useResource(directoryMeta);
 
-  if (sieve.error) {
+  const failed = sieve.error ?? meta.error;
+  if (failed) {
     return (
       <Card title={t('sieve.title')}>
-        <ErrorState error={sieve.error} onRetry={sieve.reload} />
+        <ErrorState
+          error={failed}
+          onRetry={() => {
+            sieve.reload();
+            meta.reload();
+          }}
+        />
       </Card>
     );
   }
-  if (!sieve.data) {
+  if (!sieve.data || !meta.data) {
     return (
       <Card title={t('sieve.title')}>
         <Skeleton lines={8} />
@@ -72,16 +81,26 @@ export function SieveTab({ mailbox }: { mailbox: Mailbox }) {
     );
   }
   const key = `${sieve.data.prefilter?.updated_at ?? ''}|${sieve.data.postfilter?.updated_at ?? ''}`;
-  return <SieveForm key={key} mailbox={mailbox} initial={sieve.data} onSaved={sieve.setData} />;
+  return (
+    <SieveForm
+      key={key}
+      mailbox={mailbox}
+      initial={sieve.data}
+      maxBytes={meta.data.sieve.script_max_bytes}
+      onSaved={sieve.setData}
+    />
+  );
 }
 
 function SieveForm({
   mailbox,
   initial,
+  maxBytes,
   onSaved,
 }: {
   mailbox: Mailbox;
   initial: MailboxSieve;
+  maxBytes: number;
   onSaved: (next: MailboxSieve) => void;
 }) {
   const toast = useToast();
@@ -102,10 +121,10 @@ function SieveForm({
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
-    const tooLarge = t('sieve.tooLarge', { kib: SIEVE_SCRIPT_MAX_BYTES / 1024 });
+    const tooLarge = t('sieve.tooLarge', { kib: maxBytes / 1024 });
     const next = {
-      prefilter: byteLength(prefilter.script) > SIEVE_SCRIPT_MAX_BYTES ? tooLarge : undefined,
-      postfilter: byteLength(postfilter.script) > SIEVE_SCRIPT_MAX_BYTES ? tooLarge : undefined,
+      prefilter: byteLength(prefilter.script) > maxBytes ? tooLarge : undefined,
+      postfilter: byteLength(postfilter.script) > maxBytes ? tooLarge : undefined,
     };
     setErrors(next);
     if (next.prefilter || next.postfilter) return;

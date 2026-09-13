@@ -241,11 +241,11 @@ func TestAjustesDOIValidanLaPlantilla(t *testing.T) {
 	tpl := uuid.New()
 	in := domain.DOISettings{Enabled: true, TemplateID: &tpl, FromEmail: "hola@shop.example.com"}
 
-	f.templates.Kind = kindMarketing
+	f.templates.Kind = KindMarketing
 	if _, err := f.uc.UpdateDOISettings(ctx, f.tenant, in, &f.user); !errors.Is(err, domain.ErrTemplateNotTransactional) {
 		t.Fatalf("plantilla de marketing: %v", err)
 	}
-	f.templates.Kind = kindTransactional
+	f.templates.Kind = KindTransactional
 	f.templates.OmitConfirm = true
 	if _, err := f.uc.UpdateDOISettings(ctx, f.tenant, in, &f.user); !errors.Is(err, domain.ErrTemplateMissingConfirmURL) {
 		t.Fatalf("sin confirm_url: %v", err)
@@ -255,7 +255,7 @@ func TestAjustesDOIValidanLaPlantilla(t *testing.T) {
 	if _, err := f.uc.UpdateDOISettings(ctx, f.tenant, in, &f.user); !errors.Is(err, domain.ErrTemplateKindUnknown) {
 		t.Fatalf("sin tipo se falla cerrado: %v", err)
 	}
-	f.templates.Kind = kindTransactional
+	f.templates.Kind = KindTransactional
 	f.templates.Err = domain.ErrTemplateVariables
 	if _, err := f.uc.UpdateDOISettings(ctx, f.tenant, in, &f.user); !errors.Is(err, domain.ErrTemplateVariables) {
 		t.Fatalf("variables que no se proporcionan: %v", err)

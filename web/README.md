@@ -109,15 +109,16 @@ src/
 
 ## Marketing, plan y plataforma
 
-| Menu                                | Ruta                                                                        | Modulo o rol     | API                                |
-| ----------------------------------- | --------------------------------------------------------------------------- | ---------------- | ---------------------------------- |
-| Contactos (listas, atributos, CSV)  | `/marketing/contacts`, `/marketing/contacts/:id`, `/marketing/lists/:id`    | `contacts`       | `/contacts/*`                      |
-| Segmentos                           | `/marketing/segments`, `/marketing/segments/new`, `/marketing/segments/:id` | `segments`       | `/segments/*`                      |
-| Campanas                            | `/marketing/campaigns`, `/marketing/campaigns/:id`                          | `campaigns`      | `/campaigns/*`                     |
-| Analitica                           | `/marketing/analytics`                                                      | `analytics`      | `/analytics/*`                     |
-| Plan y consumo                      | `/billing`                                                                  | `billing`        | `/billing/subscription`, `/usage`  |
-| Planes y suscripciones (plataforma) | `/platform/billing`                                                         | rol `superadmin` | `/billing/plans`, `/subscriptions` |
-| Reputacion de empresas (plataforma) | `/platform/reputation`                                                      | rol `superadmin` | `/reputation/tenants/*`            |
+| Menu                                    | Ruta                                                                                                                    | Modulo o rol     | API                                |
+| --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- | ---------------- | ---------------------------------- |
+| Contactos (listas, atributos, CSV)      | `/marketing/contacts`, `/marketing/contacts/:id`, `/marketing/lists/:id`                                                | `contacts`       | `/contacts/*`                      |
+| Segmentos                               | `/marketing/segments`, `/marketing/segments/new`, `/marketing/segments/:id`                                             | `segments`       | `/segments/*`                      |
+| Campanas                                | `/marketing/campaigns`, `/marketing/campaigns/:id`                                                                      | `campaigns`      | `/campaigns/*`                     |
+| Automatizaciones (flujos, doble opt-in) | `/marketing/automations`, `/marketing/automations/new`, `/marketing/automations/:id`, `/marketing/automations/runs/:id` | `automations`    | `/automations/*`                   |
+| Analitica                               | `/marketing/analytics`                                                                                                  | `analytics`      | `/analytics/*`                     |
+| Plan y consumo                          | `/billing`                                                                                                              | `billing`        | `/billing/subscription`, `/usage`  |
+| Planes y suscripciones (plataforma)     | `/platform/billing`                                                                                                     | rol `superadmin` | `/billing/plans`, `/subscriptions` |
+| Reputacion de empresas (plataforma)     | `/platform/reputation`                                                                                                  | rol `superadmin` | `/reputation/tenants/*`            |
 
 Las dos pantallas de plataforma se gatean por rol del sistema y no por modulo: billing
 `plans`/`subscriptions` y reputation `tenants` tienen alcance plataforma y el servicio exige
@@ -133,11 +134,21 @@ Catalogos del API en lugar de constantes copiadas:
 - `GET /segments/meta`: campos, operadores con su aridad, valores de los enumerados,
   atributos declarados de la empresa y limites del DSL. El editor de segmentos se construye
   solo con esto.
+- `GET /contacts/meta`: estados de contacto y de consentimiento, lo que la empresa puede
+  registrar por API, tipos de atributo y topes de importacion y de pagina.
+- `GET /campaigns/meta`: estados con las acciones que admite cada uno (la pantalla no tiene
+  reglas propias de transicion), destinatarios de prueba y tamano de lote efectivo.
+- `GET /automations/meta`: estados con sus acciones, disparadores, tipos de paso, unidades y
+  topes de espera, tipo de plantilla de cada uso y tope efectivo del doble opt-in.
+- `GET /billing/meta`: recursos con su tipo (el alta de un plan lleva un limite por
+  recurso), periodos, estados y el valor de included que significa sin limite.
+- `GET /reputation/meta`: estados de menos a mas grave, clases de envio, motivos y topes.
+- `GET /mail-directory/meta`: estados activos, politicas TLS, tipos de mapa BCC, longitudes
+  de contrasena y de nombre, tamano de sieve y pagina maxima del directorio.
 
-Se leen con `cachedResource` (una peticion por sesion) y `useResource`. Las listas que aun
-son espejo del servicio (estados de contacto y campana, recursos y estados de billing,
-estados de reputacion, clases de envio) llevan un comentario que lo dice y el catalogo que
-las sustituira.
+Se leen con `cachedResource` (una peticion por sesion) y `useResource`. La unica lista que
+queda copiada es la de clases de envio del filtro de analitica (`api/sendClass.ts`):
+analytics no publica catalogo y el de reputation pertenece a otro modulo de permisos.
 
 Reglas de la interfaz que no se relajan:
 
@@ -158,5 +169,9 @@ Reglas de la interfaz que no se relajan:
 - Las contrasenas de aplicacion se muestran una sola vez, en un dialogo que no se cierra
   por accidente, y se descartan del estado al cerrarlo. Las de relayhosts y transportes
   son de solo escritura: la interfaz solo sabe si hay una guardada (`has_password`).
-- Los listados de buzones aun no filtran en servidor: la pantalla pide la pagina mas
-  grande que admite el API y filtra esa pagina.
+- Buzones y dominios del directorio se buscan en el servidor (`?search`, y `?domain` en
+  buzones). Los selectores de dominio (`pages/shared/DirectoryDomainPicker.tsx`) piden la
+  pagina maxima que publica `GET /mail-directory/meta` y avisan si hay mas coincidencias; sin
+  permiso para leer el directorio, el dominio se escribe a mano.
+- El historial del doble opt-in no muestra ni pide el enlace de confirmacion: es una
+  credencial y el servicio no lo guarda.

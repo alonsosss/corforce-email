@@ -210,14 +210,11 @@ func (p Patch) empty() bool {
 // que recibieron una version concreta de una plantilla concreta, asi que la audiencia y
 // la plantilla quedan fijas hasta el final.
 func (c *Campaign) ApplyPatch(p Patch) error {
-	switch c.Status {
-	case StatusDraft:
-	case StatusPaused:
-		if p.TemplateID != nil || p.Audience != nil {
-			return ErrLockedWhilePaused
-		}
-	default:
+	if !c.Editable() {
 		return ErrNotEditable
+	}
+	if c.ContentLocked() && (p.TemplateID != nil || p.Audience != nil) {
+		return ErrLockedWhilePaused
 	}
 	if p.empty() {
 		return ErrNothingToUpdate
@@ -335,6 +332,30 @@ func validVersion(version int) error {
 	return nil
 }
 
+// Editable dice si la campana admite un PATCH.
+func (c *Campaign) Editable() bool {
+	return c.Status == StatusDraft || c.Status == StatusPaused
+}
+
+// ContentLocked dice si plantilla y audiencia estan fijas: en pausa ya hay destinatarios
+// que recibieron una version concreta de una plantilla concreta.
+func (c *Campaign) ContentLocked() bool {
+	return c.Status == StatusPaused
+}
+
+// CanPause, CanResume y CanCancel son las transiciones que admite el estado actual.
+func (c *Campaign) CanPause() bool {
+	return c.Status == StatusSending || c.Status == StatusScheduled
+}
+
+func (c *Campaign) CanResume() bool {
+	return c.Status == StatusPaused
+}
+
+func (c *Campaign) CanCancel() bool {
+	return c.Status == StatusScheduled || c.Status == StatusSending || c.Status == StatusPaused
+}
+
 // CanSchedule dice si la campana admite programarse (o reprogramarse) ahora.
 func (c *Campaign) CanSchedule() bool {
 	return c.Status == StatusDraft || c.Status == StatusScheduled
@@ -391,7 +412,7 @@ func (c *Campaign) Start(version int, now time.Time) error {
 // Pause detiene una campana en envio o retiene una programada. El motivo queda para
 // quien la reanude: una restriccion de reputacion no se levanta sola.
 func (c *Campaign) Pause(reason string) error {
-	if c.Status != StatusSending && c.Status != StatusScheduled {
+	if !c.CanPause() {
 		return TransitionError(c.Status, StatusPaused)
 	}
 	c.Status = StatusPaused
@@ -403,7 +424,7 @@ func (c *Campaign) Pause(reason string) error {
 // Resume la devuelve a donde estaba: a programada si nunca empezo y su fecha sigue en
 // el futuro, a envio en otro caso. firstStart indica que es la primera vez que envia.
 func (c *Campaign) Resume(now time.Time) (firstStart bool, err error) {
-	if c.Status != StatusPaused {
+	if !c.CanResume() {
 		return false, TransitionError(c.Status, StatusSending)
 	}
 	c.PauseReason = ""
@@ -421,9 +442,7 @@ func (c *Campaign) Resume(now time.Time) (firstStart bool, err error) {
 }
 
 func (c *Campaign) Cancel() error {
-	switch c.Status {
-	case StatusScheduled, StatusSending, StatusPaused:
-	default:
+	if !c.CanCancel() {
 		return TransitionError(c.Status, StatusCancelled)
 	}
 	c.Status = StatusCancelled

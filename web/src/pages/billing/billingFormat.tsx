@@ -1,4 +1,4 @@
-import { UNLIMITED, type BillingResource, type UsageReport } from '@/api/billing';
+import type { BillingResource, UsageReport } from '@/api/billing';
 import { Badge, DataTable, Meter, type Column } from '@/design/components';
 import { barRatio, formatDecimalText, formatPercentText } from '@/lib/decimal';
 import { formatDate } from '@/lib/format';
@@ -11,8 +11,13 @@ export function formatQuantity(resource: BillingResource, n: number): string {
     : new Intl.NumberFormat(getLocale()).format(n);
 }
 
-export function formatIncluded(resource: BillingResource, included: number): string {
-  return included === UNLIMITED ? t('billing.unlimited') : formatQuantity(resource, included);
+/** unlimited: el included que significa sin limite (GET /billing/meta). */
+export function formatIncluded(
+  resource: BillingResource,
+  included: number,
+  unlimited: number,
+): string {
+  return included === unlimited ? t('billing.unlimited') : formatQuantity(resource, included);
 }
 
 /** Importe del API ("49.00") con su moneda, sin convertirlo a numero. */
@@ -27,7 +32,7 @@ export function formatPeriodDay(day: string): string {
 
 type Line = UsageReport['resources'][number];
 
-export function UsageTable({ report }: { report: UsageReport }) {
+export function UsageTable({ report, unlimited }: { report: UsageReport; unlimited: number }) {
   const columns: Column<Line>[] = [
     {
       key: 'resource',
@@ -47,7 +52,7 @@ export function UsageTable({ report }: { report: UsageReport }) {
           <span className="cf-text-sm">
             {t('billing.usedOf', {
               used: formatQuantity(l.resource, l.used),
-              included: formatIncluded(l.resource, l.included),
+              included: formatIncluded(l.resource, l.included, unlimited),
             })}
           </span>
           {l.percent !== null ? (
@@ -69,7 +74,7 @@ export function UsageTable({ report }: { report: UsageReport }) {
       key: 'limit',
       header: t('billing.column.limitKind'),
       render: (l) =>
-        l.included === UNLIMITED ? (
+        l.included === unlimited ? (
           <Badge>{t('billing.unlimited')}</Badge>
         ) : l.hard_limit ? (
           <Badge tone="warning">{t('billing.hardLimit')}</Badge>

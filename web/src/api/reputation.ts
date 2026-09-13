@@ -1,6 +1,7 @@
 import { api } from './client';
 import { endpoints } from './endpoints';
 import { fetchList, fetchPage } from './paging';
+import { cachedResource } from './resource';
 import type { SendClass } from './sendClass';
 import type { Page, PageQuery } from './types';
 
@@ -9,14 +10,18 @@ import type { Page, PageQuery } from './types';
 
 export type ReputationState = 'ok' | 'warning' | 'restricted' | 'suspended';
 
-// Espejo de domain.States() (de menos a mas grave) para el filtro de plataforma.
-// reputation no publica aun su catalogo; cuando exista se toma de alli.
-export const REPUTATION_STATES: readonly ReputationState[] = [
-  'ok',
-  'warning',
-  'restricted',
-  'suspended',
-];
+/**
+ * GET /reputation/meta: estados de menos a mas grave, clases de envio, motivos y topes.
+ * Lo lee la empresa (reputation/status/read) y el superadmin por su rol.
+ */
+export interface ReputationMeta {
+  states: ReputationState[];
+  classes: SendClass[];
+  evaluation_reasons: string[];
+  denial_reasons: string[];
+  limits: { max_reason_length: number; max_authorize_count: number };
+  pagination: { default_page_size: number; max_page_size: number };
+}
 
 export interface RateUsage {
   limit: number;
@@ -133,4 +138,9 @@ export const reputationApi = {
     }),
   release: (tenantId: string, sendClass: SendClass) =>
     api.post<StateRecord>(endpoints.reputation.release(tenantId, sendClass)),
+
+  meta: async (): Promise<ReputationMeta> =>
+    (await api.get<ReputationMeta>(endpoints.reputation.meta)).data,
 };
+
+export const reputationMeta = cachedResource(reputationApi.meta);

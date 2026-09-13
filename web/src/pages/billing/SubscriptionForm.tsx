@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import {
-  SUBSCRIPTION_STATUSES,
   billingApi,
+  billingMeta,
   type Plan,
   type PutSubscriptionRequest,
   type Subscription,
@@ -9,6 +9,7 @@ import {
 } from '@/api/billing';
 import type { Tenant } from '@/api/organization';
 import { useAction } from '@/hooks/useAction';
+import { useResource } from '@/hooks/useResource';
 import { FormField, Input, Select } from '@/design/components';
 import { isPast, toDatetimeLocal } from '@/lib/datetime';
 import { localToRfc3339 } from '@/lib/format';
@@ -37,6 +38,7 @@ export function SubscriptionForm({
   const [tenant, setTenant] = useState(tenantId ?? '');
   const [planCode, setPlanCode] = useState(subscription?.plan_code ?? '');
   const [status, setStatus] = useState<SubscriptionStatus | ''>('');
+  const meta = useResource(billingMeta);
   const initialTrial = toDatetimeLocal(subscription?.trial_ends_at);
   const initialCancel = toDatetimeLocal(subscription?.cancel_at);
   const [trial, setTrial] = useState(initialTrial);
@@ -139,7 +141,7 @@ export function SubscriptionForm({
         <Select
           id="subscription-status"
           placeholder={t('billing.subscriptions.noStatusChange')}
-          options={SUBSCRIPTION_STATUSES.map((s) => ({
+          options={(meta.data?.subscription_statuses ?? []).map(({ status: s }) => ({
             value: s,
             label: tEnum('billing.subscriptionStatus', s),
           }))}

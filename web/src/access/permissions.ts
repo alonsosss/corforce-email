@@ -186,6 +186,18 @@ export const PERMISSIONS = {
   campaignStats: {
     read: [MODULES.campaigns, 'stats', 'read'],
   },
+  // 019: activate cubre activar, pausar y archivar; settings, el doble opt-in y su historial.
+  automationWorkflows: {
+    ...crud(MODULES.automations, 'workflows'),
+    activate: [MODULES.automations, 'workflows', 'activate'],
+  },
+  automationRuns: {
+    read: [MODULES.automations, 'runs', 'read'],
+  },
+  automationSettings: {
+    read: [MODULES.automations, 'settings', 'read'],
+    update: [MODULES.automations, 'settings', 'update'],
+  },
   analyticsReports: {
     read: [MODULES.analytics, 'reports', 'read'],
   },

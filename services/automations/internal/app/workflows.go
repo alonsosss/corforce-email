@@ -70,7 +70,7 @@ func (uc *UseCase) ActivateWorkflow(ctx context.Context, tenantID, id uuid.UUID)
 	if err != nil {
 		return nil, err
 	}
-	if w.Status != domain.StatusDraft && w.Status != domain.StatusPaused {
+	if !w.CanActivate() {
 		return nil, domain.TransitionError(w.Status, domain.StatusActive)
 	}
 	versions := make(map[int]int)
@@ -128,7 +128,7 @@ func (uc *UseCase) checkMarketingTemplate(ctx context.Context, tenantID uuid.UUI
 		return 0, err
 	}
 	switch rendered.Kind {
-	case kindMarketing:
+	case KindMarketing:
 	case "":
 		return 0, domain.ErrTemplateKindUnknown
 	default:
@@ -144,7 +144,7 @@ func (uc *UseCase) checkMarketingTemplate(ctx context.Context, tenantID uuid.UUI
 func (uc *UseCase) PauseWorkflow(ctx context.Context, tenantID, id uuid.UUID, reason string) (*domain.Workflow, error) {
 	reason = strings.TrimSpace(reason)
 	if reason == "" {
-		reason = "manual"
+		reason = domain.PauseReasonManual
 	}
 	var out *domain.Workflow
 	err := uc.tx.Transact(ctx, func(ctx context.Context) error {

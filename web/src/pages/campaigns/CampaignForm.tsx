@@ -18,11 +18,12 @@ import { FormModal } from '@/pages/shared/FormModal';
 import { ResourceGate } from '@/pages/shared/ResourceGate';
 import { AudiencePicker } from './AudiencePicker';
 import { loadCampaignOptions, type CampaignOptions } from './campaignOptions';
-import { campaignRules } from './campaignRules';
 
 export interface CampaignFormProps {
   /** null en el alta. */
   campaign: Campaign | null;
+  /** Plantilla y audiencia fijas (content_locked del estado en GET /campaigns/meta). */
+  contentLocked?: boolean;
   onClose: () => void;
   onSaved: (campaign: Campaign) => void;
 }
@@ -60,6 +61,7 @@ export function CampaignForm(props: CampaignFormProps) {
 
 function Form({
   campaign,
+  contentLocked = false,
   options,
   title,
   onClose,
@@ -73,7 +75,7 @@ function Form({
   const [replyTo, setReplyTo] = useState(campaign?.reply_to ?? '');
   const [audience, setAudience] = useState<Audience>(campaign?.audience ?? EMPTY_AUDIENCE);
   const [errors, setErrors] = useState<Record<string, string | undefined>>({});
-  const locked = campaign ? campaignRules.contentLocked(campaign.status) : false;
+  const locked = campaign !== null && contentLocked;
 
   const action = useAction(async (body: CreateCampaignRequest | UpdateCampaignRequest | null) => {
     if (!campaign) {

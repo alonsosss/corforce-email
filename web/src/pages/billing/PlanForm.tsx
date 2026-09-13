@@ -1,17 +1,20 @@
 import { useState } from 'react';
 import {
-  BILLING_PERIODS,
   billingApi,
+  billingMeta,
+  type BillingMeta,
   type BillingPeriod,
   type Plan,
   type UpdatePlanRequest,
 } from '@/api/billing';
 import { useAction } from '@/hooks/useAction';
+import { useResource } from '@/hooks/useResource';
 import { Checkbox, FormField, Input, Select, Textarea } from '@/design/components';
 import { changed, isEmptyPatch } from '@/lib/patch';
 import { rules, validateField } from '@/lib/validate';
 import { t, tEnum } from '@/i18n';
 import { FormModal } from '@/pages/shared/FormModal';
+import { ResourceGate } from '@/pages/shared/ResourceGate';
 import {
   emptyPlanDraft,
   isAmount,
@@ -22,18 +25,26 @@ import {
   type PlanDraft,
 } from './planDraft';
 
-export function PlanForm({
-  plan,
-  onClose,
-  onSaved,
-}: {
+interface PlanFormProps {
   /** null en el alta. */
   plan: Plan | null;
   onClose: () => void;
   onSaved: () => void;
-}) {
+}
+
+export function PlanForm(props: PlanFormProps) {
+  const meta = useResource(billingMeta);
+  const title = props.plan ? t('billing.plans.editTitle') : t('billing.plans.createTitle');
+  return (
+    <ResourceGate resource={meta} modal={{ title, onClose: props.onClose }}>
+      {(catalog) => <PlanFormBody {...props} meta={catalog} />}
+    </ResourceGate>
+  );
+}
+
+function PlanFormBody({ plan, onClose, onSaved, meta }: PlanFormProps & { meta: BillingMeta }) {
   const [draft, setDraft] = useState<PlanDraft>(() =>
-    plan ? planToDraft(plan) : emptyPlanDraft(),
+    plan ? planToDraft(plan, meta) : emptyPlanDraft(meta),
   );
   const [errors, setErrors] = useState<Record<string, string | undefined>>({});
   const set = (patch: Partial<PlanDraft>) => setDraft((d) => ({ ...d, ...patch }));
@@ -52,7 +63,7 @@ export function PlanForm({
         currency: draft.currency.trim(),
         base_price: draft.basePrice.trim(),
         billing_period: draft.billingPeriod as BillingPeriod,
-        limits: limitsFromDraft(draft.limits).limits,
+        limits: limitsFromDraft(draft.limits, meta.unlimited).limits,
       });
     } else if (plan && body) {
       await billingApi.updatePlan(plan.id, body);
@@ -61,11 +72,21 @@ export function PlanForm({
   });
 
   const submit = async () => {
-    const limits = limitsFromDraft(draft.limits);
+    const limits = limitsFromDraft(draft.limits, meta.unlimited);
     const next: Record<string, string | undefined> = {
       ...limits.errors,
       code: plan ? undefined : (validateField(draft.code, rules.required) ?? undefined),
-      name: validateField(draft.name, rules.required) ?? undefined,
+      name:
+        validateField(
+          draft.name,
+          rules.required,
+          rules.maxLength(meta.limits.max_plan_name_length),
+        ) ?? undefined,
+      description:
+        validateField(
+          draft.description,
+          rules.maxLength(meta.limits.max_plan_description_length),
+        ) ?? undefined,
       currency: validateField(draft.currency, rules.required) ?? undefined,
       basePrice: !isAmount(draft.basePrice) ? t('billing.form.amountInvalid') : undefined,
       billingPeriod: draft.billingPeriod ? undefined : t('validation.required'),
@@ -131,7 +152,11 @@ export function PlanForm({
           />
         </FormField>
       </div>
-      <FormField label={t('common.description')} htmlFor="plan-description">
+      <FormField
+        label={t('common.description')}
+        htmlFor="plan-description"
+        error={errors.description}
+      >
         <Textarea
           id="plan-description"
           rows={2}
@@ -180,7 +205,7 @@ export function PlanForm({
           <Select
             id="plan-period"
             placeholder={t('common.select')}
-            options={BILLING_PERIODS.map((p) => ({
+            options={meta.billing_periods.map(({ period: p }) => ({
               value: p,
               label: tEnum('billing.billingPeriod', p),
             }))}

@@ -42,6 +42,9 @@ func (h *Handler) perm(resource, action string) func(http.Handler) http.Handler 
 func (h *Handler) PublicRoutes() http.Handler {
 	r := chi.NewRouter()
 	r.Get("/health", h.Health)
+	// El catalogo es lectura de la empresa: cuelga de subscription/read y no del grupo del
+	// superadmin, que lo lee igual por su rol.
+	r.With(h.perm("subscription", "read")).Get("/meta", h.Meta)
 	r.With(h.perm("subscription", "read")).Get("/subscription", h.GetSubscription)
 	r.With(h.perm("usage", "read")).Get("/usage", h.GetUsage)
 

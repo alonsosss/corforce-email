@@ -19,10 +19,14 @@ const (
 	PeriodYearly  BillingPeriod = "yearly"
 )
 
+// BillingPeriods son los periodos de facturacion de un plan.
+func BillingPeriods() []BillingPeriod { return []BillingPeriod{PeriodMonthly, PeriodYearly} }
+
 func ParseBillingPeriod(s string) (BillingPeriod, error) {
-	switch BillingPeriod(s) {
-	case PeriodMonthly, PeriodYearly:
-		return BillingPeriod(s), nil
+	for _, p := range BillingPeriods() {
+		if BillingPeriod(s) == p {
+			return p, nil
+		}
 	}
 	return "", fmt.Errorf("%w: billing_period debe ser monthly o yearly", ErrInvalidPlan)
 }
@@ -42,10 +46,14 @@ const (
 	PlanRetired PlanStatus = "retired"
 )
 
+// PlanStatuses son los estados de un plan del catalogo.
+func PlanStatuses() []PlanStatus { return []PlanStatus{PlanActive, PlanRetired} }
+
 func ParsePlanStatus(s string) (PlanStatus, error) {
-	switch PlanStatus(s) {
-	case PlanActive, PlanRetired:
-		return PlanStatus(s), nil
+	for _, st := range PlanStatuses() {
+		if PlanStatus(s) == st {
+			return st, nil
+		}
 	}
 	return "", fmt.Errorf("%w: status debe ser active o retired", ErrInvalidPlan)
 }

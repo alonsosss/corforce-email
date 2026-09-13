@@ -102,6 +102,9 @@ export const endpoints = {
     verify: (id: string) => `${API_PREFIX}/domains/${seg(id)}/verify`,
     rotateDkim: (id: string) => `${API_PREFIX}/domains/${seg(id)}/rotate-dkim`,
   },
+  mailDirectory: {
+    meta: `${API_PREFIX}/mail-directory/meta`,
+  },
   mailDomains: {
     ...collectionOf('/mail-domains'),
     aliasDomains: collectionOf('/mail-domains/alias-domains'),
@@ -168,6 +171,7 @@ export const endpoints = {
   },
   contacts: {
     ...collectionOf('/contacts'),
+    meta: `${API_PREFIX}/contacts/meta`,
     export: (id: string) => `${API_PREFIX}/contacts/${seg(id)}/export`,
     consents: (id: string) => `${API_PREFIX}/contacts/${seg(id)}/consents`,
     consent: (id: string) => `${API_PREFIX}/contacts/${seg(id)}/consent`,
@@ -187,6 +191,7 @@ export const endpoints = {
   },
   campaigns: {
     ...collectionOf('/campaigns'),
+    meta: `${API_PREFIX}/campaigns/meta`,
     schedule: (id: string) => `${API_PREFIX}/campaigns/${seg(id)}/schedule`,
     start: (id: string) => `${API_PREFIX}/campaigns/${seg(id)}/start`,
     pause: (id: string) => `${API_PREFIX}/campaigns/${seg(id)}/pause`,
@@ -195,6 +200,17 @@ export const endpoints = {
     test: (id: string) => `${API_PREFIX}/campaigns/${seg(id)}/test`,
     batches: (id: string) => `${API_PREFIX}/campaigns/${seg(id)}/batches`,
   },
+  automations: {
+    meta: `${API_PREFIX}/automations/meta`,
+    workflows: collectionOf('/automations/workflows'),
+    activate: (id: string) => `${API_PREFIX}/automations/workflows/${seg(id)}/activate`,
+    pause: (id: string) => `${API_PREFIX}/automations/workflows/${seg(id)}/pause`,
+    archive: (id: string) => `${API_PREFIX}/automations/workflows/${seg(id)}/archive`,
+    runs: (id: string) => `${API_PREFIX}/automations/workflows/${seg(id)}/runs`,
+    run: (id: string) => `${API_PREFIX}/automations/runs/${seg(id)}`,
+    doubleOptIn: `${API_PREFIX}/automations/double-opt-in`,
+    deliveries: `${API_PREFIX}/automations/double-opt-in/deliveries`,
+  },
   analytics: {
     overview: `${API_PREFIX}/analytics/overview`,
     timeseries: `${API_PREFIX}/analytics/timeseries`,
@@ -202,6 +218,7 @@ export const endpoints = {
     domains: `${API_PREFIX}/analytics/domains`,
   },
   billing: {
+    meta: `${API_PREFIX}/billing/meta`,
     subscription: `${API_PREFIX}/billing/subscription`,
     usage: `${API_PREFIX}/billing/usage`,
     plans: collectionOf('/billing/plans'),
@@ -210,6 +227,7 @@ export const endpoints = {
     tenantUsage: (tenantId: string) => `${API_PREFIX}/billing/usage/${seg(tenantId)}`,
   },
   reputation: {
+    meta: `${API_PREFIX}/reputation/meta`,
     status: `${API_PREFIX}/reputation/status`,
     history: `${API_PREFIX}/reputation/history`,
     tenants: `${API_PREFIX}/reputation/tenants`,

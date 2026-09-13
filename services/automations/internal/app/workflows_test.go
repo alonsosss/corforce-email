@@ -42,11 +42,11 @@ func TestActivarFijaLaVersionYExigeMarketing(t *testing.T) {
 	f := newFixture(t, Config{})
 	w := f.draft(t, "A", domain.Step{Type: domain.StepWait, Duration: "1h"}, sendEmail())
 
-	f.templates.Kind = kindTransactional
+	f.templates.Kind = KindTransactional
 	if _, err := f.uc.ActivateWorkflow(ctx, f.tenant, w.ID); !errors.Is(err, domain.ErrTemplateNotMarketing) {
 		t.Fatalf("una plantilla transaccional no sirve: %v", err)
 	}
-	f.templates.Kind = kindMarketing
+	f.templates.Kind = KindMarketing
 	f.templates.Err = domain.ErrTemplateVariables
 	if _, err := f.uc.ActivateWorkflow(ctx, f.tenant, w.ID); !errors.Is(err, domain.ErrTemplateVersionRequired) {
 		t.Fatalf("sin poder renderizar hay que indicar la version: %v", err)

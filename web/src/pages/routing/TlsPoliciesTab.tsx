@@ -1,17 +1,19 @@
 import { useState } from 'react';
 import {
-  TLS_POLICIES,
+  directoryMeta,
   mailRoutingApi,
   type TlsPolicy,
   type TlsPolicyName,
 } from '@/api/mailDirectory';
 import { PERMISSIONS } from '@/access/permissions';
 import { useAction } from '@/hooks/useAction';
+import { useResource } from '@/hooks/useResource';
 import { Badge, Checkbox, FormField, Input, Select, type Column } from '@/design/components';
 import { changed, isEmptyPatch } from '@/lib/patch';
 import { rules, validateField } from '@/lib/validate';
 import { t, tEnum } from '@/i18n';
 import { FormModal } from '@/pages/shared/FormModal';
+import { ResourceGate } from '@/pages/shared/ResourceGate';
 import { ResourceTab, type ResourceFormProps } from '@/pages/shared/ResourceTab';
 import { ActiveBadge } from '@/pages/shared/StatusBadges';
 
@@ -61,7 +63,24 @@ export function TlsPoliciesTab() {
   );
 }
 
-function TlsPolicyForm({ item, onClose, onSaved }: ResourceFormProps<TlsPolicy>) {
+function TlsPolicyForm(props: ResourceFormProps<TlsPolicy>) {
+  const meta = useResource(directoryMeta);
+  const title = props.item
+    ? t('routing.tlsPolicies.editTitle')
+    : t('routing.tlsPolicies.createTitle');
+  return (
+    <ResourceGate resource={meta} modal={{ title, onClose: props.onClose }}>
+      {(rules) => <TlsPolicyFormBody {...props} policies={rules.tls_policies} />}
+    </ResourceGate>
+  );
+}
+
+function TlsPolicyFormBody({
+  item,
+  onClose,
+  onSaved,
+  policies,
+}: ResourceFormProps<TlsPolicy> & { policies: readonly TlsPolicyName[] }) {
   const [dest, setDest] = useState(item?.dest ?? '');
   const [policy, setPolicy] = useState<TlsPolicyName | ''>(item?.policy ?? '');
   const [parameters, setParameters] = useState(item?.parameters ?? '');
@@ -139,7 +158,7 @@ function TlsPolicyForm({ item, onClose, onSaved }: ResourceFormProps<TlsPolicy>)
         <Select
           id="tls-policy"
           placeholder={t('common.select')}
-          options={TLS_POLICIES.map((p) => ({ value: p, label: p }))}
+          options={policies.map((p) => ({ value: p, label: p }))}
           value={policy}
           onChange={(e) => setPolicy(e.target.value as TlsPolicyName | '')}
           invalid={Boolean(errors.policy)}

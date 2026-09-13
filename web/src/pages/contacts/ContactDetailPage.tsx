@@ -1,20 +1,22 @@
 import { useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
-  CONSENT_API_METHODS,
   contactsApi,
+  contactsMeta,
   type ConsentApiMethod,
   type ConsentGrantStatus,
   type Consent,
   type Contact,
   type ContactExport,
   type ContactList,
+  type ContactsMeta,
 } from '@/api/contacts';
 import { PICKER_PAGE_SIZE } from '@/api/paging';
 import { PERMISSIONS } from '@/access/permissions';
 import { useAccess } from '@/access/useAccess';
 import { useAction } from '@/hooks/useAction';
 import { useQuery } from '@/hooks/useQuery';
+import { useResource } from '@/hooks/useResource';
 import { useTabParam } from '@/hooks/useTabParam';
 import {
   Alert,
@@ -40,6 +42,7 @@ import { rules, validateField } from '@/lib/validate';
 import { getLocale, t, tEnum } from '@/i18n';
 import { paths } from '@/paths';
 import { FormModal } from '@/pages/shared/FormModal';
+import { ResourceGate } from '@/pages/shared/ResourceGate';
 import { AddToListDialog } from './AddToListDialog';
 import { attributeLabel } from './AttributeInput';
 import { ContactForm } from './ContactForm';
@@ -463,32 +466,49 @@ function ExportTab({ contact }: { contact: Contact }) {
   );
 }
 
-function RecordConsentForm({
-  contactId,
-  onClose,
-  onSaved,
-}: {
+interface RecordConsentProps {
   contactId: string;
   onClose: () => void;
   onSaved: () => void;
-}) {
-  const [status, setStatus] = useState<ConsentGrantStatus>('granted');
-  const [method, setMethod] = useState<ConsentApiMethod>('form');
+}
+
+function RecordConsentForm(props: RecordConsentProps) {
+  const meta = useResource(contactsMeta);
+  return (
+    <ResourceGate
+      resource={meta}
+      modal={{ title: t('contacts.consent.record'), onClose: props.onClose }}
+    >
+      {(catalog) => <RecordConsentBody {...props} meta={catalog} />}
+    </ResourceGate>
+  );
+}
+
+function RecordConsentBody({
+  contactId,
+  onClose,
+  onSaved,
+  meta,
+}: RecordConsentProps & { meta: ContactsMeta }) {
+  const [status, setStatus] = useState<ConsentGrantStatus | ''>(meta.api_consent_statuses[0] ?? '');
+  const [method, setMethod] = useState<ConsentApiMethod | ''>(meta.api_consent_methods[0] ?? '');
   const [source, setSource] = useState('');
   const [ip, setIp] = useState('');
   const [userAgent, setUserAgent] = useState('');
   const [error, setError] = useState<string | null>(null);
 
-  const action = useAction(async () => {
-    await contactsApi.recordConsent(contactId, {
-      status,
-      method,
-      source: source.trim(),
-      ip: ip.trim() || undefined,
-      user_agent: userAgent.trim() || undefined,
-    });
-    onSaved();
-  });
+  const action = useAction(
+    async (chosenStatus: ConsentGrantStatus, chosenMethod: ConsentApiMethod) => {
+      await contactsApi.recordConsent(contactId, {
+        status: chosenStatus,
+        method: chosenMethod,
+        source: source.trim(),
+        ip: ip.trim() || undefined,
+        user_agent: userAgent.trim() || undefined,
+      });
+      onSaved();
+    },
+  );
 
   return (
     <FormModal
@@ -501,7 +521,7 @@ function RecordConsentForm({
       onSubmit={async () => {
         const next = validateField(source, rules.required);
         setError(next);
-        if (!next) await action.run();
+        if (!next && status && method) await action.run(status, method);
       }}
     >
       <Alert tone="info">{t('contacts.consent.recordHint')}</Alert>
@@ -509,7 +529,7 @@ function RecordConsentForm({
         <FormField label={t('common.status')} htmlFor="consent-status">
           <Select
             id="consent-status"
-            options={(['granted', 'revoked'] as const).map((s) => ({
+            options={meta.api_consent_statuses.map((s) => ({
               value: s,
               label: tEnum('contacts.consentAction', s),
             }))}
@@ -520,7 +540,7 @@ function RecordConsentForm({
         <FormField label={t('contacts.consent.method')} htmlFor="consent-method">
           <Select
             id="consent-method"
-            options={CONSENT_API_METHODS.map((m) => ({
+            options={meta.api_consent_methods.map((m) => ({
               value: m,
               label: tEnum('contacts.consentMethod', m),
             }))}

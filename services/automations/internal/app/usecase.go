@@ -94,6 +94,9 @@ func New(d Deps) *UseCase {
 	}
 }
 
+// DOILimits es el tope efectivo de correos del doble opt-in por contacto.
+func (uc *UseCase) DOILimits() domain.DOILimits { return uc.cfg.DOILimits }
+
 // PruneProcessedEvents olvida los eventos de disparo ya procesados fuera de retencion.
 func (uc *UseCase) PruneProcessedEvents(ctx context.Context, tenantID uuid.UUID) (int64, error) {
 	return uc.processed.PruneProcessed(ctx, tenantID, uc.now().Add(-processedRetention))

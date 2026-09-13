@@ -2,6 +2,7 @@ import { t } from '@/i18n';
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export type FieldErrors<K extends string> = Partial<Record<K, string>>;
 
@@ -18,6 +19,7 @@ export const rules = {
     (value: string): string | null =>
       value.length <= n ? null : t('validation.maxLength', { n }),
   slug: (value: string): string | null => (SLUG.test(value) ? null : t('validation.slug')),
+  uuid: (value: string): string | null => (UUID.test(value.trim()) ? null : t('validation.uuid')),
   port: (value: string): string | null => {
     const n = Number(value);
     return Number.isInteger(n) && n >= 1 && n <= 65535 ? null : t('validation.port');

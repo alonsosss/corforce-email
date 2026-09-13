@@ -1,10 +1,11 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { DIRECTORY_MAX_PAGE_SIZE, mailDirectoryApi, type Mailbox } from '@/api/mailDirectory';
+import { directoryMeta, mailDirectoryApi, type Mailbox } from '@/api/mailDirectory';
 import { PERMISSIONS } from '@/access/permissions';
 import { useAccess } from '@/access/useAccess';
 import { usePagination } from '@/hooks/usePagination';
 import { useQuery } from '@/hooks/useQuery';
+import { useResource } from '@/hooks/useResource';
 import {
   Badge,
   Button,
@@ -12,7 +13,6 @@ import {
   DataTable,
   Input,
   PageHeader,
-  Select,
   useToast,
   type Column,
 } from '@/design/components';
@@ -21,47 +21,47 @@ import { formatDateTime } from '@/lib/format';
 import { formatQuota } from '@/lib/quota';
 import { t } from '@/i18n';
 import { paths } from '@/paths';
+import { DirectoryDomainPicker } from '@/pages/shared/DirectoryDomainPicker';
 import { ActiveStateBadge } from '@/pages/shared/StatusBadges';
 import { ProtocolBadges } from './access';
 import { MailboxCreateForm } from './MailboxCreateForm';
 
-/**
- * El listado de mail-directory aun no filtra en servidor: se pide la pagina mas grande que
- * admite el API y la busqueda y el filtro por dominio se aplican sobre esa pagina.
- */
-export function filterMailboxes(items: Mailbox[], search: string, domain: string): Mailbox[] {
-  const needle = search.trim().toLowerCase();
-  return items.filter(
-    (m) =>
-      (!domain || m.domain === domain) &&
-      (!needle ||
-        m.username.toLowerCase().includes(needle) ||
-        m.display_name.toLowerCase().includes(needle)),
-  );
-}
+const SEARCH_DEBOUNCE_MS = 300;
 
+/** Buzones de la celda con busqueda y filtro por dominio en el servidor (bajo RLS). */
 export default function MailboxesPage() {
   const navigate = useNavigate();
   const toast = useToast();
   const { can } = useAccess();
-  const pager = usePagination(DIRECTORY_MAX_PAGE_SIZE);
+  const meta = useResource(directoryMeta);
+  const pager = usePagination();
+  const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
   const [domain, setDomain] = useState('');
   const [creating, setCreating] = useState(false);
 
+  useEffect(() => {
+    const handle = window.setTimeout(() => {
+      setSearch(searchInput.trim());
+      pager.reset();
+    }, SEARCH_DEBOUNCE_MS);
+    return () => window.clearTimeout(handle);
+    // pager.reset es estable; solo el texto escrito dispara la busqueda.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchInput]);
+
   const mailboxes = useQuery(
-    () => mailDirectoryApi.listMailboxes({ page: pager.page, per_page: pager.perPage }),
-    [pager.page, pager.perPage],
+    () =>
+      mailDirectoryApi.listMailboxes({
+        page: pager.page,
+        per_page: pager.perPage,
+        search: search || undefined,
+        domain: domain.trim() || undefined,
+      }),
+    [pager.page, pager.perPage, search, domain],
   );
 
-  const items = mailboxes.data?.items;
-  const rows = useMemo(() => filterMailboxes(items ?? [], search, domain), [items, search, domain]);
-  const domainOptions = useMemo(
-    () =>
-      [...new Set((items ?? []).map((m) => m.domain))].sort().map((d) => ({ value: d, label: d })),
-    [items],
-  );
-  const filtering = Boolean(search.trim() || domain);
+  const filtering = Boolean(search || domain.trim());
 
   const columns: Column<Mailbox>[] = [
     {
@@ -131,9 +131,11 @@ export default function MailboxesPage() {
             <div className="cf-input-group">
               <Input
                 id="mailboxes-search"
+                type="search"
                 placeholder={t('mailboxes.searchPlaceholder')}
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
+                value={searchInput}
+                maxLength={meta.data?.search.max_length}
+                onChange={(e) => setSearchInput(e.target.value)}
               />
               <span className="cf-input-group__addon" style={{ right: 10 }}>
                 <IconSearch size={16} />
@@ -144,23 +146,20 @@ export default function MailboxesPage() {
             <label className="cf-field__label" htmlFor="mailboxes-domain">
               {t('mailboxes.filter.domain')}
             </label>
-            <Select
+            <DirectoryDomainPicker
               id="mailboxes-domain"
               placeholder={t('common.all')}
-              options={domainOptions}
               value={domain}
-              onChange={(e) => setDomain(e.target.value)}
+              onChange={(next) => {
+                setDomain(next);
+                pager.reset();
+              }}
             />
           </div>
         </div>
-        {filtering && (mailboxes.data?.totalPages ?? 0) > 1 ? (
-          <div className="cf-toolbar cf-text-sm cf-text-secondary">
-            {t('mailboxes.filterScope')}
-          </div>
-        ) : null}
         <DataTable
           columns={columns}
-          rows={rows}
+          rows={mailboxes.data?.items ?? []}
           rowKey={(m) => m.id}
           loading={mailboxes.loading}
           error={mailboxes.error}

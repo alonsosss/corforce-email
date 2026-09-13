@@ -185,6 +185,26 @@ export const SCREENS: readonly ScreenDecl[] = [
     load: () => import('@/pages/campaigns/CampaignDetailPage'),
   },
   {
+    path: paths.automations,
+    module: MODULES.automations,
+    load: () => import('@/pages/automations/AutomationsPage'),
+  },
+  {
+    path: paths.automationNew,
+    module: MODULES.automations,
+    load: () => import('@/pages/automations/WorkflowPage'),
+  },
+  {
+    path: `${paths.automations}/:id`,
+    module: MODULES.automations,
+    load: () => import('@/pages/automations/WorkflowPage'),
+  },
+  {
+    path: paths.automationRunPattern,
+    module: MODULES.automations,
+    load: () => import('@/pages/automations/RunDetailPage'),
+  },
+  {
     path: paths.analytics,
     module: MODULES.analytics,
     load: () => import('@/pages/analytics/AnalyticsPage'),

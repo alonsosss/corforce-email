@@ -1,15 +1,17 @@
 import { useState } from 'react';
 import {
   reputationApi,
+  reputationMeta,
   type ClassStatus,
   type RateUsage,
   type StateChange,
 } from '@/api/reputation';
-import { SEND_CLASSES, type SendClass } from '@/api/sendClass';
+import type { SendClass } from '@/api/sendClass';
 import { PERMISSIONS } from '@/access/permissions';
 import { useAccess } from '@/access/useAccess';
 import { usePagination } from '@/hooks/usePagination';
 import { useQuery } from '@/hooks/useQuery';
+import { useResource } from '@/hooks/useResource';
 import {
   Alert,
   Badge,
@@ -37,12 +39,13 @@ export default function ReputationPage() {
     async () => (canStatus ? (await reputationApi.status()).data : null),
     [canStatus],
   );
+  const meta = useResource(reputationMeta);
   if (!canStatus && !canHistory) {
     return (
       <MissingPermission title={t('reputation.title')} description={t('reputation.subtitle')} />
     );
   }
-  const classes = status.data?.classes.map((c) => c.class) ?? SEND_CLASSES;
+  const classes = status.data?.classes.map((c) => c.class) ?? meta.data?.classes ?? [];
   return (
     <div>
       <PageHeader title={t('reputation.title')} description={t('reputation.subtitle')} />

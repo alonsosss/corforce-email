@@ -1,8 +1,7 @@
 import { useState } from 'react';
 import {
-  PLAN_STATUSES,
-  SUBSCRIPTION_STATUSES,
   billingApi,
+  billingMeta,
   type Plan,
   type PlanStatus,
   type Subscription,
@@ -11,6 +10,7 @@ import {
 import type { Tenant } from '@/api/organization';
 import { usePagination } from '@/hooks/usePagination';
 import { useQuery } from '@/hooks/useQuery';
+import { useResource } from '@/hooks/useResource';
 import { useTabParam } from '@/hooks/useTabParam';
 import {
   Button,
@@ -29,6 +29,7 @@ import {
 import { IconPlus } from '@/design/icons';
 import { formatDateTime } from '@/lib/format';
 import { t, tEnum } from '@/i18n';
+import { ResourceGate } from '@/pages/shared/ResourceGate';
 import { RowActions } from '@/pages/shared/RowActions';
 import { formatMoney, formatPeriodDay, UsageTable } from './billingFormat';
 import { LimitsCard } from './PlanPage';
@@ -68,6 +69,7 @@ function PlansTab() {
   const [retiring, setRetiring] = useState<Plan | null>(null);
   const [viewing, setViewing] = useState<Plan | null>(null);
   const plans = useQuery(() => billingApi.listPlans(status || undefined), [status]);
+  const meta = useResource(billingMeta);
 
   const columns: Column<Plan>[] = [
     {
@@ -134,7 +136,7 @@ function PlansTab() {
           <Select
             id="plans-status"
             placeholder={t('common.all')}
-            options={PLAN_STATUSES.map((s) => ({
+            options={(meta.data?.plan_statuses ?? []).map((s) => ({
               value: s,
               label: tEnum('billing.planStatus', s),
             }))}
@@ -171,7 +173,9 @@ function PlansTab() {
           onClose={() => setViewing(null)}
           footer={<Button onClick={() => setViewing(null)}>{t('common.close')}</Button>}
         >
-          <LimitsCard plan={viewing} />
+          <ResourceGate resource={meta}>
+            {(catalog) => <LimitsCard plan={viewing} unlimited={catalog.unlimited} />}
+          </ResourceGate>
         </Modal>
       ) : null}
       <ConfirmDialog
@@ -210,6 +214,7 @@ function SubscriptionsTab() {
     [pager.page, pager.perPage, status],
   );
   const plans = useQuery(() => billingApi.listPlans(), []);
+  const meta = useResource(billingMeta);
 
   const columns: Column<Subscription>[] = [
     {
@@ -283,7 +288,7 @@ function SubscriptionsTab() {
           <Select
             id="subscriptions-status"
             placeholder={t('common.all')}
-            options={SUBSCRIPTION_STATUSES.map((s) => ({
+            options={(meta.data?.subscription_statuses ?? []).map(({ status: s }) => ({
               value: s,
               label: tEnum('billing.subscriptionStatus', s),
             }))}
@@ -349,6 +354,7 @@ function TenantUsageModal({
     async () => (await billingApi.tenantUsage(subscription.tenant_id)).data,
     [subscription.tenant_id],
   );
+  const meta = useResource(billingMeta);
   return (
     <Modal
       open
@@ -361,7 +367,9 @@ function TenantUsageModal({
     >
       {usage.error ? (
         <ErrorState error={usage.error} onRetry={usage.reload} />
-      ) : !usage.data ? (
+      ) : meta.error ? (
+        <ErrorState error={meta.error} onRetry={meta.reload} />
+      ) : !usage.data || !meta.data ? (
         <Skeleton lines={6} />
       ) : (
         <div className="cf-stack" style={{ gap: 'var(--cf-space-3)' }}>
@@ -371,7 +379,7 @@ function TenantUsageModal({
               to: formatPeriodDay(usage.data.period_end),
             })}
           </span>
-          <UsageTable report={usage.data} />
+          <UsageTable report={usage.data} unlimited={meta.data.unlimited} />
         </div>
       )}
     </Modal>

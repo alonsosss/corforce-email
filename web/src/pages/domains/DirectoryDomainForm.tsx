@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import {
-  DIRECTORY_MAX_PAGE_SIZE,
+  directoryMeta,
   mailDirectoryApi,
   mailRoutingApi,
   type DirectoryDomain,
@@ -35,8 +35,12 @@ export function DirectoryDomainForm({ domain, onClose, onSaved }: DirectoryDomai
   const relayhosts = useQuery(
     async () =>
       canReadRelayhosts
-        ? (await mailRoutingApi.relayhosts.list({ page: 1, per_page: DIRECTORY_MAX_PAGE_SIZE }))
-            .items
+        ? (
+            await mailRoutingApi.relayhosts.list({
+              page: 1,
+              per_page: (await directoryMeta.get()).pagination.max_page_size,
+            })
+          ).items
         : [],
     [canReadRelayhosts],
   );

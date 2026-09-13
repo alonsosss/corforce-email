@@ -47,6 +47,25 @@ func ParseResource(s string) (Resource, error) {
 	return "", fmt.Errorf("%w: %q", ErrInvalidResource, s)
 }
 
+// ResourceKind dice si un recurso es un stock (lo que existe) o un flujo (lo consumido en
+// el periodo).
+type ResourceKind string
+
+const (
+	KindStock ResourceKind = "stock"
+	KindFlow  ResourceKind = "flow"
+)
+
+func ResourceKinds() []ResourceKind { return []ResourceKind{KindStock, KindFlow} }
+
+// Kind es el tipo del recurso segun IsFlow.
+func (r Resource) Kind() ResourceKind {
+	if r.IsFlow() {
+		return KindFlow
+	}
+	return KindStock
+}
+
 // IsFlow distingue lo que se consume por periodo (mensajes enviados) de lo que existe
 // (buzones, dominios): el primero empieza en cero en cada periodo, el segundo no.
 func (r Resource) IsFlow() bool {

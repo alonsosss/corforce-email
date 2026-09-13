@@ -3,21 +3,13 @@ import { mailDirectoryApi, type AliasDomain } from '@/api/mailDirectory';
 import { errorMessage } from '@/api/messages';
 import { PERMISSIONS } from '@/access/permissions';
 import { useAction } from '@/hooks/useAction';
-import {
-  Button,
-  Checkbox,
-  FormField,
-  Input,
-  Modal,
-  Select,
-  type Column,
-} from '@/design/components';
+import { Button, Checkbox, FormField, Input, Modal, type Column } from '@/design/components';
 import { formatDateTime } from '@/lib/format';
 import { normalizeDomainName } from '@/lib/mailAddress';
 import { t } from '@/i18n';
 import { ResourceTab, type ResourceFormProps } from '@/pages/shared/ResourceTab';
+import { DirectoryDomainPicker } from '@/pages/shared/DirectoryDomainPicker';
 import { ActiveBadge } from '@/pages/shared/StatusBadges';
-import { useDirectoryDomains } from '@/pages/shared/useDirectoryDomains';
 
 const api = mailDirectoryApi.aliasDomains;
 
@@ -63,7 +55,6 @@ export function AliasDomainsTab() {
 const FORM_ID = 'alias-domain-form';
 
 function AliasDomainForm({ item, onClose, onSaved }: ResourceFormProps<AliasDomain>) {
-  const targets = useDirectoryDomains();
   const [alias, setAlias] = useState(item?.alias_domain ?? '');
   const [target, setTarget] = useState(item?.target_domain ?? '');
   const [active, setActive] = useState(item?.active ?? true);
@@ -100,11 +91,6 @@ function AliasDomainForm({ item, onClose, onSaved }: ResourceFormProps<AliasDoma
     if (next.alias || next.target) return;
     await action.run();
   };
-
-  const targetOptions = (targets.data ?? []).map((d) => ({ value: d.domain, label: d.domain }));
-  if (target && !targetOptions.some((o) => o.value === target)) {
-    targetOptions.push({ value: target, label: target });
-  }
 
   return (
     <Modal
@@ -144,14 +130,13 @@ function AliasDomainForm({ item, onClose, onSaved }: ResourceFormProps<AliasDoma
           label={t('aliasDomains.column.target')}
           htmlFor="alias-domain-target"
           required
-          error={errors.target ?? (targets.error ? errorMessage(targets.error) : undefined)}
+          error={errors.target}
         >
-          <Select
+          <DirectoryDomainPicker
             id="alias-domain-target"
             placeholder={t('common.select')}
-            options={targetOptions}
             value={target}
-            onChange={(e) => setTarget(e.target.value)}
+            onChange={setTarget}
             invalid={Boolean(errors.target)}
           />
         </FormField>

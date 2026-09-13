@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -25,6 +26,7 @@ const (
 	bodyLimit      = 128 << 10
 	defaultPerPage = 25
 	maxPerPage     = 100
+	maxSearchLen   = 200
 )
 
 // PermissionGuard es la tercera capa de acceso (pkg/authz.Checker la cumple).
@@ -49,6 +51,7 @@ func (h *Handler) Routes() http.Handler {
 		return h.perms.RequirePermission(permModule, resource, action)
 	}
 	r := chi.NewRouter()
+	r.With(perm("workflows", "read")).Get("/meta", h.Meta)
 	r.With(perm("settings", "read")).Get("/double-opt-in", h.GetDOI)
 	r.With(perm("settings", "update")).Put("/double-opt-in", h.PutDOI)
 	r.With(perm("settings", "read")).Get("/double-opt-in/deliveries", h.ListDeliveries)
@@ -201,8 +204,8 @@ func (h *Handler) ListWorkflows(w http.ResponseWriter, r *http.Request) {
 		}
 		f.Status = st
 	}
-	if len(f.Search) > 200 {
-		response.ErrValidation(w, "search admite como maximo 200 caracteres")
+	if len(f.Search) > maxSearchLen {
+		response.ErrValidation(w, fmt.Sprintf("search admite como maximo %d caracteres", maxSearchLen))
 		return
 	}
 	f.Page, f.PerPage = pagination(r)
@@ -319,8 +322,8 @@ func (h *Handler) PauseWorkflow(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if len([]rune(req.Reason)) > 500 {
-		response.ErrValidation(w, "reason admite como maximo 500 caracteres")
+	if len([]rune(req.Reason)) > domain.MaxPauseReasonLen {
+		response.ErrValidation(w, fmt.Sprintf("reason admite como maximo %d caracteres", domain.MaxPauseReasonLen))
 		return
 	}
 	wf, err := h.uc.PauseWorkflow(r.Context(), tenantID, id, req.Reason)

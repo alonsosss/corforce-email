@@ -1,5 +1,11 @@
 import { useMemo, useState, type ChangeEvent, type FormEvent } from 'react';
-import { contactsApi, type ContactImport, type ImportResult } from '@/api/contacts';
+import {
+  contactsApi,
+  contactsMeta,
+  type ContactImport,
+  type ImportConsentStatus,
+  type ImportResult,
+} from '@/api/contacts';
 import { PICKER_PAGE_SIZE } from '@/api/paging';
 import { errorMessage } from '@/api/messages';
 import { PERMISSIONS } from '@/access/permissions';
@@ -7,6 +13,7 @@ import { useAccess } from '@/access/useAccess';
 import { useAction } from '@/hooks/useAction';
 import { usePagination } from '@/hooks/usePagination';
 import { useQuery } from '@/hooks/useQuery';
+import { useResource } from '@/hooks/useResource';
 import {
   Alert,
   Badge,
@@ -25,8 +32,6 @@ import { formatDateTime } from '@/lib/format';
 import { getLocale, t, tEnum } from '@/i18n';
 import { rowsFromCsv, TAG_SEPARATOR } from './importRows';
 
-type ConsentChoice = 'none' | 'granted';
-
 export function ImportTab() {
   const toast = useToast();
   const { can } = useAccess();
@@ -34,9 +39,10 @@ export function ImportTab() {
   const format = new Intl.NumberFormat(getLocale());
   const canReadAttributes = can(...PERMISSIONS.contactAttributes.read);
   const canReadLists = can(...PERMISSIONS.contactLists.read);
+  const meta = useResource(contactsMeta);
 
   const [text, setText] = useState('');
-  const [consent, setConsent] = useState<ConsentChoice>('none');
+  const [consent, setConsent] = useState<ImportConsentStatus>('none');
   const [basis, setBasis] = useState('');
   const [listId, setListId] = useState('');
   const [updateExisting, setUpdateExisting] = useState(false);
@@ -96,11 +102,22 @@ export function ImportTab() {
           ? t('contacts.import.unknownColumns', { list: parsed.unknownColumns.join(', ') })
           : parsed.rows.length === 0
             ? t('contacts.import.noRows')
+            : meta.data && parsed.rows.length > meta.data.import.max_rows
+              ? t('contacts.import.tooManyRows', {
+                  n: format.format(meta.data.import.max_rows),
+                })
+              : null;
+    const basisProblem =
+      consent !== 'granted'
+        ? null
+        : !basis.trim()
+          ? t('validation.required')
+          : meta.data && basis.trim().length > meta.data.import.max_consent_basis_length
+            ? t('validation.maxLength', { n: meta.data.import.max_consent_basis_length })
             : null;
-    const needsBasis = consent === 'granted' && !basis.trim();
     setFormError(problem);
-    setBasisError(needsBasis ? t('validation.required') : null);
-    if (problem || needsBasis) return;
+    setBasisError(basisProblem);
+    if (problem || basisProblem) return;
     setResult(null);
     await action.run();
   };
@@ -194,12 +211,12 @@ export function ImportTab() {
           <FormField label={t('contacts.import.consent')} htmlFor="contacts-import-consent">
             <Select
               id="contacts-import-consent"
-              options={[
-                { value: 'none', label: t('contacts.import.consentNone') },
-                { value: 'granted', label: t('contacts.import.consentGranted') },
-              ]}
+              options={(meta.data?.import.consent_statuses ?? [consent]).map((s) => ({
+                value: s,
+                label: tEnum('contacts.import.consentChoice', s),
+              }))}
               value={consent}
-              onChange={(e) => setConsent(e.target.value as ConsentChoice)}
+              onChange={(e) => setConsent(e.target.value as ImportConsentStatus)}
             />
           </FormField>
           {consent === 'granted' ? (

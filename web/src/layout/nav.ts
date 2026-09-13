@@ -31,6 +31,7 @@ import {
   IconTarget,
   IconUser,
   IconUsers,
+  IconWorkflow,
   type IconProps,
 } from '@/design/icons';
 
@@ -124,6 +125,12 @@ export const NAV: NavGroup[] = [
       },
       { to: paths.segments, labelKey: 'nav.segments', icon: IconTarget, module: MODULES.segments },
       { to: paths.campaigns, labelKey: 'nav.campaigns', icon: IconSend, module: MODULES.campaigns },
+      {
+        to: paths.automations,
+        labelKey: 'nav.automations',
+        icon: IconWorkflow,
+        module: MODULES.automations,
+      },
       {
         to: paths.analytics,
         labelKey: 'nav.analytics',

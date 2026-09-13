@@ -17,6 +17,8 @@ const (
 	BatchFailed    BatchStatus = "failed"
 )
 
+func BatchStatuses() []BatchStatus { return []BatchStatus{BatchPending, BatchDelivered, BatchFailed} }
+
 const (
 	// MaxBatchSize es el tope de destinatarios del lote de transactional: un lote de
 	// campana es exactamente una peticion a ese lote.

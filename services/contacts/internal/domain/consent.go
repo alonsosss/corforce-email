@@ -12,11 +12,15 @@ const (
 	MaxUserAgent = 512
 )
 
+// GrantStatuses son los estados que una empresa puede registrar por API.
+func GrantStatuses() []ConsentStatus { return []ConsentStatus{ConsentGranted, ConsentRevoked} }
+
 // ParseGrantStatus valida el estado que una empresa puede registrar por API.
 func ParseGrantStatus(s string) (ConsentStatus, error) {
-	switch ConsentStatus(s) {
-	case ConsentGranted, ConsentRevoked:
-		return ConsentStatus(s), nil
+	for _, st := range GrantStatuses() {
+		if ConsentStatus(s) == st {
+			return st, nil
+		}
 	}
 	return "", ErrInvalidConsentStatus
 }
@@ -25,12 +29,16 @@ func ParseGrantStatus(s string) (ConsentStatus, error) {
 // propio sistema (api) o un formulario suyo (form). El doble opt-in, la importacion, el
 // enlace de baja y la supresion los registra la plataforma, nunca el cliente.
 func ParseAPIMethod(s string) (ConsentMethod, error) {
-	switch ConsentMethod(s) {
-	case MethodAPI, MethodForm:
-		return ConsentMethod(s), nil
+	for _, m := range APIMethods() {
+		if ConsentMethod(s) == m {
+			return m, nil
+		}
 	}
 	return "", ErrInvalidConsentMethod
 }
+
+// APIMethods son los metodos que una empresa puede declarar por API (ParseAPIMethod).
+func APIMethods() []ConsentMethod { return []ConsentMethod{MethodAPI, MethodForm} }
 
 // NormalizeIP valida la ip de la evidencia. Vacio = sin ip.
 func NormalizeIP(raw string) (*string, error) {

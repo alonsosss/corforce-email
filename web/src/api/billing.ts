@@ -1,6 +1,7 @@
 import { api } from './client';
 import { endpoints } from './endpoints';
 import { fetchList, fetchPage } from './paging';
+import { cachedResource } from './resource';
 import type { Page, PageQuery } from './types';
 
 // DTOs de services/billing/internal/adapters/http/dto.go. Los importes viajan como texto
@@ -18,31 +19,27 @@ export type BillingPeriod = 'monthly' | 'yearly';
 export type PlanStatus = 'active' | 'retired';
 export type SubscriptionStatus = 'trialing' | 'active' | 'past_due' | 'suspended' | 'cancelled';
 
-// Espejo de domain.Resources(), ParseBillingPeriod, PlanStatus y SubscriptionStatuses()
-// (services/billing/internal/domain). billing no publica aun su catalogo: el alta de un
-// plan necesita la lista completa de recursos (un limite por recurso). Cuando exista
-// GET /billing/meta, estas listas se toman de alli.
-export const BILLING_RESOURCES: readonly BillingResource[] = [
-  'users',
-  'domains',
-  'mailboxes',
-  'storage_bytes',
-  'contacts',
-  'transactional_messages',
-  'marketing_messages',
-];
-export const BILLING_PERIODS: readonly BillingPeriod[] = ['monthly', 'yearly'];
-export const PLAN_STATUSES: readonly PlanStatus[] = ['active', 'retired'];
-export const SUBSCRIPTION_STATUSES: readonly SubscriptionStatus[] = [
-  'trialing',
-  'active',
-  'past_due',
-  'suspended',
-  'cancelled',
-];
+export type ResourceKind = 'stock' | 'flow';
 
-/** domain.Unlimited: included = -1 significa que el plan no limita el recurso. */
-export const UNLIMITED = -1;
+/**
+ * GET /billing/meta: recursos (el alta de un plan lleva un limite por recurso), periodos,
+ * estados y el valor de included que significa sin limite.
+ */
+export interface BillingMeta {
+  resources: { resource: BillingResource; kind: ResourceKind }[];
+  resource_kinds: ResourceKind[];
+  billing_periods: { period: BillingPeriod; months: number }[];
+  plan_statuses: PlanStatus[];
+  subscription_statuses: { status: SubscriptionStatus; allows_usage: boolean }[];
+  unlimited: number;
+  limits: {
+    max_plan_name_length: number;
+    max_plan_description_length: number;
+    price_scale: number;
+    unit_price_scale: number;
+  };
+  pagination: { default_page_size: number; max_page_size: number };
+}
 
 export interface PlanLimit {
   resource: BillingResource;
@@ -85,7 +82,7 @@ export interface Subscription {
 export interface UsageLine {
   resource: BillingResource;
   /** stock: lo que existe; flow: lo consumido en el periodo. */
-  kind: 'stock' | 'flow';
+  kind: ResourceKind;
   used: number;
   included: number;
   hard_limit: boolean;
@@ -158,4 +155,8 @@ export const billingApi = {
   putSubscription: (tenantId: string, input: PutSubscriptionRequest) =>
     api.put<Subscription>(endpoints.billing.subscriptions.byId(tenantId), { body: input }),
   tenantUsage: (tenantId: string) => api.get<UsageReport>(endpoints.billing.tenantUsage(tenantId)),
+
+  meta: async (): Promise<BillingMeta> => (await api.get<BillingMeta>(endpoints.billing.meta)).data,
 };
+
+export const billingMeta = cachedResource(billingApi.meta);

@@ -18,6 +18,14 @@ const (
 	ReasonComplaintBlock     = "complaint_rate_block"
 )
 
+// EvaluationReasons son los motivos que escribe la evaluacion automatica.
+func EvaluationReasons() []string {
+	return []string{
+		ReasonInitial, ReasonInsufficientVolume, ReasonWithinThresholds,
+		ReasonBounceWarn, ReasonBounceBlock, ReasonComplaintWarn, ReasonComplaintBlock,
+	}
+}
+
 // RateScale son los decimales con los que una tasa se calcula, se guarda (numeric(9,6)) y
 // se compara: la tasa que decide un estado es exactamente la que se muestra.
 const RateScale = 6

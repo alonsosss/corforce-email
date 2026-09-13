@@ -7,6 +7,12 @@ const (
 	ReasonRateLimited          = "rate_limited"
 )
 
+// DenialReasons son los motivos con que se deniega un envio: los de reputacion y tasa, y
+// los del derecho mensual cuando billing no da uno propio.
+func DenialReasons() []string {
+	return []string{ReasonSuspended, ReasonReputationRestricted, ReasonRateLimited, ReasonPlanDenied, ReasonPlanLimitExceeded}
+}
+
 // MaxAuthorizeCount acota una sola autorizacion: un lote mayor se autoriza por tramos.
 const MaxAuthorizeCount int64 = 10000
 

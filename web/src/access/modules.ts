@@ -16,6 +16,7 @@ export const MODULES = {
   contacts: 'contacts',
   segments: 'segments',
   campaigns: 'campaigns',
+  automations: 'automations',
   analytics: 'analytics',
   billing: 'billing',
   reputation: 'reputation',

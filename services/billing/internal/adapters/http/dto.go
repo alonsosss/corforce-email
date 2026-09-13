@@ -136,12 +136,12 @@ func toUsageDTO(rep *domain.UsageReport) usageDTO {
 		Resources: make([]usageLineDTO, 0, len(rep.Lines)),
 	}
 	for _, l := range rep.Lines {
-		kind := "stock"
+		kind := domain.KindStock
 		if l.Flow {
-			kind = "flow"
+			kind = domain.KindFlow
 		}
 		line := usageLineDTO{
-			Resource: string(l.Resource), Kind: kind, Used: l.Used, Included: l.Included,
+			Resource: string(l.Resource), Kind: string(kind), Used: l.Used, Included: l.Included,
 			HardLimit: l.HardLimit, Overage: l.Overage,
 		}
 		if l.Percent != nil {

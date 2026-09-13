@@ -1,6 +1,5 @@
 import { useState } from 'react';
 import { mailSecurityApi, type DomainFooter } from '@/api/mailSecurity';
-import { errorMessage } from '@/api/messages';
 import { PERMISSIONS } from '@/access/permissions';
 import { useAccess } from '@/access/useAccess';
 import { useAction } from '@/hooks/useAction';
@@ -10,8 +9,6 @@ import {
   ChipsInput,
   FormField,
   HtmlPreviewFrame,
-  Input,
-  Select,
   Textarea,
   type Column,
 } from '@/design/components';
@@ -20,8 +17,8 @@ import { normalizeDomainName, normalizeEmail } from '@/lib/mailAddress';
 import { t } from '@/i18n';
 import { FormModal } from '@/pages/shared/FormModal';
 import { ListTab, type ResourceFormProps } from '@/pages/shared/ResourceTab';
+import { DirectoryDomainPicker } from '@/pages/shared/DirectoryDomainPicker';
 import { YesNo } from '@/pages/shared/StatusBadges';
-import { useDirectoryDomains } from '@/pages/shared/useDirectoryDomains';
 
 const loadFooters = () => mailSecurityApi.listFooters();
 
@@ -84,7 +81,6 @@ export function FootersTab() {
 }
 
 function FooterForm({ item, onClose, onSaved }: ResourceFormProps<DomainFooter>) {
-  const domains = useDirectoryDomains();
   const [domain, setDomain] = useState(item?.domain ?? '');
   const [html, setHtml] = useState(item?.html ?? '');
   const [plain, setPlain] = useState(item?.plain ?? '');
@@ -115,7 +111,6 @@ function FooterForm({ item, onClose, onSaved }: ResourceFormProps<DomainFooter>)
     await action.run(target);
   };
 
-  const pickDomain = !item && !domains.error && (domains.data?.length ?? 0) > 0;
   const chipLabels = {
     removeLabel: (value: string) => t('common.removeValue', { value }),
     rejectedLabel: (rejected: string[]) =>
@@ -142,26 +137,15 @@ function FooterForm({ item, onClose, onSaved }: ResourceFormProps<DomainFooter>)
           label={t('domains.column.domain')}
           htmlFor="footer-domain"
           required
-          error={errors.domain ?? (domains.error ? errorMessage(domains.error) : undefined)}
+          error={errors.domain}
         >
-          {pickDomain ? (
-            <Select
-              id="footer-domain"
-              placeholder={t('common.select')}
-              options={(domains.data ?? []).map((d) => ({ value: d.domain, label: d.domain }))}
-              value={domain}
-              onChange={(e) => setDomain(e.target.value)}
-              invalid={Boolean(errors.domain)}
-            />
-          ) : (
-            <Input
-              id="footer-domain"
-              className="cf-mono"
-              value={domain}
-              onChange={(e) => setDomain(e.target.value)}
-              invalid={Boolean(errors.domain)}
-            />
-          )}
+          <DirectoryDomainPicker
+            id="footer-domain"
+            placeholder={t('common.select')}
+            value={domain}
+            onChange={setDomain}
+            invalid={Boolean(errors.domain)}
+          />
         </FormField>
       )}
       <div className="cf-split">

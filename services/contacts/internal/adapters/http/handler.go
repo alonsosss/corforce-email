@@ -42,6 +42,10 @@ const (
 
 	defaultPerPage = 25
 	maxPerPage     = 100
+
+	maxEmailLength  = 320
+	maxSearchLength = 200
+	maxTagLength    = 64
 )
 
 // PermissionGuard es la tercera capa de acceso (pkg/authz.Checker la cumple).
@@ -73,6 +77,7 @@ func (h *Handler) ContactRoutes() http.Handler {
 	perm := h.perms.RequirePermission
 	r := chi.NewRouter()
 	r.Get("/health", h.Health)
+	r.With(perm(modContacts, "contacts", "read")).Get("/meta", h.ContactMeta)
 	r.With(perm(modContacts, "contacts", "read")).Get("/", h.ListContacts)
 	r.With(perm(modContacts, "contacts", "create")).Post("/", h.CreateContact)
 
@@ -242,7 +247,7 @@ func (c *consentRequest) validate(v *validate.Validator, statuses []string) {
 	v.Required("consent.status", c.Status)
 	v.OneOf("consent.status", c.Status, statuses)
 	v.Required("consent.method", c.Method)
-	v.OneOf("consent.method", c.Method, []string{string(domain.MethodAPI), string(domain.MethodForm)})
+	v.OneOf("consent.method", c.Method, stringsOf(domain.APIMethods()))
 	v.Required("consent.source", c.Source)
 	v.MaxLength("consent.source", c.Source, domain.MaxConsentSource)
 	v.MaxLength("consent.ip", c.IP, 64)
@@ -283,7 +288,7 @@ func (h *Handler) CreateContact(w http.ResponseWriter, r *http.Request) {
 	}
 	v := validate.New()
 	v.Required("email", req.Email)
-	v.MaxLength("email", req.Email, 320)
+	v.MaxLength("email", req.Email, maxEmailLength)
 	v.OneOf("source", req.Source, []string{string(domain.SourceAPI), string(domain.SourceForm), string(domain.SourceIntegration)})
 	if req.Consent != nil {
 		req.Consent.validate(v, []string{string(domain.ConsentGranted)})
@@ -319,8 +324,8 @@ func (h *Handler) ListContacts(w http.ResponseWriter, r *http.Request) {
 	}
 	q := r.URL.Query()
 	v := validate.New()
-	v.MaxLength("search", q.Get("search"), 200)
-	v.MaxLength("tag", q.Get("tag"), 64)
+	v.MaxLength("search", q.Get("search"), maxSearchLength)
+	v.MaxLength("tag", q.Get("tag"), maxTagLength)
 	v.OneOf("status", q.Get("status"), statusNames())
 	v.UUID("list_id", q.Get("list_id"))
 	if !v.Valid() {
@@ -463,7 +468,7 @@ func (h *Handler) RecordConsent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	v := validate.New()
-	req.validate(v, []string{string(domain.ConsentGranted), string(domain.ConsentRevoked)})
+	req.validate(v, stringsOf(domain.GrantStatuses()))
 	if !v.Valid() {
 		response.ErrValidation(w, strings.ReplaceAll(v.Error(), "consent.", ""))
 		return
@@ -563,7 +568,7 @@ func (h *Handler) Import(w http.ResponseWriter, r *http.Request) {
 		response.ErrBadRequest(w, err.Error())
 		return
 	}
-	consent := importConsentRequest{Status: "none"}
+	consent := importConsentRequest{Status: string(domain.ConsentNone)}
 	if req.Consent != nil {
 		consent = *req.Consent
 	}
@@ -575,8 +580,8 @@ func (h *Handler) Import(w http.ResponseWriter, r *http.Request) {
 		v.Add("rows", "admite como maximo "+strconv.Itoa(maxRows)+" filas")
 	}
 	v.Required("consent.status", consent.Status)
-	v.OneOf("consent.status", consent.Status, []string{"granted", "none"})
-	if consent.Status == "granted" {
+	v.OneOf("consent.status", consent.Status, stringsOf(importConsentStatuses()))
+	if consent.Status == string(domain.ConsentGranted) {
 		v.Required("consent.basis", consent.Basis)
 	}
 	v.MaxLength("consent.basis", consent.Basis, app.MaxConsentBasis)
@@ -593,7 +598,7 @@ func (h *Handler) Import(w http.ResponseWriter, r *http.Request) {
 	}
 	imp, err := h.uc.Import(r.Context(), tenantID, app.ImportInput{
 		Rows: rows, ListID: req.ListID, UpdateExisting: req.UpdateExisting,
-		GrantConsent: consent.Status == "granted", ConsentBasis: consent.Basis, CreatedBy: userID,
+		GrantConsent: consent.Status == string(domain.ConsentGranted), ConsentBasis: consent.Basis, CreatedBy: userID,
 	})
 	if err != nil {
 		writeError(w, err)
@@ -1317,10 +1322,18 @@ func (h *Handler) Confirm(w http.ResponseWriter, r *http.Request) {
 
 // ── Errores ──────────────────────────────────────────────────────────────────
 
-func statusNames() []string {
-	out := make([]string, 0, len(domain.Statuses()))
-	for _, s := range domain.Statuses() {
-		out = append(out, string(s))
+func statusNames() []string { return stringsOf(domain.Statuses()) }
+
+// importConsentStatuses: una importacion declara consentimiento concedido con su base
+// legal o ninguno.
+func importConsentStatuses() []domain.ConsentStatus {
+	return []domain.ConsentStatus{domain.ConsentGranted, domain.ConsentNone}
+}
+
+func stringsOf[T ~string](in []T) []string {
+	out := make([]string, len(in))
+	for i, v := range in {
+		out[i] = string(v)
 	}
 	return out
 }

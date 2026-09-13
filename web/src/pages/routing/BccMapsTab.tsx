@@ -1,13 +1,15 @@
 import { useState } from 'react';
-import { BCC_TYPES, mailRoutingApi, type BccMap, type BccType } from '@/api/mailDirectory';
+import { directoryMeta, mailRoutingApi, type BccMap, type BccType } from '@/api/mailDirectory';
 import { PERMISSIONS } from '@/access/permissions';
 import { useAction } from '@/hooks/useAction';
+import { useResource } from '@/hooks/useResource';
 import { Badge, Checkbox, FormField, Input, Select, type Column } from '@/design/components';
 import { normalizeEmail } from '@/lib/mailAddress';
 import { changed, isEmptyPatch } from '@/lib/patch';
 import { rules, validateField } from '@/lib/validate';
 import { t, tEnum } from '@/i18n';
 import { FormModal } from '@/pages/shared/FormModal';
+import { ResourceGate } from '@/pages/shared/ResourceGate';
 import { ResourceTab, type ResourceFormProps } from '@/pages/shared/ResourceTab';
 import { ActiveBadge } from '@/pages/shared/StatusBadges';
 
@@ -56,7 +58,22 @@ export function BccMapsTab() {
   );
 }
 
-function BccMapForm({ item, onClose, onSaved }: ResourceFormProps<BccMap>) {
+function BccMapForm(props: ResourceFormProps<BccMap>) {
+  const meta = useResource(directoryMeta);
+  const title = props.item ? t('routing.bccMaps.editTitle') : t('routing.bccMaps.createTitle');
+  return (
+    <ResourceGate resource={meta} modal={{ title, onClose: props.onClose }}>
+      {(rules) => <BccMapFormBody {...props} types={rules.bcc_map_types} />}
+    </ResourceGate>
+  );
+}
+
+function BccMapFormBody({
+  item,
+  onClose,
+  onSaved,
+  types,
+}: ResourceFormProps<BccMap> & { types: readonly BccType[] }) {
   const [localDest, setLocalDest] = useState(item?.local_dest ?? '');
   const [bccDest, setBccDest] = useState(item?.bcc_dest ?? '');
   const [type, setType] = useState<BccType | ''>(item?.type ?? '');
@@ -150,7 +167,7 @@ function BccMapForm({ item, onClose, onSaved }: ResourceFormProps<BccMap>) {
         <Select
           id="bcc-type"
           placeholder={t('common.select')}
-          options={BCC_TYPES.map((value) => ({ value, label: tEnum('routing.bccType', value) }))}
+          options={types.map((value) => ({ value, label: tEnum('routing.bccType', value) }))}
           value={type}
           onChange={(e) => setType(e.target.value as BccType | '')}
           invalid={Boolean(errors.type)}

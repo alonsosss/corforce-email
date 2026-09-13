@@ -19,6 +19,10 @@ const (
 	StepRemoveFromList StepType = "remove_from_list"
 )
 
+func StepTypes() []StepType {
+	return []StepType{StepWait, StepSendEmail, StepAddToList, StepRemoveFromList}
+}
+
 const (
 	MinSteps = 1
 	MaxSteps = 20
@@ -38,21 +42,45 @@ type Step struct {
 	ListID          *uuid.UUID `json:"list_id,omitempty"`
 }
 
-// durationPattern: un entero y una unidad (m, h o d). Se admite d porque las esperas de
-// marketing se piensan en dias y time.ParseDuration no lo entiende.
-var durationPattern = regexp.MustCompile(`^([1-9][0-9]{0,6})([mhd])$`)
+// WaitUnit es una unidad admitida en la duracion de una espera.
+type WaitUnit struct {
+	Code     string
+	Duration time.Duration
+}
+
+// WaitUnits son las unidades de una espera, de menor a mayor. Se admite d porque las
+// esperas de marketing se piensan en dias y time.ParseDuration no lo entiende.
+func WaitUnits() []WaitUnit {
+	return []WaitUnit{{Code: "m", Duration: time.Minute}, {Code: "h", Duration: time.Hour}, {Code: "d", Duration: 24 * time.Hour}}
+}
+
+// durationPattern: un entero y una unidad de WaitUnits.
+var durationPattern = regexp.MustCompile(`^([1-9][0-9]{0,6})([a-z])$`)
+
+func waitUnit(code string) (time.Duration, bool) {
+	for _, u := range WaitUnits() {
+		if u.Code == code {
+			return u.Duration, true
+		}
+	}
+	return 0, false
+}
 
 // ParseWait interpreta la duracion de una espera y exige que quede entre MinWait y MaxWait.
 func ParseWait(s string) (time.Duration, error) {
 	m := durationPattern.FindStringSubmatch(s)
-	if m == nil {
+	var unit time.Duration
+	known := false
+	if m != nil {
+		unit, known = waitUnit(m[2])
+	}
+	if !known {
 		return 0, NewValidationError("duration debe ser un entero con unidad m, h o d (por ejemplo 30m, 12h, 3d)")
 	}
 	n, err := strconv.Atoi(m[1])
 	if err != nil {
 		return 0, NewValidationError("duration no valida")
 	}
-	unit := map[string]time.Duration{"m": time.Minute, "h": time.Hour, "d": 24 * time.Hour}[m[2]]
 	if int64(n) > int64(MaxWait/unit) {
 		return 0, NewValidationError("duration no puede superar 90d")
 	}

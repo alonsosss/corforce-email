@@ -1,13 +1,14 @@
 import { useState } from 'react';
 import {
-  REPUTATION_STATES,
   reputationApi,
+  reputationMeta,
   type ClassSummary,
   type ReputationState,
 } from '@/api/reputation';
 import type { SendClass } from '@/api/sendClass';
 import { useAction } from '@/hooks/useAction';
 import { useQuery } from '@/hooks/useQuery';
+import { useResource } from '@/hooks/useResource';
 import {
   Badge,
   Button,
@@ -50,6 +51,7 @@ export default function PlatformReputationPage() {
   const toast = useToast();
   const directory = useTenantDirectory();
   const [state, setState] = useState<ReputationState | ''>('');
+  const meta = useResource(reputationMeta);
   const [dialog, setDialog] = useState<Dialog>(null);
   const tenants = useQuery(() => reputationApi.tenants(state || undefined), [state]);
   const format = new Intl.NumberFormat(getLocale());
@@ -193,10 +195,11 @@ export default function PlatformReputationPage() {
             <Select
               id="reputation-state"
               placeholder={t('common.all')}
-              options={REPUTATION_STATES.map((s) => ({
+              options={(meta.data?.states ?? []).map((s) => ({
                 value: s,
                 label: tEnum('reputation.state', s),
               }))}
+              disabled={!meta.data}
               value={state}
               onChange={(e) => setState(e.target.value as ReputationState | '')}
             />
@@ -327,6 +330,8 @@ function SuspendForm({
 }) {
   const [reason, setReason] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const meta = useResource(reputationMeta);
+  const maxReason = meta.data?.limits.max_reason_length;
   const action = useAction(async () => {
     await reputationApi.suspend(target.tenantId, target.sendClass, reason.trim());
     onDone(t('reputation.platform.suspended'));
@@ -340,7 +345,10 @@ function SuspendForm({
       error={action.error}
       onClose={onClose}
       onSubmit={async () => {
-        const next = validateField(reason, rules.required);
+        const next =
+          maxReason === undefined
+            ? validateField(reason, rules.required)
+            : validateField(reason.trim(), rules.required, rules.maxLength(maxReason));
         setError(next);
         if (!next) await action.run();
       }}
@@ -358,6 +366,7 @@ function SuspendForm({
           rows={3}
           value={reason}
           onChange={(e) => setReason(e.target.value)}
+          maxLength={maxReason}
           invalid={Boolean(error)}
         />
       </FormField>

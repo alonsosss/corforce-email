@@ -59,6 +59,15 @@ func (h *Handler) PlatformRoutes() http.Handler {
 	return r
 }
 
+// MetaRoutes es el catalogo de la empresa. Se monta aparte de PublicRoutes porque no lee
+// ninguna base: sin el pool de la empresa de la sesion, el superadmin (cuya empresa de
+// plataforma no tiene base) lo lee igual. No es una ruta de plataforma.
+func (h *Handler) MetaRoutes() http.Handler {
+	r := chi.NewRouter()
+	r.With(h.authz.RequirePermission(permModule, "status", "read")).Get("/", h.Meta)
+	return r
+}
+
 // InternalRoutes es lo que llaman los servicios que envian, con el token interno y la
 // empresa en X-Tenant-ID: la autorizacion previa a cada envio.
 func (h *Handler) InternalRoutes() http.Handler {

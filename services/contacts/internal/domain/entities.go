@@ -123,6 +123,11 @@ const (
 	ConsentNone    ConsentStatus = "none"
 )
 
+// ConsentStatuses son los estados de consentimiento, proyeccion none incluida.
+func ConsentStatuses() []ConsentStatus {
+	return []ConsentStatus{ConsentGranted, ConsentRevoked, ConsentPending, ConsentNone}
+}
+
 // ConsentMethod es como se obtuvo o retiro el consentimiento.
 type ConsentMethod string
 
@@ -134,6 +139,11 @@ const (
 	MethodUnsubscribeLink ConsentMethod = "unsubscribe_link"
 	MethodSuppression     ConsentMethod = "suppression"
 )
+
+// ConsentMethods son todos los metodos con que se registra un consentimiento.
+func ConsentMethods() []ConsentMethod {
+	return []ConsentMethod{MethodForm, MethodImport, MethodAPI, MethodDoubleOptIn, MethodUnsubscribeLink, MethodSuppression}
+}
 
 // PurposeMarketing es, por ahora, el unico proposito de consentimiento.
 const PurposeMarketing = "marketing"

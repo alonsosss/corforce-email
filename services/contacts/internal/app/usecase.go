@@ -122,15 +122,16 @@ func schemaFor(defs domain.Definitions) segment.Schema {
 	for _, s := range domain.Sources() {
 		sources = append(sources, string(s))
 	}
+	consents := make([]string, 0, len(domain.ConsentStatuses()))
+	for _, s := range domain.ConsentStatuses() {
+		consents = append(consents, string(s))
+	}
 	return segment.Schema{
 		Attributes: attrs,
 		Enums: map[string][]string{
 			"status": statuses,
 			"source": sources,
-			"consent": {
-				string(domain.ConsentGranted), string(domain.ConsentRevoked),
-				string(domain.ConsentPending), string(domain.ConsentNone),
-			},
+			"consent": consents,
 		},
 	}
 }

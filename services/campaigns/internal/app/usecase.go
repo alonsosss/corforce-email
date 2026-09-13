@@ -76,6 +76,9 @@ func New(d Deps) *UseCase {
 	}
 }
 
+// BatchSize es el tamano efectivo de lote (CAMPAIGNS_BATCH_SIZE acotado a MaxBatchSize).
+func (uc *UseCase) BatchSize() int { return uc.batchSize }
+
 func (uc *UseCase) Create(ctx context.Context, tenantID uuid.UUID, in domain.NewCampaignInput) (*domain.Campaign, error) {
 	c, err := domain.NewCampaign(tenantID, in)
 	if err != nil {

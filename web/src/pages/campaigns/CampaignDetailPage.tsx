@@ -1,7 +1,9 @@
 import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
+  campaignStatusInfo,
   campaignsApi,
+  campaignsMeta,
   type Campaign,
   type CampaignBatch,
   type CampaignRates,
@@ -14,6 +16,7 @@ import { useAccess } from '@/access/useAccess';
 import { useAction } from '@/hooks/useAction';
 import { usePagination } from '@/hooks/usePagination';
 import { useQuery } from '@/hooks/useQuery';
+import { useResource } from '@/hooks/useResource';
 import {
   Alert,
   Button,
@@ -50,7 +53,6 @@ import { FormModal } from '@/pages/shared/FormModal';
 import { CampaignForm } from './CampaignForm';
 import { loadCampaignOptions, nameOf, type CampaignOptions } from './campaignOptions';
 import { describeReason } from './campaignReason';
-import { campaignRules, MAX_TEST_RECIPIENTS } from './campaignRules';
 import { BatchStatusBadge, CampaignStatusBadge } from './campaignStatus';
 
 type Dialog =
@@ -94,6 +96,7 @@ export default function CampaignDetailPage() {
     () => loadCampaignOptions(access),
     [access.templates, access.lists, access.segments],
   );
+  const meta = useResource(campaignsMeta);
 
   if (campaign.error) {
     return (
@@ -129,8 +132,11 @@ export default function CampaignDetailPage() {
   };
   const canSend = can(...PERMISSIONS.campaigns.send);
   const canCancel = can(...PERMISSIONS.campaigns.cancel);
-  const pause = describeReason(c.pause_reason);
-  const failure = describeReason(c.failure_reason);
+  // Las acciones de cada estado salen del catalogo; sin el, no se ofrece ninguna.
+  const info = meta.data ? campaignStatusInfo(meta.data, c.status) : null;
+  const manual = meta.data?.pause_reason_manual ?? null;
+  const pause = describeReason(c.pause_reason, manual);
+  const failure = describeReason(c.failure_reason, manual);
 
   return (
     <div>
@@ -150,22 +156,22 @@ export default function CampaignDetailPage() {
             <Button variant="ghost" icon={<IconRefresh size={16} />} onClick={campaign.reload}>
               {t('common.refresh')}
             </Button>
-            {can(...PERMISSIONS.campaigns.update) && campaignRules.editable(c.status) ? (
+            {can(...PERMISSIONS.campaigns.update) && info?.editable ? (
               <Button icon={<IconEdit size={16} />} onClick={() => setDialog('edit')}>
                 {t('common.edit')}
               </Button>
             ) : null}
-            {canSend ? (
+            {canSend && meta.data ? (
               <Button icon={<IconSend size={16} />} onClick={() => setDialog('test')}>
                 {t('campaigns.test.action')}
               </Button>
             ) : null}
-            {canSend && campaignRules.schedulable(c.status) ? (
+            {canSend && info?.can_schedule ? (
               <Button icon={<IconCalendar size={16} />} onClick={() => setDialog('schedule')}>
                 {t('campaigns.schedule.action')}
               </Button>
             ) : null}
-            {canSend && campaignRules.startable(c.status) ? (
+            {canSend && info?.can_start ? (
               <Button
                 variant="primary"
                 icon={<IconPlay size={16} />}
@@ -174,12 +180,12 @@ export default function CampaignDetailPage() {
                 {t('campaigns.start.action')}
               </Button>
             ) : null}
-            {canCancel && campaignRules.pausable(c.status) ? (
+            {canCancel && info?.can_pause ? (
               <Button icon={<IconPause size={16} />} onClick={() => setDialog('pause')}>
                 {t('campaigns.pause.action')}
               </Button>
             ) : null}
-            {canSend && campaignRules.resumable(c.status) ? (
+            {canSend && info?.can_resume ? (
               <Button
                 variant="primary"
                 icon={<IconPlay size={16} />}
@@ -188,7 +194,7 @@ export default function CampaignDetailPage() {
                 {t('campaigns.resume.action')}
               </Button>
             ) : null}
-            {canCancel && campaignRules.cancellable(c.status) ? (
+            {canCancel && info?.can_cancel ? (
               <Button
                 variant="danger"
                 icon={<IconStop size={16} />}
@@ -197,7 +203,7 @@ export default function CampaignDetailPage() {
                 {t('campaigns.cancel.action')}
               </Button>
             ) : null}
-            {can(...PERMISSIONS.campaigns.delete) && campaignRules.deletable(c.status) ? (
+            {can(...PERMISSIONS.campaigns.delete) && info?.deletable ? (
               <Button
                 variant="danger"
                 icon={<IconTrash size={16} />}
@@ -210,6 +216,11 @@ export default function CampaignDetailPage() {
         }
       />
       <div className="cf-stack">
+        {meta.error ? (
+          <Card>
+            <ErrorState error={meta.error} onRetry={meta.reload} />
+          </Card>
+        ) : null}
         {c.status === 'paused' && pause ? (
           <Alert tone="warning" title={t('campaigns.reason.pausedTitle')}>
             <span>{pause.text}</span>
@@ -234,13 +245,18 @@ export default function CampaignDetailPage() {
         />
         {c.stats ? <StatsCard stats={c.stats} /> : null}
         {can(...PERMISSIONS.campaignStats.read) ? (
-          <BatchesCard campaignId={c.id} version={c.updated_at} />
+          <BatchesCard
+            campaignId={c.id}
+            version={c.updated_at}
+            batchSize={meta.data?.batch_size ?? null}
+          />
         ) : null}
       </div>
 
       {dialog === 'edit' ? (
         <CampaignForm
           campaign={c}
+          contentLocked={info?.content_locked ?? false}
           onClose={close}
           onSaved={(next) => applied(next, t('campaigns.updated'))}
         />
@@ -259,7 +275,9 @@ export default function CampaignDetailPage() {
           onDone={(next) => applied(next, t('campaigns.start.done'))}
         />
       ) : null}
-      {dialog === 'test' ? <TestForm campaign={c} onClose={close} /> : null}
+      {dialog === 'test' && meta.data ? (
+        <TestForm campaign={c} maxRecipients={meta.data.max_test_recipients} onClose={close} />
+      ) : null}
       <ConfirmDialog
         open={dialog === 'pause'}
         title={t('campaigns.pause.action')}
@@ -390,7 +408,15 @@ function StatsCard({ stats }: { stats: CampaignStats }) {
   );
 }
 
-function BatchesCard({ campaignId, version }: { campaignId: string; version: string }) {
+function BatchesCard({
+  campaignId,
+  version,
+  batchSize,
+}: {
+  campaignId: string;
+  version: string;
+  batchSize: number | null;
+}) {
   const pager = usePagination();
   const format = new Intl.NumberFormat(getLocale());
   const batches = useQuery(
@@ -449,7 +475,13 @@ function BatchesCard({ campaignId, version }: { campaignId: string; version: str
     <Card
       flush
       title={t('campaigns.batches.title')}
-      description={t('campaigns.batches.description')}
+      description={
+        batchSize !== null
+          ? t('campaigns.batches.descriptionWithSize', {
+              n: new Intl.NumberFormat(getLocale()).format(batchSize),
+            })
+          : t('campaigns.batches.description')
+      }
     >
       <DataTable
         columns={columns}
@@ -612,7 +644,15 @@ function StartForm({
   );
 }
 
-function TestForm({ campaign, onClose }: { campaign: Campaign; onClose: () => void }) {
+function TestForm({
+  campaign,
+  maxRecipients,
+  onClose,
+}: {
+  campaign: Campaign;
+  maxRecipients: number;
+  onClose: () => void;
+}) {
   const [emails, setEmails] = useState<string[]>([]);
   const [version, setVersion] = useState('');
   const [errors, setErrors] = useState<Record<string, string | undefined>>({});
@@ -634,8 +674,8 @@ function TestForm({ campaign, onClose }: { campaign: Campaign; onClose: () => vo
         const v = parseVersion(version);
         const next = {
           emails:
-            emails.length === 0 || emails.length > MAX_TEST_RECIPIENTS
-              ? t('campaigns.test.count', { n: MAX_TEST_RECIPIENTS })
+            emails.length === 0 || emails.length > maxRecipients
+              ? t('campaigns.test.count', { n: maxRecipients })
               : undefined,
           version: v === null ? t('campaigns.form.versionInvalid') : undefined,
         };
@@ -651,7 +691,7 @@ function TestForm({ campaign, onClose }: { campaign: Campaign; onClose: () => vo
         htmlFor="campaign-test-emails"
         required
         error={errors.emails}
-        hint={t('campaigns.test.count', { n: MAX_TEST_RECIPIENTS })}
+        hint={t('campaigns.test.count', { n: maxRecipients })}
       >
         <ChipsInput
           id="campaign-test-emails"

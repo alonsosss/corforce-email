@@ -66,6 +66,7 @@ func (h *Handler) perm(resource, action string) func(http.Handler) http.Handler 
 func (h *Handler) Routes() http.Handler {
 	r := chi.NewRouter()
 	r.Get("/health", h.Health)
+	r.With(h.perm(resCampaigns, actionRead)).Get("/meta", h.Meta)
 	r.With(h.perm(resCampaigns, actionRead)).Get("/", h.List)
 	r.With(h.perm(resCampaigns, actionCreate)).Post("/", h.Create)
 	r.Route("/{id}", func(r chi.Router) {

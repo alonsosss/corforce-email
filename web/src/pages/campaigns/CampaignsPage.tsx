@@ -1,15 +1,11 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import {
-  CAMPAIGN_STATUSES,
-  campaignsApi,
-  type Campaign,
-  type CampaignStatus,
-} from '@/api/campaigns';
+import { campaignsApi, campaignsMeta, type Campaign, type CampaignStatus } from '@/api/campaigns';
 import { PERMISSIONS } from '@/access/permissions';
 import { useAccess } from '@/access/useAccess';
 import { usePagination } from '@/hooks/usePagination';
 import { useQuery } from '@/hooks/useQuery';
+import { useResource } from '@/hooks/useResource';
 import {
   Button,
   Card,
@@ -35,6 +31,7 @@ export default function CampaignsPage() {
   const toast = useToast();
   const { can } = useAccess();
   const pager = usePagination();
+  const meta = useResource(campaignsMeta);
   const [status, setStatus] = useState<CampaignStatus | ''>('');
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
@@ -130,6 +127,7 @@ export default function CampaignsPage() {
               type="search"
               placeholder={t('campaigns.searchPlaceholder')}
               value={searchInput}
+              maxLength={meta.data?.limits.max_search_length}
               onChange={(e) => setSearchInput(e.target.value)}
             />
           </div>
@@ -140,10 +138,11 @@ export default function CampaignsPage() {
             <Select
               id="campaigns-status"
               placeholder={t('common.all')}
-              options={CAMPAIGN_STATUSES.map((s) => ({
+              options={(meta.data?.statuses ?? []).map(({ status: s }) => ({
                 value: s,
                 label: tEnum('campaigns.status', s),
               }))}
+              disabled={!meta.data}
               value={status}
               onChange={(e) => {
                 setStatus(e.target.value as CampaignStatus | '');

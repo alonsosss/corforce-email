@@ -1,6 +1,7 @@
 import { api } from './client';
 import { endpoints } from './endpoints';
 import { fetchList, fetchPage } from './paging';
+import { cachedResource } from './resource';
 import type { ApiResponse, Page, PageQuery } from './types';
 
 // DTOs de services/mail-directory: peticiones en internal/adapters/http/dto.go y
@@ -9,30 +10,51 @@ import type { ApiResponse, Page, PageQuery } from './types';
 
 /** Estado que leen Postfix y Dovecot: 0 no recibe ni envia, 1 activo, 2 solo recibe. */
 export type ActiveState = 0 | 1 | 2;
-export const ACTIVE_STATES: readonly ActiveState[] = [1, 2, 0];
+/** Politica de smtp_tls_policy_maps; las admitidas llegan en DirectoryMeta.tls_policies. */
+export type TlsPolicyName = string;
+/** Tipo de un mapa BCC; los admitidos llegan en DirectoryMeta.bcc_map_types. */
+export type BccType = string;
 
-/** Espejo de domain.TLSPolicies(): lo que admite smtp_tls_policy_maps de Postfix. */
-export const TLS_POLICIES = [
-  'none',
-  'may',
-  'encrypt',
-  'dane',
-  'dane-only',
-  'fingerprint',
-  'verify',
-  'secure',
-] as const;
-export type TlsPolicyName = (typeof TLS_POLICIES)[number];
+export interface ActiveStateInfo {
+  value: ActiveState;
+  code: string;
+}
 
-export const BCC_TYPES = ['sender', 'rcpt'] as const;
-export type BccType = (typeof BCC_TYPES)[number];
+/**
+ * GET /mail-directory/meta (app.DirectoryMeta): reglas del directorio de la celda sacadas
+ * de las constantes del dominio. Las cuotas viajan en limits.quota_unit y limits.unlimited
+ * significa sin limite.
+ */
+export interface DirectoryMeta {
+  mailbox: {
+    password_min_length: number;
+    password_max_length: number;
+    local_part_max_length: number;
+    display_name_max_length: number;
+    kinds: string[];
+    active_states: ActiveStateInfo[];
+  };
+  alias: { active_states: ActiveStateInfo[] };
+  domain: { name_max_length: number; label_max_length: number; description_max_length: number };
+  sieve: { script_max_bytes: number; filter_types: SieveFilterType[] };
+  tls_policies: TlsPolicyName[];
+  bcc_map_types: BccType[];
+  limits: { quota_unit: string; unlimited: number };
+  pagination: { default_page_size: number; max_page_size: number };
+  search: { max_length: number };
+}
 
-// Espejo de domain.MinPasswordLength, domain.MaxPasswordLength y
-// domain.MaxSieveScriptBytes, y del tope de pagina de app.NormalizePage.
-export const MAILBOX_PASSWORD_MIN_LENGTH = 12;
-export const MAILBOX_PASSWORD_MAX_LENGTH = 256;
-export const SIEVE_SCRIPT_MAX_BYTES = 64 * 1024;
-export const DIRECTORY_MAX_PAGE_SIZE = 200;
+export interface DirectoryDomainQuery extends PageQuery {
+  /** Subcadena del nombre, sin distinguir mayusculas. */
+  search?: string;
+}
+
+export interface MailboxQuery extends PageQuery {
+  /** Subcadena de la direccion o del nombre visible, sin distinguir mayusculas. */
+  search?: string;
+  /** Dominio exacto. */
+  domain?: string;
+}
 
 // ── Dominios del directorio ─────────────────────────────────────────────────
 
@@ -456,7 +478,10 @@ function resourceApi<T, C, U>(ep: CollectionEndpoints): ResourceApi<T, C, U> {
 }
 
 export const mailDirectoryApi = {
-  listDomains: (query: PageQuery) =>
+  meta: async (): Promise<DirectoryMeta> =>
+    (await api.get<DirectoryMeta>(endpoints.mailDirectory.meta)).data,
+
+  listDomains: (query: DirectoryDomainQuery) =>
     fetchPage<DirectoryDomain>(endpoints.mailDomains.collection, { ...query }),
   updateDomain: (id: string, input: UpdateDirectoryDomainRequest) =>
     api.patch<DirectoryDomain>(endpoints.mailDomains.byId(id), { body: input }),
@@ -464,7 +489,7 @@ export const mailDirectoryApi = {
     endpoints.mailDomains.aliasDomains,
   ),
 
-  listMailboxes: (query: PageQuery) =>
+  listMailboxes: (query: MailboxQuery) =>
     fetchPage<Mailbox>(endpoints.mailboxes.collection, { ...query }),
   getMailbox: (id: string) => api.get<Mailbox>(endpoints.mailboxes.byId(id)),
   createMailbox: (input: CreateMailboxRequest) =>
@@ -517,3 +542,6 @@ export const mailRoutingApi = {
     endpoints.mailRouting.bccMaps,
   ),
 };
+
+/** Reglas del directorio compartidas por todas las pantallas de la sesion. */
+export const directoryMeta = cachedResource(mailDirectoryApi.meta);

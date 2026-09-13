@@ -1,15 +1,9 @@
-import {
-  BILLING_RESOURCES,
-  UNLIMITED,
-  type BillingPeriod,
-  type BillingResource,
-  type LimitInput,
-  type Plan,
-} from '@/api/billing';
+import type { BillingMeta, BillingPeriod, BillingResource, LimitInput, Plan } from '@/api/billing';
 import { t } from '@/i18n';
 
 // Formulario de un plan. Los importes se escriben y viajan como texto decimal: nunca pasan
-// por float. El servicio vuelve a validar escala, topes y coherencia de cada limite.
+// por float. Los recursos (un limite por cada uno) y el valor de "sin limite" salen de
+// GET /billing/meta. El servicio vuelve a validar escala, topes y coherencia de cada limite.
 
 /** Forma de un importe que acepta domain.parseAmount: digitos y un punto decimal. */
 const AMOUNT = /^\d+(?:\.\d+)?$/;
@@ -37,7 +31,7 @@ function defaultLimit(resource: BillingResource): LimitDraft {
   return { resource, included: '0', unlimited: false, hardLimit: true, overage: '' };
 }
 
-export function emptyPlanDraft(): PlanDraft {
+export function emptyPlanDraft(meta: BillingMeta): PlanDraft {
   return {
     code: '',
     name: '',
@@ -45,11 +39,11 @@ export function emptyPlanDraft(): PlanDraft {
     currency: '',
     basePrice: '',
     billingPeriod: '',
-    limits: BILLING_RESOURCES.map(defaultLimit),
+    limits: meta.resources.map(({ resource }) => defaultLimit(resource)),
   };
 }
 
-export function planToDraft(plan: Plan): PlanDraft {
+export function planToDraft(plan: Plan, meta: BillingMeta): PlanDraft {
   return {
     code: plan.code,
     name: plan.name,
@@ -57,13 +51,13 @@ export function planToDraft(plan: Plan): PlanDraft {
     currency: plan.currency,
     basePrice: plan.base_price,
     billingPeriod: plan.billing_period,
-    limits: BILLING_RESOURCES.map((resource) => {
+    limits: meta.resources.map(({ resource }) => {
       const limit = plan.limits.find((l) => l.resource === resource);
       if (!limit) return defaultLimit(resource);
       return {
         resource,
-        included: limit.included === UNLIMITED ? '' : String(limit.included),
-        unlimited: limit.included === UNLIMITED,
+        included: limit.included === meta.unlimited ? '' : String(limit.included),
+        unlimited: limit.included === meta.unlimited,
         hardLimit: limit.hard_limit,
         overage: limit.overage_unit_price ?? '',
       };
@@ -80,7 +74,8 @@ export interface LimitsResult {
   errors: Partial<Record<BillingResource, string>>;
 }
 
-export function limitsFromDraft(drafts: readonly LimitDraft[]): LimitsResult {
+/** unlimited: el included que significa sin limite (BillingMeta.unlimited). */
+export function limitsFromDraft(drafts: readonly LimitDraft[], unlimited: number): LimitsResult {
   const limits: LimitInput[] = [];
   const errors: Partial<Record<BillingResource, string>> = {};
   for (const d of drafts) {
@@ -90,7 +85,7 @@ export function limitsFromDraft(drafts: readonly LimitDraft[]): LimitsResult {
     }
     const limit: LimitInput = {
       resource: d.resource,
-      included: d.unlimited ? UNLIMITED : Number(d.included.trim()),
+      included: d.unlimited ? unlimited : Number(d.included.trim()),
       hard_limit: d.hardLimit,
     };
     const overage = d.overage.trim();

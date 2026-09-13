@@ -1,19 +1,30 @@
 import { useState, type FormEvent } from 'react';
 import {
-  MAILBOX_PASSWORD_MAX_LENGTH,
-  MAILBOX_PASSWORD_MIN_LENGTH,
+  directoryMeta,
   mailDirectoryApi,
+  type DirectoryMeta,
   type Mailbox,
 } from '@/api/mailDirectory';
 import { errorMessage } from '@/api/messages';
 import { useAction } from '@/hooks/useAction';
+import { useResource } from '@/hooks/useResource';
 import { Button, Card, FormField, PasswordInput, useToast } from '@/design/components';
 import { hasErrors, rules, validateField, type FieldErrors } from '@/lib/validate';
 import { t } from '@/i18n';
+import { ResourceGate } from '@/pages/shared/ResourceGate';
 
 type Field = 'password' | 'confirm';
 
 export function MailboxPasswordTab({ mailbox }: { mailbox: Mailbox }) {
+  const meta = useResource(directoryMeta);
+  return (
+    <ResourceGate resource={meta}>
+      {(rules) => <PasswordForm mailbox={mailbox} meta={rules} />}
+    </ResourceGate>
+  );
+}
+
+function PasswordForm({ mailbox, meta }: { mailbox: Mailbox; meta: DirectoryMeta }) {
   const toast = useToast();
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
@@ -33,8 +44,8 @@ export function MailboxPasswordTab({ mailbox }: { mailbox: Mailbox }) {
         validateField(
           password,
           rules.required,
-          rules.minLength(MAILBOX_PASSWORD_MIN_LENGTH),
-          rules.maxLength(MAILBOX_PASSWORD_MAX_LENGTH),
+          rules.minLength(meta.mailbox.password_min_length),
+          rules.maxLength(meta.mailbox.password_max_length),
         ) ?? undefined,
       confirm: confirm === password ? undefined : t('validation.passwordMismatch'),
     };
@@ -59,7 +70,7 @@ export function MailboxPasswordTab({ mailbox }: { mailbox: Mailbox }) {
           htmlFor="mailbox-new-password"
           required
           error={errors.password}
-          hint={t('mailboxes.form.passwordHint', { n: MAILBOX_PASSWORD_MIN_LENGTH })}
+          hint={t('mailboxes.form.passwordHint', { n: meta.mailbox.password_min_length })}
         >
           <PasswordInput
             id="mailbox-new-password"

@@ -1,33 +1,48 @@
 import { useState } from 'react';
 import {
-  MAILBOX_PASSWORD_MAX_LENGTH,
-  MAILBOX_PASSWORD_MIN_LENGTH,
+  directoryMeta,
   mailDirectoryApi,
   type CreateMailboxRequest,
+  type DirectoryMeta,
   type Mailbox,
 } from '@/api/mailDirectory';
 import { useAction } from '@/hooks/useAction';
-import { Checkbox, FormField, Input, PasswordInput, Select } from '@/design/components';
+import { useResource } from '@/hooks/useResource';
+import { Checkbox, FormField, Input, PasswordInput } from '@/design/components';
 import { normalizeDomainName, normalizeLocalPart } from '@/lib/mailAddress';
 import type { QuotaAmount } from '@/lib/quota';
 import { hasErrors, rules, validateField, type FieldErrors } from '@/lib/validate';
 import { t } from '@/i18n';
 import { FormModal } from '@/pages/shared/FormModal';
+import { DirectoryDomainPicker } from '@/pages/shared/DirectoryDomainPicker';
 import { QuotaField, readQuota } from '@/pages/shared/QuotaField';
-import { useDirectoryDomains } from '@/pages/shared/useDirectoryDomains';
+import { ResourceGate } from '@/pages/shared/ResourceGate';
 import { AccessCheckboxes, MAILBOX_ACCESS_KEYS, allAccess } from './access';
 
 type Field = 'local_part' | 'domain' | 'password' | 'confirm' | 'display_name' | 'quota';
-
-const DISPLAY_NAME_MAX_LENGTH = 255;
 
 export interface MailboxCreateFormProps {
   onClose: () => void;
   onCreated: (mailbox: Mailbox) => void;
 }
 
-export function MailboxCreateForm({ onClose, onCreated }: MailboxCreateFormProps) {
-  const domains = useDirectoryDomains();
+export function MailboxCreateForm(props: MailboxCreateFormProps) {
+  const meta = useResource(directoryMeta);
+  return (
+    <ResourceGate
+      resource={meta}
+      modal={{ title: t('mailboxes.form.createTitle'), onClose: props.onClose }}
+    >
+      {(rules) => <CreateForm {...props} meta={rules} />}
+    </ResourceGate>
+  );
+}
+
+function CreateForm({
+  onClose,
+  onCreated,
+  meta,
+}: MailboxCreateFormProps & { meta: DirectoryMeta }) {
   const [localPart, setLocalPart] = useState('');
   const [domain, setDomain] = useState('');
   const [displayName, setDisplayName] = useState('');
@@ -61,12 +76,13 @@ export function MailboxCreateForm({ onClose, onCreated }: MailboxCreateFormProps
         validateField(
           password,
           rules.required,
-          rules.minLength(MAILBOX_PASSWORD_MIN_LENGTH),
-          rules.maxLength(MAILBOX_PASSWORD_MAX_LENGTH),
+          rules.minLength(meta.mailbox.password_min_length),
+          rules.maxLength(meta.mailbox.password_max_length),
         ) ?? undefined,
       confirm: confirm === password ? undefined : t('validation.passwordMismatch'),
       display_name:
-        validateField(displayName, rules.maxLength(DISPLAY_NAME_MAX_LENGTH)) ?? undefined,
+        validateField(displayName, rules.maxLength(meta.mailbox.display_name_max_length)) ??
+        undefined,
       quota: quotaReading.error ?? undefined,
     };
     setErrors(next);
@@ -82,10 +98,6 @@ export function MailboxCreateForm({ onClose, onCreated }: MailboxCreateFormProps
       tls_enforce_out: tlsOut,
     });
   };
-
-  const domainList = domains.data ?? [];
-  // Sin permiso para leer el directorio (o si falla), el dominio se escribe a mano.
-  const pickDomain = !domains.error && domainList.length > 0;
 
   return (
     <FormModal
@@ -122,30 +134,16 @@ export function MailboxCreateForm({ onClose, onCreated }: MailboxCreateFormProps
           required
           error={errors.domain}
         >
-          {pickDomain ? (
-            <Select
-              id="mailbox-domain"
-              placeholder={t('common.select')}
-              options={domainList.map((d) => ({
-                value: d.domain,
-                label: d.active
-                  ? d.domain
-                  : t('mailboxes.form.domainInactive', { domain: d.domain }),
-              }))}
-              value={domain}
-              onChange={(e) => setDomain(e.target.value)}
-              invalid={Boolean(errors.domain)}
-            />
-          ) : (
-            <Input
-              id="mailbox-domain"
-              className="cf-mono"
-              value={domain}
-              onChange={(e) => setDomain(e.target.value)}
-              invalid={Boolean(errors.domain)}
-              autoComplete="off"
-            />
-          )}
+          <DirectoryDomainPicker
+            id="mailbox-domain"
+            placeholder={t('common.select')}
+            value={domain}
+            onChange={setDomain}
+            invalid={Boolean(errors.domain)}
+            optionLabel={(d) =>
+              d.active ? d.domain : t('mailboxes.form.domainInactive', { domain: d.domain })
+            }
+          />
         </FormField>
       </div>
       <FormField
@@ -166,7 +164,7 @@ export function MailboxCreateForm({ onClose, onCreated }: MailboxCreateFormProps
           htmlFor="mailbox-password"
           required
           error={errors.password}
-          hint={t('mailboxes.form.passwordHint', { n: MAILBOX_PASSWORD_MIN_LENGTH })}
+          hint={t('mailboxes.form.passwordHint', { n: meta.mailbox.password_min_length })}
         >
           <PasswordInput
             id="mailbox-password"

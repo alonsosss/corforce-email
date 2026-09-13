@@ -93,7 +93,7 @@ func setupDB(t *testing.T, cfg Config) *dbFixture {
 	clock := &apptest.Clock{T: time.Now().UTC().Truncate(time.Microsecond)}
 	f := &fixture{
 		clock: clock, sender: &apptest.Sender{}, contacts: apptest.NewContacts(),
-		templates: &apptest.Templates{Kind: kindMarketing, Version: 3}, tenant: uuid.New(), user: uuid.New(),
+		templates: &apptest.Templates{Kind: KindMarketing, Version: 3}, tenant: uuid.New(), user: uuid.New(),
 	}
 	if cfg.PublicBaseURL == "" {
 		cfg.PublicBaseURL = "https://app.example.com"

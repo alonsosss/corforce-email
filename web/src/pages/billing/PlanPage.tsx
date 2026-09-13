@@ -1,8 +1,9 @@
-import { billingApi, type Plan } from '@/api/billing';
+import { billingApi, billingMeta, type Plan } from '@/api/billing';
 import { ERROR_CODES, errorCode } from '@/api/errors';
 import { PERMISSIONS } from '@/access/permissions';
 import { useAccess } from '@/access/useAccess';
 import { useQuery } from '@/hooks/useQuery';
+import { useResource } from '@/hooks/useResource';
 import {
   Badge,
   Card,
@@ -17,6 +18,7 @@ import {
 import { formatDateTime } from '@/lib/format';
 import { t, tEnum } from '@/i18n';
 import { MissingPermission } from '@/pages/shared/MissingPermission';
+import { ResourceGate } from '@/pages/shared/ResourceGate';
 import { formatIncluded, formatMoney, formatPeriodDay, UsageTable } from './billingFormat';
 import { SubscriptionStatusBadge } from './subscriptionStatus';
 
@@ -40,6 +42,7 @@ export default function PlanPage() {
 
 function SubscriptionCard() {
   const subscription = useQuery(async () => (await billingApi.subscription()).data, []);
+  const meta = useResource(billingMeta);
   if (subscription.error) {
     return (
       <Card title={t('billing.subscription.title')}>
@@ -98,12 +101,16 @@ function SubscriptionCard() {
           ]}
         />
       </Card>
-      {plan ? <LimitsCard plan={plan} /> : null}
+      {plan ? (
+        <ResourceGate resource={meta}>
+          {(catalog) => <LimitsCard plan={plan} unlimited={catalog.unlimited} />}
+        </ResourceGate>
+      ) : null}
     </div>
   );
 }
 
-export function LimitsCard({ plan }: { plan: Plan }) {
+export function LimitsCard({ plan, unlimited }: { plan: Plan; unlimited: number }) {
   const columns: Column<Plan['limits'][number]>[] = [
     {
       key: 'resource',
@@ -114,7 +121,7 @@ export function LimitsCard({ plan }: { plan: Plan }) {
       key: 'included',
       header: t('billing.column.included'),
       align: 'right',
-      render: (l) => formatIncluded(l.resource, l.included),
+      render: (l) => formatIncluded(l.resource, l.included, unlimited),
     },
     {
       key: 'kind',
@@ -148,6 +155,7 @@ export function LimitsCard({ plan }: { plan: Plan }) {
 
 function UsageCard() {
   const usage = useQuery(async () => (await billingApi.usage()).data, []);
+  const meta = useResource(billingMeta);
   return (
     <Card
       flush
@@ -169,12 +177,16 @@ function UsageCard() {
             <ErrorState error={usage.error} onRetry={usage.reload} />
           )}
         </div>
-      ) : !usage.data ? (
+      ) : meta.error ? (
+        <div className="cf-table__state">
+          <ErrorState error={meta.error} onRetry={meta.reload} />
+        </div>
+      ) : !usage.data || !meta.data ? (
         <div className="cf-table__state">
           <Skeleton lines={5} />
         </div>
       ) : (
-        <UsageTable report={usage.data} />
+        <UsageTable report={usage.data} unlimited={meta.data.unlimited} />
       )}
     </Card>
   );

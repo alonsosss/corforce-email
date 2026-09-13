@@ -48,6 +48,9 @@ func TriggerTypes() []TriggerType {
 	return []TriggerType{TriggerContactCreated, TriggerConsentGranted, TriggerEmailClicked}
 }
 
+// AcceptsCampaign dice si el disparador admite acotarse a una campana (CampaignID).
+func (t TriggerType) AcceptsCampaign() bool { return t == TriggerEmailClicked }
+
 // PurposeMarketing es el unico proposito de consentimiento que dispara un flujo.
 const PurposeMarketing = "marketing"
 
@@ -67,7 +70,7 @@ func (t Trigger) validate() error {
 		return NewValidationError("trigger.type debe ser contact.created, consent.granted o email.clicked")
 	}
 	if t.CampaignID != nil {
-		if t.Type != TriggerEmailClicked {
+		if !t.Type.AcceptsCampaign() {
 			return NewValidationError("trigger.campaign_id solo aplica a email.clicked")
 		}
 		if *t.CampaignID == uuid.Nil {
@@ -113,7 +116,14 @@ type NewWorkflowInput struct {
 	CreatedBy   uuid.UUID
 }
 
-const maxDescriptionLen = 2000
+const (
+	MaxDescriptionLen = 2000
+	// MaxPauseReasonLen acota el motivo que escribe quien pausa un flujo.
+	MaxPauseReasonLen = 500
+	// PauseReasonManual es el motivo de una pausa pedida sin texto. Las pausas del
+	// ejecutor llevan "CODIGO: detalle" (BlockingCodes).
+	PauseReasonManual = "manual"
+)
 
 // NewWorkflow crea un flujo en borrador con todo validado.
 func NewWorkflow(tenantID uuid.UUID, in NewWorkflowInput) (*Workflow, error) {
@@ -136,8 +146,8 @@ func (w *Workflow) validate() error {
 		return NewValidationError("name es obligatorio y admite como maximo %d caracteres", MaxNameLen)
 	}
 	w.Description = strings.TrimSpace(w.Description)
-	if utf8.RuneCountInString(w.Description) > maxDescriptionLen {
-		return NewValidationError("description admite como maximo %d caracteres", maxDescriptionLen)
+	if utf8.RuneCountInString(w.Description) > MaxDescriptionLen {
+		return NewValidationError("description admite como maximo %d caracteres", MaxDescriptionLen)
 	}
 	if err := w.Trigger.validate(); err != nil {
 		return err
@@ -201,10 +211,15 @@ func (w *Workflow) ApplyPatch(p Patch) error {
 	return nil
 }
 
+// CanActivate, CanPause y CanArchive son las transiciones que admite el estado actual.
+func (w *Workflow) CanActivate() bool { return w.Status == StatusDraft || w.Status == StatusPaused }
+func (w *Workflow) CanPause() bool    { return w.Status == StatusActive }
+func (w *Workflow) CanArchive() bool  { return w.Status != StatusArchived }
+
 // Activate pone el flujo en marcha. Todos los pasos de envio deben llevar ya la version
 // de plantilla fijada (la fija el caso de uso tras comprobarla en templates).
 func (w *Workflow) Activate(now time.Time) error {
-	if w.Status != StatusDraft && w.Status != StatusPaused {
+	if !w.CanActivate() {
 		return TransitionError(w.Status, StatusActive)
 	}
 	if err := ValidateSteps(w.Steps); err != nil {
@@ -224,7 +239,7 @@ func (w *Workflow) Activate(now time.Time) error {
 
 // Pause congela el flujo: sus ejecuciones dejan de avanzar hasta reactivarlo.
 func (w *Workflow) Pause(reason string) error {
-	if w.Status != StatusActive {
+	if !w.CanPause() {
 		return TransitionError(w.Status, StatusPaused)
 	}
 	w.Status = StatusPaused
@@ -234,7 +249,7 @@ func (w *Workflow) Pause(reason string) error {
 
 // Archive retira el flujo; sus ejecuciones pendientes se cancelan.
 func (w *Workflow) Archive() error {
-	if w.Status == StatusArchived {
+	if !w.CanArchive() {
 		return TransitionError(w.Status, StatusArchived)
 	}
 	w.Status = StatusArchived

@@ -16,9 +16,14 @@ import (
 	"go.uber.org/zap"
 )
 
+// Tipo de plantilla que exige cada uso, tal como lo informa templates: los pasos de envio
+// salen por la via de marketing y el doble opt-in es un correo transaccional.
 const (
-	kindTransactional = "transactional"
-	kindMarketing     = "marketing"
+	KindTransactional = "transactional"
+	KindMarketing     = "marketing"
+)
+
+const (
 	// doiProbePath es la ruta del enlace de prueba con que se comprueba que la plantilla
 	// del doble opt-in muestra confirm_url. No se sirve: nunca sale en un correo.
 	doiProbePath = "/automations/doi-template-check/"
@@ -73,7 +78,7 @@ func (uc *UseCase) checkDOITemplate(ctx context.Context, tenantID, templateID uu
 		return err
 	}
 	switch rendered.Kind {
-	case kindTransactional:
+	case KindTransactional:
 	case "":
 		return domain.ErrTemplateKindUnknown
 	default:

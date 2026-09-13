@@ -122,6 +122,11 @@ func main() {
 		r.Use(middleware.NewRateLimiter(120, time.Minute).Limit)
 		r.Mount("/api/v1/reputation", h.PublicRoutes())
 	})
+	// Catalogo: por el gateway, con sesion y sin base de empresa.
+	r.Group(func(r chi.Router) {
+		r.Use(middleware.NewRateLimiter(120, time.Minute).Limit)
+		r.Mount("/api/v1/reputation/meta", h.MetaRoutes())
+	})
 	// Plataforma: por el gateway, solo superadmin; la empresa es la de la ruta.
 	r.Group(func(r chi.Router) {
 		r.Use(middleware.NewRateLimiter(120, time.Minute).Limit)

@@ -87,6 +87,7 @@ describe('menu frente a rutas', () => {
       [paths.contacts, MODULES.contacts],
       [paths.segments, MODULES.segments],
       [paths.campaigns, MODULES.campaigns],
+      [paths.automations, MODULES.automations],
       [paths.analytics, MODULES.analytics],
     ]);
   });
@@ -128,6 +129,9 @@ describe('menu frente a rutas', () => {
       [paths.segments, paths.segmentNew],
       [paths.segments, `${paths.segments}/:id`],
       [paths.campaigns, `${paths.campaigns}/:id`],
+      [paths.automations, paths.automationNew],
+      [paths.automations, `${paths.automations}/:id`],
+      [paths.automations, paths.automationRunPattern],
     ] as const) {
       const listScreen = SCREENS.find((s) => s.path === list);
       const detailScreen = SCREENS.find((s) => s.path === detail);

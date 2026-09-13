@@ -1,8 +1,9 @@
 import { useState, type FormEvent } from 'react';
 import {
-  ACTIVE_STATES,
+  directoryMeta,
   mailDirectoryApi,
   type ActiveState,
+  type DirectoryMeta,
   type Mailbox,
   type UpdateMailboxRequest,
 } from '@/api/mailDirectory';
@@ -10,6 +11,7 @@ import { errorMessage } from '@/api/messages';
 import { PERMISSIONS } from '@/access/permissions';
 import { useAccess } from '@/access/useAccess';
 import { useAction } from '@/hooks/useAction';
+import { useResource } from '@/hooks/useResource';
 import {
   Button,
   Card,
@@ -26,16 +28,22 @@ import { bytesToQuota, type QuotaAmount } from '@/lib/quota';
 import { rules, validateField } from '@/lib/validate';
 import { t, tEnum } from '@/i18n';
 import { QuotaField, readQuota } from '@/pages/shared/QuotaField';
+import { ResourceGate } from '@/pages/shared/ResourceGate';
 import { AccessCheckboxes, MAILBOX_ACCESS_KEYS, pickAccess } from './access';
-
-const DISPLAY_NAME_MAX_LENGTH = 255;
 
 export interface MailboxDataTabProps {
   mailbox: Mailbox;
   onChange: (mailbox: Mailbox) => void;
 }
 
-export function MailboxDataTab({ mailbox, onChange }: MailboxDataTabProps) {
+export function MailboxDataTab(props: MailboxDataTabProps) {
+  const meta = useResource(directoryMeta);
+  return (
+    <ResourceGate resource={meta}>{(rules) => <DataForm {...props} meta={rules} />}</ResourceGate>
+  );
+}
+
+function DataForm({ mailbox, onChange, meta }: MailboxDataTabProps & { meta: DirectoryMeta }) {
   const toast = useToast();
   const { can } = useAccess();
   const editable = can(...PERMISSIONS.mailboxes.update);
@@ -59,7 +67,8 @@ export function MailboxDataTab({ mailbox, onChange }: MailboxDataTabProps) {
     const quotaReading = readQuota(quota);
     const next = {
       display_name:
-        validateField(displayName, rules.maxLength(DISPLAY_NAME_MAX_LENGTH)) ?? undefined,
+        validateField(displayName, rules.maxLength(meta.mailbox.display_name_max_length)) ??
+        undefined,
       quota: quotaReading.error ?? undefined,
     };
     setErrors(next);
@@ -118,9 +127,9 @@ export function MailboxDataTab({ mailbox, onChange }: MailboxDataTabProps) {
             >
               <Select
                 id="mailbox-edit-status"
-                options={ACTIVE_STATES.map((s) => ({
-                  value: String(s),
-                  label: tEnum('mail.active', String(s)),
+                options={meta.mailbox.active_states.map((s) => ({
+                  value: String(s.value),
+                  label: tEnum('mail.active', String(s.value)),
                 }))}
                 value={String(active)}
                 onChange={(e) => setActive(Number(e.target.value) as ActiveState)}

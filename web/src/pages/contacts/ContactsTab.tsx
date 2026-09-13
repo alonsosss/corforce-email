@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { CONTACT_STATUSES, contactsApi, type Contact, type ContactStatus } from '@/api/contacts';
+import { contactsApi, contactsMeta, type Contact, type ContactStatus } from '@/api/contacts';
 import { PICKER_PAGE_SIZE } from '@/api/paging';
 import { PERMISSIONS } from '@/access/permissions';
 import { useAccess } from '@/access/useAccess';
 import { usePagination } from '@/hooks/usePagination';
 import { useQuery } from '@/hooks/useQuery';
+import { useResource } from '@/hooks/useResource';
 import {
   Badge,
   Button,
@@ -34,6 +35,7 @@ export function ContactsTab() {
   const { can } = useAccess();
   const pager = usePagination();
   const selection = useRowSelection();
+  const meta = useResource(contactsMeta);
   const [searchInput, setSearchInput] = useState('');
   const [tagInput, setTagInput] = useState('');
   const [search, setSearch] = useState('');
@@ -174,10 +176,11 @@ export function ContactsTab() {
           <Select
             id="contacts-status"
             placeholder={t('common.all')}
-            options={CONTACT_STATUSES.map((s) => ({
+            options={(meta.data?.statuses ?? []).map((s) => ({
               value: s,
               label: tEnum('contacts.status', s),
             }))}
+            disabled={!meta.data}
             value={status}
             onChange={(e) => {
               setStatus(e.target.value as ContactStatus | '');

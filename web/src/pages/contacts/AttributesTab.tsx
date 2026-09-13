@@ -1,17 +1,19 @@
 import { useState } from 'react';
 import {
-  ATTRIBUTE_TYPES,
   contactsApi,
+  contactsMeta,
   type AttributeDefinition,
   type AttributeType,
 } from '@/api/contacts';
 import { PERMISSIONS } from '@/access/permissions';
 import { useAccess } from '@/access/useAccess';
 import { useAction } from '@/hooks/useAction';
+import { useResource } from '@/hooks/useResource';
 import { Checkbox, FormField, Input, Select, type Column } from '@/design/components';
 import { rules, validateField } from '@/lib/validate';
 import { t, tEnum } from '@/i18n';
 import { FormModal } from '@/pages/shared/FormModal';
+import { ResourceGate } from '@/pages/shared/ResourceGate';
 import { ListTab, type ResourceFormProps } from '@/pages/shared/ResourceTab';
 import { YesNo } from '@/pages/shared/StatusBadges';
 
@@ -67,7 +69,24 @@ export function AttributesTab() {
   );
 }
 
-function AttributeForm({ item, onClose, onSaved }: ResourceFormProps<AttributeDefinition>) {
+function AttributeForm(props: ResourceFormProps<AttributeDefinition>) {
+  const meta = useResource(contactsMeta);
+  const title = props.item
+    ? t('contacts.attributes.editTitle')
+    : t('contacts.attributes.createTitle');
+  return (
+    <ResourceGate resource={meta} modal={{ title, onClose: props.onClose }}>
+      {(catalog) => <AttributeFormBody {...props} types={catalog.attribute_types} />}
+    </ResourceGate>
+  );
+}
+
+function AttributeFormBody({
+  item,
+  onClose,
+  onSaved,
+  types,
+}: ResourceFormProps<AttributeDefinition> & { types: readonly AttributeType[] }) {
   const [key, setKey] = useState(item?.key ?? '');
   const [type, setType] = useState<AttributeType | ''>(item?.type ?? '');
   const [label, setLabel] = useState(item?.label ?? '');
@@ -132,7 +151,7 @@ function AttributeForm({ item, onClose, onSaved }: ResourceFormProps<AttributeDe
           <Select
             id="attribute-type"
             placeholder={t('common.select')}
-            options={ATTRIBUTE_TYPES.map((v) => ({
+            options={types.map((v) => ({
               value: v,
               label: tEnum('contacts.attributeType', v),
             }))}

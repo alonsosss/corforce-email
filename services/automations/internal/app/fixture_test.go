@@ -28,7 +28,7 @@ func newFixture(t *testing.T, cfg Config) *fixture {
 	clock := &apptest.Clock{T: time.Date(2026, 9, 13, 12, 0, 0, 0, time.UTC)}
 	f := &fixture{
 		clock: clock, store: apptest.NewStore(clock), sender: &apptest.Sender{}, contacts: apptest.NewContacts(),
-		templates: &apptest.Templates{Kind: kindMarketing, Version: 3}, tenant: uuid.New(), user: uuid.New(),
+		templates: &apptest.Templates{Kind: KindMarketing, Version: 3}, tenant: uuid.New(), user: uuid.New(),
 	}
 	if cfg.PublicBaseURL == "" {
 		cfg.PublicBaseURL = "https://app.example.com"

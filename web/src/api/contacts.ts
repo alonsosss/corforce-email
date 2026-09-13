@@ -1,10 +1,13 @@
 import { api } from './client';
 import { endpoints } from './endpoints';
 import { fetchList, fetchPage } from './paging';
+import { cachedResource } from './resource';
 import type { Page, PageQuery } from './types';
 
 // DTOs de services/contacts/internal/adapters/http/handler.go, domain/entities.go,
-// app/contacts.go (Export), app/consent.go (ConfirmationRequest) y app/lists.go.
+// app/contacts.go (Export), app/consent.go (ConfirmationRequest) y app/lists.go. Los
+// valores admitidos y los topes llegan en GET /contacts/meta (adapters/http/meta.go); el
+// editor de segmentos usa su propio catalogo, GET /segments/meta.
 
 export type ContactStatus = 'active' | 'unsubscribed' | 'bounced' | 'complained';
 export type ConsentStatus = 'granted' | 'revoked' | 'pending' | 'none';
@@ -12,21 +15,38 @@ export type AttributeType = 'string' | 'number' | 'boolean' | 'date';
 /** Valor guardado de un atributo: texto (tambien las fechas AAAA-MM-DD), numero o booleano. */
 export type AttributeValue = string | number | boolean;
 
-// contacts no publica aun un catalogo propio (GET /contacts/meta). Hasta entonces estas
-// listas son espejo del servicio: domain.Statuses(), domain.AttrTypes() y lo que el
-// handler admite al registrar consentimiento por API (la empresa concede o revoca, y solo
-// declara api o form; el doble opt-in, la importacion y las bajas los registra la
-// plataforma). El editor de segmentos no usa estas listas: lee GET /segments/meta.
+/** Lo que la empresa puede registrar por API: concede o revoca, y declara api o form. */
 export type ConsentGrantStatus = 'granted' | 'revoked';
 export type ConsentApiMethod = 'api' | 'form';
-export const CONTACT_STATUSES: readonly ContactStatus[] = [
-  'active',
-  'unsubscribed',
-  'bounced',
-  'complained',
-];
-export const ATTRIBUTE_TYPES: readonly AttributeType[] = ['string', 'number', 'boolean', 'date'];
-export const CONSENT_API_METHODS: readonly ConsentApiMethod[] = ['api', 'form'];
+export type ImportConsentStatus = 'granted' | 'none';
+
+/** GET /contacts/meta: valores del dominio y topes efectivos del servicio. */
+export interface ContactsMeta {
+  statuses: ContactStatus[];
+  consent_statuses: ConsentStatus[];
+  consent_methods: string[];
+  api_consent_statuses: ConsentGrantStatus[];
+  api_consent_methods: ConsentApiMethod[];
+  sources: string[];
+  attribute_types: AttributeType[];
+  import: {
+    max_rows: number;
+    max_errors: number;
+    consent_statuses: ImportConsentStatus[];
+    max_consent_basis_length: number;
+  };
+  limits: {
+    max_email_length: number;
+    max_name_length: number;
+    max_tags: number;
+    max_tag_length: number;
+    max_attribute_definitions: number;
+    max_attribute_string_length: number;
+    max_consent_source_length: number;
+    max_search_length: number;
+  };
+  pagination: { default_page_size: number; max_page_size: number };
+}
 
 export interface Contact {
   id: string;
@@ -260,4 +280,10 @@ export const contactsApi = {
   updateAttribute: (key: string, input: UpdateAttributeRequest) =>
     api.patch<AttributeDefinition>(endpoints.contacts.attribute(key), { body: input }),
   deleteAttribute: (key: string) => api.delete<null>(endpoints.contacts.attribute(key)),
+
+  meta: async (): Promise<ContactsMeta> =>
+    (await api.get<ContactsMeta>(endpoints.contacts.meta)).data,
 };
+
+/** Catalogo de contactos compartido por todas las pantallas de la sesion. */
+export const contactsMeta = cachedResource(contactsApi.meta);
