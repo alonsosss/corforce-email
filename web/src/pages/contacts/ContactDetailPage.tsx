@@ -47,7 +47,7 @@ import { ResourceGate } from '@/pages/shared/ResourceGate';
 import { AddToListDialog } from './AddToListDialog';
 import { attributeLabel } from './AttributeInput';
 import { ContactForm } from './ContactForm';
-import { ConsentBadge, ContactStatusBadge } from './contactStatus';
+import { ConsentBadge, ContactStatusBadge, ContactStatusSummary } from './contactStatus';
 
 type TabId = 'data' | 'consents' | 'export';
 type Dialog = 'edit' | 'delete' | 'doi' | 'consent' | 'addToList' | null;
@@ -250,7 +250,7 @@ function DataTab({
             { label: t('common.email'), value: <span className="cf-mono">{contact.email}</span> },
             { label: t('contacts.form.firstName'), value: contact.first_name || t('common.dash') },
             { label: t('contacts.form.lastName'), value: contact.last_name || t('common.dash') },
-            { label: t('common.status'), value: <ContactStatusBadge status={contact.status} /> },
+            { label: t('common.status'), value: <ContactStatusSummary status={contact.status} /> },
             {
               label: t('contacts.column.consent'),
               value: <ConsentBadge status={contact.consent_status} />,

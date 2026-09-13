@@ -32,8 +32,18 @@ type contactPaginationMeta struct {
 	MaxPageSize     int `json:"max_page_size"`
 }
 
+// contactStatusMeta describe un estado: su gravedad (con varias causas de exclusion
+// vigentes manda la mayor) y que lo levanta (vacio en active).
+type contactStatusMeta struct {
+	Status   domain.Status     `json:"status"`
+	Severity int               `json:"severity"`
+	LiftedBy domain.StatusLift `json:"lifted_by,omitempty"`
+}
+
 type contactMetaResponse struct {
-	Statuses        []domain.Status        `json:"statuses"`
+	Statuses []domain.Status `json:"statuses"`
+	// StatusDetails va en el mismo orden que Statuses.
+	StatusDetails   []contactStatusMeta    `json:"status_details"`
 	ConsentStatuses []domain.ConsentStatus `json:"consent_statuses"`
 	ConsentMethods  []domain.ConsentMethod `json:"consent_methods"`
 	// APIConsentStatuses y APIConsentMethods son lo que la empresa puede registrar por
@@ -47,9 +57,19 @@ type contactMetaResponse struct {
 	Pagination         contactPaginationMeta  `json:"pagination"`
 }
 
+func statusDetails() []contactStatusMeta {
+	statuses := domain.Statuses()
+	out := make([]contactStatusMeta, len(statuses))
+	for i, s := range statuses {
+		out[i] = contactStatusMeta{Status: s, Severity: s.Severity(), LiftedBy: s.LiftedBy()}
+	}
+	return out
+}
+
 func buildContactMeta(importMaxRows int) contactMetaResponse {
 	return contactMetaResponse{
 		Statuses:           domain.Statuses(),
+		StatusDetails:      statusDetails(),
 		ConsentStatuses:    domain.ConsentStatuses(),
 		ConsentMethods:     domain.ConsentMethods(),
 		APIConsentStatuses: domain.GrantStatuses(),

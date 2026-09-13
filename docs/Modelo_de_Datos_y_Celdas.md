@@ -273,10 +273,61 @@ servidores). El consentimiento que reactiva a quien se dio de baja publica
 `contacts.contact.resubscribed` con `{tenant_id, email, consented_at}` (V, 2026-09-13):
 `consented_at` es el `occurred_at` de ese consentimiento, en RFC 3339 con fraccion y en
 UTC, y con el suppression solo retira las bajas anteriores; publicar sin hora es un error
-que revierte la transaccion del consentimiento. Sin ninguna causa vigente `bounced` y `complained`
-vuelven a `active` (una `manual` o `invalid` vigente lo impide) y `unsubscribed` no, ni se
-reconcede el consentimiento: eso solo lo hace un doble opt-in. Un evento sin `reasons`
-(productor anterior) se aplica por su causa, con un aviso limitado en el log.
+que revierte la transaccion del consentimiento. Sin ninguna causa que cuente `bounced`,
+`complained`, `invalid` y `excluded` vuelven a `active` con el consentimiento que tuvieran y
+`unsubscribed` no, ni se reconcede el consentimiento: eso solo lo hace un doble opt-in. Un
+evento sin `reasons` (productor anterior) se aplica por su causa, sin degradar un estado mas
+grave, con un aviso limitado en el log.
+
+Estados de exclusion (V, 2026-09-13, `domain.ReconcileSuppression`): cada causa de
+suppression tiene su estado en contacts y, con varias vigentes, el contacto toma el de la
+mas grave, en el orden de `domain.Reasons()` de suppression (un test contrasta las dos
+escalas). Hasta esta fecha `manual` e `invalid` no tenian estado: transactional no enviaba
+nada a la direccion, pero el contacto seguia `active` y contaba como enviable en segmentos,
+audiencias y en la consulta interna de enviables.
+
+| Causa vigente | Estado | Gravedad | Lo levanta (`lifted_by`) | Revoca el consentimiento |
+|---|---|---|---|---|
+| `complaint` | `complained` | 5 | `operator`: retirar la causa en suppression | no |
+| `hard_bounce` | `bounced` | 4 | `operator` | no |
+| `unsubscribe` | `unsubscribed` | 3 | `reconsent`: doble opt-in o formulario con ip | si, al registrarse |
+| `invalid` | `invalid` | 2 | `operator` | no |
+| `manual` | `excluded` | 1 | `operator_or_expiry`: retirarla o que caduque | no |
+| ninguna | `active` | 0 | - | - |
+
+La baja pesa mas que `invalid` y `manual` porque es lo unico que no levanta un operador:
+`unsubscribed` solo lo sustituye una causa mas grave, nunca una menor, y cuenta como baja en
+vigor aunque suppression ya no la devuelva. Una baja vigente solo cuenta si ya estaba en
+vigor para el contacto (estado `unsubscribed` o mas grave) o se acaba de registrar: a quien
+reconsintio y aun tiene su baja vigente, una exclusion manual lo deja `excluded` (no
+`unsubscribed`) y al retirarla vuelve a `active`. Una causa desconocida conserva el estado.
+`invalid` y `manual` no los pidio la persona: no revocan el consentimiento, y al levantarlos el
+contacto recupera el que tenia, sin escribir evidencia ni publicar
+`contacts.contact.resubscribed`. El doble opt-in no se pide a `bounced`, `complained`,
+`invalid` ni `excluded` (`CONTACT_NOT_REACHABLE`): la confirmacion no saldria. La regla de
+enviable no cambia (`status = 'active' AND marketing_consent = 'granted'`, el indice parcial
+`idx_contacts_contacts_sendable`), asi que los dos estados nuevos quedan fuera de la
+audiencia y de la consulta interna de enviables; el listado y los segmentos filtran por ellos
+(los valores del campo `status` salen de `domain.Statuses()`). `contacts/02_status_exclusions.sql`
+amplia el CHECK de `status` (DROP IF EXISTS y ADD con el mismo nombre: idempotente, y ninguna
+fila existente lo incumple). `GET /contacts/meta` publica `status_details: [{status, severity,
+lifted_by}]` en el orden de `statuses`; la interfaz etiqueta cada estado por su valor y decide
+el tono por `lifted_by`, sin lista de estados propia.
+
+Caducidad y barrido (V, 2026-09-13, `app.SweepSuppression` y `adapters/sweep`): suppression no
+publica nada cuando caduca una exclusion manual (`expires_at` solo se compara al leer), asi que
+contacts barre en segundo plano, cada barrido en una sola replica (cerrojo de lider sobre el
+registro): cada `CONTACTS_EXPIRY_SWEEP_INTERVAL` (5m por defecto, de 1m a 24h) los contactos
+`excluded`, y una vez al dia, `CONTACTS_FULL_SWEEP_AT` despues de la medianoche UTC (4h por
+defecto), todos. Pagina de 500 por id, consulta `POST /internal/suppression/check` en bloque
+(tandas de 500, bajo el tope de 1000 de suppression) y solo al contacto cuyo estado cambiaria
+lo vuelve a decidir con su fila bloqueada y sus causas leidas despues del bloqueo, como un
+evento, publicando `contacts.contact.updated`. Nunca revoca: sin el evento no sabe si una baja
+vigente sobre un `active` es nueva o ya la levanto un reconsentimiento. El barrido completo
+recupera tambien lo que no llego por evento: los contactos que ya tenian una `manual` o
+`invalid` vigente antes de estos estados (siguen `active` hasta la primera pasada completa
+tras el despliegue), los creados o importados con la direccion ya excluida (el alta no
+consulta suppression) y los eventos perdidos.
 Tambien `automations` (2026-09-13): `automations.doi_settings` (una fila por empresa,
 `UNIQUE (tenant_id)`; activado exige plantilla y remitente por CHECK);
 `automations.doi_deliveries`, un intento por evento `contacts.consent.requested` con

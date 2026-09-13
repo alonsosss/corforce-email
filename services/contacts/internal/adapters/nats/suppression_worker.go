@@ -1,5 +1,5 @@
 // Package nats consume los hechos de suppression que cambian el estado de un contacto:
-// bajas, rebotes duros y quejas, y su retirada.
+// el alta y la retirada de cada causa de exclusion.
 package nats
 
 import (

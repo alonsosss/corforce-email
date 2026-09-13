@@ -23,7 +23,7 @@ var (
 	ErrInvalidTag           = errors.New("etiqueta no valida: de 1 a 64 letras, digitos, espacio, _ . : -")
 	ErrTooManyTags          = errors.New("un contacto admite como maximo 100 etiquetas")
 	ErrInvalidName          = errors.New("el nombre admite como maximo 200 caracteres")
-	ErrInvalidStatus        = errors.New("status debe ser active, unsubscribed, bounced o complained")
+	ErrInvalidStatus        = errors.New("status no valido: los admitidos estan en GET /contacts/meta")
 	ErrInvalidSource        = errors.New("source no valido")
 	ErrInvalidAttributeKey  = errors.New("clave de atributo no valida: minusculas, digitos y _, empezando por letra, hasta 63")
 	ErrReservedAttributeKey = errors.New("la clave coincide con un campo fijo del contacto")
@@ -40,7 +40,7 @@ var (
 	// ip de quien lo envio o el doble opt-in.
 	ErrResubscribeRequiresOptIn = errors.New("volver a suscribir a quien se dio de baja exige un formulario con ip o el doble opt-in")
 	ErrConsentAlreadyGranted    = errors.New("el contacto ya tiene el consentimiento concedido")
-	ErrContactNotReachable      = errors.New("el contacto rebota o se quejo: no se le puede pedir confirmacion")
+	ErrContactNotReachable      = errors.New("la direccion esta excluida de todo envio (rebote, queja, direccion no valida o exclusion manual): no se le puede pedir confirmacion")
 	// ErrInvalidConfirmation cubre token inexistente, usado, caducado o de otra empresa:
 	// quien confirma no debe poder distinguir un caso de otro.
 	ErrInvalidConfirmation = errors.New("enlace de confirmacion no valido")

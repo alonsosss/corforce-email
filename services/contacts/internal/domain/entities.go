@@ -7,8 +7,9 @@ import (
 	"github.com/google/uuid"
 )
 
-// Status es el estado de entrega del contacto. Lo cambian los hechos (bajas, rebotes y
-// quejas que registra suppression) y el nuevo consentimiento explicito; nunca un PATCH.
+// Status es el estado de entrega del contacto. Lo cambian las causas de exclusion que
+// registra suppression (bajas, rebotes, quejas, direcciones no validas y exclusiones
+// manuales) y el nuevo consentimiento explicito; nunca un PATCH.
 type Status string
 
 const (
@@ -16,10 +17,12 @@ const (
 	StatusUnsubscribed Status = "unsubscribed"
 	StatusBounced      Status = "bounced"
 	StatusComplained   Status = "complained"
+	StatusInvalid      Status = "invalid"
+	StatusExcluded     Status = "excluded"
 )
 
 func Statuses() []Status {
-	return []Status{StatusActive, StatusUnsubscribed, StatusBounced, StatusComplained}
+	return []Status{StatusActive, StatusUnsubscribed, StatusBounced, StatusComplained, StatusInvalid, StatusExcluded}
 }
 
 func ParseStatus(s string) (Status, error) {
@@ -31,18 +34,59 @@ func ParseStatus(s string) (Status, error) {
 	return "", ErrInvalidStatus
 }
 
-// Severity ordena los estados como suppression ordena sus causas: una queja pesa mas que
-// un rebote duro y este mas que una baja. Un hecho menor no degrada a uno mayor.
+// Severity ordena los estados como suppression ordena sus causas (una sola escala, que un
+// test contrasta con la suya): queja, rebote duro, baja, direccion no valida y exclusion
+// manual. Con varias causas vigentes el estado es el de la mas grave. La baja pesa mas que
+// invalid y excluded porque es lo unico que no levanta un operador: mostrarla dice que hace
+// falta para que la persona vuelva. invalid pesa mas que excluded porque es un hecho de la
+// direccion, y excluded una decision de la empresa que puede caducar.
 func (s Status) Severity() int {
 	switch s {
 	case StatusComplained:
-		return 3
+		return 5
 	case StatusBounced:
-		return 2
+		return 4
 	case StatusUnsubscribed:
+		return 3
+	case StatusInvalid:
+		return 2
+	case StatusExcluded:
 		return 1
 	}
 	return 0
+}
+
+// StatusLift dice que devuelve a un contacto excluido a su estado anterior.
+type StatusLift string
+
+const (
+	// LiftReconsent: solo un consentimiento nuevo con prueba de que lo pidio la persona.
+	LiftReconsent StatusLift = "reconsent"
+	// LiftOperator: que un operador retire la causa en suppression.
+	LiftOperator StatusLift = "operator"
+	// LiftOperatorOrExpiry: que un operador la retire o que caduque.
+	LiftOperatorOrExpiry StatusLift = "operator_or_expiry"
+)
+
+// LiftedBy es lo que levanta el estado; vacio en active, que no hay que levantar.
+func (s Status) LiftedBy() StatusLift {
+	switch s {
+	case StatusUnsubscribed:
+		return LiftReconsent
+	case StatusComplained, StatusBounced, StatusInvalid:
+		return LiftOperator
+	case StatusExcluded:
+		return LiftOperatorOrExpiry
+	}
+	return ""
+}
+
+// BlocksAllMail indica si la causa del estado excluye a la direccion de todo envio,
+// tambien del doble opt-in (que solo pasa por encima de una baja), y si el estado lo
+// levanta la retirada de esa causa y no un consentimiento.
+func (s Status) BlocksAllMail() bool {
+	lift := s.LiftedBy()
+	return lift == LiftOperator || lift == LiftOperatorOrExpiry
 }
 
 // Source dice por donde entro el contacto.

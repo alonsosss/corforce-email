@@ -89,10 +89,11 @@ func provesOwnRequest(method ConsentMethod, ip *string) bool {
 }
 
 // CheckConfirmationRequest decide si se puede pedir el doble opt-in. A una direccion que
-// rebota o que se quejo no se le envia nada; a quien ya consintio no se le pide de nuevo,
-// porque la fila pending lo sacaria de la audiencia hasta que confirmara.
+// rebota, que se quejo, que no es valida o que la empresa excluyo no se le envia nada, ni
+// la confirmacion (BlocksAllMail); a quien ya consintio no se le pide de nuevo, porque la
+// fila pending lo sacaria de la audiencia hasta que confirmara.
 func CheckConfirmationRequest(c *Contact) error {
-	if c.Status == StatusBounced || c.Status == StatusComplained {
+	if c.Status.BlocksAllMail() {
 		return ErrContactNotReachable
 	}
 	if c.ConsentStatus == ConsentGranted {
@@ -130,9 +131,10 @@ func (c *Contact) ApplySuppression(target Status) bool {
 }
 
 // LiftSuppression vuelve a active cuando se retira la exclusion que explica el estado
-// actual (un rebote o una queja reactivados por un operador). Devuelve si cambio.
+// actual (un rebote, una queja, una direccion no valida o una exclusion manual retirados
+// por un operador). Devuelve si cambio.
 func (c *Contact) LiftSuppression(lifted Status) bool {
-	if c.Status != lifted || (lifted != StatusBounced && lifted != StatusComplained) {
+	if c.Status != lifted || !lifted.BlocksAllMail() {
 		return false
 	}
 	c.Status = StatusActive

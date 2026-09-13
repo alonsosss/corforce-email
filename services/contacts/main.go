@@ -26,6 +26,7 @@ import (
 	outboxadapter "github.com/alonsosss/corforce-email/services/contacts/internal/adapters/outbox"
 	"github.com/alonsosss/corforce-email/services/contacts/internal/adapters/postgres"
 	"github.com/alonsosss/corforce-email/services/contacts/internal/adapters/suppressionclient"
+	"github.com/alonsosss/corforce-email/services/contacts/internal/adapters/sweep"
 	"github.com/alonsosss/corforce-email/services/contacts/internal/app"
 	"github.com/go-chi/chi/v5"
 	"go.uber.org/zap"
@@ -64,6 +65,14 @@ func main() {
 		log.Fatal(err)
 	}
 	importMax, err := envInt("CONTACTS_IMPORT_MAX_ROWS", app.DefaultImportMaxRows, 1, maxImportRows)
+	if err != nil {
+		log.Fatal(err)
+	}
+	expiryEvery, err := envDuration("CONTACTS_EXPIRY_SWEEP_INTERVAL", sweep.DefaultExpiryInterval, time.Minute, 24*time.Hour)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fullSweepAt, err := envDuration("CONTACTS_FULL_SWEEP_AT", sweep.DefaultFullAt, 0, 24*time.Hour)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -114,6 +123,10 @@ func main() {
 		worker.Start(ctx)
 		defer worker.Stop()
 	}
+
+	// Sin evento de suppression cuando caduca una exclusion manual: el estado lo alcanza el
+	// barrido. No depende de NATS: consulta suppression por HTTP y publica por la outbox.
+	go sweep.New(registryPool.Pool, tenantDB, uc, logger, expiryEvery, fullSweepAt).Run(ctx)
 
 	h := handler.NewHandler(handler.Deps{UC: uc, Perms: authz.NewCheckerFromEnv(), TenantDB: tenantDB, Logger: logger})
 

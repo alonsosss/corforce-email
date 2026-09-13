@@ -83,12 +83,13 @@ func TestRetirarUnaDeVariasCausasNoReactiva(t *testing.T) {
 		t.Fatalf("un rebote no toca el consentimiento: %+v", got)
 	}
 
-	// El operador retira el rebote; la exclusion manual sigue bloqueando todo envio.
+	// El operador retira el rebote; la exclusion manual sigue bloqueando todo envio y el
+	// contacto queda excluded, con su consentimiento intacto.
 	f.suppressed(c.Email, domain.CauseManual)
-	if res := f.apply(t, removed(f, c.Email, "hard_bounce")); res.Changed {
-		t.Fatal("retirar el rebote con otra causa vigente no reactiva")
+	if res := f.apply(t, removed(f, c.Email, "hard_bounce")); !res.Changed {
+		t.Fatal("retirar el rebote con una exclusion manual vigente deja excluded")
 	}
-	if got := f.contact(t, c.ID); got.Status != domain.StatusBounced || got.Sendable() {
+	if got := f.contact(t, c.ID); got.Status != domain.StatusExcluded || got.ConsentStatus != domain.ConsentGranted || got.Sendable() {
 		t.Fatalf("sigue fuera de la audiencia: %+v", got)
 	}
 
@@ -182,12 +183,21 @@ func TestEventosDesordenadosNoContradicenASuppression(t *testing.T) {
 		t.Fatal("la baja ya retirada no cambia al contacto")
 	}
 	// Mientras suppression aun no retira la baja de quien reconsintio, otro evento de la
-	// direccion no lo devuelve a unsubscribed.
+	// direccion no lo devuelve a unsubscribed: una exclusion manual lo deja excluded, sin
+	// revocar el consentimiento.
 	f.suppressed(c.Email, domain.CauseUnsubscribe, domain.CauseManual)
-	if res := f.apply(t, added(f, c.Email, "manual")); res.Changed {
-		t.Fatal("un evento ajeno a la baja no deshace el reconsentimiento")
+	if res := f.apply(t, added(f, c.Email, "manual")); !res.Changed {
+		t.Fatal("la exclusion manual saca al contacto de la audiencia")
 	}
-	if got := f.contact(t, c.ID); got.Status != domain.StatusActive || got.ConsentStatus != domain.ConsentGranted {
+	if got := f.contact(t, c.ID); got.Status != domain.StatusExcluded || got.ConsentStatus != domain.ConsentGranted {
+		t.Fatalf("excluido, no dado de baja: %+v", got)
+	}
+	// Retirada la manual con la baja aun vigente, vuelve a active con su consentimiento.
+	f.suppressed(c.Email, domain.CauseUnsubscribe)
+	if res := f.apply(t, removed(f, c.Email, "manual")); !res.Changed {
+		t.Fatal("retirar la manual devuelve el estado anterior")
+	}
+	if got := f.contact(t, c.ID); got.Status != domain.StatusActive || !got.Sendable() {
 		t.Fatalf("el reconsentimiento sigue: %+v", got)
 	}
 	if len(f.s.consents) != 0 {
@@ -213,8 +223,25 @@ func TestProductorSinReasonsAplicaLaCausaDelEvento(t *testing.T) {
 	if res := f.apply(t, legacy(removed(f, c.Email, "hard_bounce"))); !res.Changed || f.contact(t, c.ID).Status != domain.StatusActive {
 		t.Fatalf("retirar el rebote reactiva: %+v", f.contact(t, c.ID))
 	}
+	// manual e invalid tambien tienen estado por la causa del evento y no revocan.
+	revocations := len(f.s.consents)
+	if res := f.apply(t, legacy(added(f, c.Email, "manual"))); !res.Changed || f.contact(t, c.ID).Status != domain.StatusExcluded {
+		t.Fatalf("exclusion manual: %+v", f.contact(t, c.ID))
+	}
+	if res := f.apply(t, legacy(added(f, c.Email, "invalid"))); !res.Changed || f.contact(t, c.ID).Status != domain.StatusInvalid {
+		t.Fatalf("direccion no valida: %+v", f.contact(t, c.ID))
+	}
+	if res := f.apply(t, legacy(removed(f, c.Email, "manual"))); res.Changed || f.contact(t, c.ID).Status != domain.StatusInvalid {
+		t.Fatalf("retirar una causa que no explica el estado no lo cambia: %+v", f.contact(t, c.ID))
+	}
+	if res := f.apply(t, legacy(removed(f, c.Email, "invalid"))); !res.Changed || f.contact(t, c.ID).Status != domain.StatusActive {
+		t.Fatalf("retirar la direccion no valida reactiva: %+v", f.contact(t, c.ID))
+	}
+	if len(f.s.consents) != revocations {
+		t.Fatalf("manual e invalid no escriben consentimiento: %+v", f.s.consents[revocations:])
+	}
 	for _, ev := range []SuppressionEvent{
-		legacy(added(f, c.Email, "manual")),
+		legacy(added(f, c.Email, "futura")),
 		legacy(removed(f, c.Email, "unsubscribe")),
 	} {
 		if res := f.apply(t, ev); !res.Ignored || res.Changed {

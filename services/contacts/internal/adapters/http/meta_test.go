@@ -16,7 +16,12 @@ import (
 
 // contactMetaContract escribe a mano los nombres JSON que consume la interfaz.
 type contactMetaContract struct {
-	Statuses           []string `json:"statuses"`
+	Statuses      []string `json:"statuses"`
+	StatusDetails []struct {
+		Status   string `json:"status"`
+		Severity int    `json:"severity"`
+		LiftedBy string `json:"lifted_by"`
+	} `json:"status_details"`
 	ConsentStatuses    []string `json:"consent_statuses"`
 	ConsentMethods     []string `json:"consent_methods"`
 	APIConsentStatuses []string `json:"api_consent_statuses"`
@@ -101,6 +106,18 @@ func TestContactMetaPublicaElCatalogoDelDominio(t *testing.T) {
 	for _, c := range checks {
 		if !reflect.DeepEqual(c.got, c.want) {
 			t.Errorf("%s = %v, quiero %v", c.name, c.got, c.want)
+		}
+	}
+	// status_details describe cada estado de statuses, en su orden, con lo que dice el
+	// dominio: la interfaz decide el tono y la explicacion de cada estado con esto.
+	statuses := domain.Statuses()
+	if len(got.StatusDetails) != len(statuses) {
+		t.Fatalf("status_details = %+v, un detalle por estado de %v", got.StatusDetails, statuses)
+	}
+	for i, d := range got.StatusDetails {
+		s := statuses[i]
+		if d.Status != string(s) || d.Severity != s.Severity() || d.LiftedBy != string(s.LiftedBy()) {
+			t.Errorf("status_details[%d] = %+v; dominio %s/%d/%q", i, d, s, s.Severity(), s.LiftedBy())
 		}
 	}
 	// Lo que se publica como registrable por API es lo que el dominio acepta.

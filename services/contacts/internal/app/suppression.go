@@ -127,7 +127,8 @@ func (uc *UseCase) unsubscribeRegistered(ctx context.Context, c *domain.Contact,
 
 // applySuppressionByReason es la regla de un productor sin reasons, que guardaba una
 // sola fila por direccion: el estado sale de la causa del evento, sin degradar uno mas
-// grave, y retirar un rebote o una queja reactiva a quien estaba en ese estado.
+// grave, y retirar un rebote, una queja, una direccion no valida o una exclusion manual
+// reactiva a quien estaba en ese estado. Solo la baja revoca el consentimiento.
 func (uc *UseCase) applySuppressionByReason(ctx context.Context, ev SuppressionEvent, email string) (SuppressionResult, error) {
 	cause := domain.SuppressionCause(ev.Reason)
 	target, _ := domain.StatusForCause(cause)

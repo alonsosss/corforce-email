@@ -1376,7 +1376,7 @@ export const es = {
     'La persona se dio de baja o retiro su consentimiento: solo vuelve con un formulario que registre su IP o con el doble opt-in.',
   'error.code.CONSENT_ALREADY_GRANTED': 'El contacto ya tiene el consentimiento concedido.',
   'error.code.CONTACT_NOT_REACHABLE':
-    'La direccion rebota o se quejo: no se le puede enviar la confirmacion.',
+    'La direccion esta excluida de todo envio (rebota, se quejo, no es valida o la empresa la excluyo): no se le puede enviar la confirmacion.',
   'error.code.QUERY_TIMEOUT':
     'La consulta tardo demasiado. Acota las reglas del segmento y vuelve a intentarlo.',
   'error.code.RATE_LIMITED': 'Se alcanzo el limite de envios. Vuelve a intentarlo mas tarde.',
@@ -1621,6 +1621,14 @@ export const es = {
   'contacts.status.unsubscribed': 'Dado de baja',
   'contacts.status.bounced': 'Rebota',
   'contacts.status.complained': 'Se quejo',
+  'contacts.status.invalid': 'Direccion no valida',
+  'contacts.status.excluded': 'Excluido',
+  'contacts.statusLift.reconsent':
+    'Solo vuelve con un nuevo consentimiento de la persona: doble opt-in o formulario que registre su IP.',
+  'contacts.statusLift.operator':
+    'Deja de estar excluido cuando se retira la causa en Supresion. Su consentimiento no cambia.',
+  'contacts.statusLift.operator_or_expiry':
+    'Exclusion manual de la empresa: deja de aplicarse cuando se retira en Supresion o cuando caduca, y el contacto recupera su estado sin cambiar su consentimiento.',
   'contacts.consentStatus.granted': 'Concedido',
   'contacts.consentStatus.revoked': 'Revocado',
   'contacts.consentStatus.pending': 'Pendiente',

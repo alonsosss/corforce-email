@@ -34,6 +34,10 @@ type ContactRepository interface {
 	// consentimiento vigente no se escribe aqui: lo proyecta la base desde consents.
 	Update(ctx context.Context, c *domain.Contact) error
 	List(ctx context.Context, tenantID uuid.UUID, f ContactFilter) ([]domain.Contact, int64, error)
+	// ListAfter devuelve hasta limit contactos de la empresa en orden de id, despues de
+	// after (uuid.Nil = desde el principio); status vacio = todos. Es el recorrido del
+	// barrido que contrasta los estados con suppression.
+	ListAfter(ctx context.Context, tenantID uuid.UUID, status domain.Status, after uuid.UUID, limit int) ([]domain.Contact, error)
 	// FindByEmailsForUpdate devuelve y bloquea los contactos existentes de esas
 	// direcciones (importacion por lotes).
 	FindByEmailsForUpdate(ctx context.Context, tenantID uuid.UUID, emails []string) ([]domain.Contact, error)
@@ -143,6 +147,9 @@ type SuppressionState interface {
 	// ActiveCauses devuelve las causas vigentes de la direccion, cada una con su hora de
 	// alta si suppression la publica; vacio si esta libre.
 	ActiveCauses(ctx context.Context, tenantID uuid.UUID, email string) ([]domain.ActiveCause, error)
+	// ActiveCausesOf hace la misma consulta para varias direcciones ya normalizadas. Una
+	// direccion libre no aparece en el mapa.
+	ActiveCausesOf(ctx context.Context, tenantID uuid.UUID, emails []string) (map[string][]domain.ActiveCause, error)
 }
 
 // EventPublisher encola los eventos del dominio DENTRO de la transaccion (outbox): el

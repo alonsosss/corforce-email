@@ -123,6 +123,22 @@ func (f fakeContacts) List(_ context.Context, tenantID uuid.UUID, fl ports.Conta
 	return out, int64(len(out)), nil
 }
 
+// ListAfter recorre en orden de id, como el keyset de la base.
+func (f fakeContacts) ListAfter(_ context.Context, tenantID uuid.UUID, status domain.Status, after uuid.UUID, limit int) ([]domain.Contact, error) {
+	var out []domain.Contact
+	for _, c := range f.s.contacts {
+		if c.TenantID != tenantID || (status != "" && c.Status != status) || bytes.Compare(c.ID[:], after[:]) <= 0 {
+			continue
+		}
+		out = append(out, *copyContact(c))
+	}
+	sort.Slice(out, func(i, j int) bool { return bytes.Compare(out[i].ID[:], out[j].ID[:]) < 0 })
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
 func (f fakeContacts) FindByEmailsForUpdate(_ context.Context, tenantID uuid.UUID, emails []string) ([]domain.Contact, error) {
 	var out []domain.Contact
 	for _, e := range emails {
@@ -597,11 +613,14 @@ func (f fakeImports) List(_ context.Context, tenantID uuid.UUID, _, _ int) ([]do
 
 // fakeSuppression es el estado vigente de suppression: las causas de cada direccion en
 // el momento de la consulta, con su hora de alta, que el test fija antes de aplicar cada
-// evento.
+// evento. batch, si no es nil, es lo que devuelve la consulta en bloque del barrido: la
+// foto que el barrido leyo sin bloquear, que puede haber cambiado al bloquear la fila.
 type fakeSuppression struct {
-	causes map[string][]domain.ActiveCause
-	err    error
-	calls  int
+	causes     map[string][]domain.ActiveCause
+	batch      map[string][]domain.ActiveCause
+	err        error
+	calls      int
+	batchSizes []int
 }
 
 func (f *fakeSuppression) ActiveCauses(_ context.Context, _ uuid.UUID, email string) ([]domain.ActiveCause, error) {
@@ -610,6 +629,24 @@ func (f *fakeSuppression) ActiveCauses(_ context.Context, _ uuid.UUID, email str
 		return nil, f.err
 	}
 	return append([]domain.ActiveCause{}, f.causes[email]...), nil
+}
+
+func (f *fakeSuppression) ActiveCausesOf(_ context.Context, _ uuid.UUID, emails []string) (map[string][]domain.ActiveCause, error) {
+	f.batchSizes = append(f.batchSizes, len(emails))
+	if f.err != nil {
+		return nil, f.err
+	}
+	source := f.causes
+	if f.batch != nil {
+		source = f.batch
+	}
+	out := map[string][]domain.ActiveCause{}
+	for _, e := range emails {
+		if causes := source[e]; len(causes) > 0 {
+			out[e] = append([]domain.ActiveCause{}, causes...)
+		}
+	}
+	return out, nil
 }
 
 type fakeTx struct{}

@@ -69,8 +69,7 @@ const (
 
 // StatusForCause es el estado del contacto que implica cada causa de suppression y la
 // unica copia de ese catalogo en este servicio: un test la contrasta con el orden de
-// gravedad de services/suppression/internal/domain. manual e invalid no dicen nada de la
-// persona y no implican estado (status vacio). known=false es una causa que este
+// gravedad de services/suppression/internal/domain. known=false es una causa que este
 // servicio aun no conoce.
 func StatusForCause(cause SuppressionCause) (status Status, known bool) {
 	switch cause {
@@ -80,44 +79,62 @@ func StatusForCause(cause SuppressionCause) (status Status, known bool) {
 		return StatusBounced, true
 	case CauseUnsubscribe:
 		return StatusUnsubscribed, true
-	case CauseInvalid, CauseManual:
-		return "", true
+	case CauseInvalid:
+		return StatusInvalid, true
+	case CauseManual:
+		return StatusExcluded, true
 	}
 	return "", false
 }
 
 // ReconcileSuppression deja el estado del contacto de acuerdo con las causas vigentes de
-// su direccion en suppression (causes, leidas despues del cambio y en cualquier orden):
+// su direccion en suppression (causes, leidas despues del cambio y en cualquier orden). El
+// estado es el de la causa vigente mas grave (Severity), tambien a la baja: retirar una
+// queja con un rebote vigente deja bounced y retirar un rebote con una exclusion manual
+// vigente deja excluded. Con tres salvedades:
 //
-//   - una queja o un rebote vigentes fijan el estado de la mas grave, tambien a la baja:
-//     retirar la queja con un rebote vigente deja bounced;
-//   - una baja vigente sin queja ni rebote deja unsubscribed a quien estaba en un estado
-//     mas grave, pero a quien esta active solo lo pasa la baja que se acaba de registrar y
-//     no es anterior a su ultimo reconsentimiento (unsubscribeRegistered, ver
-//     UnsubscribeRevokes): un active con la baja aun vigente es quien reconsintio y espera
-//     a que suppression la retire al recibir contacts.contact.resubscribed;
-//   - sin ninguna causa vigente, bounced y complained vuelven a active; unsubscribed no,
-//     porque una baja solo la levanta un consentimiento nuevo;
-//   - manual, invalid o una causa desconocida no implican estado ni dejan volver a active:
-//     la direccion sigue sin poder recibir nada.
+//   - unsubscribed solo lo levanta un consentimiento nuevo (Reactivate, fuera de aqui): el
+//     estado cuenta como una baja en vigor aunque suppression ya no la devuelva, y solo lo
+//     sustituye una causa mas grave (un rebote o una queja), nunca invalid ni manual;
+//   - una baja vigente solo cuenta si ya estaba en vigor para el contacto (su estado es
+//     unsubscribed o uno mas grave) o se acaba de registrar y no es anterior a su ultimo
+//     reconsentimiento (unsubscribeRegistered, ver UnsubscribeRevokes). A quien esta en
+//     active, invalid o excluded con la baja aun vigente, la baja ya se la levanto un
+//     reconsentimiento y solo espera a que suppression la retire al recibir
+//     contacts.contact.resubscribed: se decide con las demas causas;
+//   - una causa que este servicio no conoce no implica estado ni deja volver a active: la
+//     direccion sigue sin poder recibir nada.
+//
+// Sin causa que cuente, vuelve a active quien estaba excluido por una causa que se retira
+// (BlocksAllMail: rebote, queja, direccion no valida o exclusion manual retirada o
+// caducada), con el consentimiento que tuviera. Aqui nunca se toca el consentimiento:
+// invalid y manual no los pidio la persona y no lo revocan, y al levantarlos queda el que
+// habia.
 //
 // Devuelve si el estado cambio.
 func (c *Contact) ReconcileSuppression(causes []SuppressionCause, unsubscribeRegistered bool) bool {
+	unsubscribeInForce := unsubscribeRegistered || c.Status.Severity() >= StatusUnsubscribed.Severity()
 	var implied Status
+	if c.Status == StatusUnsubscribed {
+		implied = StatusUnsubscribed
+	}
+	unknown := false
 	for _, cause := range causes {
-		if st, _ := StatusForCause(cause); st.Severity() > implied.Severity() {
+		st, known := StatusForCause(cause)
+		switch {
+		case !known:
+			unknown = true
+		case st == StatusUnsubscribed && !unsubscribeInForce:
+		case st.Severity() > implied.Severity():
 			implied = st
 		}
 	}
 	next := c.Status
 	switch {
-	case implied == StatusComplained || implied == StatusBounced:
+	case implied != "":
 		next = implied
-	case implied == StatusUnsubscribed:
-		if c.Status != StatusActive || unsubscribeRegistered {
-			next = StatusUnsubscribed
-		}
-	case len(causes) == 0 && (c.Status == StatusBounced || c.Status == StatusComplained):
+	case unknown:
+	case c.Status.BlocksAllMail():
 		next = StatusActive
 	}
 	if next == c.Status {

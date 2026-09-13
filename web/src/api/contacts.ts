@@ -9,7 +9,10 @@ import type { Page, PageQuery } from './types';
 // valores admitidos y los topes llegan en GET /contacts/meta (adapters/http/meta.go); el
 // editor de segmentos usa su propio catalogo, GET /segments/meta.
 
-export type ContactStatus = 'active' | 'unsubscribed' | 'bounced' | 'complained';
+/** Estado de entrega del contacto: los valores admitidos llegan en GET /contacts/meta. */
+export type ContactStatus = string;
+/** Que levanta un estado de exclusion (status_details[].lifted_by); ausente en active. */
+export type ContactStatusLift = string;
 export type ConsentStatus = 'granted' | 'revoked' | 'pending' | 'none';
 export type AttributeType = 'string' | 'number' | 'boolean' | 'date';
 /** Valor guardado de un atributo: texto (tambien las fechas AAAA-MM-DD), numero o booleano. */
@@ -20,9 +23,21 @@ export type ConsentGrantStatus = 'granted' | 'revoked';
 export type ConsentApiMethod = 'api' | 'form';
 export type ImportConsentStatus = 'granted' | 'none';
 
+/**
+ * Un estado del contacto: con varias causas de exclusion vigentes el estado es el de mayor
+ * gravedad, y lifted_by dice que lo levanta.
+ */
+export interface ContactStatusDetail {
+  status: ContactStatus;
+  severity: number;
+  lifted_by?: ContactStatusLift;
+}
+
 /** GET /contacts/meta: valores del dominio y topes efectivos del servicio. */
 export interface ContactsMeta {
   statuses: ContactStatus[];
+  /** En el mismo orden que statuses. */
+  status_details: ContactStatusDetail[];
   consent_statuses: ConsentStatus[];
   consent_methods: string[];
   api_consent_statuses: ConsentGrantStatus[];

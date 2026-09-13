@@ -23,7 +23,7 @@ export const catalogFixture: SegmentCatalog = {
       field: 'status',
       value_type: 'enum',
       operators: ['eq', 'neq', 'in'],
-      values: ['active', 'unsubscribed', 'bounced', 'complained'],
+      values: ['active', 'unsubscribed', 'bounced', 'complained', 'invalid', 'excluded'],
     },
     { field: 'created_at', value_type: 'timestamp', operators: ['gt'] },
     { field: 'tags', value_type: 'tag', operators: ['has_tag', 'in', 'exists'] },
