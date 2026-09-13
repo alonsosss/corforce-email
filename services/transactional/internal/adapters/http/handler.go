@@ -211,9 +211,9 @@ type internalCreateRequest struct {
 }
 
 // InternalCreateMessages es el envio de una empresa para otro servicio de la plataforma
-// (automations, correo del doble opt-in): mismo cuerpo y mismas reglas que POST /messages,
-// la empresa en X-Tenant-ID, Idempotency-Key obligatoria (por cabecera o en el cuerpo) y
-// un proposito opcional (domain.PurposeDoubleOptIn).
+// (automations con el doble opt-in, mail-security con el aviso de cuarentena): mismo
+// cuerpo y mismas reglas que POST /messages, la empresa en X-Tenant-ID, Idempotency-Key
+// obligatoria (por cabecera o en el cuerpo) y un proposito opcional (domain.Purposes).
 func (h *Handler) InternalCreateMessages(w http.ResponseWriter, r *http.Request) {
 	tenantID, err := uuid.Parse(r.Header.Get("X-Tenant-ID"))
 	if err != nil {

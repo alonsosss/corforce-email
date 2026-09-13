@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/alonsosss/corforce-email/services/mail-security/internal/domain"
 	"github.com/alonsosss/corforce-email/services/mail-security/internal/ports"
@@ -16,14 +17,18 @@ const (
 	maxQuarantinePerPage     = 200
 )
 
-// QuarantineUseCase es la cuarentena vista desde el API de administracion.
+// QuarantineUseCase es la cuarentena vista desde el API de administracion y desde los
+// enlaces sin sesion del aviso.
 type QuarantineUseCase struct {
 	tx      ports.Transactor
 	repo    ports.QuarantineRepository
 	reinj   ports.Reinjector
 	learner ports.SpamLearner
 	events  ports.EventPublisher
+	notices ports.QuarantineNoticeRepository
+	links   *domain.QuarantineLinkSigner
 	logger  *zap.Logger
+	now     func() time.Time
 }
 
 type QuarantineDeps struct {
@@ -32,11 +37,15 @@ type QuarantineDeps struct {
 	Reinjector ports.Reinjector
 	Learner    ports.SpamLearner
 	Events     ports.EventPublisher
-	Logger     *zap.Logger
+	// Notices y Links sirven los enlaces del aviso; sin Links todo enlace es invalido.
+	Notices ports.QuarantineNoticeRepository
+	Links   *domain.QuarantineLinkSigner
+	Logger  *zap.Logger
 }
 
 func NewQuarantineUseCase(d QuarantineDeps) *QuarantineUseCase {
-	return &QuarantineUseCase{tx: d.Tx, repo: d.Repo, reinj: d.Reinjector, learner: d.Learner, events: d.Events, logger: d.Logger}
+	return &QuarantineUseCase{tx: d.Tx, repo: d.Repo, reinj: d.Reinjector, learner: d.Learner, events: d.Events,
+		notices: d.Notices, links: d.Links, logger: d.Logger, now: time.Now}
 }
 
 func (uc *QuarantineUseCase) List(ctx context.Context, tenantID uuid.UUID, f domain.QuarantineFilter) (items []domain.QuarantineItem, total int64, err error) {
@@ -85,11 +94,23 @@ func (uc *QuarantineUseCase) Delete(ctx context.Context, tenantID, id uuid.UUID)
 // mantener la transaccion abierta durante la entrega SMTP local, que acota el timeout del
 // reinyector.
 func (uc *QuarantineUseCase) Release(ctx context.Context, tenantID, id uuid.UUID, userID string) error {
+	return uc.release(ctx, tenantID, id, userID, nil)
+}
+
+// release es Release con una comprobacion opcional que corre con la fila ya bloqueada y
+// antes de reinyectar (la usa el enlace sin sesion para registrar su uso): si falla, no se
+// entrega ni se borra nada.
+func (uc *QuarantineUseCase) release(ctx context.Context, tenantID, id uuid.UUID, userID string, guard func(ctx context.Context, item *domain.QuarantineItem) error) error {
 	reinjected := false
 	err := uc.tx.TransactRLS(ctx, func(ctx context.Context) error {
 		item, err := uc.repo.LockForRelease(ctx, tenantID, id)
 		if err != nil {
 			return err
+		}
+		if guard != nil {
+			if err := guard(ctx, item); err != nil {
+				return err
+			}
 		}
 		if err := uc.reinj.Reinject(ctx, item.Sender, item.Rcpt, item.Msg); err != nil {
 			return fmt.Errorf("reinyectar %s: %w", id, err)

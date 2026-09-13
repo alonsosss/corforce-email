@@ -10,7 +10,9 @@ import (
 	"time"
 
 	"github.com/alonsosss/corforce-email/services/mail-security/internal/domain"
+	"github.com/alonsosss/corforce-email/services/mail-security/internal/ports"
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 )
 
 // Directory implementa ports.DirectoryReader en memoria.
@@ -466,6 +468,123 @@ func (p *Publisher) QuarantineStored(context.Context, *domain.QuarantineItem) er
 
 func (p *Publisher) QuarantineReleased(context.Context, *domain.QuarantineItem, string) error {
 	return p.record(domain.SubjectQuarantineReleased)
+}
+
+// Notices implementa ports.QuarantineNoticeRepository sobre la cuarentena en memoria Q.
+// FailInsert hace fallar el registro del aviso como fallaria el INSERT en la base.
+type Notices struct {
+	Q          *Quarantine
+	Records    []domain.QuarantineNotice
+	Uses       map[uuid.UUID]domain.QuarantineLinkUse
+	FailInsert error
+	Pruned     int
+}
+
+func NewNotices(q *Quarantine) *Notices {
+	return &Notices{Q: q, Uses: map[uuid.UUID]domain.QuarantineLinkUse{}}
+}
+
+// Snapshot captura mensajes, avisos y usos para que Tx deshaga una transaccion fallida.
+func (n *Notices) Snapshot() func() {
+	items := append([]domain.QuarantineItem(nil), n.Q.Items...)
+	records := append([]domain.QuarantineNotice(nil), n.Records...)
+	uses := make(map[uuid.UUID]domain.QuarantineLinkUse, len(n.Uses))
+	for k, v := range n.Uses {
+		uses[k] = v
+	}
+	return func() { n.Q.Items, n.Records, n.Uses = items, records, uses }
+}
+
+func (n *Notices) PendingNotices(_ context.Context, tenantID uuid.UUID, maxScore decimal.Decimal, perMailbox int) ([]domain.QuarantineItem, error) {
+	var pending []domain.QuarantineItem
+	for _, it := range n.Q.Items {
+		if it.TenantID == tenantID && !it.Notified && it.Score.LessThanOrEqual(maxScore) {
+			pending = append(pending, it)
+		}
+	}
+	var out []domain.QuarantineItem
+	for _, g := range domain.GroupByMailbox(pending) {
+		if len(g.Messages) > perMailbox {
+			g.Messages = g.Messages[:perMailbox]
+		}
+		out = append(out, g.Messages...)
+	}
+	return out, nil
+}
+
+func (n *Notices) MarkNotified(_ context.Context, tenantID uuid.UUID, ids []uuid.UUID) error {
+	marked := make(map[uuid.UUID]bool, len(ids))
+	for _, id := range ids {
+		marked[id] = true
+	}
+	for i := range n.Q.Items {
+		if n.Q.Items[i].TenantID == tenantID && marked[n.Q.Items[i].ID] {
+			n.Q.Items[i].Notified = true
+		}
+	}
+	return nil
+}
+
+func (n *Notices) InsertNotice(_ context.Context, rec *domain.QuarantineNotice) error {
+	if n.FailInsert != nil {
+		return n.FailInsert
+	}
+	for _, r := range n.Records {
+		if r.TenantID == rec.TenantID && r.IdempotencyKey == rec.IdempotencyKey {
+			return nil
+		}
+	}
+	n.Records = append(n.Records, *rec)
+	return nil
+}
+
+func (n *Notices) FindByQHash(_ context.Context, tenantID uuid.UUID, qhash string) (*domain.QuarantineItem, error) {
+	for _, it := range n.Q.Items {
+		if it.TenantID == tenantID && it.QHash == qhash {
+			found := it
+			return &found, nil
+		}
+	}
+	return nil, domain.ErrNotFound
+}
+
+func (n *Notices) LockForLink(ctx context.Context, tenantID, id uuid.UUID) (*domain.QuarantineItem, error) {
+	return n.Q.Get(ctx, tenantID, id)
+}
+
+func (n *Notices) InsertLinkUse(_ context.Context, u *domain.QuarantineLinkUse) error {
+	if _, used := n.Uses[u.QuarantineID]; used {
+		return domain.ErrLinkUsed
+	}
+	n.Uses[u.QuarantineID] = *u
+	return nil
+}
+
+func (n *Notices) PruneHistory(context.Context, int) (int64, error) {
+	n.Pruned++
+	return 0, nil
+}
+
+// NoticeSender implementa ports.NoticeSender: anota cada aviso y responde con Err o, sin
+// el, acepta (suprimido si el buzon esta en Suppressed).
+type NoticeSender struct {
+	Sent       []domain.NoticeMail
+	Tenants    []uuid.UUID
+	Err        error
+	Suppressed map[string]bool
+}
+
+func (s *NoticeSender) SendQuarantineNotice(_ context.Context, tenantID uuid.UUID, m domain.NoticeMail) (*ports.NoticeReceipt, error) {
+	s.Sent = append(s.Sent, m)
+	s.Tenants = append(s.Tenants, tenantID)
+	if s.Err != nil {
+		return nil, s.Err
+	}
+	id := uuid.New()
+	if s.Suppressed[m.To] {
+		return &ports.NoticeReceipt{MessageID: &id, Status: "suppressed", Suppressed: true}, nil
+	}
+	return &ports.NoticeReceipt{MessageID: &id, Status: "queued"}, nil
 }
 
 // Documents implementa ports.DocumentStamps en memoria. Varios casos de uso pueden

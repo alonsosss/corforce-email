@@ -2,11 +2,14 @@ package ports
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net/netip"
 	"time"
 
 	"github.com/alonsosss/corforce-email/services/mail-security/internal/domain"
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 )
 
 // PolicyRepository son las tablas propias vistas desde el API de administracion: cada
@@ -102,6 +105,57 @@ type QuarantineRepository interface {
 	// transaccion: dos liberaciones simultaneas no entregan el mensaje dos veces.
 	LockForRelease(ctx context.Context, tenantID, id uuid.UUID) (*domain.QuarantineItem, error)
 	Delete(ctx context.Context, tenantID, id uuid.UUID) error
+}
+
+// QuarantineNoticeRepository es lo que el aviso de cuarentena y sus enlaces sin sesion
+// leen y escriben. Los metodos del barrido corren sin empresa en la peticion (a lo ancho
+// de la celda) y filtran por tenant_id en el SQL.
+type QuarantineNoticeRepository interface {
+	// PendingNotices devuelve, de una empresa, los mensajes sin avisar con puntuacion hasta
+	// maxScore, como mucho perMailbox por buzon (los mas recientes), sin el mensaje crudo.
+	PendingNotices(ctx context.Context, tenantID uuid.UUID, maxScore decimal.Decimal, perMailbox int) ([]domain.QuarantineItem, error)
+	// MarkNotified marca los mensajes como avisados. Va en la transaccion de InsertNotice.
+	MarkNotified(ctx context.Context, tenantID uuid.UUID, ids []uuid.UUID) error
+	// InsertNotice registra el aviso; una clave de idempotencia ya registrada no se repite.
+	InsertNotice(ctx context.Context, n *domain.QuarantineNotice) error
+	// FindByQHash devuelve la fila de un enlace (sin el mensaje crudo) o ErrNotFound.
+	FindByQHash(ctx context.Context, tenantID uuid.UUID, qhash string) (*domain.QuarantineItem, error)
+	// LockForLink bloquea la fila hasta el fin de la transaccion, sin el mensaje crudo.
+	LockForLink(ctx context.Context, tenantID, id uuid.UUID) (*domain.QuarantineItem, error)
+	// InsertLinkUse registra el uso del enlace de un mensaje; ErrLinkUsed si ya lo tenia.
+	InsertLinkUse(ctx context.Context, u *domain.QuarantineLinkUse) error
+	// PruneHistory borra avisos y usos de enlace mas antiguos que el max_age_days de su
+	// empresa, o que defaultMaxAgeDays si la empresa no tiene ajustes.
+	PruneHistory(ctx context.Context, defaultMaxAgeDays int) (int64, error)
+}
+
+// NoticeReceipt es lo que transactional devuelve al aceptar un aviso.
+type NoticeReceipt struct {
+	MessageID  *uuid.UUID
+	Status     string
+	Suppressed bool
+}
+
+// ErrNoticeUnavailable: transactional no respondio, respondio 5xx, 429 o rechazo la
+// credencial interna. El aviso se reintenta en el siguiente barrido con la misma clave.
+var ErrNoticeUnavailable = errors.New("transactional no disponible")
+
+// NoticeRejectedError es un 4xx de negocio de transactional (remitente sin verificar,
+// envio restringido, validacion): reintentar daria lo mismo.
+type NoticeRejectedError struct {
+	Status  int
+	Code    string
+	Message string
+}
+
+func (e *NoticeRejectedError) Error() string {
+	return fmt.Sprintf("transactional rechazo el aviso (%d %s): %s", e.Status, e.Code, e.Message)
+}
+
+// NoticeSender es transactional visto desde este servicio: el envio interno con
+// purpose=quarantine_notice.
+type NoticeSender interface {
+	SendQuarantineNotice(ctx context.Context, tenantID uuid.UUID, m domain.NoticeMail) (*NoticeReceipt, error)
 }
 
 // DocumentStamps guarda la marca de modificacion de los documentos que sondean los

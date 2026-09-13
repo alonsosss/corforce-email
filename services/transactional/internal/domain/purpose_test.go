@@ -17,9 +17,26 @@ func TestIgnoresSuppression(t *testing.T) {
 		{"sin lista de causas", PurposeDoubleOptIn, SuppressedRecipient{Reason: "unsubscribe"}, false},
 		{"principal incoherente", PurposeDoubleOptIn, SuppressedRecipient{Reason: "manual", Reasons: []string{"unsubscribe"}}, false},
 		{"sin proposito", "", SuppressedRecipient{Reason: "unsubscribe", Reasons: []string{"unsubscribe"}}, false},
+		{"aviso de cuarentena con baja", PurposeQuarantineNotice, SuppressedRecipient{Reason: "unsubscribe", Reasons: []string{"unsubscribe"}}, false},
+		{"aviso de cuarentena con rebote", PurposeQuarantineNotice, SuppressedRecipient{Reason: "hard_bounce", Reasons: []string{"hard_bounce"}}, false},
 	} {
 		if got := IgnoresSuppression(tc.purpose, tc.s); got != tc.want {
 			t.Errorf("%s: %v, se esperaba %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestValidPurpose(t *testing.T) {
+	for purpose, want := range map[string]bool{
+		"":                      true,
+		PurposeDoubleOptIn:      true,
+		PurposeQuarantineNotice: true,
+		"marketing":             false,
+		"QUARANTINE_NOTICE":     false,
+		" quarantine_notice":    false,
+	} {
+		if got := ValidPurpose(purpose); got != want {
+			t.Errorf("%q: %v, se esperaba %v", purpose, got, want)
 		}
 	}
 }

@@ -177,6 +177,97 @@ func TestDoubleOptInRepetidoNoEnviaDosVeces(t *testing.T) {
 	}
 }
 
+// quarantineCommand es el aviso de cuarentena tal como lo pide mail-security: cuerpo crudo,
+// un solo buzon y la clave quarantine-notice:<buzon>:<mensaje mas reciente>.
+func quarantineCommand(f *fixture, to ...string) CreateMessagesCommand {
+	cmd := rawCommand(f, to...)
+	cmd.IdempotencyKey = "quarantine-notice:" + to[0] + ":" + uuid.NewString()
+	cmd.Purpose = domain.PurposeQuarantineNotice
+	cmd.Subject = "Correo retenido en cuarentena"
+	cmd.HTML = "<p>Tienes 2 mensajes retenidos</p>"
+	return cmd
+}
+
+func TestAvisoDeCuarentenaSaleComoTransaccional(t *testing.T) {
+	f := newFixture(t, Config{})
+	f.setDomain(f.tenant, shopDomain, "verified", "sending")
+
+	res, err := f.uc.CreateMessages(ctx, quarantineCommand(f, "ana@example.com"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Messages) != 1 || res.Messages[0].Status != domain.StatusQueued || len(res.Suppressed) != 0 {
+		t.Fatalf("el aviso debe encolarse: %+v suprimidos=%+v", res.Messages, res.Suppressed)
+	}
+	if n := len(f.repo.published("transactional.message.queued")); n != 1 {
+		t.Fatalf("sale por el carril transaccional: %d encolados", n)
+	}
+	if len(f.rep.calls) != 1 || f.rep.calls[0].Class != domain.ClassTransactional || f.rep.calls[0].Count != 1 {
+		t.Fatalf("reputation autoriza la clase transactional por un destinatario: %+v", f.rep.calls)
+	}
+}
+
+// El aviso respeta la supresion normal: a diferencia del doble opt-in, ni siquiera una baja
+// voluntaria deja pasar el aviso.
+func TestAvisoDeCuarentenaRespetaTodaSupresion(t *testing.T) {
+	for _, reason := range []string{"unsubscribe", "hard_bounce", "complaint", "manual", "invalid"} {
+		f := newFixture(t, Config{})
+		f.setDomain(f.tenant, shopDomain, "verified", "sending")
+		f.supp.suppressed["ana@example.com"] = reason
+		f.supp.causes = map[string][]string{"ana@example.com": {reason}}
+
+		res, err := f.uc.CreateMessages(ctx, quarantineCommand(f, "ana@example.com"))
+		if err != nil {
+			t.Fatalf("%s: %v", reason, err)
+		}
+		if len(res.Messages) != 1 || res.Messages[0].Status != domain.StatusSuppressed {
+			t.Fatalf("%s debe bloquear el aviso: %+v", reason, res.Messages)
+		}
+		if len(res.Suppressed) != 1 || res.Suppressed[0].Reason != reason {
+			t.Fatalf("%s: la respuesta dice por que: %+v", reason, res.Suppressed)
+		}
+		if n := len(f.repo.published("transactional.message.queued")); n != 0 {
+			t.Fatalf("%s: no se encola nada", reason)
+		}
+	}
+}
+
+func TestAvisoDeCuarentenaRepetidoNoEnviaDosVeces(t *testing.T) {
+	f := newFixture(t, Config{})
+	f.setDomain(f.tenant, shopDomain, "verified", "sending")
+	cmd := quarantineCommand(f, "ana@example.com")
+	first, err := f.uc.CreateMessages(ctx, cmd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	again, err := f.uc.CreateMessages(ctx, cmd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !again.Replayed || again.Messages[0].ID != first.Messages[0].ID {
+		t.Fatalf("la misma clave repite la respuesta: %+v", again)
+	}
+	if n := len(f.repo.published("transactional.message.queued")); n != 1 {
+		t.Fatalf("un solo aviso encolado: %d", n)
+	}
+}
+
+func TestAvisoDeCuarentenaExigeUnSoloBuzon(t *testing.T) {
+	f := newFixture(t, Config{})
+	f.setDomain(f.tenant, shopDomain, "verified", "sending")
+	two := quarantineCommand(f, "ana@example.com", "eva@example.com")
+	copied := quarantineCommand(f, "ana@example.com")
+	copied.Bcc = []domain.Recipient{{Email: "copia@example.com"}}
+	for name, cmd := range map[string]CreateMessagesCommand{"dos buzones": two, "con copia oculta": copied} {
+		if _, err := f.uc.CreateMessages(ctx, cmd); !domain.IsValidation(err) {
+			t.Errorf("%s: se esperaba un error de validacion, hubo %v", name, err)
+		}
+	}
+	if len(f.supp.checks) != 0 {
+		t.Fatal("una peticion invalida no llega a consultar la supresion")
+	}
+}
+
 func TestPropositoValidado(t *testing.T) {
 	f := newFixture(t, Config{})
 	f.setDomain(f.tenant, shopDomain, "verified", "sending")

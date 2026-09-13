@@ -34,8 +34,8 @@ type CreateMessagesCommand struct {
 	ScheduledAt     *time.Time
 	Unsubscribable  bool
 	HasAttachments  bool
-	// Purpose solo llega por el envio interno (domain.PurposeDoubleOptIn); el API publico
-	// no lo acepta.
+	// Purpose solo llega por el envio interno (domain.Purposes); el API publico no lo
+	// acepta.
 	Purpose string
 }
 
@@ -253,10 +253,11 @@ func (uc *UseCase) validateCreate(cmd *CreateMessagesCommand) error {
 	}
 	cmd.Purpose = strings.TrimSpace(cmd.Purpose)
 	if !domain.ValidPurpose(cmd.Purpose) {
-		return domain.NewValidationError("purpose must be %q or empty", domain.PurposeDoubleOptIn)
+		return domain.NewValidationError("purpose must be one of %s or empty", strings.Join(domain.Purposes(), ", "))
 	}
-	// El proposito relaja la supresion para UNA persona: un mensaje con varios
-	// destinatarios o copias escribiria a quien se dio de baja sin que lo hubiera pedido.
+	// Un proposito describe un correo dirigido a UNA persona: el doble opt-in relaja la
+	// supresion para ella (con copias escribiria a quien se dio de baja sin pedirlo) y el
+	// aviso de cuarentena lista el correo retenido de un solo buzon.
 	if cmd.Purpose != "" && (len(cmd.To) != 1 || len(cmd.Cc) > 0 || len(cmd.Bcc) > 0) {
 		return domain.NewValidationError("purpose %q requires exactly one recipient in to and no cc or bcc", cmd.Purpose)
 	}

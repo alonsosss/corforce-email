@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/alonsosss/corforce-email/pkg/authz"
@@ -26,6 +27,7 @@ import (
 	redisadapter "github.com/alonsosss/corforce-email/services/mail-security/internal/adapters/redis"
 	"github.com/alonsosss/corforce-email/services/mail-security/internal/adapters/rspamd"
 	smtpadapter "github.com/alonsosss/corforce-email/services/mail-security/internal/adapters/smtp"
+	"github.com/alonsosss/corforce-email/services/mail-security/internal/adapters/transactionalcli"
 	"github.com/alonsosss/corforce-email/services/mail-security/internal/app"
 	"github.com/alonsosss/corforce-email/services/mail-security/internal/domain"
 	"github.com/go-chi/chi/v5"
@@ -51,6 +53,14 @@ const (
 	// outboxRetention conserva lo publicado lo mismo que el stream (EnsureStream: 7 dias).
 	outboxRetention = 7 * 24 * time.Hour
 	streamRetry     = 5 * time.Second
+)
+
+// Aviso de cuarentena: cadencia del barrido, vigencia de los enlaces y cerrojo de lider
+// del barrido en la base de la celda (una sola instancia avisa a la vez).
+const (
+	defaultQuarantineNotifyInterval       = 15 * time.Minute
+	defaultQuarantineLinkTTL              = 72 * time.Hour
+	quarantineNotifyLockKey         int64 = 0x716e6f7469667921 // "qnotify!"
 )
 
 func envOrDefault(key, fallback string) string {
@@ -139,6 +149,16 @@ func main() {
 	quarantineRepo := postgres.NewQuarantineRepository(ctxPool)
 	redisSync := app.NewRedisSync(store, directory, policyReader, logger)
 
+	// Enlaces sin sesion del aviso de cuarentena: firmados con MAIL_LINK_SIGNING_KEY y
+	// colgados de PUBLIC_BASE_URL. Sin ellos el servicio arranca, pero no avisa y todo
+	// enlace es invalido.
+	noticeRepo := postgres.NewQuarantineNoticeRepository(ctxPool)
+	quarantineLinks, linksErr := domain.NewQuarantineLinkSigner(os.Getenv("MAIL_LINK_SIGNING_KEY"), os.Getenv("PUBLIC_BASE_URL"),
+		envDuration("MAIL_QUARANTINE_LINK_TTL", defaultQuarantineLinkTTL))
+	if linksErr != nil {
+		logger.Error("aviso de cuarentena y sus enlaces desactivados", zap.Error(linksErr))
+	}
+
 	policyUC := app.NewPolicyUseCase(app.PolicyDeps{
 		Tx: ctxPool, Repo: postgres.NewPolicyRepository(ctxPool), Directory: directory, Sync: redisSync, Logger: logger,
 	})
@@ -150,6 +170,8 @@ func main() {
 			envOrDefault("MAIL_HOSTNAME", "mail-security")),
 		Learner:    rspamd.New(envOrDefault("RSPAMD_CONTROLLER_URL", defaultControllerURL), os.Getenv("RSPAMD_CONTROLLER_PASSWORD")),
 		Events:     publisher,
+		Notices:    noticeRepo,
+		Links:      quarantineLinks,
 		Logger:     logger,
 	})
 	engineUC := app.NewEngineUseCase(app.EngineDeps{
@@ -166,6 +188,26 @@ func main() {
 	go app.NewReconciler(redisSync, policyReader, quarantineRepo,
 		envDuration("MAIL_REDIS_RECONCILE_INTERVAL", defaultReconcileInterval), logger).Run(withPool(ctx))
 	go natsadapter.NewDirectoryConsumer(bus, redisSync, policyReader, withPool, logger).Run(ctx)
+
+	// Aviso de cuarentena por transactional (POST /internal/transactional/messages con
+	// purpose=quarantine_notice), con el cerrojo de lider de la celda.
+	transactionalURL := strings.TrimSpace(os.Getenv("TRANSACTIONAL_URL"))
+	internalToken := os.Getenv("INTERNAL_GATEWAY_TOKEN")
+	switch {
+	case linksErr != nil:
+		// Ya registrado al construir el firmante: sin enlaces no se avisa.
+	case transactionalURL == "" || internalToken == "":
+		logger.Error("aviso de cuarentena desactivado: faltan TRANSACTIONAL_URL o INTERNAL_GATEWAY_TOKEN")
+	default:
+		notifier := app.NewQuarantineNotifier(app.NotifierDeps{
+			Tx: ctxPool, Policy: policyReader, Notices: noticeRepo, Directory: directory,
+			Sender: transactionalcli.New(transactionalURL, internalToken), Links: quarantineLinks,
+			Interval: envDuration("MAIL_QUARANTINE_NOTIFY_INTERVAL", defaultQuarantineNotifyInterval), Logger: logger,
+		})
+		go notifier.Run(withPool(ctx), func(c context.Context) (func(), bool) {
+			return db.TryLeaderLock(c, pool.Pool, quarantineNotifyLockKey)
+		})
+	}
 
 	// Superficie A: API de administracion tras el gateway (y rutas internas con token).
 	r := chi.NewRouter()

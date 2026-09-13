@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/alonsosss/corforce-email/pkg/authz"
 	"github.com/alonsosss/corforce-email/pkg/middleware"
@@ -30,10 +31,17 @@ type Handler struct {
 	quarantine *app.QuarantineUseCase
 	firewall   *app.FirewallUseCase
 	authz      *authz.Checker
+	// publicLimiter frena por ip los enlaces sin sesion del aviso de cuarentena, por
+	// debajo del limite general del servicio.
+	publicLimiter *middleware.RateLimiter
 }
 
+// publicLinksPerMinute es el cupo por ip de los enlaces sin sesion.
+const publicLinksPerMinute = 30
+
 func NewHandler(policy *app.PolicyUseCase, quarantine *app.QuarantineUseCase, firewall *app.FirewallUseCase, checker *authz.Checker) *Handler {
-	return &Handler{policy: policy, quarantine: quarantine, firewall: firewall, authz: checker}
+	return &Handler{policy: policy, quarantine: quarantine, firewall: firewall, authz: checker,
+		publicLimiter: middleware.NewRateLimiter(publicLinksPerMinute, time.Minute)}
 }
 
 func (h *Handler) can(resource, action string) func(http.Handler) http.Handler {
@@ -101,6 +109,9 @@ func (h *Handler) Routes() http.Handler {
 		r.With(h.can("firewall", "read")).Get("/firewall/bans", h.ListFirewallBans)
 		r.With(h.can("firewall", "update")).Post("/firewall/bans/unban", h.UnbanFirewallNetwork)
 	})
+
+	// Enlaces del aviso de cuarentena: publicos, los verifica la firma del enlace.
+	r.Route("/api/v1/public/mail-security/quarantine", h.publicRoutes)
 
 	// Rutas internas: las llama domain-service con el token de gateway y X-Tenant-ID.
 	// Sin permiso de usuario porque no hay usuario: la autoridad es el servicio.

@@ -18,6 +18,12 @@ var (
 	ErrPlatformOnly = errors.New("solo el operador de la plataforma administra el cortafuegos de la celda")
 	// ErrAlreadyExists: la red ya figura en una lista del cortafuegos.
 	ErrAlreadyExists = errors.New("ya existe")
+	// ErrInvalidLink: un enlace del aviso de cuarentena no vale (firma, caducidad, mensaje
+	// ya liberado o descartado, enlace usado). Es un solo error a proposito: quien prueba
+	// enlaces no aprende cual fallo.
+	ErrInvalidLink = errors.New("enlace no valido")
+	// ErrLinkUsed: el mensaje ya se libero o descarto por un enlace.
+	ErrLinkUsed = errors.New("enlace ya usado")
 )
 
 // ValidationError lleva el detalle de una entrada rechazada.

@@ -337,19 +337,54 @@ por los entrypoints, igual que en mailcow: `postfix/conf/sql/*.cf`, `sni.map*`,
 `dovecot_trusted.map`, `rspamd_trusted.map`, `sa-rules` y `dqs-rbl.conf`. No
 deben versionarse.
 
+## Aviso de cuarentena (V, 2026-09-13)
+
+Lo que hacia `quarantine_notify.py` lo hace `mail-security`, y el correo sale por
+`transactional` (SES, clase transaccional), no por los motores de la celda. Probado con
+pruebas unitarias e integracion contra Postgres con las migraciones de la celda aplicadas
+dos veces; sin prueba de punta a punta con SES.
+
+* Barrido al arrancar y cada `MAIL_QUARANTINE_NOTIFY_INTERVAL` (15m) con cerrojo de lider
+  en la base de la celda (`db.TryLeaderLock`): por empresa con `notify_enabled` y ajustes
+  validos, las filas con `notified = false` y `score <= notify_max_score`, agrupadas por
+  buzon final (las 100 mas recientes; el resto sale en el aviso siguiente). Un buzon que ya
+  no existe, no recibe o es un recurso se da por atendido sin enviar (`skipped`).
+* Una llamada por buzon a `POST /internal/transactional/messages` de la empresa con
+  `purpose = quarantine_notice`, `Idempotency-Key = quarantine-notice:<buzon>:<id mas
+  reciente>` (con el sha256 del buzon si la clave pasara de 200 caracteres), remitente
+  `notify_sender`, asunto `notify_subject` y el HTML de `notify_html_template`.
+  `transactional` aplica sus reglas de siempre (remitente verificado, reputacion, un solo
+  destinatario sin copias) y la supresion normal: un buzon suprimido no recibe el aviso.
+* 2xx, tambien con el buzon suprimido: `notified = true` y registro en
+  `mail_security.quarantine_notices` en UNA transaccion. 4xx de negocio (400, 403, 404,
+  409, 422...): registro `rejected` con el codigo y marcado, sin reintento. 429, 401, 408,
+  5xx o red: nada cambia y el siguiente barrido repite con la misma clave, asi que
+  `transactional` devuelve lo que ya creo si el primer intento llego.
+* `notify_html_template` es `html/template` de Go: `{{.Mailbox}}`, `{{.Count}}`,
+  `{{.LinksExpireAt}}` y `{{range .Messages}}` con `.Subject`, `.Sender`, `.Date`, `.Score`,
+  `.ReleaseURL` y `.DiscardURL`. Asunto y remitente son contenido hostil: se sanean (sin
+  caracteres de control ni de direccion de texto, 200 y 254 runas) y salen escapados segun
+  el contexto donde los ponga la plantilla. Con el aviso activo, `PUT
+  /quarantine-settings` exige remitente con forma de direccion, asunto de una linea y una
+  plantilla que se interprete y ejecute; el HTML renderizado tiene un tope de 1 MiB.
+* Enlaces sin sesion, declarados en `services/gateway/routes.json` (`public`):
+  `GET|POST /api/v1/public/mail-security/quarantine/release` y `.../discard` con
+  `t` (empresa), `q` (qhash), `e` (caducidad, segundos Unix) y `sig` (HMAC-SHA256 con
+  `MAIL_LINK_SIGNING_KEY` sobre `quarantine-link`, empresa, id del mensaje, accion y
+  caducidad). Caducan a `MAIL_QUARANTINE_LINK_TTL` (72h). GET muestra una confirmacion sin
+  JavaScript y POST ejecuta: liberar es el caso de uso de siempre (reinyeccion por el puerto
+  590, borrado y evento por la outbox en una transaccion con la fila bloqueada) y descartar
+  borra la fila. El uso se registra en `mail_security.quarantine_link_uses` (una fila por
+  mensaje, con la ip de `X-Real-IP` y el user agent) en esa misma transaccion: un solo uso
+  por mensaje aunque lleguen dos peticiones a la vez. Firma alterada, caducado, usado o
+  mensaje inexistente dan la misma pagina 403. 30 peticiones por minuto e ip. Avisos y
+  usos se podan con el `max_age_days` de la empresa.
+* Sin `MAIL_LINK_SIGNING_KEY` (32 caracteres o mas) y `PUBLIC_BASE_URL` el servicio arranca
+  sin aviso y todo enlace es invalido; sin `TRANSACTIONAL_URL` o `INTERNAL_GATEWAY_TOKEN`,
+  sin aviso. Ambos casos quedan en el log como error.
+
 ## Pendientes
 
-* Aviso de cuarentena (lo que hacia `quarantine_notify.py`): los ajustes existen
-  (`quarantine_settings.notify_*`) y la columna `notified`, pero nadie envia el aviso. El
-  correo sale por `transactional`, no por los motores de la celda. Contrato que haria
-  falta: `mail-security`, en un barrido periodico, agrupa por buzon las filas con
-  `notified = false` y `score <= notify_max_score` de las empresas con `notify_enabled`,
-  llama a `POST /internal/transactional/messages` de la empresa (clase transaccional,
-  `purpose = quarantine_notice`, `Idempotency-Key = quarantine-notice:<buzon>:<id mas
-  reciente>`, remitente `notify_sender`, asunto `notify_subject` y el HTML de
-  `notify_html_template` con la lista de mensajes) y marca `notified` al recibir el 2xx.
-  Falta en `transactional` aceptar ese `purpose`, y una ruta sin sesion que libere o
-  descarte por `qhash` con enlace firmado (hoy solo existe la liberacion con sesion).
 * `/footer`: `vars` lleva `from` y `domain`; faltan los atributos personalizados del
   buzon. `mail.v_routing_mailboxes` ya publica `attributes`, pero ningun API de
   `mail-directory` los escribe (quedan en `{}`): hace falta ese API y que `/footer` los

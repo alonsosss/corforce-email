@@ -112,7 +112,7 @@ prueba de integracion de 5.1 falla si falta). Las peticiones con usuario siguen 
 mismo patron: `tenant_isolation` por `tenant_id = mail_security.current_tenant()` para
 `mail_app` en sus nueve tablas, sin `FORCE`. Su API de administracion corre en
 `TransactRLS` y filtra por `tenant_id`; los endpoints de motores (`/pipe`, `/settings`...)
-consultan como dueno y atribuyen cada fila de cuarentena a la empresa del buzon final.
+consultan como `mail_service` y atribuyen cada fila de cuarentena a la empresa del buzon final.
 Probado contra Postgres: una empresa no ve umbrales, ajustes ni cuarentena de otra.
 
 Anadidos de `mail-security` (V, probado contra Postgres con las migraciones aplicadas dos
@@ -123,6 +123,17 @@ celda, y `05_firewall.sql`, listas y opciones del cortafuegos de la celda. Estas
 ultimas no tienen `tenant_id`: son de la celda o de la plataforma, `mail_app` no tiene
 permisos sobre ellas (RLS activo sin politica para ella) y el servicio las usa como
 `mail_service`, el cortafuegos solo tras exigir al superadmin.
+
+`07_quarantine_notices.sql` (V, probado contra Postgres con las migraciones aplicadas dos
+veces, 2026-09-13): `quarantine_notices`, un registro por aviso de cuarentena (`sent`,
+`suppressed`, `rejected` con codigo por CHECK, `skipped`) con los mensajes que lista y
+`UNIQUE (tenant_id, idempotency_key)`, escrito en la misma transaccion que marca
+`notified`; `quarantine_link_uses`, la constancia de cada enlace sin sesion usado, con
+`UNIQUE (tenant_id, quarantine_id)` como garantia de un solo uso y sin clave foranea a
+`quarantine` (la fila se borra al liberar o descartar y la constancia queda); y el indice
+parcial de lo pendiente de aviso `(tenant_id, rcpt, created_at DESC, id DESC) WHERE notified
+= false`. Las dos tablas tienen `tenant_isolation` para `mail_app` y `service_all` para
+`mail_service`, y se podan con el `max_age_days` de su empresa.
 
 `03_mail_app_policies.sql` (mail-directory) anade lo que el primer consumidor necesito:
 `app_delete` sobre `quota_usage` (solo del buzon propio, por eso el servicio borra la cuota

@@ -54,6 +54,15 @@ func TestInternalCreateMessagesContract(t *testing.T) {
 	if rec := call(tenant, "doi:1", strings.Replace(valid, `"purpose"`, `"proposito"`, 1)); rec.Code != nethttp.StatusBadRequest {
 		t.Fatalf("un campo fuera del contrato se rechaza: %d", rec.Code)
 	}
+
+	// El aviso de cuarentena llega con cuerpo crudo y el mismo limite de un destinatario.
+	notice := `{"from":{"email":"cuarentena@shop.example.com"},"to":[{"email":"ana@shop.example.com"},{"email":"eva@shop.example.com"}],` +
+		`"subject":"Correo retenido","html":"<p>2 mensajes</p>","purpose":"quarantine_notice"}`
+	rec = call(tenant, "quarantine-notice:ana@shop.example.com:"+uuid.New().String(), notice)
+	_ = json.Unmarshal(rec.Body.Bytes(), &body)
+	if rec.Code != nethttp.StatusUnprocessableEntity || !strings.Contains(body.Error.Message, "exactly one recipient") {
+		t.Fatalf("quarantine_notice es un proposito conocido con un solo destinatario: %d %s", rec.Code, rec.Body.String())
+	}
 }
 
 // El API publico no admite el proposito: relajar la supresion es cosa de la plataforma.

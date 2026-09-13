@@ -35,8 +35,11 @@ cambie cualquiera de estas líneas.
   `F2B_BLACKLIST`, `F2B_OPTIONS` y `F2B_QUEUE_UNBAN` de netfilter (cortafuegos de la celda,
   solo superadmin, `/api/v1/mail-security/firewall/*`, migración 05), con reconciliación
   desde la base. Sus eventos y los de `mail-directory` salen por `pkg/outbox` (2026-09-13).
-* Pendiente en `mail-security`: el aviso de cuarentena al buzón (hay ajustes y columna
-  `notified`, falta el emisor; necesita `transactional`, contrato en
+* `mail-security` envía el aviso de cuarentena al buzón por `transactional`
+  (`purpose=quarantine_notice`, barrido con cerrojo de líder, `notified` marcado en la misma
+  transacción que registra el aviso, migración 07) con enlaces firmados, con caducidad y de
+  un solo uso para liberar o descartar sin sesión (probado contra Postgres con las
+  migraciones aplicadas dos veces, 2026-09-13; sin SES; contrato en
   `deploy/mail/README.md`). `clean_q_aged.sh` de Dovecot no hace nada (busca
   `mail.quarantine`, que no existe): la poda la hace el servicio.
 * El gateway debe servir `/.well-known/acme-challenge/` o usarse `ACME_DNS_CHALLENGE=y`.

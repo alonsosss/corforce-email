@@ -530,6 +530,12 @@ func (uc *PolicyUseCase) PutQuarantineSettings(ctx context.Context, tenantID uui
 	if s.Notify.MaxScore.IsZero() {
 		s.Notify.MaxScore = decimal.NewFromInt(9999)
 	}
+	s.Notify.Sender, s.Notify.Subject = strings.TrimSpace(s.Notify.Sender), strings.TrimSpace(s.Notify.Subject)
+	if s.Notify.Enabled {
+		if err := domain.ValidateQuarantineNotify(s.Notify); err != nil {
+			return nil, err
+		}
+	}
 	err = uc.tx.TransactRLS(ctx, func(ctx context.Context) error {
 		s.TenantID = tenantID
 		if err := uc.repo.UpsertQuarantineSettings(ctx, &s); err != nil {
