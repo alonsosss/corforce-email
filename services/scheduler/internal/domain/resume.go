@@ -6,41 +6,39 @@ import "time"
 // es su fila de calendario, o nil si no tiene. Ninguna regla lanza lo que se dejo de lanzar
 // mientras estuvo parado ni deja next_run_at en el pasado:
 //
-//   - cron: la primera ocurrencia de su expresion posterior a now, en su zona.
+//   - cron: la primera ocurrencia de su expresion posterior a now, en su zona, como al
+//     crearlo.
 //   - interval: sigue su rejilla (la hora guardada mas k periodos), sin deriva: si la hora
 //     guardada aun no llego se respeta; si ya paso, la primera de la rejilla posterior a
 //     now. Una hora guardada a mas de un periodo de now (el intervalo se acorto mientras
 //     estaba parado) o la falta de calendario cuentan un periodo desde now.
 //   - one_time: si el calendario nunca lo despacho, now (sale en la pasada siguiente, como
-//     al crearlo); si ya lo despacho, ErrOneTimeAlreadyRun.
+//     al crearlo); si ya lo despacho (OneTimeAlreadyRun), ErrOneTimeAlreadyRun.
 func (j *JobDefinition) ResumeAt(schedule *JobSchedule, now time.Time) (time.Time, error) {
 	switch j.JobType {
 	case JobTypeCron:
-		spec, err := ParseCron(j.CronExpr(), j.Timezone)
+		return j.FirstRunAt(now)
+	case JobTypeInterval:
+		period, err := j.intervalPeriod()
 		if err != nil {
 			return time.Time{}, err
-		}
-		return spec.Next(now)
-	case JobTypeInterval:
-		if j.IntervalMinutes == nil {
-			return time.Time{}, invalidField(FieldIntervalMinutes, RuleRequired, ErrInvalidJob, "interval_minutes is required for interval jobs")
-		}
-		minutes := *j.IntervalMinutes
-		if minutes < MinIntervalMinutes || minutes > MaxIntervalMinutes {
-			return time.Time{}, invalidField(FieldIntervalMinutes, RuleOutOfRange, ErrInvalidJob, "interval_minutes must be between %d and %d", MinIntervalMinutes, MaxIntervalMinutes)
 		}
 		var stored time.Time
 		if schedule != nil {
 			stored = schedule.NextRunAt
 		}
-		return nextOnGrid(stored, now, time.Duration(minutes)*time.Minute), nil
+		return nextOnGrid(stored, now, period), nil
 	case JobTypeOneTime:
-		if schedule != nil && schedule.LastRunAt != nil {
+		var lastRunAt *time.Time
+		if schedule != nil {
+			lastRunAt = schedule.LastRunAt
+		}
+		if j.OneTimeAlreadyRun(lastRunAt) {
 			return time.Time{}, ErrOneTimeAlreadyRun
 		}
 		return now, nil
 	}
-	return time.Time{}, invalidField(FieldJobType, RuleNotAllowed, ErrInvalidJob, "job_type %q cannot be scheduled", j.JobType)
+	return time.Time{}, j.unschedulableType()
 }
 
 // nextOnGrid es la primera hora de la rejilla anchor + k*period estrictamente posterior a

@@ -2469,7 +2469,7 @@ export const es = {
   'scheduler.jobTypeHint.cron':
     'Se lanza segun la expresion cron, evaluada en la zona horaria del trabajo.',
   'scheduler.jobTypeHint.interval':
-    'Se lanza cada cierto numero de minutos, contados desde el ultimo lanzamiento.',
+    'Se lanza cada cierto numero de minutos sobre una rejilla fija: un lanzamiento con retraso no desplaza los siguientes y lo que no se lanzo durante una caida sale una sola vez. Cambiar los minutos lo replanifica desde ese momento.',
   'scheduler.jobTypeHint.one_time':
     'Se lanza una sola vez en la siguiente pasada del planificador y queda desactivado.',
   'scheduler.schedule.interval': 'Cada {n} min',
@@ -2489,6 +2489,8 @@ export const es = {
     '"{name}" vuelve a lanzarse segun su calendario. Un trabajo cron se replanifica desde ahora: lo que no se lanzo mientras estuvo desactivado no se recupera.',
   'scheduler.deactivateConfirm':
     '"{name}" deja de lanzarse hasta que se active de nuevo. Las ejecuciones en curso no se detienen.',
+  'scheduler.alreadyRunHint':
+    'Este trabajo de una sola vez ya se lanzo segun su calendario y no se puede reactivar. Para repetirlo, lanzalo a mano o crea uno nuevo.',
   'scheduler.detail.code': 'Codigo',
   'scheduler.detail.maxRetries': 'Reintentos maximos',
   'scheduler.detail.timeout': 'Plazo de ejecucion',

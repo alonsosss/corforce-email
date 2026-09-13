@@ -156,6 +156,9 @@ type JobOverview struct {
 	LastRunAt *time.Time
 	// LastExecution es su ejecucion creada mas reciente: programada, manual o reintento.
 	LastExecution *ExecutionSummary
+	// AlreadyRun indica un one_time que el calendario ya despacho, que no se reactiva
+	// (JobDefinition.OneTimeAlreadyRun).
+	AlreadyRun bool
 }
 
 // NewJobOverview arma la lectura de un trabajo. Un trabajo inactivo conserva la fila de su
@@ -164,7 +167,10 @@ func NewJobOverview(job JobDefinition, nextRunAt, lastRunAt *time.Time, last *Ex
 	if !job.IsActive {
 		nextRunAt = nil
 	}
-	return &JobOverview{Job: job, NextRunAt: nextRunAt, LastRunAt: lastRunAt, LastExecution: last}
+	return &JobOverview{
+		Job: job, NextRunAt: nextRunAt, LastRunAt: lastRunAt, LastExecution: last,
+		AlreadyRun: job.OneTimeAlreadyRun(lastRunAt),
+	}
 }
 
 // ExecutionSummary es lo que el listado de trabajos muestra de una ejecucion.

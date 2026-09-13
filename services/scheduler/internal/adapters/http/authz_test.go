@@ -70,8 +70,8 @@ func (jobsVacios) List(context.Context, domain.JobFilter) ([]*domain.JobOverview
 
 type ejecucionesVacias struct{ ports.JobExecutionRepository }
 
-func (ejecucionesVacias) ListRunning(context.Context, uuid.UUID) ([]*domain.JobExecution, error) {
-	return nil, nil
+func (ejecucionesVacias) ListRunning(context.Context, uuid.UUID, int, int) ([]*domain.JobExecution, int64, error) {
+	return nil, 0, nil
 }
 
 type tareasVacias struct{ ports.ScheduledTaskRepository }

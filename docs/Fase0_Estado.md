@@ -122,9 +122,31 @@ cambie cualquiera de estas líneas.
   despachó, sale en la pasada siguiente, como al crearlo; si ya lo despachó, 409
   `JOB_ALREADY_RUN` y sigue inactivo (volver a lanzarlo es `POST /jobs/{id}/run`, con
   `jobs/run`; reactivarlo lo habría relanzado con solo `jobs/update`). Reactivar uno activo
-  no toca su calendario. Queda fuera: el despacho de un `interval` sigue contando desde la
-  hora real (P: llevarlo a la rejilla como `@every`), y editar `interval_minutes` de un
-  trabajo activo no lo replanifica (P).
+  no toca su calendario.
+* Despacho de un `interval` sin deriva (2026-09-13, unitarias con reloj inyectado,
+  contrato e integración contra Postgres 16; `domain.JobDefinition.NextAfterDispatch`): la
+  siguiente ejecución es la primera de su rejilla (la hora prevista más k periodos)
+  posterior a la pasada, contada desde la hora prevista y no desde la real, igual que
+  `@every`. Un ticker que llega tarde no desplaza las siguientes (prevista 10:00, pasada
+  10:00:29, cada 5 min: la siguiente es 10:05:00); tras una caída, lo que se saltó sale una
+  sola vez (prevista 03:00, pasada 10:17, cada 7 min: una ejecución y la siguiente a las
+  10:21). Cuenta tiempo transcurrido: la zona del trabajo y los cambios de hora no la
+  mueven. Un trabajo guardado sin una definición planificable (minutos nulos, cero o
+  negativos, un tipo desconocido, además de la expresión o la zona inválidas de un cron) se
+  desactiva sin lanzarse, en vez de lanzarse en cada pasada.
+* Editar el calendario de un trabajo (2026-09-13, unitarias, contrato e integración contra
+  Postgres 16; `ScheduleChanged` y `FirstRunAt` del dominio): si la edición cambia cuándo
+  corre (el tipo, la expresión o la zona de un `cron`, los minutos de un `interval`), la
+  próxima ejecución se recalcula desde el momento de la edición con la definición nueva,
+  como en un alta: `cron`, su primera ocurrencia posterior; `interval`, un periodo desde
+  ahora (su rejilla empieza ahí); `one_time`, la pasada siguiente. Nunca queda en el pasado
+  ni lanza lo que venció sin despacharse (cada 5 min con la próxima a las 09:58 sin
+  despachar, pasado a 15 a las 10:00: la próxima es 10:15 y a las 10:00 no sale nada).
+  Cambiar el tipo empieza además un calendario nuevo (`last_run_at` a NULL): un trabajo que
+  pasa a `one_time` corre una vez aunque antes corriera como intervalo. Una edición que no
+  toca el calendario (nombre, manejador, payload, reintentos, plazo, la zona de un
+  intervalo) respeta la ejecución prevista. En un trabajo inactivo la hora queda guardada
+  sin exponerse y al reactivarlo decide `ResumeAt`.
 * Aislamiento por empresa del scheduler (2026-09-13, unitarias, contrato e integración
   contra Postgres 16): ninguna lectura ni escritura por id va sin la empresa del token.
   Leer y cancelar una tarea, `GET /jobs/{id}/history`, `GET /executions` y las escrituras de
@@ -148,10 +170,15 @@ cambie cualquiera de estas líneas.
   puntuales. El API los sirve (2026-09-13, unitarias, contrato e integración contra
   Postgres 16) y `web/` los consume: el trabajo lleva `next_run_at` (null si está inactivo),
   `last_run_at` (última pasada del calendario) y `last_execution` (`id`, `status`,
-  `completed_at`, `failure_reason` o null), leídos con dos consultas por página;
-  `GET /scheduler/jobs`, `GET /scheduler/jobs/{id}/history` y `GET /scheduler/tasks`
-  paginan con `page` y `per_page` (20 por defecto, tope 100, desplazamiento que satura: una
-  página enorme no tiene filas en vez de ser un 500) sobre la empresa del token;
+  `completed_at`, `failure_reason` o null) y `already_run` (true en un `one_time` que el
+  calendario ya despachó, calculado con la misma regla, `OneTimeAlreadyRun`, con la que el
+  servicio rechaza reactivarlo con 409 `JOB_ALREADY_RUN`; la web no ofrece Activar en ese
+  caso y lo explica), leídos con dos consultas por página;
+  `GET /scheduler/jobs`, `GET /scheduler/jobs/{id}/history`, `GET /scheduler/executions`
+  (activas de la empresa y de plataforma, de la más reciente a la más antigua con el id como
+  desempate) y `GET /scheduler/tasks` paginan con `page` y `per_page` y `meta` `page`,
+  `per_page`, `total`, `total_pages` (20 por defecto, tope 100, desplazamiento que satura:
+  una página enorme no tiene filas en vez de ser un 500) sobre la empresa del token;
   `GET /scheduler/meta` (`jobs/read`) publica `job_types`, `limits` y `pagination` desde
   `domain/validation.go`, y la ventana de las tareas pendientes va en la meta de
   `GET /scheduler/tasks` (`pending_window_seconds`, `tasks/read`); `web/` pagina las tareas

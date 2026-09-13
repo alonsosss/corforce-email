@@ -77,6 +77,8 @@ export default function JobDetailPage() {
   const platform = isPlatformJob(j);
   const canUpdate = !platform && can(...PERMISSIONS.schedulerJobs.update);
   const canRun = !platform && can(...PERMISSIONS.schedulerJobs.run);
+  // already_run lo calcula el servicio con la regla con la que rechaza reactivar (409).
+  const spent = !j.is_active && j.already_run;
   const handler = catalog.data ? handlerOf(catalog.data, j) : null;
   const outOfCatalog = catalog.data !== null && handler === null;
   const number = new Intl.NumberFormat(getLocale());
@@ -137,16 +139,15 @@ export default function JobDetailPage() {
                 {t('common.edit')}
               </Button>
             ) : null}
-            {canUpdate ? (
-              j.is_active ? (
-                <Button icon={<IconPause size={16} />} onClick={() => setDialog('deactivate')}>
-                  {t('common.deactivate')}
-                </Button>
-              ) : (
-                <Button icon={<IconPlay size={16} />} onClick={() => setDialog('activate')}>
-                  {t('common.activate')}
-                </Button>
-              )
+            {canUpdate && j.is_active ? (
+              <Button icon={<IconPause size={16} />} onClick={() => setDialog('deactivate')}>
+                {t('common.deactivate')}
+              </Button>
+            ) : null}
+            {canUpdate && !j.is_active && !spent ? (
+              <Button icon={<IconPlay size={16} />} onClick={() => setDialog('activate')}>
+                {t('common.activate')}
+              </Button>
             ) : null}
           </>
         }
@@ -154,6 +155,7 @@ export default function JobDetailPage() {
       <div className="cf-stack">
         {j.description ? <p className="cf-text-secondary">{j.description}</p> : null}
         {platform ? <Alert tone="info">{t('scheduler.platformHint')}</Alert> : null}
+        {canUpdate && spent ? <Alert tone="info">{t('scheduler.alreadyRunHint')}</Alert> : null}
         {outOfCatalog ? (
           <Alert tone="warning" title={t('scheduler.handler.outOfCatalog')}>
             {t('scheduler.handler.outOfCatalogHint')}

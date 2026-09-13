@@ -424,19 +424,21 @@ func (h *Handler) GetJobHistory(w http.ResponseWriter, r *http.Request) {
 	response.JSONWithMeta(w, http.StatusOK, executionsResponse(execs), response.PageMeta(total, page, perPage))
 }
 
-// ListRunning lista las ejecuciones activas que ve la empresa del token.
+// ListRunning pagina como /jobs las ejecuciones activas que ve la empresa del token: las
+// suyas y las de plataforma, de la mas reciente a la mas antigua.
 func (h *Handler) ListRunning(w http.ResponseWriter, r *http.Request) {
 	tenantID, err := parseTenantID(r)
 	if err != nil {
 		response.ErrUnauthorized(w, "invalid tenant")
 		return
 	}
-	execs, err := h.uc.GetRunningJobs(r.Context(), tenantID)
+	page, perPage := parsePage(r)
+	execs, total, err := h.uc.GetRunningJobs(r.Context(), tenantID, page, perPage)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	response.JSON(w, http.StatusOK, executionsResponse(execs))
+	response.JSONWithMeta(w, http.StatusOK, executionsResponse(execs), response.PageMeta(total, page, perPage))
 }
 
 func (h *Handler) GetExecution(w http.ResponseWriter, r *http.Request) {

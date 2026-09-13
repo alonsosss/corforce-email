@@ -119,7 +119,7 @@ func TestElHistorialYLasActivasSonDeLaEmpresa(t *testing.T) {
 		t.Fatalf("el historial de un trabajo de plataforma se lee: %d (%v)", len(page), err)
 	}
 
-	running, err := f.uc.GetRunningJobs(ctx, f.tenantID)
+	running, total, err := f.uc.GetRunningJobs(ctx, f.tenantID, 1, 20)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,8 +127,16 @@ func TestElHistorialYLasActivasSonDeLaEmpresa(t *testing.T) {
 	for _, e := range running {
 		seen[e.ID] = true
 	}
-	if len(running) != 2 || !seen[newer.ID] || !seen[platformRun.ID] {
-		t.Fatalf("activas de la empresa y de plataforma, sin la ajena: %v", running)
+	if len(running) != 2 || total != 2 || !seen[newer.ID] || !seen[platformRun.ID] {
+		t.Fatalf("activas de la empresa y de plataforma, sin la ajena: %v (total %d)", running, total)
+	}
+	// La mas reciente primero, una por pagina; una pagina enorme no tiene filas.
+	page, total, err = f.uc.GetRunningJobs(ctx, f.tenantID, 2, 1)
+	if err != nil || total != 2 || len(page) != 1 || page[0].ID != newer.ID {
+		t.Fatalf("pagina 2 de las activas: %v de %d (%v), se esperaba %s", page, total, err, newer.ID)
+	}
+	if page, total, err := f.uc.GetRunningJobs(ctx, f.tenantID, math.MaxInt, 100); err != nil || total != 2 || len(page) != 0 {
+		t.Fatalf("pagina enorme de las activas: %d de %d (%v)", len(page), total, err)
 	}
 }
 

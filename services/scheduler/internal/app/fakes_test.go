@@ -265,17 +265,25 @@ func (r memExecs) Update(ctx context.Context, e *domain.JobExecution) error {
 	return nil
 }
 
-func (r memExecs) ListRunning(_ context.Context, tenantID uuid.UUID) ([]*domain.JobExecution, error) {
+// ListRunning pagina como el repositorio: las activas visibles para la empresa, las mas
+// recientes antes y el id como desempate.
+func (r memExecs) ListRunning(_ context.Context, tenantID uuid.UUID, page, perPage int) ([]*domain.JobExecution, int64, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	var out []*domain.JobExecution
+	var all []*domain.JobExecution
 	for _, e := range r.execs {
 		if e.IsActive() && visible(e.TenantID, tenantID) {
 			c := e
-			out = append(out, &c)
+			all = append(all, &c)
 		}
 	}
-	return out, nil
+	sort.Slice(all, func(i, j int) bool {
+		if !all[i].CreatedAt.Equal(all[j].CreatedAt) {
+			return all[i].CreatedAt.After(all[j].CreatedAt)
+		}
+		return all[i].ID.String() > all[j].ID.String()
+	})
+	return pageOf(all, page, perPage), int64(len(all)), nil
 }
 
 // first devuelve la ejecucion que cumple ok con la menor clave de orden.
@@ -353,6 +361,15 @@ func (r memSchedules) SetNextRun(_ context.Context, jobID uuid.UUID, next time.T
 	s := r.schedules[jobID]
 	s.JobID, s.NextRunAt = jobID, next
 	r.schedules[jobID] = s
+	r.planned++
+	return nil
+}
+
+// Restart planifica como un alta: tampoco marca ejecucion y olvida last_run_at.
+func (r memSchedules) Restart(_ context.Context, jobID uuid.UUID, next time.Time) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.schedules[jobID] = domain.JobSchedule{JobID: jobID, NextRunAt: next}
 	r.planned++
 	return nil
 }

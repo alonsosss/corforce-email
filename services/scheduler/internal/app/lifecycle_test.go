@@ -336,8 +336,9 @@ func TestProcessDueJobs(t *testing.T) {
 	if got := byJob[due.ID.String()]; len(got) != 1 || got[0].Status != domain.StatusRunning {
 		t.Fatalf("el trabajo vencido se lanza una sola vez: %+v", got)
 	}
-	if !f.store.schedules[due.ID].NextRunAt.Equal(now.Add(5 * time.Minute)) {
-		t.Fatalf("siguiente pasada: %v", f.store.schedules[due.ID].NextRunAt)
+	// La rejilla cuenta desde la hora prevista (un segundo antes de la pasada), no desde ella.
+	if want := now.Add(-time.Second).Add(5 * time.Minute); !f.store.schedules[due.ID].NextRunAt.Equal(want) {
+		t.Fatalf("siguiente pasada: %v, se esperaba %v", f.store.schedules[due.ID].NextRunAt, want)
 	}
 	if got := byJob[inactive.ID.String()]; len(got) != 0 {
 		t.Fatal("un trabajo inactivo no se lanza")

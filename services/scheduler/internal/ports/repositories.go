@@ -43,8 +43,9 @@ type JobExecutionRepository interface {
 	// Update escribe la ejecucion solo si sigue siendo de exec.TenantID:
 	// domain.ErrExecutionNotFound si no.
 	Update(ctx context.Context, exec *domain.JobExecution) error
-	// ListRunning lista las ejecuciones activas que ve la empresa.
-	ListRunning(ctx context.Context, tenantID uuid.UUID) ([]*domain.JobExecution, error)
+	// ListRunning pagina las ejecuciones activas que ve la empresa (las suyas y las de
+	// plataforma), de la mas reciente a la mas antigua, con el total.
+	ListRunning(ctx context.Context, tenantID uuid.UUID, page, perPage int) ([]*domain.JobExecution, int64, error)
 	// ClaimOverdue bloquea la ejecucion activa con el plazo vencido mas antiguo, saltando
 	// las que otra transaccion ya tiene; nil si no queda ninguna.
 	ClaimOverdue(ctx context.Context, now time.Time) (*domain.JobExecution, error)
@@ -81,6 +82,9 @@ type JobScheduleRepository interface {
 	// SetNextRun planifica el trabajo sin marcar una ejecucion (alta, edicion, reactivacion,
 	// reconciliacion): last_run_at no cambia.
 	SetNextRun(ctx context.Context, jobID uuid.UUID, nextRunAt time.Time) error
+	// Restart planifica el trabajo como recien creado: fija next_run_at y deja last_run_at a
+	// NULL. Es la edicion que cambia su tipo: la ultima pasada era de otra definicion.
+	Restart(ctx context.Context, jobID uuid.UUID, nextRunAt time.Time) error
 	// GetDue lista los calendarios vencidos de trabajos activos, sin bloquearlos.
 	GetDue(ctx context.Context, now time.Time) ([]*domain.JobSchedule, error)
 	// ClaimDue bloquea el calendario del trabajo si sigue vencido y ninguna otra

@@ -152,7 +152,7 @@ func TestContratoJSONEnSnakeCase(t *testing.T) {
 		id   uuid.UUID
 	}{
 		{"/api/v1/scheduler/jobs/" + c.job.ID.String(),
-			"code,created_at,cron_expression,description,handler,id,interval_minutes,is_active,job_type,last_execution,last_run_at,max_retries,name,next_run_at,payload,tenant_id,timeout_seconds,timezone,updated_at",
+			"already_run,code,created_at,cron_expression,description,handler,id,interval_minutes,is_active,job_type,last_execution,last_run_at,max_retries,name,next_run_at,payload,tenant_id,timeout_seconds,timezone,updated_at",
 			c.job.ID},
 		{"/api/v1/scheduler/executions/" + c.exec.ID.String(),
 			"completed_at,created_at,deadline_at,duration_ms,error_message,failure_reason,id,job_id,next_attempt_at,result,retry_count,retry_of,started_at,status,tenant_id",

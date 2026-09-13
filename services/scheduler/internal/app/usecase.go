@@ -92,7 +92,7 @@ func (uc *SchedulerUseCase) CreateJob(ctx context.Context, job *domain.JobDefini
 	job.IsActive = true
 	job.CreatedAt = uc.now()
 	job.UpdatedAt = job.CreatedAt
-	next, err := uc.nextRun(job, nil, job.CreatedAt)
+	next, err := job.FirstRunAt(job.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -128,10 +128,14 @@ func (uc *SchedulerUseCase) ListJobs(ctx context.Context, filter domain.JobFilte
 	return uc.jobs.List(ctx, filter)
 }
 
-// UpdateJob recibe el trabajo leido con GetJob y ya modificado; su empresa no cambia. Si
-// cambia el calendario de un cron (pasa a cron, cambia su expresion o su zona) se
-// replanifica en la misma transaccion; una edicion que no lo toca respeta la ejecucion ya
-// prevista. Devuelve el trabajo leido en esa transaccion.
+// UpdateJob recibe el trabajo leido con GetJob y ya modificado; su empresa no cambia. Si la
+// edicion cambia el calendario (domain.JobDefinition.ScheduleChanged: el tipo, la expresion
+// o la zona de un cron, los minutos de un interval) se replanifica desde ahora con la
+// definicion nueva (domain.JobDefinition.FirstRunAt) en la misma transaccion, sin anotar
+// una ejecucion; si cambia el tipo, ademas se olvida la ultima pasada, como en un alta. Una
+// edicion que no toca el calendario respeta la ejecucion ya prevista. Un trabajo
+// inactivo guarda esa hora sin exponerla: al reactivarlo decide ResumeAt. Devuelve el
+// trabajo leido en esa transaccion.
 func (uc *SchedulerUseCase) UpdateJob(ctx context.Context, job *domain.JobDefinition) (*domain.JobOverview, error) {
 	if job.IsPlatform() {
 		return nil, domain.ErrPlatformJob
@@ -149,12 +153,18 @@ func (uc *SchedulerUseCase) UpdateJob(ctx context.Context, job *domain.JobDefini
 		if err := uc.jobs.Update(ctx, job); err != nil {
 			return err
 		}
-		if job.JobType == domain.JobTypeCron && (stored.JobType != job.JobType || stored.CronExpr() != job.CronExpr() || stored.Timezone != job.Timezone) {
-			next, err := uc.nextRun(job, nil, job.UpdatedAt)
+		if job.ScheduleChanged(stored) {
+			next, err := job.FirstRunAt(job.UpdatedAt)
 			if err != nil {
 				return err
 			}
-			if err := uc.schedules.SetNextRun(ctx, job.ID, next); err != nil {
+			// Otro tipo es otro calendario: su ultima pasada no cuenta, y en un one_time es la
+			// que diria que ya se despacho.
+			replan := uc.schedules.SetNextRun
+			if stored.JobType != job.JobType {
+				replan = uc.schedules.Restart
+			}
+			if err := replan(ctx, job.ID, next); err != nil {
 				return err
 			}
 		}
@@ -280,9 +290,10 @@ func (uc *SchedulerUseCase) GetJobHistory(ctx context.Context, jobID, tenantID u
 	return uc.executions.GetByJob(ctx, jobID, tenantID, page, perPage)
 }
 
-// GetRunningJobs lista las ejecuciones activas que ve la empresa: las suyas y las de plataforma.
-func (uc *SchedulerUseCase) GetRunningJobs(ctx context.Context, tenantID uuid.UUID) ([]*domain.JobExecution, error) {
-	return uc.executions.ListRunning(ctx, tenantID)
+// GetRunningJobs pagina las ejecuciones activas que ve la empresa (las suyas y las de
+// plataforma) con el total.
+func (uc *SchedulerUseCase) GetRunningJobs(ctx context.Context, tenantID uuid.UUID, page, perPage int) ([]*domain.JobExecution, int64, error) {
+	return uc.executions.ListRunning(ctx, tenantID, page, perPage)
 }
 
 func (uc *SchedulerUseCase) GetExecution(ctx context.Context, id, tenantID uuid.UUID) (*domain.JobExecution, error) {
@@ -322,8 +333,8 @@ func (uc *SchedulerUseCase) runDue(ctx context.Context, s *domain.JobSchedule) e
 		if !job.IsActive {
 			return nil
 		}
-		next, err := uc.nextRun(job, &scheduled, now)
-		if errors.Is(err, domain.ErrInvalidCron) || errors.Is(err, domain.ErrInvalidTimezone) {
+		next, err := job.NextAfterDispatch(scheduled, now)
+		if unschedulable(err) {
 			return uc.deactivateUnschedulable(ctx, job.ID, job.TenantID, now, err)
 		}
 		if err != nil {
@@ -349,12 +360,20 @@ func (uc *SchedulerUseCase) runDue(ctx context.Context, s *domain.JobSchedule) e
 	})
 }
 
-// deactivateUnschedulable desactiva un cron cuya expresion o zona guardadas no se pueden
-// evaluar (escritas antes de que se validaran, o una zona que la base de zonas ya no
-// carga): lanzarlo seria hacerlo a deshora. Reactivarlo exige corregirlas antes. Que falte
-// la base de zonas entera no llega aqui: el proceso no arranca sin ella.
+// unschedulable indica que la definicion guardada no da una proxima ejecucion.
+func unschedulable(err error) bool {
+	var ferr *domain.FieldError
+	return errors.As(err, &ferr) || errors.Is(err, domain.ErrInvalidCron) || errors.Is(err, domain.ErrInvalidTimezone)
+}
+
+// deactivateUnschedulable desactiva un trabajo cuya definicion guardada no se puede
+// planificar: la expresion o la zona de un cron que no se evaluan, los minutos de un
+// interval fuera de rango o un tipo desconocido, escritos antes de que se validaran, o una
+// zona que la base de zonas ya no carga. Lanzarlo seria hacerlo a deshora, o en cada pasada
+// con unos minutos a cero. Reactivarlo exige corregirla antes. Que falte la base de zonas
+// entera no llega aqui: el proceso no arranca sin ella.
 func (uc *SchedulerUseCase) deactivateUnschedulable(ctx context.Context, jobID uuid.UUID, owner *uuid.UUID, now time.Time, cause error) error {
-	uc.logger.Error("scheduler: trabajo cron con expresion o zona invalida; se desactiva",
+	uc.logger.Error("scheduler: trabajo con una definicion que no se puede planificar; se desactiva",
 		zap.String("job_id", jobID.String()), zap.Error(cause))
 	return uc.jobs.Deactivate(ctx, jobID, owner, now)
 }
@@ -416,30 +435,6 @@ func (uc *SchedulerUseCase) ProcessPendingTasks(ctx context.Context) {
 			uc.logger.Error("scheduler: no se marco ejecutada la tarea", zap.String("task_id", t.ID.String()), zap.Error(err))
 		}
 	}
-}
-
-// nextRun es la proxima ejecucion del trabajo vista en now. scheduled es la ejecucion
-// prevista que se acaba de despachar, o nil al crear, editar o reactivar el trabajo; un
-// cron cuenta desde ella (ver domain.CronSpec.NextAfterDispatch).
-func (uc *SchedulerUseCase) nextRun(job *domain.JobDefinition, scheduled *time.Time, now time.Time) (time.Time, error) {
-	switch job.JobType {
-	case domain.JobTypeCron:
-		spec, err := domain.ParseCron(job.CronExpr(), job.Timezone)
-		if err != nil {
-			return time.Time{}, err
-		}
-		if scheduled == nil {
-			return spec.Next(now)
-		}
-		return spec.NextAfterDispatch(*scheduled, now)
-	case domain.JobTypeInterval:
-		if job.IntervalMinutes != nil {
-			return now.Add(time.Duration(*job.IntervalMinutes) * time.Minute), nil
-		}
-	case domain.JobTypeOneTime:
-		return now, nil
-	}
-	return now.Add(time.Hour), nil
 }
 
 // ListPendingTasks pagina las tareas puntuales pendientes de la empresa que vencen dentro de

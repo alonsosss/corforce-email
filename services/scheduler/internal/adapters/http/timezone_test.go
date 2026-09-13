@@ -31,12 +31,15 @@ func (r *storedJobs) GetOverview(ctx context.Context, id, tenantID uuid.UUID) (*
 	if err != nil {
 		return nil, err
 	}
-	var next *time.Time
-	if r.schedules != nil && !r.schedules.next.IsZero() {
-		n := r.schedules.next
-		next = &n
+	var next, last *time.Time
+	if r.schedules != nil {
+		if !r.schedules.next.IsZero() {
+			n := r.schedules.next
+			next = &n
+		}
+		last = r.schedules.last
 	}
-	return domain.NewJobOverview(*job, next, nil, nil), nil
+	return domain.NewJobOverview(*job, next, last, nil), nil
 }
 
 func (r *storedJobs) GetByCode(context.Context, string) (*domain.JobDefinition, error) {
@@ -69,6 +72,11 @@ type plannedSchedules struct {
 
 func (s *plannedSchedules) SetNextRun(_ context.Context, _ uuid.UUID, next time.Time) error {
 	s.next = next
+	return nil
+}
+
+func (s *plannedSchedules) Restart(_ context.Context, _ uuid.UUID, next time.Time) error {
+	s.next, s.last = next, nil
 	return nil
 }
 

@@ -36,6 +36,9 @@ type jobDTO struct {
 	NextRunAt     *time.Time        `json:"next_run_at"`
 	LastRunAt     *time.Time        `json:"last_run_at"`
 	LastExecution *lastExecutionDTO `json:"last_execution"`
+	// AlreadyRun es true en un one_time que el calendario ya despacho: reactivarlo responde
+	// 409 JOB_ALREADY_RUN. Sale de la misma regla con la que el servicio lo rechaza.
+	AlreadyRun bool `json:"already_run"`
 }
 
 type lastExecutionDTO struct {
@@ -94,7 +97,7 @@ func jobResponse(o *domain.JobOverview) jobDTO {
 		JobType: j.JobType, CronExpression: j.CronExpression, Timezone: j.Timezone, IntervalMinutes: j.IntervalMinutes,
 		Handler: j.Handler, Payload: j.Payload, IsActive: j.IsActive, MaxRetries: j.MaxRetries,
 		TimeoutSeconds: j.TimeoutSeconds, CreatedAt: j.CreatedAt, UpdatedAt: j.UpdatedAt,
-		NextRunAt: o.NextRunAt, LastRunAt: o.LastRunAt,
+		NextRunAt: o.NextRunAt, LastRunAt: o.LastRunAt, AlreadyRun: o.AlreadyRun,
 	}
 	if e := o.LastExecution; e != nil {
 		dto.LastExecution = &lastExecutionDTO{ID: e.ID, Status: e.Status, CompletedAt: e.CompletedAt, FailureReason: e.FailureReason}

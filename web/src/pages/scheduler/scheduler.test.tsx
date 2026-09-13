@@ -872,8 +872,35 @@ describe('detalle de un trabajo', () => {
     expect(screen.queryByText(t('scheduler.handler.outOfCatalog'))).toBeNull();
   });
 
-  it('reactivar un one_time ya lanzado explica el 409 JOB_ALREADY_RUN', async () => {
-    const user = userEvent.setup();
+  it('un one_time que el servidor da por lanzado no ofrece activar y explica como repetirlo', async () => {
+    grant(
+      PERMISSIONS.schedulerJobs.read,
+      PERMISSIONS.schedulerJobs.update,
+      PERMISSIONS.schedulerJobs.run,
+    );
+    mockCatalogs();
+    vi.spyOn(schedulerApi, 'getJob').mockResolvedValue({
+      data: jobFixture({
+        job_type: 'one_time',
+        cron_expression: null,
+        is_active: false,
+        next_run_at: null,
+        last_run_at: '2026-09-13T09:00:00Z',
+        already_run: true,
+      }),
+    });
+    const enable = vi.spyOn(schedulerApi, 'enableJob');
+    renderDetail();
+
+    expect(await screen.findByText(t('scheduler.alreadyRunHint'))).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: t('common.activate') })).toBeNull();
+    expect(screen.queryByRole('button', { name: t('common.deactivate') })).toBeNull();
+    expect(screen.getByRole('button', { name: t('scheduler.run') })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: t('common.edit') })).toBeInTheDocument();
+    expect(enable).not.toHaveBeenCalled();
+  });
+
+  it('la regla es la del servidor: sin already_run se ofrece activar, tambien a un one_time', async () => {
     grant(PERMISSIONS.schedulerJobs.read, PERMISSIONS.schedulerJobs.update);
     mockCatalogs();
     vi.spyOn(schedulerApi, 'getJob').mockResolvedValue({
@@ -883,12 +910,35 @@ describe('detalle de un trabajo', () => {
         is_active: false,
         next_run_at: null,
         last_run_at: '2026-09-13T09:00:00Z',
+        already_run: false,
+      }),
+    });
+    renderDetail();
+
+    expect(await screen.findByRole('button', { name: t('common.activate') })).toBeInTheDocument();
+    expect(screen.queryByText(t('scheduler.alreadyRunHint'))).toBeNull();
+  });
+
+  it('si el servidor lo rechaza igual (lo despacho despues de leerlo) explica el 409 JOB_ALREADY_RUN', async () => {
+    const user = userEvent.setup();
+    grant(PERMISSIONS.schedulerJobs.read, PERMISSIONS.schedulerJobs.update);
+    mockCatalogs();
+    vi.spyOn(schedulerApi, 'getJob').mockResolvedValue({
+      data: jobFixture({
+        job_type: 'one_time',
+        cron_expression: null,
+        is_active: false,
+        next_run_at: null,
       }),
     });
     const enable = vi
       .spyOn(schedulerApi, 'enableJob')
       .mockRejectedValue(
-        rejected(409, ERROR_CODES.JOB_ALREADY_RUN, 'a one_time job that already ran cannot be re-enabled'),
+        rejected(
+          409,
+          ERROR_CODES.JOB_ALREADY_RUN,
+          'a one_time job that already ran cannot be re-enabled',
+        ),
       );
     renderDetail();
 

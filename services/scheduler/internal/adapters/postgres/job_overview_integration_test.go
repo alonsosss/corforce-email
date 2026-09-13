@@ -121,7 +121,8 @@ func TestListadoPaginadoConCalendarioYUltimaEjecucion(t *testing.T) {
 		byName[o.Job.Name] = o
 	}
 	a := byName["Alfa"]
-	if a.LastRunAt == nil || !a.LastRunAt.Equal(dispatchedAt) || a.NextRunAt == nil || !a.NextRunAt.Equal(dispatchedAt.Add(5*time.Minute)) {
+	// last_run_at es la hora real del despacho; la siguiente sigue la rejilla de la prevista.
+	if a.LastRunAt == nil || !a.LastRunAt.Equal(dispatchedAt) || a.NextRunAt == nil || !a.NextRunAt.Equal(start.Add(5*time.Minute)) {
 		t.Fatalf("Alfa: last_run_at %v, next_run_at %v", a.LastRunAt, a.NextRunAt)
 	}
 	if a.LastExecution == nil || a.LastExecution.Status != domain.StatusRunning || a.LastExecution.CompletedAt != nil {

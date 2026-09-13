@@ -69,6 +69,7 @@ const JOB: SchedulerJob = {
     completed_at: '2026-09-13T10:00:00Z',
     failure_reason: 'timeout',
   },
+  already_run: false,
 };
 
 const EXECUTION: JobExecution = {
@@ -271,11 +272,14 @@ describe('cliente del scheduler', () => {
 
     for (const window of [0, -60, '86400', null]) {
       mockFetch(() =>
-        jsonResponse(200, { data: [], meta: { page: 1, per_page: 20, pending_window_seconds: window } }),
+        jsonResponse(200, {
+          data: [],
+          meta: { page: 1, per_page: 20, pending_window_seconds: window },
+        }),
       );
-      expect((await schedulerApi.listPendingTasks({ page: 1, per_page: 20 })).pendingWindowSeconds).toBe(
-        null,
-      );
+      expect(
+        (await schedulerApi.listPendingTasks({ page: 1, per_page: 20 })).pendingWindowSeconds,
+      ).toBe(null);
     }
   });
 
@@ -316,7 +320,10 @@ describe('cliente del scheduler', () => {
   it('reactivar un one_time ya despachado es un 409 JOB_ALREADY_RUN con texto propio', async () => {
     mockFetch(() =>
       jsonResponse(409, {
-        error: { code: 'JOB_ALREADY_RUN', message: 'a one_time job that already ran cannot be re-enabled' },
+        error: {
+          code: 'JOB_ALREADY_RUN',
+          message: 'a one_time job that already ran cannot be re-enabled',
+        },
       }),
     );
     const err = await schedulerApi.enableJob('job-1').catch((e: unknown) => e);

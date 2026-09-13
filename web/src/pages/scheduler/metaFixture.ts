@@ -65,6 +65,7 @@ export function jobFixture(extra: Partial<SchedulerJob> = {}): SchedulerJob {
     next_run_at: '2026-09-14T12:00:00Z',
     last_run_at: null,
     last_execution: null,
+    already_run: false,
     ...extra,
   };
 }

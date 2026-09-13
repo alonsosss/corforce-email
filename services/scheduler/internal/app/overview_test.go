@@ -37,7 +37,8 @@ func TestAltaYEdicionDevuelvenElTrabajoLeido(t *testing.T) {
 func TestUltimaPasadaDelCalendarioYUltimaEjecucion(t *testing.T) {
 	f := newFixture(t)
 	job := f.addJob(nil)
-	f.schedule(job, f.clock.now())
+	scheduled := f.clock.now()
+	f.schedule(job, scheduled)
 	f.clock.advance(10 * time.Second)
 	dispatchedAt := f.clock.now()
 	f.uc.ProcessDueJobs(ctx)
@@ -46,7 +47,8 @@ func TestUltimaPasadaDelCalendarioYUltimaEjecucion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if o.LastRunAt == nil || !o.LastRunAt.Equal(dispatchedAt) || !o.NextRunAt.Equal(dispatchedAt.Add(5*time.Minute)) {
+	// last_run_at es la hora real del despacho; la siguiente sigue la rejilla de la prevista.
+	if o.LastRunAt == nil || !o.LastRunAt.Equal(dispatchedAt) || !o.NextRunAt.Equal(scheduled.Add(5*time.Minute)) {
 		t.Fatalf("tras la pasada: last_run_at %v, next_run_at %v", o.LastRunAt, o.NextRunAt)
 	}
 	if o.LastExecution == nil || o.LastExecution.Status != domain.StatusRunning || o.LastExecution.CompletedAt != nil {

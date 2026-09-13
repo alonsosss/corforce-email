@@ -286,11 +286,23 @@ func (r *JobExecutionRepo) Update(ctx context.Context, exec *domain.JobExecution
 	return affectedOr(tag, err, domain.ErrExecutionNotFound)
 }
 
-func (r *JobExecutionRepo) ListRunning(ctx context.Context, tenantID uuid.UUID) ([]*domain.JobExecution, error) {
-	return r.list(ctx,
-		`SELECT `+executionColumns+` FROM scheduler.job_executions
-		  WHERE status IN ('pending','running') AND (tenant_id=$1 OR tenant_id IS NULL)
-		  ORDER BY created_at DESC, id DESC`, tenantID)
+// ListRunning cuenta y lee la pagina con dos consultas (idx_job_executions_active); el
+// desempate por id evita que dos paginas se solapen cuando varias comparten created_at.
+func (r *JobExecutionRepo) ListRunning(ctx context.Context, tenantID uuid.UUID, page, perPage int) ([]*domain.JobExecution, int64, error) {
+	const where = ` FROM scheduler.job_executions WHERE status IN ('pending','running') AND (tenant_id=$1 OR tenant_id IS NULL)`
+	var total int64
+	if err := r.pool.QueryRow(ctx, `SELECT count(*)`+where, tenantID).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	if total == 0 {
+		return nil, 0, nil
+	}
+	list, err := r.list(ctx, `SELECT `+executionColumns+where+` ORDER BY created_at DESC, id DESC LIMIT $2 OFFSET $3`,
+		tenantID, perPage, domain.PageOffset(page, perPage))
+	if err != nil {
+		return nil, 0, err
+	}
+	return list, total, nil
 }
 
 func (r *JobExecutionRepo) ClaimOverdue(ctx context.Context, now time.Time) (*domain.JobExecution, error) {
@@ -474,6 +486,15 @@ func (r *JobScheduleRepo) SetNextRun(ctx context.Context, jobID uuid.UUID, nextR
 	_, err := r.pool.Exec(ctx,
 		`INSERT INTO scheduler.job_schedules (job_id,next_run_at,is_locked) VALUES ($1,$2,false)
  ON CONFLICT (job_id) DO UPDATE SET next_run_at=EXCLUDED.next_run_at`,
+		jobID, nextRunAt,
+	)
+	return err
+}
+
+func (r *JobScheduleRepo) Restart(ctx context.Context, jobID uuid.UUID, nextRunAt time.Time) error {
+	_, err := r.pool.Exec(ctx,
+		`INSERT INTO scheduler.job_schedules (job_id,next_run_at,is_locked) VALUES ($1,$2,false)
+ ON CONFLICT (job_id) DO UPDATE SET next_run_at=EXCLUDED.next_run_at, last_run_at=NULL`,
 		jobID, nextRunAt,
 	)
 	return err

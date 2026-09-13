@@ -67,6 +67,11 @@ export interface SchedulerJob {
   last_run_at: string | null;
   /** Ejecucion mas reciente de cualquier origen, o null si nunca se ejecuto. */
   last_execution: LastExecution | null;
+  /**
+   * true en un one_time que el calendario ya despacho: el servicio rechaza reactivarlo (409
+   * JOB_ALREADY_RUN) con la misma regla con la que lo calcula.
+   */
+  already_run: boolean;
 }
 
 export interface LastExecution {

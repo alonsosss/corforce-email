@@ -165,7 +165,7 @@ func TestHistorialActivasYEscriturasSoloDeLaEmpresa(t *testing.T) {
 		t.Fatalf("el historial de plataforma se lee: %d (%v)", len(list), err)
 	}
 
-	active, err := e.uc.GetRunningJobs(e.ctx, e.tenant)
+	active, total, err := e.uc.GetRunningJobs(e.ctx, e.tenant, 1, 20)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -173,8 +173,8 @@ func TestHistorialActivasYEscriturasSoloDeLaEmpresa(t *testing.T) {
 	for _, x := range active {
 		ids[x.ID] = true
 	}
-	if len(active) != 2 || !ids[running] || !ids[platformRun] {
-		t.Fatalf("activas de la empresa y de plataforma, sin las ajenas: %d", len(active))
+	if len(active) != 2 || total != 2 || !ids[running] || !ids[platformRun] {
+		t.Fatalf("activas de la empresa y de plataforma, sin las ajenas: %d de %d", len(active), total)
 	}
 
 	if err := e.uc.DisableJob(e.ctx, foreignJob, e.tenant); !errors.Is(err, domain.ErrJobNotFound) {
