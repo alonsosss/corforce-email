@@ -39,5 +39,19 @@ construye fuera del literal y no se puede leer estaticamente.
 | Subject | Servicio | Campos que lee |
 |---|---|---|
 | `audit.api.write` | audit | `ip`, `method`, `module`, `path`, `request_id`, `roles`, `status`, `tenant_id`, `user_agent`, `user_id` |
+| `campaigns.campaign.*` | analytics | `campaign_id`, `occurred_at`, `status`, `tenant_id` |
+| `contacts.contact.created` | billing | `tenant_id` |
+| `contacts.contact.deleted` | billing | `tenant_id` |
 | `domains.domain.*` | transactional | `domain`, `purpose`, `status`, `tenant_id` |
+| `domains.domain.created` | billing | `domain`, `tenant_id` |
+| `domains.domain.deleted` | billing | `domain`, `tenant_id` |
+| `mail.domain.created` | billing | `domain`, `tenant_id` |
+| `mail.domain.deleted` | billing | `domain`, `tenant_id` |
+| `mail.mailbox.created` | billing | `tenant_id` |
+| `mail.mailbox.deleted` | billing | `tenant_id` |
+| `organization.tenant.created` | billing | `tenant_id` |
+| `organization.tenant.status_changed` | billing | `status`, `tenant_id` |
+| `transactional.email.*` | analytics | `bounce_type`, `campaign_id`, `class`, `email`, `message_id`, `occurred_at`, `tenant_id`, `to` |
+| `transactional.email.sent` | billing | `tenant_id` |
+| `transactional.marketing.queued` | transactional | _opaco_ |
 | `transactional.message.queued` | transactional | _opaco_ |
