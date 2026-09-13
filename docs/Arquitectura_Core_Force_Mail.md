@@ -42,7 +42,7 @@ JetStream, S3, ClickHouse (analitica, fase 4), Prometheus/Grafana/Loki.
 Difiere del informe: `tenant-service` se llama `organization` (nombre heredado, esquema
 `organization`); `billing-service` y `policy-service` no existen todavia (fase 3/4).
 
-### 2.2 Correo corporativo (celda). Estado: `mail-directory`, `mail-auth` y `domain-service` verificados (2026-09-12); `mail-security` en construccion; motores copiados
+### 2.2 Correo corporativo (celda). Estado: `mail-directory`, `mail-auth`, `domain-service` y `mail-security` verificados contra Postgres real (2026-09-12); motores copiados, pendientes de levantar con `mail-security` como `mail-policy`
 
 | Servicio | Responsabilidad | Esquema |
 |---|---|---|

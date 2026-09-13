@@ -30,9 +30,12 @@ construye fuera del literal y no se puede leer estaticamente.
 | `scheduler.job.completed` | scheduler | `execution_id`, `job_id` |
 | `scheduler.job.failed` | scheduler | `error`, `execution_id`, `job_id` |
 | `scheduler.job.started` | scheduler | `execution_id`, `job_id` |
+| `templates.template.published` | templates | `template_id`, `tenant_id`, `version` |
 
 ## Consumido
 
 | Subject | Servicio | Campos que lee |
 |---|---|---|
 | `audit.api.write` | audit | `ip`, `method`, `module`, `path`, `request_id`, `roles`, `status`, `tenant_id`, `user_agent`, `user_id` |
+| `domains.domain.*` | transactional | `domain`, `purpose`, `status`, `tenant_id` |
+| `transactional.message.queued` | transactional | _opaco_ |

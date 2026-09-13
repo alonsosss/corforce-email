@@ -4,7 +4,7 @@ Generado por `ops/scaffold/gen-events.sh` desde el codigo. NO editar a mano.
 Convencion de subject: `<dominio>.<entidad>.<accion>`. Un subject tiene UN dueno
 (el servicio que lo publica); los demas solo lo consumen (regla no-fork).
 
-Resumen: 13 publicaciones, 1 suscripciones, 13 subjects distintos.
+Resumen: 20 publicaciones, 2 suscripciones, 20 subjects distintos.
 
 ## Cruce por subject (dueno -> consumidores)
 
@@ -23,6 +23,13 @@ Resumen: 13 publicaciones, 1 suscripciones, 13 subjects distintos.
 | `scheduler.job.completed` | scheduler | - |
 | `scheduler.job.failed` | scheduler | - |
 | `scheduler.job.started` | scheduler | - |
+| `templates.template.published` | templates | - |
+| `transactional.email.bounced` | transactional | - |
+| `transactional.email.complained` | transactional | - |
+| `transactional.email.failed` | transactional | - |
+| `transactional.email.sent` | transactional | - |
+| `transactional.email.unsubscribed` | transactional | - |
+| `transactional.message.queued` | transactional | transactional |
 
 ## Por servicio
 
@@ -38,4 +45,11 @@ Resumen: 13 publicaciones, 1 suscripciones, 13 subjects distintos.
 
 ### scheduler
 - Publica: `scheduler.job.completed`,`scheduler.job.failed` `scheduler.job.started`
+
+### templates
+- Publica: `templates.template.published`
+
+### transactional
+- Publica: `transactional.email.bounced`,`transactional.email.complained` `transactional.email.failed`,`transactional.email.sent` `transactional.email.unsubscribed`,`transactional.message.queued`
+- Consume: `transactional.message.queued`
 

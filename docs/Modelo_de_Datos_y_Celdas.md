@@ -74,6 +74,13 @@ Los servicios Go de celda acceden SIEMPRE dentro de `db.TransactRLS` y ademas fi
 `tenant_id` en el SQL; `mail-auth` y los endpoints de motores de `mail-security` consultan
 como dueno porque resuelven identidades sin empresa previa, y lo dicen en un comentario.
 
+`mail_security` (`migrations/cell/canonical/mail-security/01_mail_security.sql`) sigue el
+mismo patron: `tenant_isolation` por `tenant_id = mail_security.current_tenant()` para
+`mail_app` en sus nueve tablas, sin `FORCE`. Su API de administracion corre en
+`TransactRLS` y filtra por `tenant_id`; los endpoints de motores (`/pipe`, `/settings`...)
+consultan como dueno y atribuyen cada fila de cuarentena a la empresa del buzon final.
+Probado contra Postgres: una empresa no ve umbrales, ajustes ni cuarentena de otra.
+
 `03_mail_app_policies.sql` (mail-directory) anade lo que el primer consumidor necesito:
 `app_delete` sobre `quota_usage` (solo del buzon propio, por eso el servicio borra la cuota
 antes que el buzon), `WITH CHECK` en `transports` que admite `tenant_id NULL` solo con
@@ -90,9 +97,15 @@ Base `mail_tenant_<slug>` creada por `organization` al dar de alta la empresa
 (`CREATE DATABASE` + todas las canonicas en orden, con advisory lock sobre conexion
 directa sin PgBouncer, `public.schema_migrations`, baseline para bases preexistentes).
 Barrido en segundo plano al arrancar (`RUN_TENANT_MIGRATIONS`). Hoy contiene `audit`,
-`scheduler`, `domains` y `suppression` (lista de exclusiones de envio: una fila por
+`scheduler`, `domains`, `suppression` (lista de exclusiones de envio: una fila por
 direccion y empresa, causa vigente por orden de gravedad, consulta previa a todo envio
-por `POST /internal/suppression/check`).
+por `POST /internal/suppression/check`) y `templates` (plantillas de correo por empresa:
+`templates.templates` con nombre unico por empresa y `current_version`, y
+`templates.versions` con asunto, HTML, texto opcional y variables declaradas en `jsonb`;
+una sola version publicada por plantilla garantizada por el indice parcial
+`uq_versions_one_published`, las anteriores quedan `superseded`; renderizado interno por
+`POST /internal/templates/{id}/render` y evento `templates.template.published` por la
+outbox).
 
 ## 5. Enrutado por peticion y por celda (V)
 
