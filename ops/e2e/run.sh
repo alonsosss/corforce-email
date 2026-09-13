@@ -43,7 +43,7 @@ WORK="$(mktemp -d)"
 limpiar() {
   pkill -f "$WORK/bin/" 2>/dev/null
   if [[ "${E2E_KEEP:-0}" != "1" ]]; then
-    docker rm -f "$E2E_PREFIX-pg" "$E2E_PREFIX-nats" "$E2E_PREFIX-redis" >/dev/null 2>&1
+    docker rm -f "$E2E_PREFIX-pg" "$E2E_PREFIX-nats" "$E2E_PREFIX-redis" "$E2E_PREFIX-redis-pe02" >/dev/null 2>&1
     rm -rf "$WORK"
   else
     echo "E2E_KEEP=1: contenedores $E2E_PREFIX-* y registros en $WORK/log"
@@ -540,7 +540,7 @@ echo "== Rutas con sesion por celda (segundo gateway, dos celdas)"
 # la celda base (GATEWAY_BASE_CELL_CODE) y una instancia de mail-directory sobre mail_cell_pe_02:
 # cada peticion con sesion va a la celda de su empresa, que pregunta a organization, y una celda
 # sin instancia declarada no llega a ninguna. Tokens nuevos: los de arriba caducan a los 5 min.
-MD2_PORT=$((BASE + 60)) GW2_PORT=$((BASE + 61))
+MD2_PORT=$((BASE + 60)) GW2_PORT=$((BASE + 61)) MS2_PORT=$((BASE + 62)) REDIS2_PORT=$((BASE - 1620))
 T1N=$(e2e_login "$ADMIN_EMAIL" "$ADMIN_PASS" | jget data.access_token)
 A2N="Authorization: Bearer $(e2e_login admin@acme.test "$TENANT_PASS" | jget data.access_token)"
 for c in pe-02 pe-03; do
@@ -564,9 +564,17 @@ expect "ni sin el token interno" "$(codigo "$ORG_INTERNA")" "401"
 
 env -u POSTGRES_PASSWORD -u JWT_SIGNING_KEY CELL_CODE=pe-02 CELL_DB_NAME=mail_cell_pe_02 CELL_DB_PASSWORD="$CELL2_PASS" \
   MAIL_DIRECTORY_PORT="$MD2_PORT" "$WORK/bin/mail-directory" >"$WORK/log/mail-directory-pe-02.log" 2>&1 &
+# mail-security de pe-02 con el Redis de los motores de su celda y sin NATS: aqui solo se opera su
+# cortafuegos, y no debe llevarse los eventos del directorio que consume la instancia de pe-01.
+docker rm -f "$E2E_PREFIX-redis-pe02" >/dev/null 2>&1
+docker run -d --name "$E2E_PREFIX-redis-pe02" -p "127.0.0.1:$REDIS2_PORT:6379" redis:7.4.10-alpine >/dev/null || mal "redis de los motores de pe-02"
+env -u POSTGRES_PASSWORD -u JWT_SIGNING_KEY CELL_CODE=pe-02 CELL_DB_NAME=mail_cell_pe_02 CELL_DB_PASSWORD="$CELL2_PASS" \
+  MAIL_SECURITY_PORT="$MS2_PORT" MAIL_POLICY_MAPS_PORT=$((BASE + 63)) MAIL_POLICY_EXPORT_PORT=$((BASE + 64)) \
+  MAIL_REDIS_PORT="$REDIS2_PORT" NATS_URL=nats://127.0.0.1:1 "$WORK/bin/mail-security" >"$WORK/log/mail-security-pe-02.log" 2>&1 &
 env -u JWT_SIGNING_KEY GATEWAY_PORT="$GW2_PORT" GATEWAY_BASE_CELL_CODE=pe-01 MAIL_DIRECTORY_CELL_HOSTS="pe-02=127.0.0.1:$MD2_PORT" \
-  "$WORK/bin/gateway" >"$WORK/log/gateway-celdas.log" 2>&1 &
+  MAIL_SECURITY_CELL_HOSTS="pe-02=127.0.0.1:$MS2_PORT" "$WORK/bin/gateway" >"$WORK/log/gateway-celdas.log" 2>&1 &
 esperar_salud mail-directory-pe-02 "$MD2_PORT"
+esperar_salud mail-security-pe-02 "$MS2_PORT"
 esperar_salud gateway-celdas "$GW2_PORT"
 GW2="http://127.0.0.1:$GW2_PORT/api/v1"
 en_pe02() { grep -c '"path":"/api/v1/mailboxes"' "$WORK/log/mail-directory-pe-02.log"; }
@@ -576,10 +584,44 @@ expect "beta (pe-02) va a la instancia de su celda" "$(curl -s "$GW2/mailboxes" 
 expect "que es la que la atiende" "$(en_pe02)" "1"
 expect "gamma (pe-03, sin instancia) no llega a ninguna" "$(sesion "$GW2/mailboxes" -H "$AG")" "CELL_UNAVAILABLE 503"
 expect "ni a la de pe-02" "$(en_pe02)" "1"
-expect "beta tampoco llega a mail-security, que no declara pe-02" "$(sesion "$GW2/mail-security/quarantine" -H "$AB")" "CELL_UNAVAILABLE 503"
+expect "beta llega a mail-security de su celda" "$(codigo "$GW2/mail-security/quarantine" -H "$AB")" "200"
+expect "gamma tampoco llega a mail-security" "$(sesion "$GW2/mail-security/quarantine" -H "$AG")" "CELL_UNAVAILABLE 503"
 expect "acme si, en la celda base" "$(codigo "$GW2/mail-security/quarantine" -H "$A2N")" "200"
 contains "el gateway cuenta la celda sin instancia" "$(curl -s "http://127.0.0.1:$GW2_PORT/metrics")" \
   'cell_routing_failures_total{reason="not_served",service="mail-directory"} 1'
+
+echo "== Celda destino explicita del superadmin (X-Target-Cell)"
+# El superadmin es de la empresa de plataforma (pe-01): sin cabecera solo opera esa celda. Con
+# X-Target-Cell el gateway por celda le lleva a la instancia de la celda que nombra, que solo le
+# atiende sus rutas de plataforma (el cortafuegos) y nunca datos de una empresa.
+A1N="Authorization: Bearer $T1N"
+RED_PE02=192.0.2.0/24
+expect "el superadmin anade una red al cortafuegos de pe-02" "$(codigo -X POST "$GW2/mail-security/firewall/networks" -H "$A1N" \
+  -H 'X-Target-Cell: pe-02' -H 'Content-Type: application/json' -d "{\"list\":\"deny\",\"network\":\"$RED_PE02\",\"note\":\"e2e\"}")" "201"
+expect "la red queda en la base de pe-02" "$(sql mail_cell_pe_02 "SELECT count(*) FROM mail_security.firewall_networks WHERE network = '$RED_PE02'")" "1"
+expect "y no en la de pe-01" "$(sql mail_cell_pe_01 "SELECT count(*) FROM mail_security.firewall_networks WHERE network = '$RED_PE02'")" "0"
+expect "llega al Redis de los motores de pe-02" "$(docker exec "$E2E_PREFIX-redis-pe02" redis-cli HEXISTS F2B_BLACKLIST "$RED_PE02")" "1"
+expect "y no al de pe-01" "$(docker exec "$E2E_PREFIX-redis" redis-cli HEXISTS F2B_BLACKLIST "$RED_PE02")" "0"
+contains "el superadmin lee el cortafuegos de pe-02" "$(curl -s "$GW2/mail-security/firewall/networks" -H "$A1N" -H 'X-Target-Cell: pe-02')" "\"$RED_PE02\""
+FW=$(curl -s -w ' %{http_code}' "$GW2/mail-security/firewall/networks" -H "$A1N")
+expect "sin cabecera lee el cortafuegos de la celda de su empresa" "${FW##* }" "200"
+lacks "donde la red de pe-02 no esta" "$FW" "$RED_PE02"
+FW=$(curl -s -w ' %{http_code}' "$GW2/mail-security/firewall/networks" -H "$A1N" -H 'X-Target-Cell: pe-01')
+expect "con la celda base como destino tambien" "${FW##* }" "200"
+lacks "y tampoco la ve" "$FW" "$RED_PE02"
+expect "con celda destino no llega a los datos de una empresa" "$(sesion "$GW2/mail-security/quarantine" -H "$A1N" -H 'X-Target-Cell: pe-02')" "PLATFORM_SCOPE_ONLY 403"
+expect "ni al directorio de pe-02, que no tiene rutas de plataforma" "$(sesion "$GW2/mailboxes" -H "$A1N" -H 'X-Target-Cell: pe-02')" "PLATFORM_SCOPE_ONLY 403"
+expect "una celda sin instancia no cae en ninguna otra" "$(sesion "$GW2/mail-security/firewall/networks" -H "$A1N" -H 'X-Target-Cell: pe-03')" "CELL_UNAVAILABLE 503"
+expect "una celda mal formada se rechaza" "$(sesion "$GW2/mail-security/firewall/networks" -H "$A1N" -H 'X-Target-Cell: PE-02')" "INVALID_TARGET_CELL 400"
+expect "fuera de un servicio de celda no se admite" "$(sesion "$GW2/templates" -H "$A1N" -H 'X-Target-Cell: pe-02')" "TARGET_CELL_NOT_APPLICABLE 400"
+expect "una empresa no elige celda destino" "$(sesion "$GW2/mail-security/quarantine" -H "$AB" -H 'X-Target-Cell: pe-01')" "TARGET_CELL_FORBIDDEN 403"
+expect "la cabecera interna del cliente se borra: beta sigue en su celda" "$(codigo "$GW2/mail-security/quarantine" -H "$AB" -H 'X-Operator-Cell: pe-01')" "200"
+expect "el gateway sin celdas no admite celda destino" "$(sesion "$GW/mail-security/firewall/networks" -H "$A1N" -H 'X-Target-Cell: pe-01')" "CELL_UNAVAILABLE 503"
+M2=$(curl -s "http://127.0.0.1:$GW2_PORT/metrics")
+contains "el gateway cuenta la empresa que pidio celda destino" "$M2" 'cell_target_refusals_total{reason="not_operator"} 1'
+contains "y la celda destino sin instancia" "$M2" 'cell_target_refusals_total{reason="not_served"} 1'
+contains "mail-security de pe-02 cuenta la ruta de empresa que rechazo al operador" "$(curl -s "http://127.0.0.1:$MS2_PORT/metrics")" \
+  'cell_membership_refusals_total{reason="operator_tenant_route"} 1'
 
 echo "== Segunda barrera: cada instancia solo atiende a las empresas de su celda"
 # El primer gateway no declara celdas y lo lleva todo a pe-01, como uno al que le falta

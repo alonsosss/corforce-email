@@ -13,6 +13,9 @@ import (
 	"github.com/alonsosss/corforce-email/pkg/tenantcell"
 	"github.com/alonsosss/corforce-email/pkg/tenantcell/tenantcelltest"
 	handler "github.com/alonsosss/corforce-email/services/mail-security/internal/adapters/http"
+	"github.com/alonsosss/corforce-email/services/mail-security/internal/app"
+	"github.com/alonsosss/corforce-email/services/mail-security/internal/app/apptest"
+	"github.com/alonsosss/corforce-email/services/mail-security/internal/domain"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
@@ -125,6 +128,106 @@ func TestLaEmpresaDeLaCeldaLlegaASusRutas(t *testing.T) {
 	salud.tenant = nueva
 	if rec := pedir(router, salud); rec.Code != http.StatusServiceUnavailable || codigoDeError(rec) != tenantcell.CodeCellUnavailable {
 		t.Fatalf("empresa sin comprobar con organization caido: %d %s", rec.Code, rec.Body)
+	}
+}
+
+// rutasConCortafuegos son las rutas del servicio con el caso de uso del cortafuegos sobre dobles
+// en memoria; el resto sin casos de uso, de modo que atender una ruta que no es de plataforma
+// entraria en panico.
+func rutasConCortafuegos() chi.Router {
+	policy := apptest.NewPolicyReader()
+	policy.FirewallNets = []domain.FirewallNetwork{{ID: uuid.New(), List: "deny", Network: "192.0.2.0/24", Note: "red de pe-01"}}
+	fw := app.NewFirewallUseCase(app.FirewallDeps{Policy: policy, Store: apptest.NewStore(), Logger: zap.NewNop()})
+	return handler.NewHandler(nil, nil, fw, authz.NewChecker("http://127.0.0.1:9", "")).Routes()
+}
+
+func pedirConCeldaDestino(h http.Handler, method, path, tenant, roles, cell string, n int) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(method, path, strings.NewReader(`{`))
+	req.RemoteAddr = fmt.Sprintf("203.0.113.%d:4000", n%250+1)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Gateway-Token", tokenInterno)
+	req.Header.Set("X-Tenant-ID", tenant)
+	req.Header.Set("X-User-ID", uuid.NewString())
+	req.Header.Set("X-User-Roles", roles)
+	if cell != "" {
+		req.Header.Set("X-Operator-Cell", cell)
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return rec
+}
+
+// El superadmin, cuya empresa vive en otra celda, opera el cortafuegos de esta con celda destino:
+// cada ruta del cortafuegos le atiende (las lecturas responden, las escrituras llegan al handler,
+// que rechaza el cuerpo) y cualquier otra ruta del servicio, de datos de empresa, publica o
+// interna, le responde 403 sin llegar a su handler. Sin celda destino sigue rechazado por ser de
+// otra celda; un administrador de empresa no usa la celda destino.
+func TestElOperadorConCeldaDestinoSoloLlegaAlCortafuegos(t *testing.T) {
+	plataforma, socia := uuid.NewString(), uuid.NewString()
+	t.Setenv("INTERNAL_GATEWAY_TOKEN", tokenInterno)
+	org, url := tenantcelltest.New(t, tokenInterno, map[string]string{plataforma: "pe-02", socia: "pe-01"})
+	m, err := tenantcell.NewMembership("pe-01", tenantcell.NewResolver(url, tokenInterno, zap.NewNop()), zap.NewNop())
+	if err != nil {
+		t.Fatal(err)
+	}
+	routes := rutasConCortafuegos()
+	if err := m.AcceptOperators(routes, handler.PlatformRoutes()); err != nil {
+		t.Fatal(err)
+	}
+	router := apiRouter(nil, m, routes, zap.NewNop())
+
+	plataformaRutas := map[string]bool{}
+	for _, pr := range handler.PlatformRoutes() {
+		plataformaRutas[pr.Method+" "+pr.Pattern] = true
+	}
+	if len(plataformaRutas) != 7 {
+		t.Fatalf("rutas de plataforma: %v", plataformaRutas)
+	}
+	n, atendidas, rechazadas := 0, 0, 0
+	err = chi.Walk(routes, func(method, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
+		n++
+		path := strings.TrimSuffix(paramRe.ReplaceAllString(route, "x"), "/*")
+		rec := pedirConCeldaDestino(router, method, path, plataforma, "superadmin", "pe-01", n)
+		switch {
+		case !plataformaRutas[method+" "+route]:
+			rechazadas++
+			if rec.Code != http.StatusForbidden || codigoDeError(rec) != tenantcell.CodePlatformScopeOnly {
+				t.Fatalf("%s %s con celda destino: %d %s", method, route, rec.Code, rec.Body)
+			}
+		case method == http.MethodGet:
+			atendidas++
+			if rec.Code != http.StatusOK {
+				t.Fatalf("%s %s: %d %s", method, route, rec.Code, rec.Body)
+			}
+		default:
+			atendidas++
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("%s %s: %d %s, se esperaba el 400 del handler", method, route, rec.Code, rec.Body)
+			}
+		}
+		return nil
+	})
+	if err != nil || atendidas != 7 || rechazadas < 30 {
+		t.Fatalf("atendidas %d, rechazadas %d: %v", atendidas, rechazadas, err)
+	}
+	firewall := "/api/v1/mail-security/firewall/networks"
+	if rec := pedirConCeldaDestino(router, http.MethodGet, firewall, plataforma, "superadmin", "pe-01", 1); !strings.Contains(rec.Body.String(), "192.0.2.0/24") {
+		t.Fatalf("cortafuegos de la celda: %s", rec.Body)
+	}
+	if rec := pedirConCeldaDestino(router, http.MethodGet, firewall, plataforma, "superadmin", "pe-02", 2); rec.Code != http.StatusForbidden ||
+		codigoDeError(rec) != tenantcell.CodeTargetCellMismatch {
+		t.Fatalf("celda destino de otra celda: %d %s", rec.Code, rec.Body)
+	}
+	if rec := pedirConCeldaDestino(router, http.MethodGet, firewall, socia, "tenant_admin", "pe-01", 3); rec.Code != http.StatusForbidden ||
+		codigoDeError(rec) != tenantcell.CodePlatformScopeOnly {
+		t.Fatalf("administrador de empresa con celda destino: %d %s", rec.Code, rec.Body)
+	}
+	if org.Calls() != 0 {
+		t.Fatalf("la celda destino pregunto %d veces a organization", org.Calls())
+	}
+	if rec := pedirConCeldaDestino(router, http.MethodGet, firewall, plataforma, "superadmin", "", 4); rec.Code != http.StatusForbidden ||
+		codigoDeError(rec) != tenantcell.CodeNotInCell {
+		t.Fatalf("superadmin de otra celda sin celda destino: %d %s", rec.Code, rec.Body)
 	}
 }
 

@@ -11,6 +11,7 @@ import (
 	"github.com/alonsosss/corforce-email/pkg/authz"
 	"github.com/alonsosss/corforce-email/pkg/middleware"
 	"github.com/alonsosss/corforce-email/pkg/response"
+	"github.com/alonsosss/corforce-email/pkg/tenantcell"
 	"github.com/alonsosss/corforce-email/services/mail-security/internal/app"
 	"github.com/alonsosss/corforce-email/services/mail-security/internal/domain"
 	"github.com/go-chi/chi/v5"
@@ -48,9 +49,38 @@ func (h *Handler) can(resource, action string) func(http.Handler) http.Handler {
 	return h.authz.RequirePermission(permissionModule, resource, action)
 }
 
-func (h *Handler) Routes() http.Handler {
+// adminPrefix es el prefijo del API de administracion, el que enruta el gateway.
+const adminPrefix = "/api/v1/mail-security"
+
+// firewallRoutes es el cortafuegos de la celda: permiso de plataforma (mail_security/firewall/*)
+// y, en el caso de uso, superadmin. Son las rutas de plataforma del servicio: las unicas que un
+// operador con celda destino alcanza en una celda que no es la de su empresa (PlatformRoutes).
+var firewallRoutes = []struct {
+	method, path, action string
+	serve                func(*Handler, http.ResponseWriter, *http.Request)
+}{
+	{http.MethodGet, "/firewall/networks", "read", (*Handler).ListFirewallNetworks},
+	{http.MethodPost, "/firewall/networks", "create", (*Handler).AddFirewallNetwork},
+	{http.MethodDelete, "/firewall/networks/{id}", "delete", (*Handler).DeleteFirewallNetwork},
+	{http.MethodGet, "/firewall/options", "read", (*Handler).GetFirewallOptions},
+	{http.MethodPut, "/firewall/options", "update", (*Handler).PutFirewallOptions},
+	{http.MethodGet, "/firewall/bans", "read", (*Handler).ListFirewallBans},
+	{http.MethodPost, "/firewall/bans/unban", "update", (*Handler).UnbanFirewallNetwork},
+}
+
+// PlatformRoutes son las rutas de plataforma tal como las monta Routes, para
+// tenantcell.Membership.AcceptOperators.
+func PlatformRoutes() []tenantcell.Route {
+	out := make([]tenantcell.Route, 0, len(firewallRoutes))
+	for _, fr := range firewallRoutes {
+		out = append(out, tenantcell.Route{Method: fr.method, Pattern: adminPrefix + fr.path})
+	}
+	return out
+}
+
+func (h *Handler) Routes() chi.Router {
 	r := chi.NewRouter()
-	r.Route("/api/v1/mail-security", func(r chi.Router) {
+	r.Route(adminPrefix, func(r chi.Router) {
 		r.Get("/health", h.Health)
 
 		r.With(h.can("spam_scores", "read")).Get("/spam-scores", h.ListSpamScores)
@@ -100,14 +130,11 @@ func (h *Handler) Routes() http.Handler {
 		r.With(h.can("smtp_access", "update")).Put("/smtp-access/{username}", h.PutSMTPAccess)
 		r.With(h.can("smtp_access", "delete")).Delete("/smtp-access/{username}", h.DeleteSMTPAccess)
 
-		// Cortafuegos de la celda: permiso de plataforma y, en el caso de uso, superadmin.
-		r.With(h.can("firewall", "read")).Get("/firewall/networks", h.ListFirewallNetworks)
-		r.With(h.can("firewall", "create")).Post("/firewall/networks", h.AddFirewallNetwork)
-		r.With(h.can("firewall", "delete")).Delete("/firewall/networks/{id}", h.DeleteFirewallNetwork)
-		r.With(h.can("firewall", "read")).Get("/firewall/options", h.GetFirewallOptions)
-		r.With(h.can("firewall", "update")).Put("/firewall/options", h.PutFirewallOptions)
-		r.With(h.can("firewall", "read")).Get("/firewall/bans", h.ListFirewallBans)
-		r.With(h.can("firewall", "update")).Post("/firewall/bans/unban", h.UnbanFirewallNetwork)
+		for _, fr := range firewallRoutes {
+			r.With(h.can("firewall", fr.action)).Method(fr.method, fr.path, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				fr.serve(h, w, r)
+			}))
+		}
 	})
 
 	// Enlaces del aviso de cuarentena: publicos, los verifica la firma del enlace.

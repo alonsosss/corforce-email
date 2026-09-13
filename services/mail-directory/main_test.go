@@ -132,6 +132,37 @@ func TestLaEmpresaDeLaCeldaLlegaASusRutas(t *testing.T) {
 	}
 }
 
+// mail-directory no declara rutas de plataforma: una peticion con celda destino (la de un
+// operador) se rechaza en todas sus rutas sin llegar a ningun handler ni preguntar a organization,
+// aunque quien llama sea superadmin y la celda sea esta. Sus rutas son de datos de empresa.
+func TestNingunaRutaAtiendeAUnOperadorConCeldaDestino(t *testing.T) {
+	plataforma := uuid.NewString()
+	org, router := celdaPe01(t, map[string]string{plataforma: "pe-02"}, rutasReales())
+	n := 0
+	err := chi.Walk(rutasReales(), func(method, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
+		n++
+		req := httptest.NewRequest(method, strings.TrimSuffix(paramRe.ReplaceAllString(route, "x"), "/*"), strings.NewReader(`{}`))
+		req.RemoteAddr = fmt.Sprintf("198.51.100.%d:4000", n%250+1)
+		req.Header.Set("X-Gateway-Token", tokenInterno)
+		req.Header.Set("X-Tenant-ID", plataforma)
+		req.Header.Set("X-User-ID", uuid.NewString())
+		req.Header.Set("X-User-Roles", "superadmin")
+		req.Header.Set("X-Operator-Cell", "pe-01")
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		if rec.Code != http.StatusForbidden || codigoDeError(rec) != tenantcell.CodePlatformScopeOnly {
+			t.Fatalf("%s %s con celda destino: %d %s", method, route, rec.Code, rec.Body)
+		}
+		return nil
+	})
+	if err != nil || n < 10 {
+		t.Fatalf("rutas recorridas %d: %v", n, err)
+	}
+	if org.Calls() != 0 {
+		t.Fatalf("consultas a organization: %d", org.Calls())
+	}
+}
+
 // Lo que no actua por ninguna empresa sigue igual: la consulta de remitentes del webmail no
 // lleva X-Tenant-ID y no pregunta a organization; sin el token interno nada entra.
 func TestLasLlamadasSinEmpresaNoSeComprueban(t *testing.T) {

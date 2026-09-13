@@ -34,11 +34,16 @@ const (
 	CtxTokenIssuedAt contextKey = "token_iat"
 )
 
+// HeaderOperatorCell lleva a un servicio de celda la celda destino que el gateway valido para
+// un operador de la plataforma (tenantcell.Membership). Solo la escribe el gateway.
+const HeaderOperatorCell = "X-Operator-Cell"
+
 var internalHeaders = []string{
 	"X-User-ID",
 	"X-Tenant-ID",
 	"X-User-Roles",
 	"X-Gateway-Token",
+	HeaderOperatorCell,
 	// Token servicio-a-servicio: jamas debe llegar desde un cliente externo.
 	"X-Internal-Token",
 	// X-Real-IP y X-Forwarded-For NO se borran aqui: los evalua y consume

@@ -67,6 +67,9 @@ func main() {
 	r := chi.NewRouter()
 	// Strip trusted internal headers first to prevent client header injection.
 	r.Use(middleware.StripInternalHeaders)
+	// La celda destino que pide el cliente no sigue hacia ningun servicio: se guarda para las
+	// rutas con sesion, que la validan (target.go).
+	r.Use(captureTargetCell)
 	// La IP real del visitante llega en X-Real-IP desde el proxy de borde; solo se
 	// acepta ese header cuando la conexion entra por un proxy de confianza.
 	r.Use(middleware.CaptureClientIP(middleware.TrustedProxyCIDRs(os.Getenv("TRUSTED_PROXY_CIDRS"))))
@@ -76,7 +79,7 @@ func main() {
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   allowedOrigins,
 		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-Request-ID", "X-Auth-Mode", "X-Step-Up"},
+		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-Request-ID", "X-Auth-Mode", "X-Step-Up", targetCellHeader},
 		ExposedHeaders:   []string{"X-Request-ID"},
 		AllowCredentials: true,
 		MaxAge:           86400,
@@ -153,11 +156,20 @@ func main() {
 			modules, table.readPostIndex(), logger,
 		)
 
+		// Celda destino explicita de un operador (target.go): se valida en toda ruta con sesion,
+		// despues del rastro de auditoria, para que tambien quede la rechazada.
+		targets := newTargetCellGate(table, logger)
+		// Rastro de auditoria: escrituras con modulo y toda peticion con celda destino.
+		trail := newAuditTrail(modules, logger)
+
 		// MFA self-service: requiere autenticacion (inyecta X-User-ID) pero NO pasa
-		// por RBAC: es gestion de la propia cuenta, no un recurso protegido por modulo.
+		// por RBAC: es gestion de la propia cuenta, no un recurso protegido por modulo. El
+		// rastro solo publica aqui las peticiones con celda destino (auth tiene su bitacora).
 		r.Group(func(r chi.Router) {
 			r.Use(jwtAuth.Authenticate)
 			r.Use(enforcer.sessionCheck)
+			r.Use(trail.middleware)
+			r.Use(targets.middleware)
 			r.Post("/auth/mfa/setup", identity.ServeHTTP)
 			r.Post("/auth/mfa/activate", identity.ServeHTTP)
 			r.Delete("/auth/mfa/disable", identity.ServeHTTP)
@@ -173,8 +185,8 @@ func main() {
 			// mutacion autenticada, que persiste el servicio audit. Corre despues
 			// del RBAC: solo audita lo permitido (las denegaciones ya se registran
 			// en access-control).
-			trail := newAuditTrail(modules, logger)
 			r.Use(trail.middleware)
+			r.Use(targets.middleware)
 
 			// Los servicios de celda van a la instancia de la celda de la empresa (cells.go).
 			handlers := sessionHandlers(table, internalToken, cells, logger)

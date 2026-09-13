@@ -13,13 +13,15 @@ import (
 	"go.uber.org/zap"
 )
 
-// auditTrail publica un evento persistente por cada ESCRITURA autenticada del API: quien (usuario/roles/IP), que (metodo/ruta/modulo) y con que
-// resultado (status HTTP). El servicio audit lo consume con un worker durable y lo
-// persiste append-only en audit.audit_logs. Asincrono y best-effort: nunca bloquea ni
-// falla la peticion; sin NATS el gateway sigue operando (solo se pierde el rastro API,
-// no el trafico).
+// auditTrail publica un evento persistente por cada ESCRITURA autenticada del API y por cada
+// peticion con celda destino explicita, tambien las lecturas y las rechazadas (target.go): quien
+// (usuario/roles/IP), que (metodo/ruta/modulo, celda destino) y con que resultado (status
+// HTTP). El servicio audit lo consume con un worker durable y lo persiste append-only en
+// audit.audit_logs de la empresa de quien llama. Asincrono y best-effort: nunca bloquea ni
+// falla la peticion; sin NATS el gateway sigue operando (solo se pierde el rastro API, no el
+// trafico).
 type auditTrail struct {
-	bus     *events.Bus
+	bus     trailPublisher
 	modules map[string]string
 	logger  *zap.Logger
 
@@ -32,6 +34,12 @@ type auditTrail struct {
 	exfilReads  map[string]*readWindow // userID -> conteo en la ventana
 	exfilMax    int
 	exfilWindow time.Duration
+}
+
+// trailPublisher es la parte del bus que usa el rastro.
+type trailPublisher interface {
+	Publish(subject string, evt events.Event) error
+	PublishPersistent(subject string, evt events.Event) error
 }
 
 type readWindow struct {
@@ -171,12 +179,10 @@ func (a *auditTrail) middleware(next http.Handler) http.Handler {
 			}
 		}
 
-		if a.bus == nil || !rbacWriteMethods[r.Method] {
-			next.ServeHTTP(w, r)
-			return
-		}
-		// auth tiene su propia bitacora en identity; access es consulta de permisos.
-		if !esDatos {
+		// auth tiene su propia bitacora en identity; access es consulta de permisos. Una
+		// peticion con celda destino se audita siempre, sea cual sea su ruta y su metodo.
+		target, targeted := requestedTargetFrom(r.Context())
+		if a.bus == nil || !(targeted || (esDatos && rbacWriteMethods[r.Method])) {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -192,23 +198,27 @@ func (a *auditTrail) middleware(next http.Handler) http.Handler {
 		if module == "" {
 			module = seg1
 		}
+		data := map[string]interface{}{
+			"tenant_id":  tenantID,
+			"user_id":    userID,
+			"roles":      strings.Join(middleware.GetRoles(r.Context()), ","),
+			"method":     r.Method,
+			"path":       r.URL.Path,
+			"module":     module,
+			"status":     rec.status,
+			"ip":         middleware.GetClientIP(r.Context()),
+			"user_agent": r.UserAgent(),
+			"request_id": middleware.GetRequestID(r.Context()),
+		}
+		if targeted {
+			data["target_cell"] = target.auditValue()
+		}
 		evt := events.Event{
 			Type:     "audit.api.write",
 			Source:   "gateway",
 			TenantID: tenantID,
 			UserID:   userID,
-			Data: map[string]interface{}{
-				"tenant_id":  tenantID,
-				"user_id":    userID,
-				"roles":      strings.Join(middleware.GetRoles(r.Context()), ","),
-				"method":     r.Method,
-				"path":       r.URL.Path,
-				"module":     module,
-				"status":     rec.status,
-				"ip":         middleware.GetClientIP(r.Context()),
-				"user_agent": r.UserAgent(),
-				"request_id": middleware.GetRequestID(r.Context()),
-			},
+			Data:     data,
 		}
 		// Fuera del camino de la peticion: publicar no debe anadir latencia ni fallo.
 		go func() {

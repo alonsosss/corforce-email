@@ -227,8 +227,13 @@ func main() {
 		})
 	}
 
-	// Superficie A: API de administracion tras el gateway (y rutas internas con token).
-	r := apiRouter(pool.Pool, membership, handler.NewHandler(policyUC, quarantineUC, firewallUC, authz.NewCheckerFromEnv()).Routes(), logger)
+	// Superficie A: API de administracion tras el gateway (y rutas internas con token). El
+	// cortafuegos es de plataforma: el superadmin lo opera en cualquier celda con celda destino.
+	routes := handler.NewHandler(policyUC, quarantineUC, firewallUC, authz.NewCheckerFromEnv()).Routes()
+	if err := membership.AcceptOperators(routes, handler.PlatformRoutes()); err != nil {
+		log.Fatalf("celda de la instancia: %v", err)
+	}
+	r := apiRouter(pool.Pool, membership, routes, logger)
 
 	// Superficie B: listeners de los motores, sin gateway ni JWT, acotados por IP. No llevan
 	// empresa (Postfix, Dovecot y Rspamd no saben de ellas): no pasan por Membership.

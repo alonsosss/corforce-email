@@ -611,12 +611,69 @@ si falta `organization` entre los servicios.
   cuentan. `make e2e-mail`: los servicios de celda en contenedores preguntan a organization en el
   host.
 
+* Celda destino explicita de un operador (V, 2026-09-13). El superadmin es de la empresa de
+  plataforma, que vive en una celda: por su empresa solo llega a esa, y la barrera de las demas le
+  rechaza. Para operar otra nombra la celda en la cabecera `X-Target-Cell`. Cabecera y no ruta ni
+  consulta: no cambia la forma de las rutas de ningun servicio ni se mezcla con sus parametros, no
+  queda en la URL (historial, `Referer`, registros de acceso), un origen ajeno no la anade sin
+  preflight CORS (esta en `AllowedHeaders`, que solo sirve a los origenes permitidos) y la sesion
+  va en `Authorization`, que el navegador no manda solo. Toda respuesta con sesion de un servicio de
+  celda lleva `Vary: X-Target-Cell`, para que una cache no sirva la de una celda a otra.
+  * Gateway (`services/gateway/target.go`): la cabecera se retira de toda peticion al entrar (no
+    llega a ningun servicio, tampoco por las rutas publicas ni por las del webmail) y solo se valida
+    en las rutas con sesion, despues de la sesion, del RBAC y del rastro de auditoria. Sin el rol
+    `superadmin` en el token verificado, 403 `TARGET_CELL_FORBIDDEN` (no se ignora: quien la manda
+    espera operar otra celda); un valor que no es un unico codigo de celda, 400
+    `INVALID_TARGET_CELL`; una ruta que no es de un servicio de celda, 400
+    `TARGET_CELL_NOT_APPLICABLE`; una celda sin instancia declarada de ese servicio (la base o
+    `<SERVICIO>_CELL_HOSTS`), o un despliegue sin `GATEWAY_BASE_CELL_CODE`, 503 `CELL_UNAVAILABLE`.
+    Ningun rechazo sale hacia una instancia, vuelve a la celda de la empresa ni pregunta a
+    organization; `cell_target_refusals_total{reason}` (`not_operator`, `malformed`,
+    `not_cell_service`, `not_served`, nacen a cero). La celda se valida contra las instancias que el
+    gateway tiene, no contra el registro de organization: una celda registrada sin instancia recibe
+    503, y una instancia declarada con una celda equivocada la rechaza la propia instancia por su
+    `CELL_CODE` (punto siguiente).
+  * Instancia (`tenantcell.Membership`): la celda validada llega en `X-Operator-Cell`, que el
+    gateway borra de toda peticion de cliente y que el servicio solo cree detras de
+    `RequireGatewayToken`. Esa peticion no se juzga por su empresa (la de plataforma no es de la
+    celda y no es la que se opera) ni pregunta a organization: pasa solo si la celda es el
+    `CELL_CODE` de la instancia (si no, 403 `TARGET_CELL_MISMATCH`), quien llama es una persona con
+    el rol `superadmin` (si no, 403 `PLATFORM_SCOPE_ONLY`) y la ruta, resuelta con el mismo router
+    que la atendera, es una de las rutas de plataforma que el servicio declara con
+    `AcceptOperators` (si no, 403 `PLATFORM_SCOPE_ONLY`). Una ruta declarada que no casa con una
+    montada impide arrancar. Motivos `operator_wrong_cell`, `operator_not_platform` y
+    `operator_tenant_route` en `cell_membership_refusals_total`. `mail-security` declara las siete
+    rutas del cortafuegos (`/api/v1/mail-security/firewall/*`, permiso `mail_security/firewall/*` de
+    alcance plataforma y superadmin exigido otra vez en el caso de uso); `mail-directory` no declara
+    ninguna y rechaza toda peticion con celda destino. Una ruta de datos de empresa no se atiende
+    nunca con celda destino, tampoco en la celda del propio operador: no existe acceso de soporte a
+    los datos de otra empresa y esto no lo abre.
+  * Auditoria: toda peticion con celda destino, atendida o rechazada y tambien las lecturas, sale
+    en `audit.api.write` con `target_cell` (la celda pedida, o `invalid` si no tenia forma de
+    codigo), quien la hizo, sus roles, la ruta y el resultado; `audit` la guarda en el rastro de la
+    empresa de quien llama (la de plataforma, para el superadmin) con `target_cell` en `changes`. El
+    registro del gateway anota ademas cada celda destino aceptada o rechazada.
+  * Probado: unitarias del gateway (superadmin con celda valida, con la base, sin instancia, mal
+    formada, repetida, en un servicio que no es de celda y sin cabecera; empresa con la cabecera y
+    con la cabecera interna; despliegue de una celda; `Vary`; el apunte de auditoria de cada caso),
+    de `pkg/tenantcell` (celda, rol y ruta, rutas retorcidas, declaracion que no casa), de las rutas
+    de `mail-security` y `mail-directory` tal como las monta `main` (cada ruta con celda destino) y
+    de `audit` (detalle del apunte); `make e2e`: por el gateway por celda el superadmin anade y lee
+    una red del cortafuegos de pe-02 (fila en `mail_cell_pe_02`, ninguna en `mail_cell_pe_01`), sin
+    cabecera o con pe-01 lee el de pe-01, y con celda destino no llega a la cuarentena de pe-02 ni
+    al directorio; una celda sin instancia, mal formada o fuera de un servicio de celda se rechaza;
+    una empresa con la cabecera recibe 403 y con la interna sigue en su celda; el gateway sin
+    celdas no la admite; las metricas lo cuentan.
+
 Pendiente (P):
 
-* El superadmin opera sobre la celda de su empresa (`platform`): el cortafuegos de otra celda
-  (`/api/v1/mail-security/firewall/*`) no se alcanza por el gateway. Diseno: una celda de destino
-  explicita que el gateway acepte solo con el rol `superadmin` y solo si organization la tiene
-  registrada.
+* Operaciones de plataforma de `mail-directory` en otra celda: los transportes sin empresa
+  (`tenant_id` NULL) se crean y editan por las rutas de transportes, que exigen un permiso de
+  empresa (`mail_routing/transports/*`) y sirven tambien los de la empresa; no son rutas de
+  plataforma y no se alcanzan con celda destino. Necesitan rutas propias con permiso de alcance
+  plataforma, declaradas con `AcceptOperators`.
+* La web no tiene pantalla del cortafuegos: cuando la tenga, el selector de celda (solo para el
+  superadmin, con las celdas de `GET /cells`) manda `X-Target-Cell` en sus peticiones.
 * Llamadas entre servicios hacia la celda: `domain-service` activa dominios y entrega DKIM en
   una sola instancia (`MAIL_DIRECTORY_URL`, `MAIL_SECURITY_URL`). Con varias celdas, la instancia
   responde 403 `TENANT_NOT_IN_CELL` a la empresa de otra celda y el paso falla en vez de escribir
@@ -688,6 +745,7 @@ Diseno:
 | Un enlace publico de cuarentena solo actua en la celda que lo firmo: la celda va en la firma, el gateway enruta sin la clave y una celda desconocida responde igual que una firma mala (5.3) | V (2026-09-13) |
 | Una peticion con sesion a un servicio de celda solo llega a la instancia de la celda de su empresa; sin celda resoluble o sin instancia declarada no sale hacia ninguna (5.4) | V (2026-09-13; con `GATEWAY_BASE_CELL_CODE`) |
 | Una instancia de celda solo atiende a las empresas de su celda aunque le lleguen de otra (gateway mal configurado, llamada de servicio a la instancia equivocada): pregunta a organization y rechaza con 403 antes de cualquier ruta, sin escribir nada; con organization caido solo las ya comprobadas (5.4) | V (2026-09-13, `mail-directory` y `mail-security`; el webmail no la necesita, 5.5) |
+| Un operador de la plataforma solo alcanza otra celda nombrandola (`X-Target-Cell`): el gateway lo acepta solo del superadmin y hacia una celda con instancia, sin volver nunca a la de su empresa; la instancia solo le atiende rutas de plataforma declaradas, nunca datos de una empresa, y cada peticion queda auditada con la celda (5.4) | V (2026-09-13; rutas de plataforma: el cortafuegos de `mail-security`) |
 | El webmail de un buzon se sirve en la celda de su dominio (5.5) | P |
 | Un servicio de empresa solo abre su esquema y no el registro (credencial por servicio) | P (5.2) |
 | Respaldo por base y restauracion probada semanalmente (`ops/backup`) | V (scripts), P (programados en este entorno) |

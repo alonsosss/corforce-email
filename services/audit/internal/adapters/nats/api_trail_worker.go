@@ -103,18 +103,28 @@ func (w *APITrailWorker) handle(evt events.Event, ack func()) {
 	if rid := trailStr(data["request_id"]); rid != "" {
 		l.RequestID = &rid
 	}
-	if detail, err := json.Marshal(map[string]interface{}{
-		"roles": trailStr(data["roles"]), "status": data["status"],
-	}); err == nil {
-		d := string(detail)
-		l.Changes = &d
-	}
+	l.Changes = trailChanges(data)
 
 	if err := w.uc.LogAction(ctx, l); err != nil {
 		w.logger.Warn("persistir rastro API fallo; se reintentara", zap.Error(err))
 		return // sin ack
 	}
 	ack()
+}
+
+// trailChanges es el detalle del apunte: roles y resultado y, si la peticion eligio celda
+// destino (operador de la plataforma), la celda pedida.
+func trailChanges(data map[string]interface{}) *string {
+	detail := map[string]interface{}{"roles": trailStr(data["roles"]), "status": data["status"]}
+	if cell := trailStr(data["target_cell"]); cell != "" {
+		detail["target_cell"] = cell
+	}
+	b, err := json.Marshal(detail)
+	if err != nil {
+		return nil
+	}
+	d := string(b)
+	return &d
 }
 
 func trailStr(v interface{}) string {

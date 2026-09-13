@@ -308,22 +308,25 @@ func sessionHandlers(t *routeTable, internalToken string, cells *tenantcell.Reso
 	out := make(map[string]http.Handler, len(t.Services))
 	for name, s := range t.Services {
 		base := reverseProxy(t.serviceURL(name), internalToken)
-		if s.CellHostsEnv == "" || cells == nil {
+		switch {
+		case s.CellHostsEnv == "":
 			out[name] = base
-			continue
+		case cells == nil:
+			out[name] = varyByTargetCell(base)
+		default:
+			byCell := map[string]http.Handler{t.baseCell: base}
+			for code, target := range t.cellTargets[name] {
+				byCell[code] = reverseProxy(target, internalToken)
+			}
+			out[name] = varyByTargetCell(tenantCellRouter{service: name, byCell: byCell, cells: cells, logger: logger})
 		}
-		byCell := map[string]http.Handler{t.baseCell: base}
-		for code, target := range t.cellTargets[name] {
-			byCell[code] = reverseProxy(target, internalToken)
-		}
-		out[name] = tenantCellRouter{service: name, byCell: byCell, cells: cells, logger: logger}
 	}
 	return out
 }
 
-// tenantCellRouter lleva una peticion con sesion a la instancia de la celda de su empresa.
-// Va al final de la cadena, despues de la sesion y del RBAC: una peticion denegada no llega
-// a preguntar la celda.
+// tenantCellRouter lleva una peticion con sesion a la instancia de la celda de su empresa, o a
+// la celda destino que targetCellGate valido para un operador (target.go). Va al final de la
+// cadena, despues de la sesion y del RBAC: una peticion denegada no llega a preguntar la celda.
 type tenantCellRouter struct {
 	service string
 	byCell  map[string]http.Handler
@@ -332,6 +335,17 @@ type tenantCellRouter struct {
 }
 
 func (c tenantCellRouter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if cell, ok := routedTargetFrom(r.Context()); ok {
+		h, served := c.byCell[cell]
+		if !served {
+			c.refuse(w, "not_served", middleware.GetTenantID(r.Context()), cell)
+			response.Err(w, http.StatusServiceUnavailable, tenantcell.CodeCellUnavailable, "el servicio no esta disponible en la celda destino")
+			return
+		}
+		r.Header.Set(middleware.HeaderOperatorCell, cell)
+		h.ServeHTTP(w, r)
+		return
+	}
 	tenantID := middleware.GetTenantID(r.Context())
 	cell, err := c.cells.CellOf(r.Context(), tenantID)
 	if err != nil {
