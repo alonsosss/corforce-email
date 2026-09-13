@@ -260,7 +260,7 @@ func TestClaveNoLaEligenLasCabecerasDelCliente(t *testing.T) {
 	for _, tc := range []struct{ remote, realIP, want string }{
 		{"10.0.0.5:1000", "198.51.100.7", "rl:gateway:auth:ip:198.51.100.7"},
 		{"10.0.0.5:1000", "no-es-una-ip", "rl:gateway:auth:ip:10.0.0.5"},
-		{"[2001:db8::1]:1000", "198.51.100.7", "rl:gateway:auth:ip:2001:db8::1"},
+		{"[2001:db8::1]:1000", "198.51.100.7", "rl:gateway:auth:ip6:2001:db8::/64"},
 	} {
 		r := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", nil)
 		r.RemoteAddr = tc.remote
