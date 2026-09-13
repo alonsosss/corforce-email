@@ -3,7 +3,8 @@
 # Redis desechables. Recorre lo que ya esta integrado: arranque de una plataforma vacia,
 # alta de celda y empresa, acceso por el gateway con sus tres capas, dominio y buzon en
 # la celda, propagacion a Redis por eventos, mapas de los motores, plantillas, supresion,
-# planes y derechos de billing, autorizacion de envio en reputation y alcance de permisos.
+# planes y derechos de billing, autorizacion de envio en reputation, alcance de permisos,
+# contactos con su consentimiento y audiencia, y el panel de analitica.
 #
 # Cada paso COMPRUEBA su resultado y la ejecucion termina con error si alguno falla: no
 # basta con que los servicios arranquen, tienen que hablarse. Las credenciales se generan
@@ -82,7 +83,7 @@ docker run -d --name "$PREFIX-nats" -p "127.0.0.1:$NATS_PORT:4222" nats:2.10-alp
 docker run -d --name "$PREFIX-redis" -p "127.0.0.1:$REDIS_PORT:6379" redis:7.4.10-alpine >/dev/null || exit 1
 for _ in $(seq 1 40); do docker exec "$PREFIX-pg" pg_isready -U mail_admin -d mail_registry >/dev/null 2>&1 && break; sleep 1; done
 
-SERVICES=(organization identity access-control gateway mail-directory mail-auth domain-service mail-security templates suppression billing reputation)
+SERVICES=(organization identity access-control gateway mail-directory mail-auth domain-service mail-security templates suppression billing reputation contacts analytics)
 echo "== Compilacion (${SERVICES[*]})"
 mkdir -p "$WORK/bin" "$WORK/log"
 for s in "${SERVICES[@]}"; do go build -o "$WORK/bin/$s" "./services/$s" || { echo "no compila $s" >&2; exit 1; }; done
@@ -112,7 +113,7 @@ export CORS_ALLOWED_ORIGINS=http://localhost:3000
 declare -A PORT=(
   [identity]=$((BASE + 1)) [access-control]=$((BASE + 2)) [organization]=$((BASE + 3))
   [mail-directory]=$((BASE + 40)) [mail-auth]=$((BASE + 41)) [mail-security]=$((BASE + 42)) [domain-service]=$((BASE + 43))
-  [suppression]=$((BASE + 46)) [templates]=$((BASE + 47)) [reputation]=$((BASE + 54)) [billing]=$((BASE + 55))
+  [suppression]=$((BASE + 46)) [templates]=$((BASE + 47)) [contacts]=$((BASE + 50)) [analytics]=$((BASE + 53)) [reputation]=$((BASE + 54)) [billing]=$((BASE + 55))
   [gateway]=$((BASE + 80))
 )
 MAPS_PORT=$((BASE + 81))
@@ -122,13 +123,13 @@ GW="http://127.0.0.1:${PORT[gateway]}/api/v1"
 export IDENTITY_PORT=${PORT[identity]} ACCESS_CONTROL_PORT=${PORT[access-control]} ORGANIZATION_PORT=${PORT[organization]}
 export MAIL_DIRECTORY_PORT=${PORT[mail-directory]} MAIL_SECURITY_PORT=${PORT[mail-security]} DOMAIN_SERVICE_PORT=${PORT[domain-service]}
 export SUPPRESSION_PORT=${PORT[suppression]} TEMPLATES_PORT=${PORT[templates]} GATEWAY_PORT=${PORT[gateway]}
-export BILLING_PORT=${PORT[billing]} REPUTATION_PORT=${PORT[reputation]}
+export BILLING_PORT=${PORT[billing]} REPUTATION_PORT=${PORT[reputation]} CONTACTS_PORT=${PORT[contacts]} ANALYTICS_PORT=${PORT[analytics]}
 export MAIL_POLICY_MAPS_PORT=$MAPS_PORT MAIL_POLICY_EXPORT_PORT=$EXPORT_PORT
 export MAIL_AUTH_PORT=${PORT[mail-auth]} MAIL_AUTH_TLS_PORT=$AUTH_TLS_PORT
 export API_ORIGIN="http://localhost:${PORT[gateway]}" PUBLIC_BASE_URL="http://localhost:${PORT[gateway]}"
 # Direcciones internas: las que el gateway lee de routes.json por <SERVICIO>_HOST(_PORT) y
 # las que los servicios usan entre si.
-for s in identity access-control organization mail-directory mail-security domain-service suppression templates billing reputation; do
+for s in identity access-control organization mail-directory mail-security domain-service suppression templates billing reputation contacts analytics; do
   var="$(echo "$s" | tr 'a-z-' 'A-Z_')_HOST"
   export "$var=127.0.0.1" "${var}_PORT=${PORT[$s]}"
 done
@@ -160,7 +161,7 @@ ADMIN_PASS="$(rand_hex 12)Aa1!"
 PGHOST=127.0.0.1 PLATFORM_ADMIN_EMAIL=root@platform.test PLATFORM_ADMIN_PASSWORD="$ADMIN_PASS" \
   bash ops/db/bootstrap-platform.sh --cell pe-01 --region sa-east-1 >/dev/null || mal "bootstrap-platform.sh"
 
-ARRANQUE=(identity access-control mail-directory mail-auth domain-service mail-security templates suppression billing reputation gateway)
+ARRANQUE=(identity access-control mail-directory mail-auth domain-service mail-security templates suppression billing reputation contacts analytics gateway)
 for s in "${ARRANQUE[@]}"; do arrancar "$s"; done
 for s in "${ARRANQUE[@]}"; do esperar_salud "$s" "${PORT[$s]}"; done
 
@@ -295,6 +296,31 @@ expect "y si los de empresa" \
   "$(codigo -X PUT "$GW/roles/$RID/permissions" -H "$A2" -H 'Content-Type: application/json' -d "{\"permission_ids\":[\"$P_EMP\"]}")" "200"
 expect "el tenant_admin sembrado no tiene permisos de plataforma" \
   "$(sql mail_registry "SELECT count(*) FROM access_control.role_permissions rp JOIN access_control.permissions p ON p.id = rp.permission_id JOIN access_control.roles r ON r.id = rp.role_id WHERE r.tenant_id = '$TID' AND p.scope = 'platform'")" "0"
+
+echo "== Contactos y audiencia (contacts)"
+CT=$(curl -s -X POST "$GW/contacts" -H "$A2" -H 'Content-Type: application/json' \
+  -d '{"email":"lucia@cliente.test","first_name":"Lucia","source":"api","consent":{"status":"granted","method":"api","source":"e2e"}}')
+CTID=$(echo "$CT" | jget data.id)
+[[ -n "$CTID" ]] && ok "alta de contacto con consentimiento" || mal "alta de contacto: ${CT:0:200}"
+expect "la misma direccion en otra caja no crea otro contacto" \
+  "$(codigo -X POST "$GW/contacts" -H "$A2" -H 'Content-Type: application/json' -d '{"email":"LUCIA@cliente.test","source":"api"}')" "409"
+LID=$(curl -s -X POST "$GW/contacts/lists" -H "$A2" -H 'Content-Type: application/json' -d '{"name":"clientes"}' | jget data.id)
+[[ -n "$LID" ]] && ok "alta de lista" || mal "alta de lista"
+expect "el contacto entra en la lista" \
+  "$(curl -s -X POST "$GW/contacts/lists/$LID/members" -H "$A2" -H 'Content-Type: application/json' -d "{\"contact_ids\":[\"$CTID\"]}" | jget data.added)" "1"
+audiencia() { interno "${PORT[contacts]}/internal/contacts/audience" "{\"list_ids\":[\"$LID\"],\"limit\":100}"; }
+contains "la audiencia de la lista trae al contacto enviable" "$(audiencia)" '"lucia@cliente.test"'
+expect "previsualizacion de segmento (gateada como lectura)" \
+  "$(curl -s -X POST "$GW/segments/preview" -H "$A2" -H 'Content-Type: application/json' -d '{"definition":{"match":"all","rules":[{"field":"status","op":"eq","value":"active"}]}}' | jget data.count)" "1"
+expect "revocar el consentimiento queda como evidencia" \
+  "$(codigo -X POST "$GW/contacts/$CTID/consent" -H "$A2" -H 'Content-Type: application/json' -d '{"status":"revoked","method":"api","source":"e2e"}')" "201"
+[[ "$(audiencia)" != *lucia@cliente.test* ]] && ok "sin consentimiento sale de la audiencia" || mal "la audiencia conserva un contacto sin consentimiento"
+expect "y no se vuelve a conceder sin doble opt-in" \
+  "$(codigo -X POST "$GW/contacts/$CTID/consent" -H "$A2" -H 'Content-Type: application/json' -d '{"status":"granted","method":"api","source":"e2e"}')" "409"
+
+echo "== Analitica"
+expect "el panel responde sin envios" "$(curl -s "$GW/analytics/overview" -H "$A2" | jget data.totals.sent)" "0"
+expect "un rango invertido se rechaza" "$(codigo "$GW/analytics/overview?from=2026-09-10&to=2026-09-01" -H "$A2")" "422"
 
 echo "== Registros"
 errores=$(grep -l '"level":"error"' "$WORK"/log/*.log 2>/dev/null)
