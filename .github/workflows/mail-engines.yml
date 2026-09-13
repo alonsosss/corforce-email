@@ -49,9 +49,12 @@ on:
     - cron: '17 4 * * *'
   workflow_dispatch:
 
+# En un pull request solo importa la ultima version: se cancela la anterior. En main no: con
+# pushes seguidos cada uno cancelaba al previo y la prueba no terminaba nunca; asi termina la
+# que esta en marcha y la ultima pendiente corre despues.
 concurrency:
   group: mail-engines-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
