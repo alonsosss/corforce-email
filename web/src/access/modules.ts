@@ -1,12 +1,18 @@
-// Modulos de permiso del plano de control (docs/Usuarios_Roles_y_Acceso.md, seccion 3).
-// Coinciden con la columna `module` de access_control.permissions y con el campo `module`
-// de services/gateway/routes.json. Los modulos de correo se anadiran con sus pantallas.
+// Modulos de permiso (docs/Usuarios_Roles_y_Acceso.md, seccion 3). Coinciden con la
+// columna `module` de access_control.permissions y con el campo `module` de
+// services/gateway/routes.json.
 export const MODULES = {
   organization: 'organization',
   identity: 'identity',
   access: 'access',
   audit: 'audit',
   scheduler: 'scheduler',
+  domains: 'domains',
+  mailboxes: 'mailboxes',
+  mailRouting: 'mail_routing',
+  mailSecurity: 'mail_security',
+  templates: 'templates',
+  suppression: 'suppression',
 } as const;
 
 export type ModuleName = (typeof MODULES)[keyof typeof MODULES];

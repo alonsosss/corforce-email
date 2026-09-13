@@ -1,9 +1,26 @@
 import { MODULES } from './modules';
 
 // Triples (module, resource, action) del catalogo sembrado en
-// migrations/registry/005_seed_permissions.sql. La interfaz pregunta can() con estos
-// valores; si el catalogo cambia, cambia aqui y en ningun otro sitio.
+// migrations/registry/005_seed_permissions.sql y 006 a 010 (correo, seguridad del correo,
+// dominios, supresion y plantillas). La interfaz pregunta can() con estos valores; si el
+// catalogo cambia, cambia aqui y en ningun otro sitio.
 type Triple = readonly [module: string, resource: string, action: string];
+
+export interface CrudPermissions {
+  read: Triple;
+  create: Triple;
+  update: Triple;
+  delete: Triple;
+}
+
+function crud<M extends string, R extends string>(module: M, resource: R) {
+  return {
+    read: [module, resource, 'read'],
+    create: [module, resource, 'create'],
+    update: [module, resource, 'update'],
+    delete: [module, resource, 'delete'],
+  } as const;
+}
 
 export const PERMISSIONS = {
   users: {
@@ -58,6 +75,88 @@ export const PERMISSIONS = {
   integrity: {
     read: [MODULES.audit, 'integrity', 'read'],
     verify: [MODULES.audit, 'integrity', 'verify'],
+  },
+
+  domains: {
+    ...crud(MODULES.domains, 'domains'),
+    verify: [MODULES.domains, 'domains', 'verify'],
+    rotateDkim: [MODULES.domains, 'domains', 'rotate_dkim'],
+  },
+  aliasDomains: crud(MODULES.domains, 'alias_domains'),
+
+  mailboxes: {
+    ...crud(MODULES.mailboxes, 'mailboxes'),
+    setPassword: [MODULES.mailboxes, 'mailboxes', 'set_password'],
+  },
+  appPasswords: crud(MODULES.mailboxes, 'app_passwords'),
+  sieve: {
+    read: [MODULES.mailboxes, 'sieve', 'read'],
+    update: [MODULES.mailboxes, 'sieve', 'update'],
+  },
+
+  aliases: crud(MODULES.mailRouting, 'aliases'),
+  spamAliases: crud(MODULES.mailRouting, 'spam_aliases'),
+  senderAcl: crud(MODULES.mailRouting, 'sender_acl'),
+  relayhosts: crud(MODULES.mailRouting, 'relayhosts'),
+  transports: crud(MODULES.mailRouting, 'transports'),
+  tlsPolicies: crud(MODULES.mailRouting, 'tls_policies'),
+  recipientMaps: crud(MODULES.mailRouting, 'recipient_maps'),
+  bccMaps: crud(MODULES.mailRouting, 'bcc_maps'),
+
+  spamScores: {
+    read: [MODULES.mailSecurity, 'spam_scores', 'read'],
+    update: [MODULES.mailSecurity, 'spam_scores', 'update'],
+    delete: [MODULES.mailSecurity, 'spam_scores', 'delete'],
+  },
+  addressLists: {
+    read: [MODULES.mailSecurity, 'address_lists', 'read'],
+    create: [MODULES.mailSecurity, 'address_lists', 'create'],
+    delete: [MODULES.mailSecurity, 'address_lists', 'delete'],
+  },
+  footers: {
+    read: [MODULES.mailSecurity, 'footers', 'read'],
+    update: [MODULES.mailSecurity, 'footers', 'update'],
+    delete: [MODULES.mailSecurity, 'footers', 'delete'],
+  },
+  forwardingHosts: {
+    read: [MODULES.mailSecurity, 'forwarding_hosts', 'read'],
+    create: [MODULES.mailSecurity, 'forwarding_hosts', 'create'],
+    delete: [MODULES.mailSecurity, 'forwarding_hosts', 'delete'],
+  },
+  rateLimits: {
+    read: [MODULES.mailSecurity, 'rate_limits', 'read'],
+    update: [MODULES.mailSecurity, 'rate_limits', 'update'],
+    delete: [MODULES.mailSecurity, 'rate_limits', 'delete'],
+  },
+  mailboxTags: {
+    read: [MODULES.mailSecurity, 'mailbox_tags', 'read'],
+    update: [MODULES.mailSecurity, 'mailbox_tags', 'update'],
+  },
+  quarantine: {
+    read: [MODULES.mailSecurity, 'quarantine', 'read'],
+    delete: [MODULES.mailSecurity, 'quarantine', 'delete'],
+    release: [MODULES.mailSecurity, 'quarantine', 'release'],
+    learn: [MODULES.mailSecurity, 'quarantine', 'learn'],
+  },
+  quarantineSettings: {
+    read: [MODULES.mailSecurity, 'quarantine_settings', 'read'],
+    update: [MODULES.mailSecurity, 'quarantine_settings', 'update'],
+  },
+
+  templates: {
+    ...crud(MODULES.templates, 'templates'),
+    publish: [MODULES.templates, 'templates', 'publish'],
+    render: [MODULES.templates, 'templates', 'render'],
+  },
+
+  suppressionEntries: {
+    read: [MODULES.suppression, 'entries', 'read'],
+    create: [MODULES.suppression, 'entries', 'create'],
+    delete: [MODULES.suppression, 'entries', 'delete'],
+    import: [MODULES.suppression, 'entries', 'import'],
+  },
+  suppressionStats: {
+    read: [MODULES.suppression, 'stats', 'read'],
   },
 } as const satisfies Record<string, Record<string, Triple>>;
 

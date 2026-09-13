@@ -31,6 +31,12 @@ export const rules = {
         ? null
         : t('validation.range', { min, max });
     },
+  nonNegativeInteger: (value: string): string | null => {
+    const n = Number(value);
+    return value.trim() !== '' && Number.isSafeInteger(n) && n >= 0
+      ? null
+      : t('validation.nonNegativeInteger');
+  },
 };
 
 type Rule = (value: string) => string | null;

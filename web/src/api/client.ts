@@ -112,9 +112,14 @@ export interface RequestOptions {
   params?: QueryParams;
   body?: unknown;
   signal?: AbortSignal;
+  /** Cabecera Accept; por defecto JSON. */
+  accept?: string;
 }
 
 type Method = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+
+/** Como se lee el cuerpo de una respuesta correcta. Los errores llegan siempre en JSON. */
+type ResponseKind = 'json' | 'text';
 
 function buildUrl(path: string, params?: QueryParams): string {
   const query = new URLSearchParams();
@@ -218,6 +223,8 @@ async function ensureStepUpToken(): Promise<string | null> {
 interface Exchange<T> {
   res: Response;
   json: Envelope<T> | null;
+  /** Cuerpo en crudo: solo se rellena cuando se pidio texto y la respuesta fue correcta. */
+  text: string;
 }
 
 async function exchange<T>(
@@ -225,7 +232,8 @@ async function exchange<T>(
   url: string,
   headers: Record<string, string>,
   body: string | undefined,
-  signal?: AbortSignal,
+  signal: AbortSignal | undefined,
+  kind: ResponseKind,
 ): Promise<Exchange<T>> {
   let res: Response;
   try {
@@ -234,11 +242,12 @@ async function exchange<T>(
     if (err instanceof DOMException && err.name === 'AbortError') throw err;
     throw new ApiError(0, { code: ERROR_CODES.NETWORK_ERROR, message: '' });
   }
-  if (res.status === 204) return { res, json: null };
+  if (res.status === 204) return { res, json: null, text: '' };
   const raw = await res.text();
-  if (!raw) return { res, json: null };
+  if (kind === 'text' && res.ok) return { res, json: null, text: raw };
+  if (!raw) return { res, json: null, text: '' };
   try {
-    return { res, json: JSON.parse(raw) as Envelope<T> };
+    return { res, json: JSON.parse(raw) as Envelope<T>, text: '' };
   } catch {
     // Un 502 del proxy o un 500 sin capturar no responden JSON: se conserva el estado,
     // que es la unica pista util, y nunca se ensena el cuerpo crudo.
@@ -254,53 +263,71 @@ function toError(res: Response, json: Envelope<unknown> | null): ApiError {
   return new ApiError(res.status, json?.error ?? null, json);
 }
 
-async function request<T>(
+async function send<T>(
   method: Method,
   path: string,
-  opts?: RequestOptions,
-): Promise<ApiResponse<T>> {
+  opts: RequestOptions | undefined,
+  kind: ResponseKind,
+): Promise<Exchange<T>> {
   const url = buildUrl(path, opts?.params);
-  const headers: Record<string, string> = { Accept: 'application/json' };
+  const headers: Record<string, string> = { Accept: opts?.accept ?? 'application/json' };
   const body = opts?.body === undefined ? undefined : JSON.stringify(opts.body);
   if (body !== undefined) headers['Content-Type'] = 'application/json';
 
   const token = await getValidToken();
   if (token) headers.Authorization = `Bearer ${token}`;
 
-  let { res, json } = await exchange<T>(method, url, headers, body, opts?.signal);
+  let result = await exchange<T>(method, url, headers, body, opts?.signal, kind);
 
-  if (res.status === 401) {
+  if (result.res.status === 401) {
     const fresh = await refreshSingleFlight();
     if (fresh) {
       headers.Authorization = `Bearer ${fresh}`;
-      ({ res, json } = await exchange<T>(method, url, headers, body, opts?.signal));
+      result = await exchange<T>(method, url, headers, body, opts?.signal, kind);
     }
-    if (res.status === 401) {
+    if (result.res.status === 401) {
       // Solo cae la sesion si la cookie tampoco sirve. Si la renovacion dio un token
       // valido, el 401 es de ESTA peticion y tumbar toda la aplicacion seria excesivo.
       if (!fresh) dropSession();
-      throw toError(res, json);
+      throw toError(result.res, result.json);
     }
   }
 
   if (
-    res.status === 403 &&
-    codeOf(json) === ERROR_CODES.STEP_UP_REQUIRED &&
+    result.res.status === 403 &&
+    codeOf(result.json) === ERROR_CODES.STEP_UP_REQUIRED &&
     !headers['X-Step-Up']
   ) {
     const stepUp = await ensureStepUpToken();
     if (stepUp) {
       headers['X-Step-Up'] = stepUp;
-      ({ res, json } = await exchange<T>(method, url, headers, body, opts?.signal));
-      if (res.status === 403 && codeOf(json) === ERROR_CODES.STEP_UP_REQUIRED) {
+      result = await exchange<T>(method, url, headers, body, opts?.signal, kind);
+      if (result.res.status === 403 && codeOf(result.json) === ERROR_CODES.STEP_UP_REQUIRED) {
         clearStepUpToken();
       }
     }
   }
 
-  if (!res.ok) throw toError(res, json);
+  if (!result.res.ok) throw toError(result.res, result.json);
+  return result;
+}
 
+async function request<T>(
+  method: Method,
+  path: string,
+  opts?: RequestOptions,
+): Promise<ApiResponse<T>> {
+  const { json } = await send<T>(method, path, opts, 'json');
   return { data: (json?.data ?? null) as T, meta: json?.meta };
+}
+
+/**
+ * GET de un recurso que no responde JSON (por ejemplo un mensaje message/rfc822). Devuelve
+ * el cuerpo como texto; quien lo muestre debe tratarlo como texto, nunca como HTML.
+ */
+async function requestText(path: string, opts?: RequestOptions): Promise<string> {
+  const { text } = await send<unknown>('GET', path, opts, 'text');
+  return text;
 }
 
 export const api = {
@@ -309,4 +336,5 @@ export const api = {
   put: <T>(path: string, opts?: RequestOptions) => request<T>('PUT', path, opts),
   patch: <T>(path: string, opts?: RequestOptions) => request<T>('PATCH', path, opts),
   delete: <T>(path: string, opts?: RequestOptions) => request<T>('DELETE', path, opts),
+  getText: (path: string, opts?: RequestOptions) => requestText(path, opts),
 };

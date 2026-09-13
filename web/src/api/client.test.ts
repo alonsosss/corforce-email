@@ -184,4 +184,29 @@ describe('cliente HTTP', () => {
     expect((error as ApiError).status).toBe(502);
     expect((error as ApiError).code).toBe(ERROR_CODES.INVALID_RESPONSE);
   });
+
+  it('getText devuelve en crudo el cuerpo correcto que no es JSON', async () => {
+    setAccessToken(makeToken('u1', 3600));
+    const raw = 'From: a@origen.test\r\nContent-Type: text/html\r\n\r\n<b>hola</b>';
+    const calls = mockFetch(
+      () => new Response(raw, { status: 200, headers: { 'Content-Type': 'message/rfc822' } }),
+    );
+
+    const text = await api.getText(BUSINESS, { accept: 'message/rfc822' });
+
+    expect(text).toBe(raw);
+    expect(calls[0]?.headers.Accept).toBe('message/rfc822');
+  });
+
+  it('getText sigue leyendo los errores del envelope JSON', async () => {
+    setAccessToken(makeToken('u1', 3600));
+    mockFetch(() =>
+      jsonResponse(404, { error: { code: ERROR_CODES.NOT_FOUND, message: 'no encontrado' } }),
+    );
+
+    const error = await api.getText(BUSINESS).catch((err: unknown) => err);
+
+    expect(error).toBeInstanceOf(ApiError);
+    expect((error as ApiError).code).toBe(ERROR_CODES.NOT_FOUND);
+  });
 });

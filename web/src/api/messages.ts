@@ -18,6 +18,9 @@ const BY_CODE: Partial<Record<string, MessageKey>> = {
   [ERROR_CODES.PASSWORD_REUSED]: 'error.passwordReused',
   [ERROR_CODES.PASSWORD_BREACHED]: 'error.passwordBreached',
   [ERROR_CODES.RESET_TOKEN_INVALID]: 'error.resetTokenInvalid',
+  [ERROR_CODES.INTEGRATION_UNAVAILABLE]: 'error.integrationUnavailable',
+  [ERROR_CODES.NOT_CONFIGURED]: 'error.notConfigured',
+  [ERROR_CODES.UNSUBSCRIBE_PROTECTED]: 'error.unsubscribeProtected',
 };
 
 export function errorMessage(

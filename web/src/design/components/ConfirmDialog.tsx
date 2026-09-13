@@ -2,7 +2,7 @@ import { useState, type ReactNode } from 'react';
 import { Modal } from './Modal';
 import { Button } from './Button';
 import { errorMessage } from '@/api/messages';
-import { t } from '@/i18n';
+import { t, type MessageKey } from '@/i18n';
 
 export interface ConfirmDialogProps {
   open: boolean;
@@ -12,6 +12,8 @@ export interface ConfirmDialogProps {
   danger?: boolean;
   onConfirm: () => Promise<void>;
   onCancel: () => void;
+  /** Texto propio para un codigo de error concreto del backend (por ejemplo, un 409). */
+  errorOverrides?: Partial<Record<string, MessageKey>>;
 }
 
 /**
@@ -26,6 +28,7 @@ export function ConfirmDialog({
   danger = false,
   onConfirm,
   onCancel,
+  errorOverrides,
 }: ConfirmDialogProps) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
@@ -72,7 +75,7 @@ export function ConfirmDialog({
         <p className="cf-modal__message">{message}</p>
         {error ? (
           <div className="cf-form__error" role="alert">
-            {errorMessage(error)}
+            {errorMessage(error, errorOverrides)}
           </div>
         ) : null}
       </div>

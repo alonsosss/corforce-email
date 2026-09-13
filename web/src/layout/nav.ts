@@ -6,12 +6,19 @@ import type { MessageKey } from '@/i18n';
 import { paths } from '@/paths';
 import {
   IconAlertTriangle,
+  IconArchive,
+  IconBan,
   IconBuilding,
   IconClipboard,
+  IconFileText,
+  IconFilter,
+  IconGlobe,
   IconHome,
+  IconInbox,
   IconLayers,
   IconLink,
   IconMonitor,
+  IconRoute,
   IconServer,
   IconShieldCheck,
   IconShieldOff,
@@ -36,14 +43,60 @@ export interface NavGroup {
 }
 
 // El menu se construye desde esta declaracion y se filtra con los modulos de
-// GET /access/my-modules. Las pantallas de correo (dominios, buzones, aliases) se
-// anadiran como un grupo mas cuando existan sus APIs.
+// GET /access/my-modules.
 export const NAV: NavGroup[] = [
   {
     labelKey: 'nav.group.general',
     items: [
       { to: paths.home, labelKey: 'nav.home', icon: IconHome },
       { to: paths.account, labelKey: 'nav.account', icon: IconUser },
+    ],
+  },
+  {
+    labelKey: 'nav.group.mail',
+    items: [
+      { to: paths.domains, labelKey: 'nav.domains', icon: IconGlobe, module: MODULES.domains },
+      {
+        to: paths.mailboxes,
+        labelKey: 'nav.mailboxes',
+        icon: IconInbox,
+        module: MODULES.mailboxes,
+      },
+      {
+        to: paths.mailRouting,
+        labelKey: 'nav.mailRouting',
+        icon: IconRoute,
+        module: MODULES.mailRouting,
+      },
+      {
+        to: paths.mailSecurity,
+        labelKey: 'nav.mailSecurity',
+        icon: IconFilter,
+        module: MODULES.mailSecurity,
+      },
+      {
+        to: paths.quarantine,
+        labelKey: 'nav.quarantine',
+        icon: IconArchive,
+        module: MODULES.mailSecurity,
+      },
+    ],
+  },
+  {
+    labelKey: 'nav.group.sending',
+    items: [
+      {
+        to: paths.templates,
+        labelKey: 'nav.templates',
+        icon: IconFileText,
+        module: MODULES.templates,
+      },
+      {
+        to: paths.suppression,
+        labelKey: 'nav.suppression',
+        icon: IconBan,
+        module: MODULES.suppression,
+      },
     ],
   },
   {

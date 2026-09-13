@@ -89,6 +89,56 @@ export const SCREENS: readonly ScreenDecl[] = [
     module: MODULES.audit,
     load: () => import('@/pages/audit/IntegrityPage'),
   },
+  {
+    path: paths.domains,
+    module: MODULES.domains,
+    load: () => import('@/pages/domains/DomainsPage'),
+  },
+  {
+    path: `${paths.domains}/:id`,
+    module: MODULES.domains,
+    load: () => import('@/pages/domains/DomainDetailPage'),
+  },
+  {
+    path: paths.mailboxes,
+    module: MODULES.mailboxes,
+    load: () => import('@/pages/mailboxes/MailboxesPage'),
+  },
+  {
+    path: `${paths.mailboxes}/:id`,
+    module: MODULES.mailboxes,
+    load: () => import('@/pages/mailboxes/MailboxDetailPage'),
+  },
+  {
+    path: paths.mailRouting,
+    module: MODULES.mailRouting,
+    load: () => import('@/pages/routing/RoutingPage'),
+  },
+  {
+    path: paths.mailSecurity,
+    module: MODULES.mailSecurity,
+    load: () => import('@/pages/mailSecurity/MailSecurityPage'),
+  },
+  {
+    path: paths.quarantine,
+    module: MODULES.mailSecurity,
+    load: () => import('@/pages/quarantine/QuarantinePage'),
+  },
+  {
+    path: paths.templates,
+    module: MODULES.templates,
+    load: () => import('@/pages/templates/TemplatesPage'),
+  },
+  {
+    path: `${paths.templates}/:id`,
+    module: MODULES.templates,
+    load: () => import('@/pages/templates/TemplateDetailPage'),
+  },
+  {
+    path: paths.suppression,
+    module: MODULES.suppression,
+    load: () => import('@/pages/suppression/SuppressionPage'),
+  },
 ];
 
 const NotFoundPage = lazy(() => import('@/pages/NotFoundPage'));

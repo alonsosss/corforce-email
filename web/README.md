@@ -1,8 +1,9 @@
 # Core Force Mail: aplicacion web
 
-Una sola aplicacion React 18 + TypeScript (estricto) + Vite 5, sin module federation. Es el
-plano de control: acceso, cuenta, usuarios, roles y permisos, sesiones, empresas, celdas y
-auditoria. Las pantallas de correo (dominios, buzones, aliases) llegan en una segunda ola.
+Una sola aplicacion React 18 + TypeScript (estricto) + Vite 5, sin module federation. Cubre
+el plano de control (acceso, cuenta, usuarios, roles y permisos, sesiones, empresas, celdas
+y auditoria), el correo corporativo (dominios, directorio de la celda, buzones, enrutado,
+seguridad y cuarentena) y los envios (plantillas y supresion).
 
 ## Desarrollo
 
@@ -90,3 +91,28 @@ src/
    del menu en `src/layout/nav.ts` con el mismo `module`. `nav.test.ts` falla si el menu y
    las rutas no coinciden.
 4. Los textos en `src/i18n/es.ts`.
+
+## Correo y envios
+
+| Menu                                    | Ruta                                           | Modulo          | API                         |
+| --------------------------------------- | ---------------------------------------------- | --------------- | --------------------------- |
+| Dominios (y directorio, dominios alias) | `/mail/domains`, `/mail/domains/:id`           | `domains`       | `/domains`, `/mail-domains` |
+| Buzones                                 | `/mail/mailboxes`, `/mail/mailboxes/:id`       | `mailboxes`     | `/mailboxes`                |
+| Enrutado                                | `/mail/routing`                                | `mail_routing`  | `/mail-routing/*`           |
+| Seguridad                               | `/mail/security`                               | `mail_security` | `/mail-security/*`          |
+| Cuarentena                              | `/mail/quarantine`                             | `mail_security` | `/mail-security/quarantine` |
+| Plantillas                              | `/sending/templates`, `/sending/templates/:id` | `templates`     | `/templates`                |
+| Supresion                               | `/sending/suppression`                         | `suppression`   | `/suppression`              |
+
+Reglas de la interfaz que no se relajan:
+
+- HTML que no es de la aplicacion (plantillas, pies de pagina, aviso de cuarentena) solo se
+  pinta en `HtmlPreviewFrame`: `<iframe sandbox="">` con `srcdoc`, sin scripts, formularios,
+  navegacion ni mismo origen. Nunca `dangerouslySetInnerHTML`.
+- El mensaje en cuarentena (`message/rfc822`) se pide con `api.getText` y se muestra como
+  texto en un `<pre>`; jamas se interpreta su HTML.
+- Las contrasenas de aplicacion se muestran una sola vez, en un dialogo que no se cierra
+  por accidente, y se descartan del estado al cerrarlo. Las de relayhosts y transportes
+  son de solo escritura: la interfaz solo sabe si hay una guardada (`has_password`).
+- Los listados de buzones aun no filtran en servidor: la pantalla pide la pagina mas
+  grande que admite el API y filtra esa pagina.

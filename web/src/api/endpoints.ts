@@ -7,6 +7,20 @@ const API_PREFIX = '/api/v1';
 const seg = (value: string): string => encodeURIComponent(value);
 
 /**
+ * Segmento que lleva una direccion o un dominio (objetos de mail-security). '@' y '+' son
+ * validos en una ruta (RFC 3986) y viajan sin escapar: si llegaran escapados, chi enruta
+ * sobre RawPath y el servicio Go recibiria el parametro sin decodificar.
+ */
+const addressSeg = (value: string): string =>
+  encodeURIComponent(value).replace(/%40/g, '@').replace(/%2B/gi, '+');
+
+/** Coleccion REST con detalle por id. */
+const collectionOf = (path: string) => ({
+  collection: `${API_PREFIX}${path}`,
+  byId: (id: string) => `${API_PREFIX}${path}/${seg(id)}`,
+});
+
+/**
  * Origen del API. Vacio por defecto: la aplicacion y el API comparten origen y las rutas
  * son relativas. VITE_API_URL solo se rellena cuando el API vive en otro host.
  */
@@ -81,5 +95,73 @@ export const endpoints = {
     securityEvents: `${API_PREFIX}/audit/security-events`,
     acknowledge: (id: string) => `${API_PREFIX}/audit/security-events/${seg(id)}/acknowledge`,
     integrity: `${API_PREFIX}/audit/integrity`,
+  },
+  domains: {
+    collection: `${API_PREFIX}/domains`,
+    byId: (id: string) => `${API_PREFIX}/domains/${seg(id)}`,
+    verify: (id: string) => `${API_PREFIX}/domains/${seg(id)}/verify`,
+    rotateDkim: (id: string) => `${API_PREFIX}/domains/${seg(id)}/rotate-dkim`,
+  },
+  mailDomains: {
+    ...collectionOf('/mail-domains'),
+    aliasDomains: collectionOf('/mail-domains/alias-domains'),
+  },
+  mailboxes: {
+    ...collectionOf('/mailboxes'),
+    password: (id: string) => `${API_PREFIX}/mailboxes/${seg(id)}/password`,
+    quota: (id: string) => `${API_PREFIX}/mailboxes/${seg(id)}/quota`,
+    logins: (id: string) => `${API_PREFIX}/mailboxes/${seg(id)}/logins`,
+    sieve: (id: string) => `${API_PREFIX}/mailboxes/${seg(id)}/sieve`,
+    appPasswords: (id: string) => `${API_PREFIX}/mailboxes/${seg(id)}/app-passwords`,
+    appPassword: (id: string, appPasswordId: string) =>
+      `${API_PREFIX}/mailboxes/${seg(id)}/app-passwords/${seg(appPasswordId)}`,
+  },
+  mailRouting: {
+    aliases: collectionOf('/mail-routing/aliases'),
+    spamAliases: collectionOf('/mail-routing/spam-aliases'),
+    senderAcl: collectionOf('/mail-routing/sender-acl'),
+    relayhosts: collectionOf('/mail-routing/relayhosts'),
+    transports: collectionOf('/mail-routing/transports'),
+    tlsPolicies: collectionOf('/mail-routing/tls-policies'),
+    recipientMaps: collectionOf('/mail-routing/recipient-maps'),
+    bccMaps: collectionOf('/mail-routing/bcc-maps'),
+  },
+  mailSecurity: {
+    spamScores: `${API_PREFIX}/mail-security/spam-scores`,
+    spamScore: (object: string) => `${API_PREFIX}/mail-security/spam-scores/${addressSeg(object)}`,
+    addressLists: `${API_PREFIX}/mail-security/address-lists`,
+    addressList: (id: string) => `${API_PREFIX}/mail-security/address-lists/${seg(id)}`,
+    footers: `${API_PREFIX}/mail-security/footers`,
+    footer: (domain: string) => `${API_PREFIX}/mail-security/footers/${addressSeg(domain)}`,
+    forwardingHosts: `${API_PREFIX}/mail-security/forwarding-hosts`,
+    forwardingHost: (id: string) => `${API_PREFIX}/mail-security/forwarding-hosts/${seg(id)}`,
+    rateLimits: `${API_PREFIX}/mail-security/rate-limits`,
+    rateLimit: (object: string) => `${API_PREFIX}/mail-security/rate-limits/${addressSeg(object)}`,
+    mailboxTags: `${API_PREFIX}/mail-security/mailbox-tags`,
+    mailboxTag: (username: string) =>
+      `${API_PREFIX}/mail-security/mailbox-tags/${addressSeg(username)}`,
+    quarantine: `${API_PREFIX}/mail-security/quarantine`,
+    quarantineItem: (id: string) => `${API_PREFIX}/mail-security/quarantine/${seg(id)}`,
+    quarantineMessage: (id: string) => `${API_PREFIX}/mail-security/quarantine/${seg(id)}/message`,
+    quarantineRelease: (id: string) => `${API_PREFIX}/mail-security/quarantine/${seg(id)}/release`,
+    quarantineLearnSpam: (id: string) =>
+      `${API_PREFIX}/mail-security/quarantine/${seg(id)}/learn-spam`,
+    quarantineSettings: `${API_PREFIX}/mail-security/quarantine-settings`,
+  },
+  templates: {
+    ...collectionOf('/templates'),
+    versions: (id: string) => `${API_PREFIX}/templates/${seg(id)}/versions`,
+    version: (id: string, version: number) =>
+      `${API_PREFIX}/templates/${seg(id)}/versions/${version}`,
+    publish: (id: string, version: number) =>
+      `${API_PREFIX}/templates/${seg(id)}/versions/${version}/publish`,
+    preview: (id: string) => `${API_PREFIX}/templates/${seg(id)}/preview`,
+  },
+  suppression: {
+    check: `${API_PREFIX}/suppression/check`,
+    entries: collectionOf('/suppression/entries'),
+    import: `${API_PREFIX}/suppression/entries/import`,
+    imports: `${API_PREFIX}/suppression/imports`,
+    stats: `${API_PREFIX}/suppression/stats`,
   },
 } as const;
