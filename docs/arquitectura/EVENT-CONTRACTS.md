@@ -52,6 +52,6 @@ construye fuera del literal y no se puede leer estaticamente.
 | `organization.tenant.created` | billing | `tenant_id` |
 | `organization.tenant.status_changed` | billing | `status`, `tenant_id` |
 | `transactional.email.*` | analytics | `bounce_type`, `campaign_id`, `class`, `email`, `message_id`, `occurred_at`, `tenant_id`, `to` |
-| `transactional.email.sent` | billing | `tenant_id` |
+| `transactional.email.sent` | billing | `class`, `tenant_id`, `to` |
 | `transactional.marketing.queued` | transactional | _opaco_ |
 | `transactional.message.queued` | transactional | _opaco_ |
