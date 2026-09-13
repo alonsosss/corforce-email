@@ -10,8 +10,8 @@
 
 CREATE SCHEMA IF NOT EXISTS access_control;
 
--- Roles: pertenecen a un tenant. Los estructurales (is_system) los siembra organization
--- al crear el tenant y no se pueden modificar ni borrar desde la API.
+-- Roles: pertenecen a un tenant. Los estructurales (is_system) los siembra access-control
+-- cuando organization da de alta el tenant y no se pueden modificar ni borrar desde la API.
 CREATE TABLE IF NOT EXISTS access_control.roles (
     id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id   uuid NOT NULL,

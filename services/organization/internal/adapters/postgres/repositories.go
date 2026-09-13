@@ -33,16 +33,6 @@ func scanTenant(row pgx.Row) (*domain.Tenant, error) {
 	return t, nil
 }
 
-func (r *TenantRepo) Create(ctx context.Context, t *domain.Tenant) error {
-	// RETURNING: los sellos de tiempo los pone la base, y la respuesta del alta debe
-	// llevarlos en vez de un cero.
-	return r.pool.QueryRow(ctx,
-		`INSERT INTO organization.tenants (id, slug, name, db_name, status, cell_id, settings)
- VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING created_at, updated_at`,
-		t.ID, t.Slug, t.Name, t.DBName, t.Status, t.CellID, t.Settings,
-	).Scan(&t.CreatedAt, &t.UpdatedAt)
-}
-
 func (r *TenantRepo) GetByID(ctx context.Context, id uuid.UUID) (*domain.Tenant, error) {
 	return scanTenant(r.pool.QueryRow(ctx,
 		`SELECT `+tenantColumns+` FROM organization.tenants WHERE id = $1`, id))
@@ -85,30 +75,6 @@ func (r *TenantRepo) Update(ctx context.Context, t *domain.Tenant) error {
 		t.Name, t.Status, t.Settings, t.ID,
 	)
 	return err
-}
-
-// Delete retira el tenant del registro con lo que cuelga de el en identidad y acceso.
-// No hay claves foraneas entre esquemas, asi que el orden lo impone este metodo: primero
-// lo que referencia, al final el tenant. Todo en una transaccion.
-func (r *TenantRepo) Delete(ctx context.Context, id uuid.UUID) error {
-	tx, err := r.pool.Begin(ctx)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback(ctx)
-
-	for _, q := range []string{
-		`DELETE FROM access_control.user_roles WHERE role_id IN (SELECT id FROM access_control.roles WHERE tenant_id = $1)`,
-		`DELETE FROM access_control.roles WHERE tenant_id = $1`,
-		`DELETE FROM identity.users WHERE tenant_id = $1`,
-		`DELETE FROM organization.tenant_modules WHERE tenant_id = $1`,
-		`DELETE FROM organization.tenants WHERE id = $1`,
-	} {
-		if _, err := tx.Exec(ctx, q, id); err != nil {
-			return err
-		}
-	}
-	return tx.Commit(ctx)
 }
 
 // ── Aprovisionamiento de bases de tenant ─────────────────────────────────────
@@ -173,24 +139,105 @@ func (p *DBProvisioner) tenantDSN(target domain.DBTarget) string {
 	return p.directDSNFn(host, port, sanitizeDBName(target.DBName))
 }
 
-// CreateDatabase crea la base de la empresa y la cierra a PUBLIC: Postgres da CONNECT a
-// todo rol de login en cada base nueva, y un rol de celda (ops/db/cell-service-role.sh)
-// podria abrirla. Entran el dueno (la credencial de plataforma) y los superusuarios. Una
-// base que no se pudo cerrar se retira: abierta seria peor que no creada.
-func (p *DBProvisioner) CreateDatabase(ctx context.Context, target domain.DBTarget) error {
+// adminQueryRow lee una fila del catalogo del cluster del destino, por el mismo camino que
+// adminExec.
+func (p *DBProvisioner) adminQueryRow(ctx context.Context, target domain.DBTarget, sql string, args []any, dest ...any) error {
+	if !p.remote(target) {
+		return p.pool.QueryRow(ctx, sql, args...).Scan(dest...)
+	}
+	conn, err := pgx.Connect(ctx, p.directDSNFn(target.Host, target.Port, "postgres"))
+	if err != nil {
+		return fmt.Errorf("conectar a la celda %s: %w", target.Host, err)
+	}
+	defer conn.Close(ctx)
+	return conn.QueryRow(ctx, sql, args...).Scan(dest...)
+}
+
+const pgDuplicateDatabase = "42P04"
+
+// tenantDBMarker es el comentario con el que el alta marca la base de su empresa. Se lee
+// desde cualquier base del cluster y distingue la base que creo un intento anterior del alta
+// (se adopta) de una ajena con el mismo nombre, como la que se conserva de una empresa
+// borrada con el mismo slug (no se toca ni se borra). Solo lleva el uuid de la empresa: se
+// concatena en un COMMENT, que no admite parametros.
+func tenantDBMarker(tenantID uuid.UUID) string {
+	return "core-force-mail tenant " + tenantID.String()
+}
+
+// databaseMarker devuelve el comentario de la base y si existe.
+func (p *DBProvisioner) databaseMarker(ctx context.Context, target domain.DBTarget, name string) (string, bool, error) {
+	var comment *string
+	err := p.adminQueryRow(ctx, target,
+		`SELECT shobj_description(oid, 'pg_database') FROM pg_database WHERE datname = $1`, []any{name}, &comment)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("leer la marca de la base: %w", err)
+	}
+	if comment == nil {
+		return "", true, nil
+	}
+	return *comment, true, nil
+}
+
+// CreateDatabase crea la base de la empresa, la marca como suya y la cierra a PUBLIC:
+// Postgres da CONNECT a todo rol de login en cada base nueva, y un rol de celda
+// (ops/db/cell-service-role.sh) podria abrirla. Entran el dueno (la credencial de
+// plataforma) y los superusuarios. Una base que no se pudo marcar o cerrar se retira:
+// abierta seria peor que no creada.
+//
+// Es idempotente para el alta que la creo: si la base ya existe con su marca (un intento
+// anterior se corto), la adopta y repite marca y cierre. Una base con ese nombre sin su marca
+// es ajena y responde ErrDatabaseOccupied. Queda una ventana: si el proceso muere entre el
+// CREATE y la marca, la base queda sin marca y el reintento la trata como ajena; el fallo es
+// seguro (no adopta ni borra) y la base se retira a mano.
+func (p *DBProvisioner) CreateDatabase(ctx context.Context, target domain.DBTarget, tenantID uuid.UUID) error {
 	name := sanitizeDBName(target.DBName)
-	if err := p.adminExec(ctx, target, fmt.Sprintf("CREATE DATABASE %s", name)); err != nil {
-		return err
+	if name == "" {
+		return fmt.Errorf("nombre de base vacio para la empresa %s", tenantID)
+	}
+	marker := tenantDBMarker(tenantID)
+	err := p.adminExec(ctx, target, "CREATE DATABASE "+name)
+	created := err == nil
+	if !created {
+		if pgErrorCode(err) != pgDuplicateDatabase {
+			return err
+		}
+		owner, exists, markErr := p.databaseMarker(ctx, target, name)
+		if markErr != nil {
+			return markErr
+		}
+		if !exists || owner != marker {
+			return domain.ErrDatabaseOccupied
+		}
+	}
+	if err := p.adminExec(ctx, target, fmt.Sprintf("COMMENT ON DATABASE %s IS '%s'", name, marker)); err != nil {
+		if created {
+			_ = p.adminExec(ctx, target, "DROP DATABASE IF EXISTS "+name)
+		}
+		return fmt.Errorf("marcar la base: %w", err)
 	}
 	if err := p.adminExec(ctx, target, fmt.Sprintf("REVOKE CONNECT, TEMPORARY ON DATABASE %s FROM PUBLIC", name)); err != nil {
-		_ = p.DropDatabase(ctx, target)
+		_ = p.DropOwnedDatabase(ctx, target, tenantID)
 		return fmt.Errorf("cerrar la base a PUBLIC: %w", err)
 	}
 	return nil
 }
 
-func (p *DBProvisioner) DropDatabase(ctx context.Context, target domain.DBTarget) error {
-	return p.adminExec(ctx, target, fmt.Sprintf("DROP DATABASE IF EXISTS %s", sanitizeDBName(target.DBName)))
+// DropOwnedDatabase borra la base solo si lleva la marca de la empresa: deshacer un alta
+// nunca borra una base que no creo. WITH (FORCE) cierra las conexiones que quedaran abiertas
+// (un pool de la empresa) para que no impidan deshacerla.
+func (p *DBProvisioner) DropOwnedDatabase(ctx context.Context, target domain.DBTarget, tenantID uuid.UUID) error {
+	name := sanitizeDBName(target.DBName)
+	owner, exists, err := p.databaseMarker(ctx, target, name)
+	if err != nil {
+		return err
+	}
+	if !exists || owner != tenantDBMarker(tenantID) {
+		return nil
+	}
+	return p.adminExec(ctx, target, fmt.Sprintf("DROP DATABASE IF EXISTS %s WITH (FORCE)", name))
 }
 
 // RunMigrations aplica las migraciones canonicas pendientes sobre la base del tenant.

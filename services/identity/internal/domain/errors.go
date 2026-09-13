@@ -21,4 +21,10 @@ var (
 	ErrResetTokenInvalid  = errors.New("reset token is invalid, expired or already used")
 
 	ErrInvalidSessionPolicy = errors.New("session policy values out of range")
+
+	// ErrFirstUserConflict: la empresa ya tiene cuentas, o la del reintento no coincide con
+	// la que se creo (otro correo, otra contrasena u otra empresa).
+	ErrFirstUserConflict = errors.New("tenant already has a different first user")
+	// ErrTenantActive: las cuentas de una empresa activa no se retiran en bloque.
+	ErrTenantActive = errors.New("tenant is active")
 )

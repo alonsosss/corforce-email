@@ -54,7 +54,7 @@ func (h *Handler) Routes() chi.Router {
 		r.Get("/access/my-modules", h.MyModules)
 		// Metricas de accesos denegados por RBAC: registro (interno, desde el gateway)
 		// y consulta (administracion).
-		r.With(internalOnly).Post("/access/denials", h.RecordDenial)
+		r.With(middleware.RequireInternalCaller).Post("/access/denials", h.RecordDenial)
 		r.With(h.perm("denials", "read")).Get("/access/denials", h.GetDenials)
 		// Destinatarios de un aviso, resueltos por permiso (uso interno entre servicios).
 		r.With(h.internalOrPerm("user_roles", "read")).Get("/access/users-with-permission", h.UsersWithPermission)

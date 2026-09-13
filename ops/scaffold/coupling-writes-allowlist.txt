@@ -1,7 +1,3 @@
 # Escrituras en tablas de otro esquema sancionadas: "<servicio> <esquema>", con su motivo.
-#
-# organization da de alta la empresa con su rol tenant_admin, sus permisos y su primer
-# usuario (seeders.go), y al borrarla elimina roles, asignaciones y usuarios
-# (repositories.go). Pendiente: que identity y access-control expongan esas operaciones.
-organization identity
-organization access_control
+# El dueno del esquema expone la operacion (API interna o evento) y quien la necesita la
+# pide; una entrada aqui es una excepcion que se justifica y se retira.

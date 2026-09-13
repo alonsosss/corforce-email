@@ -2,20 +2,19 @@ package ports
 
 import (
 	"context"
+	"time"
 
 	"github.com/alonsosss/corforce-email/services/organization/internal/domain"
 	"github.com/google/uuid"
 )
 
+// TenantRepository lee y edita el registro de empresas. El alta y la baja de una empresa
+// son de la saga (TenantSagaRepository): la empresa nace y desaparece junto a su saga.
 type TenantRepository interface {
-	Create(ctx context.Context, tenant *domain.Tenant) error
 	GetByID(ctx context.Context, id uuid.UUID) (*domain.Tenant, error)
 	GetBySlug(ctx context.Context, slug string) (*domain.Tenant, error)
 	List(ctx context.Context, offset, limit int) ([]*domain.Tenant, int64, error)
 	Update(ctx context.Context, tenant *domain.Tenant) error
-	// Delete retira el tenant del registro junto con sus usuarios, roles y modulos.
-	// No toca la base fisica: esa decision se toma aparte y con respaldo.
-	Delete(ctx context.Context, id uuid.UUID) error
 }
 
 // CellRepository es el directorio de celdas: donde esta cada Postgres regional y si
@@ -29,24 +28,84 @@ type CellRepository interface {
 }
 
 type TenantDBProvisioner interface {
-	CreateDatabase(ctx context.Context, target domain.DBTarget) error
+	// CreateDatabase crea la base de la empresa, la marca como suya y la cierra a PUBLIC. Si
+	// ya existe con la marca de esa empresa (un intento anterior del alta) la adopta; si
+	// existe sin ella responde ErrDatabaseOccupied y no la toca.
+	CreateDatabase(ctx context.Context, target domain.DBTarget, tenantID uuid.UUID) error
 	RunMigrations(ctx context.Context, target domain.DBTarget) error
-	DropDatabase(ctx context.Context, target domain.DBTarget) error
+	// DropOwnedDatabase borra la base solo si lleva la marca de la empresa. Sin base, o con
+	// una ajena, no hace nada.
+	DropOwnedDatabase(ctx context.Context, target domain.DBTarget, tenantID uuid.UUID) error
 	// MigrationStatus reporta migraciones aplicadas y pendientes sin aplicar nada.
 	MigrationStatus(ctx context.Context, target domain.DBTarget) (domain.TenantMigrationStatus, error)
 }
 
-// RoleSeeder siembra los roles de sistema de un tenant. Es idempotente: se aplica en
-// el alta y se reaplica en cada arranque para que un permiso nuevo del catalogo llegue
-// a los tenants que ya existian.
-type RoleSeeder interface {
-	SeedDefaultRoles(ctx context.Context, tenantID uuid.UUID) error
+// TenantSagaRepository persiste la saga de alta y baja de cada empresa. Cada escritura de
+// una saga en curso lleva el token de su arriendo: si otra instancia la tomo, ErrLeaseLost.
+// Un lease mayor que cero alarga el arriendo hasta ahora + lease; cero lo suelta.
+type TenantSagaRepository interface {
+	// BeginCreate registra la empresa y su saga de alta, con el arriendo tomado, en una
+	// transaccion. ErrTenantAlreadyExists si el slug o el nombre de base estan ocupados.
+	BeginCreate(ctx context.Context, tenant *domain.Tenant, saga *domain.TenantSaga, lease time.Duration) error
+	// Insert crea, con el arriendo tomado, la saga de una empresa que no la tenia (dada de
+	// alta antes de que existieran). ErrTenantBusy si ya existe.
+	Insert(ctx context.Context, saga *domain.TenantSaga, lease time.Duration) error
+	// Get devuelve la saga de la empresa o ErrSagaNotFound.
+	Get(ctx context.Context, tenantID uuid.UUID) (*domain.TenantSaga, error)
+	// Claim toma el arriendo si nadie lo tiene vigente. ErrSagaNotFound o ErrTenantBusy.
+	Claim(ctx context.Context, tenantID uuid.UUID, lease time.Duration) (*domain.TenantSaga, error)
+	// Save guarda operacion, estado, paso, rol, borrado de base y error de la saga.
+	Save(ctx context.Context, saga *domain.TenantSaga, lease time.Duration) error
+	// CompleteCreate activa la empresa y cierra su saga de alta en una transaccion.
+	CompleteCreate(ctx context.Context, saga *domain.TenantSaga) error
+	// DeleteTenant retira del registro la empresa, sus modulos y su saga en una transaccion.
+	DeleteTenant(ctx context.Context, saga *domain.TenantSaga) error
+	// ListStale devuelve las sagas en curso o compensando sin arriendo vigente.
+	ListStale(ctx context.Context, limit int) ([]*domain.TenantSaga, error)
 }
 
-// AdminUserSeeder crea el primer usuario administrador del tenant con la contrasena
-// recibida en el alta. La contrasena nunca se registra ni se devuelve.
-type AdminUserSeeder interface {
-	CreateAdminUser(ctx context.Context, tenantID uuid.UUID, email, password, firstName, lastName string) error
+// AccessControl son las operaciones de roles de una empresa entera que access-control sirve
+// por su API interna. Todas son idempotentes.
+type AccessControl interface {
+	// SeedTenantAdminRole siembra el rol del sistema con los permisos de alcance tenant del
+	// catalogo y devuelve su id.
+	SeedTenantAdminRole(ctx context.Context, tenantID uuid.UUID) (uuid.UUID, error)
+	// ReseedSystemRoles concede a los roles del sistema de todas las empresas los permisos
+	// que les falten y devuelve cuantos roles recorrio.
+	ReseedSystemRoles(ctx context.Context) (int, error)
+	AssignRole(ctx context.Context, tenantID, userID, roleID uuid.UUID) error
+	RevokeRole(ctx context.Context, tenantID, userID, roleID uuid.UUID) error
+	// RemoveTenantRoles borra los roles de una empresa que no esta activa, con sus
+	// asignaciones.
+	RemoveTenantRoles(ctx context.Context, tenantID uuid.UUID) error
+}
+
+// FirstAdmin es el primer administrador de una empresa. La contrasena solo viaja a
+// identity: organization no la guarda ni la registra nunca, y por eso no se serializa ni se
+// imprime.
+type FirstAdmin struct {
+	UserID    uuid.UUID
+	Email     string
+	Password  string `json:"-"`
+	FirstName string
+	LastName  string
+}
+
+func (a FirstAdmin) String() string {
+	return "FirstAdmin{" + a.UserID.String() + " " + a.Email + "}"
+}
+
+func (a FirstAdmin) GoString() string { return a.String() }
+
+// Identity son las operaciones sobre las cuentas de una empresa entera que identity sirve
+// por su API interna. Las dos son idempotentes.
+type Identity interface {
+	// CreateFirstUser da de alta la primera cuenta con la politica de contrasenas de
+	// identity. AdminRejectedError si identity rechaza la contrasena; ErrAdminUserConflict
+	// si la empresa ya tiene otra cuenta.
+	CreateFirstUser(ctx context.Context, tenantID uuid.UUID, admin FirstAdmin) error
+	// RemoveTenantUsers borra las cuentas de una empresa que no esta activa, con sus sesiones.
+	RemoveTenantUsers(ctx context.Context, tenantID uuid.UUID) error
 }
 
 // ModulesRepository accede al catalogo de modulos y al estado de habilitacion por

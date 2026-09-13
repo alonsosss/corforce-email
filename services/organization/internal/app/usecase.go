@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/alonsosss/corforce-email/services/organization/internal/domain"
 	"github.com/alonsosss/corforce-email/services/organization/internal/ports"
@@ -19,36 +20,47 @@ var slugRegex = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
 var cellCodeRegex = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
 
 // minAdminPasswordLength es el minimo que se exige a la contrasena del primer
-// administrador. La politica de contrasenas del tenant la aplica identity despues;
-// este suelo evita que el alta deje una cuenta administrativa con una contrasena
-// trivial antes de que exista ninguna politica.
+// administrador antes de empezar el alta. La politica de contrasenas la aplica identity al
+// crear la cuenta; este suelo evita crear y deshacer una base por una contrasena trivial.
 const minAdminPasswordLength = 12
+
+// defaultSagaLease es el arriendo de una ejecucion de la saga cuando el despliegue no fija
+// otro: holgado para crear y migrar una base nueva.
+const defaultSagaLease = 5 * time.Minute
 
 // Dependencies agrupa los puertos del caso de uso. Un constructor con nombres evita
 // el error clasico de cruzar dos argumentos posicionales del mismo tipo.
 type Dependencies struct {
 	Tenants     ports.TenantRepository
 	Cells       ports.CellRepository
+	Sagas       ports.TenantSagaRepository
 	Provisioner ports.TenantDBProvisioner
-	RoleSeeder  ports.RoleSeeder
-	AdminSeeder ports.AdminUserSeeder
-	Modules     ports.ModulesRepository
-	Publisher   ports.TenantEventPublisher
+	// Access e Identity son los duenos del rol del sistema, las asignaciones y las cuentas
+	// de cada empresa: la saga se los pide por su API interna.
+	Access    ports.AccessControl
+	Identity  ports.Identity
+	Modules   ports.ModulesRepository
+	Publisher ports.TenantEventPublisher
 	// DefaultCellCode es la celda donde nacen los tenants cuya alta no indica una.
 	// Vacio significa que no hay celda por defecto y toda alta debe indicarla.
 	DefaultCellCode string
-	Logger          *zap.Logger
+	// SagaLease es cuanto puede tardar una ejecucion de la saga antes de que otra instancia
+	// la de por abandonada. Cero toma defaultSagaLease.
+	SagaLease time.Duration
+	Logger    *zap.Logger
 }
 
 type OrganizationUseCase struct {
 	tenants         ports.TenantRepository
 	cells           ports.CellRepository
+	sagas           ports.TenantSagaRepository
 	provisioner     ports.TenantDBProvisioner
-	roleSeeder      ports.RoleSeeder
-	adminSeeder     ports.AdminUserSeeder
+	access          ports.AccessControl
+	identity        ports.Identity
 	modules         ports.ModulesRepository
 	publisher       ports.TenantEventPublisher
 	defaultCellCode string
+	sagaLease       time.Duration
 	logger          *zap.Logger
 }
 
@@ -57,15 +69,21 @@ func NewOrganizationUseCase(deps Dependencies) *OrganizationUseCase {
 	if logger == nil {
 		logger = zap.NewNop()
 	}
+	lease := deps.SagaLease
+	if lease <= 0 {
+		lease = defaultSagaLease
+	}
 	return &OrganizationUseCase{
 		tenants:         deps.Tenants,
 		cells:           deps.Cells,
+		sagas:           deps.Sagas,
 		provisioner:     deps.Provisioner,
-		roleSeeder:      deps.RoleSeeder,
-		adminSeeder:     deps.AdminSeeder,
+		access:          deps.Access,
+		identity:        deps.Identity,
 		modules:         deps.Modules,
 		publisher:       deps.Publisher,
 		defaultCellCode: strings.TrimSpace(deps.DefaultCellCode),
+		sagaLease:       lease,
 		logger:          logger,
 	}
 }
@@ -90,6 +108,10 @@ type CreateTenantRequest struct {
 	AdminLastName  string
 }
 
+// CreateTenant da de alta una empresa como saga (tenant_saga.go): la empresa se registra
+// inactiva, se crea y migra su base, access-control siembra su rol del sistema, identity
+// crea su primer usuario, access-control se lo asigna y solo entonces la empresa pasa a
+// activa. Pedir de nuevo el alta de un slug con un alta pendiente la retoma.
 func (uc *OrganizationUseCase) CreateTenant(ctx context.Context, req CreateTenantRequest) (*domain.Tenant, error) {
 	slug := strings.ToLower(strings.TrimSpace(req.Slug))
 	if !slugRegex.MatchString(slug) {
@@ -102,12 +124,15 @@ func (uc *OrganizationUseCase) CreateTenant(ctx context.Context, req CreateTenan
 		return nil, domain.ErrAdminPasswordShort
 	}
 
-	if existing, _ := uc.tenants.GetBySlug(ctx, slug); existing != nil {
-		return nil, domain.ErrTenantAlreadyExists
+	existing, err := uc.tenants.GetBySlug(ctx, slug)
+	switch {
+	case err == nil:
+		return uc.retryCreate(ctx, existing, req)
+	case !errors.Is(err, domain.ErrTenantNotFound):
+		return nil, fmt.Errorf("buscar la empresa: %w", err)
 	}
 
-	// La celda se resuelve ANTES de crear nada: sin celda no hay donde aprovisionar y
-	// no tiene sentido dejar una base a medias.
+	// La celda se resuelve ANTES de registrar nada: sin celda no hay donde aprovisionar.
 	cell, err := uc.resolveCell(ctx, req.CellCode)
 	if err != nil {
 		return nil, err
@@ -121,44 +146,29 @@ func (uc *OrganizationUseCase) CreateTenant(ctx context.Context, req CreateTenan
 	}
 
 	tenant := &domain.Tenant{
-		ID:       uuid.New(),
-		Slug:     slug,
-		Name:     req.Name,
-		DBName:   domain.TenantDBName(slug),
-		Status:   domain.TenantStatusActive,
+		ID:     uuid.New(),
+		Slug:   slug,
+		Name:   req.Name,
+		DBName: domain.TenantDBName(slug),
+		// Inactiva hasta que la saga termine: sin login, sin enrutado y fuera de los
+		// barridos de migracion.
+		Status:   domain.TenantStatusInactive,
 		CellID:   cell.ID,
 		Settings: settings,
 	}
-
-	target := domain.DBTargetFor(tenant, cell)
-	if err := uc.provisioner.CreateDatabase(ctx, target); err != nil {
-		return nil, fmt.Errorf("aprovisionar base: %w", err)
+	saga := &domain.TenantSaga{
+		TenantID:    tenant.ID,
+		Operation:   domain.SagaCreate,
+		State:       domain.SagaRunning,
+		Step:        domain.StepRegistered,
+		AdminUserID: uuid.New(),
 	}
-	if err := uc.provisioner.RunMigrations(ctx, target); err != nil {
-		_ = uc.provisioner.DropDatabase(ctx, target)
-		return nil, fmt.Errorf("migrar base nueva: %w", err)
+	if err := uc.sagas.BeginCreate(ctx, tenant, saga, uc.sagaLease); err != nil {
+		return nil, err
 	}
-	if err := uc.tenants.Create(ctx, tenant); err != nil {
-		_ = uc.provisioner.DropDatabase(ctx, target)
-		return nil, fmt.Errorf("registrar tenant: %w", err)
-	}
-
-	if err := uc.roleSeeder.SeedDefaultRoles(ctx, tenant.ID); err != nil {
-		return nil, fmt.Errorf("sembrar roles de sistema: %w", err)
-	}
-	if err := uc.adminSeeder.CreateAdminUser(
-		ctx, tenant.ID,
-		req.AdminEmail, req.AdminPassword,
-		strOrDefault(req.AdminFirstName, "Admin"),
-		strOrDefault(req.AdminLastName, tenant.Name),
-	); err != nil {
-		return nil, fmt.Errorf("crear primer administrador: %w", err)
-	}
-
-	uc.publish("tenant.created", tenant.ID, func() error {
-		return uc.publisher.TenantCreated(ctx, tenant)
+	return uc.runCreate(ctx, &createRun{
+		tenant: tenant, target: domain.DBTargetFor(tenant, cell), saga: saga, admin: firstAdmin(req, tenant, saga),
 	})
-	return tenant, nil
 }
 
 // targetFor localiza la base de un tenant existente en su celda.
@@ -207,44 +217,23 @@ func (uc *OrganizationUseCase) GetTenant(ctx context.Context, id uuid.UUID) (*do
 	return uc.tenants.GetByID(ctx, id)
 }
 
-// ReseedAllRoles reaplica el catalogo de roles de sistema a TODOS los tenants.
-//
-// Corre al arrancar. Sin esto, un permiso nuevo del catalogo solo llegaba a un tenant
-// si alguien entraba y pulsaba "resembrar": el catalogo decia ser la fuente de verdad
-// y en la practica lo era solo para los tenants creados despues del cambio.
-//
-// Es idempotente y toca solo el registro, no la base de cada tenant: no compite con el
-// barrido de migraciones. Un tenant que falle no detiene a los demas; se cuenta y se
-// sigue, porque dejar a los otros sin su catalogo por culpa de uno seria convertir un
-// fallo local en uno general.
-func (uc *OrganizationUseCase) ReseedAllRoles(ctx context.Context) (int, int) {
-	if uc.roleSeeder == nil {
-		return 0, 0
-	}
-	var ok, failed int
-	err := uc.eachTenant(ctx, func(t *domain.Tenant) {
-		if err := uc.roleSeeder.SeedDefaultRoles(ctx, t.ID); err != nil {
-			uc.logger.Warn("catalogo de roles no aplicado",
-				zap.String("tenant", t.Slug), zap.Error(err))
-			failed++
-			return
-		}
-		ok++
-	})
-	if err != nil {
-		uc.logger.Error("no se pudo listar tenants para resembrar roles", zap.Error(err))
-	}
-	return ok, failed
+// ReseedAllRoles pide a access-control que conceda a los roles del sistema de todas las
+// empresas los permisos del catalogo que les falten. Corre al arrancar, despues de migrar el
+// registro: es lo que hace que un permiso nuevo llegue a las empresas que ya existian sin
+// que nadie tenga que pulsar nada. Devuelve cuantos roles recorrio.
+func (uc *OrganizationUseCase) ReseedAllRoles(ctx context.Context) (int, error) {
+	return uc.access.ReseedSystemRoles(ctx)
 }
 
-// ReseedRoles reaplica el catalogo de roles de sistema a un tenant, rellenando los
-// permisos que falten de forma idempotente. Es la operacion de reparacion que sustituye
-// a cualquier arreglo SQL a mano: el mapeo rol-permiso vive una sola vez, en el seeder.
+// ReseedRoles repara el rol del sistema de un tenant: access-control lo vuelve a sembrar,
+// de forma idempotente, con los permisos que le falten. Sustituye a cualquier arreglo SQL
+// a mano: el mapeo rol-permiso vive una sola vez, en el catalogo de access-control.
 func (uc *OrganizationUseCase) ReseedRoles(ctx context.Context, tenantID uuid.UUID) error {
 	if _, err := uc.tenants.GetByID(ctx, tenantID); err != nil {
 		return domain.ErrTenantNotFound
 	}
-	return uc.roleSeeder.SeedDefaultRoles(ctx, tenantID)
+	_, err := uc.access.SeedTenantAdminRole(ctx, tenantID)
+	return err
 }
 
 type UpdateTenantRequest struct {
@@ -289,6 +278,9 @@ func (uc *OrganizationUseCase) SetTenantStatus(ctx context.Context, id uuid.UUID
 	if tenant.Status == status {
 		return tenant, nil
 	}
+	if err := uc.requireNoPendingSaga(ctx, id); err != nil {
+		return nil, err
+	}
 	previous := tenant.Status
 	tenant.Status = status
 	if err := uc.tenants.Update(ctx, tenant); err != nil {
@@ -300,13 +292,31 @@ func (uc *OrganizationUseCase) SetTenantStatus(ctx context.Context, id uuid.UUID
 	return tenant, nil
 }
 
+// requireNoPendingSaga rechaza cambiar a mano el estado de una empresa con un alta sin
+// completar o una baja en curso: solo la saga la activa, y activarla a medias la pondria en
+// servicio sin administrador.
+func (uc *OrganizationUseCase) requireNoPendingSaga(ctx context.Context, id uuid.UUID) error {
+	saga, err := uc.sagas.Get(ctx, id)
+	switch {
+	case errors.Is(err, domain.ErrSagaNotFound):
+		return nil
+	case err != nil:
+		return fmt.Errorf("saga de la empresa: %w", err)
+	case saga.Pending():
+		return domain.ErrTenantBusy
+	}
+	return nil
+}
+
 func (uc *OrganizationUseCase) ListTenants(ctx context.Context, page, pageSize int) ([]*domain.Tenant, int64, error) {
 	page, pageSize = normalizePage(page, pageSize)
 	return uc.tenants.List(ctx, (page-1)*pageSize, pageSize)
 }
 
-// DeleteTenant retira del registro un tenant que ya no esta activo. La base fisica se
-// conserva: borrarla es una decision operativa aparte, con respaldo previo.
+// DeleteTenant retira del registro un tenant que ya no esta activa, como saga que se retoma
+// hasta terminar: access-control retira sus roles, identity sus cuentas y organization su
+// registro. La base fisica se conserva (borrarla es una decision operativa aparte, con
+// respaldo previo), salvo la de un alta que nunca llego a completarse.
 func (uc *OrganizationUseCase) DeleteTenant(ctx context.Context, id uuid.UUID) error {
 	tenant, err := uc.tenants.GetByID(ctx, id)
 	if err != nil {
@@ -315,7 +325,13 @@ func (uc *OrganizationUseCase) DeleteTenant(ctx context.Context, id uuid.UUID) e
 	if tenant.IsActive() {
 		return domain.ErrTenantStillActive
 	}
-	return uc.tenants.Delete(ctx, id)
+	saga, err := uc.claimDeletion(ctx, id)
+	if err != nil {
+		return err
+	}
+	runCtx, cancel := uc.sagaContext(ctx)
+	defer cancel()
+	return uc.runDelete(runCtx, tenant, saga)
 }
 
 // eachTenant recorre todos los tenants pagina a pagina, esten en el estado que esten.

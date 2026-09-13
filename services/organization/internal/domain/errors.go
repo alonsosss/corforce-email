@@ -26,4 +26,33 @@ var (
 	ErrNothingToUpdate    = errors.New("la peticion no trae ningun campo que actualizar")
 	ErrAdminUserRequired  = errors.New("el alta exige el correo y la contrasena del primer administrador")
 	ErrAdminPasswordShort = errors.New("la contrasena del primer administrador es demasiado corta")
+
+	// ErrTenantBusy: otra peticion o instancia tiene en curso el alta o la baja de la empresa.
+	ErrTenantBusy = errors.New("la empresa tiene un alta o una baja en curso")
+	// ErrLeaseLost: la saga paso a otra instancia mientras esta la ejecutaba (su arriendo
+	// vencio); esta deja de escribirla.
+	ErrLeaseLost = errors.New("la saga de la empresa paso a otra instancia")
+	// ErrSagaNotFound: la empresa no tiene saga (se dio de alta antes de que existieran).
+	ErrSagaNotFound = errors.New("la empresa no tiene saga de alta ni de baja")
+	// ErrDatabaseOccupied: ya existe una base con el nombre de la empresa y no la creo su
+	// alta, como la que se conserva de una empresa borrada con el mismo slug.
+	ErrDatabaseOccupied = errors.New("ya existe una base con ese nombre que no pertenece a esta alta")
+	// ErrProvisioningMismatch: el reintento de un alta pendiente pide otra celda.
+	ErrProvisioningMismatch = errors.New("el alta pendiente de esa empresa se pidio en otra celda")
+	// ErrAdminRejected: identity rechazo al primer administrador (su contrasena no cumple la
+	// politica o aparece en filtraciones). Lo lleva AdminRejectedError.
+	ErrAdminRejected = errors.New("identity rechazo al primer administrador")
+	// ErrAdminUserConflict: identity ya tiene otro primer usuario para la empresa.
+	ErrAdminUserConflict = errors.New("la empresa ya tiene un primer administrador distinto")
 )
+
+// AdminRejectedError lleva el codigo y el mensaje con los que identity rechazo al primer
+// administrador, para responderlos tal cual a quien pidio el alta.
+type AdminRejectedError struct {
+	Code    string
+	Message string
+}
+
+func (e *AdminRejectedError) Error() string { return ErrAdminRejected.Error() + ": " + e.Message }
+
+func (e *AdminRejectedError) Is(target error) bool { return target == ErrAdminRejected }

@@ -86,6 +86,16 @@ func main() {
 	breachChecker := pwned.NewFromEnv()
 	logger.Info("contrasenas filtradas", zap.Bool("comprobacion_activa", breachChecker.Enabled()))
 	userUC := app.NewUserUseCase(userRepo, policyRepo, historyRepo, auditRepo, eventPub, breachChecker, logger)
+	tenantUsersUC := app.NewTenantUsersUseCase(app.TenantUsersDeps{
+		Users:       userRepo,
+		TenantUsers: userRepo,
+		Tenants:     tenantRepo,
+		Policies:    policyRepo,
+		Breach:      breachChecker,
+		Audit:       auditRepo,
+		Events:      eventPub,
+		Logger:      logger,
+	})
 
 	mailer := mailerclient.New()
 	if !mailer.Configured() {
@@ -125,6 +135,9 @@ func main() {
 	limiter := middleware.NewRateLimiter(60, time.Minute)
 	r.Use(limiter.Limit)
 	r.Mount("/", handler.Routes())
+	// Interno: las cuentas de una empresa entera, que orquesta organization al darla de
+	// alta y de baja. Mismo token interno; ninguna persona llega aqui.
+	r.Mount("/internal/identity", identityhttp.NewInternalHandler(tenantUsersUC).Routes())
 
 	port := 8001
 	if p := os.Getenv("IDENTITY_PORT"); p != "" {

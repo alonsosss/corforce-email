@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/alonsosss/corforce-email/services/access-control/internal/domain"
@@ -65,13 +66,15 @@ func (r *RoleRepo) Create(ctx context.Context, role *domain.Role) error {
 	return err
 }
 
+// GetByID distingue el rol que no existe (ErrRoleNotFound) de un fallo de la base: quien
+// trata "no existe" como exito (retirar una asignacion) no debe tomar por exito una caida.
 func (r *RoleRepo) GetByID(ctx context.Context, id uuid.UUID) (*domain.Role, error) {
 	role, err := scanRole(r.pool.QueryRow(ctx,
 		`SELECT `+roleColumns+` FROM access_control.roles WHERE id = $1`, id))
-	if err != nil {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, domain.ErrRoleNotFound
 	}
-	return role, nil
+	return role, err
 }
 
 func (r *RoleRepo) GetByName(ctx context.Context, tenantID uuid.UUID, name string) (*domain.Role, error) {
@@ -201,11 +204,17 @@ func (r *UserRoleRepo) TokensValidFrom(ctx context.Context, userID uuid.UUID) (t
 	return validFrom, err
 }
 
+// Assign sin actor (una asignacion de la plataforma, como la del primer administrador) deja
+// assigned_by en NULL en vez de guardar el uuid cero como si fuera alguien.
 func (r *UserRoleRepo) Assign(ctx context.Context, userID, roleID, assignedBy uuid.UUID) error {
+	var by any
+	if assignedBy != uuid.Nil {
+		by = assignedBy
+	}
 	_, err := r.pool.Exec(ctx,
 		`INSERT INTO access_control.user_roles (user_id, role_id, assigned_by)
 		 VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
-		userID, roleID, assignedBy,
+		userID, roleID, by,
 	)
 	return err
 }

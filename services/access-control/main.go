@@ -10,11 +10,13 @@ import (
 	"github.com/alonsosss/corforce-email/pkg/config"
 	"github.com/alonsosss/corforce-email/pkg/db"
 	"github.com/alonsosss/corforce-email/pkg/middleware"
+	"github.com/alonsosss/corforce-email/pkg/response"
 	"github.com/alonsosss/corforce-email/pkg/server"
 	handler "github.com/alonsosss/corforce-email/services/access-control/internal/adapters/http"
 	"github.com/alonsosss/corforce-email/services/access-control/internal/adapters/postgres"
 	redisadapter "github.com/alonsosss/corforce-email/services/access-control/internal/adapters/redis"
 	"github.com/alonsosss/corforce-email/services/access-control/internal/app"
+	"github.com/alonsosss/corforce-email/services/access-control/internal/ports"
 	"github.com/go-chi/chi/v5"
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
@@ -23,6 +25,7 @@ import (
 func main() {
 	logger, _ := zap.NewProduction()
 	defer logger.Sync()
+	response.SetUnexpectedLogger(logger)
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -56,7 +59,8 @@ func main() {
 	})
 
 	// Los nombres de los roles estructurales llegan del paquete compartido: son los
-	// mismos que reconoce el gateway y los que siembra organization al crear el tenant.
+	// mismos que reconoce el gateway, y tenant_admin es el que este servicio siembra en
+	// cada empresa nueva cuando organization se lo pide.
 	systemRoles := app.SystemRoles{
 		Superadmin:  middleware.RoleSuperadmin,
 		TenantAdmin: middleware.RoleTenantAdmin,
@@ -64,15 +68,24 @@ func main() {
 
 	// Sin Redis el servicio sigue funcionando: la politica se resuelve en cada consulta
 	// contra la base, sin cache.
-	var rbacUC *app.RBACUseCase
+	var userRoles ports.UserRoleRepository = userRoleRepo
+	var policyCache ports.PolicyCache
 	if err := rdb.Ping(ctx).Err(); err != nil {
 		logger.Warn("redis unavailable, running without policy cache", zap.Error(err))
 		rdb.Close()
-		rbacUC = app.NewRBACUseCase(roleRepo, permRepo, rolePermRepo, userRoleRepo, denialRepo, moduleGate, systemRoles, logger)
 	} else {
 		cachedRepo := redisadapter.NewCachedUserRoleRepo(userRoleRepo, rdb)
-		rbacUC = app.NewRBACUseCase(roleRepo, permRepo, rolePermRepo, cachedRepo, denialRepo, moduleGate, systemRoles, logger)
+		userRoles, policyCache = cachedRepo, cachedRepo
 	}
+	rbacUC := app.NewRBACUseCase(roleRepo, permRepo, rolePermRepo, userRoles, denialRepo, moduleGate, systemRoles, logger)
+	tenantRolesUC := app.NewTenantRolesUseCase(app.TenantRolesDeps{
+		Lifecycle:   postgres.NewTenantRoleLifecycleRepo(pool.Pool),
+		Roles:       roleRepo,
+		UserRoles:   userRoles,
+		Cache:       policyCache,
+		Tenants:     postgres.NewTenantDirectory(pool.Pool),
+		SystemRoles: systemRoles,
+	})
 
 	h := handler.NewHandler(rbacUC)
 
@@ -85,6 +98,9 @@ func main() {
 	limiter := middleware.NewRateLimiter(100, time.Minute)
 	r.Use(limiter.Limit)
 	r.Mount("/", h.Routes())
+	// Interno: el ciclo de vida de los roles de una empresa entera, que orquesta
+	// organization. Mismo token interno; ninguna persona llega aqui.
+	r.Mount("/internal/access-control", handler.NewInternalHandler(tenantRolesUC).Routes())
 
 	port := 8002
 	if p := os.Getenv("ACCESS_CONTROL_PORT"); p != "" {

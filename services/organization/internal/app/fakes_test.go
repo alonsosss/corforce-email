@@ -2,9 +2,12 @@ package app
 
 import (
 	"context"
+	"errors"
 	"sort"
+	"time"
 
 	"github.com/alonsosss/corforce-email/services/organization/internal/domain"
+	"github.com/alonsosss/corforce-email/services/organization/internal/ports"
 	"github.com/google/uuid"
 )
 
@@ -13,11 +16,6 @@ import (
 type fakeTenantRepo struct {
 	tenants []*domain.Tenant
 	updated []*domain.Tenant
-}
-
-func (f *fakeTenantRepo) Create(_ context.Context, t *domain.Tenant) error {
-	f.tenants = append(f.tenants, t)
-	return nil
 }
 
 func (f *fakeTenantRepo) GetByID(_ context.Context, id uuid.UUID) (*domain.Tenant, error) {
@@ -54,14 +52,13 @@ func (f *fakeTenantRepo) Update(_ context.Context, t *domain.Tenant) error {
 	return nil
 }
 
-func (f *fakeTenantRepo) Delete(_ context.Context, id uuid.UUID) error {
+func (f *fakeTenantRepo) remove(id uuid.UUID) {
 	for i, t := range f.tenants {
 		if t.ID == id {
 			f.tenants = append(f.tenants[:i], f.tenants[i+1:]...)
-			return nil
+			return
 		}
 	}
-	return domain.ErrTenantNotFound
 }
 
 // fakeCellRepo es el directorio de celdas en memoria.
@@ -95,27 +92,228 @@ func (f *fakeCellRepo) GetByCode(_ context.Context, code string) (*domain.Cell, 
 func (f *fakeCellRepo) List(context.Context) ([]*domain.Cell, error) { return f.cells, nil }
 func (f *fakeCellRepo) Update(context.Context, *domain.Cell) error   { return nil }
 
-// fakeProvisioner devuelve por nombre de base el resultado que se quiere simular y
-// registra que bases se crearon, migraron o borraron.
+// callLog registra, en orden, lo que la saga pide a cada dueno de datos (la base de la
+// empresa, access-control e identity), y hace fallar la llamada que se le indique.
+type callLog struct {
+	calls []string
+	fail  map[string]int
+}
+
+// fakeError es el fallo simulado de una llamada: su nombre queda en el error.
+type fakeError string
+
+func (e fakeError) Error() string { return "fallo simulado en " + string(e) }
+
+// failOn hace fallar las proximas times llamadas con ese nombre.
+func (l *callLog) failOn(name string, times int) {
+	if l.fail == nil {
+		l.fail = map[string]int{}
+	}
+	l.fail[name] = times
+}
+
+func (l *callLog) record(name string) error {
+	l.calls = append(l.calls, name)
+	if n := l.fail[name]; n > 0 {
+		l.fail[name] = n - 1
+		return fakeError(name)
+	}
+	return nil
+}
+
+// fakeSagaRepo guarda las sagas en memoria con la semantica de arriendo del repositorio
+// real y con su propio reloj: las pruebas no dependen de la hora del sistema. Guarda
+// copias, como la base: la saga del caso de uso y la persistida son objetos distintos.
+type fakeSagaRepo struct {
+	tenants *fakeTenantRepo
+	sagas   map[uuid.UUID]*domain.TenantSaga
+	now     time.Time
+	// saveFailAt hace fallar el Save numero saveFailAt (1 = el primero): el registro cae
+	// justo despues de un paso, que es lo que ve la saga cuando su instancia muere ahi.
+	saves       int
+	saveFailAt  int
+	completeErr error
+}
+
+func newFakeSagaRepo(tenants *fakeTenantRepo) *fakeSagaRepo {
+	return &fakeSagaRepo{
+		tenants: tenants,
+		sagas:   map[uuid.UUID]*domain.TenantSaga{},
+		now:     time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC),
+	}
+}
+
+func (f *fakeSagaRepo) leased(s *domain.TenantSaga) bool {
+	return s.LeaseUntil != nil && s.LeaseUntil.After(f.now)
+}
+
+func (f *fakeSagaRepo) setLease(s *domain.TenantSaga, d time.Duration) {
+	if d <= 0 {
+		s.LeaseUntil = nil
+		return
+	}
+	until := f.now.Add(d)
+	s.LeaseUntil = &until
+}
+
+func (f *fakeSagaRepo) store(s *domain.TenantSaga) {
+	c := *s
+	f.sagas[s.TenantID] = &c
+}
+
+func (f *fakeSagaRepo) BeginCreate(_ context.Context, t *domain.Tenant, s *domain.TenantSaga, lease time.Duration) error {
+	for _, existing := range f.tenants.tenants {
+		if existing.Slug == t.Slug || existing.DBName == t.DBName {
+			return domain.ErrTenantAlreadyExists
+		}
+	}
+	f.tenants.tenants = append(f.tenants.tenants, t)
+	s.LeaseToken, s.Attempts = uuid.New(), 1
+	f.setLease(s, lease)
+	f.store(s)
+	return nil
+}
+
+func (f *fakeSagaRepo) Insert(_ context.Context, s *domain.TenantSaga, lease time.Duration) error {
+	if _, ok := f.sagas[s.TenantID]; ok {
+		return domain.ErrTenantBusy
+	}
+	s.LeaseToken, s.Attempts = uuid.New(), 1
+	f.setLease(s, lease)
+	f.store(s)
+	return nil
+}
+
+func (f *fakeSagaRepo) Get(_ context.Context, id uuid.UUID) (*domain.TenantSaga, error) {
+	s, ok := f.sagas[id]
+	if !ok {
+		return nil, domain.ErrSagaNotFound
+	}
+	c := *s
+	return &c, nil
+}
+
+func (f *fakeSagaRepo) Claim(_ context.Context, id uuid.UUID, lease time.Duration) (*domain.TenantSaga, error) {
+	s, ok := f.sagas[id]
+	if !ok {
+		return nil, domain.ErrSagaNotFound
+	}
+	if f.leased(s) {
+		return nil, domain.ErrTenantBusy
+	}
+	s.LeaseToken = uuid.New()
+	s.Attempts++
+	f.setLease(s, lease)
+	c := *s
+	return &c, nil
+}
+
+func (f *fakeSagaRepo) Save(_ context.Context, s *domain.TenantSaga, lease time.Duration) error {
+	f.saves++
+	if f.saveFailAt > 0 && f.saves == f.saveFailAt {
+		return errors.New("registro caido")
+	}
+	stored, ok := f.sagas[s.TenantID]
+	if !ok || stored.LeaseToken != s.LeaseToken {
+		return domain.ErrLeaseLost
+	}
+	f.setLease(s, lease)
+	f.store(s)
+	return nil
+}
+
+func (f *fakeSagaRepo) CompleteCreate(_ context.Context, s *domain.TenantSaga) error {
+	if f.completeErr != nil {
+		return f.completeErr
+	}
+	stored, ok := f.sagas[s.TenantID]
+	if !ok || stored.LeaseToken != s.LeaseToken {
+		return domain.ErrLeaseLost
+	}
+	s.State, s.Step, s.LastError, s.LeaseUntil = domain.SagaCompleted, domain.StepActivated, "", nil
+	f.store(s)
+	for _, t := range f.tenants.tenants {
+		if t.ID == s.TenantID {
+			t.Status = domain.TenantStatusActive
+		}
+	}
+	return nil
+}
+
+func (f *fakeSagaRepo) DeleteTenant(_ context.Context, s *domain.TenantSaga) error {
+	stored, ok := f.sagas[s.TenantID]
+	if !ok || stored.LeaseToken != s.LeaseToken {
+		return domain.ErrLeaseLost
+	}
+	delete(f.sagas, s.TenantID)
+	f.tenants.remove(s.TenantID)
+	return nil
+}
+
+func (f *fakeSagaRepo) ListStale(_ context.Context, limit int) ([]*domain.TenantSaga, error) {
+	var out []*domain.TenantSaga
+	for _, s := range f.sagas {
+		if (s.State == domain.SagaRunning || s.State == domain.SagaCompensating) && !f.leased(s) {
+			c := *s
+			out = append(out, &c)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].TenantID.String() < out[j].TenantID.String() })
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
+// fakeProvisioner simula las bases de la celda con su marca: owner guarda, por base, la
+// empresa que la creo (uuid.Nil para una base ajena, sin marca).
 type fakeProvisioner struct {
+	log     *callLog
 	runErr  map[string]error
 	status  map[string]domain.TenantMigrationStatus
+	owner   map[string]uuid.UUID
 	ran     []string
 	created []string
 	dropped []string
 }
 
-func (f *fakeProvisioner) CreateDatabase(_ context.Context, target domain.DBTarget) error {
+func (f *fakeProvisioner) note(name string) error {
+	if f.log == nil {
+		return nil
+	}
+	return f.log.record(name)
+}
+
+func (f *fakeProvisioner) CreateDatabase(_ context.Context, target domain.DBTarget, tenantID uuid.UUID) error {
+	if err := f.note("db.create"); err != nil {
+		return err
+	}
+	if f.owner == nil {
+		f.owner = map[string]uuid.UUID{}
+	}
+	if owner, ok := f.owner[target.DBName]; ok && owner != tenantID {
+		return domain.ErrDatabaseOccupied
+	}
+	f.owner[target.DBName] = tenantID
 	f.created = append(f.created, target.DBName)
 	return nil
 }
 
-func (f *fakeProvisioner) DropDatabase(_ context.Context, target domain.DBTarget) error {
-	f.dropped = append(f.dropped, target.DBName)
+func (f *fakeProvisioner) DropOwnedDatabase(_ context.Context, target domain.DBTarget, tenantID uuid.UUID) error {
+	if err := f.note("db.drop"); err != nil {
+		return err
+	}
+	if owner, ok := f.owner[target.DBName]; ok && owner == tenantID {
+		delete(f.owner, target.DBName)
+		f.dropped = append(f.dropped, target.DBName)
+	}
 	return nil
 }
 
 func (f *fakeProvisioner) RunMigrations(_ context.Context, target domain.DBTarget) error {
+	if err := f.note("db.migrate"); err != nil {
+		return err
+	}
 	f.ran = append(f.ran, target.DBName)
 	return f.runErr[target.DBName]
 }
@@ -124,21 +322,105 @@ func (f *fakeProvisioner) MigrationStatus(_ context.Context, target domain.DBTar
 	return f.status[target.DBName], nil
 }
 
-type fakeRoleSeeder struct{ seeded []uuid.UUID }
+// fakeAccess hace de access-control: el rol del sistema de cada empresa y las asignaciones.
+type fakeAccess struct {
+	log      *callLog
+	roles    map[uuid.UUID]uuid.UUID
+	assigned map[uuid.UUID]uuid.UUID
+	reseeds  int
+}
 
-func (f *fakeRoleSeeder) SeedDefaultRoles(_ context.Context, tenantID uuid.UUID) error {
-	f.seeded = append(f.seeded, tenantID)
+func newFakeAccess(log *callLog) *fakeAccess {
+	return &fakeAccess{log: log, roles: map[uuid.UUID]uuid.UUID{}, assigned: map[uuid.UUID]uuid.UUID{}}
+}
+
+func (f *fakeAccess) SeedTenantAdminRole(_ context.Context, tenantID uuid.UUID) (uuid.UUID, error) {
+	if err := f.log.record("access.seed"); err != nil {
+		return uuid.Nil, err
+	}
+	if id, ok := f.roles[tenantID]; ok {
+		return id, nil
+	}
+	id := uuid.New()
+	f.roles[tenantID] = id
+	return id, nil
+}
+
+func (f *fakeAccess) ReseedSystemRoles(context.Context) (int, error) {
+	if err := f.log.record("access.reseed"); err != nil {
+		return 0, err
+	}
+	f.reseeds++
+	return len(f.roles), nil
+}
+
+func (f *fakeAccess) AssignRole(_ context.Context, tenantID, userID, roleID uuid.UUID) error {
+	if err := f.log.record("access.assign"); err != nil {
+		return err
+	}
+	if f.roles[tenantID] != roleID {
+		return errors.New("rol de otra empresa")
+	}
+	f.assigned[userID] = roleID
 	return nil
 }
 
-type fakeAdminSeeder struct {
-	tenantID uuid.UUID
-	email    string
-	password string
+func (f *fakeAccess) RevokeRole(_ context.Context, _, userID, _ uuid.UUID) error {
+	if err := f.log.record("access.revoke"); err != nil {
+		return err
+	}
+	delete(f.assigned, userID)
+	return nil
 }
 
-func (f *fakeAdminSeeder) CreateAdminUser(_ context.Context, tenantID uuid.UUID, email, password, _, _ string) error {
-	f.tenantID, f.email, f.password = tenantID, email, password
+func (f *fakeAccess) RemoveTenantRoles(_ context.Context, tenantID uuid.UUID) error {
+	if err := f.log.record("access.remove"); err != nil {
+		return err
+	}
+	roleID := f.roles[tenantID]
+	delete(f.roles, tenantID)
+	for user, role := range f.assigned {
+		if role == roleID {
+			delete(f.assigned, user)
+		}
+	}
+	return nil
+}
+
+// fakeIdentity hace de identity: el primer usuario de cada empresa, con la misma regla de
+// repeticion (mismo id, correo y contrasena) que el servicio real.
+type fakeIdentity struct {
+	log    *callLog
+	users  map[uuid.UUID]ports.FirstAdmin
+	reject *domain.AdminRejectedError
+}
+
+func newFakeIdentity(log *callLog) *fakeIdentity {
+	return &fakeIdentity{log: log, users: map[uuid.UUID]ports.FirstAdmin{}}
+}
+
+func (f *fakeIdentity) CreateFirstUser(_ context.Context, tenantID uuid.UUID, admin ports.FirstAdmin) error {
+	if err := f.log.record("identity.create"); err != nil {
+		return err
+	}
+	if f.reject != nil {
+		return f.reject
+	}
+	if u, ok := f.users[tenantID]; ok {
+		if u.UserID != admin.UserID || u.Email != admin.Email || u.Password != admin.Password {
+			return domain.ErrAdminUserConflict
+		}
+		return nil
+	}
+	f.users[tenantID] = admin
+	return nil
+}
+
+func (f *fakeIdentity) RemoveTenantUsers(_ context.Context, tenantID uuid.UUID) error {
+	if err := f.log.record("identity.remove"); err != nil {
+		return err
+	}
+	delete(f.users, tenantID)
 	return nil
 }
 

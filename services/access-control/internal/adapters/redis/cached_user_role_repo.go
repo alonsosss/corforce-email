@@ -100,6 +100,13 @@ func (r *CachedUserRoleRepo) ListUsersWithPermission(ctx context.Context, tenant
 	return r.inner.ListUsersWithPermission(ctx, tenantID, module, action)
 }
 
+// InvalidateUsers descarta la politica cacheada de cada usuario, en todas sus empresas.
+func (r *CachedUserRoleRepo) InvalidateUsers(ctx context.Context, userIDs []uuid.UUID) {
+	for _, id := range userIDs {
+		r.invalidateUser(ctx, id)
+	}
+}
+
 // invalidateUser borra las politicas cacheadas del usuario en todos los tenants. Recorre
 // con SCAN y no con KEYS para no bloquear a Redis con un barrido completo del espacio de
 // claves; la invalidacion es best-effort porque la entrada expira sola en policyTTL.

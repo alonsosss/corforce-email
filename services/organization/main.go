@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log"
+	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -18,7 +19,9 @@ import (
 	"github.com/alonsosss/corforce-email/pkg/middleware"
 	"github.com/alonsosss/corforce-email/pkg/response"
 	"github.com/alonsosss/corforce-email/pkg/server"
+	"github.com/alonsosss/corforce-email/services/organization/internal/adapters/accesscontrolcli"
 	handler "github.com/alonsosss/corforce-email/services/organization/internal/adapters/http"
+	"github.com/alonsosss/corforce-email/services/organization/internal/adapters/identitycli"
 	natsadapter "github.com/alonsosss/corforce-email/services/organization/internal/adapters/nats"
 	"github.com/alonsosss/corforce-email/services/organization/internal/adapters/postgres"
 	"github.com/alonsosss/corforce-email/services/organization/internal/app"
@@ -89,6 +92,99 @@ func envOrDefault(key, fallback string) string {
 	return fallback
 }
 
+// envDuration lee una duracion (5m, 30s). Un valor que no se entiende se avisa y toma el
+// de por defecto: arrancar con un cero dejaria la saga sin arriendo.
+func envDuration(key string, fallback time.Duration, logger *zap.Logger) time.Duration {
+	raw := os.Getenv(key)
+	if raw == "" {
+		return fallback
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil || d <= 0 {
+		logger.Warn("duracion no valida; se usa la de por defecto",
+			zap.String("variable", key), zap.String("valor", raw), zap.Duration("por_defecto", fallback))
+		return fallback
+	}
+	return d
+}
+
+// serviceURL resuelve la direccion interna de otro servicio: <SERVICIO>_URL si esta, o
+// <SERVICIO>_HOST y <SERVICIO>_HOST_PORT, las mismas que el gateway lee de routes.json, con
+// su nombre y puerto de compose por defecto.
+func serviceURL(prefix, defaultHost, defaultPort string) string {
+	if u := os.Getenv(prefix + "_URL"); u != "" {
+		return u
+	}
+	return "http://" + envOrDefault(prefix+"_HOST", defaultHost) + ":" + envOrDefault(prefix+"_HOST_PORT", defaultPort)
+}
+
+// waitReady espera a que el servicio responda en /healthz. Va por un cliente aparte a
+// proposito: los fallos de arranque, contados por el cliente que comparte la saga, abririan
+// su cortacircuitos y un alta pedida en esos segundos fallaria sin llegar a intentarse.
+func waitReady(ctx context.Context, baseURL string) error {
+	probe := &http.Client{Timeout: 2 * time.Second}
+	url := strings.TrimRight(baseURL, "/") + "/healthz"
+	wait := time.Second
+	for {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		if err != nil {
+			return err
+		}
+		if resp, err := probe.Do(req); err == nil {
+			_ = resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				return nil
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(wait):
+		}
+		if wait < 10*time.Second {
+			wait *= 2
+		}
+	}
+}
+
+// reseedSystemRoles pide la resiembra hasta que access-control la aplique: al arrancar la
+// plataforma, organization migra el registro antes de que access-control este arriba.
+func reseedSystemRoles(ctx context.Context, uc *app.OrganizationUseCase, logger *zap.Logger) {
+	wait := 2 * time.Second
+	for {
+		roles, err := uc.ReseedAllRoles(ctx)
+		if err == nil {
+			logger.Info("catalogo de permisos aplicado al rol del sistema de las empresas", zap.Int("roles", roles))
+			return
+		}
+		logger.Warn("resiembra del rol del sistema pendiente; se reintenta", zap.Duration("espera", wait), zap.Error(err))
+		select {
+		case <-ctx.Done():
+			logger.Error("resiembra del rol del sistema sin aplicar", zap.Error(ctx.Err()))
+			return
+		case <-time.After(wait):
+		}
+		if wait < 30*time.Second {
+			wait *= 2
+		}
+	}
+}
+
+// recoverSagas retoma cada intervalo las sagas de empresa sin dueno. Varias replicas pueden
+// hacerlo a la vez: cada saga la toma una sola por su arriendo. La primera pasada espera un
+// intervalo: al arrancar la plataforma, access-control e identity aun no responden.
+func recoverSagas(uc *app.OrganizationUseCase, interval time.Duration, logger *zap.Logger) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for range ticker.C {
+		if n, err := uc.RecoverSagas(context.Background()); err != nil {
+			logger.Warn("barrido de sagas de empresa fallido", zap.Error(err))
+		} else if n > 0 {
+			logger.Info("sagas de empresa retomadas", zap.Int("sagas", n))
+		}
+	}
+}
+
 func main() {
 	logger, _ := zap.NewProduction()
 	defer logger.Sync()
@@ -150,31 +246,44 @@ func main() {
 		logger.Warn("DEFAULT_CELL_CODE no configurado: cada alta de tenant debe indicar cell_code")
 	}
 
+	// El rol del sistema, sus asignaciones y las cuentas de cada empresa son de
+	// access-control e identity: la saga se los pide por su API interna, con el mismo
+	// token interno que el gateway.
+	internalToken := os.Getenv("INTERNAL_GATEWAY_TOKEN")
+	accessControlURL := serviceURL("ACCESS_CONTROL", "access-control", "8002")
 	uc := app.NewOrganizationUseCase(app.Dependencies{
 		Tenants:         postgres.NewTenantRepo(pool.Pool),
 		Cells:           postgres.NewCellRepo(pool.Pool),
+		Sagas:           postgres.NewTenantSagaRepo(pool.Pool),
 		Provisioner:     provisioner,
-		RoleSeeder:      postgres.NewRoleSeeder(pool.Pool),
-		AdminSeeder:     postgres.NewAdminUserSeeder(pool.Pool),
+		Access:          accesscontrolcli.New(accessControlURL, internalToken),
+		Identity:        identitycli.New(serviceURL("IDENTITY", "identity", "8001"), internalToken),
 		Modules:         postgres.NewModulesRepo(pool.Pool),
 		Publisher:       publisher,
 		DefaultCellCode: defaultCellCode,
+		SagaLease:       envDuration("ORGANIZATION_SAGA_LEASE", 5*time.Minute, logger),
 		Logger:          logger,
 	})
 
-	// Reaplica el catalogo de roles a todos los tenants. Va aparte del barrido de
-	// migraciones y antes que el: solo toca el registro, no la base de cada tenant, y
-	// es lo que hace que un permiso nuevo llegue a los tenants que YA existian sin que
-	// nadie tenga que entrar a pulsar nada.
+	// Reaplica el catalogo de permisos al rol del sistema de todas las empresas. Va aparte
+	// del barrido de migraciones y antes que el, despues de migrar el registro: es lo que
+	// hace que un permiso nuevo llegue a las empresas que YA existian sin que nadie tenga
+	// que entrar a pulsar nada.
 	if os.Getenv("RUN_ROLE_RESEED") != "false" {
 		go func() {
 			seedCtx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 			defer cancel()
-			ok, failed := uc.ReseedAllRoles(seedCtx)
-			logger.Info("catalogo de roles aplicado a los tenants",
-				zap.Int("ok", ok), zap.Int("failed", failed))
+			if err := waitReady(seedCtx, accessControlURL); err != nil {
+				logger.Error("access-control no respondio; resiembra del rol del sistema sin aplicar", zap.Error(err))
+				return
+			}
+			reseedSystemRoles(seedCtx, uc, logger)
 		}()
 	}
+
+	// Sagas de alta y baja que se quedaron sin dueno (una instancia murio a mitad o un
+	// fallo solto el arriendo): se retoman cada intervalo.
+	go recoverSagas(uc, envDuration("ORGANIZATION_SAGA_SWEEP_INTERVAL", time.Minute, logger), logger)
 
 	// Aplica migraciones canonicas pendientes a los tenants existentes al arrancar.
 	// Corre EN SEGUNDO PLANO para no retrasar el health-check ni el arranque del HTTP, es

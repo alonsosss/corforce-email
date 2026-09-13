@@ -21,13 +21,57 @@ func NewUserRepo(pool *pgxpool.Pool) *UserRepo {
 	return &UserRepo{pool: pool}
 }
 
+const insertUserSQL = `INSERT INTO identity.users (id, tenant_id, email, password_hash, first_name, last_name, status, mfa_enabled)
+ VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
+
+func insertUserArgs(u *domain.User) []any {
+	return []any{u.ID, u.TenantID, u.Email, u.PasswordHash, u.FirstName, u.LastName, u.Status, u.MFAEnabled}
+}
+
 func (r *UserRepo) Create(ctx context.Context, u *domain.User) error {
-	_, err := r.pool.Exec(ctx,
-		`INSERT INTO identity.users (id, tenant_id, email, password_hash, first_name, last_name, status, mfa_enabled)
- VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-		u.ID, u.TenantID, u.Email, u.PasswordHash, u.FirstName, u.LastName, u.Status, u.MFAEnabled,
-	)
+	_, err := r.pool.Exec(ctx, insertUserSQL, insertUserArgs(u)...)
 	return err
+}
+
+// firstUserLockSpace separa el candado del alta del primer usuario de cualquier otro
+// candado asesor de la base: la clave es (espacio, hash de la empresa).
+const firstUserLockSpace int32 = 0x69647530
+
+// CreateFirst serializa por empresa con un candado de transaccion: dos altas simultaneas
+// del primer usuario no pueden ver las dos la empresa vacia. Vale con PgBouncer en modo
+// transaccion, porque el candado muere con la transaccion.
+func (r *UserRepo) CreateFirst(ctx context.Context, u *domain.User) error {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1, hashtext($2))`, firstUserLockSpace, u.TenantID.String()); err != nil {
+		return fmt.Errorf("candado del primer usuario: %w", err)
+	}
+	var taken bool
+	if err := tx.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM identity.users WHERE tenant_id = $1)`, u.TenantID).Scan(&taken); err != nil {
+		return err
+	}
+	if taken {
+		return domain.ErrFirstUserConflict
+	}
+	if _, err := tx.Exec(ctx, insertUserSQL, insertUserArgs(u)...); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// DeleteByTenant borra las cuentas de la empresa. Las sesiones, el historial de contrasenas
+// y los enlaces de reinicio caen con ellas (ON DELETE CASCADE): ningun refresh de esas
+// cuentas vuelve a servir.
+func (r *UserRepo) DeleteByTenant(ctx context.Context, tenantID uuid.UUID) (int64, error) {
+	tag, err := r.pool.Exec(ctx, `DELETE FROM identity.users WHERE tenant_id = $1`, tenantID)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
 }
 
 func (r *UserRepo) GetByID(ctx context.Context, id uuid.UUID) (*domain.User, error) {
@@ -559,10 +603,12 @@ func NewAuditRepo(pool *pgxpool.Pool) *AuditRepo {
 	return &AuditRepo{pool: pool}
 }
 
+// Log guarda la IP como NULL cuando el apunte no la trae (una operacion interna): la cadena
+// vacia no es una direccion y el INSERT fallaba entero.
 func (r *AuditRepo) Log(ctx context.Context, e *domain.AuditEntry) error {
 	_, err := r.pool.Exec(ctx,
 		`INSERT INTO identity.audit_log (id, tenant_id, user_id, action, resource, resource_id, ip_address, user_agent, details)
- VALUES ($1, $2, $3, $4, $5, $6, $7::inet, $8, $9)`,
+ VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7, '')::inet, $8, $9)`,
 		e.ID, e.TenantID, e.UserID, e.Action, e.Resource, e.ResourceID, e.IPAddress, e.UserAgent, e.Details,
 	)
 	return err
@@ -586,6 +632,17 @@ func (r *TenantRepo) GetIDBySlug(ctx context.Context, slug string) (uuid.UUID, e
 		return uuid.Nil, domain.ErrTenantNotFound
 	}
 	return id, nil
+}
+
+func (r *TenantRepo) IsActive(ctx context.Context, tenantID uuid.UUID) (bool, error) {
+	var active bool
+	err := r.pool.QueryRow(ctx,
+		`SELECT status = 'active' FROM organization.v_tenants WHERE tenant_id = $1`, tenantID,
+	).Scan(&active)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	return active, err
 }
 
 func (r *TenantRepo) GetIDByEmail(ctx context.Context, email string) (uuid.UUID, error) {

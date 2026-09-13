@@ -107,4 +107,17 @@ type AuditRepository interface {
 type TenantRepository interface {
 	GetIDBySlug(ctx context.Context, slug string) (uuid.UUID, error)
 	GetIDByEmail(ctx context.Context, email string) (uuid.UUID, error)
+	// IsActive responde si la empresa esta activa; false si no esta en el registro.
+	IsActive(ctx context.Context, tenantID uuid.UUID) (bool, error)
+}
+
+// TenantUserRepository es el ciclo de vida de las cuentas de una empresa entera, que
+// organization orquesta al darla de alta y de baja.
+type TenantUserRepository interface {
+	// CreateFirst da de alta la cuenta solo si la empresa aun no tiene ninguna;
+	// ErrFirstUserConflict si ya la tiene.
+	CreateFirst(ctx context.Context, user *domain.User) error
+	// DeleteByTenant borra todas las cuentas de la empresa y devuelve cuantas borro. Sus
+	// sesiones, historial y enlaces de reinicio caen con ellas.
+	DeleteByTenant(ctx context.Context, tenantID uuid.UUID) (int64, error)
 }

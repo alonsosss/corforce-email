@@ -8,7 +8,9 @@ V = verificado en el codigo. P = propuesto, todavia no implementado.
   `(tenant_id, email)`). El superadmin es un usuario de la empresa de plataforma.
 * Contrasena con bcrypt, politica por empresa (longitud, clases, caducidad, historial,
   bloqueo tras N intentos) con valores por defecto cuando la empresa no tiene fila;
-  comprobacion contra contrasenas filtradas (HIBP, k-anonimato) al crear o cambiar.
+  comprobacion contra contrasenas filtradas (HIBP, k-anonimato) al crear o cambiar. El
+  primer usuario de cada empresa pasa por la misma puerta: lo crea identity cuando se lo
+  pide la saga de alta (seccion 7).
 * Sesion: access token JWT de 5 minutos con claims `uid`, `tid`, `roles`, `iat`, firmado
   por identity con EdDSA (Ed25519, `kid` y `typ` `at+jwt` en la cabecera); solo identity
   tiene la clave privada (`JWT_SIGNING_KEY`) y el gateway verifica con las publicas
@@ -36,7 +38,7 @@ Solo dos roles viven en codigo (`pkg/middleware/roles.go`):
 | Rol | Alcance | Se siembra |
 |---|---|---|
 | `superadmin` | Opera la plataforma: empresas, celdas, migraciones, sesiones de cualquier empresa. No dirige ninguna empresa y no recibe sus avisos | Empresa de plataforma, por operacion |
-| `tenant_admin` | Administra su empresa: usuarios, roles, dominios, politicas | `organization.RoleSeeder` al crear cada empresa, `is_system = true`, con todos los permisos de alcance `tenant` |
+| `tenant_admin` | Administra su empresa: usuarios, roles, dominios, politicas | access-control al crear cada empresa, cuando se lo pide la saga de alta de organization (seccion 7), `is_system = true`, con todos los permisos de alcance `tenant` del catalogo |
 
 Cualquier otro rol lo crea un `tenant_admin` por API y recibe permisos por
 `role_permissions`. Un handler nunca compara con un nombre de rol distinto de los dos del
@@ -134,3 +136,44 @@ un usuario supera el umbral de lecturas; `audit` los persiste en cadena de hashe
 empresa y el detector genera eventos de seguridad (fuerza bruta, IP o dispositivo nuevo,
 viaje imposible, exfiltracion) que reconoce quien tiene `audit/security_events/acknowledge`
 (el `tenant_admin` siempre).
+
+## 7. Alta y baja de una empresa (V, 2026-09-13)
+
+organization no escribe en `identity` ni en `access_control` (las dos allowlists de
+`check-coupling` estan vacias): el alta y la baja de una empresa son una saga
+(`organization.tenant_sagas`, `026_organization_tenant_sagas.sql`) que pide cada paso al
+dueno del dato por su API interna. Esas rutas solo las llaman otros servicios: exigen el
+token interno (`X-Gateway-Token` = `INTERNAL_GATEWAY_TOKEN`, `RequireGatewayToken`) y
+`middleware.RequireInternalCaller` responde 403 a cualquier peticion con usuario (el gateway
+siempre lo inyecta y no enruta `/internal`). Todas son idempotentes.
+
+| Ruta | Dueno | Que hace |
+|---|---|---|
+| `PUT /internal/access-control/tenants/{id}/system-role` | access-control | Crea `tenant_admin` (`is_system`) si falta y le concede los permisos de alcance `tenant` del catalogo que no tenga; 409 `SYSTEM_ROLE_NAME_TAKEN` si un rol propio ocupa el nombre |
+| `POST /internal/access-control/system-role/reseed` | access-control | Lo mismo para el rol del sistema de todas las empresas, en una sentencia; organization la pide al arrancar, despues de migrar el registro |
+| `PUT` y `DELETE /internal/access-control/tenants/{id}/users/{user}/roles/{role}` | access-control | Asigna (sin actor: `assigned_by` NULL) o retira un rol de la empresa; retirar un rol que ya no existe responde 200 |
+| `DELETE /internal/access-control/tenants/{id}/roles` | access-control | Borra los roles de la empresa con sus permisos y asignaciones e invalida la politica cacheada de los afectados; 409 `TENANT_ACTIVE` si la empresa esta activa segun `organization.v_tenants` |
+| `PUT /internal/identity/tenants/{id}/first-user` | identity | Primer usuario con el id que elige la saga: politica de contrasenas de la empresa, filtraciones y bcrypt como cualquier alta; 201 al crear, 200 al repetir con el mismo id, correo y contrasena, 409 `FIRST_USER_CONFLICT` si la empresa ya tiene otra cuenta, 422 `PASSWORD_POLICY` o `PASSWORD_BREACHED`. La contrasena no sale en la respuesta ni en un error |
+| `DELETE /internal/identity/tenants/{id}/users` | identity | Borra las cuentas de la empresa; sus sesiones, historial y enlaces de reinicio caen con ellas. 409 `TENANT_ACTIVE` si la empresa esta activa |
+
+Alta: la empresa se registra inactiva; se crea su base (con el id de la empresa en su
+comentario, para que un reintento adopte la suya y nunca toque una ajena) y se migra;
+access-control siembra el rol; identity crea el primer usuario; access-control se lo asigna,
+y solo entonces la empresa pasa a activa y sale `tenant.created`. Un fallo deshace en orden
+inverso (asignacion, cuentas, roles, base propia) y deja la saga en `failed`: repetir
+`POST /organizations` con el mismo slug vuelve a empezar y `DELETE /organizations/{id}` la
+retira. Una contrasena que identity rechaza se responde con su 422 y no deja la empresa
+registrada. Cada paso se guarda bajo un arriendo (`ORGANIZATION_SAGA_LEASE`, 5 min): si la
+instancia muere, el reintento de la peticion sigue desde el ultimo paso, y si nadie la
+reintenta el barrido (`ORGANIZATION_SAGA_SWEEP_INTERVAL`, 1 min) termina el alta cuando el
+primer usuario ya existe y la deshace cuando no, porque la contrasena no se guarda nunca.
+Mientras un alta o una baja estan en curso, el estado de la empresa no se cambia a mano (409).
+
+Baja: roles, cuentas y, si el alta no llego a completarse, la base que creo; despues la
+empresa, sus modulos y su saga salen del registro. No se deshace: un fallo deja la baja en
+curso en su paso y el siguiente `DELETE` o el barrido la terminan. La base de una empresa que
+llego a operar se conserva.
+
+P: el access token (5 min) de una cuenta borrada sigue verificando en el gateway hasta
+caducar, porque sin fila en `identity.v_user_status` no hay `tokens_valid_from` que comparar
+y esa comprobacion falla abierta; sin roles, el RBAC del gateway ya no le abre ningun modulo.

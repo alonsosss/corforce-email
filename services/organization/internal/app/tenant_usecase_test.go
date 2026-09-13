@@ -3,7 +3,9 @@ package app
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
+	"time"
 
 	"github.com/alonsosss/corforce-email/services/organization/internal/domain"
 	"github.com/google/uuid"
@@ -22,25 +24,31 @@ type tenantHarness struct {
 	uc      *OrganizationUseCase
 	tenants *fakeTenantRepo
 	cells   *fakeCellRepo
+	sagas   *fakeSagaRepo
 	prov    *fakeProvisioner
-	roles   *fakeRoleSeeder
-	admin   *fakeAdminSeeder
+	access  *fakeAccess
+	ident   *fakeIdentity
 	pub     *fakePublisher
+	log     *callLog
 }
 
 func newTenantHarness(defaultCell string) *tenantHarness {
+	log := &callLog{}
+	tenants := &fakeTenantRepo{}
 	h := &tenantHarness{
-		tenants: &fakeTenantRepo{},
+		tenants: tenants,
 		cells:   &fakeCellRepo{cells: cellsFixture()},
-		prov:    &fakeProvisioner{},
-		roles:   &fakeRoleSeeder{},
-		admin:   &fakeAdminSeeder{},
+		sagas:   newFakeSagaRepo(tenants),
+		prov:    &fakeProvisioner{log: log},
+		access:  newFakeAccess(log),
+		ident:   newFakeIdentity(log),
 		pub:     &fakePublisher{},
+		log:     log,
 	}
 	h.uc = NewOrganizationUseCase(Dependencies{
-		Tenants: h.tenants, Cells: h.cells, Provisioner: h.prov,
-		RoleSeeder: h.roles, AdminSeeder: h.admin, Publisher: h.pub,
-		DefaultCellCode: defaultCell,
+		Tenants: h.tenants, Cells: h.cells, Sagas: h.sagas, Provisioner: h.prov,
+		Access: h.access, Identity: h.ident, Publisher: h.pub,
+		DefaultCellCode: defaultCell, SagaLease: time.Minute,
 	})
 	return h
 }
@@ -52,6 +60,32 @@ func baseRequest() CreateTenantRequest {
 		Settings: map[string]string{"tz": "America/Lima", "no_admitido": "x"},
 	}
 }
+
+// sagaOf devuelve la saga persistida de la empresa.
+func (h *tenantHarness) sagaOf(t *testing.T, id uuid.UUID) *domain.TenantSaga {
+	t.Helper()
+	s, err := h.sagas.Get(context.Background(), id)
+	if err != nil {
+		t.Fatalf("saga de %s: %v", id, err)
+	}
+	return s
+}
+
+// onlyTenant devuelve la unica empresa registrada.
+func (h *tenantHarness) onlyTenant(t *testing.T) *domain.Tenant {
+	t.Helper()
+	if len(h.tenants.tenants) != 1 {
+		t.Fatalf("empresas registradas = %d; se esperaba 1", len(h.tenants.tenants))
+	}
+	return h.tenants.tenants[0]
+}
+
+// expireLeases adelanta el reloj de las sagas mas alla de cualquier arriendo: lo que ve otra
+// instancia cuando la que ejecutaba la saga murio.
+func (h *tenantHarness) expireLeases() { h.sagas.now = h.sagas.now.Add(time.Hour) }
+
+// forwardCalls es el alta completa, en orden.
+var forwardCalls = []string{"db.create", "db.migrate", "access.seed", "identity.create", "access.assign"}
 
 func TestCreateTenantUsaCeldaPorDefecto(t *testing.T) {
 	h := newTenantHarness("pe-01")
@@ -74,11 +108,23 @@ func TestCreateTenantUsaCeldaPorDefecto(t *testing.T) {
 	if tenant.Settings["tz"] != "America/Lima" {
 		t.Errorf("settings.tz = %v; want America/Lima", tenant.Settings["tz"])
 	}
-	if len(h.prov.created) != 1 || len(h.prov.ran) != 1 || len(h.prov.dropped) != 0 {
-		t.Errorf("aprovisionamiento = created=%v ran=%v dropped=%v", h.prov.created, h.prov.ran, h.prov.dropped)
+	if !reflect.DeepEqual(h.log.calls, forwardCalls) {
+		t.Errorf("pasos = %v; want %v", h.log.calls, forwardCalls)
 	}
-	if len(h.roles.seeded) != 1 || h.admin.tenantID != tenant.ID || h.admin.password != testAdminPassword {
-		t.Error("el alta debe sembrar roles y crear el primer administrador con la contrasena recibida")
+	saga := h.sagaOf(t, tenant.ID)
+	if saga.State != domain.SagaCompleted || saga.Step != domain.StepActivated || saga.LeaseUntil != nil {
+		t.Errorf("saga = %s/%s (arriendo %v); want completed/activated sin arriendo", saga.State, saga.Step, saga.LeaseUntil)
+	}
+	admin := h.ident.users[tenant.ID]
+	if admin.UserID != saga.AdminUserID || admin.Email != "admin@acme.test" || admin.Password != testAdminPassword ||
+		admin.FirstName != "Admin" || admin.LastName != "Acme" {
+		t.Errorf("primer administrador = %v; want el de la peticion con el id de la saga", admin)
+	}
+	if saga.RoleID == uuid.Nil || h.access.assigned[saga.AdminUserID] != saga.RoleID {
+		t.Error("el rol del sistema sembrado debe quedar asignado al primer administrador")
+	}
+	if len(h.prov.dropped) != 0 {
+		t.Errorf("bases borradas = %v; un alta completa no borra nada", h.prov.dropped)
 	}
 	if len(h.pub.created) != 1 {
 		t.Errorf("eventos tenant.created = %d; want 1", len(h.pub.created))
@@ -117,8 +163,8 @@ func TestCreateTenantRechazosDeCelda(t *testing.T) {
 			if !errors.Is(err, c.want) {
 				t.Errorf("err = %v; want %v", err, c.want)
 			}
-			if len(h.prov.created) != 0 {
-				t.Error("sin celda resuelta no debe crearse ninguna base")
+			if len(h.tenants.tenants) != 0 || len(h.log.calls) != 0 {
+				t.Error("sin celda resuelta no se registra la empresa ni se crea nada")
 			}
 		})
 	}
@@ -142,20 +188,12 @@ func TestCreateTenantDuplicado(t *testing.T) {
 	if _, err := h.uc.CreateTenant(context.Background(), baseRequest()); err != nil {
 		t.Fatalf("primer alta: %v", err)
 	}
+	h.log.calls = nil
 	if _, err := h.uc.CreateTenant(context.Background(), baseRequest()); !errors.Is(err, domain.ErrTenantAlreadyExists) {
 		t.Errorf("segundo alta = %v; want ErrTenantAlreadyExists", err)
 	}
-}
-
-// Si las migraciones de la base nueva fallan, la base se borra y no queda registro.
-func TestCreateTenantDeshaceBaseSiFallanMigraciones(t *testing.T) {
-	h := newTenantHarness("pe-01")
-	h.prov.runErr = map[string]error{"mail_tenant_acme_corp": errors.New("boom")}
-	if _, err := h.uc.CreateTenant(context.Background(), baseRequest()); err == nil {
-		t.Fatal("se esperaba error de migracion")
-	}
-	if len(h.prov.dropped) != 1 || len(h.tenants.tenants) != 0 {
-		t.Errorf("dropped=%v tenants=%d; la base debe borrarse y el registro quedar vacio", h.prov.dropped, len(h.tenants.tenants))
+	if len(h.log.calls) != 0 {
+		t.Errorf("un alta completada no se repite: %v", h.log.calls)
 	}
 }
 
@@ -193,11 +231,21 @@ func TestDeleteTenantExigeQueNoEsteActivo(t *testing.T) {
 	if _, err := h.uc.SetTenantStatus(ctx, tenant.ID, domain.TenantStatusInactive); err != nil {
 		t.Fatalf("dar de baja: %v", err)
 	}
+	h.log.calls = nil
 	if err := h.uc.DeleteTenant(ctx, tenant.ID); err != nil {
-		t.Errorf("borrar inactivo: %v", err)
+		t.Fatalf("borrar inactivo: %v", err)
 	}
-	if len(h.prov.dropped) != 0 {
-		t.Error("borrar del registro no debe borrar la base fisica")
+	if want := []string{"access.remove", "identity.remove"}; !reflect.DeepEqual(h.log.calls, want) {
+		t.Errorf("pasos de la baja = %v; want %v", h.log.calls, want)
+	}
+	if len(h.tenants.tenants) != 0 || len(h.sagas.sagas) != 0 {
+		t.Error("la baja retira la empresa y su saga del registro")
+	}
+	if len(h.access.roles) != 0 || len(h.ident.users) != 0 {
+		t.Error("la baja retira los roles y las cuentas de la empresa")
+	}
+	if _, kept := h.prov.owner[tenant.DBName]; !kept || len(h.prov.dropped) != 0 {
+		t.Error("borrar del registro no debe borrar la base fisica de una empresa que llego a operar")
 	}
 }
 

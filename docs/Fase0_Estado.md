@@ -115,9 +115,22 @@ cambie cualquiera de estas líneas.
   `organization.v_module_catalog` y `organization.v_tenant_modules`
   (`024_organization_published_views.sql`). Ninguno de los dos figura ya en
   `ops/scaffold/coupling-allowlist.txt`: si vuelven a leer las tablas, `check-coupling`
-  falla. Lo que queda en la allowlist son las escrituras de organización. `organization` además escribe en
-  `identity` y `access_control` al sembrar y borrar una empresa
-  (`coupling-writes-allowlist.txt`); falta que esos servicios expongan la operación.
+  falla. Tampoco queda ninguna escritura cruzada: las dos allowlists de acoplamiento están
+  vacías (punto siguiente).
+* Alta y baja de empresa por saga, sin escribir en esquemas ajenos (2026-09-13; unitarias de
+  cada punto de fallo y su compensación, contrato de las rutas internas, integración contra
+  Postgres 16 y `make e2e`): `organization` ya no inserta ni borra en `identity` ni en
+  `access_control`. El alta registra la empresa inactiva con su saga
+  (`organization.tenant_sagas`, `026_organization_tenant_sagas.sql`), crea y migra la base
+  marcada con el id de la empresa y pide por API interna el rol `tenant_admin` a
+  access-control, el primer usuario a identity (con su política de contraseñas y la
+  comprobación de filtraciones, que el sembrado anterior se saltaba) y la asignación; solo
+  entonces la activa. Un fallo se deshace en orden inverso y deja la saga en `failed`; una
+  caída deja el paso guardado y el reintento sigue desde él, y el barrido de `organization`
+  termina o deshace lo que quede sin dueño. La baja retira roles y cuentas por las mismas
+  APIs y se retoma hasta terminar. Rutas, contrato y comportamiento en
+  `Usuarios_Roles_y_Acceso.md`, sección 7. `make check-coupling` pasa con
+  `coupling-allowlist.txt` y `coupling-writes-allowlist.txt` vacías.
 
 ## Lo que la fase 0 dejó mejor que la base
 

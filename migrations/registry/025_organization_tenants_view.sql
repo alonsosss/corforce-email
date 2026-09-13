@@ -1,8 +1,9 @@
 -- Schema: organization | Service: organization
 --
 -- Vista publicada para identity, que resuelve la empresa del login por slug y pone el
--- nombre de la empresa en el listado de sesiones. identity lee esta vista y no la tabla
--- tenants, que es detalle interno de organization. Sin db_name, cell_id ni settings: el
+-- nombre de la empresa en el listado de sesiones. identity y access-control la leen ademas
+-- para no retirar en bloque las cuentas ni los roles de una empresa activa. Nadie lee la
+-- tabla tenants, que es detalle interno de organization. Sin db_name, cell_id ni settings: el
 -- destino de la base y la celda son enrutado del plano de control, no dato del lector.
 --
 -- El registro tiene un unico rol de base para el plano de control, por eso no hay GRANT.

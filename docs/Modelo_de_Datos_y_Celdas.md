@@ -44,8 +44,11 @@ foraneas entre esquemas, cabecera `-- Schema: x | Service: y`, idempotentes y ad
   `organization.v_module_catalog(module, tier, permission_modules)` y
   `organization.v_tenant_modules(tenant_id, module, enabled)`
   (`024_organization_published_views.sql`), sin `requires`, `label` ni `updated_at`.
-  Lo que aun lee o escribe tablas de `organization` o desde ella figura con su motivo en
-  `ops/scaffold/coupling-allowlist.txt` y `coupling-writes-allowlist.txt`.
+  Ningun servicio lee ni escribe tablas de otro esquema del registro:
+  `ops/scaffold/coupling-allowlist.txt` y `coupling-writes-allowlist.txt` estan vacias. El
+  alta y la baja de empresa son una saga de `organization` (`organization.tenant_sagas`,
+  `026_organization_tenant_sagas.sql`) que pide el rol del sistema a access-control y el
+  primer usuario a identity por su API interna (`Usuarios_Roles_y_Acceso.md`, 7).
 * `billing` (`013_billing.sql`, permisos en `014`): `plans` (codigo unico, moneda ISO 4217,
   `base_price numeric(15,2)`, `monthly|yearly`, `active|retired`), `plan_limits` (un limite
   por recurso: `included` con -1 ilimitado, `hard_limit`, `overage_unit_price numeric(15,6)`
@@ -164,9 +167,11 @@ evento con el id de su fila.
 
 ## 4. Empresa (V)
 
-Base `mail_tenant_<slug>` creada por `organization` al dar de alta la empresa
-(`CREATE DATABASE` + todas las canonicas en orden, con advisory lock sobre conexion
-directa sin PgBouncer, `public.schema_migrations`, baseline para bases preexistentes).
+Base `mail_tenant_<slug>` creada por la saga de alta de `organization` (`CREATE DATABASE` +
+todas las canonicas en orden, con advisory lock sobre conexion directa sin PgBouncer,
+`public.schema_migrations`, baseline para bases preexistentes). La base queda marcada con el
+id de la empresa en su `COMMENT`: una compensacion o un reintento solo borra o adopta una
+base que lleva la marca de esa empresa, nunca una ajena con el mismo nombre.
 Barrido en segundo plano al arrancar (`RUN_TENANT_MIGRATIONS`). Hoy contiene `audit`,
 `scheduler` (`scheduler.job_definitions`, con el `handler` validado contra la lista blanca
 `services/scheduler/handlers.json`; `scheduler.job_schedules`, cuyo bloqueo por trabajo es

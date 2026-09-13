@@ -13,4 +13,9 @@ var (
 	// ErrPermissionNotHeld: nadie concede, directamente o a traves de un rol, un permiso
 	// que el mismo no tiene.
 	ErrPermissionNotHeld = errors.New("cannot grant a permission you do not hold")
+	// ErrSystemRoleNameTaken: un rol propio de la empresa ocupa el nombre del rol del
+	// sistema. Sembrar encima le daria todos los permisos de la empresa.
+	ErrSystemRoleNameTaken = errors.New("a tenant role already uses the system role name")
+	// ErrTenantActive: los roles de una empresa activa no se retiran en bloque.
+	ErrTenantActive = errors.New("tenant is active")
 )

@@ -85,16 +85,3 @@ func (h *Handler) internalOrPerm(resource, action string) func(http.Handler) htt
 		})
 	}
 }
-
-// internalOnly cierra una ruta a las personas: solo la llaman otros servicios con el token
-// interno. El gateway siempre inyecta el usuario de la sesion, asi que una peticion con
-// usuario es alguien intentando escribir por su cuenta lo que solo registra la plataforma.
-func internalOnly(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if middleware.GetUserID(r.Context()) != "" {
-			response.ErrForbidden(w, "ruta reservada a los servicios de la plataforma")
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
-}

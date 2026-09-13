@@ -82,7 +82,7 @@ func TestCellServiceRoleIsolation(t *testing.T) {
 
 	// La base de empresa nace DESPUES del script: es organization quien la cierra a PUBLIC.
 	prov := NewDBProvisioner(admin, nil, nil, adminCfg.ConnConfig.Host)
-	if err := prov.CreateDatabase(ctx, domain.DBTarget{DBName: tenantDB}); err != nil {
+	if err := prov.CreateDatabase(ctx, domain.DBTarget{DBName: tenantDB}, uuid.New()); err != nil {
 		t.Fatalf("organization crea la base de empresa: %v", err)
 	}
 

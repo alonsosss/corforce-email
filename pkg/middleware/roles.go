@@ -6,7 +6,8 @@ import (
 )
 
 // Roles del sistema. Son estructurales, no de negocio: existen en toda empresa,
-// los siembra organization con is_system = true y no se pueden borrar. Que
+// los siembra access-control con is_system = true (tenant_admin en el alta de cada
+// empresa, a peticion de organization) y no se pueden borrar. Que
 // permiso concreto tiene cada rol es un dato de access_control, nunca una lista
 // en el codigo; aqui solo se distingue quien opera la plataforma de quien
 // administra su empresa, porque ambos existen antes de que haya ningun permiso.

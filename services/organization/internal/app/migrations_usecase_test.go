@@ -82,16 +82,29 @@ func TestMigrateTenantDesconocido(t *testing.T) {
 	}
 }
 
-// El resembrado de roles alcanza a todos los tenants, activos o no: un tenant
-// suspendido vuelve a la actividad con su catalogo al dia.
-func TestReseedAllRolesAlcanzaTodosLosTenants(t *testing.T) {
-	seeder := &fakeRoleSeeder{}
-	uc := NewOrganizationUseCase(Dependencies{Tenants: &fakeTenantRepo{tenants: tenantsFixture()}, RoleSeeder: seeder})
-	ok, failed := uc.ReseedAllRoles(context.Background())
-	if ok != 4 || failed != 0 {
-		t.Errorf("ReseedAllRoles = (%d, %d); want (4, 0)", ok, failed)
+// El resembrado es una sola llamada a access-control, que lo aplica al rol del sistema de
+// todas las empresas, activas o no: una suspendida vuelve con su catalogo al dia.
+func TestReseedAllRolesLoPideAAccessControl(t *testing.T) {
+	access := newFakeAccess(&callLog{})
+	for _, tn := range tenantsFixture() {
+		access.roles[tn.ID] = uuid.New()
 	}
-	if len(seeder.seeded) != 4 {
-		t.Errorf("se sembraron %d tenants; want 4", len(seeder.seeded))
+	uc := NewOrganizationUseCase(Dependencies{Tenants: &fakeTenantRepo{tenants: tenantsFixture()}, Access: access})
+	roles, err := uc.ReseedAllRoles(context.Background())
+	if err != nil || roles != 4 || access.reseeds != 1 {
+		t.Errorf("ReseedAllRoles = (%d, %v) con %d llamadas; want (4, nil) con una", roles, err, access.reseeds)
+	}
+}
+
+func TestReseedRolesDeUnTenant(t *testing.T) {
+	tenants := tenantsFixture()
+	log := &callLog{}
+	access := newFakeAccess(log)
+	uc := NewOrganizationUseCase(Dependencies{Tenants: &fakeTenantRepo{tenants: tenants}, Access: access})
+	if err := uc.ReseedRoles(context.Background(), uuid.New()); !errors.Is(err, domain.ErrTenantNotFound) {
+		t.Errorf("tenant desconocido = %v; want ErrTenantNotFound", err)
+	}
+	if err := uc.ReseedRoles(context.Background(), tenants[0].ID); err != nil || access.roles[tenants[0].ID] == uuid.Nil {
+		t.Errorf("ReseedRoles = %v; want el rol sembrado en access-control", err)
 	}
 }

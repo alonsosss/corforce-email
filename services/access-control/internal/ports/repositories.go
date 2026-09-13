@@ -58,6 +58,30 @@ type UserRoleRepository interface {
 	ListUsersWithPermission(ctx context.Context, tenantID uuid.UUID, module, action string) ([]uuid.UUID, error)
 }
 
+// TenantRoleLifecycle es el ciclo de vida de los roles de una empresa entera, que
+// organization orquesta al darla de alta y de baja. Que permisos recibe el rol del sistema
+// sale del catalogo (alcance tenant), nunca de una lista en el codigo.
+type TenantRoleLifecycle interface {
+	// SeedSystemRole crea el rol del sistema si falta y le concede los permisos de alcance
+	// tenant que aun no tenga. ErrSystemRoleNameTaken si el nombre lo ocupa un rol propio.
+	SeedSystemRole(ctx context.Context, tenantID uuid.UUID, name, description string) (*domain.SystemRoleSeed, error)
+	// ReseedSystemRoles concede a los roles del sistema de todas las empresas los permisos
+	// de alcance tenant que les falten.
+	ReseedSystemRoles(ctx context.Context, name string) (domain.SystemRoleReseed, error)
+	// DeleteTenantRoles borra todos los roles de la empresa con sus permisos y asignaciones.
+	DeleteTenantRoles(ctx context.Context, tenantID uuid.UUID) (*domain.TenantRolesRemoval, error)
+}
+
+// PolicyCache descarta la politica cacheada de unos usuarios.
+type PolicyCache interface {
+	InvalidateUsers(ctx context.Context, userIDs []uuid.UUID)
+}
+
+// TenantDirectory responde si una empresa esta activa, por la vista que publica organization.
+type TenantDirectory interface {
+	IsActive(ctx context.Context, tenantID uuid.UUID) (bool, error)
+}
+
 // DenialRepository persiste y consulta los accesos denegados por RBAC (metricas).
 type DenialRepository interface {
 	Record(ctx context.Context, d *domain.AccessDenial) error

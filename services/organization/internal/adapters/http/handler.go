@@ -159,8 +159,16 @@ func (h *Handler) CreateTenant(w http.ResponseWriter, r *http.Request) {
 		AdminFirstName: req.AdminFirstName, AdminLastName: req.AdminLastName,
 	})
 	if err != nil {
+		var rejected *domain.AdminRejectedError
 		switch {
+		case errors.As(err, &rejected):
+			// El codigo y el mensaje de identity, tal cual: la politica de contrasenas es suya.
+			response.Err(w, http.StatusUnprocessableEntity, rejected.Code, rejected.Message)
 		case errors.Is(err, domain.ErrTenantAlreadyExists):
+			response.ErrConflict(w, err.Error())
+		case errors.Is(err, domain.ErrTenantBusy), errors.Is(err, domain.ErrLeaseLost),
+			errors.Is(err, domain.ErrAdminUserConflict), errors.Is(err, domain.ErrDatabaseOccupied),
+			errors.Is(err, domain.ErrProvisioningMismatch):
 			response.ErrConflict(w, err.Error())
 		case errors.Is(err, domain.ErrCellRequired),
 			errors.Is(err, domain.ErrAdminUserRequired),
@@ -278,6 +286,8 @@ func (h *Handler) UpdateTenant(w http.ResponseWriter, r *http.Request) {
 			response.ErrNotFound(w, "tenant no encontrado")
 		case errors.Is(err, domain.ErrInvalidTenantStatus):
 			response.ErrValidation(w, err.Error())
+		case errors.Is(err, domain.ErrTenantBusy):
+			response.ErrConflict(w, err.Error())
 		default:
 			response.Unexpected(w, err)
 		}
@@ -295,7 +305,8 @@ func (h *Handler) DeleteTenant(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case errors.Is(err, domain.ErrTenantNotFound):
 			response.ErrNotFound(w, "tenant no encontrado")
-		case errors.Is(err, domain.ErrTenantStillActive):
+		case errors.Is(err, domain.ErrTenantStillActive), errors.Is(err, domain.ErrTenantBusy),
+			errors.Is(err, domain.ErrLeaseLost):
 			response.ErrConflict(w, err.Error())
 		default:
 			response.Unexpected(w, err)
