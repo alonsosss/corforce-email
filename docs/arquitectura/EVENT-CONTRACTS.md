@@ -41,9 +41,9 @@ construye fuera del literal y no se puede leer estaticamente.
 | `organization.tenant.created` | organization | `cell_id`, `db_name`, `name`, `slug`, `status`, `tenant_id` |
 | `organization.tenant.modules_changed` | organization | `disabled`, `enabled`, `tenant_id` |
 | `organization.tenant.status_changed` | organization | `previous_status`, `slug`, `status`, `tenant_id` |
-| `scheduler.job.completed` | scheduler | `execution_id`, `job_id` |
-| `scheduler.job.failed` | scheduler | `error`, `execution_id`, `job_id` |
-| `scheduler.job.started` | scheduler | `execution_id`, `job_id` |
+| `scheduler.job.completed` | scheduler | `attempt`, `duration_ms`, `execution_id`, `handler`, `job_id`, `tenant_id` |
+| `scheduler.job.failed` | scheduler | `attempt`, `error`, `execution_id`, `handler`, `job_id`, `reason`, `retry_at`, `retry_execution_id`, `tenant_id` |
+| `scheduler.job.started` | scheduler | `attempt`, `execution_id`, `handler`, `job_id`, `payload`, `tenant_id`, `timeout_seconds` |
 | `templates.template.published` | templates | `template_id`, `tenant_id`, `version` |
 
 ## Consumido
@@ -62,6 +62,7 @@ construye fuera del literal y no se puede leer estaticamente.
 | `domains.domain.deleted` | billing | `domain`, `tenant_id` |
 | `mail.domain.created` | billing | `domain`, `tenant_id` |
 | `mail.domain.deleted` | billing | `domain`, `tenant_id` |
+| `mail.mailbox.>` | webmail | `username` |
 | `mail.mailbox.created` | billing | `tenant_id` |
 | `mail.mailbox.deleted` | billing | `tenant_id` |
 | `organization.tenant.created` | billing | `tenant_id` |
