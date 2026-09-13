@@ -193,11 +193,11 @@ func NewUserRoleRepo(pool *pgxpool.Pool) *UserRoleRepo {
 }
 
 // TokensValidFrom lee la columna que identity adelanta al revocar todas las sesiones de
-// un usuario. Se lee de identity.users, en la misma base de registro, sin clave foranea.
+// un usuario, por la vista que publica identity (identity.v_user_status).
 func (r *UserRoleRepo) TokensValidFrom(ctx context.Context, userID uuid.UUID) (time.Time, error) {
 	var validFrom time.Time
 	err := r.pool.QueryRow(ctx,
-		`SELECT tokens_valid_from FROM identity.users WHERE id = $1`, userID).Scan(&validFrom)
+		`SELECT tokens_valid_from FROM identity.v_user_status WHERE user_id = $1`, userID).Scan(&validFrom)
 	return validFrom, err
 }
 
@@ -223,7 +223,7 @@ func (r *UserRoleRepo) ListRoles(ctx context.Context, userID, tenantID uuid.UUID
 		`SELECT r.id, r.tenant_id, r.name, r.description, r.is_system, r.status, r.created_at, r.updated_at
 		   FROM access_control.roles r
 		   JOIN access_control.user_roles ur ON ur.role_id = r.id
-		  WHERE ur.user_id = $1 AND r.tenant_id = $2
+		  WHERE ur.user_id = $1 AND r.tenant_id = $2 AND r.status = 'active'
 		  ORDER BY r.name`, userID, tenantID)
 	if err != nil {
 		return nil, err
@@ -238,7 +238,7 @@ func (r *UserRoleRepo) ListPermissions(ctx context.Context, userID, tenantID uui
 		   JOIN access_control.role_permissions rp ON rp.permission_id = p.id
 		   JOIN access_control.user_roles ur ON ur.role_id = rp.role_id
 		   JOIN access_control.roles r ON r.id = ur.role_id
-		  WHERE ur.user_id = $1 AND r.tenant_id = $2
+		  WHERE ur.user_id = $1 AND r.tenant_id = $2 AND r.status = 'active'
 		  ORDER BY p.module, p.resource, p.action`, userID, tenantID)
 	if err != nil {
 		return nil, err
@@ -253,7 +253,7 @@ func (r *UserRoleRepo) ListAccessibleModules(ctx context.Context, userID, tenant
 		   JOIN access_control.role_permissions rp ON rp.permission_id = p.id
 		   JOIN access_control.user_roles ur ON ur.role_id = rp.role_id
 		   JOIN access_control.roles r ON r.id = ur.role_id
-		  WHERE ur.user_id = $1 AND r.tenant_id = $2
+		  WHERE ur.user_id = $1 AND r.tenant_id = $2 AND r.status = 'active'
 		  ORDER BY p.module`, userID, tenantID)
 	if err != nil {
 		return nil, err
@@ -280,7 +280,7 @@ func (r *UserRoleRepo) ListWriteActionsByModule(ctx context.Context, userID, ten
 		   JOIN access_control.role_permissions rp ON rp.permission_id = p.id
 		   JOIN access_control.user_roles ur ON ur.role_id = rp.role_id
 		   JOIN access_control.roles r ON r.id = ur.role_id
-		  WHERE ur.user_id = $1 AND r.tenant_id = $2 AND p.action NOT IN ('read', 'export')
+		  WHERE ur.user_id = $1 AND r.tenant_id = $2 AND r.status = 'active' AND p.action NOT IN ('read', 'export')
 		  ORDER BY p.module, p.action`, userID, tenantID)
 	if err != nil {
 		return nil, err
@@ -336,9 +336,9 @@ func (r *UserRoleRepo) ListUsersWithPermission(ctx context.Context, tenantID uui
 		   JOIN access_control.role_permissions rp ON rp.permission_id = p.id
 		   JOIN access_control.user_roles ur ON ur.role_id = rp.role_id
 		   JOIN access_control.roles r ON r.id = ur.role_id
-		   JOIN identity.users u ON u.id = ur.user_id
+		   JOIN identity.v_user_status u ON u.user_id = ur.user_id
 		  WHERE p.module = $1 AND p.action = $2
-		    AND r.tenant_id = $3 AND u.tenant_id = $3 AND u.status = 'active'`,
+		    AND r.tenant_id = $3 AND r.status = 'active' AND u.tenant_id = $3 AND u.status = 'active'`,
 		module, action, tenantID)
 	if err != nil {
 		return nil, err

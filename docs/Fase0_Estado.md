@@ -70,9 +70,12 @@ cambie cualquiera de estas líneas.
   evalúa (un trabajo `cron` corre cada hora).
 * Contrato JSON del scheduler fijado en snake_case (DTOs del adaptador HTTP, con test de
   contrato; la duración sale como `duration_ms`). `web/` todavía no lo consume.
-* `identity` lee `access_control.roles`/`user_roles` por join directo dentro del registro;
-  conviene una vista publicada `v_user_roles`.
-* Rate limiting en memoria por proceso (no se comparte entre réplicas del gateway).
+* Lecturas del registro que todavía van a tablas ajenas, sancionadas con motivo en
+  `ops/scaffold/coupling-allowlist.txt`: `identity` lee `organization.tenants` (slug y
+  nombre de la empresa) y `access-control` lee `organization.module_catalog` y
+  `tenant_modules`; faltan las vistas de `organization`. `organization` además escribe en
+  `identity` y `access_control` al sembrar y borrar una empresa
+  (`coupling-writes-allowlist.txt`); falta que esos servicios expongan la operación.
 
 ## Lo que la fase 0 dejó mejor que la base
 

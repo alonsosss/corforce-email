@@ -1,0 +1,14 @@
+# Lecturas de tablas de otro esquema sancionadas: "<servicio> <esquema>", con su motivo.
+# Retirar la entrada en cuanto el dueno publique la vista v_* y el lector la use.
+#
+# identity resuelve la empresa por slug y pone el nombre de la empresa en el listado de
+# sesiones (organization.tenants). Pendiente: vista organization.v_tenants.
+identity organization
+# access-control lee el catalogo de modulos y su estado por empresa para gatear permisos
+# (organization.module_catalog, organization.tenant_modules). Pendiente: vista publicada.
+access-control organization
+# organization siembra el rol tenant_admin y su usuario al dar de alta una empresa, y los
+# borra con ella. Son escrituras (ver coupling-writes-allowlist.txt); el patron de lectura
+# las cuenta tambien por INSERT INTO/UPDATE y por el SELECT de roles y permisos del sembrado.
+organization identity
+organization access_control

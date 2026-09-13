@@ -33,6 +33,15 @@ foraneas entre esquemas, cabecera `-- Schema: x | Service: y`, idempotentes y ad
   `role_permissions`, `user_roles`, `access_denials`.
 * Semilla de permisos del plano de control en `005_seed_permissions.sql`; cada servicio
   nuevo trae la suya.
+* Vistas publicadas del registro: los tres servicios del plano de control comparten base
+  pero cada uno posee solo su esquema, y `check-coupling` lo exige. identity lee
+  `access_control.v_user_roles(user_id, tenant_id, role_name)`, solo roles activos, para
+  sellar los roles en el token (`022_access_control_published_views.sql`).
+  access-control lee `identity.v_user_status(user_id, tenant_id, status,
+  tokens_valid_from)` para la politica y `users-with-permission`
+  (`023_identity_published_views.sql`). Ninguna expone correo, nombre, hash ni secreto MFA.
+  Lo que aun lee o escribe tablas de `organization` o desde ella figura con su motivo en
+  `ops/scaffold/coupling-allowlist.txt` y `coupling-writes-allowlist.txt`.
 * `billing` (`013_billing.sql`, permisos en `014`): `plans` (codigo unico, moneda ISO 4217,
   `base_price numeric(15,2)`, `monthly|yearly`, `active|retired`), `plan_limits` (un limite
   por recurso: `included` con -1 ilimitado, `hard_limit`, `overage_unit_price numeric(15,6)`

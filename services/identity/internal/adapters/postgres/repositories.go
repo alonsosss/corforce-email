@@ -183,9 +183,9 @@ func (r *UserRepo) BumpTokenEpoch(ctx context.Context, id uuid.UUID) error {
 	return err
 }
 
-// RoleRepo lee los roles vigentes de un usuario para sellarlos en el access token.
-// access_control vive en la misma base de registro que identity; la lectura es solo
-// de nombres y nunca escribe: conceder o retirar roles es cosa de access-control.
+// RoleRepo lee los roles vigentes de un usuario para sellarlos en el access token. Lee
+// la vista que publica access-control (access_control.v_user_roles, solo roles activos)
+// y nunca sus tablas: conceder o retirar roles es cosa de access-control.
 type RoleRepo struct {
 	pool *pgxpool.Pool
 }
@@ -196,9 +196,7 @@ func NewRoleRepo(pool *pgxpool.Pool) *RoleRepo {
 
 func (r *RoleRepo) RoleNames(ctx context.Context, userID uuid.UUID) ([]string, error) {
 	rows, err := r.pool.Query(ctx,
-		`SELECT DISTINCT r.name FROM access_control.roles r
-		 JOIN access_control.user_roles ur ON ur.role_id = r.id
-		 WHERE ur.user_id = $1 AND r.status = 'active'`,
+		`SELECT DISTINCT role_name FROM access_control.v_user_roles WHERE user_id = $1`,
 		userID,
 	)
 	if err != nil {

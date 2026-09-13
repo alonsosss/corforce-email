@@ -20,12 +20,11 @@ SCHEMAS="organization identity access_control audit scheduler mail mail_security
 domains transactional templates suppression reputation contacts segments campaigns \
 automations analytics billing policy"
 
-# Schemas que posee cada servicio. El plano de control (identity/organization/
-# access-control) comparte los esquemas del registro por diseno: son tres servicios sobre
-# una sola base de plataforma y se leen entre si por sus tablas de catalogo.
+# Schemas que posee cada servicio. Los tres servicios del plano de control comparten la
+# base de registro pero cada uno posee solo su esquema: se leen entre si por las vistas
+# v_* que publica el dueno, y lo que todavia toca tablas ajenas figura en las allowlists.
 owned_schemas() {
   case "$1" in
-    identity|organization|access-control) echo "identity organization access_control" ;;
     # mail-auth es la mitad de autenticacion del directorio: verifica contrasenas de
     # buzon y de aplicacion que solo estan en mail.*; no tiene tablas propias.
     mail-directory|mail-auth) echo "mail" ;;

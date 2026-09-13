@@ -61,6 +61,11 @@ plataforma del `scheduler` (sin empresa) se leen desde una empresa pero no se ca
 se activan, desactivan o lanzan (403); desactivar exige ademas que el trabajo sea de la
 empresa, ya no basta el id.
 
+Un rol inactivo (`access_control.roles.status <> 'active'`) no concede nada: la politica
+efectiva que sirve access-control (roles, permisos, modulos visibles, acciones de escritura
+y usuarios con un permiso) solo cuenta roles activos, igual que el token de identity.
+Desactivar un rol retira sus permisos en cuanto caduca la cache de la politica.
+
 ## 3. Permisos (V)
 
 Triple `(module, resource, action)` en `access_control.permissions`, con comodin `*` en
