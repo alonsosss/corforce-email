@@ -189,7 +189,24 @@ previa anade ademas `causes: [{reason, created_at}]` (V, 2026-09-13), las mismas
 `reasons` en su orden con la hora de alta de su fila, el reloj de la base de la empresa;
 el listado
 filtra y las estadisticas cuentan por la principal; `suppression.entry.added` y `.removed`
-llevan la causa que entro o salio en `reason` y las vigentes que quedan en `reasons`) y
+llevan la causa que entro o salio en `reason` y las vigentes que quedan en `reasons`.
+Horas de alta y resuscripcion (V, 2026-09-13): `created_at` y `updated_at` tienen DEFAULT
+`clock_timestamp()` desde `suppression/03_clock_timestamp.sql` (las filas existentes no
+cambian), la hora de la sentencia que escribe la fila y no la del inicio de su transaccion,
+que podia quedar antes de un doble opt-in confirmado mientras el alta esperaba el bloqueo
+de la direccion. Una baja que se vuelve a pedir estando vigente se vuelve a registrar: la
+misma fila toma los datos del nuevo origen y `created_at = clock_timestamp()`, y
+`suppression.entry.added` se publica otra vez con un id de evento nuevo, asi que JetStream
+no lo deduplica y contacts lo compara con su ultimo reconsentimiento (contacts no deduplica
+por id: decide por las causas vigentes y sus horas, y repetir una baja sin reconsentimiento
+en medio no le cambia nada); un rebote, una queja o una manual vigentes repetidos no
+cambian nada. `contacts.contact.resubscribed` solo retira la baja cuyo `created_at` es
+anterior a su `consented_at`: una baja posterior, o la reentrega tardia del evento, no se la
+lleva, y en empate la baja sigue, la misma regla con que contacts decide que esa baja revoca
+el consentimiento. Sin `consented_at` (productor anterior) la retira como antes; con un
+valor que no es una hora RFC 3339 el evento se descarta con un error en el log y la baja
+sigue. `updated_at` lo pone el trigger comun con `now()`, asi que en una baja vuelta a
+registrar puede quedar por detras de `created_at`) y
 `templates` (plantillas de correo por empresa:
 `templates.templates` con nombre unico por empresa y `current_version`, y
 `templates.versions` con asunto, HTML, texto opcional y variables declaradas en `jsonb`;
@@ -252,7 +269,11 @@ revoca; un consentimiento posterior por API o importacion no levanta la baja; si
 (suppression anterior a `causes`) revoca como antes. Las dos horas las pone el mismo
 servidor, el de la base de la empresa que guarda los dos esquemas, asi que no hay deriva de
 relojes que tolerar (si algun dia se separan, la tolerancia pasa a ser la deriva NTP entre
-servidores). Sin ninguna causa vigente `bounced` y `complained`
+servidores). El consentimiento que reactiva a quien se dio de baja publica
+`contacts.contact.resubscribed` con `{tenant_id, email, consented_at}` (V, 2026-09-13):
+`consented_at` es el `occurred_at` de ese consentimiento, en RFC 3339 con fraccion y en
+UTC, y con el suppression solo retira las bajas anteriores; publicar sin hora es un error
+que revierte la transaccion del consentimiento. Sin ninguna causa vigente `bounced` y `complained`
 vuelven a `active` (una `manual` o `invalid` vigente lo impide) y `unsubscribed` no, ni se
 reconcede el consentimiento: eso solo lo hace un doble opt-in. Un evento sin `reasons`
 (productor anterior) se aplica por su causa, con un aviso limitado en el log.

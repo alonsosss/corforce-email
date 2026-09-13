@@ -50,7 +50,9 @@ func (uc *UseCase) RecordConsent(ctx context.Context, tenantID, contactID uuid.U
 }
 
 // appendConsent guarda la evidencia sobre un contacto YA bloqueado, publica su evento y,
-// si es una concesion que reactiva a quien se dio de baja, lo reactiva.
+// si es una concesion que reactiva a quien se dio de baja, lo reactiva. La resuscripcion
+// lleva el occurred_at que Append acaba de leer de la base: es la hora con que suppression
+// decide que bajas levanta este consentimiento.
 func (uc *UseCase) appendConsent(ctx context.Context, c *domain.Contact, consent *domain.Consent) error {
 	if err := uc.consents.Append(ctx, consent); err != nil {
 		return err
@@ -67,7 +69,7 @@ func (uc *UseCase) appendConsent(ctx context.Context, c *domain.Contact, consent
 			if err := uc.events.ContactUpdated(ctx, c, []string{"status"}); err != nil {
 				return err
 			}
-			if err := uc.events.ContactResubscribed(ctx, c); err != nil {
+			if err := uc.events.ContactResubscribed(ctx, c, consent.OccurredAt); err != nil {
 				return err
 			}
 		}

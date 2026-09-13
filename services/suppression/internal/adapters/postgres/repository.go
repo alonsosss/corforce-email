@@ -200,6 +200,26 @@ func (r *Repository) Update(ctx context.Context, e *domain.Entry) error {
 	return err
 }
 
+// Reregister fecha la causa con clock_timestamp(), la hora de esta sentencia y no la del
+// inicio de la transaccion (now()), que puede ser anterior a un consentimiento confirmado
+// mientras la transaccion esperaba el bloqueo de la direccion. updated_at lo pone el
+// trigger comun con now(), asi que tras volver a registrar puede quedar por detras de
+// created_at; la hora que se compara es created_at.
+func (r *Repository) Reregister(ctx context.Context, e *domain.Entry) error {
+	err := r.pool.QueryRow(ctx,
+		`UPDATE suppression.entries
+		    SET source = $3, detail = $4, message_id = $5, campaign_id = $6, expires_at = $7,
+		        created_at = clock_timestamp()
+		  WHERE tenant_id = $1 AND id = $2
+		  RETURNING created_at, updated_at`,
+		e.TenantID, e.ID, e.Source, e.Detail, e.MessageID, e.CampaignID, e.ExpiresAt,
+	).Scan(&e.CreatedAt, &e.UpdatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.ErrEntryNotFound
+	}
+	return err
+}
+
 func (r *Repository) Delete(ctx context.Context, tenantID, id uuid.UUID) error {
 	tag, err := r.pool.Exec(ctx, `DELETE FROM suppression.entries WHERE tenant_id = $1 AND id = $2`, tenantID, id)
 	if err != nil {

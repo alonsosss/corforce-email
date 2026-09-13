@@ -151,7 +151,9 @@ type EventPublisher interface {
 	ContactCreated(ctx context.Context, c *domain.Contact) error
 	ContactUpdated(ctx context.Context, c *domain.Contact, changed []string) error
 	ContactDeleted(ctx context.Context, tenantID, contactID uuid.UUID) error
-	ContactResubscribed(ctx context.Context, c *domain.Contact) error
+	// ContactResubscribed lleva consentedAt, el occurred_at del consentimiento que reactivo
+	// el contacto: suppression solo retira la baja registrada antes de esa hora.
+	ContactResubscribed(ctx context.Context, c *domain.Contact, consentedAt time.Time) error
 	ConsentGranted(ctx context.Context, c *domain.Consent) error
 	ConsentRevoked(ctx context.Context, c *domain.Consent) error
 	ConsentRequested(ctx context.Context, c *domain.Contact, confirmURL string) error

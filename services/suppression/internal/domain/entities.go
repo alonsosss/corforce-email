@@ -62,6 +62,16 @@ func (r Reason) Removable() bool {
 	return r != ReasonUnsubscribe
 }
 
+// RenewedOnRepeat indica si una nueva alta de esta causa, ya vigente en la direccion, la
+// vuelve a registrar (hora de alta nueva y evento nuevo) en vez de dejarla como estaba.
+// Solo la baja: cada una la pide la persona y contacts compara su hora con la del ultimo
+// reconsentimiento. Conservar la hora de una baja anterior dejaria que
+// contacts.contact.resubscribed retirara tambien la que se pidio despues de consentir. Un
+// rebote o una queja repetidos no dicen nada nuevo de la direccion.
+func (r Reason) RenewedOnRepeat() bool {
+	return r == ReasonUnsubscribe
+}
+
 // Entry es UNA causa de exclusion de una direccion en una empresa: hay una fila por
 // (empresa, direccion, causa). Una direccion puede tener varias a la vez (se dio de baja
 // y ademas la empresa la excluyo a mano) y cada una se registra y se retira por separado,
@@ -84,6 +94,17 @@ type Entry struct {
 // pueden caducar; el resto no lleva fecha.
 func (e Entry) Active(now time.Time) bool {
 	return e.ExpiresAt == nil || e.ExpiresAt.After(now)
+}
+
+// LiftedByConsentAt indica si un nuevo consentimiento dado a la hora consentedAt levanta
+// esta causa: solo si se registro antes. Una baja posterior la pidio la persona despues de
+// consentir y sigue; en empate tambien sigue, la misma regla con que contacts decide que
+// esa baja revoca el consentimiento (UnsubscribeRevokes), para que los dos servicios no
+// den por buena cada uno una version distinta. Las dos horas son del reloj de la base de
+// la empresa. consentedAt nil es un contacts.contact.resubscribed sin la hora (productor
+// anterior): la levanta, como antes de esta regla.
+func (e Entry) LiftedByConsentAt(consentedAt *time.Time) bool {
+	return consentedAt == nil || e.CreatedAt.Before(*consentedAt)
 }
 
 // Address es una direccion excluida con todas sus causas: lo que devuelven el listado, la

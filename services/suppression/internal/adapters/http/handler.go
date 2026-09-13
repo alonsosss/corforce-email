@@ -373,7 +373,8 @@ type internalAddResponse struct {
 	// Entry es la direccion con todas sus causas: reason es la principal, que puede ser
 	// otra mas grave que la registrada.
 	Entry *domain.Address `json:"entry"`
-	// Added: la causa entro (o se reactivo); false si la direccion ya la tenia vigente.
+	// Added: la causa entro, se reactivo o, si es una baja, se volvio a registrar; false si
+	// la direccion ya la tenia vigente.
 	Added bool `json:"added"`
 }
 

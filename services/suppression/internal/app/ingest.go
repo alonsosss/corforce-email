@@ -45,7 +45,8 @@ type IngestResult struct {
 	// Ignored: el evento no describe un hecho definitivo (rebote transitorio o subject
 	// que no suprime) y no se toca la lista.
 	Ignored bool
-	// Added: la causa entro (o se reactivo); false si la direccion ya la tenia vigente.
+	// Added: la causa entro (o se reactivo); false si la direccion ya la tenia vigente. Un
+	// rebote o una queja repetidos no se vuelven a registrar (domain.Reason.RenewedOnRepeat).
 	Added bool
 }
 

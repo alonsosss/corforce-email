@@ -121,7 +121,7 @@ func TestBajaYExclusionManualConviven(t *testing.T) {
 	}
 
 	// El nuevo consentimiento levanta solo la baja: la exclusion manual sigue bloqueando.
-	if removed, err := f.uc.Resubscribe(ctx, f.tenant, email); err != nil || !removed {
+	if removed, err := f.uc.Resubscribe(ctx, f.tenant, email, nil); err != nil || !removed {
 		t.Fatalf("resuscripcion: removed=%v err=%v", removed, err)
 	}
 	got, _ = f.uc.Check(ctx, f.tenant, []string{email})
@@ -262,13 +262,13 @@ func TestResubscribeSoloLevantaLaBaja(t *testing.T) {
 
 	f.cause("baja@example.com", domain.ReasonUnsubscribe, nil)
 	f.cause("rebote@example.com", domain.ReasonHardBounce, nil)
-	if removed, err := f.uc.Resubscribe(ctx, f.tenant, "Baja@example.com"); err != nil || !removed {
+	if removed, err := f.uc.Resubscribe(ctx, f.tenant, "Baja@example.com", nil); err != nil || !removed {
 		t.Fatalf("baja: removed=%v err=%v", removed, err)
 	}
-	if removed, err := f.uc.Resubscribe(ctx, f.tenant, "baja@example.com"); err != nil || removed {
+	if removed, err := f.uc.Resubscribe(ctx, f.tenant, "baja@example.com", nil); err != nil || removed {
 		t.Fatalf("segunda vez debe ser idempotente: removed=%v err=%v", removed, err)
 	}
-	if removed, err := f.uc.Resubscribe(ctx, f.tenant, "rebote@example.com"); err != nil || removed {
+	if removed, err := f.uc.Resubscribe(ctx, f.tenant, "rebote@example.com", nil); err != nil || removed {
 		t.Fatalf("un rebote no se levanta por consentimiento: removed=%v err=%v", removed, err)
 	}
 	if len(f.entries.entries) != 1 || f.entries.entries[0].Reason != domain.ReasonHardBounce {

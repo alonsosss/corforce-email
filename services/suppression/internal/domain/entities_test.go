@@ -53,6 +53,43 @@ func TestAggregate(t *testing.T) {
 	}
 }
 
+// Solo la baja se vuelve a registrar al repetirse: es la unica causa que contacts compara
+// con un reconsentimiento.
+func TestSoloLaBajaSeVuelveARegistrar(t *testing.T) {
+	for _, r := range Reasons() {
+		if got, want := r.RenewedOnRepeat(), r == ReasonUnsubscribe; got != want {
+			t.Errorf("%s: RenewedOnRepeat=%v, se esperaba %v", r, got, want)
+		}
+	}
+}
+
+// Un consentimiento solo levanta la baja registrada antes que el. En empate la baja
+// sigue, como en contacts; sin hora (productor anterior) se levanta como antes.
+func TestLiftedByConsentAt(t *testing.T) {
+	baja := time.Date(2026, 9, 13, 12, 0, 0, 123456000, time.UTC)
+	e := Entry{Reason: ReasonUnsubscribe, CreatedAt: baja}
+	at := func(d time.Duration) *time.Time { t := baja.Add(d); return &t }
+	for _, tc := range []struct {
+		name        string
+		consentedAt *time.Time
+		want        bool
+	}{
+		{"consentimiento posterior", at(time.Microsecond), true},
+		{"empate", at(0), false},
+		{"baja posterior al consentimiento", at(-time.Microsecond), false},
+		{"sin hora", nil, true},
+	} {
+		if got := e.LiftedByConsentAt(tc.consentedAt); got != tc.want {
+			t.Errorf("%s: %v, se esperaba %v", tc.name, got, tc.want)
+		}
+	}
+	// La zona horaria no cuenta: se comparan instantes.
+	lima := baja.In(time.FixedZone("PET", -5*3600)).Add(time.Second)
+	if !e.LiftedByConsentAt(&lima) {
+		t.Fatal("un consentimiento posterior en otra zona levanta la baja")
+	}
+}
+
 // causes de la consulta previa lista exactamente las causas de reasons, en su orden, cada
 // una con la hora de alta de su fila; una manual caducada no aparece.
 func TestSuppressedLlevaLaHoraDeCadaCausaVigente(t *testing.T) {

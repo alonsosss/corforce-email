@@ -125,10 +125,11 @@ type AddInput struct {
 	CampaignID *uuid.UUID
 }
 
-// Add registra una causa de exclusion de forma idempotente. Cada causa se guarda aparte:
-// una baja no absorbe una exclusion manual ni un rebote duro una baja. Si la direccion ya
-// tiene esa causa vigente no cambia nada (added=false); si la tenia caducada (solo una
-// manual caduca) la reactiva sin caducidad. Devuelve la direccion con todas sus causas.
+// Add registra una causa de exclusion. Cada causa se guarda aparte: una baja no absorbe
+// una exclusion manual ni un rebote duro una baja. Si la direccion ya tiene esa causa
+// vigente no cambia nada (added=false), salvo una baja, que se vuelve a registrar
+// (domain.Reason.RenewedOnRepeat); si la tenia caducada (solo una manual caduca) la
+// reactiva sin caducidad. Devuelve la direccion con todas sus causas.
 func (uc *UseCase) Add(ctx context.Context, tenantID uuid.UUID, in AddInput) (*domain.Address, bool, error) {
 	email, err := domain.NormalizeEmail(in.Email)
 	if err != nil {
@@ -159,8 +160,16 @@ func (uc *UseCase) Add(ctx context.Context, tenantID uuid.UUID, in AddInput) (*d
 }
 
 // addInTx es el cuerpo transaccional de Add: con la direccion bloqueada, deja la causa
-// como esta si ya es vigente, la reactiva si caduco o la inserta, y deja en out/added el
-// resultado.
+// como esta si ya es vigente (o la vuelve a registrar si es una baja), la reactiva si
+// caduco o la inserta, y deja en out/added el resultado.
+//
+// La baja repetida se publica otra vez como suppression.entry.added para que contacts la
+// compare con su ultimo reconsentimiento: sin ese evento, una baja pedida despues de
+// reconsentir, pero antes de que este servicio procesara contacts.contact.resubscribed, no
+// llegaria nunca a contacts. El evento lleva un id nuevo (outbox.Enqueue), asi que la
+// deduplicacion por id de JetStream no lo confunde con el de la baja anterior. contacts no
+// deduplica por id: decide con las causas vigentes y sus horas, de modo que repetir una
+// baja sin reconsentimiento en medio no le cambia nada.
 func (uc *UseCase) addInTx(ctx context.Context, tenantID uuid.UUID, email string, in AddInput, out **domain.Address, added *bool) error {
 	if err := uc.entries.LockAddress(ctx, tenantID, email); err != nil {
 		return err
@@ -169,7 +178,17 @@ func (uc *UseCase) addInTx(ctx context.Context, tenantID uuid.UUID, email string
 	var changed *domain.Entry
 	existing, err := uc.entries.GetCauseForUpdate(ctx, tenantID, email, in.Reason)
 	switch {
+	case err == nil && existing.Active(now) && !in.Reason.RenewedOnRepeat():
 	case err == nil && existing.Active(now):
+		existing.Source = in.Source
+		existing.Detail = in.Detail
+		existing.MessageID = in.MessageID
+		existing.CampaignID = in.CampaignID
+		existing.ExpiresAt = nil
+		if err := uc.entries.Reregister(ctx, existing); err != nil {
+			return err
+		}
+		changed = existing
 	case err == nil:
 		existing.Source = in.Source
 		existing.Detail = in.Detail
@@ -299,8 +318,11 @@ func (uc *UseCase) removeCause(ctx context.Context, e *domain.Entry) error {
 
 // Resubscribe levanta la baja de una direccion cuando contacts registra un nuevo
 // consentimiento explicito. Solo retira la causa unsubscribe: un rebote duro, una queja o
-// una exclusion manual siguen vigentes aunque la persona vuelva a consentir. Idempotente.
-func (uc *UseCase) Resubscribe(ctx context.Context, tenantID uuid.UUID, rawEmail string) (bool, error) {
+// una exclusion manual siguen vigentes aunque la persona vuelva a consentir. consentedAt
+// es la hora de ese consentimiento y solo se retira una baja registrada antes
+// (domain.Entry.LiftedByConsentAt): una baja pedida despues, o la reentrega tardia del
+// evento, no se la lleva. nil (productor sin la hora) la retira como antes. Idempotente.
+func (uc *UseCase) Resubscribe(ctx context.Context, tenantID uuid.UUID, rawEmail string, consentedAt *time.Time) (bool, error) {
 	email, err := domain.NormalizeEmail(rawEmail)
 	if err != nil {
 		return false, err
@@ -316,6 +338,9 @@ func (uc *UseCase) Resubscribe(ctx context.Context, tenantID uuid.UUID, rawEmail
 		}
 		if err != nil {
 			return err
+		}
+		if !e.LiftedByConsentAt(consentedAt) {
+			return nil
 		}
 		if err := uc.removeCause(ctx, e); err != nil {
 			return err

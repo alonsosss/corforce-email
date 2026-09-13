@@ -16,6 +16,9 @@ import (
 type fakeEntryRepo struct {
 	entries []*domain.Entry
 	locks   []string
+	// now es el reloj de la base (el DEFAULT y el clock_timestamp() de created_at): el de
+	// la fixture, para que ninguna prueba dependa de la fecha real.
+	now func() time.Time
 }
 
 func (f *fakeEntryRepo) find(tenantID uuid.UUID, email string, reason domain.Reason) *domain.Entry {
@@ -93,7 +96,7 @@ func (f *fakeEntryRepo) Insert(_ context.Context, e *domain.Entry) error {
 		return domain.ErrEntryAlreadyExists
 	}
 	e.ID = uuid.New()
-	e.CreatedAt = time.Now()
+	e.CreatedAt = f.now()
 	e.UpdatedAt = e.CreatedAt
 	f.entries = append(f.entries, e)
 	return nil
@@ -122,6 +125,18 @@ func (f *fakeEntryRepo) InsertMissing(ctx context.Context, tenantID uuid.UUID, e
 func (f *fakeEntryRepo) Update(_ context.Context, e *domain.Entry) error {
 	for _, cur := range f.entries {
 		if cur.ID == e.ID {
+			*cur = *e
+			return nil
+		}
+	}
+	return domain.ErrEntryNotFound
+}
+
+func (f *fakeEntryRepo) Reregister(_ context.Context, e *domain.Entry) error {
+	for _, cur := range f.entries {
+		if cur.TenantID == e.TenantID && cur.ID == e.ID {
+			e.CreatedAt = f.now()
+			e.UpdatedAt = e.CreatedAt
 			*cur = *e
 			return nil
 		}
@@ -161,11 +176,12 @@ func (f *fakeEntryRepo) CountByReason(_ context.Context, tenantID uuid.UUID, now
 
 type fakeImportRepo struct {
 	imports []*domain.Import
+	now     func() time.Time
 }
 
 func (f *fakeImportRepo) Create(_ context.Context, imp *domain.Import) error {
 	imp.ID = uuid.New()
-	imp.CreatedAt = time.Now()
+	imp.CreatedAt = f.now()
 	f.imports = append(f.imports, imp)
 	return nil
 }
@@ -222,15 +238,16 @@ type fixture struct {
 
 func newFixture() *fixture {
 	f := &fixture{
-		entries: &fakeEntryRepo{},
-		imports: &fakeImportRepo{},
-		events:  &fakePublisher{},
-		now:     time.Date(2026, 9, 12, 12, 0, 0, 0, time.UTC),
-		tenant:  uuid.New(),
+		events: &fakePublisher{},
+		now:    time.Date(2026, 9, 12, 12, 0, 0, 0, time.UTC),
+		tenant: uuid.New(),
 	}
+	clock := func() time.Time { return f.now }
+	f.entries = &fakeEntryRepo{now: clock}
+	f.imports = &fakeImportRepo{now: clock}
 	f.uc = New(Deps{
 		Entries: f.entries, Imports: f.imports, Tx: fakeTx{}, Events: f.events,
-		Now: func() time.Time { return f.now },
+		Now: clock,
 	})
 	return f
 }

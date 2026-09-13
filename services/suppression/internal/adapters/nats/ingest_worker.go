@@ -4,6 +4,7 @@ package nats
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 
@@ -135,7 +136,14 @@ func (w *IngestWorker) handle(subject string) func(events.Event, func()) {
 		ctx = db.WithTenant(ctx, pool, tenantID.String())
 
 		if subject == app.SubjectContactResubscribe {
-			w.resubscribe(ctx, tenantID, str(data["email"]), ack)
+			at, err := consentedAt(data["consented_at"])
+			if err != nil {
+				w.logger.Error("suppression: resuscripcion con consented_at invalido; se descarta y la baja sigue",
+					zap.String("tenant_id", tenantID.String()), zap.Error(err))
+				ack()
+				return
+			}
+			w.resubscribe(ctx, tenantID, str(data["email"]), at, ack)
 			return
 		}
 
@@ -169,8 +177,30 @@ func (w *IngestWorker) handle(subject string) func(events.Event, func()) {
 	}
 }
 
-func (w *IngestWorker) resubscribe(ctx context.Context, tenantID uuid.UUID, email string, ack func()) {
-	removed, err := w.uc.Resubscribe(ctx, tenantID, email)
+// errInvalidConsentedAt: el campo viene pero no es una hora RFC 3339. Reintentar no lo
+// arregla, y levantar la baja sin saber cuando se consintio podria retirar una baja
+// posterior, asi que el evento se descarta y la baja sigue.
+var errInvalidConsentedAt = errors.New("consented_at no es una hora RFC 3339")
+
+// consentedAt lee la hora del consentimiento de contacts.contact.resubscribed. Sin el
+// campo (productor anterior) devuelve nil y la baja se levanta como antes.
+func consentedAt(v interface{}) (*time.Time, error) {
+	if v == nil {
+		return nil, nil
+	}
+	s, ok := v.(string)
+	if !ok {
+		return nil, errInvalidConsentedAt
+	}
+	at, err := time.Parse(time.RFC3339Nano, s)
+	if err != nil {
+		return nil, errInvalidConsentedAt
+	}
+	return &at, nil
+}
+
+func (w *IngestWorker) resubscribe(ctx context.Context, tenantID uuid.UUID, email string, at *time.Time, ack func()) {
+	removed, err := w.uc.Resubscribe(ctx, tenantID, email, at)
 	if err != nil {
 		if isPermanent(err) {
 			w.logger.Error("suppression: resuscripcion con direccion invalida; se descarta", zap.Error(err))

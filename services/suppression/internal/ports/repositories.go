@@ -42,6 +42,10 @@ type EntryRepository interface {
 	// se reactivaron; las que ya la tenian vigente se omiten sin error.
 	InsertMissing(ctx context.Context, tenantID uuid.UUID, emails []string, reason domain.Reason, source, detail string, now time.Time) ([]domain.Entry, error)
 	Update(ctx context.Context, e *domain.Entry) error
+	// Reregister vuelve a registrar una causa existente (domain.Reason.RenewedOnRepeat):
+	// guarda los datos de e y fija created_at con el reloj de la base en el momento de la
+	// escritura, el mismo del DEFAULT de la columna. Deja en e created_at y updated_at.
+	Reregister(ctx context.Context, e *domain.Entry) error
 	Delete(ctx context.Context, tenantID, id uuid.UUID) error
 	// CountByReason cuenta las direcciones con alguna causa vigente por su causa principal.
 	CountByReason(ctx context.Context, tenantID uuid.UUID, now time.Time) ([]domain.ReasonCount, error)

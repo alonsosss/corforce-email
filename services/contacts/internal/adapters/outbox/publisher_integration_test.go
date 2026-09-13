@@ -8,6 +8,7 @@ import (
 	"os"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/alonsosss/corforce-email/pkg/db"
 	"github.com/alonsosss/corforce-email/pkg/middleware"
@@ -37,9 +38,10 @@ func TestPublicadorEncolaElContrato(t *testing.T) {
 	pub := NewPublisher(cp)
 	c := &domain.Contact{ID: uuid.New(), TenantID: tenant, Email: "ana@example.com", Status: domain.StatusActive,
 		Attributes: map[string]any{"plan": "pro"}}
+	consentedAt := time.Date(2026, 9, 13, 10, 0, 0, 123456000, time.FixedZone("PET", -5*3600))
 
 	err = cp.Transact(ctx, func(ctx context.Context) error {
-		if err := pub.ContactResubscribed(ctx, c); err != nil {
+		if err := pub.ContactResubscribed(ctx, c, consentedAt); err != nil {
 			return err
 		}
 		if err := pub.ContactDeleted(ctx, tenant, c.ID); err != nil {
@@ -88,7 +90,7 @@ func TestPublicadorEncolaElContrato(t *testing.T) {
 	}
 
 	// suppression lee exactamente {tenant_id, email} de la resuscripcion.
-	if want := map[string]any{"tenant_id": tenant.String(), "email": "ana@example.com"}; !reflect.DeepEqual(got[SubjectContactResubscribed], want) {
+	if want := map[string]any{"tenant_id": tenant.String(), "email": "ana@example.com", "consented_at": "2026-09-13T15:00:00.123456Z"}; !reflect.DeepEqual(got[SubjectContactResubscribed], want) {
 		t.Fatalf("resubscribed: %#v", got[SubjectContactResubscribed])
 	}
 	if want := map[string]any{"tenant_id": tenant.String(), "contact_id": c.ID.String()}; !reflect.DeepEqual(got[SubjectContactDeleted], want) {

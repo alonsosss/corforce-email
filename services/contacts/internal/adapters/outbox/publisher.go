@@ -9,6 +9,8 @@ package outbox
 
 import (
 	"context"
+	"errors"
+	"time"
 
 	"github.com/alonsosss/corforce-email/pkg/events"
 	"github.com/alonsosss/corforce-email/pkg/middleware"
@@ -73,11 +75,19 @@ func (p *Publisher) ContactDeleted(ctx context.Context, tenantID, contactID uuid
 }
 
 // ContactResubscribed es el contrato que lee suppression (IngestWorker.resubscribe):
-// {tenant_id, email}. No se anade nada: el consumidor solo levanta la baja de esa
-// direccion.
-func (p *Publisher) ContactResubscribed(ctx context.Context, c *domain.Contact) error {
+// {tenant_id, email, consented_at}. consented_at es el occurred_at del consentimiento que
+// reactivo el contacto, en RFC 3339 con fraccion y en UTC: suppression solo levanta la
+// baja registrada antes de esa hora, asi que una reentrega tardia no retira una baja
+// posterior. Sin la hora el consumidor levantaria cualquier baja, por eso una hora cero
+// es un error y no un evento. No se anade nada mas: el consumidor solo levanta la baja de
+// esa direccion.
+func (p *Publisher) ContactResubscribed(ctx context.Context, c *domain.Contact, consentedAt time.Time) error {
+	if consentedAt.IsZero() {
+		return errors.New("contacts: resuscripcion sin la hora del consentimiento")
+	}
 	return p.enqueue(ctx, SubjectContactResubscribed, c.TenantID, map[string]interface{}{
-		"email": c.Email,
+		"email":        c.Email,
+		"consented_at": consentedAt.UTC().Format(time.RFC3339Nano),
 	})
 }
 

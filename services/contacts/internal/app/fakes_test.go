@@ -616,10 +616,12 @@ type fakeTx struct{}
 
 func (fakeTx) Transact(ctx context.Context, fn func(ctx context.Context) error) error { return fn(ctx) }
 
-// fakePublisher registra los eventos como "subject|detalle".
+// fakePublisher registra los eventos como "subject|detalle", y aparte la hora de
+// consentimiento de cada resuscripcion.
 type fakePublisher struct {
-	events     []string
-	confirmURL string
+	events      []string
+	confirmURL  string
+	consentedAt []time.Time
 }
 
 func (p *fakePublisher) add(e string) error { p.events = append(p.events, e); return nil }
@@ -633,7 +635,8 @@ func (p *fakePublisher) ContactUpdated(_ context.Context, c *domain.Contact, cha
 func (p *fakePublisher) ContactDeleted(_ context.Context, _, id uuid.UUID) error {
 	return p.add("contact.deleted|" + id.String())
 }
-func (p *fakePublisher) ContactResubscribed(_ context.Context, c *domain.Contact) error {
+func (p *fakePublisher) ContactResubscribed(_ context.Context, c *domain.Contact, consentedAt time.Time) error {
+	p.consentedAt = append(p.consentedAt, consentedAt)
 	return p.add("contact.resubscribed|" + c.Email)
 }
 func (p *fakePublisher) ConsentGranted(_ context.Context, c *domain.Consent) error {
