@@ -106,7 +106,9 @@ func TestForwardingHostsPermitDunnoYMapa(t *testing.T) {
 
 func TestSettingsSirveUCLYRespondeNotModified(t *testing.T) {
 	s := newEngineServer(t)
-	s.policy.UpdatedAt = time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+	// La marca inicial solo toma updated_at si ya paso segun el reloj del caso de uso, que
+	// desde este paquete es el real: una fecha fija haria depender el test del dia.
+	s.policy.UpdatedAt = time.Now().UTC().Add(-24 * time.Hour).Truncate(time.Second)
 	s.policy.Scores = []domain.SpamScore{{Object: "acme.com", HighScore: decimal.NewFromInt(15), LowScore: decimal.NewFromInt(8)}}
 	s.policy.Lists = []domain.AddressListEntry{{Object: "acme.com", Kind: domain.ListAllow, Pattern: "@partner.com"}}
 
@@ -115,7 +117,7 @@ func TestSettingsSirveUCLYRespondeNotModified(t *testing.T) {
 		t.Fatalf("primera carga: %d", resp.StatusCode)
 	}
 	lastModified := resp.Header.Get("Last-Modified")
-	if lastModified != "Tue, 01 Sep 2026 12:00:00 GMT" {
+	if lastModified != s.policy.UpdatedAt.Format(http.TimeFormat) {
 		t.Fatalf("Last-Modified tras arrancar debe ser el ultimo updated_at: %q", lastModified)
 	}
 	for _, want := range []string{"settings {", "watchdog {", "reject = 9999.0;", `"/@acme[.]com$/i"`, "MAILCOW_WHITE"} {
