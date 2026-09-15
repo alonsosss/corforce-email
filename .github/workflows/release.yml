@@ -64,7 +64,7 @@ jobs:
     steps:
       # Historia completa: el rango de deteccion puede abarcar varios commits, y con una
       # profundidad fija el commit base no existe en el clon.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with: { fetch-depth: 0 }
 
       - id: meta
@@ -198,7 +198,7 @@ jobs:
     steps:
       # El paso de deriva necesita el arbol, y su deteccion de rezagados resuelve los tags
       # vivos como commits: con profundidad 1 no existirian y los daria por no juzgables.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with: { fetch-depth: 0 }
 
       # El mismo rol OIDC que publica a ECR. Aqui se usa para hablar con SSM.
