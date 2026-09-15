@@ -10,7 +10,7 @@ ademas el catalogo de planes, las suscripciones y la reputacion de todas las emp
 
 ## Desarrollo
 
-Requisitos: Node 20 y pnpm 9 (`corepack enable` toma la version de `packageManager`).
+Requisitos: Node 24 y pnpm 9 (`corepack enable` toma la version de `packageManager`).
 
 ```bash
 cd web

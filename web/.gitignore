@@ -5,3 +5,5 @@ coverage/
 .env.local
 .env.*.local
 *.log
+# Almacen de pnpm que crea una instalacion en contenedor junto al proyecto
+.pnpm-store/

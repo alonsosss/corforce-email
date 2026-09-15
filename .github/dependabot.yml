@@ -27,6 +27,12 @@ updates:
     groups:
       web-menores:
         update-types: [minor, patch]
+    # @types/node describe la version mayor de Node con la que se construye la web
+    # (web/Dockerfile, node-version del CI y engines): sube a mano con ella, nunca sola,
+    # o el typecheck aceptaria APIs que el Node de la imagen no tiene.
+    ignore:
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
     labels: [dependencias, web]
 
   - package-ecosystem: github-actions
