@@ -15,7 +15,7 @@ tests:
   # ── Sin rechazos: el contador nace a cero y no se mueve ───────────────────
   - interval: 1m
     input_series:
-      - series: 'cell_call_failures_total{job="mail-services",service="domain-service",exported_service="mail-security",reason="not_in_cell"}'
+      - series: 'cell_call_failures_total{job="mail-services",service="domain-service",cell_service="mail-security",reason="not_in_cell"}'
         values: '0x60'
     alert_rule_test:
       - eval_time: 30m
@@ -25,7 +25,7 @@ tests:
   # ── Un solo rechazo avisa, y el aviso cesa diez minutos despues ───────────
   - interval: 1m
     input_series:
-      - series: 'cell_call_failures_total{job="mail-services",service="domain-service",exported_service="mail-security",reason="not_in_cell"}'
+      - series: 'cell_call_failures_total{job="mail-services",service="domain-service",cell_service="mail-security",reason="not_in_cell"}'
         values: '0x10 1x50'
     alert_rule_test:
       - eval_time: 12m
@@ -34,7 +34,7 @@ tests:
           - exp_labels:
               severidad: alta
               service: domain-service
-              exported_service: mail-security
+              cell_service: mail-security
             exp_annotations:
               resumen: "domain-service envia empresas a una instancia de mail-security que no es de su celda"
               detalle: "La instancia respondio 403 TENANT_NOT_IN_CELL y no se escribio nada, pero los pasos de dominios y DKIM de esa empresa fallan hasta corregirlo. Comparar GATEWAY_BASE_CELL_CODE, <SERVICIO>_CELL_HOSTS y los destinos base (MAIL_DIRECTORY_URL, MAIL_SECURITY_URL) de domain-service con los del gateway y con el CELL_CODE y ORGANIZATION_URL de cada instancia; el registro de domain-service nombra la empresa y la celda."
@@ -45,11 +45,11 @@ tests:
   # ── Otros motivos: sin celda resuelta o celda sin instancia ───────────────
   - interval: 1m
     input_series:
-      - series: 'cell_call_failures_total{job="mail-services",service="domain-service",exported_service="mail-directory",reason="unresolved"}'
+      - series: 'cell_call_failures_total{job="mail-services",service="domain-service",cell_service="mail-directory",reason="unresolved"}'
         values: '0+2x60'
-      - series: 'cell_call_failures_total{job="mail-services",service="domain-service",exported_service="mail-directory",reason="not_served"}'
+      - series: 'cell_call_failures_total{job="mail-services",service="domain-service",cell_service="mail-directory",reason="not_served"}'
         values: '0+1x60'
-      - series: 'cell_call_failures_total{job="mail-services",service="domain-service",exported_service="mail-directory",reason="not_in_cell"}'
+      - series: 'cell_call_failures_total{job="mail-services",service="domain-service",cell_service="mail-directory",reason="not_in_cell"}'
         values: '0x60'
     alert_rule_test:
       - eval_time: 30m

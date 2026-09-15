@@ -171,12 +171,12 @@ func TestElInicioDeSesionDelWebmailVaALaCeldaDelDominio(t *testing.T) {
 		t.Fatalf("inicio con cookie de otra celda: %+v", got)
 	}
 
-	antes := counterValue("cell_routing_failures_total", map[string]string{"service": "webmail", "reason": "not_served"})
+	antes := counterValue("cell_routing_failures_total", map[string]string{"cell_service": "webmail", "reason": "not_served"})
 	rec = e.login(`{"username":"ana@gamma.test","password":"secreta"}`)
 	if rec.Code != http.StatusServiceUnavailable || codigoDeError(rec) != tenantcell.CodeCellUnavailable || len(e.buzon.take()) != 0 {
 		t.Fatalf("celda sin instancia: %d %s", rec.Code, rec.Body)
 	}
-	if got := counterValue("cell_routing_failures_total", map[string]string{"service": "webmail", "reason": "not_served"}); got != antes+1 {
+	if got := counterValue("cell_routing_failures_total", map[string]string{"cell_service": "webmail", "reason": "not_served"}); got != antes+1 {
 		t.Fatalf("metrica not_served: %v", got)
 	}
 }
@@ -224,14 +224,14 @@ func TestElInicioDeSesionConOrganizationCaido(t *testing.T) {
 		t.Fatalf("dominio en cache con organization caido: %d", rec.Code)
 	}
 
-	antes := counterValue("cell_routing_failures_total", map[string]string{"service": "webmail", "reason": "unresolved"})
+	antes := counterValue("cell_routing_failures_total", map[string]string{"cell_service": "webmail", "reason": "unresolved"})
 	for _, body := range []string{`{"username":"ana@delta.test","password":"x"}`, `{"username":"ana@acme.test","password":"x"}`} {
 		rec := e.login(body)
 		if rec.Code != http.StatusServiceUnavailable || codigoDeError(rec) != tenantcell.CodeCellUnavailable || len(e.buzon.take()) != 0 {
 			t.Fatalf("%s sin cache y con organization caido: %d %s", body, rec.Code, rec.Body)
 		}
 	}
-	if got := counterValue("cell_routing_failures_total", map[string]string{"service": "webmail", "reason": "unresolved"}); got != antes+2 {
+	if got := counterValue("cell_routing_failures_total", map[string]string{"cell_service": "webmail", "reason": "unresolved"}); got != antes+2 {
 		t.Fatalf("metrica unresolved: %v", got)
 	}
 }

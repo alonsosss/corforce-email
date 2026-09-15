@@ -1,0 +1,91 @@
+# Pruebas de la alerta RepasoDKIMDetenido.
+#
+# El repaso DKIM de mail-security completa una pasada al arrancar y cada 15 min
+# (MAIL_DKIM_RECONCILE_INTERVAL). Avisa cuando lleva mas de una hora sin completar ninguna y la
+# situacion dura 15 min mas: cuatro pasadas seguidas sin terminar. Una replica que no completo
+# ninguna cuenta desde su arranque, y el arranque de los demas servicios no entra en la cuenta.
+# El reloj de la prueba empieza en 0: las pasadas completas se anotan con su instante en segundos.
+#
+#   make check-alertas
+
+rule_files:
+  - ../rules/plataforma.yml
+
+evaluation_interval: 1m
+
+tests:
+  # ── Pasadas cada 15 min: nada que avisar ──────────────────────────────────
+  - interval: 1m
+    input_series:
+      - series: 'mail_security_dkim_reconcile_last_success_timestamp_seconds{job="mail-services",service="mail-security",instance="mail-security:8042"}'
+        values: '0 60x14 960x14 1860x14 2760x14 3660x14 4560x14 5460x14 6360x14'
+      - series: 'process_start_time_seconds{job="mail-services",service="mail-security",instance="mail-security:8042"}'
+        values: '0x120'
+      - series: 'process_start_time_seconds{job="mail-services",service="gateway",instance="gateway:8080"}'
+        values: '0x120'
+    alert_rule_test:
+      - eval_time: 2h
+        alertname: RepasoDKIMDetenido
+        exp_alerts: []
+
+  # ── Ultima pasada completa a los 31 min y ninguna despues ─────────────────
+  - interval: 1m
+    input_series:
+      - series: 'mail_security_dkim_reconcile_last_success_timestamp_seconds{job="mail-services",service="mail-security",instance="mail-security:8042"}'
+        values: '0 60x14 960x14 1860x100'
+      - series: 'process_start_time_seconds{job="mail-services",service="mail-security",instance="mail-security:8042"}'
+        values: '0x130'
+    alert_rule_test:
+      # Mas de una hora sin pasada: en espera, no disparada.
+      - eval_time: 100m
+        alertname: RepasoDKIMDetenido
+        exp_alerts: []
+      - eval_time: 110m
+        alertname: RepasoDKIMDetenido
+        exp_alerts:
+          - exp_labels:
+              severidad: media
+              service: mail-security
+            exp_annotations:
+              resumen: "El repaso DKIM de mail-security no completa ninguna pasada desde hace mas de una hora"
+              detalle: "Las pasadas fallan o no terminan en su plazo, asi que nadie retira las claves DKIM que un camino fallido deje en los motores; publicar y retirar claves y los eventos del directorio siguen funcionando. El registro de mail-security (repaso DKIM incompleto) dice por que: Redis de los motores, la base de la celda o una pasada mas larga que MAIL_DKIM_RECONCILE_INTERVAL."
+
+  # ── Proceso arrancado a los 10 min que no completa ninguna pasada ─────────
+  - interval: 1m
+    input_series:
+      - series: 'mail_security_dkim_reconcile_last_success_timestamp_seconds{job="mail-services",service="mail-security",instance="mail-security:8042"}'
+        values: '_x10 0x120'
+      - series: 'process_start_time_seconds{job="mail-services",service="mail-security",instance="mail-security:8042"}'
+        values: '_x10 600x120'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: RepasoDKIMDetenido
+        exp_alerts: []
+      - eval_time: 80m
+        alertname: RepasoDKIMDetenido
+        exp_alerts: []
+      - eval_time: 90m
+        alertname: RepasoDKIMDetenido
+        exp_alerts:
+          - exp_labels:
+              severidad: media
+              service: mail-security
+            exp_annotations:
+              resumen: "El repaso DKIM de mail-security no completa ninguna pasada desde hace mas de una hora"
+              detalle: "Las pasadas fallan o no terminan en su plazo, asi que nadie retira las claves DKIM que un camino fallido deje en los motores; publicar y retirar claves y los eventos del directorio siguen funcionando. El registro de mail-security (repaso DKIM incompleto) dice por que: Redis de los motores, la base de la celda o una pasada mas larga que MAIL_DKIM_RECONCILE_INTERVAL."
+
+  # ── Dos replicas: la que no gana el cerrojo no retrasa nada ───────────────
+  - interval: 1m
+    input_series:
+      - series: 'mail_security_dkim_reconcile_last_success_timestamp_seconds{job="mail-services",service="mail-security",instance="10.0.0.1:8042"}'
+        values: '0 60x14 960x14 1860x14 2760x14 3660x14 4560x14 5460x14 6360x14'
+      - series: 'mail_security_dkim_reconcile_last_success_timestamp_seconds{job="mail-services",service="mail-security",instance="10.0.0.2:8042"}'
+        values: '0x120'
+      - series: 'process_start_time_seconds{job="mail-services",service="mail-security",instance="10.0.0.1:8042"}'
+        values: '0x120'
+      - series: 'process_start_time_seconds{job="mail-services",service="mail-security",instance="10.0.0.2:8042"}'
+        values: '0x120'
+    alert_rule_test:
+      - eval_time: 2h
+        alertname: RepasoDKIMDetenido
+        exp_alerts: []

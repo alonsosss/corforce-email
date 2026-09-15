@@ -21,16 +21,16 @@ Cada servicio expone `/metrics` en su propio puerto, en formato Prometheus:
 | `pgx_pool_acquire_waits_total` | Veces que una peticion espero conexion libre: el aviso temprano del agotamiento. |
 | `rbac_denials_total{module,action,enforced}` | Escrituras denegadas por el control de acceso (solo en el gateway). |
 | `rate_limit_degraded_total{limiter}` | Decisiones de un limitador compartido (`gateway:api`, `gateway:auth`) tomadas en memoria del proceso porque Redis no respondia: mientras crece, cada replica aplica su propio cupo (`docs/arquitectura/CSP-Y-SESION.md`). |
-| `cell_routing_failures_total`, `cell_call_failures_total`, `cell_target_refusals_total`, `cell_membership_refusals_total`, `cell_resolution_stale_total` | Enrutado por celda: peticiones que el gateway o domain-service no enviaron a ninguna celda, celdas destino rechazadas, empresas que una instancia rechazo y resoluciones servidas con la ultima celda conocida (`Modelo_de_Datos_y_Celdas.md`, 5.4). |
+| `cell_routing_failures_total{cell_service,reason}`, `cell_call_failures_total{cell_service,reason}`, `cell_target_refusals_total`, `cell_membership_refusals_total`, `cell_resolution_stale_total` | Enrutado por celda: peticiones que el gateway o domain-service no enviaron a ninguna celda (`cell_service` es el servicio de celda de destino), celdas destino rechazadas, empresas que una instancia rechazo y resoluciones servidas con la ultima celda conocida (`Modelo_de_Datos_y_Celdas.md`, 5.4). Nacen a cero al arrancar. |
+| `mail_security_dkim_reconcile_removals_total{reason}`, `mail_security_dkim_reconcile_unresolved_total`, `mail_security_dkim_reconcile_last_success_timestamp_seconds` | Repaso de las claves DKIM de los motores en mail-security: dominios a los que retiro las claves (`not_served`, `tenant_gone`), dominios que conservo porque organization no dio su empresa, e instante de su ultima pasada completa (0 si ninguna desde el arranque). Los contadores nacen a cero. |
 | `go_*`, `process_*` | Memoria, goroutines, arranques del proceso (detecta reinicios en bucle). |
 
 La identidad del servicio **no** viaja dentro de la metrica: la aporta el recolector desde
 la definicion del objetivo. Es la convencion de Prometheus y evita que la etiqueta se
-duplique como `exported_service`. Hay una excepcion: `cell_routing_failures_total` y
-`cell_call_failures_total` llevan en su propia etiqueta `service` el servicio de celda de
-destino, que choca con la del objetivo, y Prometheus la guarda como `exported_service`
-(comprobado con v3.1.0). Asi la leen las alertas de celdas: `service` es quien llama y
-`exported_service`, a que servicio.
+duplique como `exported_service`. Una metrica que nombra otro servicio lo hace con una etiqueta
+propia, como `cell_service` en las de celdas. Queda una que no lo cumple:
+`mail_auth_attempts_total{service,result}` (el servicio de Dovecot que pregunta, `deploy/mail/README.md`),
+que Prometheus guarda como `exported_service`; ninguna alerta ni tablero la lee.
 
 ## Como queda instrumentado un servicio
 
@@ -109,7 +109,7 @@ familia: disponibilidad (servicio caido, reinicios en bucle), version desplegada
 compilada en el servidor), trafico (errores 5xx, latencia), base de datos (pool al limite,
 esperas), seguridad (pico de denegaciones RBAC), host (disco, memoria, CPU, robo de CPU, swap),
 chat, vigilancia del propio aviso, parcheado del host, limites de peticiones (limitador sin
-Redis) y celdas (abajo).
+Redis), celdas y claves DKIM (abajo).
 
 Una alerta mal escrita no falla: se queda callada. Las reglas nuevas llevan su prueba de
 promtool en `ops/observability/prometheus/tests/<alerta>_test.yml`, que `make check-alertas`
@@ -124,11 +124,31 @@ avisa al primer caso, de lo que puede ser un corte breve de organization.
 | Alerta | Cuando | Espera | Severidad | Por que |
 |---|---|---|---|---|
 | `EmpresaEnCeldaAjena` | sube `cell_membership_refusals_total{reason="foreign_tenant"}` | ninguna | alta | Una empresa llego a la instancia de otra celda: enrutado del gateway o URL de un servicio de celda mal desplegados. |
-| `CeldaSinInstancia` | sube `not_served` en `cell_routing_failures_total` (gateway) o `cell_call_failures_total` (domain-service) | ninguna | alta | La celda de la empresa no tiene instancia declarada del servicio. El gateway crea la serie en su primer fallo, que nace en 1 y no da `increase()`: la regla detecta tambien la serie nueva. |
+| `CeldaSinInstancia` | sube `not_served` en `cell_routing_failures_total` (gateway) o `cell_call_failures_total` (domain-service) | ninguna | alta | La celda de la empresa no tiene instancia declarada del servicio. Los dos crean al arrancar sus series a cero, una por servicio de celda y motivo que pueden producir, asi que el primer fallo da `increase()`. |
 | `MapaDeCeldasDesalineado` | sube `cell_call_failures_total{reason="not_in_cell"}` | ninguna | alta | La instancia elegida por domain-service rechaza a la empresa: su mapa de celdas no casa con el `CELL_CODE` de la instancia. |
 | `ResolucionDeCeldaFallida` | `cell_routing_failures_total{reason="unresolved"}` sube en cada ventana de 10 min | 15 min | alta | El gateway sirve la ultima celda conocida hasta una hora despues de caducar: solo fallan las empresas sin cache, y un corte de menos de cinco minutos no avisa. |
 | `BarridoDeDominiosSinCelda` | `cell_call_failures_total{reason="unresolved"}` sube en cada ventana de 6 h 30 min | 7 h | media | domain-service llama en barridos (`DOMAIN_RECHECK_INTERVAL`, 6 h) y un barrido fallido se repite en el siguiente: avisa con dos seguidos. La ventana debe superar el intervalo y la espera, la ventana. |
 | `CeldaDestinoSinSuperadmin` | sube `cell_target_refusals_total{reason="not_operator"}` | ninguna | alta | Ningun cliente legitimo manda `X-Target-Cell` sin el rol superadmin: alguien con una sesion valida tantea el aislamiento entre celdas. |
+
+En estas reglas `service` es quien no pudo llamar (lo pone el recolector) y `cell_service`, a que
+servicio de celda.
+
+### Claves DKIM
+
+El repaso de mail-security retira las claves DKIM que la regla ya impide al escribir y con los
+eventos del directorio (`deploy/mail/README.md`). Pasa al arrancar y cada
+`MAIL_DKIM_RECONCILE_INTERVAL` (15 min por defecto), con un plazo de un intervalo por pasada. Nada
+de esto corta el correo: las tres son de severidad media.
+
+| Alerta | Cuando | Espera | Severidad | Por que |
+|---|---|---|---|---|
+| `ClavesDKIMRetiradasPorElRepaso` | sube `mail_security_dkim_reconcile_removals_total` en la ultima hora, por motivo | ninguna | media | Cada retirada es un camino que fallo: `not_served`, un dominio inactivo o fuera del directorio con claves (caida entre dos pasos, evento perdido); `tenant_gone`, un dominio activo de una empresa dada de baja, que sigue recibiendo. Las claves ya se retiraron: hay que investigarlo, no es una emergencia. |
+| `RepasoDKIMDetenido` | mas de una hora (cuatro intervalos) sin pasada completa en ninguna replica del servicio; la que no completo ninguna cuenta desde su arranque | 15 min | media | Avisa cuando cuatro pasadas seguidas no terminaron. Mientras dure nadie retira lo que un camino fallido deje en los motores; publicar, retirar y los eventos del directorio siguen. |
+| `RepasoDKIMSinOrganization` | sube `mail_security_dkim_reconcile_unresolved_total` en cada ventana de 20 min | 1 h | media | Sin respuesta de organization el repaso conserva las claves de esas empresas. Una pasada asi no avisa; cuatro seguidas si. organization caido ya lo avisa `ServicioCaido`: esta cubre que mail-security no llegue a el. |
+
+Las dos ultimas cuentan con el intervalo por defecto: si se alarga `MAIL_DKIM_RECONCILE_INTERVAL`,
+el umbral de `RepasoDKIMDetenido` debe seguir siendo cuatro intervalos y su espera uno, y la
+ventana de `RepasoDKIMSinOrganization` mas de un intervalo y su espera cuatro.
 
 ### Entrega de las alertas
 

@@ -16,7 +16,7 @@ tests:
   # ── Barridos sanos ────────────────────────────────────────────────────────
   - interval: 10m
     input_series:
-      - series: 'cell_call_failures_total{job="mail-services",service="domain-service",exported_service="mail-directory",reason="unresolved"}'
+      - series: 'cell_call_failures_total{job="mail-services",service="domain-service",cell_service="mail-directory",reason="unresolved"}'
         values: '0x80'
     alert_rule_test:
       - eval_time: 8h
@@ -26,7 +26,7 @@ tests:
   # ── Un solo barrido fallido: el siguiente lo repite ───────────────────────
   - interval: 10m
     input_series:
-      - series: 'cell_call_failures_total{job="mail-services",service="domain-service",exported_service="mail-directory",reason="unresolved"}'
+      - series: 'cell_call_failures_total{job="mail-services",service="domain-service",cell_service="mail-directory",reason="unresolved"}'
         values: '0 3x80'
     alert_rule_test:
       - eval_time: 7h20m
@@ -39,7 +39,7 @@ tests:
   # ── Dos barridos seguidos, a los 10 min y a las 6 h 10 min ────────────────
   - interval: 10m
     input_series:
-      - series: 'cell_call_failures_total{job="mail-services",service="domain-service",exported_service="mail-security",reason="unresolved"}'
+      - series: 'cell_call_failures_total{job="mail-services",service="domain-service",cell_service="mail-security",reason="unresolved"}'
         values: '0 3x35 6x40'
     alert_rule_test:
       # Ya fallo el segundo, pero la espera no se ha cumplido.
@@ -52,7 +52,7 @@ tests:
           - exp_labels:
               severidad: media
               service: domain-service
-              exported_service: mail-security
+              cell_service: mail-security
             exp_annotations:
               resumen: "domain-service no obtiene de organization la celda de las empresas en barridos seguidos para mail-security"
               detalle: "Sin la celda no sale ninguna llamada: la activacion de dominios, la entrega y retirada de claves DKIM y las desactivaciones pendientes esperan al barrido siguiente, y las verificaciones de las personas devuelven integration_errors. Revisar organization, ORGANIZATION_URL y el token interno de domain-service y la red entre los dos."

@@ -2,12 +2,12 @@
 #
 # Una celda sin instancia declarada de un servicio de celda es un error de despliegue: avisa en
 # el primer fallo, del gateway o de domain-service, y deja de avisar diez minutos despues del
-# ultimo. El gateway no crea la serie hasta su primer fallo, asi que la prueba comprueba que
-# ese primer fallo, que nace ya en 1, tambien avisa, y que una serie quieta no. Las empresas
-# desconocidas y las celdas sin resolver no son de despliegue y no avisan.
+# ultimo. Los dos crean sus series a cero al arrancar: la prueba comprueba que el primer fallo
+# del proceso avisa y que una serie quieta no. Las empresas desconocidas y las celdas sin
+# resolver no son de despliegue y no avisan.
 #
 # Las series llevan las etiquetas tal como las guarda Prometheus: 'service' del objetivo y el
-# servicio de destino en 'exported_service'.
+# servicio de destino en 'cell_service'.
 #
 #   make check-alertas
 
@@ -17,21 +17,23 @@ rule_files:
 evaluation_interval: 1m
 
 tests:
-  # ── Sin fallos: domain-service nace a cero y el gateway no tiene serie ────
+  # ── Sin fallos: las series de los dos nacen a cero y no se mueven ─────────
   - interval: 1m
     input_series:
-      - series: 'cell_call_failures_total{job="mail-services",service="domain-service",exported_service="mail-directory",reason="not_served"}'
+      - series: 'cell_call_failures_total{job="mail-services",service="domain-service",cell_service="mail-directory",reason="not_served"}'
+        values: '0x60'
+      - series: 'cell_routing_failures_total{job="mail-services",service="gateway",cell_service="mail-directory",reason="not_served"}'
         values: '0x60'
     alert_rule_test:
       - eval_time: 30m
         alertname: CeldaSinInstancia
         exp_alerts: []
 
-  # ── Primer fallo del gateway: la serie nace en 1 y avisa igual ────────────
+  # ── Primer fallo del gateway desde que arranco ────────────────────────────
   - interval: 1m
     input_series:
-      - series: 'cell_routing_failures_total{job="mail-services",service="gateway",exported_service="mail-security",reason="not_served"}'
-        values: '_x20 1x40'
+      - series: 'cell_routing_failures_total{job="mail-services",service="gateway",cell_service="mail-security",reason="not_served"}'
+        values: '0x20 1x40'
     alert_rule_test:
       - eval_time: 21m
         alertname: CeldaSinInstancia
@@ -39,7 +41,7 @@ tests:
           - exp_labels:
               severidad: alta
               service: gateway
-              exported_service: mail-security
+              cell_service: mail-security
             exp_annotations:
               resumen: "gateway no encuentra instancia de mail-security en la celda de una empresa"
               detalle: "Esa celda no tiene instancia declarada de mail-security: por el gateway sus empresas reciben 503 CELL_UNAVAILABLE y en domain-service su activacion de dominios y su entrega DKIM fallan en cada barrido. Declararla en <SERVICIO>_CELL_HOSTS, junto a GATEWAY_BASE_CELL_CODE, en el gateway y en domain-service, que leen las mismas variables; el registro de gateway nombra la empresa y la celda."
@@ -50,7 +52,7 @@ tests:
   # ── Gateway con fallos anteriores: quieta no avisa, un fallo nuevo si ─────
   - interval: 1m
     input_series:
-      - series: 'cell_routing_failures_total{job="mail-services",service="gateway",exported_service="mail-directory",reason="not_served"}'
+      - series: 'cell_routing_failures_total{job="mail-services",service="gateway",cell_service="mail-directory",reason="not_served"}'
         values: '2x30 3x30'
     alert_rule_test:
       - eval_time: 25m
@@ -62,7 +64,7 @@ tests:
           - exp_labels:
               severidad: alta
               service: gateway
-              exported_service: mail-directory
+              cell_service: mail-directory
             exp_annotations:
               resumen: "gateway no encuentra instancia de mail-directory en la celda de una empresa"
               detalle: "Esa celda no tiene instancia declarada de mail-directory: por el gateway sus empresas reciben 503 CELL_UNAVAILABLE y en domain-service su activacion de dominios y su entrega DKIM fallan en cada barrido. Declararla en <SERVICIO>_CELL_HOSTS, junto a GATEWAY_BASE_CELL_CODE, en el gateway y en domain-service, que leen las mismas variables; el registro de gateway nombra la empresa y la celda."
@@ -70,7 +72,7 @@ tests:
   # ── domain-service: la activacion no encuentra instancia ──────────────────
   - interval: 1m
     input_series:
-      - series: 'cell_call_failures_total{job="mail-services",service="domain-service",exported_service="mail-directory",reason="not_served"}'
+      - series: 'cell_call_failures_total{job="mail-services",service="domain-service",cell_service="mail-directory",reason="not_served"}'
         values: '0x10 1x50'
     alert_rule_test:
       - eval_time: 12m
@@ -79,7 +81,7 @@ tests:
           - exp_labels:
               severidad: alta
               service: domain-service
-              exported_service: mail-directory
+              cell_service: mail-directory
             exp_annotations:
               resumen: "domain-service no encuentra instancia de mail-directory en la celda de una empresa"
               detalle: "Esa celda no tiene instancia declarada de mail-directory: por el gateway sus empresas reciben 503 CELL_UNAVAILABLE y en domain-service su activacion de dominios y su entrega DKIM fallan en cada barrido. Declararla en <SERVICIO>_CELL_HOSTS, junto a GATEWAY_BASE_CELL_CODE, en el gateway y en domain-service, que leen las mismas variables; el registro de domain-service nombra la empresa y la celda."
@@ -90,11 +92,11 @@ tests:
   # ── Empresas desconocidas y celdas sin resolver: no son de despliegue ─────
   - interval: 1m
     input_series:
-      - series: 'cell_routing_failures_total{job="mail-services",service="gateway",exported_service="mail-directory",reason="unknown_tenant"}'
-        values: '_x5 1+2x55'
-      - series: 'cell_routing_failures_total{job="mail-services",service="gateway",exported_service="mail-directory",reason="unresolved"}'
-        values: '_x5 1+1x55'
-      - series: 'cell_call_failures_total{job="mail-services",service="domain-service",exported_service="mail-security",reason="unknown_tenant"}'
+      - series: 'cell_routing_failures_total{job="mail-services",service="gateway",cell_service="mail-directory",reason="unknown_tenant"}'
+        values: '0x4 1+2x55'
+      - series: 'cell_routing_failures_total{job="mail-services",service="gateway",cell_service="mail-directory",reason="unresolved"}'
+        values: '0x4 1+1x55'
+      - series: 'cell_call_failures_total{job="mail-services",service="domain-service",cell_service="mail-security",reason="unknown_tenant"}'
         values: '0+1x60'
     alert_rule_test:
       - eval_time: 8m

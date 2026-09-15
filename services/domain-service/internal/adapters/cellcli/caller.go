@@ -43,7 +43,7 @@ const (
 var failures = prometheus.NewCounterVec(prometheus.CounterOpts{
 	Name: "cell_call_failures_total",
 	Help: "Llamadas a un servicio de celda por una empresa que no salieron hacia ninguna instancia (celda sin resolver, empresa desconocida, celda sin instancia declarada) o que la instancia rechazo porque la empresa no es de su celda.",
-}, []string{"service", "reason"})
+}, []string{"cell_service", "reason"})
 
 func init() { prometheus.MustRegister(failures) }
 

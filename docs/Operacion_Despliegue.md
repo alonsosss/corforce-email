@@ -146,14 +146,17 @@ para llamar a la API hace falta ya un superadmin. Después, todo por API: `POST 
   organization antes de activarlo y, con `GATEWAY_BASE_CELL_CODE`, pregunta la celda de cada
   empresa; activa dominios y entrega las claves DKIM en la instancia de la celda de cada empresa.
   Si esa celda no tiene instancia declarada de un servicio, sus pasos fallan, se reintentan en el
-  barrido y se cuentan en `cell_call_failures_total{service, reason}`. Orden de despliegue del
+  barrido y se cuentan en `cell_call_failures_total{cell_service, reason}`. Orden de despliegue del
   indice: organization (migracion 029 y sus rutas internas) antes que el `domain-service` nuevo,
   que sin ellas no activa ningun dominio nuevo (los ya activos siguen); el webmail nuevo, con la
   celda en el token, cierra las sesiones abiertas con el anterior. Claves DKIM: `mail-security`
   en todas las celdas antes que el `domain-service` nuevo, que entrega el juego completo de claves
   de cada dominio y un `mail-security` anterior rechaza (las claves ya en los motores no se
   pierden); su primer repaso (`MAIL_DKIM_RECONCILE_INTERVAL`) retira las claves de dominios solo
-  de envio o inactivos en el directorio, y cada retirada queda en el registro como `repaso DKIM`.
+  de envio o inactivos en el directorio, y cada retirada queda en el registro como `repaso DKIM`
+  y en `mail_security_dkim_reconcile_removals_total`. Esa primera pasada corre al arrancar, casi
+  siempre antes de que Prometheus vea la serie, y lo que retire no suele avisar; cualquier retirada
+  posterior, tambien tras un reinicio, dispara `ClavesDKIMRetiradasPorElRepaso`.
 * Reglas: idempotentes y aditivas (`make check-migrations` cubre empresa y celda), cabecera
   `-- Schema | Service`, nunca cambiar el tipo de una columna sin
   `ops/maintenance/pgbouncer-reconnect.sh` después (los planes preparados viven en el pooler).

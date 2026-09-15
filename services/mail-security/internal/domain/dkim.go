@@ -20,6 +20,23 @@ type DirectoryDomain struct {
 	Active   bool
 }
 
+// DKIMRemovalReason es el motivo por el que el repaso retira las claves de un dominio. Cada
+// retirada es un camino que fallo antes: la regla ya se aplica al escribir y con cada evento del
+// directorio.
+type DKIMRemovalReason string
+
+const (
+	// DKIMNotServed: el dominio no esta activo en el directorio de la celda (o no esta en el).
+	DKIMNotServed DKIMRemovalReason = "not_served"
+	// DKIMTenantGone: el dominio sigue activo, pero organization ya no conoce su empresa.
+	DKIMTenantGone DKIMRemovalReason = "tenant_gone"
+)
+
+// DKIMRemovalReasons son todos los motivos de retirada del repaso.
+func DKIMRemovalReasons() []DKIMRemovalReason {
+	return []DKIMRemovalReason{DKIMNotServed, DKIMTenantGone}
+}
+
 // DKIMKeyField es el campo de DKIM_PRIV_KEYS de un selector: selector.dominio.
 func DKIMKeyField(selector, domainName string) string { return selector + "." + domainName }
 

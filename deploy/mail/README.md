@@ -354,7 +354,8 @@ compartido por las replicas) y leyendo el directorio dentro de el:
 * Repaso periodico con cerrojo de lider cada `MAIL_DKIM_RECONCILE_INTERVAL` (15 min por
   defecto): retira las de un dominio que no esta activo o cuya empresa organization ya no
   conoce (baja terminada). Sin respuesta de organization no toca esa empresa. Lo que encuentra
-  es un camino que fallo y queda en el registro (`repaso DKIM`).
+  es un camino que fallo y queda en el registro (`repaso DKIM`) y en las metricas
+  `mail_security_dkim_reconcile_*`, con sus alertas (`docs/arquitectura/OBSERVABILIDAD.md`).
 
 domain-service solo publica las claves de un dominio corporativo verificado (un dominio solo de
 envio no firma en la celda) y retira la clave en gracia en la celda antes de olvidarla mientras

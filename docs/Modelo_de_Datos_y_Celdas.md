@@ -566,9 +566,10 @@ tiene ninguna ruta o si falta `organization` entre los servicios.
 * Falla cerrado sin salir hacia ninguna instancia: sesion sin empresa valida o empresa que
   organization no conoce, 403; celda sin respuesta aplicable, 503 `CELL_UNAVAILABLE`; celda
   sin instancia declarada de ese servicio, 503 `CELL_UNAVAILABLE`.
-  `cell_routing_failures_total{service, reason}` con `unknown_tenant`, `unresolved` y
-  `not_served`. Alertas `CeldaSinInstancia` (al primer `not_served`) y
-  `ResolucionDeCeldaFallida` (`unresolved` sostenido; `docs/arquitectura/OBSERVABILIDAD.md`).
+  `cell_routing_failures_total{cell_service, reason}` con `unknown_tenant`, `unresolved` y
+  `not_served`, que nacen a cero al arrancar. Alertas `CeldaSinInstancia` (al primer
+  `not_served`) y `ResolucionDeCeldaFallida` (`unresolved` sostenido;
+  `docs/arquitectura/OBSERVABILIDAD.md`).
 * Arranque: con alguna instancia declarada, `GATEWAY_BASE_CELL_CODE` es obligatorio, con forma
   de codigo de celda y sin repetirse como instancia. Una celda declarada para un servicio de
   celda y no para otro se avisa en el registro; no impide arrancar (una celda puede abrirse
@@ -687,7 +688,7 @@ tiene ninguna ruta o si falta `organization` entre los servicios.
     celda sin respuesta aplicable, una empresa que organization no conoce o una celda sin instancia
     declarada del servicio no salen hacia ninguna instancia, y un 403 `TENANT_NOT_IN_CELL` de la
     instancia es un error de configuracion. Ninguno cuenta como hecho ni como 404: el paso falla.
-    `cell_call_failures_total{service, reason}` (`unresolved`, `unknown_tenant`, `not_served`,
+    `cell_call_failures_total{cell_service, reason}` (`unresolved`, `unknown_tenant`, `not_served`,
     `not_in_cell`, nacen a cero; alertas `CeldaSinInstancia` y `MapaDeCeldasDesalineado` al primer
     `not_served` o `not_in_cell`, y `BarridoDeDominiosSinCelda` con `unresolved` en dos barridos
     seguidos) y registro con empresa y celda (nivel error para `not_served` y
@@ -713,6 +714,9 @@ tiene ninguna ruta o si falta `organization` entre los servicios.
     no tiene activo, retira los selectores que el juego no trae, quita las de un dominio que el
     directorio desactiva o borra (`mail.domain.*`) y repasa con cerrojo de lider las que queden,
     tambien las de una empresa que organization ya no conoce. Contrato en `deploy/mail/README.md`.
+    El repaso cuenta por motivo lo que retira y lo que conserva sin respuesta de organization, y
+    sella su ultima pasada completa (`mail_security_dkim_reconcile_*`, con alertas en
+    `docs/arquitectura/OBSERVABILIDAD.md`).
   * Probado: unitarias de `pkg/tenantcell` (lectura de instancias y sus reglas; eleccion en la celda
     base, en otra celda, celda sin instancia, empresa desconocida, organization caido con la celda
     en cache, sin ella y fuera del margen; una celda sin consultas), de `cellcli` (cada empresa a
@@ -804,7 +808,7 @@ otro).
   nombre sin dominio van a la celda base, que responde lo mismo que a una contrasena mala (o su
   400): el gateway no responde nada propio. Sin respuesta aplicable de organization, o con la
   celda sin instancia declarada de webmail, 503 `CELL_UNAVAILABLE` sin salir hacia ninguna
-  instancia (`cell_routing_failures_total{service="webmail"}`, motivos `unresolved` y
+  instancia (`cell_routing_failures_total{cell_service="webmail"}`, motivos `unresolved` y
   `not_served`): nunca se supone otra celda. El limitador estricto del gateway y el de `mail-auth`
   por buzon e IP real no cambian.
 * Tiempo: todo inicio de sesion con un dominio bien formado hace la misma consulta (con la misma

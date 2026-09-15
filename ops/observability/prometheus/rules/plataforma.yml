@@ -350,29 +350,22 @@ groups:
           detalle: "Una empresa de otra celda llego a esta instancia y recibio 403 TENANT_NOT_IN_CELL. Revisar GATEWAY_BASE_CELL_CODE y <SERVICIO>_CELL_HOSTS del gateway y las URL de servicio de celda de quien llama (domain-service), y el registro del servicio (tenant_id y tenant_cell)."
 
       # cell_routing_failures_total (gateway) y cell_call_failures_total (domain-service) llevan
-      # el servicio de celda de destino en su propia etiqueta 'service', que choca con la que el
-      # recolector pone al objetivo: Prometheus la guarda como 'exported_service' (comprobado
-      # con v3.1.0). En las reglas siguientes 'service' es quien no pudo llamar y
-      # 'exported_service', a que servicio.
+      # el servicio de celda de destino en 'cell_service'; 'service' lo pone el recolector y es
+      # quien no pudo llamar.
       #
       # Una celda sin instancia declarada de un servicio es un error de despliegue que no se
-      # corrige solo: la empresa no llega a ninguna instancia. Avisa al primer fallo. El gateway
-      # no crea la serie hasta su primer fallo y un contador que nace ya en 1 no da increase():
-      # el segundo termino caza la serie que hace diez minutos no existia. Tras reiniciar
-      # Prometheus puede repetir un fallo anterior del mismo proceso, cuya configuracion, que
-      # sale del entorno, sigue siendo la que fallo.
+      # corrige solo: la empresa no llega a ninguna instancia. Avisa al primer fallo. Los dos
+      # crean sus series a cero al arrancar, una por servicio de celda y motivo que pueden
+      # producir, asi que el primer fallo da increase().
       - alert: CeldaSinInstancia
         expr: |
-          sum by (service, exported_service) (increase(cell_routing_failures_total{reason="not_served"}[10m])) > 0
-            or sum by (service, exported_service) (
-                 cell_routing_failures_total{reason="not_served"} > 0
-                   unless cell_routing_failures_total{reason="not_served"} offset 10m)
-            or sum by (service, exported_service) (increase(cell_call_failures_total{reason="not_served"}[10m])) > 0
+          sum by (service, cell_service) (increase(cell_routing_failures_total{reason="not_served"}[10m])) > 0
+            or sum by (service, cell_service) (increase(cell_call_failures_total{reason="not_served"}[10m])) > 0
         labels:
           severidad: alta
         annotations:
-          resumen: "{{ $labels.service }} no encuentra instancia de {{ $labels.exported_service }} en la celda de una empresa"
-          detalle: "Esa celda no tiene instancia declarada de {{ $labels.exported_service }}: por el gateway sus empresas reciben 503 CELL_UNAVAILABLE y en domain-service su activacion de dominios y su entrega DKIM fallan en cada barrido. Declararla en <SERVICIO>_CELL_HOSTS, junto a GATEWAY_BASE_CELL_CODE, en el gateway y en domain-service, que leen las mismas variables; el registro de {{ $labels.service }} nombra la empresa y la celda."
+          resumen: "{{ $labels.service }} no encuentra instancia de {{ $labels.cell_service }} en la celda de una empresa"
+          detalle: "Esa celda no tiene instancia declarada de {{ $labels.cell_service }}: por el gateway sus empresas reciben 503 CELL_UNAVAILABLE y en domain-service su activacion de dominios y su entrega DKIM fallan en cada barrido. Declararla en <SERVICIO>_CELL_HOSTS, junto a GATEWAY_BASE_CELL_CODE, en el gateway y en domain-service, que leen las mismas variables; el registro de {{ $labels.service }} nombra la empresa y la celda."
 
       # domain-service elige la instancia de cada empresa con las mismas variables que el
       # gateway. Si la instancia responde TENANT_NOT_IN_CELL, su mapa de celdas no casa con el
@@ -380,11 +373,11 @@ groups:
       # rechazo. Si la instancia lo cuenta como foreign_tenant, EmpresaEnCeldaAjena suena a la
       # vez; esta dice quien la envio.
       - alert: MapaDeCeldasDesalineado
-        expr: sum by (service, exported_service) (increase(cell_call_failures_total{reason="not_in_cell"}[10m])) > 0
+        expr: sum by (service, cell_service) (increase(cell_call_failures_total{reason="not_in_cell"}[10m])) > 0
         labels:
           severidad: alta
         annotations:
-          resumen: "{{ $labels.service }} envia empresas a una instancia de {{ $labels.exported_service }} que no es de su celda"
+          resumen: "{{ $labels.service }} envia empresas a una instancia de {{ $labels.cell_service }} que no es de su celda"
           detalle: "La instancia respondio 403 TENANT_NOT_IN_CELL y no se escribio nada, pero los pasos de dominios y DKIM de esa empresa fallan hasta corregirlo. Comparar GATEWAY_BASE_CELL_CODE, <SERVICIO>_CELL_HOSTS y los destinos base (MAIL_DIRECTORY_URL, MAIL_SECURITY_URL) de {{ $labels.service }} con los del gateway y con el CELL_CODE y ORGANIZATION_URL de cada instancia; el registro de {{ $labels.service }} nombra la empresa y la celda."
 
       # Sin respuesta de organization el gateway sirve la ultima celda conocida hasta una hora
@@ -394,12 +387,12 @@ groups:
       # despliegue de organization, y tolera huecos de diez minutos entre peticiones de empresas
       # sin cache, que con poco trafico son escasas.
       - alert: ResolucionDeCeldaFallida
-        expr: sum by (service, exported_service) (increase(cell_routing_failures_total{reason="unresolved"}[10m])) > 0
+        expr: sum by (service, cell_service) (increase(cell_routing_failures_total{reason="unresolved"}[10m])) > 0
         for: 15m
         labels:
           severidad: alta
         annotations:
-          resumen: "{{ $labels.service }} no obtiene de organization la celda de las empresas para {{ $labels.exported_service }}"
+          resumen: "{{ $labels.service }} no obtiene de organization la celda de las empresas para {{ $labels.cell_service }}"
           detalle: "Fallos sostenidos al resolver la celda: las empresas sin celda en cache reciben 503 CELL_UNAVAILABLE y, una hora despues de caducar su ultima respuesta, todas. Revisar organization (ServicioCaido), ORGANIZATION_HOST y el token interno del gateway y la red entre los dos; cell_resolution_stale_total cuenta las resoluciones servidas con la ultima celda conocida."
 
       # domain-service no llama de forma continua: un barrido cada DOMAIN_RECHECK_INTERVAL (6 h
@@ -409,12 +402,12 @@ groups:
       # la ventana: avisa con fallos en dos barridos seguidos o sostenidos mas de media hora. Si
       # se alarga DOMAIN_RECHECK_INTERVAL hay que alargar las dos.
       - alert: BarridoDeDominiosSinCelda
-        expr: sum by (service, exported_service) (increase(cell_call_failures_total{reason="unresolved"}[6h30m])) > 0
+        expr: sum by (service, cell_service) (increase(cell_call_failures_total{reason="unresolved"}[6h30m])) > 0
         for: 7h
         labels:
           severidad: media
         annotations:
-          resumen: "{{ $labels.service }} no obtiene de organization la celda de las empresas en barridos seguidos para {{ $labels.exported_service }}"
+          resumen: "{{ $labels.service }} no obtiene de organization la celda de las empresas en barridos seguidos para {{ $labels.cell_service }}"
           detalle: "Sin la celda no sale ninguna llamada: la activacion de dominios, la entrega y retirada de claves DKIM y las desactivaciones pendientes esperan al barrido siguiente, y las verificaciones de las personas devuelven integration_errors. Revisar organization, ORGANIZATION_URL y el token interno de domain-service y la red entre los dos."
 
       # Solo el superadmin nombra otra celda en X-Target-Cell y ningun cliente legitimo la
@@ -429,3 +422,64 @@ groups:
         annotations:
           resumen: "Una sesion sin rol superadmin intento operar otra celda con X-Target-Cell"
           detalle: "El gateway la rechazo con 403 TARGET_CELL_FORBIDDEN sin enviarla a ninguna celda. Ningun cliente legitimo manda esa cabecera sin el rol superadmin: el registro del gateway (celda destino rechazada, not_operator) y el rastro de auditoria (target_cell) dicen que cuenta, de que empresa y en que ruta. Si no tiene explicacion, revocar sus sesiones."
+
+  # Repaso de las claves DKIM de los motores en mail-security: al arrancar y cada
+  # MAIL_DKIM_RECONCILE_INTERVAL (15 min por defecto), con el cerrojo de la base de la celda, retira
+  # las claves que la regla ya impide al escribir y con los eventos del directorio. Nada de esto
+  # corta el correo: severidad media en las tres.
+  - name: claves-dkim
+    rules:
+      # Cada retirada es un camino que fallo antes. not_served: un dominio inactivo o fuera del
+      # directorio conservaba claves (una caida entre dos pasos, un evento mail.domain.* que no
+      # llego). tenant_gone: un dominio activo de una empresa que organization ya no conoce (la baja
+      # no desactivo sus dominios, que siguen recibiendo). Las claves ya se retiraron: avisa al
+      # primer caso y lo deja una hora a la vista para investigarlo. Las series nacen a cero y la
+      # del mismo objetivo sigue tras un reinicio, asi que tambien cuenta lo que retire la pasada con
+      # la que arranca el proceso; solo en el primer despliegue, sin serie previa, lo que retire al
+      # arrancar puede no avisar, y es la limpieza esperada de ese despliegue.
+      - alert: ClavesDKIMRetiradasPorElRepaso
+        expr: sum by (service, reason) (increase(mail_security_dkim_reconcile_removals_total[1h])) > 0
+        labels:
+          severidad: media
+        annotations:
+          resumen: "El repaso DKIM de {{ $labels.service }} retiro claves de dominios que la celda no debia firmar ({{ $labels.reason }})"
+          detalle: "Las claves ya no estan en los motores, pero un camino fallo antes. not_served: el dominio no esta activo en el directorio de la celda y conservaba claves (una caida entre dos pasos o un evento mail.domain.* que no llego a mail-security). tenant_gone: el dominio sigue activo en el directorio y organization ya no conoce su empresa, asi que la baja no desactivo sus dominios, que siguen recibiendo correo. El registro de {{ $labels.service }} (repaso DKIM) nombra cada dominio y su empresa."
+
+      # Cada pasada tiene de plazo un intervalo y una que no termina (Redis de los motores, la base
+      # de la celda, el plazo) se repite en la siguiente. El umbral son cuatro intervalos y la
+      # espera uno mas: avisa cuando cuatro pasadas seguidas no terminaron, tambien la que aun podia
+      # estar en curso. El cerrojo es por pasada y cualquier replica repasa la celda entera: vale la
+      # pasada mas reciente de las replicas del servicio, y la que no completo ninguna cuenta desde
+      # su arranque, que asi tiene el mismo margen. Mientras dure, nadie retira lo que un camino
+      # fallido deje en los motores. Cuenta con MAIL_DKIM_RECONCILE_INTERVAL: si se alarga, hay que
+      # alargar el umbral (cuatro intervalos) y la espera (uno).
+      - alert: RepasoDKIMDetenido
+        expr: |
+          time() - max by (service) (
+              mail_security_dkim_reconcile_last_success_timestamp_seconds > 0
+            or on (job, service, instance)
+              (process_start_time_seconds and on (job, service, instance) mail_security_dkim_reconcile_last_success_timestamp_seconds)
+          ) > 3600
+        for: 15m
+        labels:
+          severidad: media
+        annotations:
+          resumen: "El repaso DKIM de {{ $labels.service }} no completa ninguna pasada desde hace mas de una hora"
+          detalle: "Las pasadas fallan o no terminan en su plazo, asi que nadie retira las claves DKIM que un camino fallido deje en los motores; publicar y retirar claves y los eventos del directorio siguen funcionando. El registro de {{ $labels.service }} (repaso DKIM incompleto) dice por que: Redis de los motores, la base de la celda o una pasada mas larga que MAIL_DKIM_RECONCILE_INTERVAL."
+
+      # Sin respuesta de organization el repaso conserva las claves de esas empresas: una pasada asi
+      # no avisa y la siguiente lo repite. El resolvedor sirve la ultima respuesta hasta una hora
+      # despues de caducar, asi que esto sube con un corte largo o con un proceso recien arrancado
+      # sin cache. La ventana supera un intervalo, para que las pasadas seguidas la mantengan, y la
+      # espera son cuatro: avisa cuando cuatro pasadas seguidas no obtienen la empresa de algun
+      # dominio. organization caido ya avisa (ServicioCaido); esta cubre que mail-security no llegue
+      # a el. Cuenta con MAIL_DKIM_RECONCILE_INTERVAL: si se alarga, hay que alargar la ventana (mas
+      # de un intervalo) y la espera (cuatro).
+      - alert: RepasoDKIMSinOrganization
+        expr: sum by (service) (increase(mail_security_dkim_reconcile_unresolved_total[20m])) > 0
+        for: 1h
+        labels:
+          severidad: media
+        annotations:
+          resumen: "El repaso DKIM de {{ $labels.service }} no obtiene de organization la empresa de sus dominios"
+          detalle: "Las claves de las empresas sin respuesta se conservan, tambien las de una empresa ya dada de baja. La segunda barrera de la celda pregunta a organization por la misma ruta y rechaza con 503 a las empresas que no tiene en cache. Revisar organization, ORGANIZATION_URL y el token interno de {{ $labels.service }} y la red entre los dos."

@@ -46,15 +46,33 @@ const (
 	cellDirectoryService = "organization"
 )
 
-// cellRoutingFailures cuenta las peticiones con sesion que no salieron hacia ninguna celda.
-// reason: unresolved (organization no dio la celda), unknown_tenant (la empresa no existe) o
-// not_served (la celda no tiene instancia declarada de ese servicio: error de despliegue).
+// Motivos, etiqueta reason de cell_routing_failures_total.
+const (
+	// routingUnresolved: organization no dio la celda.
+	routingUnresolved = "unresolved"
+	// routingUnknownTenant: la empresa de la sesion no existe.
+	routingUnknownTenant = "unknown_tenant"
+	// routingNotServed: la celda no tiene instancia declarada del servicio (error de despliegue).
+	routingNotServed = "not_served"
+)
+
+// cellRoutingFailures cuenta las peticiones que no salieron hacia ninguna celda. El servicio de
+// celda de destino va en cell_service: la etiqueta service la pone el recolector al gateway.
 var cellRoutingFailures = prometheus.NewCounterVec(prometheus.CounterOpts{
 	Name: "cell_routing_failures_total",
 	Help: "Peticiones con sesion a un servicio de celda que el gateway no envio a ninguna celda.",
-}, []string{"service", "reason"})
+}, []string{"cell_service", "reason"})
 
 func init() { prometheus.MustRegister(cellRoutingFailures) }
+
+// routingFailuresAtZero crea a cero, al montar el enrutado, las series de un servicio para los
+// motivos que puede producir: un contador que nace ya en 1 no da increase() y su primer fallo no
+// avisaria (CeldaSinInstancia).
+func routingFailuresAtZero(service string, reasons ...string) {
+	for _, reason := range reasons {
+		cellRoutingFailures.WithLabelValues(service, reason)
+	}
+}
 
 // cellSegment dice si la ruta lleva {cell} como segmento entero.
 func cellSegment(path string) bool {
@@ -299,6 +317,10 @@ func mountPublic(r chi.Router, t *routeTable, internalToken string) {
 // (GATEWAY_BASE_CELL_CODE), el que elige la instancia por la celda de la empresa. cells es
 // nil exactamente cuando no hay celda base.
 func sessionHandlers(t *routeTable, internalToken string, cells *tenantcell.Resolver, logger *zap.Logger) map[string]http.Handler {
+	routed := make(map[string]bool, len(t.Routes))
+	for _, rt := range t.Routes {
+		routed[rt.Service] = true
+	}
 	out := make(map[string]http.Handler, len(t.Services))
 	for name, s := range t.Services {
 		base := reverseProxy(t.serviceURL(name), internalToken)
@@ -313,6 +335,9 @@ func sessionHandlers(t *routeTable, internalToken string, cells *tenantcell.Reso
 				byCell[code] = reverseProxy(target, internalToken)
 			}
 			out[name] = varyByTargetCell(tenantCellRouter{service: name, byCell: byCell, cells: cells, logger: logger})
+			if routed[name] {
+				routingFailuresAtZero(name, routingUnknownTenant, routingUnresolved, routingNotServed)
+			}
 		}
 	}
 	return out
@@ -332,7 +357,7 @@ func (c tenantCellRouter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if cell, ok := routedTargetFrom(r.Context()); ok {
 		h, served := c.byCell[cell]
 		if !served {
-			c.refuse(w, "not_served", middleware.GetTenantID(r.Context()), cell)
+			c.refuse(w, routingNotServed, middleware.GetTenantID(r.Context()), cell)
 			response.Err(w, http.StatusServiceUnavailable, tenantcell.CodeCellUnavailable, "el servicio no esta disponible en la celda destino")
 			return
 		}
@@ -344,17 +369,17 @@ func (c tenantCellRouter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	cell, err := c.cells.CellOf(r.Context(), tenantID)
 	if err != nil {
 		if errors.Is(err, tenantcell.ErrUnknownTenant) {
-			c.refuse(w, "unknown_tenant", tenantID, "")
+			c.refuse(w, routingUnknownTenant, tenantID, "")
 			response.Err(w, http.StatusForbidden, "FORBIDDEN", "la sesion no corresponde a ninguna empresa")
 			return
 		}
-		c.refuse(w, "unresolved", tenantID, "")
+		c.refuse(w, routingUnresolved, tenantID, "")
 		response.Err(w, http.StatusServiceUnavailable, "CELL_UNAVAILABLE", "no se pudo determinar la celda de tu empresa; intentalo de nuevo")
 		return
 	}
 	h, ok := c.byCell[cell]
 	if !ok {
-		c.refuse(w, "not_served", tenantID, cell)
+		c.refuse(w, routingNotServed, tenantID, cell)
 		response.Err(w, http.StatusServiceUnavailable, "CELL_UNAVAILABLE", "el servicio no esta disponible para la celda de tu empresa")
 		return
 	}

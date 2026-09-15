@@ -23,6 +23,7 @@ type DKIMUseCase struct {
 	lock    ports.DKIMDomainLock
 	sync    *RedisSync
 	tenants ports.TenantRegistry
+	metrics ports.DKIMReconcileMetrics
 	logger  *zap.Logger
 }
 
@@ -31,22 +32,27 @@ type DKIMDeps struct {
 	Lock      ports.DKIMDomainLock
 	Sync      *RedisSync
 	Tenants   ports.TenantRegistry
+	Metrics   ports.DKIMReconcileMetrics
 	Logger    *zap.Logger
 }
 
 func NewDKIMUseCase(d DKIMDeps) *DKIMUseCase {
-	uc := &DKIMUseCase{dir: d.Directory, lock: d.Lock, sync: d.Sync, tenants: d.Tenants, logger: d.Logger}
+	uc := &DKIMUseCase{dir: d.Directory, lock: d.Lock, sync: d.Sync, tenants: d.Tenants, metrics: d.Metrics, logger: d.Logger}
+	if uc.metrics == nil {
+		uc.metrics = noDKIMMetrics{}
+	}
 	if uc.logger == nil {
 		uc.logger = zap.NewNop()
 	}
 	return uc
 }
 
-// Motivos por los que un dominio pierde sus claves en el repaso.
-const (
-	dkimReasonNotServed  = "not_served"
-	dkimReasonTenantGone = "tenant_gone"
-)
+// noDKIMMetrics descarta las metricas del repaso cuando no se inyectan (pruebas).
+type noDKIMMetrics struct{}
+
+func (noDKIMMetrics) DKIMKeysRemoved(domain.DKIMRemovalReason, int) {}
+func (noDKIMMetrics) DKIMUnresolved(int)                            {}
+func (noDKIMMetrics) DKIMReconciled(time.Time)                      {}
 
 // PutKeys deja en los motores exactamente el juego de claves del dominio, en orden (la ultima
 // firma): los selectores que no vienen se retiran. Solo de un dominio activo de la empresa.
@@ -185,7 +191,7 @@ func (uc *DKIMUseCase) Reconcile(ctx context.Context) (DKIMReconcileReport, erro
 			continue
 		}
 		seen, found := states[name]
-		reason := dkimReasonNotServed
+		reason := domain.DKIMNotServed
 		if found && seen.Active {
 			ans, asked := answers[seen.TenantID]
 			if !asked {
@@ -203,7 +209,7 @@ func (uc *DKIMUseCase) Reconcile(ctx context.Context) (DKIMReconcileReport, erro
 			if !ans.gone {
 				continue
 			}
-			reason = dkimReasonTenantGone
+			reason = domain.DKIMTenantGone
 		}
 		removed, err := uc.forgetUnchanged(ctx, name, seen.TenantID, reason)
 		if err != nil {
@@ -212,12 +218,12 @@ func (uc *DKIMUseCase) Reconcile(ctx context.Context) (DKIMReconcileReport, erro
 		if !removed {
 			continue
 		}
-		if reason == dkimReasonTenantGone {
+		if reason == domain.DKIMTenantGone {
 			rep.TenantGone++
 		} else {
 			rep.NotServed++
 		}
-		fields := []zap.Field{zap.String("domain", name), zap.String("motivo", reason)}
+		fields := []zap.Field{zap.String("domain", name), zap.String("motivo", string(reason))}
 		if found {
 			fields = append(fields, zap.String("tenant_id", seen.TenantID.String()))
 		}
@@ -229,7 +235,7 @@ func (uc *DKIMUseCase) Reconcile(ctx context.Context) (DKIMReconcileReport, erro
 // forgetUnchanged retira las claves del dominio si, con su cerrojo tomado, el motivo sigue en pie:
 // un dominio que se activo entretanto conserva las que acaba de recibir, y uno que cambio de
 // empresa se decide en la pasada siguiente.
-func (uc *DKIMUseCase) forgetUnchanged(ctx context.Context, name string, tenantID uuid.UUID, reason string) (bool, error) {
+func (uc *DKIMUseCase) forgetUnchanged(ctx context.Context, name string, tenantID uuid.UUID, reason domain.DKIMRemovalReason) (bool, error) {
 	removed := false
 	err := uc.lock.WithDomainLock(ctx, name, func(ctx context.Context) error {
 		st, found, err := uc.state(ctx, name)
@@ -237,7 +243,7 @@ func (uc *DKIMUseCase) forgetUnchanged(ctx context.Context, name string, tenantI
 			return err
 		}
 		stillServed := found && st.Active
-		if stillServed && (reason != dkimReasonTenantGone || st.TenantID != tenantID) {
+		if stillServed && (reason != domain.DKIMTenantGone || st.TenantID != tenantID) {
 			return nil
 		}
 		if _, err := uc.sync.RemoveDKIMDomain(ctx, name); err != nil {
@@ -273,7 +279,15 @@ func (uc *DKIMUseCase) reconcileTick(ctx context.Context, interval time.Duration
 	tctx, cancel := context.WithTimeout(ctx, interval)
 	defer cancel()
 	rep, err := uc.Reconcile(tctx)
-	if err != nil && tctx.Err() == nil {
+	// Lo retirado cuenta aunque la pasada no termine; solo una pasada entera sella la ultima
+	// completa. Una pasada cortada por el apagado no es un fallo y no se registra.
+	uc.metrics.DKIMKeysRemoved(domain.DKIMNotServed, rep.NotServed)
+	uc.metrics.DKIMKeysRemoved(domain.DKIMTenantGone, rep.TenantGone)
+	uc.metrics.DKIMUnresolved(rep.Unresolved)
+	switch {
+	case err == nil:
+		uc.metrics.DKIMReconciled(time.Now())
+	case ctx.Err() == nil:
 		uc.logger.Warn("repaso DKIM incompleto; se repite en el siguiente", zap.Error(err))
 	}
 	if rep.NotServed+rep.TenantGone+rep.Unresolved > 0 {

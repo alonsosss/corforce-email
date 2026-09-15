@@ -146,6 +146,24 @@ func (t *Tenants) TenantGone(_ context.Context, id uuid.UUID) (bool, error) {
 	return t.Gone[id], nil
 }
 
+// DKIMMetrics implementa ports.DKIMReconcileMetrics en memoria.
+type DKIMMetrics struct {
+	Removed    map[domain.DKIMRemovalReason]int
+	Unresolved int
+	Reconciled []time.Time
+}
+
+func (m *DKIMMetrics) DKIMKeysRemoved(reason domain.DKIMRemovalReason, domains int) {
+	if m.Removed == nil {
+		m.Removed = map[domain.DKIMRemovalReason]int{}
+	}
+	m.Removed[reason] += domains
+}
+
+func (m *DKIMMetrics) DKIMUnresolved(domains int) { m.Unresolved += domains }
+
+func (m *DKIMMetrics) DKIMReconciled(at time.Time) { m.Reconciled = append(m.Reconciled, at) }
+
 func (f *Directory) AliasDomainsOf(_ context.Context, target string) ([]string, error) {
 	var out []string
 	for a, t := range f.AliasDomains {

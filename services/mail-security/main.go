@@ -26,6 +26,7 @@ import (
 	"github.com/alonsosss/corforce-email/services/mail-security/internal/adapters/organizationcli"
 	outboxadapter "github.com/alonsosss/corforce-email/services/mail-security/internal/adapters/outbox"
 	"github.com/alonsosss/corforce-email/services/mail-security/internal/adapters/postgres"
+	promadapter "github.com/alonsosss/corforce-email/services/mail-security/internal/adapters/prometheus"
 	redisadapter "github.com/alonsosss/corforce-email/services/mail-security/internal/adapters/redis"
 	"github.com/alonsosss/corforce-email/services/mail-security/internal/adapters/rspamd"
 	smtpadapter "github.com/alonsosss/corforce-email/services/mail-security/internal/adapters/smtp"
@@ -182,6 +183,7 @@ func main() {
 	dkimUC := app.NewDKIMUseCase(app.DKIMDeps{
 		Directory: directory, Lock: postgres.NewDKIMLock(ctxPool), Sync: redisSync, Logger: logger,
 		Tenants: organizationcli.New(tenantcell.NewResolver(strings.TrimSpace(os.Getenv("ORGANIZATION_URL")), orgToken, logger)),
+		Metrics: promadapter.New(),
 	})
 
 	// Enlaces sin sesion del aviso de cuarentena: firmados con MAIL_LINK_SIGNING_KEY,

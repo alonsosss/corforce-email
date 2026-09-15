@@ -58,6 +58,7 @@ func selfAuthHandlers(t *routeTable, s selfAuthSpec, internalToken string, domai
 		service: s.Service, base: base, byCell: byCell, cookie: s.CellCookie,
 		login: loginType(s.CellLogin.UsernameField), domains: domains, logger: logger,
 	}
+	routingFailuresAtZero(s.Service, routingUnresolved, routingNotServed)
 	return http.HandlerFunc(c.bySession), http.HandlerFunc(c.byLogin)
 }
 
@@ -117,13 +118,13 @@ func (c *selfAuthCellRouter) byLogin(w http.ResponseWriter, r *http.Request) {
 		c.base.ServeHTTP(w, r)
 		return
 	case err != nil:
-		c.refuse(w, "unresolved", name, "")
+		c.refuse(w, routingUnresolved, name, "")
 		response.Err(w, http.StatusServiceUnavailable, tenantcell.CodeCellUnavailable, "no se pudo determinar la celda del buzon; intentalo de nuevo")
 		return
 	}
 	h, served := c.byCell[cell]
 	if !served {
-		c.refuse(w, "not_served", name, cell)
+		c.refuse(w, routingNotServed, name, cell)
 		response.Err(w, http.StatusServiceUnavailable, tenantcell.CodeCellUnavailable, "el servicio no esta disponible para la celda del buzon")
 		return
 	}

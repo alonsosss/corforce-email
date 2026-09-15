@@ -20,15 +20,18 @@ type dkimFixture struct {
 	store   *apptest.Store
 	lock    *apptest.DKIMLock
 	tenants *apptest.Tenants
+	metrics *apptest.DKIMMetrics
 }
 
 func newDKIMFixture() *dkimFixture {
 	f := &dkimFixture{dir: apptest.NewDirectory(), store: apptest.NewStore(), lock: &apptest.DKIMLock{},
-		tenants: &apptest.Tenants{Gone: map[uuid.UUID]bool{}}}
+		tenants: &apptest.Tenants{Gone: map[uuid.UUID]bool{}}, metrics: &apptest.DKIMMetrics{}}
 	sync := NewRedisSync(f.store, f.dir, apptest.NewPolicyReader(), zap.NewNop())
-	f.uc = NewDKIMUseCase(DKIMDeps{Directory: f.dir, Lock: f.lock, Sync: sync, Tenants: f.tenants, Logger: zap.NewNop()})
+	f.uc = NewDKIMUseCase(DKIMDeps{Directory: f.dir, Lock: f.lock, Sync: sync, Tenants: f.tenants, Metrics: f.metrics, Logger: zap.NewNop()})
 	return f
 }
+
+func conElCerrojo(context.Context) (func(), bool) { return func() {}, true }
 
 // seed deja claves en los motores sin pasar por el caso de uso, como quedarian tras un fallo
 // entre pasos o antes de esta regla.
@@ -281,5 +284,67 @@ func TestElRepasoSoloCorreEnLaReplicaConElCerrojo(t *testing.T) {
 	f.uc.reconcileTick(ctx, time.Minute, func(context.Context) (func(), bool) { return func() { released = true }, true })
 	if names, _ := f.uc.sync.DKIMDomains(ctx); len(names) != 0 || !released {
 		t.Fatalf("con el cerrojo se retira y se suelta: %v, soltado %v", names, released)
+	}
+}
+
+// El repaso cuenta lo que retira, por motivo, y lo que conserva sin respuesta de organization, y
+// cada pasada entera sella la ultima completa, tambien la que no pudo preguntar por una empresa.
+func TestElRepasoCuentaLoQueRetiraYSellaLaPasadaCompleta(t *testing.T) {
+	f := newDKIMFixture()
+	ctx := context.Background()
+	activa, retirada := uuid.New(), uuid.New()
+	f.dir.Domains["acme.com"] = activa
+	f.dir.Domains["vieja.com"] = retirada
+	f.tenants.Gone[retirada] = true
+	f.seed(t, "acme.com", "s1")
+	f.seed(t, "vieja.com", "s1")
+	f.seed(t, "fantasma.com", "s1")
+
+	antes := time.Now()
+	f.uc.reconcileTick(ctx, time.Minute, conElCerrojo)
+	m := f.metrics
+	if m.Removed[domain.DKIMNotServed] != 1 || m.Removed[domain.DKIMTenantGone] != 1 || m.Unresolved != 0 ||
+		len(m.Reconciled) != 1 || m.Reconciled[0].Before(antes) {
+		t.Fatalf("primera pasada: %+v", m)
+	}
+
+	f.tenants.Down = true
+	f.uc.reconcileTick(ctx, time.Minute, conElCerrojo)
+	if m.Removed[domain.DKIMNotServed] != 1 || m.Removed[domain.DKIMTenantGone] != 1 || m.Unresolved != 1 || len(m.Reconciled) != 2 {
+		t.Fatalf("sin organization: %+v", m)
+	}
+
+	// La replica sin el cerrojo no repasa ni cuenta nada.
+	f.uc.reconcileTick(ctx, time.Minute, func(context.Context) (func(), bool) { return nil, false })
+	if m.Unresolved != 1 || len(m.Reconciled) != 2 {
+		t.Fatalf("sin el cerrojo: %+v", m)
+	}
+}
+
+// Una pasada que no termina en su plazo no sella la ultima completa, pero lo que ya retiro cuenta.
+// Una pasada cortada por el apagado tampoco la sella.
+func TestElRepasoIncompletoNoSellaLaPasada(t *testing.T) {
+	f := newDKIMFixture()
+	f.seed(t, "a.com", "s1")
+	f.seed(t, "b.com", "s1")
+	f.lock.Before = func(name string) {
+		if name == "a.com" {
+			time.Sleep(50 * time.Millisecond)
+		}
+	}
+	f.uc.reconcileTick(context.Background(), 10*time.Millisecond, conElCerrojo)
+	if f.metrics.Removed[domain.DKIMNotServed] != 1 || len(f.metrics.Reconciled) != 0 {
+		t.Fatalf("pasada fuera de plazo: %+v", f.metrics)
+	}
+	if names, _ := f.uc.sync.DKIMDomains(context.Background()); len(names) != 1 || names[0] != "b.com" {
+		t.Fatalf("la pasada se corta en el plazo: quedan %v", names)
+	}
+
+	f.lock.Before = nil
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	f.uc.reconcileTick(ctx, time.Minute, conElCerrojo)
+	if f.metrics.Removed[domain.DKIMNotServed] != 1 || len(f.metrics.Reconciled) != 0 {
+		t.Fatalf("pasada cortada por el apagado: %+v", f.metrics)
 	}
 }

@@ -228,6 +228,16 @@ type TenantRegistry interface {
 	TenantGone(ctx context.Context, tenantID uuid.UUID) (bool, error)
 }
 
+// DKIMReconcileMetrics cuenta el repaso de las claves DKIM de los motores.
+type DKIMReconcileMetrics interface {
+	// DKIMKeysRemoved suma los dominios a los que el repaso retiro las claves, por motivo.
+	DKIMKeysRemoved(reason domain.DKIMRemovalReason, domains int)
+	// DKIMUnresolved suma los dominios cuyas claves se conservaron sin respuesta de organization.
+	DKIMUnresolved(domains int)
+	// DKIMReconciled anota el instante de una pasada completa.
+	DKIMReconciled(at time.Time)
+}
+
 // EventPublisher encola los eventos del servicio en la outbox de la celda por la
 // transaccion del contexto: se llama DENTRO de ella y su error la revierte, de modo que
 // el evento existe si y solo si existe el cambio que lo origina.

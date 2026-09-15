@@ -1,0 +1,92 @@
+# Pruebas de la alerta ClavesDKIMRetiradasPorElRepaso.
+#
+# Cada dominio al que el repaso de mail-security retira las claves DKIM es un camino que fallo
+# antes: avisa en la primera retirada, con el motivo, y deja de avisar una hora despues. Las
+# series nacen a cero y siguen tras un reinicio, asi que la pasada con la que arranca un proceso
+# tambien avisa; una serie que aparece ya con retiradas (primer despliegue) no.
+#
+#   make check-alertas
+
+rule_files:
+  - ../rules/plataforma.yml
+
+evaluation_interval: 1m
+
+tests:
+  # ── Sin retiradas: las series nacen a cero y no se mueven ─────────────────
+  - interval: 1m
+    input_series:
+      - series: 'mail_security_dkim_reconcile_removals_total{job="mail-services",service="mail-security",reason="not_served"}'
+        values: '0x60'
+      - series: 'mail_security_dkim_reconcile_removals_total{job="mail-services",service="mail-security",reason="tenant_gone"}'
+        values: '0x60'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: ClavesDKIMRetiradasPorElRepaso
+        exp_alerts: []
+
+  # ── Un dominio fuera del directorio: avisa con su motivo y cesa en una hora ─
+  - interval: 1m
+    input_series:
+      - series: 'mail_security_dkim_reconcile_removals_total{job="mail-services",service="mail-security",reason="not_served"}'
+        values: '0x10 1x80'
+      - series: 'mail_security_dkim_reconcile_removals_total{job="mail-services",service="mail-security",reason="tenant_gone"}'
+        values: '0x90'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: ClavesDKIMRetiradasPorElRepaso
+        exp_alerts:
+          - exp_labels:
+              severidad: media
+              service: mail-security
+              reason: not_served
+            exp_annotations:
+              resumen: "El repaso DKIM de mail-security retiro claves de dominios que la celda no debia firmar (not_served)"
+              detalle: "Las claves ya no estan en los motores, pero un camino fallo antes. not_served: el dominio no esta activo en el directorio de la celda y conservaba claves (una caida entre dos pasos o un evento mail.domain.* que no llego a mail-security). tenant_gone: el dominio sigue activo en el directorio y organization ya no conoce su empresa, asi que la baja no desactivo sus dominios, que siguen recibiendo correo. El registro de mail-security (repaso DKIM) nombra cada dominio y su empresa."
+      - eval_time: 75m
+        alertname: ClavesDKIMRetiradasPorElRepaso
+        exp_alerts: []
+
+  # ── Dominios activos de una empresa dada de baja ──────────────────────────
+  - interval: 1m
+    input_series:
+      - series: 'mail_security_dkim_reconcile_removals_total{job="mail-services",service="mail-security",reason="tenant_gone"}'
+        values: '0x20 3x40'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: ClavesDKIMRetiradasPorElRepaso
+        exp_alerts:
+          - exp_labels:
+              severidad: media
+              service: mail-security
+              reason: tenant_gone
+            exp_annotations:
+              resumen: "El repaso DKIM de mail-security retiro claves de dominios que la celda no debia firmar (tenant_gone)"
+              detalle: "Las claves ya no estan en los motores, pero un camino fallo antes. not_served: el dominio no esta activo en el directorio de la celda y conservaba claves (una caida entre dos pasos o un evento mail.domain.* que no llego a mail-security). tenant_gone: el dominio sigue activo en el directorio y organization ya no conoce su empresa, asi que la baja no desactivo sus dominios, que siguen recibiendo correo. El registro de mail-security (repaso DKIM) nombra cada dominio y su empresa."
+
+  # ── Reinicio: la pasada con la que arranca el proceso nuevo retira algo ───
+  - interval: 1m
+    input_series:
+      - series: 'mail_security_dkim_reconcile_removals_total{job="mail-services",service="mail-security",reason="not_served"}'
+        values: '0x10 _x3 1x50'
+    alert_rule_test:
+      - eval_time: 16m
+        alertname: ClavesDKIMRetiradasPorElRepaso
+        exp_alerts:
+          - exp_labels:
+              severidad: media
+              service: mail-security
+              reason: not_served
+            exp_annotations:
+              resumen: "El repaso DKIM de mail-security retiro claves de dominios que la celda no debia firmar (not_served)"
+              detalle: "Las claves ya no estan en los motores, pero un camino fallo antes. not_served: el dominio no esta activo en el directorio de la celda y conservaba claves (una caida entre dos pasos o un evento mail.domain.* que no llego a mail-security). tenant_gone: el dominio sigue activo en el directorio y organization ya no conoce su empresa, asi que la baja no desactivo sus dominios, que siguen recibiendo correo. El registro de mail-security (repaso DKIM) nombra cada dominio y su empresa."
+
+  # ── Primer despliegue: la serie aparece ya con la limpieza de arranque ────
+  - interval: 1m
+    input_series:
+      - series: 'mail_security_dkim_reconcile_removals_total{job="mail-services",service="mail-security",reason="not_served"}'
+        values: '_x10 4x50'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: ClavesDKIMRetiradasPorElRepaso
+        exp_alerts: []

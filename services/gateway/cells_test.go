@@ -42,6 +42,32 @@ func counterValue(name string, labels map[string]string) float64 {
 	return 0
 }
 
+// seriesValue devuelve el valor de la serie con exactamente esas etiquetas y si existe.
+func seriesValue(name string, labels map[string]string) (float64, bool) {
+	mfs, err := prometheus.DefaultGatherer.Gather()
+	if err != nil {
+		return 0, false
+	}
+	for _, mf := range mfs {
+		if mf.GetName() != name {
+			continue
+		}
+	metric:
+		for _, m := range mf.GetMetric() {
+			if len(m.GetLabel()) != len(labels) {
+				continue
+			}
+			for _, l := range m.GetLabel() {
+				if want, ok := labels[l.GetName()]; !ok || want != l.GetValue() {
+					continue metric
+				}
+			}
+			return m.GetCounter().GetValue(), true
+		}
+	}
+	return 0, false
+}
+
 // fakeCell hace de mail-security de una celda: acepta el enlace de su celda con la firma
 // buena y responde a todo lo demas con la misma pagina, como el servicio real.
 func fakeCell(t *testing.T, cell string, hits *[]string) *httptest.Server {
@@ -366,12 +392,12 @@ func TestLasRutasConSesionDeCadaServicioDeCeldaVanASuCelda(t *testing.T) {
 			}
 		}
 
-		antes := counterValue("cell_routing_failures_total", map[string]string{"service": rt.Service, "reason": "not_served"})
+		antes := counterValue("cell_routing_failures_total", map[string]string{"cell_service": rt.Service, "reason": "not_served"})
 		rec := pedirComo(gw, t03, path)
 		if rec.Code != http.StatusServiceUnavailable || codigoDeError(rec) != "CELL_UNAVAILABLE" || len(g.take()) != 0 {
 			t.Fatalf("%s en una celda sin instancia: %d %s", path, rec.Code, rec.Body)
 		}
-		if got := counterValue("cell_routing_failures_total", map[string]string{"service": rt.Service, "reason": "not_served"}); got != antes+1 {
+		if got := counterValue("cell_routing_failures_total", map[string]string{"cell_service": rt.Service, "reason": "not_served"}); got != antes+1 {
 			t.Fatalf("metrica not_served de %s: %v", rt.Service, got)
 		}
 		if rec := pedirComo(gw, nadie, path); rec.Code != http.StatusForbidden || len(g.take()) != 0 {
@@ -397,12 +423,12 @@ func TestLasRutasConSesionDeCadaServicioDeCeldaVanASuCelda(t *testing.T) {
 	sinRespuesta := uuid.NewString()
 	org.SetDown(true)
 	org.SetCell(sinRespuesta, "pe-01")
-	antes2 := counterValue("cell_routing_failures_total", map[string]string{"service": "mail-directory", "reason": "unresolved"})
+	antes2 := counterValue("cell_routing_failures_total", map[string]string{"cell_service": "mail-directory", "reason": "unresolved"})
 	rec := pedirComo(gw, sinRespuesta, "/api/v1/mailboxes/x")
 	if rec.Code != http.StatusServiceUnavailable || codigoDeError(rec) != "CELL_UNAVAILABLE" || len(g.take()) != 0 {
 		t.Fatalf("organization caido: %d %s", rec.Code, rec.Body)
 	}
-	if got := counterValue("cell_routing_failures_total", map[string]string{"service": "mail-directory", "reason": "unresolved"}); got != antes2+1 {
+	if got := counterValue("cell_routing_failures_total", map[string]string{"cell_service": "mail-directory", "reason": "unresolved"}); got != antes2+1 {
 		t.Fatalf("metrica unresolved: %v", got)
 	}
 	// Con la respuesta en cache siguen pasando las empresas ya resueltas.
@@ -427,5 +453,40 @@ func TestUnaSolaCeldaNoPreguntaLaCelda(t *testing.T) {
 	}
 	if org.Calls() != 0 {
 		t.Fatalf("una celda pregunto %d veces a organization", org.Calls())
+	}
+}
+
+// Con enrutado por celda las series de cell_routing_failures_total nacen a cero al montar las
+// rutas, una por servicio de celda y motivo que el gateway puede producir: sin ellas el primer
+// fallo no da increase() y CeldaSinInstancia no avisaria. El webmail no tiene rutas con sesion y
+// no puede dar unknown_tenant; un servicio que no es de celda no tiene series. Con una celda no
+// hay enrutado por celda ni series.
+func TestLosFallosDeEnrutadoNacenACero(t *testing.T) {
+	type serie struct{ service, reason string }
+	todas := []serie{}
+	for _, s := range []string{"mail-directory", "mail-security", "webmail", "templates"} {
+		for _, reason := range []string{routingUnknownTenant, routingUnresolved, routingNotServed} {
+			todas = append(todas, serie{s, reason})
+		}
+	}
+	nacen := map[serie]bool{
+		{"mail-directory", routingUnknownTenant}: true, {"mail-directory", routingUnresolved}: true, {"mail-directory", routingNotServed}: true,
+		{"mail-security", routingUnknownTenant}: true, {"mail-security", routingUnresolved}: true, {"mail-security", routingNotServed}: true,
+		{"webmail", routingUnresolved}: true, {"webmail", routingNotServed}: true,
+	}
+	for _, base := range []string{"pe-01", ""} {
+		t.Run("celda base "+base, func(t *testing.T) {
+			cellRoutingFailures.Reset()
+			_, orgURL := tenantcelltest.New(t, "token-interno", nil)
+			newSessionGateway(t, &grabador{}, orgURL, base)
+			nuevoEscenarioWebmail(t, base)
+			for _, s := range todas {
+				want := nacen[s] && base != ""
+				got, existe := seriesValue("cell_routing_failures_total", map[string]string{"cell_service": s.service, "reason": s.reason})
+				if existe != want || got != 0 {
+					t.Errorf("%s %s: existe=%v valor=%v, se esperaba existe=%v a cero", s.service, s.reason, existe, got, want)
+				}
+			}
+		})
 	}
 }

@@ -1,0 +1,56 @@
+# Pruebas de la alerta RepasoDKIMSinOrganization.
+#
+# El repaso DKIM de mail-security pasa cada 15 min (MAIL_DKIM_RECONCILE_INTERVAL). Sin respuesta
+# de organization conserva las claves de esas empresas y lo cuenta por dominio: tres pasadas
+# seguidas asi no avisan, cuatro si. Las pasadas de la prueba van a los 5 min y cada 15.
+#
+#   make check-alertas
+
+rule_files:
+  - ../rules/plataforma.yml
+
+evaluation_interval: 1m
+
+tests:
+  # ── organization responde: nada que contar ────────────────────────────────
+  - interval: 1m
+    input_series:
+      - series: 'mail_security_dkim_reconcile_unresolved_total{job="mail-services",service="mail-security"}'
+        values: '0x120'
+    alert_rule_test:
+      - eval_time: 90m
+        alertname: RepasoDKIMSinOrganization
+        exp_alerts: []
+
+  # ── Tres pasadas seguidas sin respuesta y vuelta a la normalidad ──────────
+  - interval: 1m
+    input_series:
+      - series: 'mail_security_dkim_reconcile_unresolved_total{job="mail-services",service="mail-security"}'
+        values: '0x4 2x14 4x14 6x80'
+    alert_rule_test:
+      - eval_time: 50m
+        alertname: RepasoDKIMSinOrganization
+        exp_alerts: []
+      - eval_time: 70m
+        alertname: RepasoDKIMSinOrganization
+        exp_alerts: []
+
+  # ── Sin respuesta en cada pasada ──────────────────────────────────────────
+  - interval: 1m
+    input_series:
+      - series: 'mail_security_dkim_reconcile_unresolved_total{job="mail-services",service="mail-security"}'
+        values: '0x4 2x14 4x14 6x14 8x14 10x14 12x14 14x14'
+    alert_rule_test:
+      # Cuatro pasadas y media hora de fallos no bastan: en espera.
+      - eval_time: 60m
+        alertname: RepasoDKIMSinOrganization
+        exp_alerts: []
+      - eval_time: 70m
+        alertname: RepasoDKIMSinOrganization
+        exp_alerts:
+          - exp_labels:
+              severidad: media
+              service: mail-security
+            exp_annotations:
+              resumen: "El repaso DKIM de mail-security no obtiene de organization la empresa de sus dominios"
+              detalle: "Las claves de las empresas sin respuesta se conservan, tambien las de una empresa ya dada de baja. La segunda barrera de la celda pregunta a organization por la misma ruta y rechaza con 503 a las empresas que no tiene en cache. Revisar organization, ORGANIZATION_URL y el token interno de mail-security y la red entre los dos."

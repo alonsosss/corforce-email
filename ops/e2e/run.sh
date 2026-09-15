@@ -643,7 +643,7 @@ expect "beta llega a mail-security de su celda" "$(codigo "$GW2/mail-security/qu
 expect "gamma tampoco llega a mail-security" "$(sesion "$GW2/mail-security/quarantine" -H "$AG")" "CELL_UNAVAILABLE 503"
 expect "acme si, en la celda base" "$(codigo "$GW2/mail-security/quarantine" -H "$A2N")" "200"
 contains "el gateway cuenta la celda sin instancia" "$(curl -s "http://127.0.0.1:$GW2_PORT/metrics")" \
-  'cell_routing_failures_total{reason="not_served",service="mail-directory"} 1'
+  'cell_routing_failures_total{cell_service="mail-directory",reason="not_served"} 1'
 
 echo "== Celda destino explicita del superadmin (X-Target-Cell)"
 # El superadmin es de la empresa de plataforma (pe-01): sin cabecera solo opera esa celda. Con
@@ -724,8 +724,8 @@ expect "domain-service sin celdas verifica beta.test contra el DNS de la prueba"
 expect "la activacion y las claves no se dan por hechas: pe-01 no atiende a beta" "$(echo "$V1" | errores_de TENANT_NOT_IN_CELL)" "2 2"
 expect "y pe-01 no guarda nada de beta.test" "$(en_pe01)" "0"
 M_DS=$(curl -s "http://127.0.0.1:${PORT[domain-service]}/metrics")
-contains "domain-service cuenta la instancia de otra celda en mail-directory" "$M_DS" 'cell_call_failures_total{reason="not_in_cell",service="mail-directory"} 1'
-contains "y en mail-security" "$M_DS" 'cell_call_failures_total{reason="not_in_cell",service="mail-security"} 1'
+contains "domain-service cuenta la instancia de otra celda en mail-directory" "$M_DS" 'cell_call_failures_total{cell_service="mail-directory",reason="not_in_cell"} 1'
+contains "y en mail-security" "$M_DS" 'cell_call_failures_total{cell_service="mail-security",reason="not_in_cell"} 1'
 V2=$(curl -s -X POST "$GW2/domains/$BDOMID/verify" -H "$AB")
 expect "domain-service de las celdas lo verifica" "$(echo "$V2" | jget data.status)" "verified"
 expect "y lo activa en mail_cell_pe_02 con la empresa de beta" \
@@ -734,8 +734,8 @@ expect "sin escribir nada en mail_cell_pe_01" "$(en_pe01)" "0"
 expect "las claves DKIM no salen hacia ninguna instancia: mail-security no declara pe-02" \
   "$(echo "$V2" | errores_de 'celda pe-02: la celda de la empresa no tiene instancia declarada')" "1 1"
 M_DS2=$(curl -s "http://127.0.0.1:$DS2_PORT/metrics")
-contains "y lo cuenta como celda sin instancia" "$M_DS2" 'cell_call_failures_total{reason="not_served",service="mail-security"} 1'
-contains "sin llamar a ninguna instancia de otra celda" "$M_DS2" 'cell_call_failures_total{reason="not_in_cell",service="mail-directory"} 0'
+contains "y lo cuenta como celda sin instancia" "$M_DS2" 'cell_call_failures_total{cell_service="mail-security",reason="not_served"} 1'
+contains "sin llamar a ninguna instancia de otra celda" "$M_DS2" 'cell_call_failures_total{cell_service="mail-directory",reason="not_in_cell"} 0'
 
 echo "== Webmail por celda (indice global de dominios y celda en el token)"
 # domain-service reclamo beta.test en el indice global de organization al activarlo en pe-02. Un
@@ -809,7 +809,9 @@ expect "por el gateway sin celdas eva no entra: la celda base no conoce su buzon
   "$(entrar_wm "$GW" "$WORK/eva-sin-celdas.cookies" eva@beta.test "$EVA_PASS")/$(jget error.code <"$WORK/wm.json")" "401/INVALID_CREDENTIALS"
 expect "eva cierra sesion" "$(wm "$GW2/webmail/session" "$TARRO_EVA" DELETE)" "204"
 expect "y su cookie ya no abre nada" "$(wm "$GW2/webmail/session" "$TARRO_EVA" GET)" "401"
-lacks "el gateway de las celdas no dejo ningun inicio de sesion sin celda" "$(curl -s "http://127.0.0.1:$GW2_PORT/metrics")" 'service="webmail"'
+M_GW2=$(curl -s "http://127.0.0.1:$GW2_PORT/metrics")
+contains "el gateway de las celdas no dejo ningun inicio de sesion sin celda" "$M_GW2" 'cell_routing_failures_total{cell_service="webmail",reason="not_served"} 0'
+contains "ni sin resolver, con las series del webmail a cero desde el arranque" "$M_GW2" 'cell_routing_failures_total{cell_service="webmail",reason="unresolved"} 0'
 
 echo "== Claves DKIM solo de dominios activos en la celda"
 # mail-security de pe-01 acepta claves solo de un dominio activo en el directorio de su celda, se
@@ -843,6 +845,20 @@ expect "el evento del directorio le quita las claves" "$(dkim_sin_claves claves.
 dkim_redis HSET DKIM_PRIV_KEYS e2e1.fantasma.test x >/dev/null
 dkim_redis HSET DKIM_SELECTORS fantasma.test e2e1 >/dev/null
 expect "el repaso retira la clave huerfana de un dominio fuera del directorio" "$(dkim_sin_claves fantasma.test)" "si"
+# dkim_metricas: si en 10 s mail-security expone las dos series de retiradas, alguna not_served y
+# una pasada completa.
+dkim_metricas() {
+  for _ in $(seq 1 20); do
+    curl -s "http://127.0.0.1:${PORT[mail-security]}/metrics" | awk '
+      $1 == "mail_security_dkim_reconcile_removals_total{reason=\"not_served\"}" && $2 >= 1 { r = 1 }
+      $1 == "mail_security_dkim_reconcile_removals_total{reason=\"tenant_gone\"}" { g = 1 }
+      $1 == "mail_security_dkim_reconcile_last_success_timestamp_seconds" && $2 > 0 { s = 1 }
+      END { exit !(r && g && s) }' && { echo si; return; }
+    sleep 0.5
+  done
+  echo no
+}
+expect "y lo cuenta en las metricas de mail-security, con su ultima pasada completa" "$(dkim_metricas)" "si"
 
 echo "== Registros"
 # Los unicos errores esperados son los que la prueba provoca a proposito: los pasos de
