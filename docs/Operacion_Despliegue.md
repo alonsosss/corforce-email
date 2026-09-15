@@ -40,6 +40,17 @@ largas de cada guardarraíl están en `ops/scaffold/README.md`, `ops/security/se
   (`EnvFloat` para los umbrales). El techo de `DOMAIN_RECHECK_INTERVAL` (6 h) es el que
   cuenta la alerta `BarridoDeDominiosSinCelda` (`docs/arquitectura/OBSERVABILIDAD.md`).
   Pendiente de migrar, con lector propio: mail-security.
+* Direcciones internas de otros servicios (`<SERVICIO>_HOST` y `<SERVICIO>_HOST_PORT`): el
+  gateway las lee para cada servicio de `services/gateway/routes.json`, y organization para
+  identity, access-control y mail-directory cuando falta su `<SERVICIO>_URL`, con
+  `config.UpstreamURL` (`pkg/config/upstream.go`). Vacías valen `default_host` y
+  `default_port` de la tabla (en organization, los nombres y puertos de compose). El gateway
+  las resuelve todas al cargar la tabla, las pida ya una ruta o no. Un puerto ilegible o fuera
+  de 1 a 65535 (`config.MaxPort`), un `default_port` que no lo cumpla o un host con espacios,
+  con delimitadores de URL o con dos puntos sin ser una IPv6 (que va sin corchetes) impiden
+  arrancar, y el error nombra la variable o el servicio: antes salían como 502 en la primera
+  petición. Las entradas `celda=host:puerto` de `<SERVICIO>_CELL_HOSTS` siguen la misma
+  regla (`tenantcell.ParseInstances`).
 * Entorno declarado (`ENVIRONMENT`). Un servidor declara exactamente
   `ENVIRONMENT=production` o `ENVIRONMENT=staging` en el `.env` de `DEPLOY_PATH`, el que
   Compose pasa a los contenedores; también el servidor de la cuenta de dev. `development` y

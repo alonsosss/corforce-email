@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -19,6 +20,29 @@ func TestTablaRechazaCamposDesconocidos(t *testing.T) {
 	}
 	if _, err := decodeRouteTable([]byte(`{"services":{}}`)); err != nil {
 		t.Errorf("una tabla sin claves desconocidas debe leerse: %v", err)
+	}
+}
+
+// default_port es un puerto de 1 a 65535 escrito en decimal: otro valor impide leer la tabla y
+// el error nombra el servicio, en vez de dar 502 cuando alguien pide ese servicio.
+func TestTablaRechazaDefaultPortInvalido(t *testing.T) {
+	tabla := func(port string) []byte {
+		return []byte(`{"services":{"identity":{"host_env":"IDENTITY_HOST","default_host":"identity","default_port":"` + port + `"}}}`)
+	}
+	for _, port := range []string{"1", "80", "65535"} {
+		if _, err := decodeRouteTable(tabla(port)); err != nil {
+			t.Errorf("default_port %q: %v", port, err)
+		}
+	}
+	for _, port := range []string{"", "0", "-1", "65536", "99999999999999999999", "ocho", "80.0", " 80", "0x50"} {
+		_, err := decodeRouteTable(tabla(port))
+		if err == nil || !strings.Contains(err.Error(), "default_port") || !strings.Contains(err.Error(), `"identity"`) {
+			t.Errorf("default_port %q: %v; se esperaba un error que nombre default_port y el servicio", port, err)
+		}
+	}
+	// Un numero JSON no es el contrato de la tabla (un texto): tampoco se lee.
+	if _, err := decodeRouteTable([]byte(`{"services":{"identity":{"host_env":"IDENTITY_HOST","default_host":"identity","default_port":8001}}}`)); err == nil {
+		t.Error("default_port como numero JSON no debe leerse")
 	}
 }
 
@@ -298,12 +322,31 @@ func cellService(t *routeTable) {
 
 func TestServiceURLPrefiereElEntorno(t *testing.T) {
 	tbl := routeTable{Services: map[string]serviceSpec{"identity": {HostEnv: "IDENTITY_HOST", DefaultHost: "identity", DefaultPort: "8001"}}}
+	t.Setenv("IDENTITY_HOST", "")
+	t.Setenv("IDENTITY_HOST_PORT", "")
+	if err := tbl.loadUpstreams(); err != nil {
+		t.Fatal(err)
+	}
 	if got := tbl.serviceURL("identity"); got != "http://identity:8001" {
 		t.Fatalf("sin entorno: %s", got)
 	}
 	t.Setenv("IDENTITY_HOST", "10.0.0.5")
 	t.Setenv("IDENTITY_HOST_PORT", "9001")
+	if err := tbl.loadUpstreams(); err != nil {
+		t.Fatal(err)
+	}
 	if got := tbl.serviceURL("identity"); got != "http://10.0.0.5:9001" {
 		t.Fatalf("con entorno: %s", got)
+	}
+	t.Setenv("IDENTITY_HOST_PORT", "65536")
+	if err := tbl.loadUpstreams(); err == nil || !strings.Contains(err.Error(), "IDENTITY_HOST_PORT") || !strings.Contains(err.Error(), `"identity"`) {
+		t.Fatalf("un puerto fuera de rango debe impedir cargar y nombrar variable y servicio: %v", err)
+	}
+	// Una tabla escrita a mano sin pasar por decodeRouteTable tampoco carga con un default_port
+	// invalido.
+	t.Setenv("IDENTITY_HOST_PORT", "")
+	tbl.Services["identity"] = serviceSpec{HostEnv: "IDENTITY_HOST", DefaultHost: "identity", DefaultPort: "0"}
+	if err := tbl.loadUpstreams(); err == nil || !strings.Contains(err.Error(), "default_port") {
+		t.Fatalf("default_port 0 debe impedir cargar: %v", err)
 	}
 }

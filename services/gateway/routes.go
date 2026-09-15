@@ -7,9 +7,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"regexp"
+	"slices"
 	"strings"
+
+	"github.com/alonsosss/corforce-email/pkg/config"
 )
 
 // La tabla de enrutado vive en datos, no en codigo. En la plataforma de la que
@@ -29,7 +33,7 @@ var defaultRoutes []byte
 type routeTable struct {
 	// Services: nombre logico -> como localizarlo. El host y el puerto reales
 	// salen del entorno (<HostEnv> y <HostEnv>_PORT) con estos valores por defecto,
-	// que son los del compose de desarrollo.
+	// que son los del compose de desarrollo; se validan todos al cargar la tabla.
 	Services map[string]serviceSpec `json:"services"`
 	// Routes: prefijo bajo /api/v1 -> servicio y modulo de permisos que lo gatea.
 	// Un modulo vacio significa "no se gatea por modulo" y solo se admite en las
@@ -64,6 +68,9 @@ type routeTable struct {
 	// leen del entorno al cargar la tabla (loadCellTargets).
 	cellTargets map[string]map[string]string
 	baseCell    string
+	// upstreams: servicio -> URL de su destino base, resuelta del entorno al cargar la tabla
+	// (loadUpstreams).
+	upstreams map[string]string
 }
 
 type selfAuthSpec struct {
@@ -147,6 +154,9 @@ func loadRouteTable() (*routeTable, error) {
 	if err := t.validate(); err != nil {
 		return nil, err
 	}
+	if err := t.loadUpstreams(); err != nil {
+		return nil, err
+	}
 	if err := t.loadCellTargets(); err != nil {
 		return nil, err
 	}
@@ -165,6 +175,11 @@ func decodeRouteTable(raw []byte) (*routeTable, error) {
 	}
 	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
 		return nil, fmt.Errorf("tabla de rutas: contenido despues del objeto")
+	}
+	for _, name := range slices.Sorted(maps.Keys(t.Services)) {
+		if _, err := config.ParsePort(t.Services[name].DefaultPort); err != nil {
+			return nil, fmt.Errorf("tabla de rutas: default_port de %q: %w", name, err)
+		}
 	}
 	return &t, nil
 }
@@ -255,19 +270,29 @@ func (t *routeTable) validate() error {
 	return t.validateCellServices()
 }
 
-// serviceURL resuelve la URL interna de un servicio: el entorno manda y los
-// valores del fichero son el respaldo de desarrollo.
+// loadUpstreams resuelve del entorno el destino base de cada servicio de la tabla, lo pida ya una
+// ruta o no: el entorno manda y los valores del fichero son el respaldo de desarrollo. Un host o
+// un puerto invalidos impiden arrancar, en vez de dar 502 en la primera peticion a ese servicio.
+func (t *routeTable) loadUpstreams() error {
+	t.upstreams = make(map[string]string, len(t.Services))
+	for _, name := range slices.Sorted(maps.Keys(t.Services)) {
+		s := t.Services[name]
+		port, err := config.ParsePort(s.DefaultPort)
+		if err != nil {
+			return fmt.Errorf("tabla de rutas: default_port de %q: %w", name, err)
+		}
+		target, err := config.UpstreamURL(s.HostEnv, s.DefaultHost, port)
+		if err != nil {
+			return fmt.Errorf("destino del servicio %q: %w", name, err)
+		}
+		t.upstreams[name] = target
+	}
+	return nil
+}
+
+// serviceURL es la URL interna del destino base de un servicio, resuelta al cargar la tabla.
 func (t *routeTable) serviceURL(name string) string {
-	s := t.Services[name]
-	host := os.Getenv(s.HostEnv)
-	if host == "" {
-		host = s.DefaultHost
-	}
-	port := os.Getenv(s.HostEnv + "_PORT")
-	if port == "" {
-		port = s.DefaultPort
-	}
-	return "http://" + host + ":" + port
+	return t.upstreams[name]
 }
 
 // moduleIndex devuelve el mapa prefijo -> modulo de permisos que usa el RBAC y

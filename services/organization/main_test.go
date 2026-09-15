@@ -20,6 +20,15 @@ func setSettingsEnv(t *testing.T, environment, token string) {
 		"ORGANIZATION_PORT":                "",
 		"ORGANIZATION_SAGA_LEASE":          "",
 		"ORGANIZATION_SAGA_SWEEP_INTERVAL": "",
+		"ACCESS_CONTROL_URL":               "",
+		"ACCESS_CONTROL_HOST":              "",
+		"ACCESS_CONTROL_HOST_PORT":         "",
+		"IDENTITY_URL":                     "",
+		"IDENTITY_HOST":                    "",
+		"IDENTITY_HOST_PORT":               "",
+		"MAIL_DIRECTORY_URL":               "",
+		"MAIL_DIRECTORY_HOST":              "",
+		"MAIL_DIRECTORY_HOST_PORT":         "",
 	} {
 		t.Setenv(key, value)
 	}
@@ -53,6 +62,25 @@ func TestLoadSettingsValoresPorDefecto(t *testing.T) {
 	if st.port != defaultPort || st.sagaLease != app.DefaultSagaLease || st.sagaSweepInterval != time.Minute {
 		t.Errorf("puerto %d, arriendo %s, barrido %s", st.port, st.sagaLease, st.sagaSweepInterval)
 	}
+	if st.accessControlURL != "http://access-control:8002" || st.identityURL != "http://identity:8001" || st.mailDirectoryURL != "http://mail-directory:8040" {
+		t.Errorf("direcciones por defecto: %q %q %q", st.accessControlURL, st.identityURL, st.mailDirectoryURL)
+	}
+}
+
+// <SERVICIO>_HOST y <SERVICIO>_HOST_PORT arman la direccion; <SERVICIO>_URL, si esta, manda.
+func TestLoadSettingsDireccionesDelEntorno(t *testing.T) {
+	setSettingsEnv(t, "staging", tokenDePrueba)
+	t.Setenv("IDENTITY_HOST", "10.0.0.5")
+	t.Setenv("IDENTITY_HOST_PORT", "9001")
+	t.Setenv("MAIL_DIRECTORY_HOST", "fd00::5")
+	t.Setenv("ACCESS_CONTROL_URL", "http://ac.interno:7002")
+	st, err := loadSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.identityURL != "http://10.0.0.5:9001" || st.mailDirectoryURL != "http://[fd00::5]:8040" || st.accessControlURL != "http://ac.interno:7002" {
+		t.Errorf("direcciones: %q %q %q", st.identityURL, st.mailDirectoryURL, st.accessControlURL)
+	}
 }
 
 // Fuera de su rango, o ilegible, una variable impide arrancar y el error la nombra.
@@ -76,6 +104,19 @@ func TestLoadSettingsRangos(t *testing.T) {
 		{"ORGANIZATION_SAGA_SWEEP_INTERVAL", "500ms", false},
 		{"ORGANIZATION_SAGA_SWEEP_INTERVAL", "2h", false},
 		{"ORGANIZATION_SAGA_SWEEP_INTERVAL", "-1m", false},
+		{"ACCESS_CONTROL_HOST_PORT", "1", true},
+		{"ACCESS_CONTROL_HOST_PORT", "65535", true},
+		{"ACCESS_CONTROL_HOST_PORT", "0", false},
+		{"ACCESS_CONTROL_HOST_PORT", "65536", false},
+		{"IDENTITY_HOST_PORT", "-8001", false},
+		{"IDENTITY_HOST_PORT", "ocho", false},
+		{"MAIL_DIRECTORY_HOST_PORT", "8040.5", false},
+		{"MAIL_DIRECTORY_HOST_PORT", "99999999999999999999", false},
+		{"IDENTITY_HOST", "10.0.0.5", true},
+		{"IDENTITY_HOST", "fd00::5", true},
+		{"IDENTITY_HOST", "iden tity", false},
+		{"IDENTITY_HOST", "identity:8001", false},
+		{"MAIL_DIRECTORY_HOST", "http://mail-directory", false},
 	} {
 		setSettingsEnv(t, "staging", tokenDePrueba)
 		t.Setenv(c.key, c.value)

@@ -206,6 +206,65 @@ func TestInstanciasMalFormadasNoArrancan(t *testing.T) {
 	}
 }
 
+// El puerto de cada instancia por celda va de 1 a 65535, como el de los destinos base.
+func TestPuertoDeLasInstanciasPorCelda(t *testing.T) {
+	t.Setenv("GATEWAY_ROUTES_FILE", "")
+	t.Setenv(baseCellEnv, "pe-01")
+	t.Setenv("MAIL_DIRECTORY_CELL_HOSTS", "")
+	for port, ok := range map[string]bool{"1": true, "65535": true, "0": false, "65536": false, "-1": false, "http": false} {
+		t.Setenv("MAIL_SECURITY_CELL_HOSTS", "pe-02=ms-pe-02:"+port)
+		_, err := loadRouteTable()
+		if ok && err != nil {
+			t.Errorf("puerto %s: %v", port, err)
+		}
+		if !ok && (err == nil || !strings.Contains(err.Error(), "MAIL_SECURITY_CELL_HOSTS")) {
+			t.Errorf("puerto %s: se esperaba error de MAIL_SECURITY_CELL_HOSTS: %v", port, err)
+		}
+	}
+}
+
+// Todo servicio de la tabla se resuelve al cargarla, tambien los que ninguna peticion ha pedido
+// todavia (el frontend, un servicio sin rutas con sesion): un host o un puerto invalidos impiden
+// arrancar y el error nombra la variable.
+func TestDestinosInvalidosNoArrancan(t *testing.T) {
+	t.Setenv("GATEWAY_ROUTES_FILE", "")
+	t.Setenv(baseCellEnv, "")
+	t.Setenv("MAIL_DIRECTORY_CELL_HOSTS", "")
+	t.Setenv("MAIL_SECURITY_CELL_HOSTS", "")
+	t.Setenv("WEBMAIL_CELL_HOSTS", "")
+	for _, c := range []struct{ key, value string }{
+		{"WEB_HOST_PORT", "0"},
+		{"WEB_HOST_PORT", "65536"},
+		{"IDENTITY_HOST_PORT", "-8001"},
+		{"MAIL_SECURITY_HOST_PORT", "8042.0"},
+		{"ANALYTICS_HOST_PORT", "99999999999999999999"},
+		{"TEMPLATES_HOST_PORT", "ocho"},
+		{"WEB_HOST", "web frontend"},
+		{"ORGANIZATION_HOST", "organization:8003"},
+	} {
+		t.Run(c.key+"="+c.value, func(t *testing.T) {
+			t.Setenv(c.key, c.value)
+			if _, err := loadRouteTable(); err == nil || !strings.Contains(err.Error(), c.key+"=") {
+				t.Fatalf("se esperaba un error que nombre %s: %v", c.key, err)
+			}
+		})
+	}
+	for _, c := range []struct{ key, value, service, want string }{
+		{"WEB_HOST_PORT", "1", "web", "http://web:1"},
+		{"IDENTITY_HOST_PORT", "65535", "identity", "http://identity:65535"},
+		{"ORGANIZATION_HOST", " fd00::5 ", "organization", "http://[fd00::5]:8003"},
+	} {
+		t.Setenv(c.key, c.value)
+		tbl, err := loadRouteTable()
+		if err != nil {
+			t.Fatalf("%s=%q: %v", c.key, c.value, err)
+		}
+		if got := tbl.serviceURL(c.service); got != c.want {
+			t.Errorf("%s=%q: %q, se esperaba %q", c.key, c.value, got, c.want)
+		}
+	}
+}
+
 // La celda de los destinos base es obligatoria en cuanto se declara una instancia por celda,
 // bien formada y no repetida como instancia; sin nada declarado el despliegue es de una celda.
 func TestCeldaBaseDelEntorno(t *testing.T) {

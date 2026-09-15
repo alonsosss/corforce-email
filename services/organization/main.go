@@ -118,11 +118,16 @@ type settings struct {
 	port              int
 	sagaLease         time.Duration
 	sagaSweepInterval time.Duration
+	// Direcciones de los servicios que llama la saga; la de mail-directory es su destino base.
+	accessControlURL string
+	identityURL      string
+	mailDirectoryURL string
 }
 
 // loadSettings falla con un valor fuera de su rango y sin token interno fuera de desarrollo o
 // prueba: la saga lo presenta a identity, access-control y el mail-directory de cada celda, y
-// las rutas del servicio lo exigen, con la misma regla que el gateway.
+// las rutas del servicio lo exigen, con la misma regla que el gateway. Tambien falla con un
+// host o un puerto invalidos de los servicios que llama, antes de la primera peticion.
 func loadSettings() (settings, error) {
 	var st settings
 	var err error
@@ -138,17 +143,26 @@ func loadSettings() (settings, error) {
 	if st.sagaSweepInterval, err = config.EnvDuration("ORGANIZATION_SAGA_SWEEP_INTERVAL", defaultSagaSweepInterval, time.Second, maxSagaSweepInterval); err != nil {
 		return st, err
 	}
+	if st.accessControlURL, err = serviceURL("ACCESS_CONTROL", "access-control", 8002); err != nil {
+		return st, err
+	}
+	if st.identityURL, err = serviceURL("IDENTITY", "identity", 8001); err != nil {
+		return st, err
+	}
+	if st.mailDirectoryURL, err = serviceURL("MAIL_DIRECTORY", "mail-directory", 8040); err != nil {
+		return st, err
+	}
 	return st, nil
 }
 
 // serviceURL resuelve la direccion interna de otro servicio: <SERVICIO>_URL si esta, o
 // <SERVICIO>_HOST y <SERVICIO>_HOST_PORT, las mismas que el gateway lee de routes.json, con
-// su nombre y puerto de compose por defecto.
-func serviceURL(prefix, defaultHost, defaultPort string) string {
+// su nombre y puerto de compose por defecto (config.UpstreamURL).
+func serviceURL(prefix, defaultHost string, defaultPort int) (string, error) {
 	if u := os.Getenv(prefix + "_URL"); u != "" {
-		return u
+		return u, nil
 	}
-	return "http://" + envOrDefault(prefix+"_HOST", defaultHost) + ":" + envOrDefault(prefix+"_HOST_PORT", defaultPort)
+	return config.UpstreamURL(prefix+"_HOST", defaultHost, defaultPort)
 }
 
 // waitReady espera a que el servicio responda en /healthz. Va por un cliente aparte a
@@ -286,7 +300,7 @@ func main() {
 	// El rol del sistema, sus asignaciones y las cuentas de cada empresa son de
 	// access-control e identity: la saga se los pide por su API interna, con el mismo
 	// token interno que el gateway.
-	accessControlURL := serviceURL("ACCESS_CONTROL", "access-control", "8002")
+	accessControlURL := st.accessControlURL
 
 	// La baja de una empresa la da de baja en el mail-directory de su celda, con las mismas
 	// instancias por celda que el gateway (tenantcell.BaseCellEnv y MAIL_DIRECTORY_CELL_HOSTS) y el
@@ -296,7 +310,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("instancias por celda: %v", err)
 	}
-	directoryTargets, err := cells.CellTargets(mailDirectoryCellHostsEnv, serviceURL("MAIL_DIRECTORY", "mail-directory", "8040"))
+	directoryTargets, err := cells.CellTargets(mailDirectoryCellHostsEnv, st.mailDirectoryURL)
 	if err != nil {
 		log.Fatalf("instancias por celda: %v", err)
 	}
@@ -309,7 +323,7 @@ func main() {
 		Sagas:           postgres.NewTenantSagaRepo(pool.Pool),
 		Provisioner:     provisioner,
 		Access:          accesscontrolcli.New(accessControlURL, st.internalToken),
-		Identity:        identitycli.New(serviceURL("IDENTITY", "identity", "8001"), st.internalToken),
+		Identity:        identitycli.New(st.identityURL, st.internalToken),
 		Modules:         postgres.NewModulesRepo(pool.Pool),
 		Publisher:       publisher,
 		MailDomains:     postgres.NewMailDomainRepo(pool.Pool),

@@ -39,19 +39,24 @@ func TestInstanciasPorCeldaDelEntorno(t *testing.T) {
 	}
 
 	for name, raw := range map[string]string{
-		"sin igual":             "pe-01",
-		"sin puerto":            "pe-01=mail-security",
-		"puerto no numerico":    "pe-01=mail-security:http",
-		"puerto fuera de rango": "pe-01=mail-security:70000",
-		"puerto cero":           "pe-01=mail-security:0",
-		"con esquema":           "pe-01=http://mail-security:8042",
-		"con ruta":              "pe-01=mail-security/x:8042",
-		"sin host":              "pe-01=:8042",
-		"celda repetida":        "pe-01=a:1,pe-01=b:2",
-		"celda en mayusculas":   "PE-01=a:1",
-		"celda con guion final": "pe-=a:1",
-		"celda vacia":           "=a:1",
-		"entrada vacia":         "pe-01=a:1,,pe-02=b:2",
+		"sin igual":                   "pe-01",
+		"sin puerto":                  "pe-01=mail-security",
+		"puerto no numerico":          "pe-01=mail-security:http",
+		"puerto fuera de rango":       "pe-01=mail-security:70000",
+		"puerto cero":                 "pe-01=mail-security:0",
+		"puerto por encima":           "pe-01=mail-security:65536",
+		"puerto negativo":             "pe-01=mail-security:-1",
+		"puerto decimal":              "pe-01=mail-security:8042.0",
+		"host con tabulador":          "pe-01=mail\tsecurity:8042",
+		"host no IPv6 con dos puntos": "pe-01=[mail:security]:8042",
+		"con esquema":                 "pe-01=http://mail-security:8042",
+		"con ruta":                    "pe-01=mail-security/x:8042",
+		"sin host":                    "pe-01=:8042",
+		"celda repetida":              "pe-01=a:1,pe-01=b:2",
+		"celda en mayusculas":         "PE-01=a:1",
+		"celda con guion final":       "pe-=a:1",
+		"celda vacia":                 "=a:1",
+		"entrada vacia":               "pe-01=a:1,,pe-02=b:2",
 	} {
 		if _, err := ParseInstances("X", raw); err == nil || !strings.Contains(err.Error(), "X") {
 			t.Errorf("%s: %q se esperaba error con la variable: %v", name, raw, err)

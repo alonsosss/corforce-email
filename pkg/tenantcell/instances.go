@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/alonsosss/corforce-email/pkg/config"
 	"github.com/alonsosss/corforce-email/pkg/middleware"
 	"go.uber.org/zap"
 )
@@ -91,8 +92,8 @@ func ParseInstances(envName, raw string) (map[string]string, error) {
 			return nil, fmt.Errorf("%s: celda %q repetida", envName, code)
 		}
 		host, port, err := net.SplitHostPort(hostport)
-		n, perr := strconv.Atoi(port)
-		if err != nil || host == "" || strings.ContainsAny(host, "/?#@ ") || perr != nil || n < 1 || n > 65535 {
+		n, perr := config.ParsePort(port)
+		if err != nil || perr != nil || !config.ValidHost(host) {
 			return nil, fmt.Errorf("%s: la celda %q necesita host:puerto, llego %q", envName, code, hostport)
 		}
 		out[code] = "http://" + net.JoinHostPort(host, strconv.Itoa(n))

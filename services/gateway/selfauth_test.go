@@ -40,6 +40,9 @@ func TestSelfAuthenticatedEnrutaSinDebilitarOtrasRutas(t *testing.T) {
 			{Prefix: "webmail", Service: "webmail", StrictLimit: []methodPathSpec{{Method: "POST", Path: "/session"}}},
 		},
 	}
+	if err := tbl.loadUpstreams(); err != nil {
+		t.Fatal(err)
+	}
 
 	r := chi.NewRouter()
 	r.Use(middleware.SecureHeaders)

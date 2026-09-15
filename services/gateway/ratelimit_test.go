@@ -48,6 +48,9 @@ func TestLimitesCompartidosEntreReplicas(t *testing.T) {
 		Services:          map[string]serviceSpec{"webmail": {HostEnv: "WEBMAIL_HOST", DefaultHost: "webmail", DefaultPort: "8044"}},
 		SelfAuthenticated: []selfAuthSpec{{Prefix: "webmail", Service: "webmail", StrictLimit: []methodPathSpec{{Method: "POST", Path: "/session"}}}},
 	}
+	if err := webmailTable.loadUpstreams(); err != nil {
+		t.Fatal(err)
+	}
 
 	store := &memStore{counts: map[string]int64{}, ends: map[string]time.Time{}, keys: map[string]bool{}}
 	replica := func() http.Handler {
