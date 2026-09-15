@@ -4,7 +4,6 @@ import (
 	"context"
 	"log"
 	"os"
-	"strconv"
 	"time"
 
 	"github.com/alonsosss/corforce-email/pkg/auth"
@@ -40,6 +39,10 @@ func main() {
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatalf("load config: %v", err)
+	}
+	port, err := config.EnvInt("IDENTITY_PORT", defaultPort, 1, config.MaxPort)
+	if err != nil {
+		log.Fatal(err)
 	}
 	// Antes de abrir nada: sin clave de firma valida no hay servicio que levantar.
 	tokenSvc, tokenVerifier, err := newTokenService(cfg, logger)
@@ -190,13 +193,6 @@ func main() {
 	// alta y de baja. Mismo token interno; ninguna persona llega aqui.
 	r.Mount("/internal/identity", identityhttp.NewInternalHandler(tenantUsersUC).Routes())
 
-	port := 8001
-	if p := os.Getenv("IDENTITY_PORT"); p != "" {
-		if v, err := strconv.Atoi(p); err == nil {
-			port = v
-		}
-	}
-
 	srv := server.New(port, r, logger)
 	if err := srv.Run(); err != nil {
 		logger.Fatal("server error", zap.Error(err))
@@ -206,6 +202,8 @@ func main() {
 }
 
 const (
+	defaultPort = 8001
+
 	// streamRetry espacia los intentos de declarar el stream mientras NATS no responde.
 	streamRetry = 5 * time.Second
 	// outboxRetention conserva lo publicado lo mismo que el stream (EnsureStream: 7 dias).

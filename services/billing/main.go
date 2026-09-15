@@ -31,13 +31,21 @@ import (
 const periodSweepLockKey int64 = 0x62696c6c696e6701
 
 const (
-	defaultPort               = 8055
-	defaultSweepInterval      = 15 * time.Minute
-	minSweepInterval          = time.Minute
+	defaultPort          = 8055
+	maxTrialDays         = 366
+	defaultSweepInterval = 15 * time.Minute
+	minSweepInterval     = time.Minute
+	// maxSweepInterval: los periodos se miden en dias UTC; con mas de un dia entre pasadas un
+	// periodo vencido, una prueba terminada o una cancelacion programada esperarian mas de un
+	// dia a aplicarse.
+	maxSweepInterval          = 24 * time.Hour
 	defaultProcessedRetention = 30 * 24 * time.Hour
 	// minProcessedRetention: olvidar un evento que JetStream aun puede reentregar (los
 	// streams consumidos retienen 7 dias) permitiria contarlo dos veces.
 	minProcessedRetention = 7 * 24 * time.Hour
+	// maxProcessedRetention: el rastro crece con cada evento consumido y solo protege mientras
+	// un stream puede reentregar; mas de 365 dias es una errata.
+	maxProcessedRetention = 365 * 24 * time.Hour
 	pruneInterval         = 24 * time.Hour
 )
 
@@ -136,21 +144,14 @@ func main() {
 }
 
 func loadSettings() (settings, error) {
-	st := settings{port: defaultPort, sweepInterval: defaultSweepInterval, processedRetention: defaultProcessedRetention}
-	if v := os.Getenv("BILLING_PORT"); v != "" {
-		p, err := strconv.Atoi(v)
-		if err != nil || p < 1 || p > 65535 {
-			return st, fmt.Errorf("BILLING_PORT no valido: %q", v)
-		}
-		st.port = p
+	var st settings
+	var err error
+	if st.port, err = config.EnvInt("BILLING_PORT", defaultPort, 1, config.MaxPort); err != nil {
+		return st, err
 	}
 	st.business.DefaultPlanCode = strings.TrimSpace(os.Getenv("BILLING_DEFAULT_PLAN_CODE"))
-	if v := os.Getenv("BILLING_TRIAL_DAYS"); v != "" {
-		d, err := strconv.Atoi(v)
-		if err != nil || d < 0 || d > 366 {
-			return st, fmt.Errorf("BILLING_TRIAL_DAYS debe ser un entero entre 0 y 366: %q", v)
-		}
-		st.business.TrialDays = d
+	if st.business.TrialDays, err = config.EnvInt("BILLING_TRIAL_DAYS", 0, 0, maxTrialDays); err != nil {
+		return st, err
 	}
 	if v := os.Getenv("BILLING_ENFORCE"); v != "" {
 		b, err := strconv.ParseBool(v)
@@ -159,19 +160,11 @@ func loadSettings() (settings, error) {
 		}
 		st.business.Enforce = b
 	}
-	if v := os.Getenv("BILLING_PERIOD_SWEEP_INTERVAL"); v != "" {
-		d, err := time.ParseDuration(v)
-		if err != nil || d < minSweepInterval {
-			return st, fmt.Errorf("BILLING_PERIOD_SWEEP_INTERVAL debe ser una duracion de al menos %s: %q", minSweepInterval, v)
-		}
-		st.sweepInterval = d
+	if st.sweepInterval, err = config.EnvDuration("BILLING_PERIOD_SWEEP_INTERVAL", defaultSweepInterval, minSweepInterval, maxSweepInterval); err != nil {
+		return st, err
 	}
-	if v := os.Getenv("BILLING_PROCESSED_EVENTS_RETENTION"); v != "" {
-		d, err := time.ParseDuration(v)
-		if err != nil || d < minProcessedRetention {
-			return st, fmt.Errorf("BILLING_PROCESSED_EVENTS_RETENTION debe ser una duracion de al menos %s: %q", minProcessedRetention, v)
-		}
-		st.processedRetention = d
+	if st.processedRetention, err = config.EnvDuration("BILLING_PROCESSED_EVENTS_RETENTION", defaultProcessedRetention, minProcessedRetention, maxProcessedRetention); err != nil {
+		return st, err
 	}
 	return st, nil
 }

@@ -3,8 +3,6 @@ package main
 import (
 	"context"
 	"log"
-	"os"
-	"strconv"
 	"time"
 
 	"github.com/alonsosss/corforce-email/pkg/authz"
@@ -34,6 +32,10 @@ func main() {
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatalf("load config: %v", err)
+	}
+	port, err := config.EnvInt("TEMPLATES_PORT", defaultPort, 1, config.MaxPort)
+	if err != nil {
+		log.Fatal(err)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -93,13 +95,6 @@ func main() {
 		r.Use(db.TenantHeaderPoolMiddleware(tenantDB))
 		r.Mount("/internal/templates", h.InternalRoutes())
 	})
-
-	port := defaultPort
-	if p := os.Getenv("TEMPLATES_PORT"); p != "" {
-		if v, err := strconv.Atoi(p); err == nil {
-			port = v
-		}
-	}
 
 	srv := server.New(port, r, logger)
 	if err := srv.Run(); err != nil {

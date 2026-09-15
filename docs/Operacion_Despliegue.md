@@ -32,10 +32,12 @@ largas de cada guardarraíl están en `ops/scaffold/README.md`, `ops/security/se
   rango. `EnvFloat` rechaza además NaN e infinito: una tasa infinita dejaba sin límite el
   envío a SES (`SES_MAX_SEND_RATE`, `SES_MAX_SEND_RATE_MARKETING`, de 1 a 10000 por segundo). Así leen
   `pkg/config` (`POSTGRES_PORT`, `POSTGRES_DIRECT_PORT`, `REDIS_PORT`, `JWT_*_TTL`) y
-  scheduler, campaigns, transactional, mail-auth, contacts, suppression, automations y
-  webmail. Pendiente de migrar, con lectores propios: gateway (`GATEWAY_PORT`),
-  domain-service, mail-security, organization, mail-directory, audit, identity,
-  access-control, templates, analytics, billing y reputation.
+  scheduler, campaigns, transactional, mail-auth, contacts, suppression, automations,
+  webmail, gateway, audit, identity, access-control, templates, analytics, billing y
+  reputation. Los umbrales, la ventana y los límites de reputation siguen siendo
+  obligatorios y sin valor por defecto: se exige la variable y después se lee con su rango
+  (`EnvFloat` para los umbrales). Pendiente de migrar, con lectores propios:
+  domain-service, mail-security, organization y mail-directory.
 * Entorno declarado (`ENVIRONMENT`). Un servidor declara exactamente
   `ENVIRONMENT=production` o `ENVIRONMENT=staging` en el `.env` de `DEPLOY_PATH`, el que
   Compose pasa a los contenedores; también el servidor de la cuenta de dev. `development` y

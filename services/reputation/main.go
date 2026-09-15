@@ -51,7 +51,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("load config: %v", err)
 	}
-	st, err := loadSettings(os.Getenv)
+	st, err := loadSettings()
 	if err != nil {
 		log.Fatalf("reputation: configuracion no valida: %v", err)
 	}

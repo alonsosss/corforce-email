@@ -4,15 +4,19 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
-	"strconv"
+	"os"
 	"strings"
 	"time"
 
+	"github.com/alonsosss/corforce-email/pkg/config"
 	"github.com/alonsosss/corforce-email/services/reputation/internal/domain"
 	"github.com/shopspring/decimal"
 )
 
-const defaultPort = 8054
+const (
+	defaultPort = 8054
+	day         = 24 * time.Hour
+)
 
 type settings struct {
 	port       int
@@ -23,17 +27,12 @@ type settings struct {
 // loadSettings lee y valida la configuracion. Los umbrales, la ventana y los limites son
 // decisiones de negocio: no tienen valor por defecto en el codigo, y sin ellos o con uno
 // incoherente el servicio no arranca.
-func loadSettings(getenv func(string) string) (settings, error) {
-	p := envParser{getenv: getenv}
-	st := settings{port: defaultPort}
-	if v := strings.TrimSpace(getenv("REPUTATION_PORT")); v != "" {
-		port, err := strconv.Atoi(v)
-		if err != nil || port < 1 || port > 65535 {
-			p.fail("REPUTATION_PORT", "debe ser un puerto valido")
-		} else {
-			st.port = port
-		}
-	}
+func loadSettings() (settings, error) {
+	var p envParser
+	var st settings
+	var err error
+	st.port, err = config.EnvInt("REPUTATION_PORT", defaultPort, 1, config.MaxPort)
+	p.add(err)
 	st.policy = domain.Policy{
 		WindowDays: p.windowDays("REPUTATION_WINDOW"),
 		Thresholds: domain.Thresholds{
@@ -41,16 +40,16 @@ func loadSettings(getenv func(string) string) (settings, error) {
 			BounceBlock:    p.fraction("REPUTATION_BOUNCE_BLOCK"),
 			ComplaintWarn:  p.fraction("REPUTATION_COMPLAINT_WARN"),
 			ComplaintBlock: p.fraction("REPUTATION_COMPLAINT_BLOCK"),
-			MinVolume:      p.positiveInt("REPUTATION_MIN_VOLUME"),
+			MinVolume:      p.count("REPUTATION_MIN_VOLUME"),
 		},
 		Defaults: map[domain.Class]domain.Limits{
 			domain.ClassTransactional: {
-				Hourly: p.positiveInt("REPUTATION_DEFAULT_HOURLY_TRANSACTIONAL"),
-				Daily:  p.positiveInt("REPUTATION_DEFAULT_DAILY_TRANSACTIONAL"),
+				Hourly: p.count("REPUTATION_DEFAULT_HOURLY_TRANSACTIONAL"),
+				Daily:  p.count("REPUTATION_DEFAULT_DAILY_TRANSACTIONAL"),
 			},
 			domain.ClassMarketing: {
-				Hourly: p.positiveInt("REPUTATION_DEFAULT_HOURLY_MARKETING"),
-				Daily:  p.positiveInt("REPUTATION_DEFAULT_DAILY_MARKETING"),
+				Hourly: p.count("REPUTATION_DEFAULT_HOURLY_MARKETING"),
+				Daily:  p.count("REPUTATION_DEFAULT_DAILY_MARKETING"),
 			},
 		},
 	}
@@ -65,10 +64,17 @@ func loadSettings(getenv func(string) string) (settings, error) {
 	return st, errors.Join(p.errs...)
 }
 
-// envParser acumula todos los errores de configuracion para informarlos de una vez.
+// envParser acumula todos los errores de configuracion para informarlos de una vez. Las
+// variables de la politica son obligatorias: se exige su presencia y despues se leen con
+// pkg/config, cuyo valor por defecto (el minimo del rango) nunca llega a usarse.
 type envParser struct {
-	getenv func(string) string
-	errs   []error
+	errs []error
+}
+
+func (p *envParser) add(err error) {
+	if err != nil {
+		p.errs = append(p.errs, err)
+	}
 }
 
 func (p *envParser) fail(key, msg string) {
@@ -76,7 +82,7 @@ func (p *envParser) fail(key, msg string) {
 }
 
 func (p *envParser) required(key string) (string, bool) {
-	v := strings.TrimSpace(p.getenv(key))
+	v := strings.TrimSpace(os.Getenv(key))
 	if v == "" {
 		p.fail(key, "es obligatoria")
 		return "", false
@@ -84,45 +90,51 @@ func (p *envParser) required(key string) (string, bool) {
 	return v, true
 }
 
+// fraction lee un umbral como fraccion de los envios de la ventana, sin NaN ni infinito.
+// Que quede entre 0 y 1, ambos excluidos, y el aviso por debajo del bloqueo lo exige
+// Policy.Validate.
 func (p *envParser) fraction(key string) decimal.Decimal {
-	v, ok := p.required(key)
-	if !ok {
+	if _, ok := p.required(key); !ok {
 		return decimal.Zero
 	}
-	d, err := decimal.NewFromString(v)
+	v, err := config.EnvFloat(key, 0, 0, 1)
 	if err != nil {
-		p.fail(key, "debe ser una fraccion decimal (por ejemplo 0.02)")
+		p.add(err)
 		return decimal.Zero
 	}
-	return d
+	return decimal.NewFromFloat(v)
 }
 
-func (p *envParser) positiveInt(key string) int64 {
-	v, ok := p.required(key)
-	if !ok {
+// count lee un numero de envios (el volumen minimo o un limite por defecto), acotado como
+// cualquier limite de la politica por domain.MaxLimit.
+func (p *envParser) count(key string) int64 {
+	if _, ok := p.required(key); !ok {
 		return 0
 	}
-	n, err := strconv.ParseInt(v, 10, 64)
-	if err != nil || n < 1 {
-		p.fail(key, "debe ser un entero mayor que 0")
+	n, err := config.EnvInt(key, 1, 1, int(domain.MaxLimit))
+	if err != nil {
+		p.add(err)
 		return 0
 	}
-	return n
+	return int64(n)
 }
 
-// windowDays lee la ventana como duracion de Go y exige dias completos: la ventana se
-// suma por dias naturales UTC.
+// windowDays lee la ventana como duracion de Go, de 1 a domain.MaxWindowDays dias, y exige
+// dias completos: la ventana se suma por dias naturales UTC.
 func (p *envParser) windowDays(key string) int {
-	v, ok := p.required(key)
-	if !ok {
+	if _, ok := p.required(key); !ok {
 		return 0
 	}
-	d, err := time.ParseDuration(v)
-	if err != nil || d <= 0 || d%(24*time.Hour) != 0 {
+	d, err := config.EnvDuration(key, day, day, domain.MaxWindowDays*day)
+	if err != nil {
+		p.add(err)
+		return 0
+	}
+	if d%day != 0 {
 		p.fail(key, "debe ser una duracion en dias completos (por ejemplo 168h)")
 		return 0
 	}
-	return int(d / (24 * time.Hour))
+	return int(d / day)
 }
 
 func (p *envParser) serviceURL(key string) string {

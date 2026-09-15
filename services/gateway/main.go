@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/alonsosss/corforce-email/pkg/auth"
+	"github.com/alonsosss/corforce-email/pkg/config"
 	"github.com/alonsosss/corforce-email/pkg/middleware"
 	"github.com/alonsosss/corforce-email/pkg/objectstore"
 	"github.com/alonsosss/corforce-email/pkg/observability"
@@ -34,6 +35,10 @@ func main() {
 	}
 	logger.Info("claves publicas del token de acceso", zap.Strings("kid", kids))
 	internalToken, err := middleware.InternalGatewayToken()
+	if err != nil {
+		log.Fatal(err)
+	}
+	st, err := loadSettings()
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -101,15 +106,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("redis: %v", err)
 	}
-	apiLimit, err := positiveIntFromEnv("API_RATE_LIMIT_PER_MIN", 600)
-	if err != nil {
-		log.Fatal(err)
-	}
-	authLimit, err := positiveIntFromEnv("AUTH_RATE_LIMIT_PER_MIN", 30)
-	if err != nil {
-		log.Fatal(err)
-	}
-	limiter, authLimiter := newRateLimiters(rateStore, apiLimit, authLimit, logger)
+	limiter, authLimiter := newRateLimiters(rateStore, st.apiRatePerMin, st.authRatePerMin, logger)
 
 	identity := reverseProxy(table.serviceURL("identity"), internalToken)
 
@@ -171,10 +168,7 @@ func main() {
 		// despues del rastro de auditoria, para que tambien quede la rechazada.
 		targets := newTargetCellGate(table, logger)
 		// Rastro de auditoria: escrituras con modulo y toda peticion con celda destino.
-		trail, err := newAuditTrail(modules, logger)
-		if err != nil {
-			log.Fatal(err)
-		}
+		trail := newAuditTrail(modules, st.exfilReads, st.exfilWindow, logger)
 
 		// MFA self-service: requiere autenticacion (inyecta X-User-ID) pero NO pasa
 		// por RBAC: es gestion de la propia cuenta, no un recurso protegido por modulo. El
@@ -213,14 +207,10 @@ func main() {
 		})
 	})
 
-	port := os.Getenv("GATEWAY_PORT")
-	if port == "" {
-		port = "8080"
-	}
-	logger.Info("gateway starting", zap.String("port", port), zap.Int("routes", len(table.Routes)))
+	logger.Info("gateway starting", zap.Int("port", st.port), zap.Int("routes", len(table.Routes)))
 
 	srv := &http.Server{
-		Addr:              ":" + port,
+		Addr:              fmt.Sprintf(":%d", st.port),
 		Handler:           observability.WithOps(r),
 		ReadTimeout:       15 * time.Second,
 		ReadHeaderTimeout: 5 * time.Second,
@@ -253,19 +243,57 @@ func jwtAuthFromEnv() (*middleware.JWTAuth, []string, error) {
 	return middleware.NewJWTAuth(verifier), keys.KIDs(), nil
 }
 
-// positiveIntFromEnv lee un entero positivo del entorno. Ausente vale el valor por defecto;
-// presente y no valido (no numerico, cero o negativo) es un error: un limite mal escrito que
-// cae en silencio al valor por defecto no se nota hasta que hace falta.
-func positiveIntFromEnv(key string, fallback int) (int, error) {
-	v := os.Getenv(key)
-	if v == "" {
-		return fallback, nil
+const (
+	defaultPort           = 8080
+	defaultAPIRatePerMin  = 600
+	defaultAuthRatePerMin = 30
+	// Cupos por minuto e IP. Con mas de 1000 peticiones por segundo desde una IP el general ya
+	// no frena nada, y con mas de 10 intentos por segundo el estricto deja de ser la barrera
+	// contra el barrido de cuentas.
+	maxAPIRatePerMin  = 60000
+	maxAuthRatePerMin = 600
+
+	defaultExfilReads     = 400
+	defaultExfilWindowMin = 5
+	// Por encima de este numero de lecturas en la ventana la alerta ya no avisa de ninguna
+	// extraccion: con el cupo general por defecto una IP tardaria casi tres horas en llegar.
+	maxExfilReads = 100000
+	// La ventana vive en memoria del gateway: cada usuario activo conserva su contador hasta dos
+	// ventanas y la limpieza pasa una vez por ventana.
+	maxExfilWindowMin = 60
+)
+
+// settings son los valores numericos del gateway, leidos al arrancar y antes de conectar a
+// Redis o a NATS: un limite mal escrito no espera a que respondan para descubrirse.
+type settings struct {
+	port           int
+	apiRatePerMin  int
+	authRatePerMin int
+	exfilReads     int
+	exfilWindow    time.Duration
+}
+
+func loadSettings() (settings, error) {
+	var st settings
+	var err error
+	if st.port, err = config.EnvInt("GATEWAY_PORT", defaultPort, 1, config.MaxPort); err != nil {
+		return st, err
 	}
-	n, err := strconv.Atoi(v)
-	if err != nil || n <= 0 {
-		return 0, fmt.Errorf("%s=%q: debe ser un entero positivo", key, v)
+	if st.apiRatePerMin, err = config.EnvInt("API_RATE_LIMIT_PER_MIN", defaultAPIRatePerMin, 1, maxAPIRatePerMin); err != nil {
+		return st, err
 	}
-	return n, nil
+	if st.authRatePerMin, err = config.EnvInt("AUTH_RATE_LIMIT_PER_MIN", defaultAuthRatePerMin, 1, maxAuthRatePerMin); err != nil {
+		return st, err
+	}
+	if st.exfilReads, err = config.EnvInt("EXFIL_READ_THRESHOLD", defaultExfilReads, 1, maxExfilReads); err != nil {
+		return st, err
+	}
+	windowMin, err := config.EnvInt("EXFIL_WINDOW_MIN", defaultExfilWindowMin, 1, maxExfilWindowMin)
+	if err != nil {
+		return st, err
+	}
+	st.exfilWindow = time.Duration(windowMin) * time.Minute
+	return st, nil
 }
 
 // stampCSPNonce marca los <script> del HTML con el nonce de esta respuesta.

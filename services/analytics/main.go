@@ -2,11 +2,7 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"log"
-	"os"
-	"strconv"
-	"strings"
 	"time"
 
 	"github.com/alonsosss/corforce-email/pkg/authz"
@@ -45,7 +41,11 @@ func main() {
 	if err != nil {
 		log.Fatalf("load config: %v", err)
 	}
-	retentionDays, err := envRetentionDays()
+	retentionDays, err := config.EnvInt("ANALYTICS_MESSAGE_RETENTION_DAYS", defaultRetentionDays, 1, maxRetentionDays)
+	if err != nil {
+		log.Fatal(err)
+	}
+	port, err := config.EnvInt("ANALYTICS_PORT", defaultPort, 1, config.MaxPort)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -100,13 +100,6 @@ func main() {
 	r.Use(middleware.NewRateLimiter(120, time.Minute).Limit)
 	r.Mount("/api/v1/analytics", h.Routes())
 
-	port := defaultPort
-	if p := os.Getenv("ANALYTICS_PORT"); p != "" {
-		if v, err := strconv.Atoi(p); err == nil {
-			port = v
-		}
-	}
-
 	srv := server.New(port, r, logger)
 	if err := srv.Run(); err != nil {
 		logger.Fatal("server error", zap.Error(err))
@@ -146,18 +139,4 @@ func runPruner(ctx context.Context, tenantDB *db.TenantDB, uc *app.UseCase, logg
 		case <-t.C:
 		}
 	}
-}
-
-// envRetentionDays lee ANALYTICS_MESSAGE_RETENTION_DAYS. Un valor presente e invalido
-// detiene el arranque: una retencion de datos mal escrita no se sustituye en silencio.
-func envRetentionDays() (int, error) {
-	raw := strings.TrimSpace(os.Getenv("ANALYTICS_MESSAGE_RETENTION_DAYS"))
-	if raw == "" {
-		return defaultRetentionDays, nil
-	}
-	v, err := strconv.Atoi(raw)
-	if err != nil || v < 1 || v > maxRetentionDays {
-		return 0, fmt.Errorf("ANALYTICS_MESSAGE_RETENTION_DAYS debe ser un entero entre 1 y %d", maxRetentionDays)
-	}
-	return v, nil
 }

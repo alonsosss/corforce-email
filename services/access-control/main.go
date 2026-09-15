@@ -3,8 +3,6 @@ package main
 import (
 	"context"
 	"log"
-	"os"
-	"strconv"
 	"time"
 
 	"github.com/alonsosss/corforce-email/pkg/config"
@@ -24,6 +22,8 @@ import (
 	"go.uber.org/zap"
 )
 
+const defaultPort = 8002
+
 func main() {
 	logger, _ := zap.NewProduction()
 	defer logger.Sync()
@@ -32,6 +32,10 @@ func main() {
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatalf("load config: %v", err)
+	}
+	port, err := config.EnvInt("ACCESS_CONTROL_PORT", defaultPort, 1, config.MaxPort)
+	if err != nil {
+		log.Fatal(err)
 	}
 
 	ctx := context.Background()
@@ -113,13 +117,6 @@ func main() {
 	// Interno: el ciclo de vida de los roles de una empresa entera, que orquesta
 	// organization. Mismo token interno; ninguna persona llega aqui.
 	r.Mount("/internal/access-control", handler.NewInternalHandler(tenantRolesUC).Routes())
-
-	port := 8002
-	if p := os.Getenv("ACCESS_CONTROL_PORT"); p != "" {
-		if v, err := strconv.Atoi(p); err == nil {
-			port = v
-		}
-	}
 
 	srv := server.New(port, r, logger)
 	if err := srv.Run(); err != nil {

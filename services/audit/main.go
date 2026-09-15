@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"log"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
@@ -25,6 +24,18 @@ import (
 	"go.uber.org/zap"
 )
 
+const (
+	defaultPort                = 8030
+	defaultBruteForceMax       = 5
+	defaultBruteForceWindowMin = 15
+	// Fallos de inicio de sesion desde una IP, sumados los de todas las cuentas detras de ella
+	// (una oficina con NAT), como el freno por IP de mail-auth.
+	maxBruteForceMax = 10000
+	// El recuento y la alerta unica por IP comparten la ventana: con mas de un dia, una errata
+	// callaria las alertas repetidas de esa IP durante todo ese tiempo.
+	maxBruteForceWindowMin = 24 * 60
+)
+
 func main() {
 	logger, _ := zap.NewProduction()
 	defer logger.Sync()
@@ -32,6 +43,18 @@ func main() {
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatalf("load config: %v", err)
+	}
+	port, err := config.EnvInt("AUDIT_PORT", defaultPort, 1, config.MaxPort)
+	if err != nil {
+		log.Fatal(err)
+	}
+	bruteForceMax, err := config.EnvInt("SECURITY_BRUTEFORCE_MAX", defaultBruteForceMax, 1, maxBruteForceMax)
+	if err != nil {
+		log.Fatal(err)
+	}
+	bruteForceWindowMin, err := config.EnvInt("SECURITY_BRUTEFORCE_WINDOW_MIN", defaultBruteForceWindowMin, 1, maxBruteForceWindowMin)
+	if err != nil {
+		log.Fatal(err)
 	}
 
 	ctx := context.Background()
@@ -72,8 +95,8 @@ func main() {
 	// Detector de seguridad: convierte el flujo de identidad (logins, fallos,
 	// bloqueos, revocaciones) en eventos accionables de audit.security_events.
 	detector := app.NewSecurityDetector(logRepo, secRepo, eventPub, app.SecurityDetectorConfig{
-		BruteForceMax:    envInt64("SECURITY_BRUTEFORCE_MAX", 5),
-		BruteForceWindow: time.Duration(envInt64("SECURITY_BRUTEFORCE_WINDOW_MIN", 15)) * time.Minute,
+		BruteForceMax:    int64(bruteForceMax),
+		BruteForceWindow: time.Duration(bruteForceWindowMin) * time.Minute,
 	}, logger)
 
 	subscribeToEvents(bus, uc, detector, tenantDB, logger)
@@ -96,26 +119,10 @@ func main() {
 	r.Use(limiter.Limit)
 	r.Mount("/api/v1/audit", h.Routes())
 
-	port := 8030
-	if p := os.Getenv("AUDIT_PORT"); p != "" {
-		if v, err := strconv.Atoi(p); err == nil {
-			port = v
-		}
-	}
-
 	srv := server.New(port, r, logger)
 	if err := srv.Run(); err != nil {
 		logger.Fatal("server error", zap.Error(err))
 	}
-}
-
-func envInt64(key string, def int64) int64 {
-	if v := os.Getenv(key); v != "" {
-		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
-			return n
-		}
-	}
-	return def
 }
 
 func subscribeToEvents(bus *events.Bus, uc *app.AuditUseCase, detector *app.SecurityDetector, tenantDB *db.TenantDB, logger *zap.Logger) {

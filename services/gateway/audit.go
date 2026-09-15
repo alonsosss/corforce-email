@@ -47,32 +47,25 @@ type readWindow struct {
 	lastAlert   time.Time
 }
 
-func newAuditTrail(modules map[string]string, logger *zap.Logger) (*auditTrail, error) {
-	max, err := positiveIntFromEnv("EXFIL_READ_THRESHOLD", 400)
-	if err != nil {
-		return nil, err
-	}
-	windowMin, err := positiveIntFromEnv("EXFIL_WINDOW_MIN", 5)
-	if err != nil {
-		return nil, err
-	}
-	window := time.Duration(windowMin) * time.Minute
+// newAuditTrail arma el rastro con el umbral y la ventana de exfiltracion ya validados
+// (loadSettings).
+func newAuditTrail(modules map[string]string, exfilMax int, exfilWindow time.Duration, logger *zap.Logger) *auditTrail {
 	url := os.Getenv("NATS_URL")
 	if url == "" {
 		url = "nats://nats:4222"
 	}
-	at := &auditTrail{modules: modules, logger: logger, exfilReads: make(map[string]*readWindow), exfilMax: max, exfilWindow: window}
+	at := &auditTrail{modules: modules, logger: logger, exfilReads: make(map[string]*readWindow), exfilMax: exfilMax, exfilWindow: exfilWindow}
 	bus, err := events.NewBus(url, logger)
 	if err != nil {
 		logger.Warn("audit trail sin NATS: escrituras no auditadas a nivel API", zap.Error(err))
-		return at, nil
+		return at
 	}
 	if err := bus.EnsureStream("AUDIT_API", []string{"audit.api.>"}); err != nil {
 		logger.Warn("ensure stream AUDIT_API", zap.Error(err))
 	}
 	at.bus = bus
 	go at.exfilCleanup()
-	return at, nil
+	return at
 }
 
 // trackRead cuenta una lectura del usuario y devuelve true la PRIMERA vez que supera el
