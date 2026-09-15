@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -38,6 +37,28 @@ const (
 	defaultRecheckInterval = 6 * time.Hour
 	defaultSweepTimeout    = 5 * time.Minute
 	defaultSweepWorkers    = 4
+
+	// Cada barrido consulta el DNS de todos los dominios de todas las empresas y llama a sus
+	// celdas; el suelo deja caber el tiempo por empresa por defecto. El techo es el de la alerta
+	// BarridoDeDominiosSinCelda (ops/observability/prometheus/rules/plataforma.yml), que avisa con
+	// fallos en dos barridos seguidos dentro de su ventana de 6h30m: con un intervalo mayor no
+	// avisaria nunca. Alargarlo exige alargar a la vez la ventana y la espera de la alerta.
+	minRecheckInterval = defaultSweepTimeout
+	maxRecheckInterval = 6 * time.Hour
+	// Verificar un dominio son hasta seis consultas DNS de 5 s y sus llamadas a la celda: con
+	// menos de un minuto una empresa lenta no terminaria ni el primero.
+	minSweepTimeout = time.Minute
+	// Cada empresa en vuelo ocupa conexiones de su pool (hasta 10, pkg/db) a traves de
+	// pgbouncer, cuyo max_client_conn (1000) comparten todos los servicios.
+	maxSweepWorkers = 64
+	// La clave anterior sigue en los motores durante la gracia: al menos un dia, el TTL mas
+	// largo habitual de un TXT, y como mucho treinta, porque una rotacion puede deberse a una
+	// clave comprometida.
+	minDKIMRotationGrace = 24 * time.Hour
+	maxDKIMRotationGrace = 30 * 24 * time.Hour
+	// El historial de comprobaciones crece una fila por registro en cada verificacion.
+	maxCheckRetention = 365 * 24 * time.Hour
+
 	// sweepLockKey serializa el barrido entre replicas (advisory lock en el registro).
 	sweepLockKey int64 = 0x646f6d73 // "doms"
 
@@ -95,18 +116,33 @@ func loadSettings(logger *zap.Logger) (settings, error) {
 		mailDirectoryURL: require("MAIL_DIRECTORY_URL"),
 		mailSecurityURL:  require("MAIL_SECURITY_URL"),
 		dnsResolver:      strings.TrimSpace(os.Getenv("MAIL_DNS_RESOLVER")),
-		rotationGrace:    envDuration("MAIL_DKIM_ROTATION_GRACE", app.DefaultDKIMRotationGrace),
-		recheckInterval:  envDuration("DOMAIN_RECHECK_INTERVAL", defaultRecheckInterval),
-		sweepWorkers:     envInt("DOMAIN_SWEEP_CONCURRENCY", defaultSweepWorkers),
-		sweepTimeout:     envDuration("DOMAIN_SWEEP_TENANT_TIMEOUT", defaultSweepTimeout),
-		checkRetention:   envDuration("DOMAIN_CHECK_RETENTION", app.DefaultCheckRetention),
-		port:             envInt("DOMAIN_SERVICE_PORT", defaultPort),
 	}
 	if len(missing) > 0 {
 		return s, fmt.Errorf("faltan variables de entorno obligatorias: %s", strings.Join(missing, ", "))
 	}
 	if !strings.HasPrefix(s.platform.SPFInclude, "include:") {
 		return s, fmt.Errorf("MAIL_SPF_INCLUDE debe ser un mecanismo include: (p. ej. include:spf.%s)", s.platformHostname)
+	}
+	var err error
+	if s.port, err = config.EnvInt("DOMAIN_SERVICE_PORT", defaultPort, 1, config.MaxPort); err != nil {
+		return s, err
+	}
+	if s.recheckInterval, err = config.EnvDuration("DOMAIN_RECHECK_INTERVAL", defaultRecheckInterval, minRecheckInterval, maxRecheckInterval); err != nil {
+		return s, err
+	}
+	// Una empresa no retiene el barrido mas alla de su intervalo.
+	if s.sweepTimeout, err = config.EnvDuration("DOMAIN_SWEEP_TENANT_TIMEOUT", defaultSweepTimeout, minSweepTimeout, s.recheckInterval); err != nil {
+		return s, err
+	}
+	if s.sweepWorkers, err = config.EnvInt("DOMAIN_SWEEP_CONCURRENCY", defaultSweepWorkers, 1, maxSweepWorkers); err != nil {
+		return s, err
+	}
+	if s.rotationGrace, err = config.EnvDuration("MAIL_DKIM_ROTATION_GRACE", app.DefaultDKIMRotationGrace, minDKIMRotationGrace, maxDKIMRotationGrace); err != nil {
+		return s, err
+	}
+	// Un dominio pendiente se reverifica durante su ventana: su historial no se poda antes.
+	if s.checkRetention, err = config.EnvDuration("DOMAIN_CHECK_RETENTION", app.DefaultCheckRetention, app.DefaultPendingRecheckWindow, maxCheckRetention); err != nil {
+		return s, err
 	}
 	token, err := middleware.InternalGatewayToken()
 	if err != nil {
@@ -132,20 +168,6 @@ func loadSettings(logger *zap.Logger) (settings, error) {
 		return s, err
 	}
 	return s, nil
-}
-
-func envInt(key string, fallback int) int {
-	if v, err := strconv.Atoi(os.Getenv(key)); err == nil && v > 0 {
-		return v
-	}
-	return fallback
-}
-
-func envDuration(key string, fallback time.Duration) time.Duration {
-	if v, err := time.ParseDuration(os.Getenv(key)); err == nil && v > 0 {
-		return v
-	}
-	return fallback
 }
 
 func main() {

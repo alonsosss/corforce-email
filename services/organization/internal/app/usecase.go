@@ -24,9 +24,9 @@ var cellCodeRegex = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
 // crear la cuenta; este suelo evita crear y deshacer una base por una contrasena trivial.
 const minAdminPasswordLength = 12
 
-// defaultSagaLease es el arriendo de una ejecucion de la saga cuando el despliegue no fija
+// DefaultSagaLease es el arriendo de una ejecucion de la saga cuando el despliegue no fija
 // otro: holgado para crear y migrar una base nueva.
-const defaultSagaLease = 5 * time.Minute
+const DefaultSagaLease = 5 * time.Minute
 
 // Dependencies agrupa los puertos del caso de uso. Un constructor con nombres evita
 // el error clasico de cruzar dos argumentos posicionales del mismo tipo.
@@ -50,7 +50,7 @@ type Dependencies struct {
 	// Vacio significa que no hay celda por defecto y toda alta debe indicarla.
 	DefaultCellCode string
 	// SagaLease es cuanto puede tardar una ejecucion de la saga antes de que otra instancia
-	// la de por abandonada. Cero toma defaultSagaLease.
+	// la de por abandonada. Cero toma DefaultSagaLease.
 	SagaLease time.Duration
 	Logger    *zap.Logger
 }
@@ -78,7 +78,7 @@ func NewOrganizationUseCase(deps Dependencies) *OrganizationUseCase {
 	}
 	lease := deps.SagaLease
 	if lease <= 0 {
-		lease = defaultSagaLease
+		lease = DefaultSagaLease
 	}
 	return &OrganizationUseCase{
 		tenants:         deps.Tenants,

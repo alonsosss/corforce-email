@@ -399,8 +399,9 @@ groups:
       # por defecto) y las acciones de las personas. De un barrido al siguiente su cache ya ha
       # caducado, asi que un corte de organization durante uno falla sus pasos, que el siguiente
       # repite: un barrido fallido no avisa. La ventana supera el intervalo y la espera supera
-      # la ventana: avisa con fallos en dos barridos seguidos o sostenidos mas de media hora. Si
-      # se alarga DOMAIN_RECHECK_INTERVAL hay que alargar las dos.
+      # la ventana: avisa con fallos en dos barridos seguidos o sostenidos mas de media hora.
+      # domain-service no arranca con DOMAIN_RECHECK_INTERVAL por encima de 6 h: alargarlo exige
+      # alargar las dos y ese techo (maxRecheckInterval, services/domain-service/main.go).
       - alert: BarridoDeDominiosSinCelda
         expr: sum by (service, cell_service) (increase(cell_call_failures_total{reason="unresolved"}[6h30m])) > 0
         for: 7h

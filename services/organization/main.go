@@ -43,6 +43,17 @@ const (
 	// retirementCallTimeout acota cada intento de la baja de una empresa en su celda: una sola
 	// transaccion que apaga todo su directorio y encola un evento por fila.
 	retirementCallTimeout = 30 * time.Second
+
+	// La saga entera corre bajo su arriendo (sagaContext): el suelo cubre su llamada mas larga,
+	// la baja en la celda con sus tres intentos de retirementCallTimeout. Por encima del techo,
+	// una empresa cuya instancia murio a mitad queda bloqueada (409) mas de una hora antes de
+	// que otra instancia la retome.
+	minSagaLease = 2 * time.Minute
+	maxSagaLease = time.Hour
+	// Cada pasada del barrido de sagas es una consulta al registro. Por encima del techo, una
+	// saga abandonada espera mas de una hora, ademas de su arriendo, a que alguien la retome.
+	defaultSagaSweepInterval = time.Minute
+	maxSagaSweepInterval     = time.Hour
 )
 
 func loadMigrations(dir string) []postgres.MigrationFile {
@@ -101,20 +112,33 @@ func envOrDefault(key, fallback string) string {
 	return fallback
 }
 
-// envDuration lee una duracion (5m, 30s). Un valor que no se entiende se avisa y toma el
-// de por defecto: arrancar con un cero dejaria la saga sin arriendo.
-func envDuration(key string, fallback time.Duration, logger *zap.Logger) time.Duration {
-	raw := os.Getenv(key)
-	if raw == "" {
-		return fallback
+// settings es la configuracion propia del servicio, leida y validada antes de conectar a nada.
+type settings struct {
+	internalToken     string
+	port              int
+	sagaLease         time.Duration
+	sagaSweepInterval time.Duration
+}
+
+// loadSettings falla con un valor fuera de su rango y sin token interno fuera de desarrollo o
+// prueba: la saga lo presenta a identity, access-control y el mail-directory de cada celda, y
+// las rutas del servicio lo exigen, con la misma regla que el gateway.
+func loadSettings() (settings, error) {
+	var st settings
+	var err error
+	if st.internalToken, err = middleware.InternalGatewayToken(); err != nil {
+		return st, err
 	}
-	d, err := time.ParseDuration(raw)
-	if err != nil || d <= 0 {
-		logger.Warn("duracion no valida; se usa la de por defecto",
-			zap.String("variable", key), zap.String("valor", raw), zap.Duration("por_defecto", fallback))
-		return fallback
+	if st.port, err = config.EnvInt("ORGANIZATION_PORT", defaultPort, 1, config.MaxPort); err != nil {
+		return st, err
 	}
-	return d
+	if st.sagaLease, err = config.EnvDuration("ORGANIZATION_SAGA_LEASE", app.DefaultSagaLease, minSagaLease, maxSagaLease); err != nil {
+		return st, err
+	}
+	if st.sagaSweepInterval, err = config.EnvDuration("ORGANIZATION_SAGA_SWEEP_INTERVAL", defaultSagaSweepInterval, time.Second, maxSagaSweepInterval); err != nil {
+		return st, err
+	}
+	return st, nil
 }
 
 // serviceURL resuelve la direccion interna de otro servicio: <SERVICIO>_URL si esta, o
@@ -203,6 +227,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("load config: %v", err)
 	}
+	st, err := loadSettings()
+	if err != nil {
+		log.Fatalf("organization: %v", err)
+	}
 
 	ctx := context.Background()
 
@@ -258,7 +286,6 @@ func main() {
 	// El rol del sistema, sus asignaciones y las cuentas de cada empresa son de
 	// access-control e identity: la saga se los pide por su API interna, con el mismo
 	// token interno que el gateway.
-	internalToken := os.Getenv("INTERNAL_GATEWAY_TOKEN")
 	accessControlURL := serviceURL("ACCESS_CONTROL", "access-control", "8002")
 
 	// La baja de una empresa la da de baja en el mail-directory de su celda, con las mismas
@@ -273,7 +300,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("instancias por celda: %v", err)
 	}
-	mailDirectory := maildirectorycli.New(tenantcell.NewCaller("mail-directory", directoryTargets, internalToken, logger,
+	mailDirectory := maildirectorycli.New(tenantcell.NewCaller("mail-directory", directoryTargets, st.internalToken, logger,
 		tenantcell.CallerOptions{Timeout: retirementCallTimeout}))
 
 	uc := app.NewOrganizationUseCase(app.Dependencies{
@@ -281,14 +308,14 @@ func main() {
 		Cells:           postgres.NewCellRepo(pool.Pool),
 		Sagas:           postgres.NewTenantSagaRepo(pool.Pool),
 		Provisioner:     provisioner,
-		Access:          accesscontrolcli.New(accessControlURL, internalToken),
-		Identity:        identitycli.New(serviceURL("IDENTITY", "identity", "8001"), internalToken),
+		Access:          accesscontrolcli.New(accessControlURL, st.internalToken),
+		Identity:        identitycli.New(serviceURL("IDENTITY", "identity", "8001"), st.internalToken),
 		Modules:         postgres.NewModulesRepo(pool.Pool),
 		Publisher:       publisher,
 		MailDomains:     postgres.NewMailDomainRepo(pool.Pool),
 		MailDirectory:   mailDirectory,
 		DefaultCellCode: defaultCellCode,
-		SagaLease:       envDuration("ORGANIZATION_SAGA_LEASE", 5*time.Minute, logger),
+		SagaLease:       st.sagaLease,
 		Logger:          logger,
 	})
 
@@ -310,7 +337,7 @@ func main() {
 
 	// Sagas de alta y baja que se quedaron sin dueno (una instancia murio a mitad o un
 	// fallo solto el arriendo): se retoman cada intervalo.
-	go recoverSagas(uc, envDuration("ORGANIZATION_SAGA_SWEEP_INTERVAL", time.Minute, logger), logger)
+	go recoverSagas(uc, st.sagaSweepInterval, logger)
 
 	// Aplica migraciones canonicas pendientes a los tenants existentes al arrancar.
 	// Corre EN SEGUNDO PLANO para no retrasar el health-check ni el arranque del HTTP, es
@@ -331,7 +358,9 @@ func main() {
 		}()
 	}
 
-	h := handler.NewHandler(uc, authz.NewCheckerFromEnv())
+	// Los permisos de accion se consultan al mismo access-control que la saga, con el token ya
+	// validado.
+	h := handler.NewHandler(uc, authz.NewChecker(accessControlURL, st.internalToken))
 
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
@@ -350,14 +379,7 @@ func main() {
 		r.Mount("/", h.Routes())
 	})
 
-	port := defaultPort
-	if p := os.Getenv("ORGANIZATION_PORT"); p != "" {
-		if v, err := strconv.Atoi(p); err == nil {
-			port = v
-		}
-	}
-
-	srv := server.New(port, r, logger)
+	srv := server.New(st.port, r, logger)
 	if err := srv.Run(); err != nil {
 		logger.Fatal("server error", zap.Error(err))
 	}

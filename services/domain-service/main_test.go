@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/alonsosss/corforce-email/pkg/middleware"
 	"github.com/alonsosss/corforce-email/pkg/tenantcell"
@@ -15,18 +16,24 @@ import (
 func setSettingsEnv(t *testing.T, environment, token string) {
 	t.Helper()
 	for key, value := range map[string]string{
-		"MAIL_HOSTNAME":           "mail.cfm.test",
-		"MAIL_MX_HOSTNAME":        "mx.cfm.test",
-		"MAIL_SPF_INCLUDE":        "include:spf.cfm.test",
-		"MAIL_DMARC_RUA":          "dmarc@cfm.test",
-		"MAIL_DIRECTORY_URL":      "http://mail-directory:8040",
-		"MAIL_SECURITY_URL":       "http://mail-security:8042",
-		"ENVIRONMENT":             environment,
-		"INTERNAL_GATEWAY_TOKEN":  token,
-		tenantcell.BaseCellEnv:    "",
-		mailDirectoryCellHostsEnv: "",
-		mailSecurityCellHostsEnv:  "",
-		"ORGANIZATION_URL":        "http://organization:8003",
+		"MAIL_HOSTNAME":               "mail.cfm.test",
+		"MAIL_MX_HOSTNAME":            "mx.cfm.test",
+		"MAIL_SPF_INCLUDE":            "include:spf.cfm.test",
+		"MAIL_DMARC_RUA":              "dmarc@cfm.test",
+		"MAIL_DIRECTORY_URL":          "http://mail-directory:8040",
+		"MAIL_SECURITY_URL":           "http://mail-security:8042",
+		"ENVIRONMENT":                 environment,
+		"INTERNAL_GATEWAY_TOKEN":      token,
+		tenantcell.BaseCellEnv:        "",
+		mailDirectoryCellHostsEnv:     "",
+		mailSecurityCellHostsEnv:      "",
+		"ORGANIZATION_URL":            "http://organization:8003",
+		"DOMAIN_SERVICE_PORT":         "",
+		"DOMAIN_RECHECK_INTERVAL":     "",
+		"DOMAIN_SWEEP_TENANT_TIMEOUT": "",
+		"DOMAIN_SWEEP_CONCURRENCY":    "",
+		"MAIL_DKIM_ROTATION_GRACE":    "",
+		"DOMAIN_CHECK_RETENTION":      "",
 	} {
 		t.Setenv(key, value)
 	}
@@ -54,6 +61,58 @@ func TestLoadSettingsConTokenInterno(t *testing.T) {
 	}
 	if st.internalToken != "gateway-token-0123456789" {
 		t.Fatalf("token %q", st.internalToken)
+	}
+}
+
+func TestLoadSettingsValoresPorDefecto(t *testing.T) {
+	setSettingsEnv(t, "staging", "gateway-token-0123456789")
+	st, err := loadSettings(zap.NewNop())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.port != defaultPort || st.recheckInterval != 6*time.Hour || st.sweepTimeout != 5*time.Minute ||
+		st.sweepWorkers != 4 || st.rotationGrace != 72*time.Hour || st.checkRetention != 30*24*time.Hour {
+		t.Errorf("puerto %d, intervalo %s, tiempo por empresa %s, trabajadores %d, gracia %s, retencion %s",
+			st.port, st.recheckInterval, st.sweepTimeout, st.sweepWorkers, st.rotationGrace, st.checkRetention)
+	}
+}
+
+// Fuera de su rango, o ilegible, una variable impide arrancar y el error la nombra. El intervalo
+// no pasa del que cuenta la alerta BarridoDeDominiosSinCelda, y el tiempo por empresa, del
+// intervalo.
+func TestLoadSettingsRangos(t *testing.T) {
+	for nombre, c := range map[string]struct {
+		env map[string]string
+		err string
+	}{
+		"intervalo en el suelo, con su tiempo por empresa":    {map[string]string{"DOMAIN_RECHECK_INTERVAL": "5m", "DOMAIN_SWEEP_TENANT_TIMEOUT": "5m"}, ""},
+		"tiempo por empresa en el suelo":                      {map[string]string{"DOMAIN_SWEEP_TENANT_TIMEOUT": "1m"}, ""},
+		"extremos validos":                                    {map[string]string{"DOMAIN_SWEEP_CONCURRENCY": "64", "MAIL_DKIM_ROTATION_GRACE": "720h", "DOMAIN_CHECK_RETENTION": "168h", "DOMAIN_SERVICE_PORT": "65535"}, ""},
+		"intervalo mas largo que la alerta":                   {map[string]string{"DOMAIN_RECHECK_INTERVAL": "6h1m"}, "DOMAIN_RECHECK_INTERVAL"},
+		"intervalo por debajo del suelo":                      {map[string]string{"DOMAIN_RECHECK_INTERVAL": "4m"}, "DOMAIN_RECHECK_INTERVAL"},
+		"intervalo ilegible":                                  {map[string]string{"DOMAIN_RECHECK_INTERVAL": "seis horas"}, "DOMAIN_RECHECK_INTERVAL"},
+		"tiempo por empresa mayor que el intervalo":           {map[string]string{"DOMAIN_RECHECK_INTERVAL": "5m", "DOMAIN_SWEEP_TENANT_TIMEOUT": "10m"}, "DOMAIN_SWEEP_TENANT_TIMEOUT"},
+		"tiempo por empresa por debajo del suelo":             {map[string]string{"DOMAIN_SWEEP_TENANT_TIMEOUT": "30s"}, "DOMAIN_SWEEP_TENANT_TIMEOUT"},
+		"sin trabajadores":                                    {map[string]string{"DOMAIN_SWEEP_CONCURRENCY": "0"}, "DOMAIN_SWEEP_CONCURRENCY"},
+		"demasiados trabajadores":                             {map[string]string{"DOMAIN_SWEEP_CONCURRENCY": "65"}, "DOMAIN_SWEEP_CONCURRENCY"},
+		"gracia DKIM corta":                                   {map[string]string{"MAIL_DKIM_ROTATION_GRACE": "1h"}, "MAIL_DKIM_ROTATION_GRACE"},
+		"gracia DKIM larga":                                   {map[string]string{"MAIL_DKIM_ROTATION_GRACE": "721h"}, "MAIL_DKIM_ROTATION_GRACE"},
+		"historial podado dentro de la ventana de pendientes": {map[string]string{"DOMAIN_CHECK_RETENTION": "24h"}, "DOMAIN_CHECK_RETENTION"},
+		"historial de mas de un ano":                          {map[string]string{"DOMAIN_CHECK_RETENTION": "8761h"}, "DOMAIN_CHECK_RETENTION"},
+		"puerto cero":                                         {map[string]string{"DOMAIN_SERVICE_PORT": "0"}, "DOMAIN_SERVICE_PORT"},
+		"puerto fuera de TCP":                                 {map[string]string{"DOMAIN_SERVICE_PORT": "65536"}, "DOMAIN_SERVICE_PORT"},
+	} {
+		setSettingsEnv(t, "staging", "gateway-token-0123456789")
+		for key, value := range c.env {
+			t.Setenv(key, value)
+		}
+		_, err := loadSettings(zap.NewNop())
+		if c.err == "" && err != nil {
+			t.Errorf("%s: %v", nombre, err)
+		}
+		if c.err != "" && (err == nil || !strings.Contains(err.Error(), c.err)) {
+			t.Errorf("%s: se esperaba un error que nombre %s: %v", nombre, c.err, err)
+		}
 	}
 }
 

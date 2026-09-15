@@ -4,8 +4,6 @@ import (
 	"context"
 	"log"
 	"net/http"
-	"os"
-	"strconv"
 	"time"
 
 	"github.com/alonsosss/corforce-email/pkg/authz"
@@ -46,6 +44,10 @@ func main() {
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatalf("load config: %v", err)
+	}
+	port, err := config.EnvInt("MAIL_DIRECTORY_PORT", defaultPort, 1, config.MaxPort)
+	if err != nil {
+		log.Fatal(err)
 	}
 	membership, err := tenantcell.MembershipFromEnv(logger)
 	if err != nil {
@@ -92,13 +94,6 @@ func main() {
 	})
 
 	r := apiRouter(pool.Pool, membership, handler.NewHandler(uc, authz.NewCheckerFromEnv()).Routes(), logger)
-
-	port := defaultPort
-	if p := os.Getenv("MAIL_DIRECTORY_PORT"); p != "" {
-		if v, err := strconv.Atoi(p); err == nil {
-			port = v
-		}
-	}
 
 	srv := server.New(port, r, logger)
 	runErr := srv.Run()

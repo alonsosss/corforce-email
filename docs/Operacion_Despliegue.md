@@ -33,11 +33,13 @@ largas de cada guardarraíl están en `ops/scaffold/README.md`, `ops/security/se
   envío a SES (`SES_MAX_SEND_RATE`, `SES_MAX_SEND_RATE_MARKETING`, de 1 a 10000 por segundo). Así leen
   `pkg/config` (`POSTGRES_PORT`, `POSTGRES_DIRECT_PORT`, `REDIS_PORT`, `JWT_*_TTL`) y
   scheduler, campaigns, transactional, mail-auth, contacts, suppression, automations,
-  webmail, gateway, audit, identity, access-control, templates, analytics, billing y
-  reputation. Los umbrales, la ventana y los límites de reputation siguen siendo
+  webmail, gateway, audit, identity, access-control, templates, analytics, billing,
+  reputation, organization, mail-directory y domain-service. Los umbrales, la ventana y los
+  límites de reputation siguen siendo
   obligatorios y sin valor por defecto: se exige la variable y después se lee con su rango
-  (`EnvFloat` para los umbrales). Pendiente de migrar, con lectores propios:
-  domain-service, mail-security, organization y mail-directory.
+  (`EnvFloat` para los umbrales). El techo de `DOMAIN_RECHECK_INTERVAL` (6 h) es el que
+  cuenta la alerta `BarridoDeDominiosSinCelda` (`docs/arquitectura/OBSERVABILIDAD.md`).
+  Pendiente de migrar, con lector propio: mail-security.
 * Entorno declarado (`ENVIRONMENT`). Un servidor declara exactamente
   `ENVIRONMENT=production` o `ENVIRONMENT=staging` en el `.env` de `DEPLOY_PATH`, el que
   Compose pasa a los contenedores; también el servidor de la cuenta de dev. `development` y
@@ -59,12 +61,13 @@ largas de cada guardarraíl están en `ops/scaffold/README.md`, `ops/security/se
   | Redis de la plataforma en claro, sin `REDIS_TLS=true` | `pkg/config/redis.go` |
   | Servicios de celda con la credencial de plataforma, sin `CELL_DB_PASSWORD` | `pkg/config/config.go` |
   | identity firma con un par efímero, sin `JWT_SIGNING_KEY` | `pkg/config/config.go`, `pkg/auth` |
-  | Sin `INTERNAL_GATEWAY_TOKEN` arrancan el gateway, domain-service y webmail, y `RequireGatewayToken` deja pasar sin comprobar; en cualquier otro entorno esos tres no arrancan y el middleware responde 503 a todo | `middleware.InternalGatewayToken` (`pkg/middleware/middleware.go`), `services/gateway/main.go`, `services/domain-service/main.go`, `services/webmail/main.go` |
+  | Sin `INTERNAL_GATEWAY_TOKEN` arrancan el gateway, domain-service, organization y webmail, y `RequireGatewayToken` deja pasar sin comprobar; en cualquier otro entorno esos cuatro no arrancan y el middleware responde 503 a todo | `middleware.InternalGatewayToken` (`pkg/middleware/middleware.go`), `services/gateway/main.go`, `services/domain-service/main.go`, `services/organization/main.go`, `services/webmail/main.go` |
   | webmail con `WEBMAIL_TLS_INSECURE_SKIP_VERIFY=true` o `WEBMAIL_IMAP_TLS=none`, y adjuntos sin ClamAV con `WEBMAIL_ALLOW_UNSCANNED_ATTACHMENTS=true` | `services/webmail/main.go` |
 
   Además, en un servidor `INTERNAL_GATEWAY_TOKEN` es obligatorio en el almacén
   (`secret-keys.txt`) y sin él `fetch-secrets.sh` detiene el despliegue. `make e2e` comprueba
-  que con `staging` y sin `ENVIRONMENT` el gateway y domain-service no arrancan sin token.
+  que con `staging` y sin `ENVIRONMENT` el gateway, domain-service y organization no arrancan
+  sin token.
   `AUTH_COOKIE_SECURE` no depende de `ENVIRONMENT` (`docs/arquitectura/CSP-Y-SESION.md`).
 
 ## 2. Secretos
