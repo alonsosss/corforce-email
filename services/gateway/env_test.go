@@ -58,3 +58,22 @@ func TestLoadSettingsRangos(t *testing.T) {
 		}
 	}
 }
+
+// Las rutas del cupo estricto gastan tambien el general: un estricto mayor no frenaria nada.
+// Bajar el general por debajo del estricto por defecto obliga a bajar tambien el estricto.
+func TestLoadSettingsEstrictoNoSuperaGeneral(t *testing.T) {
+	for _, env := range []map[string]string{
+		{"API_RATE_LIMIT_PER_MIN": "100", "AUTH_RATE_LIMIT_PER_MIN": "200"},
+		{"API_RATE_LIMIT_PER_MIN": "20"},
+	} {
+		setSettingsEnv(t, env)
+		_, err := loadSettings()
+		if err == nil || !strings.Contains(err.Error(), "AUTH_RATE_LIMIT_PER_MIN") || !strings.Contains(err.Error(), "API_RATE_LIMIT_PER_MIN") {
+			t.Errorf("%v deberia impedir el arranque nombrando los dos cupos: %v", env, err)
+		}
+	}
+	setSettingsEnv(t, map[string]string{"API_RATE_LIMIT_PER_MIN": "50", "AUTH_RATE_LIMIT_PER_MIN": "50"})
+	if st, err := loadSettings(); err != nil || st.apiRatePerMin != 50 || st.authRatePerMin != 50 {
+		t.Fatalf("cupos iguales: %+v, %v", st, err)
+	}
+}

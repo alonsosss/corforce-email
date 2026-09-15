@@ -285,6 +285,11 @@ func loadSettings() (settings, error) {
 	if st.authRatePerMin, err = config.EnvInt("AUTH_RATE_LIMIT_PER_MIN", defaultAuthRatePerMin, 1, maxAuthRatePerMin); err != nil {
 		return st, err
 	}
+	// Las rutas del cupo estricto cuelgan de /api/v1 y gastan tambien el general: un estricto
+	// mayor que el general no frenaria nunca nada.
+	if st.authRatePerMin > st.apiRatePerMin {
+		return st, fmt.Errorf("AUTH_RATE_LIMIT_PER_MIN=%d must not exceed API_RATE_LIMIT_PER_MIN=%d", st.authRatePerMin, st.apiRatePerMin)
+	}
 	if st.exfilReads, err = config.EnvInt("EXFIL_READ_THRESHOLD", defaultExfilReads, 1, maxExfilReads); err != nil {
 		return st, err
 	}

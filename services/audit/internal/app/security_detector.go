@@ -14,7 +14,7 @@ import (
 
 // SecurityDetectorConfig acota las heuristicas. Los umbrales llegan por entorno
 // (SECURITY_BRUTEFORCE_MAX / SECURITY_BRUTEFORCE_WINDOW_MIN) para poder ajustarlos
-// sin recompilar.
+// sin recompilar, ya validados en su rango al arrancar (services/audit/main.go).
 type SecurityDetectorConfig struct {
 	// BruteForceMax es el numero de logins fallidos desde una misma IP dentro de la
 	// ventana a partir del cual se considera fuerza bruta.
@@ -38,12 +38,6 @@ type SecurityDetector struct {
 
 func NewSecurityDetector(logs ports.AuditLogRepository, security ports.SecurityEventRepository,
 	events ports.EventPublisher, cfg SecurityDetectorConfig, logger *zap.Logger) *SecurityDetector {
-	if cfg.BruteForceMax <= 0 {
-		cfg.BruteForceMax = 5
-	}
-	if cfg.BruteForceWindow <= 0 {
-		cfg.BruteForceWindow = 15 * time.Minute
-	}
 	return &SecurityDetector{logs: logs, security: security, events: events, cfg: cfg, logger: logger}
 }
 
