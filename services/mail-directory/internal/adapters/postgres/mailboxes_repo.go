@@ -237,10 +237,13 @@ func (r *AppPasswordRepo) DeleteByMailbox(ctx context.Context, tenantID, mailbox
 	return err
 }
 
-func (r *AppPasswordRepo) DeactivateByMailbox(ctx context.Context, tenantID, mailboxID uuid.UUID) error {
-	_, err := r.pool.Exec(ctx,
+func (r *AppPasswordRepo) DeactivateByMailbox(ctx context.Context, tenantID, mailboxID uuid.UUID) (int64, error) {
+	tag, err := r.pool.Exec(ctx,
 		`UPDATE mail.app_passwords SET active = false WHERE tenant_id = $1 AND mailbox_id = $2 AND active`, tenantID, mailboxID)
-	return err
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
 }
 
 // ── Sieve ─────────────────────────────────────────────────────────────────────

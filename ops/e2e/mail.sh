@@ -690,6 +690,51 @@ esperar "Dovecot rechaza al momento la anterior, que tenia en su cache" 20 login
 expect "y acepta la nueva" "$(cliente login bea@acme.test "$BEA_NUEVA")" "OK"
 esperar "la sesion IMAP abierta con la anterior se cierra" 20 sesion_en bea CERRADA
 BEA_PASS="$BEA_NUEVA"
+
+# Una contrasena de aplicacion de bea que se desactiva o se borra deja de valer al momento aunque
+# Dovecot la tuviera en su cache, y la sesion IMAP abierta con ella se cierra
+# (mail.mailbox.credentials_changed con credential app_password). La contrasena principal sigue
+# entrando y la sesion del webmail, que solo admite la principal, sigue abierta. Cada paso usa una
+# contrasena nueva, que entra en la cache como inicio correcto, y espera a que mail-security eche a
+# bea antes de sondear: un intento anterior lo contesta Dovecot desde su cache.
+bea_kicks() { docker logs "$(c mail-security)" 2>&1 | grep -c '"username":"bea@acme.test","change":"credentials_changed","action":"kick"'; }
+# webmail_ignora: avisos de una contrasena de aplicacion de bea que el webmail atendio sin cerrar sesiones.
+webmail_ignora() { docker logs "$(c webmail)" 2>&1 | grep 'contrasena de aplicacion' | grep -c '"username":"bea@acme.test"'; }
+bea_expulsada() { (( $(bea_kicks) > BEA_KICKS0 )); }
+webmail_atendio() { (( $(webmail_ignora) > BEA_WM0 )); }
+wm "$TARRO_BEA" POST /session -H 'Content-Type: application/json' -d "{\"username\":\"bea@acme.test\",\"password\":\"$BEA_PASS\"}"
+expect "bea abre sesion en el webmail con su contrasena principal" "$WM_CODE" "200"
+for paso in desactivar borrar; do
+  api POST "/mailboxes/$BEAID/app-passwords" "{\"name\":\"cliente-$paso\"}"
+  BEA_APP=$(echo "$API_BODY" | jget data.password)
+  BEA_APPID=$(echo "$API_BODY" | jget data.app_password.id)
+  expect "alta de una contrasena de aplicacion de bea para $paso (la genera el servidor)" "$API_CODE/${BEA_APPID:+id}/${BEA_APP:+clave}" "201/id/clave"
+  wm "$WORK/bea-app.cookies" POST /session -H 'Content-Type: application/json' -d "{\"username\":\"bea@acme.test\",\"password\":\"$BEA_APP\"}"
+  expect "el webmail no la admite" "$WM_CODE" "401"
+  expect "bea entra por IMAP con ella (queda en la cache de Dovecot)" "$(cliente login bea@acme.test "$BEA_APP")" "OK"
+  sesion "bea-app-$paso" bea@acme.test "$BEA_APP" 60
+  esperar "y abre con ella una sesion IMAP" 30 sesion_en "bea-app-$paso" LISTA
+  BEA_KICKS0=$(bea_kicks) BEA_WM0=$(webmail_ignora)
+  if [[ $paso == desactivar ]]; then
+    api PATCH "/mailboxes/$BEAID/app-passwords/$BEA_APPID" '{"active":false}'
+    expect "mail-directory la desactiva" "$API_CODE/$(echo "$API_BODY" | jget data.active)" "200/False"
+  else
+    api DELETE "/mailboxes/$BEAID/app-passwords/$BEA_APPID"
+    expect "mail-directory la borra" "$API_CODE" "204"
+  fi
+  esperar "mail-security vacia la cache de bea y cierra sus sesiones (credentials_changed al $paso)" 20 bea_expulsada
+  esperar "Dovecot la rechaza al momento aunque la tenia en su cache" 20 login_rechazado bea@acme.test "$BEA_APP"
+  esperar "y la sesion IMAP abierta con ella se cierra" 20 sesion_en "bea-app-$paso" CERRADA
+  expect "la contrasena principal de bea sigue entrando" "$(cliente login bea@acme.test "$BEA_PASS")" "OK"
+  esperar "el webmail recibe el aviso de la contrasena de aplicacion y no cierra sesiones" 20 webmail_atendio
+  wm "$TARRO_BEA" GET /folders
+  expect "y la sesion de bea en el webmail sigue abierta" "$WM_CODE" "200"
+  if [[ $paso == desactivar ]]; then
+    api PATCH "/mailboxes/$BEAID/app-passwords/$BEA_APPID" '{"active":true}'
+    expect "bea la reactiva (sin aviso: no retira ninguna credencial)" "$API_CODE/$(echo "$API_BODY" | jget data.active)" "200/True"
+    esperar "y vuelve a entrar al momento: la cache negativa no bloquea una contrasena buena" 20 login_aceptado bea@acme.test "$BEA_APP"
+  fi
+done
 expect "mail-security sin fallos de revocacion" "$(revocaciones fallos)" "0"
 
 echo "== Rotacion y revocacion de la clave DKIM (domain-service -> mail-security -> redis-mail)"

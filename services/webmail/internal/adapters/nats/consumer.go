@@ -22,10 +22,13 @@ const (
 
 	SubjectMailboxUpdated = "mail.mailbox.updated"
 	SubjectMailboxDeleted = "mail.mailbox.deleted"
-	// SubjectMailboxCredentialsChanged es el cambio de la contrasena principal del buzon
-	// (las de aplicacion son otra credencial). Payload: tenant_id, id, username y
-	// changed_at (RFC 3339, UTC).
+	// SubjectMailboxCredentialsChanged es una credencial del buzon que dejo de valer.
+	// Payload: tenant_id, id, username, changed_at (RFC 3339, UTC) y credential.
 	SubjectMailboxCredentialsChanged = "mail.mailbox.credentials_changed"
+	// credentialAppPassword marca el cambio de una contrasena de aplicacion. El webmail solo
+	// admite la principal (mail-auth, service webmail), asi que ninguna de sus sesiones entro
+	// con ella. Cualquier otro valor, o ninguno (eventos anteriores al campo), es la principal.
+	credentialAppPassword = "app_password"
 
 	subscribeRetry = 5 * time.Second
 	handleTimeout  = 15 * time.Second
@@ -41,8 +44,8 @@ type Revoker interface {
 	RevokeMailbox(ctx context.Context, username string, at time.Time) error
 }
 
-// Consumer revoca las sesiones de un buzon cuando cambia su contrasena, se actualiza o
-// se borra. Una actualizacion revoca siempre: el evento no dice que cambio, y cambiar
+// Consumer revoca las sesiones de un buzon cuando cambia su contrasena principal, se
+// actualiza o se borra. Una actualizacion revoca siempre: el evento no dice que cambio, y cambiar
 // active, imap_access o smtp_access cambia quien puede usar el webmail; el siguiente
 // inicio de sesion lo vuelve a comprobar en mail-auth.
 type Consumer struct {
@@ -96,6 +99,12 @@ func (c *Consumer) Handle(evt events.Event, ack func()) {
 	username, ok := domain.NormalizeUsername(raw)
 	if !ok {
 		c.logger.Warn("webmail: evento de buzon sin username valido; se descarta", zap.String("subject", evt.Type), zap.String("event_id", evt.ID))
+		ack()
+		return
+	}
+	if evt.Type == SubjectMailboxCredentialsChanged && data["credential"] == credentialAppPassword {
+		c.logger.Info("webmail: cambio de una contrasena de aplicacion; las sesiones del webmail siguen",
+			zap.String("username", username), zap.String("event_id", evt.ID))
 		ack()
 		return
 	}

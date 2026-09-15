@@ -67,6 +67,33 @@ func TestCredencialesCambiadasUsaChangedAt(t *testing.T) {
 	}
 }
 
+// Una contrasena de aplicacion no abre el webmail: su cambio no cierra sus sesiones. Si las cierran
+// la principal, cualquier otro valor y los eventos sin credential (anteriores al campo).
+func TestContrasenaDeAplicacionNoRevocaElWebmail(t *testing.T) {
+	rev := &fakeRevoker{}
+	c := NewConsumer(nil, rev, zap.NewNop())
+	evt := events.Event{ID: "e3", Type: SubjectMailboxCredentialsChanged, Data: map[string]any{
+		"username": "ana@empresa.pe", "credential": "app_password",
+	}}
+	if !handle(c, evt) || !handle(c, evt) || len(rev.calls) != 0 {
+		t.Fatalf("app_password se confirma sin revocar, tambien repetido: %+v", rev.calls)
+	}
+	for _, credential := range []any{"password", "otra", 1, nil} {
+		rev.calls = nil
+		data := map[string]any{"username": "ana@empresa.pe"}
+		if credential != nil {
+			data["credential"] = credential
+		}
+		if !handle(c, events.Event{Type: SubjectMailboxCredentialsChanged, Data: data}) || len(rev.calls) != 1 {
+			t.Fatalf("credential %v: revocaciones %+v", credential, rev.calls)
+		}
+	}
+	rev.calls = nil
+	if !handle(c, events.Event{Type: SubjectMailboxUpdated, Data: map[string]any{"username": "ana@empresa.pe", "credential": "app_password"}}) || len(rev.calls) != 1 {
+		t.Fatalf("un cambio del buzon revoca aunque traiga credential: %+v", rev.calls)
+	}
+}
+
 func TestIgnoraOtrosEventos(t *testing.T) {
 	rev := &fakeRevoker{}
 	c := NewConsumer(nil, rev, zap.NewNop())

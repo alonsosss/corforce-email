@@ -222,13 +222,23 @@ directorio:
 | Evento | Estado del buzon | Accion |
 |---|---|---|
 | `mail.mailbox.deleted` | no se lee | vaciar y echar |
-| `mail.mailbox.credentials_changed` | no se lee: una sesion no dice con que credencial entro | vaciar y echar |
+| `mail.mailbox.credentials_changed` (contrasena principal o de aplicacion) | no se lee: una sesion no dice con que credencial entro | vaciar y echar |
 | `mail.mailbox.updated` | ya no esta, o `active` distinto de 1 (0 apagado, 2 solo recibe; tambien la baja de su empresa) | vaciar y echar |
 | `mail.mailbox.updated` | `active = 1` (cuota, nombre visible, TLS, relayhost, protocolos) | solo vaciar: la siguiente autenticacion vuelve a `mail-auth`, que aplica `imap_access` y los demas |
 | `mail.mailbox.created` | - | nada |
 
   Echar a quien aun puede entrar no abre nada, pero molesta (el cliente vuelve a entrar solo con su
   credencial): por eso un cambio que no retira nada no echa a nadie.
+
+  `mail-directory` publica `mail.mailbox.credentials_changed` con `credential`: `password` al
+  cambiar la contrasena principal, y `app_password` cuando una contrasena de aplicacion pierde un
+  inicio de sesion que tenia (se desactiva, se borra activa, pierde `imap_access`, `pop3_access`,
+  `smtp_access` o `sieve_access`, o se apaga con su buzon). Darla de alta, reactivarla, ampliar sus
+  protocolos, renombrarla o cambiar `dav_access` (la plataforma no sirve DAV) no publica nada: no
+  deja en la cache una credencial que ya no valga, y la cache negativa no bloquea una contrasena
+  buena. Este consumidor no lee `credential`; el webmail si, y con `app_password` no cierra sus
+  sesiones, porque solo admite la principal. La baja de la empresa no lo publica: cada buzon que
+  apaga ya sale como `mail.mailbox.updated`, que echa, y ninguno puede reactivarse despues.
 * **Idempotencia y reintento**: un `kick` sin sesiones (salida 68) es un exito y vaciar dos veces no
   cambia nada. Un fallo deja el evento sin confirmar: JetStream lo reentrega cada 90 s y tras 20
   entregas lo guarda en `EVENTS_DLQ` (`pkg/events`). Metricas
@@ -254,12 +264,13 @@ segundos (el control, apagarlo en la base sin evento, prueba que la cache le seg
 sesion IMAP abierta se cierra y al reactivarlo vuelve a entrar; tras cambiar la contrasena la
 anterior se rechaza, la nueva entra y la sesion abierta se cierra; cambiar el nombre visible vacia
 la cache sin cerrar la sesion, y la baja de la empresa cierra la de un buzon que acababa de entrar.
+Una contrasena de aplicacion con la que el buzon acababa de entrar por IMAP se rechaza en segundos
+al desactivarla y al borrarla y su sesion IMAP abierta se cierra, mientras la contrasena principal
+sigue entrando y la sesion del webmail sigue abierta; reactivada, vuelve a entrar al momento.
 
-P: una contrasena de aplicacion desactivada o borrada no publica evento (mail-directory), asi que
-vale en la cache hasta 300 s y sus sesiones siguen; si mail-directory publica entonces
-`mail.mailbox.credentials_changed`, este consumidor ya lo atiende. Retirar un protocolo vacia la
-cache pero no cierra la sesion abierta de ese protocolo: `mail.v_routing_mailboxes` no publica los
-flags. `dsync-server` con replica no esta probado. Queda una carrera: una autenticacion que
+P: retirar un protocolo del buzon vacia la cache pero no cierra la sesion abierta de ese protocolo:
+`mail.v_routing_mailboxes` no publica los flags. `dsync-server` con replica no esta probado.
+Queda una carrera: una autenticacion que
 `mail-auth` acepto antes del cambio y que Dovecot guardara despues del vaciado (mas lenta que el
 rele de la outbox) valdria hasta `auth_cache_ttl`.
 

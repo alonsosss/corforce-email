@@ -11,6 +11,7 @@ package outbox
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/alonsosss/corforce-email/pkg/events"
@@ -33,8 +34,9 @@ const (
 	SubjectMailboxCreated     = "mail.mailbox.created"
 	SubjectMailboxUpdated     = "mail.mailbox.updated"
 	SubjectMailboxDeleted     = "mail.mailbox.deleted"
-	// SubjectMailboxCredentialsChanged: cambio de la contrasena principal del buzon. Quien
-	// guarda sesiones del buzon (el webmail) las revoca al recibirlo.
+	// SubjectMailboxCredentialsChanged: una credencial del buzon dejo de valer o perdio
+	// protocolos; credential dice cual (domain.Credential). mail-security echa al buzon de
+	// Dovecot con cualquiera; el webmail revoca sus sesiones solo con la principal.
 	SubjectMailboxCredentialsChanged = "mail.mailbox.credentials_changed"
 	SubjectAliasCreated              = "mail.alias.created"
 	SubjectAliasUpdated              = "mail.alias.updated"
@@ -123,10 +125,15 @@ func (p *Publisher) MailboxDeleted(ctx context.Context, m *domain.Mailbox) error
 	}})
 }
 
-func (p *Publisher) MailboxCredentialsChanged(ctx context.Context, m *domain.Mailbox) error {
+// MailboxCredentialsChanged rechaza una credencial desconocida: un consumidor que la leyera
+// como la principal cerraria sesiones que no debia, y al reves dejaria abiertas las que si.
+func (p *Publisher) MailboxCredentialsChanged(ctx context.Context, m *domain.Mailbox, credential domain.Credential) error {
+	if !credential.Valid() {
+		return fmt.Errorf("credencial %q desconocida en %s", credential, SubjectMailboxCredentialsChanged)
+	}
 	return p.in(ctx).Publish(SubjectMailboxCredentialsChanged, events.Event{TenantID: m.TenantID.String(), Data: map[string]interface{}{
 		"tenant_id": m.TenantID.String(), "id": m.ID.String(), "username": m.Username,
-		"changed_at": time.Now().UTC().Format(time.RFC3339),
+		"changed_at": time.Now().UTC().Format(time.RFC3339), "credential": string(credential),
 	}})
 }
 

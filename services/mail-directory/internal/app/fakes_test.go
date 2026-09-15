@@ -55,6 +55,13 @@ type fakeEvents struct {
 	subjects []string
 	outside  []string
 	fail     error
+	// credentials anota cada mail.mailbox.credentials_changed con su buzon y su credencial.
+	credentials []credentialEvent
+}
+
+type credentialEvent struct {
+	username   string
+	credential domain.Credential
 }
 
 func (f *fakeEvents) record(s string) error {
@@ -97,8 +104,12 @@ func (f *fakeEvents) MailboxUpdated(context.Context, *domain.Mailbox) error {
 func (f *fakeEvents) MailboxDeleted(context.Context, *domain.Mailbox) error {
 	return f.record("mail.mailbox.deleted")
 }
-func (f *fakeEvents) MailboxCredentialsChanged(context.Context, *domain.Mailbox) error {
-	return f.record("mail.mailbox.credentials_changed")
+func (f *fakeEvents) MailboxCredentialsChanged(_ context.Context, m *domain.Mailbox, c domain.Credential) error {
+	if err := f.record("mail.mailbox.credentials_changed"); err != nil {
+		return err
+	}
+	f.credentials = append(f.credentials, credentialEvent{username: m.Username, credential: c})
+	return nil
 }
 func (f *fakeEvents) AliasCreated(context.Context, *domain.Alias) error {
 	return f.record("mail.alias.created")
@@ -330,24 +341,61 @@ type fakeAppPasswords struct {
 func (f *fakeAppPasswords) List(context.Context, uuid.UUID, uuid.UUID) ([]domain.AppPassword, error) {
 	return nil, nil
 }
-func (f *fakeAppPasswords) Get(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) (*domain.AppPassword, error) {
-	return nil, domain.ErrNotFound
+
+// find devuelve la posicion de la contrasena, o -1.
+func (f *fakeAppPasswords) find(tenantID, mailboxID, id uuid.UUID) int {
+	for i, p := range f.items {
+		if p.TenantID == tenantID && p.MailboxID == mailboxID && p.ID == id {
+			return i
+		}
+	}
+	return -1
+}
+
+// Get devuelve una copia, como la base: el caso de uso cambia la suya y solo Update la guarda.
+func (f *fakeAppPasswords) Get(_ context.Context, tenantID, mailboxID, id uuid.UUID) (*domain.AppPassword, error) {
+	i := f.find(tenantID, mailboxID, id)
+	if i < 0 {
+		return nil, domain.ErrNotFound
+	}
+	c := *f.items[i]
+	return &c, nil
 }
 func (f *fakeAppPasswords) Create(_ context.Context, p *domain.AppPassword) error {
 	f.items = append(f.items, p)
 	return nil
 }
-func (f *fakeAppPasswords) Update(context.Context, *domain.AppPassword) error { return nil }
-func (f *fakeAppPasswords) Delete(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) error {
+func (f *fakeAppPasswords) Update(_ context.Context, p *domain.AppPassword) error {
+	i := f.find(p.TenantID, p.MailboxID, p.ID)
+	if i < 0 {
+		return domain.ErrNotFound
+	}
+	c := *p
+	f.items[i] = &c
+	return nil
+}
+func (f *fakeAppPasswords) Delete(_ context.Context, tenantID, mailboxID, id uuid.UUID) error {
+	i := f.find(tenantID, mailboxID, id)
+	if i < 0 {
+		return domain.ErrNotFound
+	}
+	f.items = append(f.items[:i], f.items[i+1:]...)
 	return nil
 }
 func (f *fakeAppPasswords) DeleteByMailbox(context.Context, uuid.UUID, uuid.UUID) error {
 	f.deleted++
 	return nil
 }
-func (f *fakeAppPasswords) DeactivateByMailbox(context.Context, uuid.UUID, uuid.UUID) error {
+func (f *fakeAppPasswords) DeactivateByMailbox(_ context.Context, tenantID, mailboxID uuid.UUID) (int64, error) {
 	f.deactivated++
-	return nil
+	var n int64
+	for _, p := range f.items {
+		if p.TenantID == tenantID && p.MailboxID == mailboxID && p.Active {
+			p.Active = false
+			n++
+		}
+	}
+	return n, nil
 }
 
 type fakeSieve struct{ deleted int }
@@ -614,16 +662,33 @@ func (h *harness) addMailbox(tenantID uuid.UUID, username string, quota int64) *
 	return m
 }
 
+// addAppPassword da al buzon una contrasena de aplicacion activa con todos los protocolos;
+// change la ajusta antes de guardarla.
+func (h *harness) addAppPassword(m *domain.Mailbox, change func(*domain.AppPassword)) *domain.AppPassword {
+	p := &domain.AppPassword{
+		ID: uuid.New(), TenantID: m.TenantID, MailboxID: m.ID, Name: "movil", PasswordHash: "hash",
+		IMAPAccess: true, POP3Access: true, SMTPAccess: true, SieveAccess: true, DAVAccess: true, Active: true,
+	}
+	if change != nil {
+		change(p)
+	}
+	h.appPasswords.items = append(h.appPasswords.items, p)
+	return p
+}
+
 // snapshot copia lo que escriben los casos de uso probados y devuelve como restaurarlo.
 func (h *harness) snapshot() func() {
 	domains, aliasDomains := cloneAll(h.domains.items), cloneAll(h.aliasDomains.items)
 	mailboxes, aliases := cloneAll(h.mailboxes.items), cloneAll(h.aliases.items)
+	appPasswords := cloneAll(h.appPasswords.items)
 	subjects := append([]string(nil), h.events.subjects...)
+	credentials := append([]credentialEvent(nil), h.events.credentials...)
 	retired := maps.Clone(h.retirements.retired)
 	return func() {
 		h.domains.items, h.aliasDomains.items = domains, aliasDomains
 		h.mailboxes.items, h.aliases.items = mailboxes, aliases
-		h.events.subjects = subjects
+		h.appPasswords.items = appPasswords
+		h.events.subjects, h.events.credentials = subjects, credentials
 		h.retirements.retired = retired
 	}
 }

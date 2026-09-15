@@ -200,10 +200,18 @@ func (uc *UseCase) UpdateMailbox(ctx context.Context, tenantID, id uuid.UUID, re
 			return err
 		}
 		// Un buzon apagado no puede iniciar sesion; sus contrasenas de aplicacion se
-		// revocan para que un cliente configurado no siga entrando al reactivarlo.
+		// revocan para que un cliente configurado no siga entrando al reactivarlo. Su aviso
+		// cierra en Dovecot las sesiones que abrieron aunque el buzon se reactive antes de que
+		// mail-security atienda mail.mailbox.updated, que entonces solo vaciaria la cache.
 		if deactivated {
-			if err := uc.appPasswords.DeactivateByMailbox(ctx, tenantID, id); err != nil {
+			revoked, err := uc.appPasswords.DeactivateByMailbox(ctx, tenantID, id)
+			if err != nil {
 				return err
+			}
+			if revoked > 0 {
+				if err := uc.events.MailboxCredentialsChanged(ctx, m, domain.CredentialAppPassword); err != nil {
+					return err
+				}
 			}
 		}
 		return uc.events.MailboxUpdated(ctx, m)
@@ -299,7 +307,7 @@ func (uc *UseCase) SetMailboxPassword(ctx context.Context, tenantID, id uuid.UUI
 		if err := uc.mailboxes.UpdatePassword(ctx, tenantID, id, hash); err != nil {
 			return err
 		}
-		return uc.events.MailboxCredentialsChanged(ctx, m)
+		return uc.events.MailboxCredentialsChanged(ctx, m, domain.CredentialPassword)
 	})
 }
 
@@ -367,7 +375,7 @@ func (uc *UseCase) ListAppPasswords(ctx context.Context, tenantID, mailboxID uui
 }
 
 // CreateAppPassword genera la contrasena en el servidor y la devuelve UNA sola vez; en la
-// base solo queda el hash.
+// base solo queda el hash. No se anuncia: una credencial nueva no deja ninguna vieja valiendo.
 func (uc *UseCase) CreateAppPassword(ctx context.Context, tenantID, mailboxID uuid.UUID, req CreateAppPasswordRequest) (*domain.AppPassword, string, error) {
 	name := strings.TrimSpace(req.Name)
 	if name == "" {
@@ -399,6 +407,8 @@ func (uc *UseCase) CreateAppPassword(ctx context.Context, tenantID, mailboxID uu
 	return p, plain, nil
 }
 
+// UpdateAppPassword anuncia en su transaccion el cambio que le quita un inicio de sesion
+// (domain.AppPasswordLoginsRevoked); el resto no tiene nada que retirar de Dovecot.
 func (uc *UseCase) UpdateAppPassword(ctx context.Context, tenantID, mailboxID, id uuid.UUID, req UpdateAppPasswordRequest) (*domain.AppPassword, error) {
 	if req.empty() {
 		return nil, domain.ErrNothingToUpdate
@@ -410,6 +420,7 @@ func (uc *UseCase) UpdateAppPassword(ctx context.Context, tenantID, mailboxID, i
 		if err != nil {
 			return err
 		}
+		before := *p
 		if req.Name != nil && strings.TrimSpace(*req.Name) != "" {
 			p.Name = strings.TrimSpace(*req.Name)
 		}
@@ -419,7 +430,13 @@ func (uc *UseCase) UpdateAppPassword(ctx context.Context, tenantID, mailboxID, i
 		p.SieveAccess = boolOr(req.SieveAccess, p.SieveAccess)
 		p.DAVAccess = boolOr(req.DAVAccess, p.DAVAccess)
 		p.Active = boolOr(req.Active, p.Active)
-		return uc.appPasswords.Update(ctx, p)
+		if err := uc.appPasswords.Update(ctx, p); err != nil {
+			return err
+		}
+		if !domain.AppPasswordLoginsRevoked(before, p) {
+			return nil
+		}
+		return uc.appPasswordRevoked(ctx, tenantID, mailboxID)
 	})
 	if err != nil {
 		return nil, err
@@ -429,11 +446,29 @@ func (uc *UseCase) UpdateAppPassword(ctx context.Context, tenantID, mailboxID, i
 
 func (uc *UseCase) DeleteAppPassword(ctx context.Context, tenantID, mailboxID, id uuid.UUID) error {
 	return uc.writeTx(ctx, tenantID, func(ctx context.Context) error {
-		if _, err := uc.appPasswords.Get(ctx, tenantID, mailboxID, id); err != nil {
+		p, err := uc.appPasswords.Get(ctx, tenantID, mailboxID, id)
+		if err != nil {
 			return err
 		}
-		return uc.appPasswords.Delete(ctx, tenantID, mailboxID, id)
+		if err := uc.appPasswords.Delete(ctx, tenantID, mailboxID, id); err != nil {
+			return err
+		}
+		if !domain.AppPasswordLoginsRevoked(*p, nil) {
+			return nil
+		}
+		return uc.appPasswordRevoked(ctx, tenantID, mailboxID)
 	})
+}
+
+// appPasswordRevoked anuncia que una contrasena de aplicacion del buzon perdio un inicio de
+// sesion: mail-security retira de la cache de Dovecot la autenticacion que quedara y cierra las
+// sesiones del buzon, que no dicen con que credencial entraron.
+func (uc *UseCase) appPasswordRevoked(ctx context.Context, tenantID, mailboxID uuid.UUID) error {
+	m, err := uc.mailboxes.Get(ctx, tenantID, mailboxID)
+	if err != nil {
+		return err
+	}
+	return uc.events.MailboxCredentialsChanged(ctx, m, domain.CredentialAppPassword)
 }
 
 // ── Sieve ─────────────────────────────────────────────────────────────────────

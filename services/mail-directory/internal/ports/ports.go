@@ -87,7 +87,8 @@ type AppPasswordRepository interface {
 	Update(ctx context.Context, p *domain.AppPassword) error
 	Delete(ctx context.Context, tenantID, mailboxID, id uuid.UUID) error
 	DeleteByMailbox(ctx context.Context, tenantID, mailboxID uuid.UUID) error
-	DeactivateByMailbox(ctx context.Context, tenantID, mailboxID uuid.UUID) error
+	// DeactivateByMailbox apaga las activas del buzon y cuenta las que apago.
+	DeactivateByMailbox(ctx context.Context, tenantID, mailboxID uuid.UUID) (int64, error)
 }
 
 type SieveRepository interface {
@@ -219,7 +220,9 @@ type EventPublisher interface {
 	MailboxCreated(ctx context.Context, m *domain.Mailbox) error
 	MailboxUpdated(ctx context.Context, m *domain.Mailbox) error
 	MailboxDeleted(ctx context.Context, m *domain.Mailbox) error
-	MailboxCredentialsChanged(ctx context.Context, m *domain.Mailbox) error
+	// MailboxCredentialsChanged anuncia que una credencial del buzon dejo de valer o perdio
+	// protocolos: la contrasena principal cambio, o una de aplicacion perdio un inicio de sesion.
+	MailboxCredentialsChanged(ctx context.Context, m *domain.Mailbox, credential domain.Credential) error
 	AliasCreated(ctx context.Context, a *domain.Alias) error
 	AliasUpdated(ctx context.Context, a *domain.Alias) error
 	AliasDeleted(ctx context.Context, a *domain.Alias) error

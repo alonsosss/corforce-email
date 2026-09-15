@@ -233,15 +233,20 @@ varias celdas el gateway lleva el inicio de sesion a la celda del dominio del bu
 la celda del token de la cookie, que enruta y no autoriza: cada instancia solo acepta tokens de
 su celda (V, 2026-09-13; `Modelo_de_Datos_y_Celdas.md` 5.5). Las
 sesiones de un buzon se revocan al actualizarse o borrarse (`mail.mailbox.updated`,
-`mail.mailbox.deleted`) y al cambiar su contrasena (`mail.mailbox.credentials_changed`).
+`mail.mailbox.deleted`) y al cambiar su contrasena principal (`mail.mailbox.credentials_changed`
+con `credential` = `password`); el aviso de una contrasena de aplicacion (`app_password`) no las
+toca, porque el webmail no la admite.
 
 V (2026-09-15, contra Dovecot y Postfix reales con `make e2e-mail`): Dovecot deja de aceptar al
 momento la credencial de un buzon apagado, borrado o con la contrasena cambiada, aunque la tuviera
 en su cache de autenticacion, y cierra sus sesiones IMAP y POP3 abiertas: mail-security consume
 `mail.mailbox.*`, vacia su entrada y lo echa por el API HTTP de doveadm de la celda
 (`deploy/mail/README.md`, "Revocacion en Dovecot"). Un cambio que no le retira nada (cuota, nombre
-visible) solo vacia la cache, sin echarlo. P: una contrasena de aplicacion desactivada o borrada no
-publica evento y sigue valiendo en la cache de Dovecot hasta `auth_cache_ttl` (300 s).
+visible) solo vacia la cache, sin echarlo. Igual con una contrasena de aplicacion que se desactiva,
+se borra o pierde un protocolo de inicio de sesion: mail-directory publica en la misma transaccion
+`mail.mailbox.credentials_changed` con `credential` = `app_password`, Dovecot la rechaza al momento y
+cierra las sesiones abiertas del buzon, y la contrasena principal y la sesion del webmail siguen.
+Darla de alta o reactivarla no publica nada: no deja ninguna credencial vieja valiendo.
 
 ## 6. Auditoria de acceso (V)
 

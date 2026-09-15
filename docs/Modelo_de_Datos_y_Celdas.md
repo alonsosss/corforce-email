@@ -172,7 +172,12 @@ del evento es el de la fila y no cambia entre reintentos: es la clave de dedupli
 JetStream y de los consumidores. Probado en
 `services/mail-directory/internal/adapters/postgres/outbox_integration_test.go`: el alta
 de buzon deja fila y evento, sin permiso de `INSERT` no deja ninguna, y el rele entrega el
-evento con el id de su fila.
+evento con el id de su fila. Los cambios de credencial de un buzon salen como
+`mail.mailbox.credentials_changed` con `credential`: `password` (su contrasena principal) o
+`app_password` (una contrasena de aplicacion que pierde un inicio de sesion: se desactiva, se borra
+activa, pierde `imap_access`, `pop3_access`, `smtp_access` o `sieve_access`, o se apaga con su
+buzon); darla de alta, reactivarla o ampliarla no publica nada (V, 2026-09-15,
+`app_passwords_integration_test.go`, tambien sin permiso de `INSERT`: la revocacion no se confirma).
 
 ## 4. Empresa (V)
 
@@ -832,14 +837,12 @@ Pendiente (P):
 * Purga del directorio de una empresa dada de baja al terminar la retencion (una operacion con
   respaldo previo, como la de su base). Mientras tanto sus dominios siguen ocupando el nombre en
   su celda: otra empresa de la misma celda no puede activarlos (otra celda si).
-* Revocacion en Dovecot de una contrasena de aplicacion o de un protocolo: mail-security vacia la
-  cache de autenticacion y cierra las sesiones de un buzon con cada evento de buzon (V, 2026-09-15,
-  `deploy/mail/README.md`), pero mail-directory no publica evento al desactivar o borrar una
-  contrasena de aplicacion, que sigue valiendo en la cache de Dovecot hasta `auth_cache_ttl`, y
-  `mail.v_routing_mailboxes` no publica los flags de protocolo, asi que retirar uno vacia la cache
-  sin cerrar la sesion abierta de ese protocolo. Falta que mail-directory publique
-  `mail.mailbox.credentials_changed` en esos casos (el consumidor ya lo atiende) o los flags en la
-  vista.
+* Revocacion en Dovecot de un protocolo del buzon: mail-security vacia la cache de autenticacion y
+  cierra las sesiones de un buzon con cada evento de buzon, tambien cuando una contrasena de
+  aplicacion pierde un inicio de sesion (V, 2026-09-15, 3.3 y `deploy/mail/README.md`), pero
+  `mail.v_routing_mailboxes` no publica los flags de protocolo del buzon, asi que retirar uno vacia
+  la cache sin cerrar la sesion abierta de ese protocolo. Falta que mail-directory publique
+  `mail.mailbox.credentials_changed` tambien en ese caso o los flags en la vista.
 
 ### 5.5 Webmail por celda (V, 2026-09-13)
 
