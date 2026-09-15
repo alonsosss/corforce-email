@@ -76,7 +76,8 @@ type DKIMKey struct {
 // MailSecurityClient publica y retira claves DKIM en mail-security, que las escribe en el
 // Redis de los motores (DKIM_PRIV_KEYS, DKIM_SELECTORS).
 type MailSecurityClient interface {
-	// PublishDKIM publica las claves en orden: la ultima es la que Rspamd usa para firmar.
+	// PublishDKIM publica el juego completo de claves del dominio en orden: la ultima es la que
+	// Rspamd usa para firmar y mail-security retira los demas selectores del dominio.
 	PublishDKIM(ctx context.Context, tenantID uuid.UUID, name string, keys []DKIMKey) error
 	// RetireDKIM retira un selector concreto del dominio.
 	RetireDKIM(ctx context.Context, tenantID uuid.UUID, name, selector string) error

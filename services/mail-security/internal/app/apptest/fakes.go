@@ -4,6 +4,7 @@ package apptest
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -21,18 +22,21 @@ type Directory struct {
 	Aliases      map[string]string
 	AliasDomains map[string]string
 	Domains      map[string]uuid.UUID
-	BCC          map[string]string
-	Internal     []domain.InternalAlias
-	Lookups      int
+	// InactiveDomains son los dominios propios del directorio que no estan activos.
+	InactiveDomains map[string]uuid.UUID
+	BCC             map[string]string
+	Internal        []domain.InternalAlias
+	Lookups         int
 }
 
 func NewDirectory() *Directory {
 	return &Directory{
-		Mailboxes:    map[string]domain.Mailbox{},
-		Aliases:      map[string]string{},
-		AliasDomains: map[string]string{},
-		Domains:      map[string]uuid.UUID{},
-		BCC:          map[string]string{},
+		Mailboxes:       map[string]domain.Mailbox{},
+		Aliases:         map[string]string{},
+		AliasDomains:    map[string]string{},
+		Domains:         map[string]uuid.UUID{},
+		InactiveDomains: map[string]uuid.UUID{},
+		BCC:             map[string]string{},
 	}
 }
 
@@ -94,9 +98,52 @@ func (f *Directory) ObjectOwnedBy(_ context.Context, tenantID uuid.UUID, object 
 	return false, nil
 }
 
-func (f *Directory) DomainOwner(_ context.Context, d string) (uuid.UUID, bool, error) {
-	t, ok := f.Domains[d]
-	return t, ok, nil
+func (f *Directory) DomainStates(_ context.Context, names []string) (map[string]domain.DirectoryDomain, error) {
+	out := map[string]domain.DirectoryDomain{}
+	for _, n := range names {
+		if t, ok := f.Domains[n]; ok {
+			out[n] = domain.DirectoryDomain{Name: n, TenantID: t, Active: true}
+		} else if t, ok := f.InactiveDomains[n]; ok {
+			out[n] = domain.DirectoryDomain{Name: n, TenantID: t}
+		}
+	}
+	return out, nil
+}
+
+// DKIMLock implementa ports.DKIMDomainLock en memoria. Before, si no es nil, corre con el
+// cerrojo tomado y antes de fn: simula un cambio del directorio justo antes de decidir.
+type DKIMLock struct {
+	mu     sync.Mutex
+	Taken  []string
+	Before func(domainName string)
+}
+
+func (l *DKIMLock) WithDomainLock(ctx context.Context, domainName string, fn func(ctx context.Context) error) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.Taken = append(l.Taken, domainName)
+	if l.Before != nil {
+		l.Before(domainName)
+	}
+	return fn(ctx)
+}
+
+// ErrOrganizationDown es la respuesta de Tenants con Down.
+var ErrOrganizationDown = errors.New("organization no responde")
+
+// Tenants implementa ports.TenantRegistry en memoria.
+type Tenants struct {
+	Gone  map[uuid.UUID]bool
+	Down  bool
+	Calls int
+}
+
+func (t *Tenants) TenantGone(_ context.Context, id uuid.UUID) (bool, error) {
+	t.Calls++
+	if t.Down {
+		return false, ErrOrganizationDown
+	}
+	return t.Gone[id], nil
 }
 
 func (f *Directory) AliasDomainsOf(_ context.Context, target string) ([]string, error) {

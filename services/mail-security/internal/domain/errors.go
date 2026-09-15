@@ -24,6 +24,9 @@ var (
 	ErrInvalidLink = errors.New("enlace no valido")
 	// ErrLinkUsed: el mensaje ya se libero o descarto por un enlace.
 	ErrLinkUsed = errors.New("enlace ya usado")
+	// ErrDKIMDomainNotActive: la celda no sirve el dominio (no esta en su directorio o no esta
+	// activo) y sus claves DKIM no entran en los motores.
+	ErrDKIMDomainNotActive = errors.New("el dominio no esta activo en el directorio de la celda")
 )
 
 // ValidationError lleva el detalle de una entrada rechazada.

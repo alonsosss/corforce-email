@@ -82,6 +82,8 @@ contains "ni en la base de otra celda" "$(como_celda mail_cell_pe_02)" "permissi
 # ── Entorno comun ────────────────────────────────────────────────────────────
 e2e_entorno_comun || exit 1
 export MAIL_REDIS_HOST=127.0.0.1 MAIL_REDIS_PORT="$REDIS_PORT"
+# Repaso de claves DKIM de mail-security corto: la prueba lo ve retirar una clave huerfana.
+export MAIL_DKIM_RECONCILE_INTERVAL=2s
 export DEFAULT_CELL_CODE=pe-01 CELL_CODE=pe-01 CELL_DB_NAME=mail_cell_pe_01
 export MAIL_HOSTNAME=mail.cfm.test MAIL_MX_HOSTNAME=mail.cfm.test MAIL_SPF_INCLUDE=include:spf.cfm.test MAIL_DMARC_RUA=dmarc@cfm.test
 export CORS_ALLOWED_ORIGINS=http://localhost:3000
@@ -808,6 +810,39 @@ expect "por el gateway sin celdas eva no entra: la celda base no conoce su buzon
 expect "eva cierra sesion" "$(wm "$GW2/webmail/session" "$TARRO_EVA" DELETE)" "204"
 expect "y su cookie ya no abre nada" "$(wm "$GW2/webmail/session" "$TARRO_EVA" GET)" "401"
 lacks "el gateway de las celdas no dejo ningun inicio de sesion sin celda" "$(curl -s "http://127.0.0.1:$GW2_PORT/metrics")" 'service="webmail"'
+
+echo "== Claves DKIM solo de dominios activos en la celda"
+# mail-security de pe-01 acepta claves solo de un dominio activo en el directorio de su celda, se
+# las quita cuando el directorio lo desactiva (mail.domain.*) y su repaso retira las que queden de
+# un dominio que la celda no sirve.
+dkim_redis() { docker exec "$E2E_PREFIX-redis" redis-cli "$@"; }
+dkim_activar() {
+  curl -s -o /dev/null -w '%{http_code}' -X PUT "http://127.0.0.1:${PORT[mail-directory]}/internal/mail-directory/domains/$1/activation" \
+    -H "X-Gateway-Token: $INTERNAL_GATEWAY_TOKEN" -H "X-Tenant-ID: $TID" -H 'Content-Type: application/json' -d "{\"active\":$2}"
+}
+dkim_publicar() {
+  curl -s -w ' %{http_code}' -X PUT "http://127.0.0.1:${PORT[mail-security]}/internal/mail-security/dkim/$1" \
+    -H "X-Gateway-Token: $INTERNAL_GATEWAY_TOKEN" -H "X-Tenant-ID: $TID" -H 'Content-Type: application/json' \
+    -d '{"keys":[{"selector":"e2e1","private_key_pem":"-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----\n"}]}'
+}
+# dkim_sin_claves <dominio>: si en 30 s no queda ni su clave ni su selector en los motores.
+dkim_sin_claves() {
+  for _ in $(seq 1 60); do
+    [[ "$(dkim_redis HEXISTS DKIM_PRIV_KEYS "e2e1.$1")$(dkim_redis HEXISTS DKIM_SELECTORS "$1")" == "00" ]] && { echo si; return; }
+    sleep 0.5
+  done
+  echo no
+}
+expect "claves.test activo en el directorio de pe-01" "$(dkim_activar claves.test true)" "200"
+expect "mail-security acepta el juego de claves de un dominio activo" "$(dkim_publicar claves.test | tail -c 3)" "204"
+expect "y lo deja firmando" "$(dkim_redis HGET DKIM_SELECTORS claves.test)" "e2e1"
+contains "rechaza las de un dominio que la celda no sirve" "$(dkim_publicar fantasma.test)" '"code":"DKIM_DOMAIN_NOT_ACTIVE"'
+expect "sin escribir nada" "$(dkim_redis HEXISTS DKIM_SELECTORS fantasma.test)" "0"
+expect "claves.test desactivado en el directorio" "$(dkim_activar claves.test false)" "200"
+expect "el evento del directorio le quita las claves" "$(dkim_sin_claves claves.test)" "si"
+dkim_redis HSET DKIM_PRIV_KEYS e2e1.fantasma.test x >/dev/null
+dkim_redis HSET DKIM_SELECTORS fantasma.test e2e1 >/dev/null
+expect "el repaso retira la clave huerfana de un dominio fuera del directorio" "$(dkim_sin_claves fantasma.test)" "si"
 
 echo "== Registros"
 # Los unicos errores esperados son los que la prueba provoca a proposito: los pasos de

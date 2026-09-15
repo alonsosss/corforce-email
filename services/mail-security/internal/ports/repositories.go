@@ -183,9 +183,9 @@ type DirectoryReader interface {
 	DomainActive(ctx context.Context, domainName string) (bool, error)
 	// ObjectOwnedBy comprueba que un buzon o dominio pertenece a la empresa.
 	ObjectOwnedBy(ctx context.Context, tenantID uuid.UUID, object string) (bool, error)
-	// DomainOwner devuelve la empresa duena de un dominio del directorio; found=false si
-	// el dominio aun no figura (domain-service publica DKIM antes de activarlo).
-	DomainOwner(ctx context.Context, domainName string) (uuid.UUID, bool, error)
+	// DomainStates devuelve empresa y estado de los dominios propios del directorio (no los
+	// dominios alias) de entre los dados; el que no figura no tiene entrada.
+	DomainStates(ctx context.Context, names []string) (map[string]domain.DirectoryDomain, error)
 	// AliasDomainsOf lista los dominios alias que apuntan a un dominio.
 	AliasDomainsOf(ctx context.Context, targetDomain string) ([]string, error)
 	// AliasesTargeting lista las direcciones de alias cuyo destino incluye el buzon.
@@ -212,6 +212,20 @@ type EngineStore interface {
 	Del(ctx context.Context, keys ...string) error
 	Set(ctx context.Context, key, value string) error
 	LPushTrim(ctx context.Context, key, value string, maxLen int64) error
+}
+
+// DKIMDomainLock serializa por dominio, entre todas las replicas de la celda, la decision de
+// escribir o retirar sus claves DKIM: fn corre con el cerrojo tomado y lee el directorio en la
+// misma transaccion, de modo que una publicacion y una retirada del mismo dominio no se cruzan.
+type DKIMDomainLock interface {
+	WithDomainLock(ctx context.Context, domainName string, fn func(ctx context.Context) error) error
+}
+
+// TenantRegistry es organization visto desde este servicio.
+type TenantRegistry interface {
+	// TenantGone es true solo si organization responde que la empresa no existe (baja
+	// terminada). Sin respuesta aplicable no se sabe y devuelve error.
+	TenantGone(ctx context.Context, tenantID uuid.UUID) (bool, error)
 }
 
 // EventPublisher encola los eventos del servicio en la outbox de la celda por la

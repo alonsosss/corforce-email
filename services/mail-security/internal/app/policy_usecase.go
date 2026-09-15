@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"encoding/pem"
 	"fmt"
 	"strings"
 
@@ -549,67 +548,6 @@ func (uc *PolicyUseCase) PutQuarantineSettings(ctx context.Context, tenantID uui
 	}
 	uc.afterCommit(ctx, domain.RedisQuarantineMaxSize, uc.sync.SyncQuarantineTop)
 	return out, nil
-}
-
-// ── DKIM (interno, lo llama domain-service) ───────────────────────────────────
-
-// dkimDomain valida el dominio y comprueba que no sea de OTRA empresa. Un dominio que
-// aun no figura en el directorio se acepta: domain-service publica la clave DKIM antes
-// de activar el dominio en mail-directory.
-func (uc *PolicyUseCase) dkimDomain(ctx context.Context, tenantID uuid.UUID, domainName string) (string, error) {
-	domainName = strings.ToLower(strings.TrimSpace(domainName))
-	if err := domain.ValidateDomainName(domainName); err != nil {
-		return "", err
-	}
-	owner, found, err := uc.dir.DomainOwner(ctx, domainName)
-	if err != nil {
-		return "", err
-	}
-	if found && owner != tenantID {
-		return "", domain.ErrObjectNotOwned
-	}
-	return domainName, nil
-}
-
-// PutDKIM publica la clave en Redis. Se exige que el PEM sea una clave privada legible
-// para no dejar a Rspamd sin firmar por un pegado a medias.
-func (uc *PolicyUseCase) PutDKIM(ctx context.Context, tenantID uuid.UUID, k domain.DKIMKey) error {
-	k.Selector = strings.ToLower(strings.TrimSpace(k.Selector))
-	if err := domain.ValidateDKIMSelector(k.Selector); err != nil {
-		return err
-	}
-	block, _ := pem.Decode([]byte(k.PrivateKeyPEM))
-	if block == nil || !strings.Contains(block.Type, "PRIVATE KEY") {
-		return &domain.ValidationError{Msg: "private_key_pem no es una clave privada PEM"}
-	}
-	dom, err := uc.dkimDomain(ctx, tenantID, k.Domain)
-	if err != nil {
-		return err
-	}
-	k.Domain = dom
-	return uc.sync.SyncDKIM(ctx, k)
-}
-
-// DeleteDKIMSelector retira una clave concreta (rotacion).
-func (uc *PolicyUseCase) DeleteDKIMSelector(ctx context.Context, tenantID uuid.UUID, domainName, selector string) error {
-	selector = strings.ToLower(strings.TrimSpace(selector))
-	if err := domain.ValidateDKIMSelector(selector); err != nil {
-		return err
-	}
-	dom, err := uc.dkimDomain(ctx, tenantID, domainName)
-	if err != nil {
-		return err
-	}
-	return uc.sync.RemoveDKIMSelector(ctx, dom, selector)
-}
-
-// DeleteDKIMDomain retira todas las claves del dominio.
-func (uc *PolicyUseCase) DeleteDKIMDomain(ctx context.Context, tenantID uuid.UUID, domainName string) error {
-	dom, err := uc.dkimDomain(ctx, tenantID, domainName)
-	if err != nil {
-		return err
-	}
-	return uc.sync.RemoveDKIMDomain(ctx, dom)
 }
 
 func lowerAll(in []string) []string {

@@ -319,7 +319,7 @@ sobre un enlace privado hasta que se cifre.
 | `SMTP_LIMITED_ACCESS` | hash `usuario -> 1` | mail-security (se marca despues de escribir las redes y se desmarca antes de borrarlas) | rspamd multimap | usuarios con acceso SMTP restringido |
 | `KEEP_SPAM` | hash `ip|cidr -> 1` | mail-security (host de reenvio con `filter_spam=false`) | rspamd (lua, pre-result accept) | hosts cuyo spam no se filtra |
 | `RCPT_WANTS_SUBFOLDER_TAG`, `RCPT_WANTS_SUBJECT_TAG` | hash `buzon -> 1` | mail-security | rspamd `TAG_MOO` | como entregar correo con `+tag` |
-| `DKIM_PRIV_KEYS` | hash `selector.dominio -> clave privada PEM` | mail-security (la recibe de domain-service por `PUT /internal/mail-security/dkim/{dominio}`; no la guarda en su base; en rotacion conviven dos selectores) | rspamd `dkim_signing`, `arc` | claves DKIM |
+| `DKIM_PRIV_KEYS` | hash `selector.dominio -> clave privada PEM` | mail-security (la recibe de domain-service por `PUT /internal/mail-security/dkim/{dominio}`, solo de un dominio activo en el directorio de la celda; no la guarda en su base; en rotacion conviven dos selectores; ciclo de vida debajo de la tabla) | rspamd `dkim_signing`, `arc` | claves DKIM |
 | `DKIM_SELECTORS` | hash `dominio -> selector` | mail-security | rspamd | selector por dominio |
 | `QW_HTML`, `QW_SENDER`, `QW_SUBJ` | string | mail-directory | `quota_notify.py` (usuario ACL `quota_notify`, solo `GET/HGET ~QW_*`) | plantilla Jinja, remitente y asunto del aviso de cuota |
 | `QW_BCC` | hash `dominio -> {"bcc_rcpts":[...],"active":1}` | mail-directory | `quota_notify.py` | copias del aviso de cuota |
@@ -334,6 +334,30 @@ sobre un enlace privado hasta que se cifre.
 | `F2B_LOG` / `NETFILTER_LOG`, `POSTFIX_MAILLOG`, `DOVECOT_MAILLOG`, `ACME_LOG`, `WATCHDOG_LOG`, `RL_LOG` | list (LPUSH, recortadas por `trim_logs.sh` a `LOG_LINES`) | motores | plataforma (UI de logs) | logs JSON |
 | `DOVECOT_REPL_HEALTH`, `ACME_FAIL_TIME` | string | dovecot / acme | watchdog | estado |
 | `MC_CHANNEL` | pub/sub | plataforma | dockerapi | `{"api_call":"container_post","post_action":"exec|restart|...","container_name":"...","request":{"cmd":..,"task":..}}` |
+
+Claves DKIM (V, 2026-09-13): `DKIM_PRIV_KEYS` y `DKIM_SELECTORS` solo tienen claves de
+dominios activos en el directorio de la celda (`mail.v_routing_domains.active`, no un dominio
+alias) cuya empresa sigue existiendo para organization. `mail-security` lo aplica en tres
+sitios, siempre con el cerrojo del dominio (`pg_advisory_xact_lock` en la base de la celda,
+compartido por las replicas) y leyendo el directorio dentro de el:
+
+* Al escribir: `PUT /internal/mail-security/dkim/{dominio}` con `{"keys":[{"selector","private_key_pem"},...]}`
+  (una o dos, en orden; la ultima firma) deja exactamente ese juego y retira los demas
+  selectores del dominio. Un dominio que la celda no sirve es 409 `DKIM_DOMAIN_NOT_ACTIVE` y no
+  se escribe nada; uno de otra empresa, 403. La forma anterior (`selector` y
+  `private_key_pem`, una clave por llamada, conserva las demas) sigue aceptada con la misma
+  regla mientras quede un domain-service anterior desplegado.
+* Al desactivarse o borrarse un dominio en el directorio: el consumidor durable
+  `mail-security-redis` de `mail.domain.*` (idempotente, reentrega y DLQ de `pkg/events`) retira
+  sus claves con el estado real, no el del evento.
+* Repaso periodico con cerrojo de lider cada `MAIL_DKIM_RECONCILE_INTERVAL` (15 min por
+  defecto): retira las de un dominio que no esta activo o cuya empresa organization ya no
+  conoce (baja terminada). Sin respuesta de organization no toca esa empresa. Lo que encuentra
+  es un camino que fallo y queda en el registro (`repaso DKIM`).
+
+domain-service solo publica las claves de un dominio corporativo verificado (un dominio solo de
+envio no firma en la celda) y retira la clave en gracia en la celda antes de olvidarla mientras
+el dominio pueda tenerla alli.
 
 Rspamd guarda ademas sus propias estructuras (bayes, fuzzy, history, ratelimit,
 reputation) en el mismo Redis.

@@ -100,13 +100,24 @@ func (r *DirectoryRepository) ObjectOwnedBy(ctx context.Context, tenantID uuid.U
 	return owned, err
 }
 
-func (r *DirectoryRepository) DomainOwner(ctx context.Context, domainName string) (uuid.UUID, bool, error) {
-	var owner uuid.UUID
-	err := r.pool.QueryRow(ctx, `SELECT tenant_id FROM mail.v_routing_domains WHERE domain = $1`, domainName).Scan(&owner)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return uuid.Nil, false, nil
+func (r *DirectoryRepository) DomainStates(ctx context.Context, names []string) (map[string]domain.DirectoryDomain, error) {
+	out := make(map[string]domain.DirectoryDomain, len(names))
+	if len(names) == 0 {
+		return out, nil
 	}
-	return owner, err == nil, err
+	rows, err := r.pool.Query(ctx, `SELECT domain, tenant_id, active FROM mail.v_routing_domains WHERE domain = ANY($1)`, names)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var d domain.DirectoryDomain
+		if err := rows.Scan(&d.Name, &d.TenantID, &d.Active); err != nil {
+			return nil, err
+		}
+		out[d.Name] = d
+	}
+	return out, rows.Err()
 }
 
 func (r *DirectoryRepository) AliasDomainsOf(ctx context.Context, targetDomain string) ([]string, error) {

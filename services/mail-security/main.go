@@ -23,6 +23,7 @@ import (
 	"github.com/alonsosss/corforce-email/pkg/tenantcell"
 	handler "github.com/alonsosss/corforce-email/services/mail-security/internal/adapters/http"
 	natsadapter "github.com/alonsosss/corforce-email/services/mail-security/internal/adapters/nats"
+	"github.com/alonsosss/corforce-email/services/mail-security/internal/adapters/organizationcli"
 	outboxadapter "github.com/alonsosss/corforce-email/services/mail-security/internal/adapters/outbox"
 	"github.com/alonsosss/corforce-email/services/mail-security/internal/adapters/postgres"
 	redisadapter "github.com/alonsosss/corforce-email/services/mail-security/internal/adapters/redis"
@@ -63,6 +64,12 @@ const (
 	defaultQuarantineNotifyInterval       = 15 * time.Minute
 	defaultQuarantineLinkTTL              = 72 * time.Hour
 	quarantineNotifyLockKey         int64 = 0x716e6f7469667921 // "qnotify!"
+)
+
+// Repaso de las claves DKIM de los motores: cadencia y cerrojo de lider en la base de la celda.
+const (
+	defaultDKIMReconcileInterval       = 15 * time.Minute
+	dkimReconcileLockKey         int64 = 0x646b696d72656321 // "dkimrec!"
 )
 
 func envOrDefault(key, fallback string) string {
@@ -166,6 +173,17 @@ func main() {
 	quarantineRepo := postgres.NewQuarantineRepository(ctxPool)
 	redisSync := app.NewRedisSync(store, directory, policyReader, logger)
 
+	// Claves DKIM solo de dominios activos en esta celda cuya empresa sigue existiendo.
+	// ORGANIZATION_URL y el token interno ya los valido MembershipFromEnv.
+	orgToken, err := middleware.InternalGatewayToken()
+	if err != nil {
+		log.Fatalf("claves DKIM: %v", err)
+	}
+	dkimUC := app.NewDKIMUseCase(app.DKIMDeps{
+		Directory: directory, Lock: postgres.NewDKIMLock(ctxPool), Sync: redisSync, Logger: logger,
+		Tenants: organizationcli.New(tenantcell.NewResolver(strings.TrimSpace(os.Getenv("ORGANIZATION_URL")), orgToken, logger)),
+	})
+
 	// Enlaces sin sesion del aviso de cuarentena: firmados con MAIL_LINK_SIGNING_KEY,
 	// colgados de PUBLIC_BASE_URL y atados a la celda CELL_CODE, que va en su ruta para que el
 	// gateway los enrute. Sin ellos el servicio arranca, pero no avisa y todo enlace es
@@ -205,7 +223,9 @@ func main() {
 	// directorio. Ambos corren fuera de cualquier peticion: el pool va en el contexto.
 	go app.NewReconciler(redisSync, policyReader, quarantineRepo,
 		envDuration("MAIL_REDIS_RECONCILE_INTERVAL", defaultReconcileInterval), logger).Run(withPool(ctx))
-	go natsadapter.NewDirectoryConsumer(bus, redisSync, policyReader, withPool, logger).Run(ctx)
+	go natsadapter.NewDirectoryConsumer(bus, redisSync, dkimUC, policyReader, withPool, logger).Run(ctx)
+	go dkimUC.RunReconciler(withPool(ctx), envDuration("MAIL_DKIM_RECONCILE_INTERVAL", defaultDKIMReconcileInterval),
+		func(c context.Context) (func(), bool) { return db.TryLeaderLock(c, pool.Pool, dkimReconcileLockKey) })
 
 	// Aviso de cuarentena por transactional (POST /internal/transactional/messages con
 	// purpose=quarantine_notice), con el cerrojo de lider de la celda.
@@ -229,7 +249,7 @@ func main() {
 
 	// Superficie A: API de administracion tras el gateway (y rutas internas con token). El
 	// cortafuegos es de plataforma: el superadmin lo opera en cualquier celda con celda destino.
-	routes := handler.NewHandler(policyUC, quarantineUC, firewallUC, authz.NewCheckerFromEnv()).Routes()
+	routes := handler.NewHandler(policyUC, quarantineUC, firewallUC, dkimUC, authz.NewCheckerFromEnv()).Routes()
 	if err := membership.AcceptOperators(routes, handler.PlatformRoutes()); err != nil {
 		log.Fatalf("celda de la instancia: %v", err)
 	}

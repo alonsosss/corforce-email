@@ -2,6 +2,7 @@ package mailsecuritycli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -55,7 +56,9 @@ func siempre(status int, cuerpo string) func(int, http.ResponseWriter) {
 	}
 }
 
-func TestPublicaLasClavesEnOrden(t *testing.T) {
+// El juego completo va en una sola llamada y en orden: la ultima clave es la que firma y
+// mail-security retira los selectores que no vienen.
+func TestPublicaElJuegoCompletoEnUnaLlamada(t *testing.T) {
 	c, recibidos := nuevo(t, siempre(http.StatusNoContent, ""))
 	tenant := uuid.New()
 	keys := []ports.DKIMKey{{Selector: "cfm202608", PrivateKeyPEM: "A"}, {Selector: "cfm202609", PrivateKeyPEM: "B"}}
@@ -63,32 +66,30 @@ func TestPublicaLasClavesEnOrden(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := recibidos()
-	if len(got) != 2 {
+	if len(got) != 1 || got[0].metodo != http.MethodPut || got[0].ruta != "/internal/mail-security/dkim/acme.test" || got[0].empresa != tenant.String() {
 		t.Fatalf("llamadas: %+v", got)
 	}
-	for i, key := range keys {
-		if got[i].metodo != http.MethodPut || got[i].ruta != "/internal/mail-security/dkim/acme.test" || got[i].empresa != tenant.String() ||
-			!strings.Contains(got[i].cuerpo, `"selector":"`+key.Selector+`"`) {
-			t.Errorf("llamada %d: %+v", i, got[i])
-		}
+	var cuerpo struct {
+		Keys []struct {
+			Selector      string `json:"selector"`
+			PrivateKeyPEM string `json:"private_key_pem"`
+		} `json:"keys"`
+	}
+	if err := json.Unmarshal([]byte(got[0].cuerpo), &cuerpo); err != nil {
+		t.Fatal(err)
+	}
+	if len(cuerpo.Keys) != 2 || cuerpo.Keys[0].Selector != "cfm202608" || cuerpo.Keys[0].PrivateKeyPEM != "A" ||
+		cuerpo.Keys[1].Selector != "cfm202609" || cuerpo.Keys[1].PrivateKeyPEM != "B" {
+		t.Errorf("juego publicado: %+v", cuerpo.Keys)
 	}
 }
 
-func TestUnaClaveQueNoSePublicaCortaLasSiguientes(t *testing.T) {
-	c, recibidos := nuevo(t, func(n int, w http.ResponseWriter) {
-		if n == 0 {
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-		w.WriteHeader(http.StatusInternalServerError)
-	})
-	keys := []ports.DKIMKey{{Selector: "cfm202608", PrivateKeyPEM: "A"}, {Selector: "cfm202609", PrivateKeyPEM: "B"}, {Selector: "cfm202610", PrivateKeyPEM: "C"}}
-	err := c.PublishDKIM(context.Background(), uuid.New(), "acme.test", keys)
-	if err == nil || !strings.Contains(err.Error(), "cfm202609") {
+// Un dominio que la celda no sirve (409 DKIM_DOMAIN_NOT_ACTIVE) no es una publicacion hecha.
+func TestUnJuegoRechazadoNoSeDaPorPublicado(t *testing.T) {
+	c, _ := nuevo(t, siempre(http.StatusConflict, `{"error":{"code":"DKIM_DOMAIN_NOT_ACTIVE","message":"x"}}`))
+	err := c.PublishDKIM(context.Background(), uuid.New(), "acme.test", []ports.DKIMKey{{Selector: "cfm202609", PrivateKeyPEM: "A"}})
+	if err == nil || !strings.Contains(err.Error(), "409") {
 		t.Fatalf("error: %v", err)
-	}
-	if got := recibidos(); len(got) != 2 {
-		t.Errorf("tras el fallo no se publica la siguiente: %d llamadas", len(got))
 	}
 }
 

@@ -125,6 +125,8 @@ func (uc *UseCase) syncVerified(ctx context.Context, d *domain.Domain, signWithP
 			if errors.Is(err, domain.ErrDomainClaimedElsewhere) {
 				uc.logger.Warn("el dominio ya esta activo en otra empresa: no se activa en el directorio de la celda",
 					zap.String("domain", d.Domain), zap.String("tenant_id", d.TenantID.String()))
+				// La celda no sirve el dominio: sus claves DKIM no van a los motores, que las rechazarian.
+				return append(failures, "activar en mail-directory: "+err.Error())
 			} else {
 				uc.logger.Error("no se pudo activar el dominio en mail-directory; se reintenta en el barrido",
 					zap.String("domain", d.Domain), zap.String("tenant_id", d.TenantID.String()), zap.Error(err))

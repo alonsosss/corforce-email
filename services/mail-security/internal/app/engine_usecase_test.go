@@ -268,28 +268,10 @@ func TestDKIMRotacionConvivenDosSelectores(t *testing.T) {
 
 	// Baja del dominio completo: solo sus claves, no las de sub.acme.com.
 	_ = sync.SyncDKIM(ctx, domain.DKIMKey{Domain: "acme.com", Selector: "s3", PrivateKeyPEM: pem})
-	if err := sync.RemoveDKIMDomain(ctx, "acme.com"); err != nil {
-		t.Fatal(err)
+	if n, err := sync.RemoveDKIMDomain(ctx, "acme.com"); err != nil || n != 1 {
+		t.Fatalf("baja de dominio: %d claves, %v", n, err)
 	}
 	if _, ok := keys["s3.acme.com"]; ok || keys["s1.sub.acme.com"] != pem || f.store.Hashes[domain.RedisDKIMSelectors]["sub.acme.com"] != "s1" {
 		t.Fatalf("baja de dominio: %v / %v", keys, f.store.Hashes[domain.RedisDKIMSelectors])
-	}
-}
-
-func TestPutDKIMAceptaDominioNoActivadoYRechazaAjeno(t *testing.T) {
-	f := newEngineFixture()
-	mine, other := uuid.New(), uuid.New()
-	f.dir.Domains["ajeno.com"] = other
-	uc := NewPolicyUseCase(PolicyDeps{Directory: f.dir, Sync: NewRedisSync(f.store, f.dir, f.policy, zap.NewNop()), Logger: zap.NewNop()})
-	pem := "-----BEGIN RSA PRIVATE KEY-----\neA==\n-----END RSA PRIVATE KEY-----"
-
-	if err := uc.PutDKIM(context.Background(), mine, domain.DKIMKey{Domain: "nuevo.com", Selector: "dkim", PrivateKeyPEM: pem}); err != nil {
-		t.Fatalf("un dominio que aun no esta en el directorio se acepta: %v", err)
-	}
-	if err := uc.PutDKIM(context.Background(), mine, domain.DKIMKey{Domain: "ajeno.com", Selector: "dkim", PrivateKeyPEM: pem}); err != domain.ErrObjectNotOwned {
-		t.Fatalf("un dominio de otra empresa se rechaza: %v", err)
-	}
-	if err := uc.PutDKIM(context.Background(), mine, domain.DKIMKey{Domain: "nuevo.com", Selector: "dkim", PrivateKeyPEM: "no es pem"}); err == nil {
-		t.Fatal("un PEM ilegible se rechaza")
 	}
 }

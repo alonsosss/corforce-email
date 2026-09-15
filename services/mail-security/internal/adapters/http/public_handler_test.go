@@ -48,7 +48,7 @@ func newLinkServer(t *testing.T) *linkServer {
 	item := domain.QuarantineItem{ID: id, TenantID: uuid.New(), Rcpt: "ana@acme.com", Score: decimal.NewFromInt(7),
 		Subject: `<script>alert(1)</script>Factura`, Sender: `"><img src=x>@evil.test`, QHash: hex.EncodeToString(sum[:]), Msg: []byte("m")}
 	q.Items = []domain.QuarantineItem{item}
-	srv := httptest.NewServer(NewHandler(nil, uc, nil, authz.NewCheckerFromEnv()).Routes())
+	srv := httptest.NewServer(NewHandler(nil, uc, nil, nil, authz.NewCheckerFromEnv()).Routes())
 	t.Cleanup(srv.Close)
 	return &linkServer{srv: srv, q: q, links: links, item: item}
 }

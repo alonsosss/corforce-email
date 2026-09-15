@@ -24,6 +24,7 @@ const subscribeRetry = 5 * time.Second
 type DirectoryConsumer struct {
 	bus    *events.Bus
 	sync   *app.RedisSync
+	dkim   *app.DKIMUseCase
 	policy ports.PolicyReader
 	// withPool deja en el contexto el pool de la celda: el handler corre fuera de
 	// cualquier peticion HTTP.
@@ -31,8 +32,8 @@ type DirectoryConsumer struct {
 	logger   *zap.Logger
 }
 
-func NewDirectoryConsumer(bus *events.Bus, sync *app.RedisSync, policy ports.PolicyReader, withPool func(context.Context) context.Context, logger *zap.Logger) *DirectoryConsumer {
-	return &DirectoryConsumer{bus: bus, sync: sync, policy: policy, withPool: withPool, logger: logger}
+func NewDirectoryConsumer(bus *events.Bus, sync *app.RedisSync, dkim *app.DKIMUseCase, policy ports.PolicyReader, withPool func(context.Context) context.Context, logger *zap.Logger) *DirectoryConsumer {
+	return &DirectoryConsumer{bus: bus, sync: sync, dkim: dkim, policy: policy, withPool: withPool, logger: logger}
 }
 
 // Run bloquea hasta suscribirse o hasta que el contexto se cancele.
@@ -73,6 +74,9 @@ func (c *DirectoryConsumer) handle(evt events.Event, ack func()) {
 	switch {
 	case strings.HasPrefix(evt.Type, "mail.domain."):
 		err = c.refreshDomainFrom(ctx, data, "domain")
+		if err == nil {
+			err = c.forgetDKIMFrom(ctx, data)
+		}
 	case strings.HasPrefix(evt.Type, "mail.alias_domain."):
 		err = c.refreshDomainFrom(ctx, data, "alias_domain")
 	case evt.Type == "mail.mailbox.deleted":
@@ -100,6 +104,16 @@ func (c *DirectoryConsumer) forgetMailbox(ctx context.Context, username string) 
 		return err
 	}
 	return c.sync.RemoveSMTPAccess(ctx, username)
+}
+
+// forgetDKIMFrom retira las claves DKIM del dominio del evento si el directorio ya no lo sirve
+// (desactivado o borrado). Sin nombre no hay dominio que decidir: lo cubre el repaso periodico.
+func (c *DirectoryConsumer) forgetDKIMFrom(ctx context.Context, data map[string]any) error {
+	name, ok := data["domain"].(string)
+	if !ok || name == "" {
+		return nil
+	}
+	return c.dkim.ForgetIfNotServed(ctx, name)
 }
 
 func (c *DirectoryConsumer) refreshDomainFrom(ctx context.Context, data map[string]any, key string) error {

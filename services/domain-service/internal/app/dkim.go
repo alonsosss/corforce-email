@@ -128,8 +128,9 @@ func (uc *UseCase) RotateDKIM(ctx context.Context, tenantID, id uuid.UUID) (*Rot
 	}
 	// La clave en gracia sale de los motores antes de que la fila la olvide: despues ya nada
 	// la recordaria y su clave privada quedaria en el Redis de la celda. Si mail-security no la
-	// retira (tambien si no se llega a la celda de la empresa), no se rota.
-	if d.Status == domain.StatusVerified && retired != "" {
+	// retira (tambien si no se llega a la celda de la empresa), no se rota. Solo puede estar alli
+	// si el dominio esta activo en la celda o su desactivacion sigue sin confirmar.
+	if retired != "" && d.KeysMayBeInCell() {
 		if err := uc.mailSecurity.RetireDKIM(ctx, tenantID, d.Domain, retired); err != nil {
 			return nil, integrationError("retirar en mail-security la clave en gracia", err)
 		}
@@ -168,7 +169,13 @@ func (uc *UseCase) RotateDKIM(ctx context.Context, tenantID, id uuid.UUID) (*Rot
 	}, nil
 }
 
+// publishDKIM entrega a mail-security el juego completo de claves de un dominio activo en el
+// directorio de su celda. Uno que la celda no sirve (solo de envio) no lleva claves a los
+// motores: mail-security las rechazaria y ningun correo de la celda se firmaria con ellas.
 func (uc *UseCase) publishDKIM(ctx context.Context, d *domain.Domain, signWithPrevious bool) error {
+	if !d.ActiveInDirectory() {
+		return nil
+	}
 	keys, err := uc.signingKeys(d, signWithPrevious)
 	if err != nil {
 		return err
@@ -176,12 +183,15 @@ func (uc *UseCase) publishDKIM(ctx context.Context, d *domain.Domain, signWithPr
 	return uc.mailSecurity.PublishDKIM(ctx, d.TenantID, d.Domain, keys)
 }
 
-// retirePreviousDKIM saca de gracia la clave anterior: la retira de mail-security y
-// limpia las columnas. Si mail-security no responde, se deja para el siguiente barrido.
+// retirePreviousDKIM saca de gracia la clave anterior: la retira de mail-security si pudo llegar
+// a los motores y limpia las columnas. Si mail-security no responde, se deja para el siguiente
+// barrido.
 func (uc *UseCase) retirePreviousDKIM(ctx context.Context, d *domain.Domain) error {
 	selector := d.DKIMPreviousSelector
-	if err := uc.mailSecurity.RetireDKIM(ctx, d.TenantID, d.Domain, selector); err != nil {
-		return fmt.Errorf("retirar selector %s en mail-security: %w", selector, err)
+	if d.KeysMayBeInCell() {
+		if err := uc.mailSecurity.RetireDKIM(ctx, d.TenantID, d.Domain, selector); err != nil {
+			return fmt.Errorf("retirar selector %s en mail-security: %w", selector, err)
+		}
 	}
 	d.ClearPreviousDKIM()
 	return uc.repo.Update(ctx, d)

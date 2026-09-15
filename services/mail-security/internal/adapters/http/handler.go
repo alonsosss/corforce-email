@@ -31,6 +31,7 @@ type Handler struct {
 	policy     *app.PolicyUseCase
 	quarantine *app.QuarantineUseCase
 	firewall   *app.FirewallUseCase
+	dkim       *app.DKIMUseCase
 	authz      *authz.Checker
 	// publicLimiter frena por ip los enlaces sin sesion del aviso de cuarentena, por
 	// debajo del limite general del servicio.
@@ -40,8 +41,8 @@ type Handler struct {
 // publicLinksPerMinute es el cupo por ip de los enlaces sin sesion.
 const publicLinksPerMinute = 30
 
-func NewHandler(policy *app.PolicyUseCase, quarantine *app.QuarantineUseCase, firewall *app.FirewallUseCase, checker *authz.Checker) *Handler {
-	return &Handler{policy: policy, quarantine: quarantine, firewall: firewall, authz: checker,
+func NewHandler(policy *app.PolicyUseCase, quarantine *app.QuarantineUseCase, firewall *app.FirewallUseCase, dkim *app.DKIMUseCase, checker *authz.Checker) *Handler {
+	return &Handler{policy: policy, quarantine: quarantine, firewall: firewall, dkim: dkim, authz: checker,
 		publicLimiter: middleware.NewRateLimiter(publicLinksPerMinute, time.Minute)}
 }
 
@@ -193,6 +194,8 @@ func writeError(w http.ResponseWriter, err error) {
 		response.ErrForbidden(w, err.Error())
 	case errors.Is(err, domain.ErrAlreadyExists):
 		response.ErrConflict(w, "ya existe")
+	case errors.Is(err, domain.ErrDKIMDomainNotActive):
+		response.Err(w, http.StatusConflict, "DKIM_DOMAIN_NOT_ACTIVE", err.Error())
 	case errors.Is(err, domain.ErrRedisUnavailable):
 		response.Err(w, http.StatusServiceUnavailable, "REDIS_UNAVAILABLE", "el redis de los motores no responde")
 	case errors.As(err, &verr):
@@ -781,19 +784,40 @@ func (h *Handler) PutQuarantineSettings(w http.ResponseWriter, r *http.Request) 
 
 // ── DKIM (interno) ────────────────────────────────────────────────────────────
 
+type dkimKeyBody struct {
+	Selector      string `json:"selector"`
+	PrivateKeyPEM string `json:"private_key_pem"`
+}
+
+// PutDKIM recibe de domain-service el juego completo de claves del dominio en keys, en orden (la
+// ultima firma; los demas selectores se retiran). selector y private_key_pem son la forma
+// anterior, una clave por llamada. Un dominio que la celda no sirve es 409 DKIM_DOMAIN_NOT_ACTIVE.
 func (h *Handler) PutDKIM(w http.ResponseWriter, r *http.Request) {
 	tenantID, ok := tenantFrom(w, r)
 	if !ok {
 		return
 	}
 	var body struct {
-		Selector      string `json:"selector"`
-		PrivateKeyPEM string `json:"private_key_pem"`
+		dkimKeyBody
+		Keys []dkimKeyBody `json:"keys"`
 	}
 	if !decode(w, r, &body) {
 		return
 	}
-	err := h.policy.PutDKIM(r.Context(), tenantID, domain.DKIMKey{Domain: chi.URLParam(r, "domain"), Selector: body.Selector, PrivateKeyPEM: body.PrivateKeyPEM})
+	name := chi.URLParam(r, "domain")
+	var err error
+	switch {
+	case body.Keys != nil && body.dkimKeyBody != (dkimKeyBody{}):
+		err = &domain.ValidationError{Msg: "keys no se combina con selector ni private_key_pem"}
+	case body.Keys != nil:
+		keys := make([]domain.DKIMKey, 0, len(body.Keys))
+		for _, k := range body.Keys {
+			keys = append(keys, domain.DKIMKey{Domain: name, Selector: k.Selector, PrivateKeyPEM: k.PrivateKeyPEM})
+		}
+		err = h.dkim.PutKeys(r.Context(), tenantID, name, keys)
+	default:
+		err = h.dkim.PutKey(r.Context(), tenantID, domain.DKIMKey{Domain: name, Selector: body.Selector, PrivateKeyPEM: body.PrivateKeyPEM})
+	}
 	if err != nil {
 		writeError(w, err)
 		return
@@ -806,7 +830,7 @@ func (h *Handler) DeleteDKIMDomain(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := h.policy.DeleteDKIMDomain(r.Context(), tenantID, chi.URLParam(r, "domain")); err != nil {
+	if err := h.dkim.DeleteDomain(r.Context(), tenantID, chi.URLParam(r, "domain")); err != nil {
 		writeError(w, err)
 		return
 	}
@@ -818,7 +842,7 @@ func (h *Handler) DeleteDKIMSelector(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := h.policy.DeleteDKIMSelector(r.Context(), tenantID, chi.URLParam(r, "domain"), chi.URLParam(r, "selector")); err != nil {
+	if err := h.dkim.DeleteSelector(r.Context(), tenantID, chi.URLParam(r, "domain"), chi.URLParam(r, "selector")); err != nil {
 		writeError(w, err)
 		return
 	}

@@ -174,8 +174,10 @@ func TestIntegracionCelda(t *testing.T) {
 		if strings.Join(domains, ",") != "acme-alias.com,acme.com,otra.com" {
 			t.Errorf("dominios activos: %v", domains)
 		}
-		if owner, found, _ := directory.DomainOwner(engineCtx, "otra.com"); !found || owner != tenantB {
-			t.Errorf("dueno de otra.com: %v %v", owner, found)
+		states, err := directory.DomainStates(engineCtx, []string{"otra.com", "baja.com", "acme-alias.com", "nadie.com"})
+		if err != nil || len(states) != 2 || states["otra.com"] != (domain.DirectoryDomain{Name: "otra.com", TenantID: tenantB, Active: true}) ||
+			states["baja.com"] != (domain.DirectoryDomain{Name: "baja.com", TenantID: tenantB}) {
+			t.Errorf("estado de los dominios propios (sin dominios alias ni desconocidos): %+v %v", states, err)
 		}
 	})
 

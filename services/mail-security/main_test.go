@@ -41,7 +41,7 @@ func celdaPe01(t *testing.T, cells map[string]string, routes http.Handler) (*ten
 // rutasReales son las rutas del servicio sin casos de uso: una peticion que llegara a un
 // handler que lee o escribe entraria en panico y romperia la prueba.
 func rutasReales() http.Handler {
-	return handler.NewHandler(nil, nil, nil, authz.NewChecker("http://127.0.0.1:9", "")).Routes()
+	return handler.NewHandler(nil, nil, nil, nil, authz.NewChecker("http://127.0.0.1:9", "")).Routes()
 }
 
 type llamada struct {
@@ -138,7 +138,7 @@ func rutasConCortafuegos() chi.Router {
 	policy := apptest.NewPolicyReader()
 	policy.FirewallNets = []domain.FirewallNetwork{{ID: uuid.New(), List: "deny", Network: "192.0.2.0/24", Note: "red de pe-01"}}
 	fw := app.NewFirewallUseCase(app.FirewallDeps{Policy: policy, Store: apptest.NewStore(), Logger: zap.NewNop()})
-	return handler.NewHandler(nil, nil, fw, authz.NewChecker("http://127.0.0.1:9", "")).Routes()
+	return handler.NewHandler(nil, nil, fw, nil, authz.NewChecker("http://127.0.0.1:9", "")).Routes()
 }
 
 func pedirConCeldaDestino(h http.Handler, method, path, tenant, roles, cell string, n int) *httptest.ResponseRecorder {

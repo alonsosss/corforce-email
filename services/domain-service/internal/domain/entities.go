@@ -112,6 +112,13 @@ func (d *Domain) ActiveInDirectory() bool {
 	return d.Status == StatusVerified && d.Purpose.IncludesCorporate()
 }
 
+// KeysMayBeInCell dice si las claves DKIM del dominio pueden estar en el Redis de los motores de
+// su celda: mail-security solo las acepta de un dominio activo en el directorio, asi que es el
+// que debe estarlo o el que dejo de recibir sin que la desactivacion se confirmara.
+func (d *Domain) KeysMayBeInCell() bool {
+	return d.ActiveInDirectory() || d.DirectoryDeactivationPending
+}
+
 // HasPreviousDKIM indica si queda una clave anterior en gracia.
 func (d *Domain) HasPreviousDKIM() bool {
 	return d.DKIMPreviousSelector != "" && len(d.DKIMPreviousPrivateKeyEnc) > 0 && d.DKIMRotatedAt != nil

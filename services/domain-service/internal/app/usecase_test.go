@@ -246,8 +246,8 @@ func TestVerifyWithoutDMARCStillVerifies(t *testing.T) {
 	if len(h.directory.calls) != 0 {
 		t.Error("un dominio solo de envio no se activa en el directorio de la celda")
 	}
-	if len(h.security.published) != 1 {
-		t.Error("las claves DKIM se publican aunque el dominio sea solo de envio")
+	if len(h.security.published) != 0 {
+		t.Error("un dominio solo de envio no lleva claves DKIM a los motores de la celda")
 	}
 }
 
@@ -727,7 +727,7 @@ func TestQuitarElUsoCorporativoSinCeldaNoCambiaNada(t *testing.T) {
 // fila la sigue recordando.
 func TestRotarSinRetirarLaClaveEnGraciaNoRota(t *testing.T) {
 	h := newHarness(t)
-	d := h.create(t, "acme.com", domain.PurposeSending)
+	d := h.create(t, "acme.com", domain.PurposeCorporate)
 	h.dns.publishZone(h.uc, d)
 	h.verify(t, d.ID)
 	first, err := h.uc.RotateDKIM(context.Background(), h.tenantID, d.ID)

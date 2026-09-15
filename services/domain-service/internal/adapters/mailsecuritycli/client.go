@@ -23,22 +23,27 @@ func New(cell *cellcli.Caller) *Client {
 	return &Client{cell: cell}
 }
 
-// PublishDKIM hace un PUT /internal/mail-security/dkim/{domain} por clave, en orden: cada
-// PUT deja el selector como el activo del dominio, asi que la ultima clave es la que firma.
+type keyBody struct {
+	Selector      string `json:"selector"`
+	PrivateKeyPEM string `json:"private_key_pem"`
+}
+
+// PublishDKIM hace un solo PUT /internal/mail-security/dkim/{domain} con el juego completo de
+// claves en keys, en orden: la ultima es la que firma y mail-security retira cualquier otro
+// selector del dominio, asi que una clave que la fila ya olvido no sobrevive a la siguiente
+// publicacion. 409 DKIM_DOMAIN_NOT_ACTIVE: la celda no sirve el dominio y no guarda nada.
 func (c *Client) PublishDKIM(ctx context.Context, tenantID uuid.UUID, name string, keys []ports.DKIMKey) error {
+	body := struct {
+		Keys []keyBody `json:"keys"`
+	}{Keys: make([]keyBody, 0, len(keys))}
 	for _, key := range keys {
-		body, err := json.Marshal(map[string]string{
-			"selector":        key.Selector,
-			"private_key_pem": key.PrivateKeyPEM,
-		})
-		if err != nil {
-			return err
-		}
-		if err := c.do(ctx, tenantID, http.MethodPut, dkimPath(name), body); err != nil {
-			return fmt.Errorf("publicar selector %s: %w", key.Selector, err)
-		}
+		body.Keys = append(body.Keys, keyBody{Selector: key.Selector, PrivateKeyPEM: key.PrivateKeyPEM})
 	}
-	return nil
+	raw, err := json.Marshal(body)
+	if err != nil {
+		return err
+	}
+	return c.do(ctx, tenantID, http.MethodPut, dkimPath(name), raw)
 }
 
 // RetireDKIM hace DELETE /internal/mail-security/dkim/{domain}/{selector}.

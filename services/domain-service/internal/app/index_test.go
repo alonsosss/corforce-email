@@ -51,8 +51,8 @@ func TestUnDominioDeSoloEnvioNoSeReclama(t *testing.T) {
 }
 
 // Un dominio activo en otra empresa no se activa en esta celda: la verificacion lo dice y el
-// estado sigue saliendo del DNS; las claves DKIM no dependen del directorio. Cuando la otra
-// empresa lo suelta, el barrido lo reclama y lo activa.
+// estado sigue saliendo del DNS; sus claves DKIM no van a los motores de una celda que no lo
+// sirve. Cuando la otra empresa lo suelta, el barrido lo reclama, lo activa y publica sus claves.
 func TestUnDominioActivoEnOtraEmpresaNoSeActiva(t *testing.T) {
 	h := newHarness(t)
 	h.index.owners["acme.com"] = uuid.New()
@@ -64,14 +64,15 @@ func TestUnDominioActivoEnOtraEmpresaNoSeActiva(t *testing.T) {
 		!strings.Contains(res.IntegrationErrors[0], domain.ErrDomainClaimedElsewhere.Error()) {
 		t.Fatalf("status %s, errores %v", res.Domain.Status, res.IntegrationErrors)
 	}
-	if len(h.directory.calls) != 0 || len(h.security.published) != 1 {
+	if len(h.directory.calls) != 0 || len(h.security.published) != 0 {
 		t.Fatalf("activaciones %v, publicaciones DKIM %d", h.directory.calls, len(h.security.published))
 	}
 
 	delete(h.index.owners, "acme.com")
 	h.uc.SweepTenant(context.Background(), h.tenantID)
-	if h.index.owners["acme.com"] != h.tenantID || len(h.directory.calls) != 1 || !h.directory.calls[0].active {
-		t.Fatalf("liberado: indice %v, activaciones %v", h.index.owners, h.directory.calls)
+	if h.index.owners["acme.com"] != h.tenantID || len(h.directory.calls) != 1 || !h.directory.calls[0].active ||
+		len(h.security.published) != 1 {
+		t.Fatalf("liberado: indice %v, activaciones %v, publicaciones DKIM %d", h.index.owners, h.directory.calls, len(h.security.published))
 	}
 }
 

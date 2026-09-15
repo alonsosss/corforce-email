@@ -60,8 +60,8 @@ func TestIntegracionRedis(t *testing.T) {
 	if err != nil || len(keys) != 3 {
 		t.Fatalf("HSCAN MATCH: %v %v", keys, err)
 	}
-	if err := sync.RemoveDKIMDomain(ctx, "acme.com"); err != nil {
-		t.Fatal(err)
+	if n, err := sync.RemoveDKIMDomain(ctx, "acme.com"); err != nil || n != 2 {
+		t.Fatalf("baja de acme.com: %d claves, %v", n, err)
 	}
 	left, _ := store.HGetAll(ctx, domain.RedisDKIMPrivKeys)
 	if len(left) != 1 || left["s1.sub.acme.com"] != pem {
@@ -72,6 +72,27 @@ func TestIntegracionRedis(t *testing.T) {
 	}
 	if sel, ok, _ := store.HGet(ctx, domain.RedisDKIMSelectors, "sub.acme.com"); !ok || sel != "s1" {
 		t.Fatalf("selector de sub.acme.com intacto: %q %v", sel, ok)
+	}
+
+	// Juego completo: escribe, deja firmando la ultima y retira los demas selectores del
+	// dominio, no los de sub.acme.com.
+	if err := sync.SyncDKIM(ctx, domain.DKIMKey{Domain: "acme.com", Selector: "viejo", PrivateKeyPEM: pem}); err != nil {
+		t.Fatal(err)
+	}
+	set := []domain.DKIMKey{{Domain: "acme.com", Selector: "s2", PrivateKeyPEM: pem}, {Domain: "acme.com", Selector: "s1", PrivateKeyPEM: pem}}
+	if err := sync.SyncDKIMSet(ctx, "acme.com", set); err != nil {
+		t.Fatal(err)
+	}
+	fields, _ := store.HKeys(ctx, domain.RedisDKIMPrivKeys, "*")
+	sort.Strings(fields)
+	if len(fields) != 3 || fields[0] != "s1.acme.com" || fields[1] != "s1.sub.acme.com" || fields[2] != "s2.acme.com" {
+		t.Fatalf("juego completo de acme.com: %v", fields)
+	}
+	if sel, _, _ := store.HGet(ctx, domain.RedisDKIMSelectors, "acme.com"); sel != "s1" {
+		t.Fatalf("firma la ultima del juego: %q", sel)
+	}
+	if names, err := sync.DKIMDomains(ctx); err != nil || len(names) != 2 || names[0] != "acme.com" || names[1] != "sub.acme.com" {
+		t.Fatalf("dominios con claves: %v %v", names, err)
 	}
 
 	// LPUSH + LTRIM en una transaccion.

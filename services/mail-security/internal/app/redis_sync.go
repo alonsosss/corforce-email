@@ -4,8 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strconv"
-	"strings"
 
 	"github.com/alonsosss/corforce-email/services/mail-security/internal/domain"
 	"github.com/alonsosss/corforce-email/services/mail-security/internal/ports"
@@ -27,7 +27,8 @@ func NewRedisSync(store ports.EngineStore, dir ports.DirectoryReader, policy por
 }
 
 // ReconcileAll recalcula todas las claves derivadas de la base. Las claves DKIM no se
-// reconstruyen: este servicio no guarda las claves privadas, las publica domain-service.
+// reconstruyen: este servicio no guarda las claves privadas, las publica domain-service; las
+// que sobran las retira el repaso de DKIMUseCase.
 func (s *RedisSync) ReconcileAll(ctx context.Context) error {
 	var firstErr error
 	keep := func(err error, what string) {
@@ -336,16 +337,74 @@ func (s *RedisSync) SyncQuarantineTop(ctx context.Context) error {
 // conviven dos hasta que domain-service retira la vieja. La clave solo pasa por aqui:
 // no se guarda en la base de este servicio.
 func (s *RedisSync) SyncDKIM(ctx context.Context, k domain.DKIMKey) error {
-	if err := s.store.HSet(ctx, domain.RedisDKIMPrivKeys, k.Selector+"."+k.Domain, k.PrivateKeyPEM); err != nil {
+	if err := s.store.HSet(ctx, domain.RedisDKIMPrivKeys, domain.DKIMKeyField(k.Selector, k.Domain), k.PrivateKeyPEM); err != nil {
 		return err
 	}
 	return s.store.HSet(ctx, domain.RedisDKIMSelectors, k.Domain, k.Selector)
 }
 
+// SyncDKIMSet deja en los motores exactamente el juego de claves del dominio: escribe todas, el
+// selector activo pasa a la ultima y solo despues retira las demas del dominio, de modo que
+// Rspamd nunca ve un selector activo sin su clave.
+func (s *RedisSync) SyncDKIMSet(ctx context.Context, domainName string, keys []domain.DKIMKey) error {
+	if len(keys) == 0 {
+		return fmt.Errorf("juego DKIM de %s sin claves", domainName)
+	}
+	keep := make(map[string]bool, len(keys))
+	for _, k := range keys {
+		field := domain.DKIMKeyField(k.Selector, domainName)
+		if err := s.store.HSet(ctx, domain.RedisDKIMPrivKeys, field, k.PrivateKeyPEM); err != nil {
+			return err
+		}
+		keep[field] = true
+	}
+	if err := s.store.HSet(ctx, domain.RedisDKIMSelectors, domainName, keys[len(keys)-1].Selector); err != nil {
+		return err
+	}
+	fields, err := s.dkimFieldsOf(ctx, domainName)
+	if err != nil {
+		return err
+	}
+	var stale []string
+	for _, f := range fields {
+		if !keep[f] {
+			stale = append(stale, f)
+		}
+	}
+	return s.store.HDel(ctx, domain.RedisDKIMPrivKeys, stale...)
+}
+
+// DKIMDomains lista, ordenados, los dominios con alguna clave o selector DKIM en los motores.
+func (s *RedisSync) DKIMDomains(ctx context.Context) ([]string, error) {
+	seen := map[string]bool{}
+	fields, err := s.store.HKeys(ctx, domain.RedisDKIMPrivKeys, "*")
+	if err != nil {
+		return nil, err
+	}
+	for _, f := range fields {
+		if _, d, ok := domain.SplitDKIMKeyField(f); ok {
+			seen[d] = true
+		}
+	}
+	selectors, err := s.store.HKeys(ctx, domain.RedisDKIMSelectors, "*")
+	if err != nil {
+		return nil, err
+	}
+	for _, d := range selectors {
+		seen[d] = true
+	}
+	out := make([]string, 0, len(seen))
+	for d := range seen {
+		out = append(out, d)
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
 // RemoveDKIMSelector retira solo esa clave; el selector activo se retira si apuntaba a
 // ella (Rspamd deja de firmar el dominio hasta que se publique otra).
 func (s *RedisSync) RemoveDKIMSelector(ctx context.Context, domainName, selector string) error {
-	if err := s.store.HDel(ctx, domain.RedisDKIMPrivKeys, selector+"."+domainName); err != nil {
+	if err := s.store.HDel(ctx, domain.RedisDKIMPrivKeys, domain.DKIMKeyField(selector, domainName)); err != nil {
 		return err
 	}
 	active, ok, err := s.store.HGet(ctx, domain.RedisDKIMSelectors, domainName)
@@ -358,23 +417,33 @@ func (s *RedisSync) RemoveDKIMSelector(ctx context.Context, domainName, selector
 	return nil
 }
 
-// RemoveDKIMDomain retira todas las claves del dominio y su selector activo.
-func (s *RedisSync) RemoveDKIMDomain(ctx context.Context, domainName string) error {
+// RemoveDKIMDomain retira todas las claves del dominio y su selector activo, y devuelve cuantas
+// claves privadas habia.
+func (s *RedisSync) RemoveDKIMDomain(ctx context.Context, domainName string) (int, error) {
+	own, err := s.dkimFieldsOf(ctx, domainName)
+	if err != nil {
+		return 0, err
+	}
+	if err := s.store.HDel(ctx, domain.RedisDKIMPrivKeys, own...); err != nil {
+		return 0, err
+	}
+	return len(own), s.store.HDel(ctx, domain.RedisDKIMSelectors, domainName)
+}
+
+// dkimFieldsOf lista los campos de DKIM_PRIV_KEYS del dominio. El patron glob casa tambien con
+// sub.dominio: se filtra por el dominio exacto de cada campo.
+func (s *RedisSync) dkimFieldsOf(ctx context.Context, domainName string) ([]string, error) {
 	fields, err := s.store.HKeys(ctx, domain.RedisDKIMPrivKeys, "*."+domainName)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	// El patron glob casa tambien con sub.dominio: se filtra por sufijo exacto.
 	var own []string
 	for _, f := range fields {
-		if strings.HasSuffix(f, "."+domainName) && !strings.Contains(strings.TrimSuffix(f, "."+domainName), ".") {
+		if _, d, ok := domain.SplitDKIMKeyField(f); ok && d == domainName {
 			own = append(own, f)
 		}
 	}
-	if err := s.store.HDel(ctx, domain.RedisDKIMPrivKeys, own...); err != nil {
-		return err
-	}
-	return s.store.HDel(ctx, domain.RedisDKIMSelectors, domainName)
+	return own, nil
 }
 
 // PushRateLimitLog apila una linea en RL_LOG recortando la lista a maxLen.

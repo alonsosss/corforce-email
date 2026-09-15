@@ -705,6 +705,14 @@ tiene ninguna ruta o si falta `organization` entre los servicios.
   * Un 404 ya no cuenta como hecho: al activar o desactivar, mail-directory da de alta el dominio
     que no tiene, y retirar claves en mail-security responde 204 aunque no esten. Un 404 solo puede
     ser una instancia que no sirve la ruta.
+  * Claves DKIM en los motores de la celda (V, 2026-09-13): solo las de dominios activos en su
+    directorio cuya empresa existe. `domain-service` entrega el juego completo (actual y, en
+    gracia, la anterior) solo de un dominio corporativo verificado, y retira en la celda la clave
+    en gracia antes de olvidarla mientras el dominio este activo o con la desactivacion pendiente.
+    `mail-security` rechaza con 409 `DKIM_DOMAIN_NOT_ACTIVE` las de un dominio que su directorio
+    no tiene activo, retira los selectores que el juego no trae, quita las de un dominio que el
+    directorio desactiva o borra (`mail.domain.*`) y repasa con cerrojo de lider las que queden,
+    tambien las de una empresa que organization ya no conoce. Contrato en `deploy/mail/README.md`.
   * Probado: unitarias de `pkg/tenantcell` (lectura de instancias y sus reglas; eleccion en la celda
     base, en otra celda, celda sin instancia, empresa desconocida, organization caido con la celda
     en cache, sin ella y fuera del margen; una celda sin consultas), de `cellcli` (cada empresa a
@@ -729,6 +737,11 @@ Pendiente (P):
   superadmin, con las celdas de `GET /cells`) manda `X-Target-Cell` en sus peticiones.
 * Traslado de una empresa de celda: el gateway y las instancias de celda lo ven al caducar su
   entrada (5 minutos); falta invalidarla con el evento del traslado.
+* Baja de empresa en su celda: la saga de baja de `organization` no desactiva los dominios de la
+  empresa en el directorio de su celda, que siguen en `DOMAIN_MAP` y recibiendo. Sus claves DKIM
+  salen en el repaso de `mail-security` cuando organization ya no conoce la empresa; falta un paso
+  de la saga que desactive sus dominios (una ruta interna de `mail-directory` por empresa), y con
+  el sus claves saldrian al momento por `mail.domain.*`.
 
 ### 5.5 Webmail por celda (V, 2026-09-13)
 
@@ -767,7 +780,9 @@ otro).
   a `mail-directory`, la verificacion lo devuelve en `integration_errors` ("el dominio ya esta
   activo en otra empresa de la plataforma"), el dominio sigue verificado (el estado sale solo del
   DNS) y el barrido lo repite hasta que la otra empresa lo suelte. Sin respuesta de organization
-  tampoco se activa. Las claves DKIM no dependen del directorio y se publican igual.
+  tampoco se activa. Las claves DKIM solo van a los motores de un dominio activo en el directorio
+  de la celda: con el 409 `domain-service` no las publica, y `mail-security` rechaza las de un
+  dominio que su directorio no tiene activo (5.4, claves DKIM en los motores de la celda).
 * Convergencia: el reclamo va delante de la activacion en cada verificacion y en cada barrido
   (idempotente, sella `updated_at`), asi que los dominios que ya estaban activos entran en el
   indice en el primer barrido tras desplegar. La retirada va detras de la desactivacion

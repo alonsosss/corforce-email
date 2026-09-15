@@ -181,7 +181,7 @@ func TestIntegracionAvisoDeCuarentena(t *testing.T) {
 		reinj := &reinyectorLento{}
 		uc := app.NewQuarantineUseCase(app.QuarantineDeps{Tx: ctxPool, Repo: quarantine, Reinjector: reinj,
 			Events: outboxadapter.NewPublisher(ctxPool), Notices: notices, Links: links, Logger: logger})
-		srv := httptest.NewServer(db.StaticPoolMiddleware(pool)(handler.NewHandler(nil, uc, nil, authz.NewCheckerFromEnv()).Routes()))
+		srv := httptest.NewServer(db.StaticPoolMiddleware(pool)(handler.NewHandler(nil, uc, nil, nil, authz.NewCheckerFromEnv()).Routes()))
 		defer srv.Close()
 		target := func(it domain.QuarantineItem, action domain.QuarantineLinkAction) string {
 			raw := links.URL(domain.QuarantineLinkClaims{TenantID: it.TenantID, MessageID: it.ID, Action: action,
