@@ -69,7 +69,7 @@ en() { local s="$1"; shift; docker exec -i "$(c "$s")" "$@"; }
 # binarios del host.
 compose() {
   CELL_DB_PASSWORD="${CELL_PASS}" MAIL_DB_PASSWORD="$MAIL_DB_PASS" MAIL_REDIS_PASSWORD="$MAIL_REDIS_PASS" \
-    DOVECOT_MASTER_USER="${MASTER_USER}" DOVECOT_MASTER_PASS="$MASTER_PASS" \
+    DOVECOT_MASTER_USER="${MASTER_USER}" DOVECOT_MASTER_PASS="$MASTER_PASS" DOVEADM_API_KEY="${DOVEADM_KEY}" \
     docker compose -p "$PROYECTO" -f "$MAILDIR/docker-compose.mail.yml" -f "$MAILDIR/docker-compose.e2e.yml" "$@"
 }
 
@@ -157,6 +157,8 @@ MAIL_DB_PASS="$(rand_hex 24)"
 MAIL_REDIS_PASS="$(rand_hex 24)"
 MASTER_USER="e2e-webmail"
 MASTER_PASS="$(rand_hex 24)"
+# Clave del API HTTP de doveadm: la reciben Dovecot y mail-security (revocacion en Dovecot).
+DOVEADM_KEY="$(rand_hex 32)"
 export CELL_CODE=pe-01 CELL_DB_NAME=mail_cell_pe_01 DEFAULT_CELL_CODE=pe-01
 export MAIL_MX_HOSTNAME="$MAIL_HOSTNAME" MAIL_SPF_INCLUDE=include:spf.cfm.test MAIL_DMARC_RUA=dmarc@cfm.test
 export MAIL_DNS_RESOLVER="127.0.0.1:$DNS_PORT"
@@ -615,11 +617,93 @@ expect "cerrar sesion" "$WM_CODE" "204"
 wm "$TARRO_ANA" GET /folders
 expect "y la cookie ya no abre el buzon" "$WM_CODE" "401"
 
+echo "== Dovecot deja de aceptar una credencial al momento (mail-security: cache y sesiones)"
+# Dovecot guarda cada inicio correcto en su cache de autenticacion (auth_cache_ttl, 300 s) y no
+# vuelve a preguntar a mail-auth mientras dura, y una sesion IMAP abierta sigue hasta que el cliente
+# se va. mail-security consume mail.mailbox.* y, por el API HTTP de doveadm de la celda (TLS y
+# DOVEADM_API_KEY), vacia la entrada del buzon y cierra sus sesiones cuando deja de poder entrar o
+# cambia su credencial (deploy/mail/README.md, "Revocacion en Dovecot").
+# sesion <nombre> <buzon> <contrasena> <limite>: sesion IMAP en segundo plano (mail_client.py) que
+# escribe LISTA al entrar y CERRADA si Dovecot la corta, o ABIERTA si sigue viva al cumplir el limite.
+declare -A SESION_PID=()
+sesion() {
+  cliente sesion "$2" "$3" --limite "$4" </dev/null >"$WORK/sesion-$1" 2>&1 &
+  SESION_PID[$1]=$!
+}
+sesion_en() { grep -q "$2" "$WORK/sesion-$1" 2>/dev/null; }
+login_rechazado() { [[ "$(cliente login "$1" "$2")" == NO* ]]; }
+login_aceptado() { [[ "$(cliente login "$1" "$2")" == OK ]]; }
+buzon_id() { api GET "/mailboxes?search=$1" && echo "$API_BODY" | jget data.0.id; }
+# revocaciones <flush|kick|fallos>: contadores de mail-security (fallos suma todos los motivos).
+revocaciones() {
+  curl -s "http://127.0.0.1:${PORT[mail-security]}/metrics" | awk -v a="$1" '
+    $1 == "mail_security_dovecot_revocations_total{action=\"" a "\"}" { print $2 }
+    a == "fallos" && $1 ~ /^mail_security_dovecot_revocation_failures_total/ { s += $2 }
+    END { if (a == "fallos") print s + 0 }'
+}
+contains "el API de doveadm exige su clave (401 sin ella)" \
+  "$(cliente doveadm '[["kick",{"mask":["nadie@acme.test"]},"t"]]' --sin-clave </dev/null)" "HTTP 401"
+contains "y con ella solo admite las ordenes de la revocacion (doveadm user: no autorizada)" \
+  "$(cliente doveadm '[["user",{"userMask":["ana@acme.test"]},"t"]]' <<<"$DOVEADM_KEY")" "unAuthorized"
+ANAID=$(buzon_id ana@acme.test) BEAID=$(buzon_id bea@acme.test) CARLAID=$(buzon_id carla@acme.test)
+[[ -n "$ANAID" && -n "$BEAID" && -n "$CARLAID" ]] && ok "ids de ana, bea y carla" || mal "ids de los buzones: '$ANAID' '$BEAID' '$CARLAID'"
+
+# Un cambio que no retira nada (el nombre visible) vacia la cache y no echa a nadie.
+F0=$(revocaciones flush) K0=$(revocaciones kick)
+sesion ana ana@acme.test "$ANA_PASS" 25
+esperar "ana con una sesion IMAP abierta" 30 sesion_en ana LISTA
+api PATCH "/mailboxes/$ANAID" '{"display_name":"Ana P. Perez"}'
+expect "cambiar el nombre visible de ana" "$API_CODE" "200"
+flush_atendido() { (( $(revocaciones flush) > F0 )); }
+esperar "mail-security atiende el evento y solo vacia su cache (mail.mailbox.updated, buzon activo)" 30 flush_atendido
+expect "sin echar a nadie" "$(revocaciones kick)" "$K0"
+esperar "la sesion abierta de ana sigue viva hasta su limite: un cambio de nombre no echa a nadie" 40 sesion_en ana ABIERTA
+lacks "sin que Dovecot la corte" "$(cat "$WORK/sesion-ana")" "CERRADA"
+expect "y ana sigue entrando (mail-auth la vuelve a verificar)" "$(cliente login ana@acme.test "$ANA_PASS")" "OK"
+
+# Apagar un buzon que acaba de entrar. El control, en la base y sin evento, prueba que la cache le
+# seguiria abriendo la puerta: lo que la cierra es el vaciado de mail-security.
+expect "carla entra por IMAP (Dovecot guarda el inicio en su cache)" "$(cliente login carla@acme.test "$CARLA_PASS")" "OK"
+expect "control: carla apagada en la base sin pasar por mail-directory (sin evento)" \
+  "$(sql mail_cell_pe_01 "UPDATE mail.mailboxes SET active = 0 WHERE username = 'carla@acme.test' RETURNING active")" "0"
+expect "y la cache de Dovecot la sigue dejando entrar" "$(cliente login carla@acme.test "$CARLA_PASS")" "OK"
+expect "control deshecho" "$(sql mail_cell_pe_01 "UPDATE mail.mailboxes SET active = 1 WHERE username = 'carla@acme.test' RETURNING active")" "1"
+sesion carla carla@acme.test "$CARLA_PASS" 60
+esperar "carla con una sesion IMAP abierta" 30 sesion_en carla LISTA
+api PATCH "/mailboxes/$CARLAID" '{"active":0}'
+expect "mail-directory apaga a carla" "$API_CODE" "200"
+esperar "Dovecot la rechaza al momento aunque la tenia en su cache (mail-security vacia su entrada)" 20 login_rechazado carla@acme.test "$CARLA_PASS"
+esperar "y su sesion IMAP abierta se cierra (doveadm kick)" 20 sesion_en carla CERRADA
+contains "mail-auth la rechaza por el buzon apagado, no por la contrasena" \
+  "$(docker logs "$(c mail-auth)" 2>&1 | grep '"username":"carla@acme.test"')" "buzon sin inicio de sesion"
+api PATCH "/mailboxes/$CARLAID" '{"active":1}'
+esperar "reactivada, carla vuelve a entrar" 20 login_aceptado carla@acme.test "$CARLA_PASS"
+
+# Cambiar la contrasena de un buzon que acaba de entrar: la anterior deja de valer al momento.
+expect "bea entra por IMAP con su contrasena (queda en la cache)" "$(cliente login bea@acme.test "$BEA_PASS")" "OK"
+sesion bea bea@acme.test "$BEA_PASS" 60
+esperar "bea con una sesion IMAP abierta" 30 sesion_en bea LISTA
+BEA_NUEVA="$(rand_hex 10)Aa1!"
+api POST "/mailboxes/$BEAID/password" "{\"password\":\"$BEA_NUEVA\"}"
+expect "mail-directory cambia la contrasena de bea" "$API_CODE" "204"
+esperar "Dovecot rechaza al momento la anterior, que tenia en su cache" 20 login_rechazado bea@acme.test "$BEA_PASS"
+expect "y acepta la nueva" "$(cliente login bea@acme.test "$BEA_NUEVA")" "OK"
+esperar "la sesion IMAP abierta con la anterior se cierra" 20 sesion_en bea CERRADA
+BEA_PASS="$BEA_NUEVA"
+expect "mail-security sin fallos de revocacion" "$(revocaciones fallos)" "0"
+
 echo "== Baja de la empresa: su correo deja de entrar y de autenticar en la celda"
 # La saga de baja de organization da de baja a acme en el mail-directory de su celda antes de
 # retirarla del registro: los mapas de Postfix dejan de servir su dominio, su dominio alias, sus
 # buzones y sus aliases, Dovecot deja de autenticar a sus buzones (mail-auth) y mail-security saca
 # sus dominios de DOMAIN_MAP y retira sus claves DKIM con los eventos del directorio.
+expect "ana entra por IMAP antes de la baja (queda en la cache de Dovecot)" "$(cliente login ana@acme.test "$ANA_PASS")" "OK"
+sesion ana-baja ana@acme.test "$ANA_PASS" 120
+esperar "y con una sesion IMAP abierta" 30 sesion_en ana-baja LISTA
+# ana_kicks: veces que mail-security vacio la cache de ana y cerro sus sesiones por un cambio que le
+# quita el acceso (su registro, "credencial del buzon retirada de Dovecot").
+ana_kicks() { docker logs "$(c mail-security)" 2>&1 | grep -c '"username":"ana@acme.test","change":"updated","action":"kick"'; }
+ANA_KICKS0=$(ana_kicks)
 AS="Authorization: Bearer $(e2e_login "$ADMIN_EMAIL" "$ADMIN_PASS" | jget data.access_token)"
 expect "el superadmin deja a acme inactiva" \
   "$(curl -s -X PATCH "$GW/organizations/$TID" -H "$AS" -H 'Content-Type: application/json' -d '{"status":"inactive"}' | jget data.status)" "inactive"
@@ -628,13 +712,18 @@ mapa pgsql_virtual_domains_maps acme.test ""
 mapa pgsql_virtual_domains_maps acme-alias.test ""
 mapa pgsql_virtual_mailbox_maps ana@acme.test ""
 mapa pgsql_virtual_alias_maps ventas@acme.test ""
-# Dovecot guarda cada inicio correcto en su cache de autenticacion (auth_cache_ttl, 300 s, por
-# servicio, buzon y contrasena): ana, que entro hace menos, seguiria entrando hasta que caduque
-# (Modelo_de_Datos_y_Celdas.md 5.4, pendiente). carla no tiene entrada en la cache: Dovecot pregunta
-# a mail-auth, que reconoce su contrasena y la rechaza porque el buzon esta apagado.
-contains "Dovecot ya no deja entrar a carla por IMAP (passwd-verify.lua -> mail-auth)" "$(cliente login carla@acme.test "$CARLA_PASS")" "NO"
+# La baja apaga el buzon de ana (mail.mailbox.updated): mail-security vacia su entrada en la cache
+# de Dovecot y cierra su sesion, sin esperar a auth_cache_ttl. El sondeo espera a ese vaciado: un
+# intento anterior lo responde Dovecot desde su cache, y como el directorio ya no sirve a ana, falla
+# en la busqueda del usuario (un error en su registro) sin llegar a mail-auth.
+ana_expulsada() { (( $(ana_kicks) > ANA_KICKS0 )); }
+esperar "mail-security vacia la cache de ana y cierra sus sesiones tras la baja" 20 ana_expulsada
+esperar "Dovecot deja de aceptar a ana al momento aunque la tenia en su cache" 20 login_rechazado ana@acme.test "$ANA_PASS"
 contains "mail-auth la rechaza por el buzon apagado, no por la contrasena" \
-  "$(docker logs "$(c mail-auth)" 2>&1 | grep '"username":"carla@acme.test"')" "buzon sin inicio de sesion"
+  "$(docker logs "$(c mail-auth)" 2>&1 | grep '"username":"ana@acme.test"')" "buzon sin inicio de sesion"
+esperar "y su sesion IMAP abierta se cierra" 20 sesion_en ana-baja CERRADA
+# Ningun cliente de sesion sigue vivo cuando se derriba la red de los motores.
+wait "${SESION_PID[@]}" 2>/dev/null
 fuera_de_domain_map() { [[ -z "$(redis_mail HGET DOMAIN_MAP acme.test)" && -z "$(redis_mail HGET DOMAIN_MAP acme-alias.test)" ]]; }
 esperar "mail-security saca acme.test y su dominio alias de DOMAIN_MAP" 60 fuera_de_domain_map
 sin_dkim() { [[ -z "$(redis_mail HGET DKIM_SELECTORS acme.test)" && "$(redis_mail HEXISTS DKIM_PRIV_KEYS "$SELECTOR.acme.test")" == 0 ]]; }

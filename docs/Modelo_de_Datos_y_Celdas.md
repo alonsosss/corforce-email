@@ -758,8 +758,9 @@ tiene ninguna ruta o si falta `organization` entre los servicios.
     `mail.mailbox.updated`, `mail.alias.updated`): mail-security lo saca de `DOMAIN_MAP` y retira sus
     claves DKIM al momento, y el webmail cierra las sesiones de los buzones. Postfix deja de aceptar
     el dominio y de entregar a sus buzones por sus mapas `pgsql:`, y `mail-auth` deja de autenticar
-    a sus buzones (Dovecot, submission y webmail); Dovecot, eso si, sigue aceptando hasta
-    `auth_cache_ttl` (300 s) al cliente que entro en ese tiempo con la misma contrasena (P). Responde
+    a sus buzones (Dovecot, submission y webmail), y mail-security vacia la cache de autenticacion
+    de Dovecot de cada buzon apagado y cierra sus sesiones (V, 2026-09-15; `deploy/mail/README.md`,
+    "Revocacion en Dovecot"). Responde
     200 `{tenant_id, retired_at,
     deactivated: {domains, alias_domains, mailboxes, aliases, app_passwords, relayhosts,
     transports, tls_policies, recipient_maps, bcc_maps}}` con lo que apago esa llamada; repetirla
@@ -791,8 +792,9 @@ tiene ninguna ruta o si falta `organization` entre los servicios.
     apagados en `mail_cell_pe_02`, eva deja de autenticar en el mail-auth de su celda, la
     activacion ya no enciende el dominio y otra empresa lo reclama); `make e2e-mail` (acme: los
     mapas de Postfix dejan de servir su dominio, su dominio alias, su buzon y su alias, Dovecot deja
-    de autenticar a un buzon sin entrada en su cache, al que mail-auth rechaza por apagado, y
-    mail-security retira `DOMAIN_MAP` y las claves DKIM).
+    de autenticar al momento a un buzon que acababa de entrar, con su entrada en la cache, al que
+    mail-auth rechaza por apagado, y cierra su sesion IMAP abierta, y mail-security retira
+    `DOMAIN_MAP` y las claves DKIM).
 
 Pendiente (P):
 
@@ -808,14 +810,14 @@ Pendiente (P):
 * Purga del directorio de una empresa dada de baja al terminar la retencion (una operacion con
   respaldo previo, como la de su base). Mientras tanto sus dominios siguen ocupando el nombre en
   su celda: otra empresa de la misma celda no puede activarlos (otra celda si).
-* Dovecot con un buzon apagado (por la baja de su empresa o uno a uno) o con la contrasena
-  cambiada: guarda cada inicio correcto en su cache de autenticacion (`auth_cache_ttl`, 300 s, por
-  servicio, buzon y contrasena) y sigue aceptando al cliente que entro en ese tiempo sin preguntar
-  a mail-auth, y las sesiones IMAP y POP3 abiertas siguen hasta que el cliente vuelve a
-  autenticarse. `make e2e-mail` comprueba la baja con un buzon sin entrada en la cache. Falta que el
-  servicio de celda que habla con los motores (mail-security) vacie esa entrada y cierre las
-  sesiones (`doveadm auth cache flush` y `doveadm kick`) al recibir `mail.mailbox.updated` o
-  `mail.mailbox.credentials_changed`.
+* Revocacion en Dovecot de una contrasena de aplicacion o de un protocolo: mail-security vacia la
+  cache de autenticacion y cierra las sesiones de un buzon con cada evento de buzon (V, 2026-09-15,
+  `deploy/mail/README.md`), pero mail-directory no publica evento al desactivar o borrar una
+  contrasena de aplicacion, que sigue valiendo en la cache de Dovecot hasta `auth_cache_ttl`, y
+  `mail.v_routing_mailboxes` no publica los flags de protocolo, asi que retirar uno vacia la cache
+  sin cerrar la sesion abierta de ese protocolo. Falta que mail-directory publique
+  `mail.mailbox.credentials_changed` en esos casos (el consumidor ya lo atiende) o los flags en la
+  vista.
 
 ### 5.5 Webmail por celda (V, 2026-09-13)
 

@@ -21,6 +21,7 @@ import (
 	"github.com/alonsosss/corforce-email/pkg/response"
 	"github.com/alonsosss/corforce-email/pkg/server"
 	"github.com/alonsosss/corforce-email/pkg/tenantcell"
+	"github.com/alonsosss/corforce-email/services/mail-security/internal/adapters/doveadm"
 	handler "github.com/alonsosss/corforce-email/services/mail-security/internal/adapters/http"
 	natsadapter "github.com/alonsosss/corforce-email/services/mail-security/internal/adapters/nats"
 	"github.com/alonsosss/corforce-email/services/mail-security/internal/adapters/organizationcli"
@@ -53,6 +54,7 @@ const (
 	defaultReinjectPort      = 590
 	defaultControllerURL     = "http://rspamd:11334"
 	defaultPipeMaxBodyMiB    = 50
+	defaultDoveadmURL        = "https://dovecot:8443"
 
 	// outboxRetention conserva lo publicado lo mismo que el stream (EnsureStream: 7 dias).
 	outboxRetention = 7 * 24 * time.Hour
@@ -108,6 +110,26 @@ func engineListener(port int, h http.Handler, readTimeout time.Duration) *http.S
 	}
 }
 
+// doveadmFromEnv lee el API HTTP de doveadm de la celda. Sin DOVEADM_API_KEY solo arranca con
+// ENVIRONMENT=development|test, sin revocacion en Dovecot; en cualquier otro entorno no arranca:
+// un buzon apagado seguiria entrando con la cache de Dovecot y sus sesiones abiertas seguirian.
+func doveadmFromEnv(logger *zap.Logger) (*doveadm.Client, error) {
+	key := strings.TrimSpace(os.Getenv("DOVEADM_API_KEY"))
+	if key == "" {
+		if config.DeclaredDevelopmentOrTest() {
+			logger.Warn("revocacion en Dovecot desactivada: falta DOVEADM_API_KEY (solo development o test)")
+			return nil, nil
+		}
+		return nil, errors.New("DOVEADM_API_KEY es obligatoria fuera de ENVIRONMENT=development|test")
+	}
+	return doveadm.New(doveadm.Config{
+		BaseURL:    envOrDefault("DOVEADM_API_URL", defaultDoveadmURL),
+		APIKey:     key,
+		ServerName: envOrDefault("DOVEADM_API_TLS_SERVER_NAME", strings.TrimSpace(os.Getenv("MAIL_HOSTNAME"))),
+		CAFile:     strings.TrimSpace(os.Getenv("DOVEADM_API_TLS_CA_FILE")),
+	})
+}
+
 func main() {
 	logger, _ := zap.NewProduction()
 	defer logger.Sync()
@@ -120,6 +142,10 @@ func main() {
 	membership, err := tenantcell.MembershipFromEnv(logger)
 	if err != nil {
 		log.Fatalf("celda de la instancia: %v", err)
+	}
+	engineSessions, err := doveadmFromEnv(logger)
+	if err != nil {
+		log.Fatalf("revocacion en Dovecot: %v", err)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -180,10 +206,11 @@ func main() {
 	if err != nil {
 		log.Fatalf("claves DKIM: %v", err)
 	}
+	metrics := promadapter.New()
 	dkimUC := app.NewDKIMUseCase(app.DKIMDeps{
 		Directory: directory, Lock: postgres.NewDKIMLock(ctxPool), Sync: redisSync, Logger: logger,
 		Tenants: organizationcli.New(tenantcell.NewResolver(strings.TrimSpace(os.Getenv("ORGANIZATION_URL")), orgToken, logger)),
-		Metrics: promadapter.New(),
+		Metrics: metrics,
 	})
 
 	// Enlaces sin sesion del aviso de cuarentena: firmados con MAIL_LINK_SIGNING_KEY,
@@ -226,6 +253,12 @@ func main() {
 	go app.NewReconciler(redisSync, policyReader, quarantineRepo,
 		envDuration("MAIL_REDIS_RECONCILE_INTERVAL", defaultReconcileInterval), logger).Run(withPool(ctx))
 	go natsadapter.NewDirectoryConsumer(bus, redisSync, dkimUC, policyReader, withPool, logger).Run(ctx)
+	// Revocacion en Dovecot: con cada evento de buzon vacia su cache de autenticacion y, si ya no
+	// puede entrar o cambio su credencial, cierra sus sesiones (deploy/mail/README.md).
+	if engineSessions != nil {
+		revoker := app.NewSessionRevoker(app.SessionRevokerDeps{Directory: directory, Engine: engineSessions, Metrics: metrics, Logger: logger})
+		go natsadapter.NewSessionConsumer(bus, revoker, withPool, logger).Run(ctx)
+	}
 	go dkimUC.RunReconciler(withPool(ctx), envDuration("MAIL_DKIM_RECONCILE_INTERVAL", defaultDKIMReconcileInterval),
 		func(c context.Context) (func(), bool) { return db.TryLeaderLock(c, pool.Pool, dkimReconcileLockKey) })
 

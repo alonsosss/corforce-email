@@ -7,9 +7,12 @@ real. Una linea de resultado por orden: OK ..., NO ... o RECHAZO <fase> <codigo>
 `buscar` anade despues las cabeceras del primer mensaje encontrado.
 """
 import argparse
+import base64
 import email.utils
+import http.client
 import imaplib
 import smtplib
+import socket
 import ssl
 import sys
 import time
@@ -96,6 +99,55 @@ def orden_buscar(args):
     print(cabeceras)
 
 
+def orden_sesion(args):
+    """Abre una sesion IMAP y la mantiene con NOOP: LISTA al entrar, CERRADA si el servidor la
+    corta y ABIERTA si sigue viva al cumplir el limite."""
+    try:
+        c = imap(args)
+        c.login(usuario(args), args.clave)
+        c.select("INBOX", readonly=True)
+    except imaplib.IMAP4.error as e:
+        print(f"NO {e}", flush=True)
+        return
+    print("LISTA", flush=True)
+    inicio = time.time()
+    while time.time() - inicio < args.limite:
+        time.sleep(1)
+        try:
+            c.noop()
+        except (imaplib.IMAP4.abort, OSError) as e:
+            print(f"CERRADA {int(time.time() - inicio)}s {e}", flush=True)
+            return
+    print("ABIERTA", flush=True)
+    c.logout()
+
+
+class HTTPSNombre(http.client.HTTPSConnection):
+    """HTTPS que verifica el nombre del certificado y no la direccion conectada."""
+
+    def __init__(self, host, port, contexto, nombre):
+        super().__init__(host, port, context=contexto, timeout=30)
+        self._nombre = nombre
+
+    def connect(self):
+        sock = socket.create_connection((self.host, self.port), self.timeout)
+        self.sock = self._context.wrap_socket(sock, server_hostname=self._nombre)
+
+
+def orden_doveadm(args):
+    """Llama al API HTTP de doveadm con la clave que llega por la entrada estandar (con
+    --sin-clave, sin cabecera Authorization). Escribe HTTP <codigo> <cuerpo>."""
+    cabeceras = {"Content-Type": "application/json"}
+    if not args.sin_clave:
+        clave = sys.stdin.readline().strip()
+        cabeceras["Authorization"] = "X-Dovecot-API " + base64.b64encode(clave.encode()).decode()
+    conn = HTTPSNombre(args.doveadm_host, args.doveadm_puerto, contexto(args), args.nombre)
+    conn.request("POST", "/doveadm/v1", body=args.ordenes.encode(), headers=cabeceras)
+    r = conn.getresponse()
+    print(f"HTTP {r.status} {r.read().decode('utf-8', 'replace')}")
+    conn.close()
+
+
 def orden_enviar(args):
     msg = EmailMessage()
     msg["From"] = args.de
@@ -146,6 +198,8 @@ def main():
     p.add_argument("--imap-puerto", type=int, default=993)
     p.add_argument("--smtp-host", default="postfix")
     p.add_argument("--smtp-puerto", type=int, default=587)
+    p.add_argument("--doveadm-host", default="dovecot")
+    p.add_argument("--doveadm-puerto", type=int, default=8443)
     sub = p.add_subparsers(dest="orden", required=True)
 
     o = sub.add_parser("login")
@@ -163,6 +217,18 @@ def main():
     o.add_argument("--espera", type=int, default=60)
     o.add_argument("--estable", type=int, default=0)
     o.set_defaults(fn=orden_buscar)
+
+    o = sub.add_parser("sesion")
+    o.add_argument("usuario")
+    o.add_argument("clave")
+    o.add_argument("--maestro", default="")
+    o.add_argument("--limite", type=int, default=60)
+    o.set_defaults(fn=orden_sesion)
+
+    o = sub.add_parser("doveadm")
+    o.add_argument("ordenes")
+    o.add_argument("--sin-clave", action="store_true")
+    o.set_defaults(fn=orden_doveadm)
 
     o = sub.add_parser("enviar")
     o.add_argument("login")

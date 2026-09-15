@@ -238,6 +238,20 @@ type DKIMReconcileMetrics interface {
 	DKIMReconciled(at time.Time)
 }
 
+// EngineSessions es Dovecot visto desde este servicio: su API de administracion de la celda.
+type EngineSessions interface {
+	// ForgetCredentials vacia la cache de autenticacion del buzon y, con kick, cierra despues sus
+	// sesiones abiertas. Idempotente: un buzon sin entradas ni sesiones no es un error. Los errores
+	// envuelven domain.ErrEngineUnreachable, ErrEngineRejected o ErrEngineCommand.
+	ForgetCredentials(ctx context.Context, username string, kick bool) error
+}
+
+// SessionRevocationMetrics cuenta la revocacion de credenciales en Dovecot.
+type SessionRevocationMetrics interface {
+	SessionsRevoked(action domain.SessionAction)
+	SessionRevocationFailed(reason domain.SessionRevocationFailure)
+}
+
 // EventPublisher encola los eventos del servicio en la outbox de la celda por la
 // transaccion del contexto: se llama DENTRO de ella y su error la revierte, de modo que
 // el evento existe si y solo si existe el cambio que lo origina.

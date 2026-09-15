@@ -484,3 +484,23 @@ groups:
         annotations:
           resumen: "El repaso DKIM de {{ $labels.service }} no obtiene de organization la empresa de sus dominios"
           detalle: "Las claves de las empresas sin respuesta se conservan, tambien las de una empresa ya dada de baja. La segunda barrera de la celda pregunta a organization por la misma ruta y rechaza con 503 a las empresas que no tiene en cache. Revisar organization, ORGANIZATION_URL y el token interno de {{ $labels.service }} y la red entre los dos."
+
+  # Revocacion en Dovecot desde mail-security: con cada evento de buzon (mail.mailbox.*) vacia la
+  # cache de autenticacion del buzon y, si ya no puede entrar o cambio su credencial, cierra sus
+  # sesiones por el API HTTP de doveadm de la celda. Un fallo deja el evento sin confirmar y
+  # JetStream lo reentrega cada 90 s; tras 20 entregas, unos 30 minutos, pasa a EVENTS_DLQ.
+  - name: revocacion-en-dovecot
+    rules:
+      # Un fallo suelto que la reentrega resuelve no avisa: la ventana (5 min) cubre tres
+      # reentregas y la espera (10 min) exige que sigan fallando unas siete de las veinte, con
+      # tiempo antes de que el evento acabe en EVENTS_DLQ. Mientras dura, un buzon apagado o con la
+      # credencial cambiada conserva sus sesiones abiertas y entra con la credencial vieja hasta
+      # auth_cache_ttl (300 s): severidad alta.
+      - alert: RevocacionEnDovecotFallida
+        expr: sum by (service, reason) (increase(mail_security_dovecot_revocation_failures_total[5m])) > 0
+        for: 10m
+        labels:
+          severidad: alta
+        annotations:
+          resumen: "{{ $labels.service }} no consigue retirar credenciales de Dovecot ({{ $labels.reason }})"
+          detalle: "Los buzones apagados, borrados o con la credencial cambiada conservan sus sesiones IMAP y POP3 abiertas y siguen entrando con la credencial vieja hasta que caduca la cache de Dovecot (auth_cache_ttl, 300 s). unreachable: Dovecot o su listener 8443 no responden (contenedor dovecot-mail, red mail-engines, DOVEADM_API_URL). rejected: DOVEADM_API_KEY distinta en Dovecot y en {{ $labels.service }}, una orden fuera de doveadm_allowed_commands o un certificado que no casa con DOVEADM_API_TLS_SERVER_NAME. command: la orden fallo dentro de Dovecot (su registro). directory: la base de la celda no responde. Tras unos 30 minutos el evento pasa a EVENTS_DLQ (dlq.mail.mailbox.*): reproducirlo, o ejecutar en dovecot-mail doveadm auth cache flush y doveadm kick con el buzon que nombra el registro de {{ $labels.service }} (revocacion en Dovecot no aplicada)."

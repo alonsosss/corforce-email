@@ -111,6 +111,10 @@ services:
       MAIL_LINK_SIGNING_KEY: ${MAIL_LINK_SIGNING_KEY:?lo fija ops/e2e/mail.sh}
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:?lo fija ops/e2e/mail.sh}
       ORGANIZATION_URL: http://host.docker.internal:${E2E_PORT_ORGANIZATION:?lo fija ops/e2e/mail.sh}
+      DOVEADM_API_KEY: ${DOVEADM_API_KEY:?lo fija ops/e2e/mail.sh}
+      DOVEADM_API_TLS_CA_FILE: /run/cfm-e2e/tls/ca.pem
+    volumes:
+      - ${E2E_TLS_DIR:?lo fija ops/e2e/mail.sh}/ca.pem:/run/cfm-e2e/tls/ca.pem:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:

@@ -6,7 +6,7 @@ Convencion de subject: `<dominio>.<entidad>.<accion>`. Un subject tiene UN dueno
 Publicar incluye encolar en la outbox (`outbox.Enqueue`); un consumidor con comodin
 (`*`, `>`) figura en cada subject publicado que recibe.
 
-Resumen: 78 publicaciones, 34 suscripciones, 78 subjects distintos.
+Resumen: 78 publicaciones, 35 suscripciones, 78 subjects distintos.
 
 ## Cruce por subject (dueno -> consumidores)
 
@@ -133,7 +133,7 @@ Resumen: 78 publicaciones, 34 suscripciones, 78 subjects distintos.
 
 ### mail-security
 - Publica: `mail_security.quarantine.released`, `mail_security.quarantine.stored`
-- Consume: `mail.>`
+- Consume: `mail.>`, `mail.mailbox.>`
 
 ### organization
 - Publica: `organization.tenant.created`, `organization.tenant.modules_changed`, `organization.tenant.status_changed`

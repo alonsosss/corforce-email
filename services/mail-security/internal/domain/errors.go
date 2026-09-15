@@ -27,6 +27,12 @@ var (
 	// ErrDKIMDomainNotActive: la celda no sirve el dominio (no esta en su directorio o no esta
 	// activo) y sus claves DKIM no entran en los motores.
 	ErrDKIMDomainNotActive = errors.New("el dominio no esta activo en el directorio de la celda")
+	// ErrEngineUnreachable: el API de administracion de un motor no responde (red, plazo, 5xx).
+	ErrEngineUnreachable = errors.New("el motor no responde")
+	// ErrEngineRejected: el motor rechaza la llamada (credencial, orden no permitida, certificado).
+	ErrEngineRejected = errors.New("el motor rechaza la llamada")
+	// ErrEngineCommand: la orden fallo dentro del motor o su respuesta no se entiende.
+	ErrEngineCommand = errors.New("la orden fallo en el motor")
 )
 
 // ValidationError lleva el detalle de una entrada rechazada.

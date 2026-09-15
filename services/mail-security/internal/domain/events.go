@@ -14,4 +14,12 @@ const (
 	DirectoryStreamName     = "MAIL_DIRECTORY"
 	DirectorySubjectPattern = "mail.>"
 	DirectoryConsumer       = "mail-security-redis"
+
+	// Consumidor durable aparte de los eventos de buzon que revocan credenciales en Dovecot: un
+	// Dovecot caido reentrega solo estos y no retiene los de Redis.
+	MailboxSubjectPattern            = "mail.mailbox.>"
+	SessionsConsumer                 = "mail-security-dovecot"
+	SubjectMailboxUpdated            = "mail.mailbox.updated"
+	SubjectMailboxDeleted            = "mail.mailbox.deleted"
+	SubjectMailboxCredentialsChanged = "mail.mailbox.credentials_changed"
 )

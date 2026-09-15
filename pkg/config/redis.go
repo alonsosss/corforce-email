@@ -2,7 +2,6 @@ package config
 
 import (
 	"crypto/tls"
-	"crypto/x509"
 	"errors"
 	"fmt"
 	"os"
@@ -62,22 +61,10 @@ func (t RedisTLS) ClientConfig() (*tls.Config, error) {
 	if !t.Enabled {
 		return nil, nil
 	}
-	cfg := &tls.Config{MinVersion: tls.VersionTLS12, ServerName: t.ServerName}
-	if t.CAFile == "" {
-		return cfg, nil
-	}
-	pem, err := os.ReadFile(t.CAFile)
+	cfg, err := ClientTLS(t.ServerName, t.CAFile)
 	if err != nil {
-		return nil, fmt.Errorf("redis TLS CA file: %w", err)
+		return nil, fmt.Errorf("redis TLS: %w", err)
 	}
-	pool, err := x509.SystemCertPool()
-	if err != nil || pool == nil {
-		pool = x509.NewCertPool()
-	}
-	if !pool.AppendCertsFromPEM(pem) {
-		return nil, fmt.Errorf("redis TLS CA file %s holds no PEM certificate", t.CAFile)
-	}
-	cfg.RootCAs = pool
 	return cfg, nil
 }
 

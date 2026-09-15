@@ -207,7 +207,7 @@ renderizar o previsualizar una plantilla, previsualizar un segmento) se declaran
 Las denegaciones se cuentan en `rbac_denials_total` y se guardan en
 `access_control.access_denials`.
 
-## 5. Cuentas de correo frente a usuarios de la plataforma (V; P contra motores reales)
+## 5. Cuentas de correo frente a usuarios de la plataforma (V)
 
 Un **usuario** de la plataforma (identity) administra; un **buzon** (`mail.mailboxes`) es
 una cuenta de correo con su propia contrasena y contrasenas de aplicacion, verificadas por
@@ -233,8 +233,15 @@ varias celdas el gateway lleva el inicio de sesion a la celda del dominio del bu
 la celda del token de la cookie, que enruta y no autoriza: cada instancia solo acepta tokens de
 su celda (V, 2026-09-13; `Modelo_de_Datos_y_Celdas.md` 5.5). Las
 sesiones de un buzon se revocan al actualizarse o borrarse (`mail.mailbox.updated`,
-`mail.mailbox.deleted`) y al cambiar su contrasena (`mail.mailbox.credentials_changed`, P
-hasta que mail-directory lo emita). P: la verificacion contra Dovecot y Postfix reales.
+`mail.mailbox.deleted`) y al cambiar su contrasena (`mail.mailbox.credentials_changed`).
+
+V (2026-09-15, contra Dovecot y Postfix reales con `make e2e-mail`): Dovecot deja de aceptar al
+momento la credencial de un buzon apagado, borrado o con la contrasena cambiada, aunque la tuviera
+en su cache de autenticacion, y cierra sus sesiones IMAP y POP3 abiertas: mail-security consume
+`mail.mailbox.*`, vacia su entrada y lo echa por el API HTTP de doveadm de la celda
+(`deploy/mail/README.md`, "Revocacion en Dovecot"). Un cambio que no le retira nada (cuota, nombre
+visible) solo vacia la cache, sin echarlo. P: una contrasena de aplicacion desactivada o borrada no
+publica evento y sigue valiendo en la cache de Dovecot hasta `auth_cache_ttl` (300 s).
 
 ## 6. Auditoria de acceso (V)
 

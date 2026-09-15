@@ -23,6 +23,7 @@ Cada servicio expone `/metrics` en su propio puerto, en formato Prometheus:
 | `rate_limit_degraded_total{limiter}` | Decisiones de un limitador compartido (`gateway:api`, `gateway:auth`) tomadas en memoria del proceso porque Redis no respondia: mientras crece, cada replica aplica su propio cupo (`docs/arquitectura/CSP-Y-SESION.md`). |
 | `cell_routing_failures_total{cell_service,reason}`, `cell_call_failures_total{cell_service,reason}`, `cell_target_refusals_total`, `cell_membership_refusals_total`, `cell_resolution_stale_total` | Enrutado por celda: peticiones que el gateway o domain-service no enviaron a ninguna celda (`cell_service` es el servicio de celda de destino), celdas destino rechazadas, empresas que una instancia rechazo y resoluciones servidas con la ultima celda conocida (`Modelo_de_Datos_y_Celdas.md`, 5.4). Nacen a cero al arrancar. |
 | `mail_security_dkim_reconcile_removals_total{reason}`, `mail_security_dkim_reconcile_unresolved_total`, `mail_security_dkim_reconcile_last_success_timestamp_seconds` | Repaso de las claves DKIM de los motores en mail-security: dominios a los que retiro las claves (`not_served`, `tenant_gone`), dominios que conservo porque organization no dio su empresa, e instante de su ultima pasada completa (0 si ninguna desde el arranque). Los contadores nacen a cero. |
+| `mail_security_dovecot_revocations_total{action}`, `mail_security_dovecot_revocation_failures_total{reason}` | Revocacion en Dovecot desde mail-security (`deploy/mail/README.md`): buzones cuya credencial retiro por un evento del directorio (`flush`, cache de autenticacion vaciada; `kick`, ademas sesiones cerradas) y fallos que esperan la reentrega del evento (`unreachable`, `rejected`, `command`, `directory`). Nacen a cero. |
 | `go_*`, `process_*` | Memoria, goroutines, arranques del proceso (detecta reinicios en bucle). |
 
 La identidad del servicio **no** viaja dentro de la metrica: la aporta el recolector desde
@@ -108,7 +109,7 @@ familia: disponibilidad (servicio caido, reinicios en bucle), version desplegada
 compilada en el servidor), trafico (errores 5xx, latencia), base de datos (pool al limite,
 esperas), seguridad (pico de denegaciones RBAC), host (disco, memoria, CPU, robo de CPU, swap),
 chat, vigilancia del propio aviso, parcheado del host, limites de peticiones (limitador sin
-Redis), celdas y claves DKIM (abajo).
+Redis), celdas, claves DKIM y revocacion en Dovecot (abajo).
 
 Una alerta mal escrita no falla: se queda callada. Las reglas nuevas llevan su prueba de
 promtool en `ops/observability/prometheus/tests/<alerta>_test.yml`, que `make check-alertas`
@@ -148,6 +149,17 @@ de esto corta el correo: las tres son de severidad media.
 Las dos ultimas cuentan con el intervalo por defecto: si se alarga `MAIL_DKIM_RECONCILE_INTERVAL`,
 el umbral de `RepasoDKIMDetenido` debe seguir siendo cuatro intervalos y su espera uno, y la
 ventana de `RepasoDKIMSinOrganization` mas de un intervalo y su espera cuatro.
+
+### Revocacion en Dovecot
+
+Con cada evento `mail.mailbox.*` mail-security vacia la cache de autenticacion de Dovecot del buzon
+y, si ya no puede entrar o cambio su credencial, cierra sus sesiones (`deploy/mail/README.md`). Un
+fallo deja el evento sin confirmar y JetStream lo reentrega cada 90 s; tras 20 entregas, unos 30
+minutos, pasa a `EVENTS_DLQ`.
+
+| Alerta | Cuando | Espera | Severidad | Por que |
+|---|---|---|---|---|
+| `RevocacionEnDovecotFallida` | sube `mail_security_dovecot_revocation_failures_total` en cada ventana de 5 min, por motivo | 10 min | alta | Un fallo suelto que la reentrega resuelve no avisa; unas siete reentregas fallidas si, antes de que el evento acabe en `EVENTS_DLQ`. Mientras dura, un buzon apagado o con la credencial cambiada conserva sus sesiones y entra con la credencial vieja hasta `auth_cache_ttl` (300 s). `rejected` es configuracion: `DOVEADM_API_KEY` distinta en los dos lados, una orden fuera de `doveadm_allowed_commands` o el certificado. |
 
 ### Entrega de las alertas
 

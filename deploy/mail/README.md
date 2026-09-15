@@ -111,7 +111,7 @@ Comunes a casi todos: `TZ`, `LOG_LINES`, `IPV4_NETWORK` (por defecto `172.22.1`)
 | Contenedor | Variables propias |
 |---|---|
 | `postfix-mail` | `MAIL_HOSTNAME`, `MAIL_DB_HOST`, `MAIL_DB_PORT`, `MAIL_DB_NAME`, `MAIL_DB_USER`, `MAIL_DB_PASSWORD`, `MAIL_POLICY_HOST`, `SKIP_LETS_ENCRYPT`, `SPAMHAUS_DQS_KEY`, `SPAMHAUS_ASN_CHECK_URL` |
-| `dovecot-mail` | `MAIL_HOSTNAME`, `MAIL_DB_*`, `MAIL_AUTH_URL`, `DOVECOT_MASTER_USER`, `DOVECOT_MASTER_PASS`, `DOVECOT_MASTER_ALLOWED_NETS`, `MAIL_REPLICA_IP`, `DOVEADM_REPLICA_PORT`, `MAILDIR_GC_TIME`, `ACL_ANYONE`, `SKIP_FTS`, `FTS_HEAP`, `FTS_PROCS`, `MAILDIR_SUB`, `MASTER`, `COMPOSE_PROJECT_NAME` |
+| `dovecot-mail` | `MAIL_HOSTNAME`, `MAIL_DB_*`, `MAIL_AUTH_URL`, `DOVECOT_MASTER_USER`, `DOVECOT_MASTER_PASS`, `DOVECOT_MASTER_ALLOWED_NETS`, `DOVEADM_API_KEY`, `MAIL_REPLICA_IP`, `DOVEADM_REPLICA_PORT`, `MAILDIR_GC_TIME`, `ACL_ANYONE`, `SKIP_FTS`, `FTS_HEAP`, `FTS_PROCS`, `MAILDIR_SUB`, `MASTER`, `COMPOSE_PROJECT_NAME` |
 | `rspamd-mail` | `MAIL_POLICY_HOST`, `SPAMHAUS_DQS_KEY`, `SKIP_OLEFY` |
 | `acme-mail` | `MAIL_HOSTNAME`, `MAIL_DB_*`, `ADDITIONAL_SAN`, `AUTODISCOVER_SAN`, `SKIP_LETS_ENCRYPT`, `DIRECTORY_URL`, `ENABLE_SSL_SNI`, `SKIP_IP_CHECK`, `SKIP_HTTP_VERIFICATION`, `ONLY_MAIL_HOSTNAME`, `LE_STAGING`, `SNAT_TO_SOURCE`, `SNAT6_TO_SOURCE`, `ACME_DNS_CHALLENGE`, `ACME_DNS_PROVIDER`, `ACME_ACCOUNT_EMAIL`, `COMPOSE_PROJECT_NAME` |
 | `watchdog-mail` | `MAIL_HOSTNAME`, `USE_WATCHDOG`, `WATCHDOG_NOTIFY_EMAIL`, `WATCHDOG_NOTIFY_BAN`, `WATCHDOG_NOTIFY_START`, `WATCHDOG_SUBJECT`, `WATCHDOG_NOTIFY_WEBHOOK`, `WATCHDOG_NOTIFY_WEBHOOK_BODY`, `WATCHDOG_VERBOSE`, `IP_BY_DOCKER_API`, `CHECK_UNBOUND`, `SKIP_CLAMD`, `SKIP_OLEFY`, `SKIP_LETS_ENCRYPT`, `*_THRESHOLD`, `MAILQ_CRIT`, `DEV_MODE`, `COMPOSE_PROJECT_NAME` |
@@ -138,7 +138,8 @@ Publicados: 25 (SMTP), 465 (SMTPS), 587 (submission), 143/993 (IMAP), 110/995
 (POP3), 4190 (ManageSieve). Internos: postfix 588 (submission interna sin TLS
 obligatorio, `submission_host` de Dovecot y avisos de cuota), 590 (reinyeccion
 de cuarentena), 591 (copias BCC), 589 (watchdog), 10025/10465/10587 (HAProxy);
-dovecot 24 (LMTP), 10001 (SASL para Postfix), 12345 (doveadm); rspamd 9900
+dovecot 24 (LMTP), 10001 (SASL para Postfix), 12345 (doveadm), 8443 (API HTTP de doveadm con
+TLS, solo con `DOVEADM_API_KEY`); rspamd 9900
 (milter), 11332-11334 y `/var/lib/rspamd/rspamd.sock`; postfix-tlspol 8642;
 clamd 3310; olefy 10055; dockerapi 443.
 
@@ -162,7 +163,8 @@ Cualquier otro codigo o un JSON invalido se trata como fallo de contrasena
 usuario. El servicio debe validar contrasena principal y `mail.app_passwords`
 (acotadas por `service`), respetar `mailboxes.active = 1` y los flags
 `imap_access`/`pop3_access`/`smtp_access`/`sieve_access`, y registrar el login en
-`mail.sasl_logins`. Dovecot cachea resultados 300 s (negativos 60 s).
+`mail.sasl_logins`. Dovecot cachea resultados 300 s (negativos 60 s); `mail-security` vacia la
+entrada de un buzon con cada evento de buzon ("Revocacion en Dovecot", abajo).
 
 Lo implementa `services/mail-auth`: listener TLS en `MAIL_AUTH_TLS_PORT` (9082)
 con `MAIL_AUTH_TLS_CERT`/`MAIL_AUTH_TLS_KEY` (sin ellos, certificado autofirmado
@@ -183,6 +185,83 @@ por `(username, real_rip)` y por `real_rip` (`MAIL_AUTH_MAX_FAILURES` 10, de 1 a
 `GET /internal/mail-auth/logins?username=&limit=` (tras `X-Gateway-Token` +
 `X-Tenant-ID`). El contenedor debe unirse a `mail-engines` con el alias
 `mail-auth`.
+
+## Revocacion en Dovecot (API HTTP de doveadm)
+
+Dovecot guarda cada autenticacion correcta en su cache (`auth_cache_ttl = 300s`; clave
+`%s:%u:%w` de la passdb Lua: servicio, buzon y contrasena) y mientras dura no vuelve a preguntar
+a `mail-auth`, y una sesion IMAP o POP3 abierta sigue hasta que el cliente se va. Sin mas, un
+buzon apagado, borrado o con la contrasena cambiada seguiria entrando hasta cinco minutos con la
+credencial vieja y conservaria sus sesiones. `mail-security` lo cierra con los eventos del
+directorio:
+
+* **Canal**: el API HTTP de doveadm de Dovecot 2.3 (`POST /doveadm/v1`) en el listener `http`
+  del servicio `doveadm`: puerto 8443, `ssl = yes` con el certificado del servidor de correo, sin
+  publicar (solo se alcanza en la red `mail-engines`). mailcow no tenia equivalente: su
+  `dockerapi` ejecuta `doveadm` con el socket de docker del host y recibe ordenes sin respuesta
+  por `MC_CHANNEL`; el API de Dovecot autentica cada llamada, responde por orden y no necesita
+  privilegios del host.
+* **Credencial**: `DOVEADM_API_KEY`, del almacen de secretos (`ops/security/secrets/secret-keys.txt`)
+  y la misma en `dovecot-mail` y en `mail-security`: de 32 a 256 caracteres de `[A-Za-z0-9_-]`
+  (`openssl rand -hex 32`). El entrypoint la escribe en `/etc/dovecot-auth/doveadm-api.conf`
+  (600, root), fuera del bind mount de `/etc/dovecot`, con `doveadm_allowed_commands = kick,auth
+  cache flush` (con replica, ademas `dsync-server`, porque la regla vale tambien para el puerto
+  12345): la clave solo vacia la cache y echa a un buzon; no lee correo ni lista quien esta
+  conectado. Sin clave no se abre el listener. `mail-security` la manda en
+  `Authorization: X-Dovecot-API <base64>` a `DOVEADM_API_URL` (`https://dovecot:8443`; en claro no
+  arranca), por TLS verificado contra `DOVEADM_API_TLS_SERVER_NAME` (vacio = `MAIL_HOSTNAME`), con
+  `DOVEADM_API_TLS_CA_FILE` para una CA propia, sin proxy y sin seguir redirecciones. Sin clave,
+  `mail-security` solo arranca con `ENVIRONMENT=development|test`.
+* **Eventos**: consumidor durable propio, `mail-security-dovecot`, sobre `mail.mailbox.>` (stream
+  `MAIL_DIRECTORY`), aparte de `mail-security-redis` para que un Dovecot caido no retenga los de
+  Redis. Cada evento es una sola peticion con `authCacheFlush` del buzon (quita sus entradas,
+  positivas y negativas; la clave de mailcow no cambia: el vaciado por buzon la encuentra) y, si
+  toca, `kick` despues, para que un cliente echado que vuelve a entrar no encuentre la entrada
+  vieja. Decide con el estado real del buzon (`mail.v_routing_mailboxes`), no con el evento:
+
+| Evento | Estado del buzon | Accion |
+|---|---|---|
+| `mail.mailbox.deleted` | no se lee | vaciar y echar |
+| `mail.mailbox.credentials_changed` | no se lee: una sesion no dice con que credencial entro | vaciar y echar |
+| `mail.mailbox.updated` | ya no esta, o `active` distinto de 1 (0 apagado, 2 solo recibe; tambien la baja de su empresa) | vaciar y echar |
+| `mail.mailbox.updated` | `active = 1` (cuota, nombre visible, TLS, relayhost, protocolos) | solo vaciar: la siguiente autenticacion vuelve a `mail-auth`, que aplica `imap_access` y los demas |
+| `mail.mailbox.created` | - | nada |
+
+  Echar a quien aun puede entrar no abre nada, pero molesta (el cliente vuelve a entrar solo con su
+  credencial): por eso un cambio que no retira nada no echa a nadie.
+* **Idempotencia y reintento**: un `kick` sin sesiones (salida 68) es un exito y vaciar dos veces no
+  cambia nada. Un fallo deja el evento sin confirmar: JetStream lo reentrega cada 90 s y tras 20
+  entregas lo guarda en `EVENTS_DLQ` (`pkg/events`). Metricas
+  `mail_security_dovecot_revocations_total{action}` y
+  `mail_security_dovecot_revocation_failures_total{reason}` (`unreachable`, `rejected`,
+  `command`, `directory`), nacidas a cero, y alerta `RevocacionEnDovecotFallida`
+  (`docs/arquitectura/OBSERVABILIDAD.md`).
+* **Cache**: `auth_cache_ttl` sigue en 300 s y la cache negativa en 60 s. El mecanismo es el
+  vaciado; el plazo solo acota lo que queda si falla, y no acota las sesiones abiertas. Bajarlo
+  multiplicaria los bcrypt de `mail-auth` en cada reconexion. La cache negativa no bloquea una
+  contrasena buena: un fallo en la passdb con cache sigue en la segunda, que pregunta siempre a
+  `mail-auth`.
+* **Despliegue**: `DOVEADM_API_KEY` en el almacen; despues `dovecot-mail` recreado (abre el 8443);
+  despues `mail-security`. La primera vez el consumidor recorre los eventos de buzon que retiene el
+  stream (7 dias) y echa las sesiones de los buzones apagados o con la credencial cambiada en ese
+  tiempo; quien pueda entrar vuelve solo.
+
+V (2026-09-15, Dovecot 2.3.21.1): el vaciado por buzon con la clave `%s:%u:%w`, la cache negativa
+que no bloquea, las respuestas del API y `doveadm_allowed_commands` sobre la imagen de
+`deploy/mail/dovecot`; y con `make e2e-mail`: sin clave el API responde 401 y con ella `doveadm
+user` sale `unAuthorized`; un buzon que acaba de entrar por IMAP y se apaga por el API se rechaza en
+segundos (el control, apagarlo en la base sin evento, prueba que la cache le seguia abriendo), su
+sesion IMAP abierta se cierra y al reactivarlo vuelve a entrar; tras cambiar la contrasena la
+anterior se rechaza, la nueva entra y la sesion abierta se cierra; cambiar el nombre visible vacia
+la cache sin cerrar la sesion, y la baja de la empresa cierra la de un buzon que acababa de entrar.
+
+P: una contrasena de aplicacion desactivada o borrada no publica evento (mail-directory), asi que
+vale en la cache hasta 300 s y sus sesiones siguen; si mail-directory publica entonces
+`mail.mailbox.credentials_changed`, este consumidor ya lo atiende. Retirar un protocolo vacia la
+cache pero no cierra la sesion abierta de ese protocolo: `mail.v_routing_mailboxes` no publica los
+flags. `dsync-server` con replica no esta probado. Queda una carrera: una autenticacion que
+`mail-auth` acepto antes del cambio y que Dovecot guardara despues del vaciado (mas lenta que el
+rele de la outbox) valdria hasta `auth_cache_ttl`.
 
 ## Webmail (usuario maestro y envio)
 
@@ -536,8 +615,10 @@ ejecutar; POST libera, registra el uso y la reinyeccion por el 590 lo entrega; u
 mismo 403); que Rspamd aplica la regla `watchdog` del mapa
 `settings` de mail-policy y ve `DOMAIN_MAP`; Unbound con validacion DNSSEC; el webmail por el
 gateway (sesion, carpetas, identidades frente a Postfix, envio idempotente, lectura del
-destinatario, Enviados, remitente ajeno, EICAR, cierre de sesion); y registros sin errores ni
-reinicios.
+destinatario, Enviados, remitente ajeno, EICAR, cierre de sesion); la revocacion en Dovecot
+(el API de doveadm con su clave y sus ordenes permitidas; un buzon que acaba de entrar y se apaga,
+cambia de contrasena o cae con la baja de su empresa se rechaza al momento y pierde su sesion
+IMAP; un cambio de nombre no la cierra); y registros sin errores ni reinicios.
 
 Diferencias con produccion (solo en `docker-compose.e2e.yml` y el entorno del script; ningun
 fichero de configuracion de los motores cambia para la prueba):

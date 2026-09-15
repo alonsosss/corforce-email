@@ -110,6 +110,7 @@ subject y payload. `opaco` = el payload no se puede leer estaticamente.
 | `mail.>` | mail-security | `domain`, `username` |
 | `mail.domain.created` | billing | `domain`, `tenant_id` |
 | `mail.domain.deleted` | billing | `domain`, `tenant_id` |
+| `mail.mailbox.>` | mail-security | `username` |
 | `mail.mailbox.>` | webmail | `changed_at`, `username` |
 | `mail.mailbox.created` | billing | `tenant_id` |
 | `mail.mailbox.deleted` | billing | `tenant_id` |
