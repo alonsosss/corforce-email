@@ -28,9 +28,8 @@ Cada servicio expone `/metrics` en su propio puerto, en formato Prometheus:
 La identidad del servicio **no** viaja dentro de la metrica: la aporta el recolector desde
 la definicion del objetivo. Es la convencion de Prometheus y evita que la etiqueta se
 duplique como `exported_service`. Una metrica que nombra otro servicio lo hace con una etiqueta
-propia, como `cell_service` en las de celdas. Queda una que no lo cumple:
-`mail_auth_attempts_total{service,result}` (el servicio de Dovecot que pregunta, `deploy/mail/README.md`),
-que Prometheus guarda como `exported_service`; ninguna alerta ni tablero la lee.
+propia: `cell_service` en las de celdas y `auth_service` en `mail_auth_attempts_total` (el
+servicio de Dovecot que pregunta, `deploy/mail/README.md`).
 
 ## Como queda instrumentado un servicio
 

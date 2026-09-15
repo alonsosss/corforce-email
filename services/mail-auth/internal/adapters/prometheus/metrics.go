@@ -9,7 +9,9 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
-// Metrics cuenta los intentos de autenticacion por servicio y desenlace.
+// Metrics cuenta los intentos de autenticacion por servicio de Dovecot y desenlace. La
+// etiqueta es auth_service y no service: service la pone el recolector a cada objetivo, y
+// Prometheus guardaria la de la metrica como exported_service.
 type Metrics struct {
 	attempts *prometheus.CounterVec
 }
@@ -18,8 +20,8 @@ func New() *Metrics {
 	m := &Metrics{
 		attempts: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "mail_auth_attempts_total",
-			Help: "Intentos de autenticacion de buzon atendidos para Dovecot, por servicio y resultado.",
-		}, []string{"service", "result"}),
+			Help: "Intentos de autenticacion de buzon atendidos para Dovecot, por servicio de Dovecot (auth_service) y resultado.",
+		}, []string{"auth_service", "result"}),
 	}
 	prometheus.MustRegister(m.attempts)
 	return m

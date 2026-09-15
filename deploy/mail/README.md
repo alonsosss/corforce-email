@@ -178,7 +178,7 @@ por `(username, real_rip)` y por `real_rip` (`MAIL_AUTH_MAX_FAILURES` 10, de 1 a
 `MAIL_AUTH_MAX_FAILURES_PER_IP` 50, de 1 a 10000; `MAIL_AUTH_FAILURE_WINDOW` 15m y
 `MAIL_AUTH_LOCK_TTL` 30m, de 1m a 24h). Un valor fuera de rango, o un puerto fuera de 1 a
 65535, impide arrancar aunque Redis no responda; sin Redis arranca sin freno y lo avisa. Metrica
-`mail_auth_attempts_total{service,result}`. El listener HTTP de `MAIL_AUTH_PORT`
+`mail_auth_attempts_total{auth_service,result}`. El listener HTTP de `MAIL_AUTH_PORT`
 (8041) solo sirve `/healthz`, `/metrics` y
 `GET /internal/mail-auth/logins?username=&limit=` (tras `X-Gateway-Token` +
 `X-Tenant-ID`). El contenedor debe unirse a `mail-engines` con el alias
