@@ -101,6 +101,7 @@ export const endpoints = {
     byId: (id: string) => `${API_PREFIX}/domains/${seg(id)}`,
     verify: (id: string) => `${API_PREFIX}/domains/${seg(id)}/verify`,
     rotateDkim: (id: string) => `${API_PREFIX}/domains/${seg(id)}/rotate-dkim`,
+    revokeDkim: (id: string) => `${API_PREFIX}/domains/${seg(id)}/revoke-dkim`,
   },
   mailDirectory: {
     meta: `${API_PREFIX}/mail-directory/meta`,

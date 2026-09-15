@@ -17,11 +17,14 @@ import (
 // errores que el repositorio real. now hace de reloj de la base: created_at sale del mismo
 // reloj que el caso de uso, o las ventanas de tiempo dependerian del dia en que se corre.
 type fakeRepo struct {
-	mu      sync.Mutex
-	domains map[uuid.UUID]*domain.Domain
-	checks  []domain.DNSCheck
-	updates int
-	now     func() time.Time
+	mu        sync.Mutex
+	domains   map[uuid.UUID]*domain.Domain
+	checks    []domain.DNSCheck
+	rotations []domain.DKIMRotation
+	updates   int
+	now       func() time.Time
+	// keyMu hace de cerrojo por dominio de WithDKIMLock (uno para todos basta en las pruebas).
+	keyMu sync.Mutex
 }
 
 func newFakeRepo(now func() time.Time) *fakeRepo {
@@ -88,15 +91,153 @@ func (r *fakeRepo) List(_ context.Context, tenantID uuid.UUID, offset, limit int
 	return out, total, nil
 }
 
+// Update copia solo el estado, como el repositorio real: las claves DKIM no se tocan.
 func (r *fakeRepo) Update(_ context.Context, d *domain.Domain) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if _, ok := r.domains[d.ID]; !ok {
+	stored, ok := r.domains[d.ID]
+	if !ok {
 		return domain.ErrDomainNotFound
 	}
 	r.updates++
-	r.domains[d.ID] = clone(d)
+	c := clone(stored)
+	c.Purpose, c.Status, c.VerifiedAt, c.LastCheckedAt = d.Purpose, d.Status, d.VerifiedAt, d.LastCheckedAt
+	c.DMARCPolicy, c.DirectoryDeactivationPending = d.DMARCPolicy, d.DirectoryDeactivationPending
+	r.domains[d.ID] = c
 	return nil
+}
+
+// WithDKIMLock deshace lo que fn escribio si devuelve error, como la transaccion real.
+func (r *fakeRepo) WithDKIMLock(ctx context.Context, tenantID, id uuid.UUID, fn func(context.Context, *domain.Domain) error) error {
+	r.keyMu.Lock()
+	defer r.keyMu.Unlock()
+	r.mu.Lock()
+	domains := make(map[uuid.UUID]*domain.Domain, len(r.domains))
+	for k, v := range r.domains {
+		domains[k] = clone(v)
+	}
+	rotations := append([]domain.DKIMRotation(nil), r.rotations...)
+	r.mu.Unlock()
+	d, err := r.GetByID(ctx, tenantID, id)
+	if err != nil {
+		return err
+	}
+	if err := fn(ctx, d); err != nil {
+		r.mu.Lock()
+		r.domains, r.rotations = domains, rotations
+		r.mu.Unlock()
+		return err
+	}
+	return nil
+}
+
+func (r *fakeRepo) SaveDKIMKeys(_ context.Context, d *domain.Domain, expectedSelector string, rotation *domain.DKIMRotation) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	stored, ok := r.domains[d.ID]
+	if !ok || stored.TenantID != d.TenantID {
+		return domain.ErrDomainNotFound
+	}
+	if stored.DKIMSelector != expectedSelector {
+		return domain.ErrDKIMKeysChanged
+	}
+	c := clone(stored)
+	c.DKIMSelector, c.DKIMPrivateKeyEnc, c.DKIMPublicKey, c.DKIMKeyBits = d.DKIMSelector, d.DKIMPrivateKeyEnc, d.DKIMPublicKey, d.DKIMKeyBits
+	c.DKIMPreviousSelector, c.DKIMPreviousPrivateKeyEnc, c.DKIMPreviousPublicKey = d.DKIMPreviousSelector, d.DKIMPreviousPrivateKeyEnc, d.DKIMPreviousPublicKey
+	c.DKIMRotatedAt, c.DKIMPreviousSignedAt, c.DKIMConfirmedAt = d.DKIMRotatedAt, d.DKIMPreviousSignedAt, d.DKIMConfirmedAt
+	c.DKIMRevocationPending = d.DKIMRevocationPending
+	r.domains[d.ID] = c
+	rot := *rotation
+	rot.RevokedSelectors = append([]string(nil), rotation.RevokedSelectors...)
+	r.rotations = append(r.rotations, rot)
+	return nil
+}
+
+// withKeys aplica fn a la fila si su selector (actual o anterior, segun previous) sigue siendo
+// selector: la misma condicion que las consultas reales.
+func (r *fakeRepo) withKeys(tenantID, id uuid.UUID, selector string, previous bool, fn func(*domain.Domain)) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	stored, ok := r.domains[id]
+	if !ok || stored.TenantID != tenantID {
+		return nil
+	}
+	current := stored.DKIMSelector
+	if previous {
+		current = stored.DKIMPreviousSelector
+	}
+	if current != selector {
+		return nil
+	}
+	c := clone(stored)
+	fn(c)
+	r.domains[id] = c
+	return nil
+}
+
+func (r *fakeRepo) ClearPreviousDKIM(_ context.Context, tenantID, id uuid.UUID, selector string) error {
+	return r.withKeys(tenantID, id, selector, true, func(d *domain.Domain) { d.ClearPreviousDKIM() })
+}
+
+func (r *fakeRepo) MarkPreviousDKIMSigning(_ context.Context, tenantID, id uuid.UUID, selector string, at time.Time) error {
+	return r.withKeys(tenantID, id, selector, true, func(d *domain.Domain) {
+		if d.DKIMPreviousSignedAt == nil || at.After(*d.DKIMPreviousSignedAt) {
+			d.DKIMPreviousSignedAt = &at
+		}
+	})
+}
+
+func (r *fakeRepo) ConfirmDKIM(_ context.Context, tenantID, id uuid.UUID, selector string, at time.Time) error {
+	return r.withKeys(tenantID, id, selector, false, func(d *domain.Domain) {
+		if d.DKIMConfirmedAt == nil {
+			d.DKIMConfirmedAt = &at
+		}
+	})
+}
+
+func (r *fakeRepo) CompleteDKIMRevocation(_ context.Context, tenantID, id uuid.UUID, selector string) error {
+	return r.withKeys(tenantID, id, selector, false, func(d *domain.Domain) { d.DKIMRevocationPending = false })
+}
+
+func (r *fakeRepo) ListDKIMRotations(_ context.Context, tenantID, domainID uuid.UUID, limit int) ([]domain.DKIMRotation, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []domain.DKIMRotation
+	for i := len(r.rotations) - 1; i >= 0 && len(out) < limit; i-- {
+		if rot := r.rotations[i]; rot.TenantID == tenantID && rot.DomainID == domainID {
+			out = append(out, rot)
+		}
+	}
+	return out, nil
+}
+
+func (r *fakeRepo) UsedDKIMSelectors(_ context.Context, tenantID, domainID uuid.UUID) ([]string, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []string
+	for _, rot := range r.rotations {
+		if rot.TenantID != tenantID || rot.DomainID != domainID {
+			continue
+		}
+		out = append(out, rot.Selector)
+		if rot.PreviousSelector != "" {
+			out = append(out, rot.PreviousSelector)
+		}
+		out = append(out, rot.RevokedSelectors...)
+	}
+	return out, nil
+}
+
+func (r *fakeRepo) ListPendingDKIMRevocation(_ context.Context, tenantID uuid.UUID) ([]*domain.Domain, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []*domain.Domain
+	for _, d := range r.domains {
+		if d.TenantID == tenantID && d.DKIMRevocationPending {
+			out = append(out, clone(d))
+		}
+	}
+	return out, nil
 }
 
 func (r *fakeRepo) Delete(_ context.Context, tenantID, id uuid.UUID) error {
@@ -130,7 +271,7 @@ func (r *fakeRepo) ListWithExpiredPreviousDKIM(_ context.Context, tenantID uuid.
 	defer r.mu.Unlock()
 	var out []*domain.Domain
 	for _, d := range r.domains {
-		if d.TenantID == tenantID && d.HasPreviousDKIM() && d.DKIMRotatedAt.Before(rotatedBefore) {
+		if d.TenantID == tenantID && d.HasPreviousDKIM() && d.PreviousDKIMSigningEnd().Before(rotatedBefore) {
 			out = append(out, clone(d))
 		}
 	}
@@ -332,9 +473,11 @@ func (f *fakeSecurity) lastPublished() published {
 	return f.published[len(f.published)-1]
 }
 
+// fakePublisher hace de publicador de NATS y de outbox de claves (ports.KeyEvents).
 type fakePublisher struct {
-	subjects []string
-	err      error
+	subjects  []string
+	rotations []domain.DKIMRotation
+	err       error
 }
 
 func (f *fakePublisher) record(subject string) error {
@@ -357,8 +500,19 @@ func (f *fakePublisher) DomainFailed(context.Context, *domain.Domain) error {
 func (f *fakePublisher) DomainDeleted(context.Context, *domain.Domain) error {
 	return f.record("domains.domain.deleted")
 }
-func (f *fakePublisher) DKIMRotated(context.Context, *domain.Domain) error {
-	return f.record("domains.domain.dkim_rotated")
+func (f *fakePublisher) DKIMRotated(_ context.Context, _ *domain.Domain, r *domain.DKIMRotation) error {
+	if err := f.record("domains.domain.dkim_rotated"); err != nil {
+		return err
+	}
+	f.rotations = append(f.rotations, *r)
+	return nil
+}
+func (f *fakePublisher) DKIMRevoked(_ context.Context, _ *domain.Domain, r *domain.DKIMRotation) error {
+	if err := f.record("domains.domain.dkim_revoked"); err != nil {
+		return err
+	}
+	f.rotations = append(f.rotations, *r)
+	return nil
 }
 
 func (f *fakePublisher) count(subject string) int {

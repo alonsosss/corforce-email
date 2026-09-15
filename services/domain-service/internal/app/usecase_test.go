@@ -37,7 +37,9 @@ type harness struct {
 	events    *fakePublisher
 	keyRing   *crypto.KeyRing
 	tenantID  uuid.UUID
-	now       time.Time
+	// actor es el usuario que pide las rotaciones.
+	actor uuid.UUID
+	now   time.Time
 }
 
 func testKeyRing(t *testing.T, active, old string) *crypto.KeyRing {
@@ -58,12 +60,13 @@ func newHarness(t *testing.T) *harness {
 		security: &fakeSecurity{}, index: newFakeIndex(), events: &fakePublisher{},
 		keyRing:  testKeyRing(t, testActiveKey, ""),
 		tenantID: uuid.New(),
+		actor:    uuid.New(),
 		now:      time.Date(2026, 9, 12, 10, 0, 0, 0, time.UTC),
 	}
 	h.repo = newFakeRepo(func() time.Time { return h.now })
 	h.uc = New(Deps{
 		Repo: h.repo, DNS: h.dns, Cipher: h.keyRing,
-		MailDirectory: h.directory, MailSecurity: h.security, DomainIndex: h.index, Events: h.events,
+		MailDirectory: h.directory, MailSecurity: h.security, DomainIndex: h.index, Events: h.events, KeyEvents: h.events,
 		Platform: testPlatform, PlatformHostname: platformHost,
 		DKIMRotationGrace: 72 * time.Hour,
 		Now:               func() time.Time { return h.now },
@@ -370,7 +373,7 @@ func TestRotateDKIMKeepsPreviousAndSignsWithItUntilPublished(t *testing.T) {
 	h.verify(t, d.ID)
 	oldSelector, oldPublic := d.DKIMSelector, d.DKIMPublicKey
 
-	res, err := h.uc.RotateDKIM(context.Background(), h.tenantID, d.ID)
+	res, err := h.uc.RotateDKIM(context.Background(), h.tenantID, d.ID, h.actor)
 	if err != nil {
 		t.Fatalf("RotateDKIM: %v", err)
 	}
@@ -428,7 +431,7 @@ func TestSweepKeepsPreviousDKIMWhileNewTXTUnpublished(t *testing.T) {
 	d := h.create(t, "acme.com", domain.PurposeSending)
 	h.dns.publishZone(h.uc, d)
 	h.verify(t, d.ID)
-	if _, err := h.uc.RotateDKIM(context.Background(), h.tenantID, d.ID); err != nil {
+	if _, err := h.uc.RotateDKIM(context.Background(), h.tenantID, d.ID, h.actor); err != nil {
 		t.Fatal(err)
 	}
 	h.now = h.now.Add(100 * time.Hour)
@@ -442,7 +445,7 @@ func TestSweepKeepsPreviousDKIMWhileNewTXTUnpublished(t *testing.T) {
 func TestRotateDKIMOnPendingDomainDoesNotPublish(t *testing.T) {
 	h := newHarness(t)
 	d := h.create(t, "acme.com", domain.PurposeSending)
-	if _, err := h.uc.RotateDKIM(context.Background(), h.tenantID, d.ID); err != nil {
+	if _, err := h.uc.RotateDKIM(context.Background(), h.tenantID, d.ID, h.actor); err != nil {
 		t.Fatal(err)
 	}
 	if len(h.security.published) != 0 {
@@ -725,31 +728,31 @@ func TestQuitarElUsoCorporativoSinCeldaNoCambiaNada(t *testing.T) {
 
 // Rotar descarta la clave que estaba en gracia: si mail-security no la retira, no se rota y la
 // fila la sigue recordando.
-func TestRotarSinRetirarLaClaveEnGraciaNoRota(t *testing.T) {
+// Con una clave aun en gracia no se rota otra vez: retirarla romperia el DKIM del correo que sigue
+// en cola firmado con ella. No se toca nada, ni en la fila ni en la celda.
+func TestRotarConUnaClaveEnGraciaSeNiega(t *testing.T) {
 	h := newHarness(t)
 	d := h.create(t, "acme.com", domain.PurposeCorporate)
 	h.dns.publishZone(h.uc, d)
 	h.verify(t, d.ID)
-	first, err := h.uc.RotateDKIM(context.Background(), h.tenantID, d.ID)
+	first, err := h.uc.RotateDKIM(context.Background(), h.tenantID, d.ID, h.actor)
 	if err != nil {
 		t.Fatal(err)
 	}
-	inGrace := first.Domain.DKIMPreviousSelector
+	published := len(h.security.published)
 
-	h.security.err = errCelda
-	if _, err := h.uc.RotateDKIM(context.Background(), h.tenantID, d.ID); !errors.Is(err, domain.ErrIntegrationUnavailable) {
-		t.Fatalf("sin celda: %v", err)
+	if _, err := h.uc.RotateDKIM(context.Background(), h.tenantID, d.ID, h.actor); !errors.Is(err, domain.ErrDKIMRotationInProgress) {
+		t.Fatalf("segunda rotacion en gracia: %v", err)
 	}
-	if got := h.stored(t, d.ID); got.DKIMSelector != first.Domain.DKIMSelector || got.DKIMPreviousSelector != inGrace {
-		t.Fatalf("roto sin retirar la clave en gracia: %s/%s", got.DKIMSelector, got.DKIMPreviousSelector)
+	got := h.stored(t, d.ID)
+	if got.DKIMSelector != first.Domain.DKIMSelector || got.DKIMPreviousSelector != first.Domain.DKIMPreviousSelector {
+		t.Fatalf("la fila cambio: %s/%s", got.DKIMSelector, got.DKIMPreviousSelector)
 	}
-
-	h.security.err = nil
-	second, err := h.uc.RotateDKIM(context.Background(), h.tenantID, d.ID)
-	if err != nil {
-		t.Fatal(err)
+	if len(h.security.retired) != 0 || len(h.security.published) != published || h.events.count("domains.domain.dkim_rotated") != 1 {
+		t.Errorf("retiradas %v, publicaciones %d, eventos %v", h.security.retired, len(h.security.published)-published, h.events.subjects)
 	}
-	if len(h.security.retired) != 1 || h.security.retired[0] != "acme.com/"+inGrace || second.Domain.DKIMPreviousSelector != first.Domain.DKIMSelector {
-		t.Errorf("retiradas %v, en gracia %s", h.security.retired, second.Domain.DKIMPreviousSelector)
+	if rotations, _ := h.uc.DKIMRotations(context.Background(), h.tenantID, d.ID); len(rotations) != 1 ||
+		rotations[0].Kind != domain.RotationScheduled || rotations[0].ActorID != h.actor || rotations[0].PreviousSelector != first.Domain.DKIMPreviousSelector {
+		t.Errorf("historial = %+v", rotations)
 	}
 }

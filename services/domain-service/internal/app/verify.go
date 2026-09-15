@@ -34,7 +34,9 @@ func (uc *UseCase) Verify(ctx context.Context, tenantID, id uuid.UUID) (*VerifyR
 // verify es el nucleo compartido por la verificacion manual y el barrido. sweep cambia
 // dos cosas: un pendiente que no verifica se queda en pending (nadie lo pidio), y un
 // verificado solo cae a failed si pierde la propiedad, el MX o el SPF, nunca por el
-// DKIM, que durante una rotacion puede tardar en publicarse.
+// DKIM, que durante una rotacion puede tardar en publicarse. A mano un verificado tampoco cae
+// solo por el DKIM mientras el TXT de su clave actual no se haya visto nunca: la cambio la
+// plataforma (rotacion o revocacion) y apagarle el correo no retira ninguna clave.
 func (uc *UseCase) verify(ctx context.Context, d *domain.Domain, sweep bool) (*VerifyResult, error) {
 	now := uc.now()
 	expected := uc.ExpectedRecords(d)
@@ -45,6 +47,7 @@ func (uc *UseCase) verify(ctx context.Context, d *domain.Domain, sweep bool) (*V
 	d.LastCheckedAt = &now
 
 	previous, wasActive := d.Status, d.ActiveInDirectory()
+	keyConfirmed := d.DKIMConfirmedAt != nil
 	switch result.Outcome {
 	case domain.OutcomeVerified:
 		if d.Status != domain.StatusVerified {
@@ -55,7 +58,7 @@ func (uc *UseCase) verify(ctx context.Context, d *domain.Domain, sweep bool) (*V
 		switch {
 		case sweep && d.Status == domain.StatusPending:
 			// Sigue esperando a que el cliente publique; no es un fallo suyo.
-		case sweep && d.Status == domain.StatusVerified && !lostRoutingRecord(result.Checks):
+		case d.Status == domain.StatusVerified && !lostRoutingRecord(result.Checks) && (sweep || !keyConfirmed):
 			// Solo el DKIM falla: se registra, pero el dominio sigue recibiendo.
 		default:
 			d.Status = domain.StatusFailed
@@ -74,6 +77,9 @@ func (uc *UseCase) verify(ctx context.Context, d *domain.Domain, sweep bool) (*V
 		d.DirectoryDeactivationPending = true
 	}
 	if err := uc.repo.Update(ctx, d); err != nil {
+		return nil, err
+	}
+	if err := uc.recordDKIMSigning(ctx, d, result, keyConfirmed, now); err != nil {
 		return nil, err
 	}
 
@@ -134,7 +140,7 @@ func (uc *UseCase) syncVerified(ctx context.Context, d *domain.Domain, signWithP
 			failures = append(failures, "activar en mail-directory: "+err.Error())
 		}
 	}
-	if err := uc.publishDKIM(ctx, d, signWithPrevious); err != nil {
+	if err := uc.publishDKIMFor(ctx, d, signWithPrevious); err != nil {
 		uc.logger.Error("no se pudieron publicar las claves DKIM; se reintenta en el barrido",
 			zap.String("domain", d.Domain), zap.String("tenant_id", d.TenantID.String()), zap.Error(err))
 		failures = append(failures, "publicar DKIM en mail-security: "+err.Error())

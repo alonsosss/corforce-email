@@ -438,7 +438,14 @@ compartido por las replicas) y leyendo el directorio dentro de el:
 
 domain-service solo publica las claves de un dominio corporativo verificado (un dominio solo de
 envio no firma en la celda) y retira la clave en gracia en la celda antes de olvidarla mientras
-el dominio pueda tenerla alli.
+el dominio pueda tenerla alli. En una rotacion programada la clave anterior sigue en los motores
+`MAIL_DKIM_ROTATION_GRACE` desde la ultima vez que pudo firmar, y ese plazo tiene que superar
+`maximal_queue_lifetime` de `postfix/conf/main.cf` (5d) mas un dia de TTL de un TXT: el correo
+firmado con ella puede seguir en la cola hasta entonces. Alargar la cola exige subir
+`minDKIMRotationGrace` en `services/domain-service/main.go`; `ops/scaffold/check-dkim-grace.sh`
+(`make checks`) falla si no. Una clave comprometida no espera a la gracia: la revocacion de
+domain-service hace un solo `PUT` con la clave nueva, que queda firmando mientras mail-security
+retira al momento los demas selectores del dominio.
 
 Rspamd guarda ademas sus propias estructuras (bayes, fuzzy, history, ratelimit,
 reputation) en el mismo Redis.

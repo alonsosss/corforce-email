@@ -29,6 +29,10 @@ export interface ManagedDomain {
   dkim_key_bits: number;
   dkim_previous_selector: string | null;
   dkim_rotated_at: string | null;
+  /** Hasta cuando, como pronto, debe seguir publicado el TXT de la clave anterior. */
+  dkim_previous_until: string | null;
+  /** Una revocacion sigue sin confirmar en los servidores de correo de la celda. */
+  dkim_revocation_pending: boolean;
   dmarc_policy: DmarcPolicy;
   created_at: string;
   updated_at: string;
@@ -57,11 +61,28 @@ export interface DomainWithRecords extends ManagedDomain {
   dns_records: DnsRecord[];
 }
 
-export interface DomainDetail extends DomainWithRecords {
-  dns_checks: DnsCheck[];
+export type DkimRotationKind = 'scheduled' | 'compromised';
+
+/** Entrada del historial de claves DKIM (rotationResponse). */
+export interface DkimRotation {
+  id: string;
+  kind: DkimRotationKind;
+  selector: string;
+  previous_selector: string | null;
+  revoked_selectors: string[];
+  reason: string;
+  actor_id: string | null;
+  rotated_at: string;
 }
 
-export interface VerifyResult extends DomainDetail {
+export interface DomainDetail extends DomainWithRecords {
+  dns_checks: DnsCheck[];
+  dkim_rotations: DkimRotation[];
+}
+
+/** La verificacion no devuelve el historial de claves: se funde con la ficha ya cargada. */
+export interface VerifyResult extends DomainWithRecords {
+  dns_checks: DnsCheck[];
   outcome: VerifyOutcome;
   integration_errors: string[];
 }
@@ -69,6 +90,22 @@ export interface VerifyResult extends DomainDetail {
 export interface RotateDkimResult extends ManagedDomain {
   dns_record: DnsRecord;
   grace_until: string;
+}
+
+/** current_selector es el selector actual que se vio: repetir la peticion no genera otra clave. */
+export interface RevokeDkimRequest {
+  current_selector: string;
+  reason: string;
+}
+
+export interface RevokeDkimResult extends ManagedDomain {
+  dns_record: DnsRecord;
+  /** TXT que el cliente debe retirar de su DNS ya; solo llevan host y tipo. */
+  remove_dns_records: DnsRecord[];
+  revocation: DkimRotation;
+  /** Los servidores de correo ya no tienen ninguna clave revocada. */
+  engines_retired: boolean;
+  integration_errors: string[];
 }
 
 export interface CreateDomainRequest {
@@ -93,4 +130,6 @@ export const domainsApi = {
   remove: (id: string) => api.delete<null>(endpoints.domains.byId(id)),
   verify: (id: string) => api.post<VerifyResult>(endpoints.domains.verify(id)),
   rotateDkim: (id: string) => api.post<RotateDkimResult>(endpoints.domains.rotateDkim(id)),
+  revokeDkim: (id: string, input: RevokeDkimRequest) =>
+    api.post<RevokeDkimResult>(endpoints.domains.revokeDkim(id), { body: input }),
 };

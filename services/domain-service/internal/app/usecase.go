@@ -16,7 +16,13 @@ import (
 
 // Valores por defecto de los plazos que si admiten un defecto razonable en codigo.
 const (
-	DefaultDKIMRotationGrace = 72 * time.Hour
+	// DefaultDKIMRotationGrace: la clave anterior de una rotacion programada se conserva, desde la
+	// ultima vez que pudo firmar, mas de lo que un mensaje firmado con ella puede seguir en la cola
+	// de Postfix (maximal_queue_lifetime, deploy/mail/postfix/conf/main.cf) mas un TTL habitual de
+	// un TXT: un receptor que lo recibe al final de la cola tiene que poder leer su TXT. El minimo
+	// de main.go es esa suma; esto deja un dia mas para el receptor que comprueba DKIM despues de
+	// aceptar el mensaje. ops/scaffold/check-dkim-grace.sh lo comprueba contra main.cf.
+	DefaultDKIMRotationGrace = 168 * time.Hour
 	// DefaultPendingRecheckWindow: un dominio pendiente se reverifica solo mientras es
 	// reciente; despues es el cliente quien lanza la verificacion.
 	DefaultPendingRecheckWindow = 7 * 24 * time.Hour
@@ -35,6 +41,8 @@ type Deps struct {
 	// DomainIndex es el indice global de dominios activos de organization.
 	DomainIndex ports.DomainIndex
 	Events      ports.EventPublisher
+	// KeyEvents encola los eventos de las claves DKIM en la transaccion que las cambia.
+	KeyEvents ports.KeyEvents
 	// Platform son los valores que aparecen en los registros del cliente.
 	Platform domain.PlatformDNS
 	// PlatformHostname es MAIL_HOSTNAME: ni el ni sus subdominios se dan de alta.
@@ -55,6 +63,7 @@ type UseCase struct {
 	mailSecurity  ports.MailSecurityClient
 	index         ports.DomainIndex
 	events        ports.EventPublisher
+	keyEvents     ports.KeyEvents
 	platform      domain.PlatformDNS
 	platformHost  string
 	rotationGrace time.Duration
@@ -67,7 +76,7 @@ type UseCase struct {
 func New(d Deps) *UseCase {
 	uc := &UseCase{
 		repo: d.Repo, dns: d.DNS, cipher: d.Cipher,
-		mailDirectory: d.MailDirectory, mailSecurity: d.MailSecurity, index: d.DomainIndex, events: d.Events,
+		mailDirectory: d.MailDirectory, mailSecurity: d.MailSecurity, index: d.DomainIndex, events: d.Events, keyEvents: d.KeyEvents,
 		platform: d.Platform, platformHost: d.PlatformHostname,
 		rotationGrace: d.DKIMRotationGrace, pendingWindow: d.PendingRecheckWindow,
 		retention: d.CheckRetention, logger: d.Logger, now: d.Now,

@@ -701,8 +701,9 @@ tiene ninguna ruta o si falta `organization` entre los servicios.
     `02_directory_deactivation.sql`), guardada antes de llamar: el barrido repite la desactivacion
     hasta que mail-directory la confirma, una reverificacion la anula y borrar el dominio desactiva
     tambien si la marca sigue aunque ya no sea corporativo. Quitar el uso corporativo y borrar son
-    sincronos: sin la celda, 503 `INTEGRATION_UNAVAILABLE` y no se guarda nada. Rotar con una clave
-    en gracia la retira de mail-security antes de olvidarla; si no se puede, 503 y no se rota.
+    sincronos: sin la celda, 503 `INTEGRATION_UNAVAILABLE` y no se guarda nada. Una rotacion
+    programada con otra clave aun en gracia se niega (409 `DKIM_ROTATION_IN_PROGRESS`, V 2026-09-15):
+    retirarla romperia el DKIM del correo que sigue en cola firmado con ella.
   * Un 404 ya no cuenta como hecho: al activar o desactivar, mail-directory da de alta el dominio
     que no tiene, y retirar claves en mail-security responde 204 aunque no esten. Un 404 solo puede
     ser una instancia que no sirve la ruta.
@@ -717,6 +718,27 @@ tiene ninguna ruta o si falta `organization` entre los servicios.
     El repaso cuenta por motivo lo que retira y lo que conserva sin respuesta de organization, y
     sella su ultima pasada completa (`mail_security_dkim_reconcile_*`, con alertas en
     `docs/arquitectura/OBSERVABILIDAD.md`).
+  * Rotacion y revocacion de claves DKIM (V, 2026-09-15; migracion de empresa
+    `03_dkim_rotations.sql` y de registro `030_domain_service_dkim_revoke.sql`). Rotacion programada
+    (`POST /api/v1/domains/{id}/rotate-dkim`, `domains/domains/rotate_dkim`): la clave anterior se
+    conserva `MAIL_DKIM_ROTATION_GRACE` (168h por defecto, 144h como minimo: `maximal_queue_lifetime`
+    de Postfix, 5d, mas un dia de TTL de un TXT; lo comprueba `ops/scaffold/check-dkim-grace.sh`)
+    contada desde la ultima vez que pudo firmar (`dkim_previous_signed_at`), no desde la rotacion:
+    mientras el TXT nuevo no se ve publicado se sigue firmando con ella y la marca avanza. Revocacion
+    por clave comprometida (`POST /api/v1/domains/{id}/revoke-dkim` con `current_selector` y
+    `reason`; permiso aparte `domains/domains/revoke_dkim`, porque corta la firma hasta que el
+    cliente publique el TXT nuevo): una transaccion guarda la clave nueva, la marca
+    `dkim_revocation_pending`, la entrada de `domains.dkim_rotations` con motivo y actor y el evento
+    `domains.domain.dkim_revoked` por la outbox; despues se entrega a mail-security solo la clave
+    nueva, que deja firmando la nueva y retira al momento los demas selectores del dominio (nunca
+    sin clave). Un dominio que la celda ya no debe servir pierde alli todas sus claves. Sin la celda
+    responde 200 con `engines_retired: false`; el barrido y el reintento de la misma peticion (mismo
+    `current_selector`: no genera otra clave) la completan. Respuesta y evento nombran los TXT que el
+    cliente debe quitar de su DNS ya (`remove_dns_records`). Lo que entrega o retira claves en la
+    celda va con un cerrojo consultivo por dominio y la fila leida dentro, y `Update` no escribe
+    claves: una verificacion con la fila de antes no devuelve una clave revocada ni a la fila ni a
+    los motores. Un verificado cuya clave actual aun no se vio publicada no cae a failed solo por el
+    DKIM, tampoco a mano. Ningun selector se repite. `audit` guarda `domains.>` por defecto.
   * Probado: unitarias de `pkg/tenantcell` (lectura de instancias y sus reglas; eleccion en la celda
     base, en otra celda, celda sin instancia, empresa desconocida, organization caido con la celda
     en cache, sin ella y fuera del margen; una celda sin consultas), de `tenantcell.Caller` (cada empresa a

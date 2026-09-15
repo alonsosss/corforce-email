@@ -4,10 +4,12 @@ import {
   DMARC_POLICIES,
   DOMAIN_PURPOSES,
   domainsApi,
+  type DkimRotation,
   type DmarcPolicy,
   type DomainDetail,
   type DomainPurpose,
   type DomainWithRecords,
+  type RevokeDkimResult,
   type RotateDkimResult,
   type UpdateDomainRequest,
   type VerifyResult,
@@ -24,6 +26,8 @@ import {
   Button,
   Card,
   ConfirmDialog,
+  CopyButton,
+  DataTable,
   DescriptionList,
   ErrorState,
   FormField,
@@ -31,16 +35,18 @@ import {
   PageHeader,
   Select,
   Skeleton,
+  Textarea,
   useToast,
+  type Column,
 } from '@/design/components';
-import { IconEdit, IconKey, IconRefresh, IconTrash } from '@/design/icons';
+import { IconEdit, IconKey, IconRefresh, IconShieldOff, IconTrash } from '@/design/icons';
 import { formatDateTime } from '@/lib/format';
 import { t, tEnum } from '@/i18n';
 import { paths } from '@/paths';
 import { DnsRecordsTable } from './DnsRecordsTable';
 import { domainStatusTone, verifyOutcomeTone } from './domainStatus';
 
-type Dialog = 'edit' | 'rotate' | 'delete' | null;
+type Dialog = 'edit' | 'rotate' | 'revoke' | 'delete' | null;
 
 export default function DomainDetailPage() {
   const { id = '' } = useParams();
@@ -50,13 +56,25 @@ export default function DomainDetailPage() {
   const [dialog, setDialog] = useState<Dialog>(null);
   const [verification, setVerification] = useState<VerifyResult | null>(null);
   const [rotation, setRotation] = useState<RotateDkimResult | null>(null);
+  const [revocation, setRevocation] = useState<RevokeDkimResult | null>(null);
 
   const detail = useQuery(async () => (await domainsApi.get(id)).data, [id]);
 
   const verify = useAction(async () => {
     const { data } = await domainsApi.verify(id);
-    detail.setData(data);
+    detail.setData((current) => (current ? { ...current, ...data } : current));
     setVerification(data);
+  });
+
+  // Repite la ultima revocacion con su selector y su motivo: el backend la reconoce, no genera otra
+  // clave y solo reintenta lo que falta en los servidores de correo.
+  const retryRevocation = useAction(async (last: DkimRotation) => {
+    const { data } = await domainsApi.revokeDkim(id, {
+      current_selector: last.revoked_selectors[0] ?? '',
+      reason: last.reason,
+    });
+    setRevocation(data);
+    detail.reload();
   });
 
   const close = () => setDialog(null);
@@ -83,6 +101,7 @@ export default function DomainDetailPage() {
   }
 
   const d = detail.data;
+  const lastRevocation = d.dkim_rotations[0]?.kind === 'compromised' ? d.dkim_rotations[0] : undefined;
 
   return (
     <div className="cf-stack">
@@ -109,6 +128,15 @@ export default function DomainDetailPage() {
                 {t('domains.rotateDkim')}
               </Button>
             ) : null}
+            {can(...PERMISSIONS.domains.revokeDkim) ? (
+              <Button
+                variant="danger"
+                icon={<IconShieldOff size={16} />}
+                onClick={() => setDialog('revoke')}
+              >
+                {t('domains.revokeDkim')}
+              </Button>
+            ) : null}
             {can(...PERMISSIONS.domains.update) ? (
               <Button icon={<IconEdit size={16} />} onClick={() => setDialog('edit')}>
                 {t('common.edit')}
@@ -133,6 +161,25 @@ export default function DomainDetailPage() {
         </Alert>
       ) : null}
       {verification ? <VerificationSummary result={verification} /> : null}
+      {d.dkim_revocation_pending ? (
+        <Alert tone="danger" title={t('domains.revocation.pendingTitle')}>
+          <span>{t('domains.revocation.enginesPending')}</span>
+          {lastRevocation && can(...PERMISSIONS.domains.revokeDkim) ? (
+            <div>
+              <Button
+                size="sm"
+                loading={retryRevocation.busy}
+                onClick={() => void retryRevocation.run(lastRevocation)}
+              >
+                {t('domains.revocation.retry')}
+              </Button>
+            </div>
+          ) : null}
+          {retryRevocation.error ? (
+            <div role="alert">{errorMessage(retryRevocation.error)}</div>
+          ) : null}
+        </Alert>
+      ) : null}
 
       <Card>
         <DescriptionList
@@ -156,6 +203,9 @@ export default function DomainDetailPage() {
                   <span className="cf-mono">{d.dkim_previous_selector}</span>{' '}
                   <span className="cf-text-muted">
                     {t('domains.detail.rotatedAt', { date: formatDateTime(d.dkim_rotated_at) })}
+                    {d.dkim_previous_until
+                      ? `; ${t('domains.detail.previousUntil', { date: formatDateTime(d.dkim_previous_until) })}`
+                      : null}
                   </span>
                 </span>
               ) : (
@@ -171,6 +221,12 @@ export default function DomainDetailPage() {
       <Card flush title={t('domains.records.title')} description={t('domains.records.description')}>
         <DnsRecordsTable records={d.dns_records} checks={d.dns_checks} />
       </Card>
+
+      {d.dkim_rotations.length ? (
+        <Card flush title={t('domains.history.title')} description={t('domains.history.description')}>
+          <DkimHistoryTable rotations={d.dkim_rotations} />
+        </Card>
+      ) : null}
 
       {dialog === 'edit' ? (
         <DomainEditForm
@@ -226,7 +282,177 @@ export default function DomainDetailPage() {
           </div>
         </Modal>
       ) : null}
+      {dialog === 'revoke' ? (
+        <DkimRevokeForm
+          domain={d}
+          onClose={close}
+          onRevoked={(result) => {
+            setRevocation(result);
+            close();
+            detail.reload();
+          }}
+        />
+      ) : null}
+      {revocation ? (
+        <RevocationResult result={revocation} onClose={() => setRevocation(null)} />
+      ) : null}
     </div>
+  );
+}
+
+function DkimHistoryTable({ rotations }: { rotations: DkimRotation[] }) {
+  const columns: Column<DkimRotation>[] = [
+    {
+      key: 'date',
+      header: t('domains.history.column.date'),
+      render: (r) => formatDateTime(r.rotated_at),
+    },
+    {
+      key: 'kind',
+      header: t('domains.history.column.kind'),
+      render: (r) => (
+        <Badge tone={r.kind === 'compromised' ? 'danger' : 'neutral'}>
+          {tEnum('domains.rotationKind', r.kind)}
+        </Badge>
+      ),
+    },
+    {
+      key: 'selector',
+      header: t('domains.history.column.selector'),
+      render: (r) => <span className="cf-mono">{r.selector}</span>,
+    },
+    {
+      key: 'retired',
+      header: t('domains.history.column.retired'),
+      render: (r) => {
+        const retired =
+          r.kind === 'compromised' ? r.revoked_selectors : r.previous_selector ? [r.previous_selector] : [];
+        return retired.length ? <span className="cf-mono">{retired.join(', ')}</span> : t('common.dash');
+      },
+    },
+    {
+      key: 'reason',
+      header: t('domains.history.column.reason'),
+      render: (r) => r.reason || t('common.dash'),
+    },
+  ];
+  return <DataTable columns={columns} rows={rotations} rowKey={(r) => r.id} />;
+}
+
+const REVOKE_FORM_ID = 'domain-revoke-form';
+
+// El selector actual viaja con la peticion: si otra persona ya revoco o roto las claves, el backend
+// lo detecta en vez de revocar la clave nueva.
+function DkimRevokeForm({
+  domain,
+  onClose,
+  onRevoked,
+}: {
+  domain: DomainDetail;
+  onClose: () => void;
+  onRevoked: (result: RevokeDkimResult) => void;
+}) {
+  const [reason, setReason] = useState('');
+
+  const action = useAction(async () => {
+    const { data } = await domainsApi.revokeDkim(domain.id, {
+      current_selector: domain.dkim_selector,
+      reason,
+    });
+    onRevoked(data);
+  });
+
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    await action.run();
+  };
+
+  return (
+    <Modal
+      open
+      title={t('domains.revokeDkim')}
+      onClose={onClose}
+      footer={
+        <>
+          <Button onClick={onClose} disabled={action.busy}>
+            {t('common.cancel')}
+          </Button>
+          <Button
+            type="submit"
+            form={REVOKE_FORM_ID}
+            variant="danger"
+            loading={action.busy}
+            disabled={!reason.trim()}
+          >
+            {t('domains.revoke.confirm')}
+          </Button>
+        </>
+      }
+    >
+      <form id={REVOKE_FORM_ID} className="cf-form" onSubmit={(e) => void submit(e)} noValidate>
+        <Alert tone="danger">{t('domains.revoke.warning', { domain: domain.domain })}</Alert>
+        <FormField
+          label={t('domains.revoke.reason')}
+          htmlFor="domain-revoke-reason"
+          hint={t('domains.revoke.reasonHint')}
+          required
+        >
+          <Textarea
+            id="domain-revoke-reason"
+            rows={3}
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+          />
+        </FormField>
+        {action.error ? (
+          <div className="cf-form__error" role="alert">
+            {errorMessage(action.error)}
+          </div>
+        ) : null}
+      </form>
+    </Modal>
+  );
+}
+
+function RevocationResult({ result, onClose }: { result: RevokeDkimResult; onClose: () => void }) {
+  return (
+    <Modal
+      open
+      size="lg"
+      title={t('domains.revocation.title')}
+      onClose={onClose}
+      footer={<Button onClick={onClose}>{t('common.close')}</Button>}
+    >
+      <div className="cf-stack" style={{ gap: 'var(--cf-space-4)' }}>
+        <Alert tone="danger">
+          <span>{t('domains.revocation.removeNow')}</span>
+          <ul className="cf-rules">
+            {result.remove_dns_records.map((r) => (
+              <li key={r.host}>
+                <span className="cf-mono">
+                  {r.type} {r.host}
+                </span>{' '}
+                <CopyButton value={r.host} label={t('domains.records.copyHost')} />
+              </li>
+            ))}
+          </ul>
+        </Alert>
+        {!result.engines_retired ? (
+          <Alert tone="warning">
+            <span>{t('domains.revocation.enginesPending')}</span>
+            {result.integration_errors.length ? (
+              <ul className="cf-rules">
+                {result.integration_errors.map((message) => (
+                  <li key={message}>{message}</li>
+                ))}
+              </ul>
+            ) : null}
+          </Alert>
+        ) : null}
+        <span>{t('domains.revocation.publishNew')}</span>
+        <DnsRecordsTable records={[result.dns_record]} />
+      </div>
+    </Modal>
   );
 }
 

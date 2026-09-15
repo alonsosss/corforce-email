@@ -95,6 +95,15 @@ type Domain struct {
 	DKIMPreviousPrivateKeyEnc []byte
 	DKIMPreviousPublicKey     string
 	DKIMRotatedAt             *time.Time
+	// DKIMPreviousSignedAt es la ultima vez que la clave anterior pudo firmar: la gracia se
+	// cuenta desde aqui, porque lo que firmo puede seguir en cola.
+	DKIMPreviousSignedAt *time.Time
+	// DKIMConfirmedAt: cuando una verificacion vio publicado por primera vez el TXT de la clave
+	// actual. Nil tras rotar o revocar.
+	DKIMConfirmedAt *time.Time
+	// DKIMRevocationPending: una revocacion se guardo y la celda aun no confirmo que sus motores
+	// solo tienen la clave nueva.
+	DKIMRevocationPending bool
 
 	// DirectoryDeactivationPending: el dominio dejo de recibir por la celda y su directorio
 	// puede tenerlo aun activo. Se marca antes de llamar a mail-directory y se quita cuando la
@@ -124,9 +133,31 @@ func (d *Domain) HasPreviousDKIM() bool {
 	return d.DKIMPreviousSelector != "" && len(d.DKIMPreviousPrivateKeyEnc) > 0 && d.DKIMRotatedAt != nil
 }
 
+// PreviousDKIMSigningEnd es la ultima vez que la clave anterior pudo firmar: la rotacion o, si
+// despues se siguio firmando con ella, la ultima verificacion que lo hizo.
+func (d *Domain) PreviousDKIMSigningEnd() time.Time {
+	if !d.HasPreviousDKIM() {
+		return time.Time{}
+	}
+	end := *d.DKIMRotatedAt
+	if d.DKIMPreviousSignedAt != nil && d.DKIMPreviousSignedAt.After(end) {
+		end = *d.DKIMPreviousSignedAt
+	}
+	return end
+}
+
+// PreviousDKIMRetireAfter es cuando vence la gracia de la clave anterior: su TXT debe seguir
+// publicado hasta entonces. Cero si no hay clave anterior.
+func (d *Domain) PreviousDKIMRetireAfter(grace time.Duration) time.Time {
+	if !d.HasPreviousDKIM() {
+		return time.Time{}
+	}
+	return d.PreviousDKIMSigningEnd().Add(grace)
+}
+
 // PreviousDKIMExpired dice si la ventana de gracia de la clave anterior ya vencio.
 func (d *Domain) PreviousDKIMExpired(now time.Time, grace time.Duration) bool {
-	return d.HasPreviousDKIM() && now.After(d.DKIMRotatedAt.Add(grace))
+	return d.HasPreviousDKIM() && now.After(d.PreviousDKIMRetireAfter(grace))
 }
 
 // ClearPreviousDKIM retira la clave anterior una vez fuera de gracia.
@@ -135,6 +166,15 @@ func (d *Domain) ClearPreviousDKIM() {
 	d.DKIMPreviousPrivateKeyEnc = nil
 	d.DKIMPreviousPublicKey = ""
 	d.DKIMRotatedAt = nil
+	d.DKIMPreviousSignedAt = nil
+}
+
+// DKIMSelectors son los selectores que el dominio custodia: el actual y, en gracia, el anterior.
+func (d *Domain) DKIMSelectors() []string {
+	if d.HasPreviousDKIM() {
+		return []string{d.DKIMSelector, d.DKIMPreviousSelector}
+	}
+	return []string{d.DKIMSelector}
 }
 
 // RecordKind identifica cada registro DNS que se comprueba.

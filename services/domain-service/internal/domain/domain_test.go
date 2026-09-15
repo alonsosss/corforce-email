@@ -265,13 +265,50 @@ func TestPreviousDKIMExpired(t *testing.T) {
 	if d.PreviousDKIMExpired(time.Now(), time.Hour) {
 		t.Error("sin clave anterior no hay gracia que vencer")
 	}
-	rotated := time.Now().Add(-2 * time.Hour)
+	now := time.Now()
+	rotated := now.Add(-2 * time.Hour)
 	d.DKIMPreviousSelector, d.DKIMPreviousPrivateKeyEnc, d.DKIMPreviousPublicKey, d.DKIMRotatedAt = "old", []byte("x"), "k", &rotated
-	if !d.PreviousDKIMExpired(time.Now(), time.Hour) || d.PreviousDKIMExpired(time.Now(), 3*time.Hour) {
-		t.Error("la gracia se mide desde dkim_rotated_at")
+	if !d.PreviousDKIMExpired(now, time.Hour) || d.PreviousDKIMExpired(now, 3*time.Hour) {
+		t.Error("sin firmas posteriores la gracia se mide desde dkim_rotated_at")
+	}
+	signed := now.Add(-30 * time.Minute)
+	d.DKIMPreviousSignedAt = &signed
+	if d.PreviousDKIMExpired(now, time.Hour) || !d.PreviousDKIMRetireAfter(time.Hour).Equal(signed.Add(time.Hour)) {
+		t.Error("la gracia se mide desde la ultima vez que la clave anterior pudo firmar")
+	}
+	earlier := rotated.Add(-time.Hour)
+	d.DKIMPreviousSignedAt = &earlier
+	if !d.PreviousDKIMSigningEnd().Equal(rotated) {
+		t.Error("la anterior firmo al menos hasta la rotacion")
 	}
 	d.ClearPreviousDKIM()
-	if d.HasPreviousDKIM() {
-		t.Error("ClearPreviousDKIM debe dejar los cuatro campos vacios")
+	if d.HasPreviousDKIM() || d.DKIMPreviousSignedAt != nil || !d.PreviousDKIMRetireAfter(time.Hour).IsZero() {
+		t.Error("ClearPreviousDKIM debe dejar vacios los campos de la clave anterior")
+	}
+	if got := d.DKIMSelectors(); len(got) != 1 || got[0] != d.DKIMSelector {
+		t.Errorf("selectores sin anterior = %v", got)
+	}
+}
+
+func TestNormalizeRevocationReason(t *testing.T) {
+	if got, err := NormalizeRevocationReason("  expuesta en un respaldo\n(ticket 42)  "); err != nil || got != "expuesta en un respaldo\n(ticket 42)" {
+		t.Errorf("valido: %q %v", got, err)
+	}
+	if got, err := NormalizeRevocationReason(strings.Repeat("ñ", MaxRevocationReasonLength)); err != nil || got == "" {
+		t.Errorf("el limite cuenta caracteres, no bytes: %v", err)
+	}
+	for _, bad := range []string{"", "   ", "a\x00b", "a\x1bb", strings.Repeat("a", MaxRevocationReasonLength+1), "\xff"} {
+		if _, err := NormalizeRevocationReason(bad); !errors.Is(err, ErrInvalidRevocationReason) {
+			t.Errorf("%q: %v", bad, err)
+		}
+	}
+}
+
+func TestDKIMRotationRevoked(t *testing.T) {
+	var none *DKIMRotation
+	scheduled := &DKIMRotation{Kind: RotationScheduled, PreviousSelector: "a", RevokedSelectors: []string{"a"}}
+	revoked := &DKIMRotation{Kind: RotationCompromised, RevokedSelectors: []string{"a", "b"}}
+	if none.Revoked("a") || scheduled.Revoked("a") || !revoked.Revoked("b") || revoked.Revoked("c") {
+		t.Error("solo una revocacion revoca, y solo sus selectores")
 	}
 }

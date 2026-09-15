@@ -632,10 +632,25 @@ export const es = {
     'El DNS no respondio a alguna consulta. Espera unos minutos y vuelve a verificar.',
   'domains.rotateDkim': 'Rotar DKIM',
   'domains.rotateConfirm':
-    'Se generara una clave DKIM nueva para {domain}. La anterior sigue firmando durante el periodo de gracia mientras publicas el registro nuevo.',
+    'Se generara una clave DKIM nueva para {domain}. La anterior sigue firmando mientras publicas el registro nuevo y se conserva despues durante el periodo de gracia.',
   'domains.rotation.title': 'Nueva clave DKIM',
   'domains.rotation.description':
-    'Publica este registro TXT cuanto antes. La clave anterior sigue firmando hasta el {date}; despues se retira.',
+    'Publica este registro TXT cuanto antes. Conserva el de la clave anterior al menos hasta el {date}: el correo que firmo puede seguir en camino. La ficha del dominio muestra la fecha definitiva.',
+  'domains.revokeDkim': 'Revocar clave comprometida',
+  'domains.revoke.warning':
+    'Todas las claves DKIM de {domain} se retiran de inmediato de los servidores de correo y se firma con una clave nueva. Hasta que publiques su registro TXT, el correo del dominio no superara DKIM y, segun tu politica DMARC, puede ir a spam o rechazarse.',
+  'domains.revoke.reason': 'Motivo',
+  'domains.revoke.reasonHint': 'Queda en el historial del dominio y en la auditoria.',
+  'domains.revoke.confirm': 'Revocar ahora',
+  'domains.revocation.title': 'Claves DKIM revocadas',
+  'domains.revocation.removeNow':
+    'Retira ya de tu DNS estos registros TXT: mientras sigan publicados, el correo falsificado con la clave comprometida sigue superando DKIM. La plataforma no puede retirarlos por ti.',
+  'domains.revocation.publishNew': 'Publica cuanto antes el registro TXT de la clave nueva.',
+  'domains.revocation.enginesPending':
+    'Los servidores de correo aun no confirmaron la retirada: la clave revocada puede seguir firmando. Se reintenta automaticamente y tambien puedes reintentarlo ahora.',
+  'domains.revocation.pendingTitle': 'Revocacion DKIM sin confirmar',
+  'domains.revocation.retry': 'Reintentar ahora',
+  'domains.revocation.confirmed': 'Revocacion confirmada en los servidores de correo',
   'domains.delete': 'Dar de baja el dominio',
   'domains.deleteConfirm': 'Se dara de baja {domain} y dejara de recibir y enviar correo.',
   'domains.deleteHasMailboxes':
@@ -644,6 +659,16 @@ export const es = {
   'domains.detail.keyBits': '{bits} bits',
   'domains.detail.dkimPrevious': 'Selector anterior',
   'domains.detail.rotatedAt': 'rotado el {date}',
+  'domains.detail.previousUntil': 'su registro se conserva hasta el {date}',
+  'domains.history.title': 'Historial de claves DKIM',
+  'domains.history.description': 'Rotaciones y revocaciones del dominio, con su motivo.',
+  'domains.history.column.date': 'Fecha',
+  'domains.history.column.kind': 'Tipo',
+  'domains.history.column.selector': 'Clave nueva',
+  'domains.history.column.retired': 'Claves anteriores',
+  'domains.history.column.reason': 'Motivo',
+  'domains.rotationKind.scheduled': 'Rotacion programada',
+  'domains.rotationKind.compromised': 'Revocacion por compromiso',
   'domains.records.title': 'Registros DNS',
   'domains.records.description':
     'Lo que debe publicarse en el DNS del dominio y el resultado de la ultima comprobacion.',
@@ -1365,6 +1390,10 @@ export const es = {
   'audit.integrity.noVerify':
     'Tu rol no incluye verificar la cadena: la verificacion recorre todo el rastro.',
 
+  'error.code.DKIM_ROTATION_IN_PROGRESS':
+    'La clave DKIM anterior sigue en su periodo de gracia. Espera a que se retire o revoca las claves si estan comprometidas.',
+  'error.code.DKIM_SELECTOR_NOT_CURRENT': 'Las claves DKIM del dominio cambiaron. Recarga la pagina.',
+  'error.code.DKIM_KEYS_CHANGED': 'Otra operacion cambio las claves DKIM del dominio. Vuelve a intentarlo.',
   'error.code.CONTACT_EXISTS': 'Ya existe un contacto con esa direccion.',
   'error.code.LIST_EXISTS': 'Ya existe una lista con ese nombre.',
   'error.code.SEGMENT_EXISTS': 'Ya existe un segmento con ese nombre.',

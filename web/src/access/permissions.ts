@@ -98,6 +98,7 @@ export const PERMISSIONS = {
     ...crud(MODULES.domains, 'domains'),
     verify: [MODULES.domains, 'domains', 'verify'],
     rotateDkim: [MODULES.domains, 'domains', 'rotate_dkim'],
+    revokeDkim: [MODULES.domains, 'domains', 'revoke_dkim'],
   },
   aliasDomains: crud(MODULES.domains, 'alias_domains'),
 

@@ -15,6 +15,7 @@ import (
 	"github.com/alonsosss/corforce-email/pkg/db"
 	"github.com/alonsosss/corforce-email/pkg/events"
 	"github.com/alonsosss/corforce-email/pkg/middleware"
+	"github.com/alonsosss/corforce-email/pkg/outbox"
 	"github.com/alonsosss/corforce-email/pkg/response"
 	"github.com/alonsosss/corforce-email/pkg/server"
 	"github.com/alonsosss/corforce-email/pkg/tenantcell"
@@ -24,6 +25,7 @@ import (
 	"github.com/alonsosss/corforce-email/services/domain-service/internal/adapters/mailsecuritycli"
 	natsadapter "github.com/alonsosss/corforce-email/services/domain-service/internal/adapters/nats"
 	"github.com/alonsosss/corforce-email/services/domain-service/internal/adapters/organizationcli"
+	outboxadapter "github.com/alonsosss/corforce-email/services/domain-service/internal/adapters/outbox"
 	"github.com/alonsosss/corforce-email/services/domain-service/internal/adapters/postgres"
 	"github.com/alonsosss/corforce-email/services/domain-service/internal/app"
 	"github.com/alonsosss/corforce-email/services/domain-service/internal/domain"
@@ -51,11 +53,15 @@ const (
 	// Cada empresa en vuelo ocupa conexiones de su pool (hasta 10, pkg/db) a traves de
 	// pgbouncer, cuyo max_client_conn (1000) comparten todos los servicios.
 	maxSweepWorkers = 64
-	// La clave anterior sigue en los motores durante la gracia: al menos un dia, el TTL mas
-	// largo habitual de un TXT, y como mucho treinta, porque una rotacion puede deberse a una
-	// clave comprometida.
-	minDKIMRotationGrace = 24 * time.Hour
-	maxDKIMRotationGrace = 30 * 24 * time.Hour
+	// La clave anterior de una rotacion programada sigue en los motores y en la zona del cliente
+	// durante la gracia, contada desde la ultima vez que pudo firmar. Suelo: lo que un mensaje
+	// firmado con ella puede seguir en la cola de Postfix (maximal_queue_lifetime = 5d en
+	// deploy/mail/postfix/conf/main.cf) mas un dia, el TTL mas largo habitual de un TXT; con menos,
+	// correo aun en cola llegaria al receptor cuando su TXT ya no esta. Alargar la cola exige subir
+	// este suelo; ops/scaffold/check-dkim-grace.sh lo comprueba. Techo: treinta dias; una clave
+	// comprometida no espera a la gracia, se revoca (RevokeDKIM).
+	minDKIMRotationGrace = 144 * time.Hour
+	maxDKIMRotationGrace = 720 * time.Hour
 	// El historial de comprobaciones crece una fila por registro en cada verificacion.
 	maxCheckRetention = 365 * 24 * time.Hour
 
@@ -208,13 +214,16 @@ func main() {
 
 	publisher := natsadapter.NewPublisher(nil)
 	if bus, err := events.NewBus(cfg.NATS.URL, logger); err != nil {
-		logger.Warn("domain-service: NATS no disponible, sin eventos", zap.Error(err))
+		// Los eventos de las claves DKIM esperan en la outbox de cada empresa hasta que un rele
+		// los entregue.
+		logger.Warn("domain-service: NATS no disponible, sin eventos ni rele de outbox", zap.Error(err))
 	} else {
 		defer bus.Close()
 		if err := bus.EnsureStream("DOMAINS", []string{"domains.>"}); err != nil {
 			logger.Warn("ensure stream DOMAINS", zap.Error(err))
 		}
 		publisher = natsadapter.NewPublisher(bus)
+		go outbox.RunForTenants(ctx, tenantDB, db.PoolFromCtx, bus, logger, outbox.Options{})
 	}
 
 	uc := app.New(app.Deps{
@@ -225,6 +234,7 @@ func main() {
 		MailSecurity:         mailsecuritycli.New(tenantcell.NewCaller("mail-security", st.securityTargets, st.internalToken, logger, tenantcell.CallerOptions{})),
 		DomainIndex:          organizationcli.New(st.organizationURL, st.internalToken),
 		Events:               publisher,
+		KeyEvents:            outboxadapter.NewPublisher(ctxPool),
 		Platform:             st.platform,
 		PlatformHostname:     st.platformHostname,
 		DKIMRotationGrace:    st.rotationGrace,
@@ -277,6 +287,7 @@ func runSweeps(ctx context.Context, tenantDB *db.TenantDB, registry *db.Pool, uc
 			total.Failed += rep.Failed
 			total.Deactivated += rep.Deactivated
 			total.Retired += rep.Retired
+			total.Revoked += rep.Revoked
 			total.Pruned += rep.Pruned
 			mu.Unlock()
 		})
@@ -287,7 +298,8 @@ func runSweeps(ctx context.Context, tenantDB *db.TenantDB, registry *db.Pool, uc
 		logger.Info("barrido de dominios completado",
 			zap.Int("rechecked", total.Rechecked), zap.Int("failed", total.Failed),
 			zap.Int("deactivated", total.Deactivated),
-			zap.Int("dkim_retired", total.Retired), zap.Int64("checks_pruned", total.Pruned),
+			zap.Int("dkim_retired", total.Retired), zap.Int("dkim_revocations_completed", total.Revoked),
+			zap.Int64("checks_pruned", total.Pruned),
 			zap.Duration("took", time.Since(started)))
 	}
 

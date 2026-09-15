@@ -26,7 +26,12 @@ func NewRepository(pool *db.ContextPool) *Repository {
 const domainColumns = `id, tenant_id, domain, purpose, status, verification_token, verified_at, last_checked_at,
  dkim_selector, dkim_private_key_enc, dkim_public_key, dkim_key_bits,
  dkim_previous_selector, dkim_previous_private_key_enc, dkim_previous_public_key, dkim_rotated_at,
+ dkim_previous_signed_at, dkim_confirmed_at, dkim_revocation_pending,
  dmarc_policy, directory_deactivation_pending, created_at, updated_at`
+
+// dkimLockClass es el espacio de los cerrojos consultivos de claves DKIM en la base de la empresa;
+// el segundo entero es el hash del id del dominio.
+const dkimLockClass int32 = 0x646b696d // "dkim"
 
 func scanDomain(row pgx.Row) (*domain.Domain, error) {
 	d := &domain.Domain{}
@@ -35,6 +40,7 @@ func scanDomain(row pgx.Row) (*domain.Domain, error) {
 		&d.ID, &d.TenantID, &d.Domain, &d.Purpose, &d.Status, &d.VerificationToken, &d.VerifiedAt, &d.LastCheckedAt,
 		&d.DKIMSelector, &d.DKIMPrivateKeyEnc, &d.DKIMPublicKey, &d.DKIMKeyBits,
 		&prevSelector, &d.DKIMPreviousPrivateKeyEnc, &prevPublic, &d.DKIMRotatedAt,
+		&d.DKIMPreviousSignedAt, &d.DKIMConfirmedAt, &d.DKIMRevocationPending,
 		&d.DMARCPolicy, &d.DirectoryDeactivationPending, &d.CreatedAt, &d.UpdatedAt,
 	)
 	if err != nil {
@@ -118,17 +124,15 @@ func collect(rows pgx.Rows) ([]*domain.Domain, error) {
 	return out, rows.Err()
 }
 
+// Update no escribe ninguna columna DKIM (ports.Repository): las claves cambian solo con
+// SaveDKIMKeys y los metodos condicionados al selector.
 func (r *Repository) Update(ctx context.Context, d *domain.Domain) error {
 	tag, err := r.pool.Exec(ctx,
 		`UPDATE domains.domains SET purpose = $3, status = $4, verified_at = $5, last_checked_at = $6,
- dkim_selector = $7, dkim_private_key_enc = $8, dkim_public_key = $9, dkim_key_bits = $10,
- dkim_previous_selector = $11, dkim_previous_private_key_enc = $12, dkim_previous_public_key = $13,
- dkim_rotated_at = $14, dmarc_policy = $15, directory_deactivation_pending = $16
+ dmarc_policy = $7, directory_deactivation_pending = $8
  WHERE tenant_id = $1 AND id = $2`,
 		d.TenantID, d.ID, d.Purpose, d.Status, d.VerifiedAt, d.LastCheckedAt,
-		d.DKIMSelector, d.DKIMPrivateKeyEnc, d.DKIMPublicKey, d.DKIMKeyBits,
-		nullable(d.DKIMPreviousSelector), d.DKIMPreviousPrivateKeyEnc, nullable(d.DKIMPreviousPublicKey),
-		d.DKIMRotatedAt, d.DMARCPolicy, d.DirectoryDeactivationPending,
+		d.DMARCPolicy, d.DirectoryDeactivationPending,
 	)
 	if err != nil {
 		return err
@@ -164,10 +168,13 @@ func (r *Repository) ListForRecheck(ctx context.Context, tenantID uuid.UUID, pen
 	return collect(rows)
 }
 
+// ListWithExpiredPreviousDKIM mide la gracia desde la ultima vez que la clave anterior pudo
+// firmar (domain.Domain.PreviousDKIMSigningEnd).
 func (r *Repository) ListWithExpiredPreviousDKIM(ctx context.Context, tenantID uuid.UUID, rotatedBefore time.Time) ([]*domain.Domain, error) {
 	rows, err := r.pool.Query(ctx,
 		`SELECT `+domainColumns+` FROM domains.domains
- WHERE tenant_id = $1 AND dkim_previous_selector IS NOT NULL AND dkim_rotated_at < $2
+ WHERE tenant_id = $1 AND dkim_previous_selector IS NOT NULL
+   AND GREATEST(dkim_rotated_at, COALESCE(dkim_previous_signed_at, dkim_rotated_at)) < $2
  ORDER BY dkim_rotated_at`,
 		tenantID, rotatedBefore)
 	if err != nil {
@@ -188,6 +195,170 @@ func (r *Repository) ListPendingDeactivation(ctx context.Context, tenantID uuid.
 	}
 	defer rows.Close()
 	return collect(rows)
+}
+
+func (r *Repository) ListPendingDKIMRevocation(ctx context.Context, tenantID uuid.UUID) ([]*domain.Domain, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT `+domainColumns+` FROM domains.domains
+ WHERE tenant_id = $1 AND dkim_revocation_pending
+ ORDER BY domain`,
+		tenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return collect(rows)
+}
+
+// WithDKIMLock toma pg_advisory_xact_lock sobre el dominio: se suelta al terminar la transaccion,
+// asi que es seguro a traves de pgbouncer en modo transaccion. fn recibe la fila leida con el
+// cerrojo tomado y todo lo que escribe va por la misma transaccion.
+func (r *Repository) WithDKIMLock(ctx context.Context, tenantID, id uuid.UUID, fn func(ctx context.Context, d *domain.Domain) error) error {
+	return r.pool.Transact(ctx, func(ctx context.Context) error {
+		if _, err := r.pool.Exec(ctx, `SELECT pg_advisory_xact_lock($1, hashtext($2))`, dkimLockClass, id.String()); err != nil {
+			return err
+		}
+		d, err := r.GetByID(ctx, tenantID, id)
+		if err != nil {
+			return err
+		}
+		return fn(ctx, d)
+	})
+}
+
+// inTx corre fn en la transaccion del contexto o, si no la hay, en una propia.
+func (r *Repository) inTx(ctx context.Context, fn func(ctx context.Context) error) error {
+	if db.HasTx(ctx) {
+		return fn(ctx)
+	}
+	return r.pool.Transact(ctx, fn)
+}
+
+func (r *Repository) SaveDKIMKeys(ctx context.Context, d *domain.Domain, expectedSelector string, rotation *domain.DKIMRotation) error {
+	return r.inTx(ctx, func(ctx context.Context) error {
+		tag, err := r.pool.Exec(ctx,
+			`UPDATE domains.domains SET dkim_selector = $4, dkim_private_key_enc = $5, dkim_public_key = $6, dkim_key_bits = $7,
+ dkim_previous_selector = $8, dkim_previous_private_key_enc = $9, dkim_previous_public_key = $10, dkim_rotated_at = $11,
+ dkim_previous_signed_at = $12, dkim_confirmed_at = $13, dkim_revocation_pending = $14
+ WHERE tenant_id = $1 AND id = $2 AND dkim_selector = $3`,
+			d.TenantID, d.ID, expectedSelector,
+			d.DKIMSelector, d.DKIMPrivateKeyEnc, d.DKIMPublicKey, d.DKIMKeyBits,
+			nullable(d.DKIMPreviousSelector), d.DKIMPreviousPrivateKeyEnc, nullable(d.DKIMPreviousPublicKey), d.DKIMRotatedAt,
+			d.DKIMPreviousSignedAt, d.DKIMConfirmedAt, d.DKIMRevocationPending,
+		)
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() == 0 {
+			if _, err := r.GetByID(ctx, d.TenantID, d.ID); err != nil {
+				return err
+			}
+			return domain.ErrDKIMKeysChanged
+		}
+		revoked := rotation.RevokedSelectors
+		if revoked == nil {
+			revoked = []string{}
+		}
+		var actor *uuid.UUID
+		if rotation.ActorID != uuid.Nil {
+			actor = &rotation.ActorID
+		}
+		if rotation.ID == uuid.Nil {
+			rotation.ID = uuid.New()
+		}
+		_, err = r.pool.Exec(ctx,
+			`INSERT INTO domains.dkim_rotations (id, tenant_id, domain_id, kind, selector, previous_selector, revoked_selectors, reason, actor_id, rotated_at)
+ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+			rotation.ID, rotation.TenantID, rotation.DomainID, rotation.Kind, rotation.Selector,
+			nullable(rotation.PreviousSelector), revoked, rotation.Reason, actor, rotation.RotatedAt,
+		)
+		return err
+	})
+}
+
+func (r *Repository) ClearPreviousDKIM(ctx context.Context, tenantID, id uuid.UUID, selector string) error {
+	_, err := r.pool.Exec(ctx,
+		`UPDATE domains.domains SET dkim_previous_selector = NULL, dkim_previous_private_key_enc = NULL,
+ dkim_previous_public_key = NULL, dkim_rotated_at = NULL, dkim_previous_signed_at = NULL
+ WHERE tenant_id = $1 AND id = $2 AND dkim_previous_selector = $3`,
+		tenantID, id, selector)
+	return err
+}
+
+func (r *Repository) MarkPreviousDKIMSigning(ctx context.Context, tenantID, id uuid.UUID, selector string, at time.Time) error {
+	_, err := r.pool.Exec(ctx,
+		`UPDATE domains.domains SET dkim_previous_signed_at = GREATEST(COALESCE(dkim_previous_signed_at, $4), $4)
+ WHERE tenant_id = $1 AND id = $2 AND dkim_previous_selector = $3`,
+		tenantID, id, selector, at)
+	return err
+}
+
+func (r *Repository) ConfirmDKIM(ctx context.Context, tenantID, id uuid.UUID, selector string, at time.Time) error {
+	_, err := r.pool.Exec(ctx,
+		`UPDATE domains.domains SET dkim_confirmed_at = $4
+ WHERE tenant_id = $1 AND id = $2 AND dkim_selector = $3 AND dkim_confirmed_at IS NULL`,
+		tenantID, id, selector, at)
+	return err
+}
+
+func (r *Repository) CompleteDKIMRevocation(ctx context.Context, tenantID, id uuid.UUID, selector string) error {
+	_, err := r.pool.Exec(ctx,
+		`UPDATE domains.domains SET dkim_revocation_pending = false
+ WHERE tenant_id = $1 AND id = $2 AND dkim_selector = $3`,
+		tenantID, id, selector)
+	return err
+}
+
+func (r *Repository) ListDKIMRotations(ctx context.Context, tenantID, domainID uuid.UUID, limit int) ([]domain.DKIMRotation, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT id, tenant_id, domain_id, kind, selector, previous_selector, revoked_selectors, reason, actor_id, rotated_at
+ FROM domains.dkim_rotations WHERE tenant_id = $1 AND domain_id = $2
+ ORDER BY rotated_at DESC, id LIMIT $3`,
+		tenantID, domainID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []domain.DKIMRotation
+	for rows.Next() {
+		var rot domain.DKIMRotation
+		var previous *string
+		var actor *uuid.UUID
+		if err := rows.Scan(&rot.ID, &rot.TenantID, &rot.DomainID, &rot.Kind, &rot.Selector, &previous,
+			&rot.RevokedSelectors, &rot.Reason, &actor, &rot.RotatedAt); err != nil {
+			return nil, err
+		}
+		if previous != nil {
+			rot.PreviousSelector = *previous
+		}
+		if actor != nil {
+			rot.ActorID = *actor
+		}
+		out = append(out, rot)
+	}
+	return out, rows.Err()
+}
+
+func (r *Repository) UsedDKIMSelectors(ctx context.Context, tenantID, domainID uuid.UUID) ([]string, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT selector FROM domains.dkim_rotations WHERE tenant_id = $1 AND domain_id = $2
+ UNION SELECT previous_selector FROM domains.dkim_rotations
+  WHERE tenant_id = $1 AND domain_id = $2 AND previous_selector IS NOT NULL
+ UNION SELECT unnest(revoked_selectors) FROM domains.dkim_rotations WHERE tenant_id = $1 AND domain_id = $2`,
+		tenantID, domainID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var s string
+		if err := rows.Scan(&s); err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
 }
 
 // SaveChecks inserta las comprobaciones de una verificacion en una sola transaccion:

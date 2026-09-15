@@ -192,9 +192,10 @@ func subscribeToEvents(bus *events.Bus, uc *app.AuditUseCase, detector *app.Secu
 }
 
 // defaultAuditSubjects son los dominios que hoy emiten eventos con valor de
-// auditoria: identidad, organizacion, accesos, el gateway y los trabajos
-// programados.
-const defaultAuditSubjects = "identity.>,organization.>,access.>,gateway.>,scheduler.>"
+// auditoria: identidad, organizacion, accesos, el gateway, los trabajos
+// programados y los dominios de correo (alta, verificacion y claves DKIM: una
+// revocacion por clave comprometida lleva motivo y actor).
+const defaultAuditSubjects = "identity.>,organization.>,access.>,gateway.>,scheduler.>,domains.>"
 
 // auditSubjects lee de AUDIT_SUBJECTS (lista separada por comas) los subjects que
 // se vuelcan en la bitacora. Va por configuracion y no en codigo porque la

@@ -16,10 +16,12 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/alonsosss/corforce-email/pkg/db"
+	outboxadapter "github.com/alonsosss/corforce-email/services/domain-service/internal/adapters/outbox"
 	"github.com/alonsosss/corforce-email/services/domain-service/internal/domain"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -50,11 +52,14 @@ func setup(t *testing.T) (context.Context, *Repository) {
 	}
 	t.Cleanup(pool.Close)
 
-	files, err := filepath.Glob(filepath.Join("..", "..", "..", "..", "..", "migrations", "tenant", "canonical", "domain-service", "*.sql"))
-	if err != nil || len(files) < 2 {
+	canonical := filepath.Join("..", "..", "..", "..", "..", "migrations", "tenant", "canonical")
+	files, err := filepath.Glob(filepath.Join(canonical, "domain-service", "*.sql"))
+	if err != nil || len(files) < 3 {
 		t.Fatalf("migraciones del servicio: %v %v", files, err)
 	}
 	sort.Strings(files)
+	// La outbox de la base de empresa: los eventos de claves se encolan en la misma transaccion.
+	files = append([]string{filepath.Join(canonical, "platform", "00_outbox.sql")}, files...)
 	for i := 0; i < 2; i++ {
 		for _, f := range files {
 			sqlBytes, err := os.ReadFile(f)
@@ -150,9 +155,14 @@ func TestRepositoryRoundTrip(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	got.Status = domain.StatusVerified
 	got.VerifiedAt, got.LastCheckedAt = &now, &now
-	got.DKIMPreviousSelector, got.DKIMPreviousPrivateKeyEnc, got.DKIMPreviousPublicKey, got.DKIMRotatedAt = "cfm202608", []byte{9}, "OLD", &now
 	if err := repo.Update(ctx, got); err != nil {
 		t.Fatalf("Update: %v", err)
+	}
+	got.DKIMPreviousSelector, got.DKIMPreviousPrivateKeyEnc, got.DKIMPreviousPublicKey, got.DKIMRotatedAt = "cfm202608", []byte{9}, "OLD", &now
+	if err := repo.SaveDKIMKeys(ctx, got, "cfm202609", &domain.DKIMRotation{
+		TenantID: tenantID, DomainID: d.ID, Kind: domain.RotationScheduled, Selector: "cfm202609", PreviousSelector: "cfm202608", RotatedAt: now,
+	}); err != nil {
+		t.Fatalf("SaveDKIMKeys: %v", err)
 	}
 	again, _ := repo.GetByID(ctx, tenantID, d.ID)
 	if again.Status != domain.StatusVerified || !again.HasPreviousDKIM() || again.DKIMPreviousPublicKey != "OLD" || !again.UpdatedAt.After(again.CreatedAt) {
@@ -207,5 +217,251 @@ func TestRepositoryRoundTrip(t *testing.T) {
 	}
 	if left, _ := repo.LatestChecks(ctx, tenantID, d.ID); len(left) != 0 {
 		t.Error("las comprobaciones caen con el dominio (ON DELETE CASCADE)")
+	}
+	if left, _ := repo.ListDKIMRotations(ctx, tenantID, d.ID, 10); len(left) != 0 {
+		t.Error("el historial de claves cae con el dominio (ON DELETE CASCADE)")
+	}
+}
+
+// Las claves solo cambian partiendo del selector que se vio; Update nunca las toca; cada marca
+// DKIM va condicionada a su selector, y el historial guarda motivo, actor y selectores.
+func TestRepositoryDKIMKeys(t *testing.T) {
+	ctx, repo := setup(t)
+	tenantID, actor := uuid.New(), uuid.New()
+	d := sample(tenantID, "claves-"+uuid.NewString()[:8]+".test")
+	if err := repo.Create(ctx, d); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	later := now.Add(time.Hour)
+
+	next := *d
+	next.DKIMSelector, next.DKIMPrivateKeyEnc, next.DKIMPublicKey = "cfm20260912", []byte{4}, "NEW"
+	next.DKIMPreviousSelector, next.DKIMPreviousPrivateKeyEnc, next.DKIMPreviousPublicKey = "cfm202609", []byte{1, 2, 3}, "PUB"
+	next.DKIMRotatedAt, next.DKIMPreviousSignedAt = &now, &now
+	scheduled := &domain.DKIMRotation{
+		TenantID: tenantID, DomainID: d.ID, Kind: domain.RotationScheduled,
+		Selector: "cfm20260912", PreviousSelector: "cfm202609", ActorID: actor, RotatedAt: now,
+	}
+	if err := repo.SaveDKIMKeys(ctx, &next, "cfm199901", scheduled); !errors.Is(err, domain.ErrDKIMKeysChanged) {
+		t.Fatalf("desde un selector que ya no es el actual: %v", err)
+	}
+	if err := repo.SaveDKIMKeys(ctx, &domain.Domain{ID: uuid.New(), TenantID: tenantID}, "cfm202609", scheduled); !errors.Is(err, domain.ErrDomainNotFound) {
+		t.Errorf("dominio inexistente: %v", err)
+	}
+	if rs, _ := repo.ListDKIMRotations(ctx, tenantID, d.ID, 10); len(rs) != 0 {
+		t.Fatalf("una rotacion rechazada no deja historial: %d", len(rs))
+	}
+	if err := repo.SaveDKIMKeys(ctx, &next, "cfm202609", scheduled); err != nil {
+		t.Fatalf("SaveDKIMKeys: %v", err)
+	}
+	got, _ := repo.GetByID(ctx, tenantID, d.ID)
+	if got.DKIMSelector != "cfm20260912" || got.DKIMPreviousSelector != "cfm202609" || got.DKIMPreviousSignedAt == nil ||
+		!got.DKIMPreviousSignedAt.Equal(now) || got.DKIMConfirmedAt != nil || got.DKIMRevocationPending {
+		t.Fatalf("claves guardadas: %+v", got)
+	}
+
+	stale := *d
+	stale.Status = domain.StatusVerified
+	if err := repo.Update(ctx, &stale); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if got, _ := repo.GetByID(ctx, tenantID, d.ID); got.DKIMSelector != "cfm20260912" || got.Status != domain.StatusVerified {
+		t.Fatalf("Update con la fila de antes devolvio las claves viejas: %s/%s", got.DKIMSelector, got.Status)
+	}
+
+	for _, m := range []struct {
+		selector string
+		at       time.Time
+	}{{"cfm202609", later}, {"cfm202609", now}, {"otro", later.Add(time.Hour)}} {
+		if err := repo.MarkPreviousDKIMSigning(ctx, tenantID, d.ID, m.selector, m.at); err != nil {
+			t.Fatalf("MarkPreviousDKIMSigning: %v", err)
+		}
+	}
+	if got, _ := repo.GetByID(ctx, tenantID, d.ID); !got.DKIMPreviousSignedAt.Equal(later) {
+		t.Errorf("la ultima firma solo avanza y solo con su selector: %v", got.DKIMPreviousSignedAt)
+	}
+	if expired, _ := repo.ListWithExpiredPreviousDKIM(ctx, tenantID, later); len(expired) != 0 {
+		t.Error("la gracia cuenta desde la ultima firma, no desde la rotacion")
+	}
+	if expired, _ := repo.ListWithExpiredPreviousDKIM(ctx, tenantID, later.Add(time.Minute)); len(expired) != 1 {
+		t.Error("vencida desde la ultima firma")
+	}
+
+	for _, c := range []struct {
+		selector string
+		at       time.Time
+	}{{"cfm202609", now}, {"cfm20260912", now}, {"cfm20260912", later}} {
+		if err := repo.ConfirmDKIM(ctx, tenantID, d.ID, c.selector, c.at); err != nil {
+			t.Fatalf("ConfirmDKIM: %v", err)
+		}
+	}
+	if got, _ := repo.GetByID(ctx, tenantID, d.ID); got.DKIMConfirmedAt == nil || !got.DKIMConfirmedAt.Equal(now) {
+		t.Errorf("confirmada la primera vez y solo la actual: %v", got.DKIMConfirmedAt)
+	}
+
+	if err := repo.ClearPreviousDKIM(ctx, tenantID, d.ID, "otro"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := repo.GetByID(ctx, tenantID, d.ID); !got.HasPreviousDKIM() {
+		t.Fatal("ClearPreviousDKIM de otro selector no retira la anterior")
+	}
+	if err := repo.ClearPreviousDKIM(ctx, tenantID, d.ID, "cfm202609"); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = repo.GetByID(ctx, tenantID, d.ID)
+	if got.HasPreviousDKIM() || got.DKIMPreviousSignedAt != nil {
+		t.Fatalf("anterior retirada: %+v", got)
+	}
+
+	revoked := *got
+	revoked.DKIMSelector, revoked.DKIMPrivateKeyEnc, revoked.DKIMPublicKey = "cfm20260913", []byte{5}, "NEWER"
+	revoked.DKIMConfirmedAt, revoked.DKIMRevocationPending = nil, true
+	compromised := &domain.DKIMRotation{
+		TenantID: tenantID, DomainID: d.ID, Kind: domain.RotationCompromised, Selector: "cfm20260913",
+		RevokedSelectors: []string{"cfm20260912"}, Reason: "expuesta", ActorID: actor, RotatedAt: later,
+	}
+	if err := repo.SaveDKIMKeys(ctx, &revoked, "cfm20260912", compromised); err != nil {
+		t.Fatalf("revocacion: %v", err)
+	}
+	if pending, _ := repo.ListPendingDKIMRevocation(ctx, tenantID); len(pending) != 1 || pending[0].ID != d.ID {
+		t.Fatalf("pendientes = %d", len(pending))
+	}
+	if pending, _ := repo.ListPendingDKIMRevocation(ctx, uuid.New()); len(pending) != 0 {
+		t.Error("otra empresa no ve las revocaciones de esta")
+	}
+	_ = repo.CompleteDKIMRevocation(ctx, tenantID, d.ID, "cfm20260912")
+	if got, _ := repo.GetByID(ctx, tenantID, d.ID); !got.DKIMRevocationPending {
+		t.Fatal("solo se completa la revocacion de la clave actual")
+	}
+	_ = repo.CompleteDKIMRevocation(ctx, tenantID, d.ID, "cfm20260913")
+	if got, _ := repo.GetByID(ctx, tenantID, d.ID); got.DKIMRevocationPending {
+		t.Fatal("revocacion completada")
+	}
+
+	// Una revocacion sin motivo no entra (CHECK) y la transaccion deshace tambien las claves.
+	bad := revoked
+	bad.DKIMSelector = "cfm20260914"
+	if err := repo.SaveDKIMKeys(ctx, &bad, "cfm20260913", &domain.DKIMRotation{
+		TenantID: tenantID, DomainID: d.ID, Kind: domain.RotationCompromised, Selector: "cfm20260914",
+		RevokedSelectors: []string{"cfm20260913"}, RotatedAt: later,
+	}); err == nil {
+		t.Fatal("revocacion sin motivo aceptada")
+	}
+	if got, _ := repo.GetByID(ctx, tenantID, d.ID); got.DKIMSelector != "cfm20260913" {
+		t.Fatalf("las claves cambiaron sin su historial: %s", got.DKIMSelector)
+	}
+
+	rs, err := repo.ListDKIMRotations(ctx, tenantID, d.ID, 10)
+	if err != nil || len(rs) != 2 {
+		t.Fatalf("historial = %d, %v", len(rs), err)
+	}
+	if rs[0].Kind != domain.RotationCompromised || rs[0].Reason != "expuesta" || rs[0].ActorID != actor ||
+		len(rs[0].RevokedSelectors) != 1 || rs[0].RevokedSelectors[0] != "cfm20260912" || rs[0].PreviousSelector != "" {
+		t.Errorf("revocacion = %+v", rs[0])
+	}
+	if rs[1].Kind != domain.RotationScheduled || rs[1].PreviousSelector != "cfm202609" || len(rs[1].RevokedSelectors) != 0 || rs[1].ActorID != actor {
+		t.Errorf("rotacion = %+v", rs[1])
+	}
+	if one, _ := repo.ListDKIMRotations(ctx, tenantID, d.ID, 1); len(one) != 1 || one[0].ID != rs[0].ID {
+		t.Error("el limite devuelve la mas reciente")
+	}
+	used, err := repo.UsedDKIMSelectors(ctx, tenantID, d.ID)
+	sort.Strings(used)
+	if err != nil || strings.Join(used, ",") != "cfm202609,cfm20260912,cfm20260913" {
+		t.Errorf("selectores usados = %v, %v", used, err)
+	}
+}
+
+// WithDKIMLock serializa por dominio y confirma o deshace a la vez las claves, el historial y el
+// evento de la outbox.
+func TestRepositoryDKIMLock(t *testing.T) {
+	ctx, repo := setup(t)
+	q := &db.ContextPool{}
+	events := outboxadapter.NewPublisher(q)
+	tenantID, actor := uuid.New(), uuid.New()
+	d := sample(tenantID, "cerrojo-"+uuid.NewString()[:8]+".test")
+	if err := repo.Create(ctx, d); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	outboxRows := func() int {
+		var n int
+		if err := q.QueryRow(ctx, `SELECT count(*) FROM platform.event_outbox
+ WHERE subject = 'domains.domain.dkim_revoked' AND payload->'data'->>'domain_id' = $1`, d.ID.String()).Scan(&n); err != nil {
+			t.Fatalf("outbox: %v", err)
+		}
+		return n
+	}
+	revoke := func(fail error) error {
+		return repo.WithDKIMLock(ctx, tenantID, d.ID, func(ctx context.Context, fresh *domain.Domain) error {
+			fresh.DKIMSelector, fresh.DKIMPrivateKeyEnc, fresh.DKIMPublicKey, fresh.DKIMRevocationPending = "cfm20260912", []byte{7}, "NEW", true
+			rot := &domain.DKIMRotation{
+				TenantID: tenantID, DomainID: d.ID, Kind: domain.RotationCompromised, Selector: "cfm20260912",
+				RevokedSelectors: []string{"cfm202609"}, Reason: "expuesta", ActorID: actor, RotatedAt: time.Now().UTC(),
+			}
+			if err := repo.SaveDKIMKeys(ctx, fresh, "cfm202609", rot); err != nil {
+				return err
+			}
+			if err := events.DKIMRevoked(ctx, fresh, rot); err != nil {
+				return err
+			}
+			return fail
+		})
+	}
+
+	errCut := errors.New("corte antes de confirmar")
+	if err := revoke(errCut); !errors.Is(err, errCut) {
+		t.Fatalf("WithDKIMLock: %v", err)
+	}
+	got, _ := repo.GetByID(ctx, tenantID, d.ID)
+	rs, _ := repo.ListDKIMRotations(ctx, tenantID, d.ID, 10)
+	if got.DKIMSelector != "cfm202609" || len(rs) != 0 || outboxRows() != 0 {
+		t.Fatalf("deshecho a medias: selector %s, historial %d, outbox %d", got.DKIMSelector, len(rs), outboxRows())
+	}
+	if err := revoke(nil); err != nil {
+		t.Fatalf("WithDKIMLock: %v", err)
+	}
+	got, _ = repo.GetByID(ctx, tenantID, d.ID)
+	rs, _ = repo.ListDKIMRotations(ctx, tenantID, d.ID, 10)
+	if got.DKIMSelector != "cfm20260912" || !got.DKIMRevocationPending || len(rs) != 1 || outboxRows() != 1 {
+		t.Fatalf("confirmado a medias: selector %s, historial %d, outbox %d", got.DKIMSelector, len(rs), outboxRows())
+	}
+	var userID, reason, hosts string
+	if err := q.QueryRow(ctx, `SELECT payload->>'user_id', payload->'data'->>'reason', payload->'data'->'remove_dns_records'->>0
+ FROM platform.event_outbox WHERE subject = 'domains.domain.dkim_revoked' AND payload->'data'->>'domain_id' = $1`, d.ID.String()).Scan(&userID, &reason, &hosts); err != nil {
+		t.Fatal(err)
+	}
+	if userID != actor.String() || reason != "expuesta" || hosts != "cfm202609._domainkey."+d.Domain {
+		t.Errorf("evento: usuario %s, motivo %s, TXT %s", userID, reason, hosts)
+	}
+
+	entered, release := make(chan struct{}), make(chan struct{})
+	firstDone, second := make(chan error, 1), make(chan error, 1)
+	go func() {
+		firstDone <- repo.WithDKIMLock(ctx, tenantID, d.ID, func(context.Context, *domain.Domain) error {
+			close(entered)
+			<-release
+			return nil
+		})
+	}()
+	<-entered
+	go func() {
+		second <- repo.WithDKIMLock(ctx, tenantID, d.ID, func(context.Context, *domain.Domain) error { return nil })
+	}()
+	select {
+	case err := <-second:
+		t.Fatalf("entro con el cerrojo del dominio tomado: %v", err)
+	case <-time.After(300 * time.Millisecond):
+	}
+	close(release)
+	for _, ch := range []chan error{firstDone, second} {
+		select {
+		case err := <-ch:
+			if err != nil {
+				t.Fatalf("WithDKIMLock: %v", err)
+			}
+		case <-time.After(30 * time.Second):
+			t.Fatal("el cerrojo no se solto al terminar la transaccion")
+		}
 	}
 }

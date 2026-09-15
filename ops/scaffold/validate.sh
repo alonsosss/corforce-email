@@ -66,6 +66,11 @@ if ! bash "$ROOT/ops/scaffold/check-sql-arity.sh"; then
   FAIL=1
 fi
 
+echo "== 7. Gracia DKIM frente a la cola de Postfix =="
+if ! bash "$ROOT/ops/scaffold/check-dkim-grace.sh"; then
+  FAIL=1
+fi
+
 echo ""
 if [[ $FAIL -ne 0 ]]; then
   echo "VALIDACION: FALLA"; exit 1

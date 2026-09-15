@@ -10,7 +10,8 @@ import (
 // Eventos persistentes del dominio domains (stream DOMAINS, subjects domains.>). Los
 // consumen auditoria, notificaciones y, en fase 3, el plano transaccional. El payload
 // nunca lleva claves ni el token de propiedad. Cada metodo escribe el subject y el
-// payload literales para que ops/scaffold/eventcontracts pueda leer el contrato.
+// payload literales para que ops/scaffold/eventcontracts pueda leer el contrato. Los de
+// las claves DKIM salen por la outbox (adapters/outbox).
 const (
 	StreamName = "DOMAINS"
 
@@ -18,7 +19,6 @@ const (
 	SubjectDomainVerified = "domains.domain.verified"
 	SubjectDomainFailed   = "domains.domain.failed"
 	SubjectDomainDeleted  = "domains.domain.deleted"
-	SubjectDKIMRotated    = "domains.domain.dkim_rotated"
 
 	eventSource = "domain-service"
 )
@@ -87,22 +87,6 @@ func (p *Publisher) DomainDeleted(_ context.Context, d *domain.Domain) error {
 	}
 	return p.bus.PublishPersistent(SubjectDomainDeleted, events.Event{
 		Type: SubjectDomainDeleted, Source: eventSource, TenantID: d.TenantID.String(),
-		Data: map[string]interface{}{
-			"tenant_id": d.TenantID.String(),
-			"domain_id": d.ID.String(),
-			"domain":    d.Domain,
-			"purpose":   string(d.Purpose),
-			"status":    string(d.Status),
-		},
-	})
-}
-
-func (p *Publisher) DKIMRotated(_ context.Context, d *domain.Domain) error {
-	if !p.enabled() {
-		return nil
-	}
-	return p.bus.PublishPersistent(SubjectDKIMRotated, events.Event{
-		Type: SubjectDKIMRotated, Source: eventSource, TenantID: d.TenantID.String(),
 		Data: map[string]interface{}{
 			"tenant_id": d.TenantID.String(),
 			"domain_id": d.ID.String(),

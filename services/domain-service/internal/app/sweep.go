@@ -14,18 +14,37 @@ type SweepReport struct {
 	Failed      int
 	Deactivated int
 	Retired     int
-	Pruned      int64
+	// Revoked son las revocaciones por clave comprometida que la celda confirmo en esta pasada.
+	Revoked int
+	Pruned  int64
 }
 
-// SweepTenant termina primero las desactivaciones que quedaron sin confirmar en el directorio
-// de la celda. Despues reverifica los dominios de una empresa: los verificados (que pueden
-// perder sus registros) y los pendientes recientes (que pueden haberlos publicado sin
-// pulsar verificar). Por ultimo retira las claves DKIM fuera de gracia y poda el historial.
-// El contexto lleva ya el pool de la empresa (ForEachActiveTenantConcurrent).
+// SweepTenant termina primero las revocaciones de claves comprometidas que la celda no confirmo
+// (una clave revocada que siga firmando es lo mas urgente) y las desactivaciones que quedaron sin
+// confirmar en el directorio de la celda. Despues reverifica los dominios de una empresa: los
+// verificados (que pueden perder sus registros) y los pendientes recientes (que pueden haberlos
+// publicado sin pulsar verificar). Por ultimo retira las claves DKIM fuera de gracia y poda el
+// historial. El contexto lleva ya el pool de la empresa (ForEachActiveTenantConcurrent).
 func (uc *UseCase) SweepTenant(ctx context.Context, tenantID uuid.UUID) SweepReport {
 	var report SweepReport
 	now := uc.now()
 	log := uc.logger.With(zap.String("tenant_id", tenantID.String()))
+
+	revocations, err := uc.repo.ListPendingDKIMRevocation(ctx, tenantID)
+	if err != nil {
+		log.Error("barrido: listar revocaciones DKIM pendientes", zap.Error(err))
+	}
+	for _, d := range revocations {
+		if ctx.Err() != nil {
+			return report
+		}
+		if err := uc.finishRevocation(ctx, d.TenantID, d.ID); err != nil {
+			log.Error("barrido: la celda sigue sin confirmar la revocacion DKIM; la clave revocada puede seguir firmando",
+				zap.String("domain", d.Domain), zap.Error(err))
+			continue
+		}
+		report.Revoked++
+	}
 
 	pending, err := uc.repo.ListPendingDeactivation(ctx, tenantID)
 	if err != nil {

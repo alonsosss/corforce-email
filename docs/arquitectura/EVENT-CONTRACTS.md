@@ -41,7 +41,8 @@ subject y payload. `opaco` = el payload no se puede leer estaticamente.
 | `contacts.import.completed` | contacts | `created`, `import_id`, `list_id`, `skipped`, `tenant_id`, `total`, `updated` |
 | `domains.domain.created` | domain-service | `domain`, `domain_id`, `purpose`, `status`, `tenant_id` |
 | `domains.domain.deleted` | domain-service | `domain`, `domain_id`, `purpose`, `status`, `tenant_id` |
-| `domains.domain.dkim_rotated` | domain-service | `domain`, `domain_id`, `purpose`, `status`, `tenant_id` |
+| `domains.domain.dkim_revoked` | domain-service | `domain`, `domain_id`, `purpose`, `reason`, `remove_dns_records`, `revoked_selectors`, `rotated_at`, `selector`, `status`, `tenant_id` |
+| `domains.domain.dkim_rotated` | domain-service | `domain`, `domain_id`, `previous_selector`, `purpose`, `rotated_at`, `selector`, `status`, `tenant_id` |
 | `domains.domain.failed` | domain-service | `domain`, `domain_id`, `purpose`, `status`, `tenant_id` |
 | `domains.domain.verified` | domain-service | `domain`, `domain_id`, `purpose`, `status`, `tenant_id` |
 | `gateway.security.exfiltration` | gateway | `count`, `ip`, `tenant_id`, `user_id`, `window` |

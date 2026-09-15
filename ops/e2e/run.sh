@@ -863,6 +863,67 @@ dkim_metricas() {
 }
 expect "y lo cuenta en las metricas de mail-security, con su ultima pasada completa" "$(dkim_metricas)" "si"
 
+echo "== Rotacion y revocacion de claves DKIM (domain-service)"
+# acme da de alta firma.test, la prueba lo publica en su DNS y domain-service lo verifica: lo activa
+# en el directorio de pe-01 y mail-security escribe su clave en el Redis de la prueba. Una rotacion
+# programada sigue firmando con la anterior; revocar por compromiso deja en el Redis solo la clave
+# nueva al volver la respuesta, con motivo y actor en el historial del dominio y en la auditoria.
+AF="Authorization: Bearer $(e2e_login admin@acme.test "$TENANT_PASS" | jget data.access_token)"
+FDOM=$(curl -s -X POST "$GW/domains" -H "$AF" -H 'Content-Type: application/json' -d '{"domain":"firma.test","purpose":"corporate"}')
+FDOMID=$(echo "$FDOM" | jget data.id)
+K1=$(echo "$FDOM" | jget data.dkim_selector)
+python3 -c 'import json, sys
+z = json.load(open(sys.argv[1])) + json.load(sys.stdin)["data"]["dns_records"]
+json.dump(z, open(sys.argv[1] + ".tmp", "w"))' "$WORK/zona.json" <<<"$FDOM" && mv "$WORK/zona.json.tmp" "$WORK/zona.json"
+FV=$(curl -s -X POST "$GW/domains/$FDOMID/verify" -H "$AF")
+expect "domain-service verifica firma.test y lo activa en pe-01 sin errores de celda" "$(echo "$FV" | jget data.status)/$(echo "$FV" | errores_de x)" "verified/0 0"
+expect "mail-security escribe su clave en los motores" "$(dkim_redis HGET DKIM_SELECTORS firma.test)" "$K1"
+K2=$(curl -s -X POST "$GW/domains/$FDOMID/rotate-dkim" -H "$AF" | jget data.dkim_selector)
+expect "rotacion programada: la nueva en los motores y firmando la anterior" \
+  "$(dkim_redis HEXISTS DKIM_PRIV_KEYS "$K2.firma.test")/$(dkim_redis HGET DKIM_SELECTORS firma.test)" "1/$K1"
+expect "con la anterior en gracia no se rota otra vez" "$(sesion -X POST "$GW/domains/$FDOMID/rotate-dkim" -H "$AF")" "DKIM_ROTATION_IN_PROGRESS 409"
+MOTIVO="clave expuesta en la prueba $(rand_hex 4)"
+revocar() {
+  curl -s -X POST "$GW/domains/$FDOMID/revoke-dkim" -H "$AF" -H 'Content-Type: application/json' \
+    -d "{\"current_selector\":\"$1\",\"reason\":\"$2\"}" "${@:3}"
+}
+expect "revocar exige el selector actual" "$(sesion -X POST "$GW/domains/$FDOMID/revoke-dkim" -H "$AF" -H 'Content-Type: application/json' \
+  -d "{\"current_selector\":\"$K1\",\"reason\":\"$MOTIVO\"}")" "DKIM_SELECTOR_NOT_CURRENT 409"
+expect "y un motivo" "$(sesion -X POST "$GW/domains/$FDOMID/revoke-dkim" -H "$AF" -H 'Content-Type: application/json' \
+  -d "{\"current_selector\":\"$K2\",\"reason\":\"   \"}")" "VALIDATION_ERROR 422"
+REV=$(revocar "$K2" "$MOTIVO")
+K3=$(echo "$REV" | jget data.dkim_selector)
+expect "revocacion confirmada por la celda" "$(echo "$REV" | jget data.engines_retired)" "True"
+expect "al volver la respuesta el Redis de los motores ya no tiene ninguna clave revocada" \
+  "$(dkim_redis HEXISTS DKIM_PRIV_KEYS "$K1.firma.test")$(dkim_redis HEXISTS DKIM_PRIV_KEYS "$K2.firma.test")" "00"
+expect "y firma con la nueva" "$(dkim_redis HGET DKIM_SELECTORS firma.test)/$(dkim_redis HEXISTS DKIM_PRIV_KEYS "$K3.firma.test")" "$K3/1"
+expect "pide retirar del DNS los dos TXT revocados" \
+  "$(echo "$REV" | jget data.remove_dns_records.0.host) $(echo "$REV" | jget data.remove_dns_records.1.host)" \
+  "$K2._domainkey.firma.test $K1._domainkey.firma.test"
+expect "el reintento de la misma revocacion no genera otra clave" "$(revocar "$K2" "$MOTIVO" | jget data.dkim_selector)" "$K3"
+YO=$(sql mail_registry "SELECT id FROM identity.users WHERE email = 'admin@acme.test'")
+FICHA=$(curl -s "$GW/domains/$FDOMID" -H "$AF")
+expect "el historial del dominio guarda la revocacion con su motivo y quien la pidio" \
+  "$(echo "$FICHA" | jget data.dkim_rotations.0.kind)/$(echo "$FICHA" | jget data.dkim_rotations.0.reason)/$(echo "$FICHA" | jget data.dkim_rotations.0.actor_id)" \
+  "compromised/$MOTIVO/$YO"
+expect "y la rotacion programada de antes, sin repetir la revocacion" "$(echo "$FICHA" | jget data.dkim_rotations.1.kind)/$(echo "$FICHA" | jget data.dkim_rotations.2.kind)" "scheduled/"
+# publicada: si en 30 s el rele de la outbox de acme entrego a NATS la revocacion con el usuario y
+# el motivo. audit la guarda por AUDIT_SUBJECTS (domains.>); esta prueba no arranca audit.
+publicada() {
+  local n=""
+  for _ in $(seq 1 60); do
+    n=$(sql mail_tenant_acme "SELECT count(*) FROM platform.event_outbox WHERE subject = 'domains.domain.dkim_revoked'
+      AND published_at IS NOT NULL AND payload->>'user_id' = '$YO' AND payload->'data'->>'reason' = '$MOTIVO'")
+    [[ "$n" == 1 ]] && { echo si; return; }
+    sleep 0.5
+  done
+  echo "no ($n)"
+}
+expect "la outbox de acme entrega a NATS una sola revocacion, con el usuario y el motivo" "$(publicada)" "si"
+FVR=$(curl -s -X POST "$GW/domains/$FDOMID/verify" -H "$AF")
+expect "verificar a mano antes de publicar el TXT nuevo no apaga el dominio" "$(echo "$FVR" | jget data.outcome)/$(echo "$FVR" | jget data.status)" "failed/verified"
+expect "que sigue activo en el directorio de pe-01" "$(sql mail_cell_pe_01 "SELECT active FROM mail.domains WHERE domain = 'firma.test'")" "t"
+
 echo "== Baja de una empresa con correo en su celda"
 # La saga de baja de organization da de baja a beta en el mail-directory de pe-02, la instancia de
 # su celda, antes de retirarla del registro, y despues suelta beta.test del indice global. El buzon

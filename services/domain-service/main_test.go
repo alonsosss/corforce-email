@@ -71,7 +71,7 @@ func TestLoadSettingsValoresPorDefecto(t *testing.T) {
 		t.Fatal(err)
 	}
 	if st.port != defaultPort || st.recheckInterval != 6*time.Hour || st.sweepTimeout != 5*time.Minute ||
-		st.sweepWorkers != 4 || st.rotationGrace != 72*time.Hour || st.checkRetention != 30*24*time.Hour {
+		st.sweepWorkers != 4 || st.rotationGrace != 168*time.Hour || st.checkRetention != 30*24*time.Hour {
 		t.Errorf("puerto %d, intervalo %s, tiempo por empresa %s, trabajadores %d, gracia %s, retencion %s",
 			st.port, st.recheckInterval, st.sweepTimeout, st.sweepWorkers, st.rotationGrace, st.checkRetention)
 	}
@@ -95,7 +95,10 @@ func TestLoadSettingsRangos(t *testing.T) {
 		"tiempo por empresa por debajo del suelo":             {map[string]string{"DOMAIN_SWEEP_TENANT_TIMEOUT": "30s"}, "DOMAIN_SWEEP_TENANT_TIMEOUT"},
 		"sin trabajadores":                                    {map[string]string{"DOMAIN_SWEEP_CONCURRENCY": "0"}, "DOMAIN_SWEEP_CONCURRENCY"},
 		"demasiados trabajadores":                             {map[string]string{"DOMAIN_SWEEP_CONCURRENCY": "65"}, "DOMAIN_SWEEP_CONCURRENCY"},
+		"gracia DKIM en el suelo":                             {map[string]string{"MAIL_DKIM_ROTATION_GRACE": "144h"}, ""},
 		"gracia DKIM corta":                                   {map[string]string{"MAIL_DKIM_ROTATION_GRACE": "1h"}, "MAIL_DKIM_ROTATION_GRACE"},
+		"gracia DKIM de antes, mas corta que la cola":         {map[string]string{"MAIL_DKIM_ROTATION_GRACE": "72h"}, "MAIL_DKIM_ROTATION_GRACE"},
+		"gracia DKIM por debajo de la cola mas un TTL":        {map[string]string{"MAIL_DKIM_ROTATION_GRACE": "143h"}, "MAIL_DKIM_ROTATION_GRACE"},
 		"gracia DKIM larga":                                   {map[string]string{"MAIL_DKIM_ROTATION_GRACE": "721h"}, "MAIL_DKIM_ROTATION_GRACE"},
 		"historial podado dentro de la ventana de pendientes": {map[string]string{"DOMAIN_CHECK_RETENTION": "24h"}, "DOMAIN_CHECK_RETENTION"},
 		"historial de mas de un ano":                          {map[string]string{"DOMAIN_CHECK_RETENTION": "8761h"}, "DOMAIN_CHECK_RETENTION"},

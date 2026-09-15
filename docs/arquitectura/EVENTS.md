@@ -6,7 +6,7 @@ Convencion de subject: `<dominio>.<entidad>.<accion>`. Un subject tiene UN dueno
 Publicar incluye encolar en la outbox (`outbox.Enqueue`); un consumidor con comodin
 (`*`, `>`) figura en cada subject publicado que recibe.
 
-Resumen: 78 publicaciones, 35 suscripciones, 78 subjects distintos.
+Resumen: 79 publicaciones, 35 suscripciones, 79 subjects distintos.
 
 ## Cruce por subject (dueno -> consumidores)
 
@@ -41,6 +41,7 @@ Resumen: 78 publicaciones, 35 suscripciones, 78 subjects distintos.
 | `contacts.import.completed` | contacts | - |
 | `domains.domain.created` | domain-service | billing, transactional |
 | `domains.domain.deleted` | domain-service | billing, transactional |
+| `domains.domain.dkim_revoked` | domain-service | transactional |
 | `domains.domain.dkim_rotated` | domain-service | transactional |
 | `domains.domain.failed` | domain-service | transactional |
 | `domains.domain.verified` | domain-service | transactional |
@@ -120,7 +121,7 @@ Resumen: 78 publicaciones, 35 suscripciones, 78 subjects distintos.
 - Consume: `suppression.entry.added`, `suppression.entry.expired`, `suppression.entry.removed`
 
 ### domain-service
-- Publica: `domains.domain.created`, `domains.domain.deleted`, `domains.domain.dkim_rotated`, `domains.domain.failed`, `domains.domain.verified`
+- Publica: `domains.domain.created`, `domains.domain.deleted`, `domains.domain.dkim_revoked`, `domains.domain.dkim_rotated`, `domains.domain.failed`, `domains.domain.verified`
 
 ### gateway
 - Publica: `audit.api.write`, `gateway.security.exfiltration`

@@ -692,6 +692,34 @@ esperar "la sesion IMAP abierta con la anterior se cierra" 20 sesion_en bea CERR
 BEA_PASS="$BEA_NUEVA"
 expect "mail-security sin fallos de revocacion" "$(revocaciones fallos)" "0"
 
+echo "== Rotacion y revocacion de la clave DKIM (domain-service -> mail-security -> redis-mail)"
+# Una rotacion programada deposita la clave nueva y sigue firmando con la anterior. Revocar por
+# compromiso entrega solo una clave nueva y mail-security retira las demas en esa misma llamada: al
+# volver la respuesta, redis-mail ya no tiene ninguna clave revocada y Rspamd firma con la nueva.
+A2="Authorization: Bearer $(e2e_login admin@acme.test "$TENANT_PASS" | jget data.access_token)"
+api POST "/domains/$DOMID/rotate-dkim"
+K2=$(echo "$API_BODY" | jget data.dkim_selector)
+expect "rotacion programada: la clave nueva queda en redis-mail" "$API_CODE/$(redis_mail HEXISTS DKIM_PRIV_KEYS "$K2.acme.test")" "200/1"
+expect "y se sigue firmando con la anterior mientras su TXT no se publica" "$(redis_mail HGET DKIM_SELECTORS acme.test)" "$SELECTOR"
+api POST "/domains/$DOMID/rotate-dkim"
+expect "con una clave en gracia no se rota otra vez" "$API_CODE/$(echo "$API_BODY" | jget error.code)" "409/DKIM_ROTATION_IN_PROGRESS"
+MOTIVO_DKIM="clave expuesta en la prueba $(rand_hex 4)"
+api POST "/domains/$DOMID/revoke-dkim" "{\"current_selector\":\"$K2\",\"reason\":\"$MOTIVO_DKIM\"}"
+K3=$(echo "$API_BODY" | jget data.dkim_selector)
+expect "revocacion por clave comprometida confirmada por la celda" "$API_CODE/$(echo "$API_BODY" | jget data.engines_retired)" "200/True"
+expect "al volver la respuesta redis-mail ya no tiene la clave actual revocada ni la que seguia en gracia" \
+  "$(redis_mail HEXISTS DKIM_PRIV_KEYS "$K2.acme.test")$(redis_mail HEXISTS DKIM_PRIV_KEYS "$SELECTOR.acme.test")" "00"
+expect "y firma con la nueva" "$(redis_mail HGET DKIM_SELECTORS acme.test)/$(redis_mail HEXISTS DKIM_PRIV_KEYS "$K3.acme.test")" "$K3/1"
+expect "la respuesta pide retirar del DNS los dos TXT revocados" \
+  "$(echo "$API_BODY" | jget data.remove_dns_records.0.host) $(echo "$API_BODY" | jget data.remove_dns_records.1.host)" \
+  "$K2._domainkey.acme.test $SELECTOR._domainkey.acme.test"
+api POST "/domains/$DOMID/revoke-dkim" "{\"current_selector\":\"$K2\",\"reason\":\"$MOTIVO_DKIM\"}"
+expect "el reintento de la misma revocacion no genera otra clave" "$API_CODE/$(echo "$API_BODY" | jget data.dkim_selector)" "200/$K3"
+TOKEN_DKIM="e2e$(rand_hex 4)"
+contains "ana envia tras la revocacion" "$(cliente enviar ana@acme.test "$ANA_PASS" ana@acme.test bea@acme.test "$TOKEN_DKIM-revocada")" "OK 250"
+contains "Rspamd lo firma ya con la clave nueva" "$(cliente buscar bea@acme.test "$BEA_PASS" "$TOKEN_DKIM-revocada")" "s=$K3;"
+SELECTOR="$K3"
+
 echo "== Baja de la empresa: su correo deja de entrar y de autenticar en la celda"
 # La saga de baja de organization da de baja a acme en el mail-directory de su celda antes de
 # retirarla del registro: los mapas de Postfix dejan de servir su dominio, su dominio alias, sus

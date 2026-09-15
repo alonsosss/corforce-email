@@ -15,8 +15,39 @@ type Repository interface {
 	GetByID(ctx context.Context, tenantID, id uuid.UUID) (*domain.Domain, error)
 	GetByName(ctx context.Context, tenantID uuid.UUID, name string) (*domain.Domain, error)
 	List(ctx context.Context, tenantID uuid.UUID, offset, limit int) ([]*domain.Domain, int64, error)
+	// Update guarda el estado del dominio (uso, estado, verificacion, politica DMARC y
+	// desactivacion pendiente). Nunca escribe las claves DKIM: una verificacion o un barrido
+	// que leyo el dominio antes de una rotacion no puede devolverle las claves que la rotacion
+	// retiro. Las claves solo cambian con los metodos DKIM de abajo, cada uno condicionado al
+	// selector que el llamante vio.
 	Update(ctx context.Context, d *domain.Domain) error
 	Delete(ctx context.Context, tenantID, id uuid.UUID) error
+
+	// WithDKIMLock serializa por dominio todo lo que decide sobre sus claves y las entrega a la
+	// celda: fn corre en una transaccion con el cerrojo del dominio tomado y recibe la fila
+	// leida dentro de ella. Lo que fn escribe se confirma si devuelve nil.
+	WithDKIMLock(ctx context.Context, tenantID, id uuid.UUID, fn func(ctx context.Context, d *domain.Domain) error) error
+	// SaveDKIMKeys guarda el juego de claves nuevo del dominio y su entrada del historial en una
+	// transaccion, solo si la clave actual sigue siendo expectedSelector; si no,
+	// domain.ErrDKIMKeysChanged.
+	SaveDKIMKeys(ctx context.Context, d *domain.Domain, expectedSelector string, rotation *domain.DKIMRotation) error
+	// ClearPreviousDKIM olvida la clave anterior si sigue siendo selector.
+	ClearPreviousDKIM(ctx context.Context, tenantID, id uuid.UUID, selector string) error
+	// MarkPreviousDKIMSigning adelanta a at la ultima firma de la clave anterior si sigue siendo
+	// selector.
+	MarkPreviousDKIMSigning(ctx context.Context, tenantID, id uuid.UUID, selector string, at time.Time) error
+	// ConfirmDKIM anota la primera vez que se vio publicado el TXT de la clave actual si sigue
+	// siendo selector.
+	ConfirmDKIM(ctx context.Context, tenantID, id uuid.UUID, selector string, at time.Time) error
+	// CompleteDKIMRevocation quita la marca de revocacion pendiente si la clave actual sigue
+	// siendo selector.
+	CompleteDKIMRevocation(ctx context.Context, tenantID, id uuid.UUID, selector string) error
+	// ListDKIMRotations devuelve el historial del dominio, la mas reciente primero.
+	ListDKIMRotations(ctx context.Context, tenantID, domainID uuid.UUID, limit int) ([]domain.DKIMRotation, error)
+	// UsedDKIMSelectors devuelve todos los selectores que el dominio uso alguna vez.
+	UsedDKIMSelectors(ctx context.Context, tenantID, domainID uuid.UUID) ([]string, error)
+	// ListPendingDKIMRevocation devuelve los dominios con una revocacion sin confirmar en la celda.
+	ListPendingDKIMRevocation(ctx context.Context, tenantID uuid.UUID) ([]*domain.Domain, error)
 
 	// ListForRecheck devuelve los dominios que el barrido debe reverificar: los
 	// verificados y los pendientes creados despues de pendingSince.
@@ -91,5 +122,12 @@ type EventPublisher interface {
 	DomainVerified(ctx context.Context, d *domain.Domain) error
 	DomainFailed(ctx context.Context, d *domain.Domain) error
 	DomainDeleted(ctx context.Context, d *domain.Domain) error
-	DKIMRotated(ctx context.Context, d *domain.Domain) error
+}
+
+// KeyEvents encola los hechos de las claves DKIM en la outbox de la base de la empresa, dentro
+// de la transaccion que las cambia (pkg/outbox): una rotacion o una revocacion existe en el
+// historial si y solo si existe su evento. Nunca llevan claves privadas.
+type KeyEvents interface {
+	DKIMRotated(ctx context.Context, d *domain.Domain, rotation *domain.DKIMRotation) error
+	DKIMRevoked(ctx context.Context, d *domain.Domain, rotation *domain.DKIMRotation) error
 }
