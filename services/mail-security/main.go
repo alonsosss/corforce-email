@@ -69,9 +69,10 @@ const (
 	// linea puede ocupar el cuerpo entero de /pipe_rl (256 KiB) en el Redis que Rspamd consulta en
 	// cada mensaje, y el watchdog solo lee las primeras.
 	maxLogLines = 10000
-	// /pipe recibe el mensaje entero de Rspamd y ninguno supera message_size_limit de Postfix
-	// (100 MiB, deploy/mail/postfix/conf/main.cf).
-	maxPipeMaxBodyMiB = 100
+	// /pipe recibe de Rspamd el mensaje entero en un multipart con sus metadatos. El techo cubre el
+	// mayor mensaje que acepta Postfix (message_size_limit, 100 MiB) mas 1 MiB de envoltorio y no
+	// pasa de lo que Rspamd analiza (max_message): ops/scaffold/check-mail-size-limits.sh.
+	maxPipeMaxBodyMiB = 101
 )
 
 // Aviso de cuarentena: cadencia del barrido, vigencia de los enlaces y cerrojo de lider
@@ -147,6 +148,9 @@ func loadSettings() (settings, error) {
 	if st.exportPort, err = config.EnvInt("MAIL_POLICY_EXPORT_PORT", defaultExportPort, 1, config.MaxPort); err != nil {
 		return st, err
 	}
+	if err = distinctListenerPorts(st); err != nil {
+		return st, err
+	}
 	if st.redisHost, err = config.EnvHost("MAIL_REDIS_HOST", defaultRedisHost); err != nil {
 		return st, err
 	}
@@ -192,6 +196,24 @@ func loadSettings() (settings, error) {
 		return st, err
 	}
 	return st, nil
+}
+
+// distinctListenerPorts: el proceso abre un listener en cada puerto. Con dos en el mismo, el segundo
+// fallaria al abrirse, con los consumidores y el rele ya en marcha.
+func distinctListenerPorts(st settings) error {
+	listeners := []struct {
+		key  string
+		port int
+	}{{"MAIL_SECURITY_PORT", st.port}, {"MAIL_POLICY_MAPS_PORT", st.mapsPort}, {"MAIL_POLICY_EXPORT_PORT", st.exportPort}}
+	for i, a := range listeners {
+		for _, b := range listeners[i+1:] {
+			if a.port == b.port {
+				return fmt.Errorf("%s y %s tienen el mismo puerto (%d): cada uno es un listener propio y deben ser distintos",
+					a.key, b.key, a.port)
+			}
+		}
+	}
+	return nil
 }
 
 func envOrDefault(key, fallback string) string {

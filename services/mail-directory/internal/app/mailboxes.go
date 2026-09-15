@@ -182,7 +182,7 @@ func (uc *UseCase) UpdateMailbox(ctx context.Context, tenantID, id uuid.UUID, re
 		if err != nil {
 			return err
 		}
-		deactivated := req.Active != nil && *req.Active == domain.ActiveOff && m.Active != domain.ActiveOff
+		before := *m
 		applyMailboxUpdate(m, req)
 		if err := uc.ownRelayhost(ctx, tenantID, m.RelayhostID); err != nil {
 			return err
@@ -200,18 +200,19 @@ func (uc *UseCase) UpdateMailbox(ctx context.Context, tenantID, id uuid.UUID, re
 			return err
 		}
 		// Un buzon apagado no puede iniciar sesion; sus contrasenas de aplicacion se
-		// revocan para que un cliente configurado no siga entrando al reactivarlo. Su aviso
-		// cierra en Dovecot las sesiones que abrieron aunque el buzon se reactive antes de que
-		// mail-security atienda mail.mailbox.updated, que entonces solo vaciaria la cache.
-		if deactivated {
-			revoked, err := uc.appPasswords.DeactivateByMailbox(ctx, tenantID, id)
-			if err != nil {
+		// revocan para que un cliente configurado no siga entrando al reactivarlo.
+		if m.Active == domain.ActiveOff && before.Active != domain.ActiveOff {
+			if _, err := uc.appPasswords.DeactivateByMailbox(ctx, tenantID, id); err != nil {
 				return err
 			}
-			if revoked > 0 {
-				if err := uc.events.MailboxCredentialsChanged(ctx, m, domain.CredentialAppPassword); err != nil {
-					return err
-				}
+		}
+		// Lo que le quita al buzon un inicio de sesion lo pierden todas sus credenciales y sale como
+		// la principal: mail-security cierra en Dovecot las sesiones ya abiertas, que
+		// mail.mailbox.updated con el buzon activo solo vaciaria, aunque el buzon se reactive antes
+		// de que atienda el cambio; el webmail cierra las suyas.
+		if domain.MailboxLoginsRevoked(before, *m) {
+			if err := uc.events.MailboxCredentialsChanged(ctx, m, domain.CredentialPassword); err != nil {
+				return err
 			}
 		}
 		return uc.events.MailboxUpdated(ctx, m)

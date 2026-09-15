@@ -35,8 +35,9 @@ const (
 	SubjectMailboxUpdated     = "mail.mailbox.updated"
 	SubjectMailboxDeleted     = "mail.mailbox.deleted"
 	// SubjectMailboxCredentialsChanged: una credencial del buzon dejo de valer o perdio
-	// protocolos; credential dice cual (domain.Credential). mail-security echa al buzon de
-	// Dovecot con cualquiera; el webmail revoca sus sesiones solo con la principal.
+	// protocolos; credential dice cual (domain.Credential), y un cambio del buzon que le quita
+	// inicios de sesion sale como la principal. mail-security echa al buzon de Dovecot con
+	// cualquiera; el webmail revoca sus sesiones solo con la principal.
 	SubjectMailboxCredentialsChanged = "mail.mailbox.credentials_changed"
 	SubjectAliasCreated              = "mail.alias.created"
 	SubjectAliasUpdated              = "mail.alias.updated"

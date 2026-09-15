@@ -143,6 +143,27 @@ TLS, solo con `DOVEADM_API_KEY`); rspamd 9900
 (milter), 11332-11334 y `/var/lib/rspamd/rspamd.sock`; postfix-tlspol 8642;
 clamd 3310; olefy 10055; dockerapi 443.
 
+## Tamano de los mensajes
+
+Un mismo tope recorre la cadena y `ops/scaffold/check-mail-size-limits.sh` (en `validate.sh`,
+dentro de `make checks`) compara los tres ficheros:
+
+| Limite | Donde | Valor | Regla |
+|---|---|---|---|
+| `message_size_limit` | `postfix/conf/main.cf` | 104857600 (100 MiB) | el mayor mensaje que acepta la celda |
+| `max_message` | `rspamd/local.d/options.inc`, en bytes y en ningun otro fichero de `rspamd/` | 105906176 (101 MiB) | al menos Postfix + 1 MiB |
+| techo de `MAIL_QUARANTINE_MAX_BODY_MB` | `maxPipeMaxBodyMiB` de `services/mail-security/main.go` | 101 MiB | de Postfix + 1 MiB a `max_message` + 1 MiB; el defecto (50) y `.env.example`, de 1 al techo |
+
+Postfix pasa cada mensaje por el milter de Rspamd (`smtpd_milters`, `non_smtpd_milters`). Uno mayor
+que `max_message` no se analiza: el proxy del milter contesta tempfail a cualquier fallo del worker y
+Postfix (`milter_default_action = tempfail`) lo rechaza temporalmente hasta devolverlo, sin
+entregarlo. Con el defecto de Rspamd 4.1.4 (50 MiB, `DEFAULT_MAX_MESSAGE`) le pasaba a todo mensaje
+de 50 a 100 MiB. El MiB de margen cubre las cabeceras que reconstruye el milter y el envoltorio
+multipart de `/pipe` con sus metadatos. `max_message` acota tambien lo que aprende el controller.
+`MAIL_QUARANTINE_MAX_BODY_MB` puede quedar por debajo de Postfix (menos memoria por peticion en
+`/pipe`): un mensaje mayor sigue su accion, pero no queda en la cuarentena. ClamAV tiene su propio
+tope, fuera de esta regla (`max_size` de `rspamd/local.d/antivirus.conf`, 20 MiB).
+
 ## Contrato HTTP de `mail-auth`
 
 Lo llama `passwd-verify.lua` en cada autenticacion IMAP/POP3/ManageSieve/SMTP
@@ -225,16 +246,20 @@ directorio:
 | `mail.mailbox.deleted` | no se lee | vaciar y echar |
 | `mail.mailbox.credentials_changed` (contrasena principal o de aplicacion) | no se lee: una sesion no dice con que credencial entro | vaciar y echar |
 | `mail.mailbox.updated` | ya no esta, o `active` distinto de 1 (0 apagado, 2 solo recibe; tambien la baja de su empresa) | vaciar y echar |
-| `mail.mailbox.updated` | `active = 1` (cuota, nombre visible, TLS, relayhost, protocolos) | solo vaciar: la siguiente autenticacion vuelve a `mail-auth`, que aplica `imap_access` y los demas |
+| `mail.mailbox.updated` | `active = 1` (cuota, nombre visible, TLS, relayhost, protocolos) | solo vaciar: la siguiente autenticacion vuelve a `mail-auth`, que aplica `imap_access` y los demas; un protocolo retirado llega ademas como `credentials_changed`, que echa |
 | `mail.mailbox.created` | - | nada |
 
   Echar a quien aun puede entrar no abre nada, pero molesta (el cliente vuelve a entrar solo con su
   credencial): por eso un cambio que no retira nada no echa a nadie.
 
   `mail-directory` publica `mail.mailbox.credentials_changed` con `credential`: `password` al
-  cambiar la contrasena principal, y `app_password` cuando una contrasena de aplicacion pierde un
+  cambiar la contrasena principal y cuando el propio buzon pierde un inicio de sesion que tenia (se
+  apaga, pasa a solo recepcion o pierde `imap_access`, `pop3_access`, `smtp_access` o
+  `sieve_access`: lo pierden todas sus credenciales, `domain.MailboxLoginsRevoked`), en la misma
+  transaccion que su `mail.mailbox.updated`, para cerrar la sesion ya abierta con ese protocolo; y
+  `app_password` cuando una contrasena de aplicacion pierde un
   inicio de sesion que tenia (se desactiva, se borra activa, pierde `imap_access`, `pop3_access`,
-  `smtp_access` o `sieve_access`, o se apaga con su buzon). Darla de alta, reactivarla, ampliar sus
+  `smtp_access` o `sieve_access`). Darla de alta, reactivarla, ampliar sus
   protocolos, renombrarla o cambiar `dav_access` (la plataforma no sirve DAV) no publica nada: no
   deja en la cache una credencial que ya no valga, y la cache negativa no bloquea una contrasena
   buena. Este consumidor no lee `credential`; el webmail si, y con `app_password` no cierra sus

@@ -40,6 +40,43 @@ func TestAppPasswordLoginsRevoked(t *testing.T) {
 	}
 }
 
+func TestMailboxLoginsRevoked(t *testing.T) {
+	full := Mailbox{Username: "ana@acme.test", Active: ActiveOn, IMAPAccess: true, POP3Access: true, SMTPAccess: true, SieveAccess: true}
+	with := func(change func(*Mailbox)) Mailbox {
+		m := full
+		change(&m)
+		return m
+	}
+	cases := []struct {
+		name          string
+		before, after Mailbox
+		want          bool
+	}{
+		{"sin cambios", full, full, false},
+		{"cuota, nombre, TLS y reenvio de contrasena", full, with(func(m *Mailbox) {
+			m.QuotaBytes, m.DisplayName, m.TLSEnforceIn, m.TLSEnforceOut, m.ForcePwUpdate = 1, "Ana", true, true, true
+		}), false},
+		{"sin imap", full, with(func(m *Mailbox) { m.IMAPAccess = false }), true},
+		{"sin pop3", full, with(func(m *Mailbox) { m.POP3Access = false }), true},
+		{"sin smtp", full, with(func(m *Mailbox) { m.SMTPAccess = false }), true},
+		{"sin sieve", full, with(func(m *Mailbox) { m.SieveAccess = false }), true},
+		{"apagado", full, with(func(m *Mailbox) { m.Active = ActiveOff }), true},
+		{"solo recepcion", full, with(func(m *Mailbox) { m.Active = ActiveReceiveOnly }), true},
+		{"de solo recepcion a apagado", with(func(m *Mailbox) { m.Active = ActiveReceiveOnly }), with(func(m *Mailbox) { m.Active = ActiveOff }), false},
+		{"reactivado", with(func(m *Mailbox) { m.Active = ActiveOff }), full, false},
+		{"devolver imap", with(func(m *Mailbox) { m.IMAPAccess = false }), full, false},
+		{"quitar imap a un buzon apagado", with(func(m *Mailbox) { m.Active = ActiveOff }),
+			with(func(m *Mailbox) { m.Active, m.IMAPAccess = ActiveOff, false }), false},
+		{"reactivado sin imap", with(func(m *Mailbox) { m.Active = ActiveOff }), with(func(m *Mailbox) { m.IMAPAccess = false }), false},
+		{"cambia un protocolo por otro", with(func(m *Mailbox) { m.POP3Access = false }), with(func(m *Mailbox) { m.IMAPAccess = false }), true},
+	}
+	for _, c := range cases {
+		if got := MailboxLoginsRevoked(c.before, c.after); got != c.want {
+			t.Errorf("%s: got %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
 func TestCredentialValid(t *testing.T) {
 	for _, c := range []Credential{CredentialPassword, CredentialAppPassword} {
 		if !c.Valid() {

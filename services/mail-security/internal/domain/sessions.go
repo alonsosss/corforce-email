@@ -57,8 +57,9 @@ const mailboxLoginActive int16 = 1
 //     entro, y el cliente con la credencial vigente vuelve a entrar solo.
 //   - actualizado y ya sin inicio de sesion (apagado, solo recepcion o borrado despues): igual.
 //   - actualizado y activo (cuota, nombre visible, TLS, relayhost...): solo vacia la cache, sin
-//     echar a nadie. Asi un protocolo retirado (imap_access y los demas) deja de valer en la
-//     siguiente autenticacion, que mail-auth vuelve a comprobar.
+//     echar a nadie. Un protocolo retirado (imap_access y los demas) deja de valer en la siguiente
+//     autenticacion, que mail-auth vuelve a comprobar, y mail-directory lo publica ademas como
+//     credencial cambiada, que cierra la sesion ya abierta con el.
 func SessionActionFor(change MailboxChange, current *Mailbox) SessionAction {
 	if change == MailboxDeleted || change == MailboxCredentialsChanged {
 		return SessionKick

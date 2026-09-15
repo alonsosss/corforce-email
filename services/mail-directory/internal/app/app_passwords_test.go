@@ -127,15 +127,17 @@ func TestRevocarSinOutboxNoCambiaLaContrasena(t *testing.T) {
 	}
 }
 
-// Apagar un buzon revoca sus contrasenas de aplicacion y lo anuncia una vez, ademas de
+// Apagar un buzon revoca sus contrasenas de aplicacion y, como le quita sus inicios de sesion a todas
+// sus credenciales, lo anuncia una vez como la principal (domain.MailboxLoginsRevoked), ademas de
 // mail.mailbox.updated: sus sesiones se cierran en Dovecot aunque el buzon se reactive antes de que
-// mail-security atienda el cambio. Sin contrasenas activas que apagar solo sale el cambio del buzon.
+// mail-security atienda el cambio. Un buzon sin protocolos de inicio no tenia sesion que cerrar, ni
+// siquiera con sus contrasenas de aplicacion, que mail-auth acota por los flags del buzon.
 func TestApagarUnBuzonAnunciaSusContrasenasDeAplicacion(t *testing.T) {
 	h := newHarness()
 	ctx := context.Background()
 	tenant := uuid.New()
-	ana := h.addMailbox(tenant, "ana@acme.com", 0)
-	bea := h.addMailbox(tenant, "bea@acme.com", 0)
+	ana := withAllLogins(h.addMailbox(tenant, "ana@acme.com", 0))
+	bea := withAllLogins(h.addMailbox(tenant, "bea@acme.com", 0))
 	h.addAppPassword(ana, nil)
 	h.addAppPassword(ana, nil)
 	h.addAppPassword(ana, func(p *domain.AppPassword) { p.Active = false })
@@ -146,7 +148,7 @@ func TestApagarUnBuzonAnunciaSusContrasenasDeAplicacion(t *testing.T) {
 		t.Fatalf("apagar a ana: %v", err)
 	}
 	wantSubjects := []string{"mail.mailbox.credentials_changed", "mail.mailbox.updated"}
-	wantCredentials := []credentialEvent{{username: ana.Username, credential: domain.CredentialAppPassword}}
+	wantCredentials := []credentialEvent{{username: ana.Username, credential: domain.CredentialPassword}}
 	if !reflect.DeepEqual(h.events.subjects, wantSubjects) || !reflect.DeepEqual(h.events.credentials, wantCredentials) || len(h.events.outside) != 0 {
 		t.Fatalf("eventos %v, avisos %+v, fuera de la transaccion %v", h.events.subjects, h.events.credentials, h.events.outside)
 	}
@@ -167,7 +169,18 @@ func TestApagarUnBuzonAnunciaSusContrasenasDeAplicacion(t *testing.T) {
 	if _, err := h.uc.UpdateMailbox(ctx, tenant, ana.ID, UpdateMailboxRequest{Active: &off}); err != nil {
 		t.Fatalf("apagarla sin contrasenas activas: %v", err)
 	}
-	if want := []string{"mail.mailbox.updated", "mail.mailbox.updated"}; !reflect.DeepEqual(h.events.subjects, want) {
+	want := []string{"mail.mailbox.updated", "mail.mailbox.credentials_changed", "mail.mailbox.updated"}
+	if !reflect.DeepEqual(h.events.subjects, want) || !reflect.DeepEqual(h.events.credentials, wantCredentials) {
+		t.Fatalf("eventos %v, avisos %+v; want %v", h.events.subjects, h.events.credentials, want)
+	}
+
+	h.events.subjects, h.events.credentials = nil, nil
+	sinProtocolos := h.addMailbox(tenant, "recursos@acme.com", 0)
+	h.addAppPassword(sinProtocolos, nil)
+	if _, err := h.uc.UpdateMailbox(ctx, tenant, sinProtocolos.ID, UpdateMailboxRequest{Active: &off}); err != nil {
+		t.Fatalf("apagar un buzon sin protocolos: %v", err)
+	}
+	if want := []string{"mail.mailbox.updated"}; !reflect.DeepEqual(h.events.subjects, want) {
 		t.Fatalf("eventos %v; want %v", h.events.subjects, want)
 	}
 }

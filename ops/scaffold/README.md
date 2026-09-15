@@ -33,6 +33,7 @@ en `migrations/cell/canonical/<name>/` en vez de `tenant/`.
 | `check-base-images.sh` | Imágenes fijadas por versión o digest |
 | `check-sql-arity.sh` | `INSERT` con columnas y valores descuadrados |
 | `check-dkim-grace.sh` | La gracia de una rotacion DKIM (minimo y defecto de domain-service, valor de `.env.example`) cubre `maximal_queue_lifetime` de Postfix mas un dia de TTL; lo corre `validate.sh` |
+| `check-mail-size-limits.sh` | `max_message` de Rspamd y el techo del cuerpo de `/pipe` de mail-security cubren `message_size_limit` de Postfix mas 1 MiB, el techo no pasa de `max_message` mas 1 MiB, y el defecto y `.env.example` de `MAIL_QUARANTINE_MAX_BODY_MB` caben en el; lo corre `validate.sh` |
 | `check-silent-errors.sh` | Ningún 500 sin motivo registrado (`response.Unexpected`) |
 | `check-clean-copy.sh` | Sin restos de las bases de referencia (ERP de origen y capa PHP/MySQL de mailcow) ni cuentas de AWS concretas en ARNs o registros de ECR |
 | `eventcontracts/` | Campos del payload por subject; un consumidor no lee lo que su emisor no publica |

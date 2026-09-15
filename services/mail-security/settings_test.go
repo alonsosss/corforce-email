@@ -83,7 +83,7 @@ func TestLoadSettingsRangos(t *testing.T) {
 	}{
 		"extremos inferiores": {map[string]string{"MAIL_SECURITY_PORT": "1", "MAIL_LOG_LINES": "1", "MAIL_QUARANTINE_MAX_BODY_MB": "1",
 			"MAIL_REDIS_RECONCILE_INTERVAL": "1m", "MAIL_DKIM_RECONCILE_INTERVAL": "1s", "MAIL_QUARANTINE_NOTIFY_INTERVAL": "1m", "MAIL_QUARANTINE_LINK_TTL": "1h"}, ""},
-		"extremos superiores": {map[string]string{"MAIL_POLICY_EXPORT_PORT": "65535", "MAIL_LOG_LINES": "10000", "MAIL_QUARANTINE_MAX_BODY_MB": "100",
+		"extremos superiores": {map[string]string{"MAIL_POLICY_EXPORT_PORT": "65535", "MAIL_LOG_LINES": "10000", "MAIL_QUARANTINE_MAX_BODY_MB": "101",
 			"MAIL_REDIS_RECONCILE_INTERVAL": "1h", "MAIL_DKIM_RECONCILE_INTERVAL": "15m", "MAIL_QUARANTINE_NOTIFY_INTERVAL": "24h", "MAIL_QUARANTINE_LINK_TTL": "720h"}, ""},
 		"repaso DKIM del e2e":                   {map[string]string{"MAIL_DKIM_RECONCILE_INTERVAL": "2s"}, ""},
 		"hosts y URLs propios":                  {map[string]string{"MAIL_REDIS_HOST": "127.0.0.1", "MAIL_QUARANTINE_REINJECT_HOST": "fd00::25", "RSPAMD_CONTROLLER_URL": "http://rspamd-mail:11334/", "TRANSACTIONAL_URL": "http://127.0.0.1:18045"}, ""},
@@ -97,7 +97,7 @@ func TestLoadSettingsRangos(t *testing.T) {
 		"sin lineas de log":                     {map[string]string{"MAIL_LOG_LINES": "0"}, "MAIL_LOG_LINES"},
 		"demasiadas lineas de log":              {map[string]string{"MAIL_LOG_LINES": "10001"}, "MAIL_LOG_LINES"},
 		"cuerpo de /pipe vacio":                 {map[string]string{"MAIL_QUARANTINE_MAX_BODY_MB": "0"}, "MAIL_QUARANTINE_MAX_BODY_MB"},
-		"cuerpo de /pipe mayor que Postfix":     {map[string]string{"MAIL_QUARANTINE_MAX_BODY_MB": "101"}, "MAIL_QUARANTINE_MAX_BODY_MB"},
+		"cuerpo de /pipe mayor que Rspamd":      {map[string]string{"MAIL_QUARANTINE_MAX_BODY_MB": "102"}, "MAIL_QUARANTINE_MAX_BODY_MB"},
 		"reconciliacion demasiado seguida":      {map[string]string{"MAIL_REDIS_RECONCILE_INTERVAL": "59s"}, "MAIL_REDIS_RECONCILE_INTERVAL"},
 		"reconciliacion de mas de una hora":     {map[string]string{"MAIL_REDIS_RECONCILE_INTERVAL": "61m"}, "MAIL_REDIS_RECONCILE_INTERVAL"},
 		"repaso DKIM mas largo que sus alertas": {map[string]string{"MAIL_DKIM_RECONCILE_INTERVAL": "16m"}, "MAIL_DKIM_RECONCILE_INTERVAL"},
@@ -127,6 +127,41 @@ func TestLoadSettingsRangos(t *testing.T) {
 		if c.err != "" && (err == nil || !strings.Contains(err.Error(), c.err)) {
 			t.Errorf("%s: se esperaba un error que nombre %s: %v", nombre, c.err, err)
 		}
+	}
+}
+
+// Los tres listeners necesitan puertos distintos: un choque no arranca y el error nombra las dos
+// variables, tambien cuando una se queda en su valor por defecto.
+func TestLoadSettingsPuertosDistintos(t *testing.T) {
+	for nombre, c := range map[string]struct {
+		env  map[string]string
+		pair []string
+	}{
+		"mapas en el de administracion por defecto": {map[string]string{"MAIL_POLICY_MAPS_PORT": "8042"},
+			[]string{"MAIL_SECURITY_PORT", "MAIL_POLICY_MAPS_PORT"}},
+		"administracion en el de exportacion por defecto": {map[string]string{"MAIL_SECURITY_PORT": "9081"},
+			[]string{"MAIL_SECURITY_PORT", "MAIL_POLICY_EXPORT_PORT"}},
+		"mapas y exportacion iguales": {map[string]string{"MAIL_POLICY_MAPS_PORT": "18081", "MAIL_POLICY_EXPORT_PORT": "18081"},
+			[]string{"MAIL_POLICY_MAPS_PORT", "MAIL_POLICY_EXPORT_PORT"}},
+		"los tres iguales": {map[string]string{"MAIL_SECURITY_PORT": "18042", "MAIL_POLICY_MAPS_PORT": "18042", "MAIL_POLICY_EXPORT_PORT": "18042"},
+			[]string{"MAIL_SECURITY_PORT", "MAIL_POLICY_MAPS_PORT"}},
+	} {
+		setSettingsEnv(t, "staging", "gateway-token-0123456789")
+		for key, value := range c.env {
+			t.Setenv(key, value)
+		}
+		_, err := loadSettings()
+		if err == nil || !strings.Contains(err.Error(), c.pair[0]+" y "+c.pair[1]) {
+			t.Errorf("%s: se esperaba un error que nombre %s y %s: %v", nombre, c.pair[0], c.pair[1], err)
+		}
+	}
+
+	setSettingsEnv(t, "staging", "gateway-token-0123456789")
+	t.Setenv("MAIL_SECURITY_PORT", "18042")
+	t.Setenv("MAIL_POLICY_MAPS_PORT", "18081")
+	t.Setenv("MAIL_POLICY_EXPORT_PORT", "19081")
+	if st, err := loadSettings(); err != nil || st.port != 18042 || st.mapsPort != 18081 || st.exportPort != 19081 {
+		t.Errorf("puertos distintos: %d %d %d, %v", st.port, st.mapsPort, st.exportPort, err)
 	}
 }
 

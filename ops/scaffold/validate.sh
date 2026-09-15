@@ -71,6 +71,11 @@ if ! bash "$ROOT/ops/scaffold/check-dkim-grace.sh"; then
   FAIL=1
 fi
 
+echo "== 8. Tamano de mensaje: Postfix, Rspamd y la cuarentena de mail-security =="
+if ! bash "$ROOT/ops/scaffold/check-mail-size-limits.sh"; then
+  FAIL=1
+fi
+
 echo ""
 if [[ $FAIL -ne 0 ]]; then
   echo "VALIDACION: FALLA"; exit 1

@@ -158,7 +158,9 @@ func TestContrasenasDeAplicacionEnLaOutbox(t *testing.T) {
 		t.Fatalf("borrar una inactiva no se anuncia: %d avisos, quiero %d", n, want)
 	}
 
-	// Apagar el buzon con dos contrasenas activas: un aviso y las dos apagadas.
+	// Apagar el buzon con dos contrasenas activas: las dos apagadas y un solo aviso, como la
+	// principal, porque el buzon apagado ya no abre sesion con ninguna credencial
+	// (domain.MailboxLoginsRevoked).
 	var ids []uuid.UUID
 	for _, n := range []string{"telefono", "tableta"} {
 		p, _, err := uc.CreateAppPassword(actx, tenant, mb.ID, app.CreateAppPasswordRequest{Name: n})
@@ -169,9 +171,9 @@ func TestContrasenasDeAplicacionEnLaOutbox(t *testing.T) {
 	apagados0 := apagados()
 	_, err = uc.UpdateMailbox(actx, tenant, mb.ID, app.UpdateMailboxRequest{Active: &off})
 	fatal("apagar el buzon", err)
-	want++
-	if n := avisos(domain.CredentialAppPassword); n != want || apagados() != apagados0+1 {
-		t.Fatalf("apagar el buzon: %d avisos (quiero %d), %d cambios del buzon", n, want, apagados()-apagados0)
+	if n, p := avisos(domain.CredentialAppPassword), avisos(domain.CredentialPassword); n != want || p != 1 || apagados() != apagados0+1 {
+		t.Fatalf("apagar el buzon: %d avisos de aplicacion (quiero %d), %d de la principal (quiero 1), %d cambios del buzon",
+			n, want, p, apagados()-apagados0)
 	}
 	for _, id := range ids {
 		if _, activa := estado(id); activa {
@@ -180,8 +182,8 @@ func TestContrasenasDeAplicacionEnLaOutbox(t *testing.T) {
 	}
 
 	fatal("cambiar la contrasena principal", uc.SetMailboxPassword(actx, tenant, mb.ID, "otra-contrasena-de-prueba-2"))
-	if n := avisos(domain.CredentialPassword); n != 1 {
-		t.Fatalf("la contrasena principal se anuncia como password: %d", n)
+	if n := avisos(domain.CredentialPassword); n != 2 {
+		t.Fatalf("la contrasena principal se anuncia como password: %d avisos, quiero 2", n)
 	}
 
 	// La baja apaga la contrasena activa y anuncia el buzon apagado, sin otro aviso de credencial.

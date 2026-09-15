@@ -735,6 +735,33 @@ for paso in desactivar borrar; do
     esperar "y vuelve a entrar al momento: la cache negativa no bloquea una contrasena buena" 20 login_aceptado bea@acme.test "$BEA_APP"
   fi
 done
+
+# Quitarle un protocolo al buzon cierra al momento la sesion abierta con el: mail-directory publica en
+# la misma transaccion mail.mailbox.credentials_changed con credential password
+# (domain.MailboxLoginsRevoked) y mail-security echa al buzon; mail.mailbox.updated con el buzon
+# activo solo vaciaria la cache. bea sigue entrando por lo que conserva, y su sesion del webmail, que
+# necesita imap y smtp, se cierra.
+webmail_cerrada() { wm "$TARRO_BEA" GET /folders; [[ $WM_CODE == 401 ]]; }
+expect "bea entra por IMAP (queda en la cache de Dovecot)" "$(cliente login bea@acme.test "$BEA_PASS")" "OK"
+sesion bea-imap bea@acme.test "$BEA_PASS" 60
+esperar "bea con una sesion IMAP abierta" 30 sesion_en bea-imap LISTA
+wm "$TARRO_BEA" GET /folders
+expect "y con su sesion del webmail abierta" "$WM_CODE" "200"
+BEA_KICKS0=$(bea_kicks)
+api PATCH "/mailboxes/$BEAID" '{"imap_access":false}'
+expect "mail-directory le quita imap a bea y le deja smtp" \
+  "$API_CODE/$(echo "$API_BODY" | jget data.imap_access)/$(echo "$API_BODY" | jget data.smtp_access)" "200/False/True"
+esperar "mail-security vacia la cache de bea y cierra sus sesiones (credentials_changed al quitar imap)" 20 bea_expulsada
+esperar "la sesion IMAP abierta de bea se cierra" 20 sesion_en bea-imap CERRADA
+esperar "Dovecot rechaza al momento el IMAP de bea, que tenia en su cache" 20 login_rechazado bea@acme.test "$BEA_PASS"
+contains "mail-auth la rechaza por el protocolo, no por la contrasena" \
+  "$(docker logs "$(c mail-auth)" 2>&1 | grep '"username":"bea@acme.test"')" "protocolo deshabilitado para el buzon"
+contains "bea sigue enviando por submission con la misma contrasena (smtp_access, que conserva)" \
+  "$(cliente enviar bea@acme.test "$BEA_PASS" bea@acme.test bea@acme.test "sin-imap-$(rand_hex 4)")" "OK 250"
+esperar "y su sesion del webmail, que necesita imap, se cierra" 20 webmail_cerrada
+api PATCH "/mailboxes/$BEAID" '{"imap_access":true}'
+expect "bea recupera imap" "$API_CODE/$(echo "$API_BODY" | jget data.imap_access)" "200/True"
+esperar "y vuelve a entrar por IMAP" 20 login_aceptado bea@acme.test "$BEA_PASS"
 expect "mail-security sin fallos de revocacion" "$(revocaciones fallos)" "0"
 
 echo "== Rotacion y revocacion de la clave DKIM (domain-service -> mail-security -> redis-mail)"
