@@ -12,7 +12,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"os"
 	"sync"
 	"time"
 
@@ -59,14 +58,20 @@ const (
 )
 
 // CheckerFromEnv lee ACCESS_CONTROL_URL (config.ServiceURL, por defecto
-// http://access-control:8002) e INTERNAL_GATEWAY_TOKEN. Una URL mal formada es un error de
-// arranque: con ella cada permiso se denegaria en la primera peticion.
+// http://access-control:8002) e INTERNAL_GATEWAY_TOKEN con la regla comun
+// (middleware.InternalGatewayToken). Una URL mal formada, o un token ausente fuera de
+// development o test, es un error de arranque: con ellos cada permiso se denegaria en la
+// primera peticion.
 func CheckerFromEnv() (*Checker, error) {
 	url, err := config.ServiceURL(accessControlURLEnv, defaultAccessControlURL)
 	if err != nil {
 		return nil, err
 	}
-	return NewChecker(url, os.Getenv("INTERNAL_GATEWAY_TOKEN")), nil
+	token, err := middleware.InternalGatewayToken()
+	if err != nil {
+		return nil, err
+	}
+	return NewChecker(url, token), nil
 }
 
 // Allowed indica si el usuario de la peticion puede (module, resource, action). El
