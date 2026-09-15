@@ -4,7 +4,6 @@ import (
 	"context"
 	"log"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
@@ -40,6 +39,10 @@ const (
 	// maxWorkers acota cada carril: un trabajador ocupa una conexion del pool de la empresa
 	// (10, pkg/db) mientras envia y la tasa ya la fija SES_MAX_SEND_RATE; mas solo esperan.
 	maxWorkers = 64
+	// Tasa de cada carril, envios por segundo a SES: desde 1, la de una cuenta en sandbox. El
+	// techo solo detiene una errata; la cuota real la fija SES para cada cuenta.
+	minSendRate = 1.0
+	maxSendRate = 10000.0
 	// releaseInterval es la cadencia con la que se encolan los programados vencidos.
 	releaseInterval = time.Minute
 )
@@ -63,6 +66,14 @@ func main() {
 		log.Fatal(err)
 	}
 	port, err := config.EnvInt("TRANSACTIONAL_PORT", defaultPort, 1, config.MaxPort)
+	if err != nil {
+		log.Fatal(err)
+	}
+	sendRate, err := config.EnvFloat("SES_MAX_SEND_RATE", defaultSendRate, minSendRate, maxSendRate)
+	if err != nil {
+		log.Fatal(err)
+	}
+	marketingRate, err := config.EnvFloat("SES_MAX_SEND_RATE_MARKETING", defaultMarketingSendRate, minSendRate, maxSendRate)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -108,8 +119,6 @@ func main() {
 	if reputationURL == "" {
 		logger.Error("transactional: REPUTATION_URL no configurada; el marketing respondera 503 y el transaccional saldra sin autorizacion previa")
 	}
-	sendRate := envFloat("SES_MAX_SEND_RATE", defaultSendRate)
-	marketingRate := envFloat("SES_MAX_SEND_RATE_MARKETING", defaultMarketingSendRate)
 	uc := app.New(app.Deps{
 		Repo:        postgres.NewRepository(ctxPool),
 		Events:      postgres.NewOutboxPublisher(ctxPool),
@@ -214,11 +223,4 @@ func releaseScheduled(ctx context.Context, tenantDB *db.TenantDB, uc *app.UseCas
 			logger.Warn("transactional: no se pudo listar las empresas", zap.Error(err))
 		}
 	}
-}
-
-func envFloat(key string, fallback float64) float64 {
-	if v, err := strconv.ParseFloat(strings.TrimSpace(os.Getenv(key)), 64); err == nil && v > 0 {
-		return v
-	}
-	return fallback
 }

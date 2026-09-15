@@ -25,10 +25,12 @@ largas de cada guardarraíl están en `ops/scaffold/README.md`, `ops/security/se
   nombre de `REDIS_HOST`. Un valor de `REDIS_TLS` que no es booleano, o una CA o un nombre
   con TLS apagado, detienen el arranque. El Redis de los motores (`MAIL_REDIS_*`) tiene
   las mismas variables, opcionales y apagadas: ver `deploy/mail/README.md`, Contrato Redis.
-* Variables numéricas y de duración (límites, trabajadores, puertos, intervalos): se leen con
-  `config.EnvInt` y `config.EnvDuration` (`pkg/config/env.go`), con el rango de cada una
-  junto a ella en `.env.example`. Vacía vale su valor por defecto; ilegible o fuera de su
-  rango, el servicio no arranca y el error nombra la variable y el rango. Así leen
+* Variables numéricas y de duración (límites, trabajadores, puertos, intervalos, tasas): se
+  leen con `config.EnvInt`, `config.EnvDuration` y `config.EnvFloat` (`pkg/config/env.go`),
+  con el rango de cada una junto a ella en `.env.example`. Vacía vale su valor por defecto;
+  ilegible o fuera de su rango, el servicio no arranca y el error nombra la variable y el
+  rango. `EnvFloat` rechaza además NaN e infinito: una tasa infinita dejaba sin límite el
+  envío a SES (`SES_MAX_SEND_RATE`, `SES_MAX_SEND_RATE_MARKETING`, de 1 a 10000 por segundo). Así leen
   `pkg/config` (`POSTGRES_PORT`, `POSTGRES_DIRECT_PORT`, `REDIS_PORT`, `JWT_*_TTL`) y
   scheduler, campaigns, transactional, mail-auth, contacts, suppression, automations y
   webmail. Pendiente de migrar, con lectores propios: gateway (`GATEWAY_PORT`),

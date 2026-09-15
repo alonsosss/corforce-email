@@ -1,7 +1,9 @@
 package config
 
 import (
+	"errors"
 	"fmt"
+	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -27,7 +29,27 @@ func EnvDuration(key string, def, lo, hi time.Duration) (time.Duration, error) {
 	return envInRange(key, def, lo, hi, "a duration", time.ParseDuration)
 }
 
-func envInRange[T int | time.Duration](key string, def, lo, hi T, kind string, parse func(string) (T, error)) (T, error) {
+// EnvFloat es EnvInt para un decimal. NaN e infinito se rechazan siempre, tambien como
+// defecto o limite: NaN no es menor ni mayor que nada y pasaria cualquier rango, y una tasa
+// infinita apaga el limite que la usa.
+func EnvFloat(key string, def, lo, hi float64) (float64, error) {
+	if !finite(def) || !finite(lo) || !finite(hi) {
+		return 0, fmt.Errorf("%s: default and range must be finite numbers", key)
+	}
+	return envInRange(key, def, lo, hi, "a number", parseFinite)
+}
+
+func parseFinite(s string) (float64, error) {
+	v, err := strconv.ParseFloat(s, 64)
+	if err == nil && !finite(v) {
+		return 0, errors.New("not a finite number")
+	}
+	return v, err
+}
+
+func finite(v float64) bool { return !math.IsNaN(v) && !math.IsInf(v, 0) }
+
+func envInRange[T int | time.Duration | float64](key string, def, lo, hi T, kind string, parse func(string) (T, error)) (T, error) {
 	if lo > hi || def < lo || def > hi {
 		return 0, fmt.Errorf("%s: default %v is outside the allowed range [%v, %v]", key, def, lo, hi)
 	}
