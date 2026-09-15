@@ -79,6 +79,8 @@ func TestLoadSettingsNoArrancaConConfiguracionInvalida(t *testing.T) {
 		"limite excesivo":            func(e map[string]string) { e["REPUTATION_DEFAULT_DAILY_MARKETING"] = "1000000001" },
 		"limite decimal":             func(e map[string]string) { e["REPUTATION_DEFAULT_HOURLY_TRANSACTIONAL"] = "2000.5" },
 		"billing sin esquema":        func(e map[string]string) { e["BILLING_URL"] = "billing:8055" },
+		"billing con ruta":           func(e map[string]string) { e["BILLING_URL"] = "http://billing:8055/internal" },
+		"billing con puerto cero":    func(e map[string]string) { e["BILLING_URL"] = "http://billing:0" },
 		"billing ausente":            func(e map[string]string) { delete(e, "BILLING_URL") },
 		"puerto no valido":           func(e map[string]string) { e["REPUTATION_PORT"] = "puerto" },
 		"puerto fuera de rango":      func(e map[string]string) { e["REPUTATION_PORT"] = "65536" },

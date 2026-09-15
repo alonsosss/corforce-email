@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/alonsosss/corforce-email/pkg/config"
 	"github.com/alonsosss/corforce-email/pkg/httpclient"
 	"github.com/alonsosss/corforce-email/pkg/middleware"
 	"github.com/alonsosss/corforce-email/pkg/response"
@@ -52,12 +53,30 @@ func NewChecker(accessURL, token string) *Checker {
 	}
 }
 
-// NewCheckerFromEnv lee ACCESS_CONTROL_URL (por defecto http://access-control:8002) e
-// INTERNAL_GATEWAY_TOKEN.
+const (
+	accessControlURLEnv     = "ACCESS_CONTROL_URL"
+	defaultAccessControlURL = "http://access-control:8002"
+)
+
+// CheckerFromEnv lee ACCESS_CONTROL_URL (config.ServiceURL, por defecto
+// http://access-control:8002) e INTERNAL_GATEWAY_TOKEN. Una URL mal formada es un error de
+// arranque: con ella cada permiso se denegaria en la primera peticion.
+func CheckerFromEnv() (*Checker, error) {
+	url, err := config.ServiceURL(accessControlURLEnv, defaultAccessControlURL)
+	if err != nil {
+		return nil, err
+	}
+	return NewChecker(url, os.Getenv("INTERNAL_GATEWAY_TOKEN")), nil
+}
+
+// NewCheckerFromEnv es CheckerFromEnv sin validar ACCESS_CONTROL_URL.
+//
+// Deprecated: usa CheckerFromEnv. Queda solo para mail-security y domain-service hasta que
+// lean su configuracion con la regla de config.ServiceURL.
 func NewCheckerFromEnv() *Checker {
-	url := os.Getenv("ACCESS_CONTROL_URL")
+	url := os.Getenv(accessControlURLEnv)
 	if url == "" {
-		url = "http://access-control:8002"
+		url = defaultAccessControlURL
 	}
 	return NewChecker(url, os.Getenv("INTERNAL_GATEWAY_TOKEN"))
 }

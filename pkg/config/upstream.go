@@ -1,8 +1,10 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -13,7 +15,8 @@ import (
 //
 // Quien llama a otro servicio por la red interna lo localiza con <HOST_ENV> (host) y
 // <HOST_ENV>_PORT (puerto), con los de compose por defecto: el gateway, cada servicio de su tabla
-// de rutas; organization, los que llama su saga. Se resuelven al arrancar: un puerto fuera de
+// de rutas; organization, los que llama su saga. Los demas lo localizan con una URL base,
+// <SERVICIO>_URL, que se lee con ServiceURL. Se resuelven al arrancar: un puerto fuera de
 // rango o un host que no cabe en una URL impiden arrancar, en vez de dar 502 en la primera
 // peticion que los use.
 
@@ -35,6 +38,67 @@ func UpstreamURL(hostEnv, defaultHost string, defaultPort int) (string, error) {
 		return "", err
 	}
 	return "http://" + net.JoinHostPort(host, strconv.Itoa(port)), nil
+}
+
+// errServiceURL es la regla de una URL base interna: quien la usa le pega rutas absolutas
+// ("/internal/..."), asi que no lleva ruta propia, y nada de lo que viaja con ella (usuario,
+// consulta, fragmento) tiene destino en una llamada entre servicios.
+var errServiceURL = errors.New("must be an http or https base URL, scheme://host[:port], without user info, path, query or fragment")
+
+// ServiceURL lee de key la URL base interna de otro servicio (ORGANIZATION_URL,
+// SUPPRESSION_URL...) y la devuelve como scheme://host[:port], sin barra final. Admite http o
+// https, un host valido para ValidHost (IPv6 entre corchetes), un puerto opcional entre 1 y
+// MaxPort y como mucho la barra de la raiz; ningun usuario, ruta, consulta ni fragmento.
+// Ausente o en blanco vale def, que puede ser "" en una variable opcional. Como en EnvInt, un
+// def no vacio se valida en cada llamada.
+func ServiceURL(key, def string) (string, error) {
+	base := ""
+	if def != "" {
+		var err error
+		if base, err = serviceBaseURL(def); err != nil {
+			return "", fmt.Errorf("%s: default %q: %w", key, def, err)
+		}
+	}
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return base, nil
+	}
+	u, err := serviceBaseURL(raw)
+	if err != nil {
+		return "", fmt.Errorf("%s=%q: %w", key, raw, err)
+	}
+	return u, nil
+}
+
+// RequiredServiceURL es ServiceURL para una variable sin valor por defecto: ausente o en
+// blanco es un error.
+func RequiredServiceURL(key string) (string, error) {
+	u, err := ServiceURL(key, "")
+	if err == nil && u == "" {
+		return "", fmt.Errorf("%s is required: %w", key, errServiceURL)
+	}
+	return u, err
+}
+
+func serviceBaseURL(raw string) (string, error) {
+	u, err := url.Parse(raw)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Opaque != "" || u.User != nil ||
+		(u.Path != "" && u.Path != "/") || u.RawPath != "" || strings.ContainsAny(raw, "?#") {
+		return "", errServiceURL
+	}
+	host := u.Hostname()
+	// Sin corchetes, url.Parse toma el ultimo grupo de una IPv6 por puerto.
+	if !ValidHost(host) || (strings.Contains(host, ":") && !strings.HasPrefix(u.Host, "[")) {
+		return "", errServiceURL
+	}
+	if port := u.Port(); port != "" {
+		if _, err := ParsePort(port); err != nil {
+			return "", err
+		}
+	} else if strings.HasSuffix(u.Host, ":") {
+		return "", errServiceURL
+	}
+	return u.Scheme + "://" + u.Host, nil
 }
 
 // ParsePort interpreta un puerto TCP decimal entre 1 y MaxPort.

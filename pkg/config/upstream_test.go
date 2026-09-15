@@ -83,6 +83,84 @@ func TestUpstreamURLValidaLosDefectos(t *testing.T) {
 	}
 }
 
+const serviceURLEnv = "CONFIG_TEST_SERVICE_URL"
+
+func TestServiceURL(t *testing.T) {
+	valid := map[string]string{
+		"http://organization:8003":        "http://organization:8003",
+		"http://organization:8003/":       "http://organization:8003",
+		" http://organization:8003 ":      "http://organization:8003",
+		"https://mail-auth":               "https://mail-auth",
+		"HTTP://Organization:8003":        "http://Organization:8003",
+		"http://127.0.0.1:18003":          "http://127.0.0.1:18003",
+		"http://host.docker.internal:1":   "http://host.docker.internal:1",
+		"http://svc.cell.internal:65535":  "http://svc.cell.internal:65535",
+		"http://[fd00::5]:8003":           "http://[fd00::5]:8003",
+		"http://[::1]":                    "http://[::1]",
+		"https://organization.pe-01:8443": "https://organization.pe-01:8443",
+	}
+	for raw, want := range valid {
+		t.Setenv(serviceURLEnv, raw)
+		if got, err := ServiceURL(serviceURLEnv, ""); err != nil || got != want {
+			t.Errorf("%q: %q, %v; se esperaba %q", raw, got, err, want)
+		}
+	}
+	for _, raw := range []string{
+		"organization:8003", "organization", "//organization:8003", "ftp://organization", "file:///etc/passwd",
+		"http:organization", "http://", "http:///x", "http://:8003",
+		"http://organization:8003/api", "http://organization:8003//", "http://organization:8003/%2F",
+		"http://organization:8003?x=1", "http://organization:8003/?", "http://organization:8003#f", "http://organization:8003/#",
+		"http://u@organization:8003", "http://u:p@organization:8003", "http://@organization",
+		"http://organization:0", "http://organization:65536", "http://organization:99999999999999999999",
+		"http://organization:", "http://organization:ocho", "http://organization:-1",
+		"http://organ ization:8003", "http://organization\t:8003", "http://organization:8003/ x",
+		"http://fd00::5:8003", "http://[fe80::1%25eth0]:8003", "http://organization%20x",
+	} {
+		t.Setenv(serviceURLEnv, raw)
+		if got, err := ServiceURL(serviceURLEnv, "http://organization:8003"); err == nil || !strings.Contains(err.Error(), serviceURLEnv+"=") {
+			t.Errorf("%q: %q, %v; se esperaba un error que nombre %s", raw, got, err, serviceURLEnv)
+		}
+	}
+}
+
+// Ausente o en blanco vale el defecto, "" en una variable opcional; RequiredServiceURL no tiene.
+func TestServiceURLAusente(t *testing.T) {
+	for _, value := range []string{"", " \t"} {
+		t.Setenv(serviceURLEnv, value)
+		if got, err := ServiceURL(serviceURLEnv, "http://access-control:8002/"); err != nil || got != "http://access-control:8002" {
+			t.Errorf("%q con defecto: %q, %v", value, got, err)
+		}
+		if got, err := ServiceURL(serviceURLEnv, ""); err != nil || got != "" {
+			t.Errorf("%q opcional: %q, %v", value, got, err)
+		}
+		if got, err := RequiredServiceURL(serviceURLEnv); err == nil || !strings.Contains(err.Error(), serviceURLEnv+" is required") {
+			t.Errorf("%q obligatoria: %q, %v", value, got, err)
+		}
+	}
+	unsetEnv(t, serviceURLEnv)
+	if got, err := RequiredServiceURL(serviceURLEnv); err == nil || got != "" {
+		t.Errorf("sin definir: %q, %v; se esperaba un error", got, err)
+	}
+	t.Setenv(serviceURLEnv, "http://organization:8003/")
+	if got, err := RequiredServiceURL(serviceURLEnv); err != nil || got != "http://organization:8003" {
+		t.Errorf("obligatoria presente: %q, %v", got, err)
+	}
+	t.Setenv(serviceURLEnv, "organization:8003")
+	if got, err := RequiredServiceURL(serviceURLEnv); err == nil || !strings.Contains(err.Error(), serviceURLEnv+"=") {
+		t.Errorf("obligatoria mal formada: %q, %v", got, err)
+	}
+}
+
+// Un defecto invalido es un error de programacion: sale aunque el entorno traiga un valor bueno.
+func TestServiceURLValidaElDefecto(t *testing.T) {
+	t.Setenv(serviceURLEnv, "http://organization:8003")
+	for _, def := range []string{"organization:8003", "http://organization:8003/api", "http://organization:0", " "} {
+		if got, err := ServiceURL(serviceURLEnv, def); err == nil || !strings.Contains(err.Error(), serviceURLEnv+": default") {
+			t.Errorf("defecto %q: %q, %v; se esperaba un error que nombre %s", def, got, err, serviceURLEnv)
+		}
+	}
+}
+
 func TestParsePort(t *testing.T) {
 	for raw, want := range map[string]int{"1": 1, "80": 80, "8001": 8001, "65535": MaxPort} {
 		if got, err := ParsePort(raw); err != nil || got != want {

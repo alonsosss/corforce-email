@@ -146,3 +146,17 @@ func TestLoadSettingsCeldaInvalida(t *testing.T) {
 		t.Fatalf("CELL_CODE=pe-02: %q %v", st.cellCode, err)
 	}
 }
+
+// MAIL_DIRECTORY_URL es la URL base de mail-directory (config.RequiredServiceURL).
+func TestLoadSettingsURLDeMailDirectory(t *testing.T) {
+	for _, value := range []string{"", "mail-directory:8040", "http://mail-directory:8040/internal", "http://u@mail-directory:8040", "http://mail-directory:0"} {
+		setSettingsEnv(t, "production", map[string]string{"MAIL_DIRECTORY_URL": value})
+		if _, err := loadSettings(); !errorMentions("MAIL_DIRECTORY_URL")(err) {
+			t.Errorf("MAIL_DIRECTORY_URL=%q deberia impedir el arranque: %v", value, err)
+		}
+	}
+	setSettingsEnv(t, "production", map[string]string{"MAIL_DIRECTORY_URL": "http://mail-directory:8040/"})
+	if st, err := loadSettings(); err != nil || st.mailDirectoryURL != "http://mail-directory:8040" {
+		t.Fatalf("URL valida: %q %v", st.mailDirectoryURL, err)
+	}
+}

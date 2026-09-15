@@ -107,6 +107,10 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	perms, err := authz.CheckerFromEnv()
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	registryPool, err := db.NewPool(ctx, cfg.Postgres.DSN(), logger)
 	if err != nil {
@@ -147,7 +151,7 @@ func main() {
 
 	h := handler.NewHandler(handler.Deps{
 		UC:    uc,
-		Perms: authz.NewCheckerFromEnv(),
+		Perms: perms,
 		API: []func(http.Handler) http.Handler{
 			db.TenantPoolMiddleware(tenantDB),
 			middleware.NewRateLimiter(60, time.Minute).Limit,

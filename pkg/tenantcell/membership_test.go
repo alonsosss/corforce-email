@@ -170,6 +170,7 @@ func TestMembershipFromEnvFallaCerrado(t *testing.T) {
 		"ORGANIZATION_URL sin http":   {"pe-01", "organization:8003"},
 		"ORGANIZATION_URL de fichero": {"pe-01", "file:///etc/passwd"},
 		"ORGANIZATION_URL con query":  {"pe-01", "http://organization:8003?x=1"},
+		"ORGANIZATION_URL con ruta":   {"pe-01", "http://organization:8003/api"},
 	} {
 		t.Setenv("CELL_CODE", env[0])
 		t.Setenv("ORGANIZATION_URL", env[1])

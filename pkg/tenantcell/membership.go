@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"net/url"
 	"os"
 	"strings"
 
@@ -99,7 +98,7 @@ func NewMembership(cell string, resolver *Resolver, logger *zap.Logger) (*Member
 // MembershipFromEnv lee CELL_CODE, ORGANIZATION_URL e INTERNAL_GATEWAY_TOKEN. Cualquiera que
 // falte o este mal formada es un error: un servicio de celda no arranca sin su segunda barrera.
 func MembershipFromEnv(logger *zap.Logger) (*Membership, error) {
-	orgURL, err := organizationURL(os.Getenv("ORGANIZATION_URL"))
+	orgURL, err := OrganizationURLFromEnv()
 	if err != nil {
 		return nil, err
 	}
@@ -108,15 +107,6 @@ func MembershipFromEnv(logger *zap.Logger) (*Membership, error) {
 		return nil, err
 	}
 	return NewMembership(strings.TrimSpace(os.Getenv("CELL_CODE")), NewResolver(orgURL, token, logger), logger)
-}
-
-func organizationURL(raw string) (string, error) {
-	raw = strings.TrimSpace(raw)
-	u, err := url.Parse(raw)
-	if raw == "" || err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.RawQuery != "" || u.Fragment != "" {
-		return "", fmt.Errorf("ORGANIZATION_URL %q: se espera la URL interna de organization (http o https, sin ruta de consulta)", raw)
-	}
-	return raw, nil
 }
 
 // Cell es la celda de esta instancia.

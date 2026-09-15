@@ -11,7 +11,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
@@ -32,10 +31,12 @@ type Client struct {
 	http    *http.Client
 }
 
-func New() *Client {
+// New envia a baseURL, la URL base de transactional ya validada al arrancar; vacia, el
+// cliente queda sin configurar.
+func New(baseURL, token string) *Client {
 	return &Client{
-		baseURL: strings.TrimRight(strings.TrimSpace(os.Getenv(EnvBaseURL)), "/"),
-		token:   os.Getenv("INTERNAL_GATEWAY_TOKEN"),
+		baseURL: strings.TrimRight(strings.TrimSpace(baseURL), "/"),
+		token:   token,
 		http:    &http.Client{Timeout: 15 * time.Second},
 	}
 }

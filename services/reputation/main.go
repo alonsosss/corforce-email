@@ -55,6 +55,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("reputation: configuracion no valida: %v", err)
 	}
+	perms, err := authz.CheckerFromEnv()
+	if err != nil {
+		log.Fatalf("reputation: configuracion no valida: %v", err)
+	}
 
 	// ctx gobierna los trabajos de fondo (rele de la outbox, consumidores, barrido): se
 	// cancela cuando el HTTP termina de apagarse.
@@ -110,7 +114,7 @@ func main() {
 
 	go sweep.New(registryPool.Pool, uc, logger, sweepAt).Run(ctx)
 
-	h := handler.NewHandler(uc, authz.NewCheckerFromEnv())
+	h := handler.NewHandler(uc, perms)
 
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -101,9 +100,10 @@ func ParseInstances(envName, raw string) (map[string]string, error) {
 	return out, nil
 }
 
-// OrganizationURLFromEnv lee y valida ORGANIZATION_URL, la URL interna de organization.
+// OrganizationURLFromEnv lee ORGANIZATION_URL, la URL interna de organization, obligatoria y
+// con la regla de config.ServiceURL.
 func OrganizationURLFromEnv() (string, error) {
-	return organizationURL(os.Getenv("ORGANIZATION_URL"))
+	return config.RequiredServiceURL("ORGANIZATION_URL")
 }
 
 // ResolverFromEnv pregunta a organization en ORGANIZATION_URL con el token interno. Sin URL

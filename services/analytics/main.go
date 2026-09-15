@@ -49,6 +49,10 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	perms, err := authz.CheckerFromEnv()
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	// ctx gobierna los trabajos de fondo (consumidores, poda): se cancela cuando el HTTP
 	// termina de apagarse.
@@ -88,7 +92,7 @@ func main() {
 
 	go runPruner(ctx, tenantDB, uc, logger)
 
-	h := handler.NewHandler(uc, authz.NewCheckerFromEnv())
+	h := handler.NewHandler(uc, perms)
 
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)

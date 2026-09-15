@@ -37,6 +37,10 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	perms, err := authz.CheckerFromEnv()
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -71,7 +75,7 @@ func main() {
 		Events:   outboxadapter.NewPublisher(ctxPool),
 		Logger:   logger,
 	})
-	h := handler.NewHandler(uc, authz.NewCheckerFromEnv())
+	h := handler.NewHandler(uc, perms)
 
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)

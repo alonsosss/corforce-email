@@ -3,7 +3,6 @@ package main
 import (
 	"errors"
 	"fmt"
-	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -138,14 +137,7 @@ func (p *envParser) windowDays(key string) int {
 }
 
 func (p *envParser) serviceURL(key string) string {
-	v, ok := p.required(key)
-	if !ok {
-		return ""
-	}
-	u, err := url.Parse(v)
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-		p.fail(key, "debe ser una URL http(s) absoluta")
-		return ""
-	}
-	return strings.TrimRight(v, "/")
+	v, err := config.RequiredServiceURL(key)
+	p.add(err)
+	return v
 }

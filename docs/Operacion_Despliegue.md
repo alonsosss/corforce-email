@@ -51,6 +51,27 @@ largas de cada guardarraíl están en `ops/scaffold/README.md`, `ops/security/se
   arrancar, y el error nombra la variable o el servicio: antes salían como 502 en la primera
   petición. Las entradas `celda=host:puerto` de `<SERVICIO>_CELL_HOSTS` siguen la misma
   regla (`tenantcell.ParseInstances`).
+* URLs base internas de otros servicios (`<SERVICIO>_URL`): se leen al arrancar, antes de
+  conectar a nada, con `config.ServiceURL` o `config.RequiredServiceURL`
+  (`pkg/config/upstream.go`). Regla: `http` o `https` absoluta, `scheme://host[:puerto]`, con el
+  host de la regla anterior (una IPv6, entre corchetes), puerto opcional de 1 a 65535 y como
+  mucho la barra de la raíz, que se quita; sin usuario, ruta, consulta ni fragmento. Ningún
+  cliente la necesita: cada uno le pega su ruta absoluta (`/internal/...`), así que una ruta o
+  una consulta desviarían la llamada y unas credenciales viajarían por la red interna. Mal
+  formada, el servicio no arranca y el error nombra la variable. Cada una conserva si es
+  obligatoria u opcional. Obligatorias: `ORGANIZATION_URL` (servicios de celda y
+  domain-service, `tenantcell.OrganizationURLFromEnv`), `SUPPRESSION_URL` de contacts,
+  `CONTACTS_URL`, `TRANSACTIONAL_URL` y `TEMPLATES_URL` de campaigns y automations,
+  `BILLING_URL` de reputation y `MAIL_DIRECTORY_URL` del webmail. Opcionales: `SUPPRESSION_URL`,
+  `TEMPLATES_URL` y `REPUTATION_URL` de transactional y `TRANSACTIONAL_MAIL_URL` de identity
+  (vacías, lo que depende de ellas no funciona y se registra); `ACCESS_CONTROL_URL`, por
+  defecto `http://access-control:8002` (`authz.CheckerFromEnv`); y en organization
+  `ACCESS_CONTROL_URL`, `IDENTITY_URL` y `MAIL_DIRECTORY_URL`, que sin ellas usa
+  `<SERVICIO>_HOST`. No son URLs base internas y conservan su lector: `MAIL_AUTH_URL` (el
+  endpoint https que llaman tal cual Dovecot y el webmail), `PUBLIC_BASE_URL`,
+  `PASSWORD_BREACH_API_URL`, `MINIO_PUBLIC_URL` y `NATS_URL`. Pendientes de migrar, con lector
+  propio: mail-security (`ACCESS_CONTROL_URL`, `TRANSACTIONAL_URL`, `DOVEADM_API_URL`) y
+  domain-service (`ACCESS_CONTROL_URL`, `MAIL_DIRECTORY_URL`, `MAIL_SECURITY_URL`).
 * Entorno declarado (`ENVIRONMENT`). Un servidor declara exactamente
   `ENVIRONMENT=production` o `ENVIRONMENT=staging` en el `.env` de `DEPLOY_PATH`, el que
   Compose pasa a los contenedores; también el servidor de la cuenta de dev. `development` y

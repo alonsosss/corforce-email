@@ -44,6 +44,15 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	perms, err := authz.CheckerFromEnv()
+	if err != nil {
+		log.Fatal(err)
+	}
+	// Opcional: sin ella identity autentica igual, pero la recuperacion de contrasena no envia.
+	mailerURL, err := config.ServiceURL(mailerclient.EnvBaseURL, "")
+	if err != nil {
+		log.Fatal(err)
+	}
 	// Antes de abrir nada: sin clave de firma valida no hay servicio que levantar.
 	tokenSvc, tokenVerifier, err := newTokenService(cfg, logger)
 	if err != nil {
@@ -130,7 +139,7 @@ func main() {
 		Logger:      logger,
 	})
 
-	mailer := mailerclient.New()
+	mailer := mailerclient.New(mailerURL, os.Getenv("INTERNAL_GATEWAY_TOKEN"))
 	if !mailer.Configured() {
 		logger.Warn("correo transaccional sin configurar: la recuperacion de contrasena no enviara enlaces",
 			zap.String("variable", mailerclient.EnvBaseURL))
@@ -174,7 +183,7 @@ func main() {
 	}()
 	go runUnknownLoginPrune(workCtx, unknownLoginRepo, logger)
 
-	handler := identityhttp.NewHandler(authUC, userUC, resetUC, authz.NewCheckerFromEnv(), identityhttp.Config{
+	handler := identityhttp.NewHandler(authUC, userUC, resetUC, perms, identityhttp.Config{
 		StepUp:           tokenVerifier,
 		MFAIssuer:        os.Getenv("MFA_ISSUER"),
 		RefreshCookieTTL: cfg.JWT.RefreshTTL,

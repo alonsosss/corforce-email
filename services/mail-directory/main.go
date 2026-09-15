@@ -49,6 +49,10 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	perms, err := authz.CheckerFromEnv()
+	if err != nil {
+		log.Fatal(err)
+	}
 	membership, err := tenantcell.MembershipFromEnv(logger)
 	if err != nil {
 		log.Fatalf("celda de la instancia: %v", err)
@@ -93,7 +97,7 @@ func main() {
 		Logger:       logger,
 	})
 
-	r := apiRouter(pool.Pool, membership, handler.NewHandler(uc, authz.NewCheckerFromEnv()).Routes(), logger)
+	r := apiRouter(pool.Pool, membership, handler.NewHandler(uc, perms).Routes(), logger)
 
 	srv := server.New(port, r, logger)
 	runErr := srv.Run()

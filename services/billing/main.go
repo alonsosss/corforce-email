@@ -69,6 +69,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("billing: %v", err)
 	}
+	perms, err := authz.CheckerFromEnv()
+	if err != nil {
+		log.Fatalf("billing: %v", err)
+	}
 
 	// ctx gobierna los trabajos de fondo; se cancela cuando el HTTP termina de apagarse.
 	ctx, cancel := context.WithCancel(context.Background())
@@ -120,7 +124,7 @@ func main() {
 	go runPeriodSweeps(ctx, registry.Pool, uc, st.sweepInterval, logger)
 	go runProcessedPrune(ctx, uc, st.processedRetention, logger)
 
-	h := handler.NewHandler(uc, authz.NewCheckerFromEnv())
+	h := handler.NewHandler(uc, perms)
 
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)

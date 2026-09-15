@@ -4,7 +4,6 @@ import (
 	"context"
 	"log"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/alonsosss/corforce-email/pkg/authz"
@@ -57,9 +56,22 @@ func main() {
 	if internalToken == "" {
 		log.Fatal("INTERNAL_GATEWAY_TOKEN es obligatoria: sin ella contacts, transactional y templates rechazan las llamadas")
 	}
-	contactsURL := requiredEnv("CONTACTS_URL")
-	transactionalURL := requiredEnv("TRANSACTIONAL_URL")
-	templatesURL := requiredEnv("TEMPLATES_URL")
+	contactsURL, err := config.RequiredServiceURL("CONTACTS_URL")
+	if err != nil {
+		log.Fatal(err)
+	}
+	transactionalURL, err := config.RequiredServiceURL("TRANSACTIONAL_URL")
+	if err != nil {
+		log.Fatal(err)
+	}
+	templatesURL, err := config.RequiredServiceURL("TEMPLATES_URL")
+	if err != nil {
+		log.Fatal(err)
+	}
+	perms, err := authz.CheckerFromEnv()
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	batchSize, err := config.EnvInt("CAMPAIGNS_BATCH_SIZE", domain.MaxBatchSize, 1, domain.MaxBatchSize)
 	if err != nil {
@@ -119,7 +131,7 @@ func main() {
 
 	go runOrchestrator(ctx, tenantDB, uc, tick, logger)
 
-	h := handler.NewHandler(uc, authz.NewCheckerFromEnv())
+	h := handler.NewHandler(uc, perms)
 
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
@@ -179,12 +191,4 @@ func runOrchestrator(ctx context.Context, tenantDB *db.TenantDB, uc *app.UseCase
 			lastPrune = time.Now()
 		}
 	}
-}
-
-func requiredEnv(key string) string {
-	v := strings.TrimSpace(os.Getenv(key))
-	if v == "" {
-		log.Fatalf("%s es obligatoria", key)
-	}
-	return v
 }

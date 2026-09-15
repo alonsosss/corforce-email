@@ -55,9 +55,13 @@ func main() {
 	// El estado del contacto se decide con las causas vigentes que devuelve suppression:
 	// sin su URL, los eventos de suppression no se podrian aplicar sin arriesgar un estado
 	// que la contradiga.
-	suppressionURL, err := absoluteURL(os.Getenv("SUPPRESSION_URL"))
+	suppressionURL, err := config.RequiredServiceURL("SUPPRESSION_URL")
 	if err != nil {
-		log.Fatalf("SUPPRESSION_URL (causas vigentes de suppression): %v", err)
+		log.Fatalf("causas vigentes de suppression: %v", err)
+	}
+	perms, err := authz.CheckerFromEnv()
+	if err != nil {
+		log.Fatal(err)
 	}
 	doiTTL, err := config.EnvDuration("CONTACTS_DOI_TTL", app.DefaultDOITTL, time.Hour, 30*24*time.Hour)
 	if err != nil {
@@ -133,7 +137,7 @@ func main() {
 	// evento. No depende de NATS: consulta suppression por HTTP y publica por la outbox.
 	go sweep.New(registryPool.Pool, tenantDB, uc, logger, fullSweepAt).Run(ctx)
 
-	h := handler.NewHandler(handler.Deps{UC: uc, Perms: authz.NewCheckerFromEnv(), TenantDB: tenantDB, Logger: logger})
+	h := handler.NewHandler(handler.Deps{UC: uc, Perms: perms, TenantDB: tenantDB, Logger: logger})
 
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
@@ -168,8 +172,8 @@ func main() {
 	}
 }
 
-// absoluteURL valida una URL obligatoria de la configuracion (la publica del doble opt-in,
-// la interna de suppression): el servicio no arranca a medias sin ella.
+// absoluteURL valida la URL publica del doble opt-in, obligatoria: el servicio no arranca a
+// medias sin ella.
 func absoluteURL(raw string) (string, error) {
 	s := strings.TrimRight(strings.TrimSpace(raw), "/")
 	if s == "" {

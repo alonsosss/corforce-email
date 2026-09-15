@@ -126,8 +126,8 @@ type settings struct {
 
 // loadSettings falla con un valor fuera de su rango y sin token interno fuera de desarrollo o
 // prueba: la saga lo presenta a identity, access-control y el mail-directory de cada celda, y
-// las rutas del servicio lo exigen, con la misma regla que el gateway. Tambien falla con un
-// host o un puerto invalidos de los servicios que llama, antes de la primera peticion.
+// las rutas del servicio lo exigen, con la misma regla que el gateway. Tambien falla con una
+// URL, un host o un puerto invalidos de los servicios que llama, antes de la primera peticion.
 func loadSettings() (settings, error) {
 	var st settings
 	var err error
@@ -155,12 +155,13 @@ func loadSettings() (settings, error) {
 	return st, nil
 }
 
-// serviceURL resuelve la direccion interna de otro servicio: <SERVICIO>_URL si esta, o
-// <SERVICIO>_HOST y <SERVICIO>_HOST_PORT, las mismas que el gateway lee de routes.json, con
-// su nombre y puerto de compose por defecto (config.UpstreamURL).
+// serviceURL resuelve la direccion interna de otro servicio: <SERVICIO>_URL si esta
+// (config.ServiceURL), o <SERVICIO>_HOST y <SERVICIO>_HOST_PORT, las mismas que el gateway lee
+// de routes.json, con su nombre y puerto de compose por defecto (config.UpstreamURL).
 func serviceURL(prefix, defaultHost string, defaultPort int) (string, error) {
-	if u := os.Getenv(prefix + "_URL"); u != "" {
-		return u, nil
+	u, err := config.ServiceURL(prefix+"_URL", "")
+	if err != nil || u != "" {
+		return u, err
 	}
 	return config.UpstreamURL(prefix+"_HOST", defaultHost, defaultPort)
 }

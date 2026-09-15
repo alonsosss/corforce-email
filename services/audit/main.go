@@ -56,6 +56,10 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	perms, err := authz.CheckerFromEnv()
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	ctx := context.Background()
 
@@ -90,7 +94,7 @@ func main() {
 		Logger:   logger,
 	})
 
-	h := handler.NewHandler(uc, authz.NewCheckerFromEnv())
+	h := handler.NewHandler(uc, perms)
 
 	// Detector de seguridad: convierte el flujo de identidad (logins, fallos,
 	// bloqueos, revocaciones) en eventos accionables de audit.security_events.

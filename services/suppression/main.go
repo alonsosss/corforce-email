@@ -42,6 +42,10 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	perms, err := authz.CheckerFromEnv()
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	// ctx gobierna los trabajos de fondo (rele de la outbox, consumidor de eventos): se
 	// cancela cuando el HTTP termina de apagarse.
@@ -87,7 +91,7 @@ func main() {
 	// lo que se encole sin bus sale cuando el rele vuelva.
 	go sweep.New(registryPool.Pool, tenantDB, uc, logger, expiryEvery).Run(ctx)
 
-	h := handler.NewHandler(uc, authz.NewCheckerFromEnv())
+	h := handler.NewHandler(uc, perms)
 
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)

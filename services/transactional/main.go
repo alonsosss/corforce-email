@@ -77,6 +77,23 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	// Las tres son opcionales: sin una, lo que depende de ella falla o se degrada en cada envio.
+	suppressionURL, err := config.ServiceURL("SUPPRESSION_URL", "")
+	if err != nil {
+		log.Fatal(err)
+	}
+	templatesURL, err := config.ServiceURL("TEMPLATES_URL", "")
+	if err != nil {
+		log.Fatal(err)
+	}
+	reputationURL, err := config.ServiceURL("REPUTATION_URL", "")
+	if err != nil {
+		log.Fatal(err)
+	}
+	perms, err := authz.CheckerFromEnv()
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -115,15 +132,14 @@ func main() {
 	}
 
 	internalToken := os.Getenv("INTERNAL_GATEWAY_TOKEN")
-	reputationURL := strings.TrimSpace(os.Getenv("REPUTATION_URL"))
 	if reputationURL == "" {
 		logger.Error("transactional: REPUTATION_URL no configurada; el marketing respondera 503 y el transaccional saldra sin autorizacion previa")
 	}
 	uc := app.New(app.Deps{
 		Repo:        postgres.NewRepository(ctxPool),
 		Events:      postgres.NewOutboxPublisher(ctxPool),
-		Suppression: suppressionclient.New(os.Getenv("SUPPRESSION_URL"), internalToken),
-		Templates:   templatesclient.New(os.Getenv("TEMPLATES_URL"), internalToken),
+		Suppression: suppressionclient.New(suppressionURL, internalToken),
+		Templates:   templatesclient.New(templatesURL, internalToken),
 		Reputation:  reputationclient.New(reputationURL, internalToken),
 		Sender:      sender,
 		Limiter:     natsadapter.NewTokenBucket(sendRate, int(sendRate)),
@@ -175,7 +191,7 @@ func main() {
 	h := handler.NewHandler(handler.Deps{
 		UC:       uc,
 		TenantDB: tenantDB,
-		Perms:    authz.NewCheckerFromEnv(),
+		Perms:    perms,
 		SNS:      sns.NewVerifier(),
 		TopicARN: strings.TrimSpace(os.Getenv("SES_EVENTS_TOPIC_ARN")),
 		Logger:   logger,

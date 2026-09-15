@@ -73,7 +73,7 @@ func TestLoadSettingsDireccionesDelEntorno(t *testing.T) {
 	t.Setenv("IDENTITY_HOST", "10.0.0.5")
 	t.Setenv("IDENTITY_HOST_PORT", "9001")
 	t.Setenv("MAIL_DIRECTORY_HOST", "fd00::5")
-	t.Setenv("ACCESS_CONTROL_URL", "http://ac.interno:7002")
+	t.Setenv("ACCESS_CONTROL_URL", "http://ac.interno:7002/")
 	st, err := loadSettings()
 	if err != nil {
 		t.Fatal(err)
@@ -117,6 +117,12 @@ func TestLoadSettingsRangos(t *testing.T) {
 		{"IDENTITY_HOST", "iden tity", false},
 		{"IDENTITY_HOST", "identity:8001", false},
 		{"MAIL_DIRECTORY_HOST", "http://mail-directory", false},
+		{"ACCESS_CONTROL_URL", "https://ac.interno", true},
+		{"ACCESS_CONTROL_URL", "ac.interno:7002", false},
+		{"IDENTITY_URL", "http://identity:8001/api", false},
+		{"IDENTITY_URL", "http://u@identity:8001", false},
+		{"MAIL_DIRECTORY_URL", "http://mail-directory:0", false},
+		{"MAIL_DIRECTORY_URL", "http://mail-directory:8040?x=1", false},
 	} {
 		setSettingsEnv(t, "staging", tokenDePrueba)
 		t.Setenv(c.key, c.value)

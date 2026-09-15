@@ -319,7 +319,7 @@ func loadSettings() (settings, error) {
 	st.heloName = envString("MAIL_HOSTNAME", "localhost")
 
 	// Los remitentes del buzon los resuelve mail-directory con la regla de Postfix.
-	if st.mailDirectoryURL, err = required("MAIL_DIRECTORY_URL"); err != nil {
+	if st.mailDirectoryURL, err = config.RequiredServiceURL("MAIL_DIRECTORY_URL"); err != nil {
 		return st, err
 	}
 	if st.internalToken, err = middleware.InternalGatewayToken(); err != nil {
