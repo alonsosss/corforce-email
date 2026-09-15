@@ -104,6 +104,35 @@ func errorMentions(fragment string) func(error) bool {
 	return func(err error) bool { return err != nil && strings.Contains(err.Error(), fragment) }
 }
 
+// Un tope o una vida de sesion fuera de su rango impide arrancar; los extremos se admiten.
+func TestLoadSettingsRangos(t *testing.T) {
+	refused := map[string][]string{
+		"WEBMAIL_PORT":                 {"0", "65536", "abc"},
+		"WEBMAIL_SESSION_IDLE":         {"30s", "25h", "30"},
+		"WEBMAIL_SESSION_MAX":          {"30s", "721h"},
+		"WEBMAIL_MAX_RECIPIENTS":       {"0", "1001"},
+		"WEBMAIL_MAX_MESSAGE_BYTES":    {"0", "104857601", "25MB"},
+		"WEBMAIL_MAX_BODY_PART_BYTES":  {"-1", "104857601"},
+		"WEBMAIL_MAX_ATTACHMENT_BYTES": {"104857601"},
+	}
+	for key, values := range refused {
+		for _, value := range values {
+			setSettingsEnv(t, "production", map[string]string{key: value})
+			if _, err := loadSettings(); !errorMentions(key)(err) {
+				t.Errorf("%s=%q deberia impedir el arranque: %v", key, value, err)
+			}
+		}
+	}
+	setSettingsEnv(t, "production", map[string]string{
+		"WEBMAIL_MAX_RECIPIENTS": "1000", "WEBMAIL_MAX_MESSAGE_BYTES": "104857600",
+		"WEBMAIL_MAX_ATTACHMENT_BYTES": "104857600", "WEBMAIL_SESSION_MAX": "720h",
+	})
+	st, err := loadSettings()
+	if err != nil || st.limits.MaxRecipients != 1000 || st.limits.MaxMessageBytes != 104857600 || st.maxAttachmentBytes != 104857600 {
+		t.Fatalf("topes maximos: %+v %v", st.limits, err)
+	}
+}
+
 // La celda va en cada token de sesion: un CELL_CODE que no es un codigo de celda no arranca.
 func TestLoadSettingsCeldaInvalida(t *testing.T) {
 	for _, cell := range []string{"", "PE-01", "pe.01", "pe_01", "pe-01 x"} {

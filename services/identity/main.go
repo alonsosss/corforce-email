@@ -172,8 +172,9 @@ func main() {
 	go runUnknownLoginPrune(workCtx, unknownLoginRepo, logger)
 
 	handler := identityhttp.NewHandler(authUC, userUC, resetUC, authz.NewCheckerFromEnv(), identityhttp.Config{
-		StepUp:    tokenVerifier,
-		MFAIssuer: os.Getenv("MFA_ISSUER"),
+		StepUp:           tokenVerifier,
+		MFAIssuer:        os.Getenv("MFA_ISSUER"),
+		RefreshCookieTTL: cfg.JWT.RefreshTTL,
 	})
 
 	r := chi.NewRouter()

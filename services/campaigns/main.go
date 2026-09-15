@@ -4,7 +4,6 @@ import (
 	"context"
 	"log"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
@@ -32,7 +31,10 @@ import (
 const (
 	defaultPort = 8052
 	defaultTick = 15 * time.Second
-	minTick     = time.Second
+	// CAMPAIGNS_TICK va de minTick a maxTick: por debajo el orquestador recorreria las
+	// empresas sin pausa; por encima retrasaria la salida de cada campana y de cada lote.
+	minTick = time.Second
+	maxTick = 10 * time.Minute
 	// tenantConcurrency y tenantBudget acotan cada pasada del orquestador: cuantas
 	// empresas a la vez y cuanto puede durar cada una (varios lotes de CallTimeout).
 	tenantConcurrency = 4
@@ -59,13 +61,18 @@ func main() {
 	transactionalURL := requiredEnv("TRANSACTIONAL_URL")
 	templatesURL := requiredEnv("TEMPLATES_URL")
 
-	batchSize := envInt("CAMPAIGNS_BATCH_SIZE", domain.MaxBatchSize)
-	if batchSize > domain.MaxBatchSize {
-		logger.Warn("CAMPAIGNS_BATCH_SIZE supera el tope del lote de transactional; se usa el tope",
-			zap.Int("configured", batchSize), zap.Int("max", domain.MaxBatchSize))
-		batchSize = domain.MaxBatchSize
+	batchSize, err := config.EnvInt("CAMPAIGNS_BATCH_SIZE", domain.MaxBatchSize, 1, domain.MaxBatchSize)
+	if err != nil {
+		log.Fatal(err)
 	}
-	tick := envDuration(logger, "CAMPAIGNS_TICK", defaultTick)
+	tick, err := config.EnvDuration("CAMPAIGNS_TICK", defaultTick, minTick, maxTick)
+	if err != nil {
+		log.Fatal(err)
+	}
+	port, err := config.EnvInt("CAMPAIGNS_PORT", defaultPort, 1, config.MaxPort)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	// ctx gobierna los trabajos de fondo (orquestador, rele de la outbox, consumidor de
 	// estadisticas): se cancela cuando el HTTP termina de apagarse.
@@ -128,7 +135,6 @@ func main() {
 		r.Mount("/api/v1/campaigns", h.Routes())
 	})
 
-	port := envInt("CAMPAIGNS_PORT", defaultPort)
 	srv := server.New(port, r, logger)
 	if err := srv.Run(); err != nil {
 		logger.Fatal("server error", zap.Error(err))
@@ -181,27 +187,4 @@ func requiredEnv(key string) string {
 		log.Fatalf("%s es obligatoria", key)
 	}
 	return v
-}
-
-func envInt(key string, fallback int) int {
-	if v, err := strconv.Atoi(strings.TrimSpace(os.Getenv(key))); err == nil && v > 0 {
-		return v
-	}
-	return fallback
-}
-
-func envDuration(logger *zap.Logger, key string, fallback time.Duration) time.Duration {
-	raw := strings.TrimSpace(os.Getenv(key))
-	if raw == "" {
-		return fallback
-	}
-	d, err := time.ParseDuration(raw)
-	if err != nil {
-		logger.Warn("duracion no valida; se usa el valor por defecto", zap.String("key", key), zap.String("value", raw))
-		return fallback
-	}
-	if d < minTick {
-		return minTick
-	}
-	return d
 }

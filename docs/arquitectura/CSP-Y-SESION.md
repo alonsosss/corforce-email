@@ -19,6 +19,13 @@ decorativa.
 sesión se restaura pidiendo un token nuevo con la cookie. El webmail no usa este token: su
 sesión es la cookie `cf_wm` de su propio servicio.
 
+**Vida de los tokens** (`pkg/config`): `JWT_ACCESS_TTL` admite de 2 a 5 minutos, 5 por
+defecto. Se puede acortar, nunca alargar: es la ventana en que un token robado o revocado
+sigue sirviendo. El mínimo deja al menos un minuto de uso a cada token, porque el cliente
+renueva 60 s antes de vencer. `JWT_REFRESH_TTL`, la vida de la cookie `cf_rt`, admite de 1 h
+a 8760 h, el mismo rango que la política de sesión de una empresa. Fuera de rango, ningún
+servicio arranca.
+
 **Modo cookie es opt-in** (`cookie_auth: true` o cabecera `X-Auth-Mode: cookie`): los
 clientes que no son navegador siguen recibiendo el refresh token en el JSON.
 

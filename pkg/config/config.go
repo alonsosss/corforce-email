@@ -16,7 +16,6 @@ type Config struct {
 	Redis    RedisConfig
 	NATS     NATSConfig
 	JWT      JWTConfig
-	Gateway  GatewayConfig
 }
 
 type PostgresConfig struct {
@@ -195,9 +194,22 @@ type JWTConfig struct {
 	AllowEphemeralSigningKey bool
 }
 
-type GatewayConfig struct {
-	Port int
-}
+// Vida de los tokens (JWT_ACCESS_TTL, JWT_REFRESH_TTL).
+const (
+	// Al no haber revocacion en caliente del access token mas alla de tokens_valid_from, su
+	// vida ES la ventana en que un token robado o ya revocado sigue sirviendo, y la sesion
+	// esta documentada con 5 minutos como mucho: se puede acortar, nunca alargar. El minimo
+	// deja al menos un minuto de uso a cada token, porque el cliente web lo renueva 60 s
+	// antes de vencer (web/src/api/client.ts).
+	defaultAccessTTL = 5 * time.Minute
+	minAccessTTL     = 2 * time.Minute
+	maxAccessTTL     = 5 * time.Minute
+	// El refresh admite el mismo rango que la politica de sesion de una empresa en identity
+	// (refresh_ttl_hours de 1 a 8760).
+	defaultRefreshTTL = 168 * time.Hour
+	minRefreshTTL     = time.Hour
+	maxRefreshTTL     = 8760 * time.Hour
+)
 
 // developmentOrTestEnvironments son los valores de ENVIRONMENT que admiten los respaldos de
 // desarrollo (docs/Operacion_Despliegue.md, 1).
@@ -216,15 +228,32 @@ func Load() (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	pgPort, err := EnvInt("POSTGRES_PORT", 5432, 1, MaxPort)
+	if err != nil {
+		return nil, err
+	}
+	// 0 es no declararlo: TenantDirectDSN usa entonces POSTGRES_PORT.
+	directPort, err := EnvInt("POSTGRES_DIRECT_PORT", 0, 0, MaxPort)
+	if err != nil {
+		return nil, err
+	}
+	accessTTL, err := EnvDuration("JWT_ACCESS_TTL", defaultAccessTTL, minAccessTTL, maxAccessTTL)
+	if err != nil {
+		return nil, err
+	}
+	refreshTTL, err := EnvDuration("JWT_REFRESH_TTL", defaultRefreshTTL, minRefreshTTL, maxRefreshTTL)
+	if err != nil {
+		return nil, err
+	}
 	cfg := &Config{
 		Postgres: PostgresConfig{
 			Host:                        getEnv("POSTGRES_HOST", "localhost"),
-			Port:                        getEnvInt("POSTGRES_PORT", 5432),
+			Port:                        pgPort,
 			User:                        getEnv("POSTGRES_USER", "mail_admin"),
 			Password:                    getEnv("POSTGRES_PASSWORD", ""),
 			DBName:                      getEnv("POSTGRES_DB", "mail_registry"),
 			DirectHost:                  getEnv("POSTGRES_DIRECT_HOST", ""),
-			DirectPort:                  getEnvInt("POSTGRES_DIRECT_PORT", 0),
+			DirectPort:                  directPort,
 			CellDBName:                  getEnv("CELL_DB_NAME", ""),
 			CellUser:                    getEnv("CELL_DB_USER", ""),
 			CellPassword:                getEnv("CELL_DB_PASSWORD", ""),
@@ -235,15 +264,9 @@ func Load() (*Config, error) {
 			URL: getEnv("NATS_URL", "nats://localhost:4222"),
 		},
 		JWT: JWTConfig{
-			// 5 min (antes 15): al no haber revocacion en caliente del access token, su
-			// duracion ES la ventana en que un token robado o ya revocado sigue sirviendo.
-			// El cliente renueva en memoria, asi que solo cambia la frecuencia de refresco.
-			AccessTTL:                getEnvDuration("JWT_ACCESS_TTL", 5*time.Minute),
-			RefreshTTL:               getEnvDuration("JWT_REFRESH_TTL", 168*time.Hour),
+			AccessTTL:                accessTTL,
+			RefreshTTL:               refreshTTL,
 			AllowEphemeralSigningKey: DeclaredDevelopmentOrTest(),
-		},
-		Gateway: GatewayConfig{
-			Port: getEnvInt("GATEWAY_PORT", 8080),
 		},
 	}
 
@@ -259,28 +282,4 @@ func getEnv(key, fallback string) string {
 		return v
 	}
 	return fallback
-}
-
-func getEnvInt(key string, fallback int) int {
-	s := os.Getenv(key)
-	if s == "" {
-		return fallback
-	}
-	v, err := strconv.Atoi(s)
-	if err != nil {
-		return fallback
-	}
-	return v
-}
-
-func getEnvDuration(key string, fallback time.Duration) time.Duration {
-	s := os.Getenv(key)
-	if s == "" {
-		return fallback
-	}
-	v, err := time.ParseDuration(s)
-	if err != nil {
-		return fallback
-	}
-	return v
 }

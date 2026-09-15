@@ -45,16 +45,7 @@ func refreshCookieSecure() bool {
 	return true
 }
 
-func refreshCookieTTL() time.Duration {
-	if v := os.Getenv("JWT_REFRESH_TTL"); v != "" {
-		if d, err := time.ParseDuration(v); err == nil {
-			return d
-		}
-	}
-	return 168 * time.Hour
-}
-
-func setRefreshCookie(w http.ResponseWriter, token string) {
+func setRefreshCookie(w http.ResponseWriter, token string, ttl time.Duration) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     refreshCookieName,
 		Value:    token,
@@ -62,7 +53,7 @@ func setRefreshCookie(w http.ResponseWriter, token string) {
 		HttpOnly: true,
 		Secure:   refreshCookieSecure(),
 		SameSite: http.SameSiteStrictMode,
-		MaxAge:   int(refreshCookieTTL().Seconds()),
+		MaxAge:   int(ttl.Seconds()),
 	})
 }
 
@@ -89,12 +80,12 @@ func refreshCookieValue(r *http.Request) string {
 // issueSession entrega el par de tokens al cliente. En modo cookie, el refresh viaja como
 // cookie HttpOnly y se OMITE del JSON: si siguiera ahi, un XSS podria leerlo de la
 // respuesta y toda la proteccion seria decorativa.
-func issueSession(w http.ResponseWriter, r *http.Request, res *ports.LoginResponse, cookieMode bool) *ports.LoginResponse {
+func (h *Handler) issueSession(w http.ResponseWriter, r *http.Request, res *ports.LoginResponse, cookieMode bool) *ports.LoginResponse {
 	if res == nil || !cookieAuthRequested(r, cookieMode) {
 		return res
 	}
 	if res.RefreshToken != "" {
-		setRefreshCookie(w, res.RefreshToken)
+		setRefreshCookie(w, res.RefreshToken, h.refreshCookieTTL)
 	}
 	clone := *res
 	clone.RefreshToken = ""

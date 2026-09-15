@@ -6,7 +6,6 @@ import (
 	"log"
 	"net/url"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
@@ -63,11 +62,11 @@ func main() {
 	if err != nil {
 		log.Fatalf("PUBLIC_BASE_URL: %v", err)
 	}
-	perDay, err := envInt("AUTOMATIONS_DOI_MAX_PER_DAY", 1, 1, 100)
+	perDay, err := config.EnvInt("AUTOMATIONS_DOI_MAX_PER_DAY", 1, 1, 100)
 	if err != nil {
 		log.Fatal(err)
 	}
-	per30, err := envInt("AUTOMATIONS_DOI_MAX_PER_30D", 3, 1, 1000)
+	per30, err := config.EnvInt("AUTOMATIONS_DOI_MAX_PER_30D", 3, 1, 1000)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -75,15 +74,15 @@ func main() {
 	if err := limits.Validate(); err != nil {
 		log.Fatalf("AUTOMATIONS_DOI_MAX_PER_DAY y AUTOMATIONS_DOI_MAX_PER_30D: %v", err)
 	}
-	pauseAfter, err := envInt("AUTOMATIONS_PAUSE_AFTER_FAILURES", 20, 1, 100000)
+	pauseAfter, err := config.EnvInt("AUTOMATIONS_PAUSE_AFTER_FAILURES", 20, 1, 100000)
 	if err != nil {
 		log.Fatal(err)
 	}
-	tick, err := envDuration("AUTOMATIONS_TICK", defaultTick, time.Second, 10*time.Minute)
+	tick, err := config.EnvDuration("AUTOMATIONS_TICK", defaultTick, time.Second, 10*time.Minute)
 	if err != nil {
 		log.Fatal(err)
 	}
-	port, err := envInt("AUTOMATIONS_PORT", defaultPort, 1, 65535)
+	port, err := config.EnvInt("AUTOMATIONS_PORT", defaultPort, 1, config.MaxPort)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -219,28 +218,4 @@ func requiredEnv(key string) string {
 		log.Fatalf("%s es obligatoria", key)
 	}
 	return v
-}
-
-func envInt(key string, def, min, max int) (int, error) {
-	v := strings.TrimSpace(os.Getenv(key))
-	if v == "" {
-		return def, nil
-	}
-	n, err := strconv.Atoi(v)
-	if err != nil || n < min || n > max {
-		return 0, fmt.Errorf("%s debe ser un entero entre %d y %d", key, min, max)
-	}
-	return n, nil
-}
-
-func envDuration(key string, def, min, max time.Duration) (time.Duration, error) {
-	v := strings.TrimSpace(os.Getenv(key))
-	if v == "" {
-		return def, nil
-	}
-	d, err := time.ParseDuration(v)
-	if err != nil || d < min || d > max {
-		return 0, fmt.Errorf("%s debe ser una duracion entre %s y %s", key, min, max)
-	}
-	return d, nil
 }

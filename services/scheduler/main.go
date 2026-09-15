@@ -7,7 +7,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"strconv"
 	"sync"
 	"time"
 	// La imagen es scratch y no trae la base de zonas horarias: sin esto, toda zona de un
@@ -81,12 +80,32 @@ func main() {
 	if err != nil {
 		log.Fatalf("%v", err)
 	}
-	retry := domain.RetryPolicy{
-		BaseDelay: envDuration("SCHEDULER_RETRY_BASE_DELAY", 30*time.Second),
-		MaxDelay:  envDuration("SCHEDULER_RETRY_MAX_DELAY", time.Hour),
+	baseDelay, err := config.EnvDuration("SCHEDULER_RETRY_BASE_DELAY", 30*time.Second, time.Second, time.Hour)
+	if err != nil {
+		log.Fatal(err)
 	}
+	maxDelay, err := config.EnvDuration("SCHEDULER_RETRY_MAX_DELAY", time.Hour, time.Second, 24*time.Hour)
+	if err != nil {
+		log.Fatal(err)
+	}
+	retry := domain.RetryPolicy{BaseDelay: baseDelay, MaxDelay: maxDelay}
 	if err := retry.Validate(); err != nil {
 		log.Fatalf("SCHEDULER_RETRY_BASE_DELAY / SCHEDULER_RETRY_MAX_DELAY: %v", err)
+	}
+	// Cada empresa en vuelo ocupa conexiones de su pool (hasta 10, pkg/db) a traves de
+	// pgbouncer, cuyo max_client_conn (1000) comparten todos los servicios.
+	concurrency, err := config.EnvInt("SCHEDULER_TENANT_CONCURRENCY", 4, 1, 64)
+	if err != nil {
+		log.Fatal(err)
+	}
+	// Una empresa no retiene la vuelta mas alla del intervalo del ticker.
+	perTenant, err := config.EnvDuration("SCHEDULER_TENANT_TIMEOUT", 20*time.Second, time.Second, tickInterval)
+	if err != nil {
+		log.Fatal(err)
+	}
+	port, err := config.EnvInt("SCHEDULER_PORT", defaultPort, 1, config.MaxPort)
+	if err != nil {
+		log.Fatal(err)
 	}
 
 	registryPool, err := db.NewPool(ctx, cfg.Postgres.DSN(), logger)
@@ -124,7 +143,7 @@ func main() {
 		go outbox.RunForTenants(ctx, tenantDB, db.PoolFromCtx, bus, logger, outbox.Options{})
 	}
 
-	go runTicker(ctx, tenantDB, uc, envInt("SCHEDULER_TENANT_CONCURRENCY", 4), envDuration("SCHEDULER_TENANT_TIMEOUT", 20*time.Second), logger)
+	go runTicker(ctx, tenantDB, uc, concurrency, perTenant, logger)
 
 	h := handler.NewHandler(handler.Deps{
 		UC:    uc,
@@ -146,7 +165,7 @@ func main() {
 	r.Use(middleware.Logger(logger))
 	r.Mount("/", h.Routes())
 
-	srv := server.New(envInt("SCHEDULER_PORT", defaultPort), r, logger)
+	srv := server.New(port, r, logger)
 	if err := srv.Run(); err != nil {
 		logger.Fatal("server error", zap.Error(err))
 	}
@@ -224,22 +243,4 @@ func loadCatalog() (*domain.HandlerCatalog, error) {
 		raw = b
 	}
 	return catalogadapter.Parse(raw)
-}
-
-func envInt(key string, def int) int {
-	if v := os.Getenv(key); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			return n
-		}
-	}
-	return def
-}
-
-func envDuration(key string, def time.Duration) time.Duration {
-	if v := os.Getenv(key); v != "" {
-		if d, err := time.ParseDuration(v); err == nil && d > 0 {
-			return d
-		}
-	}
-	return def
 }

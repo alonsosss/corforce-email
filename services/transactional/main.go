@@ -37,6 +37,9 @@ const (
 	defaultSendRate          = 10.0
 	defaultMarketingWorkers  = 4
 	defaultMarketingSendRate = 10.0
+	// maxWorkers acota cada carril: un trabajador ocupa una conexion del pool de la empresa
+	// (10, pkg/db) mientras envia y la tasa ya la fija SES_MAX_SEND_RATE; mas solo esperan.
+	maxWorkers = 64
 	// releaseInterval es la cadencia con la que se encolan los programados vencidos.
 	releaseInterval = time.Minute
 )
@@ -49,6 +52,19 @@ func main() {
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatalf("load config: %v", err)
+	}
+
+	workers, err := config.EnvInt("TRANSACTIONAL_WORKERS", defaultWorkers, 1, maxWorkers)
+	if err != nil {
+		log.Fatal(err)
+	}
+	marketingWorkers, err := config.EnvInt("TRANSACTIONAL_MARKETING_WORKERS", defaultMarketingWorkers, 1, maxWorkers)
+	if err != nil {
+		log.Fatal(err)
+	}
+	port, err := config.EnvInt("TRANSACTIONAL_PORT", defaultPort, 1, config.MaxPort)
+	if err != nil {
+		log.Fatal(err)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -124,14 +140,12 @@ func main() {
 		if err := natsadapter.EnsureStreams(bus); err != nil {
 			logger.Error("transactional: no se pudieron asegurar los streams", zap.Error(err))
 		}
-		workers := envInt("TRANSACTIONAL_WORKERS", defaultWorkers)
 		senderWorker := natsadapter.NewSenderWorker(bus, uc, tenantDB, workers, logger)
 		if err := senderWorker.Start(); err != nil {
 			logger.Error("transactional: el worker de envio no arranco", zap.Error(err))
 		} else {
 			defer senderWorker.Stop()
 		}
-		marketingWorkers := envInt("TRANSACTIONAL_MARKETING_WORKERS", defaultMarketingWorkers)
 		marketingWorker := natsadapter.NewMarketingSenderWorker(bus, uc, tenantDB, marketingWorkers, logger)
 		if err := marketingWorker.Start(); err != nil {
 			logger.Error("transactional: el worker de marketing no arranco", zap.Error(err))
@@ -165,7 +179,6 @@ func main() {
 	r.Use(middleware.Logger(logger))
 	r.Mount("/", h.Routes())
 
-	port := envInt("TRANSACTIONAL_PORT", defaultPort)
 	srv := server.New(port, r, logger)
 	if err := srv.Run(); err != nil {
 		logger.Fatal("server error", zap.Error(err))
@@ -201,13 +214,6 @@ func releaseScheduled(ctx context.Context, tenantDB *db.TenantDB, uc *app.UseCas
 			logger.Warn("transactional: no se pudo listar las empresas", zap.Error(err))
 		}
 	}
-}
-
-func envInt(key string, fallback int) int {
-	if v, err := strconv.Atoi(strings.TrimSpace(os.Getenv(key))); err == nil && v > 0 {
-		return v
-	}
-	return fallback
 }
 
 func envFloat(key string, fallback float64) float64 {

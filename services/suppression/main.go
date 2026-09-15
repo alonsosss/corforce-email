@@ -2,11 +2,7 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"log"
-	"os"
-	"strconv"
-	"strings"
 	"time"
 
 	"github.com/alonsosss/corforce-email/pkg/authz"
@@ -27,6 +23,8 @@ import (
 	"go.uber.org/zap"
 )
 
+const defaultPort = 8046
+
 func main() {
 	logger, _ := zap.NewProduction()
 	defer logger.Sync()
@@ -36,7 +34,11 @@ func main() {
 	if err != nil {
 		log.Fatalf("load config: %v", err)
 	}
-	expiryEvery, err := envDuration("SUPPRESSION_EXPIRY_SWEEP_INTERVAL", sweep.DefaultInterval, time.Second, time.Hour)
+	expiryEvery, err := config.EnvDuration("SUPPRESSION_EXPIRY_SWEEP_INTERVAL", sweep.DefaultInterval, time.Second, time.Hour)
+	if err != nil {
+		log.Fatal(err)
+	}
+	port, err := config.EnvInt("SUPPRESSION_PORT", defaultPort, 1, config.MaxPort)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -108,27 +110,8 @@ func main() {
 		r.Mount("/internal/suppression", h.InternalRoutes())
 	})
 
-	port := 8046
-	if p := os.Getenv("SUPPRESSION_PORT"); p != "" {
-		if v, err := strconv.Atoi(p); err == nil {
-			port = v
-		}
-	}
-
 	srv := server.New(port, r, logger)
 	if err := srv.Run(); err != nil {
 		logger.Fatal("server error", zap.Error(err))
 	}
-}
-
-func envDuration(key string, def, min, max time.Duration) (time.Duration, error) {
-	v := strings.TrimSpace(os.Getenv(key))
-	if v == "" {
-		return def, nil
-	}
-	d, err := time.ParseDuration(v)
-	if err != nil || d < min || d > max {
-		return 0, fmt.Errorf("%s debe ser una duracion entre %s y %s", key, min, max)
-	}
-	return d, nil
 }

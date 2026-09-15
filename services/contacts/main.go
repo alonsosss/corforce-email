@@ -6,7 +6,6 @@ import (
 	"log"
 	"net/url"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 	// La imagen es scratch y no trae la base de zonas horarias: sin esto, validar la
@@ -60,15 +59,19 @@ func main() {
 	if err != nil {
 		log.Fatalf("SUPPRESSION_URL (causas vigentes de suppression): %v", err)
 	}
-	doiTTL, err := envDuration("CONTACTS_DOI_TTL", app.DefaultDOITTL, time.Hour, 30*24*time.Hour)
+	doiTTL, err := config.EnvDuration("CONTACTS_DOI_TTL", app.DefaultDOITTL, time.Hour, 30*24*time.Hour)
 	if err != nil {
 		log.Fatal(err)
 	}
-	importMax, err := envInt("CONTACTS_IMPORT_MAX_ROWS", app.DefaultImportMaxRows, 1, maxImportRows)
+	importMax, err := config.EnvInt("CONTACTS_IMPORT_MAX_ROWS", app.DefaultImportMaxRows, 1, maxImportRows)
 	if err != nil {
 		log.Fatal(err)
 	}
-	fullSweepAt, err := envDuration("CONTACTS_FULL_SWEEP_AT", sweep.DefaultFullAt, 0, 24*time.Hour)
+	fullSweepAt, err := config.EnvDuration("CONTACTS_FULL_SWEEP_AT", sweep.DefaultFullAt, 0, 24*time.Hour)
+	if err != nil {
+		log.Fatal(err)
+	}
+	port, err := config.EnvInt("CONTACTS_PORT", defaultPort, 1, config.MaxPort)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -159,10 +162,6 @@ func main() {
 		r.Mount("/internal/contacts", h.InternalRoutes())
 	})
 
-	port, err := envInt("CONTACTS_PORT", defaultPort, 1, 65535)
-	if err != nil {
-		log.Fatal(err)
-	}
 	srv := server.New(port, r, logger)
 	if err := srv.Run(); err != nil {
 		logger.Fatal("server error", zap.Error(err))
@@ -181,28 +180,4 @@ func absoluteURL(raw string) (string, error) {
 		return "", fmt.Errorf("debe ser una URL absoluta http(s) sin query ni fragmento")
 	}
 	return s, nil
-}
-
-func envInt(key string, def, min, max int) (int, error) {
-	v := strings.TrimSpace(os.Getenv(key))
-	if v == "" {
-		return def, nil
-	}
-	n, err := strconv.Atoi(v)
-	if err != nil || n < min || n > max {
-		return 0, fmt.Errorf("%s debe ser un entero entre %d y %d", key, min, max)
-	}
-	return n, nil
-}
-
-func envDuration(key string, def, min, max time.Duration) (time.Duration, error) {
-	v := strings.TrimSpace(os.Getenv(key))
-	if v == "" {
-		return def, nil
-	}
-	d, err := time.ParseDuration(v)
-	if err != nil || d < min || d > max {
-		return 0, fmt.Errorf("%s debe ser una duracion entre %s y %s", key, min, max)
-	}
-	return d, nil
 }

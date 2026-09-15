@@ -88,9 +88,13 @@ func LoadRedis() (RedisConfig, error) {
 	if err != nil {
 		return RedisConfig{}, err
 	}
+	port, err := EnvInt("REDIS_PORT", 6379, 1, MaxPort)
+	if err != nil {
+		return RedisConfig{}, err
+	}
 	return RedisConfig{
 		Host:           getEnv("REDIS_HOST", "localhost"),
-		Port:           getEnvInt("REDIS_PORT", 6379),
+		Port:           port,
 		Password:       getEnv("REDIS_PASSWORD", ""),
 		TLS:            t,
 		AllowPlaintext: DeclaredDevelopmentOrTest(),

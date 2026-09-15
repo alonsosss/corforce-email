@@ -25,6 +25,15 @@ largas de cada guardarraíl están en `ops/scaffold/README.md`, `ops/security/se
   nombre de `REDIS_HOST`. Un valor de `REDIS_TLS` que no es booleano, o una CA o un nombre
   con TLS apagado, detienen el arranque. El Redis de los motores (`MAIL_REDIS_*`) tiene
   las mismas variables, opcionales y apagadas: ver `deploy/mail/README.md`, Contrato Redis.
+* Variables numéricas y de duración (límites, trabajadores, puertos, intervalos): se leen con
+  `config.EnvInt` y `config.EnvDuration` (`pkg/config/env.go`), con el rango de cada una
+  junto a ella en `.env.example`. Vacía vale su valor por defecto; ilegible o fuera de su
+  rango, el servicio no arranca y el error nombra la variable y el rango. Así leen
+  `pkg/config` (`POSTGRES_PORT`, `POSTGRES_DIRECT_PORT`, `REDIS_PORT`, `JWT_*_TTL`) y
+  scheduler, campaigns, transactional, mail-auth, contacts, suppression, automations y
+  webmail. Pendiente de migrar, con lectores propios: gateway (`GATEWAY_PORT`),
+  domain-service, mail-security, organization, mail-directory, audit, identity,
+  access-control, templates, analytics, billing y reputation.
 * Entorno declarado (`ENVIRONMENT`). Un servidor declara exactamente
   `ENVIRONMENT=production` o `ENVIRONMENT=staging` en el `.env` de `DEPLOY_PATH`, el que
   Compose pasa a los contenedores; también el servidor de la cuenta de dev. `development` y

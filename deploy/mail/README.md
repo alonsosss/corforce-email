@@ -174,9 +174,10 @@ pasar por aqui; cualquier otro se deniega); bcrypt sobre la contrasena principal
 despues sobre las de aplicacion activas con ese flag (actualiza `last_used_at`; el
 webmail solo acepta la principal); `active = 2` y `active = 0` no entran;
 `force_pw_update` no bloquea. Freno de fuerza bruta en el Redis de la plataforma
-por `(username, real_rip)` y por `real_rip` (`MAIL_AUTH_MAX_FAILURES` 10,
-`MAIL_AUTH_MAX_FAILURES_PER_IP` 50, `MAIL_AUTH_FAILURE_WINDOW` 15m,
-`MAIL_AUTH_LOCK_TTL` 30m); sin Redis arranca sin freno y lo avisa. Metrica
+por `(username, real_rip)` y por `real_rip` (`MAIL_AUTH_MAX_FAILURES` 10, de 1 a 1000;
+`MAIL_AUTH_MAX_FAILURES_PER_IP` 50, de 1 a 10000; `MAIL_AUTH_FAILURE_WINDOW` 15m y
+`MAIL_AUTH_LOCK_TTL` 30m, de 1m a 24h). Un valor fuera de rango, o un puerto fuera de 1 a
+65535, impide arrancar aunque Redis no responda; sin Redis arranca sin freno y lo avisa. Metrica
 `mail_auth_attempts_total{service,result}`. El listener HTTP de `MAIL_AUTH_PORT`
 (8041) solo sirve `/healthz`, `/metrics` y
 `GET /internal/mail-auth/logins?username=&limit=` (tras `X-Gateway-Token` +

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/alonsosss/corforce-email/pkg/auth"
 	"github.com/alonsosss/corforce-email/pkg/authz"
@@ -38,15 +39,19 @@ type Config struct {
 	StepUp *auth.Verifier
 	// MFAIssuer es el emisor que ve el usuario en su app TOTP. Vacio: la marca del producto.
 	MFAIssuer string
+	// RefreshCookieTTL es la vida de la cookie del refresh: JWT_REFRESH_TTL, validada por
+	// config.Load.
+	RefreshCookieTTL time.Duration
 }
 
 type Handler struct {
-	auth      *app.AuthUseCase
-	user      *app.UserUseCase
-	reset     *app.PasswordResetUseCase
-	authz     *authz.Checker
-	stepUp    *auth.Verifier
-	mfaIssuer string
+	auth             *app.AuthUseCase
+	user             *app.UserUseCase
+	reset            *app.PasswordResetUseCase
+	authz            *authz.Checker
+	stepUp           *auth.Verifier
+	mfaIssuer        string
+	refreshCookieTTL time.Duration
 }
 
 func NewHandler(auth *app.AuthUseCase, user *app.UserUseCase, reset *app.PasswordResetUseCase, checker *authz.Checker, cfg Config) *Handler {
@@ -54,7 +59,8 @@ func NewHandler(auth *app.AuthUseCase, user *app.UserUseCase, reset *app.Passwor
 	if issuer == "" {
 		issuer = defaultMFAIssuer
 	}
-	return &Handler{auth: auth, user: user, reset: reset, authz: checker, stepUp: cfg.StepUp, mfaIssuer: issuer}
+	return &Handler{auth: auth, user: user, reset: reset, authz: checker, stepUp: cfg.StepUp, mfaIssuer: issuer,
+		refreshCookieTTL: cfg.RefreshCookieTTL}
 }
 
 func (h *Handler) Routes() chi.Router {
@@ -169,7 +175,7 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response.JSON(w, http.StatusOK, issueSession(w, r, res, req.CookieAuth))
+	response.JSON(w, http.StatusOK, h.issueSession(w, r, res, req.CookieAuth))
 }
 
 type forgotPasswordRequest struct {
@@ -323,7 +329,7 @@ func (h *Handler) RefreshToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response.JSON(w, http.StatusOK, issueSession(w, r, res, cookieMode))
+	response.JSON(w, http.StatusOK, h.issueSession(w, r, res, cookieMode))
 }
 
 type logoutRequest struct {
@@ -991,7 +997,7 @@ func (h *Handler) MFAChallenge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response.JSON(w, http.StatusOK, issueSession(w, r, res, req.CookieAuth))
+	response.JSON(w, http.StatusOK, h.issueSession(w, r, res, req.CookieAuth))
 }
 
 type mfaSetupResponse struct {

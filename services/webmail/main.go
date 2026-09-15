@@ -52,6 +52,15 @@ const (
 	defaultMaxBodyPartBytes   = 2 << 20
 	defaultMaxAttachmentBytes = 50 << 20
 
+	// Topes de los motores de la celda, por donde entra y sale todo mensaje: el
+	// message_size_limit de deploy/mail/postfix/conf/main.cf (ningun mensaje, ni por tanto
+	// ninguna de sus partes, lo supera) y el smtpd_recipient_limit de Postfix, que main.cf
+	// deja en su valor por defecto.
+	postfixMessageSizeLimit = 100 << 20
+	postfixRecipientLimit   = 1000
+	maxSessionIdle          = 24 * time.Hour
+	maxSessionMax           = 30 * 24 * time.Hour
+
 	// minMasterPasswordLen coincide con lo que exige el entrypoint de Dovecot: la
 	// credencial maestra abre cualquier buzon de la celda.
 	minMasterPasswordLen = 32
@@ -225,7 +234,7 @@ func loadSettings() (settings, error) {
 	devRelaxations := config.DeclaredDevelopmentOrTest()
 	var st settings
 	var err error
-	if st.port, err = envInt("WEBMAIL_PORT", defaultPort); err != nil {
+	if st.port, err = config.EnvInt("WEBMAIL_PORT", defaultPort, 1, config.MaxPort); err != nil {
 		return st, err
 	}
 	if st.cellCode = strings.TrimSpace(os.Getenv("CELL_CODE")); !domain.ValidCellCode(st.cellCode) {
@@ -267,28 +276,28 @@ func loadSettings() (settings, error) {
 		return st, fmt.Errorf("WEBMAIL_MASTER_PASSWORD debe llegar del almacen de secretos y tener al menos %d caracteres", minMasterPasswordLen)
 	}
 
-	if st.sessions.Idle, err = envDuration("WEBMAIL_SESSION_IDLE", defaultSessionIdle); err != nil {
+	if st.sessions.Idle, err = config.EnvDuration("WEBMAIL_SESSION_IDLE", defaultSessionIdle, time.Minute, maxSessionIdle); err != nil {
 		return st, err
 	}
-	if st.sessions.Max, err = envDuration("WEBMAIL_SESSION_MAX", defaultSessionMax); err != nil {
+	if st.sessions.Max, err = config.EnvDuration("WEBMAIL_SESSION_MAX", defaultSessionMax, time.Minute, maxSessionMax); err != nil {
 		return st, err
 	}
 	if err := st.sessions.Validate(); err != nil {
 		return st, err
 	}
-	if st.limits.MaxRecipients, err = envInt("WEBMAIL_MAX_RECIPIENTS", defaultMaxRecipients); err != nil {
+	if st.limits.MaxRecipients, err = config.EnvInt("WEBMAIL_MAX_RECIPIENTS", defaultMaxRecipients, 1, postfixRecipientLimit); err != nil {
 		return st, err
 	}
-	if st.limits.MaxMessageBytes, err = envInt64("WEBMAIL_MAX_MESSAGE_BYTES", defaultMaxMessageBytes); err != nil {
+	if st.limits.MaxMessageBytes, err = envBytes("WEBMAIL_MAX_MESSAGE_BYTES", defaultMaxMessageBytes); err != nil {
 		return st, err
 	}
 	if err := st.limits.Validate(); err != nil {
 		return st, err
 	}
-	if st.maxBodyPartBytes, err = envInt64("WEBMAIL_MAX_BODY_PART_BYTES", defaultMaxBodyPartBytes); err != nil {
+	if st.maxBodyPartBytes, err = envBytes("WEBMAIL_MAX_BODY_PART_BYTES", defaultMaxBodyPartBytes); err != nil {
 		return st, err
 	}
-	if st.maxAttachmentBytes, err = envInt64("WEBMAIL_MAX_ATTACHMENT_BYTES", defaultMaxAttachmentBytes); err != nil {
+	if st.maxAttachmentBytes, err = envBytes("WEBMAIL_MAX_ATTACHMENT_BYTES", defaultMaxAttachmentBytes); err != nil {
 		return st, err
 	}
 
@@ -358,40 +367,10 @@ func envString(key, fallback string) string {
 	return fallback
 }
 
-func envInt(key string, fallback int) (int, error) {
-	v := strings.TrimSpace(os.Getenv(key))
-	if v == "" {
-		return fallback, nil
-	}
-	n, err := strconv.Atoi(v)
-	if err != nil || n < 1 {
-		return 0, fmt.Errorf("%s debe ser un entero positivo", key)
-	}
-	return n, nil
-}
-
-func envInt64(key string, fallback int64) (int64, error) {
-	v := strings.TrimSpace(os.Getenv(key))
-	if v == "" {
-		return fallback, nil
-	}
-	n, err := strconv.ParseInt(v, 10, 64)
-	if err != nil || n < 1 {
-		return 0, fmt.Errorf("%s debe ser un entero positivo", key)
-	}
-	return n, nil
-}
-
-func envDuration(key string, fallback time.Duration) (time.Duration, error) {
-	v := strings.TrimSpace(os.Getenv(key))
-	if v == "" {
-		return fallback, nil
-	}
-	d, err := time.ParseDuration(v)
-	if err != nil || d <= 0 {
-		return 0, fmt.Errorf("%s debe ser una duracion positiva (p. ej. 30m)", key)
-	}
-	return d, nil
+// envBytes lee un tope en bytes, que ningun mensaje de la celda puede superar.
+func envBytes(key string, def int) (int64, error) {
+	n, err := config.EnvInt(key, def, 1, postfixMessageSizeLimit)
+	return int64(n), err
 }
 
 func envBool(key string, fallback bool) (bool, error) {

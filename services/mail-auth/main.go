@@ -15,7 +15,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"strconv"
 	"time"
 
 	"github.com/alonsosss/corforce-email/pkg/config"
@@ -44,6 +43,14 @@ const (
 	defaultFailureWindow    = 15 * time.Minute
 	defaultLockTTL          = 30 * time.Minute
 
+	// Techos del freno de fuerza bruta: por encima ya no frena. El de la IP es mas alto
+	// porque suma los fallos de todos los buzones detras de ella (una oficina con NAT).
+	maxFailuresCeiling      = 1000
+	maxFailuresPerIPCeiling = 10000
+	// Una ventana o un bloqueo de mas de un dia es una errata, y el bloqueo por IP alcanza
+	// tambien a los buzones legitimos que salen por ella.
+	maxThrottleDuration = 24 * time.Hour
+
 	// tlsHostname es el alias con el que Dovecot resuelve al servicio (MAIL_AUTH_URL).
 	tlsHostname = "mail-auth"
 )
@@ -56,6 +63,18 @@ func main() {
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatalf("load config: %v", err)
+	}
+	tlsPort, err := config.EnvInt("MAIL_AUTH_TLS_PORT", defaultTLSPort, 1, config.MaxPort)
+	if err != nil {
+		log.Fatal(err)
+	}
+	port, err := config.EnvInt("MAIL_AUTH_PORT", defaultPort, 1, config.MaxPort)
+	if err != nil {
+		log.Fatal(err)
+	}
+	throttleCfg, err := throttleConfigFromEnv()
+	if err != nil {
+		log.Fatal(err)
 	}
 
 	ctx := context.Background()
@@ -70,7 +89,7 @@ func main() {
 		log.Fatalf("password verifier: %v", err)
 	}
 
-	throttle, err := newThrottle(ctx, cfg.Redis, logger)
+	throttle, err := newThrottle(ctx, cfg.Redis, throttleCfg, logger)
 	if err != nil {
 		log.Fatalf("redis: %v", err)
 	}
@@ -99,7 +118,7 @@ func main() {
 		logger.Warn("mail-auth: sin MAIL_AUTH_TLS_CERT/MAIL_AUTH_TLS_KEY, se usa un certificado autofirmado en memoria (Dovecot conecta sin verificarlo)")
 	}
 	tlsSrv := &http.Server{
-		Addr:              fmt.Sprintf(":%d", envInt("MAIL_AUTH_TLS_PORT", defaultTLSPort)),
+		Addr:              fmt.Sprintf(":%d", tlsPort),
 		Handler:           observability.HTTPMetrics()(verifyRouter),
 		TLSConfig:         tlsCfg,
 		ReadTimeout:       15 * time.Second,
@@ -128,7 +147,7 @@ func main() {
 	r.Use(middleware.NewRateLimiter(120, time.Minute).Limit)
 	r.Mount("/", h.InternalRoutes())
 
-	srv := server.New(envInt("MAIL_AUTH_PORT", defaultPort), r, logger)
+	srv := server.New(port, r, logger)
 	runErr := make(chan error, 1)
 	go func() { runErr <- srv.Run() }()
 
@@ -150,7 +169,7 @@ func main() {
 // newThrottle abre el freno de fuerza bruta sobre el Redis de la plataforma. Sin Redis
 // el servicio arranca sin freno y lo avisa: la capa de red la sigue dando netfilter. Una
 // configuracion TLS invalida, o ausente fuera de desarrollo, impide el arranque.
-func newThrottle(ctx context.Context, rc config.RedisConfig, logger *zap.Logger) (*redisadapter.Throttle, error) {
+func newThrottle(ctx context.Context, rc config.RedisConfig, tcfg redisadapter.Config, logger *zap.Logger) (*redisadapter.Throttle, error) {
 	tlsCfg, err := rc.TLSConfig()
 	if err != nil {
 		return nil, err
@@ -161,28 +180,35 @@ func newThrottle(ctx context.Context, rc config.RedisConfig, logger *zap.Logger)
 		_ = rdb.Close()
 		return nil, nil
 	}
-	tcfg := redisadapter.Config{
-		MaxFailures:      int64(envInt("MAIL_AUTH_MAX_FAILURES", defaultMaxFailures)),
-		MaxFailuresPerIP: int64(envInt("MAIL_AUTH_MAX_FAILURES_PER_IP", defaultMaxFailuresPerIP)),
-		Window:           envDuration("MAIL_AUTH_FAILURE_WINDOW", defaultFailureWindow),
-		LockTTL:          envDuration("MAIL_AUTH_LOCK_TTL", defaultLockTTL),
-	}
 	logger.Info("mail-auth: freno de fuerza bruta activo",
 		zap.Int64("max_failures", tcfg.MaxFailures), zap.Int64("max_failures_per_ip", tcfg.MaxFailuresPerIP),
 		zap.Duration("window", tcfg.Window), zap.Duration("lock_ttl", tcfg.LockTTL))
 	return redisadapter.NewThrottle(rdb, tcfg, logger), nil
 }
 
-func envInt(key string, fallback int) int {
-	if v, err := strconv.Atoi(os.Getenv(key)); err == nil {
-		return v
+// throttleConfigFromEnv lee el freno de fuerza bruta al arrancar, responda o no Redis: un
+// limite mal escrito no espera a que Redis vuelva para descubrirse.
+func throttleConfigFromEnv() (redisadapter.Config, error) {
+	maxFailures, err := config.EnvInt("MAIL_AUTH_MAX_FAILURES", defaultMaxFailures, 1, maxFailuresCeiling)
+	if err != nil {
+		return redisadapter.Config{}, err
 	}
-	return fallback
-}
-
-func envDuration(key string, fallback time.Duration) time.Duration {
-	if v, err := time.ParseDuration(os.Getenv(key)); err == nil && v > 0 {
-		return v
+	maxFailuresPerIP, err := config.EnvInt("MAIL_AUTH_MAX_FAILURES_PER_IP", defaultMaxFailuresPerIP, 1, maxFailuresPerIPCeiling)
+	if err != nil {
+		return redisadapter.Config{}, err
 	}
-	return fallback
+	window, err := config.EnvDuration("MAIL_AUTH_FAILURE_WINDOW", defaultFailureWindow, time.Minute, maxThrottleDuration)
+	if err != nil {
+		return redisadapter.Config{}, err
+	}
+	lockTTL, err := config.EnvDuration("MAIL_AUTH_LOCK_TTL", defaultLockTTL, time.Minute, maxThrottleDuration)
+	if err != nil {
+		return redisadapter.Config{}, err
+	}
+	return redisadapter.Config{
+		MaxFailures:      int64(maxFailures),
+		MaxFailuresPerIP: int64(maxFailuresPerIP),
+		Window:           window,
+		LockTTL:          lockTTL,
+	}, nil
 }
