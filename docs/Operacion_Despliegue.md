@@ -309,3 +309,78 @@ contra un Postgres y un Redis desechables, con una base por variable `*_TEST_DSN
 paquetes en serie; una prueba que se salta cuenta como fallo. Una prueba de integración
 nueva aplica ella misma sus migraciones (dos veces, en su base) y su variable se declara en
 `ops/scaffold/test-integration.sh`, o el job falla.
+
+## 10. Eventos abandonados (`EVENTS_DLQ`)
+
+Un consumidor durable (`pkg/events`, `DurableQueueSubscribe`) que no confirma un evento lo recibe
+otra vez cada 90 s. Tras 20 entregas sin confirmar (unos 30 minutos), o en la primera si el cuerpo no
+es un evento, lo copia en el stream `EVENTS_DLQ` bajo `dlq.<subject original>` y deja de recibirlo.
+La copia lleva el cuerpo intacto y las cabeceras `Dlq-Stream` (stream de origen), `Dlq-Consumer`
+(quién lo abandonó), `Dlq-Reason` (`max_deliveries` o `undecodable`), `Dlq-Deliveries` y
+`Dlq-Stream-Sequence` (su secuencia en el stream de origen). `EVENTS_DLQ` guarda 30 días; los
+streams de origen, 7. Nada reproduce un evento abandonado por su cuenta. Avisan
+`EventosAbandonadosEnDLQ`, `EventosAbandonadosSinCopia` y `DLQConMensajesSinRevisar`
+(`docs/arquitectura/OBSERVABILIDAD.md`, Eventos), y el registro del servicio («evento abandonado y
+guardado en EVENTS_DLQ») da stream, consumidor, subject, `stream_seq` y motivo. Las copias llevan
+datos de las empresas: se leen en el servidor y no salen de él.
+
+Herramienta: el CLI `nats` de `natsio/nats-box:0.14.5` en la red del despliegue (NATS no se publica
+fuera del host), en una sesión interactiva con el `NATS_URL` del `.env`:
+
+```bash
+docker run --rm -it --network "${APP_NETWORK:-app_mail-internal}" \
+  -e NATS_URL=nats://nats:4222 natsio/nats-box:0.14.5
+```
+
+1. Inspeccionar, sin cambiar nada. `<seq>` es la secuencia en `EVENTS_DLQ` (la da `view`):
+
+   ```bash
+   nats stream subjects EVENTS_DLQ                # cuántos por subject
+   nats stream view EVENTS_DLQ                    # cuerpos y cabeceras, página a página
+   nats stream get EVENTS_DLQ <seq> --json > /tmp/m.json
+   jq -r .hdrs /tmp/m.json | base64 -d            # Dlq-Stream, Dlq-Consumer, Dlq-Reason...
+   jq -r .data /tmp/m.json | base64 -d | jq .     # el evento
+   ```
+
+2. Corregir la causa antes de reproducir: el registro del consumidor tiene el error de cada
+   entrega, y un evento reproducido con la causa viva vuelve a la cola en media hora.
+   `undecodable` es un fallo de quien publica: se corrige el publicador y la copia se descarta
+   (paso 5), no se reproduce.
+3. Decidir si el efecto sigue siendo válido: llega después de lo que haya pasado desde entonces con
+   el mismo objeto (un buzón reactivado, una clave rotada otra vez). Los consumidores que leen el
+   estado actual (mail-security, webmail, access-control) no se ven afectados; ante la duda, se
+   descarta y se deja constancia en el incidente.
+4. Reproducir: el cuerpo tal cual, en el subject original. Lo reciben otra vez TODOS los
+   consumidores durables de ese subject (`docs/arquitectura/EVENTS.md`), no solo el que lo
+   abandonó; son idempotentes por el `id` del evento o por el estado que leen, así que para los
+   demás es un duplicado sin efecto. El cuerpo no se edita nunca: el `id` es la clave de
+   idempotencia. `nats pub` no espera la confirmación del stream y trata el cuerpo como plantilla
+   de Go si puede (`{{ID}}`, `{{Count}}` o `{{Time}}` se publicarían cambiados): de ahí la guarda
+   de antes y la comprobación de después, que exige los mismos bytes en el stream de origen.
+
+   ```bash
+   subject=$(jq -r '.subject | sub("^dlq\\."; "")' /tmp/m.json)
+   origen=$(jq -r .hdrs /tmp/m.json | base64 -d | tr -d '\r' | sed -n 's/^Dlq-Stream: //p')
+   jq -r .data /tmp/m.json | base64 -d > /tmp/body
+   grep -q '{{' /tmp/body && echo 'NO reproducir con nats pub: el cuerpo lleva {{'
+   nats pub "$subject" --force-stdin < /tmp/body
+   [ "$(nats stream get "$origen" -S "$subject" --json | jq -r .data)" = "$(jq -r .data /tmp/m.json)" ] \
+     && echo reproducido
+   ```
+
+   Sin `reproducido`, otro evento del mismo subject llegó entre medias o el cuerpo cambió:
+   `nats stream view "$origen" --subject "$subject"` muestra lo guardado. Después,
+   `nats consumer info "$origen" <Dlq-Consumer>` y el registro del consumidor confirman que lo
+   aplicó.
+5. Retirar de la cola lo reproducido y lo descartado: `nats stream rmm EVENTS_DLQ <seq> -f`.
+   `DLQConMensajesSinRevisar` sigue activa mientras quede alguno.
+
+`EventosAbandonadosSinCopia`: el evento no está en `EVENTS_DLQ`, solo en su stream de origen hasta
+que se cumplen sus 7 días. Primero se recupera JetStream (registro del servidor NATS, espacio del
+volumen `natsdata`); después, con el stream y el `stream_seq` del registro,
+`nats stream get <stream> <stream_seq> --json > /tmp/m.json` y los pasos 2 a 4 con
+`subject=$(jq -r .subject /tmp/m.json)` y `origen=<stream>`.
+
+No se borra ni se recrea un consumidor para repetir un evento (se recrea con `DeliverAll` y vuelve a
+procesar los 7 días de su stream), ni se vacía `EVENTS_DLQ` con `nats stream purge` sin revisar cada
+mensaje.

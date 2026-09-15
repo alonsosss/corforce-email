@@ -1,0 +1,53 @@
+# Pruebas de la alerta EventosAbandonadosSinCopia.
+#
+# Si la copia en EVENTS_DLQ falla en la ultima entrega, el consumidor durable termina el mensaje
+# igual (JetStream ya no lo reentregaria) y lo cuenta en events_dead_letter_failures_total: el
+# evento solo queda en su stream de origen hasta que caduque. Avisa al primero, sin espera y con
+# severidad critica.
+#
+#   make check-alertas
+
+rule_files:
+  - ../rules/plataforma.yml
+
+evaluation_interval: 1m
+
+tests:
+  # ── Sin fallos: las series nacen a cero y no se mueven ────────────────────
+  - interval: 1m
+    input_series:
+      - series: 'events_dead_letter_failures_total{job="mail-services",service="audit",stream="AUDIT_API",consumer="audit-api-trail",reason="max_deliveries"}'
+        values: '0x90'
+      - series: 'events_dead_letter_failures_total{job="mail-services",service="audit",stream="AUDIT_API",consumer="audit-api-trail",reason="undecodable"}'
+        values: '0x90'
+    alert_rule_test:
+      - eval_time: 60m
+        alertname: EventosAbandonadosSinCopia
+        exp_alerts: []
+
+  # ── Un evento abandonado sin copia: critica al momento, calla a la hora ───
+  - interval: 1m
+    input_series:
+      - series: 'events_dead_letter_failures_total{job="mail-services",service="audit",stream="AUDIT_API",consumer="audit-api-trail",reason="max_deliveries"}'
+        values: '0x10 1x80'
+      - series: 'events_dead_letter_failures_total{job="mail-services",service="audit",stream="AUDIT_API",consumer="audit-api-trail",reason="undecodable"}'
+        values: '0x90'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: EventosAbandonadosSinCopia
+        exp_alerts: []
+      - eval_time: 11m
+        alertname: EventosAbandonadosSinCopia
+        exp_alerts:
+          - exp_labels:
+              severidad: critica
+              service: audit
+              stream: AUDIT_API
+              consumer: audit-api-trail
+              reason: max_deliveries
+            exp_annotations:
+              resumen: "audit abandono eventos de AUDIT_API sin poder guardarlos en EVENTS_DLQ (audit-api-trail, max_deliveries)"
+              detalle: "La copia en EVENTS_DLQ fallo en la ultima entrega: JetStream ya no reentrega el evento y solo queda en el stream AUDIT_API, que lo borra a los 7 dias. El registro de audit (evento abandonado sin copia en EVENTS_DLQ) da su subject y su secuencia (stream_seq) para recuperarlo con nats stream get y reproducirlo (docs/Operacion_Despliegue.md, seccion 10). Revisar JetStream: el servidor NATS, su registro y el espacio del volumen natsdata."
+      - eval_time: 75m
+        alertname: EventosAbandonadosSinCopia
+        exp_alerts: []

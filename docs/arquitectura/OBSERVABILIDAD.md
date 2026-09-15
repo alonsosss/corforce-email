@@ -24,6 +24,7 @@ Cada servicio expone `/metrics` en su propio puerto, en formato Prometheus:
 | `cell_routing_failures_total{cell_service,reason}`, `cell_call_failures_total{cell_service,reason}`, `cell_target_refusals_total`, `cell_membership_refusals_total`, `cell_resolution_stale_total` | Enrutado por celda: peticiones que el gateway o domain-service no enviaron a ninguna celda (`cell_service` es el servicio de celda de destino), celdas destino rechazadas, empresas que una instancia rechazo y resoluciones servidas con la ultima celda conocida (`Modelo_de_Datos_y_Celdas.md`, 5.4). Nacen a cero al arrancar. |
 | `mail_security_dkim_reconcile_removals_total{reason}`, `mail_security_dkim_reconcile_unresolved_total`, `mail_security_dkim_reconcile_last_success_timestamp_seconds` | Repaso de las claves DKIM de los motores en mail-security: dominios a los que retiro las claves (`not_served`, `tenant_gone`), dominios que conservo porque organization no dio su empresa, e instante de su ultima pasada completa (0 si ninguna desde el arranque). Los contadores nacen a cero. |
 | `mail_security_dovecot_revocations_total{action}`, `mail_security_dovecot_revocation_failures_total{reason}` | Revocacion en Dovecot desde mail-security (`deploy/mail/README.md`): buzones cuya credencial retiro por un evento del directorio (`flush`, cache de autenticacion vaciada; `kick`, ademas sesiones cerradas) y fallos que esperan la reentrega del evento (`unreachable`, `rejected`, `command`, `directory`). Nacen a cero. |
+| `events_dead_lettered_total{stream,consumer,reason}`, `events_dead_letter_failures_total{stream,consumer,reason}`, `events_dlq_messages` | Eventos que un consumidor durable abandono (`pkg/events`): copiados en `EVENTS_DLQ` (`max_deliveries`, agoto sus 20 entregas; `undecodable`, no es un evento legible), abandonados sin poder copiarlos, y mensajes que guarda `EVENTS_DLQ`. Los contadores nacen a cero al suscribirse cada consumidor; la profundidad se pregunta a JetStream en cada recoleccion y falta si no responde (Eventos, abajo). |
 | `go_*`, `process_*` | Memoria, goroutines, arranques del proceso (detecta reinicios en bucle). |
 
 La identidad del servicio **no** viaja dentro de la metrica: la aporta el recolector desde
@@ -109,7 +110,7 @@ familia: disponibilidad (servicio caido, reinicios en bucle), version desplegada
 compilada en el servidor), trafico (errores 5xx, latencia), base de datos (pool al limite,
 esperas), seguridad (pico de denegaciones RBAC), host (disco, memoria, CPU, robo de CPU, swap),
 chat, vigilancia del propio aviso, parcheado del host, limites de peticiones (limitador sin
-Redis), celdas, claves DKIM y revocacion en Dovecot (abajo).
+Redis), celdas, claves DKIM, revocacion en Dovecot y eventos (abajo).
 
 Una alerta mal escrita no falla: se queda callada. Las reglas nuevas llevan su prueba de
 promtool en `ops/observability/prometheus/tests/<alerta>_test.yml`, que `make check-alertas`
@@ -161,6 +162,28 @@ minutos, pasa a `EVENTS_DLQ`.
 | Alerta | Cuando | Espera | Severidad | Por que |
 |---|---|---|---|---|
 | `RevocacionEnDovecotFallida` | sube `mail_security_dovecot_revocation_failures_total` en cada ventana de 5 min, por motivo | 10 min | alta | Un fallo suelto que la reentrega resuelve no avisa; unas siete reentregas fallidas si, antes de que el evento acabe en `EVENTS_DLQ`. Mientras dura, un buzon apagado o con la credencial cambiada conserva sus sesiones y entra con la credencial vieja hasta `auth_cache_ttl` (300 s). `rejected` es configuracion: `DOVEADM_API_KEY` distinta en los dos lados, una orden fuera de `doveadm_allowed_commands` o el certificado. |
+
+### Eventos
+
+Un consumidor durable (`pkg/events`) que no confirma un evento lo recibe otra vez cada 90 s. Tras 20
+entregas sin confirmar, unos 30 minutos, o en la primera si el cuerpo no es un evento, lo copia en
+`EVENTS_DLQ` (`dlq.<subject>`, con quien lo abandono y por que en cabeceras) y deja de recibirlo. Cada
+mensaje abandonado es un efecto de negocio que no se aplico y que nada repite solo: una baja de buzon
+que no llego a Dovecot, una clave DKIM sin retirar, una entrada de auditoria sin escribir. Se
+reproduce a mano (`docs/Operacion_Despliegue.md`, seccion 10).
+
+`stream` es el stream de origen y `consumer` el consumidor durable, los dos fijados por el codigo al
+suscribirse; `reason` es `max_deliveries` o `undecodable`. Un consumidor tiene un solo subject de
+filtro, asi que el subject no anade nada, y el concreto de cada mensaje queda en la copia y nunca en
+una etiqueta: la cardinalidad la fija el numero de consumidores del codigo, dos motivos por cada uno.
+`events_dlq_messages` la publica todo proceso con un consumidor durable, con el mismo valor porque la
+cola es una sola: se lee con `max`.
+
+| Alerta | Cuando | Espera | Severidad | Por que |
+|---|---|---|---|---|
+| `EventosAbandonadosEnDLQ` | sube `events_dead_lettered_total` en la ultima hora, por servicio, stream, consumidor y motivo | ninguna | alta | La reentrega ya dio media hora a los fallos pasajeros: esperar mas solo retrasa la reparacion, y el contador no baja, asi que no hay oscilacion que filtrar. Alta y no critica: es un efecto concreto sin aplicar, no una caida, y la copia se guarda 30 dias. |
+| `EventosAbandonadosSinCopia` | sube `events_dead_letter_failures_total` en la ultima hora | ninguna | critica | La copia en `EVENTS_DLQ` fallo en la ultima entrega: el evento solo queda en su stream de origen, que lo borra a los 7 dias, y un JetStream que no escribe amenaza a todo el bus. |
+| `DLQConMensajesSinRevisar` | `EVENTS_DLQ` con mensajes | 24 h | media | Cada abandono ya aviso al llegar: esta avisa de la reparacion pendiente, y de un abandono que las anteriores no vieron porque su proceso murio antes de que se recolectara el contador. Los mensajes salen de la cola al reproducirlos o descartarlos, o a los 30 dias. |
 
 ### Entrega de las alertas
 

@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -182,9 +181,10 @@ const ackWaitDuration = 90 * time.Second
 
 // DurableQueueSubscribe binds a durable JetStream push consumer.
 // handler receives the event and an ack function — ack MUST be called after
-// successful processing; on error the message will be redelivered. When a message
-// exhausts its redelivery budget it is dead-lettered (preserved on the EVENTS_DLQ
-// stream) instead of being silently discarded.
+// successful processing; on error the message will be redelivered. A message that
+// exhausts its redelivery budget, or is not a readable event, is dead-lettered
+// (copied to the EVENTS_DLQ stream and counted, see deadletter.go) instead of being
+// silently discarded.
 //
 // El consumidor se crea explicitamente (AddConsumer) y la suscripcion se ata con
 // Bind. Antes lo creaba js.Subscribe de forma implicita, y en ese modo nats.go
@@ -236,63 +236,12 @@ func (b *Bus) DurableQueueSubscribe(subject, durable string, handler func(Event,
 			return nil, fmt.Errorf("create consumer %s: %w", durable, aerr)
 		}
 	}
-	return js.Subscribe(subject, func(msg *nats.Msg) {
-		var evt Event
-		if err := json.Unmarshal(msg.Data, &evt); err != nil {
-			b.logger.Error("unmarshal durable event", zap.Error(err), zap.String("subject", subject))
-			_ = msg.Term() // malformed payload — do not retry
-			return
-		}
-		// El ack puede llegar desde OTRA goroutine: hay handlers que resuelven el pool
-		// del tenant en segundo plano y confirman al terminar. Por eso el flag es
-		// atomico y el dead-letter solo se decide si el handler no acko NI va a
-		// ackear: `acked` se consulta con Swap para que la decision sea de uno u otro,
-		// nunca de los dos.
-		var acked atomic.Bool
-		handler(evt, func() {
-			if !acked.Swap(true) {
-				_ = msg.Ack()
-			}
-		})
-		if acked.Load() {
-			return
-		}
-		// Handler chose not to ack (will be redelivered). If this was the final
-		// allowed delivery, dead-letter the payload so it is not lost silently.
-		if meta, mErr := msg.Metadata(); mErr == nil && meta.NumDelivered >= maxDeliverCount && !acked.Swap(true) {
-			if dlErr := b.deadLetter(subject, msg.Data); dlErr != nil {
-				b.logger.Error("dead-letter publish failed", zap.Error(dlErr), zap.String("subject", subject))
-			} else {
-				b.logger.Error("event dead-lettered after max deliveries", zap.String("subject", subject), zap.Uint64("deliveries", meta.NumDelivered))
-			}
-			_ = msg.Term() // stop further redelivery; payload preserved in DLQ
-		}
-	},
+	consumer := newDurableConsumer(stream, durable, handler, b.deadLetter, b.logger)
+	dlqDepth.bind(b)
+	return js.Subscribe(subject, func(msg *nats.Msg) { consumer.deliver(natsDelivery{msg: msg}) },
 		nats.Bind(stream, durable),
 		nats.ManualAck(),
 	)
-}
-
-// deadLetter persists an exhausted message on the EVENTS_DLQ stream under
-// dlq.<original-subject> so it can be inspected and replayed instead of lost.
-func (b *Bus) deadLetter(origSubject string, data []byte) error {
-	js, err := b.conn.JetStream()
-	if err != nil {
-		return err
-	}
-	if _, err := js.StreamInfo("EVENTS_DLQ"); err == nats.ErrStreamNotFound {
-		if _, err := js.AddStream(&nats.StreamConfig{
-			Name:     "EVENTS_DLQ",
-			Subjects: []string{"dlq.>"},
-			Storage:  nats.FileStorage,
-			MaxAge:   30 * 24 * time.Hour,
-			Replicas: 1,
-		}); err != nil {
-			return err
-		}
-	}
-	_, err = js.Publish("dlq."+origSubject, data)
-	return err
 }
 
 // isSystemSubject identifica los subjects internos de NATS/JetStream ($JS.ACK.*,
@@ -351,6 +300,7 @@ func (b *Bus) QueueSubscribe(subject, queue string, handler func(Event)) (*nats.
 }
 
 func (b *Bus) Close() {
+	dlqDepth.unbind(b)
 	b.conn.Close()
 	b.logger.Info("event bus closed")
 }

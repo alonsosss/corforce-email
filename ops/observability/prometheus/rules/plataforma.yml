@@ -506,3 +506,49 @@ groups:
         annotations:
           resumen: "{{ $labels.service }} no consigue retirar credenciales de Dovecot ({{ $labels.reason }})"
           detalle: "Los buzones apagados, borrados o con la credencial cambiada conservan sus sesiones IMAP y POP3 abiertas y siguen entrando con la credencial vieja hasta que caduca la cache de Dovecot (auth_cache_ttl, 300 s). unreachable: Dovecot o su listener 8443 no responden (contenedor dovecot-mail, red mail-engines, DOVEADM_API_URL). rejected: DOVEADM_API_KEY distinta en Dovecot y en {{ $labels.service }}, una orden fuera de doveadm_allowed_commands o un certificado que no casa con DOVEADM_API_TLS_SERVER_NAME. command: la orden fallo dentro de Dovecot (su registro). directory: la base de la celda no responde. Tras unos 30 minutos el evento pasa a EVENTS_DLQ (dlq.mail.mailbox.*): reproducirlo, o ejecutar en dovecot-mail doveadm auth cache flush y doveadm kick con el buzon que nombra el registro de {{ $labels.service }} (revocacion en Dovecot no aplicada)."
+
+  # Eventos que un consumidor durable abandona (pkg/events): sin ack JetStream lo reentrega cada
+  # 90 s, y tras 20 entregas, unos 30 minutos, o en la primera si el cuerpo no es un evento, el
+  # consumidor lo copia en EVENTS_DLQ (dlq.<subject>) y deja de recibirlo. Cada uno es un efecto de
+  # negocio que no se aplico (una baja de buzon que no llego a Dovecot, una clave DKIM sin retirar,
+  # una entrada de auditoria sin escribir) y nada lo repite solo: se reproduce a mano
+  # (docs/Operacion_Despliegue.md, seccion 10). 'stream' y 'consumer' dicen de donde venia y quien
+  # lo abandono, fijados por el codigo al suscribirse; 'service' lo pone el recolector.
+  - name: eventos
+    rules:
+      # La reentrega ya le dio media hora a un fallo pasajero: esperar mas solo retrasa la
+      # reparacion, y el contador no baja, asi que no hay oscilacion que filtrar. Avisa al primer
+      # abandono y lo deja una hora a la vista. Alta y no critica: es un efecto concreto sin
+      # aplicar, no una caida, y la copia se guarda 30 dias.
+      - alert: EventosAbandonadosEnDLQ
+        expr: sum by (service, stream, consumer, reason) (increase(events_dead_lettered_total[1h])) > 0
+        labels:
+          severidad: alta
+        annotations:
+          resumen: "{{ $labels.service }} abandono eventos de {{ $labels.stream }} en EVENTS_DLQ ({{ $labels.consumer }}, {{ $labels.reason }})"
+          detalle: "El consumidor {{ $labels.consumer }} dejo de reintentar y su efecto no se aplico: nada lo repite solo. max_deliveries: 20 entregas sin confirmarse; el registro de {{ $labels.service }} (evento abandonado y guardado en EVENTS_DLQ) y sus errores anteriores dicen por que. undecodable: el cuerpo no es un evento, un fallo de quien lo publica, y no se reproduce. Corregir la causa, reproducir el evento desde EVENTS_DLQ y retirarlo de la cola (docs/Operacion_Despliegue.md, seccion 10); la copia se guarda 30 dias."
+
+      # La copia en EVENTS_DLQ fallo en la ultima entrega: JetStream ya no reentrega el evento y
+      # solo queda en su stream de origen, que lo borra a los 7 dias. Un JetStream que no escribe
+      # amenaza a todo el bus: critica y sin espera.
+      - alert: EventosAbandonadosSinCopia
+        expr: sum by (service, stream, consumer, reason) (increase(events_dead_letter_failures_total[1h])) > 0
+        labels:
+          severidad: critica
+        annotations:
+          resumen: "{{ $labels.service }} abandono eventos de {{ $labels.stream }} sin poder guardarlos en EVENTS_DLQ ({{ $labels.consumer }}, {{ $labels.reason }})"
+          detalle: "La copia en EVENTS_DLQ fallo en la ultima entrega: JetStream ya no reentrega el evento y solo queda en el stream {{ $labels.stream }}, que lo borra a los 7 dias. El registro de {{ $labels.service }} (evento abandonado sin copia en EVENTS_DLQ) da su subject y su secuencia (stream_seq) para recuperarlo con nats stream get y reproducirlo (docs/Operacion_Despliegue.md, seccion 10). Revisar JetStream: el servidor NATS, su registro y el espacio del volumen natsdata."
+
+      # Profundidad de EVENTS_DLQ: la publica cada proceso con un consumidor durable, con el mismo
+      # valor, y falta si JetStream no responde. Los mensajes salen al reproducirlos o descartarlos,
+      # o a los 30 dias. Cada abandono ya aviso al llegar: esta avisa de la reparacion pendiente un
+      # dia despues, y de un abandono que las anteriores no vieron porque su proceso murio antes de
+      # que se recolectara el contador. Media.
+      - alert: DLQConMensajesSinRevisar
+        expr: max(events_dlq_messages) > 0
+        for: 24h
+        labels:
+          severidad: media
+        annotations:
+          resumen: "EVENTS_DLQ guarda {{ $value }} eventos abandonados desde hace mas de un dia"
+          detalle: "Cada mensaje es un efecto de negocio que no se aplico. nats stream subjects EVENTS_DLQ los cuenta por subject y las cabeceras Dlq-Stream, Dlq-Consumer y Dlq-Reason de cada uno dicen quien lo abandono y por que. Reproducir los que sigan siendo validos y retirar de la cola los reproducidos y los descartados (docs/Operacion_Despliegue.md, seccion 10): a los 30 dias EVENTS_DLQ los borra sin que nadie los haya reproducido."

@@ -1,0 +1,97 @@
+# Pruebas de la alerta EventosAbandonadosEnDLQ.
+#
+# Un consumidor durable (pkg/events) que abandona un evento lo copia en EVENTS_DLQ y lo cuenta en
+# events_dead_lettered_total{stream,consumer,reason}, cuyas series nacen a cero al suscribirse. Cada
+# abandono es un efecto de negocio sin aplicar: avisa al primero, sin espera, con el stream, el
+# consumidor y el motivo, y calla una hora despues. Un reinicio del proceso solo no avisa.
+#
+#   make check-alertas
+
+rule_files:
+  - ../rules/plataforma.yml
+
+evaluation_interval: 1m
+
+tests:
+  # ── Sin abandonos: las series nacen a cero y no se mueven ─────────────────
+  - interval: 1m
+    input_series:
+      - series: 'events_dead_lettered_total{job="mail-services",service="mail-security",stream="MAIL_DIRECTORY",consumer="mail-security-dovecot",reason="max_deliveries"}'
+        values: '0x90'
+      - series: 'events_dead_lettered_total{job="mail-services",service="mail-security",stream="MAIL_DIRECTORY",consumer="mail-security-dovecot",reason="undecodable"}'
+        values: '0x90'
+    alert_rule_test:
+      - eval_time: 60m
+        alertname: EventosAbandonadosEnDLQ
+        exp_alerts: []
+
+  # ── Un abandono: avisa al momento, solo por ese consumidor, y calla a la hora ─
+  - interval: 1m
+    input_series:
+      - series: 'events_dead_lettered_total{job="mail-services",service="mail-security",stream="MAIL_DIRECTORY",consumer="mail-security-dovecot",reason="max_deliveries"}'
+        values: '0x10 1x80'
+      - series: 'events_dead_lettered_total{job="mail-services",service="mail-security",stream="MAIL_DIRECTORY",consumer="mail-security-redis",reason="max_deliveries"}'
+        values: '0x90'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: EventosAbandonadosEnDLQ
+        exp_alerts: []
+      - eval_time: 11m
+        alertname: EventosAbandonadosEnDLQ
+        exp_alerts:
+          - exp_labels:
+              severidad: alta
+              service: mail-security
+              stream: MAIL_DIRECTORY
+              consumer: mail-security-dovecot
+              reason: max_deliveries
+            exp_annotations:
+              resumen: "mail-security abandono eventos de MAIL_DIRECTORY en EVENTS_DLQ (mail-security-dovecot, max_deliveries)"
+              detalle: "El consumidor mail-security-dovecot dejo de reintentar y su efecto no se aplico: nada lo repite solo. max_deliveries: 20 entregas sin confirmarse; el registro de mail-security (evento abandonado y guardado en EVENTS_DLQ) y sus errores anteriores dicen por que. undecodable: el cuerpo no es un evento, un fallo de quien lo publica, y no se reproduce. Corregir la causa, reproducir el evento desde EVENTS_DLQ y retirarlo de la cola (docs/Operacion_Despliegue.md, seccion 10); la copia se guarda 30 dias."
+      - eval_time: 75m
+        alertname: EventosAbandonadosEnDLQ
+        exp_alerts: []
+
+  # ── Un cuerpo ilegible avisa con su motivo ────────────────────────────────
+  - interval: 1m
+    input_series:
+      - series: 'events_dead_lettered_total{job="mail-services",service="analytics",stream="TRANSACTIONAL",consumer="analytics-transactional",reason="undecodable"}'
+        values: '0x5 2x30'
+    alert_rule_test:
+      - eval_time: 8m
+        alertname: EventosAbandonadosEnDLQ
+        exp_alerts:
+          - exp_labels:
+              severidad: alta
+              service: analytics
+              stream: TRANSACTIONAL
+              consumer: analytics-transactional
+              reason: undecodable
+            exp_annotations:
+              resumen: "analytics abandono eventos de TRANSACTIONAL en EVENTS_DLQ (analytics-transactional, undecodable)"
+              detalle: "El consumidor analytics-transactional dejo de reintentar y su efecto no se aplico: nada lo repite solo. max_deliveries: 20 entregas sin confirmarse; el registro de analytics (evento abandonado y guardado en EVENTS_DLQ) y sus errores anteriores dicen por que. undecodable: el cuerpo no es un evento, un fallo de quien lo publica, y no se reproduce. Corregir la causa, reproducir el evento desde EVENTS_DLQ y retirarlo de la cola (docs/Operacion_Despliegue.md, seccion 10); la copia se guarda 30 dias."
+
+  # ── Un reinicio solo no avisa; el primer abandono tras el reinicio si ─────
+  - interval: 1m
+    input_series:
+      - series: 'events_dead_lettered_total{job="mail-services",service="billing",stream="TRANSACTIONAL",consumer="billing-transactional-email-sent",reason="max_deliveries"}'
+        values: '3x20 0x5 1x20'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: EventosAbandonadosEnDLQ
+        exp_alerts: []
+      - eval_time: 25m
+        alertname: EventosAbandonadosEnDLQ
+        exp_alerts: []
+      - eval_time: 28m
+        alertname: EventosAbandonadosEnDLQ
+        exp_alerts:
+          - exp_labels:
+              severidad: alta
+              service: billing
+              stream: TRANSACTIONAL
+              consumer: billing-transactional-email-sent
+              reason: max_deliveries
+            exp_annotations:
+              resumen: "billing abandono eventos de TRANSACTIONAL en EVENTS_DLQ (billing-transactional-email-sent, max_deliveries)"
+              detalle: "El consumidor billing-transactional-email-sent dejo de reintentar y su efecto no se aplico: nada lo repite solo. max_deliveries: 20 entregas sin confirmarse; el registro de billing (evento abandonado y guardado en EVENTS_DLQ) y sus errores anteriores dicen por que. undecodable: el cuerpo no es un evento, un fallo de quien lo publica, y no se reproduce. Corregir la causa, reproducir el evento desde EVENTS_DLQ y retirarlo de la cola (docs/Operacion_Despliegue.md, seccion 10); la copia se guarda 30 dias."

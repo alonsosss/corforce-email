@@ -1,0 +1,60 @@
+# Pruebas de la alerta DLQConMensajesSinRevisar.
+#
+# events_dlq_messages es la profundidad de EVENTS_DLQ. La publica cada proceso con un consumidor
+# durable, con el mismo valor, preguntando a JetStream en cada recoleccion. Los mensajes salen al
+# reproducirlos o descartarlos, o a los 30 dias. Un dia entero con mensajes avisa una sola vez, sin
+# importar cuantos procesos la publiquen, y calla al vaciar la cola. Muestras cada minuto: la
+# expresion lee el ultimo valor y no puede quedarse sin muestra dentro de la ventana de 5 minutos.
+#
+#   make check-alertas
+
+rule_files:
+  - ../rules/plataforma.yml
+
+evaluation_interval: 1m
+
+tests:
+  # ── Cola vacia ────────────────────────────────────────────────────────────
+  - interval: 1m
+    input_series:
+      - series: 'events_dlq_messages{job="mail-services",service="mail-security"}'
+        values: '0x1600'
+      - series: 'events_dlq_messages{job="mail-services",service="billing"}'
+        values: '0x1600'
+    alert_rule_test:
+      - eval_time: 26h
+        alertname: DLQConMensajesSinRevisar
+        exp_alerts: []
+
+  # ── Mensajes un dia entero: un solo aviso; al vaciar la cola, calla ───────
+  - interval: 1m
+    input_series:
+      - series: 'events_dlq_messages{job="mail-services",service="mail-security"}'
+        values: '0x60 2x1500 0x60'
+      - series: 'events_dlq_messages{job="mail-services",service="billing"}'
+        values: '0x60 2x1500 0x60'
+    alert_rule_test:
+      - eval_time: 24h
+        alertname: DLQConMensajesSinRevisar
+        exp_alerts: []
+      - eval_time: 25h10m
+        alertname: DLQConMensajesSinRevisar
+        exp_alerts:
+          - exp_labels:
+              severidad: media
+            exp_annotations:
+              resumen: "EVENTS_DLQ guarda 2 eventos abandonados desde hace mas de un dia"
+              detalle: "Cada mensaje es un efecto de negocio que no se aplico. nats stream subjects EVENTS_DLQ los cuenta por subject y las cabeceras Dlq-Stream, Dlq-Consumer y Dlq-Reason de cada uno dicen quien lo abandono y por que. Reproducir los que sigan siendo validos y retirar de la cola los reproducidos y los descartados (docs/Operacion_Despliegue.md, seccion 10): a los 30 dias EVENTS_DLQ los borra sin que nadie los haya reproducido."
+      - eval_time: 26h30m
+        alertname: DLQConMensajesSinRevisar
+        exp_alerts: []
+
+  # ── Una cola que se revisa antes del dia no avisa ─────────────────────────
+  - interval: 1m
+    input_series:
+      - series: 'events_dlq_messages{job="mail-services",service="mail-security"}'
+        values: '0x60 1x600 0x900'
+    alert_rule_test:
+      - eval_time: 25h
+        alertname: DLQConMensajesSinRevisar
+        exp_alerts: []
