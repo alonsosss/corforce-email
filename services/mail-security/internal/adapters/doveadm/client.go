@@ -13,7 +13,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"net/url"
 	"regexp"
 	"strings"
 	"time"
@@ -41,7 +40,8 @@ var apiKeyPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{32,256}$`)
 
 // Config describe el listener http de doveadm de la celda.
 type Config struct {
-	// BaseURL es https://<host>:<puerto>, sin ruta: nunca en claro, la clave viaja en cada peticion.
+	// BaseURL es https://host[:puerto], ya validada con config.ServiceURL (sin ruta, credenciales,
+	// consulta ni fragmento) y nunca en claro: la clave viaja en cada peticion.
 	BaseURL string
 	APIKey  string
 	// ServerName es el nombre que presenta el certificado de Dovecot (el de MAIL_HOSTNAME).
@@ -59,9 +59,8 @@ type Client struct {
 }
 
 func New(cfg Config) (*Client, error) {
-	u, err := url.Parse(strings.TrimSpace(cfg.BaseURL))
-	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || (u.Path != "" && u.Path != "/") || u.RawQuery != "" {
-		return nil, errors.New("DOVEADM_API_URL debe ser https://host:puerto, sin ruta ni credenciales")
+	if !strings.HasPrefix(cfg.BaseURL, "https://") {
+		return nil, errors.New("DOVEADM_API_URL debe ser https: la clave del API viaja en cada peticion")
 	}
 	if !apiKeyPattern.MatchString(cfg.APIKey) {
 		return nil, errors.New("DOVEADM_API_KEY debe tener de 32 a 256 caracteres de [A-Za-z0-9_-]")
@@ -88,7 +87,7 @@ func New(cfg Config) (*Client, error) {
 		IdleConnTimeout:     90 * time.Second,
 	}
 	return &Client{
-		endpoint:      "https://" + u.Host + apiPath,
+		endpoint:      cfg.BaseURL + apiPath,
 		authorization: "X-Dovecot-API " + base64.StdEncoding.EncodeToString([]byte(cfg.APIKey)),
 		http: &http.Client{
 			Timeout:       timeout,

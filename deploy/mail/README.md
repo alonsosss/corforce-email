@@ -208,7 +208,8 @@ directorio:
   cache flush` (con replica, ademas `dsync-server`, porque la regla vale tambien para el puerto
   12345): la clave solo vacia la cache y echa a un buzon; no lee correo ni lista quien esta
   conectado. Sin clave no se abre el listener. `mail-security` la manda en
-  `Authorization: X-Dovecot-API <base64>` a `DOVEADM_API_URL` (`https://dovecot:8443`; en claro no
+  `Authorization: X-Dovecot-API <base64>` a `DOVEADM_API_URL` (`https://dovecot:8443`,
+  `https://host[:puerto]` sin ruta, usuario, consulta ni fragmento: en claro o mal formada no
   arranca), por TLS verificado contra `DOVEADM_API_TLS_SERVER_NAME` (vacio = `MAIL_HOSTNAME`), con
   `DOVEADM_API_TLS_CA_FILE` para una CA propia, sin proxy y sin seguir redirecciones. Sin clave,
   `mail-security` solo arranca con `ENVIRONMENT=development|test`.
@@ -442,7 +443,8 @@ compartido por las replicas) y leyendo el directorio dentro de el:
   `mail-security-redis` de `mail.domain.*` (idempotente, reentrega y DLQ de `pkg/events`) retira
   sus claves con el estado real, no el del evento.
 * Repaso periodico con cerrojo de lider cada `MAIL_DKIM_RECONCILE_INTERVAL` (15 min por
-  defecto): retira las de un dominio que no esta activo o cuya empresa organization ya no
+  defecto, de 1 s a 15 min: el techo es el intervalo con que cuentan sus alertas): retira las
+  de un dominio que no esta activo o cuya empresa organization ya no
   conoce (baja terminada). Sin respuesta de organization no toca esa empresa. Lo que encuentra
   es un camino que fallo y queda en el registro (`repaso DKIM`) y en las metricas
   `mail_security_dkim_reconcile_*`, con sus alertas (`docs/arquitectura/OBSERVABILIDAD.md`).
@@ -528,7 +530,7 @@ Lo que hacia `quarantine_notify.py` lo hace `mail-security`, y el correo sale po
 pruebas unitarias e integracion contra Postgres con las migraciones de la celda aplicadas
 dos veces; sin prueba de punta a punta con SES.
 
-* Barrido al arrancar y cada `MAIL_QUARANTINE_NOTIFY_INTERVAL` (15m) con cerrojo de lider
+* Barrido al arrancar y cada `MAIL_QUARANTINE_NOTIFY_INTERVAL` (15m, de 1m a 24h) con cerrojo de lider
   en la base de la celda (`db.TryLeaderLock`): por empresa con `notify_enabled` y ajustes
   validos, las filas con `notified = false` y `score <= notify_max_score`, agrupadas por
   buzon final (las 100 mas recientes; el resto sale en el aviso siguiente). Un buzon que ya
@@ -569,7 +571,7 @@ dos veces; sin prueba de punta a punta con SES.
   en la firma: un segmento cambiado lleva el enlace a una celda que lo rechaza. Con una sola
   celda la variable queda vacia y todo va al destino base. No hay ruta sin celda: el gateway
   no arranca con una ruta publica de `mail-security` que no lleve `{cell}`.
-* Caducan a `MAIL_QUARANTINE_LINK_TTL` (72h). GET muestra una confirmacion sin
+* Caducan a `MAIL_QUARANTINE_LINK_TTL` (72h, de 1h a 720h). GET muestra una confirmacion sin
   JavaScript y POST ejecuta: liberar es el caso de uso de siempre (reinyeccion por el puerto
   590, borrado y evento por la outbox en una transaccion con la fila bloqueada) y descartar
   borra la fila. El uso se registra en `mail_security.quarantine_link_uses` (una fila por
@@ -579,7 +581,8 @@ dos veces; sin prueba de punta a punta con SES.
   usos se podan con el `max_age_days` de la empresa.
 * Sin `MAIL_LINK_SIGNING_KEY` (32 caracteres o mas) y `PUBLIC_BASE_URL` el servicio arranca
   sin aviso y todo enlace es invalido; sin `TRANSACTIONAL_URL` o `INTERNAL_GATEWAY_TOKEN`,
-  sin aviso. Ambos casos quedan en el log como error.
+  sin aviso. Ambos casos quedan en el log como error. Una `TRANSACTIONAL_URL` mal formada, o un
+  intervalo o una vigencia fuera de su rango, impiden arrancar.
 
 ## Prueba de punta a punta de los motores (`make e2e-mail`)
 

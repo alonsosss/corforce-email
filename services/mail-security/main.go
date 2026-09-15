@@ -59,6 +59,19 @@ const (
 	// outboxRetention conserva lo publicado lo mismo que el stream (EnsureStream: 7 dias).
 	outboxRetention = 7 * 24 * time.Hour
 	streamRetry     = 5 * time.Second
+
+	// Cada pasada de la reconciliacion reescribe desde la base todas las claves de Redis de la
+	// celda y poda la cuarentena de cada empresa, con el intervalo por plazo. Es tambien lo que
+	// repone mapas y claves DKIM en un redis-mail que perdio sus datos: como mucho una hora.
+	minReconcileInterval = time.Minute
+	maxReconcileInterval = time.Hour
+	// RL_LOG se recorta a este largo en cada linea (LTRIM 0 n-1; con 0 no se recortaria). Cada
+	// linea puede ocupar el cuerpo entero de /pipe_rl (256 KiB) en el Redis que Rspamd consulta en
+	// cada mensaje, y el watchdog solo lee las primeras.
+	maxLogLines = 10000
+	// /pipe recibe el mensaje entero de Rspamd y ninguno supera message_size_limit de Postfix
+	// (100 MiB, deploy/mail/postfix/conf/main.cf).
+	maxPipeMaxBodyMiB = 100
 )
 
 // Aviso de cuarentena: cadencia del barrido, vigencia de los enlaces y cerrojo de lider
@@ -67,30 +80,122 @@ const (
 	defaultQuarantineNotifyInterval       = 15 * time.Minute
 	defaultQuarantineLinkTTL              = 72 * time.Hour
 	quarantineNotifyLockKey         int64 = 0x716e6f7469667921 // "qnotify!"
+
+	// Cada barrido tiene el intervalo por plazo y cada aviso, 30 s (transactionalcli): con menos
+	// de un minuto no cabria ni el primero. Como mucho un dia, el menor max_age_days de una
+	// empresa: con mas, la reconciliacion podria podar la cuarentena antes de avisar de ella.
+	minQuarantineNotifyInterval = time.Minute
+	maxQuarantineNotifyInterval = 24 * time.Hour
+	// El enlace libera o descarta sin sesion: al menos una hora para leer el aviso y como mucho
+	// treinta dias, lo que sirve un aviso reenviado o filtrado.
+	minQuarantineLinkTTL = time.Hour
+	maxQuarantineLinkTTL = 720 * time.Hour
 )
 
 // Repaso de las claves DKIM de los motores: cadencia y cerrojo de lider en la base de la celda.
 const (
 	defaultDKIMReconcileInterval       = 15 * time.Minute
 	dkimReconcileLockKey         int64 = 0x646b696d72656321 // "dkimrec!"
+
+	// El techo es el intervalo con que cuentan las alertas RepasoDKIMDetenido (cuatro intervalos
+	// sin pasada completa) y RepasoDKIMSinOrganization, cuya ventana de 20 min debe superar un
+	// intervalo: con uno mayor no avisaria nunca (ops/observability/prometheus/rules/plataforma.yml).
+	// Alargarlo exige alargar a la vez sus umbrales, ventanas y esperas. El e2e repasa cada 2 s.
+	minDKIMReconcileInterval = time.Second
+	maxDKIMReconcileInterval = 15 * time.Minute
 )
+
+// settings es la configuracion propia del servicio, leida y validada antes de conectar a nada.
+type settings struct {
+	port, mapsPort, exportPort int
+	redisHost                  string
+	redisPort                  int
+	reinjectAddr               string
+	// controllerURL es el controller de Rspamd; transactionalURL, vacia, desactiva el aviso de
+	// cuarentena.
+	controllerURL            string
+	transactionalURL         string
+	organizationURL          string
+	internalToken            string
+	perms                    *authz.Checker
+	logLines                 int
+	pipeMaxBodyMiB           int
+	reconcileInterval        time.Duration
+	dkimReconcileInterval    time.Duration
+	quarantineNotifyInterval time.Duration
+	quarantineLinkTTL        time.Duration
+}
+
+// loadSettings falla con un valor fuera de su rango, un host o una URL mal formados y sin token
+// interno fuera de desarrollo o prueba, antes de conectar a nada: el token lo presenta a
+// organization y a transactional, con la misma regla que exige tenantcell.MembershipFromEnv.
+func loadSettings() (settings, error) {
+	var st settings
+	var err error
+	if st.internalToken, err = middleware.InternalGatewayToken(); err != nil {
+		return st, err
+	}
+	if st.organizationURL, err = tenantcell.OrganizationURLFromEnv(); err != nil {
+		return st, err
+	}
+	if st.port, err = config.EnvInt("MAIL_SECURITY_PORT", defaultPort, 1, config.MaxPort); err != nil {
+		return st, err
+	}
+	if st.mapsPort, err = config.EnvInt("MAIL_POLICY_MAPS_PORT", defaultMapsPort, 1, config.MaxPort); err != nil {
+		return st, err
+	}
+	if st.exportPort, err = config.EnvInt("MAIL_POLICY_EXPORT_PORT", defaultExportPort, 1, config.MaxPort); err != nil {
+		return st, err
+	}
+	if st.redisHost, err = config.EnvHost("MAIL_REDIS_HOST", defaultRedisHost); err != nil {
+		return st, err
+	}
+	if st.redisPort, err = config.EnvInt("MAIL_REDIS_PORT", defaultRedisPort, 1, config.MaxPort); err != nil {
+		return st, err
+	}
+	reinjectHost, err := config.EnvHost("MAIL_QUARANTINE_REINJECT_HOST", defaultReinjectHost)
+	if err != nil {
+		return st, err
+	}
+	reinjectPort, err := config.EnvInt("MAIL_QUARANTINE_REINJECT_PORT", defaultReinjectPort, 1, config.MaxPort)
+	if err != nil {
+		return st, err
+	}
+	st.reinjectAddr = net.JoinHostPort(reinjectHost, strconv.Itoa(reinjectPort))
+	// El learner le pega /learnspam y manda la contrasena en su cabecera: la misma regla que una
+	// URL base entre servicios, en http dentro de la red de la celda.
+	if st.controllerURL, err = config.ServiceURL("RSPAMD_CONTROLLER_URL", defaultControllerURL); err != nil {
+		return st, err
+	}
+	if st.transactionalURL, err = config.ServiceURL("TRANSACTIONAL_URL", ""); err != nil {
+		return st, err
+	}
+	if st.perms, err = authz.CheckerFromEnv(); err != nil {
+		return st, err
+	}
+	if st.logLines, err = config.EnvInt("MAIL_LOG_LINES", defaultLogLines, 1, maxLogLines); err != nil {
+		return st, err
+	}
+	if st.pipeMaxBodyMiB, err = config.EnvInt("MAIL_QUARANTINE_MAX_BODY_MB", defaultPipeMaxBodyMiB, 1, maxPipeMaxBodyMiB); err != nil {
+		return st, err
+	}
+	if st.reconcileInterval, err = config.EnvDuration("MAIL_REDIS_RECONCILE_INTERVAL", defaultReconcileInterval, minReconcileInterval, maxReconcileInterval); err != nil {
+		return st, err
+	}
+	if st.dkimReconcileInterval, err = config.EnvDuration("MAIL_DKIM_RECONCILE_INTERVAL", defaultDKIMReconcileInterval, minDKIMReconcileInterval, maxDKIMReconcileInterval); err != nil {
+		return st, err
+	}
+	if st.quarantineNotifyInterval, err = config.EnvDuration("MAIL_QUARANTINE_NOTIFY_INTERVAL", defaultQuarantineNotifyInterval, minQuarantineNotifyInterval, maxQuarantineNotifyInterval); err != nil {
+		return st, err
+	}
+	if st.quarantineLinkTTL, err = config.EnvDuration("MAIL_QUARANTINE_LINK_TTL", defaultQuarantineLinkTTL, minQuarantineLinkTTL, maxQuarantineLinkTTL); err != nil {
+		return st, err
+	}
+	return st, nil
+}
 
 func envOrDefault(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
-}
-
-func envInt(key string, fallback int) int {
-	if v, err := strconv.Atoi(os.Getenv(key)); err == nil && v > 0 {
-		return v
-	}
-	return fallback
-}
-
-func envDuration(key string, fallback time.Duration) time.Duration {
-	if v, err := time.ParseDuration(os.Getenv(key)); err == nil && v > 0 {
 		return v
 	}
 	return fallback
@@ -114,6 +219,11 @@ func engineListener(port int, h http.Handler, readTimeout time.Duration) *http.S
 // ENVIRONMENT=development|test, sin revocacion en Dovecot; en cualquier otro entorno no arranca:
 // un buzon apagado seguiria entrando con la cache de Dovecot y sus sesiones abiertas seguirian.
 func doveadmFromEnv(logger *zap.Logger) (*doveadm.Client, error) {
+	// La regla de una URL base entre servicios; doveadm.New exige ademas https.
+	baseURL, err := config.ServiceURL("DOVEADM_API_URL", defaultDoveadmURL)
+	if err != nil {
+		return nil, err
+	}
 	key := strings.TrimSpace(os.Getenv("DOVEADM_API_KEY"))
 	if key == "" {
 		if config.DeclaredDevelopmentOrTest() {
@@ -123,7 +233,7 @@ func doveadmFromEnv(logger *zap.Logger) (*doveadm.Client, error) {
 		return nil, errors.New("DOVEADM_API_KEY es obligatoria fuera de ENVIRONMENT=development|test")
 	}
 	return doveadm.New(doveadm.Config{
-		BaseURL:    envOrDefault("DOVEADM_API_URL", defaultDoveadmURL),
+		BaseURL:    baseURL,
 		APIKey:     key,
 		ServerName: envOrDefault("DOVEADM_API_TLS_SERVER_NAME", strings.TrimSpace(os.Getenv("MAIL_HOSTNAME"))),
 		CAFile:     strings.TrimSpace(os.Getenv("DOVEADM_API_TLS_CA_FILE")),
@@ -138,6 +248,10 @@ func main() {
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatalf("load config: %v", err)
+	}
+	st, err := loadSettings()
+	if err != nil {
+		log.Fatalf("mail-security: %v", err)
 	}
 	membership, err := tenantcell.MembershipFromEnv(logger)
 	if err != nil {
@@ -173,8 +287,8 @@ func main() {
 		log.Fatalf("redis de los motores: %v", err)
 	}
 	store := redisadapter.New(redisadapter.Config{
-		Host:     envOrDefault("MAIL_REDIS_HOST", defaultRedisHost),
-		Port:     envInt("MAIL_REDIS_PORT", defaultRedisPort),
+		Host:     st.redisHost,
+		Port:     st.redisPort,
 		Password: os.Getenv("MAIL_REDIS_PASSWORD"),
 		TLS:      engineTLS,
 	})
@@ -201,15 +315,10 @@ func main() {
 	redisSync := app.NewRedisSync(store, directory, policyReader, logger)
 
 	// Claves DKIM solo de dominios activos en esta celda cuya empresa sigue existiendo.
-	// ORGANIZATION_URL y el token interno ya los valido MembershipFromEnv.
-	orgToken, err := middleware.InternalGatewayToken()
-	if err != nil {
-		log.Fatalf("claves DKIM: %v", err)
-	}
 	metrics := promadapter.New()
 	dkimUC := app.NewDKIMUseCase(app.DKIMDeps{
 		Directory: directory, Lock: postgres.NewDKIMLock(ctxPool), Sync: redisSync, Logger: logger,
-		Tenants: organizationcli.New(tenantcell.NewResolver(strings.TrimSpace(os.Getenv("ORGANIZATION_URL")), orgToken, logger)),
+		Tenants: organizationcli.New(tenantcell.NewResolver(st.organizationURL, st.internalToken, logger)),
 		Metrics: metrics,
 	})
 
@@ -219,7 +328,7 @@ func main() {
 	// invalido.
 	noticeRepo := postgres.NewQuarantineNoticeRepository(ctxPool)
 	quarantineLinks, linksErr := domain.NewQuarantineLinkSigner(os.Getenv("MAIL_LINK_SIGNING_KEY"), os.Getenv("PUBLIC_BASE_URL"),
-		strings.TrimSpace(os.Getenv("CELL_CODE")), envDuration("MAIL_QUARANTINE_LINK_TTL", defaultQuarantineLinkTTL))
+		strings.TrimSpace(os.Getenv("CELL_CODE")), st.quarantineLinkTTL)
 	if linksErr != nil {
 		logger.Error("aviso de cuarentena y sus enlaces desactivados", zap.Error(linksErr))
 	}
@@ -228,21 +337,19 @@ func main() {
 		Tx: ctxPool, Repo: postgres.NewPolicyRepository(ctxPool), Directory: directory, Sync: redisSync, Logger: logger,
 	})
 	quarantineUC := app.NewQuarantineUseCase(app.QuarantineDeps{
-		Tx:   ctxPool,
-		Repo: quarantineRepo,
-		Reinjector: smtpadapter.New(
-			net.JoinHostPort(envOrDefault("MAIL_QUARANTINE_REINJECT_HOST", defaultReinjectHost), strconv.Itoa(envInt("MAIL_QUARANTINE_REINJECT_PORT", defaultReinjectPort))),
-			envOrDefault("MAIL_HOSTNAME", "mail-security")),
-		Learner: rspamd.New(envOrDefault("RSPAMD_CONTROLLER_URL", defaultControllerURL), os.Getenv("RSPAMD_CONTROLLER_PASSWORD")),
-		Events:  publisher,
-		Notices: noticeRepo,
-		Links:   quarantineLinks,
-		Logger:  logger,
+		Tx:         ctxPool,
+		Repo:       quarantineRepo,
+		Reinjector: smtpadapter.New(st.reinjectAddr, envOrDefault("MAIL_HOSTNAME", "mail-security")),
+		Learner:    rspamd.New(st.controllerURL, os.Getenv("RSPAMD_CONTROLLER_PASSWORD")),
+		Events:     publisher,
+		Notices:    noticeRepo,
+		Links:      quarantineLinks,
+		Logger:     logger,
 	})
 	engineUC := app.NewEngineUseCase(app.EngineDeps{
 		Tx: ctxPool, Documents: postgres.NewDocumentRepository(ctxPool),
 		Directory: directory, Policy: policyReader, Quarantine: quarantineRepo, Sync: redisSync,
-		Store: store, Events: publisher, Logger: logger, LogLines: int64(envInt("MAIL_LOG_LINES", defaultLogLines)),
+		Store: store, Events: publisher, Logger: logger, LogLines: int64(st.logLines),
 	})
 	firewallUC := app.NewFirewallUseCase(app.FirewallDeps{
 		Tx: ctxPool, Repo: postgres.NewFirewallRepository(ctxPool), Policy: policyReader, Sync: redisSync, Store: store, Logger: logger,
@@ -250,8 +357,7 @@ func main() {
 
 	// Reconciliacion de Redis al arrancar y periodica, y consumo de eventos del
 	// directorio. Ambos corren fuera de cualquier peticion: el pool va en el contexto.
-	go app.NewReconciler(redisSync, policyReader, quarantineRepo,
-		envDuration("MAIL_REDIS_RECONCILE_INTERVAL", defaultReconcileInterval), logger).Run(withPool(ctx))
+	go app.NewReconciler(redisSync, policyReader, quarantineRepo, st.reconcileInterval, logger).Run(withPool(ctx))
 	go natsadapter.NewDirectoryConsumer(bus, redisSync, dkimUC, policyReader, withPool, logger).Run(ctx)
 	// Revocacion en Dovecot: con cada evento de buzon vacia su cache de autenticacion y, si ya no
 	// puede entrar o cambio su credencial, cierra sus sesiones (deploy/mail/README.md).
@@ -259,23 +365,21 @@ func main() {
 		revoker := app.NewSessionRevoker(app.SessionRevokerDeps{Directory: directory, Engine: engineSessions, Metrics: metrics, Logger: logger})
 		go natsadapter.NewSessionConsumer(bus, revoker, withPool, logger).Run(ctx)
 	}
-	go dkimUC.RunReconciler(withPool(ctx), envDuration("MAIL_DKIM_RECONCILE_INTERVAL", defaultDKIMReconcileInterval),
+	go dkimUC.RunReconciler(withPool(ctx), st.dkimReconcileInterval,
 		func(c context.Context) (func(), bool) { return db.TryLeaderLock(c, pool.Pool, dkimReconcileLockKey) })
 
 	// Aviso de cuarentena por transactional (POST /internal/transactional/messages con
 	// purpose=quarantine_notice), con el cerrojo de lider de la celda.
-	transactionalURL := strings.TrimSpace(os.Getenv("TRANSACTIONAL_URL"))
-	internalToken := os.Getenv("INTERNAL_GATEWAY_TOKEN")
 	switch {
 	case linksErr != nil:
 		// Ya registrado al construir el firmante: sin enlaces no se avisa.
-	case transactionalURL == "" || internalToken == "":
+	case st.transactionalURL == "" || st.internalToken == "":
 		logger.Error("aviso de cuarentena desactivado: faltan TRANSACTIONAL_URL o INTERNAL_GATEWAY_TOKEN")
 	default:
 		notifier := app.NewQuarantineNotifier(app.NotifierDeps{
 			Tx: ctxPool, Policy: policyReader, Notices: noticeRepo, Directory: directory,
-			Sender: transactionalcli.New(transactionalURL, internalToken), Links: quarantineLinks,
-			Interval: envDuration("MAIL_QUARANTINE_NOTIFY_INTERVAL", defaultQuarantineNotifyInterval), Logger: logger,
+			Sender: transactionalcli.New(st.transactionalURL, st.internalToken), Links: quarantineLinks,
+			Interval: st.quarantineNotifyInterval, Logger: logger,
 		})
 		go notifier.Run(withPool(ctx), func(c context.Context) (func(), bool) {
 			return db.TryLeaderLock(c, pool.Pool, quarantineNotifyLockKey)
@@ -284,7 +388,7 @@ func main() {
 
 	// Superficie A: API de administracion tras el gateway (y rutas internas con token). El
 	// cortafuegos es de plataforma: el superadmin lo opera en cualquier celda con celda destino.
-	routes := handler.NewHandler(policyUC, quarantineUC, firewallUC, dkimUC, authz.NewCheckerFromEnv()).Routes()
+	routes := handler.NewHandler(policyUC, quarantineUC, firewallUC, dkimUC, st.perms).Routes()
 	if err := membership.AcceptOperators(routes, handler.PlatformRoutes()); err != nil {
 		log.Fatalf("celda de la instancia: %v", err)
 	}
@@ -293,10 +397,10 @@ func main() {
 	// Superficie B: listeners de los motores, sin gateway ni JWT, acotados por IP. No llevan
 	// empresa (Postfix, Dovecot y Rspamd no saben de ellas): no pasan por Membership.
 	allowedCIDRs := os.Getenv("MAIL_ENGINE_ALLOWED_CIDRS")
-	pipeMaxBody := int64(envInt("MAIL_QUARANTINE_MAX_BODY_MB", defaultPipeMaxBodyMiB)) * 1024 * 1024
-	maps := engineListener(envInt("MAIL_POLICY_MAPS_PORT", defaultMapsPort),
+	pipeMaxBody := int64(st.pipeMaxBodyMiB) * 1024 * 1024
+	maps := engineListener(st.mapsPort,
 		db.StaticPoolMiddleware(pool.Pool)(handler.NewEngineHandler(engineUC, logger).Routes(allowedCIDRs)), 15*time.Second)
-	export := engineListener(envInt("MAIL_POLICY_EXPORT_PORT", defaultExportPort),
+	export := engineListener(st.exportPort,
 		db.StaticPoolMiddleware(pool.Pool)(handler.NewExporterHandler(engineUC, pipeMaxBody, logger).Routes(allowedCIDRs)), 120*time.Second)
 	for _, srv := range []*http.Server{maps, export} {
 		go func(s *http.Server) {
@@ -307,8 +411,7 @@ func main() {
 		}(srv)
 	}
 
-	port := envInt("MAIL_SECURITY_PORT", defaultPort)
-	srv := server.New(port, r, logger)
+	srv := server.New(st.port, r, logger)
 	runErr := srv.Run()
 
 	// El servidor principal ya atendio la senal de parada: se apagan los listeners de

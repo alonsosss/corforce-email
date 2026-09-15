@@ -34,12 +34,13 @@ largas de cada guardarraíl están en `ops/scaffold/README.md`, `ops/security/se
   `pkg/config` (`POSTGRES_PORT`, `POSTGRES_DIRECT_PORT`, `REDIS_PORT`, `JWT_*_TTL`) y
   scheduler, campaigns, transactional, mail-auth, contacts, suppression, automations,
   webmail, gateway, audit, identity, access-control, templates, analytics, billing,
-  reputation, organization, mail-directory y domain-service. Los umbrales, la ventana y los
-  límites de reputation siguen siendo
+  reputation, organization, mail-directory, domain-service y mail-security. Los umbrales, la
+  ventana y los límites de reputation siguen siendo
   obligatorios y sin valor por defecto: se exige la variable y después se lee con su rango
   (`EnvFloat` para los umbrales). El techo de `DOMAIN_RECHECK_INTERVAL` (6 h) es el que
-  cuenta la alerta `BarridoDeDominiosSinCelda` (`docs/arquitectura/OBSERVABILIDAD.md`).
-  Pendiente de migrar, con lector propio: mail-security.
+  cuenta la alerta `BarridoDeDominiosSinCelda`, y el de `MAIL_DKIM_RECONCILE_INTERVAL` de
+  mail-security (15 min), el que cuentan `RepasoDKIMDetenido` y `RepasoDKIMSinOrganization`
+  (`docs/arquitectura/OBSERVABILIDAD.md`).
 * Direcciones internas de otros servicios (`<SERVICIO>_HOST` y `<SERVICIO>_HOST_PORT`): el
   gateway las lee para cada servicio de `services/gateway/routes.json`, y organization para
   identity, access-control y mail-directory cuando falta su `<SERVICIO>_URL`, con
@@ -50,7 +51,8 @@ largas de cada guardarraíl están en `ops/scaffold/README.md`, `ops/security/se
   con delimitadores de URL o con dos puntos sin ser una IPv6 (que va sin corchetes) impiden
   arrancar, y el error nombra la variable o el servicio: antes salían como 502 en la primera
   petición. Las entradas `celda=host:puerto` de `<SERVICIO>_CELL_HOSTS` siguen la misma
-  regla (`tenantcell.ParseInstances`).
+  regla (`tenantcell.ParseInstances`), y también los hosts que mail-security no usa en una URL
+  http, `MAIL_REDIS_HOST` y `MAIL_QUARANTINE_REINJECT_HOST` (`config.EnvHost`).
 * URLs base internas de otros servicios (`<SERVICIO>_URL`): se leen al arrancar, antes de
   conectar a nada, con `config.ServiceURL` o `config.RequiredServiceURL`
   (`pkg/config/upstream.go`). Regla: `http` o `https` absoluta, `scheme://host[:puerto]`, con el
@@ -63,16 +65,20 @@ largas de cada guardarraíl están en `ops/scaffold/README.md`, `ops/security/se
   domain-service, `tenantcell.OrganizationURLFromEnv`), `SUPPRESSION_URL` de contacts y de
   transactional (sin suppression transactional no encola ningún envío: toda exclusión se
   respeta antes de encolar), `CONTACTS_URL`, `TRANSACTIONAL_URL` y `TEMPLATES_URL` de campaigns
-  y automations, `BILLING_URL` de reputation y `MAIL_DIRECTORY_URL` del webmail. Opcionales:
-  `TEMPLATES_URL` y `REPUTATION_URL` de transactional y `TRANSACTIONAL_MAIL_URL` de identity
-  (vacías, lo que depende de ellas no funciona y se registra); `ACCESS_CONTROL_URL`, por
+  y automations, `BILLING_URL` de reputation, `MAIL_DIRECTORY_URL` del webmail y
+  `MAIL_DIRECTORY_URL` y `MAIL_SECURITY_URL` de domain-service (sus destinos base). Opcionales:
+  `TEMPLATES_URL` y `REPUTATION_URL` de transactional, `TRANSACTIONAL_MAIL_URL` de identity y
+  `TRANSACTIONAL_URL` de mail-security (vacías, lo que depende de ellas no funciona y se
+  registra; en mail-security, el aviso de cuarentena); `ACCESS_CONTROL_URL`, por
   defecto `http://access-control:8002` (`authz.CheckerFromEnv`); y en organization
   `ACCESS_CONTROL_URL`, `IDENTITY_URL` y `MAIL_DIRECTORY_URL`, que sin ellas usa
   `<SERVICIO>_HOST`. No son URLs base internas y conservan su lector: `MAIL_AUTH_URL` (el
   endpoint https que llaman tal cual Dovecot y el webmail), `PUBLIC_BASE_URL`,
-  `PASSWORD_BREACH_API_URL`, `MINIO_PUBLIC_URL` y `NATS_URL`. Pendientes de migrar, con lector
-  propio: mail-security (`ACCESS_CONTROL_URL`, `TRANSACTIONAL_URL`, `DOVEADM_API_URL`) y
-  domain-service (`ACCESS_CONTROL_URL`, `MAIL_DIRECTORY_URL`, `MAIL_SECURITY_URL`).
+  `PASSWORD_BREACH_API_URL`, `MINIO_PUBLIC_URL` y `NATS_URL`. Las dos direcciones de los motores
+  que mail-security llama como URL base siguen la misma regla con su valor por defecto:
+  `RSPAMD_CONTROLLER_URL` (`http://rspamd:11334`; le pega `/learnspam` y manda la contraseña
+  en su cabecera) y `DOVEADM_API_URL` (`https://dovecot:8443`), que además tiene que ser
+  `https` (`doveadm.New`): la clave del API viaja en cada petición.
 * Entorno declarado (`ENVIRONMENT`). Un servidor declara exactamente
   `ENVIRONMENT=production` o `ENVIRONMENT=staging` en el `.env` de `DEPLOY_PATH`, el que
   Compose pasa a los contenedores; también el servidor de la cuenta de dev. `development` y

@@ -90,6 +90,7 @@ type settings struct {
 	directoryTargets *tenantcell.Targets
 	securityTargets  *tenantcell.Targets
 	internalToken    string
+	perms            *authz.Checker
 	dnsResolver      string
 	rotationGrace    time.Duration
 	recheckInterval  time.Duration
@@ -119,9 +120,7 @@ func loadSettings(logger *zap.Logger) (settings, error) {
 			SPFInclude: require("MAIL_SPF_INCLUDE"),
 			DMARCRUA:   require("MAIL_DMARC_RUA"),
 		},
-		mailDirectoryURL: require("MAIL_DIRECTORY_URL"),
-		mailSecurityURL:  require("MAIL_SECURITY_URL"),
-		dnsResolver:      strings.TrimSpace(os.Getenv("MAIL_DNS_RESOLVER")),
+		dnsResolver: strings.TrimSpace(os.Getenv("MAIL_DNS_RESOLVER")),
 	}
 	if len(missing) > 0 {
 		return s, fmt.Errorf("faltan variables de entorno obligatorias: %s", strings.Join(missing, ", "))
@@ -148,6 +147,15 @@ func loadSettings(logger *zap.Logger) (settings, error) {
 	}
 	// Un dominio pendiente se reverifica durante su ventana: su historial no se poda antes.
 	if s.checkRetention, err = config.EnvDuration("DOMAIN_CHECK_RETENTION", app.DefaultCheckRetention, app.DefaultPendingRecheckWindow, maxCheckRetention); err != nil {
+		return s, err
+	}
+	if s.mailDirectoryURL, err = config.RequiredServiceURL("MAIL_DIRECTORY_URL"); err != nil {
+		return s, err
+	}
+	if s.mailSecurityURL, err = config.RequiredServiceURL("MAIL_SECURITY_URL"); err != nil {
+		return s, err
+	}
+	if s.perms, err = authz.CheckerFromEnv(); err != nil {
 		return s, err
 	}
 	token, err := middleware.InternalGatewayToken()
@@ -256,7 +264,7 @@ func main() {
 	r.Use(middleware.SecureHeaders)
 	r.Use(middleware.Logger(logger))
 	r.Use(middleware.NewRateLimiter(120, time.Minute).Limit)
-	r.Mount("/", handler.NewHandler(uc, authz.NewCheckerFromEnv()).Routes())
+	r.Mount("/", handler.NewHandler(uc, st.perms).Routes())
 
 	srv := server.New(st.port, r, logger)
 	if err := srv.Run(); err != nil {

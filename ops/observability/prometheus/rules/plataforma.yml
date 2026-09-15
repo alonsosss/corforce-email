@@ -452,8 +452,9 @@ groups:
       # estar en curso. El cerrojo es por pasada y cualquier replica repasa la celda entera: vale la
       # pasada mas reciente de las replicas del servicio, y la que no completo ninguna cuenta desde
       # su arranque, que asi tiene el mismo margen. Mientras dure, nadie retira lo que un camino
-      # fallido deje en los motores. Cuenta con MAIL_DKIM_RECONCILE_INTERVAL: si se alarga, hay que
-      # alargar el umbral (cuatro intervalos) y la espera (uno).
+      # fallido deje en los motores. Cuenta con MAIL_DKIM_RECONCILE_INTERVAL de 15 min como mucho:
+      # mail-security no arranca con uno mayor, y alargarlo exige alargar el umbral (cuatro
+      # intervalos), la espera (uno) y ese techo (maxDKIMReconcileInterval, services/mail-security/main.go).
       - alert: RepasoDKIMDetenido
         expr: |
           time() - max by (service) (
@@ -474,8 +475,9 @@ groups:
       # sin cache. La ventana supera un intervalo, para que las pasadas seguidas la mantengan, y la
       # espera son cuatro: avisa cuando cuatro pasadas seguidas no obtienen la empresa de algun
       # dominio. organization caido ya avisa (ServicioCaido); esta cubre que mail-security no llegue
-      # a el. Cuenta con MAIL_DKIM_RECONCILE_INTERVAL: si se alarga, hay que alargar la ventana (mas
-      # de un intervalo) y la espera (cuatro).
+      # a el. Cuenta con MAIL_DKIM_RECONCILE_INTERVAL de 15 min como mucho: mail-security no arranca
+      # con uno mayor, y alargarlo exige alargar la ventana (mas de un intervalo), la espera (cuatro)
+      # y ese techo (maxDKIMReconcileInterval, services/mail-security/main.go).
       - alert: RepasoDKIMSinOrganization
         expr: sum by (service) (increase(mail_security_dkim_reconcile_unresolved_total[20m])) > 0
         for: 1h

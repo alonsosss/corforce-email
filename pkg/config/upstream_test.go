@@ -83,6 +83,29 @@ func TestUpstreamURLValidaLosDefectos(t *testing.T) {
 	}
 }
 
+// EnvHost es la regla de host de UpstreamURL para quien no arma una URL http (host:puerto de
+// Redis o de SMTP).
+func TestEnvHost(t *testing.T) {
+	for raw, want := range map[string]string{"": "redis", " \t": "redis", " redis-mail ": "redis-mail", "10.0.0.5": "10.0.0.5", "fd00::5": "fd00::5"} {
+		t.Setenv(upstreamHostEnv, raw)
+		if got, err := EnvHost(upstreamHostEnv, "redis"); err != nil || got != want {
+			t.Errorf("%q: %q, %v; se esperaba %q", raw, got, err, want)
+		}
+	}
+	for _, raw := range []string{"re dis", "redis:6379", "[fd00::5]", "redis/0", "u@redis", "fe80::1%eth0"} {
+		t.Setenv(upstreamHostEnv, raw)
+		if got, err := EnvHost(upstreamHostEnv, "redis"); err == nil || !strings.Contains(err.Error(), upstreamHostEnv+"=") {
+			t.Errorf("%q: %q, %v; se esperaba un error que nombre %s", raw, got, err, upstreamHostEnv)
+		}
+	}
+	t.Setenv(upstreamHostEnv, "redis")
+	for _, def := range []string{"", "re dis", "redis:6379"} {
+		if got, err := EnvHost(upstreamHostEnv, def); err == nil || !strings.Contains(err.Error(), upstreamHostEnv+": default") {
+			t.Errorf("defecto %q: %q, %v; se esperaba un error que nombre %s", def, got, err, upstreamHostEnv)
+		}
+	}
+}
+
 const serviceURLEnv = "CONFIG_TEST_SERVICE_URL"
 
 func TestServiceURL(t *testing.T) {

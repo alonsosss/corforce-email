@@ -69,18 +69,6 @@ func CheckerFromEnv() (*Checker, error) {
 	return NewChecker(url, os.Getenv("INTERNAL_GATEWAY_TOKEN")), nil
 }
 
-// NewCheckerFromEnv es CheckerFromEnv sin validar ACCESS_CONTROL_URL.
-//
-// Deprecated: usa CheckerFromEnv. Queda solo para mail-security y domain-service hasta que
-// lean su configuracion con la regla de config.ServiceURL.
-func NewCheckerFromEnv() *Checker {
-	url := os.Getenv(accessControlURLEnv)
-	if url == "" {
-		url = defaultAccessControlURL
-	}
-	return NewChecker(url, os.Getenv("INTERNAL_GATEWAY_TOKEN"))
-}
-
 // Allowed indica si el usuario de la peticion puede (module, resource, action). El
 // superadmin y el tenant_admin pasan sin consultar: son los roles del sistema y sus
 // permisos no se editan.

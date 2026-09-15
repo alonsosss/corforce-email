@@ -28,6 +28,7 @@ func setSettingsEnv(t *testing.T, environment, token string) {
 		mailDirectoryCellHostsEnv:     "",
 		mailSecurityCellHostsEnv:      "",
 		"ORGANIZATION_URL":            "http://organization:8003",
+		"ACCESS_CONTROL_URL":          "",
 		"DOMAIN_SERVICE_PORT":         "",
 		"DOMAIN_RECHECK_INTERVAL":     "",
 		"DOMAIN_SWEEP_TENANT_TIMEOUT": "",
@@ -116,6 +117,54 @@ func TestLoadSettingsRangos(t *testing.T) {
 		if c.err != "" && (err == nil || !strings.Contains(err.Error(), c.err)) {
 			t.Errorf("%s: se esperaba un error que nombre %s: %v", nombre, c.err, err)
 		}
+	}
+}
+
+// Los destinos base de mail-directory y mail-security y access-control son URLs base internas
+// (config.ServiceURL): mal formadas o, las dos primeras, ausentes, impiden arrancar.
+func TestLoadSettingsURLsInternas(t *testing.T) {
+	for nombre, c := range map[string]struct {
+		key, value, err string
+	}{
+		"mail-directory con barra final":      {"MAIL_DIRECTORY_URL", "http://mail-directory:8040/", ""},
+		"mail-security por https":             {"MAIL_SECURITY_URL", "https://ms.pe-01.internal:8442", ""},
+		"access-control propio":               {"ACCESS_CONTROL_URL", "http://127.0.0.1:18002", ""},
+		"sin mail-directory":                  {"MAIL_DIRECTORY_URL", "", "MAIL_DIRECTORY_URL"},
+		"sin mail-security":                   {"MAIL_SECURITY_URL", " ", "MAIL_SECURITY_URL"},
+		"mail-directory sin esquema":          {"MAIL_DIRECTORY_URL", "mail-directory:8040", "MAIL_DIRECTORY_URL"},
+		"mail-security con ruta":              {"MAIL_SECURITY_URL", "http://mail-security:8042/api", "MAIL_SECURITY_URL"},
+		"mail-security con credenciales":      {"MAIL_SECURITY_URL", "http://u:p@mail-security:8042", "MAIL_SECURITY_URL"},
+		"mail-directory con puerto invalido":  {"MAIL_DIRECTORY_URL", "http://mail-directory:0", "MAIL_DIRECTORY_URL"},
+		"access-control con consulta":         {"ACCESS_CONTROL_URL", "http://access-control:8002?x=1", "ACCESS_CONTROL_URL"},
+		"access-control de otro esquema":      {"ACCESS_CONTROL_URL", "ftp://access-control:8002", "ACCESS_CONTROL_URL"},
+		"mail-directory con host con espacio": {"MAIL_DIRECTORY_URL", "http://mail directory:8040", "MAIL_DIRECTORY_URL"},
+	} {
+		setSettingsEnv(t, "staging", "gateway-token-0123456789")
+		t.Setenv(c.key, c.value)
+		st, err := loadSettings(zap.NewNop())
+		if c.err != "" {
+			if err == nil || !strings.Contains(err.Error(), c.err) {
+				t.Errorf("%s: se esperaba un error que nombre %s: %v", nombre, c.err, err)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("%s: %v", nombre, err)
+			continue
+		}
+		if st.perms == nil {
+			t.Errorf("%s: sin comprobador de permisos", nombre)
+		}
+	}
+
+	setSettingsEnv(t, "staging", "gateway-token-0123456789")
+	t.Setenv("MAIL_DIRECTORY_URL", "http://mail-directory:8040/")
+	st, err := loadSettings(zap.NewNop())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.mailDirectoryURL != "http://mail-directory:8040" || st.mailSecurityURL != "http://mail-security:8042" {
+		t.Errorf("destinos base: %q %q", st.mailDirectoryURL, st.mailSecurityURL)
 	}
 }
 

@@ -25,7 +25,7 @@ func TestPutDKIMConElJuegoCompletoYConLaFormaAnterior(t *testing.T) {
 	dir.InactiveDomains["baja.com"] = tenant
 	sync := app.NewRedisSync(store, dir, apptest.NewPolicyReader(), zap.NewNop())
 	uc := app.NewDKIMUseCase(app.DKIMDeps{Directory: dir, Lock: &apptest.DKIMLock{}, Sync: sync, Tenants: &apptest.Tenants{}, Logger: zap.NewNop()})
-	routes := NewHandler(nil, nil, nil, uc, authz.NewCheckerFromEnv()).Routes()
+	routes := NewHandler(nil, nil, nil, uc, authz.NewChecker("http://127.0.0.1:9", "")).Routes()
 
 	put := func(name, body string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(http.MethodPut, "/internal/mail-security/dkim/"+name, strings.NewReader(body))

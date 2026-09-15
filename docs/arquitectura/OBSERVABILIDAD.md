@@ -137,7 +137,7 @@ servicio de celda.
 
 El repaso de mail-security retira las claves DKIM que la regla ya impide al escribir y con los
 eventos del directorio (`deploy/mail/README.md`). Pasa al arrancar y cada
-`MAIL_DKIM_RECONCILE_INTERVAL` (15 min por defecto), con un plazo de un intervalo por pasada. Nada
+`MAIL_DKIM_RECONCILE_INTERVAL` (15 min por defecto y como maximo), con un plazo de un intervalo por pasada. Nada
 de esto corta el correo: las tres son de severidad media.
 
 | Alerta | Cuando | Espera | Severidad | Por que |
@@ -146,8 +146,9 @@ de esto corta el correo: las tres son de severidad media.
 | `RepasoDKIMDetenido` | mas de una hora (cuatro intervalos) sin pasada completa en ninguna replica del servicio; la que no completo ninguna cuenta desde su arranque | 15 min | media | Avisa cuando cuatro pasadas seguidas no terminaron. Mientras dure nadie retira lo que un camino fallido deje en los motores; publicar, retirar y los eventos del directorio siguen. |
 | `RepasoDKIMSinOrganization` | sube `mail_security_dkim_reconcile_unresolved_total` en cada ventana de 20 min | 1 h | media | Sin respuesta de organization el repaso conserva las claves de esas empresas. Una pasada asi no avisa; cuatro seguidas si. organization caido ya lo avisa `ServicioCaido`: esta cubre que mail-security no llegue a el. |
 
-Las dos ultimas cuentan con el intervalo por defecto: si se alarga `MAIL_DKIM_RECONCILE_INTERVAL`,
-el umbral de `RepasoDKIMDetenido` debe seguir siendo cuatro intervalos y su espera uno, y la
+Las dos ultimas cuentan con un intervalo de 15 min como mucho: mail-security no arranca con un
+`MAIL_DKIM_RECONCILE_INTERVAL` mayor (`maxDKIMReconcileInterval`). Alargarlo exige alargar ese techo
+y que el umbral de `RepasoDKIMDetenido` siga siendo cuatro intervalos y su espera uno, y la
 ventana de `RepasoDKIMSinOrganization` mas de un intervalo y su espera cuatro.
 
 ### Revocacion en Dovecot

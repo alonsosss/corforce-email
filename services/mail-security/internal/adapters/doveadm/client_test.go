@@ -168,14 +168,13 @@ func escribirCA(t *testing.T, ts *httptest.Server) string {
 	return ca
 }
 
-// La configuracion se valida al arrancar: nunca en claro, ni con ruta o credenciales en la URL,
-// ni con una clave que Dovecot no aceptaria en su configuracion, ni sin nombre de certificado.
+// La configuracion se valida al arrancar: nunca en claro, ni con una clave que Dovecot no
+// aceptaria en su configuracion, ni sin nombre de certificado. La forma de la URL (sin ruta ni
+// credenciales) la valida config.ServiceURL al leer DOVEADM_API_URL (doveadm_config_test.go).
 func TestNewRechazaUnaConfiguracionInsegura(t *testing.T) {
 	cases := map[string]Config{
 		"en claro":        {BaseURL: "http://dovecot:8443", APIKey: claveDePrueba, ServerName: "mail.acme.test"},
-		"con ruta":        {BaseURL: "https://dovecot:8443/otra", APIKey: claveDePrueba, ServerName: "mail.acme.test"},
-		"con credencial":  {BaseURL: "https://u:p@dovecot:8443", APIKey: claveDePrueba, ServerName: "mail.acme.test"},
-		"sin host":        {BaseURL: "https://", APIKey: claveDePrueba, ServerName: "mail.acme.test"},
+		"sin esquema":     {BaseURL: "dovecot:8443", APIKey: claveDePrueba, ServerName: "mail.acme.test"},
 		"clave corta":     {BaseURL: "https://dovecot:8443", APIKey: "corta", ServerName: "mail.acme.test"},
 		"clave con signo": {BaseURL: "https://dovecot:8443", APIKey: strings.Repeat("k", 40) + "\"x", ServerName: "mail.acme.test"},
 		"sin nombre":      {BaseURL: "https://dovecot:8443", APIKey: claveDePrueba},
@@ -188,7 +187,7 @@ func TestNewRechazaUnaConfiguracionInsegura(t *testing.T) {
 			t.Errorf("%s: el error lleva la clave", name)
 		}
 	}
-	if _, err := New(Config{BaseURL: "https://dovecot:8443/", APIKey: claveDePrueba, ServerName: "mail.acme.test"}); err != nil {
+	if _, err := New(Config{BaseURL: "https://dovecot:8443", APIKey: claveDePrueba, ServerName: "mail.acme.test"}); err != nil {
 		t.Fatalf("configuracion valida: %v", err)
 	}
 }

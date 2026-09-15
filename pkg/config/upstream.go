@@ -24,20 +24,31 @@ import (
 // hostEnv+"_PORT" (EnvInt entre 1 y MaxPort), o defaultHost y defaultPort si faltan. Como en
 // EnvInt, los valores por defecto se validan en cada llamada, esten o no las variables.
 func UpstreamURL(hostEnv, defaultHost string, defaultPort int) (string, error) {
-	if !ValidHost(defaultHost) {
-		return "", fmt.Errorf("%s: default host %q is not a host name or IP address", hostEnv, defaultHost)
-	}
-	host := strings.TrimSpace(os.Getenv(hostEnv))
-	if host == "" {
-		host = defaultHost
-	} else if !ValidHost(host) {
-		return "", fmt.Errorf("%s=%q must be a host name or an IP address (IPv6 without brackets)", hostEnv, host)
+	host, err := EnvHost(hostEnv, defaultHost)
+	if err != nil {
+		return "", err
 	}
 	port, err := EnvInt(hostEnv+"_PORT", defaultPort, 1, MaxPort)
 	if err != nil {
 		return "", err
 	}
 	return "http://" + net.JoinHostPort(host, strconv.Itoa(port)), nil
+}
+
+// EnvHost lee de key un host interno con la regla de ValidHost (IPv6 sin corchetes). Ausente o
+// en blanco vale def. Como en EnvInt, def se valida en cada llamada, este o no la variable.
+func EnvHost(key, def string) (string, error) {
+	if !ValidHost(def) {
+		return "", fmt.Errorf("%s: default host %q is not a host name or IP address", key, def)
+	}
+	host := strings.TrimSpace(os.Getenv(key))
+	if host == "" {
+		return def, nil
+	}
+	if !ValidHost(host) {
+		return "", fmt.Errorf("%s=%q must be a host name or an IP address (IPv6 without brackets)", key, host)
+	}
+	return host, nil
 }
 
 // errServiceURL es la regla de una URL base interna: quien la usa le pega rutas absolutas
