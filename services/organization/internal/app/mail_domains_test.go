@@ -12,9 +12,17 @@ import (
 // fakeMailDomains es el indice de dominios en memoria, con la semantica del repositorio real.
 type fakeMailDomains struct {
 	owners map[string]uuid.UUID
+	// log anota las retiradas de una empresa entera en orden con los demas pasos de la saga.
+	log *callLog
+	// removing dice si la empresa tiene la baja en curso, lo que el repositorio real consulta en
+	// la misma sentencia del reclamo.
+	removing func(tenantID uuid.UUID) bool
 }
 
 func (f *fakeMailDomains) Claim(_ context.Context, name string, tenantID uuid.UUID) error {
+	if f.removing != nil && f.removing(tenantID) {
+		return domain.ErrTenantBeingRemoved
+	}
 	if owner, ok := f.owners[name]; ok && owner != tenantID {
 		return domain.ErrMailDomainClaimed
 	}
@@ -28,6 +36,22 @@ func (f *fakeMailDomains) Release(_ context.Context, name string, tenantID uuid.
 		return true, nil
 	}
 	return false, nil
+}
+
+func (f *fakeMailDomains) ReleaseTenant(_ context.Context, tenantID uuid.UUID) (int64, error) {
+	if f.log != nil {
+		if err := f.log.record("index.release"); err != nil {
+			return 0, err
+		}
+	}
+	var released int64
+	for name, owner := range f.owners {
+		if owner == tenantID {
+			delete(f.owners, name)
+			released++
+		}
+	}
+	return released, nil
 }
 
 func (f *fakeMailDomains) TenantOf(_ context.Context, name string) (uuid.UUID, error) {

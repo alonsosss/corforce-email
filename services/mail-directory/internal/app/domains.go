@@ -79,7 +79,7 @@ func (uc *UseCase) CreateDomain(ctx context.Context, tenantID uuid.UUID, req Cre
 		DefaultQuotaBytes: req.Limits.DefaultQuotaBytes, MaxQuotaBytes: req.Limits.MaxQuotaBytes,
 		QuotaBytes: req.Limits.QuotaBytes,
 	}
-	err = uc.tx.InTx(ctx, func(ctx context.Context) error {
+	err = uc.writeTx(ctx, tenantID, func(ctx context.Context) error {
 		if err := uc.ownRelayhost(ctx, tenantID, d.RelayhostID); err != nil {
 			return err
 		}
@@ -119,7 +119,7 @@ func (uc *UseCase) UpdateDomain(ctx context.Context, tenantID, id uuid.UUID, req
 		return nil, domain.ErrActivationNotAllowed
 	}
 	var d *domain.Domain
-	err := uc.tx.InTx(ctx, func(ctx context.Context) error {
+	err := uc.writeTx(ctx, tenantID, func(ctx context.Context) error {
 		var err error
 		d, err = uc.domains.Get(ctx, tenantID, id)
 		if err != nil {
@@ -191,7 +191,7 @@ func domainLimits(d *domain.Domain) domain.DomainLimits {
 // DeleteDomain se niega mientras cuelguen buzones, aliases o dominios alias: borrarlos
 // en cascada dejaria correo sin destino sin que nadie lo pidiera.
 func (uc *UseCase) DeleteDomain(ctx context.Context, tenantID, id uuid.UUID) error {
-	return uc.tx.InTx(ctx, func(ctx context.Context) error {
+	return uc.writeTx(ctx, tenantID, func(ctx context.Context) error {
 		d, err := uc.domains.Get(ctx, tenantID, id)
 		if err != nil {
 			return err
@@ -211,7 +211,8 @@ func (uc *UseCase) DeleteDomain(ctx context.Context, tenantID, id uuid.UUID) err
 }
 
 // SetDomainActivation es la llamada interna del servicio de dominios: crea el dominio si
-// no existe (con los limites por defecto) y fija active. Idempotente.
+// no existe (con los limites por defecto) y fija active. Idempotente. Una empresa dada de baja en
+// la celda solo apaga un dominio que ya tiene: activar o dar de alta uno es ErrTenantRetired.
 func (uc *UseCase) SetDomainActivation(ctx context.Context, tenantID uuid.UUID, rawName string, active bool) (*domain.Domain, error) {
 	name, err := domain.NormalizeDomain(rawName)
 	if err != nil {
@@ -219,10 +220,16 @@ func (uc *UseCase) SetDomainActivation(ctx context.Context, tenantID uuid.UUID, 
 	}
 	var d *domain.Domain
 	err = uc.tx.InTx(ctx, func(ctx context.Context) error {
-		var err error
+		retired, err := uc.retirements.HoldShared(ctx, tenantID)
+		if err != nil {
+			return err
+		}
 		d, err = uc.domains.GetByName(ctx, tenantID, name)
 		switch err {
 		case nil:
+			if active && retired {
+				return domain.ErrTenantRetired
+			}
 			if d.Active != active {
 				d.Active = active
 				if err := uc.domains.Update(ctx, d); err != nil {
@@ -230,6 +237,9 @@ func (uc *UseCase) SetDomainActivation(ctx context.Context, tenantID uuid.UUID, 
 				}
 			}
 		case domain.ErrNotFound:
+			if retired {
+				return domain.ErrTenantRetired
+			}
 			if err := uc.nameFree(ctx, name); err != nil {
 				return err
 			}
@@ -290,7 +300,7 @@ func (uc *UseCase) CreateAliasDomain(ctx context.Context, tenantID uuid.UUID, re
 	if req.Active != nil {
 		a.Active = *req.Active
 	}
-	err = uc.tx.InTx(ctx, func(ctx context.Context) error {
+	err = uc.writeTx(ctx, tenantID, func(ctx context.Context) error {
 		if _, err := uc.ownDomain(ctx, tenantID, target); err != nil {
 			return err
 		}
@@ -318,7 +328,7 @@ func (uc *UseCase) UpdateAliasDomain(ctx context.Context, tenantID, id uuid.UUID
 		return nil, domain.ErrNothingToUpdate
 	}
 	var a *domain.AliasDomain
-	err := uc.tx.InTx(ctx, func(ctx context.Context) error {
+	err := uc.writeTx(ctx, tenantID, func(ctx context.Context) error {
 		var err error
 		a, err = uc.aliasDomains.Get(ctx, tenantID, id)
 		if err != nil {
@@ -352,7 +362,7 @@ func (uc *UseCase) UpdateAliasDomain(ctx context.Context, tenantID, id uuid.UUID
 }
 
 func (uc *UseCase) DeleteAliasDomain(ctx context.Context, tenantID, id uuid.UUID) error {
-	return uc.tx.InTx(ctx, func(ctx context.Context) error {
+	return uc.writeTx(ctx, tenantID, func(ctx context.Context) error {
 		a, err := uc.aliasDomains.Get(ctx, tenantID, id)
 		if err != nil {
 			return err

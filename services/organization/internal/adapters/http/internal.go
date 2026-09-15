@@ -19,6 +19,7 @@ const (
 	codeMailDomainNotFound = "MAIL_DOMAIN_NOT_FOUND"
 	codeMailDomainClaimed  = "MAIL_DOMAIN_CLAIMED"
 	codeInvalidMailDomain  = "INVALID_MAIL_DOMAIN"
+	codeTenantBeingRemoved = "TENANT_BEING_REMOVED"
 )
 
 // InternalHandler sirve en /internal/organization lo que otros servicios necesitan del
@@ -65,7 +66,8 @@ func (h *InternalHandler) TenantCell(w http.ResponseWriter, r *http.Request) {
 
 // ClaimMailDomain reclama el dominio para la empresa antes de activarlo: 200 {domain,
 // tenant_id, cell_code} (tambien si ya era suyo), 409 MAIL_DOMAIN_CLAIMED si esta activo en otra
-// empresa (sin decir cual), 404 TENANT_NOT_FOUND o 422 INVALID_MAIL_DOMAIN.
+// empresa (sin decir cual), 409 TENANT_BEING_REMOVED si la empresa tiene la baja en curso, 404
+// TENANT_NOT_FOUND o 422 INVALID_MAIL_DOMAIN.
 func (h *InternalHandler) ClaimMailDomain(w http.ResponseWriter, r *http.Request) {
 	tenantID, ok := tenantParam(w, r)
 	if !ok {
@@ -79,6 +81,8 @@ func (h *InternalHandler) ClaimMailDomain(w http.ResponseWriter, r *http.Request
 		response.Err(w, http.StatusNotFound, "TENANT_NOT_FOUND", "empresa no encontrada")
 	case errors.Is(err, domain.ErrMailDomainClaimed):
 		response.Err(w, http.StatusConflict, codeMailDomainClaimed, err.Error())
+	case errors.Is(err, domain.ErrTenantBeingRemoved):
+		response.Err(w, http.StatusConflict, codeTenantBeingRemoved, err.Error())
 	case err != nil:
 		response.Unexpected(w, fmt.Errorf("reclamar dominio de correo: %w", err))
 	default:

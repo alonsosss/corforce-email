@@ -350,8 +350,9 @@ expect "acme.test sale por ese relayhost" "$API_CODE" "200"
 RELAY2_PASS="$(rand_hex 12)"
 creado "relayhost propio de un buzon" POST /mail-routing/relayhosts "{\"hostname\":\"relay2.partner.test:2525\",\"username\":\"relay2user\",\"password\":\"$RELAY2_PASS\"}"
 RELAY2ID=$(echo "$API_BODY" | jget data.id)
+CARLA_PASS="$(rand_hex 10)Aa1!"
 creado "buzon carla@acme.test con TLS obligatorio al enviar y su relayhost" POST /mailboxes \
-  "{\"local_part\":\"carla\",\"domain\":\"acme.test\",\"password\":\"$(rand_hex 10)Aa1!\",\"tls_enforce_out\":true,\"relayhost_id\":\"$RELAY2ID\"}"
+  "{\"local_part\":\"carla\",\"domain\":\"acme.test\",\"password\":\"$CARLA_PASS\",\"tls_enforce_out\":true,\"relayhost_id\":\"$RELAY2ID\"}"
 creado "dominio de respaldo (backup MX) respaldo.test" POST /mail-domains '{"domain":"respaldo.test","backupmx":true,"relay_all_recipients":true,"relay_unknown_only":true}'
 RESPID=$(echo "$API_BODY" | jget data.id)
 api PATCH "/mail-domains/$RESPID" '{"active":true}'
@@ -613,6 +614,33 @@ wm "$TARRO_ANA" DELETE /session
 expect "cerrar sesion" "$WM_CODE" "204"
 wm "$TARRO_ANA" GET /folders
 expect "y la cookie ya no abre el buzon" "$WM_CODE" "401"
+
+echo "== Baja de la empresa: su correo deja de entrar y de autenticar en la celda"
+# La saga de baja de organization da de baja a acme en el mail-directory de su celda antes de
+# retirarla del registro: los mapas de Postfix dejan de servir su dominio, su dominio alias, sus
+# buzones y sus aliases, Dovecot deja de autenticar a sus buzones (mail-auth) y mail-security saca
+# sus dominios de DOMAIN_MAP y retira sus claves DKIM con los eventos del directorio.
+AS="Authorization: Bearer $(e2e_login "$ADMIN_EMAIL" "$ADMIN_PASS" | jget data.access_token)"
+expect "el superadmin deja a acme inactiva" \
+  "$(curl -s -X PATCH "$GW/organizations/$TID" -H "$AS" -H 'Content-Type: application/json' -d '{"status":"inactive"}' | jget data.status)" "inactive"
+expect "y la borra" "$(curl -s -o /dev/null -w '%{http_code}' -X DELETE "$GW/organizations/$TID" -H "$AS")" "204"
+mapa pgsql_virtual_domains_maps acme.test ""
+mapa pgsql_virtual_domains_maps acme-alias.test ""
+mapa pgsql_virtual_mailbox_maps ana@acme.test ""
+mapa pgsql_virtual_alias_maps ventas@acme.test ""
+# Dovecot guarda cada inicio correcto en su cache de autenticacion (auth_cache_ttl, 300 s, por
+# servicio, buzon y contrasena): ana, que entro hace menos, seguiria entrando hasta que caduque
+# (Modelo_de_Datos_y_Celdas.md 5.4, pendiente). carla no tiene entrada en la cache: Dovecot pregunta
+# a mail-auth, que reconoce su contrasena y la rechaza porque el buzon esta apagado.
+contains "Dovecot ya no deja entrar a carla por IMAP (passwd-verify.lua -> mail-auth)" "$(cliente login carla@acme.test "$CARLA_PASS")" "NO"
+contains "mail-auth la rechaza por el buzon apagado, no por la contrasena" \
+  "$(docker logs "$(c mail-auth)" 2>&1 | grep '"username":"carla@acme.test"')" "buzon sin inicio de sesion"
+fuera_de_domain_map() { [[ -z "$(redis_mail HGET DOMAIN_MAP acme.test)" && -z "$(redis_mail HGET DOMAIN_MAP acme-alias.test)" ]]; }
+esperar "mail-security saca acme.test y su dominio alias de DOMAIN_MAP" 60 fuera_de_domain_map
+sin_dkim() { [[ -z "$(redis_mail HGET DKIM_SELECTORS acme.test)" && "$(redis_mail HEXISTS DKIM_PRIV_KEYS "$SELECTOR.acme.test")" == 0 ]]; }
+esperar "y retira sus claves DKIM" 60 sin_dkim
+expect "acme.test sale del indice global de organization" \
+  "$(sql mail_registry "SELECT count(*) FROM organization.mail_domain_cells WHERE domain = 'acme.test'")" "0"
 
 echo "== Registros"
 e2e_registros_sin_errores

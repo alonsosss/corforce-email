@@ -19,4 +19,7 @@ var (
 	// ErrDomainClaimedElsewhere: el indice global de dominios de organization tiene el dominio
 	// activo para otra empresa. No se activa en el directorio de la celda de esta.
 	ErrDomainClaimedElsewhere = errors.New("el dominio ya esta activo en otra empresa de la plataforma")
+	// ErrTenantBeingRemoved: la empresa tiene la baja en curso o ya esta dada de baja en su celda.
+	// organization no le deja reclamar dominios y mail-directory no le activa ninguno.
+	ErrTenantBeingRemoved = errors.New("la empresa se esta dando de baja: sus dominios no se activan")
 )

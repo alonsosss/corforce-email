@@ -309,7 +309,7 @@ func TestBajaSeRetomaDondeQuedo(t *testing.T) {
 	if err := h.uc.DeleteTenant(ctx, tenant.ID); err != nil {
 		t.Fatalf("reintento de la baja: %v", err)
 	}
-	if want := []string{"identity.remove"}; !reflect.DeepEqual(h.log.calls, want) {
+	if want := []string{"identity.remove", "mail.retire", "index.release"}; !reflect.DeepEqual(h.log.calls, want) {
 		t.Errorf("pasos del reintento = %v; want %v", h.log.calls, want)
 	}
 	if len(h.tenants.tenants) != 0 || len(h.sagas.sagas) != 0 {
@@ -359,7 +359,8 @@ func TestBorrarUnAltaSinCompletarRetiraSuBase(t *testing.T) {
 	if err := h.uc.DeleteTenant(ctx, tenant.ID); err != nil {
 		t.Fatalf("DeleteTenant: %v", err)
 	}
-	if want := []string{"access.remove", "identity.remove", "db.drop"}; !reflect.DeepEqual(h.log.calls, want) {
+	// Un alta sin completar nunca estuvo activa: su baja no llama a ninguna celda.
+	if want := []string{"access.remove", "identity.remove", "db.drop", "index.release"}; !reflect.DeepEqual(h.log.calls, want) {
 		t.Errorf("pasos de la baja = %v; want %v", h.log.calls, want)
 	}
 	if len(h.tenants.tenants) != 0 {
@@ -383,7 +384,7 @@ func TestBorrarUnaEmpresaAnteriorALasSagas(t *testing.T) {
 	if err := h.uc.DeleteTenant(ctx, legacy.ID); err != nil {
 		t.Fatalf("DeleteTenant: %v", err)
 	}
-	if want := []string{"access.remove", "identity.remove"}; !reflect.DeepEqual(h.log.calls, want) {
+	if want := []string{"access.remove", "identity.remove", "mail.retire", "index.release"}; !reflect.DeepEqual(h.log.calls, want) {
 		t.Errorf("pasos de la baja = %v; want %v", h.log.calls, want)
 	}
 	if _, kept := h.prov.owner[legacy.DBName]; !kept || len(h.tenants.tenants) != 0 {
@@ -438,6 +439,136 @@ func TestBaseAjenaConElMismoNombreNoSeToca(t *testing.T) {
 	}
 	if saga := h.sagaOf(t, h.onlyTenant(t).ID); saga.State != domain.SagaFailed {
 		t.Errorf("saga = %s; want failed", saga.State)
+	}
+}
+
+// inactiveTenant da de alta una empresa en la celda cellCode, le reclama los dominios y la deja
+// inactiva, lista para la baja.
+func (h *tenantHarness) inactiveTenant(t *testing.T, cellCode string, domains ...string) *domain.Tenant {
+	t.Helper()
+	ctx := context.Background()
+	req := baseRequest()
+	req.CellCode = cellCode
+	tenant, err := h.uc.CreateTenant(ctx, req)
+	if err != nil {
+		t.Fatalf("CreateTenant: %v", err)
+	}
+	for _, name := range domains {
+		if _, _, err := h.uc.ClaimMailDomain(ctx, tenant.ID, name); err != nil {
+			t.Fatalf("reclamar %s: %v", name, err)
+		}
+	}
+	if _, err := h.uc.SetTenantStatus(ctx, tenant.ID, domain.TenantStatusInactive); err != nil {
+		t.Fatalf("dar de baja: %v", err)
+	}
+	h.log.calls = nil
+	return tenant
+}
+
+// La baja da de baja el correo de la empresa en su celda, mientras organization aun la conoce, y
+// solo despues suelta sus dominios del indice: un dominio no se suelta mientras la celda lo sirve.
+// Los dominios de otra empresa no se tocan.
+func TestBajaDaDeBajaSuCorreoEnSuCeldaYSueltaSusDominios(t *testing.T) {
+	ctx := context.Background()
+	h := newTenantHarness("pe-01")
+	h.cells.cells = append(h.cells.cells, &domain.Cell{ID: uuid.New(), Code: "pe-02", Status: domain.CellStatusActive})
+	tenant := h.inactiveTenant(t, "pe-02", "acme.test", "acme-alias.test")
+	ajena := uuid.New()
+	h.index.owners["otra.test"] = ajena
+
+	if err := h.uc.DeleteTenant(ctx, tenant.ID); err != nil {
+		t.Fatalf("DeleteTenant: %v", err)
+	}
+	if want := []string{"access.remove", "identity.remove", "mail.retire", "index.release"}; !reflect.DeepEqual(h.log.calls, want) {
+		t.Errorf("pasos de la baja = %v; want %v", h.log.calls, want)
+	}
+	if h.directory.retired[tenant.ID] != "pe-02" || !h.directory.registered[tenant.ID] {
+		t.Errorf("baja en la celda %q (registrada %v); want pe-02 con la empresa aun registrada",
+			h.directory.retired[tenant.ID], h.directory.registered[tenant.ID])
+	}
+	if len(h.index.owners) != 1 || h.index.owners["otra.test"] != ajena {
+		t.Errorf("indice = %v; want solo el dominio de la otra empresa", h.index.owners)
+	}
+	if len(h.tenants.tenants) != 0 || len(h.sagas.sagas) != 0 {
+		t.Error("la baja termina retirando la empresa y su saga")
+	}
+}
+
+// Sin la celda la baja no avanza: el paso de correo no se da por hecho, la empresa sigue en el
+// registro y sus dominios en el indice. Mientras tanto no reclama ninguno, tampoco uno suyo, y el
+// barrido la retoma desde ese paso hasta que la celda responde.
+func TestBajaNoSeDaPorHechaSinLaCelda(t *testing.T) {
+	ctx := context.Background()
+	h := newTenantHarness("pe-01")
+	tenant := h.inactiveTenant(t, "pe-01", "acme.test")
+	h.log.failOn("mail.retire", 2)
+
+	err := h.uc.DeleteTenant(ctx, tenant.ID)
+	var simulated fakeError
+	if !errors.As(err, &simulated) || string(simulated) != "mail.retire" {
+		t.Fatalf("err = %v; want el fallo de la celda", err)
+	}
+	saga := h.sagaOf(t, tenant.ID)
+	if saga.Operation != domain.SagaDelete || saga.State != domain.SagaRunning || saga.Step != domain.StepDatabaseDropped ||
+		saga.LeaseUntil != nil || !strings.Contains(saga.LastError, "mail.retire") {
+		t.Fatalf("saga = %s %s/%s (arriendo %v, %q); want delete running/database_dropped sin arriendo con el motivo",
+			saga.Operation, saga.State, saga.Step, saga.LeaseUntil, saga.LastError)
+	}
+	if _, err := h.tenants.GetByID(ctx, tenant.ID); err != nil || h.index.owners["acme.test"] != tenant.ID {
+		t.Fatalf("la empresa (%v) y su dominio (%v) siguen hasta que la celda deja de servirlo", err, h.index.owners)
+	}
+	for _, name := range []string{"acme.test", "nuevo.test"} {
+		if _, _, err := h.uc.ClaimMailDomain(ctx, tenant.ID, name); !errors.Is(err, domain.ErrTenantBeingRemoved) {
+			t.Fatalf("reclamar %s durante la baja = %v; want ErrTenantBeingRemoved", name, err)
+		}
+	}
+
+	h.log.calls = nil
+	if n, err := h.uc.RecoverSagas(ctx); err != nil || n != 0 {
+		t.Fatalf("barrido con la celda caida = %d, %v; want 0 sin error", n, err)
+	}
+	if n, err := h.uc.RecoverSagas(ctx); err != nil || n != 1 {
+		t.Fatalf("barrido con la celda de vuelta = %d, %v; want 1", n, err)
+	}
+	if want := []string{"mail.retire", "mail.retire", "index.release"}; !reflect.DeepEqual(h.log.calls, want) {
+		t.Errorf("pasos de los barridos = %v; want %v", h.log.calls, want)
+	}
+	if len(h.tenants.tenants) != 0 || len(h.index.owners) != 0 {
+		t.Errorf("empresas %d, indice %v; want nada", len(h.tenants.tenants), h.index.owners)
+	}
+}
+
+// Una instancia que muere justo despues de dar de baja el correo deja la saga en el paso anterior
+// con el arriendo vigente; al vencer, el barrido repite la baja en la celda (idempotente), suelta
+// los dominios y termina.
+func TestBajaCortadaTrasLaCeldaSeRetoma(t *testing.T) {
+	ctx := context.Background()
+	h := newTenantHarness("pe-01")
+	tenant := h.inactiveTenant(t, "pe-01", "acme.test")
+	// Guardados de la baja: su inicio, roles, cuentas, base y correo. Cae el del correo.
+	h.sagas.saveFailAt = h.sagas.saves + 5
+
+	if err := h.uc.DeleteTenant(ctx, tenant.ID); err == nil {
+		t.Fatal("se esperaba el fallo del registro")
+	}
+	saga := h.sagaOf(t, tenant.ID)
+	if saga.Step != domain.StepDatabaseDropped || saga.LeaseUntil == nil {
+		t.Fatalf("saga en %s (arriendo %v); want database_dropped con el arriendo vigente", saga.Step, saga.LeaseUntil)
+	}
+	if n, err := h.uc.RecoverSagas(ctx); err != nil || n != 0 {
+		t.Fatalf("con el arriendo vigente = %d, %v; want 0", n, err)
+	}
+
+	h.expireLeases()
+	h.log.calls = nil
+	if n, err := h.uc.RecoverSagas(ctx); err != nil || n != 1 {
+		t.Fatalf("RecoverSagas = %d, %v; want 1", n, err)
+	}
+	if want := []string{"mail.retire", "index.release"}; !reflect.DeepEqual(h.log.calls, want) {
+		t.Errorf("pasos del barrido = %v; want %v", h.log.calls, want)
+	}
+	if len(h.tenants.tenants) != 0 || len(h.index.owners) != 0 {
+		t.Errorf("empresas %d, indice %v; want nada", len(h.tenants.tenants), h.index.owners)
 	}
 }
 

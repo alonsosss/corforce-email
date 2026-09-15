@@ -52,6 +52,8 @@ var (
 	// ErrMailDomainClaimed: el dominio ya esta activo para otra empresa. Un dominio solo se activa
 	// en una celda y para una empresa.
 	ErrMailDomainClaimed = errors.New("el dominio de correo ya esta activo en otra empresa")
+	// ErrTenantBeingRemoved: la empresa tiene la baja en curso; no reclama dominios de correo.
+	ErrTenantBeingRemoved = errors.New("la empresa se esta dando de baja: no reclama dominios de correo")
 )
 
 // AdminRejectedError lleva el codigo y el mensaje con los que identity rechazo al primer

@@ -19,9 +19,11 @@ import (
 	"github.com/alonsosss/corforce-email/pkg/middleware"
 	"github.com/alonsosss/corforce-email/pkg/response"
 	"github.com/alonsosss/corforce-email/pkg/server"
+	"github.com/alonsosss/corforce-email/pkg/tenantcell"
 	"github.com/alonsosss/corforce-email/services/organization/internal/adapters/accesscontrolcli"
 	handler "github.com/alonsosss/corforce-email/services/organization/internal/adapters/http"
 	"github.com/alonsosss/corforce-email/services/organization/internal/adapters/identitycli"
+	"github.com/alonsosss/corforce-email/services/organization/internal/adapters/maildirectorycli"
 	natsadapter "github.com/alonsosss/corforce-email/services/organization/internal/adapters/nats"
 	"github.com/alonsosss/corforce-email/services/organization/internal/adapters/postgres"
 	"github.com/alonsosss/corforce-email/services/organization/internal/app"
@@ -34,6 +36,13 @@ const (
 	defaultTenantMigrationDir   = "/app/migrations/tenant"
 	defaultRegistryMigrationDir = "/app/migrations/registry"
 	defaultPort                 = 8003
+
+	// mailDirectoryCellHostsEnv declara las instancias por celda de mail-directory: la misma
+	// variable que leen el gateway y domain-service (Modelo_de_Datos_y_Celdas.md, 5.4).
+	mailDirectoryCellHostsEnv = "MAIL_DIRECTORY_CELL_HOSTS"
+	// retirementCallTimeout acota cada intento de la baja de una empresa en su celda: una sola
+	// transaccion que apaga todo su directorio y encola un evento por fila.
+	retirementCallTimeout = 30 * time.Second
 )
 
 func loadMigrations(dir string) []postgres.MigrationFile {
@@ -251,6 +260,22 @@ func main() {
 	// token interno que el gateway.
 	internalToken := os.Getenv("INTERNAL_GATEWAY_TOKEN")
 	accessControlURL := serviceURL("ACCESS_CONTROL", "access-control", "8002")
+
+	// La baja de una empresa la da de baja en el mail-directory de su celda, con las mismas
+	// instancias por celda que el gateway (tenantcell.BaseCellEnv y MAIL_DIRECTORY_CELL_HOSTS) y el
+	// mismo destino base. organization guarda la celda de cada empresa: elige la instancia sin
+	// preguntar a nadie. Una declaracion incoherente impide arrancar.
+	cells, err := tenantcell.LoadInstances(os.Getenv, tenantcell.BaseCellEnv, mailDirectoryCellHostsEnv)
+	if err != nil {
+		log.Fatalf("instancias por celda: %v", err)
+	}
+	directoryTargets, err := cells.CellTargets(mailDirectoryCellHostsEnv, serviceURL("MAIL_DIRECTORY", "mail-directory", "8040"))
+	if err != nil {
+		log.Fatalf("instancias por celda: %v", err)
+	}
+	mailDirectory := maildirectorycli.New(tenantcell.NewCaller("mail-directory", directoryTargets, internalToken, logger,
+		tenantcell.CallerOptions{Timeout: retirementCallTimeout}))
+
 	uc := app.NewOrganizationUseCase(app.Dependencies{
 		Tenants:         postgres.NewTenantRepo(pool.Pool),
 		Cells:           postgres.NewCellRepo(pool.Pool),
@@ -261,6 +286,7 @@ func main() {
 		Modules:         postgres.NewModulesRepo(pool.Pool),
 		Publisher:       publisher,
 		MailDomains:     postgres.NewMailDomainRepo(pool.Pool),
+		MailDirectory:   mailDirectory,
 		DefaultCellCode: defaultCellCode,
 		SagaLease:       envDuration("ORGANIZATION_SAGA_LEASE", 5*time.Minute, logger),
 		Logger:          logger,

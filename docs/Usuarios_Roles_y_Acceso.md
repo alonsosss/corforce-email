@@ -264,6 +264,7 @@ siempre lo inyecta y no enruta `/internal`). Todas son idempotentes.
 | `DELETE /internal/access-control/tenants/{id}/roles` | access-control | Borra los roles de la empresa con sus permisos y asignaciones e invalida la politica cacheada de los afectados; 409 `TENANT_ACTIVE` si la empresa esta activa segun `organization.v_tenants` |
 | `PUT /internal/identity/tenants/{id}/first-user` | identity | Primer usuario con el id que elige la saga: politica de contrasenas de la empresa, filtraciones y bcrypt como cualquier alta; 201 al crear, 200 al repetir con el mismo id, correo y contrasena, 409 `FIRST_USER_CONFLICT` si la empresa ya tiene otra cuenta, 422 `PASSWORD_POLICY` o `PASSWORD_BREACHED`. La contrasena no sale en la respuesta ni en un error |
 | `DELETE /internal/identity/tenants/{id}/users` | identity | Borra las cuentas de la empresa; sus sesiones, historial y enlaces de reinicio caen con ellas. 409 `TENANT_ACTIVE` si la empresa esta activa |
+| `PUT /internal/mail-directory/tenant-retirement` | mail-directory de la celda de la empresa | Da de baja a la empresa de `X-Tenant-ID` en el directorio de la celda: apaga todo lo suyo que recibe, reenvia o autentica y lo anuncia por la outbox; 200 con lo que apago, todo a cero al repetirla. Desde entonces su directorio responde 409 `TENANT_RETIRED` a toda escritura (`Modelo_de_Datos_y_Celdas.md`, 5.4) |
 
 Alta: la empresa se registra inactiva; se crea su base (con el id de la empresa en su
 comentario, para que un reintento adopte la suya y nunca toque una ajena) y se migra;
@@ -278,10 +279,14 @@ reintenta el barrido (`ORGANIZATION_SAGA_SWEEP_INTERVAL`, 1 min) termina el alta
 primer usuario ya existe y la deshace cuando no, porque la contrasena no se guarda nunca.
 Mientras un alta o una baja estan en curso, el estado de la empresa no se cambia a mano (409).
 
-Baja: roles, cuentas y, si el alta no llego a completarse, la base que creo; despues la
-empresa, sus modulos y su saga salen del registro. No se deshace: un fallo deja la baja en
-curso en su paso y el siguiente `DELETE` o el barrido la terminan. La base de una empresa que
-llego a operar se conserva.
+Baja: roles, cuentas y, si el alta no llego a completarse, la base que creo; despues (V,
+2026-09-15) mail-directory de su celda la da de baja en el directorio de correo, que deja de
+recibir y de autenticar lo suyo y de admitir cambios, y organization suelta sus dominios del
+indice global; al final la empresa, sus modulos y su saga salen del registro. Desde que empieza
+la baja la empresa no reclama dominios. No se deshace: un fallo, tambien el de una celda que no
+responde o no tiene instancia declarada, deja la baja en curso en su paso y el siguiente
+`DELETE` o el barrido la terminan. La base de una empresa que llego a operar se conserva, y su
+directorio de correo tambien: se desactiva, no se borra.
 
 V (2026-09-13): el access token (5 min) de una cuenta borrada, con la baja de su empresa o
 una a una, deja de servir en cuanto el gateway vuelve a preguntar a access-control (como

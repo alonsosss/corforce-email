@@ -684,7 +684,7 @@ tiene ninguna ruta o si falta `organization` entre los servicios.
   ruta de organization, la misma cache y el mismo margen con organization caido). Con celda base
   no arranca sin `ORGANIZATION_URL`; sin celda base ni instancias todo va a los destinos base y no
   pregunta a nadie (una celda).
-  * Falla cerrado (`tenantcell.Targets`, `services/domain-service/internal/adapters/cellcli`): una
+  * Falla cerrado (`tenantcell.Targets` y `tenantcell.Caller`, que usa tambien organization): una
     celda sin respuesta aplicable, una empresa que organization no conoce o una celda sin instancia
     declarada del servicio no salen hacia ninguna instancia, y un 403 `TENANT_NOT_IN_CELL` de la
     instancia es un error de configuracion. Ninguno cuenta como hecho ni como 404: el paso falla.
@@ -719,7 +719,7 @@ tiene ninguna ruta o si falta `organization` entre los servicios.
     `docs/arquitectura/OBSERVABILIDAD.md`).
   * Probado: unitarias de `pkg/tenantcell` (lectura de instancias y sus reglas; eleccion en la celda
     base, en otra celda, celda sin instancia, empresa desconocida, organization caido con la celda
-    en cache, sin ella y fuera del margen; una celda sin consultas), de `cellcli` (cada empresa a
+    en cache, sin ella y fuera del margen; una celda sin consultas), de `tenantcell.Caller` (cada empresa a
     la instancia de su celda con token y empresa; cortes sin salir hacia ninguna; 403
     `TENANT_NOT_IN_CELL`; metricas), de los dos clientes (ningun 404 es hecho), del caso de uso
     (verificado sin celda, desactivacion pendiente hasta confirmarse, reverificacion, cambio de uso,
@@ -729,6 +729,70 @@ tiene ninguna ruta o si falta `organization` entre los servicios.
     `TENANT_NOT_IN_CELL`, sin filas en `mail_cell_pe_01`, metrica `not_in_cell`) y el de las celdas
     lo activa en `mail_cell_pe_02` y cuenta `not_served` para las claves, porque `mail-security` no
     declara pe-02.
+
+* Baja de una empresa en su celda (V, 2026-09-15). La saga de baja de `organization`
+  (`Usuarios_Roles_y_Acceso.md`, 7) tiene dos pasos mas, `mail_retired` y `mail_domains_released`,
+  detras de retirar roles, cuentas y la base de un alta sin completar, y antes de retirar la
+  empresa del registro.
+  * `mail_retired`: organization pide a `mail-directory` de la celda de la empresa
+    `PUT /internal/mail-directory/tenant-retirement` (token interno, `X-Tenant-ID`,
+    `RequireInternalCaller`: 403 a una peticion con usuario). Elige la instancia con las mismas
+    variables que el gateway (`GATEWAY_BASE_CELL_CODE`, `MAIL_DIRECTORY_CELL_HOSTS`, destino base
+    `MAIL_DIRECTORY_URL`) y la celda que guarda de la empresa, sin preguntar a nadie
+    (`tenantcell.Instances.CellTargets` y `Caller.DoInCell`), y falla cerrado como domain-service:
+    celda sin instancia o instancia de otra celda no cuentan como hecho
+    (`cell_call_failures_total{cell_service="mail-directory"}`), y solo un 200 lo es. Si no, la baja
+    queda en ese paso y el barrido la reintenta. Va antes de retirar el registro porque la segunda
+    barrera de la celda solo atiende a empresas que organization conoce. Un alta que no llego a
+    completarse nunca estuvo activa y no llama a la celda. organization no arranca con una
+    declaracion de instancias incoherente.
+  * En la celda, en una transaccion con el cerrojo exclusivo de la empresa: registra la baja en
+    `mail.tenant_retirements` (migracion de celda `08_tenant_retirements.sql`; `mail_app` solo lee
+    la de su empresa y solo `mail_service` la escribe) y apaga dominios, dominios alias, buzones
+    (`active = 0`), aliases, contrasenas de aplicacion, relayhosts, transportes de la empresa,
+    politicas TLS y mapas de destinatario y de copia; borra las contrasenas SASL de terceros que
+    Postfix guarda en claro (relayhosts y transportes). Desactiva, no borra: como la base de la
+    empresa, su directorio se conserva durante la retencion y el contenido de sus buzones sigue en
+    el almacenamiento de Dovecot. Cada dominio, dominio alias, buzon y alias apagado sale por la
+    outbox en la misma transaccion (`mail.domain.updated`, `mail.alias_domain.updated`,
+    `mail.mailbox.updated`, `mail.alias.updated`): mail-security lo saca de `DOMAIN_MAP` y retira sus
+    claves DKIM al momento, y el webmail cierra las sesiones de los buzones. Postfix deja de aceptar
+    el dominio y de entregar a sus buzones por sus mapas `pgsql:`, y `mail-auth` deja de autenticar
+    a sus buzones (Dovecot, submission y webmail); Dovecot, eso si, sigue aceptando hasta
+    `auth_cache_ttl` (300 s) al cliente que entro en ese tiempo con la misma contrasena (P). Responde
+    200 `{tenant_id, retired_at,
+    deactivated: {domains, alias_domains, mailboxes, aliases, app_passwords, relayhosts,
+    transports, tls_policies, recipient_maps, bcc_maps}}` con lo que apago esa llamada; repetirla
+    no cambia ni anuncia nada.
+  * Nada vuelve a encenderse: desde la baja el directorio de la empresa no admite escrituras (409
+    `TENANT_RETIRED`) y la activacion interna solo apaga un dominio que ya tiene. Cada escritura
+    toma el cerrojo compartido de la empresa y comprueba la baja dentro de su transaccion, asi que
+    una escritura en curso y la baja se ordenan y la segunda ve a la primera. domain-service trata
+    el 409 `TENANT_RETIRED` como una empresa en baja: no activa ni publica sus claves DKIM.
+  * `mail_domains_released`: organization suelta del indice global todos los dominios de la
+    empresa despues de que la celda deja de servirlos (antes, otra celda podria activarlos mientras
+    esta aun los recibe). Desde que empieza la baja la empresa no reclama ninguno, tampoco uno suyo
+    (409 `TENANT_BEING_REMOVED`, en la misma sentencia del reclamo), y lo que quedara cae con la
+    empresa. El dominio se puede reclamar enseguida para otra empresa.
+  * Orden de despliegue: la migracion de celda 08 en todas las celdas antes que el mail-directory
+    nuevo, y el mail-directory nuevo en todas las celdas antes que el organization nuevo (con uno
+    anterior la ruta responde 404 y la baja se queda en ese paso, reintentandose, sin dar nada por
+    hecho). domain-service, en cualquier orden.
+  * Probado: unitarias de `pkg/tenantcell` (eleccion por celda sin resolver, `DoInCell` y la
+    metrica), de organization (orden de los pasos y celda de la empresa, celda sin respuesta que no
+    da el paso por hecho y el barrido que lo termina, caida despues de la celda, alta sin completar
+    sin llamar a la celda, reclamo rechazado durante la baja, contrato de la ruta interna y del
+    cliente), de mail-directory (baja con sus eventos dentro de la transaccion, repeticion,
+    escrituras rechazadas, baja deshecha si la outbox falla, la ruta entre las que rechazan a una
+    empresa de otra celda) y de domain-service (clientes y verificacion de una empresa en baja);
+    integracion contra Postgres (la baja con las migraciones de celda aplicadas dos veces, sin tocar
+    otra empresa, privilegios y RLS de `mail_app`, una escritura en curso que la baja espera y
+    apaga; el indice durante la baja); `make e2e` (beta, en pe-02: su dominio y su buzon quedan
+    apagados en `mail_cell_pe_02`, eva deja de autenticar en el mail-auth de su celda, la
+    activacion ya no enciende el dominio y otra empresa lo reclama); `make e2e-mail` (acme: los
+    mapas de Postfix dejan de servir su dominio, su dominio alias, su buzon y su alias, Dovecot deja
+    de autenticar a un buzon sin entrada en su cache, al que mail-auth rechaza por apagado, y
+    mail-security retira `DOMAIN_MAP` y las claves DKIM).
 
 Pendiente (P):
 
@@ -741,11 +805,17 @@ Pendiente (P):
   superadmin, con las celdas de `GET /cells`) manda `X-Target-Cell` en sus peticiones.
 * Traslado de una empresa de celda: el gateway y las instancias de celda lo ven al caducar su
   entrada (5 minutos); falta invalidarla con el evento del traslado.
-* Baja de empresa en su celda: la saga de baja de `organization` no desactiva los dominios de la
-  empresa en el directorio de su celda, que siguen en `DOMAIN_MAP` y recibiendo. Sus claves DKIM
-  salen en el repaso de `mail-security` cuando organization ya no conoce la empresa; falta un paso
-  de la saga que desactive sus dominios (una ruta interna de `mail-directory` por empresa), y con
-  el sus claves saldrian al momento por `mail.domain.*`.
+* Purga del directorio de una empresa dada de baja al terminar la retencion (una operacion con
+  respaldo previo, como la de su base). Mientras tanto sus dominios siguen ocupando el nombre en
+  su celda: otra empresa de la misma celda no puede activarlos (otra celda si).
+* Dovecot con un buzon apagado (por la baja de su empresa o uno a uno) o con la contrasena
+  cambiada: guarda cada inicio correcto en su cache de autenticacion (`auth_cache_ttl`, 300 s, por
+  servicio, buzon y contrasena) y sigue aceptando al cliente que entro en ese tiempo sin preguntar
+  a mail-auth, y las sesiones IMAP y POP3 abiertas siguen hasta que el cliente vuelve a
+  autenticarse. `make e2e-mail` comprueba la baja con un buzon sin entrada en la cache. Falta que el
+  servicio de celda que habla con los motores (mail-security) vacie esa entrada y cierre las
+  sesiones (`doveadm auth cache flush` y `doveadm kick`) al recibir `mail.mailbox.updated` o
+  `mail.mailbox.credentials_changed`.
 
 ### 5.5 Webmail por celda (V, 2026-09-13)
 
@@ -891,5 +961,6 @@ Pendiente (P):
 | Un servicio del plano de empresa (`domain-service`) solo escribe en la instancia de la celda de la empresa: sin celda resuelta o sin instancia declarada no llama a ninguna, y el 403 `TENANT_NOT_IN_CELL` es un fallo que se reintenta, nunca un exito (5.4) | V (2026-09-13) |
 | El webmail de un buzon se sirve en la celda de su dominio: el gateway lleva el inicio de sesion por el dominio del buzon y el resto por la celda del token, y cada instancia solo acepta tokens de su celda; un dominio desconocido responde como una contrasena mala (5.5) | V (2026-09-13; con `GATEWAY_BASE_CELL_CODE` y `WEBMAIL_CELL_HOSTS`) |
 | Un dominio de correo solo esta activo en una empresa y una celda: se reclama en el indice global de organization antes de activarlo y se suelta despues de desactivarlo (5.5) | V (2026-09-13) |
+| Una empresa dada de baja deja de recibir, reenviar y autenticar en su celda antes de salir del registro, nada vuelve a encender su directorio y sus dominios se sueltan del indice solo despues (5.4) | V (2026-09-15) |
 | Un servicio de empresa solo abre su esquema y no el registro (credencial por servicio) | P (5.2) |
 | Respaldo por base y restauracion probada semanalmente (`ops/backup`) | V (scripts), P (programados en este entorno) |

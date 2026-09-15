@@ -10,7 +10,6 @@ import (
 	"testing"
 
 	"github.com/alonsosss/corforce-email/pkg/tenantcell"
-	"github.com/alonsosss/corforce-email/services/domain-service/internal/adapters/cellcli"
 	"github.com/alonsosss/corforce-email/services/domain-service/internal/domain"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
@@ -40,7 +39,7 @@ func nuevo(t *testing.T, status int, cuerpo string) (*Client, func() []recibido)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return New(cellcli.New("mail-directory", targets, "token-interno", zap.NewNop())), func() []recibido {
+	return New(tenantcell.NewCaller("mail-directory", targets, "token-interno", zap.NewNop(), tenantcell.CallerOptions{})), func() []recibido {
 		mu.Lock()
 		defer mu.Unlock()
 		return append([]recibido(nil), got...)
@@ -66,6 +65,17 @@ func TestConBuzonesNoSeDesactiva(t *testing.T) {
 	}
 }
 
+// Una empresa dada de baja en la celda no activa nada: su 409 no es un dominio con buzones.
+func TestUnaEmpresaDadaDeBajaNoSeActiva(t *testing.T) {
+	c, _ := nuevo(t, http.StatusConflict, `{"error":{"code":"TENANT_RETIRED","message":"x"}}`)
+	for _, active := range []bool{true, false} {
+		err := c.SetActivation(context.Background(), uuid.New(), "acme.test", active)
+		if !errors.Is(err, domain.ErrTenantBeingRemoved) || errors.Is(err, domain.ErrDomainHasMailboxes) {
+			t.Errorf("active=%v: %v", active, err)
+		}
+	}
+}
+
 // mail-directory da de alta el dominio que no tiene: un 404, con o sin sobre, es una instancia
 // que no sirve la ruta y la desactivacion no esta hecha.
 func TestUn404NoEsUnaDesactivacionHecha(t *testing.T) {
@@ -81,7 +91,7 @@ func TestInstanciaDeOtraCeldaEsErrorDeConfiguracion(t *testing.T) {
 	c, _ := nuevo(t, http.StatusForbidden, `{"error":{"code":"TENANT_NOT_IN_CELL","message":"x"}}`)
 	for _, active := range []bool{true, false} {
 		err := c.SetActivation(context.Background(), uuid.New(), "acme.test", active)
-		if !errors.Is(err, cellcli.ErrNotInCell) || errors.Is(err, domain.ErrDomainHasMailboxes) {
+		if !errors.Is(err, tenantcell.ErrNotInCell) || errors.Is(err, domain.ErrDomainHasMailboxes) {
 			t.Errorf("active=%v: %v", active, err)
 		}
 	}

@@ -7,9 +7,9 @@ import (
 )
 
 // El alta y la baja de una empresa son sagas: pasos que llaman al dueno de cada dato (la
-// base de la empresa, access-control, identity), todos idempotentes, con el paso alcanzado
-// guardado en organization.tenant_sagas para retomarlos tras una caida o deshacerlos si
-// fallan.
+// base de la empresa, access-control, identity, el directorio de correo de su celda), todos
+// idempotentes, con el paso alcanzado guardado en organization.tenant_sagas para retomarlos tras
+// una caida o deshacerlos si fallan.
 
 // Operaciones de una saga.
 const (
@@ -39,18 +39,22 @@ const (
 	StepActivated        = "activated"
 )
 
-// Pasos de la baja, en orden.
+// Pasos de la baja, en orden. Los dos de correo van detras de database_dropped para que una baja
+// guardada en ese paso por una version anterior los haga al retomarse.
 const (
-	StepDeletionStarted = "deletion_started"
-	StepRolesRemoved    = "roles_removed"
-	StepUsersRemoved    = "users_removed"
-	StepDatabaseDropped = "database_dropped"
+	StepDeletionStarted     = "deletion_started"
+	StepRolesRemoved        = "roles_removed"
+	StepUsersRemoved        = "users_removed"
+	StepDatabaseDropped     = "database_dropped"
+	StepMailRetired         = "mail_retired"
+	StepMailDomainsReleased = "mail_domains_released"
 )
 
 var (
 	createSteps = []string{StepRegistered, StepDatabaseCreated, StepDatabaseMigrated, StepRoleSeeded,
 		StepUserCreated, StepRoleAssigned, StepActivated}
-	deleteSteps = []string{StepDeletionStarted, StepRolesRemoved, StepUsersRemoved, StepDatabaseDropped}
+	deleteSteps = []string{StepDeletionStarted, StepRolesRemoved, StepUsersRemoved, StepDatabaseDropped,
+		StepMailRetired, StepMailDomainsReleased}
 )
 
 // TenantSaga es el estado persistido del alta o la baja de una empresa.

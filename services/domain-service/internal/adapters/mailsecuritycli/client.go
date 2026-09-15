@@ -7,19 +7,19 @@ import (
 	"net/http"
 	"net/url"
 
-	"github.com/alonsosss/corforce-email/services/domain-service/internal/adapters/cellcli"
+	"github.com/alonsosss/corforce-email/pkg/tenantcell"
 	"github.com/alonsosss/corforce-email/services/domain-service/internal/ports"
 	"github.com/google/uuid"
 )
 
-// Client entrega las claves DKIM a mail-security de la celda de la empresa (cellcli), que las
-// escribe en el Redis de sus motores (DKIM_PRIV_KEYS y DKIM_SELECTORS). La clave privada viaja
-// solo en el cuerpo de esta llamada interna y no se registra en ningun log.
+// Client entrega las claves DKIM a mail-security de la celda de la empresa (tenantcell.Caller),
+// que las escribe en el Redis de sus motores (DKIM_PRIV_KEYS y DKIM_SELECTORS). La clave privada
+// viaja solo en el cuerpo de esta llamada interna y no se registra en ningun log.
 type Client struct {
-	cell *cellcli.Caller
+	cell *tenantcell.Caller
 }
 
-func New(cell *cellcli.Caller) *Client {
+func New(cell *tenantcell.Caller) *Client {
 	return &Client{cell: cell}
 }
 

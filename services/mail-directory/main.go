@@ -85,6 +85,7 @@ func main() {
 		RecipientMap: postgres.NewRecipientMapRepo(ctxPool),
 		BCCMaps:      postgres.NewBCCMapRepo(ctxPool),
 		Senders:      postgres.NewSenderIdentityRepo(ctxPool),
+		Retirements:  postgres.NewRetirementRepo(ctxPool),
 		Secrets:      secrets.New(),
 		Events:       outboxadapter.NewPublisher(ctxPool),
 		Logger:       logger,

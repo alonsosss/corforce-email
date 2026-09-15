@@ -19,8 +19,8 @@ import (
 
 // ClaimMailDomain registra que el dominio es de la empresa y devuelve el nombre normalizado y la
 // celda donde se activara. Es idempotente para la misma empresa. ErrMailDomainClaimed si otra
-// empresa lo tiene activo; ErrTenantNotFound si la empresa no existe; ErrInvalidMailDomain si el
-// nombre no es un dominio.
+// empresa lo tiene activo; ErrTenantBeingRemoved si la empresa tiene la baja en curso;
+// ErrTenantNotFound si la empresa no existe; ErrInvalidMailDomain si el nombre no es un dominio.
 func (uc *OrganizationUseCase) ClaimMailDomain(ctx context.Context, tenantID uuid.UUID, raw string) (string, *domain.Cell, error) {
 	name, err := domain.NormalizeMailDomain(raw)
 	if err != nil {

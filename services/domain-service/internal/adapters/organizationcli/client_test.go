@@ -75,11 +75,13 @@ func TestRespuestasDeOrganization(t *testing.T) {
 	tenant := uuid.New()
 	ctx := context.Background()
 	for nombre, c := range map[string]struct {
-		replies []reply
-		claimed bool
-		ok      bool
+		replies  []reply
+		claimed  bool
+		removing bool
+		ok       bool
 	}{
 		"de otra empresa":      {replies: []reply{{http.StatusConflict, `{"error":{"code":"MAIL_DOMAIN_CLAIMED","message":"x"}}`}}, claimed: true},
+		"empresa en baja":      {replies: []reply{{http.StatusConflict, `{"error":{"code":"TENANT_BEING_REMOVED","message":"x"}}`}}, removing: true},
 		"409 con otro codigo":  {replies: []reply{{http.StatusConflict, `{"error":{"code":"OTRO","message":"x"}}`}}},
 		"empresa desconocida":  {replies: []reply{{http.StatusNotFound, `{"error":{"code":"TENANT_NOT_FOUND","message":"x"}}`}}},
 		"ruta que no se sirve": {replies: []reply{{http.StatusNotFound, `404 page not found`}}},
@@ -94,6 +96,8 @@ func TestRespuestasDeOrganization(t *testing.T) {
 		case !c.ok && err == nil:
 			t.Errorf("%s: se dio por reclamado", nombre)
 		case errors.Is(err, domain.ErrDomainClaimedElsewhere) != c.claimed:
+			t.Errorf("%s: %v", nombre, err)
+		case errors.Is(err, domain.ErrTenantBeingRemoved) != c.removing:
 			t.Errorf("%s: %v", nombre, err)
 		}
 	}

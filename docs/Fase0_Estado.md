@@ -218,7 +218,8 @@ cambie cualquiera de estas líneas.
   entonces la activa. Un fallo se deshace en orden inverso y deja la saga en `failed`; una
   caída deja el paso guardado y el reintento sigue desde él, y el barrido de `organization`
   termina o deshace lo que quede sin dueño. La baja retira roles y cuentas por las mismas
-  APIs y se retoma hasta terminar. Rutas, contrato y comportamiento en
+  APIs, da de baja el correo de la empresa en el directorio de su celda y suelta sus dominios
+  del índice global (2026-09-15), y se retoma hasta terminar. Rutas, contrato y comportamiento en
   `Usuarios_Roles_y_Acceso.md`, sección 7. `make check-coupling` pasa con
   `coupling-allowlist.txt` y `coupling-writes-allowlist.txt` vacías.
 

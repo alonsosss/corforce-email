@@ -19,7 +19,6 @@ import (
 	"github.com/alonsosss/corforce-email/pkg/response"
 	"github.com/alonsosss/corforce-email/pkg/server"
 	"github.com/alonsosss/corforce-email/pkg/tenantcell"
-	"github.com/alonsosss/corforce-email/services/domain-service/internal/adapters/cellcli"
 	dnsadapter "github.com/alonsosss/corforce-email/services/domain-service/internal/adapters/dns"
 	handler "github.com/alonsosss/corforce-email/services/domain-service/internal/adapters/http"
 	"github.com/alonsosss/corforce-email/services/domain-service/internal/adapters/maildirectorycli"
@@ -200,8 +199,8 @@ func main() {
 		Repo:                 postgres.NewRepository(ctxPool),
 		DNS:                  dnsadapter.New(st.dnsResolver),
 		Cipher:               keyRing,
-		MailDirectory:        maildirectorycli.New(cellcli.New("mail-directory", st.directoryTargets, st.internalToken, logger)),
-		MailSecurity:         mailsecuritycli.New(cellcli.New("mail-security", st.securityTargets, st.internalToken, logger)),
+		MailDirectory:        maildirectorycli.New(tenantcell.NewCaller("mail-directory", st.directoryTargets, st.internalToken, logger, tenantcell.CallerOptions{})),
+		MailSecurity:         mailsecuritycli.New(tenantcell.NewCaller("mail-security", st.securityTargets, st.internalToken, logger, tenantcell.CallerOptions{})),
 		DomainIndex:          organizationcli.New(st.organizationURL, st.internalToken),
 		Events:               publisher,
 		Platform:             st.platform,

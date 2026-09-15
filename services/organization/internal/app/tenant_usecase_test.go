@@ -21,33 +21,42 @@ func cellsFixture() []*domain.Cell {
 }
 
 type tenantHarness struct {
-	uc      *OrganizationUseCase
-	tenants *fakeTenantRepo
-	cells   *fakeCellRepo
-	sagas   *fakeSagaRepo
-	prov    *fakeProvisioner
-	access  *fakeAccess
-	ident   *fakeIdentity
-	pub     *fakePublisher
-	log     *callLog
+	uc        *OrganizationUseCase
+	tenants   *fakeTenantRepo
+	cells     *fakeCellRepo
+	sagas     *fakeSagaRepo
+	prov      *fakeProvisioner
+	access    *fakeAccess
+	ident     *fakeIdentity
+	pub       *fakePublisher
+	index     *fakeMailDomains
+	directory *fakeMailDirectory
+	log       *callLog
 }
 
 func newTenantHarness(defaultCell string) *tenantHarness {
 	log := &callLog{}
 	tenants := &fakeTenantRepo{}
 	h := &tenantHarness{
-		tenants: tenants,
-		cells:   &fakeCellRepo{cells: cellsFixture()},
-		sagas:   newFakeSagaRepo(tenants),
-		prov:    &fakeProvisioner{log: log},
-		access:  newFakeAccess(log),
-		ident:   newFakeIdentity(log),
-		pub:     &fakePublisher{},
-		log:     log,
+		tenants:   tenants,
+		cells:     &fakeCellRepo{cells: cellsFixture()},
+		sagas:     newFakeSagaRepo(tenants),
+		prov:      &fakeProvisioner{log: log},
+		access:    newFakeAccess(log),
+		ident:     newFakeIdentity(log),
+		pub:       &fakePublisher{},
+		index:     &fakeMailDomains{owners: map[string]uuid.UUID{}, log: log},
+		directory: &fakeMailDirectory{log: log, tenants: tenants},
+		log:       log,
+	}
+	h.index.removing = func(tenantID uuid.UUID) bool {
+		s, ok := h.sagas.sagas[tenantID]
+		return ok && s.Operation == domain.SagaDelete
 	}
 	h.uc = NewOrganizationUseCase(Dependencies{
 		Tenants: h.tenants, Cells: h.cells, Sagas: h.sagas, Provisioner: h.prov,
 		Access: h.access, Identity: h.ident, Publisher: h.pub,
+		MailDomains: h.index, MailDirectory: h.directory,
 		DefaultCellCode: defaultCell, SagaLease: time.Minute,
 	})
 	return h
@@ -235,7 +244,7 @@ func TestDeleteTenantExigeQueNoEsteActivo(t *testing.T) {
 	if err := h.uc.DeleteTenant(ctx, tenant.ID); err != nil {
 		t.Fatalf("borrar inactivo: %v", err)
 	}
-	if want := []string{"access.remove", "identity.remove"}; !reflect.DeepEqual(h.log.calls, want) {
+	if want := []string{"access.remove", "identity.remove", "mail.retire", "index.release"}; !reflect.DeepEqual(h.log.calls, want) {
 		t.Errorf("pasos de la baja = %v; want %v", h.log.calls, want)
 	}
 	if len(h.tenants.tenants) != 0 || len(h.sagas.sagas) != 0 {

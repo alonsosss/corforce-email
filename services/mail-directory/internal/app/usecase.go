@@ -36,6 +36,7 @@ type Deps struct {
 	RecipientMap ports.RecipientMapRepository
 	BCCMaps      ports.BCCMapRepository
 	Senders      ports.SenderIdentityRepository
+	Retirements  ports.RetirementRepository
 	Secrets      ports.Secrets
 	Events       ports.EventPublisher
 	Logger       *zap.Logger
@@ -57,6 +58,7 @@ type UseCase struct {
 	recipientMap ports.RecipientMapRepository
 	bccMaps      ports.BCCMapRepository
 	senders      ports.SenderIdentityRepository
+	retirements  ports.RetirementRepository
 	secrets      ports.Secrets
 	events       ports.EventPublisher
 	logger       *zap.Logger
@@ -72,8 +74,25 @@ func New(d Deps) *UseCase {
 		appPasswords: d.AppPasswords, sieve: d.Sieve, aliases: d.Aliases, spamAliases: d.SpamAliases,
 		senderACL: d.SenderACL, relayhosts: d.Relayhosts, transports: d.Transports,
 		tlsPolicies: d.TLSPolicies, recipientMap: d.RecipientMap, bccMaps: d.BCCMaps,
-		senders: d.Senders, secrets: d.Secrets, events: d.Events, logger: logger,
+		senders: d.Senders, retirements: d.Retirements, secrets: d.Secrets, events: d.Events, logger: logger,
 	}
+}
+
+// writeTx abre la transaccion de una escritura en el directorio de la empresa. Una empresa dada de
+// baja en la celda (RetireTenant) no escribe nada: ErrTenantRetired. El cerrojo compartido de la
+// empresa ordena la escritura respecto de la baja, que toma el exclusivo: la que llega segunda
+// espera a la primera, asi que nada de lo que la baja apaga vuelve a encenderse despues de ella.
+func (uc *UseCase) writeTx(ctx context.Context, tenantID uuid.UUID, fn func(ctx context.Context) error) error {
+	return uc.tx.InTx(ctx, func(ctx context.Context) error {
+		retired, err := uc.retirements.HoldShared(ctx, tenantID)
+		if err != nil {
+			return err
+		}
+		if retired {
+			return domain.ErrTenantRetired
+		}
+		return fn(ctx)
+	})
 }
 
 // Scope es quien actua: la empresa de la peticion y si ademas opera la plataforma (lo

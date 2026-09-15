@@ -117,7 +117,7 @@ func (uc *UseCase) CreateMailbox(ctx context.Context, tenantID uuid.UUID, req Cr
 		SMTPAccess: boolOr(req.SMTPAccess, true), SieveAccess: boolOr(req.SieveAccess, true),
 		ForcePwUpdate: req.ForcePwUpdate,
 	}
-	err = uc.tx.InTx(ctx, func(ctx context.Context) error {
+	err = uc.writeTx(ctx, tenantID, func(ctx context.Context) error {
 		d, err := uc.ownDomain(ctx, tenantID, name)
 		if err != nil {
 			return err
@@ -176,7 +176,7 @@ func (uc *UseCase) UpdateMailbox(ctx context.Context, tenantID, id uuid.UUID, re
 		}
 	}
 	var m *domain.Mailbox
-	err := uc.tx.InTx(ctx, func(ctx context.Context) error {
+	err := uc.writeTx(ctx, tenantID, func(ctx context.Context) error {
 		var err error
 		m, err = uc.mailboxes.Get(ctx, tenantID, id)
 		if err != nil {
@@ -260,7 +260,7 @@ func applyMailboxUpdate(m *domain.Mailbox, req UpdateMailboxRequest) {
 // entregaban en el. El uso de cuota se borra ANTES que el buzon: la politica que lo
 // permite exige que el buzon exista.
 func (uc *UseCase) DeleteMailbox(ctx context.Context, tenantID, id uuid.UUID) error {
-	return uc.tx.InTx(ctx, func(ctx context.Context) error {
+	return uc.writeTx(ctx, tenantID, func(ctx context.Context) error {
 		m, err := uc.mailboxes.Get(ctx, tenantID, id)
 		if err != nil {
 			return err
@@ -291,7 +291,7 @@ func (uc *UseCase) SetMailboxPassword(ctx context.Context, tenantID, id uuid.UUI
 	if err != nil {
 		return err
 	}
-	return uc.tx.InTx(ctx, func(ctx context.Context) error {
+	return uc.writeTx(ctx, tenantID, func(ctx context.Context) error {
 		m, err := uc.mailboxes.Get(ctx, tenantID, id)
 		if err != nil {
 			return err
@@ -387,7 +387,7 @@ func (uc *UseCase) CreateAppPassword(ctx context.Context, tenantID, mailboxID uu
 		SMTPAccess: boolOr(req.SMTPAccess, true), SieveAccess: boolOr(req.SieveAccess, true),
 		DAVAccess: boolOr(req.DAVAccess, true), Active: true,
 	}
-	err = uc.tx.InTx(ctx, func(ctx context.Context) error {
+	err = uc.writeTx(ctx, tenantID, func(ctx context.Context) error {
 		if _, err := uc.mailboxes.Get(ctx, tenantID, mailboxID); err != nil {
 			return err
 		}
@@ -404,7 +404,7 @@ func (uc *UseCase) UpdateAppPassword(ctx context.Context, tenantID, mailboxID, i
 		return nil, domain.ErrNothingToUpdate
 	}
 	var p *domain.AppPassword
-	err := uc.tx.InTx(ctx, func(ctx context.Context) error {
+	err := uc.writeTx(ctx, tenantID, func(ctx context.Context) error {
 		var err error
 		p, err = uc.appPasswords.Get(ctx, tenantID, mailboxID, id)
 		if err != nil {
@@ -428,7 +428,7 @@ func (uc *UseCase) UpdateAppPassword(ctx context.Context, tenantID, mailboxID, i
 }
 
 func (uc *UseCase) DeleteAppPassword(ctx context.Context, tenantID, mailboxID, id uuid.UUID) error {
-	return uc.tx.InTx(ctx, func(ctx context.Context) error {
+	return uc.writeTx(ctx, tenantID, func(ctx context.Context) error {
 		if _, err := uc.appPasswords.Get(ctx, tenantID, mailboxID, id); err != nil {
 			return err
 		}
@@ -486,7 +486,7 @@ func (uc *UseCase) PutMailboxSieve(ctx context.Context, tenantID, mailboxID uuid
 			}
 		}
 	}
-	err := uc.tx.InTx(ctx, func(ctx context.Context) error {
+	err := uc.writeTx(ctx, tenantID, func(ctx context.Context) error {
 		m, err := uc.mailboxes.Get(ctx, tenantID, mailboxID)
 		if err != nil {
 			return err

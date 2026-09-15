@@ -424,6 +424,27 @@ func (f *fakeIdentity) RemoveTenantUsers(_ context.Context, tenantID uuid.UUID) 
 	return nil
 }
 
+// fakeMailDirectory hace de mail-directory de cada celda: anota en que celda se dio de baja cada
+// empresa y si organization aun la tenia registrada en ese momento.
+type fakeMailDirectory struct {
+	log        *callLog
+	tenants    *fakeTenantRepo
+	retired    map[uuid.UUID]string
+	registered map[uuid.UUID]bool
+}
+
+func (f *fakeMailDirectory) RetireTenant(ctx context.Context, cellCode string, tenantID uuid.UUID) error {
+	if err := f.log.record("mail.retire"); err != nil {
+		return err
+	}
+	if f.retired == nil {
+		f.retired, f.registered = map[uuid.UUID]string{}, map[uuid.UUID]bool{}
+	}
+	_, err := f.tenants.GetByID(ctx, tenantID)
+	f.retired[tenantID], f.registered[tenantID] = cellCode, err == nil
+	return nil
+}
+
 // fakeModulesRepo mantiene catalogo y estado por tenant en memoria.
 type fakeModulesRepo struct {
 	catalog []domain.ModuleCatalogEntry

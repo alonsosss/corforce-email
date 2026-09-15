@@ -12,7 +12,6 @@ import (
 	"testing"
 
 	"github.com/alonsosss/corforce-email/pkg/tenantcell"
-	"github.com/alonsosss/corforce-email/services/domain-service/internal/adapters/cellcli"
 	"github.com/alonsosss/corforce-email/services/domain-service/internal/ports"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
@@ -41,7 +40,7 @@ func nuevo(t *testing.T, responder func(n int, w http.ResponseWriter)) (*Client,
 	if err != nil {
 		t.Fatal(err)
 	}
-	return New(cellcli.New("mail-security", targets, "token-interno", zap.NewNop())), func() []recibido {
+	return New(tenantcell.NewCaller("mail-security", targets, "token-interno", zap.NewNop(), tenantcell.CallerOptions{})), func() []recibido {
 		mu.Lock()
 		defer mu.Unlock()
 		return append([]recibido(nil), got...)
@@ -123,11 +122,11 @@ func TestUn404NoEsUnaClaveRetirada(t *testing.T) {
 
 func TestInstanciaDeOtraCeldaEsErrorDeConfiguracion(t *testing.T) {
 	c, _ := nuevo(t, siempre(http.StatusForbidden, `{"error":{"code":"TENANT_NOT_IN_CELL","message":"x"}}`))
-	if err := c.DeleteDKIM(context.Background(), uuid.New(), "acme.test"); !errors.Is(err, cellcli.ErrNotInCell) {
+	if err := c.DeleteDKIM(context.Background(), uuid.New(), "acme.test"); !errors.Is(err, tenantcell.ErrNotInCell) {
 		t.Errorf("DELETE: %v", err)
 	}
 	err := c.PublishDKIM(context.Background(), uuid.New(), "acme.test", []ports.DKIMKey{{Selector: "cfm202609", PrivateKeyPEM: "A"}})
-	if !errors.Is(err, cellcli.ErrNotInCell) {
+	if !errors.Is(err, tenantcell.ErrNotInCell) {
 		t.Errorf("PUT: %v", err)
 	}
 }

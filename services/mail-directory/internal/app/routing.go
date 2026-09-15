@@ -66,7 +66,7 @@ func (uc *UseCase) CreateSenderACL(ctx context.Context, tenantID uuid.UUID, req 
 		return nil, err
 	}
 	a := &domain.SenderACL{ID: uuid.New(), TenantID: tenantID, LoggedInAs: loggedInAs, External: req.External}
-	err = uc.tx.InTx(ctx, func(ctx context.Context) error {
+	err = uc.writeTx(ctx, tenantID, func(ctx context.Context) error {
 		if _, err := uc.ownMailbox(ctx, tenantID, loggedInAs); err != nil {
 			return err
 		}
@@ -88,7 +88,7 @@ func (uc *UseCase) UpdateSenderACL(ctx context.Context, tenantID, id uuid.UUID, 
 		return nil, domain.ErrNothingToUpdate
 	}
 	var a *domain.SenderACL
-	err := uc.tx.InTx(ctx, func(ctx context.Context) error {
+	err := uc.writeTx(ctx, tenantID, func(ctx context.Context) error {
 		var err error
 		a, err = uc.senderACL.Get(ctx, tenantID, id)
 		if err != nil {
@@ -111,7 +111,7 @@ func (uc *UseCase) UpdateSenderACL(ctx context.Context, tenantID, id uuid.UUID, 
 }
 
 func (uc *UseCase) DeleteSenderACL(ctx context.Context, tenantID, id uuid.UUID) error {
-	return uc.tx.InTx(ctx, func(ctx context.Context) error {
+	return uc.writeTx(ctx, tenantID, func(ctx context.Context) error {
 		if _, err := uc.senderACL.Get(ctx, tenantID, id); err != nil {
 			return err
 		}
@@ -160,7 +160,7 @@ func (uc *UseCase) CreateRelayhost(ctx context.Context, tenantID uuid.UUID, req 
 		ID: uuid.New(), TenantID: tenantID, Hostname: host, Username: strings.TrimSpace(req.Username),
 		HasPassword: req.Password != "", Active: boolOr(req.Active, true),
 	}
-	err = uc.tx.InTx(ctx, func(ctx context.Context) error {
+	err = uc.writeTx(ctx, tenantID, func(ctx context.Context) error {
 		return uc.relayhosts.Create(ctx, r, req.Password)
 	})
 	if err != nil {
@@ -174,7 +174,7 @@ func (uc *UseCase) UpdateRelayhost(ctx context.Context, tenantID, id uuid.UUID, 
 		return nil, domain.ErrNothingToUpdate
 	}
 	var r *domain.Relayhost
-	err := uc.tx.InTx(ctx, func(ctx context.Context) error {
+	err := uc.writeTx(ctx, tenantID, func(ctx context.Context) error {
 		var err error
 		r, err = uc.relayhosts.Get(ctx, tenantID, id)
 		if err != nil {
@@ -201,7 +201,7 @@ func (uc *UseCase) UpdateRelayhost(ctx context.Context, tenantID, id uuid.UUID, 
 }
 
 func (uc *UseCase) DeleteRelayhost(ctx context.Context, tenantID, id uuid.UUID) error {
-	return uc.tx.InTx(ctx, func(ctx context.Context) error {
+	return uc.writeTx(ctx, tenantID, func(ctx context.Context) error {
 		if _, err := uc.relayhosts.Get(ctx, tenantID, id); err != nil {
 			return err
 		}
@@ -280,7 +280,7 @@ func (uc *UseCase) CreateTransport(ctx context.Context, scope Scope, req CreateT
 		tenantID := scope.TenantID
 		t.TenantID = &tenantID
 	}
-	err = uc.tx.InTx(ctx, func(ctx context.Context) error {
+	err = uc.writeTx(ctx, scope.TenantID, func(ctx context.Context) error {
 		return uc.transports.Create(ctx, t, req.Password)
 	})
 	if err != nil {
@@ -294,7 +294,7 @@ func (uc *UseCase) UpdateTransport(ctx context.Context, scope Scope, id uuid.UUI
 		return nil, domain.ErrNothingToUpdate
 	}
 	var t *domain.Transport
-	err := uc.tx.InTx(ctx, func(ctx context.Context) error {
+	err := uc.writeTx(ctx, scope.TenantID, func(ctx context.Context) error {
 		var err error
 		t, err = uc.transports.Get(ctx, scope.transportScope(), id)
 		if err != nil {
@@ -330,7 +330,7 @@ func (uc *UseCase) UpdateTransport(ctx context.Context, scope Scope, id uuid.UUI
 }
 
 func (uc *UseCase) DeleteTransport(ctx context.Context, scope Scope, id uuid.UUID) error {
-	return uc.tx.InTx(ctx, func(ctx context.Context) error {
+	return uc.writeTx(ctx, scope.TenantID, func(ctx context.Context) error {
 		t, err := uc.transports.Get(ctx, scope.transportScope(), id)
 		if err != nil {
 			return err
@@ -385,7 +385,7 @@ func (uc *UseCase) CreateTLSPolicy(ctx context.Context, tenantID uuid.UUID, req 
 		ID: uuid.New(), TenantID: tenantID, Dest: dest, Policy: req.Policy,
 		Parameters: strings.TrimSpace(req.Parameters), Active: boolOr(req.Active, true),
 	}
-	err = uc.tx.InTx(ctx, func(ctx context.Context) error { return uc.tlsPolicies.Create(ctx, p) })
+	err = uc.writeTx(ctx, tenantID, func(ctx context.Context) error { return uc.tlsPolicies.Create(ctx, p) })
 	if err != nil {
 		return nil, err
 	}
@@ -402,7 +402,7 @@ func (uc *UseCase) UpdateTLSPolicy(ctx context.Context, tenantID, id uuid.UUID, 
 		}
 	}
 	var p *domain.TLSPolicy
-	err := uc.tx.InTx(ctx, func(ctx context.Context) error {
+	err := uc.writeTx(ctx, tenantID, func(ctx context.Context) error {
 		var err error
 		p, err = uc.tlsPolicies.Get(ctx, tenantID, id)
 		if err != nil {
@@ -424,7 +424,7 @@ func (uc *UseCase) UpdateTLSPolicy(ctx context.Context, tenantID, id uuid.UUID, 
 }
 
 func (uc *UseCase) DeleteTLSPolicy(ctx context.Context, tenantID, id uuid.UUID) error {
-	return uc.tx.InTx(ctx, func(ctx context.Context) error {
+	return uc.writeTx(ctx, tenantID, func(ctx context.Context) error {
 		if _, err := uc.tlsPolicies.Get(ctx, tenantID, id); err != nil {
 			return err
 		}
@@ -473,7 +473,7 @@ func (uc *UseCase) CreateRecipientMap(ctx context.Context, tenantID uuid.UUID, r
 		return nil, err
 	}
 	m := &domain.RecipientMap{ID: uuid.New(), TenantID: tenantID, OldDest: oldDest, NewDest: newDest, Active: boolOr(req.Active, true)}
-	err = uc.tx.InTx(ctx, func(ctx context.Context) error {
+	err = uc.writeTx(ctx, tenantID, func(ctx context.Context) error {
 		if err := uc.ownsDomainOrAlias(ctx, tenantID, domainPart); err != nil {
 			return err
 		}
@@ -497,7 +497,7 @@ func (uc *UseCase) UpdateRecipientMap(ctx context.Context, tenantID, id uuid.UUI
 		}
 	}
 	var m *domain.RecipientMap
-	err := uc.tx.InTx(ctx, func(ctx context.Context) error {
+	err := uc.writeTx(ctx, tenantID, func(ctx context.Context) error {
 		var err error
 		m, err = uc.recipientMap.Get(ctx, tenantID, id)
 		if err != nil {
@@ -516,7 +516,7 @@ func (uc *UseCase) UpdateRecipientMap(ctx context.Context, tenantID, id uuid.UUI
 }
 
 func (uc *UseCase) DeleteRecipientMap(ctx context.Context, tenantID, id uuid.UUID) error {
-	return uc.tx.InTx(ctx, func(ctx context.Context) error {
+	return uc.writeTx(ctx, tenantID, func(ctx context.Context) error {
 		if _, err := uc.recipientMap.Get(ctx, tenantID, id); err != nil {
 			return err
 		}
@@ -571,7 +571,7 @@ func (uc *UseCase) CreateBCCMap(ctx context.Context, tenantID uuid.UUID, req Cre
 		ID: uuid.New(), TenantID: tenantID, LocalDest: localDest, BCCDest: bccDest, Domain: domainPart,
 		Type: req.Type, Active: boolOr(req.Active, false),
 	}
-	err = uc.tx.InTx(ctx, func(ctx context.Context) error {
+	err = uc.writeTx(ctx, tenantID, func(ctx context.Context) error {
 		if err := uc.ownsDomainOrAlias(ctx, tenantID, domainPart); err != nil {
 			return err
 		}
@@ -600,7 +600,7 @@ func (uc *UseCase) UpdateBCCMap(ctx context.Context, tenantID, id uuid.UUID, req
 		}
 	}
 	var m *domain.BCCMap
-	err := uc.tx.InTx(ctx, func(ctx context.Context) error {
+	err := uc.writeTx(ctx, tenantID, func(ctx context.Context) error {
 		var err error
 		m, err = uc.bccMaps.Get(ctx, tenantID, id)
 		if err != nil {
@@ -622,7 +622,7 @@ func (uc *UseCase) UpdateBCCMap(ctx context.Context, tenantID, id uuid.UUID, req
 }
 
 func (uc *UseCase) DeleteBCCMap(ctx context.Context, tenantID, id uuid.UUID) error {
-	return uc.tx.InTx(ctx, func(ctx context.Context) error {
+	return uc.writeTx(ctx, tenantID, func(ctx context.Context) error {
 		if _, err := uc.bccMaps.Get(ctx, tenantID, id); err != nil {
 			return err
 		}

@@ -23,25 +23,53 @@ func NewMailDomainRepo(pool *pgxpool.Pool) *MailDomainRepo {
 
 // Claim inserta el dominio para la empresa o, si ya es suyo, solo sella updated_at. Si es de otra
 // empresa la condicion del ON CONFLICT no se cumple y no vuelve ninguna fila: una sola sentencia,
-// sin carrera entre dos empresas que lo reclaman a la vez.
+// sin carrera entre dos empresas que lo reclaman a la vez. Una empresa con la baja en curso no
+// inserta ni confirma nada, y la saga suelta despues todo lo suyo (ReleaseTenant); lo que aun
+// asi quedara cae con la empresa.
 func (r *MailDomainRepo) Claim(ctx context.Context, name string, tenantID uuid.UUID) error {
 	var owner uuid.UUID
 	err := r.pool.QueryRow(ctx,
-		`INSERT INTO organization.mail_domain_cells (domain, tenant_id) VALUES ($1, $2)
+		`INSERT INTO organization.mail_domain_cells (domain, tenant_id)
+ SELECT $1::varchar, $2::uuid
+  WHERE NOT EXISTS (SELECT 1 FROM organization.tenant_sagas s WHERE s.tenant_id = $2::uuid AND s.operation = $3)
  ON CONFLICT (domain) DO UPDATE SET updated_at = NOW()
  WHERE organization.mail_domain_cells.tenant_id = EXCLUDED.tenant_id
  RETURNING tenant_id`,
-		name, tenantID,
+		name, tenantID, domain.SagaDelete,
 	).Scan(&owner)
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
-		return domain.ErrMailDomainClaimed
+		return r.claimRefusal(ctx, name, tenantID)
 	case pgErrorCode(err) == pgForeignKeyViolation:
 		return domain.ErrTenantNotFound
 	case err != nil:
 		return fmt.Errorf("reclamar el dominio %s: %w", name, err)
 	}
 	return nil
+}
+
+// claimRefusal distingue por que un reclamo no devolvio fila: la baja en curso de la empresa o un
+// dominio de otra empresa.
+func (r *MailDomainRepo) claimRefusal(ctx context.Context, name string, tenantID uuid.UUID) error {
+	var removing bool
+	if err := r.pool.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM organization.tenant_sagas WHERE tenant_id = $1 AND operation = $2)`,
+		tenantID, domain.SagaDelete,
+	).Scan(&removing); err != nil {
+		return fmt.Errorf("reclamar el dominio %s: %w", name, err)
+	}
+	if removing {
+		return domain.ErrTenantBeingRemoved
+	}
+	return domain.ErrMailDomainClaimed
+}
+
+func (r *MailDomainRepo) ReleaseTenant(ctx context.Context, tenantID uuid.UUID) (int64, error) {
+	tag, err := r.pool.Exec(ctx, `DELETE FROM organization.mail_domain_cells WHERE tenant_id = $1`, tenantID)
+	if err != nil {
+		return 0, fmt.Errorf("retirar los dominios de la empresa %s: %w", tenantID, err)
+	}
+	return tag.RowsAffected(), nil
 }
 
 func (r *MailDomainRepo) Release(ctx context.Context, name string, tenantID uuid.UUID) (bool, error) {

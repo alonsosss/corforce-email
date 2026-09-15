@@ -2,6 +2,7 @@ package ports
 
 import (
 	"context"
+	"time"
 
 	"github.com/alonsosss/corforce-email/services/mail-directory/internal/domain"
 	"github.com/google/uuid"
@@ -170,6 +171,30 @@ type BCCMapRepository interface {
 	Create(ctx context.Context, m *domain.BCCMap) error
 	Update(ctx context.Context, m *domain.BCCMap) error
 	Delete(ctx context.Context, tenantID, id uuid.UUID) error
+}
+
+// RetirementRepository guarda las bajas de empresa en la celda y apaga en bloque el directorio de
+// una empresa. Todo corre en la transaccion del caso de uso; los cerrojos son de esa transaccion.
+type RetirementRepository interface {
+	// HoldShared toma el cerrojo compartido de la empresa y dice si esta dada de baja. Lo toma
+	// cada escritura en su directorio: no se cruza con una baja en curso.
+	HoldShared(ctx context.Context, tenantID uuid.UUID) (retired bool, err error)
+	// HoldExclusive toma el cerrojo exclusivo de la empresa: espera a las escrituras en curso, y
+	// las que llegan despues esperan a la baja.
+	HoldExclusive(ctx context.Context, tenantID uuid.UUID) error
+	// Mark registra la baja si no estaba y devuelve cuando se registro.
+	Mark(ctx context.Context, tenantID uuid.UUID) (time.Time, error)
+	// Los Deactivate* apagan lo que sigue encendido de la empresa y devuelven las filas que
+	// cambiaron, para anunciar cada una.
+	DeactivateDomains(ctx context.Context, tenantID uuid.UUID) ([]domain.Domain, error)
+	DeactivateAliasDomains(ctx context.Context, tenantID uuid.UUID) ([]domain.AliasDomain, error)
+	DeactivateMailboxes(ctx context.Context, tenantID uuid.UUID) ([]domain.Mailbox, error)
+	DeactivateAliases(ctx context.Context, tenantID uuid.UUID) ([]domain.Alias, error)
+	// DeactivateSettings apaga las contrasenas de aplicacion, los relayhosts, los transportes de la
+	// empresa, las politicas TLS y los mapas de destinatario y de copia, borra las contrasenas SASL
+	// que Postfix guarda en claro y cuenta las filas que cambio. Ninguna de esas tablas tiene
+	// evento: los motores y mail-auth las leen en cada consulta.
+	DeactivateSettings(ctx context.Context, tenantID uuid.UUID) (domain.RetirementCounts, error)
 }
 
 // Secrets aisla el hash de contrasenas y la generacion de contrasenas de aplicacion.

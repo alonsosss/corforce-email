@@ -32,11 +32,14 @@ type CellRepository interface {
 // y retirar dominios; lo lee el gateway para llevar el webmail de cada buzon a su celda.
 type MailDomainIndex interface {
 	// Claim registra el dominio para la empresa; si ya es suyo solo lo confirma.
-	// ErrMailDomainClaimed si es de otra empresa; ErrTenantNotFound si la empresa no existe.
+	// ErrMailDomainClaimed si es de otra empresa; ErrTenantBeingRemoved si la empresa tiene la
+	// baja en curso (tampoco confirma uno suyo); ErrTenantNotFound si la empresa no existe.
 	Claim(ctx context.Context, name string, tenantID uuid.UUID) error
 	// Release retira el dominio si es de la empresa y dice si lo retiro. Si no esta, o es de
 	// otra empresa, no hace nada.
 	Release(ctx context.Context, name string, tenantID uuid.UUID) (bool, error)
+	// ReleaseTenant retira todos los dominios de la empresa y dice cuantos retiro.
+	ReleaseTenant(ctx context.Context, tenantID uuid.UUID) (int64, error)
 	// TenantOf devuelve la empresa del dominio o ErrMailDomainNotFound.
 	TenantOf(ctx context.Context, name string) (uuid.UUID, error)
 }
@@ -92,6 +95,15 @@ type AccessControl interface {
 	// RemoveTenantRoles borra los roles de una empresa que no esta activa, con sus
 	// asignaciones.
 	RemoveTenantRoles(ctx context.Context, tenantID uuid.UUID) error
+}
+
+// MailDirectory es lo que la baja de una empresa pide al directorio de correo de su celda
+// (mail-directory de esa celda) por su API interna.
+type MailDirectory interface {
+	// RetireTenant da de baja a la empresa en el directorio de la celda cellCode: nada suyo vuelve
+	// a recibir, reenviar ni autenticar ahi, y su directorio deja de admitir cambios. Solo vuelve
+	// sin error cuando la instancia de esa celda lo confirma. Idempotente.
+	RetireTenant(ctx context.Context, cellCode string, tenantID uuid.UUID) error
 }
 
 // FirstAdmin es el primer administrador de una empresa. La contrasena solo viaja a

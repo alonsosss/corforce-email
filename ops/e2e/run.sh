@@ -147,7 +147,10 @@ SERVICIOS_DE_CELDA=" mail-directory mail-auth mail-security "
 cp ops/e2e/dns_prueba.py "$WORK/bin/" && python3 "$WORK/bin/dns_prueba.py" "$DNS_PORT" "$WORK/zona.json" >"$WORK/log/dns.log" 2>&1 &
 
 echo "== Plano de control"
-arrancar organization
+# organization da de baja el correo de una empresa en el mail-directory de su celda: pe-01 en el
+# destino base y pe-02 en la instancia que arranca mas abajo (MD2_PORT). Los demas servicios del
+# host siguen sin celdas.
+GATEWAY_BASE_CELL_CODE=pe-01 MAIL_DIRECTORY_CELL_HOSTS="pe-02=127.0.0.1:$((BASE + 60))" arrancar organization
 esperar_salud organization "${PORT[organization]}" || exit 1
 
 echo "== Arranque de una plataforma vacia (ops/db/bootstrap-platform.sh)"
@@ -859,6 +862,41 @@ dkim_metricas() {
   echo no
 }
 expect "y lo cuenta en las metricas de mail-security, con su ultima pasada completa" "$(dkim_metricas)" "si"
+
+echo "== Baja de una empresa con correo en su celda"
+# La saga de baja de organization da de baja a beta en el mail-directory de pe-02, la instancia de
+# su celda, antes de retirarla del registro, y despues suelta beta.test del indice global. El buzon
+# de eva deja de autenticar en el mail-auth de su celda y el dominio se puede volver a reclamar.
+eva_en_pe02() {
+  curl -sk -o /dev/null -w '%{http_code}' -X POST "https://127.0.0.1:$MA2_TLS_PORT/" -H 'Content-Type: application/json' \
+    -d "{\"username\":\"eva@beta.test\",\"password\":\"$EVA_PASS\",\"real_rip\":\"10.20.0.6\",\"service\":\"imap\"}"
+}
+expect "antes de la baja eva autentica por IMAP en el mail-auth de pe-02" "$(eva_en_pe02)" "200"
+AS="Authorization: Bearer $(e2e_login "$ADMIN_EMAIL" "$ADMIN_PASS" | jget data.access_token)"
+expect "una empresa activa no se borra" "$(codigo -X DELETE "$GW/organizations/$BID" -H "$AS")" "409"
+expect "el superadmin deja a beta inactiva" \
+  "$(curl -s -X PATCH "$GW/organizations/$BID" -H "$AS" -H 'Content-Type: application/json' -d '{"status":"inactive"}' | jget data.status)" "inactive"
+expect "y la borra" "$(codigo -X DELETE "$GW/organizations/$BID" -H "$AS")" "204"
+expect "beta sale del registro" "$(sql mail_registry "SELECT count(*) FROM organization.tenants WHERE id = '$BID'")" "0"
+expect "y su base se conserva" "$(sql mail_registry "SELECT count(*) FROM pg_database WHERE datname = 'mail_tenant_beta'")" "1"
+expect "beta.test queda inactivo en el directorio de pe-02" "$(sql mail_cell_pe_02 "SELECT active FROM mail.domains WHERE domain = 'beta.test'")" "f"
+expect "y el buzon de eva tambien" "$(sql mail_cell_pe_02 "SELECT active FROM mail.mailboxes WHERE username = 'eva@beta.test'")" "0"
+expect "la baja queda registrada en la celda" "$(sql mail_cell_pe_02 "SELECT count(*) FROM mail.tenant_retirements WHERE tenant_id = '$BID'")" "1"
+expect "y se anuncia por la outbox de pe-02" \
+  "$(sql mail_cell_pe_02 "SELECT count(*) FROM platform.event_outbox WHERE tenant_id = '$BID' AND subject IN ('mail.domain.updated', 'mail.mailbox.updated') AND payload->'data'->>'active' IN ('false', '0')")" "2"
+expect "sin tocar el directorio de pe-01" "$(sql mail_cell_pe_01 "SELECT active FROM mail.domains WHERE domain = 'acme.test'")" "t"
+expect "eva ya no autentica en el mail-auth de su celda" "$(eva_en_pe02)" "401"
+# La instancia de pe-02 rechaza la activacion con la baja (409 TENANT_RETIRED) o, si su cache de
+# celdas ya caduco, porque organization no conoce a beta (403 TENANT_NOT_IN_CELL): nunca la hace.
+REACT=$(sesion -X PUT "http://127.0.0.1:$MD2_PORT/internal/mail-directory/domains/beta.test/activation" \
+  -H "X-Gateway-Token: $INTERNAL_GATEWAY_TOKEN" -H "X-Tenant-ID: $BID" -H 'Content-Type: application/json' -d '{"active":true}')
+[[ "$REACT" == "TENANT_RETIRED 409" || "$REACT" == "TENANT_NOT_IN_CELL 403" ]] &&
+  ok "la activacion de domain-service ya no enciende beta.test ($REACT)" || mal "reactivar beta.test tras la baja: $REACT"
+expect "y beta.test sigue inactivo" "$(sql mail_cell_pe_02 "SELECT active FROM mail.domains WHERE domain = 'beta.test'")" "f"
+expect "beta.test sale del indice global" "$(sql mail_registry "SELECT count(*) FROM organization.mail_domain_cells WHERE domain = 'beta.test'")" "0"
+expect "y otra empresa puede reclamarlo" \
+  "$(curl -s -X PUT "$ORG_HOST/tenants/$ACME_ID/mail-domains/beta.test" -H "X-Gateway-Token: $INTERNAL_GATEWAY_TOKEN" | jget data.cell_code)" "pe-01"
+expect "(la prueba lo suelta)" "$(codigo -X DELETE "$ORG_HOST/tenants/$ACME_ID/mail-domains/beta.test" -H "X-Gateway-Token: $INTERNAL_GATEWAY_TOKEN")" "204"
 
 echo "== Registros"
 # Los unicos errores esperados son los que la prueba provoca a proposito: los pasos de

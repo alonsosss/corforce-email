@@ -28,6 +28,9 @@ const (
 	actionUpdate      = "update"
 	actionDelete      = "delete"
 	actionSetPassword = "set_password"
+
+	// codeTenantRetired: la empresa esta dada de baja en la celda (domain.ErrTenantRetired).
+	codeTenantRetired = "TENANT_RETIRED"
 )
 
 type Handler struct {
@@ -52,6 +55,9 @@ func (h *Handler) Routes() chi.Router {
 	// Ruta servicio-a-servicio: la protege RequireGatewayToken en main y toma la empresa
 	// de X-Tenant-ID; no pasa por el gateway ni por permisos de usuario.
 	r.Put("/internal/mail-directory/domains/{domain}/activation", h.SetDomainActivation)
+	// La pide la saga de baja de organization, con la empresa en X-Tenant-ID. Solo servicios: una
+	// peticion con usuario recibe 403.
+	r.With(middleware.RequireInternalCaller).Put("/internal/mail-directory/tenant-retirement", h.RetireTenant)
 	// La pide el webmail, que no conoce la empresa del buzon: no lleva X-Tenant-ID.
 	r.Get("/internal/mail-directory/sender-identities", h.SenderIdentities)
 	return r
@@ -137,6 +143,8 @@ func writeError(w http.ResponseWriter, err error) {
 		response.ErrNotFound(w, err.Error())
 	case errors.Is(err, domain.ErrPlatformOnly):
 		response.ErrForbidden(w, err.Error())
+	case errors.Is(err, domain.ErrTenantRetired):
+		response.Err(w, http.StatusConflict, codeTenantRetired, err.Error())
 	case isAny(err, conflictErrors):
 		response.ErrConflict(w, err.Error())
 	case isAny(err, validationErrors):
@@ -323,6 +331,22 @@ func (h *Handler) SetDomainActivation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response.JSON(w, http.StatusOK, d)
+}
+
+// RetireTenant da de baja a la empresa de X-Tenant-ID en el directorio de la celda
+// (app.RetireTenant). Idempotente: 200 {tenant_id, retired_at, deactivated} con lo que apago esta
+// llamada, todo a cero al repetirla.
+func (h *Handler) RetireTenant(w http.ResponseWriter, r *http.Request) {
+	tenantID, ok := tenantFrom(w, r)
+	if !ok {
+		return
+	}
+	out, err := h.uc.RetireTenant(r.Context(), tenantID)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	response.JSON(w, http.StatusOK, out)
 }
 
 func (h *Handler) CreateAliasDomain(w http.ResponseWriter, r *http.Request) {

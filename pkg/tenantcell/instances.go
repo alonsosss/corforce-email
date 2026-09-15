@@ -131,6 +131,19 @@ type Targets struct {
 // Targets devuelve el selector del servicio cuyas instancias declara env, con baseURL como
 // destino base. Con varias celdas necesita resolver; con una no lo usa.
 func (i Instances) Targets(env, baseURL string, resolver *Resolver) (*Targets, error) {
+	if i.BaseCell != "" && resolver == nil {
+		return nil, fmt.Errorf("%s: con varias celdas hace falta resolver la celda de cada empresa", env)
+	}
+	return i.targets(env, baseURL, resolver)
+}
+
+// CellTargets es el selector para quien ya sabe la celda de cada empresa porque la guarda
+// (organization): elige con ForCell y no pregunta a nadie. For sin resolver no tiene destino.
+func (i Instances) CellTargets(env, baseURL string) (*Targets, error) {
+	return i.targets(env, baseURL, nil)
+}
+
+func (i Instances) targets(env, baseURL string, resolver *Resolver) (*Targets, error) {
 	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
 	byCell, loaded := i.ByEnv[env]
 	switch {
@@ -138,8 +151,6 @@ func (i Instances) Targets(env, baseURL string, resolver *Resolver) (*Targets, e
 		return nil, fmt.Errorf("%s: sin destino base", env)
 	case !loaded:
 		return nil, fmt.Errorf("%s: no se cargaron sus instancias", env)
-	case i.BaseCell != "" && resolver == nil:
-		return nil, fmt.Errorf("%s: con varias celdas hace falta resolver la celda de cada empresa", env)
 	}
 	return &Targets{base: baseURL, baseCell: i.BaseCell, byCell: byCell, resolver: resolver}, nil
 }
@@ -151,17 +162,28 @@ func (t *Targets) For(ctx context.Context, tenantID string) (target, cell string
 	if t.baseCell == "" {
 		return t.base, "", nil
 	}
+	if t.resolver == nil {
+		return "", "", fmt.Errorf("sin resolver de la celda de cada empresa: %w", ErrUnresolved)
+	}
 	cell, err = t.resolver.CellOf(ctx, tenantID)
 	if err != nil {
 		return "", "", err
 	}
-	if cell == t.baseCell {
-		return t.base, cell, nil
+	target, err = t.ForCell(cell)
+	return target, cell, err
+}
+
+// ForCell devuelve la URL de la instancia que sirve la celda cell, para quien ya sabe la celda
+// de la empresa. En un despliegue de una celda todo va al destino base, como en For; una celda
+// sin instancia declarada es ErrNotServed.
+func (t *Targets) ForCell(cell string) (string, error) {
+	if t.baseCell == "" || cell == t.baseCell {
+		return t.base, nil
 	}
 	if target, ok := t.byCell[cell]; ok {
-		return target, cell, nil
+		return target, nil
 	}
-	return "", cell, fmt.Errorf("celda %s: %w", cell, ErrNotServed)
+	return "", fmt.Errorf("celda %s: %w", cell, ErrNotServed)
 }
 
 // URLs devuelve todos los destinos posibles, el base primero y despues las instancias en orden

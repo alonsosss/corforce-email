@@ -21,7 +21,9 @@ type registroFake struct {
 	tenants map[uuid.UUID]*domain.Tenant
 	cells   map[uuid.UUID]*domain.Cell
 	domains map[string]uuid.UUID
-	reads   int
+	// removing son las empresas con la baja en curso: no reclaman dominios.
+	removing map[uuid.UUID]bool
+	reads    int
 }
 
 func (f *registroFake) GetByID(_ context.Context, id uuid.UUID) (*domain.Tenant, error) {
@@ -68,6 +70,9 @@ func (d dominiosFake) Claim(_ context.Context, name string, tenantID uuid.UUID) 
 	if d.r.domains == nil {
 		d.r.domains = map[string]uuid.UUID{}
 	}
+	if d.r.removing[tenantID] {
+		return domain.ErrTenantBeingRemoved
+	}
 	if owner, ok := d.r.domains[name]; ok && owner != tenantID {
 		return domain.ErrMailDomainClaimed
 	}
@@ -81,6 +86,17 @@ func (d dominiosFake) Release(_ context.Context, name string, tenantID uuid.UUID
 		return true, nil
 	}
 	return false, nil
+}
+
+func (d dominiosFake) ReleaseTenant(_ context.Context, tenantID uuid.UUID) (int64, error) {
+	var released int64
+	for name, owner := range d.r.domains {
+		if owner == tenantID {
+			delete(d.r.domains, name)
+			released++
+		}
+	}
+	return released, nil
 }
 
 func (d dominiosFake) TenantOf(_ context.Context, name string) (uuid.UUID, error) {
@@ -245,6 +261,24 @@ func TestIndiceDeDominiosPorLaAPIInterna(t *testing.T) {
 	}
 	if rec := pedir(http.MethodGet, "/mail-domains/beta.test/cell", nil); rec.Code != http.StatusNotFound {
 		t.Fatalf("dominio soltado: %d", rec.Code)
+	}
+}
+
+// Una empresa con la baja en curso no reclama dominios: 409 con su propio codigo, distinto del de
+// un dominio de otra empresa, y el indice no cambia.
+func TestUnaEmpresaEnBajaNoReclamaDominios(t *testing.T) {
+	pe02 := &domain.Cell{ID: uuid.New(), Code: "pe-02"}
+	beta := &domain.Tenant{ID: uuid.New(), Slug: "beta", CellID: pe02.ID, Status: domain.TenantStatusInactive}
+	reg := &registroFake{
+		tenants:  map[uuid.UUID]*domain.Tenant{beta.ID: beta},
+		cells:    map[uuid.UUID]*domain.Cell{pe02.ID: pe02},
+		removing: map[uuid.UUID]bool{beta.ID: true},
+	}
+	req := httptest.NewRequest(http.MethodPut, "/internal/organization/tenants/"+beta.ID.String()+"/mail-domains/beta.test", nil)
+	rec := httptest.NewRecorder()
+	internalServer(reg).ServeHTTP(rec, req)
+	if rec.Code != http.StatusConflict || codigo(rec) != "TENANT_BEING_REMOVED" || len(reg.domains) != 0 {
+		t.Fatalf("reclamo durante la baja: %d %s, indice %v", rec.Code, rec.Body, reg.domains)
 	}
 }
 

@@ -1,9 +1,4 @@
-// Package cellcli lleva cada llamada de domain-service a un servicio de celda (mail-directory,
-// mail-security) a la instancia que sirve la celda de la empresa, y falla cerrado: sin celda
-// resuelta o sin instancia declarada no sale hacia ninguna, y el 403 TENANT_NOT_IN_CELL de una
-// instancia es un error de configuracion, nunca un exito ni un 404 (Modelo_de_Datos_y_Celdas.md,
-// 5.4).
-package cellcli
+package tenantcell
 
 import (
 	"bytes"
@@ -16,11 +11,16 @@ import (
 	"time"
 
 	"github.com/alonsosss/corforce-email/pkg/httpclient"
-	"github.com/alonsosss/corforce-email/pkg/tenantcell"
 	"github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 )
+
+// Llamadas de un servicio a la instancia de un servicio de celda (mail-directory, mail-security)
+// por una empresa: domain-service al activar dominios y entregar claves DKIM, organization al dar
+// de baja el correo de una empresa. Falla cerrado: sin celda resuelta o sin instancia declarada no
+// sale hacia ninguna, y el 403 TENANT_NOT_IN_CELL de una instancia es un error de configuracion,
+// nunca un exito ni un 404 (Modelo_de_Datos_y_Celdas.md, 5.4).
 
 // ErrNotInCell: la instancia rechazo a la empresa porque no es de su celda. Llegar a la
 // instancia de otra celda es siempre un error de despliegue.
@@ -28,24 +28,32 @@ var ErrNotInCell = errors.New("la instancia no atiende a la empresa porque no es
 
 // Motivos, etiqueta reason de cell_call_failures_total.
 const (
-	reasonUnresolved = "unresolved"
-	reasonUnknown    = "unknown_tenant"
-	reasonNotServed  = "not_served"
-	reasonNotInCell  = "not_in_cell"
+	callReasonUnresolved = "unresolved"
+	callReasonUnknown    = "unknown_tenant"
+	callReasonNotServed  = "not_served"
+	callReasonNotInCell  = "not_in_cell"
 )
 
 const (
-	callTimeout  = 5 * time.Second
-	callAttempts = 3
-	maxErrorBody = 4 << 10
+	defaultCallTimeout  = 5 * time.Second
+	defaultCallAttempts = 3
+	maxErrorBody        = 4 << 10
 )
 
-var failures = prometheus.NewCounterVec(prometheus.CounterOpts{
+// callFailures lleva el servicio de celda de destino en cell_service: la etiqueta service la pone
+// el recolector a quien llama.
+var callFailures = prometheus.NewCounterVec(prometheus.CounterOpts{
 	Name: "cell_call_failures_total",
 	Help: "Llamadas a un servicio de celda por una empresa que no salieron hacia ninguna instancia (celda sin resolver, empresa desconocida, celda sin instancia declarada) o que la instancia rechazo porque la empresa no es de su celda.",
 }, []string{"cell_service", "reason"})
 
-func init() { prometheus.MustRegister(failures) }
+func init() { prometheus.MustRegister(callFailures) }
+
+// CallerOptions ajusta el cliente de cada instancia. Cero toma 5 s por intento y 3 intentos.
+type CallerOptions struct {
+	Timeout     time.Duration
+	MaxAttempts int
+}
 
 // Caller hace las llamadas internas a un servicio de celda por una empresa: token de gateway y
 // X-Tenant-ID, los reintentos de pkg/httpclient y un cortacircuitos por instancia, para que una
@@ -53,20 +61,26 @@ func init() { prometheus.MustRegister(failures) }
 type Caller struct {
 	service string
 	token   string
-	targets *tenantcell.Targets
+	targets *Targets
 	clients map[string]*httpclient.Client
 	logger  *zap.Logger
 }
 
-// New llama al servicio de celda service por las instancias de targets.
-func New(service string, targets *tenantcell.Targets, token string, logger *zap.Logger) *Caller {
+// NewCaller llama al servicio de celda service por las instancias de targets.
+func NewCaller(service string, targets *Targets, token string, logger *zap.Logger, opts CallerOptions) *Caller {
+	if opts.Timeout <= 0 {
+		opts.Timeout = defaultCallTimeout
+	}
+	if opts.MaxAttempts <= 0 {
+		opts.MaxAttempts = defaultCallAttempts
+	}
 	clients := map[string]*httpclient.Client{}
 	for _, target := range targets.URLs() {
-		clients[target] = httpclient.New(service, httpclient.Options{Timeout: callTimeout, MaxAttempts: callAttempts})
+		clients[target] = httpclient.New(service, httpclient.Options{Timeout: opts.Timeout, MaxAttempts: opts.MaxAttempts})
 	}
 	// Las series nacen a cero: un contador que aparece ya en 1 no da increase().
-	for _, reason := range []string{reasonUnresolved, reasonUnknown, reasonNotServed, reasonNotInCell} {
-		failures.WithLabelValues(service, reason)
+	for _, reason := range []string{callReasonUnresolved, callReasonUnknown, callReasonNotServed, callReasonNotInCell} {
+		callFailures.WithLabelValues(service, reason)
 	}
 	if logger == nil {
 		logger = zap.NewNop()
@@ -74,15 +88,28 @@ func New(service string, targets *tenantcell.Targets, token string, logger *zap.
 	return &Caller{service: service, token: token, targets: targets, clients: clients, logger: logger}
 }
 
-// Do envia la peticion a la instancia de la celda de la empresa; path es la ruta del servicio.
-// Devuelve la respuesta de la instancia, que cierra quien llama, salvo que no haya instancia a
-// la que llamar o que la instancia rechace a la empresa por no ser de su celda: en los dos casos
-// no hay respuesta y el error lo dice.
+// Do envia la peticion a la instancia de la celda de la empresa, que resuelve Targets.For; path es
+// la ruta del servicio. Devuelve la respuesta de la instancia, que cierra quien llama, salvo que no
+// haya instancia a la que llamar o que la instancia rechace a la empresa por no ser de su celda: en
+// los dos casos no hay respuesta y el error lo dice.
 func (c *Caller) Do(ctx context.Context, tenantID uuid.UUID, method, path string, body []byte) (*http.Response, error) {
 	target, cell, err := c.targets.For(ctx, tenantID.String())
 	if err != nil {
-		return nil, c.refuse(tenantID, cell, reasonOf(err), err)
+		return nil, c.refuse(tenantID, cell, callReasonOf(err), err)
 	}
+	return c.send(ctx, target, cell, tenantID, method, path, body)
+}
+
+// DoInCell es Do para quien ya sabe la celda de la empresa (Targets.ForCell): no pregunta a nadie.
+func (c *Caller) DoInCell(ctx context.Context, cell string, tenantID uuid.UUID, method, path string, body []byte) (*http.Response, error) {
+	target, err := c.targets.ForCell(cell)
+	if err != nil {
+		return nil, c.refuse(tenantID, cell, callReasonOf(err), err)
+	}
+	return c.send(ctx, target, cell, tenantID, method, path, body)
+}
+
+func (c *Caller) send(ctx context.Context, target, cell string, tenantID uuid.UUID, method, path string, body []byte) (*http.Response, error) {
 	var reader io.Reader
 	if body != nil {
 		reader = bytes.NewReader(body)
@@ -103,21 +130,21 @@ func (c *Caller) Do(ctx context.Context, tenantID uuid.UUID, method, path string
 	if err != nil {
 		return nil, err
 	}
-	if resp.StatusCode == http.StatusForbidden && ErrorCode(resp) == tenantcell.CodeNotInCell {
+	if resp.StatusCode == http.StatusForbidden && ErrorCode(resp) == CodeNotInCell {
 		resp.Body.Close()
-		return nil, c.refuse(tenantID, cell, reasonNotInCell, ErrNotInCell)
+		return nil, c.refuse(tenantID, cell, callReasonNotInCell, ErrNotInCell)
 	}
 	return resp, nil
 }
 
-func reasonOf(err error) string {
+func callReasonOf(err error) string {
 	switch {
-	case errors.Is(err, tenantcell.ErrNotServed):
-		return reasonNotServed
-	case errors.Is(err, tenantcell.ErrUnknownTenant):
-		return reasonUnknown
+	case errors.Is(err, ErrNotServed):
+		return callReasonNotServed
+	case errors.Is(err, ErrUnknownTenant):
+		return callReasonUnknown
 	default:
-		return reasonUnresolved
+		return callReasonUnresolved
 	}
 }
 
@@ -125,12 +152,12 @@ func reasonOf(err error) string {
 // Una celda sin instancia o una instancia de otra celda son errores de despliegue; sin celda
 // resuelta, organization no respondio y el paso se reintenta.
 func (c *Caller) refuse(tenantID uuid.UUID, cell, reason string, cause error) error {
-	failures.WithLabelValues(c.service, reason).Inc()
+	callFailures.WithLabelValues(c.service, reason).Inc()
 	fields := []zap.Field{
 		zap.String("service", c.service), zap.String("reason", reason),
 		zap.String("tenant_id", tenantID.String()), zap.String("cell", cell), zap.Error(cause),
 	}
-	if reason == reasonNotServed || reason == reasonNotInCell {
+	if reason == callReasonNotServed || reason == callReasonNotInCell {
 		c.logger.Error("celdas: la llamada no llega a la instancia de la celda de la empresa; revisar la configuracion de celdas", fields...)
 	} else {
 		c.logger.Warn("celdas: la llamada no sale sin la celda de la empresa; se reintenta", fields...)

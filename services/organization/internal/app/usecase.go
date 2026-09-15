@@ -43,6 +43,9 @@ type Dependencies struct {
 	Publisher ports.TenantEventPublisher
 	// MailDomains es el indice global dominio de correo -> empresa.
 	MailDomains ports.MailDomainIndex
+	// MailDirectory es el directorio de correo de la celda de cada empresa: la baja lo usa para
+	// que su correo deje de entrar y de autenticar.
+	MailDirectory ports.MailDirectory
 	// DefaultCellCode es la celda donde nacen los tenants cuya alta no indica una.
 	// Vacio significa que no hay celda por defecto y toda alta debe indicarla.
 	DefaultCellCode string
@@ -62,6 +65,7 @@ type OrganizationUseCase struct {
 	modules         ports.ModulesRepository
 	publisher       ports.TenantEventPublisher
 	mailDomains     ports.MailDomainIndex
+	mailDirectory   ports.MailDirectory
 	defaultCellCode string
 	sagaLease       time.Duration
 	logger          *zap.Logger
@@ -82,6 +86,7 @@ func NewOrganizationUseCase(deps Dependencies) *OrganizationUseCase {
 		sagas:           deps.Sagas,
 		provisioner:     deps.Provisioner,
 		mailDomains:     deps.MailDomains,
+		mailDirectory:   deps.MailDirectory,
 		access:          deps.Access,
 		identity:        deps.Identity,
 		modules:         deps.Modules,
@@ -334,9 +339,11 @@ func (uc *OrganizationUseCase) ListTenants(ctx context.Context, page, pageSize i
 }
 
 // DeleteTenant retira del registro un tenant que ya no esta activa, como saga que se retoma
-// hasta terminar: access-control retira sus roles, identity sus cuentas y organization su
-// registro. La base fisica se conserva (borrarla es una decision operativa aparte, con
-// respaldo previo), salvo la de un alta que nunca llego a completarse.
+// hasta terminar: access-control retira sus roles, identity sus cuentas, mail-directory de su
+// celda la da de baja en el directorio de correo, organization suelta sus dominios del indice y
+// retira su registro. La base fisica se conserva (borrarla es una decision operativa aparte,
+// con respaldo previo), salvo la de un alta que nunca llego a completarse; el directorio de la
+// celda tambien: se desactiva, no se borra.
 func (uc *OrganizationUseCase) DeleteTenant(ctx context.Context, id uuid.UUID) error {
 	tenant, err := uc.tenants.GetByID(ctx, id)
 	if err != nil {

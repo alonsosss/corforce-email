@@ -102,7 +102,8 @@ func TestCadaRutaRechazaUnaEmpresaQueNoEsDeLaCelda(t *testing.T) {
 			}
 		}
 	}
-	for _, imprescindible := range []string{"/api/v1/mailboxes", "/api/v1/mail-domains", "/api/v1/mail-routing/relayhosts", "/internal/mail-directory/domains/x/activation"} {
+	for _, imprescindible := range []string{"/api/v1/mailboxes", "/api/v1/mail-domains", "/api/v1/mail-routing/relayhosts",
+		"/internal/mail-directory/domains/x/activation", "/internal/mail-directory/tenant-retirement"} {
 		if !vistas[imprescindible] {
 			t.Fatalf("la prueba no recorrio %s (%d rutas)", imprescindible, len(rutas))
 		}

@@ -73,7 +73,7 @@ func (uc *UseCase) CreateAlias(ctx context.Context, tenantID uuid.UUID, req Crea
 		SenderAllowed: boolOr(req.SenderAllowed, true), Internal: req.Internal, Active: active,
 		PrivateComment: strings.TrimSpace(req.PrivateComment), PublicComment: strings.TrimSpace(req.PublicComment),
 	}
-	err = uc.tx.InTx(ctx, func(ctx context.Context) error {
+	err = uc.writeTx(ctx, tenantID, func(ctx context.Context) error {
 		if err := uc.ownsDomainOrAlias(ctx, tenantID, domainPart); err != nil {
 			return err
 		}
@@ -119,7 +119,7 @@ func (uc *UseCase) UpdateAlias(ctx context.Context, tenantID, id uuid.UUID, req 
 		}
 	}
 	var a *domain.Alias
-	err := uc.tx.InTx(ctx, func(ctx context.Context) error {
+	err := uc.writeTx(ctx, tenantID, func(ctx context.Context) error {
 		var err error
 		a, err = uc.aliases.Get(ctx, tenantID, id)
 		if err != nil {
@@ -151,7 +151,7 @@ func (uc *UseCase) UpdateAlias(ctx context.Context, tenantID, id uuid.UUID, req 
 }
 
 func (uc *UseCase) DeleteAlias(ctx context.Context, tenantID, id uuid.UUID) error {
-	return uc.tx.InTx(ctx, func(ctx context.Context) error {
+	return uc.writeTx(ctx, tenantID, func(ctx context.Context) error {
 		a, err := uc.aliases.Get(ctx, tenantID, id)
 		if err != nil {
 			return err
@@ -214,7 +214,7 @@ func (uc *UseCase) CreateSpamAlias(ctx context.Context, tenantID uuid.UUID, req 
 	if a.Permanent {
 		a.ValidUntil = nil
 	}
-	err = uc.tx.InTx(ctx, func(ctx context.Context) error {
+	err = uc.writeTx(ctx, tenantID, func(ctx context.Context) error {
 		if err := uc.ownsDomainOrAlias(ctx, tenantID, domainPart); err != nil {
 			return err
 		}
@@ -237,7 +237,7 @@ func (uc *UseCase) UpdateSpamAlias(ctx context.Context, tenantID, id uuid.UUID, 
 		return nil, domain.ErrNothingToUpdate
 	}
 	var a *domain.SpamAlias
-	err := uc.tx.InTx(ctx, func(ctx context.Context) error {
+	err := uc.writeTx(ctx, tenantID, func(ctx context.Context) error {
 		var err error
 		a, err = uc.spamAliases.Get(ctx, tenantID, id)
 		if err != nil {
@@ -267,7 +267,7 @@ func (uc *UseCase) UpdateSpamAlias(ctx context.Context, tenantID, id uuid.UUID, 
 }
 
 func (uc *UseCase) DeleteSpamAlias(ctx context.Context, tenantID, id uuid.UUID) error {
-	return uc.tx.InTx(ctx, func(ctx context.Context) error {
+	return uc.writeTx(ctx, tenantID, func(ctx context.Context) error {
 		if _, err := uc.spamAliases.Get(ctx, tenantID, id); err != nil {
 			return err
 		}

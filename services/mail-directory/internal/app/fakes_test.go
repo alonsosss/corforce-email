@@ -2,7 +2,9 @@ package app
 
 import (
 	"context"
+	"maps"
 	"strings"
+	"time"
 
 	"github.com/alonsosss/corforce-email/services/mail-directory/internal/domain"
 	"github.com/alonsosss/corforce-email/services/mail-directory/internal/ports"
@@ -471,6 +473,89 @@ func (f *fakeTransports) Update(context.Context, ports.TransportScope, *domain.T
 }
 func (f *fakeTransports) Delete(context.Context, ports.TransportScope, uuid.UUID) error { return nil }
 
+// ── Bajas de empresa ──────────────────────────────────────────────────────────
+
+// fakeRetirements hace de mail.tenant_retirements y de las sentencias que apagan el directorio de
+// una empresa, sobre los falsos del harness y con su reloj.
+type fakeRetirements struct {
+	h         *harness
+	retired   map[uuid.UUID]time.Time
+	now       time.Time
+	shared    int
+	exclusive int
+	// settings es lo que apagaria la siguiente llamada en las tablas sin evento.
+	settings domain.RetirementCounts
+}
+
+func (f *fakeRetirements) HoldShared(_ context.Context, tenantID uuid.UUID) (bool, error) {
+	f.shared++
+	_, retired := f.retired[tenantID]
+	return retired, nil
+}
+
+func (f *fakeRetirements) HoldExclusive(context.Context, uuid.UUID) error {
+	f.exclusive++
+	return nil
+}
+
+func (f *fakeRetirements) Mark(_ context.Context, tenantID uuid.UUID) (time.Time, error) {
+	if at, ok := f.retired[tenantID]; ok {
+		return at, nil
+	}
+	f.retired[tenantID] = f.now
+	return f.now, nil
+}
+
+func (f *fakeRetirements) DeactivateDomains(_ context.Context, tenantID uuid.UUID) ([]domain.Domain, error) {
+	var out []domain.Domain
+	for _, d := range f.h.domains.items {
+		if d.TenantID == tenantID && d.Active {
+			d.Active = false
+			out = append(out, *d)
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeRetirements) DeactivateAliasDomains(_ context.Context, tenantID uuid.UUID) ([]domain.AliasDomain, error) {
+	var out []domain.AliasDomain
+	for _, a := range f.h.aliasDomains.items {
+		if a.TenantID == tenantID && a.Active {
+			a.Active = false
+			out = append(out, *a)
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeRetirements) DeactivateMailboxes(_ context.Context, tenantID uuid.UUID) ([]domain.Mailbox, error) {
+	var out []domain.Mailbox
+	for _, m := range f.h.mailboxes.items {
+		if m.TenantID == tenantID && m.Active != domain.ActiveOff {
+			m.Active = domain.ActiveOff
+			out = append(out, *m)
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeRetirements) DeactivateAliases(_ context.Context, tenantID uuid.UUID) ([]domain.Alias, error) {
+	var out []domain.Alias
+	for _, a := range f.h.aliases.items {
+		if a.TenantID == tenantID && a.Active != domain.ActiveOff {
+			a.Active = domain.ActiveOff
+			out = append(out, *a)
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeRetirements) DeactivateSettings(context.Context, uuid.UUID) (domain.RetirementCounts, error) {
+	c := f.settings
+	f.settings = domain.RetirementCounts{}
+	return c, nil
+}
+
 // harness cablea un caso de uso con todos los falsos; los repositorios que un test no
 // necesita quedan en su valor vacio.
 type harness struct {
@@ -486,6 +571,7 @@ type harness struct {
 	senderACL    *fakeSenderACL
 	relayhosts   *fakeRelayhosts
 	transports   *fakeTransports
+	retirements  *fakeRetirements
 	events       *fakeEvents
 }
 
@@ -496,12 +582,13 @@ func newHarness() *harness {
 		senderACL: &fakeSenderACL{}, relayhosts: &fakeRelayhosts{}, transports: &fakeTransports{}, events: &fakeEvents{},
 	}
 	h.mailboxes = &fakeMailboxes{aliases: h.aliases}
+	h.retirements = &fakeRetirements{h: h, retired: map[uuid.UUID]time.Time{}, now: time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)}
 	h.events.tx = h.tx
 	h.tx.snapshot = h.snapshot
 	h.uc = New(Deps{
 		Tx: h.tx, Domains: h.domains, AliasDomains: h.aliasDomains, Mailboxes: h.mailboxes,
 		AppPasswords: h.appPasswords, Sieve: h.sieve, Aliases: h.aliases, SpamAliases: h.spamAliases,
-		SenderACL: h.senderACL, Relayhosts: h.relayhosts, Transports: h.transports,
+		SenderACL: h.senderACL, Relayhosts: h.relayhosts, Transports: h.transports, Retirements: h.retirements,
 		Secrets: fakeSecrets{}, Events: h.events,
 	})
 	return h
@@ -532,10 +619,12 @@ func (h *harness) snapshot() func() {
 	domains, aliasDomains := cloneAll(h.domains.items), cloneAll(h.aliasDomains.items)
 	mailboxes, aliases := cloneAll(h.mailboxes.items), cloneAll(h.aliases.items)
 	subjects := append([]string(nil), h.events.subjects...)
+	retired := maps.Clone(h.retirements.retired)
 	return func() {
 		h.domains.items, h.aliasDomains.items = domains, aliasDomains
 		h.mailboxes.items, h.aliases.items = mailboxes, aliases
 		h.events.subjects = subjects
+		h.retirements.retired = retired
 	}
 }
 

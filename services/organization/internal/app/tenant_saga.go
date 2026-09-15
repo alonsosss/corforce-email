@@ -21,7 +21,14 @@ import (
 //	Deshacer, en orden inverso: retirar la asignacion, las cuentas, los roles y la base
 //	(solo si la creo este alta).
 //	Baja:  roles retirados -> cuentas retiradas -> base borrada (solo la de un alta sin
-//	       completar) -> registro retirado. No se deshace: se retoma hasta terminar.
+//	       completar) -> correo dado de baja en su celda -> dominios soltados del indice ->
+//	       registro retirado. No se deshace: se retoma hasta terminar.
+//
+// El correo se da de baja en la celda cuando ya no quedan cuentas que puedan tocar el directorio
+// y antes de retirar la empresa del registro, porque la celda solo atiende a empresas que
+// organization conoce. Los dominios se sueltan del indice despues de que la celda deja de
+// servirlos: soltarlos antes dejaria activarlos en otra celda mientras esta aun los recibe. Desde
+// que empieza la baja la empresa no reclama dominios (MailDomainIndex.Claim).
 //
 // Un fallo del alta la deshace y la deja en failed: el reintento con el mismo slug vuelve a
 // empezar y DELETE la retira. Una caida a mitad deja la saga con el arriendo sin renovar;
@@ -360,6 +367,32 @@ func (uc *OrganizationUseCase) deleteSteps(tenant *domain.Tenant, saga *domain.T
 			}
 			if err := uc.provisioner.DropOwnedDatabase(ctx, target, tenant.ID); err != nil {
 				return fmt.Errorf("borrar la base del alta sin completar: %w", err)
+			}
+			return nil
+		}},
+		{domain.StepMailRetired, func(ctx context.Context) error {
+			if saga.DropDatabase {
+				// Un alta que no llego a completarse nunca estuvo activa: nadie pudo darle correo
+				// en la celda.
+				return nil
+			}
+			cell, err := uc.cells.GetByID(ctx, tenant.CellID)
+			if err != nil {
+				return fmt.Errorf("celda de la empresa: %w", err)
+			}
+			if err := uc.mailDirectory.RetireTenant(ctx, cell.Code, tenant.ID); err != nil {
+				return fmt.Errorf("dar de baja su correo en la celda %s: %w", cell.Code, err)
+			}
+			return nil
+		}},
+		{domain.StepMailDomainsReleased, func(ctx context.Context) error {
+			released, err := uc.mailDomains.ReleaseTenant(ctx, tenant.ID)
+			if err != nil {
+				return fmt.Errorf("soltar sus dominios del indice: %w", err)
+			}
+			if released > 0 {
+				uc.logger.Info("indice de dominios: dominios de la empresa dada de baja retirados",
+					zap.String("tenant_id", tenant.ID.String()), zap.Int64("dominios", released))
 			}
 			return nil
 		}},

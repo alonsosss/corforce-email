@@ -26,6 +26,8 @@ const (
 	maxErrorBody = 4 << 10
 	// codeClaimed es el 409 de organization para un dominio activo en otra empresa.
 	codeClaimed = "MAIL_DOMAIN_CLAIMED"
+	// codeBeingRemoved es el 409 de organization para una empresa con la baja en curso.
+	codeBeingRemoved = "TENANT_BEING_REMOVED"
 )
 
 // Client implementa ports.DomainIndex. Las dos llamadas son idempotentes (PUT y DELETE), asi
@@ -45,22 +47,27 @@ func New(baseURL, token string) *Client {
 }
 
 // Claim hace PUT /internal/organization/tenants/{id}/mail-domains/{dominio}: 200 es reclamado
-// (tambien si ya lo estaba), 409 MAIL_DOMAIN_CLAIMED es domain.ErrDomainClaimedElsewhere y
-// cualquier otra respuesta es un fallo que se reintenta en el barrido.
+// (tambien si ya lo estaba), 409 MAIL_DOMAIN_CLAIMED es domain.ErrDomainClaimedElsewhere, 409
+// TENANT_BEING_REMOVED es domain.ErrTenantBeingRemoved y cualquier otra respuesta es un fallo que
+// se reintenta en el barrido.
 func (c *Client) Claim(ctx context.Context, tenantID uuid.UUID, name string) error {
 	resp, err := c.do(ctx, http.MethodPut, tenantID, name)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
-	switch {
-	case resp.StatusCode == http.StatusOK:
+	if resp.StatusCode == http.StatusOK {
 		return nil
-	case resp.StatusCode == http.StatusConflict && errorCode(resp.Body) == codeClaimed:
-		return domain.ErrDomainClaimedElsewhere
-	default:
-		return fmt.Errorf("organization: reclamar %s respondio %d", name, resp.StatusCode)
 	}
+	if resp.StatusCode == http.StatusConflict {
+		switch errorCode(resp.Body) {
+		case codeClaimed:
+			return domain.ErrDomainClaimedElsewhere
+		case codeBeingRemoved:
+			return domain.ErrTenantBeingRemoved
+		}
+	}
+	return fmt.Errorf("organization: reclamar %s respondio %d", name, resp.StatusCode)
 }
 
 // Release hace DELETE de la misma ruta: 204 aunque la empresa no lo tuviera reclamado.

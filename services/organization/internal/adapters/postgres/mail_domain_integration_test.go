@@ -146,3 +146,61 @@ func TestIndiceDeDominiosContraPostgres(t *testing.T) {
 		t.Fatalf("dominio de una empresa borrada: %v", err)
 	}
 }
+
+// Una empresa con la baja en curso no reclama dominios, tampoco confirma uno suyo, y la saga suelta
+// todos los suyos de una vez sin tocar los de otra empresa. Un alta en curso no impide reclamar.
+func TestIndiceDeDominiosEnLaBajaDeUnaEmpresa(t *testing.T) {
+	pool, _ := organizationDB(t)
+	ctx := context.Background()
+	repo := NewMailDomainRepo(pool)
+	baja, otra := empresaDePrueba(t, pool, "baja"), empresaDePrueba(t, pool, "otra")
+	suffix := itSuffix()
+	propio, segundo, ajeno, nuevo := "propio-"+suffix+".test", "segundo-"+suffix+".test", "ajeno-"+suffix+".test", "nuevo-"+suffix+".test"
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM organization.mail_domain_cells WHERE domain = ANY($1)`,
+			[]string{propio, segundo, ajeno, nuevo})
+	})
+	saga := func(tenant uuid.UUID, operation string) {
+		t.Helper()
+		if _, err := pool.Exec(ctx, `INSERT INTO organization.tenant_sagas (tenant_id, operation, state, step) VALUES ($1, $2, 'running', 'registered')`,
+			tenant, operation); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	for _, name := range []string{propio, segundo} {
+		if err := repo.Claim(ctx, name, baja); err != nil {
+			t.Fatalf("reclamo de %s: %v", name, err)
+		}
+	}
+	saga(otra, domain.SagaCreate)
+	if err := repo.Claim(ctx, ajeno, otra); err != nil {
+		t.Fatalf("una empresa con el alta en curso reclama: %v", err)
+	}
+
+	saga(baja, domain.SagaDelete)
+	for _, name := range []string{nuevo, propio} {
+		if err := repo.Claim(ctx, name, baja); !errors.Is(err, domain.ErrTenantBeingRemoved) {
+			t.Fatalf("reclamo de %s durante la baja: %v", name, err)
+		}
+	}
+	if err := repo.Claim(ctx, propio, otra); !errors.Is(err, domain.ErrMailDomainClaimed) {
+		t.Fatalf("otra empresa reclama un dominio que la baja aun no solto: %v", err)
+	}
+	if _, err := repo.TenantOf(ctx, nuevo); !errors.Is(err, domain.ErrMailDomainNotFound) {
+		t.Fatalf("el reclamo rechazado no deja fila: %v", err)
+	}
+
+	if n, err := repo.ReleaseTenant(ctx, baja); err != nil || n != 2 {
+		t.Fatalf("la baja suelta sus dominios: %d %v", n, err)
+	}
+	if n, err := repo.ReleaseTenant(ctx, baja); err != nil || n != 0 {
+		t.Fatalf("soltarlos otra vez: %d %v", n, err)
+	}
+	if owner, err := repo.TenantOf(ctx, ajeno); err != nil || owner != otra {
+		t.Fatalf("el dominio de la otra empresa sigue: %v %v", owner, err)
+	}
+	if err := repo.Claim(ctx, propio, otra); err != nil {
+		t.Fatalf("el dominio soltado se puede volver a reclamar: %v", err)
+	}
+}
