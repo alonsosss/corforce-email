@@ -77,8 +77,10 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	// Las tres son opcionales: sin una, lo que depende de ella falla o se degrada en cada envio.
-	suppressionURL, err := config.ServiceURL("SUPPRESSION_URL", "")
+	// Sin suppression no se encola ningun envio (toda exclusion se respeta antes de encolar), asi
+	// que su URL es obligatoria. Templates y reputation son opcionales: sin ellas fallan o se
+	// degradan solo los envios que dependen de ellas.
+	suppressionURL, err := config.RequiredServiceURL("SUPPRESSION_URL")
 	if err != nil {
 		log.Fatal(err)
 	}

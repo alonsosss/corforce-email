@@ -60,9 +60,10 @@ largas de cada guardarraíl están en `ops/scaffold/README.md`, `ops/security/se
   una consulta desviarían la llamada y unas credenciales viajarían por la red interna. Mal
   formada, el servicio no arranca y el error nombra la variable. Cada una conserva si es
   obligatoria u opcional. Obligatorias: `ORGANIZATION_URL` (servicios de celda y
-  domain-service, `tenantcell.OrganizationURLFromEnv`), `SUPPRESSION_URL` de contacts,
-  `CONTACTS_URL`, `TRANSACTIONAL_URL` y `TEMPLATES_URL` de campaigns y automations,
-  `BILLING_URL` de reputation y `MAIL_DIRECTORY_URL` del webmail. Opcionales: `SUPPRESSION_URL`,
+  domain-service, `tenantcell.OrganizationURLFromEnv`), `SUPPRESSION_URL` de contacts y de
+  transactional (sin suppression transactional no encola ningún envío: toda exclusión se
+  respeta antes de encolar), `CONTACTS_URL`, `TRANSACTIONAL_URL` y `TEMPLATES_URL` de campaigns
+  y automations, `BILLING_URL` de reputation y `MAIL_DIRECTORY_URL` del webmail. Opcionales:
   `TEMPLATES_URL` y `REPUTATION_URL` de transactional y `TRANSACTIONAL_MAIL_URL` de identity
   (vacías, lo que depende de ellas no funciona y se registra); `ACCESS_CONTROL_URL`, por
   defecto `http://access-control:8002` (`authz.CheckerFromEnv`); y en organization
