@@ -77,6 +77,32 @@ func ValidateQuarantineMaxSize(bytes int64) error {
 	return nil
 }
 
+// ValidateQuarantineRetentionSize acota las filas que la celda guarda por buzon. Cero es valido:
+// no guardar nada mas que el ultimo mensaje es una decision de la empresa.
+func ValidateQuarantineRetentionSize(size int) error {
+	if size < 0 || size > MaxQuarantineRetentionSize {
+		return newValidation(fmt.Sprintf("retention_size debe estar entre 0 y %d mensajes por buzon, lo que la celda guarda y deja revisar", MaxQuarantineRetentionSize))
+	}
+	return nil
+}
+
+// ValidateQuarantineMaxAgeDays acota cuanto conserva la celda un mensaje en cuarentena.
+func ValidateQuarantineMaxAgeDays(days int) error {
+	if days <= 0 || days > MaxQuarantineMaxAgeDays {
+		return newValidation(fmt.Sprintf("max_age_days debe estar entre 1 y %d dias, lo que la celda conserva el correo en cuarentena", MaxQuarantineMaxAgeDays))
+	}
+	return nil
+}
+
+// ValidateQuarantineExcludeDomains acota cuantos dominios excluye una empresa: la lista acaba en
+// una clave de Redis compartida por toda la celda.
+func ValidateQuarantineExcludeDomains(n int) error {
+	if n > MaxQuarantineExcludeDomains {
+		return newValidation(fmt.Sprintf("exclude_domains admite hasta %d dominios", MaxQuarantineExcludeDomains))
+	}
+	return nil
+}
+
 // NormalizeHost acepta una IP o un CIDR y devuelve siempre la forma CIDR canonica.
 func NormalizeHost(host string) (string, error) {
 	h := strings.TrimSpace(host)

@@ -48,6 +48,14 @@ cambie cualquiera de estas líneas.
   `MAIL_SECURITY_CELL_HOSTS` sin la clave de los enlaces y cada `mail-security` solo acepta
   los de su celda (`Modelo_de_Datos_y_Celdas.md`, 5.3). No hay forma sin celda: nada se
   desplego con la anterior y se retiro sin ventana de compatibilidad.
+* Revocación precisa en el webmail y techos de la retención de cuarentena (2026-09-15, unitarias,
+  integración contra Postgres y `make e2e-mail`): `mail.mailbox.updated` y
+  `mail.mailbox.credentials_changed` llevan `changed` (los atributos que cambiaron) y el webmail
+  cierra las sesiones del buzón solo cuando alguno invalida la suya; cambiar la cuota o el nombre
+  visible ya no echa al usuario, y apagar el buzón, quitarle un protocolo, borrarlo o cambiar su
+  contraseña las siguen cerrando al momento (`docs/Usuarios_Roles_y_Acceso.md`, 5). La migración de
+  celda `09_quarantine_retention.sql` acota `retention_size`, `max_age_days` y `exclude_domains`,
+  que no tenían techo y viajan a Redis como el tope de toda la celda.
 * El gateway debe servir `/.well-known/acme-challenge/` o usarse `ACME_DNS_CHALLENGE=y`.
 * Primer despliegue: smoke test con `postmap -q` y `doveadm user` sobre la celda.
 * Corregido con la prueba de los motores (2026-09-13): `mail-policy` responde al `HEAD` con el

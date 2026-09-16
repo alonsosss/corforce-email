@@ -23,12 +23,14 @@ const (
 	SubjectMailboxUpdated = "mail.mailbox.updated"
 	SubjectMailboxDeleted = "mail.mailbox.deleted"
 	// SubjectMailboxCredentialsChanged es una credencial del buzon que dejo de valer.
-	// Payload: tenant_id, id, username, changed_at (RFC 3339, UTC) y credential.
+	// Payload: tenant_id, id, username, changed_at (RFC 3339, UTC), credential y changed.
 	SubjectMailboxCredentialsChanged = "mail.mailbox.credentials_changed"
 	// credentialAppPassword marca el cambio de una contrasena de aplicacion. El webmail solo
 	// admite la principal (mail-auth, service webmail), asi que ninguna de sus sesiones entro
 	// con ella. Cualquier otro valor, o ninguno (eventos anteriores al campo), es la principal.
 	credentialAppPassword = "app_password"
+	// changedField es la lista de atributos que el directorio dice haber cambiado.
+	changedField = "changed"
 
 	subscribeRetry = 5 * time.Second
 	handleTimeout  = 15 * time.Second
@@ -39,15 +41,29 @@ const (
 	revocationMargin = 2 * time.Second
 )
 
+// harmlessChanges son los atributos del buzon cuyo cambio NO invalida una sesion del webmail: no
+// tocan su contrasena principal ni lo que necesita para servir el buzon (active = 1 con
+// imap_access y smtp_access, que mail-auth exige al abrir la sesion). pop3_access y sieve_access
+// estan porque el webmail no usa ninguno de los dos, y kind, relayhost_id y tls_enforce_* porque
+// gobiernan entrega y enrutado, no la autenticacion.
+//
+// Es una lista de lo inofensivo, no de lo peligroso: un atributo nuevo, o cualquier nombre que
+// este consumidor no reconozca, cae del lado que revoca. Ampliarla es una decision consciente.
+var harmlessChanges = map[string]bool{
+	"display_name": true, "quota_bytes": true, "kind": true,
+	"tls_enforce_in": true, "tls_enforce_out": true, "relayhost_id": true,
+	"force_pw_update": true, "pop3_access": true, "sieve_access": true,
+}
+
 // Revoker es lo que el consumidor necesita del caso de uso.
 type Revoker interface {
 	RevokeMailbox(ctx context.Context, username string, at time.Time) error
 }
 
-// Consumer revoca las sesiones de un buzon cuando cambia su contrasena principal, se
-// actualiza o se borra. Una actualizacion revoca siempre: el evento no dice que cambio, y cambiar
-// active, imap_access o smtp_access cambia quien puede usar el webmail; el siguiente
-// inicio de sesion lo vuelve a comprobar en mail-auth.
+// Consumer revoca las sesiones de un buzon cuando cambia su contrasena principal, deja de poder
+// entrar, se borra o pierde lo que el webmail necesita. Un cambio que el directorio declara
+// inofensivo (cuota, nombre visible) no cierra ninguna sesion; el siguiente inicio de sesion lo
+// vuelve a comprobar todo en mail-auth.
 type Consumer struct {
 	bus     *events.Bus
 	revoker Revoker
@@ -108,6 +124,14 @@ func (c *Consumer) Handle(evt events.Event, ack func()) {
 		ack()
 		return
 	}
+	// Un borrado nunca se salta la revocacion, diga lo que diga el resto del payload.
+	if evt.Type != SubjectMailboxDeleted && sessionSurvives(data) {
+		c.logger.Info("webmail: cambio del buzon que no invalida la sesion; las sesiones del webmail siguen",
+			zap.String("subject", evt.Type), zap.String("username", username),
+			zap.Any("changed", data[changedField]), zap.String("event_id", evt.ID))
+		ack()
+		return
+	}
 	at := c.revokedAt(evt, data)
 	ctx, cancel := context.WithTimeout(context.Background(), handleTimeout)
 	defer cancel()
@@ -117,6 +141,25 @@ func (c *Consumer) Handle(evt events.Event, ack func()) {
 		return
 	}
 	ack()
+}
+
+// sessionSurvives dice si el evento AFIRMA que su cambio no invalida ninguna sesion del buzon:
+// solo cuando trae la lista changed, bien formada, y todo lo que nombra es inofensivo. Una lista
+// vacia es un cambio que no toco ningun atributo. Sin lista (un mail-directory anterior al campo),
+// con una lista ilegible o con un atributo que no se reconoce se revoca, que es lo que hacia antes
+// con cualquier cambio: ante la duda se cierra la sesion y el usuario vuelve a entrar.
+func sessionSurvives(data map[string]any) bool {
+	changed, ok := data[changedField].([]any)
+	if !ok {
+		return false
+	}
+	for _, item := range changed {
+		attr, ok := item.(string)
+		if !ok || !harmlessChanges[attr] {
+			return false
+		}
+	}
+	return true
 }
 
 // revokedAt es el instante que se revoca: el mas tardio entre changed_at (cuando el

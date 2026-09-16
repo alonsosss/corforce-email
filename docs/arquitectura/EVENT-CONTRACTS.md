@@ -65,9 +65,9 @@ subject y payload. `opaco` = el payload no se puede leer estaticamente.
 | `mail.domain.deleted` | mail-directory | `active`, `backupmx`, `domain`, `id`, `tenant_id` |
 | `mail.domain.updated` | mail-directory | `active`, `backupmx`, `domain`, `id`, `tenant_id` |
 | `mail.mailbox.created` | mail-directory | `active`, `domain`, `id`, `kind`, `tenant_id`, `username` |
-| `mail.mailbox.credentials_changed` | mail-directory | `changed_at`, `credential`, `id`, `tenant_id`, `username` |
+| `mail.mailbox.credentials_changed` | mail-directory | `changed`, `changed_at`, `credential`, `id`, `tenant_id`, `username` |
 | `mail.mailbox.deleted` | mail-directory | `active`, `domain`, `id`, `kind`, `tenant_id`, `username` |
-| `mail.mailbox.updated` | mail-directory | `active`, `domain`, `id`, `kind`, `tenant_id`, `username` |
+| `mail.mailbox.updated` | mail-directory | `active`, `changed`, `domain`, `id`, `kind`, `tenant_id`, `username` |
 | `mail_security.quarantine.released` | mail-security | `id`, `rcpt`, `tenant_id`, `user_id` |
 | `mail_security.quarantine.stored` | mail-security | `id`, `qid`, `rcpt`, `score`, `sender`, `subject`, `tenant_id` |
 | `organization.tenant.created` | organization | `cell_id`, `db_name`, `name`, `slug`, `status`, `tenant_id` |
@@ -113,7 +113,7 @@ subject y payload. `opaco` = el payload no se puede leer estaticamente.
 | `mail.domain.created` | billing | `domain`, `tenant_id` |
 | `mail.domain.deleted` | billing | `domain`, `tenant_id` |
 | `mail.mailbox.>` | mail-security | `username` |
-| `mail.mailbox.>` | webmail | `changed_at`, `credential`, `username` |
+| `mail.mailbox.>` | webmail | `changed`, `changed_at`, `credential`, `username` |
 | `mail.mailbox.created` | billing | `tenant_id` |
 | `mail.mailbox.deleted` | billing | `tenant_id` |
 | `organization.tenant.created` | billing | `tenant_id` |

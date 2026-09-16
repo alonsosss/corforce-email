@@ -146,7 +146,9 @@ func TestCambiarLaContrasenaAvisaEnLaTransaccion(t *testing.T) {
 	if h.published("mail.mailbox.credentials_changed") != 1 || len(h.events.outside) != 0 {
 		t.Fatalf("eventos: %v, fuera de la transaccion: %v", h.events.subjects, h.events.outside)
 	}
-	if want := (credentialEvent{username: "ana@acme.com", credential: domain.CredentialPassword}); h.events.credentials[0] != want {
+	want := credentialEvent{username: "ana@acme.com", credential: domain.CredentialPassword,
+		changed: []domain.MailboxAttr{domain.AttrPassword}}
+	if !reflect.DeepEqual(h.events.credentials[0], want) {
 		t.Fatalf("aviso %+v; want %+v", h.events.credentials[0], want)
 	}
 

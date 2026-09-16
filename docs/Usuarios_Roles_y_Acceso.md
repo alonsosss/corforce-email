@@ -236,12 +236,23 @@ y exige un `Origin` permitido en toda escritura (`docs/arquitectura/CSP-Y-SESION
 varias celdas el gateway lleva el inicio de sesion a la celda del dominio del buzon y el resto a
 la celda del token de la cookie, que enruta y no autoriza: cada instancia solo acepta tokens de
 su celda (V, 2026-09-13; `Modelo_de_Datos_y_Celdas.md` 5.5). Las
-sesiones de un buzon se revocan al actualizarse o borrarse (`mail.mailbox.updated`,
-`mail.mailbox.deleted`) y al cambiar su contrasena principal o perder el buzon un inicio de sesion
-(`mail.mailbox.credentials_changed` con `credential` = `password`); el aviso de una contrasena de
-aplicacion (`app_password`) no las toca, porque el webmail no la admite. Quitar `imap_access` o
-`smtp_access` las cierra porque el webmail necesita los dos; quitar `pop3_access` o `sieve_access`
-tambien, porque el webmail revoca con todo `mail.mailbox.updated`, que no dice que cambio.
+sesiones de un buzon se revocan al borrarse (`mail.mailbox.deleted`), al cambiar su contrasena
+principal y al perder el buzon un inicio de sesion (`mail.mailbox.credentials_changed` con
+`credential` = `password`), y con el `mail.mailbox.updated` que toca lo que la sesion necesita. El
+aviso de una contrasena de aplicacion (`app_password`) no las toca, porque el webmail no la admite.
+Quitar `imap_access` o `smtp_access` las cierra porque el webmail necesita los dos.
+
+V (2026-09-15): los dos eventos de cambio llevan `changed`, los atributos que cambiaron
+(`domain.MailboxChanges` en mail-directory, en la misma transaccion del cambio), y el webmail revoca
+salvo que TODOS sean inofensivos para su sesion (nombre visible, cuota, `kind`, TLS, relayhost,
+`force_pw_update`, `pop3_access` y `sieve_access`): cambiar la cuota o el nombre visible ya no echa
+al usuario, que es lo que pasaba cuando revocaba con todo `mail.mailbox.updated`. La lista del
+webmail es de lo inofensivo, no de lo peligroso, asi que un atributo que no reconozca, un `changed`
+ilegible o su ausencia (un publicador anterior al campo) revocan igual que antes; el campo es
+aditivo y un consumidor que no lo lea se comporta como hasta ahora. `changed` vale `password` o
+`app_password` cuando lo que cambio fue la credencial misma, y la baja de la empresa apaga cada
+buzon con `active`, que revoca. mail-security no lo lee: sigue decidiendo con el estado real del
+directorio.
 
 V (2026-09-15, contra Dovecot y Postfix reales con `make e2e-mail`): Dovecot deja de aceptar al
 momento la credencial de un buzon apagado, borrado o con la contrasena cambiada, aunque la tuviera

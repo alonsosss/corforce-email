@@ -206,16 +206,20 @@ func (uc *UseCase) UpdateMailbox(ctx context.Context, tenantID, id uuid.UUID, re
 				return err
 			}
 		}
+		// Los dos avisos llevan los atributos que cambiaron: con ellos el webmail cierra sus
+		// sesiones solo cuando alguno las invalida (el buzon deja de poder entrar o pierde imap o
+		// smtp) y las conserva ante un cambio de cuota o de nombre visible.
+		changed := domain.MailboxChanges(before, *m)
 		// Lo que le quita al buzon un inicio de sesion lo pierden todas sus credenciales y sale como
 		// la principal: mail-security cierra en Dovecot las sesiones ya abiertas, que
 		// mail.mailbox.updated con el buzon activo solo vaciaria, aunque el buzon se reactive antes
 		// de que atienda el cambio; el webmail cierra las suyas.
 		if domain.MailboxLoginsRevoked(before, *m) {
-			if err := uc.events.MailboxCredentialsChanged(ctx, m, domain.CredentialPassword); err != nil {
+			if err := uc.events.MailboxCredentialsChanged(ctx, m, domain.CredentialPassword, changed); err != nil {
 				return err
 			}
 		}
-		return uc.events.MailboxUpdated(ctx, m)
+		return uc.events.MailboxUpdated(ctx, m, changed)
 	})
 	if err != nil {
 		return nil, err
@@ -308,7 +312,7 @@ func (uc *UseCase) SetMailboxPassword(ctx context.Context, tenantID, id uuid.UUI
 		if err := uc.mailboxes.UpdatePassword(ctx, tenantID, id, hash); err != nil {
 			return err
 		}
-		return uc.events.MailboxCredentialsChanged(ctx, m, domain.CredentialPassword)
+		return uc.events.MailboxCredentialsChanged(ctx, m, domain.CredentialPassword, []domain.MailboxAttr{domain.AttrPassword})
 	})
 }
 
@@ -469,7 +473,7 @@ func (uc *UseCase) appPasswordRevoked(ctx context.Context, tenantID, mailboxID u
 	if err != nil {
 		return err
 	}
-	return uc.events.MailboxCredentialsChanged(ctx, m, domain.CredentialAppPassword)
+	return uc.events.MailboxCredentialsChanged(ctx, m, domain.CredentialAppPassword, []domain.MailboxAttr{domain.AttrAppPassword})
 }
 
 // ── Sieve ─────────────────────────────────────────────────────────────────────

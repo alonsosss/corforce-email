@@ -11,10 +11,12 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -218,6 +220,36 @@ func TestIntegracionCelda(t *testing.T) {
 		qs.ExcludeDomains = []string{"zzz.com"}
 		if _, err := policy.PutQuarantineSettings(ctxA, tenantA, qs); err != nil {
 			t.Fatal(err)
+		}
+		// La retencion de cuarentena tiene techo: lo exige el caso de uso y, por debajo, el CHECK de
+		// la migracion 09. Sin el, una empresa fijaba por API lo que quisiera en la base compartida
+		// de la celda y se llevaba con ello el tope que leen los motores de todas.
+		muchos := make([]string, domain.MaxQuarantineExcludeDomains+1)
+		for i := range muchos {
+			muchos[i] = "d" + strconv.Itoa(i) + ".example"
+		}
+		fuera := map[string]domain.QuarantineSettings{
+			"retention_size":  {MaxSizeBytes: qs.MaxSizeBytes, MaxAgeDays: qs.MaxAgeDays, RetentionSize: domain.MaxQuarantineRetentionSize + 1},
+			"max_age_days":    {MaxSizeBytes: qs.MaxSizeBytes, MaxAgeDays: domain.MaxQuarantineMaxAgeDays + 1, RetentionSize: 1},
+			"exclude_domains": {MaxSizeBytes: qs.MaxSizeBytes, MaxAgeDays: qs.MaxAgeDays, RetentionSize: 1, ExcludeDomains: muchos},
+		}
+		for campo, bad := range fuera {
+			if _, err := policy.PutQuarantineSettings(ctxA, tenantA, bad); !errors.Is(err, domain.ErrValidation) {
+				t.Fatalf("%s por encima del techo: %v", campo, err)
+			}
+		}
+		// Y la base lo rechaza aunque se escriba sin pasar por el caso de uso.
+		for campo, valor := range map[string]int{
+			"retention_size": domain.MaxQuarantineRetentionSize + 1,
+			"max_age_days":   domain.MaxQuarantineMaxAgeDays + 1,
+		} {
+			if _, err := pool.Exec(ctx, "UPDATE mail_security.quarantine_settings SET "+campo+" = $1 WHERE tenant_id = $2",
+				valor, tenantA); err == nil {
+				t.Fatalf("el CHECK de la migracion 09 debe rechazar %s = %d", campo, valor)
+			}
+		}
+		if got, err := policy.GetQuarantineSettings(ctxA, tenantA); err != nil || got.RetentionSize != 2 {
+			t.Fatalf("los ajustes validos siguen en pie tras los rechazos: %+v %v", got, err)
 		}
 		// Redes SMTP: cidr en la base, en la forma de SMTP_ACCESS al leer.
 		access, err := policy.PutSMTPAccess(ctxA, tenantA, "Ana@acme.com", []string{"203.0.113.9/24", "198.51.100.7", "198.51.100.7/32"})

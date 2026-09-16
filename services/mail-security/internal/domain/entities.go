@@ -134,6 +134,13 @@ type QuarantineFilter struct {
 	PerPage  int
 }
 
+// Paginacion del listado de cuarentena: la pagina por defecto y la mayor que se sirve. El tope
+// vive aqui porque tambien acota la retencion (MaxQuarantineRetentionSize).
+const (
+	DefaultQuarantinePerPage = 50
+	MaxQuarantinePerPage     = 200
+)
+
 // QuarantineNotify configura el aviso de cuarentena al usuario.
 type QuarantineNotify struct {
 	Enabled      bool            `json:"enabled"`
@@ -169,6 +176,32 @@ const (
 // La migracion 08 repite el numero como CHECK y ops/scaffold/check-mail-size-limits.sh ata
 // los tres.
 const MaxQuarantineMaxSizeBytes int64 = 101 * 1024 * 1024
+
+// Techos de la retencion de cuarentena. Los tres ajustes viajan ademas a Redis como el TOPE de la
+// CELDA (el maximo entre empresas y la union de dominios, ComputeCellQuarantineTop): sin techo, lo
+// que pide una empresa se lo lleva toda la celda.
+const (
+	// MaxQuarantineRetentionSize son las filas que la celda guarda por buzon. No es un numero
+	// redondo sino diez paginas del unico listado que sirve esas filas (MaxQuarantinePerPage), que
+	// son tambien veinte avisos de cuarentena (maxMessagesPerNotice, 100): pasado eso los mensajes
+	// ya no se revisan, solo se guardan, y cada fila cuesta dos veces. En la base, porque lleva el
+	// mensaje ENTERO (quarantine.msg): al tamano por defecto (DefaultQuarantineMaxSizeBytes, 10
+	// MiB) son casi 20 GiB de UN solo buzon en la base compartida de la celda, y al techo por
+	// mensaje casi 200. Y en la entrega, porque la poda por buzon corre dentro de /pipe, que Rspamd
+	// llama con cada mensaje que va a cuarentena, y su DELETE recorre retention_size entradas del
+	// indice antes de dar con la primera que sobra.
+	MaxQuarantineRetentionSize = 10 * MaxQuarantinePerPage
+	// MaxQuarantineMaxAgeDays es el doble del defecto: dos anos. La cuarentena guarda el cuerpo
+	// entero de correo de terceros, spam y malware incluidos, y PruneAged es lo unico que retira el
+	// mensaje que nadie llega a revisar; sin techo una empresa podia pedir una retencion
+	// practicamente infinita y dejar ese contenido en la celda para siempre.
+	MaxQuarantineMaxAgeDays = 2 * DefaultQuarantineMaxAgeDays
+	// MaxQuarantineExcludeDomains acota la lista de dominios excluidos, que viaja entera a Redis
+	// como UN valor (Q_EXCLUDE_DOMAINS) unido al de las demas empresas de la celda. Son muchos mas
+	// dominios de los que una empresa gestiona; el limite esta para que una lista sin fin no hinche
+	// una clave que leen los motores de todas.
+	MaxQuarantineExcludeDomains = 256
+)
 
 // DefaultQuarantineSettings devuelve los ajustes que rigen sin fila propia.
 func DefaultQuarantineSettings(tenantID uuid.UUID) QuarantineSettings {

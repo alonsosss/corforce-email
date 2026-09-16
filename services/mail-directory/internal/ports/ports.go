@@ -218,11 +218,15 @@ type EventPublisher interface {
 	AliasDomainUpdated(ctx context.Context, a *domain.AliasDomain) error
 	AliasDomainDeleted(ctx context.Context, a *domain.AliasDomain) error
 	MailboxCreated(ctx context.Context, m *domain.Mailbox) error
-	MailboxUpdated(ctx context.Context, m *domain.Mailbox) error
+	// MailboxUpdated anuncia el cambio con los atributos que cambio (domain.MailboxChanges):
+	// quien guarda sesiones del buzon decide con esa lista si tiene que cerrarlas.
+	MailboxUpdated(ctx context.Context, m *domain.Mailbox, changed []domain.MailboxAttr) error
 	MailboxDeleted(ctx context.Context, m *domain.Mailbox) error
 	// MailboxCredentialsChanged anuncia que una credencial del buzon dejo de valer o perdio
 	// protocolos: la contrasena principal cambio, o una de aplicacion perdio un inicio de sesion.
-	MailboxCredentialsChanged(ctx context.Context, m *domain.Mailbox, credential domain.Credential) error
+	// changed dice cual de las dos cosas fue: AttrPassword o AttrAppPassword cuando la credencial
+	// misma cambio, y los atributos del buzon cuando lo que perdio fueron protocolos.
+	MailboxCredentialsChanged(ctx context.Context, m *domain.Mailbox, credential domain.Credential, changed []domain.MailboxAttr) error
 	AliasCreated(ctx context.Context, a *domain.Alias) error
 	AliasUpdated(ctx context.Context, a *domain.Alias) error
 	AliasDeleted(ctx context.Context, a *domain.Alias) error

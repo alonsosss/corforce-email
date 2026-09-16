@@ -744,6 +744,27 @@ for paso in desactivar borrar; do
   fi
 done
 
+# La otra cara: un cambio INOCUO del buzon (la cuota, el nombre visible) no cierra la sesion del
+# webmail. mail-directory dice en mail.mailbox.updated que atributos cambio (changed) y el webmail
+# solo revoca con los que invalidan su sesion; antes revocaba con cualquier mail.mailbox.updated, que
+# no decia que cambio, y echaba al usuario sin motivo. Se espera al registro del webmail antes de
+# mirar la sesion: sin esa espera seguiria abierta por no haber llegado el evento, no por el arreglo.
+webmail_conservo() { docker logs "$(c webmail)" 2>&1 | grep 'no invalida la sesion' | grep -c '"username":"bea@acme.test"'; }
+webmail_conservo_mas() { (( $(webmail_conservo) > BEA_WM_OK0 )); }
+wm "$TARRO_BEA" GET /folders
+expect "bea sigue con su sesion del webmail abierta antes de los cambios inocuos" "$WM_CODE" "200"
+K_INOCUO=$(revocaciones kick)
+for inocuo in '{"quota_bytes":1073741824}' '{"display_name":"Bea D. Diaz"}'; do
+  BEA_WM_OK0=$(webmail_conservo)
+  api PATCH "/mailboxes/$BEAID" "$inocuo"
+  expect "mail-directory aplica un cambio inocuo a bea: $inocuo" "$API_CODE" "200"
+  esperar "el webmail lo atiende y no revoca ($inocuo)" 20 webmail_conservo_mas
+  wm "$TARRO_BEA" GET /folders
+  expect "y la sesion de bea en el webmail sigue abierta" "$WM_CODE" "200"
+done
+expect "mail-security tampoco echo a nadie de Dovecot por ellos (solo vacio la cache)" "$(revocaciones kick)" "$K_INOCUO"
+expect "y bea sigue entrando por IMAP" "$(cliente login bea@acme.test "$BEA_PASS")" "OK"
+
 # Quitarle un protocolo al buzon cierra al momento la sesion abierta con el: mail-directory publica en
 # la misma transaccion mail.mailbox.credentials_changed con credential password
 # (domain.MailboxLoginsRevoked) y mail-security echa al buzon; mail.mailbox.updated con el buzon
@@ -770,6 +791,47 @@ esperar "y su sesion del webmail, que necesita imap, se cierra" 20 webmail_cerra
 api PATCH "/mailboxes/$BEAID" '{"imap_access":true}'
 expect "bea recupera imap" "$API_CODE/$(echo "$API_BODY" | jget data.imap_access)" "200/True"
 esperar "y vuelve a entrar por IMAP" 20 login_aceptado bea@acme.test "$BEA_PASS"
+
+# Apagar el buzon y cambiar su contrasena SI cierran la sesion del webmail al momento: son los dos
+# cambios que la invalidan sin tocar un protocolo, y con changed siguen cerrandola como antes.
+#
+# Aqui NO se sondea /folders esperando el 401, como si se hace arriba con imap_access: con el buzon
+# apagado el directorio deja de servirlo, y la peticion del webmail entra como usuario MAESTRO (la
+# passdb que autentica es la del maestro, asi que la busqueda del buzon llega al userdb y no la corta
+# antes mail-auth, como si pasa con un login normal). Cada intento en esa ventana deja "user not
+# found from any userdbs" en el registro de Dovecot y un error en el del webmail, y el escaneo final
+# mira el log ENTERO: basta provocarlo una vez para romperlo. Se espera a la senal real (el webmail
+# registra la revocacion al aplicarla) y solo despues se mira la sesion: ya revocada, responde 401
+# sin abrir IMAP. La sesion previa se comprueba sirviendo carpetas porque una abierta dentro del
+# margen de revocacion del cambio anterior nace invalidada y el 401 de despues no probaria nada.
+webmail_sesion_viva() {
+  wm "$TARRO_BEA" POST /session -H 'Content-Type: application/json' -d "{\"username\":\"bea@acme.test\",\"password\":\"$BEA_PASS\"}"
+  [[ $WM_CODE == 200 ]] || return 1
+  wm "$TARRO_BEA" GET /folders
+  [[ $WM_CODE == 200 ]]
+}
+webmail_revoco() { docker logs "$(c webmail)" 2>&1 | grep 'sesiones del buzon revocadas' | grep -c '"username":"bea@acme.test"'; }
+webmail_revoco_mas() { (( $(webmail_revoco) > BEA_WM_REV0 )); }
+esperar "bea abre una sesion del webmail que sirve sus carpetas" 30 webmail_sesion_viva
+BEA_WM_REV0=$(webmail_revoco)
+api PATCH "/mailboxes/$BEAID" '{"active":0}'
+expect "mail-directory apaga a bea" "$API_CODE" "200"
+esperar "el webmail revoca sus sesiones al apagarse el buzon" 20 webmail_revoco_mas
+wm "$TARRO_BEA" GET /folders
+expect "y su sesion del webmail ya no sirve el buzon" "$WM_CODE" "401"
+api PATCH "/mailboxes/$BEAID" '{"active":1}'
+expect "bea se reactiva" "$API_CODE" "200"
+esperar "y vuelve a entrar por IMAP" 20 login_aceptado bea@acme.test "$BEA_PASS"
+esperar "y a abrir una sesion del webmail que sirve sus carpetas" 30 webmail_sesion_viva
+BEA_WM_REV0=$(webmail_revoco)
+BEA_OTRA="$(rand_hex 10)Aa1!"
+api POST "/mailboxes/$BEAID/password" "{\"password\":\"$BEA_OTRA\"}"
+expect "mail-directory vuelve a cambiar la contrasena de bea" "$API_CODE" "204"
+esperar "el webmail revoca sus sesiones al cambiar la contrasena" 20 webmail_revoco_mas
+wm "$TARRO_BEA" GET /folders
+expect "y su sesion del webmail ya no sirve el buzon" "$WM_CODE" "401"
+BEA_PASS="$BEA_OTRA"
+esperar "y bea entra por IMAP con la nueva" 20 login_aceptado bea@acme.test "$BEA_PASS"
 expect "mail-security sin fallos de revocacion" "$(revocaciones fallos)" "0"
 
 echo "== Rotacion y revocacion de la clave DKIM (domain-service -> mail-security -> redis-mail)"

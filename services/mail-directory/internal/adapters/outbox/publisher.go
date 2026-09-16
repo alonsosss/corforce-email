@@ -112,11 +112,33 @@ func (p *Publisher) MailboxCreated(ctx context.Context, m *domain.Mailbox) error
 	}})
 }
 
-func (p *Publisher) MailboxUpdated(ctx context.Context, m *domain.Mailbox) error {
+// MailboxUpdated lleva en changed los atributos que cambio el cambio que anuncia: con esa lista
+// el webmail cierra las sesiones del buzon solo cuando alguno las invalida, en vez de cerrarlas
+// con cualquier cambio. mail-security no la lee: decide con el estado real del directorio.
+func (p *Publisher) MailboxUpdated(ctx context.Context, m *domain.Mailbox, changed []domain.MailboxAttr) error {
+	attrs, err := changedAttrs(SubjectMailboxUpdated, changed)
+	if err != nil {
+		return err
+	}
 	return p.in(ctx).Publish(SubjectMailboxUpdated, events.Event{TenantID: m.TenantID.String(), Data: map[string]interface{}{
 		"tenant_id": m.TenantID.String(), "id": m.ID.String(), "username": m.Username, "domain": m.Domain,
-		"active": m.Active, "kind": m.Kind,
+		"active": m.Active, "kind": m.Kind, "changed": attrs,
 	}})
+}
+
+// changedAttrs devuelve los atributos como lista JSON, NUNCA nula: el consumidor distingue "no
+// cambio nada" (lista vacia) de "el evento no lo dice" (sin campo, un publicador anterior a este),
+// y solo con lo segundo revoca por si acaso. Un atributo desconocido no se encola: el consumidor
+// que no lo reconoce revocaria de mas para siempre.
+func changedAttrs(subject string, changed []domain.MailboxAttr) ([]string, error) {
+	attrs := make([]string, 0, len(changed))
+	for _, a := range changed {
+		if !a.Valid() {
+			return nil, fmt.Errorf("atributo %q desconocido en %s", a, subject)
+		}
+		attrs = append(attrs, string(a))
+	}
+	return attrs, nil
 }
 
 func (p *Publisher) MailboxDeleted(ctx context.Context, m *domain.Mailbox) error {
@@ -128,13 +150,17 @@ func (p *Publisher) MailboxDeleted(ctx context.Context, m *domain.Mailbox) error
 
 // MailboxCredentialsChanged rechaza una credencial desconocida: un consumidor que la leyera
 // como la principal cerraria sesiones que no debia, y al reves dejaria abiertas las que si.
-func (p *Publisher) MailboxCredentialsChanged(ctx context.Context, m *domain.Mailbox, credential domain.Credential) error {
+func (p *Publisher) MailboxCredentialsChanged(ctx context.Context, m *domain.Mailbox, credential domain.Credential, changed []domain.MailboxAttr) error {
 	if !credential.Valid() {
 		return fmt.Errorf("credencial %q desconocida en %s", credential, SubjectMailboxCredentialsChanged)
 	}
+	attrs, err := changedAttrs(SubjectMailboxCredentialsChanged, changed)
+	if err != nil {
+		return err
+	}
 	return p.in(ctx).Publish(SubjectMailboxCredentialsChanged, events.Event{TenantID: m.TenantID.String(), Data: map[string]interface{}{
 		"tenant_id": m.TenantID.String(), "id": m.ID.String(), "username": m.Username,
-		"changed_at": time.Now().UTC().Format(time.RFC3339), "credential": string(credential),
+		"changed_at": time.Now().UTC().Format(time.RFC3339), "credential": string(credential), "changed": attrs,
 	}})
 }
 

@@ -57,11 +57,14 @@ type fakeEvents struct {
 	fail     error
 	// credentials anota cada mail.mailbox.credentials_changed con su buzon y su credencial.
 	credentials []credentialEvent
+	// changed anota el changed de cada mail.mailbox.updated, en orden.
+	changed [][]domain.MailboxAttr
 }
 
 type credentialEvent struct {
 	username   string
 	credential domain.Credential
+	changed    []domain.MailboxAttr
 }
 
 func (f *fakeEvents) record(s string) error {
@@ -98,17 +101,21 @@ func (f *fakeEvents) AliasDomainDeleted(context.Context, *domain.AliasDomain) er
 func (f *fakeEvents) MailboxCreated(context.Context, *domain.Mailbox) error {
 	return f.record("mail.mailbox.created")
 }
-func (f *fakeEvents) MailboxUpdated(context.Context, *domain.Mailbox) error {
-	return f.record("mail.mailbox.updated")
+func (f *fakeEvents) MailboxUpdated(_ context.Context, _ *domain.Mailbox, changed []domain.MailboxAttr) error {
+	if err := f.record("mail.mailbox.updated"); err != nil {
+		return err
+	}
+	f.changed = append(f.changed, changed)
+	return nil
 }
 func (f *fakeEvents) MailboxDeleted(context.Context, *domain.Mailbox) error {
 	return f.record("mail.mailbox.deleted")
 }
-func (f *fakeEvents) MailboxCredentialsChanged(_ context.Context, m *domain.Mailbox, c domain.Credential) error {
+func (f *fakeEvents) MailboxCredentialsChanged(_ context.Context, m *domain.Mailbox, c domain.Credential, changed []domain.MailboxAttr) error {
 	if err := f.record("mail.mailbox.credentials_changed"); err != nil {
 		return err
 	}
-	f.credentials = append(f.credentials, credentialEvent{username: m.Username, credential: c})
+	f.credentials = append(f.credentials, credentialEvent{username: m.Username, credential: c, changed: changed})
 	return nil
 }
 func (f *fakeEvents) AliasCreated(context.Context, *domain.Alias) error {

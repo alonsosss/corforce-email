@@ -79,6 +79,45 @@ func TestValidateQuarantineMaxSize(t *testing.T) {
 	}
 }
 
+// La retencion de cuarentena tiene techo: sin el, una empresa fijaba por API lo que quisiera en la
+// base compartida de la celda y se llevaba con ello el tope que leen los motores de todas.
+func TestTechosDeLaRetencionDeCuarentena(t *testing.T) {
+	for _, ok := range []int{0, 1, DefaultQuarantineRetentionSize, MaxQuarantineRetentionSize} {
+		if err := ValidateQuarantineRetentionSize(ok); err != nil {
+			t.Errorf("retention_size %d deberia aceptarse: %v", ok, err)
+		}
+	}
+	for _, bad := range []int{-1, MaxQuarantineRetentionSize + 1, 1 << 30} {
+		if err := ValidateQuarantineRetentionSize(bad); !errors.Is(err, ErrValidation) {
+			t.Errorf("retention_size %d deberia rechazarse con ErrValidation, obtuve %v", bad, err)
+		}
+	}
+	for _, ok := range []int{1, DefaultQuarantineMaxAgeDays, MaxQuarantineMaxAgeDays} {
+		if err := ValidateQuarantineMaxAgeDays(ok); err != nil {
+			t.Errorf("max_age_days %d deberia aceptarse: %v", ok, err)
+		}
+	}
+	for _, bad := range []int{0, -1, MaxQuarantineMaxAgeDays + 1, 1 << 30} {
+		if err := ValidateQuarantineMaxAgeDays(bad); !errors.Is(err, ErrValidation) {
+			t.Errorf("max_age_days %d deberia rechazarse con ErrValidation, obtuve %v", bad, err)
+		}
+	}
+	for _, ok := range []int{0, 1, MaxQuarantineExcludeDomains} {
+		if err := ValidateQuarantineExcludeDomains(ok); err != nil {
+			t.Errorf("exclude_domains %d deberia aceptarse: %v", ok, err)
+		}
+	}
+	if err := ValidateQuarantineExcludeDomains(MaxQuarantineExcludeDomains + 1); !errors.Is(err, ErrValidation) {
+		t.Errorf("exclude_domains por encima del techo deberia rechazarse, obtuve %v", err)
+	}
+	// Los defectos que rigen sin fila propia caen dentro de sus propios techos.
+	def := DefaultQuarantineSettings(uuid.New())
+	if ValidateQuarantineRetentionSize(def.RetentionSize) != nil || ValidateQuarantineMaxAgeDays(def.MaxAgeDays) != nil ||
+		ValidateQuarantineMaxSize(def.MaxSizeBytes) != nil {
+		t.Fatalf("los ajustes por defecto no pasan su propia validacion: %+v", def)
+	}
+}
+
 func TestCellQuarantineTopEsElMaximoYLaUnion(t *testing.T) {
 	a := DefaultQuarantineSettings(uuid.New())
 	a.MaxSizeBytes = 3 * 1024 * 1024

@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 
 	"github.com/alonsosss/corforce-email/services/mail-directory/internal/domain"
@@ -49,6 +50,12 @@ func TestLaBajaApagaElDirectorioDeLaEmpresaYLoAnuncia(t *testing.T) {
 	}
 	if len(h.events.subjects) != 4 || len(h.events.outside) != 0 || h.retirements.exclusive != 1 {
 		t.Fatalf("eventos %v (fuera de la transaccion %v), cerrojos exclusivos %d", h.events.subjects, h.events.outside, h.retirements.exclusive)
+	}
+	// La baja apaga el buzon y su aviso lo dice: con active en changed el webmail cierra sus
+	// sesiones. Es el unico camino que apaga un buzon sin pasar por UpdateMailbox, asi que si el
+	// aviso saliera vacio la baja de una empresa dejaria sesiones del webmail abiertas.
+	if want := [][]domain.MailboxAttr{{domain.AttrActive}}; !reflect.DeepEqual(h.events.changed, want) {
+		t.Fatalf("changed de mail.mailbox.updated = %v; want %v", h.events.changed, want)
 	}
 
 	again, err := h.uc.RetireTenant(ctx, tenant)

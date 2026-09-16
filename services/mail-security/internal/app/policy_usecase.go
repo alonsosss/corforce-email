@@ -514,13 +514,16 @@ func (uc *PolicyUseCase) PutQuarantineSettings(ctx context.Context, tenantID uui
 	if err := domain.ValidateQuarantineMaxSize(s.MaxSizeBytes); err != nil {
 		return nil, err
 	}
-	if s.MaxAgeDays <= 0 {
-		return nil, &domain.ValidationError{Msg: "max_age_days debe ser mayor que cero"}
+	if err := domain.ValidateQuarantineMaxAgeDays(s.MaxAgeDays); err != nil {
+		return nil, err
 	}
-	if s.RetentionSize < 0 {
-		return nil, &domain.ValidationError{Msg: "retention_size no puede ser negativo"}
+	if err := domain.ValidateQuarantineRetentionSize(s.RetentionSize); err != nil {
+		return nil, err
 	}
 	s.ExcludeDomains = lowerAll(s.ExcludeDomains)
+	if err := domain.ValidateQuarantineExcludeDomains(len(s.ExcludeDomains)); err != nil {
+		return nil, err
+	}
 	for _, d := range s.ExcludeDomains {
 		if err := domain.ValidateDomainName(d); err != nil {
 			return nil, &domain.ValidationError{Msg: fmt.Sprintf("exclude_domains: %q no es un dominio", d)}

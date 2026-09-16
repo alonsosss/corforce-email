@@ -311,6 +311,14 @@ directorio:
   buena. Este consumidor no lee `credential`; el webmail si, y con `app_password` no cierra sus
   sesiones, porque solo admite la principal. La baja de la empresa no lo publica: cada buzon que
   apaga ya sale como `mail.mailbox.updated`, que echa, y ninguno puede reactivarse despues.
+
+  `mail.mailbox.updated` y `mail.mailbox.credentials_changed` llevan ademas `changed`, la lista de
+  atributos que cambio ese hecho (`domain.MailboxChanges`), con los nombres del JSON del buzon, o
+  `password` / `app_password` cuando lo que cambio fue la credencial misma. Es aditivo y lo usa el
+  WEBMAIL para no cerrar la sesion de su usuario ante un cambio que no la invalida (cuota, nombre
+  visible, `kind`, TLS, relayhost, `force_pw_update`, `pop3_access`, `sieve_access`), revocando ante
+  cualquier otro atributo, ante uno que no reconozca y ante la falta del campo. Este consumidor NO lo
+  lee: decide con el estado real del buzon, que es mas fiable que cualquier lista.
 * **Idempotencia y reintento**: un `kick` sin sesiones (salida 68) es un exito y vaciar dos veces no
   cambia nada. Un fallo deja el evento sin confirmar: JetStream lo reentrega cada 90 s y tras 20
   entregas lo guarda en `EVENTS_DLQ` (`pkg/events`). Metricas
@@ -340,9 +348,13 @@ Una contrasena de aplicacion con la que el buzon acababa de entrar por IMAP se r
 al desactivarla y al borrarla y su sesion IMAP abierta se cierra, mientras la contrasena principal
 sigue entrando y la sesion del webmail sigue abierta; reactivada, vuelve a entrar al momento.
 
-P: retirar un protocolo del buzon vacia la cache pero no cierra la sesion abierta de ese protocolo:
-`mail.v_routing_mailboxes` no publica los flags. `dsync-server` con replica no esta probado.
-Queda una carrera: una autenticacion que
+V (2026-09-15, las dos caras de la revocacion en el webmail con `make e2e-mail`): con la sesion del
+webmail abierta, cambiar la cuota y el nombre visible del buzon NO la cierra (el webmail atiende el
+evento, lo registra como cambio que no invalida la sesion y la sesion sigue sirviendo carpetas) y
+mail-security no echa a nadie de Dovecot por ellos; quitarle `imap_access`, apagar el buzon y
+cambiar su contrasena SI la cierran al momento.
+
+P: `dsync-server` con replica no esta probado. Queda una carrera: una autenticacion que
 `mail-auth` acepto antes del cambio y que Dovecot guardara despues del vaciado (mas lenta que el
 rele de la outbox) valdria hasta `auth_cache_ttl`.
 
@@ -490,7 +502,7 @@ sobre un enlace privado hasta que se cifre.
 | `QW_HTML`, `QW_SENDER`, `QW_SUBJ` | string | mail-directory | `quota_notify.py` (usuario ACL `quota_notify`, solo `GET/HGET ~QW_*`) | plantilla Jinja, remitente y asunto del aviso de cuota |
 | `QW_BCC` | hash `dominio -> {"bcc_rcpts":[...],"active":1}` | mail-directory | `quota_notify.py` | copias del aviso de cuota |
 | `Q_MAX_AGE` | string (dias) | mail-security | `clean_q_aged.sh` | TOPE de la celda (maximo entre empresas) |
-| `Q_MAX_SIZE` (MiB), `Q_EXCLUDE_DOMAINS` (JSON), `Q_RETENTION_SIZE` | string | mail-security | informativo | TOPE de la celda: maximo entre empresas y union de dominios excluidos. Los ajustes son por empresa y los aplica `/pipe` con la fila de la empresa; Redis admite un solo valor |
+| `Q_MAX_SIZE` (MiB), `Q_EXCLUDE_DOMAINS` (JSON), `Q_RETENTION_SIZE` | string | mail-security | informativo | TOPE de la celda: maximo entre empresas y union de dominios excluidos. Los ajustes son por empresa y los aplica `/pipe` con la fila de la empresa; Redis admite un solo valor. Por eso los cuatro tienen techo por empresa (`domain.MaxQuarantine*`, migraciones 08 y 09): sin el, lo que pide una empresa se lo lleva toda la celda |
 | `F2B_OPTIONS` | string JSON | netfilter (defaults) y mail-security (`ban_time`, `max_ban_time`, `ban_time_increment`, `max_attempts`, `retry_window`, `netban_ipv4`, `netban_ipv6` de `mail_security.firewall_options`; conserva `banlist_id` y `manage_external`; sin fila en la base no la toca) | netfilter | opciones de baneo |
 | `F2B_REGEX` | string JSON | netfilter (defaults) | netfilter | regex de baneo; no se expone por API: una regex mal escrita deja la celda sin baneos o banea de mas |
 | `F2B_WHITELIST`, `F2B_BLACKLIST` | hash `red/prefijo -> 1` | mail-security (`mail_security.firewall_networks`, `/api/v1/mail-security/firewall/networks`, solo superadmin, y reconciliacion) | netfilter | listas del cortafuegos de la celda |

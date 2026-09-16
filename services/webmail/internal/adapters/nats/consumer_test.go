@@ -128,6 +128,101 @@ func TestFalloDelAlmacenSeReentrega(t *testing.T) {
 	}
 }
 
+// Un cambio que el directorio declara inofensivo no cierra ninguna sesion: antes el webmail revocaba
+// con cualquier mail.mailbox.updated, que no decia que cambio, y una cuota o un nombre visible
+// echaban al usuario de su sesion sin motivo.
+func TestUnCambioInofensivoNoRevoca(t *testing.T) {
+	for _, changed := range [][]any{
+		{"display_name"},
+		{"quota_bytes"},
+		{"display_name", "quota_bytes"},
+		{"kind", "tls_enforce_in", "tls_enforce_out", "relayhost_id", "force_pw_update"},
+		// El webmail no usa pop3 ni sieve: perderlos no invalida su sesion aunque si cierre la
+		// sesion IMAP o POP3 que los usara (eso lo hace mail-security en Dovecot).
+		{"pop3_access", "sieve_access"},
+		// Lista vacia: el cambio no toco ningun atributo.
+		{},
+	} {
+		for _, subject := range []string{SubjectMailboxUpdated, SubjectMailboxCredentialsChanged} {
+			rev := &fakeRevoker{}
+			c := NewConsumer(nil, rev, zap.NewNop())
+			evt := events.Event{ID: "e", Type: subject, Data: map[string]any{
+				"username": "ana@empresa.pe", "changed": changed,
+			}}
+			if !handle(c, evt) || len(rev.calls) != 0 {
+				t.Fatalf("%s con changed %v: revocaciones %+v", subject, changed, rev.calls)
+			}
+		}
+	}
+}
+
+// Lo que invalida de verdad la sesion la cierra al momento, exactamente como antes.
+func TestLoQueInvalidaLaSesionSigueRevocando(t *testing.T) {
+	for _, changed := range [][]any{
+		{"active"},
+		{"imap_access"},
+		{"smtp_access"},
+		{"password"},
+		{"app_password"},
+		// Basta uno: el resto de la lista es inofensivo.
+		{"display_name", "imap_access"},
+		{"quota_bytes", "active"},
+	} {
+		for _, subject := range []string{SubjectMailboxUpdated, SubjectMailboxCredentialsChanged} {
+			rev := &fakeRevoker{}
+			c := NewConsumer(nil, rev, zap.NewNop())
+			evt := events.Event{ID: "e", Type: subject, Data: map[string]any{
+				"username": "ana@empresa.pe", "changed": changed,
+			}}
+			if !handle(c, evt) || len(rev.calls) != 1 {
+				t.Fatalf("%s con changed %v: revocaciones %+v", subject, changed, rev.calls)
+			}
+		}
+	}
+}
+
+// La lista es de lo inofensivo, no de lo peligroso: sin changed (un mail-directory anterior al
+// campo), con un changed ilegible o con un atributo que este consumidor no conoce se revoca, que es
+// lo que hacia antes con cualquier cambio. Un borrado revoca diga lo que diga el payload.
+func TestAnteLaDudaRevoca(t *testing.T) {
+	cases := map[string]map[string]any{
+		"sin changed":          {"username": "ana@empresa.pe"},
+		"changed nulo":         {"username": "ana@empresa.pe", "changed": nil},
+		"changed no es lista":  {"username": "ana@empresa.pe", "changed": "display_name"},
+		"changed es un mapa":   {"username": "ana@empresa.pe", "changed": map[string]any{"display_name": true}},
+		"elemento no es texto": {"username": "ana@empresa.pe", "changed": []any{"display_name", 1}},
+		"atributo desconocido": {"username": "ana@empresa.pe", "changed": []any{"inventado_en_el_futuro"}},
+		"atributo vacio":       {"username": "ana@empresa.pe", "changed": []any{""}},
+	}
+	for name, data := range cases {
+		rev := &fakeRevoker{}
+		c := NewConsumer(nil, rev, zap.NewNop())
+		if !handle(c, events.Event{ID: "e", Type: SubjectMailboxUpdated, Data: data}) || len(rev.calls) != 1 {
+			t.Fatalf("%s: revocaciones %+v", name, rev.calls)
+		}
+	}
+	rev := &fakeRevoker{}
+	c := NewConsumer(nil, rev, zap.NewNop())
+	borrado := events.Event{ID: "e", Type: SubjectMailboxDeleted, Data: map[string]any{
+		"username": "ana@empresa.pe", "changed": []any{"display_name"},
+	}}
+	if !handle(c, borrado) || len(rev.calls) != 1 {
+		t.Fatalf("un borrado revoca siempre: %+v", rev.calls)
+	}
+}
+
+// Una contrasena de aplicacion no abre el webmail ni con un changed que parezca peligroso.
+func TestContrasenaDeAplicacionManda(t *testing.T) {
+	rev := &fakeRevoker{}
+	c := NewConsumer(nil, rev, zap.NewNop())
+	evt := events.Event{ID: "e", Type: SubjectMailboxCredentialsChanged, Data: map[string]any{
+		"username": "ana@empresa.pe", "credential": "app_password", "changed": []any{"imap_access"},
+	}}
+	if !handle(c, evt) || len(rev.calls) != 0 {
+		t.Fatalf("revocaciones %+v", rev.calls)
+	}
+}
+
 func TestSinHoraUsaLaActual(t *testing.T) {
 	now := time.Date(2026, 9, 13, 10, 0, 0, 0, time.UTC)
 	rev := &fakeRevoker{}

@@ -56,8 +56,10 @@ func (uc *UseCase) RetireTenant(ctx context.Context, tenantID uuid.UUID) (*domai
 		if err != nil {
 			return err
 		}
+		// La baja solo apaga el buzon: el aviso lo dice (active), y con eso el webmail cierra sus
+		// sesiones igual que con cualquier buzon que deja de poder entrar.
 		for i := range mailboxes {
-			if err := uc.events.MailboxUpdated(ctx, &mailboxes[i]); err != nil {
+			if err := uc.events.MailboxUpdated(ctx, &mailboxes[i], []domain.MailboxAttr{domain.AttrActive}); err != nil {
 				return err
 			}
 		}

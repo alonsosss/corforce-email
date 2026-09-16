@@ -50,7 +50,8 @@ func TestCambiosDeUnaContrasenaDeAplicacionQueSeAnuncian(t *testing.T) {
 			}
 			var want []credentialEvent
 			if c.want {
-				want = []credentialEvent{{username: m.Username, credential: domain.CredentialAppPassword}}
+				want = []credentialEvent{{username: m.Username, credential: domain.CredentialAppPassword,
+					changed: []domain.MailboxAttr{domain.AttrAppPassword}}}
 			}
 			if !reflect.DeepEqual(h.events.credentials, want) || len(h.events.subjects) != len(want) || len(h.events.outside) != 0 {
 				t.Fatalf("avisos %+v (eventos %v, fuera de la transaccion %v); want %+v",
@@ -72,7 +73,8 @@ func TestBorrarUnaContrasenaDeAplicacion(t *testing.T) {
 	if err := h.uc.DeleteAppPassword(ctx, tenant, m.ID, activa.ID); err != nil {
 		t.Fatalf("borrar la activa: %v", err)
 	}
-	want := []credentialEvent{{username: m.Username, credential: domain.CredentialAppPassword}}
+	want := []credentialEvent{{username: m.Username, credential: domain.CredentialAppPassword,
+		changed: []domain.MailboxAttr{domain.AttrAppPassword}}}
 	if !reflect.DeepEqual(h.events.credentials, want) || len(h.events.outside) != 0 {
 		t.Fatalf("avisos %+v (fuera de la transaccion %v); want %+v", h.events.credentials, h.events.outside, want)
 	}
@@ -148,7 +150,8 @@ func TestApagarUnBuzonAnunciaSusContrasenasDeAplicacion(t *testing.T) {
 		t.Fatalf("apagar a ana: %v", err)
 	}
 	wantSubjects := []string{"mail.mailbox.credentials_changed", "mail.mailbox.updated"}
-	wantCredentials := []credentialEvent{{username: ana.Username, credential: domain.CredentialPassword}}
+	wantCredentials := []credentialEvent{{username: ana.Username, credential: domain.CredentialPassword,
+		changed: []domain.MailboxAttr{domain.AttrActive}}}
 	if !reflect.DeepEqual(h.events.subjects, wantSubjects) || !reflect.DeepEqual(h.events.credentials, wantCredentials) || len(h.events.outside) != 0 {
 		t.Fatalf("eventos %v, avisos %+v, fuera de la transaccion %v", h.events.subjects, h.events.credentials, h.events.outside)
 	}

@@ -11,12 +11,6 @@ import (
 	"go.uber.org/zap"
 )
 
-// Tope de pagina del listado de cuarentena.
-const (
-	defaultQuarantinePerPage = 50
-	maxQuarantinePerPage     = 200
-)
-
 // QuarantineUseCase es la cuarentena vista desde el API de administracion y desde los
 // enlaces sin sesion del aviso.
 type QuarantineUseCase struct {
@@ -53,10 +47,10 @@ func (uc *QuarantineUseCase) List(ctx context.Context, tenantID uuid.UUID, f dom
 		f.Page = 1
 	}
 	if f.PerPage < 1 {
-		f.PerPage = defaultQuarantinePerPage
+		f.PerPage = domain.DefaultQuarantinePerPage
 	}
-	if f.PerPage > maxQuarantinePerPage {
-		f.PerPage = maxQuarantinePerPage
+	if f.PerPage > domain.MaxQuarantinePerPage {
+		f.PerPage = domain.MaxQuarantinePerPage
 	}
 	err = uc.tx.TransactRLS(ctx, func(ctx context.Context) error {
 		items, total, err = uc.repo.List(ctx, tenantID, f)
