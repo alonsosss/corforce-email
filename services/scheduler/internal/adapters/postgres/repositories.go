@@ -44,7 +44,7 @@ func NewJobDefinitionRepo(pool *db.ContextPool) *JobDefinitionRepo {
 	return &JobDefinitionRepo{pool: pool}
 }
 
-const jobColumns = `id,tenant_id,name,code,description,job_type,cron_expression,timezone,interval_minutes,handler,payload,is_active,max_retries,timeout_seconds,created_at,updated_at`
+const jobColumns = `id,tenant_id,name,code,description,job_type,cron_expression,timezone,interval_minutes,handler,payload,is_active,max_retries,timeout_seconds,version,created_at,updated_at`
 
 // jobColumnsJD son las mismas columnas con el alias jd de job_definitions.
 var jobColumnsJD = "jd." + strings.ReplaceAll(jobColumns, ",", ",jd.")
@@ -70,7 +70,7 @@ var overviewSelect = `SELECT ` + jobColumnsJD + `, js.next_run_at, js.last_run_a
 func jobDest(j *domain.JobDefinition) []any {
 	return []any{&j.ID, &j.TenantID, &j.Name, &j.Code, &j.Description, &j.JobType, &j.CronExpression,
 		&j.Timezone, &j.IntervalMinutes, &j.Handler, &j.Payload, &j.IsActive, &j.MaxRetries, &j.TimeoutSeconds,
-		&j.CreatedAt, &j.UpdatedAt}
+		&j.Version, &j.CreatedAt, &j.UpdatedAt}
 }
 
 func scanJob(row pgx.Row) (*domain.JobDefinition, error) {
@@ -106,11 +106,11 @@ func scanOverview(row pgx.Row) (*domain.JobOverview, error) {
 
 func (r *JobDefinitionRepo) Create(ctx context.Context, job *domain.JobDefinition) error {
 	_, err := r.pool.Exec(ctx,
-		`INSERT INTO scheduler.job_definitions (id,tenant_id,name,code,description,job_type,cron_expression,timezone,interval_minutes,handler,payload,is_active,max_retries,timeout_seconds,created_at,updated_at)
- VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
+		`INSERT INTO scheduler.job_definitions (id,tenant_id,name,code,description,job_type,cron_expression,timezone,interval_minutes,handler,payload,is_active,max_retries,timeout_seconds,version,created_at,updated_at)
+ VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
 		job.ID, job.TenantID, job.Name, job.Code, job.Description, job.JobType, job.CronExpression,
 		job.Timezone, job.IntervalMinutes, job.Handler, job.Payload, job.IsActive, job.MaxRetries, job.TimeoutSeconds,
-		job.CreatedAt, job.UpdatedAt,
+		job.Version, job.CreatedAt, job.UpdatedAt,
 	)
 	if isUniqueViolation(err, "job_definitions_code_key") {
 		return domain.ErrJobAlreadyExists
@@ -178,15 +178,29 @@ func (r *JobDefinitionRepo) List(ctx context.Context, f domain.JobFilter) ([]*do
 // Update, Activate y Deactivate escriben por id y empresa: una fila de otra empresa no se
 // toca aunque alguien llegue con su id. IS NOT DISTINCT FROM iguala tambien la de plataforma
 // (NULL). Update no escribe is_active: la definicion editada puede venir de una lectura
-// anterior al despacho que desactivo un one_time.
+// anterior al despacho que desactivo un one_time. Solo escribe sobre la version que se leyo
+// y la sube; si no escribio, una segunda lectura separa el conflicto de version del trabajo
+// que no es de la empresa, que sigue siendo un 404 sin mas pistas.
 func (r *JobDefinitionRepo) Update(ctx context.Context, job *domain.JobDefinition) error {
 	tag, err := r.pool.Exec(ctx,
-		`UPDATE scheduler.job_definitions SET name=$1,description=$2,job_type=$3,cron_expression=$4,timezone=$5,interval_minutes=$6,handler=$7,payload=$8,max_retries=$9,timeout_seconds=$10,updated_at=$11
-		  WHERE id=$12 AND tenant_id IS NOT DISTINCT FROM $13`,
+		`UPDATE scheduler.job_definitions SET name=$1,description=$2,job_type=$3,cron_expression=$4,timezone=$5,interval_minutes=$6,handler=$7,payload=$8,max_retries=$9,timeout_seconds=$10,updated_at=$11,version=version+1
+		  WHERE id=$12 AND tenant_id IS NOT DISTINCT FROM $13 AND version=$14`,
 		job.Name, job.Description, job.JobType, job.CronExpression, job.Timezone, job.IntervalMinutes,
-		job.Handler, job.Payload, job.MaxRetries, job.TimeoutSeconds, job.UpdatedAt, job.ID, job.TenantID,
+		job.Handler, job.Payload, job.MaxRetries, job.TimeoutSeconds, job.UpdatedAt, job.ID, job.TenantID, job.Version,
 	)
-	return affectedOr(tag, err, domain.ErrJobNotFound)
+	if err != nil || tag.RowsAffected() > 0 {
+		return err
+	}
+	var exists bool
+	if err := r.pool.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM scheduler.job_definitions WHERE id=$1 AND tenant_id IS NOT DISTINCT FROM $2)`,
+		job.ID, job.TenantID).Scan(&exists); err != nil {
+		return err
+	}
+	if exists {
+		return domain.ErrJobVersionConflict
+	}
+	return domain.ErrJobNotFound
 }
 
 func (r *JobDefinitionRepo) Activate(ctx context.Context, id uuid.UUID, owner *uuid.UUID, updatedAt time.Time) error {

@@ -1426,6 +1426,10 @@ export const es = {
   'error.code.REPUTATION_UNAVAILABLE': 'El servicio de reputacion no respondio: no se envio nada.',
   'error.code.JOB_ALREADY_RUN':
     'Este trabajo de una sola vez ya se ejecuto y no se reactiva: lanzalo a mano o crea uno nuevo.',
+  'error.code.VERSION_CONFLICT':
+    'Otra persona guardo cambios despues de que abrieras este formulario y los tuyos no se guardaron. Recarga y vuelve a aplicarlos.',
+  'error.code.VERSION_REQUIRED':
+    'El servidor exige la version que estabas editando y no aplico el cambio. Recarga la pagina y vuelve a intentarlo.',
   'error.code.SUPPRESSION_UNAVAILABLE':
     'La lista de supresion no esta disponible: no se envio nada.',
   'error.code.DATABASE_UNAVAILABLE': 'La base de datos no esta disponible en este momento.',
@@ -2559,6 +2563,10 @@ export const es = {
   'scheduler.form.cronRejected': 'El servidor rechazo la expresion: {detail}',
   'scheduler.form.timezoneRejected': 'El servidor rechazo la zona: {detail}',
   'scheduler.form.serverRejected': 'El servidor rechazo el valor: {detail}',
+  'scheduler.form.staleTitle': 'El trabajo cambio mientras lo editabas',
+  'scheduler.form.staleBody':
+    'Otra persona guardo cambios en este trabajo despues de que abrieras el formulario, asi que los tuyos no se guardaron. Recarga para ver la version actual y vuelve a aplicar tus cambios.',
+  'scheduler.form.reload': 'Recargar el trabajo',
   'scheduler.timezoneFormat.iana': 'IANA',
   'scheduler.validation.descriptor': 'Los descriptores admitidos son {list} y @every <duracion>.',
   'scheduler.validation.everyMin': '@every debe ser de al menos {min}.',

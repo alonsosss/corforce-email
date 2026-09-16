@@ -90,6 +90,7 @@ func (uc *SchedulerUseCase) CreateJob(ctx context.Context, job *domain.JobDefini
 	}
 	job.ID = uuid.New()
 	job.IsActive = true
+	job.Version = domain.FirstJobVersion
 	job.CreatedAt = uc.now()
 	job.UpdatedAt = job.CreatedAt
 	next, err := job.FirstRunAt(job.CreatedAt)
@@ -138,9 +139,17 @@ func (uc *SchedulerUseCase) ListJobs(ctx context.Context, filter domain.JobFilte
 // edicion que no toca el calendario respeta la ejecucion ya prevista. Un trabajo
 // inactivo guarda esa hora sin exponerla: al reactivarlo decide ResumeAt. Devuelve el
 // trabajo leido en esa transaccion.
+//
+// job.Version es la version que leyo quien edita: si otra edicion se aplico despues, la
+// suya la desharia (una zona, un calendario) y es domain.ErrJobVersionConflict sin escribir
+// nada. Se compara con la version leida bajo el bloqueo, que es la que pisaria la escritura.
 func (uc *SchedulerUseCase) UpdateJob(ctx context.Context, job *domain.JobDefinition) (*domain.JobOverview, error) {
 	if job.IsPlatform() {
 		return nil, domain.ErrPlatformJob
+	}
+	if job.Version < domain.FirstJobVersion {
+		return nil, domain.NewFieldError(domain.FieldVersion, domain.RuleOutOfRange, domain.ErrInvalidJob,
+			"version must be the version of the job that was read")
 	}
 	if err := uc.checkDefinition(job); err != nil {
 		return nil, err
@@ -151,6 +160,9 @@ func (uc *SchedulerUseCase) UpdateJob(ctx context.Context, job *domain.JobDefini
 		stored, _, err := uc.lockTenantJob(ctx, job.ID, *job.TenantID)
 		if err != nil {
 			return err
+		}
+		if stored.Version != job.Version {
+			return domain.ErrJobVersionConflict
 		}
 		if err := uc.jobs.Update(ctx, job); err != nil {
 			return err
@@ -195,10 +207,14 @@ func (uc *SchedulerUseCase) tenantJob(ctx context.Context, id, tenantID uuid.UUI
 // lockTenantJob bloquea, dentro de la transaccion del llamante, el calendario y despues el
 // trabajo de la empresa, y los devuelve leidos bajo esos bloqueos (el calendario, nil si no
 // tiene). Es el orden del despacho, que toma el calendario con ClaimDue y despues desactiva
-// el one_time: una edicion o una reactivacion espera al despacho en curso y lee lo que dejo,
-// y el despacho salta el calendario mientras ellas duran. El orden inverso se interbloquea
-// con el despacho.
+// el one_time: una edicion, una reactivacion o una desactivacion espera al despacho en curso
+// y lee lo que dejo, y el despacho salta el calendario mientras ellas duran. El orden inverso
+// se interbloquea con el despacho. Un trabajo de plataforma se rechaza antes de bloquearlo:
+// una empresa no aparta al despacho de un trabajo que no puede cambiar.
 func (uc *SchedulerUseCase) lockTenantJob(ctx context.Context, id, tenantID uuid.UUID) (*domain.JobDefinition, *domain.JobSchedule, error) {
+	if _, err := uc.tenantJob(ctx, id, tenantID); err != nil {
+		return nil, nil, err
+	}
 	schedule, err := uc.schedules.GetForUpdate(ctx, id, tenantID)
 	if err != nil {
 		return nil, nil, err
@@ -206,9 +222,6 @@ func (uc *SchedulerUseCase) lockTenantJob(ctx context.Context, id, tenantID uuid
 	job, err := uc.jobs.GetForUpdate(ctx, id, tenantID)
 	if err != nil {
 		return nil, nil, err
-	}
-	if job.IsPlatform() {
-		return nil, nil, domain.ErrPlatformJob
 	}
 	return job, schedule, nil
 }
@@ -238,12 +251,21 @@ func (uc *SchedulerUseCase) EnableJob(ctx context.Context, id, tenantID uuid.UUI
 	})
 }
 
+// DisableJob desactiva un trabajo de la empresa con los bloqueos de lockTenantJob, en el
+// orden del despacho. Si llega antes que el despacho, este salta el calendario mientras dura
+// y, confirmada, ya no ve el trabajo activo: la pasada vencida no sale. Si un despacho ya
+// tiene el calendario, espera a que confirme y desactiva despues: la ejecucion que ese
+// despacho reclamo sigue su curso, porque nacio con su evento de inicio en la misma
+// transaccion y el ejecutor ya puede tenerla. Pararla es cancelarla (CancelExecution, con
+// executions/cancel); desactivar corta las siguientes.
 func (uc *SchedulerUseCase) DisableJob(ctx context.Context, id, tenantID uuid.UUID) error {
-	job, err := uc.tenantJob(ctx, id, tenantID)
-	if err != nil {
-		return err
-	}
-	return uc.jobs.Deactivate(ctx, id, job.TenantID, uc.now())
+	return uc.tx.Transact(ctx, func(ctx context.Context) error {
+		job, _, err := uc.lockTenantJob(ctx, id, tenantID)
+		if err != nil {
+			return err
+		}
+		return uc.jobs.Deactivate(ctx, job.ID, job.TenantID, uc.now())
+	})
 }
 
 // RunJob lanza a mano un trabajo de la empresa: la ejecucion nace despachada.

@@ -35,6 +35,7 @@ var migrations = []string{
 	"migrations/tenant/canonical/scheduler/01_scheduler.sql",
 	"migrations/tenant/canonical/scheduler/02_execution_lifecycle.sql",
 	"migrations/tenant/canonical/scheduler/03_job_timezone.sql",
+	"migrations/tenant/canonical/scheduler/04_job_version.sql",
 }
 
 type testClock struct {

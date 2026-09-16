@@ -55,9 +55,16 @@ type JobDefinition struct {
 	IsActive        bool
 	MaxRetries      int
 	TimeoutSeconds  int
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
+	// Version cuenta las ediciones de la definicion desde FirstJobVersion. Una edicion lleva
+	// la que leyo y solo se aplica si sigue siendo la guardada; activar, desactivar y el
+	// calendario no la cambian.
+	Version   int64
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
+
+// FirstJobVersion es la version de un trabajo recien creado.
+const FirstJobVersion int64 = 1
 
 type JobExecution struct {
 	ID           uuid.UUID

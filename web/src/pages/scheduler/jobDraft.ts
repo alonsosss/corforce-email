@@ -267,7 +267,7 @@ export function validateDraft(
   return errors;
 }
 
-function toUpdateBody(draft: JobDraft, jobType: JobType): UpdateJobRequest {
+function toDefinition(draft: JobDraft, jobType: JobType): Omit<UpdateJobRequest, 'version'> {
   return {
     name: draft.name.trim(),
     description: draft.description.trim() || null,
@@ -284,12 +284,19 @@ function toUpdateBody(draft: JobDraft, jobType: JobType): UpdateJobRequest {
 
 /** Cuerpo del alta. Solo se llama con un borrador que pasa validateDraft. */
 export function toCreateRequest(draft: JobDraft, jobType: JobType): CreateJobRequest {
-  return { ...toUpdateBody(draft, jobType), code: draft.code.trim() };
+  return { ...toDefinition(draft, jobType), code: draft.code.trim() };
 }
 
-/** Cuerpo de la edicion: sin code, que el servicio rechazaria como campo desconocido. */
-export function toUpdateRequest(draft: JobDraft, jobType: JobType): UpdateJobRequest {
-  return toUpdateBody(draft, jobType);
+/**
+ * Cuerpo de la edicion: sin code, que el servicio rechazaria como campo desconocido, y con la
+ * version del trabajo que se leyo, que el servicio compara con la guardada.
+ */
+export function toUpdateRequest(
+  draft: JobDraft,
+  jobType: JobType,
+  version: number,
+): UpdateJobRequest {
+  return { ...toDefinition(draft, jobType), version };
 }
 
 /** Claves de error.details con las que el scheduler nombra el campo y la regla que incumple. */

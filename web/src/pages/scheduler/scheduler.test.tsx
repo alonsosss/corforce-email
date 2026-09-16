@@ -385,6 +385,7 @@ describe('formulario de un trabajo', () => {
     expect(update.mock.calls[0]?.[1]).toMatchObject({
       timezone: job.timezone,
       handler: job.handler,
+      version: job.version,
     });
   });
 });
@@ -947,6 +948,55 @@ describe('detalle de un trabajo', () => {
     await user.click(within(dialog).getByRole('button', { name: t('common.activate') }));
     expect(await within(dialog).findByText(t('error.code.JOB_ALREADY_RUN'))).toBeInTheDocument();
     expect(enable).toHaveBeenCalledTimes(1);
+  });
+
+  it('si otra persona guardo el trabajo mientras se editaba, lo explica y recarga el formulario con la version vigente', async () => {
+    const user = userEvent.setup();
+    grant(PERMISSIONS.schedulerJobs.read, PERMISSIONS.schedulerJobs.update);
+    mockCatalogs();
+    const read = jobFixture({ version: 3 });
+    const current = jobFixture({ version: 4, name: 'Resumen de la manana', timezone: 'Europe/Madrid' });
+    const get = vi
+      .spyOn(schedulerApi, 'getJob')
+      .mockResolvedValueOnce({ data: read })
+      .mockResolvedValue({ data: current });
+    const update = vi
+      .spyOn(schedulerApi, 'updateJob')
+      .mockRejectedValueOnce(
+        rejected(409, ERROR_CODES.VERSION_CONFLICT, 'the job changed after it was read'),
+      )
+      .mockResolvedValue({ data: { ...current, version: 5 } });
+    renderDetail();
+
+    await user.click(await screen.findByRole('button', { name: t('common.edit') }));
+    const name = await screen.findByLabelText(new RegExp(`^${escape(t('common.name'))}`));
+    await user.clear(name);
+    await user.type(name, 'Otro nombre');
+    await user.click(screen.getByRole('button', { name: t('common.save') }));
+
+    expect(await screen.findByText(t('scheduler.form.staleTitle'))).toBeInTheDocument();
+    expect(screen.getByText(t('scheduler.form.staleBody'))).toBeInTheDocument();
+    expect(screen.queryByText('the job changed after it was read')).toBeNull();
+    expect(update).toHaveBeenCalledWith(
+      read.id,
+      expect.objectContaining({ version: 3, name: 'Otro nombre' }),
+    );
+    expect(screen.getByRole('button', { name: t('common.save') })).toBeDisabled();
+
+    await user.click(screen.getByRole('button', { name: t('scheduler.form.reload') }));
+    await waitFor(() => expect(get).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(field(t('scheduler.form.timezone'))).toHaveValue('Europe/Madrid'));
+    expect(field(t('common.name'))).toHaveValue(current.name);
+    expect(screen.queryByText(t('scheduler.form.staleTitle'))).toBeNull();
+
+    const save = screen.getByRole('button', { name: t('common.save') });
+    expect(save).toBeEnabled();
+    await user.click(save);
+    await waitFor(() => expect(update).toHaveBeenCalledTimes(2));
+    expect(update).toHaveBeenLastCalledWith(
+      current.id,
+      expect.objectContaining({ version: 4, name: current.name, timezone: 'Europe/Madrid' }),
+    );
   });
 
   it('avisa cuando el manejador del trabajo ya no esta en el catalogo', async () => {

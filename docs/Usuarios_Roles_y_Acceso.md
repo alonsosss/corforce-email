@@ -161,7 +161,11 @@ y cancelar una tarea, el historial de un trabajo, las ejecuciones activas y las 
 trabajos y ejecuciones llevan la condicion en el SQL, y una tarea, un trabajo o una ejecucion
 de otra empresa responde 404 igual que uno que no existe, sin efectos. Reactivar un trabajo
 `one_time` que el calendario ya despacho es 409 `JOB_ALREADY_RUN`: volver a lanzarlo es
-`jobs/run`, que `jobs/update` no sustituye.
+`jobs/run`, que `jobs/update` no sustituye. Por lo mismo, desactivar un trabajo (`jobs/update`)
+no cancela la ejecucion que el calendario ya reclamo antes (V, 2026-09-15): desactivar espera a
+ese despacho y corta las siguientes; pararla es `executions/cancel`. Editar un trabajo exige la
+version que se leyo (V, 2026-09-15): sin ella 428 `VERSION_REQUIRED` y, si otro administrador
+lo edito despues, 409 `VERSION_CONFLICT` sin escribir nada.
 
 Un rol inactivo (`access_control.roles.status <> 'active'`) no concede nada: la politica
 efectiva que sirve access-control (roles, permisos, modulos visibles, acciones de escritura

@@ -28,8 +28,11 @@ type jobDTO struct {
 	IsActive        bool       `json:"is_active"`
 	MaxRetries      int        `json:"max_retries"`
 	TimeoutSeconds  int        `json:"timeout_seconds"`
-	CreatedAt       time.Time  `json:"created_at"`
-	UpdatedAt       time.Time  `json:"updated_at"`
+	// Version es la de la definicion; el PUT la exige y solo se aplica si sigue siendo la
+	// guardada. Activar, desactivar y el calendario no la cambian.
+	Version   int64     `json:"version"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 	// NextRunAt es null si el trabajo esta inactivo; LastRunAt es la ultima vez que lo
 	// despacho el calendario (no un lanzamiento manual); LastExecution, la ejecucion mas
 	// reciente de cualquier origen, o null.
@@ -96,7 +99,7 @@ func jobResponse(o *domain.JobOverview) jobDTO {
 		ID: j.ID, TenantID: j.TenantID, Name: j.Name, Code: j.Code, Description: j.Description,
 		JobType: j.JobType, CronExpression: j.CronExpression, Timezone: j.Timezone, IntervalMinutes: j.IntervalMinutes,
 		Handler: j.Handler, Payload: j.Payload, IsActive: j.IsActive, MaxRetries: j.MaxRetries,
-		TimeoutSeconds: j.TimeoutSeconds, CreatedAt: j.CreatedAt, UpdatedAt: j.UpdatedAt,
+		TimeoutSeconds: j.TimeoutSeconds, Version: j.Version, CreatedAt: j.CreatedAt, UpdatedAt: j.UpdatedAt,
 		NextRunAt: o.NextRunAt, LastRunAt: o.LastRunAt, AlreadyRun: o.AlreadyRun,
 	}
 	if e := o.LastExecution; e != nil {

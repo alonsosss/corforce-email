@@ -181,7 +181,8 @@ func sameOwner(a, b *uuid.UUID) bool {
 	return *a == *b
 }
 
-// Update escribe como el SQL: la definicion, sin is_active.
+// Update escribe como el SQL: la definicion, sin is_active, solo sobre la version leida, que
+// sube en uno.
 func (r memJobs) Update(_ context.Context, j *domain.JobDefinition) error {
 	r.mu.Lock()
 	hook := r.beforeJobUpdate
@@ -196,8 +197,12 @@ func (r memJobs) Update(_ context.Context, j *domain.JobDefinition) error {
 	if !ok || !sameOwner(stored.TenantID, j.TenantID) {
 		return domain.ErrJobNotFound
 	}
+	if stored.Version != j.Version {
+		return domain.ErrJobVersionConflict
+	}
 	updated := *j
 	updated.IsActive = stored.IsActive
+	updated.Version = stored.Version + 1
 	r.jobs[j.ID] = updated
 	r.jobUpdates++
 	return nil
@@ -584,14 +589,14 @@ func newFixture(t *testing.T) *fixture {
 	return &fixture{t: t, store: s, clock: clk, uc: uc, tenantID: uuid.New()}
 }
 
-// addJob guarda un trabajo de la empresa (activo, cada 5 minutos, en UTC, plazo de 120 s y
-// dos reintentos) con los cambios de mut.
+// addJob guarda un trabajo de la empresa (activo, cada 5 minutos, en UTC, plazo de 120 s,
+// dos reintentos y recien creado) con los cambios de mut.
 func (f *fixture) addJob(mut func(j *domain.JobDefinition)) domain.JobDefinition {
 	tenant, five := f.tenantID, 5
 	j := domain.JobDefinition{
 		ID: uuid.New(), TenantID: &tenant, Name: "Informe", Code: uuid.NewString(), JobType: domain.JobTypeInterval,
 		Timezone: domain.DefaultTimezone, IntervalMinutes: &five, Handler: tenantHandler, IsActive: true, MaxRetries: 2, TimeoutSeconds: 120,
-		CreatedAt: f.clock.now(), UpdatedAt: f.clock.now(),
+		Version: domain.FirstJobVersion, CreatedAt: f.clock.now(), UpdatedAt: f.clock.now(),
 	}
 	if mut != nil {
 		mut(&j)
@@ -599,6 +604,9 @@ func (f *fixture) addJob(mut func(j *domain.JobDefinition)) domain.JobDefinition
 	f.store.jobs[j.ID] = j
 	return j
 }
+
+// versionOf es la version guardada del trabajo: la que leeria quien lo edite ahora.
+func (f *fixture) versionOf(id uuid.UUID) int64 { return f.store.jobs[id].Version }
 
 func (f *fixture) exec(id uuid.UUID) domain.JobExecution {
 	f.t.Helper()

@@ -155,7 +155,28 @@ cambie cualquiera de estas líneas.
   edición no escribe `is_active` (lo cambian solo activar, desactivar y el calendario): un
   PUT leído antes de que el calendario despache un `one_time` guarda la edición y lo deja
   inactivo, y reactivarlo sigue siendo 409 `JOB_ALREADY_RUN` (unitarias e integración
-  contra Postgres 16 con las transacciones intercaladas).
+  contra Postgres 16 con las transacciones intercaladas). Desactivar toma los mismos
+  bloqueos en el mismo orden (2026-09-15): si llega antes que el despacho, este salta el
+  calendario y la pasada vencida no sale; si un despacho ya lo reclamó, espera a que
+  confirme y desactiva después, sin interbloqueo, y esa ejecución sigue su curso (nació con
+  su `scheduler.job.started` en la misma transacción; pararla es cancelarla, con
+  `executions/cancel`). Un trabajo de plataforma se rechaza antes de bloquear nada.
+* Concurrencia optimista de la edición de un trabajo (2026-09-15, unitarias, contrato,
+  jsdom e integración contra Postgres 16 con las transacciones intercaladas;
+  `04_job_version.sql`): el trabajo lleva `version`, un entero que empieza en 1 y sube en uno
+  con cada edición (no `updated_at`, que el trigger pisa con `NOW()`, la hora de inicio de la
+  transacción, y que el navegador lee con milisegundos); activar, desactivar y el calendario
+  no la cambian, porque el PUT no escribe `is_active`. `PUT /api/v1/scheduler/jobs/{id}` la
+  exige en el cuerpo y solo se aplica si sigue siendo la guardada, comparada bajo el
+  bloqueo: sin ella (o `null`) 428 `VERSION_REQUIRED`; con otra, 409 `VERSION_CONFLICT` sin
+  escribir ni replanificar nada (RFC 9110, 15.5.10); menor que 1, 422 con
+  `details.field = version`. No es `If-Match`: la representación lleva `next_run_at` y
+  `last_execution`, que cambian en cada despacho, y una ETag fuerte tendría que cambiar con
+  ellos. `web/` envía la versión que leyó y, ante el 409, explica que otra persona guardó
+  cambios, bloquea el envío y ofrece recargar el formulario con la versión vigente. Orden de
+  despliegue: la migración 04 en las bases de empresa, el scheduler y después la web (la web
+  anterior recibe 428 al editar; la nueva contra el scheduler anterior, 400 por un campo
+  desconocido).
 * Aislamiento por empresa del scheduler (2026-09-13, unitarias, contrato e integración
   contra Postgres 16): ninguna lectura ni escritura por id va sin la empresa del token.
   Leer y cancelar una tarea, `GET /jobs/{id}/history`, `GET /executions` y las escrituras de

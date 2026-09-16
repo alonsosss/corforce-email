@@ -23,6 +23,9 @@ var (
 	// ErrOneTimeAlreadyRun: un trabajo one_time que el calendario ya despacho no se reactiva;
 	// volver a lanzarlo es RunJob, que exige su propio permiso.
 	ErrOneTimeAlreadyRun = errors.New("a one_time job that already ran cannot be re-enabled: run it manually or create a new job")
+	// ErrJobVersionConflict: la edicion trae una version que ya no es la guardada; otra
+	// edicion se aplico despues de su lectura y aplicarla la desharia.
+	ErrJobVersionConflict = errors.New("the job changed after it was read: reload it and apply the changes again")
 	// ErrHandlerNotAllowed: el manejador no esta en el catalogo o no admite el tipo de
 	// trabajo (de empresa o de plataforma).
 	ErrHandlerNotAllowed = errors.New("handler not allowed")

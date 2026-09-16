@@ -59,6 +59,7 @@ const JOB: SchedulerJob = {
   is_active: true,
   max_retries: 3,
   timeout_seconds: 60,
+  version: 4,
   created_at: '2026-09-13T10:00:00Z',
   updated_at: '2026-09-13T10:00:00Z',
   next_run_at: '2026-09-13T11:00:00Z',
@@ -156,12 +157,14 @@ describe('cliente del scheduler', () => {
     expect(data).toEqual(JOB);
   });
 
-  it('edita con PUT sobre el trabajo y codifica el id', async () => {
+  it('edita con PUT sobre el trabajo, codifica el id y lleva la version leida', async () => {
     const calls = mockFetch(() => jsonResponse(200, { data: JOB }));
     const { code: _code, ...update } = CREATE;
-    await schedulerApi.updateJob('a/b', update);
+    await schedulerApi.updateJob('a/b', { ...update, version: JOB.version });
     expect(`${calls[0]?.method} ${calls[0]?.url}`).toBe('PUT /api/v1/scheduler/jobs/a%2Fb');
-    expect(JSON.parse(calls[0]?.body ?? '{}')).not.toHaveProperty('code');
+    const body = JSON.parse(calls[0]?.body ?? '{}') as Record<string, unknown>;
+    expect(body).not.toHaveProperty('code');
+    expect(body.version).toBe(JOB.version);
   });
 
   it('lee el historial con page y per_page y toma la pagina del meta del servicio', async () => {
@@ -329,5 +332,20 @@ describe('cliente del scheduler', () => {
     const err = await schedulerApi.enableJob('job-1').catch((e: unknown) => e);
     expect(err).toMatchObject({ status: 409, code: ERROR_CODES.JOB_ALREADY_RUN });
     expect(errorMessage(err)).toBe(t('error.code.JOB_ALREADY_RUN'));
+  });
+
+  it('una version que ya no es la guardada es 409 VERSION_CONFLICT y sin version 428, con texto propio', async () => {
+    const { code: _code, ...update } = CREATE;
+    for (const [status, code] of [
+      [409, ERROR_CODES.VERSION_CONFLICT],
+      [428, ERROR_CODES.VERSION_REQUIRED],
+    ] as const) {
+      mockFetch(() => jsonResponse(status, { error: { code, message: 'from the service' } }));
+      const err = await schedulerApi
+        .updateJob('job-1', { ...update, version: 1 })
+        .catch((e: unknown) => e);
+      expect(err).toMatchObject({ status, code });
+      expect(errorMessage(err)).toBe(t(`error.code.${code}`));
+    }
   });
 });

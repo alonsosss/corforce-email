@@ -35,14 +35,15 @@ func (g gate) stop() {
 
 func (g gate) open() { g.once.Do(func() { close(g.release) }) }
 
-// pausedDispatch para el despacho despues de desactivar el one_time: tiene el calendario
-// (ClaimDue) y el trabajo bloqueados.
-type pausedDispatch struct {
+// pausedDeactivate para la transaccion despues de desactivar el trabajo, con el calendario y
+// el trabajo bloqueados: el despacho de un one_time (ClaimDue y Deactivate) o una
+// desactivacion (lockTenantJob y Deactivate).
+type pausedDeactivate struct {
 	ports.JobDefinitionRepository
 	gate
 }
 
-func (p pausedDispatch) Deactivate(ctx context.Context, id uuid.UUID, owner *uuid.UUID, at time.Time) error {
+func (p pausedDeactivate) Deactivate(ctx context.Context, id uuid.UUID, owner *uuid.UUID, at time.Time) error {
 	if err := p.JobDefinitionRepository.Deactivate(ctx, id, owner, at); err != nil {
 		return err
 	}
@@ -123,7 +124,7 @@ func TestLaEdicionYLaReactivacionEsperanAlDespachoEnCurso(t *testing.T) {
 
 	g := newGate(t)
 	deps := e.deps
-	deps.Jobs = pausedDispatch{deps.Jobs, g}
+	deps.Jobs = pausedDeactivate{deps.Jobs, g}
 	dispatcher := app.NewSchedulerUseCase(deps)
 	e.clock.set(scopeStart.Add(30 * time.Second))
 	dispatched := make(chan struct{})

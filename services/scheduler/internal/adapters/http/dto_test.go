@@ -79,7 +79,7 @@ func contractServer() contract {
 	job := &domain.JobDefinition{
 		ID: uuid.New(), TenantID: &tenant, Name: "Limpieza", Code: "cleanup", JobType: "cron",
 		CronExpression: &cron, Timezone: "America/Lima", IntervalMinutes: &interval, Handler: "cleanup", Payload: &payload,
-		IsActive: true, MaxRetries: 3, TimeoutSeconds: 60, CreatedAt: now, UpdatedAt: now,
+		IsActive: true, MaxRetries: 3, TimeoutSeconds: 60, Version: 3, CreatedAt: now, UpdatedAt: now,
 	}
 	exec := &domain.JobExecution{
 		ID: uuid.New(), JobID: job.ID, TenantID: &tenant, Status: "completed", StartedAt: &now,
@@ -152,7 +152,7 @@ func TestContratoJSONEnSnakeCase(t *testing.T) {
 		id   uuid.UUID
 	}{
 		{"/api/v1/scheduler/jobs/" + c.job.ID.String(),
-			"already_run,code,created_at,cron_expression,description,handler,id,interval_minutes,is_active,job_type,last_execution,last_run_at,max_retries,name,next_run_at,payload,tenant_id,timeout_seconds,timezone,updated_at",
+			"already_run,code,created_at,cron_expression,description,handler,id,interval_minutes,is_active,job_type,last_execution,last_run_at,max_retries,name,next_run_at,payload,tenant_id,timeout_seconds,timezone,updated_at,version",
 			c.job.ID},
 		{"/api/v1/scheduler/executions/" + c.exec.ID.String(),
 			"completed_at,created_at,deadline_at,duration_ms,error_message,failure_reason,id,job_id,next_attempt_at,result,retry_count,retry_of,started_at,status,tenant_id",
@@ -178,6 +178,9 @@ func TestContratoJSONEnSnakeCase(t *testing.T) {
 	obj, _ = keysOf(t, getData(t, c.srv, "/api/v1/scheduler/jobs/"+c.job.ID.String()))
 	if string(obj["timezone"]) != `"America/Lima"` {
 		t.Errorf("timezone: %s", obj["timezone"])
+	}
+	if string(obj["version"]) != "3" {
+		t.Errorf("version: %s", obj["version"])
 	}
 }
 

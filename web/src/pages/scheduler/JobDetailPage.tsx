@@ -217,8 +217,10 @@ export default function JobDetailPage() {
 
       {dialog === 'edit' ? (
         <JobForm
+          key={j.version}
           job={j}
           onClose={close}
+          onReload={job.reload}
           onSaved={(saved) => {
             toast.success(t('scheduler.updated'));
             close();

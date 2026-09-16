@@ -50,6 +50,8 @@ const (
 	FieldRetryable   = "retryable"
 	// FieldIsActive es el filtro del listado de trabajos.
 	FieldIsActive = "is_active"
+	// FieldVersion es la version del trabajo que lleva una edicion.
+	FieldVersion = "version"
 )
 
 // JobTypes son los tipos de trabajo admitidos, en el orden en que se ofrecen.

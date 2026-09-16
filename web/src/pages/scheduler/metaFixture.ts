@@ -60,6 +60,7 @@ export function jobFixture(extra: Partial<SchedulerJob> = {}): SchedulerJob {
     is_active: true,
     max_retries: 2,
     timeout_seconds: 0,
+    version: 1,
     created_at: '2026-09-13T10:00:00Z',
     updated_at: '2026-09-13T10:00:00Z',
     next_run_at: '2026-09-14T12:00:00Z',

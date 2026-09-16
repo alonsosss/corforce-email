@@ -134,7 +134,7 @@ func TestEditarConUnNombreDeMasEs422(t *testing.T) {
 		t.Fatalf("crear: %d %s", rec.Code, rec.Body.String())
 	}
 	rec := request(t, srv, http.MethodPut, "/api/v1/scheduler/jobs/"+jobs.job.ID.String(),
-		jobBody(t, map[string]any{"code": absent, "name": long(256)}), uuid.NewString())
+		jobBody(t, map[string]any{"code": absent, "name": long(256), "version": 1}), uuid.NewString())
 	if code, field, rule := errorWithRule(t, rec); rec.Code != http.StatusUnprocessableEntity || code != "VALIDATION_ERROR" || field != "name" || rule != domain.RuleTooLong {
 		t.Fatalf("editar: %d %s", rec.Code, rec.Body.String())
 	}

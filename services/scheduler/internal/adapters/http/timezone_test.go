@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -64,18 +65,28 @@ func (r *storedJobs) GetForUpdate(ctx context.Context, id, tenantID uuid.UUID) (
 	return r.GetByID(ctx, id, tenantID)
 }
 
-// Update guarda como el SQL: la definicion, sin is_active.
+// Update guarda como el SQL: la definicion, sin is_active, solo sobre la version leida, que
+// sube en uno.
 func (r *storedJobs) Update(_ context.Context, j *domain.JobDefinition) error {
-	c := *j
-	if r.job != nil {
-		c.IsActive = r.job.IsActive
+	if r.job == nil || r.job.ID != j.ID {
+		return domain.ErrJobNotFound
 	}
+	if r.job.Version != j.Version {
+		return domain.ErrJobVersionConflict
+	}
+	c := *j
+	c.IsActive, c.Version = r.job.IsActive, r.job.Version+1
 	r.job = &c
 	return nil
 }
 
 func (r *storedJobs) Activate(context.Context, uuid.UUID, *uuid.UUID, time.Time) error {
 	r.job.IsActive = true
+	return nil
+}
+
+func (r *storedJobs) Deactivate(context.Context, uuid.UUID, *uuid.UUID, time.Time) error {
+	r.job.IsActive = false
 	return nil
 }
 
@@ -164,10 +175,12 @@ func send(t *testing.T, srv http.Handler, method, path, body string) (int, envel
 const jobFields = `"name":"Informe","job_type":"cron","cron_expression":"0 8 * * *","handler":"reports.daily"`
 
 // createBody y updateBody son el cuerpo de un cron diario a las 08:00 con timezone, que es
-// el trozo JSON que se anade (vacio para omitir el campo).
+// el trozo JSON que se anade (vacio para omitir el campo); la edicion lleva la version leida.
 func createBody(timezone string) string { return `{"code":"informe",` + jobFields + timezone + `}` }
 
-func updateBody(timezone string) string { return `{` + jobFields + timezone + `}` }
+func updateBody(version int, timezone string) string {
+	return `{"version":` + strconv.Itoa(version) + `,` + jobFields + timezone + `}`
+}
 
 func TestCrearUnTrabajoConZona(t *testing.T) {
 	srv, jobs, schedules := timezoneServer(t)
@@ -210,17 +223,17 @@ func TestEditarConservaOCambiaLaZona(t *testing.T) {
 	}
 	path := "/api/v1/scheduler/jobs/" + jobs.job.ID.String()
 
-	code, env := send(t, srv, http.MethodPut, path, updateBody(""))
+	code, env := send(t, srv, http.MethodPut, path, updateBody(1, ""))
 	if code != http.StatusOK || string(env.Data["timezone"]) != `"America/Lima"` {
 		t.Fatalf("editar sin zona la conserva: %d %s", code, env.Data["timezone"])
 	}
 
-	code, _ = send(t, srv, http.MethodPut, path, updateBody(`,"timezone":"Europe/Berlin"`))
+	code, _ = send(t, srv, http.MethodPut, path, updateBody(2, `,"timezone":"Europe/Berlin"`))
 	if code != http.StatusOK || jobs.job.Timezone != "Europe/Berlin" || !schedules.next.Equal(time.Date(2026, 9, 14, 6, 0, 0, 0, time.UTC)) {
 		t.Fatalf("cambiar la zona replanifica: %d %q %v", code, jobs.job.Timezone, schedules.next)
 	}
 
-	code, env = send(t, srv, http.MethodPut, path, updateBody(`,"timezone":""`))
+	code, env = send(t, srv, http.MethodPut, path, updateBody(3, `,"timezone":""`))
 	if code != http.StatusUnprocessableEntity || env.Error == nil || env.Error.Code != "INVALID_TIMEZONE" || jobs.job.Timezone != "Europe/Berlin" {
 		t.Fatalf("editar con zona vacia: %d %+v, guardada %q", code, env.Error, jobs.job.Timezone)
 	}

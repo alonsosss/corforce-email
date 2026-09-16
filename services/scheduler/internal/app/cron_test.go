@@ -138,7 +138,7 @@ func TestEditarElCalendarioDeUnCronLoReplanifica(t *testing.T) {
 	}
 
 	expr := "30 12 * * *"
-	edited.CronExpression = &expr
+	edited.CronExpression, edited.Version = &expr, f.versionOf(job.ID)
 	if _, err := f.uc.UpdateJob(ctx, &edited); err != nil {
 		t.Fatal(err)
 	}

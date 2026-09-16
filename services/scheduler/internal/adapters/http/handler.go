@@ -36,6 +36,8 @@ const (
 	codeInvalidTimezone = "INVALID_TIMEZONE"
 	codeConflict        = "CONFLICT"
 	codeJobAlreadyRun   = "JOB_ALREADY_RUN"
+	codeVersionConflict = "VERSION_CONFLICT"
+	codeVersionRequired = "VERSION_REQUIRED"
 	detailField         = "field"
 	detailRule          = "rule"
 )
@@ -164,6 +166,8 @@ func writeError(w http.ResponseWriter, err error) {
 		fieldError(w, http.StatusConflict, codeConflict, domain.FieldCode, domain.RuleDuplicate, err.Error())
 	case errors.Is(err, domain.ErrOneTimeAlreadyRun):
 		response.Err(w, http.StatusConflict, codeJobAlreadyRun, err.Error())
+	case errors.Is(err, domain.ErrJobVersionConflict):
+		response.Err(w, http.StatusConflict, codeVersionConflict, err.Error())
 	// El dominio nombra el campo de todo error de validacion; estos casos solo cubren uno que
 	// llegara sin el, que sigue siendo un 422 y no un 500.
 	case errors.Is(err, domain.ErrInvalidTimezone):
@@ -304,8 +308,16 @@ type updateJobReq struct {
 	Payload         *string `json:"payload"`
 	MaxRetries      int     `json:"max_retries"`
 	TimeoutSeconds  int     `json:"timeout_seconds"`
+	// Version es la del trabajo que se leyo (jobDTO.Version). Es obligatoria: sin ella la
+	// edicion desharia en silencio la de otro administrador.
+	Version *int64 `json:"version"`
 }
 
+// UpdateJob reemplaza la definicion con concurrencia optimista. La version va en el cuerpo y
+// no en If-Match: la representacion del trabajo lleva estado del calendario (next_run_at,
+// last_execution) que cambia en cada despacho, y una ETag fuerte tendria que cambiar con el
+// (RFC 9110, 8.8.1 y 13.1.1), asi que un trabajo que corre a menudo rechazaria casi toda
+// edicion. Sin version, 428; con una que ya no es la guardada, 409 (RFC 9110, 15.5.10).
 func (h *Handler) UpdateJob(w http.ResponseWriter, r *http.Request) {
 	id, err := parseIDParam(r)
 	if err != nil {
@@ -320,6 +332,10 @@ func (h *Handler) UpdateJob(w http.ResponseWriter, r *http.Request) {
 	tenantID, err := parseTenantID(r)
 	if err != nil {
 		response.ErrUnauthorized(w, "invalid tenant")
+		return
+	}
+	if req.Version == nil {
+		response.Err(w, http.StatusPreconditionRequired, codeVersionRequired, "version is required: send the version of the job that was read")
 		return
 	}
 	job, err := h.uc.GetJob(r.Context(), id, tenantID)
@@ -339,6 +355,7 @@ func (h *Handler) UpdateJob(w http.ResponseWriter, r *http.Request) {
 	job.Payload = req.Payload
 	job.MaxRetries = req.MaxRetries
 	job.TimeoutSeconds = req.TimeoutSeconds
+	job.Version = *req.Version
 	updated, err := h.uc.UpdateJob(r.Context(), job)
 	if err != nil {
 		writeError(w, err)

@@ -218,11 +218,12 @@ describe('cuerpos del API', () => {
     });
   });
 
-  it('la edicion reproduce el trabajo guardado y no lleva code', () => {
-    const job = jobFixture({ payload: '{"k":"v"}', description: 'Cada manana' });
-    const body = toUpdateRequest(draftFromJob(job), job.job_type);
+  it('la edicion reproduce el trabajo guardado con su version y no lleva code', () => {
+    const job = jobFixture({ payload: '{"k":"v"}', description: 'Cada manana', version: 7 });
+    const body = toUpdateRequest(draftFromJob(job), job.job_type, job.version);
     expect(body).not.toHaveProperty('code');
     expect(body).toEqual({
+      version: 7,
       name: job.name,
       description: 'Cada manana',
       job_type: 'cron',

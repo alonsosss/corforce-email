@@ -27,8 +27,9 @@ type JobDefinitionRepository interface {
 	// una sola consulta por pagina: sin una lectura por trabajo.
 	List(ctx context.Context, filter domain.JobFilter) ([]*domain.JobOverview, int64, error)
 	// Update escribe la definicion del trabajo solo si sigue siendo de job.TenantID (nil, de
-	// plataforma): domain.ErrJobNotFound si no. La empresa de un trabajo no cambia y su
-	// estado tampoco: is_active solo lo escriben Activate y Deactivate.
+	// plataforma), domain.ErrJobNotFound si no, y sigue en job.Version, que sube en uno,
+	// domain.ErrJobVersionConflict si no. La empresa de un trabajo no cambia y su estado
+	// tampoco: is_active solo lo escriben Activate y Deactivate, que no tocan la version.
 	Update(ctx context.Context, job *domain.JobDefinition) error
 	// Activate activa el trabajo de owner (nil, de plataforma) con updatedAt como hora del
 	// cambio; domain.ErrJobNotFound si no es suyo.

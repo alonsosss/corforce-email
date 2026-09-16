@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { ERROR_CODES, errorCode } from '@/api/errors';
 import {
   schedulerApi,
   schedulerHandlers,
@@ -10,7 +11,8 @@ import {
 } from '@/api/scheduler';
 import { useAction } from '@/hooks/useAction';
 import { useResource } from '@/hooks/useResource';
-import { Alert, FormField, Input, Select, Textarea } from '@/design/components';
+import { Alert, Button, FormField, Input, Select, Textarea } from '@/design/components';
+import { IconRefresh } from '@/design/icons';
 import { formatBytes } from '@/lib/quota';
 import { hasErrors } from '@/lib/validate';
 import { t, tEnum } from '@/i18n';
@@ -37,6 +39,12 @@ export interface JobFormProps {
   job: SchedulerJob | null;
   onClose: () => void;
   onSaved: (job: SchedulerJob) => void;
+  /**
+   * Relee el trabajo cuando otra edicion se guardo despues de abrir el formulario (409
+   * VERSION_CONFLICT). Quien monta el formulario le da la version como key, asi que se rehace
+   * con la definicion vigente en cuanto llega.
+   */
+  onReload?: () => void;
 }
 
 const FORM_ID = 'scheduler-job-form';
@@ -67,7 +75,7 @@ interface FormProps extends JobFormProps {
   title: string;
 }
 
-function Form({ job, onClose, onSaved, meta, handlers, title }: FormProps) {
+function Form({ job, onClose, onSaved, onReload, meta, handlers, title }: FormProps) {
   const [draft, setDraft] = useState<JobDraft>(() => (job ? draftFromJob(job) : emptyDraft(meta)));
   const [errors, setErrors] = useState<JobErrors>({});
   // Campos tocados desde el ultimo envio: su error del servidor ya no aplica.
@@ -79,7 +87,7 @@ function Form({ job, onClose, onSaved, meta, handlers, title }: FormProps) {
 
   const action = useAction(async (current: JobDraft, jobType: JobType) => {
     const { data } = job
-      ? await schedulerApi.updateJob(job.id, toUpdateRequest(current, jobType))
+      ? await schedulerApi.updateJob(job.id, toUpdateRequest(current, jobType, job.version))
       : await schedulerApi.createJob(toCreateRequest(current, jobType));
     onSaved(data);
   });
@@ -87,6 +95,8 @@ function Form({ job, onClose, onSaved, meta, handlers, title }: FormProps) {
     () => serverFieldErrors(action.error, meta, selected),
     [action.error, meta, selected],
   );
+  // Otra edicion se guardo despues de leer el trabajo: reenviar daria el mismo 409.
+  const stale = errorCode(action.error) === ERROR_CODES.VERSION_CONFLICT;
   const errorOf = (field: JobField): string | undefined =>
     errors[field] ?? (touched.has(field) ? undefined : fromServer[field]);
 
@@ -140,12 +150,24 @@ function Form({ job, onClose, onSaved, meta, handlers, title }: FormProps) {
       title={title}
       submitLabel={job ? t('common.save') : t('common.create')}
       busy={action.busy}
-      error={hasErrors(fromServer) ? null : action.error}
+      error={stale || hasErrors(fromServer) ? null : action.error}
       onClose={onClose}
       onSubmit={submit}
       size="lg"
-      submitDisabled={catalogEmpty}
+      submitDisabled={catalogEmpty || stale}
     >
+      {stale ? (
+        <div role="alert">
+          <Alert tone="warning" title={t('scheduler.form.staleTitle')}>
+            <p>{t('scheduler.form.staleBody')}</p>
+            {onReload ? (
+              <Button icon={<IconRefresh size={16} />} onClick={onReload}>
+                {t('scheduler.form.reload')}
+              </Button>
+            ) : null}
+          </Alert>
+        </div>
+      ) : null}
       {catalogEmpty ? (
         <Alert tone="warning" title={t('scheduler.catalogEmpty.title')}>
           {t('scheduler.catalogEmpty.body')}

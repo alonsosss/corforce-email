@@ -16,13 +16,13 @@ func TestEditarElIntervaloDeUnTrabajoActivoLoReplanificaDesdeAhora(t *testing.T)
 	}
 	path := "/api/v1/scheduler/jobs/" + jobs.job.ID.String()
 
-	code, env := send(t, srv, http.MethodPut, path, `{"name":"Cada hora","job_type":"interval","interval_minutes":60,"handler":"reports.daily"}`)
+	code, env := send(t, srv, http.MethodPut, path, `{"version":1,"name":"Cada hora","job_type":"interval","interval_minutes":60,"handler":"reports.daily"}`)
 	if code != http.StatusOK || string(env.Data["next_run_at"]) != `"2026-09-13T11:00:00Z"` || !schedules.next.Equal(clockNow.Add(time.Hour)) {
 		t.Fatalf("otros minutos replanifican desde ahora: %d, next_run_at %s, planificado %v", code, env.Data["next_run_at"], schedules.next)
 	}
 
 	schedules.next = clockNow.Add(20 * time.Minute)
-	code, env = send(t, srv, http.MethodPut, path, `{"name":"Otro nombre","job_type":"interval","interval_minutes":60,"handler":"reports.daily","max_retries":2}`)
+	code, env = send(t, srv, http.MethodPut, path, `{"version":2,"name":"Otro nombre","job_type":"interval","interval_minutes":60,"handler":"reports.daily","max_retries":2}`)
 	if code != http.StatusOK || string(env.Data["next_run_at"]) != `"2026-09-13T10:20:00Z"` || !schedules.next.Equal(clockNow.Add(20*time.Minute)) {
 		t.Fatalf("sin tocar el calendario se respeta la prevista: %d, next_run_at %s", code, env.Data["next_run_at"])
 	}

@@ -252,7 +252,7 @@ func TestUnCronConExpresionInvalidaEs422(t *testing.T) {
 	} {
 		body := `{"name":"n","job_type":"cron","handler":"reports.daily"` + expr + `}`
 		create := f.api(t, http.MethodPost, "/api/v1/scheduler/jobs", strings.Replace(body, `{`, `{"code":"c",`, 1))
-		update := f.api(t, http.MethodPut, "/api/v1/scheduler/jobs/"+f.jobID.String(), body)
+		update := f.api(t, http.MethodPut, "/api/v1/scheduler/jobs/"+f.jobID.String(), strings.Replace(body, `{`, `{"version":1,`, 1))
 		for op, rec := range map[string]*httptest.ResponseRecorder{"crear": create, "editar": update} {
 			if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), domain.ErrInvalidCron.Error()) {
 				t.Errorf("%s con %s: %d %s", op, name, rec.Code, rec.Body.String())

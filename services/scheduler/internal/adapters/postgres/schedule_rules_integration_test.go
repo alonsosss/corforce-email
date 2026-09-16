@@ -77,8 +77,8 @@ func TestEditarElCalendarioContraLaBase(t *testing.T) {
 	}
 
 	e.clock.set(scopeStart.Add(9 * time.Minute))
-	job.Name = "Otro nombre"
-	if _, err := e.uc.UpdateJob(e.ctx, job); err != nil {
+	job.Name, job.Version = "Otro nombre", o.Job.Version
+	if o, err = e.uc.UpdateJob(e.ctx, job); err != nil {
 		t.Fatal(err)
 	}
 	if next, _ := e.schedule(t, job.ID); !next.Equal(want) {
@@ -86,7 +86,7 @@ func TestEditarElCalendarioContraLaBase(t *testing.T) {
 	}
 
 	// Pasa a una sola vez: un calendario nuevo que sale en la pasada siguiente.
-	job.JobType, job.IntervalMinutes = domain.JobTypeOneTime, nil
+	job.JobType, job.IntervalMinutes, job.Version = domain.JobTypeOneTime, nil, o.Job.Version
 	o, err = e.uc.UpdateJob(e.ctx, job)
 	next, last = e.schedule(t, job.ID)
 	if err != nil || !next.Equal(e.clock.now()) || last != nil || o.AlreadyRun {

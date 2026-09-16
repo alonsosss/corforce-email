@@ -59,6 +59,11 @@ export interface SchedulerJob {
   max_retries: number;
   /** 0 toma el maximo del manejador. */
   timeout_seconds: number;
+  /**
+   * Version de la definicion. La edicion la devuelve tal cual la leyo y el servicio solo la
+   * aplica si sigue siendo la guardada (409 VERSION_CONFLICT si otra edicion se guardo antes).
+   */
+  version: number;
   created_at: string;
   updated_at: string;
   /** Proximo lanzamiento del calendario; null si el trabajo esta inactivo. */
@@ -186,8 +191,11 @@ export interface CreateJobRequest {
   timeout_seconds: number;
 }
 
-/** PUT reemplaza la definicion entera; el codigo no se cambia. */
-export type UpdateJobRequest = Omit<CreateJobRequest, 'code'>;
+/**
+ * PUT reemplaza la definicion entera; el codigo no se cambia. version es la del trabajo que se
+ * leyo: sin ella el servicio responde 428 VERSION_REQUIRED.
+ */
+export type UpdateJobRequest = Omit<CreateJobRequest, 'code'> & { version: number };
 
 export interface JobListQuery extends PageQuery {
   is_active?: boolean;
