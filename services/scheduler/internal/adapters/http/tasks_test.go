@@ -210,7 +210,7 @@ func TestListadoDeTareasPaginadoConSuVentana(t *testing.T) {
 			t.Errorf("meta.%s: %s, se esperaba %s", key, env.Meta[key], want)
 		}
 	}
-	if _, got := keysOf(t, env.Data[0]); got != "created_at,description,executed_at,handler,id,name,payload,status,tenant_id,trigger_at" {
+	if _, got := keysOf(t, env.Data[0]); got != "created_at,description,executed_at,failure_reason,handler,id,name,payload,status,tenant_id,trigger_at" {
 		t.Fatalf("una fila es una tarea completa: %s", got)
 	}
 	// La empresa es la del token y la ventana sale del reloj del caso de uso.

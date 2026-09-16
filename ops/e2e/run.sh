@@ -58,7 +58,7 @@ trap limpiar EXIT
 echo "== Infraestructura desechable"
 e2e_infra_up || exit 1
 
-SERVICES=(organization identity access-control gateway mail-directory mail-auth domain-service mail-security templates suppression billing reputation contacts analytics transactional campaigns automations webmail)
+SERVICES=(organization identity access-control gateway mail-directory mail-auth domain-service mail-security templates suppression billing reputation contacts scheduler analytics transactional campaigns automations webmail)
 echo "== Compilacion (${SERVICES[*]})"
 e2e_compilar "${SERVICES[@]}" || exit 1
 
@@ -96,7 +96,7 @@ export AUTH_RATE_LIMIT_PER_MIN=50
 declare -A PORT=(
   [identity]=$((BASE + 1)) [access-control]=$((BASE + 2)) [organization]=$((BASE + 3))
   [mail-directory]=$((BASE + 40)) [mail-auth]=$((BASE + 41)) [mail-security]=$((BASE + 42)) [domain-service]=$((BASE + 43)) [webmail]=$((BASE + 44))
-  [suppression]=$((BASE + 46)) [templates]=$((BASE + 47)) [transactional]=$((BASE + 45)) [contacts]=$((BASE + 50)) [campaigns]=$((BASE + 52)) [automations]=$((BASE + 51)) [analytics]=$((BASE + 53)) [reputation]=$((BASE + 54)) [billing]=$((BASE + 55))
+  [suppression]=$((BASE + 46)) [templates]=$((BASE + 47)) [transactional]=$((BASE + 45)) [contacts]=$((BASE + 50)) [campaigns]=$((BASE + 52)) [automations]=$((BASE + 51)) [analytics]=$((BASE + 53)) [reputation]=$((BASE + 54)) [billing]=$((BASE + 55)) [scheduler]=$((BASE + 33))
   [gateway]=$((BASE + 80))
 )
 MAPS_PORT=$((BASE + 81))
@@ -108,7 +108,7 @@ export IDENTITY_PORT=${PORT[identity]} ACCESS_CONTROL_PORT=${PORT[access-control
 export MAIL_DIRECTORY_PORT=${PORT[mail-directory]} MAIL_SECURITY_PORT=${PORT[mail-security]} DOMAIN_SERVICE_PORT=${PORT[domain-service]}
 export SUPPRESSION_PORT=${PORT[suppression]} TEMPLATES_PORT=${PORT[templates]} GATEWAY_PORT=${PORT[gateway]}
 export BILLING_PORT=${PORT[billing]} REPUTATION_PORT=${PORT[reputation]} CONTACTS_PORT=${PORT[contacts]} ANALYTICS_PORT=${PORT[analytics]}
-export TRANSACTIONAL_PORT=${PORT[transactional]} CAMPAIGNS_PORT=${PORT[campaigns]} AUTOMATIONS_PORT=${PORT[automations]}
+export TRANSACTIONAL_PORT=${PORT[transactional]} CAMPAIGNS_PORT=${PORT[campaigns]} AUTOMATIONS_PORT=${PORT[automations]} SCHEDULER_PORT=${PORT[scheduler]}
 export MAIL_POLICY_MAPS_PORT=$MAPS_PORT MAIL_POLICY_EXPORT_PORT=$EXPORT_PORT
 export MAIL_AUTH_PORT=${PORT[mail-auth]} MAIL_AUTH_TLS_PORT=$AUTH_TLS_PORT
 # domain-service verifica contra el DNS de la prueba: la zona es $WORK/zona.json, que la prueba
@@ -117,7 +117,7 @@ export MAIL_DNS_RESOLVER="127.0.0.1:$DNS_PORT"
 export API_ORIGIN="http://localhost:${PORT[gateway]}" PUBLIC_BASE_URL="http://localhost:${PORT[gateway]}"
 # Direcciones internas: las que el gateway lee de routes.json por <SERVICIO>_HOST(_PORT) y
 # las que los servicios usan entre si.
-for s in identity access-control organization mail-directory mail-security domain-service suppression templates billing reputation contacts analytics transactional campaigns automations webmail; do
+for s in identity access-control organization mail-directory mail-security domain-service suppression templates billing reputation contacts scheduler analytics transactional campaigns automations webmail; do
   var="$(echo "$s" | tr 'a-z-' 'A-Z_')_HOST"
   export "$var=127.0.0.1" "${var}_PORT=${PORT[$s]}"
 done
@@ -131,6 +131,8 @@ export BILLING_URL="http://127.0.0.1:${PORT[billing]}" REPUTATION_URL="http://12
 while IFS= read -r linea; do export "$linea"; done < <(grep -E '^REPUTATION_(WINDOW|MIN_VOLUME|BOUNCE|COMPLAINT|DEFAULT)' .env.example)
 export BILLING_ENFORCE=true
 export TRANSACTIONAL_URL="http://127.0.0.1:${PORT[transactional]}" CONTACTS_URL="http://127.0.0.1:${PORT[contacts]}"
+# analytics cierra en el scheduler la ejecucion de la poda que este le despacha.
+export SCHEDULER_URL="http://127.0.0.1:${PORT[scheduler]}"
 # SES sin credenciales: la prueba nunca llega a enviar (el remitente no esta verificado), y
 # el cliente de AWS solo pide credenciales al enviar.
 export SES_REGION=us-east-1 SES_CONFIG_SET_TRANSACTIONAL=cfm-transactional SES_CONFIG_SET_MARKETING=cfm-marketing
@@ -156,7 +158,7 @@ esperar_salud organization "${PORT[organization]}" || exit 1
 echo "== Arranque de una plataforma vacia (ops/db/bootstrap-platform.sh)"
 e2e_plataforma pe-01
 
-ARRANQUE=(identity access-control mail-directory mail-auth domain-service mail-security templates suppression billing reputation contacts analytics transactional campaigns automations gateway)
+ARRANQUE=(identity access-control mail-directory mail-auth domain-service mail-security templates suppression billing reputation contacts scheduler analytics transactional campaigns automations gateway)
 for s in "${ARRANQUE[@]}"; do arrancar "$s"; done
 for s in "${ARRANQUE[@]}"; do esperar_salud "$s" "${PORT[$s]}"; done
 
@@ -499,6 +501,69 @@ contains "con el motivo de transactional" "$(echo "$ENT" | jget data.0.reason)" 
 echo "== Analitica"
 expect "el panel responde sin envios" "$(curl -s "$GW/analytics/overview" -H "$A2" | jget data.totals.sent)" "0"
 expect "un rango invertido se rechaza" "$(codigo "$GW/analytics/overview?from=2026-09-10&to=2026-09-01" -H "$A2")" "422"
+
+echo "== Planificador (scheduler)"
+# El catalogo de manejadores ya no esta vacio: analytics declara analytics.retention.prune y
+# lo ejecuta. Con el catalogo vacio, crear un trabajo respondia 422 y nada se despachaba.
+HAND=$(curl -s "$GW/scheduler/handlers" -H "$A2")
+contains "el catalogo publica el manejador de la poda" "$HAND" '"analytics.retention.prune"'
+contains "con el servicio que lo ejecuta" "$HAND" '"service":"analytics"'
+# El trabajo de plataforma que siembra la migracion 05: la empresa lo ve y no lo puede tocar.
+contains "la empresa ve el trabajo de plataforma sembrado" "$(curl -s "$GW/scheduler/jobs" -H "$A2")" '"code":"analytics-retention-prune"'
+PJID=$(sql mail_tenant_acme "SELECT id FROM scheduler.job_definitions WHERE code = 'analytics-retention-prune'")
+expect "que no es de ninguna empresa" "$(sql mail_tenant_acme "SELECT tenant_id IS NULL FROM scheduler.job_definitions WHERE id = '$PJID'")" "t"
+expect "y la empresa no lo desactiva" "$(codigo -X POST "$GW/scheduler/jobs/$PJID/disable" -H "$A2")" "403"
+expect "su primera pasada es la medianoche siguiente, no el propio despliegue" \
+  "$(sql mail_tenant_acme "SELECT next_run_at > now() FROM scheduler.job_schedules WHERE job_id = '$PJID'")" "t"
+# Un manejador que nadie declara se rechaza al crear, nombrando el campo y la regla.
+NOJOB=$(curl -s -X POST "$GW/scheduler/jobs" -H "$A2" -H 'Content-Type: application/json' \
+  -d '{"name":"Inventado","code":"e2e-inventado","job_type":"interval","interval_minutes":60,"handler":"no.existe"}')
+expect "un manejador fuera del catalogo se rechaza" \
+  "$(echo "$NOJOB" | jget error.details.field)/$(echo "$NOJOB" | jget error.details.rule)" "handler/not_allowed"
+# Y uno declarado se crea: es lo que el catalogo vacio hacia imposible.
+JOB=$(curl -s -X POST "$GW/scheduler/jobs" -H "$A2" -H 'Content-Type: application/json' \
+  -d '{"name":"Poda de la analitica","code":"e2e-poda","job_type":"interval","interval_minutes":60,"handler":"analytics.retention.prune","timeout_seconds":120}')
+JID=$(echo "$JOB" | jget data.id)
+[[ -n "$JID" ]] && ok "la empresa crea un trabajo con un manejador declarado" || mal "crear el trabajo: ${JOB:0:300}"
+# Lanzarlo a mano lo despacha por la outbox; analytics lo recoge y lo cierra por
+# POST /internal/scheduler/executions/{id}/complete.
+EJID=$(curl -s -X POST "$GW/scheduler/jobs/$JID/run" -H "$A2" | jget data.id)
+[[ -n "$EJID" ]] && ok "la ejecucion nace despachada" || mal "lanzar el trabajo: $JID"
+estado=""
+for _ in $(seq 1 80); do
+  estado=$(curl -s "$GW/scheduler/executions/$EJID" -H "$A2" | jget data.status)
+  [[ "$estado" == completed || "$estado" == failed ]] && break; sleep 0.5
+done
+expect "analytics la ejecuta y la cierra con exito" "$estado" "completed"
+contains "y deja lo que podo como resultado" "$(curl -s "$GW/scheduler/executions/$EJID" -H "$A2" | jget data.result)" "messages"
+
+# Tareas puntuales: apuntan al mismo catalogo y ahora se despachan de verdad.
+NOTASK=$(curl -s -X POST "$GW/scheduler/tasks" -H "$A2" -H 'Content-Type: application/json' \
+  -d '{"name":"Inventada","trigger_at":"2026-01-01T00:00:00Z","handler":"no.existe"}')
+expect "una tarea con un manejador fuera del catalogo se rechaza" \
+  "$(echo "$NOTASK" | jget error.details.field)/$(echo "$NOTASK" | jget error.details.rule)" "handler/not_allowed"
+TSK=$(curl -s -X POST "$GW/scheduler/tasks" -H "$A2" -H 'Content-Type: application/json' \
+  -d "{\"name\":\"Poda puntual\",\"trigger_at\":\"$(date -u -d '-1 minute' +%Y-%m-%dT%H:%M:%SZ)\",\"handler\":\"analytics.retention.prune\"}")
+TSKID=$(echo "$TSK" | jget data.id)
+[[ -n "$TSKID" ]] && ok "la empresa programa una tarea puntual ya vencida" || mal "programar la tarea: ${TSK:0:300}"
+estado=""
+for _ in $(seq 1 120); do
+  estado=$(sql mail_tenant_acme "SELECT status FROM scheduler.scheduled_tasks WHERE id = '$TSKID'")
+  [[ "$estado" == executed ]] && break; sleep 0.5
+done
+expect "el barrido la marca ejecutada" "$estado" "executed"
+# Lo que antes faltaba: la marca iba sola, sin despachar nada a nadie.
+despachada() {
+  local n=""
+  for _ in $(seq 1 40); do
+    n=$(sql mail_tenant_acme "SELECT count(*) FROM platform.event_outbox WHERE subject = 'scheduler.task.started'
+      AND payload->'data'->>'task_id' = '$TSKID' AND published_at IS NOT NULL")
+    [[ "$n" == 1 ]] && { echo si; return; }
+    sleep 0.5
+  done
+  echo "no ($n)"
+}
+expect "y la outbox entrega su despacho a NATS" "$(despachada)" "si"
 
 echo "== Cuentas borradas o desactivadas"
 # El access token sigue firmado y vigente 5 minutos. El gateway lo rechaza en cuanto la cuenta

@@ -116,6 +116,11 @@ export interface ScheduledTask {
   status: string;
   executed_at: string | null;
   created_at: string;
+  /**
+   * Por que la plataforma la cancelo sin despacharla (handler_not_allowed: su manejador salio
+   * del catalogo). null si la cancelo una persona o si sigue su curso.
+   */
+  failure_reason: string | null;
 }
 
 export interface SchedulerHandler {

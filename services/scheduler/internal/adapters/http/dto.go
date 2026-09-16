@@ -83,6 +83,9 @@ type taskDTO struct {
 	Status      string     `json:"status"`
 	ExecutedAt  *time.Time `json:"executed_at"`
 	CreatedAt   time.Time  `json:"created_at"`
+	// FailureReason es por que la plataforma la cancelo sin despacharla; null si la cancelo
+	// una persona o si sigue su curso.
+	FailureReason *string `json:"failure_reason"`
 }
 
 type handlerDTO struct {
@@ -138,7 +141,7 @@ func taskResponse(t *domain.ScheduledTask) taskDTO {
 	return taskDTO{
 		ID: t.ID, TenantID: t.TenantID, Name: t.Name, Description: t.Description,
 		TriggerAt: t.TriggerAt, Handler: t.Handler, Payload: t.Payload, Status: t.Status,
-		ExecutedAt: t.ExecutedAt, CreatedAt: t.CreatedAt,
+		ExecutedAt: t.ExecutedAt, CreatedAt: t.CreatedAt, FailureReason: t.FailureReason,
 	}
 }
 

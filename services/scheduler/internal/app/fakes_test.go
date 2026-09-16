@@ -36,6 +36,9 @@ type memStore struct {
 	locks []string
 	// beforeJobUpdate, si esta, corre una vez al empezar la siguiente escritura de un trabajo.
 	beforeJobUpdate func()
+	// beforeTaskMark, si esta, corre una vez antes de marcar ejecutada una tarea: simula la
+	// cancelacion que llega entre la lectura del barrido y su escritura.
+	beforeTaskMark func()
 }
 
 type recorded struct {
@@ -514,7 +517,27 @@ func (r memTasks) ListDue(_ context.Context, now time.Time) ([]*domain.Scheduled
 	return out, nil
 }
 
+func (r memTasks) CancelUndispatchable(_ context.Context, id uuid.UUID, reason string) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	t, ok := r.tasks[id]
+	if !ok || t.Status != domain.TaskStatusScheduled {
+		return false, nil
+	}
+	t.Status, t.FailureReason = domain.TaskStatusCancelled, &reason
+	r.tasks[id] = t
+	r.taskWrites++
+	return true, nil
+}
+
 func (r memTasks) MarkExecuted(_ context.Context, id uuid.UUID, at time.Time) (bool, error) {
+	r.mu.Lock()
+	hook := r.beforeTaskMark
+	r.beforeTaskMark = nil
+	r.mu.Unlock()
+	if hook != nil {
+		hook()
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	t, ok := r.tasks[id]
@@ -550,6 +573,10 @@ func (r memEvents) JobCompleted(ctx context.Context, _ *domain.JobDefinition, e 
 
 func (r memEvents) JobFailed(ctx context.Context, _ *domain.JobDefinition, e, retry *domain.JobExecution) error {
 	return r.record(ctx, recorded{subject: "scheduler.job.failed", execID: e.ID, retry: retry})
+}
+
+func (r memEvents) TaskStarted(ctx context.Context, t *domain.ScheduledTask) error {
+	return r.record(ctx, recorded{subject: "scheduler.task.started", execID: t.ID})
 }
 
 type clock struct{ t time.Time }

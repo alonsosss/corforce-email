@@ -80,6 +80,22 @@ func (p *Publisher) JobFailed(ctx context.Context, job *domain.JobDefinition, ex
 	})
 }
 
+// TaskStarted: una tarea puntual vencida queda despachada a su manejador. No lleva
+// execution_id porque no hay ejecucion que cerrar: el ejecutor hace el trabajo y confirma
+// el mensaje. Sale en la misma transaccion que la marca como ejecutada, asi que una tarea
+// cancelada entre la lectura y la escritura no se despacha.
+func (p *Publisher) TaskStarted(ctx context.Context, task *domain.ScheduledTask) error {
+	return p.in(ctx).Publish("scheduler.task.started", events.Event{
+		Data: map[string]any{
+			"tenant_id": task.TenantID.String(),
+			"task_id":   task.ID.String(),
+			"name":      task.Name,
+			"handler":   task.Handler,
+			"payload":   payloadField(task.Payload),
+		},
+	})
+}
+
 // in liga el publicador a la transaccion del contexto. La forma Publish(subject, evento)
 // es la que leen los registros de contratos (ops/scaffold/eventcontracts y gen-events).
 func (p *Publisher) in(ctx context.Context) transactional {

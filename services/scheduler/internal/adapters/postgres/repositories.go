@@ -392,13 +392,13 @@ func (r *ScheduledTaskRepo) Create(ctx context.Context, task *domain.ScheduledTa
 	return err
 }
 
-const taskColumns = `id,tenant_id,name,description,trigger_at,handler,payload,status,executed_at,created_at`
+const taskColumns = `id,tenant_id,name,description,trigger_at,handler,payload,status,executed_at,created_at,failure_reason`
 
 // scanTask distingue la tarea que no esta (domain.ErrTaskNotFound) de un fallo de la base,
 // que sube tal cual y acaba en un 500 registrado.
 func scanTask(row pgx.Row) (*domain.ScheduledTask, error) {
 	t := &domain.ScheduledTask{}
-	err := row.Scan(&t.ID, &t.TenantID, &t.Name, &t.Description, &t.TriggerAt, &t.Handler, &t.Payload, &t.Status, &t.ExecutedAt, &t.CreatedAt)
+	err := row.Scan(&t.ID, &t.TenantID, &t.Name, &t.Description, &t.TriggerAt, &t.Handler, &t.Payload, &t.Status, &t.ExecutedAt, &t.CreatedAt, &t.FailureReason)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, domain.ErrTaskNotFound
 	}
@@ -465,6 +465,17 @@ func (r *ScheduledTaskRepo) list(ctx context.Context, sql string, args ...any) (
 func (r *ScheduledTaskRepo) MarkExecuted(ctx context.Context, id uuid.UUID, at time.Time) (bool, error) {
 	tag, err := r.pool.Exec(ctx,
 		`UPDATE scheduler.scheduled_tasks SET status='executed', executed_at=$1 WHERE id=$2 AND status='scheduled'`, at, id)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
+// CancelUndispatchable cancela con su motivo una tarea que sigue programada, con la misma
+// condicion que MarkExecuted: la que cancelo una persona mientras tanto no se reabre.
+func (r *ScheduledTaskRepo) CancelUndispatchable(ctx context.Context, id uuid.UUID, reason string) (bool, error) {
+	tag, err := r.pool.Exec(ctx,
+		`UPDATE scheduler.scheduled_tasks SET status='cancelled', failure_reason=$2 WHERE id=$1 AND status='scheduled'`, id, reason)
 	if err != nil {
 		return false, err
 	}

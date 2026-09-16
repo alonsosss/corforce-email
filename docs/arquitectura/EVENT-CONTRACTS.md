@@ -77,6 +77,7 @@ subject y payload. `opaco` = el payload no se puede leer estaticamente.
 | `scheduler.job.completed` | scheduler | `attempt`, `duration_ms`, `execution_id`, `handler`, `job_id`, `tenant_id` |
 | `scheduler.job.failed` | scheduler | `attempt`, `error`, `execution_id`, `handler`, `job_id`, `reason`, `retry_at`, `retry_execution_id`, `tenant_id` |
 | `scheduler.job.started` | scheduler | `attempt`, `execution_id`, `handler`, `job_id`, `payload`, `tenant_id`, `timeout_seconds` |
+| `scheduler.task.started` | scheduler | `handler`, `name`, `payload`, `task_id`, `tenant_id` |
 | `suppression.entry.added` | suppression | `email`, `reason`, `reasons`, `source`, `tenant_id` |
 | `suppression.entry.expired` | suppression | `email`, `expires_at`, `reason`, `reasons`, `source`, `tenant_id` |
 | `suppression.entry.removed` | suppression | `email`, `reason`, `reasons`, `source`, `tenant_id` |
@@ -117,6 +118,8 @@ subject y payload. `opaco` = el payload no se puede leer estaticamente.
 | `mail.mailbox.deleted` | billing | `tenant_id` |
 | `organization.tenant.created` | billing | `tenant_id` |
 | `organization.tenant.status_changed` | billing | `status`, `tenant_id` |
+| `scheduler.job.started` | analytics | _opaco_ |
+| `scheduler.task.started` | analytics | _opaco_ |
 | `suppression.entry.added` | contacts | `email`, `reason`, `reasons`, `source`, `tenant_id` |
 | `suppression.entry.expired` | contacts | `email`, `reason`, `reasons`, `source`, `tenant_id` |
 | `suppression.entry.removed` | contacts | `email`, `reason`, `reasons`, `source`, `tenant_id` |

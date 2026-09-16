@@ -2,11 +2,27 @@ package ports
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/alonsosss/corforce-email/services/analytics/internal/domain"
 	"github.com/google/uuid"
 )
+
+var (
+	// ErrSchedulerUnavailable: el scheduler no respondio. El cierre se vuelve a intentar.
+	ErrSchedulerUnavailable = errors.New("el scheduler no esta disponible")
+	// ErrReportRejected: el scheduler rechazo el cierre de forma definitiva (la ejecucion ya
+	// vencio, se cancelo o no es de esta empresa). Repetirlo daria siempre lo mismo.
+	ErrReportRejected = errors.New("el scheduler rechazo el cierre de la ejecucion")
+)
+
+// SchedulerReporter cierra en el scheduler la ejecucion que despacho un trabajo. Es el
+// contrato de POST /internal/scheduler/executions/{id}/complete y /fail.
+type SchedulerReporter interface {
+	Complete(ctx context.Context, tenantID, executionID uuid.UUID, result any) error
+	Fail(ctx context.Context, tenantID, executionID uuid.UUID, message string, retryable bool) error
+}
 
 // Transactor abre la transaccion de la ingesta de un evento; db.ContextPool lo cumple.
 // Todos los repositorios resuelven el pool o la transaccion desde el contexto.

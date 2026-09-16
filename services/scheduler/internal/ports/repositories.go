@@ -79,6 +79,9 @@ type ScheduledTaskRepository interface {
 	// MarkExecuted pasa a ejecutada una tarea que sigue programada; false si ya no lo estaba
 	// (se cancelo entre la lectura y la escritura).
 	MarkExecuted(ctx context.Context, id uuid.UUID, at time.Time) (bool, error)
+	// CancelUndispatchable cancela con su motivo una tarea que sigue programada y que no se
+	// puede despachar; false si ya no lo estaba, con la misma condicion que MarkExecuted.
+	CancelUndispatchable(ctx context.Context, id uuid.UUID, reason string) (bool, error)
 }
 
 type JobScheduleRepository interface {
@@ -113,4 +116,7 @@ type EventPublisher interface {
 	JobCompleted(ctx context.Context, job *domain.JobDefinition, exec *domain.JobExecution) error
 	// JobFailed lleva el reintento programado, o nil si no habra otro intento.
 	JobFailed(ctx context.Context, job *domain.JobDefinition, exec, retry *domain.JobExecution) error
+	// TaskStarted despacha una tarea puntual vencida. A diferencia de un trabajo, no hay
+	// ejecucion que cerrar: la garantia es la del bus (reentrega y DLQ).
+	TaskStarted(ctx context.Context, task *domain.ScheduledTask) error
 }

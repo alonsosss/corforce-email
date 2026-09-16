@@ -288,8 +288,14 @@ func (uc *SchedulerUseCase) RunJob(ctx context.Context, tenantID, jobID uuid.UUI
 	return exec, nil
 }
 
+// ScheduleTask guarda una tarea puntual. Su manejador sale del mismo catalogo que el de un
+// trabajo de empresa: sin un ejecutor declarado que la recoja, la tarea se guardaria solo
+// para no despachar nada al vencer.
 func (uc *SchedulerUseCase) ScheduleTask(ctx context.Context, task *domain.ScheduledTask) error {
 	if err := task.Validate(); err != nil {
+		return err
+	}
+	if _, err := uc.catalog.Resolve(task.Handler, false); err != nil {
 		return err
 	}
 	task.ID = uuid.New()
@@ -456,8 +462,10 @@ func (uc *SchedulerUseCase) ReconcileCronSchedules(ctx context.Context) (int, er
 	return fixed, err
 }
 
-// ProcessPendingTasks marca ejecutadas las tareas vencidas de la base del contexto. Una que
-// se cancelo entre la lectura y la escritura sigue cancelada.
+// ProcessPendingTasks despacha las tareas vencidas de la base del contexto: cada una, en su
+// propia transaccion, se marca ejecutada y encola scheduler.task.started, de modo que el
+// evento existe si y solo si la marca existe. Una que se cancelo entre la lectura y la
+// escritura sigue cancelada y no se despacha.
 func (uc *SchedulerUseCase) ProcessPendingTasks(ctx context.Context) {
 	now := uc.now()
 	tasks, err := uc.tasks.ListDue(ctx, now)
@@ -469,10 +477,35 @@ func (uc *SchedulerUseCase) ProcessPendingTasks(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
-		if _, err := uc.tasks.MarkExecuted(ctx, t.ID, now); err != nil {
-			uc.logger.Error("scheduler: no se marco ejecutada la tarea", zap.String("task_id", t.ID.String()), zap.Error(err))
+		if err := uc.dispatchTask(ctx, t, now); err != nil {
+			uc.logger.Error("scheduler: no se despacho la tarea vencida", zap.String("task_id", t.ID.String()), zap.Error(err))
 		}
 	}
+}
+
+// dispatchTask despacha UNA tarea vencida. Si su manejador ya no esta en el catalogo no hay
+// a quien despacharla: queda cancelada con el motivo, en vez de marcarse ejecutada sin que
+// nadie haga nada. Es el equivalente de la ejecucion que un trabajo cierra con
+// FailureHandlerNotAllowed; una tarea no tiene ejecucion en la que anotarlo.
+func (uc *SchedulerUseCase) dispatchTask(ctx context.Context, task *domain.ScheduledTask, now time.Time) error {
+	if _, rerr := uc.catalog.Resolve(task.Handler, false); rerr != nil {
+		cancelled, err := uc.tasks.CancelUndispatchable(ctx, task.ID, domain.FailureHandlerNotAllowed)
+		if err != nil {
+			return err
+		}
+		if cancelled {
+			uc.logger.Error("scheduler: tarea con un manejador fuera del catalogo; se cancela sin despacharla",
+				zap.String("task_id", task.ID.String()), zap.String("handler", task.Handler), zap.Error(rerr))
+		}
+		return nil
+	}
+	return uc.tx.Transact(ctx, func(ctx context.Context) error {
+		marked, err := uc.tasks.MarkExecuted(ctx, task.ID, now)
+		if err != nil || !marked {
+			return err
+		}
+		return uc.events.TaskStarted(ctx, task)
+	})
 }
 
 // ListPendingTasks pagina las tareas puntuales pendientes de la empresa que vencen dentro de

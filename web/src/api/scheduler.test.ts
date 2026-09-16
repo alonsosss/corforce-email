@@ -254,6 +254,7 @@ describe('cliente del scheduler', () => {
       payload: null,
       status: 'scheduled',
       executed_at: null,
+    failure_reason: null,
       created_at: '2026-09-13T10:00:00Z',
     };
     const calls = mockFetch(() =>

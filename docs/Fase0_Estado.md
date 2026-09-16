@@ -98,13 +98,38 @@ cambie cualquiera de estas líneas.
   en la transacción que cambia la ejecución (stream `SCHEDULER`); el ejecutor cierra por
   `POST /internal/scheduler/executions/{id}/complete|fail` y un barrido con
   `db.TryLeaderLock` vence por timeout y despacha los reintentos con espera creciente. El
-  catálogo de manejadores (`services/scheduler/handlers.json`) está vacío porque ningún
-  servicio consume hoy `scheduler.job.started`: hasta que un ejecutor se declare, crear o
-  editar un trabajo responde 422. Pendiente del scheduler: las tareas puntuales
-  (`scheduled_tasks`) se marcan `executed` sin despachar nada (P). Lo que si hace el
-  barrido (V, 2026-09-13): marcar solo las que siguen `scheduled`, con la hora del caso de
-  uso en `executed_at`, de modo que una tarea cancelada entre la lectura y la escritura
-  sigue cancelada.
+  catálogo de manejadores (`services/scheduler/handlers.json`) declara desde 2026-09-15 su
+  primer ejecutor real, `analytics.retention.prune` (servicio `analytics`, alcances `tenant`
+  y `platform`, plazo máximo 300 s). Declarar un manejador ahí es comprometerse a consumir
+  `scheduler.job.started` y cerrar la ejecución; el scheduler comprueba el nombre contra el
+  catálogo al crear o editar un trabajo, al programar una tarea, al despacharlos y antes de
+  reintentar (422 con `details.field = handler` y `details.rule = not_allowed`). Crear o
+  editar un trabajo ya no responde 422 por un catálogo vacío. Las tareas puntuales
+  (`scheduled_tasks`) se despachan de verdad (V, 2026-09-15, unitarias e integración contra
+  Postgres 16): el barrido marca `executed` con la hora del caso de uso y encola
+  `scheduler.task.started` en la MISMA transacción, así que una tarea cancelada entre la
+  lectura y la escritura sigue cancelada y no se despacha, y un despacho que no se puede
+  encolar deshace la marca en vez de dejarla ejecutada sin despachar. Una tarea cuyo
+  manejador salió del catálogo queda `cancelled` con
+  `failure_reason = handler_not_allowed` (`05_task_dispatch.sql`), que es lo que un trabajo
+  anota en su ejecución y una tarea no tenía dónde anotar. Una tarea no informa cómo acabó:
+  su garantía es la del bus (reentrega y DLQ de `pkg/events`); lo que deba quedar registrado
+  va en un trabajo `one_time`, que sí tiene ejecución.
+* La poda de la analítica es un trabajo del scheduler (2026-09-15; unitarias, cliente contra
+  `httptest`, integración contra Postgres 16 y `make e2e`): `analytics` ya no la corre en un
+  `time.Ticker` propio y sin cerrojo de líder (cada réplica podaba cada 24 h contadas desde
+  su propio arranque, sin historial, sin reintentos y sin forma de lanzarla a mano). Ahora
+  la despacha el trabajo de plataforma `analytics-retention-prune` que siembra
+  `05_task_dispatch.sql` en cada base de empresa (`@daily` en UTC, con `next_run_at` en la
+  medianoche siguiente para no podar en el propio despliegue; la empresa lo ve y no puede
+  cambiarlo, 403 `ErrPlatformJob`), el consumidor durable `analytics-scheduler-jobs` la
+  ejecuta y la cierra por `POST /internal/scheduler/executions/{id}/complete|fail`. Un fallo
+  se informa como reintentable y lo reintenta el SCHEDULER con su espera creciente y su
+  presupuesto, no el bus: dos reintentos superpuestos repetirían la misma poda a destiempo.
+  `analytics` pasa a necesitar `SCHEDULER_URL` e `INTERNAL_GATEWAY_TOKEN`. Orden de
+  despliegue: analytics primero (ya consume), después el scheduler (ya declara el manejador)
+  y al final la migración 05 (siembra el trabajo); al revés, la primera pasada despacharía a
+  un ejecutor que todavía no escucha y la ejecución vencería por plazo.
 * `cron_expression` evaluada (2026-09-13, unitarias e integración contra Postgres 16) con
   el parser de `github.com/robfig/cron/v3` v3.0.1; la planificación sigue en la base. Se
   admiten los cinco campos estándar y `@hourly`, `@daily`, `@weekly`, `@monthly` y

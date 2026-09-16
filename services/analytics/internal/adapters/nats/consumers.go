@@ -8,6 +8,7 @@ package nats
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -17,6 +18,7 @@ import (
 	"github.com/alonsosss/corforce-email/pkg/events"
 	"github.com/alonsosss/corforce-email/services/analytics/internal/app"
 	"github.com/alonsosss/corforce-email/services/analytics/internal/domain"
+	"github.com/alonsosss/corforce-email/services/analytics/internal/ports"
 	"github.com/google/uuid"
 	natsgo "github.com/nats-io/nats.go"
 	"go.uber.org/zap"
@@ -25,10 +27,23 @@ import (
 const (
 	durableTransactional = "analytics-transactional"
 	durableCampaigns     = "analytics-campaigns"
+	// Los dos durables del scheduler: un trabajo programado, que se cierra por HTTP, y una
+	// tarea puntual, que no tiene ejecucion que cerrar.
+	durableSchedulerJobs  = "analytics-scheduler-jobs"
+	durableSchedulerTasks = "analytics-scheduler-tasks"
+
+	// handlerRetentionPrune es el manejador que este servicio declara en el catalogo del
+	// scheduler (services/scheduler/handlers.json). Los demas manejadores del catalogo viajan
+	// por el mismo subject y este consumidor los ignora.
+	handlerRetentionPrune = "analytics.retention.prune"
 
 	// processTimeout acota resolver la base de la empresa y la transaccion de un evento;
 	// queda por debajo del AckWait del bus.
 	processTimeout = 15 * time.Second
+	// pruneTimeout acota una poda entera. Queda por debajo del AckWait del bus (90 s) para
+	// que el mensaje no se reentregue mientras la poda sigue corriendo; lo que no le da
+	// tiempo se borra en la siguiente, porque el DELETE va por lotes.
+	pruneTimeout   = 60 * time.Second
 	subscribeRetry = 10 * time.Second
 )
 
@@ -39,18 +54,19 @@ type binding struct {
 
 // Consumers mantiene las suscripciones durables y traduce cada evento a la ingesta.
 type Consumers struct {
-	bus      *events.Bus
-	uc       *app.UseCase
-	tenantDB *db.TenantDB
-	logger   *zap.Logger
+	bus       *events.Bus
+	uc        *app.UseCase
+	tenantDB  *db.TenantDB
+	scheduler ports.SchedulerReporter
+	logger    *zap.Logger
 
 	mu      sync.Mutex
 	subs    []*natsgo.Subscription
 	stopped bool
 }
 
-func NewConsumers(bus *events.Bus, uc *app.UseCase, tenantDB *db.TenantDB, logger *zap.Logger) *Consumers {
-	return &Consumers{bus: bus, uc: uc, tenantDB: tenantDB, logger: logger}
+func NewConsumers(bus *events.Bus, uc *app.UseCase, tenantDB *db.TenantDB, scheduler ports.SchedulerReporter, logger *zap.Logger) *Consumers {
+	return &Consumers{bus: bus, uc: uc, tenantDB: tenantDB, scheduler: scheduler, logger: logger}
 }
 
 func (c *Consumers) bindings() []binding {
@@ -60,6 +76,12 @@ func (c *Consumers) bindings() []binding {
 		}},
 		{subject: "campaigns.campaign.*", bind: func() (*natsgo.Subscription, error) {
 			return c.bus.DurableQueueSubscribe("campaigns.campaign.*", durableCampaigns, c.onCampaignEvent)
+		}},
+		{subject: "scheduler.job.started", bind: func() (*natsgo.Subscription, error) {
+			return c.bus.DurableQueueSubscribe("scheduler.job.started", durableSchedulerJobs, c.onSchedulerJob)
+		}},
+		{subject: "scheduler.task.started", bind: func() (*natsgo.Subscription, error) {
+			return c.bus.DurableQueueSubscribe("scheduler.task.started", durableSchedulerTasks, c.onSchedulerTask)
 		}},
 	}
 }
@@ -202,6 +224,159 @@ func (c *Consumers) onCampaignEvent(evt events.Event, ack func()) {
 		_, err := c.uc.IngestCampaignEvent(ctx, ev)
 		return err
 	})
+}
+
+// Motivos por los que un despacho del scheduler no se ejecuta aqui.
+var (
+	// errNotMine: el manejador es de otro ejecutor del catalogo. Viaja por el mismo subject.
+	errNotMine = errors.New("el manejador es de otro servicio")
+	// errMalformed: el despacho no trae lo que hace falta para ejecutarlo o cerrarlo.
+	errMalformed = errors.New("despacho del scheduler ilegible")
+)
+
+// schedulerJob es el despacho de un trabajo programado dirigido a este servicio.
+type schedulerJob struct {
+	tenantID    uuid.UUID
+	executionID uuid.UUID
+}
+
+// parseSchedulerJob lee scheduler.job.started. Un trabajo de plataforma lleva data.tenant_id
+// nulo: la empresa es entonces la de la base en la que vive la ejecucion, que es la del
+// sobre y la que hay que devolver al cerrarla.
+func parseSchedulerJob(evt events.Event) (schedulerJob, error) {
+	data, _ := evt.Data.(map[string]interface{})
+	if str(data["handler"]) != handlerRetentionPrune {
+		return schedulerJob{}, errNotMine
+	}
+	executionID, err := uuid.Parse(str(data["execution_id"]))
+	if err != nil {
+		return schedulerJob{}, errMalformed
+	}
+	tenantID, err := eventTenant(evt, str(data["tenant_id"]))
+	if err != nil {
+		return schedulerJob{}, err
+	}
+	return schedulerJob{tenantID: tenantID, executionID: executionID}, nil
+}
+
+// parseSchedulerTask lee scheduler.task.started, que no lleva ejecucion que cerrar.
+func parseSchedulerTask(evt events.Event) (uuid.UUID, error) {
+	data, _ := evt.Data.(map[string]interface{})
+	if str(data["handler"]) != handlerRetentionPrune {
+		return uuid.Nil, errNotMine
+	}
+	return eventTenant(evt, str(data["tenant_id"]))
+}
+
+// eventTenant toma la empresa del payload y, si no viene, la del sobre.
+func eventTenant(evt events.Event, raw string) (uuid.UUID, error) {
+	id, err := uuid.Parse(raw)
+	if err != nil {
+		id, err = uuid.Parse(evt.TenantID)
+	}
+	if err != nil || id == uuid.Nil {
+		return uuid.Nil, errMalformed
+	}
+	return id, nil
+}
+
+// pruneResult es lo que el scheduler guarda como resultado de la ejecucion.
+type pruneResult struct {
+	Messages int64 `json:"messages"`
+	Events   int64 `json:"events"`
+}
+
+// onSchedulerJob ejecuta la poda que el scheduler despacho y la cierra por su API interna.
+// El fallo lo reintenta el SCHEDULER, con su espera creciente y su presupuesto
+// (max_retries), no el bus: dos reintentos superpuestos repetirian la misma poda a
+// destiempo. Por eso un fallo de la poda tambien se informa y se confirma el mensaje.
+func (c *Consumers) onSchedulerJob(evt events.Event, ack func()) {
+	job, err := parseSchedulerJob(evt)
+	if err != nil {
+		c.skip(evt, err)
+		ack()
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), pruneTimeout)
+	defer cancel()
+	res, perr := c.prune(ctx, job.tenantID)
+	if perr != nil {
+		if db.IsUnknownTenant(perr) {
+			c.logger.Error("analytics: poda de una empresa inexistente; se descarta",
+				zap.String("event_id", evt.ID), zap.String("tenant_id", job.tenantID.String()))
+			ack()
+			return
+		}
+		c.close(evt, ack, c.scheduler.Fail(ctx, job.tenantID, job.executionID, perr.Error(), true))
+		return
+	}
+	c.close(evt, ack, c.scheduler.Complete(ctx, job.tenantID, job.executionID,
+		pruneResult{Messages: res.Messages, Events: res.Events}))
+}
+
+// onSchedulerTask ejecuta una tarea puntual que el scheduler despacho. No hay ejecucion que
+// cerrar: su garantia es la del bus (reentrega y, agotada, la DLQ de pkg/events). Un trabajo
+// programado, que si informa como acabo, es lo que conviene a lo que deba quedar registrado.
+func (c *Consumers) onSchedulerTask(evt events.Event, ack func()) {
+	tenantID, err := parseSchedulerTask(evt)
+	if err != nil {
+		c.skip(evt, err)
+		ack()
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), pruneTimeout)
+	defer cancel()
+	res, perr := c.prune(ctx, tenantID)
+	if perr != nil {
+		if db.IsUnknownTenant(perr) {
+			c.logger.Error("analytics: tarea de una empresa inexistente; se descarta",
+				zap.String("event_id", evt.ID), zap.String("tenant_id", tenantID.String()))
+			ack()
+			return
+		}
+		c.logger.Warn("analytics: la tarea de poda no se pudo ejecutar; se reintentara",
+			zap.String("event_id", evt.ID), zap.Error(perr))
+		return
+	}
+	c.logger.Info("analytics: tarea de poda ejecutada", zap.String("tenant_id", tenantID.String()),
+		zap.Int64("messages", res.Messages), zap.Int64("events", res.Events))
+	ack()
+}
+
+// prune resuelve la base de la empresa y poda.
+func (c *Consumers) prune(ctx context.Context, tenantID uuid.UUID) (app.PruneResult, error) {
+	pool, err := c.tenantDB.ResolveForTenant(ctx, tenantID.String())
+	if err != nil {
+		return app.PruneResult{}, err
+	}
+	return c.uc.Prune(db.WithTenant(ctx, pool, tenantID.String()), tenantID)
+}
+
+// skip registra por que no se ejecuta un despacho. El de otro manejador no es un problema:
+// todos los ejecutores del catalogo reciben el mismo subject.
+func (c *Consumers) skip(evt events.Event, err error) {
+	if errors.Is(err, errNotMine) {
+		return
+	}
+	c.logger.Error("analytics: despacho del scheduler ilegible; se descarta",
+		zap.String("type", evt.Type), zap.String("event_id", evt.ID), zap.Error(err))
+}
+
+// close confirma el mensaje solo cuando el scheduler registro el cierre, o cuando lo rechazo
+// de forma definitiva (la ejecucion ya vencio por plazo o se cancelo). Mientras el scheduler
+// no responda, el mensaje se reentrega y el cierre se vuelve a intentar.
+func (c *Consumers) close(evt events.Event, ack func(), err error) {
+	switch {
+	case err == nil:
+		ack()
+	case errors.Is(err, ports.ErrReportRejected):
+		c.logger.Warn("analytics: el scheduler rechazo el cierre; no se reintenta",
+			zap.String("event_id", evt.ID), zap.Error(err))
+		ack()
+	default:
+		c.logger.Warn("analytics: no se pudo cerrar la ejecucion; se reintentara",
+			zap.String("event_id", evt.ID), zap.Error(err))
+	}
 }
 
 // process resuelve la base de la empresa y aplica la ingesta. Se acka lo procesado y lo

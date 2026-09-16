@@ -6,7 +6,7 @@ Convencion de subject: `<dominio>.<entidad>.<accion>`. Un subject tiene UN dueno
 Publicar incluye encolar en la outbox (`outbox.Enqueue`); un consumidor con comodin
 (`*`, `>`) figura en cada subject publicado que recibe.
 
-Resumen: 79 publicaciones, 35 suscripciones, 79 subjects distintos.
+Resumen: 80 publicaciones, 37 suscripciones, 80 subjects distintos.
 
 ## Cruce por subject (dueno -> consumidores)
 
@@ -76,7 +76,8 @@ Resumen: 79 publicaciones, 35 suscripciones, 79 subjects distintos.
 | `reputation.tenant.state_changed` | reputation | - |
 | `scheduler.job.completed` | scheduler | - |
 | `scheduler.job.failed` | scheduler | - |
-| `scheduler.job.started` | scheduler | - |
+| `scheduler.job.started` | scheduler | analytics |
+| `scheduler.task.started` | scheduler | analytics |
 | `suppression.entry.added` | suppression | contacts |
 | `suppression.entry.expired` | suppression | contacts |
 | `suppression.entry.removed` | suppression | contacts |
@@ -98,7 +99,7 @@ Resumen: 79 publicaciones, 35 suscripciones, 79 subjects distintos.
 - Consume: `identity.user.deleted`
 
 ### analytics
-- Consume: `campaigns.campaign.*`, `transactional.email.*`
+- Consume: `campaigns.campaign.*`, `scheduler.job.started`, `scheduler.task.started`, `transactional.email.*`
 
 ### audit
 - Publica: `audit.security.alert`
@@ -144,7 +145,7 @@ Resumen: 79 publicaciones, 35 suscripciones, 79 subjects distintos.
 - Consume: `transactional.email.bounced`, `transactional.email.complained`, `transactional.email.sent`
 
 ### scheduler
-- Publica: `scheduler.job.completed`, `scheduler.job.failed`, `scheduler.job.started`
+- Publica: `scheduler.job.completed`, `scheduler.job.failed`, `scheduler.job.started`, `scheduler.task.started`
 
 ### suppression
 - Publica: `suppression.entry.added`, `suppression.entry.expired`, `suppression.entry.removed`

@@ -105,6 +105,9 @@ type ScheduledTask struct {
 	Status      string
 	ExecutedAt  *time.Time
 	CreatedAt   time.Time
+	// FailureReason es por que la plataforma cancelo la tarea sin despacharla
+	// (FailureHandlerNotAllowed). Una tarea que cancela una persona lo deja en NULL.
+	FailureReason *string
 }
 
 // Cancel detiene una tarea programada. Cancelar dos veces no cambia nada, como con una

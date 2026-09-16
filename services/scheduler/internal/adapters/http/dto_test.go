@@ -158,7 +158,7 @@ func TestContratoJSONEnSnakeCase(t *testing.T) {
 			"completed_at,created_at,deadline_at,duration_ms,error_message,failure_reason,id,job_id,next_attempt_at,result,retry_count,retry_of,started_at,status,tenant_id",
 			c.exec.ID},
 		{"/api/v1/scheduler/tasks/" + c.task.ID.String(),
-			"created_at,description,executed_at,handler,id,name,payload,status,tenant_id,trigger_at",
+			"created_at,description,executed_at,failure_reason,handler,id,name,payload,status,tenant_id,trigger_at",
 			c.task.ID},
 	}
 	for _, tc := range cases {

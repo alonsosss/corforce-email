@@ -76,6 +76,8 @@ func (c *countEvents) JobCompleted(context.Context, *domain.JobDefinition, *doma
 	return nil
 }
 
+func (c *countEvents) TaskStarted(context.Context, *domain.ScheduledTask) error { return nil }
+
 func (c *countEvents) JobFailed(context.Context, *domain.JobDefinition, *domain.JobExecution, *domain.JobExecution) error {
 	c.failed++
 	return nil

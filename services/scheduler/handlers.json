@@ -1,3 +1,11 @@
 {
-  "handlers": []
+  "handlers": [
+    {
+      "name": "analytics.retention.prune",
+      "service": "analytics",
+      "description": "Poda el detalle por mensaje fuera de la retencion y los ids de evento ya olvidables de la empresa (ANALYTICS_MESSAGE_RETENTION_DAYS). Los agregados diarios no se tocan.",
+      "max_timeout_seconds": 300,
+      "scopes": ["tenant", "platform"]
+    }
+  ]
 }
