@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"fmt"
 	"net"
 	"regexp"
 	"strings"
@@ -62,6 +63,16 @@ func ValidateSettingsMapContent(content string) error {
 	}
 	if depth != 0 {
 		return newValidation("content tiene llaves desbalanceadas")
+	}
+	return nil
+}
+
+// ValidateQuarantineMaxSize acota el tamano de mensaje que una empresa guarda en
+// cuarentena a lo que /pipe llega a recibir: por encima de MaxQuarantineMaxSizeBytes el
+// ajuste no guardaria nada mas y taparia el motivo real de que un mensaje falte.
+func ValidateQuarantineMaxSize(bytes int64) error {
+	if bytes <= 0 || bytes > MaxQuarantineMaxSizeBytes {
+		return newValidation(fmt.Sprintf("max_size_bytes debe estar entre 1 y %d, el mayor mensaje que los motores entregan a la cuarentena", MaxQuarantineMaxSizeBytes))
 	}
 	return nil
 }

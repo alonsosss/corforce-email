@@ -146,13 +146,19 @@ clamd 3310; olefy 10055; dockerapi 443.
 ## Tamano de los mensajes
 
 Un mismo tope recorre la cadena y `ops/scaffold/check-mail-size-limits.sh` (en `validate.sh`,
-dentro de `make checks`) compara los tres ficheros:
+dentro de `make checks`) compara los ficheros:
 
 | Limite | Donde | Valor | Regla |
 |---|---|---|---|
 | `message_size_limit` | `postfix/conf/main.cf` | 104857600 (100 MiB) | el mayor mensaje que acepta la celda |
 | `max_message` | `rspamd/local.d/options.inc`, en bytes y en ningun otro fichero de `rspamd/` | 105906176 (101 MiB) | al menos Postfix + 1 MiB |
-| techo de `MAIL_QUARANTINE_MAX_BODY_MB` | `maxPipeMaxBodyMiB` de `services/mail-security/main.go` | 101 MiB | de Postfix + 1 MiB a `max_message` + 1 MiB; el defecto (50) y `.env.example`, de 1 al techo |
+| `max_size` del antivirus | `rspamd/local.d/antivirus.conf`, en bytes y en ningun otro fichero de `rspamd/local.d/` | 105906176 (101 MiB) | al menos Postfix + 1 MiB |
+| `StreamMaxLength`, `MaxFileSize` | `clamav/clamd.conf` | 101M | al menos Postfix + 1 MiB |
+| `MaxScanSize` | `clamav/clamd.conf` | 202M | al menos `MaxFileSize`; el resto, margen para lo que se extrae de un comprimido |
+| `AlertExceedsMax` | `clamav/clamd.conf` | `yes` | obligatorio |
+| `VIRUS_SCAN_FAILED` | `rspamd/local.d/force_actions.conf` | `soft reject` sobre `CLAM_VIRUS_FAIL` | obligatorio |
+| techo de `MAIL_QUARANTINE_MAX_BODY_MB` | `maxPipeMaxBodyMiB` de `services/mail-security/main.go`, `domain.MaxQuarantineMaxSizeBytes` y el CHECK de la migracion 08 | 101 MiB | de Postfix + 1 MiB a `max_message` + 1 MiB; el defecto (50) y `.env.example`, de 1 al techo; es tambien el mayor `max_size_bytes` que una empresa puede pedir |
+| `postfixMessageSizeLimit` | `services/webmail/main.go` | 100 MiB | igual que `message_size_limit`: techo de `WEBMAIL_MAX_MESSAGE_BYTES`, `WEBMAIL_MAX_BODY_PART_BYTES` y `WEBMAIL_MAX_ATTACHMENT_BYTES` |
 
 Postfix pasa cada mensaje por el milter de Rspamd (`smtpd_milters`, `non_smtpd_milters`). Uno mayor
 que `max_message` no se analiza: el proxy del milter contesta tempfail a cualquier fallo del worker y
@@ -161,8 +167,33 @@ entregarlo. Con el defecto de Rspamd 4.1.4 (50 MiB, `DEFAULT_MAX_MESSAGE`) le pa
 de 50 a 100 MiB. El MiB de margen cubre las cabeceras que reconstruye el milter y el envoltorio
 multipart de `/pipe` con sus metadatos. `max_message` acota tambien lo que aprende el controller.
 `MAIL_QUARANTINE_MAX_BODY_MB` puede quedar por debajo de Postfix (menos memoria por peticion en
-`/pipe`): un mensaje mayor sigue su accion, pero no queda en la cuarentena. ClamAV tiene su propio
-tope, fuera de esta regla (`max_size` de `rspamd/local.d/antivirus.conf`, 20 MiB).
+`/pipe`): un mensaje mayor sigue su accion, pero no queda en la cuarentena.
+
+El antivirus falla de otra manera: **callado**. Rspamd manda a clamd el mensaje ENTERO
+(`scan_mime_parts = false` en `antivirus.conf`), no cada parte, y los dos topes que lo acotan dejan
+pasar el mensaje como si estuviera limpio:
+
+* Un mensaje mayor que `max_size` NO se analiza. Rspamd lo anota en `info` (`skip clamav check as it
+  is too large`), no deja ningun simbolo y el mensaje sigue su camino. Con los 20 MiB que traia la
+  copia, todo mensaje de 20 a 100 MiB entraba sin pasar por ClamAV.
+* clamd, con un flujo mayor que `StreamMaxLength`, responde `INSTREAM size limit exceeded. ERROR` y
+  con flujos bastante mayores corta la conexion a medias; pero con un fichero mayor que `MaxFileSize`
+  (o un total mayor que `MaxScanSize`) lo analiza TRUNCADO y responde `stream: OK`, un veredicto
+  limpio falso. Comprobado con la imagen de `clamav/` y sus firmas reales: 30 y 60 MiB con EICAR al
+  final dan `OK` con `MaxFileSize 25M`, y `Heuristics.Limits.Exceeded.MaxFileSize FOUND` con
+  `AlertExceedsMax yes`.
+
+De ahi la regla: **ningun mensaje se entrega sin veredicto**. Los topes cubren lo que Postfix acepta;
+`AlertExceedsMax` convierte un analisis recortado en una deteccion; `clamav.lua` traduce
+`Heuristics.Limits.Exceeded` (y cualquier error, plazo agotado o respuesta que no entiende) al
+simbolo `CLAM_VIRUS_FAIL`, que por si solo puntua 0 y no hace nada; y la regla `VIRUS_SCAN_FAILED` de
+`force_actions.conf` lo convierte en `soft reject`, o sea 451 al remitente. Postfix conserva el
+mensaje en cola y lo reintenta: una parada de clamd APLAZA el correo entrante en vez de entregarlo
+sin analizar. `SKIP_CLAMD=y` por si solo hace exactamente eso (es lo correcto, pero rara vez lo que
+se busca); apagar el antivirus a proposito es vaciar `antivirus.conf`, porque sin regla no hay
+simbolo y `VIRUS_SCAN_FAILED` no dispara. Analizar 101 MiB cuesta menos de dos segundos con las
+firmas al dia, de ahi `timeout = 15` en `antivirus.conf`, por debajo del `task_timeout` de 25 s del
+worker (`override.d/worker-normal.inc`); agotarlo tambien acaba en `soft reject`, nunca en entrega.
 
 ## Contrato HTTP de `mail-auth`
 
@@ -341,9 +372,12 @@ de sesion; el gateway lleva cada buzon al de la celda de su dominio (`WEBMAIL_CE
   (`mail.mailboxes`, `active = 1`): mail-directory no crea el alias `buzon -> buzon` que
   mailcow daba por supuesto, y sin el todo envio autenticado desde la direccion del propio
   buzon se rechazaba.
-* **ClamAV**: el webmail analiza cada adjunto con `clamd:3310` (INSTREAM, `StreamMaxLength`
-  25M) antes de enviarlo o guardarlo en Borradores o Enviados: el APPEND por IMAP no pasa
-  por Rspamd.
+* **ClamAV**: el webmail analiza cada adjunto con `clamd:3310` (INSTREAM) antes de enviarlo o
+  guardarlo en Borradores o Enviados: el APPEND por IMAP no pasa por Rspamd. Falla cerrado, y
+  cualquier respuesta que no sea un `OK` explicito (incluido pasarse de `StreamMaxLength`) es
+  `503 SCAN_UNAVAILABLE`: el adjunto no se guarda. Por eso `StreamMaxLength` y `MaxFileSize`
+  cubren el mayor adjunto que el servicio admite (`WEBMAIL_MAX_ATTACHMENT_BYTES`, con techo en
+  `message_size_limit`), y `check-mail-size-limits.sh` compara los dos ficheros.
 * **Red**: el webmail se une a `mail-engines`, que es `mynetworks` de Postfix. La garantia
   contra la suplantacion descansa en que el webmail siempre se autentica; un proceso
   comprometido dentro de esa red podria enviar sin autenticar (modelo heredado de mailcow).
@@ -654,7 +688,9 @@ entrega por LMTP leida por IMAP, firma DKIM de Rspamd con el selector de domain-
 rechazos 553 de `reject_authenticated_sender_login_mismatch` (tambien con la credencial
 maestra), envio como alias con permiso, como dominio alias y por `sender_acl`; un adjunto
 EICAR rechazado al final de DATA (`CLAM_VIRUS` -> `VIRUS_FOUND` -> reject) y guardado en la
-cuarentena del destinatario por `/pipe`; su enlace de liberar, firmado por la prueba con la
+cuarentena del destinatario por `/pipe`; un mensaje de unos 27 MiB con EICAR al final, por
+encima de los topes con los que el antivirus se saltaba el analisis en silencio (20 MiB de
+`max_size`, 25 MiB de `StreamMaxLength`), analizado entero y rechazado igual; su enlace de liberar, firmado por la prueba con la
 forma `quarantine-link/v2` y seguido por el gateway (la celda cambiada a una desconocida y
 una firma alterada dan la misma pagina 403 byte a byte sin tocar nada; GET confirma sin
 ejecutar; POST libera, registra el uso y la reinyeccion por el 590 lo entrega; usado, el
@@ -681,7 +717,7 @@ fichero de configuracion de los motores cambia para la prueba):
 
 En CI corre en su propio flujo (`.github/workflows/mail-engines.yml`), sin bloquear: cuando
 cambia algo de lo que prueba, cada noche y a mano. En local, una ejecucion con las imagenes ya
-construidas tarda menos de dos minutos (168 comprobaciones, 2026-09-13); construirlas desde
+construidas tarda menos de dos minutos (259 comprobaciones, 211 s, 2026-09-15); construirlas desde
 cero, unos seis mas, y la primera descarga de firmas de ClamAV, uno o dos.
 
 ## Pendientes

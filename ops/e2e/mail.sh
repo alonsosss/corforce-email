@@ -502,6 +502,14 @@ en_cuarentena() {
 }
 esperar "y queda en la cuarentena de bea (metadata_exporter -> mail-policy /pipe)" 30 en_cuarentena
 lacks "sin llegar a su INBOX" "$(cliente buscar bea@acme.test "$BEA_PASS" "$TOKEN-eicar" --espera 3)" "OK"
+# Un mensaje por encima de los topes con los que el antivirus se saltaba el analisis en silencio
+# (20 MiB del max_size de Rspamd, 25 MiB del StreamMaxLength de clamd): 20 MiB de relleno mas
+# EICAR al final salen a unos 27 MiB. Antes se entregaba sin pasar por ClamAV; ahora se analiza
+# entero y se rechaza igual. No se comprueba la cuarentena: con el max_size_bytes por defecto
+# (10 MiB) la empresa no guarda un mensaje asi y /pipe responde 505, que es lo correcto.
+R=$(cliente enviar ana@acme.test "$ANA_PASS" ana@acme.test bea@acme.test "$TOKEN-grande" --eicar --relleno-mib 20)
+contains "un mensaje de unos 27 MiB con EICAR al final tambien se analiza entero y se rechaza" "$R" "RECHAZO DATA 554"
+lacks "sin llegar al INBOX de bea" "$(cliente buscar bea@acme.test "$BEA_PASS" "$TOKEN-grande" --espera 3)" "OK"
 
 echo "== Enlace del aviso de cuarentena por el gateway (celda en la ruta y en la firma)"
 # Sin transactional no sale el aviso: el enlace se firma aqui con la clave de la ejecucion y la

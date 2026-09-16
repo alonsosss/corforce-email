@@ -121,7 +121,11 @@ migraciones conectan directo.
   de la celda (`deploy/mail/README.md`, Contrato Redis).
 * `mail_engine` no puede leer contrasenas de buzon: la verificacion pasa por `mail-auth`.
 * ClamAV en Rspamd para todo lo que entra; ClamAV antes de guardar cualquier adjunto que
-  suba una persona.
+  suba una persona. Siempre con veredicto: los topes de `antivirus.conf` y `clamd.conf`
+  cubren el `message_size_limit` de Postfix, `AlertExceedsMax` impide que un analisis
+  recortado pase por limpio, y un analisis que no se pudo hacer acaba en `soft reject`
+  (451) por `force_actions.conf`, nunca en una entrega sin analizar
+  (`deploy/mail/README.md`, Tamano de los mensajes).
 * Auditoria con cadena de hashes; exfiltracion detectada en el gateway.
 
 ## 5. Fases

@@ -11,6 +11,7 @@ import base64
 import email.utils
 import http.client
 import imaplib
+import os
 import smtplib
 import socket
 import ssl
@@ -156,6 +157,13 @@ def orden_enviar(args):
     msg["Date"] = email.utils.formatdate(localtime=False)
     msg["Message-ID"] = email.utils.make_msgid(domain="e2e.test")
     msg.set_content("Mensaje de prueba de los motores de Core Force Mail.\n")
+    if args.relleno_mib:
+        # Relleno aleatorio (no se comprime ni casa con ninguna firma) para llevar el mensaje
+        # por encima de un tope de analisis. base64 lo expande un tercio: el mensaje sale en
+        # torno a 4/3 de este valor. Va antes que EICAR para dejarlo al FINAL, que es donde un
+        # analisis truncado ya no lo veria.
+        msg.add_attachment(os.urandom(args.relleno_mib << 20), maintype="application",
+                           subtype="octet-stream", filename="relleno.bin")
     if args.eicar:
         msg.add_attachment(EICAR.encode(), maintype="application", subtype="octet-stream", filename="eicar.com")
     try:
@@ -237,6 +245,7 @@ def main():
     o.add_argument("para")
     o.add_argument("asunto")
     o.add_argument("--eicar", action="store_true")
+    o.add_argument("--relleno-mib", type=int, default=0)
     o.set_defaults(fn=orden_enviar)
 
     o = sub.add_parser("eicar")

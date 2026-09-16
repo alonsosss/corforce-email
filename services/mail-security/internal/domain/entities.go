@@ -162,6 +162,14 @@ const (
 	DefaultQuarantineRetentionSize       = 100
 )
 
+// MaxQuarantineMaxSizeBytes es el mayor max_size_bytes que puede pedir una empresa: el
+// mayor mensaje que /pipe llega a recibir (maxPipeMaxBodyMiB de services/mail-security/
+// main.go, message_size_limit de Postfix mas 1 MiB de envoltorio). Un ajuste por encima no
+// guardaria ni un mensaje mas y taparia el motivo real de que algo no quede en cuarentena.
+// La migracion 08 repite el numero como CHECK y ops/scaffold/check-mail-size-limits.sh ata
+// los tres.
+const MaxQuarantineMaxSizeBytes int64 = 101 * 1024 * 1024
+
 // DefaultQuarantineSettings devuelve los ajustes que rigen sin fila propia.
 func DefaultQuarantineSettings(tenantID uuid.UUID) QuarantineSettings {
 	return QuarantineSettings{

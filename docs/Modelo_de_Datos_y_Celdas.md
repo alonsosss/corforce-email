@@ -147,6 +147,15 @@ parcial de lo pendiente de aviso `(tenant_id, rcpt, created_at DESC, id DESC) WH
 = false`. Las dos tablas tienen `tenant_isolation` para `mail_app` y `service_all` para
 `mail_service`, y se podan con el `max_age_days` de su empresa.
 
+`08_quarantine_max_size.sql` (V, 2026-09-15): techo de `max_size_bytes` en
+`quarantine_settings`. El CHECK de 01 solo exigia mayor que cero, asi que por API una empresa
+podia fijar un tamano que `/pipe` nunca llega a recibir (su cuerpo esta acotado por
+`maxPipeMaxBodyMiB`, 101 MiB: el `message_size_limit` de Postfix mas 1 MiB de envoltorio) y
+quedarse con un ajuste que no se aplica. El techo vive a la vez en el CHECK, en
+`domain.MaxQuarantineMaxSizeBytes` (lo exige `PutQuarantineSettings`) y en
+`ops/scaffold/check-mail-size-limits.sh`, que comprueba que los tres digan lo mismo. La
+migracion baja al techo las filas que ya lo superaban antes de poner la restriccion.
+
 `03_mail_app_policies.sql` (mail-directory) anade lo que el primer consumidor necesito:
 `app_delete` sobre `quota_usage` (solo del buzon propio, por eso el servicio borra la cuota
 antes que el buzon), `WITH CHECK` en `transports` que admite `tenant_id NULL` solo con

@@ -511,8 +511,8 @@ func (uc *PolicyUseCase) GetQuarantineSettings(ctx context.Context, tenantID uui
 }
 
 func (uc *PolicyUseCase) PutQuarantineSettings(ctx context.Context, tenantID uuid.UUID, s domain.QuarantineSettings) (out *domain.QuarantineSettings, err error) {
-	if s.MaxSizeBytes <= 0 {
-		return nil, &domain.ValidationError{Msg: "max_size_bytes debe ser mayor que cero"}
+	if err := domain.ValidateQuarantineMaxSize(s.MaxSizeBytes); err != nil {
+		return nil, err
 	}
 	if s.MaxAgeDays <= 0 {
 		return nil, &domain.ValidationError{Msg: "max_age_days debe ser mayor que cero"}

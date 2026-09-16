@@ -55,7 +55,10 @@ const (
 	// Topes de los motores de la celda, por donde entra y sale todo mensaje: el
 	// message_size_limit de deploy/mail/postfix/conf/main.cf (ningun mensaje, ni por tanto
 	// ninguna de sus partes, lo supera) y el smtpd_recipient_limit de Postfix, que main.cf
-	// deja en su valor por defecto.
+	// deja en su valor por defecto. message_size_limit es ademas lo que clamd analiza entero
+	// (StreamMaxLength y MaxFileSize de deploy/mail/clamav/clamd.conf, 101 MiB): ningun tope
+	// configurable puede pasar de ahi o un adjunto se quedaria sin veredicto.
+	// ops/scaffold/check-mail-size-limits.sh compara esta constante con los dos ficheros.
 	postfixMessageSizeLimit = 100 << 20
 	postfixRecipientLimit   = 1000
 	maxSessionIdle          = 24 * time.Hour
@@ -367,7 +370,9 @@ func envString(key, fallback string) string {
 	return fallback
 }
 
-// envBytes lee un tope en bytes, que ningun mensaje de la celda puede superar.
+// envBytes lee un tope en bytes, que ningun mensaje de la celda puede superar y que clamd
+// analiza entero: un adjunto mayor que StreamMaxLength o MaxFileSize no tendria veredicto
+// (el analisis falla cerrado y el envio se corta con 503 SCAN_UNAVAILABLE).
 func envBytes(key string, def int) (int64, error) {
 	n, err := config.EnvInt(key, def, 1, postfixMessageSizeLimit)
 	return int64(n), err

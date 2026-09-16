@@ -66,6 +66,19 @@ func TestValidateObject(t *testing.T) {
 	}
 }
 
+func TestValidateQuarantineMaxSize(t *testing.T) {
+	for _, ok := range []int64{1, DefaultQuarantineMaxSizeBytes, MaxQuarantineMaxSizeBytes} {
+		if err := ValidateQuarantineMaxSize(ok); err != nil {
+			t.Errorf("%d deberia aceptarse: %v", ok, err)
+		}
+	}
+	for _, bad := range []int64{0, -1, MaxQuarantineMaxSizeBytes + 1, 1 << 40} {
+		if err := ValidateQuarantineMaxSize(bad); !errors.Is(err, ErrValidation) {
+			t.Errorf("%d deberia rechazarse con ErrValidation, obtuve %v", bad, err)
+		}
+	}
+}
+
 func TestCellQuarantineTopEsElMaximoYLaUnion(t *testing.T) {
 	a := DefaultQuarantineSettings(uuid.New())
 	a.MaxSizeBytes = 3 * 1024 * 1024
