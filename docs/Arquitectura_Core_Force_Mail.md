@@ -132,7 +132,7 @@ migraciones conectan directo.
 
 | Fase | Contenido | Estado |
 |---|---|---|
-| 0 | Copia y limpieza del plano de control, `pkg/`, operativa; motores de mailcow en `deploy/mail/`; esquema `mail` de celda; documentos | En curso: `Fase0_Estado.md` |
+| 0 | Copia y limpieza del plano de control, `pkg/`, operativa; motores de mailcow en `deploy/mail/`; esquema `mail` de celda; documentos | Cerrada (2026-09-13): los nueve criterios de cierre cumplidos, `ERP/` y `mailcow/` borrados. La deuda que no bloquea y los pendientes que dejan los motores para la fase 2 siguen listados en `Fase0_Estado.md` |
 | 1 | `web/` (React + TypeScript, una sola aplicacion): login, MFA, usuarios, roles, empresas, celdas | En curso |
 | 2 | Correo corporativo: `mail-directory`, `mail-auth`, `mail-security`, `domain-service`; motores levantados contra la celda; webmail | En curso |
 | 3 | Transaccional: `transactional`, `templates`, `suppression`, `reputation`, ingesta SES, `billing` | En curso: `transactional`, `templates` y `suppression` hechos |
