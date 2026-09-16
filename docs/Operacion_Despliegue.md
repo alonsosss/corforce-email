@@ -129,6 +129,37 @@ opcional y por defecto ese nombre. Alta y rotación, seguidas: publicar el valor
 las conexiones abiertas siguen vivas pero las nuevas con la contraseña retirada fallan.
 Detalle en `docs/Modelo_de_Datos_y_Celdas.md` 5.1.
 
+Credenciales de base de datos, todas: viven en `ops/security/secrets/secret-keys-db.txt`, no
+en `secret-keys.txt`. Se materializan en `/dev/shm/core-force-mail/secrets-db.env`, que
+**ningún contenedor recibe por `env_file`**: cada una llega solo al servicio al que su bloque
+de `docker-compose.yml` se la pasa por `environment:`, y Compose la interpola contra el
+entorno que deja `with-secrets.sh`. Quién puede recibir qué lo declara
+`ops/db/service-credentials.json` (planos `registry`, `tenant`, `cell`, `none`) y lo comprueba
+`make check-db-credentials`, que forma parte de `make checks`. Un servicio nuevo que no declare
+su plano hace fallar CI: nacer sin credencial propia es heredar la de plataforma.
+
+`userlist.txt` de PgBouncer lo genera `ops/db/pgbouncer-userlist.sh --write` (y `--check`
+falla si se quedó atrás) con los roles de este despliegue. Es el paso que se olvidaba: un rol
+que Postgres acepta pero que no está en `userlist.txt` no pasa el pooler, y el error apunta a
+la base y no al pooler. Tras regenerarlo, recrear el contenedor `pgbouncer`.
+
+Motores de una celda: su rol es `<CELL_DB_NAME>_engine` (`ops/db/cell-engine-role.sh --cell
+<code>`), miembro del grupo `mail_engine`, con `MAIL_DB_PASSWORD` del almacén y CONNECT solo a
+su base. Orden, en dos fases, porque los motores en marcha siguen conectados como el rol
+compartido: (1) el script, `userlist.txt`, `MAIL_DB_USER=<CELL_DB_NAME>_engine` en el `.env` de
+los motores y recrearlos; (2) cuando **ninguna** celda del clúster use ya `mail_engine`,
+`cell-engine-role.sh --cell <code> --retire-shared`, que le quita LOGIN y CONNECT. Hacer (2)
+antes de (1) corta la entrada a la base y la celda deja de recibir correo hasta que los
+motores arranquen con el rol nuevo.
+
+Servicios del plano de empresa: dos credenciales, el rol de enrutado (`mail_router`,
+compartido, solo lee `organization.v_tenant_routing`) y una por servicio
+(`mail_svc_<esquema>`). Orden: la migración canónica de empresa que crea el grupo y sus
+permisos (organization la barre sola) **antes** que
+`ops/db/tenant-service-role.sh --router | --service <svc>`, que falla si el grupo no existe;
+después `userlist.txt` y recrear el servicio. El reparto va servicio a servicio: el que aún no
+tenga su contraseña sigue con la de plataforma y lo avisa al arrancar. `docs/Modelo_de_Datos_y_Celdas.md` 5.2.
+
 Clave de firma del token de acceso (`docs/arquitectura/CSP-Y-SESION.md`, Firma del access
 token): `JWT_SIGNING_KEY` va al almacén (obligatoria) y la recibe solo identity;
 `JWT_SIGNING_KID` y `JWT_PUBLIC_KEYS` son configuración del `.env`. `JWT_SECRET` ya no la usa
@@ -170,7 +201,10 @@ para llamar a la API hace falta ya un superadmin. Después, todo por API: `POST 
 * Celda: `ops/db/apply-migration.sh` contra `mail_cell_<code>` (P: runner propio en
   `mail-directory`). Al abrir una celda, en el mismo paso y tras sus migraciones,
   `ops/db/cell-service-role.sh --cell <code>`: crea el rol de sus servicios y cierra a
-  PUBLIC las bases del cluster (necesita `mail_service`, de las migraciones 06). Sus
+  PUBLIC las bases del cluster (necesita `mail_service`, de las migraciones 06);
+  `ops/db/cell-engine-role.sh --cell <code>`, el rol con el que los motores de esa celda leen
+  su directorio; y `ops/db/pgbouncer-userlist.sh --write`, sin cuya entrada ninguno de los dos
+  pasa el pooler. Sus
   `mail-directory` y `mail-security` arrancan con `CELL_CODE=<code>` y `ORGANIZATION_URL` (sin
   las dos no arrancan: cada instancia pregunta a `organization` la celda de cada empresa y
   rechaza con 403 `TENANT_NOT_IN_CELL` a la que no es de la suya) y el gateway recibe sus

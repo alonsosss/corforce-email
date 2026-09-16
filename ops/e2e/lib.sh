@@ -145,6 +145,22 @@ e2e_credencial_celda() {
   PGHOST=127.0.0.1 CELL_DB_PASSWORD="$2" bash ops/db/cell-service-role.sh --cell "$1" >/dev/null || mal "cell-service-role.sh $1"
 }
 
+# e2e_credencial_motores <codigo> <contrasena>: rol de los motores de esa celda
+# (ops/db/cell-engine-role.sh), el que usan Postfix y Dovecot en lugar del mail_engine
+# compartido por todas las celdas del cluster.
+e2e_credencial_motores() {
+  PGHOST=127.0.0.1 MAIL_DB_PASSWORD="$2" bash ops/db/cell-engine-role.sh --cell "$1" >/dev/null ||
+    mal "cell-engine-role.sh $1"
+}
+
+# e2e_credencial_enrutado <contrasena>: rol mail_router (ops/db/tenant-service-role.sh), con
+# el que los servicios de empresa resuelven la celda y la base de cada empresa. Necesita las
+# migraciones del registro ya aplicadas (las aplica organization al arrancar).
+e2e_credencial_enrutado() {
+  PGHOST=127.0.0.1 TENANT_ROUTER_DB_PASSWORD="$1" bash ops/db/tenant-service-role.sh --router >/dev/null ||
+    mal "tenant-service-role.sh --router"
+}
+
 # e2e_entorno_comun: variables que comparten los binarios del host. El par de firma del token
 # sale de la herramienta de operacion y la privada solo la recibe identity (arrancar).
 e2e_entorno_comun() {
@@ -181,6 +197,12 @@ arrancar() {
   [[ "$1" == organization ]] && export ORGANIZATION_URL="http://127.0.0.1:${PORT[organization]}"
   if [[ "${SERVICIOS_DE_CELDA:-}" == *" $1 "* ]]; then
     env -u POSTGRES_PASSWORD "${sin_firma[@]}" CELL_DB_PASSWORD="$CELL_PASS" "$WORK/bin/$1" >"$WORK/log/$1.log" 2>&1 &
+  elif [[ "${SERVICIOS_DE_EMPRESA:-}" == *" $1 "* ]]; then
+    # Los servicios del plano de empresa resuelven la empresa en el registro con el rol de
+    # enrutado (solo SELECT sobre organization.v_tenant_routing): si a alguno le hiciera
+    # falta cualquier otra cosa del registro, sus comprobaciones fallarian aqui.
+    env "${sin_firma[@]}" REGISTRY_DB_USER=mail_router REGISTRY_DB_PASSWORD="$ROUTER_PASS" \
+      "$WORK/bin/$1" >"$WORK/log/$1.log" 2>&1 &
   else
     env "${sin_firma[@]}" "$WORK/bin/$1" >"$WORK/log/$1.log" 2>&1 &
   fi

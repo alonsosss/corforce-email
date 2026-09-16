@@ -337,6 +337,14 @@ func (t *TenantDB) SetDefaultHost(host string) { t.defaultHost = host }
 // vive en otra, y la equivalencia entre el host por defecto y su celda. Es lo que debe
 // usar cada servicio de empresa en su main.
 func NewTenantRouting(registry *pgxpool.Pool, pg config.PostgresConfig, logger *zap.Logger) (*TenantDB, *TenantPoolManager) {
+	// Sin credencial propia, este servicio abre el registro y TODAS las bases de empresa con
+	// la de plataforma, que es duena de las tablas de todos los servicios. Es el estado
+	// anterior al reparto y no impide arrancar, pero no se deja pasar en silencio: fuera de
+	// desarrollo hay que crear su rol (ops/db/tenant-service-role.sh) y publicar su
+	// contrasena.
+	if !pg.HasServiceCredential() && !config.DeclaredDevelopmentOrTest() {
+		logger.Warn("servicio de empresa con la credencial de plataforma: crea su rol con ops/db/tenant-service-role.sh y publica REGISTRY_DB_PASSWORD y TENANT_DB_PASSWORD")
+	}
 	mgr := NewTenantPoolManager(pg.TenantDSN, logger)
 	mgr.SetCellDSN(pg.TenantDSNAt)
 	tdb := NewTenantDB(registry, mgr)
@@ -352,7 +360,7 @@ func (t *TenantDB) ResolveForTenant(ctx context.Context, tenantID string) (*pgxp
 	if target, ok := t.manager.getCachedTarget(tenantID); ok {
 		return t.manager.GetPool(ctx, target)
 	}
-	target, err := t.lookupTarget(ctx, `WHERE t.id = $1`, tenantID)
+	target, err := t.lookupTarget(ctx, `WHERE t.tenant_id = $1`, tenantID)
 	if err != nil {
 		return nil, fmt.Errorf("resolve tenant db for %s: %w", tenantID, err)
 	}
@@ -360,11 +368,14 @@ func (t *TenantDB) ResolveForTenant(ctx context.Context, tenantID string) (*pgxp
 	return t.manager.GetPool(ctx, target)
 }
 
-// targetColumns une la empresa con su celda. Una celda cuyo host coincide con el del
-// cluster por defecto (POSTGRES_HOST) se trata como tal: es lo que permite que un
-// despliegue de una sola celda declare su celda sin abrir un segundo pool por empresa.
-const targetColumns = `t.db_name, COALESCE(c.db_host, ''), COALESCE(c.db_port, 0)
-	   FROM organization.tenants t LEFT JOIN organization.cells c ON c.id = t.cell_id `
+// targetColumns lee el destino de la empresa de la VISTA PUBLICADA del enrutado, no de las
+// tablas de organization: es el unico dato del registro que un servicio de empresa necesita,
+// y es lo unico que puede leer el rol de enrutado (migracion de registro 031). Una celda
+// cuyo host coincide con el del cluster por defecto (POSTGRES_HOST) se trata como tal: es lo
+// que permite que un despliegue de una sola celda declare su celda sin abrir un segundo pool
+// por empresa.
+const targetColumns = `t.db_name, COALESCE(t.db_host, ''), COALESCE(t.db_port, 0)
+	   FROM organization.v_tenant_routing t `
 
 func (t *TenantDB) lookupTarget(ctx context.Context, where string, args ...interface{}) (DBTarget, error) {
 	var target DBTarget
@@ -404,7 +415,7 @@ func (t *TenantDB) ResolveBySlug(ctx context.Context, slug string) (*pgxpool.Poo
 	var tenantID string
 	var target DBTarget
 	err := t.registry.QueryRow(ctx,
-		`SELECT t.id, `+targetColumns+`WHERE t.slug = $1 AND t.status = 'active'`, slug,
+		`SELECT t.tenant_id, `+targetColumns+`WHERE t.slug = $1 AND t.status = 'active'`, slug,
 	).Scan(&tenantID, &target.DBName, &target.Host, &target.Port)
 	if err != nil {
 		return nil, fmt.Errorf("resolve tenant by slug %s: %w", slug, err)
@@ -425,7 +436,7 @@ type activeTenantRow struct {
 
 func (t *TenantDB) listActiveTenants(ctx context.Context) ([]activeTenantRow, error) {
 	rows, err := t.registry.Query(ctx,
-		`SELECT t.id, `+targetColumns+`WHERE t.status = 'active'`,
+		`SELECT t.tenant_id, `+targetColumns+`WHERE t.status = 'active'`,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("list active tenants: %w", err)

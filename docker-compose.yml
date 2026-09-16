@@ -158,6 +158,8 @@ services:
       - .env
       - path: /dev/shm/core-force-mail/secrets.env
         required: false
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
     depends_on:
       pgbouncer:
         condition: service_healthy
@@ -179,6 +181,7 @@ services:
       - path: /dev/shm/core-force-mail/secrets.env
         required: false
     environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
       JWT_SIGNING_KEY: ""
     depends_on:
       pgbouncer:
@@ -203,6 +206,7 @@ services:
       - path: /dev/shm/core-force-mail/secrets.env
         required: false
     environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
       JWT_SIGNING_KEY: ""
       # Las migraciones viajan dentro de la imagen del servicio que las aplica.
       TENANT_MIGRATION_DIR: /app/migrations/tenant/canonical
@@ -227,6 +231,10 @@ services:
       - path: /dev/shm/core-force-mail/secrets.env
         required: false
     environment:
+      POSTGRES_PASSWORD: ${TENANT_SERVICES_PLATFORM_PASSWORD:-}
+      REGISTRY_DB_PASSWORD: ${TENANT_ROUTER_DB_PASSWORD:-}
+      TENANT_DB_USER: mail_svc_audit
+      TENANT_DB_PASSWORD: ${AUDIT_DB_PASSWORD:-}
       JWT_SIGNING_KEY: ""
     depends_on:
       pgbouncer:
@@ -249,6 +257,10 @@ services:
       - path: /dev/shm/core-force-mail/secrets.env
         required: false
     environment:
+      POSTGRES_PASSWORD: ${TENANT_SERVICES_PLATFORM_PASSWORD:-}
+      REGISTRY_DB_PASSWORD: ${TENANT_ROUTER_DB_PASSWORD:-}
+      TENANT_DB_USER: mail_svc_scheduler
+      TENANT_DB_PASSWORD: ${SCHEDULER_DB_PASSWORD:-}
       JWT_SIGNING_KEY: ""
     depends_on:
       pgbouncer:
@@ -271,6 +283,7 @@ services:
       - path: /dev/shm/core-force-mail/secrets.env
         required: false
     environment:
+      CELL_DB_PASSWORD: ${CELL_DB_PASSWORD:-}
       JWT_SIGNING_KEY: ""
       # La credencial de plataforma no llega a los servicios de celda: usan la de su celda
       # (secreto CELL_DB_PASSWORD). Solo en desarrollo, sin rol de celda, se les puede dar
@@ -297,6 +310,7 @@ services:
       - path: /dev/shm/core-force-mail/secrets.env
         required: false
     environment:
+      CELL_DB_PASSWORD: ${CELL_DB_PASSWORD:-}
       JWT_SIGNING_KEY: ""
       # La credencial de plataforma no llega a los servicios de celda: usan la de su celda
       # (secreto CELL_DB_PASSWORD). Solo en desarrollo, sin rol de celda, se les puede dar
@@ -327,6 +341,7 @@ services:
       - path: /dev/shm/core-force-mail/secrets.env
         required: false
     environment:
+      CELL_DB_PASSWORD: ${CELL_DB_PASSWORD:-}
       JWT_SIGNING_KEY: ""
       # La credencial de plataforma no llega a los servicios de celda: usan la de su celda
       # (secreto CELL_DB_PASSWORD). Solo en desarrollo, sin rol de celda, se les puede dar
@@ -360,6 +375,7 @@ services:
       - path: /dev/shm/core-force-mail/secrets.env
         required: false
     environment:
+      CELL_DB_PASSWORD: ${CELL_DB_PASSWORD:-}
       JWT_SIGNING_KEY: ""
       # La credencial de plataforma no llega a los servicios de celda: usan la de su celda
       # (secreto CELL_DB_PASSWORD). Solo en desarrollo, sin rol de celda, se les puede dar
@@ -390,6 +406,10 @@ services:
       - path: /dev/shm/core-force-mail/secrets.env
         required: false
     environment:
+      POSTGRES_PASSWORD: ${TENANT_SERVICES_PLATFORM_PASSWORD:-}
+      REGISTRY_DB_PASSWORD: ${TENANT_ROUTER_DB_PASSWORD:-}
+      TENANT_DB_USER: mail_svc_domains
+      TENANT_DB_PASSWORD: ${DOMAIN_SERVICE_DB_PASSWORD:-}
       JWT_SIGNING_KEY: ""
     depends_on:
       pgbouncer:
@@ -412,6 +432,10 @@ services:
       - path: /dev/shm/core-force-mail/secrets.env
         required: false
     environment:
+      POSTGRES_PASSWORD: ${TENANT_SERVICES_PLATFORM_PASSWORD:-}
+      REGISTRY_DB_PASSWORD: ${TENANT_ROUTER_DB_PASSWORD:-}
+      TENANT_DB_USER: mail_svc_transactional
+      TENANT_DB_PASSWORD: ${TRANSACTIONAL_DB_PASSWORD:-}
       JWT_SIGNING_KEY: ""
     depends_on:
       pgbouncer:
@@ -436,6 +460,10 @@ services:
       - path: /dev/shm/core-force-mail/secrets.env
         required: false
     environment:
+      POSTGRES_PASSWORD: ${TENANT_SERVICES_PLATFORM_PASSWORD:-}
+      REGISTRY_DB_PASSWORD: ${TENANT_ROUTER_DB_PASSWORD:-}
+      TENANT_DB_USER: mail_svc_suppression
+      TENANT_DB_PASSWORD: ${SUPPRESSION_DB_PASSWORD:-}
       JWT_SIGNING_KEY: ""
     depends_on:
       pgbouncer:
@@ -458,6 +486,10 @@ services:
       - path: /dev/shm/core-force-mail/secrets.env
         required: false
     environment:
+      POSTGRES_PASSWORD: ${TENANT_SERVICES_PLATFORM_PASSWORD:-}
+      REGISTRY_DB_PASSWORD: ${TENANT_ROUTER_DB_PASSWORD:-}
+      TENANT_DB_USER: mail_svc_templates
+      TENANT_DB_PASSWORD: ${TEMPLATES_DB_PASSWORD:-}
       JWT_SIGNING_KEY: ""
     depends_on:
       pgbouncer:
@@ -480,6 +512,10 @@ services:
       - path: /dev/shm/core-force-mail/secrets.env
         required: false
     environment:
+      POSTGRES_PASSWORD: ${TENANT_SERVICES_PLATFORM_PASSWORD:-}
+      REGISTRY_DB_PASSWORD: ${TENANT_ROUTER_DB_PASSWORD:-}
+      TENANT_DB_USER: mail_svc_contacts
+      TENANT_DB_PASSWORD: ${CONTACTS_DB_PASSWORD:-}
       JWT_SIGNING_KEY: ""
     depends_on:
       pgbouncer:
@@ -502,6 +538,7 @@ services:
       - path: /dev/shm/core-force-mail/secrets.env
         required: false
     environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
       JWT_SIGNING_KEY: ""
     depends_on:
       pgbouncer:
@@ -524,6 +561,10 @@ services:
       - path: /dev/shm/core-force-mail/secrets.env
         required: false
     environment:
+      POSTGRES_PASSWORD: ${TENANT_SERVICES_PLATFORM_PASSWORD:-}
+      REGISTRY_DB_PASSWORD: ${TENANT_ROUTER_DB_PASSWORD:-}
+      TENANT_DB_USER: mail_svc_reputation
+      TENANT_DB_PASSWORD: ${REPUTATION_DB_PASSWORD:-}
       JWT_SIGNING_KEY: ""
     depends_on:
       pgbouncer:
@@ -548,6 +589,10 @@ services:
       - path: /dev/shm/core-force-mail/secrets.env
         required: false
     environment:
+      POSTGRES_PASSWORD: ${TENANT_SERVICES_PLATFORM_PASSWORD:-}
+      REGISTRY_DB_PASSWORD: ${TENANT_ROUTER_DB_PASSWORD:-}
+      TENANT_DB_USER: mail_svc_campaigns
+      TENANT_DB_PASSWORD: ${CAMPAIGNS_DB_PASSWORD:-}
       JWT_SIGNING_KEY: ""
     depends_on:
       pgbouncer:
@@ -570,6 +615,10 @@ services:
       - path: /dev/shm/core-force-mail/secrets.env
         required: false
     environment:
+      POSTGRES_PASSWORD: ${TENANT_SERVICES_PLATFORM_PASSWORD:-}
+      REGISTRY_DB_PASSWORD: ${TENANT_ROUTER_DB_PASSWORD:-}
+      TENANT_DB_USER: mail_svc_automations
+      TENANT_DB_PASSWORD: ${AUTOMATIONS_DB_PASSWORD:-}
       JWT_SIGNING_KEY: ""
     depends_on:
       pgbouncer:
@@ -592,6 +641,10 @@ services:
       - path: /dev/shm/core-force-mail/secrets.env
         required: false
     environment:
+      POSTGRES_PASSWORD: ${TENANT_SERVICES_PLATFORM_PASSWORD:-}
+      REGISTRY_DB_PASSWORD: ${TENANT_ROUTER_DB_PASSWORD:-}
+      TENANT_DB_USER: mail_svc_analytics
+      TENANT_DB_PASSWORD: ${ANALYTICS_DB_PASSWORD:-}
       JWT_SIGNING_KEY: ""
     depends_on:
       pgbouncer:

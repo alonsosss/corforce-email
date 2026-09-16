@@ -127,6 +127,21 @@ Obligatorias sin valor por defecto: `MAIL_HOSTNAME`, `MAIL_DB_HOST`,
 `MAIL_DB_NAME`, `MAIL_DB_PASSWORD`, `MAIL_REDIS_PASSWORD`. Ninguna va en el
 compose: llegan por `.env` o por el orquestador.
 
+`MAIL_DB_USER` es el rol de ESTA celda, `<MAIL_DB_NAME>_engine`, que crea
+`ops/db/cell-engine-role.sh --cell <code>` con `MAIL_DB_PASSWORD` del almacen.
+Es miembro del grupo `mail_engine`, de donde hereda exactamente los permisos que
+enumeran las migraciones de la celda (SELECT sobre lo que consultan Postfix y
+Dovecot, escritura solo en `mail.quota_usage`, nada sobre `mail.app_passwords`
+ni `mail.sasl_logins`), y tiene CONNECT propio solo a la base de su celda.
+`mail_engine` sigue existiendo como grupo; como rol de LOGIN compartido se
+retira con `cell-engine-role.sh --cell <code> --retire-shared` cuando ninguna
+celda lo usa ya. Esa segunda fase es la que cierra el aislamiento entre celdas:
+la membresia no distingue permisos de tabla de permisos de base, asi que
+mientras `mail_engine` conserve el CONNECT que necesitan los motores todavia sin
+recrear, cada rol de celda lo hereda y alcanza las bases de las demas. Hasta
+entonces el rol por celda ya evita que la contrasena de una celda sea la de
+todas, pero no el alcance. Orden y ventana, en `docs/Operacion_Despliegue.md`, 2.
+
 ## Red, IPs fijas y puertos
 
 Red `mail-engines` (`${IPV4_NETWORK}.0/24`, bridge `br-mail`): unbound `.254`,
@@ -727,5 +742,28 @@ cero, unos seis mas, y la primera descarga de firmas de ClamAV, uno o dos.
   `mail-directory` los escribe (quedan en `{}`): hace falta ese API y que `/footer` los
   mezcle en `vars`.
 * MTA-STS: sin tabla `mta_sts`, ACME no pide certificados `mta-sts.<dominio>`.
-* Contrasena de `mail_engine`: la fija operacion; llega solo por `MAIL_DB_PASSWORD`.
+* Contrasena del rol de los motores (`<MAIL_DB_NAME>_engine`): la fija operacion; llega solo
+  por `MAIL_DB_PASSWORD`.
+* **Smoke test obligatorio del primer despliegue con el rol por celda.** El cambio de
+  `MAIL_DB_USER` esta probado contra Postgres (`pkg/db/service_roles_integration_test.go` y
+  `make e2e`), pero NO con Postfix y Dovecot reales: `make e2e-mail` sigue usando el rol
+  compartido. Un permiso de menos aqui es correo que no se recibe, asi que en el primer
+  despliegue de cada celda, con los motores ya arrancados con el rol nuevo y ANTES de
+  `--retire-shared`:
+
+  ```bash
+  # 1. Los 18 mapas de Postfix resuelven con el rol nuevo (uno por fichero de conf/sql).
+  for m in /opt/postfix/conf/sql/*.cf; do
+    docker compose exec postfix-mail postmap -q "buzon@<dominio>" "pgsql:$m" || echo "FALLA $m"
+  done
+  # 2. Dovecot resuelve el buzon (userdb) y su cuota.
+  docker compose exec dovecot-mail doveadm user "buzon@<dominio>"
+  docker compose exec dovecot-mail doveadm quota get -u "buzon@<dominio>"
+  # 3. Entrega y lectura reales: un mensaje de prueba al buzon y un IMAP LOGIN + SELECT INBOX.
+  # 4. El rol NO ve credenciales (tiene que responder "permission denied"):
+  docker compose exec postfix-mail psql "$MAIL_DB_URL" -c 'SELECT 1 FROM mail.app_passwords LIMIT 1'
+  ```
+
+  Si (1) o (2) fallan para algun mapa, el rol no hereda un SELECT: se revisa la membresia
+  (`\du <MAIL_DB_NAME>_engine` debe listar `mail_engine`) antes de tocar ningun GRANT suelto.
 * `SPAMHAUS_ASN_CHECK_URL`: sin servicio propio, usar `SPAMHAUS_DQS_KEY`.

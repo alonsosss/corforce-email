@@ -511,39 +511,98 @@ desarrollo, nunca con la de plataforma.
   `make e2e`, que corre los tres servicios de celda con su credencial y sin la de
   plataforma.
 
-Pendiente de la credencial de celda (P):
+Reparto de secretos por servicio (V, 2026-09-15). El fichero de secretos se entrega ENTERO a
+cada servicio que lo declara en `env_file`, asi que una credencial de base que viva ahi la ve
+todo el despliegue, y vaciarla servicio a servicio crece con el cuadrado de los servicios.
+Por eso las credenciales de base salieron de esa lista: `secret-keys-db.txt` se materializa en
+`secrets-db.env`, que NINGUN contenedor recibe por `env_file`, y cada credencial llega solo al
+servicio al que su bloque de `docker-compose.yml` se la pasa por `environment:` (Compose la
+interpola contra el entorno que deja `with-secrets.sh`). Quien puede recibir que lo declara
+`ops/db/service-credentials.json` por planos (`registry`, `tenant`, `cell`, `none`) y lo
+comprueba `make check-db-credentials`, que falla si un servicio recibe una credencial de otro
+plano, si un servicio nuevo no declara el suyo o si el rol al que da entrada no tiene permisos
+en ninguna migracion. Efecto: el gateway ya no recibe ninguna credencial de base, un servicio
+de celda no ve `POSTGRES_PASSWORD` de produccion y uno de empresa no ve `CELL_DB_PASSWORD`.
 
-* Reparto de secretos por servicio en compose: hoy cada servicio recibe el fichero de
-  secretos entero, asi que un servicio de celda sigue viendo `POSTGRES_PASSWORD` y uno de
-  empresa `CELL_DB_PASSWORD`. A cada uno se le deja vacia la que no le toca.
-* PgBouncer autentica con `userlist.txt` (`auth_type = plain`): el rol de la celda necesita
-  su entrada ahi. Mejor: `auth_query` con un usuario que solo consulte verificadores.
-* `mail_engine` sigue siendo un rol de login compartido por las celdas de un cluster, con
-  CONNECT en todas sus bases de celda: pasa a un rol por celda con el mismo patron.
-* Una base de celda recien creada queda abierta a PUBLIC hasta que corre el script para
-  ella: se corre en el mismo paso en que se abre la celda.
+`mail_engine` por celda (V, 2026-09-15). Era un rol de login compartido por todas las celdas
+de un cluster, con CONNECT en todas sus bases: la contrasena de los motores de una celda abria
+el directorio de las demas. `ops/db/cell-engine-role.sh --cell <code>` crea
+`<CELL_DB_NAME>_engine`, con CONNECT solo a su base, y lo hace MIEMBRO de `mail_engine`, que
+se queda como grupo donde siguen viviendo los permisos que enumeran las migraciones 01 y 02
+(SELECT sobre lo que consultan Postfix y Dovecot, escritura solo en `quota_usage`, nada sobre
+`app_passwords` ni `sasl_logins`). Asi el rol nuevo hereda exactamente esos permisos y no hay
+una segunda lista que pueda quedarse corta: un GRANT de menos dejaria la celda sin recibir
+correo. Se despliega en dos fases (crear el rol y recrear los motores con `MAIL_DB_USER`;
+despues `--retire-shared`, que quita LOGIN y CONNECT al compartido cuando ninguna celda lo
+usa); `cell-service-role.sh` ya no devuelve CONNECT a un `mail_engine` retirado. **El
+aislamiento entre celdas se cierra en la SEGUNDA fase**: la membresia no distingue permisos de
+tabla de permisos de base, asi que mientras `mail_engine` conserve el CONNECT que necesitan los
+motores que aun no se han recreado, cada rol de celda lo hereda y alcanza las bases de las
+demas. El script lo avisa al terminar la primera fase y solo exige el aislamiento cuando el
+compartido ya esta retirado. Probado en
+`pkg/db/service_roles_integration_test.go` (lee las 14 relaciones de los motores y escribe la
+cuota, no ve credenciales, no entra en la otra celda, y retirar el compartido no toca a los
+propios) y en `make e2e`. NO probado con los motores reales: el smoke test exacto del primer
+despliegue esta en `deploy/mail/README.md`.
 
-### 5.2 Credencial de las bases de empresa (P)
+PgBouncer (V parcial, 2026-09-15): `ops/db/pgbouncer-userlist.sh --write` genera
+`userlist.txt` con los roles que este despliegue usa (plataforma, los dos de su celda,
+enrutado y uno por servicio de empresa), y `--check` falla si el fichero se quedo atras, que
+es lo que dejaba a un rol nuevo sin poder pasar por el pool. Sigue siendo `auth_type = plain`,
+con las contrasenas en claro en el fichero (modo 0640, grupo 70): `auth_query` con un usuario
+que solo consulte verificadores queda pendiente.
 
-Evaluado y descartado con el enrutado actual: un servicio de empresa atiende desde un solo
-despliegue a TODAS las empresas de TODAS las celdas y resuelve cada una en el registro.
-Con una credencial por celda tendria la de todas las celdas y seguiria necesitando la de
-plataforma para leer `organization.tenants`: no aislaria nada. Ademas `DBTarget` no lleva
-la celda (la del cluster por defecto se normaliza a host vacio) y `secret-keys.txt` es una
-lista fija de nombres. El diseno que si aisla:
+Pendiente de la credencial de celda (P): una base de celda recien creada queda abierta a
+PUBLIC hasta que corre el script para ella; se corre en el mismo paso en que se abre la celda.
 
-1. Vista publicada `organization.v_tenant_routing` (id, slug, status, db_name, db_host,
-   db_port, codigo de celda) y un rol de login de enrutado con `SELECT` solo sobre ella y
-   CONNECT solo al registro: `db.NewTenantRouting` resuelve con el, no con la credencial de
-   plataforma.
-2. Rol NOLOGIN por servicio con `USAGE` y DML solo sobre su esquema, concedido por su
-   migracion canonica de empresa, y rol de login por servicio miembro de el; organization
-   le da CONNECT al crear cada base de empresa. Sin DDL (las migraciones siguen corriendo
-   como dueno). Un servicio comprometido ve su esquema, no los de los demas ni el registro.
-3. Si los servicios de empresa llegan a desplegarse por celda: el mismo rol por servicio y
+### 5.2 Credencial de las bases de empresa (V, 2026-09-15)
+
+Un servicio de empresa atiende desde un solo despliegue a TODAS las empresas de TODAS las
+celdas y resuelve cada una en el registro, asi que una credencial por celda no aislaria nada
+(tendria la de todas y seguiria necesitando la de plataforma para el registro). Lo que si
+aisla, y es lo implementado, son dos credenciales por servicio:
+
+1. **Enrutado.** Vista publicada `organization.v_tenant_routing` (empresa, slug, estado,
+   `db_name`, codigo de celda, `db_host`, `db_port`) y el grupo `tenant_router` con `SELECT`
+   solo sobre ella y CONNECT solo al registro (`migrations/registry/031_tenant_routing_role.sql`).
+   El rol de login `mail_router` es miembro suyo. `db.NewTenantRouting` lee de la vista, no de
+   `organization.tenants` unida a `organization.cells`: el enrutado es lo unico que un servicio
+   de empresa necesita del registro, y es lo unico que puede leer. Ni empresas, ni cuentas, ni
+   permisos, ni facturacion, ni la outbox de plataforma.
+2. **Un rol por servicio.** Grupo NOLOGIN `<esquema>_service` con `USAGE` y DML solo sobre su
+   esquema y sobre `platform.event_outbox`, concedido por la migracion canonica de empresa de
+   cada servicio (`NN_service_role.sql`), y rol de login `mail_svc_<esquema>` miembro de el.
+   Los permisos se enumeran en la migracion, junto a las tablas que los necesitan; el script
+   solo crea el rol de login y su membresia, de modo que no puede quedarse corto ni largo. Sin
+   DDL, sin TRUNCATE y sin temporales: las migraciones siguen corriendo como dueno
+   (`TenantDirectDSN` conserva la credencial de plataforma, tambien hacia otra celda). El
+   CONNECT lo concede esa misma migracion sobre la base en la que corre, asi que una empresa
+   nueva deja entrar a su servicio sin ningun paso aparte y sin que organization tenga que
+   saber de roles.
+3. Los dos roles los crea `ops/db/tenant-service-role.sh` (`--router`, `--service <svc>`,
+   `--all`) con la credencial de plataforma y las contrasenas del almacen, y comprueba al
+   terminar que cada uno solo alcanza lo suyo. Los servicios los reciben por
+   `REGISTRY_DB_USER`/`REGISTRY_DB_PASSWORD` y `TENANT_DB_USER`/`TENANT_DB_PASSWORD`
+   (`pkg/config`), sin tocar ningun `main.go`.
+4. El reparto va servicio a servicio: sin su contrasena, el servicio sigue abriendo con la de
+   plataforma y `db.NewTenantRouting` lo AVISA al arrancar fuera de desarrollo. Al reves no:
+   una contrasena de empresa sin su rol no arranca (`config.Load`).
+5. `organization` sigue siendo el unico con la credencial de plataforma (crea y migra las
+   bases). `identity`, `access-control` y `billing` tambien, porque su almacen es el propio
+   registro y son duenos de sus tablas: su credencial por servicio queda pendiente (P).
+6. Si los servicios de empresa llegan a desplegarse por celda: el mismo rol por servicio y
    celda, con CONNECT solo a las bases de empresa de su celda; `DBTarget` gana la celda y
-   `TenantPoolManager` elige la credencial por celda.
-4. `organization` sigue siendo el unico con la credencial de plataforma (crea y migra).
+   `TenantPoolManager` elige la credencial por celda (P).
+
+Probado: unitarias de `pkg/config` (que DSN sale con que credencial, incluidas las migraciones);
+integracion en `pkg/db/service_roles_integration_test.go` contra Postgres 16, que aplica el
+registro y dos bases de empresa y comprueba con conexiones reales que el enrutado lee su vista
+y recibe `permission denied` en `organization.tenants`, `identity.users`,
+`access_control.permissions` y la outbox, que no entra en una base de empresa, que
+`mail_svc_contacts` escribe lo suyo y su outbox pero no el esquema `templates` de la MISMA
+base, que no hace DDL ni entra en el registro, que una empresa creada despues lo deja entrar
+sola, y la rotacion de contrasena; y `make e2e`, donde los nueve servicios de empresa arrancan
+con el rol de enrutado.
 
 ### 5.3 Enlaces publicos por celda (V, 2026-09-13)
 
@@ -988,7 +1047,9 @@ Pendiente (P):
 | Rutas por id comprueban la empresa de la sesion en el plano de control | V |
 | Directorio de correo con `tenant_id` en cada fila y rol de motores sin acceso a credenciales | V |
 | RLS en la celda para los servicios Go | V (politicas y roles; `mail-directory` y el API de administracion de `mail-security` las usan en toda lectura y escritura) |
-| Una celda no lee otra celda: sus servicios abren solo `CELL_DB_NAME` con el rol `<CELL_DB_NAME>_svc`, sin CONNECT al registro, a otra celda ni a una empresa (5.1); claves de cifrado por celda | V / P (claves; reparto de secretos por servicio) |
+| Una celda no lee otra celda: sus servicios abren solo `CELL_DB_NAME` con el rol `<CELL_DB_NAME>_svc`, sin CONNECT al registro, a otra celda ni a una empresa (5.1); claves de cifrado por celda | V / P (claves) |
+| Los motores de una celda solo leen el directorio de SU celda: `<CELL_DB_NAME>_engine`, miembro del grupo `mail_engine` (de donde saca sus permisos) y con CONNECT solo a su base (5.1) | V (2026-09-15; sin probar contra Postfix y Dovecot reales: smoke test en `deploy/mail/README.md`) |
+| Cada servicio recibe solo SU credencial de base: las de base no viajan en el fichero de secretos compartido y `make check-db-credentials` ata compose, el almacen y los permisos del rol (5.1) | V (2026-09-15) |
 | Un enlace publico de cuarentena solo actua en la celda que lo firmo: la celda va en la firma, el gateway enruta sin la clave y una celda desconocida responde igual que una firma mala (5.3) | V (2026-09-13) |
 | Una peticion con sesion a un servicio de celda solo llega a la instancia de la celda de su empresa; sin celda resoluble o sin instancia declarada no sale hacia ninguna (5.4) | V (2026-09-13; con `GATEWAY_BASE_CELL_CODE`) |
 | Una instancia de celda solo atiende a las empresas de su celda aunque le lleguen de otra (gateway mal configurado, llamada de servicio a la instancia equivocada): pregunta a organization y rechaza con 403 antes de cualquier ruta, sin escribir nada; con organization caido solo las ya comprobadas (5.4) | V (2026-09-13, `mail-directory` y `mail-security`; el webmail no la necesita, 5.5) |
@@ -997,5 +1058,6 @@ Pendiente (P):
 | El webmail de un buzon se sirve en la celda de su dominio: el gateway lleva el inicio de sesion por el dominio del buzon y el resto por la celda del token, y cada instancia solo acepta tokens de su celda; un dominio desconocido responde como una contrasena mala (5.5) | V (2026-09-13; con `GATEWAY_BASE_CELL_CODE` y `WEBMAIL_CELL_HOSTS`) |
 | Un dominio de correo solo esta activo en una empresa y una celda: se reclama en el indice global de organization antes de activarlo y se suelta despues de desactivarlo (5.5) | V (2026-09-13) |
 | Una empresa dada de baja deja de recibir, reenviar y autenticar en su celda antes de salir del registro, nada vuelve a encender su directorio y sus dominios se sueltan del indice solo despues (5.4) | V (2026-09-15) |
-| Un servicio de empresa solo abre su esquema y no el registro (credencial por servicio) | P (5.2) |
+| Un servicio de empresa solo abre su esquema y no el registro (credencial por servicio) | V (2026-09-15, 5.2; los del plano de registro -identity, access-control, billing- siguen con la de plataforma) |
+| Un servicio de empresa solo lee del registro el enrutado: `mail_router` con `SELECT` solo sobre `organization.v_tenant_routing`, sin cuentas, permisos ni facturacion (5.2) | V (2026-09-15) |
 | Respaldo por base y restauracion probada semanalmente (`ops/backup`) | V (scripts), P (programados en este entorno) |

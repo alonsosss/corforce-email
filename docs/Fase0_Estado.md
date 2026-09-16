@@ -90,9 +90,20 @@ cambie cualquiera de estas líneas.
   tambien la unicidad de un dominio entre celdas (2026-09-13, `make e2e` con un webmail por
   celda; 5.5). Credencial propia por celda para los servicios de celda hecha (2026-09-13:
   `ops/db/cell-service-role.sh`, `db.NewCellPool`, falla cerrado fuera de desarrollo;
-  `Modelo_de_Datos_y_Celdas.md` 5.1). Pendiente: reparto de secretos por servicio en
-  compose, la entrada del rol en `userlist.txt` de PgBouncer, `mail_engine` por celda y la
-  credencial por servicio de las bases de empresa (5.2).
+  `Modelo_de_Datos_y_Celdas.md` 5.1). Reparto de credenciales por servicio hecho
+  (2026-09-15, `Modelo_de_Datos_y_Celdas.md` 5.1 y 5.2): las credenciales de base salen del
+  fichero de secretos compartido y viven en `secret-keys-db.txt`, que se materializa aparte y
+  solo llega al servicio al que su bloque de compose se la pasa (`ops/db/service-credentials.json`
+  declara el plano de cada uno y `make check-db-credentials` lo ata); `userlist.txt` de
+  PgBouncer lo genera `ops/db/pgbouncer-userlist.sh` desde esos mismos roles;
+  `ops/db/cell-engine-role.sh` da a cada celda su rol de motores (`<base>_engine`, miembro del
+  grupo `mail_engine`) y retira el compartido; y los servicios de empresa tienen rol de
+  enrutado (`mail_router`, solo `organization.v_tenant_routing`) y un rol por servicio
+  (`mail_svc_<esquema>`, DML solo sobre su esquema) que conceden sus migraciones canonicas.
+  Pendiente: publicar las contrasenas y correr los scripts en el servidor (ninguna celda ni
+  empresa reales lo tienen aun); `auth_query` en PgBouncer en lugar de contrasenas en claro en
+  `userlist.txt`; y la credencial por servicio de los del plano de registro (identity,
+  access-control, billing), que siguen con la de plataforma.
 * Ciclo de vida de una ejecución del scheduler cerrado (2026-09-13, unitarias e integración
   contra Postgres 16): `scheduler.job.started`, `.completed` y `.failed` salen por la outbox
   en la transacción que cambia la ejecución (stream `SCHEDULER`); el ejecutor cierra por

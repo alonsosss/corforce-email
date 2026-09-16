@@ -79,6 +79,27 @@ expect "el rol de la celda entra en su base" "$(como_celda mail_cell_pe_01)" "$C
 contains "pero no en el registro" "$(como_celda mail_registry)" "permission denied for database"
 contains "ni en la base de otra celda" "$(como_celda mail_cell_pe_02)" "permission denied for database"
 
+echo "== Credencial de los motores de cada celda (ops/db/cell-engine-role.sh)"
+MAIL_PASS="$(rand_hex 24)"
+MAIL2_PASS="$(rand_hex 24)"
+e2e_credencial_motores pe-01 "$MAIL_PASS"
+e2e_credencial_motores pe-02 "$MAIL2_PASS"
+# Segunda fase: sin retirar el rol de login compartido, cada rol de celda HEREDA de
+# mail_engine el CONNECT a las bases de las demas celdas (la membresia no distingue permisos
+# de tabla de permisos de base). El aislamiento entre celdas se comprueba despues de esto.
+PGHOST=127.0.0.1 MAIL_DB_PASSWORD="${MAIL_PASS}" \
+  bash ops/db/cell-engine-role.sh --cell pe-01 --retire-shared >/dev/null ||
+  mal "cell-engine-role.sh --retire-shared"
+expect "el rol de motores compartido queda sin inicio de sesion" \
+  "$(sql mail_registry "SELECT rolcanlogin FROM pg_roles WHERE rolname = 'mail_engine'")" "f"
+como_motor() { psql -U "mail_cell_${1//-/_}_engine" -d "$2" -At -c "$3" 2>&1; }
+expect "el motor de pe-01 lee el directorio de su celda" \
+  "$(como_motor pe-01 mail_cell_pe_01 'SELECT count(*) FROM mail.mailboxes')" "0"
+contains "y no las contrasenas de aplicacion" \
+  "$(como_motor pe-01 mail_cell_pe_01 'SELECT 1 FROM mail.app_passwords LIMIT 1')" "permission denied"
+contains "ni la base de la otra celda" \
+  "$(como_motor pe-01 mail_cell_pe_02 'SELECT 1')" "permission denied for database"
+
 # ── Entorno comun ────────────────────────────────────────────────────────────
 e2e_entorno_comun || exit 1
 export MAIL_REDIS_HOST=127.0.0.1 MAIL_REDIS_PORT="$REDIS_PORT"
@@ -145,6 +166,11 @@ export SUPPRESSION_EXPIRY_SWEEP_INTERVAL=1s
 # Los servicios de la celda arrancan con SU credencial y sin la de plataforma: un permiso que
 # le falte al rol de la celda hace fallar las comprobaciones del correo de mas abajo.
 SERVICIOS_DE_CELDA=" mail-directory mail-auth mail-security "
+# Los del plano de empresa abren el registro con el rol de enrutado, que solo puede leer
+# organization.v_tenant_routing: si alguno necesitara otra cosa del registro (una tabla, la
+# outbox), fallaria aqui y no en produccion. billing no entra, porque su almacen ES el
+# registro y sigue con la credencial de plataforma.
+SERVICIOS_DE_EMPRESA=" domain-service templates suppression reputation contacts analytics transactional campaigns automations "
 
 cp ops/e2e/dns_prueba.py "$WORK/bin/" && python3 "$WORK/bin/dns_prueba.py" "$DNS_PORT" "$WORK/zona.json" >"$WORK/log/dns.log" 2>&1 &
 
@@ -157,6 +183,19 @@ esperar_salud organization "${PORT[organization]}" || exit 1
 
 echo "== Arranque de una plataforma vacia (ops/db/bootstrap-platform.sh)"
 e2e_plataforma pe-01
+
+echo "== Credencial de enrutado de los servicios de empresa (ops/db/tenant-service-role.sh)"
+# organization ya aplico las migraciones del registro al arrancar, asi que existen la vista
+# publicada del enrutado y su rol de grupo.
+ROUTER_PASS="$(rand_hex 24)"
+e2e_credencial_enrutado "$ROUTER_PASS"
+como_router() { psql -U mail_router -d "$1" -At -c "$2" 2>&1; }
+expect "el rol de enrutado lee la vista publicada" \
+  "$(como_router mail_registry 'SELECT count(*) > 0 FROM organization.v_tenant_routing')" "t"
+contains "pero no la tabla de empresas" \
+  "$(como_router mail_registry 'SELECT 1 FROM organization.tenants LIMIT 1')" "permission denied"
+contains "ni las cuentas de identity" \
+  "$(como_router mail_registry 'SELECT 1 FROM identity.users LIMIT 1')" "permission denied"
 
 ARRANQUE=(identity access-control mail-directory mail-auth domain-service mail-security templates suppression billing reputation contacts scheduler analytics transactional campaigns automations gateway)
 for s in "${ARRANQUE[@]}"; do arrancar "$s"; done
@@ -273,6 +312,21 @@ ORG=$(e2e_alta_empresa "$T1" acme pe-01 admin@acme.test "$TENANT_PASS")
 expect "alta de empresa en su celda" "$(echo "$ORG" | jget data.slug)" "acme"
 expect "base de la empresa creada y migrada" "$(sql mail_registry "SELECT count(*) FROM pg_database WHERE datname = 'mail_tenant_acme'")" "1"
 contains "organization la cierra: el rol de la celda no la abre" "$(como_celda mail_tenant_acme)" "permission denied for database"
+
+echo "== Credencial propia de un servicio de empresa (ops/db/tenant-service-role.sh)"
+# Ya hay una base de empresa migrada, asi que existen los roles de grupo <esquema>_service.
+CONTACTS_PASS="$(rand_hex 24)"
+CONTACTS_DB_PASSWORD="${CONTACTS_PASS}" PGHOST=127.0.0.1 \
+  bash ops/db/tenant-service-role.sh --service contacts >/dev/null 2>&1 ||
+  mal "tenant-service-role.sh --service contacts"
+como_contacts() { psql -U mail_svc_contacts -d "$1" -At -c "$2" 2>&1; }
+expect "el rol de contacts lee su esquema en la base de la empresa" \
+  "$(como_contacts mail_tenant_acme 'SELECT count(*) FROM contacts.contacts')" "0"
+contains "pero no el esquema de otro servicio de la MISMA base" \
+  "$(como_contacts mail_tenant_acme 'SELECT 1 FROM templates.templates LIMIT 1')" "permission denied"
+contains "ni el registro" "$(como_contacts mail_registry 'SELECT 1')" "permission denied for database"
+contains "ni crea tablas" \
+  "$(como_contacts mail_tenant_acme 'CREATE TABLE contacts.prohibida (id int)')" "permission denied"
 expect "la saga de acme queda completada" \
   "$(sql mail_registry "SELECT s.state || '/' || s.step FROM organization.tenant_sagas s JOIN organization.tenants t ON t.id = s.tenant_id WHERE t.slug = 'acme'")" "completed/activated"
 # Un alta que falla a mitad (identity rechaza al primer administrador) se deshace entera.

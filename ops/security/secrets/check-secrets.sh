@@ -15,13 +15,20 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 KEYS_FILE="$ROOT/ops/security/secrets/secret-keys.txt"
+# Las credenciales de base viven en su propia lista (se materializan en un fichero que
+# ningun contenedor recibe por env_file), pero para ESTE guardarrail son exactamente igual
+# de secretas: ninguna puede tener valor en un fichero versionado.
+KEYS_DB_FILE="$ROOT/ops/security/secrets/secret-keys-db.txt"
 
 cd "$ROOT"
 LISTA="$(mktemp)"
 trap 'rm -f "$LISTA"' EXIT
 git ls-files -z >"$LISTA"
 
-python3 - "$KEYS_FILE" "$LISTA" <<'PY'
+cat "$KEYS_FILE" "$KEYS_DB_FILE" > "$LISTA.keys"
+trap 'rm -f "$LISTA" "$LISTA.keys"' EXIT
+
+python3 - "$LISTA.keys" "$LISTA" <<'PY'
 import os
 import re
 import sys

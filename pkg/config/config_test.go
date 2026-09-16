@@ -25,6 +25,61 @@ func TestDSNsConservanElFormato(t *testing.T) {
 	}
 }
 
+// Credenciales por servicio del plano de empresa: el registro se abre con el rol de
+// enrutado y las bases de empresa con el rol del servicio, pero las MIGRACIONES siguen
+// yendo con la de plataforma (corren como dueno). Confundir esa ultima seria dejar sin
+// migrar a toda empresa de una celda remota.
+func TestCredencialesPorServicioDeEmpresa(t *testing.T) {
+	p := PostgresConfig{
+		Host: "pgbouncer", Port: 5432, User: "mail_admin", Password: "platform-pass",
+		DBName: "mail_registry", DirectHost: "db.internal", DirectPort: 5433,
+		RegistryPassword: "router-pass-0123456789012345678901",
+		TenantUser:       "mail_svc_contacts",
+		TenantPassword:   "contacts-pass-0123456789012345678",
+	}
+	if !p.HasServiceCredential() {
+		t.Fatal("con las dos credenciales, el servicio no depende de la de plataforma")
+	}
+	cases := map[string]struct{ got, want string }{
+		"registro con el rol de enrutado": {p.DSN(),
+			"postgres://mail_router:router-pass-0123456789012345678901@pgbouncer:5432/mail_registry?sslmode=disable"},
+		"empresa con el rol del servicio": {p.TenantDSN("mail_tenant_acme"),
+			"postgres://mail_svc_contacts:contacts-pass-0123456789012345678@pgbouncer:5432/mail_tenant_acme?sslmode=disable"},
+		"empresa en otra celda, tambien con el suyo": {p.TenantDSNAt("cell2.db", 6432, "mail_tenant_acme"),
+			"postgres://mail_svc_contacts:contacts-pass-0123456789012345678@cell2.db:6432/mail_tenant_acme?sslmode=prefer"},
+		"migracion: credencial de plataforma": {p.TenantDirectDSN("mail_tenant_acme"),
+			"postgres://mail_admin:platform-pass@db.internal:5433/mail_tenant_acme?sslmode=prefer"},
+		"migracion en otra celda: tambien la de plataforma": {p.TenantDirectDSNAt("cell2.db", 6432, "mail_tenant_acme"),
+			"postgres://mail_admin:platform-pass@cell2.db:6432/mail_tenant_acme?sslmode=prefer"},
+	}
+	for name, c := range cases {
+		if c.got != c.want {
+			t.Errorf("%s: %q, se esperaba %q", name, c.got, c.want)
+		}
+	}
+
+	// Sin credencial propia todo sigue como antes: es el estado del que parte el reparto.
+	sinReparto := p
+	sinReparto.RegistryPassword, sinReparto.TenantUser, sinReparto.TenantPassword = "", "", ""
+	if sinReparto.HasServiceCredential() {
+		t.Error("sin credenciales propias no puede darse por repartido")
+	}
+	if got := sinReparto.DSN(); !strings.Contains(got, "mail_admin:platform-pass") {
+		t.Errorf("sin rol de enrutado el registro va con la de plataforma: %q", got)
+	}
+	if got := sinReparto.TenantDSN("mail_tenant_acme"); !strings.Contains(got, "mail_admin:platform-pass") {
+		t.Errorf("sin rol propio la empresa va con la de plataforma: %q", got)
+	}
+
+	// Un rol declarado y su contrasena aun sin publicar es el estado intermedio del
+	// reparto: se sigue con la de plataforma, no a medias.
+	soloRol := sinReparto
+	soloRol.TenantUser = "mail_svc_contacts"
+	if got := soloRol.TenantDSN("mail_tenant_acme"); !strings.Contains(got, "mail_admin:platform-pass") {
+		t.Errorf("con rol pero sin contrasena se usa la de plataforma: %q", got)
+	}
+}
+
 func TestDSNEscapaCredencialesYHostIPv6(t *testing.T) {
 	password := "a@b/c?d:e%f"
 	p := PostgresConfig{Host: "::1", Port: 5432, User: "mail_cell_pe_01_svc", CellPassword: password, CellDBName: "mail_cell_pe_01"}

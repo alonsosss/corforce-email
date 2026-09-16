@@ -40,6 +40,18 @@ type PostgresConfig struct {
 	// su base con la de plataforma. Solo lo activa un ENVIRONMENT declarado de desarrollo
 	// o de prueba: en cualquier otro, sin credencial de celda el servicio no arranca.
 	AllowPlatformCellCredential bool
+	// RegistryUser y RegistryPassword son la credencial con la que un servicio del plano de
+	// EMPRESA abre el registro: el rol de enrutado (mail_router), que solo puede leer
+	// organization.v_tenant_routing. Vacias, el registro se abre con la de plataforma.
+	RegistryUser     string
+	RegistryPassword string
+	// TenantUser y TenantPassword son la credencial propia del servicio para las bases de
+	// EMPRESA: el rol mail_svc_<esquema>, con DML solo sobre su esquema. Vacias, las bases
+	// de empresa se abren con la de plataforma, que es duena de las tablas de todos.
+	//
+	// Las migraciones NO pasan por aqui: corren como dueno (TenantDirectDSN).
+	TenantUser     string
+	TenantPassword string
 }
 
 // postgresURL compone un DSN con el usuario y la contrasena escapados: una contrasena con
@@ -55,17 +67,52 @@ func postgresURL(user, password, host string, port int, dbName, sslMode string) 
 	return u.String()
 }
 
+// DefaultRoutingRole es el rol de login del enrutado por empresa cuando REGISTRY_DB_USER no
+// lo dice. Lo crea ops/db/tenant-service-role.sh --router.
+const DefaultRoutingRole = "mail_router"
+
+// registryCredential: con que se abre la base de REGISTRO. El rol de enrutado si el
+// despliegue se lo dio; si no, la de plataforma.
+func (p PostgresConfig) registryCredential() (string, string) {
+	if p.RegistryPassword == "" {
+		return p.User, p.Password
+	}
+	user := p.RegistryUser
+	if user == "" {
+		user = DefaultRoutingRole
+	}
+	return user, p.RegistryPassword
+}
+
+// tenantCredential: con que se abre la base de una EMPRESA. La propia del servicio si el
+// despliegue se la dio; si no, la de plataforma.
+func (p PostgresConfig) tenantCredential() (string, string) {
+	if p.TenantPassword == "" || p.TenantUser == "" {
+		return p.User, p.Password
+	}
+	return p.TenantUser, p.TenantPassword
+}
+
+// HasServiceCredential indica que el proceso abre el registro y las bases de empresa con
+// credenciales propias, y no con la de plataforma.
+func (p PostgresConfig) HasServiceCredential() bool {
+	return p.RegistryPassword != "" && p.TenantPassword != "" && p.TenantUser != ""
+}
+
 func (p PostgresConfig) DSN() string {
-	return postgresURL(p.User, p.Password, p.Host, p.Port, p.DBName, "disable")
+	user, password := p.registryCredential()
+	return postgresURL(user, password, p.Host, p.Port, p.DBName, "disable")
 }
 
 func (p PostgresConfig) TenantDSN(dbName string) string {
-	return postgresURL(p.User, p.Password, p.Host, p.Port, dbName, "disable")
+	user, password := p.tenantCredential()
+	return postgresURL(user, password, p.Host, p.Port, dbName, "disable")
 }
 
 // TenantDSNAt es TenantDSN contra el host de otra celda (organization.cells).
 func (p PostgresConfig) TenantDSNAt(host string, port int, dbName string) string {
-	return postgresURL(p.User, p.Password, host, port, dbName, "prefer")
+	user, password := p.tenantCredential()
+	return postgresURL(user, password, host, port, dbName, "prefer")
 }
 
 // TenantDirectDSNAt es TenantDirectDSN contra otra celda: si el host es el del cluster
@@ -75,7 +122,9 @@ func (p PostgresConfig) TenantDirectDSNAt(host string, port int, dbName string) 
 	if host == "" || host == p.Host {
 		return p.TenantDirectDSN(dbName)
 	}
-	return p.TenantDSNAt(host, port, dbName)
+	// Con la credencial de PLATAFORMA, no con la del servicio: por aqui pasan las
+	// migraciones, que corren como dueno de las tablas. Un rol de servicio no hace DDL.
+	return postgresURL(p.User, p.Password, host, port, dbName, "prefer")
 }
 
 // cellServiceRoleSuffix completa el nombre del rol de login de una celda a partir del de
@@ -258,6 +307,10 @@ func Load() (*Config, error) {
 			CellUser:                    getEnv("CELL_DB_USER", ""),
 			CellPassword:                getEnv("CELL_DB_PASSWORD", ""),
 			AllowPlatformCellCredential: DeclaredDevelopmentOrTest(),
+			RegistryUser:                getEnv("REGISTRY_DB_USER", ""),
+			RegistryPassword:            getEnv("REGISTRY_DB_PASSWORD", ""),
+			TenantUser:                  getEnv("TENANT_DB_USER", ""),
+			TenantPassword:              getEnv("TENANT_DB_PASSWORD", ""),
 		},
 		Redis: redisCfg,
 		NATS: NATSConfig{
@@ -270,7 +323,18 @@ func Load() (*Config, error) {
 		},
 	}
 
-	if cfg.Postgres.Password == "" && !cfg.Postgres.hasCellCredential() {
+	// Una contrasena de empresa sin su rol abriria las bases con la de plataforma creyendo
+	// que usa la suya: eso no arranca. Al reves si vale y es el estado normal del reparto,
+	// que va servicio a servicio: el rol declarado y la contrasena todavia sin publicar
+	// dejan al servicio con la credencial de plataforma, y db.NewTenantRouting lo avisa.
+	if cfg.Postgres.TenantPassword != "" && cfg.Postgres.TenantUser == "" {
+		return nil, fmt.Errorf("TENANT_DB_PASSWORD is set without TENANT_DB_USER")
+	}
+	if cfg.Postgres.RegistryUser != "" && cfg.Postgres.RegistryPassword == "" {
+		return nil, fmt.Errorf("REGISTRY_DB_USER is set without REGISTRY_DB_PASSWORD")
+	}
+
+	if cfg.Postgres.Password == "" && !cfg.Postgres.hasCellCredential() && !cfg.Postgres.HasServiceCredential() {
 		return nil, fmt.Errorf("POSTGRES_PASSWORD is required")
 	}
 

@@ -56,6 +56,13 @@ deploy/mail/dkim/
 /ERP/
 /mailcow/
 
+# userlist.txt de PgBouncer: lo genera ops/db/pgbouncer-userlist.sh en el servidor y lleva
+# las contrasenas EN CLARO que exige auth_type = plain. El directorio pgbouncer/ SI se
+# versiona y se sincroniza al servidor, asi que sin esta linea un `git add` distraido
+# publicaria las credenciales en la historia del repositorio, de donde no se borran.
+# ops/scaffold/check-db-credentials.sh falla si alguna vez acaba en el indice.
+pgbouncer/userlist.txt
+
 # Ficheros que los entrypoints de los motores generan en los bind mounts (llevan la
 # credencial de mail_engine y certificados): nunca en el repositorio
 deploy/mail/postfix/conf/sql/

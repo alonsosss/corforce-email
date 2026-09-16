@@ -19,9 +19,10 @@
 #   - CONNECT sobre la base de la celda para ese rol y para mail_engine;
 #   - ninguna base del cluster abierta a PUBLIC. Postgres da CONNECT a todo rol de login en
 #     toda base nueva: sin este cierre, el rol nuevo entraria al registro, a las demas
-#     celdas y a las empresas. mail_engine conserva CONNECT en las bases de celda (hoy es
-#     un rol compartido por todas); la base de mantenimiento `postgres` no tiene datos y
-#     queda como esta;
+#     celdas y a las empresas. mail_engine conserva CONNECT en las bases de celda mientras
+#     siga siendo el rol de login compartido de los motores; cuando cada celda tiene el suyo
+#     (ops/db/cell-engine-role.sh) y el compartido se retira, este script ya no se lo
+#     devuelve; la base de mantenimiento `postgres` no tiene datos y queda como esta;
 #   - la contrasena del rol, fijada en cada ejecucion: rotar es publicar el valor nuevo,
 #     volver a correr esto y recrear los servicios de la celda.
 #
@@ -103,9 +104,15 @@ SELECT format('REVOKE CONNECT, TEMPORARY ON DATABASE %I FROM PUBLIC', datname)
  WHERE datallowconn AND NOT datistemplate AND datname NOT IN ('postgres', 'rdsadmin')
  ORDER BY datname \gexec
 
+-- mail_engine conserva CONNECT en las bases de celda MIENTRAS siga siendo el rol de login
+-- compartido de los motores. En cuanto una celda pasa a su rol propio
+-- (ops/db/cell-engine-role.sh) y se retira el compartido con --retire-shared, mail_engine
+-- se queda NOLOGIN: volver a darle CONNECT aqui desharia esa retirada la proxima vez que se
+-- abriera o se rotara una celda cualquiera del cluster.
 SELECT format('GRANT CONNECT ON DATABASE %I TO mail_engine', datname)
   FROM pg_database
  WHERE datallowconn AND NOT datistemplate AND datname LIKE 'mail\_cell\_%'
+   AND EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'mail_engine' AND rolcanlogin)
  ORDER BY datname \gexec
 
 GRANT CONNECT ON DATABASE :"cell_db" TO :"role";

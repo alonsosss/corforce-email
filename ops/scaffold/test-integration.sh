@@ -84,8 +84,10 @@ declare -A MIGRADAS_POR_EL_SCRIPT=(
 REDIS_ADDR_VARS=(REDIS_TEST_ADDR MAIL_SECURITY_TEST_REDIS REPUTATION_TEST_REDIS_ADDR WEBMAIL_TEST_REDIS_ADDR)
 REDIS_PASSWORD_VARS=(REDIS_TEST_PASSWORD MAIL_SECURITY_TEST_REDIS_PASSWORD REPUTATION_TEST_REDIS_PASSWORD WEBMAIL_TEST_REDIS_PASSWORD)
 # La prueba del rol de celda crea sus propias bases desde la de mantenimiento y usa el psql
-# del contenedor (no hay cliente en el anfitrion).
-OTRAS_VARS=(CELL_ROLE_TEST_DSN CELL_ROLE_TEST_CONTAINER)
+# del contenedor (no hay cliente en el anfitrion). La de los roles por servicio (pkg/db)
+# hace lo mismo: crea registro, dos bases de empresa y dos celdas, y corre los scripts de
+# ops/db contra ellas.
+OTRAS_VARS=(CELL_ROLE_TEST_DSN CELL_ROLE_TEST_CONTAINER DB_ROLES_TEST_DSN DB_ROLES_TEST_CONTAINER)
 # La prueba del TLS hacia Redis (pkg/config) genera su CA y su certificado y crea con ellos
 # su propio Redis con tls-port: recibe solo el nombre del contenedor y el puerto.
 REDIS_TLS_VARS=(REDIS_TLS_TEST_CONTAINER REDIS_TLS_TEST_PORT)
@@ -258,6 +260,8 @@ done
 
 export CELL_ROLE_TEST_DSN; CELL_ROLE_TEST_DSN="$(dsn postgres)"
 export CELL_ROLE_TEST_CONTAINER="$PG_CONTAINER"
+export DB_ROLES_TEST_DSN; DB_ROLES_TEST_DSN="$(dsn postgres)"
+export DB_ROLES_TEST_CONTAINER="$PG_CONTAINER"
 for v in "${REDIS_ADDR_VARS[@]}"; do export "$v=127.0.0.1:$REDIS_PORT"; done
 for v in "${REDIS_PASSWORD_VARS[@]}"; do export "$v=$REDIS_PASSWORD"; done
 export REDIS_TLS_TEST_CONTAINER="$REDIS_TLS_CONTAINER" REDIS_TLS_TEST_PORT="$REDIS_TLS_PORT"

@@ -39,18 +39,29 @@ export PATH
 
 _cf_secrets_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 _cf_secrets_file="${SECRETS_ENV_FILE:-/dev/shm/core-force-mail/secrets.env}"
+# Las credenciales de base van en un fichero APARTE que ningun contenedor recibe por
+# env_file: solo llegan al servicio al que su bloque de compose se las pasa por
+# `environment:`, que Compose interpola contra este entorno (secret-keys-db.txt).
+_cf_secrets_db_file="${SECRETS_DB_ENV_FILE:-/dev/shm/core-force-mail/secrets-db.env}"
 _cf_keys_file="${SECRET_KEYS_FILE:-$_cf_secrets_dir/secret-keys.txt}"
+_cf_keys_db_file="${SECRET_KEYS_DB_FILE:-$_cf_secrets_dir/secret-keys-db.txt}"
 _cf_env_file="${WITH_SECRETS_ENV_FILE:-${APP_DIR:-.}/.env}"
 
 # cf_env_tiene_credenciales: cierto si el .env conserva TODAS las claves obligatorias con
 # valor. Es lo que distingue "el almacen aun no esta puesto" de "el almacen es la fuente y
 # no responde".
 cf_env_tiene_credenciales() {
-  KEYS_FILE="$_cf_keys_file" ENV_FILE="$_cf_env_file" python3 - <<'PY'
+  KEYS_FILE="$_cf_keys_file" KEYS_DB_FILE="$_cf_keys_db_file" ENV_FILE="$_cf_env_file" python3 - <<'PY'
 import os, re, sys
 
-keys = [l.strip() for l in open(os.environ["KEYS_FILE"], encoding="utf-8")
-        if l.strip() and not l.startswith("#")]
+def leer(ruta):
+    try:
+        return [l.strip() for l in open(ruta, encoding="utf-8")
+                if l.strip() and not l.startswith("#")]
+    except OSError:
+        return []
+
+keys = leer(os.environ["KEYS_FILE"]) + leer(os.environ["KEYS_DB_FILE"])
 obligatorias = [k for k in keys if not k.endswith("?")]
 try:
     env = open(os.environ["ENV_FILE"], encoding="utf-8").read()
@@ -72,12 +83,15 @@ cf_cargar_secretos() {
     return 1
   fi
 
-  if [[ -f "$_cf_secrets_file" ]]; then
-    set -a
-    # shellcheck disable=SC1090
-    . "$_cf_secrets_file"
-    set +a
-  fi
+  local f
+  for f in "$_cf_secrets_file" "$_cf_secrets_db_file"; do
+    if [[ -f "$f" ]]; then
+      set -a
+      # shellcheck disable=SC1090
+      . "$f"
+      set +a
+    fi
+  done
   return 0
 }
 

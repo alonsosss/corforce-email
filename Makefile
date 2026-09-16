@@ -119,7 +119,7 @@ check-event-contracts:
 
 # ── Operacion ────────────────────────────────────────────────────────────────
 .PHONY: gen-observability-targets check-observability-targets check-alertas
-.PHONY: check-secrets check-secret-sources gen-compose-images check-compose-images
+.PHONY: check-secrets check-secret-sources check-db-credentials gen-compose-images check-compose-images
 .PHONY: service-paths check-service-paths
 
 # make gen-observability-targets  (regenera la lista de objetivos de Prometheus desde
@@ -146,6 +146,11 @@ check-secrets:
 # make check-secret-sources  (ningun script se busca un secreto en el .env)
 check-secret-sources:
 	@bash ops/security/secrets/check-secret-sources.sh
+
+# make check-db-credentials  (cada servicio recibe SU credencial de base y ninguna otra:
+# compose, el almacen y los permisos del rol dicen lo mismo)
+check-db-credentials:
+	@bash ops/scaffold/check-db-credentials.sh
 
 # make gen-compose-images  (regenera el override de imagenes de ECR) /
 # make check-compose-images (falla si un servicio con build quedo fuera del override)
@@ -190,8 +195,8 @@ e2e-mail:
 # se anade aqui: un check que solo corre en CI deja pasar lo que rompe el despliegue)
 checks: build check-gofmt check-migrations check-migration-drops check-coupling check-silent-errors \
 	check-sql-arity check-streams check-event-contracts check-secrets check-secret-sources \
-	check-compose check-compose-images check-observability-targets check-service-paths \
-	check-alertas validate-scaffold
+	check-db-credentials check-compose check-compose-images check-observability-targets \
+	check-service-paths check-alertas validate-scaffold
 	@$(GO) vet ./...
 	@echo "checks: OK"
 
