@@ -26,6 +26,9 @@ function CredentialsStep({ onSubmit }: { onSubmit: ReturnType<typeof useAuth>['l
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [tenantSlug, setTenantSlug] = useState('');
+  // La empresa no se pide: el correo la resuelve. Solo hace falta indicarla cuando la misma
+  // direccion existe en dos empresas, que es la excepcion, y entonces se pide a proposito.
+  const [mostrarEmpresa, setMostrarEmpresa] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -69,18 +72,21 @@ function CredentialsStep({ onSubmit }: { onSubmit: ReturnType<typeof useAuth>['l
             required
           />
         </FormField>
-        <FormField
-          label={t('auth.login.tenantSlug')}
-          htmlFor="login-tenant"
-          hint={t('auth.login.tenantSlugHint')}
-        >
-          <Input
-            id="login-tenant"
-            autoComplete="organization"
-            value={tenantSlug}
-            onChange={(e) => setTenantSlug(e.target.value)}
-          />
-        </FormField>
+        {mostrarEmpresa ? (
+          <FormField
+            label={t('auth.login.tenantSlug')}
+            htmlFor="login-tenant"
+            hint={t('auth.login.tenantSlugHint')}
+          >
+            <Input
+              id="login-tenant"
+              autoComplete="organization"
+              value={tenantSlug}
+              onChange={(e) => setTenantSlug(e.target.value)}
+              autoFocus
+            />
+          </FormField>
+        ) : null}
         {error ? (
           <div className="cf-form__error" role="alert">
             {error}
@@ -91,6 +97,11 @@ function CredentialsStep({ onSubmit }: { onSubmit: ReturnType<typeof useAuth>['l
         </Button>
         <div className="cf-auth__links">
           <Link to={paths.forgotPassword}>{t('auth.login.forgot')}</Link>
+          {mostrarEmpresa ? null : (
+            <button type="button" onClick={() => setMostrarEmpresa(true)}>
+              {t('auth.login.tenantToggle')}
+            </button>
+          )}
         </div>
       </form>
     </AuthLayout>

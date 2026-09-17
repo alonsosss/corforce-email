@@ -223,6 +223,22 @@
   font-size: var(--cf-text-sm);
 }
 
+/* El acceso al campo de empresa es un boton (no navega), con el aspecto del enlace vecino. */
+.cf-auth__links button {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--cf-link);
+  font: inherit;
+  text-align: right;
+  cursor: pointer;
+}
+
+.cf-auth__links button:hover {
+  color: var(--cf-link-hover);
+  text-decoration: underline;
+}
+
 /* Matriz de permisos */
 .cf-matrix {
   width: 100%;
