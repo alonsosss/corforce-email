@@ -1,0 +1,13 @@
+[Unit]
+Description=Renovacion del TLS interno de Core Force Mail (Postgres y Redis del perfil autoalojado)
+After=docker.service
+Wants=docker.service
+# Antes del primer despliegue el guion aun no esta en el servidor: no es un fallo.
+ConditionPathExists=/opt/core-force-mail/app/ops/security/internal-tls.sh
+
+[Service]
+Type=oneshot
+# Root: los ficheros llevan el dueno de cada imagen y la clave de la CA es solo de root.
+User=root
+WorkingDirectory=/opt/core-force-mail/app
+ExecStart=/opt/core-force-mail/app/ops/security/internal-tls.sh --renovar --recargar

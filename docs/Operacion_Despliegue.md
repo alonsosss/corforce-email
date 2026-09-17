@@ -24,7 +24,11 @@ largas de cada guardarraíl están en `ops/scaffold/README.md`, `ops/security/se
   que es el versionado; `webmail` exige `WEBMAIL_MASTER_USER=<DOVECOT_MASTER_USER>@platform.local`.
 * Producción (AWS): una cuenta por ambiente (dev, staging, prod). RDS PostgreSQL Multi-AZ
   detrás de PgBouncer, ElastiCache, SES, S3, Secrets Manager. Servidor de aplicación
-  endurecido con `ops/server-template/bootstrap.sh`.
+  endurecido con `ops/server-template/bootstrap.sh`. PgBouncer verifica RDS con
+  `pgbouncer/rds-global-bundle.pem` (bundle público de AWS, versionado).
+* Producción autoalojada: un solo servidor propio, sin servicios gestionados, con el perfil
+  `DEPLOY_PROFILE=selfhosted` (sección 11). Mismos controles que en AWS, dados por
+  contenedores: Postgres y Redis con TLS de una CA interna y un proxy de borde con HTTPS.
 * Redis en tránsito (`pkg/config/redis.go`). El Redis de la plataforma (`REDIS_*`: cupos
   del gateway, freno de `mail-auth`, sesiones del webmail, tasa de `reputation`, caché de
   `access-control`) va cifrado: `REDIS_TLS=true`, con verificación del certificado siempre
@@ -299,8 +303,13 @@ para llamar a la API hace falta ya un superadmin. Después, todo por API: `POST 
   del rol que no gestiona, y el usuario anterior se retira a mano. `make clean-copy` falla
   con cualquier `core-force` que no sea `core-force-mail`.
 * Todo lo que el servidor ejecuta o monta viaja en el rsync de `stage_head_files` desde
-  `git archive` de HEAD: compose, `migrations/`, `ops/security`, `ops/ecr`,
-  `ops/observability`, `ops/maintenance`, `ops/backup`, `pgbouncer`.
+  `git archive` de HEAD, con una sola lista para los tres caminos (`FICHEROS_SERVIDOR` de
+  `scripts/deploy-ecr.sh`): compose (incluido `docker-compose.selfhosted.yml`), `selfhosted/`,
+  `migrations/`, `ops/security`, `ops/ecr`, `ops/observability`, `ops/maintenance`,
+  `ops/backup`, `pgbouncer`.
+* Perfil del servidor: los dos caminos preguntan a `ops/maintenance/perfil-despliegue.sh` (que
+  `release.yml` lleva en base64) los argumentos de compose y la infraestructura propia del
+  perfil; con `DEPLOY_PROFILE=selfhosted` aplican lo de la sección 11.
 * Commits siempre con pathspec (`git commit -- <rutas>`): el índice puede estar compartido
   con otra sesión.
 * `docker-compose.images.yml` es generado (`make gen-compose-images`); CI falla si queda
@@ -365,7 +374,9 @@ el propio binario con `--healthcheck <puerto>`.
 ## 9. Checks antes de dar por terminada una tarea
 
 `make checks` (build, vet, migraciones, acoplamiento, errores mudos, aridad SQL, streams,
-contratos de eventos, secretos, scaffold) y `make clean-copy`. Con docker: `make test`
+contratos de eventos, secretos, scaffold) y `make clean-copy`. Si se toca el perfil autoalojado
+(`docker-compose.selfhosted.yml`, `selfhosted/`, `pgbouncer/`, `ops/security/internal-tls.sh`),
+además `bash ops/scaffold/test-selfhosted-profile.sh` (docker, sección 11). Con docker: `make test`
 (con `-race`) y `make e2e`, que levanta Postgres, NATS y Redis desechables, compila los
 servicios integrados y recorre la plataforma de punta a punta con comprobaciones que
 fallan: un servicio nuevo que otro consume se añade a `ops/e2e/run.sh` en la misma tarea.
@@ -453,3 +464,167 @@ volumen `natsdata`); después, con el stream y el `stream_seq` del registro,
 No se borra ni se recrea un consumidor para repetir un evento (se recrea con `DeliverAll` y vuelve a
 procesar los 7 días de su stream), ni se vacía `EVENTS_DLQ` con `nats stream purge` sin revisar cada
 mensaje.
+
+## 11. Producción autoalojada (`DEPLOY_PROFILE=selfhosted`)
+
+Toda la plataforma en un servidor propio (probado para un VPS Debian 13, 2 vCPU, 3,8 GB de RAM
+y 4 GB de swap), sin RDS, ElastiCache ni balanceador. En `ENVIRONMENT=production` los servicios
+exigen lo que en AWS dan esos servicios gestionados, y el perfil lo da sin relajar nada:
+
+| Control | En AWS | En el perfil |
+|---|---|---|
+| TLS de PgBouncer a Postgres, `verify-full` | Bundle de RDS | CA interna: `DB_UPSTREAM_CA_FILE` (`pgbouncer/entrypoint.sh`) |
+| Postgres solo cifrado | `rds.force_ssl` | `ssl=on`, TLS 1.2 mínimo y `selfhosted/postgres/pg_hba.conf` (`hostssl` con `scram-sha-256`, `hostnossl` rechazado) |
+| Redis con TLS y contraseña | ElastiCache | `redis` sin puerto en claro (`--port 0`, `tls-port 6379`), contraseña por la entrada estándar (`selfhosted/redis/entrypoint.sh`) |
+| Clientes de Redis con TLS verificado | CA pública | `REDIS_TLS=true`, `REDIS_TLS_CA_FILE` y `REDIS_TLS_SERVER_NAME=redis` en todo servicio Go |
+| HTTPS delante del gateway | Balanceador | `edge-proxy` (nginx fijado por digest, `selfhosted/edge`) |
+
+Piezas: `docker-compose.selfhosted.yml` (superposición sobre `docker-compose.yml`; activa
+`postgres-primary` sin el perfil `embedded-db`), `selfhosted/` (pg_hba, arranque de Redis y
+configuración del borde), `ops/security/internal-tls.sh` (CA y certificados),
+`ops/security/systemd/core-force-mail-internal-tls.{service,timer}` (renovación),
+`ops/maintenance/perfil-despliegue.sh` (lo que decide el despliegue) y dos guardarraíles:
+`ops/scaffold/check-selfhosted-profile.sh` (sin docker, sección 11 de `validate.sh`) y
+`ops/scaffold/test-selfhosted-profile.sh` (con docker).
+
+### Clientes de Postgres y su modo TLS
+
+Toda conexión TCP a `postgres-primary` negocia TLS o se rechaza. Comprobado con clientes reales
+contra el perfil (`test-selfhosted-profile.sh` y a mano el 2026-09-17):
+
+* PgBouncer: `verify-full` contra la CA interna; con la IP en vez de `postgres-primary`, falla
+  por el nombre.
+* Servicios Go: van por PgBouncer (sin TLS dentro de la red interna, como en AWS). Sus conexiones
+  directas (`POSTGRES_DIRECT_HOST=postgres-primary`, que fija el perfil para las migraciones)
+  usan `sslmode=prefer` de `pkg/config`: pgx negocia TLS 1.3. `prefer` no verifica el
+  certificado; ver Riesgos.
+* Motores de correo: `MAIL_DB_HOST=postgres`, que el perfil resuelve a PgBouncer también en la
+  red `mail-engines`; Postgres no entra en esa red. Si se apuntaran a `postgres-primary`, su
+  libpq (enlazada con OpenSSL en las imágenes de Postfix, Dovecot y acme) negocia TLS 1.3 por
+  defecto: un mapa `pgsql:` de Postfix y el `psql` de Dovecot y de acme lo hicieron, y con
+  `sslmode=disable` Postgres los rechazó.
+* Guiones del host (`ops/db`, `ops/backup`): `psql` y `pg_dump` con libpq, `prefer` por defecto.
+  Para verificar además el servidor: `PGSSLMODE=verify-full
+  PGSSLROOTCERT=<INTERNAL_TLS_DIR>/publico/ca.crt` y `PGHOST=127.0.0.1` (el certificado lleva
+  `127.0.0.1` y `localhost`).
+
+### Proxy de borde
+
+* Sirve el host de `PUBLIC_BASE_URL` (o `EDGE_PUBLIC_HOST`) en 443 con `cert.pem` y `key.pem` del
+  volumen de acme de `deploy/mail` (`MAIL_SSL_VOLUME`, por defecto `mail_ssl-vol`): el
+  certificado lo emite `acme-mail` por DNS-01 (`ACME_DNS_CHALLENGE=y`, `ACME_DNS_PROVIDER=dns_cf`)
+  con ese host en `ADDITIONAL_SAN`. Vigila el certificado cada `EDGE_CERT_CHECK_INTERVAL` y recarga
+  nginx cuando acme lo renueva.
+* 80 redirige a `https://<host>`; otro nombre en 80 se cierra sin respuesta y en 443 se rechaza
+  el saludo TLS sin presentar certificado.
+* Con `EDGE_REQUIRE_CLOUDFLARE=true` (por defecto) solo atiende conexiones desde los rangos de
+  `selfhosted/edge/cloudflare-ips.txt` (403 al resto), y solo de esas toma la IP del visitante de
+  `CF-Connecting-IP`. Reescribe `X-Real-IP` y `X-Forwarded-For` y borra `CF-Connecting-IP`. El
+  gateway acepta `X-Real-IP` solo desde `EDGE_NETWORK_SUBNET`, la red `edge`, donde no hay más que
+  el borde y el gateway; el borde no entra en la red interna. La lista se contrasta con la de
+  Cloudflare con `ops/security/edge-cloudflare-ips.sh --comprobar` (`--escribir` la actualiza).
+* Cabeceras: pone HSTS (`EDGE_HSTS_MAX_AGE`, con `includeSubDomains`) y quita la versión de nginx.
+  Las de la aplicación (CSP con nonce, `X-Frame-Options`, `nosniff`, `Referrer-Policy`) son del
+  gateway y no se repiten (`docs/arquitectura/CSP-Y-SESION.md`).
+* Límites: `EDGE_MAX_BODY_SIZE=101m`, el mayor envío del webmail (`postfixMessageSizeLimit` más
+  `multipartOverhead`); cubre la importación de `CONTACTS_IMPORT_MAX_ROWS` de `.env.example`
+  (`check-selfhosted-profile.sh` ata los tres). El cuerpo se recibe entero antes de pasarlo al
+  gateway (lee con un plazo de 15 s) y lo que no cabe en memoria va a un tmpfs
+  (`EDGE_BODY_TMPFS_SIZE`), nunca a disco; tiempos de espera alineados con el `WriteTimeout` de
+  120 s del gateway. Contenedor de solo lectura, sin capacidades salvo las cuatro que necesita el
+  maestro, con `EDGE_MEMORY_LIMIT`.
+* Cloudflare admite cuerpos de hasta 100 MB en sus planes Free y Pro: por encima, el límite real
+  de un envío es el suyo, no el del borde.
+
+### Procedimiento en el servidor, en orden
+
+Desde el puesto de trabajo, con el repositorio en el commit a desplegar (`<srv>` es el servidor):
+
+1. Aprovisionar. En `ops/server-template/server.env`: `ENVIRONMENT=production`,
+   `DEPLOY_PROFILE=selfhosted`, `GRUB_CONSOLA_SERIE=auto` (no aplica la consola serie de EC2) y
+   `DEPLOY_PUBKEY` **entre comillas**. Copiar la plantilla junto con lo que genera el TLS y
+   ejecutar:
+
+   ```bash
+   git archive HEAD docker-compose.yml ops/server-template ops/security | \
+     ssh root@<srv> 'rm -rf /tmp/cfm && mkdir /tmp/cfm && tar -x -C /tmp/cfm'
+   scp ops/server-template/server.env root@<srv>:/tmp/cfm/ops/server-template/
+   ssh root@<srv> /tmp/cfm/ops/server-template/bootstrap.sh
+   ```
+
+   `bootstrap.sh` escribe `ENVIRONMENT` y `DEPLOY_PROFILE` en `/opt/core-force-mail/app/.env`,
+   genera el TLS interno (paso 2) y programa `core-force-mail-internal-tls.timer`.
+2. TLS interno (si no lo hizo el paso 1, o para revisarlo):
+   `sudo /tmp/cfm/ops/security/internal-tls.sh` y `sudo /tmp/cfm/ops/security/internal-tls.sh
+   --comprobar`. Crea en `INTERNAL_TLS_DIR` (por defecto `/opt/core-force-mail/tls`) la CA
+   (`ca/ca.key`, 0600 de root, nunca se monta), `publico/ca.crt` y los certificados de
+   `postgres-primary` y `redis` con los SAN de su servicio, su contenedor
+   (`app-<servicio>-1`), `localhost` y `127.0.0.1`, con la clave 0600 del uid y gid que el guion
+   lee de cada imagen fijada (hoy postgres 999:999 y redis 999:1000). Nunca imprime una clave.
+3. `.env` del despliegue: completar `/opt/core-force-mail/app/.env` con la configuración de
+   `.env.example` sin copiarlo encima. Del perfil: `PUBLIC_BASE_URL=https://app.<dominio>`,
+   `EDGE_REQUIRE_CLOUDFLARE=true`, `EDGE_NETWORK_SUBNET` (fuera de `172.30.0.0/16`, el pool de
+   `daemon.json`), `MAIL_SSL_VOLUME` si el proyecto de los motores no se llama `mail`, y
+   `INTERNAL_TLS_DIR` si no es el de por defecto. `REDIS_TLS*`, `DB_UPSTREAM_*` y
+   `POSTGRES_DIRECT_*` los fija el perfil. Secretos: ver Pendientes.
+4. Motores y certificado público: levantar `deploy/mail` (crea la red `mail-engines`, que la
+   plataforma necesita) con `MAIL_DB_HOST=postgres`, `ACME_DNS_CHALLENGE=y`,
+   `ACME_DNS_PROVIDER=dns_cf` y `ADDITIONAL_SAN=app.<dominio>`. `acme-mail` deja primero el
+   certificado provisional de `ssl-example` y espera a la base, que llega con el paso 5; al emitir
+   el definitivo, el borde lo recarga solo. En Cloudflare, `app.<dominio>` con proxy y modo SSL
+   «Full (strict)», y `mail.<dominio>` sin proxy (DNS only).
+5. Primer despliegue, sin AWS (el transporte cae a `save`):
+
+   ```bash
+   DEPLOY_HOST=<srv> DEPLOY_USER=deploy DEPLOY_SSH_KEY=~/.ssh/<llave> \
+     ./scripts/deploy-ecr.sh <todos los servicios>
+   ```
+
+   Tras el rsync, `perfil-despliegue.sh` confirma `selfhosted` y la CA (sin ella se detiene
+   aquí); se levantan y esperan sanos `postgres-primary`, `redis` y `pgbouncer`; se recrean los
+   servicios y se esperan; y al final `edge-proxy`, también esperado. Cada `docker compose` va por
+   `with-secrets.sh` con `-f docker-compose.yml -f docker-compose.selfhosted.yml`. En despliegues
+   siguientes un cambio en `selfhosted/redis` recrea Redis, uno en `selfhosted/edge` recrea el
+   borde y uno en `selfhosted/postgres` recarga `pg_hba` con SIGHUP, sin reiniciar la base.
+6. Renovaciones:
+   * TLS interno: el timer diario ejecuta `internal-tls.sh --renovar --recargar`, que reemite con la
+     misma CA lo que caduca en `INTERNAL_TLS_RENEW_DAYS` (30) y lo aplica sin reiniciar: SIGHUP a
+     Postgres y `CONFIG SET tls-cert-file` a Redis. Estado: `internal-tls.sh --comprobar`. La CA
+     (10 años) no se rota sola: rotarla es crear una nueva, reemitir, y recrear `pgbouncer`,
+     `redis`, `postgres-primary` y todos los servicios Go en la misma ventana.
+   * Certificado público: lo renueva `acme-mail`; el borde lo detecta y recarga nginx.
+   * Rangos de Cloudflare: `ops/security/edge-cloudflare-ips.sh --comprobar` periódicamente.
+
+### Red y cortafuegos
+
+No hay Security Group. UFW solo gobierna el host (SSH); los puertos que publica Docker no pasan
+por UFW. Públicos quedan 80 y 443 (`edge-proxy`, `EDGE_BIND_ADDRESS`) y los de correo de
+`deploy/mail`. Postgres, Redis, NATS, el gateway y los servicios solo en `127.0.0.1`. Si el
+proveedor ofrece cortafuegos externo, limitar 80 y 443 a los rangos de Cloudflare cierra el
+acceso directo también en la red.
+
+### Consumo de memoria
+
+En reposo, medido en la prueba: Postgres 51 MiB, Redis 5 MiB, PgBouncer 2,4 MiB, `edge-proxy`
+11 MiB con 12 trabajadores (en 2 vCPU son 2 y ronda 4 MiB), gateway y access-control 7 MiB cada
+uno. El TLS añade poco: la caché de sesiones del borde reserva 5 MiB compartidos y cada conexión
+TLS de Postgres o Redis unas decenas de KiB. Lo que cuenta en 3,8 GB son los techos: `shared_buffers`
+de 512 MB y `max_connections=200` de Postgres, `maxmemory 512mb` de Redis, el tmpfs de cuerpos del
+borde (hasta `EDGE_BODY_TMPFS_SIZE`, 256 MiB, dentro de `EDGE_MEMORY_LIMIT`, 384 MiB) y los motores
+de correo (ClamAV sola supera 1 GB al cargar firmas). Sumados rozan la RAM: el swap de 4 GB evita
+el OOM, pero con ClamAV cargando la latencia se degrada.
+
+### Riesgos y pendientes
+
+* Secretos: el servidor no tiene Secrets Manager. `with-secrets.sh` sigue siendo el único camino,
+  pero `fetch-secrets.sh` falla sin el CLI y el rol de AWS y `load.sh` recurre al `.env`, que
+  entonces tiene que llevar TODAS las credenciales de `secret-keys.txt` y `secret-keys-db.txt`
+  (0600, del usuario de despliegue). Es un secreto en disco que en AWS no existe; falta decidir el
+  almacén del perfil (por ejemplo `systemd-creds` o un fichero cifrado desbloqueado al arrancar).
+* `sslmode=prefer` de las conexiones directas de `pkg/config` cifra pero no verifica el
+  certificado; en este perfil el camino va por la red interna de Docker del propio servidor.
+  Verificarlo pide soportar `sslrootcert` en `pkg/config`.
+* La clave de la CA vive en el servidor (la necesita la renovación): quien tenga root puede emitir
+  certificados internos, pero también puede leer los datos.
+* `release.yml` aplica el perfil, pero entra por SSM y publica en ECR: en un servidor sin AWS el
+  camino es `scripts/deploy-ecr.sh` con `save`.

@@ -2,8 +2,8 @@
 #
 # Core Force Mail - plantilla de aprovisionamiento de servidores.
 #
-# Convierte una EC2 Ubuntu recien creada en un host de la plataforma, identico en cada
-# ambiente (una cuenta de AWS por ambiente: dev, staging, prod). Es IDEMPOTENTE: puede
+# Convierte una EC2 Ubuntu recien creada (o un servidor propio Ubuntu o Debian, perfil
+# autoalojado) en un host de la plataforma, identico en cada ambiente. Es IDEMPOTENTE: puede
 # ejecutarse varias veces sin romper nada.
 #
 # Que hace:
@@ -11,12 +11,13 @@
 #   - Usuario de despliegue con grupo docker y llave SSH autorizada
 #   - /etc/docker/daemon.json (rotacion de logs, live-restore, ulimits)
 #   - /etc/default/grub.d/99-core-force-mail-recuperacion.cfg (consola serie en GRUB y
-#     espera de 30 s solo tras un arranque fallido)
+#     espera de 30 s solo tras un arranque fallido), solo en EC2 (GRUB_CONSOLA_SERIE)
 #   - Endurecimiento SSH (solo llaves), UFW (solo SSH a nivel host), fail2ban
 #   - Actualizaciones de seguridad automaticas
 #   - Tuning de kernel (sysctl) y swapfile de seguridad
 #   - Zona horaria y estructura de carpetas de despliegue
-#   - ENVIRONMENT (production o staging) en el .env de la plataforma
+#   - ENVIRONMENT (production o staging) y DEPLOY_PROFILE en el .env de la plataforma
+#   - Perfil autoalojado: TLS interno (ops/security/internal-tls.sh) y su renovacion diaria
 #
 # No toca los puertos publicos: esos los gobierna el Security Group de AWS.
 #
@@ -33,6 +34,12 @@ CONFIG_DIR="$SCRIPT_DIR/config"
 # Configuracion (server.env > entorno > defaults)
 # ----------------------------------------------------------------------------
 if [[ -f "$SCRIPT_DIR/server.env" ]]; then
+  # Un valor con espacios sin comillas (DEPLOY_PUBKEY lo es siempre) hace que `source` ejecute su
+  # segunda palabra como orden y aborte con 127 sin decir por que. Se detecta antes, con la causa.
+  if grep -nE "^[[:space:]]*[A-Z_]+=[^\"'[:space:]#][^#]*[[:space:]]+[^[:space:]#]" "$SCRIPT_DIR/server.env" >&2; then
+    printf '\033[1;31m[error]\033[0m %s\n' "server.env: valores con espacios sin comillas (arriba); ponlos entre comillas dobles, p. ej. DEPLOY_PUBKEY=\"ssh-ed25519 AAAA... comentario\"" >&2
+    exit 1
+  fi
   # shellcheck disable=SC1091
   source "$SCRIPT_DIR/server.env"
 fi
@@ -46,6 +53,8 @@ DEPLOY_PATH="${DEPLOY_PATH:-${CORE_ROOT}/app}"
 DEPLOY_PUBKEY="${DEPLOY_PUBKEY:-}"
 SWAP_SIZE="${SWAP_SIZE:-4G}"
 TZ="${TZ:-America/Lima}"
+DEPLOY_PROFILE="${DEPLOY_PROFILE:-}"
+GRUB_CONSOLA_SERIE="${GRUB_CONSOLA_SERIE:-auto}"
 
 log()  { printf '\n\033[1;34m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[advertencia]\033[0m %s\n' "$*" >&2; }
@@ -57,12 +66,23 @@ case "$ENVIRONMENT" in
   production|staging) ;;
   *) die "ENVIRONMENT en server.env debe ser production o staging (valor: '$ENVIRONMENT'); development y test son solo para local" ;;
 esac
+case "$DEPLOY_PROFILE" in
+  ""|aws|selfhosted) ;;
+  *) die "DEPLOY_PROFILE en server.env debe ser aws, selfhosted o vacio (valor: '$DEPLOY_PROFILE')" ;;
+esac
+case "$GRUB_CONSOLA_SERIE" in
+  auto|si|no) ;;
+  *) die "GRUB_CONSOLA_SERIE en server.env debe ser auto, si o no (valor: '$GRUB_CONSOLA_SERIE')" ;;
+esac
 
 [[ "$(id -u)" -eq 0 ]] || die "ejecuta como root (sudo ./bootstrap.sh)"
 [[ -r /etc/os-release ]] || die "no se pudo leer /etc/os-release"
 # shellcheck disable=SC1091
 . /etc/os-release
-[[ "${ID:-}" == "ubuntu" ]] || warn "probado en Ubuntu; ID detectado: ${ID:-desconocido}"
+case "${ID:-}" in
+  ubuntu|debian) ;;
+  *) warn "probado en Ubuntu y Debian; ID detectado: ${ID:-desconocido}" ;;
+esac
 
 export DEBIAN_FRONTEND=noninteractive
 
@@ -94,18 +114,23 @@ fi
 # ----------------------------------------------------------------------------
 if ! command -v docker >/dev/null 2>&1; then
   log "Instalando Docker Engine + Compose V2"
+  # El repositorio de Docker es por distribucion: los paquetes de Ubuntu en Debian (el servidor
+  # autoalojado es Debian 13) instalan contra otra libc y otro systemd.
+  distro="ubuntu"
+  [[ "${ID:-}" == "debian" ]] && distro="debian"
   install -m 0755 -d /etc/apt/keyrings
-  curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+  curl -fsSL "https://download.docker.com/linux/${distro}/gpg" -o /etc/apt/keyrings/docker.asc
   chmod a+r /etc/apt/keyrings/docker.asc
 
   codename="${VERSION_CODENAME:-}"
-  case "$codename" in
-    focal|jammy|noble) : ;;
-    *) warn "codename '$codename' no soportado por el repo Docker; usando 'noble'"; codename="noble" ;;
+  case "$distro:$codename" in
+    ubuntu:focal|ubuntu:jammy|ubuntu:noble|debian:bookworm|debian:trixie) : ;;
+    ubuntu:*) warn "codename '$codename' no soportado por el repo Docker; usando 'noble'"; codename="noble" ;;
+    debian:*) die "Debian '$codename' no soportado por el repo Docker de esta plantilla (bookworm o trixie)" ;;
   esac
 
   arch="$(dpkg --print-architecture)"
-  echo "deb [arch=${arch} signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu ${codename} stable" \
+  echo "deb [arch=${arch} signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/${distro} ${codename} stable" \
     > /etc/apt/sources.list.d/docker.list
   apt-get update -y
   apt-get install -y \
@@ -135,7 +160,7 @@ else
 fi
 
 # ----------------------------------------------------------------------------
-# 4b) GRUB: poder recuperar la maquina si un kernel nuevo no arranca
+# 4b) GRUB: poder recuperar la maquina si un kernel nuevo no arranca (solo EC2)
 # ----------------------------------------------------------------------------
 # La imagen de AWS deja GRUB mudo por el puerto serie y sin ninguna espera, y
 # ademas con GRUB_RECORDFAIL_TIMEOUT=0, que desactiva la red de seguridad de
@@ -150,20 +175,50 @@ fi
 #
 # Requiere ademas la consola serie habilitada EN LA CUENTA:
 #   aws ec2 enable-serial-console-access --region us-east-1
-log "Aplicando GRUB de recuperacion (consola serie y espera tras un arranque fallido)"
-if ! cmp -s "$CONFIG_DIR/99-grub-recuperacion.cfg" /etc/default/grub.d/99-core-force-mail-recuperacion.cfg 2>/dev/null; then
-  install -m 0644 "$CONFIG_DIR/99-grub-recuperacion.cfg" /etc/default/grub.d/99-core-force-mail-recuperacion.cfg
+#
+# Es propio de EC2. En otro proveedor la consola de rescate es la pantalla (VNC en Netcup, por
+# ejemplo): con GRUB_TERMINAL="console serial" el menu se reparte con un puerto serie que nadie
+# mira, y la espera de recordfail no existe en Debian. GRUB_CONSOLA_SERIE decide: auto (por
+# defecto) lo aplica solo si la maquina es EC2, si lo fuerza y no lo retira. Retirarlo tambien
+# converge: un servidor aprovisionado con una version anterior de este guion lo pierde aqui.
+es_ec2() {
+  # Nitro: el fabricante DMI. Xen (generaciones anteriores): el uuid del hipervisor.
+  [[ "$(cat /sys/devices/virtual/dmi/id/sys_vendor 2>/dev/null)" == "Amazon EC2" ]] && return 0
+  [[ "$(head -c 3 /sys/hypervisor/uuid 2>/dev/null)" == "ec2" ]] && return 0
+  return 1
+}
+grub_serie="$GRUB_CONSOLA_SERIE"
+if [[ "$grub_serie" == auto ]]; then
+  if es_ec2; then grub_serie=si; else grub_serie=no; fi
+fi
+grub_drop=/etc/default/grub.d/99-core-force-mail-recuperacion.cfg
+
+# regenerar_grub: update-grub y comprobacion de sintaxis. Un grub.cfg mal formado no falla al
+# escribirse: falla al arrancar, y para entonces la maquina ya no esta.
+regenerar_grub() {
   cp -a /boot/grub/grub.cfg "/boot/grub/grub.cfg.bak.$(date -u +%Y%m%d%H%M%S 2>/dev/null || echo prev)" 2>/dev/null || true
   update-grub
-  # Un grub.cfg mal formado no falla al escribirse: falla al arrancar, y para
-  # entonces la maquina ya no esta. Se comprueba la sintaxis aqui.
   if grub-script-check /boot/grub/grub.cfg; then
     log "grub.cfg regenerado y con sintaxis correcta"
   else
     warn "grub.cfg NO pasa la comprobacion de sintaxis; revisar antes de reiniciar"
   fi
+}
+
+if [[ "$grub_serie" == si ]]; then
+  log "Aplicando GRUB de recuperacion (consola serie y espera tras un arranque fallido)"
+  if ! cmp -s "$CONFIG_DIR/99-grub-recuperacion.cfg" "$grub_drop" 2>/dev/null; then
+    install -m 0644 "$CONFIG_DIR/99-grub-recuperacion.cfg" "$grub_drop"
+    regenerar_grub
+  else
+    log "GRUB de recuperacion sin cambios"
+  fi
+elif [[ -f "$grub_drop" ]]; then
+  log "Retirando el GRUB de consola serie de EC2 (GRUB_CONSOLA_SERIE=$GRUB_CONSOLA_SERIE, maquina no EC2 o excluida)"
+  rm -f "$grub_drop"
+  regenerar_grub
 else
-  log "GRUB de recuperacion sin cambios"
+  log "GRUB sin consola serie (no es EC2 o GRUB_CONSOLA_SERIE=no)"
 fi
 
 # ----------------------------------------------------------------------------
@@ -222,16 +277,23 @@ install -d -o "$DEPLOY_USER" -g "$DEPLOY_USER" "$DEPLOY_PATH"
 # los contenedores, y lo repone si alguien lo cambio; with-secrets.sh se niega a desplegar
 # con otro valor.
 env_app="$DEPLOY_PATH/.env"
-patron_env='^[[:space:]]*(export[[:space:]]+)?ENVIRONMENT[[:space:]]*='
-log "Declarando ENVIRONMENT=$ENVIRONMENT en $env_app"
 [[ -f "$env_app" ]] || install -m 0600 -o "$DEPLOY_USER" -g "$DEPLOY_USER" /dev/null "$env_app"
-if [[ "$(grep -E "$patron_env" "$env_app" || true)" != "ENVIRONMENT=$ENVIRONMENT" ]]; then
-  sed -i -E "/$patron_env/d" "$env_app"
-  if [[ -s "$env_app" && -n "$(tail -c 1 "$env_app")" ]]; then
-    echo >> "$env_app"
+# declarar_en_env <CLAVE> <valor>: deja una sola asignacion exacta de la clave en el .env.
+declarar_en_env() {
+  local patron="^[[:space:]]*(export[[:space:]]+)?$1[[:space:]]*="
+  log "Declarando $1=$2 en $env_app"
+  if [[ "$(grep -E "$patron" "$env_app" || true)" != "$1=$2" ]]; then
+    sed -i -E "/$patron/d" "$env_app"
+    if [[ -s "$env_app" && -n "$(tail -c 1 "$env_app")" ]]; then
+      echo >> "$env_app"
+    fi
+    printf '%s=%s\n' "$1" "$2" >> "$env_app"
   fi
-  printf 'ENVIRONMENT=%s\n' "$ENVIRONMENT" >> "$env_app"
-fi
+}
+declarar_en_env ENVIRONMENT "$ENVIRONMENT"
+# El perfil de despliegue (ops/maintenance/perfil-despliegue.sh). Vacio en server.env: no se toca
+# lo que diga el .env.
+[[ -n "$DEPLOY_PROFILE" ]] && declarar_en_env DEPLOY_PROFILE "$DEPLOY_PROFILE"
 chown "$DEPLOY_USER:$DEPLOY_USER" "$env_app"
 chmod 0600 "$env_app"
 
@@ -365,12 +427,53 @@ elif [[ ! -d "$BACKUP_UNITS_DIR" ]]; then
 fi
 
 # ----------------------------------------------------------------------------
+# 14) Perfil autoalojado: TLS interno y su renovacion
+# ----------------------------------------------------------------------------
+# Sin RDS ni ElastiCache, los certificados de Postgres y Redis los emite una CA interna del
+# servidor (ops/security/internal-tls.sh, idempotente). Se genera aqui si el guion viajo junto a
+# la plantilla (git archive de docker-compose.yml, ops/security y ops/server-template) o ya esta
+# desplegado; el despliegue se niega a continuar sin la CA. La renovacion es un timer diario.
+tls_estado="no aplica (DEPLOY_PROFILE=${DEPLOY_PROFILE:-vacio})"
+perfil_env="$(sed -n -E 's/^[[:space:]]*DEPLOY_PROFILE[[:space:]]*=[[:space:]]*//p' "$env_app" | tail -n 1)"
+if [[ "$perfil_env" == selfhosted ]]; then
+  tls_guion=""
+  for candidato in "$SCRIPT_DIR/../security/internal-tls.sh" "$DEPLOY_PATH/ops/security/internal-tls.sh"; do
+    [[ -f "$candidato" ]] && { tls_guion="$candidato"; break; }
+  done
+  if [[ -n "$tls_guion" ]]; then
+    log "Generando o revisando el TLS interno"
+    # El directorio lo decide el .env del despliegue, que es el que monta el compose.
+    tls_dir="$(sed -n -E 's/^[[:space:]]*INTERNAL_TLS_DIR[[:space:]]*=[[:space:]]*//p' "$env_app" | tail -n 1)"
+    [[ -n "$tls_dir" ]] && export INTERNAL_TLS_DIR="$tls_dir"
+    bash "$tls_guion"
+    tls_estado="$(bash "$tls_guion" --comprobar >/dev/null 2>&1 && echo vigente || echo 'revisar con --comprobar')"
+  else
+    warn "perfil autoalojado sin ops/security/internal-tls.sh a mano: generalo antes del primer despliegue (docs/Operacion_Despliegue.md, 11)"
+    tls_estado="pendiente"
+  fi
+  tls_units=""
+  for candidato in "$SCRIPT_DIR/../security/systemd" "$DEPLOY_PATH/ops/security/systemd"; do
+    [[ -f "$candidato/core-force-mail-internal-tls.timer" ]] && { tls_units="$candidato"; break; }
+  done
+  if [[ -n "$tls_units" ]]; then
+    install -m 0644 "$tls_units/core-force-mail-internal-tls.service" "$tls_units/core-force-mail-internal-tls.timer" /etc/systemd/system/
+    systemctl daemon-reload
+    systemctl enable --now core-force-mail-internal-tls.timer >/dev/null
+  else
+    warn "no se encontraron las unidades de renovacion del TLS interno; vuelve a correr tras el primer despliegue"
+  fi
+fi
+
+# ----------------------------------------------------------------------------
 # Resumen
 # ----------------------------------------------------------------------------
 log "Aprovisionamiento completado"
 cat <<EOF
 
   Entorno          : ENVIRONMENT=$ENVIRONMENT en $DEPLOY_PATH/.env
+  Perfil           : DEPLOY_PROFILE=${perfil_env:-aws (vacio)}
+  GRUB serie       : $grub_serie (GRUB_CONSOLA_SERIE=$GRUB_CONSOLA_SERIE)
+  TLS interno      : $tls_estado
   Rol del servidor : $SERVER_ROLE
   Hostname         : $(hostnamectl --static 2>/dev/null || hostname)
   Docker           : $(docker --version 2>/dev/null)
@@ -383,7 +486,9 @@ cat <<EOF
 
   Siguientes pasos:
     1) Security Group: 22 solo desde la IP de administracion; cada puerto publico, solo
-       desde su origen (80/443 desde el proxy de borde).
+       desde su origen (80/443 desde el proxy de borde). En un servidor propio no hay
+       Security Group: docker-compose.selfhosted.yml publica 80 y 443, y los puertos que
+       publica Docker no pasan por UFW (docs/Operacion_Despliegue.md, 11).
     2) Completa $DEPLOY_PATH/.env con la configuracion de .env.example sin copiarlo
        encima (traeria ENVIRONMENT=development) y publica los secretos en el almacen:
        ops/security/secrets/README.md.

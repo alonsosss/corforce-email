@@ -1,6 +1,7 @@
 # Plantilla de servidores - Core Force Mail
 
-Procedimiento repetible para convertir una EC2 Ubuntu recien creada en un host de la
+Procedimiento repetible para convertir una EC2 Ubuntu recien creada, o un servidor propio
+Ubuntu o Debian (perfil autoalojado, `docs/Operacion_Despliegue.md` 11), en un host de la
 plataforma. Los servidores de cada ambiente (una cuenta de AWS por ambiente: dev, staging,
 prod) quedan **identicos** porque se aprovisionan con el mismo `bootstrap.sh` versionado en
 git.
@@ -12,7 +13,8 @@ secundarios.
 
 | Area | Detalle |
 | --- | --- |
-| Docker | Engine + Compose V2 desde el repo oficial de Docker |
+| Docker | Engine + Compose V2 desde el repo oficial de Docker (el de Ubuntu o el de Debian segun la maquina) |
+| GRUB | Consola serie y espera tras un arranque fallido, solo en EC2 (`GRUB_CONSOLA_SERIE`) |
 | daemon.json | Rotacion de logs (20m x5, comprimida), `live-restore`, ulimits, pools de red |
 | Usuario deploy | Usuario dedicado en grupo `docker`, con llave SSH autorizada |
 | SSH | Solo llaves, sin root, `MaxAuthTries`, timeouts (salvaguarda anti-bloqueo) |
@@ -23,7 +25,8 @@ secundarios.
 | journald | tope de 300 MB (`journald.conf.d/99-core-force-mail.conf`); los logs de servicios van por Docker |
 | Swap | Swapfile de seguridad si el host no tiene swap |
 | Sistema | Zona horaria + hostname |
-| Entorno | `ENVIRONMENT` de `server.env` (`production` o `staging`) en el `.env` de `DEPLOY_PATH` |
+| Entorno | `ENVIRONMENT` de `server.env` (`production` o `staging`) y `DEPLOY_PROFILE` en el `.env` de `DEPLOY_PATH` |
+| TLS interno | Con `DEPLOY_PROFILE=selfhosted`: CA y certificados de Postgres y Redis (`ops/security/internal-tls.sh`) y timer `core-force-mail-internal-tls` |
 | Respaldo | Unidades `core-force-mail-backup*` de `ops/backup/systemd/` |
 
 ## Entorno declarado
@@ -44,6 +47,23 @@ local. Por eso:
 
 Al completar el `.env` con la configuracion de `.env.example` no copies el fichero encima:
 traeria `ENVIRONMENT=development` y el despliegue se detendria con el motivo.
+
+## Servidor propio (perfil autoalojado)
+
+En un servidor que no es de AWS (probado para Debian 13 en Netcup) el procedimiento completo, en
+orden, esta en `docs/Operacion_Despliegue.md`, 11. Lo que cambia en esta plantilla:
+
+- `DEPLOY_PROFILE=selfhosted` en `server.env`: `bootstrap.sh` lo escribe en el `.env`, genera el
+  TLS interno si `ops/security/internal-tls.sh` viajo junto a la plantilla (copiar con
+  `git archive HEAD docker-compose.yml ops/server-template ops/security`) y programa su
+  renovacion.
+- GRUB: el bloque de consola serie es propio de EC2, cuya consola de rescate es el puerto serie.
+  En un proveedor con consola VNC estorba, y la espera de `recordfail` no existe en Debian. Con
+  `GRUB_CONSOLA_SERIE=auto` (por defecto) se aplica solo si la maquina es EC2 (fabricante DMI
+  `Amazon EC2` o uuid de hipervisor `ec2`); `no` lo retira si una version anterior lo instalo,
+  regenerando y comprobando `grub.cfg`; `si` lo fuerza.
+- No hay Security Group: los puertos que publica Docker no pasan por UFW. El perfil publica 80 y
+  443 (proxy de borde); lo demas queda en `127.0.0.1`.
 
 ## Modelo de seguridad de red
 
@@ -81,6 +101,10 @@ cp server.env.example server.env
 nano server.env            # ENVIRONMENT (production o staging), SERVER_ROLE, hostname, DEPLOY_USER...
 sudo ./bootstrap.sh
 ```
+
+`DEPLOY_PUBKEY` va **entre comillas dobles**: una llave publica lleva espacios y `bootstrap.sh`
+carga `server.env` con `source`, que sin comillas ejecutaria la segunda palabra como orden y
+abortaria con codigo 127. `bootstrap.sh` lo detecta antes de cargarlo y dice que linea corregir.
 
 Si no pones `DEPLOY_PUBKEY`, el bootstrap reutiliza la llave del usuario `ubuntu`
 para el usuario de despliegue, de modo que nunca te quedas sin acceso.
@@ -157,7 +181,9 @@ sudo fail2ban-client status sshd
 swapon --show
 sudo sysctl vm.swappiness fs.inotify.max_user_watches
 cat /etc/docker/daemon.json
-sudo grep -E '^ENVIRONMENT=' /opt/core-force-mail/app/.env   # production o staging
+sudo grep -E '^(ENVIRONMENT|DEPLOY_PROFILE)=' /opt/core-force-mail/app/.env   # production o staging; perfil
+ls /etc/default/grub.d/99-core-force-mail-recuperacion.cfg      # solo en EC2
+sudo /opt/core-force-mail/app/ops/security/internal-tls.sh --comprobar   # perfil autoalojado
 systemctl list-timers 'core-force-mail-*'
 ```
 

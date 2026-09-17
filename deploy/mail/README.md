@@ -99,6 +99,12 @@ devuelve `/settings`; renombrarlos no aporta nada y es una fuente de errores.
    `http://<dominio>/.well-known/acme-challenge/` desde el volumen
    `acme-challenge-vol` (montado en acme en `/var/www/acme`). Alternativa:
    `ACME_DNS_CHALLENGE=y` con la configuracion de `acme/load-dns-config.sh`.
+   En la produccion autoalojada (`docs/Operacion_Despliegue.md`, 11) se usa DNS-01
+   (`ACME_DNS_PROVIDER=dns_cf`) y el proxy de borde de la plataforma lee `cert.pem`
+   y `key.pem` de `ssl-vol` (volumen `<proyecto>_ssl-vol`, `MAIL_SSL_VOLUME`): el
+   host publico de la web va en `ADDITIONAL_SAN`. Ahi `MAIL_DB_HOST=postgres` es
+   PgBouncer, que ese perfil une a la red `mail-engines`; Postgres solo acepta TLS
+   y no entra en esa red.
 4. Si `mail-policy` escribe los mapas de `rspamd/custom/` (listas globales), debe
    correr con uid/gid 82, que es el propietario que fija el entrypoint de Rspamd.
 

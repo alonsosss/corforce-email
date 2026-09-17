@@ -51,6 +51,9 @@ deploy/mail/dkim/
 *.key
 !deploy/mail/ssl-example/*.pem
 !deploy/mail/ssl-example/*.key
+# Bundle PUBLICO de CA de RDS: la CA por defecto de PgBouncer (verify-full). Sin esta
+# excepcion no viajaba en el git archive del despliegue y el pooler no podia verificar la base.
+!pgbouncer/rds-global-bundle.pem
 
 # Clones de referencia de la fase 0 (solo mientras dura la copia)
 /ERP/

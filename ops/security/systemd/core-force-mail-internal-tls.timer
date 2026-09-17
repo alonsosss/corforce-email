@@ -1,0 +1,12 @@
+[Unit]
+Description=Renovacion diaria del TLS interno de Core Force Mail
+
+[Timer]
+# Diario: renueva solo lo que caduca dentro del margen (INTERNAL_TLS_RENEW_DAYS, 30 dias), asi
+# que una semana sin ejecutarse no deja caducar nada.
+OnCalendar=*-*-* 09:40:00 UTC
+Persistent=true
+RandomizedDelaySec=600
+
+[Install]
+WantedBy=timers.target

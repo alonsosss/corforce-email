@@ -86,6 +86,11 @@ if ! bash "$ROOT/ops/scaffold/check-deploy-preflight.sh"; then
   FAIL=1
 fi
 
+echo "== 11. Produccion autoalojada: perfil, TLS interno y proxy de borde =="
+if ! bash "$ROOT/ops/scaffold/check-selfhosted-profile.sh"; then
+  FAIL=1
+fi
+
 echo ""
 if [[ $FAIL -ne 0 ]]; then
   echo "VALIDACION: FALLA"; exit 1

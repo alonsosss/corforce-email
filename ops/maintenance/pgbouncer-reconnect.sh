@@ -44,6 +44,8 @@ POSTGRES_USER="${POSTGRES_USER:-mail_admin}"
 APP_DIR="$APP_DIR" . ops/security/secrets/load.sh
 : "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD no esta en el almacen de secretos}"
 
-docker exec -e PGPASSWORD="$POSTGRES_PASSWORD" "$PGB_CONTAINER" \
+# -e PGPASSWORD sin valor: docker lo toma del entorno de este proceso. Con el valor en la linea de
+# ordenes, la contrasena de plataforma quedaba a la vista de cualquiera que listara procesos.
+PGPASSWORD="$POSTGRES_PASSWORD" docker exec -e PGPASSWORD "$PGB_CONTAINER" \
   psql -h 127.0.0.1 -p 5432 -U "$POSTGRES_USER" -d pgbouncer -Atqc "RECONNECT" >/dev/null
 echo ">> pgbouncer: conexiones al servidor renovadas (RECONNECT)"

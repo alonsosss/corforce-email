@@ -39,6 +39,9 @@ en `migrations/cell/canonical/<name>/` en vez de `tenant/`.
 | `eventcontracts/` | Campos del payload por subject; un consumidor no lee lo que su emisor no publica |
 | `gen-events.sh` | Regenera `docs/arquitectura/EVENTS.md`; CI falla si queda atrás |
 | `service-paths.sh` | Mapa ruta -> servicio derivado de `docker-compose.yml`, base de la detección de cambios en el despliegue |
+| `check-pgbouncer-entrypoint.sh` | PgBouncer solo relaja TLS y credenciales en development y test; fuera exige `verify-full`, una CA legible (por defecto `pgbouncer/rds-global-bundle.pem`, que tiene que viajar en git; `DB_UPSTREAM_CA_FILE` la sustituye) y `userlist.txt`; lo corre `validate.sh` |
+| `check-selfhosted-profile.sh` | Perfil autoalojado sin docker: `docker-compose.selfhosted.yml` conserva los parámetros de Postgres y Redis del compose base, Redis sin puerto en claro ni contraseña en la línea de órdenes, `pg_hba.conf` sin TCP en claro, todo servicio Go con `REDIS_TLS` y la CA, montajes de `internal-tls.sh`, cuerpo máximo del borde frente al webmail y la importación de contactos, rangos de Cloudflare, imagen del borde por digest, `perfil-despliegue.sh` ejecutado y los dos despliegues usándolo; lo corre `validate.sh` |
+| `test-selfhosted-profile.sh` | Con docker: levanta el perfil en `production` con certificados de `internal-tls.sh` y prueba con clientes reales `verify-full`, el rechazo de Postgres sin TLS y de Redis en claro, los servicios Go por TLS, el borde (HTTPS, SNI, 80 a 443, HSTS, 413, solo Cloudflare e IP real) y la renovación sin reinicio (`docs/Operacion_Despliegue.md` 11) |
 
 Las listas de excepciones (`*-allowlist.txt`) nacen vacías: lo que hoy pasa es la línea
 base, y nada nuevo entra sin justificarse en la revisión.

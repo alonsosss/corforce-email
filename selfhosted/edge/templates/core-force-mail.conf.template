@@ -1,0 +1,120 @@
+# Proxy de borde de la produccion autoalojada: termina HTTPS de la web publica y la entrega al
+# gateway. Plantilla de selfhosted/edge/entrypoint.d/20-plantilla.sh; las ${EDGE_*} se sustituyen
+# al arrancar y las demas variables son de nginx.
+#
+# Que es de aqui y que no. El gateway pone las cabeceras de seguridad de la aplicacion (CSP con
+# nonce, X-Frame-Options, nosniff, Referrer-Policy, Permissions-Policy: pkg/middleware,
+# docs/arquitectura/CSP-Y-SESION.md) y borra las de sus servicios; repetirlas aqui daria dos
+# politicas y el navegador aplicaria la interseccion. Aqui solo va lo que el gateway no puede
+# saber: que la conexion fue HTTPS (HSTS) y quien es el visitante (CF-Connecting-IP, y solo si la
+# conexion viene de Cloudflare: 00-cloudflare.conf).
+
+server_tokens off;
+
+# Cuerpo maximo: el del mayor envio legitimo que atraviesa el gateway, el del webmail
+# (postfixMessageSizeLimit + multipartOverhead de services/webmail, 101 MiB).
+# ops/scaffold/check-selfhosted-profile.sh lo ata a esos valores.
+client_max_body_size ${EDGE_MAX_BODY_SIZE};
+# El cuerpo se recibe entero antes de pasarlo (el gateway corta a los 15 s de lectura, y un cliente
+# lento no debe ocuparle una conexion). Lo que no cabe en memoria va a /var/cache/nginx, un tmpfs:
+# un adjunto sin analizar por ClamAV nunca toca el disco. Las respuestas no se vuelcan a fichero.
+client_body_buffer_size 128k;
+proxy_request_buffering on;
+proxy_max_temp_file_size 0;
+client_header_timeout 10s;
+client_body_timeout 60s;
+send_timeout 120s;
+
+ssl_protocols TLSv1.2 TLSv1.3;
+ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305;
+ssl_prefer_server_ciphers off;
+ssl_session_cache shared:edge_tls:5m;
+ssl_session_timeout 1d;
+ssl_session_tickets off;
+
+# El gateway se recrea en cada despliegue y cambia de IP: se resuelve por el DNS de Docker en cada
+# peticion (valid) en vez de una vez al arrancar, que dejaria el borde apuntando a la IP vieja.
+resolver 127.0.0.11 valid=10s ipv6=off;
+resolver_timeout 5s;
+
+map $http_upgrade $edge_connection_upgrade {
+  default upgrade;
+  '' close;
+}
+
+# 1 cuando se exige Cloudflare y la conexion no viene de sus rangos.
+map "${EDGE_REQUIRE_CLOUDFLARE_FLAG}:$edge_desde_cloudflare" $edge_rechazar {
+  default 0;
+  "1:0" 1;
+}
+
+# Chequeo de salud del contenedor, solo en su bucle local.
+server {
+  listen 127.0.0.1:8081;
+  access_log off;
+  location = /healthz {
+    return 204;
+  }
+  location / {
+    return 404;
+  }
+}
+
+# HTTP: solo redirige a HTTPS el host publico; cualquier otro nombre se cierra sin respuesta.
+server {
+  listen 80 default_server;
+  server_name _;
+  return 444;
+}
+server {
+  listen 80;
+  server_name ${EDGE_PUBLIC_HOST};
+  location / {
+    return 301 https://${EDGE_PUBLIC_HOST}$request_uri;
+  }
+}
+
+# HTTPS con un nombre (SNI) que no es el publico: el saludo TLS se rechaza sin presentar
+# certificado, de modo que un barrido por IP no descubre para que dominio es este servidor.
+server {
+  listen 443 ssl default_server;
+  server_name _;
+  ssl_reject_handshake on;
+}
+
+server {
+  listen 443 ssl;
+  http2 on;
+  server_name ${EDGE_PUBLIC_HOST};
+
+  ssl_certificate ${EDGE_TLS_CERT_FILE};
+  ssl_certificate_key ${EDGE_TLS_KEY_FILE};
+
+  add_header Strict-Transport-Security "max-age=${EDGE_HSTS_MAX_AGE}; includeSubDomains" always;
+
+  if ($edge_rechazar) {
+    return 403;
+  }
+
+  location / {
+    set $edge_upstream ${EDGE_UPSTREAM};
+    proxy_pass http://$edge_upstream;
+    proxy_http_version 1.1;
+    proxy_connect_timeout 5s;
+    # El gateway cierra a los 120 s de escritura (WriteTimeout de services/gateway/main.go).
+    proxy_send_timeout 120s;
+    proxy_read_timeout 120s;
+
+    # Se ESCRIBEN, no se anaden: lo que mande el cliente no llega al gateway. X-Real-IP es la IP
+    # del visitante que el gateway acepta solo desde TRUSTED_PROXY_CIDRS (la red edge).
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $remote_addr;
+    proxy_set_header X-Forwarded-Proto https;
+    proxy_set_header X-Forwarded-Host $host;
+    proxy_set_header CF-Connecting-IP "";
+    proxy_set_header True-Client-IP "";
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection $edge_connection_upgrade;
+  }
+}

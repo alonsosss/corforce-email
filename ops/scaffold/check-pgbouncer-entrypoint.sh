@@ -7,25 +7,44 @@
 #   - fuera de development|test: verify-full, userlist.txt obligatorio y legible, y cualquier
 #     modo mas debil impide arrancar;
 #   - en development|test: disable por defecto y, sin userlist.txt, uno efimero con el rol de
-#     plataforma fuera del directorio montado desde el repositorio.
+#     plataforma fuera del directorio montado desde el repositorio;
+#   - la CA de verify-full: por defecto el bundle de RDS que viaja junto a la plantilla (y que el
+#     repositorio versiona), DB_UPSTREAM_CA_FILE la sustituye (produccion autoalojada) y, con
+#     verificacion, una CA ausente, que no es PEM o con una ruta no admitida impide arrancar.
 # Basta volver a fijar verify-full en la plantilla para que `make dev` deje de conectar, o un
 # valor por defecto equivocado para que produccion vaya a la base sin TLS.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 ENTRY="$ROOT/pgbouncer/entrypoint.sh"
-TEMPLATE="$ROOT/pgbouncer/pgbouncer.ini.template"
+BUNDLE="$ROOT/pgbouncer/rds-global-bundle.pem"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
+# La plantilla y el bundle se copian juntos, como estan en /etc/pgbouncer del contenedor: la CA por
+# defecto se busca junto a la plantilla, y la ruta del repositorio puede llevar espacios, que el
+# entrypoint no admite en una ruta de CA.
+mkdir -p "$TMP/etc"
+TEMPLATE="$TMP/etc/pgbouncer.ini.template"
+cp "$ROOT/pgbouncer/pgbouncer.ini.template" "$TEMPLATE"
+[[ -f "$BUNDLE" ]] && cp "$BUNDLE" "$TMP/etc/rds-global-bundle.pem"
 mkdir -p "$TMP/bin"
 printf '#!/bin/sh\nexit 0\n' >"$TMP/bin/pgbouncer"
 chmod +x "$TMP/bin/pgbouncer"
 FALLOS=0
 mal() { echo "  FALLA: $*" >&2; FALLOS=1; }
 
-for marca in __DB_UPSTREAM_SSLMODE__ __AUTH_FILE__; do
+for marca in __DB_UPSTREAM_SSLMODE__ __AUTH_FILE__ __DB_UPSTREAM_CA_FILE__; do
   grep -q "$marca" "$TEMPLATE" || mal "la plantilla no usa $marca: el entorno ya no decide"
 done
+
+# El bundle de RDS es la CA por defecto: tiene que existir, ser PEM y viajar en el git archive del
+# despliegue (*.pem esta ignorado salvo esta excepcion).
+if [[ ! -s "$BUNDLE" ]] || ! grep -q 'BEGIN CERTIFICATE' "$BUNDLE"; then
+  mal "falta pgbouncer/rds-global-bundle.pem o no es PEM: verify-full contra RDS no verificaria nada"
+elif git -C "$ROOT" rev-parse --git-dir >/dev/null 2>&1 && git -C "$ROOT" check-ignore -q "$BUNDLE"; then
+  mal "pgbouncer/rds-global-bundle.pem esta ignorado por git: no viajaria al servidor"
+fi
+printf -- '-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n' >"$TMP/ca-interna.pem"
 
 # preparar <caso> [userlist]: directorio limpio del caso, con userlist.txt si se pide.
 preparar() {
@@ -55,6 +74,35 @@ correr prod ENVIRONMENT=production
 arranca "produccion con userlist" prod
 [[ "$(valor server_tls_sslmode prod)" == verify-full ]] || mal "produccion: TLS $(valor server_tls_sslmode prod), se esperaba verify-full"
 [[ "$(valor auth_file prod)" == "$TMP/prod/userlist.txt" ]] || mal "produccion: no usa el userlist.txt montado"
+[[ "$(valor server_tls_ca_file prod)" == "$TMP/etc/rds-global-bundle.pem" ]] ||
+  mal "produccion: CA $(valor server_tls_ca_file prod), se esperaba el bundle de RDS junto a la plantilla"
+
+preparar autoalojado userlist
+correr autoalojado ENVIRONMENT=production DB_UPSTREAM_CA_FILE="$TMP/ca-interna.pem"
+arranca "produccion con CA interna" autoalojado
+[[ "$(valor server_tls_ca_file autoalojado)" == "$TMP/ca-interna.pem" ]] || mal "produccion: no usa DB_UPSTREAM_CA_FILE"
+[[ "$(valor server_tls_sslmode autoalojado)" == verify-full ]] || mal "produccion con CA interna: se esperaba verify-full"
+
+preparar ca-ausente userlist
+correr ca-ausente ENVIRONMENT=production DB_UPSTREAM_CA_FILE="$TMP/no-existe.pem"
+no_arranca "produccion con una CA que no existe" ca-ausente
+grep -q 'DB_UPSTREAM_CA_FILE' "$TMP/ca-ausente/salida" || mal "produccion con CA ausente: el mensaje no nombra la causa"
+
+printf 'no es un certificado\n' >"$TMP/no-pem.txt"
+preparar ca-no-pem userlist
+correr ca-no-pem ENVIRONMENT=production DB_UPSTREAM_CA_FILE="$TMP/no-pem.txt"
+no_arranca "produccion con una CA que no es PEM" ca-no-pem
+
+preparar ca-relativa userlist
+correr ca-relativa ENVIRONMENT=production DB_UPSTREAM_CA_FILE="ca-interna.pem"
+no_arranca "CA con ruta relativa" ca-relativa
+
+# Un & en la ruta: sed lo sustituiria por el texto buscado y la plantilla apuntaria a otra CA sin
+# ningun error. El fichero existe y es PEM: solo lo para la comprobacion de la ruta.
+cp "$TMP/ca-interna.pem" "$TMP/ca&x.pem"
+preparar ca-inyeccion userlist
+correr ca-inyeccion ENVIRONMENT=production DB_UPSTREAM_CA_FILE="$TMP/ca&x.pem"
+no_arranca "CA con caracteres que alteran la plantilla" ca-inyeccion
 
 preparar sin-entorno userlist
 correr sin-entorno
@@ -80,6 +128,10 @@ preparar dev
 correr dev ENVIRONMENT=development POSTGRES_PASSWORD='clave"con-comillas'
 arranca "desarrollo sin userlist.txt" dev
 [[ "$(valor server_tls_sslmode dev)" == disable ]] || mal "desarrollo: TLS $(valor server_tls_sslmode dev), se esperaba disable"
+
+preparar dev-sin-ca
+correr dev-sin-ca ENVIRONMENT=development POSTGRES_PASSWORD=x DB_UPSTREAM_CA_FILE="$TMP/no-existe.pem"
+arranca "desarrollo sin TLS y sin CA" dev-sin-ca
 [[ "$(valor auth_file dev)" == "$TMP/dev/local.txt" ]] || mal "desarrollo: no usa el userlist efimero"
 [[ "$(cat "$TMP/dev/local.txt" 2>/dev/null)" == '"mail_admin" "clave""con-comillas"' ]] || mal "desarrollo: userlist efimero mal formado (comillas sin doblar)"
 [[ "$(stat -c %a "$TMP/dev/local.txt" 2>/dev/null)" == 600 ]] || mal "desarrollo: el userlist efimero no es 0600"
@@ -121,4 +173,4 @@ if [[ $FALLOS -ne 0 ]]; then
   echo "check-pgbouncer-entrypoint: FALLA" >&2
   exit 1
 fi
-echo "  OK: PgBouncer exige verify-full y userlist.txt fuera de development|test, y en ellos arranca sin los dos."
+echo "  OK: PgBouncer exige verify-full, una CA legible y userlist.txt fuera de development|test, y en ellos arranca sin los tres."

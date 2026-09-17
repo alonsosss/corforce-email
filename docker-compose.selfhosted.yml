@@ -1,0 +1,262 @@
+# compose-base: docker-compose.yml
+#
+# Perfil de PRODUCCION AUTOALOJADA: la plataforma entera en un servidor propio, sin RDS, sin
+# ElastiCache y sin balanceador. Da con contenedores los controles que en AWS dan esos servicios
+# gestionados, sin relajar ninguno de los que exige ENVIRONMENT=production:
+#   - el Postgres del contenedor (el de embedded-db, aqui siempre activo) con TLS 1.2 minimo y
+#     toda conexion TCP cifrada (pg_hba);
+#   - PgBouncer hacia Postgres con verify-full contra la CA interna;
+#   - Redis solo por TLS y con contrasena, y los servicios Go con REDIS_TLS=true y esa CA;
+#   - un proxy de borde que termina HTTPS de la web publica delante del gateway.
+#
+# Se activa declarando DEPLOY_PROFILE=selfhosted en el .env del servidor: los despliegues
+# (scripts/deploy-ecr.sh y release.yml) toman los argumentos de compose de
+# ops/maintenance/perfil-despliegue.sh. A mano, siempre por el envoltorio de secretos:
+#   ops/security/secrets/with-secrets.sh docker compose -f docker-compose.yml \
+#     -f docker-compose.selfhosted.yml up -d <servicios>
+#
+# Requisitos previos: el TLS interno en INTERNAL_TLS_DIR (ops/security/internal-tls.sh) y el
+# volumen de certificados de acme de deploy/mail. Orden completo en docs/Operacion_Despliegue.md,
+# seccion 11. Los puntos de montaje /run/core-force-mail/tls/* los usa tambien internal-tls.sh y
+# ops/scaffold/check-selfhosted-profile.sh comprueba que coinciden.
+
+x-internal-ca: &internal-ca
+  - ${INTERNAL_TLS_DIR:-/opt/core-force-mail/tls}/publico:/run/core-force-mail/tls/publico:ro
+
+# Lo que cambia en todo servicio Go. REDIS_TLS* pisan lo que diga el .env: en este perfil no hay
+# Redis en claro. POSTGRES_DIRECT_*: las migraciones van a Postgres sin pasar por PgBouncer (sus
+# advisory locks de sesion no sobreviven al modo transaction), y ahi negocian TLS.
+x-go-service-env: &go-service-env
+  REDIS_TLS: "true"
+  REDIS_TLS_CA_FILE: /run/core-force-mail/tls/publico/ca.crt
+  REDIS_TLS_SERVER_NAME: redis
+  POSTGRES_DIRECT_HOST: postgres-primary
+  POSTGRES_DIRECT_PORT: "5432"
+
+services:
+  postgres-primary:
+    # En este perfil la base es siempre la del contenedor: sin el perfil embedded-db que la deja
+    # fuera en AWS (y PgBouncer puede esperar a que este sana).
+    profiles: !reset []
+    # docker-compose.yml fija ya los parametros de memoria y planificador: se repiten tal cual
+    # (command no se fusiona) y se anade el TLS. check-selfhosted-profile.sh falla si divergen.
+    command:
+      - postgres
+      - -c
+      - max_connections=200
+      - -c
+      - shared_buffers=512MB
+      - -c
+      - work_mem=16MB
+      - -c
+      - maintenance_work_mem=128MB
+      - -c
+      - checkpoint_completion_target=0.9
+      - -c
+      - random_page_cost=1.1
+      - -c
+      - ssl=on
+      - -c
+      - ssl_cert_file=/run/core-force-mail/tls/postgres/server.crt
+      - -c
+      - ssl_key_file=/run/core-force-mail/tls/postgres/server.key
+      - -c
+      - ssl_min_protocol_version=TLSv1.2
+      - -c
+      - password_encryption=scram-sha-256
+      - -c
+      - hba_file=/etc/core-force-mail/postgres/pg_hba.conf
+    volumes:
+      - ${INTERNAL_TLS_DIR:-/opt/core-force-mail/tls}/postgres:/run/core-force-mail/tls/postgres:ro
+      - ./selfhosted/postgres:/etc/core-force-mail/postgres:ro
+
+  pgbouncer:
+    environment:
+      DB_UPSTREAM_HOST: postgres-primary
+      DB_UPSTREAM_PORT: "5432"
+      DB_UPSTREAM_SSLMODE: verify-full
+      DB_UPSTREAM_CA_FILE: /run/core-force-mail/tls/publico/ca.crt
+    volumes: *internal-ca
+    depends_on:
+      postgres-primary:
+        condition: service_healthy
+    networks:
+      # Los motores de correo (deploy/mail) leen el directorio de la celda por PgBouncer
+      # (MAIL_DB_HOST=postgres), como los servicios: Postgres no entra en la red de los motores,
+      # donde corren los analizadores de contenido hostil (rspamd, clamd, olefy).
+      mail-engines:
+        aliases:
+          - postgres
+
+  redis:
+    # Sin puerto en claro (--port 0): el 6379 es TLS. La contrasena entra por la entrada estandar
+    # (selfhosted/redis/entrypoint.sh), no por argumentos. Los parametros de memoria son los de
+    # docker-compose.yml; check-selfhosted-profile.sh falla si divergen.
+    entrypoint: ["/etc/core-force-mail/redis/entrypoint.sh"]
+    command:
+      - --appendonly
+      - "yes"
+      - --maxmemory
+      - 512mb
+      - --maxmemory-policy
+      - allkeys-lru
+      - --hz
+      - "20"
+      - --port
+      - "0"
+      - --tls-port
+      - "6379"
+      - --tls-cert-file
+      - /run/core-force-mail/tls/redis/server.crt
+      - --tls-key-file
+      - /run/core-force-mail/tls/redis/server.key
+      - --tls-ca-cert-file
+      - /run/core-force-mail/tls/publico/ca.crt
+      - --tls-auth-clients
+      - "no"
+      - --tls-protocols
+      - TLSv1.2 TLSv1.3
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+    volumes:
+      - ${INTERNAL_TLS_DIR:-/opt/core-force-mail/tls}/redis:/run/core-force-mail/tls/redis:ro
+      - ${INTERNAL_TLS_DIR:-/opt/core-force-mail/tls}/publico:/run/core-force-mail/tls/publico:ro
+      - ./selfhosted/redis:/etc/core-force-mail/redis:ro
+    healthcheck:
+      # REDISCLI_AUTH y no -a: la contrasena no aparece en la lista de procesos.
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$$REDIS_PASSWORD\" redis-cli --tls --cacert /run/core-force-mail/tls/publico/ca.crt -h 127.0.0.1 -p 6379 ping | grep -q PONG"]
+
+  gateway:
+    environment:
+      <<: *go-service-env
+      # El gateway acepta X-Real-IP solo de la red edge, donde no hay mas que el proxy de borde.
+      TRUSTED_PROXY_CIDRS: ${EDGE_NETWORK_SUBNET:-172.31.255.0/28}
+    volumes: *internal-ca
+    networks:
+      edge: {}
+
+  identity:
+    environment: *go-service-env
+    volumes: *internal-ca
+  access-control:
+    environment: *go-service-env
+    volumes: *internal-ca
+  organization:
+    environment: *go-service-env
+    volumes: *internal-ca
+  audit:
+    environment: *go-service-env
+    volumes: *internal-ca
+  scheduler:
+    environment: *go-service-env
+    volumes: *internal-ca
+  mail-directory:
+    environment: *go-service-env
+    volumes: *internal-ca
+  mail-auth:
+    environment: *go-service-env
+    volumes: *internal-ca
+  mail-security:
+    environment: *go-service-env
+    volumes: *internal-ca
+  webmail:
+    environment: *go-service-env
+    volumes: *internal-ca
+  domain-service:
+    environment: *go-service-env
+    volumes: *internal-ca
+  transactional:
+    environment: *go-service-env
+    volumes: *internal-ca
+  suppression:
+    environment: *go-service-env
+    volumes: *internal-ca
+  templates:
+    environment: *go-service-env
+    volumes: *internal-ca
+  contacts:
+    environment: *go-service-env
+    volumes: *internal-ca
+  billing:
+    environment: *go-service-env
+    volumes: *internal-ca
+  reputation:
+    environment: *go-service-env
+    volumes: *internal-ca
+  campaigns:
+    environment: *go-service-env
+    volumes: *internal-ca
+  automations:
+    environment: *go-service-env
+    volumes: *internal-ca
+  analytics:
+    environment: *go-service-env
+    volumes: *internal-ca
+
+  edge-proxy:
+    # Proxy de borde: HTTPS de la web publica con el certificado que emite acme (volumen ssl de
+    # deploy/mail), 80 redirige a 443, y al gateway por la red edge. Configuracion en
+    # selfhosted/edge. Fijada por digest: esta en el camino de toda peticion de internet.
+    image: nginx:1.30.5-alpine@sha256:25820c39dba41369486df729ad6697de2fab631ca809e0503e1d1e0c73d9a232
+    init: true
+    read_only: true
+    cap_drop: [ALL]
+    # El maestro arranca como root para leer la clave de acme (0600 de root) y abrir 80 y 443, y
+    # baja los trabajadores al usuario nginx.
+    cap_add: [CHOWN, SETGID, SETUID, NET_BIND_SERVICE]
+    environment:
+      TZ: ${TZ:-America/Lima}
+      # Host publico de la web: el de PUBLIC_BASE_URL salvo EDGE_PUBLIC_HOST.
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
+      EDGE_PUBLIC_HOST: ${EDGE_PUBLIC_HOST:-}
+      EDGE_UPSTREAM: gateway:${GATEWAY_PORT:-8080}
+      EDGE_TLS_CERT_FILE: ${EDGE_TLS_CERT_FILE:-/etc/ssl/mail/cert.pem}
+      EDGE_TLS_KEY_FILE: ${EDGE_TLS_KEY_FILE:-/etc/ssl/mail/key.pem}
+      EDGE_MAX_BODY_SIZE: ${EDGE_MAX_BODY_SIZE:-101m}
+      EDGE_HSTS_MAX_AGE: ${EDGE_HSTS_MAX_AGE:-31536000}
+      EDGE_REQUIRE_CLOUDFLARE: ${EDGE_REQUIRE_CLOUDFLARE:-true}
+      EDGE_CERT_CHECK_INTERVAL: ${EDGE_CERT_CHECK_INTERVAL:-3600}
+    ports:
+      - "${EDGE_BIND_ADDRESS:-0.0.0.0}:${EDGE_HTTP_PORT:-80}:80"
+      - "${EDGE_BIND_ADDRESS:-0.0.0.0}:${EDGE_HTTPS_PORT:-443}:443"
+    volumes:
+      - ./selfhosted/edge:/etc/core-force-mail/edge:ro
+      - ./selfhosted/edge/entrypoint.d:/docker-entrypoint.d:ro
+      - mail-ssl:/etc/ssl/mail:ro
+    tmpfs:
+      - /etc/nginx/conf.d:size=1m
+      - /run:size=1m
+      - /tmp:size=1m
+      # Cuerpos de peticion en curso que no caben en memoria (client_body_temp_path): en RAM y
+      # nunca en disco. Cuenta dentro del limite de memoria del contenedor.
+      - /var/cache/nginx:size=${EDGE_BODY_TMPFS_SIZE:-256m}
+    mem_limit: ${EDGE_MEMORY_LIMIT:-384m}
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8081/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    depends_on:
+      gateway:
+        condition: service_started
+    restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    networks:
+      - edge
+
+volumes:
+  # Certificados publicos de acme (deploy/mail/docker-compose.mail.yml, volumen ssl-vol del
+  # proyecto de los motores).
+  mail-ssl:
+    external: true
+    name: ${MAIL_SSL_VOLUME:-mail_ssl-vol}
+
+networks:
+  # Solo el proxy de borde y el gateway. Subred fija: es la que el gateway declara de confianza
+  # (TRUSTED_PROXY_CIDRS). Fuera del pool de redes de Docker del servidor
+  # (ops/server-template/config/daemon.json, 172.30.0.0/16) para no chocar con una red nueva.
+  edge:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: ${EDGE_NETWORK_SUBNET:-172.31.255.0/28}

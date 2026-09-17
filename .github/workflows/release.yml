@@ -238,10 +238,11 @@ jobs:
           TAG: ${{ needs.build-push.outputs.tag }}
           SVCS: ${{ needs.build-push.outputs.services }}
         run: |
-          # Este flujo no sincroniza ops/: los dos guiones viajan dentro del propio script remoto, en
+          # Este flujo no sincroniza ops/: los guiones viajan dentro del propio script remoto, en
           # base64 para que ningun \$ se expanda por el camino, y de .env.example solo los nombres.
           CLAVES_ENV_B64=$(base64 -w0 ops/maintenance/claves-env.sh)
           ESPERAR_SANOS_B64=$(base64 -w0 ops/maintenance/esperar-sanos.sh)
+          PERFIL_B64=$(base64 -w0 ops/maintenance/perfil-despliegue.sh)
           CLAVES_B64=$(sed -n -E 's/^([A-Z][A-Z0-9_]*)=.*/\1/p' .env.example | base64 -w0)
           ops/aws/ssm-exec.sh <<REMOTO
           set -euo pipefail
@@ -258,12 +259,23 @@ jobs:
           T=\$(mktemp -d)
           echo '$CLAVES_ENV_B64' | base64 -d > "\$T/claves-env.sh"
           echo '$ESPERAR_SANOS_B64' | base64 -d > "\$T/esperar-sanos.sh"
+          echo '$PERFIL_B64' | base64 -d > "\$T/perfil-despliegue.sh"
+          # Perfil que declara el .env (DEPLOY_PROFILE): con selfhosted, cada compose lleva
+          # docker-compose.selfhosted.yml y Postgres, Redis y PgBouncer se levantan antes que los
+          # servicios, y el proxy de borde despues. Un perfil no valido detiene aqui el despliegue.
+          ARGS=\$(bash "\$T/perfil-despliegue.sh" --env .env --compose)
+          INFRA=\$(bash "\$T/perfil-despliegue.sh" --env .env --infra)
+          PREVIOS=\$(echo "\$INFRA" | tr ' ' '\n' | grep -vx edge-proxy | tr '\n' ' ' || true)
           # Sin userlist.txt un pooler con el entrypoint actual no arranca. --write existe en cualquier
           # copia del guion que haya en el servidor; con fichero no se toca.
           [ -s pgbouncer/userlist.txt ] || ops/security/secrets/with-secrets.sh ops/db/pgbouncer-userlist.sh --write
           echo '$CLAVES_B64' | base64 -d | bash "\$T/claves-env.sh" .env
-          ops/security/secrets/with-secrets.sh docker compose -f docker-compose.yml -f docker-compose.images.yml pull -q $SVCS
-          ops/security/secrets/with-secrets.sh docker compose -f docker-compose.yml -f docker-compose.images.yml up -d --no-deps $SVCS
+          ops/security/secrets/with-secrets.sh docker compose \$ARGS -f docker-compose.images.yml pull -q $SVCS
+          if [ -n "\${PREVIOS// /}" ]; then
+            ops/security/secrets/with-secrets.sh docker compose \$ARGS up -d \$PREVIOS
+            bash "\$T/esperar-sanos.sh" --proyecto app \$PREVIOS
+          fi
+          ops/security/secrets/with-secrets.sh docker compose \$ARGS -f docker-compose.images.yml up -d --no-deps $SVCS
           echo $TAG > .deployed-tag
           # Un pull que no trajo nada o un up que no recreo dejan el despliegue "correcto"
           # con codigo viejo dentro, y eso ya ha pasado aqui. Se comprueba contenedor a
@@ -279,6 +291,10 @@ jobs:
           # Imagen correcta no es arranque correcto: un servicio que no arranca por configuracion
           # queda reiniciandose con el tag nuevo. Se espera a que arranque o se falla con la causa.
           bash "\$T/esperar-sanos.sh" --proyecto app $SVCS
+          if echo " \$INFRA " | grep -q ' edge-proxy '; then
+            ops/security/secrets/with-secrets.sh docker compose \$ARGS up -d --no-deps edge-proxy
+            bash "\$T/esperar-sanos.sh" --proyecto app edge-proxy
+          fi
           rm -rf "\$T"
           REMOTO
 

@@ -103,6 +103,76 @@ stage_head_files() {
   git archive HEAD -- "$@" | tar -x -C "$STAGE_DIR"
 }
 
+# Lo que viaja al servidor, UNA lista para los tres caminos (solo ficheros, ecr y save). Cuando
+# divergen, un fichero llega o no segun el transporte que se usara ese dia, que es de las cosas
+# mas dificiles de diagnosticar. docker-compose.selfhosted.yml y selfhosted/ son del perfil de
+# produccion autoalojada: en un servidor de AWS viajan y no se usan.
+FICHEROS_SERVIDOR=(docker-compose.yml docker-compose.images.yml docker-compose.observability.yml
+  docker-compose.selfhosted.yml selfhosted migrations ops/db ops/security ops/ecr ops/observability
+  ops/maintenance ops/backup pgbouncer)
+
+# ── perfil de despliegue ─────────────────────────────────────────────────────
+# El .env del servidor declara DEPLOY_PROFILE (ops/maintenance/perfil-despliegue.sh): con
+# selfhosted, cada compose lleva docker-compose.selfhosted.yml y el propio despliegue levanta
+# Postgres, Redis, PgBouncer y el proxy de borde, que en AWS son servicios gestionados. Se lee
+# despues del rsync, que es lo que trae el guion a un servidor nuevo.
+COMPOSE_ARGS=""
+INFRA=()
+TAG_DESPLEGADO=""
+leer_perfil() {
+  COMPOSE_ARGS="$(remote "ops/maintenance/perfil-despliegue.sh --compose")" || {
+    echo "!! el perfil de despliegue del servidor no es valido (detalle arriba)" >&2
+    exit 1
+  }
+  read -r -a INFRA <<<"$(remote "ops/maintenance/perfil-despliegue.sh --infra")"
+  [[ ${#INFRA[@]} -gt 0 ]] && echo ">> perfil autoalojado: $COMPOSE_ARGS | infraestructura: ${INFRA[*]}"
+  return 0
+}
+
+# cambio_desplegado <rutas>: cierto si cambiaron desde el commit que corre el servidor (o si no
+# se sabe cual es). Los ficheros montados como directorio llegan con el rsync, pero nginx y el
+# arranque de Redis solo los leen al crear el contenedor, y Compose no ve cambios de contenido.
+cambio_desplegado() {
+  [[ -z "$TAG_DESPLEGADO" ]] && return 0
+  git rev-parse -q --verify "$TAG_DESPLEGADO^{commit}" >/dev/null || return 0
+  ! git diff --quiet "$TAG_DESPLEGADO" HEAD -- "$@"
+}
+
+en_infra() { [[ " ${INFRA[*]} " == *" $1 "* ]]; }
+
+# Infraestructura del perfil ANTES de recrear los servicios: sin base, pooler ni Redis no arranca
+# ninguno. `up -d` solo recrea lo que cambio en compose; un pg_hba nuevo se aplica con SIGHUP (sin
+# cortar conexiones) y un arranque de Redis nuevo obliga a recrearlo.
+aplicar_infra() {
+  local previos=() s
+  for s in "${INFRA[@]}"; do [[ "$s" != edge-proxy ]] && previos+=("$s"); done
+  [[ ${#previos[@]} -eq 0 ]] && return 0
+  remote "ops/security/secrets/with-secrets.sh docker compose $COMPOSE_ARGS up -d ${previos[*]}"
+  if en_infra redis && cambio_desplegado selfhosted/redis; then
+    remote "ops/security/secrets/with-secrets.sh docker compose $COMPOSE_ARGS up -d --no-deps --force-recreate redis"
+  fi
+  if en_infra postgres-primary && cambio_desplegado selfhosted/postgres; then
+    remote "docker kill -s HUP \$(docker ps -q --filter label=com.docker.compose.project=app --filter label=com.docker.compose.service=postgres-primary)" >/dev/null
+    echo ">> postgres-primary: pg_hba recargado"
+  fi
+  remote "ops/maintenance/esperar-sanos.sh --proyecto app ${previos[*]}" || {
+    echo "!! la infraestructura del perfil no arranco (detalle arriba)" >&2
+    exit 1
+  }
+}
+
+# El proxy de borde DESPUES del gateway, del que depende.
+aplicar_borde() {
+  en_infra edge-proxy || return 0
+  local forzar=""
+  cambio_desplegado selfhosted/edge && forzar="--force-recreate"
+  remote "ops/security/secrets/with-secrets.sh docker compose $COMPOSE_ARGS up -d --no-deps $forzar edge-proxy"
+  remote "ops/maintenance/esperar-sanos.sh --proyecto app edge-proxy" || {
+    echo "!! el proxy de borde no arranco (detalle arriba)" >&2
+    exit 1
+  }
+}
+
 # Los Dockerfile de los servicios Go usan "RUN --mount=type=cache" para reutilizar el
 # cache de modulos y de compilacion. Sin BuildKit, Docker cae al constructor clasico y el
 # build muere a media compilacion con un mensaje que no explica que falta. Se comprueba
@@ -257,18 +327,20 @@ make -s check-compose-images
 # nada lo delatara: el despliegue decia "nada que desplegar" y el fichero nuevo -una clave
 # declarada en el almacen de secretos, por ejemplo- no llegaba nunca.
 if [[ "${SOLO_FICHEROS:-0}" == "1" ]]; then
-  if git diff --quiet "$(remote 'cat .deployed-tag 2>/dev/null' || echo HEAD)" HEAD -- \
-      docker-compose.yml docker-compose.images.yml docker-compose.observability.yml \
-      migrations ops/db ops/security ops/ecr ops/observability ops/maintenance ops/backup pgbouncer 2>/dev/null; then
+  if git diff --quiet "$(remote 'cat .deployed-tag 2>/dev/null' || echo HEAD)" HEAD -- "${FICHEROS_SERVIDOR[@]}" 2>/dev/null; then
     echo "nada que desplegar"; exit 0
   fi
   echo ">> tag $TAG | sin imagenes que reconstruir; se sincronizan los ficheros del servidor"
   adquirir_candado
   CANDADO_TOMADO=1
   guardia_retroceso || exit 1
-  stage_head_files docker-compose.yml docker-compose.images.yml docker-compose.observability.yml migrations ops/db ops/security ops/ecr ops/observability ops/maintenance ops/backup pgbouncer
+  TAG_DESPLEGADO="$(remote 'cat .deployed-tag 2>/dev/null' || true)"
+  stage_head_files "${FICHEROS_SERVIDOR[@]}"
   rsync -a -e "ssh -o IdentitiesOnly=yes -i $SSH_KEY" "$STAGE_DIR"/ "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/"
   recargar_prometheus
+  leer_perfil
+  aplicar_infra
+  aplicar_borde
   remote "echo $TAG > .deployed-tag"
   echo ">> DEPLOY $TAG COMPLETO (solo ficheros)"
   exit 0
@@ -351,10 +423,12 @@ if [[ "$TRANSPORT" == "ecr" ]]; then
   adquirir_candado
   CANDADO_TOMADO=1
   guardia_retroceso || exit 1
-  stage_head_files docker-compose.yml docker-compose.images.yml docker-compose.observability.yml migrations ops/db ops/security ops/ecr ops/observability ops/maintenance ops/backup pgbouncer
+  TAG_DESPLEGADO="$(remote 'cat .deployed-tag 2>/dev/null' || true)"
+  stage_head_files "${FICHEROS_SERVIDOR[@]}"
   rsync -a -e "ssh -o IdentitiesOnly=yes -i $SSH_KEY" "$STAGE_DIR"/ "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/"
   recargar_prometheus
   preparar_servidor
+  leer_perfil
   # El login de docker contra ECR caduca a las 12 h. El servidor tiene su rol
   # IAM, pero si nadie renueva la sesion el pull falla con un 403 opaco que
   # parece un problema de permisos y no de caducidad. Se renueva en cada
@@ -369,9 +443,10 @@ if [[ "$TRANSPORT" == "ecr" ]]; then
   ECR_LOGUEADO=1
 
   # El pull va entero: solo trae bytes y no compite por CPU con lo que esta sirviendo.
-  remote "export DEPLOY_TAG=$TAG && ops/security/secrets/with-secrets.sh docker compose -f docker-compose.yml -f docker-compose.images.yml pull -q ${SVCS[*]}"
+  remote "export DEPLOY_TAG=$TAG && ops/security/secrets/with-secrets.sh docker compose $COMPOSE_ARGS -f docker-compose.images.yml pull -q ${SVCS[*]}"
+  aplicar_infra
   # La recreacion, en lotes: es la que arranca procesos y dispara la CPU.
-  por_lotes_remoto "recrear" "export DEPLOY_TAG=$TAG && ops/security/secrets/with-secrets.sh docker compose -f docker-compose.yml -f docker-compose.images.yml up -d --no-deps"
+  por_lotes_remoto "recrear" "export DEPLOY_TAG=$TAG && ops/security/secrets/with-secrets.sh docker compose $COMPOSE_ARGS -f docker-compose.images.yml up -d --no-deps"
 
   # El contenedor tiene que estar corriendo LA imagen recien construida. Un pull
   # que no trajo nada, un compose que reutilizo la anterior o un up que no
@@ -393,6 +468,7 @@ if [[ "$TRANSPORT" == "ecr" ]]; then
     esac
   done
   esperar_sanos
+  aplicar_borde
 else
   # fallback sin AWS local: save | ssh load, luego up normal (imagen local del server)
   COMPOSE=(docker compose)
@@ -402,14 +478,16 @@ else
   guardia_retroceso || exit 1
   echo ">> build local OK"
   docker save $(printf 'app-%s:latest ' "${SVCS[@]}") | gzip | "${SSH[@]}" 'gunzip | docker load'
-  # La MISMA lista que el camino de ECR. Cuando divergen, un fichero llega o no llega segun
-  # el transporte que se usara ese dia, que es de las cosas mas dificiles de diagnosticar.
-  stage_head_files docker-compose.yml docker-compose.images.yml docker-compose.observability.yml migrations ops/db ops/security ops/ecr ops/observability ops/maintenance ops/backup pgbouncer
+  TAG_DESPLEGADO="$(remote 'cat .deployed-tag 2>/dev/null' || true)"
+  stage_head_files "${FICHEROS_SERVIDOR[@]}"
   rsync -a -e "ssh -o IdentitiesOnly=yes -i $SSH_KEY" "$STAGE_DIR"/ "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/"
   recargar_prometheus
   preparar_servidor
-  por_lotes_remoto "recrear" "ops/security/secrets/with-secrets.sh docker compose up -d --no-deps"
+  leer_perfil
+  aplicar_infra
+  por_lotes_remoto "recrear" "ops/security/secrets/with-secrets.sh docker compose $COMPOSE_ARGS up -d --no-deps"
   esperar_sanos
+  aplicar_borde
 fi
 
 # Las migraciones de tenant corren al arrancar organization. Si alguna cambio el TIPO de
