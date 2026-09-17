@@ -2,11 +2,16 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/alonsosss/corforce-email/pkg/auth"
 	"github.com/alonsosss/corforce-email/pkg/middleware"
 	"github.com/alonsosss/corforce-email/pkg/tenantcell"
 	"github.com/google/uuid"
@@ -35,6 +40,9 @@ func setSettingsEnv(t *testing.T, environment, token string) {
 		"DOMAIN_SWEEP_CONCURRENCY":    "",
 		"MAIL_DKIM_ROTATION_GRACE":    "",
 		"DOMAIN_CHECK_RETENTION":      "",
+		cloudflareAPIURLEnv:           "",
+		stepUpModeEnv:                 "",
+		"JWT_PUBLIC_KEYS":             "",
 	} {
 		t.Setenv(key, value)
 	}
@@ -227,4 +235,113 @@ func TestLoadSettingsCeldas(t *testing.T) {
 	if got := strings.Join(st.securityTargets.Cells(), ","); got != "pe-02,pe-03" {
 		t.Errorf("celdas de mail-security: %s", got)
 	}
+}
+
+// La API de Cloudflare es https://api.cloudflare.com salvo que una prueba la cambie, con la regla
+// comun de URLs; fuera de desarrollo y pruebas solo por https, porque por ahi viaja el token.
+func TestLoadSettingsAPIDeCloudflare(t *testing.T) {
+	for nombre, c := range map[string]struct {
+		environment, value, want, err string
+	}{
+		"por defecto":                    {"staging", "", "https://api.cloudflare.com", ""},
+		"falso de pruebas en desarrollo": {"development", "http://127.0.0.1:28066", "http://127.0.0.1:28066", ""},
+		"https propio en produccion":     {"production", "https://cf-proxy.interno:8443", "https://cf-proxy.interno:8443", ""},
+		"http en produccion":             {"production", "http://127.0.0.1:28066", "", cloudflareAPIURLEnv},
+		"con ruta":                       {"development", "http://127.0.0.1:28066/client/v4", "", cloudflareAPIURLEnv},
+		"con credenciales":               {"development", "https://u:p@api.cloudflare.com", "", cloudflareAPIURLEnv},
+		"con consulta":                   {"development", "https://api.cloudflare.com?x=1", "", cloudflareAPIURLEnv},
+		"otro esquema":                   {"development", "ftp://api.cloudflare.com", "", cloudflareAPIURLEnv},
+	} {
+		setSettingsEnv(t, c.environment, "gateway-token-0123456789")
+		t.Setenv(cloudflareAPIURLEnv, c.value)
+		st, err := loadSettings(zap.NewNop())
+		if c.err != "" {
+			if err == nil || !strings.Contains(err.Error(), c.err) {
+				t.Errorf("%s: se esperaba un error que nombre %s: %v", nombre, c.err, err)
+			}
+			continue
+		}
+		if err != nil || st.cloudflareURL != c.want {
+			t.Errorf("%s: %q %v", nombre, st.cloudflareURL, err)
+		}
+	}
+}
+
+// Con STEP_UP_MODE=enforce conectar un proveedor DNS exige un step-up que se verifica con las claves
+// publicas de identity: sin ellas no arranca.
+func TestLoadSettingsStepUp(t *testing.T) {
+	setSettingsEnv(t, "staging", "gateway-token-0123456789")
+	t.Setenv(stepUpModeEnv, "enforce")
+	if _, err := loadSettings(zap.NewNop()); err == nil || !strings.Contains(err.Error(), stepUpModeEnv) {
+		t.Fatalf("enforce sin claves publicas: %v", err)
+	}
+
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := auth.EncodePublicKey(pub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("JWT_PUBLIC_KEYS", "k1:"+encoded)
+	st, err := loadSettings(zap.NewNop())
+	if err != nil {
+		t.Fatal(err)
+	}
+	signer, err := auth.NewSigner("k1", priv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	verifier, _ := auth.NewVerifier(mustKeySet(t, "k1:"+encoded))
+	tokens := auth.NewTokenService(signer, verifier, time.Minute, time.Hour)
+	user := uuid.NewString()
+	stepUp, err := tokens.GenerateStepUp(user, uuid.NewString())
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := middleware.InjectFromGateway(st.stepUp(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})))
+	for nombre, c := range map[string]struct {
+		header string
+		want   int
+	}{"sin step-up": {"", http.StatusForbidden}, "de otro usuario": {"", http.StatusForbidden}, "valido": {stepUp, http.StatusNoContent}} {
+		req := httptest.NewRequest(http.MethodPost, "/", nil)
+		req.Header.Set("X-User-ID", user)
+		if nombre == "de otro usuario" {
+			req.Header.Set("X-User-ID", uuid.NewString())
+			c.header = stepUp
+		}
+		if c.header != "" {
+			req.Header.Set("X-Step-Up", c.header)
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != c.want {
+			t.Errorf("%s: %d", nombre, rec.Code)
+		}
+	}
+
+	t.Setenv(stepUpModeEnv, "")
+	t.Setenv("JWT_PUBLIC_KEYS", "")
+	st, err = loadSettings(zap.NewNop())
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	st.stepUp(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) })).
+		ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/", nil))
+	if rec.Code != http.StatusNoContent {
+		t.Errorf("sin enforce no se exige: %d", rec.Code)
+	}
+}
+
+func mustKeySet(t *testing.T, spec string) *auth.KeySet {
+	t.Helper()
+	ks, err := auth.ParseKeySet(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ks
 }

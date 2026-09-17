@@ -34,3 +34,36 @@ var (
 	// ErrInvalidRevocationReason: el motivo de una revocacion es obligatorio y texto plano.
 	ErrInvalidRevocationReason = errors.New("reason es obligatorio, sin caracteres de control y de 500 caracteres como mucho")
 )
+
+// Publicacion automatica del DNS en el proveedor de la empresa. Ningun error lleva el token ni el
+// mensaje del proveedor, que puede repetir datos de la peticion.
+var (
+	ErrUnsupportedDNSProvider  = errors.New("proveedor DNS no admitido")
+	ErrInvalidDNSMode          = errors.New("dns_mode debe ser manual o el nombre de un proveedor DNS admitido")
+	ErrInvalidDNSProviderToken = errors.New("el token de API no tiene un formato valido")
+	ErrInvalidRecordKind       = errors.New("replace solo admite tipos de registro del dominio")
+	// ErrDNSProviderNotConnected: la empresa no tiene conectado el proveedor.
+	ErrDNSProviderNotConnected = errors.New("la empresa no tiene conectado este proveedor DNS")
+	// ErrDNSModeManual: el dominio publica su DNS a mano; se publica solo en modo automatico.
+	ErrDNSModeManual = errors.New("el dominio publica su DNS a mano; cambie a publicacion automatica antes de publicar")
+	// ErrDNSProviderTokenInvalid: el proveedor no acepta el token (inexistente, caducado, revocado
+	// o no activo).
+	ErrDNSProviderTokenInvalid = errors.New("el proveedor DNS no acepta el token: no existe, caduco o no esta activo")
+	// ErrDNSProviderPermissionDenied: el token es valido pero no tiene permiso para lo pedido.
+	ErrDNSProviderPermissionDenied = errors.New("el token no tiene permiso para leer las zonas o editar sus registros DNS")
+	// ErrDNSProviderNoZones: el token no ve ninguna zona; no sirve para publicar nada.
+	ErrDNSProviderNoZones = errors.New("el token no ve ninguna zona DNS")
+	// ErrDNSZoneNotFound: ninguna zona visible es la del dominio ni una de la que sea subdominio.
+	ErrDNSZoneNotFound = errors.New("el token no ve la zona DNS del dominio")
+	// ErrDNSProviderRateLimited: el proveedor limita las peticiones; se reintenta mas tarde.
+	ErrDNSProviderRateLimited = errors.New("el proveedor DNS limita las peticiones; reintente en unos minutos")
+	// ErrDNSProviderUnavailable: el proveedor no respondio o respondio con un error suyo.
+	ErrDNSProviderUnavailable = errors.New("el proveedor DNS no esta disponible; reintente")
+	// ErrDNSProviderRejected: el proveedor rechazo la peticion por su contenido.
+	ErrDNSProviderRejected = errors.New("el proveedor DNS rechazo el registro")
+	// ErrDNSRecordExists: el proveedor ya tiene un registro identico (otra publicacion llego antes).
+	ErrDNSRecordExists = errors.New("el proveedor DNS ya tiene ese registro")
+	// ErrDNSRecordOutsideZone: un registro no pertenece a la zona elegida. No debe ocurrir: se
+	// comprueba antes de cada escritura para no escribir jamas fuera de la zona del dominio.
+	ErrDNSRecordOutsideZone = errors.New("el registro no pertenece a la zona del dominio")
+)

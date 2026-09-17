@@ -99,6 +99,13 @@ export const PERMISSIONS = {
     verify: [MODULES.domains, 'domains', 'verify'],
     rotateDkim: [MODULES.domains, 'domains', 'rotate_dkim'],
     revokeDkim: [MODULES.domains, 'domains', 'revoke_dkim'],
+    publishDns: [MODULES.domains, 'domains', 'publish_dns'],
+  },
+  // Conexion de la empresa con su proveedor DNS (032_domain_service_dns_providers.sql).
+  dnsProviders: {
+    read: [MODULES.domains, 'dns_providers', 'read'],
+    connect: [MODULES.domains, 'dns_providers', 'connect'],
+    disconnect: [MODULES.domains, 'dns_providers', 'disconnect'],
   },
   aliasDomains: crud(MODULES.domains, 'alias_domains'),
 

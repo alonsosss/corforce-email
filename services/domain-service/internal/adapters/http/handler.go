@@ -17,8 +17,9 @@ import (
 // Permisos que exige cada operacion (modulo domains, recurso domains). El gateway ya
 // gateo el modulo; aqui va la accion concreta, tercera capa.
 const (
-	permModule   = "domains"
-	permResource = "domains"
+	permModule           = "domains"
+	permResource         = "domains"
+	permProviderResource = "dns_providers"
 )
 
 // Authorizer es la tercera capa de control de acceso (pkg/authz.Checker).
@@ -33,15 +34,29 @@ const maxBodyBytes = 4 * 1024
 type Handler struct {
 	uc    *app.UseCase
 	authz Authorizer
+	// stepUp exige reconfirmar la identidad (middleware.RequireStepUp) para guardar una credencial
+	// de terceros; nil no exige nada.
+	stepUp func(http.Handler) http.Handler
 }
 
-func NewHandler(uc *app.UseCase, authz Authorizer) *Handler {
-	return &Handler{uc: uc, authz: authz}
+func NewHandler(uc *app.UseCase, authz Authorizer, stepUp func(http.Handler) http.Handler) *Handler {
+	if stepUp == nil {
+		stepUp = func(next http.Handler) http.Handler { return next }
+	}
+	return &Handler{uc: uc, authz: authz, stepUp: stepUp}
 }
 
 func (h *Handler) Routes() http.Handler {
 	r := chi.NewRouter()
 	r.Route("/api/v1/domains", func(r chi.Router) {
+		// Conexion de la empresa con su proveedor DNS. Todas las escrituras van por POST para que el
+		// gateway no exija update o delete del modulo a quien solo tiene estos permisos. El permiso va
+		// antes que el step-up: no se pide reconfirmar la identidad a quien no puede conectar.
+		r.Route("/dns-providers/{provider}", func(r chi.Router) {
+			r.With(h.requireProvider("read")).Get("/", h.DNSProviderStatus)
+			r.With(h.requireProvider("connect"), h.stepUp).Post("/connect", h.ConnectDNSProvider)
+			r.With(h.requireProvider("disconnect")).Post("/disconnect", h.DisconnectDNSProvider)
+		})
 		r.With(h.require("read")).Get("/", h.List)
 		r.With(h.require("read")).Get("/{id}", h.Get)
 		r.With(h.require("create")).Post("/", h.Create)
@@ -52,12 +67,18 @@ func (h *Handler) Routes() http.Handler {
 		// Revocar corta la firma hasta que el cliente publique el TXT nuevo: accion aparte de la
 		// rotacion programada (030_domain_service_dkim_revoke.sql).
 		r.With(h.require("revoke_dkim")).Post("/{id}/revoke-dkim", h.RevokeDKIM)
+		r.With(h.require("publish_dns")).Post("/{id}/dns-mode", h.SetDNSMode)
+		r.With(h.require("publish_dns")).Post("/{id}/publish-dns", h.PublishDNS)
 	})
 	return r
 }
 
 func (h *Handler) require(action string) func(http.Handler) http.Handler {
 	return h.authz.RequirePermission(permModule, permResource, action)
+}
+
+func (h *Handler) requireProvider(action string) func(http.Handler) http.Handler {
+	return h.authz.RequirePermission(permModule, permProviderResource, action)
 }
 
 func tenantFromRequest(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
@@ -108,6 +129,8 @@ func writeError(w http.ResponseWriter, err error) {
 		response.ErrValidation(w, err.Error())
 	case errors.Is(err, domain.ErrIntegrationUnavailable):
 		response.Err(w, http.StatusServiceUnavailable, "INTEGRATION_UNAVAILABLE", domain.ErrIntegrationUnavailable.Error())
+	case dnsErrorCode(err) != "":
+		writeDNSError(w, err)
 	default:
 		response.Unexpected(w, err)
 	}
@@ -301,6 +324,9 @@ func (h *Handler) RotateDKIM(w http.ResponseWriter, r *http.Request) {
 	out := h.domainResponse(res.Domain)
 	out["dns_record"] = res.Record
 	out["grace_until"] = res.GraceUntil
+	if res.DNS != nil {
+		out["dns_automation"] = automationResponse(res.DNS)
+	}
 	response.JSON(w, http.StatusOK, out)
 }
 
@@ -353,6 +379,9 @@ func (h *Handler) RevokeDKIM(w http.ResponseWriter, r *http.Request) {
 	out["revocation"] = rotationResponse(res.Rotation)
 	out["engines_retired"] = res.EnginesRetired
 	out["integration_errors"] = nilSafe(res.IntegrationErrors)
+	if res.DNS != nil {
+		out["dns_automation"] = automationResponse(res.DNS)
+	}
 	response.JSON(w, http.StatusOK, out)
 }
 
@@ -379,6 +408,8 @@ func (h *Handler) domainResponse(d *domain.Domain) map[string]interface{} {
 		"dkim_previous_until":     h.uc.PreviousDKIMRetireAfter(d),
 		"dkim_revocation_pending": d.DKIMRevocationPending,
 		"dmarc_policy":            string(d.DMARCPolicy),
+		"dns_mode":                dnsMode(d),
+		"dns_published_at":        d.DNSPublishedAt,
 		"created_at":              d.CreatedAt,
 		"updated_at":              d.UpdatedAt,
 	}

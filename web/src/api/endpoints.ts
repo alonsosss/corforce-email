@@ -102,6 +102,13 @@ export const endpoints = {
     verify: (id: string) => `${API_PREFIX}/domains/${seg(id)}/verify`,
     rotateDkim: (id: string) => `${API_PREFIX}/domains/${seg(id)}/rotate-dkim`,
     revokeDkim: (id: string) => `${API_PREFIX}/domains/${seg(id)}/revoke-dkim`,
+    dnsMode: (id: string) => `${API_PREFIX}/domains/${seg(id)}/dns-mode`,
+    publishDns: (id: string) => `${API_PREFIX}/domains/${seg(id)}/publish-dns`,
+    dnsProvider: (provider: string) => `${API_PREFIX}/domains/dns-providers/${seg(provider)}`,
+    dnsProviderConnect: (provider: string) =>
+      `${API_PREFIX}/domains/dns-providers/${seg(provider)}/connect`,
+    dnsProviderDisconnect: (provider: string) =>
+      `${API_PREFIX}/domains/dns-providers/${seg(provider)}/disconnect`,
   },
   mailDirectory: {
     meta: `${API_PREFIX}/mail-directory/meta`,

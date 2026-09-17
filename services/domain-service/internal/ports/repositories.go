@@ -131,3 +131,48 @@ type KeyEvents interface {
 	DKIMRotated(ctx context.Context, d *domain.Domain, rotation *domain.DKIMRotation) error
 	DKIMRevoked(ctx context.Context, d *domain.Domain, rotation *domain.DKIMRotation) error
 }
+
+// DNSProviderRepository guarda la conexion de la empresa con su proveedor DNS y el modo de
+// publicacion de cada dominio, en la base de la empresa.
+type DNSProviderRepository interface {
+	// GetDNSProvider devuelve domain.ErrDNSProviderNotConnected si la empresa no lo tiene.
+	GetDNSProvider(ctx context.Context, tenantID uuid.UUID, provider domain.DNSProvider) (*domain.DNSProviderConnection, error)
+	// SaveDNSProvider crea la conexion o reemplaza la que habia (token, zonas, quien y cuando).
+	SaveDNSProvider(ctx context.Context, c *domain.DNSProviderConnection) error
+	// UpdateDNSProviderZones anota lo que el token veia en una validacion posterior al alta.
+	UpdateDNSProviderZones(ctx context.Context, c *domain.DNSProviderConnection) error
+	// DeleteDNSProvider borra la conexion con su token; false si no habia.
+	DeleteDNSProvider(ctx context.Context, tenantID uuid.UUID, provider domain.DNSProvider) (bool, error)
+	// ResetDNSMode devuelve a manual los dominios de la empresa en ese modo y cuenta cuantos.
+	ResetDNSMode(ctx context.Context, tenantID uuid.UUID, mode domain.DNSMode) (int64, error)
+	SetDNSMode(ctx context.Context, tenantID, id uuid.UUID, mode domain.DNSMode) error
+	MarkDNSPublished(ctx context.Context, tenantID, id uuid.UUID, at time.Time) error
+	// Transact corre fn en una transaccion de la base de la empresa (o en la del contexto).
+	Transact(ctx context.Context, fn func(ctx context.Context) error) error
+}
+
+// DNSProviderAPI es la API de un proveedor DNS. Cada llamada lleva el token de la empresa; ningun
+// error lo contiene ni repite el mensaje del proveedor: se traducen a los errores de domain
+// (ErrDNSProviderTokenInvalid, ErrDNSProviderPermissionDenied, ErrDNSZoneNotFound,
+// ErrDNSProviderRateLimited, ErrDNSProviderUnavailable, ErrDNSProviderRejected, ErrDNSRecordExists).
+type DNSProviderAPI interface {
+	// VerifyToken comprueba que el token existe y esta activo.
+	VerifyToken(ctx context.Context, token domain.APIToken) error
+	// ListZones devuelve todas las zonas que el token ve.
+	ListZones(ctx context.Context, token domain.APIToken) ([]domain.DNSZone, error)
+	// ListRecords devuelve los registros de la zona con ese tipo y nombre exactos.
+	ListRecords(ctx context.Context, token domain.APIToken, zone domain.DNSZone, recordType, name string) ([]domain.ProviderRecord, error)
+	CreateRecord(ctx context.Context, token domain.APIToken, zone domain.DNSZone, rec domain.ProviderRecord) error
+	// UpdateRecord sobrescribe el registro rec.ID con rec.
+	UpdateRecord(ctx context.Context, token domain.APIToken, zone domain.DNSZone, rec domain.ProviderRecord) error
+	// DeleteRecord no falla si el registro ya no existe.
+	DeleteRecord(ctx context.Context, token domain.APIToken, zone domain.DNSZone, recordID string) error
+}
+
+// DNSEvents encola los hechos de la publicacion automatica en la outbox de la base de la empresa,
+// en la transaccion del cambio. Nunca llevan el token.
+type DNSEvents interface {
+	DNSProviderConnected(ctx context.Context, c *domain.DNSProviderConnection) error
+	DNSProviderDisconnected(ctx context.Context, tenantID uuid.UUID, provider domain.DNSProvider, actorID uuid.UUID, domainsReset int64, at time.Time) error
+	DNSPublished(ctx context.Context, d *domain.Domain, p *domain.DNSPublication, actorID uuid.UUID) error
+}

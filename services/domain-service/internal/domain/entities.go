@@ -110,6 +110,12 @@ type Domain struct {
 	// desactivacion se confirma; el barrido la repite mientras siga marcada.
 	DirectoryDeactivationPending bool
 
+	// DNSMode: manual (el cliente publica) o el proveedor en el que publica la plataforma.
+	// DNSPublishedAt: la ultima publicacion automatica completa. Solo los cambian SetDNSMode y
+	// MarkDNSPublished del repositorio, nunca Update.
+	DNSMode        DNSMode
+	DNSPublishedAt *time.Time
+
 	DMARCPolicy DMARCPolicy
 	CreatedAt   time.Time
 	UpdatedAt   time.Time

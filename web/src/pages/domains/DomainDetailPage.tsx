@@ -43,6 +43,7 @@ import { IconEdit, IconKey, IconRefresh, IconShieldOff, IconTrash } from '@/desi
 import { formatDateTime } from '@/lib/format';
 import { t, tEnum } from '@/i18n';
 import { paths } from '@/paths';
+import { DnsAutomationNotice, DnsPublishingCard } from './DnsPublishingCard';
 import { DnsRecordsTable } from './DnsRecordsTable';
 import { domainStatusTone, verifyOutcomeTone } from './domainStatus';
 
@@ -218,6 +219,17 @@ export default function DomainDetailPage() {
         />
       </Card>
 
+      <DnsPublishingCard
+        domain={d}
+        onDomainChanged={(next) =>
+          detail.setData((current) => (current ? { ...current, ...next } : current))
+        }
+        onPublished={(result) => {
+          detail.setData((current) => (current ? { ...current, ...result } : current));
+          setVerification(result.outcome ? { ...result, outcome: result.outcome } : null);
+        }}
+      />
+
       <Card flush title={t('domains.records.title')} description={t('domains.records.description')}>
         <DnsRecordsTable records={d.dns_records} checks={d.dns_checks} />
       </Card>
@@ -275,6 +287,9 @@ export default function DomainDetailPage() {
           footer={<Button onClick={() => setRotation(null)}>{t('common.close')}</Button>}
         >
           <div className="cf-stack" style={{ gap: 'var(--cf-space-4)' }}>
+            {rotation.dns_automation ? (
+              <DnsAutomationNotice automation={rotation.dns_automation} />
+            ) : null}
             <Alert tone="warning">
               {t('domains.rotation.description', { date: formatDateTime(rotation.grace_until) })}
             </Alert>
@@ -415,6 +430,9 @@ function DkimRevokeForm({
 }
 
 function RevocationResult({ result, onClose }: { result: RevokeDkimResult; onClose: () => void }) {
+  // En modo automatico la plataforma ya retiro sus TXT revocados y publico el nuevo: solo quedan a
+  // cargo del cliente los TXT suyos que la notificacion enumera.
+  const automated = Boolean(result.dns_automation?.publication && !result.dns_automation.error_code);
   return (
     <Modal
       open
@@ -424,6 +442,8 @@ function RevocationResult({ result, onClose }: { result: RevokeDkimResult; onClo
       footer={<Button onClick={onClose}>{t('common.close')}</Button>}
     >
       <div className="cf-stack" style={{ gap: 'var(--cf-space-4)' }}>
+        {result.dns_automation ? <DnsAutomationNotice automation={result.dns_automation} /> : null}
+        {automated ? null : (
         <Alert tone="danger">
           <span>{t('domains.revocation.removeNow')}</span>
           <ul className="cf-rules">
@@ -437,6 +457,7 @@ function RevocationResult({ result, onClose }: { result: RevokeDkimResult; onClo
             ))}
           </ul>
         </Alert>
+        )}
         {!result.engines_retired ? (
           <Alert tone="warning">
             <span>{t('domains.revocation.enginesPending')}</span>
@@ -449,7 +470,7 @@ function RevocationResult({ result, onClose }: { result: RevokeDkimResult; onClo
             ) : null}
           </Alert>
         ) : null}
-        <span>{t('domains.revocation.publishNew')}</span>
+        {automated ? null : <span>{t('domains.revocation.publishNew')}</span>}
         <DnsRecordsTable records={[result.dns_record]} />
       </div>
     </Modal>

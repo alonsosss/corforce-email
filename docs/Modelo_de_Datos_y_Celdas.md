@@ -826,6 +826,51 @@ tiene ninguna ruta o si falta `organization` entre los servicios.
     claves: una verificacion con la fila de antes no devuelve una clave revocada ni a la fila ni a
     los motores. Un verificado cuya clave actual aun no se vio publicada no cae a failed solo por el
     DKIM, tampoco a mano. Ningun selector se repite. `audit` guarda `domains.>` por defecto.
+  * Publicacion automatica del DNS con Cloudflare (V, 2026-09-17; migracion de empresa
+    `05_dns_providers.sql` y de registro `032_domain_service_dns_providers.sql`). La publicacion
+    manual sigue siendo la de por defecto (`domains.domains.dns_mode = 'manual'`) y no cambia. La
+    empresa conecta Cloudflare una vez (`POST /api/v1/domains/dns-providers/cloudflare/connect` con
+    `api_token`, permiso `dns_providers/connect` y step-up): domain-service valida el token contra
+    Cloudflare (`/user/tokens/verify` activo y al menos una zona en `/zones`, paginado), lo cifra con
+    el `KeyRing` de las claves DKIM (`MAIL_ENCRYPTION_KEY` con rotacion) y lo guarda en
+    `domains.dns_providers` (una fila por empresa y proveedor, `tenant_id`, pista de cuatro
+    caracteres, zonas visibles, quien y cuando). El token no sale en ninguna respuesta, evento,
+    error ni registro (`domain.APIToken` se formatea y serializa oculto; los errores de Cloudflare se
+    traducen por estado y codigo numerico sin su mensaje) y nunca en 401 ni 403, que el cliente web
+    trata como sesion o permiso: 422 `DNS_PROVIDER_TOKEN_INVALID`, `DNS_PROVIDER_PERMISSION_DENIED`,
+    `DNS_PROVIDER_NO_ZONES`, 409 `DNS_PROVIDER_NOT_CONNECTED`, `DNS_ZONE_NOT_FOUND`, `DNS_MODE_MANUAL`,
+    429 `DNS_PROVIDER_RATE_LIMITED`, 503 `DNS_PROVIDER_UNAVAILABLE`. `GET .../cloudflare` da el estado y
+    `POST .../cloudflare/disconnect` borra la fila y devuelve a manual, en la misma transaccion, los
+    dominios que la usaban; lo publicado se queda en la zona. Un dominio pasa a automatico con
+    `POST /api/v1/domains/{id}/dns-mode` (`publish_dns`) solo si el token ve su zona: la de nombre
+    igual al dominio o la mas especifica de la que es subdominio, nunca una que solo comparte sufijo;
+    antes de cada escritura se comprueba que el nombre es de esa zona. `POST /api/v1/domains/{id}/publish-dns`
+    (con el cerrojo de claves del dominio y su fila leida dentro) crea o actualiza los registros de
+    `ExpectedRecords` y lanza la verificacion real: un registro identico no se toca aunque no sea de
+    la plataforma, los que ella crea llevan `comment` `cfm-managed` y solo esos se actualizan o
+    retiran sin preguntar; un SPF, DMARC, TXT de propiedad, TXT de un selector o MX del cliente que
+    ocupa el sitio de uno de la plataforma queda en `conflict`, con su valor en la respuesta, y solo
+    se reemplaza si su tipo viene en `replace`. Otros TXT del mismo nombre no cuentan. Un rechazo de
+    Cloudflare solo falla su registro; token, permiso, zona, limite o caida cortan la publicacion,
+    que es idempotente al repetirla. `dns_published_at` y el evento `domains.domain.dns_published`
+    salen en la transaccion; `domains.dns_provider.connected` y `.disconnected` con la conexion. En
+    modo automatico rotar DKIM publica sola la clave nueva, revocar retira los TXT revocados que
+    llevan la marca y publica el nuevo (`dns_automation` en la respuesta, que nombra los TXT del
+    cliente que quedan en esos nombres), y el barrido retira de la zona el TXT de la clave que sale de
+    gracia; un fallo de Cloudflare no deshace nada de eso. Llamadas solo a `CLOUDFLARE_API_URL`
+    (vacia, `https://api.cloudflare.com`; regla de URLs internas; `https` fuera de development y
+    test), 15 s por llamada, sin seguir redirecciones y con la respuesta acotada. Orden de despliegue:
+    migracion de registro 032 (la aplica organization al arrancar y resiembra el `tenant_admin`),
+    despues el domain-service nuevo, cuya migracion de empresa 05 aplica el runner de organization;
+    la web nueva al final. Un domain-service anterior no lee `dns_mode` y sigue en manual. Probado:
+    unitarias de dominio (token, zona, plan de cada registro y normalizacion de TXT), caso de uso con
+    dobles (conectar, reconectar, desconectar, modo, publicar, conflictos, fallos, rotar, revocar,
+    barrido), adaptador contra un `httptest.Server` (paginacion, token invalido, sin permiso, zona
+    ajena, registro existente, limite, redireccion, respuestas anomalas), contrato HTTP (permiso de
+    cada ruta, step-up solo al conectar, el token no sale), integracion contra Postgres (migracion dos
+    veces, cifrado en reposo, aislamiento por empresa, outbox en la transaccion) y `make e2e` contra un
+    Cloudflare falso (`ops/e2e/cloudflare_prueba.py`) que escribe en la zona del DNS de la prueba: tras
+    confirmar el SPF la verificacion real del dominio pasa.
   * Probado: unitarias de `pkg/tenantcell` (lectura de instancias y sus reglas; eleccion en la celda
     base, en otra celda, celda sin instancia, empresa desconocida, organization caido con la celda
     en cache, sin ella y fuera del margen; una celda sin consultas), de `tenantcell.Caller` (cada empresa a

@@ -27,7 +27,7 @@ const domainColumns = `id, tenant_id, domain, purpose, status, verification_toke
  dkim_selector, dkim_private_key_enc, dkim_public_key, dkim_key_bits,
  dkim_previous_selector, dkim_previous_private_key_enc, dkim_previous_public_key, dkim_rotated_at,
  dkim_previous_signed_at, dkim_confirmed_at, dkim_revocation_pending,
- dmarc_policy, directory_deactivation_pending, created_at, updated_at`
+ dmarc_policy, directory_deactivation_pending, dns_mode, dns_published_at, created_at, updated_at`
 
 // dkimLockClass es el espacio de los cerrojos consultivos de claves DKIM en la base de la empresa;
 // el segundo entero es el hash del id del dominio.
@@ -41,7 +41,7 @@ func scanDomain(row pgx.Row) (*domain.Domain, error) {
 		&d.DKIMSelector, &d.DKIMPrivateKeyEnc, &d.DKIMPublicKey, &d.DKIMKeyBits,
 		&prevSelector, &d.DKIMPreviousPrivateKeyEnc, &prevPublic, &d.DKIMRotatedAt,
 		&d.DKIMPreviousSignedAt, &d.DKIMConfirmedAt, &d.DKIMRevocationPending,
-		&d.DMARCPolicy, &d.DirectoryDeactivationPending, &d.CreatedAt, &d.UpdatedAt,
+		&d.DMARCPolicy, &d.DirectoryDeactivationPending, &d.DNSMode, &d.DNSPublishedAt, &d.CreatedAt, &d.UpdatedAt,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

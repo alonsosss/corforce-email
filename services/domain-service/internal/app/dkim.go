@@ -136,6 +136,8 @@ type RotateDKIMResult struct {
 	Domain     *domain.Domain
 	Record     domain.DNSRecord
 	GraceUntil time.Time
+	// DNS es lo que publico la plataforma en el proveedor si el dominio publica en automatico.
+	DNS *DNSAutomationResult
 }
 
 // RotateDKIM es la rotacion programada: genera un par nuevo y conserva el anterior durante la
@@ -185,6 +187,7 @@ func (uc *UseCase) RotateDKIM(ctx context.Context, tenantID, id, actorID uuid.UU
 	if err != nil {
 		return nil, err
 	}
+	out.DNS = uc.publishDKIMAutomatically(ctx, tenantID, id, nil)
 	return out, nil
 }
 
@@ -206,6 +209,9 @@ type RevokeDKIMResult struct {
 	RemoveRecords     []domain.DNSRecord
 	EnginesRetired    bool
 	IntegrationErrors []string
+	// DNS es lo que publico y retiro la plataforma en el proveedor si el dominio publica en
+	// automatico: el TXT nuevo y los TXT revocados que ella misma habia publicado.
+	DNS *DNSAutomationResult
 }
 
 // RevokeDKIM retira de inmediato todas las claves del dominio (la actual y la que siga en gracia)
@@ -265,6 +271,7 @@ func (uc *UseCase) RevokeDKIM(ctx context.Context, tenantID, id uuid.UUID, req R
 	}
 
 	res := &RevokeDKIMResult{Rotation: rotation, EnginesRetired: true}
+	res.DNS = uc.publishDKIMAutomatically(ctx, tenantID, id, rotation.RevokedSelectors)
 	if err := uc.finishRevocation(ctx, tenantID, id); err != nil {
 		uc.logger.Error("revocacion DKIM guardada pero sin confirmar en la celda: la clave revocada puede seguir firmando; se reintenta en el barrido",
 			zap.String("tenant_id", tenantID.String()), zap.String("domain_id", id.String()), zap.Error(err))

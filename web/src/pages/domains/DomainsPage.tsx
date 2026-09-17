@@ -24,6 +24,7 @@ import { t, tEnum } from '@/i18n';
 import { paths } from '@/paths';
 import { AliasDomainsTab } from './AliasDomainsTab';
 import { DirectoryTab } from './DirectoryTab';
+import { DnsProviderCard } from './DnsProviderCard';
 import { DnsRecordsTable } from './DnsRecordsTable';
 import { DomainCreateForm } from './DomainCreateForm';
 import { domainStatusTone } from './domainStatus';
@@ -48,7 +49,12 @@ export default function DomainsPage() {
     <div>
       <PageHeader title={t('domains.title')} description={t('domains.subtitle')} />
       <Tabs items={tabs} value={tab} onChange={setTab} label={t('domains.title')} />
-      {tab === 'domains' ? <DomainsList /> : null}
+      {tab === 'domains' ? (
+        <div className="cf-stack">
+          <DomainsList />
+          {can(...PERMISSIONS.dnsProviders.read) ? <DnsProviderCard /> : null}
+        </div>
+      ) : null}
       {tab === 'directory' ? <DirectoryTab /> : null}
       {tab === 'aliasDomains' ? <AliasDomainsTab /> : null}
     </div>

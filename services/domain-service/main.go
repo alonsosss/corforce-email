@@ -4,11 +4,13 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/alonsosss/corforce-email/pkg/auth"
 	"github.com/alonsosss/corforce-email/pkg/authz"
 	"github.com/alonsosss/corforce-email/pkg/config"
 	"github.com/alonsosss/corforce-email/pkg/crypto"
@@ -19,6 +21,7 @@ import (
 	"github.com/alonsosss/corforce-email/pkg/response"
 	"github.com/alonsosss/corforce-email/pkg/server"
 	"github.com/alonsosss/corforce-email/pkg/tenantcell"
+	"github.com/alonsosss/corforce-email/services/domain-service/internal/adapters/cloudflare"
 	dnsadapter "github.com/alonsosss/corforce-email/services/domain-service/internal/adapters/dns"
 	handler "github.com/alonsosss/corforce-email/services/domain-service/internal/adapters/http"
 	"github.com/alonsosss/corforce-email/services/domain-service/internal/adapters/maildirectorycli"
@@ -29,6 +32,7 @@ import (
 	"github.com/alonsosss/corforce-email/services/domain-service/internal/adapters/postgres"
 	"github.com/alonsosss/corforce-email/services/domain-service/internal/app"
 	"github.com/alonsosss/corforce-email/services/domain-service/internal/domain"
+	"github.com/alonsosss/corforce-email/services/domain-service/internal/ports"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
@@ -73,6 +77,11 @@ const (
 	// destinos base de la celda tenantcell.BaseCellEnv.
 	mailDirectoryCellHostsEnv = "MAIL_DIRECTORY_CELL_HOSTS"
 	mailSecurityCellHostsEnv  = "MAIL_SECURITY_CELL_HOSTS"
+
+	// cloudflareAPIURLEnv sobrescribe la API de Cloudflare solo para pruebas (un Cloudflare falso).
+	// Fuera de desarrollo y pruebas tiene que ser https: por ahi viaja el token de la empresa.
+	cloudflareAPIURLEnv = "CLOUDFLARE_API_URL"
+	stepUpModeEnv       = "STEP_UP_MODE"
 )
 
 // settings es la configuracion propia del servicio. Los valores que aparecen en la zona
@@ -91,13 +100,17 @@ type settings struct {
 	securityTargets  *tenantcell.Targets
 	internalToken    string
 	perms            *authz.Checker
-	dnsResolver      string
-	rotationGrace    time.Duration
-	recheckInterval  time.Duration
-	sweepWorkers     int
-	sweepTimeout     time.Duration
-	checkRetention   time.Duration
-	port             int
+	// cloudflareURL es la API a la que domain-service lleva el token de Cloudflare de cada empresa.
+	cloudflareURL string
+	// stepUp exige reconfirmar la identidad para conectar un proveedor DNS (STEP_UP_MODE).
+	stepUp          func(http.Handler) http.Handler
+	dnsResolver     string
+	rotationGrace   time.Duration
+	recheckInterval time.Duration
+	sweepWorkers    int
+	sweepTimeout    time.Duration
+	checkRetention  time.Duration
+	port            int
 }
 
 // loadSettings lee y valida la configuracion. Siempre necesita ORGANIZATION_URL: cada dominio se
@@ -158,6 +171,12 @@ func loadSettings(logger *zap.Logger) (settings, error) {
 	if s.perms, err = authz.CheckerFromEnv(); err != nil {
 		return s, err
 	}
+	if s.cloudflareURL, err = cloudflareURLFromEnv(); err != nil {
+		return s, err
+	}
+	if s.stepUp, err = stepUpFromEnv(); err != nil {
+		return s, err
+	}
 	token, err := middleware.InternalGatewayToken()
 	if err != nil {
 		return s, err
@@ -184,6 +203,39 @@ func loadSettings(logger *zap.Logger) (settings, error) {
 	return s, nil
 }
 
+// cloudflareURLFromEnv lee la URL base de la API de Cloudflare con la regla comun de URLs internas
+// (sin ruta, credenciales, consulta ni fragmento). http solo se admite con ENVIRONMENT de desarrollo
+// o pruebas.
+func cloudflareURLFromEnv() (string, error) {
+	u, err := config.ServiceURL(cloudflareAPIURLEnv, cloudflare.DefaultBaseURL)
+	if err != nil {
+		return "", err
+	}
+	if !strings.HasPrefix(u, "https://") && !config.DeclaredDevelopmentOrTest() {
+		return "", fmt.Errorf("%s=%q: fuera de desarrollo y pruebas la API de Cloudflare va por https", cloudflareAPIURLEnv, u)
+	}
+	return u, nil
+}
+
+// stepUpFromEnv arma el step-up de conectar un proveedor DNS, que guarda una credencial de terceros.
+// Con STEP_UP_MODE=enforce verifica el token de step-up con las claves publicas de identity
+// (JWT_PUBLIC_KEYS) y sin ellas no arranca: aceptaria cualquier peticion o ninguna. Sin enforce,
+// middleware.RequireStepUp deja pasar, como en identity.
+func stepUpFromEnv() (func(http.Handler) http.Handler, error) {
+	if !strings.EqualFold(os.Getenv(stepUpModeEnv), "enforce") {
+		return middleware.RequireStepUp(nil), nil
+	}
+	keys, err := auth.KeySetFromEnv()
+	if err != nil {
+		return nil, fmt.Errorf("%s=enforce: domain-service verifica el step-up de conectar un proveedor DNS: %w", stepUpModeEnv, err)
+	}
+	verifier, err := auth.NewVerifier(keys)
+	if err != nil {
+		return nil, fmt.Errorf("%s=enforce: %w", stepUpModeEnv, err)
+	}
+	return middleware.RequireStepUp(verifier), nil
+}
+
 func main() {
 	logger, _ := zap.NewProduction()
 	defer logger.Sync()
@@ -199,7 +251,7 @@ func main() {
 	}
 	keyRing, err := crypto.LoadKeyRing("MAIL_ENCRYPTION_KEY", "MAIL_ENCRYPTION_KEYS_OLD")
 	if err != nil {
-		log.Fatalf("domain-service: cifrado de claves DKIM: %v", err)
+		log.Fatalf("domain-service: cifrado de claves DKIM y tokens de proveedores DNS: %v", err)
 	}
 	if base := st.directoryTargets.BaseCell(); base != "" {
 		logger.Info("servicios de celda por la celda de cada empresa", zap.String("base_cell", base),
@@ -234,15 +286,20 @@ func main() {
 		go outbox.RunForTenants(ctx, tenantDB, db.PoolFromCtx, bus, logger, outbox.Options{})
 	}
 
+	repo := postgres.NewRepository(ctxPool)
+	keyEvents := outboxadapter.NewPublisher(ctxPool)
 	uc := app.New(app.Deps{
-		Repo:                 postgres.NewRepository(ctxPool),
+		Repo:                 repo,
 		DNS:                  dnsadapter.New(st.dnsResolver),
 		Cipher:               keyRing,
 		MailDirectory:        maildirectorycli.New(tenantcell.NewCaller("mail-directory", st.directoryTargets, st.internalToken, logger, tenantcell.CallerOptions{})),
 		MailSecurity:         mailsecuritycli.New(tenantcell.NewCaller("mail-security", st.securityTargets, st.internalToken, logger, tenantcell.CallerOptions{})),
 		DomainIndex:          organizationcli.New(st.organizationURL, st.internalToken),
 		Events:               publisher,
-		KeyEvents:            outboxadapter.NewPublisher(ctxPool),
+		KeyEvents:            keyEvents,
+		DNSProviders:         repo,
+		DNSAPIs:              map[domain.DNSProvider]ports.DNSProviderAPI{domain.DNSProviderCloudflare: cloudflare.New(st.cloudflareURL, cloudflare.DefaultTimeout)},
+		DNSEvents:            keyEvents,
 		Platform:             st.platform,
 		PlatformHostname:     st.platformHostname,
 		DKIMRotationGrace:    st.rotationGrace,
@@ -264,7 +321,7 @@ func main() {
 	r.Use(middleware.SecureHeaders)
 	r.Use(middleware.Logger(logger))
 	r.Use(middleware.NewRateLimiter(120, time.Minute).Limit)
-	r.Mount("/", handler.NewHandler(uc, st.perms).Routes())
+	r.Mount("/", handler.NewHandler(uc, st.perms, st.stepUp).Routes())
 
 	srv := server.New(st.port, r, logger)
 	if err := srv.Run(); err != nil {

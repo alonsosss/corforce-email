@@ -70,6 +70,8 @@ function domainFixture(extra: Partial<DomainDetail> = {}): DomainDetail {
     dkim_previous_until: null,
     dkim_revocation_pending: false,
     dmarc_policy: 'quarantine',
+    dns_mode: 'manual',
+    dns_published_at: null,
     created_at: '2026-09-01T10:00:00Z',
     updated_at: '2026-09-12T09:00:00Z',
     dns_records: [],

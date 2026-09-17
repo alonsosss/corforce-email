@@ -39,10 +39,13 @@ subject y payload. `opaco` = el payload no se puede leer estaticamente.
 | `contacts.contact.resubscribed` | contacts | `consented_at`, `email`, `tenant_id` |
 | `contacts.contact.updated` | contacts | `changed`, `contact_id`, `status`, `tenant_id` |
 | `contacts.import.completed` | contacts | `created`, `import_id`, `list_id`, `skipped`, `tenant_id`, `total`, `updated` |
+| `domains.dns_provider.connected` | domain-service | `connected_at`, `provider`, `tenant_id`, `zones_visible` |
+| `domains.dns_provider.disconnected` | domain-service | `disconnected_at`, `domains_reset`, `provider`, `tenant_id` |
 | `domains.domain.created` | domain-service | `domain`, `domain_id`, `purpose`, `status`, `tenant_id` |
 | `domains.domain.deleted` | domain-service | `domain`, `domain_id`, `purpose`, `status`, `tenant_id` |
 | `domains.domain.dkim_revoked` | domain-service | `domain`, `domain_id`, `purpose`, `reason`, `remove_dns_records`, `revoked_selectors`, `rotated_at`, `selector`, `status`, `tenant_id` |
 | `domains.domain.dkim_rotated` | domain-service | `domain`, `domain_id`, `previous_selector`, `purpose`, `rotated_at`, `selector`, `status`, `tenant_id` |
+| `domains.domain.dns_published` | domain-service | `conflicts`, `created`, `domain`, `domain_id`, `failed`, `provider`, `published_at`, `purpose`, `removed`, `replaced`, `status`, `tenant_id`, `unchanged`, `updated`, `zone` |
 | `domains.domain.failed` | domain-service | `domain`, `domain_id`, `purpose`, `status`, `tenant_id` |
 | `domains.domain.verified` | domain-service | `domain`, `domain_id`, `purpose`, `status`, `tenant_id` |
 | `gateway.security.exfiltration` | gateway | `count`, `ip`, `tenant_id`, `user_id`, `window` |

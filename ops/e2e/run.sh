@@ -135,6 +135,16 @@ export MAIL_AUTH_PORT=${PORT[mail-auth]} MAIL_AUTH_TLS_PORT=$AUTH_TLS_PORT
 # domain-service verifica contra el DNS de la prueba: la zona es $WORK/zona.json, que la prueba
 # escribe con los registros que pide domain-service. Sin zona, todo nombre es NXDOMAIN.
 export MAIL_DNS_RESOLVER="127.0.0.1:$DNS_PORT"
+# domain-service publica el DNS de los dominios en automatico en un Cloudflare falso
+# (ops/e2e/cloudflare_prueba.py) que escribe lo publicado en esa misma zona. Los tokens se generan
+# en cada ejecucion: el bueno ve nube.test y sesenta zonas de relleno (varias paginas), el
+# deshabilitado y el que no puede leer zonas no sirven, y uno cualquiera no existe.
+CF_PORT=$((BASE + 70))
+CF_TOKEN="cfe2e_$(rand_hex 20)"
+CF_TOKEN_DESHABILITADO="cfe2e_$(rand_hex 20)"
+CF_TOKEN_SIN_PERMISO="cfe2e_$(rand_hex 20)"
+CF_TOKEN_DESCONOCIDO="cfe2e_$(rand_hex 20)"
+export CLOUDFLARE_API_URL="http://127.0.0.1:$CF_PORT"
 export API_ORIGIN="http://localhost:${PORT[gateway]}" PUBLIC_BASE_URL="http://localhost:${PORT[gateway]}"
 # Direcciones internas: las que el gateway lee de routes.json por <SERVICIO>_HOST(_PORT) y
 # las que los servicios usan entre si.
@@ -173,6 +183,18 @@ SERVICIOS_DE_CELDA=" mail-directory mail-auth mail-security "
 SERVICIOS_DE_EMPRESA=" domain-service templates suppression reputation contacts analytics transactional campaigns automations "
 
 cp ops/e2e/dns_prueba.py "$WORK/bin/" && python3 "$WORK/bin/dns_prueba.py" "$DNS_PORT" "$WORK/zona.json" >"$WORK/log/dns.log" 2>&1 &
+# El cliente ya tiene en nube.test un SPF de otro proveedor y un TXT de verificacion ajeno: la
+# publicacion no pisa el primero sin confirmacion ni toca el segundo.
+cat >"$WORK/cloudflare.json" <<JSON
+{"filler_zones": 60,
+ "tokens": {"$CF_TOKEN": {"status": "active", "zones": ["nube.test"]},
+            "$CF_TOKEN_DESHABILITADO": {"status": "disabled", "zones": ["nube.test"]},
+            "$CF_TOKEN_SIN_PERMISO": {"status": "active", "forbidden": true}},
+ "seed": [{"zone": "nube.test", "type": "TXT", "name": "nube.test", "content": "v=spf1 include:_spf.otro-proveedor.test ~all"},
+          {"zone": "nube.test", "type": "TXT", "name": "nube.test", "content": "otro-proveedor-verification=e2e"}]}
+JSON
+cp ops/e2e/cloudflare_prueba.py "$WORK/bin/" &&
+  python3 "$WORK/bin/cloudflare_prueba.py" "$CF_PORT" "$WORK/cloudflare.json" "$WORK/zona.json" >"$WORK/log/cloudflare.log" 2>&1 &
 
 echo "== Plano de control"
 # organization da de baja el correo de una empresa en el mail-directory de su celda: pe-01 en el
@@ -1061,6 +1083,90 @@ expect "la outbox de acme entrega a NATS una sola revocacion, con el usuario y e
 FVR=$(curl -s -X POST "$GW/domains/$FDOMID/verify" -H "$AF")
 expect "verificar a mano antes de publicar el TXT nuevo no apaga el dominio" "$(echo "$FVR" | jget data.outcome)/$(echo "$FVR" | jget data.status)" "failed/verified"
 expect "que sigue activo en el directorio de pe-01" "$(sql mail_cell_pe_01 "SELECT active FROM mail.domains WHERE domain = 'firma.test'")" "t"
+
+echo "== Publicacion automatica del DNS con Cloudflare (domain-service)"
+# acme da de alta nube.test, que como todo dominio publica su DNS a mano. Conecta Cloudflare una
+# vez con un token que se valida contra el Cloudflare falso y se guarda cifrado sin volver a salir;
+# pasa nube.test a automatico y publica: el SPF que ya tenia queda en conflicto hasta que confirma
+# reemplazarlo, y entonces la verificacion real (DNS de la prueba) lo da por bueno. Rotar y revocar
+# DKIM publican y retiran solas sus TXT; desconectar borra el token y devuelve el dominio a manual.
+CF="$GW/domains/dns-providers/cloudflare"
+cf_registros() { curl -s "http://127.0.0.1:$CF_PORT/__registros?zone=nube.test"; }
+# en_zona <host>: cuantos TXT tiene ese nombre en la zona que sirve el DNS de la prueba.
+en_zona() { python3 -c 'import json, sys; print(sum(1 for e in json.load(open(sys.argv[1])) if e["host"] == sys.argv[2] and e["type"] == "TXT"))' "$WORK/zona.json" "$1"; }
+accion() { python3 -c 'import json, sys; d = json.load(sys.stdin)["data"]; p = d.get("dns_publication") or (d.get("dns_automation") or {}).get("publication") or {}; print(",".join(r["record"] + "=" + r["action"] for r in p.get("records", [])))' 2>/dev/null; }
+NDOM=$(curl -s -X POST "$GW/domains" -H "$AF" -H 'Content-Type: application/json' -d '{"domain":"nube.test","purpose":"corporate"}')
+NDOMID=$(echo "$NDOM" | jget data.id)
+expect "un dominio nuevo publica su DNS a mano" "$(echo "$NDOM" | jget data.dns_mode)" "manual"
+expect "acme no tiene Cloudflare conectado" "$(curl -s "$CF" -H "$AF" | jget data.connected)" "False"
+expect "sin conexion no pasa a automatico" \
+  "$(sesion -X POST "$GW/domains/$NDOMID/dns-mode" -H "$AF" -H 'Content-Type: application/json' -d '{"mode":"cloudflare"}')" "DNS_PROVIDER_NOT_CONNECTED 409"
+expect "ni publica" "$(sesion -X POST "$GW/domains/$NDOMID/publish-dns" -H "$AF")" "DNS_MODE_MANUAL 409"
+conectar() { curl -s -w ' %{http_code}' -X POST "$CF/connect" -H "$AF" -H 'Content-Type: application/json' -d "{\"api_token\":\"$1\"}"; }
+for caso in "desconocido:$CF_TOKEN_DESCONOCIDO:DNS_PROVIDER_TOKEN_INVALID 422" "deshabilitado:$CF_TOKEN_DESHABILITADO:DNS_PROVIDER_TOKEN_INVALID 422" \
+  "que no puede leer zonas:$CF_TOKEN_SIN_PERMISO:DNS_PROVIDER_PERMISSION_DENIED 422"; do
+  IFS=: read -r nombre tok esperado <<<"$caso"
+  r=$(conectar "$tok")
+  expect "Cloudflare no acepta un token $nombre" "$(echo "${r% *}" | jget error.code) ${r##* }" "$esperado"
+  lacks "y la respuesta no lo repite" "$r" "$tok"
+done
+expect "un token rechazado no se guarda" "$(sql mail_tenant_acme "SELECT count(*) FROM domains.dns_providers")" "0"
+CONN=$(conectar "$CF_TOKEN")
+expect "conecta con un token activo y ve todas sus zonas, en varias paginas" \
+  "$(echo "${CONN% *}" | jget data.connected)/$(echo "${CONN% *}" | jget data.zones_visible)/$(echo "${CONN% *}" | jget data.token_hint) ${CONN##* }" \
+  "True/61/${CF_TOKEN: -4} 200"
+lacks "la respuesta de conectar no lleva el token" "$CONN" "$CF_TOKEN"
+ESTADO=$(curl -s "$CF" -H "$AF")
+expect "el estado dice quien la conecto" "$(echo "$ESTADO" | jget data.connected_by)" "$YO"
+lacks "y tampoco lleva el token" "$ESTADO" "$CF_TOKEN"
+expect "el token se guarda cifrado: ninguna columna lo contiene en claro" \
+  "$(sql mail_tenant_acme "SELECT count(*) FROM domains.dns_providers p WHERE position(convert_to('$CF_TOKEN', 'UTF8') IN p.api_token_enc) = 0 AND (p.*)::text NOT LIKE '%$CF_TOKEN%'")" "1"
+expect "la conexion se anuncia por la outbox sin el token" \
+  "$(sql mail_tenant_acme "SELECT count(*) FROM platform.event_outbox WHERE subject = 'domains.dns_provider.connected' AND payload->>'user_id' = '$YO' AND payload::text NOT LIKE '%$CF_TOKEN%'")" "1"
+lacks "ningun registro de domain-service lleva el token" "$(cat "$WORK/log/domain-service.log" "$WORK/log/gateway.log" "$WORK/log/cloudflare.log")" "$CF_TOKEN"
+expect "firma.test no esta en ninguna zona que vea el token" \
+  "$(sesion -X POST "$GW/domains/$FDOMID/dns-mode" -H "$AF" -H 'Content-Type: application/json' -d '{"mode":"cloudflare"}')" "DNS_ZONE_NOT_FOUND 409"
+expect "nube.test pasa a automatico" \
+  "$(curl -s -X POST "$GW/domains/$NDOMID/dns-mode" -H "$AF" -H 'Content-Type: application/json' -d '{"mode":"cloudflare"}' | jget data.dns_mode)" "cloudflare"
+P1=$(curl -s -X POST "$GW/domains/$NDOMID/publish-dns" -H "$AF" -H 'Content-Type: application/json' -d '{}')
+expect "publicar crea lo que falta y deja en conflicto el SPF del cliente" "$(echo "$P1" | accion)" \
+  "ownership_txt=created,mx=created,spf=conflict,dkim=created,dmarc=created"
+contains "mostrando su valor" "$(echo "$P1" | jget data.dns_publication.records.2.existing.0)" "_spf.otro-proveedor.test"
+expect "sin tocarlo, y la verificacion lo ve" "$(en_zona nube.test)/$(echo "$P1" | jget data.outcome)/$(echo "$P1" | jget data.status)" "2/failed/failed"
+P2=$(curl -s -X POST "$GW/domains/$NDOMID/publish-dns" -H "$AF" -H 'Content-Type: application/json' -d '{"replace":["spf"]}')
+expect "con la confirmacion reemplaza el SPF y el resto sigue igual" "$(echo "$P2" | accion)" \
+  "ownership_txt=unchanged,mx=unchanged,spf=replaced,dkim=unchanged,dmarc=unchanged"
+expect "y la verificacion real contra el DNS de la prueba pasa" \
+  "$(echo "$P2" | jget data.outcome)/$(echo "$P2" | jget data.status)/$(echo "$P2" | errores_de x)" "verified/verified/0 0"
+expect "el TXT ajeno del mismo nombre sigue en la zona" "$(en_zona nube.test)" "2"
+expect "nube.test queda activo en el directorio de pe-01" "$(sql mail_cell_pe_01 "SELECT active FROM mail.domains WHERE domain = 'nube.test'")" "t"
+expect "todo lo que publico la plataforma lleva su marca" \
+  "$(cf_registros | python3 -c 'import json, sys; r = json.load(sys.stdin)["result"]; print(sum(1 for x in r if x["comment"] == "cfm-managed"), len(r))')" "5 6"
+P3=$(curl -s -X POST "$GW/domains/$NDOMID/publish-dns" -H "$AF")
+expect "publicar otra vez no toca nada" "$(echo "$P3" | accion)" \
+  "ownership_txt=unchanged,mx=unchanged,spf=unchanged,dkim=unchanged,dmarc=unchanged"
+N1=$(echo "$NDOM" | jget data.dkim_selector)
+ROT=$(curl -s -X POST "$GW/domains/$NDOMID/rotate-dkim" -H "$AF")
+N2=$(echo "$ROT" | jget data.dkim_selector)
+expect "rotar en automatico publica sola la clave nueva y conserva la anterior" \
+  "$(echo "$ROT" | accion)/$(echo "$ROT" | jget data.dns_automation.error_code)/$(en_zona "$N2._domainkey.nube.test")/$(en_zona "$N1._domainkey.nube.test")" \
+  "dkim=created,dkim_previous=unchanged//1/1"
+REVN=$(curl -s -X POST "$GW/domains/$NDOMID/revoke-dkim" -H "$AF" -H 'Content-Type: application/json' \
+  -d "{\"current_selector\":\"$N2\",\"reason\":\"prueba de publicacion automatica\"}")
+N3=$(echo "$REVN" | jget data.dkim_selector)
+expect "revocar en automatico retira solos los dos TXT revocados y publica el nuevo" \
+  "$(en_zona "$N1._domainkey.nube.test")/$(en_zona "$N2._domainkey.nube.test")/$(en_zona "$N3._domainkey.nube.test")/$(echo "$REVN" | jget data.dns_automation.publication.removed.1)" \
+  "0/0/1/$N1._domainkey.nube.test"
+expect "con el TXT nuevo ya publicado el dominio verifica" "$(curl -s -X POST "$GW/domains/$NDOMID/verify" -H "$AF" | jget data.outcome)" "verified"
+expect "cada publicacion sale por la outbox" \
+  "$(sql mail_tenant_acme "SELECT count(*) FROM platform.event_outbox WHERE subject = 'domains.domain.dns_published' AND payload->'data'->>'domain' = 'nube.test'")" "5"
+DIS=$(curl -s -X POST "$CF/disconnect" -H "$AF")
+expect "desconectar borra el token y devuelve nube.test a manual" \
+  "$(echo "$DIS" | jget data.disconnected)/$(echo "$DIS" | jget data.domains_reset)/$(sql mail_tenant_acme "SELECT count(*) FROM domains.dns_providers")/$(curl -s "$GW/domains/$NDOMID" -H "$AF" | jget data.dns_mode)" \
+  "True/1/0/manual"
+expect "y deja lo publicado en la zona" "$(en_zona "$N3._domainkey.nube.test")" "1"
+expect "rotar en manual ya no escribe en Cloudflare" \
+  "$(curl -s -X POST "$GW/domains/$NDOMID/rotate-dkim" -H "$AF" | jget data.dns_automation)/$(cf_registros | python3 -c 'import json, sys; print(len(json.load(sys.stdin)["result"]))')" "/6"
 
 echo "== Baja de una empresa con correo en su celda"
 # La saga de baja de organization da de baja a beta en el mail-directory de pe-02, la instancia de

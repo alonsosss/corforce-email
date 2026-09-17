@@ -43,6 +43,11 @@ type Deps struct {
 	Events      ports.EventPublisher
 	// KeyEvents encola los eventos de las claves DKIM en la transaccion que las cambia.
 	KeyEvents ports.KeyEvents
+	// DNSProviders, DNSAPIs y DNSEvents son la publicacion automatica del DNS en el proveedor de
+	// la empresa. Sin ellos todo dominio publica a mano.
+	DNSProviders ports.DNSProviderRepository
+	DNSAPIs      map[domain.DNSProvider]ports.DNSProviderAPI
+	DNSEvents    ports.DNSEvents
 	// Platform son los valores que aparecen en los registros del cliente.
 	Platform domain.PlatformDNS
 	// PlatformHostname es MAIL_HOSTNAME: ni el ni sus subdominios se dan de alta.
@@ -64,6 +69,9 @@ type UseCase struct {
 	index         ports.DomainIndex
 	events        ports.EventPublisher
 	keyEvents     ports.KeyEvents
+	dnsRepo       ports.DNSProviderRepository
+	dnsAPIs       map[domain.DNSProvider]ports.DNSProviderAPI
+	dnsEvents     ports.DNSEvents
 	platform      domain.PlatformDNS
 	platformHost  string
 	rotationGrace time.Duration
@@ -77,6 +85,7 @@ func New(d Deps) *UseCase {
 	uc := &UseCase{
 		repo: d.Repo, dns: d.DNS, cipher: d.Cipher,
 		mailDirectory: d.MailDirectory, mailSecurity: d.MailSecurity, index: d.DomainIndex, events: d.Events, keyEvents: d.KeyEvents,
+		dnsRepo: d.DNSProviders, dnsAPIs: d.DNSAPIs, dnsEvents: d.DNSEvents,
 		platform: d.Platform, platformHost: d.PlatformHostname,
 		rotationGrace: d.DKIMRotationGrace, pendingWindow: d.PendingRecheckWindow,
 		retention: d.CheckRetention, logger: d.Logger, now: d.Now,
@@ -156,7 +165,7 @@ func (uc *UseCase) Create(ctx context.Context, tenantID uuid.UUID, req CreateReq
 	d := &domain.Domain{
 		ID: uuid.New(), TenantID: tenantID, Domain: name,
 		Purpose: purpose, Status: domain.StatusPending,
-		VerificationToken: token, DMARCPolicy: policy,
+		VerificationToken: token, DMARCPolicy: policy, DNSMode: domain.DNSModeManual,
 	}
 	if err := uc.assignDKIMKey(d, dkimSelector(now, "", "")); err != nil {
 		return nil, err

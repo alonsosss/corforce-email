@@ -6,7 +6,7 @@ Convencion de subject: `<dominio>.<entidad>.<accion>`. Un subject tiene UN dueno
 Publicar incluye encolar en la outbox (`outbox.Enqueue`); un consumidor con comodin
 (`*`, `>`) figura en cada subject publicado que recibe.
 
-Resumen: 80 publicaciones, 37 suscripciones, 80 subjects distintos.
+Resumen: 83 publicaciones, 37 suscripciones, 83 subjects distintos.
 
 ## Cruce por subject (dueno -> consumidores)
 
@@ -39,10 +39,13 @@ Resumen: 80 publicaciones, 37 suscripciones, 80 subjects distintos.
 | `contacts.contact.resubscribed` | contacts | suppression |
 | `contacts.contact.updated` | contacts | - |
 | `contacts.import.completed` | contacts | - |
+| `domains.dns_provider.connected` | domain-service | - |
+| `domains.dns_provider.disconnected` | domain-service | - |
 | `domains.domain.created` | domain-service | billing, transactional |
 | `domains.domain.deleted` | domain-service | billing, transactional |
 | `domains.domain.dkim_revoked` | domain-service | transactional |
 | `domains.domain.dkim_rotated` | domain-service | transactional |
+| `domains.domain.dns_published` | domain-service | transactional |
 | `domains.domain.failed` | domain-service | transactional |
 | `domains.domain.verified` | domain-service | transactional |
 | `gateway.security.exfiltration` | gateway | - |
@@ -122,7 +125,7 @@ Resumen: 80 publicaciones, 37 suscripciones, 80 subjects distintos.
 - Consume: `suppression.entry.added`, `suppression.entry.expired`, `suppression.entry.removed`
 
 ### domain-service
-- Publica: `domains.domain.created`, `domains.domain.deleted`, `domains.domain.dkim_revoked`, `domains.domain.dkim_rotated`, `domains.domain.failed`, `domains.domain.verified`
+- Publica: `domains.dns_provider.connected`, `domains.dns_provider.disconnected`, `domains.domain.created`, `domains.domain.deleted`, `domains.domain.dkim_revoked`, `domains.domain.dkim_rotated`, `domains.domain.dns_published`, `domains.domain.failed`, `domains.domain.verified`
 
 ### gateway
 - Publica: `audit.api.write`, `gateway.security.exfiltration`

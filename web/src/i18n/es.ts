@@ -692,6 +692,70 @@ export const es = {
   'domains.record.dkim': 'DKIM',
   'domains.record.dkim_previous': 'DKIM anterior',
   'domains.record.dmarc': 'DMARC',
+  'domains.dnsMode.manual': 'Manual',
+  'domains.dnsMode.cloudflare': 'Automatico con Cloudflare',
+  'domains.dns.title': 'Publicacion del DNS',
+  'domains.dns.description': 'Como llegan a la zona DNS del dominio los registros de la tabla de abajo.',
+  'domains.dns.mode': 'Modo',
+  'domains.dns.publishedAt': 'Ultima publicacion completa',
+  'domains.dns.manualHint':
+    'Publicas tu los registros en el DNS del dominio y despues pulsas Verificar ahora.',
+  'domains.dns.automaticHint':
+    'La plataforma publica los registros en tu zona de Cloudflare y los mantiene al rotar o revocar claves DKIM. Los registros tuyos que choquen no se tocan sin tu confirmacion.',
+  'domains.dns.useCloudflare': 'Publicar con Cloudflare',
+  'domains.dns.useManual': 'Volver a manual',
+  'domains.dns.useManualConfirm':
+    'El dominio vuelve a publicar su DNS a mano. Los registros ya publicados en Cloudflare se quedan como estan.',
+  'domains.dns.publish': 'Publicar registros',
+  'domains.dns.modeChanged': 'Modo de publicacion actualizado.',
+  'domains.dns.published': 'Registros publicados en Cloudflare.',
+  'domains.dns.result.title': 'Publicacion en la zona {zone}',
+  'domains.dns.result.complete': 'Todos los registros quedaron publicados. El dominio se verifico a continuacion.',
+  'domains.dns.result.incomplete':
+    'Algunos registros no se publicaron. Revisa los conflictos y los fallos de la tabla.',
+  'domains.dns.column.action': 'Resultado',
+  'domains.dns.action.unchanged': 'Sin cambios',
+  'domains.dns.action.created': 'Creado',
+  'domains.dns.action.updated': 'Actualizado',
+  'domains.dns.action.replaced': 'Reemplazado',
+  'domains.dns.action.conflict': 'Conflicto',
+  'domains.dns.action.failed': 'Fallido',
+  'domains.dns.conflict.title': 'Registros tuyos en conflicto',
+  'domains.dns.conflict.description':
+    'Tu zona ya tiene estos registros con otro valor y no se han tocado. Si los reemplazas dejan de aplicarse: por ejemplo, otro servicio que envia correo con tu SPF actual.',
+  'domains.dns.conflict.existing': 'Valor actual: {value}',
+  'domains.dns.conflict.replace': 'Reemplazar el registro {record}',
+  'domains.dns.conflict.confirm': 'Reemplazar los seleccionados',
+  'domains.dns.automation.published': 'La plataforma ya publico en tu zona de Cloudflare el registro de la clave nueva.',
+  'domains.dns.automation.removed':
+    'La plataforma retiro de tu zona de Cloudflare los TXT revocados que habia publicado.',
+  'domains.dns.automation.kept':
+    'Estos nombres tienen TXT que no publico la plataforma y siguen en tu zona: retiralos tu.',
+  'domains.dns.automation.failed': 'No se pudo publicar en Cloudflare. Publica el registro a mano.',
+  'domains.dnsProvider.title': 'Publicacion automatica del DNS',
+  'domains.dnsProvider.description':
+    'Conecta Cloudflare una vez para que la plataforma publique los registros de los dominios que elijas. Cada dominio sigue en publicacion manual hasta que lo cambies en su ficha.',
+  'domains.dnsProvider.notConnected': 'Cloudflare no esta conectado.',
+  'domains.dnsProvider.connect': 'Conectar Cloudflare',
+  'domains.dnsProvider.replaceToken': 'Cambiar token',
+  'domains.dnsProvider.disconnect': 'Desconectar',
+  'domains.dnsProvider.disconnectConfirm':
+    'Se borra el token guardado y los dominios que publicaban con Cloudflare vuelven a manual. Los registros ya publicados se quedan en tu zona.',
+  'domains.dnsProvider.disconnected': 'Cloudflare desconectado.',
+  'domains.dnsProvider.connected': 'Cloudflare conectado.',
+  'domains.dnsProvider.active': 'Activa',
+  'domains.dnsProvider.field.token': 'Token',
+  'domains.dnsProvider.field.zones': 'Zonas visibles',
+  'domains.dnsProvider.field.connectedBy': 'Conectado por',
+  'domains.dnsProvider.field.connectedAt': 'Conectado el',
+  'domains.dnsProvider.field.lastValidated': 'Ultima validacion',
+  'domains.dnsProvider.tokenHint': 'Termina en {hint}',
+  'domains.dnsProvider.zonesMore': '{shown} y {count} mas',
+  'domains.dnsProvider.form.title': 'Conectar Cloudflare',
+  'domains.dnsProvider.form.token': 'Token de API de Cloudflare',
+  'domains.dnsProvider.form.tokenHint':
+    'Crea en Cloudflare un token con los permisos Zona: Leer y DNS: Editar, limitado a las zonas de tus dominios. Se valida contra Cloudflare, se guarda cifrado y no se vuelve a mostrar.',
+  'domains.dnsProvider.form.submit': 'Validar y conectar',
 
   'directory.title': 'Directorio de la celda',
   'directory.description':
@@ -1394,6 +1458,21 @@ export const es = {
     'La clave DKIM anterior sigue en su periodo de gracia. Espera a que se retire o revoca las claves si estan comprometidas.',
   'error.code.DKIM_SELECTOR_NOT_CURRENT': 'Las claves DKIM del dominio cambiaron. Recarga la pagina.',
   'error.code.DKIM_KEYS_CHANGED': 'Otra operacion cambio las claves DKIM del dominio. Vuelve a intentarlo.',
+  'error.code.DNS_PROVIDER_UNSUPPORTED': 'Ese proveedor DNS no esta disponible.',
+  'error.code.DNS_PROVIDER_TOKEN_INVALID':
+    'Cloudflare no acepta el token: comprueba que lo copiaste entero, que esta activo y que no ha caducado.',
+  'error.code.DNS_PROVIDER_PERMISSION_DENIED':
+    'El token no tiene permiso para leer tus zonas o editar sus registros DNS. Dale Zona: Leer y DNS: Editar.',
+  'error.code.DNS_PROVIDER_NO_ZONES': 'El token no ve ninguna zona DNS. Limitalo a las zonas de tus dominios.',
+  'error.code.DNS_PROVIDER_NOT_CONNECTED':
+    'Cloudflare no esta conectado. Conectalo en la pagina de Dominios antes de publicar automaticamente.',
+  'error.code.DNS_MODE_MANUAL': 'El dominio publica su DNS a mano. Cambia a publicacion automatica antes de publicar.',
+  'error.code.DNS_ZONE_NOT_FOUND':
+    'El token de Cloudflare no ve la zona de este dominio. Anadela al token o publica a mano.',
+  'error.code.DNS_PROVIDER_RATE_LIMITED': 'Cloudflare esta limitando las peticiones. Vuelve a intentarlo en unos minutos.',
+  'error.code.DNS_PROVIDER_UNAVAILABLE': 'Cloudflare no responde. Vuelve a intentarlo en unos minutos.',
+  'error.code.DNS_PROVIDER_REJECTED': 'Cloudflare rechazo el registro.',
+  'error.code.DNS_RECORD_CONFLICT': 'Cloudflare ya tiene ese registro.',
   'error.code.CONTACT_EXISTS': 'Ya existe un contacto con esa direccion.',
   'error.code.LIST_EXISTS': 'Ya existe una lista con ese nombre.',
   'error.code.SEGMENT_EXISTS': 'Ya existe un segmento con ese nombre.',

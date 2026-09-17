@@ -100,6 +100,11 @@ func (uc *UseCase) SweepTenant(ctx context.Context, tenantID uuid.UUID) SweepRep
 			continue
 		}
 		report.Retired++
+		// En modo automatico su TXT sale tambien de la zona del proveedor; un fallo lo deja alli,
+		// como en modo manual, y lo registra.
+		if d.DNSAutomatic() {
+			uc.publishDKIMAutomatically(ctx, d.TenantID, d.ID, []string{d.DKIMPreviousSelector})
+		}
 	}
 
 	pruned, err := uc.repo.PruneChecks(ctx, tenantID, now.Add(-uc.retention))

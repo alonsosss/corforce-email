@@ -74,3 +74,75 @@ func (p *Publisher) enqueue(ctx context.Context, subject string, d *domain.Domai
 	}
 	return outbox.Enqueue(ctx, p.q, subject, evt)
 }
+
+// Subjects de la publicacion automatica del DNS. Ninguno lleva el token ni su pista.
+const (
+	SubjectDNSProviderConnected    = "domains.dns_provider.connected"
+	SubjectDNSProviderDisconnected = "domains.dns_provider.disconnected"
+	SubjectDNSPublished            = "domains.domain.dns_published"
+)
+
+// DNSProviderConnected anuncia que la empresa conecto (o reconecto) su proveedor DNS.
+func (p *Publisher) DNSProviderConnected(ctx context.Context, c *domain.DNSProviderConnection) error {
+	evt := events.Event{
+		Type: SubjectDNSProviderConnected, Source: source, TenantID: c.TenantID.String(),
+		Data: map[string]interface{}{
+			"tenant_id":     c.TenantID.String(),
+			"provider":      string(c.Provider),
+			"zones_visible": c.ZonesVisible,
+			"connected_at":  c.ConnectedAt.UTC().Format(time.RFC3339Nano),
+		},
+	}
+	if c.ConnectedBy != uuid.Nil {
+		evt.UserID = c.ConnectedBy.String()
+	}
+	return outbox.Enqueue(ctx, p.q, SubjectDNSProviderConnected, evt)
+}
+
+// DNSProviderDisconnected anuncia que la empresa desconecto su proveedor, cuyo token se borro, y
+// cuantos dominios volvieron a publicar a mano.
+func (p *Publisher) DNSProviderDisconnected(ctx context.Context, tenantID uuid.UUID, provider domain.DNSProvider, actorID uuid.UUID, domainsReset int64, at time.Time) error {
+	evt := events.Event{
+		Type: SubjectDNSProviderDisconnected, Source: source, TenantID: tenantID.String(),
+		Data: map[string]interface{}{
+			"tenant_id":       tenantID.String(),
+			"provider":        string(provider),
+			"domains_reset":   domainsReset,
+			"disconnected_at": at.UTC().Format(time.RFC3339Nano),
+		},
+	}
+	if actorID != uuid.Nil {
+		evt.UserID = actorID.String()
+	}
+	return outbox.Enqueue(ctx, p.q, SubjectDNSProviderDisconnected, evt)
+}
+
+// DNSPublished anuncia una publicacion en el proveedor: la zona y cuantos registros creo, cambio,
+// reemplazo con confirmacion, dejo en conflicto o no pudo escribir, y los TXT que retiro. Lleva los
+// campos comunes de domains.domain.*. actorID es nulo si la lanzo la plataforma (rotacion o barrido).
+func (p *Publisher) DNSPublished(ctx context.Context, d *domain.Domain, pub *domain.DNSPublication, actorID uuid.UUID) error {
+	evt := events.Event{
+		Type: SubjectDNSPublished, Source: source, TenantID: d.TenantID.String(),
+		Data: map[string]interface{}{
+			"tenant_id":    d.TenantID.String(),
+			"domain_id":    d.ID.String(),
+			"domain":       d.Domain,
+			"purpose":      string(d.Purpose),
+			"status":       string(d.Status),
+			"provider":     string(pub.Provider),
+			"zone":         pub.Zone,
+			"created":      pub.Count(domain.RecordCreated),
+			"updated":      pub.Count(domain.RecordUpdated),
+			"replaced":     pub.Count(domain.RecordReplaced),
+			"unchanged":    pub.Count(domain.RecordUnchanged),
+			"conflicts":    pub.Count(domain.RecordConflict),
+			"failed":       pub.Count(domain.RecordFailed),
+			"removed":      len(pub.Removed),
+			"published_at": pub.PublishedAt.UTC().Format(time.RFC3339Nano),
+		},
+	}
+	if actorID != uuid.Nil {
+		evt.UserID = actorID.String()
+	}
+	return outbox.Enqueue(ctx, p.q, SubjectDNSPublished, evt)
+}
