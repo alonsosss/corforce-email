@@ -42,16 +42,27 @@ if [[ -f "$SCRIPT_DIR/pg-credentials.sh" && -z "${PGHOST:-}" ]]; then
 fi
 export PGHOST="${PGHOST:-${POSTGRES_HOST:-127.0.0.1}}" PGPORT="${PGPORT:-${POSTGRES_PORT:-5432}}"
 export PGUSER="${PGUSER:-${POSTGRES_USER:-mail_admin}}" PGPASSWORD="${PGPASSWORD:-${POSTGRES_PASSWORD:-}}"
+
+# Sin pg-credentials.sh (con PGHOST ya en el entorno: pruebas y make e2e) las herramientas son
+# las del host, como hasta ahora.
+declare -F cf_psql >/dev/null || cf_psql() { psql "$@"; }
+declare -F cf_pg_pasar_entorno >/dev/null || cf_pg_pasar_entorno() { export "${@?}"; }
 REGISTRY_DB="${POSTGRES_DB:-mail_registry}"
 # El host de la celda es el que ven los SERVICIOS (el alias de pgbouncer en compose), no
 # el que ve este script desde fuera: por defecto POSTGRES_HOST.
 CELL_DB_HOST="${CELL_DB_HOST:-${POSTGRES_HOST:-postgres}}"
 
-# Los valores entran como variables de psql (-v) y se citan con :'x': nunca se interpolan
-# en el texto SQL desde bash.
-psql -v ON_ERROR_STOP=1 -q -d "$REGISTRY_DB" \
+# Los valores entran como variables de psql (-v, y \getenv para el secreto) y se citan con
+# :'x': nunca se interpolan en el texto SQL desde bash.
+#
+# La contrasena del primer superadmin va por el ENTORNO. Con -v quedaria en la linea de ordenes
+# de psql y, en el perfil autoalojado, en la de docker run y en `docker inspect` del contenedor
+# efimero: tan visible como pasarla por argumento, que es justo lo que este guion evita.
+cf_pg_pasar_entorno PLATFORM_ADMIN_PASSWORD
+cf_psql -v ON_ERROR_STOP=1 -q -d "$REGISTRY_DB" \
   -v cell="$CELL" -v region="$REGION" -v cell_host="$CELL_DB_HOST" -v cell_port="$CELL_DB_PORT" \
-  -v email="$PLATFORM_ADMIN_EMAIL" -v password="$PLATFORM_ADMIN_PASSWORD" <<'SQL'
+  -v email="$PLATFORM_ADMIN_EMAIL" <<'SQL'
+\getenv password PLATFORM_ADMIN_PASSWORD
 INSERT INTO organization.cells (code, region, status, db_host, db_port)
 VALUES (:'cell', :'region', 'active', :'cell_host', (:'cell_port')::int)
 ON CONFLICT (code) DO NOTHING;

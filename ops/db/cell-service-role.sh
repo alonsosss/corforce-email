@@ -66,7 +66,13 @@ fi
 export PGHOST="${PGHOST:-${POSTGRES_HOST:-127.0.0.1}}" PGPORT="${PGPORT:-${POSTGRES_PORT:-5432}}"
 export PGUSER="${PGUSER:-${POSTGRES_USER:-mail_admin}}" PGPASSWORD="${PGPASSWORD:-${POSTGRES_PASSWORD:-}}"
 
-VERIFIER="$(CELL_DB_PASSWORD="$CELL_DB_PASSWORD" python3 - <<'PY'
+# Sin pg-credentials.sh (con PGHOST ya en el entorno: pruebas y make e2e) las herramientas son
+# las del host, como hasta ahora.
+declare -F cf_psql >/dev/null || cf_psql() { psql "$@"; }
+declare -F cf_pg_pasar_entorno >/dev/null || cf_pg_pasar_entorno() { export "${@?}"; }
+
+# shellcheck disable=SC2034  # lo lee psql del entorno con \getenv
+CF_SCRAM_VERIFIER="$(CELL_DB_PASSWORD="$CELL_DB_PASSWORD" python3 - <<'PY'
 import base64, hashlib, hmac, os
 
 password = os.environ["CELL_DB_PASSWORD"].encode("ascii")
@@ -79,11 +85,16 @@ b64 = lambda raw: base64.b64encode(raw).decode("ascii")
 print(f"SCRAM-SHA-256${iterations}:{b64(salt)}${b64(hashlib.sha256(client_key).digest())}:{b64(server_key)}")
 PY
 )"
+# El verificador viaja por el ENTORNO y el SQL lo lee con \getenv: con -v quedaria en la
+# linea de ordenes de psql (y en la de docker run del perfil autoalojado), a la vista de
+# cualquier `ps` o `docker inspect`.
+cf_pg_pasar_entorno CF_SCRAM_VERIFIER
 
-# Los valores entran como variables de psql (-v) y se citan con :'x' / :"x": nunca se
-# interpolan en el texto SQL desde bash.
-psql -v ON_ERROR_STOP=1 -q -d "$CELL_DB" \
-  -v role="$ROLE" -v cell_db="$CELL_DB" -v verifier="$VERIFIER" <<'SQL'
+# Los valores entran como variables de psql (-v, y \getenv para el verificador) y se citan con
+# :'x' / :"x": nunca se interpolan en el texto SQL desde bash.
+cf_psql -v ON_ERROR_STOP=1 -q -d "$CELL_DB" \
+  -v role="$ROLE" -v cell_db="$CELL_DB" <<'SQL'
+\getenv verifier CF_SCRAM_VERIFIER
 DO $$
 BEGIN
     IF to_regclass('mail.mailboxes') IS NULL OR to_regclass('mail_security.quarantine') IS NULL
@@ -118,7 +129,7 @@ SELECT format('GRANT CONNECT ON DATABASE %I TO mail_engine', datname)
 GRANT CONNECT ON DATABASE :"cell_db" TO :"role";
 SQL
 
-problemas="$(psql -v ON_ERROR_STOP=1 -q -At -d "$CELL_DB" -v role="$ROLE" -v cell_db="$CELL_DB" <<'SQL'
+problemas="$(cf_psql -v ON_ERROR_STOP=1 -q -At -d "$CELL_DB" -v role="$ROLE" -v cell_db="$CELL_DB" <<'SQL'
 SELECT 'tiene atributos de administracion o no puede iniciar sesion'
   FROM pg_roles WHERE rolname = :'role'
    AND (rolsuper OR rolcreatedb OR rolcreaterole OR rolreplication OR rolbypassrls OR NOT rolcanlogin);

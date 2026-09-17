@@ -60,11 +60,16 @@ fi
 export PGHOST="${PGHOST:-${POSTGRES_HOST:-127.0.0.1}}" PGPORT="${PGPORT:-${POSTGRES_PORT:-5432}}"
 export PGUSER="${PGUSER:-${POSTGRES_USER:-mail_admin}}" PGPASSWORD="${PGPASSWORD:-${POSTGRES_PASSWORD:-}}"
 
+# Sin pg-credentials.sh (con PGHOST ya en el entorno: pruebas y make e2e) las herramientas son
+# las del host, como hasta ahora.
+declare -F cf_psql >/dev/null || cf_psql() { psql "$@"; }
+declare -F cf_pg_pasar_entorno >/dev/null || cf_pg_pasar_entorno() { export "${@?}"; }
+
 # cf_tenant_databases la define pg-credentials.sh; sin el (pruebas) se lee igual del
 # registro, que es la fuente: nunca un patron sobre los nombres de base.
 if ! declare -F cf_tenant_databases >/dev/null; then
   cf_tenant_databases() {
-    psql -d "${POSTGRES_DB:-mail_registry}" -At -c \
+    cf_psql -d "${POSTGRES_DB:-mail_registry}" -At -c \
       "SELECT db_name FROM organization.tenants
         WHERE status = 'active' AND db_name <> ''
         ORDER BY db_name"
@@ -78,7 +83,7 @@ fi
 # celdas propias, o un registro restaurado despues, se quedaria abierto. El dueno (la
 # credencial de plataforma) conserva su acceso, y el rol de enrutado tiene el CONNECT que le
 # concede su migracion. Idempotente.
-psql -v ON_ERROR_STOP=1 -q -d "${POSTGRES_DB:-mail_registry}" <<'SQL'
+cf_psql -v ON_ERROR_STOP=1 -q -d "${POSTGRES_DB:-mail_registry}" <<'SQL'
 SELECT format('REVOKE CONNECT, TEMPORARY ON DATABASE %I FROM PUBLIC', current_database()) \gexec
 SQL
 
@@ -121,23 +126,28 @@ PY
 
 # crear_rol <rol de login> <grupo> <contrasena>
 crear_rol() {
-  local rol="$1" grupo="$2" clave="$3" ver
+  local rol="$1" grupo="$2" clave="$3"
   [[ ${#clave} -ge 32 ]] || { echo "la contrasena de $rol debe tener al menos 32 caracteres" >&2; exit 2; }
   [[ "$clave" =~ ^[!-~]+$ ]] || { echo "la contrasena de $rol solo admite ASCII imprimible sin espacios" >&2; exit 2; }
   # El grupo lo crea la MIGRACION, que es donde estan sus permisos. Sin el, el rol de login
   # existiria sin poder hacer nada y el servicio fallaria al primer SELECT.
   # Por la entrada estandar y no con -c: psql solo sustituye :'variable' en lo que lee como
   # entrada, no en el texto de -c, y ahi la consulta llegaria literal al servidor.
-  if [[ "$(psql -At -d "${POSTGRES_DB:-mail_registry}" -v grp="$grupo" <<'SQL'
+  if [[ "$(cf_psql -At -d "${POSTGRES_DB:-mail_registry}" -v grp="$grupo" <<'SQL'
 SELECT 1 FROM pg_roles WHERE rolname = :'grp';
 SQL
 )" != "1" ]]; then
     echo "falta el rol de grupo $grupo: aplica antes la migracion que lo crea" >&2
     exit 1
   fi
-  ver="$(verificador "$clave")"
-  psql -v ON_ERROR_STOP=1 -q -d "${POSTGRES_DB:-mail_registry}" \
-    -v role="$rol" -v grp="$grupo" -v verifier="$ver" <<'SQL'
+  # shellcheck disable=SC2034  # lo lee psql del entorno con \getenv
+  CF_SCRAM_VERIFIER="$(verificador "$clave")"
+  # Por el ENTORNO y con \getenv, no con -v: el verificador no puede quedar en la linea de
+  # ordenes de psql ni en la de docker run del perfil autoalojado.
+  cf_pg_pasar_entorno CF_SCRAM_VERIFIER
+  cf_psql -v ON_ERROR_STOP=1 -q -d "${POSTGRES_DB:-mail_registry}" \
+    -v role="$rol" -v grp="$grupo" <<'SQL'
+\getenv verifier CF_SCRAM_VERIFIER
 SELECT format('CREATE ROLE %I LOGIN', :'role')
  WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'role') \gexec
 ALTER ROLE :"role" WITH LOGIN PASSWORD :'verifier';
@@ -148,7 +158,7 @@ SQL
 # comprobar_rol <rol> <grupo> <esquema o vacio para el enrutado>
 comprobar_rol() {
   local rol="$1" grupo="$2" esquema="${3:-}" problemas
-  problemas="$(psql -v ON_ERROR_STOP=1 -q -At -d "${POSTGRES_DB:-mail_registry}" \
+  problemas="$(cf_psql -v ON_ERROR_STOP=1 -q -At -d "${POSTGRES_DB:-mail_registry}" \
     -v role="$rol" -v grp="$grupo" <<'SQL'
 SELECT 'tiene atributos de administracion o no puede iniciar sesion'
   FROM pg_roles WHERE rolname = :'role'
@@ -163,7 +173,7 @@ SQL
   # entran siquiera. Es la comprobacion que separa "creado" de "acotado".
   local registro="${POSTGRES_DB:-mail_registry}"
   if [[ -z "$esquema" ]]; then
-    problemas+="$(psql -v ON_ERROR_STOP=1 -q -At -d "$registro" -v role="$rol" <<'SQL'
+    problemas+="$(cf_psql -v ON_ERROR_STOP=1 -q -At -d "$registro" -v role="$rol" <<'SQL'
 SELECT 'no puede leer organization.v_tenant_routing'
  WHERE NOT has_table_privilege(:'role', 'organization.v_tenant_routing', 'SELECT');
 SELECT 'alcanza la tabla ' || c
@@ -173,7 +183,7 @@ SELECT 'alcanza la tabla ' || c
 SQL
 )"
   else
-    problemas+="$(psql -v ON_ERROR_STOP=1 -q -At -d "$registro" -v role="$rol" -v db="$registro" <<'SQL'
+    problemas+="$(cf_psql -v ON_ERROR_STOP=1 -q -At -d "$registro" -v role="$rol" -v db="$registro" <<'SQL'
 SELECT 'conecta al registro' WHERE has_database_privilege(:'role', :'db', 'CONNECT');
 SQL
 )"
@@ -191,7 +201,7 @@ bases_sin_connect() {
   local grupo="$1" db
   while IFS= read -r db; do
     [[ -z "$db" ]] && continue
-    if [[ "$(psql -At -d "${POSTGRES_DB:-mail_registry}" -v grp="$grupo" -v db="$db" 2>/dev/null <<'SQL'
+    if [[ "$(cf_psql -At -d "${POSTGRES_DB:-mail_registry}" -v grp="$grupo" -v db="$db" 2>/dev/null <<'SQL'
 SELECT has_database_privilege(:'grp', :'db', 'CONNECT');
 SQL
 )" != "t" ]]; then

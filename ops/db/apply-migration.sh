@@ -42,7 +42,10 @@ echo "bases: ${DBS[*]}"
 fallos=0
 for db in "${DBS[@]}"; do
   printf '  %-40s ' "$db"
-  salida="$(psql -d "$db" -v ON_ERROR_STOP=1 -q -f "$FILE" 2>&1)"
+  # Por la entrada estandar y no con -f: asi el fichero no tiene que existir dentro del
+  # contenedor efimero con el que el perfil autoalojado alcanza la base
+  # (ops/db/pg-credentials.sh).
+  salida="$(cf_psql -d "$db" -v ON_ERROR_STOP=1 -q <"$FILE" 2>&1)"
   if [[ $? -ne 0 ]]; then
     echo "FALLO"
     printf '%s\n' "$salida" | sed 's/^/      /' | head -5
@@ -51,7 +54,7 @@ for db in "${DBS[@]}"; do
   fi
 
   if [[ -n "${VERIFY_SQL:-}" ]]; then
-    ok="$(psql -d "$db" -At -c "SELECT ($VERIFY_SQL)" 2>&1)"
+    ok="$(cf_psql -d "$db" -At -c "SELECT ($VERIFY_SQL)" 2>&1)"
     if [[ "$ok" != "t" ]]; then
       echo "APLICADA PERO NO SURTIO EFECTO"
       echo "      la comprobacion devolvio: $ok"

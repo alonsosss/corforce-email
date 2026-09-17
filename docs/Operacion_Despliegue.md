@@ -243,7 +243,10 @@ para llamar a la API hace falta ya un superadmin. Después, todo por API: `POST 
   PUBLIC las bases del cluster (necesita `mail_service`, de las migraciones 06);
   `ops/db/cell-engine-role.sh --cell <code>`, el rol con el que los motores de esa celda leen
   su directorio; y `ops/db/pgbouncer-userlist.sh --write`, sin cuya entrada ninguno de los dos
-  pasa el pooler. Sus
+  pasa el pooler. Los tres, y `apply-migration.sh`, alcanzan la base por el resolvedor común
+  (`ops/db/pg-credentials.sh`), que en el perfil autoalojado los ejecuta en un contenedor de la
+  imagen del Postgres en marcha (sección 11); las contraseñas y verificadores viajan por el
+  entorno, nunca por argumento. Sus
   `mail-directory` y `mail-security` arrancan con `CELL_CODE=<code>` y `ORGANIZATION_URL` (sin
   las dos no arrancan: cada instancia pregunta a `organization` la celda de cada empresa y
   rechaza con 403 `TENANT_NOT_IN_CELL` a la que no es de la suya) y el gateway recibe sus
@@ -593,8 +596,16 @@ contra el perfil (`test-selfhosted-profile.sh` y a mano el 2026-09-17):
   el `pg_dump` 17 de Debian 13 escribe el formato 1.16 y el `pg_restore` 16 de la imagen no lo lee
   (`unsupported version (1.16) in file header`), y respaldar con una herramienta y restaurar con otra
   convierte la copia en una apuesta. El usuario que los ejecuta necesita el grupo `docker`.
-  Los demás guiones de `ops/db` (migraciones y roles) siguen usando `psql` del host y por eso hoy
-  solo funcionan desde dentro de la red interna; ver Riesgos.
+  Por el mismo camino van los demás guiones que abren la base (`ops/db/apply-migration.sh`,
+  `ops/apply-all-canonical.sh`, `cell-service-role.sh`, `cell-engine-role.sh`,
+  `tenant-service-role.sh`, `bootstrap-platform.sh`): las migraciones entran por la entrada
+  estándar, así que el fichero no tiene que existir dentro del contenedor, y los secretos que el
+  SQL necesita (el verificador SCRAM y la contraseña del primer superadmin) se pasan por el
+  entorno con `cf_pg_pasar_entorno` y se leen con `\getenv`, nunca con `-v`: si no, quedarían en la
+  línea de órdenes de `psql`, en la de `docker run` y en `docker inspect` del contenedor efímero.
+  El verificador SCRAM lo sigue calculando `python3` en el host, que es donde está la contraseña.
+  `ops/maintenance/pgbouncer-reconnect.sh` no pasa por aquí: habla con la consola de
+  administración del pooler dentro de su propio contenedor (`docker exec`).
 
 ### Proxy de borde
 
@@ -747,11 +758,6 @@ el OOM, pero con ClamAV cargando la latencia se degrada.
 
 ### Riesgos y pendientes
 
-* Los guiones de `ops/db` que aplican migraciones o crean roles (`apply-migration.sh`,
-  `apply-all-canonical.sh`, `cell-service-role.sh`, `cell-engine-role.sh`,
-  `tenant-service-role.sh`, `bootstrap-platform.sh`) llaman a `psql` del host, que no resuelve
-  `postgres-primary`: en este perfil hay que ejecutarlos desde un contenedor en la red interna
-  hasta que pasen por `cf_psql` como los del respaldo.
 * Los buzones se archivan con Dovecot en marcha: un mensaje que cambie de carpeta durante el
   archivado puede faltar en esa copia (está en la siguiente). Un archivo sin ese riesgo exige
   `doveadm backup` buzón a buzón o parar Dovecot; queda pendiente.

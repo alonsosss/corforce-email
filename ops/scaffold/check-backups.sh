@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Guardarrail de los respaldos (ops/backup), sin docker.
+# Guardarrail de los respaldos y del acceso a la base desde ops/ (ops/backup, ops/db,
+# ops/maintenance y ops/apply-all-canonical.sh), sin docker.
 #
 # El respaldo no se ve funcionar: un cambio que lo rompe pasa desapercibido hasta el dia que hace
 # falta. Aqui se atan las decisiones que lo sostienen en los dos perfiles:
@@ -7,7 +8,11 @@
 #     en contenedor de la imagen del Postgres en marcha (por su identificador), en su red, con
 #     verify-full y la CA interna montada, la contrasena solo por nombre (-e PGPASSWORD) y sin
 #     capacidades; en el perfil aws, los binarios del host sin tocar PGSSLMODE;
-#   - ningun guion de ops/backup llama a psql, pg_dump o pg_restore sin pasar por esas funciones;
+#   - ningun guion de ops/ que abra la base (respaldo, migraciones, roles, arranque) llama a psql,
+#     pg_dump o pg_restore sin pasar por esas funciones, y todos conservan el respaldo al binario
+#     del host para cuando se ejecutan sin pg-credentials.sh (pruebas, make e2e);
+#   - ningun secreto viaja como argumento de psql: los que el SQL necesita se pasan por el entorno
+#     con cf_pg_pasar_entorno y se leen con \getenv;
 #   - el respaldo lista las tres clases de base y la verificacion completa exige registro y celda;
 #   - la copia externa: CLI fijado por digest, credenciales y frase nunca en argumentos, sus
 #     secretos en secret-keys-backup.txt (fuera de secret-keys.txt y de .env.example) y vigilados
@@ -52,7 +57,9 @@ chmod +x "$TMP/bin/"*
 printf 'DEPLOY_PROFILE=selfhosted\nPOSTGRES_USER=mail_admin\nINTERNAL_TLS_DIR=%s\nCOMPOSE_PROJECT_NAME=proyecto\n' "$TMP/tls" >"$TMP/arbol/.env"
 salida="$(env -i PATH="$TMP/bin:/usr/bin:/bin" APP_DIR="$TMP/arbol" POSTGRES_PASSWORD=clave-simulada DOCKER_LOG="$TMP/docker.log" \
   HOST_LOG="$TMP/host.log" bash -c '. "$APP_DIR/ops/db/pg-credentials.sh" || exit 1
-  mkdir -p "$APP_DIR/volcados" && cf_pg_montar "$APP_DIR/volcados" && cf_pg_dump -d mail_registry -Fc -f "$APP_DIR/volcados/x.dump"
+  mkdir -p "$APP_DIR/volcados" && cf_pg_montar "$APP_DIR/volcados" || exit 1
+  CF_SECRETO_SIMULADO=verificador-simulado cf_pg_pasar_entorno CF_SECRETO_SIMULADO
+  cf_pg_dump -d mail_registry -Fc -f "$APP_DIR/volcados/x.dump"
   echo "perfil=$CF_PERFIL_DESPLIEGUE host=$PGHOST modo=$PGSSLMODE ca=$PGSSLROOTCERT"' 2>&1)" || mal "pg-credentials.sh en el perfil autoalojado: $salida"
 args="$(cat "$TMP/docker.log" 2>/dev/null || true)"
 tiene() { grep -qxF -- "$1" <<<"$args"; }
@@ -63,7 +70,9 @@ for esperado in run --rm --network proyecto_mail-internal --read-only --cap-drop
   "$TMP/arbol/volcados:$TMP/arbol/volcados:rw" pg_dump sha256:imagen-del-servidor; do
   tiene "$esperado" || mal "autoalojado: docker run sin '$esperado'"
 done
-grep -qE '^(PG[A-Z]*|POSTGRES_PASSWORD)=' <<<"$args" && mal "autoalojado: una variable de Postgres va con su valor en los argumentos de docker run"
+tiene "CF_SECRETO_SIMULADO" || mal "autoalojado: cf_pg_pasar_entorno no pasa la variable al contenedor con -e"
+grep -qE '^(PG[A-Z]*|POSTGRES_PASSWORD|CF_SECRETO_SIMULADO)=' <<<"$args" && mal "autoalojado: una variable de Postgres va con su valor en los argumentos de docker run"
+grep -qF 'verificador-simulado' <<<"$args" && mal "autoalojado: el valor de un secreto del entorno aparece en los argumentos de docker run"
 grep -qF 'clave-simulada' <<<"$args" && mal "autoalojado: la contrasena aparece en los argumentos de docker run"
 [[ -f "$TMP/host.log" ]] && mal "autoalojado: se ejecuto un binario de Postgres del host ($(cat "$TMP/host.log"))"
 
@@ -108,10 +117,60 @@ def codigo(texto):
 backup = "ops/backup"
 guiones = sorted(f for f in os.listdir(os.path.join(root, backup)) if f.endswith(".sh"))
 llamada = re.compile(r"(^|\$\(|[|;&!{(]|\bif\b|\bthen\b|\bdo\b|\|\|)\s*(psql|pg_dump|pg_restore)\b")
-for g in guiones:
-    for n, linea in codigo(leer(f"{backup}/{g}")):
-        if llamada.search(linea):
-            fallos.append(f"{backup}/{g}:{n} llama a una herramienta de Postgres sin cf_psql/cf_pg_dump/cf_pg_restore")
+
+# Guiones de ops/ que abren la base (fuera de ops/backup): el respaldo, las migraciones, los roles
+# y el arranque de la plataforma van todos por cf_psql. En el perfil autoalojado el psql del host no
+# resuelve postgres-primary, y el fallo aparece lejos: "could not translate host name".
+def guiones_de(rel_dir):
+    d = os.path.join(root, rel_dir)
+    return sorted(f"{rel_dir}/{f}" for f in os.listdir(d) if f.endswith(".sh")) if os.path.isdir(d) else []
+
+
+def sentencias(texto):
+    """Lineas logicas: une las continuaciones con barra antes de mirar.
+
+    Un docker exec partido en dos lineas, con el psql en la segunda, es una sola orden; leidas
+    por separado la segunda parece una llamada al psql del host."""
+    logica, primera, salida = "", 0, []
+    for n, linea in enumerate(texto.splitlines(), 1):
+        if not logica:
+            primera = n
+        sin = "" if linea.lstrip().startswith("#") else linea
+        if sin.rstrip().endswith("\\"):
+            logica += sin.rstrip()[:-1] + " "
+            continue
+        salida.append((primera, logica + sin))
+        logica = ""
+    if logica:
+        salida.append((primera, logica))
+    return salida
+
+
+abren_base = [f"ops/{g}" for g in ("apply-all-canonical.sh",) if os.path.isfile(os.path.join(root, "ops", g))]
+abren_base += guiones_de("ops/db") + guiones_de("ops/maintenance") + [f"{backup}/{g}" for g in guiones]
+# pgbouncer-reconnect.sh habla con la consola de administracion del POOLER, dentro de su propio
+# contenedor (docker exec): no pasa por la base ni por este resolvedor.
+docker_exec = re.compile(r"docker\s+exec\b")
+secreto_en_argumento = re.compile(r"-v\s+[a-z_]+=\"?\$\{?[A-Za-z_]*(PASSWORD|VERIFIER|SECRET|TOKEN)")
+for rel in abren_base:
+    texto = leer(rel)
+    for n, linea in sentencias(texto):
+        if "declare -F cf_psql" in linea:
+            continue
+        if llamada.search(linea) and not docker_exec.search(linea):
+            fallos.append(f"{rel}:{n} llama a psql/pg_dump/pg_restore sin cf_psql/cf_pg_dump/cf_pg_restore")
+        if secreto_en_argumento.search(linea):
+            fallos.append(f"{rel}:{n} pasa un secreto como argumento de psql (-v); usa cf_pg_pasar_entorno y \\getenv")
+    # Los que sourcean pg-credentials.sh solo cuando PGHOST esta vacio (pruebas y make e2e lo
+    # traen en el entorno) tienen que conservar el respaldo al binario del host.
+    if 'PGHOST:-' in texto and "pg-credentials.sh" in texto and "cf_psql" in texto:
+        if "declare -F cf_psql >/dev/null || cf_psql()" not in texto:
+            fallos.append(f"{rel} usa cf_psql sin el respaldo al psql del host (declare -F ... || cf_psql())")
+    # Y lo contrario de pasar un secreto por argumento: un \getenv cuya variable nadie pasa al
+    # contenedor efimero llegaria vacia.
+    for variable in set(re.findall(r"\\getenv\s+[a-z_]+\s+([A-Z_][A-Z0-9_]*)", texto)):
+        if f"cf_pg_pasar_entorno {variable}" not in texto:
+            fallos.append(f"{rel} lee {variable} con \\getenv sin pasarla con cf_pg_pasar_entorno: en contenedor llegaria vacia")
 
 respaldo = leer(f"{backup}/backup-tenants.sh")
 if "LIKE 'mail\\_%'" not in respaldo:
@@ -226,4 +285,4 @@ sys.exit(1 if fallos else 0)
 PY
 
 [[ $FALLOS -eq 0 ]] || exit 1
-echo "  OK: respaldos con la herramienta del servidor por verify-full en el perfil autoalojado y la del host en aws, sin credenciales en argumentos, copia externa cifrada y fijada, tres clases cubiertas y temporizadores instalables."
+echo "  OK: respaldos, migraciones y roles con la herramienta del servidor por verify-full en el perfil autoalojado y la del host en aws, sin secretos en argumentos, copia externa cifrada y fijada, tres clases cubiertas y temporizadores instalables."

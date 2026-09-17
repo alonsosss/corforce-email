@@ -74,6 +74,7 @@ if [[ -z "$PGHOST" || -z "$PGUSER" || -z "${PGPASSWORD:-}" ]]; then
 fi
 
 CF_PG_MONTAJES=()
+CF_PG_ENV=()
 if [[ "$CF_PERFIL_DESPLIEGUE" == selfhosted ]]; then
   # Proyecto de compose: el de COMPOSE_PROJECT_NAME o, como hace Compose, el directorio de la
   # aplicacion normalizado.
@@ -114,6 +115,18 @@ cf_pg_montar() {
   CF_PG_MONTAJES+=(-v "$dir:$dir:$modo")
 }
 
+# cf_pg_pasar_entorno <VARIABLE>...: hace visible el valor a las herramientas por el ENTORNO, no
+# por argumentos. Es el camino de los secretos que el SQL necesita (un verificador SCRAM, la
+# contrasena del primer superadmin): en el SQL se leen con `\getenv`, asi que no aparecen ni en la
+# linea de ordenes de psql ni en la de docker run ni en `docker inspect`.
+cf_pg_pasar_entorno() {
+  local nombre
+  for nombre in "$@"; do
+    export "${nombre?}"
+    [[ "$CF_PERFIL_DESPLIEGUE" == selfhosted ]] && CF_PG_ENV+=(-e "$nombre")
+  done
+}
+
 # cf_pg_herramienta <psql|pg_dump|pg_restore> [argumentos]: la contrasena entra por el entorno
 # (-e con solo el nombre), nunca por argumentos. Contenedor sin capacidades, de solo lectura, con
 # el uid del llamador para que los volcados sean suyos.
@@ -125,7 +138,7 @@ cf_pg_herramienta() {
   docker run --rm -i --network "$CF_PG_RED" --user "$(id -u):$(id -g)" \
     --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges \
     -e HOME=/tmp -e PGHOST -e PGPORT -e PGUSER -e PGPASSWORD -e PGSSLMODE -e PGSSLROOTCERT \
-    -v "$CF_PG_CA_DIR:/run/core-force-mail/tls/publico:ro" "${CF_PG_MONTAJES[@]}" \
+    "${CF_PG_ENV[@]}" -v "$CF_PG_CA_DIR:/run/core-force-mail/tls/publico:ro" "${CF_PG_MONTAJES[@]}" \
     --entrypoint "$1" "$CF_PG_IMAGEN" "${@:2}"
 }
 cf_psql() { cf_pg_herramienta psql "$@"; }

@@ -70,6 +70,12 @@ resuelve Compose contra el entorno del proceso.
 > `warning` facil de pasar por alto. Los dos caminos de despliegue (`scripts/deploy-ecr.sh` y
 > `release.yml`) ya lo hacen; la precaucion es para el uso manual.
 > Consultar estado (`ps`, `logs`) es seguro sin el envoltorio: solo molestan los avisos.
+>
+> **Un secreto tampoco viaja como argumento de `psql`.** Los guiones de `ops/db` que fijan una
+> contrasena (el verificador SCRAM de un rol, la contrasena del primer superadmin) la pasan por el
+> entorno con `cf_pg_pasar_entorno` y el SQL la lee con `\getenv`: con `-v` quedaria en `ps` y, en
+> el perfil autoalojado, en `docker inspect` del contenedor efimero que alcanza la base
+> (`ops/backup/README.md`). Lo comprueba `ops/scaffold/check-backups.sh`.
 
 ## Que NO va al almacen
 

@@ -51,7 +51,9 @@ for db in "${DBS[@]}"; do
   echo "===== $db"
   errores=0
   for f in "${FILES[@]}"; do
-    salida="$(psql -d "$db" -X -q -v ON_ERROR_STOP=0 -f "$f" 2>&1)"
+    # Por la entrada estandar y no con -f: el fichero no tiene que existir dentro del
+    # contenedor efimero del perfil autoalojado (ops/db/pg-credentials.sh).
+    salida="$(cf_psql -d "$db" -X -q -v ON_ERROR_STOP=0 <"$f" 2>&1)"
     reales="$(printf '%s\n' "$salida" | grep -iE 'ERROR' | grep -viE "$INOFENSIVOS")"
     if [[ -n "$reales" ]]; then
       echo "  [ERROR] ${f#"$CANONICAL"/}"

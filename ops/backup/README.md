@@ -64,6 +64,22 @@ la misma versión, y siguen al servidor cuando se actualice.
 En el perfil **aws** nada de esto cambia: se usan los binarios del host contra RDS, como hasta
 ahora, y `PGSSLMODE` no se toca.
 
+Por el mismo camino van los demás guiones que abren la base: `ops/db/apply-migration.sh`,
+`ops/apply-all-canonical.sh`, `ops/db/cell-service-role.sh`, `ops/db/cell-engine-role.sh`,
+`ops/db/tenant-service-role.sh` y `ops/db/bootstrap-platform.sh`. Dos consecuencias de hacerlo en
+contenedor, resueltas ahí:
+
+- las migraciones entran por la **entrada estándar** (no con `-f`), así que el fichero no tiene
+  que existir dentro del contenedor;
+- los secretos que el SQL necesita —el verificador SCRAM de un rol, la contraseña del primer
+  superadmin— se pasan por el **entorno** (`cf_pg_pasar_entorno`) y se leen con `\getenv`, nunca
+  con `-v`: con `-v` quedarían en la línea de órdenes de `psql`, en la de `docker run` y en
+  `docker inspect` del contenedor efímero. El verificador SCRAM lo sigue calculando `python3` en
+  el host, que es donde está la contraseña; a Postgres solo viaja el verificador.
+
+Cada uno conserva el respaldo al `psql` del host (`declare -F cf_psql || cf_psql()`) para cuando
+se ejecuta con `PGHOST` ya en el entorno, como en `make e2e`.
+
 ## Uso
 
 ```bash

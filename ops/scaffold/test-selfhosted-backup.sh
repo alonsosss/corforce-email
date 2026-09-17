@@ -18,6 +18,11 @@
 #     uid de Dovecot, sin _garbage, con su suma, la clave comprobada contra su publica y cifrados
 #     al salir; una clave que no corresponde se detecta; restore-mail-volume.sh devuelve el
 #     volumen (tambien desde el bucket) con su contenido intacto;
+#   - los guiones de ops/db alcanzan la base con el mismo camino: apply-migration.sh aplica una
+#     canonica, cell-service-role.sh y cell-engine-role.sh crean los roles de la celda (que
+#     inician sesion de verdad con su contrasena) y bootstrap-platform.sh deja el primer
+#     superadmin, sin que la contrasena ni el verificador SCRAM aparezcan en la linea de ordenes
+#     de ningun contenedor;
 #   - install-timers.sh reescribe usuario y ruta de las unidades y es idempotente.
 #
 #   bash ops/scaffold/test-selfhosted-backup.sh     # RESPALDO_KEEP=1 deja todo en pie
@@ -118,11 +123,31 @@ services:
     ports: !reset []
 EOF
 
+# Envoltorio de docker que registra la linea de ordenes de cada invocacion y sigue adelante: con el
+# se comprueba que ningun secreto viaja como argumento de un contenedor efimero.
+mkdir -p "$W/shim"
+cat >"$W/shim/docker" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$DOCKER_ARGV_LOG"
+exec /usr/bin/docker "$@"
+EOF
+chmod +x "$W/shim/docker"
+ARGV_LOG="$W/docker-argv.log"
+: >"$ARGV_LOG"
+
 # Guiones como en el servidor: desde el arbol desplegado, con su .env, sin variables de la prueba.
 guion() {
-  env -i PATH="$W/bin:/usr/local/bin:/usr/bin:/bin" HOME="$HOME" APP_DIR="$APP" CF_METRICS_DIR="$METRICAS" \
-    ${DOCKER_HOST:+DOCKER_HOST="$DOCKER_HOST"} bash "$APP/ops/backup/$1" "${@:2}"
+  ops_guion "ops/backup/$1" "${@:2}"
 }
+
+# ops_guion <ruta bajo APP_DIR> [args...]: como los ejecuta el servidor. Las variables de entorno
+# extra se pasan en el array CF_ENV_PRUEBA (NOMBRE=valor), nunca por argumento.
+ops_guion() {
+  env -i PATH="$W/shim:$W/bin:/usr/local/bin:/usr/bin:/bin" HOME="$HOME" APP_DIR="$APP" \
+    CF_METRICS_DIR="$METRICAS" DOCKER_ARGV_LOG="$ARGV_LOG" \
+    ${DOCKER_HOST:+DOCKER_HOST="$DOCKER_HOST"} "${CF_ENV_PRUEBA[@]}" bash "$APP/$1" "${@:2}"
+}
+CF_ENV_PRUEBA=()
 
 duenos="$(bash "$ROOT/ops/security/internal-tls.sh" --solo-detectar | paste -sd,)"
 docker run --rm -v "$ROOT:/repo:ro" -v "$W:/w" "$IMG_PG" bash /repo/ops/security/internal-tls.sh \
@@ -134,6 +159,7 @@ compose up -d postgres-primary >/dev/null 2>"$W/up.log" || { cat "$W/up.log" >&2
 bash "$ROOT/ops/maintenance/esperar-sanos.sh" --proyecto "$PROYECTO" --plazo 120 postgres-primary >/dev/null ||
   { mal "postgres-primary no arranco"; exit 1; }
 PG="$(compose ps -q postgres-primary)"
+RED_INTERNA="$(docker inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{println $k}}{{end}}' "$PG" | sed '/^$/d' | head -1)"
 [[ -z "$(docker port "$PG")" ]] && ok "postgres-primary sin puertos publicados en el host" || mal "postgres-primary publica puertos: $(docker port "$PG")"
 
 sql() { docker exec -i "$PG" psql -v ON_ERROR_STOP=1 -q -At -U mail_admin -d "$1" "${@:2}"; }
@@ -331,6 +357,84 @@ else
   mal "restore-tenant.sh desde S3 fallo"
 fi
 [[ -z "$(find "$RESPALDOS" -maxdepth 1 -name 'descarga-*')" ]] && ok "la descarga temporal se borra" || mal "queda la descarga temporal"
+
+echo "== Guiones de ops/db con el perfil autoalojado =="
+: >"$ARGV_LOG"
+# El array no se puede pasar como prefijo de una orden: se fija antes de cada llamada.
+CF_ENV_PRUEBA=(VERIFY_SQL="to_regclass('platform.event_outbox') IS NOT NULL")
+if ops_guion ops/db/apply-migration.sh migrations/tenant/canonical/platform/00_outbox.sql mail_tenant_prueba >"$W/migracion-ops.log" 2>&1; then
+  ok "apply-migration.sh aplica una canonica y comprueba su efecto ($(tail -1 "$W/migracion-ops.log"))"
+else
+  cat "$W/migracion-ops.log" >&2
+  mal "apply-migration.sh fallo con el perfil autoalojado"
+fi
+
+# CELL_DB_PASSWORD y MAIL_DB_PASSWORD estan en el inventario de secretos: el guion las exige en el
+# entorno (en el servidor las pone with-secrets.sh) y el resolvedor las vuelve a exportar desde el
+# almacen o, sin almacen, desde el .env. Se toman del .env para que el valor sea el mismo por los
+# dos caminos, que es lo que pasa en el servidor.
+CLAVE_SVC="$(sed -n 's/^CELL_DB_PASSWORD=//p' "$APP/.env" | tail -1)"
+CLAVE_MOTORES="$(sed -n 's/^MAIL_DB_PASSWORD=//p' "$APP/.env" | tail -1)"
+CLAVE_ADMIN="$(aleatorio 12)"
+CF_ENV_PRUEBA=(CELL_DB_PASSWORD="$CLAVE_SVC")
+if ops_guion ops/db/cell-service-role.sh --cell prueba >"$W/rol-celda.log" 2>&1; then
+  ok "cell-service-role.sh crea el rol de la celda ($(tail -2 "$W/rol-celda.log" | head -1))"
+else
+  cat "$W/rol-celda.log" >&2
+  mal "cell-service-role.sh fallo con el perfil autoalojado"
+fi
+CF_ENV_PRUEBA=(MAIL_DB_PASSWORD="$CLAVE_MOTORES")
+if ops_guion ops/db/cell-engine-role.sh --cell prueba >"$W/rol-motores.log" 2>&1; then
+  ok "cell-engine-role.sh crea el rol de los motores de la celda"
+else
+  cat "$W/rol-motores.log" >&2
+  mal "cell-engine-role.sh fallo con el perfil autoalojado"
+fi
+# El verificador SCRAM lo calcula python3 en el host: la prueba de que quedo bien es que el rol
+# inicia sesion de verdad, por TLS verificado y desde la red interna.
+entra_como() {
+  PGPASSWORD="$2" docker run --rm --network "$RED_INTERNA" -e PGPASSWORD -v "$W/tls/publico:/ca:ro" "$IMG_PG" \
+    psql "host=postgres-primary port=5432 user=$1 dbname=mail_cell_prueba sslmode=verify-full sslrootcert=/ca/ca.crt" \
+    -Atc 'SELECT current_user' 2>&1 || true
+}
+[[ "$(entra_como mail_cell_prueba_svc "$CLAVE_SVC")" == mail_cell_prueba_svc ]] &&
+  ok "el rol de la celda inicia sesion con su contrasena (verificador SCRAM calculado en el host)" ||
+  mal "el rol de la celda no inicia sesion: $(entra_como mail_cell_prueba_svc "$CLAVE_SVC")"
+[[ "$(entra_como mail_cell_prueba_engine "$CLAVE_MOTORES")" == mail_cell_prueba_engine ]] &&
+  ok "el rol de los motores inicia sesion con su contrasena" ||
+  mal "el rol de los motores no inicia sesion: $(entra_como mail_cell_prueba_engine "$CLAVE_MOTORES")"
+
+CF_ENV_PRUEBA=(PLATFORM_ADMIN_EMAIL=root@prueba.test PLATFORM_ADMIN_PASSWORD="$CLAVE_ADMIN")
+if ops_guion ops/db/bootstrap-platform.sh --cell prueba --region sa-east-1 >"$W/bootstrap.log" 2>&1; then
+  hash_admin="$(CLAVE_ADMIN="$CLAVE_ADMIN" docker exec -i -e CLAVE_ADMIN "$PG" psql -q -At -U mail_admin -d mail_registry <<'SQL'
+\getenv clave CLAVE_ADMIN
+SELECT password_hash LIKE '$2a$10$%' AND password_hash = crypt(:'clave', password_hash)
+  FROM identity.users WHERE email = 'root@prueba.test';
+SQL
+)"
+  [[ "$hash_admin" == t ]] && ok "bootstrap-platform.sh deja el superadmin con su hash bcrypt de coste 10 verificable" ||
+    mal "el superadmin no quedo con un hash que verifique la contrasena: $hash_admin"
+else
+  cat "$W/bootstrap.log" >&2
+  mal "bootstrap-platform.sh fallo con el perfil autoalojado"
+fi
+
+# Ni la contrasena del superadmin ni las de los roles ni el verificador pueden aparecer en la
+# linea de ordenes de un contenedor: se pasan por el entorno y el SQL los lee con \getenv.
+fuga=""
+for secreto in "$CLAVE_ADMIN" "$CLAVE_SVC" "$CLAVE_MOTORES"; do
+  grep -qF "$secreto" "$ARGV_LOG" && fuga="si"
+done
+grep -qE 'SCRAM-SHA-256\$' "$ARGV_LOG" && fuga="${fuga:+$fuga y }verificador"
+if [[ -z "$fuga" ]]; then
+  ok "ningun secreto aparece en los $(wc -l <"$ARGV_LOG") docker run de estos guiones"
+else
+  mal "un secreto viaja en la linea de ordenes de docker ($fuga)"
+fi
+CF_ENV_PRUEBA=()
+grep -q -- '-e PLATFORM_ADMIN_PASSWORD' "$ARGV_LOG" && grep -q -- '-e CF_SCRAM_VERIFIER' "$ARGV_LOG" &&
+  ok "los secretos llegan al contenedor como nombres de variable (-e PLATFORM_ADMIN_PASSWORD, -e CF_SCRAM_VERIFIER)" ||
+  mal "los secretos no se pasan por el entorno al contenedor: $(grep -c -- '-e ' "$ARGV_LOG") invocaciones con -e"
 
 echo "== Volumenes de correo (buzones y claves de mail_crypt) =="
 echo "MAIL_COMPOSE_PROJECT=$PROYECTO" >>"$APP/.env"
