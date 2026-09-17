@@ -62,5 +62,5 @@ case "$ACCION:$perfil" in
   compose:selfhosted) echo "-f docker-compose.yml -f docker-compose.selfhosted.yml" ;;
   infra:aws) ;;
   # En orden de arranque: las dependencias antes; el proxy de borde, tras el gateway.
-  infra:selfhosted) echo "postgres-primary redis pgbouncer edge-proxy" ;;
+  infra:selfhosted) echo "postgres-primary redis pgbouncer nats edge-proxy" ;;
 esac

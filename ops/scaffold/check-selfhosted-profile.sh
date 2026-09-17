@@ -282,6 +282,11 @@ for s in $(cat "$TMP/out"); do
   grep -qE "^  $s:\s*$" "$ROOT/docker-compose.selfhosted.yml" "$ROOT/docker-compose.yml" || mal "perfil selfhosted: $s no es un servicio de compose"
 done
 [[ "$(awk '{print $NF}' "$TMP/out")" == edge-proxy ]] || mal "perfil selfhosted: el proxy de borde no va el ultimo"
+# NATS no se construye ni lo recrea ningun despliegue: si no es infraestructura del perfil, nadie
+# lo arranca y los servicios se quedan sin eventos.
+for s in postgres-primary redis pgbouncer nats; do
+  grep -qw "$s" "$TMP/out" || mal "perfil selfhosted: $s no es infraestructura del perfil"
+done
 perfil 'DEPLOY_PROFILE=selfhosted\n' --nombre && [[ "$(cat "$TMP/out")" == selfhosted ]] || mal "perfil: --nombre no necesita la CA y dice selfhosted"
 
 if [[ $FALLOS -ne 0 ]]; then

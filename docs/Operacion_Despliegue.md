@@ -584,7 +584,7 @@ Desde el puesto de trabajo, con el repositorio en el commit a desplegar (`<srv>`
    ```
 
    Tras el rsync, `perfil-despliegue.sh` confirma `selfhosted` y la CA (sin ella se detiene
-   aquí); se levantan y esperan sanos `postgres-primary`, `redis` y `pgbouncer`; se recrean los
+   aquí); se levantan y esperan sanos `postgres-primary`, `redis`, `pgbouncer` y `nats`; se recrean los
    servicios y se esperan; y al final `edge-proxy`, también esperado. Cada `docker compose` va por
    `with-secrets.sh` con `-f docker-compose.yml -f docker-compose.selfhosted.yml`. En despliegues
    siguientes un cambio en `selfhosted/redis` recrea Redis, uno en `selfhosted/edge` recrea el
