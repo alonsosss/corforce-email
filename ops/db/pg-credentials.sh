@@ -19,8 +19,9 @@
 # no es el camino para DDL ni para un volcado.
 #
 # Perfil autoalojado (DEPLOY_PROFILE=selfhosted): postgres-primary no se publica en el host y su
-# nombre solo existe en la red interna de Docker. Las herramientas cf_psql, cf_pg_dump y
-# cf_pg_restore corren entonces en un contenedor efimero de la MISMA imagen que el Postgres en
+# nombre solo existe en la red interna de Docker. Las herramientas cf_psql, cf_psql_entrada,
+# cf_pg_dump y cf_pg_restore corren entonces en un contenedor efimero de la MISMA imagen que el
+# Postgres en
 # marcha, en su red, con verify-full contra la CA interna. Asi el cliente siempre tiene la version
 # del servidor: un volcado -Fc de pg_dump 17 (el del host Debian 13) no lo lee el pg_restore 16 de
 # la imagen, y restaurar con otra herramienta que la que respalda convierte la copia en una
@@ -127,23 +128,55 @@ cf_pg_pasar_entorno() {
   done
 }
 
-# cf_pg_herramienta <psql|pg_dump|pg_restore> [argumentos]: la contrasena entra por el entorno
-# (-e con solo el nombre), nunca por argumentos. Contenedor sin capacidades, de solo lectura, con
-# el uid del llamador para que los volcados sean suyos.
-cf_pg_herramienta() {
+# _cf_pg_ejecutar <con|sin> <psql|pg_dump|pg_restore> [argumentos]: la contrasena entra por el
+# entorno (-e con solo el nombre), nunca por argumentos. Contenedor sin capacidades, de solo
+# lectura, con el uid del llamador para que los volcados sean suyos.
+#
+# La entrada estandar se declara, y por eso hay dos familias de funciones:
+#
+#   - "sin" (cf_psql, cf_pg_dump, cf_pg_restore): la orden NO lee la entrada estandar del guion,
+#     que se sustituye por /dev/null. `docker run -i` se la lleva entera, y eso rompio en
+#     produccion `tenant-service-role.sh --all`: el bucle
+#     `while read svc; do ...; done < <(servicios_de_empresa)` perdio la lista en la primera
+#     consulta de la primera vuelta, creo un solo rol y salio con 0. Los diez servicios restantes
+#     se quedaron sin rol y PgBouncer devolvia "password authentication failed" (Postgres dice eso
+#     tambien cuando el rol no existe). Tambien sin contenedor conviene: un psql sin -c ni -f leeria
+#     ahi el SQL y se comeria igual la lista.
+#   - "con" (cf_psql_entrada): la orden recibe la entrada del llamador porque ES su SQL o su
+#     fichero (un heredoc, `<fichero`, una tuberia). Dentro de un bucle `while read` solo es segura
+#     con su propia redireccion, que es justo lo que la hace "con entrada".
+#
+# ops/scaffold/check-backups.sh ata las dos reglas: una orden con heredoc o `<fichero` tiene que
+# usar la familia "con", y una de la familia "con" dentro de un bucle `while read` tiene que traer
+# su redireccion.
+_cf_pg_ejecutar() {
+  local entrada="$1" herramienta="$2"
+  shift 2
   if [[ "$CF_PERFIL_DESPLIEGUE" != selfhosted ]]; then
-    "$@"
+    if [[ "$entrada" == con ]]; then
+      "$herramienta" "$@"
+    else
+      "$herramienta" "$@" </dev/null
+    fi
     return
   fi
-  docker run --rm -i --network "$CF_PG_RED" --user "$(id -u):$(id -g)" \
-    --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges \
-    -e HOME=/tmp -e PGHOST -e PGPORT -e PGUSER -e PGPASSWORD -e PGSSLMODE -e PGSSLROOTCERT \
-    "${CF_PG_ENV[@]}" -v "$CF_PG_CA_DIR:/run/core-force-mail/tls/publico:ro" "${CF_PG_MONTAJES[@]}" \
-    --entrypoint "$1" "$CF_PG_IMAGEN" "${@:2}"
+  local orden=(docker run --rm)
+  [[ "$entrada" == con ]] && orden+=(-i)
+  orden+=(--network "$CF_PG_RED" --user "$(id -u):$(id -g)"
+    --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges
+    -e HOME=/tmp -e PGHOST -e PGPORT -e PGUSER -e PGPASSWORD -e PGSSLMODE -e PGSSLROOTCERT
+    "${CF_PG_ENV[@]}" -v "$CF_PG_CA_DIR:/run/core-force-mail/tls/publico:ro" "${CF_PG_MONTAJES[@]}"
+    --entrypoint "$herramienta" "$CF_PG_IMAGEN" "$@")
+  if [[ "$entrada" == con ]]; then
+    "${orden[@]}"
+  else
+    "${orden[@]}" </dev/null
+  fi
 }
-cf_psql() { cf_pg_herramienta psql "$@"; }
-cf_pg_dump() { cf_pg_herramienta pg_dump "$@"; }
-cf_pg_restore() { cf_pg_herramienta pg_restore "$@"; }
+cf_psql() { _cf_pg_ejecutar sin psql "$@"; }
+cf_psql_entrada() { _cf_pg_ejecutar con psql "$@"; }
+cf_pg_dump() { _cf_pg_ejecutar sin pg_dump "$@"; }
+cf_pg_restore() { _cf_pg_ejecutar sin pg_restore "$@"; }
 
 # cf_tenant_databases: las bases de empresa, una por empresa.
 #

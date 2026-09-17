@@ -66,9 +66,19 @@ ahora, y `PGSSLMODE` no se toca.
 
 Por el mismo camino van los demás guiones que abren la base: `ops/db/apply-migration.sh`,
 `ops/apply-all-canonical.sh`, `ops/db/cell-service-role.sh`, `ops/db/cell-engine-role.sh`,
-`ops/db/tenant-service-role.sh` y `ops/db/bootstrap-platform.sh`. Dos consecuencias de hacerlo en
+`ops/db/tenant-service-role.sh` y `ops/db/bootstrap-platform.sh`. Tres consecuencias de hacerlo en
 contenedor, resueltas ahí:
 
+- **la entrada estándar es de quien la pide**, y por eso hay dos familias de funciones:
+  `cf_psql`, `cf_pg_dump` y `cf_pg_restore` **no** leen la entrada estándar del guion (se sustituye
+  por `/dev/null`), y `cf_psql_entrada` la recibe porque ES su SQL o su fichero (un heredoc,
+  `<fichero`, una tubería). `docker run -i` se lleva la entrada entera, y eso rompió en producción
+  `tenant-service-role.sh --all`: el bucle `while read svc; do …; done < <(servicios_de_empresa)`
+  perdió la lista en la primera consulta, creó **un solo rol** y salió con 0; los diez servicios
+  restantes se quedaron sin rol y PgBouncer devolvía `password authentication failed` (Postgres
+  dice eso también cuando el rol no existe), con 404 en dominios, contactos, plantillas, tareas y
+  auditoría. Dentro de un bucle `while read`, una función de la familia "con entrada" solo es
+  segura con su propia redirección, que es justo lo que la hace "con entrada";
 - las migraciones entran por la **entrada estándar** (no con `-f`), así que el fichero no tiene
   que existir dentro del contenedor;
 - los secretos que el SQL necesita —el verificador SCRAM de un rol, la contraseña del primer
@@ -77,8 +87,14 @@ contenedor, resueltas ahí:
   `docker inspect` del contenedor efímero. El verificador SCRAM lo sigue calculando `python3` en
   el host, que es donde está la contraseña; a Postgres solo viaja el verificador.
 
-Cada uno conserva el respaldo al `psql` del host (`declare -F cf_psql || cf_psql()`) para cuando
-se ejecuta con `PGHOST` ya en el entorno, como en `make e2e`.
+Cada uno conserva el respaldo al `psql` del host (`declare -F cf_psql || cf_psql()`, y lo mismo
+para `cf_psql_entrada`) para cuando se ejecuta con `PGHOST` ya en el entorno, como en `make e2e`.
+
+`ops/scaffold/check-backups.sh` ata las dos reglas de la entrada estándar: una orden con heredoc o
+`<fichero` tiene que usar la familia "con entrada", y una de esa familia dentro de un bucle
+`while read` tiene que traer su redirección. Además lo comprueba ejecutando: un bucle de tres
+líneas con `cf_psql` dentro tiene que dar tres vueltas, y el heredoc de `cf_psql_entrada` tiene que
+llegar al contenedor.
 
 ## Uso
 

@@ -79,7 +79,8 @@ export PGUSER="${PGUSER:-${POSTGRES_USER:-mail_admin}}" PGPASSWORD="${PGPASSWORD
 
 # Sin pg-credentials.sh (con PGHOST ya en el entorno: pruebas y make e2e) las herramientas son
 # las del host, como hasta ahora.
-declare -F cf_psql >/dev/null || cf_psql() { psql "$@"; }
+declare -F cf_psql >/dev/null || cf_psql() { psql "$@" </dev/null; }
+declare -F cf_psql_entrada >/dev/null || cf_psql_entrada() { psql "$@"; }
 declare -F cf_pg_pasar_entorno >/dev/null || cf_pg_pasar_entorno() { export "${@?}"; }
 
 # shellcheck disable=SC2034  # lo lee psql del entorno con \getenv
@@ -103,7 +104,7 @@ cf_pg_pasar_entorno CF_SCRAM_VERIFIER
 
 # Los valores entran como variables de psql (-v, y \getenv para el verificador) y se citan con
 # :'x' / :"x": nunca se interpolan en el texto SQL desde bash.
-cf_psql -v ON_ERROR_STOP=1 -q -d "$CELL_DB" \
+cf_psql_entrada -v ON_ERROR_STOP=1 -q -d "$CELL_DB" \
   -v role="$ROLE" -v cell_db="$CELL_DB" <<'SQL'
 \getenv verifier CF_SCRAM_VERIFIER
 DO $$
@@ -134,7 +135,7 @@ REVOKE TEMPORARY ON DATABASE :"cell_db" FROM :"role";
 SQL
 
 if [[ $RETIRE -eq 1 ]]; then
-  cf_psql -v ON_ERROR_STOP=1 -q -d "$CELL_DB" <<'SQL'
+  cf_psql_entrada -v ON_ERROR_STOP=1 -q -d "$CELL_DB" <<'SQL'
 -- Segunda fase: mail_engine deja de poder iniciar sesion y de alcanzar ninguna base. Los
 -- permisos sobre el esquema mail se quedan donde estaban, que es lo que heredan los roles
 -- de login por celda.
@@ -148,7 +149,7 @@ SELECT format('REVOKE CONNECT ON DATABASE %I FROM mail_engine', datname)
 SQL
 fi
 
-problemas="$(cf_psql -v ON_ERROR_STOP=1 -q -At -d "$CELL_DB" -v role="$ROLE" -v cell_db="$CELL_DB" <<'SQL'
+problemas="$(cf_psql_entrada -v ON_ERROR_STOP=1 -q -At -d "$CELL_DB" -v role="$ROLE" -v cell_db="$CELL_DB" <<'SQL'
 SELECT 'tiene atributos de administracion o no puede iniciar sesion'
   FROM pg_roles WHERE rolname = :'role'
    AND (rolsuper OR rolcreatedb OR rolcreaterole OR rolreplication OR rolbypassrls OR NOT rolcanlogin);

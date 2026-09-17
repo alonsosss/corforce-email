@@ -45,7 +45,8 @@ export PGUSER="${PGUSER:-${POSTGRES_USER:-mail_admin}}" PGPASSWORD="${PGPASSWORD
 
 # Sin pg-credentials.sh (con PGHOST ya en el entorno: pruebas y make e2e) las herramientas son
 # las del host, como hasta ahora.
-declare -F cf_psql >/dev/null || cf_psql() { psql "$@"; }
+declare -F cf_psql >/dev/null || cf_psql() { psql "$@" </dev/null; }
+declare -F cf_psql_entrada >/dev/null || cf_psql_entrada() { psql "$@"; }
 declare -F cf_pg_pasar_entorno >/dev/null || cf_pg_pasar_entorno() { export "${@?}"; }
 REGISTRY_DB="${POSTGRES_DB:-mail_registry}"
 # El host de la celda es el que ven los SERVICIOS (el alias de pgbouncer en compose), no
@@ -59,7 +60,7 @@ CELL_DB_HOST="${CELL_DB_HOST:-${POSTGRES_HOST:-postgres}}"
 # de psql y, en el perfil autoalojado, en la de docker run y en `docker inspect` del contenedor
 # efimero: tan visible como pasarla por argumento, que es justo lo que este guion evita.
 cf_pg_pasar_entorno PLATFORM_ADMIN_PASSWORD
-cf_psql -v ON_ERROR_STOP=1 -q -d "$REGISTRY_DB" \
+cf_psql_entrada -v ON_ERROR_STOP=1 -q -d "$REGISTRY_DB" \
   -v cell="$CELL" -v region="$REGION" -v cell_host="$CELL_DB_HOST" -v cell_port="$CELL_DB_PORT" \
   -v email="$PLATFORM_ADMIN_EMAIL" <<'SQL'
 \getenv password PLATFORM_ADMIN_PASSWORD

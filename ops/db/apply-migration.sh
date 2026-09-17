@@ -45,7 +45,7 @@ for db in "${DBS[@]}"; do
   # Por la entrada estandar y no con -f: asi el fichero no tiene que existir dentro del
   # contenedor efimero con el que el perfil autoalojado alcanza la base
   # (ops/db/pg-credentials.sh).
-  salida="$(cf_psql -d "$db" -v ON_ERROR_STOP=1 -q <"$FILE" 2>&1)"
+  salida="$(cf_psql_entrada -d "$db" -v ON_ERROR_STOP=1 -q <"$FILE" 2>&1)"
   if [[ $? -ne 0 ]]; then
     echo "FALLO"
     printf '%s\n' "$salida" | sed 's/^/      /' | head -5

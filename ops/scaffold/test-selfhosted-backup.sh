@@ -18,7 +18,10 @@
 #     uid de Dovecot, sin _garbage, con su suma, la clave comprobada contra su publica y cifrados
 #     al salir; una clave que no corresponde se detecta; restore-mail-volume.sh devuelve el
 #     volumen (tambien desde el bucket) con su contenido intacto;
-#   - los guiones de ops/db alcanzan la base con el mismo camino: apply-migration.sh aplica una
+#   - los guiones de ops/db alcanzan la base con el mismo camino, y ninguno se queda con la
+#     entrada estandar del guion que los llama (tenant-service-role.sh --all crea el rol de
+#     enrutado y el de cada servicio de empresa, no solo el primero del bucle):
+#     apply-migration.sh aplica una
 #     canonica, cell-service-role.sh y cell-engine-role.sh crean los roles de la celda (que
 #     inician sesion de verdad con su contrasena) y bootstrap-platform.sh deja el primer
 #     superadmin, sin que la contrasena ni el verificador SCRAM aparezcan en la linea de ordenes
@@ -403,6 +406,44 @@ entra_como() {
 [[ "$(entra_como mail_cell_prueba_engine "$CLAVE_MOTORES")" == mail_cell_prueba_engine ]] &&
   ok "el rol de los motores inicia sesion con su contrasena" ||
   mal "el rol de los motores no inicia sesion: $(entra_como mail_cell_prueba_engine "$CLAVE_MOTORES")"
+
+# tenant-service-role.sh --all recorre los servicios de empresa con `while read ... done < <(...)`:
+# si una herramienta se queda con la entrada estandar, el bucle acaba en la primera vuelta y solo
+# nace el primer rol, con codigo de salida 0. Paso en produccion. Las contrasenas van al .env,
+# que es de donde las toma el resolvedor cuando no hay almacen.
+SERVICIOS_EMPRESA="$(python3 - "$APP/ops/db/service-credentials.json" <<'PYSVC'
+import json, sys
+for nombre, s in sorted(json.load(open(sys.argv[1], encoding="utf-8"))["servicios"].items()):
+    if s.get("plane") == "tenant":
+        print(nombre)
+PYSVC
+)"
+CF_ENV_PRUEBA=(TENANT_ROUTER_DB_PASSWORD="$(aleatorio 20)")
+while read -r svc; do
+  [[ -n "$svc" ]] || continue
+  CF_ENV_PRUEBA+=("$(tr 'a-z-' 'A-Z_' <<<"$svc")_DB_PASSWORD=$(aleatorio 20)")
+done <<<"$SERVICIOS_EMPRESA"
+printf '%s\n' "${CF_ENV_PRUEBA[@]}" >>"$APP/.env"
+if ops_guion ops/db/tenant-service-role.sh --all >"$W/roles-empresa.log" 2>&1; then
+  ok "tenant-service-role.sh --all termina bien ($(grep -c "^servicio '" "$W/roles-empresa.log") servicios)"
+else
+  cat "$W/roles-empresa.log" >&2
+  mal "tenant-service-role.sh --all fallo con el perfil autoalojado"
+fi
+esperados="${#CF_ENV_PRUEBA[@]}"
+creados="$(sql mail_registry -c "SELECT count(*) FROM pg_roles WHERE rolname = 'mail_router' OR rolname LIKE 'mail\_svc\_%'")"
+[[ "$creados" == "$esperados" ]] &&
+  ok "los $esperados roles de empresa existen (el enrutado y uno por servicio), no solo el primero del bucle" ||
+  mal "el bucle de --all creo $creados roles de $esperados: alguna herramienta se come la entrada estandar del bucle"
+clave_transactional="$(sed -n 's/^TRANSACTIONAL_DB_PASSWORD=//p' "$APP/.env" | tail -1)"
+entra_en_empresa() {
+  PGPASSWORD="$2" docker run --rm --network "$RED_INTERNA" -e PGPASSWORD -v "$W/tls/publico:/ca:ro" "$IMG_PG" \
+    psql "host=postgres-primary port=5432 user=$1 dbname=mail_tenant_prueba sslmode=verify-full sslrootcert=/ca/ca.crt" \
+    -Atc 'SELECT current_user' 2>&1 || true
+}
+[[ "$(entra_en_empresa mail_svc_transactional "$clave_transactional")" == mail_svc_transactional ]] &&
+  ok "mail_svc_transactional -el rol que falto en produccion- inicia sesion con su contrasena" ||
+  mal "mail_svc_transactional no inicia sesion: $(entra_en_empresa mail_svc_transactional "$clave_transactional")"
 
 CF_ENV_PRUEBA=(PLATFORM_ADMIN_EMAIL=root@prueba.test PLATFORM_ADMIN_PASSWORD="$CLAVE_ADMIN")
 if ops_guion ops/db/bootstrap-platform.sh --cell prueba --region sa-east-1 >"$W/bootstrap.log" 2>&1; then

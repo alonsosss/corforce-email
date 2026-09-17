@@ -596,6 +596,12 @@ contra el perfil (`test-selfhosted-profile.sh` y a mano el 2026-09-17):
   el `pg_dump` 17 de Debian 13 escribe el formato 1.16 y el `pg_restore` 16 de la imagen no lo lee
   (`unsupported version (1.16) in file header`), y respaldar con una herramienta y restaurar con otra
   convierte la copia en una apuesta. El usuario que los ejecuta necesita el grupo `docker`.
+  La entrada estándar se declara: `cf_psql`, `cf_pg_dump` y `cf_pg_restore` **no** leen la del
+  guion (se sustituye por `/dev/null`) y `cf_psql_entrada` sí, porque es su SQL o su fichero.
+  `docker run -i` se lleva la entrada entera, y por eso `tenant-service-role.sh --all` creó un solo
+  rol y salió con 0 en el primer servidor autoalojado: el bucle
+  `while read svc; …; done < <(servicios_de_empresa)` perdió su lista en la primera consulta. Lo
+  ata `ops/scaffold/check-backups.sh` (estático y ejecutado).
   Por el mismo camino van los demás guiones que abren la base (`ops/db/apply-migration.sh`,
   `ops/apply-all-canonical.sh`, `cell-service-role.sh`, `cell-engine-role.sh`,
   `tenant-service-role.sh`, `bootstrap-platform.sh`): las migraciones entran por la entrada

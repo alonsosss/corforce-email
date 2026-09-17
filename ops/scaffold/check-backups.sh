@@ -46,11 +46,15 @@ case "$1" in
       *'{{.Image}}'*) echo sha256:imagen-del-servidor ;;
       *Networks*) echo proyecto_mail-internal ;;
     esac ;;
-  run) printf '%s\n' "$@" >"$DOCKER_LOG" ;;
+  run)
+    printf '%s\n' "$@" >"$DOCKER_LOG"
+    # La entrada estandar del contenedor, para distinguir la familia "con entrada" de la otra.
+    cat >"$DOCKER_LOG.entrada"
+    ;;
 esac
 EOF
 for binario in psql pg_dump pg_restore; do
-  printf '#!/usr/bin/env bash\necho "host:%s $*" >"$HOST_LOG"\n' "$binario" >"$TMP/bin/$binario"
+  printf '#!/usr/bin/env bash\necho "host:%s $*" >"$HOST_LOG"\ncat >/dev/null\n' "$binario" >"$TMP/bin/$binario"
 done
 chmod +x "$TMP/bin/"*
 
@@ -76,8 +80,31 @@ grep -qF 'verificador-simulado' <<<"$args" && mal "autoalojado: el valor de un s
 grep -qF 'clave-simulada' <<<"$args" && mal "autoalojado: la contrasena aparece en los argumentos de docker run"
 [[ -f "$TMP/host.log" ]] && mal "autoalojado: se ejecuto un binario de Postgres del host ($(cat "$TMP/host.log"))"
 
+# La entrada estandar es de quien la pide: cf_psql no puede comerse la lista de un bucle
+# `while read` (lo hizo en produccion y tenant-service-role.sh --all creo un solo rol), y
+# cf_psql_entrada tiene que recibir su heredoc.
+vueltas="$(env -i PATH="$TMP/bin:/usr/bin:/bin" APP_DIR="$TMP/arbol" POSTGRES_PASSWORD=clave-simulada \
+  DOCKER_LOG="$TMP/docker.log" HOST_LOG="$TMP/host.log" bash -c '. "$APP_DIR/ops/db/pg-credentials.sh" || exit 1
+  n=0
+  while IFS= read -r linea; do
+    cf_psql -d mail_registry -At -c "select 1" >/dev/null
+    n=$((n + 1))
+  done < <(printf "uno\ndos\ntres\n")
+  echo "$n"' 2>&1)" || mal "pg-credentials.sh en el bucle de prueba: $vueltas"
+[[ "$vueltas" == 3 ]] || mal "autoalojado: cf_psql se come la entrada del bucle (vueltas=$vueltas, se esperaban 3)"
+grep -qxF -- '-i' "$TMP/docker.log" && mal "autoalojado: cf_psql reserva la entrada estandar con -i"
+rm -f "$TMP/docker.log" "$TMP/docker.log.entrada"
+env -i PATH="$TMP/bin:/usr/bin:/bin" APP_DIR="$TMP/arbol" POSTGRES_PASSWORD=clave-simulada \
+  DOCKER_LOG="$TMP/docker.log" HOST_LOG="$TMP/host.log" bash -c '. "$APP_DIR/ops/db/pg-credentials.sh" || exit 1
+  cf_psql_entrada -d mail_registry <<SQL
+SELECT marca-del-heredoc;
+SQL' >/dev/null 2>&1 || mal "cf_psql_entrada fallo en el docker simulado"
+grep -qxF -- '-i' "$TMP/docker.log" || mal "autoalojado: cf_psql_entrada no pasa la entrada estandar al contenedor (-i)"
+grep -q 'marca-del-heredoc' "$TMP/docker.log.entrada" 2>/dev/null ||
+  mal "autoalojado: el heredoc de cf_psql_entrada no llega al contenedor"
+
 printf 'DEPLOY_PROFILE=aws\nPOSTGRES_HOST=db.interna\nPOSTGRES_USER=mail_admin\n' >"$TMP/arbol/.env"
-rm -f "$TMP/docker.log"
+rm -f "$TMP/docker.log" "$TMP/docker.log.entrada"
 salida="$(env -i PATH="$TMP/bin:/usr/bin:/bin" APP_DIR="$TMP/arbol" POSTGRES_PASSWORD=clave-simulada DOCKER_LOG="$TMP/docker.log" \
   HOST_LOG="$TMP/host.log" bash -c '. "$APP_DIR/ops/db/pg-credentials.sh" || exit 1
   cf_pg_montar /tmp && cf_psql -d mail_registry -c "select 1"
@@ -85,6 +112,12 @@ salida="$(env -i PATH="$TMP/bin:/usr/bin:/bin" APP_DIR="$TMP/arbol" POSTGRES_PAS
 [[ "$salida" == *"perfil=aws host=db.interna modo=sin"* ]] || mal "aws: se esperaba el host del .env sin tocar PGSSLMODE ($salida)"
 [[ "$(cat "$TMP/host.log" 2>/dev/null)" == "host:psql -d mail_registry -c select 1" ]] || mal "aws: cf_psql no ejecuta el psql del host"
 [[ -f "$TMP/docker.log" ]] && mal "aws: se lanzo un contenedor"
+vueltas="$(env -i PATH="$TMP/bin:/usr/bin:/bin" APP_DIR="$TMP/arbol" POSTGRES_PASSWORD=clave-simulada \
+  DOCKER_LOG="$TMP/docker.log" HOST_LOG="$TMP/host.log" bash -c '. "$APP_DIR/ops/db/pg-credentials.sh" || exit 1
+  n=0
+  while IFS= read -r linea; do cf_psql -d mail_registry -At -c "select 1" >/dev/null; n=$((n + 1)); done < <(printf "uno\ndos\ntres\n")
+  echo "$n"' 2>&1)" || mal "pg-credentials.sh en el bucle de prueba (aws): $vueltas"
+[[ "$vueltas" == 3 ]] || mal "aws: cf_psql se come la entrada del bucle (vueltas=$vueltas, se esperaban 3)"
 
 # Sin .env (un puesto de trabajo o una prueba con PG* propias): el camino de siempre.
 rm -f "$TMP/arbol/.env" "$TMP/host.log"
@@ -154,18 +187,36 @@ docker_exec = re.compile(r"docker\s+exec\b")
 secreto_en_argumento = re.compile(r"-v\s+[a-z_]+=\"?\$\{?[A-Za-z_]*(PASSWORD|VERIFIER|SECRET|TOKEN)")
 for rel in abren_base:
     texto = leer(rel)
+    bucles_read = 0
     for n, linea in sentencias(texto):
+        # Profundidad de bucles `while ... read`; un bucle escrito en una sola linea abre y cierra
+        # en ella, y su cuerpo tambien esta dentro.
+        abre = bool(re.search(r"\bwhile\b.*\bread\b", linea))
+        cierra = bool(re.match(r"\s*done\b", linea) or re.search(r";\s*done\b", linea))
+        bucles_read_aqui = bucles_read + (1 if abre else 0)
+        bucles_read = max(0, bucles_read_aqui - (1 if cierra else 0))
         if "declare -F cf_psql" in linea:
             continue
         if llamada.search(linea) and not docker_exec.search(linea):
             fallos.append(f"{rel}:{n} llama a psql/pg_dump/pg_restore sin cf_psql/cf_pg_dump/cf_pg_restore")
         if secreto_en_argumento.search(linea):
             fallos.append(f"{rel}:{n} pasa un secreto como argumento de psql (-v); usa cf_pg_pasar_entorno y \\getenv")
+        # La entrada estandar es de quien la pide (ops/db/pg-credentials.sh): una orden con
+        # heredoc o con `<fichero` tiene que ser de la familia "con entrada" (cf_psql_entrada);
+        # las otras la sustituyen por /dev/null y el SQL no llegaria a ejecutarse, en silencio.
+        if re.search(r"(?<!_entrada)\b(cf_psql|cf_pg_dump|cf_pg_restore)\b[^|]*(<<|<\s*\")", linea):
+            fallos.append(f"{rel}:{n} da entrada estandar (heredoc o fichero) a una herramienta que la descarta: usa cf_psql_entrada")
+        # Y al contrario: una de la familia "con entrada" DENTRO de un bucle `while read`, sin su
+        # propia redireccion, se come la lista del bucle. Es lo que rompio tenant-service-role.sh --all.
+        if bucles_read_aqui and "_entrada" in linea and not re.search(r"<<|<\s*\"|</dev/null", linea):
+            fallos.append(f"{rel}:{n} llama a una herramienta con entrada dentro de un bucle `while read` sin su propia redireccion: se comeria la lista del bucle")
     # Los que sourcean pg-credentials.sh solo cuando PGHOST esta vacio (pruebas y make e2e lo
     # traen en el entorno) tienen que conservar el respaldo al binario del host.
     if 'PGHOST:-' in texto and "pg-credentials.sh" in texto and "cf_psql" in texto:
-        if "declare -F cf_psql >/dev/null || cf_psql()" not in texto:
-            fallos.append(f"{rel} usa cf_psql sin el respaldo al psql del host (declare -F ... || cf_psql())")
+        for funcion in ("cf_psql", "cf_psql_entrada"):
+            if re.search(rf"(?<![a-z_]){funcion}(?![a-z_])", texto) and \
+               f"declare -F {funcion} >/dev/null || {funcion}()" not in texto:
+                fallos.append(f"{rel} usa {funcion} sin el respaldo al psql del host (declare -F ... || {funcion}())")
     # Y lo contrario de pasar un secreto por argumento: un \getenv cuya variable nadie pasa al
     # contenedor efimero llegaria vacia.
     for variable in set(re.findall(r"\\getenv\s+[a-z_]+\s+([A-Z_][A-Z0-9_]*)", texto)):
