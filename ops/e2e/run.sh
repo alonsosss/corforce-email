@@ -178,11 +178,30 @@ echo "== Plano de control"
 # organization da de baja el correo de una empresa en el mail-directory de su celda: pe-01 en el
 # destino base y pe-02 en la instancia que arranca mas abajo (MD2_PORT). Los demas servicios del
 # host siguen sin celdas.
-GATEWAY_BASE_CELL_CODE=pe-01 MAIL_DIRECTORY_CELL_HOSTS="pe-02=127.0.0.1:$((BASE + 60))" arrancar organization
+GATEWAY_BASE_CELL_CODE=pe-01 MAIL_DIRECTORY_CELL_HOSTS="pe-02=127.0.0.1:$((BASE + 60))" ORGANIZATION_SAGA_SWEEP_INTERVAL=1s arrancar organization
 esperar_salud organization "${PORT[organization]}" || exit 1
 
 echo "== Arranque de una plataforma vacia (ops/db/bootstrap-platform.sh)"
 e2e_plataforma pe-01
+
+# La base de la empresa de plataforma la crea y la migra organization, no el alta: el barrido de
+# migraciones solo migra bases que ya existen, y sin ella los servicios que recorren las empresas
+# activas la reintentaban en bucle. Se espera antes de arrancar el resto, para que ninguno la vea vacia.
+plataforma_lista() { [[ "$(sql mail_tenant_platform "SELECT count(*) > 0 FROM public.schema_migrations" 2>/dev/null)" == t ]]; }
+for _ in $(seq 1 60); do plataforma_lista && break; sleep 1; done
+plataforma_lista && ok "organization crea y migra la base de la empresa de plataforma" || mal "organization crea y migra la base de la empresa de plataforma"
+PLATFORM_ID="$(sql mail_registry "SELECT id FROM organization.tenants WHERE slug = 'platform'")"
+expect "con la marca de su empresa, como las altas por API" \
+  "$(sql mail_registry "SELECT shobj_description(oid, 'pg_database') FROM pg_database WHERE datname = 'mail_tenant_platform'")" \
+  "core-force-mail tenant $PLATFORM_ID"
+expect "cerrada a PUBLIC" \
+  "$(sql mail_registry "SELECT has_database_privilege('public', 'mail_tenant_platform', 'CONNECT')")" "f"
+expect "migrada por el runner y no por baseline" \
+  "$(sql mail_tenant_platform "SELECT count(*) FROM public.schema_migrations WHERE name LIKE '%baseline%'")" "0"
+# Se repite el alta con la MISMA contrasena (e2e_plataforma genera una nueva en cada llamada): es
+# idempotente y no cambia la de un superadmin que ya existe; el login de abajo lo prueba.
+PGHOST=127.0.0.1 PLATFORM_ADMIN_EMAIL="$ADMIN_EMAIL" PLATFORM_ADMIN_PASSWORD="$ADMIN_PASS" \
+  bash ops/db/bootstrap-platform.sh --cell pe-01 --region sa-east-1 >/dev/null || mal "bootstrap-platform.sh repetido"
 
 echo "== Credencial de enrutado de los servicios de empresa (ops/db/tenant-service-role.sh)"
 # organization ya aplico las migraciones del registro al arrancar, asi que existen la vista

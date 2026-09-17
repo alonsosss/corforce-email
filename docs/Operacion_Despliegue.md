@@ -206,7 +206,13 @@ access tokens caen de golpe y se renuevan con el refresh.
 
 `ops/db/bootstrap-platform.sh` crea la celda inicial, la empresa `platform` y su primer
 `superadmin` (contraseña solo por `PLATFORM_ADMIN_PASSWORD`, nunca por argumento; hash
-bcrypt hecho por Postgres). Idempotente. Es lo único que no se puede hacer por API, porque
+bcrypt hecho por Postgres). Idempotente. La base `mail_tenant_platform` no la crea el script:
+organization la crea y la migra con las mismas piezas que la saga de alta (marca, cierre a
+`PUBLIC` y registro de migraciones), al arrancar y en cada pasada de
+`ORGANIZATION_SAGA_SWEEP_INTERVAL` hasta dejarla lista. Es la única empresa que nace fuera de
+la saga, y el barrido de migraciones solo migra bases que ya existen: sin esto quedaba activa y
+sin base, y los servicios que recorren las empresas la reintentaban en bucle. No crea la base
+que le falte a otra empresa: una base borrada por accidente no debe reaparecer vacía. Es lo único que no se puede hacer por API, porque
 para llamar a la API hace falta ya un superadmin. Después, todo por API: `POST /cells`,
 `POST /organizations`.
 

@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"errors"
+	"github.com/alonsosss/corforce-email/services/organization/internal/domain"
 	"log"
 	"net/http"
 	"os"
@@ -221,6 +223,32 @@ func reseedSystemRoles(ctx context.Context, uc *app.OrganizationUseCase, logger 
 // recoverSagas retoma cada intervalo las sagas de empresa sin dueno. Varias replicas pueden
 // hacerlo a la vez: cada saga la toma una sola por su arriendo. La primera pasada espera un
 // intervalo: al arrancar la plataforma, access-control e identity aun no responden.
+// ensurePlatformDatabase deja lista la base de la empresa de plataforma: al arrancar y en cada
+// pasada hasta conseguirlo, porque el alta de plataforma corre despues de arrancar organization
+// (necesita el registro ya migrado). Una base ajena con ese nombre no se reintenta: pide una mano.
+func ensurePlatformDatabase(uc *app.OrganizationUseCase, interval time.Duration, logger *zap.Logger) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		listo, err := uc.EnsurePlatformDatabase(ctx)
+		cancel()
+		switch {
+		case err == nil && listo:
+			logger.Info("base de la empresa de plataforma creada y migrada")
+			return
+		case errors.Is(err, domain.ErrDatabaseOccupied):
+			logger.Error("la base de la empresa de plataforma ya existe y es ajena: no se adopta", zap.Error(err))
+			return
+		case errors.Is(err, domain.ErrMigrationsLocked):
+			// Otra replica la esta migrando: se mira en la siguiente pasada.
+		case err != nil:
+			logger.Warn("no se pudo preparar la base de la empresa de plataforma", zap.Error(err))
+		}
+		<-ticker.C
+	}
+}
+
 func recoverSagas(uc *app.OrganizationUseCase, interval time.Duration, logger *zap.Logger) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -353,6 +381,8 @@ func main() {
 	// Sagas de alta y baja que se quedaron sin dueno (una instancia murio a mitad o un
 	// fallo solto el arriendo): se retoman cada intervalo.
 	go recoverSagas(uc, st.sagaSweepInterval, logger)
+	// La base de la empresa de plataforma, la unica que nace fuera de la saga de alta.
+	go ensurePlatformDatabase(uc, st.sagaSweepInterval, logger)
 
 	// Aplica migraciones canonicas pendientes a los tenants existentes al arrancar.
 	// Corre EN SEGUNDO PLANO para no retrasar el health-check ni el arranque del HTTP, es

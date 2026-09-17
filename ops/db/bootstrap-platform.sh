@@ -81,4 +81,6 @@ ON CONFLICT DO NOTHING;
 SQL
 
 echo "plataforma lista: celda '$CELL', empresa 'platform', superadmin '$PLATFORM_ADMIN_EMAIL'"
-echo "la base de la empresa de plataforma (mail_tenant_platform) la crea organization en su barrido de migraciones"
+# La base de la empresa de plataforma no la crea este script: la crea y la migra organization con
+# las mismas piezas que la saga de alta (marca, cierre a PUBLIC y registro de migraciones).
+echo "la base mail_tenant_platform la crea y la migra organization en su siguiente pasada (ORGANIZATION_SAGA_SWEEP_INTERVAL)"
