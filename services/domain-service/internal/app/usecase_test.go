@@ -150,6 +150,7 @@ func TestCreateRejects(t *testing.T) {
 		{"duplicado", CreateRequest{Domain: "ACME.com", Purpose: "corporate"}, domain.ErrDomainAlreadyExists},
 		{"plataforma", CreateRequest{Domain: "smtp." + platformHost, Purpose: "corporate"}, domain.ErrPlatformDomain},
 		{"ip", CreateRequest{Domain: "10.0.0.1", Purpose: "corporate"}, domain.ErrInvalidDomainName},
+		{"sufijo publico", CreateRequest{Domain: " COM.pe. ", Purpose: "corporate"}, domain.ErrPublicSuffixDomain},
 		{"purpose", CreateRequest{Domain: "otro.com", Purpose: "marketing"}, domain.ErrInvalidPurpose},
 		{"dmarc", CreateRequest{Domain: "otro.com", Purpose: "sending", DMARCPolicy: "block"}, domain.ErrInvalidDMARCPolicy},
 	}

@@ -113,6 +113,11 @@ func TestLoadSettingsRangos(t *testing.T) {
 		"historial de mas de un ano":                          {map[string]string{"DOMAIN_CHECK_RETENTION": "8761h"}, "DOMAIN_CHECK_RETENTION"},
 		"puerto cero":                                         {map[string]string{"DOMAIN_SERVICE_PORT": "0"}, "DOMAIN_SERVICE_PORT"},
 		"puerto fuera de TCP":                                 {map[string]string{"DOMAIN_SERVICE_PORT": "65536"}, "DOMAIN_SERVICE_PORT"},
+		"hostname bajo un sufijo de dos etiquetas":            {map[string]string{"MAIL_HOSTNAME": "Mail.Plataforma.com.pe."}, ""},
+		"hostname que es un sufijo publico":                   {map[string]string{"MAIL_HOSTNAME": "com.pe"}, "MAIL_HOSTNAME"},
+		"hostname que es un sufijo privado":                   {map[string]string{"MAIL_HOSTNAME": "github.io"}, "MAIL_HOSTNAME"},
+		"hostname de una etiqueta":                            {map[string]string{"MAIL_HOSTNAME": "localhost"}, "MAIL_HOSTNAME"},
+		"hostname con caracteres no validos":                  {map[string]string{"MAIL_HOSTNAME": "mail_plataforma.com"}, "MAIL_HOSTNAME"},
 	} {
 		setSettingsEnv(t, "staging", "gateway-token-0123456789")
 		for key, value := range c.env {

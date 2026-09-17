@@ -138,6 +138,9 @@ func loadSettings(logger *zap.Logger) (settings, error) {
 	if len(missing) > 0 {
 		return s, fmt.Errorf("faltan variables de entorno obligatorias: %s", strings.Join(missing, ", "))
 	}
+	if err := domain.ValidatePlatformHostname(s.platformHostname); err != nil {
+		return s, fmt.Errorf("MAIL_HOSTNAME %q: %w", s.platformHostname, err)
+	}
 	if !strings.HasPrefix(s.platform.SPFInclude, "include:") {
 		return s, fmt.Errorf("MAIL_SPF_INCLUDE debe ser un mecanismo include: (p. ej. include:spf.%s)", s.platformHostname)
 	}

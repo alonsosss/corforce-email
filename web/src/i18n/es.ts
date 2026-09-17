@@ -747,6 +747,8 @@ export const es = {
   'domains.dnsProvider.field.token': 'Token',
   'domains.dnsProvider.field.zones': 'Zonas visibles',
   'domains.dnsProvider.field.connectedBy': 'Conectado por',
+  'domains.dnsProvider.connectedByRemoved': 'Usuario eliminado',
+  'domains.dnsProvider.connectedByUnknown': 'Un usuario de la empresa',
   'domains.dnsProvider.field.connectedAt': 'Conectado el',
   'domains.dnsProvider.field.lastValidated': 'Ultima validacion',
   'domains.dnsProvider.tokenHint': 'Termina en {hint}',

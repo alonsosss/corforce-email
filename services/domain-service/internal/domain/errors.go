@@ -7,9 +7,12 @@ var (
 	ErrDomainAlreadyExists = errors.New("el dominio ya esta dado de alta en esta empresa")
 	ErrInvalidDomainName   = errors.New("nombre de dominio no valido")
 	ErrPlatformDomain      = errors.New("el dominio pertenece a la plataforma y no puede darse de alta")
-	ErrInvalidPurpose      = errors.New("purpose debe ser corporate, sending o both")
-	ErrInvalidDMARCPolicy  = errors.New("dmarc_policy debe ser none, quarantine o reject")
-	ErrNothingToUpdate     = errors.New("no hay nada que actualizar")
+	ErrPublicSuffixDomain  = errors.New("el nombre es un sufijo publico (como com.pe o co.uk) y no un dominio registrable; indique el dominio de la empresa")
+	// ErrInvalidPlatformHostname: MAIL_HOSTNAME no es un nombre DNS valido o es un sufijo publico.
+	ErrInvalidPlatformHostname = errors.New("el hostname de la plataforma no es valido o es un sufijo publico")
+	ErrInvalidPurpose          = errors.New("purpose debe ser corporate, sending o both")
+	ErrInvalidDMARCPolicy      = errors.New("dmarc_policy debe ser none, quarantine o reject")
+	ErrNothingToUpdate         = errors.New("no hay nada que actualizar")
 	// ErrDomainHasMailboxes lo devuelve mail-directory cuando el dominio todavia tiene
 	// buzones: no se puede dar de baja hasta retirarlos.
 	ErrDomainHasMailboxes = errors.New("el dominio tiene buzones activos en el directorio")

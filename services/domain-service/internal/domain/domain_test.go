@@ -44,6 +44,114 @@ func TestValidateDomainName(t *testing.T) {
 	}
 }
 
+// La proteccion del dominio de la plataforma sigue la Public Suffix List: bajo un sufijo de dos
+// etiquetas (com.pe, co.uk) protege solo el dominio registrable de la plataforma, nunca el
+// sufijo entero.
+func TestValidateDomainNamePlataformaPorSufijoPublico(t *testing.T) {
+	cases := []struct {
+		name     string
+		platform string
+		in       string
+		want     error
+	}{
+		{".com: base", "mail.plataforma.com", "plataforma.com", ErrPlatformDomain},
+		{".com: subdominio del base", "mail.plataforma.com", "clientes.plataforma.com", ErrPlatformDomain},
+		{".com: otra empresa", "mail.plataforma.com", "acme.com", nil},
+		{".com.pe: hostname", "mail.plataforma.com.pe", "mail.plataforma.com.pe", ErrPlatformDomain},
+		{".com.pe: subdominio del hostname", "mail.plataforma.com.pe", "smtp.mail.plataforma.com.pe", ErrPlatformDomain},
+		{".com.pe: base", "mail.plataforma.com.pe", "plataforma.com.pe", ErrPlatformDomain},
+		{".com.pe: subdominio del base", "mail.plataforma.com.pe", "ventas.plataforma.com.pe", ErrPlatformDomain},
+		{".com.pe: otra empresa", "mail.plataforma.com.pe", "acme.com.pe", nil},
+		{".com.pe: subdominio de otra empresa", "mail.plataforma.com.pe", "correo.acme.com.pe", nil},
+		{".com.pe: parecido pero distinto", "mail.plataforma.com.pe", "miplataforma.com.pe", nil},
+		{".com.pe: el mismo nombre en .pe", "mail.plataforma.com.pe", "plataforma.pe", nil},
+		{".co.uk: base", "mail.x.co.uk", "x.co.uk", ErrPlatformDomain},
+		{".co.uk: otra empresa", "mail.x.co.uk", "acme.co.uk", nil},
+		{".uk directo: base", "mail.plataforma.uk", "plataforma.uk", ErrPlatformDomain},
+		{".uk directo: otra empresa", "mail.plataforma.uk", "acme.uk", nil},
+		{".uk directo: bajo co.uk", "mail.plataforma.uk", "plataforma.co.uk", nil},
+		{"hostname de la plataforma en dos etiquetas", "plataforma.com.pe", "clientes.plataforma.com.pe", ErrPlatformDomain},
+		{"mayusculas y punto final en MAIL_HOSTNAME", " MAIL.Plataforma.COM.PE. ", "plataforma.com.pe", ErrPlatformDomain},
+		{"mayusculas y punto final: otra empresa", " MAIL.Plataforma.COM.PE. ", "acme.com.pe", nil},
+		{"sufijo privado: solo el registrable", "mail.plataforma.github.io", "plataforma.github.io", ErrPlatformDomain},
+		{"sufijo privado: vecino del sufijo", "mail.plataforma.github.io", "acme.github.io", nil},
+		{"TLD fuera de la lista", "mail.plataforma.example", "clientes.plataforma.example", ErrPlatformDomain},
+		{"hostname que es un sufijo publico: el propio sufijo no se da de alta", "com.pe", "com.pe", ErrPublicSuffixDomain},
+		{"hostname que es un sufijo publico: no bloquea el sufijo", "com.pe", "acme.com.pe", nil},
+		{"sin hostname de plataforma", "", "acme.com.pe", nil},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := ValidateDomainName(c.in, c.platform); !errors.Is(got, c.want) {
+				t.Errorf("ValidateDomainName(%q, %q) = %v; want %v", c.in, c.platform, got, c.want)
+			}
+		})
+	}
+}
+
+// Un sufijo publico no es el dominio de una empresa; lo que cuelga de el, si. Un TLD fuera de la
+// lista no convierte en sufijo al nombre de dos etiquetas que usa el e2e.
+func TestValidateDomainNameSufijoPublico(t *testing.T) {
+	cases := []struct {
+		in   string
+		want error
+	}{
+		{"com.pe", ErrPublicSuffixDomain},
+		{"co.uk", ErrPublicSuffixDomain},
+		{"gob.pe", ErrPublicSuffixDomain},
+		{"github.io", ErrPublicSuffixDomain},
+		{"blogspot.com", ErrPublicSuffixDomain},
+		{"acme.ck", ErrPublicSuffixDomain},
+		{"www.ck", nil},
+		{"acme.com.pe", nil},
+		{"correo.acme.com.pe", nil},
+		{"acme.co.uk", nil},
+		{"acme.uk", nil},
+		{"acme.github.io", nil},
+		{"acme.com", nil},
+		{"cfm.test", nil},
+		{"acme.test", nil},
+		{"plataforma.example", nil},
+	}
+	for _, c := range cases {
+		t.Run(c.in, func(t *testing.T) {
+			if got := ValidateDomainName(c.in, ""); !errors.Is(got, c.want) {
+				t.Errorf("ValidateDomainName(%q) = %v; want %v", c.in, got, c.want)
+			}
+		})
+	}
+}
+
+func TestValidatePlatformHostname(t *testing.T) {
+	cases := []struct {
+		host string
+		ok   bool
+	}{
+		{"mail.plataforma.com", true},
+		{"mail.plataforma.com.pe", true},
+		{"MAIL.Plataforma.co.uk.", true},
+		{"plataforma.uk", true},
+		{"mail.cfm.test", true},
+		{"com.pe", false},
+		{"co.uk", false},
+		{"uk", false},
+		{"github.io", false},
+		{"localhost", false},
+		{"", false},
+		{"192.168.1.1", false},
+		{"mail_x.plataforma.com", false},
+	}
+	for _, c := range cases {
+		err := ValidatePlatformHostname(c.host)
+		if c.ok && err != nil {
+			t.Errorf("ValidatePlatformHostname(%q) = %v", c.host, err)
+		}
+		if !c.ok && !errors.Is(err, ErrInvalidPlatformHostname) {
+			t.Errorf("ValidatePlatformHostname(%q) = %v; want ErrInvalidPlatformHostname", c.host, err)
+		}
+	}
+}
+
 func TestNormalizeDomainName(t *testing.T) {
 	if got := NormalizeDomainName("  Acme.COM. "); got != "acme.com" {
 		t.Errorf("got %q", got)

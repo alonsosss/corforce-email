@@ -124,7 +124,7 @@ func writeError(w http.ResponseWriter, err error) {
 	case errors.Is(err, domain.ErrDKIMKeysChanged):
 		response.Err(w, http.StatusConflict, "DKIM_KEYS_CHANGED", err.Error())
 	case errors.Is(err, domain.ErrInvalidDomainName), errors.Is(err, domain.ErrPlatformDomain),
-		errors.Is(err, domain.ErrInvalidPurpose), errors.Is(err, domain.ErrInvalidDMARCPolicy),
+		errors.Is(err, domain.ErrPublicSuffixDomain), errors.Is(err, domain.ErrInvalidPurpose), errors.Is(err, domain.ErrInvalidDMARCPolicy),
 		errors.Is(err, domain.ErrNothingToUpdate), errors.Is(err, domain.ErrInvalidRevocationReason):
 		response.ErrValidation(w, err.Error())
 	case errors.Is(err, domain.ErrIntegrationUnavailable):

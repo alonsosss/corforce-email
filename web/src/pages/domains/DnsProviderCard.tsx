@@ -1,8 +1,11 @@
 import { useState, type FormEvent } from 'react';
 import { DNS_PROVIDER_CLOUDFLARE, dnsProvidersApi, type DnsProviderStatus } from '@/api/domains';
+import { ERROR_CODES, isApiError } from '@/api/errors';
+import { identityApi, type User } from '@/api/identity';
 import { errorMessage } from '@/api/messages';
 import { PERMISSIONS } from '@/access/permissions';
 import { useAccess } from '@/access/useAccess';
+import { useAuthStore } from '@/auth/store';
 import { useAction } from '@/hooks/useAction';
 import { useQuery } from '@/hooks/useQuery';
 import {
@@ -19,7 +22,7 @@ import {
   useToast,
 } from '@/design/components';
 import { IconLink, IconTrash } from '@/design/icons';
-import { formatDateTime } from '@/lib/format';
+import { formatDateTime, fullName } from '@/lib/format';
 import { t } from '@/i18n';
 
 /** Zonas que se nombran en la ficha; el resto se cuenta. */
@@ -136,7 +139,7 @@ function ConnectionDetails({ status }: { status: DnsProviderStatus }) {
         {
           label: t('domains.dnsProvider.field.connectedBy'),
           value: status.connected_by ? (
-            <span className="cf-mono">{status.connected_by}</span>
+            <ConnectedBy userId={status.connected_by} />
           ) : (
             t('common.dash')
           ),
@@ -152,6 +155,52 @@ function ConnectionDetails({ status }: { status: DnsProviderStatus }) {
       ]}
     />
   );
+}
+
+type ConnectedByResult = { kind: 'user'; user: User } | { kind: 'removed' } | { kind: 'hidden' };
+
+/**
+ * Nombre de quien conecto el proveedor. domain-service solo guarda su id: la ficha la da identity,
+ * que responde 404 tanto a un usuario borrado como a uno de otra empresa. Sin users/read solo se
+ * resuelve la propia ficha; de otro usuario no se muestra ni el id.
+ */
+function ConnectedBy({ userId }: { userId: string }) {
+  const { can } = useAccess();
+  const selfId = useAuthStore((s) => s.userId);
+  const selfUser = useAuthStore((s) => s.user);
+  const isSelf = userId === selfId;
+  const canRead = isSelf || can(...PERMISSIONS.users.read);
+
+  const result = useQuery<ConnectedByResult>(async () => {
+    if (!canRead) return { kind: 'hidden' };
+    if (isSelf && selfUser?.id === userId) return { kind: 'user', user: selfUser };
+    try {
+      return { kind: 'user', user: (await identityApi.getUser(userId)).data };
+    } catch (err) {
+      if (isApiError(err) && err.is(ERROR_CODES.NOT_FOUND)) return { kind: 'removed' };
+      throw err;
+    }
+  }, [userId, canRead, isSelf, selfUser]);
+
+  if (result.loading && !result.data) return <>{t('common.loading')}</>;
+  if (!result.data) return <>{t('domains.dnsProvider.connectedByUnknown')}</>;
+  switch (result.data.kind) {
+    case 'removed':
+      return <>{t('domains.dnsProvider.connectedByRemoved')}</>;
+    case 'hidden':
+      return <>{t('domains.dnsProvider.connectedByUnknown')}</>;
+    case 'user': {
+      const { user } = result.data;
+      const name = fullName(user.first_name, user.last_name);
+      return name ? (
+        <span>
+          {name} <span className="cf-text-muted cf-text-sm">{user.email}</span>
+        </span>
+      ) : (
+        <span>{user.email}</span>
+      );
+    }
+  }
 }
 
 const CONNECT_FORM_ID = 'dns-provider-connect-form';

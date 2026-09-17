@@ -6,15 +6,18 @@ import type { PermissionTriple } from '@/api/access';
 import {
   dnsProvidersApi,
   domainsApi,
+  type DnsProviderStatus,
   type DnsPublication,
   type DomainDetail,
   type PublishDnsResult,
 } from '@/api/domains';
 import { ApiError } from '@/api/errors';
+import { identityApi, type User } from '@/api/identity';
 import type { ApiResponse } from '@/api/types';
 import { MODULES } from '@/access/modules';
 import { PERMISSIONS } from '@/access/permissions';
 import { useAccessStore } from '@/access/store';
+import { useAuthStore } from '@/auth/store';
 import { ToastProvider } from '@/design/components';
 import { t } from '@/i18n';
 import { paths } from '@/paths';
@@ -124,6 +127,7 @@ function renderProviderCard() {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  useAuthStore.setState({ userId: null, user: null });
 });
 
 describe('modo manual', () => {
@@ -161,6 +165,107 @@ describe('modo manual', () => {
   });
 });
 
+const CONNECTED_BY = 'b7c1f0de-0000-4000-8000-0000000000bb';
+
+function userFixture(extra: Partial<User> = {}): User {
+  return {
+    id: CONNECTED_BY,
+    email: 'ana.torres@acme.com.pe',
+    first_name: 'Ana',
+    last_name: 'Torres',
+    avatar_url: null,
+    status: 'active',
+    mfa_enabled: true,
+    last_login_at: null,
+    created_at: '2026-09-01T10:00:00Z',
+    updated_at: '2026-09-01T10:00:00Z',
+    ...extra,
+  };
+}
+
+function connectedStatus(): ApiResponse<DnsProviderStatus> {
+  return ok<DnsProviderStatus>({
+    provider: 'cloudflare',
+    connected: true,
+    token_hint: '6789',
+    zones: ['acme.com'],
+    zones_visible: 1,
+    connected_by: CONNECTED_BY,
+    connected_at: '2026-09-17T10:00:00Z',
+    last_validated_at: '2026-09-17T10:00:00Z',
+  });
+}
+
+describe('quien conecto Cloudflare', () => {
+  it('con users/read muestra el nombre y el correo, no el id', async () => {
+    vi.spyOn(dnsProvidersApi, 'status').mockResolvedValue(connectedStatus());
+    const getUser = vi.spyOn(identityApi, 'getUser').mockResolvedValue(ok(userFixture()));
+    grant(PERMISSIONS.dnsProviders.read, PERMISSIONS.users.read);
+    renderProviderCard();
+
+    expect(await screen.findByText('Ana Torres')).toBeInTheDocument();
+    expect(screen.getByText('ana.torres@acme.com.pe')).toBeInTheDocument();
+    expect(getUser).toHaveBeenCalledWith(CONNECTED_BY);
+    expect(document.body.innerHTML).not.toContain(CONNECTED_BY);
+  });
+
+  it('un usuario sin nombre se muestra por su correo', async () => {
+    vi.spyOn(dnsProvidersApi, 'status').mockResolvedValue(connectedStatus());
+    vi.spyOn(identityApi, 'getUser').mockResolvedValue(ok(userFixture({ first_name: '', last_name: '' })));
+    grant(PERMISSIONS.dnsProviders.read, PERMISSIONS.users.read);
+    renderProviderCard();
+
+    expect(await screen.findByText('ana.torres@acme.com.pe')).toBeInTheDocument();
+  });
+
+  it('un usuario que ya no existe se indica como eliminado', async () => {
+    vi.spyOn(dnsProvidersApi, 'status').mockResolvedValue(connectedStatus());
+    vi.spyOn(identityApi, 'getUser').mockRejectedValue(
+      new ApiError(404, { code: 'NOT_FOUND', message: 'user not found' }),
+    );
+    grant(PERMISSIONS.dnsProviders.read, PERMISSIONS.users.read);
+    renderProviderCard();
+
+    expect(await screen.findByText(t('domains.dnsProvider.connectedByRemoved'))).toBeInTheDocument();
+    expect(document.body.innerHTML).not.toContain(CONNECTED_BY);
+  });
+
+  it('si identity falla no muestra el id ni lo da por eliminado', async () => {
+    vi.spyOn(dnsProvidersApi, 'status').mockResolvedValue(connectedStatus());
+    vi.spyOn(identityApi, 'getUser').mockRejectedValue(
+      new ApiError(503, { code: 'SERVICE_UNAVAILABLE', message: 'no' }),
+    );
+    grant(PERMISSIONS.dnsProviders.read, PERMISSIONS.users.read);
+    renderProviderCard();
+
+    expect(await screen.findByText(t('domains.dnsProvider.connectedByUnknown'))).toBeInTheDocument();
+    expect(screen.queryByText(t('domains.dnsProvider.connectedByRemoved'))).not.toBeInTheDocument();
+    expect(document.body.innerHTML).not.toContain(CONNECTED_BY);
+  });
+
+  it('sin users/read no consulta identity ni muestra el id', async () => {
+    vi.spyOn(dnsProvidersApi, 'status').mockResolvedValue(connectedStatus());
+    const getUser = vi.spyOn(identityApi, 'getUser');
+    grant(PERMISSIONS.dnsProviders.read);
+    renderProviderCard();
+
+    expect(await screen.findByText(t('domains.dnsProvider.connectedByUnknown'))).toBeInTheDocument();
+    expect(getUser).not.toHaveBeenCalled();
+    expect(document.body.innerHTML).not.toContain(CONNECTED_BY);
+  });
+
+  it('la propia conexion se resuelve con la ficha de la sesion, sin permiso ni llamada', async () => {
+    vi.spyOn(dnsProvidersApi, 'status').mockResolvedValue(connectedStatus());
+    const getUser = vi.spyOn(identityApi, 'getUser');
+    useAuthStore.setState({ userId: CONNECTED_BY, user: userFixture() });
+    grant(PERMISSIONS.dnsProviders.read);
+    renderProviderCard();
+
+    expect(await screen.findByText('Ana Torres')).toBeInTheDocument();
+    expect(getUser).not.toHaveBeenCalled();
+  });
+});
+
 describe('conexion con Cloudflare', () => {
   it('conecta con el token en un campo enmascarado y no lo conserva', async () => {
     const user = userEvent.setup();
@@ -172,7 +277,7 @@ describe('conexion con Cloudflare', () => {
         token_hint: '6789',
         zones: ['acme.com', 'acme.org'],
         zones_visible: 2,
-        connected_by: 'b7c1f0de-0000-4000-8000-0000000000bb',
+        connected_by: CONNECTED_BY,
         connected_at: '2026-09-17T10:00:00Z',
         last_validated_at: '2026-09-17T10:00:00Z',
       }),
@@ -197,6 +302,7 @@ describe('conexion con Cloudflare', () => {
     expect(screen.queryByLabelText(new RegExp(t('domains.dnsProvider.form.token')))).not.toBeInTheDocument();
     expect(container.innerHTML).not.toContain(TOKEN);
     expect(document.body.innerHTML).not.toContain(TOKEN);
+    expect(document.body.innerHTML).not.toContain(CONNECTED_BY);
   });
 
   it('muestra el error de Cloudflare y vacia el campo', async () => {

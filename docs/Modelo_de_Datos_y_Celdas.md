@@ -839,7 +839,11 @@ tiene ninguna ruta o si falta `organization` entre los servicios.
     traducen por estado y codigo numerico sin su mensaje) y nunca en 401 ni 403, que el cliente web
     trata como sesion o permiso: 422 `DNS_PROVIDER_TOKEN_INVALID`, `DNS_PROVIDER_PERMISSION_DENIED`,
     `DNS_PROVIDER_NO_ZONES`, 409 `DNS_PROVIDER_NOT_CONNECTED`, `DNS_ZONE_NOT_FOUND`, `DNS_MODE_MANUAL`,
-    429 `DNS_PROVIDER_RATE_LIMITED`, 503 `DNS_PROVIDER_UNAVAILABLE`. `GET .../cloudflare` da el estado y
+    429 `DNS_PROVIDER_RATE_LIMITED`, 503 `DNS_PROVIDER_UNAVAILABLE`. `GET .../cloudflare` da el estado
+    (`connected_by` es solo el id del usuario: domain-service no lee identity; la web lo resuelve
+    con `GET /api/v1/users/{id}` de identity si es la propia ficha o tiene `identity/users/read`,
+    muestra "Usuario eliminado" ante un 404 y, sin permiso o si identity falla, un texto neutro sin
+    el id; V, 2026-09-17) y
     `POST .../cloudflare/disconnect` borra la fila y devuelve a manual, en la misma transaccion, los
     dominios que la usaban; lo publicado se queda en la zona. Un dominio pasa a automatico con
     `POST /api/v1/domains/{id}/dns-mode` (`publish_dns`) solo si el token ve su zona: la de nombre
