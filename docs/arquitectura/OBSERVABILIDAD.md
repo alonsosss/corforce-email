@@ -110,11 +110,31 @@ familia: disponibilidad (servicio caido, reinicios en bucle), version desplegada
 compilada en el servidor), trafico (errores 5xx, latencia), base de datos (pool al limite,
 esperas), seguridad (pico de denegaciones RBAC), host (disco, memoria, CPU, robo de CPU, swap),
 chat, vigilancia del propio aviso, parcheado del host, limites de peticiones (limitador sin
-Redis), celdas, claves DKIM, revocacion en Dovecot y eventos (abajo).
+Redis), respaldos (abajo), celdas, claves DKIM, revocacion en Dovecot y eventos (abajo).
 
 Una alerta mal escrita no falla: se queda callada. Las reglas nuevas llevan su prueba de
 promtool en `ops/observability/prometheus/tests/<alerta>_test.yml`, que `make check-alertas`
 (dentro de `make checks`) ejecuta con la misma imagen de Prometheus que produccion.
+
+### Respaldos
+
+Los trabajos de `ops/backup` no corren en un contenedor, asi que no aparecen en ningun panel: que
+dejen de ejecutarse se ve igual que si corrieran. Publican su resultado en un fichero `.prom` que
+node-exporter recoge (`ops/backup/report-metric.sh`), y lo que se vigila es la MARCA DE TIEMPO del
+ultimo exito, no el codigo de salida: el caso peligroso no es el respaldo que falla -deja un error
+en el journal- sino el que dejo de ejecutarse. Por eso cada trabajo tiene dos alertas: la de
+antiguedad no puede sonar si la serie desaparece, porque no habria nada que comparar.
+
+| Alerta | Cuando | Espera | Severidad | Por que |
+|---|---|---|---|---|
+| `RespaldoSinExitoReciente` | `core_force_job_last_success_timestamp_seconds{trabajo=~"respaldo\|respaldo_correo"}` con mas de 36 h | 15 min | critica | El respaldo corre de madrugada: 36 h son dos corridas perdidas, de las bases o de los buzones. |
+| `RespaldoFallido` | `core_force_job_last_exit_code != 0` en respaldo, respaldo de correo o verificacion | 10 min | alta | Una base, un volumen, la copia externa o la verificacion fallaron; el journal de la unidad dice cual. |
+| `RespaldoNoSeRegistra` | `absent(core_force_job_last_run_timestamp_seconds{trabajo="respaldo"})` | 36 h | critica | El trabajo no llega a ejecutarse: temporizador sin instalar o sin permiso de escribir la metrica. |
+| `VerificacionDeRespaldoSinExitoReciente` | ultimo exito de `verificacion_respaldo` con mas de 10 dias | 1 h | alta | Mientras no pase, que los respaldos restauren es una suposicion. |
+| `VerificacionDeRespaldoNoSeRegistra` | `absent` de su serie | 10 dias | alta | Igual que la anterior, sin serie que vigilar. |
+
+El respaldo de correo (`respaldo_correo`) no tiene alerta de ausencia: un host sin los motores de
+`deploy/mail` no lo ejecuta y sonaria para siempre.
 
 ### Celdas
 

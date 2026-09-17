@@ -9,15 +9,19 @@
 # Uso:
 #   ops/backup/restore-tenant.sh mail_tenant_demo                      # último respaldo local
 #   ops/backup/restore-tenant.sh mail_tenant_demo /ruta/al.dump
-#   ops/backup/restore-tenant.sh mail_tenant_demo s3://bucket/clave.dump
+#   ops/backup/restore-tenant.sh mail_tenant_demo s3://bucket/clave.dump[.gpg]
 #   ops/backup/restore-tenant.sh mail_tenant_demo --into mail_prueba
 #   ops/backup/restore-tenant.sh mail_tenant_demo --force              # SOBRESCRIBE la viva
+#
+# Antes de restaurar comprueba la suma <volcado>.sha256 que deja backup-tenants.sh: un fichero
+# dañado en disco no llega a pg_restore. Restaura con la misma herramienta que respalda
+# (ops/db/pg-credentials.sh): en el perfil autoalojado, la de la imagen del Postgres en marcha.
 set -uo pipefail
+umask 077
 
 APP_DIR="${APP_DIR:-/opt/core-force-mail/app}"
-BACKUP_DIR="${BACKUP_DIR:-/opt/core-force-mail/backups}"
 
-usage() { sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
+usage() { sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
 [[ $# -lt 1 ]] && usage
 
 SRC_DB="$1"; shift
@@ -26,7 +30,7 @@ TARGET=""
 FORCE=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --into) TARGET="${2:-}"; shift 2 ;;
+    --into) TARGET="${2:-}"; shift 2 || usage ;;
     --force) FORCE=1; shift ;;
     -h|--help) usage ;;
     *) DUMP="$1"; shift ;;
@@ -38,12 +42,20 @@ done
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=/dev/null
 . "$SCRIPT_DIR/../db/pg-credentials.sh" || exit 1
+# shellcheck source=/dev/null
+. "$SCRIPT_DIR/destino-externo.sh"
 
-psql_() { psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$1" -v ON_ERROR_STOP=1 "${@:2}"; }
+BACKUP_DIR="${BACKUP_DIR:-$(cf_read_env BACKUP_DIR)}"
+BACKUP_DIR="${BACKUP_DIR:-/opt/core-force-mail/backups}"
+
+[[ "$SRC_DB" =~ ^[a-z0-9_]+$ ]] || { echo "FALLA: nombre de base inesperado: $(printf '%q' "$SRC_DB")" >&2; exit 1; }
+[[ -z "$TARGET" || "$TARGET" =~ ^[a-z0-9_]+$ ]] || { echo "FALLA: nombre de destino inesperado: $(printf '%q' "$TARGET")" >&2; exit 1; }
+
+psql_() { cf_psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$1" -v ON_ERROR_STOP=1 "${@:2}"; }
 
 # Origen del volcado: explícito, de S3, o el más reciente en disco.
 tmp=""
-cleanup() { [[ -n "$tmp" ]] && rm -f "$tmp"; }
+cleanup() { [[ -n "$tmp" ]] && rm -rf "$tmp"; }
 trap cleanup EXIT
 
 if [[ -z "$DUMP" ]]; then
@@ -51,11 +63,35 @@ if [[ -z "$DUMP" ]]; then
   [[ -z "$DUMP" ]] && { echo "FALLA: no hay respaldo local de $SRC_DB en $BACKUP_DIR" >&2; exit 1; }
   echo "Respaldo más reciente: $DUMP"
 elif [[ "$DUMP" == s3://* ]]; then
-  tmp="$(mktemp /tmp/restore-XXXXXX.dump)"
-  aws s3 cp "$DUMP" "$tmp" --only-show-errors || { echo "FALLA: no se pudo bajar $DUMP" >&2; exit 1; }
-  DUMP="$tmp"
+  cf_externo_cargar || exit 1
+  # Dentro de BACKUP_DIR y no en /tmp: es un volcado entero de la base y ahi queda con los
+  # permisos de los respaldos.
+  if ! mkdir -p "$BACKUP_DIR" || ! tmp="$(mktemp -d "$BACKUP_DIR/descarga-XXXXXX")"; then
+    echo "FALLA: no se pudo preparar la descarga en $BACKUP_DIR" >&2
+    exit 1
+  fi
+  bajado="$tmp/$(basename "$DUMP")"
+  cf_externo_bajar "$DUMP" "$bajado" || { echo "FALLA: no se pudo bajar $DUMP" >&2; exit 1; }
+  if [[ "$bajado" == *.gpg ]]; then
+    cf_descifrar "$bajado" "${bajado%.gpg}" || { echo "FALLA: $DUMP no descifra: frase distinta o fichero dañado" >&2; exit 1; }
+    rm -f "$bajado"
+    bajado="${bajado%.gpg}"
+  fi
+  DUMP="$bajado"
 fi
 [[ -f "$DUMP" ]] || { echo "FALLA: no existe $DUMP" >&2; exit 1; }
+DUMP="$(cd "$(dirname "$DUMP")" && pwd)/$(basename "$DUMP")"
+
+if [[ -f "$DUMP.sha256" ]]; then
+  if ! (cd "$(dirname "$DUMP")" && sha256sum --status -c "$(basename "$DUMP").sha256"); then
+    echo "FALLA: $DUMP no coincide con su suma $DUMP.sha256: el volcado esta dañado y no se restaura" >&2
+    exit 1
+  fi
+  echo "Suma de verificación correcta: $DUMP"
+else
+  echo "  aviso: $DUMP no tiene suma .sha256 (respaldo anterior o descargado); lo juzga pg_restore"
+fi
+cf_pg_montar "$(dirname "$DUMP")" ro || exit 1
 
 if [[ $FORCE -eq 1 ]]; then
   TARGET="${TARGET:-$SRC_DB}"
@@ -85,7 +121,7 @@ echo "Restaurando $SRC_DB -> $TARGET ..."
 # --no-owner: el rol dueño del volcado puede no existir en el destino, y eso no debe
 # abortar una recuperación. Los errores reales sí se muestran.
 log="$(mktemp)"
-pg_restore -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$TARGET" --no-owner --no-privileges \
+cf_pg_restore -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$TARGET" --no-owner --no-privileges \
   -j 2 "$DUMP" 2>"$log"
 rc=$?
 real="$(grep -i 'error' "$log" | grep -viE 'already exists|does not exist, skipping' | head -5)"

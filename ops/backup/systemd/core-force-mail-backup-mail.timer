@@ -1,0 +1,12 @@
+[Unit]
+Description=Respaldo diario de los buzones de Core Force Mail
+
+[Timer]
+# 03:45 en hora de Lima (UTC-5): despues del respaldo de las bases, que empieza a las 03:15. Si
+# aun estuviera corriendo, el cerrojo de BACKUP_DIR hace esperar a este.
+OnCalendar=*-*-* 08:45:00 UTC
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

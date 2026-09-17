@@ -19,13 +19,15 @@ KEYS_FILE="$ROOT/ops/security/secrets/secret-keys.txt"
 # ningun contenedor recibe por env_file), pero para ESTE guardarrail son exactamente igual
 # de secretas: ninguna puede tener valor en un fichero versionado.
 KEYS_DB_FILE="$ROOT/ops/security/secrets/secret-keys-db.txt"
+# Los del respaldo tampoco los recibe ningun contenedor, y tampoco pueden tener valor versionado.
+KEYS_BACKUP_FILE="$ROOT/ops/security/secrets/secret-keys-backup.txt"
 
 cd "$ROOT"
 LISTA="$(mktemp)"
 trap 'rm -f "$LISTA"' EXIT
 git ls-files -z >"$LISTA"
 
-cat "$KEYS_FILE" "$KEYS_DB_FILE" > "$LISTA.keys"
+cat "$KEYS_FILE" "$KEYS_DB_FILE" "$KEYS_BACKUP_FILE" > "$LISTA.keys"
 trap 'rm -f "$LISTA" "$LISTA.keys"' EXIT
 
 python3 - "$LISTA.keys" "$LISTA" <<'PY'

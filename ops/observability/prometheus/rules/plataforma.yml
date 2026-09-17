@@ -320,6 +320,60 @@ groups:
           resumen: "El sistema no volvio entero despues del ultimo arranque"
           detalle: "La verificacion posterior al arranque encontro contenedores caidos, enfermos o la pasarela sin responder, y no pudo arreglarlo. Revisar /var/log/core-force-mail-verificacion-arranque.log en el servidor. Nota: si el que no volvio fue Prometheus, esta alerta NO puede sonar y el aviso llega por el vigilante externo."
 
+  # Los trabajos de ops/backup publican su resultado en un fichero .prom que node-exporter recoge
+  # (ops/backup/report-metric.sh). Lo que se vigila es la MARCA DE TIEMPO del ultimo exito, no el
+  # codigo de salida: el caso peligroso no es el respaldo que falla -deja un error en el journal-
+  # sino el que dejo de ejecutarse (temporizador desactivado, servidor reinstalado). Un servidor sin
+  # respaldo se ve igual que uno con respaldo hasta el dia que hace falta. Por eso hay dos alertas
+  # por trabajo: la de antiguedad no puede sonar si la serie desaparece, porque no hay nada que
+  # comparar.
+  - name: respaldos
+    rules:
+      - alert: RespaldoSinExitoReciente
+        expr: time() - core_force_job_last_success_timestamp_seconds{trabajo=~"respaldo|respaldo_correo"} > 129600
+        for: 15m
+        labels:
+          severidad: critica
+        annotations:
+          resumen: "El trabajo {{ $labels.trabajo }} no consigue un respaldo bueno desde hace mas de 36 horas"
+          detalle: "El respaldo diario corre de madrugada: 36 horas sin exito son dos corridas perdidas. Lo que se pierde es la capacidad de devolver a UNA empresa (o los buzones) al estado de ayer. Revisar 'journalctl -u core-force-mail-backup.service' o '-u core-force-mail-backup-mail.service' y ejecutarlo a mano: ops/backup/backup-tenants.sh, ops/backup/backup-mail-volumes.sh."
+
+      - alert: RespaldoFallido
+        expr: core_force_job_last_exit_code{trabajo=~"respaldo|respaldo_correo|verificacion_respaldo"} != 0
+        for: 10m
+        labels:
+          severidad: alta
+        annotations:
+          resumen: "La ultima ejecucion de {{ $labels.trabajo }} termino con error"
+          detalle: "Puede ser una base o un volumen concreto, la copia externa o la verificacion de restauracion. El journal de la unidad nombra la base o el volumen y el motivo (ops/backup/README.md, 'Que revisar cuando falle')."
+
+      - alert: RespaldoNoSeRegistra
+        expr: absent(core_force_job_last_run_timestamp_seconds{trabajo="respaldo"})
+        for: 36h
+        labels:
+          severidad: critica
+        annotations:
+          resumen: "El respaldo de las bases no publica ninguna serie: no llega a ejecutarse"
+          detalle: "Sin serie, la alerta de antiguedad no puede sonar. Comprobar 'systemctl list-timers core-force-mail-*', que node-exporter monte /opt/core-force-mail/metrics y que el trabajo pueda escribir ahi. Instalar o reponer los temporizadores: sudo ops/backup/install-timers.sh."
+
+      - alert: VerificacionDeRespaldoSinExitoReciente
+        expr: time() - core_force_job_last_success_timestamp_seconds{trabajo="verificacion_respaldo"} > 864000
+        for: 1h
+        labels:
+          severidad: alta
+        annotations:
+          resumen: "Hace mas de 10 dias que no se comprueba que los respaldos restauran"
+          detalle: "La prueba semanal restaura el ultimo volcado del registro, de una celda y de una empresa en una base desechable. Mientras no pase, que los respaldos sirvan es una suposicion. Revisar 'journalctl -u core-force-mail-backup-verify.service' y ejecutar ops/backup/verify-restore.sh."
+
+      - alert: VerificacionDeRespaldoNoSeRegistra
+        expr: absent(core_force_job_last_run_timestamp_seconds{trabajo="verificacion_respaldo"})
+        for: 10d
+        labels:
+          severidad: alta
+        annotations:
+          resumen: "La prueba de restauracion no publica ninguna serie: no llega a ejecutarse"
+          detalle: "Mismo caso que RespaldoNoSeRegistra, con el temporizador core-force-mail-backup-verify.timer."
+
   - name: limites-de-peticiones
     rules:
       # Sin Redis cada replica cuenta el cupo en su propia memoria: el servicio sigue

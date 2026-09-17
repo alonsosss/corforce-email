@@ -411,27 +411,21 @@ fi
 METRICS_DIR="${METRICS_TEXTFILE_DIR:-/opt/core-force-mail/metrics}"
 install -d -o "$DEPLOY_USER" -g "$DEPLOY_USER" -m 0755 "$METRICS_DIR"
 
-BACKUP_UNITS_DIR="$DEPLOY_PATH/ops/backup/systemd"
-if [[ "${INSTALL_BACKUP_TIMERS:-yes}" == "yes" && -d "$BACKUP_UNITS_DIR" ]]; then
-  log "Instalando el respaldo por empresa (systemd)"
-  install -m 0644 "$BACKUP_UNITS_DIR"/*.service "$BACKUP_UNITS_DIR"/*.timer /etc/systemd/system/
-  systemctl daemon-reload
-  systemctl enable --now core-force-mail-backup.timer core-force-mail-backup-verify.timer >/dev/null
-
-  # Los timers reemplazan al crontab que se usaba cuando el usuario de despliegue no
-  # tenia root. Dejar los dos activos correria el respaldo dos veces: dos volcados
-  # simultaneos de la misma base compitiendo por disco y por la conexion.
-  if crontab -u "$DEPLOY_USER" -l 2>/dev/null | grep -q 'ops/backup/'; then
-    log "Retirando las entradas de cron que ahora lleva systemd"
-    crontab -u "$DEPLOY_USER" -l 2>/dev/null \
-      | grep -v 'ops/backup/' \
-      | grep -v '^# Core Force: respaldo por empresa' \
-      | grep -v '^# si algun dia se instalan las unidades de systemd' \
-      | grep -v '^# para no duplicar la ejecucion' \
-      | crontab -u "$DEPLOY_USER" -
+# Las unidades y su instalacion viven en ops/backup/install-timers.sh, que tambien se ejecuta a
+# mano en un servidor ya aprovisionado. Se busca junto a la plantilla (git archive con ops/backup)
+# o en el despliegue.
+if [[ "${INSTALL_BACKUP_TIMERS:-yes}" == "yes" ]]; then
+  backup_installer=""
+  for candidato in "$SCRIPT_DIR/../backup/install-timers.sh" "$DEPLOY_PATH/ops/backup/install-timers.sh"; do
+    [[ -f "$candidato" ]] && { backup_installer="$candidato"; break; }
+  done
+  if [[ -n "$backup_installer" ]]; then
+    log "Instalando el respaldo por empresa (systemd)"
+    DEPLOY_USER="$DEPLOY_USER" DEPLOY_PATH="$DEPLOY_PATH" CORE_ROOT="$CORE_ROOT" METRICS_TEXTFILE_DIR="$METRICS_DIR" \
+      bash "$backup_installer"
+  else
+    warn "no se encontro ops/backup/install-timers.sh; tras el primer despliegue: sudo $DEPLOY_PATH/ops/backup/install-timers.sh"
   fi
-elif [[ ! -d "$BACKUP_UNITS_DIR" ]]; then
-  warn "no se encontro $BACKUP_UNITS_DIR; sincroniza el repo y vuelve a correr para programar el respaldo"
 fi
 
 # ----------------------------------------------------------------------------

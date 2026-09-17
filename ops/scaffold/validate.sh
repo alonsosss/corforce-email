@@ -96,6 +96,11 @@ if ! bash "$ROOT/ops/scaffold/check-deploy-mail.sh"; then
   FAIL=1
 fi
 
+echo "== 13. Respaldos: herramienta de Postgres por perfil, copia externa y temporizadores =="
+if ! bash "$ROOT/ops/scaffold/check-backups.sh"; then
+  FAIL=1
+fi
+
 echo ""
 if [[ $FAIL -ne 0 ]]; then
   echo "VALIDACION: FALLA"; exit 1

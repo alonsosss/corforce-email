@@ -1,5 +1,5 @@
 [Unit]
-Description=Verifica que los respaldos de Core Force Mail restauran de verdad
+Description=Respaldo de los buzones y las claves de mail_crypt de Core Force Mail
 After=network-online.target docker.service
 Wants=network-online.target
 
@@ -9,7 +9,7 @@ Type=oneshot
 User=deploy
 WorkingDirectory=/opt/core-force-mail/app
 Environment=APP_DIR=/opt/core-force-mail/app
-ExecStart=/opt/core-force-mail/app/ops/backup/verify-restore.sh
+ExecStart=/opt/core-force-mail/app/ops/backup/backup-mail-volumes.sh
 UMask=0077
 Nice=10
 IOSchedulingClass=idle

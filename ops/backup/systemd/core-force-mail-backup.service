@@ -1,13 +1,17 @@
 [Unit]
 Description=Respaldo por empresa de las bases de Core Force Mail
-After=network-online.target
+After=network-online.target docker.service
 Wants=network-online.target
 
 [Service]
 Type=oneshot
+# Usuario, ruta y APP_DIR los reescribe ops/backup/install-timers.sh con los del servidor.
 User=deploy
 WorkingDirectory=/opt/core-force-mail/app
+Environment=APP_DIR=/opt/core-force-mail/app
 ExecStart=/opt/core-force-mail/app/ops/backup/backup-tenants.sh
+# Los volcados son la base entera: solo legibles por el usuario del respaldo.
+UMask=0077
 # El respaldo compite con la operación: se le baja la prioridad de CPU y de disco para
 # que un volcado largo no degrade el servicio de correo.
 Nice=10

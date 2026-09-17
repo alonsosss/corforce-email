@@ -152,6 +152,13 @@ opcional y por defecto ese nombre. Alta y rotación, seguidas: publicar el valor
 las conexiones abiertas siguen vivas pero las nuevas con la contraseña retirada fallan.
 Detalle en `docs/Modelo_de_Datos_y_Celdas.md` 5.1.
 
+Secretos del respaldo (credencial del bucket externo y frase de cifrado):
+`ops/security/secrets/secret-keys-backup.txt`. Ningún contenedor los recibe; los leen solo los
+trabajos de `ops/backup`, del entorno o de `BACKUP_SECRETS_FILE`
+(`/opt/core-force-mail/env/backup.env`, 0600 del usuario de despliegue). En el `.env` no van: lo
+recibe entero cada servicio, y con esas dos claves un servicio comprometido lee y borra el
+histórico de respaldos. `make check-secrets` los vigila igual que los demás.
+
 Credenciales de base de datos, todas: viven en `ops/security/secrets/secret-keys-db.txt`, no
 en `secret-keys.txt`. Se materializan en `/dev/shm/core-force-mail/secrets-db.env`, que
 **ningún contenedor recibe por `env_file`**: cada una llega solo al servicio al que su bloque
@@ -310,7 +317,7 @@ para llamar a la API hace falta ya un superadmin. Después, todo por API: `POST 
 * Todo lo que el servidor ejecuta o monta viaja en el rsync de `stage_head_files` desde
   `git archive` de HEAD, con una sola lista para los tres caminos (`FICHEROS_SERVIDOR` de
   `scripts/deploy-ecr.sh`): compose (incluido `docker-compose.selfhosted.yml`), `selfhosted/`,
-  `migrations/`, `ops/security`, `ops/ecr`, `ops/observability`, `ops/maintenance`,
+  `migrations/`, `ops/db`, `ops/security`, `ops/ecr`, `ops/observability`, `ops/maintenance`,
   `ops/backup`, `pgbouncer`.
 * Perfil del servidor: los dos caminos preguntan a `ops/maintenance/perfil-despliegue.sh` (que
   `release.yml` lleva en base64) los argumentos de compose y la infraestructura propia del
@@ -357,18 +364,41 @@ para llamar a la API hace falta ya un superadmin. Después, todo por API: `POST 
 
 ## 6. Respaldos
 
-`ops/backup/backup-tenants.sh` vuelca cada base (`mail_%`) por separado con `pg_dump -Fc`,
-verifica que `pg_restore --list` lo lee, sube a `BACKUP_S3_BUCKET` (bucket distinto al de
-medios, con Object Lock; la misma variable en `ops/aws/setup-iam.sh`, `setup-buckets.sh` y
-`setup-auditoria.sh`) y conserva 3 días en local. Cada semana `verify-restore.sh` restaura
-el último volcado de la empresa con el respaldo más grande (o la base que se le indique) en
-una base desechable y comprueba, sin suponer filas de negocio, que están todos los esquemas y
-tablas del índice del volcado, `platform.event_outbox`, el historial
-`public.schema_migrations` con filas y el esquema que declara cada migración registrada; en
-una celda, que no tiene historial, los esquemas de sus migraciones, y en el registro al menos
-un usuario. Las alertas vigilan la antigüedad del último éxito y la ausencia de la serie.
-Programación: `ops/backup/systemd/` (`core-force-mail-backup.timer` y
-`core-force-mail-backup-verify.timer`, que instala `bootstrap.sh`).
+Razones largas y procedimientos: `ops/backup/README.md`.
+
+`ops/backup/backup-tenants.sh` vuelca cada base (`mail_%`: registro, celdas y empresas) por
+separado con `pg_dump -Fc`, la lee entera para comprobar que `pg_restore` la entiende, deja su
+`.sha256` y conserva `BACKUP_KEEP_DAYS` (3) días en local, podando solo tras una corrida sin
+fallos. `ops/backup/backup-mail-volumes.sh` archiva los volúmenes de correo de `deploy/mail`
+(`crypt-vol`, la clave de `mail_crypt` sin la que los buzones son ilegibles, y `vmail-vol`, los
+buzones); el resto de volúmenes se regenera y no entra (tabla en `ops/backup/README.md`).
+
+Cada semana `verify-restore.sh`, sin argumentos, restaura en una base desechable el último volcado
+de **una base de cada clase** (registro, la celda mayor y la empresa mayor) y comprueba, sin
+suponer filas de negocio, la suma del volcado, que están todos los esquemas y tablas de su índice,
+`platform.event_outbox`, el historial `public.schema_migrations` con filas y el esquema que declara
+cada migración registrada; en una celda, que no tiene historial, los esquemas de sus migraciones, y
+en el registro al menos un usuario.
+
+Copia externa OPCIONAL a un bucket S3 o S3-compatible: `BACKUP_S3_BUCKET` (distinto al de medios;
+la misma variable en `ops/aws/setup-iam.sh`, `setup-buckets.sh` y `setup-auditoria.sh`) y, para un
+tercero como Cloudflare R2, `BACKUP_S3_ENDPOINT` y `BACKUP_S3_REGION`. Con endpoint, el cifrado en
+reposo es obligatorio (`gpg` simétrico AES-256 con `BACKUP_ENCRYPTION_PASSPHRASE`) y `crypt-vol` no
+sale del servidor sin cifrar en ningún caso; sin el destino, la copia local funciona igual. Los
+tres secretos del respaldo (credencial del bucket y frase) viven en `BACKUP_SECRETS_FILE`
+(`/opt/core-force-mail/env/backup.env`, 0600 del usuario de despliegue) y están declarados en
+`ops/security/secrets/secret-keys-backup.txt`: **no** en el `.env`, que Compose entrega entero a
+cada contenedor. La frase se guarda también fuera del servidor.
+
+Las herramientas de Postgres en el perfil autoalojado corren en un contenedor de la imagen del
+Postgres en marcha (sección 11, «Clientes de Postgres»).
+
+Programación: `sudo ops/backup/install-timers.sh` instala las unidades de `ops/backup/systemd/` con
+el usuario y la ruta del servidor y activa `core-force-mail-backup.timer` (08:15 UTC),
+`core-force-mail-backup-mail.timer` (08:45) y `core-force-mail-backup-verify.timer` (domingos
+09:30); es idempotente, lo llama `bootstrap.sh` y se ejecuta igual en un servidor ya aprovisionado.
+Alertas del grupo `respaldos` en `ops/observability/prometheus/rules/plataforma.yml`: vigilan la
+antigüedad del último éxito, el error de la última corrida y la ausencia de la serie.
 
 ## 7. Observabilidad
 
@@ -395,7 +425,8 @@ el propio binario con `--healthcheck <puerto>`.
 `make checks` (build, vet, migraciones, acoplamiento, errores mudos, aridad SQL, streams,
 contratos de eventos, secretos, scaffold) y `make clean-copy`. Si se toca el perfil autoalojado
 (`docker-compose.selfhosted.yml`, `selfhosted/`, `pgbouncer/`, `ops/security/internal-tls.sh`),
-además `bash ops/scaffold/test-selfhosted-profile.sh` (docker, sección 11). Con docker: `make test`
+además `bash ops/scaffold/test-selfhosted-profile.sh` (docker, sección 11); si se toca `ops/backup`
+o `ops/db/pg-credentials.sh`, `bash ops/scaffold/test-selfhosted-backup.sh` (docker, sección 6). Con docker: `make test`
 (con `-race`) y `make e2e`, que levanta Postgres, NATS y Redis desechables, compila los
 servicios integrados y recorre la plataforma de punta a punta con comprobaciones que
 fallan: un servicio nuevo que otro consume se añade a `ops/e2e/run.sh` en la misma tarea.
@@ -523,10 +554,19 @@ contra el perfil (`test-selfhosted-profile.sh` y a mano el 2026-09-17):
   libpq (enlazada con OpenSSL en las imágenes de Postfix, Dovecot y acme) negocia TLS 1.3 por
   defecto: un mapa `pgsql:` de Postfix y el `psql` de Dovecot y de acme lo hicieron, y con
   `sslmode=disable` Postgres los rechazó.
-* Guiones del host (`ops/db`, `ops/backup`): `psql` y `pg_dump` con libpq, `prefer` por defecto.
-  Para verificar además el servidor: `PGSSLMODE=verify-full
-  PGSSLROOTCERT=<INTERNAL_TLS_DIR>/publico/ca.crt` y `PGHOST=127.0.0.1` (el certificado lleva
-  `127.0.0.1` y `localhost`).
+* Guiones del host que van por `ops/db/pg-credentials.sh` (el respaldo, la restauración y su
+  verificación): NO usan el cliente del host. En este perfil `postgres-primary` no se publica en el
+  host y su nombre solo existe en la red interna, así que `cf_psql`, `cf_pg_dump` y `cf_pg_restore`
+  corren en un contenedor efímero de la **misma imagen que el Postgres en marcha** (por su
+  identificador, resuelto con `docker inspect`), en su red, con `sslmode=verify-full` contra
+  `<INTERNAL_TLS_DIR>/publico/ca.crt`, de solo lectura, sin capacidades y con el uid del usuario del
+  respaldo; la contraseña entra por `-e PGPASSWORD`, solo el nombre. Se eligió frente a
+  `PGHOSTADDR` con el cliente del host porque la versión del cliente tiene que ser la del servidor:
+  el `pg_dump` 17 de Debian 13 escribe el formato 1.16 y el `pg_restore` 16 de la imagen no lo lee
+  (`unsupported version (1.16) in file header`), y respaldar con una herramienta y restaurar con otra
+  convierte la copia en una apuesta. El usuario que los ejecuta necesita el grupo `docker`.
+  Los demás guiones de `ops/db` (migraciones y roles) siguen usando `psql` del host y por eso hoy
+  solo funcionan desde dentro de la red interna; ver Riesgos.
 
 ### Proxy de borde
 
@@ -566,14 +606,17 @@ Desde el puesto de trabajo, con el repositorio en el commit a desplegar (`<srv>`
    ejecutar:
 
    ```bash
-   git archive HEAD docker-compose.yml docker-compose.selfhosted.yml ops/server-template ops/security | \
+   git archive HEAD docker-compose.yml docker-compose.selfhosted.yml ops/server-template ops/security ops/backup ops/maintenance | \
      ssh root@<srv> 'rm -rf /tmp/cfm && mkdir /tmp/cfm && tar -x -C /tmp/cfm'
    scp ops/server-template/server.env root@<srv>:/tmp/cfm/ops/server-template/
    ssh root@<srv> /tmp/cfm/ops/server-template/bootstrap.sh
    ```
 
    `bootstrap.sh` escribe `ENVIRONMENT` y `DEPLOY_PROFILE` en `/opt/core-force-mail/app/.env`,
-   genera el TLS interno (paso 2) y programa `core-force-mail-internal-tls.timer`.
+   genera el TLS interno (paso 2), programa `core-force-mail-internal-tls.timer` y, con
+   `ops/backup` a mano, instala los temporizadores del respaldo (`ops/backup/install-timers.sh`).
+   Si no viajó, se ejecutan a mano tras el primer despliegue:
+   `sudo /opt/core-force-mail/app/ops/backup/install-timers.sh`.
 2. TLS interno (si no lo hizo el paso 1, o para revisarlo):
    `sudo /tmp/cfm/ops/security/internal-tls.sh` y `sudo /tmp/cfm/ops/security/internal-tls.sh
    --comprobar`. Crea en `INTERNAL_TLS_DIR` (por defecto `/opt/core-force-mail/tls`) la CA
@@ -635,7 +678,15 @@ Desde el puesto de trabajo, con el repositorio en el commit a desplegar (`<srv>`
    `with-secrets.sh` con `-f docker-compose.yml -f docker-compose.selfhosted.yml`. En despliegues
    siguientes un cambio en `selfhosted/redis` recrea Redis, uno en `selfhosted/edge` recrea el
    borde y uno en `selfhosted/postgres` recarga `pg_hba` con SIGHUP, sin reiniciar la base.
-6. Renovaciones:
+6. Respaldos (sección 6): comprobar los temporizadores
+   (`systemctl list-timers 'core-force-mail-*'`) y, si hay destino externo, crear
+   `/opt/core-force-mail/env/backup.env` (0600 del usuario de despliegue) con
+   `BACKUP_S3_ACCESS_KEY_ID`, `BACKUP_S3_SECRET_ACCESS_KEY` y `BACKUP_ENCRYPTION_PASSPHRASE`, y
+   declarar `BACKUP_S3_BUCKET`, `BACKUP_S3_ENDPOINT` y `BACKUP_S3_REGION` en el `.env`. Primera
+   corrida a mano, como el usuario de despliegue: `ops/backup/backup-tenants.sh`,
+   `ops/backup/backup-mail-volumes.sh` y `ops/backup/verify-restore.sh`. La frase de cifrado se
+   guarda también fuera del servidor: sin ella, el histórico externo no se descifra.
+7. Renovaciones:
    * TLS interno: el timer diario ejecuta `internal-tls.sh --renovar --recargar`, que reemite con la
      misma CA lo que caduca en `INTERNAL_TLS_RENEW_DAYS` (30) y lo aplica sin reiniciar: SIGHUP a
      Postgres y `CONFIG SET tls-cert-file` a Redis; mail-auth mira sus ficheros cada 15 s y sirve
@@ -668,6 +719,16 @@ el OOM, pero con ClamAV cargando la latencia se degrada.
 
 ### Riesgos y pendientes
 
+* Los guiones de `ops/db` que aplican migraciones o crean roles (`apply-migration.sh`,
+  `apply-all-canonical.sh`, `cell-service-role.sh`, `cell-engine-role.sh`,
+  `tenant-service-role.sh`, `bootstrap-platform.sh`) llaman a `psql` del host, que no resuelve
+  `postgres-primary`: en este perfil hay que ejecutarlos desde un contenedor en la red interna
+  hasta que pasen por `cf_psql` como los del respaldo.
+* Los buzones se archivan con Dovecot en marcha: un mensaje que cambie de carpeta durante el
+  archivado puede faltar en esa copia (está en la siguiente). Un archivo sin ese riesgo exige
+  `doveadm backup` buzón a buzón o parar Dovecot; queda pendiente.
+* La cola de Postfix (`postfix-vol`) y el Redis de los motores no se respaldan: lo encolado se
+  reintenta desde el emisor y el bayes de Rspamd se reaprende.
 * Secretos: el servidor no tiene Secrets Manager. `with-secrets.sh` sigue siendo el único camino,
   pero `fetch-secrets.sh` falla sin el CLI y el rol de AWS y `load.sh` recurre al `.env`, que
   entonces tiene que llevar TODAS las credenciales de `secret-keys.txt` y `secret-keys-db.txt`
@@ -675,6 +736,10 @@ el OOM, pero con ClamAV cargando la latencia se degrada.
   inventario, citadas, para que los guiones de `ops/db` (el `userlist.txt` de PgBouncer, los roles)
   las vean igual que con el almacen. Es un secreto en disco que en AWS no existe; falta decidir el
   almacén del perfil (por ejemplo `systemd-creds` o un fichero cifrado desbloqueado al arrancar).
+  Los secretos del respaldo no siguen ese camino a propósito: con el `.env` entregado entero a cada
+  contenedor, la credencial del bucket y la frase de cifrado quedarían a la vista de todo servicio,
+  así que viven en `BACKUP_SECRETS_FILE`, que ningún contenedor recibe. Cuando se decida el almacén
+  del perfil, esas tres claves entran con las demás (`secret-keys-backup.txt`).
 * `sslmode=prefer` de las conexiones directas de `pkg/config` cifra pero no verifica el
   certificado; en este perfil el camino va por la red interna de Docker del propio servidor.
   Verificarlo pide soportar `sslrootcert` en `pkg/config`.

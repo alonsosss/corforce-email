@@ -20,31 +20,69 @@
 # Pensado para correr semanalmente y dejar rastro: si falla, el respaldo estaba roto y
 # hay tiempo de arreglarlo antes de necesitarlo.
 #
-# Uso: ops/backup/verify-restore.sh [base]   (por defecto, la empresa con el respaldo más grande)
+# Uso: ops/backup/verify-restore.sh [base]
+#   Sin base, una de cada clase del ultimo respaldo: el registro, la celda con el volcado mas
+#   grande y la empresa con el volcado mas grande. Una clase sin respaldo hace fallar la
+#   verificacion salvo la de empresas, que puede no haber ninguna todavia.
 set -uo pipefail
+umask 077
 
 APP_DIR="${APP_DIR:-/opt/core-force-mail/app}"
-BACKUP_DIR="${BACKUP_DIR:-/opt/core-force-mail/backups}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Credenciales por el resolvedor comun: la contrasena sale del almacen de secretos, el host
-# y el usuario del .env.
-# shellcheck source=/dev/null
-. "$HERE/../db/pg-credentials.sh" || exit 1
 # shellcheck source=/dev/null
 . "$HERE/report-metric.sh"
 
+# CF_VERIFICACION_ANIDADA: la llamada por base de la verificacion completa; la metrica la publica
+# la llamada de fuera, con el total.
 falla() {
-  cf_publicar_metrica verificacion_respaldo 1 0
+  [[ -n "${CF_VERIFICACION_ANIDADA:-}" ]] || cf_publicar_metrica verificacion_respaldo 1 0
   echo "FALLA: $*" >&2
   exit 1
 }
 
+# Credenciales por el resolvedor comun: la contrasena sale del almacen de secretos, el host
+# y el usuario del .env.
+# shellcheck source=/dev/null
+. "$HERE/../db/pg-credentials.sh" || falla "sin credenciales de Postgres"
+
+BACKUP_DIR="${BACKUP_DIR:-$(cf_read_env BACKUP_DIR)}"
+BACKUP_DIR="${BACKUP_DIR:-/opt/core-force-mail/backups}"
+
 DB="${1:-}"
 if [[ -z "$DB" ]]; then
-  DB="$(ls -1S "$BACKUP_DIR"/*/mail_tenant_*.dump 2>/dev/null | head -1 | xargs -r basename | sed 's/\.dump$//')"
+  [[ -d "$BACKUP_DIR" ]] || falla "no existe $BACKUP_DIR"
+  # Espera a un respaldo en curso: el volcado mas reciente podria estar a medias.
+  exec 8>"$BACKUP_DIR/.respaldo.lock"
+  flock -w 7200 8 || falla "un respaldo sigue en curso tras dos horas"
+  # La corrida completa mas reciente es la ultima que respaldo el registro; celda y empresa salen
+  # de esa misma corrida.
+  corrida="$(ls -1dt "$BACKUP_DIR"/*/mail_registry.dump 2>/dev/null | head -1 | xargs -r dirname)"
+  [[ -n "$corrida" ]] || falla "no hay respaldo del registro (mail_registry) en $BACKUP_DIR"
+  mayor() { find "$corrida" -maxdepth 1 -type f -name "$1" -printf '%s %f\n' | sort -rn | head -1 | sed -E 's/^[0-9]+ //; s/\.dump$//'; }
+  bases=(mail_registry)
+  celda="$(mayor 'mail_cell_*.dump')"
+  [[ -n "$celda" ]] || falla "la corrida $corrida no tiene respaldo de ninguna celda (mail_cell_*)"
+  bases+=("$celda")
+  empresa="$(mayor 'mail_tenant_*.dump')"
+  if [[ -n "$empresa" ]]; then
+    bases+=("$empresa")
+  else
+    echo "  aviso: no hay respaldo de ninguna empresa (mail_tenant_*); se verifican registro y celda"
+  fi
+  total=0
+  for base in "${bases[@]}"; do
+    salida="$(CF_VERIFICACION_ANIDADA=1 bash "$HERE/verify-restore.sh" "$base" 2>&1)"
+    rc=$?
+    printf '%s\n' "$salida"
+    [[ $rc -eq 0 ]] || { cf_publicar_metrica verificacion_respaldo 1 "$total"; echo "FALLA: la verificacion de $base no paso" >&2; exit 1; }
+    tablas_base="$(sed -n 's/^VERIFICACIÓN OK: .*(\([0-9]*\) tablas)$/\1/p' <<<"$salida")"
+    total=$((total + ${tablas_base:-0}))
+  done
+  cf_publicar_metrica verificacion_respaldo 0 "$total"
+  echo "VERIFICACIÓN COMPLETA OK: ${bases[*]} ($total tablas)"
+  exit 0
 fi
-[[ -n "$DB" ]] || falla "no hay respaldos que verificar en $BACKUP_DIR"
 
 case "$DB" in
   mail_registry) plano=registro; migraciones="$APP_DIR/migrations/registry" ;;
@@ -56,15 +94,17 @@ esac
 
 DUMP="$(ls -1dt "$BACKUP_DIR"/*/"$DB".dump 2>/dev/null | head -1)"
 [[ -n "$DUMP" ]] || falla "no hay respaldo local de $DB en $BACKUP_DIR"
+[[ "$DB" =~ ^[a-z0-9_]+$ ]] || falla "nombre de base inesperado: $(printf '%q' "$DB")"
+cf_pg_montar "$(dirname "$DUMP")" ro || falla "no se pudo preparar $DUMP para las herramientas de Postgres"
 
 SCRATCH="verify_restore_$(date -u +%Y%m%d%H%M%S)"
 echo "Verificando $DUMP ($plano) restaurándolo en $SCRATCH"
 
 log="$(mktemp)"
 cleanup() {
-  psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d postgres -q \
+  cf_psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d postgres -q \
     -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='$SCRATCH' AND pid<>pg_backend_pid()" >/dev/null 2>&1
-  psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d postgres -q \
+  cf_psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d postgres -q \
     -c "DROP DATABASE IF EXISTS \"$SCRATCH\"" >/dev/null 2>&1
   rm -f "$log"
 }
@@ -75,12 +115,12 @@ if ! bash "$HERE/restore-tenant.sh" "$DB" "$DUMP" --into "$SCRATCH" > "$log" 2>&
   falla "el respaldo de $DB no se pudo restaurar"
 fi
 
-q() { psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$SCRATCH" -v ON_ERROR_STOP=1 -At -c "$1"; }
+q() { cf_psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$SCRATCH" -v ON_ERROR_STOP=1 -At -c "$1"; }
 
 # Índice del volcado: "<id>; <oid> <oid> SCHEMA - <esquema> <dueño>" y
 # "<id>; <oid> <oid> TABLE <esquema> <tabla> <dueño>"; TABLE DATA y TABLE ATTACH son otras
 # entradas.
-indice="$(pg_restore --list "$DUMP" 2>/dev/null | awk '
+indice="$(cf_pg_restore --list "$DUMP" 2>/dev/null | awk '
   $4 == "SCHEMA" && $5 == "-" { print $6 }
   $4 == "TABLE" && $5 != "DATA" && $5 != "ATTACH" { print $5 "." $6 }' | LC_ALL=C sort -u)"
 [[ -n "$indice" ]] || falla "el índice de $DUMP no lista esquemas ni tablas"
@@ -138,5 +178,5 @@ if [[ "$plano" == registro ]]; then
 fi
 
 echo "  $tablas tablas del volcado presentes; esquemas propios: $(tr '\n' ' ' <<<"$esperados")"
-cf_publicar_metrica verificacion_respaldo 0 "$tablas"
+[[ -n "${CF_VERIFICACION_ANIDADA:-}" ]] || cf_publicar_metrica verificacion_respaldo 0 "$tablas"
 echo "VERIFICACIÓN OK: el respaldo de $DB restaura completo ($tablas tablas)"

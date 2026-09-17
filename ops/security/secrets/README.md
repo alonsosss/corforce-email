@@ -23,6 +23,7 @@ version nueva.
 | Fichero | Que hace |
 |---|---|
 | `secret-keys.txt` | Lista canonica de variables que SON secreto. La usan los tres scripts y el guardarrail de CI. |
+| `secret-keys-backup.txt` | Secretos del RESPALDO (credencial del bucket externo y frase de cifrado). Ningun contenedor los recibe: los leen solo los trabajos de `ops/backup` del entorno o de `BACKUP_SECRETS_FILE` (`ops/backup/README.md`). Para `check-secrets.sh` valen igual que los demas. |
 | `fetch-secrets.sh` | Materializa los secretos en `/dev/shm/core-force-mail/secrets.env` (memoria, 0600). Atomico y todo-o-nada. |
 | `with-secrets.sh` | Envoltorio: comprueba el entorno declarado, materializa, carga al entorno y ejecuta el comando (lo usan los despliegues). |
 | `require-server-environment.sh` | Guarda que `with-secrets.sh` ejecuta antes que nada: si el `.env` del servidor no dice exactamente `ENVIRONMENT=production` o `staging`, no se despliega (`docs/Operacion_Despliegue.md`, 1). |

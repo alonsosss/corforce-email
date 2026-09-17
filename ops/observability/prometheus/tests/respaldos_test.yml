@@ -1,0 +1,126 @@
+# Pruebas de las alertas de los respaldos (ops/backup/report-metric.sh publica las series).
+#
+# Lo que se vigila es la antiguedad del ultimo exito y la ausencia de la serie: un trabajo que
+# dejo de ejecutarse no deja ningun error, y es el caso peligroso. El reloj de la prueba empieza
+# en 0 y las marcas se anotan en segundos.
+#
+#   make check-alertas
+
+rule_files:
+  - ../rules/plataforma.yml
+
+evaluation_interval: 1m
+
+tests:
+  # Respaldo diario al dia y verificacion semanal reciente: nada que avisar.
+  - interval: 1m
+    input_series:
+      - series: 'core_force_job_last_success_timestamp_seconds{trabajo="respaldo",job="node",instance="host:9100"}'
+        values: '0+60x2880'
+      - series: 'core_force_job_last_run_timestamp_seconds{trabajo="respaldo",job="node",instance="host:9100"}'
+        values: '0+60x2880'
+      - series: 'core_force_job_last_exit_code{trabajo="respaldo",job="node",instance="host:9100"}'
+        values: '0x2880'
+      - series: 'core_force_job_last_success_timestamp_seconds{trabajo="verificacion_respaldo",job="node",instance="host:9100"}'
+        values: '0+60x2880'
+      - series: 'core_force_job_last_run_timestamp_seconds{trabajo="verificacion_respaldo",job="node",instance="host:9100"}'
+        values: '0+60x2880'
+    alert_rule_test:
+      - eval_time: 47h
+        alertname: RespaldoSinExitoReciente
+        exp_alerts: []
+      - eval_time: 47h
+        alertname: RespaldoNoSeRegistra
+        exp_alerts: []
+      - eval_time: 47h
+        alertname: VerificacionDeRespaldoSinExitoReciente
+        exp_alerts: []
+
+  # El respaldo de correo se detuvo: su ultimo exito se queda fijo y envejece.
+  - interval: 1m
+    input_series:
+      - series: 'core_force_job_last_success_timestamp_seconds{trabajo="respaldo_correo",job="node",instance="host:9100"}'
+        values: '3600x2880'
+      - series: 'core_force_job_last_run_timestamp_seconds{trabajo="respaldo_correo",job="node",instance="host:9100"}'
+        values: '3600x2880'
+      - series: 'core_force_job_last_exit_code{trabajo="respaldo_correo",job="node",instance="host:9100"}'
+        values: '0x2880'
+    alert_rule_test:
+      - eval_time: 35h
+        alertname: RespaldoSinExitoReciente
+        exp_alerts: []
+      - eval_time: 38h
+        alertname: RespaldoSinExitoReciente
+        exp_alerts:
+          - exp_labels:
+              severidad: critica
+              trabajo: respaldo_correo
+              job: node
+              instance: host:9100
+            exp_annotations:
+              resumen: "El trabajo respaldo_correo no consigue un respaldo bueno desde hace mas de 36 horas"
+              detalle: "El respaldo diario corre de madrugada: 36 horas sin exito son dos corridas perdidas. Lo que se pierde es la capacidad de devolver a UNA empresa (o los buzones) al estado de ayer. Revisar 'journalctl -u core-force-mail-backup.service' o '-u core-force-mail-backup-mail.service' y ejecutarlo a mano: ops/backup/backup-tenants.sh, ops/backup/backup-mail-volumes.sh."
+
+  # Una corrida con error avisa aunque el ultimo exito siga siendo reciente.
+  - interval: 1m
+    input_series:
+      - series: 'core_force_job_last_exit_code{trabajo="respaldo",job="node",instance="host:9100"}'
+        values: '0x120 1x600'
+      - series: 'core_force_job_last_success_timestamp_seconds{trabajo="respaldo",job="node",instance="host:9100"}'
+        values: '0+60x720'
+      - series: 'core_force_job_last_run_timestamp_seconds{trabajo="respaldo",job="node",instance="host:9100"}'
+        values: '0+60x720'
+    alert_rule_test:
+      - eval_time: 4h
+        alertname: RespaldoFallido
+        exp_alerts:
+          - exp_labels:
+              severidad: alta
+              trabajo: respaldo
+              job: node
+              instance: host:9100
+            exp_annotations:
+              resumen: "La ultima ejecucion de respaldo termino con error"
+              detalle: "Puede ser una base o un volumen concreto, la copia externa o la verificacion de restauracion. El journal de la unidad nombra la base o el volumen y el motivo (ops/backup/README.md, 'Que revisar cuando falle')."
+
+  # Sin ninguna serie del respaldo: el trabajo no llega a ejecutarse.
+  - interval: 1m
+    input_series:
+      - series: 'up{job="node",instance="host:9100"}'
+        values: '1x2880'
+    alert_rule_test:
+      - eval_time: 30h
+        alertname: RespaldoNoSeRegistra
+        exp_alerts: []
+      - eval_time: 40h
+        alertname: RespaldoNoSeRegistra
+        exp_alerts:
+          - exp_labels:
+              severidad: critica
+              trabajo: respaldo
+            exp_annotations:
+              resumen: "El respaldo de las bases no publica ninguna serie: no llega a ejecutarse"
+              detalle: "Sin serie, la alerta de antiguedad no puede sonar. Comprobar 'systemctl list-timers core-force-mail-*', que node-exporter monte /opt/core-force-mail/metrics y que el trabajo pueda escribir ahi. Instalar o reponer los temporizadores: sudo ops/backup/install-timers.sh."
+
+  # La prueba de restauracion dejo de pasar hace mas de 10 dias.
+  - interval: 1m
+    input_series:
+      - series: 'core_force_job_last_success_timestamp_seconds{trabajo="verificacion_respaldo",job="node",instance="host:9100"}'
+        values: '0x14700'
+      - series: 'core_force_job_last_run_timestamp_seconds{trabajo="verificacion_respaldo",job="node",instance="host:9100"}'
+        values: '0+60x14700'
+    alert_rule_test:
+      - eval_time: 239h
+        alertname: VerificacionDeRespaldoSinExitoReciente
+        exp_alerts: []
+      - eval_time: 242h
+        alertname: VerificacionDeRespaldoSinExitoReciente
+        exp_alerts:
+          - exp_labels:
+              severidad: alta
+              trabajo: verificacion_respaldo
+              job: node
+              instance: host:9100
+            exp_annotations:
+              resumen: "Hace mas de 10 dias que no se comprueba que los respaldos restauran"
+              detalle: "La prueba semanal restaura el ultimo volcado del registro, de una celda y de una empresa en una base desechable. Mientras no pase, que los respaldos sirvan es una suposicion. Revisar 'journalctl -u core-force-mail-backup-verify.service' y ejecutar ops/backup/verify-restore.sh."

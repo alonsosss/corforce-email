@@ -4,6 +4,8 @@
 # El diseño es una base por empresa, así que el respaldo tiene que respetarlo: restaurar
 # a una empresa de una foto del servidor entero significa devolver a TODAS las demás al
 # pasado. Un archivo por base es lo que permite recuperar a una sola sin tocar al resto.
+# Entran las tres clases: el registro (mail_registry), cada celda (mail_cell_*) y cada
+# empresa (mail_tenant_*).
 #
 # Verifica cada volcado antes de darlo por bueno: un archivo que pg_restore no puede leer
 # ocupa disco pero no es un respaldo, y eso solo se descubre el día que hace falta.
@@ -12,30 +14,57 @@
 #   ops/backup/backup-tenants.sh                 # todas las bases
 #   ops/backup/backup-tenants.sh mail_tenant_demo # una sola
 #
-# Credenciales: ops/db/pg-credentials.sh (contrasena del almacen, resto del .env).
-# Variables propias:
+# Credenciales: ops/db/pg-credentials.sh (contrasena del almacen, resto del .env). En el perfil
+# autoalojado las herramientas de Postgres corren en contenedor con verify-full (ver ese guion).
+# Variables propias (entorno o .env):
 #   BACKUP_DIR          destino local (por defecto /opt/core-force-mail/backups)
-#   BACKUP_S3_BUCKET    bucket de copia externa; sin él solo queda la copia local
-#   BACKUP_KEEP_DAYS    días de retención local (por defecto 3; el histórico vive en S3)
+#   BACKUP_KEEP_DAYS    días de retención local (por defecto 3)
+#   BACKUP_S3_*         copia externa opcional: ops/backup/destino-externo.sh
 set -uo pipefail
+umask 077
 
 APP_DIR="${APP_DIR:-/opt/core-force-mail/app}"
-BACKUP_DIR="${BACKUP_DIR:-/opt/core-force-mail/backups}"
-KEEP_DAYS="${BACKUP_KEEP_DAYS:-3}"
 
 # Las credenciales salen del resolvedor comun: la contrasena del almacen de secretos, el
 # host y el usuario del .env. Leerlas aqui a mano fue lo que dejo este respaldo sin
 # credenciales el dia que el .env dejo de tenerlas.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=/dev/null
-. "$SCRIPT_DIR/../db/pg-credentials.sh" || exit 1
-# shellcheck source=/dev/null
 . "$SCRIPT_DIR/report-metric.sh"
-BUCKET="${BACKUP_S3_BUCKET:-$(cf_read_env BACKUP_S3_BUCKET)}"
+# shellcheck source=/dev/null
+. "$SCRIPT_DIR/../db/pg-credentials.sh" || { cf_publicar_metrica respaldo 1 0; exit 1; }
+# shellcheck source=/dev/null
+. "$SCRIPT_DIR/destino-externo.sh"
+
+BACKUP_DIR="${BACKUP_DIR:-$(cf_read_env BACKUP_DIR)}"
+BACKUP_DIR="${BACKUP_DIR:-/opt/core-force-mail/backups}"
+KEEP_DAYS="${BACKUP_KEEP_DAYS:-$(cf_read_env BACKUP_KEEP_DAYS)}"
+KEEP_DAYS="${KEEP_DAYS:-3}"
+
+abortar() {
+  echo "FALLA: $*" >&2
+  cf_publicar_metrica respaldo 1 0
+  exit 1
+}
+
+[[ "$KEEP_DAYS" =~ ^[0-9]+$ && "$KEEP_DAYS" -ge 1 ]] || abortar "BACKUP_KEEP_DAYS debe ser un entero de 1 en adelante"
+mkdir -p "$BACKUP_DIR" || abortar "no se pudo crear $BACKUP_DIR"
+# Una copia externa mal configurada no puede dejar al servidor sin la local: se respalda en disco,
+# no se sube nada y la corrida termina en fallo para que se vea.
+externo_mal=0
+if ! cf_externo_cargar; then
+  externo_mal=1
+  CF_S3_BUCKET=""
+fi
+
+# Un solo respaldo a la vez, y la verificacion espera a que termine: leeria un volcado a medias.
+exec 8>"$BACKUP_DIR/.respaldo.lock"
+flock -n 8 || abortar "otro respaldo o verificacion esta en curso sobre $BACKUP_DIR"
 
 stamp="$(date -u +%Y%m%dT%H%M%SZ)"
 dest="$BACKUP_DIR/$stamp"
-mkdir -p "$dest" || { echo "FALLA: no se pudo crear $dest" >&2; exit 1; }
+mkdir -m 0700 "$dest" || abortar "no se pudo crear $dest"
+cf_pg_montar "$dest" || abortar "no se pudo preparar $dest para las herramientas de Postgres"
 
 if [[ $# -gt 0 ]]; then
   dbs=("$@")
@@ -44,51 +73,83 @@ else
   # nuestro, incluido mail_registry y cualquier base que exista sin estar declarada como
   # empresa. Respaldar de mas cuesta disco; respaldar de menos se descubre el dia que hace
   # falta. Las migraciones si van por el registro, porque ahi aplicar de mas es un error.
-  mapfile -t dbs < <(psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d postgres -At \
-    -c "SELECT datname FROM pg_database WHERE datname LIKE 'mail_%' AND NOT datistemplate ORDER BY datname")
+  lista="$(cf_psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d postgres -At -v ON_ERROR_STOP=1 \
+    -c "SELECT datname FROM pg_database WHERE datname LIKE 'mail\_%' AND NOT datistemplate ORDER BY datname")" ||
+    { rmdir "$dest" 2>/dev/null; abortar "no se pudo listar las bases"; }
+  mapfile -t dbs < <(sed '/^$/d' <<<"$lista")
 fi
 
 if [[ ${#dbs[@]} -eq 0 ]]; then
-  echo "FALLA: no se encontró ninguna base que respaldar" >&2
-  exit 1
+  rmdir "$dest" 2>/dev/null
+  abortar "no se encontró ninguna base que respaldar"
+fi
+if [[ $# -eq 0 && ! " ${dbs[*]} " =~ " mail_registry " ]]; then
+  echo "  AVISO: no aparece mail_registry entre las bases; sin el registro no se opera la plataforma" >&2
 fi
 
-echo "Respaldo $stamp -> $dest (${#dbs[@]} bases)"
-fail=0
+echo "Respaldo $stamp -> $dest (${#dbs[@]} bases)${CF_PERFIL_DESPLIEGUE:+, perfil $CF_PERFIL_DESPLIEGUE}"
+fail=$externo_mal
+fail_local=0
 for db in "${dbs[@]}"; do
-  [[ -z "$db" ]] && continue
+  [[ "$db" =~ ^[a-z0-9_]+$ ]] || { echo "  FALLA: nombre de base inesperado: $(printf '%q' "$db")"; fail=1; fail_local=1; continue; }
   file="$dest/$db.dump"
-  if ! pg_dump -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$db" -Fc -f "$file" 2>"$file.err"; then
+  if ! cf_pg_dump -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$db" -Fc -f "$file" 2>"$file.err"; then
     echo "  FALLA: $db no se pudo volcar"; sed 's/^/      /' "$file.err" | head -3
-    fail=1; continue
+    rm -f "$file"
+    fail=1; fail_local=1; continue
   fi
   rm -f "$file.err"
+  # La herramienta en contenedor crea el fichero con su propia mascara: se deja solo para su dueno.
+  chmod 0600 "$file" || { echo "  FALLA: no se pudo restringir $file"; fail=1; fail_local=1; continue; }
 
   # Un volcado que pg_restore no sabe leer no es un respaldo. Se comprueba aquí, no el
-  # día de la emergencia.
-  objects="$(pg_restore --list "$file" 2>/dev/null | grep -c ';' || true)"
-  if [[ "${objects:-0}" -lt 10 ]]; then
-    echo "  FALLA: $db produjo un volcado ilegible o vacío ($objects entradas)"
-    fail=1; continue
+  # día de la emergencia: el índice y, leyendo el fichero entero, que los datos descomprimen.
+  objects="$(cf_pg_restore --list "$file" 2>/dev/null | grep -c ';' || true)"
+  if [[ "${objects:-0}" -lt 10 ]] || ! cf_pg_restore -f /dev/null "$file" 2>/dev/null; then
+    echo "  FALLA: $db produjo un volcado ilegible o vacío (${objects:-0} entradas)"
+    mv -f "$file" "$file.ilegible" 2>/dev/null
+    fail=1; fail_local=1; continue
   fi
+
+  # La suma se guarda junto al volcado: restore-tenant.sh la comprueba antes de restaurar, y un
+  # fichero dañado despues en disco se detecta sin leerlo con pg_restore.
+  (cd "$dest" && sha256sum "$db.dump" >"$db.dump.sha256") || { echo "  FALLA: $db sin suma de verificacion"; fail=1; fail_local=1; continue; }
 
   size="$(du -h "$file" | cut -f1)"
   echo "  OK $db ($size, $objects objetos)"
 
-  if [[ -n "$BUCKET" ]]; then
-    if ! aws s3 cp "$file" "s3://$BUCKET/postgres/$db/$stamp.dump" --only-show-errors; then
-      echo "  AVISO: $db quedó respaldado en disco pero no subió a S3"
+  if cf_externo_activo; then
+    origen="$file"
+    clave="postgres/$db/$stamp.dump"
+    if cf_externo_cifra; then
+      if ! cf_cifrar "$file" "$file.gpg"; then
+        echo "  AVISO: $db quedó respaldado en disco pero no se pudo cifrar; no sale del servidor"
+        fail=1; continue
+      fi
+      origen="$file.gpg"
+      clave="$clave.gpg"
+    fi
+    if ! cf_externo_subir "$origen" "$clave"; then
+      echo "  AVISO: $db quedó respaldado en disco pero no subió a s3://$CF_S3_BUCKET"
       fail=1
     fi
+    [[ "$origen" == "$file.gpg" ]] && rm -f "$file.gpg"
   fi
 done
 
-[[ -z "$BUCKET" ]] && echo "AVISO: BACKUP_S3_BUCKET sin definir; solo hay copia local, que se pierde con el servidor"
+if [[ $externo_mal -eq 1 ]]; then
+  echo "AVISO: copia externa mal configurada (FALLA de arriba); solo hay copia local"
+elif ! cf_externo_activo; then
+  echo "AVISO: BACKUP_S3_BUCKET sin definir; solo hay copia local, que se pierde con el servidor"
+fi
 
-# Retención local: el histórico vive en S3. Nunca borra el respaldo de esta corrida.
-if [[ "$KEEP_DAYS" =~ ^[0-9]+$ ]]; then
-  find "$BACKUP_DIR" -mindepth 1 -maxdepth 1 -type d -mtime "+$KEEP_DAYS" \
+# Retención local. Solo tras una corrida sin fallos locales: si hoy no se pudo volcar, los
+# respaldos de ayer son los unicos buenos. Nunca borra el respaldo de esta corrida.
+if [[ $fail_local -eq 0 ]]; then
+  find "$BACKUP_DIR" -mindepth 1 -maxdepth 1 -type d -name '[0-9]*T[0-9]*Z' -mtime "+$KEEP_DAYS" \
     ! -path "$dest" -exec rm -rf {} + 2>/dev/null || true
+else
+  echo "AVISO: no se aplica la retención local porque esta corrida tuvo fallos"
 fi
 
 cf_publicar_metrica respaldo "$fail" "${#dbs[@]}"
@@ -97,4 +158,4 @@ if [[ $fail -ne 0 ]]; then
   echo "RESPALDO INCOMPLETO: revisa las líneas FALLA/AVISO de arriba" >&2
   exit 1
 fi
-echo "RESPALDO OK: ${#dbs[@]} bases en $dest${BUCKET:+ y en s3://$BUCKET/postgres/}"
+echo "RESPALDO OK: ${#dbs[@]} bases en $dest${CF_S3_BUCKET:+ y en s3://$CF_S3_BUCKET/postgres/}"

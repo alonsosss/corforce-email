@@ -1,0 +1,229 @@
+#!/usr/bin/env bash
+# Guardarrail de los respaldos (ops/backup), sin docker.
+#
+# El respaldo no se ve funcionar: un cambio que lo rompe pasa desapercibido hasta el dia que hace
+# falta. Aqui se atan las decisiones que lo sostienen en los dos perfiles:
+#   - las herramientas de Postgres, ejecutadas con un docker simulado: en el perfil autoalojado van
+#     en contenedor de la imagen del Postgres en marcha (por su identificador), en su red, con
+#     verify-full y la CA interna montada, la contrasena solo por nombre (-e PGPASSWORD) y sin
+#     capacidades; en el perfil aws, los binarios del host sin tocar PGSSLMODE;
+#   - ningun guion de ops/backup llama a psql, pg_dump o pg_restore sin pasar por esas funciones;
+#   - el respaldo lista las tres clases de base y la verificacion completa exige registro y celda;
+#   - la copia externa: CLI fijado por digest, credenciales y frase nunca en argumentos, sus
+#     secretos en secret-keys-backup.txt (fuera de secret-keys.txt y de .env.example) y vigilados
+#     por check-secrets.sh;
+#   - unidades de systemd: plantilla coherente con install-timers.sh, UMask 0077, todos los
+#     temporizadores activados, y bootstrap.sh instalando por ese guion;
+#   - el respaldo de los volumenes de correo: imagen de tar fijada e igual en respaldo y
+#     restauracion, buzones y claves de mail_crypt por defecto y crypt-vol nunca sin cifrar fuera;
+#   - todo trabajo que publique metrica tiene alerta en plataforma.yml;
+#   - el nombre del servicio de Postgres es el de compose y el del certificado interno;
+#   - el despliegue sincroniza ops/backup, ops/db y ops/maintenance.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+FALLOS=0
+mal() { echo "  FALLA: $*" >&2; FALLOS=1; }
+
+# --- herramientas de Postgres con docker simulado --------------------------------------------------
+mkdir -p "$TMP/arbol/ops/security/secrets" "$TMP/bin" "$TMP/tls/publico"
+cp -r "$ROOT/ops/db" "$ROOT/ops/maintenance" "$TMP/arbol/ops/"
+: >"$TMP/arbol/ops/security/secrets/load.sh"
+: >"$TMP/tls/publico/ca.crt"
+cat >"$TMP/bin/docker" <<'EOF'
+#!/usr/bin/env bash
+case "$1" in
+  ps) echo c0ffee ;;
+  inspect)
+    case "$*" in
+      *'{{.Image}}'*) echo sha256:imagen-del-servidor ;;
+      *Networks*) echo proyecto_mail-internal ;;
+    esac ;;
+  run) printf '%s\n' "$@" >"$DOCKER_LOG" ;;
+esac
+EOF
+for binario in psql pg_dump pg_restore; do
+  printf '#!/usr/bin/env bash\necho "host:%s $*" >"$HOST_LOG"\n' "$binario" >"$TMP/bin/$binario"
+done
+chmod +x "$TMP/bin/"*
+
+printf 'DEPLOY_PROFILE=selfhosted\nPOSTGRES_USER=mail_admin\nINTERNAL_TLS_DIR=%s\nCOMPOSE_PROJECT_NAME=proyecto\n' "$TMP/tls" >"$TMP/arbol/.env"
+salida="$(env -i PATH="$TMP/bin:/usr/bin:/bin" APP_DIR="$TMP/arbol" POSTGRES_PASSWORD=clave-simulada DOCKER_LOG="$TMP/docker.log" \
+  HOST_LOG="$TMP/host.log" bash -c '. "$APP_DIR/ops/db/pg-credentials.sh" || exit 1
+  mkdir -p "$APP_DIR/volcados" && cf_pg_montar "$APP_DIR/volcados" && cf_pg_dump -d mail_registry -Fc -f "$APP_DIR/volcados/x.dump"
+  echo "perfil=$CF_PERFIL_DESPLIEGUE host=$PGHOST modo=$PGSSLMODE ca=$PGSSLROOTCERT"' 2>&1)" || mal "pg-credentials.sh en el perfil autoalojado: $salida"
+args="$(cat "$TMP/docker.log" 2>/dev/null || true)"
+tiene() { grep -qxF -- "$1" <<<"$args"; }
+[[ "$salida" == *"perfil=selfhosted host=postgres-primary modo=verify-full ca=/run/core-force-mail/tls/publico/ca.crt"* ]] ||
+  mal "autoalojado: se esperaba postgres-primary con verify-full y la CA montada ($salida)"
+for esperado in run --rm --network proyecto_mail-internal --read-only --cap-drop ALL no-new-privileges \
+  PGPASSWORD PGSSLMODE PGSSLROOTCERT "$TMP/tls/publico:/run/core-force-mail/tls/publico:ro" \
+  "$TMP/arbol/volcados:$TMP/arbol/volcados:rw" pg_dump sha256:imagen-del-servidor; do
+  tiene "$esperado" || mal "autoalojado: docker run sin '$esperado'"
+done
+grep -qE '^(PG[A-Z]*|POSTGRES_PASSWORD)=' <<<"$args" && mal "autoalojado: una variable de Postgres va con su valor en los argumentos de docker run"
+grep -qF 'clave-simulada' <<<"$args" && mal "autoalojado: la contrasena aparece en los argumentos de docker run"
+[[ -f "$TMP/host.log" ]] && mal "autoalojado: se ejecuto un binario de Postgres del host ($(cat "$TMP/host.log"))"
+
+printf 'DEPLOY_PROFILE=aws\nPOSTGRES_HOST=db.interna\nPOSTGRES_USER=mail_admin\n' >"$TMP/arbol/.env"
+rm -f "$TMP/docker.log"
+salida="$(env -i PATH="$TMP/bin:/usr/bin:/bin" APP_DIR="$TMP/arbol" POSTGRES_PASSWORD=clave-simulada DOCKER_LOG="$TMP/docker.log" \
+  HOST_LOG="$TMP/host.log" bash -c '. "$APP_DIR/ops/db/pg-credentials.sh" || exit 1
+  cf_pg_montar /tmp && cf_psql -d mail_registry -c "select 1"
+  echo "perfil=$CF_PERFIL_DESPLIEGUE host=$PGHOST modo=${PGSSLMODE:-sin}"' 2>&1)" || mal "pg-credentials.sh en el perfil aws: $salida"
+[[ "$salida" == *"perfil=aws host=db.interna modo=sin"* ]] || mal "aws: se esperaba el host del .env sin tocar PGSSLMODE ($salida)"
+[[ "$(cat "$TMP/host.log" 2>/dev/null)" == "host:psql -d mail_registry -c select 1" ]] || mal "aws: cf_psql no ejecuta el psql del host"
+[[ -f "$TMP/docker.log" ]] && mal "aws: se lanzo un contenedor"
+
+# Sin .env (un puesto de trabajo o una prueba con PG* propias): el camino de siempre.
+rm -f "$TMP/arbol/.env" "$TMP/host.log"
+salida="$(env -i PATH="$TMP/bin:/usr/bin:/bin" APP_DIR="$TMP/arbol" POSTGRES_PASSWORD=clave-simulada POSTGRES_DIRECT_HOST=127.0.0.1 \
+  POSTGRES_USER=mail_admin DOCKER_LOG="$TMP/docker.log" HOST_LOG="$TMP/host.log" bash -c '. "$APP_DIR/ops/db/pg-credentials.sh" || exit 1
+  cf_pg_dump -d mail_registry; echo "perfil=$CF_PERFIL_DESPLIEGUE host=$PGHOST modo=${PGSSLMODE:-sin}"' 2>&1)" || mal "pg-credentials.sh sin .env: $salida"
+[[ "$salida" == *"perfil=aws host=127.0.0.1 modo=sin"* && "$(cat "$TMP/host.log" 2>/dev/null)" == "host:pg_dump -d mail_registry" ]] ||
+  mal "sin .env: se esperaba el pg_dump del host contra POSTGRES_DIRECT_HOST ($salida)"
+[[ -f "$TMP/docker.log" ]] && mal "sin .env: se lanzo un contenedor"
+
+# --- comprobaciones estaticas ---------------------------------------------------------------------
+python3 - "$ROOT" <<'PY' || FALLOS=1
+import os
+import re
+import sys
+
+root = sys.argv[1]
+fallos = []
+
+
+def leer(rel):
+    with open(os.path.join(root, rel), encoding="utf-8") as fh:
+        return fh.read()
+
+
+def codigo(texto):
+    return [(n, l) for n, l in enumerate(texto.splitlines(), 1) if not l.lstrip().startswith("#")]
+
+
+backup = "ops/backup"
+guiones = sorted(f for f in os.listdir(os.path.join(root, backup)) if f.endswith(".sh"))
+llamada = re.compile(r"(^|\$\(|[|;&!{(]|\bif\b|\bthen\b|\bdo\b|\|\|)\s*(psql|pg_dump|pg_restore)\b")
+for g in guiones:
+    for n, linea in codigo(leer(f"{backup}/{g}")):
+        if llamada.search(linea):
+            fallos.append(f"{backup}/{g}:{n} llama a una herramienta de Postgres sin cf_psql/cf_pg_dump/cf_pg_restore")
+
+respaldo = leer(f"{backup}/backup-tenants.sh")
+if "LIKE 'mail\\_%'" not in respaldo:
+    fallos.append("backup-tenants.sh ya no lista todas las bases mail_* (registro, celdas y empresas)")
+verificacion = leer(f"{backup}/verify-restore.sh")
+for patron in ("mail_registry.dump", "'mail_cell_*.dump'", "'mail_tenant_*.dump'"):
+    if patron not in verificacion:
+        fallos.append(f"verify-restore.sh sin argumentos no cubre {patron}")
+
+externo = leer(f"{backup}/destino-externo.sh")
+m = re.search(r'CF_BACKUP_S3_CLI_IMAGE="\$\{BACKUP_S3_CLI_IMAGE:-([^}]+)\}"', externo)
+if not m or not re.search(r"@sha256:[0-9a-f]{64}$", m.group(1)):
+    fallos.append("destino-externo.sh: la imagen del CLI de S3 no esta fijada por digest")
+for n, linea in codigo(externo) + [(n, l) for g in guiones for n, l in codigo(leer(f"{backup}/{g}"))]:
+    if re.search(r"-e\s+(AWS_[A-Z_]+|PG[A-Z]+|BACKUP_[A-Z0-9_]+)=", linea):
+        fallos.append(f"ops/backup:{n} pasa una credencial con su valor en -e")
+    if re.search(r"--passphrase(\s|=)|--passphrase-file", linea):
+        fallos.append(f"ops/backup:{n} pasa la frase de cifrado por argumento o fichero")
+if not any("--passphrase-fd 0" in l for _, l in codigo(externo)):
+    fallos.append("destino-externo.sh: gpg debe leer la frase por la entrada estandar")
+
+secretos = lambda rel: {l.strip().rstrip("?") for l in leer(rel).splitlines() if l.strip() and not l.startswith("#")}
+de_respaldo = secretos("ops/security/secrets/secret-keys-backup.txt")
+usados = set(re.findall(r"_cf_secreto_respaldo (BACKUP_[A-Z0-9_]+)", externo))
+if usados != de_respaldo:
+    fallos.append(f"secret-keys-backup.txt ({sorted(de_respaldo)}) no coincide con lo que lee destino-externo.sh ({sorted(usados)})")
+if cruce := de_respaldo & (secretos("ops/security/secrets/secret-keys.txt") | secretos("ops/security/secrets/secret-keys-db.txt")):
+    fallos.append(f"secretos del respaldo en las listas que reciben los contenedores o el pooler: {sorted(cruce)}")
+ejemplo = leer(".env.example")
+for clave in sorted(de_respaldo):
+    if re.search(rf"^\s*{clave}\s*=", ejemplo, re.M):
+        fallos.append(f".env.example declara {clave}: el .env llega a todos los contenedores")
+if not re.search(r'^\s*cat .*"\$KEYS_BACKUP_FILE"', leer("ops/security/secrets/check-secrets.sh"), re.M):
+    fallos.append("check-secrets.sh no vigila secret-keys-backup.txt")
+
+# --- volumenes de correo --------------------------------------------------------------------------
+correo = leer(f"{backup}/backup-mail-volumes.sh")
+restauracion_correo = leer(f"{backup}/restore-mail-volume.sh")
+imagenes = [re.search(r'BACKUP_ARCHIVE_IMAGE:-([^}]+)\}', t) for t in (correo, restauracion_correo)]
+if not all(imagenes) or len({i.group(1) for i in imagenes}) != 1 or not re.search(r"@sha256:[0-9a-f]{64}$", imagenes[0].group(1)):
+    fallos.append("la imagen de tar del respaldo de correo no esta fijada por digest o difiere entre respaldo y restauracion")
+if 'VOLUMENES:-crypt-vol vmail-vol' not in correo:
+    fallos.append("backup-mail-volumes.sh ya no respalda por defecto crypt-vol (claves de mail_crypt) y vmail-vol (buzones)")
+if not re.search(r'\[\[ "\$vol" == crypt-vol \]\] && ! cf_externo_cifra', correo):
+    fallos.append("backup-mail-volumes.sh debe negarse a subir crypt-vol sin cifrar: es la clave que descifra todo el correo")
+if "--exclude=./_garbage" not in correo:
+    fallos.append("backup-mail-volumes.sh archiva _garbage (lo que Dovecot ya borro)")
+
+# --- cada trabajo programado tiene alerta ---------------------------------------------------------
+reglas = leer("ops/observability/prometheus/rules/plataforma.yml")
+trabajos = set()
+for g in guiones:
+    texto = leer(f"{backup}/{g}")
+    trabajos |= set(re.findall(r"cf_publicar_metrica ([a-z_]+)", texto))
+    if 'cf_publicar_metrica "$TRABAJO"' in texto:
+        m = re.search(r"^TRABAJO=([a-z_]+)$", texto, re.M)
+        if m:
+            trabajos.add(m.group(1))
+for trabajo in sorted(trabajos):
+    if f'trabajo="{trabajo}"' not in reglas and f'{trabajo}|' not in reglas and f'|{trabajo}' not in reglas:
+        fallos.append(f"ninguna alerta de plataforma.yml vigila el trabajo {trabajo}: su ausencia no se notaria")
+
+instalador = leer(f"{backup}/install-timers.sh")
+usuario = re.search(r"^PLANTILLA_USUARIO=(\S+)$", instalador, re.M)
+ruta = re.search(r"^PLANTILLA_RUTA=(\S+)$", instalador, re.M)
+temporizadores = re.search(r"^TEMPORIZADORES=\(([^)]*)\)$", instalador, re.M)
+unidades = sorted(os.listdir(os.path.join(root, backup, "systemd")))
+if not (usuario and ruta and temporizadores):
+    fallos.append("install-timers.sh sin PLANTILLA_USUARIO, PLANTILLA_RUTA o TEMPORIZADORES")
+else:
+    if sorted(temporizadores.group(1).split()) != sorted(u for u in unidades if u.endswith(".timer")):
+        fallos.append("install-timers.sh no activa exactamente los temporizadores de ops/backup/systemd")
+    for u in unidades:
+        texto = leer(f"{backup}/systemd/{u}")
+        if u.endswith(".timer"):
+            if u.replace(".timer", ".service") not in unidades:
+                fallos.append(f"{u} sin su .service")
+            continue
+        if f"User={usuario.group(1)}" not in texto.splitlines():
+            fallos.append(f"{u}: User= no es el de la plantilla ({usuario.group(1)}), install-timers.sh no lo reescribiria")
+        if "UMask=0077" not in texto.splitlines():
+            fallos.append(f"{u}: sin UMask=0077")
+        exec_start = re.search(r"^ExecStart=(\S+)$", texto, re.M)
+        if not exec_start or not exec_start.group(1).startswith(ruta.group(1) + "/ops/backup/"):
+            fallos.append(f"{u}: ExecStart fuera de {ruta.group(1)}/ops/backup")
+        elif not os.path.isfile(os.path.join(root, exec_start.group(1)[len(ruta.group(1)) + 1:])):
+            fallos.append(f"{u}: {exec_start.group(1)} no existe en el repositorio")
+        if f"Environment=APP_DIR={ruta.group(1)}" not in texto.splitlines():
+            fallos.append(f"{u}: sin Environment=APP_DIR={ruta.group(1)}")
+if not any('"$SCRIPT_DIR/../backup/install-timers.sh"' in l and '"$DEPLOY_PATH/ops/backup/install-timers.sh"' in l
+           for _, l in codigo(leer("ops/server-template/bootstrap.sh"))):
+    fallos.append("bootstrap.sh no instala el respaldo por ops/backup/install-timers.sh")
+
+credenciales = leer("ops/db/pg-credentials.sh")
+servicio = re.search(r"^\s*CF_PG_SERVICIO=(\S+)$", credenciales, re.M)
+if not servicio:
+    fallos.append("pg-credentials.sh sin CF_PG_SERVICIO")
+else:
+    if not re.search(rf"^  {re.escape(servicio.group(1))}:\s*$", leer("docker-compose.selfhosted.yml"), re.M):
+        fallos.append(f"CF_PG_SERVICIO={servicio.group(1)} no es un servicio de docker-compose.selfhosted.yml")
+    if f"[postgres]={servicio.group(1)}" not in leer("ops/security/internal-tls.sh"):
+        fallos.append(f"CF_PG_SERVICIO={servicio.group(1)} no es el nombre del certificado de Postgres en internal-tls.sh")
+
+despliegue = re.search(r"FICHEROS_SERVIDOR=\(([^)]*)\)", leer("scripts/deploy-ecr.sh"), re.S)
+for ruta_srv in ("ops/backup", "ops/db", "ops/maintenance"):
+    if not despliegue or ruta_srv not in despliegue.group(1).split():
+        fallos.append(f"scripts/deploy-ecr.sh no sincroniza {ruta_srv} al servidor")
+
+for f in fallos:
+    print(f"  FALLA: {f}", file=sys.stderr)
+sys.exit(1 if fallos else 0)
+PY
+
+[[ $FALLOS -eq 0 ]] || exit 1
+echo "  OK: respaldos con la herramienta del servidor por verify-full en el perfil autoalojado y la del host en aws, sin credenciales en argumentos, copia externa cifrada y fijada, tres clases cubiertas y temporizadores instalables."
