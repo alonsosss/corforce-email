@@ -478,6 +478,11 @@ base de mantenimiento de la celda) y la cierra a PUBLIC (`REVOKE CONNECT, TEMPOR
 solo entran su dueno (la credencial de plataforma) y los superusuarios; si no puede
 cerrarla, la retira. Los servicios de celda abren su base por `CELL_DB_NAME`
 (`db.NewCellPool` + `db.StaticPoolMiddleware`).
+Un pool por base de empresa se abre una sola vez y fuera del cerrojo del gestor (V,
+2026-09-17, `pkg/db/tenant.go`): una base inalcanzable solo hace esperar a quien pide esa
+base, y cada llamante como mucho lo que permite su contexto. Antes el gestor retenia su
+cerrojo durante la apertura, y una base inexistente, con PgBouncer esperando
+`server_login_retry`, dejaba cada peticion de TODAS las empresas del servicio en unos 15 s.
 
 P: mover una empresa de celda (`TenantPoolManager.Forget` ya invalida la cache; falta el
 traslado de datos).

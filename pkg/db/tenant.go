@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
+	"golang.org/x/sync/singleflight"
 )
 
 // ── Context pool key ──────────────────────────────────────────────────────────
@@ -200,10 +201,22 @@ func (t DBTarget) Key() string {
 	return fmt.Sprintf("%s:%d/%s", t.Host, t.Port, t.DBName)
 }
 
+// plazoApertura acota la apertura de un pool. No depende del contexto de quien la pidio primero:
+// otros llamantes pueden estar esperando ese mismo resultado.
+const plazoApertura = 30 * time.Second
+
 type TenantPoolManager struct {
 	mu      sync.RWMutex
 	pools   map[string]*pgxpool.Pool // por DBTarget.Key()
 	targets map[string]DBTarget      // tenantID -> destino (cache local)
+	// aperturas deja una sola apertura en curso por destino, sin retener mu mientras se abre:
+	// abrir es red, y una base de empresa inalcanzable (PgBouncer esperando server_login_retry,
+	// por ejemplo) dejaba a TODAS las empresas del servicio esperando detras del cerrojo.
+	aperturas singleflight.Group
+	// generacion sube con CloseAll: una apertura que empezo antes no guarda su pool despues.
+	generacion uint64
+	// abrir crea y comprueba el pool de un destino; sustituible en pruebas.
+	abrir   func(ctx context.Context, key, dsn string) (*pgxpool.Pool, error)
 	baseDSN func(dbName string) string
 	// cellDSN construye el DSN de una base en OTRA celda. Sin el, toda empresa se
 	// busca en el cluster por defecto aunque su celda diga otra cosa.
@@ -217,6 +230,7 @@ func NewTenantPoolManager(baseDSN func(string) string, logger *zap.Logger) *Tena
 		targets: make(map[string]DBTarget),
 		baseDSN: baseDSN,
 		logger:  logger,
+		abrir:   abrirPool,
 	}
 }
 
@@ -233,26 +247,65 @@ func (m *TenantPoolManager) GetPoolByDBName(ctx context.Context, dbName string) 
 	return m.GetPool(ctx, DBTarget{DBName: dbName})
 }
 
-// GetPool devuelve (o abre) el pool del destino.
+// GetPool devuelve (o abre) el pool del destino. Solo esperan la apertura quienes piden ese
+// mismo destino, y cada uno como mucho lo que permita su propio contexto.
 func (m *TenantPoolManager) GetPool(ctx context.Context, target DBTarget) (*pgxpool.Pool, error) {
 	key := target.Key()
-	m.mu.RLock()
-	if pool, ok := m.pools[key]; ok {
-		m.mu.RUnlock()
+	if pool, ok := m.poolEnCache(key); ok {
 		return pool, nil
 	}
-	m.mu.RUnlock()
-
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if pool, ok := m.pools[key]; ok {
-		return pool, nil
-	}
-
 	dsn := m.baseDSN(target.DBName)
 	if target.Host != "" && m.cellDSN != nil {
 		dsn = m.cellDSN(target.Host, target.Port, target.DBName)
 	}
+
+	resultado := m.aperturas.DoChan(key, func() (any, error) {
+		if pool, ok := m.poolEnCache(key); ok {
+			return pool, nil
+		}
+		m.mu.RLock()
+		generacion := m.generacion
+		m.mu.RUnlock()
+
+		abrirCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), plazoApertura)
+		defer cancel()
+		pool, err := m.abrir(abrirCtx, key, dsn)
+		if err != nil {
+			return nil, err
+		}
+
+		m.mu.Lock()
+		if m.generacion != generacion {
+			m.mu.Unlock()
+			pool.Close()
+			return nil, fmt.Errorf("tenant pool %s: los pools se cerraron durante la apertura", key)
+		}
+		m.pools[key] = pool
+		m.mu.Unlock()
+		RegisterPoolMetrics(key, pool)
+		m.logger.Info("tenant pool created", zap.String("db", key))
+		return pool, nil
+	})
+
+	select {
+	case r := <-resultado:
+		if r.Err != nil {
+			return nil, r.Err
+		}
+		return r.Val.(*pgxpool.Pool), nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func (m *TenantPoolManager) poolEnCache(key string) (*pgxpool.Pool, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	pool, ok := m.pools[key]
+	return pool, ok
+}
+
+func abrirPool(ctx context.Context, key, dsn string) (*pgxpool.Pool, error) {
 	cfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
 		return nil, fmt.Errorf("parse tenant dsn: %w", err)
@@ -274,10 +327,6 @@ func (m *TenantPoolManager) GetPool(ctx context.Context, target DBTarget) (*pgxp
 		pool.Close()
 		return nil, fmt.Errorf("ping tenant db %s: %w", key, err)
 	}
-
-	m.pools[key] = pool
-	RegisterPoolMetrics(key, pool)
-	m.logger.Info("tenant pool created", zap.String("db", key))
 	return pool, nil
 }
 
@@ -304,6 +353,7 @@ func (m *TenantPoolManager) Forget(tenantID string) {
 func (m *TenantPoolManager) CloseAll() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.generacion++
 	for name, pool := range m.pools {
 		UnregisterPoolMetrics(name)
 		pool.Close()
