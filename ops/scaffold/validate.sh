@@ -81,6 +81,11 @@ if ! bash "$ROOT/ops/scaffold/check-pgbouncer-entrypoint.sh"; then
   FAIL=1
 fi
 
+echo "== 10. Despliegue: userlist de PgBouncer, claves del .env y servicios arrancados =="
+if ! bash "$ROOT/ops/scaffold/check-deploy-preflight.sh"; then
+  FAIL=1
+fi
+
 echo ""
 if [[ $FAIL -ne 0 ]]; then
   echo "VALIDACION: FALLA"; exit 1

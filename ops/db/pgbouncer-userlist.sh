@@ -41,10 +41,11 @@ while [[ $# -gt 0 ]]; do
     --write) MODO=write; shift ;;
     --check) MODO=check; shift ;;
     --print) MODO=print; shift ;;
+    --ensure) MODO=ensure; shift ;;
     *) echo "argumento desconocido: $1" >&2; exit 2 ;;
   esac
 done
-[[ -n "$MODO" ]] || { echo "uso: $0 --write | --check | --print" >&2; exit 2; }
+[[ -n "$MODO" ]] || { echo "uso: $0 --write | --check | --print | --ensure" >&2; exit 2; }
 [[ -f "$MATRIZ" ]] || { echo "no existe $MATRIZ" >&2; exit 2; }
 
 # La contrasena NO se lee del .env: la fuente es el almacen (with-secrets.sh la deja en el
@@ -93,6 +94,23 @@ contenido="$(printf '%s\n' \
   "; GENERADO por ops/db/pgbouncer-userlist.sh - no editar a mano." \
   "; Un rol por linea, con la contrasena del almacen de secretos." \
   "${lineas[@]}")"
+
+# --ensure es lo que corre el despliegue antes de recrear. Sin fichero se genera: sin el,
+# el pooler no arranca. Con uno distinto solo se avisa, porque reescribirlo a ciegas quitaria
+# el rol cuya contrasena no este en este entorno y dejaria fuera a un servicio que hoy entra.
+if [[ "$MODO" == ensure ]]; then
+  if [[ ! -f "$DESTINO" ]]; then
+    echo "userlist: falta $DESTINO; se genera" >&2
+    MODO=write
+  elif ! diff -q <(printf '%s\n' "$contenido") "$DESTINO" >/dev/null 2>&1; then
+    echo "userlist: AVISO: $DESTINO no coincide con los roles y credenciales de este despliegue; no se reescribe." >&2
+    echo "  Revisalo y regeneralo: ops/security/secrets/with-secrets.sh ops/db/pgbouncer-userlist.sh --write" >&2
+    exit 0
+  else
+    echo "userlist: $DESTINO al dia"
+    exit 0
+  fi
+fi
 
 case "$MODO" in
   print)

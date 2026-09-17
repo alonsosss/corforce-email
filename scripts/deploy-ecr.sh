@@ -302,6 +302,22 @@ build_en_lotes() {
 # momento. En lotes el trabajo total es el mismo y tarda algo mas; lo que cambia es que
 # el pico se reparte. Ajustable con DEPLOY_UP_LOTE.
 UP_LOTE="${DEPLOY_UP_LOTE:-20}"
+# Antes de recrear: el userlist.txt de PgBouncer presente (sin el, el pooler no arranca) y aviso
+# de las claves de .env.example que el .env del servidor no tiene. Solo viajan nombres de claves.
+preparar_servidor() {
+  remote "ops/security/secrets/with-secrets.sh ops/db/pgbouncer-userlist.sh --ensure"
+  sed -n -E 's/^([A-Z][A-Z0-9_]*)=.*/\1/p' .env.example | remote "ops/maintenance/claves-env.sh .env"
+}
+
+# Tras recrear: imagen correcta no es arranque correcto. Un servicio que no arranca por
+# configuracion queda reiniciandose con el tag nuevo; se espera a que arranque o se falla.
+esperar_sanos() {
+  remote "ops/maintenance/esperar-sanos.sh --proyecto app ${SVCS[*]}" || {
+    echo "!! algun servicio no arranco tras el despliegue (detalle arriba)" >&2
+    exit 1
+  }
+}
+
 por_lotes_remoto() {
   local prefijo="$1"; shift
   local total=${#SVCS[@]} i
@@ -338,6 +354,7 @@ if [[ "$TRANSPORT" == "ecr" ]]; then
   stage_head_files docker-compose.yml docker-compose.images.yml docker-compose.observability.yml migrations ops/db ops/security ops/ecr ops/observability ops/maintenance ops/backup pgbouncer
   rsync -a -e "ssh -o IdentitiesOnly=yes -i $SSH_KEY" "$STAGE_DIR"/ "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/"
   recargar_prometheus
+  preparar_servidor
   # El login de docker contra ECR caduca a las 12 h. El servidor tiene su rol
   # IAM, pero si nadie renueva la sesion el pull falla con un 403 opaco que
   # parece un problema de permisos y no de caducidad. Se renueva en cada
@@ -375,6 +392,7 @@ if [[ "$TRANSPORT" == "ecr" ]]; then
         ;;
     esac
   done
+  esperar_sanos
 else
   # fallback sin AWS local: save | ssh load, luego up normal (imagen local del server)
   COMPOSE=(docker compose)
@@ -389,7 +407,9 @@ else
   stage_head_files docker-compose.yml docker-compose.images.yml docker-compose.observability.yml migrations ops/db ops/security ops/ecr ops/observability ops/maintenance ops/backup pgbouncer
   rsync -a -e "ssh -o IdentitiesOnly=yes -i $SSH_KEY" "$STAGE_DIR"/ "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/"
   recargar_prometheus
+  preparar_servidor
   por_lotes_remoto "recrear" "ops/security/secrets/with-secrets.sh docker compose up -d --no-deps"
+  esperar_sanos
 fi
 
 # Las migraciones de tenant corren al arrancar organization. Si alguna cambio el TIPO de

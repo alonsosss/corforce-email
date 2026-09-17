@@ -304,6 +304,18 @@ para llamar a la API hace falta ya un superadmin. Después, todo por API: `POST 
   confirma y verifica. `--check` muestra el conjunto de cambios sin aplicarlo. Sus salidas
   son `SES_EVENTS_TOPIC_ARN`, `SES_CONFIG_SET_TRANSACTIONAL` y `SES_CONFIG_SET_MARKETING`.
   No verifica dominios ni saca la cuenta del sandbox: eso es por empresa y con su DNS.
+* Antes y después de recrear, en los dos caminos (`ops/scaffold/check-deploy-preflight.sh`,
+  sección 10 de `validate.sh`). Antes: `ops/db/pgbouncer-userlist.sh --ensure` genera el
+  `userlist.txt` si falta, porque sin él PgBouncer no arranca, y si no coincide solo avisa:
+  reescribirlo a ciegas quitaría el rol cuya contraseña no esté en el entorno y dejaría fuera a
+  un servicio que hoy entra. `release.yml`, que no sincroniza `ops/`, usa `--write` solo cuando el
+  fichero no existe. `ops/maintenance/claves-env.sh` nombra las claves de `.env.example` que el
+  `.env` del servidor no tiene, sin leer ni imprimir valores y sin bloquear. Después:
+  `ops/maintenance/esperar-sanos.sh` espera a que cada servicio recreado quede sano, o corriendo
+  sin reiniciarse si su imagen no declara chequeo, y si no el despliegue falla con su estado y sus
+  últimas líneas de registro. Antes solo se comprobaba que corriera la imagen nueva, y un servicio
+  en bucle de reinicios por una clave ausente (`SCHEDULER_URL` en analytics) pasaba por bueno.
+  `release.yml` lleva los dos guiones dentro del script remoto, en base64.
 
 ## 6. Respaldos
 
