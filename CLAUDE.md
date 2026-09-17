@@ -230,8 +230,13 @@ documento que contradice al código es peor que ninguno.
   (relayhosts, DKIM, SES propio) cifradas con `MAIL_ENCRYPTION_KEY` (AES-256-GCM con
   rotación); ClamAV antes de guardar cualquier adjunto; auditoría con cadena de hashes;
   mínimo privilegio en la base (`mail_engine` solo lee lo que Postfix/Dovecot necesitan).
-* **Infraestructura**: AWS con servicios administrados donde reduzcan riesgo (RDS Multi-AZ,
-  ElastiCache, SES, S3, Secrets Manager); una cuenta por ambiente (dev, staging, prod). No
+* **Infraestructura**: servidor propio en Netcup, autoadministrado (sin RDS, ElastiCache,
+  EC2 ni Secrets Manager de AWS); PostgreSQL, Redis y PgBouncer corren en el mismo host bajo
+  Docker Compose. Amazon SES se conserva solo para el envío transaccional y de marketing
+  (Netcup bloquea el puerto 25 de salida, así que ese tráfico sale por la API de SES, nunca
+  por SMTP directo); el correo corporativo lo sigue sirviendo Postfix en `deploy/mail/`. Los
+  detalles operativos (TLS interno entre servicios, proxy de borde, DNS) viven en
+  `docs/Operacion_Despliegue.md`, que se mantiene al día con el estado real del servidor. No
   se introduce infraestructura nueva (Kubernetes, OpenSearch, OpenTelemetry) sin métricas
   que lo exijan y sin ADR en `docs/adr/`.
 
@@ -311,32 +316,9 @@ Las tablas nuevas van en la migración canónica del servicio que las posee
 (`migrations/{registry,cell,tenant}/.../<svc>/`); cada microservicio tiene su carpeta con
 sus scripts y ahí se ubican las tablas que crea.
 
-## AWS Guidance
-
-- Prefer the AWS MCP Server for AWS interactions — it provides sandboxed
-  execution, observability, and audit logging. If unavailable, use the
-  AWS CLI directly.
-- Before starting a task, check whether a relevant AWS skill is available.
-  Load the skill with `retrieve_skill` and prefer its guidance over
-  general knowledge.
-- When uncertain about specific AWS details (API parameters, permissions,
-  limits, error codes), verify against documentation rather than guessing.
-  State uncertainty explicitly if you cannot confirm.
-- When creating infrastructure, prefer infrastructure-as-code (AWS CDK or
-  CloudFormation) over direct CLI commands.
-- When working with infrastructure, follow AWS Well-Architected Framework
-  principles.
-- Do not use em dashes in AWS resource names or descriptions. Use
-  hyphens instead.
-
-### Secret Safety
-
-- MUST load the `aws-secrets-manager` skill first for any secret,
-  credential, API key, token, or password task. MUST NOT call
-  `secretsmanager get-secret-value` or `batch-get-secret-value`, and MUST
-  NOT hit the Secrets Manager Agent daemon directly. MUST use
-  `{{resolve:secretsmanager:secret-id:SecretString:json-key}}` with
-  `asm-exec` so the secret resolves at runtime without entering context.
-
 Es muy importante la ciberseguridad y la protección de datos en cualquier decisión, además
-de la robustez y escalabilidad del sistema.
+de la robustez y escalabilidad del sistema. Los secretos de cualquier tipo (credenciales,
+tokens, claves de cifrado, credenciales de SES) viven solo en el almacén propio
+(`ops/security/secrets`), nunca en AWS Secrets Manager ni en ningún otro servicio
+administrado de AWS: no queda infraestructura de AWS que gestione secretos en este
+proyecto.
