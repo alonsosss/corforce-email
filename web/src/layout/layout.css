@@ -217,10 +217,16 @@
 }
 .cf-auth__links {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
-  gap: var(--cf-space-3);
+  gap: var(--cf-space-2) var(--cf-space-3);
   margin-top: var(--cf-space-4);
   font-size: var(--cf-text-sm);
+}
+
+/* Cada enlace entero o en su propia linea: partir las palabras se leia mal en la tarjeta. */
+.cf-auth__links > * {
+  white-space: nowrap;
 }
 
 /* El acceso al campo de empresa es un boton (no navega), con el aspecto del enlace vecino. */
