@@ -198,7 +198,12 @@ replica. Responde 404 `USER_NOT_FOUND` si la cuenta no existe en la empresa del 
 cuenta cerrada. La politica de permisos (`GET /api/v1/policy/{user}`, la que consulta
 `pkg/authz`) va en cache Redis 5 minutos por usuario y empresa, invalidada al asignar o
 revocar un rol, al retirar los roles de una empresa y al borrar una cuenta
-(`identity.user.deleted`, seccion 7).
+(`identity.user.deleted`, seccion 7); tambien (V, 2026-09-17) al cambiar los permisos de un
+rol (`PUT /roles/{id}/permissions`), al renombrarlo o editar su descripcion y al borrarlo:
+`RBACUseCase` lee los usuarios que tienen el rol (`ListUsersByRole`, antes de borrarlo, ya
+que sus filas de `user_roles` caen con el `ON DELETE CASCADE` del rol) e invalida la
+politica cacheada de cada uno, para que un permiso revocado no siga activo hasta que expire
+la cache.
 
 ## 4. Tres capas de control
 
