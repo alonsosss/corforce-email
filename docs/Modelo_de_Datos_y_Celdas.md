@@ -551,6 +551,10 @@ enrutado y uno por servicio de empresa), y `--check` falla si el fichero se qued
 es lo que dejaba a un rol nuevo sin poder pasar por el pool. Sigue siendo `auth_type = plain`,
 con las contrasenas en claro en el fichero (modo 0640, grupo 70): `auth_query` con un usuario
 que solo consulte verificadores queda pendiente.
+En desarrollo y pruebas (V, 2026-09-17), sin `userlist.txt` montado el entrypoint del
+pooler arma uno efimero en `/tmp` del contenedor con el rol de plataforma y va sin TLS al
+Postgres del compose; en cualquier otro entorno exige el fichero y `verify-full`, y sin ellos
+no arranca (`ops/scaffold/check-pgbouncer-entrypoint.sh`).
 
 Pendiente de la credencial de celda (P): una base de celda recien creada queda abierta a
 PUBLIC hasta que corre el script para ella; se corre en el mismo paso en que se abre la celda.

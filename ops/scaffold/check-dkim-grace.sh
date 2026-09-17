@@ -8,14 +8,14 @@
 # su cache dura como mucho un TTL), la firma no se puede comprobar. La gracia se cuenta desde la
 # ultima vez que la clave pudo firmar, asi que basta con que el minimo cubra la cola y el TTL.
 #
-# Compara maximal_queue_lifetime de deploy/mail/postfix/conf/main.cf (unidades de Postfix s, m, h,
+# Compara maximal_queue_lifetime de deploy/mail/postfix/conf/main.cf.base (unidades de Postfix s, m, h,
 # d, w; sin unidad, dias) con minDKIMRotationGrace de services/domain-service/main.go,
 # DefaultDKIMRotationGrace de services/domain-service/internal/app/usecase.go y
 # MAIL_DKIM_ROTATION_GRACE de .env.example. Regla: cola + margen <= minimo <= defecto, y el valor
 # de .env.example no baja del minimo. Las constantes de Go se escriben como N * time.Hour.
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-MAIN_CF="$ROOT/deploy/mail/postfix/conf/main.cf"
+MAIN_CF="$ROOT/deploy/mail/postfix/conf/main.cf.base"
 MAIN_GO="$ROOT/services/domain-service/main.go"
 USECASE_GO="$ROOT/services/domain-service/internal/app/usecase.go"
 ENV_EXAMPLE="$ROOT/.env.example"

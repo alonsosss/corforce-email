@@ -165,7 +165,7 @@ dentro de `make checks`) compara los ficheros:
 
 | Limite | Donde | Valor | Regla |
 |---|---|---|---|
-| `message_size_limit` | `postfix/conf/main.cf` | 104857600 (100 MiB) | el mayor mensaje que acepta la celda |
+| `message_size_limit` | `postfix/conf/main.cf.base` | 104857600 (100 MiB) | el mayor mensaje que acepta la celda |
 | `max_message` | `rspamd/local.d/options.inc`, en bytes y en ningun otro fichero de `rspamd/` | 105906176 (101 MiB) | al menos Postfix + 1 MiB |
 | `max_size` del antivirus | `rspamd/local.d/antivirus.conf`, en bytes y en ningun otro fichero de `rspamd/local.d/` | 105906176 (101 MiB) | al menos Postfix + 1 MiB |
 | `StreamMaxLength`, `MaxFileSize` | `clamav/clamd.conf` | 101M | al menos Postfix + 1 MiB |
@@ -174,6 +174,11 @@ dentro de `make checks`) compara los ficheros:
 | `VIRUS_SCAN_FAILED` | `rspamd/local.d/force_actions.conf` | `soft reject` sobre `CLAM_VIRUS_FAIL` | obligatorio |
 | techo de `MAIL_QUARANTINE_MAX_BODY_MB` | `maxPipeMaxBodyMiB` de `services/mail-security/main.go`, `domain.MaxQuarantineMaxSizeBytes` y el CHECK de la migracion 08 | 101 MiB | de Postfix + 1 MiB a `max_message` + 1 MiB; el defecto (50) y `.env.example`, de 1 al techo; es tambien el mayor `max_size_bytes` que una empresa puede pedir |
 | `postfixMessageSizeLimit` | `services/webmail/main.go` | 100 MiB | igual que `message_size_limit`: techo de `WEBMAIL_MAX_MESSAGE_BYTES`, `WEBMAIL_MAX_BODY_PART_BYTES` y `WEBMAIL_MAX_ATTACHMENT_BYTES` |
+
+`postfix/conf/main.cf` no se versiona: `postfix/postfix.sh` lo genera en cada arranque desde
+`main.cf.base` (hasta la marca `Overrides`), las DNSBL y `extra.cf`, en un temporal que renombra
+encima. Un valor de Postfix se cambia en `main.cf.base`; las comprobaciones de `ops/scaffold/`
+leen ese fichero.
 
 Postfix pasa cada mensaje por el milter de Rspamd (`smtpd_milters`, `non_smtpd_milters`). Uno mayor
 que `max_message` no se analiza: el proxy del milter contesta tempfail a cualquier fallo del worker y
@@ -539,7 +544,7 @@ domain-service solo publica las claves de un dominio corporativo verificado (un 
 envio no firma en la celda) y retira la clave en gracia en la celda antes de olvidarla mientras
 el dominio pueda tenerla alli. En una rotacion programada la clave anterior sigue en los motores
 `MAIL_DKIM_ROTATION_GRACE` desde la ultima vez que pudo firmar, y ese plazo tiene que superar
-`maximal_queue_lifetime` de `postfix/conf/main.cf` (5d) mas un dia de TTL de un TXT: el correo
+`maximal_queue_lifetime` de `postfix/conf/main.cf.base` (5d) mas un dia de TTL de un TXT: el correo
 firmado con ella puede seguir en la cola hasta entonces. Alargar la cola exige subir
 `minDKIMRotationGrace` en `services/domain-service/main.go`; `ops/scaffold/check-dkim-grace.sh`
 (`make checks`) falla si no. Una clave comprometida no espera a la gracia: la revocacion de

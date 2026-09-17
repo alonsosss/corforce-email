@@ -17,7 +17,7 @@
 # Heuristics.Limits.Exceeded, clamav.lua la traduce (como cualquier error o plazo agotado) al
 # simbolo CLAM_VIRUS_FAIL, y la regla de force_actions.conf lo convierte en soft reject.
 #
-# Compara message_size_limit de deploy/mail/postfix/conf/main.cf (bytes; sin el parametro, el
+# Compara message_size_limit de deploy/mail/postfix/conf/main.cf.base (bytes; sin el parametro, el
 # defecto de Postfix, 10240000), max_message de deploy/mail/rspamd/local.d/options.inc (bytes y
 # obligatorio: el defecto cambia con la version de Rspamd; ningun otro fichero de
 # deploy/mail/rspamd lo fija, porque lo pisaria), max_size de rspamd/local.d/antivirus.conf,
@@ -35,7 +35,7 @@
 #   1 <= defecto de /pipe y valor de .env.example <= techo
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-MAIN_CF="$ROOT/deploy/mail/postfix/conf/main.cf"
+MAIN_CF="$ROOT/deploy/mail/postfix/conf/main.cf.base"
 RSPAMD_DIR="$ROOT/deploy/mail/rspamd"
 OPTIONS_INC="$RSPAMD_DIR/local.d/options.inc"
 AV_CONF="$RSPAMD_DIR/local.d/antivirus.conf"

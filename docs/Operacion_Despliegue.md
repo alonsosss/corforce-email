@@ -7,8 +7,21 @@ largas de cada guardarraíl están en `ops/scaffold/README.md`, `ops/security/se
 ## 1. Entornos
 
 * Desarrollo: `make dev` levanta Postgres (perfil `embedded-db`), PgBouncer, Redis, NATS y
-  el plano de control con `docker-compose.yml`. Los motores de correo se levantan aparte
-  con `deploy/mail/docker-compose.mail.yml` cuando se trabaje en la fase 2.
+  el plano de control con `docker-compose.yml`. Con `ENVIRONMENT=development` (el valor de
+  `.env.example`) PgBouncer va sin TLS al Postgres del compose, que no tiene certificado, y
+  si no hay `pgbouncer/userlist.txt` arma uno efímero en `/tmp` del contenedor con el rol de
+  plataforma. Fuera de `development` y `test` exige `verify-full` y el `userlist.txt` que
+  genera `ops/db/pgbouncer-userlist.sh`, y sin ellos no arranca
+  (`ops/scaffold/check-pgbouncer-entrypoint.sh`, sección 9 de `validate.sh`). Lo que sea de
+  una sola máquina, como remapear puertos que ya usan otros proyectos, va en un
+  `docker-compose.override.yml`, que no se versiona.
+* Motores de correo en desarrollo: se levantan aparte con `deploy/mail/docker-compose.mail.yml`
+  cuando se trabaje en la fase 2. En un puesto de trabajo nunca `netfilter-mail` (corre
+  privilegiado en la red del host y reescribe su cortafuegos), ni `acme-mail`, `watchdog-mail`
+  o `dockerapi-mail`: `up -d --no-deps` con la lista de motores, porque `redis-mail` depende de
+  `netfilter-mail` y un `up` sin más lo arrancaría. Los puertos de correo, solo en `127.0.0.1`.
+  `main.cf` de Postfix lo genera `postfix/postfix.sh` en cada arranque desde `main.cf.base`,
+  que es el versionado; `webmail` exige `WEBMAIL_MASTER_USER=<DOVECOT_MASTER_USER>@platform.local`.
 * Producción (AWS): una cuenta por ambiente (dev, staging, prod). RDS PostgreSQL Multi-AZ
   detrás de PgBouncer, ElastiCache, SES, S3, Secrets Manager. Servidor de aplicación
   endurecido con `ops/server-template/bootstrap.sh`.

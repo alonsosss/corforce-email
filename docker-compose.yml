@@ -54,6 +54,12 @@ services:
       TZ: ${TZ:-America/Lima}
       DB_UPSTREAM_HOST: ${DB_UPSTREAM_HOST:-postgres-primary}
       DB_UPSTREAM_PORT: ${DB_UPSTREAM_PORT:-5432}
+      # verify-full salvo en development|test; el entrypoint rechaza algo mas debil fuera de ahi.
+      DB_UPSTREAM_SSLMODE: ${DB_UPSTREAM_SSLMODE:-}
+      ENVIRONMENT: ${ENVIRONMENT:-}
+      # Solo development|test y sin userlist.txt montado: userlist efimero en /tmp del
+      # contenedor con el rol de plataforma. En produccion el pooler exige el fichero.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
     entrypoint: ["/usr/local/bin/pgbouncer-entrypoint.sh"]
     volumes:
       # El DIRECTORIO entero, no fichero a fichero: un bind de fichero ata el inodo y,

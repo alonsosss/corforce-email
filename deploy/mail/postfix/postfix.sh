@@ -2,6 +2,11 @@
 
 trap "postfix stop" EXIT
 
+# main.cf no se versiona: se genera desde main.cf.base (ver "Overrides" mas abajo). Hasta ese
+# punto los postmap de este script necesitan uno valido, tambien en una copia recien clonada.
+cp /opt/postfix/conf/main.cf.base /opt/postfix/conf/.main.cf.inicio
+mv -f /opt/postfix/conf/.main.cf.inicio /opt/postfix/conf/main.cf
+
 [[ ! -d /opt/postfix/conf/sql/ ]] && mkdir -p /opt/postfix/conf/sql/
 
 # Espera a PostgreSQL (rol mail_engine, sin contrasena: pg_isready solo comprueba el listener)
@@ -384,19 +389,24 @@ EOF
   fi
 fi
 
-# Reset main.cf
-sed -i '/Overrides/q' /opt/postfix/conf/main.cf
-echo >> /opt/postfix/conf/main.cf
+# main.cf = main.cf.base hasta la marca Overrides, las DNSBL y los overrides del operador
+# (extra.cf). Se escribe en un temporal y se renombra: un arranque interrumpido no deja un
+# main.cf a medias y el fichero versionado no se toca.
+MAIN_CF_TMP=$(mktemp /opt/postfix/conf/.main.cf.XXXXXX)
+sed '/Overrides/q' /opt/postfix/conf/main.cf.base > "${MAIN_CF_TMP}"
+echo >> "${MAIN_CF_TMP}"
 # Append postscreen dnsbl sites to main.cf
 if [ ! -z "$DNSBL_CONFIG" ]; then
-  echo -e "${DNSBL_CONFIG}\n${SPAMHAUS_DNSBL_CONFIG}" >> /opt/postfix/conf/main.cf
+  echo -e "${DNSBL_CONFIG}\n${SPAMHAUS_DNSBL_CONFIG}" >> "${MAIN_CF_TMP}"
 fi
 # Append user overrides
-echo -e "\n# User Overrides" >> /opt/postfix/conf/main.cf
+echo -e "\n# User Overrides" >> "${MAIN_CF_TMP}"
 touch /opt/postfix/conf/extra.cf
 sed -i '/\$myhostname/! { /myhostname/d }' /opt/postfix/conf/extra.cf
 echo -e "myhostname = ${MAIL_HOSTNAME}\n$(cat /opt/postfix/conf/extra.cf)" > /opt/postfix/conf/extra.cf
-cat /opt/postfix/conf/extra.cf >> /opt/postfix/conf/main.cf
+cat /opt/postfix/conf/extra.cf >> "${MAIN_CF_TMP}"
+chmod 644 "${MAIN_CF_TMP}"
+mv -f "${MAIN_CF_TMP}" /opt/postfix/conf/main.cf
 
 if [ ! -f /opt/postfix/conf/custom_transport.pcre ]; then
   echo "Creating dummy custom_transport.pcre"

@@ -56,7 +56,7 @@ const (
 	// La clave anterior de una rotacion programada sigue en los motores y en la zona del cliente
 	// durante la gracia, contada desde la ultima vez que pudo firmar. Suelo: lo que un mensaje
 	// firmado con ella puede seguir en la cola de Postfix (maximal_queue_lifetime = 5d en
-	// deploy/mail/postfix/conf/main.cf) mas un dia, el TTL mas largo habitual de un TXT; con menos,
+	// deploy/mail/postfix/conf/main.cf.base) mas un dia, el TTL mas largo habitual de un TXT; con menos,
 	// correo aun en cola llegaria al receptor cuando su TXT ya no esta. Alargar la cola exige subir
 	// este suelo; ops/scaffold/check-dkim-grace.sh lo comprueba. Techo: treinta dias; una clave
 	// comprometida no espera a la gracia, se revoca (RevokeDKIM).

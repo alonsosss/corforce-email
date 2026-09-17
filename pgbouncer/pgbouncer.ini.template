@@ -9,7 +9,7 @@
 listen_addr         = *
 listen_port         = 5432
 auth_type           = plain
-auth_file           = /etc/pgbouncer/userlist.txt
+auth_file           = __AUTH_FILE__
 
 ; Consola de administracion (base virtual "pgbouncer"). La necesita
 ; ops/maintenance/pgbouncer-reconnect.sh: tras una migracion que cambia el tipo
@@ -62,6 +62,6 @@ stats_period          = 60
 ; hacerse pasar por la base. El bundle es publico (truststore.pki.rds.amazonaws.com) y
 ; viaja con este directorio; AWS lo renueva con anos de margen, y la 03-MANTENIMIENTO lo
 ; recuerda. Cambiado el 2026-09-05.
-server_tls_sslmode    = verify-full
+server_tls_sslmode    = __DB_UPSTREAM_SSLMODE__
 server_tls_ca_file    = /etc/pgbouncer/rds-global-bundle.pem
 ignore_startup_parameters = extra_float_digits,search_path

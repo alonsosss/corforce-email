@@ -18,7 +18,7 @@ import (
 const (
 	// DefaultDKIMRotationGrace: la clave anterior de una rotacion programada se conserva, desde la
 	// ultima vez que pudo firmar, mas de lo que un mensaje firmado con ella puede seguir en la cola
-	// de Postfix (maximal_queue_lifetime, deploy/mail/postfix/conf/main.cf) mas un TTL habitual de
+	// de Postfix (maximal_queue_lifetime, deploy/mail/postfix/conf/main.cf.base) mas un TTL habitual de
 	// un TXT: un receptor que lo recibe al final de la cola tiene que poder leer su TXT. El minimo
 	// de main.go es esa suma; esto deja un dia mas para el receptor que comprueba DKIM despues de
 	// aceptar el mensaje. ops/scaffold/check-dkim-grace.sh lo comprueba contra main.cf.

@@ -53,7 +53,7 @@ const (
 	defaultMaxAttachmentBytes = 50 << 20
 
 	// Topes de los motores de la celda, por donde entra y sale todo mensaje: el
-	// message_size_limit de deploy/mail/postfix/conf/main.cf (ningun mensaje, ni por tanto
+	// message_size_limit de deploy/mail/postfix/conf/main.cf.base (ningun mensaje, ni por tanto
 	// ninguna de sus partes, lo supera) y el smtpd_recipient_limit de Postfix, que main.cf
 	// deja en su valor por defecto. message_size_limit es ademas lo que clamd analiza entero
 	// (StreamMaxLength y MaxFileSize de deploy/mail/clamav/clamd.conf, 101 MiB): ningun tope

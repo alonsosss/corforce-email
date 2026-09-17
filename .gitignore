@@ -79,3 +79,18 @@ deploy/mail/dovecot/conf/mail_replica.conf
 deploy/mail/dovecot/conf/dovecot-master.*
 deploy/mail/rspamd/local.d/external_services.conf
 deploy/mail/rspamd/override.d/worker-controller-password.inc
+
+# Ajustes de una sola maquina (puertos ocupados por otros proyectos, por ejemplo).
+docker-compose.override.yml
+deploy/mail/docker-compose.override.yml
+# Generados por los motores en cada arranque (postfix/postfix.sh, rspamd/docker-entrypoint.sh).
+# main.cf sale de main.cf.base, que es el versionado.
+deploy/mail/postfix/conf/main.cf
+deploy/mail/postfix/conf/.main.cf.*
+deploy/mail/postfix/conf/custom_postscreen_whitelist.cidr
+deploy/mail/postfix/conf/custom_transport.pcre
+deploy/mail/rspamd/custom/dovecot_trusted.map
+deploy/mail/rspamd/custom/platform_networks.map
+deploy/mail/rspamd/custom/rspamd_trusted.map
+deploy/mail/rspamd/custom/sa-rules
+deploy/mail/rspamd/local.d/redis.conf
