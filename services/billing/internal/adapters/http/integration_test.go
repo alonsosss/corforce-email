@@ -137,6 +137,24 @@ func call(t *testing.T, srv http.Handler, method, path, body string, tenant uuid
 	return rec.Code, env
 }
 
+// callInternal reproduce como llaman los servicios reales a una ruta interna (por
+// ejemplo reputation/billingcli a /internal/billing/entitlements/check): solo
+// X-Tenant-ID, nunca X-User-ID. RequireInternalCaller rechaza cualquier peticion con
+// usuario, asi que reusar call() aqui (que siempre fija X-User-ID) daria un falso 403.
+func callInternal(t *testing.T, srv http.Handler, method, path, body string, tenant uuid.UUID) (int, envelope) {
+	t.Helper()
+	req := httptest.NewRequest(method, path, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Tenant-ID", tenant.String())
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	var env envelope
+	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
+		t.Fatalf("%s %s: cuerpo ilegible %q", method, path, rec.Body.String())
+	}
+	return rec.Code, env
+}
+
 func planBody(code string) string {
 	var limits []map[string]interface{}
 	for _, r := range domain.Resources() {
@@ -193,7 +211,7 @@ func TestContratoHTTP(t *testing.T) {
 
 	check := func(body string) entitlementDTO {
 		t.Helper()
-		status, env := call(t, srv, "POST", "/internal/billing/entitlements/check", body, tenant, "")
+		status, env := callInternal(t, srv, "POST", "/internal/billing/entitlements/check", body, tenant)
 		if status != http.StatusOK {
 			t.Fatalf("entitlements/check: %d %+v", status, env.Error)
 		}
@@ -227,7 +245,7 @@ func TestContratoHTTP(t *testing.T) {
 	if ent := check(`{"resource":"mailboxes"}`); ent.Allowed || ent.Reason != "limit_reached" || ent.Used != 1 || *ent.Remaining != 0 {
 		t.Fatalf("en el tope: %+v", ent)
 	}
-	if status, _ := call(t, srv, "POST", "/internal/billing/entitlements/check", `{"resource":"gigas"}`, tenant, ""); status != http.StatusUnprocessableEntity {
+	if status, _ := callInternal(t, srv, "POST", "/internal/billing/entitlements/check", `{"resource":"gigas"}`, tenant); status != http.StatusUnprocessableEntity {
 		t.Fatalf("recurso desconocido: %d", status)
 	}
 
