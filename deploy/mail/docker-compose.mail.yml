@@ -67,9 +67,13 @@ services:
   rspamd-mail:
     build: ./rspamd
     stop_grace_period: 30s
+    # Rspamd guarda en el Redis de los motores su bayesiano, sus limites y sus mapas: sin el no
+    # arranca util. Se declara para que el despliegue por motor sepa el orden (mailcow los levantaba
+    # todos a la vez y la dependencia quedaba implicita).
     depends_on:
       - dovecot-mail
       - clamd-mail
+      - redis-mail
     environment:
       - TZ=${TZ:-UTC}
       - IPV4_NETWORK=${IPV4_NETWORK:-172.22.1}
@@ -371,6 +375,9 @@ services:
 
   dockerapi-mail:
     build: ./dockerapi
+    # Su API asincrona abre Redis al arrancar: sin redis-mail sale con ConnectionError.
+    depends_on:
+      - redis-mail
     labels:
       # Nunca contra el docker del puesto de trabajo: monta el socket de docker del host (scripts/deploy-mail.sh).
       core-force-mail.solo-servidor: "true"

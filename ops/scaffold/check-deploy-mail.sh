@@ -300,6 +300,36 @@ sys.exit(0 if m and "docker run --rm" in m.group(1) else 1)
 PY
 [[ -x "$ROOT/ops/maintenance/recursos-externos.sh" && -x "$DM" ]] || mal "deploy-mail.sh o recursos-externos.sh no son ejecutables"
 
+# Los motores que ABREN Redis al arrancar tienen que declararlo: el despliegue recrea de uno en uno
+# y ordena por depends_on. mailcow los levantaba todos a la vez y la dependencia quedaba implicita:
+# dockerapi-mail salio con ConnectionError en un servidor nuevo. No entran netfilter-mail (redis-mail
+# depende de el: seria un ciclo) ni postfix, postfix-tlspol y acme, que abren Redis ya en marcha.
+python3 - "$ROOT/deploy/mail/docker-compose.mail.yml" <<'PY' || FALLOS=1
+import re, sys
+texto = open(sys.argv[1], encoding="utf-8").read()
+cuerpo = texto.split("\nservices:\n", 1)[1].split("\nnetworks:\n", 1)[0]
+bloques = re.split(r"\n(?=  [a-z][a-z0-9-]*:\n)", "\n" + cuerpo)
+por_servicio = {}
+for b in bloques:
+    m = re.match(r"\n?  ([a-z][a-z0-9-]*):\n", b)
+    if m:
+        por_servicio[m.group(1)] = b
+fallos = []
+for svc in ("dockerapi-mail", "rspamd-mail"):
+    b = por_servicio.get(svc)
+    if b is None:
+        fallos.append(f"{svc} no existe en el compose")
+        continue
+    dep = re.search(r"\n    depends_on:\n((?:\s{6,}.*\n)+)", b)
+    if not dep or "redis-mail" not in dep.group(1):
+        fallos.append(f"{svc} no declara depends_on redis-mail")
+if fallos:
+    for f in fallos:
+        print("  FALLA: " + f, file=sys.stderr)
+    print("    Sin eso el despliegue por motor los recrea antes que Redis y no arrancan.", file=sys.stderr)
+    sys.exit(1)
+PY
+
 if [[ $FALLOS -ne 0 ]]; then
   echo "check-deploy-mail: FALLA" >&2
   exit 1
