@@ -64,6 +64,22 @@ ul --ensure || mal "userlist --ensure: bloquea ante un fichero distinto (debe av
 grep -q 'mail_svc_x' "$TMP/userlist.txt" || mal "userlist --ensure: reescribio un fichero distinto"
 grep -q 'AVISO' "$TMP/ul.out" || mal "userlist --ensure: no avisa de un fichero distinto"
 
+# --- require-server-environment.sh: entorno declarado y marcadores de .env.example ----------
+entorno() { printf '%b' "$1" >"$TMP/srv.env"; WITH_SECRETS_ENV_FILE="$TMP/srv.env" bash "$ROOT/ops/security/secrets/require-server-environment.sh" >"$TMP/srv.out" 2>&1; }
+entorno 'ENVIRONMENT=production\nMAIL_SPF_INCLUDE=include:spf.plataforma.com\n' || mal "entorno: rechaza un servidor limpio"
+entorno 'ENVIRONMENT=staging\n' || mal "entorno: rechaza staging"
+if entorno 'ENVIRONMENT=development\n'; then mal "entorno: acepta development en un servidor"; fi
+if entorno 'MAIL_HOSTNAME=mail.plataforma.com\n'; then mal "entorno: acepta un .env sin ENVIRONMENT"; fi
+if entorno 'ENVIRONMENT=production\nMAIL_SPF_INCLUDE=include:spf.YOUR_DOMAIN.com\nPUBLIC_BASE_URL=https://app.YOUR_DOMAIN.com\n'; then
+  mal "entorno: acepta el marcador YOUR_DOMAIN"
+fi
+grep -q 'MAIL_SPF_INCLUDE PUBLIC_BASE_URL' "$TMP/srv.out" || mal "entorno: no nombra todas las claves con YOUR_DOMAIN"
+if grep -q 'spf.YOUR_DOMAIN\|app.YOUR_DOMAIN' "$TMP/srv.out"; then mal "entorno: imprime un valor del .env"; fi
+entorno 'ENVIRONMENT=production\n# MAIL_SPF_INCLUDE=include:spf.YOUR_DOMAIN.com\n' || mal "entorno: cuenta un marcador comentado"
+entorno 'ENVIRONMENT=production\nPOSTGRES_PASSWORD=CHANGE_ME_IN_PRODUCTION\n' || mal "entorno: bloquea por CHANGE_ME (debe avisar)"
+grep -q 'aviso:.*POSTGRES_PASSWORD' "$TMP/srv.out" || mal "entorno: no avisa de CHANGE_ME"
+if grep -q 'IN_PRODUCTION' "$TMP/srv.out"; then mal "entorno: imprime el valor de un secreto"; fi
+
 # --- enganchados en los dos despliegues ---------------------------------------------------
 D="$ROOT/scripts/deploy-ecr.sh"
 [[ "$(grep -c '^  preparar_servidor$' "$D")" == 2 ]] || mal "deploy-ecr.sh: preparar_servidor no esta en los dos transportes"
@@ -77,4 +93,4 @@ if [[ $FALLOS -ne 0 ]]; then
   echo "check-deploy-preflight: FALLA" >&2
   exit 1
 fi
-echo "  OK: el despliegue genera el userlist que falta, avisa de claves ausentes y no da por bueno un servicio que no arranca."
+echo "  OK: el despliegue genera el userlist que falta, avisa de claves ausentes, rechaza marcadores de .env.example y no da por bueno un servicio que no arranca."

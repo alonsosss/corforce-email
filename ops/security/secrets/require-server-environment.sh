@@ -36,3 +36,23 @@ case "$linea" in
   ENVIRONMENT=\'production\' | ENVIRONMENT=\'staging\') ;;
   *) rechazar "ENVIRONMENT no es production ni staging: $(printf '%q' "$linea")" ;;
 esac
+
+# Marcadores de .env.example. YOUR_DOMAIN nunca vale en un servidor: nada lo sustituye y acabaria en
+# los registros DNS que se indican a cada empresa (MX, SPF, DMARC), en los enlaces y en los origenes
+# permitidos. Se nombran las claves, nunca los valores; las lineas comentadas no cuentan.
+claves_con() {
+  sed -n -E "s/^[[:space:]]*(export[[:space:]]+)?([A-Z][A-Z0-9_]*)=.*$1.*/\\2/p" "$env_file" | LC_ALL=C sort -u | tr '\n' ' '
+}
+con_dominio="$(claves_con YOUR_DOMAIN)"
+if [[ -n "$con_dominio" ]]; then
+  echo "despliegue rechazado: $env_file conserva el marcador YOUR_DOMAIN de .env.example en: $con_dominio" >&2
+  echo "  Pon el dominio real de la plataforma antes de levantar nada." >&2
+  exit 1
+fi
+# CHANGE_ME solo avisa: los secretos del almacen tienen prioridad, pero si el almacen no responde el
+# resolvedor recurre al .env y ese marcador acabaria usandose como credencial.
+con_cambiar="$(claves_con CHANGE_ME)"
+if [[ -n "$con_cambiar" ]]; then
+  echo "aviso: $env_file conserva el marcador CHANGE_ME en: $con_cambiar" >&2
+  echo "  Retira esas lineas: los secretos van en el almacen (ops/security/secrets)." >&2
+fi

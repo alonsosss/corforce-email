@@ -32,6 +32,12 @@ version nueva.
 | `check-secrets.sh` | Guardarrail de CI: falla si una credencial canonica tiene valor en un fichero versionado. |
 | `check-secret-sources.sh` | Guardarrail de CI: falla si un script se busca un secreto en el `.env`, o si un `docker compose` que crea contenedores no va por `with-secrets.sh`. |
 
+Tras validar `ENVIRONMENT`, el mismo guion rechaza el `.env` de un servidor que conserve el
+marcador `YOUR_DOMAIN` de `.env.example` (acabaria en los registros DNS que se indican a las
+empresas, en los enlaces y en los origenes permitidos) y avisa, sin bloquear, de los `CHANGE_ME`:
+los secretos del almacen tienen prioridad, pero si no responde el resolvedor recurre al `.env`.
+Solo nombra claves, nunca valores (`ops/scaffold/check-deploy-preflight.sh`).
+
 Los permisos del rol de la instancia sobre el almacen no viven aqui: los declara
 `ops/aws/setup-iam.sh`, que los renderiza con la cuenta de quien lo ejecuta, `AWS_REGION` y
 `SECRETS_PREFIX` (por defecto `core-force-mail`, el prefijo de `SECRETS_ID`).

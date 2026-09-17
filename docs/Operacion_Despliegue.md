@@ -100,7 +100,11 @@ largas de cada guardarraíl están en `ops/scaffold/README.md`, `ops/security/se
   `server.env` y lo escribe en ese `.env`. `ops/security/secrets/require-server-environment.sh`,
   que `with-secrets.sh` ejecuta antes de materializar ningún secreto, se niega a desplegar si
   la última asignación de `ENVIRONMENT` del `.env` no es exactamente una de las dos (con
-  espacios, un comentario o un CR al final tampoco: el servicio recibiría otro texto). Todo
+  espacios, un comentario o un CR al final tampoco: el servicio recibiría otro texto). Tras
+  eso rechaza también un `.env` que conserve el marcador `YOUR_DOMAIN` de `.env.example`: nada
+  lo sustituye y acabaría en los registros DNS que se indican a cada empresa (MX, SPF, DMARC),
+  en los enlaces y en los orígenes permitidos; y avisa sin bloquear de los `CHANGE_ME`, que
+  el resolvedor usaría como credencial si el almacén no respondiera. Solo nombra claves. Todo
   `docker compose` del servidor va por `with-secrets.sh` (`check-secret-sources.sh`), así que
   es el punto único de `release.yml` y de `scripts/deploy-ecr.sh`. Una sola regla decide qué
   se relaja según el valor, `config.DeclaredDevelopmentOrTest` (`pkg/config/config.go`):
