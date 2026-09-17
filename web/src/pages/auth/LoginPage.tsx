@@ -26,8 +26,10 @@ function CredentialsStep({ onSubmit }: { onSubmit: ReturnType<typeof useAuth>['l
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [tenantSlug, setTenantSlug] = useState('');
-  // La empresa no se pide: el correo la resuelve. Solo hace falta indicarla cuando la misma
-  // direccion existe en dos empresas, que es la excepcion, y entonces se pide a proposito.
+  // La empresa no se pide: la resuelve la credencial, tambien cuando la misma direccion esta
+  // dada de alta en varias empresas. El campo queda como salida para lo que el correo y la
+  // contrasena no alcanzan (mas empresas que el tope de identity, o una cuenta que no puede
+  // abrir sesion), y se pide a proposito.
   const [mostrarEmpresa, setMostrarEmpresa] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);

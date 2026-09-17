@@ -12,6 +12,11 @@ type UserRepository interface {
 	Create(ctx context.Context, user *domain.User) error
 	GetByID(ctx context.Context, id uuid.UUID) (*domain.User, error)
 	GetByEmail(ctx context.Context, tenantID uuid.UUID, email string) (*domain.User, error)
+	// ListLoginCandidates devuelve, en un orden estable, las cuentas de cualquier empresa con
+	// las que ese correo podria abrir sesion cuando el inicio no indica la empresa, hasta limit.
+	// Solo las que pueden tenerla (active, o locked, que es temporal): una inactive o pending no
+	// sale, para que su estado no se conozca sin nombrar su empresa.
+	ListLoginCandidates(ctx context.Context, email string, limit int) ([]*domain.User, error)
 	List(ctx context.Context, tenantID uuid.UUID, offset, limit int, search string) ([]*domain.User, int64, error)
 	Update(ctx context.Context, user *domain.User) error
 	Delete(ctx context.Context, id uuid.UUID) error

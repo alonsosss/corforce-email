@@ -236,7 +236,14 @@ func psqlShim(t *testing.T) string {
 	t.Helper()
 	if container := os.Getenv("CELL_ROLE_TEST_CONTAINER"); container != "" {
 		dir := t.TempDir()
-		shim := "#!/bin/sh\nexec docker exec -i \"$CELL_ROLE_TEST_CONTAINER\" psql -U \"$PGUSER\" \"$@\"\n"
+		// Los secretos que el SQL lee con \getenv entran al contenedor por su NOMBRE (los apunta
+		// ops/db/pg-credentials.sh en CF_PG_ENV_NOMBRES): el psql de dentro no hereda el entorno del
+		// guion, y sin reenviarlos el SQL se ejecutaba con `:'verifier'` literal. Nunca los valores.
+		shim := `#!/bin/sh
+pasar="-e PGPASSWORD"
+for nombre in $CF_PG_ENV_NOMBRES; do pasar="$pasar -e $nombre"; done
+exec docker exec -i $pasar "$CELL_ROLE_TEST_CONTAINER" psql -U "$PGUSER" "$@"
+`
 		if err := os.WriteFile(filepath.Join(dir, "psql"), []byte(shim), 0o755); err != nil {
 			t.Fatal(err)
 		}

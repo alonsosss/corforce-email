@@ -22,7 +22,7 @@ function renderLogin() {
 describe('formulario de inicio de sesion', () => {
   afterEach(() => vi.restoreAllMocks());
 
-  it('no pide la empresa: la resuelve el correo', async () => {
+  it('no pide la empresa: la resuelve la credencial', async () => {
     const user = userEvent.setup();
     const login = vi.spyOn(useAuthStore.getState(), 'login').mockResolvedValue(undefined);
     const campos = renderLogin();
@@ -40,7 +40,7 @@ describe('formulario de inicio de sesion', () => {
     });
   });
 
-  it('el correo repetido en dos empresas puede indicar cual, tras pedirlo', async () => {
+  it('quien necesita nombrar su empresa la indica, tras pedirlo', async () => {
     const user = userEvent.setup();
     const login = vi.spyOn(useAuthStore.getState(), 'login').mockResolvedValue(undefined);
     const campos = renderLogin();

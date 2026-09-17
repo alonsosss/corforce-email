@@ -51,6 +51,29 @@ func (s *lgUsers) GetByEmail(_ context.Context, tenant uuid.UUID, email string) 
 	return nil, domain.ErrUserNotFound
 }
 
+// ListLoginCandidates devuelve lo que devolveria la sentencia real: las cuentas del correo que
+// pueden tener sesion, en orden estable por alta, hasta el tope.
+func (s *lgUsers) ListLoginCandidates(_ context.Context, email string, limit int) ([]*domain.User, error) {
+	var out []*domain.User
+	for _, u := range s.users {
+		if u.Email != email || (u.Status != domain.UserStatusActive && u.Status != domain.UserStatusLocked) {
+			continue
+		}
+		cp := *u
+		out = append(out, &cp)
+	}
+	slices.SortFunc(out, func(a, b *domain.User) int {
+		if c := a.CreatedAt.Compare(b.CreatedAt); c != 0 {
+			return c
+		}
+		return strings.Compare(a.ID.String(), b.ID.String())
+	})
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
 func (s *lgUsers) GetByID(_ context.Context, id uuid.UUID) (*domain.User, error) {
 	if u, ok := s.users[id]; ok {
 		cp := *u

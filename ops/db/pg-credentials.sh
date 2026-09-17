@@ -125,7 +125,13 @@ cf_pg_pasar_entorno() {
   for nombre in "$@"; do
     export "${nombre?}"
     [[ "$CF_PERFIL_DESPLIEGUE" == selfhosted ]] && CF_PG_ENV+=(-e "$nombre")
+    # Los nombres tambien viajan en el entorno: un psql que corre DENTRO de un contenedor (el de
+    # las pruebas de integracion y del e2e) no hereda el entorno del guion, y sin reenviarlos
+    # \getenv dejaba la variable sin definir y el SQL se ejecutaba con `:'verifier'` literal.
+    # Solo los NOMBRES, nunca los valores: la contrasena no puede aparecer en ningun argumento.
+    CF_PG_ENV_NOMBRES="${CF_PG_ENV_NOMBRES:-} $nombre"
   done
+  export CF_PG_ENV_NOMBRES
 }
 
 # _cf_pg_ejecutar <con|sin> <psql|pg_dump|pg_restore> [argumentos]: la contrasena entra por el

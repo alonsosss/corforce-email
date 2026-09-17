@@ -106,9 +106,9 @@ export const es = {
   'auth.login.title': 'Iniciar sesion',
   'auth.login.subtitle': 'Accede al plano de control de tu empresa.',
   'auth.login.tenantSlug': 'Empresa',
-  'auth.login.tenantToggle': 'Mi correo esta en mas de una empresa',
+  'auth.login.tenantToggle': 'Indicar mi empresa',
   'auth.login.tenantSlugHint':
-    'Identificador de la empresa (slug). Dejalo vacio si tu correo es unico en la plataforma.',
+    'Identificador de la empresa (slug). Solo hace falta si no consigues entrar sin indicarla.',
   'auth.login.submit': 'Entrar',
   'auth.login.forgot': 'Olvide mi contrasena',
   'auth.login.invalidCredentials': 'Correo o contrasena incorrectos.',

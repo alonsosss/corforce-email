@@ -70,7 +70,13 @@ export PGUSER="${PGUSER:-${POSTGRES_USER:-mail_admin}}" PGPASSWORD="${PGPASSWORD
 # las del host, como hasta ahora.
 declare -F cf_psql >/dev/null || cf_psql() { psql "$@" </dev/null; }
 declare -F cf_psql_entrada >/dev/null || cf_psql_entrada() { psql "$@"; }
-declare -F cf_pg_pasar_entorno >/dev/null || cf_pg_pasar_entorno() { export "${@?}"; }
+declare -F cf_pg_pasar_entorno >/dev/null || cf_pg_pasar_entorno() {
+  export "${@?}"
+  # Tambien los nombres: un psql que corre dentro de un contenedor (pruebas de integracion,
+  # e2e) no hereda el entorno y su \getenv se quedaba sin valor.
+  CF_PG_ENV_NOMBRES="${CF_PG_ENV_NOMBRES:-} $*"
+  export CF_PG_ENV_NOMBRES
+}
 
 # shellcheck disable=SC2034  # lo lee psql del entorno con \getenv
 CF_SCRAM_VERIFIER="$(CELL_DB_PASSWORD="$CELL_DB_PASSWORD" python3 - <<'PY'

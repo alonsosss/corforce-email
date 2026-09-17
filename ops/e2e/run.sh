@@ -747,6 +747,34 @@ contains "la cuenta real llega al bloqueo" "$REAL" "ACCOUNT_LOCKED 403"
 expect "un correo sin cuenta en la empresa recibe la misma serie" "$(serie 198.51.100.33 nadie-bloqueo@acme.test acme)" "$REAL"
 expect "y sin empresa, tambien" "$(serie 198.51.100.34 nadie-bloqueo@acme.test)" "$REAL"
 
+echo "== La misma direccion en dos empresas: la entrada la resuelve la credencial"
+# El formulario no pide la empresa. Con la misma direccion dada de alta en dos, entra la cuenta
+# cuya contrasena coincide; antes se resolvia la empresa por el correo y una de las dos no podia
+# entrar nunca. Una contrasena que no es de ninguna sigue respondiendo lo que un correo sin
+# cuenta. Cada inicio sale de su propia IP de documentacion para no gastar el cupo de 127.0.0.1.
+T1C=$(e2e_login "$ADMIN_EMAIL" "$ADMIN_PASS" | jget data.access_token)
+DOBLE_EMAIL=admin@dosempresas.test
+DOBLE_PASS_1="$(rand_hex 12)Aa1!"
+DOBLE_PASS_2="$(rand_hex 12)Aa1!"
+expect "alta de la primera empresa con la direccion compartida" \
+  "$(e2e_alta_empresa "$T1C" dosuna pe-01 "$DOBLE_EMAIL" "$DOBLE_PASS_1" | jget data.slug)" "dosuna"
+expect "alta de la segunda con la MISMA direccion" \
+  "$(e2e_alta_empresa "$T1C" dosdos pe-01 "$DOBLE_EMAIL" "$DOBLE_PASS_2" | jget data.slug)" "dosdos"
+# entra_en <slug> <contrasena> <ip>: la empresa en que entra esa contrasena, sin indicarla.
+entra_en() {
+  expect "con la contrasena de $1 entra en $1" \
+    "$(curl -s -X POST "$GW/auth/login" -H "X-Real-IP: $3" -H 'Content-Type: application/json' \
+      -d "{\"email\":\"$DOBLE_EMAIL\",\"password\":\"$2\"}" | jget data.tenant_id)" \
+    "$(sql mail_registry "SELECT id FROM organization.tenants WHERE slug = '$1'")"
+}
+entra_en dosuna "$DOBLE_PASS_1" 198.51.100.41
+entra_en dosdos "$DOBLE_PASS_2" 198.51.100.42
+MALA_DOBLE=$(sesion -X POST "$GW/auth/login" -H 'X-Real-IP: 198.51.100.43' -H 'Content-Type: application/json' \
+  -d "{\"email\":\"$DOBLE_EMAIL\",\"password\":\"no-es-la-contrasena\"}")
+expect "una contrasena que no es de ninguna de las dos responde como un correo sin cuenta" "$MALA_DOBLE" \
+  "$(sesion -X POST "$GW/auth/login" -H 'X-Real-IP: 198.51.100.44' -H 'Content-Type: application/json' \
+    -d '{"email":"nadie-dos@dosempresas.test","password":"no-es-la-contrasena"}')"
+
 echo "== Rutas con sesion por celda (segundo gateway, dos celdas)"
 # El gateway de arriba no declara celdas: todo va al destino base. Este segundo gateway declara
 # la celda base (GATEWAY_BASE_CELL_CODE) y una instancia de mail-directory sobre mail_cell_pe_02:

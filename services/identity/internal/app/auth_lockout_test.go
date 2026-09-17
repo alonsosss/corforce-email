@@ -49,18 +49,23 @@ var lockoutScript = []loginStep{
 
 var lockoutExpected = strings.Fields("401 401 401 401 401 403 403  401 403  401 403  401 401 401 401 401 403")
 
-// runLockoutScript devuelve la respuesta de cada intento y comprueba que cada uno compara
-// exactamente una contrasena, sea contra la cuenta o contra el relleno.
+// runLockoutScript devuelve la respuesta de cada intento y comprueba que cada uno gasta las
+// comparaciones de su camino, sean contra la cuenta o contra el relleno: una con la empresa
+// indicada y loginCandidateLimit cuando solo trae el correo.
 func runLockoutScript(t *testing.T, f *authFixture, req ports.LoginRequest) []string {
 	t.Helper()
+	comparaciones := loginCandidateLimit
+	if req.TenantSlug != "" {
+		comparaciones = 1
+	}
 	var got []string
 	for _, step := range lockoutScript {
 		f.clock = f.clock.Add(step.advance)
 		for range step.attempts {
 			before := len(f.hasher.compared)
 			got = append(got, responseClass(f.uc.Login(context.Background(), req)))
-			if n := len(f.hasher.compared) - before; n != 1 {
-				t.Fatalf("un intento comparo %d contrasenas", n)
+			if n := len(f.hasher.compared) - before; n != comparaciones {
+				t.Fatalf("un intento comparo %d contrasenas, se esperaban %d", n, comparaciones)
 			}
 		}
 	}
@@ -114,8 +119,10 @@ func TestUnCorreoSinCuentaSeBloqueaComoUnaCuenta(t *testing.T) {
 }
 
 // El contador de un correo sin cuenta es el de su ambito, como el de una cuenta es el de la
-// cuenta: todo camino que llega a la misma empresa lo comparte, y otro correo, otra grafia o un
-// ambito sin empresa tienen el suyo y siguen respondiendo como una contrasena mala.
+// cuenta: todo camino que nombra la misma empresa lo comparte, y otro correo, otra grafia o el
+// camino que no la nombra tienen el suyo y siguen respondiendo como una contrasena mala. Sin
+// empresa, un correo sin cuenta no resuelve ninguna, asi que su ambito es el de "ninguna
+// empresa", nunca el de la empresa que nombro otro intento.
 func TestElBloqueoDeUnCorreoSinCuentaEsDeSuAmbito(t *testing.T) {
 	f := newAuthFixture(t)
 	lock := ports.LoginRequest{TenantSlug: "acme", Email: "nadie@example.test", Password: "mala"}
@@ -131,10 +138,10 @@ func TestElBloqueoDeUnCorreoSinCuentaEsDeSuAmbito(t *testing.T) {
 		{"el mismo correo", lock, false, "403"},
 		{"otra contrasena", ports.LoginRequest{TenantSlug: "acme", Email: "nadie@example.test", Password: "otra"}, false, "403"},
 		{"la misma empresa por otro slug", ports.LoginRequest{TenantSlug: "acme-2", Email: "nadie@example.test", Password: "mala"}, false, "403"},
-		{"la misma empresa por el correo", ports.LoginRequest{Email: "nadie@example.test", Password: "mala"}, false, "403"},
+		{"el mismo correo sin nombrar la empresa", ports.LoginRequest{Email: "nadie@example.test", Password: "mala"}, false, "401"},
 		{"otro correo", ports.LoginRequest{TenantSlug: "acme", Email: "otro@example.test", Password: "mala"}, false, "401"},
 		{"otra grafia", ports.LoginRequest{TenantSlug: "acme", Email: "Nadie@example.test", Password: "mala"}, false, "401"},
-		{"sin empresa", ports.LoginRequest{Email: "nadie@example.test", Password: "mala"}, true, "401"},
+		{"sin empresa y sin registro que resolverla", ports.LoginRequest{Email: "nadie@example.test", Password: "mala"}, true, "401"},
 		{"con un slug que no existe", ports.LoginRequest{TenantSlug: "beta", Email: "nadie@example.test", Password: "mala"}, true, "401"},
 	}
 	for _, c := range cases {

@@ -101,24 +101,48 @@ func NewAuthUseCase(deps AuthDeps) (*AuthUseCase, error) {
 	}, nil
 }
 
-// Login compara la contrasena exactamente una vez en todo intento: contra el hash de la
-// cuenta si puede tener sesion y, si no hay cuenta, empresa o sesion posible, contra el de
-// relleno. Asi el tiempo de un fallo no dice si el correo existe ni si resuelve empresa. Un
-// correo sin cuenta cuenta sus fallos como una cuenta y se bloquea al mismo umbral, con la
-// misma respuesta: el bloqueo tampoco lo dice.
+// loginCandidateLimit es el tope de cuentas que un correo puede resolver cuando el inicio de
+// sesion no indica la empresa. Todo intento sin empresa gasta exactamente esa cantidad de
+// comparaciones de contrasena (resolveByPassword), asi que subir el tope encarece cada inicio de
+// sesion de la plataforma: se queda en lo que cubre el caso real, una persona que administra
+// varias empresas con la misma direccion. Quien tenga su correo en mas empresas que el tope entra
+// indicando la suya.
+const loginCandidateLimit = 4
+
+// Login autentica y abre sesion. Hay dos formas de identificarse y las dos responden lo mismo
+// ante cualquier fallo (contrasena mala, correo sin cuenta, empresa que no resuelve):
+//
+//   - Con la empresa (tenant_slug): una sola cuenta posible y una sola comparacion de contrasena.
+//   - Solo con el correo: hasta loginCandidateLimit cuentas, y entra la que coincide con la
+//     contrasena. El intento gasta SIEMPRE loginCandidateLimit comparaciones, coincida la primera
+//     o no exista ninguna cuenta, para que el tiempo no diga en cuantas empresas esta la
+//     direccion, ni si existe, ni si resuelve empresa.
+//
+// La contrasena nunca se compara contra una cuenta que no puede tener sesion (inactive, pending o
+// con el bloqueo vigente): esa comparacion va contra el hash de relleno. Un correo sin cuenta
+// cuenta sus fallos como una cuenta y se bloquea al mismo umbral, con la misma respuesta: el
+// bloqueo tampoco lo dice.
 func (uc *AuthUseCase) Login(ctx context.Context, req ports.LoginRequest) (*ports.LoginResponse, error) {
-	var tenantID uuid.UUID
+	var user *domain.User
 	var err error
-	scope := scopeNoTenant
 	if req.TenantSlug != "" {
-		tenantID, err = uc.tenants.GetIDBySlug(ctx, req.TenantSlug)
-		scope = scopeSlug + req.TenantSlug
+		user, err = uc.authenticateInTenant(ctx, req)
 	} else {
-		tenantID, err = uc.tenants.GetIDByEmail(ctx, req.Email)
+		user, err = uc.authenticateByEmail(ctx, req)
 	}
 	if err != nil {
+		return nil, err
+	}
+	return uc.completeLogin(ctx, user, req)
+}
+
+// authenticateInTenant autentica en la empresa que indica el slug: una cuenta posible, la de ese
+// correo en esa empresa.
+func (uc *AuthUseCase) authenticateInTenant(ctx context.Context, req ports.LoginRequest) (*domain.User, error) {
+	tenantID, err := uc.tenants.GetIDBySlug(ctx, req.TenantSlug)
+	if err != nil {
 		uc.compareDecoy(req.Password)
-		return nil, uc.unknownFailure(ctx, scope, uuid.Nil, req.Email, domain.ErrTenantNotFound)
+		return nil, uc.unknownFailure(ctx, scopeSlug+req.TenantSlug, uuid.Nil, req.Email, domain.ErrTenantNotFound)
 	}
 
 	user, err := uc.users.GetByEmail(ctx, tenantID, req.Email)
@@ -141,19 +165,110 @@ func (uc *AuthUseCase) Login(ctx context.Context, req ports.LoginRequest) (*port
 		uc.handleFailedLogin(ctx, user, tenantID, req.IPAddress, req.UserAgent)
 		return nil, domain.ErrInvalidCredentials
 	}
+	return user, nil
+}
 
+// authenticateByEmail resuelve la empresa por la credencial: de las cuentas que el correo tiene
+// en la plataforma entra la que coincide con la contrasena. Antes se resolvia la empresa por el
+// correo y se comparaba contra una sola cuenta, asi que una direccion dada de alta en dos
+// empresas entraba siempre en la misma y la otra recibia "credenciales invalidas".
+func (uc *AuthUseCase) authenticateByEmail(ctx context.Context, req ports.LoginRequest) (*domain.User, error) {
+	candidates, err := uc.users.ListLoginCandidates(ctx, req.Email, loginCandidateLimit)
+	if err != nil {
+		// Sin poder leer las cuentas no se autentica a nadie, y se responde como a un correo
+		// sin cuenta: gastando las mismas comparaciones, para no delatarse por el tiempo.
+		uc.logger.Warn("no se pudieron leer las cuentas del correo", zap.Error(err))
+		candidates = nil
+	}
+
+	now := uc.now()
+	resolved := uc.resolveByPassword(req.Password, candidates, now)
+	if resolved.match != nil {
+		if resolved.matches > 1 {
+			// La misma direccion y la misma contrasena en dos empresas: entra la cuenta mas
+			// antigua, siempre la misma, y quien quiera la otra indica su empresa.
+			uc.logger.Warn("el correo resuelve varias cuentas con la misma contrasena; entra la mas antigua",
+				zap.String("user_id", resolved.match.ID.String()), zap.Int("coincidencias", resolved.matches))
+		}
+		return resolved.match, nil
+	}
+	if len(candidates) == 0 {
+		return nil, uc.unknownFailure(ctx, scopeNoTenant, uuid.Nil, req.Email, domain.ErrTenantNotFound)
+	}
+	if len(resolved.eligible) == 0 {
+		// Ninguna cuenta del correo puede tener sesion: la misma respuesta que da una sola. Las
+		// candidatas solo llegan active o locked, asi que aqui solo cabe el bloqueo vigente; si
+		// una lectura devolviera otra cosa, el fallo sigue siendo "credenciales invalidas" y
+		// nadie entra sin comparar su contrasena.
+		if err := candidates[0].SessionAllowed(now); err != nil {
+			return nil, err
+		}
+		return nil, domain.ErrInvalidCredentials
+	}
+	// El fallo se cuenta en cada cuenta que podia entrar: omitir la empresa no puede ser la
+	// forma de probar contrasenas sin gastar los intentos de ninguna cuenta.
+	for _, u := range resolved.eligible {
+		uc.handleFailedLogin(ctx, u, u.TenantID, req.IPAddress, req.UserAgent)
+	}
+	return nil, domain.ErrInvalidCredentials
+}
+
+// candidateMatch es el resultado de comparar la contrasena contra las cuentas de un correo.
+type candidateMatch struct {
+	// match es la cuenta que entra: la primera, en el orden estable del repositorio, cuya
+	// contrasena coincide.
+	match *domain.User
+	// matches son cuantas coincidieron. Mas de una es una ambiguedad real: la misma direccion
+	// con la misma contrasena en varias empresas.
+	matches int
+	// eligible son las cuentas que podian abrir sesion, coincidiera su contrasena o no; son las
+	// unicas a las que se les cuenta un intento fallido.
+	eligible []*domain.User
+}
+
+// resolveByPassword compara la contrasena contra las cuentas que pueden abrir sesion y gasta
+// SIEMPRE loginCandidateLimit comparaciones: las que sobran van contra el hash de relleno. Ni
+// cuantas cuentas tiene el correo ni en que estado estan cambian lo que tarda el intento.
+func (uc *AuthUseCase) resolveByPassword(password string, candidates []*domain.User, now time.Time) candidateMatch {
+	var out candidateMatch
+	spent := 0
+	for _, u := range candidates {
+		// El tope es del repositorio; la guarda evita que una lectura con mas filas de las
+		// pedidas multiplique el coste del intento.
+		if spent >= loginCandidateLimit || u.SessionAllowed(now) != nil {
+			continue
+		}
+		out.eligible = append(out.eligible, u)
+		spent++
+		if uc.hasher.Compare(u.PasswordHash, password) != nil {
+			continue
+		}
+		out.matches++
+		if out.match == nil {
+			out.match = u
+		}
+	}
+	for ; spent < loginCandidateLimit; spent++ {
+		uc.compareDecoy(password)
+	}
+	return out
+}
+
+// completeLogin es el tramo comun a las dos formas de identificarse, ya con la cuenta
+// autenticada: apunta el inicio y abre sesion.
+func (uc *AuthUseCase) completeLogin(ctx context.Context, user *domain.User, req ports.LoginRequest) (*ports.LoginResponse, error) {
 	uc.recordLogin(ctx, user, req.Password)
 
 	// Con MFA activo no se entrega el par todavia: sale un token de desafio de corta
 	// vida y la sesion se abre al validar el codigo (VerifyMFAChallenge).
 	if user.MFAEnabled {
-		challengeToken, err := uc.tokens.GenerateMFAChallenge(user.ID.String(), tenantID.String())
+		challengeToken, err := uc.tokens.GenerateMFAChallenge(user.ID.String(), user.TenantID.String())
 		if err != nil {
 			return nil, fmt.Errorf("generate mfa challenge: %w", err)
 		}
 		uc.audit.Log(ctx, &domain.AuditEntry{
 			ID:        uuid.New(),
-			TenantID:  tenantID,
+			TenantID:  user.TenantID,
 			UserID:    user.ID,
 			Action:    "mfa_challenge_issued",
 			Resource:  "session",
@@ -167,7 +282,7 @@ func (uc *AuthUseCase) Login(ctx context.Context, req ports.LoginRequest) (*port
 		}, nil
 	}
 
-	return uc.openSession(ctx, user, tenantID, req.IPAddress, req.UserAgent, "login")
+	return uc.openSession(ctx, user, user.TenantID, req.IPAddress, req.UserAgent, "login")
 }
 
 // openSession emite el par de tokens y persiste la sesion nueva; es el tramo comun del

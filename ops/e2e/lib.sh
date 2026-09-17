@@ -101,9 +101,32 @@ e2e_liberar() {
   return 0
 }
 
+# cf_pg_pasar_entorno <VARIABLE>...: el mismo contrato que ops/db/pg-credentials.sh. Los guiones
+# de ops/db pasan por aqui los secretos que su SQL lee con \getenv (un verificador SCRAM, la
+# contrasena del primer superadmin) para que no viajen como argumento. Aqui, ademas de exportarlos,
+# hay que apuntar SUS NOMBRES: el psql de estas pruebas corre dentro del contenedor y no hereda el
+# entorno del guion, asi que sin reenviarlos \getenv dejaba la variable sin definir y el SQL se
+# ejecutaba con `:'verifier'` literal (error de sintaxis en bootstrap-platform.sh y en los roles de
+# celda y de motores). La lista viaja en el entorno porque quien la escribe es un proceso hijo.
+cf_pg_pasar_entorno() {
+  export "${@?}"
+  CF_PG_ENV_NOMBRES="${CF_PG_ENV_NOMBRES:-} $*"
+  export CF_PG_ENV_NOMBRES
+}
+export -f cf_pg_pasar_entorno
+
 # psql sin cliente local: el de dentro del contenedor. Exportada para que la use tambien
 # ops/db/bootstrap-platform.sh y ops/db/cell-service-role.sh, que son parte de lo que se prueba.
-psql() { docker exec -i -e PGPASSWORD="${PGPASSWORD:-}" "$PG_CONTAINER" psql -U "${PGUSER:-mail_admin}" "$@"; }
+# Los secretos entran por el entorno del contenedor con solo su nombre, nunca como argumento.
+psql() {
+  local pasar=(-e PGPASSWORD) nombre
+  export PGPASSWORD="${PGPASSWORD:-}"
+  # shellcheck disable=SC2086  # son nombres de variables separados por espacios
+  for nombre in ${CF_PG_ENV_NOMBRES:-}; do
+    pasar+=(-e "$nombre")
+  done
+  docker exec -i "${pasar[@]}" "$PG_CONTAINER" psql -U "${PGUSER:-mail_admin}" "$@"
+}
 export -f psql
 sql() { psql -v ON_ERROR_STOP=1 -q -At -d "$1" -c "$2"; }
 

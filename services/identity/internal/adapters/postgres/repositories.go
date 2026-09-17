@@ -76,18 +76,27 @@ func (r *UserRepo) DeleteByTenant(ctx context.Context, tenantID uuid.UUID) (int6
 	return tag.RowsAffected(), nil
 }
 
-func (r *UserRepo) GetByID(ctx context.Context, id uuid.UUID) (*domain.User, error) {
-	u := &domain.User{}
-	err := r.pool.QueryRow(ctx,
-		`SELECT id, tenant_id, email, password_hash, first_name, last_name, COALESCE(avatar_url, ''), status,
+// selectUserColumns son las columnas de una cuenta completa, con su hash, en el orden que lee
+// scanUser: las tres lecturas que deciden un inicio de sesion comparten unas y otro.
+const selectUserColumns = `id, tenant_id, email, password_hash, first_name, last_name, COALESCE(avatar_url, ''), status,
 mfa_enabled, COALESCE(mfa_secret, ''), password_changed_at, failed_login_attempts,
-last_failed_login_at, locked_until, last_login_at, created_at, updated_at
- FROM identity.users WHERE id = $1`, id,
-	).Scan(
+last_failed_login_at, locked_until, last_login_at, created_at, updated_at`
+
+func scanUser(row pgx.Row) (*domain.User, error) {
+	u := &domain.User{}
+	if err := row.Scan(
 		&u.ID, &u.TenantID, &u.Email, &u.PasswordHash, &u.FirstName, &u.LastName, &u.AvatarURL, &u.Status,
 		&u.MFAEnabled, &u.MFASecret, &u.PasswordChangedAt, &u.FailedLoginAttempts,
 		&u.LastFailedLoginAt, &u.LockedUntil, &u.LastLoginAt, &u.CreatedAt, &u.UpdatedAt,
-	)
+	); err != nil {
+		return nil, err
+	}
+	return u, nil
+}
+
+func (r *UserRepo) GetByID(ctx context.Context, id uuid.UUID) (*domain.User, error) {
+	u, err := scanUser(r.pool.QueryRow(ctx,
+		`SELECT `+selectUserColumns+` FROM identity.users WHERE id = $1`, id))
 	if err != nil {
 		return nil, domain.ErrUserNotFound
 	}
@@ -95,21 +104,43 @@ last_failed_login_at, locked_until, last_login_at, created_at, updated_at
 }
 
 func (r *UserRepo) GetByEmail(ctx context.Context, tenantID uuid.UUID, email string) (*domain.User, error) {
-	u := &domain.User{}
-	err := r.pool.QueryRow(ctx,
-		`SELECT id, tenant_id, email, password_hash, first_name, last_name, COALESCE(avatar_url, ''), status,
-mfa_enabled, COALESCE(mfa_secret, ''), password_changed_at, failed_login_attempts,
-last_failed_login_at, locked_until, last_login_at, created_at, updated_at
- FROM identity.users WHERE tenant_id = $1 AND email = $2`, tenantID, email,
-	).Scan(
-		&u.ID, &u.TenantID, &u.Email, &u.PasswordHash, &u.FirstName, &u.LastName, &u.AvatarURL, &u.Status,
-		&u.MFAEnabled, &u.MFASecret, &u.PasswordChangedAt, &u.FailedLoginAttempts,
-		&u.LastFailedLoginAt, &u.LockedUntil, &u.LastLoginAt, &u.CreatedAt, &u.UpdatedAt,
-	)
+	u, err := scanUser(r.pool.QueryRow(ctx,
+		`SELECT `+selectUserColumns+` FROM identity.users WHERE tenant_id = $1 AND email = $2`, tenantID, email))
 	if err != nil {
 		return nil, domain.ErrUserNotFound
 	}
 	return u, nil
+}
+
+// ListLoginCandidates son las cuentas con las que un correo puede entrar sin indicar la empresa.
+// El filtro de estado es el mismo que tenia la resolucion de empresa por correo (active o
+// locked): una cuenta inactive o pending no sale y su correo se responde como uno sin cuenta. El
+// orden es por alta, estable, para que sea siempre el mismo el que decide a que cuentas alcanza
+// el tope cuando el correo esta dado de alta en mas empresas que limit.
+func (r *UserRepo) ListLoginCandidates(ctx context.Context, email string, limit int) ([]*domain.User, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	rows, err := r.pool.Query(ctx,
+		`SELECT `+selectUserColumns+`
+ FROM identity.users
+ WHERE email = $1 AND status IN ('active', 'locked')
+ ORDER BY created_at, id
+ LIMIT $2`, email, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var users []*domain.User
+	for rows.Next() {
+		u, err := scanUser(rows)
+		if err != nil {
+			return nil, err
+		}
+		users = append(users, u)
+	}
+	return users, rows.Err()
 }
 
 func (r *UserRepo) Update(ctx context.Context, u *domain.User) error {
@@ -710,11 +741,18 @@ func (r *TenantRepo) IsActive(ctx context.Context, tenantID uuid.UUID) (bool, er
 
 // GetIDByEmail solo resuelve la empresa por una cuenta que puede entrar (active, o locked, que
 // es temporal): el correo de una cuenta inactive o pending se responde como uno que no existe,
-// igual que un correo desconocido, y no revela su estado sin que se indique la empresa.
+// igual que un correo desconocido, y no revela su estado sin que se indique la empresa. Un correo
+// dado de alta en varias empresas resuelve SIEMPRE la de su cuenta mas antigua: sin el orden,
+// Postgres devolvia una cualquiera y la recuperacion de contrasena cambiaba de empresa entre dos
+// peticiones iguales. El inicio de sesion no pasa por aqui: resuelve la empresa por la
+// credencial (app.AuthUseCase.Login).
 func (r *TenantRepo) GetIDByEmail(ctx context.Context, email string) (uuid.UUID, error) {
 	var id uuid.UUID
 	err := r.pool.QueryRow(ctx,
-		`SELECT tenant_id FROM identity.users WHERE email = $1 AND status IN ('active', 'locked') LIMIT 1`, email,
+		`SELECT tenant_id FROM identity.users
+ WHERE email = $1 AND status IN ('active', 'locked')
+ ORDER BY created_at, id
+ LIMIT 1`, email,
 	).Scan(&id)
 	if err != nil {
 		return uuid.Nil, domain.ErrTenantNotFound

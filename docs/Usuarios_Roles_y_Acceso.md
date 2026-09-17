@@ -52,18 +52,50 @@ V = verificado en el codigo. P = propuesto, todavia no implementado.
   la contrasena con 403 `ACCOUNT_INACTIVE` (antes `pending` entraba y recibia un token que la
   renovacion y el gateway rechazaban), y el bloqueo vigente con 403 `ACCOUNT_LOCKED`, sin
   contar un intento fallido. Contrasena mala, correo desconocido y correo que no resuelve
-  empresa responden el mismo 401; sin `tenant_slug`, el correo de una cuenta `inactive` o
-  `pending` no resuelve empresa y responde ese 401, asi que su estado solo lo ve quien indica
-  la empresa, como ya pasaba con `inactive`.
-* Tiempo del inicio de sesion (V, 2026-09-13): todo intento compara la contrasena exactamente
-  una vez. Con una cuenta que puede tener sesion, contra su hash; sin empresa (slug
-  desconocido o correo que no la resuelve), sin cuenta en la empresa o con una cuenta que no
-  puede tener sesion (`inactive`, `pending`, bloqueo vigente), contra un hash de relleno que
-  identity deriva al arrancar con el mismo hasher y el mismo coste que todo hash que escribe
+  empresa responden el mismo 401; sin `tenant_slug`, la cuenta `inactive` o `pending` no es
+  candidata a entrar (ver "Empresa por la credencial") y responde ese 401, asi que su estado
+  solo lo ve quien indica la empresa, como ya pasaba con `inactive`.
+* Empresa por la credencial (V, 2026-09-17): el formulario ya no pide la empresa, asi que el
+  inicio de sesion sin `tenant_slug` la resuelve por la contrasena. `identity.users` es unico
+  por `(tenant_id, email)`, nunca por correo: la misma direccion puede estar dada de alta en
+  varias empresas (una persona que administra mas de una). Antes la empresa se resolvia con
+  `SELECT tenant_id ... WHERE email = $1 AND status IN ('active','locked') LIMIT 1`, sin
+  orden: Postgres devolvia una cualquiera, y quien tenia la contrasena correcta de la otra
+  empresa recibia "credenciales invalidas" de forma intermitente. Ahora identity lee las
+  cuentas de ese correo que pueden tener sesion (`UserRepo.ListLoginCandidates`: `active` o
+  `locked`, en orden de alta estable, hasta `app.loginCandidateLimit` = 4) y entra la que
+  coincide con la contrasena. El bloqueo de la cuenta de una empresa no impide entrar en la
+  otra, y una contrasena que no es de ninguna cuenta el intento fallido en TODAS las que
+  podian entrar: omitir la empresa no puede ser la forma de probar contrasenas sin gastar los
+  intentos de ninguna cuenta (por eso no se cuenta en el contador de correos sin cuenta, que
+  solo iguala respuestas y no frena nada, sino en las cuentas). Lo que cuesta y lo que queda
+  fuera: (1) cada intento sin empresa paga exactamente cuatro comparaciones de bcrypt (ver
+  "Tiempo del inicio de sesion"), asi que subir el tope encarece todo inicio de sesion de la
+  plataforma; (2) la direccion dada de alta en mas de cuatro empresas solo alcanza, sin
+  indicarla, las cuatro cuentas mas antiguas, y las demas entran con `tenant_slug` (el enlace
+  "Mi correo esta en mas de una empresa" del formulario, que se conserva por esto y por las
+  cuentas `inactive` o `pending`); (3) la misma direccion con la MISMA contrasena en varias
+  empresas es ambigua: entra la cuenta mas antigua, siempre la misma, y queda un aviso en el
+  registro; (4) `POST /auth/forgot-password` sigue resolviendo la empresa por el correo
+  (`TenantRepo.GetIDByEmail`), ahora con orden estable (la cuenta mas antigua) en vez de una
+  cualquiera, asi que una direccion que esta en varias empresas solo recupera por si misma la
+  contrasena de esa cuenta; las demas las reinicia su administrador. Pendiente (P): un enlace
+  de reinicio por cuenta, que necesita nombrar la empresa en el correo.
+* Tiempo del inicio de sesion (V, 2026-09-17): todo intento gasta las comparaciones de su
+  camino, falle donde falle: una si indica la empresa (`tenant_slug`, una sola cuenta posible)
+  y cuatro (`app.loginCandidateLimit`) si solo trae el correo, que es el tope de cuentas que
+  puede resolver. Cada cuenta que puede tener sesion se compara contra su hash; lo que sobra
+  del camino va contra un hash de relleno que identity deriva al arrancar con el mismo hasher
+  y el mismo coste que todo hash que escribe
   (`services/identity/internal/adapters/passwordhash`, bcrypt 10; el superadmin que siembra
-  `ops/db/bootstrap-platform.sh` lleva ese coste y una prueba del paquete lo vigila). El tiempo
-  no dice si el correo existe ni si resuelve empresa, el de una cuenta sin sesion no dice mas
-  que su cuerpo, y su contrasena sigue sin mirarse. Una cuenta con un hash de otro coste (el
+  `ops/db/bootstrap-platform.sh` lleva ese coste y una prueba del paquete lo vigila). Sin
+  empresa (correo sin cuenta candidata o registro que no responde), sin cuenta en la empresa
+  indicada o con una cuenta que no puede tener sesion (`inactive`, `pending`, bloqueo
+  vigente), todas las comparaciones del camino son de relleno. El tiempo no dice si el correo
+  existe, ni si resuelve empresa, ni en cuantas empresas esta, el de una cuenta sin sesion no
+  dice mas que su cuerpo, y su contrasena sigue sin mirarse. Que un camino cueste mas que el
+  otro no dice nada de ninguna cuenta: lo elige quien inicia sesion.
+  Una cuenta con un hash de otro coste (el
   superadmin de una plataforma arrancada antes de 7172693, con 12) lo cambia por uno del coste
   vigente en su primer inicio correcto, en la misma sentencia que apunta el inicio y retira los
   intentos (`UserRepo.RecordLogin`), solo si la fila conserva el hash que se comparo (un cambio
@@ -74,8 +106,11 @@ V = verificado en el codigo. P = propuesto, todavia no implementado.
   casos, milisegundos frente a las decenas del bcrypt; en el umbral la cuenta anade el bloqueo,
   su evento y su apunte, y durante un bloqueo la cuenta no escribe nada mientras el correo sin
   cuenta lee la politica y consulta su contador; solo se miden con muchas muestras, que cortan
-  el limite por IP y el bloqueo; (2) cada intento sin cuenta cuesta un bcrypt de CPU y una
-  escritura, que acotan los mismos limites. El reto MFA no compara contrasena ni sirve para
+  el limite por IP y el bloqueo; (2) sin empresa, una contrasena mala apunta el fallo en cada
+  cuenta que podia entrar, asi que la direccion que esta en varias empresas escribe una fila
+  mas por cuenta: milisegundos frente a las cuatro comparaciones que ya paga el camino;
+  (3) cada intento sin cuenta cuesta un bcrypt de CPU con la empresa indicada y cuatro sin
+  ella, mas una escritura, que acotan los mismos limites. El reto MFA no compara contrasena ni sirve para
   enumerar: pide un token de reto firmado, que solo sale con la contrasena correcta.
 * Bloqueo por intentos sin enumeracion (V, 2026-09-13): un correo sin cuenta cuenta sus fallos
   como una cuenta y llega al mismo 403 `ACCOUNT_LOCKED`, con el mismo cuerpo, tras los mismos

@@ -3,6 +3,8 @@ package app
 import (
 	"context"
 	"errors"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -39,6 +41,9 @@ type authUsers struct {
 	resets     int
 	lockedTo   *time.Time
 	logins     []*ports.PasswordRehash
+	// listErr es el fallo de la lectura de las cuentas de un correo, para el caso en que la
+	// base no responde.
+	listErr error
 }
 
 func (s *authUsers) GetByEmail(_ context.Context, tenant uuid.UUID, email string) (*domain.User, error) {
@@ -49,6 +54,32 @@ func (s *authUsers) GetByEmail(_ context.Context, tenant uuid.UUID, email string
 		}
 	}
 	return nil, domain.ErrUserNotFound
+}
+
+// ListLoginCandidates devuelve lo que devolveria la sentencia real: las cuentas del correo que
+// pueden tener sesion, en orden estable por alta, hasta el tope.
+func (s *authUsers) ListLoginCandidates(_ context.Context, email string, limit int) ([]*domain.User, error) {
+	if s.listErr != nil {
+		return nil, s.listErr
+	}
+	var out []*domain.User
+	for _, u := range s.users {
+		if u.Email != email || (u.Status != domain.UserStatusActive && u.Status != domain.UserStatusLocked) {
+			continue
+		}
+		cp := *u
+		out = append(out, &cp)
+	}
+	slices.SortFunc(out, func(a, b *domain.User) int {
+		if c := a.CreatedAt.Compare(b.CreatedAt); c != 0 {
+			return c
+		}
+		return strings.Compare(a.ID.String(), b.ID.String())
+	})
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
 }
 
 func (s *authUsers) GetByID(_ context.Context, id uuid.UUID) (*domain.User, error) {
@@ -111,15 +142,21 @@ func (s *authUnknown) RecordFailure(_ context.Context, subject string, now time.
 }
 func (s *authUnknown) PruneForgotten(context.Context, time.Time, int) (int64, error) { return 0, nil }
 
-// authTenants resuelve la misma empresa por slug y por correo; con missing, ninguna.
+// authTenants resuelve la misma empresa por slug y por correo; con missing, ninguna. emailCalls
+// cuenta las resoluciones por correo: el inicio de sesion no puede volver a resolver la empresa
+// asi, porque un correo dado de alta en varias solo resuelve una.
 type authTenants struct {
-	id      uuid.UUID
-	missing bool
+	id         uuid.UUID
+	missing    bool
+	emailCalls int
 }
 
-func (t *authTenants) GetIDBySlug(context.Context, string) (uuid.UUID, error)  { return t.resolve() }
-func (t *authTenants) GetIDByEmail(context.Context, string) (uuid.UUID, error) { return t.resolve() }
-func (t *authTenants) IsActive(context.Context, uuid.UUID) (bool, error)       { return true, nil }
+func (t *authTenants) GetIDBySlug(context.Context, string) (uuid.UUID, error) { return t.resolve() }
+func (t *authTenants) GetIDByEmail(context.Context, string) (uuid.UUID, error) {
+	t.emailCalls++
+	return t.resolve()
+}
+func (t *authTenants) IsActive(context.Context, uuid.UUID) (bool, error) { return true, nil }
 
 func (t *authTenants) resolve() (uuid.UUID, error) {
 	if t.missing {
@@ -254,6 +291,31 @@ func (f *authFixture) account(status domain.UserStatus, lockedUntil *time.Time) 
 	}
 	f.users.users[u.ID] = u
 	return u
+}
+
+// accountIn da de alta una cuenta de otra empresa con el correo, la contrasena, el estado y la
+// fecha de alta que se le piden: es la misma direccion en varias empresas. La fecha de alta
+// ordena las candidatas, asi que cada una lleva la suya.
+func (f *authFixture) accountIn(t *testing.T, tenant uuid.UUID, email, password string, status domain.UserStatus, created time.Time) *domain.User {
+	t.Helper()
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.MinCost)
+	if err != nil {
+		t.Fatal(err)
+	}
+	u := &domain.User{
+		ID: uuid.New(), TenantID: tenant, Email: email, PasswordHash: string(hash),
+		Status: status, CreatedAt: created,
+	}
+	f.users.users[u.ID] = u
+	return u
+}
+
+// loginByEmail es el inicio de sesion que no indica la empresa: el que la resuelve por la
+// credencial.
+func (f *authFixture) loginByEmail(email, password string) (*ports.LoginResponse, error) {
+	return f.uc.Login(context.Background(), ports.LoginRequest{
+		Email: email, Password: password, IPAddress: "203.0.113.7",
+	})
 }
 
 func (f *authFixture) login(u *domain.User, password string) (*ports.LoginResponse, error) {
@@ -399,25 +461,30 @@ func TestElSegundoFactorAplicaLaMismaRegla(t *testing.T) {
 	}
 }
 
-// Todo inicio de sesion compara exactamente una contrasena, falle donde falle: sin empresa, sin
-// cuenta o con la contrasena mala. Solo la cuenta que puede entrar compara contra su hash; el
-// resto, contra el de relleno. Asi el tiempo no dice si el correo existe ni si resuelve empresa.
-func TestCadaLoginComparaUnaContrasena(t *testing.T) {
+// Todo inicio de sesion gasta las comparaciones de su camino, falle donde falle: una si indica
+// la empresa (una sola cuenta posible) y loginCandidateLimit si solo trae el correo (ese es el
+// tope de cuentas que puede resolver). Solo una cuenta que puede entrar se compara contra su
+// hash; lo que sobra va contra el de relleno. Asi el tiempo no dice si el correo existe, ni si
+// resuelve empresa, ni en cuantas empresas esta.
+func TestCadaLoginGastaLasComparacionesDeSuCamino(t *testing.T) {
 	cases := []struct {
-		name      string
-		slug      string
-		noTenant  bool
-		ownEmail  bool
-		password  string
-		want      error
-		wantDecoy bool
+		name     string
+		slug     string
+		noTenant bool
+		ownEmail bool
+		password string
+		want     error
+		// wantOwn es si se compara contra el hash de la cuenta; el resto del camino va contra
+		// el de relleno.
+		wantOwn bool
 	}{
-		{"slug que no resuelve empresa", "no-existe", true, false, authPassword, domain.ErrTenantNotFound, true},
-		{"correo que no resuelve empresa", "", true, false, authPassword, domain.ErrTenantNotFound, true},
-		{"correo desconocido en la empresa", "acme", false, false, authPassword, domain.ErrInvalidCredentials, true},
-		{"contrasena mala con slug", "acme", false, true, "no-es-la-contrasena", domain.ErrInvalidCredentials, false},
-		{"contrasena mala sin slug", "", false, true, "no-es-la-contrasena", domain.ErrInvalidCredentials, false},
-		{"contrasena buena", "acme", false, true, authPassword, nil, false},
+		{"slug que no resuelve empresa", "no-existe", true, false, authPassword, domain.ErrTenantNotFound, false},
+		{"correo sin cuenta y sin empresa", "", true, false, authPassword, domain.ErrTenantNotFound, false},
+		{"correo desconocido en la empresa", "acme", false, false, authPassword, domain.ErrInvalidCredentials, false},
+		{"contrasena mala con slug", "acme", false, true, "no-es-la-contrasena", domain.ErrInvalidCredentials, true},
+		{"contrasena mala sin slug", "", false, true, "no-es-la-contrasena", domain.ErrInvalidCredentials, true},
+		{"contrasena buena con slug", "acme", false, true, authPassword, nil, true},
+		{"contrasena buena sin slug", "", false, true, authPassword, nil, true},
 	}
 	for _, c := range cases {
 		f := newAuthFixture(t)
@@ -433,12 +500,15 @@ func TestCadaLoginComparaUnaContrasena(t *testing.T) {
 		if !errors.Is(err, c.want) || (c.want == nil) != (res != nil) {
 			t.Errorf("%s: res=%v err=%v, se esperaba %v", c.name, res, err, c.want)
 		}
-		wantHash := u.PasswordHash
-		if c.wantDecoy {
-			wantHash = f.uc.decoyHash
+		want := []string{f.uc.decoyHash}
+		if c.slug == "" {
+			want = slices.Repeat([]string{f.uc.decoyHash}, loginCandidateLimit)
 		}
-		if got := f.hasher.compared; len(got) != 1 || got[0] != wantHash {
-			t.Errorf("%s: comparo %d hashes %v, se esperaba uno: %q", c.name, len(got), got, wantHash)
+		if c.wantOwn {
+			want[0] = u.PasswordHash
+		}
+		if got := f.hasher.compared; !slices.Equal(got, want) {
+			t.Errorf("%s: comparo %v, se esperaba %v", c.name, got, want)
 		}
 	}
 }

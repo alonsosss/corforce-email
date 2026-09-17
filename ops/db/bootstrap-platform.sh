@@ -47,7 +47,13 @@ export PGUSER="${PGUSER:-${POSTGRES_USER:-mail_admin}}" PGPASSWORD="${PGPASSWORD
 # las del host, como hasta ahora.
 declare -F cf_psql >/dev/null || cf_psql() { psql "$@" </dev/null; }
 declare -F cf_psql_entrada >/dev/null || cf_psql_entrada() { psql "$@"; }
-declare -F cf_pg_pasar_entorno >/dev/null || cf_pg_pasar_entorno() { export "${@?}"; }
+declare -F cf_pg_pasar_entorno >/dev/null || cf_pg_pasar_entorno() {
+  export "${@?}"
+  # Tambien los nombres: un psql que corre dentro de un contenedor (pruebas de integracion,
+  # e2e) no hereda el entorno y su \getenv se quedaba sin valor.
+  CF_PG_ENV_NOMBRES="${CF_PG_ENV_NOMBRES:-} $*"
+  export CF_PG_ENV_NOMBRES
+}
 REGISTRY_DB="${POSTGRES_DB:-mail_registry}"
 # El host de la celda es el que ven los SERVICIOS (el alias de pgbouncer en compose), no
 # el que ve este script desde fuera: por defecto POSTGRES_HOST.
