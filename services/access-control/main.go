@@ -83,7 +83,7 @@ func main() {
 		cachedRepo := redisadapter.NewCachedUserRoleRepo(userRoleRepo, rdb)
 		userRoles, policyCache = cachedRepo, cachedRepo
 	}
-	rbacUC := app.NewRBACUseCase(roleRepo, permRepo, rolePermRepo, userRoles, denialRepo, moduleGate, systemRoles, logger)
+	rbacUC := app.NewRBACUseCase(roleRepo, permRepo, rolePermRepo, userRoles, denialRepo, moduleGate, systemRoles, policyCache, logger)
 	tenantRolesUC := app.NewTenantRolesUseCase(app.TenantRolesDeps{
 		Lifecycle:   postgres.NewTenantRoleLifecycleRepo(pool.Pool),
 		Roles:       roleRepo,

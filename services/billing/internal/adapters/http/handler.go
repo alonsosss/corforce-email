@@ -66,6 +66,7 @@ func (h *Handler) PublicRoutes() http.Handler {
 // X-Tenant-ID, antes de crear un buzon o un dominio o de enviar correo.
 func (h *Handler) InternalRoutes() http.Handler {
 	r := chi.NewRouter()
+	r.Use(middleware.RequireInternalCaller)
 	r.Post("/entitlements/check", h.CheckEntitlement)
 	return r
 }

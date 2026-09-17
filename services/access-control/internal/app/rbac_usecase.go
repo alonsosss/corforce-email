@@ -40,7 +40,11 @@ type RBACUseCase struct {
 	denials     ports.DenialRepository
 	moduleGate  ports.TenantModuleGate
 	systemRoles SystemRoles
-	logger      *zap.Logger
+	// cache es nil sin Redis. Cuando existe, un cambio en los permisos, el nombre o el
+	// borrado de un rol invalida la politica cacheada de todos sus usuarios: sin esto
+	// una revocacion de permisos tarda hasta policyTTL en hacerse efectiva.
+	cache  ports.PolicyCache
+	logger *zap.Logger
 }
 
 func NewRBACUseCase(
@@ -51,6 +55,7 @@ func NewRBACUseCase(
 	denials ports.DenialRepository,
 	moduleGate ports.TenantModuleGate,
 	systemRoles SystemRoles,
+	cache ports.PolicyCache,
 	logger *zap.Logger,
 ) *RBACUseCase {
 	return &RBACUseCase{
@@ -61,7 +66,29 @@ func NewRBACUseCase(
 		denials:     denials,
 		moduleGate:  moduleGate,
 		systemRoles: systemRoles,
+		cache:       cache,
 		logger:      logger,
+	}
+}
+
+// invalidateRoleUsers descarta la politica cacheada de todos los usuarios que tienen
+// roleID. usersHint, si no es nil, evita releerlos (necesario tras borrar el rol, cuando
+// la fila de user_roles ya cayo por el ON DELETE CASCADE).
+func (uc *RBACUseCase) invalidateRoleUsers(ctx context.Context, roleID uuid.UUID, usersHint []uuid.UUID) {
+	if uc.cache == nil {
+		return
+	}
+	users := usersHint
+	if users == nil {
+		var err error
+		users, err = uc.userRoles.ListUsersByRole(ctx, roleID)
+		if err != nil {
+			uc.logger.Warn("rbac: leer usuarios del rol para invalidar cache", zap.Error(err))
+			return
+		}
+	}
+	if len(users) > 0 {
+		uc.cache.InvalidateUsers(ctx, users)
 	}
 }
 
@@ -98,7 +125,10 @@ func (uc *RBACUseCase) DenialMetrics(ctx context.Context, tenantID uuid.UUID, si
 }
 
 func (uc *RBACUseCase) CreateRole(ctx context.Context, tenantID uuid.UUID, name, description string) (*domain.Role, error) {
-	existing, _ := uc.roles.GetByName(ctx, tenantID, name)
+	existing, err := uc.roles.GetByName(ctx, tenantID, name)
+	if err != nil && !errors.Is(err, domain.ErrRoleNotFound) {
+		return nil, fmt.Errorf("comprobar nombre de rol: %w", err)
+	}
 	if existing != nil {
 		return nil, domain.ErrRoleAlreadyExists
 	}
@@ -150,6 +180,7 @@ func (uc *RBACUseCase) UpdateRole(ctx context.Context, tenantID, id uuid.UUID, n
 	if err := uc.roles.Update(ctx, role); err != nil {
 		return nil, fmt.Errorf("update role: %w", err)
 	}
+	uc.invalidateRoleUsers(ctx, role.ID, nil)
 	return role, nil
 }
 
@@ -161,7 +192,21 @@ func (uc *RBACUseCase) DeleteRole(ctx context.Context, tenantID, id uuid.UUID) e
 	if role.IsSystem {
 		return domain.ErrSystemRole
 	}
-	return uc.roles.Delete(ctx, id)
+	// Los usuarios se leen ANTES de borrar: el ON DELETE CASCADE de user_roles se lleva
+	// la fila junto con el rol, y despues ya no habria como saber a quien invalidar.
+	users := []uuid.UUID{}
+	if uc.cache != nil {
+		if u, err := uc.userRoles.ListUsersByRole(ctx, id); err != nil {
+			uc.logger.Warn("rbac: leer usuarios del rol antes de borrarlo", zap.Error(err))
+		} else {
+			users = u
+		}
+	}
+	if err := uc.roles.Delete(ctx, id); err != nil {
+		return err
+	}
+	uc.invalidateRoleUsers(ctx, id, users)
+	return nil
 }
 
 func (uc *RBACUseCase) SetRolePermissions(ctx context.Context, actor Actor, tenantID, roleID uuid.UUID, permissionIDs []uuid.UUID) error {
@@ -197,7 +242,11 @@ func (uc *RBACUseCase) SetRolePermissions(ctx context.Context, actor Actor, tena
 			return err
 		}
 	}
-	return uc.rolePerms.ReplaceAll(ctx, roleID, unique)
+	if err := uc.rolePerms.ReplaceAll(ctx, roleID, unique); err != nil {
+		return err
+	}
+	uc.invalidateRoleUsers(ctx, roleID, nil)
+	return nil
 }
 
 // requireHeld exige que un actor no privilegiado tenga cada uno de los permisos que

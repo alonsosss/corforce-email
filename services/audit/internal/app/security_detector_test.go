@@ -22,7 +22,7 @@ func (f *fakeLogs) Create(context.Context, *domain.AuditLog) error { return nil 
 func (f *fakeLogs) VerifyChain(context.Context, uuid.UUID) (*domain.ChainIntegrity, error) {
 	return &domain.ChainIntegrity{OK: true}, nil
 }
-func (f *fakeLogs) RecentLoginOtherIP(context.Context, uuid.UUID, string, time.Time, uuid.UUID) (string, error) {
+func (f *fakeLogs) RecentLoginOtherIP(context.Context, uuid.UUID, uuid.UUID, string, time.Time, uuid.UUID) (string, error) {
 	return "", nil
 }
 func (f *fakeLogs) GetByID(context.Context, uuid.UUID, uuid.UUID) (*domain.AuditLog, error) {
@@ -33,13 +33,13 @@ func (f *fakeLogs) List(context.Context, domain.AuditQuery, int, int) ([]*domain
 }
 func (f *fakeLogs) Count(context.Context, domain.AuditQuery) (int64, error) { return 0, nil }
 func (f *fakeLogs) BulkCreate(context.Context, []*domain.AuditLog) error    { return nil }
-func (f *fakeLogs) HasUserActionFromIP(context.Context, uuid.UUID, string, string, uuid.UUID) (bool, error) {
+func (f *fakeLogs) HasUserActionFromIP(context.Context, uuid.UUID, uuid.UUID, string, string, uuid.UUID) (bool, error) {
 	return f.knownIP, nil
 }
-func (f *fakeLogs) ListUserActionAgents(context.Context, uuid.UUID, string, uuid.UUID, int) ([]string, error) {
+func (f *fakeLogs) ListUserActionAgents(context.Context, uuid.UUID, uuid.UUID, string, uuid.UUID, int) ([]string, error) {
 	return f.agents, nil
 }
-func (f *fakeLogs) CountRecentByActionIP(context.Context, string, string, time.Time) (int64, error) {
+func (f *fakeLogs) CountRecentByActionIP(context.Context, uuid.UUID, string, string, time.Time) (int64, error) {
 	return f.recentFails, nil
 }
 

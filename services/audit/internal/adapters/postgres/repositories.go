@@ -191,19 +191,19 @@ func (r *AuditLogRepo) BulkCreate(ctx context.Context, logs []*domain.AuditLog) 
 	return tx.Commit(ctx)
 }
 
-func (r *AuditLogRepo) HasUserActionFromIP(ctx context.Context, userID uuid.UUID, action, ip string, excludeID uuid.UUID) (bool, error) {
+func (r *AuditLogRepo) HasUserActionFromIP(ctx context.Context, tenantID, userID uuid.UUID, action, ip string, excludeID uuid.UUID) (bool, error) {
 	var exists bool
 	err := r.pool.QueryRow(ctx,
-		`SELECT EXISTS(SELECT 1 FROM audit.audit_logs WHERE user_id=$1 AND action=$2 AND ip_address=$3 AND id<>$4)`,
-		userID, action, ip, excludeID).Scan(&exists)
+		`SELECT EXISTS(SELECT 1 FROM audit.audit_logs WHERE tenant_id=$1 AND user_id=$2 AND action=$3 AND ip_address=$4 AND id<>$5)`,
+		tenantID, userID, action, ip, excludeID).Scan(&exists)
 	return exists, err
 }
 
-func (r *AuditLogRepo) ListUserActionAgents(ctx context.Context, userID uuid.UUID, action string, excludeID uuid.UUID, limit int) ([]string, error) {
+func (r *AuditLogRepo) ListUserActionAgents(ctx context.Context, tenantID, userID uuid.UUID, action string, excludeID uuid.UUID, limit int) ([]string, error) {
 	rows, err := r.pool.Query(ctx,
 		`SELECT DISTINCT user_agent FROM audit.audit_logs
-		  WHERE user_id=$1 AND action=$2 AND id<>$3 AND user_agent IS NOT NULL AND user_agent <> ''
-		  LIMIT $4`, userID, action, excludeID, limit)
+		  WHERE tenant_id=$1 AND user_id=$2 AND action=$3 AND id<>$4 AND user_agent IS NOT NULL AND user_agent <> ''
+		  LIMIT $5`, tenantID, userID, action, excludeID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -219,24 +219,24 @@ func (r *AuditLogRepo) ListUserActionAgents(ctx context.Context, userID uuid.UUI
 	return out, rows.Err()
 }
 
-func (r *AuditLogRepo) CountRecentByActionIP(ctx context.Context, action, ip string, since time.Time) (int64, error) {
+func (r *AuditLogRepo) CountRecentByActionIP(ctx context.Context, tenantID uuid.UUID, action, ip string, since time.Time) (int64, error) {
 	var n int64
 	err := r.pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM audit.audit_logs WHERE action=$1 AND ip_address=$2 AND created_at>=$3`,
-		action, ip, since).Scan(&n)
+		`SELECT COUNT(*) FROM audit.audit_logs WHERE tenant_id=$1 AND action=$2 AND ip_address=$3 AND created_at>=$4`,
+		tenantID, action, ip, since).Scan(&n)
 	return n, err
 }
 
 // RecentLoginOtherIP devuelve la IP del ultimo inicio de sesion del usuario desde
 // una IP DISTINTA de la actual dentro de la ventana (vacio si no hay). Es la senal
 // de viaje imposible: dos ubicaciones en minutos delatan una sesion paralela.
-func (r *AuditLogRepo) RecentLoginOtherIP(ctx context.Context, userID uuid.UUID, currentIP string, since time.Time, excludeID uuid.UUID) (string, error) {
+func (r *AuditLogRepo) RecentLoginOtherIP(ctx context.Context, tenantID, userID uuid.UUID, currentIP string, since time.Time, excludeID uuid.UUID) (string, error) {
 	var ip string
 	err := r.pool.QueryRow(ctx,
 		`SELECT ip_address FROM audit.audit_logs
-		   WHERE user_id=$1 AND action='user.logged_in' AND ip_address IS NOT NULL AND ip_address<>'' AND ip_address<>$2 AND created_at>=$3 AND id<>$4
+		   WHERE tenant_id=$1 AND user_id=$2 AND action='user.logged_in' AND ip_address IS NOT NULL AND ip_address<>'' AND ip_address<>$3 AND created_at>=$4 AND id<>$5
 		   ORDER BY created_at DESC LIMIT 1`,
-		userID, currentIP, since, excludeID).Scan(&ip)
+		tenantID, userID, currentIP, since, excludeID).Scan(&ip)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", nil
 	}
@@ -421,15 +421,15 @@ func (r *DataChangeRepo) CreateBatch(ctx context.Context, records []*domain.Data
 	}
 	defer tx.Rollback(ctx)
 	for _, rec := range records {
-		if _, err := tx.Exec(ctx, `INSERT INTO audit.data_change_records (id,audit_log_id,field_name,old_value,new_value) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (id) DO NOTHING`, rec.ID, rec.AuditLogID, rec.FieldName, rec.OldValue, rec.NewValue); err != nil {
+		if _, err := tx.Exec(ctx, `INSERT INTO audit.data_change_records (id,tenant_id,audit_log_id,field_name,old_value,new_value) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (id) DO NOTHING`, rec.ID, rec.TenantID, rec.AuditLogID, rec.FieldName, rec.OldValue, rec.NewValue); err != nil {
 			return err
 		}
 	}
 	return tx.Commit(ctx)
 }
 
-func (r *DataChangeRepo) GetByLogID(ctx context.Context, logID uuid.UUID) ([]*domain.DataChangeRecord, error) {
-	rows, err := r.pool.Query(ctx, `SELECT id,audit_log_id,field_name,old_value,new_value FROM audit.data_change_records WHERE audit_log_id=$1`, logID)
+func (r *DataChangeRepo) GetByLogID(ctx context.Context, tenantID, logID uuid.UUID) ([]*domain.DataChangeRecord, error) {
+	rows, err := r.pool.Query(ctx, `SELECT id,tenant_id,audit_log_id,field_name,old_value,new_value FROM audit.data_change_records WHERE tenant_id=$1 AND audit_log_id=$2`, tenantID, logID)
 	if err != nil {
 		return nil, err
 	}
@@ -437,7 +437,7 @@ func (r *DataChangeRepo) GetByLogID(ctx context.Context, logID uuid.UUID) ([]*do
 	var out []*domain.DataChangeRecord
 	for rows.Next() {
 		var rec domain.DataChangeRecord
-		if err := rows.Scan(&rec.ID, &rec.AuditLogID, &rec.FieldName, &rec.OldValue, &rec.NewValue); err != nil {
+		if err := rows.Scan(&rec.ID, &rec.TenantID, &rec.AuditLogID, &rec.FieldName, &rec.OldValue, &rec.NewValue); err != nil {
 			return nil, err
 		}
 		out = append(out, &rec)

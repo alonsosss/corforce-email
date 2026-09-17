@@ -69,12 +69,12 @@ func (d *SecurityDetector) inspectLogin(ctx context.Context, l *domain.AuditLog,
 	}
 	// IP nueva: el usuario ya tenia historial y nunca habia entrado desde esta IP.
 	// El registro recien insertado se excluye para no contarse a si mismo.
-	known, err := d.logs.HasUserActionFromIP(ctx, l.UserID, "user.logged_in", l.IPAddress, l.ID)
+	known, err := d.logs.HasUserActionFromIP(ctx, l.TenantID, l.UserID, "user.logged_in", l.IPAddress, l.ID)
 	if err != nil {
 		d.logger.Warn("detector: historial de IP", zap.Error(err))
 		return
 	}
-	agents, err := d.logs.ListUserActionAgents(ctx, l.UserID, "user.logged_in", l.ID, 100)
+	agents, err := d.logs.ListUserActionAgents(ctx, l.TenantID, l.UserID, "user.logged_in", l.ID, 100)
 	if err != nil {
 		d.logger.Warn("detector: historial de agentes", zap.Error(err))
 		return
@@ -94,7 +94,7 @@ func (d *SecurityDetector) inspectLogin(ctx context.Context, l *domain.AuditLog,
 	// ubicaciones distintas en ese lapso no son fisicamente compatibles y delatan
 	// una sesion paralela (credenciales robadas). Riesgo alto: avisa al usuario y a
 	// los administradores.
-	other, err := d.logs.RecentLoginOtherIP(ctx, l.UserID, l.IPAddress, time.Now().Add(-10*time.Minute), l.ID)
+	other, err := d.logs.RecentLoginOtherIP(ctx, l.TenantID, l.UserID, l.IPAddress, time.Now().Add(-10*time.Minute), l.ID)
 	if err != nil {
 		d.logger.Warn("detector: viaje imposible", zap.Error(err))
 		return
@@ -110,7 +110,7 @@ func (d *SecurityDetector) inspectFailedLogin(ctx context.Context, l *domain.Aud
 		return
 	}
 	since := time.Now().Add(-d.cfg.BruteForceWindow)
-	n, err := d.logs.CountRecentByActionIP(ctx, "user.login_failed", l.IPAddress, since)
+	n, err := d.logs.CountRecentByActionIP(ctx, l.TenantID, "user.login_failed", l.IPAddress, since)
 	if err != nil {
 		d.logger.Warn("detector: conteo de fallos", zap.Error(err))
 		return

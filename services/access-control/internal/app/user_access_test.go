@@ -58,6 +58,9 @@ func (f *fakeUserRoles) UserAccount(context.Context, uuid.UUID, uuid.UUID) (doma
 func (f *fakeUserRoles) ListUsersWithPermission(context.Context, uuid.UUID, string, string) ([]uuid.UUID, error) {
 	return nil, nil
 }
+func (f *fakeUserRoles) ListUsersByRole(context.Context, uuid.UUID) ([]uuid.UUID, error) {
+	return nil, nil
+}
 
 // fakeGate simula el estado de contratacion de modulos del tenant.
 type fakeGate struct {
@@ -71,7 +74,7 @@ func (f *fakeGate) EffectiveModules(context.Context, uuid.UUID) (domain.ModuleAv
 
 func newAccessUC(roles *fakeUserRoles, gate *fakeGate) *RBACUseCase {
 	return NewRBACUseCase(nil, nil, nil, roles, nil, gate,
-		SystemRoles{Superadmin: testSuperadmin, TenantAdmin: testTenantAdmin}, zap.NewNop())
+		SystemRoles{Superadmin: testSuperadmin, TenantAdmin: testTenantAdmin}, nil, zap.NewNop())
 }
 
 func operatorRoles() *fakeUserRoles {

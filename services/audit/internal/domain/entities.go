@@ -70,6 +70,7 @@ type SecurityEvent struct {
 
 type DataChangeRecord struct {
 	ID         uuid.UUID `json:"id"`
+	TenantID   uuid.UUID `json:"tenant_id"`
 	AuditLogID uuid.UUID `json:"audit_log_id"`
 	FieldName  string    `json:"field_name"`
 	OldValue   *string   `json:"old_value,omitempty"`

@@ -37,6 +37,9 @@ type RolePermissionRepository interface {
 type UserRoleRepository interface {
 	Assign(ctx context.Context, userID, roleID, assignedBy uuid.UUID) error
 	Revoke(ctx context.Context, userID, roleID uuid.UUID) error
+	// ListUsersByRole devuelve los usuarios que tienen asignado un rol, para invalidar
+	// su politica cacheada cuando el rol cambia (permisos, nombre o borrado).
+	ListUsersByRole(ctx context.Context, roleID uuid.UUID) ([]uuid.UUID, error)
 	ListRoles(ctx context.Context, userID, tenantID uuid.UUID) ([]*domain.Role, error)
 	ListPermissions(ctx context.Context, userID, tenantID uuid.UUID) ([]*domain.Permission, error)
 	GetAccessPolicy(ctx context.Context, userID, tenantID uuid.UUID) (*domain.AccessPolicy, error)

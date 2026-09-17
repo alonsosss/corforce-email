@@ -163,7 +163,7 @@ func (uc *AuditUseCase) GetUserActivityReport(ctx context.Context, tenantID, use
 	return uc.summary.GetUserActivity(ctx, tenantID, userID, dateFrom, dateTo)
 }
 
-func (uc *AuditUseCase) CompareChanges(ctx context.Context, logID uuid.UUID, before, after string) error {
+func (uc *AuditUseCase) CompareChanges(ctx context.Context, tenantID, logID uuid.UUID, before, after string) error {
 	var beforeMap, afterMap map[string]interface{}
 	if err := json.Unmarshal([]byte(before), &beforeMap); err != nil {
 		return fmt.Errorf("parse before JSON: %w", err)
@@ -187,6 +187,7 @@ func (uc *AuditUseCase) CompareChanges(ctx context.Context, logID uuid.UUID, bef
 		if oldVal != newVal {
 			records = append(records, &domain.DataChangeRecord{
 				ID:         uuid.New(),
+				TenantID:   tenantID,
 				AuditLogID: logID,
 				FieldName:  key,
 				OldValue:   strPtr(oldVal),
@@ -201,8 +202,8 @@ func (uc *AuditUseCase) CompareChanges(ctx context.Context, logID uuid.UUID, bef
 	return nil
 }
 
-func (uc *AuditUseCase) GetChanges(ctx context.Context, logID uuid.UUID) ([]*domain.DataChangeRecord, error) {
-	return uc.changes.GetByLogID(ctx, logID)
+func (uc *AuditUseCase) GetChanges(ctx context.Context, tenantID, logID uuid.UUID) ([]*domain.DataChangeRecord, error) {
+	return uc.changes.GetByLogID(ctx, tenantID, logID)
 }
 
 func isValidSeverity(s string) bool {

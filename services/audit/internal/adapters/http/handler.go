@@ -221,7 +221,7 @@ func (h *Handler) createLog(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if l.Before != nil && l.After != nil {
-		_ = h.uc.CompareChanges(r.Context(), l.ID, *l.Before, *l.After)
+		_ = h.uc.CompareChanges(r.Context(), l.TenantID, l.ID, *l.Before, *l.After)
 	}
 
 	response.JSON(w, http.StatusCreated, l)
@@ -491,8 +491,13 @@ func (h *Handler) getChanges(w http.ResponseWriter, r *http.Request) {
 		response.ErrBadRequest(w, "invalid logId")
 		return
 	}
+	tenantID, err := uuid.Parse(middleware.GetTenantID(r.Context()))
+	if err != nil {
+		response.ErrBadRequest(w, "invalid tenant")
+		return
+	}
 
-	records, err := h.uc.GetChanges(r.Context(), logID)
+	records, err := h.uc.GetChanges(r.Context(), tenantID, logID)
 	if err != nil {
 		response.ErrInternal(w)
 		return

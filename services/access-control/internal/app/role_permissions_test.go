@@ -104,7 +104,7 @@ func newRolePermsFixture() rolePermsFixture {
 	rolePerms := &fakeRolePerms{}
 	grants := &fakeGrants{}
 	uc := NewRBACUseCase(roles, &fakePerms{all: []*domain.Permission{tenantP, platformP}}, rolePerms, grants, nil, nil,
-		SystemRoles{Superadmin: testSuperadmin, TenantAdmin: testTenantAdmin}, zap.NewNop())
+		SystemRoles{Superadmin: testSuperadmin, TenantAdmin: testTenantAdmin}, nil, zap.NewNop())
 	return rolePermsFixture{uc: uc, rolePerms: rolePerms, tenantID: tenantID, roleID: roleID, tenantP: tenantP, platformP: platformP, grants: grants, roles: roles}
 }
 

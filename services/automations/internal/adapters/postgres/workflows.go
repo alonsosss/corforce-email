@@ -29,12 +29,12 @@ func NewWorkflowRepository(pool *db.ContextPool) *WorkflowRepository {
 
 func scanWorkflow(row pgx.Row) (*domain.Workflow, error) {
 	var (
-		w              domain.Workflow
-		status, typ    string
-		steps          []byte
-		triggerCampaig *uuid.UUID
+		w               domain.Workflow
+		status, typ     string
+		steps           []byte
+		triggerCampaign *uuid.UUID
 	)
-	err := row.Scan(&w.ID, &w.TenantID, &w.Name, &w.Description, &status, &typ, &triggerCampaig, &w.ListID,
+	err := row.Scan(&w.ID, &w.TenantID, &w.Name, &w.Description, &status, &typ, &triggerCampaign, &w.ListID,
 		&w.ReEntry, &steps, &w.PauseReason, &w.CreatedBy, &w.ActivatedAt, &w.CreatedAt, &w.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, domain.ErrWorkflowNotFound
@@ -43,7 +43,7 @@ func scanWorkflow(row pgx.Row) (*domain.Workflow, error) {
 		return nil, err
 	}
 	w.Status = domain.Status(status)
-	w.Trigger = domain.Trigger{Type: domain.TriggerType(typ), CampaignID: triggerCampaig}
+	w.Trigger = domain.Trigger{Type: domain.TriggerType(typ), CampaignID: triggerCampaign}
 	if err := json.Unmarshal(steps, &w.Steps); err != nil {
 		return nil, fmt.Errorf("pasos ilegibles en el flujo %s: %w", w.ID, err)
 	}

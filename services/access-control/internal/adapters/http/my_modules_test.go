@@ -39,7 +39,7 @@ func (a *accountRepo) ListWriteActionsByModule(context.Context, uuid.UUID, uuid.
 
 func myModulesServer(repo ports.UserRoleRepository) http.Handler {
 	uc := app.NewRBACUseCase(nil, nil, nil, repo, nil, nil,
-		app.SystemRoles{Superadmin: middleware.RoleSuperadmin, TenantAdmin: middleware.RoleTenantAdmin}, zap.NewNop())
+		app.SystemRoles{Superadmin: middleware.RoleSuperadmin, TenantAdmin: middleware.RoleTenantAdmin}, nil, zap.NewNop())
 	r := chi.NewRouter()
 	r.Use(middleware.InjectFromGateway)
 	r.Mount("/", NewHandler(uc).Routes())

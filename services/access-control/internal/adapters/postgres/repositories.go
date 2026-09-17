@@ -76,13 +76,16 @@ func (r *RoleRepo) GetByID(ctx context.Context, id uuid.UUID) (*domain.Role, err
 	return role, err
 }
 
+// GetByName distingue el rol que no existe (ErrRoleNotFound) de un fallo de la base, igual
+// que GetByID: CreateRole trata el primero como "libre para crear" y el segundo como un
+// error que debe abortar la creacion, no como permiso implicito.
 func (r *RoleRepo) GetByName(ctx context.Context, tenantID uuid.UUID, name string) (*domain.Role, error) {
 	role, err := scanRole(r.pool.QueryRow(ctx,
 		`SELECT `+roleColumns+` FROM access_control.roles WHERE tenant_id = $1 AND name = $2`, tenantID, name))
-	if err != nil {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, domain.ErrRoleNotFound
 	}
-	return role, nil
+	return role, err
 }
 
 func (r *RoleRepo) List(ctx context.Context, tenantID uuid.UUID) ([]*domain.Role, error) {
@@ -230,6 +233,24 @@ func (r *UserRoleRepo) Revoke(ctx context.Context, userID, roleID uuid.UUID) err
 		userID, roleID,
 	)
 	return err
+}
+
+func (r *UserRoleRepo) ListUsersByRole(ctx context.Context, roleID uuid.UUID) ([]uuid.UUID, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT user_id FROM access_control.user_roles WHERE role_id = $1`, roleID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
 }
 
 func (r *UserRoleRepo) ListRoles(ctx context.Context, userID, tenantID uuid.UUID) ([]*domain.Role, error) {

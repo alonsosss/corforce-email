@@ -19,7 +19,7 @@ type SecurityFilters struct {
 type AuditLogRepository interface {
 	Create(ctx context.Context, log *domain.AuditLog) error
 	VerifyChain(ctx context.Context, tenantID uuid.UUID) (*domain.ChainIntegrity, error)
-	RecentLoginOtherIP(ctx context.Context, userID uuid.UUID, currentIP string, since time.Time, excludeID uuid.UUID) (string, error)
+	RecentLoginOtherIP(ctx context.Context, tenantID, userID uuid.UUID, currentIP string, since time.Time, excludeID uuid.UUID) (string, error)
 	GetByID(ctx context.Context, id, tenantID uuid.UUID) (*domain.AuditLog, error)
 	List(ctx context.Context, query domain.AuditQuery, page, pageSize int) ([]*domain.AuditLog, error)
 	Count(ctx context.Context, query domain.AuditQuery) (int64, error)
@@ -28,9 +28,9 @@ type AuditLogRepository interface {
 	// Consultas del detector de seguridad sobre el historial de la propia bitacora.
 	// excludeID descarta el registro recien insertado: el detector corre despues de
 	// persistir y sin excluirlo el evento actual se contaria como "historial".
-	HasUserActionFromIP(ctx context.Context, userID uuid.UUID, action, ip string, excludeID uuid.UUID) (bool, error)
-	ListUserActionAgents(ctx context.Context, userID uuid.UUID, action string, excludeID uuid.UUID, limit int) ([]string, error)
-	CountRecentByActionIP(ctx context.Context, action, ip string, since time.Time) (int64, error)
+	HasUserActionFromIP(ctx context.Context, tenantID, userID uuid.UUID, action, ip string, excludeID uuid.UUID) (bool, error)
+	ListUserActionAgents(ctx context.Context, tenantID, userID uuid.UUID, action string, excludeID uuid.UUID, limit int) ([]string, error)
+	CountRecentByActionIP(ctx context.Context, tenantID uuid.UUID, action, ip string, since time.Time) (int64, error)
 }
 
 type SecurityEventRepository interface {
@@ -46,7 +46,7 @@ type SecurityEventRepository interface {
 
 type DataChangeRepository interface {
 	CreateBatch(ctx context.Context, records []*domain.DataChangeRecord) error
-	GetByLogID(ctx context.Context, logID uuid.UUID) ([]*domain.DataChangeRecord, error)
+	GetByLogID(ctx context.Context, tenantID, logID uuid.UUID) ([]*domain.DataChangeRecord, error)
 }
 
 type AuditSummaryRepository interface {

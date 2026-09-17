@@ -76,6 +76,12 @@ func (r *CachedUserRoleRepo) ListRoles(ctx context.Context, userID, tenantID uui
 	return r.inner.ListRoles(ctx, userID, tenantID)
 }
 
+// ListUsersByRole no se cachea: se consulta solo al cambiar un rol, para saber a quien
+// invalidar, nunca en el camino caliente de autorizacion.
+func (r *CachedUserRoleRepo) ListUsersByRole(ctx context.Context, roleID uuid.UUID) ([]uuid.UUID, error) {
+	return r.inner.ListUsersByRole(ctx, roleID)
+}
+
 // UserAccount NO se cachea: la revocacion y la baja de una cuenta necesitan el valor
 // fresco. Se delega directo a la base (el gateway lo cachea 60 s por su lado).
 func (r *CachedUserRoleRepo) UserAccount(ctx context.Context, userID, tenantID uuid.UUID) (domain.UserAccount, error) {
