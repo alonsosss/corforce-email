@@ -50,6 +50,20 @@ done
 
 # La contrasena NO se lee del .env: la fuente es el almacen (with-secrets.sh la deja en el
 # entorno). ops/security/secrets/check-secret-sources.sh lo exige.
+
+# La configuracion que decide los roles (no secreta) llega al entorno solo si alguien la exporta;
+# with-secrets.sh exporta secretos, no configuracion. Sin esto, en el servidor quedaban fuera los
+# roles de la celda y sus servicios no pasaban el pooler.
+config() {
+  local clave="$1" valor="${!1:-}"
+  if [[ -z "$valor" && -f "${APP_DIR:-$ROOT}/.env" ]]; then
+    valor="$(sed -n -E "s/^${clave}=//p" "${APP_DIR:-$ROOT}/.env" | tail -n 1)"
+  fi
+  printf '%s' "$valor"
+}
+CELL_DB_NAME="$(config CELL_DB_NAME)"
+CELL_DB_USER="$(config CELL_DB_USER)"
+POSTGRES_USER="$(config POSTGRES_USER)"
 avisos=()
 lineas=()
 

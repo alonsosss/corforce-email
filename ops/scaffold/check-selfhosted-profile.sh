@@ -289,6 +289,15 @@ for s in postgres-primary redis pgbouncer nats; do
 done
 perfil 'DEPLOY_PROFILE=selfhosted\n' --nombre && [[ "$(cat "$TMP/out")" == selfhosted ]] || mal "perfil: --nombre no necesita la CA y dice selfhosted"
 
+# Sin almacen, with-secrets.sh exporta credenciales pero no configuracion: el userlist de PgBouncer
+# debe sacar del .env la celda del despliegue o sus servicios no pasan el pooler.
+mkdir -p "$TMP/app" && printf 'CELL_DB_NAME=mail_cell_zz_01\n' >"$TMP/app/.env"
+roles="$(env -i PATH="$PATH" APP_DIR="$TMP/app" POSTGRES_PASSWORD=x CELL_DB_PASSWORD=x MAIL_DB_PASSWORD=x \
+  bash "$ROOT/ops/db/pgbouncer-userlist.sh" --print 2>/dev/null)"
+for r in mail_cell_zz_01_svc mail_cell_zz_01_engine; do
+  grep -qx "\"$r\"" <<<"$roles" || mal "pgbouncer-userlist.sh: sin CELL_DB_NAME en el entorno omite $r del .env"
+done
+
 if [[ $FALLOS -ne 0 ]]; then
   echo "check-selfhosted-profile: FALLA" >&2
   exit 1
