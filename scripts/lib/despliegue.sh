@@ -1,0 +1,141 @@
+# shellcheck shell=bash
+# Piezas comunes de los despliegues que se lanzan desde el puesto de trabajo:
+# scripts/deploy-ecr.sh (plataforma, proyecto compose app) y scripts/deploy-mail.sh (motores de
+# correo, proyecto compose mail). Se sourcea y no cambia las opciones del shell de quien lo carga.
+#
+# Una sola implementacion del destino, del candado y de la guardia de retroceso: si los dos
+# despliegues tuvieran cada uno la suya, dejarian de excluirse entre si y un retroceso podria
+# colarse por el camino que se quedo atras.
+
+# El transporte por defecto es el alias SSM de ~/.ssh/config (ops/aws/setup-ssm-local.sh); en un
+# servidor propio se da DEPLOY_HOST, DEPLOY_USER y DEPLOY_SSH_KEY.
+DEPLOY_HOST="${DEPLOY_HOST:-core-force-mail-ssm}"; DEPLOY_USER="${DEPLOY_USER:-deploy}"
+DEPLOY_PATH="${DEPLOY_PATH:-/opt/core-force-mail/app}"
+SSH_KEY="${DEPLOY_SSH_KEY:-$HOME/.ssh/core-force-mail-prod.pem}"
+SSH=(ssh -o StrictHostKeyChecking=accept-new -o IdentitiesOnly=yes -i "$SSH_KEY" "$DEPLOY_USER@$DEPLOY_HOST")
+
+# Un despliegue a la vez por servidor, sea de la plataforma o de los motores: los dos tocan la red
+# mail-engines, el disco de imagenes y la memoria de una maquina pequena.
+DEPLOY_LOCK_DIR="${DEPLOY_LOCK_DIR:-/tmp/core-deploy.lock}"
+DEPLOY_LOCK_ABANDONO_MIN="${DEPLOY_LOCK_ABANDONO_MIN:-30}"
+DEPLOY_LOCK_INTENTOS="${DEPLOY_LOCK_INTENTOS:-60}"
+DEPLOY_LOCK_PAUSA="${DEPLOY_LOCK_PAUSA:-10}"
+CANDADO_TOMADO=0
+
+# Comprobar el transporte ANTES de compilar. Sin esto, un fallo de conexion aparecia tras varios
+# minutos de build, y el mensaje de ssh no distingue "SSM no responde" de "tu IP cambio".
+despliegue_comprobar_conexion() {
+  "${SSH[@]}" -o ConnectTimeout=45 true 2>/dev/null && return 0
+  echo "no se pudo conectar a $DEPLOY_USER@$DEPLOY_HOST" >&2
+  if [[ "$DEPLOY_HOST" == "core-force-mail-ssm" ]]; then
+    echo "  El transporte es SSM. Comprueba:" >&2
+    echo "    ops/aws/setup-ssm-local.sh        # instala el plugin y el alias, y lo prueba" >&2
+    echo "    aws ssm describe-instance-information --region ${ECR_REGION:-us-east-1}" >&2
+    echo "  Puerta de emergencia (el 22 sigue abierto a tu IP):" >&2
+    echo "    DEPLOY_HOST=<ip-publica-de-la-instancia> $0" >&2
+  else
+    echo "  Transporte directo por el puerto 22: casi siempre es que tu IP cambio o la llave no es esa." >&2
+    echo "  O usa SSM, que no depende de la IP:  ops/aws/setup-ssm-local.sh" >&2
+  fi
+  return 1
+}
+
+# El tag del despliegue es el hash de HEAD, asi que lo que viaja tiene que ser HEAD: con el arbol
+# sucio la imagen incluiria cambios sin commitear, el tag mentiria y el rollback por tag repondria
+# otra cosa.
+despliegue_comprobar_arbol() {
+  [[ -z "$(git status --porcelain --untracked-files=no)" || "${DEPLOY_ALLOW_DIRTY:-0}" == "1" ]] && return 0
+  echo "arbol de trabajo con cambios sin commitear:" >&2
+  git status --porcelain --untracked-files=no | sed 's/^/  /' >&2
+  echo "commitea primero (el deploy va atado a un commit exacto) o, a proposito," >&2
+  echo "salta la guarda con DEPLOY_ALLOW_DIRTY=1." >&2
+  return 1
+}
+
+# Los Dockerfile de los servicios Go usan "RUN --mount=type=cache": sin BuildKit el build muere a
+# media compilacion con un mensaje que no explica que falta.
+despliegue_comprobar_buildkit() {
+  docker buildx version >/dev/null 2>&1 && return 0
+  echo "falta BuildKit: 'docker buildx' no esta disponible en esta maquina." >&2
+  echo "  instalalo con: sudo apt install docker-buildx" >&2
+  return 1
+}
+
+# adquirir_candado <quien>: el candado es un directorio (mkdir es atomico) con el tag, quien lo
+# tiene y la hora; uno sin renovar hace mas de DEPLOY_LOCK_ABANDONO_MIN minutos se considera
+# muerto y se roba. Sin esto, dos despliegues en carrera terminan con los contenedores del que
+# acabo ultimo, gane quien gane las guardias. Va sin `cd`: el candado no depende de que exista
+# el directorio de ningun despliegue.
+adquirir_candado() {
+  local quien="$1" intento=0 info
+  while ! "${SSH[@]}" "mkdir $DEPLOY_LOCK_DIR 2>/dev/null && echo '${TAG:-?} $quien $(date -u +%FT%TZ)' > $DEPLOY_LOCK_DIR/info"; do
+    info="$("${SSH[@]}" "cat $DEPLOY_LOCK_DIR/info 2>/dev/null" || true)"
+    if "${SSH[@]}" "test -n \"\$(find $DEPLOY_LOCK_DIR -maxdepth 0 -mmin +$DEPLOY_LOCK_ABANDONO_MIN 2>/dev/null)\""; then
+      echo ">> candado abandonado (${info:-sin info}); se libera." >&2
+      "${SSH[@]}" "rm -rf $DEPLOY_LOCK_DIR" || true
+      continue
+    fi
+    intento=$((intento + 1))
+    if ((intento > DEPLOY_LOCK_INTENTOS)); then
+      echo "otro despliegue lleva demasiado con el candado (${info:-sin info}); abortando." >&2
+      return 1
+    fi
+    echo ">> otro despliegue en curso (${info:-sin info}); esperando..." >&2
+    sleep "$DEPLOY_LOCK_PAUSA"
+  done
+  CANDADO_TOMADO=1
+}
+
+# Un despliegue largo (varios motores esperados uno a uno) renueva el candado entre pasos para que
+# nadie lo tome por abandonado mientras sigue vivo.
+renovar_candado() {
+  [[ "$CANDADO_TOMADO" == "1" ]] || return 0
+  "${SSH[@]}" "touch $DEPLOY_LOCK_DIR" >/dev/null 2>&1 || true
+}
+
+liberar_candado() {
+  [[ "$CANDADO_TOMADO" == "1" ]] || return 0
+  "${SSH[@]}" "rm -rf $DEPLOY_LOCK_DIR" >/dev/null 2>&1 || true
+  CANDADO_TOMADO=0
+}
+
+# es_commit <tag>: cierto si el tag tiene forma de hash y es un commit de este repositorio.
+es_commit() {
+  [[ "$1" =~ ^[0-9a-f]{7,40}$ ]] && git cat-file -e "$1^{commit}" 2>/dev/null
+}
+
+# guardia_retroceso <proyecto> <tag> <servicio>...
+#
+# Desplegar un commit ANTERIOR al que ya corre es un retroceso que nada delata: el deploy termina
+# "bien" y el sintoma es una funcionalidad que desaparece horas despues. Basta con dos sesiones
+# desplegando a la vez desde commits distintos. Se llama dos veces: antes del build, para fallar
+# pronto, y con el candado en la mano, que es la que cierra la carrera. Un rollback a proposito se
+# declara con DEPLOY_ALLOW_ROLLBACK=1.
+#
+# El contenedor se busca por etiqueta de compose y no por nombre: Docker lo renombra cuando una
+# recreacion se cruza consigo misma. Solo se juzgan imagenes etiquetadas por commit; latest o una
+# imagen fijada por version (redis) no dicen de que commit vienen.
+guardia_retroceso() {
+  local proyecto="$1" tag="$2"; shift 2
+  [[ "${DEPLOY_ALLOW_ROLLBACK:-0}" == "1" ]] && return 0
+  local corriendo retrocesos=() svc tag_vivo
+  corriendo="$("${SSH[@]}" "docker ps --filter label=com.docker.compose.project=$proyecto --format '{{.Label \"com.docker.compose.service\"}} {{.Image}}'" || true)"
+  for svc in "$@"; do
+    tag_vivo="$(awk -v s="$svc" '$1==s {n=split($2,a,":"); if (n>1) print a[n]; exit}' <<<"$corriendo")"
+    [[ -z "$tag_vivo" || "$tag_vivo" == "$tag" || ! "$tag_vivo" =~ ^[0-9a-f]{7,40}$ ]] && continue
+    if ! git cat-file -e "$tag_vivo^{commit}" 2>/dev/null; then
+      echo ">> aviso: $svc corre $tag_vivo, commit desconocido en este repo; no se puede comparar." >&2
+      continue
+    fi
+    if git merge-base --is-ancestor "$tag" "$tag_vivo" 2>/dev/null; then
+      retrocesos+=("$svc ($tag_vivo -> $tag)")
+    fi
+  done
+  [[ ${#retrocesos[@]} -eq 0 ]] && return 0
+  echo "RETROCESO DE VERSION: el commit a desplegar ($tag) es ANTERIOR al que ya corre en:" >&2
+  printf '  %s\n' "${retrocesos[@]}" >&2
+  echo "desplegar asi retiraria de produccion lo publicado despues de $tag." >&2
+  echo "si es un rollback a proposito, repite con DEPLOY_ALLOW_ROLLBACK=1;" >&2
+  echo "si no, despliega desde HEAD (o haz pull/rebase primero)." >&2
+  return 1
+}

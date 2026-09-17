@@ -1,0 +1,45 @@
+# compose-base: docker-compose.mail.yml
+#
+# Imagenes de despliegue de los motores. Lo usa scripts/deploy-mail.sh encima de
+# docker-compose.mail.yml, al construir en el puesto de trabajo y al levantar en el servidor con
+# --no-build: cada motor construido se etiqueta core-force-mail/<motor>:<commit>, de modo que el
+# servidor sabe que commit corre cada uno (guardia de retroceso, rollback por etiqueta) y
+# ops/ecr/prune-local-images.sh conserva las ultimas. pull_policy: never porque estas imagenes
+# solo existen en el servidor tras el docker load del despliegue: nunca se buscan en un registro.
+#
+# Todo servicio con build en docker-compose.mail.yml tiene que estar aqui
+# (ops/scaffold/check-deploy-mail.sh). redis-mail no: usa una imagen publica fijada por version.
+services:
+  unbound-mail:
+    image: core-force-mail/unbound-mail:${MAIL_DEPLOY_TAG:?lo fija scripts/deploy-mail.sh}
+    pull_policy: never
+  clamd-mail:
+    image: core-force-mail/clamd-mail:${MAIL_DEPLOY_TAG:?lo fija scripts/deploy-mail.sh}
+    pull_policy: never
+  rspamd-mail:
+    image: core-force-mail/rspamd-mail:${MAIL_DEPLOY_TAG:?lo fija scripts/deploy-mail.sh}
+    pull_policy: never
+  dovecot-mail:
+    image: core-force-mail/dovecot-mail:${MAIL_DEPLOY_TAG:?lo fija scripts/deploy-mail.sh}
+    pull_policy: never
+  postfix-mail:
+    image: core-force-mail/postfix-mail:${MAIL_DEPLOY_TAG:?lo fija scripts/deploy-mail.sh}
+    pull_policy: never
+  postfix-tlspol-mail:
+    image: core-force-mail/postfix-tlspol-mail:${MAIL_DEPLOY_TAG:?lo fija scripts/deploy-mail.sh}
+    pull_policy: never
+  acme-mail:
+    image: core-force-mail/acme-mail:${MAIL_DEPLOY_TAG:?lo fija scripts/deploy-mail.sh}
+    pull_policy: never
+  netfilter-mail:
+    image: core-force-mail/netfilter-mail:${MAIL_DEPLOY_TAG:?lo fija scripts/deploy-mail.sh}
+    pull_policy: never
+  watchdog-mail:
+    image: core-force-mail/watchdog-mail:${MAIL_DEPLOY_TAG:?lo fija scripts/deploy-mail.sh}
+    pull_policy: never
+  dockerapi-mail:
+    image: core-force-mail/dockerapi-mail:${MAIL_DEPLOY_TAG:?lo fija scripts/deploy-mail.sh}
+    pull_policy: never
+  olefy-mail:
+    image: core-force-mail/olefy-mail:${MAIL_DEPLOY_TAG:?lo fija scripts/deploy-mail.sh}
+    pull_policy: never

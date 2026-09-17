@@ -13,41 +13,21 @@ ROOT="$(git -C "$(dirname "$0")" rev-parse --show-toplevel)"; cd "$ROOT"
 # El transporte por defecto es SSM, no la IP. El Security Group admite el 22 desde UNA
 # sola IP y la de esta PC es dinamica: cuando cambiaba, esto moria con "Connection timed
 # out" -que parece del servidor y no lo es- y arreglarlo exigia subir al perfil raiz con
-# MFA. Por SSM no hay puerto que autorizar y funciona desde cualquier sitio.
-#
-# `core-force-mail-ssm` es un alias de ~/.ssh/config que lo instala ops/aws/setup-ssm-local.sh;
-# ssh, scp y rsync no cambian, solo el transporte por debajo.
+# MFA. Por SSM no hay puerto que autorizar y funciona desde cualquier sitio. El destino, el
+# candado y la guardia de retroceso son comunes con scripts/deploy-mail.sh
+# (scripts/lib/despliegue.sh).
 #
 # El 22 sigue abierto como puerta de emergencia. Si SSM fallara:
 #   DEPLOY_HOST=<ip-publica-de-la-instancia> scripts/deploy-ecr.sh
-DEPLOY_HOST="${DEPLOY_HOST:-core-force-mail-ssm}"; DEPLOY_USER="${DEPLOY_USER:-deploy}"
-DEPLOY_PATH="${DEPLOY_PATH:-/opt/core-force-mail/app}"
-SSH_KEY="${DEPLOY_SSH_KEY:-$HOME/.ssh/core-force-mail-prod.pem}"
-SSH=(ssh -o StrictHostKeyChecking=accept-new -o IdentitiesOnly=yes -i "$SSH_KEY" "$DEPLOY_USER@$DEPLOY_HOST")
+# shellcheck source-path=SCRIPTDIR source=lib/despliegue.sh
+. "$ROOT/scripts/lib/despliegue.sh"
 TRANSPORT="${TRANSPORT:-ecr}"   # ecr | save
 TAG="$(git rev-parse --short HEAD)"
 ECR_REGION="${ECR_REGION:-us-east-1}"; NS=core-force-mail
 
 remote() { "${SSH[@]}" "cd $DEPLOY_PATH && $*"; }
 
-# Comprobar el transporte ANTES de compilar. Sin esto, un fallo de conexion aparecia tras
-# varios minutos de build, y el mensaje de ssh no distingue "SSM no responde" de "tu IP
-# cambio", que son dos arreglos completamente distintos.
-if ! "${SSH[@]}" -o ConnectTimeout=45 true 2>/dev/null; then
-  echo "no se pudo conectar a $DEPLOY_USER@$DEPLOY_HOST" >&2
-  if [[ "$DEPLOY_HOST" == "core-force-mail-ssm" ]]; then
-    echo "  El transporte es SSM. Comprueba:" >&2
-    echo "    ops/aws/setup-ssm-local.sh        # instala el plugin y el alias, y lo prueba" >&2
-    echo "    aws ssm describe-instance-information --region $ECR_REGION" >&2
-    echo "  Puerta de emergencia (el 22 sigue abierto a tu IP):" >&2
-    echo "    DEPLOY_HOST=<ip-publica-de-la-instancia> $0 $*" >&2
-  else
-    echo "  Transporte directo por el puerto 22: casi siempre es que tu IP cambio." >&2
-    echo "    curl -s https://checkip.amazonaws.com   # contrastala con la regla del grupo" >&2
-    echo "  O usa SSM, que no depende de la IP:  ops/aws/setup-ssm-local.sh" >&2
-  fi
-  exit 1
-fi
+despliegue_comprobar_conexion || exit 1
 
 # Prometheus monta ops/observability/prometheus como configuracion, pero lee las reglas al
 # ARRANCAR o al recibir una recarga: el rsync dejaba la regla nueva en disco y Prometheus
@@ -62,17 +42,7 @@ recargar_prometheus() {
   fi
 }
 
-# El tag del despliegue es el hash de HEAD, asi que lo que viaja tiene que ser HEAD:
-# con el arbol sucio, la imagen incluiria cambios sin commitear y el tag mentiria
-# (y el rollback por tag repondria otra cosa). Ademas el rsync de migraciones podria
-# arrastrar un .sql a medio escribir directo a produccion.
-if [[ -n "$(git status --porcelain --untracked-files=no)" && "${DEPLOY_ALLOW_DIRTY:-0}" != "1" ]]; then
-  echo "arbol de trabajo con cambios sin commitear:" >&2
-  git status --porcelain --untracked-files=no | sed 's/^/  /' >&2
-  echo "commitea primero (el deploy va atado a un commit exacto) o, a proposito," >&2
-  echo "salta la guarda con DEPLOY_ALLOW_DIRTY=1." >&2
-  exit 1
-fi
+despliegue_comprobar_arbol || exit 1
 
 # Ficheros que viajan al servidor: SIEMPRE desde HEAD (git archive), nunca desde el
 # arbol de trabajo. Una migracion nueva sin commitear no puede colarse a produccion.
@@ -89,12 +59,11 @@ fi
 # La limpieza es UNA rutina y UN trap: traps sueltos se pisan entre si, y un
 # fallo a mitad dejaba el candado puesto o el token de ECR en el servidor.
 STAGE_DIR=""
-CANDADO_TOMADO=0
 ECR_LOGUEADO=0
 limpiar() {
   [[ -n "$STAGE_DIR" ]] && rm -rf "$STAGE_DIR"
   [[ "$ECR_LOGUEADO" == "1" ]] && remote "docker logout $ECR_REGISTRY >/dev/null 2>&1" || true
-  [[ "$CANDADO_TOMADO" == "1" ]] && remote 'rm -rf /tmp/core-deploy.lock' >/dev/null 2>&1 || true
+  liberar_candado
 }
 trap limpiar EXIT
 
@@ -126,6 +95,13 @@ leer_perfil() {
   }
   read -r -a INFRA <<<"$(remote "ops/maintenance/perfil-despliegue.sh --infra")"
   [[ ${#INFRA[@]} -gt 0 ]] && echo ">> perfil autoalojado: $COMPOSE_ARGS | infraestructura: ${INFRA[*]}"
+  # La red mail-engines y el volumen de certificados son del proyecto de los motores: los crea su
+  # despliegue (scripts/deploy-mail.sh). Sin ellos `up` fallaria a mitad de la recreacion.
+  remote "ops/security/secrets/with-secrets.sh ops/maintenance/recursos-externos.sh $COMPOSE_ARGS" || {
+    echo "!! faltan recursos externos de la plataforma (detalle arriba): despliega antes los motores" >&2
+    echo "   con scripts/deploy-mail.sh (docs/Operacion_Despliegue.md, 11, paso 4)" >&2
+    exit 1
+  }
   return 0
 }
 
@@ -173,16 +149,7 @@ aplicar_borde() {
   }
 }
 
-# Los Dockerfile de los servicios Go usan "RUN --mount=type=cache" para reutilizar el
-# cache de modulos y de compilacion. Sin BuildKit, Docker cae al constructor clasico y el
-# build muere a media compilacion con un mensaje que no explica que falta. Se comprueba
-# antes de construir nada.
-if ! docker buildx version >/dev/null 2>&1; then
-  echo "falta BuildKit: 'docker buildx' no esta disponible en esta maquina." >&2
-  echo "  sin el, los servicios Go no compilan (--mount=type=cache lo requiere)." >&2
-  echo "  instalalo con: sudo apt install docker-buildx" >&2
-  exit 1
-fi
+despliegue_comprobar_buildkit || exit 1
 
 # El transporte ecr exige credenciales AWS locales (access key IAM). Sin ellas el
 # camino correcto sigue siendo compilar aqui: se degrada a save (docker save | ssh load)
@@ -254,67 +221,9 @@ if [[ "${SOLO_FICHEROS:-0}" != "1" ]]; then
   echo ">> tag $TAG | servicios (${#SVCS[@]}): ${SVCS[*]}"
 fi
 
-# ── 1b. guardia de retroceso ─────────────────────────────────────────────────
-# Desplegar un commit ANTERIOR al que ya corre es un retroceso de version que
-# nada delata: el deploy termina "bien", check-image-drift no lo ve (solo compara
-# ECR contra imagen local) y el sintoma es una funcionalidad que desaparece de la
-# pantalla horas despues. Basta con dos sesiones desplegando a la vez desde commits distintos.
-#
-# Se comprueba DOS veces: aqui, para fallar antes de gastar el build, y otra vez
-# con el candado del servidor en la mano, porque dos despliegues en carrera
-# pasan ambos la primera comprobacion y el que termina ultimo pisa al otro; esa
-# segunda pasada, ya serializada, es la que de verdad cierra la puerta. Un
-# rollback a proposito se declara con DEPLOY_ALLOW_ROLLBACK=1.
-guardia_retroceso() {
-  [[ "${DEPLOY_ALLOW_ROLLBACK:-0}" == "1" ]] && return 0
-  local corriendo retrocesos=() svc tag_vivo
-  corriendo="$(remote "docker ps --format '{{.Names}} {{.Image}}'" || true)"
-  for svc in "${SVCS[@]}"; do
-    tag_vivo="$(awk -v n="app-$svc-1" '$1==n {split($2,a,":"); print a[length(a)]}' <<<"$corriendo")"
-    [[ -z "$tag_vivo" || "$tag_vivo" == "$TAG" || "$tag_vivo" == "latest" ]] && continue
-    if ! git cat-file -e "$tag_vivo^{commit}" 2>/dev/null; then
-      # El commit vivo no existe en este repo (otra maquina, historia no
-      # traida): no se puede juzgar. Se avisa y se continua.
-      echo ">> aviso: $svc corre $tag_vivo, commit desconocido en este repo; no se puede comparar." >&2
-      continue
-    fi
-    if git merge-base --is-ancestor "$TAG" "$tag_vivo" 2>/dev/null; then
-      retrocesos+=("$svc ($tag_vivo -> $TAG)")
-    fi
-  done
-  if [[ ${#retrocesos[@]} -gt 0 ]]; then
-    echo "RETROCESO DE VERSION: el commit a desplegar ($TAG) es ANTERIOR al que ya corre en:" >&2
-    printf '  %s\n' "${retrocesos[@]}" >&2
-    echo "desplegar asi retiraria de produccion lo publicado despues de $TAG." >&2
-    echo "si es un rollback a proposito, repite con DEPLOY_ALLOW_ROLLBACK=1;" >&2
-    echo "si no, despliega desde HEAD (o haz pull/rebase primero)." >&2
-    return 1
-  fi
-}
-guardia_retroceso || exit 1
-
-# Un despliegue a la vez por servidor. El candado es un directorio (mkdir es
-# atomico) con el tag y la hora dentro; uno abandonado hace mas de 30 minutos
-# se considera muerto y se roba. Sin esto, dos despliegues en carrera terminan
-# con los contenedores del que acabo ultimo, gane quien gane las guardias.
-adquirir_candado() {
-  local intento=0 info
-  while ! remote "mkdir /tmp/core-deploy.lock 2>/dev/null && echo '$TAG $(date -u +%FT%TZ)' > /tmp/core-deploy.lock/info"; do
-    info="$(remote 'cat /tmp/core-deploy.lock/info 2>/dev/null' || true)"
-    if remote 'test -n "$(find /tmp/core-deploy.lock -maxdepth 0 -mmin +30 2>/dev/null)"'; then
-      echo ">> candado abandonado (${info:-sin info}); se libera." >&2
-      remote 'rm -rf /tmp/core-deploy.lock' || true
-      continue
-    fi
-    intento=$((intento + 1))
-    if (( intento > 60 )); then
-      echo "otro despliegue lleva mas de 10 minutos con el candado (${info:-sin info}); abortando." >&2
-      exit 1
-    fi
-    echo ">> otro despliegue en curso (${info:-sin info}); esperando..." >&2
-    sleep 10
-  done
-}
+# ── 1b. guardia de retroceso (scripts/lib/despliegue.sh) ─────────────────────
+# Antes del build para fallar pronto; se repite con el candado en la mano.
+guardia_retroceso app "$TAG" "${SVCS[@]}" || exit 1
 
 # El servidor no tiene el codigo fuente: solo levanta lo que el override de imagenes
 # referencia. Un servicio ausente del override intentaria compilar alli y el deploy
@@ -331,9 +240,8 @@ if [[ "${SOLO_FICHEROS:-0}" == "1" ]]; then
     echo "nada que desplegar"; exit 0
   fi
   echo ">> tag $TAG | sin imagenes que reconstruir; se sincronizan los ficheros del servidor"
-  adquirir_candado
-  CANDADO_TOMADO=1
-  guardia_retroceso || exit 1
+  adquirir_candado plataforma || exit 1
+  guardia_retroceso app "$TAG" "${SVCS[@]}" || exit 1
   TAG_DESPLEGADO="$(remote 'cat .deployed-tag 2>/dev/null' || true)"
   stage_head_files "${FICHEROS_SERVIDOR[@]}"
   rsync -a -e "ssh -o IdentitiesOnly=yes -i $SSH_KEY" "$STAGE_DIR"/ "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/"
@@ -420,9 +328,8 @@ if [[ "$TRANSPORT" == "ecr" ]]; then
   # server: pull etiquetado + up con override de imagenes. Desde aqui todo va
   # bajo candado: la re-verificacion de retroceso ve el estado REAL tras
   # cualquier despliegue que haya corrido en paralelo durante nuestro build.
-  adquirir_candado
-  CANDADO_TOMADO=1
-  guardia_retroceso || exit 1
+  adquirir_candado plataforma || exit 1
+  guardia_retroceso app "$TAG" "${SVCS[@]}" || exit 1
   TAG_DESPLEGADO="$(remote 'cat .deployed-tag 2>/dev/null' || true)"
   stage_head_files "${FICHEROS_SERVIDOR[@]}"
   rsync -a -e "ssh -o IdentitiesOnly=yes -i $SSH_KEY" "$STAGE_DIR"/ "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/"
@@ -473,9 +380,8 @@ else
   # fallback sin AWS local: save | ssh load, luego up normal (imagen local del server)
   COMPOSE=(docker compose)
   build_en_lotes
-  adquirir_candado
-  CANDADO_TOMADO=1
-  guardia_retroceso || exit 1
+  adquirir_candado plataforma || exit 1
+  guardia_retroceso app "$TAG" "${SVCS[@]}" || exit 1
   echo ">> build local OK"
   docker save $(printf 'app-%s:latest ' "${SVCS[@]}") | gzip | "${SSH[@]}" 'gunzip | docker load'
   TAG_DESPLEGADO="$(remote 'cat .deployed-tag 2>/dev/null' || true)"

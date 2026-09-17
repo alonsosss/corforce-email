@@ -236,6 +236,9 @@ services:
 
   acme-mail:
     build: ./acme
+    labels:
+      # Nunca contra el docker del puesto de trabajo: pide certificados reales para MAIL_HOSTNAME (scripts/deploy-mail.sh).
+      core-force-mail.solo-servidor: "true"
     depends_on:
       unbound-mail:
         condition: service_healthy
@@ -282,6 +285,9 @@ services:
 
   netfilter-mail:
     build: ./netfilter
+    labels:
+      # Nunca contra el docker del puesto de trabajo: privilegiado en la red del host: reescribe su cortafuegos (scripts/deploy-mail.sh).
+      core-force-mail.solo-servidor: "true"
     stop_grace_period: 30s
     restart: always
     privileged: true
@@ -302,6 +308,9 @@ services:
 
   watchdog-mail:
     build: ./watchdog
+    labels:
+      # Nunca contra el docker del puesto de trabajo: reinicia motores a traves de dockerapi (scripts/deploy-mail.sh).
+      core-force-mail.solo-servidor: "true"
     dns:
       - ${IPV4_NETWORK:-172.22.1}.254
     tmpfs:
@@ -362,6 +371,9 @@ services:
 
   dockerapi-mail:
     build: ./dockerapi
+    labels:
+      # Nunca contra el docker del puesto de trabajo: monta el socket de docker del host (scripts/deploy-mail.sh).
+      core-force-mail.solo-servidor: "true"
     security_opt:
       - label=disable
     restart: always

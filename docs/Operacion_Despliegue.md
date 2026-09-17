@@ -20,6 +20,8 @@ largas de cada guardarraíl están en `ops/scaffold/README.md`, `ops/security/se
   privilegiado en la red del host y reescribe su cortafuegos), ni `acme-mail`, `watchdog-mail`
   o `dockerapi-mail`: `up -d --no-deps` con la lista de motores, porque `redis-mail` depende de
   `netfilter-mail` y un `up` sin más lo arrancaría. Los puertos de correo, solo en `127.0.0.1`.
+  `scripts/deploy-mail.sh` se niega a levantar esos cuatro (etiqueta `core-force-mail.solo-servidor`)
+  si el docker del destino es el de la propia máquina.
   `main.cf` de Postfix lo genera `postfix/postfix.sh` en cada arranque desde `main.cf.base`,
   que es el versionado; `webmail` exige `WEBMAIL_MASTER_USER=<DOVECOT_MASTER_USER>@platform.local`.
 * Producción (AWS): una cuenta por ambiente (dev, staging, prod). RDS PostgreSQL Multi-AZ
@@ -317,6 +319,20 @@ para llamar a la API hace falta ya un superadmin. Después, todo por API: `POST 
   con otra sesión.
 * `docker-compose.images.yml` es generado (`make gen-compose-images`); CI falla si queda
   atrás.
+* Motores de correo (`deploy/mail`, proyecto compose `mail`): `scripts/deploy-mail.sh` desde el PC,
+  con el mismo destino, candado y guardia de retroceso que `deploy-ecr.sh` (`scripts/lib/despliegue.sh`).
+  Construye en local con `deploy/mail/docker-compose.mail.images.yml` (`core-force-mail/<motor>:<commit>`,
+  `pull_policy: never`), transporta con `save` (los motores no tienen repositorios en ECR), extrae
+  `deploy/mail` de HEAD en `MAIL_DEPLOY_PATH` y recrea los motores uno a uno con `--no-build` por
+  `with-secrets.sh`, esperando a que cada uno arranque; registra el commit de cada motor en
+  `.deployed-tags`. Detalle en `deploy/mail/README.md` («Despliegue en un servidor»). Nunca
+  `docker compose build` ni `up` a mano de los motores en el servidor.
+* Red `mail-engines` y volumen de certificados: son del proyecto de los motores y los crea Compose al
+  levantar el primero, con sus etiquetas. La plataforma no los crea (crearlos con otra subred o sin
+  las etiquetas los dejaría incompatibles con el compose que los declara): `deploy-ecr.sh`, tras leer
+  el perfil y antes de recrear nada, comprueba con `ops/maintenance/recursos-externos.sh` las redes y
+  volúmenes externos de su compose y se detiene pidiendo desplegar antes los motores. `release.yml`
+  no lo comprueba (no sincroniza `ops/`); en un servidor así Compose falla con el nombre del recurso.
 * Salida por Amazon SES: `ops/aws/setup-ses.sh <dev|staging|prod>` aplica la pila
   `ops/aws/ses-mail.yaml` (CloudFormation): los configuration sets transaccional y de
   marketing (reputación y TLS por clase; aperturas, clics y bajas solo en marketing, con
@@ -575,12 +591,37 @@ Desde el puesto de trabajo, con el repositorio en el commit a desplegar (`<srv>`
    `daemon.json`), `MAIL_SSL_VOLUME` si el proyecto de los motores no se llama `mail`, y
    `INTERNAL_TLS_DIR` si no es el de por defecto. `REDIS_TLS*`, `DB_UPSTREAM_*` y
    `POSTGRES_DIRECT_*`, `MAIL_AUTH_TLS_CERT`/`MAIL_AUTH_TLS_KEY` y `WEBMAIL_TLS_CA_FILE` los fija el perfil. Secretos: ver Pendientes.
-4. Motores y certificado público: levantar `deploy/mail` (crea la red `mail-engines`, que la
-   plataforma necesita) con `MAIL_DB_HOST=postgres`, `ACME_DNS_CHALLENGE=y`,
-   `ACME_DNS_PROVIDER=dns_cf` y `ADDITIONAL_SAN=app.<dominio>`. `acme-mail` deja primero el
-   certificado provisional de `ssl-example` y espera a la base, que llega con el paso 5; al emitir
-   el definitivo, el borde lo recarga solo. En Cloudflare, `app.<dominio>` con proxy y modo SSL
-   «Full (strict)», y `mail.<dominio>` sin proxy (DNS only).
+4. Motores y certificado público, antes que la plataforma (crean la red `mail-engines` y el volumen
+   `<MAIL_PROJECT>_ssl-vol` que ella exige). En el `.env` del paso 3: `MAIL_DB_HOST=postgres`,
+   `ACME_DNS_CHALLENGE=y`, `ACME_DNS_PROVIDER=dns_cf` y `ADDITIONAL_SAN=app.<dominio>`. Desde el PC:
+
+   ```bash
+   DEPLOY_HOST=<srv> DEPLOY_USER=deploy DEPLOY_SSH_KEY=~/.ssh/<llave> \
+     ./scripts/deploy-mail.sh unbound-mail redis-mail clamd-mail olefy-mail dovecot-mail rspamd-mail \
+       postfix-tlspol-mail postfix-mail acme-mail netfilter-mail dockerapi-mail
+   ```
+
+   `watchdog-mail` solo si se usa (`USE_WATCHDOG=y`). Las credenciales DNS-01 de acme no pasan por
+   el despliegue: van en el volumen `<MAIL_PROJECT>_acme-conf-vol` (`/etc/acme/dns-01.conf`, 0600),
+   escritas por la entrada estándar. `acme-mail` deja primero el certificado provisional de
+   `ssl-example` y espera a la base, que llega con el paso 5; al emitir el definitivo, el borde lo
+   recarga solo. En Cloudflare, `app.<dominio>` con proxy y modo SSL «Full (strict)», y
+   `mail.<dominio>` sin proxy (DNS only). Despliegues siguientes: `./scripts/deploy-mail.sh` sin
+   argumentos recrea solo los motores con cambios.
+
+   Migración de motores levantados a mano (imágenes `mail-<motor>:latest`, red creada a mano con las
+   etiquetas de compose, configuración en `/opt/core-force-mail/mail-src/deploy/mail`): el primer
+   despliegue va con la lista explícita, porque de `:latest` no se sabe el commit. No cambian el
+   proyecto, la ruta, los volúmenes (buzones, cola de Postfix, certificados) ni la red, que Compose
+   acepta porque lleva sus etiquetas sin huella de configuración (`test-deploy-mail.sh` lo prueba).
+   Sí se recrea cada contenedor, porque cambia su imagen: cada motor cae unos segundos, de uno en uno.
+   Durante el de Postfix, los servidores remitentes reintentan (SMTP entrega con reintentos, nada se
+   pierde) y la cola sigue en su volumen; durante el de Dovecot, los clientes IMAP reconectan. Para
+   acotarlo, en horario de poco tráfico y en tandas: primero los que no cortan correo
+   (`unbound-mail olefy-mail clamd-mail postfix-tlspol-mail acme-mail dockerapi-mail`), luego
+   `redis-mail rspamd-mail netfilter-mail` y al final `dovecot-mail` y `postfix-mail`, cada tanda
+   esperando la anterior. Las imágenes `mail-*:latest` quedan sin uso y se retiran a mano cuando todo
+   corre con etiqueta (`docker image rm mail-<motor>:latest`).
 5. Primer despliegue, sin AWS (el transporte cae a `save`):
 
    ```bash
@@ -651,3 +692,8 @@ el OOM, pero con ClamAV cargando la latencia se degrada.
   otro despliegue el síntoma es que el webmail no autentica a nadie.
 * `release.yml` aplica el perfil, pero entra por SSM y publica en ECR: en un servidor sin AWS el
   camino es `scripts/deploy-ecr.sh` con `save`.
+* Motores: `scripts/deploy-mail.sh` extrae `deploy/mail` encima de la copia del servidor con el
+  usuario de despliegue. Si un motor dejara un fichero versionado de esa copia con otro dueño, `tar`
+  fallaría antes de recrear nada (el despliegue se detiene sin tocar los motores). La configuración
+  sincronizada llega también a los motores que no se recrean: el despliegue lo avisa, y conviene
+  desplegarlos en la misma ventana.

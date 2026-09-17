@@ -91,6 +91,11 @@ if ! bash "$ROOT/ops/scaffold/check-selfhosted-profile.sh"; then
   FAIL=1
 fi
 
+echo "== 12. Despliegue de los motores de correo: imagen por commit, candado, guardia y arranque =="
+if ! bash "$ROOT/ops/scaffold/check-deploy-mail.sh"; then
+  FAIL=1
+fi
+
 echo ""
 if [[ $FAIL -ne 0 ]]; then
   echo "VALIDACION: FALLA"; exit 1

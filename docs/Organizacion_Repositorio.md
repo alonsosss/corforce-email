@@ -90,6 +90,8 @@ los motores entienden traducida a PostgreSQL.
 * `migrations/cell/`: el plano de datos de celda.
 * Celdas en `organization` (`organization.cells`, `tenants.cell_id`).
 * `ops/scaffold/check-clean-copy.sh` y el target `make clean-copy`.
+* `scripts/deploy-mail.sh` (despliegue de los motores) y `scripts/lib/despliegue.sh` (destino,
+  candado y guardia de retroceso, extraídos de `deploy-ecr.sh` y compartidos con él).
 * `docs/*` de este producto.
 * Fases siguientes: `mail-directory`, `mail-auth`, `mail-policy`, `domain-service`,
   `transactional`, `contacts`, `campaigns`, `templates`, `suppression`, `reputation`,

@@ -29,6 +29,7 @@ ingles. Los comentarios nuevos estan en espanol.
 | `ssl-example/` | Certificado snake-oil inicial y `dhparams.pem` | `data/assets/ssl-example` |
 | `templates/quota.tpl` | Plantilla Jinja del aviso de cuota | `data/assets/templates` |
 | `docker-compose.mail.yml` | Compose solo de los motores | nuevo |
+| `docker-compose.mail.images.yml` | Imagenes de despliegue por commit (`scripts/deploy-mail.sh`) | nuevo |
 
 No se copiaron: `data/web`, sogo, phpfpm, nginx, mysql, `dynmaps/*.php`,
 `meta_exporter/*.php`, `mailcowauth.php`, ldap, backup, `update.sh`,
@@ -163,6 +164,59 @@ dovecot 24 (LMTP), 10001 (SASL para Postfix), 12345 (doveadm), 8443 (API HTTP de
 TLS, solo con `DOVEADM_API_KEY`); rspamd 9900
 (milter), 11332-11334 y `/var/lib/rspamd/rspamd.sock`; postfix-tlspol 8642;
 clamd 3310; olefy 10055; dockerapi 443.
+
+## Despliegue en un servidor (`scripts/deploy-mail.sh`)
+
+Los motores se despliegan desde el puesto de trabajo, como la plataforma y con las mismas piezas
+(`scripts/lib/despliegue.sh`: destino, candado del servidor y guardia de retroceso). El servidor
+nunca compila:
+
+```bash
+DEPLOY_HOST=<srv> DEPLOY_USER=deploy DEPLOY_SSH_KEY=~/.ssh/<llave> scripts/deploy-mail.sh              # motores con cambios
+DEPLOY_HOST=<srv> DEPLOY_USER=deploy DEPLOY_SSH_KEY=~/.ssh/<llave> scripts/deploy-mail.sh dovecot-mail # motores explicitos
+```
+
+1. Exige un arbol sin cambios sin commitear (`DEPLOY_ALLOW_DIRTY=1` lo salta a proposito) y lee el
+   modelo de los motores del propio compose (`docker compose config`): contexto de build, ficheros
+   montados del repositorio, dependencias y la etiqueta `core-force-mail.solo-servidor`.
+2. Sin argumentos despliega los motores que corren en el servidor y cuyo contexto, ficheros montados
+   o compose cambiaron desde el commit que corre cada uno (`<MAIL_DEPLOY_PATH>/.deployed-tags`, una
+   linea `motor commit`, o la etiqueta de su imagen). Un motor de commit desconocido (imagen
+   `:latest`) o que nunca se levanto se pide por nombre.
+3. Rechaza `acme-mail`, `netfilter-mail`, `watchdog-mail` y `dockerapi-mail` si el demonio de docker
+   del destino es el de esta maquina (compara sus identificadores). Guardia de retroceso antes del
+   build (`DEPLOY_ALLOW_ROLLBACK=1` para un rollback a proposito).
+4. Construye en local (`MAIL_BUILD_LOTE` a la vez) con `docker-compose.mail.images.yml`, que etiqueta
+   cada motor `core-force-mail/<motor>:<commit>` con `pull_policy: never`, y solo envia
+   (`docker save | gzip | ssh docker load`) lo que el servidor no tenga ya con esa etiqueta. No hay
+   transporte por ECR: los motores no tienen repositorios alli.
+5. Con el candado del servidor (el mismo de `deploy-ecr.sh`: nunca corren los dos a la vez) repite la
+   guardia, extrae `deploy/mail`, `ops/security/secrets`, `esperar-sanos.sh` y
+   `prune-local-images.sh` de HEAD en `MAIL_DEPLOY_PATH` (por defecto
+   `/opt/core-force-mail/mail-src`) y retira los ficheros borrados del repositorio desde el commit
+   de cada motor.
+6. Recrea los motores de uno en uno, en orden de dependencias: `with-secrets.sh docker compose -p
+   <MAIL_PROJECT> --env-file <DEPLOY_PATH>/.env ... up -d --no-deps --no-build --force-recreate`,
+   comprueba que el contenedor corre la imagen del commit y espera con `esperar-sanos.sh` (sano si la
+   imagen declara chequeo, como unbound y clamd; si no, corriendo sin reiniciarse
+   `MAIL_DEPLOY_ESTABLE` segundos) hasta `MAIL_DEPLOY_PLAZO` (900 s: clamd carga firmas varios
+   minutos). Solo entonces anota el motor en `.deployed-tags` y pasa al siguiente: Postfix y Dovecot
+   nunca caen a la vez y un motor que no arranca detiene el despliegue con su registro, con los
+   siguientes intactos.
+7. Avisa de los motores no recreados que ya tienen configuracion nueva en disco (la leerian en su
+   proximo reinicio) y retira las imagenes viejas (`prune-local-images.sh`, conserva tres por motor
+   para el rollback).
+
+La red `mail-engines` y los volumenes (`<MAIL_PROJECT>_ssl-vol` entre ellos) los crea Compose al
+levantar el primer motor, con las etiquetas y la configuracion del compose; una red creada antes a
+mano con `com.docker.compose.project=mail` y `com.docker.compose.network=mail-engines` se acepta tal
+cual. La plataforma no los crea: `scripts/deploy-ecr.sh` comprueba antes de recrear nada que existen
+(`ops/maintenance/recursos-externos.sh`) y, si no, se detiene pidiendo desplegar antes los motores.
+
+Rollback: desde el commit anterior, `DEPLOY_ALLOW_ROLLBACK=1 scripts/deploy-mail.sh <motores>`; si
+la imagen sigue en el servidor no se reconstruye. Guardarrailes: `ops/scaffold/check-deploy-mail.sh`
+(sin docker, en `make checks`) y `ops/scaffold/test-deploy-mail.sh` (con docker, contra un servidor
+simulado con su propio demonio y sshd).
 
 ## Tamano de los mensajes
 
