@@ -1,19 +1,22 @@
 #!/usr/bin/env bash
 # Prueba con docker del perfil de produccion autoalojada: levanta con docker-compose.yml +
 # docker-compose.selfhosted.yml, en ENVIRONMENT=production y con certificados emitidos por
-# ops/security/internal-tls.sh, postgres-primary, pgbouncer, redis, nats, access-control, el
-# gateway y el proxy de borde, y comprueba cada control del perfil con clientes reales:
+# ops/security/internal-tls.sh, postgres-primary, pgbouncer, redis, nats, access-control,
+# mail-auth, el gateway y el proxy de borde, y comprueba cada control del perfil con clientes
+# reales:
 #   - PgBouncer llega a Postgres con verify-full, y verify-full rechaza un nombre fuera del SAN;
 #   - Postgres rechaza TCP sin TLS y TLS por debajo de 1.2, y acepta TLS con contrasena;
 #   - Redis no habla en claro, exige contrasena por TLS, no la muestra en la lista de procesos y
 #     los servicios Go le hablan por TLS (sin avisos de Redis caido y con conexiones abiertas);
+#   - mail-auth sirve en 9082 el certificado de la CA interna, verificable como mail-auth desde la
+#     red de los motores (no por IP ni con otra CA), corre sin root y otro uid no lee su clave;
 #   - el proxy de borde sirve HTTPS del host publico, rechaza otro SNI, redirige 80 a 443, pone
 #     HSTS, limita el cuerpo, solo admite Cloudflare y solo toma CF-Connecting-IP de sus rangos
 #     (una red de Docker en 173.245.48.0/24 hace de Cloudflare y otra privada de visitante
 #     directo; por el puerto publicado del host no se juzga el origen, porque Docker lo entrega
 #     desde la puerta de enlace de cualquiera de las redes del contenedor), y reenvia al gateway;
 #   - la renovacion (internal-tls.sh --forzar y --solo-recargar) cambia el certificado que sirven
-#     Postgres y Redis sin reiniciarlos y PgBouncer sigue verificando.
+#     Postgres, Redis y mail-auth sin reiniciarlos y PgBouncer sigue verificando.
 #
 #   bash ops/scaffold/test-selfhosted-profile.sh     # SELFHOSTED_KEEP=1 deja todo en pie
 #
@@ -59,7 +62,7 @@ limpiar() {
     compose down -v --remove-orphans >/dev/null 2>&1 || true
     docker network rm "$RED_MOTORES" "$RED_CF" "$RED_EXTERNA" >/dev/null 2>&1 || true
     docker volume rm "$VOL_SSL" >/dev/null 2>&1 || true
-    docker rmi "$PROYECTO-gateway:prueba" "$PROYECTO-access-control:prueba" >/dev/null 2>&1 || true
+    docker rmi "$PROYECTO-gateway:prueba" "$PROYECTO-access-control:prueba" "$PROYECTO-mail-auth:prueba" >/dev/null 2>&1 || true
     # Los certificados llevan el dueno de cada imagen: se borran como root desde un contenedor.
     docker run --rm -v "$W:/w" --entrypoint sh "$IMG_UTIL_PG" -c 'rm -rf /w/app /w/tls /w/borde' >/dev/null 2>&1 || true
     rm -rf "$W"
@@ -98,13 +101,15 @@ cp "$ROOT/docker-compose.yml" "$ROOT/docker-compose.selfhosted.yml" "$APP/"
 cp -r "$ROOT/pgbouncer" "$ROOT/selfhosted" "$APP/"
 rm -f "$APP/pgbouncer/userlist.txt"
 
-for svc in gateway access-control; do
+for svc in gateway access-control mail-auth; do
   docker build -q -f "$ROOT/services/$svc/Dockerfile" -t "$PROYECTO-$svc:prueba" "$ROOT" >/dev/null
 done
-ok "imagenes de gateway y access-control construidas desde el arbol"
+ok "imagenes de gateway, access-control y mail-auth construidas desde el arbol"
 
 POSTGRES_PASSWORD="$(aleatorio 24)"
 REDIS_PASSWORD="$(aleatorio 24)"
+CELL_DB_NAME=mail_cell_prueba
+CLAVE_CELDA="$(aleatorio 24)"
 jwt="$(bash "$ROOT/ops/security/jwt-keygen.sh" --privada "$W/jwt-privada")"
 JWT_KID="$(sed -n 's/^JWT_SIGNING_KID=//p' <<<"$jwt")"
 JWT_PUB="$(sed -n 's/^JWT_PUBLIC_KEY_ENTRY=//p' <<<"$jwt")"
@@ -122,6 +127,9 @@ REDIS_HOST=redis
 REDIS_PORT=6379
 REDIS_PASSWORD=${REDIS_PASSWORD}
 REDIS_TLS=false
+CELL_CODE=prueba
+CELL_DB_NAME=$CELL_DB_NAME
+CELL_DB_PASSWORD=${CLAVE_CELDA}
 NATS_URL=nats://nats:4222
 JWT_SIGNING_KID=$JWT_KID
 JWT_PUBLIC_KEYS=$JWT_PUB
@@ -139,7 +147,7 @@ EDGE_NETWORK_SUBNET=$SUBRED_BORDE
 EOF
 umask 022
 # userlist de la prueba: legible por el uid 70 del pooler sin poder cambiar su grupo.
-printf '"mail_admin" "%s"\n' "$POSTGRES_PASSWORD" >"$APP/pgbouncer/userlist.txt"
+printf '"mail_admin" "%s"\n"%s_svc" "%s"\n' "$POSTGRES_PASSWORD" "$CELL_DB_NAME" "$CLAVE_CELDA" >"$APP/pgbouncer/userlist.txt"
 chmod 0644 "$APP/pgbouncer/userlist.txt"
 
 # Los puertos de docker-compose.yml chocarian con otros despliegues de la maquina; env_file sin el
@@ -158,6 +166,10 @@ services:
     env_file: !override [.env]
   access-control:
     image: $PROYECTO-access-control:prueba
+    ports: !reset []
+    env_file: !override [.env]
+  mail-auth:
+    image: $PROYECTO-mail-auth:prueba
     ports: !reset []
     env_file: !override [.env]
   edge-proxy:
@@ -181,7 +193,7 @@ docker volume create "$VOL_SSL" >/dev/null
 
 # --- TLS interno con el guion del repositorio -----------------------------------------------------
 duenos="$(bash "$ROOT/ops/security/internal-tls.sh" --solo-detectar | paste -sd,)"
-[[ "$duenos" =~ ^postgres=[0-9]+:[0-9]+,redis=[0-9]+:[0-9]+$ ]] || { echo "deteccion de duenos inesperada: $duenos" >&2; exit 1; }
+[[ "$duenos" =~ ^postgres=[0-9]+:[0-9]+,redis=[0-9]+:[0-9]+,mail-auth=[1-9][0-9]*:[1-9][0-9]*$ ]] || { echo "deteccion de duenos inesperada: $duenos" >&2; exit 1; }
 ok "uid:gid leidos de las imagenes fijadas: $duenos"
 tls() { docker run --rm -v "$ROOT:/repo:ro" -v "$W:/w" "$IMG_UTIL_PG" bash /repo/ops/security/internal-tls.sh --dir /w/tls --proyecto "$PROYECTO" --duenos "$duenos" "$@"; }
 tls >/dev/null
@@ -192,9 +204,11 @@ if grep -q 'emitido' <<<"$segunda" || ! grep -q 'vigente hasta' <<<"$segunda"; t
 else
   ok "internal-tls.sh es idempotente (segunda pasada sin reemitir)"
 fi
-permisos="$(docker run --rm -v "$W:/w" --entrypoint sh "$IMG_UTIL_PG" -c 'stat -c "%n %a %u:%g" /w/tls/ca/ca.key /w/tls/postgres/server.key /w/tls/redis/server.key /w/tls/publico/ca.crt')"
+permisos="$(docker run --rm -v "$W:/w" --entrypoint sh "$IMG_UTIL_PG" -c 'stat -c "%n %a %u:%g" /w/tls/ca/ca.key /w/tls/postgres/server.key /w/tls/redis/server.key /w/tls/mail-auth /w/tls/mail-auth/server.key /w/tls/publico/ca.crt')"
+dueno_ma="$(sed -E 's/.*mail-auth=([0-9:]+)$/\1/' <<<"$duenos")"
 for esperado in "ca/ca.key 600 0:0" "postgres/server.key 600 $(sed -E 's/postgres=([0-9:]+),.*/\1/' <<<"$duenos")" \
-  "redis/server.key 600 $(sed -E 's/.*redis=([0-9:]+)/\1/' <<<"$duenos")" "publico/ca.crt 644 0:0"; do
+  "redis/server.key 600 $(sed -E 's/.*redis=([0-9:]+),.*/\1/' <<<"$duenos")" "mail-auth 700 $dueno_ma" \
+  "mail-auth/server.key 600 $dueno_ma" "publico/ca.crt 644 0:0"; do
   grep -q "/w/tls/$esperado$" <<<"$permisos" || mal "permisos: se esperaba $esperado ($(tr '\n' ';' <<<"$permisos"))"
 done
 [[ $FALLOS -eq 0 ]] && ok "claves 0600 con el dueno de cada imagen y CA privada solo de root"
@@ -291,6 +305,46 @@ fi
 clientes="$(REDISCLI_AUTH="$REDIS_PASSWORD" redis_cli --tls --cacert /ca/ca.crt client list | grep -c 'cmd=' || true)"
 ((clientes >= 2)) && ok "Redis tiene $clientes conexiones TLS abiertas (servicios + este cliente)" || mal "Redis sin conexiones de los servicios ($clientes)"
 
+# --- mail-auth ------------------------------------------------------------------------------------
+echo "== mail-auth con el certificado de la CA interna =="
+# Base de celda minima: mail-auth abre su base al arrancar con su rol propio (sin tablas: aqui solo
+# se juzga el TLS). La contrasena entra por el entorno del contenedor, no por argumentos.
+CLAVE_CELDA="$CLAVE_CELDA" docker exec -i -e CLAVE_CELDA "$PG" psql -q -v ON_ERROR_STOP=1 -U mail_admin -d mail_registry >/dev/null <<SQL
+\\getenv clave CLAVE_CELDA
+CREATE ROLE ${CELL_DB_NAME}_svc LOGIN PASSWORD :'clave';
+CREATE DATABASE $CELL_DB_NAME OWNER ${CELL_DB_NAME}_svc;
+SQL
+compose up -d --no-deps mail-auth >/dev/null 2>"$W/up-auth.log" || { cat "$W/up-auth.log" >&2; exit 1; }
+if bash "$ROOT/ops/maintenance/esperar-sanos.sh" --proyecto "$PROYECTO" --plazo 120 mail-auth; then
+  ok "mail-auth sano en production con el perfil"
+else
+  compose logs mail-auth 2>&1 | tail -20 >&2
+  mal "mail-auth no arranco"
+  exit 1
+fi
+MA="$(compose ps -q mail-auth)"
+compose logs mail-auth >"$W/mail-auth.log" 2>&1 || true
+grep -q 'autofirmado' "$W/mail-auth.log" && mal "mail-auth arranco con el certificado autofirmado en memoria" ||
+  ok "mail-auth carga MAIL_AUTH_TLS_CERT/MAIL_AUTH_TLS_KEY del montaje (sin aviso de autofirmado)"
+usuario_ma="$(docker inspect -f '{{.Config.User}}' "$MA")"
+[[ "$usuario_ma" == "$dueno_ma" ]] && ok "mail-auth corre como $usuario_ma, el dueno de su clave, sin root" || mal "mail-auth corre como '$usuario_ma', su clave es de $dueno_ma"
+# motores <orden>: un cliente en la red de los motores, donde Dovecot y el webmail buscan a mail-auth.
+motores() { docker run --rm --network "$RED_MOTORES" -v "$W/tls/publico:/ca:ro" -v "$W/ca-borde.crt:/ca-ajena.crt:ro" --entrypoint sh "$IMG_BORDE" -c "$1" 2>&1 || true; }
+verificado="$(motores "curl -sS -o /dev/null -w '%{http_code} %{ssl_verify_result}' --cacert /ca/ca.crt https://mail-auth:9082/")"
+[[ "$verificado" =~ ^[0-9]{3}\ 0$ ]] && ok "mail-auth:9082 verificado con la CA interna como mail-auth, como lo hace el webmail (HTTP ${verificado%% *})" ||
+  mal "TLS de mail-auth con la CA interna: $verificado"
+version="$(docker run --rm --network "$RED_MOTORES" --entrypoint bash "$IMG_UTIL_PG" -c "openssl s_client -connect mail-auth:9082 -servername mail-auth -tls1_1 </dev/null 2>&1" || true)"
+grep -q 'New, (NONE), Cipher is (NONE)' <<<"$version" && ok "mail-auth no negocia TLS 1.1" || mal "mail-auth negocia TLS 1.1"
+ip_ma="$(docker inspect -f "{{(index .NetworkSettings.Networks \"$RED_MOTORES\").IPAddress}}" "$MA")"
+por_ip="$(motores "curl -sS -o /dev/null --cacert /ca/ca.crt https://$ip_ma:9082/")"
+grep -qi 'no alternative certificate subject name\|does not match' <<<"$por_ip" && ok "por IP ($ip_ma) el nombre no casa con el SAN y se rechaza" ||
+  mal "mail-auth por IP no fallo por el nombre: $por_ip"
+ajena="$(motores "curl -sS -o /dev/null --cacert /ca-ajena.crt https://mail-auth:9082/")"
+grep -qi 'unable to get local issuer\|self.signed\|certificate verify\|unknown ca' <<<"$ajena" && ok "con otra CA el certificado de mail-auth no se verifica" ||
+  mal "mail-auth verificado con una CA ajena: $ajena"
+ajeno="$(docker run --rm --user 4242:4242 -v "$W/tls/mail-auth:/k:ro" --entrypoint cat "$IMG_UTIL_REDIS" /k/server.key 2>&1 || true)"
+grep -qi 'permission denied' <<<"$ajeno" && ok "otro uid no lee la clave de mail-auth" || mal "otro uid lee la clave de mail-auth"
+
 # --- proxy de borde -------------------------------------------------------------------------------
 echo "== Proxy de borde =="
 compose up -d --no-deps edge-proxy >/dev/null 2>"$W/up-borde.log" || { cat "$W/up-borde.log" >&2; exit 1; }
@@ -348,8 +402,10 @@ fi
 echo "== Renovacion del TLS interno =="
 serie() { docker run --rm --network "$RED_INTERNA" --entrypoint bash "$IMG_UTIL_PG" -c "openssl s_client -connect $1 $2 </dev/null 2>/dev/null | openssl x509 -noout -serial"; }
 pg_antes="$(serie postgres-primary:5432 '-starttls postgres')"
-arranques_antes="$(docker inspect -f '{{.State.StartedAt}}' "$PG" "$RDS")"
+arranques_antes="$(docker inspect -f '{{.State.StartedAt}}' "$PG" "$RDS" "$MA")"
 rd_antes="$(serie redis:6379 '')"
+serie_ma() { docker run --rm --network "$RED_MOTORES" --entrypoint bash "$IMG_UTIL_PG" -c "openssl s_client -connect mail-auth:9082 -servername mail-auth </dev/null 2>/dev/null | openssl x509 -noout -serial"; }
+ma_antes="$(serie_ma)"
 tls --forzar | sed 's/^/    /'
 bash "$ROOT/ops/security/internal-tls.sh" --solo-recargar --proyecto "$PROYECTO" | sed 's/^/    /' || mal "--solo-recargar fallo"
 sleep 2
@@ -357,7 +413,16 @@ pg_despues="$(serie postgres-primary:5432 '-starttls postgres')"
 rd_despues="$(serie redis:6379 '')"
 [[ -n "$pg_antes" && "$pg_antes" != "$pg_despues" ]] && ok "Postgres sirve el certificado renovado sin reiniciar ($pg_antes -> $pg_despues)" || mal "Postgres no tomo el certificado renovado ($pg_antes / $pg_despues)"
 [[ -n "$rd_antes" && "$rd_antes" != "$rd_despues" ]] && ok "Redis sirve el certificado renovado sin reiniciar ($rd_antes -> $rd_despues)" || mal "Redis no tomo el certificado renovado ($rd_antes / $rd_despues)"
-[[ "$(docker inspect -f '{{.State.StartedAt}}' "$PG" "$RDS")" == "$arranques_antes" ]] && ok "ni Postgres ni Redis se reiniciaron para renovar" || mal "la renovacion reinicio Postgres o Redis"
+# mail-auth mira sus ficheros cada 15 s (certReloadInterval): se le da un margen holgado.
+for _ in $(seq 1 30); do
+  ma_despues="$(serie_ma)"
+  [[ -n "$ma_despues" && "$ma_despues" != "$ma_antes" ]] && break
+  sleep 2
+done
+[[ -n "$ma_antes" && "$ma_antes" != "$ma_despues" ]] && ok "mail-auth sirve el certificado renovado sin reiniciar ($ma_antes -> $ma_despues)" || mal "mail-auth no tomo el certificado renovado ($ma_antes / $ma_despues)"
+[[ "$(motores "curl -sS -o /dev/null -w '%{ssl_verify_result}' --cacert /ca/ca.crt https://mail-auth:9082/")" == 0 ]] &&
+  ok "el certificado renovado de mail-auth se verifica con la misma CA" || mal "el certificado renovado de mail-auth no se verifica"
+[[ "$(docker inspect -f '{{.State.StartedAt}}' "$PG" "$RDS" "$MA")" == "$arranques_antes" ]] && ok "ni Postgres, ni Redis, ni mail-auth se reiniciaron para renovar" || mal "la renovacion reinicio Postgres, Redis o mail-auth"
 PGPASSWORD="$POSTGRES_PASSWORD" docker exec -e PGPASSWORD "$PGB" psql -h 127.0.0.1 -p 5432 -U mail_admin -d pgbouncer -Atqc 'RECONNECT' >/dev/null 2>&1 || true
 sleep 1
 tras="$(PGPASSWORD="$POSTGRES_PASSWORD" docker exec -e PGPASSWORD "$PGB" psql -h 127.0.0.1 -p 5432 -U mail_admin -d mail_registry -Atc \
@@ -367,7 +432,7 @@ REDISCLI_AUTH="$REDIS_PASSWORD" redis_cli --tls --cacert /ca/ca.crt ping | grep 
 
 # --- consumo --------------------------------------------------------------------------------------
 echo "== Memoria en reposo =="
-docker stats --no-stream --format '  {{.Name}}: {{.MemUsage}}' "$PG" "$RDS" "$PGB" "$BORDE" "$(compose ps -q gateway)" "$(compose ps -q access-control)"
+docker stats --no-stream --format '  {{.Name}}: {{.MemUsage}}' "$PG" "$RDS" "$PGB" "$BORDE" "$MA" "$(compose ps -q gateway)" "$(compose ps -q access-control)"
 
 if [[ $FALLOS -ne 0 ]]; then
   echo "test-selfhosted-profile: FALLA" >&2

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # TLS interno de la produccion autoalojada: una CA propia y los certificados de servidor de
-# postgres-primary y redis, FUERA del repositorio (docker-compose.selfhosted.yml los monta).
+# postgres-primary, redis y mail-auth, FUERA del repositorio (docker-compose.selfhosted.yml los
+# monta).
 #
 # En AWS el cifrado entre la plataforma y la base o Redis lo dan RDS y ElastiCache con
 # certificados de una CA publica. En un servidor propio no hay nadie que los emita: sin esto, o
@@ -15,21 +16,26 @@
 #
 # Opciones: --dir <ruta> (INTERNAL_TLS_DIR, por defecto /opt/core-force-mail/tls), --proyecto
 # <nombre de compose> (por defecto app), --forzar (reemite los certificados de servidor aunque
-# esten vigentes), --duenos postgres=UID:GID,redis=UID:GID (sin docker a mano; por defecto se
-# leen de las imagenes de docker-compose.yml).
+# esten vigentes), --duenos postgres=UID:GID,redis=UID:GID,mail-auth=UID:GID (a mano; por defecto
+# los de postgres y redis se leen con docker de las imagenes de docker-compose.yml y el de
+# mail-auth del user: que le fija docker-compose.selfhosted.yml, porque su imagen es scratch, sin
+# id, y el servidor no tiene su Dockerfile).
 #
 # Estructura:
 #   <dir>/ca/ca.key            0600 root   clave de la CA; nunca sale del servidor ni se monta
 #   <dir>/publico/ca.crt       0644        CA publica: PgBouncer, servicios Go, redis-cli
 #   <dir>/postgres/server.*    duenos del uid de postgres en su imagen, clave 0600
 #   <dir>/redis/server.*       duenos del uid de redis en su imagen, clave 0600
+#   <dir>/mail-auth/server.*   duenos del user: de mail-auth en el perfil, clave 0600
 # Se montan DIRECTORIOS, no ficheros: un fichero montado ata el inodo y la renovacion, que
 # reemplaza por rename, no llegaria al contenedor.
 #
 # La CA dura CA_DIAS y no se rota sola: cambiarla obliga a recrear a todos sus clientes. Los
 # certificados de servidor duran CERT_DIAS y --renovar los reemite al quedar MARGEN_DIAS, con la
 # misma CA, asi que ningun cliente necesita reiniciarse; --recargar se los hace leer a Postgres
-# (SIGHUP) y a Redis (CONFIG SET, sin cortar conexiones). Nunca imprime una clave.
+# (SIGHUP) y a Redis (CONFIG SET, sin cortar conexiones). mail-auth no necesita recarga: vuelve a
+# mirar sus ficheros cada pocos segundos y toma el par nuevo sin reiniciarse (un reinicio cortaria
+# la autenticacion de Dovecot). Nunca imprime una clave.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -47,6 +53,7 @@ MARGEN_DIAS="${INTERNAL_TLS_RENEW_DAYS:-30}"
 # docker-compose.selfhosted.yml (ops/scaffold/check-selfhosted-profile.sh los ata).
 MONTAJE_PUBLICO=/run/core-force-mail/tls/publico
 MONTAJE_REDIS=/run/core-force-mail/tls/redis
+MONTAJE_MAIL_AUTH=/run/core-force-mail/tls/mail-auth
 
 MODO=crear
 FORZAR=0
@@ -56,7 +63,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --dir) DIR="${2:?--dir necesita una ruta}"; shift 2 ;;
     --proyecto) PROYECTO="${2:?--proyecto necesita un nombre}"; shift 2 ;;
-    --duenos) DUENOS="${2:?--duenos necesita postgres=UID:GID,redis=UID:GID}"; shift 2 ;;
+    --duenos) DUENOS="${2:?--duenos necesita postgres=UID:GID,redis=UID:GID,mail-auth=UID:GID}"; shift 2 ;;
     --renovar) MODO=renovar; shift ;;
     --comprobar) MODO=comprobar; shift ;;
     --solo-detectar) MODO=detectar; shift ;;
@@ -78,10 +85,11 @@ done
 command -v openssl >/dev/null || falla "falta openssl"
 
 # Servicios con certificado y los nombres con que los alcanzan sus clientes en la red de compose:
-# el del servicio (DB_UPSTREAM_HOST, REDIS_HOST), el del contenedor y el bucle local de sus
-# propios chequeos. "postgres" NO va en el de postgres-primary: es el alias de PgBouncer.
-SERVICIOS=(postgres redis)
-declare -A NOMBRE_COMPOSE=([postgres]=postgres-primary [redis]=redis)
+# el del servicio (DB_UPSTREAM_HOST, REDIS_HOST, el host de MAIL_AUTH_URL), el del contenedor y el
+# bucle local de sus propios chequeos. "postgres" NO va en el de postgres-primary: es el alias de
+# PgBouncer.
+SERVICIOS=(postgres redis mail-auth)
+declare -A NOMBRE_COMPOSE=([postgres]=postgres-primary [redis]=redis [mail-auth]=mail-auth)
 declare -A USUARIO_IMAGEN=([postgres]=postgres [redis]=redis)
 san_de() {
   local svc="${NOMBRE_COMPOSE[$1]}"
@@ -97,18 +105,34 @@ imagen_de() {
   ' "$ROOT/docker-compose.yml"
 }
 
+# usuario_perfil_de <servicio de compose>: el user: que le fija docker-compose.selfhosted.yml.
+usuario_perfil_de() {
+  awk -v s="  $1:" '
+    $0 == s { dentro = 1; next }
+    dentro && /^  [^ #]/ { exit }
+    dentro && /^    user:/ { sub(/^    user:[[:space:]]*/, ""); gsub(/"/, ""); print; exit }
+  ' "$ROOT/docker-compose.selfhosted.yml"
+}
+
 declare -A DUENO
 detectar_duenos() {
   local svc img usuario uid gid par
   if [[ -n "$DUENOS" ]]; then
     IFS=, read -r -a pares <<<"$DUENOS"
     for par in "${pares[@]}"; do
-      [[ "$par" =~ ^(postgres|redis)=([0-9]+):([0-9]+)$ ]] || falla "--duenos mal formado: '$par'"
+      [[ "$par" =~ ^(postgres|redis|mail-auth)=([0-9]+):([0-9]+)$ ]] || falla "--duenos mal formado: '$par'"
       DUENO[${BASH_REMATCH[1]}]="${BASH_REMATCH[2]}:${BASH_REMATCH[3]}"
     done
   fi
   for svc in "${SERVICIOS[@]}"; do
     [[ -n "${DUENO[$svc]:-}" ]] && continue
+    if [[ -z "${USUARIO_IMAGEN[$svc]:-}" ]]; then
+      [[ -f "$ROOT/docker-compose.selfhosted.yml" ]] || falla "falta docker-compose.selfhosted.yml junto al guion: de el sale el uid de ${NOMBRE_COMPOSE[$svc]} (o usa --duenos)"
+      usuario="$(usuario_perfil_de "${NOMBRE_COMPOSE[$svc]}")"
+      [[ "$usuario" =~ ^([1-9][0-9]*):([1-9][0-9]*)$ ]] || falla "docker-compose.selfhosted.yml no fija a ${NOMBRE_COMPOSE[$svc]} un user: UID:GID numerico y sin root (valor: '$usuario')"
+      DUENO[$svc]="$usuario"
+      continue
+    fi
     command -v docker >/dev/null || falla "sin docker no se puede leer el uid de $svc en su imagen: usa --duenos"
     img="$(imagen_de "${NOMBRE_COMPOSE[$svc]}")"
     [[ -n "$img" ]] || falla "docker-compose.yml no declara la imagen de ${NOMBRE_COMPOSE[$svc]}"
@@ -149,6 +173,7 @@ recargar() {
   else
     info "redis no esta en marcha en el proyecto $PROYECTO; tomara el certificado al arrancar"
   fi
+  info "mail-auth: sin recarga; relee $MONTAJE_MAIL_AUTH por si mismo en unos segundos"
   return $fallos
 }
 

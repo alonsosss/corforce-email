@@ -26,7 +26,7 @@ secundarios.
 | Swap | Swapfile de seguridad si el host no tiene swap |
 | Sistema | Zona horaria + hostname |
 | Entorno | `ENVIRONMENT` de `server.env` (`production` o `staging`) y `DEPLOY_PROFILE` en el `.env` de `DEPLOY_PATH` |
-| TLS interno | Con `DEPLOY_PROFILE=selfhosted`: CA y certificados de Postgres y Redis (`ops/security/internal-tls.sh`) y timer `core-force-mail-internal-tls` |
+| TLS interno | Con `DEPLOY_PROFILE=selfhosted`: CA y certificados de Postgres, Redis y mail-auth (`ops/security/internal-tls.sh`) y timer `core-force-mail-internal-tls` |
 | Respaldo | Unidades `core-force-mail-backup*` de `ops/backup/systemd/` |
 
 ## Entorno declarado
@@ -55,7 +55,7 @@ orden, esta en `docs/Operacion_Despliegue.md`, 11. Lo que cambia en esta plantil
 
 - `DEPLOY_PROFILE=selfhosted` en `server.env`: `bootstrap.sh` lo escribe en el `.env`, genera el
   TLS interno si `ops/security/internal-tls.sh` viajo junto a la plantilla (copiar con
-  `git archive HEAD docker-compose.yml ops/server-template ops/security`) y programa su
+  `git archive HEAD docker-compose.yml docker-compose.selfhosted.yml ops/server-template ops/security`) y programa su
   renovacion.
 - GRUB: el bloque de consola serie es propio de EC2, cuya consola de rescate es el puerto serie.
   En un proveedor con consola VNC estorba, y la espera de `recordfail` no existe en Debian. Con

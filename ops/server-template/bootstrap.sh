@@ -437,9 +437,10 @@ fi
 # ----------------------------------------------------------------------------
 # 14) Perfil autoalojado: TLS interno y su renovacion
 # ----------------------------------------------------------------------------
-# Sin RDS ni ElastiCache, los certificados de Postgres y Redis los emite una CA interna del
-# servidor (ops/security/internal-tls.sh, idempotente). Se genera aqui si el guion viajo junto a
-# la plantilla (git archive de docker-compose.yml, ops/security y ops/server-template) o ya esta
+# Sin RDS ni ElastiCache, los certificados de Postgres, Redis y mail-auth los emite una CA interna
+# del servidor (ops/security/internal-tls.sh, idempotente). Se genera aqui si el guion viajo junto
+# a la plantilla (git archive de docker-compose.yml, docker-compose.selfhosted.yml, ops/security y
+# ops/server-template) o ya esta
 # desplegado; el despliegue se niega a continuar sin la CA. La renovacion es un timer diario.
 tls_estado="no aplica (DEPLOY_PROFILE=${DEPLOY_PROFILE:-vacio})"
 perfil_env="$(sed -n -E 's/^[[:space:]]*DEPLOY_PROFILE[[:space:]]*=[[:space:]]*//p' "$env_app" | tail -n 1)"

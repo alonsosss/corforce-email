@@ -7,6 +7,7 @@
 #     toda conexion TCP cifrada (pg_hba);
 #   - PgBouncer hacia Postgres con verify-full contra la CA interna;
 #   - Redis solo por TLS y con contrasena, y los servicios Go con REDIS_TLS=true y esa CA;
+#   - mail-auth con un certificado de esa CA, que el webmail verifica;
 #   - un proxy de borde que termina HTTPS de la web publica delante del gateway.
 #
 # Se activa declarando DEPLOY_PROFILE=selfhosted en el .env del servidor: los despliegues
@@ -154,13 +155,27 @@ services:
     environment: *go-service-env
     volumes: *internal-ca
   mail-auth:
-    environment: *go-service-env
-    volumes: *internal-ca
+    # Sin root (la imagen es scratch y no fija usuario). Este user: es tambien el dueno de su clave
+    # TLS: internal-tls.sh lo lee de aqui.
+    user: "65532:65532"
+    environment:
+      <<: *go-service-env
+      # Certificado de la CA interna para el listener de Dovecot y del webmail (9082), con SAN
+      # mail-auth, el host de MAIL_AUTH_URL. Lo relee solo cuando internal-tls.sh lo renueva.
+      MAIL_AUTH_TLS_CERT: /run/core-force-mail/tls/mail-auth/server.crt
+      MAIL_AUTH_TLS_KEY: /run/core-force-mail/tls/mail-auth/server.key
+    volumes:
+      - ${INTERNAL_TLS_DIR:-/opt/core-force-mail/tls}/publico:/run/core-force-mail/tls/publico:ro
+      - ${INTERNAL_TLS_DIR:-/opt/core-force-mail/tls}/mail-auth:/run/core-force-mail/tls/mail-auth:ro
   mail-security:
     environment: *go-service-env
     volumes: *internal-ca
   webmail:
-    environment: *go-service-env
+    environment:
+      <<: *go-service-env
+      # Verifica mail-auth con la CA interna; se anade a las raices del sistema, con las que sigue
+      # verificando el certificado publico de Dovecot y Postfix.
+      WEBMAIL_TLS_CA_FILE: /run/core-force-mail/tls/publico/ca.crt
     volumes: *internal-ca
   domain-service:
     environment: *go-service-env

@@ -9,7 +9,11 @@ import (
 	"crypto/x509/pkix"
 	"fmt"
 	"math/big"
+	"os"
+	"sync"
 	"time"
+
+	"go.uber.org/zap"
 )
 
 // selfSignedValidity acota el certificado generado en memoria. Dovecot no lo verifica
@@ -18,32 +22,122 @@ import (
 // eterna.
 const selfSignedValidity = 365 * 24 * time.Hour
 
-// TLSConfig carga el par de certificado y clave del listener de Dovecot. Si no se
-// configuro ninguno, genera un certificado autofirmado en memoria y lo indica con
-// selfSigned=true para que main lo avise en el log: sirve para desarrollo y para
-// arrancar antes de que operacion entregue el certificado interno; en produccion se
-// esperan ficheros.
-func TLSConfig(certFile, keyFile, hostname string) (cfg *tls.Config, selfSigned bool, err error) {
-	var cert tls.Certificate
+// certReloadInterval es cada cuanto, como mucho, se miran los ficheros del certificado. La
+// renovacion del TLS interno los reemplaza con margen de dias, asi que un retraso de segundos
+// no importa, y acotarlo evita un stat por saludo y un aviso por saludo si el par queda roto.
+const certReloadInterval = 15 * time.Second
+
+// TLSConfig prepara el listener de Dovecot. Con MAIL_AUTH_TLS_CERT y MAIL_AUTH_TLS_KEY sirve
+// ese par y lo relee cuando cambia en disco, sin reiniciar: un reinicio corta la verificacion
+// de Dovecot, que ante un error de mail-auth vacia la cache del usuario y responde fallo. Sin
+// ninguno de los dos genera un certificado autofirmado en memoria y lo indica con
+// selfSigned=true para que main lo avise: sirve para desarrollo; en produccion se esperan
+// ficheros.
+func TLSConfig(certFile, keyFile, hostname string, logger *zap.Logger) (cfg *tls.Config, selfSigned bool, err error) {
+	cfg = &tls.Config{MinVersion: tls.VersionTLS12}
 	switch {
 	case certFile != "" && keyFile != "":
-		cert, err = tls.LoadX509KeyPair(certFile, keyFile)
-		if err != nil {
-			return nil, false, fmt.Errorf("cargar certificado TLS: %w", err)
-		}
-	case certFile == "" && keyFile == "":
-		cert, err = selfSignedCertificate(hostname)
+		reloader, err := newCertReloader(certFile, keyFile, certReloadInterval, logger)
 		if err != nil {
 			return nil, false, err
 		}
+		cfg.GetCertificate = reloader.GetCertificate
+	case certFile == "" && keyFile == "":
+		cert, err := selfSignedCertificate(hostname)
+		if err != nil {
+			return nil, false, err
+		}
+		cfg.Certificates = []tls.Certificate{cert}
 		selfSigned = true
 	default:
 		return nil, false, fmt.Errorf("MAIL_AUTH_TLS_CERT y MAIL_AUTH_TLS_KEY deben configurarse juntas")
 	}
-	return &tls.Config{
-		Certificates: []tls.Certificate{cert},
-		MinVersion:   tls.VersionTLS12,
-	}, selfSigned, nil
+	return cfg, selfSigned, nil
+}
+
+// certReloader sirve el ultimo par valido. La renovacion reemplaza clave y certificado con dos
+// renombres: entre ambos el par no casa, la carga falla y se sigue sirviendo el anterior hasta
+// la siguiente comprobacion.
+type certReloader struct {
+	certFile, keyFile string
+	interval          time.Duration
+	logger            *zap.Logger
+
+	mu        sync.Mutex
+	cert      *tls.Certificate
+	certInfo  os.FileInfo
+	keyInfo   os.FileInfo
+	checkedAt time.Time
+}
+
+func newCertReloader(certFile, keyFile string, interval time.Duration, logger *zap.Logger) (*certReloader, error) {
+	r := &certReloader{certFile: certFile, keyFile: keyFile, interval: interval, logger: logger}
+	certInfo, keyInfo, err := r.stat()
+	if err != nil {
+		return nil, fmt.Errorf("cargar certificado TLS: %w", err)
+	}
+	if err := r.load(certInfo, keyInfo); err != nil {
+		return nil, fmt.Errorf("cargar certificado TLS: %w", err)
+	}
+	r.checkedAt = time.Now()
+	return r, nil
+}
+
+func (r *certReloader) GetCertificate(*tls.ClientHelloInfo) (*tls.Certificate, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if time.Since(r.checkedAt) >= r.interval {
+		r.checkedAt = time.Now()
+		r.refresh()
+	}
+	return r.cert, nil
+}
+
+func (r *certReloader) refresh() {
+	certInfo, keyInfo, err := r.stat()
+	if err != nil {
+		r.logger.Warn("mail-auth: no se pueden mirar los ficheros del certificado TLS; se sigue sirviendo el cargado", zap.Error(err))
+		return
+	}
+	if sameFile(r.certInfo, certInfo) && sameFile(r.keyInfo, keyInfo) {
+		return
+	}
+	if err := r.load(certInfo, keyInfo); err != nil {
+		r.logger.Warn("mail-auth: el certificado TLS cambio en disco pero no se puede cargar; se sigue sirviendo el anterior", zap.Error(err))
+		return
+	}
+	fields := []zap.Field{}
+	if r.cert.Leaf != nil {
+		fields = append(fields, zap.Time("not_after", r.cert.Leaf.NotAfter))
+	}
+	r.logger.Info("mail-auth: certificado TLS recargado", fields...)
+}
+
+func (r *certReloader) stat() (os.FileInfo, os.FileInfo, error) {
+	certInfo, err := os.Stat(r.certFile)
+	if err != nil {
+		return nil, nil, err
+	}
+	keyInfo, err := os.Stat(r.keyFile)
+	if err != nil {
+		return nil, nil, err
+	}
+	return certInfo, keyInfo, nil
+}
+
+func (r *certReloader) load(certInfo, keyInfo os.FileInfo) error {
+	cert, err := tls.LoadX509KeyPair(r.certFile, r.keyFile)
+	if err != nil {
+		return err
+	}
+	r.cert, r.certInfo, r.keyInfo = &cert, certInfo, keyInfo
+	return nil
+}
+
+// sameFile compara identidad (inodo), tamano y fecha: un renombre cambia la primera y una
+// reescritura en sitio, las otras.
+func sameFile(a, b os.FileInfo) bool {
+	return os.SameFile(a, b) && a.Size() == b.Size() && a.ModTime().Equal(b.ModTime())
 }
 
 func selfSignedCertificate(hostname string) (tls.Certificate, error) {

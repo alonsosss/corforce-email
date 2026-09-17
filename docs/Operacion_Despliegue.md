@@ -480,6 +480,7 @@ exigen lo que en AWS dan esos servicios gestionados, y el perfil lo da sin relaj
 | Postgres solo cifrado | `rds.force_ssl` | `ssl=on`, TLS 1.2 mínimo y `selfhosted/postgres/pg_hba.conf` (`hostssl` con `scram-sha-256`, `hostnossl` rechazado) |
 | Redis con TLS y contraseña | ElastiCache | `redis` sin puerto en claro (`--port 0`, `tls-port 6379`), contraseña por la entrada estándar (`selfhosted/redis/entrypoint.sh`) |
 | Clientes de Redis con TLS verificado | CA pública | `REDIS_TLS=true`, `REDIS_TLS_CA_FILE` y `REDIS_TLS_SERVER_NAME=redis` en todo servicio Go |
+| mail-auth (9082) con certificado verificable | `MAIL_AUTH_TLS_*` a mano (vacías: autofirmado en memoria) | CA interna: `MAIL_AUTH_TLS_CERT`/`MAIL_AUTH_TLS_KEY` del directorio montado, SAN `mail-auth`; el webmail lo verifica con `WEBMAIL_TLS_CA_FILE`; mail-auth corre sin root (`user: 65532:65532`) |
 | HTTPS delante del gateway | Balanceador | `edge-proxy` (nginx fijado por digest, `selfhosted/edge`) |
 
 Piezas: `docker-compose.selfhosted.yml` (superposición sobre `docker-compose.yml`; activa
@@ -549,7 +550,7 @@ Desde el puesto de trabajo, con el repositorio en el commit a desplegar (`<srv>`
    ejecutar:
 
    ```bash
-   git archive HEAD docker-compose.yml ops/server-template ops/security | \
+   git archive HEAD docker-compose.yml docker-compose.selfhosted.yml ops/server-template ops/security | \
      ssh root@<srv> 'rm -rf /tmp/cfm && mkdir /tmp/cfm && tar -x -C /tmp/cfm'
    scp ops/server-template/server.env root@<srv>:/tmp/cfm/ops/server-template/
    ssh root@<srv> /tmp/cfm/ops/server-template/bootstrap.sh
@@ -561,15 +562,19 @@ Desde el puesto de trabajo, con el repositorio en el commit a desplegar (`<srv>`
    `sudo /tmp/cfm/ops/security/internal-tls.sh` y `sudo /tmp/cfm/ops/security/internal-tls.sh
    --comprobar`. Crea en `INTERNAL_TLS_DIR` (por defecto `/opt/core-force-mail/tls`) la CA
    (`ca/ca.key`, 0600 de root, nunca se monta), `publico/ca.crt` y los certificados de
-   `postgres-primary` y `redis` con los SAN de su servicio, su contenedor
-   (`app-<servicio>-1`), `localhost` y `127.0.0.1`, con la clave 0600 del uid y gid que el guion
-   lee de cada imagen fijada (hoy postgres 999:999 y redis 999:1000). Nunca imprime una clave.
+   `postgres-primary`, `redis` y `mail-auth` con los SAN de su servicio, su contenedor
+   (`app-<servicio>-1`), `localhost` y `127.0.0.1`, con la clave 0600 (en un directorio 0700) del
+   uid y gid que el guion lee de cada imagen fijada (hoy postgres 999:999 y redis 999:1000) y,
+   para mail-auth, cuya imagen es `scratch` y no está en el servidor, del `user:` que le fija
+   `docker-compose.selfhosted.yml` (65532:65532; por eso ese fichero viaja con la plantilla).
+   Se montan directorios, no ficheros, para que la renovación llegue al contenedor. Nunca imprime
+   una clave.
 3. `.env` del despliegue: completar `/opt/core-force-mail/app/.env` con la configuración de
    `.env.example` sin copiarlo encima. Del perfil: `PUBLIC_BASE_URL=https://app.<dominio>`,
    `EDGE_REQUIRE_CLOUDFLARE=true`, `EDGE_NETWORK_SUBNET` (fuera de `172.30.0.0/16`, el pool de
    `daemon.json`), `MAIL_SSL_VOLUME` si el proyecto de los motores no se llama `mail`, y
    `INTERNAL_TLS_DIR` si no es el de por defecto. `REDIS_TLS*`, `DB_UPSTREAM_*` y
-   `POSTGRES_DIRECT_*` los fija el perfil. Secretos: ver Pendientes.
+   `POSTGRES_DIRECT_*`, `MAIL_AUTH_TLS_CERT`/`MAIL_AUTH_TLS_KEY` y `WEBMAIL_TLS_CA_FILE` los fija el perfil. Secretos: ver Pendientes.
 4. Motores y certificado público: levantar `deploy/mail` (crea la red `mail-engines`, que la
    plataforma necesita) con `MAIL_DB_HOST=postgres`, `ACME_DNS_CHALLENGE=y`,
    `ACME_DNS_PROVIDER=dns_cf` y `ADDITIONAL_SAN=app.<dominio>`. `acme-mail` deja primero el
@@ -583,7 +588,7 @@ Desde el puesto de trabajo, con el repositorio en el commit a desplegar (`<srv>`
      ./scripts/deploy-ecr.sh <todos los servicios>
    ```
 
-   Tras el rsync, `perfil-despliegue.sh` confirma `selfhosted` y la CA (sin ella se detiene
+   Tras el rsync, `perfil-despliegue.sh` confirma `selfhosted`, la CA y los directorios de certificado de `postgres`, `redis` y `mail-auth` (sin ellos se detiene
    aquí); se levantan y esperan sanos `postgres-primary`, `redis`, `pgbouncer` y `nats`; se recrean los
    servicios y se esperan; y al final `edge-proxy`, también esperado. Cada `docker compose` va por
    `with-secrets.sh` con `-f docker-compose.yml -f docker-compose.selfhosted.yml`. En despliegues
@@ -592,9 +597,12 @@ Desde el puesto de trabajo, con el repositorio en el commit a desplegar (`<srv>`
 6. Renovaciones:
    * TLS interno: el timer diario ejecuta `internal-tls.sh --renovar --recargar`, que reemite con la
      misma CA lo que caduca en `INTERNAL_TLS_RENEW_DAYS` (30) y lo aplica sin reiniciar: SIGHUP a
-     Postgres y `CONFIG SET tls-cert-file` a Redis. Estado: `internal-tls.sh --comprobar`. La CA
+     Postgres y `CONFIG SET tls-cert-file` a Redis; mail-auth mira sus ficheros cada 15 s y sirve
+     el par nuevo en cuanto casa (mientras no casa, el anterior). No se reinicia a propósito: con
+     mail-auth caído Dovecot responde fallo de contraseña y vacía su caché de ese usuario. Estado: `internal-tls.sh --comprobar`. La CA
      (10 años) no se rota sola: rotarla es crear una nueva, reemitir, y recrear `pgbouncer`,
-     `redis`, `postgres-primary` y todos los servicios Go en la misma ventana.
+     `redis`, `postgres-primary` y todos los servicios Go (el webmail carga la CA al arrancar) en
+     la misma ventana.
    * Certificado público: lo renueva `acme-mail`; el borde lo detecta y recarga nginx.
    * Rangos de Cloudflare: `ops/security/edge-cloudflare-ips.sh --comprobar` periódicamente.
 
@@ -631,5 +639,15 @@ el OOM, pero con ClamAV cargando la latencia se degrada.
   Verificarlo pide soportar `sslrootcert` en `pkg/config`.
 * La clave de la CA vive en el servidor (la necesita la renovación): quien tenga root puede emitir
   certificados internos, pero también puede leer los datos.
+* Dovecot no verifica a mail-auth. `passwd-verify.lua` pasa `insecure = true`, que LuaSec no
+  reconoce: lo que rige es su `verify = "none"` por defecto (LuaSec 1.3.2 de Alpine 3.21,
+  comprobado en `ssl/https.lua`). Se podría pasar `verify = "peer"` con `cafile` a la CA interna
+  montada en Dovecot, sin tocar Dovecot por dentro, pero LuaSec no comprueba el nombre del
+  certificado: aceptaría cualquiera de la CA interna (también el de Postgres o Redis), y el cambio
+  alcanza a desarrollo y al e2e, que usan otras CA. Queda pendiente con su prueba en `deploy/mail`.
+  El tráfico va por la red `mail-engines` del propio servidor; el webmail sí verifica.
+* mail-auth sin `MAIL_AUTH_TLS_CERT`/`MAIL_AUTH_TLS_KEY` arranca con un autofirmado y solo lo
+  avisa, también en `production`. En este perfil `check-selfhosted-profile.sh` impide perderlos; en
+  otro despliegue el síntoma es que el webmail no autentica a nadie.
 * `release.yml` aplica el perfil, pero entra por SSM y publica en ECR: en un servidor sin AWS el
   camino es `scripts/deploy-ecr.sh` con `save`.

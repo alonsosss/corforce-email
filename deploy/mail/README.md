@@ -246,7 +246,9 @@ entrada de un buzon con cada evento de buzon ("Revocacion en Dovecot", abajo).
 
 Lo implementa `services/mail-auth`: listener TLS en `MAIL_AUTH_TLS_PORT` (9082)
 con `MAIL_AUTH_TLS_CERT`/`MAIL_AUTH_TLS_KEY` (sin ellos, certificado autofirmado
-en memoria avisado en log); `POST /` y `POST /auth`; `service` se traduce a flag
+en memoria avisado en log; con ellos, relee el par cada 15 s cuando cambia en disco, sin
+reiniciar; en el perfil autoalojado los emite la CA interna con SAN `mail-auth`,
+`docs/Operacion_Despliegue.md` 11); `POST /` y `POST /auth`; `service` se traduce a flag
 (`imap`, `pop3`, `smtp`/`submission`/`lmtp` -> `smtp_access`,
 `sieve`/`managesieve` -> `sieve_access`; `webmail` exige `imap_access` Y
 `smtp_access`, porque el webmail lee y envia con la credencial maestra, que no vuelve a

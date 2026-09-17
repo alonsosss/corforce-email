@@ -110,7 +110,7 @@ func main() {
 	verifyRouter.Use(middleware.Logger(logger))
 	verifyRouter.Mount("/", h.VerifyRoutes())
 
-	tlsCfg, selfSigned, err := handler.TLSConfig(os.Getenv("MAIL_AUTH_TLS_CERT"), os.Getenv("MAIL_AUTH_TLS_KEY"), tlsHostname)
+	tlsCfg, selfSigned, err := handler.TLSConfig(os.Getenv("MAIL_AUTH_TLS_CERT"), os.Getenv("MAIL_AUTH_TLS_KEY"), tlsHostname, logger)
 	if err != nil {
 		log.Fatalf("tls: %v", err)
 	}

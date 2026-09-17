@@ -13,9 +13,11 @@
 # detiene el despliegue: un perfil mal escrito no puede caer en silencio en el de AWS, que en un
 # servidor propio levanta los servicios sin base ni TLS.
 #
-# Con selfhosted comprueba ademas que existe la CA interna (ops/security/internal-tls.sh): sin
-# ella no arranca ni PgBouncer ni ningun cliente de Redis, y el fallo se veria contenedor a
-# contenedor. Solo lee claves de configuracion y nunca imprime valores de otras.
+# Con selfhosted comprueba ademas que existen la CA interna y los directorios de certificado que
+# el perfil monta (ops/security/internal-tls.sh): sin la CA no arranca ni PgBouncer ni ningun
+# cliente de Redis, y sin un directorio Docker lo crearia vacio y ese servicio no arrancaria (un
+# servidor anterior a un certificado nuevo, como el de mail-auth); el fallo se veria contenedor a
+# contenedor. Los directorios son 0700 de cada servicio: aqui solo se puede ver que existen. Solo lee claves de configuracion y nunca imprime valores de otras.
 set -euo pipefail
 
 ENV_FILE="${APP_DIR:-.}/.env"
@@ -54,6 +56,13 @@ if [[ "$perfil" == selfhosted && "$ACCION" != nombre ]]; then
     echo "  Generala antes de desplegar: sudo ops/security/internal-tls.sh (docs/Operacion_Despliegue.md, 11)" >&2
     exit 1
   fi
+  for dir in postgres redis mail-auth; do
+    if [[ ! -d "$tls/$dir" ]]; then
+      echo "perfil-despliegue: DEPLOY_PROFILE=selfhosted sin el certificado interno de $dir ($tls/$dir)" >&2
+      echo "  Emitelo antes de desplegar: sudo ops/security/internal-tls.sh (docs/Operacion_Despliegue.md, 11)" >&2
+      exit 1
+    fi
+  done
 fi
 
 case "$ACCION:$perfil" in

@@ -1,5 +1,5 @@
 [Unit]
-Description=Renovacion del TLS interno de Core Force Mail (Postgres y Redis del perfil autoalojado)
+Description=Renovacion del TLS interno de Core Force Mail (Postgres, Redis y mail-auth del perfil autoalojado)
 After=docker.service
 Wants=docker.service
 # Antes del primer despliegue el guion aun no esta en el servidor: no es un fallo.

@@ -9,6 +9,9 @@
 #     TLS y no arrancaria en production);
 #   - pg_hba.conf no admite ninguna conexion TCP sin TLS ni sin contrasena;
 #   - los puntos de montaje de internal-tls.sh son los del perfil;
+#   - mail-auth sirve el certificado de la CA interna (montaje del directorio, MAIL_AUTH_TLS_*,
+#     user: sin root del que internal-tls.sh saca el dueno de la clave, SAN = host de
+#     MAIL_AUTH_URL) y el webmail lo verifica con esa CA (WEBMAIL_TLS_CA_FILE);
 #   - el cuerpo maximo del proxy de borde cubre el mayor envio del webmail y la importacion de
 #     contactos de .env.example;
 #   - los rangos de Cloudflare son CIDR validos, y la imagen del borde va por digest;
@@ -146,7 +149,8 @@ for svc in go:
     cuerpo = "\n".join(perfil.get(svc, []))
     if not re.search(r"environment:\s*\*go-service-env|<<:\s*\*go-service-env", cuerpo):
         fallos.append(f"{svc}: el perfil no le da REDIS_TLS ni la CA interna (*go-service-env)")
-    if not re.search(r"volumes:\s*\*internal-ca", cuerpo):
+    if not re.search(r"volumes:\s*\*internal-ca", cuerpo) and \
+            "- ${INTERNAL_TLS_DIR:-/opt/core-force-mail/tls}/publico:/run/core-force-mail/tls/publico:ro" not in cuerpo:
         fallos.append(f"{svc}: el perfil no le monta la CA interna (*internal-ca)")
 m = re.search(r"x-go-service-env: &go-service-env\n((?:  .*\n)+)", perfil_txt)
 env_go = dict(re.findall(r"^  ([A-Z_]+):\s*\"?([^\"\n]*)\"?", m.group(1), re.M)) if m else {}
@@ -157,7 +161,7 @@ if env_go.get("REDIS_TLS_SERVER_NAME") != "redis":
 
 # --- puntos de montaje compartidos con internal-tls.sh ----------------------------------------
 tls = leer("ops/security/internal-tls.sh")
-for var in ("MONTAJE_PUBLICO", "MONTAJE_REDIS"):
+for var in ("MONTAJE_PUBLICO", "MONTAJE_REDIS", "MONTAJE_MAIL_AUTH"):
     m = re.search(rf"^{var}=(\S+)$", tls, re.M)
     if not m:
         fallos.append(f"internal-tls.sh: falta {var}")
@@ -167,6 +171,62 @@ for var in ("MONTAJE_PUBLICO", "MONTAJE_REDIS"):
 if env_go.get("REDIS_TLS_CA_FILE", "") != "/run/core-force-mail/tls/publico/ca.crt" or \
         ":/run/core-force-mail/tls/publico:ro" not in perfil_txt:
     fallos.append("REDIS_TLS_CA_FILE no esta dentro del montaje de la CA publica")
+
+# --- mail-auth con certificado de la CA interna y el webmail verificandolo --------------------
+
+
+def entorno(lineas):
+    return dict(re.findall(r"^      ([A-Z_]+):\s*\"?([^\"\n]*)\"?\s*$", "\n".join(lineas), re.M))
+
+
+m = re.search(r"^MONTAJE_MAIL_AUTH=(\S+)$", tls, re.M)
+montaje_ma = m.group(1) if m else ""
+ma = perfil.get("mail-auth", [])
+ma_txt = "\n".join(ma)
+env_ma = entorno(ma)
+if env_ma.get("MAIL_AUTH_TLS_CERT") != f"{montaje_ma}/server.crt" or env_ma.get("MAIL_AUTH_TLS_KEY") != f"{montaje_ma}/server.key":
+    fallos.append(f"mail-auth: MAIL_AUTH_TLS_CERT/MAIL_AUTH_TLS_KEY no son server.crt/server.key de {montaje_ma or 'MONTAJE_MAIL_AUTH'} "
+                  "(sin ellos sirve un autofirmado y el webmail no verifica)")
+if f"- ${{INTERNAL_TLS_DIR:-/opt/core-force-mail/tls}}/mail-auth:{montaje_ma}:ro" not in ma_txt:
+    fallos.append("mail-auth: el perfil no monta el DIRECTORIO <INTERNAL_TLS_DIR>/mail-auth (un fichero montado no ve la renovacion)")
+m = re.search(r"^    user:\s*\"?([0-9]+):([0-9]+)\"?\s*$", ma_txt, re.M)
+if not m or m.group(1) == "0" or m.group(2) == "0":
+    fallos.append("mail-auth: el perfil no le fija un user: UID:GID numerico sin root (dueno de su clave en internal-tls.sh)")
+if not re.search(r"^SERVICIOS=\([^)]*\bmail-auth\b[^)]*\)$", tls, re.M):
+    fallos.append("internal-tls.sh: no emite el certificado de mail-auth (SERVICIOS)")
+m = re.search(r"\[mail-auth\]=(\S+?)[\s)]", tls)
+nombre_ma = m.group(1) if m else ""
+hosts = set()
+for rel, patron in ((".env.example", r"^MAIL_AUTH_URL=(\S+)$"),
+                    ("deploy/mail/docker-compose.mail.yml", r"MAIL_AUTH_URL=\$\{MAIL_AUTH_URL:-([^}]+)\}")):
+    m = re.search(patron, leer(rel), re.M)
+    if not m:
+        fallos.append(f"{rel}: no se lee MAIL_AUTH_URL")
+        continue
+    hosts.add(re.sub(r"^https://([^:/]+).*$", r"\1", m.group(1)))
+m = re.search(r'^\s*tlsHostname\s*=\s*"([^"]+)"', leer("services/mail-auth/main.go"), re.M)
+if m:
+    hosts.add(m.group(1))
+else:
+    fallos.append("services/mail-auth/main.go: no se lee tlsHostname")
+if hosts != {nombre_ma}:
+    fallos.append(f"internal-tls.sh: el certificado de mail-auth es para '{nombre_ma}' y sus clientes lo buscan como {sorted(hosts)}")
+if not re.search(r"aliases:\s*- " + re.escape(nombre_ma or "?") + r"(\s|$)", " ".join(base.get("mail-auth", []))):
+    fallos.append(f"docker-compose.yml: mail-auth no tiene el alias '{nombre_ma}' en la red de los motores")
+if not re.search(r'echo "DNS:\$svc,', tls):
+    fallos.append("internal-tls.sh: san_de no pone el nombre del servicio en el SAN")
+m = re.search(r"^SERVICIOS=\(([^)]*)\)$", tls, re.M)
+servicios_tls = m.group(1).split() if m else []
+m = re.search(r"^  for dir in ([a-z -]+); do$", leer("ops/maintenance/perfil-despliegue.sh"), re.M)
+if not m or m.group(1).split() != servicios_tls:
+    fallos.append(f"perfil-despliegue.sh: no exige los directorios de certificado de internal-tls.sh ({' '.join(servicios_tls)})")
+wm = perfil.get("webmail", [])
+env_wm = entorno(wm)
+if env_wm.get("WEBMAIL_TLS_CA_FILE") != "/run/core-force-mail/tls/publico/ca.crt" or \
+        not re.search(r"volumes:\s*\*internal-ca", "\n".join(wm)):
+    fallos.append("webmail: WEBMAIL_TLS_CA_FILE no es la CA interna montada (no verificaria mail-auth)")
+if env_wm.get("WEBMAIL_TLS_INSECURE_SKIP_VERIFY", "false") != "false":
+    fallos.append("webmail: el perfil desactiva la verificacion TLS")
 
 # --- proxy de borde ---------------------------------------------------------------------------
 borde = "\n".join(perfil.get("edge-proxy", []))
@@ -274,7 +334,10 @@ perfil 'DEPLOY_PROFILE=aws\n' --infra && [[ -z "$(cat "$TMP/out")" ]] || mal "pe
 if perfil 'DEPLOY_PROFILE=selfhost\n' --compose; then mal "perfil: acepta un DEPLOY_PROFILE mal escrito"; fi
 if perfil "DEPLOY_PROFILE=selfhosted\nINTERNAL_TLS_DIR=$TMP/sin-tls\n" --compose; then mal "perfil selfhosted: despliega sin CA interna"; fi
 grep -q 'internal-tls.sh' "$TMP/out" || mal "perfil selfhosted sin CA: el mensaje no dice como generarla"
-mkdir -p "$TMP/tls/publico" && printf -- '-----BEGIN CERTIFICATE-----\n' >"$TMP/tls/publico/ca.crt"
+mkdir -p "$TMP/tls/publico" "$TMP/tls/postgres" "$TMP/tls/redis" && printf -- '-----BEGIN CERTIFICATE-----\n' >"$TMP/tls/publico/ca.crt"
+if perfil "DEPLOY_PROFILE=selfhosted\nINTERNAL_TLS_DIR=$TMP/tls\n" --compose; then mal "perfil selfhosted: despliega sin el certificado de mail-auth"; fi
+grep -q 'mail-auth' "$TMP/out" || mal "perfil selfhosted sin certificado de mail-auth: el mensaje no lo nombra"
+mkdir -p "$TMP/tls/mail-auth"
 perfil "DEPLOY_PROFILE=\"selfhosted\"\nINTERNAL_TLS_DIR=$TMP/tls\n" --compose &&
   [[ "$(cat "$TMP/out")" == "-f docker-compose.yml -f docker-compose.selfhosted.yml" ]] || mal "perfil selfhosted: argumentos de compose inesperados"
 perfil "DEPLOY_PROFILE=selfhosted\nINTERNAL_TLS_DIR=$TMP/tls\n" --infra || mal "perfil selfhosted: --infra falla"
@@ -298,8 +361,16 @@ for r in mail_cell_zz_01_svc mail_cell_zz_01_engine; do
   grep -qx "\"$r\"" <<<"$roles" || mal "pgbouncer-userlist.sh: sin CELL_DB_NAME en el entorno omite $r del .env"
 done
 
+# --- internal-tls.sh lee el dueno de mail-auth del perfil, sin docker ---------------------------
+esperado="$(sed -n -E '/^  mail-auth:/,/^  [^ ]/s/^    user:[[:space:]]*"?([0-9]+:[0-9]+)"?[[:space:]]*$/\1/p' "$ROOT/docker-compose.selfhosted.yml")"
+if duenos="$(bash "$ROOT/ops/security/internal-tls.sh" --solo-detectar --duenos postgres=1:1,redis=1:1 2>&1)"; then
+  grep -qx "mail-auth=$esperado" <<<"$duenos" && [[ -n "$esperado" ]] || mal "internal-tls.sh: dueno de mail-auth '$(grep mail-auth <<<"$duenos")', el perfil dice '$esperado'"
+else
+  mal "internal-tls.sh --solo-detectar no lee el dueno de mail-auth del perfil: $duenos"
+fi
+
 if [[ $FALLOS -ne 0 ]]; then
   echo "check-selfhosted-profile: FALLA" >&2
   exit 1
 fi
-echo "  OK: el perfil autoalojado conserva los parametros base, cifra Postgres y Redis para todos sus clientes, cubre los limites del webmail y lo aplican los dos despliegues."
+echo "  OK: el perfil autoalojado conserva los parametros base, cifra Postgres y Redis para todos sus clientes, da a mail-auth un certificado que el webmail verifica, cubre los limites del webmail y lo aplican los dos despliegues."
