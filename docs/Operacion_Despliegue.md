@@ -162,7 +162,10 @@ su plano hace fallar CI: nacer sin credencial propia es heredar la de plataforma
 `userlist.txt` de PgBouncer lo genera `ops/db/pgbouncer-userlist.sh --write` (y `--check`
 falla si se quedó atrás) con los roles de este despliegue. Es el paso que se olvidaba: un rol
 que Postgres acepta pero que no está en `userlist.txt` no pasa el pooler, y el error apunta a
-la base y no al pooler. Tras regenerarlo, recrear el contenedor `pgbouncer`.
+la base y no al pooler. Tras regenerarlo, recrear el contenedor `pgbouncer`. El fichero va con
+modo 0640 y grupo 70 (el uid del pooler en su imagen): `bootstrap.sh` mete al usuario de
+despliegue en ese grupo (lo crea como `pgbouncer-pool` si no existe); sin eso el script no puede
+asignarlo y el pooler no arranca ("no se puede leer /etc/pgbouncer/userlist.txt").
 
 Motores de una celda: su rol es `<CELL_DB_NAME>_engine` (`ops/db/cell-engine-role.sh --cell
 <code>`), miembro del grupo `mail_engine`, con `MAIL_DB_PASSWORD` del almacén y CONNECT solo a
@@ -619,7 +622,9 @@ el OOM, pero con ClamAV cargando la latencia se degrada.
 * Secretos: el servidor no tiene Secrets Manager. `with-secrets.sh` sigue siendo el único camino,
   pero `fetch-secrets.sh` falla sin el CLI y el rol de AWS y `load.sh` recurre al `.env`, que
   entonces tiene que llevar TODAS las credenciales de `secret-keys.txt` y `secret-keys-db.txt`
-  (0600, del usuario de despliegue). Es un secreto en disco que en AWS no existe; falta decidir el
+  (0600, del usuario de despliegue). En ese modo `load.sh` exporta al entorno solo las claves del
+  inventario, citadas, para que los guiones de `ops/db` (el `userlist.txt` de PgBouncer, los roles)
+  las vean igual que con el almacen. Es un secreto en disco que en AWS no existe; falta decidir el
   almacén del perfil (por ejemplo `systemd-creds` o un fichero cifrado desbloqueado al arrancar).
 * `sslmode=prefer` de las conexiones directas de `pkg/config` cifra pero no verifica el
   certificado; en este perfil el camino va por la red interna de Docker del propio servidor.

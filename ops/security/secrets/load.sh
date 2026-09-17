@@ -72,10 +72,38 @@ sys.exit(0 if all(k in tiene for k in obligatorias) else 1)
 PY
 }
 
+cf_env_exportes() {
+  KEYS_FILE="$_cf_keys_file" KEYS_DB_FILE="$_cf_keys_db_file" ENV_FILE="$_cf_env_file" python3 - <<'PY'
+import os, re, shlex
+
+def leer(ruta):
+    try:
+        return [l.strip().rstrip("?") for l in open(ruta, encoding="utf-8")
+                if l.strip() and not l.startswith("#")]
+    except OSError:
+        return []
+
+claves = set(leer(os.environ["KEYS_FILE"]) + leer(os.environ["KEYS_DB_FILE"]))
+env = open(os.environ["ENV_FILE"], encoding="utf-8").read()
+valores = {}
+for m in re.finditer(r"^([A-Z0-9_]+)=(.*)$", env, re.M):
+    if m.group(1) in claves and m.group(2).strip():
+        valores[m.group(1)] = m.group(2)
+for k, v in sorted(valores.items()):
+    print(f"export {k}={shlex.quote(v)}")
+PY
+}
+
 cf_cargar_secretos() {
   if ! "$_cf_secrets_dir/fetch-secrets.sh"; then
     if cf_env_tiene_credenciales; then
       echo "secretos: almacen no disponible; se continua con las credenciales del .env" >&2
+      # Compose lee el .env por su cuenta, pero los guiones de ops/db solo ven el entorno: sin
+      # exportarlas, pgbouncer-userlist.sh escribia un userlist vacio. Solo las claves del
+      # inventario, citadas: el .env tiene valores con espacios que un `source` ejecutaria.
+      local exportes
+      exportes="$(cf_env_exportes)" || return 1
+      eval "$exportes"
       return 0
     fi
     echo "secretos: no se pudieron materializar y el .env tampoco los tiene." >&2

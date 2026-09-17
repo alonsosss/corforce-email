@@ -229,6 +229,14 @@ if ! id "$DEPLOY_USER" >/dev/null 2>&1; then
   useradd --create-home --shell /bin/bash "$DEPLOY_USER"
 fi
 usermod -aG docker "$DEPLOY_USER"
+# PgBouncer lee userlist.txt por el grupo 70 (el uid del pooler en su imagen) y
+# ops/db/pgbouncer-userlist.sh solo puede asignarle ese grupo si el usuario pertenece a el.
+grupo_pooler="$(getent group 70 | cut -d: -f1 || true)"
+if [[ -z "$grupo_pooler" ]]; then
+  groupadd --gid 70 pgbouncer-pool
+  grupo_pooler=pgbouncer-pool
+fi
+usermod -aG "$grupo_pooler" "$DEPLOY_USER"
 
 deploy_home="$(getent passwd "$DEPLOY_USER" | cut -d: -f6)"
 install -d -m 0700 -o "$DEPLOY_USER" -g "$DEPLOY_USER" "$deploy_home/.ssh"
