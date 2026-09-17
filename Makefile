@@ -152,16 +152,16 @@ check-secret-sources:
 check-db-credentials:
 	@bash ops/scaffold/check-db-credentials.sh
 
-# make gen-compose-images  (regenera el override de imagenes de ECR) /
-# make check-compose-images (falla si un servicio con build quedo fuera del override)
+# make gen-compose-images  (regenera los overrides de imagenes: ECR y transporte save) /
+# make check-compose-images (falla si un servicio con build quedo fuera de alguno)
 gen-compose-images:
 	@bash ops/ecr/gen-compose-images.sh
 
 check-compose-images:
 	@bash ops/ecr/gen-compose-images.sh >/dev/null
-	@git diff --quiet -- docker-compose.images.yml || \
-		( echo "docker-compose.images.yml desactualizado: corre 'make gen-compose-images'" >&2; \
-		  git --no-pager diff -- docker-compose.images.yml; exit 1 )
+	@git diff --quiet -- docker-compose.images.yml docker-compose.images.save.yml || \
+		( echo "los overrides de imagenes estan desactualizados: corre 'make gen-compose-images'" >&2; \
+		  git --no-pager diff -- docker-compose.images.yml docker-compose.images.save.yml; exit 1 )
 
 # make check-compose  (los ficheros de compose tienen que ser validos para docker compose;
 # sin docker avisa y no falla)

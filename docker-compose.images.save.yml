@@ -1,0 +1,67 @@
+# GENERADO por ops/ecr/gen-compose-images.sh - no editar a mano.
+# Uso (transporte save, sin registro): DEPLOY_TAG=<commit> docker compose -f docker-compose.yml \
+#      -f docker-compose.images.save.yml up -d --no-build <svc>
+services:
+  gateway:
+    image: core-force-mail/gateway:${DEPLOY_TAG:?lo fija scripts/deploy-ecr.sh}
+    pull_policy: never
+  identity:
+    image: core-force-mail/identity:${DEPLOY_TAG:?lo fija scripts/deploy-ecr.sh}
+    pull_policy: never
+  access-control:
+    image: core-force-mail/access-control:${DEPLOY_TAG:?lo fija scripts/deploy-ecr.sh}
+    pull_policy: never
+  organization:
+    image: core-force-mail/organization:${DEPLOY_TAG:?lo fija scripts/deploy-ecr.sh}
+    pull_policy: never
+  audit:
+    image: core-force-mail/audit:${DEPLOY_TAG:?lo fija scripts/deploy-ecr.sh}
+    pull_policy: never
+  scheduler:
+    image: core-force-mail/scheduler:${DEPLOY_TAG:?lo fija scripts/deploy-ecr.sh}
+    pull_policy: never
+  mail-directory:
+    image: core-force-mail/mail-directory:${DEPLOY_TAG:?lo fija scripts/deploy-ecr.sh}
+    pull_policy: never
+  mail-auth:
+    image: core-force-mail/mail-auth:${DEPLOY_TAG:?lo fija scripts/deploy-ecr.sh}
+    pull_policy: never
+  mail-security:
+    image: core-force-mail/mail-security:${DEPLOY_TAG:?lo fija scripts/deploy-ecr.sh}
+    pull_policy: never
+  webmail:
+    image: core-force-mail/webmail:${DEPLOY_TAG:?lo fija scripts/deploy-ecr.sh}
+    pull_policy: never
+  domain-service:
+    image: core-force-mail/domain-service:${DEPLOY_TAG:?lo fija scripts/deploy-ecr.sh}
+    pull_policy: never
+  transactional:
+    image: core-force-mail/transactional:${DEPLOY_TAG:?lo fija scripts/deploy-ecr.sh}
+    pull_policy: never
+  suppression:
+    image: core-force-mail/suppression:${DEPLOY_TAG:?lo fija scripts/deploy-ecr.sh}
+    pull_policy: never
+  templates:
+    image: core-force-mail/templates:${DEPLOY_TAG:?lo fija scripts/deploy-ecr.sh}
+    pull_policy: never
+  contacts:
+    image: core-force-mail/contacts:${DEPLOY_TAG:?lo fija scripts/deploy-ecr.sh}
+    pull_policy: never
+  billing:
+    image: core-force-mail/billing:${DEPLOY_TAG:?lo fija scripts/deploy-ecr.sh}
+    pull_policy: never
+  reputation:
+    image: core-force-mail/reputation:${DEPLOY_TAG:?lo fija scripts/deploy-ecr.sh}
+    pull_policy: never
+  campaigns:
+    image: core-force-mail/campaigns:${DEPLOY_TAG:?lo fija scripts/deploy-ecr.sh}
+    pull_policy: never
+  automations:
+    image: core-force-mail/automations:${DEPLOY_TAG:?lo fija scripts/deploy-ecr.sh}
+    pull_policy: never
+  analytics:
+    image: core-force-mail/analytics:${DEPLOY_TAG:?lo fija scripts/deploy-ecr.sh}
+    pull_policy: never
+  web:
+    image: core-force-mail/web:${DEPLOY_TAG:?lo fija scripts/deploy-ecr.sh}
+    pull_policy: never

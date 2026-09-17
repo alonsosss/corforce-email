@@ -12,9 +12,11 @@
 # Lo que se vigila NO es "la imagen no viene de ECR": muchos servicios nunca se han vuelto
 # a desplegar desde que existe el registro y corren su imagen local sin ningun problema.
 # Marcarlos a todos seria ruido y el aviso que importa quedaria enterrado. Lo que se vigila
-# es la TRANSICION ecr -> local, que solo puede producirla una compilacion en el servidor.
-# Por eso el estado observado se guarda en el propio servidor ($STATE_FILE) y cada pasada
-# se compara con la anterior; la primera pasada solo toma la foto.
+# es la TRANSICION de una imagen desplegada (de ECR, o etiquetada por commit y llevada con
+# docker save en el perfil autoalojado) a una imagen SIN etiqueta de commit, que solo puede
+# producirla una compilacion en el servidor. Por eso el estado observado se guarda en el propio
+# servidor ($STATE_FILE) y cada pasada se compara con la anterior; la primera pasada solo toma
+# la foto.
 #
 # Los servicios los da docker-compose.images.yml (el override de despliegue, cubierto por
 # `make check-compose-images`), asi que un servicio nuevo entra solo.
@@ -70,6 +72,9 @@ while read -r kind svc img; do
       case "$img" in
         -) NOW["$svc"]=absent ;;
         *.dkr.ecr.*.amazonaws.com/core-force-mail/*) NOW["$svc"]=ecr ;;
+        # Transporte save: la imagen la construyo el PC y viaja etiquetada por commit
+        # (docker-compose.images.save.yml). Es una imagen desplegada, no compilada en el servidor.
+        core-force-mail/*) NOW["$svc"]=save ;;
         *) NOW["$svc"]=local ;;
       esac
       ;;
@@ -79,10 +84,10 @@ done <<< "$OUT"
 REGRESSED=(); LOCAL=(); ABSENT=()
 for s in "${SVCS[@]}"; do
   case "${NOW[$s]:-absent}" in
-    ecr) ;;
+    ecr | save) ;;
     local)
       LOCAL+=("$s")
-      [[ "${PREV[$s]:-}" == "ecr" ]] && REGRESSED+=("$s")
+      [[ "${PREV[$s]:-}" == "ecr" || "${PREV[$s]:-}" == "save" ]] && REGRESSED+=("$s")
       ;;
     absent) ABSENT+=("$s") ;;
   esac
@@ -109,7 +114,7 @@ done
 REZAGADOS=()
 declare -A CAMBIADOS=()
 for s in "${SVCS[@]}"; do
-  [[ "${NOW[$s]:-absent}" == "ecr" ]] || continue
+  [[ "${NOW[$s]:-absent}" == "ecr" || "${NOW[$s]:-absent}" == "save" ]] || continue
   t="${TAG[$s]:-}"
   [[ -z "$t" || "$t" == "latest" ]] && continue
   git rev-parse -q --verify "$t^{commit}" >/dev/null 2>&1 || continue
@@ -127,7 +132,7 @@ if [[ ${#REZAGADOS[@]} -gt 0 ]]; then
 fi
 
 if [[ ${#REGRESSED[@]} -gt 0 ]]; then
-  echo "check-image-drift: FALLA - servicios que RETROCEDIERON de ECR a imagen local:"
+  echo "check-image-drift: FALLA - servicios que RETROCEDIERON a una imagen sin etiqueta de commit:"
   printf '  %s\n' "${REGRESSED[@]}"
   echo
   echo "  Se compilaron en el servidor con su copia del codigo, que va por rsync selectivo:"
@@ -136,4 +141,4 @@ if [[ ${#REGRESSED[@]} -gt 0 ]]; then
   exit 1
 fi
 
-echo "check-image-drift: OK (sin regresiones; ${#LOCAL[@]} de ${#SVCS[@]} servicios aun no migrados a ECR)"
+echo "check-image-drift: OK (sin regresiones; ${#LOCAL[@]} de ${#SVCS[@]} servicios corren una imagen sin etiqueta de commit y se pondran al dia en el siguiente despliegue)"

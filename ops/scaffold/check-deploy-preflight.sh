@@ -6,7 +6,12 @@
 #   - ops/maintenance/esperar-sanos.sh, con un docker falso: sano, estable sin chequeo, en bucle
 #     de reinicios, sin contenedor y sin salud;
 #   - ops/maintenance/claves-env.sh: nombra las claves ausentes y nunca un valor;
-#   - ops/db/pgbouncer-userlist.sh --ensure: genera si falta y no reescribe uno distinto.
+#   - ops/db/pgbouncer-userlist.sh --ensure: genera si falta y no reescribe uno distinto;
+#   - y las piezas comunes de scripts/lib/despliegue.sh que atan el despliegue a un commit:
+#     verificar_imagen_desplegada y servicios_sin_commit. El transporte save -el del perfil
+#     autoalojado, que es produccion- enviaba app-<svc>:latest, y con una etiqueta flotante ni la
+#     guardia de retroceso ni la verificacion podian saber que commit corria cada servicio: el
+#     despliegue podia dejar codigo viejo dentro sin que nada lo dijera.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -80,6 +85,47 @@ entorno 'ENVIRONMENT=production\nPOSTGRES_PASSWORD=CHANGE_ME_IN_PRODUCTION\n' ||
 grep -q 'aviso:.*POSTGRES_PASSWORD' "$TMP/srv.out" || mal "entorno: no avisa de CHANGE_ME"
 if grep -q 'IN_PRODUCTION' "$TMP/srv.out"; then mal "entorno: imprime el valor de un secreto"; fi
 
+# --- etiqueta por commit y verificacion de la imagen --------------------------------------
+LIB="$ROOT/scripts/lib/despliegue.sh"
+cat >"$TMP/bin/ssh" <<'STUB'
+#!/usr/bin/env bash
+exec bash -c "${!#}"
+STUB
+cat >"$TMP/bin/docker" <<'STUB'
+#!/usr/bin/env bash
+# Solo `docker ps`: devuelve "<servicio> <imagen>" por linea, del fichero de la prueba.
+[[ "$1" == ps ]] || exit 0
+svc=""
+for a in "$@"; do case "$a" in label=com.docker.compose.service=*) svc="${a##*=}" ;; esac; done
+if [[ -n "$svc" ]]; then
+  awk -v s="$svc" '$1==s {print $2; exit}' "$STUB_PS"
+else
+  cat "$STUB_PS"
+fi
+STUB
+chmod +x "$TMP/bin/ssh" "$TMP/bin/docker"
+REPO="$TMP/repo"
+git init -q "$REPO"
+git -C "$REPO" -c user.name=p -c user.email=p@p commit -q --allow-empty -m uno
+COMMIT="$(git -C "$REPO" rev-parse --short HEAD)"
+lib() { (cd "$REPO" && PATH="$TMP/bin:$PATH" STUB_PS="$TMP/ps" bash -c ". '$LIB'; $1") >"$TMP/lib.out" 2>&1; }
+
+printf 'gateway core-force-mail/gateway:%s\nidentity core-force-mail/identity:%s\n' "$COMMIT" "$COMMIT" >"$TMP/ps"
+lib "verificar_imagen_desplegada app $COMMIT gateway identity" || mal "verificar_imagen_desplegada: no acepta contenedores con la imagen del commit"
+if lib "servicios_sin_commit app gateway identity | grep ."; then mal "servicios_sin_commit: senala servicios que si corren su commit"; fi
+printf 'gateway app-gateway:latest\nidentity core-force-mail/identity:%s\n' "$COMMIT" >"$TMP/ps"
+if lib "verificar_imagen_desplegada app $COMMIT gateway identity"; then mal "verificar_imagen_desplegada: da por aplicado un servicio que corre otra imagen"; fi
+grep -q "gateway corre 'app-gateway:latest'" "$TMP/lib.out" || mal "verificar_imagen_desplegada: no dice que imagen corre el servicio"
+grep -q identity "$TMP/lib.out" && mal "verificar_imagen_desplegada: senala un servicio que si esta al dia"
+lib "servicios_sin_commit app gateway identity" && [[ "$(cat "$TMP/lib.out")" == gateway ]] ||
+  mal "servicios_sin_commit: no selecciona solo al que corre una etiqueta flotante"
+: >"$TMP/ps"
+lib "verificar_imagen_desplegada app $COMMIT gateway" || mal "verificar_imagen_desplegada: falla cuando no hay contenedor (debe avisar)"
+grep -q "no se pudo verificar" "$TMP/lib.out" || mal "verificar_imagen_desplegada: no avisa de que no hay contenedor"
+if lib "servicios_sin_commit app gateway | grep ."; then mal "servicios_sin_commit: incluye un servicio sin contenedor"; fi
+
+python3 "$ROOT/ops/scaffold/check-deploy-preflight.py" "$ROOT" || FALLOS=1
+
 # --- enganchados en los dos despliegues ---------------------------------------------------
 D="$ROOT/scripts/deploy-ecr.sh"
 [[ "$(grep -c '^  preparar_servidor$' "$D")" == 2 ]] || mal "deploy-ecr.sh: preparar_servidor no esta en los dos transportes"
@@ -93,4 +139,4 @@ if [[ $FALLOS -ne 0 ]]; then
   echo "check-deploy-preflight: FALLA" >&2
   exit 1
 fi
-echo "  OK: el despliegue genera el userlist que falta, avisa de claves ausentes, rechaza marcadores de .env.example y no da por bueno un servicio que no arranca."
+echo "  OK: el despliegue genera el userlist que falta, avisa de claves ausentes, rechaza marcadores de .env.example, ata cada servicio a la imagen de su commit en los dos transportes y no da por bueno un servicio que no arranca."

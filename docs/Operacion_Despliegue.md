@@ -324,8 +324,36 @@ para llamar a la API hace falta ya un superadmin. Después, todo por API: `POST 
   perfil; con `DEPLOY_PROFILE=selfhosted` aplican lo de la sección 11.
 * Commits siempre con pathspec (`git commit -- <rutas>`): el índice puede estar compartido
   con otra sesión.
-* `docker-compose.images.yml` es generado (`make gen-compose-images`); CI falla si queda
-  atrás.
+* Los dos overrides de imagen son generados (`make gen-compose-images`, un servicio con `build:`
+  no puede quedar fuera de ninguno; CI falla si quedan atrás): `docker-compose.images.yml` para
+  ECR y `docker-compose.images.save.yml` para el transporte `save`.
+* Transporte `save` (sin AWS, el del perfil autoalojado): también etiqueta por commit. El PC
+  construye `core-force-mail/<servicio>:<commit>` con `docker-compose.images.save.yml`
+  (`pull_policy: never`: esa imagen no está en ningún registro, llega con `docker save | ssh docker
+  load` y se comprueba con `docker image inspect` antes de seguir), el servidor recrea con ese
+  `DEPLOY_TAG` y el despliegue verifica que cada contenedor corre esa imagen
+  (`verificar_imagen_desplegada` de `scripts/lib/despliegue.sh`, la misma pieza en los dos
+  transportes y en los motores). Antes enviaba `app-<servicio>:latest`, y con una etiqueta flotante
+  ni la guardia de retroceso ni la verificación podían saber qué commit corría cada servicio: el
+  despliegue «salía bien» aunque dejara código viejo dentro, y no había rollback por etiqueta.
+  Rollback: desde el commit anterior, `DEPLOY_ALLOW_ROLLBACK=1 ./scripts/deploy-ecr.sh <servicios>`.
+* Migración de un servidor anterior al etiquetado (imágenes `app-<servicio>:latest`): sin lista a
+  mano. `servicios_sin_commit` (`scripts/lib/despliegue.sh`) añade a la detección automática los
+  servicios cuyo contenedor corre una imagen sin etiqueta de commit, así que el primer
+  `./scripts/deploy-ecr.sh` sin argumentos los reconstruye y los recrea a todos —un despliegue
+  grande, una sola vez— y desde entonces no selecciona nada. Con lista explícita migran solo los de
+  la lista; el resto sigue en `latest` hasta que les toque, y `scripts/check-image-drift.sh` los
+  cuenta en su línea final. Las `app-<servicio>:latest` quedan sin uso cuando todos corren su
+  commit (el prune solo mira `core-force-mail/`): se retiran a mano una vez,
+  `docker image rm app-<servicio>:latest`, igual que las `mail-<motor>:latest` de los motores.
+* Imágenes viejas: cada despliegue conserva las tres últimas por servicio y retira el resto, en el
+  servidor y —desde que el transporte `save` etiqueta por commit y ya no sobrescribe una sola
+  imagen— también en el PC que construye (`ops/ecr/prune-local-images.sh --apply`). Sin eso el
+  disco se llena, y cuando se llena no falla el despliegue: falla Postgres.
+* `scripts/check-image-drift.sh` distingue tres orígenes: `ecr`, `save` (etiquetada por commit y
+  llevada con `docker save`) y una imagen sin etiqueta de commit, que es la que solo puede salir de
+  un `build` en el servidor. Denuncia el paso de las dos primeras a la tercera, también en el perfil
+  autoalojado, donde antes todo era «local» y esa regresión era invisible.
 * Motores de correo (`deploy/mail`, proyecto compose `mail`): `scripts/deploy-mail.sh` desde el PC,
   con el mismo destino, candado y guardia de retroceso que `deploy-ecr.sh` (`scripts/lib/despliegue.sh`).
   Construye en local con `deploy/mail/docker-compose.mail.images.yml` (`core-force-mail/<motor>:<commit>`,
@@ -665,7 +693,7 @@ Desde el puesto de trabajo, con el repositorio en el commit a desplegar (`<srv>`
    `redis-mail rspamd-mail netfilter-mail` y al final `dovecot-mail` y `postfix-mail`, cada tanda
    esperando la anterior. Las imágenes `mail-*:latest` quedan sin uso y se retiran a mano cuando todo
    corre con etiqueta (`docker image rm mail-<motor>:latest`).
-5. Primer despliegue, sin AWS (el transporte cae a `save`):
+5. Primer despliegue, sin AWS (el transporte cae a `save`, que etiqueta por commit igual que ECR):
 
    ```bash
    DEPLOY_HOST=<srv> DEPLOY_USER=deploy DEPLOY_SSH_KEY=~/.ssh/<llave> \
@@ -757,8 +785,16 @@ el OOM, pero con ClamAV cargando la latencia se degrada.
   otro despliegue el síntoma es que el webmail no autentica a nadie.
 * `release.yml` aplica el perfil, pero entra por SSM y publica en ECR: en un servidor sin AWS el
   camino es `scripts/deploy-ecr.sh` con `save`.
-* Motores: `scripts/deploy-mail.sh` extrae `deploy/mail` encima de la copia del servidor con el
-  usuario de despliegue. Si un motor dejara un fichero versionado de esa copia con otro dueño, `tar`
-  fallaría antes de recrear nada (el despliegue se detiene sin tocar los motores). La configuración
-  sincronizada llega también a los motores que no se recrean: el despliegue lo avisa, y conviene
-  desplegarlos en la misma ventana.
+* Motores: la copia de `deploy/mail` en el servidor es un bind mount de ida y vuelta. rspamd
+  reescribe `local.d`, `override.d`, `plugins.d` y `custom/*` con el uid de su contenedor y deja
+  esos directorios sin permiso de escritura para el usuario de despliegue; Postfix y Dovecot dejan
+  ahí sus ficheros generados (`sql/*.cf` 640 `root:postfix`, `main.cf`, `sni.map`…). El 2026-09-17
+  eso detuvo un despliegue de motores en la sincronización, con decenas de `tar: … Cannot open:
+  File exists` y `Cannot utime` (antes de recrear nada: producción quedó intacta). Desde entonces
+  `scripts/deploy-mail.sh` extrae y borra **dentro de un contenedor efímero como root** —docker es
+  lo único que el usuario de despliegue tiene de más, no hace falta `sudo`— y solo toca las rutas
+  del archivo: lo generado no está versionado, así que no se reemplaza ni cambia de dueño. Detalle
+  y la única excepción a vigilar (los mapas de `rspamd/custom/`, si algún día los escribe un
+  servicio) en `deploy/mail/README.md`, «Despliegue en un servidor», paso 5.
+* La configuración sincronizada llega también a los motores que no se recrean: el despliegue lo
+  avisa, y conviene desplegarlos en la misma ventana.

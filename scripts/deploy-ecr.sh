@@ -76,7 +76,8 @@ stage_head_files() {
 # divergen, un fichero llega o no segun el transporte que se usara ese dia, que es de las cosas
 # mas dificiles de diagnosticar. docker-compose.selfhosted.yml y selfhosted/ son del perfil de
 # produccion autoalojada: en un servidor de AWS viajan y no se usan.
-FICHEROS_SERVIDOR=(docker-compose.yml docker-compose.images.yml docker-compose.observability.yml
+FICHEROS_SERVIDOR=(docker-compose.yml docker-compose.images.yml docker-compose.images.save.yml
+  docker-compose.observability.yml
   docker-compose.selfhosted.yml selfhosted migrations ops/db ops/security ops/ecr ops/observability
   ops/maintenance ops/backup pgbouncer)
 
@@ -209,8 +210,12 @@ else
   # los servicios Go, la aplicacion web y las raices compartidas (pkg/, go.mod,
   # migrations/) sin listas escritas a mano, de modo que un servicio nuevo entra solo.
   CORRIENDO="$(remote "docker ps --format '{{.Names}} {{.Image}}'" || true)"
+  # servicios_sin_commit (scripts/lib/despliegue.sh) anade los que corren una imagen sin etiqueta
+  # de commit: es lo que migra un servidor anterior al etiquetado por commit del transporte save.
+  mapfile -t TODOS < <(ops/scaffold/service-paths.sh | awk '{print $1}')
   mapfile -t SVCS < <(
-    { cambiados_desde "$BASE" | tr ' ' '\n'; rezagados "$CORRIENDO"; } | grep -v '^$' | sort -u
+    { cambiados_desde "$BASE" | tr ' ' '\n'; rezagados "$CORRIENDO"; servicios_sin_commit app "${TODOS[@]}"; } |
+      grep -v '^$' | sort -u
   )
 fi
 # Sin imagenes que reconstruir puede quedar, aun asi, trabajo para el servidor: lo que
@@ -259,7 +264,10 @@ fi
 # su propio context y dockerfile (los Go usan la raiz, la aplicacion web ./web). Compose
 # es la unica fuente que los conoce todos.
 export DOCKER_BUILDKIT=1
-export COMPOSE_PROJECT_NAME=app   # fija el nombre de imagen local app-<svc> (el directorio del repo no lo garantiza)
+# El proyecto de compose es el mismo que corre el servidor (etiquetas com.docker.compose.*, que
+# es por donde se buscan los contenedores). El nombre de la imagen ya no depende de el: lo fija
+# el override del transporte (docker-compose.images.yml o docker-compose.images.save.yml).
+export COMPOSE_PROJECT_NAME=app
 
 # Compose lanza TODOS los builds a la vez. En un despliegue acotado da igual, pero
 # cuando el cambio toca pkg/ la lista son todos los servicios Go y el PC de trabajo se
@@ -353,37 +361,34 @@ if [[ "$TRANSPORT" == "ecr" ]]; then
   remote "export DEPLOY_TAG=$TAG && ops/security/secrets/with-secrets.sh docker compose $COMPOSE_ARGS -f docker-compose.images.yml pull -q ${SVCS[*]}"
   aplicar_infra
   # La recreacion, en lotes: es la que arranca procesos y dispara la CPU.
-  por_lotes_remoto "recrear" "export DEPLOY_TAG=$TAG && ops/security/secrets/with-secrets.sh docker compose $COMPOSE_ARGS -f docker-compose.images.yml up -d --no-deps"
+  # --no-build: el servidor no tiene el codigo y NUNCA compila; si la imagen no esta, se para aqui.
+  por_lotes_remoto "recrear" "export DEPLOY_TAG=$TAG && ops/security/secrets/with-secrets.sh docker compose $COMPOSE_ARGS -f docker-compose.images.yml up -d --no-deps --no-build"
 
-  # El contenedor tiene que estar corriendo LA imagen recien construida. Un pull
-  # que no trajo nada, un compose que reutilizo la anterior o un up que no
-  # recreo dejan el despliegue "correcto" con codigo viejo dentro, y eso ya ha
-  # pasado en este repo: se comprueba en vez de confiar.
-  for s in "${SVCS[@]}"; do
-    # Por etiqueta de compose, no por nombre: Docker renombra el contenedor a
-    # "<id>_<nombre>" cuando una recreacion se cruza consigo misma, y entonces la
-    # comprobacion no encuentra nada y da el despliegue por no verificado.
-    real=$(remote "docker ps -a --filter 'label=com.docker.compose.service=$s' --filter 'label=com.docker.compose.project=app' --format '{{.Image}}' 2>/dev/null | head -1" || true)
-    case "$real" in
-      *":$TAG") ;;
-      "") echo "!! $s: no se pudo verificar la imagen del contenedor" >&2 ;;
-      *)
-        echo "!! $s corre '$real' y se esperaba el tag $TAG" >&2
-        echo "   el despliegue NO quedo aplicado para ese servicio" >&2
-        exit 1
-        ;;
-    esac
-  done
+  verificar_imagen_desplegada app "$TAG" "${SVCS[@]}" || exit 1
   esperar_sanos
   aplicar_borde
 else
-  # fallback sin AWS local: save | ssh load, luego up normal (imagen local del server)
-  COMPOSE=(docker compose)
+  # Sin AWS local (perfil autoalojado): la imagen la construye el PC y viaja con
+  # docker save | ssh docker load. Con el override del transporte save, Compose la etiqueta
+  # core-force-mail/<svc>:<commit> aqui y el servidor levanta esa misma etiqueta con --no-build.
+  #
+  # Antes este camino enviaba app-<svc>:latest: con una etiqueta flotante, ni la guardia de
+  # retroceso ni la verificacion de imagen podian saber que commit corria cada servicio (las dos
+  # descartan "latest"), asi que en el perfil autoalojado -el de produccion- el despliegue "salia
+  # bien" aunque dejara dentro codigo viejo, y no habia rollback por etiqueta.
+  export DEPLOY_TAG="$TAG"
+  COMPOSE=(docker compose -f docker-compose.yml -f docker-compose.images.save.yml)
   build_en_lotes
   adquirir_candado plataforma || exit 1
   guardia_retroceso app "$TAG" "${SVCS[@]}" || exit 1
   echo ">> build local OK"
-  docker save $(printf 'app-%s:latest ' "${SVCS[@]}") | gzip | "${SSH[@]}" 'gunzip | docker load'
+  IMAGENES=()
+  for s in "${SVCS[@]}"; do IMAGENES+=("$NS/$s:$TAG"); done
+  docker save "${IMAGENES[@]}" | gzip | "${SSH[@]}" 'gunzip | docker load' >/dev/null
+  "${SSH[@]}" "docker image inspect ${IMAGENES[*]} >/dev/null" || {
+    echo "!! el servidor no tiene las imagenes tras el docker load" >&2
+    exit 1
+  }
   TAG_DESPLEGADO="$(remote 'cat .deployed-tag 2>/dev/null' || true)"
   stage_head_files "${FICHEROS_SERVIDOR[@]}"
   rsync -a -e "ssh -o IdentitiesOnly=yes -i $SSH_KEY" "$STAGE_DIR"/ "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/"
@@ -391,9 +396,14 @@ else
   preparar_servidor
   leer_perfil
   aplicar_infra
-  por_lotes_remoto "recrear" "ops/security/secrets/with-secrets.sh docker compose $COMPOSE_ARGS up -d --no-deps"
+  por_lotes_remoto "recrear" "export DEPLOY_TAG=$TAG && ops/security/secrets/with-secrets.sh docker compose $COMPOSE_ARGS -f docker-compose.images.save.yml up -d --no-deps --no-build"
+  verificar_imagen_desplegada app "$TAG" "${SVCS[@]}" || exit 1
   esperar_sanos
   aplicar_borde
+  # Las imagenes etiquetadas por commit tambien se acumulan en el PC que construye (antes era una
+  # sola por servicio, app-<svc>:latest, que se sobreescribia). Se conservan las ultimas, como en
+  # el servidor, para que el rollback siga siendo un deploy sin build.
+  ops/ecr/prune-local-images.sh --apply >/dev/null || echo ">> no se pudo retirar las imagenes viejas de esta maquina" >&2
 fi
 
 # Las migraciones de tenant corren al arrancar organization. Si alguna cambio el TIPO de

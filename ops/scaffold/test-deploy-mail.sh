@@ -6,6 +6,10 @@
 #   - un servidor nuevo: la plataforma no tiene su red externa (recursos-externos.sh sale 1);
 #   - el estado de produccion antes de automatizar: imagenes mail-<motor>:latest, la red
 #     mail-engines creada a mano con las etiquetas de compose y los motores levantados a mano;
+#   - el arbol sincronizado tal como lo deja rspamd: local.d, override.d y plugins.d de otro uid,
+#     sin permiso de escritura para el usuario de despliegue (un tar suyo falla con "File exists"),
+#     mas un fichero generado que no esta versionado: el despliegue lo resuelve, reemplaza lo
+#     versionado y no toca lo generado;
 #   - la migracion con motores explicitos: cada motor pasa a core-force-mail/<motor>:<commit> sin
 #     recrear la red, que la plataforma ya encuentra;
 #   - un commit nuevo desplegado sin argumentos (detecta los motores afectados) y una segunda
@@ -69,8 +73,13 @@ cat >"$W/imagen/Dockerfile" <<EOF
 FROM $IMG_DIND
 RUN apk add --no-cache openssh-server bash python3 tar gzip \\
   && ssh-keygen -A && sed -i 's/^root:[^:]*:/root:*:/' /etc/shadow \\
-  && mkdir -p /root/.ssh && chmod 700 /root/.ssh
+  && mkdir -p /root/.ssh && chmod 700 /root/.ssh \\
+  && adduser -D -s /bin/bash deploy && addgroup deploy docker && passwd -u deploy \\
+  && mkdir -p /home/deploy/.ssh && chmod 700 /home/deploy/.ssh \\
+  && mkdir -p /opt/core-force-mail && chown deploy:deploy /opt/core-force-mail
 COPY authorized_keys /root/.ssh/authorized_keys
+COPY authorized_keys /home/deploy/.ssh/authorized_keys
+RUN chown -R deploy:deploy /home/deploy/.ssh
 ENV DOCKER_TLS_CERTDIR=
 ENTRYPOINT ["sh", "-c", "/usr/sbin/sshd && exec dockerd-entrypoint.sh"]
 EOF
@@ -86,7 +95,9 @@ cat >"$W/bin/ssh" <<EOF
 exec $(command -v ssh) -o UserKnownHostsFile="$W/known_hosts" -o LogLevel=ERROR "\$@"
 EOF
 chmod +x "$W/bin/ssh"
-export PATH="$W/bin:$PATH" DEPLOY_HOST="$IP" DEPLOY_USER=root DEPLOY_SSH_KEY="$W/clave"
+# El despliegue entra como el usuario de despliegue (sin sudo, solo en el grupo docker), como en
+# produccion; srv() entra como root solo para montar el escenario y mirarlo.
+export PATH="$W/bin:$PATH" DEPLOY_HOST="$IP" DEPLOY_USER=deploy DEPLOY_SSH_KEY="$W/clave"
 srv() { ssh -o StrictHostKeyChecking=accept-new -o IdentitiesOnly=yes -i "$W/clave" "root@$IP" "$@"; }
 for _ in $(seq 1 60); do srv 'docker info >/dev/null 2>&1' 2>/dev/null && break; sleep 1; done
 srv 'docker info >/dev/null' 2>/dev/null || { echo "el demonio del servidor simulado no arranco" >&2; exit 1; }
@@ -129,8 +140,31 @@ srv 'docker network create --driver bridge --subnet 172.22.1.0/24 --opt com.dock
 git -C "$REPO" archive HEAD deploy/mail | srv 'mkdir -p /opt/core-force-mail/mail-src && tar -x -C /opt/core-force-mail/mail-src'
 srv "cd /opt/core-force-mail/mail-src/deploy/mail && WITH_SECRETS_ENV_FILE=/opt/core-force-mail/app/.env /opt/core-force-mail/app/ops/security/secrets/with-secrets.sh docker compose -p mail -f docker-compose.mail.yml --env-file /opt/core-force-mail/app/.env up -d --no-build --no-deps ${MOTORES[*]}" >"$W/manual.out" 2>&1 ||
   { sed 's/^/    /' "$W/manual.out" >&2; echo "no se pudo reproducir el estado manual" >&2; exit 1; }
+srv 'chown -R deploy:deploy /opt/core-force-mail'
 RED_ANTES="$(srv 'docker network inspect -f {{.Id}} mail-engines')"
 ok "estado manual: $(srv "docker ps --format '{{.Image}}' | sort | tr '\n' ' '")"
+
+# --- el arbol sincronizado tal como lo deja rspamd ----------------------------------------------
+echo "== Arbol con ficheros de otro uid y un fichero generado =="
+UTIL="$(awk '/^  redis-mail:/{d=1;next} d&&/^    image:/{print $2;exit}' "$REPO/deploy/mail/docker-compose.mail.yml")"
+srv "docker run --rm -v /opt/core-force-mail/mail-src:/x $UTIL sh -c '
+  cd /x/deploy/mail/rspamd &&
+  echo \"# lo genera el motor\" > local.d/redis.conf &&
+  echo basura >> local.d/actions.conf &&
+  chown -R 101:82 local.d override.d plugins.d &&
+  chmod 775 local.d override.d plugins.d &&
+  chmod 664 local.d/redis.conf local.d/actions.conf'" >/dev/null 2>&1 ||
+  { echo "no se pudo montar el escenario de ficheros de otro uid" >&2; exit 1; }
+# El escenario es el de produccion solo si un tar del usuario de despliegue no puede con esos
+# ficheros: es lo que hizo fallar la sincronizacion en el servidor real.
+if git -C "$REPO" archive HEAD deploy/mail/rspamd/local.d |
+  ssh -o IdentitiesOnly=yes -i "$W/clave" "deploy@$IP" 'tar -x -C /opt/core-force-mail/mail-src' 2>"$W/tar.out"; then
+  mal "el escenario no reproduce el fallo: el usuario de despliegue si reemplaza ficheros de otro uid"
+elif grep -qE "File exists|Permission denied|Cannot utime" "$W/tar.out"; then
+  ok "reproducido: el tar del usuario de despliegue no puede con lo que reescribio rspamd"
+else
+  mal "el tar del usuario de despliegue fallo por otro motivo"; sed 's/^/    /' "$W/tar.out" >&2
+fi
 
 imagen() { srv "docker ps -a --filter label=com.docker.compose.project=mail --filter label=com.docker.compose.service=$1 --format '{{.Image}}'"; }
 desplegar() {
@@ -153,6 +187,13 @@ done
 [[ "$(srv "docker network inspect -f '{{len .Containers}}' mail-engines")" == 2 ]] || mal "los motores no estan en mail-engines"
 srv 'cat /opt/core-force-mail/mail-src/.deployed-tags' | grep -q "^olefy-mail $T1$" && ok ".deployed-tags registra el commit de cada motor" ||
   mal ".deployed-tags sin el commit de olefy-mail"
+R=/opt/core-force-mail/mail-src/deploy/mail/rspamd/local.d
+srv "grep -q basura $R/actions.conf" && mal "la sincronizacion no reemplazo un fichero versionado que reescribio rspamd" ||
+  ok "reemplaza lo versionado aunque sea de otro uid (tar como root en un contenedor)"
+[[ "$(srv "cat $R/redis.conf")" == "# lo genera el motor" ]] && ok "no toca el fichero que genera el motor (no versionado)" ||
+  mal "el fichero generado por el motor cambio"
+[[ "$(srv "stat -c %u:%g $R/redis.conf")" == "101:82" ]] && ok "lo generado conserva su dueno (los 640 root:postfix de Postfix siguen intactos)" ||
+  mal "el fichero generado cambio de dueno: $(srv "stat -c %u:%g $R/redis.conf")"
 externos && ok "con los motores desplegados la plataforma encuentra la red mail-engines" || mal "recursos-externos sigue fallando tras desplegar los motores"
 
 # --- commit nuevo, deteccion automatica -------------------------------------------------------------

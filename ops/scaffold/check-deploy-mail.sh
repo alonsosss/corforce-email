@@ -13,8 +13,10 @@
 #   - ops/maintenance/recursos-externos.sh con un docker falso;
 #   - scripts/deploy-mail.sh de punta a punta con ssh, docker y aws falsos: motor desconocido,
 #     motor solo-servidor contra el docker local, motores de commit desconocido, y un despliegue
-#     que construye solo lo que falta, levanta uno a uno con --no-build por el envoltorio de
-#     secretos, verifica la imagen, espera el arranque y registra el commit de cada motor;
+#     que construye solo lo que falta, sincroniza el arbol con tar dentro de un contenedor como
+#     root (el usuario de despliegue no puede reemplazar lo que reescribio un motor), levanta uno a
+#     uno con --no-build por el envoltorio de secretos, verifica la imagen, espera el arranque y
+#     registra el commit de cada motor;
 #   - los dos despliegues comparten el candado y la guardia, y la plataforma exige sus recursos
 #     externos antes de recrear.
 set -euo pipefail
@@ -66,10 +68,12 @@ sys.exit(1 if fallos else 0)
 PY
 
 # --- 2. scripts/lib/despliegue.sh -------------------------------------------------------------
-# ssh falso: ejecuta la orden remota (el ultimo argumento) en local.
+# ssh falso: ejecuta la orden remota (el ultimo argumento) en local y, cuando hay servidor de
+# prueba, la registra para poder comprobar por donde va cada cosa.
 mkdir -p "$TMP/bin"
 cat >"$TMP/bin/ssh" <<'STUB'
 #!/usr/bin/env bash
+[[ -n "${STUB_SRV:-}" ]] && { echo "${!#}" >>"$STUB_SRV/estado/ssh" 2>/dev/null || true; }
 exec bash -c "${!#}"
 STUB
 chmod +x "$TMP/bin/ssh"
@@ -168,6 +172,19 @@ case "$1" in
     [[ "$*" == *'{{.ID}}'* ]] && echo "$svc" || echo "${linea#* }" ;;
   inspect) echo "running healthy 0" ;;
   image) shift 2; for i in "$@"; do grep -qx "$i" "$E/cargadas" 2>/dev/null || exit 1; done ;;
+  run)
+    # Se ejecuta la orden dentro del directorio montado, que es lo que hace el contenedor.
+    shift; monta=""; img=""; cmd=()
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --rm | -i) shift ;;
+        --network | -w) shift 2 ;;
+        -v) monta="${2%%:*}"; shift 2 ;;
+        *) if [[ -z "$img" ]]; then img="$1"; else cmd+=("$1"); fi; shift ;;
+      esac
+    done
+    [[ -n "$monta" ]] || exit 1
+    mkdir -p "$monta" && cd "$monta" && "${cmd[@]}" ;;
   save) shift; echo "$*" ;;
   load) tr ' ' '\n' >>"$E/cargadas" ;;
   images | logs) ;;
@@ -215,6 +232,22 @@ grep -q "^dovecot-mail $TAG$" "$S/mail-src/.deployed-tags" 2>/dev/null && grep -
   mal "deploy-mail: no registra el commit de cada motor en .deployed-tags"
 [[ -f "$S/mail-src/deploy/mail/docker-compose.mail.yml" && -x "$S/mail-src/ops/maintenance/esperar-sanos.sh" ]] ||
   mal "deploy-mail: no sincroniza deploy/mail y sus guiones"
+# La sincronizacion va con tar dentro de un contenedor como root y con la imagen fijada de un motor
+# que no se construye: el usuario de despliegue no puede reemplazar lo que un motor reescribio en el
+# bind mount (rspamd deja sus directorios de otro uid).
+grep -q "^docker run --rm -i --network none -v $S/mail-src:/arbol -w /arbol redis:7.4.10-alpine tar -x$" "$O" ||
+  mal "deploy-mail: no extrae el arbol con tar dentro de un contenedor como root (imagen fijada del compose)"
+if grep "tar -x" "$S/estado/ssh" 2>/dev/null | grep -qv "docker run"; then mal "deploy-mail: extrae el arbol fuera del contenedor (el usuario de despliegue no puede)"; fi
+linea_tar="$(grep -n " tar -x$" "$O" | head -1 | cut -d: -f1)"
+linea_up="$(grep -n " up -d " "$O" | head -1 | cut -d: -f1)"
+[[ -n "$linea_tar" && -n "$linea_up" && "$linea_tar" -lt "$linea_up" ]] ||
+  mal "deploy-mail: la sincronizacion no va antes de recrear el primer motor"
+# Idempotente: repetir el mismo despliegue no falla ni cambia lo sincronizado.
+huella="$(find "$S/mail-src/deploy/mail" -type f | LC_ALL=C sort | xargs cat | cksum)"
+rc=0; desplegar dovecot-mail unbound-mail redis-mail || rc=$?
+[[ $rc == 0 ]] || mal "deploy-mail: repetir el despliegue falla (salida $rc)"
+[[ "$(find "$S/mail-src/deploy/mail" -type f | LC_ALL=C sort | xargs cat | cksum)" == "$huella" ]] ||
+  mal "deploy-mail: repetir el despliegue cambia el arbol sincronizado"
 [[ -e "$S/candado" ]] && mal "deploy-mail: deja el candado puesto"
 grep -q "unbound-mail: sano" "$TMP/dm.out" || mal "deploy-mail: no espera a que cada motor arranque"
 if grep -q "valor-de-prueba" "$TMP/dm.out" "$O"; then mal "deploy-mail: imprime un secreto"; fi
@@ -258,6 +291,12 @@ python3 - "$DE" <<'PY' || mal "deploy-ecr.sh: leer_perfil no exige los recursos 
 import re, sys
 m = re.search(r"^leer_perfil\(\) \{\n(.*?)^\}", open(sys.argv[1]).read(), re.S | re.M)
 sys.exit(0 if m and "with-secrets.sh ops/maintenance/recursos-externos.sh $COMPOSE_ARGS" in m.group(1) else 1)
+PY
+python3 - "$DM" <<'PY' || mal "deploy-mail.sh: el borrado de ficheros retirados no va dentro del contenedor como root"
+import re, sys
+t = open(sys.argv[1]).read()
+m = re.search(r'^\s*"\$\{SSH\[@\]\}" "(.*)rm -f --', t, re.M)
+sys.exit(0 if m and "docker run --rm" in m.group(1) else 1)
 PY
 [[ -x "$ROOT/ops/maintenance/recursos-externos.sh" && -x "$DM" ]] || mal "deploy-mail.sh o recursos-externos.sh no son ejecutables"
 

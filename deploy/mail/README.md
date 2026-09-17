@@ -194,7 +194,21 @@ DEPLOY_HOST=<srv> DEPLOY_USER=deploy DEPLOY_SSH_KEY=~/.ssh/<llave> scripts/deplo
    guardia, extrae `deploy/mail`, `ops/security/secrets`, `esperar-sanos.sh` y
    `prune-local-images.sh` de HEAD en `MAIL_DEPLOY_PATH` (por defecto
    `/opt/core-force-mail/mail-src`) y retira los ficheros borrados del repositorio desde el commit
-   de cada motor.
+   de cada motor. El `tar` y el `rm` corren **dentro de un contenedor efimero como root**
+   (`docker run --rm --network none -v <MAIL_DEPLOY_PATH>:/arbol`, con la imagen fijada de un motor
+   que no se construye: hoy la de `redis-mail`), porque el bind mount es de ida y vuelta: rspamd
+   reescribe `local.d`, `override.d`, `plugins.d` y `custom/*` con el uid de su contenedor y deja
+   esos directorios sin permiso de escritura para el usuario de despliegue, y un `tar` suyo falla
+   con «File exists» y «Cannot utime» (pasó en el servidor real el 2026-09-17, antes de recrear
+   nada). Solo se tocan las rutas del archivo: lo que los motores **generan** no está versionado
+   (ver «Ficheros generados en tiempo de ejecución» y `.gitignore`), así que no se reemplaza ni
+   cambia de dueño —los `sql/*.cf` 640 `root:postfix` que Postfix lee mientras corre siguen
+   intactos—. Lo versionado queda de root con los modos del repositorio (legible por todos) y cada
+   motor vuelve a poner lo suyo al arrancar. Reemplazar lo versionado con HEAD es correcto: ahí
+   ningún motor guarda estado que no rehaga solo (los mapas versionados de `rspamd/custom/` son
+   listas base y el entrypoint solo los `touch`ea). Si alguna vez un servicio escribe esos mapas
+   (requisito 4 de «Requisitos externos»), hay que desplegar `rspamd-mail` en la misma ventana: su
+   arranque es lo que devuelve `custom/*` a uid 82.
 6. Recrea los motores de uno en uno, en orden de dependencias: `with-secrets.sh docker compose -p
    <MAIL_PROJECT> --env-file <DEPLOY_PATH>/.env ... up -d --no-deps --no-build --force-recreate`,
    comprueba que el contenedor corre la imagen del commit y espera con `esperar-sanos.sh` (sano si la

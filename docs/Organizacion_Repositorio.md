@@ -91,7 +91,10 @@ los motores entienden traducida a PostgreSQL.
 * Celdas en `organization` (`organization.cells`, `tenants.cell_id`).
 * `ops/scaffold/check-clean-copy.sh` y el target `make clean-copy`.
 * `scripts/deploy-mail.sh` (despliegue de los motores) y `scripts/lib/despliegue.sh` (destino,
-  candado y guardia de retroceso, extraídos de `deploy-ecr.sh` y compartidos con él).
+  candado, guardia de retroceso y verificación de la imagen desplegada, extraídos de `deploy-ecr.sh`
+  y compartidos con él).
+* `docker-compose.images.save.yml`: override de imagen del transporte `save`, generado junto al de
+  ECR (`make gen-compose-images`).
 * `docs/*` de este producto.
 * Fases siguientes: `mail-directory`, `mail-auth`, `mail-policy`, `domain-service`,
   `transactional`, `contacts`, `campaigns`, `templates`, `suppression`, `reputation`,

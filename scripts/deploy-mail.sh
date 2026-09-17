@@ -71,7 +71,7 @@ despliegue_comprobar_buildkit || exit 1
 
 # ── modelo de los motores, desde el propio compose ──────────────────────────
 # Una linea por servicio en orden de arranque (dependencias antes):
-#   nombre  construido(0|1)  solo-servidor(0|1)  rutas del repositorio que lo afectan (con comas)
+#   nombre  construido(0|1)  solo-servidor(0|1)  rutas que lo afectan (con comas)  imagen declarada
 # Las rutas son su contexto de build, lo que monta del repositorio y los dos ficheros de compose:
 # un cambio en cualquiera obliga a recrearlo, porque lo montado solo se lee al arrancar.
 CONFIG_ERR="$(mktemp)"
@@ -115,15 +115,25 @@ for n in orden:
             rutas.append(rel(v["source"]))
     solo = (s.get("labels") or {}).get("core-force-mail.solo-servidor") == "true"
     rutas = sorted({r for r in rutas if r})
-    print("\t".join([n, "1" if s.get("build") else "0", "1" if solo else "0", ",".join(rutas)]))
+    print("\t".join([n, "1" if s.get("build") else "0", "1" if solo else "0", ",".join(rutas), s.get("image") or ""]))
 ' <<<"$CONFIG")"
 
-declare -A CONSTRUIDO SOLO_SERVIDOR RUTAS
+declare -A CONSTRUIDO SOLO_SERVIDOR RUTAS IMAGEN
 ORDEN=()
-while IFS=$'\t' read -r nombre construido solo rutas; do
+while IFS=$'\t' read -r nombre construido solo rutas imagen; do
   [[ -z "$nombre" ]] && continue
-  ORDEN+=("$nombre"); CONSTRUIDO[$nombre]=$construido; SOLO_SERVIDOR[$nombre]=$solo; RUTAS[$nombre]=$rutas
+  ORDEN+=("$nombre"); CONSTRUIDO[$nombre]=$construido; SOLO_SERVIDOR[$nombre]=$solo
+  RUTAS[$nombre]=$rutas; IMAGEN[$nombre]=$imagen
 done <<<"$MODELO"
+
+# Imagen de utileria para normalizar duenos en el servidor: la de un motor que NO se construye
+# (hoy redis, fijada por version en el compose). Asi no se fija aqui ninguna imagen ni se baja al
+# servidor nada que los motores no necesiten ya.
+IMAGEN_UTIL=""
+for m in "${ORDEN[@]}"; do
+  if [[ "${CONSTRUIDO[$m]}" == 0 && -n "${IMAGEN[$m]}" ]]; then IMAGEN_UTIL="${IMAGEN[$m]}"; break; fi
+done
+[[ -n "$IMAGEN_UTIL" ]] || { echo "deploy-mail: ningun motor declara una imagen fijada; sin ella no se puede normalizar el arbol del servidor" >&2; exit 1; }
 
 # rutas_de <motor>: sus rutas, una por linea.
 rutas_de() { tr ',' '\n' <<<"${RUTAS[$1]}"; }
@@ -237,7 +247,34 @@ fi
 adquirir_candado motores || exit 1
 guardia_retroceso "$MAIL_PROJECT" "$TAG" "${SEL[@]}" || exit 1
 
-git archive HEAD -- "${FICHEROS_MOTORES[@]}" | "${SSH[@]}" "mkdir -p $MAIL_DEPLOY_PATH && tar -x -C $MAIL_DEPLOY_PATH"
+# El bind mount es de ida y vuelta: los motores reescriben su configuracion en el arbol
+# sincronizado. rspamd deja local.d, override.d, plugins.d y custom/* con el uid de su contenedor y
+# sus directorios sin permiso de escritura para el usuario de despliegue; postfix y dovecot dejan
+# ahi los ficheros que generan (sql/*.cf 640 root:postfix, sni.map, main.cf...). Con eso, un tar
+# lanzado por el usuario de despliegue no puede reemplazar lo versionado: falla con "File exists"
+# (no puede desenlazar dentro de un directorio ajeno) y "Cannot utime", y el despliegue se detiene
+# -antes de recrear nada, que es lo correcto, pero sin desplegar-.
+#
+# Se extrae y se borra con tar y rm DENTRO de un contenedor efimero como root, que es lo unico que
+# el usuario de despliegue tiene de mas (docker, sin sudo). Solo toca las rutas del archivo: lo que
+# los motores GENERAN no esta versionado (.gitignore), asi que no se reemplaza ni cambia de dueno, y
+# los 640 root:postfix de los mapas que Postfix lee mientras corre siguen intactos. Lo versionado
+# queda de root con los modos del repositorio (legible por todos) y cada motor vuelve a poner lo
+# suyo al arrancar (rspamd/docker-entrypoint.sh rehace local.d, override.d, plugins.d y custom/*).
+# Reemplazar lo versionado con HEAD es lo correcto: ningun motor guarda ahi estado que no rehaga
+# solo -los mapas de rspamd/custom versionados son listas base y el entrypoint solo los `touch`ea-.
+# Si algun dia un servicio escribe esos mapas (deploy/mail/README.md, requisito 4), hay que
+# desplegar rspamd-mail en la misma ventana: su arranque es lo que devuelve custom/* a uid 82.
+#
+# Idempotente: correrlo dos veces deja el mismo arbol.
+ARBOL_MONTA="--network none -v $MAIL_DEPLOY_PATH:/arbol -w /arbol $IMAGEN_UTIL"
+"${SSH[@]}" "mkdir -p $MAIL_DEPLOY_PATH"
+if ! git archive HEAD -- "${FICHEROS_MOTORES[@]}" | "${SSH[@]}" "docker run --rm -i $ARBOL_MONTA tar -x"; then
+  echo "!! no se pudo sincronizar deploy/mail en $MAIL_DEPLOY_PATH (detalle arriba)" >&2
+  echo "   los motores no se han tocado: siguen con su version anterior." >&2
+  exit 1
+fi
+
 # tar no borra: un fichero retirado del repositorio seguiria montado y leido. Se retiran los que
 # se borraron desde cualquiera de los commits que corren los motores.
 BORRADOS=()
@@ -251,7 +288,7 @@ for m in "${ORDEN[@]}"; do
 done
 if [[ ${#BORRADOS[@]} -gt 0 ]]; then
   echo ">> retirando ${#BORRADOS[@]} fichero(s) borrados del repositorio"
-  remote_mail "rm -f -- ${BORRADOS[*]}"
+  "${SSH[@]}" "docker run --rm $ARBOL_MONTA rm -f -- ${BORRADOS[*]}"
 fi
 
 # Uno a uno y en orden de arranque: nunca caen Postfix y Dovecot a la vez, y el pico de CPU y
@@ -262,12 +299,9 @@ for m in "${SEL[@]}"; do
   renovar_candado
   echo ">> $m: recreando con $TAG"
   remote_mail "export MAIL_DEPLOY_TAG=$TAG WITH_SECRETS_ENV_FILE=$DEPLOY_PATH/.env && ops/security/secrets/with-secrets.sh docker compose -p $MAIL_PROJECT --env-file $DEPLOY_PATH/.env -f $COMPOSE_MOTORES -f $COMPOSE_IMAGENES up -d --no-deps --no-build --force-recreate $m"
+  # Solo los construidos: redis-mail corre una imagen publica fijada por version, sin commit.
   if [[ "${CONSTRUIDO[$m]}" == 1 ]]; then
-    real="$("${SSH[@]}" "docker ps -a --filter label=com.docker.compose.project=$MAIL_PROJECT --filter label=com.docker.compose.service=$m --format '{{.Image}}' | head -1" || true)"
-    if [[ "$real" != "$(imagen_de "$m")" ]]; then
-      echo "!! $m corre '${real:-nada}' y se esperaba $(imagen_de "$m")" >&2
-      exit 1
-    fi
+    verificar_imagen_desplegada "$MAIL_PROJECT" "$TAG" "$m" || exit 1
   fi
   remote_mail "ops/maintenance/esperar-sanos.sh --proyecto $MAIL_PROJECT --plazo $MAIL_DEPLOY_PLAZO --estable $MAIL_DEPLOY_ESTABLE $m" || {
     echo "!! $m no arranco con $TAG (detalle arriba); los motores posteriores no se tocaron." >&2

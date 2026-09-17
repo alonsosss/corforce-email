@@ -139,3 +139,48 @@ guardia_retroceso() {
   echo "si no, despliega desde HEAD (o haz pull/rebase primero)." >&2
   return 1
 }
+
+# servicios_sin_commit <proyecto> <servicio>...
+#
+# Servicios cuyo contenedor corre una imagen sin etiqueta de commit de este repositorio (":latest",
+# o una compilada en el servidor). De esas no se puede saber que codigo corren: ni la guardia de
+# retroceso ni la verificacion de imagen pueden juzgarlas, porque las dos comparan commits. Quien
+# despliega las incluye para que salgan de ahi; es lo que migra un servidor anterior al etiquetado
+# por commit sin lista escrita a mano, y en cuanto todos corren su commit no selecciona nada.
+servicios_sin_commit() {
+  local proyecto="$1"; shift
+  local corriendo svc tag_vivo
+  corriendo="$("${SSH[@]}" "docker ps --filter label=com.docker.compose.project=$proyecto --format '{{.Label \"com.docker.compose.service\"}} {{.Image}}'" || true)"
+  for svc in "$@"; do
+    tag_vivo="$(awk -v s="$svc" '$1==s {n=split($2,a,":"); if (n>1) print a[n]; exit}' <<<"$corriendo")"
+    [[ -z "$tag_vivo" ]] && continue
+    es_commit "$tag_vivo" || echo "$svc"
+  done
+}
+
+# verificar_imagen_desplegada <proyecto> <tag> <servicio>...
+#
+# Imagen correcta no es lo mismo que despliegue aplicado: un pull que no trajo nada, un compose que
+# reutilizo la imagen anterior o un up que no recreo dejan el despliegue "correcto" con codigo viejo
+# dentro, y eso ya ha pasado en este repositorio. Se comprueba en vez de confiar.
+#
+# Por etiqueta de compose y no por nombre: Docker renombra el contenedor a "<id>_<nombre>" cuando
+# una recreacion se cruza consigo misma, y entonces la comprobacion no encuentra nada y da el
+# despliegue por no verificado.
+verificar_imagen_desplegada() {
+  local proyecto="$1" tag="$2"; shift 2
+  local svc real fallo=0
+  for svc in "$@"; do
+    real="$("${SSH[@]}" "docker ps -a --filter label=com.docker.compose.project=$proyecto --filter label=com.docker.compose.service=$svc --format '{{.Image}}' | head -1" || true)"
+    case "$real" in
+      *":$tag") ;;
+      "") echo "!! $svc: no se pudo verificar la imagen del contenedor" >&2 ;;
+      *)
+        echo "!! $svc corre '$real' y se esperaba el tag $tag" >&2
+        echo "   el despliegue NO quedo aplicado para ese servicio" >&2
+        fallo=1
+        ;;
+    esac
+  done
+  return $fallo
+}
