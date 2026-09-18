@@ -330,6 +330,22 @@ describe('conexion con Cloudflare', () => {
     expect(screen.queryByRole('button', { name: t('domains.dnsProvider.connect') })).not.toBeInTheDocument();
   });
 
+  it('el formulario trae los pasos para crear el token, colapsados y con el enlace directo', async () => {
+    const user = userEvent.setup();
+    vi.spyOn(dnsProvidersApi, 'status').mockResolvedValue(ok({ provider: 'cloudflare', connected: false }));
+    grant(PERMISSIONS.dnsProviders.read, PERMISSIONS.dnsProviders.connect);
+    renderProviderCard();
+
+    await user.click(await screen.findByRole('button', { name: t('domains.dnsProvider.connect') }));
+    const detalles = await screen.findByText(t('domains.dnsProvider.form.howToTitle'));
+    expect(detalles.closest('details')).not.toHaveAttribute('open');
+    const enlace = screen.getByRole('link', { name: t('domains.dnsProvider.form.howToLink') });
+    expect(enlace).toHaveAttribute('href', 'https://dash.cloudflare.com/profile/api-tokens');
+    expect(enlace).toHaveAttribute('target', '_blank');
+    expect(enlace).toHaveAttribute('rel', expect.stringContaining('noreferrer'));
+    expect(screen.getByText(t('domains.dnsProvider.form.howToStep1'))).toBeInTheDocument();
+  });
+
   it('desconecta con confirmacion', async () => {
     const user = userEvent.setup();
     vi.spyOn(dnsProvidersApi, 'status').mockResolvedValue(

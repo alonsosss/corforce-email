@@ -205,6 +205,44 @@ function ConnectedBy({ userId }: { userId: string }) {
 
 const CONNECT_FORM_ID = 'dns-provider-connect-form';
 
+/** Pasos para crear el token, tal como aparecen en la pantalla de Cloudflare. Colapsado por
+ * defecto: quien ya sabe el camino no lo necesita, quien no lo sabe lo tiene sin salir del
+ * formulario. */
+function HowToCreateToken() {
+  return (
+    <details className="cf-howto">
+      <summary>{t('domains.dnsProvider.form.howToTitle')}</summary>
+      <a
+        className="cf-howto__link"
+        href="https://dash.cloudflare.com/profile/api-tokens"
+        target="_blank"
+        rel="noreferrer noopener"
+      >
+        {t('domains.dnsProvider.form.howToLink')}
+      </a>
+      <ol>
+        <li>{t('domains.dnsProvider.form.howToStep1')}</li>
+        <li>{t('domains.dnsProvider.form.howToStep2')}</li>
+        <li>
+          {t('domains.dnsProvider.form.howToStep3')}
+          <ul className="cf-rules">
+            <li>
+              <span className="cf-mono">Zone — DNS — Edit</span>
+            </li>
+            <li>
+              <span className="cf-mono">Zone — Zone — Read</span>
+            </li>
+          </ul>
+        </li>
+        <li>{t('domains.dnsProvider.form.howToStep4')}</li>
+        <li>{t('domains.dnsProvider.form.howToStep5')}</li>
+        <li>{t('domains.dnsProvider.form.howToStep6')}</li>
+        <li>{t('domains.dnsProvider.form.howToStep7')}</li>
+      </ol>
+    </details>
+  );
+}
+
 function ConnectForm({
   onClose,
   onConnected,
@@ -271,6 +309,7 @@ function ConnectForm({
             onChange={(e) => setToken(e.target.value)}
           />
         </FormField>
+        <HowToCreateToken />
         {action.error ? (
           <div className="cf-form__error" role="alert">
             {errorMessage(action.error)}

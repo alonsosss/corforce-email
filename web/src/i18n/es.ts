@@ -759,6 +759,22 @@ export const es = {
   'domains.dnsProvider.form.tokenHint':
     'Crea en Cloudflare un token con los permisos Zona: Leer y DNS: Editar, limitado a las zonas de tus dominios. Se valida contra Cloudflare, se guarda cifrado y no se vuelve a mostrar.',
   'domains.dnsProvider.form.submit': 'Validar y conectar',
+  'domains.dnsProvider.form.howToTitle': 'Como crear el token en Cloudflare',
+  'domains.dnsProvider.form.howToLink': 'Abrir Tokens de API de Cloudflare',
+  'domains.dnsProvider.form.howToStep1':
+    'Boton "Create Token" (arriba a la derecha).',
+  'domains.dnsProvider.form.howToStep2':
+    'Busca la plantilla "Edit zone DNS" y pulsa "Use template": ya trae los permisos correctos armados.',
+  'domains.dnsProvider.form.howToStep3':
+    'Confirma en "Permissions" que quedan estas dos filas:',
+  'domains.dnsProvider.form.howToStep4':
+    'En "Zone Resources", cambia "All zones" por "Include" -> "Specific zone" y elige el dominio de tu empresa.',
+  'domains.dnsProvider.form.howToStep5':
+    'Opcional: en "Client IP Address Filtering" limita el token a la IP de tu servidor.',
+  'domains.dnsProvider.form.howToStep6':
+    'Pulsa "Continue to summary" y despues "Create Token".',
+  'domains.dnsProvider.form.howToStep7':
+    'Cloudflare lo muestra una sola vez: copialo entero y pegalo aqui abajo.',
 
   'directory.title': 'Directorio de la celda',
   'directory.description':
