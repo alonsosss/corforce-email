@@ -743,6 +743,16 @@ Desde el puesto de trabajo, con el repositorio en el commit a desplegar (`<srv>`
    * Certificado público: lo renueva `acme-mail`; el borde lo detecta y recarga nginx.
    * Rangos de Cloudflare: `ops/security/edge-cloudflare-ips.sh --comprobar` periódicamente.
 
+### Arranque tras un reinicio del servidor
+
+El demonio de docker corre con `live-restore` (`ops/server-template/config/daemon.json`), y al
+arrancar solo levanta los contenedores con la politica `always`; los `unless-stopped` del compose
+base se quedan parados. En un reinicio real (2026-09-17) volvieron los motores de `deploy/mail`
+(que ya usaban `always`) y no `postgres-primary`, y con la base caida el resto de la plataforma
+quedo reintentando. El perfil fija `restart: always` para todos sus servicios (ancla `x-reinicio`),
+y `ops/scaffold/check-selfhosted-profile.sh` falla si un servicio del compose base se queda sin
+ella. Tras un reinicio, comprobar con `ops/maintenance/esperar-sanos.sh --proyecto app`.
+
 ### Red y cortafuegos
 
 No hay Security Group. UFW solo gobierna el host (SSH); los puertos que publica Docker no pasan

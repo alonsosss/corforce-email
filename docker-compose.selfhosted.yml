@@ -27,6 +27,13 @@ x-internal-ca: &internal-ca
 # Lo que cambia en todo servicio Go. REDIS_TLS* pisan lo que diga el .env: en este perfil no hay
 # Redis en claro. POSTGRES_DIRECT_*: las migraciones van a Postgres sin pasar por PgBouncer (sus
 # advisory locks de sesion no sobreviven al modo transaction), y ahi negocian TLS.
+# En este servidor la plataforma tiene que volver sola tras un reinicio. Docker corre con
+# live-restore (ops/server-template/config/daemon.json): al arrancar el demonio levanta los
+# contenedores con la politica "always", no los "unless-stopped" del compose base. Comprobado en el
+# servidor real: tras reiniciar, los motores (always) volvieron y postgres-primary no, y con el la
+# plataforma entera se quedo reintentando. El perfil la fija para todos sus servicios.
+x-reinicio: &reinicio always
+
 x-go-service-env: &go-service-env
   REDIS_TLS: "true"
   REDIS_TLS_CA_FILE: /run/core-force-mail/tls/publico/ca.crt
@@ -36,6 +43,7 @@ x-go-service-env: &go-service-env
 
 services:
   postgres-primary:
+    restart: *reinicio
     # En este perfil la base es siempre la del contenedor: sin el perfil embedded-db que la deja
     # fuera en AWS (y PgBouncer puede esperar a que este sana).
     profiles: !reset []
@@ -72,6 +80,7 @@ services:
       - ./selfhosted/postgres:/etc/core-force-mail/postgres:ro
 
   pgbouncer:
+    restart: *reinicio
     environment:
       DB_UPSTREAM_HOST: postgres-primary
       DB_UPSTREAM_PORT: "5432"
@@ -90,6 +99,7 @@ services:
           - postgres
 
   redis:
+    restart: *reinicio
     # Sin puerto en claro (--port 0): el 6379 es TLS. La contrasena entra por la entrada estandar
     # (selfhosted/redis/entrypoint.sh), no por argumentos. Los parametros de memoria son los de
     # docker-compose.yml; check-selfhosted-profile.sh falla si divergen.
@@ -128,6 +138,7 @@ services:
       test: ["CMD-SHELL", "REDISCLI_AUTH=\"$$REDIS_PASSWORD\" redis-cli --tls --cacert /run/core-force-mail/tls/publico/ca.crt -h 127.0.0.1 -p 6379 ping | grep -q PONG"]
 
   gateway:
+    restart: *reinicio
     environment:
       <<: *go-service-env
       # El gateway acepta X-Real-IP solo de la red edge, donde no hay mas que el proxy de borde.
@@ -137,24 +148,31 @@ services:
       edge: {}
 
   identity:
+    restart: *reinicio
     environment: *go-service-env
     volumes: *internal-ca
   access-control:
+    restart: *reinicio
     environment: *go-service-env
     volumes: *internal-ca
   organization:
+    restart: *reinicio
     environment: *go-service-env
     volumes: *internal-ca
   audit:
+    restart: *reinicio
     environment: *go-service-env
     volumes: *internal-ca
   scheduler:
+    restart: *reinicio
     environment: *go-service-env
     volumes: *internal-ca
   mail-directory:
+    restart: *reinicio
     environment: *go-service-env
     volumes: *internal-ca
   mail-auth:
+    restart: *reinicio
     # Sin root (la imagen es scratch y no fija usuario). Este user: es tambien el dueno de su clave
     # TLS: internal-tls.sh lo lee de aqui.
     user: "65532:65532"
@@ -168,9 +186,11 @@ services:
       - ${INTERNAL_TLS_DIR:-/opt/core-force-mail/tls}/publico:/run/core-force-mail/tls/publico:ro
       - ${INTERNAL_TLS_DIR:-/opt/core-force-mail/tls}/mail-auth:/run/core-force-mail/tls/mail-auth:ro
   mail-security:
+    restart: *reinicio
     environment: *go-service-env
     volumes: *internal-ca
   webmail:
+    restart: *reinicio
     environment:
       <<: *go-service-env
       # Verifica mail-auth con la CA interna; se anade a las raices del sistema, con las que sigue
@@ -178,35 +198,52 @@ services:
       WEBMAIL_TLS_CA_FILE: /run/core-force-mail/tls/publico/ca.crt
     volumes: *internal-ca
   domain-service:
+    restart: *reinicio
     environment: *go-service-env
     volumes: *internal-ca
   transactional:
+    restart: *reinicio
     environment: *go-service-env
     volumes: *internal-ca
   suppression:
+    restart: *reinicio
     environment: *go-service-env
     volumes: *internal-ca
   templates:
+    restart: *reinicio
     environment: *go-service-env
     volumes: *internal-ca
   contacts:
+    restart: *reinicio
     environment: *go-service-env
     volumes: *internal-ca
   billing:
+    restart: *reinicio
     environment: *go-service-env
     volumes: *internal-ca
   reputation:
+    restart: *reinicio
     environment: *go-service-env
     volumes: *internal-ca
   campaigns:
+    restart: *reinicio
     environment: *go-service-env
     volumes: *internal-ca
   automations:
+    restart: *reinicio
     environment: *go-service-env
     volumes: *internal-ca
   analytics:
+    restart: *reinicio
     environment: *go-service-env
     volumes: *internal-ca
+
+  # nats y web no necesitan nada mas del perfil, pero si su politica de reinicio: sin ella no
+  # vuelven tras un reinicio del servidor (live-restore).
+  nats:
+    restart: *reinicio
+  web:
+    restart: *reinicio
 
   edge-proxy:
     # Proxy de borde: HTTPS de la web publica con el certificado que emite acme (volumen ssl de
@@ -254,7 +291,7 @@ services:
     depends_on:
       gateway:
         condition: service_started
-    restart: unless-stopped
+    restart: *reinicio
     security_opt: ["no-new-privileges:true"]
     networks:
       - edge

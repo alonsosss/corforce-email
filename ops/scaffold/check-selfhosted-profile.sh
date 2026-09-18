@@ -369,6 +369,40 @@ else
   mal "internal-tls.sh --solo-detectar no lee el dueno de mail-auth del perfil: $duenos"
 fi
 
+# Tras un reinicio del servidor, el demonio de docker corre con live-restore y solo levanta los
+# contenedores con la politica "always": con "unless-stopped" la plataforma no vuelve sola (paso en
+# el servidor real: postgres-primary se quedo parado y todo lo demas reintentando).
+python3 - "$ROOT/docker-compose.yml" "$ROOT/docker-compose.selfhosted.yml" <<'PY' || FALLOS=1
+import re, sys
+
+def servicios(ruta):
+    texto = open(ruta, encoding="utf-8").read()
+    cuerpo = texto.split("\nservices:\n", 1)[1]
+    for corte in ("\nnetworks:\n", "\nvolumes:\n"):
+        if corte in cuerpo:
+            cuerpo = cuerpo.split(corte, 1)[0]
+    bloques = re.split(r"\n(?=  [a-z][a-z0-9-]*:\n)", "\n" + cuerpo)
+    salida = {}
+    for b in bloques:
+        m = re.match(r"\n?  ([a-z][a-z0-9-]*):\n", b)
+        if m:
+            salida[m.group(1)] = b
+    return salida
+
+base = servicios(sys.argv[1])
+perfil = servicios(sys.argv[2])
+sin_politica = []
+for nombre in base:
+    b = perfil.get(nombre, "")
+    if not re.search(r"^    restart: \*reinicio$", b, re.M):
+        sin_politica.append(nombre)
+if sin_politica:
+    print("  FALLA: servicios sin la politica de reinicio del perfil (no vuelven tras un reinicio del"
+          " servidor): " + " ".join(sorted(sin_politica)), file=sys.stderr)
+    print("    Anade `restart: *reinicio` en docker-compose.selfhosted.yml.", file=sys.stderr)
+    sys.exit(1)
+PY
+
 if [[ $FALLOS -ne 0 ]]; then
   echo "check-selfhosted-profile: FALLA" >&2
   exit 1
