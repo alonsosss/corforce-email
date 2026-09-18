@@ -229,7 +229,14 @@ export function canSee(
   access: Pick<Access, 'hasModule' | 'hasRole' | 'isSuperadmin'>,
   item: { module?: ModuleName; role?: SystemRole },
 ): boolean {
-  if (item.module && !access.hasModule(item.module)) return false;
+  // Los permisos de alcance plataforma (empresas, celdas, catalogo de planes) nunca se
+  // conceden a ningun rol en access_control.role_permissions -ni siquiera al superadmin-,
+  // a proposito (migracion 018_permission_scope.sql): "el superadmin no necesita estos
+  // permisos en ningun rol, pasa por ser rol del sistema". GET /access/my-modules
+  // refleja eso con fidelidad y le devuelve modules: []. Sin este pase, el superadmin no
+  // veia Empresas ni Celdas en el menu, y RequireModule (que usa esta misma funcion)
+  // bloqueaba la ruta con "sin permiso".
+  if (item.module && !access.isSuperadmin && !access.hasModule(item.module)) return false;
   if (item.role && !access.isSuperadmin && !access.hasRole(item.role)) return false;
   return true;
 }

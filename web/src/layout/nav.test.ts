@@ -3,7 +3,7 @@ import { MODULES } from '@/access/modules';
 import { SYSTEM_ROLES } from '@/access/roles';
 import { paths } from '@/paths';
 import { PUBLIC_SCREENS, SCREENS, WEBMAIL_ROUTE } from '@/routes';
-import { NAV, visibleNav } from './nav';
+import { canSee, NAV, visibleNav } from './nav';
 
 const allItems = NAV.flatMap((group) => group.items);
 
@@ -148,6 +148,30 @@ describe('menu frente a rutas', () => {
       const detailScreen = SCREENS.find((s) => s.path === detail);
       expect(detailScreen?.module, detail).toBe(listScreen?.module);
     }
+  });
+});
+
+describe('el superadmin ve lo suyo aunque access_control le devuelva modules: []', () => {
+  // Caso real (2026-09-18): organization/tenants/*, organization/cells/* y demas permisos
+  // de alcance plataforma nunca se conceden en role_permissions -tampoco al superadmin, a
+  // proposito (migracion 018_permission_scope.sql)-, asi que GET /access/my-modules le
+  // devuelve modules: []. Antes del arreglo, canSee ocultaba Empresas y Celdas del menu (y
+  // RequireModule bloqueaba /organizations con "sin permiso") pese a is_admin: true.
+  const superadminSinModulos = accessWith([], [SYSTEM_ROLES.superadmin]);
+
+  it('Empresas y Celdas se ven con la lista de modulos vacia', () => {
+    const empresas = allItems.find((i) => i.to === paths.organizations);
+    const celdas = allItems.find((i) => i.to === paths.cells);
+    expect(empresas, 'Empresas debe seguir declarado con module: organization').toBeDefined();
+    expect(celdas, 'Celdas debe seguir declarado con module + role').toBeDefined();
+    expect(canSee(superadminSinModulos, empresas!)).toBe(true);
+    expect(canSee(superadminSinModulos, celdas!)).toBe(true);
+  });
+
+  it('un tenant_admin sin el modulo lo sigue sin ver: el pase es solo del superadmin', () => {
+    const tenantAdminSinModulos = accessWith([], [SYSTEM_ROLES.tenantAdmin]);
+    const empresas = allItems.find((i) => i.to === paths.organizations)!;
+    expect(canSee(tenantAdminSinModulos, empresas)).toBe(false);
   });
 });
 

@@ -3,6 +3,7 @@ import type { PermissionTriple } from '@/api/access';
 import { evaluatePermission } from './can';
 import { selectCan, useAccessStore } from './store';
 import { MODULES } from './modules';
+import { SYSTEM_ROLES } from './roles';
 
 const perm = (module: string, resource: string, action: string): PermissionTriple => ({
   module,
@@ -75,5 +76,35 @@ describe('selectCan', () => {
     expect(selectCan(useAccessStore.getState(), MODULES.identity, 'users', 'delete')).toBe(true);
     useAccessStore.setState({ isAdmin: false });
     expect(selectCan(useAccessStore.getState(), MODULES.identity, 'users', 'read')).toBe(false);
+  });
+
+  it('el superadmin pasa aunque la politica cargada no traiga el permiso de plataforma', () => {
+    // Caso real (2026-09-18): organization/tenants/create es de alcance plataforma y
+    // access_control nunca lo concede en role_permissions, ni al superadmin. La politica
+    // carga bien (policyLoaded: true) pero sin ese permiso, y el boton "Nueva empresa"
+    // -que la pagina guarda con `isSuperadmin && can(...)`- no aparecia nunca.
+    useAccessStore.setState({
+      loaded: true,
+      isAdmin: true,
+      roles: [SYSTEM_ROLES.superadmin],
+      policyLoaded: true,
+      permissions: [],
+    });
+    expect(selectCan(useAccessStore.getState(), MODULES.organization, 'tenants', 'create')).toBe(
+      true,
+    );
+  });
+
+  it('un tenant_admin sin el permiso concreto sigue sin pasar', () => {
+    useAccessStore.setState({
+      loaded: true,
+      isAdmin: true,
+      roles: [SYSTEM_ROLES.tenantAdmin],
+      policyLoaded: true,
+      permissions: [],
+    });
+    expect(selectCan(useAccessStore.getState(), MODULES.organization, 'tenants', 'create')).toBe(
+      false,
+    );
   });
 });

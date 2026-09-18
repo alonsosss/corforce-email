@@ -74,6 +74,12 @@ export function selectCan(
   resource: string,
   action: string,
 ): boolean {
+  // El superadmin nunca tiene permisos de alcance plataforma en su politica granular
+  // (organization/tenants/*, billing/plans, reputation/tenants...): access_control los
+  // deja fuera de role_permissions a proposito, porque el rol del sistema pasa sin ellos
+  // (migracion 018_permission_scope.sql). Sin este pase, botones como "Nueva empresa"
+  // -que la pagina protege con `isSuperadmin && can(...)`- no se mostraban nunca.
+  if (selectIsSuperadmin(state)) return true;
   if (!state.policyLoaded) return state.isAdmin;
   return evaluatePermission(state.permissions, module, resource, action);
 }
