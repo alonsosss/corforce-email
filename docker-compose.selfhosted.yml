@@ -86,6 +86,9 @@ services:
       DB_UPSTREAM_PORT: "5432"
       DB_UPSTREAM_SSLMODE: verify-full
       DB_UPSTREAM_CA_FILE: /run/core-force-mail/tls/publico/ca.crt
+      # Dovecot mantiene conexiones largas por PgBouncer: con el corte de ociosos (600 s por
+      # defecto) el primer inicio de sesion tras un rato sin uso fallaba con client_idle_timeout.
+      PGBOUNCER_CLIENT_IDLE_TIMEOUT: "0"
     volumes: *internal-ca
     depends_on:
       postgres-primary:

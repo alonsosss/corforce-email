@@ -30,6 +30,13 @@ case "$ENVIRONMENT" in development | test) local_env=true ;; esac
 # certificado; en cualquier otro entorno no se admite nada mas debil que verify-full.
 if $local_env; then sslmode_por_defecto=disable; else sslmode_por_defecto=verify-full; fi
 DB_UPSTREAM_SSLMODE="${DB_UPSTREAM_SSLMODE:-$sslmode_por_defecto}"
+CLIENT_IDLE_TIMEOUT="${PGBOUNCER_CLIENT_IDLE_TIMEOUT:-600}"
+case "$CLIENT_IDLE_TIMEOUT" in
+  ''|*[!0-9]*)
+    echo "pgbouncer: PGBOUNCER_CLIENT_IDLE_TIMEOUT no valido: '$CLIENT_IDLE_TIMEOUT' (segundos, entero; 0 lo desactiva)" >&2
+    exit 1
+    ;;
+esac
 case "$DB_UPSTREAM_SSLMODE" in
   verify-full) ;;
   disable | allow | prefer | require | verify-ca)
@@ -97,6 +104,7 @@ sed \
   -e "s|__DB_ADMIN_USER__|${DB_ADMIN_USER}|g" \
   -e "s|__DB_UPSTREAM_SSLMODE__|${DB_UPSTREAM_SSLMODE}|g" \
   -e "s|__DB_UPSTREAM_CA_FILE__|${DB_UPSTREAM_CA_FILE}|g" \
+  -e "s|__CLIENT_IDLE_TIMEOUT__|${CLIENT_IDLE_TIMEOUT}|g" \
   -e "s|__AUTH_FILE__|${auth_file}|g" \
   "$template" >"$rendered"
 

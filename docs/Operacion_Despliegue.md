@@ -743,6 +743,17 @@ Desde el puesto de trabajo, con el repositorio en el commit a desplegar (`<srv>`
    * Certificado público: lo renueva `acme-mail`; el borde lo detecta y recarga nginx.
    * Rangos de Cloudflare: `ops/security/edge-cloudflare-ips.sh --comprobar` periódicamente.
 
+### Conexiones largas de los motores por PgBouncer
+
+En el perfil autoalojado Dovecot y Postfix leen el directorio de la celda por PgBouncer y mantienen
+sus conexiones abiertas mucho mas que los 600 s de `client_idle_timeout`. Pasado ese tiempo
+PgBouncer las cerraba y el primer inicio de sesion IMAP (o la primera entrega) tras un rato sin uso
+fallaba con `FATAL: client_idle_timeout` en el registro de Dovecot, aunque la contrasena se aceptara
+(2026-09-19, probado con un buzon real). `PGBOUNCER_CLIENT_IDLE_TIMEOUT` (segundos, entero, `0` lo
+desactiva; por defecto 600, como antes) lo fija `pgbouncer/entrypoint.sh`, y `docker-compose.selfhosted.yml`
+lo pone a `0`. `check-pgbouncer-entrypoint.sh` prueba el valor por defecto, el `0` y los no validos, y
+`check-selfhosted-profile.sh` exige el `0` del perfil.
+
 ### Arranque tras un reinicio del servidor
 
 El demonio de docker corre con `live-restore` (`ops/server-template/config/daemon.json`), y al

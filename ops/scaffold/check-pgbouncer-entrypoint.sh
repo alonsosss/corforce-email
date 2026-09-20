@@ -104,6 +104,22 @@ preparar ca-inyeccion userlist
 correr ca-inyeccion ENVIRONMENT=production DB_UPSTREAM_CA_FILE="$TMP/ca&x.pem"
 no_arranca "CA con caracteres que alteran la plantilla" ca-inyeccion
 
+# client_idle_timeout: por defecto el de siempre (600), y el perfil autoalojado lo desactiva porque
+# Dovecot mantiene conexiones largas por PgBouncer (con el corte, el primer inicio de sesion IMAP
+# tras un rato sin uso fallaba con "client_idle_timeout"). Un valor que no sea un entero no arranca.
+[[ "$(valor client_idle_timeout prod)" == 600 ]] ||
+  mal "client_idle_timeout por defecto: $(valor client_idle_timeout prod), se esperaba 600"
+preparar idle-cero userlist
+correr idle-cero ENVIRONMENT=production PGBOUNCER_CLIENT_IDLE_TIMEOUT=0
+arranca "client_idle_timeout desactivado" idle-cero
+[[ "$(valor client_idle_timeout idle-cero)" == 0 ]] ||
+  mal "PGBOUNCER_CLIENT_IDLE_TIMEOUT=0: se renderizo $(valor client_idle_timeout idle-cero)"
+for malo in abc -1 "10;x" ""; do
+  preparar idle-malo userlist
+  correr idle-malo ENVIRONMENT=production PGBOUNCER_CLIENT_IDLE_TIMEOUT="$malo"
+  if [[ -n "$malo" ]]; then no_arranca "PGBOUNCER_CLIENT_IDLE_TIMEOUT='$malo'" idle-malo; fi
+done
+
 preparar sin-entorno userlist
 correr sin-entorno
 arranca "sin ENVIRONMENT" sin-entorno

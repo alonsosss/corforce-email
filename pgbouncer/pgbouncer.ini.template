@@ -44,7 +44,11 @@ reserve_pool_timeout = 3
 ; sueltan y devuelven memoria a la base. Reabrir cuesta milisegundos dentro de la VPC.
 server_idle_timeout  = 120
 server_lifetime      = 3600
-client_idle_timeout  = 600
+; 0 desactiva el corte de clientes ociosos. Los motores de correo (Dovecot) mantienen conexiones
+; abiertas mas tiempo que cualquier limite razonable y, al usarlas tras el corte, el primer
+; intento fallaba con "client_idle_timeout" (inicio de sesion IMAP y entrega LMTP). Lo fija
+; PGBOUNCER_CLIENT_IDLE_TIMEOUT; por defecto 600, como antes.
+client_idle_timeout  = __CLIENT_IDLE_TIMEOUT__
 query_timeout        = 0
 query_wait_timeout   = 120
 

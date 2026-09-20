@@ -403,6 +403,19 @@ if sin_politica:
     sys.exit(1)
 PY
 
+# Dovecot mantiene conexiones largas a la base por PgBouncer: con el corte de clientes ociosos
+# (600 s por defecto) el primer inicio de sesion IMAP tras un rato sin uso fallaba con
+# "client_idle_timeout". El perfil lo desactiva; sin esto el fallo vuelve sin ningun aviso.
+python3 - "$ROOT/docker-compose.selfhosted.yml" <<'PY' || FALLOS=1
+import re, sys
+texto = open(sys.argv[1], encoding="utf-8").read()
+bloque = re.search(r"\n  pgbouncer:\n(.*?)(?=\n  [a-z][a-z0-9-]*:\n)", texto, re.S)
+if not bloque or not re.search(r'^\s+PGBOUNCER_CLIENT_IDLE_TIMEOUT:\s*"?0"?\s*$', bloque.group(1), re.M):
+    print("  FALLA: pgbouncer del perfil sin PGBOUNCER_CLIENT_IDLE_TIMEOUT: \"0\" (Dovecot pierde su conexion"
+          " a la base tras 600 s ociosa y falla el primer inicio de sesion)", file=sys.stderr)
+    sys.exit(1)
+PY
+
 if [[ $FALLOS -ne 0 ]]; then
   echo "check-selfhosted-profile: FALLA" >&2
   exit 1
