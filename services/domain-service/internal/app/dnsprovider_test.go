@@ -249,9 +249,41 @@ func (f *fakeCloudflare) CreateRecord(_ context.Context, token domain.APIToken, 
 	}
 	f.nextID++
 	rec.ID = fmt.Sprintf("r%d", f.nextID)
-	f.records[zone.ID] = append(f.records[zone.ID], rec)
+	f.records[zone.ID] = append(f.records[zone.ID], comoCloudflare(rec))
 	f.mirror()
 	return nil
+}
+
+// comoCloudflare guarda el registro como lo hace el proveedor real: el contenido de un TXT queda
+// entre comillas (el adaptador se las pone) y al listarlo vuelve asi, no como se escribio.
+func comoCloudflare(rec domain.ProviderRecord) domain.ProviderRecord {
+	if rec.Type == "TXT" {
+		rec.Content = domain.QuoteTXT(rec.Content)
+	}
+	return rec
+}
+
+// sinComillas es lo que responde el DNS para un TXT guardado con comillas: las cadenas unidas.
+func sinComillas(v string) string {
+	var b strings.Builder
+	dentro, escapado := false, false
+	for _, c := range strings.TrimSpace(v) {
+		switch {
+		case escapado:
+			b.WriteRune(c)
+			escapado = false
+		case dentro && c == '\\':
+			escapado = true
+		case c == '"':
+			dentro = !dentro
+		case dentro:
+			b.WriteRune(c)
+		}
+	}
+	if !strings.HasPrefix(strings.TrimSpace(v), `"`) {
+		return strings.TrimSpace(v)
+	}
+	return b.String()
 }
 
 func (f *fakeCloudflare) UpdateRecord(_ context.Context, token domain.APIToken, zone domain.DNSZone, rec domain.ProviderRecord) error {
@@ -262,7 +294,7 @@ func (f *fakeCloudflare) UpdateRecord(_ context.Context, token domain.APIToken, 
 	}
 	for i, r := range f.records[zone.ID] {
 		if r.ID == rec.ID {
-			f.records[zone.ID][i] = rec
+			f.records[zone.ID][i] = comoCloudflare(rec)
 			f.mirror()
 			return nil
 		}
@@ -323,7 +355,7 @@ func (f *fakeCloudflare) mirror() {
 			case "MX":
 				f.dns.mx[r.Name] = append(f.dns.mx[r.Name], domain.MXRecord{Host: r.Content, Priority: uint16(r.Priority)})
 			default:
-				f.dns.txt[r.Name] = append(f.dns.txt[r.Name], r.Content)
+				f.dns.txt[r.Name] = append(f.dns.txt[r.Name], sinComillas(r.Content))
 			}
 		}
 	}

@@ -854,7 +854,11 @@ tiene ninguna ruta o si falta `organization` entre los servicios.
     la plataforma, los que ella crea llevan `comment` `cfm-managed` y solo esos se actualizan o
     retiran sin preguntar; un SPF, DMARC, TXT de propiedad, TXT de un selector o MX del cliente que
     ocupa el sitio de uno de la plataforma queda en `conflict`, con su valor en la respuesta, y solo
-    se reemplaza si su tipo viene en `replace`. Otros TXT del mismo nombre no cuentan. Un rechazo de
+    se reemplaza si su tipo viene en `replace`. Otros TXT del mismo nombre no cuentan. El contenido de
+    un TXT viaja a Cloudflare entre comillas y, pasado de 255 caracteres (una clave DKIM de 2048 bits),
+    en cadenas consecutivas (`domain.QuoteTXT`): sin ellas Cloudflare lo acepta pero marca el registro
+    con un aviso en su panel; lo comparado (`normalizeTXT`) ya las ignoraba. Un TXT de la plataforma
+    publicado antes sin comillas se reescribe una vez; uno del cliente no se toca. Un rechazo de
     Cloudflare solo falla su registro; token, permiso, zona, limite o caida cortan la publicacion,
     que es idempotente al repetirla. `dns_published_at` y el evento `domains.domain.dns_published`
     salen en la transaccion; `domains.dns_provider.connected` y `.disconnected` con la conexion. En

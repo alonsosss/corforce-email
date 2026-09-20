@@ -33,6 +33,25 @@ def nuevo_id():
     return uuid.uuid4().hex
 
 
+def sin_comillas(valor):
+    """Lo que responde el DNS para un TXT guardado con comillas: las cadenas unidas y sin comillas.
+    Cloudflare guarda el contenido tal como se escribio y el DNS nunca las devuelve."""
+    valor = valor.strip()
+    if not valor.startswith('"'):
+        return valor
+    salida, dentro, escapado = [], False, False
+    for c in valor:
+        if escapado:
+            salida.append(c); escapado = False
+        elif dentro and c == "\\":
+            escapado = True
+        elif c == '"':
+            dentro = not dentro
+        elif dentro:
+            salida.append(c)
+    return "".join(salida)
+
+
 class Estado:
     def __init__(self, config, ruta_zona):
         self.ruta_zona = ruta_zona
@@ -81,6 +100,8 @@ class Estado:
         for registros in self.registros.values():
             for r in registros:
                 valor = r["content"]
+                if r["type"] == "TXT":
+                    valor = sin_comillas(valor)
                 if r["type"] == "MX":
                     valor = "%s priority %d" % (r["content"], r["priority"])
                 zona.append({"host": r["name"], "type": r["type"], "value": valor, "cf_id": r["id"]})

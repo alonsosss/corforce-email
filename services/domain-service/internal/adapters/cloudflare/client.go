@@ -213,6 +213,9 @@ func (c *Client) DeleteRecord(ctx context.Context, token domain.APIToken, z doma
 
 func toRecord(rec domain.ProviderRecord) record {
 	r := record{Type: rec.Type, Name: rec.Name, Content: rec.Content, TTL: autoTTL, Comment: rec.Comment}
+	if strings.EqualFold(rec.Type, "TXT") {
+		r.Content = domain.QuoteTXT(rec.Content)
+	}
 	if strings.EqualFold(rec.Type, "MX") {
 		p := rec.Priority
 		r.Priority = &p

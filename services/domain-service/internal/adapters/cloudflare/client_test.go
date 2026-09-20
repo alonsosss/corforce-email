@@ -241,12 +241,17 @@ func TestEscribeRegistrosConLaMarcaYElTTLAutomatico(t *testing.T) {
 	if _, ok := txt["priority"]; ok {
 		t.Errorf("un TXT no lleva prioridad: %v", txt)
 	}
+	// Cloudflare pide el contenido de un TXT entre comillas: sin ellas lo acepta pero marca el
+	// registro con un aviso en su panel. El MX no las lleva.
+	if txt["content"] != `"v=spf1 -all"` {
+		t.Errorf("el TXT viaja entre comillas: %v", txt["content"])
+	}
 
 	records, err := c.ListRecords(ctx, tok, zona, "TXT", "acme.com")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(records) != 1 || records[0].Content != "v=spf1 -all" || !records[0].Managed() {
+	if len(records) != 1 || records[0].Content != `"v=spf1 -all"` || !records[0].Managed() {
 		t.Errorf("solo el TXT de ese nombre y tipo: %+v", records)
 	}
 	if !strings.Contains(s.peticion[len(s.peticion)-1], "name=acme.com") || !strings.Contains(s.peticion[len(s.peticion)-1], "type=TXT") {
@@ -255,6 +260,16 @@ func TestEscribeRegistrosConLaMarcaYElTTLAutomatico(t *testing.T) {
 
 	if err := c.UpdateRecord(ctx, tok, zona, domain.ProviderRecord{ID: records[0].ID, Type: "TXT", Name: "acme.com", Content: "v=spf1 mx -all"}); err != nil {
 		t.Fatal(err)
+	}
+	if got := s.cuerpos[len(s.cuerpos)-1]["content"]; got != `"v=spf1 mx -all"` {
+		t.Errorf("actualizar tambien escribe entre comillas: %v", got)
+	}
+	larga := strings.Repeat("k", 300)
+	if err := c.CreateRecord(ctx, tok, zona, domain.ProviderRecord{Type: "TXT", Name: "k._domainkey.acme.com", Content: larga}); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := s.cuerpos[len(s.cuerpos)-1]["content"], `"`+strings.Repeat("k", 255)+`" "`+strings.Repeat("k", 45)+`"`; got != want {
+		t.Errorf("una clave de 300 caracteres va en dos cadenas de <= 255: %v", got)
 	}
 	if err := c.DeleteRecord(ctx, tok, zona, records[0].ID); err != nil {
 		t.Fatal(err)

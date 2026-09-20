@@ -232,6 +232,31 @@ func (r DesiredRecord) sameContent(e ProviderRecord) bool {
 	return normalizeTXT(e.Content) == normalizeTXT(r.Content)
 }
 
+// txtChunk es el largo maximo de una cadena de un TXT (RFC 1035): mas largo va en varias.
+const txtChunk = 255
+
+// QuoteTXT da a un valor de TXT la forma que Cloudflare pide para su campo de contenido: entre
+// comillas y, si pasa de 255 caracteres (una clave DKIM de 2048 bits), en cadenas consecutivas
+// "a" "b". Sin comillas Cloudflare lo acepta, pero marca el registro con un aviso. Un valor que ya
+// las lleva se deja como esta. normalizeTXT es su inversa: quita comillas y une las cadenas.
+func QuoteTXT(value string) string {
+	value = strings.TrimSpace(value)
+	if strings.HasPrefix(value, `"`) {
+		return value
+	}
+	escape := strings.NewReplacer(`\`, `\\`, `"`, `\"`)
+	var parts []string
+	for len(value) > txtChunk {
+		parts = append(parts, `"`+escape.Replace(value[:txtChunk])+`"`)
+		value = value[txtChunk:]
+	}
+	parts = append(parts, `"`+escape.Replace(value)+`"`)
+	return strings.Join(parts, " ")
+}
+
+// quoted dice si un TXT ya esta escrito con comillas.
+func quoted(content string) bool { return strings.HasPrefix(strings.TrimSpace(content), `"`) }
+
 // normalizeTXT reduce un TXT a su valor: "a" "b" es ab, y un valor sin comillas queda igual.
 func normalizeTXT(s string) string {
 	s = strings.TrimSpace(s)
@@ -307,6 +332,13 @@ func PlanRecord(desired DesiredRecord, existing []ProviderRecord, replace bool) 
 	}
 	switch {
 	case len(others) == 0 && identical != nil:
+		// Un TXT de la plataforma publicado antes de escribirlos entre comillas vale igual para quien
+		// lo consulta, pero Cloudflare lo marca con un aviso: se reescribe una vez. Uno del cliente no
+		// se toca nunca, aunque coincida.
+		if identical.Managed() && strings.EqualFold(desired.Type, "TXT") && !quoted(identical.Content) {
+			plan.Action, plan.Update = RecordUpdated, identical
+			return plan
+		}
 		plan.Action = RecordUnchanged
 		return plan
 	case len(others) == 0:
