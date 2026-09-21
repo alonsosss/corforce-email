@@ -128,26 +128,26 @@ func TestVolumen_CalDAVRutasCalientes(t *testing.T) {
 	t.Logf("sembrados %d eventos del buzon y %d de relleno (%d filas en total) en %s", n, filler, n+filler, time.Since(start).Round(time.Millisecond))
 
 	timed(t, fmt.Sprintf("listado inicial / sync-collection inicial (%d eventos)", n), func() {
-		_, events, err := e.repo.ListEvents(e.ctx, ana, "calendar", domain.EventWindow{})
+		_, events, err := e.repo.ListEvents(e.ctx, ana, "calendar", withData)
 		if err != nil || len(events) != n {
 			t.Fatalf("listado: %v %d", err, len(events))
 		}
 	})
 	week := domain.EventWindow{Start: at("20260301T000000Z"), End: at("20260308T000000Z")}
-	timed(t, "calendar-query con ventana de una semana (indice de rango)", func() {
-		_, events, err := e.repo.ListEvents(e.ctx, ana, "calendar", week)
-		if err != nil || len(events) == 0 || len(events) > 200 {
-			t.Fatalf("ventana: %v %d", err, len(events))
+	timed(t, "calendar-query con ventana de una semana (EachEvent, indice de rango)", func() {
+		seen := 0
+		if _, err := e.repo.EachEvent(e.ctx, ana, "calendar", week, func(domain.Event) (bool, error) { seen++; return true, nil }); err != nil || seen == 0 || seen > 200 {
+			t.Fatalf("ventana: %v %d", err, seen)
 		}
 	})
 	timed(t, "sync-collection incremental: 100 cambios pendientes", func() {
-		_, changed, removed, err := e.repo.EventChangesSince(e.ctx, ana, "calendar", int64(n-100))
+		_, changed, removed, err := e.repo.EventChangesSince(e.ctx, ana, "calendar", int64(n-100), withData)
 		if err != nil || len(changed) != 100 || len(removed) != 0 {
 			t.Fatalf("incremental: %v %d %d", err, len(changed), len(removed))
 		}
 	})
 	timed(t, fmt.Sprintf("sync-collection incremental: %d cambios pendientes (todo el registro)", n), func() {
-		_, changed, _, err := e.repo.EventChangesSince(e.ctx, ana, "calendar", 0)
+		_, changed, _, err := e.repo.EventChangesSince(e.ctx, ana, "calendar", 0, withData)
 		if err != nil || len(changed) != n {
 			t.Fatalf("registro completo: %v %d", err, len(changed))
 		}

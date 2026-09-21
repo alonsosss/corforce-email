@@ -868,7 +868,7 @@ latencia (`mail-migration-runner` conserva el suyo).
 |---|---|---|
 | 128 MiB | access-control, analytics, automations, billing, domain-service, identity, mail-directory, organization, reputation, scheduler, suppression, templates | En reposo miden 6 a 15 MiB (medido con `docker stats` sobre la pila local, 13 h de uso); 10x de margen |
 | 192 MiB | audit, campaigns, gateway, mail-auth, mail-migration, transactional | Cuerpos de petición y ráfagas de conexiones (gateway, mail-auth); lotes de campañas y de correo transaccional |
-| 256 MiB | contacts, mail-dav | Importación de contactos; un `sync-collection` inicial materializa el calendario entero (medido: 20000 eventos de 350 bytes, +22 MiB de heap) y el tope por buzón (20000 eventos, hasta 256 KiB cada uno) los deja crecer |
+| 256 MiB | contacts, mail-dav | Importación de contactos; un `sync-collection` inicial materializa el calendario entero (medido: 20000 eventos de 350 bytes, +26 MiB de heap; la respuesta la acota `MAIL_DAV_MAX_RESPONSE_BYTES`, 16 MiB, y el buzón `MAIL_DAV_MAX_MAILBOX_BYTES`, 64 MiB) |
 | 384 MiB | mail-security | Recibe de Rspamd el mensaje entero en `/pipe` (`MAIL_QUARANTINE_MAX_BODY_MB`, 50 por defecto) |
 | 512 MiB | webmail | Mensajes de hasta 25 MiB que se leen, se codifican en MIME y se envían |
 
@@ -962,10 +962,6 @@ Lo medido o leído en el código que NO se cambió, con su razón:
   suscripción de núcleo (`QueueSubscribe`, no durable).** Un evento publicado mientras `audit` está caído (cada
   despliegue lo recrea) queda en su stream y nadie lo lee: falta de rastro. Pasarlo a consumidores durables
   (`DurableQueueSubscribe`, con su `EnsureStream`) toca la lógica de suscripción de `audit`, que revisa otra tarea.
-* **`mail-dav`**: un `sync-collection` inicial y un `calendar-query` sin ventana cargan en memoria todos los eventos del
-  calendario. El tope es de 20000 eventos por buzón de hasta 256 KiB cada uno (en teoría 5 GiB); no hay tope de bytes
-  totales por buzón. Con eventos reales (350 bytes) son 22 MiB. Añadir una cuota de bytes por buzón o un presupuesto de
-  respuesta (`507 DAV:number-of-matches-within-limits`).
 * **Recuentos `count(*)` por página** (bitácora de `audit`, listado de `mail-migration`): O(n) por petición, 17 a 21 ms con
   100000 filas de una empresa. El listado en sí (los datos) ya es de 0,04 ms con su índice. Si una empresa llega a millones
   de filas, paginar por clave y devolver un total aproximado.
