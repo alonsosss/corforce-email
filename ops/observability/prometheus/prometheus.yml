@@ -12,18 +12,12 @@ global:
 rule_files:
   - /etc/prometheus/rules/*.yml
 
-# Las alertas van al Alertmanager de Grafana, que las entrega por correo
-# (grafana/provisioning/alerting). Un usuario de Grafana con rol Editor, no el administrador; su
-# clave la monta el compose como fichero, porque Prometheus no expande variables de entorno.
+# Las alertas van al Alertmanager de la pila (docker-compose.observability.yml), que las entrega por
+# correo. Solo se alcanza por la red interna.
 alerting:
   alertmanagers:
-    - scheme: http
-      path_prefix: /api/alertmanager/grafana
-      basic_auth:
-        username: prometheus-alertas
-        password_file: /etc/prometheus-secretos/alertmanager.pass
-      static_configs:
-        - targets: ["grafana:3000"]
+    - static_configs:
+        - targets: ["alertmanager:9093"]
 
 scrape_configs:
   # Microservicios de la plataforma. Cada uno expone /metrics en su propio puerto, fuera de la

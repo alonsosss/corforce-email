@@ -34,9 +34,6 @@ services:
       # objetivos eso significa que un microservicio nuevo NUNCA entraria al monitoreo, y
       # sin ningun error: simplemente no aparece.
       - ./ops/observability/prometheus:/etc/prometheus:ro
-      # La clave con la que Prometheus entrega alertas a Grafana. Fichero suelto y no el
-      # directorio del .env: el contenedor corre como nobody y solo debe ver esta.
-      - ${ALERTMANAGER_PASS_FILE:-/opt/core-force-mail/env/alertmanager.pass}:/etc/prometheus-secretos/alertmanager.pass:ro
       - prometheus-data:/prometheus
     ports:
       - "127.0.0.1:${PROMETHEUS_PORT:-9090}:9090"
@@ -79,17 +76,6 @@ services:
       - GF_AUTH_ANONYMOUS_ENABLED=false
       - GF_ANALYTICS_REPORTING_ENABLED=false
       - GF_ANALYTICS_CHECK_FOR_UPDATES=false
-      # Correo de las alertas por el submission de la propia plataforma, con STARTTLS
-      # obligatorio y el certificado verificado. Sin ALERT_EMAIL_TO no hay a quien avisar y
-      # Grafana no arranca: una alerta sin destinatario es peor que ninguna.
-      - ALERT_EMAIL_TO=${ALERT_EMAIL_TO:?falta ALERT_EMAIL_TO}
-      - GF_SMTP_ENABLED=true
-      - GF_SMTP_HOST=${ALERT_SMTP_HOST:?falta ALERT_SMTP_HOST}
-      - GF_SMTP_USER=${ALERT_SMTP_USER:?falta ALERT_SMTP_USER}
-      - GF_SMTP_PASSWORD=${ALERT_SMTP_PASSWORD:?falta ALERT_SMTP_PASSWORD}
-      - GF_SMTP_FROM_ADDRESS=${ALERT_SMTP_USER}
-      - GF_SMTP_FROM_NAME=Core Force Mail
-      - GF_SMTP_STARTTLS_POLICY=MandatoryStartTLS
     volumes:
       - ./ops/observability/grafana/provisioning:/etc/grafana/provisioning:ro
       - ./ops/observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
@@ -99,6 +85,34 @@ services:
     depends_on:
       - prometheus
     restart: unless-stopped
+    networks:
+      - app
+
+  # Entrega de las alertas por correo. Prometheus evalua las reglas y este las agrupa y las manda por el
+  # submission de la propia plataforma (STARTTLS obligatorio, certificado verificado). No publica puerto.
+  #
+  # Alertmanager no expande variables de entorno: render.sh sustituye en la plantilla las tres que no son
+  # secretas y la clave SMTP se lee de un fichero (smtp_auth_password_file). El fichero es un montaje
+  # suelto 0644 dentro de un directorio 0700: el contenedor corre como nobody y solo debe ver ese.
+  # Debe existir antes de levantarlo, o Docker crea un directorio en su lugar.
+  alertmanager:
+    image: prom/alertmanager:v0.28.1
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        sh /etc/alertmanager/render.sh /etc/alertmanager/alertmanager.yml.tmpl /tmp/alertmanager.yml &&
+        exec /bin/alertmanager --config.file=/tmp/alertmanager.yml --storage.path=/alertmanager
+    environment:
+      # Sin valor por defecto: sin destinatario una alerta no llega a nadie y es peor que no tenerla.
+      - ALERT_EMAIL_TO=${ALERT_EMAIL_TO:?falta ALERT_EMAIL_TO}
+      - ALERT_SMTP_HOST=${ALERT_SMTP_HOST:?falta ALERT_SMTP_HOST}
+      - ALERT_SMTP_USER=${ALERT_SMTP_USER:?falta ALERT_SMTP_USER}
+    volumes:
+      - ./ops/observability/alertmanager:/etc/alertmanager:ro
+      - ${ALERT_SMTP_PASS_FILE:-/opt/core-force-mail/env/alert-smtp.pass}:/etc/alertmanager-secretos/smtp.pass:ro
+      - alertmanager-data:/alertmanager
+    restart: unless-stopped
+    mem_limit: 128m
     networks:
       - app
 
@@ -178,6 +192,7 @@ services:
 
 volumes:
   prometheus-data:
+  alertmanager-data:
   grafana-data:
   loki-data:
   promtail-data:

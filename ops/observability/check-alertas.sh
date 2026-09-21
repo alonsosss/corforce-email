@@ -36,4 +36,20 @@ for t in "${PRUEBAS[@]}"; do
   docker run --rm -v "$DIR:/p" --entrypoint promtool "$IMAGEN" test rules "/p/$t"
 done
 
+# La entrega: la plantilla de Alertmanager renderizada con la MISMA imagen y el mismo script que en produccion
+# tiene que ser una configuracion valida, y un valor con comillas o saltos de linea tiene que rechazarse.
+AM_IMAGEN="${ALERTMANAGER_IMAGE:-prom/alertmanager:v0.28.1}"
+AM_DIR="$ROOT/ops/observability/alertmanager"
+am_probar() {
+  docker run --rm -v "$AM_DIR:/etc/alertmanager:ro" \
+    -e ALERT_EMAIL_TO="$1" -e ALERT_SMTP_HOST=mail.ejemplo.test:587 -e ALERT_SMTP_USER=alertas@ejemplo.test \
+    --entrypoint /bin/sh "$AM_IMAGEN" -c "$2"
+}
+am_probar operadores@ejemplo.test 'echo "clave" >/tmp/smtp.pass && sh /etc/alertmanager/render.sh /etc/alertmanager/alertmanager.yml.tmpl /tmp/am.yml \
+  && sed -i "s|/etc/alertmanager-secretos/smtp.pass|/tmp/smtp.pass|" /tmp/am.yml && amtool check-config /tmp/am.yml'
+if am_probar "x' ; malo: 1" 'sh /etc/alertmanager/render.sh /etc/alertmanager/alertmanager.yml.tmpl /tmp/am.yml' >/dev/null 2>&1; then
+  echo "check-alertas: render.sh acepto un destinatario con comilla" >&2
+  exit 1
+fi
+
 echo "check-alertas: OK"

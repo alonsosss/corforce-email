@@ -69,6 +69,7 @@ docker compose -f docker-compose.observability.yml up -d
 ```
 
 - **Prometheus** (`127.0.0.1:9090`): recolecta y evalua las alertas.
+- **Alertmanager** (solo red interna): las agrupa y las entrega por correo ("Entrega de las alertas").
 - **Grafana** (`127.0.0.1:3000`): tableros "Plataforma" y "Salud de entrega del correo" (`entrega.json`: cola de
   Postfix, mensaje mas antiguo, falsos positivos del antispam, cuarentena y, desde Loki, entregas, diferidos, rebotes
   y rechazos de Postfix) aprovisionados; `ops/scaffold/check-dashboards.sh` exige que solo consulten metricas que existen.
@@ -211,25 +212,26 @@ cola es una sola: se lee con `max`.
 
 ### Entrega de las alertas
 
-Una alerta que nadie recibe no sirve. Prometheus evalua las reglas y envia las disparadas al
-**Alertmanager integrado de Grafana** (`alerting` en `prometheus.yml`, con el usuario `prometheus-alertas`,
-rol Editor, no el administrador); Grafana las agrupa y las manda **por correo** al punto de contacto
-`operadores` (`grafana/provisioning/alerting/entrega.yml`). No hay servicio propio de notificaciones: el
-`notification` del ERP no se copio, y las reglas que lo vigilaban se quitaron con el.
+Una alerta que nadie recibe no sirve. Prometheus evalua las reglas y envia las disparadas a **Alertmanager**
+(contenedor `alertmanager` del mismo compose, sin puerto publicado), que las agrupa por `alertname` e `instance`
+(espera de 30 s, reenvio cada 4 h mientras dure la causa) y las manda **por correo**, tambien al resolverse. No hay
+servicio propio de notificaciones: el `notification` del ERP no se copio y las reglas que lo vigilaban se quitaron.
+Las alertas en espera (`pending`) no se envian: son las que suelen resolverse solas dentro de su ventana `for`. La
+decision y sus alternativas estan en `docs/adr/0005-entrega-de-alertas-con-alertmanager.md`.
 
-- **Remitente**: un buzon de la propia plataforma (`ALERT_SMTP_USER`) por el submission con STARTTLS obligatorio y
-  certificado verificado. Su clave es `ALERT_SMTP_PASSWORD`.
-- **Destinatario**: `ALERT_EMAIL_TO`. Grafana no arranca si falta: una alerta sin destinatario es peor que ninguna.
-- **Clave de Prometheus a Grafana**: `ALERTMANAGER_PASS_FILE`, un fichero 0644 dentro de un directorio 0700 (el
-  contenedor corre como nobody y solo ve ese fichero). Debe existir antes de levantar Prometheus: si no, Docker crea
-  un directorio en su lugar.
-- **Agrupacion**: por `alertname` e `instance`, espera de 30 s, reenvio cada 4 h mientras dure la causa. Las
-  alertas en espera (`pending`) no se envian: son las que suelen resolverse solas dentro de su ventana `for`.
+- **Remitente**: un buzon de la propia plataforma (`ALERT_SMTP_USER`, con SMTP permitido) por el submission
+  (`ALERT_SMTP_HOST`) con STARTTLS obligatorio y certificado verificado.
+- **Destinatario**: `ALERT_EMAIL_TO`. El compose no arranca si falta.
+- **Clave SMTP**: un fichero (`ALERT_SMTP_PASS_FILE`, 0644 dentro de un directorio 0700; el contenedor corre como
+  nobody). Debe existir antes de levantar Alertmanager: si no, Docker crea un directorio en su lugar. Para rotarla,
+  se reescribe el fichero y se reinicia `alertmanager`.
+- **Plantilla**: `ops/observability/alertmanager/alertmanager.yml.tmpl` con `render.sh`, que rechaza valores con
+  caracteres que no sean de una direccion. `make check-alertas` la renderiza y la valida con `amtool`.
 
 **Limitacion asumida:** con la plataforma caida por completo, Postfix tambien lo esta y el aviso no sale.
-`ALERT_EMAIL_TO` debe ser una direccion externa (no de un dominio de la plataforma) para que al menos el aviso
-llegue a un buzon que no cae con ella; para la caida total hace falta ademas un canal que no dependa de este
-servidor (Telegram, un servicio externo de latido), que requiere credenciales que hoy no hay.
+`ALERT_EMAIL_TO` debe ser una direccion externa a los dominios de la plataforma para que el aviso llegue a un buzon
+que no cae con ella; para la caida total hace falta ademas un canal que no dependa de este servidor (Telegram, un
+servicio externo de latido), que requiere credenciales que hoy no hay.
 
 ## Lo que todavia no hay
 

@@ -1,0 +1,23 @@
+# Plantilla de la configuracion de Alertmanager; render.sh sustituye las marcas __ALERT_*__ con las variables
+# de entorno del contenedor. La clave SMTP no pasa por aqui: se lee del fichero montado.
+global:
+  smtp_smarthost: '__ALERT_SMTP_HOST__'
+  smtp_from: '__ALERT_SMTP_USER__'
+  smtp_auth_username: '__ALERT_SMTP_USER__'
+  smtp_auth_password_file: /etc/alertmanager-secretos/smtp.pass
+  smtp_require_tls: true
+
+route:
+  receiver: operadores
+  group_by: [alertname, instance]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+
+receivers:
+  - name: operadores
+    email_configs:
+      - to: '__ALERT_EMAIL_TO__'
+        send_resolved: true
+        headers:
+          Subject: '[{{ .Status | toUpper }}] {{ .CommonLabels.alertname }} ({{ .Alerts.Firing | len }} activas)'
