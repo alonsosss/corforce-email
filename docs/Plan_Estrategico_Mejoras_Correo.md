@@ -207,7 +207,7 @@ adopción. No hay paridad como objetivo: reconstruir todo el panel de mailcow es
 | Calendario y contactos personales (SOGo) | No existe: ni CalDAV, ni CardDAV, ni libreta de direcciones en el webmail | Media, a validar con demanda |
 | Sincronización móvil (ActiveSync) | No existe | Descartada (ver C3) |
 | Visor de logs y acceso de solo lectura a la interfaz de Rspamd | No existe (?) | Baja |
-| Políticas TLS por destino, BCC y mapas de destinatario | Las tablas y entidades existen y los motores las leen; la API y la pantalla no las confirmé (?) | Baja |
+| Políticas TLS por destino, BCC y mapas de destinatario | V (2026-09-21): existen la API (`/mail-routing/tls-policies`, `/bcc-maps`, `/recipient-maps` en `mail-directory`) y sus pestañas (`web/src/pages/routing/`); el inventario anterior no las había confirmado | Hecho |
 | Alias temporales (spam aliases) | Entidad y DTO existen; pantalla sin confirmar (?) | Baja |
 | Resto: cuotas, contraseñas de aplicación, alias, límites de tasa, cuarentena, cortafuegos, DKIM, relayhosts | Ya reconstruido en Go y en la web | Hecho |
 
@@ -316,5 +316,6 @@ Se actualiza en la misma tarea que implemente cada iniciativa.
 | A5 Panel de salud de entrega | Parcial | V (2026-09-21): la cola de Postfix se vigila (`QueueMonitor` de `mail-security` sobre el agente de la cola): metricas `mail_security_postfix_queue_*` y las alertas `ColaDePostfixAtascada` y `GestorDeColaSinRespuesta`, con pruebas de `promtool` y comprobacion en `make e2e-mail`. Falta lo que no sale de la cola: rebotes y diferidos por proveedor y resultado de autenticacion, que hay que sacar del registro de Postfix hacia Loki, y el panel de Grafana por dominio; dependen de que la observabilidad este levantada en el servidor (P) |
 | A4 Ajuste del antispam | Parcial | V (2026-09-21): `mail_security_quarantine_messages_total{outcome}` (retenidos, liberados, descartados y entrenados como spam) con pruebas unitarias, para medir falsos positivos, y `docs/Ajuste_Antispam.md` con la regla (ningun peso sin dato), las consultas, el registro de cambios y las condiciones previas de DQS. No arranca el ajuste hasta que haya trafico real (P). Falta el camino de aprendizaje contrario (marcar como legitimo lo liberado) |
 | C3 fase 2 CardDAV y CalDAV | ADR (sin implementar) | `docs/adr/0004-contactos-y-calendario-carddav-caldav.md` (2026-09-21): servicio `mail-dav` de empresa, CardDAV primero, autenticacion Basic contra `mail-auth` con un servicio `dav` y contrasenas de aplicacion, libreria go-webdav. El plan exige decision explicita del responsable del producto para empezarlo (P) |
-| A6, C5 | P | Sin implementar (por demanda o dependientes de trafico y de la observabilidad, segun el plan) |
+| C5 Paridad restante | Parcial | Las pantallas de politicas TLS por destino, BCC y mapas de destinatario ya existian (ver el inventario). Quedan el visor de logs sobre Loki (depende de la observabilidad levantada) y el acceso de solo lectura a la interfaz de Rspamd, que no se hace a la ligera: exponer el controller de Rspamd, con su contrasena, a traves del gateway es una superficie privilegiada nueva y necesita ADR y revision de seguridad (P) |
+| A6 | P | Sin implementar (por demanda o dependientes de trafico y de la observabilidad, segun el plan) |
 
