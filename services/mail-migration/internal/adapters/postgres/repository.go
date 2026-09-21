@@ -69,7 +69,7 @@ func errorFields(e *domain.JobError) (string, string) {
 	return string(e.Code), e.Message
 }
 
-func (r *Repository) Insert(ctx context.Context, j *domain.Job, maxActive int) error {
+func (r *Repository) Insert(ctx context.Context, j *domain.Job, limits ports.InsertLimits) error {
 	if _, err := r.pool.Exec(ctx, `SELECT pg_advisory_xact_lock($1, hashtext($2))`, tenantLockClass, j.TenantID.String()); err != nil {
 		return err
 	}
@@ -77,8 +77,32 @@ func (r *Repository) Insert(ctx context.Context, j *domain.Job, maxActive int) e
 	if err != nil {
 		return err
 	}
-	if active >= maxActive {
+	if active >= limits.MaxActive {
 		return domain.ErrTenantLimitReached
+	}
+	if limits.MaxRecent > 0 {
+		var recent int
+		if err := r.pool.QueryRow(ctx,
+			`SELECT count(*) FROM mail_migration.jobs WHERE tenant_id = $1 AND created_at >= $2`,
+			j.TenantID, limits.RecentSince).Scan(&recent); err != nil {
+			return err
+		}
+		if recent >= limits.MaxRecent {
+			return domain.ErrTenantRateLimited
+		}
+	}
+	if limits.MaxAuthFailures > 0 {
+		var failures int
+		if err := r.pool.QueryRow(ctx,
+			`SELECT count(*) FROM mail_migration.jobs
+ WHERE tenant_id = $1 AND source_host = $2 AND lower(source_username) = lower($3)
+   AND last_error_code = $4 AND finished_at >= $5`,
+			j.TenantID, j.SourceHost, j.SourceUsername, string(domain.CodeSourceAuthFailed), limits.AuthFailuresSince).Scan(&failures); err != nil {
+			return err
+		}
+		if failures >= limits.MaxAuthFailures {
+			return domain.ErrSourceAuthCooldown
+		}
 	}
 	_, err = r.pool.Exec(ctx,
 		`INSERT INTO mail_migration.jobs (id, tenant_id, mailbox_id, mailbox_username, source_host, source_port, source_tls,

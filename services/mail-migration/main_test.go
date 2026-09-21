@@ -21,7 +21,7 @@ func baseEnv(t *testing.T) {
 	}
 	for _, k := range []string{
 		"MAIL_MIGRATION_RUNNER_KEY", "MAIL_MIGRATION_ALLOW_PRIVATE_SOURCES", "MAIL_MIGRATION_ALLOW_PLAINTEXT",
-		"MAIL_MIGRATION_SOURCE_PORTS", "MAIL_MIGRATION_LEASE", "MAIL_MIGRATION_MAX_ATTEMPTS", "MAIL_MIGRATION_SWEEP_INTERVAL", "MAIL_MIGRATION_PORT", "MAIL_MIGRATION_RUNNER_PORT", "MAIL_MIGRATION_MAX_ACTIVE_PER_TENANT",
+		"MAIL_MIGRATION_SOURCE_PORTS", "MAIL_MIGRATION_LEASE", "MAIL_MIGRATION_MAX_ATTEMPTS", "MAIL_MIGRATION_SWEEP_INTERVAL", "MAIL_MIGRATION_PORT", "MAIL_MIGRATION_RUNNER_PORT", "MAIL_MIGRATION_MAX_ACTIVE_PER_TENANT", "MAIL_MIGRATION_MAX_JOBS_PER_DAY", "MAIL_MIGRATION_MAX_AUTH_FAILURES_PER_HOUR", "MAIL_MIGRATION_MAX_RUNNING_JOBS",
 		"MAIL_DIRECTORY_CELL_HOSTS", "GATEWAY_BASE_CELL_CODE",
 	} {
 		t.Setenv(k, "")
@@ -36,6 +36,9 @@ func TestSinClaveDelEjecutorArrancaDesactivado(t *testing.T) {
 	}
 	if st.app.RunnerConfigured || st.runnerKey != "" {
 		t.Fatal("sin clave el servicio no debe declararse configurado")
+	}
+	if st.app.MaxJobsPerDay != 200 || st.app.MaxAuthFailuresPerHour != 5 || st.app.MaxRunningJobs != 4 {
+		t.Fatalf("topes de abuso por defecto: %d por dia, %d rechazos por hora, %d en curso", st.app.MaxJobsPerDay, st.app.MaxAuthFailuresPerHour, st.app.MaxRunningJobs)
 	}
 	if st.port != 8056 || st.runnerPort != 8057 || st.app.MaxActivePerTenant != 2 || len(st.app.Source.Ports) != 2 {
 		t.Fatalf("valores por defecto: %+v", st)
@@ -79,6 +82,9 @@ func TestConfiguracionInvalida(t *testing.T) {
 		"puerto fuera":          {"MAIL_MIGRATION_SOURCE_PORTS", "70000"},
 		"booleano":              {"MAIL_MIGRATION_ALLOW_PLAINTEXT", "quizas"},
 		"limite en cero":        {"MAIL_MIGRATION_MAX_ACTIVE_PER_TENANT", "0"},
+		"sin tope diario":       {"MAIL_MIGRATION_MAX_JOBS_PER_DAY", "0"},
+		"rechazos en cero":      {"MAIL_MIGRATION_MAX_AUTH_FAILURES_PER_HOUR", "0"},
+		"sin trabajos en curso": {"MAIL_MIGRATION_MAX_RUNNING_JOBS", "0"},
 		"lease demasiado corto": {"MAIL_MIGRATION_LEASE", "1s"},
 		"puertos iguales":       {"MAIL_MIGRATION_RUNNER_PORT", "8056"},
 	}

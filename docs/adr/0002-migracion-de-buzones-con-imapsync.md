@@ -242,6 +242,42 @@ pero es un shell dentro del contenedor del ejecutor.
 * **No ejecutado:** `make e2e-mail` (la sección de migración de `ops/e2e/mail.sh` solo pasó `bash -n`) y
   `ops/scaffold/test-deploy-mail.sh`; ni IPv6 con imapsync real ni un proveedor real.
 
+### Revision adversaria de seguridad (V, 2026-09-21)
+
+Revision del ejecutor, de su API y del cifrado de la credencial con el mismo criterio con el que se atacaria:
+cada hallazgo se demostro con una prueba que fallaba antes del arreglo. Lo confirmado y corregido:
+
+| Hallazgo | Gravedad real | Arreglo |
+|---|---|---|
+| El listener del ejecutor (8057) no esta detras del gateway, pero su limitador tomaba la IP de `X-Real-IP` y `X-Forwarded-For`, que escribe quien llama: bastaba cambiarlas para esquivar el limite o para gastar el cupo de la IP del ejecutor real (denegacion de la migracion) | Media (exige estar en la red del ejecutor o de la plataforma) | `withoutForwardedClientIP` las descarta antes del limitador |
+| La contrasena cifrada no iba atada a su fila: quien pudiera escribir en la base de una empresa y copiar el cifrado de un trabajo en otro (o de otra empresa, con acceso a las dos) hacia que el ejecutor recibiera la contrasena del primero para el destino del segundo | Baja (necesita escritura en la base y un cifrado ajeno) | AES-GCM con AAD `mail-migration/source-password/v1/<empresa>/<trabajo>` (`KeyRing.EncryptWithAAD/DecryptWithAAD` en `pkg/crypto`); un cifrado pegado falla como `credential_unreadable`. Los trabajos creados antes del cambio (cifrados sin AAD) no se pueden descifrar y fallan del mismo modo: hay que relanzarlos |
+| Sin tope de altas: una empresa podia encadenar trabajos (uno por intento) para probar contrasenas de cuentas ajenas o sondear servidores IMAP de Internet con la IP de la plataforma | Media (abuso, reputacion de IP; no compromete datos propios) | `MAIL_MIGRATION_MAX_JOBS_PER_DAY` (200 por empresa y 24 h) y `MAIL_MIGRATION_MAX_AUTH_FAILURES_PER_HOUR` (5 trabajos por mismo servidor y usuario de origen terminados con credenciales rechazadas en una hora, sin distinguir mayusculas), comprobados bajo el cerrojo de la empresa (429 `TENANT_RATE_LIMITED` y `SOURCE_AUTH_COOLDOWN`); indices en `03_abuse_limits_indexes.sql` |
+| Un ejecutor podia reclamar todos los trabajos pendientes (uno por peticion) y llevarse sus contrasenas | Media si el ejecutor se compromete | Un ejecutor no recibe un segundo trabajo mientras conserve el primero (lo libera el cierre o un lease vencido) y la instancia no reparte mas de `MAIL_MIGRATION_MAX_RUNNING_JOBS` (4) a la vez entre todos, cambie el identificador que cambie |
+| Un imapsync comprometido por un servidor hostil (mismo usuario que el ejecutor) leia por `/proc/<pid>/environ` la clave del servicio y la contrasena del maestro de Dovecot | Alta si imapsync se compromete, con la reserva de que ya ve la contrasena del maestro por su fichero | El ejecutor se marca no volcable (`prctl(PR_SET_DUMPABLE, 0)`) y sin volcado de memoria; los hijos recuperan su estado normal al hacer `exec`. La clave del servicio deja de ser alcanzable desde imapsync |
+| El ejecutor conectaba a cualquier puerto que le dijera el servicio | Baja (defensa en profundidad: exige manipular el servicio o su base) | `MIGRATION_SOURCE_PORTS` (143 y 993 por defecto; el compose la toma de `MAIL_MIGRATION_SOURCE_PORTS`) |
+| La lista IPv6 del ejecutor solo excluia partes de `2001::/23` (dejaba, por ejemplo, el anycast de PCP `2001:1::1` y `2001:3::/32`), mas permisiva que la del servicio | Baja | Todo `2001::/23` bloqueado, igual que el servicio |
+| El analizador de la salida de imapsync guardaba una entrada por carpeta del origen: un origen con millones de carpetas hacia crecer la memoria del ejecutor sin limite | Baja (el contenedor tiene tope de memoria y se reinicia) | Se guardan las primeras 500 y el resto solo se cuenta |
+
+Comprobado sin hallazgo (con pruebas): inyeccion de argumentos (usuario con espacios, comillas, guiones iniciales
+y `--exec=...` viaja como un unico argumento `--user1=<valor>`, y con imapsync real se toma como valor), destino
+con el separador del usuario maestro, contrasena con espacios y comillas por fichero, notaciones decimal, octal y
+hexadecimal, IPv6 con zona, IPv4 mapeada, NAT64, 6to4, Teredo, `0.0.0.0/8`, `100.64/10`, `192.0.0.0/24`,
+`198.18/15`, `224/4`, `240/4`, `::/128`, `fc00::/7`, `fe80::/10`, dominios con varias direcciones donde una es privada
+y CNAME a privada (se comprueban todas las direcciones y se conecta a la IP validada, sin segunda resolucion),
+comparacion de la clave en tiempo constante sobre su huella, IDOR entre empresas (toda consulta filtra por
+`tenant_id` de la sesion y el ejecutor solo actua con el `lease_id` aleatorio de un trabajo que tiene), permisos y
+borrado de ficheros temporales (0400 en un directorio 0700 de un tmpfs que desaparece con el contenedor, y
+`prepareWorkDir` lo vacia al arrancar).
+
+**Riesgo residual principal (no corregido):** el usuario maestro de Dovecot de la migracion abre CUALQUIER buzon de
+la celda desde la red del ejecutor y su contrasena esta en un fichero que imapsync lee. Un servidor de origen que
+lograra ejecutar codigo dentro de imapsync (Perl y sus modulos, sobre respuestas de un servidor ajeno) obtendria
+lectura y escritura de todos los buzones de la celda. La red aislada, `cap_drop: ALL`, el sistema de ficheros de solo
+lectura y el proceso no volcable reducen lo que puede hacer alli dentro, no ese poder. El cierre correcto es una
+credencial por trabajo: que `mail-auth` (o un passdb propio de Dovecot) acepte un token de un solo uso ligado al
+buzon destino y a la vida del trabajo, en lugar del maestro compartido. Requiere trabajo en `mail-auth` y en la
+configuracion de Dovecot y queda como mejora recomendada.
+
 ## Consecuencias
 
 * Un servicio nuevo, un contenedor nuevo y una red nueva: coste de operación real, con ADR (este) y con los
@@ -249,7 +285,8 @@ pero es un shell dentro del contenedor del ejecutor.
 * El ejecutor es el componente que parsea respuestas de servidores ajenos: por eso no tiene nada que robar
   ni a lo que llegar dentro de la plataforma, salvo, por diseño, las credenciales de los trabajos que reclama
   y el usuario maestro de la migración. Un ejecutor comprometido podría reclamar los trabajos pendientes y
-  leer sus contraseñas: el límite de trabajos activos y el borrado al terminar acotan la exposición.
+  leer sus contraseñas: el límite de trabajos activos, el borrado al terminar y, desde la revisión de seguridad
+  del 2026-09-21, un trabajo a la vez por ejecutor y un tope de trabajos reclamados acotan la exposición.
 * Un Perl más en la lista de imágenes a escanear (`ops/security/escanear-motores.sh`, que ya recorre
   `deploy/mail/*/Dockerfile`) y en el libro de parches (`UPSTREAM.md`), con la serie de imapsync fijada.
 * Primera vez que la plataforma exige una red de los motores nueva: en un servidor que ya corre hay que
@@ -274,6 +311,19 @@ pero es un shell dentro del contenedor del ejecutor.
 * **Cuotas**: un buzón migrado puede superar su cuota; imapsync falla limpio y el ejecutor lo informa como
   `quota_exceeded`.
 * **Servidor de origen bloqueando la IP** de la plataforma por parecer un ataque de fuerza bruta: un
-  trabajo son dos pasadas, cada una con su autenticación; falta limitar intentos por origen y avisar al
-  cliente.
+  trabajo son dos pasadas, cada una con su autenticación. Desde 2026-09-21 los intentos se limitan por empresa y por
+  cuenta de origen (revisión de seguridad); falta un tope global entre empresas (hoy lo acota la capacidad del ejecutor,
+  que hace un trabajo a la vez) y avisar al cliente antes de que un origen le bloquee.
+* **Mensajes enormes del origen**: imapsync los trae enteros (en memoria, en Perl) antes de que el filtro de ClamAV los
+  rechace por pasar de `MIGRATION_SCAN_MAX_BYTES`; un origen hostil puede agotar la memoria del contenedor (1 GiB) y
+  reiniciarlo, y el trabajo se reintenta hasta `MAIL_MIGRATION_MAX_ATTEMPTS`. `--maxsize` lo evitaría, pero imapsync
+  omitiría esos mensajes sin error y el trabajo acabaría `succeeded` con correo sin copiar: hay que añadirlo junto con
+  su lectura en el analizador para seguir informando el fallo.
+* **Credencial de destino por trabajo** (riesgo residual principal de la revisión de seguridad): ver arriba.
+* **Reinicio del ejecutor con el mismo identificador**: el servicio no le entrega otro trabajo hasta que venza el lease
+  del anterior (hasta `MAIL_MIGRATION_LEASE`); los topes de reclamo viven en la memoria de cada instancia de
+  `mail-migration`, no compartidos entre instancias.
+* **Tope diario y borrado de buzones**: el conteo de altas se hace sobre las filas de la empresa; quien borre el buzón
+  destino borra sus trabajos y con ellos su historial, así que un administrador que crea y borra buzones reinicia el
+  contador (a cambio de crear buzones cada vez).
 * **Historial de trabajos**: no se poda (una fila por migración, sin credencial).

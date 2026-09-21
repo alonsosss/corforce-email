@@ -193,6 +193,13 @@ func (p *Progress) Normalize() error {
 	return nil
 }
 
+// SourcePasswordAAD son los datos adicionales con los que se cifra la contrasena de origen de un
+// trabajo: la atan a su empresa y a su trabajo, de modo que el cifrado de un trabajo pegado en otro
+// no se descifra.
+func SourcePasswordAAD(tenantID, jobID uuid.UUID) []byte {
+	return []byte("mail-migration/source-password/v1/" + tenantID.String() + "/" + jobID.String())
+}
+
 // Job es una migracion de un buzon. SourcePasswordEnc solo existe mientras el trabajo esta activo y
 // nunca se serializa.
 type Job struct {

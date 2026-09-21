@@ -543,6 +543,11 @@ solo servicios, por la instancia de la celda de la empresa con `tenantcell.Calle
   defecto), comprobado dentro de la transaccion del alta con un cerrojo consultivo por empresa
   (`pg_advisory_xact_lock`, seguro tras PgBouncer en modo transaccion). No existe todavia un derecho de
   `billing` para migraciones (P: `billing.plan_limits` admite hoy siete recursos fijos, sin este).
+* Topes de abuso del alta (V, 2026-09-21, `docs/adr/0002`): en la misma transaccion y bajo el mismo cerrojo,
+  `Insert` rechaza al pasar `MAIL_MIGRATION_MAX_JOBS_PER_DAY` trabajos creados en 24 horas (200) o
+  `MAIL_MIGRATION_MAX_AUTH_FAILURES_PER_HOUR` trabajos terminados con `source_auth_failed` contra el mismo servidor
+  y usuario de origen en una hora (5). Los dos conteos se apoyan en `03_abuse_limits_indexes.sql`. La contrasena
+  cifrada lleva como AAD la empresa y el trabajo (`domain.SourcePasswordAAD`): pegarla en otra fila no la abre.
 * Reclamo del ejecutor: `WITH candidate AS (SELECT ... FOR UPDATE SKIP LOCKED LIMIT 1) UPDATE ... RETURNING`,
   una sentencia atomica por empresa; un lease vencido con intentos por debajo de
   `MAIL_MIGRATION_MAX_ATTEMPTS` vuelve a ser reclamable, y uno sin intentos o con la cancelacion pedida

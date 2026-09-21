@@ -50,12 +50,27 @@ type FinishParams struct {
 	Now      time.Time
 }
 
+// InsertLimits son los topes que Insert comprueba bajo el cerrojo de la empresa. MaxActive siempre
+// se aplica; los demas, en cero, no. Existen porque la migracion hace salir al ejecutor hacia servidores que elige el
+// usuario: sin ellos una empresa podria usarla para probar contrasenas ajenas o sondear Internet.
+type InsertLimits struct {
+	MaxActive int
+	// MaxRecent es lo que la empresa puede haber creado desde RecentSince.
+	MaxRecent   int
+	RecentSince time.Time
+	// MaxAuthFailures es cuantos trabajos contra el mismo servidor y usuario de origen pueden haber
+	// terminado con las credenciales rechazadas desde AuthFailuresSince.
+	MaxAuthFailures   int
+	AuthFailuresSince time.Time
+}
+
 // JobRepository persiste los trabajos de UNA empresa: el pool y la transaccion llegan en el
 // contexto y toda consulta filtra ademas por tenant_id.
 type JobRepository interface {
-	// Insert toma el cerrojo de la empresa, comprueba el limite de trabajos activos y guarda el
-	// trabajo. Debe correr dentro de Transact. ErrTenantLimitReached y ErrJobAlreadyActive.
-	Insert(ctx context.Context, j *domain.Job, maxActive int) error
+	// Insert toma el cerrojo de la empresa, comprueba los topes de limits y guarda el trabajo. Debe
+	// correr dentro de Transact. ErrTenantLimitReached, ErrTenantRateLimited, ErrSourceAuthCooldown
+	// y ErrJobAlreadyActive.
+	Insert(ctx context.Context, j *domain.Job, limits InsertLimits) error
 	Get(ctx context.Context, tenantID, id uuid.UUID) (*domain.Job, error)
 	List(ctx context.Context, tenantID uuid.UUID, f ListFilter, p Page) ([]domain.Job, int64, error)
 	CountActive(ctx context.Context, tenantID uuid.UUID) (int, error)
@@ -97,10 +112,11 @@ type HostResolver interface {
 	LookupAddrs(ctx context.Context, host string) ([]netip.Addr, error)
 }
 
-// Cipher cifra y descifra la credencial de origen (pkg/crypto.KeyRing).
+// Cipher cifra y descifra la credencial de origen (pkg/crypto.KeyRing). Los aad atan el cifrado a la
+// empresa y al trabajo (domain.SourcePasswordAAD): copiado a otra fila no se abre.
 type Cipher interface {
-	Encrypt(plaintext []byte) ([]byte, error)
-	Decrypt(data []byte) ([]byte, error)
+	EncryptWithAAD(plaintext, aad []byte) ([]byte, error)
+	DecryptWithAAD(data, aad []byte) ([]byte, error)
 }
 
 // Tenants abre el contexto de la base de una empresa para trabajar fuera de una peticion con sesion:

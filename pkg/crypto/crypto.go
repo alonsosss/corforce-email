@@ -25,6 +25,13 @@ var ErrUndecryptable = errors.New("crypto: unable to decrypt with any configured
 // Encrypt encrypts plaintext using AES-256-GCM. The returned slice is
 // nonce || ciphertext. key must be exactly 32 bytes.
 func Encrypt(key, plaintext []byte) ([]byte, error) {
+	return EncryptWithAAD(key, plaintext, nil)
+}
+
+// EncryptWithAAD es Encrypt con datos adicionales autenticados: el dato solo abre con los mismos
+// aad, asi que un cifrado copiado a otra fila (otro dueno, otro id) no se lee en su nuevo sitio.
+// aad no se guarda ni se cifra.
+func EncryptWithAAD(key, plaintext, aad []byte) ([]byte, error) {
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, err
@@ -37,12 +44,17 @@ func Encrypt(key, plaintext []byte) ([]byte, error) {
 	if _, err = io.ReadFull(rand.Reader, nonce); err != nil {
 		return nil, err
 	}
-	return gcm.Seal(nonce, nonce, plaintext, nil), nil
+	return gcm.Seal(nonce, nonce, plaintext, aad), nil
 }
 
 // Decrypt decrypts a nonce || ciphertext slice produced by Encrypt with the
 // given key.
 func Decrypt(key, data []byte) ([]byte, error) {
+	return DecryptWithAAD(key, data, nil)
+}
+
+// DecryptWithAAD abre lo cifrado por EncryptWithAAD con los mismos aad.
+func DecryptWithAAD(key, data, aad []byte) ([]byte, error) {
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, err
@@ -56,7 +68,7 @@ func Decrypt(key, data []byte) ([]byte, error) {
 		return nil, errors.New("crypto: ciphertext too short")
 	}
 	nonce, ciphertext := data[:ns], data[ns:]
-	return gcm.Open(nil, nonce, ciphertext, nil)
+	return gcm.Open(nil, nonce, ciphertext, aad)
 }
 
 // KeyRing holds the active key (used to encrypt) plus optional old keys (only
@@ -96,11 +108,21 @@ func (kr *KeyRing) Encrypt(plaintext []byte) ([]byte, error) {
 
 // Decrypt tries the active key first, then any old keys (rotation support).
 func (kr *KeyRing) Decrypt(data []byte) ([]byte, error) {
-	if out, err := Decrypt(kr.active, data); err == nil {
+	return kr.DecryptWithAAD(data, nil)
+}
+
+// EncryptWithAAD encrypts with the active key, binding the result to aad.
+func (kr *KeyRing) EncryptWithAAD(plaintext, aad []byte) ([]byte, error) {
+	return EncryptWithAAD(kr.active, plaintext, aad)
+}
+
+// DecryptWithAAD is Decrypt for data produced by EncryptWithAAD with the same aad.
+func (kr *KeyRing) DecryptWithAAD(data, aad []byte) ([]byte, error) {
+	if out, err := DecryptWithAAD(kr.active, data, aad); err == nil {
 		return out, nil
 	}
 	for _, k := range kr.old {
-		if out, err := Decrypt(k, data); err == nil {
+		if out, err := DecryptWithAAD(k, data, aad); err == nil {
 			return out, nil
 		}
 	}

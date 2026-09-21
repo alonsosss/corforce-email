@@ -43,6 +43,13 @@ const (
 	defaultSweepInterval = 30 * time.Second
 	// Sin limite por plan en billing (pendiente), el de la empresa es de operador.
 	defaultMaxActivePerTenant = 2
+	// Topes de abuso (ver app.Config): un cliente legitimo migra decenas de buzones al dia y se
+	// equivoca de contrasena unas pocas veces.
+	defaultMaxJobsPerDay          = 200
+	defaultMaxAuthFailuresPerHour = 5
+	// Trabajos reclamados a la vez entre todos los ejecutores de esta instancia: hoy hay un ejecutor
+	// que hace un trabajo a la vez, y el tope deja margen para agregar unos pocos.
+	defaultMaxRunningJobs = 4
 
 	minRunnerKeyLen = 32
 
@@ -77,6 +84,15 @@ func loadSettings(logger *zap.Logger) (settings, error) {
 		return s, errors.New("MAIL_MIGRATION_RUNNER_PORT no puede ser el puerto de la API de administracion")
 	}
 	if s.app.MaxActivePerTenant, err = config.EnvInt("MAIL_MIGRATION_MAX_ACTIVE_PER_TENANT", defaultMaxActivePerTenant, 1, 100); err != nil {
+		return s, err
+	}
+	if s.app.MaxJobsPerDay, err = config.EnvInt("MAIL_MIGRATION_MAX_JOBS_PER_DAY", defaultMaxJobsPerDay, 1, 100000); err != nil {
+		return s, err
+	}
+	if s.app.MaxAuthFailuresPerHour, err = config.EnvInt("MAIL_MIGRATION_MAX_AUTH_FAILURES_PER_HOUR", defaultMaxAuthFailuresPerHour, 1, 100); err != nil {
+		return s, err
+	}
+	if s.app.MaxRunningJobs, err = config.EnvInt("MAIL_MIGRATION_MAX_RUNNING_JOBS", defaultMaxRunningJobs, 1, 100); err != nil {
 		return s, err
 	}
 	if s.app.Lease, err = config.EnvDuration("MAIL_MIGRATION_LEASE", defaultLease, 30*time.Second, 30*time.Minute); err != nil {
@@ -265,14 +281,30 @@ func main() {
 	}
 }
 
+// runnerRateLimit son las peticiones por minuto y direccion que admite el listener del ejecutor:
+// holgado para el sondeo y los latidos de un ejecutor.
+const runnerRateLimit = 600
+
 // runnerRouter es la cadena del listener del ejecutor: sin gateway ni sesion, con su propia clave
-// y un limite de peticiones holgado para el sondeo y los latidos de un ejecutor.
+// y un limite de peticiones por direccion de origen.
 func runnerRouter(h *handler.RunnerHandler, logger *zap.Logger) http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
 	r.Use(middleware.SecureHeaders)
 	r.Use(middleware.Logger(logger))
-	r.Use(middleware.NewRateLimiter(600, time.Minute).Limit)
+	r.Use(withoutForwardedClientIP)
+	r.Use(middleware.NewRateLimiter(runnerRateLimit, time.Minute).Limit)
 	r.Mount("/", h.Routes())
 	return r
+}
+
+// withoutForwardedClientIP descarta las cabeceras con las que el limitador identificaria al cliente:
+// en este listener no hay proxy que las ponga, asi que las escribe quien llama y, de fiarse de ellas,
+// bastaria cambiarlas para esquivar el limite o para gastar el cupo de otra direccion.
+func withoutForwardedClientIP(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.Header.Del("X-Real-IP")
+		r.Header.Del("X-Forwarded-For")
+		next.ServeHTTP(w, r)
+	})
 }

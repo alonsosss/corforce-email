@@ -92,7 +92,88 @@ func newJob(tenant uuid.UUID) *domain.Job {
 
 func insert(t *testing.T, ctx context.Context, r *Repository, j *domain.Job, max int) error {
 	t.Helper()
-	return r.Transact(ctx, func(ctx context.Context) error { return r.Insert(ctx, j, max) })
+	return insertWith(t, ctx, r, j, ports.InsertLimits{MaxActive: max})
+}
+
+func insertWith(t *testing.T, ctx context.Context, r *Repository, j *domain.Job, limits ports.InsertLimits) error {
+	t.Helper()
+	return r.Transact(ctx, func(ctx context.Context) error { return r.Insert(ctx, j, limits) })
+}
+
+func TestTopesDeAbusoSeAplicanBajoElCerrojoDeLaEmpresa(t *testing.T) {
+	ctx, repo, _ := setup(t)
+	tenant, other := uuid.New(), uuid.New()
+	limits := ports.InsertLimits{
+		MaxActive: 100, MaxRecent: 3, RecentSince: time.Now().Add(-24 * time.Hour),
+		MaxAuthFailures: 2, AuthFailuresSince: time.Now().Add(-time.Hour),
+	}
+
+	var wg sync.WaitGroup
+	results := make(chan error, 12)
+	for i := 0; i < 12; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			results <- insertWith(t, ctx, repo, newJob(tenant), limits)
+		}()
+	}
+	wg.Wait()
+	close(results)
+	ok, limited := 0, 0
+	for err := range results {
+		switch {
+		case err == nil:
+			ok++
+		case errors.Is(err, domain.ErrTenantRateLimited):
+			limited++
+		default:
+			t.Fatalf("error inesperado: %v", err)
+		}
+	}
+	if ok != 3 || limited != 9 {
+		t.Fatalf("12 altas simultaneas con tope de 3: %d creadas y %d limitadas", ok, limited)
+	}
+	if err := insertWith(t, ctx, repo, newJob(other), limits); err != nil {
+		t.Fatalf("otra empresa no comparte el tope: %v", err)
+	}
+
+	victim := uuid.New()
+	authLimits := ports.InsertLimits{MaxActive: 100, MaxAuthFailures: 2, AuthFailuresSince: time.Now().Add(-time.Hour)}
+	rejected := func(user string, status domain.Status, code domain.ErrorCode) {
+		j := newJob(victim)
+		j.SourceUsername = user
+		if err := insertWith(t, ctx, repo, j, ports.InsertLimits{MaxActive: 100}); err != nil {
+			t.Fatal(err)
+		}
+		c, err := repo.Claim(ctx, victim, claimParams("r"))
+		if err != nil || c == nil {
+			t.Fatalf("Claim: %v %v", c, err)
+		}
+		if _, err := repo.Finish(ctx, victim, c.ID, ports.FinishParams{
+			LeaseID: *c.LeaseID, Status: status, Progress: domain.Progress{Folders: []domain.FolderProgress{}},
+			Error: &domain.JobError{Code: code}, Now: time.Now().UTC(),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rejected("Ana@origen.example", domain.StatusFailed, domain.CodeSourceAuthFailed)
+	rejected("ana@origen.example", domain.StatusFailed, domain.CodeSourceAuthFailed)
+	rejected("luis@origen.example", domain.StatusFailed, domain.CodeSourceUnreachable)
+
+	same := newJob(victim)
+	if err := insertWith(t, ctx, repo, same, authLimits); !errors.Is(err, domain.ErrSourceAuthCooldown) {
+		t.Fatalf("dos credenciales rechazadas para la misma cuenta (sin distinguir mayusculas): %v", err)
+	}
+	differentUser := newJob(victim)
+	differentUser.SourceUsername = "luis@origen.example"
+	if err := insertWith(t, ctx, repo, differentUser, authLimits); err != nil {
+		t.Fatalf("un fallo que no es de credenciales no cuenta: %v", err)
+	}
+	differentHost := newJob(victim)
+	differentHost.SourceHost = "imap.otro.example"
+	if err := insertWith(t, ctx, repo, differentHost, authLimits); err != nil {
+		t.Fatalf("otro servidor no esta frenado: %v", err)
+	}
 }
 
 func claimParams(runner string) ports.ClaimParams {
@@ -552,6 +633,63 @@ func TestDeExtremoAExtremoConCifradoRealYOutbox(t *testing.T) {
 		if !subjects[want] {
 			t.Errorf("falta el evento %s en la outbox: %v", want, subjects)
 		}
+	}
+}
+
+// La credencial cifrada va atada a su empresa y a su trabajo: quien pudiera escribir en la base y pegar el
+// cifrado de un trabajo en otro (de otra empresa incluida) no consigue que el ejecutor reciba, en claro, la
+// contrasena del primero para el destino del segundo.
+func TestLaCredencialCifradaNoSePuedePegarEnOtroTrabajo(t *testing.T) {
+	ctx, repo, _ := setup(t)
+	t.Setenv("MIGRATION_IT_KEY", strings.Repeat("cd", 32))
+	ring, err := crypto.LoadKeyRing("MIGRATION_IT_KEY", "MIGRATION_IT_KEY_OLD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tenant, actor := uuid.New(), uuid.New()
+	uc := app.New(app.Deps{
+		Repo: repo, Tx: repo, Mailboxes: &apptest.Mailboxes{Ref: ports.MailboxRef{Username: "ana@acme.test", Active: true}},
+		Resolver: &apptest.Resolver{Addrs: []netip.Addr{netip.MustParseAddr("93.184.216.34")}}, Cipher: ring,
+		Tenants: &apptest.Tenants{IDs: []uuid.UUID{tenant}}, Events: outboxadapter.NewPublisher(repo.pool),
+		Config: app.Config{RunnerConfigured: true, MaxActivePerTenant: 5, Lease: 90 * time.Second, MaxAttempts: 3, SweepInterval: time.Second,
+			Source: domain.SourcePolicy{Ports: []int{143, 993}}},
+	})
+	create := func(password string) *domain.Job {
+		job, err := uc.Create(ctx, tenant, actor, app.CreateInput{MailboxID: uuid.New(), Source: domain.Source{
+			Host: "imap.origen.example", Port: 993, TLS: domain.TLSImplicit, Username: "ana@origen.example", Password: password}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return job
+	}
+	victim, attacker := create("contrasena-de-la-victima"), create("contrasena-del-atacante")
+	if _, err := repo.pool.Exec(ctx,
+		`UPDATE mail_migration.jobs SET source_password_enc = (SELECT source_password_enc FROM mail_migration.jobs WHERE id = $1) WHERE id = $2`,
+		victim.ID, attacker.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	for i := 0; i < 2; i++ {
+		claimed, err := uc.Claim(ctx, "runner-"+uuid.NewString())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if claimed == nil {
+			continue
+		}
+		if claimed.JobID == attacker.ID {
+			t.Fatalf("el ejecutor recibio %q para el trabajo con el cifrado pegado", claimed.SourcePassword)
+		}
+		if claimed.SourcePassword != "contrasena-de-la-victima" {
+			t.Fatalf("la victima recibio %q", claimed.SourcePassword)
+		}
+	}
+	got, err := repo.Get(ctx, tenant, attacker.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != domain.StatusFailed || got.LastError == nil || got.LastError.Code != domain.CodeCredentialUnreadable {
+		t.Fatalf("el trabajo con el cifrado pegado debe fallar como credencial ilegible: %+v", got)
 	}
 }
 

@@ -8,6 +8,8 @@ var (
 	ErrMailboxInactive    = errors.New("el buzon no esta activo")
 	ErrJobAlreadyActive   = errors.New("el buzon ya tiene una migracion pendiente o en curso")
 	ErrTenantLimitReached = errors.New("la empresa alcanzo su limite de migraciones activas")
+	ErrTenantRateLimited  = errors.New("la empresa alcanzo el maximo de migraciones que puede lanzar en un dia")
+	ErrSourceAuthCooldown = errors.New("el servidor de origen rechazo varias veces las credenciales de esa cuenta: espere antes de reintentar")
 	ErrNotConfigured      = errors.New("la migracion de buzones no esta disponible: falta la clave del ejecutor")
 	ErrNotCancellable     = errors.New("el trabajo ya termino y no se puede cancelar")
 	ErrLeaseLost          = errors.New("el trabajo ya no esta reclamado por este ejecutor")

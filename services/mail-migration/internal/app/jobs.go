@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"time"
 
 	"github.com/alonsosss/corforce-email/services/mail-migration/internal/domain"
 	"github.com/alonsosss/corforce-email/services/mail-migration/internal/ports"
@@ -64,19 +65,20 @@ func (uc *UseCase) Create(ctx context.Context, tenantID, actorID uuid.UUID, in C
 	if !mbx.Active {
 		return nil, domain.ErrMailboxInactive
 	}
-	enc, err := uc.cipher.Encrypt([]byte(src.Password))
+	jobID := uuid.New()
+	enc, err := uc.cipher.EncryptWithAAD([]byte(src.Password), domain.SourcePasswordAAD(tenantID, jobID))
 	if err != nil {
 		return nil, err
 	}
 	now := uc.now()
 	job := &domain.Job{
-		ID: uuid.New(), TenantID: tenantID, MailboxID: mbx.ID, MailboxUsername: mbx.Username,
+		ID: jobID, TenantID: tenantID, MailboxID: mbx.ID, MailboxUsername: mbx.Username,
 		SourceHost: src.Host, SourcePort: src.Port, SourceTLS: src.TLS, SourceUsername: src.Username,
 		SourcePasswordEnc: enc, Status: domain.StatusPending, Progress: emptyProgress(),
 		RequestedBy: actorID, CreatedAt: now, UpdatedAt: now,
 	}
 	err = uc.tx.Transact(ctx, func(ctx context.Context) error {
-		if err := uc.repo.Insert(ctx, job, uc.cfg.MaxActivePerTenant); err != nil {
+		if err := uc.repo.Insert(ctx, job, uc.insertLimits(now)); err != nil {
 			return err
 		}
 		return uc.events.Created(ctx, job)
@@ -87,6 +89,14 @@ func (uc *UseCase) Create(ctx context.Context, tenantID, actorID uuid.UUID, in C
 	uc.hint(tenantID)
 	job.SourcePasswordEnc = nil
 	return job, nil
+}
+
+func (uc *UseCase) insertLimits(now time.Time) ports.InsertLimits {
+	return ports.InsertLimits{
+		MaxActive: uc.cfg.MaxActivePerTenant,
+		MaxRecent: uc.cfg.MaxJobsPerDay, RecentSince: now.Add(-24 * time.Hour),
+		MaxAuthFailures: uc.cfg.MaxAuthFailuresPerHour, AuthFailuresSince: now.Add(-time.Hour),
+	}
 }
 
 // checkResolved resuelve el servidor de origen y rechaza el que apunte a una direccion no publica.

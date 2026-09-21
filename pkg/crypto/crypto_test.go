@@ -77,3 +77,57 @@ func TestRotateSinLlaveQueAbraEsError(t *testing.T) {
 		t.Fatalf("got out=%v rotado=%v err=%v; want nil, false, ErrUndecryptable", out, rotado, err)
 	}
 }
+
+// Con datos adicionales el cifrado queda atado a su contexto: copiado a otra fila no abre, ni con la
+// llave activa ni con una vieja; y lo cifrado sin ellos no abre con ellos (ni al reves).
+func TestCifradoConAADSoloAbreConElMismoContexto(t *testing.T) {
+	kr := anillo(t, llaveB, llaveA)
+	aad := []byte("empresa-1|trabajo-1")
+	dato, err := kr.EncryptWithAAD([]byte("secreto"), aad)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plano, err := kr.DecryptWithAAD(dato, aad); err != nil || string(plano) != "secreto" {
+		t.Fatalf("mismo contexto: %q %v", plano, err)
+	}
+	for name, otro := range map[string][]byte{"otro trabajo": []byte("empresa-1|trabajo-2"), "otra empresa": []byte("empresa-2|trabajo-1"), "sin contexto": nil} {
+		if _, err := kr.DecryptWithAAD(dato, otro); !errors.Is(err, ErrUndecryptable) {
+			t.Errorf("%s: se abrio con un contexto distinto: %v", name, err)
+		}
+	}
+	if _, err := kr.Decrypt(dato); !errors.Is(err, ErrUndecryptable) {
+		t.Errorf("lo cifrado con contexto no debe abrir por el camino sin contexto: %v", err)
+	}
+	sinContexto, err := kr.Encrypt([]byte("secreto"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := kr.DecryptWithAAD(sinContexto, aad); !errors.Is(err, ErrUndecryptable) {
+		t.Errorf("lo cifrado sin contexto no debe abrir con contexto: %v", err)
+	}
+
+	anterior := anillo(t, llaveA, "")
+	viejo, err := anterior.EncryptWithAAD([]byte("secreto"), aad)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plano, err := kr.DecryptWithAAD(viejo, aad); err != nil || string(plano) != "secreto" {
+		t.Fatalf("una llave vieja abre con el mismo contexto: %q %v", plano, err)
+	}
+}
+
+func TestCadaCifradoUsaUnNonceNuevo(t *testing.T) {
+	kr := anillo(t, llaveB, "")
+	seen := map[string]bool{}
+	for i := 0; i < 2000; i++ {
+		dato, err := kr.EncryptWithAAD([]byte("igual"), []byte("mismo"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		nonce := string(dato[:12])
+		if seen[nonce] {
+			t.Fatal("nonce repetido")
+		}
+		seen[nonce] = true
+	}
+}

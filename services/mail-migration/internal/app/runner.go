@@ -33,6 +33,10 @@ type ClaimedJob struct {
 // Claim entrega al ejecutor el siguiente trabajo, o nil si no hay ninguno. Prueba primero las
 // empresas con trabajo conocido y, si no hay nada, recorre todas las activas como mucho cada
 // SweepInterval.
+//
+// Un ejecutor tiene un trabajo a la vez y esta instancia no reparte mas de MaxRunningJobs entre todos:
+// quien lo pida antes de tiempo recibe "nada que hacer". Es lo que acota lo que se lleva un ejecutor
+// comprometido, que necesita la contrasena de cada trabajo que reclama.
 func (uc *UseCase) Claim(ctx context.Context, runnerID string) (*ClaimedJob, error) {
 	if !uc.cfg.RunnerConfigured {
 		return nil, domain.ErrNotConfigured
@@ -41,6 +45,20 @@ func (uc *UseCase) Claim(ctx context.Context, runnerID string) (*ClaimedJob, err
 	if runnerID == "" || utf8.RuneCountInString(runnerID) > maxRunnerIDRunes {
 		return nil, domain.ErrInvalidRunner
 	}
+	slot, ok := uc.reserveSlot(runnerID)
+	if !ok {
+		return nil, nil
+	}
+	claimed, err := uc.claimNext(ctx, runnerID)
+	if claimed == nil {
+		uc.releaseSlot(slot)
+		return nil, err
+	}
+	uc.bindSlot(slot, claimed.JobID)
+	return claimed, err
+}
+
+func (uc *UseCase) claimNext(ctx context.Context, runnerID string) (*ClaimedJob, error) {
 	for _, tenantID := range uc.hints() {
 		claimed, err := uc.claimFromTenant(ctx, tenantID, runnerID)
 		if err != nil {
@@ -109,7 +127,7 @@ func (uc *UseCase) claimInTenantContext(ctx context.Context, tenantID uuid.UUID,
 	if err != nil || job == nil {
 		return nil, err
 	}
-	password, err := uc.cipher.Decrypt(job.SourcePasswordEnc)
+	password, err := uc.cipher.DecryptWithAAD(job.SourcePasswordEnc, domain.SourcePasswordAAD(tenantID, job.ID))
 	if err != nil {
 		uc.logger.Error("mail-migration: no se pudo descifrar la credencial de origen; el trabajo falla",
 			zap.String("tenant_id", tenantID.String()), zap.String("job_id", job.ID.String()))
@@ -159,6 +177,7 @@ func (uc *UseCase) Heartbeat(ctx context.Context, tenantID, jobID uuid.UUID, in 
 	if err != nil {
 		return HeartbeatResult{}, err
 	}
+	uc.extendHold(jobID, now.Add(uc.cfg.Lease))
 	return HeartbeatResult{Cancel: cancel, LeaseSeconds: int(uc.cfg.Lease / time.Second)}, nil
 }
 
@@ -202,6 +221,9 @@ func (uc *UseCase) Complete(ctx context.Context, tenantID, jobID uuid.UUID, in C
 		job = j
 		return uc.events.Finished(ctx, j, uuid.Nil)
 	})
+	if err == nil || errors.Is(err, domain.ErrLeaseLost) {
+		uc.releaseSlot(jobID)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -229,7 +251,7 @@ func (uc *UseCase) sourceSecrets(ctx context.Context, tenantID, jobID uuid.UUID)
 	if err != nil || len(j.SourcePasswordEnc) == 0 {
 		return nil
 	}
-	plain, err := uc.cipher.Decrypt(j.SourcePasswordEnc)
+	plain, err := uc.cipher.DecryptWithAAD(j.SourcePasswordEnc, domain.SourcePasswordAAD(tenantID, jobID))
 	if err != nil || len(plain) == 0 {
 		return nil
 	}

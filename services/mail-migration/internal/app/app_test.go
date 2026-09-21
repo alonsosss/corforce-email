@@ -250,12 +250,14 @@ func TestReclamarUsaLaPistaYSoloRecorreLasEmpresasCadaIntervalo(t *testing.T) {
 	}
 
 	// Pasado el intervalo, un trabajo creado por otra instancia (sin pista) se encuentra recorriendo.
-	f.repo.Jobs[uuid.New()] = &domain.Job{
-		ID: uuid.New(), TenantID: other, MailboxID: uuid.New(), Status: domain.StatusPending, SourcePasswordEnc: append(append([]byte{}, apptest.CipherMark...), "x"...),
+	foreignID := uuid.New()
+	sealed, _ := apptest.Cipher{}.EncryptWithAAD([]byte("x"), domain.SourcePasswordAAD(other, foreignID))
+	f.repo.Jobs[foreignID] = &domain.Job{
+		ID: foreignID, TenantID: other, MailboxID: uuid.New(), Status: domain.StatusPending, SourcePasswordEnc: sealed,
 		MailboxUsername: "b@acme.test", CreatedAt: f.now,
 	}
 	f.now = f.now.Add(time.Minute)
-	c, err := f.uc.Claim(ctx, "r")
+	c, err := f.uc.Claim(ctx, "r-2")
 	if err != nil || c == nil || c.TenantID != other {
 		t.Fatalf("recorrido: %v %v", c, err)
 	}

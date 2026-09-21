@@ -28,6 +28,8 @@ const (
 	codeMailboxInactive      = "MAILBOX_INACTIVE"
 	codeJobAlreadyActive     = "JOB_ALREADY_ACTIVE"
 	codeTenantLimitReached   = "TENANT_LIMIT_REACHED"
+	codeTenantRateLimited    = "TENANT_RATE_LIMITED"
+	codeSourceAuthCooldown   = "SOURCE_AUTH_COOLDOWN"
 	codeNotConfigured        = "NOT_CONFIGURED"
 	codeJobNotCancellable    = "JOB_NOT_CANCELLABLE"
 )
@@ -231,6 +233,10 @@ func writeError(w http.ResponseWriter, err error) {
 		response.Err(w, http.StatusConflict, codeJobNotCancellable, err.Error())
 	case errors.Is(err, domain.ErrTenantLimitReached):
 		response.Err(w, http.StatusTooManyRequests, codeTenantLimitReached, err.Error())
+	case errors.Is(err, domain.ErrTenantRateLimited):
+		response.Err(w, http.StatusTooManyRequests, codeTenantRateLimited, err.Error())
+	case errors.Is(err, domain.ErrSourceAuthCooldown):
+		response.Err(w, http.StatusTooManyRequests, codeSourceAuthCooldown, err.Error())
 	case errors.Is(err, domain.ErrNotConfigured):
 		response.Err(w, http.StatusServiceUnavailable, codeNotConfigured, err.Error())
 	case errors.Is(err, domain.ErrHostNotAllowed):

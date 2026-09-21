@@ -8,6 +8,7 @@ import (
 	"errors"
 	"net/netip"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -28,12 +29,22 @@ type Repo struct {
 
 func NewRepo() *Repo { return &Repo{Jobs: map[uuid.UUID]*domain.Job{}} }
 
-func (r *Repo) Insert(_ context.Context, j *domain.Job, maxActive int) error {
+func (r *Repo) Insert(_ context.Context, j *domain.Job, limits ports.InsertLimits) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	active := 0
+	active, recent, failures := 0, 0, 0
 	for _, o := range r.Jobs {
-		if o.TenantID != j.TenantID || !o.Status.Active() {
+		if o.TenantID != j.TenantID {
+			continue
+		}
+		if !o.CreatedAt.Before(limits.RecentSince) {
+			recent++
+		}
+		if o.LastError != nil && o.LastError.Code == domain.CodeSourceAuthFailed && o.FinishedAt != nil && !o.FinishedAt.Before(limits.AuthFailuresSince) &&
+			o.SourceHost == j.SourceHost && strings.EqualFold(o.SourceUsername, j.SourceUsername) {
+			failures++
+		}
+		if !o.Status.Active() {
 			continue
 		}
 		active++
@@ -41,8 +52,14 @@ func (r *Repo) Insert(_ context.Context, j *domain.Job, maxActive int) error {
 			return domain.ErrJobAlreadyActive
 		}
 	}
-	if active >= maxActive {
+	if active >= limits.MaxActive {
 		return domain.ErrTenantLimitReached
+	}
+	if limits.MaxRecent > 0 && recent >= limits.MaxRecent {
+		return domain.ErrTenantRateLimited
+	}
+	if limits.MaxAuthFailures > 0 && failures >= limits.MaxAuthFailures {
+		return domain.ErrSourceAuthCooldown
 	}
 	c := *j
 	r.Jobs[j.ID] = &c
@@ -201,19 +218,27 @@ func (r *Resolver) LookupAddrs(_ context.Context, host string) ([]netip.Addr, er
 	return r.Addrs, r.Err
 }
 
-// Cipher no es criptografia: marca el dato para comprobar que lo guardado no es el claro.
+// Cipher no es criptografia: marca el dato con su contexto para comprobar que lo guardado no es el
+// claro y que solo se abre con los mismos aad.
 type Cipher struct{ FailDecrypt bool }
 
 var CipherMark = []byte("enc:")
 
-func (c Cipher) Encrypt(p []byte) ([]byte, error) {
-	return append(append([]byte{}, CipherMark...), p...), nil
+func (c Cipher) EncryptWithAAD(p, aad []byte) ([]byte, error) {
+	return append(c.Seal(aad), p...), nil
 }
-func (c Cipher) Decrypt(d []byte) ([]byte, error) {
-	if c.FailDecrypt || !bytes.HasPrefix(d, CipherMark) {
+
+// Seal es el prefijo que este doble antepone a lo cifrado con esos aad.
+func (Cipher) Seal(aad []byte) []byte {
+	return append(append(append([]byte{}, CipherMark...), aad...), '|')
+}
+
+func (c Cipher) DecryptWithAAD(d, aad []byte) ([]byte, error) {
+	prefix := c.Seal(aad)
+	if c.FailDecrypt || !bytes.HasPrefix(d, prefix) {
 		return nil, errors.New("no descifra")
 	}
-	return d[len(CipherMark):], nil
+	return d[len(prefix):], nil
 }
 
 type Tenants struct {
