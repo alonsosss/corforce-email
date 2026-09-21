@@ -61,3 +61,9 @@ base, y nada nuevo entra sin justificarse en la revisión.
 
 Servicios Go: 8001-8099 (plano de control 80xx, correo 804x, marketing 805x). Motores de
 correo: los estándar (25, 465, 587, 143, 993, 110, 995, 4190) por celda.
+
+## Antes de subir un cambio de `web/`
+
+`make check-web` corre lo mismo que el trabajo "Aplicacion web" de la CI (lint, typecheck y tests). El
+typecheck es `pnpm typecheck`: `tsc --noEmit` a secas no comprueba nada (el proyecto esta en modo solucion) y
+deja pasar errores que la CI si ve, como `Array.prototype.at`, que la lib ES2020 del proyecto no tiene.

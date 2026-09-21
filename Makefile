@@ -118,7 +118,7 @@ check-event-contracts:
 	@go run ./ops/scaffold/eventcontracts -check
 
 # ── Operacion ────────────────────────────────────────────────────────────────
-.PHONY: gen-observability-targets check-observability-targets check-alertas
+.PHONY: gen-observability-targets check-observability-targets check-alertas check-web
 .PHONY: check-secrets check-secret-sources check-db-credentials gen-compose-images check-compose-images
 .PHONY: service-paths check-service-paths
 
@@ -133,6 +133,14 @@ check-observability-targets:
 	@git diff --quiet -- ops/observability/prometheus/targets.json || \
 		( echo "ops/observability/prometheus/targets.json desactualizado: corre 'make gen-observability-targets'" >&2; \
 		  git --no-pager diff -- ops/observability/prometheus/targets.json; exit 1 )
+
+# make check-web  (lo mismo que el trabajo "Aplicacion web" de la CI: lint, typecheck y tests de web/).
+# Ojo: `tsc --noEmit` a secas NO comprueba nada, el proyecto esta en modo solucion; el typecheck real es
+# `pnpm typecheck` (tsconfig.json y tsconfig.node.json). Con este destino un cambio de web no llega a la CI
+# roto por algo que su autor pudo ver: Array.prototype.at, que la lib ES2020 del proyecto no tiene, fallo dos
+# veces en el mismo dia.
+check-web:
+	@cd web && pnpm install --frozen-lockfile --silent && pnpm lint && pnpm typecheck && pnpm test
 
 # make check-alertas  (una alerta mal escrita no falla: se queda callada)
 check-alertas:
