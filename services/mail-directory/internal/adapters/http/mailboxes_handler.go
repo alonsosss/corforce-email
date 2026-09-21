@@ -33,6 +33,9 @@ func (h *Handler) mailboxRoutes(r chi.Router) {
 
 	r.With(h.require(moduleMailboxes, sieveRes, actionRead)).Get("/{id}/sieve", h.GetSieve)
 	r.With(h.require(moduleMailboxes, sieveRes, actionUpdate)).Put("/{id}/sieve", h.PutSieve)
+	// La respuesta automatica es un filtro mas del buzon: mismos permisos que sieve.
+	r.With(h.require(moduleMailboxes, sieveRes, actionRead)).Get("/{id}/vacation", h.GetVacation)
+	r.With(h.require(moduleMailboxes, sieveRes, actionUpdate)).Put("/{id}/vacation", h.PutVacation)
 }
 
 // ListMailboxes admite ?search= (subcadena de username o nombre visible, sin distinguir

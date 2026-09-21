@@ -511,6 +511,46 @@ R=$(cliente enviar ana@acme.test "$ANA_PASS" ana@acme.test bea@acme.test "$TOKEN
 contains "un mensaje de unos 27 MiB con EICAR al final tambien se analiza entero y se rechaza" "$R" "RECHAZO DATA 554"
 lacks "sin llegar al INBOX de bea" "$(cliente buscar bea@acme.test "$BEA_PASS" "$TOKEN-grande" --espera 3)" "OK"
 
+echo "== Respuesta automatica (mail-directory -> v_sieve_vacation -> sieve_after3 de Dovecot)"
+BEA_ID=$(sql mail_cell_pe_01 "SELECT id FROM mail.mailboxes WHERE username = 'bea@acme.test'")
+api GET "/mailboxes/$BEA_ID/vacation"
+expect "bea sin configurar: la ve desactivada" "$API_CODE/$(echo "$API_BODY" | jget data.enabled)" "200/False"
+VAC="$TOKEN-vac"
+# El texto lleva comillas, una barra y un salto de linea: tiene que llegar tal cual, no como codigo Sieve.
+respuesta() { # respuesta <fin AAAA-MM-DD o vacio>: el cuerpo del PUT
+  python3 -c '
+import json, sys
+c = {"enabled": True, "subject": "Fuera de la oficina " + sys.argv[1], "message": "Estoy fuera hasta el lunes.\nEscriba a \"soporte\" o a C:\\ruta", "interval_days": 1}
+if sys.argv[2]:
+    c["ends_on"] = sys.argv[2]
+print(json.dumps(c))' "$VAC" "$1"
+}
+api PUT "/mailboxes/$BEA_ID/vacation" "$(respuesta "$(date -u -d yesterday +%F)")"
+expect "guardarla con la ventana ya cerrada: 200 y activada" "$API_CODE/$(echo "$API_BODY" | jget data.enabled)" "200/True"
+expect "el script generado no sale por la API" "$(echo "$API_BODY" | grep -c 'require')" "0"
+expect "la vista de los motores la sirve a Dovecot" \
+  "$(sql mail_cell_pe_01 "SELECT count(*) FROM mail.v_sieve_vacation WHERE username = 'bea@acme.test' AND script_name = 'active'")" "1"
+contains "ana escribe a bea con la ventana cerrada" "$(cliente enviar ana@acme.test "$ANA_PASS" ana@acme.test bea@acme.test "$TOKEN-ventana")" "OK 250"
+contains "y llega a bea" "$(cliente buscar bea@acme.test "$BEA_PASS" "$TOKEN-ventana")" "OK 1"
+lacks "fuera de la ventana de fechas no se contesta" "$(cliente buscar ana@acme.test "$ANA_PASS" "$VAC" --espera 8)" "OK"
+api PUT "/mailboxes/$BEA_ID/vacation" "$(respuesta "")"
+expect "sin ventana: 200" "$API_CODE" "200"
+contains "ana vuelve a escribir a bea" "$(cliente enviar ana@acme.test "$ANA_PASS" ana@acme.test bea@acme.test "$TOKEN-contesta")" "OK 250"
+H=$(cliente buscar ana@acme.test "$ANA_PASS" "$VAC")
+contains "ana recibe la respuesta automatica de bea (sieve_after3, submission_host)" "$H" "OK 1"
+contains "sale con la direccion de bea como remitente del sobre (sieve_vacation_send_from_recipient)" "$H" "Return-Path: <bea@acme.test>"
+expect "y en la cabecera From" "$(grep -i '^From:' <<< "$H" | grep -c 'bea@acme.test')" "1"
+contains "marcada como respuesta automatica" "$H" "Auto-Submitted: auto-replied"
+CUERPO=$(en dovecot-mail doveadm fetch -u ana@acme.test text mailbox INBOX subject "Fuera de la oficina $VAC")
+contains "con el texto tal cual: primera linea" "$CUERPO" "Estoy fuera hasta el lunes."
+contains "las comillas y la barra del texto llegan literales" "$CUERPO" 'Escriba a "soporte" o a C:\ruta'
+expect "el filtro escrito a mano de bea y sus filtros de mail.sieve_filters no se tocan" \
+  "$(sql mail_cell_pe_01 "SELECT count(*) FROM mail.sieve_filters WHERE username = 'bea@acme.test'")" "0"
+api PUT "/mailboxes/$BEA_ID/vacation" '{"enabled":true,"message":"x","interval_days":99}'
+expect "un intervalo fuera de 1 a 30 se rechaza (422)" "$API_CODE" "422"
+api PUT "/mailboxes/$BEA_ID/vacation" '{"enabled":true,"message":"x","script_data":"discard;"}'
+expect "mandar el script a mano se rechaza (400): el usuario no escribe Sieve por este camino" "$API_CODE" "400"
+
 echo "== Enlace del aviso de cuarentena por el gateway (celda en la ruta y en la firma)"
 # Sin transactional no sale el aviso: el enlace se firma aqui con la clave de la ejecucion y la
 # forma quarantine-link/v2 de domain.QuarantineLinkSigner (contrato en deploy/mail/README.md).

@@ -89,7 +89,7 @@ func execFile(ctx context.Context, pool *pgxpool.Pool, path string) error {
 func newUseCase(ctxPool *db.ContextPool) *app.UseCase {
 	return app.New(app.Deps{
 		Tx: NewTransactor(ctxPool), Domains: NewDomainRepo(ctxPool), AliasDomains: NewAliasDomainRepo(ctxPool),
-		Mailboxes: NewMailboxRepo(ctxPool), AppPasswords: NewAppPasswordRepo(ctxPool), Sieve: NewSieveRepo(ctxPool),
+		Mailboxes: NewMailboxRepo(ctxPool), AppPasswords: NewAppPasswordRepo(ctxPool), Sieve: NewSieveRepo(ctxPool), Vacation: NewVacationRepo(ctxPool), Locator: NewMailboxLocator(ctxPool),
 		Aliases: NewAliasRepo(ctxPool), SpamAliases: NewSpamAliasRepo(ctxPool), SenderACL: NewSenderACLRepo(ctxPool),
 		Relayhosts: NewRelayhostRepo(ctxPool), Transports: NewTransportRepo(ctxPool), TLSPolicies: NewTLSPolicyRepo(ctxPool),
 		RecipientMap: NewRecipientMapRepo(ctxPool), BCCMaps: NewBCCMapRepo(ctxPool), Retirements: NewRetirementRepo(ctxPool),

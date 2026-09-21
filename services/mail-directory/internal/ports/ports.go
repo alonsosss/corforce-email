@@ -98,6 +98,22 @@ type SieveRepository interface {
 	DeleteByUsername(ctx context.Context, tenantID uuid.UUID, username string) error
 }
 
+// VacationRepository guarda la respuesta automatica de un buzon (mail.vacation_replies). Una fila
+// por buzon: Upsert la crea o la reemplaza entera.
+type VacationRepository interface {
+	// ByUsername devuelve domain.ErrNotFound si el buzon nunca la configuro.
+	ByUsername(ctx context.Context, tenantID uuid.UUID, username string) (*domain.VacationReply, error)
+	Upsert(ctx context.Context, v *domain.VacationReply) error
+	DeleteByUsername(ctx context.Context, tenantID uuid.UUID, username string) error
+}
+
+// MailboxLocator resuelve un buzon por su nombre en toda la celda, sin empresa: lo pide el webmail,
+// que se autentico como ese buzon y no conoce su empresa. Corre fuera de RLS, con el rol de servicio.
+type MailboxLocator interface {
+	// Locate devuelve domain.ErrNotFound si no hay un buzon activo con ese nombre.
+	Locate(ctx context.Context, username string) (tenantID, mailboxID uuid.UUID, err error)
+}
+
 type AliasRepository interface {
 	List(ctx context.Context, tenantID uuid.UUID, page Page) ([]domain.Alias, int64, error)
 	Get(ctx context.Context, tenantID, id uuid.UUID) (*domain.Alias, error)

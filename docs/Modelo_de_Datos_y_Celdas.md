@@ -83,7 +83,8 @@ directorio de mailcow, que es la que Postfix y Dovecot entienden, traducida a Po
   `path_prefix`, `quota_bytes`, `kind`, `tls_enforce_*`, `*_access`), `aliases`,
   `spam_aliases`, `sender_acl`, `app_passwords`, `relayhosts`, `transports`,
   `tls_policy_overrides`, `recipient_maps`, `bcc_maps`, `quota_usage` (la escribe Dovecot),
-  `sieve_filters` con vistas `v_sieve_before`/`v_sieve_after`, `sasl_logins`.
+  `sieve_filters` con vistas `v_sieve_before`/`v_sieve_after`, `vacation_replies` con la vista
+  `v_sieve_vacation` (V, 2026-09-21, abajo), `sasl_logins`.
 * Rol `mail_engine`: `SELECT` sobre lo que consultan los motores, escritura solo en
   `quota_usage`, nada sobre `app_passwords` ni `sasl_logins`. Los motores nunca ven un hash
   de contrasena: la verificacion pasa por `mail-auth`.
@@ -155,6 +156,23 @@ quedarse con un ajuste que no se aplica. El techo vive a la vez en el CHECK, en
 `domain.MaxQuarantineMaxSizeBytes` (lo exige `PutQuarantineSettings`) y en
 `ops/scaffold/check-mail-size-limits.sh`, que comprueba que los tres digan lo mismo. La
 migracion baja al techo las filas que ya lo superaban antes de poner la restriccion.
+
+`09_vacation.sql` (mail-directory, V 2026-09-21, unitarias, integracion contra Postgres y `make e2e-mail`
+con Dovecot real): la respuesta automatica (vacation de Sieve) de un buzon. `mail.vacation_replies` guarda
+una fila por buzon (`UNIQUE (username)`): `enabled`, `subject` (200), `message` (8192), `interval_days`
+(1 a 30), ventana opcional `starts_on`/`ends_on` y el `script_data` que genera la plataforma al guardar, con
+CHECK que cierran lo que la aplicacion valida (activa sin mensaje, fin antes del inicio, intervalo fuera de
+rango). Lleva `tenant_isolation` para `mail_app`, `service_all` para `mail_service` y el trigger comun de
+`updated_at`. Los motores no la leen: Dovecot lee `mail.v_sieve_vacation` (`id`, `username`, `script_name`,
+`script_data`, solo `enabled`) por su propio diccionario, en la ranura `sieve_after3`, y `mail_engine` solo
+tiene `SELECT` sobre la vista. No comparte fila con `sieve_filters` a proposito: un script generado y otro
+escrito a mano no se pueden fundir (los `require` van al principio) y asi el formulario no toca lo que el
+administrador escribio. El texto del usuario entra al script solo como cadena entre comillas, escapada;
+nunca como codigo Sieve, y `script_data` no sale por ningun API. `mail-directory` la sirve en
+`GET`/`PUT /api/v1/mailboxes/{id}/vacation` (permisos `mailboxes/sieve/{read,update}`) y, para el webmail,
+en `GET`/`PUT /internal/mail-directory/vacation?username=` (token de gateway, sin empresa, el buzon sale de la
+sesion del webmail). Limitacion: contesta a lo dirigido a la direccion del buzon, no a sus alias (no se
+enumeran los `:addresses`); las fechas se comparan con la del servidor (UTC).
 
 `03_mail_app_policies.sql` (mail-directory) anade lo que el primer consumidor necesito:
 `app_delete` sobre `quota_usage` (solo del buzon propio, por eso el servicio borra la cuota

@@ -27,6 +27,8 @@ type Deps struct {
 	Mailboxes    ports.MailboxRepository
 	AppPasswords ports.AppPasswordRepository
 	Sieve        ports.SieveRepository
+	Vacation     ports.VacationRepository
+	Locator      ports.MailboxLocator
 	Aliases      ports.AliasRepository
 	SpamAliases  ports.SpamAliasRepository
 	SenderACL    ports.SenderACLRepository
@@ -49,6 +51,8 @@ type UseCase struct {
 	mailboxes    ports.MailboxRepository
 	appPasswords ports.AppPasswordRepository
 	sieve        ports.SieveRepository
+	vacation     ports.VacationRepository
+	locator      ports.MailboxLocator
 	aliases      ports.AliasRepository
 	spamAliases  ports.SpamAliasRepository
 	senderACL    ports.SenderACLRepository
@@ -71,7 +75,7 @@ func New(d Deps) *UseCase {
 	}
 	return &UseCase{
 		tx: d.Tx, domains: d.Domains, aliasDomains: d.AliasDomains, mailboxes: d.Mailboxes,
-		appPasswords: d.AppPasswords, sieve: d.Sieve, aliases: d.Aliases, spamAliases: d.SpamAliases,
+		appPasswords: d.AppPasswords, sieve: d.Sieve, vacation: d.Vacation, locator: d.Locator, aliases: d.Aliases, spamAliases: d.SpamAliases,
 		senderACL: d.SenderACL, relayhosts: d.Relayhosts, transports: d.Transports,
 		tlsPolicies: d.TLSPolicies, recipientMap: d.RecipientMap, bccMaps: d.BCCMaps,
 		senders: d.Senders, retirements: d.Retirements, secrets: d.Secrets, events: d.Events, logger: logger,

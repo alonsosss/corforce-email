@@ -269,7 +269,7 @@ func applyMailboxUpdate(m *domain.Mailbox, req UpdateMailboxRequest) {
 }
 
 // DeleteMailbox retira el buzon y todo lo que solo tiene sentido con el: contrasenas de
-// aplicacion, filtros sieve, uso de cuota, permisos de remitente y aliases temporales que
+// aplicacion, filtros sieve, respuesta automatica, uso de cuota, permisos de remitente y aliases temporales que
 // entregaban en el. El uso de cuota se borra ANTES que el buzon: la politica que lo
 // permite exige que el buzon exista.
 func (uc *UseCase) DeleteMailbox(ctx context.Context, tenantID, id uuid.UUID) error {
@@ -282,6 +282,7 @@ func (uc *UseCase) DeleteMailbox(ctx context.Context, tenantID, id uuid.UUID) er
 			func() error { return uc.mailboxes.DeleteQuotaUsage(ctx, tenantID, m.Username) },
 			func() error { return uc.appPasswords.DeleteByMailbox(ctx, tenantID, id) },
 			func() error { return uc.sieve.DeleteByUsername(ctx, tenantID, m.Username) },
+			func() error { return uc.vacation.DeleteByUsername(ctx, tenantID, m.Username) },
 			func() error { return uc.senderACL.DeleteByLoggedInAs(ctx, tenantID, m.Username) },
 			func() error { return uc.spamAliases.DeleteByGoto(ctx, tenantID, m.Username) },
 			func() error { return uc.mailboxes.Delete(ctx, tenantID, id) },

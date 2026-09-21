@@ -52,3 +52,12 @@ var (
 	// opera la plataforma.
 	ErrPlatformOnly = errors.New("solo el operador de la plataforma administra este recurso")
 )
+
+var (
+	ErrVacationMessageRequired = errors.New("la respuesta automatica necesita un mensaje")
+	ErrVacationMessageInvalid  = errors.New("el mensaje de la respuesta automatica tiene caracteres no validos o supera los 8192")
+	ErrVacationSubjectInvalid  = errors.New("el asunto de la respuesta automatica tiene caracteres no validos o supera los 200")
+	ErrVacationInterval        = errors.New("interval_days debe estar entre 1 y 30")
+	ErrVacationWindow          = errors.New("ends_on no puede ser anterior a starts_on")
+	ErrVacationDate            = errors.New("las fechas de la respuesta automatica se dan como AAAA-MM-DD")
+)

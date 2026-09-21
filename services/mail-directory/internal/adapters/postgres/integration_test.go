@@ -206,7 +206,7 @@ func cleanup(t *testing.T, pool *pgxpool.Pool, domainA, domainB string, tenants 
 	if _, err := pool.Exec(ctx, `DELETE FROM mail.quota_usage WHERE username LIKE '%@' || $1 OR username LIKE '%@' || $2`, domainA, domainB); err != nil {
 		t.Logf("limpieza quota_usage: %v", err)
 	}
-	for _, table := range []string{"sasl_logins", "sieve_filters", "app_passwords", "sender_acl", "spam_aliases", "aliases",
+	for _, table := range []string{"sasl_logins", "sieve_filters", "vacation_replies", "app_passwords", "sender_acl", "spam_aliases", "aliases",
 		"bcc_maps", "recipient_maps", "tls_policy_overrides", "transports", "relayhosts", "mailboxes", "alias_domains", "domains",
 		"tenant_retirements"} {
 		if _, err := pool.Exec(ctx, `DELETE FROM mail.`+table+` WHERE tenant_id = ANY($1)`, tenants); err != nil {

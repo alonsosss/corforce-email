@@ -665,7 +665,11 @@ credencial del del dominio. V con `postmap -q` (2026-09-13, `make e2e-mail`).
 Dovecot: `dovecot/docker-entrypoint.sh` genera `sql/dovecot-dict-sql-userdb.conf`
 (`user_query`/`iterate_query` contra `mail.mailboxes`), el dict de cuota contra
 `mail.quota_usage` (Dovecot hace upsert por `username`) y los dicts de sieve
-contra `mail.v_sieve_before`/`mail.v_sieve_after`.
+contra `mail.v_sieve_before`/`mail.v_sieve_after` y, para la respuesta automatica de cada buzon,
+`mail.v_sieve_vacation` (`dovecot-dict-sql-sieve_vacation.conf`, en la tercera ranura `sieve_after3` de
+`dovecot.conf`: despues del filtro del usuario y de los globales, de modo que un mensaje que estos
+descartan o archivan como spam no recibe respuesta). La vista solo trae lo activo y mail-directory genera
+el script; `mail_engine` no lee la tabla `mail.vacation_replies`. V con `make e2e-mail` (2026-09-21).
 
 ACME: `SELECT domain FROM mail.domains WHERE NOT backupmx AND active`.
 

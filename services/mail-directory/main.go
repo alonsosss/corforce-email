@@ -82,6 +82,8 @@ func main() {
 		Mailboxes:    postgres.NewMailboxRepo(ctxPool),
 		AppPasswords: postgres.NewAppPasswordRepo(ctxPool),
 		Sieve:        postgres.NewSieveRepo(ctxPool),
+		Vacation:     postgres.NewVacationRepo(ctxPool),
+		Locator:      postgres.NewMailboxLocator(ctxPool),
 		Aliases:      postgres.NewAliasRepo(ctxPool),
 		SpamAliases:  postgres.NewSpamAliasRepo(ctxPool),
 		SenderACL:    postgres.NewSenderACLRepo(ctxPool),

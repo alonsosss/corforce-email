@@ -405,6 +405,54 @@ func (f *fakeAppPasswords) DeactivateByMailbox(_ context.Context, tenantID, mail
 	return n, nil
 }
 
+// fakeVacation guarda la respuesta automatica por empresa y buzon, como la restriccion UNIQUE.
+type fakeVacation struct {
+	items   map[string]*domain.VacationReply
+	upserts int
+	deleted []string
+}
+
+func vacationKey(tenantID uuid.UUID, username string) string {
+	return tenantID.String() + "|" + username
+}
+
+func (f *fakeVacation) ByUsername(_ context.Context, tenantID uuid.UUID, username string) (*domain.VacationReply, error) {
+	v, ok := f.items[vacationKey(tenantID, username)]
+	if !ok {
+		return nil, domain.ErrNotFound
+	}
+	c := *v
+	return &c, nil
+}
+
+func (f *fakeVacation) Upsert(_ context.Context, v *domain.VacationReply) error {
+	f.upserts++
+	if f.items == nil {
+		f.items = map[string]*domain.VacationReply{}
+	}
+	c := *v
+	f.items[vacationKey(v.TenantID, v.Username)] = &c
+	return nil
+}
+
+func (f *fakeVacation) DeleteByUsername(_ context.Context, tenantID uuid.UUID, username string) error {
+	f.deleted = append(f.deleted, username)
+	delete(f.items, vacationKey(tenantID, username))
+	return nil
+}
+
+// fakeLocator resuelve el buzon por su nombre en toda la celda, como el rol de servicio.
+type fakeLocator struct{ h *harness }
+
+func (f *fakeLocator) Locate(_ context.Context, username string) (uuid.UUID, uuid.UUID, error) {
+	for _, m := range f.h.mailboxes.items {
+		if m.Username == username {
+			return m.TenantID, m.ID, nil
+		}
+	}
+	return uuid.Nil, uuid.Nil, domain.ErrNotFound
+}
+
 type fakeSieve struct{ deleted int }
 
 func (f *fakeSieve) ByUsername(context.Context, uuid.UUID, string) ([]domain.SieveFilter, error) {
@@ -621,6 +669,7 @@ type harness struct {
 	mailboxes    *fakeMailboxes
 	appPasswords *fakeAppPasswords
 	sieve        *fakeSieve
+	vacation     *fakeVacation
 	aliases      *fakeAliases
 	spamAliases  *fakeSpamAliases
 	senderACL    *fakeSenderACL
@@ -633,16 +682,17 @@ type harness struct {
 func newHarness() *harness {
 	h := &harness{
 		tx: &fakeTx{}, domains: &fakeDomains{}, aliasDomains: &fakeAliasDomains{}, aliases: &fakeAliases{},
-		appPasswords: &fakeAppPasswords{}, sieve: &fakeSieve{}, spamAliases: &fakeSpamAliases{},
+		appPasswords: &fakeAppPasswords{}, sieve: &fakeSieve{}, vacation: &fakeVacation{}, spamAliases: &fakeSpamAliases{},
 		senderACL: &fakeSenderACL{}, relayhosts: &fakeRelayhosts{}, transports: &fakeTransports{}, events: &fakeEvents{},
 	}
 	h.mailboxes = &fakeMailboxes{aliases: h.aliases}
+	locator := &fakeLocator{h: h}
 	h.retirements = &fakeRetirements{h: h, retired: map[uuid.UUID]time.Time{}, now: time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)}
 	h.events.tx = h.tx
 	h.tx.snapshot = h.snapshot
 	h.uc = New(Deps{
 		Tx: h.tx, Domains: h.domains, AliasDomains: h.aliasDomains, Mailboxes: h.mailboxes,
-		AppPasswords: h.appPasswords, Sieve: h.sieve, Aliases: h.aliases, SpamAliases: h.spamAliases,
+		AppPasswords: h.appPasswords, Sieve: h.sieve, Vacation: h.vacation, Locator: locator, Aliases: h.aliases, SpamAliases: h.spamAliases,
 		SenderACL: h.senderACL, Relayhosts: h.relayhosts, Transports: h.transports, Retirements: h.retirements,
 		Secrets: fakeSecrets{}, Events: h.events,
 	})
@@ -688,6 +738,11 @@ func (h *harness) snapshot() func() {
 	domains, aliasDomains := cloneAll(h.domains.items), cloneAll(h.aliasDomains.items)
 	mailboxes, aliases := cloneAll(h.mailboxes.items), cloneAll(h.aliases.items)
 	appPasswords := cloneAll(h.appPasswords.items)
+	vacation := map[string]*domain.VacationReply{}
+	for k, v := range h.vacation.items {
+		c := *v
+		vacation[k] = &c
+	}
 	subjects := append([]string(nil), h.events.subjects...)
 	credentials := append([]credentialEvent(nil), h.events.credentials...)
 	retired := maps.Clone(h.retirements.retired)
@@ -695,6 +750,7 @@ func (h *harness) snapshot() func() {
 		h.domains.items, h.aliasDomains.items = domains, aliasDomains
 		h.mailboxes.items, h.aliases.items = mailboxes, aliases
 		h.appPasswords.items = appPasswords
+		h.vacation.items = vacation
 		h.events.subjects, h.events.credentials = subjects, credentials
 		h.retirements.retired = retired
 	}

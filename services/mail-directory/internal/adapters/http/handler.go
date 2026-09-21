@@ -60,6 +60,9 @@ func (h *Handler) Routes() chi.Router {
 	r.With(middleware.RequireInternalCaller).Put("/internal/mail-directory/tenant-retirement", h.RetireTenant)
 	// La pide el webmail, que no conoce la empresa del buzon: no lleva X-Tenant-ID.
 	r.Get("/internal/mail-directory/sender-identities", h.SenderIdentities)
+	// La respuesta automatica del buzon con el que el webmail inicio sesion; tampoco lleva X-Tenant-ID.
+	r.Get("/internal/mail-directory/vacation", h.InternalGetVacation)
+	r.Put("/internal/mail-directory/vacation", h.InternalPutVacation)
 	return r
 }
 
@@ -120,6 +123,8 @@ var validationErrors = []error{
 	domain.ErrNothingToUpdate, domain.ErrNameRequired, domain.ErrWildcardNeedsExtnl, domain.ErrDomainNotOwned,
 	domain.ErrMailboxNotOwned, domain.ErrRelayhostNotOwned, domain.ErrActivationNotAllowed,
 	domain.ErrQuotaExceedsMax, domain.ErrDomainQuotaExceeded, domain.ErrSearchTooLong,
+	domain.ErrVacationMessageRequired, domain.ErrVacationMessageInvalid, domain.ErrVacationSubjectInvalid,
+	domain.ErrVacationInterval, domain.ErrVacationWindow, domain.ErrVacationDate,
 }
 
 // conflictErrors son los choques con el estado actual: 409.
