@@ -118,7 +118,7 @@ por CSV y pausar un trabajo (solo se cancela).
   `MAIL_MIGRATION_MAX_ACTIVE_PER_TENANT` (2 por defecto), comprobado dentro de la transacción del alta con un
   cerrojo consultivo por empresa. **Pendiente de billing:** pasarlo a un derecho del plan, y el volumen.
 * **Permisos y auditoría.** `migration/jobs/{read,create,cancel}` (alcance empresa,
-  `034_mail_migration_permissions.sql`; `corporate_mail` los agrupa). Eventos `migration.job.*` por la outbox
+  `035_mail_migration_permissions.sql`; `corporate_mail` los agrupa). Eventos `migration.job.*` por la outbox
   de la empresa (stream `MIGRATION`), con quien lanzó o canceló; `audit` los recoge (`AUDIT_SUBJECTS`,
   `migration.>`).
 * **API del ejecutor.** Otro listener del mismo proceso (`MAIL_MIGRATION_RUNNER_PORT`, 8057) que no pasa por

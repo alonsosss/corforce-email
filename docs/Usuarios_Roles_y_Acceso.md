@@ -313,7 +313,7 @@ protocolo al buzon cierra al momento la sesion abierta con el (`credentials_chan
 en la misma transaccion, que mail-security atiende echando al buzon), y el buzon sigue entrando por
 los que conserva.
 
-Modulo `migration` (V, 2026-09-21, `034_mail_migration_permissions.sql`): `migration/jobs/read`
+Modulo `migration` (V, 2026-09-21, `035_mail_migration_permissions.sql`): `migration/jobs/read`
 (ver los trabajos de migracion de buzones y su progreso), `migration/jobs/create` (lanzar la
 migracion de un buzon: guarda cifrada una credencial de terceros) y `migration/jobs/cancel`,
 todos de alcance `tenant`, asi que llegan al `tenant_admin` al sembrar el rol y con el resembrado.
