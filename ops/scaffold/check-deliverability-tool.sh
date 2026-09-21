@@ -24,7 +24,10 @@ cat > "$TMP/bin/dig" <<'DIG'
 #!/usr/bin/env bash
 tipo=""; nombre=""
 args=()
-for a in "$@"; do [[ "$a" == +* ]] || args+=("$a"); done
+for a in "$@"; do
+  if [[ "$a" == @* ]]; then printf '%s %s\n' "$a" "${*: -1}" >> "$FAKE_DNS.args"; continue; fi
+  [[ "$a" == +* ]] || args+=("$a")
+done
 if [[ "${args[0]:-}" == "-x" ]]; then tipo=PTR; nombre="${args[1]}"; else tipo="${args[0]}"; nombre="${args[1]}"; fi
 awk -F'\t' -v t="$tipo" -v n="$nombre" '$1==t && $2==n {print $3}' "$FAKE_DNS"
 DIG
@@ -79,6 +82,14 @@ esperar "IP sin PTR" "FALLA   PTR: 127.0.0.1 no tiene registro inverso" '/^PTR/d
 esperar "IP en una lista negra" "FALLA   lista negra zen.spamhaus.org: la IP FIGURA" '$a\A\t1.0.0.127.zen.spamhaus.org\t127.0.0.2'
 esperar "lista negra que rechaza la consulta" "AVISO   lista negra zen.spamhaus.org: NO CONCLUYENTE" '$a\A\t1.0.0.127.zen.spamhaus.org\t127.255.255.254'
 
+# --resolver: las consultas van al resolvedor indicado, salvo las de listas negras.
+base "$TMP/dns"; rm -f "$TMP/dns.args"
+PATH="$TMP/bin:$PATH" FAKE_DNS="$TMP/dns" bash "$TOOL" d.test --ip 127.0.0.1 --selector s1 --resolver 9.9.9.9 >/dev/null 2>&1
+if grep -qE '^@9\.9\.9\.9 d\.test$' "$TMP/dns.args" 2>/dev/null; then echo "  --resolver: las consultas DNS van al resolvedor indicado"; else falla "--resolver: no se uso @9.9.9.9 en la consulta de MX"; fi
+if grep -q 'spamhaus' "$TMP/dns.args" 2>/dev/null; then falla "--resolver: una consulta de lista negra fue al resolvedor publico"; else echo "  --resolver: las listas negras siguen con el resolvedor del sistema"; fi
+base "$TMP/dns"
+if PATH="$TMP/bin:$PATH" FAKE_DNS="$TMP/dns" bash "$TOOL" d.test --ip 127.0.0.1 --resolver 'x;rm' >/dev/null 2>&1; then falla "--resolver: acepto un valor que no es una IP"; else echo "  --resolver: rechaza un valor que no es una IP"; fi
+
 # informes DMARC a otro dominio CON autorizacion: OK.
 base "$TMP/dns"; sed -i 's/r@d.test/r@otro.test/' "$TMP/dns"
 printf 'TXT\td.test._report._dmarc.otro.test\t"v=DMARC1"\nA\totro.test\t127.0.0.1\n' >> "$TMP/dns"
@@ -87,4 +98,4 @@ if grep -qF "OK      DMARC: otro.test autoriza recibir informes de d.test" <<< "
 else falla "informes DMARC con autorizacion: no dio OK"; fi
 
 [[ $FAIL -eq 0 ]] || exit 1
-echo "  OK: la herramienta de entregabilidad detecta MX, SPF, DKIM, DMARC, PTR, SMTP y listas negras; 21 casos con un dig simulado."
+echo "  OK: la herramienta de entregabilidad detecta MX, SPF, DKIM, DMARC, PTR, SMTP y listas negras; 24 casos con un dig simulado."

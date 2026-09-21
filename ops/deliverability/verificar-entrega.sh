@@ -4,11 +4,15 @@
 # credenciales y no toca el servidor (plan de mejoras, iniciativa A1).
 #
 #   verificar-entrega.sh <dominio> [--ip <IP del servidor de correo>] [--selector <selector>]...
-#                                  [--estricto]
+#                                  [--resolver <IP>] [--estricto]
 #
 #   <dominio>     el dominio del cliente (por ejemplo mentorenergy.uk)
 #   --ip          IP que envia su correo; por defecto, la de su primer MX
 #   --selector    selector DKIM a comprobar; se puede repetir
+#   --resolver    resolvedor DNS publico para todo salvo las listas negras (por ejemplo 1.1.1.1): evita
+#                 la cache del resolvedor local justo despues de un cambio de DNS y da falsos avisos
+#                 sobre lo que ya se corrigio. Las listas negras usan siempre el del sistema porque
+#                 Spamhaus y otras rechazan los resolvedores publicos grandes.
 #   --estricto    los AVISO tambien hacen fallar (codigo 1)
 #
 # Sale con 1 si hay algun FALLA. Cada linea empieza por OK, AVISO, FALLA o INFO. Un AVISO es algo que
@@ -21,13 +25,14 @@
 # (docs/Plan_Estrategico_Mejoras_Correo.md, A1).
 set -uo pipefail
 
-DOMINIO=""; IP=""; SELECTORES=(); ESTRICTO=0
+DOMINIO=""; IP=""; SELECTORES=(); ESTRICTO=0; RESOLVER=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --ip) IP="${2:-}"; shift 2 ;;
     --selector) SELECTORES+=("${2:-}"); shift 2 ;;
+    --resolver) RESOLVER="${2:-}"; shift 2 ;;
     --estricto) ESTRICTO=1; shift ;;
-    -h|--help) sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     -*) echo "opcion desconocida: $1" >&2; exit 2 ;;
     *) DOMINIO="${1,,}"; shift ;;
   esac
@@ -41,10 +46,13 @@ ok()    { echo "OK      $*"; }
 info()  { echo "INFO    $*"; }
 aviso() { echo "AVISO   $*"; AVISOS=$((AVISOS + 1)); }
 falla() { echo "FALLA   $*"; FALLAS=$((FALLAS + 1)); }
-consulta() { dig +short +time=4 +tries=1 "$@" 2>/dev/null; }
+[[ -z "$RESOLVER" || "$RESOLVER" =~ ^[0-9a-fA-F:.]+$ ]] || { echo "resolvedor no valido: $RESOLVER" >&2; exit 2; }
+consulta() { dig +short +time=4 +tries=1 ${RESOLVER:+@"$RESOLVER"} "$@" 2>/dev/null; }
+consulta_lista() { dig +short +time=4 +tries=1 "$@" 2>/dev/null; }
 txt() { consulta TXT "$1" | sed -E 's/" "//g; s/^"//; s/"$//'; }
 
 echo "== $DOMINIO =="
+[[ -z "$RESOLVER" ]] || info "resolvedor DNS: $RESOLVER (las listas negras usan el del sistema)"
 
 # ---- MX ----
 mapfile -t MX < <(consulta MX "$DOMINIO" | sort -n | awk '{print $2}' | sed 's/\.$//')
@@ -195,7 +203,7 @@ if [[ -n "$IP" ]]; then
   inv="$(awk -F. '{print $4"."$3"."$2"."$1}' <<< "$IP")"
   listada=0
   for zona in zen.spamhaus.org b.barracudacentral.org bl.spamcop.net psbl.surriel.com dnsbl-1.uceprotect.net all.s5h.net; do
-    r="$(consulta A "$inv.$zona" | head -1)"
+    r="$(consulta_lista A "$inv.$zona" | head -1)"
     if [[ -z "$r" ]]; then ok "lista negra $zona: no figura"
     elif [[ "$r" == 127.255.255.* ]]; then aviso "lista negra $zona: NO CONCLUYENTE (respondio $r: consulta rechazada; este resolvedor no puede usarse con esa lista)"
     elif [[ "$r" == 127.* ]]; then falla "lista negra $zona: la IP FIGURA ($r)"; listada=1
