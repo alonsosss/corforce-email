@@ -1,7 +1,9 @@
 package http
 
 import (
+	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"time"
@@ -153,41 +155,59 @@ type createLogRequest struct {
 // una llamada interna (sin usuario) puede registrar a nombre de otro.
 const errOtherUser = "no se puede registrar un apunte a nombre de otro usuario"
 
-func (h *Handler) createLog(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := uuid.Parse(middleware.GetTenantID(r.Context()))
-	if err != nil {
-		response.ErrBadRequest(w, "invalid tenant")
-		return
-	}
+// Limites de las columnas de audit.audit_logs (varchar): un valor mas largo lo rechazaria la
+// base con un 500 en lugar de un 422 que diga que corregir.
+const (
+	maxShortField = 100
+	maxIPLength   = 45
+	// El lote entero se escribe con el candado de la cadena tomado: sin tope, uno grande
+	// bloquearia al resto de escritores de la empresa.
+	maxBulkLogs = 500
+)
 
-	var req createLogRequest
-	if err := validate.DecodeJSON(r, &req); err != nil {
-		response.ErrBadRequest(w, err.Error())
-		return
-	}
-
+// bindSessionUser fija el usuario del apunte al de la sesion. Devuelve false si el cuerpo
+// pide registrarlo a nombre de otro.
+func bindSessionUser(r *http.Request, req *createLogRequest) bool {
 	sessionUser := middleware.GetUserID(r.Context())
-	if sessionUser != "" {
-		if req.UserID != "" && req.UserID != sessionUser {
-			response.ErrForbidden(w, errOtherUser)
-			return
-		}
-		req.UserID = sessionUser
+	if sessionUser == "" {
+		return true
 	}
+	if req.UserID != "" && req.UserID != sessionUser {
+		return false
+	}
+	req.UserID = sessionUser
+	return true
+}
 
-	v := validate.New()
+func validateLogRequest(v *validate.Validator, req *createLogRequest) {
 	v.Required("user_id", req.UserID)
 	v.UUID("user_id", req.UserID)
 	v.Required("action", req.Action)
+	v.MaxLength("action", req.Action, maxShortField)
 	v.Required("module", req.Module)
+	v.MaxLength("module", req.Module, maxShortField)
 	v.Required("resource", req.Resource)
 	v.Required("severity", req.Severity)
 	v.OneOf("severity", req.Severity, domain.ValidSeverities)
-	if !v.Valid() {
-		response.ErrValidation(w, v.Error())
-		return
+	v.MaxLength("ip_address", req.IPAddress, maxIPLength)
+	if req.RequestID != nil {
+		v.MaxLength("request_id", *req.RequestID, maxShortField)
 	}
+	if req.SessionID != nil {
+		v.UUID("session_id", *req.SessionID)
+	}
+	requireJSON(v, "before", req.Before)
+	requireJSON(v, "after", req.After)
+}
 
+func requireJSON(v *validate.Validator, field string, doc *string) {
+	if doc != nil && !json.Valid([]byte(*doc)) {
+		v.Add(field, "must be a valid JSON document")
+	}
+}
+
+// toAuditLog exige una peticion ya validada.
+func (req *createLogRequest) toAuditLog(tenantID uuid.UUID) *domain.AuditLog {
 	userID, _ := uuid.Parse(req.UserID)
 	l := &domain.AuditLog{
 		TenantID:   tenantID,
@@ -203,14 +223,38 @@ func (h *Handler) createLog(w http.ResponseWriter, r *http.Request) {
 		After:      req.After,
 		Severity:   req.Severity,
 	}
-
 	if req.SessionID != nil {
-		sid, err := uuid.Parse(*req.SessionID)
-		if err == nil {
-			l.SessionID = &sid
-		}
+		sid, _ := uuid.Parse(*req.SessionID)
+		l.SessionID = &sid
+	}
+	return l
+}
+
+func (h *Handler) createLog(w http.ResponseWriter, r *http.Request) {
+	tenantID, err := uuid.Parse(middleware.GetTenantID(r.Context()))
+	if err != nil {
+		response.ErrBadRequest(w, "invalid tenant")
+		return
 	}
 
+	var req createLogRequest
+	if err := validate.DecodeJSON(r, &req); err != nil {
+		response.ErrBadRequest(w, err.Error())
+		return
+	}
+	if !bindSessionUser(r, &req) {
+		response.ErrForbidden(w, errOtherUser)
+		return
+	}
+
+	v := validate.New()
+	validateLogRequest(v, &req)
+	if !v.Valid() {
+		response.ErrValidation(w, v.Error())
+		return
+	}
+
+	l := req.toAuditLog(tenantID)
 	if err := h.uc.LogAction(r.Context(), l); err != nil {
 		if errors.Is(err, domain.ErrInvalidSeverity) {
 			response.ErrValidation(w, err.Error())
@@ -243,40 +287,32 @@ func (h *Handler) bulkCreateLogs(w http.ResponseWriter, r *http.Request) {
 		response.ErrBadRequest(w, err.Error())
 		return
 	}
+	if len(req.Logs) == 0 || len(req.Logs) > maxBulkLogs {
+		response.ErrValidation(w, fmt.Sprintf("logs must contain between 1 and %d entries", maxBulkLogs))
+		return
+	}
 
-	sessionUser := middleware.GetUserID(r.Context())
-	var logs []*domain.AuditLog
-	for _, entry := range req.Logs {
-		if sessionUser != "" {
-			if entry.UserID != "" && entry.UserID != sessionUser {
-				response.ErrForbidden(w, errOtherUser)
-				return
-			}
-			entry.UserID = sessionUser
-		}
-		userID, err := uuid.Parse(entry.UserID)
-		if err != nil {
-			response.ErrValidation(w, "user_id no valido")
+	logs := make([]*domain.AuditLog, 0, len(req.Logs))
+	for i := range req.Logs {
+		entry := &req.Logs[i]
+		if !bindSessionUser(r, entry) {
+			response.ErrForbidden(w, errOtherUser)
 			return
 		}
-		l := &domain.AuditLog{
-			TenantID:   tenantID,
-			UserID:     userID,
-			Action:     entry.Action,
-			Module:     entry.Module,
-			Resource:   entry.Resource,
-			ResourceID: entry.ResourceID,
-			IPAddress:  entry.IPAddress,
-			UserAgent:  entry.UserAgent,
-			RequestID:  entry.RequestID,
-			Before:     entry.Before,
-			After:      entry.After,
-			Severity:   entry.Severity,
+		v := validate.New()
+		validateLogRequest(v, entry)
+		if !v.Valid() {
+			response.ErrValidation(w, fmt.Sprintf("logs[%d]: %s", i, v.Error()))
+			return
 		}
-		logs = append(logs, l)
+		logs = append(logs, entry.toAuditLog(tenantID))
 	}
 
 	if err := h.uc.BulkLogActions(r.Context(), logs); err != nil {
+		if errors.Is(err, domain.ErrInvalidSeverity) {
+			response.ErrValidation(w, err.Error())
+			return
+		}
 		response.ErrInternal(w)
 		return
 	}

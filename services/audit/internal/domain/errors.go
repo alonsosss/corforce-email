@@ -7,4 +7,5 @@ var (
 	ErrSecurityEventNotFound = errors.New("security event not found")
 	ErrInvalidSeverity       = errors.New("invalid severity")
 	ErrInvalidEventType      = errors.New("invalid event type")
+	ErrLogAlreadyRecorded    = errors.New("audit log already recorded")
 )

@@ -72,11 +72,34 @@ cambie cualquiera de estas líneas.
 
 ## Deuda conocida que sale de la copia (no bloquea la fase 0)
 
-* Pruebas de `audit` (registrada el 2026-09-21): 0,23 líneas de prueba por línea de código, la
-  proporción más baja de los servicios (`ops/scaffold/test-ratio-floors.txt`; el resto está entre 0,4 y
-  1,8). Es el servicio de la cadena de hashes: cubrir la verificación de la cadena, los huecos y la
-  manipulación de una fila con pruebas contra Postgres es lo primero. El suelo actual impide que
-  baje, no que siga bajo.
+* Pruebas de `audit` (registrada el 2026-09-21, saldada el mismo día): estaba en 0,23 líneas de prueba
+  por línea de código, la proporción más baja; ahora está en 1,46 (suelo 1,42). Cubren, contra
+  Postgres real (`AUDIT_TEST_DSN`, corriendo bajo el rol `audit_service` de producción): el formato
+  del hash fijado con vectores calculados fuera de Go y contra un cálculo independiente en SQL, la
+  verificación de la cadena ante la edición de cada columna cubierta, el borrado de la primera,
+  intermedia y varias filas, la inserción de filas falsas, la duplicación, el reordenamiento y el
+  borrado del hash o del `seq`, la concurrencia de escritores (sin bifurcar ni repetir posiciones,
+  también mezclando `Create` y `BulkCreate`), la idempotencia, el aislamiento por empresa de cada
+  consulta, la paginación con fechas iguales, los filtros, los eventos de seguridad y el diff campo a
+  campo; y sin base: el caso de uso, cada ruta del handler y el armado del apunte del rastro del API.
+  Los hallazgos de esa pasada, corregidos: el lote (`/logs/bulk`) escribía filas fuera de la cadena y
+  el verificador ignoraba las filas sin hash, con lo que quien escribe en la base podía borrar el
+  hash de las últimas filas y editarlas sin que nada lo notara; el rastro del API no era idempotente
+  ante una reentrega del bus; reconocer un evento de seguridad dos veces reescribía quién y cuándo; el
+  rol del servicio podía borrar y reescribir el rastro (`06_append_only_role.sql`, aplicar con el
+  resto de migraciones de empresa); y las entradas inválidas del lote y las que desbordaban una columna
+  daban 500 en vez de 422.
+  Sigue abierto, y es diseño, no prueba (cambiar el hash invalida las cadenas existentes, así que
+  exige versionarlo): (1) el hash une los campos con `|` sin prefijo de longitud, de modo que dos
+  campos contiguos que contengan `|` pueden intercambiar contenido sin alterar el hash; (2) `user_agent`
+  no entra en el hash; (3) el hash no lleva clave, y quien escribe en la base y conoce el formato puede
+  recalcular la cadena entera, y borrar las últimas filas no deja discontinuidad: falta anclar la cabeza
+  de la cadena fuera de la base (HMAC con `MAIL_ENCRYPTION_KEY` o sello periódico); (4)
+  `audit.security_events` no está encadenada. Antes de desplegar: en cada base de empresa,
+  `SELECT count(*) FROM audit.audit_logs WHERE seq IS NOT NULL AND entry_hash IS NULL` cuenta las
+  filas que un `/logs/bulk` anterior dejó fuera de la cadena; el verificador ya las señala como
+  rotura, y un resultado distinto de cero pide decidir qué hacer con ellas antes de que el
+  endpoint de integridad se ponga en rojo.
 * Outbox disponible en `pkg/outbox` (probado contra Postgres): los servicios copiados en
   fase 0 siguen publicando tras el commit; se migran a `Enqueue` cuando se toquen. Los
   servicios nuevos lo usan desde el principio para sus publicaciones críticas. Los de celda

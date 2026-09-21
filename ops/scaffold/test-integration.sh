@@ -57,6 +57,7 @@ declare -A BASES=(
   [OUTBOX_TEST_DSN]=it_outbox
   [ACCESS_CONTROL_TEST_DSN]=it_access_control
   [ANALYTICS_TEST_DSN]=it_analytics
+  [AUDIT_TEST_DSN]=it_audit
   [AUTOMATIONS_TEST_DSN]=it_automations
   [BILLING_TEST_DSN]=it_billing
   [CAMPAIGNS_TEST_DSN]=it_campaigns

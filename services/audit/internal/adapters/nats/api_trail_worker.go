@@ -79,6 +79,19 @@ func (w *APITrailWorker) handle(evt events.Event, ack func()) {
 	}
 	ctx = db.WithPool(ctx, pool)
 
+	l := trailLog(evt.ID, tenantID, data)
+
+	if err := w.uc.LogAction(ctx, l); err != nil {
+		w.logger.Warn("persistir rastro API fallo; se reintentara", zap.Error(err))
+		return // sin ack
+	}
+	ack()
+}
+
+// trailLog arma el apunte de una escritura del API. Toma el id del evento: JetStream entrega
+// al menos una vez, y con el id del evento una reentrega (el apunte se guardo pero el ack se
+// perdio) choca con el ya guardado en vez de duplicarlo.
+func trailLog(eventID string, tenantID uuid.UUID, data map[string]interface{}) *domain.AuditLog {
 	userID, _ := uuid.Parse(trailStr(data["user_id"]))
 	ip := trailStr(data["ip"])
 	if ip == "" {
@@ -97,6 +110,9 @@ func (w *APITrailWorker) handle(evt events.Event, ack func()) {
 		IPAddress: ip,
 		Severity:  severity,
 	}
+	if id, err := uuid.Parse(eventID); err == nil {
+		l.ID = id
+	}
 	if ua := trailStr(data["user_agent"]); ua != "" {
 		l.UserAgent = &ua
 	}
@@ -104,12 +120,7 @@ func (w *APITrailWorker) handle(evt events.Event, ack func()) {
 		l.RequestID = &rid
 	}
 	l.Changes = trailChanges(data)
-
-	if err := w.uc.LogAction(ctx, l); err != nil {
-		w.logger.Warn("persistir rastro API fallo; se reintentara", zap.Error(err))
-		return // sin ack
-	}
-	ack()
+	return l
 }
 
 // trailChanges es el detalle del apunte: roles y resultado y, si la peticion eligio celda

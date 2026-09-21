@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -59,6 +60,9 @@ func (uc *AuditUseCase) LogAction(ctx context.Context, l *domain.AuditLog) error
 	l.CreatedAt = time.Now().UTC()
 
 	if err := uc.logs.Create(ctx, l); err != nil {
+		if errors.Is(err, domain.ErrLogAlreadyRecorded) {
+			return nil
+		}
 		return fmt.Errorf("create audit log: %w", err)
 	}
 

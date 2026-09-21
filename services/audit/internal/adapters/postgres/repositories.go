@@ -69,18 +69,38 @@ func derefStr(s *string) string {
 // tenant, y una base que no las tenga debe fallar en vez de escribir una
 // bitacora que el verificador no puede comprobar.
 func (r *AuditLogRepo) Create(ctx context.Context, l *domain.AuditLog) error {
-	tx, err := r.pool.Begin(ctx)
+	tx, err := r.beginChained(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
 
-	// Serializa la cadena para este tenant: dos inserciones concurrentes no pueden
-	// leer el mismo "ultimo hash" y bifurcar la cadena.
-	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, auditChainLockKey); err != nil {
+	if err := appendChained(ctx, tx, l); err != nil {
 		return err
 	}
+	return tx.Commit(ctx)
+}
 
+// beginChained abre la transaccion que escribe en la cadena y serializa a los
+// escritores de este tenant: dos inserciones concurrentes no pueden leer el mismo
+// "ultimo hash" y bifurcar la cadena. El candado es de transaccion, asi que se
+// suelta solo al confirmar o revertir.
+func (r *AuditLogRepo) beginChained(ctx context.Context) (pgx.Tx, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, auditChainLockKey); err != nil {
+		_ = tx.Rollback(ctx)
+		return nil, err
+	}
+	return tx, nil
+}
+
+// appendChained anade l al final de la cadena. Exige el candado de beginChained.
+// Devuelve ErrLogAlreadyRecorded, sin escribir nada, si el id ya esta en la bitacora:
+// es lo que hace idempotente una reentrega del bus.
+func appendChained(ctx context.Context, tx pgx.Tx, l *domain.AuditLog) error {
 	var prev string
 	if err := tx.QueryRow(ctx,
 		`SELECT COALESCE((SELECT entry_hash FROM audit.audit_logs WHERE entry_hash IS NOT NULL ORDER BY seq DESC LIMIT 1),'')`,
@@ -92,29 +112,37 @@ func (r *AuditLogRepo) Create(ctx context.Context, l *domain.AuditLog) error {
 	// la precision real) para calcular el hash sobre exactamente eso.
 	var storedCreated time.Time
 	var storedBefore, storedAfter, storedChanges string
-	if err := tx.QueryRow(ctx,
+	err := tx.QueryRow(ctx,
 		`INSERT INTO audit.audit_logs (id,tenant_id,user_id,session_id,action,module,resource,resource_id,ip_address,user_agent,request_id,before_data,after_data,changes,severity)
 		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+		 ON CONFLICT (id) DO NOTHING
 		 RETURNING created_at, COALESCE(before_data::text,''), COALESCE(after_data::text,''), COALESCE(changes::text,'')`,
 		l.ID, l.TenantID, l.UserID, l.SessionID, l.Action, l.Module, l.Resource, l.ResourceID, l.IPAddress, l.UserAgent, l.RequestID, l.Before, l.After, l.Changes, l.Severity).
-		Scan(&storedCreated, &storedBefore, &storedAfter, &storedChanges); err != nil {
+		Scan(&storedCreated, &storedBefore, &storedAfter, &storedChanges)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.ErrLogAlreadyRecorded
+	}
+	if err != nil {
 		return err
 	}
 
 	entry := chainHash(prev, l, storedBefore, storedAfter, storedChanges, storedCreated)
-	if _, err := tx.Exec(ctx, `UPDATE audit.audit_logs SET prev_hash=$1, entry_hash=$2 WHERE id=$3`, prev, entry, l.ID); err != nil {
-		return err
-	}
-	return tx.Commit(ctx)
+	_, err = tx.Exec(ctx, `UPDATE audit.audit_logs SET prev_hash=$1, entry_hash=$2 WHERE id=$3`, prev, entry, l.ID)
+	return err
 }
 
 // VerifyChain recorre la cadena por orden y detecta la primera fila cuyo hash no
 // cuadra (contenido alterado) o cuyo prev_hash no enlaza con la anterior (fila
 // borrada o insertada). Devuelve OK=true si la cadena esta intacta.
+//
+// Forman parte de la cadena las filas con seq o con entry_hash: solo las anteriores a
+// la migracion 03 tienen ambos a NULL. Filtrar solo por entry_hash dejaria a quien
+// escribe en la base borrar el hash de las ultimas filas y editarlas sin que nada lo
+// note; una fila con seq y sin hash se lee con hash vacio y rompe la cadena.
 func (r *AuditLogRepo) VerifyChain(ctx context.Context, tenantID uuid.UUID) (*domain.ChainIntegrity, error) {
 	rows, err := r.pool.Query(ctx,
 		`SELECT id,tenant_id,user_id,session_id,action,module,resource,resource_id,ip_address,request_id,severity,created_at,COALESCE(before_data::text,''),COALESCE(after_data::text,''),COALESCE(changes::text,''),COALESCE(prev_hash,''),COALESCE(entry_hash,'')
-		   FROM audit.audit_logs WHERE entry_hash IS NOT NULL ORDER BY seq ASC`)
+		   FROM audit.audit_logs WHERE seq IS NOT NULL OR entry_hash IS NOT NULL ORDER BY seq ASC`)
 	if err != nil {
 		return nil, err
 	}
@@ -154,7 +182,7 @@ func (r *AuditLogRepo) List(ctx context.Context, q domain.AuditQuery, page, page
 	offset := (page - 1) * pageSize
 	args = append(args, pageSize, offset)
 	n := len(args)
-	rows, err := r.pool.Query(ctx, fmt.Sprintf(`SELECT id,tenant_id,user_id,session_id,action,module,resource,resource_id,ip_address,user_agent,request_id,before_data,after_data,changes,severity,created_at FROM audit.audit_logs %s ORDER BY created_at DESC LIMIT $%d OFFSET $%d`, where, n-1, n), args...)
+	rows, err := r.pool.Query(ctx, fmt.Sprintf(`SELECT id,tenant_id,user_id,session_id,action,module,resource,resource_id,ip_address,user_agent,request_id,before_data,after_data,changes,severity,created_at FROM audit.audit_logs %s ORDER BY created_at DESC, id DESC LIMIT $%d OFFSET $%d`, where, n-1, n), args...)
 	if err != nil {
 		return nil, err
 	}
@@ -177,14 +205,16 @@ func (r *AuditLogRepo) Count(ctx context.Context, q domain.AuditQuery) (int64, e
 	return n, err
 }
 
+// BulkCreate anade el lote a la cadena, en una sola transaccion y con el candado tomado una
+// vez. Las filas repetidas (mismo id) se omiten.
 func (r *AuditLogRepo) BulkCreate(ctx context.Context, logs []*domain.AuditLog) error {
-	tx, err := r.pool.Begin(ctx)
+	tx, err := r.beginChained(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
 	for _, l := range logs {
-		if _, err := tx.Exec(ctx, `INSERT INTO audit.audit_logs (id,tenant_id,user_id,session_id,action,module,resource,resource_id,ip_address,user_agent,request_id,before_data,after_data,changes,severity) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) ON CONFLICT (id) DO NOTHING`, l.ID, l.TenantID, l.UserID, l.SessionID, l.Action, l.Module, l.Resource, l.ResourceID, l.IPAddress, l.UserAgent, l.RequestID, l.Before, l.After, l.Changes, l.Severity); err != nil {
+		if err := appendChained(ctx, tx, l); err != nil && !errors.Is(err, domain.ErrLogAlreadyRecorded) {
 			return err
 		}
 	}
@@ -330,7 +360,7 @@ func (r *SecurityEventRepo) List(ctx context.Context, tenantID uuid.UUID, f port
 	}
 	qArgs := append(args, pageSize, (page-1)*pageSize)
 	n := len(qArgs)
-	rows, err := r.pool.Query(ctx, fmt.Sprintf(`SELECT `+secEvtCols+` FROM audit.security_events %s ORDER BY created_at DESC LIMIT $%d OFFSET $%d`, where, n-1, n), qArgs...)
+	rows, err := r.pool.Query(ctx, fmt.Sprintf(`SELECT `+secEvtCols+` FROM audit.security_events %s ORDER BY created_at DESC, id DESC LIMIT $%d OFFSET $%d`, where, n-1, n), qArgs...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -347,7 +377,7 @@ func (r *SecurityEventRepo) List(ctx context.Context, tenantID uuid.UUID, f port
 }
 
 func (r *SecurityEventRepo) Acknowledge(ctx context.Context, id, acknowledgedBy uuid.UUID) error {
-	_, err := r.pool.Exec(ctx, `UPDATE audit.security_events SET acknowledged=true,acknowledged_by=$2,acknowledged_at=now() WHERE id=$1`, id, acknowledgedBy)
+	_, err := r.pool.Exec(ctx, `UPDATE audit.security_events SET acknowledged=true,acknowledged_by=$2,acknowledged_at=now() WHERE id=$1 AND NOT acknowledged`, id, acknowledgedBy)
 	return err
 }
 
