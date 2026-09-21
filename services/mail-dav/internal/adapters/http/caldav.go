@@ -78,7 +78,7 @@ func eventProps(e domain.Event) []element {
 		el(davName("resourcetype"), ""),
 		el(davName("getetag"), etagHeader(e.ETag)),
 		el(davName("getcontenttype"), icalContentType+"; component=vevent"),
-		el(davName("getcontentlength"), strconv.Itoa(len(e.ICal))),
+		el(davName("getcontentlength"), strconv.Itoa(e.Size)),
 		el(davName("getlastmodified"), e.UpdatedAt.UTC().Format(http.TimeFormat)),
 		privileges("read", "write-content", "unbind"),
 		el(nameCalendarData, e.ICal),
@@ -86,7 +86,7 @@ func eventProps(e domain.Event) []element {
 }
 
 // calendarResources arma los recursos que devuelve un PROPFIND sobre las rutas de calendarios.
-func (h *Handler) calendarResources(ctx context.Context, p domain.Principal, t target, depth string) ([]resource, error) {
+func (h *Handler) calendarResources(ctx context.Context, p domain.Principal, t target, depth string, withData bool) ([]resource, error) {
 	switch t.kind {
 	case kindCalHomes:
 		return []resource{{kind: kindCalHomes, path: h.path("calendars") + "/"}}, nil
@@ -110,7 +110,7 @@ func (h *Handler) calendarResources(ctx context.Context, p domain.Principal, t t
 			}
 			return []resource{h.calendarResource(p, c)}, nil
 		}
-		c, events, err := h.uc.Events(ctx, p, t.slug)
+		c, events, err := h.uc.Events(ctx, p, t.slug, withData)
 		if err != nil {
 			return nil, err
 		}
@@ -273,6 +273,10 @@ func (h *Handler) calendarReport(w http.ResponseWriter, r *http.Request, p domai
 // que el servidor expanda las recurrencias, que aqui no se hace: se rechaza en vez de devolver el objeto
 // sin expandir a un cliente que espera instancias.
 func calendarPropRequest(w http.ResponseWriter, list *calPropList) (propRequest, bool) {
+	if list.tooMany() {
+		tooManyProps(w)
+		return propRequest{}, false
+	}
 	names, unsupported := list.names()
 	if unsupported {
 		writeDAVError(w, http.StatusForbidden, calName("supported-calendar-data"))
@@ -296,15 +300,16 @@ func (h *Handler) calendarMultiget(w http.ResponseWriter, r *http.Request, p dom
 		h.fail(w, r, err)
 		return
 	}
-	names := make([]string, 0, len(req.Hrefs))
-	byHref := make(map[string]string, len(req.Hrefs))
-	for _, href := range req.Hrefs {
+	hrefs := uniqueHrefs(req.Hrefs, func(href string) (string, bool) { return h.eventNameOf(href, p, t.slug) })
+	names := make([]string, 0, len(hrefs))
+	byHref := make(map[string]string, len(hrefs))
+	for _, href := range hrefs {
 		if name, ok := h.eventNameOf(href, p, t.slug); ok {
 			names = append(names, name)
 			byHref[href] = name
 		}
 	}
-	events, err := h.uc.EventsByName(ctx, p, t.slug, names)
+	events, err := h.uc.EventsByName(ctx, p, t.slug, names, props.wantsData())
 	if err != nil {
 		h.fail(w, r, err)
 		return
@@ -313,8 +318,8 @@ func (h *Handler) calendarMultiget(w http.ResponseWriter, r *http.Request, p dom
 	for _, e := range events {
 		found[e.ResourceName] = e
 	}
-	ms := multistatus{Responses: make([]response, 0, len(req.Hrefs))}
-	for _, href := range req.Hrefs {
+	ms := multistatus{Responses: make([]response, 0, len(hrefs))}
+	for _, href := range hrefs {
 		e, ok := found[byHref[href]]
 		if !ok {
 			ms.Responses = append(ms.Responses, response{Href: hrefText(hrefPath(href)), Status: statusLine(http.StatusNotFound)})
@@ -382,7 +387,12 @@ func (h *Handler) calendarSync(w http.ResponseWriter, r *http.Request, p domain.
 		return
 	}
 	ctx := r.Context()
-	result, err := h.uc.SyncCalendar(ctx, p, t.slug, req.Token)
+	if req.Prop.tooMany() {
+		tooManyProps(w)
+		return
+	}
+	props := propRequestOr(req.Prop, reportCalendarProps)
+	result, err := h.uc.SyncCalendar(ctx, p, t.slug, req.Token, props.wantsData())
 	if err != nil {
 		h.fail(w, r, err)
 		return
@@ -392,7 +402,6 @@ func (h *Handler) calendarSync(w http.ResponseWriter, r *http.Request, p domain.
 		h.fail(w, r, err)
 		return
 	}
-	props := propRequestOr(req.Prop, reportCalendarProps)
 	ms := multistatus{Responses: make([]response, 0, len(result.Changed)+len(result.Removed)), SyncToken: result.Token}
 	for _, e := range result.Changed {
 		ms.Responses = append(ms.Responses, h.respond(p, h.eventResource(p, cal, e), props))

@@ -134,11 +134,12 @@ func (uc *UseCase) DeleteAddressbook(ctx context.Context, p domain.Principal, sl
 	return uc.store.DeleteAddressbook(ctx, p, slug)
 }
 
-func (uc *UseCase) Contacts(ctx context.Context, p domain.Principal, slug string) (domain.Addressbook, []domain.Contact, error) {
+// Contacts lista los contactos de la libreta; sin withData solo con sus metadatos y su tamano.
+func (uc *UseCase) Contacts(ctx context.Context, p domain.Principal, slug string, withData bool) (domain.Addressbook, []domain.Contact, error) {
 	if !domain.ValidSlug(slug) {
 		return domain.Addressbook{}, nil, domain.ErrNotFound
 	}
-	return uc.store.ListContacts(ctx, p, slug)
+	return uc.store.ListContacts(ctx, p, slug, uc.cfg.Limits.Read(withData))
 }
 
 func (uc *UseCase) Contact(ctx context.Context, p domain.Principal, slug, resource string) (domain.Contact, error) {
@@ -150,7 +151,7 @@ func (uc *UseCase) Contact(ctx context.Context, p domain.Principal, slug, resour
 
 // ContactsByName atiende addressbook-multiget: los nombres que no son validos o no existen se
 // omiten, y quien llama los informa como 404.
-func (uc *UseCase) ContactsByName(ctx context.Context, p domain.Principal, slug string, resources []string) ([]domain.Contact, error) {
+func (uc *UseCase) ContactsByName(ctx context.Context, p domain.Principal, slug string, resources []string, withData bool) ([]domain.Contact, error) {
 	if !domain.ValidSlug(slug) {
 		return nil, domain.ErrNotFound
 	}
@@ -166,30 +167,40 @@ func (uc *UseCase) ContactsByName(ctx context.Context, p domain.Principal, slug 
 		}
 		return nil, nil
 	}
-	return uc.store.GetContacts(ctx, p, slug, valid)
+	return uc.store.GetContacts(ctx, p, slug, valid, uc.cfg.Limits.Read(withData))
 }
 
-// Query atiende addressbook-query: filtra en memoria los contactos de la libreta, que estan
-// acotados por buzon. Un vCard guardado que ya no se pueda leer no aparece en el resultado.
+// Query atiende addressbook-query: recorre los contactos de la libreta de uno en uno y conserva solo los
+// que cumplen el filtro, de modo que la memoria es la de las coincidencias (acotadas por MaxReadBytes) y
+// no la de la libreta. Un vCard guardado que ya no se pueda leer no aparece en el resultado, y la
+// consulta se detiene cuando el contexto se cancela.
 func (uc *UseCase) Query(ctx context.Context, p domain.Principal, slug string, filter domain.Filter, limit int) (domain.Addressbook, []domain.Contact, error) {
-	book, all, err := uc.Contacts(ctx, p, slug)
-	if err != nil {
-		return book, nil, err
+	if !domain.ValidSlug(slug) {
+		return domain.Addressbook{}, nil, domain.ErrNotFound
 	}
-	out := make([]domain.Contact, 0, len(all))
-	for _, c := range all {
+	out := []domain.Contact{}
+	matched := 0
+	book, err := uc.store.EachContact(ctx, p, slug, func(c domain.Contact) (bool, error) {
+		if err := ctx.Err(); err != nil {
+			return false, err
+		}
 		card, err := domain.ParseStoredVCard(c.VCard)
 		if err != nil {
 			uc.logger.Warn("mail-dav: vCard guardado ilegible, se omite de la consulta",
 				zap.String("contact_id", c.ID.String()), zap.Error(err))
-			continue
+			return true, nil
 		}
-		if filter.Matches(card) {
-			out = append(out, c)
-			if limit > 0 && len(out) == limit {
-				break
-			}
+		if !filter.Matches(card) {
+			return true, nil
 		}
+		if matched += c.Size; matched > uc.cfg.Limits.MaxReadBytes {
+			return false, domain.ErrResultTooLarge
+		}
+		out = append(out, c)
+		return limit <= 0 || len(out) < limit, nil
+	})
+	if err != nil {
+		return book, nil, err
 	}
 	return book, out, nil
 }
@@ -204,7 +215,7 @@ func (uc *UseCase) Put(ctx context.Context, p domain.Principal, slug, resource, 
 		return "", false, err
 	}
 	c.ID, c.TenantID, c.MailboxID = uuid.New(), p.TenantID, p.MailboxID
-	created, err = uc.store.PutContact(ctx, p, slug, c, cond, uc.cfg.Limits.MaxContactsPerMailbox, uc.cfg.Limits.MaxChangesRetained)
+	created, err = uc.store.PutContact(ctx, p, slug, c, cond, uc.cfg.Limits.Write(uc.cfg.Limits.MaxContactsPerMailbox))
 	if err != nil {
 		return "", false, err
 	}
@@ -225,8 +236,9 @@ type SyncResult struct {
 	Removed []string
 }
 
-// Sync atiende sync-collection. Con token vacio devuelve todos los contactos y ninguna baja.
-func (uc *UseCase) Sync(ctx context.Context, p domain.Principal, slug, token string) (SyncResult, error) {
+// Sync atiende sync-collection. Con token vacio devuelve todos los contactos y ninguna baja. Sin withData
+// los contactos llevan solo sus metadatos y su tamano.
+func (uc *UseCase) Sync(ctx context.Context, p domain.Principal, slug, token string, withData bool) (SyncResult, error) {
 	if !domain.ValidSlug(slug) {
 		return SyncResult{}, domain.ErrNotFound
 	}
@@ -235,13 +247,13 @@ func (uc *UseCase) Sync(ctx context.Context, p domain.Principal, slug, token str
 		return SyncResult{}, err
 	}
 	if initial {
-		book, contacts, err := uc.store.ListContacts(ctx, p, slug)
+		book, contacts, err := uc.store.ListContacts(ctx, p, slug, uc.cfg.Limits.Read(withData))
 		if err != nil {
 			return SyncResult{}, err
 		}
 		return SyncResult{Token: domain.SyncToken(book.ID, book.SyncSeq), Changed: contacts}, nil
 	}
-	book, changed, removed, err := uc.store.ChangesSince(ctx, p, slug, seq)
+	book, changed, removed, err := uc.store.ChangesSince(ctx, p, slug, seq, uc.cfg.Limits.Read(withData))
 	if err != nil {
 		return SyncResult{}, err
 	}

@@ -188,6 +188,15 @@ type CalendarObject struct {
 // con VEVENT de un mismo UID (a lo sumo uno sin RECURRENCE-ID), DTSTART obligatorio y VTIMEZONE bien
 // formados. Solo se admite VEVENT: las tareas y los diarios se rechazan con supported-calendar-component.
 func ParseCalendarObject(raw string, lim CalendarLimits) (CalendarObject, error) {
+	obj, err := parseCalendarObject(raw, lim)
+	if err != nil {
+		return CalendarObject{}, err
+	}
+	obj.index(NewBudget(maxIndexWork))
+	return obj, nil
+}
+
+func parseCalendarObject(raw string, lim CalendarLimits) (CalendarObject, error) {
 	tree, terr := parseICalTree(raw, lim)
 	if terr != nil {
 		return CalendarObject{}, terr
@@ -246,14 +255,15 @@ func ParseCalendarObject(raw string, lim CalendarLimits) (CalendarObject, error)
 		return CalendarObject{}, icalError(ICalObject, "un objeto tiene a lo sumo un VEVENT sin RECURRENCE-ID")
 	}
 	obj.Summary = obj.summary()
-	obj.index(NewBudget(maxIndexWork))
 	return obj, nil
 }
 
-// ParseStoredCalendarObject vuelve a leer un objeto ya guardado. No aplica los topes de hoy: uno aceptado
-// bajo limites mas holgados sigue siendo un objeto valido.
+// ParseStoredCalendarObject vuelve a leer un objeto ya guardado para evaluar una consulta. No aplica los
+// topes de hoy: uno aceptado bajo limites mas holgados sigue siendo un objeto valido. No calcula el
+// indice (FirstStart y LastEnd, que ya estan en la base): hacerlo expande la recurrencia de cada evento
+// con un presupuesto de un millon de unidades, y una consulta relee todos los candidatos.
 func ParseStoredCalendarObject(raw string) (CalendarObject, error) {
-	return ParseCalendarObject(raw, CalendarLimits{MaxEventBytes: len(raw), MaxEventProperties: math.MaxInt})
+	return parseCalendarObject(raw, CalendarLimits{MaxEventBytes: len(raw), MaxEventProperties: math.MaxInt})
 }
 
 func (o CalendarObject) summary() string {

@@ -227,13 +227,17 @@ func TestConsultaDeEventosDecideConExactitudSobreLoQueLaBaseDescarta(t *testing.
 		t.Fatalf("el pasado: %s", got)
 	}
 	// La base descarta sin leer: con un rango lejano la serie sin fin es el unico candidato.
-	_, candidates, err := store.ListEvents(ctx, ana.Principal, "agenda", domain.CalendarFilter{Comps: []domain.CompFilter{{Name: "VEVENT", Range: ptrRange(rangeOf("20300101T000000Z", "20300102T000000Z"))}}}.Window())
+	var candidates []domain.Event
+	_, err := store.EachEvent(ctx, ana.Principal, "agenda", domain.CalendarFilter{Comps: []domain.CompFilter{{Name: "VEVENT", Range: ptrRange(rangeOf("20300101T000000Z", "20300102T000000Z"))}}}.Window(), func(e domain.Event) (bool, error) {
+		candidates = append(candidates, e)
+		return true, nil
+	})
 	if err != nil || len(candidates) != 1 || candidates[0].ResourceName != "b.ics" {
 		t.Fatalf("candidatos: %+v %v", candidates, err)
 	}
 	// Un evento guardado que ya no se puede leer no rompe la consulta ni aparece en ella.
 	broken := domain.Event{ID: uuid.New(), ResourceName: "roto.ics", UID: "roto", ICal: "esto ya no es un iCalendar", ETag: domain.ETagOf("x"), FirstStart: time.Date(2026, 9, 21, 0, 0, 0, 0, time.UTC)}
-	if _, err := store.PutEvent(ctx, ana.Principal, "agenda", broken, domain.Precondition{}, 10, 10); err != nil {
+	if _, err := store.PutEvent(ctx, ana.Principal, "agenda", broken, domain.Precondition{}, domain.WriteLimits{MaxItems: 10, MaxBytes: 1 << 20, MaxChanges: 10}); err != nil {
 		t.Fatal(err)
 	}
 	if got := names(rangeOf("20260921T000000Z", "20260922T000000Z")); got != "a.ics,b.ics" {
@@ -271,35 +275,35 @@ func TestSincronizacionDeCalendarios(t *testing.T) {
 		t.Fatal(err)
 	}
 	e := func(uid string) string { return event(uid, uid, "20260921T100000Z", "20260921T110000Z") }
-	first, err := uc.SyncCalendar(ctx, ana.Principal, "agenda", "")
+	first, err := uc.SyncCalendar(ctx, ana.Principal, "agenda", "", true)
 	if err != nil || len(first.Changed) != 0 {
 		t.Fatalf("inicial: %+v %v", first, err)
 	}
 	putEvent(t, uc, ana.Principal, "agenda", "a.ics", e("a"), domain.Precondition{})
 	putEvent(t, uc, ana.Principal, "agenda", "b.ics", e("b"), domain.Precondition{})
-	next, err := uc.SyncCalendar(ctx, ana.Principal, "agenda", first.Token)
+	next, err := uc.SyncCalendar(ctx, ana.Principal, "agenda", first.Token, true)
 	if err != nil || len(next.Changed) != 2 || next.Token == first.Token {
 		t.Fatalf("cambios: %+v %v", next, err)
 	}
 	uc.DeleteEvent(ctx, ana.Principal, "agenda", "a.ics", domain.Precondition{})
-	delta, err := uc.SyncCalendar(ctx, ana.Principal, "agenda", next.Token)
+	delta, err := uc.SyncCalendar(ctx, ana.Principal, "agenda", next.Token, true)
 	if err != nil || len(delta.Changed) != 0 || len(delta.Removed) != 1 || delta.Removed[0] != "a.ics" {
 		t.Fatalf("borrado: %+v %v", delta, err)
 	}
 	// Un token de otro calendario, roto, o mas viejo de lo que se conserva, no se resuelve.
 	uc.CreateCalendar(ctx, ana.Principal, "otro", "", "")
-	other, _ := uc.SyncCalendar(ctx, ana.Principal, "otro", "")
-	if _, err := uc.SyncCalendar(ctx, ana.Principal, "agenda", other.Token); !errors.Is(err, domain.ErrInvalidSyncToken) {
+	other, _ := uc.SyncCalendar(ctx, ana.Principal, "otro", "", true)
+	if _, err := uc.SyncCalendar(ctx, ana.Principal, "agenda", other.Token, true); !errors.Is(err, domain.ErrInvalidSyncToken) {
 		t.Fatalf("token de otro calendario: %v", err)
 	}
-	if _, err := uc.SyncCalendar(ctx, ana.Principal, "agenda", "basura"); !errors.Is(err, domain.ErrInvalidSyncToken) {
+	if _, err := uc.SyncCalendar(ctx, ana.Principal, "agenda", "basura", true); !errors.Is(err, domain.ErrInvalidSyncToken) {
 		t.Fatalf("token roto: %v", err)
 	}
 	for i := 0; i < limits.MaxChangesRetained+2; i++ {
 		putEvent(t, uc, ana.Principal, "agenda", "b.ics", e(fmt.Sprintf("b%d", i)), domain.Precondition{})
 		// Un UID nuevo por vuelta cambia el contenido; el etag cambia con el.
 	}
-	if _, err := uc.SyncCalendar(ctx, ana.Principal, "agenda", first.Token); !errors.Is(err, domain.ErrInvalidSyncToken) {
+	if _, err := uc.SyncCalendar(ctx, ana.Principal, "agenda", first.Token, true); !errors.Is(err, domain.ErrInvalidSyncToken) {
 		t.Fatalf("un token anterior a lo que se conserva no se resuelve: %v", err)
 	}
 }
@@ -314,18 +318,18 @@ func TestLosEventosSonDeSuBuzon(t *testing.T) {
 		if _, err := uc.Event(ctx, p, "agenda", "a1.ics"); !errors.Is(err, domain.ErrNotFound) {
 			t.Errorf("%s lee el evento de Ana: %v", name, err)
 		}
-		evs, err := uc.EventsByName(ctx, p, "agenda", []string{"a1.ics"})
+		evs, err := uc.EventsByName(ctx, p, "agenda", []string{"a1.ics"}, true)
 		if err != nil || len(evs) != 0 {
 			t.Errorf("%s: multiget %v %v", name, evs, err)
 		}
-		if _, evs, err := uc.Events(ctx, p, "agenda"); err != nil || len(evs) != 1 || evs[0].UID == "a1" {
+		if _, evs, err := uc.Events(ctx, p, "agenda", true); err != nil || len(evs) != 1 || evs[0].UID == "a1" {
 			t.Errorf("%s ve lo de otro: %v %v", name, evs, err)
 		}
 	}
-	if _, err := uc.EventsByName(ctx, ana.Principal, "noexiste", []string{"a1.ics"}); !errors.Is(err, domain.ErrNotFound) {
+	if _, err := uc.EventsByName(ctx, ana.Principal, "noexiste", []string{"a1.ics"}, true); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("calendario inexistente: %v", err)
 	}
-	if _, err := uc.EventsByName(ctx, ana.Principal, "noexiste", []string{"no-valido"}); !errors.Is(err, domain.ErrNotFound) {
+	if _, err := uc.EventsByName(ctx, ana.Principal, "noexiste", []string{"no-valido"}, true); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("calendario inexistente sin nombres validos: %v", err)
 	}
 }
@@ -345,11 +349,11 @@ func TestPurgeBorraTambienLosCalendariosDelBuzon(t *testing.T) {
 	if err != nil || removed != (domain.PurgeResult{Addressbooks: 1, Calendars: 2}) {
 		t.Fatalf("PurgeMailbox: %+v %v", removed, err)
 	}
-	if _, _, err := uc.Events(ctx, ana.Principal, "agenda"); !errors.Is(err, domain.ErrNotFound) {
+	if _, _, err := uc.Events(ctx, ana.Principal, "agenda", true); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("el calendario borrado no existe: %v", err)
 	}
 	for name, p := range map[string]domain.Principal{"otro buzon": cris.Principal, "otra empresa": bea.Principal, "buzon recreado": recreated} {
-		if _, evs, err := uc.Events(ctx, p, "agenda"); err != nil || len(evs) != 1 {
+		if _, evs, err := uc.Events(ctx, p, "agenda", true); err != nil || len(evs) != 1 {
 			t.Errorf("%s perdio sus eventos: %v %d", name, err, len(evs))
 		}
 	}

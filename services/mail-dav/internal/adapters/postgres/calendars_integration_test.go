@@ -57,7 +57,7 @@ func evt(t *testing.T, res, uid, summary, start string, extra ...string) domain.
 func (e *env) putEvent(t *testing.T, p domain.Principal, slug string, ev domain.Event, cond domain.Precondition) (bool, error) {
 	t.Helper()
 	ev.TenantID, ev.MailboxID = p.TenantID, p.MailboxID
-	return e.repo.PutEvent(e.ctx, p, slug, ev, cond, maxEvents, maxChanges)
+	return e.repo.PutEvent(e.ctx, p, slug, ev, cond, writeLimits(maxEvents, maxChanges))
 }
 
 func at(s string) *time.Time {
@@ -128,11 +128,11 @@ func TestCicloDeVidaDeCalendariosYEventos(t *testing.T) {
 		t.Fatalf("otro calendario: %v", err)
 	}
 
-	cal, events, err := e.repo.ListEvents(e.ctx, ana, "calendar", domain.EventWindow{})
+	cal, events, err := e.windowEvents(e.ctx, ana, "calendar", domain.EventWindow{})
 	if err != nil || len(events) != 1 || cal.SyncSeq != 2 {
 		t.Fatalf("listado: %v %+v %+v", err, cal, events)
 	}
-	if many, err := e.repo.GetEvents(e.ctx, ana, "calendar", []string{"a.ics", "nada.ics"}); err != nil || len(many) != 1 {
+	if many, err := e.repo.GetEvents(e.ctx, ana, "calendar", []string{"a.ics", "nada.ics"}, withData); err != nil || len(many) != 1 {
 		t.Fatalf("multiget: %v %+v", err, many)
 	}
 
@@ -180,12 +180,12 @@ func TestElDescartePorTiempoUsaLosIndices(t *testing.T) {
 		evt(t, "acaba.ics", "acaba", "Serie con fin", "20260105T100000Z", "RRULE:FREQ=WEEKLY;UNTIL=20260301T000000Z"),
 		evt(t, "sinfin.ics", "sinfin", "Serie sin fin", "20260105T100000Z", "RRULE:FREQ=WEEKLY"),
 	} {
-		if _, err := e.repo.PutEvent(e.ctx, ana, "calendar", withOwner(ev, ana), domain.Precondition{}, 10, maxChanges); err != nil {
+		if _, err := e.repo.PutEvent(e.ctx, ana, "calendar", withOwner(ev, ana), domain.Precondition{}, writeLimits(10, maxChanges)); err != nil {
 			t.Fatal(err)
 		}
 	}
 	names := func(w domain.EventWindow) string {
-		_, evs, err := e.repo.ListEvents(e.ctx, ana, "calendar", w)
+		_, evs, err := e.windowEvents(e.ctx, ana, "calendar", w)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -241,7 +241,7 @@ func TestSincronizacionDeEventosPorCambios(t *testing.T) {
 	for i := 1; i <= 2; i++ {
 		e.putEvent(t, ana, "calendar", evt(t, fmt.Sprintf("c%d.ics", i), fmt.Sprintf("c%d", i), "C", "20260921T100000Z"), domain.Precondition{})
 	}
-	afterTwo, changed, removed, err := e.repo.EventChangesSince(e.ctx, ana, "calendar", 0)
+	afterTwo, changed, removed, err := e.repo.EventChangesSince(e.ctx, ana, "calendar", 0, withData)
 	if err != nil || afterTwo.SyncSeq != 2 || len(changed) != 2 || len(removed) != 0 {
 		t.Fatalf("desde el principio: %v %+v %d %v", err, afterTwo, len(changed), removed)
 	}
@@ -249,13 +249,13 @@ func TestSincronizacionDeEventosPorCambios(t *testing.T) {
 	if err := e.repo.DeleteEvent(e.ctx, ana, "calendar", "c2.ics", domain.Precondition{}, maxChanges); err != nil {
 		t.Fatal(err)
 	}
-	cal, changed, removed, err := e.repo.EventChangesSince(e.ctx, ana, "calendar", afterTwo.SyncSeq)
+	cal, changed, removed, err := e.repo.EventChangesSince(e.ctx, ana, "calendar", afterTwo.SyncSeq, withData)
 	if err != nil || cal.SyncSeq != 4 || len(changed) != 1 || changed[0].ResourceName != "c1.ics" || len(removed) != 1 || removed[0] != "c2.ics" {
 		t.Fatalf("diferencia: %v %+v %+v %v", err, cal, changed, removed)
 	}
 	e.putEvent(t, ana, "calendar", evt(t, "c3.ics", "c3", "C3", "20260921T100000Z"), domain.Precondition{})
 	_ = e.repo.DeleteEvent(e.ctx, ana, "calendar", "c3.ics", domain.Precondition{}, maxChanges)
-	_, changed, removed, err = e.repo.EventChangesSince(e.ctx, ana, "calendar", cal.SyncSeq)
+	_, changed, removed, err = e.repo.EventChangesSince(e.ctx, ana, "calendar", cal.SyncSeq, withData)
 	if err != nil || len(changed) != 0 || len(removed) != 1 || removed[0] != "c3.ics" {
 		t.Fatalf("creado y borrado: %v %+v %v", err, changed, removed)
 	}
@@ -263,10 +263,10 @@ func TestSincronizacionDeEventosPorCambios(t *testing.T) {
 	if current.ChangesFloor != current.SyncSeq-maxChanges {
 		t.Fatalf("suelo de cambios %d con secuencia %d", current.ChangesFloor, current.SyncSeq)
 	}
-	if _, _, _, err := e.repo.EventChangesSince(e.ctx, ana, "calendar", current.ChangesFloor-1); !errors.Is(err, domain.ErrInvalidSyncToken) {
+	if _, _, _, err := e.repo.EventChangesSince(e.ctx, ana, "calendar", current.ChangesFloor-1, withData); !errors.Is(err, domain.ErrInvalidSyncToken) {
 		t.Fatalf("token podado: %v", err)
 	}
-	if _, _, _, err := e.repo.EventChangesSince(e.ctx, ana, "calendar", current.SyncSeq+1); !errors.Is(err, domain.ErrInvalidSyncToken) {
+	if _, _, _, err := e.repo.EventChangesSince(e.ctx, ana, "calendar", current.SyncSeq+1, withData); !errors.Is(err, domain.ErrInvalidSyncToken) {
 		t.Fatalf("token del futuro: %v", err)
 	}
 	var kept int
@@ -303,7 +303,7 @@ func TestLimitesYConcurrenciaDeEventos(t *testing.T) {
 			defer wg.Done()
 			slug := []string{"uno", "dos"}[i%2]
 			ev := withOwner(evt(t, fmt.Sprintf("p%d.ics", i), fmt.Sprintf("p%d", i), "P", "20260921T100000Z"), ana)
-			_, err := e.repo.PutEvent(e.ctx, ana, slug, ev, domain.Precondition{}, maxEvents, 1000)
+			_, err := e.repo.PutEvent(e.ctx, ana, slug, ev, domain.Precondition{}, writeLimits(maxEvents, 1000))
 			results <- err
 		}(i)
 	}
@@ -356,19 +356,19 @@ func TestAislamientoDeEventosEntreBuzonesYEmpresas(t *testing.T) {
 		if _, err := e.repo.GetEvent(e.ctx, other, "calendar", "secreto.ics"); !errors.Is(err, domain.ErrNotFound) {
 			t.Errorf("%s lee: %v", name, err)
 		}
-		if _, evs, err := e.repo.ListEvents(e.ctx, other, "calendar", domain.EventWindow{}); err != nil || len(evs) != 0 {
+		if _, evs, err := e.windowEvents(e.ctx, other, "calendar", domain.EventWindow{}); err != nil || len(evs) != 0 {
 			t.Errorf("%s lista: %v %+v", name, err, evs)
 		}
-		if _, evs, err := e.repo.ListEvents(e.ctx, other, "calendar", domain.EventWindow{Start: at("20260101T000000Z"), End: at("20271231T000000Z")}); err != nil || len(evs) != 0 {
+		if _, evs, err := e.windowEvents(e.ctx, other, "calendar", domain.EventWindow{Start: at("20260101T000000Z"), End: at("20271231T000000Z")}); err != nil || len(evs) != 0 {
 			t.Errorf("%s lista por rango: %v %+v", name, err, evs)
 		}
-		if got, err := e.repo.GetEvents(e.ctx, other, "calendar", []string{"secreto.ics"}); err != nil || len(got) != 0 {
+		if got, err := e.repo.GetEvents(e.ctx, other, "calendar", []string{"secreto.ics"}, withData); err != nil || len(got) != 0 {
 			t.Errorf("%s pide por nombre: %v %+v", name, err, got)
 		}
 		if err := e.repo.DeleteEvent(e.ctx, other, "calendar", "secreto.ics", domain.Precondition{}, maxChanges); !errors.Is(err, domain.ErrNotFound) {
 			t.Errorf("%s borra: %v", name, err)
 		}
-		if _, _, _, err := e.repo.EventChangesSince(e.ctx, other, "calendar", 0); err != nil {
+		if _, _, _, err := e.repo.EventChangesSince(e.ctx, other, "calendar", 0, withData); err != nil {
 			t.Errorf("%s pide cambios de su propio calendario: %v", name, err)
 		}
 		if cals, err := e.repo.ListCalendars(e.ctx, other); err != nil || len(cals) != 1 || cals[0].MailboxID != other.MailboxID {
@@ -464,20 +464,20 @@ func TestLosFiltrosDeLasConsultasAislanLosEventosSinLaPolitica(t *testing.T) {
 		if _, err := e.repo.GetEvent(asOwner, other, "calendar", "secreto.ics"); !errors.Is(err, domain.ErrNotFound) {
 			t.Errorf("%s lee: %v", name, err)
 		}
-		if _, evs, err := e.repo.ListEvents(asOwner, other, "calendar", domain.EventWindow{}); err != nil || len(evs) != 0 {
+		if _, evs, err := e.windowEvents(asOwner, other, "calendar", domain.EventWindow{}); err != nil || len(evs) != 0 {
 			t.Errorf("%s lista: %v %+v", name, err, evs)
 		}
-		if _, evs, err := e.repo.ListEvents(asOwner, other, "calendar", domain.EventWindow{Start: at("20260101T000000Z"), End: at("20271231T000000Z")}); err != nil || len(evs) != 0 {
+		if _, evs, err := e.windowEvents(asOwner, other, "calendar", domain.EventWindow{Start: at("20260101T000000Z"), End: at("20271231T000000Z")}); err != nil || len(evs) != 0 {
 			t.Errorf("%s lista por rango: %v %+v", name, err, evs)
 		}
-		if got, err := e.repo.GetEvents(asOwner, other, "calendar", []string{"secreto.ics"}); err != nil || len(got) != 0 {
+		if got, err := e.repo.GetEvents(asOwner, other, "calendar", []string{"secreto.ics"}, withData); err != nil || len(got) != 0 {
 			t.Errorf("%s pide por nombre: %v %+v", name, err, got)
 		}
 		if err := e.repo.DeleteEvent(asOwner, other, "calendar", "secreto.ics", domain.Precondition{}, maxChanges); !errors.Is(err, domain.ErrNotFound) {
 			t.Errorf("%s borra: %v", name, err)
 		}
 		own := withOwner(evt(t, "secreto.ics", "otro", "De otro", "20260921T100000Z"), other)
-		if _, err := e.repo.PutEvent(asOwner, other, "calendar", own, domain.Precondition{}, maxEvents, maxChanges); err != nil {
+		if _, err := e.repo.PutEvent(asOwner, other, "calendar", own, domain.Precondition{}, writeLimits(maxEvents, maxChanges)); err != nil {
 			t.Errorf("%s escribe en SU calendario, con el mismo nombre de recurso: %v", name, err)
 		}
 		if cals, err := e.repo.ListCalendars(asOwner, other); err != nil || len(cals) != 1 || cals[0].MailboxID != other.MailboxID {
@@ -601,4 +601,14 @@ func TestBorrarLosCalendariosDeUnBuzonSoloTocaLosSuyos(t *testing.T) {
 			}
 		})
 	}
+}
+
+// windowEvents lista los eventos que pueden tocar la ventana, con su iCalendar.
+func (e *env) windowEvents(ctx context.Context, p domain.Principal, slug string, w domain.EventWindow) (domain.Calendar, []domain.Event, error) {
+	out := []domain.Event{}
+	cal, err := e.repo.EachEvent(ctx, p, slug, w, func(ev domain.Event) (bool, error) {
+		out = append(out, ev)
+		return true, nil
+	})
+	return cal, out, err
 }

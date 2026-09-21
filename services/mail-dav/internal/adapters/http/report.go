@@ -75,21 +75,27 @@ func (h *Handler) multiget(w http.ResponseWriter, r *http.Request, p domain.Prin
 		http.Error(w, "demasiados href en la peticion", http.StatusRequestEntityTooLarge)
 		return
 	}
+	if req.Prop.tooMany() {
+		tooManyProps(w)
+		return
+	}
 	ctx := r.Context()
 	book, err := h.uc.Addressbook(ctx, p, t.slug)
 	if err != nil {
 		h.fail(w, r, err)
 		return
 	}
-	names := make([]string, 0, len(req.Hrefs))
-	byHref := make(map[string]string, len(req.Hrefs))
-	for _, href := range req.Hrefs {
+	hrefs := uniqueHrefs(req.Hrefs, func(href string) (string, bool) { return h.contactNameOf(href, p, t.slug) })
+	names := make([]string, 0, len(hrefs))
+	byHref := make(map[string]string, len(hrefs))
+	for _, href := range hrefs {
 		if name, ok := h.contactNameOf(href, p, t.slug); ok {
 			names = append(names, name)
 			byHref[href] = name
 		}
 	}
-	contacts, err := h.uc.ContactsByName(ctx, p, t.slug, names)
+	props := propRequestFrom(req.Prop)
+	contacts, err := h.uc.ContactsByName(ctx, p, t.slug, names, props.wantsData())
 	if err != nil {
 		h.fail(w, r, err)
 		return
@@ -98,9 +104,8 @@ func (h *Handler) multiget(w http.ResponseWriter, r *http.Request, p domain.Prin
 	for _, c := range contacts {
 		found[c.ResourceName] = c
 	}
-	props := propRequestFrom(req.Prop)
-	ms := multistatus{Responses: make([]response, 0, len(req.Hrefs))}
-	for _, href := range req.Hrefs {
+	ms := multistatus{Responses: make([]response, 0, len(hrefs))}
+	for _, href := range hrefs {
 		c, ok := found[byHref[href]]
 		if !ok {
 			ms.Responses = append(ms.Responses, response{Href: hrefText(hrefPath(href)), Status: statusLine(http.StatusNotFound)})
@@ -109,6 +114,25 @@ func (h *Handler) multiget(w http.ResponseWriter, r *http.Request, p domain.Prin
 		ms.Responses = append(ms.Responses, h.respond(p, h.contactResource(p, book, c), props))
 	}
 	h.writeReport(w, r, ms)
+}
+
+// uniqueHrefs quita de un multiget los href repetidos, y los que nombran el mismo recurso con otra
+// escritura (%61.vcf y a.vcf): cada recurso se responde una vez, porque repetir un href multiplicaria el
+// contenido de la respuesta por lo que quepa en el cuerpo de la peticion.
+func uniqueHrefs(hrefs []string, nameOf func(string) (string, bool)) []string {
+	seen := make(map[string]bool, len(hrefs))
+	out := make([]string, 0, len(hrefs))
+	for _, href := range hrefs {
+		key := "h:" + href
+		if name, ok := nameOf(href); ok {
+			key = "n:" + name
+		}
+		if !seen[key] {
+			seen[key] = true
+			out = append(out, href)
+		}
+	}
+	return out
 }
 
 // contactNameOf devuelve el nombre del contacto al que apunta un href, si es de esta libreta del propio
@@ -140,6 +164,10 @@ func (h *Handler) query(w http.ResponseWriter, r *http.Request, p domain.Princip
 	if req.Limit != nil && req.Limit.NResults > 0 {
 		limit = req.Limit.NResults
 	}
+	if req.Prop.tooMany() {
+		tooManyProps(w)
+		return
+	}
 	book, contacts, err := h.uc.Query(r.Context(), p, t.slug, filter, limit)
 	if err != nil {
 		h.fail(w, r, err)
@@ -158,8 +186,13 @@ func (h *Handler) sync(w http.ResponseWriter, r *http.Request, p domain.Principa
 		http.Error(w, "solo se admite sync-level 1", http.StatusBadRequest)
 		return
 	}
+	if req.Prop.tooMany() {
+		tooManyProps(w)
+		return
+	}
 	ctx := r.Context()
-	result, err := h.uc.Sync(ctx, p, t.slug, req.Token)
+	props := propRequestFrom(req.Prop)
+	result, err := h.uc.Sync(ctx, p, t.slug, req.Token, props.wantsData())
 	if err != nil {
 		h.fail(w, r, err)
 		return
@@ -169,7 +202,6 @@ func (h *Handler) sync(w http.ResponseWriter, r *http.Request, p domain.Principa
 		h.fail(w, r, err)
 		return
 	}
-	props := propRequestFrom(req.Prop)
 	ms := multistatus{Responses: make([]response, 0, len(result.Changed)+len(result.Removed)), SyncToken: result.Token}
 	for _, c := range result.Changed {
 		ms.Responses = append(ms.Responses, h.respond(p, h.contactResource(p, book, c), props))

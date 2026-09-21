@@ -955,6 +955,7 @@ DAV_DB_PASS="$(rand_hex 24)"
 MAIL_DAV_DB_PASSWORD="${DAV_DB_PASS}" PGHOST=127.0.0.1 bash ops/db/tenant-service-role.sh --service mail-dav >"$WORK/log/dav-role.log" 2>&1 ||
   { mal "tenant-service-role.sh --service mail-dav"; tail -5 "$WORK/log/dav-role.log" >&2; }
 MAIL_AUTH_URL="https://127.0.0.1:$AUTH_TLS_PORT" MAIL_DAV_TLS_CA_FILE="$TLS/ca.pem" MAIL_DAV_MAX_VCARD_BYTES=2048 MAIL_DAV_MAX_EVENT_BYTES=2048 \
+  MAIL_DAV_AUTH_CACHE_TTL=2s \
   TENANT_DB_USER=mail_svc_mail_dav TENANT_DB_PASSWORD="$DAV_DB_PASS" arrancar mail-dav
 esperar_salud mail-dav "${PORT[mail-dav]}" && ok "mail-dav responde"
 expect "el gateway no exige JWT al prefijo dav: el desafio Basic es de mail-dav" \
@@ -1074,16 +1075,19 @@ dav "$ANA_APP" REPORT "$BOOK/" -H 'Depth: 0' -H 'Content-Type: application/xml' 
   --data "<d:sync-collection $CARDDAV_NS><d:sync-token>urn:mail-dav:sync:basura</d:sync-token><d:sync-level>1</d:sync-level></d:sync-collection>"
 expect "un token que no se puede resolver obliga a sincronizar de nuevo (403 valid-sync-token)" "$DAV_CODE/$(grep -c valid-sync-token <<<"$DAV_BODY")" "403/1"
 
-# dav_access se aplica en la siguiente peticion, sin cache: mail-dav pregunta a mail-auth cada vez.
+# dav_access se aplica en cuanto vence la cache de verificaciones correctas de mail-dav (MAIL_DAV_AUTH_CACHE_TTL,
+# 2s en esta prueba y 10s por defecto): dentro de ese plazo un acierto reciente se atiende sin preguntar a mail-auth.
 api PATCH "/mailboxes/$ANAID/app-passwords/$ANA_DAV_ID" '{"dav_access":false}'
 expect "mail-directory apaga dav_access de la contrasena de aplicacion" "$API_CODE/$(echo "$API_BODY" | jget data.dav_access)" "200/False"
+sleep 3
 dav "$ANA_APP" PROPFIND / -H 'Depth: 0'
-expect "esa contrasena deja de abrir DAV al momento" "$DAV_CODE" "401"
+expect "esa contrasena deja de abrir DAV pasado el TTL de la cache" "$DAV_CODE" "401"
 api PATCH "/mailboxes/$ANAID/app-passwords/$ANA_DAV_ID" '{"dav_access":true}'
 dav "$ANA_APP" PROPFIND / -H 'Depth: 0'
 expect "y vuelve a abrirlo al reactivarlo" "$DAV_CODE" "207"
 api PATCH "/mailboxes/$ANAID" '{"dav_access":false}'
 expect "mail-directory apaga dav_access del buzon" "$API_CODE/$(echo "$API_BODY" | jget data.dav_access)" "200/False"
+sleep 3
 dav "$ANA_APP" PROPFIND / -H 'Depth: 0'
 expect "ni la contrasena de aplicacion ni la principal abren DAV sin el flag del buzon (la de aplicacion)" "$DAV_CODE" "401"
 dav "ana@acme.test:$ANA_PASS" PROPFIND / -H 'Depth: 0'

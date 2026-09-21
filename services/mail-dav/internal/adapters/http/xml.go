@@ -114,13 +114,24 @@ type propList struct {
 	Items []xmlName `xml:",any"`
 }
 
+// maxRequestedProps acota las propiedades de un prop: los clientes piden unas decenas, y el cuerpo permite
+// pedir decenas de miles, cada una repetida en la respuesta de cada recurso.
+const maxRequestedProps = 128
+
+func (p *propList) tooMany() bool { return p != nil && len(p.Items) > maxRequestedProps }
+
+// names devuelve los nombres pedidos sin repetir: pedir dos veces address-data no lo devuelve dos veces.
 func (p *propList) names() []xml.Name {
 	if p == nil {
 		return nil
 	}
 	out := make([]xml.Name, 0, len(p.Items))
+	seen := make(map[xml.Name]bool, len(p.Items))
 	for _, i := range p.Items {
-		out = append(out, i.XMLName)
+		if !seen[i.XMLName] {
+			seen[i.XMLName] = true
+			out = append(out, i.XMLName)
+		}
 	}
 	return out
 }

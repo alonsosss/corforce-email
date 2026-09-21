@@ -243,3 +243,43 @@ func TestLaTablaRealDeclaraCardDAVYCalDAV(t *testing.T) {
 		t.Fatalf("servicio mail-dav: %+v", s)
 	}
 }
+
+// La IP que mail-dav entrega al freno de fuerza bruta de mail-auth es la del visitante: la que el borde
+// declara solo se acepta si la conexion viene del borde, y una cabecera de un cliente de Internet (X-Real-IP
+// o X-Forwarded-For) nunca llega al servicio ni sustituye a su direccion (el proxy escribe la suya en
+// X-Forwarded-For).
+func TestLaIPQueRecibeDavNoLaFijaElCliente(t *testing.T) {
+	var got []http.Header
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = append(got, r.Header.Clone())
+		w.WriteHeader(http.StatusMultiStatus)
+	}))
+	t.Cleanup(upstream.Close)
+	tbl := davTable(t, upstream.URL)
+	r := chi.NewRouter()
+	r.Use(middleware.StripInternalHeaders)
+	r.Use(webdavGuard(tbl))
+	r.Use(middleware.CaptureClientIP(middleware.TrustedProxyCIDRs("")))
+	r.Route("/api/v1", func(r chi.Router) {
+		mountSelfAuthenticated(r, tbl, func(next http.Handler) http.Handler { return next }, "token-interno", nil, nil)
+	})
+	do := func(remote string, headers ...string) http.Header {
+		t.Helper()
+		req := httptest.NewRequest("PROPFIND", "http://mail.acme.test/api/v1/dav/", nil)
+		req.RemoteAddr = remote
+		for i := 0; i+1 < len(headers); i += 2 {
+			req.Header.Set(headers[i], headers[i+1])
+		}
+		r.ServeHTTP(httptest.NewRecorder(), req)
+		return got[len(got)-1]
+	}
+	if h := do("198.51.100.20:5000", "X-Real-IP", "10.9.9.9", "X-Forwarded-For", "10.8.8.8, 10.7.7.7"); h.Get("X-Real-IP") != "198.51.100.20" || h.Get("X-Forwarded-For") != "198.51.100.20" {
+		t.Fatalf("un cliente de Internet fijo su IP: X-Real-IP=%q X-Forwarded-For=%q", h.Get("X-Real-IP"), h.Get("X-Forwarded-For"))
+	}
+	if h := do("10.0.0.5:5000", "X-Real-IP", "203.0.113.7"); h.Get("X-Real-IP") != "203.0.113.7" {
+		t.Fatalf("el borde de confianza declara la IP del visitante: %q", h.Get("X-Real-IP"))
+	}
+	if h := do("10.0.0.5:5000", "X-Real-IP", "no-es-una-ip", "X-Forwarded-For", "203.0.113.9"); h.Get("X-Real-IP") != "10.0.0.5" || h.Get("X-Forwarded-For") != "10.0.0.5" {
+		t.Fatalf("un valor que no es una IP no se acepta: %q %q", h.Get("X-Real-IP"), h.Get("X-Forwarded-For"))
+	}
+}

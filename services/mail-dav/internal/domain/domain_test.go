@@ -8,7 +8,7 @@ import (
 	"github.com/google/uuid"
 )
 
-var testLimits = Limits{MaxVCardBytes: 4096, MaxVCardProperties: 20, MaxContactsPerMailbox: 10, MaxAddressbooksPerMailbox: 3, MaxChangesRetained: 5}
+var testLimits = Limits{MaxVCardBytes: 4096, MaxVCardProperties: 20, MaxContactsPerMailbox: 10, MaxAddressbooksPerMailbox: 3, MaxChangesRetained: 5, MaxMailboxBytes: 1 << 20, MaxReadBytes: 1 << 20}
 
 const vcard30 = "BEGIN:VCARD\r\nVERSION:3.0\r\nUID:abc-123\r\nFN:Ana Perez\r\nN:Perez;Ana;;;\r\nEMAIL;TYPE=WORK:ana@acme.test\r\nEMAIL;TYPE=HOME:Ana@Acme.test\r\nTEL;TYPE=CELL:+51 999 111 222\r\nEND:VCARD\r\n"
 

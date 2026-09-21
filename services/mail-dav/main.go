@@ -43,7 +43,13 @@ const (
 	defaultMaxAddressbooks    = 10
 	defaultChangesRetained    = 5000
 	defaultMaxRequestBytes    = 256 << 10
+	defaultMaxMailboxBytes    = 64 << 20
+	defaultMaxResponseBytes   = 16 << 20
 	defaultRatePerMinute      = 1200
+	defaultMaxInflight        = 64
+	defaultRequestTimeout     = 25 * time.Second
+	defaultAuthCacheTTL       = 10 * time.Second
+	defaultAuthMaxConcurrent  = 16
 	defaultAddressbookName    = "Contactos"
 	defaultCalendarName       = "Calendario"
 	defaultRealm              = "Contactos"
@@ -59,6 +65,14 @@ const (
 	// 4 MiB: ningun tope de tamano configurable puede pasar de ahi.
 	maxObjectBytesCeiling = 4 << 20
 
+	// Techos del espacio por buzon y de una respuesta con objetos, y de lo que se recuerda una verificacion:
+	// pasado el techo dejan de acotar lo que acotan.
+	maxMailboxBytesCeiling  = 4 << 30
+	maxResponseBytesCeiling = 256 << 20
+	maxAuthCacheTTL         = time.Minute
+	authCacheEntries        = 4096
+	authWait                = 5 * time.Second
+
 	mailAuthTimeout = 15 * time.Second
 
 	mailAuthCellURLsEnv = "MAIL_AUTH_CELL_URLS"
@@ -70,6 +84,9 @@ type settings struct {
 	realm        string
 	maxXMLBytes  int64
 	ratePerMin   int
+	maxInflight  int
+	reqTimeout   time.Duration
+	authGuard    mailauth.GuardConfig
 	app          app.Config
 	mailAuth     mailauth.Config
 	organization string
@@ -130,6 +147,33 @@ func loadSettings(logger *zap.Logger) (settings, error) {
 	if st.ratePerMin, err = config.EnvInt("MAIL_DAV_RATE_LIMIT_PER_MIN", defaultRatePerMinute, 1, 600000); err != nil {
 		return st, err
 	}
+	mailboxBytes, err := config.EnvInt("MAIL_DAV_MAX_MAILBOX_BYTES", defaultMaxMailboxBytes, 1<<20, maxMailboxBytesCeiling)
+	if err != nil {
+		return st, err
+	}
+	lim.MaxMailboxBytes = int64(mailboxBytes)
+	if lim.MaxReadBytes, err = config.EnvInt("MAIL_DAV_MAX_RESPONSE_BYTES", defaultMaxResponseBytes, 64<<10, maxResponseBytesCeiling); err != nil {
+		return st, err
+	}
+	// Un objeto solo debe caber siempre en el espacio del buzon y en una respuesta.
+	for name, size := range map[string]int{"MAIL_DAV_MAX_VCARD_BYTES": lim.MaxVCardBytes, "MAIL_DAV_MAX_EVENT_BYTES": cal.MaxEventBytes} {
+		if size > lim.MaxReadBytes || int64(size) > lim.MaxMailboxBytes {
+			return st, fmt.Errorf("%s (%d) no cabe en MAIL_DAV_MAX_RESPONSE_BYTES ni en MAIL_DAV_MAX_MAILBOX_BYTES", name, size)
+		}
+	}
+	if st.maxInflight, err = config.EnvInt("MAIL_DAV_MAX_INFLIGHT", defaultMaxInflight, 1, 10000); err != nil {
+		return st, err
+	}
+	if st.reqTimeout, err = config.EnvDuration("MAIL_DAV_REQUEST_TIMEOUT", defaultRequestTimeout, time.Second, 120*time.Second); err != nil {
+		return st, err
+	}
+	if st.authGuard.CacheTTL, err = config.EnvDuration("MAIL_DAV_AUTH_CACHE_TTL", defaultAuthCacheTTL, 0, maxAuthCacheTTL); err != nil {
+		return st, err
+	}
+	if st.authGuard.MaxConcurrent, err = config.EnvInt("MAIL_DAV_AUTH_MAX_CONCURRENT", defaultAuthMaxConcurrent, 1, 256); err != nil {
+		return st, err
+	}
+	st.authGuard.MaxCached, st.authGuard.Wait = authCacheEntries, authWait
 
 	if st.mailAuth, err = mailAuthFromEnv(logger); err != nil {
 		return st, err
@@ -222,9 +266,13 @@ func main() {
 		log.Fatalf("mail-dav: %v", err)
 	}
 
+	guard, err := mailauth.NewGuard(authClient, st.authGuard)
+	if err != nil {
+		log.Fatalf("mail-dav: %v", err)
+	}
 	repo := postgres.NewRepository(&db.ContextPool{})
 	uc, err := app.New(app.Deps{
-		Auth:      authClient,
+		Auth:      guard,
 		Tenant:    tenantdb.NewBinder(tenantDB),
 		Store:     repo,
 		Calendars: repo,
@@ -250,7 +298,7 @@ func main() {
 		log.Fatalf("mail-dav: %v", err)
 	}
 
-	srv := server.New(st.port, router(dav, st.ratePerMin, logger), logger)
+	srv := server.New(st.port, router(dav, st, logger), logger)
 	if err := srv.Run(); err != nil {
 		logger.Fatal("server error", zap.Error(err))
 	}
@@ -258,21 +306,55 @@ func main() {
 
 // router es la cadena de la peticion. Unica entrada: el gateway; sin su token no se acepta X-Real-IP,
 // que alimenta el freno de fuerza bruta de mail-auth. No usa chi: los metodos WebDAV (PROPFIND, REPORT,
-// MKCOL, MKCALENDAR) no estan en su tabla de metodos.
-func router(dav http.Handler, ratePerMin int, logger *zap.Logger) http.Handler {
-	limiter := middleware.NewRateLimiter(ratePerMin, time.Minute)
+// MKCOL, MKCALENDAR) no estan en su tabla de metodos. Tras el cupo por IP, las peticiones que se atienden
+// a la vez y el tiempo de cada una estan acotados: el pool de la base de una empresa es de diez conexiones
+// y una peticion que espera una o que se queda calculando no puede sostenerse indefinidamente.
+func router(dav http.Handler, st settings, logger *zap.Logger) http.Handler {
+	limiter := middleware.NewRateLimiter(st.ratePerMin, time.Minute)
 	chain := []func(http.Handler) http.Handler{
 		middleware.RequestID,
 		middleware.RequireGatewayToken,
 		middleware.SecureHeaders,
 		middleware.Logger(logger),
 		limiter.Limit,
+		limitInflight(st.maxInflight),
+		withDeadline(st.reqTimeout),
 	}
 	h := dav
 	for i := len(chain) - 1; i >= 0; i-- {
 		h = chain[i](h)
 	}
 	return h
+}
+
+// limitInflight rechaza con 503 lo que llega cuando ya se atienden max peticiones: mejor que el cliente
+// reintente que acumular peticiones esperando una conexion de la base.
+func limitInflight(max int) func(http.Handler) http.Handler {
+	slots := make(chan struct{}, max)
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			select {
+			case slots <- struct{}{}:
+				defer func() { <-slots }()
+				next.ServeHTTP(w, r)
+			default:
+				w.Header().Set("Retry-After", "5")
+				http.Error(w, "servicio ocupado", http.StatusServiceUnavailable)
+			}
+		})
+	}
+}
+
+// withDeadline pone un plazo a la peticion: al vencer se cancelan sus consultas a la base y el trabajo que
+// hace el servicio, en vez de seguir despues de que el servidor ya cerro la respuesta.
+func withDeadline(d time.Duration) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ctx, cancel := context.WithTimeout(r.Context(), d)
+			defer cancel()
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
 }
 
 func envString(key, fallback string) string {

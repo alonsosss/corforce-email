@@ -3,6 +3,7 @@ package domain
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -48,12 +49,15 @@ type Contact struct {
 	AddressbookID uuid.UUID
 	ResourceName  string
 	UID           string
-	VCard         string
-	ETag          string
-	DisplayName   string
-	Emails        []string
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
+	// VCard va vacio en una lectura sin datos (ReadOptions.WithData falso); Size es siempre el tamano
+	// en bytes del vCard guardado.
+	VCard       string
+	Size        int
+	ETag        string
+	DisplayName string
+	Emails      []string
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
 }
 
 // Event es un objeto de calendario (un VEVENT con sus sobrescrituras y su VTIMEZONE) guardado tal cual lo
@@ -66,13 +70,15 @@ type Event struct {
 	CalendarID   uuid.UUID
 	ResourceName string
 	UID          string
-	ICal         string
-	ETag         string
-	Summary      string
-	FirstStart   time.Time
-	LastEnd      *time.Time
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	// ICal va vacio en una lectura sin datos; Size es siempre el tamano en bytes del iCalendar guardado.
+	ICal       string
+	Size       int
+	ETag       string
+	Summary    string
+	FirstStart time.Time
+	LastEnd    *time.Time
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
 }
 
 // EventWindow acota por tiempo los eventos que se leen: solo los que pueden tener una aparicion que
@@ -94,6 +100,22 @@ type Change struct {
 	Deleted      bool
 }
 
+// ReadOptions acota un listado: sin datos solo se leen los metadatos y el tamano de cada objeto, y con
+// ellos se corta al pasar MaxBytes (0 no acota) en vez de cargar en memoria lo que ninguna respuesta
+// podria llevar.
+type ReadOptions struct {
+	WithData bool
+	MaxBytes int
+}
+
+// WriteLimits acota una escritura: cuantos objetos y cuantos bytes de objetos puede tener el buzon (de
+// cada tipo por separado) y cuantos cambios se conservan de la coleccion.
+type WriteLimits struct {
+	MaxItems   int
+	MaxBytes   int64
+	MaxChanges int
+}
+
 // Limits acota lo que un buzon puede guardar y lo que una peticion puede pedir.
 type Limits struct {
 	MaxVCardBytes             int
@@ -102,6 +124,18 @@ type Limits struct {
 	MaxAddressbooksPerMailbox int
 	// MaxChangesRetained es cuantos cambios de una libreta se conservan para resolver un token.
 	MaxChangesRetained int
+	// MaxMailboxBytes es el total de bytes de objetos (vCard, y por separado iCalendar) que guarda un
+	// buzon; MaxReadBytes, lo que lleva como maximo una respuesta con objetos.
+	MaxMailboxBytes int64
+	MaxReadBytes    int
+}
+
+func (l Limits) Write(maxItems int) WriteLimits {
+	return WriteLimits{MaxItems: maxItems, MaxBytes: l.MaxMailboxBytes, MaxChanges: l.MaxChangesRetained}
+}
+
+func (l Limits) Read(withData bool) ReadOptions {
+	return ReadOptions{WithData: withData, MaxBytes: l.MaxReadBytes}
 }
 
 // CalendarLimits acota lo que un buzon puede guardar en calendarios y lo que cuesta una consulta.
@@ -133,11 +167,14 @@ func (l Limits) Validate() error {
 	for name, v := range map[string]int{
 		"MaxVCardBytes": l.MaxVCardBytes, "MaxVCardProperties": l.MaxVCardProperties,
 		"MaxContactsPerMailbox": l.MaxContactsPerMailbox, "MaxAddressbooksPerMailbox": l.MaxAddressbooksPerMailbox,
-		"MaxChangesRetained": l.MaxChangesRetained,
+		"MaxChangesRetained": l.MaxChangesRetained, "MaxReadBytes": l.MaxReadBytes,
 	} {
 		if v < 1 {
 			return fmt.Errorf("%s debe ser mayor que cero", name)
 		}
+	}
+	if l.MaxMailboxBytes < 1 {
+		return errors.New("MaxMailboxBytes debe ser mayor que cero")
 	}
 	return nil
 }

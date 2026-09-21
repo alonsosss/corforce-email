@@ -27,7 +27,7 @@ var (
 )
 
 var (
-	limits         = domain.Limits{MaxVCardBytes: 4096, MaxVCardProperties: 30, MaxContactsPerMailbox: 4, MaxAddressbooksPerMailbox: 2, MaxChangesRetained: 50}
+	limits         = domain.Limits{MaxVCardBytes: 4096, MaxVCardProperties: 30, MaxContactsPerMailbox: 4, MaxAddressbooksPerMailbox: 2, MaxChangesRetained: 50, MaxMailboxBytes: 1 << 20, MaxReadBytes: 1 << 20}
 	calendarLimits = domain.CalendarLimits{MaxEventBytes: 4096, MaxEventProperties: 60, MaxEventsPerMailbox: 10, MaxCalendarsPerMailbox: 2, MaxRecurrenceWork: 5000, MaxQueryWork: 20000}
 	testConfig     = app.Config{Limits: limits, Calendar: calendarLimits, DefaultAddressbookName: "Contactos", DefaultCalendarName: "Calendario"}
 )

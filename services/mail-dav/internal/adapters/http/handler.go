@@ -269,8 +269,13 @@ func (h *Handler) fail(w http.ResponseWriter, r *http.Request, err error) {
 		w.Header().Set("Allow", allowedMethods)
 		http.Error(w, "el recurso ya existe", http.StatusMethodNotAllowed)
 	case errors.Is(err, domain.ErrContactLimit), errors.Is(err, domain.ErrAddressbookLimit),
-		errors.Is(err, domain.ErrEventLimit), errors.Is(err, domain.ErrCalendarLimit):
+		errors.Is(err, domain.ErrEventLimit), errors.Is(err, domain.ErrCalendarLimit), errors.Is(err, domain.ErrStorageLimit):
 		writeDAVError(w, http.StatusInsufficientStorage, davName("quota-not-exceeded"))
+	case errors.Is(err, domain.ErrResultTooLarge):
+		writeDAVError(w, http.StatusInsufficientStorage, davName("number-of-matches-within-limits"))
+	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
+		w.Header().Set("Retry-After", "30")
+		http.Error(w, "tiempo de espera agotado", http.StatusServiceUnavailable)
 	case errors.Is(err, domain.ErrInvalidName):
 		http.Error(w, "nombre no valido", http.StatusForbidden)
 	case errors.Is(err, domain.ErrInvalidSyncToken):

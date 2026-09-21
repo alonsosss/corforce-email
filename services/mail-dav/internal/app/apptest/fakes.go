@@ -213,14 +213,70 @@ func (s *Store) sorted(id uuid.UUID) []domain.Contact {
 	return out
 }
 
-func (s *Store) ListContacts(_ context.Context, p domain.Principal, slug string) (domain.Addressbook, []domain.Contact, error) {
+// shapeContacts aplica ReadOptions como el repositorio: sin datos el vCard va vacio, con datos se corta al
+// pasar el tope de bytes.
+func shapeContacts(list []domain.Contact, opt domain.ReadOptions) ([]domain.Contact, error) {
+	used := 0
+	for i := range list {
+		if list[i].Size == 0 {
+			list[i].Size = len(list[i].VCard)
+		}
+		if !opt.WithData {
+			list[i].VCard = ""
+			continue
+		}
+		if used += list[i].Size; opt.MaxBytes > 0 && used > opt.MaxBytes {
+			return nil, domain.ErrResultTooLarge
+		}
+	}
+	return list, nil
+}
+
+func shapeEvents(list []domain.Event, opt domain.ReadOptions) ([]domain.Event, error) {
+	used := 0
+	for i := range list {
+		if list[i].Size == 0 {
+			list[i].Size = len(list[i].ICal)
+		}
+		if !opt.WithData {
+			list[i].ICal = ""
+			continue
+		}
+		if used += list[i].Size; opt.MaxBytes > 0 && used > opt.MaxBytes {
+			return nil, domain.ErrResultTooLarge
+		}
+	}
+	return list, nil
+}
+
+func (s *Store) ListContacts(_ context.Context, p domain.Principal, slug string, opt domain.ReadOptions) (domain.Addressbook, []domain.Contact, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	b, err := s.books.find(p, slug)
 	if err != nil {
 		return domain.Addressbook{}, nil, err
 	}
-	return b.Addressbook, s.sorted(b.ID), nil
+	out, err := shapeContacts(s.sorted(b.ID), opt)
+	return b.Addressbook, out, err
+}
+
+// EachContact entrega los contactos uno a uno, con su vCard. El cerrojo se suelta antes de llamar a fn.
+func (s *Store) EachContact(_ context.Context, p domain.Principal, slug string, fn func(domain.Contact) (bool, error)) (domain.Addressbook, error) {
+	s.mu.Lock()
+	b, err := s.books.find(p, slug)
+	if err != nil {
+		s.mu.Unlock()
+		return domain.Addressbook{}, err
+	}
+	list, _ := shapeContacts(s.sorted(b.ID), domain.ReadOptions{WithData: true})
+	book := b.Addressbook
+	s.mu.Unlock()
+	for _, c := range list {
+		if more, err := fn(c); err != nil || !more {
+			return book, err
+		}
+	}
+	return book, nil
 }
 
 func (s *Store) GetContact(_ context.Context, p domain.Principal, slug, resource string) (domain.Contact, error) {
@@ -237,7 +293,7 @@ func (s *Store) GetContact(_ context.Context, p domain.Principal, slug, resource
 	return c, nil
 }
 
-func (s *Store) GetContacts(_ context.Context, p domain.Principal, slug string, resources []string) ([]domain.Contact, error) {
+func (s *Store) GetContacts(_ context.Context, p domain.Principal, slug string, resources []string, opt domain.ReadOptions) ([]domain.Contact, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	b, err := s.books.find(p, slug)
@@ -250,7 +306,17 @@ func (s *Store) GetContacts(_ context.Context, p domain.Principal, slug string, 
 			out = append(out, c)
 		}
 	}
-	return out, nil
+	return shapeContacts(out, opt)
+}
+
+func (s *Store) mailboxContactBytes(p domain.Principal) int64 {
+	var n int64
+	for _, b := range s.books[key(p)] {
+		for _, c := range s.contacts[b.ID] {
+			n += int64(len(c.VCard))
+		}
+	}
+	return n
 }
 
 func (s *Store) mailboxContacts(p domain.Principal) int {
@@ -277,7 +343,7 @@ func (s *Store) record(b *book, resource string, deleted bool, maxChanges int) {
 	}
 }
 
-func (s *Store) PutContact(_ context.Context, p domain.Principal, slug string, c domain.Contact, cond domain.Precondition, maxContacts, maxChanges int) (bool, error) {
+func (s *Store) PutContact(_ context.Context, p domain.Principal, slug string, c domain.Contact, cond domain.Precondition, lim domain.WriteLimits) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	b, err := s.books.find(p, slug)
@@ -300,16 +366,20 @@ func (s *Store) PutContact(_ context.Context, p domain.Principal, slug string, c
 			return false, &domain.UIDConflictError{Resource: name}
 		}
 	}
-	if !exists && s.mailboxContacts(p) >= maxContacts {
+	if !exists && s.mailboxContacts(p) >= lim.MaxItems {
 		return false, domain.ErrContactLimit
 	}
+	if own := int64(existing.Size); int64(len(c.VCard)) > own && s.mailboxContactBytes(p)-own+int64(len(c.VCard)) > lim.MaxBytes {
+		return false, domain.ErrStorageLimit
+	}
 	c.AddressbookID, c.TenantID, c.MailboxID = b.ID, p.TenantID, p.MailboxID
+	c.Size = len(c.VCard)
 	c.CreatedAt, c.UpdatedAt = s.Now(), s.Now()
 	if exists {
 		c.ID, c.CreatedAt = existing.ID, existing.CreatedAt
 	}
 	s.contacts[b.ID][c.ResourceName] = c
-	s.record(b, c.ResourceName, false, maxChanges)
+	s.record(b, c.ResourceName, false, lim.MaxChanges)
 	return !exists, nil
 }
 
@@ -332,7 +402,7 @@ func (s *Store) DeleteContact(_ context.Context, p domain.Principal, slug, resou
 	return nil
 }
 
-func (s *Store) ChangesSince(_ context.Context, p domain.Principal, slug string, seq int64) (domain.Addressbook, []domain.Contact, []string, error) {
+func (s *Store) ChangesSince(_ context.Context, p domain.Principal, slug string, seq int64, opt domain.ReadOptions) (domain.Addressbook, []domain.Contact, []string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	b, err := s.books.find(p, slug)
@@ -349,7 +419,8 @@ func (s *Store) ChangesSince(_ context.Context, p domain.Principal, slug string,
 			changed = append(changed, c)
 		}
 	}
-	return b.Addressbook, changed, removed, nil
+	changed, err = shapeContacts(changed, opt)
+	return b.Addressbook, changed, removed, err
 }
 
 func (s *Store) ListCalendars(_ context.Context, p domain.Principal) ([]domain.Calendar, error) {
@@ -410,15 +481,27 @@ func (s *Store) sortedEvents(id uuid.UUID) []domain.Event {
 	return out
 }
 
-// ListEvents descarta por la ventana igual que la consulta real: un evento sin fin conocido nunca se descarta.
-func (s *Store) ListEvents(_ context.Context, p domain.Principal, slug string, w domain.EventWindow) (domain.Calendar, []domain.Event, error) {
+func (s *Store) ListEvents(_ context.Context, p domain.Principal, slug string, opt domain.ReadOptions) (domain.Calendar, []domain.Event, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	b, err := s.calendars.find(p, slug)
 	if err != nil {
 		return domain.Calendar{}, nil, err
 	}
-	out := []domain.Event{}
+	out, err := shapeEvents(s.sortedEvents(b.ID), opt)
+	return b.Addressbook, out, err
+}
+
+// EachEvent descarta por la ventana igual que la consulta real (un evento sin fin conocido nunca se
+// descarta) y entrega los eventos uno a uno, con su iCalendar. El cerrojo se suelta antes de llamar a fn.
+func (s *Store) EachEvent(_ context.Context, p domain.Principal, slug string, w domain.EventWindow, fn func(domain.Event) (bool, error)) (domain.Calendar, error) {
+	s.mu.Lock()
+	b, err := s.calendars.find(p, slug)
+	if err != nil {
+		s.mu.Unlock()
+		return domain.Calendar{}, err
+	}
+	var list []domain.Event
 	for _, e := range s.sortedEvents(b.ID) {
 		if w.End != nil && !e.FirstStart.Before(*w.End) {
 			continue
@@ -426,9 +509,17 @@ func (s *Store) ListEvents(_ context.Context, p domain.Principal, slug string, w
 		if w.Start != nil && e.LastEnd != nil && e.LastEnd.Before(*w.Start) {
 			continue
 		}
-		out = append(out, e)
+		list = append(list, e)
 	}
-	return b.Addressbook, out, nil
+	list, _ = shapeEvents(list, domain.ReadOptions{WithData: true})
+	cal := b.Addressbook
+	s.mu.Unlock()
+	for _, e := range list {
+		if more, err := fn(e); err != nil || !more {
+			return cal, err
+		}
+	}
+	return cal, nil
 }
 
 func (s *Store) GetEvent(_ context.Context, p domain.Principal, slug, resource string) (domain.Event, error) {
@@ -445,7 +536,7 @@ func (s *Store) GetEvent(_ context.Context, p domain.Principal, slug, resource s
 	return e, nil
 }
 
-func (s *Store) GetEvents(_ context.Context, p domain.Principal, slug string, resources []string) ([]domain.Event, error) {
+func (s *Store) GetEvents(_ context.Context, p domain.Principal, slug string, resources []string, opt domain.ReadOptions) ([]domain.Event, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	b, err := s.calendars.find(p, slug)
@@ -458,7 +549,17 @@ func (s *Store) GetEvents(_ context.Context, p domain.Principal, slug string, re
 			out = append(out, e)
 		}
 	}
-	return out, nil
+	return shapeEvents(out, opt)
+}
+
+func (s *Store) mailboxEventBytes(p domain.Principal) int64 {
+	var n int64
+	for _, b := range s.calendars[key(p)] {
+		for _, e := range s.events[b.ID] {
+			n += int64(len(e.ICal))
+		}
+	}
+	return n
 }
 
 func (s *Store) mailboxEvents(p domain.Principal) int {
@@ -469,7 +570,7 @@ func (s *Store) mailboxEvents(p domain.Principal) int {
 	return n
 }
 
-func (s *Store) PutEvent(_ context.Context, p domain.Principal, slug string, e domain.Event, cond domain.Precondition, maxEvents, maxChanges int) (bool, error) {
+func (s *Store) PutEvent(_ context.Context, p domain.Principal, slug string, e domain.Event, cond domain.Precondition, lim domain.WriteLimits) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	b, err := s.calendars.find(p, slug)
@@ -492,16 +593,20 @@ func (s *Store) PutEvent(_ context.Context, p domain.Principal, slug string, e d
 			return false, &domain.UIDConflictError{Resource: name}
 		}
 	}
-	if !exists && s.mailboxEvents(p) >= maxEvents {
+	if !exists && s.mailboxEvents(p) >= lim.MaxItems {
 		return false, domain.ErrEventLimit
 	}
+	if own := int64(existing.Size); int64(len(e.ICal)) > own && s.mailboxEventBytes(p)-own+int64(len(e.ICal)) > lim.MaxBytes {
+		return false, domain.ErrStorageLimit
+	}
 	e.CalendarID, e.TenantID, e.MailboxID = b.ID, p.TenantID, p.MailboxID
+	e.Size = len(e.ICal)
 	e.CreatedAt, e.UpdatedAt = s.Now(), s.Now()
 	if exists {
 		e.ID, e.CreatedAt = existing.ID, existing.CreatedAt
 	}
 	s.events[b.ID][e.ResourceName] = e
-	s.record(b, e.ResourceName, false, maxChanges)
+	s.record(b, e.ResourceName, false, lim.MaxChanges)
 	return !exists, nil
 }
 
@@ -524,7 +629,7 @@ func (s *Store) DeleteEvent(_ context.Context, p domain.Principal, slug, resourc
 	return nil
 }
 
-func (s *Store) EventChangesSince(_ context.Context, p domain.Principal, slug string, seq int64) (domain.Calendar, []domain.Event, []string, error) {
+func (s *Store) EventChangesSince(_ context.Context, p domain.Principal, slug string, seq int64, opt domain.ReadOptions) (domain.Calendar, []domain.Event, []string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	b, err := s.calendars.find(p, slug)
@@ -541,5 +646,6 @@ func (s *Store) EventChangesSince(_ context.Context, p domain.Principal, slug st
 			changed = append(changed, e)
 		}
 	}
-	return b.Addressbook, changed, removed, nil
+	changed, err = shapeEvents(changed, opt)
+	return b.Addressbook, changed, removed, err
 }

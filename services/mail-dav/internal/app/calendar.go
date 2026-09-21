@@ -53,11 +53,12 @@ func (uc *UseCase) DeleteCalendar(ctx context.Context, p domain.Principal, slug 
 	return uc.calendars.DeleteCalendar(ctx, p, slug)
 }
 
-func (uc *UseCase) Events(ctx context.Context, p domain.Principal, slug string) (domain.Calendar, []domain.Event, error) {
+// Events lista los eventos del calendario; sin withData solo con sus metadatos y su tamano.
+func (uc *UseCase) Events(ctx context.Context, p domain.Principal, slug string, withData bool) (domain.Calendar, []domain.Event, error) {
 	if !domain.ValidSlug(slug) {
 		return domain.Calendar{}, nil, domain.ErrNotFound
 	}
-	return uc.calendars.ListEvents(ctx, p, slug, domain.EventWindow{})
+	return uc.calendars.ListEvents(ctx, p, slug, uc.cfg.Limits.Read(withData))
 }
 
 func (uc *UseCase) Event(ctx context.Context, p domain.Principal, slug, resource string) (domain.Event, error) {
@@ -69,7 +70,7 @@ func (uc *UseCase) Event(ctx context.Context, p domain.Principal, slug, resource
 
 // EventsByName atiende calendar-multiget: los nombres que no son validos o no existen se omiten, y quien
 // llama los informa como 404.
-func (uc *UseCase) EventsByName(ctx context.Context, p domain.Principal, slug string, resources []string) ([]domain.Event, error) {
+func (uc *UseCase) EventsByName(ctx context.Context, p domain.Principal, slug string, resources []string, withData bool) ([]domain.Event, error) {
 	if !domain.ValidSlug(slug) {
 		return nil, domain.ErrNotFound
 	}
@@ -85,33 +86,43 @@ func (uc *UseCase) EventsByName(ctx context.Context, p domain.Principal, slug st
 		}
 		return nil, nil
 	}
-	return uc.calendars.GetEvents(ctx, p, slug, valid)
+	return uc.calendars.GetEvents(ctx, p, slug, valid, uc.cfg.Limits.Read(withData))
 }
 
 // QueryEvents atiende calendar-query. La base descarta por tiempo los eventos que no pueden tocar el
-// rango (con sus indices) y aqui se decide con exactitud sobre los que quedan, expandiendo las
-// recurrencias con un presupuesto acotado por evento y por consulta: lo que no se puede decidir se
-// devuelve. Un evento guardado que ya no se pueda leer no aparece en el resultado.
+// rango (con sus indices) y aqui se decide con exactitud sobre los que quedan, de uno en uno y
+// conservando solo las coincidencias (acotadas por MaxReadBytes), expandiendo las recurrencias con un
+// presupuesto acotado por evento y por consulta: lo que no se puede decidir se devuelve. Un evento
+// guardado que ya no se pueda leer no aparece en el resultado, y la consulta se detiene cuando el
+// contexto se cancela.
 func (uc *UseCase) QueryEvents(ctx context.Context, p domain.Principal, slug string, filter domain.CalendarFilter) (domain.Calendar, []domain.Event, error) {
 	if !domain.ValidSlug(slug) {
 		return domain.Calendar{}, nil, domain.ErrNotFound
 	}
-	cal, candidates, err := uc.calendars.ListEvents(ctx, p, slug, filter.Window())
-	if err != nil {
-		return cal, nil, err
-	}
 	budget := domain.NewBudget(uc.cfg.Calendar.MaxQueryWork)
-	out := make([]domain.Event, 0, len(candidates))
-	for _, e := range candidates {
+	out := []domain.Event{}
+	matched := 0
+	cal, err := uc.calendars.EachEvent(ctx, p, slug, filter.Window(), func(e domain.Event) (bool, error) {
+		if err := ctx.Err(); err != nil {
+			return false, err
+		}
 		obj, err := domain.ParseStoredCalendarObject(e.ICal)
 		if err != nil {
 			uc.logger.Warn("mail-dav: evento guardado ilegible, se omite de la consulta",
 				zap.String("event_id", e.ID.String()), zap.Error(err))
-			continue
+			return true, nil
 		}
-		if filter.Matches(obj, budget, uc.cfg.Calendar.MaxRecurrenceWork) {
-			out = append(out, e)
+		if !filter.Matches(obj, budget, uc.cfg.Calendar.MaxRecurrenceWork) {
+			return true, nil
 		}
+		if matched += e.Size; matched > uc.cfg.Limits.MaxReadBytes {
+			return false, domain.ErrResultTooLarge
+		}
+		out = append(out, e)
+		return true, nil
+	})
+	if err != nil {
+		return cal, nil, err
 	}
 	return cal, out, nil
 }
@@ -126,7 +137,7 @@ func (uc *UseCase) PutEvent(ctx context.Context, p domain.Principal, slug, resou
 		return "", false, err
 	}
 	e.ID, e.TenantID, e.MailboxID = uuid.New(), p.TenantID, p.MailboxID
-	created, err = uc.calendars.PutEvent(ctx, p, slug, e, cond, uc.cfg.Calendar.MaxEventsPerMailbox, uc.cfg.Limits.MaxChangesRetained)
+	created, err = uc.calendars.PutEvent(ctx, p, slug, e, cond, uc.cfg.Limits.Write(uc.cfg.Calendar.MaxEventsPerMailbox))
 	if err != nil {
 		return "", false, err
 	}
@@ -147,8 +158,9 @@ type CalendarSyncResult struct {
 	Removed []string
 }
 
-// SyncCalendar atiende sync-collection. Con token vacio devuelve todos los eventos y ninguna baja.
-func (uc *UseCase) SyncCalendar(ctx context.Context, p domain.Principal, slug, token string) (CalendarSyncResult, error) {
+// SyncCalendar atiende sync-collection. Con token vacio devuelve todos los eventos y ninguna baja. Sin
+// withData los eventos llevan solo sus metadatos y su tamano.
+func (uc *UseCase) SyncCalendar(ctx context.Context, p domain.Principal, slug, token string, withData bool) (CalendarSyncResult, error) {
 	if !domain.ValidSlug(slug) {
 		return CalendarSyncResult{}, domain.ErrNotFound
 	}
@@ -157,13 +169,13 @@ func (uc *UseCase) SyncCalendar(ctx context.Context, p domain.Principal, slug, t
 		return CalendarSyncResult{}, err
 	}
 	if initial {
-		cal, events, err := uc.calendars.ListEvents(ctx, p, slug, domain.EventWindow{})
+		cal, events, err := uc.calendars.ListEvents(ctx, p, slug, uc.cfg.Limits.Read(withData))
 		if err != nil {
 			return CalendarSyncResult{}, err
 		}
 		return CalendarSyncResult{Token: domain.SyncToken(cal.ID, cal.SyncSeq), Changed: events}, nil
 	}
-	cal, changed, removed, err := uc.calendars.EventChangesSince(ctx, p, slug, seq)
+	cal, changed, removed, err := uc.calendars.EventChangesSince(ctx, p, slug, seq, uc.cfg.Limits.Read(withData))
 	if err != nil {
 		return CalendarSyncResult{}, err
 	}

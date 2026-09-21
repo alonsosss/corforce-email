@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"go.uber.org/zap"
 )
@@ -19,6 +20,8 @@ func setEnv(t *testing.T, kv map[string]string) {
 		"MAIL_DAV_DEFAULT_CALENDAR_NAME", "MAIL_DAV_MAX_EVENT_BYTES", "MAIL_DAV_MAX_EVENT_PROPERTIES", "MAIL_DAV_MAX_EVENTS_PER_MAILBOX",
 		"MAIL_DAV_MAX_CALENDARS_PER_MAILBOX", "MAIL_DAV_MAX_RECURRENCE_WORK", "MAIL_DAV_MAX_QUERY_RECURRENCE_WORK",
 		"MAIL_DAV_CHANGES_RETAINED", "MAIL_DAV_MAX_REQUEST_BYTES", "MAIL_DAV_RATE_LIMIT_PER_MIN", "MAIL_DAV_TLS_CA_FILE",
+		"MAIL_DAV_MAX_MAILBOX_BYTES", "MAIL_DAV_MAX_RESPONSE_BYTES", "MAIL_DAV_MAX_INFLIGHT", "MAIL_DAV_REQUEST_TIMEOUT",
+		"MAIL_DAV_AUTH_CACHE_TTL", "MAIL_DAV_AUTH_MAX_CONCURRENT",
 		"MAIL_DAV_TLS_INSECURE_SKIP_VERIFY", "MAIL_AUTH_URL", "MAIL_AUTH_CELL_URLS", "GATEWAY_BASE_CELL_CODE", "ORGANIZATION_URL",
 	} {
 		t.Setenv(k, "")
@@ -45,6 +48,10 @@ func TestLosValoresPorDefectoSonLosDelADR(t *testing.T) {
 	if err := lim.Validate(); err != nil {
 		t.Fatal(err)
 	}
+	if lim.MaxMailboxBytes != 64<<20 || lim.MaxReadBytes != 16<<20 || st.maxInflight != 64 || st.reqTimeout != 25*time.Second ||
+		st.authGuard.CacheTTL != 10*time.Second || st.authGuard.MaxConcurrent != 16 || st.authGuard.MaxCached < 1 || st.authGuard.Wait <= 0 {
+		t.Fatalf("limites de espacio, de concurrencia y de autenticacion: %+v %+v", lim, st)
+	}
 	cal := st.app.Calendar
 	if cal.MaxEventBytes != 256<<10 || cal.MaxEventProperties != 1000 || cal.MaxEventsPerMailbox != 20000 || cal.MaxCalendarsPerMailbox != 10 ||
 		cal.MaxRecurrenceWork != 20000 || cal.MaxQueryWork != 500000 || st.app.DefaultCalendarName != "Calendario" {
@@ -61,27 +68,36 @@ func TestLosValoresPorDefectoSonLosDelADR(t *testing.T) {
 func TestLaConfiguracionInvalidaImpideArrancar(t *testing.T) {
 	good := map[string]string{"MAIL_AUTH_URL": "https://mail-auth:9082"}
 	for name, extra := range map[string]map[string]string{
-		"sin MAIL_AUTH_URL":               {"MAIL_AUTH_URL": ""},
-		"puerto invalido":                 {"MAIL_DAV_PORT": "0"},
-		"vCard mas grande que la fila":    {"MAIL_DAV_MAX_VCARD_BYTES": "4194305"},
-		"vCard diminuto":                  {"MAIL_DAV_MAX_VCARD_BYTES": "10"},
-		"limite no numerico":              {"MAIL_DAV_MAX_CONTACTS_PER_MAILBOX": "muchos"},
-		"limite en cero":                  {"MAIL_DAV_MAX_ADDRESSBOOKS_PER_MAILBOX": "0"},
-		"evento mas grande que la fila":   {"MAIL_DAV_MAX_EVENT_BYTES": "4194305"},
-		"evento diminuto":                 {"MAIL_DAV_MAX_EVENT_BYTES": "10"},
-		"calendarios en cero":             {"MAIL_DAV_MAX_CALENDARS_PER_MAILBOX": "0"},
-		"eventos no numericos":            {"MAIL_DAV_MAX_EVENTS_PER_MAILBOX": "muchos"},
-		"trabajo de recurrencia en cero":  {"MAIL_DAV_MAX_RECURRENCE_WORK": "0"},
-		"trabajo de consulta desmedido":   {"MAIL_DAV_MAX_QUERY_RECURRENCE_WORK": "1000000000"},
-		"sin token interno":               {"INTERNAL_GATEWAY_TOKEN": ""},
-		"TLS sin verificar en produccion": {"MAIL_DAV_TLS_INSECURE_SKIP_VERIFY": "true"},
-		"booleano ilegible":               {"MAIL_DAV_TLS_INSECURE_SKIP_VERIFY": "quizas"},
-		"CA inexistente":                  {"MAIL_DAV_TLS_CA_FILE": "/no/existe.pem"},
-		"celda mal escrita":               {"MAIL_AUTH_CELL_URLS": "pe-02", "GATEWAY_BASE_CELL_CODE": "pe-01", "ORGANIZATION_URL": "http://organization:8003"},
-		"celda repetida":                  {"MAIL_AUTH_CELL_URLS": "pe-02=https://a:1,pe-02=https://b:1", "GATEWAY_BASE_CELL_CODE": "pe-01", "ORGANIZATION_URL": "http://organization:8003"},
-		"celdas sin celda base":           {"MAIL_AUTH_CELL_URLS": "pe-02=https://a:1", "ORGANIZATION_URL": "http://organization:8003"},
-		"celdas sin organization":         {"MAIL_AUTH_CELL_URLS": "pe-02=https://a:1", "GATEWAY_BASE_CELL_CODE": "pe-01"},
-		"codigo de celda invalido":        {"MAIL_AUTH_CELL_URLS": "PE 02=https://a:1", "GATEWAY_BASE_CELL_CODE": "pe-01", "ORGANIZATION_URL": "http://organization:8003"},
+		"sin MAIL_AUTH_URL":                {"MAIL_AUTH_URL": ""},
+		"puerto invalido":                  {"MAIL_DAV_PORT": "0"},
+		"vCard mas grande que la fila":     {"MAIL_DAV_MAX_VCARD_BYTES": "4194305"},
+		"vCard diminuto":                   {"MAIL_DAV_MAX_VCARD_BYTES": "10"},
+		"limite no numerico":               {"MAIL_DAV_MAX_CONTACTS_PER_MAILBOX": "muchos"},
+		"limite en cero":                   {"MAIL_DAV_MAX_ADDRESSBOOKS_PER_MAILBOX": "0"},
+		"evento mas grande que la fila":    {"MAIL_DAV_MAX_EVENT_BYTES": "4194305"},
+		"evento diminuto":                  {"MAIL_DAV_MAX_EVENT_BYTES": "10"},
+		"calendarios en cero":              {"MAIL_DAV_MAX_CALENDARS_PER_MAILBOX": "0"},
+		"espacio de buzon diminuto":        {"MAIL_DAV_MAX_MAILBOX_BYTES": "1000"},
+		"respuesta diminuta":               {"MAIL_DAV_MAX_RESPONSE_BYTES": "1000"},
+		"un vCard no cabe en la respuesta": {"MAIL_DAV_MAX_RESPONSE_BYTES": "65536"},
+		"peticiones simultaneas en cero":   {"MAIL_DAV_MAX_INFLIGHT": "0"},
+		"plazo de peticion en cero":        {"MAIL_DAV_REQUEST_TIMEOUT": "0s"},
+		"plazo ilegible":                   {"MAIL_DAV_REQUEST_TIMEOUT": "mucho"},
+		"cache de autenticacion eterna":    {"MAIL_DAV_AUTH_CACHE_TTL": "1h"},
+		"cache de autenticacion negativa":  {"MAIL_DAV_AUTH_CACHE_TTL": "-1s"},
+		"verificaciones en cero":           {"MAIL_DAV_AUTH_MAX_CONCURRENT": "0"},
+		"eventos no numericos":             {"MAIL_DAV_MAX_EVENTS_PER_MAILBOX": "muchos"},
+		"trabajo de recurrencia en cero":   {"MAIL_DAV_MAX_RECURRENCE_WORK": "0"},
+		"trabajo de consulta desmedido":    {"MAIL_DAV_MAX_QUERY_RECURRENCE_WORK": "1000000000"},
+		"sin token interno":                {"INTERNAL_GATEWAY_TOKEN": ""},
+		"TLS sin verificar en produccion":  {"MAIL_DAV_TLS_INSECURE_SKIP_VERIFY": "true"},
+		"booleano ilegible":                {"MAIL_DAV_TLS_INSECURE_SKIP_VERIFY": "quizas"},
+		"CA inexistente":                   {"MAIL_DAV_TLS_CA_FILE": "/no/existe.pem"},
+		"celda mal escrita":                {"MAIL_AUTH_CELL_URLS": "pe-02", "GATEWAY_BASE_CELL_CODE": "pe-01", "ORGANIZATION_URL": "http://organization:8003"},
+		"celda repetida":                   {"MAIL_AUTH_CELL_URLS": "pe-02=https://a:1,pe-02=https://b:1", "GATEWAY_BASE_CELL_CODE": "pe-01", "ORGANIZATION_URL": "http://organization:8003"},
+		"celdas sin celda base":            {"MAIL_AUTH_CELL_URLS": "pe-02=https://a:1", "ORGANIZATION_URL": "http://organization:8003"},
+		"celdas sin organization":          {"MAIL_AUTH_CELL_URLS": "pe-02=https://a:1", "GATEWAY_BASE_CELL_CODE": "pe-01"},
+		"codigo de celda invalido":         {"MAIL_AUTH_CELL_URLS": "PE 02=https://a:1", "GATEWAY_BASE_CELL_CODE": "pe-01", "ORGANIZATION_URL": "http://organization:8003"},
 	} {
 		env := map[string]string{}
 		for k, v := range good {
@@ -124,7 +140,7 @@ func TestElRouterExigeElTokenDelGatewayYLimitaPorIP(t *testing.T) {
 	t.Setenv("INTERNAL_GATEWAY_TOKEN", "token-interno")
 	var served int
 	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { served++ })
-	h := router(inner, 2, zap.NewNop())
+	h := router(inner, settings{ratePerMin: 2, maxInflight: 8, reqTimeout: time.Minute}, zap.NewNop())
 
 	call := func(token, ip string) int {
 		req := httptest.NewRequest("PROPFIND", "/api/v1/dav/", nil)
@@ -203,5 +219,55 @@ func TestElPrefijoCoincideConLaTablaDelGateway(t *testing.T) {
 	}
 	if table.Services.MailDAV.DefaultPort != "8058" || defaultPort != 8058 {
 		t.Fatalf("puerto: gateway %q, servicio %d", table.Services.MailDAV.DefaultPort, defaultPort)
+	}
+}
+
+func TestLaCacheDeAutenticacionSePuedeApagar(t *testing.T) {
+	setEnv(t, map[string]string{"MAIL_AUTH_URL": "https://mail-auth:9082", "MAIL_DAV_AUTH_CACHE_TTL": "0s"})
+	st, err := loadSettings(zap.NewNop())
+	if err != nil || st.authGuard.CacheTTL != 0 {
+		t.Fatalf("sin cache: %v %+v", err, st.authGuard)
+	}
+}
+
+// Pasado el tope de peticiones simultaneas el servicio responde 503 con Retry-After en vez de acumularlas
+// esperando una conexion de la base, y la peticion que se atiende lleva un plazo.
+func TestElRouterAcotaLasPeticionesSimultaneasYPoneUnPlazo(t *testing.T) {
+	t.Setenv("INTERNAL_GATEWAY_TOKEN", "token-interno")
+	entered, release := make(chan struct{}, 4), make(chan struct{})
+	var deadline time.Time
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		deadline, _ = r.Context().Deadline()
+		entered <- struct{}{}
+		<-release
+	})
+	h := router(inner, settings{ratePerMin: 1000, maxInflight: 1, reqTimeout: time.Minute}, zap.NewNop())
+	call := func() int {
+		req := httptest.NewRequest("PROPFIND", "/api/v1/dav/", nil)
+		req.RemoteAddr = "10.0.0.5:1234"
+		req.Header.Set("X-Gateway-Token", "token-interno")
+		req.Header.Set("X-Real-IP", "203.0.113.1")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code == http.StatusServiceUnavailable && rec.Header().Get("Retry-After") == "" {
+			t.Error("el 503 debe llevar Retry-After")
+		}
+		return rec.Code
+	}
+	done := make(chan int)
+	go func() { done <- call() }()
+	<-entered
+	if got := call(); got != http.StatusServiceUnavailable {
+		t.Fatalf("con el servicio ocupado: %d", got)
+	}
+	if remaining := time.Until(deadline); remaining <= 0 || remaining > time.Minute {
+		t.Fatalf("la peticion debe llevar un plazo de reqTimeout: %v", remaining)
+	}
+	close(release)
+	if got := <-done; got != http.StatusOK {
+		t.Fatalf("la peticion en curso: %d", got)
+	}
+	if got := call(); got != http.StatusOK {
+		t.Fatalf("liberado el turno vuelve a atender: %d", got)
 	}
 }

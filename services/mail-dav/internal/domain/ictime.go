@@ -141,12 +141,45 @@ func ianaLocation(tzid string) *time.Location {
 	if loc, ok := locationsIdx.Load(tzid); ok {
 		return loc.(*time.Location)
 	}
+	if missingZones.has(tzid) {
+		return nil
+	}
 	loc, err := time.LoadLocation(tzid)
 	if err != nil {
+		missingZones.add(tzid)
 		return nil
 	}
 	locationsIdx.Store(tzid, loc)
 	return loc
+}
+
+// maxMissingZones acota los nombres de zona inexistentes que se recuerdan. Cada aparicion de una serie
+// convierte su hora con la zona del TZID, y buscar una y otra vez en el sistema de zonas un nombre que no
+// existe (los nombres propios de Outlook que traen su VTIMEZONE, o uno inventado) cuesta decenas de
+// microsegundos por aparicion. El tope evita que los nombres que elige el cliente hagan crecer la memoria:
+// pasado el tope, un nombre nuevo se busca cada vez, como antes.
+const maxMissingZones = 1024
+
+var missingZones = &zoneMisses{names: map[string]struct{}{}}
+
+type zoneMisses struct {
+	mu    sync.Mutex
+	names map[string]struct{}
+}
+
+func (z *zoneMisses) has(name string) bool {
+	z.mu.Lock()
+	defer z.mu.Unlock()
+	_, ok := z.names[name]
+	return ok
+}
+
+func (z *zoneMisses) add(name string) {
+	z.mu.Lock()
+	defer z.mu.Unlock()
+	if len(z.names) < maxMissingZones {
+		z.names[name] = struct{}{}
+	}
 }
 
 // zoneSet convierte relojes de pared en instantes. Un TZID se resuelve primero como zona de la base

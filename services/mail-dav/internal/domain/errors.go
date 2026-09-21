@@ -13,6 +13,8 @@ var (
 	ErrContactLimit       = errors.New("el buzon alcanzo su numero maximo de contactos")
 	ErrCalendarLimit      = errors.New("el buzon alcanzo su numero maximo de calendarios")
 	ErrEventLimit         = errors.New("el buzon alcanzo su numero maximo de eventos")
+	ErrStorageLimit       = errors.New("el buzon alcanzo su espacio maximo")
+	ErrResultTooLarge     = errors.New("el resultado supera el tamano maximo de una respuesta")
 	ErrInvalidSyncToken   = errors.New("el token de sincronizacion no es valido")
 	ErrInvalidCredentials = errors.New("credenciales invalidas")
 	ErrUnavailable        = errors.New("un servicio del que depende mail-dav no responde")

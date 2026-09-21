@@ -272,6 +272,7 @@ func NewEvent(resourceName, raw string, lim CalendarLimits) (Event, error) {
 		ResourceName: resourceName,
 		UID:          obj.UID,
 		ICal:         raw,
+		Size:         len(raw),
 		ETag:         ETagOf(raw),
 		Summary:      obj.Summary,
 		FirstStart:   obj.FirstStart,

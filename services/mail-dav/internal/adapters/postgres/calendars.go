@@ -9,21 +9,29 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-const eventColumns = `id, tenant_id, mailbox_id, calendar_id, resource_name, uid, ical, etag, summary, first_start, last_end, created_at, updated_at`
+// eventColumns son las columnas de un evento; sin datos el iCalendar se lee vacio y solo se trae su tamano.
+func eventColumns(withData bool) string {
+	data := `''`
+	if withData {
+		data = `ical`
+	}
+	return `id, tenant_id, mailbox_id, calendar_id, resource_name, uid, ` + data + `, etag, summary, first_start, last_end, created_at, updated_at, octet_length(ical)`
+}
 
 func scanEvent(row pgx.Row) (domain.Event, error) {
 	var e domain.Event
-	err := row.Scan(&e.ID, &e.TenantID, &e.MailboxID, &e.CalendarID, &e.ResourceName, &e.UID, &e.ICal, &e.ETag, &e.Summary, &e.FirstStart, &e.LastEnd, &e.CreatedAt, &e.UpdatedAt)
+	err := row.Scan(&e.ID, &e.TenantID, &e.MailboxID, &e.CalendarID, &e.ResourceName, &e.UID, &e.ICal, &e.ETag, &e.Summary, &e.FirstStart, &e.LastEnd, &e.CreatedAt, &e.UpdatedAt, &e.Size)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return e, domain.ErrNotFound
 	}
 	return e, err
 }
 
-// events lee los eventos del calendario. names acota por nombre de recurso (nil: todos) y window descarta
-// por tiempo con los indices de inicio y fin: un evento sin fin conocido (last_end nulo) nunca se descarta.
-func (r *Repository) events(ctx context.Context, p domain.Principal, cal domain.Calendar, names []string, window domain.EventWindow) ([]domain.Event, error) {
-	q := `SELECT ` + eventColumns + ` FROM mail_dav.events WHERE tenant_id = $1 AND mailbox_id = $2 AND calendar_id = $3`
+// eventsQuery arma la lectura de los eventos del calendario. names acota por nombre de recurso (nil: todos)
+// y window descarta por tiempo con los indices de inicio y fin: un evento sin fin conocido (last_end nulo)
+// nunca se descarta.
+func (r *Repository) eventsQuery(p domain.Principal, cal domain.Calendar, names []string, window domain.EventWindow, withData bool) (string, []any) {
+	q := `SELECT ` + eventColumns(withData) + ` FROM mail_dav.events WHERE tenant_id = $1 AND mailbox_id = $2 AND calendar_id = $3`
 	args := []any{p.TenantID, p.MailboxID, cal.ID}
 	if names != nil {
 		args = append(args, names)
@@ -37,15 +45,24 @@ func (r *Repository) events(ctx context.Context, p domain.Principal, cal domain.
 		args = append(args, *window.Start)
 		q += ` AND (last_end IS NULL OR last_end >= $` + strconv.Itoa(len(args)) + `)`
 	}
-	rows, err := r.pool.Query(ctx, q+` ORDER BY resource_name`, args...)
+	return q + ` ORDER BY resource_name`, args
+}
+
+func (r *Repository) events(ctx context.Context, p domain.Principal, cal domain.Calendar, names []string, opt domain.ReadOptions) ([]domain.Event, error) {
+	q, args := r.eventsQuery(p, cal, names, domain.EventWindow{}, opt.WithData)
+	rows, err := r.pool.Query(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
+	budget := readBudget{max: opt.MaxBytes}
 	out := []domain.Event{}
 	for rows.Next() {
 		e, err := scanEvent(rows)
 		if err != nil {
+			return nil, err
+		}
+		if err := budget.add(opt, e.Size); err != nil {
 			return nil, err
 		}
 		out = append(out, e)
@@ -74,7 +91,7 @@ func (r *Repository) DeleteMailboxCalendars(ctx context.Context, p domain.Princi
 	return r.deleteMailboxCollections(ctx, p, calendarsKind)
 }
 
-func (r *Repository) ListEvents(ctx context.Context, p domain.Principal, slug string, window domain.EventWindow) (domain.Calendar, []domain.Event, error) {
+func (r *Repository) ListEvents(ctx context.Context, p domain.Principal, slug string, opt domain.ReadOptions) (domain.Calendar, []domain.Event, error) {
 	var (
 		cal domain.Calendar
 		out []domain.Event
@@ -83,10 +100,36 @@ func (r *Repository) ListEvents(ctx context.Context, p domain.Principal, slug st
 		if cal, err = r.collection(ctx, p, calendarsKind, slug, false); err != nil {
 			return err
 		}
-		out, err = r.events(ctx, p, cal, nil, window)
+		out, err = r.events(ctx, p, cal, nil, opt)
 		return err
 	})
 	return cal, out, err
+}
+
+func (r *Repository) EachEvent(ctx context.Context, p domain.Principal, slug string, window domain.EventWindow, fn func(domain.Event) (bool, error)) (domain.Calendar, error) {
+	var cal domain.Calendar
+	err := r.scoped(ctx, p, func(ctx context.Context) (err error) {
+		if cal, err = r.collection(ctx, p, calendarsKind, slug, false); err != nil {
+			return err
+		}
+		q, args := r.eventsQuery(p, cal, nil, window, true)
+		rows, err := r.pool.Query(ctx, q, args...)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			e, err := scanEvent(rows)
+			if err != nil {
+				return err
+			}
+			if more, err := fn(e); err != nil || !more {
+				return err
+			}
+		}
+		return rows.Err()
+	})
+	return cal, err
 }
 
 func (r *Repository) GetEvent(ctx context.Context, p domain.Principal, slug, resource string) (domain.Event, error) {
@@ -97,7 +140,7 @@ func (r *Repository) GetEvent(ctx context.Context, p domain.Principal, slug, res
 			return err
 		}
 		out, err = scanEvent(r.pool.QueryRow(ctx,
-			`SELECT `+eventColumns+` FROM mail_dav.events
+			`SELECT `+eventColumns(true)+` FROM mail_dav.events
 			  WHERE tenant_id = $1 AND mailbox_id = $2 AND calendar_id = $3 AND resource_name = $4`,
 			p.TenantID, p.MailboxID, cal.ID, resource))
 		return err
@@ -105,22 +148,22 @@ func (r *Repository) GetEvent(ctx context.Context, p domain.Principal, slug, res
 	return out, err
 }
 
-func (r *Repository) GetEvents(ctx context.Context, p domain.Principal, slug string, resources []string) ([]domain.Event, error) {
+func (r *Repository) GetEvents(ctx context.Context, p domain.Principal, slug string, resources []string, opt domain.ReadOptions) ([]domain.Event, error) {
 	var out []domain.Event
 	err := r.scoped(ctx, p, func(ctx context.Context) error {
 		cal, err := r.collection(ctx, p, calendarsKind, slug, false)
 		if err != nil {
 			return err
 		}
-		out, err = r.events(ctx, p, cal, resources, domain.EventWindow{})
+		out, err = r.events(ctx, p, cal, resources, opt)
 		return err
 	})
 	return out, err
 }
 
-func (r *Repository) PutEvent(ctx context.Context, p domain.Principal, slug string, e domain.Event, cond domain.Precondition, maxEvents, maxChanges int) (bool, error) {
+func (r *Repository) PutEvent(ctx context.Context, p domain.Principal, slug string, e domain.Event, cond domain.Precondition, lim domain.WriteLimits) (bool, error) {
 	return r.putItem(ctx, p, calendarsKind, slug, itemWrite{
-		resource: e.ResourceName, uid: e.UID, etag: e.ETag,
+		resource: e.ResourceName, uid: e.UID, etag: e.ETag, size: int64(len(e.ICal)),
 		insert: func(ctx context.Context, cal domain.Calendar) error {
 			_, err := r.pool.Exec(ctx,
 				`INSERT INTO mail_dav.events (id, tenant_id, mailbox_id, calendar_id, resource_name, uid, ical, etag, summary, first_start, last_end)
@@ -135,14 +178,14 @@ func (r *Repository) PutEvent(ctx context.Context, p domain.Principal, slug stri
 				cal.ID, p.TenantID, p.MailboxID, e.UID, e.ICal, e.ETag, e.Summary, e.FirstStart, e.LastEnd, e.ResourceName)
 			return err
 		},
-	}, cond, maxEvents, maxChanges)
+	}, cond, lim)
 }
 
 func (r *Repository) DeleteEvent(ctx context.Context, p domain.Principal, slug, resource string, cond domain.Precondition, maxChanges int) error {
 	return r.deleteItem(ctx, p, calendarsKind, slug, resource, cond, maxChanges)
 }
 
-func (r *Repository) EventChangesSince(ctx context.Context, p domain.Principal, slug string, seq int64) (domain.Calendar, []domain.Event, []string, error) {
+func (r *Repository) EventChangesSince(ctx context.Context, p domain.Principal, slug string, seq int64, opt domain.ReadOptions) (domain.Calendar, []domain.Event, []string, error) {
 	var (
 		cal     domain.Calendar
 		changed []domain.Event
@@ -158,7 +201,7 @@ func (r *Repository) EventChangesSince(ctx context.Context, p domain.Principal, 
 			return err
 		}
 		if len(live) > 0 {
-			changed, err = r.events(ctx, p, cal, live, domain.EventWindow{})
+			changed, err = r.events(ctx, p, cal, live, opt)
 		}
 		return err
 	})

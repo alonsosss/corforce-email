@@ -21,7 +21,7 @@ var (
 )
 
 var (
-	limits         = domain.Limits{MaxVCardBytes: 2048, MaxVCardProperties: 20, MaxContactsPerMailbox: 3, MaxAddressbooksPerMailbox: 2, MaxChangesRetained: 3}
+	limits         = domain.Limits{MaxVCardBytes: 2048, MaxVCardProperties: 20, MaxContactsPerMailbox: 3, MaxAddressbooksPerMailbox: 2, MaxChangesRetained: 3, MaxMailboxBytes: 1 << 20, MaxReadBytes: 1 << 20}
 	calendarLimits = domain.CalendarLimits{MaxEventBytes: 4096, MaxEventProperties: 60, MaxEventsPerMailbox: 3, MaxCalendarsPerMailbox: 2, MaxRecurrenceWork: 5000, MaxQueryWork: 20000}
 	testConfig     = app.Config{Limits: limits, Calendar: calendarLimits, DefaultAddressbookName: "Contactos", DefaultCalendarName: "Calendario"}
 )
@@ -193,7 +193,7 @@ func TestPutRechazaLoInvalidoAntesDeGuardar(t *testing.T) {
 	if _, err := put(t, uc, ana.Principal, "noexiste", "x.vcf", card("n", "N"), domain.Precondition{}); !errors.Is(err, domain.ErrNotFound) {
 		t.Errorf("libreta inexistente: %v", err)
 	}
-	if _, contacts, _ := store.ListContacts(ctx, ana.Principal, "contacts"); len(contacts) != 0 {
+	if _, contacts, _ := store.ListContacts(ctx, ana.Principal, "contacts", domain.ReadOptions{WithData: true}); len(contacts) != 0 {
 		t.Fatalf("nada de lo rechazado se guarda: %+v", contacts)
 	}
 }
@@ -242,10 +242,10 @@ func TestAislamientoEntreBuzonesYEmpresas(t *testing.T) {
 		if _, err := uc.Contact(ctx, p, "contacts", "secreto.vcf"); !errors.Is(err, domain.ErrNotFound) {
 			t.Errorf("%s lee el contacto de ana: %v", name, err)
 		}
-		if _, contacts, err := uc.Contacts(ctx, p, "contacts"); err != nil || len(contacts) != 0 {
+		if _, contacts, err := uc.Contacts(ctx, p, "contacts", true); err != nil || len(contacts) != 0 {
 			t.Errorf("%s lista contactos de ana: %v %+v", name, err, contacts)
 		}
-		if got, err := uc.ContactsByName(ctx, p, "contacts", []string{"secreto.vcf"}); err != nil || len(got) != 0 {
+		if got, err := uc.ContactsByName(ctx, p, "contacts", []string{"secreto.vcf"}, true); err != nil || len(got) != 0 {
 			t.Errorf("%s pide por nombre: %v %+v", name, err, got)
 		}
 		if err := uc.Delete(ctx, p, "contacts", "secreto.vcf", domain.Precondition{}); !errors.Is(err, domain.ErrNotFound) {
@@ -272,14 +272,14 @@ func TestMultigetOmiteLoQueNoExiste(t *testing.T) {
 	ctx := context.Background()
 	_, _ = uc.Addressbooks(ctx, ana.Principal)
 	_, _ = put(t, uc, ana.Principal, "contacts", "a.vcf", card("a", "A"), domain.Precondition{})
-	got, err := uc.ContactsByName(ctx, ana.Principal, "contacts", []string{"a.vcf", "no.vcf", "../a.vcf"})
+	got, err := uc.ContactsByName(ctx, ana.Principal, "contacts", []string{"a.vcf", "no.vcf", "../a.vcf"}, true)
 	if err != nil || len(got) != 1 || got[0].ResourceName != "a.vcf" {
 		t.Fatalf("multiget: %v %+v", err, got)
 	}
-	if got, err := uc.ContactsByName(ctx, ana.Principal, "contacts", []string{"../a.vcf"}); err != nil || len(got) != 0 {
+	if got, err := uc.ContactsByName(ctx, ana.Principal, "contacts", []string{"../a.vcf"}, true); err != nil || len(got) != 0 {
 		t.Fatalf("solo nombres invalidos: %v %+v", err, got)
 	}
-	if _, err := uc.ContactsByName(ctx, ana.Principal, "noexiste", []string{"a.vcf"}); !errors.Is(err, domain.ErrNotFound) {
+	if _, err := uc.ContactsByName(ctx, ana.Principal, "noexiste", []string{"a.vcf"}, true); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("libreta inexistente: %v", err)
 	}
 }
@@ -303,7 +303,7 @@ func TestConsultaFiltraYRespetaElLimite(t *testing.T) {
 		t.Fatalf("limite de resultados: %+v", got)
 	}
 	// Un vCard guardado que ya no se puede leer no rompe la consulta.
-	_, _ = store.PutContact(ctx, ana.Principal, "contacts", domain.Contact{ResourceName: "roto.vcf", UID: "roto", VCard: "basura", ETag: domain.ETagOf("basura")}, domain.Precondition{}, 10, 10)
+	_, _ = store.PutContact(ctx, ana.Principal, "contacts", domain.Contact{ResourceName: "roto.vcf", UID: "roto", VCard: "basura", ETag: domain.ETagOf("basura")}, domain.Precondition{}, domain.WriteLimits{MaxItems: 10, MaxBytes: 1 << 20, MaxChanges: 10})
 	if _, got, err = uc.Query(ctx, ana.Principal, "contacts", domain.Filter{}, 0); err != nil || len(got) != 3 {
 		t.Fatalf("consulta con un vCard ilegible: %v %d", err, len(got))
 	}
@@ -314,26 +314,26 @@ func TestSincronizacionPorToken(t *testing.T) {
 	ctx := context.Background()
 	_, _ = uc.Addressbooks(ctx, ana.Principal)
 
-	initial, err := uc.Sync(ctx, ana.Principal, "contacts", "")
+	initial, err := uc.Sync(ctx, ana.Principal, "contacts", "", true)
 	if err != nil || len(initial.Changed) != 0 || len(initial.Removed) != 0 || initial.Token == "" {
 		t.Fatalf("inicial vacia: %v %+v", err, initial)
 	}
 	_, _ = put(t, uc, ana.Principal, "contacts", "a.vcf", card("a", "A"), domain.Precondition{})
 	_, _ = put(t, uc, ana.Principal, "contacts", "b.vcf", card("b", "B"), domain.Precondition{})
-	first, err := uc.Sync(ctx, ana.Principal, "contacts", initial.Token)
+	first, err := uc.Sync(ctx, ana.Principal, "contacts", initial.Token, true)
 	if err != nil || len(first.Changed) != 2 || len(first.Removed) != 0 {
 		t.Fatalf("diferencia: %v %+v", err, first)
 	}
-	if again, _ := uc.Sync(ctx, ana.Principal, "contacts", first.Token); len(again.Changed)+len(again.Removed) != 0 || again.Token != first.Token {
+	if again, _ := uc.Sync(ctx, ana.Principal, "contacts", first.Token, true); len(again.Changed)+len(again.Removed) != 0 || again.Token != first.Token {
 		t.Fatalf("sin cambios: %+v", again)
 	}
 	_, _ = put(t, uc, ana.Principal, "contacts", "a.vcf", card("a", "A editado"), domain.Precondition{})
 	_ = uc.Delete(ctx, ana.Principal, "contacts", "b.vcf", domain.Precondition{})
-	delta, err := uc.Sync(ctx, ana.Principal, "contacts", first.Token)
+	delta, err := uc.Sync(ctx, ana.Principal, "contacts", first.Token, true)
 	if err != nil || len(delta.Changed) != 1 || delta.Changed[0].DisplayName != "A editado" || len(delta.Removed) != 1 || delta.Removed[0] != "b.vcf" {
 		t.Fatalf("edicion y borrado: %v %+v", err, delta)
 	}
-	full, _ := uc.Sync(ctx, ana.Principal, "contacts", "")
+	full, _ := uc.Sync(ctx, ana.Principal, "contacts", "", true)
 	if len(full.Changed) != 1 || len(full.Removed) != 0 || full.Token != delta.Token {
 		t.Fatalf("la inicial no lista bajas: %+v", full)
 	}
@@ -343,18 +343,18 @@ func TestSincronizacionRechazaTokensQueNoSePuedenResolver(t *testing.T) {
 	uc, _, _ := newUseCase(t)
 	ctx := context.Background()
 	_, _ = uc.Addressbooks(ctx, ana.Principal)
-	start, _ := uc.Sync(ctx, ana.Principal, "contacts", "")
+	start, _ := uc.Sync(ctx, ana.Principal, "contacts", "", true)
 	// MaxChangesRetained es 3: tras cinco cambios el token inicial ya se podo.
 	for i := 0; i < 5; i++ {
 		_, _ = put(t, uc, ana.Principal, "contacts", fmt.Sprintf("p%d.vcf", i%3), card(fmt.Sprintf("p%d", i%3), fmt.Sprint("v", i)), domain.Precondition{})
 	}
-	if _, err := uc.Sync(ctx, ana.Principal, "contacts", start.Token); !errors.Is(err, domain.ErrInvalidSyncToken) {
+	if _, err := uc.Sync(ctx, ana.Principal, "contacts", start.Token, true); !errors.Is(err, domain.ErrInvalidSyncToken) {
 		t.Fatalf("token podado: %v", err)
 	}
-	recent, _ := uc.Sync(ctx, ana.Principal, "contacts", "")
+	recent, _ := uc.Sync(ctx, ana.Principal, "contacts", "", true)
 	future := domain.SyncToken(uuid.New(), 1)
 	for name, token := range map[string]string{"basura": "xyz", "de otra libreta": future, "del futuro": strings.Replace(recent.Token, ":"+strings.Split(recent.Token, ":")[4], ":999", 1)} {
-		if _, err := uc.Sync(ctx, ana.Principal, "contacts", token); !errors.Is(err, domain.ErrInvalidSyncToken) {
+		if _, err := uc.Sync(ctx, ana.Principal, "contacts", token, true); !errors.Is(err, domain.ErrInvalidSyncToken) {
 			t.Errorf("%s: %v", name, err)
 		}
 	}
@@ -365,7 +365,7 @@ func TestSincronizacionRechazaTokensQueNoSePuedenResolver(t *testing.T) {
 	if _, err := uc.CreateAddressbook(ctx, ana.Principal, "contacts", "Nueva", ""); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := uc.Sync(ctx, ana.Principal, "contacts", recent.Token); !errors.Is(err, domain.ErrInvalidSyncToken) {
+	if _, err := uc.Sync(ctx, ana.Principal, "contacts", recent.Token, true); !errors.Is(err, domain.ErrInvalidSyncToken) {
 		t.Fatalf("token de la libreta anterior: %v", err)
 	}
 }

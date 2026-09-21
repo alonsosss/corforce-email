@@ -33,10 +33,10 @@ func TestLosFiltrosDeLasConsultasAislanSinLaPolitica(t *testing.T) {
 		if _, err := e.repo.GetContact(asOwner, other, "contacts", "secreto.vcf"); !errors.Is(err, domain.ErrNotFound) {
 			t.Errorf("%s lee: %v", name, err)
 		}
-		if _, contacts, err := e.repo.ListContacts(asOwner, other, "contacts"); err != nil || len(contacts) != 0 {
+		if _, contacts, err := e.repo.ListContacts(asOwner, other, "contacts", withData); err != nil || len(contacts) != 0 {
 			t.Errorf("%s lista: %v %+v", name, err, contacts)
 		}
-		if got, err := e.repo.GetContacts(asOwner, other, "contacts", []string{"secreto.vcf"}); err != nil || len(got) != 0 {
+		if got, err := e.repo.GetContacts(asOwner, other, "contacts", []string{"secreto.vcf"}, withData); err != nil || len(got) != 0 {
 			t.Errorf("%s pide por nombre: %v %+v", name, err, got)
 		}
 		if err := e.repo.DeleteContact(asOwner, other, "contacts", "secreto.vcf", domain.Precondition{}, maxChanges); !errors.Is(err, domain.ErrNotFound) {
@@ -44,7 +44,7 @@ func TestLosFiltrosDeLasConsultasAislanSinLaPolitica(t *testing.T) {
 		}
 		own := contact(t, "secreto.vcf", "otro", "De otro")
 		own.TenantID, own.MailboxID = other.TenantID, other.MailboxID
-		if _, err := e.repo.PutContact(asOwner, other, "contacts", own, domain.Precondition{}, maxContacts, maxChanges); err != nil {
+		if _, err := e.repo.PutContact(asOwner, other, "contacts", own, domain.Precondition{}, writeLimits(maxContacts, maxChanges)); err != nil {
 			t.Errorf("%s escribe en SU libreta, con el mismo nombre de recurso: %v", name, err)
 		}
 		if books, err := e.repo.ListAddressbooks(asOwner, other); err != nil || len(books) != 1 || books[0].MailboxID != other.MailboxID {

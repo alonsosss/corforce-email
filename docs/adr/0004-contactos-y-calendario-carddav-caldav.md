@@ -12,6 +12,10 @@ de los contactos y de los calendarios de un buzon borrado esta hecho (2026-09-21
 buzon"). Cierra el diseno de `Plan_Estrategico_Mejoras_Correo.md`, C3 fase 2. La fase 1 (libreta compartida de la
 empresa en el webmail) ya estaba hecha y no depende de esto.
 
+**Revision adversaria de seguridad, robustez y escalabilidad (2026-09-21)**: hecha sobre el protocolo escrito a mano,
+el dominio iCalendar, vCard y RRULE, el repositorio, la autenticacion contra `mail-auth` y el gateway; los hallazgos
+y lo que cambio estan en "Endurecimiento tras la revision adversaria".
+
 Lo verificado y lo que no: el codigo compila y pasa las pruebas unitarias, las de integracion contra Postgres real y
 `make checks`; los cuerpos de peticion de DAVx5, iOS y Thunderbird de las pruebas estan escritos a mano segun las RFC
 (no capturados de un cliente). **No se ha probado con un cliente real ni con `make e2e-mail`** (las secciones de
@@ -106,6 +110,11 @@ escribe con `encoding/xml` (todo texto sale escapado) y la respuesta se serializ
   controles, y nombres de recurso (`[A-Za-z0-9._@=+~-]`, terminados en `.vcf`) y de libreta (`[a-z0-9-]`) por
   lista blanca. El usuario de la URL debe ser el del buzon autenticado: cualquier otro es 404.
 * Ninguna contrasena en registros (probado con un observador de `zap`); `Cache-Control: no-store`.
+* Lo que la peticion puede pedir tambien esta acotado (ver "Endurecimiento tras la revision adversaria"): un prop de
+  mas de 128 propiedades es 400 y las repetidas se responden una vez, un href repetido de un multiget se responde una
+  vez, un listado que no pide `address-data` ni `calendar-data` no lee los objetos, lo que una respuesta lleva de los
+  objetos tiene tope (`MAIL_DAV_MAX_RESPONSE_BYTES`, 507 `number-of-matches-within-limits`) y el espacio de un buzon
+  tambien (`MAIL_DAV_MAX_MAILBOX_BYTES`, 507 `quota-not-exceeded`).
 
 ### Aislamiento
 
@@ -171,9 +180,11 @@ lecturas), con la misma ruta con la que chi enruta.
 ### Autenticacion y fuerza bruta
 
 `mail-auth` acepta `service: "dav"` (flag `dav_access`, contrasena principal o de aplicacion) y, solo a `dav`, devuelve
-`username`, `tenant_id` y `mailbox_id`. `mail-dav` verifica cada peticion (sin cache: apagar `dav_access` o desactivar
-una contrasena de aplicacion se aplica en la siguiente) y trata un fallo de `mail-auth` como 503, no como 401, para que
-el cliente no descarte su contrasena. El freno por (buzon, IP) y por IP es el de `mail-auth` (Redis), el mismo que
+`username`, `tenant_id` y `mailbox_id`. `mail-dav` verifica cada peticion contra `mail-auth`, con una cache de
+aciertos de `MAIL_DAV_AUTH_CACHE_TTL` (10 segundos por defecto, 0 la apaga; ver "Endurecimiento tras la revision
+adversaria"): apagar `dav_access`, desactivar una contrasena de aplicacion o cambiar la contrasena se aplica como
+mucho pasado ese plazo. Trata un fallo de `mail-auth` como 503, no como 401, para que el cliente no descarte su
+contrasena. El freno por (buzon, IP) y por IP es el de `mail-auth` (Redis), el mismo que
 protege IMAP; el gateway aplica ademas su cupo general por IP y `mail-dav` el suyo (`MAIL_DAV_RATE_LIMIT_PER_MIN`). No
 se usa el cupo estricto de autenticacion del gateway: cada peticion DAV lleva credenciales y un cliente legitimo hace
 muchas. Con varias celdas la celda de cada buzon sale del indice de dominios de `organization` y `MAIL_AUTH_CELL_URLS`
@@ -323,14 +334,96 @@ poda, 20 altas simultaneas contra el limite, aislamiento entre buzones y empresa
 de las tablas, y mutaciones revertidas (quitar el filtro de buzon de la busqueda de coleccion y el del borrado por buzon
 hace fallar las pruebas; con la politica apagada la misma consulta si veria los eventos ajenos).
 
+## Endurecimiento tras la revision adversaria (2026-09-21)
+
+Revision como atacante autenticado (dueno de una contrasena de DAV, o de una empresa cliente) y como atacante sin
+credenciales, de la superficie completa: parser XML, vCard, iCalendar y RRULE, repositorio, `mail-auth`, gateway y
+consumidor de bajas. Cada hallazgo se demostro con una prueba que fallaba antes del arreglo (las cifras son las
+medidas antes de arreglarlo, en la maquina de desarrollo).
+
+### Lo que estaba mal y como se arreglo
+
+| Hallazgo | Severidad | Prueba y medida | Arreglo |
+|---|---|---|---|
+| Al releer un objeto guardado para una consulta se recalculaba su indice: la expansion de una recurrencia con presupuesto de 1 048 576 unidades, por cada candidato y en cada `calendar-query` | Alta | Un `RRULE:FREQ=DAILY;COUNT=400000` cuesta 64 ms y 1,2 millones de reservas por evento al releerlo; con 20 000 eventos de ese tipo un solo `REPORT` gasta unos 21 minutos de CPU | `ParseStoredCalendarObject` no calcula el indice (ya esta en la base) |
+| Sin tope de contrasenas de aplicacion por buzon, y `mail-auth` comparaba cada intento fallido con TODAS | Alta (afecta a todas las empresas de la celda) | Un administrador de empresa crea miles y cada intento de entrar cuesta miles de bcrypt en el `mail-auth` que tambien atiende a Dovecot | `mail-directory` no deja pasar de 25 por buzon (409 `ErrMaxAppPasswordsReached`) y `mail-auth` lee como mucho 50 |
+| Lecturas sin tope: PROPFIND de profundidad 1, `sync-collection`, multiget y consultas cargaban en memoria toda la libreta (o el calendario) CON sus objetos, se pidieran o no | Media a alta | 10 000 contactos de 256 KiB son 2,5 GiB por peticion; un multiget con el mismo `href` repetido multiplicaba el contenido por lo que cupiera en el cuerpo | Un listado sin `address-data`/`calendar-data` no lee los objetos (solo su tamano, `octet_length`, que no descomprime); con datos se corta al pasar `MAIL_DAV_MAX_RESPONSE_BYTES` (507 `number-of-matches-within-limits`); `addressbook-query` y `calendar-query` recorren de uno en uno y solo conservan las coincidencias; los `href` repetidos (o escritos de otra forma) se responden una vez |
+| El prop de una peticion se repetia en la respuesta de cada recurso | Media | Un cuerpo de 250 KiB pide 60 000 propiedades de cada contacto | Mas de 128 propiedades es 400; las repetidas se responden una vez |
+| Espacio sin tope por buzon | Media | 10 000 contactos y 20 000 eventos de 256 KiB son 7,5 GiB por buzon en la base compartida | `MAIL_DAV_MAX_MAILBOX_BYTES` (64 MiB por defecto, contactos y eventos por separado), comprobado en el alta y en cada modificacion bajo el cerrojo del buzon; reducir un objeto nunca se rechaza |
+| El desdoblado de lineas de continuacion era cuadratico | Media | Un vCard de 250 KiB de continuaciones tarda 0,58 s y reserva 2,2 GiB; se repetia por objeto en cada consulta | Cada linea logica se une una sola vez |
+| El tiempo de respuesta a una contrasena mala distinguia buzones: uno con contrasenas de aplicacion tardaba (1+N) comparaciones frente a 1 de uno inexistente | Media (enumeracion de direcciones) | 241 ms frente a 40 ms con cinco contrasenas de aplicacion | Toda contrasena que no es la principal cuesta dos rondas: la segunda compara las de aplicacion a la vez (o un hash ficticio) |
+| Una verificacion de bcrypt y una fila en `mail.sasl_logins` (mas la actualizacion de `last_used_at`) por peticion HTTP | Media | 20 peticiones de un cliente dejaban 20 filas, en una tabla sin retencion | Cache de aciertos en `mail-dav`, tope de verificaciones simultaneas y un registro por cliente y ventana de 5 minutos para los protocolos que verifican cada peticion |
+| Sin tope de peticiones simultaneas ni plazo: pool de diez conexiones por empresa, consultas que seguian tras el `WriteTimeout` | Media | Peticiones acumuladas esperando conexion | `MAIL_DAV_MAX_INFLIGHT` (503 con `Retry-After`), `MAIL_DAV_REQUEST_TIMEOUT` (cancela las consultas) y el recorrido de las consultas comprueba el contexto |
+| Escritura y baja de los datos de un buzon tomaban los cerrojos en orden distinto | Baja | Cuatro escritores contra la baja fallan en la primera ronda con `deadlock detected` (40P01): Postgres aborta una de las dos | La escritura toma el cerrojo del buzon antes que el de la coleccion, como la baja |
+| `TZID` con forma de nombre de zona pero inexistente: se buscaba de nuevo en cada aparicion | Baja | 22 microsegundos por aparicion; una serie de 15 000 apariciones, 330 ms | Cache acotada (1024 nombres) de zonas inexistentes |
+
+### Configuracion nueva (todo arranca igual sin ella)
+
+`MAIL_DAV_MAX_MAILBOX_BYTES` (64 MiB), `MAIL_DAV_MAX_RESPONSE_BYTES` (16 MiB; un vCard o un evento de tamano maximo debe
+caber en los dos, o el servicio no arranca), `MAIL_DAV_MAX_INFLIGHT` (64), `MAIL_DAV_REQUEST_TIMEOUT` (25 s),
+`MAIL_DAV_AUTH_CACHE_TTL` (10 s, 0 la apaga) y `MAIL_DAV_AUTH_MAX_CONCURRENT` (16). Migraciones: ninguna.
+
+### La cache de verificaciones y lo que cuesta
+
+Solo se recuerda un acierto, con una clave HMAC (con una clave aleatoria que solo vive en el proceso) del buzon y la
+contrasena: la contrasena no queda en memoria y un rechazo nunca se recuerda, de modo que corregirla entra a la
+siguiente peticion. El precio es que apagar `dav_access`, desactivar una contrasena de aplicacion, cambiarla o dar de
+baja el buzon se aplica como mucho a los 10 segundos (`MAIL_DAV_AUTH_CACHE_TTL`; con 0 vuelve a ser inmediato y a costar
+un bcrypt por peticion). Un acierto recordado no pasa por el freno de `mail-auth`, que solo protege de lo que falla.
+`ops/e2e/mail.sh` arranca `mail-dav` con 2 segundos y espera 3 tras cada revocacion.
+
+### Lo que se reviso y estaba bien (con prueba)
+
+* XML: `encoding/xml` no resuelve entidades (externas, `billion laughs` y DTD dan 400), los cuerpos se decodifican en
+  estructuras sin recursion y el anidamiento profundo se salta de forma iterativa; el cuerpo esta acotado y los
+  timeouts del servidor (15 s de lectura, 5 s de cabeceras) frenan el `slowloris`.
+* Expresiones regulares: solo `regexp` de Go (tiempo lineal), sin retroceso: no hay ReDoS.
+* Los analizadores (iCalendar con su expansion de recurrencias, vCard y RRULE) se probaron con fuzzing nativo
+  (`internal/domain/fuzz_test.go`: unos 3 millones de ejecuciones del de iCalendar, con un tope de 250 ms por entrada, y
+  medio millon a tres millones de los otros): ni un panico ni una entrada lenta. `go test -fuzz` los vuelve a lanzar.
+* Aislamiento: la ruta se decodifica por segmentos (sin `..`, `%2F`, `\`, NUL ni controles), el usuario de la URL debe
+  ser el del buzon autenticado, un token de sincronizacion de otra coleccion es 403, cada consulta filtra por empresa
+  y buzon y las politicas RLS las repiten (probado con el rol de servicio y como dueno de las tablas).
+* `sync-collection`: la secuencia y el registro de cambios se escriben en la misma transaccion con la coleccion
+  bloqueada (`FOR UPDATE`), un cambio y su numero son atomicos y las lecturas nunca ven un cambio posterior al token; el
+  registro se poda en cada escritura a `MAIL_DAV_CHANGES_RETAINED` (no crece sin limite).
+* Concurrencia: `If-Match` e `If-None-Match` se evaluan con la coleccion bloqueada; el limite de objetos, bajo el
+  cerrojo del buzon (probado con 20 altas simultaneas).
+* Gateway: un metodo de extension solo llega a un prefijo que lo declara, la IP del visitante que llega a `mail-dav` no
+  la fija el cliente (`X-Real-IP` y `X-Forwarded-For` de un cliente de Internet se descartan, probado), el descubrimiento
+  redirige a una ruta constante (no hay redireccion abierta) y el cupo por IP del gateway alcanza a `/api/v1/dav`.
+* Ninguna credencial Basic llega a los registros (probado con un observador de `zap`), y no hay sesion que fijar.
+* Volumen (Postgres real, 50 000 contactos y 50 000 eventos en un buzon y otros 100 000 alrededor): listado de la libreta
+  sin datos 110 ms en la base, multiget de 50 contactos 4 ms, `calendar-query` de un dia 5 ms (usa `idx_mail_dav_events_range`),
+  alta con comprobacion de espacio y de conteo 26 a 38 ms, `sync-collection` de 1000 cambios 62 ms.
+
+### Recomendaciones (no implementadas)
+
+* **Paginar `sync-collection`** con 507 y un token de continuacion (RFC 6578, 3.6). No se hizo: sin datos una respuesta es
+  de metadatos (unos 600 bytes por recurso) y con datos la acota `MAIL_DAV_MAX_RESPONSE_BYTES`; la sincronizacion inicial
+  paginada exige un token con cursor.
+* **Retencion de `mail.sasl_logins`** (de `mail-directory` o `mail-auth`): la tabla no se poda nunca; con el registro por
+  ventana crece mucho menos, pero sigue creciendo.
+* **Cobrar el presupuesto de expansion por dias evaluados**: una unidad de trabajo de una regla `YEARLY` evalua unos 366
+  dias; `FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=30` cuesta 12,6 ms por evento y una consulta puede llegar a 1,3 s de CPU con
+  `MAIL_DAV_MAX_QUERY_RECURRENCE_WORK` por defecto.
+* **Tope de cuerpo en el gateway para `dav`** (hoy lo pone `mail-dav`, y el gateway reenvia en streaming con su
+  `ReadTimeout`); requiere un campo en `routes.json`.
+* **Indice `(addressbook_id, resource_name)` para ordenar** el listado de contactos: hoy Postgres ordena en memoria
+  (110 ms con 50 000).
+* **Un buzon con contrasenas de aplicacion creadas antes del tope** sigue funcionando (las lee `mail-auth` hasta 50); las
+  que pasen de 25 conviene revocarlas.
+
 ## Alternativas descartadas
 
 * **Embeber Radicale, Baikal u otro servidor DAV en Python o PHP**: reintroduce lo que se quito de mailcow y una
   segunda pila que operar y parchear; su modelo de usuarios y ficheros no encaja con la base por empresa.
 * **Solo un cliente web de contactos**: no atiende al que necesita sincronizar con el movil, que es el motivo.
 * **`go-webdav`**: ver arriba.
-* **Cachear la verificacion en `mail-dav`**: ahorraria un bcrypt por peticion, pero retrasaria la revocacion de una
-  contrasena o de `dav_access`. Mejora futura si las metricas lo piden, con un TTL corto y explicito.
+* **Cachear la verificacion en `mail-dav` sin plazo o sin acotarla**: se descarto en la primera version y se retomo tras
+  la revision adversaria, con un TTL corto y explicito (10 segundos, configurable, solo aciertos, clave HMAC con una
+  clave que vive en el proceso, tamano acotado): sin ella cada peticion de un cliente que sincroniza era un bcrypt y una
+  fila en `mail.sasl_logins`. Retrasa hasta ese plazo la revocacion de una contrasena o de `dav_access`.
 
 ## Consecuencias y riesgos
 
@@ -341,14 +434,17 @@ hace fallar las pruebas; con la politica apagada la misma consulta si veria los 
   `REPORT`, `MKCOL` y `MKCALENDAR`: hay que comprobarlo.
 * Un cambio de modelo de datos de vCard e iCalendar es dificil de revertir: los objetos se guardan tal cual los
   envio el cliente y se validan, no se normalizan.
-* Cada peticion cuesta una verificacion de bcrypt en `mail-auth`. Un cliente que sincroniza a menudo con muchas
-  peticiones cortas lo notara; el cupo por IP lo acota.
-* `calendar-query` con `time-range` relee y evalua en memoria los eventos que el indice no descarta; una serie sin
-  fin siempre es candidata y cuesta su expansion (acotada por presupuesto, y devuelta si no alcanza). Con muchas
-  series sin fin por buzon la consulta gasta el presupuesto y devuelve de mas: las metricas dirian si conviene
-  indexar mas (por ejemplo, almacenar la regla y la proxima aparicion).
-* `addressbook-query` filtra en memoria los contactos de la libreta (acotados por buzon, hasta
-  `MAIL_DAV_MAX_CONTACTS_PER_MAILBOX`); con el limite por defecto es barato, con limites muy altos habria que indexar.
+* Cada verificacion que no acierta la cache cuesta un bcrypt en `mail-auth` (que tambien atiende a Dovecot): la cache de
+  aciertos, el tope de verificaciones simultaneas (`MAIL_DAV_AUTH_MAX_CONCURRENT`), el cupo por IP y el freno de
+  `mail-auth` (por buzon e IP, antes del bcrypt) lo acotan.
+* `calendar-query` con `time-range` relee y evalua uno a uno los eventos que el indice no descarta (sin acumularlos:
+  solo se conservan las coincidencias); una serie sin fin siempre es candidata y cuesta su expansion (acotada por
+  presupuesto, y devuelta si no alcanza). Con muchas series sin fin por buzon la consulta gasta el presupuesto y
+  devuelve de mas: las metricas dirian si conviene indexar mas (por ejemplo, almacenar la regla y la proxima
+  aparicion).
+* `addressbook-query` recorre uno a uno los contactos de la libreta (acotados por buzon, hasta
+  `MAIL_DAV_MAX_CONTACTS_PER_MAILBOX`, y por espacio, `MAIL_DAV_MAX_MAILBOX_BYTES`); con los limites por defecto es
+  barato, con limites muy altos habria que indexar.
 
 ## Pendiente
 

@@ -40,7 +40,7 @@ func TestPurgeBorraLibretasYContactosDelBuzon(t *testing.T) {
 	if err != nil || removed.Addressbooks != 2 {
 		t.Fatalf("PurgeMailbox: %+v %v", removed, err)
 	}
-	if _, _, err := uc.Contacts(ctx, ana.Principal, "personal"); !errors.Is(err, domain.ErrNotFound) {
+	if _, _, err := uc.Contacts(ctx, ana.Principal, "personal", true); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("la libreta borrada no existe: %v", err)
 	}
 	// Lo unico que queda es la libreta por defecto que el buzon recibiria de nuevo, vacia.
@@ -60,7 +60,7 @@ func TestPurgeNoTocaOtroBuzonDeLaMismaEmpresaNiOtraEmpresa(t *testing.T) {
 		t.Fatalf("PurgeMailbox: %+v %v", removed, err)
 	}
 	for name, p := range map[string]domain.Principal{"otro buzon de la empresa": cris.Principal, "otra empresa": bea.Principal} {
-		if _, contacts, err := uc.Contacts(context.Background(), p, "personal"); err != nil || len(contacts) != 1 {
+		if _, contacts, err := uc.Contacts(context.Background(), p, "personal", true); err != nil || len(contacts) != 1 {
 			t.Errorf("%s perdio sus contactos: %v %d", name, err, len(contacts))
 		}
 	}
@@ -74,7 +74,7 @@ func TestPurgeExigeQueLaEmpresaSeaLaDelBuzon(t *testing.T) {
 	if removed, err := uc.PurgeMailbox(context.Background(), bea.Principal.TenantID, ana.Principal.MailboxID); err != nil || removed != (domain.PurgeResult{}) {
 		t.Fatalf("PurgeMailbox con otra empresa: %+v %v", removed, err)
 	}
-	if _, contacts, err := uc.Contacts(context.Background(), ana.Principal, "personal"); err != nil || len(contacts) != 1 {
+	if _, contacts, err := uc.Contacts(context.Background(), ana.Principal, "personal", true); err != nil || len(contacts) != 1 {
 		t.Fatalf("los contactos de ana siguen: %v %d", err, len(contacts))
 	}
 }
@@ -89,7 +89,7 @@ func TestPurgeIdentificaPorIdNoPorNombre(t *testing.T) {
 	if removed, err := uc.PurgeMailbox(context.Background(), ana.Principal.TenantID, ana.Principal.MailboxID); err != nil || removed.Addressbooks != 1 {
 		t.Fatalf("PurgeMailbox: %+v %v", removed, err)
 	}
-	if _, contacts, err := uc.Contacts(context.Background(), recreated, "personal"); err != nil || len(contacts) != 1 {
+	if _, contacts, err := uc.Contacts(context.Background(), recreated, "personal", true); err != nil || len(contacts) != 1 {
 		t.Fatalf("el buzon recreado perdio sus contactos: %v %d", err, len(contacts))
 	}
 }
@@ -116,7 +116,7 @@ func TestPurgeRechazaIdentificadoresNulos(t *testing.T) {
 			t.Errorf("%v: %v", c, err)
 		}
 	}
-	if _, contacts, err := uc.Contacts(context.Background(), ana.Principal, "personal"); err != nil || len(contacts) != 1 {
+	if _, contacts, err := uc.Contacts(context.Background(), ana.Principal, "personal", true); err != nil || len(contacts) != 1 {
 		t.Fatalf("un identificador nulo no debe tocar nada: %v %d", err, len(contacts))
 	}
 }

@@ -18,6 +18,8 @@ type calPropItem struct {
 	Children []xmlName `xml:",any"`
 }
 
+func (l *calPropList) tooMany() bool { return l != nil && len(l.Items) > maxRequestedProps }
+
 // names devuelve el prop como lista de nombres y los modificadores de calendar-data que el servidor no
 // aplica. comp (recuperacion parcial) no se aplica y se admite: siempre se devuelve el objeto entero.
 func (l *calPropList) names() (list *propList, unsupported bool) {

@@ -157,7 +157,7 @@ func contact(t *testing.T, res, uid, name string) domain.Contact {
 func (e *env) put(t *testing.T, p domain.Principal, slug string, c domain.Contact, cond domain.Precondition) (bool, error) {
 	t.Helper()
 	c.TenantID, c.MailboxID = p.TenantID, p.MailboxID
-	return e.repo.PutContact(e.ctx, p, slug, c, cond, maxContacts, maxChanges)
+	return e.repo.PutContact(e.ctx, p, slug, c, cond, writeLimits(maxContacts, maxChanges))
 }
 
 func TestCicloDeVidaDeLibretasYContactos(t *testing.T) {
@@ -211,11 +211,11 @@ func TestCicloDeVidaDeLibretasYContactos(t *testing.T) {
 		t.Fatalf("libreta inexistente: %v", err)
 	}
 
-	book, contacts, err := e.repo.ListContacts(e.ctx, ana, "contacts")
+	book, contacts, err := e.repo.ListContacts(e.ctx, ana, "contacts", withData)
 	if err != nil || len(contacts) != 1 || book.SyncSeq != 2 || contacts[0].DisplayName != "Ana editada" {
 		t.Fatalf("listado: %v %+v %+v", err, book, contacts)
 	}
-	if many, err := e.repo.GetContacts(e.ctx, ana, "contacts", []string{"a.vcf", "nada.vcf"}); err != nil || len(many) != 1 {
+	if many, err := e.repo.GetContacts(e.ctx, ana, "contacts", []string{"a.vcf", "nada.vcf"}, withData); err != nil || len(many) != 1 {
 		t.Fatalf("multiget: %v %+v", err, many)
 	}
 
@@ -257,7 +257,7 @@ func TestSincronizacionPorCambios(t *testing.T) {
 	for i := 1; i <= 2; i++ {
 		e.put(t, ana, "contacts", contact(t, fmt.Sprintf("c%d.vcf", i), fmt.Sprintf("c%d", i), "C"), domain.Precondition{})
 	}
-	afterTwo, changed, removed, err := e.repo.ChangesSince(e.ctx, ana, "contacts", 0)
+	afterTwo, changed, removed, err := e.repo.ChangesSince(e.ctx, ana, "contacts", 0, withData)
 	if err != nil || afterTwo.SyncSeq != 2 || len(changed) != 2 || len(removed) != 0 {
 		t.Fatalf("desde el principio: %v %+v %d %v", err, afterTwo, len(changed), removed)
 	}
@@ -265,14 +265,14 @@ func TestSincronizacionPorCambios(t *testing.T) {
 	if err := e.repo.DeleteContact(e.ctx, ana, "contacts", "c2.vcf", domain.Precondition{}, maxChanges); err != nil {
 		t.Fatal(err)
 	}
-	book, changed, removed, err := e.repo.ChangesSince(e.ctx, ana, "contacts", afterTwo.SyncSeq)
+	book, changed, removed, err := e.repo.ChangesSince(e.ctx, ana, "contacts", afterTwo.SyncSeq, withData)
 	if err != nil || book.SyncSeq != 4 || len(changed) != 1 || changed[0].ResourceName != "c1.vcf" || len(removed) != 1 || removed[0] != "c2.vcf" {
 		t.Fatalf("diferencia: %v %+v %+v %v", err, book, changed, removed)
 	}
 	// Un recurso creado y borrado dentro del intervalo solo consta como borrado.
 	e.put(t, ana, "contacts", contact(t, "c3.vcf", "c3", "C3"), domain.Precondition{})
 	_ = e.repo.DeleteContact(e.ctx, ana, "contacts", "c3.vcf", domain.Precondition{}, maxChanges)
-	_, changed, removed, err = e.repo.ChangesSince(e.ctx, ana, "contacts", book.SyncSeq)
+	_, changed, removed, err = e.repo.ChangesSince(e.ctx, ana, "contacts", book.SyncSeq, withData)
 	if err != nil || len(changed) != 0 || len(removed) != 1 || removed[0] != "c3.vcf" {
 		t.Fatalf("creado y borrado: %v %+v %v", err, changed, removed)
 	}
@@ -282,13 +282,13 @@ func TestSincronizacionPorCambios(t *testing.T) {
 	if current.ChangesFloor != current.SyncSeq-maxChanges {
 		t.Fatalf("suelo de cambios %d con secuencia %d", current.ChangesFloor, current.SyncSeq)
 	}
-	if _, _, _, err := e.repo.ChangesSince(e.ctx, ana, "contacts", current.ChangesFloor-1); !errors.Is(err, domain.ErrInvalidSyncToken) {
+	if _, _, _, err := e.repo.ChangesSince(e.ctx, ana, "contacts", current.ChangesFloor-1, withData); !errors.Is(err, domain.ErrInvalidSyncToken) {
 		t.Fatalf("token podado: %v", err)
 	}
-	if _, _, _, err := e.repo.ChangesSince(e.ctx, ana, "contacts", current.ChangesFloor); err != nil {
+	if _, _, _, err := e.repo.ChangesSince(e.ctx, ana, "contacts", current.ChangesFloor, withData); err != nil {
 		t.Fatalf("el limite exacto aun se resuelve: %v", err)
 	}
-	if _, _, _, err := e.repo.ChangesSince(e.ctx, ana, "contacts", current.SyncSeq+1); !errors.Is(err, domain.ErrInvalidSyncToken) {
+	if _, _, _, err := e.repo.ChangesSince(e.ctx, ana, "contacts", current.SyncSeq+1, withData); !errors.Is(err, domain.ErrInvalidSyncToken) {
 		t.Fatalf("token del futuro: %v", err)
 	}
 	var kept int
@@ -318,7 +318,7 @@ func TestLimitesYConcurrencia(t *testing.T) {
 			slug := []string{"uno", "dos"}[i%2]
 			c := contact(t, fmt.Sprintf("p%d.vcf", i), fmt.Sprintf("p%d", i), "P")
 			c.TenantID, c.MailboxID = ana.TenantID, ana.MailboxID
-			_, err := e.repo.PutContact(e.ctx, ana, slug, c, domain.Precondition{}, maxContacts, 1000)
+			_, err := e.repo.PutContact(e.ctx, ana, slug, c, domain.Precondition{}, writeLimits(maxContacts, 1000))
 			results <- err
 		}(i)
 	}
@@ -355,7 +355,7 @@ func TestLimitesYConcurrencia(t *testing.T) {
 			defer wg.Done()
 			c := contact(t, "unico.vcf", "unico", "U")
 			c.TenantID, c.MailboxID = ana.TenantID, ana.MailboxID
-			_, err := e.repo.PutContact(e.ctx, ana, "tres", c, domain.Precondition{IfNoneMatchAny: true}, maxContacts, 1000)
+			_, err := e.repo.PutContact(e.ctx, ana, "tres", c, domain.Precondition{IfNoneMatchAny: true}, writeLimits(maxContacts, 1000))
 			created <- err
 		}()
 	}
@@ -442,16 +442,16 @@ func TestAislamientoEntreBuzonesYEmpresas(t *testing.T) {
 		if _, err := e.repo.GetContact(e.ctx, other, "contacts", "secreto.vcf"); !errors.Is(err, domain.ErrNotFound) {
 			t.Errorf("%s lee: %v", name, err)
 		}
-		if _, contacts, err := e.repo.ListContacts(e.ctx, other, "contacts"); err != nil || len(contacts) != 0 {
+		if _, contacts, err := e.repo.ListContacts(e.ctx, other, "contacts", withData); err != nil || len(contacts) != 0 {
 			t.Errorf("%s lista: %v %+v", name, err, contacts)
 		}
-		if got, err := e.repo.GetContacts(e.ctx, other, "contacts", []string{"secreto.vcf"}); err != nil || len(got) != 0 {
+		if got, err := e.repo.GetContacts(e.ctx, other, "contacts", []string{"secreto.vcf"}, withData); err != nil || len(got) != 0 {
 			t.Errorf("%s pide por nombre: %v %+v", name, err, got)
 		}
 		if err := e.repo.DeleteContact(e.ctx, other, "contacts", "secreto.vcf", domain.Precondition{}, maxChanges); !errors.Is(err, domain.ErrNotFound) {
 			t.Errorf("%s borra: %v", name, err)
 		}
-		if _, _, _, err := e.repo.ChangesSince(e.ctx, other, "contacts", 0); err != nil {
+		if _, _, _, err := e.repo.ChangesSince(e.ctx, other, "contacts", 0, withData); err != nil {
 			t.Errorf("%s pide cambios de su propia libreta: %v", name, err)
 		}
 		// La misma libreta no se puede alcanzar con el id de otro: sus lecturas son por slug DENTRO de su buzon.
@@ -583,4 +583,10 @@ func TestLaBaseRechazaLoQueElServicioNoDeberiaEscribir(t *testing.T) {
 	if _, err := e.service.Exec(e.ctx, `SET ROLE postgres`); err == nil {
 		t.Error("el rol de servicio pudo cambiar de rol")
 	}
+}
+
+var withData = domain.ReadOptions{WithData: true}
+
+func writeLimits(maxItems, maxChanges int) domain.WriteLimits {
+	return domain.WriteLimits{MaxItems: maxItems, MaxBytes: 1 << 30, MaxChanges: maxChanges}
 }

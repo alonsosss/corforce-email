@@ -116,19 +116,33 @@ func controlProblem(raw string) string {
 	return ""
 }
 
-// unfold parte en lineas (CRLF o LF), une las continuaciones (RFC 6350, 3.2) y descarta las vacias.
+// unfold parte en lineas (CRLF o LF), une las continuaciones (RFC 6350, 3.2) y descarta las vacias. Cada
+// linea logica se une una sola vez: concatenar cada continuacion sobre la linea acumulada es cuadratico, y
+// el cuerpo de un PUT (o cada objeto de una consulta) es entrada de un tercero.
 func unfold(raw string) []string {
-	var out []string
+	var out, pieces []string
+	flush := func() {
+		switch len(pieces) {
+		case 0:
+		case 1:
+			out = append(out, pieces[0])
+		default:
+			out = append(out, strings.Join(pieces, ""))
+		}
+		pieces = pieces[:0]
+	}
 	for _, line := range strings.Split(strings.ReplaceAll(raw, "\r\n", "\n"), "\n") {
-		if line != "" && (line[0] == ' ' || line[0] == '\t') && len(out) > 0 {
-			out[len(out)-1] += line[1:]
+		if line != "" && (line[0] == ' ' || line[0] == '\t') && len(pieces) > 0 {
+			pieces = append(pieces, line[1:])
 			continue
 		}
 		if strings.TrimSpace(line) == "" {
 			continue
 		}
-		out = append(out, line)
+		flush()
+		pieces = append(pieces, line)
 	}
+	flush()
 	return out
 }
 
@@ -253,6 +267,7 @@ func NewContact(resourceName, raw string, lim Limits) (Contact, error) {
 		ResourceName: resourceName,
 		UID:          card.UID,
 		VCard:        raw,
+		Size:         len(raw),
 		ETag:         ETagOf(raw),
 		DisplayName:  card.DisplayName(),
 		Emails:       card.Emails(),

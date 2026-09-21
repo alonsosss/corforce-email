@@ -42,6 +42,19 @@ var (
 // isDataProp dice si la propiedad es el contenido del objeto: solo se devuelve si se pide por su nombre.
 func isDataProp(n xml.Name) bool { return n == nameAddressData || n == nameCalendarData }
 
+// wantsData dice si la peticion pide el contenido de los objetos. Sin pedirlo, un listado no necesita leerlo.
+func (r propRequest) wantsData() bool {
+	if r.mode != modeListed {
+		return false
+	}
+	for _, n := range r.names {
+		if isDataProp(n) {
+			return true
+		}
+	}
+	return false
+}
+
 // reportProps son las propiedades de un REPORT que no pide ninguna: el etag y el vCard.
 var reportProps = propRequest{mode: modeListed, names: []xml.Name{nameGetETag, nameAddressData}}
 
@@ -132,7 +145,7 @@ func contactProps(c domain.Contact) []element {
 		el(davName("resourcetype"), ""),
 		el(davName("getetag"), etagHeader(c.ETag)),
 		el(davName("getcontenttype"), vcardContentType),
-		el(davName("getcontentlength"), strconv.Itoa(len(c.VCard))),
+		el(davName("getcontentlength"), strconv.Itoa(c.Size)),
 		el(davName("getlastmodified"), c.UpdatedAt.UTC().Format(http.TimeFormat)),
 		el(davName("displayname"), c.DisplayName),
 		privileges("read", "write-content", "unbind"),
@@ -215,12 +228,21 @@ func (h *Handler) requestedProps(r *http.Request, w http.ResponseWriter) (propRe
 	case err != nil:
 		badBody(w, err)
 		return propRequest{}, false
+	case req.Prop.tooMany():
+		tooManyProps(w)
+		return propRequest{}, false
 	case req.PropName != nil:
 		return propRequest{mode: modeNames}, true
 	case req.Prop != nil:
 		return propRequest{mode: modeListed, names: req.Prop.names()}, true
 	}
 	return propRequest{mode: modeAll}, true
+}
+
+// tooManyProps responde al prop con mas propiedades de las que un cliente pide: cada una se repite en la
+// respuesta de cada recurso, y el cuerpo permite decenas de miles.
+func tooManyProps(w http.ResponseWriter) {
+	http.Error(w, "demasiadas propiedades pedidas", http.StatusBadRequest)
 }
 
 // badBody distingue un cuerpo demasiado grande de uno mal formado.
@@ -280,7 +302,7 @@ func (h *Handler) propfind(w http.ResponseWriter, r *http.Request, p domain.Prin
 			out = []resource{h.bookResource(p, b)}
 			break
 		}
-		b, contacts, err := h.uc.Contacts(ctx, p, t.slug)
+		b, contacts, err := h.uc.Contacts(ctx, p, t.slug, req.wantsData())
 		if err != nil {
 			h.fail(w, r, err)
 			return
@@ -291,7 +313,7 @@ func (h *Handler) propfind(w http.ResponseWriter, r *http.Request, p domain.Prin
 		}
 	case kindCalHomes, kindCalHome, kindCalendar, kindEvent:
 		var err error
-		if out, err = h.calendarResources(ctx, p, t, depth); err != nil {
+		if out, err = h.calendarResources(ctx, p, t, depth, req.wantsData()); err != nil {
 			h.fail(w, r, err)
 			return
 		}

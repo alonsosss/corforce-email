@@ -31,14 +31,16 @@ type collectionKind struct {
 	changes string
 	// fk es la columna de items y changes que apunta a la coleccion.
 	fk string
+	// data es la columna con el objeto (vCard o iCalendar), cuyo tamano cuenta para el espacio del buzon.
+	data string
 	// limit y itemLimit son los errores al pasar el maximo de colecciones y de objetos del buzon.
 	limit     error
 	itemLimit error
 }
 
 var (
-	addressbooksKind = collectionKind{table: "mail_dav.addressbooks", items: "mail_dav.contacts", changes: "mail_dav.collection_changes", fk: "addressbook_id", limit: domain.ErrAddressbookLimit, itemLimit: domain.ErrContactLimit}
-	calendarsKind    = collectionKind{table: "mail_dav.calendars", items: "mail_dav.events", changes: "mail_dav.calendar_changes", fk: "calendar_id", limit: domain.ErrCalendarLimit, itemLimit: domain.ErrEventLimit}
+	addressbooksKind = collectionKind{table: "mail_dav.addressbooks", items: "mail_dav.contacts", changes: "mail_dav.collection_changes", fk: "addressbook_id", data: "vcard", limit: domain.ErrAddressbookLimit, itemLimit: domain.ErrContactLimit}
+	calendarsKind    = collectionKind{table: "mail_dav.calendars", items: "mail_dav.events", changes: "mail_dav.calendar_changes", fk: "calendar_id", data: "ical", limit: domain.ErrCalendarLimit, itemLimit: domain.ErrEventLimit}
 )
 
 // mailboxLockClass es el espacio de los cerrojos consultivos por buzon: serializa el conteo de los
@@ -68,11 +70,19 @@ func scanCollection(row pgx.Row) (domain.Addressbook, error) {
 	return b, err
 }
 
-const contactColumns = `id, tenant_id, mailbox_id, addressbook_id, resource_name, uid, vcard, etag, display_name, emails, created_at, updated_at`
+// contactColumns son las columnas de un contacto; sin datos el vCard se lee vacio y solo se trae su
+// tamano (octet_length de un text no descomprime el valor).
+func contactColumns(withData bool) string {
+	data := `''`
+	if withData {
+		data = `vcard`
+	}
+	return `id, tenant_id, mailbox_id, addressbook_id, resource_name, uid, ` + data + `, etag, display_name, emails, created_at, updated_at, octet_length(vcard)`
+}
 
 func scanContact(row pgx.Row) (domain.Contact, error) {
 	var c domain.Contact
-	err := row.Scan(&c.ID, &c.TenantID, &c.MailboxID, &c.AddressbookID, &c.ResourceName, &c.UID, &c.VCard, &c.ETag, &c.DisplayName, &c.Emails, &c.CreatedAt, &c.UpdatedAt)
+	err := row.Scan(&c.ID, &c.TenantID, &c.MailboxID, &c.AddressbookID, &c.ResourceName, &c.UID, &c.VCard, &c.ETag, &c.DisplayName, &c.Emails, &c.CreatedAt, &c.UpdatedAt, &c.Size)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return c, domain.ErrNotFound
 	}
@@ -87,22 +97,47 @@ func (r *Repository) collection(ctx context.Context, p domain.Principal, k colle
 	return scanCollection(r.pool.QueryRow(ctx, q, p.TenantID, p.MailboxID, slug))
 }
 
-func (r *Repository) contacts(ctx context.Context, p domain.Principal, book domain.Addressbook, names []string) ([]domain.Contact, error) {
-	q := `SELECT ` + contactColumns + ` FROM mail_dav.contacts WHERE tenant_id = $1 AND mailbox_id = $2 AND addressbook_id = $3`
+// readBudget corta un listado que lleva objetos al pasar el tope de bytes: la memoria de una lectura no
+// puede depender de lo que el buzon tenga guardado.
+type readBudget struct {
+	max, used int
+}
+
+func (b *readBudget) add(opt domain.ReadOptions, size int) error {
+	if !opt.WithData || b.max <= 0 {
+		return nil
+	}
+	if b.used += size; b.used > b.max {
+		return domain.ErrResultTooLarge
+	}
+	return nil
+}
+
+func (r *Repository) contactsQuery(book domain.Addressbook, p domain.Principal, names []string, withData bool) (string, []any) {
+	q := `SELECT ` + contactColumns(withData) + ` FROM mail_dav.contacts WHERE tenant_id = $1 AND mailbox_id = $2 AND addressbook_id = $3`
 	args := []any{p.TenantID, p.MailboxID, book.ID}
 	if names != nil {
 		q += ` AND resource_name = ANY($4)`
 		args = append(args, names)
 	}
-	rows, err := r.pool.Query(ctx, q+` ORDER BY resource_name`, args...)
+	return q + ` ORDER BY resource_name`, args
+}
+
+func (r *Repository) contacts(ctx context.Context, p domain.Principal, book domain.Addressbook, names []string, opt domain.ReadOptions) ([]domain.Contact, error) {
+	q, args := r.contactsQuery(book, p, names, opt.WithData)
+	rows, err := r.pool.Query(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
+	budget := readBudget{max: opt.MaxBytes}
 	out := []domain.Contact{}
 	for rows.Next() {
 		c, err := scanContact(rows)
 		if err != nil {
+			return nil, err
+		}
+		if err := budget.add(opt, c.Size); err != nil {
 			return nil, err
 		}
 		out = append(out, c)
@@ -218,7 +253,7 @@ func (r *Repository) DeleteMailboxData(ctx context.Context, p domain.Principal) 
 	return r.deleteMailboxCollections(ctx, p, addressbooksKind)
 }
 
-func (r *Repository) ListContacts(ctx context.Context, p domain.Principal, slug string) (domain.Addressbook, []domain.Contact, error) {
+func (r *Repository) ListContacts(ctx context.Context, p domain.Principal, slug string, opt domain.ReadOptions) (domain.Addressbook, []domain.Contact, error) {
 	var (
 		book domain.Addressbook
 		out  []domain.Contact
@@ -227,10 +262,36 @@ func (r *Repository) ListContacts(ctx context.Context, p domain.Principal, slug 
 		if book, err = r.collection(ctx, p, addressbooksKind, slug, false); err != nil {
 			return err
 		}
-		out, err = r.contacts(ctx, p, book, nil)
+		out, err = r.contacts(ctx, p, book, nil, opt)
 		return err
 	})
 	return book, out, err
+}
+
+func (r *Repository) EachContact(ctx context.Context, p domain.Principal, slug string, fn func(domain.Contact) (bool, error)) (domain.Addressbook, error) {
+	var book domain.Addressbook
+	err := r.scoped(ctx, p, func(ctx context.Context) (err error) {
+		if book, err = r.collection(ctx, p, addressbooksKind, slug, false); err != nil {
+			return err
+		}
+		q, args := r.contactsQuery(book, p, nil, true)
+		rows, err := r.pool.Query(ctx, q, args...)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			c, err := scanContact(rows)
+			if err != nil {
+				return err
+			}
+			if more, err := fn(c); err != nil || !more {
+				return err
+			}
+		}
+		return rows.Err()
+	})
+	return book, err
 }
 
 func (r *Repository) GetContact(ctx context.Context, p domain.Principal, slug, resource string) (domain.Contact, error) {
@@ -241,7 +302,7 @@ func (r *Repository) GetContact(ctx context.Context, p domain.Principal, slug, r
 			return err
 		}
 		out, err = scanContact(r.pool.QueryRow(ctx,
-			`SELECT `+contactColumns+` FROM mail_dav.contacts
+			`SELECT `+contactColumns(true)+` FROM mail_dav.contacts
 			  WHERE tenant_id = $1 AND mailbox_id = $2 AND addressbook_id = $3 AND resource_name = $4`,
 			p.TenantID, p.MailboxID, book.ID, resource))
 		return err
@@ -249,14 +310,14 @@ func (r *Repository) GetContact(ctx context.Context, p domain.Principal, slug, r
 	return out, err
 }
 
-func (r *Repository) GetContacts(ctx context.Context, p domain.Principal, slug string, resources []string) ([]domain.Contact, error) {
+func (r *Repository) GetContacts(ctx context.Context, p domain.Principal, slug string, resources []string, opt domain.ReadOptions) ([]domain.Contact, error) {
 	var out []domain.Contact
 	err := r.scoped(ctx, p, func(ctx context.Context) error {
 		book, err := r.collection(ctx, p, addressbooksKind, slug, false)
 		if err != nil {
 			return err
 		}
-		out, err = r.contacts(ctx, p, book, resources)
+		out, err = r.contacts(ctx, p, book, resources, opt)
 		return err
 	})
 	return out, err
@@ -299,13 +360,34 @@ type itemWrite struct {
 	resource string
 	uid      string
 	etag     string
+	size     int64
 	insert   func(ctx context.Context, coll domain.Addressbook) error
 	update   func(ctx context.Context, coll domain.Addressbook) error
 }
 
-func (r *Repository) putItem(ctx context.Context, p domain.Principal, k collectionKind, slug string, w itemWrite, cond domain.Precondition, maxItems, maxChanges int) (bool, error) {
+// storageExceeded dice si guardar w dejaria al buzon por encima de su espacio. Reemplazar un objeto por
+// otro que no es mayor nunca se rechaza: un buzon que ya estaba por encima puede reducir lo suyo.
+func (r *Repository) storageExceeded(ctx context.Context, p domain.Principal, k collectionKind, coll domain.Addressbook, w itemWrite, maxBytes int64) (bool, error) {
+	var total, own int64
+	err := r.pool.QueryRow(ctx,
+		`SELECT COALESCE(sum(octet_length(`+k.data+`)), 0),
+		        COALESCE(sum(octet_length(`+k.data+`)) FILTER (WHERE `+k.fk+` = $3 AND resource_name = $4), 0)
+		   FROM `+k.items+` WHERE tenant_id = $1 AND mailbox_id = $2`,
+		p.TenantID, p.MailboxID, coll.ID, w.resource).Scan(&total, &own)
+	if err != nil {
+		return false, err
+	}
+	return total-own+w.size > maxBytes && w.size > own, nil
+}
+
+// putItem escribe con el cerrojo del buzon tomado ANTES que el de la coleccion: es el mismo orden que sigue
+// la baja de los datos de un buzon, de modo que ninguna escritura y ninguna baja se esperan la una a la otra.
+func (r *Repository) putItem(ctx context.Context, p domain.Principal, k collectionKind, slug string, w itemWrite, cond domain.Precondition, lim domain.WriteLimits) (bool, error) {
 	var created bool
 	err := r.scoped(ctx, p, func(ctx context.Context) error {
+		if err := r.lockMailbox(ctx, p); err != nil {
+			return err
+		}
 		coll, err := r.collection(ctx, p, k, slug, true)
 		if err != nil {
 			return err
@@ -330,15 +412,17 @@ func (r *Repository) putItem(ctx context.Context, p domain.Principal, k collecti
 		if !errors.Is(err, pgx.ErrNoRows) {
 			return err
 		}
+		if exceeded, err := r.storageExceeded(ctx, p, k, coll, w, lim.MaxBytes); err != nil {
+			return err
+		} else if exceeded {
+			return domain.ErrStorageLimit
+		}
 		if current == nil {
-			if err := r.lockMailbox(ctx, p); err != nil {
-				return err
-			}
 			var count int
 			if err := r.pool.QueryRow(ctx, `SELECT count(*) FROM `+k.items+` WHERE tenant_id = $1 AND mailbox_id = $2`, p.TenantID, p.MailboxID).Scan(&count); err != nil {
 				return err
 			}
-			if count >= maxItems {
+			if count >= lim.MaxItems {
 				return k.itemLimit
 			}
 			err = w.insert(ctx, coll)
@@ -353,7 +437,7 @@ func (r *Repository) putItem(ctx context.Context, p domain.Principal, k collecti
 			}
 			return err
 		}
-		return r.recordChange(ctx, p, k, coll, w.resource, false, maxChanges)
+		return r.recordChange(ctx, p, k, coll, w.resource, false, lim.MaxChanges)
 	})
 	return created && err == nil, err
 }
@@ -412,13 +496,13 @@ func (r *Repository) changedNames(ctx context.Context, p domain.Principal, k col
 	return live, removed, rows.Err()
 }
 
-func (r *Repository) PutContact(ctx context.Context, p domain.Principal, slug string, c domain.Contact, cond domain.Precondition, maxContacts, maxChanges int) (bool, error) {
+func (r *Repository) PutContact(ctx context.Context, p domain.Principal, slug string, c domain.Contact, cond domain.Precondition, lim domain.WriteLimits) (bool, error) {
 	emails := c.Emails
 	if emails == nil {
 		emails = []string{}
 	}
 	return r.putItem(ctx, p, addressbooksKind, slug, itemWrite{
-		resource: c.ResourceName, uid: c.UID, etag: c.ETag,
+		resource: c.ResourceName, uid: c.UID, etag: c.ETag, size: int64(len(c.VCard)),
 		insert: func(ctx context.Context, book domain.Addressbook) error {
 			_, err := r.pool.Exec(ctx,
 				`INSERT INTO mail_dav.contacts (id, tenant_id, mailbox_id, addressbook_id, resource_name, uid, vcard, etag, display_name, emails)
@@ -433,14 +517,14 @@ func (r *Repository) PutContact(ctx context.Context, p domain.Principal, slug st
 				book.ID, p.TenantID, p.MailboxID, c.UID, c.VCard, c.ETag, c.DisplayName, emails, c.ResourceName)
 			return err
 		},
-	}, cond, maxContacts, maxChanges)
+	}, cond, lim)
 }
 
 func (r *Repository) DeleteContact(ctx context.Context, p domain.Principal, slug, resource string, cond domain.Precondition, maxChanges int) error {
 	return r.deleteItem(ctx, p, addressbooksKind, slug, resource, cond, maxChanges)
 }
 
-func (r *Repository) ChangesSince(ctx context.Context, p domain.Principal, slug string, seq int64) (domain.Addressbook, []domain.Contact, []string, error) {
+func (r *Repository) ChangesSince(ctx context.Context, p domain.Principal, slug string, seq int64, opt domain.ReadOptions) (domain.Addressbook, []domain.Contact, []string, error) {
 	var (
 		book    domain.Addressbook
 		changed []domain.Contact
@@ -456,7 +540,7 @@ func (r *Repository) ChangesSince(ctx context.Context, p domain.Principal, slug 
 			return err
 		}
 		if len(live) > 0 {
-			changed, err = r.contacts(ctx, p, book, live)
+			changed, err = r.contacts(ctx, p, book, live, opt)
 		}
 		return err
 	})
