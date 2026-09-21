@@ -1,0 +1,45 @@
+# Mapa entre deploy/mail/ y mailcow-dockerized. Lo lee ops/upstream/upstream.sh.
+#
+# motor    <carpeta de deploy/mail>    <carpetas de mailcow, separadas por coma>
+#   Un fichero <carpeta>/<ruta> se busca en data/Dockerfiles/<carpeta de mailcow>/<ruta>, en
+#   data/conf/<carpeta de mailcow>/<ruta>, en data/assets/<carpeta de mailcow>/<ruta> y, si la ruta
+#   empieza por conf/, en data/conf/<carpeta de mailcow>/<resto> (aqui la configuracion de Dovecot
+#   y Postfix vive en <motor>/conf/).
+# archivo  <ruta local>    <ruta en mailcow>
+#   Ficheros con otro nombre que su equivalente.
+# omitido  <prefijo de ruta en mailcow>    <motivo>
+#   Lo que mailcow tiene y NO se copio, por diseno (CLAUDE.md: nada de PHP, MySQL ni SOGo).
+motor	postfix	postfix
+motor	dovecot	dovecot
+motor	rspamd	rspamd
+motor	unbound	unbound
+motor	clamav	clamd,clamav
+motor	olefy	olefy
+motor	postfix-tlspol	postfix-tlspol
+motor	netfilter	netfilter
+motor	acme	acme
+motor	dockerapi	dockerapi
+motor	watchdog	watchdog
+motor	redis	redis
+motor	ssl-example	ssl-example
+motor	templates	templates
+archivo	postfix/conf/main.cf.base	data/conf/postfix/main.cf
+omitido	data/Dockerfiles/sogo	SOGo: el webmail es el servicio Go webmail
+omitido	data/Dockerfiles/phpfpm	PHP: la capa de control es Go
+omitido	data/Dockerfiles/nginx	nginx: el gateway y el borde HTTPS son propios
+omitido	data/Dockerfiles/backup	respaldo de mailcow: lo cubre ops/backup
+omitido	data/Dockerfiles/dovecot/imapsync	imapsync no se copio (plan de mejoras, C1)
+omitido	data/Dockerfiles/dovecot/quarantine_notify.py	el aviso de cuarentena lo envia mail-security
+omitido	data/Dockerfiles/watchdog/check_mysql_slavestatus.sh	sin MySQL
+omitido	data/Dockerfiles/watchdog/client.cnf	sin MySQL
+omitido	data/conf/sogo	SOGo
+omitido	data/conf/nginx	nginx
+omitido	data/conf/phpfpm	PHP
+omitido	data/conf/mysql	MySQL
+omitido	data/conf/dovecot/ldap	LDAP no se copio
+omitido	data/conf/postfix/allow_mailcow_local.regexp	Webmail propio: el remitente lo decide la regla de mail-directory
+omitido	data/conf/rspamd/dynmaps	mapas dinamicos en PHP: los sirve el servicio Go mail-policy
+omitido	data/conf/rspamd/meta_exporter	exportador en PHP: lo sirve mail-policy
+omitido	data/assets/templates/pw_reset	restablecimiento de contrasena de mailcow: lo hace identity
+omitido	data/assets/templates/quarantine	aviso de cuarentena de mailcow: lo envia mail-security
+omitido	data/assets/ssl	certificados de ejemplo de mailcow no usados

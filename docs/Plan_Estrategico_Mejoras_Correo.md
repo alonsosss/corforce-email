@@ -28,6 +28,7 @@ quedaron tres puntos por mejorar. Este plan los ataca uno por uno:
 | Las bases de imagen de los motores son heterogéneas: Debian trixie (postfix, rspamd), Debian bookworm (postfix-tlspol), Alpine 3.21 (dovecot, olefy), 3.23 (unbound, netfilter, dockerapi, acme, watchdog) y 3.24 (clamav) | V | `deploy/mail/*/Dockerfile` |
 | Servidor de producción `89.58.10.80`: MX, SPF, DKIM (`cfm202609`), DMARC y PTR coherentes, puertos 25, 465, 587 y 993 abiertos, certificado válido | V (2026-09-20) | consultas públicas de DNS y TLS |
 | Salida real por el puerto 25 desde ese servidor, MTA-STS y TLS-RPT | sin verificar / ausente | idem |
+| De 157 ficheros de `deploy/mail/`, 88 son idénticos a mailcow, 62 están modificados (31 solo cambian una etiqueta o un nombre), 1 es nuevo y 6 son propios; el coste de portar se concentra en `postfix/postfix.sh`, `watchdog/watchdog.sh`, `dovecot/docker-entrypoint.sh` y `acme/acme.sh`. La base coincide con la punta de mailcow (0 commits de diferencia) | V (2026-09-20) | `deploy/mail/UPSTREAM.md` |
 | El antispam ya trae módulos de Rspamd activos: estadística (bayes), fuzzy, greylisting, ARC, phishing, reputación, límites de tasa y listas RBL | V | `deploy/mail/rspamd/local.d/` |
 | La revisión de spam y ham por el usuario ya existe en Dovecot (`report-spam.sieve`, `report-ham.sieve`) | V | `deploy/mail/dovecot/` |
 
@@ -290,3 +291,17 @@ Los plazos son relativos a la fecha de aprobación de este plan.
 * No busca paridad completa con el panel de mailcow.
 * No toca el correo de marketing ni el transaccional, que salen por SES con su propia reputación.
 * No fija fechas de calendario absolutas: dependen del tráfico real y de decisiones pendientes.
+
+## 10. Estado de implementación
+
+Se actualiza en la misma tarea que implemente cada iniciativa.
+
+| Iniciativa | Estado | Qué hay |
+|---|---|---|
+| B1 Libro de parches | V (2026-09-20) | `deploy/mail/UPSTREAM.md` y `deploy/mail/upstream-manifest.tsv`: los 157 ficheros clasificados, con el motivo y el modo de rehacer cada uno de los 62 modificados |
+| B2 Vigilante de cambios de mailcow | V la herramienta, P la ejecución | `ops/upstream/upstream.sh informe`, probado contra datos reales de mailcow y contra un mailcow simulado. El flujo semanal `.github/workflows/upstream-mailcow.yml` está escrito y su YAML es válido, pero aún no ha corrido en GitHub |
+| B3 Avisos de seguridad | Parcial | La sección 9 de `UPSTREAM.md` fija de dónde sale cada motor, cómo llega un parche y los plazos. Suscribirse a los avisos es una acción de quien opera el servidor (P) |
+| B5 Menos divergencia | V | `ops/scaffold/check-upstream-ledger.sh`, en `validate.sh` (sección 14): editar un fichero idéntico a mailcow sin registrarlo rompe `make checks`; probado con siete mutaciones |
+| B8 Revisión trimestral | Parcial | Primera fila de la tabla de `UPSTREAM.md`, sección 10. El umbral se fija tras el primer port real |
+| B4, B6, B7, A1 a A6, C1 a C5 | P | Sin implementar |
+

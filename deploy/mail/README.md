@@ -10,6 +10,10 @@ nginx, ni memcached, ni ofelia.
 Los ficheros de configuracion copiados conservan sus comentarios originales en
 ingles. Los comentarios nuevos estan en espanol.
 
+Que ficheros difieren de mailcow, por que y como se rehace cada cambio al portar una version
+esta en `UPSTREAM.md`; `upstream-manifest.tsv` es su version legible por maquina y
+`ops/scaffold/check-upstream-ledger.sh` la vigila.
+
 ## Estructura
 
 | Directorio | Contenido | Origen en mailcow |

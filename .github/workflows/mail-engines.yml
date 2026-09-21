@@ -10,6 +10,8 @@ on:
     branches: [main]
     paths:
       - 'deploy/mail/**'
+      - '!deploy/mail/UPSTREAM.md'
+      - '!deploy/mail/upstream-manifest.tsv'
       - 'services/mail-auth/**'
       - 'services/mail-security/**'
       - 'services/mail-directory/**'
@@ -29,6 +31,8 @@ on:
   pull_request:
     paths:
       - 'deploy/mail/**'
+      - '!deploy/mail/UPSTREAM.md'
+      - '!deploy/mail/upstream-manifest.tsv'
       - 'services/mail-auth/**'
       - 'services/mail-security/**'
       - 'services/mail-directory/**'

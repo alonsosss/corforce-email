@@ -101,6 +101,11 @@ if ! bash "$ROOT/ops/scaffold/check-backups.sh"; then
   FAIL=1
 fi
 
+echo "== 14. Divergencia de deploy/mail frente a mailcow: registrada, explicada y con mutaciones que la rompen =="
+if ! bash "$ROOT/ops/scaffold/check-upstream-ledger.sh"; then
+  FAIL=1
+fi
+
 echo ""
 if [[ $FAIL -ne 0 ]]; then
   echo "VALIDACION: FALLA"; exit 1

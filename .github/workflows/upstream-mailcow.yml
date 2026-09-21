@@ -1,0 +1,55 @@
+name: Cambios de mailcow-dockerized
+
+# Cada semana compara la base de mailcow de la que salen los motores (deploy/mail/upstream-manifest.tsv)
+# con su rama principal, solo en lo que copiamos, y mantiene UNA incidencia abierta con lo pendiente de
+# portar. Solo lee: no escribe nunca en el repositorio ni copia ficheros (CLAUDE.md: copia unica).
+# El procedimiento de port esta en deploy/mail/UPSTREAM.md, seccion 3.
+on:
+  schedule:
+    - cron: '0 12 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: upstream-mailcow
+  cancel-in-progress: false
+
+jobs:
+  informe:
+    name: Informe de cambios de mailcow
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Informe contra la rama principal de mailcow
+        run: ops/upstream/upstream.sh informe > informe.md
+
+      - name: Resumen
+        run: sed 1d informe.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Incidencia
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          relevantes="$(sed -n 's/^RELEVANTES: //p' informe.md | head -1)"
+          # Un cuerpo de incidencia admite 65536 caracteres: se recorta por debajo.
+          sed 1d informe.md | head -c 60000 > cuerpo.md
+          numero="$(gh issue list --state open --label upstream-mailcow --json number --jq '.[0].number // empty')"
+          if [ "${relevantes:-0}" -eq 0 ]; then
+            echo "Sin cambios relevantes en mailcow desde la base."
+            if [ -n "$numero" ]; then
+              gh issue close "$numero" --comment "Sin cambios pendientes de portar: nuestra base coincide con mailcow en lo que copiamos."
+            fi
+            exit 0
+          fi
+          gh label create upstream-mailcow --color 5319e7 --description "Cambios de mailcow-dockerized por portar" 2>/dev/null || true
+          if [ -n "$numero" ]; then
+            gh issue edit "$numero" --body-file cuerpo.md
+          else
+            gh issue create --title "Cambios de mailcow-dockerized pendientes de portar" --label upstream-mailcow --body-file cuerpo.md
+          fi

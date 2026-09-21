@@ -1,0 +1,158 @@
+#base	02552ffefdf0	2026-08-18	2026-07b
+propio	README.md	-
+propio	UPSTREAM.md	-
+modificado	acme/Dockerfile	etiqueta,postgres	data/Dockerfiles/acme/Dockerfile
+modificado	acme/acme.sh	postgres,nombres,sogo-php	data/Dockerfiles/acme/acme.sh
+identico	acme/expand6.sh	c3152d96ccfce6a77db97fd2b438fc90c89dcd402cbb31023afb639d54ca517a
+modificado	acme/functions.sh	nombres	data/Dockerfiles/acme/functions.sh
+identico	acme/load-dns-config.sh	35fd94257c5f85a26481d0d44a72041c36bab25f5f54fe3112a572574f209a7d
+modificado	acme/obtain-certificate-dns.sh	nombres	data/Dockerfiles/acme/obtain-certificate-dns.sh
+modificado	acme/obtain-certificate.sh	nombres	data/Dockerfiles/acme/obtain-certificate.sh
+modificado	acme/reload-configurations.sh	sogo-php,nombres	data/Dockerfiles/acme/reload-configurations.sh
+modificado	clamav/Dockerfile	etiqueta	data/Dockerfiles/clamd/Dockerfile
+modificado	clamav/clamd.conf	endurecimiento	data/conf/clamav/clamd.conf
+modificado	clamav/clamd.sh	nombres	data/Dockerfiles/clamd/clamd.sh
+identico	clamav/clamdcheck.sh	843ec84c968506a7447b4ba137fa0875011f3892b67bebea3ed72abdf84a554e
+identico	clamav/freshclam.conf	2933c85ae26574c55423033b33281b29039bd453b318a9700f95d01eece55a2d
+identico	clamav/healthcheck.sh	9cc28af8f12b17ccf71937edfe80d80ed31a74f61a94b05cad23be62123e1784
+propio	docker-compose.e2e.yml	-
+propio	docker-compose.mail.images.yml	-
+propio	docker-compose.mail.yml	-
+modificado	dockerapi/Dockerfile	etiqueta	data/Dockerfiles/dockerapi/Dockerfile
+modificado	dockerapi/docker-entrypoint.sh	nombres	data/Dockerfiles/dockerapi/docker-entrypoint.sh
+modificado	dockerapi/main.py	nombres	data/Dockerfiles/dockerapi/main.py
+modificado	dockerapi/modules/DockerApi.py	sogo-php	data/Dockerfiles/dockerapi/modules/DockerApi.py
+identico	dockerapi/modules/__init__.py	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+modificado	dovecot/Dockerfile	etiqueta,postgres,sogo-php	data/Dockerfiles/dovecot/Dockerfile
+modificado	dovecot/clean_q_aged.sh	postgres,nombres	data/Dockerfiles/dovecot/clean_q_aged.sh
+modificado	dovecot/conf/auth/passwd-verify.lua	servicios-go	data/conf/dovecot/auth/passwd-verify.lua
+modificado	dovecot/conf/conf.d/fts.conf	nombres	data/conf/dovecot/conf.d/fts.conf
+modificado	dovecot/conf/dovecot.conf	postgres,sogo-php	data/conf/dovecot/dovecot.conf
+identico	dovecot/conf/dovecot.folders.conf	6a747a6efbdc02ab39846b433237a928c976a2b4d3c1d8eedefc25927b90bc83
+modificado	dovecot/conf/global_sieve_after	nombres	data/conf/dovecot/global_sieve_after
+modificado	dovecot/conf/global_sieve_before	nombres	data/conf/dovecot/global_sieve_before
+nuevo	dovecot/crontab	cron	-
+modificado	dovecot/docker-entrypoint.sh	postgres,sogo-php,servicios-go,nombres	data/Dockerfiles/dovecot/docker-entrypoint.sh
+identico	dovecot/maildir_gc.sh	bafa25e04714d9d18d3665e82585f841f088ebe139dbb005f631822144b2e0d2
+identico	dovecot/optimize-fts.sh	721e4191857c5433eeecb87f880ea8a2d55373d34becb720c9afc26487649af7
+modificado	dovecot/quota_notify.py	nombres	data/Dockerfiles/dovecot/quota_notify.py
+modificado	dovecot/repl_health.sh	nombres	data/Dockerfiles/dovecot/repl_health.sh
+identico	dovecot/report-ham.sieve	1b697ba803acd01187a9ec35f173517cee831f7001f2c00e7c356287cea92e74
+identico	dovecot/report-spam.sieve	3e79e19511d45f75b05198718f235e0c6b525ec9d79fcd2474da9429097cb456
+modificado	dovecot/rspamd-pipe-ham	nombres	data/Dockerfiles/dovecot/rspamd-pipe-ham
+modificado	dovecot/rspamd-pipe-spam	nombres	data/Dockerfiles/dovecot/rspamd-pipe-spam
+modificado	dovecot/sa-rules.sh	nombres	data/Dockerfiles/dovecot/sa-rules.sh
+identico	dovecot/stop-supervisor.sh	dcd949c726ce1c2f8f36743f63beb5ffabbd5a13e85d94740171b0127d23a6cd
+modificado	dovecot/supervisord.conf	cron	data/Dockerfiles/dovecot/supervisord.conf
+modificado	dovecot/syslog-ng-redis_slave.conf	nombres	data/Dockerfiles/dovecot/syslog-ng-redis_slave.conf
+modificado	dovecot/syslog-ng.conf	nombres	data/Dockerfiles/dovecot/syslog-ng.conf
+modificado	dovecot/trim_logs.sh	nombres,sogo-php	data/Dockerfiles/dovecot/trim_logs.sh
+modificado	netfilter/Dockerfile	etiqueta	data/Dockerfiles/netfilter/Dockerfile
+identico	netfilter/docker-entrypoint.sh	c7bc623dd80b4ec8f463677ec9a94f02652b808c29ec0f8add09105d252193c4
+modificado	netfilter/main.py	sogo-php,nombres	data/Dockerfiles/netfilter/main.py
+identico	netfilter/modules/IPTables.py	1fe68540ae1239022395b44b449555553422d25b1781e53b700621aee6da387e
+identico	netfilter/modules/Logger.py	b898bee245b8d065952b54b263c7764fb3471e15f820650f185308560d35cd2d
+identico	netfilter/modules/NFTables.py	33862a1815863e1924059dd9f18041b84e6d6c4a4f494dabeee216611724b0e5
+identico	netfilter/modules/__init__.py	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+modificado	olefy/Dockerfile	etiqueta	data/Dockerfiles/olefy/Dockerfile
+identico	olefy/olefy.py	b574b972afd232917d1f17eb7dd835f1e1040efe55b4c9fc5807027ad2a1542b
+modificado	postfix-tlspol/Dockerfile	etiqueta	data/Dockerfiles/postfix-tlspol/Dockerfile
+identico	postfix-tlspol/docker-entrypoint.sh	c604731d087286276e57b0d30cae9d1df32ab21776c4eab001995594d78e58a7
+modificado	postfix-tlspol/postfix-tlspol.sh	nombres	data/Dockerfiles/postfix-tlspol/postfix-tlspol.sh
+identico	postfix-tlspol/stop-supervisor.sh	dcd949c726ce1c2f8f36743f63beb5ffabbd5a13e85d94740171b0127d23a6cd
+identico	postfix-tlspol/supervisord.conf	a9748ea04b686c76a135d28ad4aea9a8d10ea49be08e36e25c52cc7ad3c7f161
+modificado	postfix-tlspol/syslog-ng-redis_slave.conf	nombres	data/Dockerfiles/postfix-tlspol/syslog-ng-redis_slave.conf
+modificado	postfix-tlspol/syslog-ng.conf	nombres	data/Dockerfiles/postfix-tlspol/syslog-ng.conf
+modificado	postfix/Dockerfile	etiqueta,postgres	data/Dockerfiles/postfix/Dockerfile
+modificado	postfix/conf/anonymize_headers.pcre	nombres	data/conf/postfix/anonymize_headers.pcre
+identico	postfix/conf/local_transport	6badc2520b1711e62c60988a4f28ece87b6e9e3f136d7cf5c15375a672ecefb5
+modificado	postfix/conf/main.cf.base	postgres	data/conf/postfix/main.cf
+modificado	postfix/conf/master.cf	endurecimiento,sogo-php	data/conf/postfix/master.cf
+identico	postfix/conf/postscreen_access.cidr	7f9ce43ce80e985c190adad4a47cac3d34206ce6039e32e5f1e17069006bf5e6
+identico	postfix/conf/smtp_dsn_filter	daf1295d17e2c1a69d5cd81709f5663283453ba7627e9e878cd0d079c0315cef
+modificado	postfix/docker-entrypoint.sh	arranque	data/Dockerfiles/postfix/docker-entrypoint.sh
+modificado	postfix/postfix.sh	postgres,nombres,sogo-php	data/Dockerfiles/postfix/postfix.sh
+identico	postfix/rspamd-pipe-ham	309817ec0e8d8be73c568df7981668ed6528caabc1e7bd949c8bb287c7ec9615
+identico	postfix/rspamd-pipe-spam	dfe044f1a26b0222774e44c21c2c2474157baf51f2fbb79b2a40e46749d19cbb
+identico	postfix/stop-supervisor.sh	dcd949c726ce1c2f8f36743f63beb5ffabbd5a13e85d94740171b0127d23a6cd
+identico	postfix/supervisord.conf	4f9d43ff721e507f297a4ac8fdebf164522b187328bea463b02b2411f73f4997
+modificado	postfix/syslog-ng-redis_slave.conf	nombres	data/Dockerfiles/postfix/syslog-ng-redis_slave.conf
+modificado	postfix/syslog-ng.conf	nombres	data/Dockerfiles/postfix/syslog-ng.conf
+modificado	postfix/whitelist_forwardinghosts.sh	servicios-go	data/Dockerfiles/postfix/whitelist_forwardinghosts.sh
+modificado	redis/redis-conf.sh	nombres	data/conf/redis/redis-conf.sh
+modificado	rspamd/Dockerfile	etiqueta	data/Dockerfiles/rspamd/Dockerfile
+identico	rspamd/custom/bad_asn.map	015ed8230c1f3cf52678ff98a5116040d696ca7e526d4618e8227dccbd78a7e0
+identico	rspamd/custom/bad_header.map	6935f7493b41137297deda9b6da4866e5ce8c233df00e18e10c3fb9741ca05a1
+identico	rspamd/custom/bad_languages.map	2dedce5e38ab99487c7d8308a3e0cdd1c96df9338ab2600439e7490b5cc99145
+identico	rspamd/custom/bad_words.map	4f32025d92700dfb8b0c3e51838f450a89afbdbc90df82aca7f1464b92340ed5
+identico	rspamd/custom/bad_words_de.map	c919f4e7e41053fa9aa079976eea1af28c01e9dce804dda0b79405ca6f4ec752
+identico	rspamd/custom/bulk_header.map	b1d1af34734b432d034c01e193995f73b3be6fdd7f09fe0e7d591e04c782a3bb
+identico	rspamd/custom/fishy_tlds.map	ba02c323dc61c589e8dd418563a9e6cf4a87da247d87af2ef04c85ce3421c8ce
+identico	rspamd/custom/global_mime_from_blacklist.map	271880e44a80d96b3649503efd4251061f64fe8fd374f6d40f84576f9ff6406b
+identico	rspamd/custom/global_mime_from_whitelist.map	271880e44a80d96b3649503efd4251061f64fe8fd374f6d40f84576f9ff6406b
+identico	rspamd/custom/global_rcpt_blacklist.map	271880e44a80d96b3649503efd4251061f64fe8fd374f6d40f84576f9ff6406b
+identico	rspamd/custom/global_rcpt_whitelist.map	271880e44a80d96b3649503efd4251061f64fe8fd374f6d40f84576f9ff6406b
+identico	rspamd/custom/global_smtp_from_blacklist.map	271880e44a80d96b3649503efd4251061f64fe8fd374f6d40f84576f9ff6406b
+identico	rspamd/custom/global_smtp_from_whitelist.map	271880e44a80d96b3649503efd4251061f64fe8fd374f6d40f84576f9ff6406b
+identico	rspamd/custom/ip_wl.map	fd77533a7d60e6de089869a914a5059b73f2a7510dc8cc2641ebecec29be28f4
+identico	rspamd/custom/monitoring_nolog.map	0d4728d97e48d8aeabb7a6959624efef0131e4f72553bc1aa81e9cdeee5e06aa
+modificado	rspamd/docker-entrypoint.sh	servicios-go,nombres	data/Dockerfiles/rspamd/docker-entrypoint.sh
+identico	rspamd/local.d/actions.conf	0b80bcce3793fc2af3a8f925728a8db2271ca9a995f77c1c940644a29015a65f
+modificado	rspamd/local.d/antivirus.conf	endurecimiento	data/conf/rspamd/local.d/antivirus.conf
+identico	rspamd/local.d/arc.conf	66754defb47556e7b4e44f63b47c16a903aa7a5a9f738a6934caf4dfba2f47ad
+identico	rspamd/local.d/asn.conf	461dd2edf23f928aa04cc0bf2831b06ff02dfe333db34c75036f7f9fb40e35ea
+modificado	rspamd/local.d/composites.conf	sogo-php	data/conf/rspamd/local.d/composites.conf
+identico	rspamd/local.d/dkim_signing.conf	3e79cef25bfa639c5040346e60d2faf2c6f3cc6ed55bb80321aa8729a7220c02
+modificado	rspamd/local.d/force_actions.conf	endurecimiento	data/conf/rspamd/local.d/force_actions.conf
+identico	rspamd/local.d/fuzzy_check.conf	2ed73bbe4ac51a2e08cb9192622ad908ef20d93e2cdd2e4aee71504617fb1a05
+identico	rspamd/local.d/fuzzy_group.conf	0c28ad68a0a9f9316dc63868eb0e143a5a8d30fe336af3521cdb6e69d2cd0bc4
+modificado	rspamd/local.d/greylist.conf	servicios-go	data/conf/rspamd/local.d/greylist.conf
+modificado	rspamd/local.d/groups.conf	sogo-php,nombres	data/conf/rspamd/local.d/groups.conf
+identico	rspamd/local.d/headers_group.conf	1627a205924c8c622193fa37858eb8fca618817a3a1a6ee9bd720876ac510bc5
+identico	rspamd/local.d/hfilter_group.conf	b436f1993f52c453e14d6fc9c4084d35514f719a887ff6a7b730e252d0fa6e04
+identico	rspamd/local.d/history_redis.conf	d12295672e0a885b85816bd59f5eb247f76b573b28af751745592ae065c9cef0
+modificado	rspamd/local.d/metadata_exporter.conf	servicios-go,sogo-php	data/conf/rspamd/local.d/metadata_exporter.conf
+identico	rspamd/local.d/milter_headers.conf	99fffa14789a0e0b0be8e0d263cc0849c46acbd26b1b4006023ab723d67471f0
+identico	rspamd/local.d/mime_types.conf	5e3bb90a7634ab9363cbe4399ff3cdd67b155630165f5c262ea8f425ea236030
+identico	rspamd/local.d/mime_types_group.conf	72d2e37adcb4a329d69776b381c07554367c227b9583795f3433ada16898a8b7
+identico	rspamd/local.d/multimap.conf	ac89faf83ce10f0fff6d35d567f8df5ea8eef4d1ec6ebff7bd4f9c29813f0253
+identico	rspamd/local.d/mx_check.conf	d59170accae5d4c7be0896f411ae26c0aaeb2afb00662893c38b63c2d0f809ec
+modificado	rspamd/local.d/options.inc	nombres,endurecimiento	data/conf/rspamd/local.d/options.inc
+identico	rspamd/local.d/phishing.conf	f513223367d1f2b4d3a9e52c6932fbfdf6925f1af09ec514f32f8075f303ada2
+identico	rspamd/local.d/policies_group.conf	67912a03ea10a466b174403b4a2dda3ff18c387fe87a9f758f0858e0c4ff8dd5
+modificado	rspamd/local.d/ratelimit.conf	nombres	data/conf/rspamd/local.d/ratelimit.conf
+identico	rspamd/local.d/rbl.conf	4f493b03ae4b1ba53c534c087cd31200a62fc13f2211cd26d89f2e5c12b3cad5
+identico	rspamd/local.d/rbl_group.conf	d73f84a0b39ec371f20f1d2cda00257edadb6368cdfd32de2d3dbe96ef8425e3
+identico	rspamd/local.d/reputation.conf	e93508e2d9f2f644cdd2cbeae29e0f504e9a0b2a2fbdc34804d80e31eb1b8d4a
+identico	rspamd/local.d/spamassassin.conf	5ada90670395a3f1320d320f207118a3a56a47275406575973b5d62b4ccafcb3
+identico	rspamd/local.d/statistic.conf	2379f920b30c1f70c42e1668c92ef5512637eeb1d5905b5f8f13ae8d6f152db0
+identico	rspamd/local.d/statistics_group.conf	eaa944312cce112fb4c9f7d09952d2e70655b4bf7669d2d75c377eaf397c17d2
+identico	rspamd/lua/ratelimit.lua	207fdbfbcaa5c5748c2b9d93e7fafd2165f419832efd78f2adbaf783072e6e8b
+modificado	rspamd/lua/rspamd.local.lua	servicios-go	data/conf/rspamd/lua/rspamd.local.lua
+identico	rspamd/override.d/logging.inc	ec9fd57d6e4e84ef68dbacbce753613043bd3c137e0ac16e0b968f6e38f670a6
+identico	rspamd/override.d/ratelimit.conf	819546a69cd983d49f8daabc9be26e03060d721f8172d3aac3e8970a8787c7f0
+identico	rspamd/override.d/worker-controller.inc	f951ebdbb45787efbc0e57664dfd43bee2f84a9173f585b3db3d1c746dd1bcdd
+identico	rspamd/override.d/worker-fuzzy.inc	e632702d7bcd2125004ab5c366dff356652ede7992809e66e71326ae9b881d05
+identico	rspamd/override.d/worker-normal.inc	2762b8d877a6ca1064d52e8ec8a1fcc7acd859ef941f1925332ec20eb33cdaae
+identico	rspamd/override.d/worker-proxy.inc	1bbcd4c5e11607b7b3aaec54add8da349e1c835622eb669655833a342ce142d5
+identico	rspamd/plugins.d/README.md	5b53e80d0308592e63132d9d75fde71aaa12240f8e6017c751388f07f5641d62
+identico	rspamd/rspamd.conf.local	662f603d92ff19e58a6569b92de7cc6f0c770e0f9f6898ad36f06ef2122dc9c9
+identico	rspamd/rspamd.conf.override	0cd26c05e709049ade383fc673a9236deda2f0cc4d8627062fada8a77853f3b9
+identico	rspamd/sa_trivial_convert.lua	7da4fc88bc04f7f3820996b765278d40d12669473eecf6d4dedad16e346f4d52
+identico	rspamd/set_worker_password.sh	85ee3d1fc107821d6b1afdf8cec70a3950d38c4a294e15684dedeb198a38998d
+modificado	rspamd/settings.conf	servicios-go	data/Dockerfiles/rspamd/settings.conf
+identico	ssl-example/cert.pem	f7e7844691f1ba1ff221fca47dbeff221c71b6dec142bd3575252a0da26e2f01
+identico	ssl-example/dhparams.pem	9ba6429597aeed2d8617a7705b56e96d044f64b07971659382e426675105654b
+identico	ssl-example/key.pem	ff0e110f7f340ce24572ec143a502afa8b9c1947e42a732f918b517247de93d1
+identico	templates/quota.tpl	dbd9a0f9dc9cbe62cb851611a186c527757ad3551a08f3e318d1c7673fc83552
+modificado	unbound/Dockerfile	etiqueta	data/Dockerfiles/unbound/Dockerfile
+identico	unbound/docker-entrypoint.sh	70ee8c06c40014237fe7eb2b9b5a978bad1fadc4d939fde095d6a44a7b3ad1d7
+identico	unbound/healthcheck.sh	ebdc7ecc5ae24dd57b0c82fd60d66d4344683ddcc1cac2429f0a4b7f38cd3e39
+identico	unbound/stop-supervisor.sh	52a7a6f6c36509ff287358648c9672d9d3790a6a0ef0ef81174485a3d72aef95
+identico	unbound/supervisord.conf	122892265d2e7f15d4040f9da9275e60f2fe96ad047ac13c80c6ccedf9b08969
+identico	unbound/syslog-ng.conf	f4a06b5d9ae690b40ca748bff14157a199ef839664d8805301a48a88990b81ff
+identico	unbound/unbound.conf	b7156d836ebd8ebab31e1df8c5602b108f8241d933b2df19ed90c4fc8f096c2b
+propio	upstream-manifest.tsv	-
+modificado	watchdog/Dockerfile	etiqueta,sogo-php	data/Dockerfiles/watchdog/Dockerfile
+identico	watchdog/check_dns.sh	83e7d534b3655459a5f724f25b3da00ad33333ce40994e0559bc6d256bf640e2
+modificado	watchdog/watchdog.sh	sogo-php,nombres	data/Dockerfiles/watchdog/watchdog.sh
