@@ -15,6 +15,7 @@ import (
 	"github.com/alonsosss/corforce-email/pkg/events"
 	"github.com/alonsosss/corforce-email/pkg/middleware"
 	"github.com/alonsosss/corforce-email/pkg/outbox"
+	"github.com/alonsosss/corforce-email/pkg/response"
 	"github.com/alonsosss/corforce-email/pkg/server"
 	handler "github.com/alonsosss/corforce-email/services/audit/internal/adapters/http"
 	natsadapter "github.com/alonsosss/corforce-email/services/audit/internal/adapters/nats"
@@ -44,11 +45,19 @@ const (
 	defaultAnchorInterval = 15 * time.Minute
 	minAnchorInterval     = time.Minute
 	maxAnchorInterval     = 24 * time.Hour
+
+	// Plazo de cada verificacion de cadena (AUDIT_VERIFY_TIMEOUT), por debajo del WriteTimeout de
+	// pkg/server (30 s): pasado ese, la respuesta ya no llegaria.
+	maxVerifyTimeout = 28 * time.Second
+
+	// eventHandlerTimeout acota el trabajo de audit por cada evento del bus.
+	eventHandlerTimeout = 30 * time.Second
 )
 
 func main() {
 	logger, _ := zap.NewProduction()
 	defer logger.Sync()
+	response.SetUnexpectedLogger(logger)
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -67,6 +76,10 @@ func main() {
 		log.Fatal(err)
 	}
 	anchorEvery, err := config.EnvDuration("AUDIT_ANCHOR_INTERVAL", defaultAnchorInterval, minAnchorInterval, maxAnchorInterval)
+	if err != nil {
+		log.Fatal(err)
+	}
+	verifyTimeout, err := config.EnvDuration("AUDIT_VERIFY_TIMEOUT", app.DefaultVerifyTimeout, time.Second, maxVerifyTimeout)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -122,6 +135,8 @@ func main() {
 		Anchors:      postgres.NewChainAnchorRepo(ctxPool),
 		AnchorEvents: outboxadapter.NewPublisher(ctxPool),
 		Tx:           ctxPool,
+
+		VerifyTimeout: verifyTimeout,
 	})
 
 	// El anuncio de cada ancla sale por la outbox: se encola con el ancla y el rele lo entrega.
@@ -161,8 +176,12 @@ func main() {
 	r.Mount("/api/v1/audit", h.Routes())
 
 	srv := server.New(port, r, logger)
-	if err := srv.Run(); err != nil {
-		logger.Fatal("server error", zap.Error(err))
+	runErr := srv.Run()
+	// El rele de la outbox y el anclaje retienen conexiones del pool que los cierres diferidos esperan:
+	// se cancelan antes de cerrarlo.
+	cancel()
+	if runErr != nil {
+		logger.Fatal("server error", zap.Error(runErr))
 	}
 }
 
@@ -174,12 +193,16 @@ func subscribeToEvents(bus *events.Bus, uc *app.AuditUseCase, detector *app.Secu
 			return
 		}
 
-		pool, err := tenantDB.ResolveForTenant(context.Background(), tenantID.String())
+		// Las suscripciones de nucleo entregan de una en una: un evento que se cuelga (base lenta, cerrojo
+		// de la cadena) retiene a todos los que vienen detras.
+		base, cancel := context.WithTimeout(context.Background(), eventHandlerTimeout)
+		defer cancel()
+		pool, err := tenantDB.ResolveForTenant(base, tenantID.String())
 		if err != nil {
 			logger.Warn("audit: resolve tenant pool", zap.String("tenant", tenantID.String()), zap.Error(err))
 			return
 		}
-		ctx := db.WithPool(context.Background(), pool)
+		ctx := db.WithPool(base, pool)
 
 		detail := ""
 		// La IP real y el user-agent viajan en el payload del evento cuando el emisor

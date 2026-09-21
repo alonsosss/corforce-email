@@ -18,9 +18,10 @@ const (
 	// maxConcurrentVerifications acota los recorridos de cadena a la vez en un proceso: cada uno lee
 	// entera la tabla de auditoria de una empresa, en una base que comparten todas.
 	maxConcurrentVerifications = 4
-	// defaultVerifyTimeout corta un recorrido que no termina; el contexto de la peticion ya lo
-	// cancela si el cliente se va.
-	defaultVerifyTimeout = 15 * time.Minute
+	// DefaultVerifyTimeout corta un recorrido que no termina; el contexto de la peticion ya lo
+	// cancela si el cliente se va. Queda por debajo del WriteTimeout de pkg/server (30 s): pasado ese,
+	// la respuesta ya no llegaria.
+	DefaultVerifyTimeout = 25 * time.Second
 )
 
 // verificationGate deja un solo recorrido por empresa y un tope global, para que verificar la

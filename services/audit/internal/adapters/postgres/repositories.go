@@ -89,6 +89,13 @@ func (r *AuditLogRepo) appendChained(ctx context.Context, tx pgx.Tx, l *domain.A
 	return err
 }
 
+// verifyBatchSize es cuantas filas lee cada consulta del verificador. La cadena se recorre por
+// paginacion de clave (seq > ultima) y no con una sola consulta larga: entre lotes se devuelve la
+// conexion, asi que un recorrido de millones de filas no retiene una conexion del pool ni una
+// instantanea de la base (que impide limpiar filas muertas) durante minutos. La memoria la fija
+// una fila, no el lote: nada se acumula.
+const verifyBatchSize = 2000
+
 // VerifyChain recorre la cadena por orden y detecta la primera fila cuyo hash no
 // cuadra (contenido alterado) o cuyo prev_hash no enlaza con la anterior (fila
 // borrada o insertada). Cada fila se verifica con la formula de SU version; las de version 2
@@ -97,36 +104,31 @@ func (r *AuditLogRepo) appendChained(ctx context.Context, tx pgx.Tx, l *domain.A
 // Forman parte de la cadena las filas con seq o con entry_hash: solo las anteriores a
 // la migracion 03 tienen ambos a NULL. Filtrar solo por entry_hash dejaria a quien
 // escribe en la base borrar el hash de las ultimas filas y editarlas sin que nada lo
-// note; una fila con seq y sin hash se lee con hash vacio y rompe la cadena.
+// note; una fila con seq y sin hash se lee con hash vacio y rompe la cadena. Las de seq NULL
+// con hash se leen al final, como las ordenaba la consulta unica anterior.
 func (r *AuditLogRepo) VerifyChain(ctx context.Context, tenantID uuid.UUID) (*domain.ChainIntegrity, error) {
-	rows, err := r.pool.Query(ctx,
-		`SELECT id,tenant_id,user_id,session_id,action,module,resource,resource_id,ip_address,user_agent,request_id,severity,created_at,
-		        before_data::text,after_data::text,changes::text,seq,hash_version,COALESCE(hash_key_id,''),COALESCE(prev_hash,''),COALESCE(entry_hash,'')
-		   FROM audit.audit_logs WHERE seq IS NOT NULL OR entry_hash IS NOT NULL ORDER BY seq ASC`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
 	v := newChainVerifier(domain.ChainAuditLogs, r.hashKeys, tenantID)
-	for rows.Next() {
+	const cols = `id,tenant_id,user_id,session_id,action,module,resource,resource_id,ip_address,user_agent,request_id,severity,created_at,
+		        before_data::text,after_data::text,changes::text,seq,hash_version,COALESCE(hash_key_id,''),COALESCE(prev_hash,''),COALESCE(entry_hash,'')`
+	scan := func(rows pgx.Rows) (bool, error) {
 		var l domain.AuditLog
 		var row storedRow
 		if err := rows.Scan(&l.ID, &l.TenantID, &l.UserID, &l.SessionID, &l.Action, &l.Module, &l.Resource, &l.ResourceID, &l.IPAddress, &l.UserAgent, &l.RequestID, &l.Severity, &l.CreatedAt,
 			&l.Before, &l.After, &l.Changes, &row.seq, &row.version, &row.keyID, &row.prev, &row.entry); err != nil {
-			return nil, err
+			return false, err
 		}
 		row.id, row.tenantID = l.ID, l.TenantID
-		ok := v.check(row,
+		return v.check(row,
 			func() string {
 				return chainHash(row.prev, &l, derefStr(l.Before), derefStr(l.After), derefStr(l.Changes), l.CreatedAt)
 			},
-			func(keyID string, seq int64) []byte { return auditLogCanonicalV2(keyID, seq, row.prev, &l) })
-		if !ok {
-			return v.res, nil
-		}
+			func(keyID string, seq int64) []byte { return auditLogCanonicalV2(keyID, seq, row.prev, &l) }), nil
 	}
-	return v.res, rows.Err()
+	if err := verifyBatches(ctx, r.pool, v, `SELECT `+cols+` FROM audit.audit_logs WHERE seq > $1 ORDER BY seq ASC LIMIT $2`,
+		`SELECT `+cols+` FROM audit.audit_logs WHERE seq IS NULL AND entry_hash IS NOT NULL LIMIT $1`, scan); err != nil {
+		return nil, err
+	}
+	return v.res, nil
 }
 
 func (r *AuditLogRepo) GetByID(ctx context.Context, id, tenantID uuid.UUID) (*domain.AuditLog, error) {
@@ -347,29 +349,24 @@ func (r *SecurityEventRepo) Create(ctx context.Context, e *domain.SecurityEvent)
 // filas sin seq ni hash son anteriores a la cadena, o de un servicio sin clave, y no forman
 // parte de ella; el reconocimiento no entra en el hash.
 func (r *SecurityEventRepo) VerifyChain(ctx context.Context, tenantID uuid.UUID) (*domain.ChainIntegrity, error) {
-	rows, err := r.pool.Query(ctx,
-		`SELECT id,tenant_id,user_id,event_type,host(ip_address),user_agent,detail,risk_level,created_at,
-		        seq,COALESCE(hash_version,0),COALESCE(hash_key_id,''),COALESCE(prev_hash,''),COALESCE(entry_hash,'')
-		   FROM audit.security_events WHERE seq IS NOT NULL OR entry_hash IS NOT NULL ORDER BY seq ASC`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
 	v := newChainVerifier(domain.ChainSecurityEvents, r.hashKeys, tenantID)
-	for rows.Next() {
+	const cols = `id,tenant_id,user_id,event_type,host(ip_address),user_agent,detail,risk_level,created_at,
+		        seq,COALESCE(hash_version,0),COALESCE(hash_key_id,''),COALESCE(prev_hash,''),COALESCE(entry_hash,'')`
+	scan := func(rows pgx.Rows) (bool, error) {
 		var e securityEventRecord
 		var row storedRow
 		if err := rows.Scan(&e.ID, &e.TenantID, &e.UserID, &e.EventType, &e.IP, &e.UserAgent, &e.Detail, &e.RiskLevel, &e.CreatedAt,
 			&row.seq, &row.version, &row.keyID, &row.prev, &row.entry); err != nil {
-			return nil, err
+			return false, err
 		}
 		row.id, row.tenantID = e.ID, e.TenantID
-		if !v.check(row, nil, func(keyID string, seq int64) []byte { return securityEventCanonicalV2(keyID, seq, row.prev, &e) }) {
-			return v.res, nil
-		}
+		return v.check(row, nil, func(keyID string, seq int64) []byte { return securityEventCanonicalV2(keyID, seq, row.prev, &e) }), nil
 	}
-	return v.res, rows.Err()
+	if err := verifyBatches(ctx, r.pool, v, `SELECT `+cols+` FROM audit.security_events WHERE seq > $1 ORDER BY seq ASC LIMIT $2`,
+		`SELECT `+cols+` FROM audit.security_events WHERE seq IS NULL AND entry_hash IS NOT NULL LIMIT $1`, scan); err != nil {
+		return nil, err
+	}
+	return v.res, nil
 }
 
 func (r *SecurityEventRepo) GetByID(ctx context.Context, id, tenantID uuid.UUID) (*domain.SecurityEvent, error) {

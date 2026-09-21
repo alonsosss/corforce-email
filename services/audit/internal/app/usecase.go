@@ -24,6 +24,9 @@ type AuditDeps struct {
 	Anchors      ports.ChainAnchorRepository
 	AnchorEvents ports.ChainAnchorPublisher
 	Tx           ports.Transactor
+
+	// VerifyTimeout es el plazo de cada verificacion de cadena; cero toma DefaultVerifyTimeout.
+	VerifyTimeout time.Duration
 }
 
 type AuditUseCase struct {
@@ -43,6 +46,10 @@ type AuditUseCase struct {
 }
 
 func NewAuditUseCase(deps AuditDeps) *AuditUseCase {
+	verifyTimeout := deps.VerifyTimeout
+	if verifyTimeout <= 0 {
+		verifyTimeout = DefaultVerifyTimeout
+	}
 	return &AuditUseCase{
 		logs:     deps.Logs,
 		security: deps.Security,
@@ -55,7 +62,7 @@ func NewAuditUseCase(deps AuditDeps) *AuditUseCase {
 		anchorEvents: deps.AnchorEvents,
 		tx:           deps.Tx,
 
-		verifyTimeout: defaultVerifyTimeout,
+		verifyTimeout: verifyTimeout,
 	}
 }
 

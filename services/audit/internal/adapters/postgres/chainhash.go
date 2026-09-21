@@ -7,11 +7,13 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
+	"math"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/alonsosss/corforce-email/pkg/crypto"
+	"github.com/alonsosss/corforce-email/pkg/db"
 	"github.com/alonsosss/corforce-email/services/audit/internal/domain"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -230,6 +232,7 @@ type chainVerifier struct {
 	res      *domain.ChainIntegrity
 	prev     string
 	sawKeyed bool
+	lastSeq  int64
 }
 
 func newChainVerifier(chain domain.ChainName, ring *crypto.MACKeyRing, tenantID uuid.UUID) *chainVerifier {
@@ -247,6 +250,9 @@ func newChainVerifier(chain domain.ChainName, ring *crypto.MACKeyRing, tenantID 
 func (v *chainVerifier) check(row storedRow, unkeyed func() string, serialize func(keyID string, seq int64) []byte) bool {
 	v.res.Checked++
 	v.res.Versions[strconv.Itoa(row.version)]++
+	if row.seq != nil {
+		v.lastSeq = *row.seq
+	}
 	switch {
 	case row.version == hashVersionUnkeyed && unkeyed != nil:
 		if v.sawKeyed {
@@ -293,4 +299,46 @@ func (v *chainVerifier) fail(row storedRow, reason string) bool {
 		v.res.BrokenSeq = row.seq
 	}
 	return false
+}
+
+// verifyBatches lee la cadena en lotes de verifyBatchSize filas por paginacion de clave y las
+// entrega a scan, que devuelve false cuando el verificador ya anoto un fallo (ahi termina el
+// recorrido). Despues lee, con el mismo tope, las filas con hash y sin seq. Un contexto cancelado
+// o vencido corta el recorrido en el siguiente lote como mucho.
+func verifyBatches(ctx context.Context, pool *db.ContextPool, v *chainVerifier, keyset, orphans string, scan func(pgx.Rows) (bool, error)) error {
+	drain := func(rows pgx.Rows) (n int, stop bool, err error) {
+		defer rows.Close()
+		for rows.Next() {
+			ok, err := scan(rows)
+			if err != nil {
+				return n, false, err
+			}
+			n++
+			if !ok {
+				return n, true, nil
+			}
+		}
+		return n, false, rows.Err()
+	}
+	after := int64(math.MinInt64)
+	for {
+		rows, err := pool.Query(ctx, keyset, after, verifyBatchSize)
+		if err != nil {
+			return err
+		}
+		n, stop, err := drain(rows)
+		if err != nil || stop {
+			return err
+		}
+		if n < verifyBatchSize {
+			break
+		}
+		after = v.lastSeq
+	}
+	rows, err := pool.Query(ctx, orphans, verifyBatchSize)
+	if err != nil {
+		return err
+	}
+	_, _, err = drain(rows)
+	return err
 }

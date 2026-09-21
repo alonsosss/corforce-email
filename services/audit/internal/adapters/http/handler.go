@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -79,8 +80,12 @@ func (h *Handler) verifyIntegrity(w http.ResponseWriter, r *http.Request) {
 		response.Err(w, http.StatusTooManyRequests, "VERIFICATION_BUSY", "ya hay una verificacion de la cadena en curso; reintenta cuando termine")
 		return
 	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		response.Err(w, http.StatusGatewayTimeout, "VERIFICATION_TIMEOUT", "la verificacion de la cadena excedio su plazo")
+		return
+	}
 	if err != nil {
-		response.ErrInternal(w)
+		response.Unexpected(w, err)
 		return
 	}
 	response.JSON(w, http.StatusOK, res)

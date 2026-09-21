@@ -140,6 +140,18 @@ otra cadena con la misma forma). `ok` vale para el conjunto. Causas (`reason`):
 | `head_behind_anchor` | la cabeza actual es anterior a un ancla ya publicada |
 | `anchor_mismatch` | la posición de un ancla contiene otro hash o ninguna fila |
 
+**Costo y límites de la verificación.** Recorre la cadena entera de la empresa, así que su trabajo crece con ella y lo
+puede pedir cualquiera con el permiso. Se lee por paginación de clave (`seq > última`, lotes de 2000 filas), no con una
+consulta larga: entre lotes se devuelve la conexión y no se retiene una instantánea que impida limpiar filas muertas, la
+memoria la fija una fila y no la cadena, un contexto cancelado la corta en el siguiente lote y no bloquea a los
+escritores (que solo comparten el candado entre sí). Medido con 100000 filas de versión 2 en un Postgres real: 439 ms
+(227000 filas/s), +2,8 MiB de heap, cancelada a los 44 ms, y una escritura pasa de p50 0,73 ms a 0,84 ms mientras
+verifica. Un recorrido por empresa y cuatro por proceso (la que sobra recibe 429 `VERIFICATION_BUSY`, no espera cola) y cada uno
+tiene `AUDIT_VERIFY_TIMEOUT` (25 s por defecto, tope 28: por debajo del `WriteTimeout` de 30 s de `pkg/server`;
+vencido, 504 `VERIFICATION_TIMEOUT`). A ese ritmo (máquina de
+medición; la del servidor será más lenta, medirlo allí) 25 s alcanzan para unos 5 millones de filas por empresa; más
+allá, la salida es verificar de forma incremental desde el último ancla verificado.
+
 `hash_key_missing` y `hash_key_unknown` son problemas de configuración hasta que se demuestre lo contrario; el resto son
 señal de manipulación. La respuesta **nunca** incluye la llave ni su identificador, y **no nombra filas de otra empresa**:
 si la fila que rompe la cadena tiene otro `tenant_id` (una base con filas mezcladas, o un `tenant_id` editado) el
