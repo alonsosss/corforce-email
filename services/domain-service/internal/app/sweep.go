@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 
 	"github.com/alonsosss/corforce-email/services/domain-service/internal/domain"
 	"github.com/google/uuid"
@@ -31,6 +32,10 @@ func (uc *UseCase) SweepTenant(ctx context.Context, tenantID uuid.UUID) SweepRep
 	log := uc.logger.With(zap.String("tenant_id", tenantID.String()))
 
 	revocations, err := uc.repo.ListPendingDKIMRevocation(ctx, tenantID)
+	if errors.Is(err, domain.ErrTenantSchemaNotReady) {
+		log.Warn("barrido: la base de la empresa aun no tiene todas las migraciones; se salta esta pasada", zap.Error(err))
+		return report
+	}
 	if err != nil {
 		log.Error("barrido: listar revocaciones DKIM pendientes", zap.Error(err))
 	}

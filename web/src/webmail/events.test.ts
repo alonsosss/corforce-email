@@ -63,7 +63,12 @@ describe('avisos de la bandeja', () => {
     const onChange = vi.fn();
     const onSessionExpired = vi.fn();
     const stop = watchInbox({ onChange, onSessionExpired });
-    return { onChange, onSessionExpired, stop, es: () => FakeEventSource.instances.at(-1)! };
+    return {
+      onChange,
+      onSessionExpired,
+      stop,
+      es: () => FakeEventSource.instances[FakeEventSource.instances.length - 1]!,
+    };
   };
 
   it('un aviso de la bandeja vuelve a leer, y varios seguidos se funden en una sola lectura', () => {

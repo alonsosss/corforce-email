@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/alonsosss/corforce-email/pkg/db"
@@ -69,6 +70,20 @@ func nullable(s string) *string {
 func isUniqueViolation(err error) bool {
 	var pgErr *pgconn.PgError
 	return errors.As(err, &pgErr) && pgErr.Code == "23505"
+}
+
+// schemaNotReady traduce un esquema o una columna que no existe (SQLSTATE 3F000, 42P01 y 42703) a
+// domain.ErrTenantSchemaNotReady: en una empresa que se esta aprovisionando o a la que falta una migracion no
+// es un fallo de codigo sino un estado que el barrido debe saltar.
+func schemaNotReady(err error) error {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		switch pgErr.Code {
+		case "3F000", "42P01", "42703":
+			return fmt.Errorf("%w: %s", domain.ErrTenantSchemaNotReady, pgErr.Message)
+		}
+	}
+	return err
 }
 
 func (r *Repository) Create(ctx context.Context, d *domain.Domain) error {
@@ -162,7 +177,7 @@ func (r *Repository) ListForRecheck(ctx context.Context, tenantID uuid.UUID, pen
  ORDER BY last_checked_at NULLS FIRST, domain`,
 		tenantID, domain.StatusVerified, domain.StatusPending, pendingSince)
 	if err != nil {
-		return nil, err
+		return nil, schemaNotReady(err)
 	}
 	defer rows.Close()
 	return collect(rows)
@@ -191,7 +206,7 @@ func (r *Repository) ListPendingDeactivation(ctx context.Context, tenantID uuid.
  ORDER BY domain`,
 		tenantID)
 	if err != nil {
-		return nil, err
+		return nil, schemaNotReady(err)
 	}
 	defer rows.Close()
 	return collect(rows)
@@ -204,7 +219,7 @@ func (r *Repository) ListPendingDKIMRevocation(ctx context.Context, tenantID uui
  ORDER BY domain`,
 		tenantID)
 	if err != nil {
-		return nil, err
+		return nil, schemaNotReady(err)
 	}
 	defer rows.Close()
 	return collect(rows)

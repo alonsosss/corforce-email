@@ -3,11 +3,14 @@ package domain
 import "errors"
 
 var (
-	ErrDomainNotFound      = errors.New("dominio no encontrado")
-	ErrDomainAlreadyExists = errors.New("el dominio ya esta dado de alta en esta empresa")
-	ErrInvalidDomainName   = errors.New("nombre de dominio no valido")
-	ErrPlatformDomain      = errors.New("el dominio pertenece a la plataforma y no puede darse de alta")
-	ErrPublicSuffixDomain  = errors.New("el nombre es un sufijo publico (como com.pe o co.uk) y no un dominio registrable; indique el dominio de la empresa")
+	// ErrTenantSchemaNotReady: la base de la empresa aun no tiene todas las migraciones del servicio (se esta
+	// aprovisionando o falta aplicarlas). El barrido la salta en esa pasada y la reintenta en la siguiente.
+	ErrTenantSchemaNotReady = errors.New("el esquema de la empresa aun no esta migrado")
+	ErrDomainNotFound       = errors.New("dominio no encontrado")
+	ErrDomainAlreadyExists  = errors.New("el dominio ya esta dado de alta en esta empresa")
+	ErrInvalidDomainName    = errors.New("nombre de dominio no valido")
+	ErrPlatformDomain       = errors.New("el dominio pertenece a la plataforma y no puede darse de alta")
+	ErrPublicSuffixDomain   = errors.New("el nombre es un sufijo publico (como com.pe o co.uk) y no un dominio registrable; indique el dominio de la empresa")
 	// ErrInvalidPlatformHostname: MAIL_HOSTNAME no es un nombre DNS valido o es un sufijo publico.
 	ErrInvalidPlatformHostname = errors.New("el hostname de la plataforma no es valido o es un sufijo publico")
 	// ErrInvalidReportAddress: la direccion de informes de un registro TXT no es una sola direccion valida.

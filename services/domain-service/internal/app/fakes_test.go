@@ -22,7 +22,9 @@ type fakeRepo struct {
 	checks    []domain.DNSCheck
 	rotations []domain.DKIMRotation
 	updates   int
-	now       func() time.Time
+	// listErr lo devuelve ListPendingDKIMRevocation: un esquema de empresa aun sin migrar.
+	listErr error
+	now     func() time.Time
 	// keyMu hace de cerrojo por dominio de WithDKIMLock (uno para todos basta en las pruebas).
 	keyMu sync.Mutex
 }
@@ -231,6 +233,9 @@ func (r *fakeRepo) UsedDKIMSelectors(_ context.Context, tenantID, domainID uuid.
 func (r *fakeRepo) ListPendingDKIMRevocation(_ context.Context, tenantID uuid.UUID) ([]*domain.Domain, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.listErr != nil {
+		return nil, r.listErr
+	}
 	var out []*domain.Domain
 	for _, d := range r.domains {
 		if d.TenantID == tenantID && d.DKIMRevocationPending {
