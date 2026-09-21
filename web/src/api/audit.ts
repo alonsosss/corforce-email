@@ -92,6 +92,36 @@ export interface ChainIntegrity {
   security_events?: ChainIntegrity;
 }
 
+export type IntegrityRunStatus = 'running' | 'completed' | 'cancelled' | 'failed';
+export type IntegrityRunMode = 'full' | 'incremental';
+export type IntegrityRunPhase = 'audit_logs' | 'security_events' | 'anchors' | 'done';
+
+/** Verificacion de la cadena en segundo plano (services/audit/internal/domain/integrity_run.go).
+ * `result` solo esta en las terminadas; `error` es el codigo de un fallo tecnico, que no dice
+ * nada de la cadena. `current_seq` y `target_seq` son la posicion alcanzada en audit_logs y la de
+ * su cabeza al empezar. */
+export interface IntegrityRun {
+  id: string;
+  mode: IntegrityRunMode;
+  trigger: 'manual' | 'sweep' | 'request';
+  requested_by?: string;
+  status: IntegrityRunStatus;
+  phase: IntegrityRunPhase;
+  checked: number;
+  current_seq: number;
+  target_seq: number;
+  cancel_requested: boolean;
+  result?: ChainIntegrity;
+  error?: string;
+  started_at: string;
+  heartbeat_at: string;
+  finished_at?: string;
+}
+
+/** Codigo con el que audit rechaza lanzar una verificacion cuando la empresa ya tiene una en
+ * curso; `error.details.run_id` es esa verificacion. */
+export const VERIFICATION_RUNNING = 'VERIFICATION_RUNNING';
+
 interface StatusResponse {
   status: string;
 }
@@ -115,5 +145,12 @@ export const auditApi = {
     ),
   acknowledge: (id: string) => api.post<StatusResponse>(endpoints.audit.acknowledge(id)),
 
-  integrity: () => api.get<ChainIntegrity>(endpoints.audit.integrity),
+  startIntegrityRun: (mode: IntegrityRunMode) =>
+    api.post<IntegrityRun>(endpoints.audit.integrityRuns, { body: { mode } }),
+  listIntegrityRuns: (signal?: AbortSignal) =>
+    api.get<IntegrityRun[]>(endpoints.audit.integrityRuns, { signal }),
+  integrityRun: (id: string, signal?: AbortSignal) =>
+    api.get<IntegrityRun>(endpoints.audit.integrityRun(id), { signal }),
+  cancelIntegrityRun: (id: string) =>
+    api.post<IntegrityRun>(endpoints.audit.cancelIntegrityRun(id)),
 };

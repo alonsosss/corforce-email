@@ -26,7 +26,7 @@ en `migrations/cell/canonical/<name>/` en vez de `tenant/`.
 |---|---|
 | `validate.sh` | Puertos sin colisión; todo módulo gateado en `routes.json` tiene permisos sembrados; delega en coupling, streams, base-images y sql-arity |
 | `check-migrations.sh` | Migraciones idempotentes (por sentencia, siembras con `ON CONFLICT` o `NOT EXISTS`), sin depender de esquemas creados después, sin redefinir vistas que otra amplía. Revisa empresa, celda y registro; `CANON_DIR` acota a uno |
-| `test-integration.sh` | `make test-integration` y el job `integration` de CI: pruebas `//go:build integration` contra Postgres y Redis desechables (y un Redis con `tls-port` que crea la prueba de `pkg/config` con su CA generada al vuelo), una base por variable `*_TEST_DSN`, paquetes en serie, y falla si una prueba se salta o lee una variable que el script no define |
+| `test-integration.sh` | `make test-integration` y el job `integration` de CI: pruebas `//go:build integration` contra Postgres, Redis y un NATS con JetStream desechables (`NATS_TEST_URL`, para los consumidores durables; y un Redis con `tls-port` que crea la prueba de `pkg/config` con su CA generada al vuelo), una base por variable `*_TEST_DSN`, paquetes en serie, y falla si una prueba se salta o lee una variable que el script no define |
 | `check-migration-drops.sh` | Un `DROP CONSTRAINT IF EXISTS` con nombre mal escrito no falla: se detecta |
 | `check-coupling.sh` | Un servicio no lee tablas de otro esquema; solo vistas `v_*`. Escrituras ajenas se vigilan aparte |
 | `check-streams.sh` | Dos streams de JetStream no se solapan en subjects |

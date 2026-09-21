@@ -94,7 +94,9 @@ export const endpoints = {
     logs: `${API_PREFIX}/audit/logs`,
     securityEvents: `${API_PREFIX}/audit/security-events`,
     acknowledge: (id: string) => `${API_PREFIX}/audit/security-events/${seg(id)}/acknowledge`,
-    integrity: `${API_PREFIX}/audit/integrity`,
+    integrityRuns: `${API_PREFIX}/audit/integrity/runs`,
+    integrityRun: (id: string) => `${API_PREFIX}/audit/integrity/runs/${seg(id)}`,
+    cancelIntegrityRun: (id: string) => `${API_PREFIX}/audit/integrity/runs/${seg(id)}/cancel`,
   },
   domains: {
     collection: `${API_PREFIX}/domains`,

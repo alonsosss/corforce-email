@@ -88,8 +88,8 @@ export const PERMISSIONS = {
     read: [MODULES.audit, 'security_events', 'read'],
     acknowledge: [MODULES.audit, 'security_events', 'acknowledge'],
   },
-  // GET /audit/integrity recorre toda la cadena y exige verify; integrity/read no tiene
-  // ruta, asi que la interfaz no lo pregunta.
+  // Lanzar, ver y cancelar una verificacion de la cadena (/audit/integrity/runs) exige verify;
+  // integrity/read no tiene ruta, asi que la interfaz no lo pregunta.
   integrity: {
     verify: [MODULES.audit, 'integrity', 'verify'],
   },

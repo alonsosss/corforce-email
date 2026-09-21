@@ -19,7 +19,7 @@ type fakeLogs struct {
 }
 
 func (f *fakeLogs) Create(context.Context, *domain.AuditLog) error { return nil }
-func (f *fakeLogs) VerifyChain(context.Context, uuid.UUID) (*domain.ChainIntegrity, error) {
+func (f *fakeLogs) VerifyChain(context.Context, uuid.UUID, domain.VerifyOptions) (*domain.ChainIntegrity, error) {
 	return &domain.ChainIntegrity{OK: true}, nil
 }
 func (f *fakeLogs) RecentLoginOtherIP(context.Context, uuid.UUID, uuid.UUID, string, time.Time, uuid.UUID) (string, error) {
@@ -53,7 +53,7 @@ type fakeSecurity struct {
 	verifyErr  error
 }
 
-func (f *fakeSecurity) VerifyChain(context.Context, uuid.UUID) (*domain.ChainIntegrity, error) {
+func (f *fakeSecurity) VerifyChain(context.Context, uuid.UUID, domain.VerifyOptions) (*domain.ChainIntegrity, error) {
 	if f.verified != nil || f.verifyErr != nil {
 		return f.verified, f.verifyErr
 	}

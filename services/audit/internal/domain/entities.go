@@ -109,6 +109,9 @@ type ChainIntegrity struct {
 	Head           *ChainHead      `json:"head,omitempty"`
 	Anchor         *ChainAnchor    `json:"anchor,omitempty"`
 	SecurityEvents *ChainIntegrity `json:"security_events,omitempty"`
+	// Checkpoint es el punto final de una verificacion correcta de esta cadena, desde el que puede
+	// seguir la siguiente. No forma parte de la respuesta.
+	Checkpoint *ChainCheckpoint `json:"-"`
 }
 
 type AuditQuery struct {

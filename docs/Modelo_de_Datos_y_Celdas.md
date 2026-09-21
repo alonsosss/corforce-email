@@ -672,7 +672,7 @@ foranea entre esquemas. Las claves foraneas son de dentro del esquema y llevan e
 
 Decisión y razones: `docs/adr/0006-cadena-de-auditoria-con-hmac-y-anclas.md`. Vive en la base de cada empresa (una
 cadena por empresa y por tabla), la escribe solo el servicio `audit` bajo el rol `audit_service` y se verifica con
-`GET /api/v1/audit/integrity`.
+`GET /api/v1/audit/integrity` (cadenas pequeñas) o `POST /api/v1/audit/integrity/runs` (en segundo plano).
 
 * **`audit.audit_logs`**: `seq`, `prev_hash`, `entry_hash` (migración `03`) más `hash_version` (`DEFAULT 1`) y
   `hash_key_id` (`07`). Versión 1: SHA-256 sin clave sobre campos unidos con `|` (las filas anteriores a la llave, que no
@@ -689,8 +689,17 @@ cadena por empresa y por tabla), la escribe solo el servicio `audit` bajo el rol
   reconocimiento y a los dos hashes.
 * **Verificación**: por fila con la fórmula de su versión, con la llave que dice su `hash_key_id` (`AUDIT_HASH_KEYS_OLD`
   cubre las retiradas), y después contra todas las anclas. Distingue `chain_broken`, `hash_key_missing`,
-  `hash_key_unknown`, `hash_version_regression`, `head_behind_anchor` y `anchor_mismatch`, informa las filas por versión y
+  `hash_key_unknown`, `hash_version_regression`, `head_behind_anchor`, `anchor_mismatch` y `checkpoint_mismatch` (la fila
+  donde una verificación anterior dejó su punto ya no es la misma), informa las filas por versión y
   no nombra filas de otra empresa ni deja ver la llave.
+* **`audit.integrity_runs`** (`10`, V 2026-09-21): las verificaciones de la cadena en segundo plano de la empresa: quién
+  las lanzó, origen, modo, estado, fase, avance (`checked_rows`, `current_seq`, `target_seq`), el punto de reanudación de
+  cada cadena (`chains`: posición y hash de la última fila verificada), el resultado y el latido (`heartbeat_at`, con el
+  reloj de la base). El índice único parcial `uq_integrity_runs_active` (una fila `running` por `tenant_id`) es el
+  cerrojo entre procesos. `audit_service` inserta, lee y actualiza solo las columnas de estado; no borra ni edita quién,
+  cuándo ni con qué modo. Se retoma desde el punto si el proceso muere; ADR 0006, sección 6.
+* **Eventos del bus**: el rastro los recibe por consumidores durables de JetStream con el id del evento como id del apunte
+  (`ON CONFLICT (id) DO NOTHING`: una reentrega no duplica); ADR 0006, sección 7.
 * **Límites**: una fila sin `seq` ni hash no forma parte de la cadena; la llave está en el proceso de `audit`, así que
   quien la tenga y escriba en la base recalcula las filas de versión 2; y las anclas solo valen contra quien no las escriba.
   Pruebas contra Postgres real en `services/audit/internal/adapters/postgres` (cadena mixta, manipulación de cada

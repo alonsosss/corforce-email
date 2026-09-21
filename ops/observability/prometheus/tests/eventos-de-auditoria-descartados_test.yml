@@ -1,0 +1,72 @@
+# Pruebas de las alertas EventosDeAuditoriaDescartados y VerificacionDeCadenaSinTerminar.
+#
+# audit cuenta en audit_events_discarded_total los eventos del bus que dio por tratados sin guardarlos (sin
+# empresa, o de una empresa que ya no existe) y en audit_integrity_runs_total{outcome="failed"} las
+# verificaciones de su barrido que fallaron por una causa tecnica. Los eventos avisan al primero y callan a la
+# hora; el fallo del barrido espera 30 minutos para no avisar de una pasada que la siguiente resuelve.
+#
+#   make check-alertas
+
+rule_files:
+  - ../rules/plataforma.yml
+
+evaluation_interval: 1m
+
+tests:
+  - interval: 1m
+    input_series:
+      - series: 'audit_events_discarded_total{job="mail-services",service="audit",reason="no_tenant"}'
+        values: '0x90'
+    alert_rule_test:
+      - eval_time: 60m
+        alertname: EventosDeAuditoriaDescartados
+        exp_alerts: []
+
+  - interval: 1m
+    input_series:
+      - series: 'audit_events_discarded_total{job="mail-services",service="audit",reason="no_tenant"}'
+        values: '0x10 1x80'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: EventosDeAuditoriaDescartados
+        exp_alerts: []
+      - eval_time: 11m
+        alertname: EventosDeAuditoriaDescartados
+        exp_alerts:
+          - exp_labels:
+              severidad: media
+            exp_annotations:
+              resumen: "audit descarto eventos del bus sin guardarlos en el rastro"
+              detalle: "El registro de audit (evento sin apunte) da el tipo, el emisor y el id de cada evento. reason=no_tenant: quien lo publica no puso empresa en el sobre, un fallo del emisor a corregir; reason=unknown_tenant: la empresa ya no existe en el registro."
+      - eval_time: 75m
+        alertname: EventosDeAuditoriaDescartados
+        exp_alerts: []
+
+  # Una pasada fallida aislada se resuelve sola: no avisa. Si sigue fallando media hora despues, si.
+  - interval: 1m
+    input_series:
+      - series: 'audit_integrity_runs_total{job="mail-services",service="audit",origin="sweep",outcome="failed"}'
+        values: '0x10 1x200'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: VerificacionDeCadenaSinTerminar
+        exp_alerts: []
+      - eval_time: 45m
+        alertname: VerificacionDeCadenaSinTerminar
+        exp_alerts:
+          - exp_labels:
+              severidad: media
+            exp_annotations:
+              resumen: "El barrido de verificacion de la cadena de auditoria no logra terminar"
+              detalle: "Una verificacion del barrido termino con fallo tecnico (error_code en audit.integrity_runs: internal_error o timeout). El registro de audit dice la causa. Si es timeout, la cadena de esa empresa no cabe en AUDIT_INTEGRITY_RUN_TIMEOUT: subirlo o dejar que el barrido siga incremental."
+
+  - interval: 1m
+    input_series:
+      - series: 'audit_integrity_runs_total{job="mail-services",service="audit",origin="sweep",outcome="ok"}'
+        values: '0+1x200'
+      - series: 'audit_integrity_runs_total{job="mail-services",service="audit",origin="manual",outcome="failed"}'
+        values: '0x10 1x200'
+    alert_rule_test:
+      - eval_time: 90m
+        alertname: VerificacionDeCadenaSinTerminar
+        exp_alerts: []

@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"log"
 	"os"
 	"strings"
@@ -21,11 +20,10 @@ import (
 	natsadapter "github.com/alonsosss/corforce-email/services/audit/internal/adapters/nats"
 	outboxadapter "github.com/alonsosss/corforce-email/services/audit/internal/adapters/outbox"
 	"github.com/alonsosss/corforce-email/services/audit/internal/adapters/postgres"
+	metrics "github.com/alonsosss/corforce-email/services/audit/internal/adapters/prometheus"
 	"github.com/alonsosss/corforce-email/services/audit/internal/adapters/sweep"
 	"github.com/alonsosss/corforce-email/services/audit/internal/app"
-	"github.com/alonsosss/corforce-email/services/audit/internal/domain"
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
 
@@ -50,8 +48,19 @@ const (
 	// pkg/server (30 s): pasado ese, la respuesta ya no llegaria.
 	maxVerifyTimeout = 28 * time.Second
 
-	// eventHandlerTimeout acota el trabajo de audit por cada evento del bus.
-	eventHandlerTimeout = 30 * time.Second
+	// Verificacion en segundo plano (docs/adr/0006): hasta que tamano de cadena contesta GET
+	// /integrity dentro de la peticion, cuanto puede durar una verificacion y cada cuanto una
+	// verificacion periodica pasa de incremental a completa.
+	minInlineMaxRows = 1_000
+	maxInlineMaxRows = 50_000_000
+	maxRunTimeout    = 72 * time.Hour
+	minFullEvery     = time.Hour
+	maxFullEvery     = 90 * 24 * time.Hour
+
+	// AUDIT_INTEGRITY_SWEEP_INTERVAL: cada cuanto se verifica cada cadena sin que nadie lo pida.
+	// Vacio o 0 lo desactiva.
+	minSweepInterval = time.Hour
+	maxSweepInterval = 7 * 24 * time.Hour
 )
 
 func main() {
@@ -80,6 +89,22 @@ func main() {
 		log.Fatal(err)
 	}
 	verifyTimeout, err := config.EnvDuration("AUDIT_VERIFY_TIMEOUT", app.DefaultVerifyTimeout, time.Second, maxVerifyTimeout)
+	if err != nil {
+		log.Fatal(err)
+	}
+	inlineMaxRows, err := config.EnvInt("AUDIT_INTEGRITY_INLINE_MAX_ROWS", app.DefaultInlineMaxRows, minInlineMaxRows, maxInlineMaxRows)
+	if err != nil {
+		log.Fatal(err)
+	}
+	runTimeout, err := config.EnvDuration("AUDIT_INTEGRITY_RUN_TIMEOUT", app.DefaultRunTimeout, time.Minute, maxRunTimeout)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fullEvery, err := config.EnvDuration("AUDIT_INTEGRITY_FULL_EVERY", app.DefaultFullEvery, minFullEvery, maxFullEvery)
+	if err != nil {
+		log.Fatal(err)
+	}
+	sweepEvery, err := integritySweepInterval()
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -125,6 +150,7 @@ func main() {
 	summaryRepo := postgres.NewAuditSummaryRepo(ctxPool)
 	eventPub := natsadapter.NewEventPublisher(bus)
 
+	integrityMetrics := metrics.New()
 	uc := app.NewAuditUseCase(app.AuditDeps{
 		Logs:         logRepo,
 		Security:     secRepo,
@@ -137,6 +163,14 @@ func main() {
 		Tx:           ctxPool,
 
 		VerifyTimeout: verifyTimeout,
+		Integrity: app.IntegrityRunConfig{
+			Runs:          postgres.NewIntegrityRunRepo(ctxPool),
+			Metrics:       integrityMetrics,
+			Background:    ctx,
+			RunTimeout:    runTimeout,
+			InlineMaxRows: int64(inlineMaxRows),
+			FullEvery:     fullEvery,
+		},
 	})
 
 	// El anuncio de cada ancla sale por la outbox: se encola con el ancla y el rele lo entrega.
@@ -145,6 +179,11 @@ func main() {
 	}
 	go outbox.RunForTenants(ctx, tenantDB, db.PoolFromCtx, bus, logger, outbox.Options{})
 	go sweep.New(registryPool.Pool, tenantDB, uc, logger, anchorEvery).Run(ctx)
+	if sweepEvery > 0 {
+		go sweep.NewIntegrity(registryPool.Pool, tenantDB, uc, integrityMetrics, logger, sweepEvery).Run(ctx)
+	} else {
+		logger.Info("audit: sin barrido periodico de verificacion de las cadenas (AUDIT_INTEGRITY_SWEEP_INTERVAL); solo se verifica bajo demanda")
+	}
 
 	h := handler.NewHandler(uc, perms)
 
@@ -155,13 +194,19 @@ func main() {
 		BruteForceWindow: time.Duration(bruteForceWindowMin) * time.Minute,
 	}, logger)
 
-	subscribeToEvents(bus, uc, detector, tenantDB, logger)
+	// Eventos de dominio: consumidores durables de JetStream, uno por subject. Lo publicado con audit
+	// caido queda en su stream y se aplica al volver; la caida de NATS no impide arrancar (reintentan).
+	sources, err := natsadapter.SourcesFor(auditSubjects())
+	if err != nil {
+		log.Fatalf("AUDIT_SUBJECTS: %v", err)
+	}
+	eventConsumer := natsadapter.NewEventConsumer(bus, uc, detector, tenantDB, sources, logger)
+	go eventConsumer.Run(ctx)
+	defer eventConsumer.Stop()
 
 	// Rastro de escrituras del API publicado por el gateway (JetStream durable).
 	apiTrail := natsadapter.NewAPITrailWorker(bus, uc, tenantDB, logger)
-	if err := apiTrail.Start(); err != nil {
-		logger.Error("api trail worker start failed", zap.Error(err))
-	}
+	go apiTrail.Run(ctx)
 	defer apiTrail.Stop()
 
 	r := chi.NewRouter()
@@ -182,72 +227,6 @@ func main() {
 	cancel()
 	if runErr != nil {
 		logger.Fatal("server error", zap.Error(runErr))
-	}
-}
-
-func subscribeToEvents(bus *events.Bus, uc *app.AuditUseCase, detector *app.SecurityDetector, tenantDB *db.TenantDB, logger *zap.Logger) {
-	handle := func(evt events.Event) {
-		userID, _ := uuid.Parse(evt.UserID)
-		tenantID, _ := uuid.Parse(evt.TenantID)
-		if tenantID == uuid.Nil {
-			return
-		}
-
-		// Las suscripciones de nucleo entregan de una en una: un evento que se cuelga (base lenta, cerrojo
-		// de la cadena) retiene a todos los que vienen detras.
-		base, cancel := context.WithTimeout(context.Background(), eventHandlerTimeout)
-		defer cancel()
-		pool, err := tenantDB.ResolveForTenant(base, tenantID.String())
-		if err != nil {
-			logger.Warn("audit: resolve tenant pool", zap.String("tenant", tenantID.String()), zap.Error(err))
-			return
-		}
-		ctx := db.WithPool(base, pool)
-
-		detail := ""
-		// La IP real y el user-agent viajan en el payload del evento cuando el emisor
-		// los conoce (p.ej. identity en user.logged_in); 0.0.0.0 solo como ausencia.
-		ip := "0.0.0.0"
-		userAgent := ""
-		if data, ok := evt.Data.(map[string]interface{}); ok {
-			if b, err := json.Marshal(data); err == nil {
-				detail = string(b)
-			}
-			if v, ok := data["ip"].(string); ok && v != "" {
-				ip = v
-			}
-			if v, ok := data["user_agent"].(string); ok {
-				userAgent = v
-			}
-		}
-
-		l := &domain.AuditLog{
-			TenantID:  tenantID,
-			UserID:    userID,
-			Action:    evt.Type,
-			Module:    evt.Source,
-			Resource:  evt.Type,
-			IPAddress: ip,
-			Severity:  "info",
-		}
-		if userAgent != "" {
-			l.UserAgent = &userAgent
-		}
-		if detail != "" {
-			l.Changes = &detail
-		}
-
-		if err := uc.LogAction(ctx, l); err != nil {
-			logger.Error("event audit log failed", zap.Error(err), zap.String("type", evt.Type))
-			return
-		}
-		detector.Inspect(ctx, l, userAgent)
-	}
-
-	for _, subj := range auditSubjects() {
-		if _, err := bus.QueueSubscribe(subj, "audit-service", handle); err != nil {
-			logger.Error("subscribe failed", zap.String("subject", subj), zap.Error(err))
-		}
 	}
 }
 
@@ -276,4 +255,15 @@ func auditSubjects() []string {
 		}
 	}
 	return subjects
+}
+
+// integritySweepInterval lee AUDIT_INTEGRITY_SWEEP_INTERVAL. Esta desactivado por defecto: verificar
+// cada cadena es leerla entera de vez en cuando en una base compartida, y quien opera decide cada
+// cuanto le compensa.
+func integritySweepInterval() (time.Duration, error) {
+	switch strings.TrimSpace(os.Getenv("AUDIT_INTEGRITY_SWEEP_INTERVAL")) {
+	case "", "0", "0s":
+		return 0, nil
+	}
+	return config.EnvDuration("AUDIT_INTEGRITY_SWEEP_INTERVAL", minSweepInterval, minSweepInterval, maxSweepInterval)
 }

@@ -25,7 +25,9 @@ type Total struct {
 
 type AuditLogRepository interface {
 	Create(ctx context.Context, log *domain.AuditLog) error
-	VerifyChain(ctx context.Context, tenantID uuid.UUID) (*domain.ChainIntegrity, error)
+	// VerifyChain recorre la cadena; con opts.From continua desde un punto ya verificado (relee la
+	// fila del punto y comprueba que sigue siendo la misma) y con opts.OnBatch informa de cada lote.
+	VerifyChain(ctx context.Context, tenantID uuid.UUID, opts domain.VerifyOptions) (*domain.ChainIntegrity, error)
 	RecentLoginOtherIP(ctx context.Context, tenantID, userID uuid.UUID, currentIP string, since time.Time, excludeID uuid.UUID) (string, error)
 	GetByID(ctx context.Context, id, tenantID uuid.UUID) (*domain.AuditLog, error)
 	List(ctx context.Context, query domain.AuditQuery, page, pageSize int) ([]*domain.AuditLog, error)
@@ -51,7 +53,7 @@ type SecurityEventRepository interface {
 	HasRecentEvent(ctx context.Context, tenantID uuid.UUID, eventType, ip string, since time.Time) (bool, error)
 	// VerifyChain recorre la cadena de hash de los eventos. Sin clave configurada verifica
 	// lo que haya y falla si encuentra filas firmadas.
-	VerifyChain(ctx context.Context, tenantID uuid.UUID) (*domain.ChainIntegrity, error)
+	VerifyChain(ctx context.Context, tenantID uuid.UUID, opts domain.VerifyOptions) (*domain.ChainIntegrity, error)
 }
 
 type DataChangeRepository interface {
@@ -91,4 +93,38 @@ type ChainAnchorPublisher interface {
 // Transactor abre la transaccion en la que se guarda el ancla y se encola su evento.
 type Transactor interface {
 	Transact(ctx context.Context, fn func(ctx context.Context) error) error
+}
+
+// IntegrityRunRepository guarda las verificaciones de cadena en segundo plano de la empresa. La
+// base garantiza que solo hay una en curso por empresa: es el cerrojo entre procesos.
+type IntegrityRunRepository interface {
+	// Open registra la verificacion como en curso. Si la empresa ya tiene una en curso no escribe
+	// nada y la devuelve junto a domain.ErrRunActive.
+	Open(ctx context.Context, run *domain.IntegrityRun) (*domain.IntegrityRun, error)
+	Get(ctx context.Context, tenantID, id uuid.UUID) (*domain.IntegrityRun, error)
+	// Active es la verificacion en curso de la empresa, nil si no hay.
+	Active(ctx context.Context, tenantID uuid.UUID) (*domain.IntegrityRun, error)
+	// LastCompleted es la ultima verificacion terminada de la empresa, nil si no hay. Con onlyOK
+	// solo cuenta las que dieron la cadena por buena; con un modo, solo las de ese modo.
+	LastCompleted(ctx context.Context, tenantID uuid.UUID, onlyOK bool, mode domain.RunMode) (*domain.IntegrityRun, error)
+	List(ctx context.Context, tenantID uuid.UUID, limit int) ([]*domain.IntegrityRun, error)
+	// Claim toma una verificacion en curso cuyo dueno dejo de latir hace mas de staleAfter (o que ya
+	// es de owner) y la devuelve; ok es false si otro proceso la tiene viva.
+	Claim(ctx context.Context, tenantID, id uuid.UUID, owner string, staleAfter time.Duration) (run *domain.IntegrityRun, ok bool, err error)
+	// Progress anota el avance y el latido. Devuelve domain.ErrRunLost si owner ya no es el dueno y
+	// domain.ErrRunCancelled si se pidio cancelarla.
+	Progress(ctx context.Context, tenantID, id uuid.UUID, owner string, p domain.RunProgress) error
+	// Finish cierra la verificacion; solo su dueno puede.
+	Finish(ctx context.Context, tenantID, id uuid.UUID, owner string, f domain.RunFinish) error
+	// RequestCancel marca la verificacion en curso para que su dueno la detenga; false si no esta en curso.
+	RequestCancel(ctx context.Context, tenantID, id uuid.UUID) (bool, error)
+}
+
+// IntegrityMetrics cuenta lo que hacen las verificaciones. Sus etiquetas toman valores de
+// conjuntos cerrados (origen y desenlace): nada que llegue de fuera las abre, y ninguna lleva la
+// empresa.
+type IntegrityMetrics interface {
+	RunFinished(origin domain.RunTrigger, outcome string)
+	// SweepBroken es cuantas empresas dejo con la cadena rota la ultima pasada del barrido.
+	SweepBroken(tenants int)
 }

@@ -3,6 +3,7 @@ package nats
 import (
 	"context"
 	"encoding/json"
+	"sync"
 	"time"
 
 	"github.com/alonsosss/corforce-email/pkg/db"
@@ -28,11 +29,30 @@ type APITrailWorker struct {
 	uc       *app.AuditUseCase
 	tenantDB *db.TenantDB
 	logger   *zap.Logger
-	sub      *natsgo.Subscription
+
+	mu  sync.Mutex
+	sub *natsgo.Subscription
 }
 
 func NewAPITrailWorker(bus *events.Bus, uc *app.AuditUseCase, tenantDB *db.TenantDB, logger *zap.Logger) *APITrailWorker {
 	return &APITrailWorker{bus: bus, uc: uc, tenantDB: tenantDB, logger: logger}
+}
+
+// Run ata el consumidor y, si NATS no responde, reintenta hasta lograrlo o hasta que el contexto se
+// cancele: el servicio arranca igual, y lo publicado entretanto lo recoge el durable al atarse.
+func (w *APITrailWorker) Run(ctx context.Context) {
+	for {
+		err := w.Start()
+		if err == nil {
+			return
+		}
+		w.logger.Warn("audit: no se pudo suscribir al rastro del API; se reintenta", zap.Error(err))
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(subscribeRetry):
+		}
+	}
 }
 
 func (w *APITrailWorker) Start() error {
@@ -43,13 +63,18 @@ func (w *APITrailWorker) Start() error {
 	if err != nil {
 		return err
 	}
+	w.mu.Lock()
 	w.sub = sub
+	w.mu.Unlock()
 	return nil
 }
 
 func (w *APITrailWorker) Stop() {
-	if w.sub != nil {
-		_ = w.sub.Drain()
+	w.mu.Lock()
+	sub := w.sub
+	w.mu.Unlock()
+	if sub != nil {
+		_ = sub.Drain()
 	}
 }
 

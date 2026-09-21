@@ -33,7 +33,7 @@ dev-db:
 test:
 	$(GO) test ./... -race -count=1
 
-# make test-integration  (pruebas //go:build integration contra Postgres y Redis desechables:
+# make test-integration  (pruebas //go:build integration contra Postgres, Redis y NATS desechables:
 # una base por paquete, paquetes en serie, y una prueba que se salta cuenta como fallo;
 # necesita docker. IT_PACKAGES acota los paquetes, IT_KEEP=1 deja los contenedores)
 test-integration:

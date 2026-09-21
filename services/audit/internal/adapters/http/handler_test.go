@@ -49,6 +49,10 @@ var rutas = []ruta{
 	{http.MethodGet, base + "/summary", "", "audit/logs/read"},
 	{http.MethodGet, base + "/user-activity/no-es-uuid", "", "audit/logs/read"},
 	{http.MethodGet, base + "/changes/no-es-uuid", "", "audit/logs/read"},
+	{http.MethodPost, base + "/integrity/runs", "", "audit/integrity/verify"},
+	{http.MethodGet, base + "/integrity/runs", "", "audit/integrity/verify"},
+	{http.MethodGet, base + "/integrity/runs/no-es-uuid", "", "audit/integrity/verify"},
+	{http.MethodPost, base + "/integrity/runs/no-es-uuid/cancel", "", "audit/integrity/verify"},
 }
 
 // policyStub hace de access-control: sirve a pkg/authz la politica con los permisos

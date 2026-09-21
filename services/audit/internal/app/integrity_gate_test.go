@@ -19,7 +19,7 @@ type slowLogs struct {
 	release chan struct{}
 }
 
-func (s *slowLogs) VerifyChain(ctx context.Context, tenantID uuid.UUID) (*domain.ChainIntegrity, error) {
+func (s *slowLogs) VerifyChain(ctx context.Context, tenantID uuid.UUID, _ domain.VerifyOptions) (*domain.ChainIntegrity, error) {
 	s.started <- tenantID
 	select {
 	case <-s.release:

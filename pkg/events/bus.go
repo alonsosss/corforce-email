@@ -220,6 +220,19 @@ const ackWaitDuration = 90 * time.Second
 // disimulaba, pero era trabajo repetido en cada deploy y un riesgo real de
 // duplicados cuando una clave de idempotencia cambia entre versiones.
 func (b *Bus) DurableQueueSubscribe(subject, durable string, handler func(Event, func())) (*nats.Subscription, error) {
+	return b.durableSubscribe(subject, durable, nats.DeliverAllPolicy, handler)
+}
+
+// DurableQueueSubscribeNew es DurableQueueSubscribe para un consumidor que reemplaza a una
+// suscripcion de nucleo que ya registraba el mismo flujo: al CREAR el durable solo recibe lo
+// publicado desde ese momento, en vez de reproducir todo lo que el stream retiene (lo que la
+// suscripcion anterior ya trato y volveria a aplicarse). Un durable que ya existe conserva su
+// posicion y esta politica no le afecta.
+func (b *Bus) DurableQueueSubscribeNew(subject, durable string, handler func(Event, func())) (*nats.Subscription, error) {
+	return b.durableSubscribe(subject, durable, nats.DeliverNewPolicy, handler)
+}
+
+func (b *Bus) durableSubscribe(subject, durable string, deliver nats.DeliverPolicy, handler func(Event, func())) (*nats.Subscription, error) {
 	js, err := b.conn.JetStream()
 	if err != nil {
 		return nil, fmt.Errorf("jetstream context: %w", err)
@@ -235,7 +248,7 @@ func (b *Bus) DurableQueueSubscribe(subject, durable string, handler func(Event,
 		AckPolicy:      nats.AckExplicitPolicy,
 		AckWait:        ackWaitDuration,
 		MaxDeliver:     maxDeliverCount,
-		DeliverPolicy:  nats.DeliverAllPolicy,
+		DeliverPolicy:  deliver,
 	}
 	if info, ierr := js.ConsumerInfo(stream, durable); ierr == nil && info != nil {
 		if info.Config.DeliverSubject != desired.DeliverSubject {

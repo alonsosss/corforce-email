@@ -42,17 +42,22 @@ describe('permisos por accion en auditoria', () => {
     vi.restoreAllMocks();
   });
 
-  it('verificar la cadena exige integrity/verify: con integrity/read no se ofrece', () => {
+  it('verificar la cadena exige integrity/verify: con integrity/read no se ofrece ni se pide', () => {
+    const list = vi.spyOn(auditApi, 'listIntegrityRuns');
     grant(['integrity', 'read']);
     renderPage(<IntegrityPage />);
     expect(screen.queryByRole('button', { name: t('audit.integrity.verify') })).toBeNull();
     expect(screen.getByText(t('audit.integrity.noVerify'))).toBeInTheDocument();
+    expect(list).not.toHaveBeenCalled();
   });
 
-  it('con integrity/verify se ofrece verificar', () => {
+  it('con integrity/verify se ofrece verificar', async () => {
+    vi.spyOn(auditApi, 'listIntegrityRuns').mockResolvedValue({ data: [] });
     grant(['integrity', 'verify']);
     renderPage(<IntegrityPage />);
-    expect(screen.getByRole('button', { name: t('audit.integrity.verify') })).toBeInTheDocument();
+    expect(
+      await screen.findByRole('button', { name: t('audit.integrity.verify') }),
+    ).toBeInTheDocument();
   });
 
   it('los registros exigen logs/read y sin el no se piden', () => {

@@ -534,3 +534,42 @@ groups:
         annotations:
           resumen: "{{ $labels.service }} dejo de reintentar eventos de su outbox sin publicarlos"
           detalle: "Un evento de la outbox de {{ $labels.service }} agoto sus intentos sin llegar a JetStream (payload ilegible o el bus rechazo cada intento) y nada lo vuelve a tomar. Buscar en platform.event_outbox de la base afectada las filas con published_at nulo y attempts al maximo: last_error dice la causa. Corregirla y reponer los intentos (UPDATE platform.event_outbox SET attempts = 0 WHERE published_at IS NULL AND attempts >= 50); el id del evento deduplica en JetStream, asi que republicar no duplica."
+
+  - name: auditoria
+    rules:
+      # Una verificacion de la cadena de hash (barrido periodico, a peticion o lanzada por un GET de una
+      # cadena grande) dio la cadena por rota. Los motivos de configuracion (hash_key_missing,
+      # hash_key_unknown) tambien salen aqui, y el detalle dice como distinguirlos. El gauge lo fija la
+      # ultima pasada completa del barrido y se sostiene hasta la siguiente; el contador cubre las
+      # verificaciones fuera del barrido durante una hora. Critica: es la evidencia de que el rastro se
+      # altero, y cada hora sin mirarla es una hora mas de ventaja para quien lo hizo.
+      - alert: CadenaDeAuditoriaRota
+        expr: max(audit_integrity_sweep_broken_tenants) > 0 or sum(increase(audit_integrity_runs_total{outcome="broken"}[1h])) > 0
+        labels:
+          severidad: critica
+        annotations:
+          resumen: "Una verificacion de la cadena de auditoria encontro una rotura"
+          detalle: "El registro de audit (la verificacion de la cadena encontro una rotura) da la empresa, la cadena, el motivo (reason) y la posicion (broken_seq); GET /api/v1/audit/integrity/runs de esa empresa guarda el resultado. hash_key_missing y hash_key_unknown son de configuracion (AUDIT_HASH_KEY); chain_broken, head_behind_anchor, anchor_mismatch y checkpoint_mismatch son manipulacion hasta que se demuestre lo contrario: no reiniciar audit ni tocar la base, y contrastar con audit.chain_anchors, el stream AUDIT_CHAIN y el respaldo (ADR 0006)."
+
+      # El barrido no pudo verificar: la base no responde o la verificacion excedio su plazo. No dice nada
+      # de la cadena, pero mientras dure nadie la esta comprobando. Media, y con espera: una pasada
+      # fallida por una base ocupada se resuelve sola en la siguiente.
+      - alert: VerificacionDeCadenaSinTerminar
+        expr: sum(increase(audit_integrity_runs_total{origin="sweep",outcome="failed"}[6h])) > 0
+        for: 30m
+        labels:
+          severidad: media
+        annotations:
+          resumen: "El barrido de verificacion de la cadena de auditoria no logra terminar"
+          detalle: "Una verificacion del barrido termino con fallo tecnico (error_code en audit.integrity_runs: internal_error o timeout). El registro de audit dice la causa. Si es timeout, la cadena de esa empresa no cabe en AUDIT_INTEGRITY_RUN_TIMEOUT: subirlo o dejar que el barrido siga incremental."
+
+      # Un evento del bus que audit dio por tratado sin guardarlo: no tiene empresa (no hay base donde
+      # escribirlo) o su empresa ya no existe. El evento falta en el rastro. Media: un hueco concreto,
+      # no una caida.
+      - alert: EventosDeAuditoriaDescartados
+        expr: sum(increase(audit_events_discarded_total[1h])) > 0
+        labels:
+          severidad: media
+        annotations:
+          resumen: "audit descarto eventos del bus sin guardarlos en el rastro"
+          detalle: "El registro de audit (evento sin apunte) da el tipo, el emisor y el id de cada evento. reason=no_tenant: quien lo publica no puso empresa en el sobre, un fallo del emisor a corregir; reason=unknown_tenant: la empresa ya no existe en el registro."

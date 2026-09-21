@@ -273,6 +273,32 @@ con cada una: ADR 0006, sección 5. El ancla externa (correo diario de las cabez
 plataforma) está decidida y sin implementar: hasta entonces la cabeza anclada solo vive en la base, en el stream
 `AUDIT_CHAIN` y en el log del servidor.
 
+Verificación en segundo plano y eventos por consumidores durables (`docs/adr/0006-cadena-de-auditoria-con-hmac-y-anclas.md`,
+secciones 6 y 7). Orden de despliegue:
+
+1. **Migración `10` (`audit.integrity_runs`) en cada base de empresa antes del código** (`bash ops/apply-all-canonical.sh`,
+   idempotente) y `ops/maintenance/pgbouncer-reconnect.sh` después. Sin ella, `POST /audit/integrity/runs` y el `GET
+   /audit/integrity` de una cadena grande dan 500; lo demás no cambia.
+2. **Recrear `audit`** (nunca con las dos versiones a la vez). En el primer arranque crea un consumidor durable por subject
+   de `AUDIT_SUBJECTS` con `DeliverNew` (solo lo publicado desde ese momento: el durable no reproduce lo que los streams ya
+   retenían, que la suscripción anterior guardó con otro id y saldría duplicado) y declara los streams (`GATEWAY` y `ACCESS`
+   nuevos; `IDENTITY`, `ORGANIZATION`, `SCHEDULER`, `DOMAINS` y `MIGRATION` ganan sus subjects). Lo publicado en el hueco
+   entre el `audit` viejo y el nuevo se pierde esa única vez; desde entonces, lo publicado con `audit` caído se aplica al
+   volver. Con NATS caído en el arranque el servicio atiende igual y reintenta atarse cada 5 s.
+3. Variables nuevas (todas opcionales, en `.env`): `AUDIT_INTEGRITY_INLINE_MAX_ROWS` (200000: hasta que tamaño de cadena
+   contesta `GET /audit/integrity` dentro de la petición; más allá responde 202 y lanza una verificación en segundo plano),
+   `AUDIT_INTEGRITY_RUN_TIMEOUT` (12h, de 1m a 72h), `AUDIT_INTEGRITY_FULL_EVERY` (7d, de 1h a 90d: cada cuanto el barrido
+   hace una completa en vez de incremental) y `AUDIT_INTEGRITY_SWEEP_INTERVAL` (**vacío = sin barrido**; de 1h a 7d; una
+   empresa a la vez, hasta 30 min por empresa y pasada, en una sola réplica). Con el barrido encendido la primera pasada
+   espera 5 minutos tras el arranque.
+4. Vigilar: `audit_integrity_runs_total{origin,outcome}`, `audit_integrity_sweep_broken_tenants`,
+   `audit_events_discarded_total` y las alertas del grupo `auditoria` (`CadenaDeAuditoriaRota`,
+   `VerificacionDeCadenaSinTerminar`, `EventosDeAuditoriaDescartados`), además de las de `EVENTS_DLQ` (los consumidores se
+   llaman `audit-<subject>`, por ejemplo `audit-identity-all`). Ante `CadenaDeAuditoriaRota`: `GET
+   /api/v1/audit/integrity/runs` de la empresa da el motivo y la posición; no reiniciar `audit` ni tocar la base.
+5. Una verificación en curso cuando `audit` se reinicia no se pierde: queda en curso con su punto y se retoma a los 90 s desde ahí (por
+   quien la consulte, quien lance otra o el barrido). Se cancela con `POST /audit/integrity/runs/{id}/cancel`.
+
 ## 3. Arranque de una plataforma vacía
 
 `ops/db/bootstrap-platform.sh` crea la celda inicial, la empresa `platform` y su primer
@@ -570,7 +596,7 @@ una segunda `make e2e` (o `make e2e-mail`) sin tocar los contenedores de la prim
 reserva cuyo proceso ya no existe es un resto y se reemplaza. `make e2e` y `make e2e-mail`
 pueden correr a la vez, con prefijos y puertos distintos.
 `make test-integration` (también un job de CI) corre las pruebas `//go:build integration`
-contra un Postgres y un Redis desechables, con una base por variable `*_TEST_DSN` y los
+contra un Postgres, un Redis y un NATS con JetStream desechables (el NATS lo levanta siempre el script, con una credencial de la ejecución, en el puerto base+3), con una base por variable `*_TEST_DSN` y los
 paquetes en serie; una prueba que se salta cuenta como fallo. Una prueba de integración
 nueva aplica ella misma sus migraciones (dos veces, en su base) y su variable se declara en
 `ops/scaffold/test-integration.sh`, o el job falla.
@@ -967,7 +993,7 @@ Ningún servicio corre hoy con más de una réplica; esto es lo que se comprobó
 |---|---|---|
 | gateway | Sí | Limitadores compartidos en Redis (`gateway:api`, `gateway:auth`) y el contador de lecturas del detector de extracción masiva (`gateway:exfil`: por usuario, ventana anclada en la primera lectura y TTL en Redis). `EXFIL_READ_THRESHOLD` y `EXFIL_WINDOW_MIN` valen para el conjunto de réplicas y la alerta sale una sola vez por ventana, porque sale del `INCR` atómico. Si Redis cae cada réplica cuenta aparte (`LimitadorSinRedis`, etiqueta `limiter`): los limitadores no dejan de limitar y el detector no deja de contar, pero el total de un usuario que reparte sus lecturas queda dividido por N hasta que Redis vuelva. El detector nunca bloquea, así que un Redis caído no corta ninguna lectura. Cuesta un viaje a Redis por lectura de datos (tope de 250 ms y 5 s de espera tras un fallo, como los limitadores). La caché de permisos vive 60 s por réplica |
 | identity, access-control, organization, billing, templates, campaigns, automations, analytics, suppression, reputation, domain-service, contacts, transactional | Sí | Sin estado propio. Los barridos periódicos toman `db.TryLeaderLock` (un `pg_try_advisory_xact_lock` con la transacción abierta: si el líder muere, la conexión se cierra y el cerrojo se suelta solo). Sus limitadores en memoria multiplican el cupo por N, pero detrás está el del gateway |
-| audit | Sí, con condición | Cada escritura de cadena toma un candado de transacción por base de empresa (serializa entre réplicas); el anclaje tiene líder. `AUDIT_HASH_KEY` idéntica en todas y recreadas a la vez (una sin llave escribiría versión 1 tras filas de versión 2). El tope de verificaciones (`AUDIT_VERIFY_MAX_CONCURRENT`) es por proceso. Los eventos del bus entran por una suscripción `QueueSubscribe` de núcleo (no durable): las repartidas entre réplicas, pero un evento publicado con audit caído no se recupera |
+| audit | Sí, con condición | Cada escritura de cadena toma un candado de transacción por base de empresa (serializa entre réplicas); el anclaje y el barrido de verificación tienen líder. `AUDIT_HASH_KEY` idéntica en todas y recreadas a la vez (una sin llave escribiría versión 1 tras filas de versión 2). Una verificación de cadena por empresa **entre réplicas** (índice único en la base); el tope de 4 verificaciones a la vez es **por proceso**, no global. Los eventos del bus entran por consumidores durables push de JetStream (`audit-<subject>`): la segunda réplica no puede atarse y reintenta con aviso hasta que la primera se vaya (queda en espera, sin daño, y toma el relevo); un evento publicado con audit caído se aplica al volver |
 | mail-migration | Sí | El conjunto de empresas con trabajo (`hinted`) es una optimización por réplica: el reclamo es `FOR UPDATE SKIP LOCKED`, sin doble entrega (probado con 8 ejecutores concurrentes sobre 24 trabajos, ninguno repetido) y lo que una réplica no conoce lo encuentra el recorrido completo cada `MAIL_MIGRATION_SWEEP_INTERVAL`. El consumidor de `mail.mailbox.deleted` es un push durable: la segunda réplica no puede atarse y reintenta con aviso (queda en espera, sin daño) |
 | mail-dav | Sí | Sin caché. Igual que mail-migration con su consumidor durable. El freno de fuerza bruta de la contraseña es el de mail-auth, en Redis (por IP real) |
 | mail-auth, webmail | Sí | Sesiones y throttle en Redis. webmail: consumidor durable como los anteriores |
@@ -995,10 +1021,10 @@ cada reentrega.
 
 Lo medido o leído en el código que NO se cambió, con su razón:
 
-* **`audit` recibe los eventos de identidad, organización, acceso, gateway, tareas, dominios y migraciones por una
-  suscripción de núcleo (`QueueSubscribe`, no durable).** Un evento publicado mientras `audit` está caído (cada
-  despliegue lo recrea) queda en su stream y nadie lo lee: falta de rastro. Pasarlo a consumidores durables
-  (`DurableQueueSubscribe`, con su `EnsureStream`) toca la lógica de suscripción de `audit`, que revisa otra tarea.
+* **`audit` y los eventos publicados con el servicio caído**: resuelto (2026-09-21, ADR 0006 sección 7): consumidores
+  durables por subject, idempotentes por id de evento, con ack tras persistir y DLQ. Queda un hueco de una sola vez en
+  el despliegue que lo introduce (`DeliverNew`, ver "Verificación en segundo plano y eventos por consumidores durables"
+  en la sección 2) y la retención de 7 días de los streams.
 * **Recuentos `count(*)` por página** (bitácora de `audit`, listado de `mail-migration`): eran O(n) por petición, 17 a 21 ms
   con 100000 filas de una empresa. Ahora el total se cuenta solo hasta `db.PageCountCap` (10000 filas,
   `SELECT count(*) FROM (SELECT 1 ... LIMIT 10001)`): bajo el tope es exacto y la petición no cambia; por encima devuelve el
@@ -1008,8 +1034,10 @@ Lo medido o leído en el código que NO se cambió, con su razón:
   llega más allá; para lo antiguo se estrecha el filtro (fechas, módulo, usuario). Una petición con `page` mayor sigue
   respondiendo. Si hiciera falta recorrer todo, paginar por clave (cursor), no por desplazamiento. Sin cambiar quedan los
   listados de eventos de seguridad de `audit` y los demás servicios, que cuentan exacto.
-* **Verificación de la cadena de auditoría**: solo completa, hasta ~5 millones de filas en 25 s. Pasado eso, verificar de forma
-  incremental desde el último ancla verificado.
+* **Verificación de la cadena de auditoría**: resuelto en su modelo (2026-09-21, ADR 0006 sección 6): en segundo plano,
+  reanudable, cancelable, incremental y con barrido periódico opcional. Queda **medirla en el servidor con una empresa
+  grande** (las pruebas recorren miles de filas; la única medida es 100000 filas a ~227000 filas/s) antes de fijar
+  `AUDIT_INTEGRITY_INLINE_MAX_ROWS` y el intervalo del barrido, y el cupo global entre réplicas (hoy 4 por proceso).
 * **JetStream sin tope global** en el servidor NATS (solo por stream, 1 GiB) y sin exportador de NATS: el tamaño de los
   streams no está en Prometheus. Añadir `max_file_store` al servidor y el exportador oficial.
 * **Sin métricas por contenedor** (cAdvisor): el aviso de un servicio cerca de su techo de memoria es `ProcesoMatadoPorFaltaDeMemoria`,

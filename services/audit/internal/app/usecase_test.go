@@ -68,7 +68,7 @@ func (r *recordedLogs) Count(context.Context, domain.AuditQuery) (ports.Total, e
 	return ports.Total{Value: r.total, Capped: r.totalCapped}, r.countErr
 }
 
-func (r *recordedLogs) VerifyChain(context.Context, uuid.UUID) (*domain.ChainIntegrity, error) {
+func (r *recordedLogs) VerifyChain(context.Context, uuid.UUID, domain.VerifyOptions) (*domain.ChainIntegrity, error) {
 	return r.verified, r.verifyErr
 }
 

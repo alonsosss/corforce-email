@@ -12,7 +12,9 @@
 #   2. Levanta un Postgres (pgvector/pgvector:pg16) y un Redis (redis:7.4.10-alpine)
 #      desechables, o adopta los que le dan (CI: los services de GitHub Actions), y les
 #      cambia la credencial por una aleatoria de esta ejecucion. La prueba del TLS hacia
-#      Redis crea ella misma un Redis con tls-port (cfm-it-tls-redis, puerto base+2).
+#      Redis crea ella misma un Redis con tls-port (cfm-it-tls-redis, puerto base+2). Levanta
+#      tambien un NATS con JetStream (nats:2.10-alpine, cfm-it-nats, puerto base+3, con una
+#      credencial de esta ejecucion) para las pruebas de los consumidores durables.
 #   3. Crea una base por variable *_TEST_DSN en ese Postgres y exporta todas las variables.
 #      Cada prueba migra su propia base; las que aun dan su base por migrada reciben aqui
 #      sus migraciones (MIGRADAS_POR_EL_SCRIPT), dos veces.
@@ -26,7 +28,7 @@
 #   make test-integration
 #   IT_PACKAGES='./services/billing/...' make test-integration   # acota los paquetes
 #   IT_KEEP=1 make test-integration       # deja contenedores y la salida json
-#   IT_PORT_BASE=26000 make test-integration   # otro rango si 27000-27002 esta ocupado
+#   IT_PORT_BASE=26000 make test-integration   # otro rango si 27000-27003 esta ocupado
 #   IT_REDIS_TLS_PORT=27890 make test-integration   # solo el puerto del Redis TLS
 #
 # En CI, con los contenedores ya levantados por services:
@@ -90,7 +92,7 @@ REDIS_PASSWORD_VARS=(REDIS_TEST_PASSWORD MAIL_SECURITY_TEST_REDIS_PASSWORD REPUT
 # del contenedor (no hay cliente en el anfitrion). La de los roles por servicio (pkg/db)
 # hace lo mismo: crea registro, dos bases de empresa y dos celdas, y corre los scripts de
 # ops/db contra ellas.
-OTRAS_VARS=(CELL_ROLE_TEST_DSN CELL_ROLE_TEST_CONTAINER DB_ROLES_TEST_DSN DB_ROLES_TEST_CONTAINER)
+OTRAS_VARS=(CELL_ROLE_TEST_DSN CELL_ROLE_TEST_CONTAINER DB_ROLES_TEST_DSN DB_ROLES_TEST_CONTAINER NATS_TEST_URL)
 # La prueba del TLS hacia Redis (pkg/config) genera su CA y su certificado y crea con ellos
 # su propio Redis con tls-port: recibe solo el nombre del contenedor y el puerto.
 REDIS_TLS_VARS=(REDIS_TLS_TEST_CONTAINER REDIS_TLS_TEST_PORT)
@@ -136,9 +138,11 @@ PG_PORT="${IT_PG_PORT:-$BASE}"
 REDIS_PORT="${IT_REDIS_PORT:-$((BASE + 1))}"
 REDIS_TLS_PORT="${IT_REDIS_TLS_PORT:-$((BASE + 2))}"
 REDIS_TLS_CONTAINER=cfm-it-tls-redis
+NATS_PORT="${IT_NATS_PORT:-$((BASE + 3))}"
+NATS_CONTAINER=cfm-it-nats
 PG_USER="${IT_PG_USER:-cfm_it}"
 read -r EFIMERO_MIN EFIMERO_MAX < /proc/sys/net/ipv4/ip_local_port_range 2>/dev/null || { EFIMERO_MIN=32768; EFIMERO_MAX=60999; }
-for p in "$PG_PORT" "$REDIS_PORT" "$REDIS_TLS_PORT"; do
+for p in "$PG_PORT" "$REDIS_PORT" "$REDIS_TLS_PORT" "$NATS_PORT"; do
   if (( p >= EFIMERO_MIN && p <= EFIMERO_MAX )); then
     echo "test-integration: el puerto $p cae en el rango efimero $EFIMERO_MIN-$EFIMERO_MAX; usa otro IT_PORT_BASE" >&2
     exit 2
@@ -173,14 +177,15 @@ fi
 WORK="$(mktemp -d)"
 limpiar() {
   if [[ "${IT_KEEP:-0}" == "1" ]]; then
-    echo "IT_KEEP=1: contenedores $PG_CONTAINER ($PG_PORT) y $REDIS_CONTAINER ($REDIS_PORT); salida en $WORK"
+    echo "IT_KEEP=1: contenedores $PG_CONTAINER ($PG_PORT), $REDIS_CONTAINER ($REDIS_PORT) y $NATS_CONTAINER ($NATS_PORT); salida en $WORK"
     return
   fi
   if (( PROPIOS )); then
     docker rm -f "$PG_CONTAINER" "$REDIS_CONTAINER" >/dev/null 2>&1
   fi
-  # El Redis TLS lo crea y borra la prueba; esto solo recoge el de una ejecucion cortada.
-  docker rm -f "$REDIS_TLS_CONTAINER" >/dev/null 2>&1
+  # El Redis TLS lo crea y borra la prueba; esto solo recoge el de una ejecucion cortada. El NATS
+  # lo crea siempre este script, tambien cuando Postgres y Redis los da la CI.
+  docker rm -f "$REDIS_TLS_CONTAINER" "$NATS_CONTAINER" >/dev/null 2>&1
   rm -rf "$WORK"
 }
 trap limpiar EXIT
@@ -212,6 +217,16 @@ fi
 esperar "Postgres" docker exec "$PG_CONTAINER" pg_isready -h 127.0.0.1 -U "$PG_USER" -d postgres \
   || { docker logs --tail 40 "$PG_CONTAINER" >&2; exit 1; }
 esperar "Redis" docker exec "$REDIS_CONTAINER" redis-cli ping || exit 1
+
+# NATS con JetStream en disco temporal y una credencial de esta ejecucion: las pruebas de los
+# consumidores durables (services/audit) necesitan un servidor real, porque lo que prueban es como
+# JetStream retiene, reentrega y descarta, que ningun doble reproduce.
+NATS_TOKEN="$(rand_hex 16)"
+docker rm -f "$NATS_CONTAINER" >/dev/null 2>&1
+docker run -d --name "$NATS_CONTAINER" --label "cfm-it.pid=$$" -p "127.0.0.1:$NATS_PORT:4222" \
+  nats:2.10-alpine -js -sd /tmp/js -m 8222 --auth "$NATS_TOKEN" >/dev/null || exit 1
+esperar "NATS" docker exec "$NATS_CONTAINER" wget -q -O /dev/null http://127.0.0.1:8222/healthz \
+  || { docker logs --tail 40 "$NATS_CONTAINER" >&2; exit 1; }
 
 # Por el socket del contenedor (confianza local de la imagen oficial): no hay psql en el
 # anfitrion ni en el runner de CI, y asi no hace falta la contrasena de arranque.
@@ -268,6 +283,7 @@ export DB_ROLES_TEST_CONTAINER="$PG_CONTAINER"
 for v in "${REDIS_ADDR_VARS[@]}"; do export "$v=127.0.0.1:$REDIS_PORT"; done
 for v in "${REDIS_PASSWORD_VARS[@]}"; do export "$v=$REDIS_PASSWORD"; done
 export REDIS_TLS_TEST_CONTAINER="$REDIS_TLS_CONTAINER" REDIS_TLS_TEST_PORT="$REDIS_TLS_PORT"
+export NATS_TEST_URL="nats://$NATS_TOKEN@127.0.0.1:$NATS_PORT"
 export INTEGRATION_REQUIRED=1
 
 # ── Pruebas ──────────────────────────────────────────────────────────────────

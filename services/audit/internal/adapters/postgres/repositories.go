@@ -106,11 +106,11 @@ const verifyBatchSize = 2000
 // escribe en la base borrar el hash de las ultimas filas y editarlas sin que nada lo
 // note; una fila con seq y sin hash se lee con hash vacio y rompe la cadena. Las de seq NULL
 // con hash se leen al final, como las ordenaba la consulta unica anterior.
-func (r *AuditLogRepo) VerifyChain(ctx context.Context, tenantID uuid.UUID) (*domain.ChainIntegrity, error) {
+func (r *AuditLogRepo) VerifyChain(ctx context.Context, tenantID uuid.UUID, opts domain.VerifyOptions) (*domain.ChainIntegrity, error) {
 	v := newChainVerifier(domain.ChainAuditLogs, r.hashKeys, tenantID)
 	const cols = `id,tenant_id,user_id,session_id,action,module,resource,resource_id,ip_address,user_agent,request_id,severity,created_at,
 		        before_data::text,after_data::text,changes::text,seq,hash_version,COALESCE(hash_key_id,''),COALESCE(prev_hash,''),COALESCE(entry_hash,'')`
-	scan := func(rows pgx.Rows) (bool, error) {
+	scan := func(v *chainVerifier, rows pgx.Rows) (bool, error) {
 		var l domain.AuditLog
 		var row storedRow
 		if err := rows.Scan(&l.ID, &l.TenantID, &l.UserID, &l.SessionID, &l.Action, &l.Module, &l.Resource, &l.ResourceID, &l.IPAddress, &l.UserAgent, &l.RequestID, &l.Severity, &l.CreatedAt,
@@ -124,11 +124,11 @@ func (r *AuditLogRepo) VerifyChain(ctx context.Context, tenantID uuid.UUID) (*do
 			},
 			func(keyID string, seq int64) []byte { return auditLogCanonicalV2(keyID, seq, row.prev, &l) }), nil
 	}
-	if err := verifyBatches(ctx, r.pool, v, `SELECT `+cols+` FROM audit.audit_logs WHERE seq > $1 ORDER BY seq ASC LIMIT $2`,
-		`SELECT `+cols+` FROM audit.audit_logs WHERE seq IS NULL AND entry_hash IS NOT NULL LIMIT $1`, scan); err != nil {
-		return nil, err
-	}
-	return v.res, nil
+	return verifyChain(ctx, r.pool, v, chainQueries{
+		keyset:  `SELECT ` + cols + ` FROM audit.audit_logs WHERE seq > $1 ORDER BY seq ASC LIMIT $2`,
+		at:      `SELECT ` + cols + ` FROM audit.audit_logs WHERE seq = $1`,
+		orphans: `SELECT ` + cols + ` FROM audit.audit_logs WHERE seq IS NULL AND entry_hash IS NOT NULL LIMIT $1`,
+	}, scan, opts)
 }
 
 func (r *AuditLogRepo) GetByID(ctx context.Context, id, tenantID uuid.UUID) (*domain.AuditLog, error) {
@@ -349,11 +349,11 @@ func (r *SecurityEventRepo) Create(ctx context.Context, e *domain.SecurityEvent)
 // VerifyChain recorre la cadena de los eventos con el mismo criterio que la de audit_logs. Las
 // filas sin seq ni hash son anteriores a la cadena, o de un servicio sin clave, y no forman
 // parte de ella; el reconocimiento no entra en el hash.
-func (r *SecurityEventRepo) VerifyChain(ctx context.Context, tenantID uuid.UUID) (*domain.ChainIntegrity, error) {
+func (r *SecurityEventRepo) VerifyChain(ctx context.Context, tenantID uuid.UUID, opts domain.VerifyOptions) (*domain.ChainIntegrity, error) {
 	v := newChainVerifier(domain.ChainSecurityEvents, r.hashKeys, tenantID)
 	const cols = `id,tenant_id,user_id,event_type,host(ip_address),user_agent,detail,risk_level,created_at,
 		        seq,COALESCE(hash_version,0),COALESCE(hash_key_id,''),COALESCE(prev_hash,''),COALESCE(entry_hash,'')`
-	scan := func(rows pgx.Rows) (bool, error) {
+	scan := func(v *chainVerifier, rows pgx.Rows) (bool, error) {
 		var e securityEventRecord
 		var row storedRow
 		if err := rows.Scan(&e.ID, &e.TenantID, &e.UserID, &e.EventType, &e.IP, &e.UserAgent, &e.Detail, &e.RiskLevel, &e.CreatedAt,
@@ -363,11 +363,11 @@ func (r *SecurityEventRepo) VerifyChain(ctx context.Context, tenantID uuid.UUID)
 		row.id, row.tenantID = e.ID, e.TenantID
 		return v.check(row, nil, func(keyID string, seq int64) []byte { return securityEventCanonicalV2(keyID, seq, row.prev, &e) }), nil
 	}
-	if err := verifyBatches(ctx, r.pool, v, `SELECT `+cols+` FROM audit.security_events WHERE seq > $1 ORDER BY seq ASC LIMIT $2`,
-		`SELECT `+cols+` FROM audit.security_events WHERE seq IS NULL AND entry_hash IS NOT NULL LIMIT $1`, scan); err != nil {
-		return nil, err
-	}
-	return v.res, nil
+	return verifyChain(ctx, r.pool, v, chainQueries{
+		keyset:  `SELECT ` + cols + ` FROM audit.security_events WHERE seq > $1 ORDER BY seq ASC LIMIT $2`,
+		at:      `SELECT ` + cols + ` FROM audit.security_events WHERE seq = $1`,
+		orphans: `SELECT ` + cols + ` FROM audit.security_events WHERE seq IS NULL AND entry_hash IS NOT NULL LIMIT $1`,
+	}, scan, opts)
 }
 
 func (r *SecurityEventRepo) GetByID(ctx context.Context, id, tenantID uuid.UUID) (*domain.SecurityEvent, error) {

@@ -1,0 +1,88 @@
+# Pruebas de la alerta CadenaDeAuditoriaRota.
+#
+# audit verifica la cadena de hash de cada empresa (barrido periodico, a peticion o lanzada por un GET de una
+# cadena grande). El barrido fija audit_integrity_sweep_broken_tenants al terminar cada pasada; cada
+# verificacion terminada suma a audit_integrity_runs_total{outcome=...}. Avisa a la primera rotura y, con el
+# gauge, la sostiene hasta que una pasada completa ya no encuentre ninguna.
+#
+#   make check-alertas
+
+rule_files:
+  - ../rules/plataforma.yml
+
+evaluation_interval: 1m
+
+tests:
+  # Cadenas sanas: ni el barrido ni las verificaciones a peticion avisan.
+  - interval: 1m
+    input_series:
+      - series: 'audit_integrity_sweep_broken_tenants{job="mail-services",service="audit"}'
+        values: '0x120'
+      - series: 'audit_integrity_runs_total{job="mail-services",service="audit",origin="sweep",outcome="ok"}'
+        values: '0+1x120'
+      - series: 'audit_integrity_runs_total{job="mail-services",service="audit",origin="manual",outcome="broken"}'
+        values: '0x120'
+    alert_rule_test:
+      - eval_time: 90m
+        alertname: CadenaDeAuditoriaRota
+        exp_alerts: []
+
+  # El barrido encuentra una empresa con la cadena rota: avisa, y sigue avisando mientras cada pasada la
+  # vea rota (el contador solo cubre la hora siguiente al hallazgo).
+  - interval: 1m
+    input_series:
+      - series: 'audit_integrity_sweep_broken_tenants{job="mail-services",service="audit"}'
+        values: '0x20 1x100'
+    alert_rule_test:
+      - eval_time: 19m
+        alertname: CadenaDeAuditoriaRota
+        exp_alerts: []
+      - eval_time: 21m
+        alertname: CadenaDeAuditoriaRota
+        exp_alerts:
+          - exp_labels:
+              severidad: critica
+            exp_annotations:
+              resumen: "Una verificacion de la cadena de auditoria encontro una rotura"
+              detalle: "El registro de audit (la verificacion de la cadena encontro una rotura) da la empresa, la cadena, el motivo (reason) y la posicion (broken_seq); GET /api/v1/audit/integrity/runs de esa empresa guarda el resultado. hash_key_missing y hash_key_unknown son de configuracion (AUDIT_HASH_KEY); chain_broken, head_behind_anchor, anchor_mismatch y checkpoint_mismatch son manipulacion hasta que se demuestre lo contrario: no reiniciar audit ni tocar la base, y contrastar con audit.chain_anchors, el stream AUDIT_CHAIN y el respaldo (ADR 0006)."
+      - eval_time: 100m
+        alertname: CadenaDeAuditoriaRota
+        exp_alerts:
+          - exp_labels:
+              severidad: critica
+            exp_annotations:
+              resumen: "Una verificacion de la cadena de auditoria encontro una rotura"
+              detalle: "El registro de audit (la verificacion de la cadena encontro una rotura) da la empresa, la cadena, el motivo (reason) y la posicion (broken_seq); GET /api/v1/audit/integrity/runs de esa empresa guarda el resultado. hash_key_missing y hash_key_unknown son de configuracion (AUDIT_HASH_KEY); chain_broken, head_behind_anchor, anchor_mismatch y checkpoint_mismatch son manipulacion hasta que se demuestre lo contrario: no reiniciar audit ni tocar la base, y contrastar con audit.chain_anchors, el stream AUDIT_CHAIN y el respaldo (ADR 0006)."
+
+  # Una verificacion manual encuentra la rotura: avisa aunque el barrido este desactivado, y calla a la hora.
+  - interval: 1m
+    input_series:
+      - series: 'audit_integrity_runs_total{job="mail-services",service="audit",origin="manual",outcome="broken"}'
+        values: '0x10 1x100'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: CadenaDeAuditoriaRota
+        exp_alerts: []
+      - eval_time: 11m
+        alertname: CadenaDeAuditoriaRota
+        exp_alerts:
+          - exp_labels:
+              severidad: critica
+            exp_annotations:
+              resumen: "Una verificacion de la cadena de auditoria encontro una rotura"
+              detalle: "El registro de audit (la verificacion de la cadena encontro una rotura) da la empresa, la cadena, el motivo (reason) y la posicion (broken_seq); GET /api/v1/audit/integrity/runs de esa empresa guarda el resultado. hash_key_missing y hash_key_unknown son de configuracion (AUDIT_HASH_KEY); chain_broken, head_behind_anchor, anchor_mismatch y checkpoint_mismatch son manipulacion hasta que se demuestre lo contrario: no reiniciar audit ni tocar la base, y contrastar con audit.chain_anchors, el stream AUDIT_CHAIN y el respaldo (ADR 0006)."
+      - eval_time: 75m
+        alertname: CadenaDeAuditoriaRota
+        exp_alerts: []
+
+  # Un fallo tecnico o una verificacion cancelada no son una rotura.
+  - interval: 1m
+    input_series:
+      - series: 'audit_integrity_runs_total{job="mail-services",service="audit",origin="sweep",outcome="failed"}'
+        values: '0x10 1x100'
+      - series: 'audit_integrity_runs_total{job="mail-services",service="audit",origin="manual",outcome="cancelled"}'
+        values: '0x10 1x100'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: CadenaDeAuditoriaRota
+        exp_alerts: []

@@ -233,6 +233,12 @@ type chainVerifier struct {
 	prev     string
 	sawKeyed bool
 	lastSeq  int64
+	// lastVersion es la version de hash de la ultima fila con posicion verificada.
+	lastVersion int
+	// adoptPrev hace que la primera fila lea su enlace de la propia fila: es la comprobacion de la
+	// fila de un punto de reanudacion, cuyo eslabon anterior no se conoce (se verifico en la pasada
+	// anterior) y cuyo contenido y hash si.
+	adoptPrev bool
 }
 
 func newChainVerifier(chain domain.ChainName, ring *crypto.MACKeyRing, tenantID uuid.UUID) *chainVerifier {
@@ -252,6 +258,10 @@ func (v *chainVerifier) check(row storedRow, unkeyed func() string, serialize fu
 	v.res.Versions[strconv.Itoa(row.version)]++
 	if row.seq != nil {
 		v.lastSeq = *row.seq
+		v.lastVersion = row.version
+	}
+	if v.adoptPrev {
+		v.prev, v.adoptPrev = row.prev, false
 	}
 	switch {
 	case row.version == hashVersionUnkeyed && unkeyed != nil:
@@ -301,15 +311,54 @@ func (v *chainVerifier) fail(row storedRow, reason string) bool {
 	return false
 }
 
-// verifyBatches lee la cadena en lotes de verifyBatchSize filas por paginacion de clave y las
-// entrega a scan, que devuelve false cuando el verificador ya anoto un fallo (ahi termina el
-// recorrido). Despues lee, con el mismo tope, las filas con hash y sin seq. Un contexto cancelado
-// o vencido corta el recorrido en el siguiente lote como mucho.
-func verifyBatches(ctx context.Context, pool *db.ContextPool, v *chainVerifier, keyset, orphans string, scan func(pgx.Rows) (bool, error)) error {
-	drain := func(rows pgx.Rows) (n int, stop bool, err error) {
+// resumeFrom coloca el verificador en el punto de una verificacion anterior: lo ya contado, el
+// hash del que la siguiente fila debe colgar y si ya se vio version 2 (la version no retrocede).
+func (v *chainVerifier) resumeFrom(cp *domain.ChainCheckpoint) {
+	v.prev, v.sawKeyed, v.lastSeq, v.lastVersion = cp.Hash, cp.SawKeyed, cp.Seq, cp.HashVersion
+	v.res.Checked = cp.Checked
+	v.res.Head = &domain.ChainHead{Seq: cp.Seq, Hash: cp.Hash, HashVersion: cp.HashVersion}
+	for version, n := range cp.Versions {
+		v.res.Versions[version] = n
+	}
+}
+
+// checkpoint es el punto alcanzado: la fila de posicion lastSeq y su hash.
+func (v *chainVerifier) checkpoint() domain.ChainCheckpoint {
+	cp := domain.ChainCheckpoint{
+		Seq: v.lastSeq, Hash: v.prev, HashVersion: v.lastVersion, SawKeyed: v.sawKeyed, Checked: v.res.Checked,
+		Versions: make(map[string]int, len(v.res.Versions)),
+	}
+	for version, n := range v.res.Versions {
+		cp.Versions[version] = n
+	}
+	return cp
+}
+
+// failCheckpoint anota que la fila del punto de reanudacion ya no es la que se verifico.
+func (v *chainVerifier) failCheckpoint(cp *domain.ChainCheckpoint) {
+	seq := cp.Seq
+	v.res.OK, v.res.Reason, v.res.Head, v.res.BrokenSeq = false, domain.ReasonCheckpointMismatch, nil, &seq
+}
+
+// chainQueries son las tres consultas de una cadena: por paginacion de clave (seq > $1, LIMIT $2),
+// una fila por posicion (seq = $1) y las filas con hash y sin posicion (LIMIT $1).
+type chainQueries struct{ keyset, at, orphans string }
+
+// rowScanner lee una fila y la verifica con el verificador que se le da: el de la cadena o el que
+// comprueba la fila de un punto de reanudacion.
+type rowScanner func(v *chainVerifier, rows pgx.Rows) (bool, error)
+
+// verifyChain recorre una cadena en lotes de verifyBatchSize filas por paginacion de clave. Con
+// opts.From no relee lo anterior al punto, pero SI su fila: comprueba que su contenido sigue dando
+// su hash y que este es el que se registro. Sin eso, quien editara una fila ya verificada (o
+// cambiara el punto guardado por el de otra) quedaria fuera de toda reanudacion. Entre lotes se
+// devuelve la conexion; un contexto cancelado o vencido corta el recorrido en el siguiente lote como
+// mucho, y opts.OnBatch recibe el punto alcanzado tras cada uno.
+func verifyChain(ctx context.Context, pool *db.ContextPool, v *chainVerifier, q chainQueries, scan rowScanner, opts domain.VerifyOptions) (*domain.ChainIntegrity, error) {
+	drain := func(rows pgx.Rows, with *chainVerifier) (n int, stop bool, err error) {
 		defer rows.Close()
 		for rows.Next() {
-			ok, err := scan(rows)
+			ok, err := scan(with, rows)
 			if err != nil {
 				return n, false, err
 			}
@@ -320,25 +369,76 @@ func verifyBatches(ctx context.Context, pool *db.ContextPool, v *chainVerifier, 
 		}
 		return n, false, rows.Err()
 	}
+
 	after := int64(math.MinInt64)
-	for {
-		rows, err := pool.Query(ctx, keyset, after, verifyBatchSize)
-		if err != nil {
-			return err
+	if opts.From != nil {
+		if err := checkResumePoint(ctx, pool, v, q.at, scan, opts.From, drain); err != nil || !v.res.OK {
+			return v.res, err
 		}
-		n, stop, err := drain(rows)
-		if err != nil || stop {
-			return err
+		v.resumeFrom(opts.From)
+		after = opts.From.Seq
+	}
+	for {
+		rows, err := pool.Query(ctx, q.keyset, after, verifyBatchSize)
+		if err != nil {
+			return nil, err
+		}
+		n, stop, err := drain(rows, v)
+		if err != nil {
+			return nil, err
+		}
+		if stop {
+			return v.res, nil
 		}
 		if n < verifyBatchSize {
 			break
 		}
 		after = v.lastSeq
+		if opts.OnBatch != nil {
+			if err := opts.OnBatch(v.checkpoint()); err != nil {
+				return nil, err
+			}
+		}
 	}
-	rows, err := pool.Query(ctx, orphans, verifyBatchSize)
+	// El punto final se toma antes de las filas sin posicion: estas no son parte de la secuencia
+	// desde la que continuara la siguiente verificacion.
+	final := v.checkpoint()
+	final.Complete = true
+
+	rows, err := pool.Query(ctx, q.orphans, verifyBatchSize)
+	if err != nil {
+		return nil, err
+	}
+	if _, _, err := drain(rows, v); err != nil {
+		return nil, err
+	}
+	if v.res.OK && v.lastSeq > 0 {
+		v.res.Checkpoint = &final
+	}
+	return v.res, nil
+}
+
+// checkResumePoint verifica la fila del punto con un verificador propio. Si falla, deja el
+// veredicto en v: el contenido de esa fila no cuadra con su hash, no tiene el hash registrado, o ya
+// no existe.
+func checkResumePoint(ctx context.Context, pool *db.ContextPool, v *chainVerifier, at string, scan rowScanner, cp *domain.ChainCheckpoint,
+	drain func(pgx.Rows, *chainVerifier) (int, bool, error)) error {
+	probe := newChainVerifier(v.res.Chain, v.ring, v.tenantID)
+	probe.adoptPrev = true
+	rows, err := pool.Query(ctx, at, cp.Seq)
 	if err != nil {
 		return err
 	}
-	_, _, err = drain(rows)
-	return err
+	n, _, err := drain(rows, probe)
+	if err != nil {
+		return err
+	}
+	switch {
+	case n == 0 || (probe.res.OK && (probe.lastVersion != cp.HashVersion || !hashesEqual(probe.prev, cp.Hash))):
+		v.failCheckpoint(cp)
+	case !probe.res.OK:
+		v.res.OK, v.res.Reason, v.res.Head = false, probe.res.Reason, nil
+		v.res.BrokenID, v.res.BrokenSeq, v.res.BrokenVersion = probe.res.BrokenID, probe.res.BrokenSeq, probe.res.BrokenVersion
+	}
+	return nil
 }

@@ -116,7 +116,7 @@ func TestChainVolume_VerifyBoundedCancelableAndNonBlocking(t *testing.T) {
 			cancel()
 		}()
 		start := time.Now()
-		_, err := e.logs.VerifyChain(ctx, e.tenant)
+		_, err := e.logs.VerifyChain(ctx, e.tenant, domain.VerifyOptions{})
 		if !errors.Is(err, context.Canceled) {
 			t.Fatalf("se esperaba context.Canceled, llego %v", err)
 		}
@@ -134,7 +134,7 @@ func TestChainVolume_VerifyBoundedCancelableAndNonBlocking(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			var err error
-			if verified, err = e.logs.VerifyChain(e.ctx, e.tenant); err != nil {
+			if verified, err = e.logs.VerifyChain(e.ctx, e.tenant, domain.VerifyOptions{}); err != nil {
 				t.Error(err)
 			}
 		}()

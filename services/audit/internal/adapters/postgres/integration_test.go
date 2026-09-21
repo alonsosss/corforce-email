@@ -39,6 +39,7 @@ var migrations = []string{
 	"migrations/tenant/canonical/audit/07_audit_hashchain_v2.sql",
 	"migrations/tenant/canonical/audit/08_chain_anchors.sql",
 	"migrations/tenant/canonical/audit/09_security_events_chain.sql",
+	"migrations/tenant/canonical/audit/10_integrity_runs.sql",
 }
 
 // integrationEnv devuelve la variable de entorno que apunta a la infraestructura de la
@@ -101,7 +102,7 @@ func setup(t *testing.T) *env {
 		applyMigration(t, admin, rel)
 	}
 	if _, err := admin.Exec(context.Background(),
-		`TRUNCATE audit.data_change_records, audit.audit_logs, audit.security_events, audit.chain_anchors, platform.event_outbox RESTART IDENTITY`); err != nil {
+		`TRUNCATE audit.data_change_records, audit.audit_logs, audit.security_events, audit.chain_anchors, audit.integrity_runs, platform.event_outbox RESTART IDENTITY`); err != nil {
 		t.Fatal(err)
 	}
 
@@ -171,7 +172,7 @@ func (e *env) seedChain(t *testing.T, n int) []uuid.UUID {
 
 func (e *env) verify(t *testing.T) *domain.ChainIntegrity {
 	t.Helper()
-	res, err := e.logs.VerifyChain(e.ctx, e.tenant)
+	res, err := e.logs.VerifyChain(e.ctx, e.tenant, domain.VerifyOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -620,7 +621,7 @@ func TestSinPoolEnElContextoFallaSinPanico(t *testing.T) {
 	if err := e.logs.Create(context.Background(), e.newLog("x")); err == nil {
 		t.Fatal("se esperaba un error")
 	}
-	if _, err := e.logs.VerifyChain(context.Background(), e.tenant); err == nil {
+	if _, err := e.logs.VerifyChain(context.Background(), e.tenant, domain.VerifyOptions{}); err == nil {
 		t.Fatal("se esperaba un error")
 	}
 	if err := e.logs.BulkCreate(context.Background(), []*domain.AuditLog{e.newLog("x")}); err == nil {

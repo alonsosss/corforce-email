@@ -110,6 +110,18 @@ cambie cualquiera de estas líneas.
   empresa, `SELECT count(*) FROM audit.audit_logs WHERE seq IS NOT NULL AND entry_hash IS NULL` cuenta las filas que un
   `/logs/bulk` anterior dejó fuera de la cadena; el verificador ya las señala como rotura, y un resultado distinto de
   cero pide decidir qué hacer con ellas antes de que el endpoint de integridad se ponga en rojo.
+  Resuelto después (2026-09-21, mismo ADR, secciones 6 y 7; sin desplegar): (1) **los eventos del bus ya no se pierden con
+  `audit` caído**: un consumidor durable de JetStream por subject de `AUDIT_SUBJECTS` (antes una suscripción de núcleo),
+  idempotente por id de evento, con ack tras persistir, DLQ, y sin que NATS caído impida arrancar; probado contra NATS 2.10
+  y Postgres reales (60 eventos publicados con el consumidor parado, 60 apuntes exactamente una vez) y con la mutación de
+  confirmar antes de guardar; (2) **la verificación de la cadena es asíncrona**: `POST /audit/integrity/runs`,
+  `GET /audit/integrity/runs[/{id}]`, `POST .../cancel`, con cerrojo por empresa en la base (`audit.integrity_runs`,
+  migración `10`), reanudable desde un punto atado a la fila (probado matando el proceso a mitad y con manipulaciones
+  entre la muerte y la reanudación; quitar la relectura de la fila del punto hace fallar tres pruebas), cancelable,
+  incremental, con barrido periódico opcional y alertas de Prometheus probadas con `promtool`; la página de integridad de
+  la web la usa (progreso, cancelar, resultado y causa). Abierto: medirla en el servidor con una empresa grande, el cupo
+  global entre réplicas, dar una rotura por conocida, y el hueco de una sola vez al desplegar los consumidores
+  (`DeliverNew`). `make test-integration` levanta ahora un NATS con JetStream desechable (`NATS_TEST_URL`).
 * Outbox disponible en `pkg/outbox` (probado contra Postgres): los servicios copiados en
   fase 0 siguen publicando tras el commit; se migran a `Enqueue` cuando se toquen. Los
   servicios nuevos lo usan desde el principio para sus publicaciones críticas. Los de celda

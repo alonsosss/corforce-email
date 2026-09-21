@@ -34,6 +34,8 @@ type stubLogs struct {
 	err       error
 	query     domain.AuditQuery
 	page, per int
+	// gate, si no es nil, retiene la verificacion de la cadena hasta que se cierre.
+	gate chan struct{}
 }
 
 func (s *stubLogs) Create(_ context.Context, l *domain.AuditLog) error {
@@ -50,8 +52,19 @@ func (s *stubLogs) BulkCreate(_ context.Context, l []*domain.AuditLog) error {
 	s.bulk = append(s.bulk, l...)
 	return nil
 }
-func (s *stubLogs) VerifyChain(context.Context, uuid.UUID) (*domain.ChainIntegrity, error) {
-	return s.verdict, s.err
+func (s *stubLogs) VerifyChain(ctx context.Context, _ uuid.UUID, _ domain.VerifyOptions) (*domain.ChainIntegrity, error) {
+	if s.gate != nil {
+		select {
+		case <-s.gate:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	if s.verdict == nil {
+		return nil, s.err
+	}
+	v := *s.verdict
+	return &v, s.err
 }
 func (s *stubLogs) GetByID(context.Context, uuid.UUID, uuid.UUID) (*domain.AuditLog, error) {
 	return s.byID, s.err
@@ -87,7 +100,7 @@ type stubSecurity struct {
 }
 
 func (s *stubSecurity) Create(context.Context, *domain.SecurityEvent) error { return nil }
-func (s *stubSecurity) VerifyChain(context.Context, uuid.UUID) (*domain.ChainIntegrity, error) {
+func (s *stubSecurity) VerifyChain(context.Context, uuid.UUID, domain.VerifyOptions) (*domain.ChainIntegrity, error) {
 	return &domain.ChainIntegrity{OK: true, Chain: domain.ChainSecurityEvents}, s.err
 }
 func (s *stubSecurity) GetByID(context.Context, uuid.UUID, uuid.UUID) (*domain.SecurityEvent, error) {
@@ -142,9 +155,12 @@ type stubPublisher struct{}
 
 // stubAnchors hace de tabla de anclas vacia: la cadena no tiene ninguna, asi que el veredicto
 // lo dan solo las filas.
-type stubAnchors struct{}
+type stubAnchors struct{ headSeq int64 }
 
-func (stubAnchors) Head(context.Context, domain.ChainName) (*domain.ChainHead, error) {
+func (a stubAnchors) Head(context.Context, domain.ChainName) (*domain.ChainHead, error) {
+	if a.headSeq > 0 {
+		return &domain.ChainHead{Seq: a.headSeq}, nil
+	}
 	return nil, nil
 }
 func (stubAnchors) Findings(context.Context, domain.ChainName) (domain.AnchorFindings, error) {

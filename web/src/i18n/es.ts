@@ -539,8 +539,11 @@ export const es = {
 
   'audit.integrity.title': 'Integridad del rastro',
   'audit.integrity.subtitle':
-    'Verifica la cadena de hashes de los registros de auditoria de la empresa.',
+    'Verifica la cadena de hashes de los registros de auditoria de la empresa. La verificacion corre en segundo plano.',
   'audit.integrity.verify': 'Verificar ahora',
+  'audit.integrity.verifyNew': 'Verificar solo lo nuevo',
+  'audit.integrity.verifyNewHint':
+    'Parte del punto de la ultima verificacion correcta: es mas rapida y no vuelve a leer lo ya verificado.',
   'audit.integrity.ok': 'La cadena es integra',
   'audit.integrity.broken': 'La cadena esta rota',
   'audit.integrity.checked': 'Registros comprobados: {n}',
@@ -566,8 +569,39 @@ export const es = {
     'Hay registros con una version de hash que este servicio no conoce.',
   'audit.integrity.reason.head_behind_anchor':
     'La cadena termina antes de una cabeza ya anclada: se borraron los ultimos registros. Conserva este resultado y escala el incidente.',
+  'audit.integrity.reason.checkpoint_mismatch':
+    'La fila donde termino la verificacion anterior ya no es la misma: se editaron o borraron registros ya verificados. Conserva este resultado y escala el incidente.',
   'audit.integrity.reason.anchor_mismatch':
     'Un ancla ya publicada no coincide con la cadena actual: se reescribio parte del rastro. Conserva este resultado y escala el incidente.',
+  'audit.integrity.running': 'Verificando la cadena',
+  'audit.integrity.runningDescription':
+    'La verificacion corre en segundo plano: puedes cerrar esta pagina y volver, y sigue si el servicio se reinicia.',
+  'audit.integrity.progress': 'Avance de la verificacion',
+  'audit.integrity.phase.audit_logs': 'Recorriendo los registros de auditoria',
+  'audit.integrity.phase.security_events': 'Recorriendo los eventos de seguridad',
+  'audit.integrity.phase.anchors': 'Contrastando la cadena con las anclas',
+  'audit.integrity.cancel': 'Cancelar verificacion',
+  'audit.integrity.cancelling': 'Cancelando...',
+  'audit.integrity.cancelled': 'Verificacion cancelada',
+  'audit.integrity.cancelledDescription':
+    'Se detuvo antes de terminar: no dice nada sobre la cadena. Registros comprobados hasta ese punto: {n}.',
+  'audit.integrity.failed': 'La verificacion no pudo terminar',
+  'audit.integrity.failedDescription':
+    'Fallo por una causa tecnica: no dice nada sobre la cadena. Vuelve a verificar; si persiste, revisa el registro del servicio de auditoria.',
+  'audit.integrity.error.timeout': 'Excedio el plazo maximo de una verificacion.',
+  'audit.integrity.error.internal_error': 'Error interno del servicio de auditoria.',
+  'audit.integrity.pollError': 'No se pudo consultar el avance de la verificacion; se reintenta.',
+  'audit.integrity.lastRun': 'Ultima verificacion',
+  'audit.integrity.mode': 'Modalidad',
+  'audit.integrity.mode.full': 'Completa',
+  'audit.integrity.mode.incremental': 'Solo lo nuevo',
+  'audit.integrity.trigger': 'Origen',
+  'audit.integrity.trigger.manual': 'Manual',
+  'audit.integrity.trigger.sweep': 'Programada',
+  'audit.integrity.trigger.request': 'Consulta de la API',
+  'audit.integrity.requestedBy': 'Lanzada por',
+  'audit.integrity.startedAt': 'Inicio',
+  'audit.integrity.finishedAt': 'Fin',
 
   'quota.unlimited': 'Sin limite',
   'quota.zeroUnlimited': '0 significa sin limite.',

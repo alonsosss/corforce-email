@@ -27,6 +27,8 @@ type AuditDeps struct {
 
 	// VerifyTimeout es el plazo de cada verificacion de cadena; cero toma DefaultVerifyTimeout.
 	VerifyTimeout time.Duration
+
+	Integrity IntegrityRunConfig
 }
 
 type AuditUseCase struct {
@@ -43,6 +45,8 @@ type AuditUseCase struct {
 
 	verifying     verificationGate
 	verifyTimeout time.Duration
+
+	integrity integrityRuns
 }
 
 func NewAuditUseCase(deps AuditDeps) *AuditUseCase {
@@ -63,6 +67,7 @@ func NewAuditUseCase(deps AuditDeps) *AuditUseCase {
 		tx:           deps.Tx,
 
 		verifyTimeout: verifyTimeout,
+		integrity:     newIntegrityRuns(deps.Integrity),
 	}
 }
 
@@ -75,8 +80,17 @@ var securityActions = map[string]string{
 }
 
 func (uc *AuditUseCase) LogAction(ctx context.Context, l *domain.AuditLog) error {
+	_, err := uc.RecordAction(ctx, l)
+	return err
+}
+
+// RecordAction es LogAction que ademas dice si el apunte es nuevo. Con un id fijado por el
+// llamador (el del evento del bus), guardar dos veces el mismo apunte no lo duplica y devuelve
+// created=false: el llamador distingue una reentrega de un apunte nuevo para no repetir los
+// efectos que solo corresponden al primero.
+func (uc *AuditUseCase) RecordAction(ctx context.Context, l *domain.AuditLog) (created bool, err error) {
 	if !isValidSeverity(l.Severity) {
-		return domain.ErrInvalidSeverity
+		return false, domain.ErrInvalidSeverity
 	}
 	if l.ID == uuid.Nil {
 		l.ID = uuid.New()
@@ -85,9 +99,9 @@ func (uc *AuditUseCase) LogAction(ctx context.Context, l *domain.AuditLog) error
 
 	if err := uc.logs.Create(ctx, l); err != nil {
 		if errors.Is(err, domain.ErrLogAlreadyRecorded) {
-			return nil
+			return false, nil
 		}
-		return fmt.Errorf("create audit log: %w", err)
+		return false, fmt.Errorf("create audit log: %w", err)
 	}
 
 	if eventType, ok := securityActions[l.Action]; ok {
@@ -109,7 +123,7 @@ func (uc *AuditUseCase) LogAction(ctx context.Context, l *domain.AuditLog) error
 			uc.logger.Error("publish security alert", zap.Error(err))
 		}
 	}
-	return nil
+	return true, nil
 }
 
 func (uc *AuditUseCase) BulkLogActions(ctx context.Context, logs []*domain.AuditLog) error {

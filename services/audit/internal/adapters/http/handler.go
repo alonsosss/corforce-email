@@ -25,6 +25,13 @@ const permModule = "audit"
 // verifyRetryAfterSeconds: cuando reintentar una verificacion rechazada por estar ya en curso.
 const verifyRetryAfterSeconds = "30"
 
+const (
+	// runRetryAfterSeconds: cada cuanto conviene consultar el avance de una verificacion.
+	runRetryAfterSeconds = "5"
+	maxRunRequestBytes   = 1 << 10
+	runsPath             = "/api/v1/audit/integrity/runs/"
+)
+
 type Handler struct {
 	uc    *app.AuditUseCase
 	authz *authz.Checker
@@ -60,8 +67,18 @@ func (h *Handler) Routes() chi.Router {
 		r.With(h.perm("security_events", "acknowledge")).Post("/{id}/acknowledge", h.acknowledgeEvent)
 	})
 	// Recorre la cadena de hash entera para detectar registros editados o borrados en
-	// la base: es la accion de verificar, no una lectura de estado guardado.
+	// la base: es la accion de verificar, no una lectura de estado guardado. Las cadenas grandes
+	// no caben en una peticion: se verifican en segundo plano (/integrity/runs) y esta ruta
+	// responde con la verificacion en curso. Lanzar, mirar y cancelar una verificacion es lo mismo
+	// que verificar: el mismo permiso.
 	r.With(h.perm("integrity", "verify")).Get("/integrity", h.verifyIntegrity)
+	r.Route("/integrity/runs", func(r chi.Router) {
+		r.Use(h.perm("integrity", "verify"))
+		r.Post("/", h.startIntegrityRun)
+		r.Get("/", h.listIntegrityRuns)
+		r.Get("/{id}", h.getIntegrityRun)
+		r.Post("/{id}/cancel", h.cancelIntegrityRun)
+	})
 	r.With(h.perm("logs", "read")).Get("/summary", h.getSummary)
 	r.With(h.perm("logs", "read")).Get("/user-activity/{userId}", h.getUserActivity)
 	r.With(h.perm("logs", "read")).Get("/changes/{logId}", h.getChanges)
@@ -74,22 +91,137 @@ func (h *Handler) verifyIntegrity(w http.ResponseWriter, r *http.Request) {
 		response.ErrBadRequest(w, "invalid tenant")
 		return
 	}
-	res, err := h.uc.VerifyChainIntegrity(r.Context(), tenantID)
-	if errors.Is(err, domain.ErrVerificationBusy) {
+	check, err := h.uc.CheckIntegrity(r.Context(), tenantID, requestingUser(r))
+	if h.writeIntegrityError(w, err) {
+		return
+	}
+	if check.Run != nil {
+		w.Header().Set("Location", runLocation(check.Run.ID))
+		w.Header().Set("Retry-After", runRetryAfterSeconds)
+		response.JSON(w, http.StatusAccepted, map[string]*domain.IntegrityRun{"run": check.Run, "last_completed": check.LastCompleted})
+		return
+	}
+	response.JSON(w, http.StatusOK, check.Result)
+}
+
+// writeIntegrityError traduce los fallos de las verificaciones y dice si respondio.
+func (h *Handler) writeIntegrityError(w http.ResponseWriter, err error) bool {
+	switch {
+	case err == nil:
+		return false
+	case errors.Is(err, domain.ErrVerificationBusy):
 		w.Header().Set("Retry-After", verifyRetryAfterSeconds)
 		response.Err(w, http.StatusTooManyRequests, "VERIFICATION_BUSY", "ya hay una verificacion de la cadena en curso; reintenta cuando termine")
-		return
-	}
-	if errors.Is(err, context.DeadlineExceeded) {
+	case errors.Is(err, context.DeadlineExceeded):
 		response.Err(w, http.StatusGatewayTimeout, "VERIFICATION_TIMEOUT", "la verificacion de la cadena excedio su plazo")
-		return
-	}
-	if err != nil {
+	case errors.Is(err, domain.ErrRunNotFound):
+		response.ErrNotFound(w, "verificacion no encontrada")
+	default:
 		response.Unexpected(w, err)
+	}
+	return true
+}
+
+// runRequest es el cuerpo, opcional, de POST /integrity/runs.
+type runRequest struct {
+	Mode string `json:"mode"`
+}
+
+func (h *Handler) startIntegrityRun(w http.ResponseWriter, r *http.Request) {
+	tenantID, err := uuid.Parse(middleware.GetTenantID(r.Context()))
+	if err != nil {
+		response.ErrBadRequest(w, "invalid tenant")
 		return
 	}
-	response.JSON(w, http.StatusOK, res)
+	req := runRequest{Mode: string(domain.RunModeFull)}
+	if r.ContentLength != 0 {
+		if err := validate.DecodeJSONLimit(w, r, &req, maxRunRequestBytes); err != nil {
+			response.ErrBadRequest(w, err.Error())
+			return
+		}
+	}
+	mode := domain.RunMode(req.Mode)
+	if !mode.Valid() {
+		response.ErrValidation(w, "mode debe ser full o incremental")
+		return
+	}
+	run, err := h.uc.StartIntegrityRun(r.Context(), tenantID, requestingUser(r), mode, domain.RunTriggerManual)
+	if errors.Is(err, domain.ErrRunActive) {
+		w.Header().Set("Location", runLocation(run.ID))
+		response.ErrWithDetails(w, http.StatusConflict, "VERIFICATION_RUNNING",
+			"la empresa ya tiene una verificacion de la cadena en curso", map[string]string{"run_id": run.ID.String()})
+		return
+	}
+	if h.writeIntegrityError(w, err) {
+		return
+	}
+	w.Header().Set("Location", runLocation(run.ID))
+	w.Header().Set("Retry-After", runRetryAfterSeconds)
+	response.JSON(w, http.StatusAccepted, run)
 }
+
+func (h *Handler) listIntegrityRuns(w http.ResponseWriter, r *http.Request) {
+	tenantID, err := uuid.Parse(middleware.GetTenantID(r.Context()))
+	if err != nil {
+		response.ErrBadRequest(w, "invalid tenant")
+		return
+	}
+	runs, err := h.uc.ListIntegrityRuns(r.Context(), tenantID)
+	if h.writeIntegrityError(w, err) {
+		return
+	}
+	response.JSON(w, http.StatusOK, runs)
+}
+
+func (h *Handler) getIntegrityRun(w http.ResponseWriter, r *http.Request) {
+	tenantID, runID, ok := runIDs(w, r)
+	if !ok {
+		return
+	}
+	run, err := h.uc.GetIntegrityRun(r.Context(), tenantID, runID)
+	if h.writeIntegrityError(w, err) {
+		return
+	}
+	response.JSON(w, http.StatusOK, run)
+}
+
+func (h *Handler) cancelIntegrityRun(w http.ResponseWriter, r *http.Request) {
+	tenantID, runID, ok := runIDs(w, r)
+	if !ok {
+		return
+	}
+	run, err := h.uc.CancelIntegrityRun(r.Context(), tenantID, runID)
+	if h.writeIntegrityError(w, err) {
+		return
+	}
+	response.JSON(w, http.StatusOK, run)
+}
+
+func runIDs(w http.ResponseWriter, r *http.Request) (tenantID, runID uuid.UUID, ok bool) {
+	tenantID, err := uuid.Parse(middleware.GetTenantID(r.Context()))
+	if err != nil {
+		response.ErrBadRequest(w, "invalid tenant")
+		return uuid.Nil, uuid.Nil, false
+	}
+	runID, err = uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		response.ErrBadRequest(w, "invalid run id")
+		return uuid.Nil, uuid.Nil, false
+	}
+	return tenantID, runID, true
+}
+
+// requestingUser es quien lanzo la verificacion, para dejarlo en su registro. Nil si la sesion no
+// trae un usuario legible.
+func requestingUser(r *http.Request) *uuid.UUID {
+	id, err := uuid.Parse(middleware.GetUserID(r.Context()))
+	if err != nil {
+		return nil
+	}
+	return &id
+}
+
+func runLocation(id uuid.UUID) string { return runsPath + id.String() }
 
 func (h *Handler) searchLogs(w http.ResponseWriter, r *http.Request) {
 	tenantID, err := uuid.Parse(middleware.GetTenantID(r.Context()))

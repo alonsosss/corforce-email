@@ -61,14 +61,20 @@ func (uc *AuditUseCase) VerifyChainIntegrity(ctx context.Context, tenantID uuid.
 	ctx, cancel := context.WithTimeout(ctx, uc.verifyTimeout)
 	defer cancel()
 
-	logs, err := uc.logs.VerifyChain(ctx, tenantID)
+	logs, err := uc.logs.VerifyChain(ctx, tenantID, domain.VerifyOptions{})
 	if err != nil {
 		return nil, err
 	}
-	events, err := uc.security.VerifyChain(ctx, tenantID)
+	events, err := uc.security.VerifyChain(ctx, tenantID, domain.VerifyOptions{})
 	if err != nil {
 		return nil, err
 	}
+	return uc.conclude(ctx, logs, events)
+}
+
+// conclude contrasta cada cadena con sus anclas y da el veredicto del conjunto: el de las filas de
+// audit_logs con el de security_events dentro, en rojo si cualquiera de las dos lo esta.
+func (uc *AuditUseCase) conclude(ctx context.Context, logs, events *domain.ChainIntegrity) (*domain.ChainIntegrity, error) {
 	if err := uc.checkAnchors(ctx, domain.ChainAuditLogs, logs); err != nil {
 		return nil, err
 	}

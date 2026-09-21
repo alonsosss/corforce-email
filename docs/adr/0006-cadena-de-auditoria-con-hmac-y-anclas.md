@@ -6,6 +6,11 @@ Implementado y probado contra Postgres real (2026-09-21). Sin desplegar: el desp
 hasta que se pone `AUDIT_HASH_KEY` en el almacén de secretos. La exportación del ancla a un sistema externo está
 decidida y pendiente (sección "Ancla externa").
 
+Ampliado el mismo día con dos decisiones que dejó abiertas la revisión de robustez, también implementadas y probadas
+contra Postgres y NATS reales y sin desplegar: la **verificación en segundo plano** (sección 6, migración `10`) y la
+**entrega de los eventos del bus por consumidores durables** (sección 7), sin la cual el rastro perdía lo publicado
+mientras `audit` estaba caído.
+
 ## Contexto
 
 `audit.audit_logs` es el rastro de la empresa y lleva una cadena de hash desde la migración `03`: cada fila guarda el
@@ -139,6 +144,7 @@ otra cadena con la misma forma). `ok` vale para el conjunto. Causas (`reason`):
 | `hash_version_unsupported` | versión que el servicio no conoce |
 | `head_behind_anchor` | la cabeza actual es anterior a un ancla ya publicada |
 | `anchor_mismatch` | la posición de un ancla contiene otro hash o ninguna fila |
+| `checkpoint_mismatch` | la fila donde una verificación anterior dejó su punto ya no tiene el hash que se registró, o no existe (sección 6) |
 
 **Costo y límites de la verificación.** Recorre la cadena entera de la empresa, así que su trabajo crece con ella y lo
 puede pedir cualquiera con el permiso. Se lee por paginación de clave (`seq > última`, lotes de 2000 filas), no con una
@@ -146,11 +152,135 @@ consulta larga: entre lotes se devuelve la conexión y no se retiene una instant
 memoria la fija una fila y no la cadena, un contexto cancelado la corta en el siguiente lote y no bloquea a los
 escritores (que solo comparten el candado entre sí). Medido con 100000 filas de versión 2 en un Postgres real: 439 ms
 (227000 filas/s), +2,8 MiB de heap, cancelada a los 44 ms, y una escritura pasa de p50 0,73 ms a 0,84 ms mientras
-verifica. Un recorrido por empresa y cuatro por proceso (la que sobra recibe 429 `VERIFICATION_BUSY`, no espera cola) y cada uno
-tiene `AUDIT_VERIFY_TIMEOUT` (25 s por defecto, tope 28: por debajo del `WriteTimeout` de 30 s de `pkg/server`;
-vencido, 504 `VERIFICATION_TIMEOUT`). A ese ritmo (máquina de
-medición; la del servidor será más lenta, medirlo allí) 25 s alcanzan para unos 5 millones de filas por empresa; más
-allá, la salida es verificar de forma incremental desde el último ancla verificado.
+verifica. Dentro de una petición, un recorrido por empresa y cuatro por proceso (la que sobra recibe 429
+`VERIFICATION_BUSY`, no espera cola) y cada uno tiene `AUDIT_VERIFY_TIMEOUT` (25 s por defecto, tope 28: por debajo del
+`WriteTimeout` de 30 s de `pkg/server`; vencido, 504 `VERIFICATION_TIMEOUT`). Una cadena de millones de filas no cabe en
+ese plazo: por eso `GET /integrity` solo verifica dentro de la petición las cadenas pequeñas y las grandes pasan a la
+verificación en segundo plano de la sección siguiente.
+
+### 6. Verificación en segundo plano
+
+**Modelo.** Cada verificación es una fila de `audit.integrity_runs` (migración `10`, por empresa): quién la lanzó
+(`requested_by`), su origen (`manual`, `sweep`, `request`), su modo, su estado, la fase, las filas comprobadas, la
+posición alcanzada y la de la cabeza al empezar (`current_seq`, `target_seq`: una cota del avance, no un porcentaje
+exacto, porque `seq` tiene huecos), el punto de reanudación de cada cadena y el resultado. Corre en una goroutine del
+proceso que la recibió, fuera de la vida de la petición, y no bloquea las escrituras (lee por lotes, como antes).
+
+| Ruta (permiso `audit/integrity/verify`, el de siempre) | Respuesta |
+|---|---|
+| `POST /audit/integrity/runs` (cuerpo opcional `{"mode":"full"\|"incremental"}`, completa por defecto) | `202` con la verificación, `Location` y `Retry-After`. `409 VERIFICATION_RUNNING` (con `error.details.run_id`) si la empresa ya tiene una; `429 VERIFICATION_BUSY` si el proceso está en su tope |
+| `GET /audit/integrity/runs` | las 20 más recientes de la empresa |
+| `GET /audit/integrity/runs/{id}` | estado, fase, avance y, terminada, `result` (el mismo cuerpo que da `GET /integrity`) o `error` (`internal_error`, `timeout`: un fallo técnico no dice nada de la cadena) |
+| `POST /audit/integrity/runs/{id}/cancel` | la verificación con `cancel_requested`; el dueño la cierra como `cancelled` en su siguiente punto. Es POST y no `DELETE` porque el gateway exige la acción `delete` para `DELETE` y la verificación solo pide `integrity/verify` |
+| `GET /audit/integrity` | si la suma de las posiciones de cabeza de las dos cadenas no pasa de `AUDIT_INTEGRITY_INLINE_MAX_ROWS` (200000 por defecto), **igual que antes**: `200` con el veredicto. Si pasa, `202` con `{"run": ..., "last_completed": ...}`: lanza una verificación completa (origen `request`) o sigue la que ya corre, y da la última terminada para que el llamador tenga algo que mirar |
+
+Decisión sobre `GET /integrity`: conservar el contrato para lo que ya cabía, y para lo que no, contestar `202` en vez de
+agotar el plazo. Un `GET` con efecto lateral es poco limpio, pero el `GET` ya era la operación costosa (la única forma
+de pedir el veredicto) y sigue exigiendo `integrity/verify`; el efecto está acotado (una verificación por empresa a la
+vez, con el mismo cupo) y el llamador de un cliente nuevo usa el `POST`, que es lo que hace la web.
+
+**Un trabajo por empresa, con cerrojo en la base.** El índice único parcial `uq_integrity_runs_active` (una fila
+`running` por `tenant_id`) es el cerrojo: vale entre procesos y entre réplicas, y dos lanzamientos a la vez dejan pasar
+a uno (probado con tres procesos y doce lanzamientos concurrentes). El tope global es **por proceso** (4, el mismo cupo
+que las verificaciones dentro de la petición): con N réplicas son 4 por réplica.
+
+**Reanudable.** El dueño anota su avance (fase, punto de cada cadena y `heartbeat_at`) como mucho cada 2 s. Si el proceso
+muere, `heartbeat_at` deja de avanzar; pasados 90 s la verificación se considera abandonada y la retoma quien la mire
+(`GET /runs/{id}`), quien lance otra (`POST`), o el barrido, **desde su punto y no desde cero** (probado matando el
+proceso a mitad y retomando con otro). El latido se compara con el reloj de la base, no con el de los procesos. Un
+apagado ordenado deja la verificación en curso con su punto, igual que una muerte. El plazo total de una verificación es
+`AUDIT_INTEGRITY_RUN_TIMEOUT` (12 h por defecto): vencido, queda `failed` con `timeout`.
+
+**El punto de reanudación está atado a la fila, no a un número.** Cada cadena guarda `(seq, hash, hash_version,
+saw_keyed, filas y versiones contadas)` de la última fila verificada. Al retomar, antes de seguir, se **relee la fila de
+posición `seq`**, se comprueba que su contenido da su propio hash (con el `prev_hash` que tiene guardado: de ahí sale el
+enlace con la anterior) y que ese hash es el registrado (comparación en tiempo constante); solo entonces se exige que la
+fila siguiente enlace con él. Así, editar el contenido de la fila del punto o su hash da `chain_broken` en esa
+posición, y borrarla da `checkpoint_mismatch`; borrar filas justo después rompe el enlace de la siguiente. Probado con
+manipulaciones entre la muerte del proceso y su reanudación; quitar esa relectura hace fallar tres de esas pruebas.
+
+Lo que **no** cubre, y por eso existe la verificación completa: una verificación que parte de un punto (reanudada o
+incremental) confía en lo que ya verificó. Una fila **anterior** al punto que se edite después no la ve; la ve la
+verificación completa (probado: la incremental da OK y la completa da la fila afectada). Las anclas sí se contrastan
+enteras en cada verificación. El punto guardado está en la misma base que la cadena y no va firmado: contra el rol del
+servicio, que no puede escribir filas del rastro, no hace falta; contra quien escribe como dueño de la base, que también
+puede escribir un resultado falso en `integrity_runs`, no basta, y la respuesta es el ancla externa.
+
+**Incremental.** Parte del punto final de la **última verificación terminada**, y solo si esa dio la cadena por buena;
+sin ella (o si la última la dio por rota, aunque una anterior fuera buena) es completa. Partir de una buena anterior a
+una rotura haría parecer sana una cadena que ya se sabe rota. `checked` cuenta las filas de la cadena verificadas en
+total (las del punto más las nuevas), no las releídas.
+
+**Barrido periódico (`AUDIT_INTEGRITY_SWEEP_INTERVAL`, apagado por defecto).** De 1 h a 7 d. Bajo un cerrojo de líder
+sobre el registro (`db.TryLeaderLock`), una empresa a la vez y con hasta 30 min por empresa y pasada (lo que no termine
+queda en curso con su punto y la siguiente pasada lo retoma), retoma lo abandonado o lanza una verificación incremental,
+y completa si la última completa correcta pasó de `AUDIT_INTEGRITY_FULL_EVERY` (7 d). La primera pasada espera 5 minutos
+tras arrancar. Una empresa con la cadena rota se verifica completa en cada pasada hasta que se resuelva (la incremental
+no parte de una rotura): es el costo de que la alerta siga en pie, y no hay todavía forma de dar una rotura por
+conocida (sección "Mejoras futuras").
+
+**Métricas y alertas.** `audit_integrity_runs_total{origin,outcome}` (`ok`, `broken`, `cancelled`, `failed`),
+`audit_integrity_sweep_broken_tenants` (empresas rotas en la última pasada completa) y `audit_events_discarded_total`.
+Alertas en `ops/observability/prometheus/rules/plataforma.yml`, grupo `auditoria`, con pruebas de `promtool`:
+`CadenaDeAuditoriaRota` (crítica: el gauge o una verificación rota en la última hora), `VerificacionDeCadenaSinTerminar`
+(media: el barrido falla por una causa técnica más de 30 minutos) y `EventosDeAuditoriaDescartados` (media). Ninguna
+etiqueta lleva la empresa: la empresa, la cadena, el motivo y la posición están en el registro del servicio y en la fila
+de `integrity_runs`.
+
+**Permisos de la tabla.** `audit_service` inserta, lee y actualiza solo las columnas de estado de una verificación en
+curso; nunca borra, y no puede editar quién la lanzó, cuándo ni con qué modo (probado con `permission denied`). La fila es
+el registro de quién verificó y con qué resultado.
+
+### 7. Los eventos del bus llegan por consumidores durables
+
+Hasta ahora `audit` recibía los eventos de dominio por una suscripción de **núcleo** (`QueueSubscribe`, sin estado): todo
+lo publicado con `audit` caído (cada despliegue, cada reinicio) se perdía del rastro, y un servicio cuyo único fin es ser
+evidencia no puede perder evidencia por reiniciarse. Ahora hay **un consumidor durable de JetStream por subject** de
+`AUDIT_SUBJECTS` (`identity.>`, `organization.>`, `access.>`, `gateway.>`, `scheduler.>`, `domains.>`, `migration.>` por
+defecto), con nombre `audit-<subject>` (`audit-identity-all`, ...):
+
+* **Stream.** El del dueño del subject (`IDENTITY`, `ORGANIZATION`, `SCHEDULER`, `DOMAINS`, `MIGRATION`,
+  `MAIL_DIRECTORY` para `mail.>`) o, si no hay (`gateway.>`, `access.>`), uno propio con el primer token en mayúsculas
+  (`GATEWAY`, `ACCESS`). `audit` lo declara con `EnsureStream`, que une subjects y nunca quita los ajenos. Un `Publish` de
+  núcleo a un subject cubierto por un stream también se retiene, así que `identity`, que publica sin JetStream, queda
+  cubierto sin tocarla. Un subject nuevo en `AUDIT_SUBJECTS` necesita que su primer token dé el nombre del stream
+  del dueño; si no, `EnsureStream` falla por subjects solapados y `audit` lo registra y reintenta.
+* **Idempotencia.** El id del apunte es el del evento (o, si no es un uuid, uno derivado de su texto): una reentrega choca
+  con el apunte ya guardado en lugar de duplicarlo. El detector de seguridad corre solo para un apunte **nuevo**, así una
+  reentrega no repite las alertas.
+* **Ack solo tras persistir.** Guardar y luego confirmar; el detector va después de confirmar, así un fallo suyo no
+  reentrega. Sin confirmar quedan los fallos que una nueva entrega puede arreglar (la base de la empresa no responde):
+  JetStream reentrega a los 90 s hasta 20 veces (30 minutos) y después el mensaje va a `EVENTS_DLQ`, que alerta
+  (`EventosAbandonadosEnDLQ`). No hay un retroceso creciente entre reentregas: el intervalo es el `AckWait` fijo de
+  `pkg/events`, y cambiarlo tocaría a todos los consumidores. Un cuerpo que no es un evento va a la DLQ sin reintentos, y un
+  `panic` del manejador lo recupera `pkg/events`. Los mensajes van de una en una por subject: uno colgado retiene a los de
+  su subject como mucho 30 s (el plazo del manejador) y los demás subjects no esperan; uno que falla no bloquea a los que
+  vienen detrás (probado contra NATS real).
+* **Lo que se da por tratado sin apunte**, contado en `audit_events_discarded_total` y registrado: un evento sin
+  `tenant_id` (no hay base donde escribirlo) y uno de una empresa que ya no existe en el registro (reintentar no la haría
+  aparecer). Antes se descartaban sin dejar cuenta.
+* **NATS caído no impide arrancar.** `events.NewBus` reconecta solo y los consumidores (los de dominio y el del rastro del
+  API, que hasta ahora no reintentaba nunca) reintentan atarse cada 5 s; el servicio atiende su API mientras tanto.
+* **Transición.** El durable se **crea** con `DeliverNew`: solo recibe lo publicado desde ese momento. Con `DeliverAll`
+  reproduciría los 7 días que los streams ya retienen (`SCHEDULER`, `DOMAINS`, `MIGRATION`, `ORGANIZATION`,
+  `IDENTITY` para `user.deleted`), y la suscripción anterior ya guardó esos eventos con un id **distinto** (los ponía
+  al azar): no habría idempotencia que los reconociera y quedarían duplicados en un rastro que es evidencia. El
+  costo es acotado y conocido: lo publicado entre que el `audit` viejo se detiene y el nuevo crea sus consumidores (los
+  segundos de un despliegue) se pierde **una sola vez**, como se perdía en cada despliegue hasta hoy; desde el primer
+  arranque nuevo, no más. Un durable que ya existe conserva su posición y esta política no le afecta. Para no duplicar,
+  el `audit` viejo no debe convivir con el nuevo: se recrea el servicio, no se escala con las dos versiones a la vez.
+* **Réplicas.** El consumidor es un push durable sin grupo de reparto (como los de `mail-dav` y `mail-migration`): la
+  segunda réplica no puede atarse y reintenta con aviso hasta que la primera se vaya, y entonces toma el relevo. Los
+  eventos se aplican una vez; lo que se repartía entre réplicas con el `QueueSubscribe` viejo ya no se reparte.
+* **Retención.** Los streams retienen 7 días (y 1 GiB): un `audit` caído más de 7 días pierde lo más antiguo. Los eventos
+  de identidad (con `ip` y `user_agent`) se guardan ahora 7 días en el disco de NATS además de pasar por él.
+
+Probado contra un NATS 2.10 con JetStream y un Postgres reales (`make test-integration`, `services/audit/internal/adapters/nats`):
+con el consumidor parado se publican 60 eventos (mitad por `Publish` de núcleo, mitad por JetStream, uno repetido), se
+arranca y quedan 60 apuntes exactamente una vez, con la cadena de hash intacta y el detector viendo 60 apuntes nuevos;
+el durable nuevo no reproduce lo que el stream ya retenía; un cuerpo ilegible va a `EVENTS_DLQ` con sus cabeceras y los
+tres eventos siguientes se guardan; y un evento que no se guarda queda pendiente de confirmar sin retener a los cuatro
+siguientes. Confirmar antes de guardar hace fallar la del evento pendiente y tres pruebas unitarias del consumidor.
 
 `hash_key_missing` y `hash_key_unknown` son problemas de configuración hasta que se demuestre lo contrario; el resto son
 señal de manipulación. La respuesta **nunca** incluye la llave ni su identificador, y **no nombra filas de otra empresa**:
@@ -218,6 +348,22 @@ Orden, cada paso reversible salvo el último:
    verificar (`hash_key_missing`). Este paso no es reversible: una vez puesta, quitarla convierte toda fila posterior en
    rotura, por diseño.
 
+Ampliación (verificación en segundo plano y consumidores durables), con este orden:
+
+1. **Migración `10` (`audit.integrity_runs`) en cada base de empresa, antes del código** (`bash
+   ops/apply-all-canonical.sh`; idempotente y aditiva) y `ops/maintenance/pgbouncer-reconnect.sh`. Sin ella el servicio
+   nuevo arranca y atiende, pero `POST /integrity/runs` y el `GET /integrity` de una cadena grande fallan con 500
+   (`relation does not exist`); las cadenas pequeñas y todo lo demás siguen igual.
+2. **Recrear `audit` (no escalarlo con las dos versiones a la vez).** En el primer arranque crea, con `DeliverNew`, un
+   consumidor durable por subject de `AUDIT_SUBJECTS` y declara sus streams (`GATEWAY` y `ACCESS` nuevos; `IDENTITY`,
+   `ORGANIZATION`, `SCHEDULER`, `DOMAINS` y `MIGRATION` ganan sus subjects): desde ese momento lo publicado con `audit` caído
+   se conserva. Lo que ocurre en el hueco entre el `audit` viejo y el nuevo se pierde esa única vez. El arranque registra
+   `audit: suscrito a los eventos` por cada subject.
+3. **Nada más cambia por defecto**: el barrido periódico está apagado (`AUDIT_INTEGRITY_SWEEP_INTERVAL` vacío). Para
+   encenderlo, ponerlo en el `.env` (por ejemplo `6h`), recrear `audit` y vigilar `audit_integrity_runs_total`.
+4. **Comprobar**: `POST /api/v1/audit/integrity/runs` y `GET .../runs/{id}` hasta `completed`; `nats consumer ls IDENTITY`
+   debe listar `audit-identity-all` y `nats consumer ls EVENTS_DLQ` no debe crecer.
+
 ## Riesgos
 
 * **La llave es el punto único.** Quien tenga `AUDIT_HASH_KEY` y escriba en la base recalcula las filas de versión 2.
@@ -234,24 +380,38 @@ Orden, cada paso reversible salvo el último:
   (mantener una por día más las de los extremos).
 * **Quitar la clave tras ponerla** deja el verificador en rojo por diseño (`hash_key_missing` y
   `hash_version_regression`): es lo mismo que vería un atacante que intente volver a la versión 1.
-* **`GET /integrity` es lineal** en el tamaño de la cadena, como antes; la versión 2 añade un HMAC por fila, sin coste
-  apreciable frente a la lectura. El recorrido lee las filas en flujo (memoria acotada a una fila) y con el contexto de
-  la petición (se cancela si el cliente se va), pero cada uno ocupa una conexión y lee la tabla entera de una empresa en
-  una base que comparten todas, así que `audit` lo limita (2026-09-21, revisión de seguridad): **uno por empresa y
-  cuatro a la vez por proceso** (`verificationGate` en `app`), 429 `VERIFICATION_BUSY` con `Retry-After: 30` al resto
-  y corte a los 15 minutos. Los 30 s de `WriteTimeout` de los servicios hacen que una cadena de millones de filas no
-  pueda contestar dentro de la petición: la salida es un trabajo asíncrono (ver "Mejoras futuras").
+* **Verificar es lineal** en el tamaño de la cadena; la versión 2 añade un HMAC por fila, sin coste apreciable frente
+  a la lectura. El recorrido lee las filas en flujo (memoria acotada a una fila), pero cada uno ocupa una conexión y lee la
+  tabla entera de una empresa en una base que comparten todas, así que `audit` lo limita: **uno por empresa** (en la base,
+  entre réplicas) y **cuatro a la vez por proceso** (`verificationGate` en `app`; con N réplicas son 4 por réplica, no 4
+  en total), 429 `VERIFICATION_BUSY` al resto. Las cadenas grandes ya no se verifican dentro de la petición (sección 6).
+  **Sin medir aún a escala**: las pruebas recorren miles de filas; la velocidad de la sección 5 (100000 filas) es la
+  única medida. Medir en el servidor con una empresa grande antes de fijar `AUDIT_INTEGRITY_INLINE_MAX_ROWS` y el
+  intervalo del barrido.
+* **Una verificación incremental o reanudada confía en lo ya verificado**: una fila anterior a su punto editada después
+  solo la ve la completa (sección 6). Por eso el barrido repite la completa cada `AUDIT_INTEGRITY_FULL_EVERY`, y las
+  anclas se contrastan enteras en toda verificación.
+* **Una cadena rota se re-verifica entera en cada pasada del barrido** (la incremental no parte de una rotura), con hasta
+  30 minutos por empresa y pasada, mientras nadie la dé por conocida.
+* **`GET /integrity` con efecto lateral** en las cadenas grandes (lanza una verificación completa): acotado por el cupo
+  de una por empresa, y `integrity/verify` sigue siendo el único permiso.
+* **Los eventos del bus**: el `audit` viejo pierde una sola vez lo publicado entre su parada y la creación de los
+  consumidores nuevos (sección 7, "Transición"); un `audit` caído más de 7 días pierde lo más antiguo (retención de los
+  streams); tras 20 entregas fallidas (30 minutos) un evento pasa a `EVENTS_DLQ` y hay que reproducirlo a mano.
 * **Rotación sin retirada**: cada llave retirada debe conservarse mientras existan filas con su `key_id`.
 
 ## Mejoras futuras (no implementadas)
 
 * Consumidor de `audit.chain.anchored` que entregue la cabeza fuera del servidor (sección "Ancla externa").
 * Puntos de control firmados con la llave activa cada cierto número de filas, para poder retirar llaves viejas.
-* Métrica y regla de alerta de Prometheus por ancla ausente, en lugar de solo el log.
+* Métrica y regla de alerta de Prometheus por ancla ausente, en lugar de solo el log (la verificación ya avisa de
+  `head_behind_anchor` y `anchor_mismatch` por `CadenaDeAuditoriaRota`, pero el barrido no la da por rota hasta que corre).
 * Compactación de anclas antiguas.
-* Verificación incremental (desde el último punto verificado) en lugar de recorrer toda la cadena.
-* Verificación como trabajo asíncrono (`POST` que la lanza y `GET` que lee el resultado, con el cupo por empresa en
-  Redis para que valga entre réplicas): hoy el cupo y el corte son por proceso y la respuesta debe caber en el
-  `WriteTimeout` del servicio.
+* Cupo global de verificaciones entre réplicas (hoy por proceso; el de una por empresa ya vale entre réplicas), por
+  ejemplo en Redis.
+* Dar una rotura por conocida (con quién y por qué) para que el barrido no repita la verificación completa de esa empresa
+  en cada pasada.
+* Un consumidor durable en grupo de reparto para `audit` si el volumen de eventos pidiera repartir la aplicación entre
+  réplicas, y retroceso creciente entre reentregas (hoy fijo por `pkg/events`).
 * Marcar el origen de cada apunte (`POST /logs` y `/logs/bulk` los escribe quien tenga `audit/logs/create`, con
   cualquier módulo y acción, a su propio nombre): hoy un apunte del API es indistinguible de uno del gateway o del bus.
