@@ -8,7 +8,12 @@ import (
 	"github.com/google/uuid"
 )
 
-var ErrNotFound = errors.New("not found")
+var (
+	ErrNotFound = errors.New("not found")
+	// ErrJobCredentialRejected es el unico motivo de un rechazo de una credencial de trabajo de migracion:
+	// quien pregunta no distingue un token mal formado de uno de un trabajo cerrado.
+	ErrJobCredentialRejected = errors.New("credencial de trabajo rechazada")
+)
 
 // Protocol es la familia de acceso que gobierna un flag *_access del buzon y de la
 // contrasena de aplicacion. Dovecot envia el nombre del servicio que atiende la
@@ -53,6 +58,25 @@ var serviceProtocols = map[string]Protocol{
 	"managesieve": ProtocolSieve,
 	"dav":         ProtocolDAV,
 	"webmail":     ProtocolWebmail,
+}
+
+// ServiceMigration es el servicio con el que migration-verify.lua pregunta si la contrasena que recibe
+// Dovecot es la credencial de destino de un trabajo de migracion (mail-migration). No es un protocolo del
+// buzon ni tiene flag *_access: la credencial existe solo mientras dura el trabajo y abre solo el buzon
+// destino, y no pasa por la contrasena principal ni por las de aplicacion.
+const ServiceMigration = "migration"
+
+// IsJobCredentialService indica si la peticion es una credencial de trabajo de migracion.
+func IsJobCredentialService(service string) bool {
+	return strings.EqualFold(strings.TrimSpace(service), ServiceMigration)
+}
+
+// JobCredential es lo que mail-migration sabe de una credencial de trabajo vigente: el buzon al que abre
+// y el trabajo al que pertenece.
+type JobCredential struct {
+	TenantID  uuid.UUID
+	MailboxID uuid.UUID
+	JobID     uuid.UUID
 }
 
 // ProtocolFromService resuelve el flag de un servicio de Dovecot (sin distinguir
@@ -154,6 +178,10 @@ const (
 	ResultNoAccess       Result = "no_access"
 	ResultThrottled      Result = "throttled"
 	ResultUnknownService Result = "unknown_service"
+	// ResultForbiddenNetwork es una credencial de trabajo usada desde fuera de la red del ejecutor.
+	ResultForbiddenNetwork Result = "forbidden_network"
+	// ResultJobCredentialsDisabled es una credencial de trabajo con la funcion sin configurar en mail-auth.
+	ResultJobCredentialsDisabled Result = "job_credentials_disabled"
 	// ResultError es un fallo interno (base o freno). Dovecot lo ve como contrasena
 	// incorrecta; aqui se cuenta aparte para que una caida de la base no parezca una
 	// ola de contrasenas erroneas.

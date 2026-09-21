@@ -2,6 +2,8 @@ package app
 
 import (
 	"context"
+	"crypto/rand"
+	"io"
 	"sync"
 	"time"
 
@@ -38,6 +40,10 @@ type Config struct {
 	// SweepInterval es cada cuanto un reclamo sin trabajo conocido recorre todas las empresas.
 	SweepInterval time.Duration
 	Source        domain.SourcePolicy
+	// JobCredentials hace que cada trabajo reclamado lleve su propia credencial de destino (solo abre
+	// el buzon del trabajo mientras dura) en lugar de que el ejecutor use el maestro compartido de
+	// Dovecot. Exige que mail-auth y Dovecot ya la acepten: mientras no, el ejecutor conserva el maestro.
+	JobCredentials bool
 }
 
 type Deps struct {
@@ -50,7 +56,9 @@ type Deps struct {
 	Events    ports.EventPublisher
 	Config    Config
 	Now       func() time.Time
-	Logger    *zap.Logger
+	// Random es la fuente de las credenciales de destino; nil usa crypto/rand.
+	Random io.Reader
+	Logger *zap.Logger
 }
 
 type UseCase struct {
@@ -63,6 +71,7 @@ type UseCase struct {
 	events    ports.EventPublisher
 	cfg       Config
 	now       func() time.Time
+	random    io.Reader
 	logger    *zap.Logger
 
 	// Empresas con trabajo conocido en esta instancia. El ejecutor no conoce empresas: sin esta
@@ -91,9 +100,13 @@ func New(d Deps) *UseCase {
 	if logger == nil {
 		logger = zap.NewNop()
 	}
+	random := d.Random
+	if random == nil {
+		random = rand.Reader
+	}
 	return &UseCase{
 		repo: d.Repo, tx: d.Tx, mailboxes: d.Mailboxes, resolver: d.Resolver, cipher: d.Cipher,
-		tenants: d.Tenants, events: d.Events, cfg: d.Config, now: now, logger: logger,
+		tenants: d.Tenants, events: d.Events, cfg: d.Config, now: now, random: random, logger: logger,
 		hinted: map[uuid.UUID]struct{}{}, holds: map[uuid.UUID]claimHold{},
 	}
 }

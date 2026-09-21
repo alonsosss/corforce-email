@@ -169,6 +169,7 @@ func (r *Repository) RequestCancel(ctx context.Context, tenantID, id uuid.UUID, 
 		`UPDATE mail_migration.jobs SET
    status = CASE WHEN status = 'pending' THEN 'cancelled' ELSE status END,
    source_password_enc = CASE WHEN status = 'pending' THEN NULL ELSE source_password_enc END,
+   destination_credential_hash = NULL,
    finished_at = CASE WHEN status = 'pending' THEN $3 ELSE finished_at END,
    last_error_code = CASE WHEN status = 'pending' THEN $4 ELSE last_error_code END,
    cancel_requested_at = COALESCE(cancel_requested_at, $3)
@@ -193,10 +194,11 @@ func (r *Repository) Claim(ctx context.Context, tenantID uuid.UUID, p ports.Clai
     FOR UPDATE SKIP LOCKED
     LIMIT 1)
  UPDATE mail_migration.jobs j SET status = 'running', attempt = j.attempt + 1, lease_id = $4, lease_expires_at = $5,
-   runner_id = $6, heartbeat_at = $2, started_at = COALESCE(j.started_at, $2), phase = 'initial'
+   runner_id = $6, heartbeat_at = $2, started_at = COALESCE(j.started_at, $2), phase = 'initial',
+   destination_credential_hash = $7
   FROM candidate WHERE j.id = candidate.candidate_id
  RETURNING `+jobColumns,
-		tenantID, p.Now, p.MaxAttempts, p.LeaseID, p.LeaseUntil, p.RunnerID))
+		tenantID, p.Now, p.MaxAttempts, p.LeaseID, p.LeaseUntil, p.RunnerID, p.DestinationCredentialHash))
 	if errors.Is(err, domain.ErrNotFound) {
 		return nil, nil
 	}
@@ -220,7 +222,7 @@ func (r *Repository) Finish(ctx context.Context, tenantID, id uuid.UUID, p ports
 	code, message := errorFields(p.Error)
 	j, err := scanJob(r.pool.QueryRow(ctx,
 		`UPDATE mail_migration.jobs SET status = $4, progress = $5, last_error_code = $6, last_error_message = $7,
-   finished_at = $8, source_password_enc = NULL, lease_id = NULL, lease_expires_at = NULL
+   finished_at = $8, source_password_enc = NULL, destination_credential_hash = NULL, lease_id = NULL, lease_expires_at = NULL
  WHERE tenant_id = $1 AND id = $2 AND lease_id = $3 AND status = 'running'
  RETURNING `+jobColumns,
 		tenantID, id, p.LeaseID, string(p.Status), p.Progress, code, message, p.Now))
@@ -230,13 +232,26 @@ func (r *Repository) Finish(ctx context.Context, tenantID, id uuid.UUID, p ports
 	return j, err
 }
 
+func (r *Repository) DestinationTarget(ctx context.Context, tenantID, id uuid.UUID, now time.Time) (ports.DestinationTarget, error) {
+	var t ports.DestinationTarget
+	err := r.pool.QueryRow(ctx,
+		`SELECT mailbox_id, mailbox_username, destination_credential_hash FROM mail_migration.jobs
+ WHERE tenant_id = $1 AND id = $2 AND status = 'running' AND lease_expires_at > $3
+   AND cancel_requested_at IS NULL AND destination_credential_hash IS NOT NULL`,
+		tenantID, id, now).Scan(&t.MailboxID, &t.MailboxUsername, &t.Hash)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ports.DestinationTarget{}, domain.ErrNotFound
+	}
+	return t, err
+}
+
 func (r *Repository) ExpireLost(ctx context.Context, tenantID uuid.UUID, now time.Time, maxAttempts int) ([]domain.Job, error) {
 	rows, err := r.pool.Query(ctx,
 		`UPDATE mail_migration.jobs SET
    status = CASE WHEN cancel_requested_at IS NOT NULL THEN 'cancelled' ELSE 'failed' END,
    last_error_code = CASE WHEN cancel_requested_at IS NOT NULL THEN $4 ELSE $5 END,
    last_error_message = CASE WHEN cancel_requested_at IS NOT NULL THEN '' ELSE $6 END,
-   finished_at = $2, source_password_enc = NULL, lease_id = NULL, lease_expires_at = NULL
+   finished_at = $2, source_password_enc = NULL, destination_credential_hash = NULL, lease_id = NULL, lease_expires_at = NULL
  WHERE tenant_id = $1 AND status = 'running' AND lease_expires_at < $2
    AND (attempt >= $3 OR cancel_requested_at IS NOT NULL)
  RETURNING `+jobColumns,
@@ -254,6 +269,27 @@ func (r *Repository) ExpireLost(ctx context.Context, tenantID uuid.UUID, now tim
 		out = append(out, *j)
 	}
 	return out, rows.Err()
+}
+
+func (r *Repository) StaleMailboxIDs(ctx context.Context, tenantID uuid.UUID, before time.Time, after uuid.UUID, limit int) ([]uuid.UUID, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT mailbox_id FROM mail_migration.jobs
+ WHERE tenant_id = $1 AND mailbox_id > $3
+ GROUP BY mailbox_id HAVING min(created_at) < $2
+ ORDER BY mailbox_id LIMIT $4`, tenantID, before, after, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	ids := []uuid.UUID{}
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
 }
 
 func (r *Repository) DeleteByMailbox(ctx context.Context, tenantID, mailboxID uuid.UUID) ([]domain.Job, error) {

@@ -51,6 +51,12 @@ type Throttle interface {
 	Success(ctx context.Context, username, ip string)
 }
 
+// JobCredentialVerifier pregunta a mail-migration si un token abre el buzon username. Devuelve
+// domain.ErrJobCredentialRejected cuando no lo abre y cualquier otro error cuando no pudo decidirlo.
+type JobCredentialVerifier interface {
+	Verify(ctx context.Context, token, username string) (domain.JobCredential, error)
+}
+
 // Metrics recibe el desenlace de cada intento.
 type Metrics interface {
 	Attempt(service string, result domain.Result)

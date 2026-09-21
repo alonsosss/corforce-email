@@ -131,7 +131,12 @@ func (r *Runner) process(ctx context.Context, job *ClaimedJob, track *tracker, b
 		return jobResult{Outcome: outcomeFailed, Err: &JobError{Code: code, Message: msg}}
 	}
 
-	secrets, err := newSecretFiles(r.cfg.WorkDir, job.Source.Password, r.cfg.MasterPass)
+	destPass, ok := r.cfg.destinationSecret(job)
+	if !ok {
+		r.log.Error("sin credencial de destino: el servicio no la emitio y el ejecutor no tiene el maestro compartido", "job_id", job.JobID)
+		return jobResult{Outcome: outcomeFailed, Err: &JobError{Code: codeDestinationFailed, Message: "El ejecutor no tiene credencial para el buzon de destino."}}
+	}
+	secrets, err := newSecretFiles(r.cfg.WorkDir, job.Source.Password, destPass)
 	if err != nil {
 		r.log.Error("no se pudieron preparar los ficheros del trabajo", "job_id", job.JobID, "error", err)
 		return jobResult{Outcome: outcomeFailed, Err: &JobError{Code: codeImapsyncFailed, Message: "No se pudo preparar el trabajo en el ejecutor."}}

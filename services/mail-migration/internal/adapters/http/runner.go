@@ -74,6 +74,8 @@ type claimSourceDTO struct {
 
 type claimDestinationDTO struct {
 	Username string `json:"username"`
+	// Password es la credencial de destino del trabajo; ausente cuando el servicio no las emite.
+	Password string `json:"password,omitempty"`
 }
 
 type claimDTO struct {
@@ -86,7 +88,7 @@ type claimDTO struct {
 	LeaseSeconds int                 `json:"lease_seconds"`
 }
 
-// Claim es la unica respuesta del servicio que lleva la contrasena de origen en claro.
+// Claim es la unica respuesta del servicio que lleva la contrasena de origen y la credencial de destino en claro.
 func (h *RunnerHandler) Claim(w http.ResponseWriter, r *http.Request) {
 	var req claimRequest
 	if err := validate.DecodeJSONLimit(w, r, &req, maxRunnerBody); err != nil {
@@ -108,7 +110,7 @@ func (h *RunnerHandler) Claim(w http.ResponseWriter, r *http.Request) {
 			Host: job.SourceHost, Port: job.SourcePort, TLS: string(job.SourceTLS),
 			Username: job.SourceUsername, Password: job.SourcePassword,
 		},
-		Destination:  claimDestinationDTO{Username: job.DestinationUsername},
+		Destination:  claimDestinationDTO{Username: job.DestinationUsername, Password: job.DestinationPassword},
 		LeaseSeconds: job.LeaseSeconds,
 	})
 }

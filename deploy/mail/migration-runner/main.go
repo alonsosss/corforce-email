@@ -73,6 +73,11 @@ func run() int {
 	if cfg.AllowUnscanned && cfg.ClamdAddr == "" {
 		log.Warn("MIGRATION_ALLOW_UNSCANNED=true y sin clamd: el correo migrado NO se analiza con el antivirus")
 	}
+	if cfg.SharedMaster() {
+		log.Warn("maestro compartido de Dovecot configurado: los trabajos sin credencial de destino propia abren cualquier buzon de la celda; retirar DOVECOT_MIGRATION_MASTER_* cuando mail-migration emita las credenciales por trabajo (docs/adr/0002)")
+	} else {
+		log.Info("sin maestro compartido: solo se aceptan trabajos con credencial de destino propia")
+	}
 	if cfg.AllowPrivateSources {
 		log.Warn("MIGRATION_ALLOW_PRIVATE_SOURCES activo (entorno " + cfg.Environment + "): se admiten servidores de origen en redes privadas")
 	}

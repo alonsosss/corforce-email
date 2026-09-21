@@ -16,6 +16,7 @@ import (
 	"github.com/alonsosss/corforce-email/pkg/crypto"
 	"github.com/alonsosss/corforce-email/pkg/db"
 	"github.com/alonsosss/corforce-email/pkg/events"
+	"github.com/alonsosss/corforce-email/pkg/mailreconcile"
 	"github.com/alonsosss/corforce-email/pkg/middleware"
 	"github.com/alonsosss/corforce-email/pkg/outbox"
 	"github.com/alonsosss/corforce-email/pkg/response"
@@ -53,8 +54,12 @@ const (
 
 	minRunnerKeyLen = 32
 
+	// reconcileLockKey es el cerrojo de lider de la conciliacion de buzones borrados ("mmgr").
+	reconcileLockKey int64 = 0x6d6d6772
+
 	mailDirectoryCellHostsEnv = "MAIL_DIRECTORY_CELL_HOSTS"
 	runnerKeyEnv              = "MAIL_MIGRATION_RUNNER_KEY"
+	jobCredentialsEnv         = "MAIL_MIGRATION_JOB_CREDENTIALS"
 )
 
 type settings struct {
@@ -66,6 +71,7 @@ type settings struct {
 	directoryTargets *tenantcell.Targets
 	internalToken    string
 	perms            *authz.Checker
+	reconcile        mailreconcile.Config
 }
 
 // loadSettings lee y valida la configuracion. La clave del ejecutor es opcional: sin ella el
@@ -115,7 +121,17 @@ func loadSettings(logger *zap.Logger) (settings, error) {
 	} else {
 		logger.Info("migracion de buzones desactivada: falta " + runnerKeyEnv)
 	}
+	if s.app.JobCredentials, err = envBool(jobCredentialsEnv); err != nil {
+		return s, err
+	}
+	if s.app.RunnerConfigured && !s.app.JobCredentials {
+		logger.Warn("migracion de buzones con el maestro compartido de Dovecot: falta " + jobCredentialsEnv +
+			"=true; el ejecutor abre cualquier buzon de la celda (docs/adr/0002, credencial de destino por trabajo)")
+	}
 	if s.mailDirectoryURL, err = config.RequiredServiceURL("MAIL_DIRECTORY_URL"); err != nil {
+		return s, err
+	}
+	if s.reconcile, err = mailreconcile.ConfigFromEnv("MAIL_MIGRATION"); err != nil {
 		return s, err
 	}
 	if s.perms, err = authz.CheckerFromEnv(); err != nil {
@@ -228,10 +244,11 @@ func main() {
 	}
 
 	repo := postgres.NewRepository(ctxPool)
+	directoryCaller := tenantcell.NewCaller("mail-directory", st.directoryTargets, st.internalToken, logger, tenantcell.CallerOptions{})
 	uc := app.New(app.Deps{
 		Repo:      repo,
 		Tx:        repo,
-		Mailboxes: maildirectorycli.New(tenantcell.NewCaller("mail-directory", st.directoryTargets, st.internalToken, logger, tenantcell.CallerOptions{})),
+		Mailboxes: maildirectorycli.New(directoryCaller),
 		Resolver:  dnsresolver.New(),
 		Cipher:    keyRing,
 		Tenants:   postgres.NewTenants(tenantDB),
@@ -241,6 +258,23 @@ func main() {
 	})
 
 	go natsadapter.NewConsumer(bus, uc, logger).Run(ctx)
+
+	// La conciliacion retira los trabajos que el consumidor no vio: buzones borrados antes de que existiera o
+	// mas alla de lo que el stream conserva, y trabajos que un alta en vuelo inserto despues del evento.
+	if st.reconcile.Enabled() {
+		go mailreconcile.New(mailreconcile.Deps{
+			Name: "mail-migration", Config: st.reconcile,
+			Lock: func(c context.Context) (func(), bool) {
+				return db.TryLeaderLock(c, registryPool.Pool, reconcileLockKey)
+			},
+			Tenants:   mailreconcile.TenantsOf(tenantDB),
+			Directory: mailreconcile.NewDirectory(directoryCaller),
+			Store:     uc,
+			Logger:    logger,
+		}).Run(ctx)
+	} else {
+		logger.Info("mail-migration: conciliacion de buzones borrados desactivada (MAIL_MIGRATION_RECONCILE_INTERVAL=0)")
+	}
 
 	if st.app.RunnerConfigured {
 		runnerSrv := &http.Server{
@@ -265,15 +299,7 @@ func main() {
 		}()
 	}
 
-	r := chi.NewRouter()
-	r.Use(middleware.RequestID)
-	r.Use(middleware.RequireGatewayToken)
-	r.Use(middleware.InjectFromGateway)
-	r.Use(db.TenantPoolMiddleware(tenantDB))
-	r.Use(middleware.SecureHeaders)
-	r.Use(middleware.Logger(logger))
-	r.Use(middleware.NewRateLimiter(120, time.Minute).Limit)
-	r.Mount("/", handler.NewHandler(uc, st.perms).Routes())
+	r := adminRouter(uc, st, tenantDB, logger)
 
 	srv := server.New(st.port, r, logger)
 	runErr := srv.Run()
@@ -282,6 +308,30 @@ func main() {
 	if runErr != nil {
 		logger.Fatal("server error", zap.Error(runErr))
 	}
+}
+
+// adminRouter tiene dos cadenas: la API de administracion (gateway, sesion y permisos, con la base de la
+// empresa de la sesion) y la verificacion de credenciales de destino que hace mail-auth, que solo exige el
+// token de gateway: no lleva sesion y la empresa sale del propio token del trabajo, no de una cabecera.
+func adminRouter(uc *app.UseCase, st settings, tenantDB *db.TenantDB, logger *zap.Logger) http.Handler {
+	r := chi.NewRouter()
+	r.Use(middleware.RequestID)
+	r.Group(func(in chi.Router) {
+		in.Use(middleware.RequireGatewayToken)
+		in.Use(middleware.SecureHeaders)
+		in.Use(middleware.Logger(logger))
+		in.Mount(handler.CredentialsPath, handler.NewCredentialHandler(uc).Routes())
+	})
+	r.Group(func(adm chi.Router) {
+		adm.Use(middleware.RequireGatewayToken)
+		adm.Use(middleware.InjectFromGateway)
+		adm.Use(db.TenantPoolMiddleware(tenantDB))
+		adm.Use(middleware.SecureHeaders)
+		adm.Use(middleware.Logger(logger))
+		adm.Use(middleware.NewRateLimiter(120, time.Minute).Limit)
+		adm.Mount("/", handler.NewHandler(uc, st.perms).Routes())
+	})
+	return r
 }
 
 // runnerRateLimit son las peticiones por minuto y direccion que admite el listener del ejecutor:

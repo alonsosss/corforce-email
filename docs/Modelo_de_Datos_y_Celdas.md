@@ -208,6 +208,13 @@ La libreta compartida del webmail (V, 2026-09-21, sin migracion) sale de `mail.m
 (token de gateway, sin empresa) resuelve la empresa del buzon que pregunta, lista solo sus buzones con `active = 1`
 filtrando por subcadena de direccion o nombre visible (sin comodines) y devuelve unicamente `address` y `display_name`.
 
+La conciliacion de buzones borrados (V, 2026-09-21, sin migracion) pregunta a `POST /internal/mail-directory/mailboxes/existence`
+(`{"ids":[...]}`, hasta 500; token de gateway y empresa en `X-Tenant-ID`; una peticion con usuario no llega) que ids son
+buzones de esa empresa: `SELECT id FROM mail.mailboxes WHERE tenant_id = $1 AND id = ANY($2)` bajo RLS. Devuelve
+`{"data":{"existing":[...]}}` solo con ids preguntados, sin ningun otro dato del buzon. La usan `mail-dav` y
+`mail-migration` (`pkg/mailreconcile`); no cruza esquemas ni bases: es la API acotada por empresa con la que ya
+consultan el buzon destino, no una vista `v_*`, porque el trabajo esta en la base de la empresa y el buzon en la de la celda.
+
 `03_mail_app_policies.sql` (mail-directory) anade lo que el primer consumidor necesito:
 `app_delete` sobre `quota_usage` (solo del buzon propio, por eso el servicio borra la cuota
 antes que el buzon), `WITH CHECK` en `transports` que admite `tenant_id NULL` solo con
@@ -557,6 +564,18 @@ solo servicios, por la instancia de la celda de la empresa con `tenantcell.Calle
   empresas activas (`TenantDB.ForEachActiveTenant`) como mucho cada `MAIL_MIGRATION_SWEEP_INTERVAL`
   (30 s), de modo que el coste de un reclamo sin trabajo no crece con el numero de empresas y un trabajo
   creado por otra instancia o con el lease vencido se encuentra en ese intervalo.
+* Credencial de destino por trabajo (V, 2026-09-21; `04_destination_credential.sql`, aditiva e idempotente): columna
+  `destination_credential_hash bytea` con el SHA-256 del secreto de 256 bits que se entrega al ejecutor una sola vez al
+  reclamar el trabajo (el secreto nunca se guarda). La restriccion `mail_migration_jobs_destination_credential_check`
+  impide un hash fuera de un trabajo `running` (o que no sea de 32 bytes); `Finish`, `ExpireLost`, `RequestCancel` y
+  `DeleteByMailbox` la ponen a NULL o borran la fila en la misma sentencia, y un nuevo reclamo la reemplaza. `mail-auth`
+  pregunta a `POST /internal/mail-migration/credentials/verify` (token de gateway, sin sesion; la empresa sale del token
+  del trabajo) y la respuesta sale de esta fila: trabajo en curso, lease vigente, sin cancelacion pedida, secreto y buzon
+  coincidentes. Ver `docs/adr/0002`.
+* Conciliacion (V, 2026-09-21): un barrido (`pkg/mailreconcile`, cerrojo de lider) compara los `mailbox_id` de la tabla
+  con `mail-directory` (`POST .../mailboxes/existence`) y retira, con `PurgeMailbox`, los trabajos de buzones que ya no
+  existen y cuyo trabajo mas antiguo supera la gracia (`MAIL_MIGRATION_RECONCILE_GRACE`). Cubre lo borrado antes del
+  consumidor y las altas en vuelo.
 * Rol de servicio: `mail_migration_service` (grupo NOLOGIN, `02_service_role.sql`: DML sobre su esquema y
   la outbox, sin DDL) y su login `mail_svc_mail_migration` con `MAIL_MIGRATION_DB_PASSWORD?` del almacen
   de bases (`ops/db/service-credentials.json`).
@@ -580,6 +599,10 @@ solo servicios, por la instancia de la celda de la empresa con `tenantcell.Calle
   contrasena, el ejecutor la recibe descifrada, al cerrar no queda rastro y el mensaje de error la retira); y el borrado
   por buzon borrado (otro buzon de la empresa, uno recreado con el mismo nombre y otra empresa con el mismo id de buzon
   no pierden nada; solo los activos anuncian su cancelacion; se revierte entero si falla el evento).
+  Y (2026-09-21) la credencial de destino por trabajo (vale solo con el trabajo vivo, el lease vigente y la empresa
+  correcta; cancelar, cerrar, vencer y borrar la revocan; un reclamo nuevo la reemplaza; la base rechaza un hash fuera de
+  un trabajo en curso) y la conciliacion (enumeracion por empresa y gracia, barrido con el caso de uso y la outbox reales),
+  con mutaciones (quitar la gracia, el filtro de empresa o la comprobacion del lease hace fallar la prueba).
 
 ### 4.2 Contactos y calendario personales por CardDAV y CalDAV: `mail_dav` (V, 2026-09-21)
 
@@ -621,8 +644,13 @@ foranea entre esquemas. Las claves foraneas son de dentro del esquema y llevan e
   sobre `MAIL_DIRECTORY`): borra las libretas y los calendarios del buzon con sus contactos, eventos y registros de cambios (cascada de la clave
   foranea compuesta) en la base de la empresa del evento y en ninguna otra, por el `id` del buzon y no por su nombre, de
   modo que uno recreado con el mismo nombre conserva lo suyo. Idempotente; un evento sin `tenant_id` e `id` validos
-  termina en `EVENTS_DLQ`. Lo borrado antes de que existiera el consumidor o mas alla de la retencion del stream no se
-  retira (P: barrido de conciliacion contra `mail-directory`).
+  termina en `EVENTS_DLQ`. Lo borrado antes de que existiera el consumidor o mas alla de la retencion del stream lo retira
+  el barrido de conciliacion (V, 2026-09-21; `pkg/mailreconcile`, cerrojo de lider, `MAIL_DAV_RECONCILE_*`): compara los
+  `mailbox_id` de `addressbooks` y `calendars` con `mail-directory` y retira los ausentes con el mismo caso de uso que el
+  consumidor, respetando una ventana de gracia. Como las politicas de fila no dejan a ninguna sesion listar buzones, la
+  enumeracion es `mail_dav.stale_mailbox_ids(empresa, antes_de, despues_de, limite)` (`04_reconcile.sql`): `SECURITY
+  DEFINER` con `search_path` fijo, solo `EXECUTE` para `mail_dav_service`, lectura de ids de la empresa pedida con datos
+  mas viejos que `antes_de`, sin contenido y con tope de 1000. Ver `docs/adr/0004`.
 * Probado (integracion contra Postgres 16, `IT_PACKAGES='./services/mail-dav/...' make test-integration`, con el rol de
   servicio real): migraciones dos veces; ciclo de libretas y contactos con `If-Match`/`If-None-Match`; UID unico; el
   ctag no avanza si el contenido no cambia; sincronizacion incremental y poda del registro; 20 altas simultaneas

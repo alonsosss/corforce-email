@@ -8,6 +8,13 @@ que falta están en "Implementación de la primera versión" y en "Riesgos y pre
 ejecutado `make e2e-mail` con la sección nueva de `ops/e2e/mail.sh` ni se ha probado contra un
 proveedor real; OAuth2 queda fuera.
 
+Actualización (2026-09-21): el riesgo residual principal de la revisión de seguridad, el usuario maestro compartido de
+Dovecot, tiene cierre implementado: una credencial de destino por trabajo (sección "Credencial de destino por
+trabajo"). Es opt-in (`MAIL_MIGRATION_JOB_CREDENTIALS`) para poder desplegar sin cortar el flujo actual; el riesgo
+queda cerrado del todo cuando esa credencial se activa y el maestro se retira del almacén (pasos en esa sección).
+También quedó implementado el barrido de conciliación de buzones borrados (sección "Conciliación de buzones
+borrados").
+
 Cierra la decisión de `Plan_Estrategico_Mejoras_Correo.md`, C1: herramienta y verificación de su licencia.
 
 ## Contexto
@@ -47,8 +54,9 @@ Un **ejecutor** propio y una **capa de control** propia, separados:
   Alta con `make new-service`, ruta en `routes.json`, módulo de permisos `migration`.
 * **`mail-migration-runner` (contenedor con imapsync y un envoltorio mínimo en Go).** No tiene acceso a la
   base ni a Redis. Vive en una red propia sin ruta a la plataforma: solo sale hacia Internet (los IMAP de
-  origen, con puertos 143 y 993) y hacia el IMAP de Dovecot por un usuario maestro propio restringido a la
-  red del ejecutor. Pide trabajo a `mail-migration` con su propia clave y recibe cada credencial de origen
+  origen, con puertos 143 y 993) y hacia el IMAP de Dovecot con una credencial que solo abre el buzón destino
+  de su trabajo mientras dura (o, en la primera versión y sin `MAIL_MIGRATION_JOB_CREDENTIALS`, un usuario maestro
+  propio restringido a la red del ejecutor). Pide trabajo a `mail-migration` con su propia clave y recibe cada credencial de origen
   **una vez, al tomar el trabajo**, la pasa a imapsync por un fichero efímero (nunca por argumento ni
   entorno) y la olvida al terminar. Corre como usuario sin privilegios, sistema de ficheros de solo
   lectura, sin capacidades, con límites de CPU, memoria, procesos y tiempo por trabajo.
@@ -146,9 +154,9 @@ por CSV y pausar un trabajo (solo se cancela).
     concurrente de ese cruce.
   * **Idempotente.** Un evento repetido, o el de un buzon sin trabajos, no cambia nada ni vuelve a anunciar.
   * Ventana conocida: un `Create` que ya paso la comprobacion del buzon y termina de insertar despues de procesado
-    el evento dejaria un trabajo huerfano hasta que se borre la empresa (milisegundos frente a la latencia de la
-    outbox y NATS); un barrido de conciliacion contra `mail-directory` lo cubriria (mejora futura, igual que el
-    de `mail-dav`).
+    el evento dejaria un trabajo huerfano (milisegundos frente a la latencia de la outbox y NATS), y lo borrado antes
+    de que existiera el consumidor o mas alla de la retencion del stream no llega nunca. Lo cubre el barrido de
+    conciliacion (seccion "Conciliacion de buzones borrados").
 * **API del ejecutor.** Otro listener del mismo proceso (`MAIL_MIGRATION_RUNNER_PORT`, 8057) que no pasa por
   el gateway ni por JWT: `Authorization: Bearer <MAIL_MIGRATION_RUNNER_KEY>` comparada en tiempo constante,
   `Cache-Control: no-store`. Sin la clave, el listener no se abre. La clave es un secreto opcional del almacén
@@ -168,11 +176,14 @@ Detalle operativo en `deploy/mail/README.md` ("Migración de buzones"). Lo decid
   por `--passfile1/2`, ficheros 0400 en un directorio 0700 de nombre aleatorio dentro de un tmpfs, borrados al
   terminar el trabajo y si se mata al hijo. No hay contraseña en argv, entorno ni registro (prueba con un
   imapsync falso que anota ambos), y el entorno del hijo es mínimo y explícito.
-* **Destino.** IMAP con TLS implícito verificado contra `MAIL_HOSTNAME`, con un usuario maestro de Dovecot
-  **propio de la migración** (`DOVECOT_MIGRATION_MASTER_*`, distinto del del webmail), con `allow_nets` de la
-  red del ejecutor: se rota y se revoca por separado y una filtración no lo abre desde la red de los motores.
-  Sigue abriendo cualquier buzón de la celda desde esa red: es el mismo poder que el del webmail, acotado por
-  red. Destino fijo (`MIGRATION_DEST_HOST`): una sola celda (ver riesgos).
+* **Destino.** IMAP con TLS implícito verificado contra `MAIL_HOSTNAME`. Con `MAIL_MIGRATION_JOB_CREDENTIALS`
+  el ejecutor entra con la **credencial de destino del trabajo** (ver su sección): el buzón a secas y una
+  contraseña que solo abre ese buzón mientras el trabajo está en curso. Sin ella, o si el trabajo no la trae, usa
+  un usuario maestro de Dovecot **propio de la migración** (`DOVECOT_MIGRATION_MASTER_*`, distinto del del
+  webmail), con `allow_nets` de la red del ejecutor: se rota y se revoca por separado y una filtración no lo abre
+  desde la red de los motores. Ese maestro abre cualquier buzón de la celda desde esa red (el mismo poder que el
+  del webmail, acotado por red) y es el riesgo que la credencial por trabajo cierra. Destino fijo
+  (`MIGRATION_DEST_HOST`): una sola celda (ver riesgos).
 * **SSRF (ejecutor).** Resuelve el origen y rechaza cualquier dirección no pública (la misma lista del
   servicio, más el metadata y las formas ambiguas), y conecta imapsync a la **IP validada** (`--host1=<IP>`)
   con verificación del certificado contra el nombre pedido (`SSL_verify_mode=1`, `SSL_verifycn_name`,
@@ -239,8 +250,38 @@ pero es un shell dentro del contenedor del ejecutor.
   maestro.
 * `make checks`, incluidos `check-migration-runner`, `check-upstream-ledger`, `check-deploy-mail` y
   `check-test-ratio` (suelo propio de `mail-migration`).
-* **No ejecutado:** `make e2e-mail` (la sección de migración de `ops/e2e/mail.sh` solo pasó `bash -n`) y
-  `ops/scaffold/test-deploy-mail.sh`; ni IPv6 con imapsync real ni un proveedor real.
+* Credencial de destino por trabajo (2026-09-21). Unitarias: dominio del token (forma unica, hash, aleatoriedad),
+  caso de uso (abre solo el buzon y el trabajo, no otro buzon ni otra empresa, se revoca al cerrar, cancelar, vencer el
+  lease, reclamar de nuevo y borrar el buzon; un fallo de infraestructura no es un rechazo), API del ejecutor y de
+  verificacion, ruteo de `mail-migration`, `mail-auth` (red del ejecutor, IPv4 mapeada, funcion sin configurar, buzon
+  distinto del del trabajo, freno de fuerza bruta, ningun otro servicio la acepta, la respuesta a Dovecot no dice mas
+  de `success`), su cliente y su configuracion, y el ejecutor (sin maestro, preferencia por la del trabajo, ni argv ni
+  entorno ni registros, credencial mal formada). Integracion contra Postgres 16: vale solo con el trabajo vivo, el
+  lease vigente y la empresa correcta; cancelar, cerrar, vencer y borrar la revocan; un reclamo nuevo la reemplaza; y la
+  base rechaza un hash fuera de un trabajo en curso. **Contra Dovecot 2.3.21 real** (contenedor efimero sin puertos
+  publicados, con la `migration-verify.lua` del repositorio y las mismas passdb en el mismo orden, con un `mail-auth`
+  simulado que cumple el contrato): abre solo el buzon del trabajo (el de otro buzon y un token malo se rechazan),
+  desde la red del ejecutor y no desde otra, la contrasena normal y el maestro siguen funcionando, una contrasena sin el
+  prefijo no genera ninguna llamada, y al revocar el siguiente inicio falla en el acto; sin `%{session}` en la clave
+  de cache el exito se reutilizaba 300 s (hallazgo que motivo esa clave).
+* Conciliacion de buzones borrados (2026-09-21). Unitarias de `pkg/mailreconcile` (borra solo lo que el directorio no
+  conoce; nada por un error, un plazo o una respuesta sin lista; la gracia llega al almacen; el tope; lotes sin saltar
+  ninguno; cada empresa con lo suyo; el cerrojo; el intervalo cero) y de la configuracion; el cliente contra un servidor
+  falso (todo lo que no es una respuesta completa es un error); `mail-directory` (ruta interna, solo la empresa de la
+  peticion, tope de ids); y contra Postgres real la enumeracion y el barrido completo con el caso de uso real y la
+  outbox real. Mutaciones comprobadas (aplicadas y revertidas): quitar la comparacion con la gracia hace fallar las
+  pruebas de enumeracion y de barrido de los dos servicios; quitar el filtro de empresa de la enumeracion (`mail-dav` y
+  `mail-migration`) hace fallar las de aislamiento y de barrido, y el de la verificacion de la credencial, la de
+  vigencia; quitar la comprobacion del lease de la credencial hace fallar esa misma prueba. En `mail-directory` el filtro
+  de empresa de la consulta de existencia va detras de RLS (el rol del servicio no ve filas de otra empresa) y la
+  prueba no lo distingue: quitarlo no la hace fallar, es defensa en profundidad como en el resto de consultas.
+* `make checks`, `go vet`, `gofmt` y `go test -race` de lo tocado, los modulos propios del ejecutor y del agente de
+  cola (`check-migration-runner.sh`, `check-queue-agent.sh`) e
+  `IT_PACKAGES='./services/mail-migration/... ./services/mail-dav/... ./services/mail-auth/... ./services/mail-directory/...' make test-integration`.
+* **No ejecutado:** `make e2e-mail` (las secciones de migración y de credencial por trabajo de `ops/e2e/mail.sh` solo
+  pasaron `bash -n`) y `ops/scaffold/test-deploy-mail.sh`; ni IPv6 con imapsync real ni un proveedor real; la
+  credencial por trabajo no se probo con `mail-auth` y `mail-migration` reales detras de un Dovecot real (el e2e lo
+  hace y lo corre el responsable).
 
 ### Revision adversaria de seguridad (V, 2026-09-21)
 
@@ -269,14 +310,123 @@ comparacion de la clave en tiempo constante sobre su huella, IDOR entre empresas
 borrado de ficheros temporales (0400 en un directorio 0700 de un tmpfs que desaparece con el contenedor, y
 `prepareWorkDir` lo vacia al arrancar).
 
-**Riesgo residual principal (no corregido):** el usuario maestro de Dovecot de la migracion abre CUALQUIER buzon de
-la celda desde la red del ejecutor y su contrasena esta en un fichero que imapsync lee. Un servidor de origen que
-lograra ejecutar codigo dentro de imapsync (Perl y sus modulos, sobre respuestas de un servidor ajeno) obtendria
-lectura y escritura de todos los buzones de la celda. La red aislada, `cap_drop: ALL`, el sistema de ficheros de solo
-lectura y el proceso no volcable reducen lo que puede hacer alli dentro, no ese poder. El cierre correcto es una
-credencial por trabajo: que `mail-auth` (o un passdb propio de Dovecot) acepte un token de un solo uso ligado al
-buzon destino y a la vida del trabajo, en lugar del maestro compartido. Requiere trabajo en `mail-auth` y en la
-configuracion de Dovecot y queda como mejora recomendada.
+**Riesgo residual principal (cerrado con opt-in, ver la seccion siguiente):** el usuario maestro de Dovecot de la
+migracion abre CUALQUIER buzon de la celda desde la red del ejecutor y su contrasena esta en un fichero que imapsync
+lee. Un servidor de origen que lograra ejecutar codigo dentro de imapsync (Perl y sus modulos, sobre respuestas de un
+servidor ajeno) obtendria lectura y escritura de todos los buzones de la celda. La red aislada, `cap_drop: ALL`, el
+sistema de ficheros de solo lectura y el proceso no volcable reducen lo que puede hacer alli dentro, no ese poder. El
+cierre es una credencial por trabajo en lugar del maestro compartido, y esta implementada.
+
+### Credencial de destino por trabajo (V, 2026-09-21)
+
+Sustituye al maestro compartido: cada trabajo trae una credencial que abre **solo el buzon destino de ese trabajo**,
+**solo desde la red del ejecutor** y **solo mientras el trabajo esta en curso**. Un imapsync comprometido conserva
+lo que ya tenia (la contrasena de origen y el buzon destino de su trabajo) y deja de alcanzar los demas buzones de la
+celda.
+
+**Opciones evaluadas.**
+
+1. *passdb dinamico de Dovecot que consulta a mail-auth, con el token guardado en mail-auth (Redis o tabla)*: la
+   forma del cierre es esta, pero guardar el token en mail-auth obliga a dos llamadas (emitir y revocar) de
+   `mail-migration` a `mail-auth`, a un segundo almacen con caducidad que tiene que coincidir con el estado del trabajo
+   (cancelado, cerrado, perdido, borrado) y a que una revocacion fallida deje la credencial viva hasta su caducidad.
+2. *Usuario maestro por trabajo (`buzon*migracion-<trabajo>`, passdb Lua maestra)*: es posible (en Dovecot 2.3.21 la
+   passdb Lua de un login maestro ve el buzon pedido en `request.login_user`, comprobado con un Dovecot real), pero deja
+   el peor modo de fallo: una passdb `master = yes` concede la suplantacion de Dovecot, asi que un error en la
+   comparacion del buzon, o un Dovecot que no expusiera ese campo, convierte la credencial del trabajo en un maestro
+   universal. Ademas depende de un campo de la API Lua que aqui solo se comprobo de forma empirica en esta version. Se
+   descarto a favor de autenticar al propio buzon (opcion 4), donde un error solo puede hacer fallar un inicio de sesion.
+3. *Sesion IMAP a traves de un servicio propio (proxy)*: reescribe y opera un proxy IMAP con el correo de los
+   clientes pasando por el, mucha superficie para el mismo resultado. Se descarto.
+4. **Elegida: la variante de (1) con la verdad en la fila del trabajo.** El secreto lo genera `mail-migration` al
+   reclamar el trabajo (256 bits de `crypto/rand`), se entrega al ejecutor una vez en la respuesta del reclamo y en la
+   fila solo queda su SHA-256 (`mail_migration.jobs.destination_credential_hash`, migracion
+   `04_destination_credential.sql`). `mail-auth` no guarda nada: cada vez que Dovecot recibe la contrasena le pregunta
+   a `mail-migration`. Asi la credencial vale exactamente lo que el trabajo esta en curso, sin un segundo almacen que
+   sincronizar y con la revocacion en la misma sentencia que cambia el estado.
+
+**Flujo.**
+
+1. Al reclamar (`Claim`), `mail-migration` genera el secreto, guarda su hash en la misma sentencia que deja el trabajo
+   `running` y responde al ejecutor `destination.password = cfmj1.<empresa>.<trabajo>.<secreto en base64url>` (123
+   caracteres). La empresa y el trabajo van en claro porque el servicio abre una base por empresa; solo el secreto
+   autentica y solo su hash se guarda.
+2. El ejecutor pasa a imapsync `--user2=<buzon>` y la credencial por `--passfile2` (0400, en el directorio efimero): no
+   pasa por argv, entorno ni registro. Ya no usa el maestro (con las dos disponibles prefiere la del trabajo).
+3. Dovecot (`deploy/mail/dovecot/conf/auth/migration-verify.lua`, primera passdb, solo IMAP) mira si la contrasena
+   empieza por `cfmj1.`; si no, pasa de largo sin llamar a nadie. Si si, hace `POST` a `mail-auth` con
+   `service = migration`, el usuario y la IP real del cliente.
+4. `mail-auth` (`verifyJobCredential`) exige en este orden: funcion configurada, IP de origen dentro de
+   `MAIL_AUTH_JOB_ALLOWED_NETS` (la red del ejecutor; otra red se rechaza sin preguntar a nadie), freno de fuerza
+   bruta, respuesta afirmativa de `mail-migration` (`POST /internal/mail-migration/credentials/verify`, token de
+   gateway) y que el buzon exista todavia, sea el mismo (por id y por empresa, no por nombre) y pueda iniciar sesion.
+5. `mail-migration` acepta solo si el trabajo esta `running`, con el lease vigente, sin cancelacion pedida, con hash,
+   y el secreto coincide (comparacion en tiempo constante) y el buzon del trabajo es el que se pide.
+
+**Requisitos y como se cumplen.**
+
+| Requisito | Como |
+|---|---|
+| No abre otro buzon | La verificacion compara el buzon pedido con el del trabajo, y `mail-auth` ademas compara el id de buzon y la empresa con los del directorio |
+| No abre otro trabajo | Cada trabajo (y cada reclamo del mismo trabajo) tiene su secreto; el hash de la fila es de ese trabajo |
+| No sirve tras cerrar el trabajo | `Finish`, `ExpireLost` y `RequestCancel` ponen el hash a `NULL` en la misma sentencia; la base rechaza (`CHECK`) un hash en un trabajo que no esta `running` |
+| Caduca sola | Vale mientras el lease este vigente (90 s por defecto, lo renueva cada latido del ejecutor): un ejecutor que muere pierde la credencial en un lease |
+| Otro ejecutor la pierde al reclamar de nuevo | El nuevo reclamo sobrescribe el hash: la del ejecutor anterior deja de valer |
+| Revocacion inmediata | Cancelar, cerrar y borrar el buzon (el consumidor borra la fila; ademas `mail-auth` comprueba que el buzon existe) cortan los inicios nuevos en el acto. Dovecot no cachea el exito: la clave de cache de su passdb lleva `%{session}`, unica por conexion, en lugar de `auth_cache_ttl` = 300 s (probado con Dovecot real: sin eso, una credencial ya usada seguia valiendo 5 minutos) |
+| Solo desde la red del ejecutor | `mail-auth` compara la IP real que le pasa Dovecot con `MAIL_AUTH_JOB_ALLOWED_NETS` |
+| Ni argv ni registros | Fichero 0400 en el ejecutor; `auth_verbose_passwords` de Dovecot solo escribe seis caracteres de un SHA-1; `mail-auth`, `mail-migration` y el ejecutor no la registran; el e2e lo comprueba en los registros de Dovecot, `mail-auth`, `mail-migration` y `mail-directory` |
+| El maestro compartido del webmail no se toca | La passdb nueva va antes y solo actua sobre contrasenas con el prefijo; el maestro del webmail y el de la migracion siguen igual |
+
+**Despliegue seguro y degradacion.** La funcion es opt-in y cada pieza es inerte sin su configuracion, asi que desplegar
+el codigo no cambia nada:
+
+* `mail-migration` emite la credencial solo con `MAIL_MIGRATION_JOB_CREDENTIALS=true`; sin ella el reclamo no la trae,
+  avisa en el arranque ("migracion de buzones con el maestro compartido") y el ejecutor usa el maestro como antes.
+* `mail-auth` acepta credenciales de trabajo solo con `MAIL_MIGRATION_URL` **y** `MAIL_AUTH_JOB_ALLOWED_NETS`; sin las
+  dos las deniega (metrica `job_credentials_disabled`), y con una sola no arranca (configuracion a medias).
+* La passdb de Dovecot deja pasar cualquier contrasena sin el prefijo: no cambia ningun inicio de sesion existente.
+* El ejecutor ya no exige el maestro: sin `DOVECOT_MIGRATION_MASTER_*` solo acepta trabajos con credencial propia
+  (uno sin ella falla con `destination_failed` sin lanzar imapsync).
+
+Orden y cierre del riesgo (detalle en `deploy/mail/README.md`, "Migracion de buzones"): 1) desplegar `mail-migration`,
+`mail-auth` y los motores (Dovecot se recrea para leer la passdb nueva) y el ejecutor; 2) configurar
+`MAIL_MIGRATION_URL` y `MAIL_AUTH_JOB_ALLOWED_NETS` en `mail-auth`; 3) activar `MAIL_MIGRATION_JOB_CREDENTIALS=true` en
+`mail-migration`; 4) comprobar una migracion real; 5) **retirar `DOVECOT_MIGRATION_MASTER_USER` y
+`DOVECOT_MIGRATION_MASTER_PASS` del almacen** y recrear Dovecot y el ejecutor. Hasta el paso 5 el maestro compartido
+sigue existiendo y el riesgo residual sigue abierto; el ejecutor lo dice en su registro en cada arranque.
+
+**Lo que queda.** (a) La sesion IMAP ya abierta al cancelar sigue viva hasta que el ejecutor la detiene en su siguiente
+latido (como mucho medio lease); los inicios nuevos y las reconexiones no. (b) La credencial abre el buzon con toda su
+capacidad de IMAP durante el trabajo (necesita escribir en el): lo que ya no alcanza son los demas buzones. (c) La
+comunicacion `mail-auth` -> `mail-migration` va por HTTP dentro de la red de la plataforma con el token de gateway,
+como el resto de llamadas entre servicios. (d) Con varias celdas, `mail-auth` de cada celda pregunta al mismo
+`mail-migration`; el ejecutor sigue con un solo Dovecot destino.
+
+### Conciliacion de buzones borrados (V, 2026-09-21)
+
+`mail-migration` (y `mail-dav`, `docs/adr/0004`) retira los datos de un buzon al recibir `mail.mailbox.deleted`, pero lo
+borrado antes de que existiera el consumidor, mas alla de la retencion del stream, o por una peticion en vuelo que
+escribe despues del evento, dejaba filas huerfanas. Un barrido periodico (`pkg/mailreconcile`, compartido por los dos
+servicios) compara los `mailbox_id` que el servicio guarda con los buzones que existen:
+
+* **Contrato.** `mail-directory` sirve `POST /internal/mail-directory/mailboxes/existence` (`{"ids":[...]}`, hasta 500,
+  `{"data":{"existing":[...]}}`): ruta interna, empresa en `X-Tenant-ID`, solo devuelve ids que son buzones de esa
+  empresa y solo los que se preguntaron. Se eligio una API interna y no una vista `v_*` porque el buzon vive en la celda
+  y el trabajo en la base de la empresa: son bases distintas (no hay lectura cruzada posible) y la API ya acotada por
+  empresa es el patron con el que `mail-migration` consulta el buzon destino.
+* **Que compara.** Cada servicio lista, por empresa y por paginas ordenadas, los buzones con datos cuyo dato mas antiguo
+  es anterior a la **ventana de gracia** (`MAIL_MIGRATION_RECONCILE_GRACE`, 24 h, minimo 10 min): un buzon recien
+  creado, o una escritura que acaba de llegar, no se concilia todavia. Pregunta por lotes de 200 y retira los ausentes
+  con el mismo caso de uso que el consumidor (`PurgeMailbox`: por id de buzon, por empresa, idempotente, y un trabajo
+  activo anuncia `migration.job.cancelled` con `mailbox_deleted` en la misma transaccion).
+* **Solo por una respuesta correcta.** El barrido nunca borra por un error, un plazo, un cuerpo ilegible, un estado que
+  no sea 200 ni una respuesta sin la lista de existentes: solo por un id que una respuesta completa no incluye. Ademas
+  retira como mucho `MAIL_MIGRATION_RECONCILE_MAX_PURGES_PER_TENANT` (100) buzones por empresa y pasada, de modo que un
+  directorio que respondiera mal no vaciaria una empresa de golpe (metrica `mailbox_reconcile_purge_capped_total`).
+* **Ejecucion.** Cerrojo de lider sobre el registro (`db.TryLeaderLock`, clave propia) para que corra una sola replica;
+  primera pasada un minuto despues de arrancar y luego cada `MAIL_MIGRATION_RECONCILE_INTERVAL` (6 h); `0` la desactiva.
+  Metricas: `mailbox_reconcile_runs_total{result}`, `mailbox_reconcile_orphans_purged_total`,
+  `mailbox_reconcile_failures_total{stage}` y el tope citado; el registro lleva solo ids de empresa y de buzon.
 
 ## Consecuencias
 
@@ -284,14 +434,15 @@ configuracion de Dovecot y queda como mejora recomendada.
   chequeos existentes (`check-coupling`, contratos de eventos, `check-test-ratio`, `check-migration-runner`).
 * El ejecutor es el componente que parsea respuestas de servidores ajenos: por eso no tiene nada que robar
   ni a lo que llegar dentro de la plataforma, salvo, por diseño, las credenciales de los trabajos que reclama
-  y el usuario maestro de la migración. Un ejecutor comprometido podría reclamar los trabajos pendientes y
+  (la de origen y la de destino de cada uno) y, mientras siga configurado, el usuario maestro de la migración.
+  Un ejecutor comprometido podría reclamar los trabajos pendientes y
   leer sus contraseñas: el límite de trabajos activos, el borrado al terminar y, desde la revisión de seguridad
   del 2026-09-21, un trabajo a la vez por ejecutor y un tope de trabajos reclamados acotan la exposición.
 * Un Perl más en la lista de imágenes a escanear (`ops/security/escanear-motores.sh`, que ya recorre
   `deploy/mail/*/Dockerfile`) y en el libro de parches (`UPSTREAM.md`), con la serie de imapsync fijada.
 * Primera vez que la plataforma exige una red de los motores nueva: en un servidor que ya corre hay que
   desplegar los motores antes que la plataforma (`docs/Operacion_Despliegue.md`).
-* La clave del ejecutor y el maestro de migración viven en `secret-keys.txt`, cuyo fichero se entrega entero a
+* La clave del ejecutor y, mientras se conserve, el maestro de migración viven en `secret-keys.txt`, cuyo fichero se entrega entero a
   los servicios que lo declaran (limitación conocida que ya tienen las demás claves de motores).
 
 ## Riesgos y preguntas abiertas
@@ -319,7 +470,9 @@ configuracion de Dovecot y queda como mejora recomendada.
   reiniciarlo, y el trabajo se reintenta hasta `MAIL_MIGRATION_MAX_ATTEMPTS`. `--maxsize` lo evitaría, pero imapsync
   omitiría esos mensajes sin error y el trabajo acabaría `succeeded` con correo sin copiar: hay que añadirlo junto con
   su lectura en el analizador para seguir informando el fallo.
-* **Credencial de destino por trabajo** (riesgo residual principal de la revisión de seguridad): ver arriba.
+* **Credencial de destino por trabajo** (riesgo residual principal de la revisión de seguridad): implementada, opt-in.
+  El riesgo sigue abierto mientras `DOVECOT_MIGRATION_MASTER_*` siga en el almacén y en el ejecutor; los pasos para
+  cerrarlo están en su sección. Pendiente: probarla con `make e2e-mail` y retirar el maestro en producción.
 * **Reinicio del ejecutor con el mismo identificador**: el servicio no le entrega otro trabajo hasta que venza el lease
   del anterior (hasta `MAIL_MIGRATION_LEASE`); los topes de reclamo viven en la memoria de cada instancia de
   `mail-migration`, no compartidos entre instancias.

@@ -121,13 +121,18 @@ func LoadConfig(getenv func(string) string) (Config, State, error) {
 		errs = append(errs, errors.New("falta MIGRATION_DEST_TLS_SERVER_NAME: el certificado de Dovecot se verifica siempre"))
 	}
 
+	// El maestro compartido es opcional: con MAIL_MIGRATION_JOB_CREDENTIALS en mail-migration cada trabajo
+	// trae su credencial de destino y el maestro sobra. Se conserva para desplegar sin cortar el flujo
+	// anterior; quien lo retire del almacen cierra el riesgo residual del ADR 0002.
 	cfg.MasterUser = env("DOVECOT_MIGRATION_MASTER_USER")
 	cfg.MasterPass = env("DOVECOT_MIGRATION_MASTER_PASS")
-	if !masterUserPattern.MatchString(cfg.MasterUser) {
-		errs = append(errs, errors.New("DOVECOT_MIGRATION_MASTER_USER falta o no cumple [a-z0-9._-]"))
-	}
-	if len(cfg.MasterPass) < minSecretLength {
-		errs = append(errs, fmt.Errorf("DOVECOT_MIGRATION_MASTER_PASS falta o tiene menos de %d caracteres", minSecretLength))
+	if cfg.MasterUser != "" || cfg.MasterPass != "" {
+		if !masterUserPattern.MatchString(cfg.MasterUser) {
+			errs = append(errs, errors.New("DOVECOT_MIGRATION_MASTER_USER falta o no cumple [a-z0-9._-]"))
+		}
+		if len(cfg.MasterPass) < minSecretLength {
+			errs = append(errs, fmt.Errorf("DOVECOT_MIGRATION_MASTER_PASS falta o tiene menos de %d caracteres", minSecretLength))
+		}
 	}
 
 	if cfg.SourcePorts, err = envPorts(env, "MIGRATION_SOURCE_PORTS", defaultSourcePorts); err != nil {
@@ -233,6 +238,31 @@ func envPorts(env func(string) string, name string, fallback []int) ([]int, erro
 		ports = append(ports, n)
 	}
 	return ports, nil
+}
+
+// SharedMaster dice si el ejecutor tiene el maestro compartido de Dovecot para los trabajos que no traen
+// credencial de destino propia.
+func (c Config) SharedMaster() bool { return c.MasterUser != "" && c.MasterPass != "" }
+
+// destinationSecret es la contrasena con la que se entra al buzon destino: la credencial propia del trabajo
+// si la trae y, si no, el maestro compartido. ok es false si no hay ninguna de las dos.
+func (c Config) destinationSecret(job *ClaimedJob) (string, bool) {
+	switch {
+	case job.Destination.Password != "":
+		return job.Destination.Password, true
+	case c.SharedMaster():
+		return c.MasterPass, true
+	}
+	return "", false
+}
+
+// destinationUser es el usuario de IMAP del destino: el buzon a secas con su credencial de trabajo, o el
+// buzon abierto por el maestro compartido.
+func (c Config) destinationUser(job *ClaimedJob) string {
+	if job.Destination.Password != "" {
+		return job.Destination.Username
+	}
+	return job.Destination.Username + "*" + c.MasterUser + "@platform.local"
 }
 
 func (c Config) sourcePortAllowed(port int) bool {

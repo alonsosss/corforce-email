@@ -444,7 +444,15 @@ buzones dio 500 y `mail-auth` no pudo leer el buzon del remitente de las alertas
   opcionales del almacen (`MAIL_MIGRATION_RUNNER_KEY`, y el maestro propio `DOVECOT_MIGRATION_MASTER_USER` y
   `DOVECOT_MIGRATION_MASTER_PASS`) y con la contrasena del rol de base `MAIL_MIGRATION_DB_PASSWORD`, que
   crea `ops/db/tenant-service-role.sh --service mail-migration`; sin la clave del ejecutor el servicio arranca y
-  la API responde 503 `NOT_CONFIGURED`, sin la del rol arranca con la credencial de plataforma y lo avisa.
+  la API responde 503 `NOT_CONFIGURED`, sin la del rol arranca con la credencial de plataforma y lo avisa. Credencial de
+  destino por trabajo (2026-09-21, `docs/adr/0002`): con `MAIL_MIGRATION_JOB_CREDENTIALS=true` en `mail-migration`, y
+  `MAIL_MIGRATION_URL` y `MAIL_AUTH_JOB_ALLOWED_NETS` en `mail-auth`, el ejecutor entra al buzon con una credencial que solo
+  abre ese buzon mientras el trabajo esta en curso y el maestro `DOVECOT_MIGRATION_MASTER_*` se puede retirar del almacen. Orden
+  (desplegar el codigo, activar `mail-auth`, activar `mail-migration`, probar una migracion, retirar el maestro y recrear
+  Dovecot y el ejecutor) y reversion en `deploy/mail/README.md`, "Migracion de buzones". Dovecot se recrea una vez para
+  leer la passdb nueva; la migracion de empresa `04_destination_credential.sql` (y `04_reconcile.sql` de `mail-dav`) las
+  aplica el runner de empresas al desplegar. La conciliacion de buzones borrados de `mail-dav` y `mail-migration` corre sola
+  (`*_RECONCILE_INTERVAL`, `0` la apaga) y necesita `MAIL_DIRECTORY_URL`, que el `.env` ya tiene.
 * CardDAV (`mail-dav`, V: codigo y pruebas; P: cliente real, 2026-09-21, `docs/adr/0004-contactos-y-calendario-carddav-caldav.md`):
   servicio de empresa (puerto 8058) en `mail-internal` y en `mail-engines` (para el listener TLS de `mail-auth`,
   `MAIL_AUTH_URL`, la misma variable que usa el webmail; con el perfil autoalojado verifica su certificado con la CA

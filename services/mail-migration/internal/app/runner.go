@@ -27,6 +27,10 @@ type ClaimedJob struct {
 	SourceUsername      string
 	SourcePassword      string
 	DestinationUsername string
+	// DestinationPassword es la credencial de destino del trabajo: abre solo el buzon destino, solo
+	// mientras el trabajo esta en curso. Vacia cuando el servicio no las emite y el ejecutor usa el
+	// maestro compartido.
+	DestinationPassword string
 	LeaseSeconds        int
 }
 
@@ -103,6 +107,15 @@ func (uc *UseCase) claimInTenantContext(ctx context.Context, tenantID uuid.UUID,
 	params := ports.ClaimParams{
 		RunnerID: runnerID, LeaseID: uuid.New(), Now: now, LeaseUntil: now.Add(uc.cfg.Lease), MaxAttempts: uc.cfg.MaxAttempts,
 	}
+	var credential domain.DestinationCredential
+	if uc.cfg.JobCredentials {
+		c, err := domain.NewDestinationCredential(uc.random)
+		if err != nil {
+			return nil, err
+		}
+		credential = c
+		params.DestinationCredentialHash = c.Hash
+	}
 	var job *domain.Job
 	err := uc.tx.Transact(ctx, func(ctx context.Context) error {
 		expired, err := uc.repo.ExpireLost(ctx, tenantID, now, uc.cfg.MaxAttempts)
@@ -138,12 +151,16 @@ func (uc *UseCase) claimInTenantContext(ctx context.Context, tenantID uuid.UUID,
 		}
 		return nil, nil
 	}
-	return &ClaimedJob{
+	claimed := &ClaimedJob{
 		JobID: job.ID, TenantID: tenantID, LeaseID: *job.LeaseID, Attempt: job.Attempt,
 		SourceHost: job.SourceHost, SourcePort: job.SourcePort, SourceTLS: job.SourceTLS,
 		SourceUsername: job.SourceUsername, SourcePassword: string(password),
 		DestinationUsername: job.MailboxUsername, LeaseSeconds: int(uc.cfg.Lease / time.Second),
-	}, nil
+	}
+	if uc.cfg.JobCredentials {
+		claimed.DestinationPassword = credential.Token(tenantID, job.ID)
+	}
+	return claimed, nil
 }
 
 type HeartbeatInput struct {

@@ -14,7 +14,9 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/netip"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/alonsosss/corforce-email/pkg/config"
@@ -25,10 +27,12 @@ import (
 	"github.com/alonsosss/corforce-email/pkg/server"
 	bcryptadapter "github.com/alonsosss/corforce-email/services/mail-auth/internal/adapters/bcrypt"
 	handler "github.com/alonsosss/corforce-email/services/mail-auth/internal/adapters/http"
+	"github.com/alonsosss/corforce-email/services/mail-auth/internal/adapters/migrationcli"
 	"github.com/alonsosss/corforce-email/services/mail-auth/internal/adapters/postgres"
 	promadapter "github.com/alonsosss/corforce-email/services/mail-auth/internal/adapters/prometheus"
 	redisadapter "github.com/alonsosss/corforce-email/services/mail-auth/internal/adapters/redis"
 	"github.com/alonsosss/corforce-email/services/mail-auth/internal/app"
+	"github.com/alonsosss/corforce-email/services/mail-auth/internal/ports"
 	"github.com/go-chi/chi/v5"
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
@@ -50,6 +54,9 @@ const (
 	// Una ventana o un bloqueo de mas de un dia es una errata, y el bloqueo por IP alcanza
 	// tambien a los buzones legitimos que salen por ella.
 	maxThrottleDuration = 24 * time.Hour
+
+	migrationURLEnv = "MAIL_MIGRATION_URL"
+	jobNetworksEnv  = "MAIL_AUTH_JOB_ALLOWED_NETS"
 
 	// tlsHostname es el alias con el que Dovecot resuelve al servicio (MAIL_AUTH_URL).
 	tlsHostname = "mail-auth"
@@ -76,6 +83,10 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	jobs, err := jobCredentialsFromEnv(logger)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	ctx := context.Background()
 	pool, err := db.NewCellPool(ctx, cfg.Postgres, logger)
@@ -94,11 +105,13 @@ func main() {
 		log.Fatalf("redis: %v", err)
 	}
 	uc := app.New(app.Deps{
-		Repo:      postgres.NewRepository(&db.ContextPool{}),
-		Passwords: verifier,
-		Throttle:  throttle,
-		Metrics:   promadapter.New(),
-		Logger:    logger,
+		Repo:        postgres.NewRepository(&db.ContextPool{}),
+		Passwords:   verifier,
+		Throttle:    throttle,
+		Metrics:     promadapter.New(),
+		Logger:      logger,
+		Jobs:        jobs.verifier,
+		JobNetworks: jobs.networks,
 	})
 	h := handler.NewHandler(uc)
 
@@ -164,6 +177,62 @@ func main() {
 			logger.Fatal("server error", zap.Error(err))
 		}
 	}
+}
+
+// jobCredentials es la verificacion de las credenciales de destino de los trabajos de migracion: a quien
+// se pregunta y desde que redes se aceptan.
+type jobCredentials struct {
+	verifier ports.JobCredentialVerifier
+	networks []netip.Prefix
+}
+
+// jobCredentialsFromEnv lee MAIL_MIGRATION_URL (mail-migration) y MAIL_AUTH_JOB_ALLOWED_NETS (la red del
+// ejecutor). Las dos van juntas: con una sola la funcion quedaria a medias, que es peor que apagada, asi que
+// es un error de arranque. Sin ninguna, las credenciales de trabajo se deniegan y el ejecutor conserva el
+// maestro compartido de Dovecot (docs/adr/0002).
+func jobCredentialsFromEnv(logger *zap.Logger) (jobCredentials, error) {
+	baseURL, err := config.ServiceURL(migrationURLEnv, "")
+	if err != nil {
+		return jobCredentials{}, err
+	}
+	networks, err := parseNetworks(os.Getenv(jobNetworksEnv))
+	if err != nil {
+		return jobCredentials{}, fmt.Errorf("%s: %w", jobNetworksEnv, err)
+	}
+	if baseURL == "" && len(networks) == 0 {
+		logger.Info("mail-auth: credenciales de trabajo de migracion desactivadas (falta " + migrationURLEnv + " y " + jobNetworksEnv + ")")
+		return jobCredentials{}, nil
+	}
+	if baseURL == "" || len(networks) == 0 {
+		return jobCredentials{}, fmt.Errorf("%s y %s van juntas", migrationURLEnv, jobNetworksEnv)
+	}
+	token, err := middleware.InternalGatewayToken()
+	if err != nil {
+		return jobCredentials{}, err
+	}
+	logger.Info("mail-auth: credenciales de trabajo de migracion activas", zap.String("mail_migration", baseURL), zap.Int("networks", len(networks)))
+	return jobCredentials{verifier: migrationcli.New(baseURL, token), networks: networks}, nil
+}
+
+// parseNetworks lee una lista de CIDR separada por comas. Una direccion sin mascara no es una red, y un
+// prefijo /0 abriria todas las direcciones: los dos se rechazan para que un descuido no amplie el acceso.
+func parseNetworks(raw string) ([]netip.Prefix, error) {
+	var out []netip.Prefix
+	for _, part := range strings.Split(raw, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		prefix, err := netip.ParsePrefix(part)
+		if err != nil {
+			return nil, fmt.Errorf("%q no es un CIDR", part)
+		}
+		if prefix.Bits() == 0 {
+			return nil, fmt.Errorf("%q abriria todas las direcciones", part)
+		}
+		out = append(out, prefix.Masked())
+	}
+	return out, nil
 }
 
 // newThrottle abre el freno de fuerza bruta sobre el Redis de la plataforma. Sin Redis

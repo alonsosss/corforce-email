@@ -103,6 +103,12 @@ services:
       MAIL_AUTH_TLS_PORT: "9082"
       MAIL_AUTH_TLS_CERT: /run/cfm-e2e/tls/mail-auth.pem
       MAIL_AUTH_TLS_KEY: /run/cfm-e2e/tls/mail-auth-key.pem
+      # Credenciales de destino por trabajo: mail-migration corre en el host y solo se aceptan desde la red
+      # del ejecutor.
+      MAIL_MIGRATION_URL: http://host.docker.internal:${E2E_PORT_MAIL_MIGRATION:?lo fija ops/e2e/mail.sh}
+      MAIL_AUTH_JOB_ALLOWED_NETS: ${MAIL_MIGRATION_IPV4_NETWORK:?lo fija ops/e2e/mail.sh}.0/24
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ${E2E_TLS_DIR:?lo fija ops/e2e/mail.sh}:/run/cfm-e2e/tls:ro
     ports:

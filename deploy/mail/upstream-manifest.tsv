@@ -25,9 +25,10 @@ modificado	dockerapi/modules/DockerApi.py	sogo-php	data/Dockerfiles/dockerapi/mo
 identico	dockerapi/modules/__init__.py	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
 modificado	dovecot/Dockerfile	etiqueta,postgres,sogo-php,endurecimiento	data/Dockerfiles/dovecot/Dockerfile
 modificado	dovecot/clean_q_aged.sh	postgres,nombres	data/Dockerfiles/dovecot/clean_q_aged.sh
+nuevo	dovecot/conf/auth/migration-verify.lua	migracion	-
 modificado	dovecot/conf/auth/passwd-verify.lua	servicios-go	data/conf/dovecot/auth/passwd-verify.lua
 modificado	dovecot/conf/conf.d/fts.conf	nombres	data/conf/dovecot/conf.d/fts.conf
-modificado	dovecot/conf/dovecot.conf	postgres,sogo-php	data/conf/dovecot/dovecot.conf
+modificado	dovecot/conf/dovecot.conf	postgres,sogo-php,migracion	data/conf/dovecot/dovecot.conf
 identico	dovecot/conf/dovecot.folders.conf	6a747a6efbdc02ab39846b433237a928c976a2b4d3c1d8eedefc25927b90bc83
 modificado	dovecot/conf/global_sieve_after	nombres	data/conf/dovecot/global_sieve_after
 modificado	dovecot/conf/global_sieve_before	nombres	data/conf/dovecot/global_sieve_before
@@ -56,6 +57,7 @@ nuevo	migration-runner/config_test.go	migracion	-
 nuevo	migration-runner/go.mod	migracion	-
 nuevo	migration-runner/hardening_test.go	migracion	-
 nuevo	migration-runner/imapsync.go	migracion	-
+nuevo	migration-runner/job_credential_test.go	migracion	-
 nuevo	migration-runner/main.go	migracion	-
 nuevo	migration-runner/parse.go	migracion	-
 nuevo	migration-runner/parse_test.go	migracion	-

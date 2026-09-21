@@ -25,9 +25,13 @@ type Repo struct {
 	mu        sync.Mutex
 	Jobs      map[uuid.UUID]*domain.Job
 	ExpireOut []domain.Job
+	// Hashes son las credenciales de destino vigentes por trabajo.
+	Hashes map[uuid.UUID][]byte
+	// TargetErr hace fallar DestinationTarget con un error de infraestructura.
+	TargetErr error
 }
 
-func NewRepo() *Repo { return &Repo{Jobs: map[uuid.UUID]*domain.Job{}} }
+func NewRepo() *Repo { return &Repo{Jobs: map[uuid.UUID]*domain.Job{}, Hashes: map[uuid.UUID][]byte{}} }
 
 func (r *Repo) Insert(_ context.Context, j *domain.Job, limits ports.InsertLimits) error {
 	r.mu.Lock()
@@ -124,6 +128,7 @@ func (r *Repo) RequestCancel(_ context.Context, tenantID, id uuid.UUID, at time.
 	if j.Status == domain.StatusPending {
 		j.Status, j.SourcePasswordEnc, j.FinishedAt = domain.StatusCancelled, nil, &at
 	}
+	delete(r.Hashes, id)
 	if j.CancelRequestedAt == nil {
 		j.CancelRequestedAt = &at
 	}
@@ -136,7 +141,8 @@ func (r *Repo) Claim(_ context.Context, tenantID uuid.UUID, p ports.ClaimParams)
 	defer r.mu.Unlock()
 	var pick *domain.Job
 	for _, j := range r.Jobs {
-		if j.TenantID == tenantID && j.Status == domain.StatusPending && (pick == nil || j.CreatedAt.Before(pick.CreatedAt)) {
+		reclaimable := j.Status == domain.StatusRunning && j.LeaseExpiresAt != nil && j.LeaseExpiresAt.Before(p.Now) && j.Attempt < p.MaxAttempts
+		if j.TenantID == tenantID && j.CancelRequestedAt == nil && (j.Status == domain.StatusPending || reclaimable) && (pick == nil || j.CreatedAt.Before(pick.CreatedAt)) {
 			pick = j
 		}
 	}
@@ -145,6 +151,11 @@ func (r *Repo) Claim(_ context.Context, tenantID uuid.UUID, p ports.ClaimParams)
 	}
 	lease := p.LeaseID
 	pick.Status, pick.Attempt, pick.LeaseID, pick.LeaseExpiresAt, pick.RunnerID = domain.StatusRunning, pick.Attempt+1, &lease, &p.LeaseUntil, p.RunnerID
+	if p.DestinationCredentialHash != nil {
+		r.Hashes[pick.ID] = p.DestinationCredentialHash
+	} else {
+		delete(r.Hashes, pick.ID)
+	}
 	c := *pick
 	return &c, nil
 }
@@ -168,8 +179,24 @@ func (r *Repo) Finish(_ context.Context, tenantID, id uuid.UUID, p ports.FinishP
 		return nil, domain.ErrLeaseLost
 	}
 	j.Status, j.Progress, j.LastError, j.FinishedAt, j.SourcePasswordEnc, j.LeaseID = p.Status, p.Progress, p.Error, &p.Now, nil, nil
+	delete(r.Hashes, id)
 	c := *j
 	return &c, nil
+}
+
+func (r *Repo) DestinationTarget(_ context.Context, tenantID, id uuid.UUID, now time.Time) (ports.DestinationTarget, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.TargetErr != nil {
+		return ports.DestinationTarget{}, r.TargetErr
+	}
+	j, ok := r.Jobs[id]
+	hash := r.Hashes[id]
+	if !ok || j.TenantID != tenantID || j.Status != domain.StatusRunning || j.LeaseExpiresAt == nil || !j.LeaseExpiresAt.After(now) ||
+		j.CancelRequestedAt != nil || hash == nil {
+		return ports.DestinationTarget{}, domain.ErrNotFound
+	}
+	return ports.DestinationTarget{MailboxID: j.MailboxID, MailboxUsername: j.MailboxUsername, Hash: hash}, nil
 }
 
 func (r *Repo) ExpireLost(context.Context, uuid.UUID, time.Time, int) ([]domain.Job, error) {
@@ -177,6 +204,31 @@ func (r *Repo) ExpireLost(context.Context, uuid.UUID, time.Time, int) ([]domain.
 	defer r.mu.Unlock()
 	out := r.ExpireOut
 	r.ExpireOut = nil
+	return out, nil
+}
+
+func (r *Repo) StaleMailboxIDs(_ context.Context, tenantID uuid.UUID, before time.Time, after uuid.UUID, limit int) ([]uuid.UUID, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	oldest := map[uuid.UUID]time.Time{}
+	for _, j := range r.Jobs {
+		if j.TenantID != tenantID {
+			continue
+		}
+		if at, ok := oldest[j.MailboxID]; !ok || j.CreatedAt.Before(at) {
+			oldest[j.MailboxID] = j.CreatedAt
+		}
+	}
+	var out []uuid.UUID
+	for id, at := range oldest {
+		if id.String() > after.String() && at.Before(before) {
+			out = append(out, id)
+		}
+	}
+	sort.Slice(out, func(a, b int) bool { return out[a].String() < out[b].String() })
+	if len(out) > limit {
+		out = out[:limit]
+	}
 	return out, nil
 }
 
@@ -188,6 +240,7 @@ func (r *Repo) DeleteByMailbox(_ context.Context, tenantID, mailboxID uuid.UUID)
 		if j.TenantID == tenantID && j.MailboxID == mailboxID {
 			out = append(out, *j)
 			delete(r.Jobs, id)
+			delete(r.Hashes, id)
 		}
 	}
 	return out, nil

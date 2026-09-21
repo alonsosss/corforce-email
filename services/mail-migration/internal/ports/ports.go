@@ -39,6 +39,17 @@ type ClaimParams struct {
 	Now         time.Time
 	LeaseUntil  time.Time
 	MaxAttempts int
+	// DestinationCredentialHash es el hash de la credencial de destino del trabajo que se reclama;
+	// nil cuando el servicio no las emite (se conserva el maestro compartido del ejecutor).
+	DestinationCredentialHash []byte
+}
+
+// DestinationTarget es lo que la base sabe de la credencial vigente de un trabajo: el buzon al que
+// abre y el hash del secreto.
+type DestinationTarget struct {
+	MailboxID       uuid.UUID
+	MailboxUsername string
+	Hash            []byte
 }
 
 type HeartbeatParams struct {
@@ -81,8 +92,9 @@ type JobRepository interface {
 	Get(ctx context.Context, tenantID, id uuid.UUID) (*domain.Job, error)
 	List(ctx context.Context, tenantID uuid.UUID, f ListFilter, p Page) ([]domain.Job, Total, error)
 	CountActive(ctx context.Context, tenantID uuid.UUID) (int, error)
-	// RequestCancel cancela al instante un trabajo pendiente y marca la peticion en uno en curso.
-	// ErrNotCancellable si ya termino.
+	// RequestCancel cancela al instante un trabajo pendiente y marca la peticion en uno en curso; en los
+	// dos casos su credencial de destino deja de valer en la misma sentencia. ErrNotCancellable si ya
+	// termino.
 	RequestCancel(ctx context.Context, tenantID, id uuid.UUID, at time.Time) (*domain.Job, error)
 	// Claim toma el siguiente trabajo reclamable de la empresa (FOR UPDATE SKIP LOCKED) y lo deja en
 	// curso con el lease nuevo. Devuelve nil, nil si no hay ninguno.
@@ -93,9 +105,16 @@ type JobRepository interface {
 	// Finish cierra el trabajo con su estado final y borra la credencial. ErrLeaseLost si el lease no
 	// es de quien llama o el trabajo ya termino.
 	Finish(ctx context.Context, tenantID, id uuid.UUID, p FinishParams) (*domain.Job, error)
+	// DestinationTarget devuelve la credencial de destino del trabajo solo mientras esta viva: el trabajo
+	// esta en curso, con el lease vigente en now, sin cancelacion pedida y con credencial. domain.ErrNotFound
+	// en cualquier otro caso.
+	DestinationTarget(ctx context.Context, tenantID, id uuid.UUID, now time.Time) (DestinationTarget, error)
 	// ExpireLost cierra los trabajos en curso cuyo lease vencio y ya no pueden reintentarse (agotaron
 	// los intentos) o cuya cancelacion estaba pedida, y borra su credencial.
 	ExpireLost(ctx context.Context, tenantID uuid.UUID, now time.Time, maxAttempts int) ([]domain.Job, error)
+	// StaleMailboxIDs devuelve hasta limit ids de buzon con trabajos, en orden ascendente y mayores que
+	// after, cuyo trabajo mas antiguo es anterior a before.
+	StaleMailboxIDs(ctx context.Context, tenantID uuid.UUID, before time.Time, after uuid.UUID, limit int) ([]uuid.UUID, error)
 	// DeleteByMailbox borra todos los trabajos del buzon, en cualquier estado, y devuelve lo que
 	// borro tal como estaba (el estado que tenia cada uno). Un buzon sin trabajos no es un error.
 	DeleteByMailbox(ctx context.Context, tenantID, mailboxID uuid.UUID) ([]domain.Job, error)

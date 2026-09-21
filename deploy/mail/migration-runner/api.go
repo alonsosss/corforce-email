@@ -72,6 +72,9 @@ type ClaimedJob struct {
 	Source      Source `json:"source"`
 	Destination struct {
 		Username string `json:"username"`
+		// Password es la credencial de destino del trabajo (abre solo ese buzon mientras dura el trabajo);
+		// vacia cuando el servicio no las emite y se usa el maestro compartido.
+		Password string `json:"password"`
 	} `json:"destination"`
 	LeaseSeconds int `json:"lease_seconds"`
 }
@@ -267,8 +270,25 @@ func (j *ClaimedJob) validate() error {
 		return errors.New("caracteres no admitidos en el origen")
 	case !validMailbox(j.Destination.Username):
 		return errors.New("buzon de destino")
+	case j.Destination.Password != "" && !validJobCredential(j.Destination.Password):
+		return errors.New("credencial de destino")
 	}
 	return nil
+}
+
+// validJobCredential acepta solo la forma que emite mail-migration (cfmj1.<empresa>.<trabajo>.<secreto>):
+// la credencial va a un fichero y a la linea de ordenes de imapsync como contrasena, y no debe llevar nada
+// que no sea el alfabeto del token.
+func validJobCredential(s string) bool {
+	if len(s) < 20 || len(s) > 256 || !strings.HasPrefix(s, "cfmj1.") {
+		return false
+	}
+	for _, r := range s {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '.' || r == '-' || r == '_') {
+			return false
+		}
+	}
+	return true
 }
 
 func hasControl(s string) bool {

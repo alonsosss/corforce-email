@@ -155,6 +155,7 @@ EOF
 
 # Render the Lua passdb outside the bind-mounted conf dir so the template in the repo is never rewritten
 envsubst '${MAIL_AUTH_URL}' < /etc/dovecot/auth/passwd-verify.lua > /etc/dovecot-auth/passwd-verify.lua
+envsubst '${MAIL_AUTH_URL}' < /etc/dovecot/auth/migration-verify.lua > /etc/dovecot-auth/migration-verify.lua
 
 # Migrate old sieve_after file
 [[ -f /etc/dovecot/sieve_after ]] && mv /etc/dovecot/sieve_after /etc/dovecot/global_sieve_after
@@ -353,8 +354,8 @@ sievec /usr/lib/dovecot/sieve/report-ham.sieve
 
 # Fix permissions
 chown root:root /etc/dovecot/sql/*.conf
-chown root:dovecot /etc/dovecot/sql/dovecot-dict-sql-sieve* /etc/dovecot/sql/dovecot-dict-sql-quota* /etc/dovecot-auth/passwd-verify.lua
-chmod 640 /etc/dovecot/sql/*.conf /etc/dovecot-auth/passwd-verify.lua
+chown root:dovecot /etc/dovecot/sql/dovecot-dict-sql-sieve* /etc/dovecot/sql/dovecot-dict-sql-quota* /etc/dovecot-auth/passwd-verify.lua /etc/dovecot-auth/migration-verify.lua
+chmod 640 /etc/dovecot/sql/*.conf /etc/dovecot-auth/passwd-verify.lua /etc/dovecot-auth/migration-verify.lua
 chown -R vmail:vmail /var/vmail/sieve
 chown -R vmail:vmail /var/volatile
 chown -R vmail:vmail /var/vmail_index
@@ -394,7 +395,7 @@ done
 
 # For some strange, unknown and stupid reason, Dovecot may run into a race condition, when this file is not touched before it is read by dovecot/auth
 # May be related to something inside Docker, I seriously don't know
-touch /etc/dovecot-auth/passwd-verify.lua
+touch /etc/dovecot-auth/passwd-verify.lua /etc/dovecot-auth/migration-verify.lua
 
 if [[ ! -z ${REDIS_SLAVEOF_IP} ]]; then
   cp /etc/syslog-ng/syslog-ng-redis_slave.conf /etc/syslog-ng/syslog-ng.conf

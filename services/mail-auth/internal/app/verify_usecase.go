@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"net/netip"
 	"strings"
 	"sync"
 	"time"
@@ -20,6 +21,11 @@ type Deps struct {
 	Throttle ports.Throttle
 	Metrics  ports.Metrics
 	Logger   *zap.Logger
+	// Jobs verifica las credenciales de trabajo de migracion (service "migration"). Sin el, o sin
+	// JobNetworks, esas credenciales se deniegan: el comportamiento anterior a la funcion.
+	Jobs ports.JobCredentialVerifier
+	// JobNetworks son las redes desde las que se acepta una credencial de trabajo: la del ejecutor.
+	JobNetworks []netip.Prefix
 	// Now es el reloj del registro de inicios; nil usa time.Now.
 	Now func() time.Time
 }
@@ -33,6 +39,8 @@ type UseCase struct {
 	logger    *zap.Logger
 	now       func() time.Time
 	logins    *loginDedupe
+	jobs      ports.JobCredentialVerifier
+	jobNets   []netip.Prefix
 }
 
 func New(d Deps) *UseCase {
@@ -45,7 +53,7 @@ func New(d Deps) *UseCase {
 		now = time.Now
 	}
 	return &UseCase{repo: d.Repo, passwords: d.Passwords, throttle: throttle, metrics: d.Metrics, logger: d.Logger,
-		now: now, logins: newLoginDedupe(loginDedupeEntries, loginDedupeWindow)}
+		now: now, logins: newLoginDedupe(loginDedupeEntries, loginDedupeWindow), jobs: d.Jobs, jobNets: d.JobNetworks}
 }
 
 // Verify decide si la credencial abre la sesion. El orden de las comprobaciones es
@@ -81,6 +89,9 @@ func (uc *UseCase) verify(ctx context.Context, req domain.VerifyRequest) (domain
 	username := strings.ToLower(strings.TrimSpace(req.Username))
 	fields := []zap.Field{zap.String("username", username), zap.String("remote_ip", req.RemoteIP), zap.String("service", req.Service)}
 
+	if domain.IsJobCredentialService(req.Service) {
+		return uc.verifyJobCredential(ctx, req, username, fields)
+	}
 	protocol, known := domain.ProtocolFromService(req.Service)
 	if !known {
 		uc.logger.Warn("mail-auth: servicio desconocido, se deniega", fields...)

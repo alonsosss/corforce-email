@@ -108,7 +108,7 @@ func buildArgs(cfg Config, spec passSpec) []string {
 	args = append(args,
 		"--host2="+cfg.DestHost,
 		"--port2="+strconv.Itoa(cfg.DestPort),
-		"--user2="+job.Destination.Username+"*"+cfg.MasterUser+"@platform.local",
+		"--user2="+cfg.destinationUser(job),
 		"--passfile2="+spec.secrets.pass2,
 		"--ssl2", "--notls2",
 	)

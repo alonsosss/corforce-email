@@ -210,6 +210,9 @@ export E2E_REPO_ROOT="$ROOT" E2E_TLS_DIR="$TLS"
 export E2E_PG_HOST="$E2E_PREFIX-pg" E2E_NATS_HOST="$E2E_PREFIX-nats" E2E_REDIS_HOST="$E2E_PREFIX-redis"
 export E2E_PORT_MAIL_DIRECTORY=${PORT[mail-directory]} E2E_PORT_MAIL_AUTH=${PORT[mail-auth]}
 export E2E_PORT_MAIL_SECURITY=${PORT[mail-security]} E2E_PORT_WEBMAIL=${PORT[webmail]} E2E_PORT_MAIL_AUTH_TLS=$AUTH_TLS_PORT
+# mail-migration corre en el host; mail-auth le pregunta desde la red de los motores si una credencial de
+# destino de un trabajo sigue viva.
+export E2E_PORT_MAIL_MIGRATION=${PORT[mail-migration]}
 # organization corre en el host; mail-directory y mail-security le preguntan desde la red de
 # los motores si cada empresa es de su celda.
 export E2E_PORT_ORGANIZATION=${PORT[organization]}
@@ -259,7 +262,7 @@ for s in identity access-control domain-service gateway; do arrancar "$s"; done
 # mail-migration: la clave del ejecutor solo la recibe el, y como la prueba migra entre buzones del mismo
 # Dovecot (una red privada) admite origenes privados, lo que solo se permite con ENVIRONMENT=development.
 MAIL_MIGRATION_RUNNER_KEY="${MIGRATION_KEY}" MAIL_MIGRATION_RUNNER_PORT="$MIGRATION_RUNNER_PORT" \
-  MAIL_MIGRATION_ALLOW_PRIVATE_SOURCES=true arrancar mail-migration
+  MAIL_MIGRATION_ALLOW_PRIVATE_SOURCES=true MAIL_MIGRATION_JOB_CREDENTIALS=true arrancar mail-migration
 for s in identity access-control domain-service gateway mail-migration; do esperar_salud "$s" "${PORT[$s]}"; done
 
 echo "== Servicios de la celda en contenedores (credencial de la celda)"
@@ -1522,6 +1525,88 @@ expect "el ejecutor no deja ficheros de trabajo ni contrasenas en su directorio 
   "$(docker exec "$RUNNER" ls -A /run/migration 2>&1)" ".alive"
 lacks "ni la contrasena de origen en el registro del ejecutor" "$(docker logs "$RUNNER" 2>&1)" "$ORIG1_PASS"
 lacks "ni la del usuario maestro de la migracion" "$(docker logs "$RUNNER" 2>&1)" "$MIGRATION_MASTER_PASS"
+
+echo "== Credencial de destino por trabajo (mail-migration -> mail-auth -> Dovecot real)"
+# Con MAIL_MIGRATION_JOB_CREDENTIALS cada trabajo reclamado trae su propia credencial de destino: abre solo el
+# buzon del trabajo, solo desde la red del ejecutor y solo mientras el trabajo esta en curso. El ejecutor la
+# prefiere al maestro compartido, asi que los trabajos de arriba ya entraron por ella.
+expect "los trabajos anteriores entraron al destino con su credencial (inicio service migration desde la red del ejecutor)" \
+  "$(sql mail_cell_pe_01 "SELECT count(*) > 0 FROM mail.sasl_logins WHERE service = 'migration' AND username = 'destino1@acme.test' AND host(remote_ip) LIKE '$MAIL_MIGRATION_IPV4_NETWORK.%'")" "t"
+DEST3_PASS="$(rand_hex 10)Aa1!"; DEST4_PASS="$(rand_hex 10)Aa1!"; DEST5_PASS="$(rand_hex 10)Aa1!"
+creado "buzon destino3@acme.test (destino de la prueba de credenciales)" POST /mailboxes "{\"local_part\":\"destino3\",\"domain\":\"acme.test\",\"password\":\"$DEST3_PASS\"}"
+DEST3_ID=$(echo "$API_BODY" | jget data.id)
+creado "buzon destino4@acme.test (otro buzon de la misma celda)" POST /mailboxes "{\"local_part\":\"destino4\",\"domain\":\"acme.test\",\"password\":\"$DEST4_PASS\"}"
+DEST4_ID=$(echo "$API_BODY" | jget data.id)
+creado "buzon destino5@acme.test (se borrara con un trabajo en curso)" POST /mailboxes "{\"local_part\":\"destino5\",\"domain\":\"acme.test\",\"password\":\"$DEST5_PASS\"}"
+DEST5_ID=$(echo "$API_BODY" | jget data.id)
+
+# El ejecutor se detiene para reclamar a mano con su misma clave y ver la credencial que recibe.
+docker stop "$RUNNER" >/dev/null
+reclamar() { curl -s -X POST "http://127.0.0.1:$MIGRATION_RUNNER_PORT/v1/claim" -H "Authorization: Bearer $MIGRATION_KEY" -H 'Content-Type: application/json' -d "{\"runner_id\":\"$1\"}"; }
+latido() { curl -s -o /dev/null -w '%{http_code}' -X POST "http://127.0.0.1:$MIGRATION_RUNNER_PORT/v1/tenants/$1/jobs/$2/heartbeat" -H "Authorization: Bearer $MIGRATION_KEY" -H 'Content-Type: application/json' -d "{\"lease_id\":\"$3\",\"phase\":\"initial\",\"progress\":{}}"; }
+cerrar() { curl -s -o /dev/null -w '%{http_code}' -X POST "http://127.0.0.1:$MIGRATION_RUNNER_PORT/v1/tenants/$1/jobs/$2/complete" -H "Authorization: Bearer $MIGRATION_KEY" -H 'Content-Type: application/json' -d "{\"lease_id\":\"$3\",\"outcome\":\"${4:-succeeded}\",\"progress\":{}}"; }
+
+migrar "$DEST3_ID" origen1@acme.test "$ORIG1_PASS"; JOB_A=$MIG_JOB
+CLAIM_A=$(reclamar e2e-a)
+TOKEN_A=$(echo "$CLAIM_A" | jget data.destination.password); TENANT_A=$(echo "$CLAIM_A" | jget data.tenant_id); LEASE_A=$(echo "$CLAIM_A" | jget data.lease_id)
+expect "el reclamo entrega una credencial de destino del trabajo (cfmj1...)" "$([[ "$TOKEN_A" == cfmj1.* ]] && echo si)" "si"
+expect "y es del trabajo reclamado" "$(echo "$CLAIM_A" | jget data.job_id)" "$JOB_A"
+expect "la base de la empresa solo guarda su hash (32 bytes) y nada de la credencial en claro" \
+  "$(sql mail_tenant_acme "SELECT octet_length(destination_credential_hash) FROM mail_migration.jobs WHERE id = '$JOB_A'")" "32"
+expect "sin el token en ninguna columna del trabajo" \
+  "$(sql mail_tenant_acme "SELECT count(*) FROM mail_migration.jobs j WHERE j::text LIKE '%${TOKEN_A##*.}%'")" "0"
+
+migrar "$DEST4_ID" origen1@acme.test "$ORIG1_PASS"; JOB_B=$MIG_JOB
+CLAIM_B=$(reclamar e2e-b)
+TOKEN_B=$(echo "$CLAIM_B" | jget data.destination.password); LEASE_B=$(echo "$CLAIM_B" | jget data.lease_id)
+expect "otro trabajo trae otra credencial" "$([[ -n "$TOKEN_B" && "$TOKEN_B" != "$TOKEN_A" ]] && echo si)" "si"
+
+expect "la credencial del trabajo abre el buzon destino desde la red del ejecutor" \
+  "$(cliente_migracion login destino3@acme.test "$TOKEN_A")" "OK"
+contains "no abre otro buzon de la celda" "$(cliente_migracion login destino4@acme.test "$TOKEN_A")" "NO"
+contains "ni el buzon de un tercero" "$(cliente_migracion login bea@acme.test "$TOKEN_A")" "NO"
+contains "la de otro trabajo no abre este buzon" "$(cliente_migracion login destino3@acme.test "$TOKEN_B")" "NO"
+expect "la de ese otro trabajo abre el suyo" "$(cliente_migracion login destino4@acme.test "$TOKEN_B")" "OK"
+contains "desde la red de los motores se rechaza (mail-auth solo la acepta desde la red del ejecutor)" \
+  "$(cliente login destino3@acme.test "$TOKEN_A")" "NO"
+contains "y no vale por el maestro: buzon*maestro con esa credencial no abre" \
+  "$(cliente_migracion login destino3@acme.test "$TOKEN_A" --maestro "$MAESTRO_MIGRACION")" "NO"
+contains "una contrasena cualquiera que empiece por el prefijo se rechaza" \
+  "$(cliente_migracion login destino3@acme.test "cfmj1.$(rand_hex 20)")" "NO"
+expect "la contrasena normal del buzon sigue abriendo por su passdb, tambien desde la red del ejecutor" \
+  "$(cliente_migracion login destino3@acme.test "$DEST3_PASS")" "OK"
+for servicio in "$(c dovecot-mail)" "$(c mail-auth)"; do
+  lacks "la credencial no aparece en el registro de $servicio" "$(docker logs "$servicio" 2>&1)" "${TOKEN_A##*.}"
+done
+lacks "ni en el de mail-migration" "$(cat "$WORK/log/mail-migration.log")" "${TOKEN_A##*.}"
+lacks "ni en el de mail-directory" "$(docker logs "$(c mail-directory)" 2>&1)" "${TOKEN_A##*.}"
+
+# Cancelar el trabajo la revoca en el acto: Dovecot no la cachea (su clave de cache lleva la sesion).
+expect "la credencial abre antes de cancelar" "$(cliente_migracion login destino3@acme.test "$TOKEN_A")" "OK"
+api POST "/mail-migration/jobs/$JOB_A/cancel"
+contains "cancelar el trabajo (200)" "$API_CODE" "200"
+contains "tras cancelar, la credencial deja de abrir el buzon en el acto" "$(cliente_migracion login destino3@acme.test "$TOKEN_A")" "NO"
+expect "el ejecutor cierra el trabajo cancelado" "$(cerrar "$TENANT_A" "$JOB_A" "$LEASE_A" cancelled)" "200"
+
+expect "el trabajo B sigue con su credencial viva (latido aceptado)" "$(latido "$TENANT_A" "$JOB_B" "$LEASE_B")" "200"
+expect "y la credencial de B abre su buzon" "$(cliente_migracion login destino4@acme.test "$TOKEN_B")" "OK"
+expect "cerrar el trabajo B (completado)" "$(cerrar "$TENANT_A" "$JOB_B" "$LEASE_B")" "200"
+contains "tras cerrar el trabajo la credencial no sirve" "$(cliente_migracion login destino4@acme.test "$TOKEN_B")" "NO"
+expect "y la base ya no guarda su hash" \
+  "$(sql mail_tenant_acme "SELECT count(*) FROM mail_migration.jobs WHERE id = '$JOB_B' AND destination_credential_hash IS NOT NULL")" "0"
+
+migrar "$DEST5_ID" origen1@acme.test "$ORIG1_PASS"; JOB_C=$MIG_JOB
+CLAIM_C=$(reclamar e2e-c)
+TOKEN_C=$(echo "$CLAIM_C" | jget data.destination.password)
+expect "una credencial nueva abre el buzon destino5" "$(cliente_migracion login destino5@acme.test "$TOKEN_C")" "OK"
+api DELETE "/mailboxes/$DEST5_ID"
+contains "borrar el buzon (204)" "$API_CODE" "204"
+contains "borrado el buzon, la credencial del trabajo deja de abrir" "$(cliente_migracion login destino5@acme.test "$TOKEN_C")" "NO"
+trabajo_c_retirado() { [[ "$(sql mail_tenant_acme "SELECT count(*) FROM mail_migration.jobs WHERE id = '$JOB_C'")" == 0 ]]; }
+esperar "el consumidor de buzones borrados retira el trabajo del buzon" 30 trabajo_c_retirado
+
+docker start "$RUNNER" >/dev/null
+esperar "el ejecutor vuelve a arrancar" 90 docker exec "$RUNNER" /usr/local/bin/migration-runner healthcheck
 
 echo "== Rotacion y revocacion de la clave DKIM (domain-service -> mail-security -> redis-mail)"
 # Una rotacion programada deposita la clave nueva y sigue firmando con la anterior. Revocar por
