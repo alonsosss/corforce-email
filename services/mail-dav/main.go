@@ -299,8 +299,12 @@ func main() {
 	}
 
 	srv := server.New(st.port, router(dav, st, logger), logger)
-	if err := srv.Run(); err != nil {
-		logger.Fatal("server error", zap.Error(err))
+	runErr := srv.Run()
+	// Los cierres de abajo (NATS, pools) van antes que el cancel diferido: se detiene primero el consumidor
+	// para que no pida conexiones a un pool que se esta cerrando.
+	cancel()
+	if runErr != nil {
+		logger.Fatal("server error", zap.Error(runErr))
 	}
 }
 

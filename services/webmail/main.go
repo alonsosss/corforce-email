@@ -246,8 +246,10 @@ func main() {
 	r.Mount("/", h.Routes())
 
 	srv := server.New(st.port, r, logger)
-	if err := srv.Run(); err != nil {
-		logger.Fatal("server error", zap.Error(err))
+	runErr := srv.Run()
+	cancel()
+	if runErr != nil {
+		logger.Fatal("server error", zap.Error(runErr))
 	}
 }
 

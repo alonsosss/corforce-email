@@ -276,8 +276,11 @@ func main() {
 	r.Mount("/", handler.NewHandler(uc, st.perms).Routes())
 
 	srv := server.New(st.port, r, logger)
-	if err := srv.Run(); err != nil {
-		logger.Fatal("server error", zap.Error(err))
+	runErr := srv.Run()
+	// Los cierres diferidos (rele, NATS, pools) esperan a que las tareas de fondo terminen: se cancelan antes.
+	cancel()
+	if runErr != nil {
+		logger.Fatal("server error", zap.Error(runErr))
 	}
 }
 
