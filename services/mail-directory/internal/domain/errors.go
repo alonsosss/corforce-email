@@ -28,6 +28,8 @@ var (
 	ErrNameRequired       = errors.New("name es obligatorio")
 	ErrWildcardNeedsExtnl = errors.New("send_as * exige external = true")
 	ErrSearchTooLong      = errors.New("search supera la longitud maxima")
+	ErrTooManyIDs         = errors.New("la consulta supera el maximo de identificadores")
+	ErrInvalidID          = errors.New("identificador de buzon no valido")
 
 	// ErrDomainNotOwned: el dominio no pertenece a la empresa de la peticion (o no existe).
 	ErrDomainNotOwned = errors.New("el dominio no pertenece a la empresa")

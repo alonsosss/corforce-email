@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"sort"
+	"time"
 
 	"github.com/alonsosss/corforce-email/pkg/db"
 	"github.com/alonsosss/corforce-email/pkg/middleware"
 	"github.com/alonsosss/corforce-email/services/mail-dav/internal/domain"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
@@ -246,6 +248,25 @@ func (r *Repository) CreateAddressbook(ctx context.Context, p domain.Principal, 
 
 func (r *Repository) DeleteAddressbook(ctx context.Context, p domain.Principal, slug string) error {
 	return r.deleteCollection(ctx, p, addressbooksKind, slug)
+}
+
+// StaleMailboxIDs enumera los buzones con libretas o calendarios por la funcion mail_dav.stale_mailbox_ids,
+// que salta la politica de fila por buzon solo para listar ids (migracion 04_reconcile.sql).
+func (r *Repository) StaleMailboxIDs(ctx context.Context, tenantID uuid.UUID, before time.Time, after uuid.UUID, limit int) ([]uuid.UUID, error) {
+	rows, err := r.pool.Query(ctx, `SELECT mail_dav.stale_mailbox_ids($1, $2, $3, $4)`, tenantID, before, after, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	ids := []uuid.UUID{}
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
 }
 
 // DeleteMailboxData borra las libretas del buzon.

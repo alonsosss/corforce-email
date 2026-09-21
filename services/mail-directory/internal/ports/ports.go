@@ -67,6 +67,8 @@ type AliasDomainRepository interface {
 type MailboxRepository interface {
 	List(ctx context.Context, tenantID uuid.UUID, filter MailboxFilter, page Page) ([]domain.Mailbox, int64, error)
 	Get(ctx context.Context, tenantID, id uuid.UUID) (*domain.Mailbox, error)
+	// ExistingIDs devuelve cuales de los ids son buzones de la empresa, en cualquier estado.
+	ExistingIDs(ctx context.Context, tenantID uuid.UUID, ids []uuid.UUID) ([]uuid.UUID, error)
 	GetByUsername(ctx context.Context, tenantID uuid.UUID, username string) (*domain.Mailbox, error)
 	Create(ctx context.Context, m *domain.Mailbox) error
 	Update(ctx context.Context, m *domain.Mailbox) error

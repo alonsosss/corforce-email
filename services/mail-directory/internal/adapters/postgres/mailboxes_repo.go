@@ -50,6 +50,23 @@ func (r *MailboxRepo) Get(ctx context.Context, tenantID, id uuid.UUID) (*domain.
 	return &m, nil
 }
 
+func (r *MailboxRepo) ExistingIDs(ctx context.Context, tenantID uuid.UUID, ids []uuid.UUID) ([]uuid.UUID, error) {
+	rows, err := r.pool.Query(ctx, `SELECT id FROM mail.mailboxes WHERE tenant_id = $1 AND id = ANY($2)`, tenantID, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]uuid.UUID, 0, len(ids))
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
 func (r *MailboxRepo) GetByUsername(ctx context.Context, tenantID uuid.UUID, username string) (*domain.Mailbox, error) {
 	m, err := scanMailbox(r.pool.QueryRow(ctx,
 		`SELECT `+mailboxColumns+` FROM mail.mailboxes WHERE tenant_id = $1 AND username = $2`, tenantID, username))

@@ -20,6 +20,7 @@ import (
 	"github.com/alonsosss/corforce-email/pkg/config"
 	"github.com/alonsosss/corforce-email/pkg/db"
 	"github.com/alonsosss/corforce-email/pkg/events"
+	"github.com/alonsosss/corforce-email/pkg/mailreconcile"
 	"github.com/alonsosss/corforce-email/pkg/middleware"
 	"github.com/alonsosss/corforce-email/pkg/response"
 	"github.com/alonsosss/corforce-email/pkg/server"
@@ -28,6 +29,7 @@ import (
 	"github.com/alonsosss/corforce-email/services/mail-dav/internal/adapters/mailauth"
 	natsadapter "github.com/alonsosss/corforce-email/services/mail-dav/internal/adapters/nats"
 	"github.com/alonsosss/corforce-email/services/mail-dav/internal/adapters/postgres"
+	"github.com/alonsosss/corforce-email/services/mail-dav/internal/adapters/reconcile"
 	"github.com/alonsosss/corforce-email/services/mail-dav/internal/adapters/tenantdb"
 	"github.com/alonsosss/corforce-email/services/mail-dav/internal/app"
 	"go.uber.org/zap"
@@ -76,6 +78,9 @@ const (
 	mailAuthTimeout = 15 * time.Second
 
 	mailAuthCellURLsEnv = "MAIL_AUTH_CELL_URLS"
+
+	// reconcileLockKey es el cerrojo de lider de la conciliacion de buzones borrados ("mdvr").
+	reconcileLockKey int64 = 0x6d647672
 )
 
 type settings struct {
@@ -91,6 +96,7 @@ type settings struct {
 	mailAuth     mailauth.Config
 	organization string
 	internalTok  string
+	reconcile    mailreconcile.Config
 }
 
 func loadSettings(logger *zap.Logger) (settings, error) {
@@ -186,6 +192,9 @@ func loadSettings(logger *zap.Logger) (settings, error) {
 	if st.internalTok, err = middleware.InternalGatewayToken(); err != nil {
 		return st, err
 	}
+	if st.reconcile, err = mailreconcile.ConfigFromEnv("MAIL_DAV"); err != nil {
+		return st, err
+	}
 	return st, nil
 }
 
@@ -276,6 +285,7 @@ func main() {
 		Tenant:    tenantdb.NewBinder(tenantDB),
 		Store:     repo,
 		Calendars: repo,
+		Index:     repo,
 		Config:    st.app,
 		Logger:    logger,
 	})
@@ -289,6 +299,28 @@ func main() {
 	} else {
 		defer bus.Close()
 		go natsadapter.NewConsumer(bus, uc, logger).Run(ctx)
+	}
+
+	// La conciliacion retira lo que el consumidor no vio: buzones borrados antes de que existiera o mas alla de
+	// lo que el stream conserva, y filas que una peticion en vuelo escribio despues del evento.
+	if st.reconcile.Enabled() {
+		directory, err := mailreconcile.NewDirectoryFromEnv(logger)
+		if err != nil {
+			log.Fatalf("mail-dav: conciliacion de buzones borrados: %v", err)
+		}
+		sweeper := mailreconcile.New(mailreconcile.Deps{
+			Name: "mail-dav", Config: st.reconcile,
+			Lock: func(c context.Context) (func(), bool) {
+				return db.TryLeaderLock(c, registryPool.Pool, reconcileLockKey)
+			},
+			Tenants:   mailreconcile.TenantsOf(tenantDB),
+			Directory: directory,
+			Store:     reconcile.NewStore(uc),
+			Logger:    logger,
+		})
+		go sweeper.Run(ctx)
+	} else {
+		logger.Info("mail-dav: conciliacion de buzones borrados desactivada (MAIL_DAV_RECONCILE_INTERVAL=0)")
 	}
 
 	dav, err := handler.NewHandler(uc, handler.Config{

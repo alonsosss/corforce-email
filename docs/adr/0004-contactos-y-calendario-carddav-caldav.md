@@ -128,6 +128,34 @@ rol: buzon de otra empresa, buzon de la misma empresa, consulta sin filtro, escr
 (fail-closed), y una mutacion (RLS apagada en una transaccion) que demuestra que la prueba detectaria una politica
 ausente. Sin credencial propia (desarrollo) el servicio corre como dueno y rigen solo los filtros de las consultas.
 
+### Conciliacion de buzones borrados (V, 2026-09-21)
+
+El consumidor de `mail.mailbox.deleted` solo ve los eventos que el stream `MAIL_DIRECTORY` aun conserva, y una peticion
+en vuelo puede escribir despues del evento. Un barrido periodico (`pkg/mailreconcile`, el mismo de `mail-migration`;
+diseno, contrato y garantias en `docs/adr/0002`, "Conciliacion de buzones borrados") compara los `mailbox_id` que
+`mail_dav` guarda con los buzones que existen en `mail-directory` (`POST /internal/mail-directory/mailboxes/existence`,
+acotado por empresa) y retira los de los que no existen con el mismo caso de uso que el consumidor (`PurgeMailbox`: por id
+de buzon, por empresa, idempotente, con la identidad acotada de una peticion).
+
+* **Enumeracion.** Las politicas de fila por buzon impiden a cualquier sesion del servicio listar de que buzones hay
+  datos, asi que la migracion `04_reconcile.sql` define `mail_dav.stale_mailbox_ids(empresa, antes_de, despues_de,
+  limite)`: `SECURITY DEFINER` con `search_path` fijo, solo `EXECUTE` para `mail_dav_service`, solo lee, filtra por empresa,
+  devuelve unicamente ids de buzon con libretas o calendarios cuyo elemento mas antiguo es anterior a `antes_de` (la gracia)
+  y pagina en orden con un tope de 1000. No expone contenido.
+* **Ventana de gracia.** `MAIL_DAV_RECONCILE_GRACE` (24 h, de 10 min a 30 dias): un buzon con datos mas recientes que la
+  gracia no se toca, ni aunque el directorio no lo conozca todavia. Un dato en vuelo que llega despues del evento no
+  impide que el buzon sea candidato (cuenta el mas antiguo) y se retira con el resto.
+* **Ejecucion y configuracion.** Cerrojo de lider (`db.TryLeaderLock`, clave propia) y primera pasada un minuto despues de
+  arrancar; `MAIL_DAV_RECONCILE_INTERVAL` (6 h, `0` la desactiva) y `MAIL_DAV_RECONCILE_MAX_PURGES_PER_TENANT` (100 buzones
+  por empresa y pasada). Necesita `MAIL_DIRECTORY_URL` (y `ORGANIZATION_URL` con varias celdas), la misma configuracion de
+  celdas que el resto de servicios; un valor invalido impide arrancar y `MAIL_DAV_RECONCILE_INTERVAL=0` la apaga sin mas
+  configuracion. Metricas `mailbox_reconcile_*` y registro solo con ids.
+* Probado: unitarias del caso de uso, de `pkg/mailreconcile` y del cliente; integracion contra Postgres real con el rol de
+  servicio (la enumeracion solo devuelve buzones de la empresa pedida y mas viejos que la gracia, por libretas y por
+  calendarios, y pagina; el barrido retira el buzon borrado con su calendario y respeta al vivo, al recreado con el mismo
+  nombre, al recien creado y a otra empresa). Mutaciones comprobadas: quitar la comparacion con la gracia o el filtro de
+  empresa de la funcion hace fallar esas pruebas.
+
 ### Borrado de los datos de un buzon
 
 Al borrar un buzon, `mail-directory` publica `mail.mailbox.deleted` (payload `tenant_id`, `id`, `username`, ...) por su
@@ -149,8 +177,9 @@ contactos, los eventos y los registros de cambios caen por la clave foranea `ON 
 * **Sin NATS** el servicio arranca y sirve igual, y reintenta la suscripcion; el durable recoge lo pendiente en
   cuanto suscribe. No hay configuracion nueva.
 * Ventana conocida: una peticion DAV que ya autentico cuando se borra el buzon y escribe despues de procesado el
-  evento (milisegundos frente a la latencia de la outbox y de NATS) dejaria una libreta o un calendario huerfanos; el barrido de
-  conciliacion de "Pendiente" la retiraria.
+  evento (milisegundos frente a la latencia de la outbox y de NATS) dejaria una libreta o un calendario huerfanos, y lo
+  borrado antes de que existiera el consumidor o mas alla de la retencion del stream no llega nunca. Lo retira el
+  barrido de conciliacion (seccion "Conciliacion de buzones borrados", justo antes).
 * Probado: unitarias del caso de uso y del consumidor (evento repetido, buzon inexistente, otro buzon y otra empresa
   intactos, buzon recreado con el mismo nombre intacto, identificadores incoherentes), integracion contra Postgres
   real (con el rol de servicio y como dueno de las tablas, para que los filtros se prueben sin la politica) y una
@@ -461,10 +490,6 @@ un bcrypt por peticion). Un acierto recordado no pasa por el freno de `mail-auth
 * Expansion exacta de lo que hoy se devuelve sin decidir (frecuencias menores que un dia, `BYWEEKNO`, `RDATE` con
   periodos, `RECURRENCE-ID` con `RANGE`) si las metricas muestran que se devuelve demasiado de mas.
 * **Limites como derechos del plan** de `billing` (hoy son de operador, por variable de entorno).
-* **Barrido de conciliacion de buzones borrados**: el consumidor de `mail.mailbox.deleted` solo ve los eventos que
-  el stream `MAIL_DIRECTORY` aun conserva; lo borrado antes de que existiera el consumidor, o mas alla de la
-  retencion del stream, no se retira. Un barrido que cruce los `mailbox_id` de `mail_dav` con `mail-directory` lo
-  cubriria.
 * Prueba con DAVx5, Thunderbird e iOS reales, y `make e2e-mail` con las secciones nuevas (CardDAV y CalDAV): estan
   escritas y sin ejecutar.
 * Eventos de auditoria (`dav.*`) por la outbox si la auditoria de contactos y eventos personales se exige.

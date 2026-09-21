@@ -26,6 +26,7 @@ type Deps struct {
 	Tenant    ports.TenantBinder
 	Store     ports.Store
 	Calendars ports.CalendarStore
+	Index     ports.MailboxIndex
 	Config    Config
 	Logger    *zap.Logger
 }
@@ -35,6 +36,7 @@ type UseCase struct {
 	tenant    ports.TenantBinder
 	store     ports.Store
 	calendars ports.CalendarStore
+	index     ports.MailboxIndex
 	cfg       Config
 	logger    *zap.Logger
 }
@@ -56,7 +58,7 @@ func New(d Deps) (*UseCase, error) {
 	if logger == nil {
 		logger = zap.NewNop()
 	}
-	return &UseCase{auth: d.Auth, tenant: d.Tenant, store: d.Store, calendars: d.Calendars, cfg: d.Config, logger: logger}, nil
+	return &UseCase{auth: d.Auth, tenant: d.Tenant, store: d.Store, calendars: d.Calendars, index: d.Index, cfg: d.Config, logger: logger}, nil
 }
 
 func (uc *UseCase) Limits() domain.Limits { return uc.cfg.Limits }

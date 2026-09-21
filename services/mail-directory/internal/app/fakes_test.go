@@ -249,6 +249,18 @@ type fakeMailboxes struct {
 	lastPage     ports.Page
 }
 
+func (f *fakeMailboxes) ExistingIDs(_ context.Context, tenantID uuid.UUID, ids []uuid.UUID) ([]uuid.UUID, error) {
+	var out []uuid.UUID
+	for _, id := range ids {
+		for _, m := range f.items {
+			if m.TenantID == tenantID && m.ID == id {
+				out = append(out, id)
+			}
+		}
+	}
+	return out, nil
+}
+
 func (f *fakeMailboxes) List(_ context.Context, tenantID uuid.UUID, filter ports.MailboxFilter, page ports.Page) ([]domain.Mailbox, int64, error) {
 	f.lastFilter, f.lastTenant, f.lastPage = filter, tenantID, page
 	var out []domain.Mailbox

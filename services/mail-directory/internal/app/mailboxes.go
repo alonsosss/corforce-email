@@ -85,6 +85,32 @@ func (uc *UseCase) GetMailbox(ctx context.Context, tenantID, id uuid.UUID) (m *d
 	return m, err
 }
 
+// MaxExistenceIDs es cuantos buzones se pueden consultar en una llamada de ExistingMailboxIDs.
+const MaxExistenceIDs = 500
+
+// ExistingMailboxIDs dice cuales de los ids son buzones de la empresa. Lo usan los servicios que guardan
+// datos por id de buzon para conciliar los de buzones ya borrados: un id que no vuelve no existe en la
+// empresa (borrado, o de otra empresa, que para quien pregunta es lo mismo). Nunca devuelve ids que no se
+// pidieron.
+func (uc *UseCase) ExistingMailboxIDs(ctx context.Context, tenantID uuid.UUID, ids []uuid.UUID) (existing []uuid.UUID, err error) {
+	if len(ids) > MaxExistenceIDs {
+		return nil, domain.ErrTooManyIDs
+	}
+	for _, id := range ids {
+		if id == uuid.Nil {
+			return nil, domain.ErrInvalidID
+		}
+	}
+	if len(ids) == 0 {
+		return []uuid.UUID{}, nil
+	}
+	err = uc.tx.InTx(ctx, func(ctx context.Context) error {
+		existing, err = uc.mailboxes.ExistingIDs(ctx, tenantID, ids)
+		return err
+	})
+	return existing, err
+}
+
 func (uc *UseCase) CreateMailbox(ctx context.Context, tenantID uuid.UUID, req CreateMailboxRequest) (*domain.Mailbox, error) {
 	local, err := domain.NormalizeLocalPart(req.LocalPart)
 	if err != nil {

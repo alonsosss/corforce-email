@@ -2,8 +2,10 @@ package ports
 
 import (
 	"context"
+	"time"
 
 	"github.com/alonsosss/corforce-email/services/mail-dav/internal/domain"
+	"github.com/google/uuid"
 )
 
 // Authenticator verifica una credencial de buzon contra mail-auth (service "dav"). Todo rechazo es
@@ -84,4 +86,12 @@ type CalendarStore interface {
 	// EventChangesSince devuelve, ademas del calendario, los eventos que existen y cambiaron despues de seq
 	// y los nombres de los borrados. domain.ErrInvalidSyncToken si seq ya no se puede resolver.
 	EventChangesSince(ctx context.Context, p domain.Principal, slug string, seq int64, opt domain.ReadOptions) (cal domain.Calendar, changed []domain.Event, removed []string, err error)
+}
+
+// MailboxIndex enumera de que buzones guarda datos la empresa, sin verlos: es lo que la conciliacion de
+// buzones borrados necesita y las politicas de fila por buzon no dejan hacer con la identidad de una peticion.
+type MailboxIndex interface {
+	// StaleMailboxIDs devuelve hasta limit ids de buzon con libretas o calendarios, en orden ascendente y
+	// mayores que after, cuyo elemento mas antiguo es anterior a before.
+	StaleMailboxIDs(ctx context.Context, tenantID uuid.UUID, before time.Time, after uuid.UUID, limit int) ([]uuid.UUID, error)
 }
