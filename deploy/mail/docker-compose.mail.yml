@@ -222,6 +222,11 @@ services:
       - "${SMTPS_PORT:-465}:465"
       - "${SUBMISSION_PORT:-587}:587"
     restart: always
+    # Dovecot por su IP fija y no por el DNS de Docker: con su contenedor parado (un reinicio, un despliegue) el
+    # nombre deja de resolverse, Postfix lo toma por un error PERMANENTE y rebota el correo entrante en vez
+    # de dejarlo en cola. Con la entrada estatal, la entrega falla con "conexion rechazada", que es temporal.
+    extra_hosts:
+      - "dovecot:${IPV4_NETWORK:-172.22.1}.250"
     dns:
       - ${IPV4_NETWORK:-172.22.1}.254
     networks:

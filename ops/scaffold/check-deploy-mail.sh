@@ -401,6 +401,33 @@ if fallos:
     sys.exit(1)
 PY
 
+# Postfix tiene que llegar a Dovecot sin DNS: con el contenedor de Dovecot parado (reinicio, despliegue) el
+# nombre deja de resolverse, Postfix lo toma por un error permanente y REBOTA el correo entrante en vez de
+# dejarlo en cola (comprobado en produccion el 2026-09-21: dsn=5.4.4 "Host not found" para name=dovecot).
+python3 - "$ROOT/deploy/mail" <<'PY' || FALLOS=1
+import re, sys
+base = sys.argv[1]
+compose = open(f"{base}/docker-compose.mail.yml", encoding="utf-8").read()
+cf = open(f"{base}/postfix/conf/main.cf.base", encoding="utf-8").read()
+fallos = []
+postfix = re.search(r"\n  postfix-mail:\n(.*?)(?=\n  [a-z][a-z0-9-]*:\n)", compose, re.S)
+dovecot = re.search(r"\n  dovecot-mail:\n(.*?)(?=\n  [a-z][a-z0-9-]*:\n)", compose, re.S)
+ip = re.search(r"ipv4_address: (\$\{IPV4_NETWORK:-[0-9.]+\}\.\d+)", dovecot.group(1)) if dovecot else None
+if not ip:
+    fallos.append("dovecot-mail no tiene ipv4_address fija")
+if not postfix or not re.search(r"extra_hosts:\n\s+- \"dovecot:" + (re.escape(ip.group(1)) if ip else r"\S+") + r"\"", postfix.group(1)):
+    fallos.append("postfix-mail no declara extra_hosts dovecot:<la IP fija de dovecot-mail>")
+if not re.search(r"^lmtp_host_lookup = native$", cf, re.M):
+    fallos.append("main.cf.base no fija lmtp_host_lookup = native: Postfix buscaria dovecot por DNS")
+if not re.search(r"^virtual_transport = lmtp:inet:dovecot:24$", cf, re.M):
+    fallos.append("virtual_transport ya no es lmtp:inet:dovecot:24: revisar que sigue resolviendose por /etc/hosts")
+if fallos:
+    for f in fallos:
+        print("  FALLA: " + f, file=sys.stderr)
+    print("    Sin eso, un reinicio de Dovecot hace que Postfix rebote el correo entrante como permanente.", file=sys.stderr)
+    sys.exit(1)
+PY
+
 if [[ $FALLOS -ne 0 ]]; then
   echo "check-deploy-mail: FALLA" >&2
   exit 1

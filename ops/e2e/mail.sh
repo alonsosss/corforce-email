@@ -1514,6 +1514,25 @@ contains "ana envia tras la revocacion" "$(cliente enviar ana@acme.test "$ANA_PA
 contains "Rspamd lo firma ya con la clave nueva" "$(cliente buscar bea@acme.test "$BEA_PASS" "$TOKEN_DKIM-revocada")" "s=$K3;"
 SELECTOR="$K3"
 
+echo "== Dovecot caido: el correo entrante queda en cola y se entrega al volver, sin rebotar"
+# Con el contenedor parado, el nombre "dovecot" deja de resolverse por el DNS de Docker. Postfix lo toma por un
+# error permanente y rebota (dsn 5.4.4, comprobado en produccion): se resuelve por extra_hosts y lmtp_host_lookup.
+docker stop "$(c dovecot-mail)" >/dev/null
+printf 'Subject: %s-caida\n\ncuerpo durante la caida\n' "$TOKEN" |
+  docker exec -i -e MAIL_CONFIG=/opt/postfix/conf "$(c postfix-mail)" sendmail -f "caida@cfm.test" ana@acme.test
+diferido_ana() { docker exec "$(c postfix-mail)" postqueue -j | python3 -c 'import json, sys
+for l in sys.stdin:
+    m = json.loads(l)
+    if m["queue_name"] in ("deferred", "active") and any(r["address"] == "ana@acme.test" for r in m["recipients"]): print(m["queue_id"])' | grep -q .; }
+esperar "el mensaje para ana queda en la cola de Postfix y no se rebota" 40 diferido_ana
+expect "sin ningun rebote permanente por el nombre de Dovecot" \
+  "$(docker logs "$(c postfix-mail)" 2>&1 | grep -c 'Name service error for name=dovecot')" "0"
+docker start "$(c dovecot-mail)" >/dev/null
+esperar "Dovecot vuelve" 180 dovecot_sano
+docker exec "$(c postfix-mail)" postqueue -f >/dev/null 2>&1
+contains "y el mensaje llega al buzon de ana" "$(cliente buscar ana@acme.test "$ANA_PASS" "$TOKEN-caida" --espera 60)" "OK 1"
+expect "la cola de Postfix queda vacia" "$(docker exec "$(c postfix-mail)" postqueue -j | wc -l)" "0"
+
 echo "== Baja de la empresa: su correo deja de entrar y de autenticar en la celda"
 # La saga de baja de organization da de baja a acme en el mail-directory de su celda antes de
 # retirarla del registro: los mapas de Postfix dejan de servir su dominio, su dominio alias, sus
