@@ -34,6 +34,9 @@ services:
       # objetivos eso significa que un microservicio nuevo NUNCA entraria al monitoreo, y
       # sin ningun error: simplemente no aparece.
       - ./ops/observability/prometheus:/etc/prometheus:ro
+      # La clave con la que Prometheus entrega alertas a Grafana. Fichero suelto y no el
+      # directorio del .env: el contenedor corre como nobody y solo debe ver esta.
+      - ${ALERTMANAGER_PASS_FILE:-/opt/core-force-mail/env/alertmanager.pass}:/etc/prometheus-secretos/alertmanager.pass:ro
       - prometheus-data:/prometheus
     ports:
       - "127.0.0.1:${PROMETHEUS_PORT:-9090}:9090"
@@ -76,6 +79,17 @@ services:
       - GF_AUTH_ANONYMOUS_ENABLED=false
       - GF_ANALYTICS_REPORTING_ENABLED=false
       - GF_ANALYTICS_CHECK_FOR_UPDATES=false
+      # Correo de las alertas por el submission de la propia plataforma, con STARTTLS
+      # obligatorio y el certificado verificado. Sin ALERT_EMAIL_TO no hay a quien avisar y
+      # Grafana no arranca: una alerta sin destinatario es peor que ninguna.
+      - ALERT_EMAIL_TO=${ALERT_EMAIL_TO:?falta ALERT_EMAIL_TO}
+      - GF_SMTP_ENABLED=true
+      - GF_SMTP_HOST=${ALERT_SMTP_HOST:?falta ALERT_SMTP_HOST}
+      - GF_SMTP_USER=${ALERT_SMTP_USER:?falta ALERT_SMTP_USER}
+      - GF_SMTP_PASSWORD=${ALERT_SMTP_PASSWORD:?falta ALERT_SMTP_PASSWORD}
+      - GF_SMTP_FROM_ADDRESS=${ALERT_SMTP_USER}
+      - GF_SMTP_FROM_NAME=Core Force Mail
+      - GF_SMTP_STARTTLS_POLICY=MandatoryStartTLS
     volumes:
       - ./ops/observability/grafana/provisioning:/etc/grafana/provisioning:ro
       - ./ops/observability/grafana/dashboards:/var/lib/grafana/dashboards:ro

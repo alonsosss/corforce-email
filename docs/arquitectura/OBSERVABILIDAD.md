@@ -111,7 +111,7 @@ Las reglas viven en `ops/observability/prometheus/rules/plataforma.yml`, agrupad
 familia: disponibilidad (servicio caido, reinicios en bucle), version desplegada (imagen
 compilada en el servidor), trafico (errores 5xx, latencia), base de datos (pool al limite,
 esperas), seguridad (pico de denegaciones RBAC), host (disco, memoria, CPU, robo de CPU, swap),
-chat, vigilancia del propio aviso, parcheado del host, limites de peticiones (limitador sin
+limites de peticiones (limitador sin
 Redis), respaldos (abajo), celdas, claves DKIM, revocacion en Dovecot y eventos (abajo).
 
 Una alerta mal escrita no falla: se queda callada. Las reglas nuevas llevan su prueba de
@@ -211,30 +211,25 @@ cola es una sola: se lee con `max`.
 
 ### Entrega de las alertas
 
-Una alerta que nadie recibe no sirve. Las alertas disparadas llegan al **centro de
-notificaciones de la propia plataforma**, a los usuarios del tenant de plataforma (los que operan el
-producto). El vigia vive en el servicio `notification`
-(`internal/app/platform_alerts.go`) y se enciende con `PROMETHEUS_URL` +
-`PLATFORM_TENANT_ID`; sin ambas queda apagado, que es lo que ocurre en desarrollo.
+Una alerta que nadie recibe no sirve. Prometheus evalua las reglas y envia las disparadas al
+**Alertmanager integrado de Grafana** (`alerting` en `prometheus.yml`, con el usuario `prometheus-alertas`,
+rol Editor, no el administrador); Grafana las agrupa y las manda **por correo** al punto de contacto
+`operadores` (`grafana/provisioning/alerting/entrega.yml`). No hay servicio propio de notificaciones: el
+`notification` del ERP no se copio, y las reglas que lo vigilaban se quitaron con el.
 
-Decisiones de diseno:
+- **Remitente**: un buzon de la propia plataforma (`ALERT_SMTP_USER`) por el submission con STARTTLS obligatorio y
+  certificado verificado. Su clave es `ALERT_SMTP_PASSWORD`.
+- **Destinatario**: `ALERT_EMAIL_TO`. Grafana no arranca si falta: una alerta sin destinatario es peor que ninguna.
+- **Clave de Prometheus a Grafana**: `ALERTMANAGER_PASS_FILE`, un fichero 0644 dentro de un directorio 0700 (el
+  contenedor corre como nobody y solo ve ese fichero). Debe existir antes de levantar Prometheus: si no, Docker crea
+  un directorio en su lugar.
+- **Agrupacion**: por `alertname` e `instance`, espera de 30 s, reenvio cada 4 h mientras dure la causa. Las
+  alertas en espera (`pending`) no se envian: son las que suelen resolverse solas dentro de su ventana `for`.
 
-- **Se consulta a Prometheus, no se recibe un webhook.** No abre ningun endpoint nuevo, no
-  exige compartir un secreto con el sistema de monitoreo y deja la direccion de la confianza
-  donde debe estar: la plataforma pregunta, nadie escribe en ella desde fuera.
-- **Se avisa una sola vez por problema.** Una alerta sigue disparada mientras dure la causa y
-  el vigia mira cada minuto; la huella (etiquetas + instante en que empezo) se guarda en
-  `notification.platform_alerts` y actua de candado. Un problema que se resuelve y vuelve
-  trae huella nueva y si avisa otra vez.
-- **Las alertas en espera (`pending`) se ignoran**: son justo las que suelen resolverse
-  solas dentro de su ventana `for`.
-
-**Limitacion asumida:** el aviso viaja por la propia plataforma, asi que una caida total se
-lleva por delante al mensajero. Cubre lo que ocurre a diario (un servicio caido, un disco al
-limite, un pool agotado, un pico de denegaciones) mientras el resto sigue en pie. Para la
-caida total hace falta un canal externo (correo por SES SMTP, Telegram), que requiere
-credenciales que la plataforma todavia no tiene; el punto de contacto se configura entonces
-en Grafana sin tocar codigo.
+**Limitacion asumida:** con la plataforma caida por completo, Postfix tambien lo esta y el aviso no sale.
+`ALERT_EMAIL_TO` debe ser una direccion externa (no de un dominio de la plataforma) para que al menos el aviso
+llegue a un buzon que no cae con ella; para la caida total hace falta ademas un canal que no dependa de este
+servidor (Telegram, un servicio externo de latido), que requiere credenciales que hoy no hay.
 
 ## Lo que todavia no hay
 
