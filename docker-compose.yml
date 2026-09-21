@@ -150,6 +150,11 @@ services:
       AUDIT_HASH_KEY: ""
       AUDIT_HASH_KEYS_OLD: ""
       JWT_SIGNING_KEY: ""
+      # Aqui no hay proxy de borde: al gateway se llega directo desde el anfitrion (o desde el
+      # contenedor web) y nadie legitimo escribe X-Real-IP. Sin este valor el gateway confiaria
+      # en todo RFC1918 y cualquiera de esas redes elegiria la IP con la que se le limita.
+      # Con un proxy delante, TRUSTED_PROXY_CIDRS en .env con SU subred.
+      TRUSTED_PROXY_CIDRS: ${TRUSTED_PROXY_CIDRS:-127.0.0.1/32}
     depends_on:
       pgbouncer:
         condition: service_healthy

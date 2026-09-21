@@ -423,14 +423,7 @@ func reverseProxyWith(target, internalToken string, keepUpstreamCSP bool) http.H
 		if req.Host != "" {
 			req.Header.Set("X-Forwarded-Host", req.Host)
 		}
-		esquema := "https"
-		if req.TLS == nil && req.Header.Get("X-Forwarded-Proto") == "" &&
-			(strings.HasPrefix(req.Host, "localhost") || strings.HasPrefix(req.Host, "127.0.0.1")) {
-			esquema = "http"
-		} else if p := req.Header.Get("X-Forwarded-Proto"); p != "" {
-			esquema = p
-		}
-		req.Header.Set("X-Forwarded-Proto", esquema)
+		req.Header.Set("X-Forwarded-Proto", forwardedScheme(req))
 
 		originalDirector(req)
 		req.Host = u.Host

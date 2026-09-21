@@ -237,6 +237,19 @@ arriba y nunca 0, igual decida Redis o la memoria.
 **IP**: la que resuelve `CaptureClientIP` (`X-Real-IP` solo si la conexión llega desde
 `TRUSTED_PROXY_CIDRS`). Ni `X-Real-IP`, ni `X-Forwarded-For`, ni una cabecera interna
 enviada por el cliente cambian la clave (probado en `pkg/middleware` y en el gateway).
+`TRUSTED_PROXY_CIDRS` vale, en producción, la subred `edge` (`docker-compose.selfhosted.yml`, donde solo
+está el proxy de borde) y, en el compose de desarrollo, `127.0.0.1/32`: sin proxy delante nadie legítimo
+escribe `X-Real-IP`, y con el defecto del código (todo RFC1918 y loopback) cualquier contenedor o red
+privada elegiría la IP con la que se le limita. Vacío y sin compose, el gateway sigue confiando en los
+rangos privados; esos rangos son también el defecto de `MAIL_ENGINE_ALLOWED_CIDRS` (`mail-security`), por
+lo que el defecto de `pkg/middleware.TrustedProxyCIDRs` no se estrecha en el código.
+
+**`X-Forwarded-Proto`**: el gateway declara a los servicios `https` si él termina TLS, y si no lo que
+venga en la cabecera solo cuando es `http` o `https` (sin distinguir mayúsculas; en una lista, el primer
+valor). Cualquier otro texto se descarta y se supone `https`, salvo `http` con un Host de máquina local
+(localhost o loopback exactos, sin puerto o con él; `localhost.atacante.test` ya no cuenta). La cabecera se
+sigue aceptando de cualquier origen, no solo de `TRUSTED_PROXY_CIDRS`; ningún servicio la lee hoy.
+`forwardedScheme` (`services/gateway/forwarded.go`).
 
 **Cabeceras internas**: el gateway las escribe él y solo él, y ningún cliente las puede fijar ni
 quitar. `StripInternalHeaders` borra las que envíe (`X-User-ID`, `X-Tenant-ID`, `X-User-Roles`,
