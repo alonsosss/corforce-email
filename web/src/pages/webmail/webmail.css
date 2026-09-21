@@ -436,3 +436,53 @@ a.cf-wm-message:hover {
     display: none;
   }
 }
+
+.cf-wm-addressbook {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cf-space-2);
+  margin-top: var(--cf-space-2);
+}
+
+.cf-wm-addressbook__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 14rem;
+  overflow-y: auto;
+  border: 1px solid var(--cf-border);
+  border-radius: var(--cf-radius-md);
+}
+
+.cf-wm-addressbook__item {
+  display: flex;
+  align-items: baseline;
+  gap: var(--cf-space-3);
+  width: 100%;
+  padding: var(--cf-space-2) var(--cf-space-3);
+  background: none;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.cf-wm-addressbook__item:hover:not(:disabled) {
+  background: var(--cf-surface-hover);
+}
+
+.cf-wm-addressbook__item:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.cf-wm-addressbook__address,
+.cf-wm-addressbook__state {
+  color: var(--cf-text-secondary);
+  font-size: var(--cf-text-sm);
+}
+
+.cf-wm-addressbook__state {
+  margin-left: auto;
+}

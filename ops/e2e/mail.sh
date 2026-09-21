@@ -660,6 +660,13 @@ enviar_wm bea@acme.test "$TOKEN-webmail-ajeno" -H "Idempotency-Key: $(rand_hex 1
 expect "un remitente que no es suyo se rechaza antes de Postfix" "$WM_CODE/$(echo "$WM_BODY" | jget error.code)" "403/SENDER_NOT_ALLOWED"
 enviar_wm ana@acme.test "$TOKEN-webmail-eicar" -H "Idempotency-Key: $(rand_hex 16)" -F "attachments=@$WORK/eicar.com;type=application/octet-stream"
 expect "un adjunto EICAR lo para el analisis del webmail con ClamAV" "$WM_CODE/$(echo "$WM_BODY" | jget error.code)" "422/ATTACHMENT_INFECTED"
+wm "$TARRO_ANA" GET "/address-book?q=bea"
+expect "la libreta de la empresa encuentra a bea por el texto" "$WM_CODE/$(echo "$WM_BODY" | jget data.0.address)/$(echo "$WM_BODY" | python3 -c 'import json, sys; print(len(json.load(sys.stdin)["data"]))')" "200/bea@acme.test/1"
+wm "$TARRO_ANA" GET /address-book
+LIBRETA=$(echo "$WM_BODY" | python3 -c 'import json, sys; print(" ".join(sorted(e["address"] for e in json.load(sys.stdin)["data"])))' 2>/dev/null)
+contains "y sin texto lista a ana" "$LIBRETA" "ana@acme.test"
+contains "y a sus companeros" "$LIBRETA" "bea@acme.test"
+lacks "sin exponer nada mas que direccion y nombre" "$WM_BODY" "quota"
 wm "$TARRO_ANA" GET /vacation
 expect "ana ve su respuesta automatica desactivada, con los topes del servicio" "$WM_CODE/$(echo "$WM_BODY" | jget data.enabled)/$(echo "$WM_BODY" | jget data.limits.message_max_length)" "200/False/8192"
 wm "$TARRO_ANA" PUT /vacation -H 'Content-Type: application/json' -d '{"enabled":true,"subject":"Ausente","message":"Vuelvo el lunes.","interval_days":2}'

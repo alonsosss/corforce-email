@@ -174,6 +174,10 @@ en `GET`/`PUT /internal/mail-directory/vacation?username=` (token de gateway, si
 sesion del webmail). Limitacion: contesta a lo dirigido a la direccion del buzon, no a sus alias (no se
 enumeran los `:addresses`); las fechas se comparan con la del servidor (UTC).
 
+La libreta compartida del webmail (V, 2026-09-21, sin migracion) sale de `mail.mailboxes`: `GET /internal/mail-directory/directory?username=&q=&limit=`
+(token de gateway, sin empresa) resuelve la empresa del buzon que pregunta, lista solo sus buzones con `active = 1`
+filtrando por subcadena de direccion o nombre visible (sin comodines) y devuelve unicamente `address` y `display_name`.
+
 `03_mail_app_policies.sql` (mail-directory) anade lo que el primer consumidor necesito:
 `app_delete` sobre `quota_usage` (solo del buzon propio, por eso el servicio borra la cuota
 antes que el buzon), `WITH CHECK` en `transports` que admite `tenant_id NULL` solo con

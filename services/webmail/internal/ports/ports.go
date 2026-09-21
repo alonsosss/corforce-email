@@ -79,6 +79,14 @@ type VacationDirectory interface {
 	SetVacation(ctx context.Context, username string, in domain.VacationInput) (domain.Vacation, error)
 }
 
+// AddressBook busca en el directorio de correo de la empresa de quien pregunta (los buzones activos
+// de su empresa). La empresa la resuelve mail-directory a partir del buzon; el webmail no la conoce.
+// Un texto que el directorio rechaza es un *domain.ValidationError; cualquier otro fallo,
+// domain.ErrUnavailable.
+type AddressBook interface {
+	Search(ctx context.Context, username, query string, limit int) ([]domain.AddressBookEntry, error)
+}
+
 // SendLedger recuerda cada envio por su clave de idempotencia para que un reintento del
 // cliente nunca entregue el mensaje dos veces.
 type SendLedger interface {

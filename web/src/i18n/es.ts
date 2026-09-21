@@ -1690,6 +1690,12 @@ export const es = {
   'webmail.compose.recipientsPlaceholder': 'nombre@empresa.com',
   'webmail.compose.invalidAddresses': 'Direcciones no validas: {list}',
   'webmail.compose.addCopies': 'Anadir Cc y Cco',
+  'webmail.compose.addressBook': 'Elegir de la empresa',
+  'webmail.compose.addressBookSearch': 'Buscar por nombre o direccion',
+  'webmail.compose.addressBookAdd': 'Anadir {address} a los destinatarios',
+  'webmail.compose.addressBookEmpty': 'Nadie coincide con la busqueda.',
+  'webmail.compose.addressBookAdded': 'Ya esta en los destinatarios',
+  'webmail.compose.addressBookUnavailable': 'No se pudo consultar la libreta de la empresa.',
   'webmail.compose.body': 'Mensaje',
   'webmail.compose.attachments': 'Adjuntos',
   'webmail.compose.attachmentsHint':

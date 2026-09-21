@@ -72,7 +72,7 @@ func TestIntegracionWebmailContraIMAPYSMTP(t *testing.T) {
 	}
 	svc, err := app.New(app.Deps{
 		Auth: staticAuth{}, Sessions: newMemSessions(), Mail: store, Sender: sender,
-		Directory: staticDirectory{ids: []string{"ventas@empresa.test"}}, Vacations: staticDirectory{}, Ledger: newMemLedger(),
+		Directory: staticDirectory{ids: []string{"ventas@empresa.test"}}, Vacations: staticDirectory{}, AddressBook: staticDirectory{}, Ledger: newMemLedger(),
 		Composer: rfc5322.New(), Sanitizer: htmlsafe.New(), PartURL: handler.PartURL, Logger: zap.NewNop(),
 		Config: app.Config{
 			CellCode:         "pe-01",
@@ -503,6 +503,10 @@ func (d staticDirectory) Vacation(context.Context, string) (domain.Vacation, err
 
 func (d staticDirectory) SetVacation(context.Context, string, domain.VacationInput) (domain.Vacation, error) {
 	return domain.Vacation{}, nil
+}
+
+func (d staticDirectory) Search(context.Context, string, string, int) ([]domain.AddressBookEntry, error) {
+	return nil, nil
 }
 
 // memLedger es el registro de envios en memoria (el de Redis tiene su propia prueba).

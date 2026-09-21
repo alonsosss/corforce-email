@@ -152,6 +152,23 @@ func (s *stubVacations) Vacation(_ context.Context, username string) (domain.Vac
 	return s.current, s.err
 }
 
+// stubAddressBook hace de mail-directory para la libreta: anota con que buzon, texto y tope se le llamo.
+type stubAddressBook struct {
+	mu       sync.Mutex
+	username string
+	query    string
+	limit    int
+	entries  []domain.AddressBookEntry
+	err      error
+}
+
+func (s *stubAddressBook) Search(_ context.Context, username, query string, limit int) ([]domain.AddressBookEntry, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.username, s.query, s.limit = username, query, limit
+	return s.entries, s.err
+}
+
 func (s *stubVacations) SetVacation(_ context.Context, username string, in domain.VacationInput) (domain.Vacation, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -214,10 +231,16 @@ func newTestHandlerWith(t *testing.T, sender ports.Sender) (http.Handler, *stubM
 
 func newTestHandlerFull(t *testing.T, sender ports.Sender) (http.Handler, *stubMailbox, *stubVacations) {
 	t.Helper()
-	mb, vac := &stubMailbox{}, &stubVacations{}
+	h, mb, vac, _ := newTestHandlerAll(t, sender)
+	return h, mb, vac
+}
+
+func newTestHandlerAll(t *testing.T, sender ports.Sender) (http.Handler, *stubMailbox, *stubVacations, *stubAddressBook) {
+	t.Helper()
+	mb, vac, book := &stubMailbox{}, &stubVacations{}, &stubAddressBook{}
 	svc, err := app.New(app.Deps{
 		Auth: stubAuth{}, Sessions: &memStore{m: map[string]domain.Session{}}, Mail: stubMail{mb: mb},
-		Sender: sender, Directory: stubDirectory{}, Vacations: vac, Ledger: &memLedger{m: map[string]domain.SendRecord{}},
+		Sender: sender, Directory: stubDirectory{}, Vacations: vac, AddressBook: book, Ledger: &memLedger{m: map[string]domain.SendRecord{}},
 		Composer: nopComposer{}, Sanitizer: nopSanitizer{}, PartURL: PartURL,
 		Logger: zap.NewNop(),
 		Config: app.Config{
@@ -239,7 +262,7 @@ func newTestHandlerFull(t *testing.T, sender ports.Sender) (http.Handler, *stubM
 	if err != nil {
 		t.Fatal(err)
 	}
-	return h.Routes(), mb, vac
+	return h.Routes(), mb, vac, book
 }
 
 func do(h http.Handler, method, path string, body io.Reader, headers map[string]string, cookie *http.Cookie) *httptest.ResponseRecorder {

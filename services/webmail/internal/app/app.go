@@ -27,15 +27,16 @@ type Config struct {
 }
 
 type Deps struct {
-	Auth      ports.Authenticator
-	Sessions  ports.SessionStore
-	Mail      ports.MailStore
-	Sender    ports.Sender
-	Directory ports.SenderDirectory
-	Vacations ports.VacationDirectory
-	Ledger    ports.SendLedger
-	Composer  ports.Composer
-	Sanitizer ports.HTMLSanitizer
+	Auth        ports.Authenticator
+	Sessions    ports.SessionStore
+	Mail        ports.MailStore
+	Sender      ports.Sender
+	Directory   ports.SenderDirectory
+	Vacations   ports.VacationDirectory
+	AddressBook ports.AddressBook
+	Ledger      ports.SendLedger
+	Composer    ports.Composer
+	Sanitizer   ports.HTMLSanitizer
 	// Scanner solo puede faltar si main lo decidio de forma explicita (desarrollo sin
 	// ClamAV); en ese caso los adjuntos se aceptan sin analizar.
 	Scanner ports.VirusScanner
@@ -47,25 +48,26 @@ type Deps struct {
 
 // Service es el caso de uso del webmail.
 type Service struct {
-	auth      ports.Authenticator
-	sessions  ports.SessionStore
-	mail      ports.MailStore
-	sender    ports.Sender
-	directory ports.SenderDirectory
-	vacations ports.VacationDirectory
-	ledger    ports.SendLedger
-	composer  ports.Composer
-	sanitizer ports.HTMLSanitizer
-	scanner   ports.VirusScanner
-	partURL   ports.PartURL
-	clock     func() time.Time
-	logger    *zap.Logger
-	cfg       Config
+	auth        ports.Authenticator
+	sessions    ports.SessionStore
+	mail        ports.MailStore
+	sender      ports.Sender
+	directory   ports.SenderDirectory
+	vacations   ports.VacationDirectory
+	addressBook ports.AddressBook
+	ledger      ports.SendLedger
+	composer    ports.Composer
+	sanitizer   ports.HTMLSanitizer
+	scanner     ports.VirusScanner
+	partURL     ports.PartURL
+	clock       func() time.Time
+	logger      *zap.Logger
+	cfg         Config
 }
 
 // New valida la configuracion y las dependencias: un webmail a medio cablear no arranca.
 func New(d Deps) (*Service, error) {
-	if d.Auth == nil || d.Sessions == nil || d.Mail == nil || d.Sender == nil || d.Directory == nil || d.Vacations == nil ||
+	if d.Auth == nil || d.Sessions == nil || d.Mail == nil || d.Sender == nil || d.Directory == nil || d.Vacations == nil || d.AddressBook == nil ||
 		d.Ledger == nil || d.Composer == nil || d.Sanitizer == nil || d.PartURL == nil || d.Logger == nil {
 		return nil, errors.New("webmail: faltan dependencias del caso de uso")
 	}
@@ -89,7 +91,7 @@ func New(d Deps) (*Service, error) {
 		clock = time.Now
 	}
 	return &Service{
-		auth: d.Auth, sessions: d.Sessions, mail: d.Mail, sender: d.Sender, directory: d.Directory, vacations: d.Vacations,
+		auth: d.Auth, sessions: d.Sessions, mail: d.Mail, sender: d.Sender, directory: d.Directory, vacations: d.Vacations, addressBook: d.AddressBook,
 		ledger: d.Ledger, composer: d.Composer, sanitizer: d.Sanitizer, scanner: d.Scanner,
 		partURL: d.PartURL, clock: clock, logger: d.Logger, cfg: d.Config,
 	}, nil

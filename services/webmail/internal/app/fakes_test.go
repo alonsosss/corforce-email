@@ -263,6 +263,12 @@ type fakeDirectory struct {
 	vacationErr error
 	vacationFor string
 	vacationIn  *domain.VacationInput
+	// libreta de direcciones: lo que devuelve y con que se le llamo.
+	book      []domain.AddressBookEntry
+	bookErr   error
+	bookFor   string
+	bookQuery string
+	bookLimit int
 }
 
 func (d *fakeDirectory) Vacation(_ context.Context, username string) (domain.Vacation, error) {
@@ -277,6 +283,11 @@ func (d *fakeDirectory) SetVacation(_ context.Context, username string, in domai
 	}
 	d.vacation = domain.Vacation{Enabled: in.Enabled, Subject: in.Subject, Message: in.Message, IntervalDays: in.IntervalDays, StartsOn: in.StartsOn, EndsOn: in.EndsOn}
 	return d.vacation, nil
+}
+
+func (d *fakeDirectory) Search(_ context.Context, username, query string, limit int) ([]domain.AddressBookEntry, error) {
+	d.bookFor, d.bookQuery, d.bookLimit = username, query, limit
+	return d.book, d.bookErr
 }
 
 func (d *fakeDirectory) SenderIdentities(context.Context, string) ([]string, error) {
@@ -419,7 +430,7 @@ func newHarness(t *testing.T) *harness {
 	}
 	h.mail = &fakeMail{mb: h.mb}
 	svc, err := New(Deps{
-		Auth: h.auth, Sessions: h.store, Mail: h.mail, Sender: h.sender, Directory: h.directory, Vacations: h.directory, Ledger: h.ledger,
+		Auth: h.auth, Sessions: h.store, Mail: h.mail, Sender: h.sender, Directory: h.directory, Vacations: h.directory, AddressBook: h.directory, Ledger: h.ledger,
 		Composer: h.composer, Sanitizer: h.sanitizer, Scanner: h.scanner,
 		PartURL: func(folder string, uid uint32, part string) string {
 			return fmt.Sprintf("/parts/%s/%d/%s", folder, uid, part)

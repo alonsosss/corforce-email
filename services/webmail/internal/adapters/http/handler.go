@@ -75,6 +75,7 @@ func (h *Handler) Routes() http.Handler {
 			r.Get("/session", h.Session)
 			r.Get("/meta", h.Meta)
 			r.Get("/identities", h.Identities)
+			r.Get("/address-book", h.AddressBook)
 			r.Get("/vacation", h.Vacation)
 			r.Put("/vacation", h.SetVacation)
 			r.Get("/folders", h.Folders)

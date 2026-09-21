@@ -1,6 +1,7 @@
 // Package maildirectorycli pregunta a mail-directory con que direcciones puede enviar un
 // buzon (GET /internal/mail-directory/sender-identities) y lee y cambia su respuesta automatica
-// (GET y PUT /internal/mail-directory/vacation). Son llamadas internas con el token de gateway y
+// (GET y PUT /internal/mail-directory/vacation) y busca en la libreta de la empresa
+// (GET /internal/mail-directory/directory). Son llamadas internas con el token de gateway y
 // sin empresa: el webmail no la conoce y el buzon es unico en la celda.
 //
 // Por que asi y no leyendo la base de la celda: el webmail no tiene credencial de base y no
@@ -26,16 +27,18 @@ import (
 const (
 	identitiesPath   = "/internal/mail-directory/sender-identities"
 	vacationPath     = "/internal/mail-directory/vacation"
+	directoryPath    = "/internal/mail-directory/directory"
 	maxResponseBytes = 1 << 20
 	requestTimeout   = 5 * time.Second
 )
 
-// Client implementa ports.SenderDirectory y ports.VacationDirectory.
+// Client implementa ports.SenderDirectory, ports.VacationDirectory y ports.AddressBook.
 type Client struct {
-	endpoint string
-	vacation string
-	token    string
-	http     *httpclient.Client
+	endpoint  string
+	vacation  string
+	directory string
+	token     string
+	http      *httpclient.Client
 }
 
 func New(baseURL, token string) (*Client, error) {
@@ -44,10 +47,11 @@ func New(baseURL, token string) (*Client, error) {
 		return nil, fmt.Errorf("MAIL_DIRECTORY_URL debe ser una URL http(s) sin credenciales: %q", baseURL)
 	}
 	return &Client{
-		endpoint: u.String() + identitiesPath,
-		vacation: u.String() + vacationPath,
-		token:    token,
-		http:     httpclient.New("mail-directory", httpclient.Options{Timeout: requestTimeout, MaxAttempts: 3}),
+		endpoint:  u.String() + identitiesPath,
+		vacation:  u.String() + vacationPath,
+		directory: u.String() + directoryPath,
+		token:     token,
+		http:      httpclient.New("mail-directory", httpclient.Options{Timeout: requestTimeout, MaxAttempts: 3}),
 	}, nil
 }
 

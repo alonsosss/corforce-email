@@ -63,6 +63,7 @@ func (h *Handler) Routes() chi.Router {
 	// La respuesta automatica del buzon con el que el webmail inicio sesion; tampoco lleva X-Tenant-ID.
 	r.Get("/internal/mail-directory/vacation", h.InternalGetVacation)
 	r.Put("/internal/mail-directory/vacation", h.InternalPutVacation)
+	r.Get("/internal/mail-directory/directory", h.InternalSearchDirectory)
 	return r
 }
 

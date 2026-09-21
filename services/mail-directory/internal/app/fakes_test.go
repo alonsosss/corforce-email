@@ -245,11 +245,23 @@ type fakeMailboxes struct {
 	aliases      *fakeAliases
 	quotaDeleted []string
 	lastFilter   ports.MailboxFilter
+	lastTenant   uuid.UUID
+	lastPage     ports.Page
 }
 
-func (f *fakeMailboxes) List(_ context.Context, _ uuid.UUID, filter ports.MailboxFilter, _ ports.Page) ([]domain.Mailbox, int64, error) {
-	f.lastFilter = filter
-	return nil, 0, nil
+func (f *fakeMailboxes) List(_ context.Context, tenantID uuid.UUID, filter ports.MailboxFilter, page ports.Page) ([]domain.Mailbox, int64, error) {
+	f.lastFilter, f.lastTenant, f.lastPage = filter, tenantID, page
+	var out []domain.Mailbox
+	for _, m := range f.items {
+		if m.TenantID != tenantID || (filter.ActiveOnly && m.Active != 1) {
+			continue
+		}
+		if filter.Search != "" && !strings.Contains(strings.ToLower(m.Username+" "+m.DisplayName), strings.ToLower(filter.Search)) {
+			continue
+		}
+		out = append(out, *m)
+	}
+	return out, int64(len(out)), nil
 }
 
 func (f *fakeMailboxes) Get(_ context.Context, tenantID, id uuid.UUID) (*domain.Mailbox, error) {

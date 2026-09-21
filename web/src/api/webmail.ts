@@ -87,6 +87,15 @@ export interface SenderIdentity {
   primary: boolean;
 }
 
+/**
+ * GET /webmail/address-book: un companero de la empresa del buzon. El servicio solo entrega
+ * su direccion y su nombre visible (sin cuota, accesos ni credenciales).
+ */
+export interface AddressBookEntry {
+  address: string;
+  display_name: string;
+}
+
 export interface WebmailFolder {
   name: string;
   delimiter: string;
@@ -370,6 +379,14 @@ export const webmailApi = {
   /** Respuesta automatica del buzon de la sesion, con los topes que aplica el directorio. */
   vacation: (signal?: AbortSignal) => request<Vacation>('GET', wm.vacation, { signal }),
   setVacation: (input: VacationInput) => request<Vacation>('PUT', wm.vacation, { json: input }),
+
+  /** Buzones activos de la empresa del buzon de la sesion; `query` filtra por direccion o nombre. */
+  addressBook: async (query: string, signal?: AbortSignal): Promise<AddressBookEntry[]> =>
+    (await request<AddressBookEntry[] | null>(
+      'GET',
+      `${wm.addressBook}?${new URLSearchParams({ q: query })}`,
+      { signal },
+    )) ?? [],
 
   folders: async (signal?: AbortSignal): Promise<WebmailFolder[]> =>
     (await request<WebmailFolder[] | null>('GET', wm.folders, { signal })) ?? [],

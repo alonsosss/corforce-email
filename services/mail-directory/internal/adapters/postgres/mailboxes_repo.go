@@ -33,11 +33,12 @@ func scanMailbox(row pgx.Row) (domain.Mailbox, error) {
 func (r *MailboxRepo) List(ctx context.Context, tenantID uuid.UUID, filter ports.MailboxFilter, page ports.Page) ([]domain.Mailbox, int64, error) {
 	const where = ` FROM mail.mailboxes WHERE tenant_id = $1
    AND ($2 = '' OR username ILIKE $2 ESCAPE '\' OR display_name ILIKE $2 ESCAPE '\')
-   AND ($3 = '' OR domain = $3)`
+   AND ($3 = '' OR domain = $3)
+   AND (NOT $4 OR active = 1)`
 	return listPage(ctx, r.pool,
 		`SELECT COUNT(*)`+where,
-		`SELECT `+mailboxColumns+where+` ORDER BY username LIMIT $4 OFFSET $5`,
-		scanMailbox, page.Limit, page.Offset, tenantID, likePattern(filter.Search), filter.Domain)
+		`SELECT `+mailboxColumns+where+` ORDER BY username LIMIT $5 OFFSET $6`,
+		scanMailbox, page.Limit, page.Offset, tenantID, likePattern(filter.Search), filter.Domain, filter.ActiveOnly)
 }
 
 func (r *MailboxRepo) Get(ctx context.Context, tenantID, id uuid.UUID) (*domain.Mailbox, error) {

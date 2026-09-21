@@ -45,6 +45,7 @@ import {
   type DraftSeed,
   type ServerAttachments,
 } from './compose';
+import { AddressBookPicker } from './AddressBookPicker';
 import { folderWithRole } from './folders';
 import { displayFilename, parsePositiveInt } from './format';
 import { useWebmailOutlet } from './webmailContext';
@@ -144,6 +145,7 @@ function ComposeForm({
   const [to, setTo] = useState(seed.to);
   const [cc, setCc] = useState(seed.cc);
   const [bcc, setBcc] = useState(seed.bcc);
+  const [showBook, setShowBook] = useState(false);
   const [showCopies, setShowCopies] = useState(seed.cc.length > 0 || seed.bcc.length > 0);
   const [subject, setSubject] = useState(seed.subject);
   const [text, setText] = useState(seed.text);
@@ -324,6 +326,25 @@ function ComposeForm({
           {...chips}
         />
       </FormField>
+      <div>
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={() => setShowBook((open) => !open)}
+          aria-expanded={showBook}
+        >
+          {t('webmail.compose.addressBook')}
+        </Button>
+        {showBook ? (
+          <AddressBookPicker
+            chosen={[...to, ...cc, ...bcc]}
+            onPick={(address) => {
+              edit(setTo)([...to, address]);
+              setRecipientError(null);
+            }}
+          />
+        ) : null}
+      </div>
       {showCopies ? (
         <div className="cf-form__row">
           <FormField label={t('webmail.header.cc')} htmlFor="compose-cc">

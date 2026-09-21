@@ -30,6 +30,8 @@ type DomainFilter struct {
 type MailboxFilter struct {
 	Search string
 	Domain string
+	// ActiveOnly deja fuera los buzones que no estan activos del todo (active distinto de 1).
+	ActiveOnly bool
 }
 
 // TransportScope acota el acceso a rutas de plataforma (tenant_id NULL): solo quien

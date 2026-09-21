@@ -334,3 +334,31 @@ describe('respuesta automatica del buzon', () => {
     ).rejects.toMatchObject({ status: 422 });
   });
 });
+
+describe('libreta de direcciones de la empresa', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    setAccessToken(null);
+  });
+
+  it('se consulta por la ruta del webmail con el texto codificado, la cookie y sin el access token', async () => {
+    setAccessToken('token-de-la-plataforma');
+    const calls = mockFetch(() =>
+      json(200, { data: [{ address: 'ana@empresa.pe', display_name: 'Ana Diaz' }] }),
+    );
+
+    const found = await webmailApi.addressBook('ana & co');
+
+    expect(found).toEqual([{ address: 'ana@empresa.pe', display_name: 'Ana Diaz' }]);
+    expect(calls[0]?.url).toBe(`${endpoints.webmail.addressBook}?q=ana+%26+co`);
+    expect(calls[0]?.init.method).toBe('GET');
+    expect(calls[0]?.init.credentials).toBe('include');
+    expect(JSON.stringify(calls[0]?.init)).not.toContain('token-de-la-plataforma');
+  });
+
+  it('una respuesta sin datos es una lista vacia', async () => {
+    mockFetch(() => json(200, { data: null }));
+    expect(await webmailApi.addressBook('')).toEqual([]);
+  });
+});

@@ -151,3 +151,56 @@ func TestRespuestaAutomaticaFallos(t *testing.T) {
 		t.Fatalf("200 ilegible: %v", err)
 	}
 }
+
+func TestLibretaSeBuscaPorElBuzonYDescartaDireccionesInutilizables(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		if r.Method != http.MethodGet || r.URL.Path != directoryPath || q.Get("username") != "ana@empresa.pe" || q.Get("q") != "b&c" || q.Get("limit") != "7" {
+			t.Errorf("%s %s?%s", r.Method, r.URL.Path, r.URL.RawQuery)
+		}
+		if r.Header.Get("X-Gateway-Token") != "token-interno" || r.Header.Get("X-Tenant-ID") != "" {
+			t.Errorf("cabeceras: %v", r.Header)
+		}
+		_, _ = w.Write([]byte(`{"data":[{"address":"Bea@Empresa.PE","display_name":"Beatriz"},{"address":"a@b@c","display_name":"roto"}]}`))
+	}))
+	defer srv.Close()
+	c, err := New(srv.URL, "token-interno")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := c.Search(context.Background(), "ana@empresa.pe", "b&c", 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].DisplayName != "Beatriz" || !strings.EqualFold(got[0].Address, "bea@empresa.pe") {
+		t.Fatalf("resultado: %+v", got)
+	}
+}
+
+func TestLibretaFallos(t *testing.T) {
+	status, body := http.StatusUnprocessableEntity, `{"error":{"code":"VALIDATION_ERROR","message":"la busqueda es demasiado larga"}}`
+	var lastQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		lastQuery = r.URL.RawQuery
+		w.WriteHeader(status)
+		_, _ = w.Write([]byte(body))
+	}))
+	defer srv.Close()
+	c, _ := New(srv.URL, "")
+	_, err := c.Search(context.Background(), "ana@empresa.pe", "x", 0)
+	var verr *domain.ValidationError
+	if !errors.As(err, &verr) || verr.Reason != "la busqueda es demasiado larga" || errors.Is(err, domain.ErrUnavailable) {
+		t.Fatalf("422 con motivo: %v", err)
+	}
+	if strings.Contains(lastQuery, "limit") {
+		t.Fatalf("sin tope no se envia limit: %s", lastQuery)
+	}
+	status, body = http.StatusNotFound, `{}`
+	if _, err := c.Search(context.Background(), "nadie@empresa.pe", "", 0); !errors.Is(err, domain.ErrUnavailable) {
+		t.Fatalf("404: %v", err)
+	}
+	status, body = http.StatusOK, `basura`
+	if _, err := c.Search(context.Background(), "ana@empresa.pe", "", 0); !errors.Is(err, domain.ErrUnavailable) {
+		t.Fatalf("200 ilegible: %v", err)
+	}
+}
