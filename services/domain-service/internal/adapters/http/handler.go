@@ -166,6 +166,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	d, err := h.uc.Create(r.Context(), tenantID, app.CreateRequest{
 		Domain: req.Domain, Purpose: req.Purpose, DMARCPolicy: req.DMARCPolicy,
+		PlatformOperator: middleware.IsSuperadmin(r.Context()),
 	})
 	if err != nil {
 		writeError(w, err)

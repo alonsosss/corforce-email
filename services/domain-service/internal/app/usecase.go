@@ -131,13 +131,21 @@ type CreateRequest struct {
 	Domain      string
 	Purpose     string
 	DMARCPolicy string
+	// PlatformOperator lo marca el handler cuando quien llama es un superadmin, que opera
+	// desde la empresa de plataforma: solo el puede dar de alta un dominio de la plataforma
+	// (informes DMARC, postmaster, remitente de avisos), y pasa por la misma verificacion.
+	PlatformOperator bool
 }
 
 // Create da de alta el dominio con su token de propiedad y su primer par DKIM. Queda en
 // pending hasta que Verify confirme los registros.
 func (uc *UseCase) Create(ctx context.Context, tenantID uuid.UUID, req CreateRequest) (*domain.Domain, error) {
 	name := domain.NormalizeDomainName(req.Domain)
-	if err := domain.ValidateDomainName(name, uc.platformHost); err != nil {
+	reserved := uc.platformHost
+	if req.PlatformOperator {
+		reserved = ""
+	}
+	if err := domain.ValidateDomainName(name, reserved); err != nil {
 		return nil, err
 	}
 	purpose := domain.Purpose(req.Purpose)

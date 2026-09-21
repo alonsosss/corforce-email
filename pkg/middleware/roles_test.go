@@ -34,6 +34,26 @@ func TestHasAnyRole(t *testing.T) {
 	}
 }
 
+func TestIsSuperadmin(t *testing.T) {
+	casos := []struct {
+		nombre string
+		roles  []string
+		quiere bool
+	}{
+		{"superadmin", []string{RoleSuperadmin}, true},
+		{"superadmin entre otros", []string{"auditor", RoleSuperadmin}, true},
+		{"administrador de empresa", []string{RoleTenantAdmin}, false},
+		{"sin roles", nil, false},
+	}
+	for _, c := range casos {
+		t.Run(c.nombre, func(t *testing.T) {
+			if got := IsSuperadmin(ctxConRoles(c.roles...)); got != c.quiere {
+				t.Fatalf("IsSuperadmin(%v) = %v; se esperaba %v", c.roles, got, c.quiere)
+			}
+		})
+	}
+}
+
 // Los dos roles del sistema son los unicos privilegiados: cualquier otro, aunque se
 // llame "admin", es un rol de empresa cuyos permisos viven en la base.
 func TestSoloLosRolesDelSistemaSonPrivilegiados(t *testing.T) {

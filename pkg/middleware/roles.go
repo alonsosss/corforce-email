@@ -39,6 +39,17 @@ func IsPrivileged(ctx context.Context) bool {
 	return false
 }
 
+// IsSuperadmin indica si el usuario del contexto es un operador de plataforma. Los roles
+// los escribe solo el gateway.
+func IsSuperadmin(ctx context.Context) bool {
+	for _, role := range GetRoles(ctx) {
+		if role == RoleSuperadmin {
+			return true
+		}
+	}
+	return false
+}
+
 // HasAnyRole indica si el usuario del contexto tiene alguno de los roles dados.
 // El superadmin de plataforma siempre pasa, igual que en RequireRoles.
 func HasAnyRole(ctx context.Context, roles ...string) bool {

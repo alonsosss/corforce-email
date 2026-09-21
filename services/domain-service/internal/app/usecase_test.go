@@ -139,6 +139,22 @@ func TestCreateGeneratesTokenAndEncryptedDKIM(t *testing.T) {
 	}
 }
 
+func TestCreatePlatformDomainOnlyForOperator(t *testing.T) {
+	h := newHarness(t)
+	req := CreateRequest{Domain: "dmarc." + platformHost, Purpose: "corporate"}
+	if _, err := h.uc.Create(context.Background(), h.tenantID, req); !errors.Is(err, domain.ErrPlatformDomain) {
+		t.Fatalf("una empresa dio de alta un dominio de la plataforma: err = %v", err)
+	}
+	req.PlatformOperator = true
+	if _, err := h.uc.Create(context.Background(), h.tenantID, req); err != nil {
+		t.Fatalf("el operador de plataforma no pudo dar de alta su dominio: %v", err)
+	}
+	suffix := CreateRequest{Domain: "com.pe", Purpose: "corporate", PlatformOperator: true}
+	if _, err := h.uc.Create(context.Background(), h.tenantID, suffix); !errors.Is(err, domain.ErrPublicSuffixDomain) {
+		t.Fatalf("el operador dio de alta un sufijo publico: err = %v", err)
+	}
+}
+
 func TestCreateRejects(t *testing.T) {
 	h := newHarness(t)
 	h.create(t, "acme.com", domain.PurposeBoth)
