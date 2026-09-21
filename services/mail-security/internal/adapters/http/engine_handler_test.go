@@ -87,15 +87,15 @@ func TestForwardingHostsPermitDunnoYMapa(t *testing.T) {
 	s.policy.FwdHosts = []domain.ForwardingHost{{Host: "10.1.0.0/16", Source: "relay"}, {Host: "192.0.2.7/32"}}
 
 	resp, body := call(t, http.MethodGet, s.srv.URL+"/forwardinghosts?host=10.1.2.3", nil)
-	if resp.StatusCode != http.StatusOK || body != "PERMIT" {
+	if resp.StatusCode != http.StatusOK || body != "200 PERMIT" {
 		t.Fatalf("dentro del cidr: %d %q", resp.StatusCode, body)
 	}
 	resp, body = call(t, http.MethodGet, s.srv.URL+"/forwardinghosts?host=203.0.113.9", nil)
-	if resp.StatusCode != http.StatusOK || body != "DUNNO" {
+	if resp.StatusCode != http.StatusOK || body != "200 DUNNO" {
 		t.Fatalf("fuera del cidr: %d %q", resp.StatusCode, body)
 	}
 	resp, body = call(t, http.MethodGet, s.srv.URL+"/forwardinghosts?host=no-ip", nil)
-	if resp.StatusCode != http.StatusOK || body != "DUNNO" {
+	if resp.StatusCode != http.StatusOK || body != "200 DUNNO" {
 		t.Fatalf("host invalido sigue el protocolo tcp_table: %d %q", resp.StatusCode, body)
 	}
 	resp, body = call(t, http.MethodGet, s.srv.URL+"/forwardinghosts", nil)

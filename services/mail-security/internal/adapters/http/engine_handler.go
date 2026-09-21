@@ -108,21 +108,27 @@ func (h *EngineHandler) Footer(w http.ResponseWriter, r *http.Request) {
 	_ = enc.Encode(resp)
 }
 
+const (
+	tcpTablePermit = "200 PERMIT"
+	tcpTableDunno  = "200 DUNNO"
+)
+
 // ForwardingHosts con ?host= sigue el protocolo tcp_table de Postfix: siempre HTTP 200
-// con PERMIT o DUNNO en el cuerpo. Sin host devuelve el mapa de CIDR para Rspamd.
+// y un cuerpo "200 PERMIT" o "200 DUNNO". whitelist_forwardinghosts.sh lo reenvia tal cual
+// a Postfix, que sin el codigo de estado lo descarta como respuesta mal formada. Sin host devuelve el mapa de CIDR para Rspamd.
 func (h *EngineHandler) ForwardingHosts(w http.ResponseWriter, r *http.Request) {
 	if host := r.URL.Query().Get("host"); host != "" {
 		ok, err := h.uc.ForwardingHostPermits(r.Context(), host)
 		if err != nil {
 			h.logger.Error("mapa dinamico", zap.String("endpoint", "forwardinghosts"), zap.Error(err))
-			plain(w, http.StatusOK, "DUNNO")
+			plain(w, http.StatusOK, tcpTableDunno)
 			return
 		}
 		if ok {
-			plain(w, http.StatusOK, "PERMIT")
+			plain(w, http.StatusOK, tcpTablePermit)
 			return
 		}
-		plain(w, http.StatusOK, "DUNNO")
+		plain(w, http.StatusOK, tcpTableDunno)
 		return
 	}
 	list, err := h.uc.ForwardingHostList(r.Context())
