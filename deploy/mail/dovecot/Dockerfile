@@ -1,9 +1,17 @@
+# gosu se compila aqui con el Go actual: el binario publicado (1.19) lleva la libreria estandar de Go
+# 1.24.6, con una critica y veintiuna altas con arreglo; gosu solo cambia de usuario y ejecuta, asi que no
+# las alcanza, pero un escaner las cuenta y no hay una version nueva publicada.
+FROM golang:1.26-alpine AS gosu
+# renovate: datasource=github-releases depName=tianon/gosu versioning=semver-coerced extractVersion=^(?<version>.*)$
+ARG GOSU_VERSION=1.19
+RUN apk add --no-cache git \
+  && git clone --depth 1 --branch "$GOSU_VERSION" https://github.com/tianon/gosu /src \
+  && cd /src \
+  && CGO_ENABLED=0 go build -trimpath -ldflags '-s -w' -o /out/gosu .
+
 FROM alpine:3.21
 
 LABEL maintainer="Core Force Mail"
-
-# renovate: datasource=github-releases depName=tianon/gosu versioning=semver-coerced extractVersion=^(?<version>.*)$
-ARG GOSU_VERSION=1.19
 
 ENV LANG=C.UTF-8
 ENV LC_ALL=C.UTF-8
@@ -56,11 +64,10 @@ RUN addgroup -g 5000 vmail \
   dovecot-submissiond \
   dovecot-pigeonhole-plugin \
   dovecot-pop3d \
-  dovecot-fts-flatcurve \
-  && arch=$(arch | sed s/aarch64/arm64/ | sed s/x86_64/amd64/) \
-  && wget -O /usr/local/bin/gosu "https://github.com/tianon/gosu/releases/download/$GOSU_VERSION/gosu-$arch" \
-  && chmod +x /usr/local/bin/gosu \
-  && gosu nobody true
+  dovecot-fts-flatcurve
+
+COPY --from=gosu /out/gosu /usr/local/bin/gosu
+RUN chmod +x /usr/local/bin/gosu && gosu nobody true
 
 COPY trim_logs.sh /usr/local/bin/trim_logs.sh
 COPY clean_q_aged.sh /usr/local/bin/clean_q_aged.sh

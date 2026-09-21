@@ -18,12 +18,12 @@ identico	clamav/healthcheck.sh	9cc28af8f12b17ccf71937edfe80d80ed31a74f61a94b05ca
 propio	docker-compose.e2e.yml	-
 propio	docker-compose.mail.images.yml	-
 propio	docker-compose.mail.yml	-
-modificado	dockerapi/Dockerfile	etiqueta	data/Dockerfiles/dockerapi/Dockerfile
+modificado	dockerapi/Dockerfile	etiqueta,endurecimiento	data/Dockerfiles/dockerapi/Dockerfile
 modificado	dockerapi/docker-entrypoint.sh	nombres	data/Dockerfiles/dockerapi/docker-entrypoint.sh
 modificado	dockerapi/main.py	nombres	data/Dockerfiles/dockerapi/main.py
 modificado	dockerapi/modules/DockerApi.py	sogo-php	data/Dockerfiles/dockerapi/modules/DockerApi.py
 identico	dockerapi/modules/__init__.py	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-modificado	dovecot/Dockerfile	etiqueta,postgres,sogo-php	data/Dockerfiles/dovecot/Dockerfile
+modificado	dovecot/Dockerfile	etiqueta,postgres,sogo-php,endurecimiento	data/Dockerfiles/dovecot/Dockerfile
 modificado	dovecot/clean_q_aged.sh	postgres,nombres	data/Dockerfiles/dovecot/clean_q_aged.sh
 modificado	dovecot/conf/auth/passwd-verify.lua	servicios-go	data/conf/dovecot/auth/passwd-verify.lua
 modificado	dovecot/conf/conf.d/fts.conf	nombres	data/conf/dovecot/conf.d/fts.conf
@@ -47,16 +47,16 @@ modificado	dovecot/supervisord.conf	cron	data/Dockerfiles/dovecot/supervisord.co
 modificado	dovecot/syslog-ng-redis_slave.conf	nombres	data/Dockerfiles/dovecot/syslog-ng-redis_slave.conf
 modificado	dovecot/syslog-ng.conf	nombres	data/Dockerfiles/dovecot/syslog-ng.conf
 modificado	dovecot/trim_logs.sh	nombres,sogo-php	data/Dockerfiles/dovecot/trim_logs.sh
-modificado	netfilter/Dockerfile	etiqueta	data/Dockerfiles/netfilter/Dockerfile
+modificado	netfilter/Dockerfile	etiqueta,endurecimiento	data/Dockerfiles/netfilter/Dockerfile
 identico	netfilter/docker-entrypoint.sh	c7bc623dd80b4ec8f463677ec9a94f02652b808c29ec0f8add09105d252193c4
 modificado	netfilter/main.py	sogo-php,nombres	data/Dockerfiles/netfilter/main.py
 identico	netfilter/modules/IPTables.py	1fe68540ae1239022395b44b449555553422d25b1781e53b700621aee6da387e
 identico	netfilter/modules/Logger.py	b898bee245b8d065952b54b263c7764fb3471e15f820650f185308560d35cd2d
 identico	netfilter/modules/NFTables.py	33862a1815863e1924059dd9f18041b84e6d6c4a4f494dabeee216611724b0e5
 identico	netfilter/modules/__init__.py	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-modificado	olefy/Dockerfile	etiqueta	data/Dockerfiles/olefy/Dockerfile
+modificado	olefy/Dockerfile	etiqueta,endurecimiento	data/Dockerfiles/olefy/Dockerfile
 identico	olefy/olefy.py	b574b972afd232917d1f17eb7dd835f1e1040efe55b4c9fc5807027ad2a1542b
-modificado	postfix-tlspol/Dockerfile	etiqueta	data/Dockerfiles/postfix-tlspol/Dockerfile
+modificado	postfix-tlspol/Dockerfile	etiqueta,endurecimiento	data/Dockerfiles/postfix-tlspol/Dockerfile
 identico	postfix-tlspol/docker-entrypoint.sh	c604731d087286276e57b0d30cae9d1df32ab21776c4eab001995594d78e58a7
 modificado	postfix-tlspol/postfix-tlspol.sh	nombres	data/Dockerfiles/postfix-tlspol/postfix-tlspol.sh
 identico	postfix-tlspol/stop-supervisor.sh	dcd949c726ce1c2f8f36743f63beb5ffabbd5a13e85d94740171b0127d23a6cd

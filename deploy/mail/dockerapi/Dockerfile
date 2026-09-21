@@ -16,7 +16,8 @@ RUN apk add --update --no-cache python3 \
   fastapi \
   uvicorn \
   aiodocker \
-  docker
+  docker \
+&& pip3 uninstall -y pip
 RUN mkdir /app/modules
 
 COPY docker-entrypoint.sh /app/

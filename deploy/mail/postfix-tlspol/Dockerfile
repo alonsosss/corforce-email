@@ -6,8 +6,11 @@ ENV CGO_ENABLED=0 \
 		NOOPT=1 \
     VERSION=1.8.22
 
+# golang.org/x/net v0.47.0, que fija v1.8.22, tiene cinco vulnerabilidades altas con arreglo y este
+# servicio descarga politicas MTA-STS de dominios ajenos: se sube antes de compilar.
 RUN git clone --branch v${VERSION} https://github.com/Zuplu/postfix-tlspol && \
     cd /src/postfix-tlspol && \
+    go get golang.org/x/net@v0.56.0 && go mod tidy && go mod vendor && \
     scripts/build.sh build-only
 
 

@@ -30,6 +30,7 @@ RUN apk add --virtual .build-deps \
   redis \
   ipaddress \
   dnspython \
+&& pip3 uninstall -y pip \
 && apk del .build-deps
 
 #  && pip3 install --upgrade pip python-iptables==0.13.0 redis ipaddress dnspython \

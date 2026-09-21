@@ -27,8 +27,8 @@ dice que ficheros son nuestros, por que difieren y como se rehace el cambio.
 | Propio | 6 | Nuestro por definicion: compose, README y este libro |
 | Total seguido por git | 157 | |
 
-De los 62 modificados, 31 solo cambian una etiqueta o un nombre (categorias `etiqueta` y `nombres`): son
-mecanicos. Los otros 31 cambian comportamiento (PostgreSQL, quitar SOGo y PHP, servicios Go, cron o
+De los 62 modificados, 27 solo cambian una etiqueta o un nombre (categorias `etiqueta` y `nombres`): son
+mecanicos. Los otros 35 cambian comportamiento (PostgreSQL, quitar SOGo y PHP, servicios Go, cron o
 endurecimiento).
 
 El coste real se concentra en cuatro ficheros, los que reescriben logica de mailcow y no solo un nombre:
@@ -93,11 +93,11 @@ Ordenados por carpeta. "Como se rehace" es lo que hay que hacer cuando mailcow c
 | `clamav/Dockerfile` | etiqueta | Etiqueta del mantenedor. | Reaplicar la linea. |
 | `clamav/clamd.conf` | endurecimiento | StreamMaxLength, MaxFileSize, MaxScanSize y AlertExceedsMax atados al tamano maximo de Postfix: un mensaje mayor no se analizaba y se entregaba como limpio. | Conservar los cuatro valores; ops/scaffold/check-mail-size-limits.sh falla si dejan de casar con Postfix, Rspamd y mail-security. |
 | `clamav/clamd.sh` | nombres | clamd-mailcow pasa a clamd-mail. | Reaplicar los cambios de mailcow y volver a sustituir las variables por su nombre propio. |
-| `dockerapi/Dockerfile` | etiqueta | Etiqueta del mantenedor. | Reaplicar la linea. |
+| `dockerapi/Dockerfile` | etiqueta, endurecimiento | Etiqueta del mantenedor. Sin `pip` en la imagen final: `pip` trae `msgpack` 1.1.2 embebido, con una vulnerabilidad alta que no se puede corregir desde aqui hasta que salga un `pip` nuevo, y el motor no lo usa al ejecutarse. | Reaplicar el cambio de mailcow y conservar `pip3 uninstall -y pip`. |
 | `dockerapi/docker-entrypoint.sh` | nombres | Organizacion del certificado autofirmado: mailcow pasa a platform. | Reaplicar la linea. |
 | `dockerapi/main.py` | nombres | REDISPASS y el host de Redis pasan a MAIL_REDIS_PASSWORD y MAIL_REDIS_HOST. | Reaplicar los cambios de mailcow y volver a sustituir las variables por su nombre propio. |
 | `dockerapi/modules/DockerApi.py` | sogo-php | Quita las tareas de MySQL y de SOGo (mysql_upgrade, sogo rename_user...). | Reaplicar los cambios de mailcow en las demas tareas; no reintroducir las quitadas. |
-| `dovecot/Dockerfile` | etiqueta, postgres, sogo-php | Sin grupo sogo, imapsync ni Perl; drivers de PostgreSQL (lua-sql-postgres) en lugar de los de MySQL y MariaDB. | Reaplicar el cambio de mailcow y volver a quitar SOGo, Perl e imapsync y a cambiar los drivers. |
+| `dovecot/Dockerfile` | etiqueta, postgres, sogo-php, endurecimiento | Sin grupo sogo, imapsync ni Perl; drivers de PostgreSQL (`lua-sql-postgres`) en lugar de los de MySQL y MariaDB; `gosu` se compila en una etapa propia con el Go actual (el binario publicado 1.19 lleva la libreria estandar de Go 1.24.6, con una critica y veintiuna altas con arreglo que `gosu` no alcanza pero un escaner cuenta). | Reaplicar el cambio de mailcow, volver a quitar SOGo, Perl e imapsync, cambiar los drivers y conservar la etapa `gosu` (misma version, `GOSU_VERSION`, compilada con Go 1.26). |
 | `dovecot/clean_q_aged.sh` | postgres, nombres | Poda la cuarentena con psql sobre mail.quarantine; hoy no hace nada porque esa tabla no existe: la poda la hace mail-security. | Reaplicar el cambio de mailcow y volver a poner la consulta propia. |
 | `dovecot/conf/auth/passwd-verify.lua` | servicios-go | La URL de autenticacion es ${MAIL_AUTH_URL} (mail-auth), que el entrypoint renderiza con envsubst. | Reaplicar el cambio de mailcow y conservar la URL. |
 | `dovecot/conf/conf.d/fts.conf` | nombres | Comentarios: mailcow.conf pasa a .env. | Reaplicar la linea. |
@@ -114,10 +114,10 @@ Ordenados por carpeta. "Como se rehace" es lo que hay que hacer cuando mailcow c
 | `dovecot/syslog-ng-redis_slave.conf` | nombres | REDISPASS pasa a MAIL_REDIS_PASSWORD. | Reaplicar los cambios de mailcow y volver a sustituir las variables por su nombre propio. |
 | `dovecot/syslog-ng.conf` | nombres | Host y contrasena de Redis por variables MAIL_REDIS_*. | Reaplicar los cambios de mailcow y volver a sustituir las variables por su nombre propio. |
 | `dovecot/trim_logs.sh` | nombres, sogo-php | Variables MAIL_REDIS_* y sin el recorte del registro de SOGo. | Reaplicar los cambios de mailcow y volver a sustituir las variables por su nombre propio. |
-| `netfilter/Dockerfile` | etiqueta | Etiqueta del mantenedor. | Reaplicar la linea. |
+| `netfilter/Dockerfile` | etiqueta, endurecimiento | Etiqueta del mantenedor. Sin `pip` en la imagen final: `pip` trae `msgpack` 1.1.2 embebido, con una vulnerabilidad alta que no se puede corregir desde aqui hasta que salga un `pip` nuevo, y el motor no lo usa al ejecutarse. | Reaplicar el cambio de mailcow y conservar `pip3 uninstall -y pip`. |
 | `netfilter/main.py` | sogo-php, nombres | Quita las expresiones de SOGo (8 y 9), renombra la cadena y la red (br-mail) y usa MAIL_REDIS_PASSWORD. El fichero de mailcow trae fin de linea CRLF y el nuestro LF. | Reaplicar el cambio de mailcow ignorando el fin de linea (diff --strip-trailing-cr). Nunca ejecutar netfilter en la maquina de desarrollo. |
-| `olefy/Dockerfile` | etiqueta | Etiqueta del mantenedor. | Reaplicar la linea. |
-| `postfix-tlspol/Dockerfile` | etiqueta | Etiqueta del mantenedor. | Reaplicar la linea. |
+| `olefy/Dockerfile` | etiqueta, endurecimiento | Etiqueta del mantenedor; sube `setuptools` a 78.1.1 o mas (CVE-2025-47273). Sin `pip` en la imagen final: `pip` trae `msgpack` 1.1.2 embebido, con una vulnerabilidad alta que no se puede corregir desde aqui hasta que salga un `pip` nuevo, y el motor no lo usa al ejecutarse. | Reaplicar el cambio de mailcow y conservar la subida de `setuptools` y la desinstalacion de `pip`. Ojo: instala `oletools` desde la rama principal de su repositorio, sin fijar (herencia de mailcow). |
+| `postfix-tlspol/Dockerfile` | etiqueta, endurecimiento | Etiqueta del mantenedor; sube `golang.org/x/net` a v0.56.0 y regenera `vendor/` antes de compilar: la v1.8.22 fija v0.47.0, con cinco vulnerabilidades altas, y este servicio descarga politicas MTA-STS de dominios ajenos. | Reaplicar el cambio de mailcow (si sube `VERSION`, comprobar si ya trae una `x/net` corregida y, si es asi, quitar el `go get`). |
 | `postfix-tlspol/postfix-tlspol.sh` | nombres | Espera de DNS contra letsencrypt.org en lugar de mailcow.email y variables MAIL_REDIS_*. | Reaplicar los cambios de mailcow y volver a sustituir las variables por su nombre propio. |
 | `postfix-tlspol/syslog-ng-redis_slave.conf` | nombres | REDISPASS y nombre del contenedor. | Reaplicar los cambios de mailcow y volver a sustituir las variables por su nombre propio. |
 | `postfix-tlspol/syslog-ng.conf` | nombres | Host y contrasena de Redis por variables MAIL_REDIS_*. | Reaplicar los cambios de mailcow y volver a sustituir las variables por su nombre propio. |
@@ -178,9 +178,9 @@ De donde sale cada motor decide como llega un parche:
 | Rspamd | Paquete Debian fijado en `rspamd/Dockerfile` (`RSPAMD_VER`, hoy 4.1.4) | Subir `RSPAMD_VER` |
 | ClamAV | Se compila desde fuente en `clamav/Dockerfile` (1.4.6) | Subir la version del constructor |
 | Postfix | Paquete de Debian trixie, sin fijar | Reconstruir la imagen |
-| Dovecot y Pigeonhole | Paquete de Alpine 3.21, sin fijar | Reconstruir la imagen. Cambiar de Alpine puede cambiar la version mayor de Dovecot: no se hace sin probar |
+| Dovecot y Pigeonhole | Paquete de Alpine 3.21, sin fijar (`gosu` 1.19 se compila en el Dockerfile con Go 1.26) | Reconstruir la imagen. Cambiar de Alpine puede cambiar la version mayor de Dovecot: no se hace sin probar |
 | Unbound | Repositorio `edge` de Alpine, para recibir parches | Reconstruir la imagen |
-| postfix-tlspol | Se compila la etiqueta `v1.8.22` de su repositorio | Subir la etiqueta |
+| postfix-tlspol | Se compila la etiqueta `v1.8.22` de su repositorio, con `golang.org/x/net` v0.56.0 | Subir la etiqueta y revisar si ya trae una `x/net` corregida |
 | Resto (netfilter, dockerapi, acme, watchdog, olefy) | Paquetes de la base | Reconstruir la imagen |
 
 Objetivos (propuestos en `docs/Plan_Estrategico_Mejoras_Correo.md`, a confirmar con el primer parche real):
@@ -208,4 +208,4 @@ motor. Hasta entonces no hay umbral: no se ha medido ningun port.
 
 | Fecha | Modificados | Sustantivos | Dias del ultimo port | Conflictos |
 |---|---|---|---|---|
-| 2026-09-20 | 62 | 31 | sin port aun | sin port aun |
+| 2026-09-20 | 62 | 35 | sin port aun | sin port aun |
