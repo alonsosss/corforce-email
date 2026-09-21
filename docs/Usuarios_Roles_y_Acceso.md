@@ -221,7 +221,7 @@ solo le atiende rutas de plataforma, nunca datos de una empresa.
 Triple `(module, resource, action)` en `access_control.permissions`, con comodin `*` en
 `resource` y `action`. Modulos de permiso: `organization`, `identity`, `access`, `audit`,
 `scheduler` (plano de control, siempre disponibles) y los de correo (`domains`,
-`mailboxes`, `mail_routing`, `mail_security`, `mail_storage`, `transactional`,
+`mailboxes`, `mail_routing`, `mail_security`, `mail_storage`, `migration`, `transactional`,
 `templates`, `suppression`, `reputation`, `contacts`, `segments`, `campaigns`,
 `automations`, `analytics`, `billing`, `policy`), que solo estan disponibles si la empresa
 tiene contratado el modulo del catalogo que los agrupa (`module_catalog.permission_modules`).
@@ -312,6 +312,15 @@ Darla de alta o reactivarla no publica nada: no deja ninguna credencial vieja va
 protocolo al buzon cierra al momento la sesion abierta con el (`credentials_changed` con `password`
 en la misma transaccion, que mail-security atiende echando al buzon), y el buzon sigue entrando por
 los que conserva.
+
+Modulo `migration` (V, 2026-09-21, `034_mail_migration_permissions.sql`): `migration/jobs/read`
+(ver los trabajos de migracion de buzones y su progreso), `migration/jobs/create` (lanzar la
+migracion de un buzon: guarda cifrada una credencial de terceros) y `migration/jobs/cancel`,
+todos de alcance `tenant`, asi que llegan al `tenant_admin` al sembrar el rol y con el resembrado.
+Se contrata con `corporate_mail` (la migracion la anade a su `permission_modules`). `mail-migration`
+exige la accion concreta en cada handler; el gateway deja pasar un `POST` a quien tenga cualquier
+permiso de escritura del modulo. La API del ejecutor de migracion (`/v1/*` en el puerto 8057) no
+usa permisos ni gateway: se autentica con su propia clave de servicio (`MAIL_MIGRATION_RUNNER_KEY`).
 
 ## 6. Auditoria de acceso (V)
 

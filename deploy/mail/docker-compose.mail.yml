@@ -3,8 +3,8 @@
 # (esquema mail, rol mail_engine) o lo sirven los servicios Go mail-auth y mail-policy,
 # que deben unirse a la red mail-engines con esos alias. Ver README.md.
 #
-# Sin secretos: MAIL_DB_PASSWORD, MAIL_REDIS_PASSWORD y SPAMHAUS_DQS_KEY llegan por .env
-# o por el entorno del orquestador.
+# Sin secretos: MAIL_DB_PASSWORD, MAIL_REDIS_PASSWORD, SPAMHAUS_DQS_KEY, MAIL_MIGRATION_RUNNER_KEY y
+# DOVECOT_MIGRATION_MASTER_PASS llegan por .env o por el entorno del orquestador.
 
 services:
 
@@ -61,6 +61,10 @@ services:
       - clamd-db-vol:/var/lib/clamav
     networks:
       mail-engines:
+        aliases:
+          - clamd
+      # El ejecutor de migracion analiza cada mensaje con este clamd (INSTREAM) antes de copiarlo.
+      mail-migration:
         aliases:
           - clamd
 
@@ -137,6 +141,11 @@ services:
       - DOVECOT_MASTER_USER=${DOVECOT_MASTER_USER:-}
       - DOVECOT_MASTER_PASS=${DOVECOT_MASTER_PASS:-}
       - DOVECOT_MASTER_ALLOWED_NETS=${DOVECOT_MASTER_ALLOWED_NETS:-}
+      # Usuario maestro propio de la migracion (opcional, solo desde la red mail-migration).
+      - DOVECOT_MIGRATION_MASTER_USER=${DOVECOT_MIGRATION_MASTER_USER:-}
+      - DOVECOT_MIGRATION_MASTER_PASS=${DOVECOT_MIGRATION_MASTER_PASS:-}
+      - DOVECOT_MIGRATION_MASTER_ALLOWED_NETS=${DOVECOT_MIGRATION_MASTER_ALLOWED_NETS:-}
+      - MAIL_MIGRATION_IPV4_NETWORK=${MAIL_MIGRATION_IPV4_NETWORK:-172.22.2}
       # API HTTP de doveadm (8443, TLS, sin publicar) para la revocacion de mail-security.
       - DOVEADM_API_KEY=${DOVEADM_API_KEY:-}
       - MAIL_REPLICA_IP=${MAIL_REPLICA_IP:-}
@@ -167,6 +176,10 @@ services:
     networks:
       mail-engines:
         ipv4_address: ${IPV4_NETWORK:-172.22.1}.250
+        aliases:
+          - dovecot
+      # IMAP del destino de las migraciones: el ejecutor entra por el usuario maestro de la migracion.
+      mail-migration:
         aliases:
           - dovecot
 
@@ -420,6 +433,49 @@ services:
         aliases:
           - olefy
 
+  # Ejecutor de la migracion de buzones (docs/adr/0002): reclama trabajos a mail-migration, valida el
+  # origen y copia el correo con imapsync a Dovecot, pasando cada mensaje por clamd. Sin base de datos, sin
+  # Redis, sin NATS y SIN la red de los motores ni la de la plataforma: solo la red mail-migration
+  # (Dovecot, clamd, mail-migration) y la salida a Internet hacia los IMAP de origen. Sin
+  # MAIL_MIGRATION_RUNNER_KEY arranca y no reclama nada.
+  mail-migration-runner:
+    build: ./migration-runner
+    depends_on:
+      - dovecot-mail
+      - clamd-mail
+    environment:
+      - TZ=${TZ:-UTC}
+      - ENVIRONMENT=${ENVIRONMENT:-production}
+      - MIGRATION_API_URL=${MIGRATION_API_URL:-http://mail-migration:8057}
+      - MAIL_MIGRATION_RUNNER_KEY=${MAIL_MIGRATION_RUNNER_KEY:-}
+      - MIGRATION_RUNNER_ID=${MIGRATION_RUNNER_ID:-}
+      - MIGRATION_DEST_HOST=${MIGRATION_DEST_HOST:-dovecot}
+      - MIGRATION_DEST_PORT=${MIGRATION_DEST_PORT:-993}
+      - MIGRATION_DEST_TLS_SERVER_NAME=${MAIL_HOSTNAME}
+      - DOVECOT_MIGRATION_MASTER_USER=${DOVECOT_MIGRATION_MASTER_USER:-}
+      - DOVECOT_MIGRATION_MASTER_PASS=${DOVECOT_MIGRATION_MASTER_PASS:-}
+      - MIGRATION_CLAMD_ADDR=${MIGRATION_CLAMD_ADDR:-clamd:3310}
+      - MIGRATION_ALLOW_UNSCANNED=${MIGRATION_ALLOW_UNSCANNED:-false}
+      - MIGRATION_JOB_TIMEOUT=${MIGRATION_JOB_TIMEOUT:-24h}
+      - MIGRATION_POLL_INTERVAL=${MIGRATION_POLL_INTERVAL:-15s}
+    user: "10001:10001"
+    read_only: true
+    tmpfs:
+      - /run/migration:mode=0700,uid=10001,gid=10001,size=384m,noexec,nosuid
+      - /tmp:mode=1777,size=64m,noexec,nosuid
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    mem_limit: 1g
+    cpus: 1.0
+    ulimits:
+      core: 0
+    restart: always
+    networks:
+      - mail-migration
+
 networks:
   mail-engines:
     name: mail-engines
@@ -432,6 +488,18 @@ networks:
       config:
         - subnet: ${IPV4_NETWORK:-172.22.1}.0/24
         - subnet: ${IPV6_NETWORK:-fd4d:6169:6c63:6f77::/64}
+  # Red del ejecutor de migracion: Dovecot, clamd, mail-migration (la une la plataforma) y el ejecutor.
+  # Bridge normal con salida a Internet (los IMAP de origen); nunca comparte red con los motores.
+  mail-migration:
+    name: ${MAIL_MIGRATION_NETWORK:-mail-migration}
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.name: br-mail-migr
+    enable_ipv6: false
+    ipam:
+      driver: default
+      config:
+        - subnet: ${MAIL_MIGRATION_IPV4_NETWORK:-172.22.2}.0/24
 
 volumes:
   vmail-vol:

@@ -1,7 +1,8 @@
 name: Motores de correo (punta a punta)
 
 # make e2e-mail (ops/e2e/mail.sh) levanta los motores de deploy/mail contra una celda real
-# con mail-auth, mail-policy y el webmail. Va en su propio flujo y no bloquea la integracion:
+# con mail-auth, mail-policy, el webmail y el ejecutor de migracion de buzones (imapsync real contra el
+# Dovecot de la prueba). Va en su propio flujo y no bloquea la integracion:
 # construye las imagenes de los motores (ClamAV se compila), baja las firmas de ClamAV y
 # depende de DNS publico (Unbound valida DNSSEC). Corre cuando cambia algo de lo que prueba,
 # cada noche y a mano.
@@ -16,6 +17,7 @@ on:
       - 'services/mail-security/**'
       - 'services/mail-directory/**'
       - 'services/webmail/**'
+      - 'services/mail-migration/**'
       - 'services/domain-service/**'
       - 'services/gateway/**'
       - 'services/identity/**'
@@ -37,6 +39,7 @@ on:
       - 'services/mail-security/**'
       - 'services/mail-directory/**'
       - 'services/webmail/**'
+      - 'services/mail-migration/**'
       - 'services/domain-service/**'
       - 'services/gateway/**'
       - 'services/identity/**'

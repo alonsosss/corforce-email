@@ -371,6 +371,15 @@ para llamar a la API hace falta ya un superadmin. Después, todo por API: `POST 
   el perfil y antes de recrear nada, comprueba con `ops/maintenance/recursos-externos.sh` las redes y
   volúmenes externos de su compose y se detiene pidiendo desplegar antes los motores. `release.yml`
   no lo comprueba (no sincroniza `ops/`); en un servidor así Compose falla con el nombre del recurso.
+* Red `mail-migration` (V, 2026-09-21): la crea el compose de los motores, como `mail-engines`, y une a Dovecot,
+  al ejecutor `mail-migration-runner` y al servicio `mail-migration` de la plataforma (que la declara externa). Es
+  la primera vez que la plataforma exige una red nueva de los motores: en un servidor que ya corre, desplegar los
+  motores (`scripts/deploy-mail.sh`) ANTES de la plataforma, o `deploy-ecr.sh` se detendra en
+  `recursos-externos.sh` diciendo que falta `mail-migration`. La migracion de buzones se activa con dos claves
+  opcionales del almacen (`MAIL_MIGRATION_RUNNER_KEY`, y el maestro propio `DOVECOT_MIGRATION_MASTER_USER` y
+  `DOVECOT_MIGRATION_MASTER_PASS`) y con la contrasena del rol de base `MAIL_MIGRATION_DB_PASSWORD`, que
+  crea `ops/db/tenant-service-role.sh --service mail-migration`; sin la clave del ejecutor el servicio arranca y
+  la API responde 503 `NOT_CONFIGURED`, sin la del rol arranca con la credencial de plataforma y lo avisa.
 * Salida por Amazon SES: `ops/aws/setup-ses.sh <dev|staging|prod>` aplica la pila
   `ops/aws/ses-mail.yaml` (CloudFormation): los configuration sets transaccional y de
   marketing (reputación y TLS por clase; aperturas, clics y bajas solo en marketing, con

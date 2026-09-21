@@ -16,8 +16,10 @@
 # comprueba cada mapa de Postfix con postmap, Dovecot con doveadm e IMAP (tambien el usuario
 # maestro del webmail y su restriccion de red), el envio autenticado con la regla de
 # remitentes, Rspamd con DKIM y el mapa settings de mail-policy, el antivirus y la cuarentena
-# (con su enlace firmado por el gateway), las claves de Redis que escribe mail-security y el
-# webmail por el gateway.
+# (con su enlace firmado por el gateway), las claves de Redis que escribe mail-security, el
+# webmail por el gateway y la migracion de buzones: mail-migration (binario del host) y su
+# ejecutor con imapsync REAL (contenedor en su propia red, deploy/mail/migration-runner) copian
+# de un buzon a otro del mismo Dovecot, con ClamAV real en el camino.
 #
 # Cada paso escribe OK o FALLA y la ejecucion termina con error si alguno falla. Las
 # credenciales se generan en cada ejecucion; ninguna vive en este fichero.
@@ -47,9 +49,11 @@ PG_PORT=$((BASE + 90)) NATS_PORT=$((BASE + 91)) REDIS_PORT=$((BASE + 92)) DNS_PO
 declare -A PORT=(
   [identity]=$((BASE + 1)) [access-control]=$((BASE + 2)) [organization]=$((BASE + 3))
   [mail-directory]=$((BASE + 40)) [mail-auth]=$((BASE + 41)) [mail-security]=$((BASE + 42))
-  [domain-service]=$((BASE + 43)) [webmail]=$((BASE + 44)) [gateway]=$((BASE + 80))
+  [domain-service]=$((BASE + 43)) [webmail]=$((BASE + 44)) [gateway]=$((BASE + 80)) [mail-migration]=$((BASE + 56))
 )
-e2e_fuera_del_rango_efimero "$PG_PORT" "$NATS_PORT" "$REDIS_PORT" "$DNS_PORT" "${PORT[@]}"
+# API del ejecutor de mail-migration: el ejecutor, en su contenedor, la alcanza por host.docker.internal.
+MIGRATION_RUNNER_PORT=$((BASE + 57))
+e2e_fuera_del_rango_efimero "$PG_PORT" "$NATS_PORT" "$REDIS_PORT" "$DNS_PORT" "${PORT[@]}" "$MIGRATION_RUNNER_PORT"
 
 E2E_PREFIX=cfm-e2e-mail
 PROYECTO=cfm-e2e-mail
@@ -57,6 +61,11 @@ export E2E_MAIL_NETWORK="${E2E_MAIL_NETWORK:-cfm-e2e-mail-engines}"
 export E2E_MAIL_BRIDGE="${E2E_MAIL_BRIDGE:-br-cfme2email}"
 export IPV4_NETWORK="${E2E_MAIL_IPV4_NETWORK:-172.30.29}"
 export E2E_MAIL_CLAMAV_VOLUME="${E2E_MAIL_CLAMAV_VOLUME:-cfm-e2e-mail-clamav-signatures}"
+# Red propia del ejecutor de migracion (la de produccion se llama mail-migration).
+export E2E_MIGRATION_NETWORK="${E2E_MIGRATION_NETWORK:-cfm-e2e-mail-migration}"
+export E2E_MIGRATION_BRIDGE="${E2E_MIGRATION_BRIDGE:-br-cfme2emig}"
+export MAIL_MIGRATION_IPV4_NETWORK="${E2E_MAIL_MIGRATION_IPV4_NETWORK:-172.30.30}"
+MIGRATION_DOVECOT_IP="$MAIL_MIGRATION_IPV4_NETWORK.250"
 e2e_reservar
 WORK="$(mktemp -d)"
 MAILDIR="$WORK/repo/deploy/mail"
@@ -70,6 +79,8 @@ en() { local s="$1"; shift; docker exec -i "$(c "$s")" "$@"; }
 compose() {
   CELL_DB_PASSWORD="${CELL_PASS}" MAIL_DB_PASSWORD="$MAIL_DB_PASS" MAIL_REDIS_PASSWORD="$MAIL_REDIS_PASS" \
     DOVECOT_MASTER_USER="${MASTER_USER}" DOVECOT_MASTER_PASS="$MASTER_PASS" DOVEADM_API_KEY="${DOVEADM_KEY}" QUEUE_AGENT_API_KEY="${QUEUE_KEY}" \
+    MAIL_MIGRATION_RUNNER_KEY="${MIGRATION_KEY}" DOVECOT_MIGRATION_MASTER_USER="${MIGRATION_MASTER_USER}" DOVECOT_MIGRATION_MASTER_PASS="${MIGRATION_MASTER_PASS}" \
+    E2E_PORT_MAIL_MIGRATION_RUNNER="$MIGRATION_RUNNER_PORT" \
     docker compose -p "$PROYECTO" -f "$MAILDIR/docker-compose.mail.yml" -f "$MAILDIR/docker-compose.e2e.yml" "$@"
 }
 
@@ -78,7 +89,7 @@ restos() {
   ids=$(docker ps -aq --filter "label=com.docker.compose.project=$PROYECTO")
   # shellcheck disable=SC2086
   docker rm -f $ids "$E2E_PREFIX-pg" "$E2E_PREFIX-nats" "$E2E_PREFIX-redis" "$E2E_PREFIX-dns" >/dev/null 2>&1
-  docker network rm "$E2E_MAIL_NETWORK" >/dev/null 2>&1
+  docker network rm "$E2E_MAIL_NETWORK" "$E2E_MIGRATION_NETWORK" >/dev/null 2>&1
   ids=$(docker volume ls -q --filter "label=com.docker.compose.project=$PROYECTO")
   # shellcheck disable=SC2086
   [[ -n "$ids" ]] && docker volume rm $ids >/dev/null 2>&1
@@ -112,19 +123,22 @@ trap limpiar EXIT
 
 echo "== Preparacion"
 restos
-e2e_puertos_libres "$PG_PORT" "$NATS_PORT" "$REDIS_PORT" "$DNS_PORT" "${PORT[@]}"
+e2e_puertos_libres "$PG_PORT" "$NATS_PORT" "$REDIS_PORT" "$DNS_PORT" "${PORT[@]}" "$MIGRATION_RUNNER_PORT"
 docker network inspect $(docker network ls -q) --format '{{.Name}} {{range .IPAM.Config}}{{.Subnet}} {{end}}' 2>/dev/null |
   python3 -c '
 import ipaddress, sys
-mia = ipaddress.ip_network(sys.argv[1])
+mias = [ipaddress.ip_network(a) for a in sys.argv[1:]]
+if mias[0].overlaps(mias[1]):
+    sys.exit(f"E2E: las subredes {mias[0]} y {mias[1]} se pisan; usa E2E_MAIL_IPV4_NETWORK y E2E_MAIL_MIGRATION_IPV4_NETWORK")
 for linea in sys.stdin:
     nombre, *redes = linea.split()
     for r in redes:
         try:
-            if ipaddress.ip_network(r, strict=False).overlaps(mia):
-                sys.exit(f"E2E: la subred {mia} choca con la red {nombre} ({r}); usa E2E_MAIL_IPV4_NETWORK")
+            for mia in mias:
+                if ipaddress.ip_network(r, strict=False).overlaps(mia):
+                    sys.exit(f"E2E: la subred {mia} choca con la red {nombre} ({r}); usa E2E_MAIL_IPV4_NETWORK o E2E_MAIL_MIGRATION_IPV4_NETWORK")
         except ValueError:
-            pass' "$IPV4_NETWORK.0/24" || exit 2
+            pass' "$IPV4_NETWORK.0/24" "$MAIL_MIGRATION_IPV4_NETWORK.0/24" || exit 2
 
 # Copia de deploy/mail con lo versionado y lo nuevo no ignorado: los entrypoints reescriben
 # ficheros de sus bind mounts (main.cf, mapas con la credencial) y el repositorio no se toca.
@@ -139,12 +153,15 @@ mkdir -p "$TLS/mail"
 openssl req -x509 -newkey rsa:2048 -nodes -days 2 -subj "/CN=Core Force Mail e2e CA" \
   -addext "basicConstraints=critical,CA:TRUE" -addext "keyUsage=critical,keyCertSign,cRLSign" \
   -keyout "$TLS/ca-key.pem" -out "$TLS/ca.pem" >/dev/null 2>&1 || { echo "openssl: CA" >&2; exit 1; }
-certificado() { # certificado <nombre> <clave> <certificado>
+certificado() { # certificado <nombre> <clave> <certificado> [SAN adicional, p. ej. IP:172.30.30.250]
   openssl req -newkey rsa:2048 -nodes -subj "/CN=$1" -keyout "$2" -out "$WORK/$1.csr" >/dev/null 2>&1 &&
     openssl x509 -req -in "$WORK/$1.csr" -CA "$TLS/ca.pem" -CAkey "$TLS/ca-key.pem" -CAcreateserial -days 2 -out "$3" \
-      -extfile <(printf 'subjectAltName=DNS:%s\nkeyUsage=critical,digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\n' "$1") >/dev/null 2>&1
+      -extfile <(printf 'subjectAltName=DNS:%s%s\nkeyUsage=critical,digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\n' "$1" "${4:+,$4}") >/dev/null 2>&1
 }
-certificado "$MAIL_HOSTNAME" "$TLS/mail/key.pem" "$TLS/mail/cert.pem" || { echo "openssl: certificado de correo" >&2; exit 1; }
+# El certificado de correo lleva tambien la IP de Dovecot en la red de la migracion: el buzon de origen
+# de la prueba se pide por IP (mail-migration lo resuelve desde el host, donde el nombre de la prueba no
+# existe) y el ejecutor verifica su certificado como el de cualquier origen.
+certificado "$MAIL_HOSTNAME" "$TLS/mail/key.pem" "$TLS/mail/cert.pem" "IP:$MIGRATION_DOVECOT_IP" || { echo "openssl: certificado de correo" >&2; exit 1; }
 certificado mail-auth "$TLS/mail-auth-key.pem" "$TLS/mail-auth.pem" || { echo "openssl: certificado de mail-auth" >&2; exit 1; }
 cp deploy/mail/ssl-example/dhparams.pem "$TLS/mail/dhparams.pem"
 chmod 644 "$TLS"/*.pem "$TLS/mail"/*.pem
@@ -161,13 +178,18 @@ MASTER_PASS="$(rand_hex 24)"
 DOVEADM_KEY="$(rand_hex 32)"
 # Clave del agente de la cola de Postfix: la reciben Postfix y mail-security (gestor de cola).
 QUEUE_KEY="$(rand_hex 32)"
+# Clave del ejecutor de migracion (la reciben mail-migration y el ejecutor) y usuario maestro de Dovecot
+# propio de la migracion (Dovecot y el ejecutor), distinto del del webmail.
+MIGRATION_KEY="$(rand_hex 32)"
+MIGRATION_MASTER_USER="e2e-migracion"
+MIGRATION_MASTER_PASS="$(rand_hex 24)"
 export CELL_CODE=pe-01 CELL_DB_NAME=mail_cell_pe_01 DEFAULT_CELL_CODE=pe-01
 export MAIL_MX_HOSTNAME="$MAIL_HOSTNAME" MAIL_SPF_INCLUDE=include:spf.cfm.test MAIL_DMARC_RUA=dmarc@cfm.test
 export MAIL_DNS_RESOLVER="127.0.0.1:$DNS_PORT"
 export API_ORIGIN="http://localhost:${PORT[gateway]}" PUBLIC_BASE_URL="http://localhost:${PORT[gateway]}" CORS_ALLOWED_ORIGINS=http://localhost:3000
 export IDENTITY_PORT=${PORT[identity]} ACCESS_CONTROL_PORT=${PORT[access-control]} ORGANIZATION_PORT=${PORT[organization]}
 export DOMAIN_SERVICE_PORT=${PORT[domain-service]} GATEWAY_PORT=${PORT[gateway]}
-for s in identity access-control organization domain-service mail-directory mail-auth mail-security webmail; do
+for s in identity access-control organization domain-service mail-directory mail-auth mail-security webmail mail-migration; do
   var="$(echo "$s" | tr 'a-z-' 'A-Z_')_HOST"
   export "$var=127.0.0.1" "${var}_PORT=${PORT[$s]}"
 done
@@ -198,7 +220,7 @@ t0=$SECONDS
 if compose build >"$WORK/log/build.log" 2>&1; then ok "imagenes construidas ($((SECONDS - t0))s)"; else
   mal "compose build"; tail -30 "$WORK/log/build.log" >&2; exit 1
 fi
-e2e_compilar organization identity access-control gateway domain-service || exit 1
+e2e_compilar organization identity access-control gateway domain-service mail-migration || exit 1
 
 echo "== Red de los motores e infraestructura desechable"
 docker volume create "$E2E_MAIL_CLAMAV_VOLUME" >/dev/null || exit 1
@@ -226,7 +248,11 @@ arrancar organization
 esperar_salud organization "${PORT[organization]}" || exit 1
 e2e_plataforma pe-01
 for s in identity access-control domain-service gateway; do arrancar "$s"; done
-for s in identity access-control domain-service gateway; do esperar_salud "$s" "${PORT[$s]}"; done
+# mail-migration: la clave del ejecutor solo la recibe el, y como la prueba migra entre buzones del mismo
+# Dovecot (una red privada) admite origenes privados, lo que solo se permite con ENVIRONMENT=development.
+MAIL_MIGRATION_RUNNER_KEY="${MIGRATION_KEY}" MAIL_MIGRATION_RUNNER_PORT="$MIGRATION_RUNNER_PORT" \
+  MAIL_MIGRATION_ALLOW_PRIVATE_SOURCES=true arrancar mail-migration
+for s in identity access-control domain-service gateway mail-migration; do esperar_salud "$s" "${PORT[$s]}"; done
 
 echo "== Servicios de la celda en contenedores (credencial de la celda)"
 # redis-mail primero: mail-security es su unico escritor y reconcilia al arrancar.
@@ -1025,6 +1051,129 @@ continua_en_cola "$QID2" && ok "y el otro mensaje sigue ahi" || mal "el otro men
 "${POSTCONF[@]}" -X defer_transports && docker exec "$(c postfix-mail)" postfix reload >/dev/null 2>&1
 docker exec "$(c postfix-mail)" postsuper -d ALL >/dev/null 2>&1
 
+echo "== Migracion de buzones (mail-migration -> ejecutor con imapsync real -> Dovecot, con ClamAV real)"
+# La prueba migra entre buzones del MISMO Dovecot: el origen (un buzon con su contrasena) se pide por la
+# IP fija de Dovecot en la red de la migracion, con el certificado verificado; el destino es el buzon
+# nuevo, al que el ejecutor entra por el usuario maestro PROPIO de la migracion. Solo aqui el ejecutor
+# admite origenes privados (deploy/mail/docker-compose.e2e.yml): en produccion la guarda de origen los
+# rechaza.
+RUNNER=$(c mail-migration-runner)
+esperar "el ejecutor de migracion arranca (healthcheck del propio binario)" 90 docker exec "$RUNNER" /usr/local/bin/migration-runner healthcheck
+expect "el ejecutor solo esta en la red de la migracion (no en la de los motores ni en la de la plataforma)" \
+  "$(docker inspect -f '{{range $n, $v := .NetworkSettings.Networks}}{{$n}} {{end}}' "$RUNNER" | sed 's/ $//')" "$E2E_MIGRATION_NETWORK"
+expect "corre sin privilegios, con el sistema de ficheros de solo lectura y sin capacidades" \
+  "$(docker inspect -f '{{.Config.User}} {{.HostConfig.ReadonlyRootfs}} {{.HostConfig.CapDrop}}' "$RUNNER")" "10001:10001 true [ALL]"
+expect "sin puertos publicados" "$(docker port "$RUNNER" 2>&1)" ""
+contains "resuelve Dovecot y ClamAV, que comparten su red" \
+  "$(docker exec "$RUNNER" sh -c 'getent hosts dovecot; getent hosts clamd' 2>&1)" "$MIGRATION_DOVECOT_IP"
+expect "no resuelve los motores ni los servicios de la celda (postfix, redis, mail-auth, mail-directory)" \
+  "$(docker exec "$RUNNER" sh -c 'for h in postfix redis mail-auth mail-directory; do getent hosts "$h"; done' 2>&1)" ""
+if docker exec "$RUNNER" nc -z -w 3 "$IPV4_NETWORK.253" 25 >/dev/null 2>&1; then
+  mal "el ejecutor alcanza el SMTP de Postfix por su IP en la red de los motores"
+else
+  ok "ni alcanza a Postfix por su IP en la red de los motores"
+fi
+codigo_ejecutor() { curl -s -o /dev/null -w '%{http_code}' -X POST "$@" "http://127.0.0.1:$MIGRATION_RUNNER_PORT/v1/claim"; }
+[[ "$(codigo_ejecutor)" =~ ^40[13]$ ]] && ok "la API del ejecutor rechaza una peticion sin clave" || mal "la API del ejecutor acepto una peticion sin clave"
+[[ "$(codigo_ejecutor -H 'Authorization: Bearer clave-que-no-es')" =~ ^40[13]$ ]] && ok "y con una clave que no es" || mal "la API del ejecutor acepto una clave que no es"
+
+cliente_migracion() { # como cliente, pero desde la red de la migracion
+  docker run --rm -i --network "$E2E_MIGRATION_NETWORK" -v "$ROOT/ops/e2e/mail_client.py:/cliente.py:ro" -v "$TLS/ca.pem:/ca.pem:ro" \
+    --entrypoint python3 "$PROYECTO-dovecot-mail" /cliente.py --ca /ca.pem --nombre "$MAIL_HOSTNAME" "$@" 2>&1
+}
+MAESTRO_MIGRACION="$MIGRATION_MASTER_USER@platform.local"
+expect "el maestro de la migracion entra a un buzon desde la red de la migracion" \
+  "$(cliente_migracion login bea@acme.test "$MIGRATION_MASTER_PASS" --maestro "$MAESTRO_MIGRACION")" "OK"
+contains "y no desde la red de los motores (su allow_nets es solo la de la migracion)" \
+  "$(cliente login bea@acme.test "$MIGRATION_MASTER_PASS" --maestro "$MAESTRO_MIGRACION")" "NO"
+contains "el maestro del webmail no entra por la red de la migracion" \
+  "$(cliente_migracion login bea@acme.test "$MASTER_PASS" --maestro "$MAESTRO")" "NO"
+
+api GET /mail-migration/meta
+expect "la interfaz ve la migracion configurada (mail-migration tiene la clave del ejecutor)" "$(echo "$API_BODY" | jget data.configured)" "True"
+
+# Dos pares de buzones: uno limpio y otro con un mensaje con virus en el origen.
+MIG="mig$(rand_hex 4)"
+ORIG1_PASS="$(rand_hex 10)Aa1!"; DEST1_PASS="$(rand_hex 10)Aa1!"
+ORIG2_PASS="$(rand_hex 10)Aa1!"; DEST2_PASS="$(rand_hex 10)Aa1!"
+creado "buzon origen1@acme.test (origen de la migracion)" POST /mailboxes "{\"local_part\":\"origen1\",\"domain\":\"acme.test\",\"password\":\"$ORIG1_PASS\"}"
+creado "buzon destino1@acme.test" POST /mailboxes "{\"local_part\":\"destino1\",\"domain\":\"acme.test\",\"password\":\"$DEST1_PASS\"}"
+DEST1_ID=$(echo "$API_BODY" | jget data.id)
+creado "buzon origen2@acme.test (origen con un mensaje con virus)" POST /mailboxes "{\"local_part\":\"origen2\",\"domain\":\"acme.test\",\"password\":\"$ORIG2_PASS\"}"
+creado "buzon destino2@acme.test" POST /mailboxes "{\"local_part\":\"destino2\",\"domain\":\"acme.test\",\"password\":\"$DEST2_PASS\"}"
+DEST2_ID=$(echo "$API_BODY" | jget data.id)
+for n in uno dos; do
+  contains "correo real para origen1 ($n)" "$(cliente enviar ana@acme.test "$ANA_PASS" ana@acme.test origen1@acme.test "$MIG-$n")" "OK 250"
+done
+contains "y para origen2 (mensaje limpio)" "$(cliente enviar ana@acme.test "$ANA_PASS" ana@acme.test origen2@acme.test "$MIG-limpio")" "OK 250"
+# El mensaje con virus entra por doveadm y no por SMTP: Rspamd lo rechazaria al final de DATA.
+{
+  printf 'From: ana@acme.test\r\nTo: origen2@acme.test\r\nSubject: %s-virus\r\nMessage-ID: <%s-virus@acme.test>\r\nDate: Mon, 21 Sep 2026 10:00:00 +0000\r\nContent-Type: text/plain\r\n\r\n' "$MIG" "$MIG"
+  cat "$WORK/eicar.com"
+  printf '\r\n'
+} | en dovecot-mail doveadm save -u origen2@acme.test -m INBOX >/dev/null 2>&1 && ok "mensaje con EICAR guardado en origen2 (el origen no pasa por Rspamd)" || mal "doveadm save del mensaje con EICAR en origen2"
+for par in "origen1@acme.test:$ORIG1_PASS:$MIG-uno" "origen1@acme.test:$ORIG1_PASS:$MIG-dos" "origen2@acme.test:$ORIG2_PASS:$MIG-limpio" "origen2@acme.test:$ORIG2_PASS:$MIG-virus"; do
+  IFS=: read -r bz clave asunto <<<"$par"
+  contains "el origen tiene $asunto" "$(cliente buscar "$bz" "$clave" "$asunto" --espera 30)" "OK 1"
+done
+
+migrar() { # migrar <id del buzon destino> <usuario de origen> <contrasena de origen>: crea el trabajo y deja su id en MIG_JOB
+  api POST /mail-migration/jobs "{\"mailbox_id\":\"$1\",\"source_host\":\"$MIGRATION_DOVECOT_IP\",\"source_port\":993,\"source_tls\":\"ssl\",\"source_username\":\"$2\",\"source_password\":\"$3\"}"
+  MIG_JOB=$(echo "$API_BODY" | jget data.id)
+}
+terminado() { api GET "/mail-migration/jobs/$1"; [[ "$(echo "$API_BODY" | jget data.status)" =~ ^(succeeded|failed|cancelled)$ ]]; }
+
+migrar "$DEST1_ID" origen1@acme.test "$ORIG1_PASS"
+expect "el trabajo se crea (201) pendiente" "$API_CODE/$(echo "$API_BODY" | jget data.status)" "201/pending"
+lacks "y su respuesta no lleva la contrasena de origen" "$API_BODY" "$ORIG1_PASS"
+esperar "el trabajo 1 termina (reclamo, dos pasadas de imapsync, cierre)" 240 terminado "$MIG_JOB"
+expect "trabajo 1: correcto" "$(echo "$API_BODY" | jget data.status)" "succeeded"
+expect "sin error" "$(echo "$API_BODY" | jget data.last_error.code)" ""
+expect "copio los dos mensajes" "$(echo "$API_BODY" | jget data.progress.messages_copied)" "2"
+expect "ninguno fallido" "$(echo "$API_BODY" | jget data.progress.messages_failed)" "0"
+expect "con sus bytes" "$([[ "$(echo "$API_BODY" | jget data.progress.bytes_copied)" -gt 0 ]] && echo si)" "si"
+lacks "el trabajo terminado tampoco expone la contrasena" "$API_BODY" "$ORIG1_PASS"
+for n in uno dos; do
+  contains "el buzon destino recibio $n" "$(cliente buscar destino1@acme.test "$DEST1_PASS" "$MIG-$n" --espera 10)" "OK 1"
+done
+
+migrar "$DEST1_ID" origen1@acme.test "$ORIG1_PASS"
+esperar "repetir el trabajo termina" 240 terminado "$MIG_JOB"
+expect "repetirlo es idempotente: correcto" "$(echo "$API_BODY" | jget data.status)" "succeeded"
+expect "sin copiar nada de nuevo" "$(echo "$API_BODY" | jget data.progress.messages_copied)" "0"
+expect "y sin duplicar correo en el destino" "$(cliente buscar destino1@acme.test "$DEST1_PASS" "$MIG-uno" | head -1)" "OK 1"
+
+migrar "$DEST1_ID" origen1@acme.test "no-$ORIG1_PASS"
+esperar "un trabajo con la contrasena de origen equivocada termina" 240 terminado "$MIG_JOB"
+expect "falla por autenticacion de origen" "$(echo "$API_BODY" | jget data.status)/$(echo "$API_BODY" | jget data.last_error.code)" "failed/source_auth_failed"
+lacks "sin contrasenas en el error" "$API_BODY" "$ORIG1_PASS"
+
+migrar "$DEST2_ID" origen2@acme.test "$ORIG2_PASS"
+esperar "el trabajo del origen con virus termina" 240 terminado "$MIG_JOB"
+expect "falla por virus (virus_found)" "$(echo "$API_BODY" | jget data.status)/$(echo "$API_BODY" | jget data.last_error.code)" "failed/virus_found"
+expect "copio el mensaje limpio" "$(echo "$API_BODY" | jget data.progress.messages_copied)" "1"
+expect "y cuenta el infectado como fallido" "$(echo "$API_BODY" | jget data.progress.messages_failed)" "1"
+lacks "el error no lleva contenido del correo" "$(echo "$API_BODY" | jget data.last_error.message)" "$MIG"
+contains "el destino tiene el mensaje limpio" "$(cliente buscar destino2@acme.test "$DEST2_PASS" "$MIG-limpio" --espera 10)" "OK 1"
+lacks "y no el que tenia virus (ClamAV antes de guardar)" "$(cliente buscar destino2@acme.test "$DEST2_PASS" "$MIG-virus" --espera 3)" "OK"
+contains "el origen conserva el mensaje con virus: la migracion no borra nada del origen" \
+  "$(cliente buscar origen2@acme.test "$ORIG2_PASS" "$MIG-virus" --espera 3)" "OK 1"
+contains "y el limpio" "$(cliente buscar origen2@acme.test "$ORIG2_PASS" "$MIG-limpio" --espera 3)" "OK 1"
+
+api GET "/mail-migration/jobs?mailbox_id=$DEST1_ID"
+expect "el historial del buzon lista sus tres trabajos" \
+  "$(echo "$API_BODY" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["data"]))' 2>/dev/null)" "3"
+expect "ningun trabajo activo queda en la empresa" \
+  "$(sql mail_tenant_acme "SELECT count(*) FROM mail_migration.jobs WHERE status IN ('pending', 'running')")" "0"
+expect "la contrasena de origen ya no esta en la base de la empresa (source_password_enc nulo en todo trabajo terminado)" \
+  "$(sql mail_tenant_acme "SELECT count(*) FROM mail_migration.jobs WHERE status IN ('succeeded', 'failed', 'cancelled') AND source_password_enc IS NOT NULL")" "0"
+expect "ni en ninguna otra columna" \
+  "$(sql mail_tenant_acme "SELECT count(*) FROM mail_migration.jobs j WHERE j::text LIKE '%$ORIG1_PASS%' OR j::text LIKE '%$ORIG2_PASS%'")" "0"
+expect "el ejecutor no deja ficheros de trabajo ni contrasenas en su directorio efimero" \
+  "$(docker exec "$RUNNER" ls -A /run/migration 2>&1)" ".alive"
+lacks "ni la contrasena de origen en el registro del ejecutor" "$(docker logs "$RUNNER" 2>&1)" "$ORIG1_PASS"
+lacks "ni la del usuario maestro de la migracion" "$(docker logs "$RUNNER" 2>&1)" "$MIGRATION_MASTER_PASS"
+
 echo "== Rotacion y revocacion de la clave DKIM (domain-service -> mail-security -> redis-mail)"
 # Una rotacion programada deposita la clave nueva y sigue firmando con la anterior. Revocar por
 # compromiso entrega solo una clave nueva y mail-security retira las demas en esa misma llamada: al
@@ -1100,12 +1249,14 @@ for s in mail-directory mail-auth mail-security webmail; do
   errores=$(docker logs "$(c "$s")" 2>&1 | grep '"level":"error"' | grep -v 'aviso de cuarentena desactivado')
   [[ -z "$errores" ]] && ok "$s sin errores en su registro" || { mal "errores en $s"; head -3 <<<"$errores" >&2; }
 done
+errores=$(docker logs "$(c mail-migration-runner)" 2>&1 | grep '"level":"ERROR"')
+[[ -z "$errores" ]] && ok "el ejecutor de migracion sin errores en su registro" || { mal "errores en el ejecutor de migracion"; head -3 <<<"$errores" >&2; }
 errores=$(docker logs "$(c postfix-mail)" 2>&1 | grep -E 'fatal:|panic:|pgsql.*(error|failed)')
 [[ -z "$errores" ]] && ok "Postfix sin fatal ni errores de pgsql" || { mal "Postfix"; head -3 <<<"$errores" >&2; }
 # El maestro sobre nadie@ es una comprobacion de arriba y Dovecot la registra como error.
 errores=$(docker logs "$(c dovecot-mail)" 2>&1 | grep -E 'Fatal:|Panic:|auth.*Error' | grep -v 'nadie@acme.test')
 [[ -z "$errores" ]] && ok "Dovecot sin Fatal ni errores de autenticacion" || { mal "Dovecot"; head -3 <<<"$errores" >&2; }
-for s in unbound-mail redis-mail clamd-mail rspamd-mail dovecot-mail postfix-mail postfix-tlspol-mail olefy-mail mail-directory mail-auth mail-security webmail; do
+for s in unbound-mail redis-mail clamd-mail rspamd-mail dovecot-mail postfix-mail postfix-tlspol-mail olefy-mail mail-directory mail-auth mail-security webmail mail-migration-runner; do
   reinicios=$(docker inspect -f '{{.RestartCount}}' "$(c "$s")" 2>/dev/null)
   [[ "$reinicios" == 0 ]] || mal "$s se reinicio ($reinicios veces)"
 done

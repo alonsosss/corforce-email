@@ -9,7 +9,7 @@ implementas algo marcado P, muevelo a V en la misma tarea.
 |---|---|---|---|---|
 | Registro | `mail_registry` (una) | identity, access-control, organization, billing; el gateway indirectamente | empresas, celdas, usuarios, sesiones, roles, permisos, catalogo de modulos, planes, suscripciones y contadores de consumo | `migrations/registry/` |
 | Celda | `mail_cell_<code>` (una por celda) | Postfix, Dovecot, Rspamd via `mail-auth`/`mail-policy`; mail-directory, mail-security | directorio de correo (`mail`), politicas antispam y cuarentena (`mail_security`) | `migrations/cell/canonical/<svc>/` |
-| Empresa | `mail_tenant_<slug>` (una por empresa) | el resto de servicios | auditoria, scheduler, dominios y claves DKIM (`domains`), contactos, campanas, plantillas, envios, supresion | `migrations/tenant/canonical/<svc>/` |
+| Empresa | `mail_tenant_<slug>` (una por empresa) | el resto de servicios | auditoria, scheduler, dominios y claves DKIM (`domains`), trabajos de migracion de buzones (`mail_migration`), contactos, campanas, plantillas, envios, supresion | `migrations/tenant/canonical/<svc>/` |
 
 Las tres bases llevan además el esquema `platform` con `event_outbox` (`pkg/outbox`).
 
@@ -513,6 +513,56 @@ evento con reentrada, `once` sin ella), la reserva `lease_token`/`lease_until` q
 en `running` y `finished_at` que solo existe en los terminales (CHECK), indice parcial de las
 debidas y de las fallidas por flujo; `automations.processed_events` para la deduplicacion por
 id de evento, podada a los 30 dias.
+
+### 4.1 Migracion de buzones: `mail_migration` (V, 2026-09-21)
+
+`mail-migration` guarda en la base de cada empresa los trabajos que copian un buzon desde otro
+proveedor por IMAP (`docs/adr/0002-migracion-de-buzones-con-imapsync.md`). El buzon vive en la celda
+(`mail.mailboxes`) y este esquema no lo lee: guarda su `mailbox_id` y el nombre con el que entra,
+tal como los devolvio `mail-directory` al lanzar el trabajo (`GET /internal/mail-directory/mailboxes/{id}`,
+solo servicios, por la instancia de la celda de la empresa con `tenantcell.Caller`).
+
+* `mail_migration.jobs` (`migrations/tenant/canonical/mail-migration/01_mail_migration.sql`): destino,
+  origen (servidor, puerto, modo TLS, usuario), `source_password_enc` (AES-256-GCM con
+  `MAIL_ENCRYPTION_KEY`), `status` (`pending|running|succeeded|failed|cancelled`), `phase`
+  (`initial|catchup`), `progress` en `jsonb` (totales y detalle por carpeta), `attempt`, ultimo error
+  (`last_error_code` y `last_error_message` saneado, 300 caracteres), quien lo lanzo, el `lease_id` y su
+  vencimiento (el ejecutor que lo tiene), latido, `cancel_requested_at` y fechas.
+* La credencial de origen NUNCA sobrevive a un estado final: `jobs_credential_check` obliga a que
+  `source_password_enc` sea NULL fuera de `pending` y `running`, y todo cierre (resultado del ejecutor,
+  cancelacion de uno pendiente, lease vencido sin intentos, credencial ilegible) la pone a NULL en la misma
+  sentencia que cambia el estado. Tampoco sale por la API (`jobDTO` no la tiene), ni por los eventos, ni
+  por el registro de `zap`. Solo la recibe el ejecutor, en la respuesta de `POST /v1/claim`, una vez por
+  reclamacion. `jobs_finished_check` liga estado final y `finished_at`, y `jobs_lease_check` liga
+  `running` y lease.
+* Un solo trabajo activo por buzon (`uq_mail_migration_jobs_one_active_per_mailbox`, indice unico
+  parcial) y un tope de trabajos activos por empresa (`MAIL_MIGRATION_MAX_ACTIVE_PER_TENANT`, 2 por
+  defecto), comprobado dentro de la transaccion del alta con un cerrojo consultivo por empresa
+  (`pg_advisory_xact_lock`, seguro tras PgBouncer en modo transaccion). No existe todavia un derecho de
+  `billing` para migraciones (P: `billing.plan_limits` admite hoy siete recursos fijos, sin este).
+* Reclamo del ejecutor: `WITH candidate AS (SELECT ... FOR UPDATE SKIP LOCKED LIMIT 1) UPDATE ... RETURNING`,
+  una sentencia atomica por empresa; un lease vencido con intentos por debajo de
+  `MAIL_MIGRATION_MAX_ATTEMPTS` vuelve a ser reclamable, y uno sin intentos o con la cancelacion pedida
+  se cierra (`runner_lost` o `cancelled`) en el siguiente reclamo. El ejecutor no conoce empresas, y
+  este es un servicio de empresa que abre una base por empresa: `mail-migration` prueba primero las empresas
+  con trabajo conocido en esa instancia (las que acaban de crear uno) y, si no hay ninguno, recorre las
+  empresas activas (`TenantDB.ForEachActiveTenant`) como mucho cada `MAIL_MIGRATION_SWEEP_INTERVAL`
+  (30 s), de modo que el coste de un reclamo sin trabajo no crece con el numero de empresas y un trabajo
+  creado por otra instancia o con el lease vencido se encuentra en ese intervalo.
+* Rol de servicio: `mail_migration_service` (grupo NOLOGIN, `02_service_role.sql`: DML sobre su esquema y
+  la outbox, sin DDL) y su login `mail_svc_mail_migration` con `MAIL_MIGRATION_DB_PASSWORD?` del almacen
+  de bases (`ops/db/service-credentials.json`).
+* Eventos por la outbox de la empresa, stream `MIGRATION`: `migration.job.created|started|
+  cancel_requested|completed|failed|cancelled` (`docs/arquitectura/EVENT-CONTRACTS.md`), con
+  `UserID` de quien lo lanzo o cancelo; `audit` los recoge con `AUDIT_SUBJECTS` (`migration.>`). Llevan el
+  servidor de origen y los contadores, nunca la contrasena ni el usuario de la cuenta de origen.
+* Probado (integracion contra Postgres 16, `IT_PACKAGES='./services/mail-migration/...' make test-integration`):
+  las migraciones aplican dos veces; el reclamo con 16 ejecutores concurrentes entrega cada trabajo
+  una sola vez; el limite aguanta 12 altas simultaneas; la credencial es NULL tras cada estado final y la
+  base rechaza un estado final que la conserve; una empresa no ve, lista, cuenta, reclama, cancela, da
+  latido ni cierra el trabajo de otra; lease ajeno, vencido, reintentos y agotamiento; el rol de servicio
+  solo alcanza su esquema y su outbox; y el recorrido completo con cifrado real (la columna no contiene la
+  contrasena, el ejecutor la recibe descifrada, al cerrar no queda rastro y el mensaje de error la retira).
 
 ## 5. Enrutado por peticion y por celda (V)
 
@@ -1165,6 +1215,8 @@ Pendiente (P):
 | Una peticion con sesion a un servicio de celda solo llega a la instancia de la celda de su empresa; sin celda resoluble o sin instancia declarada no sale hacia ninguna (5.4) | V (2026-09-13; con `GATEWAY_BASE_CELL_CODE`) |
 | Una instancia de celda solo atiende a las empresas de su celda aunque le lleguen de otra (gateway mal configurado, llamada de servicio a la instancia equivocada): pregunta a organization y rechaza con 403 antes de cualquier ruta, sin escribir nada; con organization caido solo las ya comprobadas (5.4) | V (2026-09-13, `mail-directory` y `mail-security`; el webmail no la necesita, 5.5) |
 | Un operador de la plataforma solo alcanza otra celda nombrandola (`X-Target-Cell`): el gateway lo acepta solo del superadmin y hacia una celda con instancia, sin volver nunca a la de su empresa; la instancia solo le atiende rutas de plataforma declaradas, nunca datos de una empresa, y cada peticion queda auditada con la celda (5.4) | V (2026-09-13; rutas de plataforma: el cortafuegos de `mail-security`) |
+| La contrasena de origen de una migracion se guarda cifrada solo mientras el trabajo esta pendiente o en curso, y la base misma impide un estado final que la conserve; nunca sale por la API, los eventos ni el registro (4.1) | V (2026-09-21) |
+| El ejecutor de migraciones no tiene acceso a la base, a Redis ni a NATS: vive en una red docker con Dovecot, clamd y `mail-migration`, pide trabajo por HTTP con su propia clave y solo sale a Internet hacia servidores de origen publicos (`deploy/mail/README.md`) | V (2026-09-21; sin probar con un proveedor real) |
 | Un servicio del plano de empresa (`domain-service`) solo escribe en la instancia de la celda de la empresa: sin celda resuelta o sin instancia declarada no llama a ninguna, y el 403 `TENANT_NOT_IN_CELL` es un fallo que se reintenta, nunca un exito (5.4) | V (2026-09-13) |
 | El webmail de un buzon se sirve en la celda de su dominio: el gateway lleva el inicio de sesion por el dominio del buzon y el resto por la celda del token, y cada instancia solo acepta tokens de su celda; un dominio desconocido responde como una contrasena mala (5.5) | V (2026-09-13; con `GATEWAY_BASE_CELL_CODE` y `WEBMAIL_CELL_HOSTS`) |
 | Un dominio de correo solo esta activo en una empresa y una celda: se reclama en el indice global de organization antes de activarlo y se suelta despues de desactivarlo (5.5) | V (2026-09-13) |

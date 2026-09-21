@@ -29,6 +29,7 @@ esta en `UPSTREAM.md`; `upstream-manifest.tsv` es su version legible por maquina
 | `acme/` | Cliente Let's Encrypt (HTTP-01 o DNS-01) | `data/Dockerfiles/acme` |
 | `dockerapi/` | API HTTPS interna para reiniciar contenedores y ejecutar tareas (doveadm, mailq) | `data/Dockerfiles/dockerapi` |
 | `watchdog/` | Vigilante de salud con reinicio automatico y notificaciones | `data/Dockerfiles/watchdog` |
+| `migration-runner/` | Ejecutor de la migracion de buzones: envoltorio Go y imapsync (seccion "Migracion de buzones") | nuevo |
 | `redis/redis-conf.sh` | Arranque de Redis con `requirepass` y el usuario ACL `quota_notify` | `data/conf/redis` |
 | `ssl-example/` | Certificado snake-oil inicial y `dhparams.pem` | `data/assets/ssl-example` |
 | `templates/quota.tpl` | Plantilla Jinja del aviso de cuota | `data/assets/templates` |
@@ -60,7 +61,8 @@ No se copiaron: `data/web`, sogo, phpfpm, nginx, mysql, `dynmaps/*.php`,
   (regex 8 y 9). El usuario maestro de Dovecot se conserva bajo
   `@platform.local`: lo usa el webmail (seccion "Webmail") y solo existe si se definen
   `DOVECOT_MASTER_USER`/`DOVECOT_MASTER_PASS`; sin ellas es aleatorio.
-* **Eliminado tambien:** imapsync (scripts, cron, dependencias Perl), la tabla
+* **Eliminado tambien:** imapsync (scripts, cron, dependencias Perl; vuelve como servicio propio en
+  `migration-runner/`, seccion "Migracion de buzones"), la tabla
   `versions`/GUID, `quarantine_notify.py`, la regla `PUSHOVERMAIL` y el selector
   `mailcow_rcpt` de `metadata_exporter.conf`, los checks de nginx, mysql,
   mysql_repl, phpfpm, sogo y `external_checks` del watchdog, los handlers
@@ -122,7 +124,7 @@ Comunes a casi todos: `TZ`, `LOG_LINES`, `IPV4_NETWORK` (por defecto `172.22.1`)
 | Contenedor | Variables propias |
 |---|---|
 | `postfix-mail` | `MAIL_HOSTNAME`, `MAIL_DB_HOST`, `MAIL_DB_PORT`, `MAIL_DB_NAME`, `MAIL_DB_USER`, `MAIL_DB_PASSWORD`, `MAIL_POLICY_HOST`, `SKIP_LETS_ENCRYPT`, `SPAMHAUS_DQS_KEY`, `SPAMHAUS_ASN_CHECK_URL` |
-| `dovecot-mail` | `MAIL_HOSTNAME`, `MAIL_DB_*`, `MAIL_AUTH_URL`, `DOVECOT_MASTER_USER`, `DOVECOT_MASTER_PASS`, `DOVECOT_MASTER_ALLOWED_NETS`, `DOVEADM_API_KEY`, `MAIL_REPLICA_IP`, `DOVEADM_REPLICA_PORT`, `MAILDIR_GC_TIME`, `ACL_ANYONE`, `SKIP_FTS`, `FTS_HEAP`, `FTS_PROCS`, `MAILDIR_SUB`, `MASTER`, `COMPOSE_PROJECT_NAME` |
+| `dovecot-mail` | `MAIL_HOSTNAME`, `MAIL_DB_*`, `MAIL_AUTH_URL`, `DOVECOT_MASTER_USER`, `DOVECOT_MASTER_PASS`, `DOVECOT_MASTER_ALLOWED_NETS`, `DOVECOT_MIGRATION_MASTER_USER`, `DOVECOT_MIGRATION_MASTER_PASS`, `DOVECOT_MIGRATION_MASTER_ALLOWED_NETS`, `MAIL_MIGRATION_IPV4_NETWORK`, `DOVEADM_API_KEY`, `MAIL_REPLICA_IP`, `DOVEADM_REPLICA_PORT`, `MAILDIR_GC_TIME`, `ACL_ANYONE`, `SKIP_FTS`, `FTS_HEAP`, `FTS_PROCS`, `MAILDIR_SUB`, `MASTER`, `COMPOSE_PROJECT_NAME` |
 | `rspamd-mail` | `MAIL_POLICY_HOST`, `SPAMHAUS_DQS_KEY`, `SKIP_OLEFY` |
 | `acme-mail` | `MAIL_HOSTNAME`, `MAIL_DB_*`, `ADDITIONAL_SAN`, `AUTODISCOVER_SAN`, `SKIP_LETS_ENCRYPT`, `DIRECTORY_URL`, `ENABLE_SSL_SNI`, `SKIP_IP_CHECK`, `SKIP_HTTP_VERIFICATION`, `ONLY_MAIL_HOSTNAME`, `LE_STAGING`, `SNAT_TO_SOURCE`, `SNAT6_TO_SOURCE`, `ACME_DNS_CHALLENGE`, `ACME_DNS_PROVIDER`, `ACME_ACCOUNT_EMAIL`, `COMPOSE_PROJECT_NAME` |
 | `watchdog-mail` | `MAIL_HOSTNAME`, `USE_WATCHDOG`, `WATCHDOG_NOTIFY_EMAIL`, `WATCHDOG_NOTIFY_BAN`, `WATCHDOG_NOTIFY_START`, `WATCHDOG_SUBJECT`, `WATCHDOG_NOTIFY_WEBHOOK`, `WATCHDOG_NOTIFY_WEBHOOK_BODY`, `WATCHDOG_VERBOSE`, `IP_BY_DOCKER_API`, `CHECK_UNBOUND`, `SKIP_CLAMD`, `SKIP_OLEFY`, `SKIP_LETS_ENCRYPT`, `*_THRESHOLD`, `MAILQ_CRIT`, `DEV_MODE`, `COMPOSE_PROJECT_NAME` |
@@ -131,6 +133,7 @@ Comunes a casi todos: `TZ`, `LOG_LINES`, `IPV4_NETWORK` (por defecto `172.22.1`)
 | `redis-mail` | `MAIL_REDIS_PASSWORD`, `MAIL_REDIS_MASTER_PASSWORD` |
 | `clamd-mail` | `SKIP_CLAMD` |
 | `olefy-mail` | `OLEFY_*`, `SKIP_OLEFY` |
+| `mail-migration-runner` | `ENVIRONMENT`, `MIGRATION_API_URL`, `MAIL_MIGRATION_RUNNER_KEY`, `MIGRATION_RUNNER_ID`, `MIGRATION_DEST_HOST`, `MIGRATION_DEST_PORT`, `MAIL_HOSTNAME` (nombre TLS del destino), `DOVECOT_MIGRATION_MASTER_USER`, `DOVECOT_MIGRATION_MASTER_PASS`, `MIGRATION_CLAMD_ADDR`, `MIGRATION_ALLOW_UNSCANNED`, `MIGRATION_JOB_TIMEOUT`, `MIGRATION_POLL_INTERVAL` |
 | `unbound-mail` | `SKIP_UNBOUND_HEALTHCHECK` |
 | `dockerapi-mail` | solo las comunes de Redis |
 
@@ -159,6 +162,10 @@ Red `mail-engines` (`${IPV4_NETWORK}.0/24`, bridge `br-mail`): unbound `.254`,
 redis `.249`, dovecot `.250`, postfix `.253`; rspamd con `hostname: rspamd`.
 `netfilter-mail` corre en `network_mode: host` y aisla los puertos 3306, 6379,
 8983 y 12345 del bridge salvo para `MAIL_REPLICA_IP`.
+
+Red `mail-migration` (`${MAIL_MIGRATION_IPV4_NETWORK}.0/24`, por defecto `172.22.2`, bridge `br-mail-migr`): dovecot
+(alias `dovecot`), clamd (alias `clamd`), `mail-migration-runner` y, desde el compose de la plataforma,
+`mail-migration`. Es la unica red del ejecutor de migracion (seccion "Migracion de buzones").
 
 Publicados: 25 (SMTP), 465 (SMTPS), 587 (submission), 143/993 (IMAP), 110/995
 (POP3), 4190 (ManageSieve). Internos: postfix 588 (submission interna sin TLS
@@ -562,6 +569,97 @@ dominios y dominios alias activos e inactivos, `sender_acl` concreta, `@dominio`
 `mail_engine` puede llamarla y que `mail_app` no puede enumerar remitentes
 (`services/mail-directory/internal/adapters/postgres/sender_identities_integration_test.go`).
 
+## Migracion de buzones (ejecutor `mail-migration-runner`)
+
+Un cliente con correo en otro proveedor entra sin perder su historial: `mail-migration` (servicio Go de la
+plataforma, base de la empresa) guarda los trabajos y `mail-migration-runner` copia el correo con imapsync
+hacia Dovecot. Decision y controles: `docs/adr/0002-migracion-de-buzones-con-imapsync.md`. Aqui, lo que el
+ejecutor hace y lo que hay que operar.
+
+* **Contenedor** (`migration-runner/`, `Dockerfile` multi-etapa): un binario Go de biblioteca estandar (sin
+  dependencias, sin shell, sin base de datos, Redis ni NATS; `ops/scaffold/check-migration-runner.sh` lo
+  vigila) mas imapsync de Alpine 3.23 (community, serie **2.314** fijada; en Debian y Ubuntu ese paquete no
+  existe). Usuario 10001, `read_only`, `cap_drop: ALL`, `no-new-privileges`, `pids_limit`, memoria y CPU
+  acotadas, sin puertos publicados, `ulimit core=0`. Los ficheros de trabajo van en el tmpfs
+  `/run/migration` (0700, `noexec`).
+* **Red.** Solo la red `mail-migration` (`MAIL_MIGRATION_NETWORK`, subred `MAIL_MIGRATION_IPV4_NETWORK`.0/24,
+  bridge `br-mail-migr`), que crea `docker-compose.mail.yml`. Sus miembros: el ejecutor, Dovecot (alias
+  `dovecot`), clamd (alias `clamd`) y `mail-migration` (lo une el compose de la plataforma, que la declara
+  `external`). El ejecutor NO esta en `mail-engines` ni en la red de la plataforma: no ve Postfix, Redis,
+  mail-auth, mail-policy ni la base. Sale a Internet por NAT hacia los IMAP de origen. Dentro de esa red
+  Dovecot expone todos sus puertos, no solo el 993: **regla recomendada en el host**, en `DOCKER-USER`,
+  para que el ejecutor solo pueda llegar a Dovecot por 993, a clamd por 3310 y a `mail-migration` por 8057,
+  y no a las redes privadas ni al metadata del proveedor (`br-mail-migr`; la guarda de origen del
+  ejecutor ya rechaza esas direcciones, la regla es la segunda barrera). Esa regla no la pone este compose.
+* **Sin la clave no hace nada.** Sin `MAIL_MIGRATION_RUNNER_KEY` arranca, lo avisa por el registro, queda sano
+  y no reclama trabajos. Con la configuracion incompleta o incoherente (falta un dato, `MIGRATION_ALLOW_PRIVATE_SOURCES`
+  fuera de `development` y `test`, sin `MIGRATION_CLAMD_ADDR` y sin `MIGRATION_ALLOW_UNSCANNED=true`) tampoco
+  reclama, y queda no sano para que se vea, sin reiniciarse en bucle. El registro dice cual es el dato.
+* **Usuario maestro propio.** Dovecot admite un segundo usuario maestro, `DOVECOT_MIGRATION_MASTER_USER` y
+  `DOVECOT_MIGRATION_MASTER_PASS` (32 caracteres o mas, usuario `[a-z0-9._-]`, distinto del del webmail, las dos
+  del almacen de secretos y las mismas en el ejecutor): el entrypoint anade su linea a
+  `dovecot-master.passwd` con `{SHA512-CRYPT}` y `allow_nets=` `DOVECOT_MIGRATION_MASTER_ALLOWED_NETS` (por
+  defecto `${MAIL_MIGRATION_IPV4_NETWORK}.0/24`, la red de la migracion) y su linea a `dovecot-master.userdb`.
+  El maestro del webmail no cambia y no entra por la red de la migracion, ni el de la migracion por la de los
+  motores. Sin las variables no se anade nada. El ejecutor entra al destino por IMAP con TLS implicito verificado
+  contra `MIGRATION_DEST_TLS_SERVER_NAME` (`MAIL_HOSTNAME`), con `<buzon>*<maestro>@platform.local`.
+* **Que ve y que no.** Ve, por trabajo, la contrasena del buzon de origen (la recibe una vez al reclamar), el
+  correo de ese buzon y el del destino. No ve la base, Redis, NATS, las claves de cifrado ni ninguna otra
+  credencial. La contrasena de origen y la del maestro llegan a imapsync por ficheros 0400 (`--passfile1/2`) en un
+  directorio de nombre aleatorio y 0700 del tmpfs; nunca por argumento ni entorno ni registro, y se borran al
+  terminar el trabajo, tambien si se mata a imapsync. imapsync corre con un entorno minimo explicito (no hereda
+  la clave del ejecutor ni ningun secreto), en su propio grupo de procesos y con `Pdeathsig`. De la salida de imapsync
+  solo se guardan contadores; el motivo de un fallo es uno de `source_auth_failed`, `source_unreachable`,
+  `source_blocked_address`, `source_tls_failed`, `destination_failed`, `quota_exceeded`, `timeout`,
+  `virus_found` o `imapsync_failed`, con un mensaje fijo.
+* **El origen es un servidor ajeno.** Antes de ejecutar nada, el ejecutor resuelve el host de origen y rechaza
+  cualquier direccion privada, loopback, de enlace local (incluido el metadata `169.254.169.254` y
+  `fd00:ec2::254`), CGNAT, multicast, no especificada, reservada o de documentacion, las IPv4 mapeadas en IPv6 y
+  las formas numericas ambiguas (`2130706433`, `0x7f000001`); una resolucion con una sola direccion no permitida
+  rechaza el trabajo. imapsync se conecta a la **IP ya resuelta y validada** (`--host1=<IP>`), de modo que una
+  segunda resolucion no puede cambiarla (DNS rebinding), y verifica el certificado contra el nombre que dio el
+  usuario (`SSL_verify_mode=1`, `SSL_verifycn_name`, SNI con `SSL_hostname`) con TLS 1.2 o mas; con una IP literal se
+  verifica contra la propia IP. No hay opcion para desactivar la verificacion. Solo con `ENVIRONMENT` en
+  `development` o `test`, `MIGRATION_ALLOW_PRIVATE_SOURCES=true` admite tambien lo privado (nunca lo no enrutable,
+  multicast ni el metadata); en cualquier otro entorno el ejecutor se niega a trabajar con esa variable.
+* **ClamAV.** El correo migrado entra por IMAP `APPEND`, que no pasa por Postfix ni por Rspamd: el ejecutor pasa
+  **cada mensaje** por `imapsync --pipemess`, que lanza `migration-runner scan-filter`. El filtro envia el mensaje
+  por INSTREAM a `MIGRATION_CLAMD_ADDR` (por defecto `clamd:3310`), lo devuelve intacto solo con `stream: OK` y en
+  cualquier otro caso (infectado, clamd caido o con una respuesta inesperada, mensaje mayor que
+  `MIGRATION_SCAN_MAX_BYTES`) sale con error: imapsync no copia el mensaje y no borra nada del origen. Falla
+  cerrado: sin clamd imapsync ni empieza (la comprobacion inicial de `--pipemess` falla) y, si clamd cae a
+  mitad, el ejecutor corta la pasada tras cinco mensajes sin analizar. Un mensaje rechazado deja el trabajo en
+  `failed` con `virus_found` y los contadores de lo que si se copio. Sin `MIGRATION_CLAMD_ADDR` el ejecutor se niega a
+  reclamar, salvo `MIGRATION_ALLOW_UNSCANNED=true`, que es una decision explicita del operador y queda en el
+  registro como aviso en cada arranque. imapsync ejecuta el filtro por un shell (necesita las redirecciones de
+  `--pipemess`); la linea es fija y la ruta del binario se valida.
+* **Dos pasadas y limites.** Cada trabajo reclamado corre `initial` y, si la primera llego al final del buzon
+  (con o sin mensajes rechazados), `catchup`, para lo que llego mientras copiaba; repetir un trabajo no duplica
+  correo (imapsync compara por `Message-ID`). El ejecutor late cada mitad del arrendamiento con contadores
+  (carpetas hechas y totales, mensajes copiados, omitidos y fallidos, bytes, por carpeta), respeta la cancelacion
+  del servicio, abandona sin cerrar ante `409 LEASE_LOST` (o si pasa un arrendamiento entero sin latido aceptado)
+  y cierra con reintentos y espera acotada. `MIGRATION_JOB_TIMEOUT` (24 h por pasada) mata el grupo de procesos.
+  Las lineas de salida de imapsync y los cuerpos de las respuestas de la API estan acotados.
+* **Variables** del ejecutor: `MIGRATION_API_URL` (por defecto `http://mail-migration:8057`),
+  `MAIL_MIGRATION_RUNNER_KEY`, `MIGRATION_RUNNER_ID`, `MIGRATION_DEST_HOST` (`dovecot`), `MIGRATION_DEST_PORT`
+  (993), `MIGRATION_DEST_TLS_SERVER_NAME` (`MAIL_HOSTNAME`), `DOVECOT_MIGRATION_MASTER_USER`,
+  `DOVECOT_MIGRATION_MASTER_PASS`, `MIGRATION_CLAMD_ADDR`, `MIGRATION_ALLOW_UNSCANNED` (false),
+  `MIGRATION_JOB_TIMEOUT` (24h), `MIGRATION_POLL_INTERVAL` (15s), `MIGRATION_SCAN_MAX_BYTES` (100 MiB, por debajo de
+  `StreamMaxLength` de clamd), `MIGRATION_SCAN_TIMEOUT` (5m), `ENVIRONMENT`. `MIGRATION_ALLOW_PRIVATE_SOURCES` no
+  esta en `docker-compose.mail.yml`: solo lo pone `docker-compose.e2e.yml`.
+* **Despliegue.** `scripts/deploy-mail.sh mail-migration-runner` (imagen `core-force-mail/mail-migration-runner:<commit>`);
+  Dovecot y clamd hay que recrearlos una vez para que se unan a la red. La red la crea el primer motor que la
+  usa y la plataforma la declara `external`: los motores se despliegan antes que `mail-migration`. Secretos
+  nuevos en el almacen: `MAIL_MIGRATION_RUNNER_KEY`, `DOVECOT_MIGRATION_MASTER_USER`, `DOVECOT_MIGRATION_MASTER_PASS`.
+* **Version de imapsync.** Alpine 3.23 community, `2.314-r0` en la construccion de 2026-09-21; el `Dockerfile` la
+  fija a la serie 2.314 (`imapsync~=2.314`) y comprueba `imapsync --version`. `ops/security/escanear-motores.sh` la
+  escanea con el resto de las imagenes (recorre `deploy/mail/*/Dockerfile`).
+* **Limites conocidos.** La verificacion del certificado usa el almacen de CA del sistema de la imagen, sin
+  anclaje de certificados por proveedor. IPv6 esta soportado por la guarda y por imapsync (IO::Socket::IP), pero
+  la prueba con imapsync real fue solo con IPv4 y con una IP literal. OAuth2 (Gmail y Microsoft 365 con
+  autenticacion moderna) queda fuera de la primera version (ADR 0002). Un buzon con mensajes mayores que
+  `MIGRATION_SCAN_MAX_BYTES` los deja sin copiar y sin analizar, y el trabajo termina en `failed`.
+
 ## Contrato HTTP de `mail-policy`
 
 Lo sirve el servicio Go `mail-security` (`services/mail-security`): sus listeners 8081 y
@@ -848,6 +946,11 @@ Como se monta:
   domain-service. El directorio se maneja como `tenant_admin`, que `pkg/authz` no consulta en
   access-control (rol del sistema); un usuario con rol de empresa necesitaria que
   access-control sea alcanzable desde la red de la celda.
+* **Migracion de buzones**: `mail-migration` corre como binario del host (con `MAIL_MIGRATION_RUNNER_KEY` solo en
+  su entorno) y `mail-migration-runner`, con imapsync real, en la red `E2E_MIGRATION_NETWORK` (subred
+  `E2E_MAIL_MIGRATION_IPV4_NETWORK`, por defecto `172.30.30`); llega a la API del ejecutor por
+  `host.docker.internal`. Dovecot lleva en esa red una IP fija (`.250`) que es tambien un SAN del certificado de
+  la prueba.
 
 Que comprueba: los 18 mapas pgsql con `postmap -q` (valor esperado o sin resultado, y que no
 quede un mapa generado sin comprobacion), en particular `smtpd_sender_login_maps` sobre
@@ -870,7 +973,11 @@ gateway (sesion, carpetas, identidades frente a Postfix, envio idempotente, lect
 destinatario, Enviados, remitente ajeno, EICAR, cierre de sesion); la revocacion en Dovecot
 (el API de doveadm con su clave y sus ordenes permitidas; un buzon que acaba de entrar y se apaga,
 cambia de contrasena o cae con la baja de su empresa se rechaza al momento y pierde su sesion
-IMAP; un cambio de nombre no la cierra); y registros sin errores ni reinicios.
+IMAP; un cambio de nombre no la cierra); la migracion de buzones (el ejecutor aislado en su red y sin
+privilegios, las dos credenciales maestras acotadas cada una a su red, dos migraciones reales de un buzon a otro
+con imapsync, la repeticion sin duplicar, una contrasena de origen equivocada, un mensaje EICAR que ClamAV
+detiene sin tocar el origen, y que la contrasena de origen no queda en la base de la empresa ni en los registros);
+y registros sin errores ni reinicios.
 
 Diferencias con produccion (solo en `docker-compose.e2e.yml` y el entorno del script; ningun
 fichero de configuracion de los motores cambia para la prueba):
@@ -880,6 +987,7 @@ fichero de configuracion de los motores cambia para la prueba):
 | Certificado de una CA propia de la ejecucion en `/etc/ssl/mail` | Let's Encrypt por `acme-mail` | ACME necesita DNS publico y HTTP-01 hacia la maquina |
 | Sin `acme-mail`, `netfilter-mail`, `watchdog-mail` ni `dockerapi-mail` | Los cuatro | netfilter corre privilegiado en la red del host y reescribe su cortafuegos; dockerapi monta el socket de docker del host; watchdog vigila a los anteriores |
 | Ningun puerto de los motores en el host; IPv6 apagado; red y bridge propios | 25, 465, 587, 143/993, 110/995, 4190 publicados | La prueba habla desde dentro de la red (cliente IMAP/SMTP en `ops/e2e/mail_client.py`) |
+| El ejecutor de migracion con `ENVIRONMENT=test` y `MIGRATION_ALLOW_PRIVATE_SOURCES=true`, y la CA de la prueba como almacen de certificados | `ENVIRONMENT=production`, sin fuentes privadas, CA publicas | La prueba migra entre dos buzones del mismo Dovecot, que esta en una red privada que la guarda de origen rechaza en produccion; la verificacion del certificado sigue activa (contra la CA de la prueba) |
 | `SKIP_UNBOUND_HEALTHCHECK=y` | `n` | El chequeo hace ping a resolvers publicos y los runners de CI no dejan salir ICMP; la resolucion con DNSSEC se comprueba aparte |
 | Firmas de ClamAV en un volumen que sobrevive entre ejecuciones | Volumen del despliegue | freshclam actualiza por diferencias en vez de bajar la base entera cada vez (la CDN de ClamAV limita las descargas repetidas) |
 | DNS de `acme.test` servido por un Unbound de la prueba | DNS del cliente | El dominio de la prueba no existe en internet |

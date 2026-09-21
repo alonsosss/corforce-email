@@ -73,6 +73,12 @@ subject y payload. `opaco` = el payload no se puede leer estaticamente.
 | `mail.mailbox.updated` | mail-directory | `active`, `changed`, `domain`, `id`, `kind`, `tenant_id`, `username` |
 | `mail_security.quarantine.released` | mail-security | `id`, `rcpt`, `tenant_id`, `user_id` |
 | `mail_security.quarantine.stored` | mail-security | `id`, `qid`, `rcpt`, `score`, `sender`, `subject`, `tenant_id` |
+| `migration.job.cancel_requested` | mail-migration | `job_id`, `mailbox_id`, `status`, `tenant_id` |
+| `migration.job.cancelled` | mail-migration | `bytes_copied`, `error_code`, `folders_done`, `job_id`, `mailbox_id`, `messages_copied`, `messages_failed`, `messages_skipped`, `status`, `tenant_id` |
+| `migration.job.completed` | mail-migration | `bytes_copied`, `error_code`, `folders_done`, `job_id`, `mailbox_id`, `messages_copied`, `messages_failed`, `messages_skipped`, `status`, `tenant_id` |
+| `migration.job.created` | mail-migration | `job_id`, `mailbox_id`, `mailbox_username`, `source_host`, `source_port`, `source_tls`, `status`, `tenant_id` |
+| `migration.job.failed` | mail-migration | `bytes_copied`, `error_code`, `folders_done`, `job_id`, `mailbox_id`, `messages_copied`, `messages_failed`, `messages_skipped`, `status`, `tenant_id` |
+| `migration.job.started` | mail-migration | `attempt`, `job_id`, `mailbox_id`, `status`, `tenant_id` |
 | `organization.tenant.created` | organization | `cell_id`, `db_name`, `name`, `slug`, `status`, `tenant_id` |
 | `organization.tenant.modules_changed` | organization | `disabled`, `enabled`, `tenant_id` |
 | `organization.tenant.status_changed` | organization | `previous_status`, `slug`, `status`, `tenant_id` |

@@ -215,6 +215,10 @@ services:
       # visibles en 1.1.1.1 y la plataforma sin verlos). Sobrescribible con MAIL_DNS_RESOLVER.
       MAIL_DNS_RESOLVER: ${MAIL_DNS_RESOLVER:-1.1.1.1:53}
     volumes: *internal-ca
+  mail-migration:
+    restart: *reinicio
+    environment: *go-service-env
+    volumes: *internal-ca
   transactional:
     restart: *reinicio
     environment: *go-service-env

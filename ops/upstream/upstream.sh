@@ -31,7 +31,7 @@ MAPA="$SCRIPT_DIR/mapa.tsv"
 MANIFIESTO="$ROOT/deploy/mail/upstream-manifest.tsv"
 LIBRO="$ROOT/deploy/mail/UPSTREAM.md"
 REPO_MAILCOW="https://github.com/mailcow/mailcow-dockerized.git"
-CATEGORIAS="etiqueta nombres postgres sogo-php servicios-go cron tls endurecimiento arranque cola"
+CATEGORIAS="etiqueta nombres postgres sogo-php servicios-go cron tls endurecimiento arranque cola migracion"
 
 falla() { echo "upstream: $*" >&2; exit 1; }
 

@@ -13,7 +13,12 @@
 #   * fuera netfilter, acme, watchdog y dockerapi;
 #   * los servicios de celda que los motores llaman por nombre (mail-auth, mail-policy) y los
 #     que la prueba usa (mail-directory, webmail), con sus Dockerfile y publicados solo en
-#     127.0.0.1 para el plano de control, que corre en el host.
+#     127.0.0.1 para el plano de control, que corre en el host;
+#   * el ejecutor de migracion (mail-migration-runner) en su red propia. Aqui, Y SOLO AQUI, arranca con
+#     ENVIRONMENT=test y MIGRATION_ALLOW_PRIVATE_SOURCES=true: la prueba migra entre dos buzones del
+#     mismo Dovecot (el origen esta en una red privada, que la guarda de origen rechaza en
+#     produccion). Confia solo en la CA de la prueba y llega a mail-migration, que corre en el host,
+#     por host.docker.internal.
 #
 # Sin secretos: todos los valores llegan por el entorno de ops/e2e/mail.sh, generados en
 # cada ejecucion.
@@ -50,6 +55,12 @@ services:
     ports: !reset []
     volumes:
       - ${E2E_TLS_DIR:?lo fija ops/e2e/mail.sh}/mail:/etc/ssl/mail/:ro
+    networks:
+      # IP fija en la red de la migracion: el buzon de origen de la prueba se pide por esa IP (la API
+      # de mail-migration resuelve el origen desde el host, donde el nombre de la prueba no existe) y su
+      # certificado, que lleva esa IP como SAN, se verifica igual que el de cualquier otro origen.
+      mail-migration:
+        ipv4_address: ${MAIL_MIGRATION_IPV4_NETWORK:?lo fija ops/e2e/mail.sh}.250
 
   postfix-mail:
     ports: !reset []
@@ -157,6 +168,18 @@ services:
     networks:
       mail-engines: {}
 
+  mail-migration-runner:
+    environment:
+      - ENVIRONMENT=test
+      - MIGRATION_ALLOW_PRIVATE_SOURCES=true
+      - MIGRATION_API_URL=http://host.docker.internal:${E2E_PORT_MAIL_MIGRATION_RUNNER:?lo fija ops/e2e/mail.sh}
+      - MIGRATION_POLL_INTERVAL=1s
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      # La CA de la prueba sustituye al almacen del sistema: imapsync verifica con el los dos servidores.
+      - ${E2E_TLS_DIR:?lo fija ops/e2e/mail.sh}/ca.pem:/etc/ssl/certs/ca-certificates.crt:ro
+
 networks:
   mail-engines:
     name: ${E2E_MAIL_NETWORK:?lo fija ops/e2e/mail.sh}
@@ -166,6 +189,13 @@ networks:
     ipam:
       config: !override
         - subnet: ${IPV4_NETWORK:-172.22.1}.0/24
+  mail-migration:
+    name: ${E2E_MIGRATION_NETWORK:?lo fija ops/e2e/mail.sh}
+    driver_opts:
+      com.docker.network.bridge.name: ${E2E_MIGRATION_BRIDGE:?lo fija ops/e2e/mail.sh}
+    ipam:
+      config: !override
+        - subnet: ${MAIL_MIGRATION_IPV4_NETWORK:?lo fija ops/e2e/mail.sh}.0/24
 
 volumes:
   clamav-signatures:

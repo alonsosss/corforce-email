@@ -6,7 +6,7 @@ Convencion de subject: `<dominio>.<entidad>.<accion>`. Un subject tiene UN dueno
 Publicar incluye encolar en la outbox (`outbox.Enqueue`); un consumidor con comodin
 (`*`, `>`) figura en cada subject publicado que recibe.
 
-Resumen: 83 publicaciones, 37 suscripciones, 83 subjects distintos.
+Resumen: 89 publicaciones, 37 suscripciones, 89 subjects distintos.
 
 ## Cruce por subject (dueno -> consumidores)
 
@@ -73,6 +73,12 @@ Resumen: 83 publicaciones, 37 suscripciones, 83 subjects distintos.
 | `mail.mailbox.updated` | mail-directory | mail-security, webmail |
 | `mail_security.quarantine.released` | mail-security | - |
 | `mail_security.quarantine.stored` | mail-security | - |
+| `migration.job.cancel_requested` | mail-migration | - |
+| `migration.job.cancelled` | mail-migration | - |
+| `migration.job.completed` | mail-migration | - |
+| `migration.job.created` | mail-migration | - |
+| `migration.job.failed` | mail-migration | - |
+| `migration.job.started` | mail-migration | - |
 | `organization.tenant.created` | organization | billing |
 | `organization.tenant.modules_changed` | organization | - |
 | `organization.tenant.status_changed` | organization | billing |
@@ -135,6 +141,9 @@ Resumen: 83 publicaciones, 37 suscripciones, 83 subjects distintos.
 
 ### mail-directory
 - Publica: `mail.alias.created`, `mail.alias.deleted`, `mail.alias.updated`, `mail.alias_domain.created`, `mail.alias_domain.deleted`, `mail.alias_domain.updated`, `mail.domain.activated`, `mail.domain.created`, `mail.domain.deleted`, `mail.domain.updated`, `mail.mailbox.created`, `mail.mailbox.credentials_changed`, `mail.mailbox.deleted`, `mail.mailbox.updated`
+
+### mail-migration
+- Publica: `migration.job.cancel_requested`, `migration.job.cancelled`, `migration.job.completed`, `migration.job.created`, `migration.job.failed`, `migration.job.started`
 
 ### mail-security
 - Publica: `mail_security.quarantine.released`, `mail_security.quarantine.stored`

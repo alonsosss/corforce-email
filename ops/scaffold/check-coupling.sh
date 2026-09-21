@@ -17,7 +17,7 @@ ALLOW_W="$ROOT/ops/scaffold/coupling-writes-allowlist.txt"
 # Schemas conocidos (registro, celda y tenant), extraidos de migrations (CREATE SCHEMA).
 SCHEMAS="organization identity access_control audit scheduler mail mail_security \
 domains transactional templates suppression reputation contacts segments campaigns \
-automations analytics billing policy"
+automations analytics billing policy mail_migration"
 
 # Schemas que posee cada servicio. Los tres servicios del plano de control comparten la
 # base de registro pero cada uno posee solo su esquema: se leen entre si por las vistas

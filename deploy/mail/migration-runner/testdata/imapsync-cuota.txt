@@ -1,0 +1,207 @@
+Here is imapsync 2.314 /usr/bin/imapsync on host e2beb5e7d225, a linux system with 4.0/31.2 free GiB of RAM, 0.53% used by processes.
+with Perl 5.42.2 and Mail::IMAPClient 3.43
+Transfer started at Monday 21 September 2026-09-21 06:57:58 +0000 UTC
+PID is 9 my PPID is 1
+No log file because of option --nolog
+Load is 2.63 3.33 3.69 5/4979 on 12 cores
+Real user id is root (uid 0)
+Effective user id is root (euid 0)
+$RCSfile: imapsync,v $ $Revision: 2.314 $ $Date: 2025/09/23 16:55:17 $ 
+Command line used, run by perl:
+/usr/bin/imapsync --host1=172.27.0.2 --port1=993 --user1=alice@src.test --passfile1=/work/p1 --nosslcheck --ssl1 --notls1 --sslargs1=SSL_verify_mode=1 --sslargs1=SSL_version=SSLv23:!SSLv2:!SSLv3:!TLSv1:!TLSv1_1 --sslargs1=SSL_verifycn_name=imap.src.test --sslargs1=SSL_hostname=imap.src.test --sslargs1=SSL_ca_file=/certs/src.pem --host2=172.27.0.4 --port2=993 --user2=bob@dst.test*maestro@platform.local --passfile2=/work/p2 --ssl2 --notls2 --sslargs2=SSL_verify_mode=1 --sslargs2=SSL_version=SSLv23:!SSLv2:!SSLv3:!TLSv1:!TLSv1_1 --sslargs2=SSL_verifycn_name=mail.dst.test --sslargs2=SSL_hostname=mail.dst.test --sslargs2=SSL_ca_file=/certs/dst2.pem --nolog --noreleasecheck --noid --no-modulesversion --nofoldersizesatend --automap --addheader --errorsmax=500 --tmpdir=/work --pidfile=/work/imapsync.pid
+Current directory is /
+Temp directory is /work ( to change it use --tmpdir dirpath )
+Creating temp directory /work
+kill -QUIT 9 # special behavior: call to sub catch_exit
+kill -TERM 9 # special behavior: call to sub catch_exit
+kill -INT 9 # special behavior: call to sub catch_reconnect
+kill -HUP 9 # special behavior: call to sub catch_print
+kill -USR1 9 # special behavior: call to sub toggle_sleep
+Logging is off. To turn on logging, use --log
+File /work/imapsync.pid does not exist
+PID file is /work/imapsync.pid ( to change it, use --pidfile filepath ; to avoid it use --pidfile "" )
+Writing my PID 9 in /work/imapsync.pid
+Info: will resync flags for already transferred messages. Use --noresyncflags to not resync flags.
+SSL debug mode level is --debugssl 1 (can be set from 0 meaning no debug to 4 meaning max debug)
+Host1: SSL default mode is like --sslargs1 "SSL_verify_mode=0", meaning for host1 SSL_VERIFY_NONE, ie, do not check the server certificate.
+Host1: Use --sslargs1 SSL_verify_mode=1 to have SSL_VERIFY_PEER, ie, check the server certificate. of host1
+Host2: SSL default mode is like --sslargs2 "SSL_verify_mode=0", meaning for host2 SSL_VERIFY_NONE, ie, do not check the server certificate.
+Host2: Use --sslargs2 SSL_verify_mode=1 to have SSL_VERIFY_PEER, ie, check the server certificate. of host2
+Info: turned ON syncinternaldates, will set the internal dates (arrival dates) on host2 same as host1.
+Host1: will try to use LOGIN authentication on host1
+Host2: will try to use LOGIN authentication on host2
+Host1: imap connection timeout is 120 seconds
+Host2: imap connection timeout is 120 seconds
+Host1: imap connection keepalive is on on host1. Use --nokeepalive1 to disable it.
+Host2: imap connection keepalive is on on host2. Use --nokeepalive2 to disable it.
+Host1: IMAP server [172.27.0.2] port [993] user [alice@src.test]
+Host2: IMAP server [172.27.0.4] port [993] user [bob@dst.test*maestro@platform.local]
+Host1: connecting and login on host1 [172.27.0.2] port [993] with user [alice@src.test]
+Host1 IP address: 172.27.0.2 Local IP address: 172.27.0.5
+Host1 banner: * OK [CAPABILITY IMAP4rev1 SASL-IR LOGIN-REFERRALS ID ENABLE IDLE LITERAL+ AUTH=PLAIN AUTH=LOGIN] Dovecot ready.
+Host1 capability before authentication: IMAP4rev1 SASL-IR LOGIN-REFERRALS ID ENABLE IDLE LITERAL+ AUTH=PLAIN AUTH=LOGIN AUTH
+Host1: 172.27.0.2 says it has CAPABILITY for AUTHENTICATE LOGIN
+Host1: success login on [172.27.0.2] with user [alice@src.test] auth [LOGIN] or [LOGIN]
+Host2: connecting and login on host2 [172.27.0.4] port [993] with user [bob@dst.test*maestro@platform.local]
+Host2 IP address: 172.27.0.4 Local IP address: 172.27.0.5
+Host2 banner: * OK [CAPABILITY IMAP4rev1 SASL-IR LOGIN-REFERRALS ID ENABLE IDLE LITERAL+ AUTH=PLAIN AUTH=LOGIN] Dovecot ready.
+Host2 capability before authentication: IMAP4rev1 SASL-IR LOGIN-REFERRALS ID ENABLE IDLE LITERAL+ AUTH=PLAIN AUTH=LOGIN AUTH
+Host2: 172.27.0.4 says it has CAPABILITY for AUTHENTICATE LOGIN
+Host2: success login on [172.27.0.4] with user [bob@dst.test*maestro@platform.local] auth [LOGIN] or [LOGIN]
+Host1: state Authenticated
+Host2: state Authenticated
+Host1 capability once authenticated: IMAP4rev1 SASL-IR LOGIN-REFERRALS ID ENABLE IDLE SORT SORT=DISPLAY THREAD=REFERENCES THREAD=REFS THREAD=ORDEREDSUBJECT MULTIAPPEND URL-PARTIAL CATENATE UNSELECT CHILDREN NAMESPACE UIDPLUS LIST-EXTENDED I18NLEVEL=1 CONDSTORE QRESYNC ESEARCH ESORT SEARCHRES WITHIN CONTEXT=SEARCH LIST-STATUS BINARY MOVE SNIPPET=FUZZY PREVIEW=FUZZY PREVIEW STATUS=SIZE SAVEDATE LITERAL+ NOTIFY QUOTA THREAD I18NLEVEL CONTEXT SNIPPET PREVIEW STATUS
+Host2 capability once authenticated: IMAP4rev1 SASL-IR LOGIN-REFERRALS ID ENABLE IDLE SORT SORT=DISPLAY THREAD=REFERENCES THREAD=REFS THREAD=ORDEREDSUBJECT MULTIAPPEND URL-PARTIAL CATENATE UNSELECT CHILDREN NAMESPACE UIDPLUS LIST-EXTENDED I18NLEVEL=1 CONDSTORE QRESYNC ESEARCH ESORT SEARCHRES WITHIN CONTEXT=SEARCH LIST-STATUS BINARY MOVE SNIPPET=FUZZY PREVIEW=FUZZY PREVIEW STATUS=SIZE SAVEDATE LITERAL+ NOTIFY QUOTA THREAD I18NLEVEL CONTEXT SNIPPET PREVIEW STATUS
+
+Host2: QUOTA capability found, presented in raw IMAP on next lines
+Sending: 4 GETQUOTAROOT INBOX
+Sent 22 bytes
+Read: 	* QUOTAROOT INBOX "User quota"
+  	* QUOTA "User quota" (STORAGE 1 200)
+  	4 OK Getquotaroot completed (0.001 + 0.000 secs).
+
+Host2: Quota current storage is 1024 bytes. Limit is 204800 bytes. So 0.50 % full
+Host1: Compression is off. Use --compress1 to allow compression on host1
+Host2: Compression is off. Use --compress2 to allow compression on host2
+Compression often generates annoying errors, especially with SSL connexions, Gmail, Office365. So, avoid it.
+Host1: found 2 folders.
+Host2: found 2 folders.
+Host1: guessing separator from folder listing: [/]
+Host1: separator given by NAMESPACE: [.]
+Host2: guessing separator from folder listing: [/]
+Host2: separator given by NAMESPACE: [.]
+Host1: guessing prefix from folder listing: []
+Host1: prefix given by NAMESPACE: []
+Host2: guessing prefix from folder listing: []
+Host2: prefix given by NAMESPACE: []
+Host1: separator and prefix: [.][]
+Host2: separator and prefix: [.][]
+Looking at INBOX or Inbox on both sides and deciding of the mapping to apply. Use --nofixInboxINBOX to avoid this behavior.
+INBOX INBOX on both sides so no mapping applied.
+Including all folders found by default. Use --subscribed or --folder or --folderrec or --include to select specific folders. Use --exclude to unselect specific folders.
+Host1: Checking wanted folders exist. Use --nocheckfoldersexist to avoid this check (shared of public namespace targeted).
+Host1: Checking wanted folders are selectable. Use --nocheckselectable to avoid this check.
+Turned on automapping folders ( use --noautomap to turn off automapping )
+
+++++ Listing folders
+All foldernames are presented between brackets like [X] where X is the foldername.
+When a foldername contains non-ASCII characters it is presented in the form
+[X] = [Y] where
+X is the imap foldername you have to use in command line options and
+Y is the utf8 output just printed for convenience, to recognize it.
+
+Host1: folders list (first the raw imap format then the [X] = [Y]):
+* LIST (\HasNoChildren \UnMarked) "." Trabajo
+* LIST (\HasNoChildren) "." INBOX
+11 OK List completed (0.001 + 0.000 secs).
+
+[INBOX]
+[Trabajo]
+
+Host2: folders list (first the raw imap format then the [X] = [Y]):
+* LIST (\HasNoChildren) "." Trabajo
+* LIST (\HasNoChildren) "." INBOX
+10 OK List completed (0.001 + 0.000 secs).
+
+[INBOX]
+[Trabajo]
+
+Checking SEARCH ALL works on both accounts. To avoid that check, use --nochecknoabletosearch
+Host1: checking if SEARCH ALL works on INBOX
+Host1: folder [INBOX] has 5 messages mentioned by SELECT
+Host1: folder [INBOX] has 5 messages found by SEARCH ALL
+Host1: folder [INBOX] has the same messages count (5) by SELECT and SEARCH ALL
+Host2: checking if SEARCH ALL works on INBOX
+Host2: folder [INBOX] has 4 messages mentioned by SELECT
+Host2: folder [INBOX] has 4 messages found by SEARCH ALL
+Host2: folder [INBOX] has the same messages count (4) by SELECT and SEARCH ALL
+Good! SEARCH ALL works on both accounts.
+
+Folders sizes before the synchronization. It can take some time. Be patient.
+You can remove foldersizes listings by using "--nofoldersizes" and "--nofoldersizesatend"
+but then you will also lose the ETA (Estimation Time of Arrival) given after each message copy.
+Host1 folder     1/2 [INBOX]                             Size:    432791 Messages:     5 Biggest:    432120
+Host2 folder     1/2 [INBOX]                             Size:       671 Messages:     4 Biggest:       221
+Host2-Host1                                                      -432120              -1            -431899
+
+Host1 folder     2/2 [Trabajo]                           Size:       136 Messages:     1 Biggest:       136
+Host2 folder     2/2 [Trabajo]                           Size:       136 Messages:     1 Biggest:       136
+Host2-Host1                                                            0               0                  0
+
+Host1 Nb folders:                     2 folders
+Host2 Nb folders:                     2 folders
+
+Host1 Nb messages:                    6 messages
+Host2 Nb messages:                    5 messages
+
+Host1 Total size:                432927 bytes (422.780 KiB)
+Host2 Total size:                   807 bytes (0.788 KiB)
+
+Host1 Biggest message:           432120 bytes (421.992 KiB)
+Host2 Biggest message:              221 bytes (0.216 KiB)
+
+Time spent on sizing:         0.1 seconds
+++++ Looping on each one of 2 folders to sync
+ETA: Monday 21 September 2026-09-21 06:57:58 +0000 UTC  0 s  6/6 msgs left
+Folder     1/2 [INBOX]                             -> [INBOX]                            
+Host1: folder [INBOX] has 5 messages in total (mentioned by SELECT)
+Host2: folder [INBOX] has 4 messages in total (mentioned by SELECT)
+Host2: folder [INBOX] permanentflags: 
+Host1: folder [INBOX] considering 5 messages
+Host2: folder [INBOX] considering 4 messages
+Host1: folder [INBOX] selected 5 messages, duplicates 0
+Host2: folder [INBOX] selected 4 messages, duplicates 0
+- msg INBOX/5 {432120} could not append ( Subject:[grande], Date:["21-Sep-2026 06:45:05 +0000"], Size:[432120], Flags:[] ) to folder INBOX: Error sending '24 APPEND INBOX () "21-Sep-2026 06:45:05 +0000" {432120}': 24 NO [OVERQUOTA] Quota exceeded (mailbox for user is full) (0.001 + 0.000 secs).
+ETA: Monday 21 September 2026-09-21 06:57:58 +0000 UTC  0 s  1/6 msgs left
+Folder     2/2 [Trabajo]                           -> [Trabajo]                          
+Host1: folder [Trabajo] has 1 messages in total (mentioned by SELECT)
+Host2: folder [Trabajo] has 1 messages in total (mentioned by SELECT)
+Host2: folder [Trabajo] permanentflags: 
+Host1: folder [Trabajo] considering 1 messages
+Host2: folder [Trabajo] considering 1 messages
+Host1: folder [Trabajo] selected 1 messages, duplicates 0
+Host2: folder [Trabajo] selected 1 messages, duplicates 0
+ETA: Monday 21 September 2026-09-21 06:57:58 +0000 UTC  0 s  0/6 msgs left
+++++ End looping on each folder
+Strange: cpu_time 0.51 > timediff 0.14498496055603
+++++ Statistics
+Transfer started on                     : Monday 21 September 2026-09-21 06:57:58 +0000 UTC
+Transfer ended on                       : Monday 21 September 2026-09-21 06:57:58 +0000 UTC
+Transfer time                           : 0.1 sec
+Folders synced                          : 2/2 synced
+Folders deleted on host2                : 0 
+Messages transferred                    : 0 
+Messages skipped                        : 5
+Messages found duplicate on host1       : 0
+Messages found duplicate on host2       : 0
+Messages found crossduplicate on host2  : 0
+Messages void (noheader) on host1       : 0  
+Messages void (noheader) on host2       : 0
+Messages found in host1 not in host2    : 1 messages
+Messages found in host2 not in host1    : 0 messages
+Messages deleted on host1               : 0
+Messages deleted on host2               : 0
+Total bytes transferred                 : 0 (0.000 KiB)
+Total bytes skipped                     : 807 (0.788 KiB)
+Message rate                            : 0.0 messages/s
+Average bandwidth rate                  : 0.0 KiB/s
+Reconnections to host1                  : 0
+Reconnections to host2                  : 0
+Memory consumption at the end           : 173.0 MiB (*time 0.0 MiB*h) (started with 168.5 MiB)
+Load end is                             : 2.63 3.33 3.69 4/4984 on 12 cores
+CPU time and %cpu                       : 0.51 sec 351.8 %cpu 29.3 %allcpus
+Biggest message transferred             : 0 bytes (0.000 KiB)
+Memory/biggest message ratio            : NA
+The sync is not finished, there are 1 among 6 identified messages in host1 that are not on host2.
+There is no unidentified message on host1.
+The sync is strict, all 5 identified messages in host2 are on host1.
+Detected 1 errors
+Check if a new imapsync release is available by adding --releasecheck
+Homepage: https://imapsync.lamiral.info/
+++++ Listing 1 errors encountered during the sync ( avoid this listing with --noerrorsdump ).
+Err 1/1: - msg INBOX/5 {432120} could not append ( Subject:[grande], Date:["21-Sep-2026 06:45:05 +0000"], Size:[432120], Flags:[] ) to folder INBOX: Error sending '24 APPEND INBOX () "21-Sep-2026 06:45:05 +0000" {432120}': 24 NO [OVERQUOTA] Quota exceeded (mailbox for user is full) (0.001 + 0.000 secs).
+The most frequent error is ERR_OVERQUOTA. The destination mailbox is 100% full, get free space on it and then resume the sync.
+Exiting with return value 113 (EXIT_OVERQUOTA) 1/500 nb_errors/max_errors PID 9
+Removing pidfile /work/imapsync.pid
+No log file because of option --nolog
+EXIT=113

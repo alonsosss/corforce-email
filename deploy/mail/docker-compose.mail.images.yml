@@ -43,3 +43,6 @@ services:
   olefy-mail:
     image: core-force-mail/olefy-mail:${MAIL_DEPLOY_TAG:?lo fija scripts/deploy-mail.sh}
     pull_policy: never
+  mail-migration-runner:
+    image: core-force-mail/mail-migration-runner:${MAIL_DEPLOY_TAG:?lo fija scripts/deploy-mail.sh}
+    pull_policy: never

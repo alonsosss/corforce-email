@@ -24,10 +24,12 @@ import { LoginsTab } from './LoginsTab';
 import { MailboxDataTab } from './MailboxDataTab';
 import { MailboxPasswordTab } from './MailboxPasswordTab';
 import { MailboxQuotaTab } from './MailboxQuotaTab';
+import { MigrationTab } from './MigrationTab';
 import { SieveTab } from './SieveTab';
 import { VacationTab } from './VacationTab';
 
-type TabId = 'data' | 'password' | 'quota' | 'appPasswords' | 'sieve' | 'vacation' | 'logins';
+type TabId =
+  'data' | 'password' | 'quota' | 'appPasswords' | 'sieve' | 'vacation' | 'migration' | 'logins';
 
 export default function MailboxDetailPage() {
   const { id = '' } = useParams();
@@ -51,6 +53,9 @@ export default function MailboxDetailPage() {
           { id: 'sieve' as const, label: t('mailboxes.tab.sieve') },
           { id: 'vacation' as const, label: t('mailboxes.tab.vacation') },
         ]
+      : []),
+    ...(can(...PERMISSIONS.mailMigrationJobs.read)
+      ? [{ id: 'migration' as const, label: t('mailboxes.tab.migration') }]
       : []),
     { id: 'logins', label: t('mailboxes.tab.logins') },
   ];
@@ -116,6 +121,7 @@ export default function MailboxDetailPage() {
       {tab === 'appPasswords' ? <AppPasswordsTab mailbox={m} /> : null}
       {tab === 'sieve' ? <SieveTab mailbox={m} /> : null}
       {tab === 'vacation' ? <VacationTab mailbox={m} /> : null}
+      {tab === 'migration' ? <MigrationTab mailbox={m} /> : null}
       {tab === 'logins' ? <LoginsTab mailbox={m} /> : null}
       <ConfirmDialog
         open={deleting}

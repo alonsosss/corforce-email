@@ -1,0 +1,57 @@
+Here is imapsync 2.314 /usr/bin/imapsync on host 948b14bcde5e, a linux system with 3.7/31.2 free GiB of RAM, 0.53% used by processes.
+with Perl 5.42.2 and Mail::IMAPClient 3.43
+Transfer started at Monday 21 September 2026-09-21 06:58:01 +0000 UTC
+PID is 9 my PPID is 1
+No log file because of option --nolog
+Load is 2.66 3.32 3.69 6/4975 on 12 cores
+Real user id is root (uid 0)
+Effective user id is root (euid 0)
+$RCSfile: imapsync,v $ $Revision: 2.314 $ $Date: 2025/09/23 16:55:17 $ 
+Command line used, run by perl:
+/usr/bin/imapsync --host1=172.27.0.2 --port1=993 --user1=alice@src.test --passfile1=/work/p1 --nosslcheck --ssl1 --notls1 --sslargs1=SSL_verify_mode=1 --sslargs1=SSL_version=SSLv23:!SSLv2:!SSLv3:!TLSv1:!TLSv1_1 --sslargs1=SSL_verifycn_name=imap.src.test --sslargs1=SSL_hostname=imap.src.test --host2=172.27.0.3 --port2=993 --user2=bob@dst.test*maestro@platform.local --passfile2=/work/p2 --ssl2 --notls2 --sslargs2=SSL_verify_mode=1 --sslargs2=SSL_version=SSLv23:!SSLv2:!SSLv3:!TLSv1:!TLSv1_1 --sslargs2=SSL_verifycn_name=mail.dst.test --sslargs2=SSL_hostname=mail.dst.test --sslargs2=SSL_ca_file=/certs/dst.pem --nolog --noreleasecheck --noid --no-modulesversion --nofoldersizesatend --automap --addheader --errorsmax=500 --tmpdir=/work --pidfile=/work/imapsync.pid
+Current directory is /
+Temp directory is /work ( to change it use --tmpdir dirpath )
+Creating temp directory /work
+kill -QUIT 9 # special behavior: call to sub catch_exit
+kill -TERM 9 # special behavior: call to sub catch_exit
+kill -INT 9 # special behavior: call to sub catch_reconnect
+kill -HUP 9 # special behavior: call to sub catch_print
+kill -USR1 9 # special behavior: call to sub toggle_sleep
+Logging is off. To turn on logging, use --log
+File /work/imapsync.pid does not exist
+PID file is /work/imapsync.pid ( to change it, use --pidfile filepath ; to avoid it use --pidfile "" )
+Writing my PID 9 in /work/imapsync.pid
+Info: will resync flags for already transferred messages. Use --noresyncflags to not resync flags.
+SSL debug mode level is --debugssl 1 (can be set from 0 meaning no debug to 4 meaning max debug)
+Host1: SSL default mode is like --sslargs1 "SSL_verify_mode=0", meaning for host1 SSL_VERIFY_NONE, ie, do not check the server certificate.
+Host1: Use --sslargs1 SSL_verify_mode=1 to have SSL_VERIFY_PEER, ie, check the server certificate. of host1
+Host2: SSL default mode is like --sslargs2 "SSL_verify_mode=0", meaning for host2 SSL_VERIFY_NONE, ie, do not check the server certificate.
+Host2: Use --sslargs2 SSL_verify_mode=1 to have SSL_VERIFY_PEER, ie, check the server certificate. of host2
+Info: turned ON syncinternaldates, will set the internal dates (arrival dates) on host2 same as host1.
+Host1: will try to use LOGIN authentication on host1
+Host2: will try to use LOGIN authentication on host2
+Host1: imap connection timeout is 120 seconds
+Host2: imap connection timeout is 120 seconds
+Host1: imap connection keepalive is on on host1. Use --nokeepalive1 to disable it.
+Host2: imap connection keepalive is on on host2. Use --nokeepalive2 to disable it.
+Host1: IMAP server [172.27.0.2] port [993] user [alice@src.test]
+Host2: IMAP server [172.27.0.3] port [993] user [bob@dst.test*maestro@platform.local]
+Host1: connecting and login on host1 [172.27.0.2] port [993] with user [alice@src.test]
+DEBUG: .../IO/Socket/SSL.pm:863: local error: SSL connect attempt failed error:0A000086:SSL routines::certificate verify failed
+DEBUG: .../IO/Socket/SSL.pm:866: fatal SSL error: SSL connect attempt failed error:0A000086:SSL routines::certificate verify failed
+DEBUG: ...perl/IO/Socket.pm:50: ignoring less severe local error 'IO::Socket::IP configuration failed', keep 'SSL connect attempt failed error:0A000086:SSL routines::certificate verify failed'
+Host1 failure: can not open imap connection on host1 [172.27.0.2] port [993] with user [alice@src.test]: Unable to connect to 172.27.0.2: SSL connect attempt failed error:0A000086:SSL routines::certificate verify failed 
+Host2: connecting and login on host2 [172.27.0.3] port [993] with user [bob@dst.test*maestro@platform.local]
+Host2 IP address: 172.27.0.3 Local IP address: 172.27.0.5
+Host2 banner: * OK [CAPABILITY IMAP4rev1 SASL-IR LOGIN-REFERRALS ID ENABLE IDLE LITERAL+ AUTH=PLAIN AUTH=LOGIN] Dovecot ready.
+Host2 capability before authentication: IMAP4rev1 SASL-IR LOGIN-REFERRALS ID ENABLE IDLE LITERAL+ AUTH=PLAIN AUTH=LOGIN AUTH
+Host2: 172.27.0.3 says it has CAPABILITY for AUTHENTICATE LOGIN
+Host2: success login on [172.27.0.3] with user [bob@dst.test*maestro@platform.local] auth [LOGIN] or [LOGIN]
+++++ Listing 1 errors encountered during the sync ( avoid this listing with --noerrorsdump ).
+Err 1/1: Host1 failure: can not open imap connection on host1 [172.27.0.2] port [993] with user [alice@src.test]: Unable to connect to 172.27.0.2: SSL connect attempt failed error:0A000086:SSL routines::certificate verify failed 
+The most frequent error is ERR_CONNECTION_FAILURE_HOST1. Check that host1 172.27.0.2 on port 993 is the right IMAP server to be contacted for your mailbox.
+Exiting with return value 101 (EXIT_CONNECTION_FAILURE_HOST1) 1/500 nb_errors/max_errors PID 9
+Removing pidfile /work/imapsync.pid
+Disconnecting from host2 172.27.0.3 user2 bob@dst.test*maestro@platform.local
+No log file because of option --nolog
+EXIT=101

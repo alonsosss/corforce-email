@@ -96,6 +96,10 @@ los motores entienden traducida a PostgreSQL.
 * `docker-compose.images.save.yml`: override de imagen del transporte `save`, generado junto al de
   ECR (`make gen-compose-images`).
 * `docs/*` de este producto.
+* `services/mail-migration` (plano de empresa) y `deploy/mail/migration-runner` (ejecutor con `imapsync`,
+  modulo Go propio sin dependencias): migracion de buzones desde otro proveedor
+  (`docs/adr/0002-migracion-de-buzones-con-imapsync.md`). `imapsync` no se copio de mailcow: se instala
+  desde el paquete de Alpine (community, serie 2.314; Debian y Ubuntu no lo empaquetan) en la imagen del ejecutor.
 * Fases siguientes: `mail-directory`, `mail-auth`, `mail-policy`, `domain-service`,
   `transactional`, `contacts`, `campaigns`, `templates`, `suppression`, `reputation`,
   `analytics`, `billing`, `policy`, `web/`.
@@ -111,5 +115,6 @@ los motores entienden traducida a PostgreSQL.
 | Un secreto | `ops/security/secrets/secret-keys.txt` + el almacén; nunca `.env` |
 | Una variable no sensible | `.env.example` con comentario |
 | Un evento | subject `<dominio>.<entidad>.<accion>`; `make gen-events` |
+| Un proceso que sale a Internet con credenciales de terceros | Un contenedor propio sin acceso a la base, con modulo Go aparte (`deploy/mail/migration-runner`), que pide trabajo por HTTP al servicio dueno de los datos |
 | Configuración de un motor | `deploy/mail/<motor>/` |
 | Una decisión de arquitectura | `docs/adr/NNNN-<titulo>.md` y el documento rector afectado |

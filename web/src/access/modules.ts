@@ -9,6 +9,7 @@ export const MODULES = {
   scheduler: 'scheduler',
   domains: 'domains',
   mailboxes: 'mailboxes',
+  mailMigration: 'migration',
   mailRouting: 'mail_routing',
   mailSecurity: 'mail_security',
   templates: 'templates',

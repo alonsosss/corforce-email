@@ -78,6 +78,7 @@ cambios relevantes.
 | `endurecimiento` | Mejora propia de seguridad o robustez que no existe en mailcow. |
 | `arranque` | Adaptacion del arranque o del despliegue. |
 | `cola` | El agente de la cola de Postfix (`postfix/queue-agent/`), propio, y lo que hace falta para compilarlo y arrancarlo dentro de la imagen. |
+| `migracion` | El ejecutor de la migracion de buzones (`migration-runner/`, con imapsync), propio, y el usuario maestro de Dovecot que usa. |
 
 ## 5. Ficheros modificados
 
@@ -105,7 +106,7 @@ Ordenados por carpeta. "Como se rehace" es lo que hay que hacer cuando mailcow c
 | `dovecot/conf/dovecot.conf` | postgres, sogo-php | Los diccionarios de cuota y sieve son pgsql, no mysql; sin ejemplo LDAP ni SOGo; el passwd-verify.lua renderizado vive fuera del bind mount (/etc/dovecot-auth); incluye doveadm-api.conf generado; ademas declara el diccionario `sieve_vacation` y la ranura `sieve_after3` de la respuesta automatica (`mail.v_sieve_vacation`) | Reaplicar el cambio de mailcow y volver a poner las cinco lineas propias. Conservar el diccionario y `sieve_after3`. |
 | `dovecot/conf/global_sieve_after` | nombres | Comentario: la UI de mailcow pasa a mail.sieve_filters. | Reaplicar la linea. |
 | `dovecot/conf/global_sieve_before` | nombres | Comentario: la UI de mailcow pasa a mail.sieve_filters. | Reaplicar la linea. |
-| `dovecot/docker-entrypoint.sh` | postgres, sogo-php, servicios-go, nombres | Genera el userdb y los dicts de Dovecot contra PostgreSQL; quita SOGo (IP de confianza, SSO, credenciales de cron); renderiza passwd-verify.lua; conserva el usuario maestro del webmail bajo @platform.local; genera la API HTTP de doveadm con TLS. Es de los ficheros que mas cuesta portar; ademas genera `dovecot-dict-sql-sieve_vacation.conf` (la respuesta automatica) | Aplicar los cambios de mailcow bloque a bloque, no el fichero entero, y comprobar con make e2e-mail. Conservar el bloque `sieve_vacation`. |
+| `dovecot/docker-entrypoint.sh` | postgres, sogo-php, servicios-go, nombres, migracion | Genera el userdb y los dicts de Dovecot contra PostgreSQL; quita SOGo (IP de confianza, SSO, credenciales de cron); renderiza passwd-verify.lua; conserva el usuario maestro del webmail bajo @platform.local; genera la API HTTP de doveadm con TLS. Es de los ficheros que mas cuesta portar; ademas genera `dovecot-dict-sql-sieve_vacation.conf` (la respuesta automatica) y, solo con `DOVECOT_MIGRATION_MASTER_USER` y `DOVECOT_MIGRATION_MASTER_PASS`, un segundo usuario maestro propio de la migracion (su linea en `dovecot-master.passwd` con su `allow_nets` y en `dovecot-master.userdb`) | Aplicar los cambios de mailcow bloque a bloque, no el fichero entero, y comprobar con make e2e-mail. Conservar el bloque `sieve_vacation` y el del maestro de la migracion. |
 | `dovecot/quota_notify.py` | nombres | El host de Redis sale de MAIL_REDIS_HOST. | Reaplicar los cambios de mailcow y volver a sustituir las variables por su nombre propio. |
 | `dovecot/repl_health.sh` | nombres | REDISPASS y MAILCOW_REPLICA_IP pasan a MAIL_REDIS_PASSWORD y MAIL_REPLICA_IP. | Reaplicar los cambios de mailcow y volver a sustituir las variables por su nombre propio. |
 | `dovecot/rspamd-pipe-ham` | nombres | El host de Rspamd es rspamd.mail-engines, no <proyecto>_mailcow-network. | Reaplicar los cambios de mailcow y volver a sustituir las variables por su nombre propio. |
@@ -162,6 +163,8 @@ y explicarlo en la seccion 5 rompe `make checks`: es el aviso de que la divergen
 
 | `postfix/queue-agent/go.mod`, `postfix/queue-agent/main.go`, `postfix/queue-agent/queue.go`, `postfix/queue-agent/server.go`, `postfix/queue-agent/queue_test.go`, `postfix/queue-agent/server_test.go` | cola | El gestor de cola: mailcow lo hace con dockerapi (`postqueue` y `postsuper` por el socket de docker, sin autenticacion en la red de los motores), lo que daria a cualquier servicio que lo alcance una ejecucion de ordenes en cualquier contenedor. Este agente es un binario de Go con biblioteca estandar que corre dentro del contenedor de Postfix, atiende por HTTPS con `QUEUE_AGENT_API_KEY` y solo admite listar, reintentar, retener, liberar y borrar por un identificador de cola validado, y vaciar la cola diferida; nunca devuelve el contenido de un mensaje. | No tiene equivalente. Se prueba con `ops/scaffold/check-queue-agent.sh` (unitarias y mutaciones) y con `make e2e-mail` contra Postfix real. |
 
+| `migration-runner/Dockerfile`, `migration-runner/api.go`, `migration-runner/api_test.go`, `migration-runner/classify.go`, `migration-runner/config.go`, `migration-runner/config_test.go`, `migration-runner/go.mod`, `migration-runner/imapsync.go`, `migration-runner/main.go`, `migration-runner/parse.go`, `migration-runner/parse_test.go`, `migration-runner/proc_linux.go`, `migration-runner/proc_other.go`, `migration-runner/proc_unix.go`, `migration-runner/runner.go`, `migration-runner/runner_test.go`, `migration-runner/scan.go`, `migration-runner/scan_test.go`, `migration-runner/ssrf.go`, `migration-runner/ssrf_test.go`, `migration-runner/testdata/imapsync-auth.txt`, `migration-runner/testdata/imapsync-cuota.txt`, `migration-runner/testdata/imapsync-inaccesible.txt`, `migration-runner/testdata/imapsync-ok-repaso.txt`, `migration-runner/testdata/imapsync-ok.txt`, `migration-runner/testdata/imapsync-starttls-nombre.txt`, `migration-runner/testdata/imapsync-tls-ca.txt`, `migration-runner/testdata/imapsync-tls-nombre.txt`, `migration-runner/testdata/imapsync-virus.txt` | migracion | El ejecutor de la migracion de buzones (`docs/adr/0002`): mailcow lanza imapsync desde su panel PHP y su contenedor de Dovecot; aqui imapsync corre en un contenedor propio, aislado, con un envoltorio de Go de biblioteca estandar que reclama trabajos a `mail-migration` por HTTP, valida el origen (rechaza direcciones privadas y conecta a la IP ya resuelta y validada, verificando el certificado contra el nombre pedido), pasa las contrasenas por ficheros 0400 en un tmpfs efimero, filtra cada mensaje por ClamAV (`--pipemess`, falla cerrado) y devuelve solo contadores. `testdata/` son salidas reales de imapsync 2.314 contra dos Dovecot desechables. | No tiene equivalente. Se prueba con `ops/scaffold/check-migration-runner.sh` (unitarias, con un imapsync falso) y con `make e2e-mail` (imapsync real contra el Dovecot de la prueba). |
+
 Propios: `README.md` (contratos de los motores), `docker-compose.mail.yml`, `docker-compose.mail.images.yml`,
 `docker-compose.e2e.yml`, este libro y `upstream-manifest.tsv`.
 
@@ -169,7 +172,7 @@ Propios: `README.md` (contratos de los motores), `docker-compose.mail.yml`, `doc
 
 Por diseno (`CLAUDE.md`: nada de PHP, MySQL ni SOGo). La lista completa, con el motivo de cada una, esta
 en `ops/upstream/mapa.tsv` (lineas `omitido`). Resumen: SOGo, PHP-FPM, nginx, MySQL, LDAP, la copia de
-seguridad de mailcow, imapsync, los mapas dinamicos y el exportador de metadatos en PHP, y las plantillas de
+seguridad de mailcow, imapsync (que vuelve como servicio propio, seccion 7), los mapas dinamicos y el exportador de metadatos en PHP, y las plantillas de
 restablecimiento de contrasena y de cuarentena. El informe semanal las muestra como informativas, sin
 contarlas como pendientes.
 
@@ -185,6 +188,7 @@ De donde sale cada motor decide como llega un parche:
 | Dovecot y Pigeonhole | Paquete de Alpine 3.21, sin fijar (`gosu` 1.19 se compila en el Dockerfile con Go 1.26) | Reconstruir la imagen. Cambiar de Alpine puede cambiar la version mayor de Dovecot: no se hace sin probar |
 | Unbound | Repositorio `edge` de Alpine, para recibir parches | Reconstruir la imagen |
 | postfix-tlspol | Se compila la etiqueta `v1.8.22` de su repositorio, con `golang.org/x/net` v0.56.0 | Subir la etiqueta y revisar si ya trae una `x/net` corregida |
+| imapsync (ejecutor de migracion) | Paquete `imapsync` de Alpine 3.23 (community), serie 2.314 fijada en `migration-runner/Dockerfile` (`imapsync~=2.314`; el build falla si resulta otra version). No esta en los repositorios de Debian ni de Ubuntu; no se descarga nada mas de Internet en el build. La licencia es la NO LIMIT PUBLIC LICENSE (`docs/adr/0002`) | Reconstruir la imagen recoge los parches del paquete y de Perl; subir de serie es una decision con `make e2e-mail` en verde (la salida de imapsync es lo que lee el ejecutor) |
 | Resto (netfilter, dockerapi, acme, watchdog, olefy) | Paquetes de la base | Reconstruir la imagen |
 
 Objetivos (propuestos en `docs/Plan_Estrategico_Mejoras_Correo.md`, a confirmar con el primer parche real):

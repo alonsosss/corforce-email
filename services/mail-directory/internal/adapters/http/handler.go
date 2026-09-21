@@ -65,6 +65,8 @@ func (h *Handler) Routes() chi.Router {
 	r.With(middleware.RequireInternalCaller).Put("/internal/mail-directory/tenant-retirement", h.RetireTenant)
 	// La pide el webmail, que no conoce la empresa del buzon: no lleva X-Tenant-ID.
 	r.Get("/internal/mail-directory/sender-identities", h.SenderIdentities)
+	// La consulta de un buzon por id que hace mail-migration; solo servicios, con la empresa en X-Tenant-ID.
+	r.With(middleware.RequireInternalCaller).Get("/internal/mail-directory/mailboxes/{id}", h.InternalMailbox)
 	// La respuesta automatica del buzon con el que el webmail inicio sesion; tampoco lleva X-Tenant-ID.
 	r.Get("/internal/mail-directory/vacation", h.InternalGetVacation)
 	r.Put("/internal/mail-directory/vacation", h.InternalPutVacation)

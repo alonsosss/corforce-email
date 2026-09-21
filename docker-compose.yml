@@ -427,6 +427,36 @@ services:
     networks:
       - mail-internal
 
+  # Trabajos de migracion de buzones desde otro proveedor (docs/adr/0002). Sirve dos listeners: la API
+  # de administracion (8056, por el gateway) y la del ejecutor mail-migration-runner (8057, solo por la
+  # red mail-migration, con MAIL_MIGRATION_RUNNER_KEY). Sin esa clave el listener del ejecutor no se abre.
+  mail-migration:
+    build:
+      context: .
+      dockerfile: ./services/mail-migration/Dockerfile
+    ports:
+      - "127.0.0.1:${MAIL_MIGRATION_PORT:-8056}:8056"
+    env_file:
+      - .env
+      - path: /dev/shm/core-force-mail/secrets.env
+        required: false
+    environment:
+      POSTGRES_PASSWORD: ${TENANT_SERVICES_PLATFORM_PASSWORD:-}
+      REGISTRY_DB_PASSWORD: ${TENANT_ROUTER_DB_PASSWORD:-}
+      TENANT_DB_USER: mail_svc_mail_migration
+      TENANT_DB_PASSWORD: ${MAIL_MIGRATION_DB_PASSWORD:-}
+      JWT_SIGNING_KEY: ""
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+    restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    networks:
+      - mail-internal
+      - mail-migration
+
   transactional:
     build:
       context: .
@@ -684,3 +714,8 @@ networks:
   mail-engines:
     external: true
     name: ${MAIL_ENGINES_NETWORK:-mail-engines}
+  # Red del ejecutor de migraciones (la crea deploy/mail/docker-compose.mail.yml): Dovecot, mail-migration y
+  # mail-migration-runner, nada mas. mail-migration se une para servir al ejecutor su API.
+  mail-migration:
+    external: true
+    name: ${MAIL_MIGRATION_NETWORK:-mail-migration}

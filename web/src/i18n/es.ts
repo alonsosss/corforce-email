@@ -882,6 +882,7 @@ export const es = {
   'mailboxes.tab.sieve': 'Filtros sieve',
   'mailboxes.tab.vacation': 'Respuesta automatica',
   'mailboxes.tab.logins': 'Inicios de sesion',
+  'mailboxes.tab.migration': 'Migracion',
   'mailboxes.form.createTitle': 'Nuevo buzon',
   'mailboxes.form.localPart': 'Usuario',
   'mailboxes.form.localPartHint': 'Lo que va antes de la @.',
@@ -982,6 +983,119 @@ export const es = {
   'sieve.tooLarge': 'El script supera el maximo de {kib} KiB.',
   'sieve.noManageSieve':
     'Este buzon no tiene acceso Sieve: el usuario no gestiona sus propios filtros, pero estos se siguen aplicando.',
+
+  'migration.title': 'Migracion de correo',
+  'migration.notConfigured.title': 'La migracion no esta disponible',
+  'migration.notConfigured.body':
+    'El servicio de migracion no esta configurado en la plataforma, asi que no se pueden lanzar migraciones. Avisa a soporte.',
+  'migration.refreshFailed': 'No se pudo actualizar el estado de la migracion.',
+  'migration.block.jobActive':
+    'Este buzon ya tiene una migracion en curso. Cuando termine o la canceles podras lanzar otra.',
+  'migration.block.tenantLimit':
+    'La empresa ya tiene el maximo de migraciones simultaneas ({max}). Espera a que termine alguna para lanzar otra.',
+  'migration.form.title': 'Migrar desde otro servidor',
+  'migration.form.description':
+    'Copia los mensajes de un buzon IMAP de otro proveedor a este buzon. La copia se hace en dos pasadas: la inicial y una segunda para lo que llegue mientras tanto.',
+  'migration.form.passwordNotice':
+    'La contrasena del buzon de origen se usa solo para la copia y se borra al terminar. No se vuelve a mostrar despues de enviarla.',
+  'migration.form.appPasswordNotice':
+    'Las cuentas de Gmail y de Microsoft con autenticacion moderna no admiten la contrasena normal por IMAP: necesitan una contrasena de aplicacion. El acceso con OAuth2 todavia no esta disponible.',
+  'migration.form.host': 'Servidor de origen',
+  'migration.form.hostHint': 'Nombre del servidor IMAP que indica el proveedor de origen.',
+  'migration.form.port': 'Puerto',
+  'migration.form.tls': 'Seguridad de la conexion',
+  'migration.form.plaintextWarning':
+    'Sin cifrado, la contrasena y el correo viajan en claro por la red. Usalo solo si el origen no admite otra cosa.',
+  'migration.form.username': 'Usuario de origen',
+  'migration.form.usernameHint': 'Suele ser la direccion de correo completa.',
+  'migration.form.password': 'Contrasena de origen',
+  'migration.form.passwordHint':
+    'Se borra del formulario al enviarla. Si hay que reintentar, escribela de nuevo.',
+  'migration.form.submit': 'Iniciar migracion',
+  'migration.form.started': 'La migracion quedo en cola.',
+  'migration.tls.ssl': 'SSL/TLS (conexion cifrada)',
+  'migration.tls.starttls': 'STARTTLS',
+  'migration.tls.none': 'Sin cifrado',
+  'migration.status.pending': 'En cola',
+  'migration.status.running': 'En curso',
+  'migration.status.succeeded': 'Completada',
+  'migration.status.failed': 'Fallida',
+  'migration.status.cancelled': 'Cancelada',
+  'migration.phase.initial': 'Copia inicial',
+  'migration.phase.catchup': 'Segunda pasada: mensajes llegados durante la copia',
+  'migration.progress.label': 'Avance de la migracion',
+  'migration.progress.messages': '{done} de {total} mensajes tratados ({percent}%)',
+  'migration.progress.folders': '{done} de {total} carpetas',
+  'migration.progress.preparing': 'Preparando la copia.',
+  'migration.job.title': 'Migracion',
+  'migration.job.cancel': 'Cancelar migracion',
+  'migration.job.cancelAction': 'Detener migracion',
+  'migration.job.cancelConfirm':
+    'Se detendra la copia; los mensajes ya copiados permanecen en el buzon.',
+  'migration.job.cancelled': 'Se solicito la cancelacion de la migracion.',
+  'migration.job.cancelRequested': 'Cancelacion solicitada',
+  'migration.job.lastError': 'Ultimo error',
+  'migration.job.folders': 'Carpetas',
+  'migration.job.foldersValue': '{done} de {total}',
+  'migration.job.copied': 'Mensajes copiados',
+  'migration.job.skipped': 'Mensajes omitidos',
+  'migration.job.failed': 'Mensajes fallidos',
+  'migration.job.bytes': 'Datos copiados',
+  'migration.job.attempt': 'Intentos',
+  'migration.job.createdAt': 'Solicitada',
+  'migration.job.startedAt': 'Iniciada',
+  'migration.job.heartbeatAt': 'Ultima actividad',
+  'migration.job.finishedAt': 'Terminada',
+  'migration.folder.name': 'Carpeta',
+  'migration.folder.copied': 'Copiados',
+  'migration.folder.skipped': 'Omitidos',
+  'migration.folder.failed': 'Fallidos',
+  'migration.history.title': 'Migraciones del buzon',
+  'migration.history.description': 'Las {n} mas recientes.',
+  'migration.column.status': 'Estado',
+  'migration.column.source': 'Origen',
+  'migration.column.createdAt': 'Solicitada',
+  'migration.column.finishedAt': 'Terminada',
+  'migration.column.view': 'Ver',
+  'migration.error.SOURCE_HOST_NOT_ALLOWED':
+    'La plataforma no admite migrar desde ese servidor: no se permiten direcciones internas ni reservadas.',
+  'migration.error.MAILBOX_NOT_FOUND': 'El buzon ya no existe.',
+  'migration.error.MAILBOX_INACTIVE': 'El buzon esta inactivo: activalo antes de migrar.',
+  'migration.error.JOB_ALREADY_ACTIVE': 'Este buzon ya tiene una migracion en curso.',
+  'migration.error.TENANT_LIMIT_REACHED':
+    'La empresa alcanzo el maximo de migraciones simultaneas. Espera a que termine alguna.',
+  'migration.error.NOT_CONFIGURED':
+    'La migracion no esta disponible: falta configurarla en la plataforma. Avisa a soporte.',
+  'migration.error.JOB_NOT_CANCELLABLE': 'La migracion ya termino y no se puede cancelar.',
+  'migration.error.NOT_FOUND': 'La migracion no existe.',
+  'migration.error.VALIDATION_ERROR':
+    'Alguno de los datos de origen no es valido. Revisalos y vuelve a intentarlo.',
+  'migration.error.field.mailbox_id': 'El buzon no es valido.',
+  'migration.error.field.source_host': 'El servidor de origen no es valido.',
+  'migration.error.field.source_port': 'El puerto de origen no es valido.',
+  'migration.error.field.source_tls': 'La seguridad de la conexion no es valida.',
+  'migration.error.field.source_username': 'El usuario de origen no es valido.',
+  'migration.error.field.source_password': 'La contrasena de origen no es valida.',
+  'migration.failure.source_auth_failed':
+    'El servidor de origen rechazo el usuario o la contrasena. Si es Gmail o Microsoft, usa una contrasena de aplicacion.',
+  'migration.failure.source_unreachable':
+    'No se pudo conectar con el servidor de origen. Revisa el nombre del servidor y el puerto.',
+  'migration.failure.source_blocked_address':
+    'El servidor de origen apunta a una direccion no permitida y se bloqueo la conexion.',
+  'migration.failure.source_tls_failed':
+    'Fallo la conexion segura con el servidor de origen. Revisa la seguridad de la conexion y el puerto.',
+  'migration.failure.destination_failed':
+    'No se pudo escribir en este buzon. Vuelve a intentarlo y, si se repite, avisa a soporte.',
+  'migration.failure.quota_exceeded':
+    'El buzon se quedo sin espacio. Amplia su cuota o libera espacio y lanza la migracion otra vez.',
+  'migration.failure.timeout': 'La migracion tardo mas del tiempo maximo permitido y se detuvo.',
+  'migration.failure.virus_found':
+    'Se detecto un virus en un mensaje del origen y la migracion se detuvo.',
+  'migration.failure.imapsync_failed': 'La copia termino con un error inesperado.',
+  'migration.failure.runner_lost':
+    'El proceso que hacia la copia dejo de responder. Vuelve a lanzar la migracion.',
+  'migration.failure.cancelled': 'La migracion se cancelo.',
+  'migration.failure.unknown': 'La migracion fallo por un motivo no identificado.',
 
   'logins.title': 'Inicios de sesion recientes',
   'logins.description': 'Ultimos {n} accesos autenticados al buzon.',

@@ -216,6 +216,37 @@ fi
 MASTER_HASH=$(printf '%s' "${RAND_PASS}" | openssl passwd -6 -stdin)
 echo "${RAND_USER}@platform.local:{SHA512-CRYPT}${MASTER_HASH}::::::allow_nets=${MASTER_NETS}" > /etc/dovecot/dovecot-master.passwd
 echo ${RAND_USER}@platform.local::5000:5000:::: > /etc/dovecot/dovecot-master.userdb
+
+# Usuario maestro PROPIO de la migracion de buzones (mail-migration-runner, README.md, "Migracion de
+# buzones"): opcional. Sin las dos variables no se anade nada; con ellas, una segunda entrada con su
+# credencial y su propia red permitida (la red `mail-migration`, nunca la de los motores), de modo que
+# la credencial del webmail y la del ejecutor no se pueden usar la una en lugar de la otra.
+if [[ -n ${DOVECOT_MIGRATION_MASTER_USER} || -n ${DOVECOT_MIGRATION_MASTER_PASS} ]]; then
+  if [[ -z ${DOVECOT_MIGRATION_MASTER_USER} || -z ${DOVECOT_MIGRATION_MASTER_PASS} ]]; then
+    echo "DOVECOT_MIGRATION_MASTER_USER y DOVECOT_MIGRATION_MASTER_PASS van juntas" >&2
+    exit 1
+  fi
+  if [[ ! ${DOVECOT_MIGRATION_MASTER_USER} =~ ^[a-z0-9._-]+$ ]]; then
+    echo "DOVECOT_MIGRATION_MASTER_USER solo admite [a-z0-9._-]" >&2
+    exit 1
+  fi
+  if [[ ${#DOVECOT_MIGRATION_MASTER_PASS} -lt 32 ]]; then
+    echo "DOVECOT_MIGRATION_MASTER_PASS debe tener al menos 32 caracteres" >&2
+    exit 1
+  fi
+  if [[ ${DOVECOT_MIGRATION_MASTER_USER} == "${RAND_USER}" ]]; then
+    echo "DOVECOT_MIGRATION_MASTER_USER no puede ser el del webmail" >&2
+    exit 1
+  fi
+  MIGRATION_NETS=${DOVECOT_MIGRATION_MASTER_ALLOWED_NETS:-${MAIL_MIGRATION_IPV4_NETWORK:-172.22.2}.0/24}
+  if [[ ! ${MIGRATION_NETS} =~ ^[0-9a-fA-F.:/,]+$ ]]; then
+    echo "DOVECOT_MIGRATION_MASTER_ALLOWED_NETS debe ser una lista de CIDR separada por comas" >&2
+    exit 1
+  fi
+  MIGRATION_HASH=$(printf '%s' "${DOVECOT_MIGRATION_MASTER_PASS}" | openssl passwd -6 -stdin)
+  echo "${DOVECOT_MIGRATION_MASTER_USER}@platform.local:{SHA512-CRYPT}${MIGRATION_HASH}::::::allow_nets=${MIGRATION_NETS}" >> /etc/dovecot/dovecot-master.passwd
+  echo ${DOVECOT_MIGRATION_MASTER_USER}@platform.local::5000:5000:::: >> /etc/dovecot/dovecot-master.userdb
+fi
 chown root:dovecot /etc/dovecot/dovecot-master.passwd
 chmod 640 /etc/dovecot/dovecot-master.passwd
 

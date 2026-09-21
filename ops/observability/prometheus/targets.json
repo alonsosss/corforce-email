@@ -109,6 +109,15 @@
   },
   {
     "targets": [
+      "mail-migration:8056"
+    ],
+    "labels": {
+      "job": "mail-services",
+      "service": "mail-migration"
+    }
+  },
+  {
+    "targets": [
       "mail-security:8042"
     ],
     "labels": {

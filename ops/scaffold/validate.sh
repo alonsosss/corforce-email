@@ -126,6 +126,11 @@ if ! bash "$ROOT/ops/scaffold/check-queue-agent.sh"; then
   FAIL=1
 fi
 
+echo "== 19. Ejecutor de la migracion de buzones: sin dependencias ni shell, sin borrar en el origen, con vet y pruebas =="
+if ! bash "$ROOT/ops/scaffold/check-migration-runner.sh"; then
+  FAIL=1
+fi
+
 echo ""
 if [[ $FAIL -ne 0 ]]; then
   echo "VALIDACION: FALLA"; exit 1

@@ -23,6 +23,8 @@ services:
     image: ${ECR_REGISTRY:?definir en .env}/core-force-mail/webmail:${DEPLOY_TAG:-latest}
   domain-service:
     image: ${ECR_REGISTRY:?definir en .env}/core-force-mail/domain-service:${DEPLOY_TAG:-latest}
+  mail-migration:
+    image: ${ECR_REGISTRY:?definir en .env}/core-force-mail/mail-migration:${DEPLOY_TAG:-latest}
   transactional:
     image: ${ECR_REGISTRY:?definir en .env}/core-force-mail/transactional:${DEPLOY_TAG:-latest}
   suppression:

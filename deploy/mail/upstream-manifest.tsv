@@ -32,7 +32,7 @@ identico	dovecot/conf/dovecot.folders.conf	6a747a6efbdc02ab39846b433237a928c976a
 modificado	dovecot/conf/global_sieve_after	nombres	data/conf/dovecot/global_sieve_after
 modificado	dovecot/conf/global_sieve_before	nombres	data/conf/dovecot/global_sieve_before
 nuevo	dovecot/crontab	cron	-
-modificado	dovecot/docker-entrypoint.sh	postgres,sogo-php,servicios-go,nombres	data/Dockerfiles/dovecot/docker-entrypoint.sh
+modificado	dovecot/docker-entrypoint.sh	postgres,sogo-php,servicios-go,nombres,migracion	data/Dockerfiles/dovecot/docker-entrypoint.sh
 identico	dovecot/maildir_gc.sh	bafa25e04714d9d18d3665e82585f841f088ebe139dbb005f631822144b2e0d2
 identico	dovecot/optimize-fts.sh	721e4191857c5433eeecb87f880ea8a2d55373d34becb720c9afc26487649af7
 modificado	dovecot/quota_notify.py	nombres	data/Dockerfiles/dovecot/quota_notify.py
@@ -47,6 +47,35 @@ modificado	dovecot/supervisord.conf	cron	data/Dockerfiles/dovecot/supervisord.co
 modificado	dovecot/syslog-ng-redis_slave.conf	nombres	data/Dockerfiles/dovecot/syslog-ng-redis_slave.conf
 modificado	dovecot/syslog-ng.conf	nombres	data/Dockerfiles/dovecot/syslog-ng.conf
 modificado	dovecot/trim_logs.sh	nombres,sogo-php	data/Dockerfiles/dovecot/trim_logs.sh
+nuevo	migration-runner/Dockerfile	migracion	-
+nuevo	migration-runner/api.go	migracion	-
+nuevo	migration-runner/api_test.go	migracion	-
+nuevo	migration-runner/classify.go	migracion	-
+nuevo	migration-runner/config.go	migracion	-
+nuevo	migration-runner/config_test.go	migracion	-
+nuevo	migration-runner/go.mod	migracion	-
+nuevo	migration-runner/imapsync.go	migracion	-
+nuevo	migration-runner/main.go	migracion	-
+nuevo	migration-runner/parse.go	migracion	-
+nuevo	migration-runner/parse_test.go	migracion	-
+nuevo	migration-runner/proc_linux.go	migracion	-
+nuevo	migration-runner/proc_other.go	migracion	-
+nuevo	migration-runner/proc_unix.go	migracion	-
+nuevo	migration-runner/runner.go	migracion	-
+nuevo	migration-runner/runner_test.go	migracion	-
+nuevo	migration-runner/scan.go	migracion	-
+nuevo	migration-runner/scan_test.go	migracion	-
+nuevo	migration-runner/ssrf.go	migracion	-
+nuevo	migration-runner/ssrf_test.go	migracion	-
+nuevo	migration-runner/testdata/imapsync-auth.txt	migracion	-
+nuevo	migration-runner/testdata/imapsync-cuota.txt	migracion	-
+nuevo	migration-runner/testdata/imapsync-inaccesible.txt	migracion	-
+nuevo	migration-runner/testdata/imapsync-ok-repaso.txt	migracion	-
+nuevo	migration-runner/testdata/imapsync-ok.txt	migracion	-
+nuevo	migration-runner/testdata/imapsync-starttls-nombre.txt	migracion	-
+nuevo	migration-runner/testdata/imapsync-tls-ca.txt	migracion	-
+nuevo	migration-runner/testdata/imapsync-tls-nombre.txt	migracion	-
+nuevo	migration-runner/testdata/imapsync-virus.txt	migracion	-
 modificado	netfilter/Dockerfile	etiqueta,endurecimiento	data/Dockerfiles/netfilter/Dockerfile
 identico	netfilter/docker-entrypoint.sh	c7bc623dd80b4ec8f463677ec9a94f02652b808c29ec0f8add09105d252193c4
 modificado	netfilter/main.py	sogo-php,nombres	data/Dockerfiles/netfilter/main.py

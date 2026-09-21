@@ -129,6 +129,12 @@ export const endpoints = {
     appPassword: (id: string, appPasswordId: string) =>
       `${API_PREFIX}/mailboxes/${seg(id)}/app-passwords/${seg(appPasswordId)}`,
   },
+  mailMigration: {
+    meta: `${API_PREFIX}/mail-migration/meta`,
+    jobs: `${API_PREFIX}/mail-migration/jobs`,
+    job: (id: string) => `${API_PREFIX}/mail-migration/jobs/${seg(id)}`,
+    cancel: (id: string) => `${API_PREFIX}/mail-migration/jobs/${seg(id)}/cancel`,
+  },
   mailRouting: {
     aliases: collectionOf('/mail-routing/aliases'),
     spamAliases: collectionOf('/mail-routing/spam-aliases'),

@@ -14,6 +14,7 @@ services/gateway 0.93
 services/identity 0.85
 services/mail-auth 0.65
 services/mail-directory 0.72
+services/mail-migration 0.75
 services/mail-security 0.48
 services/organization 0.77
 services/reputation 0.64

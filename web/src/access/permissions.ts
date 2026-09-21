@@ -124,6 +124,13 @@ export const PERMISSIONS = {
     update: [MODULES.mailboxes, 'sieve', 'update'],
   },
 
+  // Migracion de buzones desde otro servidor IMAP (mail-migration).
+  mailMigrationJobs: {
+    read: [MODULES.mailMigration, 'jobs', 'read'],
+    create: [MODULES.mailMigration, 'jobs', 'create'],
+    cancel: [MODULES.mailMigration, 'jobs', 'cancel'],
+  },
+
   aliases: crud(MODULES.mailRouting, 'aliases'),
   spamAliases: crud(MODULES.mailRouting, 'spam_aliases'),
   senderAcl: crud(MODULES.mailRouting, 'sender_acl'),
