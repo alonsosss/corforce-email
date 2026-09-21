@@ -35,7 +35,7 @@ type RateLimiter struct {
 }
 
 type visitor struct {
-	count int
+	count int64
 	start time.Time
 }
 
@@ -181,15 +181,32 @@ func (rl *RateLimiter) middleware(next http.Handler, identity func(*http.Request
 	})
 }
 
-// decide cuenta la peticion en memoria siempre y, si hay almacen disponible, decide con
-// el. Contar en memoria aunque decida el almacen hace que, si este cae, cada replica
-// arranque con lo que ya vio y no con un cupo nuevo.
+// decide es observe con el veredicto del cupo: permitida mientras el total de la ventana
+// no lo supere.
 func (rl *RateLimiter) decide(ctx context.Context, identity string) (bool, time.Duration) {
+	count, reset := rl.observe(ctx, identity)
+	return count <= int64(rl.rate), reset
+}
+
+// CountPerUser suma una operacion del usuario y devuelve cuantas lleva en la ventana en
+// curso, sin limitar nada: es el contador de un detector, no una barrera. Comparte con
+// LimitPerUser el almacen, la ventana anclada en la primera operacion y la degradacion a
+// memoria (mismo nombre de limitador, misma metrica), de modo que con el almacen caido
+// cada replica cuenta lo suyo en lugar de dejar de contar.
+func (rl *RateLimiter) CountPerUser(ctx context.Context, userID string) int64 {
+	count, _ := rl.observe(ctx, "u:"+digest(userID))
+	return count
+}
+
+// observe cuenta la peticion en memoria siempre y, si hay almacen disponible, devuelve el
+// total del almacen. Contar en memoria aunque cuente el almacen hace que, si este cae,
+// cada replica arranque con lo que ya vio y no con un cupo nuevo.
+func (rl *RateLimiter) observe(ctx context.Context, identity string) (int64, time.Duration) {
 	now := rl.now()
-	localAllowed, localReset := rl.allowLocal(identity, now)
+	localCount, localReset := rl.countLocal(identity, now)
 	s := rl.shared
 	if s == nil {
-		return localAllowed, localReset
+		return localCount, localReset
 	}
 	if now.UnixNano() >= s.downUntil.Load() {
 		// Sin la cancelacion del cliente: un cliente que corta no es un almacen caido.
@@ -203,14 +220,14 @@ func (rl *RateLimiter) decide(ctx context.Context, identity string) (bool, time.
 			if reset <= 0 || reset > rl.window {
 				reset = rl.window
 			}
-			return count <= int64(rl.rate), reset
+			return count, reset
 		}
 		s.downUntil.Store(now.Add(sharedCooldown).UnixNano())
 		s.isDown.Store(true)
 		s.warn(now, err)
 	}
 	s.degraded.Inc()
-	return localAllowed, localReset
+	return localCount, localReset
 }
 
 func (s *sharedLimit) warn(now time.Time, err error) {
@@ -222,21 +239,19 @@ func (s *sharedLimit) warn(now time.Time, err error) {
 		zap.String("limiter", s.name), zap.Duration("retry_in", sharedCooldown), zap.Error(err))
 }
 
-func (rl *RateLimiter) allowLocal(key string, now time.Time) (bool, time.Duration) {
+// countLocal suma la peticion en la memoria del proceso y devuelve el total de la ventana.
+// No se detiene en el cupo: quien decide compara el total con el cupo.
+func (rl *RateLimiter) countLocal(key string, now time.Time) (int64, time.Duration) {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 
 	v, exists := rl.visitors[key]
 	if !exists || now.Sub(v.start) >= rl.window {
 		rl.visitors[key] = &visitor{count: 1, start: now}
-		return rl.rate > 0, rl.window
-	}
-	reset := v.start.Add(rl.window).Sub(now)
-	if v.count >= rl.rate {
-		return false, reset
+		return 1, rl.window
 	}
 	v.count++
-	return true, reset
+	return v.count, v.start.Add(rl.window).Sub(now)
 }
 
 func (rl *RateLimiter) cleanup() {

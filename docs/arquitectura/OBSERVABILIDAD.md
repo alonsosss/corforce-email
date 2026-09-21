@@ -73,7 +73,7 @@ host y usuario). Las dependencias las registran los paquetes que las abren, de m
 cablearlas: `postgres:<pool>` (un `Ping` de cada pool con nombre, el del registro y los de celda; `pkg/db`) y `nats`
 (la conexion viva; `pkg/events`). Cada comprobacion tiene 2 s. Los pools por empresa no entran: una empresa con la base
 rota no vuelve no disponible al servicio para las demas. Redis no esta registrado (lo usan el limitador y las sesiones, que
-degradan por su cuenta; `LimitadorSinRedis` lo avisa).
+degradan por su cuenta; `LimitadorSinRedis` lo avisa, tambien para el contador `gateway:exfil` del detector de extraccion masiva).
 
 ## El stack
 

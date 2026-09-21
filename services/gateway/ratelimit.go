@@ -15,6 +15,8 @@ import (
 const (
 	apiLimiterName  = "gateway:api"
 	authLimiterName = "gateway:auth"
+	// exfilLimiterName es el contador de lecturas del detector de extraccion masiva (audit.go).
+	exfilLimiterName = "gateway:exfil"
 )
 
 // newRateLimitStore abre el Redis de la plataforma (REDIS_*) para los cupos del gateway,
@@ -58,4 +60,12 @@ func newRateLimiters(store middleware.RateLimitStore, apiRate, authRate int, log
 	api = middleware.NewSharedRateLimiter(store, apiLimiterName, apiRate, time.Minute, logger)
 	auth = middleware.NewSharedRateLimiter(store, authLimiterName, authRate, time.Minute, logger)
 	return api, auth
+}
+
+// newExfilCounter crea el contador de lecturas por usuario del detector de extraccion
+// masiva sobre el mismo almacen que los limitadores. A diferencia de ellos no rechaza
+// nada: su funcion es alertar, asi que un almacen caido nunca corta una lectura; solo
+// degrada el conteo a la memoria de cada replica.
+func newExfilCounter(store middleware.RateLimitStore, threshold int, window time.Duration, logger *zap.Logger) *middleware.RateLimiter {
+	return middleware.NewSharedRateLimiter(store, exfilLimiterName, threshold, window, logger)
 }

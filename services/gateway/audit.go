@@ -1,10 +1,10 @@
 package main
 
 import (
+	"context"
 	"net/http"
 	"os"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/alonsosss/corforce-email/pkg/events"
@@ -24,14 +24,14 @@ type auditTrail struct {
 	modules map[string]string
 	logger  *zap.Logger
 
-	// Deteccion de exfiltracion: un contador de LECTURAS por usuario en una ventana
-	// movil. Una cuenta comprometida que descarga la lista de contactos o los buzones
-	// hace muchas mas lecturas que un humano; al superar el umbral se emite una alerta
-	// (no se bloquea, para no cortar a un usuario legitimo intensivo). El estado vive en
-	// memoria del gateway y es best-effort.
-	exfilMu     sync.Mutex
-	exfilReads  map[string]*readWindow // userID -> conteo en la ventana
-	exfilMax    int
+	// Deteccion de exfiltracion: un contador de LECTURAS por usuario en una ventana anclada
+	// en la primera. Una cuenta comprometida que descarga la lista de contactos o los
+	// buzones hace muchas mas lecturas que un humano; al alcanzar el umbral se emite una
+	// alerta (no se bloquea, para no cortar a un usuario legitimo intensivo). El conteo es
+	// comun a todas las replicas (Redis, exfilLimiterName): repartir las lecturas entre
+	// ellas no lo esquiva. Con Redis caido cada replica cuenta lo suyo.
+	reads       *middleware.RateLimiter
+	exfilMax    int64
 	exfilWindow time.Duration
 }
 
@@ -41,20 +41,14 @@ type trailPublisher interface {
 	PublishPersistent(subject string, evt events.Event) error
 }
 
-type readWindow struct {
-	count       int
-	windowStart time.Time
-	lastAlert   time.Time
-}
-
-// newAuditTrail arma el rastro con el umbral y la ventana de exfiltracion ya validados
-// (loadSettings).
-func newAuditTrail(modules map[string]string, exfilMax int, exfilWindow time.Duration, logger *zap.Logger) *auditTrail {
+// newAuditTrail arma el rastro con el contador de lecturas y el umbral y la ventana de
+// exfiltracion ya validados (loadSettings).
+func newAuditTrail(modules map[string]string, reads *middleware.RateLimiter, exfilMax int, exfilWindow time.Duration, logger *zap.Logger) *auditTrail {
 	url := os.Getenv("NATS_URL")
 	if url == "" {
 		url = "nats://nats:4222"
 	}
-	at := &auditTrail{modules: modules, logger: logger, exfilReads: make(map[string]*readWindow), exfilMax: exfilMax, exfilWindow: exfilWindow}
+	at := &auditTrail{modules: modules, logger: logger, reads: reads, exfilMax: int64(exfilMax), exfilWindow: exfilWindow}
 	bus, err := events.NewBus(url, logger)
 	if err != nil {
 		logger.Warn("audit trail sin NATS: escrituras no auditadas a nivel API", zap.Error(err))
@@ -64,50 +58,25 @@ func newAuditTrail(modules map[string]string, exfilMax int, exfilWindow time.Dur
 		logger.Warn("ensure stream AUDIT_API", zap.Error(err))
 	}
 	at.bus = bus
-	go at.exfilCleanup()
 	return at
 }
 
-// trackRead cuenta una lectura del usuario y devuelve true la PRIMERA vez que supera el
-// umbral dentro de la ventana (una alerta por ventana y usuario).
-func (a *auditTrail) trackRead(userID string) bool {
+// trackRead cuenta una lectura del usuario y devuelve el total de la ventana y true en la
+// lectura que alcanza el umbral: una alerta por ventana y usuario, tambien entre replicas
+// porque el total sale de un contador atomico. Si la respuesta de esa unica lectura se
+// perdiera (timeout con el contador ya incrementado) la alerta de esa ventana no sale.
+func (a *auditTrail) trackRead(ctx context.Context, userID string) (int64, bool) {
 	if userID == "" {
-		return false
+		return 0, false
 	}
-	a.exfilMu.Lock()
-	defer a.exfilMu.Unlock()
-	now := time.Now()
-	w := a.exfilReads[userID]
-	if w == nil || now.Sub(w.windowStart) > a.exfilWindow {
-		a.exfilReads[userID] = &readWindow{count: 1, windowStart: now}
-		return false
-	}
-	w.count++
-	if w.count >= a.exfilMax && now.Sub(w.lastAlert) > a.exfilWindow {
-		w.lastAlert = now
-		return true
-	}
-	return false
-}
-
-func (a *auditTrail) exfilCleanup() {
-	for {
-		time.Sleep(a.exfilWindow)
-		a.exfilMu.Lock()
-		now := time.Now()
-		for k, w := range a.exfilReads {
-			if now.Sub(w.windowStart) > 2*a.exfilWindow {
-				delete(a.exfilReads, k)
-			}
-		}
-		a.exfilMu.Unlock()
-	}
+	n := a.reads.CountPerUser(ctx, userID)
+	return n, n == a.exfilMax
 }
 
 // publishExfil emite la alerta de posible extraccion masiva por la misma tuberia que el
 // resto: el servicio audit la consume, el detector crea el evento de seguridad y notifica
 // al usuario y a los administradores.
-func (a *auditTrail) publishExfil(r *http.Request, count int) {
+func (a *auditTrail) publishExfil(r *http.Request, count int64) {
 	if a.bus == nil {
 		return
 	}
@@ -153,17 +122,11 @@ func (a *auditTrail) middleware(next http.Handler) http.Handler {
 		seg1, _ := pathSegments(r.URL.Path)
 		esDatos := seg1 != "" && seg1 != "auth" && seg1 != "access"
 
-		// Deteccion de exfiltracion: cuenta las LECTURAS de datos por usuario. Al superar
+		// Deteccion de exfiltracion: cuenta las LECTURAS de datos por usuario. Al alcanzar
 		// el umbral en la ventana, emite una alerta (no bloquea). Fuera del camino de la
 		// escritura, que se audita aparte abajo.
 		if r.Method == http.MethodGet && esDatos {
-			if a.trackRead(middleware.GetUserID(r.Context())) {
-				a.exfilMu.Lock()
-				n := 0
-				if wnd := a.exfilReads[middleware.GetUserID(r.Context())]; wnd != nil {
-					n = wnd.count
-				}
-				a.exfilMu.Unlock()
+			if n, alert := a.trackRead(r.Context(), middleware.GetUserID(r.Context())); alert {
 				a.publishExfil(r, n)
 			}
 		}

@@ -171,7 +171,7 @@ func main() {
 		// despues del rastro de auditoria, para que tambien quede la rechazada.
 		targets := newTargetCellGate(table, logger)
 		// Rastro de auditoria: escrituras con modulo y toda peticion con celda destino.
-		trail := newAuditTrail(modules, st.exfilReads, st.exfilWindow, logger)
+		trail := newAuditTrail(modules, newExfilCounter(rateStore, st.exfilReads, st.exfilWindow, logger), st.exfilReads, st.exfilWindow, logger)
 
 		// MFA self-service: requiere autenticacion (inyecta X-User-ID) pero NO pasa
 		// por RBAC: es gestion de la propia cuenta, no un recurso protegido por modulo. El

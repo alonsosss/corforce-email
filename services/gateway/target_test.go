@@ -106,7 +106,7 @@ func newTargetGateway(t *testing.T, g *grabador, orgURL, base string) (http.Hand
 	}
 	pub := &publicadorDePrueba{eventos: make(chan events.Event, 32)}
 	trail := &auditTrail{bus: pub, modules: tbl.moduleIndex(), logger: zap.NewNop(),
-		exfilReads: map[string]*readWindow{}, exfilMax: 1000, exfilWindow: time.Minute}
+		reads: middleware.NewRateLimiter(1000, time.Minute), exfilMax: 1000, exfilWindow: time.Minute}
 	targets := newTargetCellGate(tbl, zap.NewNop())
 	handlers := sessionHandlers(tbl, "token-interno", cells, zap.NewNop())
 
