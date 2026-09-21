@@ -17,6 +17,7 @@ export interface PaginationState {
   perPage: number;
   total: number;
   totalPages: number;
+  totalCapped?: boolean;
   onPageChange: (page: number) => void;
 }
 
@@ -117,11 +118,17 @@ export function DataTable<T>({
   );
 }
 
-export function Pagination({ page, total, totalPages, onPageChange }: PaginationState) {
+export function Pagination({
+  page,
+  total,
+  totalPages,
+  totalCapped = false,
+  onPageChange,
+}: PaginationState) {
   const lastPage = Math.max(totalPages, 1);
   return (
     <nav className="cf-pagination" aria-label={t('common.pageOf', { page, total: lastPage })}>
-      <span>{t('common.totalRows', { total })}</span>
+      <span>{t(totalCapped ? 'common.totalRowsCapped' : 'common.totalRows', { total })}</span>
       <div className="cf-pagination__controls">
         <Button
           size="sm"

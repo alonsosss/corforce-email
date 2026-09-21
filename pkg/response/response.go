@@ -39,6 +39,8 @@ type Meta struct {
 	PerPage    int   `json:"per_page,omitempty"`
 	Total      int64 `json:"total,omitempty"`
 	TotalPages int   `json:"total_pages,omitempty"`
+	// TotalCapped indica que Total es un tope y no el total: hay al menos esas filas.
+	TotalCapped bool `json:"total_capped,omitempty"`
 }
 
 // PageMeta arma la meta de un listado paginado CON total_pages.
@@ -56,6 +58,15 @@ func PageMeta(total int64, page, perPage int) *Meta {
 		}
 	}
 	return &Meta{Page: page, PerPage: perPage, Total: total, TotalPages: totalPages}
+}
+
+// PageMetaCapped es PageMeta para un listado cuyo total se cuenta solo hasta un tope. Si
+// capped, total es el tope y la meta lo declara con total_capped: el cliente muestra "mas de"
+// en lugar de un numero que no es el total.
+func PageMetaCapped(total int64, capped bool, page, perPage int) *Meta {
+	m := PageMeta(total, page, perPage)
+	m.TotalCapped = capped
+	return m
 }
 
 func JSON(w http.ResponseWriter, status int, data interface{}) {

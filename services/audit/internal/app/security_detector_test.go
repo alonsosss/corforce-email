@@ -31,8 +31,10 @@ func (f *fakeLogs) GetByID(context.Context, uuid.UUID, uuid.UUID) (*domain.Audit
 func (f *fakeLogs) List(context.Context, domain.AuditQuery, int, int) ([]*domain.AuditLog, error) {
 	return nil, nil
 }
-func (f *fakeLogs) Count(context.Context, domain.AuditQuery) (int64, error) { return 0, nil }
-func (f *fakeLogs) BulkCreate(context.Context, []*domain.AuditLog) error    { return nil }
+func (f *fakeLogs) Count(context.Context, domain.AuditQuery) (ports.Total, error) {
+	return ports.Total{}, nil
+}
+func (f *fakeLogs) BulkCreate(context.Context, []*domain.AuditLog) error { return nil }
 func (f *fakeLogs) HasUserActionFromIP(context.Context, uuid.UUID, uuid.UUID, string, string, uuid.UUID) (bool, error) {
 	return f.knownIP, nil
 }

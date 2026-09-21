@@ -146,7 +146,7 @@ func (h *Handler) searchLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response.JSONWithMeta(w, http.StatusOK, logs, response.PageMeta(total, page, pageSize))
+	response.JSONWithMeta(w, http.StatusOK, logs, response.PageMetaCapped(total.Value, total.Capped, page, pageSize))
 }
 
 type createLogRequest struct {

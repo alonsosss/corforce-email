@@ -12,11 +12,13 @@ package postgres
 import (
 	"context"
 	"os"
+	"sort"
 	"strconv"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/alonsosss/corforce-email/pkg/db"
 	"github.com/alonsosss/corforce-email/services/mail-migration/internal/domain"
 	"github.com/alonsosss/corforce-email/services/mail-migration/internal/ports"
 	"github.com/google/uuid"
@@ -87,10 +89,42 @@ SELECT $1, gen_random_uuid(), 'run' || g, 'imap.origen.example', 993, 'ssl', 'u'
 	}
 	timed("listado sin filtro, pagina 1 de 50 (mas el recuento)", func() {
 		jobs, total, err := repo.List(ctx, tenant, ports.ListFilter{}, ports.Page{Limit: 50, Offset: 0})
-		if err != nil || len(jobs) != 50 || total != int64(n+25) {
-			t.Fatalf("listado: %v %d %d", err, len(jobs), total)
+		want := ports.Total{Value: int64(n + 25)}
+		if want.Value > db.PageCountCap {
+			want = ports.Total{Value: db.PageCountCap, Capped: true}
+		}
+		if err != nil || len(jobs) != 50 || total != want {
+			t.Fatalf("listado: %v %d %+v, se esperaba %+v", err, len(jobs), total, want)
 		}
 	})
+	median := func(fn func()) time.Duration {
+		const rounds = 15
+		fn()
+		samples := make([]time.Duration, rounds)
+		for i := range samples {
+			s := time.Now()
+			fn()
+			samples[i] = time.Since(s)
+		}
+		sort.Slice(samples, func(a, b int) bool { return samples[a] < samples[b] })
+		return samples[rounds/2]
+	}
+	exact := median(func() {
+		var c int64
+		if err := pool.QueryRow(ctx, `SELECT count(*) FROM mail_migration.jobs WHERE tenant_id = $1`, tenant).Scan(&c); err != nil || c != int64(n+25) {
+			t.Fatalf("recuento exacto: %v %d", err, c)
+		}
+	})
+	bounded := median(func() {
+		if _, _, err := db.CountCapped(ctx, &db.ContextPool{}, `FROM mail_migration.jobs WHERE tenant_id = $1`, []any{tenant}, db.PageCountCap); err != nil {
+			t.Fatal(err)
+		}
+	})
+	t.Logf("recuento con %d trabajos (mediana de 15): count(*) exacto de antes %s, acotado a %d %s",
+		n+25, exact.Round(10*time.Microsecond), db.PageCountCap, bounded.Round(10*time.Microsecond))
+	if int64(n) > db.PageCountCap*3 && bounded >= exact {
+		t.Fatalf("el recuento acotado (%s) no es mas barato que el exacto (%s)", bounded, exact)
+	}
 	timed("listado sin filtro, pagina profunda (offset n/2)", func() {
 		if _, _, err := repo.List(ctx, tenant, ports.ListFilter{}, ports.Page{Limit: 50, Offset: n / 2}); err != nil {
 			t.Fatal(err)
@@ -171,6 +205,6 @@ SELECT $1, gen_random_uuid(), 'run' || g, 'imap.origen.example', 993, 'ssl', 'u'
 		t.Logf("plan de %s:\n%s", label, plan)
 	}
 	explain("listado sin filtro", `SELECT id FROM mail_migration.jobs WHERE tenant_id = $1 AND ($2::uuid IS NULL OR mailbox_id = $2) AND ($3::text IS NULL OR status = $3) ORDER BY created_at DESC, id LIMIT 50 OFFSET 0`, tenant, nil, nil)
-	explain("recuento del listado", `SELECT count(*) FROM mail_migration.jobs WHERE tenant_id = $1 AND ($2::uuid IS NULL OR mailbox_id = $2) AND ($3::text IS NULL OR status = $3)`, tenant, nil, nil)
+	explain("recuento del listado, acotado", `SELECT count(*) FROM (SELECT 1 FROM mail_migration.jobs WHERE tenant_id = $1 AND ($2::uuid IS NULL OR mailbox_id = $2) AND ($3::text IS NULL OR status = $3) LIMIT 10001) AS bounded`, tenant, nil, nil)
 	explain("reclamo", `SELECT id FROM mail_migration.jobs WHERE tenant_id = $1 AND cancel_requested_at IS NULL AND (status = 'pending' OR (status = 'running' AND lease_expires_at < now() AND attempt < 3)) ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1`, tenant)
 }

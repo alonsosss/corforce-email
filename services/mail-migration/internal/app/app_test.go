@@ -419,8 +419,8 @@ func TestListarYVerNoDevuelvenLaCredencial(t *testing.T) {
 	f := newFixture(t, nil)
 	created, _ := f.uc.Create(context.Background(), f.tenant, f.actor, validInput())
 	jobs, total, err := f.uc.List(context.Background(), f.tenant, ports.ListFilter{}, ports.Page{Limit: 10})
-	if err != nil || total != 1 || len(jobs) != 1 || jobs[0].SourcePasswordEnc != nil {
-		t.Fatalf("listar: %v %d %+v", err, total, jobs)
+	if err != nil || total != (ports.Total{Value: 1}) || len(jobs) != 1 || jobs[0].SourcePasswordEnc != nil {
+		t.Fatalf("listar: %v %+v %+v", err, total, jobs)
 	}
 	got, err := f.uc.Get(context.Background(), f.tenant, created.ID)
 	if err != nil || got.SourcePasswordEnc != nil {

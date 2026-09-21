@@ -962,9 +962,15 @@ Lo medido o leído en el código que NO se cambió, con su razón:
   suscripción de núcleo (`QueueSubscribe`, no durable).** Un evento publicado mientras `audit` está caído (cada
   despliegue lo recrea) queda en su stream y nadie lo lee: falta de rastro. Pasarlo a consumidores durables
   (`DurableQueueSubscribe`, con su `EnsureStream`) toca la lógica de suscripción de `audit`, que revisa otra tarea.
-* **Recuentos `count(*)` por página** (bitácora de `audit`, listado de `mail-migration`): O(n) por petición, 17 a 21 ms con
-  100000 filas de una empresa. El listado en sí (los datos) ya es de 0,04 ms con su índice. Si una empresa llega a millones
-  de filas, paginar por clave y devolver un total aproximado.
+* **Recuentos `count(*)` por página** (bitácora de `audit`, listado de `mail-migration`): eran O(n) por petición, 17 a 21 ms
+  con 100000 filas de una empresa. Ahora el total se cuenta solo hasta `db.PageCountCap` (10000 filas,
+  `SELECT count(*) FROM (SELECT 1 ... LIMIT 10001)`): bajo el tope es exacto y la petición no cambia; por encima devuelve el
+  tope con `meta.total_capped: true` y la web muestra "Mas de 10000 registros". Con 100000 filas, mediana de 15 medidas en
+  la prueba de integración: bitácora 8,1 ms exacto contra 0,84 ms acotado; `mail-migration` 21,3 ms contra 3,3 ms. Efectos:
+  `total_pages` en un listado acotado es el de las primeras 10000 filas (`ceil(10000 / per_page)`), así que la paginación no
+  llega más allá; para lo antiguo se estrecha el filtro (fechas, módulo, usuario). Una petición con `page` mayor sigue
+  respondiendo. Si hiciera falta recorrer todo, paginar por clave (cursor), no por desplazamiento. Sin cambiar quedan los
+  listados de eventos de seguridad de `audit` y los demás servicios, que cuentan exacto.
 * **Verificación de la cadena de auditoría**: solo completa, hasta ~5 millones de filas en 25 s. Pasado eso, verificar de forma
   incremental desde el último ancla verificado.
 * **JetStream sin tope global** en el servidor NATS (solo por stream, 1 GiB) y sin exportador de NATS: el tamaño de los

@@ -134,6 +134,7 @@ describe('cliente del scheduler', () => {
       perPage: 20,
       total: 0,
       totalPages: 0,
+      totalCapped: false,
     });
   });
 
@@ -234,6 +235,7 @@ describe('cliente del scheduler', () => {
       perPage: 20,
       total: 0,
       totalPages: 0,
+      totalCapped: false,
       pendingWindowSeconds: null,
     });
     expect(calls.map((c) => c.url)).toEqual([
@@ -271,6 +273,7 @@ describe('cliente del scheduler', () => {
       perPage: 20,
       total: 21,
       totalPages: 2,
+      totalCapped: false,
       pendingWindowSeconds: 86400,
     });
 

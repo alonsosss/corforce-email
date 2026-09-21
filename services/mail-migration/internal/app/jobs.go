@@ -119,7 +119,7 @@ func (uc *UseCase) Get(ctx context.Context, tenantID, id uuid.UUID) (*domain.Job
 	return j, nil
 }
 
-func (uc *UseCase) List(ctx context.Context, tenantID uuid.UUID, f ports.ListFilter, p ports.Page) ([]domain.Job, int64, error) {
+func (uc *UseCase) List(ctx context.Context, tenantID uuid.UUID, f ports.ListFilter, p ports.Page) ([]domain.Job, ports.Total, error) {
 	jobs, total, err := uc.repo.List(ctx, tenantID, f, p)
 	for i := range jobs {
 		jobs[i].SourcePasswordEnc = nil

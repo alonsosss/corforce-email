@@ -161,11 +161,12 @@ func (r *AuditLogRepo) List(ctx context.Context, q domain.AuditQuery, page, page
 	return out, nil
 }
 
-func (r *AuditLogRepo) Count(ctx context.Context, q domain.AuditQuery) (int64, error) {
+// Count da el total del listado hasta db.PageCountCap: la bitacora de una empresa crece sin
+// techo y un count(*) exacto por pagina es O(n).
+func (r *AuditLogRepo) Count(ctx context.Context, q domain.AuditQuery) (ports.Total, error) {
 	where, args := buildAuditWhere(q)
-	var n int64
-	err := r.pool.QueryRow(ctx, fmt.Sprintf(`SELECT COUNT(*) FROM audit.audit_logs %s`, where), args...).Scan(&n)
-	return n, err
+	n, capped, err := db.CountCapped(ctx, r.pool, `FROM audit.audit_logs `+where, args, db.PageCountCap)
+	return ports.Total{Value: n, Capped: capped}, err
 }
 
 // BulkCreate anade el lote a la cadena, en una sola transaccion y con el candado tomado una

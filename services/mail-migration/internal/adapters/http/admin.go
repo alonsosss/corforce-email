@@ -173,7 +173,7 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	for i := range jobs {
 		out[i] = toJobDTO(&jobs[i])
 	}
-	response.JSONWithMeta(w, http.StatusOK, out, response.PageMeta(total, page, perPage))
+	response.JSONWithMeta(w, http.StatusOK, out, response.PageMetaCapped(total.Value, total.Capped, page, perPage))
 }
 
 func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {

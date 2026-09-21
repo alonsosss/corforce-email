@@ -16,13 +16,20 @@ type SecurityFilters struct {
 	Acknowledged *bool
 }
 
+// Total es el total de un listado paginado. Con Capped el valor es el tope hasta el que se
+// cuenta con exactitud y el total real es mayor.
+type Total struct {
+	Value  int64
+	Capped bool
+}
+
 type AuditLogRepository interface {
 	Create(ctx context.Context, log *domain.AuditLog) error
 	VerifyChain(ctx context.Context, tenantID uuid.UUID) (*domain.ChainIntegrity, error)
 	RecentLoginOtherIP(ctx context.Context, tenantID, userID uuid.UUID, currentIP string, since time.Time, excludeID uuid.UUID) (string, error)
 	GetByID(ctx context.Context, id, tenantID uuid.UUID) (*domain.AuditLog, error)
 	List(ctx context.Context, query domain.AuditQuery, page, pageSize int) ([]*domain.AuditLog, error)
-	Count(ctx context.Context, query domain.AuditQuery) (int64, error)
+	Count(ctx context.Context, query domain.AuditQuery) (Total, error)
 	BulkCreate(ctx context.Context, logs []*domain.AuditLog) error
 
 	// Consultas del detector de seguridad sobre el historial de la propia bitacora.

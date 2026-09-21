@@ -77,7 +77,7 @@ func (r *Repo) Get(_ context.Context, tenantID, id uuid.UUID) (*domain.Job, erro
 	return &c, nil
 }
 
-func (r *Repo) List(_ context.Context, tenantID uuid.UUID, f ports.ListFilter, p ports.Page) ([]domain.Job, int64, error) {
+func (r *Repo) List(_ context.Context, tenantID uuid.UUID, f ports.ListFilter, p ports.Page) ([]domain.Job, ports.Total, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	var out []domain.Job
@@ -88,7 +88,7 @@ func (r *Repo) List(_ context.Context, tenantID uuid.UUID, f ports.ListFilter, p
 		out = append(out, *j)
 	}
 	sort.Slice(out, func(a, b int) bool { return out[a].CreatedAt.After(out[b].CreatedAt) })
-	total := int64(len(out))
+	total := ports.Total{Value: int64(len(out))}
 	if p.Offset >= len(out) {
 		return nil, total, nil
 	}

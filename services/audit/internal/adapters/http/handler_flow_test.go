@@ -29,6 +29,7 @@ type stubLogs struct {
 	byID      *domain.AuditLog
 	listed    []*domain.AuditLog
 	total     int64
+	capped    bool
 	verdict   *domain.ChainIntegrity
 	err       error
 	query     domain.AuditQuery
@@ -59,7 +60,9 @@ func (s *stubLogs) List(_ context.Context, q domain.AuditQuery, page, per int) (
 	s.query, s.page, s.per = q, page, per
 	return s.listed, s.err
 }
-func (s *stubLogs) Count(context.Context, domain.AuditQuery) (int64, error) { return s.total, s.err }
+func (s *stubLogs) Count(context.Context, domain.AuditQuery) (ports.Total, error) {
+	return ports.Total{Value: s.total, Capped: s.capped}, s.err
+}
 func (s *stubLogs) RecentLoginOtherIP(context.Context, uuid.UUID, uuid.UUID, string, time.Time, uuid.UUID) (string, error) {
 	return "", nil
 }
@@ -240,6 +243,23 @@ func TestSearchTraduceLosFiltrosYAcotaLaPaginacion(t *testing.T) {
 	}
 	e := decode(t, rec)
 	if e.Meta["total"] != float64(120) || e.Meta["page"] != float64(3) {
+		t.Fatalf("meta: %v", e.Meta)
+	}
+	if _, ok := e.Meta["total_capped"]; ok {
+		t.Fatalf("un total exacto no lleva total_capped: %v", e.Meta)
+	}
+}
+
+func TestSearchDeclaraQueElTotalEsUnTope(t *testing.T) {
+	f := newFlow()
+	f.logs.total, f.logs.capped = 10000, true
+	f.logs.listed = []*domain.AuditLog{{ID: uuid.New()}}
+	rec := f.do(http.MethodGet, base+"/logs?page=2&per_page=50", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+	e := decode(t, rec)
+	if e.Meta["total"] != float64(10000) || e.Meta["total_capped"] != true || e.Meta["total_pages"] != float64(200) {
 		t.Fatalf("meta: %v", e.Meta)
 	}
 }

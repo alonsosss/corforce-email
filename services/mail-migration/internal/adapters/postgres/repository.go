@@ -125,7 +125,9 @@ func (r *Repository) Get(ctx context.Context, tenantID, id uuid.UUID) (*domain.J
 		`SELECT `+jobColumns+` FROM mail_migration.jobs WHERE tenant_id = $1 AND id = $2`, tenantID, id))
 }
 
-func (r *Repository) List(ctx context.Context, tenantID uuid.UUID, f ports.ListFilter, p ports.Page) ([]domain.Job, int64, error) {
+// List da la pagina y el total del filtro hasta db.PageCountCap: el historial de una empresa crece
+// sin techo y un count(*) exacto por pagina es O(n).
+func (r *Repository) List(ctx context.Context, tenantID uuid.UUID, f ports.ListFilter, p ports.Page) ([]domain.Job, ports.Total, error) {
 	mailbox := f.MailboxID
 	var status *string
 	if f.Status != nil {
@@ -133,26 +135,26 @@ func (r *Repository) List(ctx context.Context, tenantID uuid.UUID, f ports.ListF
 		status = &s
 	}
 	const where = ` WHERE tenant_id = $1 AND ($2::uuid IS NULL OR mailbox_id = $2) AND ($3::text IS NULL OR status = $3)`
-	var total int64
-	if err := r.pool.QueryRow(ctx, `SELECT count(*) FROM mail_migration.jobs`+where, tenantID, mailbox, status).Scan(&total); err != nil {
-		return nil, 0, err
+	total, capped, err := db.CountCapped(ctx, r.pool, `FROM mail_migration.jobs`+where, []any{tenantID, mailbox, status}, db.PageCountCap)
+	if err != nil {
+		return nil, ports.Total{}, err
 	}
 	rows, err := r.pool.Query(ctx,
 		`SELECT `+jobColumns+` FROM mail_migration.jobs`+where+` ORDER BY created_at DESC, id LIMIT $4 OFFSET $5`,
 		tenantID, mailbox, status, p.Limit, p.Offset)
 	if err != nil {
-		return nil, 0, err
+		return nil, ports.Total{}, err
 	}
 	defer rows.Close()
 	out := []domain.Job{}
 	for rows.Next() {
 		j, err := scanJob(rows)
 		if err != nil {
-			return nil, 0, err
+			return nil, ports.Total{}, err
 		}
 		out = append(out, *j)
 	}
-	return out, total, rows.Err()
+	return out, ports.Total{Value: total, Capped: capped}, rows.Err()
 }
 
 func (r *Repository) CountActive(ctx context.Context, tenantID uuid.UUID) (int, error) {

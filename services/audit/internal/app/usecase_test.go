@@ -19,22 +19,23 @@ var errBoom = errors.New("boom")
 // resto del puerto, que estas pruebas no tocan.
 type recordedLogs struct {
 	fakeLogs
-	created    []*domain.AuditLog
-	bulk       []*domain.AuditLog
-	bulkCalls  int
-	createErr  error
-	bulkErr    error
-	byID       *domain.AuditLog
-	byIDErr    error
-	listErr    error
-	countErr   error
-	listed     []*domain.AuditLog
-	total      int64
-	verified   *domain.ChainIntegrity
-	verifyErr  error
-	lastQuery  domain.AuditQuery
-	lastPage   int
-	lastPgSize int
+	created     []*domain.AuditLog
+	bulk        []*domain.AuditLog
+	bulkCalls   int
+	createErr   error
+	bulkErr     error
+	byID        *domain.AuditLog
+	byIDErr     error
+	listErr     error
+	countErr    error
+	listed      []*domain.AuditLog
+	total       int64
+	totalCapped bool
+	verified    *domain.ChainIntegrity
+	verifyErr   error
+	lastQuery   domain.AuditQuery
+	lastPage    int
+	lastPgSize  int
 }
 
 func (r *recordedLogs) Create(_ context.Context, l *domain.AuditLog) error {
@@ -63,8 +64,8 @@ func (r *recordedLogs) List(_ context.Context, q domain.AuditQuery, page, size i
 	return r.listed, r.listErr
 }
 
-func (r *recordedLogs) Count(context.Context, domain.AuditQuery) (int64, error) {
-	return r.total, r.countErr
+func (r *recordedLogs) Count(context.Context, domain.AuditQuery) (ports.Total, error) {
+	return ports.Total{Value: r.total, Capped: r.totalCapped}, r.countErr
 }
 
 func (r *recordedLogs) VerifyChain(context.Context, uuid.UUID) (*domain.ChainIntegrity, error) {
@@ -306,23 +307,33 @@ func TestSearchDevuelveLaPaginaYElTotal(t *testing.T) {
 	r.log.total = 41
 	q := domain.AuditQuery{TenantID: uuid.New()}
 	logs, total, err := r.uc.SearchAuditLogs(context.Background(), q, 3, 20)
-	if err != nil || len(logs) != 1 || total != 41 {
-		t.Fatalf("%v %d %v", logs, total, err)
+	if err != nil || len(logs) != 1 || total != (ports.Total{Value: 41}) {
+		t.Fatalf("%v %v %v", logs, total, err)
 	}
 	if r.log.lastQuery.TenantID != q.TenantID || r.log.lastPage != 3 || r.log.lastPgSize != 20 {
 		t.Fatal("la consulta no llego intacta a la bitacora")
 	}
 }
 
+func TestSearchTransmiteQueElTotalEsUnTope(t *testing.T) {
+	r := newRig()
+	r.log.listed = []*domain.AuditLog{entry("a", "info")}
+	r.log.total, r.log.totalCapped = 10000, true
+	_, total, err := r.uc.SearchAuditLogs(context.Background(), domain.AuditQuery{}, 1, 20)
+	if err != nil || total != (ports.Total{Value: 10000, Capped: true}) {
+		t.Fatalf("%v %v", total, err)
+	}
+}
+
 func TestSearchPropagaCadaFalloSinResultadoParcial(t *testing.T) {
 	r := newRig()
 	r.log.listErr = errBoom
-	if logs, total, err := r.uc.SearchAuditLogs(context.Background(), domain.AuditQuery{}, 1, 20); !errors.Is(err, errBoom) || logs != nil || total != 0 {
-		t.Fatalf("fallo de List: %v %v %d", err, logs, total)
+	if logs, total, err := r.uc.SearchAuditLogs(context.Background(), domain.AuditQuery{}, 1, 20); !errors.Is(err, errBoom) || logs != nil || total != (ports.Total{}) {
+		t.Fatalf("fallo de List: %v %v %v", err, logs, total)
 	}
 	r.log.listErr, r.log.countErr = nil, errBoom
-	if logs, total, err := r.uc.SearchAuditLogs(context.Background(), domain.AuditQuery{}, 1, 20); !errors.Is(err, errBoom) || logs != nil || total != 0 {
-		t.Fatalf("fallo de Count: %v %v %d", err, logs, total)
+	if logs, total, err := r.uc.SearchAuditLogs(context.Background(), domain.AuditQuery{}, 1, 20); !errors.Is(err, errBoom) || logs != nil || total != (ports.Total{}) {
+		t.Fatalf("fallo de Count: %v %v %v", err, logs, total)
 	}
 }
 

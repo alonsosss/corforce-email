@@ -126,14 +126,14 @@ func (uc *AuditUseCase) BulkLogActions(ctx context.Context, logs []*domain.Audit
 	return uc.logs.BulkCreate(ctx, logs)
 }
 
-func (uc *AuditUseCase) SearchAuditLogs(ctx context.Context, query domain.AuditQuery, page, pageSize int) ([]*domain.AuditLog, int64, error) {
+func (uc *AuditUseCase) SearchAuditLogs(ctx context.Context, query domain.AuditQuery, page, pageSize int) ([]*domain.AuditLog, ports.Total, error) {
 	logs, err := uc.logs.List(ctx, query, page, pageSize)
 	if err != nil {
-		return nil, 0, err
+		return nil, ports.Total{}, err
 	}
 	total, err := uc.logs.Count(ctx, query)
 	if err != nil {
-		return nil, 0, err
+		return nil, ports.Total{}, err
 	}
 	return logs, total, nil
 }

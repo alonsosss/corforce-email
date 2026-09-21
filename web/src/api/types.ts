@@ -13,6 +13,8 @@ export interface Meta {
   per_page?: number;
   total?: number;
   total_pages?: number;
+  /** El total es un tope: hay al menos esas filas (listados que no cuentan de mas). */
+  total_capped?: boolean;
 }
 
 export interface Envelope<T> {
@@ -32,6 +34,8 @@ export interface Page<T> {
   perPage: number;
   total: number;
   totalPages: number;
+  /** total es un tope, no el total: la pantalla lo muestra como "mas de". */
+  totalCapped?: boolean;
 }
 
 export interface PageQuery {
@@ -47,5 +51,6 @@ export function toPage<T>(res: ApiResponse<T[]>, fallback: Required<PageQuery>):
     perPage: meta.per_page ?? fallback.per_page,
     total: meta.total ?? 0,
     totalPages: meta.total_pages ?? 0,
+    totalCapped: meta.total_capped ?? false,
   };
 }

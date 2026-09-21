@@ -21,6 +21,13 @@ type Page struct {
 	Limit  int
 }
 
+// Total es el total de un listado paginado. Con Capped el valor es el tope hasta el que se cuenta
+// con exactitud y el total real es mayor.
+type Total struct {
+	Value  int64
+	Capped bool
+}
+
 type ListFilter struct {
 	MailboxID *uuid.UUID
 	Status    *domain.Status
@@ -72,7 +79,7 @@ type JobRepository interface {
 	// y ErrJobAlreadyActive.
 	Insert(ctx context.Context, j *domain.Job, limits InsertLimits) error
 	Get(ctx context.Context, tenantID, id uuid.UUID) (*domain.Job, error)
-	List(ctx context.Context, tenantID uuid.UUID, f ListFilter, p Page) ([]domain.Job, int64, error)
+	List(ctx context.Context, tenantID uuid.UUID, f ListFilter, p Page) ([]domain.Job, Total, error)
 	CountActive(ctx context.Context, tenantID uuid.UUID) (int, error)
 	// RequestCancel cancela al instante un trabajo pendiente y marca la peticion en uno en curso.
 	// ErrNotCancellable si ya termino.

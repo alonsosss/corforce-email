@@ -46,7 +46,7 @@ func (e *env) total(t *testing.T, q domain.AuditQuery) int64 {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return n
+	return n.Value
 }
 
 // ---- Lectura del rastro: paginacion, filtros y orden ----

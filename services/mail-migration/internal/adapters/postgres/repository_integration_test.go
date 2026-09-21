@@ -209,8 +209,8 @@ func TestInsertarLeerYAislarEmpresas(t *testing.T) {
 	if _, err := repo.Get(ctx, other, j.ID); !errors.Is(err, domain.ErrNotFound) {
 		t.Errorf("otra empresa ve el trabajo: %v", err)
 	}
-	if jobs, total, err := repo.List(ctx, other, ports.ListFilter{}, ports.Page{Limit: 10}); err != nil || total != 0 || len(jobs) != 0 {
-		t.Errorf("otra empresa lista el trabajo: %v %d %d", err, total, len(jobs))
+	if jobs, total, err := repo.List(ctx, other, ports.ListFilter{}, ports.Page{Limit: 10}); err != nil || total != (ports.Total{}) || len(jobs) != 0 {
+		t.Errorf("otra empresa lista el trabajo: %v %+v %d", err, total, len(jobs))
 	}
 	if n, _ := repo.CountActive(ctx, other); n != 0 {
 		t.Errorf("otra empresa cuenta el trabajo: %d", n)
@@ -519,24 +519,24 @@ func TestListarFiltraPaginaYOrdena(t *testing.T) {
 		t.Fatal(err)
 	}
 	all, total, err := repo.List(ctx, tenant, ports.ListFilter{}, ports.Page{Limit: 3})
-	if err != nil || total != 5 || len(all) != 3 || all[0].ID != ids[4] {
-		t.Fatalf("listar: %v %d %d", err, total, len(all))
+	if err != nil || total != (ports.Total{Value: 5}) || len(all) != 3 || all[0].ID != ids[4] {
+		t.Fatalf("listar: %v %+v %d", err, total, len(all))
 	}
 	page2, _, _ := repo.List(ctx, tenant, ports.ListFilter{}, ports.Page{Offset: 3, Limit: 3})
 	if len(page2) != 2 || page2[1].ID != ids[0] {
 		t.Fatalf("segunda pagina: %+v", page2)
 	}
 	byMailbox, total, _ := repo.List(ctx, tenant, ports.ListFilter{MailboxID: &mailbox}, ports.Page{Limit: 10})
-	if total != 2 || len(byMailbox) != 2 {
-		t.Fatalf("por buzon: %d", total)
+	if total.Value != 2 || total.Capped || len(byMailbox) != 2 {
+		t.Fatalf("por buzon: %+v", total)
 	}
 	cancelled := domain.StatusCancelled
-	if got, total, _ := repo.List(ctx, tenant, ports.ListFilter{Status: &cancelled}, ports.Page{Limit: 10}); total != 2 || len(got) != 2 {
-		t.Fatalf("por estado: %d", total)
+	if got, total, _ := repo.List(ctx, tenant, ports.ListFilter{Status: &cancelled}, ports.Page{Limit: 10}); total.Value != 2 || len(got) != 2 {
+		t.Fatalf("por estado: %+v", total)
 	}
 	done := domain.StatusSucceeded
-	if none, total, _ := repo.List(ctx, tenant, ports.ListFilter{Status: &done}, ports.Page{Limit: 10}); total != 0 || len(none) != 0 {
-		t.Fatalf("por estado sin filas: %d", total)
+	if none, total, _ := repo.List(ctx, tenant, ports.ListFilter{Status: &done}, ports.Page{Limit: 10}); total != (ports.Total{}) || len(none) != 0 {
+		t.Fatalf("por estado sin filas: %+v", total)
 	}
 }
 

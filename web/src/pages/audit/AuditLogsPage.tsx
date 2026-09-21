@@ -216,6 +216,7 @@ function AuditLogsView() {
             perPage: pager.perPage,
             total: logs.data?.total ?? 0,
             totalPages: logs.data?.totalPages ?? 0,
+            totalCapped: logs.data?.totalCapped,
             onPageChange: pager.setPage,
           }}
         />

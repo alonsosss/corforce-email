@@ -30,6 +30,7 @@ export const es = {
   'common.next': 'Siguiente',
   'common.pageOf': 'Pagina {page} de {total}',
   'common.totalRows': '{total} registros',
+  'common.totalRowsCapped': 'Mas de {total} registros',
   'common.enabled': 'Habilitado',
   'common.disabled': 'Deshabilitado',
   'common.apply': 'Aplicar',
