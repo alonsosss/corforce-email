@@ -808,6 +808,11 @@ Lo que se comprobó de punta a punta con un buzón real, y las trampas que salie
   el 443 a una lista de Cloudflare y las reponía cada día). Revisar `iptables -S DOCKER-USER` y las unidades de
   systemd antes de desplegar.
 * **Reinicio.** Ver "Arranque tras un reinicio del servidor": todo el perfil usa `restart: always`.
+* **Gestor de cola de Postfix.** Activo (2026-09-21): `QUEUE_AGENT_API_KEY` (32 bytes aleatorios) en el `.env` del
+  servidor, 0600, que es donde `load.sh` toma los secretos mientras no haya almacén, la misma para `mail-security` y
+  `postfix-mail`; el 8590 solo existe en la red `mail-engines` y desde fuera no conecta. El superadmin recibe 200 en
+  `/api/v1/mail-security/queue` y un administrador de empresa 403. Para rotarla: nueva clave en el `.env`, recrear
+  `mail-security` y después `postfix-mail`.
 
 ### Informes DMARC
 
