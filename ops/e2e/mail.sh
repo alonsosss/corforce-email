@@ -315,6 +315,7 @@ PY
 docker run -d --name "$E2E_PREFIX-dns" -p "127.0.0.1:$DNS_PORT:53/udp" -p "127.0.0.1:$DNS_PORT:53/tcp" \
   -v "$WORK/dns.conf:/etc/unbound/e2e.conf:ro" --entrypoint unbound "$PROYECTO-unbound-mail" -d -c /etc/unbound/e2e.conf >/dev/null \
   || mal "DNS de la prueba"
+docker network connect --alias e2e-dns "$E2E_MAIL_NETWORK" "$E2E_PREFIX-dns" >/dev/null || mal "conectar el DNS de la prueba a la red de los motores"
 dns_listo() { docker logs "$E2E_PREFIX-dns" 2>&1 | grep -q 'start of service'; }
 esperar "DNS autoritativo de acme.test (unbound con los registros de domain-service)" 30 dns_listo
 api POST "/domains/$DOMID/verify"
