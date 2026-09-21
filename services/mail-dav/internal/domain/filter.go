@@ -2,7 +2,7 @@ package domain
 
 import "strings"
 
-// Collation nombra las comparaciones de texto de addressbook-query (RFC 4790).
+// Collation nombra las comparaciones de texto de addressbook-query y calendar-query (RFC 4790).
 type Collation string
 
 const (
@@ -54,7 +54,7 @@ func (m TextMatch) matches(value string) bool {
 	return ok != m.Negate
 }
 
-// PropFilter es un prop-filter de addressbook-query: la propiedad debe no existir (IsNotDefined) o
+// PropFilter es un prop-filter de addressbook-query o calendar-query: la propiedad debe no existir (IsNotDefined) o
 // cumplir sus comparaciones de texto, todas (AllOf) o alguna.
 type PropFilter struct {
 	Name         string
@@ -63,9 +63,9 @@ type PropFilter struct {
 	Matches      []TextMatch
 }
 
-func (f PropFilter) matches(c Card) bool {
+func (f PropFilter) matches(props []Property) bool {
 	found := false
-	for _, p := range c.Props {
+	for _, p := range props {
 		if p.Name != f.Name {
 			continue
 		}
@@ -109,7 +109,7 @@ func (f Filter) Matches(c Card) bool {
 		return true
 	}
 	for _, pf := range f.Props {
-		ok := pf.matches(c)
+		ok := pf.matches(c.Props)
 		if f.AllOf && !ok {
 			return false
 		}

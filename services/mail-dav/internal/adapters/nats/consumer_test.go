@@ -16,11 +16,11 @@ type purgeCall struct{ tenant, mailbox uuid.UUID }
 
 type fakePurger struct {
 	calls   []purgeCall
-	removed int
+	removed domain.PurgeResult
 	err     error
 }
 
-func (f *fakePurger) PurgeMailbox(_ context.Context, tenantID, mailboxID uuid.UUID) (int, error) {
+func (f *fakePurger) PurgeMailbox(_ context.Context, tenantID, mailboxID uuid.UUID) (domain.PurgeResult, error) {
 	f.calls = append(f.calls, purgeCall{tenantID, mailboxID})
 	return f.removed, f.err
 }
@@ -43,7 +43,7 @@ func deleted(tenantID, mailboxID string) events.Event {
 }
 
 func TestBuzonBorradoRetiraLosDatosDeEsaEmpresaYEseBuzon(t *testing.T) {
-	p := &fakePurger{removed: 2}
+	p := &fakePurger{removed: domain.PurgeResult{Addressbooks: 2, Calendars: 1}}
 	c := NewConsumer(nil, p, zap.NewNop())
 	if !handle(c, deleted(tenant.String(), mailbox.String())) {
 		t.Fatal("un evento aplicado se confirma")

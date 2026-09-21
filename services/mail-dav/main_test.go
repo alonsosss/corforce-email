@@ -16,6 +16,8 @@ func setEnv(t *testing.T, kv map[string]string) {
 	for _, k := range []string{
 		"MAIL_DAV_PORT", "MAIL_DAV_BASE_PATH", "MAIL_DAV_REALM", "MAIL_DAV_DEFAULT_ADDRESSBOOK_NAME", "MAIL_DAV_MAX_VCARD_BYTES",
 		"MAIL_DAV_MAX_VCARD_PROPERTIES", "MAIL_DAV_MAX_CONTACTS_PER_MAILBOX", "MAIL_DAV_MAX_ADDRESSBOOKS_PER_MAILBOX",
+		"MAIL_DAV_DEFAULT_CALENDAR_NAME", "MAIL_DAV_MAX_EVENT_BYTES", "MAIL_DAV_MAX_EVENT_PROPERTIES", "MAIL_DAV_MAX_EVENTS_PER_MAILBOX",
+		"MAIL_DAV_MAX_CALENDARS_PER_MAILBOX", "MAIL_DAV_MAX_RECURRENCE_WORK", "MAIL_DAV_MAX_QUERY_RECURRENCE_WORK",
 		"MAIL_DAV_CHANGES_RETAINED", "MAIL_DAV_MAX_REQUEST_BYTES", "MAIL_DAV_RATE_LIMIT_PER_MIN", "MAIL_DAV_TLS_CA_FILE",
 		"MAIL_DAV_TLS_INSECURE_SKIP_VERIFY", "MAIL_AUTH_URL", "MAIL_AUTH_CELL_URLS", "GATEWAY_BASE_CELL_CODE", "ORGANIZATION_URL",
 	} {
@@ -43,6 +45,14 @@ func TestLosValoresPorDefectoSonLosDelADR(t *testing.T) {
 	if err := lim.Validate(); err != nil {
 		t.Fatal(err)
 	}
+	cal := st.app.Calendar
+	if cal.MaxEventBytes != 256<<10 || cal.MaxEventProperties != 1000 || cal.MaxEventsPerMailbox != 20000 || cal.MaxCalendarsPerMailbox != 10 ||
+		cal.MaxRecurrenceWork != 20000 || cal.MaxQueryWork != 500000 || st.app.DefaultCalendarName != "Calendario" {
+		t.Fatalf("calendarios: %+v", st.app)
+	}
+	if err := cal.Validate(); err != nil {
+		t.Fatal(err)
+	}
 	if st.mailAuth.BaseURL != "https://mail-auth:9082" || len(st.mailAuth.CellURLs) != 0 || st.mailAuth.TLS == nil {
 		t.Fatalf("mail-auth: %+v", st.mailAuth)
 	}
@@ -57,6 +67,12 @@ func TestLaConfiguracionInvalidaImpideArrancar(t *testing.T) {
 		"vCard diminuto":                  {"MAIL_DAV_MAX_VCARD_BYTES": "10"},
 		"limite no numerico":              {"MAIL_DAV_MAX_CONTACTS_PER_MAILBOX": "muchos"},
 		"limite en cero":                  {"MAIL_DAV_MAX_ADDRESSBOOKS_PER_MAILBOX": "0"},
+		"evento mas grande que la fila":   {"MAIL_DAV_MAX_EVENT_BYTES": "4194305"},
+		"evento diminuto":                 {"MAIL_DAV_MAX_EVENT_BYTES": "10"},
+		"calendarios en cero":             {"MAIL_DAV_MAX_CALENDARS_PER_MAILBOX": "0"},
+		"eventos no numericos":            {"MAIL_DAV_MAX_EVENTS_PER_MAILBOX": "muchos"},
+		"trabajo de recurrencia en cero":  {"MAIL_DAV_MAX_RECURRENCE_WORK": "0"},
+		"trabajo de consulta desmedido":   {"MAIL_DAV_MAX_QUERY_RECURRENCE_WORK": "1000000000"},
 		"sin token interno":               {"INTERNAL_GATEWAY_TOKEN": ""},
 		"TLS sin verificar en produccion": {"MAIL_DAV_TLS_INSECURE_SKIP_VERIFY": "true"},
 		"booleano ilegible":               {"MAIL_DAV_TLS_INSECURE_SKIP_VERIFY": "quizas"},
@@ -177,8 +193,13 @@ func TestElPrefijoCoincideConLaTablaDelGateway(t *testing.T) {
 	if prefix == "" || defaultBasePath != "/api/v1/"+prefix {
 		t.Fatalf("prefijo del gateway %q, prefijo del servicio %q", prefix, defaultBasePath)
 	}
-	if len(table.WellKnown) != 1 || table.WellKnown[0].Prefix != prefix || !strings.HasSuffix(table.WellKnown[0].Path, "/carddav") {
+	if len(table.WellKnown) != 2 {
 		t.Fatalf("descubrimiento: %+v", table.WellKnown)
+	}
+	for i, suffix := range []string{"/carddav", "/caldav"} {
+		if table.WellKnown[i].Prefix != prefix || !strings.HasSuffix(table.WellKnown[i].Path, suffix) {
+			t.Fatalf("descubrimiento: %+v", table.WellKnown)
+		}
 	}
 	if table.Services.MailDAV.DefaultPort != "8058" || defaultPort != 8058 {
 		t.Fatalf("puerto: gateway %q, servicio %d", table.Services.MailDAV.DefaultPort, defaultPort)

@@ -77,10 +77,11 @@
      "strict_limit": [{"method": "POST", "path": "/session"}],
      "cell_login": {"method": "POST", "path": "/session", "username_field": "username"},
      "cell_cookie": "cf_wm"},
-    {"prefix": "dav", "service": "mail-dav", "methods": ["PROPFIND", "REPORT", "MKCOL"]}
+    {"prefix": "dav", "service": "mail-dav", "methods": ["PROPFIND", "REPORT", "MKCOL", "MKCALENDAR"]}
   ],
   "well_known": [
-    {"path": "/.well-known/carddav", "prefix": "dav"}
+    {"path": "/.well-known/carddav", "prefix": "dav"},
+    {"path": "/.well-known/caldav", "prefix": "dav"}
   ],
   "frontend": "web"
 }

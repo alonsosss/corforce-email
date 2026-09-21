@@ -34,7 +34,7 @@ afterEach(() => {
   vi.resetAllMocks();
 });
 
-describe('pestana de contactos CardDAV', () => {
+describe('pestana de contactos y calendario (CardDAV y CalDAV)', () => {
   it('muestra la URL que da la API, el usuario del buzon y la indicacion de contrasena de aplicacion', async () => {
     mount();
     expect(await screen.findByText('https://dav.empresa.test/dav/')).toBeInTheDocument();
@@ -44,11 +44,30 @@ describe('pestana de contactos CardDAV', () => {
     expect(screen.queryByText(t('dav.disabled.title'))).not.toBeInTheDocument();
   });
 
+  it('presenta la misma URL para contactos y calendarios y explica como los descubre el cliente', async () => {
+    mount();
+    expect(await screen.findByText(t('dav.serverUrl'))).toBeInTheDocument();
+    expect(screen.getByText(t('dav.title'))).toBeInTheDocument();
+    expect(screen.getByText(t('dav.discovery'))).toBeInTheDocument();
+    expect(screen.getByText(t('dav.discoveryHint'))).toBeInTheDocument();
+    // Una sola URL, la que da la API: la ficha no compone ninguna ruta por su cuenta.
+    expect(screen.getAllByText('https://dav.empresa.test/dav/')).toHaveLength(1);
+    expect(screen.queryByText(/calendars\//)).not.toBeInTheDocument();
+  });
+
+  it('con otra URL del operador muestra esa, sin rutas de contactos ni de calendarios anadidas', async () => {
+    meta.mockResolvedValue(withDav({ server_url: 'https://correo.otra-empresa.test/api/v1/dav/' }));
+    mount();
+    expect(await screen.findByText('https://correo.otra-empresa.test/api/v1/dav/')).toBeInTheDocument();
+    expect(screen.queryByText('https://dav.empresa.test/dav/')).not.toBeInTheDocument();
+  });
+
   it('sin servidor configurado por el operador lo dice y no muestra datos de conexion', async () => {
     meta.mockResolvedValue(withDav(null));
     mount();
     expect(await screen.findByText(t('dav.notConfigured.title'))).toBeInTheDocument();
     expect(screen.queryByText(t('dav.serverUrl'))).not.toBeInTheDocument();
+    expect(screen.queryByText(t('dav.discovery'))).not.toBeInTheDocument();
     expect(screen.queryByText(MAILBOX.username)).not.toBeInTheDocument();
   });
 

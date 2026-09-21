@@ -18,8 +18,8 @@ func davTable(t *testing.T, upstream string) *routeTable {
 	t.Setenv("MAIL_DAV_HOST_PORT", port)
 	tbl := &routeTable{
 		Services:          map[string]serviceSpec{"mail-dav": {HostEnv: "MAIL_DAV_HOST", DefaultHost: "mail-dav", DefaultPort: "8058"}},
-		SelfAuthenticated: []selfAuthSpec{{Prefix: "dav", Service: "mail-dav", Methods: []string{"PROPFIND", "REPORT", "MKCOL"}}},
-		WellKnown:         []wellKnownSpec{{Path: "/.well-known/carddav", Prefix: "dav"}},
+		SelfAuthenticated: []selfAuthSpec{{Prefix: "dav", Service: "mail-dav", Methods: []string{"PROPFIND", "REPORT", "MKCOL", "MKCALENDAR"}}},
+		WellKnown:         []wellKnownSpec{{Path: "/.well-known/carddav", Prefix: "dav"}, {Path: "/.well-known/caldav", Prefix: "dav"}},
 	}
 	if err := tbl.validate(); err != nil {
 		t.Fatal(err)
@@ -82,7 +82,7 @@ func (e *davEscenario) do(method, path string, headers ...string) *httptest.Resp
 // envia (credenciales Basic, Depth, If-Match y cuerpo) intacto.
 func TestElPrefijoDavRecibeSusMetodosSinJWT(t *testing.T) {
 	e := newDavEscenario(t)
-	for _, method := range []string{"PROPFIND", "REPORT", "MKCOL", "GET", "PUT", "DELETE", "OPTIONS"} {
+	for _, method := range []string{"PROPFIND", "REPORT", "MKCOL", "MKCALENDAR", "GET", "PUT", "DELETE", "OPTIONS"} {
 		rec := e.do(method, "/api/v1/dav/addressbooks/ana@acme.test/contacts/", "Authorization", "Basic YW5hOnNlY3JldG8=", "Depth", "1", "If-Match", `"abc"`)
 		if rec.Code != http.StatusMultiStatus {
 			t.Fatalf("%s: %d", method, rec.Code)
@@ -122,6 +122,8 @@ func TestLosMetodosWebDAVSoloPasanDondeSeDeclaran(t *testing.T) {
 	for _, tc := range []struct{ method, path string }{
 		{"PROPFIND", "/api/v1/users/"},
 		{"MKCOL", "/api/v1/users/x"},
+		{"MKCALENDAR", "/api/v1/users/x"},
+		{"MKCALENDAR", "/"},
 		{"MOVE", "/api/v1/users/x"},
 		{"REPORT", "/"},
 		{"PROPFIND", "/index.html"},
@@ -152,23 +154,26 @@ func TestLosMetodosWebDAVSoloPasanDondeSeDeclaran(t *testing.T) {
 	}
 }
 
-// /.well-known/carddav redirige al prefijo con cualquier metodo, sin llegar a ningun servicio.
+// /.well-known/carddav y /.well-known/caldav redirigen al prefijo con cualquier metodo, sin llegar a ningun
+// servicio.
 func TestElDescubrimientoRedirigeAlPrefijo(t *testing.T) {
 	e := newDavEscenario(t)
-	for _, method := range []string{"GET", "HEAD", "PROPFIND", "OPTIONS", "POST"} {
-		rec := e.do(method, "/.well-known/carddav")
-		if rec.Code != http.StatusMovedPermanently || rec.Header().Get("Location") != "/api/v1/dav/" {
-			t.Errorf("%s: %d %q", method, rec.Code, rec.Header().Get("Location"))
+	for _, path := range []string{"/.well-known/carddav", "/.well-known/caldav"} {
+		for _, method := range []string{"GET", "HEAD", "PROPFIND", "OPTIONS", "POST"} {
+			rec := e.do(method, path)
+			if rec.Code != http.StatusMovedPermanently || rec.Header().Get("Location") != "/api/v1/dav/" {
+				t.Errorf("%s %s: %d %q", method, path, rec.Code, rec.Header().Get("Location"))
+			}
+			if rec.Header().Get("Cache-Control") != "no-store" {
+				t.Errorf("%s %s: la redireccion no debe quedarse en cache: %q", method, path, rec.Header().Get("Cache-Control"))
+			}
 		}
-		if rec.Header().Get("Cache-Control") != "no-store" {
-			t.Errorf("%s: la redireccion no debe quedarse en cache: %q", method, rec.Header().Get("Cache-Control"))
+		if rec := e.do("GET", path+"/x"); rec.Code == http.StatusMovedPermanently {
+			t.Fatalf("%s: solo la ruta exacta redirige", path)
 		}
 	}
-	if len(e.received) != 0 || e.web != 0 {
-		t.Fatal("el descubrimiento lo resuelve el gateway")
-	}
-	if rec := e.do("GET", "/.well-known/carddav/x"); rec.Code == http.StatusMovedPermanently {
-		t.Fatal("solo la ruta exacta redirige")
+	if len(e.received) != 0 || e.web != 2 {
+		t.Fatalf("el descubrimiento lo resuelve el gateway: dav=%d web=%d", len(e.received), e.web)
 	}
 }
 
@@ -209,8 +214,8 @@ func TestValidacionDeDescubrimientoYMetodos(t *testing.T) {
 }
 
 // La tabla real declara DAV como el ADR 0004: prefijo autenticado por el servicio, sin modulo, con
-// solo los metodos que mail-dav implementa, y el descubrimiento de CardDAV.
-func TestLaTablaRealDeclaraCardDAV(t *testing.T) {
+// solo los metodos que mail-dav implementa, y el descubrimiento de CardDAV y de CalDAV.
+func TestLaTablaRealDeclaraCardDAVYCalDAV(t *testing.T) {
 	tbl, err := decodeRouteTable(defaultRoutes)
 	if err != nil {
 		t.Fatal(err)
@@ -224,13 +229,14 @@ func TestLaTablaRealDeclaraCardDAV(t *testing.T) {
 			dav = &tbl.SelfAuthenticated[i]
 		}
 	}
-	if dav == nil || dav.Service != "mail-dav" || strings.Join(dav.Methods, ",") != "PROPFIND,REPORT,MKCOL" || len(dav.StrictLimit) != 0 {
+	if dav == nil || dav.Service != "mail-dav" || strings.Join(dav.Methods, ",") != "PROPFIND,REPORT,MKCOL,MKCALENDAR" || len(dav.StrictLimit) != 0 {
 		t.Fatalf("prefijo dav: %+v", dav)
 	}
 	if tbl.moduleIndex()["dav"] != "" {
 		t.Fatal("dav no se gatea por modulo: lo autentica mail-dav contra mail-auth")
 	}
-	if len(tbl.WellKnown) != 1 || tbl.WellKnown[0] != (wellKnownSpec{Path: "/.well-known/carddav", Prefix: "dav"}) {
+	want := []wellKnownSpec{{Path: "/.well-known/carddav", Prefix: "dav"}, {Path: "/.well-known/caldav", Prefix: "dav"}}
+	if len(tbl.WellKnown) != len(want) || tbl.WellKnown[0] != want[0] || tbl.WellKnown[1] != want[1] {
 		t.Fatalf("well_known: %+v", tbl.WellKnown)
 	}
 	if s := tbl.Services["mail-dav"]; s.HostEnv != "MAIL_DAV_HOST" || s.DefaultHost != "mail-dav" || s.DefaultPort != "8058" || s.CellHostsEnv != "" {

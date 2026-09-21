@@ -16,6 +16,9 @@ type resource struct {
 	path    string
 	book    *domain.Addressbook
 	contact *domain.Contact
+	// calendar y event son los de un recurso de CalDAV; event lleva tambien su calendario.
+	calendar *domain.Calendar
+	event    *domain.Event
 }
 
 type propMode int
@@ -36,6 +39,9 @@ var (
 	nameGetETag     = davName("getetag")
 )
 
+// isDataProp dice si la propiedad es el contenido del objeto: solo se devuelve si se pide por su nombre.
+func isDataProp(n xml.Name) bool { return n == nameAddressData || n == nameCalendarData }
+
 // reportProps son las propiedades de un REPORT que no pide ninguna: el etag y el vCard.
 var reportProps = propRequest{mode: modeListed, names: []xml.Name{nameGetETag, nameAddressData}}
 
@@ -53,15 +59,16 @@ func (h *Handler) props(p domain.Principal, res resource) []element {
 	out := h.principalProps(p)
 	collection := el(davName("collection"), "")
 	switch res.kind {
-	case kindRoot, kindPrincipals, kindHomes:
+	case kindRoot, kindPrincipals, kindHomes, kindCalHomes:
 		out = append(out, el(davName("resourcetype"), "", collection))
 	case kindPrincipal:
 		out = append(out,
 			el(davName("resourcetype"), "", collection, el(davName("principal"), "")),
 			el(davName("displayname"), p.Username),
 			el(davName("principal-URL"), "", hrefEl(h.principalPath(p))),
-			el(cardName("addressbook-home-set"), "", hrefEl(h.homePath(p))))
-	case kindHome:
+			el(cardName("addressbook-home-set"), "", hrefEl(h.homePath(p))),
+			el(calName("calendar-home-set"), "", hrefEl(h.calendarHomePath(p))))
+	case kindHome, kindCalHome:
 		out = append(out,
 			el(davName("resourcetype"), "", collection),
 			el(davName("displayname"), p.Username),
@@ -71,6 +78,10 @@ func (h *Handler) props(p domain.Principal, res resource) []element {
 		out = append(out, h.bookProps(p, *res.book, collection)...)
 	case kindContact:
 		out = append(out, contactProps(*res.contact)...)
+	case kindCalendar:
+		out = append(out, h.calendarProps(p, *res.calendar, collection)...)
+	case kindEvent:
+		out = append(out, eventProps(*res.event)...)
 	}
 	return out
 }
@@ -83,10 +94,16 @@ func privileges(names ...string) element {
 	return set
 }
 
-func (h *Handler) bookProps(p domain.Principal, b domain.Addressbook, collection element) []element {
-	report := func(name xml.Name) element {
-		return el(davName("supported-report"), "", el(davName("report"), "", el(name, "")))
+// supportedReports arma la propiedad supported-report-set con los informes que admite la coleccion.
+func supportedReports(names ...xml.Name) element {
+	set := el(davName("supported-report-set"), "")
+	for _, n := range names {
+		set.Children = append(set.Children, el(davName("supported-report"), "", el(davName("report"), "", el(n, ""))))
 	}
+	return set
+}
+
+func (h *Handler) bookProps(p domain.Principal, b domain.Addressbook, collection element) []element {
 	dataType := func(version string) element {
 		e := el(cardName("address-data-type"), "")
 		e.Attrs = []xml.Attr{{Name: xml.Name{Local: "content-type"}, Value: "text/vcard"}, {Name: xml.Name{Local: "version"}, Value: version}}
@@ -101,8 +118,7 @@ func (h *Handler) bookProps(p domain.Principal, b domain.Addressbook, collection
 		el(davName("getlastmodified"), b.UpdatedAt.UTC().Format(http.TimeFormat)),
 		el(davName("owner"), "", hrefEl(h.principalPath(p))),
 		privileges("read", "write", "write-content", "bind", "unbind"),
-		el(davName("supported-report-set"), "",
-			report(cardName("addressbook-query")), report(cardName("addressbook-multiget")), report(davName("sync-collection"))),
+		supportedReports(cardName("addressbook-query"), cardName("addressbook-multiget"), davName("sync-collection")),
 		el(cardName("supported-address-data"), "", dataType("3.0"), dataType("4.0")),
 	}
 }
@@ -142,13 +158,13 @@ func (h *Handler) respond(p domain.Principal, res resource, req propRequest) res
 	switch req.mode {
 	case modeAll:
 		for _, e := range all {
-			if e.XMLName != nameAddressData {
+			if !isDataProp(e.XMLName) {
 				found = append(found, e)
 			}
 		}
 	case modeNames:
 		for _, e := range all {
-			if e.XMLName != nameAddressData {
+			if !isDataProp(e.XMLName) {
 				found = append(found, element{XMLName: e.XMLName})
 			}
 		}
@@ -180,9 +196,12 @@ func lookup(list []element, name xml.Name) (element, bool) {
 	return element{}, false
 }
 
-func propRequestFrom(list *propList) propRequest {
+func propRequestFrom(list *propList) propRequest { return propRequestOr(list, reportProps) }
+
+// propRequestOr es el prop de un informe; sin ninguno, las propiedades por omision del tipo de coleccion.
+func propRequestOr(list *propList, fallback propRequest) propRequest {
 	if list == nil || len(list.Items) == 0 {
-		return reportProps
+		return fallback
 	}
 	return propRequest{mode: modeListed, names: list.names()}
 }
@@ -269,6 +288,12 @@ func (h *Handler) propfind(w http.ResponseWriter, r *http.Request, p domain.Prin
 		out = append(out, h.bookResource(p, b))
 		for _, c := range contacts {
 			out = append(out, h.contactResource(p, b, c))
+		}
+	case kindCalHomes, kindCalHome, kindCalendar, kindEvent:
+		var err error
+		if out, err = h.calendarResources(ctx, p, t, depth); err != nil {
+			h.fail(w, r, err)
+			return
 		}
 	case kindContact:
 		b, err := h.uc.Addressbook(ctx, p, t.slug)

@@ -90,22 +90,30 @@ func ParseStoredVCard(raw string) (Card, error) {
 	return ParseVCard(raw, Limits{MaxVCardBytes: len(raw), MaxVCardProperties: math.MaxInt})
 }
 
-// rejectControl deja pasar solo tabulador, salto de linea y el retorno de carro que lo acompana: un
-// CR suelto o un NUL hacen que dos lectores vean lineas distintas.
+// rejectControl aplica controlProblem a un vCard.
 func rejectControl(raw string) error {
+	if reason := controlProblem(raw); reason != "" {
+		return vcardError(reason)
+	}
+	return nil
+}
+
+// controlProblem deja pasar solo tabulador, salto de linea y el retorno de carro que lo acompana: un
+// CR suelto o un NUL hacen que dos lectores vean lineas distintas. Devuelve la razon del rechazo o "".
+func controlProblem(raw string) string {
 	for i := 0; i < len(raw); i++ {
 		c := raw[i]
 		switch {
 		case c == '\n' || c == '\t':
 		case c == '\r':
 			if i+1 >= len(raw) || raw[i+1] != '\n' {
-				return vcardError("contiene un retorno de carro suelto")
+				return "contiene un retorno de carro suelto"
 			}
 		case c < 0x20 || c == 0x7f:
-			return vcardError("contiene caracteres de control")
+			return "contiene caracteres de control"
 		}
 	}
-	return nil
+	return ""
 }
 
 // unfold parte en lineas (CRLF o LF), une las continuaciones (RFC 6350, 3.2) y descarta las vacias.
@@ -124,26 +132,30 @@ func unfold(raw string) []string {
 	return out
 }
 
-// parseLine separa "grupo.NOMBRE;parametros:valor". Los dos puntos dentro de un parametro entre
-// comillas no cierran el nombre.
-func parseLine(line string) (Property, error) {
-	end, inQuote := -1, false
-scan:
+// splitContentLine separa "cabecera:valor" de una linea de contenido (vCard o iCalendar). Los dos puntos
+// dentro de un parametro entre comillas no cierran la cabecera.
+func splitContentLine(line string) (head, value string, ok bool) {
+	inQuote := false
 	for i := 0; i < len(line); i++ {
 		switch line[i] {
 		case '"':
 			inQuote = !inQuote
 		case ':':
 			if !inQuote {
-				end = i
-				break scan
+				return line[:i], line[i+1:], i >= 1
 			}
 		}
 	}
-	if end < 1 {
+	return "", "", false
+}
+
+// parseLine separa "grupo.NOMBRE;parametros:valor".
+func parseLine(line string) (Property, error) {
+	head, value, ok := splitContentLine(line)
+	if !ok {
 		return Property{}, vcardError("linea sin nombre o sin valor")
 	}
-	name, _, _ := strings.Cut(line[:end], ";")
+	name, _, _ := strings.Cut(head, ";")
 	if !propertyNameRe.MatchString(name) {
 		return Property{}, vcardError("nombre de propiedad no valido")
 	}
@@ -151,7 +163,7 @@ scan:
 	if g, n, ok := strings.Cut(name, "."); ok {
 		group, bare = g, n
 	}
-	return Property{Group: group, Name: strings.ToUpper(bare), Value: unescapeText(line[end+1:])}, nil
+	return Property{Group: group, Name: strings.ToUpper(bare), Value: unescapeText(value)}, nil
 }
 
 // unescapeText deshace los escapes de texto de vCard (\n, \, \; y \\).

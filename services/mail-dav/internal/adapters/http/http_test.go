@@ -26,7 +26,11 @@ var (
 	cris = apptest.Account{Password: "clave-de-cris", Principal: domain.Principal{TenantID: ana.Principal.TenantID, MailboxID: uuid.New(), Username: "cris@acme.test"}}
 )
 
-var limits = domain.Limits{MaxVCardBytes: 4096, MaxVCardProperties: 30, MaxContactsPerMailbox: 4, MaxAddressbooksPerMailbox: 2, MaxChangesRetained: 50}
+var (
+	limits         = domain.Limits{MaxVCardBytes: 4096, MaxVCardProperties: 30, MaxContactsPerMailbox: 4, MaxAddressbooksPerMailbox: 2, MaxChangesRetained: 50}
+	calendarLimits = domain.CalendarLimits{MaxEventBytes: 4096, MaxEventProperties: 60, MaxEventsPerMailbox: 10, MaxCalendarsPerMailbox: 2, MaxRecurrenceWork: 5000, MaxQueryWork: 20000}
+	testConfig     = app.Config{Limits: limits, Calendar: calendarLimits, DefaultAddressbookName: "Contactos", DefaultCalendarName: "Calendario"}
+)
 
 type harness struct {
 	t     *testing.T
@@ -41,8 +45,7 @@ func newHarness(t *testing.T) *harness {
 	core, logs := observer.New(zap.DebugLevel)
 	logger := zap.New(core)
 	auth, store := apptest.NewAuth(ana, bea, cris), apptest.NewStore()
-	uc, err := app.New(app.Deps{Auth: auth, Tenant: apptest.Binder{}, Store: store, Logger: logger,
-		Config: app.Config{Limits: limits, DefaultAddressbookName: "Contactos"}})
+	uc, err := app.New(app.Deps{Auth: auth, Tenant: apptest.Binder{}, Store: store, Calendars: store, Logger: logger, Config: testConfig})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -803,7 +806,7 @@ func TestLasRespuestasNoSeGuardanEnCache(t *testing.T) {
 }
 
 func TestNewHandlerValidaSuConfiguracion(t *testing.T) {
-	uc, _ := app.New(app.Deps{Config: app.Config{Limits: limits, DefaultAddressbookName: "x"}})
+	uc, _ := app.New(app.Deps{Config: testConfig})
 	for name, cfg := range map[string]Config{
 		"sin prefijo":       {Realm: "r", MaxXMLBytes: 1},
 		"prefijo con barra": {BasePath: "/api/v1/dav/", Realm: "r", MaxXMLBytes: 1},

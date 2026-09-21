@@ -14,11 +14,13 @@ import (
 const (
 	nsDAV     = "DAV:"
 	nsCardDAV = "urn:ietf:params:xml:ns:carddav"
+	nsCalDAV  = "urn:ietf:params:xml:ns:caldav"
 	nsCS      = "http://calendarserver.org/ns/"
 )
 
 func davName(local string) xml.Name  { return xml.Name{Space: nsDAV, Local: local} }
 func cardName(local string) xml.Name { return xml.Name{Space: nsCardDAV, Local: local} }
+func calName(local string) xml.Name  { return xml.Name{Space: nsCalDAV, Local: local} }
 
 // element es un nodo de respuesta con nombre y contenido dinamicos. encoding/xml solo escribe
 // texto y atributos escapados: ninguna cadena del cliente llega al XML sin pasar por el.
@@ -169,17 +171,34 @@ type syncReq struct {
 	Prop  *propList `xml:"DAV: prop"`
 }
 
+// settableProps son las propiedades que un cliente fija al crear una coleccion (MKCOL extendido, RFC 5689, o
+// MKCALENDAR, RFC 4791). Las que el servidor no guarda (color, orden) se ignoran.
+type settableProps struct {
+	ResourceType *struct {
+		Items []xmlName `xml:",any"`
+	} `xml:"DAV: resourcetype"`
+	DisplayName            *string `xml:"DAV: displayname"`
+	AddressbookDescription *string `xml:"urn:ietf:params:xml:ns:carddav addressbook-description"`
+	CalendarDescription    *string `xml:"urn:ietf:params:xml:ns:caldav calendar-description"`
+	Components             *struct {
+		Comps []struct {
+			Name string `xml:"name,attr"`
+		} `xml:"urn:ietf:params:xml:ns:caldav comp"`
+	} `xml:"urn:ietf:params:xml:ns:caldav supported-calendar-component-set"`
+}
+
+type setBlock struct {
+	Prop settableProps `xml:"DAV: prop"`
+}
+
 type mkcolReq struct {
-	XMLName xml.Name `xml:"DAV: mkcol"`
-	Set     []struct {
-		Prop struct {
-			ResourceType *struct {
-				Items []xmlName `xml:",any"`
-			} `xml:"DAV: resourcetype"`
-			DisplayName *string `xml:"DAV: displayname"`
-			Description *string `xml:"urn:ietf:params:xml:ns:carddav addressbook-description"`
-		} `xml:"DAV: prop"`
-	} `xml:"DAV: set"`
+	XMLName xml.Name   `xml:"DAV: mkcol"`
+	Set     []setBlock `xml:"DAV: set"`
+}
+
+type mkcalendarReq struct {
+	XMLName xml.Name   `xml:"urn:ietf:params:xml:ns:caldav mkcalendar"`
+	Set     []setBlock `xml:"DAV: set"`
 }
 
 var errEmptyBody = errors.New("cuerpo vacio")

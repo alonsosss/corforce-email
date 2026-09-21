@@ -1,4 +1,4 @@
-// Package nats borra los contactos de un buzon cuando mail-directory lo da de baja.
+// Package nats borra los contactos y calendarios de un buzon cuando mail-directory lo da de baja.
 package nats
 
 import (
@@ -27,7 +27,7 @@ const (
 
 // Purger es lo que el consumidor necesita del caso de uso.
 type Purger interface {
-	PurgeMailbox(ctx context.Context, tenantID, mailboxID uuid.UUID) (int, error)
+	PurgeMailbox(ctx context.Context, tenantID, mailboxID uuid.UUID) (domain.PurgeResult, error)
 }
 
 // Consumer aplica mail.mailbox.deleted a la base de la empresa del evento y a ninguna otra. Un
@@ -44,7 +44,7 @@ func NewConsumer(bus *events.Bus, purger Purger, logger *zap.Logger) *Consumer {
 }
 
 // Run bloquea hasta suscribirse o hasta que el contexto se cancele; si NATS no responde
-// reintenta. Mientras no haya suscripcion los contactos de un buzon borrado siguen en la base de
+// reintenta. Mientras no haya suscripcion los datos de un buzon borrado siguen en la base de
 // su empresa, y el durable los recoge al suscribirse porque el stream los conserva.
 func (c *Consumer) Run(ctx context.Context) {
 	if c.bus == nil {
@@ -86,13 +86,14 @@ func (c *Consumer) Handle(evt events.Event, ack func()) {
 	removed, err := c.purger.PurgeMailbox(ctx, tenantID, mailboxID)
 	switch {
 	case err == nil:
-		c.logger.Info("mail-dav: libretas del buzon borrado retiradas",
-			zap.String("tenant_id", tenantID.String()), zap.String("mailbox_id", mailboxID.String()), zap.Int("addressbooks", removed))
+		c.logger.Info("mail-dav: libretas y calendarios del buzon borrado retirados",
+			zap.String("tenant_id", tenantID.String()), zap.String("mailbox_id", mailboxID.String()),
+			zap.Int("addressbooks", removed.Addressbooks), zap.Int("calendars", removed.Calendars))
 	case errors.Is(err, domain.ErrTenantUnknown):
 		c.logger.Warn("mail-dav: evento de una empresa que ya no existe; no hay nada que retirar",
 			zap.String("tenant_id", tenantID.String()), zap.String("event_id", evt.ID))
 	default:
-		c.logger.Warn("mail-dav: libretas del buzon borrado no retiradas; se reentregara",
+		c.logger.Warn("mail-dav: datos del buzon borrado no retirados; se reentregara",
 			zap.String("tenant_id", tenantID.String()), zap.String("mailbox_id", mailboxID.String()), zap.Error(err))
 		return
 	}

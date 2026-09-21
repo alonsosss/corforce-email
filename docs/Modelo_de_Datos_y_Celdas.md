@@ -9,7 +9,7 @@ implementas algo marcado P, muevelo a V en la misma tarea.
 |---|---|---|---|---|
 | Registro | `mail_registry` (una) | identity, access-control, organization, billing; el gateway indirectamente | empresas, celdas, usuarios, sesiones, roles, permisos, catalogo de modulos, planes, suscripciones y contadores de consumo | `migrations/registry/` |
 | Celda | `mail_cell_<code>` (una por celda) | Postfix, Dovecot, Rspamd via `mail-auth`/`mail-policy`; mail-directory, mail-security | directorio de correo (`mail`), politicas antispam y cuarentena (`mail_security`) | `migrations/cell/canonical/<svc>/` |
-| Empresa | `mail_tenant_<slug>` (una por empresa) | el resto de servicios | auditoria, scheduler, dominios y claves DKIM (`domains`), trabajos de migracion de buzones (`mail_migration`), libretas y contactos personales de cada buzon (`mail_dav`), contactos, campanas, plantillas, envios, supresion | `migrations/tenant/canonical/<svc>/` |
+| Empresa | `mail_tenant_<slug>` (una por empresa) | el resto de servicios | auditoria, scheduler, dominios y claves DKIM (`domains`), trabajos de migracion de buzones (`mail_migration`), libretas, contactos, calendarios y eventos personales de cada buzon (`mail_dav`), contactos, campanas, plantillas, envios, supresion | `migrations/tenant/canonical/<svc>/` |
 
 Las tres bases llevan además el esquema `platform` con `event_outbox` (`pkg/outbox`).
 
@@ -573,10 +573,10 @@ solo servicios, por la instancia de la celda de la empresa con `tenantcell.Calle
   por buzon borrado (otro buzon de la empresa, uno recreado con el mismo nombre y otra empresa con el mismo id de buzon
   no pierden nada; solo los activos anuncian su cancelacion; se revierte entero si falla el evento).
 
-### 4.2 Contactos personales por CardDAV: `mail_dav` (V, 2026-09-21)
+### 4.2 Contactos y calendario personales por CardDAV y CalDAV: `mail_dav` (V, 2026-09-21)
 
 `mail-dav` (`docs/adr/0004-contactos-y-calendario-carddav-caldav.md`) guarda en la base de cada empresa las libretas
-de contactos de sus buzones. El buzon dueno vive en la celda: aqui solo se guarda su id (`mailbox_id`), sin clave
+de contactos y los calendarios de sus buzones. El buzon dueno vive en la celda: aqui solo se guarda su id (`mailbox_id`), sin clave
 foranea entre esquemas. Las claves foraneas son de dentro del esquema y llevan empresa y buzon.
 
 * `mail_dav.addressbooks` (`migrations/tenant/canonical/mail-dav/01_mail_dav.sql`): `tenant_id`, `mailbox_id`, `slug`
@@ -588,16 +588,29 @@ foranea entre esquemas. Las claves foraneas son de dentro del esquema y llevan e
   apuntar a la libreta de otro buzon.
 * `mail_dav.collection_changes`: registro de cambios por libreta (`seq`, recurso, borrado) para `sync-collection`
   (RFC 6578); se poda a `MAIL_DAV_CHANGES_RETAINED` y el token es `urn:mail-dav:sync:<libreta>:<seq>`.
-* **RLS**: `mailbox_isolation` en las tres tablas para el grupo `mail_dav_service`, con
+* `mail_dav.calendars` (`migrations/tenant/canonical/mail-dav/03_caldav.sql`): como `addressbooks` (`slug` unico por
+  buzon, `sync_seq`, `changes_floor`). Una libreta y un calendario pueden llamarse igual: son colecciones distintas.
+* `mail_dav.events`: `resource_name` (`*.ics`), `uid` (unico por calendario), `ical` (el texto tal cual lo envio el
+  cliente, con su `VTIMEZONE`, sus `VALARM` y sus recurrencias sin expandir; hasta 4 MiB en la fila y menos por
+  configuracion), `etag` (SHA-256 de esos bytes), `summary`, y el intervalo que contiene todas sus apariciones:
+  `first_start` (inicio de la primera) y `last_end` (fin de la ultima; **nulo si la recurrencia no tiene fin conocido**,
+  es decir, "puede aparecer despues de cualquier fecha"). Son un descarte previo para `calendar-query` por rango (indice
+  `(calendar_id, first_start)`); el servicio decide con exactitud sobre lo que devuelve la base. Clave foranea compuesta
+  `(calendar_id, tenant_id, mailbox_id)`, igual que los contactos.
+* `mail_dav.calendar_changes`: el mismo registro de cambios, para calendarios. No se reutiliza `collection_changes`: su
+  clave foranea compuesta apunta a `addressbooks` y es la garantia de que un cambio no cuelga de la coleccion de otro
+  buzon.
+* **RLS**: `mailbox_isolation` en las seis tablas para el grupo `mail_dav_service`, con
   `tenant_id = app.current_tenant_id AND mailbox_id = app.current_user_id`. En este servicio `app.current_user_id`
   es el id del BUZON autenticado por `mail-auth` (no hay usuario de la plataforma). Sin esos valores no pasa nada
   (fail-closed). Solo vale para el rol de login `mail_svc_mail_dav` (`ops/db/tenant-service-role.sh --service
   mail-dav`, `MAIL_DAV_DB_PASSWORD?` del almacen), que no es dueno de las tablas y solo tiene DML; sin credencial propia
   (desarrollo) el servicio corre como dueno, exento de las politicas, y rigen solo los filtros de sus consultas.
-* Limites por buzon (`MAIL_DAV_MAX_*`): tamano y propiedades de un vCard, contactos y libretas; se cuentan bajo un
-  cerrojo consultivo por buzon. Pasarlos a derechos del plan de `billing` esta pendiente.
+* Limites por buzon (`MAIL_DAV_MAX_*`): tamano y propiedades de un vCard, contactos y libretas, y (CalDAV) tamano y
+  lineas de un evento, eventos y calendarios, mas el presupuesto de expansion de recurrencias por evento y por
+  consulta; se cuentan bajo un cerrojo consultivo por buzon. Pasarlos a derechos del plan de `billing` esta pendiente.
 * Sin outbox: no publica eventos. Consume `mail.mailbox.deleted` (V, 2026-09-21; durable `mail-dav-mailbox-deleted`
-  sobre `MAIL_DIRECTORY`): borra las libretas del buzon con sus contactos y su registro de cambios (cascada de la clave
+  sobre `MAIL_DIRECTORY`): borra las libretas y los calendarios del buzon con sus contactos, eventos y registros de cambios (cascada de la clave
   foranea compuesta) en la base de la empresa del evento y en ninguna otra, por el `id` del buzon y no por su nombre, de
   modo que uno recreado con el mismo nombre conserva lo suyo. Idempotente; un evento sin `tenant_id` e `id` validos
   termina en `EVENTS_DLQ`. Lo borrado antes de que existiera el consumidor o mas alla de la retencion del stream no se
@@ -611,7 +624,13 @@ foranea entre esquemas. Las claves foraneas son de dentro del esquema y llevan e
   filtros de cada consulta aislan por si solos (quitar un filtro hace fallar esa prueba); las restricciones de la base (recurso con ruta, etag,
   tamano, libreta ajena) y que el rol de servicio no hace DDL ni `TRUNCATE`; y el borrado por buzon borrado, con el rol
   de servicio y como dueno de las tablas (otro buzon de la empresa, uno recreado con el mismo nombre y otra empresa no
-  pierden nada; quitar el filtro de empresa o el de buzon del `DELETE` hace fallar la prueba).
+  pierden nada; quitar el filtro de empresa o el de buzon del `DELETE` hace fallar la prueba). Lo mismo para CalDAV
+  (2026-09-21, migracion `03_caldav.sql`): ciclo de calendarios y eventos, descarte por tiempo con `first_start` y
+  `last_end` (incluida la serie sin fin y la que termina en `UNTIL`), registro de cambios y poda, 20 altas simultaneas
+  contra el limite de eventos, aislamiento con el rol de servicio y como dueno (con la politica de `events` apagada, la
+  misma consulta si veria los eventos ajenos), restricciones de la base (recurso `.ics`, etag, fin anterior al inicio,
+  tamano, calendario ajeno) y borrado por buzon; quitar el filtro de buzon de la busqueda de coleccion o el del borrado
+  por buzon hace fallar esas pruebas (mutaciones revertidas).
 
 ### 4.3 Cadena de hash de auditoría: `audit` (V, 2026-09-21)
 

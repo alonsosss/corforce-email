@@ -129,6 +129,7 @@ func (e *env) cleanup(t *testing.T, ps ...domain.Principal) {
 	t.Cleanup(func() {
 		for _, p := range ps {
 			_, _ = e.owner.Exec(context.Background(), `DELETE FROM mail_dav.addressbooks WHERE mailbox_id = $1`, p.MailboxID)
+			_, _ = e.owner.Exec(context.Background(), `DELETE FROM mail_dav.calendars WHERE mailbox_id = $1`, p.MailboxID)
 		}
 	})
 }

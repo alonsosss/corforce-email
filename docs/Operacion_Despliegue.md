@@ -423,14 +423,16 @@ buzones dio 500 y `mail-auth` no pudo leer el buzon del remitente de las alertas
   interna, `MAIL_DAV_TLS_CA_FILE`). No exige nada nuevo para que el resto arranque: sin `MAIL_DAV_DB_PASSWORD` (rol de
   base creado por `ops/db/tenant-service-role.sh --service mail-dav` tras aplicar las migraciones de empresa, que crean
   su grupo `mail_dav_service`) arranca con la credencial de plataforma y lo avisa, sin RLS efectiva. El gateway lo
-  expone en `/api/v1/dav` sin JWT y redirige `/.well-known/carddav` al prefijo. **HTTP Basic solo es admisible con
+  expone en `/api/v1/dav` sin JWT y redirige `/.well-known/carddav` y `/.well-known/caldav` al prefijo. **HTTP Basic solo es admisible con
   TLS**: el proxy de borde ya termina HTTPS y `mail-dav` solo acepta el token del gateway; no se expone el puerto 8058
-  fuera de `127.0.0.1`. El borde y Cloudflare deben dejar pasar `PROPFIND`, `REPORT` y `MKCOL` (nginx los reenvia; en
+  fuera de `127.0.0.1`. El borde y Cloudflare deben dejar pasar `PROPFIND`, `REPORT`, `MKCOL` y `MKCALENDAR` (nginx los reenvia; en
   Cloudflare hay que comprobarlo con un cliente real). `MAIL_DAV_PUBLIC_URL` (con el prefijo, https) hace que la ficha
   del buzon muestre los datos de conexion; vacia, no los ofrece. Con varias celdas, `MAIL_AUTH_CELL_URLS` da el
   `mail-auth` de cada una (ademas de `GATEWAY_BASE_CELL_CODE` y `ORGANIZATION_URL`). Metricas y salud como el resto
   (`mail-dav:8058` en `targets.json`); el freno de fuerza bruta es el de `mail-auth` (Redis), y los limites por buzon
-  (`MAIL_DAV_MAX_*`) son del operador hasta que pasen al plan de `billing`.
+  (`MAIL_DAV_MAX_*`, con los de CalDAV: eventos, calendarios y el presupuesto de expansion de recurrencias) son del
+  operador hasta que pasen al plan de `billing`. La migracion `03_caldav.sql` es aditiva e idempotente y crea las tablas
+  de calendarios; la base de zonas horarias va embebida en el binario (la imagen es `scratch`).
 * Salida por Amazon SES: `ops/aws/setup-ses.sh <dev|staging|prod>` aplica la pila
   `ops/aws/ses-mail.yaml` (CloudFormation): los configuration sets transaccional y de
   marketing (reputación y TLS por clase; aperturas, clics y bajas solo en marketing, con

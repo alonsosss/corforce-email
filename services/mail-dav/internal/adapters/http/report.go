@@ -24,6 +24,10 @@ var (
 // report atiende los tres informes de RFC 6352 y RFC 6578 que usan los clientes, siempre sobre una
 // libreta del propio buzon.
 func (h *Handler) report(w http.ResponseWriter, r *http.Request, p domain.Principal, t target) {
+	if t.kind == kindCalendar {
+		h.calendarReport(w, r, p, t)
+		return
+	}
 	if t.kind != kindBook {
 		writeDAVError(w, http.StatusForbidden, davName("supported-report"))
 		return
@@ -188,28 +192,42 @@ func filterFrom(req *filterReq) (domain.Filter, xml.Name, bool) {
 	}
 	out := domain.Filter{AllOf: strings.EqualFold(req.Test, "allof")}
 	for _, pf := range req.PropFilters {
-		name := strings.ToUpper(strings.TrimSpace(pf.Name))
-		if name == "" || len(pf.ParamFilters) > 0 || len(pf.TextMatches) > maxTextMatches {
+		if len(pf.ParamFilters) > 0 {
 			return domain.Filter{}, cardName("supported-filter"), false
 		}
-		f := domain.PropFilter{Name: name, AllOf: strings.EqualFold(pf.Test, "allof"), IsNotDefined: pf.IsNotDefined != nil}
-		for _, tm := range pf.TextMatches {
-			m := domain.TextMatch{Text: tm.Text, Collation: domain.CollationUnicodeCasemap, Type: domain.MatchContains, Negate: strings.EqualFold(tm.Negate, "yes")}
-			if tm.Collation != "" {
-				m.Collation = domain.Collation(tm.Collation)
-			}
-			if tm.MatchType != "" {
-				m.Type = domain.MatchType(tm.MatchType)
-			}
-			switch {
-			case !m.Collation.Valid():
-				return domain.Filter{}, cardName("supported-collation"), false
-			case !m.Type.Valid() || len(m.Text) > maxTextMatchBytes:
-				return domain.Filter{}, cardName("supported-filter"), false
-			}
-			f.Matches = append(f.Matches, m)
+		f, cond, ok := propFilterFrom(pf.Name, pf.Test, pf.IsNotDefined != nil, pf.TextMatches, cardName)
+		if !ok {
+			return domain.Filter{}, cond, false
 		}
 		out.Props = append(out.Props, f)
 	}
 	return out, xml.Name{}, true
+}
+
+// propFilterFrom convierte un prop-filter de CardDAV o de CalDAV. Lo que no sabe evaluar (una colacion o un
+// tipo de comparacion desconocidos, demasiadas comparaciones) se rechaza con la precondicion del espacio de
+// nombres de quien lo pide (ns).
+func propFilterFrom(name, test string, isNotDefined bool, matches []textMatchReq, ns func(string) xml.Name) (domain.PropFilter, xml.Name, bool) {
+	name = strings.ToUpper(strings.TrimSpace(name))
+	if name == "" || len(matches) > maxTextMatches {
+		return domain.PropFilter{}, ns("supported-filter"), false
+	}
+	f := domain.PropFilter{Name: name, AllOf: strings.EqualFold(test, "allof"), IsNotDefined: isNotDefined}
+	for _, tm := range matches {
+		m := domain.TextMatch{Text: tm.Text, Collation: domain.CollationUnicodeCasemap, Type: domain.MatchContains, Negate: strings.EqualFold(tm.Negate, "yes")}
+		if tm.Collation != "" {
+			m.Collation = domain.Collation(tm.Collation)
+		}
+		if tm.MatchType != "" {
+			m.Type = domain.MatchType(tm.MatchType)
+		}
+		switch {
+		case !m.Collation.Valid():
+			return domain.PropFilter{}, ns("supported-collation"), false
+		case !m.Type.Valid() || len(m.Text) > maxTextMatchBytes:
+			return domain.PropFilter{}, ns("supported-filter"), false
+		}
+		f.Matches = append(f.Matches, m)
+	}
+	return f, xml.Name{}, true
 }

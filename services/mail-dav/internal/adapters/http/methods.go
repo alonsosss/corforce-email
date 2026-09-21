@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/alonsosss/corforce-email/services/mail-dav/internal/domain"
 )
@@ -46,30 +47,49 @@ func preconditionFrom(h http.Header) domain.Precondition {
 	return c
 }
 
+// object es el contenido de un recurso que se sirve con GET: un vCard o un iCalendar.
+type object struct {
+	etag        string
+	updated     time.Time
+	contentType string
+	body        string
+}
+
 func (h *Handler) get(w http.ResponseWriter, r *http.Request, p domain.Principal, t target) {
-	if t.kind != kindContact {
+	var obj object
+	switch t.kind {
+	case kindContact:
+		c, err := h.uc.Contact(r.Context(), p, t.slug, t.resource)
+		if err != nil {
+			h.fail(w, r, err)
+			return
+		}
+		obj = object{etag: c.ETag, updated: c.UpdatedAt, contentType: vcardContentType, body: c.VCard}
+	case kindEvent:
+		e, err := h.uc.Event(r.Context(), p, t.slug, t.resource)
+		if err != nil {
+			h.fail(w, r, err)
+			return
+		}
+		obj = object{etag: e.ETag, updated: e.UpdatedAt, contentType: icalContentType, body: e.ICal}
+	default:
 		w.Header().Set("Allow", allowedMethods)
-		http.Error(w, "solo se pueden leer contactos con GET", http.StatusMethodNotAllowed)
+		http.Error(w, "solo se pueden leer contactos y eventos con GET", http.StatusMethodNotAllowed)
 		return
 	}
-	c, err := h.uc.Contact(r.Context(), p, t.slug, t.resource)
-	if err != nil {
-		h.fail(w, r, err)
-		return
-	}
-	w.Header().Set("ETag", etagHeader(c.ETag))
-	w.Header().Set("Last-Modified", c.UpdatedAt.UTC().Format(http.TimeFormat))
+	w.Header().Set("ETag", etagHeader(obj.etag))
+	w.Header().Set("Last-Modified", obj.updated.UTC().Format(http.TimeFormat))
 	cond := preconditionFrom(r.Header)
 	unchanged := domain.Precondition{IfNoneMatchAny: cond.IfNoneMatchAny, IfNoneMatch: cond.IfNoneMatch}
-	if (cond.IfNoneMatchAny || len(cond.IfNoneMatch) > 0) && unchanged.Check(&c.ETag) != nil {
+	if (cond.IfNoneMatchAny || len(cond.IfNoneMatch) > 0) && unchanged.Check(&obj.etag) != nil {
 		w.WriteHeader(http.StatusNotModified)
 		return
 	}
-	w.Header().Set("Content-Type", vcardContentType)
-	w.Header().Set("Content-Length", strconv.Itoa(len(c.VCard)))
+	w.Header().Set("Content-Type", obj.contentType)
+	w.Header().Set("Content-Length", strconv.Itoa(len(obj.body)))
 	w.WriteHeader(http.StatusOK)
 	if r.Method != http.MethodHead {
-		_, _ = io.WriteString(w, c.VCard)
+		_, _ = io.WriteString(w, obj.body)
 	}
 }
 
@@ -93,9 +113,13 @@ func vcardMediaType(header string) bool {
 }
 
 func (h *Handler) put(w http.ResponseWriter, r *http.Request, p domain.Principal, t target) {
+	if t.kind == kindEvent {
+		h.putEvent(w, r, p, t)
+		return
+	}
 	if t.kind != kindContact {
 		w.Header().Set("Allow", allowedMethods)
-		http.Error(w, "solo se pueden guardar contactos con PUT", http.StatusMethodNotAllowed)
+		http.Error(w, "solo se pueden guardar contactos y eventos con PUT", http.StatusMethodNotAllowed)
 		return
 	}
 	if !vcardMediaType(r.Header.Get("Content-Type")) {
@@ -146,6 +170,10 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request, p domain.Princi
 		err = h.uc.Delete(r.Context(), p, t.slug, t.resource, preconditionFrom(r.Header))
 	case kindBook:
 		err = h.uc.DeleteAddressbook(r.Context(), p, t.slug)
+	case kindEvent:
+		err = h.uc.DeleteEvent(r.Context(), p, t.slug, t.resource, preconditionFrom(r.Header))
+	case kindCalendar:
+		err = h.uc.DeleteCalendar(r.Context(), p, t.slug)
 	default:
 		http.Error(w, "este recurso no se puede borrar", http.StatusForbidden)
 		return
@@ -157,16 +185,21 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request, p domain.Princi
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// mkcol crea una libreta (MKCOL extendido de RFC 5689, o simple). Solo se admite el tipo addressbook.
+// mkcol crea una libreta (MKCOL extendido de RFC 5689, o simple) o, en la ruta de un calendario, un
+// calendario. En una libreta solo se admite el tipo addressbook; en un calendario, el tipo calendar.
 func (h *Handler) mkcol(w http.ResponseWriter, r *http.Request, p domain.Principal, t target) {
-	if t.kind != kindBook {
-		http.Error(w, "solo se pueden crear libretas", http.StatusForbidden)
+	if t.kind != kindBook && t.kind != kindCalendar {
+		http.Error(w, "solo se pueden crear libretas y calendarios", http.StatusForbidden)
 		return
 	}
 	var req mkcolReq
 	err := decodeDoc(http.MaxBytesReader(w, r.Body, h.cfg.MaxXMLBytes), &req)
 	if err != nil && !errors.Is(err, errEmptyBody) {
 		badBody(w, err)
+		return
+	}
+	if t.kind == kindCalendar {
+		h.createCalendar(w, r, p, t, req.Set, true)
 		return
 	}
 	var displayName, description string
@@ -178,8 +211,8 @@ func (h *Handler) mkcol(w http.ResponseWriter, r *http.Request, p domain.Princip
 		if set.Prop.DisplayName != nil {
 			displayName = *set.Prop.DisplayName
 		}
-		if set.Prop.Description != nil {
-			description = *set.Prop.Description
+		if set.Prop.AddressbookDescription != nil {
+			description = *set.Prop.AddressbookDescription
 		}
 	}
 	if _, err := h.uc.CreateAddressbook(r.Context(), p, t.slug, displayName, description); err != nil {

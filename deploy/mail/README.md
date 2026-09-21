@@ -342,7 +342,7 @@ reiniciar; en el perfil autoalojado los emite la CA interna con SAN `mail-auth`,
 `docs/Operacion_Despliegue.md` 11); `POST /` y `POST /auth`; `service` se traduce a flag
 (`imap`, `pop3`, `smtp`/`submission`/`lmtp` -> `smtp_access`,
 `sieve`/`managesieve` -> `sieve_access`; `dav` -> `dav_access`, el servicio con el que
-`mail-dav` (CardDAV) verifica a cada buzon por HTTP Basic, con la contrasena principal o una de aplicacion
+`mail-dav` (CardDAV y CalDAV) verifica a cada buzon por HTTP Basic, con la contrasena principal o una de aplicacion
 con `dav_access` (docs/adr/0004); `webmail` exige `imap_access` Y
 `smtp_access`, porque el webmail lee y envia con la credencial maestra, que no vuelve a
 pasar por aqui; cualquier otro se deniega); bcrypt sobre la contrasena principal y

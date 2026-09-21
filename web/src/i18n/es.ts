@@ -900,7 +900,7 @@ export const es = {
   'mailboxes.tab.sieve': 'Filtros sieve',
   'mailboxes.tab.vacation': 'Respuesta automatica',
   'mailboxes.tab.logins': 'Inicios de sesion',
-  'mailboxes.tab.dav': 'Contactos (CardDAV)',
+  'mailboxes.tab.dav': 'Contactos y calendario',
   'mailboxes.tab.migration': 'Migracion',
   'mailboxes.form.createTitle': 'Nuevo buzon',
   'mailboxes.form.localPart': 'Usuario',
@@ -1003,10 +1003,13 @@ export const es = {
   'sieve.noManageSieve':
     'Este buzon no tiene acceso Sieve: el usuario no gestiona sus propios filtros, pero estos se siguen aplicando.',
 
-  'dav.title': 'Contactos (CardDAV)',
+  'dav.title': 'Contactos y calendario (CardDAV y CalDAV)',
   'dav.description':
-    'Datos para sincronizar los contactos de este buzon con un cliente CardDAV, como el de un movil o de un programa de correo.',
-  'dav.serverUrl': 'URL del servidor',
+    'Datos para sincronizar los contactos y el calendario de este buzon con un cliente CardDAV y CalDAV, como el de un movil o de un programa de correo.',
+  'dav.serverUrl': 'URL del servidor (CardDAV y CalDAV)',
+  'dav.discovery': 'Libretas y calendarios',
+  'dav.discoveryHint':
+    'La misma URL sirve los contactos y los calendarios: el cliente descubre las libretas y los calendarios del buzon a partir de ella, con el mismo usuario y la misma contrasena.',
   'dav.username': 'Usuario',
   'dav.password': 'Contrasena',
   'dav.passwordHint':
@@ -1014,10 +1017,10 @@ export const es = {
   'dav.openAppPasswords': 'Gestionar contrasenas de aplicacion',
   'dav.disabled.title': 'El acceso DAV esta desactivado',
   'dav.disabled.body':
-    'Este buzon no tiene acceso DAV: ningun cliente podra sincronizar contactos hasta que se active en la pestana Datos.',
-  'dav.notConfigured.title': 'El servidor de contactos no esta configurado',
+    'Este buzon no tiene acceso DAV: ningun cliente podra sincronizar contactos ni calendarios hasta que se active en la pestana Datos.',
+  'dav.notConfigured.title': 'El servidor de contactos y calendario no esta configurado',
   'dav.notConfigured.body':
-    'El operador de la plataforma no ha configurado la direccion publica del servidor de contactos, asi que no hay datos de conexion que mostrar. Avisa a soporte.',
+    'El operador de la plataforma no ha configurado la direccion publica del servidor de contactos y calendario, asi que no hay datos de conexion que mostrar. Avisa a soporte.',
 
   'migration.title': 'Migracion de correo',
   'migration.notConfigured.title': 'La migracion no esta disponible',

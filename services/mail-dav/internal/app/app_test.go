@@ -20,12 +20,21 @@ var (
 	cris = apptest.Account{Password: "clave-cris", Principal: domain.Principal{TenantID: ana.Principal.TenantID, MailboxID: uuid.New(), Username: "cris@acme.test"}}
 )
 
-var limits = domain.Limits{MaxVCardBytes: 2048, MaxVCardProperties: 20, MaxContactsPerMailbox: 3, MaxAddressbooksPerMailbox: 2, MaxChangesRetained: 3}
+var (
+	limits         = domain.Limits{MaxVCardBytes: 2048, MaxVCardProperties: 20, MaxContactsPerMailbox: 3, MaxAddressbooksPerMailbox: 2, MaxChangesRetained: 3}
+	calendarLimits = domain.CalendarLimits{MaxEventBytes: 4096, MaxEventProperties: 60, MaxEventsPerMailbox: 3, MaxCalendarsPerMailbox: 2, MaxRecurrenceWork: 5000, MaxQueryWork: 20000}
+	testConfig     = app.Config{Limits: limits, Calendar: calendarLimits, DefaultAddressbookName: "Contactos", DefaultCalendarName: "Calendario"}
+)
 
 func newUseCase(t *testing.T) (*app.UseCase, *apptest.Auth, *apptest.Store) {
 	t.Helper()
+	return newUseCaseWith(t, testConfig)
+}
+
+func newUseCaseWith(t *testing.T, cfg app.Config) (*app.UseCase, *apptest.Auth, *apptest.Store) {
+	t.Helper()
 	auth, store := apptest.NewAuth(ana, bea, cris), apptest.NewStore()
-	uc, err := app.New(app.Deps{Auth: auth, Tenant: apptest.Binder{}, Store: store, Config: app.Config{Limits: limits, DefaultAddressbookName: "Contactos"}})
+	uc, err := app.New(app.Deps{Auth: auth, Tenant: apptest.Binder{}, Store: store, Calendars: store, Config: cfg})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,11 +52,17 @@ func put(t *testing.T, uc *app.UseCase, p domain.Principal, slug, res, raw strin
 }
 
 func TestNewExigeConfiguracionCompleta(t *testing.T) {
-	if _, err := app.New(app.Deps{Config: app.Config{DefaultAddressbookName: "x"}}); err == nil {
+	if _, err := app.New(app.Deps{Config: app.Config{DefaultAddressbookName: "x", DefaultCalendarName: "x"}}); err == nil {
 		t.Fatal("unos limites en cero no pueden arrancar")
 	}
-	if _, err := app.New(app.Deps{Config: app.Config{Limits: limits, DefaultAddressbookName: "  "}}); err == nil {
+	if _, err := app.New(app.Deps{Config: app.Config{Limits: limits, DefaultAddressbookName: "x", DefaultCalendarName: "x"}}); err == nil {
+		t.Fatal("unos limites de calendario en cero no pueden arrancar")
+	}
+	if _, err := app.New(app.Deps{Config: app.Config{Limits: limits, Calendar: calendarLimits, DefaultAddressbookName: "  ", DefaultCalendarName: "x"}}); err == nil {
 		t.Fatal("sin nombre de libreta por defecto no puede arrancar")
+	}
+	if _, err := app.New(app.Deps{Config: app.Config{Limits: limits, Calendar: calendarLimits, DefaultAddressbookName: "x", DefaultCalendarName: " "}}); err == nil {
+		t.Fatal("sin nombre de calendario por defecto no puede arrancar")
 	}
 }
 

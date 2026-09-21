@@ -48,3 +48,34 @@ type Store interface {
 	// seq y los nombres de los borrados. domain.ErrInvalidSyncToken si seq ya no se puede resolver.
 	ChangesSince(ctx context.Context, p domain.Principal, slug string, seq int64) (book domain.Addressbook, changed []domain.Contact, removed []string, err error)
 }
+
+// CalendarStore es el almacen de calendarios y eventos. Como Store, toda operacion se acota al buzon del
+// Principal: un recurso de otro buzon o de otra empresa no existe para quien pregunta (domain.ErrNotFound).
+type CalendarStore interface {
+	ListCalendars(ctx context.Context, p domain.Principal) ([]domain.Calendar, error)
+	GetCalendar(ctx context.Context, p domain.Principal, slug string) (domain.Calendar, error)
+	// CreateCalendar devuelve domain.ErrAlreadyExists si el buzon ya tiene uno con ese slug y
+	// domain.ErrCalendarLimit si alcanzo maxCalendars.
+	CreateCalendar(ctx context.Context, p domain.Principal, cal domain.Calendar, maxCalendars int) (domain.Calendar, error)
+	// DeleteCalendar borra el calendario con sus eventos.
+	DeleteCalendar(ctx context.Context, p domain.Principal, slug string) error
+	// DeleteMailboxCalendars borra todos los calendarios del buzon con sus eventos y su registro de cambios
+	// y devuelve cuantos borro. Un buzon sin datos no es un error.
+	DeleteMailboxCalendars(ctx context.Context, p domain.Principal) (int, error)
+
+	// ListEvents devuelve el calendario y los eventos que pueden tener una aparicion dentro de la ventana
+	// (todos con una ventana vacia); el calendario se lee primero, de modo que su ctag nunca es posterior a
+	// lo listado.
+	ListEvents(ctx context.Context, p domain.Principal, slug string, window domain.EventWindow) (domain.Calendar, []domain.Event, error)
+	GetEvent(ctx context.Context, p domain.Principal, slug, resource string) (domain.Event, error)
+	// GetEvents devuelve solo los recursos que existen, en cualquier orden.
+	GetEvents(ctx context.Context, p domain.Principal, slug string, resources []string) ([]domain.Event, error)
+	// PutEvent crea o reemplaza el evento de e.ResourceName. cond se evalua contra el etag actual con el
+	// calendario bloqueado. Errores: domain.ErrPreconditionFailed, *domain.UIDConflictError,
+	// domain.ErrEventLimit y domain.ErrNotFound (calendario inexistente).
+	PutEvent(ctx context.Context, p domain.Principal, slug string, e domain.Event, cond domain.Precondition, maxEvents, maxChanges int) (created bool, err error)
+	DeleteEvent(ctx context.Context, p domain.Principal, slug, resource string, cond domain.Precondition, maxChanges int) error
+	// EventChangesSince devuelve, ademas del calendario, los eventos que existen y cambiaron despues de seq
+	// y los nombres de los borrados. domain.ErrInvalidSyncToken si seq ya no se puede resolver.
+	EventChangesSince(ctx context.Context, p domain.Principal, slug string, seq int64) (cal domain.Calendar, changed []domain.Event, removed []string, err error)
+}

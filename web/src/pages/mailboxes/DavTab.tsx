@@ -46,6 +46,7 @@ function DavConnection({
                     </span>
                   ),
                 },
+                { label: t('dav.discovery'), value: t('dav.discoveryHint') },
                 {
                   label: t('dav.username'),
                   value: (

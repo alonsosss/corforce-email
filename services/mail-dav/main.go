@@ -1,5 +1,5 @@
-// mail-dav sirve CardDAV: los contactos personales de cada buzon, sincronizables con iOS, Thunderbird y
-// DAVx5 (docs/adr/0004). Plano de EMPRESA: los datos viven en el esquema mail_dav de la base de cada
+// mail-dav sirve CardDAV y CalDAV: los contactos y el calendario personales de cada buzon, sincronizables
+// con iOS, Thunderbird y DAVx5 (docs/adr/0004). Plano de EMPRESA: los datos viven en el esquema mail_dav de la base de cada
 // empresa. Su usuario es un buzon, no un usuario de la plataforma: cada peticion se autentica con HTTP
 // Basic contra mail-auth (service "dav") y el gateway lo expone como prefijo autenticado por el servicio
 // (routes.json, self_authenticated). Basic solo es admisible porque el borde termina TLS.
@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	_ "time/tzdata"
 
 	"github.com/alonsosss/corforce-email/pkg/config"
 	"github.com/alonsosss/corforce-email/pkg/db"
@@ -44,11 +45,19 @@ const (
 	defaultMaxRequestBytes    = 256 << 10
 	defaultRatePerMinute      = 1200
 	defaultAddressbookName    = "Contactos"
+	defaultCalendarName       = "Calendario"
 	defaultRealm              = "Contactos"
 
-	// El limite de fila de la migracion (mail_dav_contacts_size_check) es de 4 MiB: ningun tope
-	// configurable puede pasar de ahi.
-	maxVCardBytesCeiling = 4 << 20
+	defaultMaxEventBytes         = 256 << 10
+	defaultMaxEventProperties    = 1000
+	defaultMaxEvents             = 20000
+	defaultMaxCalendars          = 10
+	defaultMaxRecurrenceWork     = 20000
+	defaultMaxQueryRecurrentWork = 500000
+
+	// El limite de fila de las migraciones (mail_dav_contacts_size_check, mail_dav_events_size_check) es de
+	// 4 MiB: ningun tope de tamano configurable puede pasar de ahi.
+	maxObjectBytesCeiling = 4 << 20
 
 	mailAuthTimeout = 15 * time.Second
 
@@ -76,9 +85,10 @@ func loadSettings(logger *zap.Logger) (settings, error) {
 	st.basePath = envString("MAIL_DAV_BASE_PATH", defaultBasePath)
 	st.realm = envString("MAIL_DAV_REALM", defaultRealm)
 	st.app.DefaultAddressbookName = envString("MAIL_DAV_DEFAULT_ADDRESSBOOK_NAME", defaultAddressbookName)
+	st.app.DefaultCalendarName = envString("MAIL_DAV_DEFAULT_CALENDAR_NAME", defaultCalendarName)
 
 	lim := &st.app.Limits
-	if lim.MaxVCardBytes, err = config.EnvInt("MAIL_DAV_MAX_VCARD_BYTES", defaultMaxVCardBytes, 1<<10, maxVCardBytesCeiling); err != nil {
+	if lim.MaxVCardBytes, err = config.EnvInt("MAIL_DAV_MAX_VCARD_BYTES", defaultMaxVCardBytes, 1<<10, maxObjectBytesCeiling); err != nil {
 		return st, err
 	}
 	if lim.MaxVCardProperties, err = config.EnvInt("MAIL_DAV_MAX_VCARD_PROPERTIES", defaultMaxVCardProperties, 1, 5000); err != nil {
@@ -93,7 +103,26 @@ func loadSettings(logger *zap.Logger) (settings, error) {
 	if lim.MaxChangesRetained, err = config.EnvInt("MAIL_DAV_CHANGES_RETAINED", defaultChangesRetained, 1, 1_000_000); err != nil {
 		return st, err
 	}
-	xmlBytes, err := config.EnvInt("MAIL_DAV_MAX_REQUEST_BYTES", defaultMaxRequestBytes, 1<<10, maxVCardBytesCeiling)
+	cal := &st.app.Calendar
+	if cal.MaxEventBytes, err = config.EnvInt("MAIL_DAV_MAX_EVENT_BYTES", defaultMaxEventBytes, 1<<10, maxObjectBytesCeiling); err != nil {
+		return st, err
+	}
+	if cal.MaxEventProperties, err = config.EnvInt("MAIL_DAV_MAX_EVENT_PROPERTIES", defaultMaxEventProperties, 1, 20000); err != nil {
+		return st, err
+	}
+	if cal.MaxEventsPerMailbox, err = config.EnvInt("MAIL_DAV_MAX_EVENTS_PER_MAILBOX", defaultMaxEvents, 1, 1_000_000); err != nil {
+		return st, err
+	}
+	if cal.MaxCalendarsPerMailbox, err = config.EnvInt("MAIL_DAV_MAX_CALENDARS_PER_MAILBOX", defaultMaxCalendars, 1, 1000); err != nil {
+		return st, err
+	}
+	if cal.MaxRecurrenceWork, err = config.EnvInt("MAIL_DAV_MAX_RECURRENCE_WORK", defaultMaxRecurrenceWork, 1, 1_000_000); err != nil {
+		return st, err
+	}
+	if cal.MaxQueryWork, err = config.EnvInt("MAIL_DAV_MAX_QUERY_RECURRENCE_WORK", defaultMaxQueryRecurrentWork, 1, 100_000_000); err != nil {
+		return st, err
+	}
+	xmlBytes, err := config.EnvInt("MAIL_DAV_MAX_REQUEST_BYTES", defaultMaxRequestBytes, 1<<10, maxObjectBytesCeiling)
 	if err != nil {
 		return st, err
 	}
@@ -193,20 +222,22 @@ func main() {
 		log.Fatalf("mail-dav: %v", err)
 	}
 
+	repo := postgres.NewRepository(&db.ContextPool{})
 	uc, err := app.New(app.Deps{
-		Auth:   authClient,
-		Tenant: tenantdb.NewBinder(tenantDB),
-		Store:  postgres.NewRepository(&db.ContextPool{}),
-		Config: st.app,
-		Logger: logger,
+		Auth:      authClient,
+		Tenant:    tenantdb.NewBinder(tenantDB),
+		Store:     repo,
+		Calendars: repo,
+		Config:    st.app,
+		Logger:    logger,
 	})
 	if err != nil {
 		log.Fatalf("mail-dav: %v", err)
 	}
-	// Sin NATS el servicio sirve igual: los contactos de un buzon borrado siguen en la base de su empresa
-	// hasta que haya bus, porque el stream conserva el evento y el durable lo recoge al suscribirse.
+	// Sin NATS el servicio sirve igual: los contactos y eventos de un buzon borrado siguen en la base de su
+	// empresa hasta que haya bus, porque el stream conserva el evento y el durable lo recoge al suscribirse.
 	if bus, err := events.NewBus(cfg.NATS.URL, logger); err != nil {
-		logger.Warn("mail-dav: NATS no disponible; sin retirada de los contactos de buzones borrados", zap.Error(err))
+		logger.Warn("mail-dav: NATS no disponible; sin retirada de los datos de buzones borrados", zap.Error(err))
 	} else {
 		defer bus.Close()
 		go natsadapter.NewConsumer(bus, uc, logger).Run(ctx)
@@ -227,7 +258,7 @@ func main() {
 
 // router es la cadena de la peticion. Unica entrada: el gateway; sin su token no se acepta X-Real-IP,
 // que alimenta el freno de fuerza bruta de mail-auth. No usa chi: los metodos WebDAV (PROPFIND, REPORT,
-// MKCOL) no estan en su tabla de metodos.
+// MKCOL, MKCALENDAR) no estan en su tabla de metodos.
 func router(dav http.Handler, ratePerMin int, logger *zap.Logger) http.Handler {
 	limiter := middleware.NewRateLimiter(ratePerMin, time.Minute)
 	chain := []func(http.Handler) http.Handler{

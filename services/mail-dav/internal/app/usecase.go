@@ -16,40 +16,52 @@ const DefaultSlug = "contacts"
 
 type Config struct {
 	Limits                 domain.Limits
+	Calendar               domain.CalendarLimits
 	DefaultAddressbookName string
+	DefaultCalendarName    string
 }
 
 type Deps struct {
-	Auth   ports.Authenticator
-	Tenant ports.TenantBinder
-	Store  ports.Store
-	Config Config
-	Logger *zap.Logger
+	Auth      ports.Authenticator
+	Tenant    ports.TenantBinder
+	Store     ports.Store
+	Calendars ports.CalendarStore
+	Config    Config
+	Logger    *zap.Logger
 }
 
 type UseCase struct {
-	auth   ports.Authenticator
-	tenant ports.TenantBinder
-	store  ports.Store
-	cfg    Config
-	logger *zap.Logger
+	auth      ports.Authenticator
+	tenant    ports.TenantBinder
+	store     ports.Store
+	calendars ports.CalendarStore
+	cfg       Config
+	logger    *zap.Logger
 }
 
 func New(d Deps) (*UseCase, error) {
 	if err := d.Config.Limits.Validate(); err != nil {
 		return nil, err
 	}
+	if err := d.Config.Calendar.Validate(); err != nil {
+		return nil, err
+	}
 	if strings.TrimSpace(d.Config.DefaultAddressbookName) == "" {
 		return nil, errors.New("falta el nombre de la libreta por defecto")
+	}
+	if strings.TrimSpace(d.Config.DefaultCalendarName) == "" {
+		return nil, errors.New("falta el nombre del calendario por defecto")
 	}
 	logger := d.Logger
 	if logger == nil {
 		logger = zap.NewNop()
 	}
-	return &UseCase{auth: d.Auth, tenant: d.Tenant, store: d.Store, cfg: d.Config, logger: logger}, nil
+	return &UseCase{auth: d.Auth, tenant: d.Tenant, store: d.Store, calendars: d.Calendars, cfg: d.Config, logger: logger}, nil
 }
 
 func (uc *UseCase) Limits() domain.Limits { return uc.cfg.Limits }
+
+func (uc *UseCase) CalendarLimits() domain.CalendarLimits { return uc.cfg.Calendar }
 
 // Authenticate verifica la credencial y devuelve el contexto ya ligado a la empresa y al buzon: desde
 // aqui todo acceso a datos usa ese contexto.
@@ -89,21 +101,30 @@ func (uc *UseCase) Addressbook(ctx context.Context, p domain.Principal, slug str
 }
 
 func (uc *UseCase) CreateAddressbook(ctx context.Context, p domain.Principal, slug, displayName, description string) (domain.Addressbook, error) {
+	displayName, description, err := collectionNames(slug, displayName, description)
+	if err != nil {
+		return domain.Addressbook{}, err
+	}
+	return uc.store.CreateAddressbook(ctx, p, domain.Addressbook{
+		ID: uuid.New(), TenantID: p.TenantID, MailboxID: p.MailboxID,
+		Slug: slug, DisplayName: displayName, Description: description,
+	}, uc.cfg.Limits.MaxAddressbooksPerMailbox)
+}
+
+// collectionNames valida y normaliza lo que el cliente da al crear una libreta o un calendario.
+func collectionNames(slug, displayName, description string) (string, string, error) {
 	displayName, description = strings.TrimSpace(displayName), strings.TrimSpace(description)
 	if !domain.ValidSlug(slug) {
-		return domain.Addressbook{}, domain.ErrInvalidName
+		return "", "", domain.ErrInvalidName
 	}
 	if displayName == "" {
 		displayName = slug
 	}
 	if len([]rune(displayName)) > domain.MaxDisplayNameLength || len([]rune(description)) > domain.MaxDescriptionLength ||
 		strings.ContainsAny(displayName+description, "\x00\r") {
-		return domain.Addressbook{}, domain.ErrInvalidName
+		return "", "", domain.ErrInvalidName
 	}
-	return uc.store.CreateAddressbook(ctx, p, domain.Addressbook{
-		ID: uuid.New(), TenantID: p.TenantID, MailboxID: p.MailboxID,
-		Slug: slug, DisplayName: displayName, Description: description,
-	}, uc.cfg.Limits.MaxAddressbooksPerMailbox)
+	return displayName, description, nil
 }
 
 func (uc *UseCase) DeleteAddressbook(ctx context.Context, p domain.Principal, slug string) error {

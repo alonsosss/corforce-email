@@ -2,20 +2,21 @@
 
 ## Estado
 
-**Parcialmente implementado: CardDAV** (2026-09-21). El responsable del producto autorizo construirlo. Hecho: el
-servicio `mail-dav` con CardDAV (contactos personales de cada buzon, sincronizables con iOS, Thunderbird y DAVx5),
-su autenticacion contra `mail-auth`, el flag `dav_access` del buzon, los datos de conexion en la ficha del buzon y
-las pruebas. **Pendiente**: CalDAV (calendarios y eventos), comparticion entre buzones, la libreta de solo lectura
-"Directorio de la empresa" y limites como derechos del plan de `billing` (secciones "Lo decidido al implementar" y
-"Pendiente"). El borrado de los contactos de un buzon borrado esta hecho (2026-09-21, ver "Borrado de los datos de
-un buzon"). Cierra el diseno de
-`Plan_Estrategico_Mejoras_Correo.md`, C3 fase 2. La fase 1 (libreta compartida de la empresa en el webmail) ya
-estaba hecha y no depende de esto.
+**Parcialmente implementado: CardDAV y CalDAV** (2026-09-21). El responsable del producto autorizo construirlo.
+Hecho: el servicio `mail-dav` con CardDAV (contactos personales de cada buzon) y con CalDAV (calendarios y eventos
+`VEVENT` de cada buzon), sincronizables con iOS, Thunderbird y DAVx5; su autenticacion contra `mail-auth`, el flag
+`dav_access` del buzon, los datos de conexion en la ficha del buzon y las pruebas. **Pendiente**: comparticion entre
+buzones, la libreta de solo lectura "Directorio de la empresa", limites como derechos del plan de `billing`, y de
+CalDAV lo que dice "Pendiente" al final (tareas, invitaciones, alarmas, `free-busy-query`, `PROPPATCH`). El borrado
+de los contactos y de los calendarios de un buzon borrado esta hecho (2026-09-21, ver "Borrado de los datos de un
+buzon"). Cierra el diseno de `Plan_Estrategico_Mejoras_Correo.md`, C3 fase 2. La fase 1 (libreta compartida de la
+empresa en el webmail) ya estaba hecha y no depende de esto.
 
 Lo verificado y lo que no: el codigo compila y pasa las pruebas unitarias, las de integracion contra Postgres real y
 `make checks`; los cuerpos de peticion de DAVx5, iOS y Thunderbird de las pruebas estan escritos a mano segun las RFC
-(no capturados de un cliente). **No se ha probado con un cliente real ni con `make e2e-mail`** (la seccion de
-`ops/e2e/mail.sh` esta escrita y sin ejecutar): el ADR original exige DAVx5, Thunderbird e iOS antes de darlo por bueno.
+(no capturados de un cliente). **No se ha probado con un cliente real ni con `make e2e-mail`** (las secciones de
+CardDAV y de CalDAV de `ops/e2e/mail.sh` estan escritas y sin ejecutar): el ADR original exige DAVx5, Thunderbird e
+iOS antes de darlo por bueno.
 
 ## Contexto
 
@@ -32,8 +33,10 @@ empresa, van en `mail_tenant_<slug>`, con `tenant_id`, RLS y sin claves foraneas
 1. **CardDAV primero** (libretas y contactos vCard 3.0 y 4.0), porque es la mitad barata y valida el resto:
    autenticacion, ruta publica, sincronizacion por `ctag`, `etag` y `sync-collection` (RFC 6578), cliente real (iOS,
    Thunderbird, DAVx5). **Hecha** (sin cliente real, ver Estado).
-2. **CalDAV despues** (calendarios y eventos iCalendar, tareas opcionales), con `sync-collection` (RFC 6578) y
-   recurrencias sin expandir en el servidor: se guardan y se devuelven, el cliente las expande. **Pendiente.**
+2. **CalDAV despues** (calendarios y eventos iCalendar), con `sync-collection` (RFC 6578) y recurrencias sin expandir
+   en el servidor: se guardan y se devuelven, el cliente las expande (la unica expansion es acotada y solo decide un
+   `calendar-query` por rango, ver "Lo decidido al implementar (CalDAV)"). **Hecha** para eventos, sin cliente real
+   (ver Estado); las tareas (`VTODO`) quedaron fuera.
 
 El almacenamiento es propio (Postgres) y el protocolo lo sirve el propio servicio (ver "Libreria WebDAV").
 
@@ -47,14 +50,14 @@ ve sus colecciones (las que se compartan con el son la fase de comparticion, pen
 
 El gateway sigue siendo la unica entrada: `mail-dav` se declara con un prefijo `self_authenticated` en
 `services/gateway/routes.json`, igual que el webmail, y el gateway no valida JWT para el. Las rutas de
-descubrimiento (`/.well-known/carddav`, y `/.well-known/caldav` cuando exista CalDAV) responden con la redireccion al
-prefijo.
+descubrimiento (`/.well-known/carddav` y `/.well-known/caldav`) responden con la redireccion al prefijo.
 
 ### Datos
 
 `mail_dav.addressbooks`, `contacts` (vCard como texto validado y campos indexados: uid, nombre, correos),
-`collection_changes` (para `sync-collection`); despues `calendars`, `events` (iCalendar, uid, inicio, fin,
-recurrencia, `etag`) y `shares` (compartir con otro buzon de la empresa, solo lectura o escritura). Limites por
+`collection_changes` (para `sync-collection`); `calendars`, `events` (iCalendar como texto validado, uid, resumen,
+inicio de la primera aparicion y fin de la ultima, `etag`) y `calendar_changes` (el mismo registro de cambios, para
+calendarios); y, pendiente, `shares` (compartir con otro buzon de la empresa, solo lectura o escritura). Limites por
 buzon (tamano de un objeto, numero de objetos y colecciones); como derechos del plan de `billing` queda pendiente.
 Los objetos importados se validan y se acotan: un vCard o un iCalendar es entrada de un tercero.
 
@@ -120,8 +123,8 @@ ausente. Sin credencial propia (desarrollo) el servicio corre como dueno y rigen
 
 Al borrar un buzon, `mail-directory` publica `mail.mailbox.deleted` (payload `tenant_id`, `id`, `username`, ...) por su
 outbox, y `mail-dav` lo consume (`internal/adapters/nats`, durable `mail-dav-mailbox-deleted` sobre el stream
-`MAIL_DIRECTORY`, que el propio consumidor declara con `EnsureStream`) y borra las libretas del buzon; los contactos
-y el registro de cambios caen por la clave foranea `ON DELETE CASCADE`.
+`MAIL_DIRECTORY`, que el propio consumidor declara con `EnsureStream`) y borra las libretas y los calendarios del buzon; los
+contactos, los eventos y los registros de cambios caen por la clave foranea `ON DELETE CASCADE`.
 
 * **Por id, no por nombre.** El borrado usa el `id` del buzon del evento. Un buzon recreado con el mismo nombre tiene
   otro id y conserva sus contactos; un evento sin `id` valido no borra nada. Tampoco se cruzan empresas: la empresa
@@ -137,7 +140,7 @@ y el registro de cambios caen por la clave foranea `ON DELETE CASCADE`.
 * **Sin NATS** el servicio arranca y sirve igual, y reintenta la suscripcion; el durable recoge lo pendiente en
   cuanto suscribe. No hay configuracion nueva.
 * Ventana conocida: una peticion DAV que ya autentico cuando se borra el buzon y escribe despues de procesado el
-  evento (milisegundos frente a la latencia de la outbox y de NATS) dejaria una libreta huerfana; el barrido de
+  evento (milisegundos frente a la latencia de la outbox y de NATS) dejaria una libreta o un calendario huerfanos; el barrido de
   conciliacion de "Pendiente" la retiraria.
 * Probado: unitarias del caso de uso y del consumidor (evento repetido, buzon inexistente, otro buzon y otra empresa
   intactos, buzon recreado con el mismo nombre intacto, identificadores incoherentes), integracion contra Postgres
@@ -155,11 +158,13 @@ borrada y recreada con el mismo nombre no acepta el token de la anterior. `colle
 ### Rutas y descubrimiento
 
 `/api/v1/dav/` (`MAIL_DAV_BASE_PATH`, que debe ser el prefijo de `routes.json`; una prueba lo cruza),
-`principals/<buzon>/`, `addressbooks/<buzon>/` y `addressbooks/<buzon>/<libreta>/<recurso>.vcf`. La libreta por
+`principals/<buzon>/`, `addressbooks/<buzon>/`, `addressbooks/<buzon>/<libreta>/<recurso>.vcf`, `calendars/<buzon>/` y
+`calendars/<buzon>/<calendario>/<recurso>.ics`. El principal anuncia `addressbook-home-set` y `calendar-home-set`. La libreta por
 defecto (`contacts`, nombre `MAIL_DAV_DEFAULT_ADDRESSBOOK_NAME`) se crea al listar el home de un buzon sin libretas
-(si borra todas, reaparece al siguiente descubrimiento). El gateway declara en `routes.json` el prefijo
-(`self_authenticated`, con los metodos WebDAV que admite: `PROPFIND`, `REPORT`, `MKCOL`) y `well_known`
-(`/.well-known/carddav` -> 301 al prefijo). chi no conoce los metodos WebDAV: se registran y una guardia previa a todo
+(si borra todas, reaparece al siguiente descubrimiento); el calendario por defecto (`calendar`, nombre
+`MAIL_DAV_DEFAULT_CALENDAR_NAME`) igual con el home de calendarios. El gateway declara en `routes.json` el prefijo
+(`self_authenticated`, con los metodos WebDAV que admite: `PROPFIND`, `REPORT`, `MKCOL`, `MKCALENDAR`) y `well_known`
+(`/.well-known/carddav` y `/.well-known/caldav` -> 301 al prefijo). chi no conoce los metodos WebDAV: se registran y una guardia previa a todo
 enrutado los deja pasar solo hacia un prefijo que los declara (en cualquier otro sitio, el RBAC los clasificaria como
 lecturas), con la misma ruta con la que chi enruta.
 
@@ -176,6 +181,148 @@ da el `mail-auth` de cada una; con una sola, todo va a `MAIL_AUTH_URL`. Un domin
 responde como a una contrasena mala. **Basic solo es admisible porque el proxy de borde termina TLS** (la conexion con
 `mail-auth` tambien es HTTPS verificado, sin proxy ni redirecciones).
 
+## Lo decidido al implementar (CalDAV)
+
+### Alcance de la primera version
+
+Calendarios por buzon (uno por defecto, `calendar`, y los que el cliente cree con `MKCALENDAR` o con `MKCOL`
+extendido de tipo calendar) con eventos `VEVENT`: `OPTIONS` (`DAV: 1, 3, addressbook, calendar-access`), `PROPFIND`
+(`calendar-home-set`, `supported-calendar-component-set`, `supported-calendar-data`, `max-resource-size`, `getctag`,
+`sync-token`, `getetag`, `resourcetype` con `calendar`), `REPORT` (`calendar-query`, `calendar-multiget`,
+`sync-collection`), `GET`/`HEAD`, `PUT` con `If-Match` e `If-None-Match`, `DELETE` de eventos y de calendarios, y
+`MKCALENDAR`. Reutiliza sin cambios la autenticacion Basic contra `mail-auth` (servicio `dav`), el aislamiento por
+(`tenant_id`, `mailbox_id`) con RLS, la guardia de metodos del gateway y el consumidor de `mail.mailbox.deleted`.
+
+**Fuera, y dicho:** las **tareas** (`VTODO`) y los diarios (`VJOURNAL`, `VFREEBUSY`) no se admiten (un `PUT` con ellos
+es 403 `supported-calendar-component`, y un `MKCALENDAR` que pide solo `VTODO` tambien): guardarlas obliga a otro
+modelo de indice (una tarea no tiene `DTEND` y su tabla de solape en RFC 4791 9.9 es otra) y a otro filtro. Las
+alarmas (`VALARM`) se guardan dentro del evento tal cual y se devuelven, pero el servidor no las dispara ni las consulta.
+`free-busy-query`, la planificacion (iTIP/iMIP, `schedule-inbox`, `CALDAV:schedule-*`), la comparticion, `PROPPATCH`,
+`calendar-color`/`calendar-order` (se ignoran al crear un calendario, como el resto de propiedades que el servidor no
+guarda) y la recuperacion parcial (`comp` en `calendar-data`, se devuelve el objeto entero) no estan.
+
+### iCalendar y recurrencias: parser propio acotado, sin libreria
+
+Se evaluaron las librerias maduras de Go y sus licencias se leyeron en su `LICENSE` de GitHub (2026-09-21):
+`emersion/go-ical` (MIT, Simon Ser, 2020), `teambition/rrule-go` (MIT, Teambition, 2017-2023) y `arran4/golang-ical`
+(Apache 2.0). Ninguna se descarta por licencia. La evaluacion funcional fue por su descripcion publica y su API, no
+por una lectura completa de su codigo, y la decision descansa menos en lo que ellas hagan que en lo que hay que
+escribir de todos modos, con el mismo criterio que `go-webdav` para CardDAV:
+
+* Un iCalendar es entrada de un tercero y hay que **acotarlo donde entra** (bytes, lineas, anidamiento, UTF-8, UID)
+  y validarlo con las precondiciones de RFC 4791 (5.3.2.1: un solo UID, sin `METHOD`, componentes admitidos). Eso
+  exige un recorrido estructural propio de todos modos; una libreria que construye el arbol entero no ahorra esa
+  validacion y agrega otro modelo de objetos entre el texto guardado y lo que se decide.
+* La expansion de una regla de recurrencia debe tener **presupuesto** (un evento hostil no puede ocupar la CPU),
+  distinguir "no se pudo decidir" de "no cae" (para devolver el evento en el primer caso) y saltar los periodos
+  anteriores al rango (una serie diaria de 2015 no se recorre entera para decidir un dia de 2032). Ese contrato es
+  de este servicio y se escribe sobre la expansion, no sobre un iterador ajeno.
+* Un `TZID` que no es de la base IANA (los nombres propios de Outlook) se resuelve con el `VTIMEZONE` que envio el
+  cliente, que necesita evaluar las reglas `STANDARD`/`DAYLIGHT`: con una libreria de recurrencias habria que escribir
+  igualmente ese codigo, y con la expansion propia es la misma que ya existe.
+* Un servicio con la mayor superficie publica no autenticada por JWT no gana nada con una dependencia de protocolo
+  mas; lo que una libreria da (analizar `DTSTART`, `RRULE`, `DURATION`) es pequeno.
+
+Se implementa en `internal/domain`: `ical.go` (estructura y validacion), `ictime.go` (fechas, `DURATION`, zonas),
+`rrule.go` (reglas y expansion) y `calendar.go` (indice, `time-range` y filtros). Sin dependencias nuevas (la base
+de zonas horarias se embebe con `time/tzdata`, de la biblioteca estandar, porque la imagen es `scratch`).
+
+### Modelo de datos y aislamiento
+
+`migrations/tenant/canonical/mail-dav/03_caldav.sql`: `calendars` (como `addressbooks`), `events` y
+`calendar_changes`, con las mismas claves foraneas compuestas `(id, tenant_id, mailbox_id)`, la politica RLS
+`mailbox_isolation` y los permisos del grupo `mail_dav_service`. `collection_changes` **no se reutiliza**: su clave
+foranea compuesta apunta a `addressbooks` y es la que impide que un cambio cuelgue de la coleccion de otro buzon;
+sacarla para servir a dos tipos de coleccion quitaria esa garantia a lo que ya funciona. Se reutiliza el modelo (secuencia
+por coleccion, suelo de poda, token `urn:mail-dav:sync:<coleccion>:<seq>`, `MAIL_DAV_CHANGES_RETAINED`) y el codigo:
+el repositorio de Postgres tiene un solo camino de coleccion (alta, baja, escritura condicional con bloqueo, registro
+de cambios) parametrizado por las tablas de cada tipo. Un calendario y una libreta pueden llamarse igual y sus
+cambios no se cruzan (probado).
+
+`events` guarda el iCalendar tal cual (`ical`, con su `etag`, el SHA-256 de esos bytes) y los campos que hacen falta
+para listarlo y para descartar por tiempo sin leerlo: `uid` (unico por calendario), `summary`, `first_start` (el
+inicio de la primera aparicion) y `last_end` (el fin de la ultima; **nulo si la recurrencia no tiene fin conocido**).
+La recurrencia no se indexa expandida: `last_end` nulo quiere decir "puede aparecer en cualquier fecha posterior". Un
+indice `(calendar_id, first_start)` sirve al descarte.
+
+### Validacion de la entrada
+
+Como en CardDAV, acotada donde entra: cuerpo maximo `MAIL_DAV_MAX_EVENT_BYTES` (`http.MaxBytesReader`, se corta al
+llegar al tope; 403 `max-resource-size`), como maximo `MAIL_DAV_MAX_EVENT_PROPERTIES` lineas, anidamiento maximo de
+tres niveles (`VCALENDAR` > `VEVENT` > `VALARM`, o `VTIMEZONE` > `STANDARD`), UTF-8 sin caracteres de control ni CR
+suelto, `VERSION:2.0`, un solo `VCALENDAR`, sin `METHOD` (403 `valid-calendar-object-resource`), `VEVENT` de un mismo
+`UID` con a lo sumo uno sin `RECURRENCE-ID`, `DTSTART` obligatorio, `DTEND` y `DURATION` no a la vez, `DTEND` no
+anterior a `DTSTART`, `RRULE` bien formada y acotada (rangos y longitud de cada lista), a lo sumo 2000 `RDATE`/`EXDATE`,
+`VTIMEZONE` completos. Los errores de `PUT` usan las precondiciones de RFC 4791: `valid-calendar-data`,
+`valid-calendar-object-resource`, `supported-calendar-component`, `max-resource-size`, `no-uid-conflict` (409, con el
+`href` del que ya lo usa) y `supported-calendar-data` (415, tipo distinto de `text/calendar` o charset distinto de
+UTF-8). `PUT` sobre un calendario que no existe es 409. Sin XXE (mismo decodificador de XML acotado y sin recursion:
+cada nivel de `comp-filter` que se admite es un tipo aparte), sin traversal (lista blanca de nombres, terminados en
+`.ics`) y el usuario de la URL debe ser el del buzon autenticado.
+
+### Zonas horarias
+
+El objeto se guarda con su `VTIMEZONE` tal como lo envio el cliente. Para indexar y para decidir un rango, un `TZID`
+se resuelve primero como zona de la base IANA (solo con la forma de un nombre de zona: nunca llega al sistema de
+ficheros con otra) y, si no lo es, con el `VTIMEZONE` del mismo objeto (`STANDARD`/`DAYLIGHT` con su `RRULE`). Sin
+ninguno de los dos la hora se toma como UTC; la hora flotante y el dia completo tambien se toman como UTC (el
+`C:timezone` de un `calendar-query` no se aplica). La resolucion de una hora ambigua o inexistente en un cambio de
+hora puede diferir una hora de la del cliente en ese instante; solo afecta a un evento pegado al borde de un rango.
+
+### `calendar-query`: filtros y decision del `time-range`
+
+Se admite `comp-filter` `VCALENDAR` > `VEVENT` (y `VTODO`, `VJOURNAL`, `VFREEBUSY`, de los que la coleccion no
+guarda ninguno: el filtro se evalua, y `is-not-defined` los admite todos) con `time-range`, `is-not-defined` y
+`prop-filter` (`is-not-defined` o `text-match` con `i;ascii-casemap`, `i;unicode-casemap` o `i;octet`, `negate-condition`
+y `test` `anyof`/`allof`). Lo que no se evalua **se rechaza con `supported-filter`** (o `supported-collation`), nunca se
+ignora: `param-filter`, `time-range` dentro de un `prop-filter`, `comp-filter` de tercer nivel (`VALARM`), componentes
+que no son de calendario, elementos desconocidos, mas de un `comp-filter` de primer nivel. Un `calendar-data` con
+`expand`, `limit-recurrence-set` o `limit-freebusy-set` es 403 `supported-calendar-data`: el servidor no expande, y
+devolver la serie sin expandir a un cliente que la pide expandida es peor que decirle que no. Un `time-range`
+mal formado (no UTC, sin extremos, fin anterior al inicio) es 400.
+
+**Como se decide un `time-range` con recurrencias** (la unica expansion del servidor): la base descarta por
+`first_start < fin` y `last_end >= inicio` (o `last_end` nulo) sin leer el objeto; sobre lo que queda se relee el
+iCalendar y se aplica la tabla de RFC 4791 9.9 a cada aparicion: `DTSTART`, `RDATE` y las de la `RRULE` (`DAILY`,
+`WEEKLY`, `MONTHLY` y `YEARLY` con `INTERVAL`, `COUNT`, `UNTIL`, `WKST`, `BYMONTH`, `BYMONTHDAY`, `BYYEARDAY`, `BYDAY`
+con ordinales, `BYSETPOS`, `BYHOUR`, `BYMINUTE` y `BYSECOND`), menos las `EXDATE` y las que una sobrescritura
+(`RECURRENCE-ID`) reemplaza, mas la propia sobrescritura. La expansion se detiene al pasar el fin del rango, salta los
+periodos anteriores al inicio (salvo con `COUNT`, que hay que contar desde el principio) y tiene un **presupuesto**
+(periodos recorridos mas apariciones generadas): `MAIL_DAV_MAX_RECURRENCE_WORK` por evento y
+`MAIL_DAV_MAX_QUERY_RECURRENCE_WORK` por consulta. **Cuando no se puede decidir el evento se devuelve**: presupuesto
+agotado, frecuencias menores que un dia, `BYWEEKNO`, partes de extensiones (`RSCALE`), `RDATE` con periodos o
+`RECURRENCE-ID` con `RANGE`. Un evento de mas lo descarta el cliente al expandir por su cuenta; uno omitido es un
+dato perdido a la vista del usuario. Es la decision que justifica que la expansion sea acotada y no exacta.
+El `prop-filter` de un evento con sobrescrituras se evalua sobre cualquiera de sus componentes, y el `time-range`
+sobre el conjunto de apariciones: es un poco mas laxo que evaluar cada instancia por separado, y mas laxo solo
+significa devolver de mas.
+
+### Sincronizacion, `MKCALENDAR` y descubrimiento
+
+`ctag` y `sync-token` salen de `calendars.sync_seq`, con las mismas reglas que las libretas (token ligado al
+calendario, poda y `changes_floor`, 403 `valid-sync-token`). `MKCALENDAR` (y `MKCOL` con `resourcetype` `calendar`)
+crea el calendario con el nombre y la descripcion pedidos; repetirlo es 405, pasar el limite es 507
+`quota-not-exceeded`. El principal responde `calendar-home-set` ademas de `addressbook-home-set`, de modo que un mismo
+principal sirve a los dos tipos de cliente, y `/.well-known/caldav` redirige al prefijo como el de CardDAV. La ficha
+del buzon muestra la misma URL del servidor para contactos y calendarios (`MAIL_DAV_PUBLIC_URL`): el cliente descubre
+las libretas y los calendarios a partir de ella.
+
+### Limites de CalDAV
+
+Por buzon, del operador (los de CardDAV siguen igual): `MAIL_DAV_MAX_EVENT_BYTES` (256 KiB, hasta 4 MiB), `MAIL_DAV_MAX_EVENT_PROPERTIES`
+(1000), `MAIL_DAV_MAX_EVENTS_PER_MAILBOX` (20000), `MAIL_DAV_MAX_CALENDARS_PER_MAILBOX` (10), y los dos presupuestos de
+expansion. Sin configuracion nueva el servicio arranca con esos valores.
+
+### Probado
+
+Unitarias de dominio (validacion, decenas de casos de rechazo, la tabla de solape de la RFC, la expansion de reglas contra
+fechas calculadas a mano, `VTIMEZONE` propio frente a la base IANA, presupuesto y reglas hostiles), de aplicacion, de
+protocolo con cuerpos escritos a mano al estilo de DAVx5, iOS (`MKCALENDAR` con propiedades de Apple) y Thunderbird
+(`calendar-query` por rango), y de integracion contra Postgres real: ciclo de vida, descarte por indices, cambios y
+poda, 20 altas simultaneas contra el limite, aislamiento entre buzones y empresas con el rol de servicio y como dueno
+de las tablas, y mutaciones revertidas (quitar el filtro de buzon de la busqueda de coleccion y el del borrado por buzon
+hace fallar las pruebas; con la politica apagada la misma consulta si veria los eventos ajenos).
+
 ## Alternativas descartadas
 
 * **Embeber Radicale, Baikal u otro servidor DAV en Python o PHP**: reintroduce lo que se quito de mailcow y una
@@ -191,24 +338,37 @@ responde como a una contrasena mala. **Basic solo es admisible porque el proxy d
   borde ya lo termina), frenos por IP y buzon, y limites estrictos de cuerpo y de objetos.
 * Los clientes DAV son muy dispares (iOS y Outlook con extensiones propias); **falta probar contra al menos DAVx5,
   Thunderbird e iOS** antes de darlo por bueno. Cloudflare, si esta delante del borde, debe dejar pasar `PROPFIND`,
-  `REPORT` y `MKCOL`: hay que comprobarlo.
+  `REPORT`, `MKCOL` y `MKCALENDAR`: hay que comprobarlo.
 * Un cambio de modelo de datos de vCard e iCalendar es dificil de revertir: los objetos se guardan tal cual los
   envio el cliente y se validan, no se normalizan.
 * Cada peticion cuesta una verificacion de bcrypt en `mail-auth`. Un cliente que sincroniza a menudo con muchas
   peticiones cortas lo notara; el cupo por IP lo acota.
+* `calendar-query` con `time-range` relee y evalua en memoria los eventos que el indice no descarta; una serie sin
+  fin siempre es candidata y cuesta su expansion (acotada por presupuesto, y devuelta si no alcanza). Con muchas
+  series sin fin por buzon la consulta gasta el presupuesto y devuelve de mas: las metricas dirian si conviene
+  indexar mas (por ejemplo, almacenar la regla y la proxima aparicion).
 * `addressbook-query` filtra en memoria los contactos de la libreta (acotados por buzon, hasta
   `MAIL_DAV_MAX_CONTACTS_PER_MAILBOX`); con el limite por defecto es barato, con limites muy altos habria que indexar.
 
 ## Pendiente
 
-* **CalDAV** (fase 2 del ADR): `calendars`, `events`, iCalendar, `well-known/caldav`.
-* **Comparticion entre buzones** (`shares`, solo lectura o escritura) y la libreta de solo lectura "Directorio de la
-  empresa" generada desde `mail-directory`.
+* **Comparticion entre buzones** (`shares`, solo lectura o escritura), de libretas y de calendarios, y la libreta de
+  solo lectura "Directorio de la empresa" generada desde `mail-directory`.
+* **Invitaciones y planificacion** (iTIP/iMIP, RFC 6638: `schedule-inbox`/`outbox`, `ATTENDEE`, respuestas por correo):
+  hoy un evento con asistentes se guarda y se sincroniza, pero el servidor no envia ni procesa invitaciones. Es el
+  paso siguiente natural y necesita decidir como sale el correo (Postfix del corporativo, nunca SES de marketing).
+* **Alarmas** (`VALARM`): se guardan y se devuelven; el servidor no las dispara y no se pueden consultar.
+* **Tareas** (`VTODO`) y diarios: fuera de la primera version (ver arriba).
+* `free-busy-query`, `PROPPATCH` (renombrar o pintar un calendario o una libreta desde el cliente),
+  `calendar-color`, `calendar-timezone`, recuperacion parcial de `calendar-data` y `address-data`, `expand` y
+  `limit-recurrence-set`, y `param-filter`.
+* Expansion exacta de lo que hoy se devuelve sin decidir (frecuencias menores que un dia, `BYWEEKNO`, `RDATE` con
+  periodos, `RECURRENCE-ID` con `RANGE`) si las metricas muestran que se devuelve demasiado de mas.
 * **Limites como derechos del plan** de `billing` (hoy son de operador, por variable de entorno).
 * **Barrido de conciliacion de buzones borrados**: el consumidor de `mail.mailbox.deleted` solo ve los eventos que
   el stream `MAIL_DIRECTORY` aun conserva; lo borrado antes de que existiera el consumidor, o mas alla de la
   retencion del stream, no se retira. Un barrido que cruce los `mailbox_id` de `mail_dav` con `mail-directory` lo
   cubriria.
-* `PROPPATCH` (renombrar una libreta desde el cliente), recuperacion parcial de `address-data` y `param-filter`.
-* Prueba con DAVx5, Thunderbird e iOS reales, y `make e2e-mail` con la seccion nueva.
-* Eventos de auditoria (`dav.*`) por la outbox si la auditoria de contactos personales se exige.
+* Prueba con DAVx5, Thunderbird e iOS reales, y `make e2e-mail` con las secciones nuevas (CardDAV y CalDAV): estan
+  escritas y sin ejecutar.
+* Eventos de auditoria (`dav.*`) por la outbox si la auditoria de contactos y eventos personales se exige.

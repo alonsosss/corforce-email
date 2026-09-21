@@ -11,12 +11,12 @@ import (
 
 // WebDAV (RFC 4918) usa metodos que chi no conoce. Se registran para poder enrutarlos, pero solo
 // pasan donde la tabla de rutas los declara: un prefijo autenticado por el servicio los lista en
-// "methods" (mail-dav, CardDAV) y una ruta de descubrimiento (well_known) responde a todos con la
+// "methods" (mail-dav, CardDAV y CalDAV) y una ruta de descubrimiento (well_known) responde a todos con la
 // redireccion. En cualquier otro sitio -las rutas con JWT, las publicas, la aplicacion- el gateway
 // responde 405 antes de enrutar: el RBAC clasifica como lectura todo lo que no sea POST, PUT,
-// PATCH o DELETE, y un MKCOL o un MOVE no puede colarse como una lectura de un modulo.
+// PATCH o DELETE, y un MKCOL, un MKCALENDAR o un MOVE no puede colarse como una lectura de un modulo.
 var extensionMethods = map[string]bool{
-	"PROPFIND": true, "PROPPATCH": true, "REPORT": true, "MKCOL": true,
+	"PROPFIND": true, "PROPPATCH": true, "REPORT": true, "MKCOL": true, "MKCALENDAR": true,
 	"COPY": true, "MOVE": true, "LOCK": true, "UNLOCK": true,
 }
 

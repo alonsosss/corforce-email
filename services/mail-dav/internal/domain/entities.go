@@ -37,6 +37,10 @@ type Addressbook struct {
 	UpdatedAt    time.Time
 }
 
+// Calendar tiene la forma de una libreta: una coleccion del buzon con su ctag y su token de
+// sincronizacion. El alias hace que ambas compartan el codigo de coleccion.
+type Calendar = Addressbook
+
 type Contact struct {
 	ID            uuid.UUID
 	TenantID      uuid.UUID
@@ -50,6 +54,38 @@ type Contact struct {
 	Emails        []string
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
+}
+
+// Event es un objeto de calendario (un VEVENT con sus sobrescrituras y su VTIMEZONE) guardado tal cual lo
+// envio el cliente. FirstStart y LastEnd acotan todas sus apariciones y sirven para descartar eventos en una
+// consulta por rango sin leerlos; LastEnd nulo significa sin cota conocida (recurrencia sin fin).
+type Event struct {
+	ID           uuid.UUID
+	TenantID     uuid.UUID
+	MailboxID    uuid.UUID
+	CalendarID   uuid.UUID
+	ResourceName string
+	UID          string
+	ICal         string
+	ETag         string
+	Summary      string
+	FirstStart   time.Time
+	LastEnd      *time.Time
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
+}
+
+// EventWindow acota por tiempo los eventos que se leen: solo los que pueden tener una aparicion que
+// solape [Start, End). Un extremo nulo no acota. Es un descarte previo: quien la usa decide con exactitud.
+type EventWindow struct {
+	Start *time.Time
+	End   *time.Time
+}
+
+// PurgeResult cuenta lo que se retiro de un buzon dado de baja.
+type PurgeResult struct {
+	Addressbooks int
+	Calendars    int
 }
 
 // Change es el ultimo estado conocido de un recurso desde un token: Deleted lo da por borrado.
@@ -66,6 +102,31 @@ type Limits struct {
 	MaxAddressbooksPerMailbox int
 	// MaxChangesRetained es cuantos cambios de una libreta se conservan para resolver un token.
 	MaxChangesRetained int
+}
+
+// CalendarLimits acota lo que un buzon puede guardar en calendarios y lo que cuesta una consulta.
+type CalendarLimits struct {
+	MaxEventBytes          int
+	MaxEventProperties     int
+	MaxEventsPerMailbox    int
+	MaxCalendarsPerMailbox int
+	// MaxRecurrenceWork es el trabajo (periodos recorridos y apariciones generadas) que se le permite a
+	// la expansion de las recurrencias de UN evento, y MaxQueryWork el de una consulta entera.
+	MaxRecurrenceWork int
+	MaxQueryWork      int
+}
+
+func (l CalendarLimits) Validate() error {
+	for name, v := range map[string]int{
+		"MaxEventBytes": l.MaxEventBytes, "MaxEventProperties": l.MaxEventProperties,
+		"MaxEventsPerMailbox": l.MaxEventsPerMailbox, "MaxCalendarsPerMailbox": l.MaxCalendarsPerMailbox,
+		"MaxRecurrenceWork": l.MaxRecurrenceWork, "MaxQueryWork": l.MaxQueryWork,
+	} {
+		if v < 1 {
+			return fmt.Errorf("%s debe ser mayor que cero", name)
+		}
+	}
+	return nil
 }
 
 func (l Limits) Validate() error {
@@ -91,6 +152,7 @@ const (
 var (
 	slugRe         = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 	resourceNameRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._@=+~-]{0,195}\.vcf$`)
+	eventNameRe    = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._@=+~-]{0,195}\.ics$`)
 )
 
 func ValidSlug(s string) bool { return slugRe.MatchString(s) }
@@ -98,6 +160,9 @@ func ValidSlug(s string) bool { return slugRe.MatchString(s) }
 // ValidResourceName admite solo lo que un cliente genera de forma normal (UUID.vcf y similares):
 // nada de separadores, espacios ni caracteres de control, y siempre con la extension .vcf.
 func ValidResourceName(s string) bool { return resourceNameRe.MatchString(s) }
+
+// ValidEventResourceName es ValidResourceName para los eventos: siempre con la extension .ics.
+func ValidEventResourceName(s string) bool { return eventNameRe.MatchString(s) }
 
 // NormalizeUsername deja el nombre de buzon como lo guarda mail-auth: sin espacios y en minusculas.
 func NormalizeUsername(raw string) (string, bool) {
@@ -109,15 +174,15 @@ func NormalizeUsername(raw string) (string, bool) {
 	return u, true
 }
 
-// ETagOf es el etag fuerte de un vCard: el SHA-256 de sus bytes exactos.
-func ETagOf(vcard string) string {
-	sum := sha256.Sum256([]byte(vcard))
+// ETagOf es el etag fuerte de un vCard o de un iCalendar: el SHA-256 de sus bytes exactos.
+func ETagOf(content string) string {
+	sum := sha256.Sum256([]byte(content))
 	return hex.EncodeToString(sum[:])
 }
 
 const syncTokenPrefix = "urn:mail-dav:sync:"
 
-// SyncToken liga la secuencia a la libreta: una libreta borrada y creada de nuevo con el mismo
+// SyncToken liga la secuencia a la coleccion (libreta o calendario): una libreta borrada y creada de nuevo con el mismo
 // nombre empieza en cero, y un token de la anterior no puede resolverse como diferencia de la nueva.
 func SyncToken(bookID uuid.UUID, seq int64) string {
 	return syncTokenPrefix + bookID.String() + ":" + strconv.FormatInt(seq, 10)

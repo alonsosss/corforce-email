@@ -1,10 +1,11 @@
-// Package http sirve CardDAV (RFC 6352) sobre WebDAV (RFC 4918) para mail-dav: el subconjunto que usan
-// los clientes de contactos (DAVx5, iOS, Thunderbird). Cada peticion se autentica con HTTP Basic contra
+// Package http sirve CardDAV (RFC 6352) y CalDAV (RFC 4791) sobre WebDAV (RFC 4918) para mail-dav: el
+// subconjunto que usan los clientes de contactos y calendario (DAVx5, iOS, Thunderbird). Cada peticion se autentica con HTTP Basic contra
 // mail-auth; Basic solo es admisible porque el borde termina TLS antes del gateway.
 package http
 
 import (
 	"context"
+	"encoding/xml"
 	"errors"
 	"fmt"
 	"net"
@@ -52,7 +53,7 @@ func NewHandler(uc *app.UseCase, cfg Config) (*Handler, error) {
 	return &Handler{uc: uc, cfg: cfg, logger: logger}, nil
 }
 
-const allowedMethods = "OPTIONS, PROPFIND, REPORT, GET, HEAD, PUT, DELETE, MKCOL"
+const allowedMethods = "OPTIONS, PROPFIND, REPORT, GET, HEAD, PUT, DELETE, MKCOL, MKCALENDAR"
 
 // ServeHTTP autentica antes de mirar la ruta: sin credenciales validas ninguna URL distingue un
 // recurso que existe de uno que no.
@@ -62,11 +63,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodOptions:
 		w.Header().Set("Allow", allowedMethods)
-		w.Header().Set("DAV", "1, 3, addressbook")
+		w.Header().Set("DAV", "1, 3, addressbook, calendar-access")
 		w.Header().Set("Content-Length", "0")
 		w.WriteHeader(http.StatusOK)
 		return
-	case "PROPFIND", "REPORT", http.MethodGet, http.MethodHead, http.MethodPut, http.MethodDelete, "MKCOL":
+	case "PROPFIND", "REPORT", http.MethodGet, http.MethodHead, http.MethodPut, http.MethodDelete, "MKCOL", "MKCALENDAR":
 	default:
 		w.Header().Set("Allow", allowedMethods)
 		http.Error(w, "metodo no admitido", http.StatusMethodNotAllowed)
@@ -96,6 +97,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.delete(w, r, p, t)
 	case "MKCOL":
 		h.mkcol(w, r, p, t)
+	case "MKCALENDAR":
+		h.mkcalendar(w, r, p, t)
 	}
 }
 
@@ -153,6 +156,10 @@ const (
 	kindHome
 	kindBook
 	kindContact
+	kindCalHomes
+	kindCalHome
+	kindCalendar
+	kindEvent
 )
 
 // target es el recurso que nombra la URL. Solo el buzon autenticado tiene recursos: cualquier ruta
@@ -197,6 +204,14 @@ func (h *Handler) routePath(escaped string, p domain.Principal) (target, bool) {
 		return target{kind: kindBook, slug: segs[2]}, true
 	case segs[0] == "addressbooks" && len(segs) == 4 && own(segs[1]) && !trailing:
 		return target{kind: kindContact, slug: segs[2], resource: segs[3]}, true
+	case segs[0] == "calendars" && len(segs) == 1:
+		return target{kind: kindCalHomes}, true
+	case segs[0] == "calendars" && len(segs) == 2 && own(segs[1]):
+		return target{kind: kindCalHome}, true
+	case segs[0] == "calendars" && len(segs) == 3 && own(segs[1]):
+		return target{kind: kindCalendar, slug: segs[2]}, true
+	case segs[0] == "calendars" && len(segs) == 4 && own(segs[1]) && !trailing:
+		return target{kind: kindEvent, slug: segs[2], resource: segs[3]}, true
 	}
 	return target{}, false
 }
@@ -228,9 +243,23 @@ func (h *Handler) contactPath(p domain.Principal, slug, resource string) string 
 	return h.path("addressbooks", p.Username, slug, resource)
 }
 
+// icalCondition es la precondicion de CalDAV (RFC 4791, 5.3.2.1) que incumple un iCalendar.
+func icalCondition(kind domain.ICalErrorKind) xml.Name {
+	switch kind {
+	case domain.ICalObject:
+		return calName("valid-calendar-object-resource")
+	case domain.ICalComponent:
+		return calName("supported-calendar-component")
+	case domain.ICalTooLarge:
+		return calName("max-resource-size")
+	}
+	return calName("valid-calendar-data")
+}
+
 // fail traduce un error del caso de uso a su respuesta. Lo que no se reconoce es un 500 sin detalle.
 func (h *Handler) fail(w http.ResponseWriter, r *http.Request, err error) {
 	var bad *domain.VCardError
+	var badICal *domain.ICalError
 	switch {
 	case errors.Is(err, domain.ErrNotFound):
 		http.NotFound(w, r)
@@ -239,12 +268,15 @@ func (h *Handler) fail(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.Is(err, domain.ErrAlreadyExists):
 		w.Header().Set("Allow", allowedMethods)
 		http.Error(w, "el recurso ya existe", http.StatusMethodNotAllowed)
-	case errors.Is(err, domain.ErrContactLimit), errors.Is(err, domain.ErrAddressbookLimit):
+	case errors.Is(err, domain.ErrContactLimit), errors.Is(err, domain.ErrAddressbookLimit),
+		errors.Is(err, domain.ErrEventLimit), errors.Is(err, domain.ErrCalendarLimit):
 		writeDAVError(w, http.StatusInsufficientStorage, davName("quota-not-exceeded"))
 	case errors.Is(err, domain.ErrInvalidName):
 		http.Error(w, "nombre no valido", http.StatusForbidden)
 	case errors.Is(err, domain.ErrInvalidSyncToken):
 		writeDAVError(w, http.StatusForbidden, davName("valid-sync-token"))
+	case errors.As(err, &badICal):
+		writeDAVError(w, http.StatusForbidden, icalCondition(badICal.Kind))
 	case errors.As(err, &bad):
 		if bad.TooLarge {
 			http.Error(w, bad.Reason, http.StatusRequestEntityTooLarge)

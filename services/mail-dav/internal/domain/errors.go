@@ -11,6 +11,8 @@ var (
 	ErrPreconditionFailed = errors.New("la precondicion de la peticion no se cumple")
 	ErrAddressbookLimit   = errors.New("el buzon alcanzo su numero maximo de libretas")
 	ErrContactLimit       = errors.New("el buzon alcanzo su numero maximo de contactos")
+	ErrCalendarLimit      = errors.New("el buzon alcanzo su numero maximo de calendarios")
+	ErrEventLimit         = errors.New("el buzon alcanzo su numero maximo de eventos")
 	ErrInvalidSyncToken   = errors.New("el token de sincronizacion no es valido")
 	ErrInvalidCredentials = errors.New("credenciales invalidas")
 	ErrUnavailable        = errors.New("un servicio del que depende mail-dav no responde")
@@ -20,11 +22,11 @@ var (
 	ErrTenantUnknown = errors.New("empresa desconocida")
 )
 
-// UIDConflictError: otro contacto de la libreta ya usa el UID del que se guarda.
+// UIDConflictError: otro contacto o evento de la coleccion ya usa el UID del que se guarda.
 type UIDConflictError struct{ Resource string }
 
 func (e *UIDConflictError) Error() string {
-	return fmt.Sprintf("el UID ya lo usa el contacto %q", e.Resource)
+	return fmt.Sprintf("el UID ya lo usa el recurso %q", e.Resource)
 }
 
 // VCardError: el cuerpo de un PUT no es un vCard aceptable. Reason va al cliente, asi que nunca
@@ -36,3 +38,26 @@ type VCardError struct {
 }
 
 func (e *VCardError) Error() string { return "vCard no valido: " + e.Reason }
+
+// ICalErrorKind distingue la precondicion de CalDAV (RFC 4791, 5.3.2.1) que incumple un PUT.
+type ICalErrorKind int
+
+const (
+	// ICalInvalid: no es un iCalendar valido (valid-calendar-data).
+	ICalInvalid ICalErrorKind = iota
+	// ICalObject: es iCalendar, pero no un objeto de calendario admisible (valid-calendar-object-resource).
+	ICalObject
+	// ICalComponent: trae un componente que la coleccion no admite (supported-calendar-component).
+	ICalComponent
+	// ICalTooLarge: supera el tamano maximo (max-resource-size).
+	ICalTooLarge
+)
+
+// ICalError: el cuerpo de un PUT no es un objeto de calendario aceptable. Reason va al cliente, asi que
+// nunca repite contenido del objeto.
+type ICalError struct {
+	Kind   ICalErrorKind
+	Reason string
+}
+
+func (e *ICalError) Error() string { return "iCalendar no valido: " + e.Reason }

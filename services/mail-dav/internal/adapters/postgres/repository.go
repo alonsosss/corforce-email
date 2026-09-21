@@ -22,8 +22,27 @@ type Repository struct {
 
 func NewRepository(pool *db.ContextPool) *Repository { return &Repository{pool: pool} }
 
+// collectionKind nombra las tablas de un tipo de coleccion: las libretas y los calendarios comparten el
+// codigo de coleccion (alta, baja, cambios, escritura condicional) y solo difieren en sus tablas. Son
+// constantes de este paquete, nunca texto del cliente.
+type collectionKind struct {
+	table   string
+	items   string
+	changes string
+	// fk es la columna de items y changes que apunta a la coleccion.
+	fk string
+	// limit y itemLimit son los errores al pasar el maximo de colecciones y de objetos del buzon.
+	limit     error
+	itemLimit error
+}
+
+var (
+	addressbooksKind = collectionKind{table: "mail_dav.addressbooks", items: "mail_dav.contacts", changes: "mail_dav.collection_changes", fk: "addressbook_id", limit: domain.ErrAddressbookLimit, itemLimit: domain.ErrContactLimit}
+	calendarsKind    = collectionKind{table: "mail_dav.calendars", items: "mail_dav.events", changes: "mail_dav.calendar_changes", fk: "calendar_id", limit: domain.ErrCalendarLimit, itemLimit: domain.ErrEventLimit}
+)
+
 // mailboxLockClass es el espacio de los cerrojos consultivos por buzon: serializa el conteo de los
-// limites (libretas y contactos) y el alta que lo sigue.
+// limites (colecciones y objetos) y el alta que lo sigue.
 const mailboxLockClass int32 = 0x64617662 // "davb"
 
 const uniqueViolation = "23505"
@@ -38,9 +57,9 @@ func (r *Repository) lockMailbox(ctx context.Context, p domain.Principal) error 
 	return err
 }
 
-const bookColumns = `id, tenant_id, mailbox_id, slug, display_name, description, sync_seq, changes_floor, created_at, updated_at`
+const collectionColumns = `id, tenant_id, mailbox_id, slug, display_name, description, sync_seq, changes_floor, created_at, updated_at`
 
-func scanBook(row pgx.Row) (domain.Addressbook, error) {
+func scanCollection(row pgx.Row) (domain.Addressbook, error) {
 	var b domain.Addressbook
 	err := row.Scan(&b.ID, &b.TenantID, &b.MailboxID, &b.Slug, &b.DisplayName, &b.Description, &b.SyncSeq, &b.ChangesFloor, &b.CreatedAt, &b.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -60,12 +79,12 @@ func scanContact(row pgx.Row) (domain.Contact, error) {
 	return c, err
 }
 
-func (r *Repository) book(ctx context.Context, p domain.Principal, slug string, forUpdate bool) (domain.Addressbook, error) {
-	q := `SELECT ` + bookColumns + ` FROM mail_dav.addressbooks WHERE tenant_id = $1 AND mailbox_id = $2 AND slug = $3`
+func (r *Repository) collection(ctx context.Context, p domain.Principal, k collectionKind, slug string, forUpdate bool) (domain.Addressbook, error) {
+	q := `SELECT ` + collectionColumns + ` FROM ` + k.table + ` WHERE tenant_id = $1 AND mailbox_id = $2 AND slug = $3`
 	if forUpdate {
 		q += ` FOR UPDATE`
 	}
-	return scanBook(r.pool.QueryRow(ctx, q, p.TenantID, p.MailboxID, slug))
+	return scanCollection(r.pool.QueryRow(ctx, q, p.TenantID, p.MailboxID, slug))
 }
 
 func (r *Repository) contacts(ctx context.Context, p domain.Principal, book domain.Addressbook, names []string) ([]domain.Contact, error) {
@@ -91,16 +110,16 @@ func (r *Repository) contacts(ctx context.Context, p domain.Principal, book doma
 	return out, rows.Err()
 }
 
-func (r *Repository) ListAddressbooks(ctx context.Context, p domain.Principal) ([]domain.Addressbook, error) {
+func (r *Repository) listCollections(ctx context.Context, p domain.Principal, k collectionKind) ([]domain.Addressbook, error) {
 	out := []domain.Addressbook{}
 	err := r.scoped(ctx, p, func(ctx context.Context) error {
-		rows, err := r.pool.Query(ctx, `SELECT `+bookColumns+` FROM mail_dav.addressbooks WHERE tenant_id = $1 AND mailbox_id = $2 ORDER BY slug`, p.TenantID, p.MailboxID)
+		rows, err := r.pool.Query(ctx, `SELECT `+collectionColumns+` FROM `+k.table+` WHERE tenant_id = $1 AND mailbox_id = $2 ORDER BY slug`, p.TenantID, p.MailboxID)
 		if err != nil {
 			return err
 		}
 		defer rows.Close()
 		for rows.Next() {
-			b, err := scanBook(rows)
+			b, err := scanCollection(rows)
 			if err != nil {
 				return err
 			}
@@ -111,45 +130,45 @@ func (r *Repository) ListAddressbooks(ctx context.Context, p domain.Principal) (
 	return out, err
 }
 
-func (r *Repository) GetAddressbook(ctx context.Context, p domain.Principal, slug string) (domain.Addressbook, error) {
+func (r *Repository) getCollection(ctx context.Context, p domain.Principal, k collectionKind, slug string) (domain.Addressbook, error) {
 	var out domain.Addressbook
 	err := r.scoped(ctx, p, func(ctx context.Context) (err error) {
-		out, err = r.book(ctx, p, slug, false)
+		out, err = r.collection(ctx, p, k, slug, false)
 		return err
 	})
 	return out, err
 }
 
-func (r *Repository) CreateAddressbook(ctx context.Context, p domain.Principal, book domain.Addressbook, maxBooks int) (domain.Addressbook, error) {
+func (r *Repository) createCollection(ctx context.Context, p domain.Principal, k collectionKind, in domain.Addressbook, maxCollections int) (domain.Addressbook, error) {
 	err := r.scoped(ctx, p, func(ctx context.Context) error {
 		if err := r.lockMailbox(ctx, p); err != nil {
 			return err
 		}
-		if _, err := r.book(ctx, p, book.Slug, false); err == nil {
+		if _, err := r.collection(ctx, p, k, in.Slug, false); err == nil {
 			return domain.ErrAlreadyExists
 		} else if !errors.Is(err, domain.ErrNotFound) {
 			return err
 		}
 		var count int
-		if err := r.pool.QueryRow(ctx, `SELECT count(*) FROM mail_dav.addressbooks WHERE tenant_id = $1 AND mailbox_id = $2`, p.TenantID, p.MailboxID).Scan(&count); err != nil {
+		if err := r.pool.QueryRow(ctx, `SELECT count(*) FROM `+k.table+` WHERE tenant_id = $1 AND mailbox_id = $2`, p.TenantID, p.MailboxID).Scan(&count); err != nil {
 			return err
 		}
-		if count >= maxBooks {
-			return domain.ErrAddressbookLimit
+		if count >= maxCollections {
+			return k.limit
 		}
 		var err error
-		book, err = scanBook(r.pool.QueryRow(ctx,
-			`INSERT INTO mail_dav.addressbooks (id, tenant_id, mailbox_id, slug, display_name, description)
-			 VALUES ($1, $2, $3, $4, $5, $6) RETURNING `+bookColumns,
-			book.ID, p.TenantID, p.MailboxID, book.Slug, book.DisplayName, book.Description))
+		in, err = scanCollection(r.pool.QueryRow(ctx,
+			`INSERT INTO `+k.table+` (id, tenant_id, mailbox_id, slug, display_name, description)
+			 VALUES ($1, $2, $3, $4, $5, $6) RETURNING `+collectionColumns,
+			in.ID, p.TenantID, p.MailboxID, in.Slug, in.DisplayName, in.Description))
 		return err
 	})
-	return book, err
+	return in, err
 }
 
-func (r *Repository) DeleteAddressbook(ctx context.Context, p domain.Principal, slug string) error {
+func (r *Repository) deleteCollection(ctx context.Context, p domain.Principal, k collectionKind, slug string) error {
 	return r.scoped(ctx, p, func(ctx context.Context) error {
-		tag, err := r.pool.Exec(ctx, `DELETE FROM mail_dav.addressbooks WHERE tenant_id = $1 AND mailbox_id = $2 AND slug = $3`, p.TenantID, p.MailboxID, slug)
+		tag, err := r.pool.Exec(ctx, `DELETE FROM `+k.table+` WHERE tenant_id = $1 AND mailbox_id = $2 AND slug = $3`, p.TenantID, p.MailboxID, slug)
 		if err != nil {
 			return err
 		}
@@ -160,15 +179,15 @@ func (r *Repository) DeleteAddressbook(ctx context.Context, p domain.Principal, 
 	})
 }
 
-// DeleteMailboxData borra las libretas del buzon; sus contactos y su registro de cambios caen por
+// deleteMailboxCollections borra las colecciones del buzon; sus objetos y su registro de cambios caen por
 // la clave foranea compuesta (ON DELETE CASCADE).
-func (r *Repository) DeleteMailboxData(ctx context.Context, p domain.Principal) (int, error) {
+func (r *Repository) deleteMailboxCollections(ctx context.Context, p domain.Principal, k collectionKind) (int, error) {
 	var removed int
 	err := r.scoped(ctx, p, func(ctx context.Context) error {
 		if err := r.lockMailbox(ctx, p); err != nil {
 			return err
 		}
-		tag, err := r.pool.Exec(ctx, `DELETE FROM mail_dav.addressbooks WHERE tenant_id = $1 AND mailbox_id = $2`, p.TenantID, p.MailboxID)
+		tag, err := r.pool.Exec(ctx, `DELETE FROM `+k.table+` WHERE tenant_id = $1 AND mailbox_id = $2`, p.TenantID, p.MailboxID)
 		if err != nil {
 			return err
 		}
@@ -178,13 +197,34 @@ func (r *Repository) DeleteMailboxData(ctx context.Context, p domain.Principal) 
 	return removed, err
 }
 
+func (r *Repository) ListAddressbooks(ctx context.Context, p domain.Principal) ([]domain.Addressbook, error) {
+	return r.listCollections(ctx, p, addressbooksKind)
+}
+
+func (r *Repository) GetAddressbook(ctx context.Context, p domain.Principal, slug string) (domain.Addressbook, error) {
+	return r.getCollection(ctx, p, addressbooksKind, slug)
+}
+
+func (r *Repository) CreateAddressbook(ctx context.Context, p domain.Principal, book domain.Addressbook, maxBooks int) (domain.Addressbook, error) {
+	return r.createCollection(ctx, p, addressbooksKind, book, maxBooks)
+}
+
+func (r *Repository) DeleteAddressbook(ctx context.Context, p domain.Principal, slug string) error {
+	return r.deleteCollection(ctx, p, addressbooksKind, slug)
+}
+
+// DeleteMailboxData borra las libretas del buzon.
+func (r *Repository) DeleteMailboxData(ctx context.Context, p domain.Principal) (int, error) {
+	return r.deleteMailboxCollections(ctx, p, addressbooksKind)
+}
+
 func (r *Repository) ListContacts(ctx context.Context, p domain.Principal, slug string) (domain.Addressbook, []domain.Contact, error) {
 	var (
 		book domain.Addressbook
 		out  []domain.Contact
 	)
 	err := r.scoped(ctx, p, func(ctx context.Context) (err error) {
-		if book, err = r.book(ctx, p, slug, false); err != nil {
+		if book, err = r.collection(ctx, p, addressbooksKind, slug, false); err != nil {
 			return err
 		}
 		out, err = r.contacts(ctx, p, book, nil)
@@ -196,7 +236,7 @@ func (r *Repository) ListContacts(ctx context.Context, p domain.Principal, slug 
 func (r *Repository) GetContact(ctx context.Context, p domain.Principal, slug, resource string) (domain.Contact, error) {
 	var out domain.Contact
 	err := r.scoped(ctx, p, func(ctx context.Context) error {
-		book, err := r.book(ctx, p, slug, false)
+		book, err := r.collection(ctx, p, addressbooksKind, slug, false)
 		if err != nil {
 			return err
 		}
@@ -212,7 +252,7 @@ func (r *Repository) GetContact(ctx context.Context, p domain.Principal, slug, r
 func (r *Repository) GetContacts(ctx context.Context, p domain.Principal, slug string, resources []string) ([]domain.Contact, error) {
 	var out []domain.Contact
 	err := r.scoped(ctx, p, func(ctx context.Context) error {
-		book, err := r.book(ctx, p, slug, false)
+		book, err := r.collection(ctx, p, addressbooksKind, slug, false)
 		if err != nil {
 			return err
 		}
@@ -222,9 +262,9 @@ func (r *Repository) GetContacts(ctx context.Context, p domain.Principal, slug s
 	return out, err
 }
 
-func (r *Repository) existingETag(ctx context.Context, book domain.Addressbook, resource string) (*string, error) {
+func (r *Repository) existingETag(ctx context.Context, k collectionKind, coll domain.Addressbook, resource string) (*string, error) {
 	var etag string
-	err := r.pool.QueryRow(ctx, `SELECT etag FROM mail_dav.contacts WHERE addressbook_id = $1 AND resource_name = $2`, book.ID, resource).Scan(&etag)
+	err := r.pool.QueryRow(ctx, `SELECT etag FROM `+k.items+` WHERE `+k.fk+` = $1 AND resource_name = $2`, coll.ID, resource).Scan(&etag)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -234,76 +274,77 @@ func (r *Repository) existingETag(ctx context.Context, book domain.Addressbook, 
 	return &etag, nil
 }
 
-// recordChange avanza la secuencia de la libreta (su ctag), anota el cambio y poda lo que ya no se
-// conserva. Corre con la libreta bloqueada, asi que las secuencias no se cruzan.
-func (r *Repository) recordChange(ctx context.Context, p domain.Principal, book domain.Addressbook, resource string, deleted bool, maxChanges int) error {
+// recordChange avanza la secuencia de la coleccion (su ctag), anota el cambio y poda lo que ya no se
+// conserva. Corre con la coleccion bloqueada, asi que las secuencias no se cruzan.
+func (r *Repository) recordChange(ctx context.Context, p domain.Principal, k collectionKind, coll domain.Addressbook, resource string, deleted bool, maxChanges int) error {
 	var seq, floor int64
 	if err := r.pool.QueryRow(ctx,
-		`UPDATE mail_dav.addressbooks SET sync_seq = sync_seq + 1, changes_floor = GREATEST(changes_floor, sync_seq + 1 - $2)
-		  WHERE id = $1 RETURNING sync_seq, changes_floor`, book.ID, maxChanges).Scan(&seq, &floor); err != nil {
+		`UPDATE `+k.table+` SET sync_seq = sync_seq + 1, changes_floor = GREATEST(changes_floor, sync_seq + 1 - $2)
+		  WHERE id = $1 RETURNING sync_seq, changes_floor`, coll.ID, maxChanges).Scan(&seq, &floor); err != nil {
 		return err
 	}
 	if _, err := r.pool.Exec(ctx,
-		`INSERT INTO mail_dav.collection_changes (addressbook_id, seq, tenant_id, mailbox_id, resource_name, deleted)
-		 VALUES ($1, $2, $3, $4, $5, $6)`, book.ID, seq, p.TenantID, p.MailboxID, resource, deleted); err != nil {
+		`INSERT INTO `+k.changes+` (`+k.fk+`, seq, tenant_id, mailbox_id, resource_name, deleted)
+		 VALUES ($1, $2, $3, $4, $5, $6)`, coll.ID, seq, p.TenantID, p.MailboxID, resource, deleted); err != nil {
 		return err
 	}
-	_, err := r.pool.Exec(ctx, `DELETE FROM mail_dav.collection_changes WHERE addressbook_id = $1 AND seq <= $2`, book.ID, floor)
+	_, err := r.pool.Exec(ctx, `DELETE FROM `+k.changes+` WHERE `+k.fk+` = $1 AND seq <= $2`, coll.ID, floor)
 	return err
 }
 
-func (r *Repository) PutContact(ctx context.Context, p domain.Principal, slug string, c domain.Contact, cond domain.Precondition, maxContacts, maxChanges int) (bool, error) {
+// itemWrite es lo que cambia de un objeto a otro en una escritura: la identidad del recurso y las dos
+// sentencias, que solo conocen sus columnas. El resto del flujo (bloqueo, precondiciones, UID unico,
+// limite, registro de cambios) es comun.
+type itemWrite struct {
+	resource string
+	uid      string
+	etag     string
+	insert   func(ctx context.Context, coll domain.Addressbook) error
+	update   func(ctx context.Context, coll domain.Addressbook) error
+}
+
+func (r *Repository) putItem(ctx context.Context, p domain.Principal, k collectionKind, slug string, w itemWrite, cond domain.Precondition, maxItems, maxChanges int) (bool, error) {
 	var created bool
 	err := r.scoped(ctx, p, func(ctx context.Context) error {
-		book, err := r.book(ctx, p, slug, true)
+		coll, err := r.collection(ctx, p, k, slug, true)
 		if err != nil {
 			return err
 		}
-		current, err := r.existingETag(ctx, book, c.ResourceName)
+		current, err := r.existingETag(ctx, k, coll, w.resource)
 		if err != nil {
 			return err
 		}
 		if err := cond.Check(current); err != nil {
 			return err
 		}
-		if current != nil && *current == c.ETag {
+		if current != nil && *current == w.etag {
 			return nil
 		}
 		var conflict string
 		err = r.pool.QueryRow(ctx,
-			`SELECT resource_name FROM mail_dav.contacts WHERE addressbook_id = $1 AND uid = $2 AND resource_name <> $3`,
-			book.ID, c.UID, c.ResourceName).Scan(&conflict)
+			`SELECT resource_name FROM `+k.items+` WHERE `+k.fk+` = $1 AND uid = $2 AND resource_name <> $3`,
+			coll.ID, w.uid, w.resource).Scan(&conflict)
 		if err == nil {
 			return &domain.UIDConflictError{Resource: conflict}
 		}
 		if !errors.Is(err, pgx.ErrNoRows) {
 			return err
 		}
-		emails := c.Emails
-		if emails == nil {
-			emails = []string{}
-		}
 		if current == nil {
 			if err := r.lockMailbox(ctx, p); err != nil {
 				return err
 			}
 			var count int
-			if err := r.pool.QueryRow(ctx, `SELECT count(*) FROM mail_dav.contacts WHERE tenant_id = $1 AND mailbox_id = $2`, p.TenantID, p.MailboxID).Scan(&count); err != nil {
+			if err := r.pool.QueryRow(ctx, `SELECT count(*) FROM `+k.items+` WHERE tenant_id = $1 AND mailbox_id = $2`, p.TenantID, p.MailboxID).Scan(&count); err != nil {
 				return err
 			}
-			if count >= maxContacts {
-				return domain.ErrContactLimit
+			if count >= maxItems {
+				return k.itemLimit
 			}
-			_, err = r.pool.Exec(ctx,
-				`INSERT INTO mail_dav.contacts (id, tenant_id, mailbox_id, addressbook_id, resource_name, uid, vcard, etag, display_name, emails)
-				 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-				c.ID, p.TenantID, p.MailboxID, book.ID, c.ResourceName, c.UID, c.VCard, c.ETag, c.DisplayName, emails)
+			err = w.insert(ctx, coll)
 			created = true
 		} else {
-			_, err = r.pool.Exec(ctx,
-				`UPDATE mail_dav.contacts SET uid = $4, vcard = $5, etag = $6, display_name = $7, emails = $8
-				  WHERE addressbook_id = $1 AND tenant_id = $2 AND mailbox_id = $3 AND resource_name = $9`,
-				book.ID, p.TenantID, p.MailboxID, c.UID, c.VCard, c.ETag, c.DisplayName, emails, c.ResourceName)
+			err = w.update(ctx, coll)
 		}
 		if err != nil {
 			var pgErr *pgconn.PgError
@@ -312,18 +353,18 @@ func (r *Repository) PutContact(ctx context.Context, p domain.Principal, slug st
 			}
 			return err
 		}
-		return r.recordChange(ctx, p, book, c.ResourceName, false, maxChanges)
+		return r.recordChange(ctx, p, k, coll, w.resource, false, maxChanges)
 	})
 	return created && err == nil, err
 }
 
-func (r *Repository) DeleteContact(ctx context.Context, p domain.Principal, slug, resource string, cond domain.Precondition, maxChanges int) error {
+func (r *Repository) deleteItem(ctx context.Context, p domain.Principal, k collectionKind, slug, resource string, cond domain.Precondition, maxChanges int) error {
 	return r.scoped(ctx, p, func(ctx context.Context) error {
-		book, err := r.book(ctx, p, slug, true)
+		coll, err := r.collection(ctx, p, k, slug, true)
 		if err != nil {
 			return err
 		}
-		current, err := r.existingETag(ctx, book, resource)
+		current, err := r.existingETag(ctx, k, coll, resource)
 		if err != nil {
 			return err
 		}
@@ -333,12 +374,70 @@ func (r *Repository) DeleteContact(ctx context.Context, p domain.Principal, slug
 		if err := cond.Check(current); err != nil {
 			return err
 		}
-		if _, err := r.pool.Exec(ctx, `DELETE FROM mail_dav.contacts WHERE addressbook_id = $1 AND tenant_id = $2 AND mailbox_id = $3 AND resource_name = $4`,
-			book.ID, p.TenantID, p.MailboxID, resource); err != nil {
+		if _, err := r.pool.Exec(ctx, `DELETE FROM `+k.items+` WHERE `+k.fk+` = $1 AND tenant_id = $2 AND mailbox_id = $3 AND resource_name = $4`,
+			coll.ID, p.TenantID, p.MailboxID, resource); err != nil {
 			return err
 		}
-		return r.recordChange(ctx, p, book, resource, true, maxChanges)
+		return r.recordChange(ctx, p, k, coll, resource, true, maxChanges)
 	})
+}
+
+// changedNames devuelve los nombres de los objetos que existen y cambiaron despues de seq (live) y los de
+// los borrados (removed). Con la coleccion ya leida: domain.ErrInvalidSyncToken si seq ya no se resuelve.
+func (r *Repository) changedNames(ctx context.Context, p domain.Principal, k collectionKind, coll domain.Addressbook, seq int64) (live, removed []string, err error) {
+	if seq < coll.ChangesFloor || seq > coll.SyncSeq {
+		return nil, nil, domain.ErrInvalidSyncToken
+	}
+	rows, err := r.pool.Query(ctx,
+		`SELECT DISTINCT ON (resource_name) resource_name, deleted FROM `+k.changes+`
+		  WHERE `+k.fk+` = $1 AND tenant_id = $2 AND mailbox_id = $3 AND seq > $4 AND seq <= $5
+		  ORDER BY resource_name, seq DESC`, coll.ID, p.TenantID, p.MailboxID, seq, coll.SyncSeq)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var name string
+		var deleted bool
+		if err := rows.Scan(&name, &deleted); err != nil {
+			return nil, nil, err
+		}
+		if deleted {
+			removed = append(removed, name)
+		} else {
+			live = append(live, name)
+		}
+	}
+	sort.Strings(removed)
+	return live, removed, rows.Err()
+}
+
+func (r *Repository) PutContact(ctx context.Context, p domain.Principal, slug string, c domain.Contact, cond domain.Precondition, maxContacts, maxChanges int) (bool, error) {
+	emails := c.Emails
+	if emails == nil {
+		emails = []string{}
+	}
+	return r.putItem(ctx, p, addressbooksKind, slug, itemWrite{
+		resource: c.ResourceName, uid: c.UID, etag: c.ETag,
+		insert: func(ctx context.Context, book domain.Addressbook) error {
+			_, err := r.pool.Exec(ctx,
+				`INSERT INTO mail_dav.contacts (id, tenant_id, mailbox_id, addressbook_id, resource_name, uid, vcard, etag, display_name, emails)
+				 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+				c.ID, p.TenantID, p.MailboxID, book.ID, c.ResourceName, c.UID, c.VCard, c.ETag, c.DisplayName, emails)
+			return err
+		},
+		update: func(ctx context.Context, book domain.Addressbook) error {
+			_, err := r.pool.Exec(ctx,
+				`UPDATE mail_dav.contacts SET uid = $4, vcard = $5, etag = $6, display_name = $7, emails = $8
+				  WHERE addressbook_id = $1 AND tenant_id = $2 AND mailbox_id = $3 AND resource_name = $9`,
+				book.ID, p.TenantID, p.MailboxID, c.UID, c.VCard, c.ETag, c.DisplayName, emails, c.ResourceName)
+			return err
+		},
+	}, cond, maxContacts, maxChanges)
+}
+
+func (r *Repository) DeleteContact(ctx context.Context, p domain.Principal, slug, resource string, cond domain.Precondition, maxChanges int) error {
+	return r.deleteItem(ctx, p, addressbooksKind, slug, resource, cond, maxChanges)
 }
 
 func (r *Repository) ChangesSince(ctx context.Context, p domain.Principal, slug string, seq int64) (domain.Addressbook, []domain.Contact, []string, error) {
@@ -347,43 +446,19 @@ func (r *Repository) ChangesSince(ctx context.Context, p domain.Principal, slug 
 		changed []domain.Contact
 		removed []string
 	)
-	err := r.scoped(ctx, p, func(ctx context.Context) (err error) {
-		if book, err = r.book(ctx, p, slug, false); err != nil {
+	err := r.scoped(ctx, p, func(ctx context.Context) error {
+		var err error
+		if book, err = r.collection(ctx, p, addressbooksKind, slug, false); err != nil {
 			return err
 		}
-		if seq < book.ChangesFloor || seq > book.SyncSeq {
-			return domain.ErrInvalidSyncToken
-		}
-		rows, err := r.pool.Query(ctx,
-			`SELECT DISTINCT ON (resource_name) resource_name, deleted FROM mail_dav.collection_changes
-			  WHERE addressbook_id = $1 AND tenant_id = $2 AND mailbox_id = $3 AND seq > $4 AND seq <= $5
-			  ORDER BY resource_name, seq DESC`, book.ID, p.TenantID, p.MailboxID, seq, book.SyncSeq)
-		if err != nil {
-			return err
-		}
-		defer rows.Close()
 		var live []string
-		for rows.Next() {
-			var name string
-			var deleted bool
-			if err := rows.Scan(&name, &deleted); err != nil {
-				return err
-			}
-			if deleted {
-				removed = append(removed, name)
-			} else {
-				live = append(live, name)
-			}
-		}
-		if err := rows.Err(); err != nil {
+		if live, removed, err = r.changedNames(ctx, p, addressbooksKind, book, seq); err != nil {
 			return err
 		}
-		rows.Close()
 		if len(live) > 0 {
 			changed, err = r.contacts(ctx, p, book, live)
 		}
 		return err
 	})
-	sort.Strings(removed)
 	return book, changed, removed, err
 }

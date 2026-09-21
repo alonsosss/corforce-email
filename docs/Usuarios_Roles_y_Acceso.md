@@ -299,8 +299,8 @@ aditivo y un consumidor que no lo lea se comporta como hasta ahora. `changed` va
 buzon con `active`, que revoca. mail-security no lo lee: sigue decidiendo con el estado real del
 directorio.
 
-Acceso DAV (CardDAV, V, 2026-09-21, `docs/adr/0004-contactos-y-calendario-carddav-caldav.md`): un cliente de contactos
-(iOS, Thunderbird, DAVx5) no tiene sesion ni JWT, autentica cada peticion con HTTP Basic contra el BUZON. `mail-dav`
+Acceso DAV (CardDAV y CalDAV, V, 2026-09-21, `docs/adr/0004-contactos-y-calendario-carddav-caldav.md`): un cliente de
+contactos o de calendario (iOS, Thunderbird, DAVx5) no tiene sesion ni JWT, autentica cada peticion con HTTP Basic contra el BUZON. `mail-dav`
 no valida la credencial: la verifica `mail-auth` con `service: "dav"`, que exige `active = 1` y el flag `dav_access`
 (en el buzon y, si entra con una contrasena de aplicacion, en esa contrasena; la contrasena principal tambien vale) y
 aplica el freno de fuerza bruta por (buzon, IP) y por IP como en IMAP. `mail-auth` devuelve solo a `dav` la empresa y

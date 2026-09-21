@@ -19,9 +19,9 @@
 # (con su enlace firmado por el gateway), las claves de Redis que escribe mail-security, el
 # webmail por el gateway y la migracion de buzones: mail-migration (binario del host) y su
 # ejecutor con imapsync REAL (contenedor en su propia red, deploy/mail/migration-runner) copian
-# de un buzon a otro del mismo Dovecot, con ClamAV real en el camino, y CardDAV: mail-dav (binario del host,
+# de un buzon a otro del mismo Dovecot, con ClamAV real en el camino, y CardDAV y CalDAV: mail-dav (binario del host,
 # con la credencial propia de su esquema) autentica cada peticion contra el listener TLS de mail-auth y el
-# gateway lo expone sin JWT; se prueban PROPFIND, PUT, REPORT y DELETE con la contrasena de aplicacion, el
+# gateway lo expone sin JWT; se prueban PROPFIND, PUT, REPORT, MKCALENDAR y DELETE con la contrasena de aplicacion, el
 # aislamiento entre buzones, las politicas de fila y dav_access.
 #
 # Cada paso escribe OK o FALLA y la ejecucion termina con error si alguno falla. Las
@@ -923,7 +923,7 @@ api PATCH "/mailboxes/$BEAID" '{"imap_access":true}'
 expect "bea recupera imap" "$API_CODE/$(echo "$API_BODY" | jget data.imap_access)" "200/True"
 esperar "y vuelve a entrar por IMAP" 20 login_aceptado bea@acme.test "$BEA_PASS"
 
-# ── CardDAV (docs/adr/0004) ────────────────────────────────────────────────────────────────────────
+# ── CardDAV y CalDAV (docs/adr/0004) ────────────────────────────────────────────────────────────────────────
 # mail-dav corre en el host con la credencial PROPIA de su esquema (mail_svc_mail_dav, sujeta a las politicas
 # de fila) y verifica a cada buzon contra el listener TLS de mail-auth, con la CA de la prueba. Todo pasa por
 # el gateway: prefijo autenticado por el servicio (sin JWT), con HTTP Basic y la contrasena de aplicacion.
@@ -931,7 +931,7 @@ echo "== CardDAV: contactos por el gateway con la contrasena de aplicacion (mail
 DAV_DB_PASS="$(rand_hex 24)"
 MAIL_DAV_DB_PASSWORD="${DAV_DB_PASS}" PGHOST=127.0.0.1 bash ops/db/tenant-service-role.sh --service mail-dav >"$WORK/log/dav-role.log" 2>&1 ||
   { mal "tenant-service-role.sh --service mail-dav"; tail -5 "$WORK/log/dav-role.log" >&2; }
-MAIL_AUTH_URL="https://127.0.0.1:$AUTH_TLS_PORT" MAIL_DAV_TLS_CA_FILE="$TLS/ca.pem" MAIL_DAV_MAX_VCARD_BYTES=2048 \
+MAIL_AUTH_URL="https://127.0.0.1:$AUTH_TLS_PORT" MAIL_DAV_TLS_CA_FILE="$TLS/ca.pem" MAIL_DAV_MAX_VCARD_BYTES=2048 MAIL_DAV_MAX_EVENT_BYTES=2048 \
   TENANT_DB_USER=mail_svc_mail_dav TENANT_DB_PASSWORD="$DAV_DB_PASS" arrancar mail-dav
 esperar_salud mail-dav "${PORT[mail-dav]}" && ok "mail-dav responde"
 expect "el gateway no exige JWT al prefijo dav: el desafio Basic es de mail-dav" \
@@ -1080,6 +1080,145 @@ dav "$ANA_APP" GET "/addressbooks/ana@acme.test/contacts/..%2f..%2fbea@acme.test
 expect "una ruta con ..%2f no llega a ningun recurso" "$([[ $DAV_CODE == 404 || $DAV_CODE == 400 ]] && echo bien || echo "$DAV_CODE")" "bien"
 dav "ana@acme.test:$ANA_PASS" PROPFIND / -H 'Depth: infinity'
 expect "PROPFIND con Depth infinity se rechaza (403)" "$DAV_CODE" "403"
+
+# ── CalDAV (docs/adr/0004, fase 2): calendarios y eventos por el mismo prefijo y las mismas credenciales ──
+CALDAV_NS='xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav" xmlns:cs="http://calendarserver.org/ns/"'
+echo "== CalDAV: calendarios y eventos por el gateway con la contrasena de aplicacion (mail-dav)"
+REDIR=$(curl -s -o /dev/null -w '%{http_code} %{redirect_url}' "http://127.0.0.1:${PORT[gateway]}/.well-known/caldav")
+expect "/.well-known/caldav redirige al prefijo de mail-dav (RFC 6764)" "$REDIR" "301 http://127.0.0.1:${PORT[gateway]}/api/v1/dav/"
+dav "$ANA_APP" OPTIONS /calendars/ana@acme.test/
+contains "OPTIONS anuncia calendar-access" "$DAV_HDR" "calendar-access"
+contains "y admite MKCALENDAR" "$DAV_HDR" "MKCALENDAR"
+
+# Descubrimiento como DAVx5: el principal da el calendar-home-set y el home lista el calendario por defecto.
+dav "$ANA_APP" PROPFIND /principals/ana@acme.test/ -H 'Depth: 0' -H 'Content-Type: application/xml' \
+  --data "<d:propfind $CALDAV_NS><d:prop><c:calendar-home-set/></d:prop></d:propfind>"
+contains "el calendar-home-set del principal" "$DAV_BODY" "/api/v1/dav/calendars/ana@acme.test/"
+dav "$ANA_APP" PROPFIND /calendars/ana@acme.test/ -H 'Depth: 1' -H 'Content-Type: application/xml' \
+  --data "<d:propfind $CALDAV_NS><d:prop><d:resourcetype/><d:displayname/><cs:getctag/><d:sync-token/><c:supported-calendar-component-set/></d:prop></d:propfind>"
+expect "el home lista su calendario" "$DAV_CODE" "207"
+CAL="/calendars/ana@acme.test/calendar"
+contains "el calendario por defecto se crea al descubrirlo" "$DAV_BODY" "$CAL/"
+contains "es un calendario que admite VEVENT" "$DAV_BODY" 'name="VEVENT"'
+contains "y tiene sync-token" "$DAV_BODY" "urn:mail-dav:sync:"
+
+# Un evento de una vez, PUT / GET con If-None-Match e If-Match como los clientes.
+EVT_UID="e2e-$(rand_hex 6)"
+EVT_URL="$CAL/$EVT_UID.ics"
+evento() { printf 'BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//e2e//ES\r\nBEGIN:VEVENT\r\nUID:%s\r\nDTSTAMP:20300101T000000Z\r\nSUMMARY:%s\r\nDTSTART:%s\r\nDTEND:%s\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n' "$EVT_UID" "$1" "$2" "$3"; }
+evento "Reunion e2e" 20300304T100000Z 20300304T110000Z >"$WORK/evento1.ics"
+dav "$ANA_APP" PUT "$EVT_URL" -H 'Content-Type: text/calendar; charset=utf-8' -H 'If-None-Match: *' --data-binary "@$WORK/evento1.ics"
+expect "PUT crea el evento (If-None-Match: *)" "$DAV_CODE" "201"
+EVT_ETAG1=$(grep -i '^etag:' <<<"$DAV_HDR" | tr -d '\r' | sed 's/^[^:]*: *//')
+[[ "$EVT_ETAG1" == \"*\" ]] && ok "y devuelve su ETag" || mal "PUT de evento sin ETag valido: '$EVT_ETAG1'"
+dav "$ANA_APP" PUT "$EVT_URL" -H 'Content-Type: text/calendar; charset=utf-8' -H 'If-None-Match: *' --data-binary "@$WORK/evento1.ics"
+expect "crearlo otra vez con If-None-Match: * es un 412" "$DAV_CODE" "412"
+dav "$ANA_APP" GET "$EVT_URL"
+expect "GET devuelve exactamente lo guardado" "$(cmp -s "$WORK/dav.out" "$WORK/evento1.ics" && echo igual)" "igual"
+contains "con su tipo de contenido" "$DAV_HDR" "text/calendar"
+evento "Reunion e2e editada" 20300304T100000Z 20300304T110000Z >"$WORK/evento2.ics"
+dav "$ANA_APP" PUT "$EVT_URL" -H 'Content-Type: text/calendar; charset=utf-8' -H 'If-Match: "0000"' --data-binary "@$WORK/evento2.ics"
+expect "editar con un If-Match viejo es un 412" "$DAV_CODE" "412"
+dav "$ANA_APP" PUT "$EVT_URL" -H 'Content-Type: text/calendar; charset=utf-8' -H "If-Match: $EVT_ETAG1" --data-binary "@$WORK/evento2.ics"
+expect "y con el ETag vigente es un 204" "$DAV_CODE" "204"
+dav "$ANA_APP" PUT "$CAL/mal.ics" -H 'Content-Type: text/calendar; charset=utf-8' --data 'esto no es un iCalendar'
+expect "un cuerpo que no es iCalendar es un 403" "$DAV_CODE/$(grep -c valid-calendar-data <<<"$DAV_BODY")" "403/1"
+dav "$ANA_APP" PUT "$CAL/tarea.ics" -H 'Content-Type: text/calendar; charset=utf-8' \
+  --data-binary $'BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VTODO\r\nUID:tarea-e2e\r\nEND:VTODO\r\nEND:VCALENDAR\r\n'
+expect "una tarea (VTODO) no se admite: supported-calendar-component" "$DAV_CODE/$(grep -c supported-calendar-component <<<"$DAV_BODY")" "403/1"
+head -c 4096 /dev/zero | tr '\0' 'A' >"$WORK/enorme.ics"
+dav "$ANA_APP" PUT "$CAL/enorme.ics" -H 'Content-Type: text/calendar; charset=utf-8' --data-binary "@$WORK/enorme.ics"
+expect "un evento mas grande que el limite (2048 bytes en esta prueba) es un 403 max-resource-size" "$DAV_CODE/$(grep -c max-resource-size <<<"$DAV_BODY")" "403/1"
+dav "$ANA_APP" PUT "$CAL/otro-nombre.ics" -H 'Content-Type: text/calendar; charset=utf-8' --data-binary "@$WORK/evento2.ics"
+expect "otro recurso con el mismo UID es un 409 no-uid-conflict" "$DAV_CODE/$(grep -c no-uid-conflict <<<"$DAV_BODY")" "409/1"
+
+# Una serie semanal con una excepcion, para la consulta por rango con recurrencias.
+SERIE_UID="serie-$(rand_hex 6)"
+printf 'BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//e2e//ES\r\nBEGIN:VEVENT\r\nUID:%s\r\nDTSTAMP:20300101T000000Z\r\nSUMMARY:Semanal e2e\r\nDTSTART:20300107T090000Z\r\nDTEND:20300107T093000Z\r\nRRULE:FREQ=WEEKLY;BYDAY=MO\r\nEXDATE:20300121T090000Z\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n' "$SERIE_UID" >"$WORK/serie.ics"
+dav "$ANA_APP" PUT "$CAL/$SERIE_UID.ics" -H 'Content-Type: text/calendar; charset=utf-8' --data-binary "@$WORK/serie.ics"
+expect "PUT de una serie con RRULE y EXDATE" "$DAV_CODE" "201"
+calendar_query() {
+  dav "$ANA_APP" REPORT "$CAL/" -H 'Depth: 1' -H 'Content-Type: application/xml' \
+    --data "<c:calendar-query $CALDAV_NS><d:prop><d:getetag/></d:prop><c:filter><c:comp-filter name=\"VCALENDAR\"><c:comp-filter name=\"VEVENT\">$1</c:comp-filter></c:comp-filter></c:filter></c:calendar-query>"
+}
+calendar_query "<c:time-range start=\"20300304T000000Z\" end=\"20300305T000000Z\"/>"
+expect "calendar-query por rango: el dia del evento" "$DAV_CODE" "207"
+contains "trae el evento de ese dia" "$DAV_BODY" "$EVT_URL"
+contains "y la serie semanal, que cae ese lunes (el 4 de marzo de 2030)" "$DAV_BODY" "$SERIE_UID.ics"
+calendar_query "<c:time-range start=\"20300305T000000Z\" end=\"20300306T000000Z\"/>"
+lacks "un dia sin evento no lo trae" "$DAV_BODY" "$EVT_URL"
+calendar_query "<c:time-range start=\"20300114T000000Z\" end=\"20300115T000000Z\"/>"
+contains "la serie semanal aparece un lunes de su recurrencia (expansion en el servidor solo para decidir)" "$DAV_BODY" "$SERIE_UID.ics"
+calendar_query "<c:time-range start=\"20300121T000000Z\" end=\"20300122T000000Z\"/>"
+lacks "y no el lunes que excluye su EXDATE" "$DAV_BODY" "$SERIE_UID.ics"
+calendar_query "<c:time-range start=\"20300115T000000Z\" end=\"20300116T000000Z\"/>"
+lacks "ni un martes" "$DAV_BODY" "$SERIE_UID.ics"
+calendar_query "<c:prop-filter name=\"SUMMARY\"><c:text-match collation=\"i;ascii-casemap\">semanal</c:text-match></c:prop-filter>"
+contains "calendar-query por texto de SUMMARY" "$DAV_BODY" "$SERIE_UID.ics"
+lacks "y no trae el que no coincide" "$DAV_BODY" "$EVT_UID.ics"
+calendar_query "<c:prop-filter name=\"ATTENDEE\"><c:param-filter name=\"PARTSTAT\"/></c:prop-filter>"
+expect "un filtro que no se sabe evaluar (param-filter) es un 403 supported-filter, no se ignora" "$DAV_CODE/$(grep -c supported-filter <<<"$DAV_BODY")" "403/1"
+dav "$ANA_APP" REPORT "$CAL/" -H 'Depth: 1' -H 'Content-Type: application/xml' \
+  --data "<c:calendar-query $CALDAV_NS><d:prop><c:calendar-data><c:expand start=\"20300101T000000Z\" end=\"20300201T000000Z\"/></c:calendar-data></d:prop><c:filter><c:comp-filter name=\"VCALENDAR\"/></c:filter></c:calendar-query>"
+expect "expand no se aplica en el servidor: 403 supported-calendar-data" "$DAV_CODE/$(grep -c supported-calendar-data <<<"$DAV_BODY")" "403/1"
+
+# sync-collection y multiget como DAVx5 e iOS.
+dav "$ANA_APP" REPORT "$CAL/" -H 'Depth: 0' -H 'Content-Type: application/xml' \
+  --data "<d:sync-collection $CALDAV_NS><d:sync-token/><d:sync-level>1</d:sync-level><d:prop><d:getetag/></d:prop></d:sync-collection>"
+expect "sync-collection inicial del calendario" "$DAV_CODE" "207"
+contains "lista el evento" "$DAV_BODY" "$EVT_URL"
+CAL_SYNC_TOKEN=$(grep -o 'urn:mail-dav:sync:[0-9a-f-]*:[0-9]*' <<<"$DAV_BODY" | head -1)
+[[ -n "$CAL_SYNC_TOKEN" ]] && ok "y da un token de sincronizacion" || mal "sin sync-token en el calendario"
+dav "$ANA_APP" REPORT "$CAL/" -H 'Depth: 1' -H 'Content-Type: application/xml' \
+  --data "<c:calendar-multiget $CALDAV_NS><d:prop><d:getetag/><c:calendar-data/></d:prop><d:href>/api/v1/dav$EVT_URL</d:href></c:calendar-multiget>"
+contains "multiget trae el evento editado" "$DAV_BODY" "Reunion e2e editada"
+
+# MKCALENDAR como iOS: un calendario mas, con propiedades que el servidor no guarda.
+dav "$ANA_APP" MKCALENDAR /calendars/ana@acme.test/trabajo/ -H 'Content-Type: application/xml' \
+  --data "<c:mkcalendar $CALDAV_NS><d:set><d:prop><d:displayname>Trabajo</d:displayname><c:supported-calendar-component-set><c:comp name=\"VEVENT\"/></c:supported-calendar-component-set></d:prop></d:set></c:mkcalendar>"
+expect "MKCALENDAR crea un calendario" "$DAV_CODE" "201"
+dav "$ANA_APP" MKCALENDAR /calendars/ana@acme.test/trabajo/ -H 'Content-Type: application/xml'
+expect "repetirlo es un 405" "$DAV_CODE" "405"
+dav "$ANA_APP" MKCALENDAR /calendars/ana@acme.test/tareas/ -H 'Content-Type: application/xml' \
+  --data "<c:mkcalendar $CALDAV_NS><d:set><d:prop><c:supported-calendar-component-set><c:comp name=\"VTODO\"/></c:supported-calendar-component-set></d:prop></d:set></c:mkcalendar>"
+expect "un calendario de tareas no se admite (403)" "$DAV_CODE" "403"
+dav "$ANA_APP" DELETE /calendars/ana@acme.test/trabajo/
+expect "DELETE borra el calendario" "$DAV_CODE" "204"
+
+# Aislamiento: bea, de la misma empresa, no ve nada de los calendarios de ana.
+dav "$BEA_APP" GET "$EVT_URL"
+expect "bea no lee el evento de ana por su URL" "$DAV_CODE" "404"
+dav "$BEA_APP" PROPFIND /calendars/ana@acme.test/ -H 'Depth: 1'
+expect "ni lista el home de calendarios de ana" "$DAV_CODE" "404"
+dav "$BEA_APP" PUT "$EVT_URL" -H 'Content-Type: text/calendar; charset=utf-8' --data-binary "@$WORK/evento2.ics"
+expect "ni escribe en su calendario" "$DAV_CODE" "404"
+dav "$BEA_APP" PROPFIND /calendars/bea@acme.test/ -H 'Depth: 1'
+contains "bea tiene su propio calendario, creado al descubrirlo" "$DAV_BODY" "/calendars/bea@acme.test/calendar/"
+calendar_query_bea() {
+  dav "$BEA_APP" REPORT /calendars/bea@acme.test/calendar/ -H 'Depth: 1' -H 'Content-Type: application/xml' \
+    --data "<c:calendar-query $CALDAV_NS><d:prop><d:getetag/></d:prop><c:filter><c:comp-filter name=\"VCALENDAR\"><c:comp-filter name=\"VEVENT\"><c:time-range start=\"20300101T000000Z\" end=\"20301231T000000Z\"/></c:comp-filter></c:comp-filter></c:filter></c:calendar-query>"
+}
+calendar_query_bea
+lacks "y en el no hay eventos de ana, ni con una consulta por rango" "$DAV_BODY" "$EVT_UID"
+CAL_SESION="$(PGPASSWORD="$DAV_DB_PASS" PGHOST=127.0.0.1 psql -U mail_svc_mail_dav -d mail_tenant_acme -At -c 'SELECT count(*) FROM mail_dav.events' 2>&1)"
+expect "el rol de mail-dav sin sesion de buzon no ve ningun evento aunque hay (RLS fail-closed)" "$CAL_SESION" "0"
+expect "y el dueno de la base ve los de ana" "$(sql mail_tenant_acme "SELECT count(*) FROM mail_dav.events WHERE uid IN ('$EVT_UID', '$SERIE_UID')")" "2"
+expect "el evento guardado lleva su intervalo indexado" "$(sql mail_tenant_acme "SELECT first_start = '2030-03-04T10:00:00Z' AND last_end = '2030-03-04T11:00:00Z' FROM mail_dav.events WHERE uid = '$EVT_UID'")" "t"
+expect "y la serie sin fin no tiene cota superior" "$(sql mail_tenant_acme "SELECT last_end IS NULL FROM mail_dav.events WHERE uid = '$SERIE_UID'")" "t"
+
+# Borrado y sincronizacion incremental con el token de antes.
+dav "$ANA_APP" DELETE "$EVT_URL" -H 'If-Match: "0000"'
+expect "borrar un evento con un If-Match viejo es un 412" "$DAV_CODE" "412"
+dav "$ANA_APP" DELETE "$EVT_URL"
+expect "DELETE borra el evento" "$DAV_CODE" "204"
+dav "$ANA_APP" REPORT "$CAL/" -H 'Depth: 0' -H 'Content-Type: application/xml' \
+  --data "<d:sync-collection $CALDAV_NS><d:sync-token>$CAL_SYNC_TOKEN</d:sync-token><d:sync-level>1</d:sync-level><d:prop><d:getetag/></d:prop></d:sync-collection>"
+contains "sync-collection con el token anterior informa el borrado" "$DAV_BODY" "404 Not Found"
+dav "$ANA_APP" REPORT "$CAL/" -H 'Depth: 0' -H 'Content-Type: application/xml' \
+  --data "<d:sync-collection $CALDAV_NS><d:sync-token>urn:mail-dav:sync:basura</d:sync-token><d:sync-level>1</d:sync-level></d:sync-collection>"
+expect "un token que no se puede resolver obliga a sincronizar de nuevo (403 valid-sync-token)" "$DAV_CODE/$(grep -c valid-sync-token <<<"$DAV_BODY")" "403/1"
+dav "$ANA_APP" GET "/calendars/ana@acme.test/calendar/..%2f..%2fbea@acme.test/x.ics"
+expect "una ruta de calendarios con ..%2f no llega a ningun recurso" "$([[ $DAV_CODE == 404 || $DAV_CODE == 400 ]] && echo bien || echo "$DAV_CODE")" "bien"
 
 # Ninguna contrasena en el registro de mail-dav.
 if grep -qF -e "$ANA_DAV" -e "$BEA_DAV" -e "$ANA_PASS" -e "$DAV_DB_PASS" "$WORK/log/mail-dav.log"; then
