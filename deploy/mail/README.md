@@ -190,6 +190,13 @@ DEPLOY_HOST=<srv> DEPLOY_USER=deploy DEPLOY_SSH_KEY=~/.ssh/<llave> scripts/deplo
 3. Rechaza `acme-mail`, `netfilter-mail`, `watchdog-mail` y `dockerapi-mail` si el demonio de docker
    del destino es el de esta maquina (compara sus identificadores). Guardia de retroceso antes del
    build (`DEPLOY_ALLOW_ROLLBACK=1` para un rollback a proposito).
+   Puerta de regresion (V, 2026-09-21, `ops/scaffold/check-deploy-mail.sh` con mutaciones): tambien
+   antes del build exige que `make e2e-mail` este en verde para lo que se despliega, segun el flujo
+   `mail-engines.yml` de GitHub consultado con `gh` (`gh auth login` en el puesto de trabajo). Vale una
+   ejecucion verde de HEAD o la ultima verde de un commit anterior de main si desde entonces no cambio
+   nada de lo que el flujo vigila (sus `paths`); una ejecucion de HEAD fallida, o ninguna que lo cubra,
+   detiene el despliegue. `MAIL_DEPLOY_REGRESION=avisar` dice lo que falta y sigue; `omitir` no
+   comprueba y lo deja dicho en la salida: solo con una razon.
 4. Construye en local (`MAIL_BUILD_LOTE` a la vez) con `docker-compose.mail.images.yml`, que etiqueta
    cada motor `core-force-mail/<motor>:<commit>` con `pull_policy: never`, y solo envia
    (`docker save | gzip | ssh docker load`) lo que el servidor no tenga ya con esa etiqueta. No hay

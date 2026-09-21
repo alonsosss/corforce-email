@@ -52,6 +52,89 @@ despliegue_comprobar_arbol() {
   return 1
 }
 
+# Puerta de regresion de los motores (docs/Plan_Estrategico_Mejoras_Correo.md, B6): un motor solo se
+# despliega si make e2e-mail (el flujo de GitHub <flujo>) esta en verde para lo que se va a desplegar.
+# Vale una ejecucion verde de HEAD, o la ultima verde de un commit anterior de main si desde entonces
+# no cambio nada de lo que ese flujo vigila (sus `paths` de push): un cambio de documentacion no
+# obliga a esperar otra ejecucion de cuatro minutos y de un CI largo. Con una ejecucion de HEAD fallida
+# o sin ninguna verde, no se despliega.
+#
+# MAIL_DEPLOY_REGRESION: exigir (por defecto) | avisar (dice lo que falta y sigue) | omitir (sin
+# comprobar, con aviso). Necesita gh autenticado (gh auth login) en la maquina desde la que se despliega.
+despliegue_comprobar_regresion() {
+  local flujo="${1:?flujo}" modo="${MAIL_DEPLOY_REGRESION:-exigir}" runs veredicto
+  case "$modo" in
+    omitir) echo ">> AVISO: no se comprueba make e2e-mail (MAIL_DEPLOY_REGRESION=omitir)" >&2; return 0 ;;
+    exigir | avisar) ;;
+    *) echo "MAIL_DEPLOY_REGRESION debe ser exigir, avisar u omitir (es '$modo')" >&2; return 1 ;;
+  esac
+  if ! command -v gh >/dev/null 2>&1; then
+    veredicto="falta gh: no se puede saber si make e2e-mail esta en verde (instalalo y usa gh auth login)"
+  elif ! runs="$(gh run list --workflow "$flujo" --branch main --limit 50 --json headSha,conclusion 2>&1)"; then
+    veredicto="gh no pudo consultar el flujo $flujo: ${runs:0:200}"
+  else
+    veredicto="$(RUNS="$runs" FLUJO_FICHERO=".github/workflows/$flujo" python3 - "$(git rev-parse HEAD)" <<'PY'
+import fnmatch, json, os, re, subprocess, sys
+
+head = sys.argv[1]
+runs = json.loads(os.environ["RUNS"] or "[]")
+
+def git(*args):
+    return subprocess.run(["git", *args], capture_output=True, text=True)
+
+# Los paths de push del flujo: lo que esa prueba vigila.
+paths, en_push = [], False
+for linea in open(os.environ["FLUJO_FICHERO"], encoding="utf-8"):
+    if re.match(r"^  push:", linea):
+        en_push = True
+    elif re.match(r"^  \w", linea) and not linea.startswith("  push:"):
+        en_push = False
+    elif en_push:
+        m = re.match(r"^\s+- '([^']+)'", linea)
+        if m:
+            paths.append(m.group(1))
+mas = [p for p in paths if not p.startswith("!")]
+menos = [p[1:] for p in paths if p.startswith("!")]
+
+def casa(patron, ruta):
+    return ruta.startswith(patron[:-2]) if patron.endswith("/**") else fnmatch.fnmatch(ruta, patron)
+
+def vigilado(ruta):
+    return any(casa(p, ruta) for p in mas) and not any(casa(p, ruta) for p in menos)
+
+de_head = [r for r in runs if r["headSha"] == head]
+if any(r["conclusion"] == "success" for r in de_head):
+    print("ok")
+    sys.exit()
+if any(r["conclusion"] == "failure" for r in de_head):
+    print("make e2e-mail FALLA para el commit " + head[:8])
+    sys.exit()
+
+for r in runs:
+    if r["conclusion"] != "success" or r["headSha"] == head:
+        continue
+    if git("merge-base", "--is-ancestor", r["headSha"], head).returncode != 0:
+        continue
+    cambiados = git("diff", "--name-only", r["headSha"], head).stdout.split()
+    tocados = [f for f in cambiados if vigilado(f)]
+    if tocados:
+        print("hay cambios en lo que prueba make e2e-mail desde su ultimo verde (%s): %s%s" % (
+            r["headSha"][:8], ", ".join(tocados[:3]), " ..." if len(tocados) > 3 else ""))
+    else:
+        print("ok")
+    sys.exit()
+print("no hay ninguna ejecucion verde de make e2e-mail que cubra el commit " + head[:8])
+PY
+)" || veredicto="no se pudo evaluar la puerta de regresion"
+  fi
+  [[ "$veredicto" == ok ]] && return 0
+  echo "PUERTA DE REGRESION DE LOS MOTORES: $veredicto" >&2
+  echo "  Espera al flujo $flujo en GitHub (o lanzalo con: gh workflow run $flujo)." >&2
+  if [[ "$modo" == avisar ]]; then echo ">> AVISO: se sigue (MAIL_DEPLOY_REGRESION=avisar)" >&2; return 0; fi
+  echo "  Solo con una razon: MAIL_DEPLOY_REGRESION=omitir (queda dicho en la salida)." >&2
+  return 1
+}
+
 # Los Dockerfile de los servicios Go usan "RUN --mount=type=cache": sin BuildKit el build muere a
 # media compilacion con un mensaje que no explica que falta.
 despliegue_comprobar_buildkit() {

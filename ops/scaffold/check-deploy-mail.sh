@@ -110,6 +110,77 @@ touch -d '2 hours ago' "$TMP/candado"
 lib "DEPLOY_LOCK_INTENTOS=0 adquirir_candado plataforma && grep -q plataforma '$TMP/candado/info'" || mal "candado: no roba uno abandonado"
 lib "CANDADO_TOMADO=1 liberar_candado; test ! -e '$TMP/candado'" || mal "candado: liberar_candado no lo retira"
 
+# --- 2b. puerta de regresion de los motores (make e2e-mail en verde) -----------------------------
+# gh falso: devuelve las ejecuciones que prepara cada caso. El repositorio de prueba lleva un flujo con
+# los mismos `paths` que el real (con una exclusion) y tres commits: el que da el verde, uno que solo
+# toca documentacion y uno que toca lo que el flujo vigila.
+cat >"$TMP/bin/gh" <<'STUB'
+#!/usr/bin/env bash
+[[ -n "${STUB_GH_FALLA:-}" ]] && { echo "gh: sin sesion" >&2; exit 1; }
+cat "$STUB_GH_RUNS"
+STUB
+chmod +x "$TMP/bin/gh"
+RG="$TMP/repo-regresion"
+git init -q "$RG"
+gitrg() { git -C "$RG" -c user.name=p -c user.email=p@p "$@"; }
+mkdir -p "$RG/.github/workflows" "$RG/deploy/mail" "$RG/docs"
+cat >"$RG/.github/workflows/mail-engines.yml" <<'YML'
+name: Motores
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'deploy/mail/**'
+      - '!deploy/mail/UPSTREAM.md'
+      - 'ops/e2e/**'
+  pull_request:
+    paths:
+      - 'otra/**'
+YML
+echo a >"$RG/deploy/mail/x"; echo a >"$RG/deploy/mail/UPSTREAM.md"; echo a >"$RG/docs/a.md"
+gitrg add -A; gitrg commit -q -m verde
+VERDE="$(gitrg rev-parse HEAD)"
+echo b >"$RG/docs/a.md"; gitrg commit -q -am docs
+DOCS="$(gitrg rev-parse HEAD)"
+echo b >"$RG/deploy/mail/UPSTREAM.md"; gitrg commit -q -am libro
+LIBRO="$(gitrg rev-parse HEAD)"
+echo b >"$RG/deploy/mail/x"; gitrg commit -q -am motor
+MOTOR="$(gitrg rev-parse HEAD)"
+regresion() { # regresion <json de ejecuciones> [VAR=valor...]: deja la salida en $TMP/rg.out
+  local json="$1"; shift
+  printf '%s' "$json" >"$TMP/gh.json"
+  (cd "$RG" && env PATH="$TMP/bin:$PATH" STUB_GH_RUNS="$TMP/gh.json" "$@" bash -c ". '$LIB'; despliegue_comprobar_regresion mail-engines.yml") >"$TMP/rg.out" 2>&1
+}
+corrida() { printf '[{"headSha":"%s","conclusion":"%s"}]' "$1" "$2"; }
+
+git -C "$RG" checkout -q "$DOCS"
+regresion "$(corrida "$VERDE" success)" || mal "regresion: rechaza un cambio de documentacion tras un verde"
+git -C "$RG" checkout -q "$LIBRO"
+regresion "$(corrida "$VERDE" success)" || mal "regresion: vigila un fichero que el flujo excluye (UPSTREAM.md)"
+git -C "$RG" checkout -q "$MOTOR"
+if regresion "$(corrida "$VERDE" success)"; then mal "regresion: acepta un cambio en deploy/mail sin una ejecucion que lo cubra"; fi
+grep -q "hay cambios en lo que prueba make e2e-mail" "$TMP/rg.out" && grep -q "deploy/mail/x" "$TMP/rg.out" || mal "regresion: no dice que cambio ni por que rechaza"
+regresion "$(corrida "$MOTOR" success)" || mal "regresion: rechaza un commit con su propia ejecucion verde"
+if regresion "$(printf '[{"headSha":"%s","conclusion":"failure"},{"headSha":"%s","conclusion":"success"}]' "$MOTOR" "$VERDE")"; then
+  mal "regresion: acepta un commit cuya ejecucion FALLO por haber un verde anterior"
+fi
+grep -q "FALLA para el commit" "$TMP/rg.out" || mal "regresion: no dice que la ejecucion del commit fallo"
+if regresion "[]"; then mal "regresion: acepta sin ninguna ejecucion"; fi
+grep -q "no hay ninguna ejecucion verde" "$TMP/rg.out" || mal "regresion: no explica que no hay ejecuciones"
+if regresion "$(corrida "$(printf '0%.0s' {1..40})" success)"; then mal "regresion: acepta una ejecucion de un commit que no es ancestro"; fi
+if regresion "[]" STUB_GH_FALLA=1; then mal "regresion: acepta si gh falla"; fi
+grep -q "gh no pudo consultar" "$TMP/rg.out" || mal "regresion: no explica el fallo de gh"
+regresion "[]" MAIL_DEPLOY_REGRESION=avisar || mal "regresion: avisar no deja seguir"
+grep -q "PUERTA DE REGRESION" "$TMP/rg.out" || mal "regresion: avisar no dice lo que falta"
+regresion "[]" MAIL_DEPLOY_REGRESION=omitir || mal "regresion: omitir no deja seguir"
+grep -q "no se comprueba make e2e-mail" "$TMP/rg.out" || mal "regresion: omitir no lo deja dicho"
+if regresion "[]" MAIL_DEPLOY_REGRESION=quiza; then mal "regresion: acepta un modo desconocido"; fi
+# El despliegue de motores la llama antes de construir.
+grep -q "despliegue_comprobar_regresion mail-engines.yml" "$DM" || mal "deploy-mail: no llama a la puerta de regresion"
+lin_puerta="$(grep -n "despliegue_comprobar_regresion mail-engines.yml" "$DM" | head -1 | cut -d: -f1)"
+lin_build="$(grep -n "^# ── 2. build local" "$DM" | head -1 | cut -d: -f1)"
+[[ -n "$lin_puerta" && -n "$lin_build" && "$lin_puerta" -lt "$lin_build" ]] || mal "deploy-mail: la puerta de regresion no va antes de construir"
+
 # --- 3. ops/maintenance/recursos-externos.sh ----------------------------------------------------
 cat >"$TMP/bin/docker" <<'STUB'
 #!/usr/bin/env bash
@@ -194,7 +265,7 @@ chmod +x "$TMP/bin/aws" "$TMP/bin/docker"
 TAG="$(git -C "$ROOT" rev-parse --short HEAD)"
 desplegar() {
   PATH="$TMP/bin:$PATH" STUB_SRV="$S" DEPLOY_HOST=servidor-de-prueba DEPLOY_PATH="$S/app" MAIL_DEPLOY_PATH="$S/mail-src" \
-    DEPLOY_LOCK_DIR="$S/candado" DEPLOY_ALLOW_DIRTY="${DEPLOY_ALLOW_DIRTY:-1}" MAIL_DEPLOY_PLAZO=5 MAIL_DEPLOY_ESTABLE=0 ESPERAR_SANOS_PAUSA=1 \
+    DEPLOY_LOCK_DIR="$S/candado" MAIL_DEPLOY_REGRESION=omitir DEPLOY_ALLOW_DIRTY="${DEPLOY_ALLOW_DIRTY:-1}" MAIL_DEPLOY_PLAZO=5 MAIL_DEPLOY_ESTABLE=0 ESPERAR_SANOS_PAUSA=1 \
     WITH_SECRETS_ENV_FILE="$S/app/.env" SECRETS_ENV_FILE="$S/secrets.env" SECRETS_DB_ENV_FILE="$S/secrets-db.env" \
     bash "$DM" "$@" >"$TMP/dm.out" 2>&1
 }

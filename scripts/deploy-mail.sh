@@ -15,6 +15,8 @@
 #   MAIL_BUILD_LOTE      motores construidos a la vez (3)
 #   MAIL_DEPLOY_PLAZO    segundos para que un motor arranque (900: ClamAV carga firmas varios minutos)
 #   MAIL_DEPLOY_ESTABLE  segundos corriendo sin reiniciarse para un motor sin chequeo de salud (30)
+#   MAIL_DEPLOY_REGRESION  exigir (por defecto: make e2e-mail en verde para lo que se despliega, segun el
+#                        flujo mail-engines.yml de GitHub, con gh) | avisar | omitir (con razon)
 #   DEPLOY_ALLOW_DIRTY=1, DEPLOY_ALLOW_ROLLBACK=1  como en deploy-ecr.sh
 #
 # Rollback: desde el commit anterior, DEPLOY_ALLOW_ROLLBACK=1 scripts/deploy-mail.sh <motores>; si
@@ -211,6 +213,7 @@ if [[ ${#solo[@]} -gt 0 ]]; then
   fi
 fi
 
+despliegue_comprobar_regresion mail-engines.yml || exit 1
 guardia_retroceso "$MAIL_PROJECT" "$TAG" "${SEL[@]}" || exit 1
 
 # ── 2. build local y transporte ─────────────────────────────────────────────
