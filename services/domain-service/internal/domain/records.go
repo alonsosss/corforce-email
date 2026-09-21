@@ -16,6 +16,9 @@ type PlatformDNS struct {
 	SPFInclude string
 	// DMARCRUA es la direccion que recibe los informes agregados (MAIL_DMARC_RUA).
 	DMARCRUA string
+	// TLSRPTRUA es la direccion que recibe los informes de fallos de TLS (MAIL_TLSRPT_RUA). Es
+	// opcional: sin ella no se pide el registro _smtp._tls.
+	TLSRPTRUA string
 }
 
 const (
@@ -40,6 +43,32 @@ func DKIMValue(publicKey string) string { return "v=DKIM1; k=rsa; p=" + publicKe
 // DMARCHost es el nombre del registro DMARC.
 func DMARCHost(name string) string { return "_dmarc." + name }
 
+// ValidateReportAddress comprueba la direccion que va tras mailto: en la etiqueta rua de un TXT: una
+// sola direccion, sin espacios ni los separadores del registro (coma y punto y coma), porque una
+// direccion partida cambiaria a donde se envian los informes de todas las empresas.
+func ValidateReportAddress(addr string) error {
+	local, host, ok := strings.Cut(addr, "@")
+	if !ok || local == "" || host == "" || strings.ContainsAny(addr, " \t\r\n,;!") || strings.Count(addr, "@") != 1 {
+		return ErrInvalidReportAddress
+	}
+	if validateDNSName(NormalizeDomainName(host)) != nil {
+		return ErrInvalidReportAddress
+	}
+	return nil
+}
+
+// MTASTSHost es el nombre del TXT que anuncia la politica MTA-STS.
+func MTASTSHost(name string) string { return "_mta-sts." + name }
+
+// MTASTSValue es el TXT de MTA-STS: el id cambia con cada version de la politica (RFC 8461, 3.1).
+func MTASTSValue(policyID string) string { return "v=STSv1; id=" + policyID }
+
+// TLSRPTHost es el nombre del TXT de TLS-RPT.
+func TLSRPTHost(name string) string { return "_smtp._tls." + name }
+
+// TLSRPTValue es el TXT de TLS-RPT con la direccion de informes (RFC 8460, 3).
+func TLSRPTValue(rua string) string { return "v=TLSRPTv1; rua=mailto:" + rua }
+
 // SPFValue es el TXT de SPF: solo la plataforma envia en nombre del dominio (-all).
 func SPFValue(include string) string { return "v=spf1 " + include + " -all" }
 
@@ -52,8 +81,10 @@ func DMARCValue(policy DMARCPolicy, rua string) string {
 // El MX solo se pide cuando el dominio recibe por la celda: un dominio solo de envio
 // que apuntara su MX aqui perderia el correo que le llegue. DMARC se recomienda pero no
 // bloquea la verificacion. Si hay una clave DKIM anterior en gracia, su TXT se incluye
-// para que el cliente no lo retire antes de tiempo.
-func ExpectedRecords(d *Domain, platform PlatformDNS) []DNSRecord {
+// para que el cliente no lo retire antes de tiempo. En un dominio que recibe por la celda, mtaSTSPolicyID
+// (la version de su politica MTA-STS, vacia si no la publica) pide el TXT _mta-sts, y TLSRPTRUA, si esta
+// configurada, el TXT _smtp._tls; ninguno es requerido.
+func ExpectedRecords(d *Domain, platform PlatformDNS, mtaSTSPolicyID string) []DNSRecord {
 	records := []DNSRecord{
 		{Record: RecordOwnershipTXT, Type: "TXT", Host: OwnershipHost(d.Domain), Value: OwnershipValue(d.VerificationToken), Required: true},
 	}
@@ -77,6 +108,18 @@ func ExpectedRecords(d *Domain, platform PlatformDNS) []DNSRecord {
 		Record: RecordDMARC, Type: "TXT", Host: DMARCHost(d.Domain),
 		Value: DMARCValue(d.DMARCPolicy, platform.DMARCRUA), Required: false,
 	})
+	if d.Purpose.IncludesCorporate() {
+		if mtaSTSPolicyID != "" {
+			records = append(records, DNSRecord{
+				Record: RecordMTASTS, Type: "TXT", Host: MTASTSHost(d.Domain), Value: MTASTSValue(mtaSTSPolicyID), Required: false,
+			})
+		}
+		if platform.TLSRPTRUA != "" {
+			records = append(records, DNSRecord{
+				Record: RecordTLSRPT, Type: "TXT", Host: TLSRPTHost(d.Domain), Value: TLSRPTValue(platform.TLSRPTRUA), Required: false,
+			})
+		}
+	}
 	return records
 }
 

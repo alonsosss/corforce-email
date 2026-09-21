@@ -4,6 +4,8 @@ import (
 	"context"
 	"log"
 	"net/http"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/alonsosss/corforce-email/pkg/authz"
@@ -15,11 +17,13 @@ import (
 	"github.com/alonsosss/corforce-email/pkg/response"
 	"github.com/alonsosss/corforce-email/pkg/server"
 	"github.com/alonsosss/corforce-email/pkg/tenantcell"
+	dnsadapter "github.com/alonsosss/corforce-email/services/mail-directory/internal/adapters/dns"
 	handler "github.com/alonsosss/corforce-email/services/mail-directory/internal/adapters/http"
 	outboxadapter "github.com/alonsosss/corforce-email/services/mail-directory/internal/adapters/outbox"
 	"github.com/alonsosss/corforce-email/services/mail-directory/internal/adapters/postgres"
 	"github.com/alonsosss/corforce-email/services/mail-directory/internal/adapters/secrets"
 	"github.com/alonsosss/corforce-email/services/mail-directory/internal/app"
+	"github.com/alonsosss/corforce-email/services/mail-directory/internal/domain"
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
@@ -56,6 +60,10 @@ func main() {
 	membership, err := tenantcell.MembershipFromEnv(logger)
 	if err != nil {
 		log.Fatalf("celda de la instancia: %v", err)
+	}
+	platformMX, err := domain.NormalizeDomain(os.Getenv("MAIL_MX_HOSTNAME"))
+	if err != nil {
+		log.Fatalf("MAIL_MX_HOSTNAME %q: %v", os.Getenv("MAIL_MX_HOSTNAME"), err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -94,6 +102,10 @@ func main() {
 		BCCMaps:      postgres.NewBCCMapRepo(ctxPool),
 		Senders:      postgres.NewSenderIdentityRepo(ctxPool),
 		Retirements:  postgres.NewRetirementRepo(ctxPool),
+		MTASTS:       postgres.NewMTASTSRepo(ctxPool),
+		MTASTSPublic: postgres.NewMTASTSPublicReader(ctxPool),
+		MX:           dnsadapter.New(strings.TrimSpace(os.Getenv("MAIL_DNS_RESOLVER"))),
+		PlatformMX:   platformMX,
 		Secrets:      secrets.New(),
 		Events:       outboxadapter.NewPublisher(ctxPool),
 		Logger:       logger,

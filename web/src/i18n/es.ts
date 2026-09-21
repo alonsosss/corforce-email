@@ -693,6 +693,42 @@ export const es = {
   'domains.record.dkim': 'DKIM',
   'domains.record.dkim_previous': 'DKIM anterior',
   'domains.record.dmarc': 'DMARC',
+  'domains.record.mta_sts': 'MTA-STS',
+  'domains.record.tls_rpt': 'TLS-RPT',
+  'domains.mtaSts.title': 'MTA-STS',
+  'domains.mtaSts.description':
+    'Obliga a otros servidores a entregar el correo de este dominio por una conexion cifrada y verificada.',
+  'domains.mtaSts.mode': 'Modo',
+  'domains.mtaSts.mode.none': 'Desactivado',
+  'domains.mtaSts.mode.testing': 'Prueba (testing)',
+  'domains.mtaSts.mode.enforce': 'Obligatorio (enforce)',
+  'domains.mtaSts.hint.none':
+    'No se publica ninguna politica. Activalo en modo prueba para empezar: en ese modo los demas servidores siguen entregando aunque el cifrado falle.',
+  'domains.mtaSts.hint.testing':
+    'La politica esta publicada en modo prueba: los demas servidores siguen entregando aunque el cifrado falle. Revisa que todo funciona antes de pasar a obligatorio.',
+  'domains.mtaSts.hint.enforce':
+    'Los demas servidores solo entregan el correo de este dominio por una conexion cifrada con un certificado valido.',
+  'domains.mtaSts.policyId': 'Version de la politica',
+  'domains.mtaSts.maxAge': 'Vigencia en el remitente',
+  'domains.mtaSts.maxAgeDays': '{days} dias',
+  'domains.mtaSts.updatedAt': 'Ultimo cambio',
+  'domains.mtaSts.policyUrl':
+    'Los remitentes descargan la politica de https://mta-sts.{domain}/.well-known/mta-sts.txt y consultan el TXT _mta-sts de la tabla de registros.',
+  'domains.mtaSts.enforceRisk':
+    'Pasar a obligatorio puede dejar de entregar correo: si un MX o el certificado de mta-sts no cuadran, los demas servidores lo rechazan en vez de entregarlo.',
+  'domains.mtaSts.enforceNeedsActive':
+    'El modo obligatorio necesita que el dominio este verificado y activo.',
+  'domains.mtaSts.notInDirectory':
+    'El dominio todavia no esta activo en el directorio de correo. Verificalo para poder activar MTA-STS.',
+  'domains.mtaSts.activate': 'Activar en modo prueba',
+  'domains.mtaSts.backToTesting': 'Volver a modo prueba',
+  'domains.mtaSts.deactivate': 'Desactivar',
+  'domains.mtaSts.enforce': 'Pasar a obligatorio',
+  'domains.mtaSts.enforceTitle': 'Pasar MTA-STS a obligatorio',
+  'domains.mtaSts.enforceConfirm':
+    'Con {domain} en modo obligatorio, los demas servidores dejaran de entregar el correo si el cifrado o el certificado fallan. La plataforma comprueba antes que los MX publicados del dominio sean los suyos. Puedes volver a modo prueba, pero los remitentes conservan la politica durante su vigencia.',
+  'domains.mtaSts.changed': 'MTA-STS actualizado.',
+  'domains.mtaSts.changeFailed': 'No se pudo cambiar MTA-STS',
   'domains.dnsMode.manual': 'Manual',
   'domains.dnsMode.cloudflare': 'Automatico con Cloudflare',
   'domains.dns.title': 'Publicacion del DNS',

@@ -102,7 +102,8 @@ func TestTablaEmbebidaEsValida(t *testing.T) {
 		t.Fatalf("servicios de celda: %v", celda)
 	}
 
-	// Los enlaces del aviso de cuarentena son las unicas rutas publicas por celda.
+	// Los enlaces del aviso de cuarentena y la politica MTA-STS de mail-directory son las unicas rutas
+	// publicas por celda.
 	var quarantine []publicRouteSpec
 	for _, p := range tbl.Public {
 		if p.Service == "mail-security" {
@@ -122,6 +123,15 @@ func TestTablaEmbebidaEsValida(t *testing.T) {
 		if !want[p] {
 			t.Errorf("ruta publica de mail-security inesperada: %+v", p)
 		}
+	}
+	var directory []publicRouteSpec
+	for _, p := range tbl.Public {
+		if p.Service == "mail-directory" {
+			directory = append(directory, p)
+		}
+	}
+	if len(directory) != 1 || directory[0] != (publicRouteSpec{Method: "GET", Path: "/public/mail-directory/mta-sts/{cell}/{domain}", Service: "mail-directory"}) {
+		t.Errorf("rutas publicas de mail-directory: %+v", directory)
 	}
 }
 

@@ -84,7 +84,7 @@ directorio de mailcow, que es la que Postfix y Dovecot entienden, traducida a Po
   `spam_aliases`, `sender_acl`, `app_passwords`, `relayhosts`, `transports`,
   `tls_policy_overrides`, `recipient_maps`, `bcc_maps`, `quota_usage` (la escribe Dovecot),
   `sieve_filters` con vistas `v_sieve_before`/`v_sieve_after`, `vacation_replies` con la vista
-  `v_sieve_vacation` (V, 2026-09-21, abajo), `sasl_logins`.
+  `v_sieve_vacation` (V, 2026-09-21, abajo), `mta_sts_policies` (V, 2026-09-21, abajo), `sasl_logins`.
 * Rol `mail_engine`: `SELECT` sobre lo que consultan los motores, escritura solo en
   `quota_usage`, nada sobre `app_passwords` ni `sasl_logins`. Los motores nunca ven un hash
   de contrasena: la verificacion pasa por `mail-auth`.
@@ -173,6 +173,33 @@ nunca como codigo Sieve, y `script_data` no sale por ningun API. `mail-directory
 en `GET`/`PUT /internal/mail-directory/vacation?username=` (token de gateway, sin empresa, el buzon sale de la
 sesion del webmail). Limitacion: contesta a lo dirigido a la direccion del buzon, no a sus alias (no se
 enumeran los `:addresses`); las fechas se comparan con la del servidor (UTC).
+
+`10_mta_sts.sql` (mail-directory, V 2026-09-21, unitarias, integracion contra Postgres y comprobaciones en
+`ops/e2e/mail.sh` sin ejecutar todavia): la politica MTA-STS (RFC 8461) por dominio de una empresa, para lo que
+otros servidores nos entregan. `mail.mta_sts_policies` guarda una fila por dominio (`UNIQUE (domain)`, `domain =
+lower(domain)`): `mode` (`none`, `testing` o `enforce`, `testing` por defecto), `max_age` (1 a 31557600 s; 1 dia en
+testing y 7 en enforce, `domain.MTASTS*MaxAge`) y `policy_id` (1 a 32 caracteres alfanumericos, RFC 8461 3.1: el
+id del TXT `_mta-sts`; la aplicacion lo genera aleatorio y lo renueva en cada cambio de modo). Sin fila el dominio
+esta en `none`. Lleva `tenant_isolation` para `mail_app`, `service_all` para `mail_service` y el trigger comun de
+`updated_at`; `mail_engine` no tiene acceso (ningun motor la lee, asi que no hay vista `v_*`; cuando el borde
+decida como atiende `mta-sts.<dominio>`, `acme.sh` necesitara una vista de los dominios con politica para pedir sus
+certificados: sigue sin hacerlo, `deploy/mail/README.md`). Sin clave foranea a `mail.domains` (el resto del esquema
+tampoco las usa): borrar el dominio borra su politica en el mismo caso de uso, y la lectura publica solo sirve una
+politica cuyo dominio esta activo y es de la misma empresa que la escribio. `mail-directory` la administra en
+`GET /api/v1/mail-domains/mta-sts` (dominios de la empresa con su modo, `none` los que no tienen politica) y
+`GET`/`PUT /api/v1/mail-domains/mta-sts/{dominio}` (permisos `domains/mta_sts/{read,update}`, alcance empresa). Reglas
+de `PUT {"mode": ...}` (`domain.MTASTSTransition`, `app.SetMTASTSMode`): se entra por `testing` y se sale por
+`testing` (de `none` o de `enforce` a otro que no sea `testing` es 409); `enforce` exige el dominio verificado y activo
+en el directorio y que TODOS sus MX publicados, consultados en el momento con `MAIL_DNS_RESOLVER`, sean
+`MAIL_MX_HOSTNAME` (409 si no; 503 `DNS_UNAVAILABLE` si el DNS no responde, que no es un MX que no cuadra); repetir el
+modo actual no cambia nada ni renueva la version; un dominio que el directorio no tiene (nunca verificado) es 404.
+domain-service lee el modo y el id en `GET /internal/mail-directory/mta-sts/{dominio}` (empresa en `X-Tenant-ID`,
+misma respuesta que la de la interfaz) para anunciarlo en el TXT `_mta-sts`. La politica publica se sirve sin sesion en
+`GET /public/mail-directory/mta-sts/{cell}/{dominio}` (el gateway la enruta por `{cell}`, como todo servicio de celda;
+`{cell}` solo enruta), como `text/plain` con `version: STSv1`, `mode`, un unico `mx: <MAIL_MX_HOSTNAME>` y `max_age`,
+en CRLF; responde 404 igual a un dominio desconocido, inactivo, invalido o en `none`. Pendiente del borde (ADR 0003):
+que el nombre `mta-sts.<dominio>` llegue a esa ruta con un certificado valido; la comprobacion del certificado no forma
+parte de la validacion de `enforce`.
 
 La libreta compartida del webmail (V, 2026-09-21, sin migracion) sale de `mail.mailboxes`: `GET /internal/mail-directory/directory?username=&q=&limit=`
 (token de gateway, sin empresa) resuelve la empresa del buzon que pregunta, lista solo sus buzones con `active = 1`

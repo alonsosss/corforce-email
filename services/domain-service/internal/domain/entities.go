@@ -195,6 +195,10 @@ const (
 	// rotacion: el cliente no debe retirarlo hasta que venza.
 	RecordDKIMPrevious RecordKind = "dkim_previous"
 	RecordDMARC        RecordKind = "dmarc"
+	// RecordMTASTS y RecordTLSRPT son los TXT que anuncian la politica MTA-STS del dominio (RFC 8461)
+	// y donde enviar los informes de fallos de TLS (RFC 8460). Recomendados, no requeridos.
+	RecordMTASTS RecordKind = "mta_sts"
+	RecordTLSRPT RecordKind = "tls_rpt"
 )
 
 // DNSCheck es el resultado de comprobar un registro en una verificacion concreta.

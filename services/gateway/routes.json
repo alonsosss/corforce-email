@@ -66,7 +66,8 @@
     {"method": "GET",  "path": "/public/mail-security/quarantine/{cell}/release", "service": "mail-security"},
     {"method": "POST", "path": "/public/mail-security/quarantine/{cell}/release", "service": "mail-security"},
     {"method": "GET",  "path": "/public/mail-security/quarantine/{cell}/discard", "service": "mail-security"},
-    {"method": "POST", "path": "/public/mail-security/quarantine/{cell}/discard", "service": "mail-security"}
+    {"method": "POST", "path": "/public/mail-security/quarantine/{cell}/discard", "service": "mail-security"},
+    {"method": "GET",  "path": "/public/mail-directory/mta-sts/{cell}/{domain}", "service": "mail-directory"}
   ],
   "self_authenticated": [
     {"prefix": "webmail", "service": "webmail",

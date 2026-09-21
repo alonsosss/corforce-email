@@ -38,6 +38,9 @@ type Deps struct {
 	Cipher        ports.Cipher
 	MailDirectory ports.MailDirectoryClient
 	MailSecurity  ports.MailSecurityClient
+	// MTASTS da la version de la politica MTA-STS de cada dominio. Opcional: sin el, ningun dominio
+	// pide el TXT _mta-sts.
+	MTASTS ports.MTASTSPolicyReader
 	// DomainIndex es el indice global de dominios activos de organization.
 	DomainIndex ports.DomainIndex
 	Events      ports.EventPublisher
@@ -66,6 +69,7 @@ type UseCase struct {
 	cipher        ports.Cipher
 	mailDirectory ports.MailDirectoryClient
 	mailSecurity  ports.MailSecurityClient
+	mtaSTS        ports.MTASTSPolicyReader
 	index         ports.DomainIndex
 	events        ports.EventPublisher
 	keyEvents     ports.KeyEvents
@@ -84,7 +88,7 @@ type UseCase struct {
 func New(d Deps) *UseCase {
 	uc := &UseCase{
 		repo: d.Repo, dns: d.DNS, cipher: d.Cipher,
-		mailDirectory: d.MailDirectory, mailSecurity: d.MailSecurity, index: d.DomainIndex, events: d.Events, keyEvents: d.KeyEvents,
+		mailDirectory: d.MailDirectory, mailSecurity: d.MailSecurity, mtaSTS: d.MTASTS, index: d.DomainIndex, events: d.Events, keyEvents: d.KeyEvents,
 		dnsRepo: d.DNSProviders, dnsAPIs: d.DNSAPIs, dnsEvents: d.DNSEvents,
 		platform: d.Platform, platformHost: d.PlatformHostname,
 		rotationGrace: d.DKIMRotationGrace, pendingWindow: d.PendingRecheckWindow,
@@ -109,8 +113,25 @@ func New(d Deps) *UseCase {
 }
 
 // ExpectedRecords devuelve los registros que el cliente debe publicar para el dominio.
-func (uc *UseCase) ExpectedRecords(d *domain.Domain) []domain.DNSRecord {
-	return domain.ExpectedRecords(d, uc.platform)
+func (uc *UseCase) ExpectedRecords(ctx context.Context, d *domain.Domain) []domain.DNSRecord {
+	return domain.ExpectedRecords(d, uc.platform, uc.mtaSTSPolicyID(ctx, d))
+}
+
+// mtaSTSPolicyID es la version de la politica MTA-STS que el TXT _mta-sts del dominio debe anunciar,
+// o vacia si no hay que pedirlo: el dominio no recibe por la celda, no tiene politica o mail-directory
+// no responde. Un fallo no es un registro que falta: solo deja el TXT fuera de esta comprobacion, que
+// no es requerido, y se registra.
+func (uc *UseCase) mtaSTSPolicyID(ctx context.Context, d *domain.Domain) string {
+	if uc.mtaSTS == nil || !d.Purpose.IncludesCorporate() {
+		return ""
+	}
+	id, err := uc.mtaSTS.PolicyID(ctx, d.TenantID, d.Domain)
+	if err != nil {
+		uc.logger.Warn("no se pudo leer la politica MTA-STS del dominio en mail-directory",
+			zap.String("domain", d.Domain), zap.String("tenant_id", d.TenantID.String()), zap.Error(err))
+		return ""
+	}
+	return id
 }
 
 // NormalizePage acota la paginacion de los listados.

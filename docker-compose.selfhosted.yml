@@ -172,7 +172,12 @@ services:
     volumes: *internal-ca
   mail-directory:
     restart: *reinicio
-    environment: *go-service-env
+    environment:
+      <<: *go-service-env
+      # Antes de admitir enforce en la politica MTA-STS de un dominio comprueba sus MX en el DNS
+      # PUBLICO, como domain-service (mas abajo): el resolver del proveedor cachea las respuestas
+      # negativas. Sobrescribible con MAIL_DNS_RESOLVER.
+      MAIL_DNS_RESOLVER: ${MAIL_DNS_RESOLVER:-1.1.1.1:53}
     volumes: *internal-ca
   mail-auth:
     restart: *reinicio

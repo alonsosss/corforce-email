@@ -179,7 +179,7 @@ func recordByKind(records []DNSRecord, kind RecordKind) (DNSRecord, bool) {
 
 func TestExpectedRecordsCorporate(t *testing.T) {
 	d := fixture(PurposeCorporate)
-	records := ExpectedRecords(d, platform)
+	records := ExpectedRecords(d, platform, "")
 	if len(records) != 5 {
 		t.Fatalf("records = %d; want 5", len(records))
 	}
@@ -205,7 +205,7 @@ func TestExpectedRecordsCorporate(t *testing.T) {
 }
 
 func TestExpectedRecordsSendingOmitsMX(t *testing.T) {
-	records := ExpectedRecords(fixture(PurposeSending), platform)
+	records := ExpectedRecords(fixture(PurposeSending), platform, "")
 	if _, ok := recordByKind(records, RecordMX); ok {
 		t.Error("un dominio solo de envio no debe pedir MX")
 	}
@@ -215,7 +215,7 @@ func TestExpectedRecordsIncludePreviousDKIMDuringGrace(t *testing.T) {
 	d := fixture(PurposeBoth)
 	now := time.Now()
 	d.DKIMPreviousSelector, d.DKIMPreviousPrivateKeyEnc, d.DKIMPreviousPublicKey, d.DKIMRotatedAt = "cfm202608", []byte("x"), "OLDKEY", &now
-	rec, ok := recordByKind(ExpectedRecords(d, platform), RecordDKIMPrevious)
+	rec, ok := recordByKind(ExpectedRecords(d, platform, ""), RecordDKIMPrevious)
 	if !ok || rec.Host != "cfm202608._domainkey.acme.com" || rec.Required {
 		t.Errorf("registro anterior = %+v, ok=%v", rec, ok)
 	}
@@ -243,7 +243,7 @@ func checkByKind(checks []DNSCheck, kind RecordKind) DNSCheck {
 
 func TestEvaluateAllOK(t *testing.T) {
 	d := fixture(PurposeCorporate)
-	res := Evaluate(d, ExpectedRecords(d, platform), allOK(d), time.Now())
+	res := Evaluate(d, ExpectedRecords(d, platform, ""), allOK(d), time.Now())
 	if res.Outcome != OutcomeVerified {
 		t.Fatalf("outcome = %s; checks %+v", res.Outcome, res.Checks)
 	}
@@ -258,7 +258,7 @@ func TestEvaluateMissingSPFFails(t *testing.T) {
 	d := fixture(PurposeCorporate)
 	obs := allOK(d)
 	obs[RecordSPF] = Observation{TXT: []string{"v=spf1 include:_spf.otro.example ~all"}}
-	res := Evaluate(d, ExpectedRecords(d, platform), obs, time.Now())
+	res := Evaluate(d, ExpectedRecords(d, platform, ""), obs, time.Now())
 	if res.Outcome != OutcomeFailed {
 		t.Fatalf("outcome = %s; want failed", res.Outcome)
 	}
@@ -275,7 +275,7 @@ func TestEvaluateTwoSPFRecordsFail(t *testing.T) {
 	d := fixture(PurposeSending)
 	obs := allOK(d)
 	obs[RecordSPF] = Observation{TXT: []string{"v=spf1 include:spf.plataforma.example -all", "v=spf1 -all"}}
-	res := Evaluate(d, ExpectedRecords(d, platform), obs, time.Now())
+	res := Evaluate(d, ExpectedRecords(d, platform, ""), obs, time.Now())
 	if res.Outcome != OutcomeFailed || !strings.Contains(checkByKind(res.Checks, RecordSPF).Detail, "mas de un") {
 		t.Errorf("res = %+v", res)
 	}
@@ -285,7 +285,7 @@ func TestEvaluateDMARCAbsentDoesNotBlock(t *testing.T) {
 	d := fixture(PurposeCorporate)
 	obs := allOK(d)
 	obs[RecordDMARC] = Observation{}
-	res := Evaluate(d, ExpectedRecords(d, platform), obs, time.Now())
+	res := Evaluate(d, ExpectedRecords(d, platform, ""), obs, time.Now())
 	if res.Outcome != OutcomeVerified {
 		t.Fatalf("outcome = %s; want verified", res.Outcome)
 	}
@@ -299,7 +299,7 @@ func TestEvaluateDMARCWeakerPolicyIsOKWithDetail(t *testing.T) {
 	d := fixture(PurposeCorporate)
 	d.DMARCPolicy = DMARCReject
 	obs := allOK(d)
-	res := Evaluate(d, ExpectedRecords(d, platform), obs, time.Now())
+	res := Evaluate(d, ExpectedRecords(d, platform, ""), obs, time.Now())
 	dmarc := checkByKind(res.Checks, RecordDMARC)
 	if !dmarc.OK || !strings.Contains(dmarc.Detail, "quarantine") {
 		t.Errorf("dmarc = %+v", dmarc)
@@ -310,11 +310,11 @@ func TestEvaluateDKIMKeyMismatchAndSplitKey(t *testing.T) {
 	d := fixture(PurposeSending)
 	obs := allOK(d)
 	obs[RecordDKIM] = Observation{TXT: []string{"v=DKIM1; k=rsa; p=OTRA"}}
-	if res := Evaluate(d, ExpectedRecords(d, platform), obs, time.Now()); res.Outcome != OutcomeFailed {
+	if res := Evaluate(d, ExpectedRecords(d, platform, ""), obs, time.Now()); res.Outcome != OutcomeFailed {
 		t.Errorf("clave distinta: outcome = %s", res.Outcome)
 	}
 	obs[RecordDKIM] = Observation{TXT: []string{"v=DKIM1; k=rsa; p=MIIBIjAN Bgkq"}}
-	if res := Evaluate(d, ExpectedRecords(d, platform), obs, time.Now()); res.Outcome != OutcomeVerified {
+	if res := Evaluate(d, ExpectedRecords(d, platform, ""), obs, time.Now()); res.Outcome != OutcomeVerified {
 		t.Errorf("clave partida en cadenas: outcome = %s", res.Outcome)
 	}
 }
@@ -324,7 +324,7 @@ func TestEvaluateTransientErrorIsInconclusive(t *testing.T) {
 	obs := allOK(d)
 	obs[RecordMX] = Observation{Err: errors.New("i/o timeout")}
 	obs[RecordSPF] = Observation{}
-	res := Evaluate(d, ExpectedRecords(d, platform), obs, time.Now())
+	res := Evaluate(d, ExpectedRecords(d, platform, ""), obs, time.Now())
 	if res.Outcome != OutcomeInconclusive {
 		t.Errorf("outcome = %s; want inconclusive aunque falte el SPF", res.Outcome)
 	}
@@ -337,11 +337,11 @@ func TestEvaluateMXMissingBlocksOnlyCorporate(t *testing.T) {
 	corp := fixture(PurposeBoth)
 	obs := allOK(corp)
 	obs[RecordMX] = Observation{MX: []MXRecord{{Host: "mx.otro.example", Priority: 5}}}
-	if res := Evaluate(corp, ExpectedRecords(corp, platform), obs, time.Now()); res.Outcome != OutcomeFailed {
+	if res := Evaluate(corp, ExpectedRecords(corp, platform, ""), obs, time.Now()); res.Outcome != OutcomeFailed {
 		t.Errorf("corporate sin MX: outcome = %s", res.Outcome)
 	}
 	send := fixture(PurposeSending)
-	if res := Evaluate(send, ExpectedRecords(send, platform), obs, time.Now()); res.Outcome != OutcomeVerified {
+	if res := Evaluate(send, ExpectedRecords(send, platform, ""), obs, time.Now()); res.Outcome != OutcomeVerified {
 		t.Errorf("sending sin MX: outcome = %s", res.Outcome)
 	}
 }
@@ -353,7 +353,7 @@ func TestEvaluateRotationGraceSignsWithPrevious(t *testing.T) {
 	obs := allOK(d)
 	obs[RecordDKIM] = Observation{}
 	obs[RecordDKIMPrevious] = Observation{TXT: []string{"v=DKIM1; k=rsa; p=OLDKEY"}}
-	res := Evaluate(d, ExpectedRecords(d, platform), obs, now)
+	res := Evaluate(d, ExpectedRecords(d, platform, ""), obs, now)
 	if res.Outcome != OutcomeVerified || !res.SignWithPrevious {
 		t.Fatalf("res = outcome %s signWithPrevious %v", res.Outcome, res.SignWithPrevious)
 	}
@@ -363,7 +363,7 @@ func TestEvaluateRotationGraceSignsWithPrevious(t *testing.T) {
 
 	// Sin el TXT anterior tampoco, no hay con que firmar: falla.
 	obs[RecordDKIMPrevious] = Observation{}
-	if res := Evaluate(d, ExpectedRecords(d, platform), obs, now); res.Outcome != OutcomeFailed || res.SignWithPrevious {
+	if res := Evaluate(d, ExpectedRecords(d, platform, ""), obs, now); res.Outcome != OutcomeFailed || res.SignWithPrevious {
 		t.Errorf("sin ningun TXT DKIM: %+v", res.Outcome)
 	}
 }

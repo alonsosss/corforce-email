@@ -85,7 +85,7 @@ func TestRevocarRetiraAlMomentoTodasLasClavesYFirmaConLaNueva(t *testing.T) {
 	if res.Record.Host != domain.DKIMHost(k3, "acme.com") || res.Record.Value != domain.DKIMValue(stored.DKIMPublicKey) {
 		t.Errorf("TXT que publicar = %+v", res.Record)
 	}
-	for _, rec := range h.uc.ExpectedRecords(stored) {
+	for _, rec := range h.uc.ExpectedRecords(context.Background(), stored) {
 		if rec.Record == domain.RecordDKIMPrevious {
 			t.Error("tras revocar no queda ningun TXT anterior que conservar")
 		}

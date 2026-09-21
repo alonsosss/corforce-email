@@ -39,33 +39,43 @@ type Deps struct {
 	BCCMaps      ports.BCCMapRepository
 	Senders      ports.SenderIdentityRepository
 	Retirements  ports.RetirementRepository
-	Secrets      ports.Secrets
-	Events       ports.EventPublisher
-	Logger       *zap.Logger
+	MTASTS       ports.MTASTSRepository
+	MTASTSPublic ports.MTASTSPublisher
+	MX           ports.MXResolver
+	// PlatformMX es MAIL_MX_HOSTNAME: el unico mx de toda politica MTA-STS y el MX que enforce
+	// exige en el DNS del dominio.
+	PlatformMX string
+	Secrets    ports.Secrets
+	Events     ports.EventPublisher
+	Logger     *zap.Logger
 }
 
 type UseCase struct {
-	tx           ports.Transactor
-	domains      ports.DomainRepository
-	aliasDomains ports.AliasDomainRepository
-	mailboxes    ports.MailboxRepository
-	appPasswords ports.AppPasswordRepository
-	sieve        ports.SieveRepository
-	vacation     ports.VacationRepository
-	locator      ports.MailboxLocator
-	aliases      ports.AliasRepository
-	spamAliases  ports.SpamAliasRepository
-	senderACL    ports.SenderACLRepository
-	relayhosts   ports.RelayhostRepository
-	transports   ports.TransportRepository
-	tlsPolicies  ports.TLSPolicyRepository
-	recipientMap ports.RecipientMapRepository
-	bccMaps      ports.BCCMapRepository
-	senders      ports.SenderIdentityRepository
-	retirements  ports.RetirementRepository
-	secrets      ports.Secrets
-	events       ports.EventPublisher
-	logger       *zap.Logger
+	tx              ports.Transactor
+	domains         ports.DomainRepository
+	aliasDomains    ports.AliasDomainRepository
+	mailboxes       ports.MailboxRepository
+	appPasswords    ports.AppPasswordRepository
+	sieve           ports.SieveRepository
+	vacation        ports.VacationRepository
+	locator         ports.MailboxLocator
+	aliases         ports.AliasRepository
+	spamAliases     ports.SpamAliasRepository
+	senderACL       ports.SenderACLRepository
+	relayhosts      ports.RelayhostRepository
+	transports      ports.TransportRepository
+	tlsPolicies     ports.TLSPolicyRepository
+	recipientMap    ports.RecipientMapRepository
+	bccMaps         ports.BCCMapRepository
+	senders         ports.SenderIdentityRepository
+	retirements     ports.RetirementRepository
+	mtaSTS          ports.MTASTSRepository
+	mtaSTSPublisher ports.MTASTSPublisher
+	mx              ports.MXResolver
+	platformMX      string
+	secrets         ports.Secrets
+	events          ports.EventPublisher
+	logger          *zap.Logger
 }
 
 func New(d Deps) *UseCase {
@@ -78,7 +88,8 @@ func New(d Deps) *UseCase {
 		appPasswords: d.AppPasswords, sieve: d.Sieve, vacation: d.Vacation, locator: d.Locator, aliases: d.Aliases, spamAliases: d.SpamAliases,
 		senderACL: d.SenderACL, relayhosts: d.Relayhosts, transports: d.Transports,
 		tlsPolicies: d.TLSPolicies, recipientMap: d.RecipientMap, bccMaps: d.BCCMaps,
-		senders: d.Senders, retirements: d.Retirements, secrets: d.Secrets, events: d.Events, logger: logger,
+		senders: d.Senders, retirements: d.Retirements, mtaSTS: d.MTASTS, mtaSTSPublisher: d.MTASTSPublic, mx: d.MX,
+		platformMX: d.PlatformMX, secrets: d.Secrets, events: d.Events, logger: logger,
 	}
 }
 

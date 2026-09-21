@@ -108,6 +108,11 @@ export const PERMISSIONS = {
     disconnect: [MODULES.domains, 'dns_providers', 'disconnect'],
   },
   aliasDomains: crud(MODULES.domains, 'alias_domains'),
+  // Politica MTA-STS de un dominio (registry 034_mail_directory_mta_sts_permissions.sql).
+  mtaSts: {
+    read: [MODULES.domains, 'mta_sts', 'read'],
+    update: [MODULES.domains, 'mta_sts', 'update'],
+  },
 
   mailboxes: {
     ...crud(MODULES.mailboxes, 'mailboxes'),

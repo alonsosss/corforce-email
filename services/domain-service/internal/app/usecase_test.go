@@ -133,7 +133,7 @@ func TestCreateGeneratesTokenAndEncryptedDKIM(t *testing.T) {
 	if h.events.count("domains.domain.created") != 1 {
 		t.Errorf("eventos = %v", h.events.subjects)
 	}
-	records := h.uc.ExpectedRecords(d)
+	records := h.uc.ExpectedRecords(context.Background(), d)
 	if len(records) != 5 || records[0].Host != "_cfm-verify.acme.com" || records[0].Value != "cfm-verify="+d.VerificationToken {
 		t.Errorf("records = %+v", records)
 	}

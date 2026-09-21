@@ -116,6 +116,7 @@ export const endpoints = {
   mailDomains: {
     ...collectionOf('/mail-domains'),
     aliasDomains: collectionOf('/mail-domains/alias-domains'),
+    mtaSts: (domain: string) => `${API_PREFIX}/mail-domains/mta-sts/${seg(domain)}`,
   },
   mailboxes: {
     ...collectionOf('/mailboxes'),

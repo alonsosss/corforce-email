@@ -103,3 +103,50 @@ func TestOtroErrorNoEsHecho(t *testing.T) {
 		t.Error("un 500 se dio por activado")
 	}
 }
+
+func TestPolicyIDPideLaPoliticaDelDominioDeLaEmpresa(t *testing.T) {
+	c, recibidos := nuevo(t, http.StatusOK, `{"data":{"domain":"acme.test","mode":"testing","policy_id":"abc123","allowed_modes":["enforce"]}}`)
+	tenant := uuid.New()
+	id, err := c.PolicyID(context.Background(), tenant, "acme.test")
+	if err != nil || id != "abc123" {
+		t.Fatalf("PolicyID: %q %v", id, err)
+	}
+	want := recibido{http.MethodGet, "/internal/mail-directory/mta-sts/acme.test", tenant.String(), ""}
+	if got := recibidos(); len(got) != 1 || got[0] != want {
+		t.Errorf("recibido %+v, se esperaba %+v", got, want)
+	}
+}
+
+// Sin politica que anunciar: modo none, o un dominio que la celda no tiene o una instancia que no sirve
+// la ruta (404).
+func TestPolicyIDVaciaSinPoliticaQueAnunciar(t *testing.T) {
+	casos := map[string]struct {
+		status int
+		cuerpo string
+	}{
+		"modo none":                     {http.StatusOK, `{"data":{"mode":"none","policy_id":"quedo-de-antes"}}`},
+		"dominio que la celda no tiene": {http.StatusNotFound, `{"error":{"code":"NOT_FOUND","message":"x"}}`},
+		"instancia sin la ruta":         {http.StatusNotFound, "404 page not found"},
+	}
+	for nombre, c := range casos {
+		cl, _ := nuevo(t, c.status, c.cuerpo)
+		if id, err := cl.PolicyID(context.Background(), uuid.New(), "acme.test"); err != nil || id != "" {
+			t.Errorf("%s: %q %v", nombre, id, err)
+		}
+	}
+}
+
+// Un fallo no es "sin politica": se devuelve para que el llamador lo distinga y no anuncie nada por
+// error.
+func TestPolicyIDDevuelveElFalloDeLaCelda(t *testing.T) {
+	for _, status := range []int{http.StatusServiceUnavailable, http.StatusForbidden, http.StatusInternalServerError} {
+		cl, _ := nuevo(t, status, `{"error":{"code":"X","message":"x"}}`)
+		if id, err := cl.PolicyID(context.Background(), uuid.New(), "acme.test"); err == nil || id != "" {
+			t.Errorf("status %d: %q %v", status, id, err)
+		}
+	}
+	cl, _ := nuevo(t, http.StatusOK, `no es json`)
+	if _, err := cl.PolicyID(context.Background(), uuid.New(), "acme.test"); err == nil {
+		t.Error("una respuesta ilegible es un error")
+	}
+}

@@ -61,3 +61,16 @@ var (
 	ErrVacationWindow          = errors.New("ends_on no puede ser anterior a starts_on")
 	ErrVacationDate            = errors.New("las fechas de la respuesta automatica se dan como AAAA-MM-DD")
 )
+
+var (
+	ErrInvalidMTASTSMode = errors.New("mode debe ser none, testing o enforce")
+	// ErrMTASTSTransition: se entra a enforce y se sale de el por testing.
+	ErrMTASTSTransition = errors.New("la politica MTA-STS pasa por testing para entrar o salir de enforce")
+	// ErrMTASTSDomainNotActive: enforce solo se admite en un dominio verificado y activo.
+	ErrMTASTSDomainNotActive = errors.New("enforce exige un dominio verificado y activo")
+	// ErrMTASTSMXMismatch: los MX publicados del dominio no son solo los de la plataforma; con
+	// enforce los remitentes no entregarian el correo.
+	ErrMTASTSMXMismatch = errors.New("los MX publicados del dominio no son los de la plataforma")
+	// ErrMTASTSDNSUnavailable: no se pudo comprobar el DNS del dominio; no es un fallo del dominio.
+	ErrMTASTSDNSUnavailable = errors.New("no se pudo consultar el DNS del dominio; intentalo de nuevo")
+)

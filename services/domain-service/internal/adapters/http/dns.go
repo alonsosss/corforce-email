@@ -169,7 +169,7 @@ func (h *Handler) SetDNSMode(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	response.JSON(w, http.StatusOK, h.domainWithRecords(d))
+	response.JSON(w, http.StatusOK, h.domainWithRecords(r.Context(), d))
 }
 
 type publishRequest struct {
@@ -206,7 +206,7 @@ func (h *Handler) PublishDNS(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	out := h.domainWithRecords(res.Domain)
+	out := h.domainWithRecords(r.Context(), res.Domain)
 	out["dns_publication"] = publicationResponse(res.Publication)
 	if res.Verification != nil {
 		out["outcome"] = string(res.Verification.Outcome)

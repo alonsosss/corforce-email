@@ -203,6 +203,9 @@ func (uc *UseCase) DeleteDomain(ctx context.Context, tenantID, id uuid.UUID) err
 		if mailboxes > 0 || aliases > 0 || aliasDomains > 0 {
 			return domain.ErrDomainInUse
 		}
+		if err := uc.mtaSTS.DeleteByDomain(ctx, tenantID, d.Domain); err != nil {
+			return err
+		}
 		if err := uc.domains.Delete(ctx, tenantID, id); err != nil {
 			return err
 		}

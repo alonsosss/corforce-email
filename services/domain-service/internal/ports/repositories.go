@@ -86,6 +86,14 @@ type MailDirectoryClient interface {
 	SetActivation(ctx context.Context, tenantID uuid.UUID, name string, active bool) error
 }
 
+// MTASTSPolicyReader lee de mail-directory la politica MTA-STS de un dominio, que vive en la base de
+// la celda y no aqui.
+type MTASTSPolicyReader interface {
+	// PolicyID devuelve la version vigente de la politica, la que lleva el TXT _mta-sts, o vacio si el
+	// dominio no la publica (modo none, sin politica o dominio que la celda no tiene todavia).
+	PolicyID(ctx context.Context, tenantID uuid.UUID, name string) (string, error)
+}
+
 // DomainIndex es el indice global de los dominios de correo activos que sirve organization
 // (dominio -> empresa; la celda es la de la empresa). Un dominio se reclama antes de activarlo en
 // el directorio de la celda y se suelta despues de desactivarlo: es lo que lleva el webmail de

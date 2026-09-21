@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strconv"
@@ -172,7 +173,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	response.JSON(w, http.StatusCreated, h.domainWithRecords(d))
+	response.JSON(w, http.StatusCreated, h.domainWithRecords(r.Context(), d))
 }
 
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
@@ -219,7 +220,7 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 		response.Unexpected(w, err)
 		return
 	}
-	res := h.domainWithRecords(d)
+	res := h.domainWithRecords(r.Context(), d)
 	res["dns_checks"] = checksResponse(checks)
 	res["dkim_rotations"] = rotationsResponse(rotations)
 	response.JSON(w, http.StatusOK, res)
@@ -262,7 +263,7 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	response.JSON(w, http.StatusOK, h.domainWithRecords(d))
+	response.JSON(w, http.StatusOK, h.domainWithRecords(r.Context(), d))
 }
 
 func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
@@ -297,7 +298,7 @@ func (h *Handler) Verify(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	out := h.domainWithRecords(res.Domain)
+	out := h.domainWithRecords(r.Context(), res.Domain)
 	out["outcome"] = string(res.Outcome)
 	out["dns_checks"] = checksResponse(res.Checks)
 	out["integration_errors"] = nilSafe(res.IntegrationErrors)
@@ -448,9 +449,9 @@ func rotationsResponse(rotations []domain.DKIMRotation) []map[string]interface{}
 	return out
 }
 
-func (h *Handler) domainWithRecords(d *domain.Domain) map[string]interface{} {
+func (h *Handler) domainWithRecords(ctx context.Context, d *domain.Domain) map[string]interface{} {
 	res := h.domainResponse(d)
-	res["dns_records"] = h.uc.ExpectedRecords(d)
+	res["dns_records"] = h.uc.ExpectedRecords(ctx, d)
 	return res
 }
 

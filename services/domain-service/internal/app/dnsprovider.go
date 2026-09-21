@@ -195,7 +195,8 @@ func ParseRecordKinds(raw []string) (map[domain.RecordKind]bool, error) {
 	for _, k := range raw {
 		kind := domain.RecordKind(strings.TrimSpace(k))
 		switch kind {
-		case domain.RecordOwnershipTXT, domain.RecordMX, domain.RecordSPF, domain.RecordDKIM, domain.RecordDKIMPrevious, domain.RecordDMARC:
+		case domain.RecordOwnershipTXT, domain.RecordMX, domain.RecordSPF, domain.RecordDKIM, domain.RecordDKIMPrevious, domain.RecordDMARC,
+			domain.RecordMTASTS, domain.RecordTLSRPT:
 			out[kind] = true
 		default:
 			return nil, domain.ErrInvalidRecordKind
@@ -231,6 +232,7 @@ func (uc *UseCase) PublishDNS(ctx context.Context, tenantID, id, actorID uuid.UU
 		return nil, err
 	}
 	var pub *domain.DNSPublication
+	mtaSTSPolicyID := uc.mtaSTSPolicyID(ctx, seen)
 	err = uc.repo.WithDKIMLock(ctx, tenantID, id, func(ctx context.Context, d *domain.Domain) error {
 		if d.DNSMode != seen.DNSMode {
 			return domain.ErrDNSModeManual
@@ -240,7 +242,7 @@ func (uc *UseCase) PublishDNS(ctx context.Context, tenantID, id, actorID uuid.UU
 			return err
 		}
 		now := uc.now()
-		records, err := uc.applyRecords(ctx, s, zone, domain.DesiredRecords(d, uc.platform), replace)
+		records, err := uc.applyRecords(ctx, s, zone, domain.DesiredRecords(d, uc.platform, mtaSTSPolicyID), replace)
 		if err != nil {
 			return err
 		}
@@ -311,7 +313,7 @@ func (uc *UseCase) publishDKIMAutomatically(ctx context.Context, tenantID, id uu
 			return err
 		}
 		var desired []domain.DesiredRecord
-		for _, dr := range domain.DesiredRecords(d, uc.platform) {
+		for _, dr := range domain.DesiredRecords(d, uc.platform, "") {
 			if dr.Kind == domain.RecordDKIM || dr.Kind == domain.RecordDKIMPrevious {
 				desired = append(desired, dr)
 			}

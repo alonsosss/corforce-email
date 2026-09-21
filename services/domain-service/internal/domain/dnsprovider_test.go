@@ -113,7 +113,7 @@ func dominioDePrueba(purpose Purpose) *Domain {
 var plataformaDePrueba = PlatformDNS{MXHostname: "MX.plataforma.example.", SPFInclude: "include:spf.plataforma.example", DMARCRUA: "dmarc@plataforma.example"}
 
 func TestDesiredRecords(t *testing.T) {
-	records := DesiredRecords(dominioDePrueba(PurposeCorporate), plataformaDePrueba)
+	records := DesiredRecords(dominioDePrueba(PurposeCorporate), plataformaDePrueba, "")
 	kinds := make([]string, 0, len(records))
 	for _, r := range records {
 		kinds = append(kinds, string(r.Kind))
@@ -124,19 +124,19 @@ func TestDesiredRecords(t *testing.T) {
 	if got := strings.Join(kinds, ","); got != "ownership_txt,mx,spf,dkim,dmarc" {
 		t.Errorf("registros %s", got)
 	}
-	if len(DesiredRecords(dominioDePrueba(PurposeSending), plataformaDePrueba)) != 4 {
+	if len(DesiredRecords(dominioDePrueba(PurposeSending), plataformaDePrueba, "")) != 4 {
 		t.Error("un dominio de envio no lleva MX")
 	}
 	d := dominioDePrueba(PurposeBoth)
 	now := time.Now()
 	d.DKIMPreviousSelector, d.DKIMPreviousPrivateKeyEnc, d.DKIMPreviousPublicKey, d.DKIMRotatedAt = "cfm202608", []byte{1}, "PREV", &now
-	if n := len(DesiredRecords(d, plataformaDePrueba)); n != 6 {
+	if n := len(DesiredRecords(d, plataformaDePrueba, "")); n != 6 {
 		t.Errorf("con clave en gracia %d registros", n)
 	}
 }
 
 func desired(kind RecordKind) DesiredRecord {
-	for _, r := range DesiredRecords(dominioDePrueba(PurposeCorporate), plataformaDePrueba) {
+	for _, r := range DesiredRecords(dominioDePrueba(PurposeCorporate), plataformaDePrueba, "") {
 		if r.Kind == kind {
 			return r
 		}

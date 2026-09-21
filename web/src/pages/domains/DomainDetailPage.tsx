@@ -45,6 +45,7 @@ import { t, tEnum } from '@/i18n';
 import { paths } from '@/paths';
 import { DnsAutomationNotice, DnsPublishingCard } from './DnsPublishingCard';
 import { DnsRecordsTable } from './DnsRecordsTable';
+import { MtaStsCard } from './MtaStsCard';
 import { domainStatusTone, verifyOutcomeTone } from './domainStatus';
 
 type Dialog = 'edit' | 'rotate' | 'revoke' | 'delete' | null;
@@ -229,6 +230,10 @@ export default function DomainDetailPage() {
           setVerification(result.outcome ? { ...result, outcome: result.outcome } : null);
         }}
       />
+
+      {d.purpose !== 'sending' && can(...PERMISSIONS.mtaSts.read) ? (
+        <MtaStsCard domain={d.domain} onChanged={detail.reload} />
+      ) : null}
 
       <Card flush title={t('domains.records.title')} description={t('domains.records.description')}>
         <DnsRecordsTable records={d.dns_records} checks={d.dns_checks} />

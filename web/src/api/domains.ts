@@ -10,7 +10,15 @@ import type { Page, PageQuery } from './types';
 export type DomainPurpose = 'corporate' | 'sending' | 'both';
 export type DomainStatus = 'pending' | 'verified' | 'failed' | 'disabled';
 export type DmarcPolicy = 'none' | 'quarantine' | 'reject';
-export type DnsRecordKind = 'ownership_txt' | 'mx' | 'spf' | 'dkim' | 'dkim_previous' | 'dmarc';
+export type DnsRecordKind =
+  | 'ownership_txt'
+  | 'mx'
+  | 'spf'
+  | 'dkim'
+  | 'dkim_previous'
+  | 'dmarc'
+  | 'mta_sts'
+  | 'tls_rpt';
 export type VerifyOutcome = 'verified' | 'failed' | 'inconclusive';
 
 /** Como se publica el DNS del dominio: a mano o por la plataforma en el proveedor conectado. */

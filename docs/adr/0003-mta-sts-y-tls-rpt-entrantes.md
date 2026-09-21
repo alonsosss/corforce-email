@@ -2,9 +2,11 @@
 
 ## Estado
 
-Propuesto (2026-09-21). No implementado. Cierra el diseño de `Plan_Estrategico_Mejoras_Correo.md`, A3, en lo
-que toca a MTA-STS y TLS-RPT. Depende de decisiones sobre el proxy de borde y los certificados que son de
-quien opera el servidor.
+Parcialmente implementado (2026-09-21). Cierra el diseño de `Plan_Estrategico_Mejoras_Correo.md`, A3, en lo que toca
+a MTA-STS y TLS-RPT. Hecho: la parte de código que no cambia la exposición (tabla, API con la verificación previa a
+`enforce`, manejador de la política, registros `_mta-sts` y `_smtp._tls` en `domain-service`, panel en la ficha del
+dominio; "Implementación" abajo). Pendiente: todo lo que depende del proxy de borde y de los certificados, que es de
+quien opera el servidor, y el procesado de los informes.
 
 ## Contexto
 
@@ -64,3 +66,57 @@ Hoy `acme.sh` ya intenta pedir certificados `mta-sts.<dominio>` para los dominio
   verificación previa a `enforce`, los registros `_mta-sts` y `_smtp._tls` en `domain-service`, y el
   manejador de la política. Sin el borde y los certificados no protege a nadie, pero deja todo listo y probado.
 * Sin cambios en la salida: `postfix-tlspol` sigue igual.
+
+## Implementación (2026-09-21)
+
+Lo que se hizo y las decisiones que el diseño dejaba abiertas.
+
+1. **Tabla y modos.** `mail.mta_sts_policies` (`migrations/cell/canonical/mail-directory/10_mta_sts.sql`): `domain`
+   único, `mode` (`none`, `testing`, `enforce`; `testing` por defecto), `max_age` (1 día en `testing`, 7 en `enforce`),
+   `policy_id` y RLS por empresa; sin fila es `none`. El id no se llama `id` como en el borrador porque `id` ya es la
+   clave de la fila; `policy_id` es el del TXT.
+2. **Transiciones.** Se entra a `enforce` y se sale de él por `testing` (`domain.MTASTSTransition`). Un remitente que
+   guardó `enforce` lo sigue aplicando hasta que vence su caché, así que apagar de golpe una política endurecida
+   dejaría sin efecto lo que ya se anunció; `testing` no bloquea entregas y sustituye a la anterior en cuanto cambia su
+   id. Repetir el modo actual no cambia nada ni renueva el id.
+3. **Verificación previa a `enforce`** (`app.SetMTASTSMode`): el dominio existe en el directorio y está activo (lo
+   activa `domain-service` al verificarlo) y **todos** sus MX publicados, consultados en el momento, son
+   `MAIL_MX_HOSTNAME`: con `enforce` los remitentes solo entregan a los MX de la política, y un MX propio que no esté
+   en ella se quedaría sin correo. `mail-directory` hace la consulta (adaptador `dns`, mismo `MAIL_DNS_RESOLVER` que
+   `domain-service`); un fallo del DNS es 503 `DNS_UNAVAILABLE`, no un MX que no cuadra. **No** comprueba todavía el
+   certificado de `mta-sts.<dominio>` ni que la política se pueda descargar: depende del borde. Sin descarga posible los
+   remitentes no aplican política alguna, así que un `enforce` sin borde no bloquea nada, pero tampoco protege.
+4. **De dónde sale el id que anuncia `domain-service`: lo lee de `mail-directory`.** Se descartó que `domain-service`
+   lo calcule de forma determinista porque necesitaría el modo y el `max_age`, que viven en la celda; duplicar ese estado
+   en la base de la empresa habría exigido eventos, un consumidor y una migración más, y ya hay una llamada
+   servicio a servicio a `mail-directory` con la celda de la empresa. La llamada es `GET
+   /internal/mail-directory/mta-sts/{dominio}` (empresa en `X-Tenant-ID`, la misma respuesta que la de la interfaz), solo
+   para dominios que reciben por la celda. Un fallo o un 404 (dominio que la celda no tiene, instancia que no sirve la
+   ruta) deja fuera únicamente ese TXT, que no es requerido, y se registra. Sin claves foráneas entre esquemas y sin más
+   acoplamiento que el que ya existía en ese sentido.
+5. **Permisos: módulo `domains`, no uno nuevo.** `domains/mta_sts/{read,update}` (`034_mail_directory_mta_sts_permissions.sql`,
+   alcance `tenant`). El prefijo `mail-domains` del gateway ya gatea el módulo `domains`; un módulo `mail_directory`
+   nuevo habría exigido otra entrada en el menú y otro prefijo por una sola pantalla. La API cuelga de
+   `/api/v1/mail-domains/mta-sts`.
+6. **Ruta pública con `{cell}`.** `GET /public/mail-directory/mta-sts/{cell}/{dominio}`, no `.../{dominio}` a secas:
+   `mail-directory` es un servicio de celda y el gateway se niega a arrancar con una ruta pública de un servicio de celda
+   sin el segmento `{cell}` (`validatePublicCell`). El segmento solo enruta, sin firmar. Con una sola celda da igual lo que
+   lleve; con varias, el borde tiene que conocer la celda de cada dominio. El manejador no pide sesión ni empresa: lee con
+   el rol de servicio y solo sirve una política de un dominio activo y de la misma empresa que la escribió.
+7. **`none` no se sirve** (404), como pide el diseño; junto con la regla 2 (no se llega a `none` desde `enforce`) evita
+   dejar a un remitente con un `enforce` en caché y sin política que lo reemplace. RFC 8461 8.3 describe la retirada
+   servida como `mode: none`; si algún día se quiere, es cambiar `PublishedMTASTS`.
+8. **Registros.** `domain-service` añade `RecordMTASTS` (`mta_sts`) y `RecordTLSRPT` (`tls_rpt`), ambos `Required:
+   false`, solo en dominios que reciben por la celda: `_mta-sts.<dominio>` = `v=STSv1; id=<policy_id>` (solo con la
+   política activa) y `_smtp._tls.<dominio>` = `v=TLSRPTv1; rua=mailto:<MAIL_TLSRPT_RUA>` (solo si esa variable
+   opcional está configurada y es una sola dirección válida; a diferencia de `MAIL_DMARC_RUA`, no es obligatoria). Los
+   verifica (un solo TXT de cada; el id tiene que ser el vigente; la lista `rua` tiene que incluir la de la plataforma), los
+   publica el proveedor DNS automático y `dns_checks` los admite (`06_mta_sts_records.sql`). No se pide el CNAME
+   `mta-sts` del punto 4 del diseño: su destino lo fija el borde. Desactivar la política no retira el TXT del proveedor.
+9. **Interfaz.** Panel MTA-STS en la ficha del dominio (`web/src/pages/domains/MtaStsCard.tsx`), con el modo, la versión,
+   la vigencia, los pasos que da el servicio (`allowed_modes`) y `ConfirmDialog` con el aviso de que `enforce` puede dejar
+   de entregar correo.
+
+Sigue pendiente, con su responsable: el borde (P: quien opera el servidor), el buzón de `MAIL_TLSRPT_RUA` y el panel de
+informes DMARC y TLS-RPT (A3, "se hace después"), la comprobación del certificado al pasar a `enforce`, y un paso de
+confirmación de identidad (step-up) en el servicio para `enforce`, hoy solo de interfaz.

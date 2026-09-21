@@ -896,7 +896,11 @@ cero, unos seis mas, y la primera descarga de firmas de ClamAV, uno o dos.
   buzon. `mail.v_routing_mailboxes` ya publica `attributes`, pero ningun API de
   `mail-directory` los escribe (quedan en `{}`): hace falta ese API y que `/footer` los
   mezcle en `vars`.
-* MTA-STS: sin tabla `mta_sts`, ACME no pide certificados `mta-sts.<dominio>`.
+* MTA-STS: la politica de cada dominio ya vive en `mail.mta_sts_policies` (`10_mta_sts.sql`) y `mail-directory` la sirve
+  en `GET /public/mail-directory/mta-sts/{cell}/{dominio}`, pero `acme` sigue sin pedir certificados `mta-sts.<dominio>`
+  (`MTA_STS_ACTIVE_DOMAINS` queda vacio a proposito, `acme/acme.sh` no cambia) y ningun motor lee esa tabla: hace falta una
+  vista `v_*` de solo los dominios activos con politica para `mail_engine` y llenar el arreglo, y que el borde atienda esos
+  nombres. Es decision de quien opera el servidor (`docs/adr/0003-mta-sts-y-tls-rpt-entrantes.md`).
 * Contrasena del rol de los motores (`<MAIL_DB_NAME>_engine`): la fija operacion; llega solo
   por `MAIL_DB_PASSWORD`.
 * **Smoke test obligatorio del primer despliegue con el rol por celda.** El cambio de

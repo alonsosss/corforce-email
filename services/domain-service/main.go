@@ -135,11 +135,17 @@ func loadSettings(logger *zap.Logger) (settings, error) {
 		},
 		dnsResolver: strings.TrimSpace(os.Getenv("MAIL_DNS_RESOLVER")),
 	}
+	s.platform.TLSRPTRUA = strings.TrimSpace(os.Getenv("MAIL_TLSRPT_RUA"))
 	if len(missing) > 0 {
 		return s, fmt.Errorf("faltan variables de entorno obligatorias: %s", strings.Join(missing, ", "))
 	}
 	if err := domain.ValidatePlatformHostname(s.platformHostname); err != nil {
 		return s, fmt.Errorf("MAIL_HOSTNAME %q: %w", s.platformHostname, err)
+	}
+	if s.platform.TLSRPTRUA != "" {
+		if err := domain.ValidateReportAddress(s.platform.TLSRPTRUA); err != nil {
+			return s, fmt.Errorf("MAIL_TLSRPT_RUA %q: %w", s.platform.TLSRPTRUA, err)
+		}
 	}
 	if !strings.HasPrefix(s.platform.SPFInclude, "include:") {
 		return s, fmt.Errorf("MAIL_SPF_INCLUDE debe ser un mecanismo include: (p. ej. include:spf.%s)", s.platformHostname)
@@ -290,12 +296,14 @@ func main() {
 	}
 
 	repo := postgres.NewRepository(ctxPool)
+	directory := maildirectorycli.New(tenantcell.NewCaller("mail-directory", st.directoryTargets, st.internalToken, logger, tenantcell.CallerOptions{}))
 	keyEvents := outboxadapter.NewPublisher(ctxPool)
 	uc := app.New(app.Deps{
 		Repo:                 repo,
 		DNS:                  dnsadapter.New(st.dnsResolver),
 		Cipher:               keyRing,
-		MailDirectory:        maildirectorycli.New(tenantcell.NewCaller("mail-directory", st.directoryTargets, st.internalToken, logger, tenantcell.CallerOptions{})),
+		MailDirectory:        directory,
+		MTASTS:               directory,
 		MailSecurity:         mailsecuritycli.New(tenantcell.NewCaller("mail-security", st.securityTargets, st.internalToken, logger, tenantcell.CallerOptions{})),
 		DomainIndex:          organizationcli.New(st.organizationURL, st.internalToken),
 		Events:               publisher,

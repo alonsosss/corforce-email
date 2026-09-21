@@ -55,6 +55,11 @@ func (h *Handler) Routes() chi.Router {
 	// Ruta servicio-a-servicio: la protege RequireGatewayToken en main y toma la empresa
 	// de X-Tenant-ID; no pasa por el gateway ni por permisos de usuario.
 	r.Put("/internal/mail-directory/domains/{domain}/activation", h.SetDomainActivation)
+	// domain-service anuncia con el id de esta politica el TXT _mta-sts del dominio; misma lectura que la
+	// de la interfaz, con la empresa en X-Tenant-ID.
+	r.Get("/internal/mail-directory/mta-sts/{domain}", h.GetMTASTS)
+	// Politica MTA-STS que descargan otros servidores de correo: publica, sin sesion ni empresa.
+	r.Get("/api/v1/public/mail-directory/mta-sts/{cell}/{domain}", h.PublicMTASTS)
 	// La pide la saga de baja de organization, con la empresa en X-Tenant-ID. Solo servicios: una
 	// peticion con usuario recibe 403.
 	r.With(middleware.RequireInternalCaller).Put("/internal/mail-directory/tenant-retirement", h.RetireTenant)
@@ -125,13 +130,14 @@ var validationErrors = []error{
 	domain.ErrMailboxNotOwned, domain.ErrRelayhostNotOwned, domain.ErrActivationNotAllowed,
 	domain.ErrQuotaExceedsMax, domain.ErrDomainQuotaExceeded, domain.ErrSearchTooLong,
 	domain.ErrVacationMessageRequired, domain.ErrVacationMessageInvalid, domain.ErrVacationSubjectInvalid,
-	domain.ErrVacationInterval, domain.ErrVacationWindow, domain.ErrVacationDate,
+	domain.ErrVacationInterval, domain.ErrVacationWindow, domain.ErrVacationDate, domain.ErrInvalidMTASTSMode,
 }
 
 // conflictErrors son los choques con el estado actual: 409.
 var conflictErrors = []error{
 	domain.ErrAlreadyExists, domain.ErrDomainInUse, domain.ErrAddressTaken, domain.ErrMaxMailboxesReached,
-	domain.ErrMaxAliasesReached, domain.ErrDomainIsOwnDomain,
+	domain.ErrMaxAliasesReached, domain.ErrDomainIsOwnDomain, domain.ErrMTASTSTransition,
+	domain.ErrMTASTSDomainNotActive, domain.ErrMTASTSMXMismatch,
 }
 
 func isAny(err error, list []error) bool {
@@ -223,6 +229,7 @@ func (h *Handler) Meta(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) domainRoutes(r chi.Router) {
 	const res, aliasRes = "domains", "alias_domains"
+	r.Route("/mta-sts", h.mtaSTSRoutes)
 	r.With(h.require(moduleDomains, res, actionRead)).Get("/", h.ListDomains)
 	r.With(h.require(moduleDomains, res, actionCreate)).Post("/", h.CreateDomain)
 	r.With(h.require(moduleDomains, aliasRes, actionRead)).Get("/alias-domains", listOf(h.uc.ListAliasDomains))

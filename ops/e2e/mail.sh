@@ -553,6 +553,44 @@ expect "un intervalo fuera de 1 a 30 se rechaza (422)" "$API_CODE" "422"
 api PUT "/mailboxes/$BEA_ID/vacation" '{"enabled":true,"message":"x","script_data":"discard;"}'
 expect "mandar el script a mano se rechaza (400): el usuario no escribe Sieve por este camino" "$API_CODE" "400"
 
+echo "== MTA-STS (mail-directory: politica por dominio y su version; domain-service: el TXT que la anuncia)"
+api GET "/mail-domains/mta-sts/acme.test"
+expect "acme.test sin politica: none, con la version vacia" "$API_CODE/$(echo "$API_BODY" | jget data.mode)/$(echo "$API_BODY" | jget data.policy_id)" "200/none/"
+api PUT "/mail-domains/mta-sts/acme.test" '{"mode":"enforce"}'
+expect "de none no se pasa a enforce (409): se entra por testing" "$API_CODE" "409"
+api PUT "/mail-domains/mta-sts/noexiste.test" '{"mode":"testing"}'
+expect "un dominio que el directorio no tiene: 404" "$API_CODE" "404"
+api PUT "/mail-domains/mta-sts/acme.test" '{"mode":"estricto"}'
+expect "un modo desconocido se rechaza (422)" "$API_CODE" "422"
+MTASTS_URL="$GW/public/mail-directory/mta-sts/pe-01/acme.test"
+expect "sin politica el gateway responde 404 al remitente, sin sesion" "$(curl -s -o /dev/null -w '%{http_code}' "$MTASTS_URL")" "404"
+api PUT "/mail-domains/mta-sts/acme.test" '{"mode":"testing"}'
+expect "activarla la deja en testing" "$API_CODE/$(echo "$API_BODY" | jget data.mode)" "200/testing"
+STS_ID=$(sql mail_cell_pe_01 "SELECT policy_id FROM mail.mta_sts_policies WHERE domain = 'acme.test'")
+expect "con una version de 32 caracteres alfanumericos" "$(grep -cE '^[A-Za-z0-9]{32}$' <<< "$STS_ID")" "1"
+curl -s -D "$WORK/sts.head" -o "$WORK/sts.txt" "$MTASTS_URL"
+contains "el remitente descarga la politica como texto plano" "$(cat "$WORK/sts.head")" "Content-Type: text/plain"
+expect "con el documento del RFC 8461 y el MX de la plataforma" "$(tr -d '\r' < "$WORK/sts.txt" | tr '\n' '|')" \
+  "version: STSv1|mode: testing|mx: ${MAIL_MX_HOSTNAME,,}|max_age: 86400|"
+api GET "/domains/$DOMID"
+expect "domain-service anuncia esa version en el TXT _mta-sts, recomendado y no requerido" "$(echo "$API_BODY" | python3 -c '
+import json, sys
+r = [r for r in json.load(sys.stdin)["data"]["dns_records"] if r["record"] == "mta_sts"]
+print(r[0]["host"], r[0]["value"], r[0]["required"]) if r else print("sin registro")')" "_mta-sts.acme.test v=STSv1; id=$STS_ID False"
+api POST "/domains/$DOMID/verify"
+expect "el TXT sin publicar en el DNS no quita la verificacion del dominio" "$(echo "$API_BODY" | jget data.status)" "verified"
+api PUT "/mail-domains/mta-sts/acme.test" '{"mode":"enforce"}'
+expect "enforce con el dominio activo y sus MX en la plataforma: 200" "$API_CODE/$(echo "$API_BODY" | jget data.mode)" "200/enforce"
+expect "cada cambio renueva la version" "$([[ "$(sql mail_cell_pe_01 "SELECT policy_id FROM mail.mta_sts_policies WHERE domain = 'acme.test'")" != "$STS_ID" ]] && echo distinta)" "distinta"
+contains "y se sirve en enforce" "$(curl -s "$MTASTS_URL")" "mode: enforce"
+api PUT "/mail-domains/mta-sts/acme.test" '{"mode":"none"}'
+expect "de enforce no se pasa a none (409): se sale por testing" "$API_CODE" "409"
+api PUT "/mail-domains/mta-sts/acme.test" '{"mode":"testing"}'
+api PUT "/mail-domains/mta-sts/acme.test" '{"mode":"none"}'
+expect "testing a none: 200, y el remitente deja de recibir la politica (404)" "$API_CODE/$(curl -s -o /dev/null -w '%{http_code}' "$MTASTS_URL")" "200/404"
+contains "ningun motor lee la tabla de politicas" \
+  "$(psql -v ON_ERROR_STOP=1 -q -At -d mail_cell_pe_01 -c "SET ROLE mail_engine; SELECT 1 FROM mail.mta_sts_policies LIMIT 1" 2>&1)" "permission denied"
+
 echo "== Enlace del aviso de cuarentena por el gateway (celda en la ruta y en la firma)"
 # Sin transactional no sale el aviso: el enlace se firma aqui con la clave de la ejecucion y la
 # forma quarantine-link/v2 de domain.QuarantineLinkSigner (contrato en deploy/mail/README.md).

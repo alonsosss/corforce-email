@@ -360,7 +360,7 @@ func (f *fakeDNS) LookupMX(_ context.Context, name string) ([]domain.MXRecord, e
 
 // publishZone deja en el DNS falso todos los registros esperados del dominio.
 func (f *fakeDNS) publishZone(uc *UseCase, d *domain.Domain) {
-	for _, rec := range uc.ExpectedRecords(d) {
+	for _, rec := range uc.ExpectedRecords(context.Background(), d) {
 		switch rec.Type {
 		case "MX":
 			f.mx[rec.Host] = []domain.MXRecord{{Host: uc.platform.MXHostname, Priority: 10}}

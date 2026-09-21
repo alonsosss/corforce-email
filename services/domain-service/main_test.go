@@ -25,6 +25,7 @@ func setSettingsEnv(t *testing.T, environment, token string) {
 		"MAIL_MX_HOSTNAME":            "mx.cfm.test",
 		"MAIL_SPF_INCLUDE":            "include:spf.cfm.test",
 		"MAIL_DMARC_RUA":              "dmarc@cfm.test",
+		"MAIL_TLSRPT_RUA":             "",
 		"MAIL_DIRECTORY_URL":          "http://mail-directory:8040",
 		"MAIL_SECURITY_URL":           "http://mail-security:8042",
 		"ENVIRONMENT":                 environment,
@@ -73,6 +74,19 @@ func TestLoadSettingsConTokenInterno(t *testing.T) {
 	}
 }
 
+func TestLoadSettingsLeeLaDireccionOpcionalDeTLSRPT(t *testing.T) {
+	setSettingsEnv(t, "staging", "gateway-token-0123456789")
+	t.Setenv("MAIL_TLSRPT_RUA", " tlsrpt@cfm.test ")
+	st, err := loadSettings(zap.NewNop())
+	if err != nil || st.platform.TLSRPTRUA != "tlsrpt@cfm.test" {
+		t.Fatalf("TLSRPTRUA %q: %v", st.platform.TLSRPTRUA, err)
+	}
+	t.Setenv("MAIL_TLSRPT_RUA", "")
+	if st, err = loadSettings(zap.NewNop()); err != nil || st.platform.TLSRPTRUA != "" {
+		t.Fatalf("sin variable no se pide el registro: %q %v", st.platform.TLSRPTRUA, err)
+	}
+}
+
 func TestLoadSettingsValoresPorDefecto(t *testing.T) {
 	setSettingsEnv(t, "staging", "gateway-token-0123456789")
 	st, err := loadSettings(zap.NewNop())
@@ -118,6 +132,10 @@ func TestLoadSettingsRangos(t *testing.T) {
 		"hostname que es un sufijo privado":                   {map[string]string{"MAIL_HOSTNAME": "github.io"}, "MAIL_HOSTNAME"},
 		"hostname de una etiqueta":                            {map[string]string{"MAIL_HOSTNAME": "localhost"}, "MAIL_HOSTNAME"},
 		"hostname con caracteres no validos":                  {map[string]string{"MAIL_HOSTNAME": "mail_plataforma.com"}, "MAIL_HOSTNAME"},
+		"TLS-RPT sin configurar":                              {map[string]string{"MAIL_TLSRPT_RUA": ""}, ""},
+		"TLS-RPT con una direccion":                           {map[string]string{"MAIL_TLSRPT_RUA": "tlsrpt@cfm.test"}, ""},
+		"TLS-RPT sin arroba":                                  {map[string]string{"MAIL_TLSRPT_RUA": "tlsrpt.cfm.test"}, "MAIL_TLSRPT_RUA"},
+		"TLS-RPT con dos direcciones":                         {map[string]string{"MAIL_TLSRPT_RUA": "a@cfm.test,b@cfm.test"}, "MAIL_TLSRPT_RUA"},
 	} {
 		setSettingsEnv(t, "staging", "gateway-token-0123456789")
 		for key, value := range c.env {

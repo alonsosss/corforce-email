@@ -109,6 +109,31 @@ type VacationRepository interface {
 	DeleteByUsername(ctx context.Context, tenantID uuid.UUID, username string) error
 }
 
+// MTASTSRepository guarda la politica MTA-STS de los dominios de una empresa
+// (mail.mta_sts_policies). Un dominio sin fila no publica politica.
+type MTASTSRepository interface {
+	// ByDomain devuelve domain.ErrNotFound si el dominio no tiene politica.
+	ByDomain(ctx context.Context, tenantID uuid.UUID, name string) (*domain.MTASTSPolicy, error)
+	// States lista los dominios de la empresa con su modo (none los que no tienen politica).
+	States(ctx context.Context, tenantID uuid.UUID, page Page) ([]domain.MTASTSState, int64, error)
+	// Upsert crea la politica del dominio o la reemplaza (modo, max_age y version).
+	Upsert(ctx context.Context, p *domain.MTASTSPolicy) error
+	DeleteByDomain(ctx context.Context, tenantID uuid.UUID, name string) error
+}
+
+// MTASTSPublisher lee la politica que se sirve a los remitentes, sin empresa en la peticion (es
+// publica). Corre fuera de RLS con el rol de servicio.
+type MTASTSPublisher interface {
+	// Published devuelve domain.ErrNotFound si el dominio no esta activo o su modo es none.
+	Published(ctx context.Context, name string) (*domain.MTASTSPolicy, error)
+}
+
+// MXResolver consulta los MX publicados de un dominio. Un dominio sin MX devuelve lista vacia sin
+// error; solo un fallo de la consulta devuelve error.
+type MXResolver interface {
+	LookupMX(ctx context.Context, name string) ([]string, error)
+}
+
 // MailboxLocator resuelve un buzon por su nombre en toda la celda, sin empresa: lo pide el webmail,
 // que se autentico como ese buzon y no conoce su empresa. Corre fuera de RLS, con el rol de servicio.
 type MailboxLocator interface {

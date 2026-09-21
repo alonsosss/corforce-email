@@ -3,6 +3,7 @@ import { endpoints } from './endpoints';
 import { fetchList, fetchPage } from './paging';
 import { cachedResource } from './resource';
 import type { ApiResponse, Page, PageQuery } from './types';
+import type { MtaStsMode, MtaStsState } from './mtaSts';
 import type { Vacation, VacationInput } from './vacation';
 
 // DTOs de services/mail-directory: peticiones en internal/adapters/http/dto.go y
@@ -489,6 +490,9 @@ export const mailDirectoryApi = {
   aliasDomains: resourceApi<AliasDomain, CreateAliasDomainRequest, UpdateAliasDomainRequest>(
     endpoints.mailDomains.aliasDomains,
   ),
+  getMtaSts: (domain: string) => api.get<MtaStsState>(endpoints.mailDomains.mtaSts(domain)),
+  setMtaSts: (domain: string, mode: MtaStsMode) =>
+    api.put<MtaStsState>(endpoints.mailDomains.mtaSts(domain), { body: { mode } }),
 
   listMailboxes: (query: MailboxQuery) =>
     fetchPage<Mailbox>(endpoints.mailboxes.collection, { ...query }),

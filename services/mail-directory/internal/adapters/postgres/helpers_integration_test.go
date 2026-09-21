@@ -16,6 +16,7 @@ import (
 	outboxadapter "github.com/alonsosss/corforce-email/services/mail-directory/internal/adapters/outbox"
 	"github.com/alonsosss/corforce-email/services/mail-directory/internal/adapters/secrets"
 	"github.com/alonsosss/corforce-email/services/mail-directory/internal/app"
+	"github.com/alonsosss/corforce-email/services/mail-directory/internal/ports"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -85,14 +86,27 @@ func execFile(ctx context.Context, pool *pgxpool.Pool, path string) error {
 	return nil
 }
 
+// testPlatformMX es el MX de la plataforma con el que corren las pruebas de integracion.
+const testPlatformMX = "mx.plataforma.example"
+
+// fixedMX responde los MX que se le den para todo dominio.
+type fixedMX struct{ hosts []string }
+
+func (f fixedMX) LookupMX(context.Context, string) ([]string, error) { return f.hosts, nil }
+
 // newUseCase cablea el caso de uso con los repositorios reales y la outbox, como main.go.
 func newUseCase(ctxPool *db.ContextPool) *app.UseCase {
+	return newUseCaseWithMX(ctxPool, fixedMX{hosts: []string{testPlatformMX}})
+}
+
+func newUseCaseWithMX(ctxPool *db.ContextPool, mx ports.MXResolver) *app.UseCase {
 	return app.New(app.Deps{
 		Tx: NewTransactor(ctxPool), Domains: NewDomainRepo(ctxPool), AliasDomains: NewAliasDomainRepo(ctxPool),
 		Mailboxes: NewMailboxRepo(ctxPool), AppPasswords: NewAppPasswordRepo(ctxPool), Sieve: NewSieveRepo(ctxPool), Vacation: NewVacationRepo(ctxPool), Locator: NewMailboxLocator(ctxPool),
 		Aliases: NewAliasRepo(ctxPool), SpamAliases: NewSpamAliasRepo(ctxPool), SenderACL: NewSenderACLRepo(ctxPool),
 		Relayhosts: NewRelayhostRepo(ctxPool), Transports: NewTransportRepo(ctxPool), TLSPolicies: NewTLSPolicyRepo(ctxPool),
 		RecipientMap: NewRecipientMapRepo(ctxPool), BCCMaps: NewBCCMapRepo(ctxPool), Retirements: NewRetirementRepo(ctxPool),
+		MTASTS: NewMTASTSRepo(ctxPool), MTASTSPublic: NewMTASTSPublicReader(ctxPool), MX: mx, PlatformMX: testPlatformMX,
 		Secrets: secrets.New(), Events: outboxadapter.NewPublisher(ctxPool),
 	})
 }

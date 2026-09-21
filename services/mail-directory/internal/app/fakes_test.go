@@ -671,8 +671,78 @@ func (f *fakeRetirements) DeactivateSettings(context.Context, uuid.UUID) (domain
 	return c, nil
 }
 
+type fakeMTASTS struct {
+	items   map[string]*domain.MTASTSPolicy
+	upserts int
+	deleted []string
+}
+
+func (f *fakeMTASTS) ByDomain(_ context.Context, tenantID uuid.UUID, name string) (*domain.MTASTSPolicy, error) {
+	p, ok := f.items[name]
+	if !ok || p.TenantID != tenantID {
+		return nil, domain.ErrNotFound
+	}
+	c := *p
+	return &c, nil
+}
+
+func (f *fakeMTASTS) States(context.Context, uuid.UUID, ports.Page) ([]domain.MTASTSState, int64, error) {
+	return nil, 0, nil
+}
+
+func (f *fakeMTASTS) Upsert(_ context.Context, p *domain.MTASTSPolicy) error {
+	f.upserts++
+	if f.items == nil {
+		f.items = map[string]*domain.MTASTSPolicy{}
+	}
+	p.UpdatedAt = time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
+	c := *p
+	f.items[p.Domain] = &c
+	return nil
+}
+
+func (f *fakeMTASTS) DeleteByDomain(_ context.Context, tenantID uuid.UUID, name string) error {
+	f.deleted = append(f.deleted, name)
+	if p, ok := f.items[name]; ok && p.TenantID == tenantID {
+		delete(f.items, name)
+	}
+	return nil
+}
+
+// fakeMTASTSPublisher sirve las filas de fakeMTASTS como la consulta publica: solo el dominio activo
+// y con un modo distinto de none.
+type fakeMTASTSPublisher struct{ h *harness }
+
+func (f fakeMTASTSPublisher) Published(_ context.Context, name string) (*domain.MTASTSPolicy, error) {
+	p, ok := f.h.mtaSTS.items[name]
+	if !ok || !p.Mode.Published() {
+		return nil, domain.ErrNotFound
+	}
+	for _, d := range f.h.domains.items {
+		if d.Domain == name && d.TenantID == p.TenantID && d.Active {
+			c := *p
+			return &c, nil
+		}
+	}
+	return nil, domain.ErrNotFound
+}
+
+// fakeMX responde lo que se le fije para todo dominio y cuenta las consultas.
+type fakeMX struct {
+	hosts []string
+	err   error
+	calls int
+}
+
+func (f *fakeMX) LookupMX(context.Context, string) ([]string, error) {
+	f.calls++
+	return f.hosts, f.err
+}
+
 // harness cablea un caso de uso con todos los falsos; los repositorios que un test no
 // necesita quedan en su valor vacio.
+const platformMXForTests = "mx.plataforma.example"
+
 type harness struct {
 	uc           *UseCase
 	tx           *fakeTx
@@ -682,6 +752,8 @@ type harness struct {
 	appPasswords *fakeAppPasswords
 	sieve        *fakeSieve
 	vacation     *fakeVacation
+	mtaSTS       *fakeMTASTS
+	mx           *fakeMX
 	aliases      *fakeAliases
 	spamAliases  *fakeSpamAliases
 	senderACL    *fakeSenderACL
@@ -694,7 +766,7 @@ type harness struct {
 func newHarness() *harness {
 	h := &harness{
 		tx: &fakeTx{}, domains: &fakeDomains{}, aliasDomains: &fakeAliasDomains{}, aliases: &fakeAliases{},
-		appPasswords: &fakeAppPasswords{}, sieve: &fakeSieve{}, vacation: &fakeVacation{}, spamAliases: &fakeSpamAliases{},
+		appPasswords: &fakeAppPasswords{}, sieve: &fakeSieve{}, vacation: &fakeVacation{}, mtaSTS: &fakeMTASTS{}, mx: &fakeMX{hosts: []string{platformMXForTests}}, spamAliases: &fakeSpamAliases{},
 		senderACL: &fakeSenderACL{}, relayhosts: &fakeRelayhosts{}, transports: &fakeTransports{}, events: &fakeEvents{},
 	}
 	h.mailboxes = &fakeMailboxes{aliases: h.aliases}
@@ -706,6 +778,7 @@ func newHarness() *harness {
 		Tx: h.tx, Domains: h.domains, AliasDomains: h.aliasDomains, Mailboxes: h.mailboxes,
 		AppPasswords: h.appPasswords, Sieve: h.sieve, Vacation: h.vacation, Locator: locator, Aliases: h.aliases, SpamAliases: h.spamAliases,
 		SenderACL: h.senderACL, Relayhosts: h.relayhosts, Transports: h.transports, Retirements: h.retirements,
+		MTASTS: h.mtaSTS, MTASTSPublic: fakeMTASTSPublisher{h: h}, MX: h.mx, PlatformMX: platformMXForTests,
 		Secrets: fakeSecrets{}, Events: h.events,
 	})
 	return h
@@ -755,6 +828,11 @@ func (h *harness) snapshot() func() {
 		c := *v
 		vacation[k] = &c
 	}
+	mtaSTS := map[string]*domain.MTASTSPolicy{}
+	for k, v := range h.mtaSTS.items {
+		c := *v
+		mtaSTS[k] = &c
+	}
 	subjects := append([]string(nil), h.events.subjects...)
 	credentials := append([]credentialEvent(nil), h.events.credentials...)
 	retired := maps.Clone(h.retirements.retired)
@@ -763,6 +841,7 @@ func (h *harness) snapshot() func() {
 		h.mailboxes.items, h.aliases.items = mailboxes, aliases
 		h.appPasswords.items = appPasswords
 		h.vacation.items = vacation
+		h.mtaSTS.items = mtaSTS
 		h.events.subjects, h.events.credentials = subjects, credentials
 		h.retirements.retired = retired
 	}

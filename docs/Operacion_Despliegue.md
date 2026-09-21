@@ -833,6 +833,22 @@ falta, en este orden y una sola vez por plataforma (V en producción, 2026-09-20
 Con la dirección en un dominio sin MX o sin ese TXT, el correo funciona igual pero los informes se pierden en
 silencio: es lo que ocurría con `dmarc@core-force.com`.
 
+### MTA-STS y TLS-RPT de las empresas (código hecho, sin activar)
+
+`mail-directory` guarda la política MTA-STS de cada dominio y la sirve en `GET /public/mail-directory/mta-sts/{cell}/{dominio}`;
+`domain-service` pide a los dominios que reciben por la celda los TXT recomendados `_mta-sts` y, si está configurada,
+`_smtp._tls` (`rua=mailto:<MAIL_TLSRPT_RUA>`). Dos variables del `.env` intervienen y ninguna cambia lo que se despliega
+hoy: `MAIL_MX_HOSTNAME` (ya obligatoria) es ahora también obligatoria para `mail-directory`, que no arranca sin un nombre
+válido y la usa como único `mx:` de toda política y como el MX que exige antes de pasar un dominio a `enforce`; y
+`MAIL_TLSRPT_RUA` es opcional (vacía no publica `_smtp._tls`). `MAIL_DNS_RESOLVER` lo lee también `mail-directory` (en
+el perfil autoalojado, con el mismo `1.1.1.1:53` por defecto que `domain-service`) para comprobar esos MX.
+
+Nada protege a nadie hasta que el borde atienda `mta-sts.<dominio>` (CNAME del cliente hacia la plataforma, certificado por
+`acme` con HTTP-01 sin Cloudflare por medio, SNI en `selfhosted/edge`, y la celda en la ruta si hay varias): es la decisión
+de quien opera el servidor descrita en `docs/adr/0003-mta-sts-y-tls-rpt-entrantes.md`. Mientras tanto, activar MTA-STS en un
+dominio solo publica una política que nadie descarga; no hay que pasarlo a `enforce`. Y como con DMARC, la dirección de
+`MAIL_TLSRPT_RUA` debe ser un buzón real de un dominio de la plataforma que reciba correo antes de configurarla.
+
 ### Riesgos y pendientes
 
 * Los buzones se archivan con Dovecot en marcha: un mensaje que cambie de carpeta durante el

@@ -106,6 +106,10 @@ func evaluateRecord(d *Domain, rec DNSRecord, obs Observation) (ok bool, observe
 		return evaluateDKIM(d.DKIMPreviousPublicKey, obs.TXT)
 	case RecordDMARC:
 		return evaluateDMARC(d.DMARCPolicy, obs.TXT)
+	case RecordMTASTS:
+		return evaluateMTASTS(parseTags(rec.Value)["id"], obs.TXT)
+	case RecordTLSRPT:
+		return evaluateTLSRPT(parseTags(rec.Value)["rua"], obs.TXT)
 	}
 	return false, "", "registro desconocido"
 }
@@ -204,6 +208,51 @@ func evaluateDMARC(configured DMARCPolicy, txt []string) (bool, string, string) 
 		return true, v, ""
 	}
 	return false, strings.Join(txt, " | "), "no hay registro DMARC (recomendado)"
+}
+
+// evaluateMTASTS exige un unico TXT v=STSv1 (RFC 8461: con varios se ignoran todos) con el id de la
+// version vigente de la politica: con otro id los remitentes no volverian a pedirla.
+func evaluateMTASTS(policyID string, txt []string) (bool, string, string) {
+	records := recordsWithVersion(txt, "v", "STSv1")
+	switch {
+	case len(records) == 0:
+		return false, strings.Join(txt, " | "), "no hay registro MTA-STS (recomendado)"
+	case len(records) > 1:
+		return false, strings.Join(records, " | "), "hay mas de un registro MTA-STS; debe quedar uno solo"
+	}
+	if got := parseTags(records[0])["id"]; got != policyID {
+		return false, records[0], fmt.Sprintf("el id publicado es %q y el de la politica vigente %q", got, policyID)
+	}
+	return true, records[0], ""
+}
+
+// evaluateTLSRPT exige un unico TXT v=TLSRPTv1 (RFC 8460) cuya lista rua incluya la direccion de la
+// plataforma; las demas direcciones del cliente se respetan.
+func evaluateTLSRPT(rua string, txt []string) (bool, string, string) {
+	records := recordsWithVersion(txt, "v", "TLSRPTv1")
+	switch {
+	case len(records) == 0:
+		return false, strings.Join(txt, " | "), "no hay registro TLS-RPT (recomendado)"
+	case len(records) > 1:
+		return false, strings.Join(records, " | "), "hay mas de un registro TLS-RPT; debe quedar uno solo"
+	}
+	for _, target := range strings.Split(parseTags(records[0])["rua"], ",") {
+		if strings.EqualFold(strings.TrimSpace(target), rua) {
+			return true, records[0], ""
+		}
+	}
+	return false, records[0], "el registro TLS-RPT no envia los informes a " + rua
+}
+
+// recordsWithVersion filtra los TXT cuya etiqueta tag vale value, sin distinguir mayusculas.
+func recordsWithVersion(txt []string, tag, value string) []string {
+	var out []string
+	for _, v := range txt {
+		if strings.EqualFold(parseTags(v)[tag], value) {
+			out = append(out, strings.TrimSpace(v))
+		}
+	}
+	return out
 }
 
 // parseTags lee un registro tag=value; tag=value (DKIM y DMARC comparten el formato).

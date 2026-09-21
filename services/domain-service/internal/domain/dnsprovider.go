@@ -189,8 +189,8 @@ func (r DesiredRecord) ProviderRecord(id string) ProviderRecord {
 
 // DesiredRecords son los registros de ExpectedRecords en la forma del proveedor: el MX con su
 // destino y su prioridad por separado.
-func DesiredRecords(d *Domain, platform PlatformDNS) []DesiredRecord {
-	expected := ExpectedRecords(d, platform)
+func DesiredRecords(d *Domain, platform PlatformDNS, mtaSTSPolicyID string) []DesiredRecord {
+	expected := ExpectedRecords(d, platform, mtaSTSPolicyID)
 	out := make([]DesiredRecord, 0, len(expected))
 	for _, rec := range expected {
 		dr := DesiredRecord{Kind: rec.Record, Type: rec.Type, Name: rec.Host, Content: rec.Value}
@@ -204,7 +204,7 @@ func DesiredRecords(d *Domain, platform PlatformDNS) []DesiredRecord {
 
 // sameFamily dice si un registro existente ocupa el mismo sitio que el deseado: el mismo nombre y
 // tipo y, en los TXT que comparten nombre con otros usos, el mismo prefijo. Un dominio solo puede
-// tener un SPF y un DMARC (RFC 7208 y 7489), un TXT de propiedad y un TXT por selector DKIM, y el
+// tener un SPF, un DMARC, un MTA-STS y un TLS-RPT (RFC 7208, 7489, 8461 y 8460), un TXT de propiedad y un TXT por selector DKIM, y el
 // correo solo llega bien si todos sus MX son los de la plataforma.
 func (r DesiredRecord) sameFamily(e ProviderRecord) bool {
 	if !strings.EqualFold(e.Type, r.Type) || normalizeHost(e.Name) != normalizeHost(r.Name) {
@@ -216,6 +216,10 @@ func (r DesiredRecord) sameFamily(e ProviderRecord) bool {
 		return content == "v=spf1" || strings.HasPrefix(content, "v=spf1 ")
 	case RecordDMARC:
 		return strings.HasPrefix(content, "v=dmarc1")
+	case RecordMTASTS:
+		return strings.HasPrefix(content, "v=stsv1")
+	case RecordTLSRPT:
+		return strings.HasPrefix(content, "v=tlsrptv1")
 	case RecordOwnershipTXT:
 		return strings.HasPrefix(content, ownershipTag)
 	}

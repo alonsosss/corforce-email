@@ -39,7 +39,7 @@ func (uc *UseCase) Verify(ctx context.Context, tenantID, id uuid.UUID) (*VerifyR
 // plataforma (rotacion o revocacion) y apagarle el correo no retira ninguna clave.
 func (uc *UseCase) verify(ctx context.Context, d *domain.Domain, sweep bool) (*VerifyResult, error) {
 	now := uc.now()
-	expected := uc.ExpectedRecords(d)
+	expected := uc.ExpectedRecords(ctx, d)
 	result := domain.Evaluate(d, expected, uc.observe(ctx, expected), now)
 	if err := uc.repo.SaveChecks(ctx, result.Checks); err != nil {
 		return nil, fmt.Errorf("guardar comprobaciones DNS: %w", err)

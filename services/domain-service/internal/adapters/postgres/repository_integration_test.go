@@ -465,3 +465,28 @@ func TestRepositoryDKIMLock(t *testing.T) {
 		}
 	}
 }
+
+// Los registros MTA-STS y TLS-RPT se guardan en dns_checks (migracion 06); el CHECK sigue rechazando
+// un tipo que el servicio no comprueba.
+func TestRepositoryGuardaLosChecksDeMTASTSYTLSRPT(t *testing.T) {
+	ctx, repo := setup(t)
+	tenantID := uuid.New()
+	d := sample(tenantID, "sts-"+uuid.NewString()[:8]+".test")
+	if err := repo.Create(ctx, d); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	check := func(kind domain.RecordKind) domain.DNSCheck {
+		return domain.DNSCheck{TenantID: tenantID, DomainID: d.ID, CheckedAt: now, Record: kind, Expected: "v=x", OK: true}
+	}
+	if err := repo.SaveChecks(ctx, []domain.DNSCheck{check(domain.RecordMTASTS), check(domain.RecordTLSRPT)}); err != nil {
+		t.Fatalf("SaveChecks: %v", err)
+	}
+	latest, err := repo.LatestChecks(ctx, tenantID, d.ID)
+	if err != nil || len(latest) != 2 {
+		t.Fatalf("LatestChecks = %d, %v", len(latest), err)
+	}
+	if err := repo.SaveChecks(ctx, []domain.DNSCheck{check("dnssec")}); err == nil {
+		t.Error("un tipo de registro que el servicio no comprueba debe rechazarse")
+	}
+}
