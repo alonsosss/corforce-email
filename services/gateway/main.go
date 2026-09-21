@@ -214,7 +214,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:              fmt.Sprintf(":%d", st.port),
-		Handler:           observability.WithOps(r),
+		Handler:           internalOps(observability.WithOps(r), r),
 		ReadTimeout:       15 * time.Second,
 		ReadHeaderTimeout: 5 * time.Second,
 		// El gateway es un proxy: el tiempo de respuesta no lo pone el, sino el
@@ -230,6 +230,20 @@ func main() {
 	if err := srv.ListenAndServe(); err != nil {
 		logger.Fatal("gateway failed", zap.Error(err))
 	}
+}
+
+// internalOps deja las metricas solo a quien llega por la red interna. El borde reenvia al gateway
+// todo el dominio publico y escribe siempre X-Real-IP; el recolector no pasa por el borde y no la
+// lleva. Una peticion de metricas con esa cabecera (o X-Forwarded-For) sigue a app, como cualquier
+// otra ruta desconocida. Solo se sirve la salud del proceso, que no revela nada.
+func internalOps(ops, app http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == observability.MetricsPath && (r.Header.Get("X-Real-IP") != "" || r.Header.Get("X-Forwarded-For") != "") {
+			app.ServeHTTP(w, r)
+			return
+		}
+		ops.ServeHTTP(w, r)
+	})
 }
 
 // jwtAuthFromEnv arma la autenticacion del token de acceso con las claves PUBLICAS de
@@ -338,6 +352,33 @@ func stampCSPNonce(resp *http.Response) error {
 	return nil
 }
 
+// dropClientHopHeaders aplica por adelantado lo que ReverseProxy hace DESPUES del Director: borrar
+// las cabeceras que la peticion nombra en Connection. Hecho despues, el cliente podria quitar por
+// si mismo X-User-ID, X-Tenant-ID, X-Gateway-Token o X-Real-IP, que el Director acaba de escribir,
+// y los servicios, que solo esperan esas cabeceras del gateway, tomarian su peticion por una llamada
+// de otro servicio. Solo sobreviven los tokens que el propio proxy interpreta (upgrade, close,
+// keep-alive).
+func dropClientHopHeaders(h http.Header) {
+	var keep []string
+	for _, value := range h.Values("Connection") {
+		for _, token := range strings.Split(value, ",") {
+			token = strings.TrimSpace(token)
+			switch {
+			case token == "":
+			case strings.EqualFold(token, "upgrade"), strings.EqualFold(token, "close"), strings.EqualFold(token, "keep-alive"):
+				keep = append(keep, token)
+			default:
+				h.Del(token)
+			}
+		}
+	}
+	if len(keep) == 0 {
+		h.Del("Connection")
+		return
+	}
+	h.Set("Connection", strings.Join(keep, ", "))
+}
+
 func reverseProxy(target, internalToken string) http.Handler {
 	return reverseProxyWith(target, internalToken, false)
 }
@@ -372,6 +413,7 @@ func reverseProxyWith(target, internalToken string, keepUpstreamCSP bool) http.H
 	}
 	originalDirector := proxy.Director
 	proxy.Director = func(req *http.Request) {
+		dropClientHopHeaders(req.Header)
 		// El host que pidio el cliente se pierde al apuntar al servicio interno, asi
 		// que se conserva antes de pisarlo: lo necesita cualquier servicio que tenga
 		// que decir "esta es mi direccion" (enlaces de baja, de reinicio de contrasena).

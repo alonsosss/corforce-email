@@ -15,7 +15,7 @@ con `HEALTHCHECK` por el propio binario), la migración canónica de empresa
 `migrations/tenant/canonical/<name>/01_<name>.sql` y el puerto en `.env.example`. Imprime,
 sin editar ficheros frágiles, el bloque de `docker-compose.yml`, la entrada de
 `services/gateway/routes.json` (el gateway lee la tabla al arrancar y no se recompila) y
-la migración de permisos del módulo. `module=--ungated` para un servicio que no se gatea.
+la migración de permisos del módulo. `module=--ungated` solo sirve a los prefijos de consulta de acceso (`access`, `check-access`, `policy`): el gateway no arranca con otro prefijo sin módulo.
 
 Si la tabla del servicio vive en la celda (la leen los motores de correo), la migración va
 en `migrations/cell/canonical/<name>/` en vez de `tenant/`.

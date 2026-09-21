@@ -14,7 +14,8 @@ import (
 // Ambas rutas quedan por FUERA de la cadena de middlewares del servicio: ni el recolector
 // ni el healthcheck del contenedor tienen token de gateway o sesion. Solo son alcanzables
 // desde la red interna de Docker y desde el loopback del host (los puertos de servicio se
-// publican en 127.0.0.1); el gateway nunca las expone, porque solo reenvia /api/v1.
+// publican en 127.0.0.1). El gateway, que si recibe el trafico del borde, no las sirve a quien
+// llega por el (internalOps en services/gateway).
 //
 // METRICS_DISABLED=true apaga la medicion del trafico (no las rutas operativas, de las que
 // depende el healthcheck del contenedor): valvula de escape si el coste de medir molestara

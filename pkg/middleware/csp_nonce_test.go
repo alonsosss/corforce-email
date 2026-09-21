@@ -50,6 +50,30 @@ func TestLaPoliticaNuncaAdmiteInlineNiEval(t *testing.T) {
 	}
 }
 
+// connect-src con ws: o wss: (esquema solo) permite abrir un WebSocket a CUALQUIER servidor: es el
+// camino por el que un XSS sacaria los datos que el resto de la politica ya no deja sacar. La
+// aplicacion no usa WebSockets; 'self' basta para el API.
+func TestLaPoliticaNoAbreWebSocketsATerceros(t *testing.T) {
+	t.Setenv("API_ORIGIN", "https://api.ejemplo.test")
+	rec := httptest.NewRecorder()
+	SecureHeaders(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})).
+		ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	var connect string
+	for _, d := range strings.Split(rec.Header().Get("Content-Security-Policy"), ";") {
+		if strings.HasPrefix(strings.TrimSpace(d), "connect-src") {
+			connect = strings.TrimSpace(d)
+		}
+	}
+	if connect == "" || !strings.Contains(connect, "'self'") || !strings.Contains(connect, "https://api.ejemplo.test") {
+		t.Fatalf("connect-src = %q", connect)
+	}
+	for _, source := range strings.Fields(connect) {
+		if source == "ws:" || source == "wss:" || source == "*" || source == "https:" || source == "http:" {
+			t.Errorf("connect-src admite %q: %s", source, connect)
+		}
+	}
+}
+
 // Las fotos del modulo biometrico —la de una marcacion, el rostro con el que
 // quedo registrado un trabajador— se piden con la cabecera de sesion, asi que no
 // pueden ir en un <img src> directo: se descargan y se muestran desde memoria,

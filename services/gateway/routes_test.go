@@ -147,6 +147,11 @@ func TestValidacionRechazaIncoherencias(t *testing.T) {
 		"prefijo repetido":     func(t *routeTable) { t.Routes = append(t.Routes, t.Routes[0]) },
 		"prefijo invalido":     func(t *routeTable) { t.Routes[0].Prefix = "Users" },
 		"modulo invalido":      func(t *routeTable) { t.Routes[0].Module = "mail-boxes" },
+		// Una ruta nueva con "module" olvidado o vacio quedaria sin RBAC en silencio: el modulo vacio solo
+		// es de las consultas de acceso, que resuelve access-control con el JWT.
+		"ruta con sesion sin modulo": func(t *routeTable) {
+			t.Routes = append(t.Routes, routeSpec{Prefix: "mail-nuevo", Service: "identity", Module: ""})
+		},
 		"frontend desconocido": func(t *routeTable) { t.Frontend = "web" },
 		"host_env invalido": func(t *routeTable) {
 			s := t.Services["identity"]

@@ -2,6 +2,7 @@ package main
 
 import (
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -16,6 +17,24 @@ import (
 // por lo que la firma se renueva en cada peticion.
 const mediaPresignTTL = 15 * time.Minute
 
+// publicMediaKey dice si la clave es de un objeto del espacio public/ sin salir de el: nada de
+// segmentos vacios, "." ni ".." (tambien escapados) ni barras invertidas.
+func publicMediaKey(key string) bool {
+	if !strings.HasPrefix(key, "public/") {
+		return false
+	}
+	decoded, err := url.PathUnescape(key)
+	if err != nil || strings.Contains(decoded, `\`) {
+		return false
+	}
+	for _, segment := range strings.Split(decoded, "/") {
+		if segment == "" || segment == "." || segment == ".." {
+			return false
+		}
+	}
+	return true
+}
+
 // mediaHandler sirve UNICAMENTE los objetos del espacio public/ (imagenes de
 // catalogo, medios de tienda, creatividades): activos no confidenciales,
 // legibles por cualquiera con el enlace. Redirige a una URL prefirmada de corta
@@ -29,7 +48,7 @@ const mediaPresignTTL = 15 * time.Minute
 func mediaHandler(store *objectstore.Store, logger *zap.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		key := chi.URLParam(r, "*")
-		if !strings.HasPrefix(key, "public/") {
+		if !publicMediaKey(key) {
 			response.Err(w, http.StatusNotFound, "NOT_FOUND", "not found")
 			return
 		}

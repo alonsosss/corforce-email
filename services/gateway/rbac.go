@@ -153,7 +153,7 @@ func (e *rbacEnforcer) gatearLectura(w http.ResponseWriter, r *http.Request) boo
 		return true
 	}
 	seg1, seg2 := pathSegments(r.URL.Path)
-	if seg2 == "me" || autoservicio(seg1, seg2, userID) {
+	if autoservicio(seg1, seg2, userID) {
 		return true
 	}
 	module := e.modules[seg1]
@@ -251,10 +251,10 @@ func (e *rbacEnforcer) middleware(next http.Handler) http.Handler {
 			return
 		}
 
-		// Autoservicio: las rutas /api/v1/<x>/me/... son del propio usuario y el
-		// servicio las resuelve con el JWT. No se gatean por modulo.
+		// Autoservicio (autoservicio): lo propio de la sesion, que el servicio resuelve con el JWT.
+		// No se gatea por modulo.
 		seg1, seg2 := pathSegments(r.URL.Path)
-		if seg2 == "me" || autoservicio(seg1, seg2, middleware.GetUserID(r.Context())) {
+		if autoservicio(seg1, seg2, middleware.GetUserID(r.Context())) {
 			next.ServeHTTP(w, r)
 			return
 		}

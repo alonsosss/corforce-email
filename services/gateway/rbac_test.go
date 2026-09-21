@@ -1,9 +1,13 @@
 package main
 
 import (
+	"context"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/alonsosss/corforce-email/pkg/middleware"
 )
 
 func TestElAutoservicioNoAbreElDirectorioDeUsuarios(t *testing.T) {
@@ -26,6 +30,27 @@ func TestElAutoservicioNoAbreElDirectorioDeUsuarios(t *testing.T) {
 		if got := autoservicio(c.seg1, c.seg2, uid); got != c.quiere {
 			t.Errorf("autoservicio(%q,%q) = %v; se esperaba %v", c.seg1, c.seg2, got, c.quiere)
 		}
+	}
+}
+
+// "me" como segundo segmento no exime a ningun modulo: solo lo es en users/me. Una ruta o un recurso
+// que se llame "me" (o un parametro de ruta de texto libre) saltaria el gateo por modulo y el bloqueo
+// de los modulos que la empresa no tiene contratados.
+func TestMeNoEximeDelGateoPorModulo(t *testing.T) {
+	s := nuevaSesion(t, http.StatusOK, cuentaActiva(time.Now().Add(-time.Hour)))
+	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodDelete} {
+		req := httptest.NewRequest(method, "/api/v1/campaigns/me", nil)
+		ctx := context.WithValue(req.Context(), middleware.CtxUserID, "7f0b1e2c-0000-4000-8000-000000000001")
+		ctx = context.WithValue(ctx, middleware.CtxTenantID, "7f0b1e2c-0000-4000-8000-0000000000aa")
+		ctx = context.WithValue(ctx, middleware.CtxRoles, []string{})
+		rec := httptest.NewRecorder()
+		s.h.ServeHTTP(rec, req.WithContext(ctx))
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("%s /campaigns/me sin permisos: %d, se esperaba 403", method, rec.Code)
+		}
+	}
+	if rec := s.pedir("/api/v1/campaigns/me", hace(30)); rec.Code != http.StatusForbidden {
+		t.Errorf("GET /campaigns/me sin el modulo: %d, se esperaba 403", rec.Code)
 	}
 }
 

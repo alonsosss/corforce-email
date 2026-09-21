@@ -101,6 +101,10 @@ type methodPathSpec struct {
 	Path   string `json:"path"`
 }
 
+// ungatedPrefixes son las unicas rutas con sesion sin modulo de permisos: las consultas de acceso,
+// que access-control resuelve con el JWT del propio usuario. Cualquier otra ruta debe declarar modulo.
+var ungatedPrefixes = map[string]bool{"access": true, "check-access": true, "policy": true}
+
 // reservedPrefixes los monta el gateway por su cuenta: un prefijo autenticado por el
 // servicio no puede ocuparlos.
 var reservedPrefixes = map[string]bool{"auth": true, "public": true}
@@ -220,6 +224,9 @@ func (t *routeTable) validate() error {
 		if r.Module != "" && !moduleRe.MatchString(r.Module) {
 			return fmt.Errorf("tabla de rutas: modulo invalido %q en %q", r.Module, r.Prefix)
 		}
+		if r.Module == "" && !ungatedPrefixes[r.Prefix] {
+			return fmt.Errorf("tabla de rutas: la ruta %q no declara modulo y quedaria sin control de acceso por modulo", r.Prefix)
+		}
 	}
 	for _, rp := range t.ReadPosts {
 		if !seen[rp.Prefix] || !prefixRe.MatchString(rp.Action) {
@@ -338,7 +345,7 @@ func lastSegment(path string) string {
 }
 
 // pathSegments devuelve los dos primeros segmentos de /api/v1/<seg1>/<seg2>/...
-// seg1 identifica el modulo; seg2 permite detectar autoservicio (".../me/...").
+// seg1 identifica el modulo; seg2 permite detectar el autoservicio (users/me, access/my-modules).
 func pathSegments(path string) (seg1, seg2 string) {
 	p := strings.TrimPrefix(path, "/api/v1/")
 	parts := strings.SplitN(p, "/", 3)

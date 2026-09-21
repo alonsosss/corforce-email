@@ -151,6 +151,10 @@ El gateway marca los `<script>` del documento con ese nonce (`stampCSPNonce`) y 
 HTML sin comprimir **solo para el documento** —el navegador manda `text/html` en `Accept`—;
 los assets siguen viajando comprimidos.
 
+`connect-src` es `'self' blob:` más `API_ORIGIN`. No admite `ws:` ni `wss:` (esquemas solos, que
+permiten abrir un WebSocket a cualquier servidor): la aplicación no usa WebSockets y esa apertura
+era el camino por el que un XSS sacaría datos aunque el resto de la política estuviera cerrada.
+
 `style-src` conserva `'unsafe-inline'` a propósito: el sistema de diseño inyecta estilos y
 un estilo no ejecuta código.
 
@@ -233,6 +237,29 @@ arriba y nunca 0, igual decida Redis o la memoria.
 **IP**: la que resuelve `CaptureClientIP` (`X-Real-IP` solo si la conexión llega desde
 `TRUSTED_PROXY_CIDRS`). Ni `X-Real-IP`, ni `X-Forwarded-For`, ni una cabecera interna
 enviada por el cliente cambian la clave (probado en `pkg/middleware` y en el gateway).
+
+**Cabeceras internas**: el gateway las escribe él y solo él, y ningún cliente las puede fijar ni
+quitar. `StripInternalHeaders` borra las que envíe (`X-User-ID`, `X-Tenant-ID`, `X-User-Roles`,
+`X-Gateway-Token`, `X-Operator-Cell`, `X-Internal-Token`) y `X-Target-Cell` se retira antes de
+llegar a ningún servicio. Además, `ReverseProxy` borra, **después** de su `Director`, las cabeceras
+que la petición nombre en `Connection`: sin defensa, un cliente con sesión escribía
+`Connection: X-User-ID` y el servicio recibía la petición sin usuario, que `RequireInternalCaller`,
+`internalOrPerm` y `Membership.Require` toman por una llamada de otro servicio (`dropClientHopHeaders`
+aplica ese borrado por adelantado, antes de escribir las del gateway). Lo comprueba
+`TestElClienteNoFijaNiQuitaCabecerasInternasEnNingunaRuta`, que recorre con la tabla real de
+`routes.json` cada ruta pública, cada prefijo `self_authenticated` con sus métodos, cada ruta con sesión
+y la aplicación.
+
+**`X-Request-ID`**: lo elige el cliente y acaba en el registro de acceso y en el rastro de auditoría
+(`audit.audit_logs.request_id` es `varchar(100)`); `RequestID` solo lo conserva si son hasta 64
+caracteres de `[A-Za-z0-9._-]` y si no sortea uno. El rastro de `audit` recorta además lo que
+no cabe en sus columnas: un valor largo hacía fallar el `INSERT` en cada reentrega y la escritura
+quedaba sin apunte.
+
+**Métricas**: `/metrics` de `observability.WithOps` se resuelve antes que el router, y el borde
+reenvía al gateway todo el dominio público. `internalOps` solo la sirve a quien llega sin `X-Real-IP` ni
+`X-Forwarded-For` (el recolector, por la red interna; el borde los escribe siempre) y a los demás los
+pasa al router como a cualquier ruta desconocida. `/healthz` sigue disponible.
 
 **Redis caído**: los dos limitadores caen a memoria con el mismo cupo por réplica. En el
 estricto, nunca se deja pasar sin límite, pero tampoco se tumba el inicio de sesión.

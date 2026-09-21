@@ -407,8 +407,9 @@ if $GATED; then
 else
   echo "     en \"routes\":   {\"prefix\": \"$NAME\", \"service\": \"$NAME\", \"module\": \"\"}"
   echo ""
-  echo "3) RBAC: servicio marcado --ungated (no se gatea por modulo). Confirmar que es correcto:"
-  echo "   solo las consultas de acceso que el propio servicio resuelve con el JWT deberian quedar sin gatear."
+  echo "3) RBAC: servicio marcado --ungated (no se gatea por modulo)."
+  echo "   El gateway solo admite un modulo vacio en access, check-access y policy (ungatedPrefixes en services/gateway/routes.go);"
+  echo "   otro prefijo sin modulo no arranca. Un servicio nuevo declara su modulo de permisos."
 fi
 echo ""
 echo "Valida con: make validate-scaffold && make gen-events && make gen-observability-targets"

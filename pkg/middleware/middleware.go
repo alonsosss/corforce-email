@@ -151,10 +151,31 @@ func GetClientIP(ctx context.Context) string {
 	return v
 }
 
+// maxRequestIDLen: el identificador llega al rastro de auditoria, cuya columna es varchar(100).
+const maxRequestIDLen = 64
+
+// validRequestID admite lo que producen un UUID o un proxy (letras, digitos, '-', '_', '.'): el
+// identificador lo elige el cliente y viaja al registro de acceso, a la cabecera de respuesta y al
+// apunte de auditoria de cada escritura.
+func validRequestID(id string) bool {
+	if id == "" || len(id) > maxRequestIDLen {
+		return false
+	}
+	for i := 0; i < len(id); i++ {
+		c := id[i]
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9', c == '-', c == '_', c == '.':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 func RequestID(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id := r.Header.Get("X-Request-ID")
-		if id == "" {
+		if !validRequestID(id) {
 			id = uuid.New().String()
 		}
 		ctx := context.WithValue(r.Context(), CtxRequestID, id)
@@ -207,7 +228,7 @@ func SecureHeaders(next http.Handler) http.Handler {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("X-XSS-Protection", "0")
-		connectSrc := "connect-src 'self' blob: ws: wss:"
+		connectSrc := "connect-src 'self' blob:"
 		if apiOrigin := strings.TrimSpace(os.Getenv("API_ORIGIN")); apiOrigin != "" {
 			connectSrc += " " + apiOrigin
 		}
