@@ -61,6 +61,10 @@ type rsResets struct {
 	created     []*domain.PasswordResetToken
 	invalidated int
 	byHash      map[string]*domain.PasswordResetToken
+	// recent es la respuesta de RequestedSince y since lo que se le pregunto.
+	recent    bool
+	recentErr error
+	since     time.Time
 }
 
 func (r *rsResets) Create(_ context.Context, tok *domain.PasswordResetToken) error {
@@ -68,6 +72,10 @@ func (r *rsResets) Create(_ context.Context, tok *domain.PasswordResetToken) err
 	return nil
 }
 func (r *rsResets) InvalidateForUser(context.Context, uuid.UUID) error { r.invalidated++; return nil }
+func (r *rsResets) RequestedSince(_ context.Context, _ uuid.UUID, since time.Time) (bool, error) {
+	r.since = since
+	return r.recent, r.recentErr
+}
 func (r *rsResets) GetByTokenHash(_ context.Context, hash string) (*domain.PasswordResetToken, error) {
 	if tok, ok := r.byHash[hash]; ok {
 		return tok, nil
@@ -227,6 +235,27 @@ func TestAtenderLaSolicitudDeUnaCuenta(t *testing.T) {
 	}
 	if len(f.audit.entries) != 1 || f.audit.entries[0].IPAddress != "203.0.113.7" || f.audit.entries[0].Action != "password_reset_requested" {
 		t.Errorf("bitacora %+v", f.audit.entries)
+	}
+}
+
+// La solicitud es publica y sin sesion: quien conozca un correo podria llenarle el buzon de enlaces y,
+// como cada enlace nuevo anula el anterior, impedirle terminar nunca un reinicio legitimo. Un correo
+// que ya tuvo un enlace hace poco no recibe otro ni anula el vigente, y un fallo al comprobarlo
+// tampoco envia nada.
+func TestUnaCuentaConUnEnlaceRecienteNoRecibeOtro(t *testing.T) {
+	for name, setup := range map[string]func(*resetFixture){
+		"enlace reciente":        func(f *resetFixture) { f.resets.recent = true },
+		"no se pudo comprobarlo": func(f *resetFixture) { f.resets.recentErr = errors.New("base caida") },
+	} {
+		f := newResetFixture(t, resetBaseURL)
+		setup(f)
+		f.uc.ProcessReset(context.Background(), ports.PasswordResetRequest{Email: f.known.Email, IPAddress: "203.0.113.7"})
+		if f.resets.invalidated != 0 || len(f.resets.created) != 0 || len(f.mailer.sent) != 0 || len(f.audit.entries) != 0 {
+			t.Errorf("%s: invalidados %d, creados %d, enviados %d", name, f.resets.invalidated, len(f.resets.created), len(f.mailer.sent))
+		}
+		if want := resetNow.Add(-resetCooldown); !f.resets.since.Equal(want) {
+			t.Errorf("%s: se pregunto desde %v, se esperaba %v", name, f.resets.since, want)
+		}
 	}
 }
 

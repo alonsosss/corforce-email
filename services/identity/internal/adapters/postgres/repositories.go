@@ -797,6 +797,15 @@ func (r *PasswordResetRepo) MarkUsed(ctx context.Context, id uuid.UUID) error {
 	return err
 }
 
+func (r *PasswordResetRepo) RequestedSince(ctx context.Context, userID uuid.UUID, since time.Time) (bool, error) {
+	var found bool
+	err := r.pool.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM identity.password_reset_tokens WHERE user_id = $1 AND created_at >= $2)`,
+		userID, since,
+	).Scan(&found)
+	return found, err
+}
+
 func (r *PasswordResetRepo) InvalidateForUser(ctx context.Context, userID uuid.UUID) error {
 	_, err := r.pool.Exec(ctx,
 		`UPDATE identity.password_reset_tokens SET used_at = NOW()

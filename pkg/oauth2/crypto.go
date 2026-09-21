@@ -33,7 +33,8 @@ func NewCipherFromHex(hexKey, purpose string) (*Cipher, error) {
 	}
 	master, err := hex.DecodeString(hexKey)
 	if err != nil {
-		return nil, fmt.Errorf("oauth2: clave de cifrado invalida: %w", err)
+		// El error de hex nombra el caracter invalido, que es un caracter de la clave.
+		return nil, errors.New("oauth2: clave de cifrado invalida: debe ser hexadecimal")
 	}
 	if purpose == "" {
 		return nil, errors.New("oauth2: falta el proposito de la clave derivada")

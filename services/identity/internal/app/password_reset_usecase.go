@@ -19,6 +19,9 @@ import (
 
 const resetTokenTTL = 30 * time.Minute
 
+// resetCooldown es lo que una cuenta espera entre dos enlaces de reinicio.
+const resetCooldown = 2 * time.Minute
+
 // productName es la marca que ve el usuario en el correo de recuperacion.
 const productName = "Core Force Mail"
 
@@ -130,6 +133,19 @@ func (uc *PasswordResetUseCase) ProcessReset(ctx context.Context, req ports.Pass
 	user, err := uc.users.GetByEmail(ctx, tenantID, email)
 	if err != nil || user.Status == domain.UserStatusInactive {
 		uc.logger.Info("password reset: usuario no elegible", zap.String("email", email))
+		return
+	}
+
+	// La solicitud es publica: sin este freno se podria llenar de enlaces el buzon de cualquier
+	// cuenta y, como cada enlace anula el anterior, impedirle terminar un reinicio legitimo. Ante la
+	// duda no se envia nada.
+	recent, err := uc.resets.RequestedSince(ctx, user.ID, uc.now().Add(-resetCooldown))
+	if err != nil {
+		uc.logger.Warn("password reset: no se pudo comprobar la frecuencia de solicitudes", zap.Error(err))
+		return
+	}
+	if recent {
+		uc.logger.Info("password reset: la cuenta ya tiene un enlace reciente; no se envia otro")
 		return
 	}
 

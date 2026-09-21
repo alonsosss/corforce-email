@@ -233,7 +233,8 @@ func parseHexKey(hexKey string) ([]byte, error) {
 	}
 	key, err := hex.DecodeString(hexKey)
 	if err != nil {
-		return nil, err
+		// El error de hex nombra el caracter invalido, que es un caracter de la llave.
+		return nil, errors.New("must be 64 hex chars (0-9, a-f)")
 	}
 	return key, nil
 }

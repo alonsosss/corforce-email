@@ -97,6 +97,8 @@ type PasswordResetRepository interface {
 	// InvalidateForUser marca como usados los tokens vigentes del usuario para que
 	// solo el enlace mas reciente sea valido.
 	InvalidateForUser(ctx context.Context, userID uuid.UUID) error
+	// RequestedSince dice si el usuario tiene un enlace creado desde since, usado o no.
+	RequestedSince(ctx context.Context, userID uuid.UUID, since time.Time) (bool, error)
 }
 
 // PasswordPolicyRepository guarda la politica de contrasenas por empresa. Get nunca
