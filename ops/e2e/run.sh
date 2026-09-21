@@ -915,7 +915,9 @@ expect "domain-service sin celdas verifica beta.test contra el DNS de la prueba"
 expect "la activacion y las claves no se dan por hechas: pe-01 no atiende a beta" "$(echo "$V1" | errores_de TENANT_NOT_IN_CELL)" "2 2"
 expect "y pe-01 no guarda nada de beta.test" "$(en_pe01)" "0"
 M_DS=$(curl -s "http://127.0.0.1:${PORT[domain-service]}/metrics")
-contains "domain-service cuenta la instancia de otra celda en mail-directory" "$M_DS" 'cell_call_failures_total{cell_service="mail-directory",reason="not_in_cell"} 1'
+# Tres llamadas a mail-directory rechazadas por la celda: la activacion y dos lecturas de la version de la
+# politica MTA-STS para el TXT _mta-sts (estas ultimas no dan error de integracion: solo dejan ese TXT fuera).
+contains "domain-service cuenta la instancia de otra celda en mail-directory" "$M_DS" 'cell_call_failures_total{cell_service="mail-directory",reason="not_in_cell"} 3'
 contains "y en mail-security" "$M_DS" 'cell_call_failures_total{cell_service="mail-security",reason="not_in_cell"} 1'
 V2=$(curl -s -X POST "$GW2/domains/$BDOMID/verify" -H "$AB")
 expect "domain-service de las celdas lo verifica" "$(echo "$V2" | jget data.status)" "verified"

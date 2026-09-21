@@ -19,6 +19,11 @@ import { MtaStsCard } from './MtaStsCard';
 
 type Triple = readonly [string, string, string];
 
+/** El ultimo elemento: Array.prototype.at no esta en la lib de TypeScript del proyecto. */
+function lastOf<T>(items: T[]): T {
+  return items[items.length - 1]!;
+}
+
 function grant(...triples: Triple[]) {
   const permissions: PermissionTriple[] = triples.map(([module, resource, action]) => ({
     module,
@@ -127,7 +132,7 @@ describe('MTA-STS en la ficha del dominio', () => {
     const dialog = await screen.findByRole('dialog');
     expect(dialog).toHaveTextContent(t('domains.mtaSts.enforceConfirm', { domain: 'acme.com' }));
 
-    await user.click(screen.getAllByRole('button', { name: t('domains.mtaSts.enforce') }).at(-1)!);
+    await user.click(lastOf(screen.getAllByRole('button', { name: t('domains.mtaSts.enforce') })));
     await waitFor(() => expect(set).toHaveBeenCalledWith('acme.com', 'enforce'));
     expect(await screen.findByText(t('domains.mtaSts.mode.enforce'))).toBeInTheDocument();
     expect(onChanged).toHaveBeenCalledTimes(1);
@@ -160,7 +165,7 @@ describe('MTA-STS en la ficha del dominio', () => {
     renderCard(onChanged);
 
     await user.click(await screen.findByRole('button', { name: t('domains.mtaSts.enforce') }));
-    await user.click(screen.getAllByRole('button', { name: t('domains.mtaSts.enforce') }).at(-1)!);
+    await user.click(lastOf(screen.getAllByRole('button', { name: t('domains.mtaSts.enforce') })));
 
     expect(
       await screen.findByText(/los MX publicados del dominio no son los de la plataforma/),
