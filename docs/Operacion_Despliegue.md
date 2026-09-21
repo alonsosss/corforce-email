@@ -809,6 +809,25 @@ Lo que se comprobó de punta a punta con un buzón real, y las trampas que salie
   systemd antes de desplegar.
 * **Reinicio.** Ver "Arranque tras un reinicio del servidor": todo el perfil usa `restart: always`.
 
+### Informes DMARC
+
+Todos los dominios de las empresas publican `rua=mailto:<MAIL_DMARC_RUA>`. Para que esos informes lleguen hace
+falta, en este orden y una sola vez por plataforma (V en producción, 2026-09-20):
+
+1. Un dominio de la plataforma que reciba correo, distinto del de la web. En producción `dmarc.core-force.com`. El
+   superadmin lo da de alta en Dominios (`POST /api/v1/domains`, propósito corporativo): es el único que puede dar
+   de alta un dominio de la plataforma, y pasa por la verificación normal (TXT de propiedad, MX, SPF, DKIM).
+2. Sus registros DNS, que devuelve el alta: MX a `MAIL_MX_HOSTNAME`, SPF, DKIM y el TXT de propiedad.
+3. El TXT de autorización `*._report._dmarc.<dominio>` con `v=DMARC1`. Sin él, Google y Microsoft no envían
+   informes a un dominio distinto del que los pide (RFC 7489, 7.1); el comodín vale para todas las empresas.
+4. Un buzón real en ese dominio (`reportes@`), con `smtp_access` apagado porque solo recibe. El superadmin lo lee
+   por `/webmail`; la contraseña se genera aleatoria y se guarda fuera del repositorio.
+5. `MAIL_DMARC_RUA` con esa dirección en el `.env` y recrear `domain-service`. Las empresas con Cloudflare la
+   toman al publicar de nuevo su DNS; las de DNS manual la ven en los registros del dominio y la copian ellas.
+
+Con la dirección en un dominio sin MX o sin ese TXT, el correo funciona igual pero los informes se pierden en
+silencio: es lo que ocurría con `dmarc@core-force.com`.
+
 ### Riesgos y pendientes
 
 * Los buzones se archivan con Dovecot en marcha: un mensaje que cambie de carpeta durante el
