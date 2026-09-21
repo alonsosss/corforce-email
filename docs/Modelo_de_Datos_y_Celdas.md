@@ -556,13 +556,22 @@ solo servicios, por la instancia de la celda de la empresa con `tenantcell.Calle
   cancel_requested|completed|failed|cancelled` (`docs/arquitectura/EVENT-CONTRACTS.md`), con
   `UserID` de quien lo lanzo o cancelo; `audit` los recoge con `AUDIT_SUBJECTS` (`migration.>`). Llevan el
   servidor de origen y los contadores, nunca la contrasena ni el usuario de la cuenta de origen.
+* Consume `mail.mailbox.deleted` (V, 2026-09-21; durable `mail-migration-mailbox-deleted` sobre `MAIL_DIRECTORY`): borra
+  TODOS los trabajos del buzon (en cualquier estado, con su credencial cifrada, usuario y servidor de origen y nombres de
+  carpeta) en la base de la empresa del evento y en ninguna otra, por `mailbox_id` y no por el nombre guardado. Se borran
+  las filas en vez de anonimizarlas: la evidencia esta en los eventos `migration.job.*` que ya recoge `audit`, y un
+  trabajo `pending` o `running` anuncia `migration.job.cancelled` con `error_code = mailbox_deleted` en la misma
+  transaccion que lo borra (el ejecutor pierde el lease en su siguiente latido). Idempotente; ver
+  `docs/adr/0002-migracion-de-buzones-con-imapsync.md`.
 * Probado (integracion contra Postgres 16, `IT_PACKAGES='./services/mail-migration/...' make test-integration`):
   las migraciones aplican dos veces; el reclamo con 16 ejecutores concurrentes entrega cada trabajo
   una sola vez; el limite aguanta 12 altas simultaneas; la credencial es NULL tras cada estado final y la
   base rechaza un estado final que la conserve; una empresa no ve, lista, cuenta, reclama, cancela, da
   latido ni cierra el trabajo de otra; lease ajeno, vencido, reintentos y agotamiento; el rol de servicio
   solo alcanza su esquema y su outbox; y el recorrido completo con cifrado real (la columna no contiene la
-  contrasena, el ejecutor la recibe descifrada, al cerrar no queda rastro y el mensaje de error la retira).
+  contrasena, el ejecutor la recibe descifrada, al cerrar no queda rastro y el mensaje de error la retira); y el borrado
+  por buzon borrado (otro buzon de la empresa, uno recreado con el mismo nombre y otra empresa con el mismo id de buzon
+  no pierden nada; solo los activos anuncian su cancelacion; se revierte entero si falla el evento).
 
 ### 4.2 Contactos personales por CardDAV: `mail_dav` (V, 2026-09-21)
 
@@ -587,8 +596,12 @@ foranea entre esquemas. Las claves foraneas son de dentro del esquema y llevan e
   (desarrollo) el servicio corre como dueno, exento de las politicas, y rigen solo los filtros de sus consultas.
 * Limites por buzon (`MAIL_DAV_MAX_*`): tamano y propiedades de un vCard, contactos y libretas; se cuentan bajo un
   cerrojo consultivo por buzon. Pasarlos a derechos del plan de `billing` esta pendiente.
-* Sin eventos ni outbox. El borrado de los datos de un buzon borrado en `mail-directory` esta pendiente (hoy quedan
-  hasta que se borra la empresa).
+* Sin outbox: no publica eventos. Consume `mail.mailbox.deleted` (V, 2026-09-21; durable `mail-dav-mailbox-deleted`
+  sobre `MAIL_DIRECTORY`): borra las libretas del buzon con sus contactos y su registro de cambios (cascada de la clave
+  foranea compuesta) en la base de la empresa del evento y en ninguna otra, por el `id` del buzon y no por su nombre, de
+  modo que uno recreado con el mismo nombre conserva lo suyo. Idempotente; un evento sin `tenant_id` e `id` validos
+  termina en `EVENTS_DLQ`. Lo borrado antes de que existiera el consumidor o mas alla de la retencion del stream no se
+  retira (P: barrido de conciliacion contra `mail-directory`).
 * Probado (integracion contra Postgres 16, `IT_PACKAGES='./services/mail-dav/...' make test-integration`, con el rol de
   servicio real): migraciones dos veces; ciclo de libretas y contactos con `If-Match`/`If-None-Match`; UID unico; el
   ctag no avanza si el contenido no cambia; sincronizacion incremental y poda del registro; 20 altas simultaneas
@@ -596,7 +609,9 @@ foranea entre esquemas. Las claves foraneas son de dentro del esquema y llevan e
   consulta sin filtro, la escritura como otro buzon y la sesion vacia no ven ni tocan lo de otro, y con la politica
   apagada (mutacion, revertida) la misma consulta si lo veria, y como dueno de las tablas (exento de las politicas) los
   filtros de cada consulta aislan por si solos (quitar un filtro hace fallar esa prueba); las restricciones de la base (recurso con ruta, etag,
-  tamano, libreta ajena) y que el rol de servicio no hace DDL ni `TRUNCATE`.
+  tamano, libreta ajena) y que el rol de servicio no hace DDL ni `TRUNCATE`; y el borrado por buzon borrado, con el rol
+  de servicio y como dueno de las tablas (otro buzon de la empresa, uno recreado con el mismo nombre y otra empresa no
+  pierden nada; quitar el filtro de empresa o el de buzon del `DELETE` hace fallar la prueba).
 
 ## 5. Enrutado por peticion y por celda (V)
 

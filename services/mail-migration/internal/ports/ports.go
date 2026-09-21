@@ -74,6 +74,9 @@ type JobRepository interface {
 	// ExpireLost cierra los trabajos en curso cuyo lease vencio y ya no pueden reintentarse (agotaron
 	// los intentos) o cuya cancelacion estaba pedida, y borra su credencial.
 	ExpireLost(ctx context.Context, tenantID uuid.UUID, now time.Time, maxAttempts int) ([]domain.Job, error)
+	// DeleteByMailbox borra todos los trabajos del buzon, en cualquier estado, y devuelve lo que
+	// borro tal como estaba (el estado que tenia cada uno). Un buzon sin trabajos no es un error.
+	DeleteByMailbox(ctx context.Context, tenantID, mailboxID uuid.UUID) ([]domain.Job, error)
 }
 
 // MailboxRef es lo que el directorio de correo sabe de un buzon destino.

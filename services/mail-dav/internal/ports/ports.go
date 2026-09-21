@@ -29,6 +29,9 @@ type Store interface {
 	CreateAddressbook(ctx context.Context, p domain.Principal, book domain.Addressbook, maxBooks int) (domain.Addressbook, error)
 	// DeleteAddressbook borra la libreta con sus contactos.
 	DeleteAddressbook(ctx context.Context, p domain.Principal, slug string) error
+	// DeleteMailboxData borra todas las libretas del buzon con sus contactos y su registro de cambios y
+	// devuelve cuantas libretas borro. Un buzon sin datos no es un error.
+	DeleteMailboxData(ctx context.Context, p domain.Principal) (int, error)
 
 	// ListContacts devuelve la libreta y todos sus contactos; la libreta se lee primero, de modo que
 	// su ctag nunca es posterior a lo listado.

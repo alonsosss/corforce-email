@@ -12,6 +12,7 @@ var (
 	ErrNotCancellable     = errors.New("el trabajo ya termino y no se puede cancelar")
 	ErrLeaseLost          = errors.New("el trabajo ya no esta reclamado por este ejecutor")
 	ErrTenantUnknown      = errors.New("empresa desconocida")
+	ErrInvalidMailbox     = errors.New("identificador de buzon no valido")
 
 	ErrInvalidHost      = errors.New("servidor de origen no valido")
 	ErrHostNotAllowed   = errors.New("el servidor de origen no es una direccion publica de Internet")

@@ -6,8 +6,9 @@
 servicio `mail-dav` con CardDAV (contactos personales de cada buzon, sincronizables con iOS, Thunderbird y DAVx5),
 su autenticacion contra `mail-auth`, el flag `dav_access` del buzon, los datos de conexion en la ficha del buzon y
 las pruebas. **Pendiente**: CalDAV (calendarios y eventos), comparticion entre buzones, la libreta de solo lectura
-"Directorio de la empresa", limites como derechos del plan de `billing` y la limpieza de los datos de un buzon
-borrado (secciones "Lo decidido al implementar" y "Pendiente"). Cierra el diseno de
+"Directorio de la empresa" y limites como derechos del plan de `billing` (secciones "Lo decidido al implementar" y
+"Pendiente"). El borrado de los contactos de un buzon borrado esta hecho (2026-09-21, ver "Borrado de los datos de
+un buzon"). Cierra el diseno de
 `Plan_Estrategico_Mejoras_Correo.md`, C3 fase 2. La fase 1 (libreta compartida de la empresa en el webmail) ya
 estaba hecha y no depende de esto.
 
@@ -115,6 +116,34 @@ rol: buzon de otra empresa, buzon de la misma empresa, consulta sin filtro, escr
 (fail-closed), y una mutacion (RLS apagada en una transaccion) que demuestra que la prueba detectaria una politica
 ausente. Sin credencial propia (desarrollo) el servicio corre como dueno y rigen solo los filtros de las consultas.
 
+### Borrado de los datos de un buzon
+
+Al borrar un buzon, `mail-directory` publica `mail.mailbox.deleted` (payload `tenant_id`, `id`, `username`, ...) por su
+outbox, y `mail-dav` lo consume (`internal/adapters/nats`, durable `mail-dav-mailbox-deleted` sobre el stream
+`MAIL_DIRECTORY`, que el propio consumidor declara con `EnsureStream`) y borra las libretas del buzon; los contactos
+y el registro de cambios caen por la clave foranea `ON DELETE CASCADE`.
+
+* **Por id, no por nombre.** El borrado usa el `id` del buzon del evento. Un buzon recreado con el mismo nombre tiene
+  otro id y conserva sus contactos; un evento sin `id` valido no borra nada. Tampoco se cruzan empresas: la empresa
+  sale del `tenant_id` del evento (y debe coincidir con la del sobre), elige la base y es la del borrado, que ademas
+  corre con la misma identidad acotada (empresa y buzon en la sesion) que una peticion, de modo que las politicas
+  RLS valen tambien aqui.
+* **Idempotente y sin orden.** Borrar lo que no existe no es un error: un evento repetido, o el de un buzon que
+  nunca guardo contactos, deja las cosas igual. No hay evento de "creacion" que esperar: las libretas nacen del
+  primer acceso del buzon.
+* **Fallos.** Sin ack un evento se reentrega y, agotadas sus entregas, va a `EVENTS_DLQ` (alerta del grupo eventos).
+  Un evento sin `tenant_id` e `id` coherentes tampoco se confirma, para que quede a la vista en la DLQ en lugar de
+  perderse; una empresa que ya no figura en el registro se confirma (sus datos se fueron con ella).
+* **Sin NATS** el servicio arranca y sirve igual, y reintenta la suscripcion; el durable recoge lo pendiente en
+  cuanto suscribe. No hay configuracion nueva.
+* Ventana conocida: una peticion DAV que ya autentico cuando se borra el buzon y escribe despues de procesado el
+  evento (milisegundos frente a la latencia de la outbox y de NATS) dejaria una libreta huerfana; el barrido de
+  conciliacion de "Pendiente" la retiraria.
+* Probado: unitarias del caso de uso y del consumidor (evento repetido, buzon inexistente, otro buzon y otra empresa
+  intactos, buzon recreado con el mismo nombre intacto, identificadores incoherentes), integracion contra Postgres
+  real (con el rol de servicio y como dueno de las tablas, para que los filtros se prueben sin la politica) y una
+  mutacion por filtro (sin `tenant_id`, sin `mailbox_id`) que hace fallar la prueba.
+
 ### Sincronizacion
 
 `ctag` y `sync-token` salen de `addressbooks.sync_seq`, que sube en cada cambio (con la libreta bloqueada, sin huecos ni
@@ -176,8 +205,10 @@ responde como a una contrasena mala. **Basic solo es admisible porque el proxy d
 * **Comparticion entre buzones** (`shares`, solo lectura o escritura) y la libreta de solo lectura "Directorio de la
   empresa" generada desde `mail-directory`.
 * **Limites como derechos del plan** de `billing` (hoy son de operador, por variable de entorno).
-* **Borrado de los datos de un buzon** al borrarlo en `mail-directory` (consumidor de `mail.mailbox.deleted` en cada
-  empresa): hoy los contactos de un buzon borrado quedan en la base de la empresa hasta que se borra la empresa.
+* **Barrido de conciliacion de buzones borrados**: el consumidor de `mail.mailbox.deleted` solo ve los eventos que
+  el stream `MAIL_DIRECTORY` aun conserva; lo borrado antes de que existiera el consumidor, o mas alla de la
+  retencion del stream, no se retira. Un barrido que cruce los `mailbox_id` de `mail_dav` con `mail-directory` lo
+  cubriria.
 * `PROPPATCH` (renombrar una libreta desde el cliente), recuperacion parcial de `address-data` y `param-filter`.
 * Prueba con DAVx5, Thunderbird e iOS reales, y `make e2e-mail` con la seccion nueva.
 * Eventos de auditoria (`dav.*`) por la outbox si la auditoria de contactos personales se exige.

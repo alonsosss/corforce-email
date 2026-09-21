@@ -27,6 +27,9 @@ func NewBinder(pools PoolResolver) *Binder { return &Binder{pools: pools} }
 func (b *Binder) Bind(ctx context.Context, p domain.Principal) (context.Context, error) {
 	pool, err := b.pools.ResolveForTenant(ctx, p.TenantID.String())
 	if err != nil {
+		if db.IsUnknownTenant(err) {
+			return ctx, fmt.Errorf("%w: %w: %v", domain.ErrUnavailable, domain.ErrTenantUnknown, err)
+		}
 		return ctx, fmt.Errorf("%w: base de la empresa: %v", domain.ErrUnavailable, err)
 	}
 	ctx = middleware.WithIdentity(ctx, p.MailboxID.String(), p.TenantID.String())

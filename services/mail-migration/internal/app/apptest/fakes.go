@@ -163,6 +163,19 @@ func (r *Repo) ExpireLost(context.Context, uuid.UUID, time.Time, int) ([]domain.
 	return out, nil
 }
 
+func (r *Repo) DeleteByMailbox(_ context.Context, tenantID, mailboxID uuid.UUID) ([]domain.Job, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []domain.Job
+	for id, j := range r.Jobs {
+		if j.TenantID == tenantID && j.MailboxID == mailboxID {
+			out = append(out, *j)
+			delete(r.Jobs, id)
+		}
+	}
+	return out, nil
+}
+
 type Mailboxes struct {
 	Ref ports.MailboxRef
 	Err error

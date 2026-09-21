@@ -160,6 +160,24 @@ func (r *Repository) DeleteAddressbook(ctx context.Context, p domain.Principal, 
 	})
 }
 
+// DeleteMailboxData borra las libretas del buzon; sus contactos y su registro de cambios caen por
+// la clave foranea compuesta (ON DELETE CASCADE).
+func (r *Repository) DeleteMailboxData(ctx context.Context, p domain.Principal) (int, error) {
+	var removed int
+	err := r.scoped(ctx, p, func(ctx context.Context) error {
+		if err := r.lockMailbox(ctx, p); err != nil {
+			return err
+		}
+		tag, err := r.pool.Exec(ctx, `DELETE FROM mail_dav.addressbooks WHERE tenant_id = $1 AND mailbox_id = $2`, p.TenantID, p.MailboxID)
+		if err != nil {
+			return err
+		}
+		removed = int(tag.RowsAffected())
+		return nil
+	})
+	return removed, err
+}
+
 func (r *Repository) ListContacts(ctx context.Context, p domain.Principal, slug string) (domain.Addressbook, []domain.Contact, error) {
 	var (
 		book domain.Addressbook

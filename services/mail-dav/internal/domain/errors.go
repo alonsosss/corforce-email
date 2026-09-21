@@ -15,6 +15,9 @@ var (
 	ErrInvalidCredentials = errors.New("credenciales invalidas")
 	ErrUnavailable        = errors.New("un servicio del que depende mail-dav no responde")
 	ErrInvalidName        = errors.New("nombre de recurso no valido")
+	ErrInvalidMailbox     = errors.New("identificador de buzon o de empresa no valido")
+	// ErrTenantUnknown es la empresa que ya no figura en el registro: un fallo definitivo, no una base que no responde.
+	ErrTenantUnknown = errors.New("empresa desconocida")
 )
 
 // UIDConflictError: otro contacto de la libreta ya usa el UID del que se guarda.

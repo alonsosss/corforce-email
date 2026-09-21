@@ -54,10 +54,12 @@ func (a *Auth) Authenticate(_ context.Context, username, password, remoteIP stri
 	return acc.Principal, nil
 }
 
-// Binder no necesita base: deja el contexto como esta.
-type Binder struct{}
+// Binder no necesita base: deja el contexto como esta. Err simula una empresa cuya base no se puede abrir.
+type Binder struct{ Err error }
 
-func (Binder) Bind(ctx context.Context, _ domain.Principal) (context.Context, error) { return ctx, nil }
+func (b Binder) Bind(ctx context.Context, _ domain.Principal) (context.Context, error) {
+	return ctx, b.Err
+}
 
 type owner struct{ tenant, mailbox uuid.UUID }
 
@@ -144,6 +146,17 @@ func (s *Store) DeleteAddressbook(_ context.Context, p domain.Principal, slug st
 	delete(s.contacts, b.ID)
 	delete(s.books[key(p)], slug)
 	return nil
+}
+
+func (s *Store) DeleteMailboxData(_ context.Context, p domain.Principal) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	books := s.books[key(p)]
+	for _, b := range books {
+		delete(s.contacts, b.ID)
+	}
+	delete(s.books, key(p))
+	return len(books), nil
 }
 
 func (s *Store) sorted(id uuid.UUID) []domain.Contact {

@@ -56,7 +56,9 @@ Un **ejecutor** propio y una **capa de control** propia, separados:
 Controles obligatorios (los del plan):
 
 * La contraseña de origen se cifra con `MAIL_ENCRYPTION_KEY` en la base de la empresa y se **borra al
-  terminar** el trabajo, cancelado o fallido. Nunca sale por la API ni por el registro.
+  terminar** el trabajo, cancelado o fallido. Nunca sale por la API ni por el registro. Si el buzon destino se
+  borra en `mail-directory` antes de que termine, los trabajos del buzon se borran con su credencial (ver
+  "Borrado de los trabajos de un buzon borrado").
 * Salida del ejecutor solo hacia el origen: sin acceso a la base, a Redis ni al resto de la red interna; el
   destino es únicamente Dovecot.
 * Límite por empresa (trabajos simultáneos) y, pendiente, volumen como derecho del plan en `billing`.
@@ -121,6 +123,32 @@ por CSV y pausar un trabajo (solo se cancela).
   `035_mail_migration_permissions.sql`; `corporate_mail` los agrupa). Eventos `migration.job.*` por la outbox
   de la empresa (stream `MIGRATION`), con quien lanzó o canceló; `audit` los recoge (`AUDIT_SUBJECTS`,
   `migration.>`).
+* **Borrado de los trabajos de un buzon borrado.** `mail-migration` consume `mail.mailbox.deleted`
+  (`internal/adapters/nats`, durable `mail-migration-mailbox-deleted` sobre el stream `MAIL_DIRECTORY`, que el
+  consumidor declara con `EnsureStream`) y, en la base de la empresa del evento y solo ahi, borra todos los
+  trabajos del buzon. Sin `NATS` el servicio arranca y sirve igual, reintenta la suscripcion y el durable recoge lo
+  pendiente al suscribir; no hay configuracion nueva. Decisiones:
+  * **Por id, no por nombre.** El evento lleva el `id` del buzon y el trabajo guarda `mailbox_id`: un buzon
+    recreado con el mismo nombre tiene otro id y conserva sus trabajos. Un evento sin `tenant_id` e `id` validos
+    (y coherentes con el sobre) no borra nada y no se confirma, para que termine en `EVENTS_DLQ` y se vea.
+  * **Se borran las filas, no se anonimizan.** Guardan el nombre del buzon, el usuario y el servidor de origen, los
+    nombres de las carpetas del origen y el ultimo mensaje de error, y una vez que el buzon no existe nada las
+    lee. La evidencia no depende de la fila: `migration.job.*` sale por la outbox a `audit` (cadena de hashes) y
+    lleva `job_id`, `mailbox_id`, estado, contadores y `error_code`, nunca el usuario de origen ni la
+    contrasena. Anonimizar exigiria ademas impedir que el cierre del ejecutor devolviera a la fila los nombres de
+    carpeta, y dejaria filas sin dueno en el listado de la empresa.
+  * **Activos.** Un trabajo `pending` o `running` anuncia `migration.job.cancelled` con `error_code =
+    mailbox_deleted` (sin actor: lo cierra el servicio) en la MISMA transaccion que borra la fila, junto con su
+    credencial cifrada. Un ejecutor que aun lo tenga recibe `LEASE_LOST` en su siguiente latido y detiene imapsync
+    sin informar nada; un `Complete` tardio tambien recibe `LEASE_LOST`. Si el evento no se puede encolar, se
+    revierte todo y el evento de buzon se reentrega. Frente a un `Claim` concurrente decide el bloqueo de fila de
+    Postgres (el borrado espera y borra la fila ya en curso, o el reclamo salta la fila bloqueada); no hay prueba
+    concurrente de ese cruce.
+  * **Idempotente.** Un evento repetido, o el de un buzon sin trabajos, no cambia nada ni vuelve a anunciar.
+  * Ventana conocida: un `Create` que ya paso la comprobacion del buzon y termina de insertar despues de procesado
+    el evento dejaria un trabajo huerfano hasta que se borre la empresa (milisegundos frente a la latencia de la
+    outbox y NATS); un barrido de conciliacion contra `mail-directory` lo cubriria (mejora futura, igual que el
+    de `mail-dav`).
 * **API del ejecutor.** Otro listener del mismo proceso (`MAIL_MIGRATION_RUNNER_PORT`, 8057) que no pasa por
   el gateway ni por JWT: `Authorization: Bearer <MAIL_MIGRATION_RUNNER_KEY>` comparada en tiempo constante,
   `Cache-Control: no-store`. Sin la clave, el listener no se abre. La clave es un secreto opcional del almacén
@@ -193,12 +221,19 @@ pero es un shell dentro del contenedor del ejecutor.
   resuelven a privada, mezcla pública y privada, formas numéricas), casos de uso con dobles, API de
   administración y del ejecutor, publicador de eventos, cliente de `mail-directory`, configuración; y el
   módulo del ejecutor con `go test -race` (guarda SSRF, API, parseo con salidas reales, filtro contra un clamd
-  falso, ejecutor completo con un imapsync falso).
+  falso, ejecutor completo con un imapsync falso). Borrado por buzón borrado (2026-09-21): caso de uso y
+  consumidor (evento repetido, buzón inexistente, otro buzón y otra empresa intactos, buzón recreado con el mismo
+  nombre intacto, identificadores incoherentes sin borrar ni confirmar, empresa desconocida confirmada, fallo
+  transitorio sin confirmar).
 * Integración contra Postgres real (`IT_PACKAGES='./services/mail-migration/...' make test-integration`):
   migraciones dos veces, reclamo concurrente con 16 ejecutores (cada trabajo una sola vez), límite con 12 altas
   simultáneas, borrado de la credencial en todo estado final y rechazo de la base a uno que la conserve,
   aislamiento entre empresas, lease y reintentos, rol de servicio, y el recorrido completo con cifrado real y
-  outbox.
+  outbox; y el borrado por buzón borrado (2026-09-21) con la outbox real: borra en cualquier estado, solo
+  anuncia `migration.job.cancelled` (`mailbox_deleted`) de los activos y sin datos personales, no toca a otro
+  buzón, a uno recreado con el mismo nombre ni a otra empresa con el mismo id de buzón, el ejecutor pierde el
+  lease, es idempotente y se revierte entero si falla el evento. Mutaciones comprobadas (quitar el filtro de
+  empresa o el de buzón del `DELETE` hace fallar la prueba).
 * Laboratorio efímero con imapsync 2.314, dos Dovecot 2.3 y clamd reales: migración de punta a punta, TLS
   por IP con nombre, EICAR, clamd caído, origen privado rechazado, certificado no confiable, `allow_nets` del
   maestro.

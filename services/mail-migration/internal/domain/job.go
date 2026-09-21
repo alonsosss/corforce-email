@@ -73,12 +73,15 @@ const (
 	CodeRunnerLost           ErrorCode = "runner_lost"
 	CodeCredentialUnreadable ErrorCode = "credential_unreadable"
 	CodeCancelled            ErrorCode = "cancelled"
+	// CodeMailboxDeleted cierra un trabajo cuyo buzon destino se borro en mail-directory. Solo lo
+	// anuncia el servicio a la auditoria: la fila se borra en la misma transaccion.
+	CodeMailboxDeleted ErrorCode = "mailbox_deleted"
 )
 
 var errorCodes = []ErrorCode{
 	CodeSourceAuthFailed, CodeSourceUnreachable, CodeSourceBlockedAddress, CodeSourceTLSFailed,
 	CodeDestinationFailed, CodeQuotaExceeded, CodeTimeout, CodeVirusFound, CodeImapsyncFailed,
-	CodeRunnerLost, CodeCredentialUnreadable, CodeCancelled,
+	CodeRunnerLost, CodeCredentialUnreadable, CodeCancelled, CodeMailboxDeleted,
 }
 
 func (c ErrorCode) Valid() bool {
@@ -217,6 +220,16 @@ type Job struct {
 	FinishedAt        *time.Time
 	CreatedAt         time.Time
 	UpdatedAt         time.Time
+}
+
+// CancelForDeletedMailbox deja el trabajo como lo anuncia la auditoria cuando su buzon destino se
+// borra: cancelado por el servicio, sin credencial ni lease.
+func (j *Job) CancelForDeletedMailbox(at time.Time) {
+	j.Status = StatusCancelled
+	j.LastError = &JobError{Code: CodeMailboxDeleted}
+	j.SourcePasswordEnc = nil
+	j.LeaseID, j.LeaseExpiresAt = nil, nil
+	j.FinishedAt = &at
 }
 
 // Outcome es como cierra el ejecutor un trabajo.

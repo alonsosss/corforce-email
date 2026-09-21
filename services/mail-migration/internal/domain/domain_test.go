@@ -5,6 +5,9 @@ import (
 	"net/netip"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/google/uuid"
 )
 
 func TestIsPublicAddrRechazaLoInterno(t *testing.T) {
@@ -277,5 +280,18 @@ func TestEstadosFasesYResultados(t *testing.T) {
 	}
 	if _, err := ParseOutcome("running"); !errors.Is(err, ErrInvalidOutcome) {
 		t.Errorf("resultado invalido: %v", err)
+	}
+}
+
+func TestCancelForDeletedMailboxDejaElTrabajoSinCredencialNiLease(t *testing.T) {
+	lease, until, at := uuid.New(), time.Now().Add(time.Minute), time.Date(2026, 9, 21, 12, 0, 0, 0, time.UTC)
+	j := &Job{Status: StatusRunning, SourcePasswordEnc: []byte("x"), LeaseID: &lease, LeaseExpiresAt: &until}
+	j.CancelForDeletedMailbox(at)
+	if j.Status != StatusCancelled || j.SourcePasswordEnc != nil || j.LeaseID != nil || j.LeaseExpiresAt != nil ||
+		j.FinishedAt == nil || !j.FinishedAt.Equal(at) || j.LastError == nil || j.LastError.Code != CodeMailboxDeleted {
+		t.Fatalf("%+v", j)
+	}
+	if !CodeMailboxDeleted.Valid() {
+		t.Fatal("mailbox_deleted es parte del vocabulario de errores")
 	}
 }

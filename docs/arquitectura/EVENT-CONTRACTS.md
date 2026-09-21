@@ -125,6 +125,8 @@ subject y payload. `opaco` = el payload no se puede leer estaticamente.
 | `mail.mailbox.>` | webmail | `changed`, `changed_at`, `credential`, `username` |
 | `mail.mailbox.created` | billing | `tenant_id` |
 | `mail.mailbox.deleted` | billing | `tenant_id` |
+| `mail.mailbox.deleted` | mail-dav | `id`, `tenant_id` |
+| `mail.mailbox.deleted` | mail-migration | `id`, `tenant_id` |
 | `organization.tenant.created` | billing | `tenant_id` |
 | `organization.tenant.status_changed` | billing | `status`, `tenant_id` |
 | `scheduler.job.started` | analytics | _opaco_ |

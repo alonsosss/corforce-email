@@ -18,12 +18,14 @@ import (
 
 	"github.com/alonsosss/corforce-email/pkg/config"
 	"github.com/alonsosss/corforce-email/pkg/db"
+	"github.com/alonsosss/corforce-email/pkg/events"
 	"github.com/alonsosss/corforce-email/pkg/middleware"
 	"github.com/alonsosss/corforce-email/pkg/response"
 	"github.com/alonsosss/corforce-email/pkg/server"
 	"github.com/alonsosss/corforce-email/pkg/tenantcell"
 	handler "github.com/alonsosss/corforce-email/services/mail-dav/internal/adapters/http"
 	"github.com/alonsosss/corforce-email/services/mail-dav/internal/adapters/mailauth"
+	natsadapter "github.com/alonsosss/corforce-email/services/mail-dav/internal/adapters/nats"
 	"github.com/alonsosss/corforce-email/services/mail-dav/internal/adapters/postgres"
 	"github.com/alonsosss/corforce-email/services/mail-dav/internal/adapters/tenantdb"
 	"github.com/alonsosss/corforce-email/services/mail-dav/internal/app"
@@ -201,6 +203,15 @@ func main() {
 	if err != nil {
 		log.Fatalf("mail-dav: %v", err)
 	}
+	// Sin NATS el servicio sirve igual: los contactos de un buzon borrado siguen en la base de su empresa
+	// hasta que haya bus, porque el stream conserva el evento y el durable lo recoge al suscribirse.
+	if bus, err := events.NewBus(cfg.NATS.URL, logger); err != nil {
+		logger.Warn("mail-dav: NATS no disponible; sin retirada de los contactos de buzones borrados", zap.Error(err))
+	} else {
+		defer bus.Close()
+		go natsadapter.NewConsumer(bus, uc, logger).Run(ctx)
+	}
+
 	dav, err := handler.NewHandler(uc, handler.Config{
 		BasePath: st.basePath, Realm: st.realm, MaxXMLBytes: st.maxXMLBytes, Logger: logger,
 	})

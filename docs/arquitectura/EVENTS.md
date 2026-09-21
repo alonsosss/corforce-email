@@ -6,7 +6,7 @@ Convencion de subject: `<dominio>.<entidad>.<accion>`. Un subject tiene UN dueno
 Publicar incluye encolar en la outbox (`outbox.Enqueue`); un consumidor con comodin
 (`*`, `>`) figura en cada subject publicado que recibe.
 
-Resumen: 89 publicaciones, 37 suscripciones, 89 subjects distintos.
+Resumen: 89 publicaciones, 39 suscripciones, 89 subjects distintos.
 
 ## Cruce por subject (dueno -> consumidores)
 
@@ -69,7 +69,7 @@ Resumen: 89 publicaciones, 37 suscripciones, 89 subjects distintos.
 | `mail.domain.updated` | mail-directory | mail-security |
 | `mail.mailbox.created` | mail-directory | billing, mail-security, webmail |
 | `mail.mailbox.credentials_changed` | mail-directory | mail-security, webmail |
-| `mail.mailbox.deleted` | mail-directory | billing, mail-security, webmail |
+| `mail.mailbox.deleted` | mail-directory | billing, mail-dav, mail-migration, mail-security, webmail |
 | `mail.mailbox.updated` | mail-directory | mail-security, webmail |
 | `mail_security.quarantine.released` | mail-security | - |
 | `mail_security.quarantine.stored` | mail-security | - |
@@ -139,11 +139,15 @@ Resumen: 89 publicaciones, 37 suscripciones, 89 subjects distintos.
 ### identity
 - Publica: `identity.session.revoked_by_admin`, `identity.user.created`, `identity.user.deleted`, `identity.user.locked`, `identity.user.logged_in`, `identity.user.logged_out`, `identity.user.login_failed`, `identity.user.password_changed`
 
+### mail-dav
+- Consume: `mail.mailbox.deleted`
+
 ### mail-directory
 - Publica: `mail.alias.created`, `mail.alias.deleted`, `mail.alias.updated`, `mail.alias_domain.created`, `mail.alias_domain.deleted`, `mail.alias_domain.updated`, `mail.domain.activated`, `mail.domain.created`, `mail.domain.deleted`, `mail.domain.updated`, `mail.mailbox.created`, `mail.mailbox.credentials_changed`, `mail.mailbox.deleted`, `mail.mailbox.updated`
 
 ### mail-migration
 - Publica: `migration.job.cancel_requested`, `migration.job.cancelled`, `migration.job.completed`, `migration.job.created`, `migration.job.failed`, `migration.job.started`
+- Consume: `mail.mailbox.deleted`
 
 ### mail-security
 - Publica: `mail_security.quarantine.released`, `mail_security.quarantine.stored`

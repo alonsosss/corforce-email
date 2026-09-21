@@ -24,6 +24,7 @@ import (
 	"github.com/alonsosss/corforce-email/services/mail-migration/internal/adapters/dnsresolver"
 	handler "github.com/alonsosss/corforce-email/services/mail-migration/internal/adapters/http"
 	"github.com/alonsosss/corforce-email/services/mail-migration/internal/adapters/maildirectorycli"
+	natsadapter "github.com/alonsosss/corforce-email/services/mail-migration/internal/adapters/nats"
 	outboxadapter "github.com/alonsosss/corforce-email/services/mail-migration/internal/adapters/outbox"
 	"github.com/alonsosss/corforce-email/services/mail-migration/internal/adapters/postgres"
 	"github.com/alonsosss/corforce-email/services/mail-migration/internal/app"
@@ -196,10 +197,13 @@ func main() {
 	defer mgr.CloseAll()
 	ctxPool := &db.ContextPool{}
 
-	if bus, err := events.NewBus(cfg.NATS.URL, logger); err != nil {
-		// Los eventos de auditoria esperan en la outbox de cada empresa hasta que un rele los entregue.
-		logger.Warn("mail-migration: NATS no disponible, sin rele de outbox", zap.Error(err))
+	var bus *events.Bus
+	if b, err := events.NewBus(cfg.NATS.URL, logger); err != nil {
+		// Los eventos de auditoria esperan en la outbox de cada empresa hasta que un rele los entregue,
+		// y los trabajos de un buzon borrado siguen en su base hasta que haya bus.
+		logger.Warn("mail-migration: NATS no disponible, sin rele de outbox ni retirada de los trabajos de buzones borrados", zap.Error(err))
 	} else {
+		bus = b
 		defer bus.Close()
 		if err := bus.EnsureStream(outboxadapter.Stream, []string{outboxadapter.Pattern}); err != nil {
 			logger.Warn("ensure stream MIGRATION", zap.Error(err))
@@ -219,6 +223,8 @@ func main() {
 		Config:    st.app,
 		Logger:    logger,
 	})
+
+	go natsadapter.NewConsumer(bus, uc, logger).Run(ctx)
 
 	if st.app.RunnerConfigured {
 		runnerSrv := &http.Server{

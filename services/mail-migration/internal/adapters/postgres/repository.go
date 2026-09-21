@@ -229,3 +229,21 @@ func (r *Repository) ExpireLost(ctx context.Context, tenantID uuid.UUID, now tim
 	}
 	return out, rows.Err()
 }
+
+func (r *Repository) DeleteByMailbox(ctx context.Context, tenantID, mailboxID uuid.UUID) ([]domain.Job, error) {
+	rows, err := r.pool.Query(ctx,
+		`DELETE FROM mail_migration.jobs WHERE tenant_id = $1 AND mailbox_id = $2 RETURNING `+jobColumns, tenantID, mailboxID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []domain.Job
+	for rows.Next() {
+		j, err := scanJob(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *j)
+	}
+	return out, rows.Err()
+}

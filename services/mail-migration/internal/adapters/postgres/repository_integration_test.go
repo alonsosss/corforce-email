@@ -554,3 +554,182 @@ func TestDeExtremoAExtremoConCifradoRealYOutbox(t *testing.T) {
 		}
 	}
 }
+
+// finished deja un trabajo del buzon en un estado final por el camino real: alta, reclamo y cierre.
+func finished(t *testing.T, ctx context.Context, r *Repository, tenant, mailbox uuid.UUID, status domain.Status) *domain.Job {
+	t.Helper()
+	j := newJob(tenant)
+	j.MailboxID = mailbox
+	if err := insert(t, ctx, r, j, 100); err != nil {
+		t.Fatal(err)
+	}
+	c, err := r.Claim(ctx, tenant, claimParams("r"))
+	if err != nil || c == nil || c.ID != j.ID {
+		t.Fatalf("reclamo: %+v %v", c, err)
+	}
+	if _, err := r.Finish(ctx, tenant, c.ID, ports.FinishParams{LeaseID: *c.LeaseID, Status: status,
+		Progress: domain.Progress{Folders: []domain.FolderProgress{{Name: "Clientes/Juan Perez"}}}, Now: now}); err != nil {
+		t.Fatal(err)
+	}
+	return j
+}
+
+func jobsOf(t *testing.T, ctx context.Context, r *Repository, tenant, mailbox uuid.UUID) int {
+	t.Helper()
+	var n int
+	if err := r.pool.QueryRow(ctx, `SELECT count(*) FROM mail_migration.jobs WHERE tenant_id = $1 AND mailbox_id = $2`, tenant, mailbox).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
+func purgeUseCase(repo *Repository, events ports.EventPublisher) *app.UseCase {
+	return app.New(app.Deps{
+		Repo: repo, Tx: repo, Tenants: &apptest.Tenants{}, Events: events, Cipher: apptest.Cipher{},
+		Config: app.Config{MaxActivePerTenant: 100, Lease: 90 * time.Second, MaxAttempts: 3},
+	})
+}
+
+type outboxRow struct{ subject, payload string }
+
+func outboxOfJob(t *testing.T, ctx context.Context, r *Repository, tenant, job uuid.UUID) []outboxRow {
+	t.Helper()
+	rows, err := r.pool.Query(ctx, `SELECT subject, payload::text FROM platform.event_outbox WHERE tenant_id = $1 AND payload::text LIKE '%' || $2 || '%'`, tenant, job.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var out []outboxRow
+	for rows.Next() {
+		var o outboxRow
+		if err := rows.Scan(&o.subject, &o.payload); err != nil {
+			t.Fatal(err)
+		}
+		out = append(out, o)
+	}
+	return out
+}
+
+func outboxCount(t *testing.T, ctx context.Context, r *Repository, tenant uuid.UUID) int {
+	t.Helper()
+	var n int
+	if err := r.pool.QueryRow(ctx, `SELECT count(*) FROM platform.event_outbox WHERE tenant_id = $1`, tenant).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
+// Borrar un buzon retira sus trabajos en cualquier estado, anuncia solo la cancelacion de los activos y no
+// toca ni a otro buzon de la empresa, ni a uno recreado con el mismo nombre, ni a otra empresa.
+func TestBorrarUnBuzonRetiraSusTrabajosYSoloLosSuyos(t *testing.T) {
+	ctx, repo, _ := setup(t)
+	tenant, other := uuid.New(), uuid.New()
+	mailbox, sibling, recreated := uuid.New(), uuid.New(), uuid.New()
+
+	finished(t, ctx, repo, tenant, mailbox, domain.StatusSucceeded)
+	finished(t, ctx, repo, tenant, mailbox, domain.StatusFailed)
+	active := newJob(tenant)
+	active.MailboxID = mailbox
+	siblingJob, recreatedJob, otherJob := newJob(tenant), newJob(tenant), newJob(other)
+	siblingJob.MailboxID, recreatedJob.MailboxID, otherJob.MailboxID = sibling, recreated, mailbox
+	for _, j := range []*domain.Job{active, siblingJob, recreatedJob, otherJob} {
+		if err := insert(t, ctx, repo, j, 100); err != nil {
+			t.Fatal(err)
+		}
+	}
+	outboxBefore := outboxCount(t, ctx, repo, tenant)
+
+	uc := purgeUseCase(repo, outboxadapter.NewPublisher(repo.pool))
+	removed, err := uc.PurgeMailbox(ctx, tenant, mailbox)
+	if err != nil || removed != 3 {
+		t.Fatalf("PurgeMailbox: %d %v", removed, err)
+	}
+	if n := jobsOf(t, ctx, repo, tenant, mailbox); n != 0 {
+		t.Fatalf("quedan %d trabajos del buzon borrado", n)
+	}
+	for name, j := range map[string]*domain.Job{"otro buzon de la empresa": siblingJob, "buzon recreado con el mismo nombre": recreatedJob, "otra empresa con el mismo id de buzon": otherJob} {
+		got, err := repo.Get(ctx, j.TenantID, j.ID)
+		if err != nil || got.Status != domain.StatusPending || len(got.SourcePasswordEnc) == 0 {
+			t.Errorf("%s perdio su trabajo: %+v %v", name, got, err)
+		}
+	}
+
+	cancelled := outboxOfJob(t, ctx, repo, tenant, active.ID)
+	if len(cancelled) != 1 || cancelled[0].subject != outboxadapter.SubjectCancelled {
+		t.Fatalf("eventos del trabajo activo: %+v", cancelled)
+	}
+	for _, want := range []string{`"error_code": "mailbox_deleted"`, `"status": "cancelled"`} {
+		if !strings.Contains(cancelled[0].payload, want) {
+			t.Errorf("el evento no lleva %s: %s", want, cancelled[0].payload)
+		}
+	}
+	if strings.Contains(cancelled[0].payload, "origen.example") || strings.Contains(cancelled[0].payload, "acme.test") {
+		t.Errorf("el evento filtra datos personales: %s", cancelled[0].payload)
+	}
+	if total := outboxCount(t, ctx, repo, tenant); total != outboxBefore+1 {
+		t.Errorf("solo el trabajo activo anuncia su cancelacion: %d eventos, antes %d", total, outboxBefore)
+	}
+
+	// Repetir el evento no cambia nada ni anuncia otra vez.
+	if removed, err := uc.PurgeMailbox(ctx, tenant, mailbox); err != nil || removed != 0 {
+		t.Fatalf("segunda vez: %d %v", removed, err)
+	}
+	if removed, err := uc.PurgeMailbox(ctx, tenant, uuid.New()); err != nil || removed != 0 {
+		t.Fatalf("buzon sin trabajos: %d %v", removed, err)
+	}
+	if total := outboxCount(t, ctx, repo, tenant); total != outboxBefore+1 {
+		t.Errorf("un evento repetido no anuncia otra vez: %d eventos", total)
+	}
+}
+
+// Un trabajo en curso desaparece con su buzon: el ejecutor que lo tiene pierde el lease en su siguiente
+// latido, y no puede cerrarlo ni devolver datos a una fila que ya no existe.
+func TestBorrarUnBuzonConUnTrabajoEnCursoDetieneAlEjecutor(t *testing.T) {
+	ctx, repo, _ := setup(t)
+	tenant := uuid.New()
+	job := newJob(tenant)
+	if err := insert(t, ctx, repo, job, 100); err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := repo.Claim(ctx, tenant, claimParams("runner"))
+	if err != nil || claimed == nil {
+		t.Fatalf("reclamo: %+v %v", claimed, err)
+	}
+
+	uc := purgeUseCase(repo, outboxadapter.NewPublisher(repo.pool))
+	if removed, err := uc.PurgeMailbox(ctx, tenant, job.MailboxID); err != nil || removed != 1 {
+		t.Fatalf("PurgeMailbox: %d %v", removed, err)
+	}
+	hb := ports.HeartbeatParams{LeaseID: *claimed.LeaseID, Phase: domain.PhaseInitial, Now: now, LeaseUntil: now.Add(time.Minute)}
+	if _, err := repo.Heartbeat(ctx, tenant, job.ID, hb); !errors.Is(err, domain.ErrLeaseLost) {
+		t.Fatalf("latido tras el borrado: %v", err)
+	}
+	fin := ports.FinishParams{LeaseID: *claimed.LeaseID, Status: domain.StatusSucceeded, Now: now}
+	if _, err := repo.Finish(ctx, tenant, job.ID, fin); !errors.Is(err, domain.ErrLeaseLost) {
+		t.Fatalf("cierre tras el borrado: %v", err)
+	}
+	if got := outboxOfJob(t, ctx, repo, tenant, job.ID); len(got) != 1 || got[0].subject != outboxadapter.SubjectCancelled {
+		t.Fatalf("eventos: %+v", got)
+	}
+}
+
+// Si el evento de auditoria no se puede encolar, el borrado se revierte entero: la credencial no queda
+// sin cancelar y el siguiente intento del consumidor lo reintenta.
+func TestBorrarUnBuzonEsAtomicoConSuEventoDeAuditoria(t *testing.T) {
+	ctx, repo, _ := setup(t)
+	tenant := uuid.New()
+	job := newJob(tenant)
+	if err := insert(t, ctx, repo, job, 100); err != nil {
+		t.Fatal(err)
+	}
+	failing := &apptest.Events{Fail: errors.New("outbox caida")}
+	if _, err := purgeUseCase(repo, failing).PurgeMailbox(ctx, tenant, job.MailboxID); err == nil {
+		t.Fatal("un fallo del evento tiene que devolverse")
+	}
+	if n := jobsOf(t, ctx, repo, tenant, job.MailboxID); n != 1 {
+		t.Fatalf("el borrado no se revirtio: %d trabajos", n)
+	}
+	if removed, err := purgeUseCase(repo, outboxadapter.NewPublisher(repo.pool)).PurgeMailbox(ctx, tenant, job.MailboxID); err != nil || removed != 1 {
+		t.Fatalf("el reintento: %d %v", removed, err)
+	}
+}
