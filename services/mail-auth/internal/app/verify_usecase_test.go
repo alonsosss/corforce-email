@@ -2,7 +2,9 @@ package app
 
 import (
 	"context"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/alonsosss/corforce-email/services/mail-auth/internal/domain"
 	"github.com/google/uuid"
@@ -17,10 +19,17 @@ const (
 	hashDummy = "hash:ficticio"
 )
 
-type fakeVerifier struct{ calls int }
+type fakeVerifier struct {
+	mu    sync.Mutex
+	calls int
+	delay time.Duration
+}
 
 func (f *fakeVerifier) Verify(hash, password string) bool {
+	f.mu.Lock()
 	f.calls++
+	f.mu.Unlock()
+	time.Sleep(f.delay)
 	return hash == "hash:"+password
 }
 func (f *fakeVerifier) DummyHash() string { return hashDummy }
@@ -197,8 +206,8 @@ func TestVerifyUsuarioInexistenteComparaIgualmente(t *testing.T) {
 	if got := h.uc.Verify(context.Background(), request("loquesea", "imap")); got != domain.ResultBadPassword {
 		t.Fatalf("resultado = %s, se esperaba bad_password", got)
 	}
-	if h.verifier.calls != 1 {
-		t.Fatalf("debe compararse contra el hash ficticio exactamente una vez, calls=%d", h.verifier.calls)
+	if h.verifier.calls != 2 {
+		t.Fatalf("debe compararse contra el hash ficticio en las dos rondas de un buzon que existe, calls=%d", h.verifier.calls)
 	}
 	if h.throttle.failures != 1 {
 		t.Fatalf("el intento debe contar en el freno: failures=%d", h.throttle.failures)

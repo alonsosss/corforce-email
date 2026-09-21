@@ -58,6 +58,11 @@ var accessColumns = map[domain.Protocol]string{
 	domain.ProtocolDAV:   "dav_access",
 }
 
+// maxAppPasswordCandidates acota las contrasenas de aplicacion que se comparan en cada intento fallido
+// (una comparacion de bcrypt cada una). mail-directory no deja crear mas de 25 por buzon; el margen cubre
+// las que una carrera entre altas dejara pasar.
+const maxAppPasswordCandidates = 50
+
 func (r *Repository) ListAppPasswords(ctx context.Context, mailboxID uuid.UUID, p domain.Protocol) ([]domain.AppPassword, error) {
 	column, ok := accessColumns[p]
 	if !ok {
@@ -67,7 +72,8 @@ func (r *Repository) ListAppPasswords(ctx context.Context, mailboxID uuid.UUID, 
 		SELECT id, name, password_hash
 		  FROM mail.app_passwords
 		 WHERE mailbox_id = $1 AND active AND `+column+`
-		 ORDER BY created_at`, mailboxID)
+		 ORDER BY created_at
+		 LIMIT $2`, mailboxID, maxAppPasswordCandidates)
 	if err != nil {
 		return nil, fmt.Errorf("listar contrasenas de aplicacion: %w", err)
 	}

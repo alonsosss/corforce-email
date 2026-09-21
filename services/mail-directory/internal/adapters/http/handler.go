@@ -138,7 +138,7 @@ var validationErrors = []error{
 // conflictErrors son los choques con el estado actual: 409.
 var conflictErrors = []error{
 	domain.ErrAlreadyExists, domain.ErrDomainInUse, domain.ErrAddressTaken, domain.ErrMaxMailboxesReached,
-	domain.ErrMaxAliasesReached, domain.ErrDomainIsOwnDomain, domain.ErrMTASTSTransition,
+	domain.ErrMaxAliasesReached, domain.ErrMaxAppPasswordsReached, domain.ErrDomainIsOwnDomain, domain.ErrMTASTSTransition,
 	domain.ErrMTASTSDomainNotActive, domain.ErrMTASTSMXMismatch,
 }
 

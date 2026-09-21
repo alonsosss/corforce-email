@@ -410,6 +410,13 @@ func (uc *UseCase) CreateAppPassword(ctx context.Context, tenantID, mailboxID uu
 		if _, err := uc.mailboxes.Get(ctx, tenantID, mailboxID); err != nil {
 			return err
 		}
+		existing, err := uc.appPasswords.List(ctx, tenantID, mailboxID)
+		if err != nil {
+			return err
+		}
+		if len(existing) >= domain.MaxAppPasswordsPerMailbox {
+			return domain.ErrMaxAppPasswordsReached
+		}
 		return uc.appPasswords.Create(ctx, p)
 	})
 	if err != nil {

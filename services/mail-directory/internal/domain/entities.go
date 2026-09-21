@@ -142,6 +142,12 @@ type SenderACL struct {
 	CreatedAt  time.Time `json:"created_at"`
 }
 
+// MaxAppPasswordsPerMailbox acota las contrasenas de aplicacion de un buzon. mail-auth compara la
+// contrasena de cada intento fallido con todas las de aplicacion del buzon, y solo lee las primeras
+// (maxAppPasswordCandidates en services/mail-auth, mayor que este maximo): con mas, las sobrantes
+// dejarian de servir y cada intento costaria mas.
+const MaxAppPasswordsPerMailbox = 25
+
 type AppPassword struct {
 	ID           uuid.UUID  `json:"id"`
 	TenantID     uuid.UUID  `json:"tenant_id"`

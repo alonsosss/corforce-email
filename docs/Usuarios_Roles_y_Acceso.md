@@ -275,6 +275,15 @@ V: `mail-auth` verifica hoy contrasena principal y de aplicacion con bcrypt, den
 escribe `mail.sasl_logins`; expone los inicios de un buzon por
 `GET /internal/mail-auth/logins` acotado por `X-Tenant-ID`.
 
+V (2026-09-21, revision adversaria de CardDAV y CalDAV, `docs/adr/0004-contactos-y-calendario-carddav-caldav.md`): una
+contrasena que no es la principal cuesta siempre dos rondas de bcrypt en `mail-auth`, exista o no el buzon y tenga o no
+contrasenas de aplicacion (la segunda compara todas las de aplicacion a la vez, o un hash ficticio), de modo que el
+tiempo de respuesta no dice que direcciones existen; `mail-auth` lee como mucho 50 contrasenas de aplicacion por buzon y
+`mail-directory` no deja crear mas de 25 (409); un protocolo que verifica cada peticion (`dav`) deja un registro en
+`mail.sasl_logins` (y anota `last_used_at`) por cliente y ventana de 5 minutos, no por peticion; y `mail-dav` recuerda
+un acierto `MAIL_DAV_AUTH_CACHE_TTL` (10 segundos), asi que apagar `dav_access`, desactivar o cambiar una contrasena, o dar
+de baja el buzon, alcanza a DAV como mucho a los 10 segundos. La retencion de `mail.sasl_logins` sigue pendiente.
+
 V (2026-09-13): el webmail (`services/webmail`) autentica contra el buzon por `mail-auth`
 con service `webmail`, que exige `imap_access` y `smtp_access`, acepta solo la contrasena
 principal (nunca una de aplicacion), responde igual a un buzon inexistente y a una

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/alonsosss/corforce-email/services/mail-auth/internal/domain"
@@ -19,6 +20,8 @@ type Deps struct {
 	Throttle ports.Throttle
 	Metrics  ports.Metrics
 	Logger   *zap.Logger
+	// Now es el reloj del registro de inicios; nil usa time.Now.
+	Now func() time.Time
 }
 
 // UseCase verifica credenciales de buzon para Dovecot y consulta el historial de inicios.
@@ -28,6 +31,8 @@ type UseCase struct {
 	throttle  ports.Throttle
 	metrics   ports.Metrics
 	logger    *zap.Logger
+	now       func() time.Time
+	logins    *loginDedupe
 }
 
 func New(d Deps) *UseCase {
@@ -35,7 +40,12 @@ func New(d Deps) *UseCase {
 	if throttle == nil {
 		throttle = noThrottle{}
 	}
-	return &UseCase{repo: d.Repo, passwords: d.Passwords, throttle: throttle, metrics: d.Metrics, logger: d.Logger}
+	now := d.Now
+	if now == nil {
+		now = time.Now
+	}
+	return &UseCase{repo: d.Repo, passwords: d.Passwords, throttle: throttle, metrics: d.Metrics, logger: d.Logger,
+		now: now, logins: newLoginDedupe(loginDedupeEntries, loginDedupeWindow)}
 }
 
 // Verify decide si la credencial abre la sesion. El orden de las comprobaciones es
@@ -43,6 +53,12 @@ func New(d Deps) *UseCase {
 // contra uno ficticio) antes de mirar el estado del buzon, de modo que un usuario
 // inexistente, uno inactivo y uno sin el protocolo tardan lo mismo y reciben el mismo
 // 401. Solo se distinguen en las metricas y en el log.
+//
+// Una contrasena que no es la principal cuesta siempre dos rondas de comparacion, exista
+// o no el buzon y tenga o no contrasenas de aplicacion: la segunda ronda compara todas las
+// de aplicacion a la vez (o un hash ficticio si no hay ninguna). Si el buzon que existe con
+// contrasenas de aplicacion tardara mas que el que no existe, el tiempo de respuesta
+// diria que direcciones existen.
 func (uc *UseCase) Verify(ctx context.Context, req domain.VerifyRequest) domain.Result {
 	return uc.Authenticate(ctx, req).Result
 }
@@ -83,6 +99,7 @@ func (uc *UseCase) verify(ctx context.Context, req domain.VerifyRequest) (domain
 	}
 	if mailbox == nil {
 		uc.passwords.Verify(uc.passwords.DummyHash(), req.Password)
+		uc.passwords.Verify(uc.passwords.DummyHash(), req.Password)
 		uc.throttle.Failure(ctx, username, req.RemoteIP)
 		uc.logger.Info("mail-auth: credencial rechazada", fields...)
 		return domain.ResultBadPassword, nil
@@ -111,7 +128,7 @@ func (uc *UseCase) verify(ctx context.Context, req domain.VerifyRequest) (domain
 	}
 
 	uc.throttle.Success(ctx, username, req.RemoteIP)
-	uc.recordSuccess(ctx, mailbox, appPassword, req, fields)
+	uc.recordSuccess(ctx, mailbox, appPassword, protocol, req, fields)
 	return domain.ResultOK, mailbox
 }
 
@@ -122,31 +139,66 @@ func (uc *UseCase) matchPassword(ctx context.Context, mailbox *domain.Mailbox, p
 	if uc.passwords.Verify(mailbox.PasswordHash, password) {
 		return nil, true, nil
 	}
-	if !protocol.AcceptsAppPasswords() {
-		return nil, false, nil
-	}
-	candidates, err := uc.repo.ListAppPasswords(ctx, mailbox.ID, protocol)
-	if err != nil {
-		return nil, false, err
-	}
-	for i := range candidates {
-		if uc.passwords.Verify(candidates[i].PasswordHash, password) {
-			return &candidates[i], true, nil
+	var candidates []domain.AppPassword
+	if protocol.AcceptsAppPasswords() {
+		var err error
+		if candidates, err = uc.repo.ListAppPasswords(ctx, mailbox.ID, protocol); err != nil {
+			return nil, false, err
 		}
+	}
+	if matched := uc.matchAppPasswords(candidates, password); matched != nil {
+		return matched, true, nil
 	}
 	return nil, false, nil
 }
 
+// matchAppPasswords es la segunda ronda: compara la contrasena con todas las candidatas a la vez y
+// espera a todas, de modo que la ronda dura una comparacion tenga el buzon una o varias. Sin
+// candidatas (o si el protocolo no las admite) compara contra el hash ficticio, para que la ronda
+// exista igual.
+func (uc *UseCase) matchAppPasswords(candidates []domain.AppPassword, password string) *domain.AppPassword {
+	if len(candidates) == 0 {
+		uc.passwords.Verify(uc.passwords.DummyHash(), password)
+		return nil
+	}
+	matched := make([]bool, len(candidates))
+	var wg sync.WaitGroup
+	for i := range candidates {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			matched[i] = uc.passwords.Verify(candidates[i].PasswordHash, password)
+		}(i)
+	}
+	wg.Wait()
+	for i, ok := range matched {
+		if ok {
+			return &candidates[i]
+		}
+	}
+	return nil
+}
+
 // recordSuccess deja rastro del inicio. Un fallo al escribirlo se registra pero no
 // cierra la puerta: la credencial ya se comprobo y negar el acceso por un fallo del
-// rastro convertiria una degradacion de la base en una caida del correo.
-func (uc *UseCase) recordSuccess(ctx context.Context, mailbox *domain.Mailbox, appPassword *domain.AppPassword, req domain.VerifyRequest, fields []zap.Field) {
+// rastro convertiria una degradacion de la base en una caida del correo. Un protocolo
+// que verifica cada peticion deja un registro por cliente y ventana, no uno por peticion.
+func (uc *UseCase) recordSuccess(ctx context.Context, mailbox *domain.Mailbox, appPassword *domain.AppPassword, protocol domain.Protocol, req domain.VerifyRequest, fields []zap.Field) {
 	login := domain.Login{
 		TenantID: mailbox.TenantID,
 		Username: mailbox.Username,
 		Service:  strings.ToLower(strings.TrimSpace(req.Service)),
 		RemoteIP: req.RemoteIP,
-		LoggedAt: time.Now(),
+		LoggedAt: uc.now(),
+	}
+	if protocol.AuthenticatesEachRequest() {
+		client := mailbox.ID.String() + "|" + login.Service + "|" + req.RemoteIP + "|"
+		if appPassword != nil {
+			client += appPassword.ID.String()
+		}
+		if !uc.logins.firstInWindow(client, login.LoggedAt) {
+			return
+		}
 	}
 	if appPassword != nil {
 		id := appPassword.ID

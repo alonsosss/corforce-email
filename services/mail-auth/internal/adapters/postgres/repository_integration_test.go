@@ -213,3 +213,53 @@ func TestRepositorioContraEsquemaReal(t *testing.T) {
 		t.Fatalf("limit: %d filas, err=%v", len(limited), err)
 	}
 }
+
+// Cada intento fallido compara la contrasena con todas las de aplicacion que se lean: la consulta esta
+// acotada, y el orden es el de creacion para que las mas antiguas sean las que siguen sirviendo.
+func TestListAppPasswordsEstaAcotada(t *testing.T) {
+	dsn := integrationEnv(t, "MAIL_AUTH_TEST_DSN")
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatalf("pool: %v", err)
+	}
+	t.Cleanup(pool.Close)
+	if err := applyMigrationsTwice(ctx, pool, "migrations/cell/canonical/platform",
+		"migrations/cell/canonical/mail-directory", "migrations/cell/canonical/mail-security"); err != nil {
+		t.Fatalf("migraciones de la celda: %v", err)
+	}
+	ctx = db.WithPool(ctx, pool)
+
+	tenantID := uuid.New()
+	username := "it-" + uuid.NewString()[:8] + "@pruebas.local"
+	var mailboxID uuid.UUID
+	err = pool.QueryRow(ctx, `
+		INSERT INTO mail.mailboxes (tenant_id, username, local_part, domain, password_hash)
+		VALUES ($1, $2, split_part($2, '@', 1), split_part($2, '@', 2), 'x')
+		RETURNING id`, tenantID, username).Scan(&mailboxID)
+	if err != nil {
+		t.Fatalf("sembrar buzon: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM mail.app_passwords WHERE mailbox_id = $1`, mailboxID)
+		_, _ = pool.Exec(context.Background(), `DELETE FROM mail.mailboxes WHERE id = $1`, mailboxID)
+	})
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO mail.app_passwords (tenant_id, mailbox_id, name, password_hash, created_at)
+		SELECT $1, $2, 'cliente ' || g, 'x', now() + (g || ' seconds')::interval FROM generate_series(1, $3) g`,
+		tenantID, mailboxID, maxAppPasswordCandidates+30); err != nil {
+		t.Fatalf("sembrar contrasenas de aplicacion: %v", err)
+	}
+
+	got, err := NewRepository(&db.ContextPool{}).ListAppPasswords(ctx, mailboxID, domain.ProtocolIMAP)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != maxAppPasswordCandidates {
+		t.Fatalf("se leyeron %d contrasenas de aplicacion, tope %d", len(got), maxAppPasswordCandidates)
+	}
+	if got[0].Name != "cliente 1" || got[len(got)-1].Name != fmt.Sprintf("cliente %d", maxAppPasswordCandidates) {
+		t.Fatalf("deben ser las mas antiguas: %q ... %q", got[0].Name, got[len(got)-1].Name)
+	}
+}

@@ -35,6 +35,11 @@ const (
 // navegador que lee y envia, y solo entra con la contrasena principal.
 func (p Protocol) AcceptsAppPasswords() bool { return p != ProtocolWebmail }
 
+// AuthenticatesEachRequest indica si el protocolo verifica la credencial en cada peticion en vez de abrir una
+// sesion (HTTP Basic de mail-dav): un solo cliente produce decenas de verificaciones por minuto, y dejar
+// un registro de inicio por cada una llenaria sasl_logins de filas que no dicen nada nuevo.
+func (p Protocol) AuthenticatesEachRequest() bool { return p == ProtocolDAV }
+
 // serviceProtocols traduce el campo service de passwd-verify.lua a su flag. Un servicio
 // que no figure aqui se deniega: es preferible negar un protocolo nuevo a autorizarlo
 // con el flag equivocado.

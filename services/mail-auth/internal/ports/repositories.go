@@ -18,7 +18,8 @@ type MailboxRepository interface {
 	// estado; domain.ErrNotFound si no existe.
 	FindByUsername(ctx context.Context, username string) (*domain.Mailbox, error)
 	// ListAppPasswords devuelve las contrasenas de aplicacion activas del buzon con el
-	// flag del protocolo encendido.
+	// flag del protocolo encendido, las mas antiguas primero y con un tope: cada una
+	// cuesta una comparacion de bcrypt en cada intento fallido.
 	ListAppPasswords(ctx context.Context, mailboxID uuid.UUID, p domain.Protocol) ([]domain.AppPassword, error)
 	// TouchAppPassword actualiza last_used_at de la contrasena de aplicacion usada.
 	TouchAppPassword(ctx context.Context, id uuid.UUID) error

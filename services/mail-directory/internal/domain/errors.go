@@ -43,8 +43,10 @@ var (
 
 	ErrMaxMailboxesReached = errors.New("el dominio alcanzo su maximo de buzones")
 	ErrMaxAliasesReached   = errors.New("el dominio alcanzo su maximo de aliases")
-	ErrQuotaExceedsMax     = errors.New("la cuota supera el maximo por buzon del dominio")
-	ErrDomainQuotaExceeded = errors.New("la suma de cuotas supera la cuota del dominio")
+	// ErrMaxAppPasswordsReached: el buzon ya tiene el maximo de contrasenas de aplicacion.
+	ErrMaxAppPasswordsReached = errors.New("el buzon alcanzo su maximo de contrasenas de aplicacion")
+	ErrQuotaExceedsMax        = errors.New("la cuota supera el maximo por buzon del dominio")
+	ErrDomainQuotaExceeded    = errors.New("la suma de cuotas supera la cuota del dominio")
 	// ErrAddressTaken: la direccion ya la usa un buzon, un alias o un alias temporal.
 	ErrAddressTaken = errors.New("la direccion ya esta en uso")
 

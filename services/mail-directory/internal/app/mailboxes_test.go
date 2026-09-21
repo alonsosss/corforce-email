@@ -160,6 +160,38 @@ func TestCreateAppPasswordDevuelveLaClaveUnaVezYGuardaHash(t *testing.T) {
 	}
 }
 
+// mail-auth compara la contrasena con TODAS las de aplicacion del buzon en cada intento fallido: sin tope,
+// quien administra una empresa podria crear miles y hacer que cada intento de entrar cueste el CPU de la celda.
+func TestUnBuzonTieneUnMaximoDeContrasenasDeAplicacion(t *testing.T) {
+	h := newHarness()
+	tenant := uuid.New()
+	ana := h.addMailbox(tenant, "ana@acme.com", 0)
+	bea := h.addMailbox(tenant, "bea@acme.com", 0)
+	ctx := context.Background()
+	var first uuid.UUID
+	for i := 0; i < domain.MaxAppPasswordsPerMailbox; i++ {
+		p, _, err := h.uc.CreateAppPassword(ctx, tenant, ana.ID, CreateAppPasswordRequest{Name: "cliente"})
+		if err != nil {
+			t.Fatalf("contrasena %d: %v", i+1, err)
+		}
+		if i == 0 {
+			first = p.ID
+		}
+	}
+	if _, _, err := h.uc.CreateAppPassword(ctx, tenant, ana.ID, CreateAppPasswordRequest{Name: "de mas"}); !errors.Is(err, domain.ErrMaxAppPasswordsReached) {
+		t.Fatalf("pasado el maximo: %v", err)
+	}
+	if _, _, err := h.uc.CreateAppPassword(ctx, tenant, bea.ID, CreateAppPasswordRequest{Name: "cliente"}); err != nil {
+		t.Fatalf("el maximo es de cada buzon: %v", err)
+	}
+	if err := h.uc.DeleteAppPassword(ctx, tenant, ana.ID, first); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := h.uc.CreateAppPassword(ctx, tenant, ana.ID, CreateAppPasswordRequest{Name: "cliente"}); err != nil {
+		t.Fatalf("borrada una vuelve a haber lugar: %v", err)
+	}
+}
+
 func TestTodaOperacionPasaPorLaTransaccionRLS(t *testing.T) {
 	h := newHarness()
 	tenant := uuid.New()

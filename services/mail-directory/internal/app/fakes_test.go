@@ -357,8 +357,14 @@ type fakeAppPasswords struct {
 	deleted     int
 }
 
-func (f *fakeAppPasswords) List(context.Context, uuid.UUID, uuid.UUID) ([]domain.AppPassword, error) {
-	return nil, nil
+func (f *fakeAppPasswords) List(_ context.Context, tenantID, mailboxID uuid.UUID) ([]domain.AppPassword, error) {
+	var out []domain.AppPassword
+	for _, p := range f.items {
+		if p.TenantID == tenantID && p.MailboxID == mailboxID {
+			out = append(out, *p)
+		}
+	}
+	return out, nil
 }
 
 // find devuelve la posicion de la contrasena, o -1.
