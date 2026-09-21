@@ -11,6 +11,8 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 )
 
 const (
@@ -35,6 +37,10 @@ type Server struct {
 	// slots limita a uno las operaciones que ejecutan procesos: no hay razon para lanzar varios
 	// postsuper a la vez y un cliente con prisa no debe poder saturar el contenedor de Postfix.
 	slots chan struct{}
+
+	rejectedMu    sync.Mutex
+	rejectedCount int
+	rejectedLast  time.Time
 }
 
 func NewServer(queue operations, apiKey string, log *slog.Logger) *Server {
@@ -55,12 +61,30 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 		token, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
 		got := sha256.Sum256([]byte(token))
 		if !ok || subtle.ConstantTimeCompare(got[:], s.keyHash[:]) != 1 {
-			s.log.Warn("peticion sin clave valida", "remote", remoteHost(r), "path", r.URL.Path)
+			s.logRejected(r)
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "no autorizado"})
 			return
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// rejectedLogEvery espacia el registro de las peticiones sin clave: quien alcance el puerto puede enviar
+// miles por segundo y el registro del contenedor de Postfix es compartido con el resto de sus procesos.
+const rejectedLogEvery = time.Minute
+
+func (s *Server) logRejected(r *http.Request) {
+	s.rejectedMu.Lock()
+	s.rejectedCount++
+	now := time.Now()
+	if !s.rejectedLast.IsZero() && now.Sub(s.rejectedLast) < rejectedLogEvery {
+		s.rejectedMu.Unlock()
+		return
+	}
+	count := s.rejectedCount
+	s.rejectedCount, s.rejectedLast = 0, now
+	s.rejectedMu.Unlock()
+	s.log.Warn("peticiones sin clave valida", "desde_el_ultimo_aviso", count, "remote", remoteHost(r), "path", r.URL.Path)
 }
 
 func (s *Server) list(w http.ResponseWriter, r *http.Request) {

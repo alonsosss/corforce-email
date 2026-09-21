@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -22,6 +23,11 @@ const (
 	// maxLineBytes acota una linea de `postqueue -j`: un mensaje con miles de destinatarios cabe de
 	// sobra y una linea absurda no consume la memoria del contenedor de Postfix.
 	maxLineBytes = 4 << 20
+	// lineHeadBytes es lo que se conserva de una linea demasiado larga: sobra para la cola, el
+	// identificador, la llegada y el tamano, que Postfix escribe primero.
+	lineHeadBytes = 4 << 10
+	// maxAddress acota una direccion de las que se devuelven (remitente y destinatarios).
+	maxAddress = 512
 	// maxRecipients acota los destinatarios que se devuelven por mensaje; el total se cuenta aparte.
 	maxRecipients = 50
 	// maxDelayReason acota el motivo de diferimiento (texto que escribe el servidor remoto).
@@ -105,6 +111,7 @@ func (q *Queue) List(ctx context.Context, limit int) (Listing, error) {
 	if err := cmd.Start(); err != nil {
 		return Listing{}, fmt.Errorf("%w: %v", ErrCommand, err)
 	}
+	deprioritize(cmd.Process.Pid)
 	out, parseErr := parseListing(stdout, limit)
 	// El resto de la salida se descarta para que el proceso termine y no quede colgado de la tuberia.
 	_, _ = io.Copy(io.Discard, stdout)
@@ -117,50 +124,120 @@ func (q *Queue) List(ctx context.Context, limit int) (Listing, error) {
 	return out, nil
 }
 
+// parseListing lee la salida de `postqueue -j` en streaming. Lo unico que crece con la cola es el
+// conteo: de cada mensaje mas alla de limit solo se lee la cabecera (cola, identificador, llegada y
+// tamano), sin decodificar sus destinatarios.
 func parseListing(r io.Reader, limit int) (Listing, error) {
 	out := Listing{Items: []Message{}, Counts: map[string]int{}}
-	sc := bufio.NewScanner(r)
-	sc.Buffer(make([]byte, 0, 64<<10), maxLineBytes)
-	for sc.Scan() {
-		line := strings.TrimSpace(sc.Text())
-		if line == "" {
-			continue
-		}
-		var raw rawMessage
-		if err := json.Unmarshal([]byte(line), &raw); err != nil {
-			return Listing{}, fmt.Errorf("%w: linea de la cola ilegible", ErrCommand)
-		}
-		if !ValidQueueID(raw.QueueID) {
-			continue
-		}
-		out.Total++
-		out.Counts[raw.QueueName]++
-		// Un mensaje retenido lo dejo alli una persona: no cuenta como cola atascada.
-		if raw.QueueName != "hold" && raw.ArrivalTime > 0 && (out.OldestArrival == 0 || raw.ArrivalTime < out.OldestArrival) {
-			out.OldestArrival = raw.ArrivalTime
-		}
-		if len(out.Items) >= limit {
-			out.Truncated = true
-			continue
-		}
-		msg := Message{
-			QueueID: raw.QueueID, QueueName: raw.QueueName, ArrivalTime: raw.ArrivalTime,
-			MessageSize: raw.MessageSize, Sender: raw.Sender, RecipientsTotal: len(raw.Recipients),
-			Recipients: []Recipient{},
-		}
-		for i, rcpt := range raw.Recipients {
-			if i >= maxRecipients {
-				msg.RecipientsCapped = true
-				break
+	br := bufio.NewReaderSize(r, 64<<10)
+	for {
+		line, oversize, err := readLine(br)
+		if len(bytes.TrimSpace(line)) > 0 {
+			if perr := out.add(line, oversize, limit); perr != nil {
+				return Listing{}, perr
 			}
-			msg.Recipients = append(msg.Recipients, Recipient{Address: rcpt.Address, DelayReason: clip(rcpt.DelayReason, maxDelayReason)})
 		}
-		out.Items = append(out.Items, msg)
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return out, nil
+			}
+			return Listing{}, fmt.Errorf("%w: %v", ErrCommand, err)
+		}
 	}
-	if err := sc.Err(); err != nil {
-		return Listing{}, fmt.Errorf("%w: %v", ErrCommand, err)
+}
+
+// readLine lee una linea. Si pasa de maxLineBytes (un mensaje con decenas de miles de destinatarios) la
+// descarta hasta el salto de linea y devuelve solo su comienzo, con oversize: que un mensaje asi no pueda
+// impedir listar la cola es lo que permite encontrarlo y borrarlo.
+func readLine(r *bufio.Reader) (line []byte, oversize bool, err error) {
+	var buf []byte
+	for {
+		chunk, rerr := r.ReadSlice('\n')
+		if !oversize {
+			buf = append(buf, chunk...)
+			if len(buf) > maxLineBytes {
+				oversize = true
+				buf = buf[:lineHeadBytes]
+			}
+		}
+		if errors.Is(rerr, bufio.ErrBufferFull) {
+			continue
+		}
+		return buf, oversize, rerr
 	}
-	return out, nil
+}
+
+// add cuenta un mensaje y, si aun no se llego a limit, lo agrega al listado.
+func (l *Listing) add(line []byte, oversize bool, limit int) error {
+	var raw rawMessage
+	full := !oversize && len(l.Items) < limit
+	if !full {
+		head, ok := readHead(line)
+		switch {
+		case ok:
+			raw = head
+		case oversize:
+			return nil
+		default:
+			full = true
+		}
+	}
+	if full {
+		if err := json.Unmarshal(line, &raw); err != nil {
+			return fmt.Errorf("%w: linea de la cola ilegible", ErrCommand)
+		}
+	}
+	if !ValidQueueID(raw.QueueID) {
+		return nil
+	}
+	l.Total++
+	l.Counts[raw.QueueName]++
+	// Un mensaje retenido lo dejo alli una persona: no cuenta como cola atascada.
+	if raw.QueueName != "hold" && raw.ArrivalTime > 0 && (l.OldestArrival == 0 || raw.ArrivalTime < l.OldestArrival) {
+		l.OldestArrival = raw.ArrivalTime
+	}
+	if len(l.Items) >= limit {
+		l.Truncated = true
+		return nil
+	}
+	msg := Message{
+		QueueID: raw.QueueID, QueueName: raw.QueueName, ArrivalTime: raw.ArrivalTime,
+		MessageSize: raw.MessageSize, Sender: clip(raw.Sender, maxAddress), RecipientsTotal: len(raw.Recipients),
+		Recipients: []Recipient{}, RecipientsCapped: oversize,
+	}
+	for i, rcpt := range raw.Recipients {
+		if i >= maxRecipients {
+			msg.RecipientsCapped = true
+			break
+		}
+		msg.Recipients = append(msg.Recipients, Recipient{Address: clip(rcpt.Address, maxAddress), DelayReason: clip(rcpt.DelayReason, maxDelayReason)})
+	}
+	l.Items = append(l.Items, msg)
+	return nil
+}
+
+var (
+	headQueueName = regexp.MustCompile(`"queue_name": ?"([a-z]+)"`)
+	headQueueID   = regexp.MustCompile(`"queue_id": ?"([0-9A-Za-z]+)"`)
+	headArrival   = regexp.MustCompile(`"arrival_time": ?(\d+)`)
+	headSize      = regexp.MustCompile(`"message_size": ?(\d+)`)
+)
+
+// readHead saca de los primeros bytes de una linea lo que Postfix escribe antes del remitente y los
+// destinatarios (que son lo que un atacante controla). ok es false si falta cualquiera de los tres
+// primeros campos.
+func readHead(line []byte) (rawMessage, bool) {
+	head := line[:min(len(line), lineHeadBytes)]
+	name, id, arrival := headQueueName.FindSubmatch(head), headQueueID.FindSubmatch(head), headArrival.FindSubmatch(head)
+	if name == nil || id == nil || arrival == nil {
+		return rawMessage{}, false
+	}
+	raw := rawMessage{QueueName: string(name[1]), QueueID: string(id[1])}
+	raw.ArrivalTime, _ = strconv.ParseInt(string(arrival[1]), 10, 64)
+	if size := headSize.FindSubmatch(head); size != nil {
+		raw.MessageSize, _ = strconv.ParseInt(string(size[1]), 10, 64)
+	}
+	return raw, true
 }
 
 func clip(s string, max int) string {

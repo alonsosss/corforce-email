@@ -5,8 +5,8 @@
 // Corre dentro del contenedor de Postfix y como root, porque postsuper solo lo admite del superusuario.
 // Por eso es deliberadamente pequeno: no ejecuta un shell, no admite mas argumentos que un identificador
 // de cola validado y una de cinco acciones, no devuelve el contenido de ningun mensaje y solo atiende a
-// quien presenta QUEUE_AGENT_API_KEY. Sin esa clave no abre el puerto (y no termina: supervisord
-// detiene el contenedor si cualquiera de sus procesos sale).
+// quien presenta QUEUE_AGENT_API_KEY. Sin esa clave no abre el puerto (y no termina, para que supervisord
+// no lo reinicie en bucle). Su salida no detiene el contenedor: stop-supervisor.sh la ignora.
 package main
 
 import (
@@ -14,9 +14,11 @@ import (
 	"crypto/tls"
 	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"syscall"
@@ -53,10 +55,17 @@ func main() {
 		<-ctx.Done()
 		return
 	}
+	if err := preferOOMVictim(oomScoreAdjPath); err != nil {
+		log.Warn("no se pudo ofrecer el agente como primer candidato ante falta de memoria", "error", err)
+	}
+	if err := protectProcess(); err != nil {
+		log.Warn("no se pudo marcar el proceso como no volcable", "error", err)
+	}
+	debug.SetMemoryLimit(agentMemoryLimit)
 	srv := &http.Server{
 		Addr:              envOr("QUEUE_AGENT_LISTEN", defaultListen),
 		Handler:           NewServer(NewQueue(), key, log).Routes(),
-		TLSConfig:         &tls.Config{MinVersion: tls.VersionTLS12, GetCertificate: certs.get},
+		TLSConfig:         serverTLSConfig(certs),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      45 * time.Second,
@@ -69,8 +78,14 @@ func main() {
 		defer cancel()
 		_ = srv.Shutdown(shutdown)
 	}()
+	ln, err := net.Listen("tcp", srv.Addr)
+	if err != nil {
+		log.Error("no se pudo abrir el puerto", "addr", srv.Addr, "error", err)
+		<-ctx.Done()
+		return
+	}
 	log.Info("gestor de cola escuchando", "addr", srv.Addr)
-	if err := srv.ListenAndServeTLS("", ""); err != nil && !errors.Is(err, http.ErrServerClosed) {
+	if err := srv.ServeTLS(newLimitListener(ln, maxConnections), "", ""); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Error("el servidor termino", "error", err)
 		<-ctx.Done()
 	}

@@ -64,6 +64,33 @@ func TestUnaConsultaFallidaSeCuentaYNoSeConfundeConUnaColaVacia(t *testing.T) {
 	}
 }
 
+// Con la cola enorme o el agente sobrecargado, consultar cada intervalo suma carga al contenedor de Postfix
+// justo cuando peor le viene: tras fallos seguidos el monitor espera mas, y vuelve al ritmo normal al
+// primer exito.
+func TestElMonitorEspaceLasConsultasTrasFallosSeguidos(t *testing.T) {
+	m := NewQueueMonitor(apptest.NewQueue(), &recordingQueueMetrics{}, time.Minute, zap.NewNop())
+	want := []time.Duration{time.Minute, 2 * time.Minute, 4 * time.Minute, 4 * time.Minute, 4 * time.Minute}
+	for failures, d := range want {
+		if got := m.delay(failures); got != d {
+			t.Errorf("tras %d fallos seguidos espera %s, quiero %s", failures, got, d)
+		}
+	}
+}
+
+func TestElMonitorNoRepiteLaConsultaAlRitmoNormalMientrasFalla(t *testing.T) {
+	engine := apptest.NewQueue()
+	engine.Err = domain.ErrEngineUnreachable
+	metrics := &recordingQueueMetrics{}
+	ctx, cancel := context.WithTimeout(context.Background(), 350*time.Millisecond)
+	defer cancel()
+	NewQueueMonitor(engine, metrics, 50*time.Millisecond, zap.NewNop()).Run(ctx)
+	metrics.mu.Lock()
+	defer metrics.mu.Unlock()
+	if metrics.bad > 4 {
+		t.Fatalf("en 350 ms con intervalo de 50 ms y espera creciente hubo %d consultas fallidas, a ritmo fijo serian 7", metrics.bad)
+	}
+}
+
 func TestElMonitorSeDetieneConElContexto(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})

@@ -124,11 +124,12 @@ var blockedV4 = concat(
 )
 
 // IPv6 se admite solo dentro de 2000::/3 (unicast global) y sin los rangos que incrustan una IPv4
-// (6to4, Teredo, NAT64) o son de documentacion o pruebas.
+// (6to4, Teredo, NAT64) o son de documentacion o pruebas. 2001::/23 entero (asignaciones de
+// protocolos: Teredo, anycast de PCP y TURN, AMT, ORCHID) es el mismo bloque que excluye el servicio.
 var (
 	globalV6  = netip.MustParsePrefix("2000::/3")
 	blockedV6 = concat(
-		mustPrefixes("reservada", "2001::/32", "2001:2::/48", "2001:10::/28", "2001:20::/28", "2001:db8::/32", "2002::/16", "3fff::/20"),
+		mustPrefixes("reservada", "2001::/23", "2001:db8::/32", "2002::/16", "3fff::/20"),
 	)
 	specialV6 = concat(
 		mustPrefixes("metadata", "fd00:ec2::/32"),

@@ -53,6 +53,9 @@ func run() int {
 	// Los ficheros con contrasenas y los temporales de imapsync nacen 0600 y no hay volcado de memoria.
 	syscall.Umask(0o077)
 	_ = syscall.Setrlimit(syscall.RLIMIT_CORE, &syscall.Rlimit{})
+	if err := protectProcess(); err != nil {
+		log.Warn("no se pudo marcar el proceso como no volcable", "error", err)
+	}
 
 	cfg, state, err := LoadConfig(os.Getenv)
 	switch state {

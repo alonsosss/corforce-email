@@ -133,7 +133,7 @@ Comunes a casi todos: `TZ`, `LOG_LINES`, `IPV4_NETWORK` (por defecto `172.22.1`)
 | `redis-mail` | `MAIL_REDIS_PASSWORD`, `MAIL_REDIS_MASTER_PASSWORD` |
 | `clamd-mail` | `SKIP_CLAMD` |
 | `olefy-mail` | `OLEFY_*`, `SKIP_OLEFY` |
-| `mail-migration-runner` | `ENVIRONMENT`, `MIGRATION_API_URL`, `MAIL_MIGRATION_RUNNER_KEY`, `MIGRATION_RUNNER_ID`, `MIGRATION_DEST_HOST`, `MIGRATION_DEST_PORT`, `MAIL_HOSTNAME` (nombre TLS del destino), `DOVECOT_MIGRATION_MASTER_USER`, `DOVECOT_MIGRATION_MASTER_PASS`, `MIGRATION_CLAMD_ADDR`, `MIGRATION_ALLOW_UNSCANNED`, `MIGRATION_JOB_TIMEOUT`, `MIGRATION_POLL_INTERVAL` |
+| `mail-migration-runner` | `ENVIRONMENT`, `MIGRATION_API_URL`, `MAIL_MIGRATION_RUNNER_KEY`, `MIGRATION_RUNNER_ID`, `MIGRATION_DEST_HOST`, `MIGRATION_DEST_PORT`, `MAIL_HOSTNAME` (nombre TLS del destino), `DOVECOT_MIGRATION_MASTER_USER`, `DOVECOT_MIGRATION_MASTER_PASS`, `MIGRATION_CLAMD_ADDR`, `MIGRATION_ALLOW_UNSCANNED`, `MIGRATION_SOURCE_PORTS` (de `MAIL_MIGRATION_SOURCE_PORTS`), `MIGRATION_JOB_TIMEOUT`, `MIGRATION_POLL_INTERVAL` |
 | `unbound-mail` | `SKIP_UNBOUND_HEALTHCHECK` |
 | `dockerapi-mail` | solo las comunes de Redis |
 
@@ -485,10 +485,36 @@ borrarlos y vaciar la cola diferida (`docs/Plan_Estrategico_Mejoras_Correo.md`, 
   los binarios como rutas absolutas fijas, una sola operacion a la vez (429 si hay otra) y plazo de 20 s. Un
   fallo de Postfix devuelve al cliente un mensaje fijo; el detalle queda en el registro del contenedor.
   `ops/scaffold/check-queue-agent.sh` (en `make checks`) exige que siga sin dependencias ni shell.
+* **Endurecimiento (revision de 2026-09-21).** El agente corre como root junto a Postfix, asi que se acota lo que
+  puede hacerle al contenedor:
+  * **Un fallo suyo no detiene Postfix.** `stop-supervisor.sh` detenia el contenedor con la salida de CUALQUIER
+    proceso, y `autorestart=true` no lo evitaba: supervisord anuncia `PROCESS_STATE_EXITED` tambien cuando va a
+    reiniciar. Un panic, una falta de memoria o un `kill` al agente paraban el SMTP de la celda (comprobado con el
+    supervisord real de la imagen). Ahora el oyente lee el evento y ignora solo los de `queue-agent`; los de
+    Postfix, syslog-ng o un evento ilegible siguen deteniendo el contenedor. Si el agente entra en `FATAL`
+    (no consigue arrancar), queda apagado y `GestorDeColaSinRespuesta` lo avisa, pero el correo sigue.
+  * **Ofrecido al matador de memoria.** Se escribe `1000` en su `oom_score_adj`: si el contenedor se queda sin
+    memoria, el nucleo mata antes al agente que a Postfix. Con `GOMEMLIMIT` blando de 256 MiB.
+  * **Proceso no volcable** (`PR_SET_DUMPABLE` a 0 y sin volcado de memoria): otro proceso del contenedor no lee su
+    memoria ni su entorno (`QUEUE_AGENT_API_KEY`).
+  * **TLS 1.3 como minimo** (el unico cliente es `mail-security`, en Go), como mucho 32 conexiones abiertas a la
+    vez (las demas esperan en la cola del sistema) y un solo aviso por minuto de peticiones sin clave, con su
+    contador, para que un flujo de peticiones no llene el registro compartido del contenedor.
+  * **Una cola gigante no lo deja ciego.** Un mensaje con decenas de miles de destinatarios produce una linea de
+    `postqueue -j` mayor que el tope de lectura y antes hacia fallar el listado entero mientras siguiera en cola:
+    ni la pantalla ni la vigilancia veian nada, y era justo el mensaje que habia que encontrar y borrar. Ahora una
+    linea demasiado larga se descarta hasta el salto de linea conservando su comienzo (cola, identificador, llegada y
+    tamano), asi que se cuenta y aparece en el listado con `recipients_capped`. Mas alla del limite pedido no se
+    decodifican los destinatarios (con `limit=1`, el del monitor, cuesta una expresion regular por mensaje en lugar
+    de una decodificacion JSON completa), y remitente y destinatarios se recortan a 512 caracteres.
+    `postqueue -j` corre con la prioridad de CPU y de disco al minimo para no competir con la entrega.
+  * **Contrapresion del monitor.** `mail-security` espera el doble, el cuadruple y como mucho cuatro intervalos
+    tras fallos seguidos en lugar de repetir la consulta cada minuto contra un agente ya sobrecargado; vuelve al
+    ritmo normal al primer exito. `GestorDeColaSinRespuesta` sigue viendo un fallo cada pocos minutos.
+  * Sin cambios de configuracion: nada de esto exige variables nuevas.
 * **Credencial**: `QUEUE_AGENT_API_KEY`, del almacen de secretos (opcional en `secret-keys.txt`), la misma en
   `postfix-mail` y en `mail-security`: de 32 a 256 caracteres de `[A-Za-z0-9_-]` (`openssl rand -hex 32`). Sin
-  ella el agente no abre el puerto (y no termina: `stop-supervisor.sh` detiene el contenedor si un proceso
-  sale) y `mail-security` arranca igual con el gestor desactivado (503 `NOT_CONFIGURED`), de modo que desplegar
+  ella el agente no abre el puerto (y no termina, para que supervisord no lo reinicie en bucle) y `mail-security` arranca igual con el gestor desactivado (503 `NOT_CONFIGURED`), de modo que desplegar
   el codigo no exige la clave. `QUEUE_AGENT_URL` (por defecto `https://postfix:8590`),
   `QUEUE_AGENT_TLS_SERVER_NAME` (vacio = `MAIL_HOSTNAME`) y `QUEUE_AGENT_TLS_CA_FILE` los lee `mail-security`.
 * **API**: `GET /api/v1/mail-security/queue?limit=` (por defecto 100, como mucho 500),
@@ -661,8 +687,20 @@ ejecutor hace y lo que hay que operar.
   (993), `MIGRATION_DEST_TLS_SERVER_NAME` (`MAIL_HOSTNAME`), `DOVECOT_MIGRATION_MASTER_USER`,
   `DOVECOT_MIGRATION_MASTER_PASS`, `MIGRATION_CLAMD_ADDR`, `MIGRATION_ALLOW_UNSCANNED` (false),
   `MIGRATION_JOB_TIMEOUT` (24h), `MIGRATION_POLL_INTERVAL` (15s), `MIGRATION_SCAN_MAX_BYTES` (100 MiB, por debajo de
-  `StreamMaxLength` de clamd), `MIGRATION_SCAN_TIMEOUT` (5m), `ENVIRONMENT`. `MIGRATION_ALLOW_PRIVATE_SOURCES` no
-  esta en `docker-compose.mail.yml`: solo lo pone `docker-compose.e2e.yml`.
+  `StreamMaxLength` de clamd), `MIGRATION_SCAN_TIMEOUT` (5m), `MIGRATION_SOURCE_PORTS` (143,993; el compose la toma
+  de `MAIL_MIGRATION_SOURCE_PORTS`, la misma del servicio, para que las dos listas no diverjan), `ENVIRONMENT`.
+  `MIGRATION_ALLOW_PRIVATE_SOURCES` no esta en `docker-compose.mail.yml`: solo lo pone `docker-compose.e2e.yml`.
+* **Revision de seguridad (2026-09-21).** El proceso del ejecutor se marca no volcable en el arranque
+  (`prctl(PR_SET_DUMPABLE, 0)`): imapsync corre con el mismo usuario y habla con servidores ajenos, y sin eso
+  un imapsync comprometido leeria por `/proc/<pid>/environ` la clave del servicio y la contrasena del maestro de
+  Dovecot; los hijos recuperan su estado normal al hacer `exec`. El ejecutor solo conecta a los puertos de
+  `MIGRATION_SOURCE_PORTS` aunque el servicio (o su base) le diga otro: un trabajo manipulado no lo convierte en un
+  sondeo de puertos. Su lista de rangos IPv6 excluye todo `2001::/23` (asignaciones de protocolos: Teredo, anycast
+  de PCP y TURN, AMT, ORCHID), igual que el servicio. El analizador guarda como mucho 500 carpetas aunque el
+  origen tenga millones. Del lado del servicio (`docs/adr/0002`): topes de trabajos por empresa y dia y de
+  credenciales rechazadas por cuenta de origen y hora, un trabajo a la vez por ejecutor y un tope global de
+  trabajos reclamados, la contrasena cifrada atada a su empresa y a su trabajo (AAD) y el limitador del listener
+  del ejecutor sin fiarse de `X-Forwarded-For`.
 * **Despliegue.** `scripts/deploy-mail.sh mail-migration-runner` (imagen `core-force-mail/mail-migration-runner:<commit>`);
   Dovecot y clamd hay que recrearlos una vez para que se unan a la red. La red la crea el primer motor que la
   usa y la plataforma la declara `external`: los motores se despliegan antes que `mail-migration`. Secretos

@@ -54,6 +54,7 @@ nuevo	migration-runner/classify.go	migracion	-
 nuevo	migration-runner/config.go	migracion	-
 nuevo	migration-runner/config_test.go	migracion	-
 nuevo	migration-runner/go.mod	migracion	-
+nuevo	migration-runner/hardening_test.go	migracion	-
 nuevo	migration-runner/imapsync.go	migracion	-
 nuevo	migration-runner/main.go	migracion	-
 nuevo	migration-runner/parse.go	migracion	-
@@ -61,6 +62,8 @@ nuevo	migration-runner/parse_test.go	migracion	-
 nuevo	migration-runner/proc_linux.go	migracion	-
 nuevo	migration-runner/proc_other.go	migracion	-
 nuevo	migration-runner/proc_unix.go	migracion	-
+nuevo	migration-runner/protect_linux.go	migracion	-
+nuevo	migration-runner/protect_other.go	migracion	-
 nuevo	migration-runner/runner.go	migracion	-
 nuevo	migration-runner/runner_test.go	migracion	-
 nuevo	migration-runner/scan.go	migracion	-
@@ -102,14 +105,20 @@ identico	postfix/conf/smtp_dsn_filter	daf1295d17e2c1a69d5cd81709f5663283453ba762
 modificado	postfix/docker-entrypoint.sh	arranque	data/Dockerfiles/postfix/docker-entrypoint.sh
 modificado	postfix/postfix.sh	postgres,nombres,sogo-php	data/Dockerfiles/postfix/postfix.sh
 nuevo	postfix/queue-agent/go.mod	cola	-
+nuevo	postfix/queue-agent/harden.go	cola	-
+nuevo	postfix/queue-agent/hardening_test.go	cola	-
 nuevo	postfix/queue-agent/main.go	cola	-
+nuevo	postfix/queue-agent/priority_linux.go	cola	-
+nuevo	postfix/queue-agent/priority_other.go	cola	-
+nuevo	postfix/queue-agent/protect_linux.go	cola	-
+nuevo	postfix/queue-agent/protect_other.go	cola	-
 nuevo	postfix/queue-agent/queue.go	cola	-
 nuevo	postfix/queue-agent/queue_test.go	cola	-
 nuevo	postfix/queue-agent/server.go	cola	-
 nuevo	postfix/queue-agent/server_test.go	cola	-
 identico	postfix/rspamd-pipe-ham	309817ec0e8d8be73c568df7981668ed6528caabc1e7bd949c8bb287c7ec9615
 identico	postfix/rspamd-pipe-spam	dfe044f1a26b0222774e44c21c2c2474157baf51f2fbb79b2a40e46749d19cbb
-identico	postfix/stop-supervisor.sh	dcd949c726ce1c2f8f36743f63beb5ffabbd5a13e85d94740171b0127d23a6cd
+modificado	postfix/stop-supervisor.sh	cola	data/Dockerfiles/postfix/stop-supervisor.sh
 modificado	postfix/supervisord.conf	cola	data/Dockerfiles/postfix/supervisord.conf
 modificado	postfix/syslog-ng-redis_slave.conf	nombres	data/Dockerfiles/postfix/syslog-ng-redis_slave.conf
 modificado	postfix/syslog-ng.conf	nombres	data/Dockerfiles/postfix/syslog-ng.conf

@@ -24,6 +24,9 @@ const (
 	defaultScanLimit = 5 * time.Minute
 )
 
+// defaultSourcePorts son los puertos IMAP: los mismos que admite el servicio por defecto.
+var defaultSourcePorts = []int{143, 993}
+
 // executable se sustituye en las pruebas: la ruta del binario de prueba no la controla el repositorio.
 var executable = os.Executable
 
@@ -63,6 +66,7 @@ type Config struct {
 	PollInterval time.Duration
 
 	ImapsyncBin string
+	SourcePorts []int
 	WorkDir     string
 	Self        string
 }
@@ -124,6 +128,10 @@ func LoadConfig(getenv func(string) string) (Config, State, error) {
 	}
 	if len(cfg.MasterPass) < minSecretLength {
 		errs = append(errs, fmt.Errorf("DOVECOT_MIGRATION_MASTER_PASS falta o tiene menos de %d caracteres", minSecretLength))
+	}
+
+	if cfg.SourcePorts, err = envPorts(env, "MIGRATION_SOURCE_PORTS", defaultSourcePorts); err != nil {
+		errs = append(errs, err)
 	}
 
 	cfg.ClamdAddr = env("MIGRATION_CLAMD_ADDR")
@@ -207,6 +215,33 @@ func envInt(env func(string) string, name string, fallback, lo, hi int) (int, er
 		return fallback, fmt.Errorf("%s debe ser un entero entre %d y %d", name, lo, hi)
 	}
 	return n, nil
+}
+
+// envPorts lee una lista de puertos separados por comas. La lista vacia no existe: sin puertos el
+// ejecutor no conectaria a ningun origen.
+func envPorts(env func(string) string, name string, fallback []int) ([]int, error) {
+	raw := env(name)
+	if raw == "" {
+		return append([]int(nil), fallback...), nil
+	}
+	var ports []int
+	for _, part := range strings.Split(raw, ",") {
+		n, err := strconv.Atoi(strings.TrimSpace(part))
+		if err != nil || n < 1 || n > 65535 {
+			return fallback, fmt.Errorf("%s debe ser una lista de puertos entre 1 y 65535 separados por comas", name)
+		}
+		ports = append(ports, n)
+	}
+	return ports, nil
+}
+
+func (c Config) sourcePortAllowed(port int) bool {
+	for _, p := range c.SourcePorts {
+		if p == port {
+			return true
+		}
+	}
+	return false
 }
 
 func envInt64(env func(string) string, name string, fallback, lo, hi int64) (int64, error) {

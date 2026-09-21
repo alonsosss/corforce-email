@@ -1382,6 +1382,16 @@ expect "con la clave lista la cola" "$(agente_http -H "Authorization: Bearer $QU
 expect "no borra por un identificador que no es de cola" "$(agente_http -X POST -H "Authorization: Bearer $QUEUE_KEY" "https://127.0.0.1:8590/v1/queue/ALL/delete")" "400"
 expect "ni admite una accion que no es suya" "$(agente_http -X POST -H "Authorization: Bearer $QUEUE_KEY" "https://127.0.0.1:8590/v1/queue/$QID2/super_delete")" "400"
 continua_en_cola "$QID2" && ok "y el otro mensaje sigue ahi" || mal "el otro mensaje ya no esta (estado: '$(en_cola_de "$QID2")')"
+expect "el agente no acepta TLS 1.2 (su unico cliente habla 1.3)" "$(agente_http --tls-max 1.2 -H "Authorization: Bearer $QUEUE_KEY" https://127.0.0.1:8590/v1/queue)" "000"
+
+# Un fallo del agente no puede detener Postfix: stop-supervisor.sh ignora su salida y supervisord lo reinicia.
+reinicios_postfix() { docker inspect -f '{{.RestartCount}}' "$(c postfix-mail)"; }
+agente_de_vuelta() { [[ "$(agente_http -H "Authorization: Bearer $QUEUE_KEY" https://127.0.0.1:8590/v1/queue)" == "200" ]]; }
+REINICIOS_POSTFIX=$(reinicios_postfix)
+docker exec "$(c postfix-mail)" sh -c 'kill -9 $(pidof queue-agent)'
+esperar "el agente vuelve tras matarlo (supervisord lo reinicia)" 60 agente_de_vuelta
+expect "y el contenedor de Postfix no se reinicio" "$(reinicios_postfix)" "$REINICIOS_POSTFIX"
+expect "ni Postfix dejo de correr" "$(docker exec "$(c postfix-mail)" sh -c 'pidof master >/dev/null && echo si')" "si"
 
 "${POSTCONF[@]}" -X defer_transports && docker exec "$(c postfix-mail)" postfix reload >/dev/null 2>&1
 docker exec "$(c postfix-mail)" postsuper -d ALL >/dev/null 2>&1

@@ -113,6 +113,10 @@ func (r *Runner) process(ctx context.Context, job *ClaimedJob, track *tracker, b
 		r.log.Error("trabajo con datos no validos", "job_id", job.JobID, "motivo", err.Error())
 		return jobResult{Outcome: outcomeFailed, Err: &JobError{Code: codeImapsyncFailed, Message: "El ejecutor recibio un trabajo con datos no validos."}}
 	}
+	if !r.cfg.sourcePortAllowed(job.Source.Port) {
+		r.log.Warn("origen rechazado", "job_id", job.JobID, "codigo", codeSourceBlockedAddress, "motivo", "puerto")
+		return jobResult{Outcome: outcomeFailed, Err: &JobError{Code: codeSourceBlockedAddress, Message: "El servidor de origen usa un puerto no permitido."}}
+	}
 	target, err := r.guard.Resolve(ctx, job.Source.Host)
 	if err != nil {
 		code := codeSourceUnreachable

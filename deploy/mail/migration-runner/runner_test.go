@@ -234,7 +234,7 @@ func newHarness(t *testing.T, mutate func(*Config)) *harness {
 		MasterUser: "migracion", MasterPass: testMaster,
 		ClamdAddr: "clamav:3310", ScanMaxBytes: defaultScanMax, ScanTimeout: defaultScanLimit,
 		JobTimeout: time.Minute, PollInterval: 50 * time.Millisecond,
-		ImapsyncBin: fake.bin, WorkDir: filepath.Join(t.TempDir(), "run"), Self: "/usr/local/bin/migration-runner",
+		SourcePorts: []int{143, 993}, ImapsyncBin: fake.bin, WorkDir: filepath.Join(t.TempDir(), "run"), Self: "/usr/local/bin/migration-runner",
 	}
 	if mutate != nil {
 		mutate(&cfg)

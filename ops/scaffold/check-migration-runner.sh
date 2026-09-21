@@ -47,6 +47,12 @@ if grep -nE 'log\.[A-Za-z]+\(.*(Password|password|Pass\b|RunnerKey)' "${FUENTES[
   falla "un registro incluye una contrasena o la clave del ejecutor"
 fi
 
+# El proceso del ejecutor lleva la clave del servicio y la contrasena del maestro de Dovecot en su entorno:
+# se marca no volcable en el arranque para que imapsync (mismo usuario) no pueda leerlos por /proc, y solo
+# conecta a los puertos de origen de su lista.
+grep -q 'protectProcess()' "$DIR/main.go" || falla "main.go ya no llama a protectProcess"
+grep -q 'sourcePortAllowed' "$DIR/runner.go" || falla "runner.go ya no comprueba el puerto del origen"
+
 if command -v go >/dev/null 2>&1; then
   modulo="$(cd "$DIR" && go list -m)"
   ajenos="$(cd "$DIR" && go list -deps -test -f '{{if not .Standard}}{{.ImportPath}}{{end}}' ./... | grep -v "^$modulo" | sort -u)"

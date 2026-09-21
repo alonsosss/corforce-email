@@ -37,9 +37,13 @@ type outputParser struct {
 	foldersTotal  int
 	messagesTotal int
 	haveTotals    bool
-	folders       []*folderState
-	current       *folderState
-	inErrorList   bool
+	// folders guarda solo las primeras maxFolders (las que se informan): un origen con millones de
+	// carpetas no debe hacer crecer la memoria; el resto solo suma a foldersDone y skippedDone.
+	folders     []*folderState
+	current     *folderState
+	foldersDone int
+	skippedDone int
+	inErrorList bool
 
 	copied int
 	failed int
@@ -63,8 +67,9 @@ type folderState struct {
 	selected int
 	copied   int
 	failed   int
-	done     bool
 }
+
+func (f *folderState) skipped() int { return max(0, f.selected-f.copied-f.failed) }
 
 func newOutputParser() *outputParser { return &outputParser{} }
 
@@ -112,7 +117,9 @@ func (p *outputParser) line(l string) {
 		p.finishFolder()
 		p.foldersTotal = atoiBounded(m[2])
 		p.current = &folderState{name: truncateRunes(sanitizeName(m[3]), maxFolderName)}
-		p.folders = append(p.folders, p.current)
+		if len(p.folders) < maxFolders {
+			p.folders = append(p.folders, p.current)
+		}
 		return
 	}
 	if m := selectedRe.FindStringSubmatch(l); m != nil && p.current != nil {
@@ -199,7 +206,8 @@ func isTLSFailure(text string) bool {
 
 func (p *outputParser) finishFolder() {
 	if p.current != nil {
-		p.current.done = true
+		p.foldersDone++
+		p.skippedDone += p.current.skipped()
 		p.current = nil
 	}
 }
@@ -216,15 +224,10 @@ func (p *outputParser) Progress() Progress {
 		BytesCopied:    p.bytes,
 		Folders:        make([]FolderProgress, 0, len(p.folders)),
 	}
+	out.FoldersDone = p.foldersDone
+	out.MessagesSkipped = p.skippedDone
 	for _, f := range p.folders {
-		skipped := max(0, f.selected-f.copied-f.failed)
-		if f.done {
-			out.FoldersDone++
-			out.MessagesSkipped += skipped
-		}
-		if len(out.Folders) < maxFolders {
-			out.Folders = append(out.Folders, FolderProgress{Name: f.name, MessagesCopied: f.copied, MessagesSkipped: skipped, MessagesFailed: f.failed})
-		}
+		out.Folders = append(out.Folders, FolderProgress{Name: f.name, MessagesCopied: f.copied, MessagesSkipped: f.skipped(), MessagesFailed: f.failed})
 	}
 	if out.FoldersTotal < out.FoldersDone {
 		out.FoldersTotal = out.FoldersDone
