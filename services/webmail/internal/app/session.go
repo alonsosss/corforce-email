@@ -69,6 +69,16 @@ func (s *Service) Login(ctx context.Context, rawUsername, password, remoteIP, pr
 // sin poder comprobar la revocacion no se sirve el buzon. El token de otra celda se rechaza
 // sin buscarlo: aqui esa sesion no existe.
 func (s *Service) Authenticate(ctx context.Context, token string) (domain.Session, error) {
+	return s.authenticate(ctx, token, true)
+}
+
+// PeekSession comprueba la sesion igual que Authenticate pero sin renovar su inactividad: la usa el flujo de
+// avisos, que se reconecta solo y no debe mantener viva una sesion que nadie usa.
+func (s *Service) PeekSession(ctx context.Context, token string) (domain.Session, error) {
+	return s.authenticate(ctx, token, false)
+}
+
+func (s *Service) authenticate(ctx context.Context, token string, touch bool) (domain.Session, error) {
 	key, ok := s.sessionKey(token)
 	if !ok {
 		if cell, parsed := domain.ParseSessionToken(token); parsed && cell != s.cfg.CellCode {
@@ -95,6 +105,9 @@ func (s *Service) Authenticate(ctx context.Context, token string) (domain.Sessio
 	if sess.RevokedBy(revokedAt) {
 		s.drop(ctx, key, sess.Username, "revocada")
 		return domain.Session{}, domain.ErrSessionInvalid
+	}
+	if !touch {
+		return sess, nil
 	}
 	if err := s.sessions.Touch(ctx, key, ttl); err != nil {
 		// La sesion es valida: si no se pudo renovar, caducara antes, que es el lado seguro.

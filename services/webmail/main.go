@@ -44,13 +44,21 @@ import (
 )
 
 const (
-	defaultPort               = 8044
-	defaultSessionIdle        = 30 * time.Minute
-	defaultSessionMax         = 12 * time.Hour
-	defaultMaxRecipients      = 100
-	defaultMaxMessageBytes    = 25 << 20
-	defaultMaxBodyPartBytes   = 2 << 20
-	defaultMaxAttachmentBytes = 50 << 20
+	defaultPort          = 8044
+	defaultSessionIdle   = 30 * time.Minute
+	defaultSessionMax    = 12 * time.Hour
+	defaultMaxRecipients = 100
+
+	// Avisos en tiempo real: cada buzon vigilado mantiene una sesion IMAP en IDLE (un proceso imap de
+	// Dovecot, del orden de 5 a 10 MB) compartida por todas sus pestanas. El tope de buzones acota esa
+	// memoria en la celda; 0 desactiva los avisos y la interfaz refresca por sondeo.
+	defaultEventsMaxPerMailbox = 5
+	maxEventsMaxPerMailbox     = 20
+	defaultEventsMaxMailboxes  = 100
+	maxEventsMaxMailboxes      = 5000
+	defaultMaxMessageBytes     = 25 << 20
+	defaultMaxBodyPartBytes    = 2 << 20
+	defaultMaxAttachmentBytes  = 50 << 20
 
 	// Topes de los motores de la celda, por donde entra y sale todo mensaje: el
 	// message_size_limit de deploy/mail/postfix/conf/main.cf.base (ningun mensaje, ni por tanto
@@ -98,6 +106,8 @@ type settings struct {
 	heloName           string
 	mailDirectoryURL   string
 	internalToken      string
+	eventsPerMailbox   int
+	eventsMailboxes    int
 }
 
 func main() {
@@ -176,6 +186,13 @@ func main() {
 		logger.Warn("webmail: WEBMAIL_ALLOW_UNSCANNED_ATTACHMENTS=true, los adjuntos NO se analizan con ClamAV (solo desarrollo)")
 	}
 
+	var watcher ports.MailboxWatcher
+	if st.eventsMailboxes > 0 {
+		watcher = imapadapter.NewWatcher(store, imapadapter.WatchConfig{MaxPerMailbox: st.eventsPerMailbox, MaxMailboxes: st.eventsMailboxes}, logger)
+	} else {
+		logger.Info("webmail: avisos en tiempo real desactivados (WEBMAIL_EVENTS_MAX_MAILBOXES=0)")
+	}
+
 	svc, err := app.New(app.Deps{
 		Auth:        authClient,
 		Sessions:    redisadapter.NewSessionStore(rdb, st.cellCode, st.sessions.Max),
@@ -184,6 +201,7 @@ func main() {
 		Directory:   directory,
 		Vacations:   directory,
 		AddressBook: directory,
+		Watcher:     watcher,
 		Ledger:      redisadapter.NewSendLedger(rdb, st.cellCode),
 		Composer:    rfc5322.New(),
 		Sanitizer:   htmlsafe.New(),
@@ -288,6 +306,12 @@ func loadSettings() (settings, error) {
 		return st, err
 	}
 	if err := st.sessions.Validate(); err != nil {
+		return st, err
+	}
+	if st.eventsPerMailbox, err = config.EnvInt("WEBMAIL_EVENTS_MAX_PER_MAILBOX", defaultEventsMaxPerMailbox, 1, maxEventsMaxPerMailbox); err != nil {
+		return st, err
+	}
+	if st.eventsMailboxes, err = config.EnvInt("WEBMAIL_EVENTS_MAX_MAILBOXES", defaultEventsMaxMailboxes, 0, maxEventsMaxMailboxes); err != nil {
 		return st, err
 	}
 	if st.limits.MaxRecipients, err = config.EnvInt("WEBMAIL_MAX_RECIPIENTS", defaultMaxRecipients, 1, postfixRecipientLimit); err != nil {

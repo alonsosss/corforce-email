@@ -285,6 +285,7 @@ export const endpoints = {
     identities: `${API_PREFIX}/webmail/identities`,
     vacation: `${API_PREFIX}/webmail/vacation`,
     addressBook: `${API_PREFIX}/webmail/address-book`,
+    events: `${API_PREFIX}/webmail/events`,
     folders: `${API_PREFIX}/webmail/folders`,
     messages: (folder: string) => `${API_PREFIX}/webmail/folders/${seg(folder)}/messages`,
     message: (folder: string, uid: number) =>

@@ -34,9 +34,12 @@ type Deps struct {
 	Directory   ports.SenderDirectory
 	Vacations   ports.VacationDirectory
 	AddressBook ports.AddressBook
-	Ledger      ports.SendLedger
-	Composer    ports.Composer
-	Sanitizer   ports.HTMLSanitizer
+	// Watcher es opcional: sin el, GET /events responde que los avisos estan desactivados y la interfaz
+	// refresca por sondeo.
+	Watcher   ports.MailboxWatcher
+	Ledger    ports.SendLedger
+	Composer  ports.Composer
+	Sanitizer ports.HTMLSanitizer
 	// Scanner solo puede faltar si main lo decidio de forma explicita (desarrollo sin
 	// ClamAV); en ese caso los adjuntos se aceptan sin analizar.
 	Scanner ports.VirusScanner
@@ -55,6 +58,7 @@ type Service struct {
 	directory   ports.SenderDirectory
 	vacations   ports.VacationDirectory
 	addressBook ports.AddressBook
+	watcher     ports.MailboxWatcher
 	ledger      ports.SendLedger
 	composer    ports.Composer
 	sanitizer   ports.HTMLSanitizer
@@ -91,7 +95,7 @@ func New(d Deps) (*Service, error) {
 		clock = time.Now
 	}
 	return &Service{
-		auth: d.Auth, sessions: d.Sessions, mail: d.Mail, sender: d.Sender, directory: d.Directory, vacations: d.Vacations, addressBook: d.AddressBook,
+		auth: d.Auth, sessions: d.Sessions, mail: d.Mail, sender: d.Sender, directory: d.Directory, vacations: d.Vacations, addressBook: d.AddressBook, watcher: d.Watcher,
 		ledger: d.Ledger, composer: d.Composer, sanitizer: d.Sanitizer, scanner: d.Scanner,
 		partURL: d.PartURL, clock: clock, logger: d.Logger, cfg: d.Config,
 	}, nil

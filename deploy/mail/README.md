@@ -514,6 +514,14 @@ borrarlos y vaciar la cola diferida (`docs/Plan_Estrategico_Mejoras_Correo.md`, 
 
 ## Webmail (usuario maestro y envio)
 
+Avisos en tiempo real (V, 2026-09-21): ademas de las conexiones cortas por peticion, el webmail mantiene una
+sesion IMAP en IDLE por buzon con la interfaz abierta (usuario maestro, INBOX en solo lectura) y la reparte por
+Server-Sent Events; ver `docs/Arquitectura_Core_Force_Mail.md`. Para Dovecot son conexiones largas: cuentan en
+`mail_max_userip_connections` (500 aqui, sobrado con el tope de 5 pestanas por buzon) y cada una es un proceso
+`imap` residente, por lo que `WEBMAIL_EVENTS_MAX_MAILBOXES` (100 por defecto) acota la memoria. Si la celda
+crece, la salida es la hibernacion de IMAP de Dovecot (`imap_hibernate_timeout` y el servicio `imap-hibernate`),
+que se prueba aparte antes de activarla; no esta activa.
+
 `services/webmail` lee por IMAP y envia por submission en nombre del buzon sin guardar su
 contrasena (la comprueba `mail-auth` con service `webmail` al abrir la sesion). Cada celda
 despliega el suyo contra sus motores y su `mail-auth`, con su `CELL_CODE`, que va en cada token

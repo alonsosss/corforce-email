@@ -1,6 +1,6 @@
 import { useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { FLAGS, hasFlag, webmailApi } from '@/api/webmail';
+import { FLAGS, FOLDER_ROLES, hasFlag, webmailApi } from '@/api/webmail';
 import { useQuery } from '@/hooks/useQuery';
 import { EmptyState, ErrorState, LoadingBlock } from '@/design/components';
 import { IconMail } from '@/design/icons';
@@ -39,7 +39,7 @@ export default function MailboxPage() {
 }
 
 function MailboxView({ folderName }: { folderName: string }) {
-  const { folders, adjustUnread, reloadFolders } = useWebmailOutlet();
+  const { folders, adjustUnread, reloadFolders, inboxTick } = useWebmailOutlet();
   const refreshSession = useWebmailStore((s) => s.refresh);
   const [params] = useSearchParams();
   const navigate = useNavigate();
@@ -48,9 +48,11 @@ function MailboxView({ folderName }: { folderName: string }) {
   const search = params.get('q') ?? '';
   const folder = folders.data?.find((f) => f.name === folderName) ?? null;
 
+  // Un aviso de la bandeja vuelve a leer la lista solo si es la bandeja de entrada.
+  const liveTick = folder?.role === FOLDER_ROLES.inbox ? inboxTick : 0;
   const list = useQuery(
     (signal) => webmailApi.messages(folderName, { page, search: search || undefined }, signal),
-    [folderName, page, search],
+    [folderName, page, search, liveTick],
   );
   const { setData: setList, reload: reloadList } = list;
   const rows = list.data?.items;

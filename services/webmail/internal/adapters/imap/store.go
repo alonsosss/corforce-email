@@ -78,6 +78,16 @@ func NewStore(cfg Config, logger *zap.Logger) (*Store, error) {
 // se vuelve a rechazar el separador maestro aqui porque es lo que decide a que buzon se
 // entra.
 func (s *Store) Open(ctx context.Context, username string) (ports.Mailbox, error) {
+	c, err := s.dial(ctx, username, nil)
+	if err != nil {
+		return nil, err
+	}
+	return &mailbox{c: c, logger: s.logger}, nil
+}
+
+// dial abre la conexion y entra en nombre del buzon. unilateral, si no es nil, recibe lo que Dovecot avisa
+// sin que se le pida (mensajes nuevos, banderas), que es lo que usa la vigilancia de la bandeja.
+func (s *Store) dial(ctx context.Context, username string, unilateral *imapclient.UnilateralDataHandler) (*imapclient.Client, error) {
 	if username == "" || strings.ContainsAny(username, masterSeparator+"\r\n\x00 \"") {
 		return nil, fmt.Errorf("%w: nombre de buzon invalido", domain.ErrUnavailable)
 	}
@@ -89,7 +99,7 @@ func (s *Store) Open(ctx context.Context, username string) (ports.Mailbox, error
 	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
 	defer stop()
 
-	opts := &imapclient.Options{TLSConfig: s.cfg.TLSConfig, WordDecoder: s.wordDecoder}
+	opts := &imapclient.Options{TLSConfig: s.cfg.TLSConfig, WordDecoder: s.wordDecoder, UnilateralDataHandler: unilateral}
 	var c *imapclient.Client
 	switch s.cfg.TLSMode {
 	case TLSImplicit:
@@ -116,7 +126,7 @@ func (s *Store) Open(ctx context.Context, username string) (ports.Mailbox, error
 		s.logger.Error("webmail: Dovecot rechazo el inicio en nombre del buzon", zap.String("username", username), zap.Error(err))
 		return nil, unavailable("inicio IMAP", err)
 	}
-	return &mailbox{c: c, logger: s.logger}, nil
+	return c, nil
 }
 
 // mailbox implementa ports.Mailbox sobre una conexion autenticada. No es concurrente:

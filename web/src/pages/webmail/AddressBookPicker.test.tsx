@@ -23,7 +23,11 @@ describe('libreta de direcciones de la empresa', () => {
     const onPick = vi.fn();
     render(<AddressBookPicker chosen={[]} onPick={onPick} />);
 
-    await user.click(await screen.findByRole('button', { name: t('webmail.compose.addressBookAdd', { address: 'ana@empresa.pe' }) }));
+    await user.click(
+      await screen.findByRole('button', {
+        name: t('webmail.compose.addressBookAdd', { address: 'ana@empresa.pe' }),
+      }),
+    );
     expect(onPick).toHaveBeenCalledWith('ana@empresa.pe');
     expect(screen.getByText('Ana Diaz')).toBeInTheDocument();
     // Sin nombre visible se muestra la direccion como nombre.
@@ -35,10 +39,16 @@ describe('libreta de direcciones de la empresa', () => {
     const onPick = vi.fn();
     render(<AddressBookPicker chosen={['ANA@Empresa.pe']} onPick={onPick} />);
 
-    const ana = await screen.findByRole('button', { name: t('webmail.compose.addressBookAdd', { address: 'ana@empresa.pe' }) });
+    const ana = await screen.findByRole('button', {
+      name: t('webmail.compose.addressBookAdd', { address: 'ana@empresa.pe' }),
+    });
     expect(ana).toBeDisabled();
     expect(screen.getByText(t('webmail.compose.addressBookAdded'))).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: t('webmail.compose.addressBookAdd', { address: 'bea@empresa.pe' }) })).toBeEnabled();
+    expect(
+      screen.getByRole('button', {
+        name: t('webmail.compose.addressBookAdd', { address: 'bea@empresa.pe' }),
+      }),
+    ).toBeEnabled();
   });
 
   it('busca tras una pausa, con el texto escrito y una sola peticion', async () => {
@@ -64,8 +74,12 @@ describe('libreta de direcciones de la empresa', () => {
     expect(await screen.findByText(t('webmail.compose.addressBookEmpty'))).toBeInTheDocument();
     unmount();
 
-    search.mockRejectedValue(new ApiError(503, { code: 'SERVICE_UNAVAILABLE', message: 'no disponible' }));
+    search.mockRejectedValue(
+      new ApiError(503, { code: 'SERVICE_UNAVAILABLE', message: 'no disponible' }),
+    );
     render(<AddressBookPicker chosen={[]} onPick={vi.fn()} />);
-    expect(await screen.findByRole('alert')).toHaveTextContent(t('webmail.compose.addressBookUnavailable'));
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      t('webmail.compose.addressBookUnavailable'),
+    );
   });
 });

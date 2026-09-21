@@ -71,6 +71,12 @@ func (h *Handler) Session(w http.ResponseWriter, r *http.Request) {
 
 // requireSession resuelve la cookie a una sesion viva o responde 401 y borra la cookie.
 func (h *Handler) requireSession(next http.Handler) http.Handler {
+	return h.sessionMiddleware(next, h.app.Authenticate)
+}
+
+// sessionMiddleware valida la cookie con authenticate (con o sin renovar la inactividad) y deja la sesion en
+// el contexto.
+func (h *Handler) sessionMiddleware(next http.Handler, authenticate func(context.Context, string) (domain.Session, error)) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		token := cookieValue(r)
 		if token == "" {
@@ -78,7 +84,7 @@ func (h *Handler) requireSession(next http.Handler) http.Handler {
 			return
 		}
 		ctx, cancel := h.opContext(r)
-		sess, err := h.app.Authenticate(ctx, token)
+		sess, err := authenticate(ctx, token)
 		cancel()
 		if err != nil {
 			if errors.Is(err, domain.ErrSessionInvalid) {

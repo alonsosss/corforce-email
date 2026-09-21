@@ -37,6 +37,11 @@ type Config struct {
 	OperationTimeout time.Duration
 	// TransferTimeout es el plazo de descargas de adjuntos y envios con adjuntos grandes.
 	TransferTimeout time.Duration
+	// EventsHeartbeat, EventsSessionCheck y EventsMaxLifetime rigen el flujo de avisos; 0 usa los valores de
+	// siempre (25 s, 10 s y 100 s).
+	EventsHeartbeat    time.Duration
+	EventsSessionCheck time.Duration
+	EventsMaxLifetime  time.Duration
 }
 
 type Handler struct {
@@ -70,6 +75,7 @@ func (h *Handler) Routes() http.Handler {
 		r.Use(h.origins.Middleware)
 		r.Post("/session", h.Login)
 		r.Delete("/session", h.Logout)
+		r.With(h.requireSessionPeek).Get("/events", h.Events)
 		r.Group(func(r chi.Router) {
 			r.Use(h.requireSession)
 			r.Get("/session", h.Session)
@@ -138,6 +144,10 @@ func writeError(w http.ResponseWriter, err error) {
 		response.Err(w, http.StatusUnprocessableEntity, "IDEMPOTENCY_KEY_REUSED", domain.ErrIdempotencyKeyReused.Error())
 	case errors.Is(err, domain.ErrInvalidCredentials):
 		response.Err(w, http.StatusUnauthorized, "INVALID_CREDENTIALS", domain.ErrInvalidCredentials.Error())
+	case errors.Is(err, domain.ErrTooManyStreams):
+		response.Err(w, http.StatusTooManyRequests, "TOO_MANY_STREAMS", domain.ErrTooManyStreams.Error())
+	case errors.Is(err, domain.ErrEventsDisabled):
+		response.Err(w, http.StatusServiceUnavailable, "EVENTS_DISABLED", domain.ErrEventsDisabled.Error())
 	case errors.Is(err, domain.ErrSessionInvalid):
 		response.Err(w, http.StatusUnauthorized, "SESSION_EXPIRED", domain.ErrSessionInvalid.Error())
 	case errors.Is(err, domain.ErrFolderNotFound):

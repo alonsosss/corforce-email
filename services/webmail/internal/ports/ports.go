@@ -79,6 +79,14 @@ type VacationDirectory interface {
 	SetVacation(ctx context.Context, username string, in domain.VacationInput) (domain.Vacation, error)
 }
 
+// MailboxWatcher avisa de los cambios de la bandeja de entrada de un buzon. Comparte una sola conexion de
+// vigilancia por buzon entre todos los que la piden, y limita cuantas admite por buzon y en total.
+type MailboxWatcher interface {
+	// Watch se suscribe. El canal emite un aviso por cambio (los que llegan juntos se funden en uno) y se
+	// cierra al cancelar ctx. Devuelve domain.ErrTooManyStreams si se supera un tope.
+	Watch(ctx context.Context, username string) (<-chan domain.MailboxChange, error)
+}
+
 // AddressBook busca en el directorio de correo de la empresa de quien pregunta (los buzones activos
 // de su empresa). La empresa la resuelve mail-directory a partir del buzon; el webmail no la conoce.
 // Un texto que el directorio rechaza es un *domain.ValidationError; cualquier otro fallo,

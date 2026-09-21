@@ -751,6 +751,29 @@ wm "$TARRO_ANA" PUT /vacation -H 'Content-Type: application/json' -d '{"enabled"
 expect "una respuesta activa sin mensaje la rechaza el servicio (422)" "$WM_CODE" "422"
 wm "$TARRO_ANA" PUT /vacation -H 'Content-Type: application/json' -d '{"enabled":false,"message":"","interval_days":1}'
 expect "y desactivarla la retira de la vista de Dovecot" "$WM_CODE/$(sql mail_cell_pe_01 "SELECT count(*) FROM mail.v_sieve_vacation WHERE username = 'ana@acme.test'")" "200/0"
+echo "== Avisos en tiempo real (webmail: SSE por el gateway, alimentado por IMAP IDLE de Dovecot)"
+SSE="$WORK/sse-bea.txt"; : >"$SSE"
+sin_cookie=$(curl -s -o /dev/null -w '%{http_code}' -H "Origin: $API_ORIGIN" "$WM/events")
+expect "el flujo de avisos exige sesion" "$sin_cookie" "401"
+otro_origen=$(curl -s -o /dev/null -w '%{http_code}' -b "$TARRO_BEA" -H "Origin: https://malo.example" "$WM/events")
+expect "y no se abre desde otro origen" "$otro_origen" "403"
+curl -sN --max-time 60 -b "$TARRO_BEA" -H "Origin: $API_ORIGIN" -H 'Accept: text/event-stream' "$WM/events" >"$SSE" 2>/dev/null &
+SSE_PID=$!
+sse_listo() { grep -q '^event: ready' "$SSE"; }
+esperar "el flujo de bea se abre (evento ready) sin que el gateway lo acumule" 15 sse_listo
+T0=$(date +%s.%N)
+enviar_wm ana@acme.test "$TOKEN-tiempo-real" -H "Idempotency-Key: $(rand_hex 16)"
+expect "ana envia a bea por el webmail" "$WM_CODE" "202"
+sse_aviso() { grep -q '^event: mailbox' "$SSE"; }
+esperar "bea recibe el aviso de correo nuevo por el flujo, sin recargar" 20 sse_aviso
+T1=$(date +%s.%N)
+LAT=$(python3 -c "print(round(($T1) - ($T0), 1))")
+python3 -c "import sys; sys.exit(0 if $LAT <= 12 else 1)" && ok "del envio al aviso pasaron ${LAT} s (tope de la prueba: 12 s)" || mal "el aviso tardo ${LAT} s"
+contains "el aviso no lleva contenido del mensaje" "$(grep -A1 '^event: mailbox' "$SSE" | tr '\n' ' ')" '"folder":"INBOX"'
+lacks "ni el asunto" "$(cat "$SSE")" "$TOKEN-tiempo-real"
+contains "y por el sondeo la carpeta ya lo cuenta" "$(wm "$TARRO_BEA" GET /folders/INBOX/messages; echo "$WM_BODY")" "$TOKEN-tiempo-real"
+kill "$SSE_PID" 2>/dev/null; wait "$SSE_PID" 2>/dev/null
+
 wm "$TARRO_ANA" DELETE /session
 expect "cerrar sesion" "$WM_CODE" "204"
 wm "$TARRO_ANA" GET /folders

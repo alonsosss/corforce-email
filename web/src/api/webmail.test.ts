@@ -6,6 +6,7 @@ import {
   composeFormData,
   filenameFromDisposition,
   onWebmailSessionExpired,
+  openWebmailEvents,
   webmailApi,
 } from './webmail';
 
@@ -274,6 +275,26 @@ describe('nombre de fichero de Content-Disposition', () => {
   });
 });
 
+describe('flujo de avisos de la bandeja', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('abre el flujo del webmail con la cookie y sin ningun dato mas', () => {
+    const created: { url: string; init?: EventSourceInit }[] = [];
+    vi.stubGlobal(
+      'EventSource',
+      class {
+        constructor(url: string, init?: EventSourceInit) {
+          created.push({ url, init });
+        }
+      },
+    );
+    openWebmailEvents();
+    expect(created).toHaveLength(1);
+    expect(created[0]?.url).toBe(endpoints.webmail.events);
+    expect(created[0]?.init).toEqual({ withCredentials: true });
+  });
+});
+
 describe('respuesta automatica del buzon', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -289,7 +310,12 @@ describe('respuesta automatica del buzon', () => {
     starts_on: null,
     ends_on: null,
     updated_at: null,
-    limits: { subject_max_length: 200, message_max_length: 8192, interval_min_days: 1, interval_max_days: 30 },
+    limits: {
+      subject_max_length: 200,
+      message_max_length: 8192,
+      interval_min_days: 1,
+      interval_max_days: 30,
+    },
   };
 
   it('se lee y se guarda por la ruta del webmail, con la cookie y sin el access token', async () => {
@@ -326,10 +352,17 @@ describe('respuesta automatica del buzon', () => {
   });
 
   it('un 422 del directorio llega como error con su mensaje', async () => {
-    mockFetch(() => json(422, { error: { code: 'VALIDATION_ERROR', message: 'el mensaje supera los 8192' } }));
+    mockFetch(() =>
+      json(422, { error: { code: 'VALIDATION_ERROR', message: 'el mensaje supera los 8192' } }),
+    );
     await expect(
       webmailApi.setVacation({
-        enabled: true, subject: '', message: 'x', interval_days: 1, starts_on: null, ends_on: null,
+        enabled: true,
+        subject: '',
+        message: 'x',
+        interval_days: 1,
+        starts_on: null,
+        ends_on: null,
       }),
     ).rejects.toMatchObject({ status: 422 });
   });

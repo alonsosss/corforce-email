@@ -9,6 +9,7 @@ import { useTheme } from '@/design/useTheme';
 import { formatBytes, usageRatio } from '@/lib/quota';
 import { t } from '@/i18n';
 import { paths } from '@/paths';
+import { watchInbox } from '@/webmail/events';
 import { useWebmailStore } from '@/webmail/store';
 import { FolderNav } from './FolderNav';
 import { defaultFolder } from './folders';
@@ -39,9 +40,23 @@ export function WebmailShell() {
       ),
     [setFolders],
   );
+  const [inboxTick, setInboxTick] = useState(0);
+  const refreshSession = useWebmailStore((s) => s.refresh);
+  useEffect(
+    () =>
+      watchInbox({
+        onChange: () => {
+          reloadFolders();
+          setInboxTick((tick) => tick + 1);
+        },
+        // Una lectura de la sesion responde SESSION_EXPIRED y el store vuelve a la pantalla de acceso.
+        onSessionExpired: () => void refreshSession(),
+      }),
+    [reloadFolders, refreshSession],
+  );
   const outlet = useMemo<WebmailOutlet>(
-    () => ({ folders, adjustUnread, reloadFolders }),
-    [folders, adjustUnread, reloadFolders],
+    () => ({ folders, adjustUnread, reloadFolders, inboxTick }),
+    [folders, adjustUnread, reloadFolders, inboxTick],
   );
 
   useEffect(() => {

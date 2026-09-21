@@ -363,6 +363,14 @@ export function composeFormData(input: ComposeInput, replaceUid?: number): FormD
 
 const wm = endpoints.webmail;
 
+/**
+ * Flujo de avisos de la bandeja (Server-Sent Events). Va con la cookie del webmail y solo hacia
+ * endpoints.webmail.events; no lleva ningun dato del correo: solo dice que hay algo que volver a leer.
+ */
+export function openWebmailEvents(): EventSource {
+  return new EventSource(buildUrl(wm.events), { withCredentials: true });
+}
+
 export const webmailApi = {
   login: (username: string, password: string) =>
     request<WebmailSession>('POST', wm.session, { json: { username, password } }),

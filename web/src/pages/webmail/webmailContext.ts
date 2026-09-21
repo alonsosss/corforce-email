@@ -8,6 +8,8 @@ export interface WebmailOutlet {
   /** Ajusta en local los no leidos de una carpeta tras leer o marcar un mensaje. */
   adjustUnread: (folder: string, delta: number) => void;
   reloadFolders: () => void;
+  /** Sube cuando llega un aviso de cambios en la bandeja de entrada: quien la muestra vuelve a leerla. */
+  inboxTick: number;
 }
 
 export function useWebmailOutlet(): WebmailOutlet {
