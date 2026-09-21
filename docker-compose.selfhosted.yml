@@ -202,7 +202,13 @@ services:
     volumes: *internal-ca
   domain-service:
     restart: *reinicio
-    environment: *go-service-env
+    environment:
+      <<: *go-service-env
+      # La verificacion de DNS de los dominios de las empresas consulta el DNS PUBLICO. El resolver
+      # del servidor es el del proveedor, que guarda en cache que "no hay registros" y devolvia un
+      # dominio recien publicado como fallido durante horas (2026-09-19: los cinco registros
+      # visibles en 1.1.1.1 y la plataforma sin verlos). Sobrescribible con MAIL_DNS_RESOLVER.
+      MAIL_DNS_RESOLVER: ${MAIL_DNS_RESOLVER:-1.1.1.1:53}
     volumes: *internal-ca
   transactional:
     restart: *reinicio

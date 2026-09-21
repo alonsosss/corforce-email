@@ -416,6 +416,18 @@ if not bloque or not re.search(r'^\s+PGBOUNCER_CLIENT_IDLE_TIMEOUT:\s*"?0"?\s*$'
     sys.exit(1)
 PY
 
+# La verificacion de DNS de las empresas no puede depender del resolver del proveedor: cachea la
+# respuesta negativa y un dominio recien publicado se quedaba en "fallido" durante horas.
+python3 - "$ROOT/docker-compose.selfhosted.yml" <<'PY' || FALLOS=1
+import re, sys
+texto = open(sys.argv[1], encoding="utf-8").read()
+bloque = re.search(r"\n  domain-service:\n(.*?)(?=\n  [a-z][a-z0-9-]*:\n)", texto, re.S)
+if not bloque or not re.search(r"^\s+MAIL_DNS_RESOLVER:\s*\$\{MAIL_DNS_RESOLVER:-[0-9.]+:53\}\s*$", bloque.group(1), re.M):
+    print("  FALLA: domain-service del perfil sin un resolver publico por defecto (MAIL_DNS_RESOLVER): un dominio"
+          " recien publicado se verificaria como fallido por la cache negativa del DNS del proveedor", file=sys.stderr)
+    sys.exit(1)
+PY
+
 if [[ $FALLOS -ne 0 ]]; then
   echo "check-selfhosted-profile: FALLA" >&2
   exit 1

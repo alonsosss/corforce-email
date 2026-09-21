@@ -548,8 +548,10 @@ mensaje.
 
 ## 11. Producción autoalojada (`DEPLOY_PROFILE=selfhosted`)
 
-Toda la plataforma en un servidor propio (probado para un VPS Debian 13, 2 vCPU, 3,8 GB de RAM
-y 4 GB de swap), sin RDS, ElastiCache ni balanceador. En `ENVIRONMENT=production` los servicios
+Toda la plataforma en un servidor propio (probado en un VPS Debian 13 de 2 vCPU y 3,8 GB de RAM y, en
+producción desde 2026-09-17, en uno Ubuntu 24.04 de 4 vCPU y 8 GB de RAM con 4 GB de swap), sin RDS,
+ElastiCache ni balanceador. Con 3,8 GB quedaba 1 GB libre solo con los motores de correo levantados
+(ClamAV ocupa 1 GB): para volumen real, 8 GB. En `ENVIRONMENT=production` los servicios
 exigen lo que en AWS dan esos servicios gestionados, y el perfil lo da sin relajar nada:
 
 | Control | En AWS | En el perfil |
@@ -782,6 +784,30 @@ de 512 MB y `max_connections=200` de Postgres, `maxmemory 512mb` de Redis, el tm
 borde (hasta `EDGE_BODY_TMPFS_SIZE`, 256 MiB, dentro de `EDGE_MEMORY_LIMIT`, 384 MiB) y los motores
 de correo (ClamAV sola supera 1 GB al cargar firmas). Sumados rozan la RAM: el swap de 4 GB evita
 el OOM, pero con ClamAV cargando la latencia se degrada.
+
+### Estado verificado del servidor de producción (2026-09-20)
+
+Lo que se comprobó de punta a punta con un buzón real, y las trampas que salieron al hacerlo:
+
+* **Nombres.** La plataforma vive en `email.<dominio>` y el correo en `mx.<dominio>` (HELO, PTR y certificado
+  son ese mismo nombre); el SPF de la plataforma, en `spf.<dominio>` y el SPF del HELO en `mx.<dominio>`
+  (`v=spf1 a -all`). La plataforma no admite dar de alta como dominio de una empresa su propio dominio
+  (ni el de un subdominio suyo): las empresas usan dominios distintos.
+* **Entrada.** SMTP en el 25 con greylisting (el primer intento de un remitente nuevo recibe 451; los servidores
+  reales reintentan), IMAP en el 993 y envío autenticado en el 587. Un remitente en una lista negra o de un dominio
+  que declara `nullMX` se rechaza: es el filtro, no un fallo.
+* **Salida.** Firmada con DKIM (`d=<dominio de la empresa>`, selector `cfm<aaaamm>`), SPF y DNS inverso en `pass`
+  para un verificador externo (Port25) y 10/10 en mail-tester. El puerto 25 de salida hay que comprobarlo en un
+  servidor nuevo: hacia Gmail y Outlook conectó; Yahoo no respondió.
+* **DNS inverso.** Lo cambia el cliente en el panel del proveedor (Netcup: Server Control Panel, IPv4, Reverse
+  DNS) a `mx.<dominio>`; tarda unos minutos en publicarse. No se pone en la fila IPv6 si el servidor no tiene
+  IPv6 ni un AAAA para ese nombre.
+* **Verificación de dominios.** `MAIL_DNS_RESOLVER` apunta a un resolver público (por defecto `1.1.1.1:53` en el
+  perfil): el del proveedor cachea las respuestas negativas y dejaba un dominio recién publicado como fallido.
+* **Cortafuegos heredado.** Un servidor reutilizado puede traer reglas de otra plataforma (`cf-firewall` mandaba el 80 y
+  el 443 a una lista de Cloudflare y las reponía cada día). Revisar `iptables -S DOCKER-USER` y las unidades de
+  systemd antes de desplegar.
+* **Reinicio.** Ver "Arranque tras un reinicio del servidor": todo el perfil usa `restart: always`.
 
 ### Riesgos y pendientes
 
