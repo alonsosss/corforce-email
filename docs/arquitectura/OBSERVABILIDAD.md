@@ -69,7 +69,9 @@ docker compose -f docker-compose.observability.yml up -d
 ```
 
 - **Prometheus** (`127.0.0.1:9090`): recolecta y evalua las alertas.
-- **Grafana** (`127.0.0.1:3000`): tablero "Plataforma" aprovisionado.
+- **Grafana** (`127.0.0.1:3000`): tableros "Plataforma" y "Salud de entrega del correo" (`entrega.json`: cola de
+  Postfix, mensaje mas antiguo, falsos positivos del antispam, cuarentena y, desde Loki, entregas, diferidos, rebotes
+  y rechazos de Postfix) aprovisionados; `ops/scaffold/check-dashboards.sh` exige que solo consulten metricas que existen.
 - **node-exporter**: CPU, memoria y disco del servidor.
 
 Ninguno se publica hacia internet: se consultan por tunel SSH

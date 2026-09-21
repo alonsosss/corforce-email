@@ -131,6 +131,11 @@ if ! bash "$ROOT/ops/scaffold/check-migration-runner.sh"; then
   FAIL=1
 fi
 
+echo "== 19. Paneles de Grafana: JSON valido, origenes aprovisionados y metricas que existen =="
+if ! bash "$ROOT/ops/scaffold/check-dashboards.sh"; then
+  FAIL=1
+fi
+
 echo ""
 if [[ $FAIL -ne 0 ]]; then
   echo "VALIDACION: FALLA"; exit 1
