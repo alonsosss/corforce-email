@@ -303,5 +303,6 @@ Se actualiza en la misma tarea que implemente cada iniciativa.
 | B3 Avisos de seguridad | Parcial | La sección 9 de `UPSTREAM.md` fija de dónde sale cada motor, cómo llega un parche y los plazos. Suscribirse a los avisos es una acción de quien opera el servidor (P) |
 | B5 Menos divergencia | V | `ops/scaffold/check-upstream-ledger.sh`, en `validate.sh` (sección 14): editar un fichero idéntico a mailcow sin registrarlo rompe `make checks`; probado con siete mutaciones |
 | B8 Revisión trimestral | Parcial | Primera fila de la tabla de `UPSTREAM.md`, sección 10. El umbral se fija tras el primer port real |
-| B4, B6, B7, A1 a A6, C1 a C5 | P | Sin implementar |
+| A1 Línea base de entregabilidad | Parcial | `ops/deliverability/verificar-entrega.sh <dominio> --selector <selector>`: MX, SPF (con cuenta de consultas DNS), DKIM (tamaño de clave), DMARC (incluida la autorización de informes a otro dominio), MTA-STS, TLS-RPT, PTR con FCrDNS, saludo SMTP, certificado, puertos y seis listas negras; probado con un `dig` simulado en `ops/scaffold/check-deliverability-tool.sh`. Primera medición, `mentorenergy.uk` el 2026-09-20: 0 fallas y 3 avisos (los informes DMARC van a `dmarc@core-force.com` y ese dominio no publica `mentorenergy.uk._report._dmarc.core-force.com`, sin MTA-STS ni TLS-RPT). Falta lo que no se ve desde fuera: la salida por el puerto 25, Postmaster Tools, SNDS y los buzones semilla (P) |
+| B4, B6, B7, A2 a A6, C1 a C5 | P | Sin implementar |
 

@@ -106,6 +106,11 @@ if ! bash "$ROOT/ops/scaffold/check-upstream-ledger.sh"; then
   FAIL=1
 fi
 
+echo "== 15. Herramienta de entregabilidad: MX, SPF, DKIM, DMARC, PTR, SMTP y listas negras con un DNS simulado =="
+if ! bash "$ROOT/ops/scaffold/check-deliverability-tool.sh"; then
+  FAIL=1
+fi
+
 echo ""
 if [[ $FAIL -ne 0 ]]; then
   echo "VALIDACION: FALLA"; exit 1
