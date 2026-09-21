@@ -224,8 +224,8 @@ puede lanzar las herramientas de Postgres en la red interna.
 
 | Unidad | Cuándo (UTC en el fichero) | Hora de Lima |
 |---|---|---|
-| `core-force-mail-backup.timer` | `08:15` diario | 03:15 |
-| `core-force-mail-backup-mail.timer` | `08:45` diario | 03:45 |
+| `core-force-mail-backup.timer` | `02,08,14,20:15` cada seis horas | 21:15, 03:15, 09:15, 15:15 |
+| `core-force-mail-backup-mail.timer` | `02,08,14,20:45` cada seis horas | 21:45, 03:45, 09:45, 15:45 |
 | `core-force-mail-backup-verify.timer` | domingos `09:30` | domingos 04:30 |
 
 El `OnCalendar` está en **UTC**: al cambiarlo, no leerlo como hora local. Los tres con prioridad

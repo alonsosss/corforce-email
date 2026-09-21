@@ -1,9 +1,10 @@
 [Unit]
-Description=Respaldo diario de las bases de Core Force Mail
+Description=Respaldo de las bases de Core Force Mail cada seis horas
 
 [Timer]
-# 03:15 en hora de Lima (UTC-5), de madrugada.
-OnCalendar=*-*-* 08:15:00 UTC
+# Cada seis horas, a las 21:15, 03:15, 09:15 y 15:15 de Lima (UTC-5): con un solo respaldo al dia, un fallo del
+# servidor perdia hasta 24 horas de datos; asi el peor caso son seis. Con la retencion de tres dias quedan doce.
+OnCalendar=*-*-* 02,08,14,20:15:00 UTC
 Persistent=true
 RandomizedDelaySec=300
 
