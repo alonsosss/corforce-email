@@ -93,7 +93,7 @@ func main() {
 		log.Fatalf("SCHEDULER_RETRY_BASE_DELAY / SCHEDULER_RETRY_MAX_DELAY: %v", err)
 	}
 	// Cada empresa en vuelo ocupa conexiones de su pool (hasta 10, pkg/db) a traves de
-	// pgbouncer, cuyo max_client_conn (1000) comparten todos los servicios.
+	// pgbouncer, cuyo max_client_conn (4000) comparten todos los servicios.
 	concurrency, err := config.EnvInt("SCHEDULER_TENANT_CONCURRENCY", 4, 1, 64)
 	if err != nil {
 		log.Fatal(err)

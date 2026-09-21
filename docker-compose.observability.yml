@@ -38,6 +38,9 @@ services:
     ports:
       - "127.0.0.1:${PROMETHEUS_PORT:-9090}:9090"
     restart: unless-stopped
+    # 22 objetivos cada 30 s son unas decenas de miles de series: cientos de MiB como mucho. El techo
+    # evita que el monitoreo compita por la RAM con la base y los motores si algun dia crecen las series.
+    mem_limit: 768m
     networks:
       - app
 
@@ -62,6 +65,7 @@ services:
       - /:/host:ro,rslave
       - ${METRICS_TEXTFILE_DIR:-/opt/core-force-mail/metrics}:/textfile:ro
     restart: unless-stopped
+    mem_limit: 64m
     networks:
       - app
 
@@ -85,6 +89,7 @@ services:
     depends_on:
       - prometheus
     restart: unless-stopped
+    mem_limit: 384m
     networks:
       - app
 

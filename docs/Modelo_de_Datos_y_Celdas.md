@@ -1293,7 +1293,7 @@ Pendiente (P):
 
 ## 6. Limites que condicionan el dimensionado (V, heredados y vigentes)
 
-* PgBouncer en `pool_mode = transaction`, `default_pool_size 20`, `max_client_conn 1000`.
+* PgBouncer en `pool_mode = transaction`, `default_pool_size 20`, `max_client_conn 4000`, `max_db_connections 40`, `min_pool_size 0`.
   Cada servicio abre hasta 10 conexiones por base de empresa activa: con S servicios que
   toquen bases de empresa y T empresas activas a la vez, el techo es 10 x S x T conexiones
   de cliente hacia PgBouncer. `MinConns 0` es lo que permite tener muchas empresas

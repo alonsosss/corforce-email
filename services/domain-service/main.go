@@ -55,7 +55,7 @@ const (
 	// menos de un minuto una empresa lenta no terminaria ni el primero.
 	minSweepTimeout = time.Minute
 	// Cada empresa en vuelo ocupa conexiones de su pool (hasta 10, pkg/db) a traves de
-	// pgbouncer, cuyo max_client_conn (1000) comparten todos los servicios.
+	// pgbouncer, cuyo max_client_conn (4000) comparten todos los servicios.
 	maxSweepWorkers = 64
 	// La clave anterior de una rotacion programada sigue en los motores y en la zona del cliente
 	// durante la gracia, contada desde la ultima vez que pudo firmar. Suelo: lo que un mensaje

@@ -24,17 +24,29 @@ stats_users         = __DB_ADMIN_USER__
 ; es el modo más eficiente para microservicios stateless
 pool_mode           = transaction
 
-; Clientes máximos simultáneos (todos los microservicios + picos)
-max_client_conn     = 1000
+; Clientes máximos simultáneos. Cada servicio abre hasta 10 conexiones cliente al registro y hasta 10
+; por empresa (pkg/db, MaxConns): 22 servicios x (1 + empresas) x 10 superaba 1000 con 6 empresas
+; saturadas. Un cliente en espera cuesta unos KiB de este proceso y un descriptor (el demonio da
+; 65536), asi que el techo no es lo que protege a la base: lo hace max_db_connections.
+max_client_conn     = 4000
 
 ; Conexiones reales a Postgres por pool (DB + usuario)
-; Con 3 DBs × 20 = 60 conexiones reales máx en vez de 277+
 default_pool_size   = 20
-; Suelo por base y usuario. Estaba en 5 desde el servidor anterior, donde Postgres corria
-; en la misma maquina con 8 GB; en RDS de 2 GiB, 10 bases x 2 usuarios x 5 son ~80 procesos
-; de Postgres vivos a cualquier hora, a 5-8 MiB cada uno, sin hacer nada. El techo
-; (default_pool_size) no se toca: es el que responde bajo carga. Cambiado el 2026-09-05.
-min_pool_size       = 1
+; Techo de conexiones reales por BASE, sumados todos sus usuarios. Cada servicio tiene su usuario
+; y cada usuario su pool de default_pool_size: 13 servicios de empresa x 20 = 260 por base, mas
+; que el max_connections de Postgres (200) con UNA sola empresa. Medido con un pooler real contra
+; un Postgres de 200 conexiones, 12 usuarios x 8 bases y 6 clientes concurrentes por par: sin
+; techo el pico fue de 197 conexiones de servidor (Postgres al limite, sin sitio para Dovecot,
+; migraciones ni respaldos); con 16 por base fue de 128 (8 x 16). Regla: bases con carga a la
+; vez x max_db_connections <= max_connections - 15 (docs/Operacion_Despliegue.md, "Presupuesto de
+; conexiones"). Las peticiones de mas esperan en cola (query_wait_timeout), no fallan.
+max_db_connections  = 40
+; Sin suelo. Con 1 cada par (base, usuario) que alguna vez recibio trafico retenia una conexion
+; de servidor para siempre (server_idle_timeout no la cierra): medido, 96 pares dejaron 96
+; conexiones abiertas tras 14 s ociosas con min_pool_size=1 y 0 con min_pool_size=0. Eso es
+; 13 servicios x cada empresa: con 15 empresas, el max_connections entero, sin hacer nada.
+; Reabrir una conexion local con TLS cuesta milisegundos. Cambiado el 2026-09-21.
+min_pool_size       = 0
 reserve_pool_size   = 5
 reserve_pool_timeout = 3
 

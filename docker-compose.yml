@@ -63,6 +63,12 @@ services:
       # contenedor con el rol de plataforma. En produccion el pooler exige el fichero.
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
     entrypoint: ["/usr/local/bin/pgbouncer-entrypoint.sh"]
+    # max_client_conn (pgbouncer.ini.template) necesita descriptores de sobra; con el limite de 1024
+    # de un demonio sin ajustar, PgBouncer avisa y rechaza clientes a partir de ~1000.
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
     volumes:
       # El DIRECTORIO entero, no fichero a fichero: un bind de fichero ata el inodo y,
       # cuando alguien reemplaza userlist.txt en el host (cualquier editor o `sed -i`
@@ -114,10 +120,14 @@ services:
     volumes:
       - natsdata:/data
     healthcheck:
-      test: ["CMD", "nats-server", "--help"]
+      # El monitor (-m 8222) responde /healthz solo con el servidor y JetStream sanos. Antes se
+      # probaba `nats-server --help`, que sale bien aunque el servidor este caido, y los servicios
+      # con depends_on: service_healthy arrancaban contra un NATS que aun no aceptaba conexiones.
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8222/healthz"]
       interval: 10s
       timeout: 5s
       retries: 3
+      start_period: 10s
     restart: unless-stopped
     security_opt: ["no-new-privileges:true"]
     networks:

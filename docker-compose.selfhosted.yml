@@ -34,6 +34,21 @@ x-internal-ca: &internal-ca
 # plataforma entera se quedo reintentando. El perfil la fija para todos sus servicios.
 x-reinicio: &reinicio always
 
+# Endurecimiento de todo servicio Go: sin root, sistema de ficheros de solo lectura (ninguno escribe: las
+# imagenes son scratch y el codigo no crea ficheros), sin capacidades y con un tope de procesos. Cada servicio
+# declara ademas su mem_limit y su GOMEMLIMIT (80 % del techo, para que el recolector actue antes que el
+# OOM del cgroup). Son techos, no reservas: se dimensionan contra lo medido en reposo (6 a 15 MiB por
+# servicio) y la carga maxima de cada uno; el presupuesto del servidor esta en docs/Operacion_Despliegue.md
+# ("Presupuesto de recursos"). check-selfhosted-profile.sh falla si un servicio Go pierde alguno.
+x-go-runtime: &go-runtime
+  user: "65532:65532"
+  read_only: true
+  cap_drop: [ALL]
+  pids_limit: 256
+  # pkg/server espera hasta 30 s a las peticiones en vuelo tras SIGTERM; con los 10 s por defecto de compose
+  # el kernel las mataba a medias en cada despliegue.
+  stop_grace_period: 40s
+
 x-go-service-env: &go-service-env
   REDIS_TLS: "true"
   REDIS_TLS_CA_FILE: /run/core-force-mail/tls/publico/ca.crt
@@ -81,6 +96,8 @@ services:
 
   pgbouncer:
     restart: *reinicio
+    # Medido en reposo: 2,5 MiB. Con max_client_conn 4000, unos KiB por cliente en espera.
+    mem_limit: 128m
     environment:
       DB_UPSTREAM_HOST: postgres-primary
       DB_UPSTREAM_PORT: "5432"
@@ -103,6 +120,9 @@ services:
 
   redis:
     restart: *reinicio
+    # maxmemory 512mb mas el margen de la copia al reescribir el AOF y de los buffers de clientes.
+    # Medido en reposo: 4 MiB.
+    mem_limit: 640m
     # Sin puerto en claro (--port 0): el 6379 es TLS. La contrasena entra por la entrada estandar
     # (selfhosted/redis/entrypoint.sh), no por argumentos. Los parametros de memoria son los de
     # docker-compose.yml; check-selfhosted-profile.sh falla si divergen.
@@ -142,8 +162,11 @@ services:
 
   gateway:
     restart: *reinicio
+    <<: *go-runtime
+    mem_limit: 192m
     environment:
       <<: *go-service-env
+      GOMEMLIMIT: 150MiB
       # El gateway acepta X-Real-IP solo de la red edge, donde no hay mas que el proxy de borde.
       TRUSTED_PROXY_CIDRS: ${EDGE_NETWORK_SUBNET:-172.31.255.0/28}
     volumes: *internal-ca
@@ -152,28 +175,51 @@ services:
 
   identity:
     restart: *reinicio
-    environment: *go-service-env
+    <<: *go-runtime
+    mem_limit: 128m
+    environment:
+      <<: *go-service-env
+      GOMEMLIMIT: 100MiB
     volumes: *internal-ca
   access-control:
     restart: *reinicio
-    environment: *go-service-env
+    <<: *go-runtime
+    mem_limit: 128m
+    environment:
+      <<: *go-service-env
+      GOMEMLIMIT: 100MiB
     volumes: *internal-ca
   organization:
     restart: *reinicio
-    environment: *go-service-env
+    <<: *go-runtime
+    mem_limit: 128m
+    environment:
+      <<: *go-service-env
+      GOMEMLIMIT: 100MiB
     volumes: *internal-ca
   audit:
     restart: *reinicio
-    environment: *go-service-env
+    <<: *go-runtime
+    mem_limit: 192m
+    environment:
+      <<: *go-service-env
+      GOMEMLIMIT: 150MiB
     volumes: *internal-ca
   scheduler:
     restart: *reinicio
-    environment: *go-service-env
+    <<: *go-runtime
+    mem_limit: 128m
+    environment:
+      <<: *go-service-env
+      GOMEMLIMIT: 100MiB
     volumes: *internal-ca
   mail-directory:
     restart: *reinicio
+    <<: *go-runtime
+    mem_limit: 128m
     environment:
       <<: *go-service-env
+      GOMEMLIMIT: 100MiB
       # Antes de admitir enforce en la politica MTA-STS de un dominio comprueba sus MX en el DNS
       # PUBLICO, como domain-service (mas abajo): el resolver del proveedor cachea las respuestas
       # negativas. Sobrescribible con MAIL_DNS_RESOLVER.
@@ -181,11 +227,14 @@ services:
     volumes: *internal-ca
   mail-auth:
     restart: *reinicio
+    <<: *go-runtime
+    mem_limit: 192m
     # Sin root (la imagen es scratch y no fija usuario). Este user: es tambien el dueno de su clave
     # TLS: internal-tls.sh lo lee de aqui.
     user: "65532:65532"
     environment:
       <<: *go-service-env
+      GOMEMLIMIT: 150MiB
       # Certificado de la CA interna para el listener de Dovecot y del webmail (9082), con SAN
       # mail-auth, el host de MAIL_AUTH_URL. Lo relee solo cuando internal-tls.sh lo renueva.
       MAIL_AUTH_TLS_CERT: /run/core-force-mail/tls/mail-auth/server.crt
@@ -195,20 +244,30 @@ services:
       - ${INTERNAL_TLS_DIR:-/opt/core-force-mail/tls}/mail-auth:/run/core-force-mail/tls/mail-auth:ro
   mail-security:
     restart: *reinicio
-    environment: *go-service-env
+    <<: *go-runtime
+    mem_limit: 384m
+    environment:
+      <<: *go-service-env
+      GOMEMLIMIT: 300MiB
     volumes: *internal-ca
   webmail:
     restart: *reinicio
+    <<: *go-runtime
+    mem_limit: 512m
     environment:
       <<: *go-service-env
+      GOMEMLIMIT: 400MiB
       # Verifica mail-auth con la CA interna; se anade a las raices del sistema, con las que sigue
       # verificando el certificado publico de Dovecot y Postfix.
       WEBMAIL_TLS_CA_FILE: /run/core-force-mail/tls/publico/ca.crt
     volumes: *internal-ca
   domain-service:
     restart: *reinicio
+    <<: *go-runtime
+    mem_limit: 128m
     environment:
       <<: *go-service-env
+      GOMEMLIMIT: 100MiB
       # La verificacion de DNS de los dominios de las empresas consulta el DNS PUBLICO. El resolver
       # del servidor es el del proveedor, que guarda en cache que "no hay registros" y devolvia un
       # dominio recien publicado como fallido durante horas (2026-09-19: los cinco registros
@@ -217,58 +276,106 @@ services:
     volumes: *internal-ca
   mail-migration:
     restart: *reinicio
-    environment: *go-service-env
+    <<: *go-runtime
+    mem_limit: 192m
+    environment:
+      <<: *go-service-env
+      GOMEMLIMIT: 150MiB
     volumes: *internal-ca
   mail-dav:
     restart: *reinicio
+    <<: *go-runtime
+    # Un listado inicial o un sync-collection completo materializa los eventos del calendario (medido:
+    # 20000 eventos de 350 bytes, +22 MiB), y el tope por buzon (MAIL_DAV_MAX_EVENTS_PER_MAILBOX) los deja crecer.
+    mem_limit: 256m
     environment:
       <<: *go-service-env
+      GOMEMLIMIT: 200MiB
       # Verifica mail-auth (certificado de la CA interna) al autenticar cada peticion.
       MAIL_DAV_TLS_CA_FILE: /run/core-force-mail/tls/publico/ca.crt
     volumes: *internal-ca
   transactional:
     restart: *reinicio
-    environment: *go-service-env
+    <<: *go-runtime
+    mem_limit: 192m
+    environment:
+      <<: *go-service-env
+      GOMEMLIMIT: 150MiB
     volumes: *internal-ca
   suppression:
     restart: *reinicio
-    environment: *go-service-env
+    <<: *go-runtime
+    mem_limit: 128m
+    environment:
+      <<: *go-service-env
+      GOMEMLIMIT: 100MiB
     volumes: *internal-ca
   templates:
     restart: *reinicio
-    environment: *go-service-env
+    <<: *go-runtime
+    mem_limit: 128m
+    environment:
+      <<: *go-service-env
+      GOMEMLIMIT: 100MiB
     volumes: *internal-ca
   contacts:
     restart: *reinicio
-    environment: *go-service-env
+    <<: *go-runtime
+    mem_limit: 256m
+    environment:
+      <<: *go-service-env
+      GOMEMLIMIT: 200MiB
     volumes: *internal-ca
   billing:
     restart: *reinicio
-    environment: *go-service-env
+    <<: *go-runtime
+    mem_limit: 128m
+    environment:
+      <<: *go-service-env
+      GOMEMLIMIT: 100MiB
     volumes: *internal-ca
   reputation:
     restart: *reinicio
-    environment: *go-service-env
+    <<: *go-runtime
+    mem_limit: 128m
+    environment:
+      <<: *go-service-env
+      GOMEMLIMIT: 100MiB
     volumes: *internal-ca
   campaigns:
     restart: *reinicio
-    environment: *go-service-env
+    <<: *go-runtime
+    mem_limit: 192m
+    environment:
+      <<: *go-service-env
+      GOMEMLIMIT: 150MiB
     volumes: *internal-ca
   automations:
     restart: *reinicio
-    environment: *go-service-env
+    <<: *go-runtime
+    mem_limit: 128m
+    environment:
+      <<: *go-service-env
+      GOMEMLIMIT: 100MiB
     volumes: *internal-ca
   analytics:
     restart: *reinicio
-    environment: *go-service-env
+    <<: *go-runtime
+    mem_limit: 128m
+    environment:
+      <<: *go-service-env
+      GOMEMLIMIT: 100MiB
     volumes: *internal-ca
 
   # nats y web no necesitan nada mas del perfil, pero si su politica de reinicio: sin ella no
   # vuelven tras un reinicio del servidor (live-restore).
   nats:
     restart: *reinicio
+    # JetStream escribe en disco (el cache de paginas del kernel no cuenta aqui). Medido en reposo: 13 MiB.
+    mem_limit: 256m
   web:
     restart: *reinicio
+    mem_limit: 64m
 
   edge-proxy:
     # Proxy de borde: HTTPS de la web publica con el certificado que emite acme (volumen ssl de

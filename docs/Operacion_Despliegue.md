@@ -503,8 +503,8 @@ antigüedad del último éxito, el error de la última corrida y la ausencia de 
 `docker-compose.observability.yml` (Prometheus, Grafana, Loki, Promtail, node-exporter,
 docker-socket-proxy) se une a la red `mail_mail-internal` como externa. Los objetivos se
 generan desde el compose (`make gen-observability-targets`); las reglas de alerta tienen
-pruebas de `promtool` (`make check-alertas`). Cada servicio expone `/healthz` y `/metrics`
-fuera de su cadena de middlewares; las imágenes son `FROM scratch` y el `HEALTHCHECK` usa
+pruebas de `promtool` (`make check-alertas`). Cada servicio expone `/healthz` (el proceso vive), `/readyz`
+(la base y el bus responden, 503 si no) y `/metrics` fuera de su cadena de middlewares; las imágenes son `FROM scratch` y el `HEALTHCHECK` usa
 el propio binario con `--healthcheck <puerto>`.
 
 ## 8. Alta de un servicio
@@ -851,6 +851,144 @@ de 512 MB y `max_connections=200` de Postgres, `maxmemory 512mb` de Redis, el tm
 borde (hasta `EDGE_BODY_TMPFS_SIZE`, 256 MiB, dentro de `EDGE_MEMORY_LIMIT`, 384 MiB) y los motores
 de correo (ClamAV sola supera 1 GB al cargar firmas). Sumados rozan la RAM: el swap de 4 GB evita
 el OOM, pero con ClamAV cargando la latencia se degrada.
+
+### Presupuesto de recursos
+
+`docker-compose.selfhosted.yml` da a cada servicio Go (22) `mem_limit`, `GOMEMLIMIT` (80 % del techo, para que el
+recolector actúe antes que el OOM del cgroup), `pids_limit: 256`, `user: 65532:65532`, `read_only: true`,
+`cap_drop: [ALL]` y `stop_grace_period: 40s` (`pkg/server` espera hasta 30 s a las peticiones en vuelo tras SIGTERM; con
+los 10 s por defecto de compose el kernel las mataba a medias en cada despliegue). Ninguno escribe en disco (imágenes
+`scratch`, sin `CreateTemp` ni `WriteFile`), así que no hay tmpfs. `ops/scaffold/check-selfhosted-profile.sh` falla si
+un servicio Go pierde alguno de ellos o si la suma de `mem_limit` del perfil pasa de 6144 MiB. La rotación de logs la da
+el demonio (`ops/server-template/config/daemon.json`: `json-file`, 20 MiB x 5, comprimido), no cada servicio. No se fija
+límite de CPU: en 4 vCPU compartidas con la base y los motores, un tope por contenedor solo convierte una ráfaga en
+latencia (`mail-migration-runner` conserva el suyo).
+
+| Techo | Servicios | Por qué ese valor |
+|---|---|---|
+| 128 MiB | access-control, analytics, automations, billing, domain-service, identity, mail-directory, organization, reputation, scheduler, suppression, templates | En reposo miden 6 a 15 MiB (medido con `docker stats` sobre la pila local, 13 h de uso); 10x de margen |
+| 192 MiB | audit, campaigns, gateway, mail-auth, mail-migration, transactional | Cuerpos de petición y ráfagas de conexiones (gateway, mail-auth); lotes de campañas y de correo transaccional |
+| 256 MiB | contacts, mail-dav | Importación de contactos; un `sync-collection` inicial materializa el calendario entero (medido: 20000 eventos de 350 bytes, +22 MiB de heap) y el tope por buzón (20000 eventos, hasta 256 KiB cada uno) los deja crecer |
+| 384 MiB | mail-security | Recibe de Rspamd el mensaje entero en `/pipe` (`MAIL_QUARANTINE_MAX_BODY_MB`, 50 por defecto) |
+| 512 MiB | webmail | Mensajes de hasta 25 MiB que se leen, se codifican en MIME y se envían |
+
+Resto de la plataforma: `pgbouncer` 128 MiB (medido 2,5 MiB), `redis` 640 MiB (`maxmemory 512mb` más la copia del AOF; medido
+4 MiB), `nats` 256 MiB (medido 13 MiB), `web` 64 MiB (medido 11 MiB), `edge-proxy` 384 MiB. Suma de techos de la
+plataforma: **5568 MiB**. Pila de observabilidad: Prometheus 768, Grafana 384, Loki 512, Promtail 256, Alertmanager 128,
+node-exporter 64 y docker-socket-ro 64 = 2176 MiB.
+
+**Lo que no lleva límite, y por qué.** Postgres (`shared_buffers` 512 MB más hasta 197 procesos de servidor: un OOM de
+cgroup sobre la base es peor que la presión de memoria del host), ClamAV (supera 1 GiB al cargar firmas, medido 1007
+MiB, y en cada recarga de firmas llega a casi el doble: un límite estrecho lo mata durante la recarga y el correo entrante
+se detiene), y el resto de los motores (Rspamd 71 MiB, Dovecot 13, Postfix 16, tlspol 17, Olefy 11, Unbound 13; Postfix
+ejecuta además el `queue-agent`). `mail-migration-runner` conserva su tope de 1 GiB y 1 CPU.
+
+**La suma supera la RAM y se decide así.** Techos de la plataforma (5,4 GiB) + observabilidad (2,1) + ejecutor de migración
+(1,0) + Postgres (hasta ~1,5) + ClamAV (1,1 a 2,2) + motores (~0,2) son 11 a 12 GiB frente a 7,9 GiB de RAM y 4 GiB de
+swap. No es un defecto: un techo no reserva nada, y el uso real es la suma de los usos (medido en producción el 2026-09-21:
+37 contenedores con 4,9 GiB libres). Lo que el techo compra es aislamiento: una fuga o una petición enorme en un servicio
+lo mata a él (y `restart: always` lo levanta) en vez de arrastrar a Postgres. Lo que hay que vigilar es que ningún
+servicio toque su techo en estado estable: `ProcesoMatadoPorFaltaDeMemoria` (`node_vmstat_oom_kill`) avisa de cualquier
+muerte por memoria del host, y tras el primer despliegue conviene mirar `docker stats --no-stream` con carga real.
+**Estos límites salen de la medición en reposo y del análisis del código, no de carga real en el servidor**: si uno se
+queda corto, sube su `mem_limit` y su `GOMEMLIMIT` en el perfil (los candidatos son webmail, mail-security y mail-dav, los
+que reciben cuerpos grandes). No impiden el arranque: un servicio Go arranca con 6 a 15 MiB.
+
+### Presupuesto de conexiones a Postgres
+
+`max_connections=200` (3 reservadas para superusuario) y unos 12 huecos para lo que no pasa por el pooler (el migrador de
+`organization` por `POSTGRES_DIRECT_*`, `pg_dump` del respaldo, `psql` del operador) dejan **185** para PgBouncer, que corre
+en `pool_mode = transaction`. Un pool de PgBouncer es un par (base, usuario), y cada servicio de empresa tiene su usuario:
+con `default_pool_size=20` y 13 servicios, UNA base podía pedir 260 conexiones. Medido contra un PgBouncer 1.25 real y un
+Postgres de 200 (12 usuarios x 8 bases, 6 clientes concurrentes por par, consultas de 50 ms):
+
+| Configuración | Conexiones de servidor con carga | Al quedar ociosas (`server_idle_timeout`) |
+|---|---|---|
+| Anterior (`min_pool_size=1`, sin techo por base) | 197 de 200: Postgres al límite | 96 (una por par que alguna vez tuvo tráfico) |
+| `min_pool_size=0`, sin techo por base | 197 | 0 |
+| `min_pool_size=0`, `max_db_connections=16` | 128 (= 8 bases x 16) | 0 |
+
+Por eso `pgbouncer/pgbouncer.ini.template` fija ahora `min_pool_size=0` (con 1, las conexiones ociosas crecían como
+servicios x empresas: 15 empresas agotaban `max_connections` sin hacer nada) y `max_db_connections=40`
+(por base, sumados todos los usuarios). Regla: **bases con carga a la vez x `max_db_connections` <= 185**; hoy son 4
+(registro, celda, `platform` y una empresa) = 160. Al pasar de 4 bases saturadas a la vez, o se sube `max_connections`
+(cada conexión inactiva cuesta 5 a 10 MiB) o se baja el tope; lo habitual es lejos de eso, porque una conexión solo se
+ocupa mientras dura una transacción y la carga real de un pool es de unas pocas. Las peticiones de más esperan en la cola
+de PgBouncer (`query_wait_timeout` 120 s): no fallan, se enlentecen, y `EsperaDeConexiones` lo avisa. `max_client_conn`
+sube a 4000 (era 1000): cada servicio abre hasta 10 conexiones cliente al registro y otras 10 por empresa (`pkg/db`), y
+22 servicios superaban 1000 con 6 empresas saturadas; un cliente en espera cuesta unos KiB. `pgbouncer` recibe
+`ulimits.nofile` 65536.
+
+**Exige recrear PgBouncer** (`up -d --force-recreate pgbouncer`): el despliegue solo le hace `RECONNECT` y la plantilla se
+renderiza al arrancar. Corta las conexiones un instante y los servicios reintentan; hacerlo fuera de hora punta.
+
+### Réplicas: qué escala y qué no
+
+Ningún servicio corre hoy con más de una réplica; esto es lo que se comprobó en el código antes de que haga falta.
+
+| Servicio | ¿Réplicas? | Estado en el proceso y qué pasa con N réplicas |
+|---|---|---|
+| gateway | Sí | Limitadores compartidos en Redis (`gateway:api`, `gateway:auth`); si Redis cae cada réplica cuenta aparte (`LimitadorSinRedis`). La caché de permisos vive 60 s por réplica. El detector de extracción masiva (`exfilReads`) cuenta por réplica: el umbral efectivo se multiplica por N. Acción: pasarlo a Redis antes de replicar |
+| identity, access-control, organization, billing, templates, campaigns, automations, analytics, suppression, reputation, domain-service, contacts, transactional | Sí | Sin estado propio. Los barridos periódicos toman `db.TryLeaderLock` (un `pg_try_advisory_xact_lock` con la transacción abierta: si el líder muere, la conexión se cierra y el cerrojo se suelta solo). Sus limitadores en memoria multiplican el cupo por N, pero detrás está el del gateway |
+| audit | Sí, con condición | Cada escritura de cadena toma un candado de transacción por base de empresa (serializa entre réplicas); el anclaje tiene líder. `AUDIT_HASH_KEY` idéntica en todas y recreadas a la vez (una sin llave escribiría versión 1 tras filas de versión 2). El tope de verificaciones (`AUDIT_VERIFY_MAX_CONCURRENT`) es por proceso. Los eventos del bus entran por una suscripción `QueueSubscribe` de núcleo (no durable): las repartidas entre réplicas, pero un evento publicado con audit caído no se recupera |
+| mail-migration | Sí | El conjunto de empresas con trabajo (`hinted`) es una optimización por réplica: el reclamo es `FOR UPDATE SKIP LOCKED`, sin doble entrega (probado con 8 ejecutores concurrentes sobre 24 trabajos, ninguno repetido) y lo que una réplica no conoce lo encuentra el recorrido completo cada `MAIL_MIGRATION_SWEEP_INTERVAL`. El consumidor de `mail.mailbox.deleted` es un push durable: la segunda réplica no puede atarse y reintenta con aviso (queda en espera, sin daño) |
+| mail-dav | Sí | Sin caché. Igual que mail-migration con su consumidor durable. El freno de fuerza bruta de la contraseña es el de mail-auth, en Redis (por IP real) |
+| mail-auth, webmail | Sí | Sesiones y throttle en Redis. webmail: consumidor durable como los anteriores |
+| mail-directory, mail-security | Con cuidado | Cerrojos de líder para el repaso DKIM, los avisos de cuarentena y el relé de la outbox de celda. El monitor de la cola de Postfix corre en CADA réplica (cada una consulta al `queue-agent`, que atiende de una en una): N réplicas son N consultas por intervalo. No se probó con dos |
+| scheduler | Sí | Barrido bajo líder |
+| postgres, redis, nats, pgbouncer, edge-proxy | No en este perfil | Instancia única en el host; NATS con `Replicas: 1` |
+
+### Eventos: retención y tamaño
+
+Todo stream de aplicación (`pkg/events.EnsureStream`) retiene 7 días **y** como máximo 1 GiB (`MaxBytes`; al llegar se
+descartan los mensajes más viejos: llegar ahí es un incidente, no el funcionamiento normal). Se reconcilia en cada
+arranque también sobre los streams que ya existían (comprobado contra un NATS 2.10 real: uno creado sin tope quedó en
+1073741824 bytes). `EVENTS_DLQ` (30 días) se crea con 256 MiB. Un consumidor lento o un mensaje venenoso no bloquea el
+stream: cada consumidor durable tiene 20 entregas y 90 s de espera de confirmación, las entregas atrasadas no impiden
+las siguientes, y al agotarse pasa a `EVENTS_DLQ`. Los eventos críticos salen por outbox (`platform.event_outbox`); si una
+fila agota sus 50 intentos ya no se reintenta, y desde ahora eso se cuenta (`outbox_events_exhausted_total`) y avisa
+(`EventosDeOutboxAgotados`). El healthcheck de NATS pasó de `nats-server --help` (que sale bien aunque el servidor esté
+caído) a `/healthz` del monitor, de modo que `depends_on: service_healthy` espera de verdad.
+
+Un handler que hace `panic` ya no tumba el proceso (nats.go entrega en su propia goroutine): `pkg/events` lo recupera, deja
+el mensaje sin confirmar y sigue el camino normal hasta `EVENTS_DLQ`; antes un evento venenoso reiniciaba el servicio en
+cada reentrega.
+
+### Pendiente de la revisión de robustez (2026-09-21)
+
+Lo medido o leído en el código que NO se cambió, con su razón:
+
+* **`audit` recibe los eventos de identidad, organización, acceso, gateway, tareas, dominios y migraciones por una
+  suscripción de núcleo (`QueueSubscribe`, no durable).** Un evento publicado mientras `audit` está caído (cada
+  despliegue lo recrea) queda en su stream y nadie lo lee: falta de rastro. Pasarlo a consumidores durables
+  (`DurableQueueSubscribe`, con su `EnsureStream`) toca la lógica de suscripción de `audit`, que revisa otra tarea.
+* **`mail-dav`**: un `sync-collection` inicial y un `calendar-query` sin ventana cargan en memoria todos los eventos del
+  calendario. El tope es de 20000 eventos por buzón de hasta 256 KiB cada uno (en teoría 5 GiB); no hay tope de bytes
+  totales por buzón. Con eventos reales (350 bytes) son 22 MiB. Añadir una cuota de bytes por buzón o un presupuesto de
+  respuesta (`507 DAV:number-of-matches-within-limits`).
+* **Recuentos `count(*)` por página** (bitácora de `audit`, listado de `mail-migration`): O(n) por petición, 17 a 21 ms con
+  100000 filas de una empresa. El listado en sí (los datos) ya es de 0,04 ms con su índice. Si una empresa llega a millones
+  de filas, paginar por clave y devolver un total aproximado.
+* **Verificación de la cadena de auditoría**: solo completa, hasta ~5 millones de filas en 25 s. Pasado eso, verificar de forma
+  incremental desde el último ancla verificado.
+* **JetStream sin tope global** en el servidor NATS (solo por stream, 1 GiB) y sin exportador de NATS: el tamaño de los
+  streams no está en Prometheus. Añadir `max_file_store` al servidor y el exportador oficial.
+* **Sin métricas por contenedor** (cAdvisor): el aviso de un servicio cerca de su techo de memoria es `ProcesoMatadoPorFaltaDeMemoria`,
+  después del OOM; antes solo se ve con `docker stats`.
+* **`mail-security`**: el monitor de la cola de Postfix hace que el `queue-agent` cuente TODA la cola de `postqueue -j` en
+  cada intervalo. Medido (`parseListing`, 1,7 µs y 650 B por mensaje): 100000 mensajes son 169 ms y 65 MiB transitorios
+  del agente, además de lo que tarde `postqueue`; el plazo del agente es de 20 s. No es un problema con las colas
+  esperadas; con colas de cientos de miles, contar por directorio (`qshape`) en vez de listar.
+* **Respaldos**: las claves del almacén (`MAIL_ENCRYPTION_KEY`, `AUDIT_HASH_KEY`, `JWT_SIGNING_KEY`,
+  `MAIL_LINK_SIGNING_KEY`) y los roles de Postgres no van en ningún respaldo y su copia externa es manual
+  (`ops/backup/README.md`, "Lo que el respaldo no trae"). `verify-restore.sh` avisa de la cadena de auditoría, pero no puede
+  verificarla sin la llave.
+* **`idle_in_transaction_session_timeout` no debe fijarse en Postgres**: `db.TryLeaderLock` mantiene una transacción
+  abierta a propósito durante todo el barrido (el cerrojo de líder es de transacción); un tope bajo soltaría el cerrojo a
+  mitad del trabajo y habría dos líderes.
+* **`mail-dav` autentica cada petición contra `mail-auth`** (bcrypt de coste 10, decenas de ms de CPU por petición): es lo que
+  da la revocación inmediata. Con miles de dispositivos sincronizando cada pocos minutos es una fracción de un núcleo; si
+  creciera, una caché de aciertos de segundos, con la revocación como límite de su TTL.
 
 ### Estado verificado del servidor de producción (2026-09-20)
 

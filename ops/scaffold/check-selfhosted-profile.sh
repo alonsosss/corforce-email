@@ -428,6 +428,76 @@ if not bloque or not re.search(r"^\s+MAIL_DNS_RESOLVER:\s*\$\{MAIL_DNS_RESOLVER:
     sys.exit(1)
 PY
 
+# Recursos de cada servicio Go del perfil: sin root, solo lectura, sin capacidades, tope de procesos
+# y de memoria (mem_limit con su GOMEMLIMIT por debajo). Sin limite, un servicio con una fuga o una
+# peticion enorme se lleva la RAM de un servidor donde comparte host con la base y los motores, y
+# el OOM del kernel elige a la victima (a menudo Postgres). Ademas, la suma de los limites de la
+# plataforma no pasa del techo declarado: subirlo es una decision de presupuesto
+# (docs/Operacion_Despliegue.md, "Presupuesto de recursos"), no un efecto secundario.
+python3 - "$ROOT" <<'PY' || FALLOS=1
+import os, re, subprocess, sys
+try:
+    import yaml
+except ImportError:
+    print("  AVISO: sin PyYAML; no se comprueban los limites de recursos del perfil", file=sys.stderr)
+    sys.exit(0)
+
+CEILING_MIB = 6144
+
+root = sys.argv[1]
+
+
+class Cargador(yaml.SafeLoader):
+    pass
+
+
+# Las etiquetas propias de compose (!reset, !override) no cambian lo que se lee aqui.
+for etiqueta in ("!reset", "!override"):
+    Cargador.add_constructor(etiqueta, lambda cargador, nodo: None)
+perfil = yaml.load(open(os.path.join(root, "docker-compose.selfhosted.yml"), encoding="utf-8"), Loader=Cargador)["services"]
+mapa = subprocess.run(["bash", os.path.join(root, "ops/scaffold/service-paths.sh"), "--map"],
+                      capture_output=True, text=True, check=True).stdout
+go = [l.split("\t")[0] for l in mapa.splitlines() if l.endswith("\tgo")]
+
+
+def mib(valor):
+    valor = re.sub(r"^\$\{[A-Z_]+:-([^}]*)\}$", r"\1", str(valor).strip())
+    m = re.fullmatch(r"(\d+)([kmg]?)i?b?", str(valor).strip().lower())
+    if not m:
+        return None
+    return int(m.group(1)) * {"": 1 / 1048576, "k": 1 / 1024, "m": 1, "g": 1024}[m.group(2)]
+
+
+fallos = []
+for svc in go:
+    s = perfil.get(svc, {})
+    limite = mib(s.get("mem_limit"))
+    if limite is None:
+        fallos.append(f"{svc}: sin mem_limit en el perfil")
+    gomem = mib((s.get("environment") or {}).get("GOMEMLIMIT"))
+    if gomem is None or limite is None or not (0.5 * limite <= gomem < limite):
+        fallos.append(f"{svc}: GOMEMLIMIT debe existir y estar entre el 50 % y el 100 % de mem_limit")
+    if str(s.get("user", "")) in ("", "0", "0:0", "root"):
+        fallos.append(f"{svc}: corre como root (user:)")
+    if s.get("read_only") is not True:
+        fallos.append(f"{svc}: sin read_only")
+    if "ALL" not in (s.get("cap_drop") or []):
+        fallos.append(f"{svc}: sin cap_drop: [ALL]")
+    if not s.get("pids_limit"):
+        fallos.append(f"{svc}: sin pids_limit")
+    espera = re.fullmatch(r"(\d+)s", str(s.get("stop_grace_period", "")))
+    if not espera or int(espera.group(1)) <= 30:
+        fallos.append(f"{svc}: stop_grace_period debe superar los 30 s con los que pkg/server espera a las peticiones en vuelo")
+total = sum(mib(s.get("mem_limit")) or 0 for s in perfil.values())
+if total > CEILING_MIB:
+    fallos.append(f"la suma de mem_limit del perfil es {total:.0f} MiB y el techo declarado es {CEILING_MIB} MiB")
+for f in fallos:
+    print("  FALLA: " + f, file=sys.stderr)
+if fallos:
+    sys.exit(1)
+print(f"  OK: {len(go)} servicios Go con limites de recursos; suma de mem_limit del perfil {total:.0f} MiB (techo {CEILING_MIB})")
+PY
+
 if [[ $FALLOS -ne 0 ]]; then
   echo "check-selfhosted-profile: FALLA" >&2
   exit 1
