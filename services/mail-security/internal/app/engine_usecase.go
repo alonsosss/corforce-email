@@ -35,6 +35,7 @@ type EngineUseCase struct {
 	sync       *RedisSync
 	store      ports.EngineStore
 	events     ports.EventPublisher
+	metrics    ports.QuarantineMetrics
 	logger     *zap.Logger
 	logLines   int64
 	now        func() time.Time
@@ -49,8 +50,10 @@ type EngineDeps struct {
 	Sync       *RedisSync
 	Store      ports.EngineStore
 	Events     ports.EventPublisher
-	Logger     *zap.Logger
-	LogLines   int64
+	// Metrics es opcional: sin ellas no se cuenta nada.
+	Metrics  ports.QuarantineMetrics
+	Logger   *zap.Logger
+	LogLines int64
 }
 
 func NewEngineUseCase(d EngineDeps) *EngineUseCase {
@@ -64,6 +67,7 @@ func NewEngineUseCase(d EngineDeps) *EngineUseCase {
 		sync:       d.Sync,
 		store:      d.Store,
 		events:     d.Events,
+		metrics:    quarantineMetricsOrNoop(d.Metrics),
 		logger:     d.Logger,
 		logLines:   d.LogLines,
 		now:        time.Now,
@@ -383,6 +387,7 @@ func (uc *EngineUseCase) Pipe(ctx context.Context, meta domain.QuarantineMetadat
 				return out, fmt.Errorf("guardar cuarentena de %s: %w", mb.Username, errStore(err))
 			}
 			out.Stored++
+			uc.metrics.QuarantineStored()
 			// La poda va fuera: un fallo aqui no debe deshacer la fila recien guardada.
 			if _, err := uc.quarantine.PruneRcpt(ctx, mb.TenantID, mb.Username, settings.RetentionSize); err != nil {
 				uc.logger.Warn("poda de cuarentena por buzon", zap.String("rcpt", mb.Username), zap.Error(err))

@@ -136,3 +136,23 @@ func TestUnaConsultaFallidaCuentaSinTocarLaUltimaCorrecta(t *testing.T) {
 		t.Fatalf("antes %v despues %v", before, after)
 	}
 }
+
+func TestLaCuarentenaCuentaCadaDesenlaceConSuEtiqueta(t *testing.T) {
+	m := metricas()
+	before := seriesCon(t, "mail_security_quarantine_")
+	m.QuarantineStored()
+	m.QuarantineStored()
+	m.QuarantineReleased()
+	m.QuarantineDiscarded()
+	m.QuarantineLearnedSpam()
+	after := seriesCon(t, "mail_security_quarantine_")
+	for outcome, want := range map[string]float64{"stored": 2, "released": 1, "discarded": 1, "learned_spam": 1} {
+		key := "mail_security_quarantine_messages_total{outcome=" + outcome + "}"
+		if _, ok := before[key]; !ok {
+			t.Errorf("la serie %s debe nacer a cero", key)
+		}
+		if after[key]-before[key] != want {
+			t.Errorf("%s: sumo %v, se esperaba %v", key, after[key]-before[key], want)
+		}
+	}
+}

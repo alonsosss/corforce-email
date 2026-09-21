@@ -18,6 +18,7 @@ type Metrics struct {
 	dkimLastSuccess    prometheus.Gauge
 	dovecotRevocations *prometheus.CounterVec
 	dovecotFailures    *prometheus.CounterVec
+	quarantine         *prometheus.CounterVec
 	queueMessages      *prometheus.GaugeVec
 	queueOldest        prometheus.Gauge
 	queuePollSuccess   prometheus.Gauge
@@ -46,6 +47,10 @@ func New() *Metrics {
 			Name: "mail_security_dovecot_revocation_failures_total",
 			Help: "Revocaciones en Dovecot que fallaron y esperan la reentrega del evento, por motivo (unreachable, rejected, command, directory).",
 		}, []string{"reason"}),
+		quarantine: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "mail_security_quarantine_messages_total",
+			Help: "Mensajes de la cuarentena de la celda por lo que paso con ellos (stored: retenidos; released: liberados por su dueno o por enlace, los falsos positivos; discarded: descartados; learned_spam: usados para entrenar el clasificador como spam). released frente a stored mide los falsos positivos del antispam.",
+		}, []string{"outcome"}),
 		queueMessages: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "mail_security_postfix_queue_messages",
 			Help: "Mensajes en la cola de Postfix de la celda, por cola (incoming, active, deferred, hold, corrupt), en la ultima consulta que salio bien.",
@@ -73,11 +78,14 @@ func New() *Metrics {
 	for _, reason := range domain.SessionRevocationFailures() {
 		m.dovecotFailures.WithLabelValues(string(reason))
 	}
+	for _, outcome := range []string{"stored", "released", "discarded", "learned_spam"} {
+		m.quarantine.WithLabelValues(outcome)
+	}
 	for _, queue := range domain.QueueNames() {
 		m.queueMessages.WithLabelValues(queue)
 	}
 	prometheus.MustRegister(m.dkimRemovals, m.dkimUnresolved, m.dkimLastSuccess, m.dovecotRevocations, m.dovecotFailures,
-		m.queueMessages, m.queueOldest, m.queuePollSuccess, m.queuePollFailures)
+		m.quarantine, m.queueMessages, m.queueOldest, m.queuePollSuccess, m.queuePollFailures)
 	return m
 }
 
@@ -119,3 +127,8 @@ func (m *Metrics) QueueObserved(counts map[string]int, oldestArrival time.Time) 
 }
 
 func (m *Metrics) QueuePollFailed() { m.queuePollFailures.Inc() }
+
+func (m *Metrics) QuarantineStored()      { m.quarantine.WithLabelValues("stored").Inc() }
+func (m *Metrics) QuarantineReleased()    { m.quarantine.WithLabelValues("released").Inc() }
+func (m *Metrics) QuarantineDiscarded()   { m.quarantine.WithLabelValues("discarded").Inc() }
+func (m *Metrics) QuarantineLearnedSpam() { m.quarantine.WithLabelValues("learned_spam").Inc() }

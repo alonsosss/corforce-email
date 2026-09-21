@@ -413,12 +413,13 @@ func main() {
 		Events:     publisher,
 		Notices:    noticeRepo,
 		Links:      quarantineLinks,
+		Metrics:    metrics,
 		Logger:     logger,
 	})
 	engineUC := app.NewEngineUseCase(app.EngineDeps{
 		Tx: ctxPool, Documents: postgres.NewDocumentRepository(ctxPool),
 		Directory: directory, Policy: policyReader, Quarantine: quarantineRepo, Sync: redisSync,
-		Store: store, Events: publisher, Logger: logger, LogLines: int64(st.logLines),
+		Store: store, Events: publisher, Metrics: metrics, Logger: logger, LogLines: int64(st.logLines),
 	})
 	firewallUC := app.NewFirewallUseCase(app.FirewallDeps{
 		Tx: ctxPool, Repo: postgres.NewFirewallRepository(ctxPool), Policy: policyReader, Sync: redisSync, Store: store, Logger: logger,

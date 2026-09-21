@@ -83,6 +83,9 @@ func (uc *QuarantineUseCase) DiscardByLink(ctx context.Context, req LinkRequest,
 		}
 		return uc.repo.Delete(ctx, req.TenantID, locked.ID)
 	})
+	if err == nil {
+		uc.metrics.QuarantineDiscarded()
+	}
 	return uc.linkError(err, req)
 }
 

@@ -264,6 +264,16 @@ type QueueMetrics interface {
 	QueuePollFailed()
 }
 
+// QuarantineMetrics cuenta lo que pasa con el correo en cuarentena de la celda. Sirve para medir falsos
+// positivos del antispam: cuanto de lo retenido acaba liberado por su dueno (docs/Plan_Estrategico_Mejoras_Correo.md,
+// A4). Son totales de la celda, sin etiqueta de empresa ni de buzon: una etiqueta asi no acota su cardinalidad.
+type QuarantineMetrics interface {
+	QuarantineStored()
+	QuarantineReleased()
+	QuarantineDiscarded()
+	QuarantineLearnedSpam()
+}
+
 // SessionRevocationMetrics cuenta la revocacion de credenciales en Dovecot.
 type SessionRevocationMetrics interface {
 	SessionsRevoked(action domain.SessionAction)

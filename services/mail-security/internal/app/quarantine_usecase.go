@@ -21,6 +21,7 @@ type QuarantineUseCase struct {
 	events  ports.EventPublisher
 	notices ports.QuarantineNoticeRepository
 	links   *domain.QuarantineLinkSigner
+	metrics ports.QuarantineMetrics
 	logger  *zap.Logger
 	now     func() time.Time
 }
@@ -34,12 +35,14 @@ type QuarantineDeps struct {
 	// Notices y Links sirven los enlaces del aviso; sin Links todo enlace es invalido.
 	Notices ports.QuarantineNoticeRepository
 	Links   *domain.QuarantineLinkSigner
+	// Metrics es opcional: sin ellas no se cuenta nada.
+	Metrics ports.QuarantineMetrics
 	Logger  *zap.Logger
 }
 
 func NewQuarantineUseCase(d QuarantineDeps) *QuarantineUseCase {
 	return &QuarantineUseCase{tx: d.Tx, repo: d.Repo, reinj: d.Reinjector, learner: d.Learner, events: d.Events,
-		notices: d.Notices, links: d.Links, logger: d.Logger, now: time.Now}
+		notices: d.Notices, links: d.Links, metrics: quarantineMetricsOrNoop(d.Metrics), logger: d.Logger, now: time.Now}
 }
 
 func (uc *QuarantineUseCase) List(ctx context.Context, tenantID uuid.UUID, f domain.QuarantineFilter) (items []domain.QuarantineItem, total int64, err error) {
@@ -76,9 +79,13 @@ func (uc *QuarantineUseCase) Message(ctx context.Context, tenantID, id uuid.UUID
 }
 
 func (uc *QuarantineUseCase) Delete(ctx context.Context, tenantID, id uuid.UUID) error {
-	return uc.tx.TransactRLS(ctx, func(ctx context.Context) error {
+	err := uc.tx.TransactRLS(ctx, func(ctx context.Context) error {
 		return uc.repo.Delete(ctx, tenantID, id)
 	})
+	if err == nil {
+		uc.metrics.QuarantineDiscarded()
+	}
+	return err
 }
 
 // Release reinyecta el mensaje por el puerto interno de Postfix (sin milter) al buzon
@@ -121,6 +128,9 @@ func (uc *QuarantineUseCase) release(ctx context.Context, tenantID, id uuid.UUID
 		uc.logger.Error("mensaje reinyectado sin confirmar la liberacion; la fila sigue en cuarentena",
 			zap.String("id", id.String()), zap.Error(err))
 	}
+	if err == nil {
+		uc.metrics.QuarantineReleased()
+	}
 	return err
 }
 
@@ -133,5 +143,23 @@ func (uc *QuarantineUseCase) LearnSpam(ctx context.Context, tenantID, id uuid.UU
 	if err != nil {
 		return err
 	}
-	return uc.learner.LearnSpam(ctx, msg)
+	if err := uc.learner.LearnSpam(ctx, msg); err != nil {
+		return err
+	}
+	uc.metrics.QuarantineLearnedSpam()
+	return nil
+}
+
+type noopQuarantineMetrics struct{}
+
+func (noopQuarantineMetrics) QuarantineStored()      {}
+func (noopQuarantineMetrics) QuarantineReleased()    {}
+func (noopQuarantineMetrics) QuarantineDiscarded()   {}
+func (noopQuarantineMetrics) QuarantineLearnedSpam() {}
+
+func quarantineMetricsOrNoop(m ports.QuarantineMetrics) ports.QuarantineMetrics {
+	if m == nil {
+		return noopQuarantineMetrics{}
+	}
+	return m
 }
