@@ -25,6 +25,7 @@ export const paths = {
   webmail: '/webmail',
   webmailLogin: '/webmail/login',
   webmailCompose: '/webmail/compose',
+  webmailSettings: '/webmail/settings',
   webmailView: (view: WebmailView) => withQuery('/webmail', { ...view }),
   webmailComposeFrom: (mode: string, folder: string, uid: number) =>
     withQuery('/webmail/compose', { mode, folder, uid }),

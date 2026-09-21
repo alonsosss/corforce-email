@@ -4,7 +4,7 @@ import { webmailApi, type WebmailQuota } from '@/api/webmail';
 import { useQuery } from '@/hooks/useQuery';
 import { BrandMark } from '@/design/BrandMark';
 import { Button, ErrorState, Meter, Skeleton, useToast } from '@/design/components';
-import { IconEdit, IconLogOut, IconMenu, IconMoon, IconSun } from '@/design/icons';
+import { IconCalendar, IconEdit, IconLogOut, IconMenu, IconMoon, IconSun } from '@/design/icons';
 import { useTheme } from '@/design/useTheme';
 import { formatBytes, usageRatio } from '@/lib/quota';
 import { t } from '@/i18n';
@@ -127,6 +127,14 @@ export function WebmailShell() {
           onClick={() => navigate(paths.webmailCompose)}
         >
           {t('webmail.compose.new')}
+        </Button>
+        <Button
+          variant="ghost"
+          block
+          icon={<IconCalendar size={16} />}
+          onClick={() => navigate(paths.webmailSettings)}
+        >
+          {t('webmail.settings.open')}
         </Button>
         {folders.error && !folders.data ? (
           <ErrorState error={folders.error} onRetry={reloadFolders} />

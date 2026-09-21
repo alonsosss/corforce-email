@@ -56,7 +56,7 @@ func TestNewExigeUnaCeldaValida(t *testing.T) {
 	h := newHarness(t)
 	for _, cell := range []string{"", "pe.01", "PE-01", "pe_01"} {
 		_, err := New(Deps{
-			Auth: h.auth, Sessions: h.store, Mail: h.mail, Sender: h.sender, Directory: h.directory, Ledger: h.ledger,
+			Auth: h.auth, Sessions: h.store, Mail: h.mail, Sender: h.sender, Directory: h.directory, Vacations: h.directory, Ledger: h.ledger,
 			Composer: h.composer, Sanitizer: h.sanitizer, Scanner: h.scanner,
 			PartURL: func(string, uint32, string) string { return "" }, Logger: zap.NewNop(),
 			Config: Config{

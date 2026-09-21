@@ -1,6 +1,7 @@
 // Package maildirectorycli pregunta a mail-directory con que direcciones puede enviar un
-// buzon (GET /internal/mail-directory/sender-identities). Es una llamada interna con el
-// token de gateway y sin empresa: el webmail no la conoce y el buzon es unico en la celda.
+// buzon (GET /internal/mail-directory/sender-identities) y lee y cambia su respuesta automatica
+// (GET y PUT /internal/mail-directory/vacation). Son llamadas internas con el token de gateway y
+// sin empresa: el webmail no la conoce y el buzon es unico en la celda.
 //
 // Por que asi y no leyendo la base de la celda: el webmail no tiene credencial de base y no
 // debe tenerla (ya guarda la credencial maestra de Dovecot); mail-directory es el dueno del
@@ -24,13 +25,15 @@ import (
 
 const (
 	identitiesPath   = "/internal/mail-directory/sender-identities"
+	vacationPath     = "/internal/mail-directory/vacation"
 	maxResponseBytes = 1 << 20
 	requestTimeout   = 5 * time.Second
 )
 
-// Client implementa ports.SenderDirectory.
+// Client implementa ports.SenderDirectory y ports.VacationDirectory.
 type Client struct {
 	endpoint string
+	vacation string
 	token    string
 	http     *httpclient.Client
 }
@@ -42,6 +45,7 @@ func New(baseURL, token string) (*Client, error) {
 	}
 	return &Client{
 		endpoint: u.String() + identitiesPath,
+		vacation: u.String() + vacationPath,
 		token:    token,
 		http:     httpclient.New("mail-directory", httpclient.Options{Timeout: requestTimeout, MaxAttempts: 3}),
 	}, nil

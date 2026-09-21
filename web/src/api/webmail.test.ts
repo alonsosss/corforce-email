@@ -273,3 +273,64 @@ describe('nombre de fichero de Content-Disposition', () => {
     expect(filenameFromDisposition(null)).toBeNull();
   });
 });
+
+describe('respuesta automatica del buzon', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    setAccessToken(null);
+  });
+
+  const VACATION = {
+    enabled: true,
+    subject: 'Ausente',
+    message: 'Vuelvo.',
+    interval_days: 2,
+    starts_on: null,
+    ends_on: null,
+    updated_at: null,
+    limits: { subject_max_length: 200, message_max_length: 8192, interval_min_days: 1, interval_max_days: 30 },
+  };
+
+  it('se lee y se guarda por la ruta del webmail, con la cookie y sin el access token', async () => {
+    setAccessToken('token-de-la-plataforma');
+    const calls = mockFetch(() => json(200, { data: VACATION }));
+
+    const read = await webmailApi.vacation();
+    const saved = await webmailApi.setVacation({
+      enabled: true,
+      subject: 'Ausente',
+      message: 'Vuelvo.',
+      interval_days: 2,
+      starts_on: null,
+      ends_on: '2026-09-30',
+    });
+
+    expect(read.limits.message_max_length).toBe(8192);
+    expect(saved.enabled).toBe(true);
+    expect(calls[0]?.url).toBe(endpoints.webmail.vacation);
+    expect(calls[0]?.init.method).toBe('GET');
+    expect(calls[1]?.init.method).toBe('PUT');
+    expect(JSON.parse(String(calls[1]?.init.body))).toEqual({
+      enabled: true,
+      subject: 'Ausente',
+      message: 'Vuelvo.',
+      interval_days: 2,
+      starts_on: null,
+      ends_on: '2026-09-30',
+    });
+    for (const call of calls) {
+      expect(call.init.credentials).toBe('include');
+      expect(JSON.stringify(call.init)).not.toContain('token-de-la-plataforma');
+    }
+  });
+
+  it('un 422 del directorio llega como error con su mensaje', async () => {
+    mockFetch(() => json(422, { error: { code: 'VALIDATION_ERROR', message: 'el mensaje supera los 8192' } }));
+    await expect(
+      webmailApi.setVacation({
+        enabled: true, subject: '', message: 'x', interval_days: 1, starts_on: null, ends_on: null,
+      }),
+    ).rejects.toMatchObject({ status: 422 });
+  });
+});

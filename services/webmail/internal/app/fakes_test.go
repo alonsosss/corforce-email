@@ -258,6 +258,25 @@ type fakeDirectory struct {
 	ids   []string
 	err   error
 	calls int
+	// respuesta automatica: lo que devuelve, con que buzon y con que datos se le llamo.
+	vacation    domain.Vacation
+	vacationErr error
+	vacationFor string
+	vacationIn  *domain.VacationInput
+}
+
+func (d *fakeDirectory) Vacation(_ context.Context, username string) (domain.Vacation, error) {
+	d.vacationFor = username
+	return d.vacation, d.vacationErr
+}
+
+func (d *fakeDirectory) SetVacation(_ context.Context, username string, in domain.VacationInput) (domain.Vacation, error) {
+	d.vacationFor, d.vacationIn = username, &in
+	if d.vacationErr != nil {
+		return domain.Vacation{}, d.vacationErr
+	}
+	d.vacation = domain.Vacation{Enabled: in.Enabled, Subject: in.Subject, Message: in.Message, IntervalDays: in.IntervalDays, StartsOn: in.StartsOn, EndsOn: in.EndsOn}
+	return d.vacation, nil
 }
 
 func (d *fakeDirectory) SenderIdentities(context.Context, string) ([]string, error) {
@@ -400,7 +419,7 @@ func newHarness(t *testing.T) *harness {
 	}
 	h.mail = &fakeMail{mb: h.mb}
 	svc, err := New(Deps{
-		Auth: h.auth, Sessions: h.store, Mail: h.mail, Sender: h.sender, Directory: h.directory, Ledger: h.ledger,
+		Auth: h.auth, Sessions: h.store, Mail: h.mail, Sender: h.sender, Directory: h.directory, Vacations: h.directory, Ledger: h.ledger,
 		Composer: h.composer, Sanitizer: h.sanitizer, Scanner: h.scanner,
 		PartURL: func(folder string, uid uint32, part string) string {
 			return fmt.Sprintf("/parts/%s/%d/%s", folder, uid, part)

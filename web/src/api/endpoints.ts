@@ -123,6 +123,7 @@ export const endpoints = {
     quota: (id: string) => `${API_PREFIX}/mailboxes/${seg(id)}/quota`,
     logins: (id: string) => `${API_PREFIX}/mailboxes/${seg(id)}/logins`,
     sieve: (id: string) => `${API_PREFIX}/mailboxes/${seg(id)}/sieve`,
+    vacation: (id: string) => `${API_PREFIX}/mailboxes/${seg(id)}/vacation`,
     appPasswords: (id: string) => `${API_PREFIX}/mailboxes/${seg(id)}/app-passwords`,
     appPassword: (id: string, appPasswordId: string) =>
       `${API_PREFIX}/mailboxes/${seg(id)}/app-passwords/${seg(appPasswordId)}`,
@@ -268,6 +269,7 @@ export const endpoints = {
     session: `${API_PREFIX}/webmail/session`,
     meta: `${API_PREFIX}/webmail/meta`,
     identities: `${API_PREFIX}/webmail/identities`,
+    vacation: `${API_PREFIX}/webmail/vacation`,
     folders: `${API_PREFIX}/webmail/folders`,
     messages: (folder: string) => `${API_PREFIX}/webmail/folders/${seg(folder)}/messages`,
     message: (folder: string, uid: number) =>

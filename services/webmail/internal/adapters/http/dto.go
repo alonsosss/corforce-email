@@ -249,3 +249,41 @@ func nonNil(list []string) []string {
 	}
 	return list
 }
+
+type vacationLimitsDTO struct {
+	SubjectMaxLength int `json:"subject_max_length"`
+	MessageMaxLength int `json:"message_max_length"`
+	IntervalMinDays  int `json:"interval_min_days"`
+	IntervalMaxDays  int `json:"interval_max_days"`
+}
+
+type vacationDTO struct {
+	Enabled      bool              `json:"enabled"`
+	Subject      string            `json:"subject"`
+	Message      string            `json:"message"`
+	IntervalDays int               `json:"interval_days"`
+	StartsOn     *string           `json:"starts_on"`
+	EndsOn       *string           `json:"ends_on"`
+	UpdatedAt    *time.Time        `json:"updated_at"`
+	Limits       vacationLimitsDTO `json:"limits"`
+}
+
+func toVacationDTO(v domain.Vacation) vacationDTO {
+	return vacationDTO{
+		Enabled: v.Enabled, Subject: v.Subject, Message: v.Message, IntervalDays: v.IntervalDays,
+		StartsOn: v.StartsOn, EndsOn: v.EndsOn, UpdatedAt: v.UpdatedAt,
+		Limits: vacationLimitsDTO{
+			SubjectMaxLength: v.Limits.SubjectMaxLength, MessageMaxLength: v.Limits.MessageMaxLength,
+			IntervalMinDays: v.Limits.IntervalMinDays, IntervalMaxDays: v.Limits.IntervalMaxDays,
+		},
+	}
+}
+
+type vacationRequest struct {
+	Enabled      bool    `json:"enabled"`
+	Subject      string  `json:"subject"`
+	Message      string  `json:"message"`
+	IntervalDays int     `json:"interval_days"`
+	StartsOn     *string `json:"starts_on"`
+	EndsOn       *string `json:"ends_on"`
+}

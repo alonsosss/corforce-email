@@ -135,6 +135,34 @@ func (stubDirectory) SenderIdentities(context.Context, string) ([]string, error)
 	return []string{"ventas@empresa.pe"}, nil
 }
 
+// stubVacations hace de mail-directory para la respuesta automatica: anota con que buzon y con que
+// datos se le llamo y devuelve lo que la prueba prepare.
+type stubVacations struct {
+	mu       sync.Mutex
+	username string
+	input    *domain.VacationInput
+	current  domain.Vacation
+	err      error
+}
+
+func (s *stubVacations) Vacation(_ context.Context, username string) (domain.Vacation, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.username = username
+	return s.current, s.err
+}
+
+func (s *stubVacations) SetVacation(_ context.Context, username string, in domain.VacationInput) (domain.Vacation, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.username, s.input = username, &in
+	if s.err != nil {
+		return domain.Vacation{}, s.err
+	}
+	s.current = domain.Vacation{Enabled: in.Enabled, Subject: in.Subject, Message: in.Message, IntervalDays: in.IntervalDays, StartsOn: in.StartsOn, EndsOn: in.EndsOn}
+	return s.current, nil
+}
+
 // memLedger es el registro de envios en memoria, con la misma semantica que el de Redis.
 type memLedger struct {
 	mu  sync.Mutex
@@ -180,10 +208,16 @@ func newTestHandler(t *testing.T) (http.Handler, *stubMailbox) {
 
 func newTestHandlerWith(t *testing.T, sender ports.Sender) (http.Handler, *stubMailbox) {
 	t.Helper()
-	mb := &stubMailbox{}
+	h, mb, _ := newTestHandlerFull(t, sender)
+	return h, mb
+}
+
+func newTestHandlerFull(t *testing.T, sender ports.Sender) (http.Handler, *stubMailbox, *stubVacations) {
+	t.Helper()
+	mb, vac := &stubMailbox{}, &stubVacations{}
 	svc, err := app.New(app.Deps{
 		Auth: stubAuth{}, Sessions: &memStore{m: map[string]domain.Session{}}, Mail: stubMail{mb: mb},
-		Sender: sender, Directory: stubDirectory{}, Ledger: &memLedger{m: map[string]domain.SendRecord{}},
+		Sender: sender, Directory: stubDirectory{}, Vacations: vac, Ledger: &memLedger{m: map[string]domain.SendRecord{}},
 		Composer: nopComposer{}, Sanitizer: nopSanitizer{}, PartURL: PartURL,
 		Logger: zap.NewNop(),
 		Config: app.Config{
@@ -205,7 +239,7 @@ func newTestHandlerWith(t *testing.T, sender ports.Sender) (http.Handler, *stubM
 	if err != nil {
 		t.Fatal(err)
 	}
-	return h.Routes(), mb
+	return h.Routes(), mb, vac
 }
 
 func do(h http.Handler, method, path string, body io.Reader, headers map[string]string, cookie *http.Cookie) *httptest.ResponseRecorder {

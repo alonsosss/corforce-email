@@ -1,6 +1,7 @@
 import { apiBase, endpoints } from './endpoints';
 import { ApiError, ERROR_CODES } from './errors';
 import { toPage, type Envelope, type Page } from './types';
+import type { Vacation, VacationInput } from './vacation';
 
 /*
  * Cliente del webmail (services/webmail). Es OTRA sesion: la del buzon, no la de la
@@ -207,7 +208,7 @@ export interface DownloadedPart {
   contentType: string;
 }
 
-type Method = 'GET' | 'POST' | 'DELETE';
+type Method = 'GET' | 'POST' | 'PUT' | 'DELETE';
 
 interface RequestInit {
   params?: Record<string, string | number | boolean | undefined>;
@@ -365,6 +366,10 @@ export const webmailApi = {
   /** Remitentes del buzon, el propio primero. Se leen por sesion con webmail/catalogs.ts. */
   identities: async (signal?: AbortSignal): Promise<SenderIdentity[]> =>
     (await request<SenderIdentity[] | null>('GET', wm.identities, { signal })) ?? [],
+
+  /** Respuesta automatica del buzon de la sesion, con los topes que aplica el directorio. */
+  vacation: (signal?: AbortSignal) => request<Vacation>('GET', wm.vacation, { signal }),
+  setVacation: (input: VacationInput) => request<Vacation>('PUT', wm.vacation, { json: input }),
 
   folders: async (signal?: AbortSignal): Promise<WebmailFolder[]> =>
     (await request<WebmailFolder[] | null>('GET', wm.folders, { signal })) ?? [],

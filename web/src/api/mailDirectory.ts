@@ -3,6 +3,7 @@ import { endpoints } from './endpoints';
 import { fetchList, fetchPage } from './paging';
 import { cachedResource } from './resource';
 import type { ApiResponse, Page, PageQuery } from './types';
+import type { Vacation, VacationInput } from './vacation';
 
 // DTOs de services/mail-directory: peticiones en internal/adapters/http/dto.go y
 // respuestas en internal/domain/entities.go. Las cuotas viajan en bytes y 0 significa sin
@@ -514,6 +515,10 @@ export const mailDirectoryApi = {
   getSieve: (id: string) => api.get<MailboxSieve>(endpoints.mailboxes.sieve(id)),
   putSieve: (id: string, input: PutSieveRequest) =>
     api.put<MailboxSieve>(endpoints.mailboxes.sieve(id), { body: input }),
+
+  getVacation: (id: string) => api.get<Vacation>(endpoints.mailboxes.vacation(id)),
+  putVacation: (id: string, input: VacationInput) =>
+    api.put<Vacation>(endpoints.mailboxes.vacation(id), { body: input }),
 };
 
 export const mailRoutingApi = {

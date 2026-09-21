@@ -182,6 +182,7 @@ func main() {
 		Mail:      store,
 		Sender:    sender,
 		Directory: directory,
+		Vacations: directory,
 		Ledger:    redisadapter.NewSendLedger(rdb, st.cellCode),
 		Composer:  rfc5322.New(),
 		Sanitizer: htmlsafe.New(),

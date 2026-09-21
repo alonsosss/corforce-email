@@ -6,6 +6,7 @@ import { paths } from '@/paths';
 import { useWebmailStore } from '@/webmail/store';
 import ComposePage from './ComposePage';
 import MailboxPage from './MailboxPage';
+import SettingsPage from './SettingsPage';
 import { WebmailLoginPage } from './WebmailLoginPage';
 import { WebmailShell } from './WebmailShell';
 import './webmail.css';
@@ -26,6 +27,7 @@ export default function WebmailApp() {
         <Route element={<WebmailShell />}>
           <Route index element={<MailboxPage />} />
           <Route path="compose" element={<ComposePage />} />
+          <Route path="settings" element={<SettingsPage />} />
         </Route>
       </Route>
       <Route path="*" element={<Navigate to={paths.webmail} replace />} />

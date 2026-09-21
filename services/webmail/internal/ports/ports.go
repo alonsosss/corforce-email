@@ -71,6 +71,14 @@ type SenderDirectory interface {
 	SenderIdentities(ctx context.Context, username string) ([]string, error)
 }
 
+// VacationDirectory lee y cambia la respuesta automatica del buzon en mail-directory, que es el
+// dueno de la regla y de la validacion: el webmail no la copia. Un texto que el directorio rechaza es
+// un *domain.ValidationError; cualquier otro fallo, domain.ErrUnavailable.
+type VacationDirectory interface {
+	Vacation(ctx context.Context, username string) (domain.Vacation, error)
+	SetVacation(ctx context.Context, username string, in domain.VacationInput) (domain.Vacation, error)
+}
+
 // SendLedger recuerda cada envio por su clave de idempotencia para que un reintento del
 // cliente nunca entregue el mensaje dos veces.
 type SendLedger interface {

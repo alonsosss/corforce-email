@@ -32,6 +32,7 @@ type Deps struct {
 	Mail      ports.MailStore
 	Sender    ports.Sender
 	Directory ports.SenderDirectory
+	Vacations ports.VacationDirectory
 	Ledger    ports.SendLedger
 	Composer  ports.Composer
 	Sanitizer ports.HTMLSanitizer
@@ -51,6 +52,7 @@ type Service struct {
 	mail      ports.MailStore
 	sender    ports.Sender
 	directory ports.SenderDirectory
+	vacations ports.VacationDirectory
 	ledger    ports.SendLedger
 	composer  ports.Composer
 	sanitizer ports.HTMLSanitizer
@@ -63,7 +65,7 @@ type Service struct {
 
 // New valida la configuracion y las dependencias: un webmail a medio cablear no arranca.
 func New(d Deps) (*Service, error) {
-	if d.Auth == nil || d.Sessions == nil || d.Mail == nil || d.Sender == nil || d.Directory == nil ||
+	if d.Auth == nil || d.Sessions == nil || d.Mail == nil || d.Sender == nil || d.Directory == nil || d.Vacations == nil ||
 		d.Ledger == nil || d.Composer == nil || d.Sanitizer == nil || d.PartURL == nil || d.Logger == nil {
 		return nil, errors.New("webmail: faltan dependencias del caso de uso")
 	}
@@ -87,7 +89,7 @@ func New(d Deps) (*Service, error) {
 		clock = time.Now
 	}
 	return &Service{
-		auth: d.Auth, sessions: d.Sessions, mail: d.Mail, sender: d.Sender, directory: d.Directory,
+		auth: d.Auth, sessions: d.Sessions, mail: d.Mail, sender: d.Sender, directory: d.Directory, vacations: d.Vacations,
 		ledger: d.Ledger, composer: d.Composer, sanitizer: d.Sanitizer, scanner: d.Scanner,
 		partURL: d.PartURL, clock: clock, logger: d.Logger, cfg: d.Config,
 	}, nil

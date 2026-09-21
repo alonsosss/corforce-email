@@ -108,6 +108,10 @@ func TestRespuestaAutomaticaInternaLeeYEscribePorNombreDeBuzon(t *testing.T) {
 	if env := decodeVacation(t, rec); env.Data.Enabled || env.Data.IntervalDays != 1 || env.Data.UpdatedAt != nil {
 		t.Fatalf("un buzon sin configurar la ve desactivada: %+v", env.Data)
 	}
+	if lim := decodeVacation(t, rec).Data.Limits; lim.MessageMaxLength != domain.MaxVacationMessageRunes ||
+		lim.SubjectMaxLength != domain.MaxVacationSubjectRunes || lim.IntervalMinDays != 1 || lim.IntervalMaxDays != 30 {
+		t.Fatalf("la respuesta trae los topes del directorio: %+v", lim)
+	}
 	if loc.pedido != "ana@acme.test" {
 		t.Fatalf("el nombre debe llegar normalizado: %q", loc.pedido)
 	}

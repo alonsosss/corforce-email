@@ -660,6 +660,15 @@ enviar_wm bea@acme.test "$TOKEN-webmail-ajeno" -H "Idempotency-Key: $(rand_hex 1
 expect "un remitente que no es suyo se rechaza antes de Postfix" "$WM_CODE/$(echo "$WM_BODY" | jget error.code)" "403/SENDER_NOT_ALLOWED"
 enviar_wm ana@acme.test "$TOKEN-webmail-eicar" -H "Idempotency-Key: $(rand_hex 16)" -F "attachments=@$WORK/eicar.com;type=application/octet-stream"
 expect "un adjunto EICAR lo para el analisis del webmail con ClamAV" "$WM_CODE/$(echo "$WM_BODY" | jget error.code)" "422/ATTACHMENT_INFECTED"
+wm "$TARRO_ANA" GET /vacation
+expect "ana ve su respuesta automatica desactivada, con los topes del servicio" "$WM_CODE/$(echo "$WM_BODY" | jget data.enabled)/$(echo "$WM_BODY" | jget data.limits.message_max_length)" "200/False/8192"
+wm "$TARRO_ANA" PUT /vacation -H 'Content-Type: application/json' -d '{"enabled":true,"subject":"Ausente","message":"Vuelvo el lunes.","interval_days":2}'
+expect "el webmail guarda la respuesta automatica del buzon de la sesion" "$WM_CODE/$(echo "$WM_BODY" | jget data.enabled)/$(echo "$WM_BODY" | jget data.interval_days)" "200/True/2"
+expect "y queda en la vista que lee Dovecot, solo para ana" "$(sql mail_cell_pe_01 "SELECT string_agg(username, ',') FROM mail.v_sieve_vacation WHERE username IN ('ana@acme.test','bea@acme.test') AND script_data LIKE '%Vuelvo el lunes.%'")" "ana@acme.test"
+wm "$TARRO_ANA" PUT /vacation -H 'Content-Type: application/json' -d '{"enabled":true,"message":"","interval_days":1}'
+expect "una respuesta activa sin mensaje la rechaza el servicio (422)" "$WM_CODE" "422"
+wm "$TARRO_ANA" PUT /vacation -H 'Content-Type: application/json' -d '{"enabled":false,"message":"","interval_days":1}'
+expect "y desactivarla la retira de la vista de Dovecot" "$WM_CODE/$(sql mail_cell_pe_01 "SELECT count(*) FROM mail.v_sieve_vacation WHERE username = 'ana@acme.test'")" "200/0"
 wm "$TARRO_ANA" DELETE /session
 expect "cerrar sesion" "$WM_CODE" "204"
 wm "$TARRO_ANA" GET /folders

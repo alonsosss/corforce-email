@@ -22,18 +22,31 @@ type vacationRequest struct {
 	EndsOn       *string `json:"ends_on"`
 }
 
+// vacationLimits son los topes que el directorio aplica: la interfaz los lee de aqui y no los copia.
+type vacationLimits struct {
+	SubjectMaxLength int `json:"subject_max_length"`
+	MessageMaxLength int `json:"message_max_length"`
+	IntervalMinDays  int `json:"interval_min_days"`
+	IntervalMaxDays  int `json:"interval_max_days"`
+}
+
 type vacationResponse struct {
-	Enabled      bool       `json:"enabled"`
-	Subject      string     `json:"subject"`
-	Message      string     `json:"message"`
-	IntervalDays int        `json:"interval_days"`
-	StartsOn     *string    `json:"starts_on"`
-	EndsOn       *string    `json:"ends_on"`
-	UpdatedAt    *time.Time `json:"updated_at"`
+	Limits       vacationLimits `json:"limits"`
+	Enabled      bool           `json:"enabled"`
+	Subject      string         `json:"subject"`
+	Message      string         `json:"message"`
+	IntervalDays int            `json:"interval_days"`
+	StartsOn     *string        `json:"starts_on"`
+	EndsOn       *string        `json:"ends_on"`
+	UpdatedAt    *time.Time     `json:"updated_at"`
 }
 
 func toVacationResponse(v *domain.VacationReply) vacationResponse {
 	out := vacationResponse{
+		Limits: vacationLimits{
+			SubjectMaxLength: domain.MaxVacationSubjectRunes, MessageMaxLength: domain.MaxVacationMessageRunes,
+			IntervalMinDays: domain.MinVacationIntervalDays, IntervalMaxDays: domain.MaxVacationIntervalDays,
+		},
 		Enabled: v.Enabled, Subject: v.Subject, Message: v.Message, IntervalDays: v.IntervalDays,
 		StartsOn: domain.FormatVacationDate(v.StartsOn), EndsOn: domain.FormatVacationDate(v.EndsOn),
 	}
