@@ -104,3 +104,35 @@ func TestLasSeriesDeLaRevocacionEnDovecotNacenACeroYCuentan(t *testing.T) {
 		t.Fatalf("tras revocar: %v, se esperaba %v", got, want)
 	}
 }
+
+func TestLaColaDePostfixAnotaCadaColaYPonAZeroLasQueNoAparecen(t *testing.T) {
+	m := metricas()
+	m.QueueObserved(map[string]int{"deferred": 12, "hold": 3}, time.Unix(1_700_000_000, 0))
+	got := seriesCon(t, "mail_security_postfix_queue_")
+	if got[`mail_security_postfix_queue_messages{queue=deferred}`] != 12 || got[`mail_security_postfix_queue_messages{queue=hold}`] != 3 ||
+		got[`mail_security_postfix_queue_messages{queue=active}`] != 0 || got["mail_security_postfix_queue_oldest_arrival_timestamp_seconds"] != 1_700_000_000 {
+		t.Fatalf("series: %v", got)
+	}
+	if got["mail_security_postfix_queue_last_poll_success_timestamp_seconds"] < float64(time.Now().Add(-time.Minute).Unix()) {
+		t.Fatalf("la ultima consulta correcta debe ser de ahora: %v", got)
+	}
+
+	// Una consulta posterior con la cola vacia no conserva los valores anteriores.
+	m.QueueObserved(map[string]int{}, time.Time{})
+	got = seriesCon(t, "mail_security_postfix_queue_")
+	if got[`mail_security_postfix_queue_messages{queue=deferred}`] != 0 || got["mail_security_postfix_queue_oldest_arrival_timestamp_seconds"] != 0 {
+		t.Fatalf("cola vacia: %v", got)
+	}
+}
+
+func TestUnaConsultaFallidaCuentaSinTocarLaUltimaCorrecta(t *testing.T) {
+	m := metricas()
+	m.QueueObserved(map[string]int{}, time.Time{})
+	before := seriesCon(t, "mail_security_postfix_queue_")
+	m.QueuePollFailed()
+	after := seriesCon(t, "mail_security_postfix_queue_")
+	if after["mail_security_postfix_queue_poll_failures_total"] != before["mail_security_postfix_queue_poll_failures_total"]+1 ||
+		after["mail_security_postfix_queue_last_poll_success_timestamp_seconds"] != before["mail_security_postfix_queue_last_poll_success_timestamp_seconds"] {
+		t.Fatalf("antes %v despues %v", before, after)
+	}
+}

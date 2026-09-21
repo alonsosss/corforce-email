@@ -255,6 +255,15 @@ type EngineQueue interface {
 	Flush(ctx context.Context) error
 }
 
+// QueueMetrics anota lo que el monitor ve en la cola de Postfix.
+type QueueMetrics interface {
+	// QueueObserved anota el conteo por cola y el instante del mensaje mas antiguo (cero con la cola
+	// vacia) de una consulta que salio bien.
+	QueueObserved(counts map[string]int, oldestArrival time.Time)
+	// QueuePollFailed anota una consulta que fallo.
+	QueuePollFailed()
+}
+
 // SessionRevocationMetrics cuenta la revocacion de credenciales en Dovecot.
 type SessionRevocationMetrics interface {
 	SessionsRevoked(action domain.SessionAction)

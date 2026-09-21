@@ -53,11 +53,16 @@ type Message struct {
 	RecipientsCapped bool        `json:"recipients_capped,omitempty"`
 }
 
-// Listing es la respuesta de una consulta a la cola.
+// Listing es la respuesta de una consulta a la cola. Counts y OldestArrival describen la cola entera, no
+// solo los mensajes devueltos: Counts cuenta por cola de Postfix (incoming, active, deferred, hold) y
+// OldestArrival es el instante Unix del mensaje mas antiguo sin contar los retenidos (0 si no hay). Con ellos se vigila la
+// cola sin traer los mensajes.
 type Listing struct {
-	Total     int       `json:"total"`
-	Truncated bool      `json:"truncated"`
-	Items     []Message `json:"items"`
+	Total         int            `json:"total"`
+	Truncated     bool           `json:"truncated"`
+	Counts        map[string]int `json:"counts"`
+	OldestArrival int64          `json:"oldest_arrival"`
+	Items         []Message      `json:"items"`
 }
 
 // Queue ejecuta las operaciones de la cola. Los binarios se pasan por campo para que las pruebas
@@ -113,7 +118,7 @@ func (q *Queue) List(ctx context.Context, limit int) (Listing, error) {
 }
 
 func parseListing(r io.Reader, limit int) (Listing, error) {
-	out := Listing{Items: []Message{}}
+	out := Listing{Items: []Message{}, Counts: map[string]int{}}
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 64<<10), maxLineBytes)
 	for sc.Scan() {
@@ -129,6 +134,11 @@ func parseListing(r io.Reader, limit int) (Listing, error) {
 			continue
 		}
 		out.Total++
+		out.Counts[raw.QueueName]++
+		// Un mensaje retenido lo dejo alli una persona: no cuenta como cola atascada.
+		if raw.QueueName != "hold" && raw.ArrivalTime > 0 && (out.OldestArrival == 0 || raw.ArrivalTime < out.OldestArrival) {
+			out.OldestArrival = raw.ArrivalTime
+		}
 		if len(out.Items) >= limit {
 			out.Truncated = true
 			continue

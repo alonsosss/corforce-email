@@ -60,7 +60,14 @@ type QueueMessage struct {
 
 // QueueListing es una consulta de la cola: Total cuenta todos los mensajes aunque Items traiga menos.
 type QueueListing struct {
-	Total     int            `json:"total"`
-	Truncated bool           `json:"truncated"`
-	Items     []QueueMessage `json:"items"`
+	Total     int  `json:"total"`
+	Truncated bool `json:"truncated"`
+	// Counts cuenta los mensajes de la cola entera por cola de Postfix y OldestArrival es el instante Unix
+	// del mas antiguo sin contar los retenidos (0 si no hay): describen toda la cola aunque Items traiga menos.
+	Counts        map[string]int `json:"counts"`
+	OldestArrival int64          `json:"oldest_arrival"`
+	Items         []QueueMessage `json:"items"`
 }
+
+// QueueNames son las colas de Postfix que se vigilan: una que no aparece en la consulta se anota a cero.
+func QueueNames() []string { return []string{"incoming", "active", "deferred", "hold", "corrupt"} }

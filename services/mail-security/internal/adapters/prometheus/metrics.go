@@ -18,6 +18,10 @@ type Metrics struct {
 	dkimLastSuccess    prometheus.Gauge
 	dovecotRevocations *prometheus.CounterVec
 	dovecotFailures    *prometheus.CounterVec
+	queueMessages      *prometheus.GaugeVec
+	queueOldest        prometheus.Gauge
+	queuePollSuccess   prometheus.Gauge
+	queuePollFailures  prometheus.Counter
 }
 
 func New() *Metrics {
@@ -42,6 +46,22 @@ func New() *Metrics {
 			Name: "mail_security_dovecot_revocation_failures_total",
 			Help: "Revocaciones en Dovecot que fallaron y esperan la reentrega del evento, por motivo (unreachable, rejected, command, directory).",
 		}, []string{"reason"}),
+		queueMessages: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "mail_security_postfix_queue_messages",
+			Help: "Mensajes en la cola de Postfix de la celda, por cola (incoming, active, deferred, hold, corrupt), en la ultima consulta que salio bien.",
+		}, []string{"queue"}),
+		queueOldest: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "mail_security_postfix_queue_oldest_arrival_timestamp_seconds",
+			Help: "Instante Unix de llegada del mensaje mas antiguo de la cola de Postfix; 0 con la cola vacia.",
+		}),
+		queuePollSuccess: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "mail_security_postfix_queue_last_poll_success_timestamp_seconds",
+			Help: "Instante Unix de la ultima consulta correcta a la cola de Postfix; 0 si aun no ha habido ninguna (o el gestor de cola esta desactivado).",
+		}),
+		queuePollFailures: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "mail_security_postfix_queue_poll_failures_total",
+			Help: "Consultas a la cola de Postfix que fallaron (agente caido, clave o certificado rechazados).",
+		}),
 	}
 	// Las series nacen a cero: un contador que aparece ya en 1 no da increase().
 	for _, reason := range domain.DKIMRemovalReasons() {
@@ -53,7 +73,11 @@ func New() *Metrics {
 	for _, reason := range domain.SessionRevocationFailures() {
 		m.dovecotFailures.WithLabelValues(string(reason))
 	}
-	prometheus.MustRegister(m.dkimRemovals, m.dkimUnresolved, m.dkimLastSuccess, m.dovecotRevocations, m.dovecotFailures)
+	for _, queue := range domain.QueueNames() {
+		m.queueMessages.WithLabelValues(queue)
+	}
+	prometheus.MustRegister(m.dkimRemovals, m.dkimUnresolved, m.dkimLastSuccess, m.dovecotRevocations, m.dovecotFailures,
+		m.queueMessages, m.queueOldest, m.queuePollSuccess, m.queuePollFailures)
 	return m
 }
 
@@ -80,3 +104,18 @@ func (m *Metrics) DKIMUnresolved(domains int) {
 func (m *Metrics) DKIMReconciled(at time.Time) {
 	m.dkimLastSuccess.Set(float64(at.UnixNano()) / 1e9)
 }
+
+// QueueObserved anota una consulta correcta: las colas que no aparecen valen cero, no conservan el valor anterior.
+func (m *Metrics) QueueObserved(counts map[string]int, oldestArrival time.Time) {
+	for _, queue := range domain.QueueNames() {
+		m.queueMessages.WithLabelValues(queue).Set(float64(counts[queue]))
+	}
+	oldest := 0.0
+	if !oldestArrival.IsZero() {
+		oldest = float64(oldestArrival.Unix())
+	}
+	m.queueOldest.Set(oldest)
+	m.queuePollSuccess.Set(float64(time.Now().Unix()))
+}
+
+func (m *Metrics) QueuePollFailed() { m.queuePollFailures.Inc() }

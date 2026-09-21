@@ -182,6 +182,8 @@ minutos, pasa a `EVENTS_DLQ`.
 | Alerta | Cuando | Espera | Severidad | Por que |
 |---|---|---|---|---|
 | `RevocacionEnDovecotFallida` | sube `mail_security_dovecot_revocation_failures_total` en cada ventana de 5 min, por motivo | 10 min | alta | Un fallo suelto que la reentrega resuelve no avisa; unas siete reentregas fallidas si, antes de que el evento acabe en `EVENTS_DLQ`. Mientras dura, un buzon apagado o con la credencial cambiada conserva sus sesiones y entra con la credencial vieja hasta `auth_cache_ttl` (300 s). `rejected` es configuracion: `DOVEADM_API_KEY` distinta en los dos lados, una orden fuera de `doveadm_allowed_commands` o el certificado. |
+| `ColaDePostfixAtascada` | el mensaje mas antiguo sin retener de la cola de Postfix (`mail_security_postfix_queue_oldest_arrival_timestamp_seconds`) lleva mas de 4 horas | 15 min | media | Postfix avisa al remitente del retraso a las 4 horas (`delay_warning_time`): un mensaje asi es un problema de entrega real. La pantalla Cola de correo (superadmin) da el motivo de cada uno: destino caido, lista negra, puerto 25 de salida bloqueado o rechazo del remoto. Los retenidos a mano no cuentan. |
+| `GestorDeColaSinRespuesta` | sube `mail_security_postfix_queue_poll_failures_total` en cada ventana de 10 min | 15 min | media | El agente de la cola (8590 del contenedor de Postfix) no responde a `mail-security`: caido, `QUEUE_AGENT_API_KEY` distinta o certificado que no casa. Sin el, `ColaDePostfixAtascada` no ve la cola. Con el gestor desactivado no hay consultas y no avisa. |
 
 ### Eventos
 

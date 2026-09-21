@@ -482,6 +482,14 @@ borrarlos y vaciar la cola diferida (`docs/Plan_Estrategico_Mejoras_Correo.md`, 
   tiene el superadmin, y el caso de uso lo vuelve a exigir: la cola mezcla el correo de todas las empresas de la
   celda. Son rutas de plataforma como las del cortafuegos: el operador las alcanza en la celda destino. Cada
   accion queda en el registro de `mail-security` con quien la pidio. Pantalla: `/platform/mail-queue`.
+* **Vigilancia**: `mail-security` consulta la cola cada `MAIL_QUEUE_POLL_INTERVAL` (por defecto 1 minuto, de 10 s
+  a 5 min; solo con el agente configurado), pidiendo un solo mensaje porque el agente devuelve el conteo por
+  cola y la llegada del mas antiguo (sin contar los retenidos) de la cola entera. Publica
+  `mail_security_postfix_queue_messages{queue}`, `mail_security_postfix_queue_oldest_arrival_timestamp_seconds`,
+  `mail_security_postfix_queue_last_poll_success_timestamp_seconds` y
+  `mail_security_postfix_queue_poll_failures_total`. Alertas `ColaDePostfixAtascada` (un mensaje sin entregar
+  y sin retener desde hace mas de 4 horas, el aviso de retraso de Postfix) y `GestorDeColaSinRespuesta`, en
+  `ops/observability/prometheus/rules/plataforma.yml`, con pruebas de `promtool` (`make check-alertas`).
 * **Despliegue**: migracion 033 del registro; `QUEUE_AGENT_API_KEY` en el almacen; `mail-security` (sin
   clave sigue igual); despues `postfix-mail` recreado (compila el agente). Con la clave puesta en los dos
   lados, el gestor se activa sin mas cambios.

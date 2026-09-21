@@ -58,6 +58,13 @@ const (
 	defaultDoveadmURL        = "https://dovecot:8443"
 	defaultQueueAgentURL     = "https://postfix:8590"
 
+	// Vigilancia de la cola de Postfix: las alertas ColaDePostfixAtascada y GestorDeColaSinRespuesta
+	// (ops/observability/prometheus/rules/plataforma.yml) cuentan con una consulta por minuto como
+	// mucho cada cinco: alargarla exige alargar sus umbrales.
+	defaultQueuePollInterval = time.Minute
+	minQueuePollInterval     = 10 * time.Second
+	maxQueuePollInterval     = 5 * time.Minute
+
 	// outboxRetention conserva lo publicado lo mismo que el stream (EnsureStream: 7 dias).
 	outboxRetention = 7 * 24 * time.Hour
 	streamRetry     = 5 * time.Second
@@ -124,6 +131,7 @@ type settings struct {
 	logLines                 int
 	pipeMaxBodyMiB           int
 	reconcileInterval        time.Duration
+	queuePollInterval        time.Duration
 	dkimReconcileInterval    time.Duration
 	quarantineNotifyInterval time.Duration
 	quarantineLinkTTL        time.Duration
@@ -186,6 +194,9 @@ func loadSettings() (settings, error) {
 		return st, err
 	}
 	if st.reconcileInterval, err = config.EnvDuration("MAIL_REDIS_RECONCILE_INTERVAL", defaultReconcileInterval, minReconcileInterval, maxReconcileInterval); err != nil {
+		return st, err
+	}
+	if st.queuePollInterval, err = config.EnvDuration("MAIL_QUEUE_POLL_INTERVAL", defaultQueuePollInterval, minQueuePollInterval, maxQueuePollInterval); err != nil {
 		return st, err
 	}
 	if st.dkimReconcileInterval, err = config.EnvDuration("MAIL_DKIM_RECONCILE_INTERVAL", defaultDKIMReconcileInterval, minDKIMReconcileInterval, maxDKIMReconcileInterval); err != nil {
@@ -422,6 +433,10 @@ func main() {
 	if engineSessions != nil {
 		revoker := app.NewSessionRevoker(app.SessionRevokerDeps{Directory: directory, Engine: engineSessions, Metrics: metrics, Logger: logger})
 		go natsadapter.NewSessionConsumer(bus, revoker, withPool, logger).Run(ctx)
+	}
+	// Vigilancia de la cola de Postfix, solo con el agente configurado.
+	if queueAgent != nil {
+		go app.NewQueueMonitor(queueAgent, metrics, st.queuePollInterval, logger).Run(ctx)
 	}
 	go dkimUC.RunReconciler(withPool(ctx), st.dkimReconcileInterval,
 		func(c context.Context) (func(), bool) { return db.TryLeaderLock(c, pool.Pool, dkimReconcileLockKey) })

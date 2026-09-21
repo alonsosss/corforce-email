@@ -541,6 +541,33 @@ groups:
           resumen: "El repaso DKIM de {{ $labels.service }} no obtiene de organization la empresa de sus dominios"
           detalle: "Las claves de las empresas sin respuesta se conservan, tambien las de una empresa ya dada de baja. La segunda barrera de la celda pregunta a organization por la misma ruta y rechaza con 503 a las empresas que no tiene en cache. Revisar organization, ORGANIZATION_URL y el token interno de {{ $labels.service }} y la red entre los dos."
 
+  # Cola de Postfix de la celda, vigilada por mail-security (QueueMonitor, una consulta por minuto al agente
+  # de la cola). Postfix reintenta un mensaje durante cinco dias y avisa al remitente a las cuatro horas
+  # (delay_warning_time): un mensaje que lleva mas de cuatro horas en la cola sin estar retenido a mano es un
+  # problema de entrega real (un destino caido, una lista negra, el puerto 25 saliente bloqueado).
+  - name: cola-de-postfix
+    rules:
+      - alert: ColaDePostfixAtascada
+        expr: time() - max by (service) (mail_security_postfix_queue_oldest_arrival_timestamp_seconds > 0) > 14400
+        for: 15m
+        labels:
+          severidad: media
+        annotations:
+          resumen: "La cola de Postfix de {{ $labels.service }} tiene mensajes sin entregar desde hace mas de cuatro horas"
+          detalle: "Hay correo que Postfix no logra entregar y que sus remitentes ya han recibido como aviso de retraso. Ver la pantalla Cola de correo (superadmin) para el motivo de cada mensaje (delay_reason): destino caido, lista negra de la IP, bloqueo del puerto 25 de salida o rechazo del servidor remoto. Los retenidos a mano no cuentan."
+
+      # El agente de la cola no responde a mail-security: sin el, ni la pantalla ni la alerta anterior ven la
+      # cola. La ventana supera dos consultas y la espera son quince minutos de fallos seguidos. Con el
+      # gestor desactivado (sin QUEUE_AGENT_API_KEY) no hay consultas y no avisa.
+      - alert: GestorDeColaSinRespuesta
+        expr: sum by (service) (increase(mail_security_postfix_queue_poll_failures_total[10m])) > 0
+        for: 15m
+        labels:
+          severidad: media
+        annotations:
+          resumen: "{{ $labels.service }} no consigue consultar la cola de Postfix"
+          detalle: "Las consultas al agente de la cola (puerto 8590 del contenedor de Postfix) fallan de forma sostenida: el agente esta caido o el contenedor de Postfix no esta sano, QUEUE_AGENT_API_KEY es distinta en Postfix y en {{ $labels.service }}, o el certificado no casa con QUEUE_AGENT_TLS_SERVER_NAME. Mientras dure, la alerta ColaDePostfixAtascada no ve la cola."
+
   # Revocacion en Dovecot desde mail-security: con cada evento de buzon (mail.mailbox.*) vacia la
   # cache de autenticacion del buzon y, si ya no puede entrar o cambio su credencial, cierra sus
   # sesiones por el API HTTP de doveadm de la celda. Un fallo deja el evento sin confirmar y

@@ -183,3 +183,37 @@ func TestListaLeeLaSalidaDePostqueue(t *testing.T) {
 		t.Fatalf("un postqueue que falla es ErrCommand: %v", err)
 	}
 }
+
+func TestElListadoCuentaPorColaYDiceCuandoLlegoElMasAntiguoAunSiSeAcota(t *testing.T) {
+	got, err := parseListing(strings.NewReader(sampleQueue), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Counts["deferred"] != 1 || got.Counts["hold"] != 1 || len(got.Counts) != 2 {
+		t.Fatalf("conteo por cola (la linea con identificador invalido no cuenta): %+v", got.Counts)
+	}
+	if got.OldestArrival != 1700000000 {
+		t.Fatalf("el mas antiguo se calcula sobre toda la cola, no sobre lo devuelto: %d", got.OldestArrival)
+	}
+	empty, err := parseListing(strings.NewReader(""), 5)
+	if err != nil || empty.Counts == nil || len(empty.Counts) != 0 || empty.OldestArrival != 0 {
+		t.Fatalf("cola vacia: %+v %v", empty, err)
+	}
+}
+
+func TestUnMensajeRetenidoNoCuentaComoElMasAntiguo(t *testing.T) {
+	in := `{"queue_name":"hold","queue_id":"HOLD000001","arrival_time":100,"message_size":1,"sender":"a@b.c","recipients":[{"address":"x@y.z"}]}
+{"queue_name":"deferred","queue_id":"DEFER00002","arrival_time":500,"message_size":1,"sender":"a@b.c","recipients":[{"address":"x@y.z"}]}
+`
+	got, err := parseListing(strings.NewReader(in), 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.OldestArrival != 500 || got.Counts["hold"] != 1 {
+		t.Fatalf("el retenido se cuenta pero no fija el mas antiguo: %+v", got)
+	}
+	only, _ := parseListing(strings.NewReader(`{"queue_name":"hold","queue_id":"HOLD000001","arrival_time":100,"message_size":1,"sender":"a@b.c","recipients":[]}`), 5)
+	if only.OldestArrival != 0 {
+		t.Fatalf("solo retenidos: %d", only.OldestArrival)
+	}
+}

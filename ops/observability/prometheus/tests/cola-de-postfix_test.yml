@@ -1,0 +1,83 @@
+# Pruebas de las alertas de la cola de Postfix.
+#
+# mail-security anota el instante de llegada del mensaje mas antiguo (sin contar los retenidos; 0 con la cola
+# vacia) y cuenta las consultas fallidas al agente. ColaDePostfixAtascada avisa cuando lleva mas de cuatro
+# horas y la situacion dura 15 minutos mas; GestorDeColaSinRespuesta, cuando las consultas fallan quince
+# minutos seguidos. El reloj de la prueba empieza en 0.
+#
+#   make check-alertas
+
+rule_files:
+  - ../rules/plataforma.yml
+
+evaluation_interval: 1m
+
+tests:
+  # ── Un mensaje de hace una hora y otro de hace tres: nada que avisar ─────────
+  - interval: 1m
+    input_series:
+      - series: 'mail_security_postfix_queue_oldest_arrival_timestamp_seconds{job="mail-services",service="mail-security",instance="mail-security:8042"}'
+        values: '0x400'
+    alert_rule_test:
+      - eval_time: 200m
+        alertname: ColaDePostfixAtascada
+        exp_alerts: []
+
+  # ── Cola vacia (0): no se confunde con "desde 1970" ──────────────────────────
+  - interval: 1m
+    input_series:
+      - series: 'mail_security_postfix_queue_oldest_arrival_timestamp_seconds{job="mail-services",service="mail-security",instance="mail-security:8042"}'
+        values: '0x2000'
+    alert_rule_test:
+      - eval_time: 30h
+        alertname: ColaDePostfixAtascada
+        exp_alerts: []
+
+  # ── Un mensaje llegado en el minuto 1 que sigue ahi: pasa de cuatro horas a los 241 min ─
+  - interval: 1m
+    input_series:
+      - series: 'mail_security_postfix_queue_oldest_arrival_timestamp_seconds{job="mail-services",service="mail-security",instance="mail-security:8042"}'
+        values: '60x400'
+    alert_rule_test:
+      # Mas de cuatro horas, pero aun en espera de los 15 minutos.
+      - eval_time: 250m
+        alertname: ColaDePostfixAtascada
+        exp_alerts: []
+      - eval_time: 260m
+        alertname: ColaDePostfixAtascada
+        exp_alerts:
+          - exp_labels:
+              severidad: media
+              service: mail-security
+            exp_annotations:
+              resumen: "La cola de Postfix de mail-security tiene mensajes sin entregar desde hace mas de cuatro horas"
+              detalle: "Hay correo que Postfix no logra entregar y que sus remitentes ya han recibido como aviso de retraso. Ver la pantalla Cola de correo (superadmin) para el motivo de cada mensaje (delay_reason): destino caido, lista negra de la IP, bloqueo del puerto 25 de salida o rechazo del servidor remoto. Los retenidos a mano no cuentan."
+
+  # ── Consultas al agente que fallan sin parar ──────────────────────────────────
+  - interval: 1m
+    input_series:
+      - series: 'mail_security_postfix_queue_poll_failures_total{job="mail-services",service="mail-security",instance="mail-security:8042"}'
+        values: '0x10 1+1x60'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: GestorDeColaSinRespuesta
+        exp_alerts: []
+      - eval_time: 40m
+        alertname: GestorDeColaSinRespuesta
+        exp_alerts:
+          - exp_labels:
+              severidad: media
+              service: mail-security
+            exp_annotations:
+              resumen: "mail-security no consigue consultar la cola de Postfix"
+              detalle: "Las consultas al agente de la cola (puerto 8590 del contenedor de Postfix) fallan de forma sostenida: el agente esta caido o el contenedor de Postfix no esta sano, QUEUE_AGENT_API_KEY es distinta en Postfix y en mail-security, o el certificado no casa con QUEUE_AGENT_TLS_SERVER_NAME. Mientras dure, la alerta ColaDePostfixAtascada no ve la cola."
+
+  # ── Un fallo suelto no avisa ──────────────────────────────────────────────────
+  - interval: 1m
+    input_series:
+      - series: 'mail_security_postfix_queue_poll_failures_total{job="mail-services",service="mail-security",instance="mail-security:8042"}'
+        values: '0x10 1x100'
+    alert_rule_test:
+      - eval_time: 90m
+        alertname: GestorDeColaSinRespuesta
+        exp_alerts: []
