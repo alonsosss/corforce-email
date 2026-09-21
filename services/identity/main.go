@@ -25,6 +25,7 @@ import (
 	"github.com/alonsosss/corforce-email/services/identity/internal/adapters/resetqueue"
 	"github.com/alonsosss/corforce-email/services/identity/internal/app"
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 )
@@ -139,7 +140,16 @@ func main() {
 		Logger:      logger,
 	})
 
-	mailer := mailerclient.New(mailerURL, os.Getenv("INTERNAL_GATEWAY_TOKEN"))
+	platformTenantID := uuid.Nil
+	if raw := os.Getenv(mailerclient.EnvPlatformTenantID); raw != "" {
+		if platformTenantID, err = uuid.Parse(raw); err != nil {
+			log.Fatalf("%s no es un uuid valido: %v", mailerclient.EnvPlatformTenantID, err)
+		}
+	} else {
+		logger.Warn("sin la empresa de plataforma, los correos del sistema salen como la empresa de cada usuario y solo funcionan si su dominio de remitente esta verificado alli",
+			zap.String("variable", mailerclient.EnvPlatformTenantID))
+	}
+	mailer := mailerclient.New(mailerURL, os.Getenv("INTERNAL_GATEWAY_TOKEN"), platformTenantID)
 	if !mailer.Configured() {
 		logger.Warn("correo transaccional sin configurar: la recuperacion de contrasena no enviara enlaces",
 			zap.String("variable", mailerclient.EnvBaseURL))

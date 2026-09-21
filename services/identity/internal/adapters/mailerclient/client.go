@@ -21,23 +21,33 @@ import (
 // cliente no adivina ningun host: los correos de identity no salen y queda constancia.
 const EnvBaseURL = "TRANSACTIONAL_MAIL_URL"
 
+// EnvPlatformTenantID es la empresa de plataforma: los correos del sistema salen como ella, con su dominio
+// de remitente verificado, y no como la empresa del usuario que los provoca.
+const EnvPlatformTenantID = "PLATFORM_TENANT_ID"
+
 const sendPath = "/internal/send-email"
 
 var errNotConfigured = errors.New("correo transaccional no configurado: falta " + EnvBaseURL)
 
 type Client struct {
-	baseURL string
-	token   string
-	http    *http.Client
+	baseURL          string
+	token            string
+	platformTenantID uuid.UUID
+	http             *http.Client
 }
 
 // New envia a baseURL, la URL base de transactional ya validada al arrancar; vacia, el
-// cliente queda sin configurar.
-func New(baseURL, token string) *Client {
+// cliente queda sin configurar. Con platformTenantID, todo correo sale como esa empresa: el
+// remitente del sistema (PLATFORM_FROM_EMAIL) solo esta verificado en la de plataforma, y
+// transactional lo busca entre los dominios de la empresa que envia, asi que con la del usuario
+// la recuperacion de contrasena fallaba con 422 para toda empresa que no fuera la de plataforma.
+// Sin el (uuid.Nil), sale como la empresa del usuario.
+func New(baseURL, token string, platformTenantID uuid.UUID) *Client {
 	return &Client{
-		baseURL: strings.TrimRight(strings.TrimSpace(baseURL), "/"),
-		token:   token,
-		http:    &http.Client{Timeout: 15 * time.Second},
+		baseURL:          strings.TrimRight(strings.TrimSpace(baseURL), "/"),
+		token:            token,
+		platformTenantID: platformTenantID,
+		http:             &http.Client{Timeout: 15 * time.Second},
 	}
 }
 
@@ -63,7 +73,11 @@ func (c *Client) Send(ctx context.Context, tenantID uuid.UUID, to, subject, html
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Gateway-Token", c.token)
-	req.Header.Set("X-Tenant-ID", tenantID.String())
+	sender := tenantID
+	if c.platformTenantID != uuid.Nil {
+		sender = c.platformTenantID
+	}
+	req.Header.Set("X-Tenant-ID", sender.String())
 
 	resp, err := c.http.Do(req)
 	if err != nil {

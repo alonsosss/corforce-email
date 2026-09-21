@@ -1015,6 +1015,23 @@ Lo que se comprobó de punta a punta con un buzón real, y las trampas que salie
   `/api/v1/mail-security/queue` y un administrador de empresa 403. Para rotarla: nueva clave en el `.env`, recrear
   `mail-security` y después `postfix-mail`.
 
+### Correo del sistema (recuperacion de contrasena)
+
+El correo que envia la propia plataforma sale por `transactional` y por Amazon SES, como el resto del transaccional
+(no por el Postfix corporativo: no se mezclan reputaciones). Hace falta, y solo lo primero lo puede dejar listo quien
+opera el servidor:
+
+1. Un dominio de remitente de la plataforma, verificado en la empresa de plataforma: el superadmin lo da de alta
+   (`POST /api/v1/domains`, proposito `sending`) y publica sus registros. En produccion `avisos.core-force.com`
+   (2026-09-21, un subdominio, para no tocar el DNS de `core-force.com` que usa otro sistema);
+   `PLATFORM_FROM_EMAIL=no-reply@avisos.core-force.com`.
+2. `PLATFORM_TENANT_ID` con el id de la empresa de plataforma en el `.env` de `identity`. Sin el, el correo sale
+   como la empresa del usuario y transactional responde 422 `SENDING_DOMAIN_NOT_VERIFIED`: comprobado en produccion
+   el 2026-09-21 con la recuperacion de contrasena de `it@mentorenergy.uk`.
+3. Credenciales de SES (un usuario IAM solo con `ses:SendEmail` y `ses:SendRawEmail`), la identidad del dominio
+   verificada en SES y la cuenta fuera del sandbox. Sin ellas el mensaje se acepta y encola, pero SES lo rechaza.
+
+
 ### Informes DMARC
 
 Todos los dominios de las empresas publican `rua=mailto:<MAIL_DMARC_RUA>`. Para que esos informes lleguen hace
