@@ -40,7 +40,7 @@ func TestParseVCardAceptaTarjetasReales(t *testing.T) {
 	}
 }
 
-func TestParseVCardRechazaLoQueNoEsUnaTarjetaAcotada(t *testing.T) {
+func TestParseVCardRechazaLoQueNoEsTarjetaValidaNiAcotada(t *testing.T) {
 	long := vcardWith(append([]string{"VERSION:3.0", "UID:x", "FN:x"}, repeat("NOTE:y", 30)...)...)
 	cases := map[string]string{
 		"vacio":                      "",
