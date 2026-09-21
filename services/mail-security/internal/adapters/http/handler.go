@@ -32,6 +32,7 @@ type Handler struct {
 	quarantine *app.QuarantineUseCase
 	firewall   *app.FirewallUseCase
 	dkim       *app.DKIMUseCase
+	queue      *app.QueueUseCase
 	authz      *authz.Checker
 	// publicLimiter frena por ip los enlaces sin sesion del aviso de cuarentena, por
 	// debajo del limite general del servicio.
@@ -46,6 +47,13 @@ func NewHandler(policy *app.PolicyUseCase, quarantine *app.QuarantineUseCase, fi
 		publicLimiter: middleware.NewRateLimiter(publicLinksPerMinute, time.Minute)}
 }
 
+// WithQueue conecta el gestor de la cola de Postfix. Sin el, las rutas de la cola responden 503
+// NOT_CONFIGURED: el resto del servicio no depende de el.
+func (h *Handler) WithQueue(queue *app.QueueUseCase) *Handler {
+	h.queue = queue
+	return h
+}
+
 func (h *Handler) can(resource, action string) func(http.Handler) http.Handler {
 	return h.authz.RequirePermission(permissionModule, resource, action)
 }
@@ -53,28 +61,36 @@ func (h *Handler) can(resource, action string) func(http.Handler) http.Handler {
 // adminPrefix es el prefijo del API de administracion, el que enruta el gateway.
 const adminPrefix = "/api/v1/mail-security"
 
-// firewallRoutes es el cortafuegos de la celda: permiso de plataforma (mail_security/firewall/*)
-// y, en el caso de uso, superadmin. Son las rutas de plataforma del servicio: las unicas que un
-// operador con celda destino alcanza en una celda que no es la de su empresa (PlatformRoutes).
-var firewallRoutes = []struct {
-	method, path, action string
-	serve                func(*Handler, http.ResponseWriter, *http.Request)
+// platformRoutes son las rutas de plataforma de la celda: el cortafuegos (mail_security/firewall/*) y la
+// cola de Postfix (mail_security/queue/*). El permiso es de plataforma y, en el caso de uso, se exige
+// superadmin. Son las unicas que un operador con celda destino alcanza en una celda que no es la de su
+// empresa (PlatformRoutes).
+var platformRoutes = []struct {
+	method, path, resource, action string
+	serve                          func(*Handler, http.ResponseWriter, *http.Request)
 }{
-	{http.MethodGet, "/firewall/networks", "read", (*Handler).ListFirewallNetworks},
-	{http.MethodPost, "/firewall/networks", "create", (*Handler).AddFirewallNetwork},
-	{http.MethodDelete, "/firewall/networks/{id}", "delete", (*Handler).DeleteFirewallNetwork},
-	{http.MethodGet, "/firewall/options", "read", (*Handler).GetFirewallOptions},
-	{http.MethodPut, "/firewall/options", "update", (*Handler).PutFirewallOptions},
-	{http.MethodGet, "/firewall/bans", "read", (*Handler).ListFirewallBans},
-	{http.MethodPost, "/firewall/bans/unban", "update", (*Handler).UnbanFirewallNetwork},
+	{http.MethodGet, "/firewall/networks", "firewall", "read", (*Handler).ListFirewallNetworks},
+	{http.MethodPost, "/firewall/networks", "firewall", "create", (*Handler).AddFirewallNetwork},
+	{http.MethodDelete, "/firewall/networks/{id}", "firewall", "delete", (*Handler).DeleteFirewallNetwork},
+	{http.MethodGet, "/firewall/options", "firewall", "read", (*Handler).GetFirewallOptions},
+	{http.MethodPut, "/firewall/options", "firewall", "update", (*Handler).PutFirewallOptions},
+	{http.MethodGet, "/firewall/bans", "firewall", "read", (*Handler).ListFirewallBans},
+	{http.MethodPost, "/firewall/bans/unban", "firewall", "update", (*Handler).UnbanFirewallNetwork},
+
+	{http.MethodGet, "/queue", "queue", "read", (*Handler).ListQueue},
+	{http.MethodPost, "/queue/flush", "queue", "update", (*Handler).FlushQueue},
+	{http.MethodPost, "/queue/{id}/retry", "queue", "update", queueAction(domain.QueueRetry)},
+	{http.MethodPost, "/queue/{id}/hold", "queue", "update", queueAction(domain.QueueHold)},
+	{http.MethodPost, "/queue/{id}/unhold", "queue", "update", queueAction(domain.QueueUnhold)},
+	{http.MethodDelete, "/queue/{id}", "queue", "delete", queueAction(domain.QueueDelete)},
 }
 
 // PlatformRoutes son las rutas de plataforma tal como las monta Routes, para
 // tenantcell.Membership.AcceptOperators.
 func PlatformRoutes() []tenantcell.Route {
-	out := make([]tenantcell.Route, 0, len(firewallRoutes))
-	for _, fr := range firewallRoutes {
-		out = append(out, tenantcell.Route{Method: fr.method, Pattern: adminPrefix + fr.path})
+	out := make([]tenantcell.Route, 0, len(platformRoutes))
+	for _, pr := range platformRoutes {
+		out = append(out, tenantcell.Route{Method: pr.method, Pattern: adminPrefix + pr.path})
 	}
 	return out
 }
@@ -131,9 +147,9 @@ func (h *Handler) Routes() chi.Router {
 		r.With(h.can("smtp_access", "update")).Put("/smtp-access/{username}", h.PutSMTPAccess)
 		r.With(h.can("smtp_access", "delete")).Delete("/smtp-access/{username}", h.DeleteSMTPAccess)
 
-		for _, fr := range firewallRoutes {
-			r.With(h.can("firewall", fr.action)).Method(fr.method, fr.path, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				fr.serve(h, w, r)
+		for _, pr := range platformRoutes {
+			r.With(h.can(pr.resource, pr.action)).Method(pr.method, pr.path, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				pr.serve(h, w, r)
 			}))
 		}
 	})
@@ -196,6 +212,8 @@ func writeError(w http.ResponseWriter, err error) {
 		response.ErrConflict(w, "ya existe")
 	case errors.Is(err, domain.ErrDKIMDomainNotActive):
 		response.Err(w, http.StatusConflict, "DKIM_DOMAIN_NOT_ACTIVE", err.Error())
+	case errors.Is(err, domain.ErrEngineUnreachable), errors.Is(err, domain.ErrEngineRejected), errors.Is(err, domain.ErrEngineCommand):
+		response.Err(w, http.StatusBadGateway, "ENGINE_UNAVAILABLE", "el motor de correo no pudo completar la operacion")
 	case errors.Is(err, domain.ErrRedisUnavailable):
 		response.Err(w, http.StatusServiceUnavailable, "REDIS_UNAVAILABLE", "el redis de los motores no responde")
 	case errors.As(err, &verr):

@@ -246,6 +246,15 @@ type EngineSessions interface {
 	ForgetCredentials(ctx context.Context, username string, kick bool) error
 }
 
+// EngineQueue es la cola de Postfix de la celda vista desde este servicio: el agente que corre dentro
+// del contenedor de Postfix. Los errores envuelven domain.ErrEngineUnreachable, ErrEngineRejected o
+// ErrEngineCommand; un mensaje que ya no esta en la cola es domain.ErrNotFound.
+type EngineQueue interface {
+	List(ctx context.Context, limit int) (domain.QueueListing, error)
+	Apply(ctx context.Context, action domain.QueueAction, id string) error
+	Flush(ctx context.Context) error
+}
+
 // SessionRevocationMetrics cuenta la revocacion de credenciales en Dovecot.
 type SessionRevocationMetrics interface {
 	SessionsRevoked(action domain.SessionAction)

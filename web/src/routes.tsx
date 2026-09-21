@@ -237,6 +237,11 @@ export const SCREENS: readonly ScreenDecl[] = [
     role: SYSTEM_ROLES.superadmin,
     load: () => import('@/pages/reputation/PlatformReputationPage'),
   },
+  {
+    path: paths.platformMailQueue,
+    role: SYSTEM_ROLES.superadmin,
+    load: () => import('@/pages/mailQueue/MailQueuePage'),
+  },
 ];
 
 const NotFoundPage = lazy(() => import('@/pages/NotFoundPage'));

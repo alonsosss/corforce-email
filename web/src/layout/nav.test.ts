@@ -93,7 +93,11 @@ describe('menu frente a rutas', () => {
   });
 
   it('la operacion de planes y reputacion de la plataforma es del superadmin, sin modulo', () => {
-    const platform: string[] = [paths.platformBilling, paths.platformReputation];
+    const platform: string[] = [
+      paths.platformBilling,
+      paths.platformReputation,
+      paths.platformMailQueue,
+    ];
     for (const to of platform) {
       const item = allItems.find((i) => i.to === to);
       expect(item?.module, to).toBeUndefined();

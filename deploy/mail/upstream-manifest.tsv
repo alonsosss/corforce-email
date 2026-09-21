@@ -63,7 +63,7 @@ identico	postfix-tlspol/stop-supervisor.sh	dcd949c726ce1c2f8f36743f63beb5ffabbd5
 identico	postfix-tlspol/supervisord.conf	a9748ea04b686c76a135d28ad4aea9a8d10ea49be08e36e25c52cc7ad3c7f161
 modificado	postfix-tlspol/syslog-ng-redis_slave.conf	nombres	data/Dockerfiles/postfix-tlspol/syslog-ng-redis_slave.conf
 modificado	postfix-tlspol/syslog-ng.conf	nombres	data/Dockerfiles/postfix-tlspol/syslog-ng.conf
-modificado	postfix/Dockerfile	etiqueta,postgres	data/Dockerfiles/postfix/Dockerfile
+modificado	postfix/Dockerfile	etiqueta,postgres,cola	data/Dockerfiles/postfix/Dockerfile
 modificado	postfix/conf/anonymize_headers.pcre	nombres	data/conf/postfix/anonymize_headers.pcre
 identico	postfix/conf/local_transport	6badc2520b1711e62c60988a4f28ece87b6e9e3f136d7cf5c15375a672ecefb5
 modificado	postfix/conf/main.cf.base	postgres	data/conf/postfix/main.cf
@@ -72,10 +72,16 @@ identico	postfix/conf/postscreen_access.cidr	7f9ce43ce80e985c190adad4a47cac3d342
 identico	postfix/conf/smtp_dsn_filter	daf1295d17e2c1a69d5cd81709f5663283453ba7627e9e878cd0d079c0315cef
 modificado	postfix/docker-entrypoint.sh	arranque	data/Dockerfiles/postfix/docker-entrypoint.sh
 modificado	postfix/postfix.sh	postgres,nombres,sogo-php	data/Dockerfiles/postfix/postfix.sh
+nuevo	postfix/queue-agent/go.mod	cola	-
+nuevo	postfix/queue-agent/main.go	cola	-
+nuevo	postfix/queue-agent/queue.go	cola	-
+nuevo	postfix/queue-agent/queue_test.go	cola	-
+nuevo	postfix/queue-agent/server.go	cola	-
+nuevo	postfix/queue-agent/server_test.go	cola	-
 identico	postfix/rspamd-pipe-ham	309817ec0e8d8be73c568df7981668ed6528caabc1e7bd949c8bb287c7ec9615
 identico	postfix/rspamd-pipe-spam	dfe044f1a26b0222774e44c21c2c2474157baf51f2fbb79b2a40e46749d19cbb
 identico	postfix/stop-supervisor.sh	dcd949c726ce1c2f8f36743f63beb5ffabbd5a13e85d94740171b0127d23a6cd
-identico	postfix/supervisord.conf	4f9d43ff721e507f297a4ac8fdebf164522b187328bea463b02b2411f73f4997
+modificado	postfix/supervisord.conf	cola	data/Dockerfiles/postfix/supervisord.conf
 modificado	postfix/syslog-ng-redis_slave.conf	nombres	data/Dockerfiles/postfix/syslog-ng-redis_slave.conf
 modificado	postfix/syslog-ng.conf	nombres	data/Dockerfiles/postfix/syslog-ng.conf
 modificado	postfix/whitelist_forwardinghosts.sh	servicios-go	data/Dockerfiles/postfix/whitelist_forwardinghosts.sh

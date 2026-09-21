@@ -69,7 +69,7 @@ en() { local s="$1"; shift; docker exec -i "$(c "$s")" "$@"; }
 # binarios del host.
 compose() {
   CELL_DB_PASSWORD="${CELL_PASS}" MAIL_DB_PASSWORD="$MAIL_DB_PASS" MAIL_REDIS_PASSWORD="$MAIL_REDIS_PASS" \
-    DOVECOT_MASTER_USER="${MASTER_USER}" DOVECOT_MASTER_PASS="$MASTER_PASS" DOVEADM_API_KEY="${DOVEADM_KEY}" \
+    DOVECOT_MASTER_USER="${MASTER_USER}" DOVECOT_MASTER_PASS="$MASTER_PASS" DOVEADM_API_KEY="${DOVEADM_KEY}" QUEUE_AGENT_API_KEY="${QUEUE_KEY}" \
     docker compose -p "$PROYECTO" -f "$MAILDIR/docker-compose.mail.yml" -f "$MAILDIR/docker-compose.e2e.yml" "$@"
 }
 
@@ -159,6 +159,8 @@ MASTER_USER="e2e-webmail"
 MASTER_PASS="$(rand_hex 24)"
 # Clave del API HTTP de doveadm: la reciben Dovecot y mail-security (revocacion en Dovecot).
 DOVEADM_KEY="$(rand_hex 32)"
+# Clave del agente de la cola de Postfix: la reciben Postfix y mail-security (gestor de cola).
+QUEUE_KEY="$(rand_hex 32)"
 export CELL_CODE=pe-01 CELL_DB_NAME=mail_cell_pe_01 DEFAULT_CELL_CODE=pe-01
 export MAIL_MX_HOSTNAME="$MAIL_HOSTNAME" MAIL_SPF_INCLUDE=include:spf.cfm.test MAIL_DMARC_RUA=dmarc@cfm.test
 export MAIL_DNS_RESOLVER="127.0.0.1:$DNS_PORT"
@@ -889,6 +891,89 @@ expect "y su sesion del webmail ya no sirve el buzon" "$WM_CODE" "401"
 BEA_PASS="$BEA_OTRA"
 esperar "y bea entra por IMAP con la nueva" 20 login_aceptado bea@acme.test "$BEA_PASS"
 expect "mail-security sin fallos de revocacion" "$(revocaciones fallos)" "0"
+
+echo "== Gestor de la cola de Postfix (agente en el contenedor -> mail-security -> gateway, solo superadmin)"
+# Sin salida real: con defer_transports=smtp, Postfix no intenta entregar y deja el mensaje diferido en la
+# cola, que es lo que hay que gestionar. Se restaura al terminar.
+POSTCONF=(docker exec "$(c postfix-mail)" postconf -c /opt/postfix/conf)
+"${POSTCONF[@]}" -e defer_transports=smtp && docker exec "$(c postfix-mail)" postfix reload >/dev/null 2>&1
+MSG_COLA="$TOKEN-cola"
+encolar() { # encolar <n>: un mensaje a un destino externo, que queda diferido
+  printf 'Subject: %s-%s\n\ncola\n' "$MSG_COLA" "$1" | docker exec -i -e MAIL_CONFIG=/opt/postfix/conf "$(c postfix-mail)" sendmail -f "cola@cfm.test" "destino-$1@ejemplo.org"
+}
+encolar 1; encolar 2
+cola_json() { docker exec "$(c postfix-mail)" postqueue -j; }
+# Diferidos y estables: un mensaje que Postfix aun procesa (active) puede cambiar de identificador.
+en_cola() { [[ "$(cola_json | grep '"queue_name": "deferred"' | grep -c "destino-[12]@ejemplo.org")" == 2 ]]; }
+esperar "los dos mensajes quedan diferidos en la cola de Postfix" 60 en_cola
+sleep 3
+QID1=$(cola_json | python3 -c 'import json, sys
+for l in sys.stdin:
+    m = json.loads(l)
+    if any(r["address"] == "destino-1@ejemplo.org" for r in m["recipients"]): print(m["queue_id"])')
+QID2=$(cola_json | python3 -c 'import json, sys
+for l in sys.stdin:
+    m = json.loads(l)
+    if any(r["address"] == "destino-2@ejemplo.org" for r in m["recipients"]): print(m["queue_id"])')
+[[ -n "$QID1" && -n "$QID2" ]] && ok "identificadores de cola: $QID1 y $QID2" || mal "sin identificadores de cola ($QID1, $QID2)"
+
+A1="Authorization: Bearer $(e2e_login "$ADMIN_EMAIL" "$ADMIN_PASS" | jget data.access_token)"
+A2="Authorization: Bearer $(e2e_login admin@acme.test "$TENANT_PASS" | jget data.access_token)"
+cola() { # cola <cabecera> <metodo> <ruta>: deja COLA_CODE y COLA_BODY
+  COLA_CODE=$(curl -s -o "$WORK/cola.json" -w '%{http_code}' -X "$2" "$GW/mail-security/queue$3" -H "$1")
+  COLA_BODY=$(cat "$WORK/cola.json")
+}
+cola "$A1" GET ""
+expect "el superadmin lista la cola" "$COLA_CODE" "200"
+contains "con el identificador del mensaje" "$COLA_BODY" "$QID1"
+contains "su remitente y su destinatario" "$COLA_BODY" "destino-1@ejemplo.org"
+contains "y por que sigue en cola" "$COLA_BODY" "delay_reason"
+lacks "sin el asunto ni el contenido del mensaje" "$COLA_BODY" "$MSG_COLA"
+cola "$A1" GET "?limit=1"
+expect "el limite se respeta y avisa de que hay mas" "$COLA_CODE/$(echo "$COLA_BODY" | jget data.truncated)/$(echo "$COLA_BODY" | python3 -c 'import json, sys; print(len(json.load(sys.stdin)["data"]["items"]))')" "200/True/1"
+
+cola "$A2" GET ""
+expect "un administrador de empresa no ve la cola" "$COLA_CODE" "403"
+cola "$A2" DELETE "/$QID1"
+expect "ni borra un mensaje" "$COLA_CODE" "403"
+cola "$A1" DELETE "/no-valido"
+expect "un identificador invalido se rechaza (422)" "$COLA_CODE" "422"
+en_cola_de() { cola_json | python3 -c 'import json, sys
+for l in sys.stdin:
+    m = json.loads(l)
+    if m["queue_id"] == sys.argv[1]: print(m["queue_name"])' "$1"; }
+expect "el mensaje sigue en la cola tras los rechazos" "$(en_cola_de "$QID1")" "deferred"
+
+cola "$A1" POST "/$QID1/hold"
+expect "retener un mensaje" "$COLA_CODE" "204"
+expect "Postfix lo tiene en hold" "$(en_cola_de "$QID1")" "hold"
+cola "$A1" POST "/$QID1/unhold"
+expect "liberarlo" "$COLA_CODE" "204"
+expect "y vuelve a la cola diferida" "$(en_cola_de "$QID1")" "deferred"
+cola "$A1" POST "/$QID1/retry"
+expect "reintentar la entrega" "$COLA_CODE" "204"
+cola "$A1" POST "/flush"
+expect "vaciar la cola diferida (202)" "$COLA_CODE" "202"
+cola "$A1" DELETE "/$QID1"
+expect "borrar un mensaje" "$COLA_CODE" "204"
+expect "Postfix ya no lo tiene" "$(en_cola_de "$QID1")" ""
+cola "$A1" DELETE "/$QID1"
+expect "borrarlo otra vez es un 404" "$COLA_CODE" "404"
+# Tras reintentar y vaciar, Postfix lo vuelve a intentar y puede estar en active un instante: lo que cuenta es que sigue en la cola y no retenido.
+continua_en_cola() { [[ "$(en_cola_de "$1")" =~ ^(active|deferred)$ ]]; }
+continua_en_cola "$QID2" && ok "el otro mensaje no se toco" || mal "el otro mensaje no se toco (estado: '$(en_cola_de "$QID2")')"
+
+# El agente por su cuenta: exige la clave y no admite lo que no es suyo.
+agente_http() { docker exec "$(c postfix-mail)" curl -sk -o /dev/null -w '%{http_code}' "$@"; }
+expect "el agente rechaza una peticion sin clave" "$(agente_http https://127.0.0.1:8590/v1/queue)" "401"
+expect "y una clave equivocada" "$(agente_http -H "Authorization: Bearer $(rand_hex 32)" https://127.0.0.1:8590/v1/queue)" "401"
+expect "con la clave lista la cola" "$(agente_http -H "Authorization: Bearer $QUEUE_KEY" https://127.0.0.1:8590/v1/queue)" "200"
+expect "no borra por un identificador que no es de cola" "$(agente_http -X POST -H "Authorization: Bearer $QUEUE_KEY" "https://127.0.0.1:8590/v1/queue/ALL/delete")" "400"
+expect "ni admite una accion que no es suya" "$(agente_http -X POST -H "Authorization: Bearer $QUEUE_KEY" "https://127.0.0.1:8590/v1/queue/$QID2/super_delete")" "400"
+continua_en_cola "$QID2" && ok "y el otro mensaje sigue ahi" || mal "el otro mensaje ya no esta (estado: '$(en_cola_de "$QID2")')"
+
+"${POSTCONF[@]}" -X defer_transports && docker exec "$(c postfix-mail)" postfix reload >/dev/null 2>&1
+docker exec "$(c postfix-mail)" postsuper -d ALL >/dev/null 2>&1
 
 echo "== Rotacion y revocacion de la clave DKIM (domain-service -> mail-security -> redis-mail)"
 # Una rotacion programada deposita la clave nueva y sigue firmando con la anterior. Revocar por

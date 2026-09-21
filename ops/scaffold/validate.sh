@@ -121,6 +121,11 @@ if ! bash "$ROOT/ops/scaffold/check-test-ratio.sh"; then
   FAIL=1
 fi
 
+echo "== 18. Agente de la cola de Postfix: sin dependencias ni shell, con vet y pruebas =="
+if ! bash "$ROOT/ops/scaffold/check-queue-agent.sh"; then
+  FAIL=1
+fi
+
 echo ""
 if [[ $FAIL -ne 0 ]]; then
   echo "VALIDACION: FALLA"; exit 1

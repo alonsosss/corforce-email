@@ -18,6 +18,39 @@ export type RateLimitUnit = (typeof RATE_LIMIT_UNITS)[number];
 /** Tope de per_page de la cuarentena (maxQuarantinePerPage). */
 export const QUARANTINE_MAX_PAGE_SIZE = 200;
 
+/** Tope de mensajes de una consulta de la cola de Postfix (domain.MaxQueueListLimit). */
+export const QUEUE_MAX_LIMIT = 500;
+
+/** Acciones sobre un mensaje de la cola que no lo borran (POST /queue/{id}/{action}). */
+export type QueueAction = 'retry' | 'hold' | 'unhold';
+
+export interface QueueRecipient {
+  address: string;
+  delay_reason?: string;
+}
+
+/** Un mensaje de la cola de Postfix de la celda, sin su contenido (domain.QueueMessage). */
+export interface QueueMessage {
+  queue_id: string;
+  /** Cola de Postfix: incoming, active, deferred, hold o corrupt. */
+  queue_name: string;
+  /** Segundos desde epoch. */
+  arrival_time: number;
+  message_size: number;
+  /** Vacio en los rebotes (remitente nulo). */
+  sender: string;
+  recipients: QueueRecipient[];
+  recipients_total: number;
+  recipients_capped?: boolean;
+}
+
+export interface QueueListing {
+  /** Todos los mensajes de la cola, aunque items traiga menos. */
+  total: number;
+  truncated: boolean;
+  items: QueueMessage[];
+}
+
 export interface SpamScore {
   id: string;
   tenant_id: string;
@@ -225,6 +258,14 @@ export const mailSecurityApi = {
   learnSpam: (id: string) =>
     api.post<StatusResponse>(endpoints.mailSecurity.quarantineLearnSpam(id)),
   deleteQuarantine: (id: string) => api.delete<null>(endpoints.mailSecurity.quarantineItem(id)),
+
+  /** Cola de Postfix de la celda: solo el superadmin (permiso mail_security/queue, de plataforma). */
+  listQueue: async (limit: number): Promise<QueueListing> =>
+    (await api.get<QueueListing>(endpoints.mailSecurity.queue, { params: { limit } })).data,
+  queueAction: (id: string, action: QueueAction) =>
+    api.post<null>(endpoints.mailSecurity.queueAction(id, action)),
+  deleteQueueMessage: (id: string) => api.delete<null>(endpoints.mailSecurity.queueMessage(id)),
+  flushQueue: () => api.post<StatusResponse>(endpoints.mailSecurity.queueFlush),
 
   getQuarantineSettings: () =>
     api.get<QuarantineSettings>(endpoints.mailSecurity.quarantineSettings),

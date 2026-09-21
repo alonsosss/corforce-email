@@ -80,4 +80,5 @@ export const paths = {
   schedulerJob: (id: string) => `/scheduler/${encodeURIComponent(id)}`,
   platformBilling: '/platform/billing',
   platformReputation: '/platform/reputation',
+  platformMailQueue: '/platform/mail-queue',
 } as const;

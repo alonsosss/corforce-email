@@ -77,6 +77,7 @@ cambios relevantes.
 | `tls` | Cambios de TLS propios. |
 | `endurecimiento` | Mejora propia de seguridad o robustez que no existe en mailcow. |
 | `arranque` | Adaptacion del arranque o del despliegue. |
+| `cola` | El agente de la cola de Postfix (`postfix/queue-agent/`), propio, y lo que hace falta para compilarlo y arrancarlo dentro de la imagen. |
 
 ## 5. Ficheros modificados
 
@@ -121,12 +122,13 @@ Ordenados por carpeta. "Como se rehace" es lo que hay que hacer cuando mailcow c
 | `postfix-tlspol/postfix-tlspol.sh` | nombres | Espera de DNS contra letsencrypt.org en lugar de mailcow.email y variables MAIL_REDIS_*. | Reaplicar los cambios de mailcow y volver a sustituir las variables por su nombre propio. |
 | `postfix-tlspol/syslog-ng-redis_slave.conf` | nombres | REDISPASS y nombre del contenedor. | Reaplicar los cambios de mailcow y volver a sustituir las variables por su nombre propio. |
 | `postfix-tlspol/syslog-ng.conf` | nombres | Host y contrasena de Redis por variables MAIL_REDIS_*. | Reaplicar los cambios de mailcow y volver a sustituir las variables por su nombre propio. |
-| `postfix/Dockerfile` | etiqueta, postgres | Etiqueta del mantenedor, postgresql-client y postfix-pgsql en lugar de mariadb-client y postfix-mysql. | Reaplicar las lineas. |
+| `postfix/Dockerfile` | etiqueta, postgres, cola | Etiqueta del mantenedor, postgresql-client y postfix-pgsql en lugar de mariadb-client y postfix-mysql; una etapa que compila `queue-agent` con Go, copia el binario a `/usr/local/sbin` y expone el puerto 8590. | Reaplicar las lineas y conservar la etapa `queue-agent` y su `COPY --from`. |
 | `postfix/conf/anonymize_headers.pcre` | nombres | El agente de recepcion se llama Core Force Mail, no Postcow. | Reaplicar los cambios de mailcow y volver a sustituir las variables por su nombre propio. |
 | `postfix/conf/main.cf.base` | postgres | Todos los mapas son proxy:pgsql: en lugar de proxy:mysql:. Es la plantilla de main.cf (en mailcow es main.cf); postfix.sh genera el main.cf real en cada arranque. | Reaplicar el cambio de mailcow en main.cf sobre esta plantilla y volver a poner los mapas pgsql. |
 | `postfix/conf/master.cf` | endurecimiento, sogo-php | El envio interno de la plataforma no tiene la excepcion de SOGo (allow_mailcow_local): el webmail se autentica como buzon*maestro y Postfix le aplica smtpd_sender_login_maps. | Reaplicar el cambio de mailcow y conservar las restricciones de remitente. |
 | `postfix/docker-entrypoint.sh` | arranque | La comprobacion de TLS antiguo lee main.cf.base, no main.cf, porque el main.cf real se genera despues. | Reaplicar la linea. |
 | `postfix/postfix.sh` | postgres, nombres, sogo-php | Genera los 18 mapas pgsql_*.cf contra el esquema mail en lugar de los de MySQL, sin BCC dinamicos ni SOGo, y con los nombres propios. Es el fichero que mas cuesta portar. | Aplicar los cambios de mailcow bloque a bloque, no el fichero entero, y comprobar los 18 mapas con postmap -q (make e2e-mail). |
+| `postfix/supervisord.conf` | cola | Un programa mas, `queue-agent`, que arranca el agente de la cola. | Reaplicar el cambio de mailcow y conservar el bloque `[program:queue-agent]` antes del `eventlistener`. |
 | `postfix/syslog-ng-redis_slave.conf` | nombres | REDISPASS y nombre del contenedor. | Reaplicar los cambios de mailcow y volver a sustituir las variables por su nombre propio. |
 | `postfix/syslog-ng.conf` | nombres | Host y contrasena de Redis por variables MAIL_REDIS_*. | Reaplicar los cambios de mailcow y volver a sustituir las variables por su nombre propio. |
 | `postfix/whitelist_forwardinghosts.sh` | servicios-go | Consulta a mail-policy (http://mail-policy:8081/forwardinghosts) y no a nginx con un .php. | Reaplicar la linea. |
@@ -157,6 +159,8 @@ y explicarlo en la seccion 5 rompe `make checks`: es el aviso de que la divergen
 | Fichero | Categorias | Por que existe | Como se mantiene |
 |---|---|---|---|
 | `dovecot/crontab` | cron | Las tareas periodicas de Dovecot, que en mailcow lanza ofelia desde fuera del contenedor; aqui las ejecuta crond dentro (ver dovecot/supervisord.conf). | No tiene equivalente: se mantiene a mano y hay que revisar si mailcow cambia las tareas de ofelia. |
+
+| `postfix/queue-agent/go.mod`, `postfix/queue-agent/main.go`, `postfix/queue-agent/queue.go`, `postfix/queue-agent/server.go`, `postfix/queue-agent/queue_test.go`, `postfix/queue-agent/server_test.go` | cola | El gestor de cola: mailcow lo hace con dockerapi (`postqueue` y `postsuper` por el socket de docker, sin autenticacion en la red de los motores), lo que daria a cualquier servicio que lo alcance una ejecucion de ordenes en cualquier contenedor. Este agente es un binario de Go con biblioteca estandar que corre dentro del contenedor de Postfix, atiende por HTTPS con `QUEUE_AGENT_API_KEY` y solo admite listar, reintentar, retener, liberar y borrar por un identificador de cola validado, y vaciar la cola diferida; nunca devuelve el contenido de un mensaje. | No tiene equivalente. Se prueba con `ops/scaffold/check-queue-agent.sh` (unitarias y mutaciones) y con `make e2e-mail` contra Postfix real. |
 
 Propios: `README.md` (contratos de los motores), `docker-compose.mail.yml`, `docker-compose.mail.images.yml`,
 `docker-compose.e2e.yml`, este libro y `upstream-manifest.tsv`.

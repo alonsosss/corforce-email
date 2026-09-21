@@ -14,8 +14,8 @@ var (
 	ErrNotConfigured = errors.New("integracion no configurada")
 	// ErrRedisUnavailable: Redis no responde; los motores lo distinguen (504).
 	ErrRedisUnavailable = errors.New("redis unavailable")
-	// ErrPlatformOnly: el cortafuegos de la celda solo lo opera el superadmin.
-	ErrPlatformOnly = errors.New("solo el operador de la plataforma administra el cortafuegos de la celda")
+	// ErrPlatformOnly: el cortafuegos y la cola de la celda solo los opera el superadmin.
+	ErrPlatformOnly = errors.New("solo el operador de la plataforma administra lo que es de toda la celda")
 	// ErrAlreadyExists: la red ya figura en una lista del cortafuegos.
 	ErrAlreadyExists = errors.New("ya existe")
 	// ErrInvalidLink: un enlace del aviso de cuarentena no vale (firma, caducidad, mensaje

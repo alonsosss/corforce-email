@@ -1,3 +1,8 @@
+FROM golang:1.26-alpine AS queue-agent
+WORKDIR /src
+COPY queue-agent/ ./
+RUN CGO_ENABLED=0 go build -trimpath -ldflags '-s -w' -o /out/queue-agent .
+
 FROM debian:trixie-slim
 
 LABEL maintainer="Core Force Mail"
@@ -48,6 +53,7 @@ COPY rspamd-pipe-spam /usr/local/bin/rspamd-pipe-spam
 COPY whitelist_forwardinghosts.sh /usr/local/bin/whitelist_forwardinghosts.sh
 COPY stop-supervisor.sh /usr/local/sbin/stop-supervisor.sh
 COPY docker-entrypoint.sh /docker-entrypoint.sh
+COPY --from=queue-agent /out/queue-agent /usr/local/sbin/queue-agent
 
 RUN chmod +x /opt/postfix.sh \
   /usr/local/bin/rspamd-pipe-ham \
@@ -56,7 +62,7 @@ RUN chmod +x /opt/postfix.sh \
   /usr/local/sbin/stop-supervisor.sh
 RUN rm -rf /tmp/* /var/tmp/*
 
-EXPOSE 588
+EXPOSE 588 8590
 
 ENTRYPOINT ["/docker-entrypoint.sh"]
 

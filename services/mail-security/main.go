@@ -28,6 +28,7 @@ import (
 	outboxadapter "github.com/alonsosss/corforce-email/services/mail-security/internal/adapters/outbox"
 	"github.com/alonsosss/corforce-email/services/mail-security/internal/adapters/postgres"
 	promadapter "github.com/alonsosss/corforce-email/services/mail-security/internal/adapters/prometheus"
+	"github.com/alonsosss/corforce-email/services/mail-security/internal/adapters/queueagent"
 	redisadapter "github.com/alonsosss/corforce-email/services/mail-security/internal/adapters/redis"
 	"github.com/alonsosss/corforce-email/services/mail-security/internal/adapters/rspamd"
 	smtpadapter "github.com/alonsosss/corforce-email/services/mail-security/internal/adapters/smtp"
@@ -55,6 +56,7 @@ const (
 	defaultControllerURL     = "http://rspamd:11334"
 	defaultPipeMaxBodyMiB    = 50
 	defaultDoveadmURL        = "https://dovecot:8443"
+	defaultQueueAgentURL     = "https://postfix:8590"
 
 	// outboxRetention conserva lo publicado lo mismo que el stream (EnsureStream: 7 dias).
 	outboxRetention = 7 * 24 * time.Hour
@@ -262,6 +264,36 @@ func doveadmFromEnv(logger *zap.Logger) (*doveadm.Client, error) {
 	})
 }
 
+// queueFromEnv lee el agente de la cola de Postfix de la celda. Sin QUEUE_AGENT_API_KEY el servicio arranca
+// igual y el gestor de cola queda desactivado (sus rutas responden 503): a diferencia de la revocacion en
+// Dovecot, no proteger nada depende de el, y exigirla pararia el servicio hasta que se despliegue el agente.
+func queueFromEnv(logger *zap.Logger) (*queueagent.Client, error) {
+	key := strings.TrimSpace(os.Getenv("QUEUE_AGENT_API_KEY"))
+	if key == "" {
+		logger.Info("gestor de cola de Postfix desactivado: falta QUEUE_AGENT_API_KEY")
+		return nil, nil
+	}
+	baseURL, err := config.ServiceURL("QUEUE_AGENT_URL", defaultQueueAgentURL)
+	if err != nil {
+		return nil, err
+	}
+	return queueagent.New(queueagent.Config{
+		BaseURL:    baseURL,
+		APIKey:     key,
+		ServerName: envOrDefault("QUEUE_AGENT_TLS_SERVER_NAME", strings.TrimSpace(os.Getenv("MAIL_HOSTNAME"))),
+		CAFile:     strings.TrimSpace(os.Getenv("QUEUE_AGENT_TLS_CA_FILE")),
+	})
+}
+
+// queueUseCase evita el nil tipado: un *Client nil dentro de la interfaz no seria nil y el caso de uso
+// intentaria usarlo.
+func queueUseCase(client *queueagent.Client, logger *zap.Logger) *app.QueueUseCase {
+	if client == nil {
+		return app.NewQueueUseCase(nil, logger)
+	}
+	return app.NewQueueUseCase(client, logger)
+}
+
 func main() {
 	logger, _ := zap.NewProduction()
 	defer logger.Sync()
@@ -282,6 +314,10 @@ func main() {
 	engineSessions, err := doveadmFromEnv(logger)
 	if err != nil {
 		log.Fatalf("revocacion en Dovecot: %v", err)
+	}
+	queueAgent, err := queueFromEnv(logger)
+	if err != nil {
+		log.Fatalf("gestor de cola: %v", err)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -410,7 +446,7 @@ func main() {
 
 	// Superficie A: API de administracion tras el gateway (y rutas internas con token). El
 	// cortafuegos es de plataforma: el superadmin lo opera en cualquier celda con celda destino.
-	routes := handler.NewHandler(policyUC, quarantineUC, firewallUC, dkimUC, st.perms).Routes()
+	routes := handler.NewHandler(policyUC, quarantineUC, firewallUC, dkimUC, st.perms).WithQueue(queueUseCase(queueAgent, logger)).Routes()
 	if err := membership.AcceptOperators(routes, handler.PlatformRoutes()); err != nil {
 		log.Fatalf("celda de la instancia: %v", err)
 	}

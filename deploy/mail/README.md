@@ -443,6 +443,45 @@ P: `dsync-server` con replica no esta probado. Queda una carrera: una autenticac
 `mail-auth` acepto antes del cambio y que Dovecot guardara despues del vaciado (mas lenta que el
 rele de la outbox) valdria hasta `auth_cache_ttl`.
 
+## Gestor de la cola de Postfix (agente `queue-agent`)
+
+V (2026-09-21, unitarias del agente y de mail-security, y `make e2e-mail` con Postfix real): el superadmin ve
+los mensajes que Postfix aun no entrego en su celda y por que, y puede reintentarlos, retenerlos, liberarlos,
+borrarlos y vaciar la cola diferida (`docs/Plan_Estrategico_Mejoras_Correo.md`, C4).
+
+* **Por que no `dockerapi`**: mailcow lo hace con `dockerapi` (`postqueue` y `postsuper` por el socket de
+  docker del host, sin autenticacion dentro de la red de los motores). Dar a un servicio Go acceso a ese API
+  seria darle ejecucion de ordenes en cualquier contenedor del host. Aqui `dockerapi` no se toca ni se amplia.
+* **El agente**: `postfix/queue-agent/`, un binario de Go con solo la biblioteca estandar que se compila en
+  la imagen de Postfix y corre dentro del contenedor, como root porque `postsuper` solo lo admite del
+  superusuario. Atiende por HTTPS en el 8590 (sin publicar; solo la red `mail-engines`) con el certificado del
+  servidor de correo (se relee cada minuto, asi que la renovacion de acme no lo reinicia) y exige
+  `Authorization: Bearer <QUEUE_AGENT_API_KEY>`, comparada en tiempo constante. Solo admite:
+  `GET /v1/queue?limit=` (`postqueue -j`, hasta 5000, sin contenido ni asunto), `POST /v1/queue/{id}/{retry|hold|
+  unhold|delete}` (`postqueue -i`, `postsuper -h|-H|-d`), `POST /v1/queue/flush` (`postqueue -f`). El
+  identificador (`[0-9A-Za-z]{5,25}`) es lo unico que llega a un proceso: sin shell, sin otros argumentos, con
+  los binarios como rutas absolutas fijas, una sola operacion a la vez (429 si hay otra) y plazo de 20 s. Un
+  fallo de Postfix devuelve al cliente un mensaje fijo; el detalle queda en el registro del contenedor.
+  `ops/scaffold/check-queue-agent.sh` (en `make checks`) exige que siga sin dependencias ni shell.
+* **Credencial**: `QUEUE_AGENT_API_KEY`, del almacen de secretos (opcional en `secret-keys.txt`), la misma en
+  `postfix-mail` y en `mail-security`: de 32 a 256 caracteres de `[A-Za-z0-9_-]` (`openssl rand -hex 32`). Sin
+  ella el agente no abre el puerto (y no termina: `stop-supervisor.sh` detiene el contenedor si un proceso
+  sale) y `mail-security` arranca igual con el gestor desactivado (503 `NOT_CONFIGURED`), de modo que desplegar
+  el codigo no exige la clave. `QUEUE_AGENT_URL` (por defecto `https://postfix:8590`),
+  `QUEUE_AGENT_TLS_SERVER_NAME` (vacio = `MAIL_HOSTNAME`) y `QUEUE_AGENT_TLS_CA_FILE` los lee `mail-security`.
+* **API**: `GET /api/v1/mail-security/queue?limit=` (por defecto 100, como mucho 500),
+  `POST /queue/{id}/{retry|hold|unhold}` y `DELETE /queue/{id}` (204), `POST /queue/flush` (202). Permisos de
+  plataforma `mail_security/queue/{read,update,delete}` (`033_mail_security_queue_permissions.sql`), que solo
+  tiene el superadmin, y el caso de uso lo vuelve a exigir: la cola mezcla el correo de todas las empresas de la
+  celda. Son rutas de plataforma como las del cortafuegos: el operador las alcanza en la celda destino. Cada
+  accion queda en el registro de `mail-security` con quien la pidio. Pantalla: `/platform/mail-queue`.
+* **Despliegue**: migracion 033 del registro; `QUEUE_AGENT_API_KEY` en el almacen; `mail-security` (sin
+  clave sigue igual); despues `postfix-mail` recreado (compila el agente). Con la clave puesta en los dos
+  lados, el gestor se activa sin mas cambios.
+* **Prueba**: `make e2e-mail` deja dos mensajes diferidos con `defer_transports=smtp` y comprueba, con el
+  superadmin por el gateway y contra Postfix real, listar, retener, liberar, reintentar, vaciar y borrar; que un
+  administrador de empresa recibe 403; y, contra el agente, la clave, el identificador y la accion.
+
 ## Webmail (usuario maestro y envio)
 
 `services/webmail` lee por IMAP y envia por submission en nombre del buzon sin guardar su

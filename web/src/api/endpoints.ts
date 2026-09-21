@@ -159,6 +159,11 @@ export const endpoints = {
     quarantineLearnSpam: (id: string) =>
       `${API_PREFIX}/mail-security/quarantine/${seg(id)}/learn-spam`,
     quarantineSettings: `${API_PREFIX}/mail-security/quarantine-settings`,
+    queue: `${API_PREFIX}/mail-security/queue`,
+    queueMessage: (id: string) => `${API_PREFIX}/mail-security/queue/${seg(id)}`,
+    queueAction: (id: string, action: string) =>
+      `${API_PREFIX}/mail-security/queue/${seg(id)}/${seg(action)}`,
+    queueFlush: `${API_PREFIX}/mail-security/queue/flush`,
   },
   templates: {
     ...collectionOf('/templates'),
