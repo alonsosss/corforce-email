@@ -99,8 +99,8 @@ todas = {"POSTGRES_PASSWORD", "CELL_DB_PASSWORD", "TENANT_DB_PASSWORD", "REGISTR
 
 for nombre, cuerpo in compose.items():
     texto = "".join(cuerpo)
-    if "secrets.env" not in texto:
-        continue  # infraestructura de terceros: no recibe secretos de la plataforma
+    if "dockerfile: ./services/" not in texto:
+        continue  # infraestructura de terceros y la web: no abren ninguna base de la plataforma
     s = servicios.get(nombre)
     if s is None:
         fallos.append(

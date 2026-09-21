@@ -379,12 +379,8 @@ cat <<EOF
       - "127.0.0.1:\${${NAME_UPPER}_PORT:-$PORT}:$PORT"
     env_file:
       - .env
-      - path: /dev/shm/core-force-mail/secrets.env
-        required: false
     environment:
-      JWT_SIGNING_KEY: ""
-      AUDIT_HASH_KEY: ""
-      AUDIT_HASH_KEYS_OLD: ""
+      INTERNAL_GATEWAY_TOKEN: \${INTERNAL_GATEWAY_TOKEN:-}
     depends_on:
       pgbouncer: { condition: service_healthy }
       nats: { condition: service_healthy }
@@ -393,6 +389,10 @@ cat <<EOF
     networks:
       - mail-internal
 EOF
+echo ""
+echo "   y su fila en ops/security/secrets/reparto.tsv (solo lo que su codigo lee; el molde lee el token del gateway):"
+printf '     %s\tINTERNAL_GATEWAY_TOKEN\tservices/%s/main.go:1\n' "$NAME" "$NAME"
+echo "   Cada secreto nuevo que lea el servicio se anade en las dos partes (docs/adr/0007); make check-secret-scope lo comprueba."
 echo ""
 echo "2) services/gateway/routes.json  (el gateway no se recompila: lee la tabla al arrancar):"
 echo "     en \"services\": \"$NAME\": {\"host_env\": \"${NAME_UPPER}_HOST\", \"default_host\": \"$NAME\", \"default_port\": \"$PORT\"}"

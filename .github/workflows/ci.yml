@@ -53,6 +53,9 @@ jobs:
       - name: Secretos por el resolvedor comun
         run: make check-secret-sources
 
+      - name: Cada contenedor recibe solo sus secretos
+        run: make check-secret-scope
+
       - name: Objetivos de monitoreo al dia
         run: make check-observability-targets
 

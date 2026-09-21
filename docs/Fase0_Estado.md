@@ -140,7 +140,11 @@ cambie cualquiera de estas líneas.
   (2026-09-15, `Modelo_de_Datos_y_Celdas.md` 5.1 y 5.2): las credenciales de base salen del
   fichero de secretos compartido y viven en `secret-keys-db.txt`, que se materializa aparte y
   solo llega al servicio al que su bloque de compose se la pasa (`ops/db/service-credentials.json`
-  declara el plano de cada uno y `make check-db-credentials` lo ata); `userlist.txt` de
+  declara el plano de cada uno y `make check-db-credentials` lo ata); el resto de secretos sigue
+  el mismo camino (2026-09-21, `docs/adr/0007-minimo-privilegio-en-secretos.md`): ningun contenedor
+  recibe `secrets.env` entero, cada uno recibe los de su fila de `ops/security/secrets/reparto.tsv` y
+  `make check-secret-scope` lo ata al compose y al codigo (sin desplegar: falta recrear los servicios);
+  `userlist.txt` de
   PgBouncer lo genera `ops/db/pgbouncer-userlist.sh` desde esos mismos roles;
   `ops/db/cell-engine-role.sh` da a cada celda su rol de motores (`<base>_engine`, miembro del
   grupo `mail_engine`) y retira el compartido; y los servicios de empresa tienen rol de

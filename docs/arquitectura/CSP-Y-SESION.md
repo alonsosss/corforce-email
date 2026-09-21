@@ -44,8 +44,9 @@ cambiarlo exige reconstruir y desplegar solo la imagen `web`.
 ## Firma del access token
 
 `identity` firma con **EdDSA (Ed25519)** y una clave privada que solo él recibe
-(`JWT_SIGNING_KEY`, almacén de secretos). `docker-compose.yml` la vacía en todos los demás
-servicios y `ops/security/secrets/check-secrets.sh` falla si un servicio la hereda. La
+(`JWT_SIGNING_KEY`, almacén de secretos). Ningún otro contenedor la recibe: `docker-compose.yml`
+solo se la declara a identity (`ops/security/secrets/reparto.tsv`, `docs/adr/0007-minimo-privilegio-en-secretos.md`) y
+`make check-secret-scope` falla si otro bloque la recibe o su código la lee. La
 cabecera lleva `kid` (la clave con que se firmó, `JWT_SIGNING_KID`) y `typ`. El gateway
 verifica con las claves **públicas** de `JWT_PUBLIC_KEYS` (entradas `kid:clave` separadas
 por comas, configuración no secreta): no tiene con qué firmar, así que un servicio

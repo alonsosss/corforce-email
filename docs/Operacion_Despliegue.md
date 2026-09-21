@@ -139,7 +139,35 @@ Secrets Manager (`core-force-mail/prod`). `ops/security/secrets/fetch-secrets.sh
 materializa en `/dev/shm/core-force-mail/secrets.env` (tmpfs, 0600, todo o nada) y
 `with-secrets.sh` envuelve cualquier `docker compose` que cree contenedores. La lista
 canónica es `ops/security/secrets/secret-keys.txt`; añadir una variable ahí es parte de
-introducir el secreto. CI: `make check-secrets` y `make check-secret-sources`.
+introducir el secreto. CI: `make check-secrets`, `make check-secret-sources` y `make check-secret-scope`.
+
+**Reparto por contenedor (mínimo privilegio, `docs/adr/0007-minimo-privilegio-en-secretos.md`).** Ningún
+contenedor recibe el fichero de secretos entero: el `environment:` de cada bloque de `docker-compose.yml` declara uno a
+uno los suyos como `NOMBRE: ${NOMBRE:-}` (Compose los interpola contra el entorno que deja `with-secrets.sh`) y no hay
+`env_file` de `secrets.env`. Quién recibe qué lo dice `ops/security/secrets/reparto.tsv` (contenedor, secreto,
+evidencia de dónde lo lee), y `make check-secret-scope`, dentro de `make checks` y de CI, ata la tabla al compose, al
+código y a `secret-keys.txt`: falla si un contenedor recibe o lee un secreto que su fila no lista, si una fila concede
+algo que no se entrega o que el código no lee, o si un secreto no tiene destinatario. Todo servicio Go recibe
+`INTERNAL_GATEWAY_TOKEN`; `identity` es el único con `JWT_SIGNING_KEY`, `audit` con `AUDIT_HASH_KEY*`, `domain-service` y
+`mail-migration` con `MAIL_ENCRYPTION_KEY*`, `mail-security` y `transactional` con `MAIL_LINK_SIGNING_KEY`, y `webmail`
+con el maestro de Dovecot del webmail (tabla completa en la ADR). Límite: las variables de entorno son legibles con el
+socket de Docker o como root del host; esto acota lo que ve un servicio comprometido, no un atacante con el servidor.
+
+* **Secreto nuevo.** Variable en `secret-keys.txt` (con `?` si es opcional), valor en el almacén con `add-secret.sh`,
+  una fila en `reparto.tsv` por contenedor que la lea y la línea `NOMBRE: ${NOMBRE:-}` en el `environment:` de cada uno.
+  Sin cualquiera de las tres partes, `make check-secret-scope` falla. Servicio nuevo: `make new-service` imprime su
+  bloque con solo el token interno y su fila.
+* **Rotar uno.** Publicar el valor y recrear **solo** los contenedores de su fila en `reparto.tsv`.
+* **Desplegar este reparto (una vez).** El cambio solo toca compose y `ops/`: `deploy-ecr.sh` sin argumentos lo trata como
+  "solo ficheros" y no recrea nada, y los contenedores en marcha siguen con el fichero entero hasta que se recrean.
+  1. `ops/security/secrets/with-secrets.sh ops/security/secrets/verify-scope.sh entorno`: el valor que Compose interpola
+     coincide con el del fichero materializado (un secreto con espacios, comillas, `$` o `#` llegaría cambiado; antes lo
+     entregaba `env_file` sin pasar por el shell). Si nombra una variable, cambiar su valor en el almacén.
+  2. Recrear los 22 servicios Go (`ops/scaffold/service-paths.sh --class go`) con `scripts/deploy-ecr.sh <servicios>`
+     explícitos, que pasa por la guardia de retroceso y `esperar-sanos.sh`. Cada fila está completa por sí sola, así que un
+     estado intermedio es válido; `gateway` e `identity` al final. Redis y los motores no se recrean: su entorno no cambia.
+  3. `ops/security/secrets/verify-scope.sh contenedores` (solo `docker`, imprime nombres, nunca valores): cada servicio
+     debe salir `OK`; `recibe de mas` es un contenedor sin recrear y `le faltan` un obligatorio vacío.
 
 Credencial de la celda: la contraseña del rol `<CELL_DB_NAME>_svc` de la celda que sirve
 el despliegue va al almacén como `CELL_DB_PASSWORD` (obligatoria: sin ella el despliegue se
@@ -222,7 +250,7 @@ Llave de la cadena de hash de auditoría (`docs/adr/0006-cadena-de-auditoria-con
 `AUDIT_HASH_KEY` (64 hex) y `AUDIT_HASH_KEYS_OLD` (retiradas, separadas por coma) son **opcionales** en
 `secret-keys.txt`: **sin ellas nada cambia**, `audit` sigue escribiendo el hash sin clave (versión 1), no encadena los
 eventos de seguridad y lo avisa en el arranque (`audit: sin AUDIT_HASH_KEY`). Las recibe solo `audit`; los demás
-servicios las llevan vaciadas en `docker-compose.yml` y `make check-secrets` lo comprueba. Orden de alta:
+servicios no las reciben (`reparto.tsv`, `make check-secret-scope`). Orden de alta:
 
 1. Migraciones `07`, `08` y `09` de `audit` en cada base de empresa **antes** del código (`bash
    ops/apply-all-canonical.sh`, idempotentes) y `ops/maintenance/pgbouncer-reconnect.sh` después.
@@ -514,14 +542,15 @@ el propio binario con `--healthcheck <puerto>`.
 2. Ruta en `services/gateway/routes.json` (`prefix`, `service`, `module`).
 3. Permisos del módulo en `migrations/registry/NNN_<svc>_permissions.sql` y, si es de
    correo, su módulo de catálogo en `organization.module_catalog.permission_modules`.
-4. Bloque en `docker-compose.yml` (el generador imprime el fragmento).
+4. Bloque en `docker-compose.yml` (el generador imprime el fragmento) y su fila en
+   `ops/security/secrets/reparto.tsv`: solo los secretos que su código lee, empezando por `INTERNAL_GATEWAY_TOKEN`.
 5. `make validate-scaffold` comprueba puertos, permisos, catálogo, acoplamiento, streams e
    imágenes. `make gen-events` y `make gen-observability-targets` regeneran lo derivado.
 
 ## 9. Checks antes de dar por terminada una tarea
 
 `make checks` (build, vet, migraciones, acoplamiento, errores mudos, aridad SQL, streams,
-contratos de eventos, secretos, scaffold) y `make clean-copy`. Si se toca el perfil autoalojado
+contratos de eventos, secretos y su reparto por contenedor, scaffold) y `make clean-copy`. Si se toca el perfil autoalojado
 (`docker-compose.selfhosted.yml`, `selfhosted/`, `pgbouncer/`, `ops/security/internal-tls.sh`),
 además `bash ops/scaffold/test-selfhosted-profile.sh` (docker, sección 11); si se toca `ops/backup`
 o `ops/db/pg-credentials.sh`, `bash ops/scaffold/test-selfhosted-backup.sh` (docker, sección 6). Con docker: `make test`

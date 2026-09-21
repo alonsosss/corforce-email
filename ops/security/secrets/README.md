@@ -23,6 +23,7 @@ version nueva.
 | Fichero | Que hace |
 |---|---|
 | `secret-keys.txt` | Lista canonica de variables que SON secreto. La usan los tres scripts y el guardarrail de CI. |
+| `reparto.tsv` | Quien recibe cada secreto de `secret-keys.txt`: una fila (contenedor, secreto, evidencia de donde lo lee) por entrega. Ningun contenedor recibe el fichero entero, solo lo que aqui se le da (`docs/adr/0007-minimo-privilegio-en-secretos.md`). |
 | `secret-keys-backup.txt` | Secretos del RESPALDO (credencial del bucket externo y frase de cifrado). Ningun contenedor los recibe: los leen solo los trabajos de `ops/backup` del entorno o de `BACKUP_SECRETS_FILE` (`ops/backup/README.md`). Para `check-secrets.sh` valen igual que los demas. |
 | `fetch-secrets.sh` | Materializa los secretos en `/dev/shm/core-force-mail/secrets.env` (memoria, 0600). Atomico y todo-o-nada. |
 | `with-secrets.sh` | Envoltorio: comprueba el entorno declarado, materializa, carga al entorno y ejecuta el comando (lo usan los despliegues). |
@@ -32,6 +33,10 @@ version nueva.
 | `load.sh` | Resolvedor sourceable: materializa y carga los secretos al entorno. Lo usan `with-secrets.sh` y los trabajos que necesitan una credencial para si mismos (respaldo, migraciones). |
 | `check-secrets.sh` | Guardarrail de CI: falla si una credencial canonica tiene valor en un fichero versionado. |
 | `check-secret-sources.sh` | Guardarrail de CI: falla si un script se busca un secreto en el `.env`, o si un `docker compose` que crea contenedores no va por `with-secrets.sh`. |
+| `verify-scope.sh` | Operacion, solo imprime nombres: `entorno` (bajo `with-secrets.sh`) comprueba que el valor que Compose interpola es el del fichero materializado; `contenedores` compara lo que recibe cada contenedor en marcha con su fila de `reparto.tsv`. |
+
+El reparto lo comprueba `ops/scaffold/check-secret-scope.sh` (`make check-secret-scope`, dentro de `make checks`), que ata
+`reparto.tsv` al compose, al codigo y a `secret-keys.txt` y demuestra con mutaciones que muerde.
 
 Tras validar `ENVIRONMENT`, el mismo guion rechaza el `.env` de un servidor que conserve el
 marcador `YOUR_DOMAIN` de `.env.example` (acabaria en los registros DNS que se indican a las
@@ -48,14 +53,15 @@ mientras se corre con `--escritura-secretos`, y la siguiente corrida sin la opci
 
 ## Como lo consumen los servicios
 
-`docker-compose.yml` da a cada servicio dos ficheros de entorno: `.env` (configuracion no
-sensible) y `/dev/shm/core-force-mail/secrets.env` con `required: false`. En desarrollo ese
-segundo fichero no existe y Compose lo omite, de modo que levantar en local sigue
-necesitando solo `.env`.
+`docker-compose.yml` da a cada servicio `.env` por `env_file` (configuracion no sensible) y, en su
+`environment:`, SOLO los secretos de su fila de `reparto.tsv`, cada uno como `NOMBRE: ${NOMBRE:-}`. El
+fichero `/dev/shm/core-force-mail/secrets.env` no llega por `env_file` a ningun contenedor: Compose interpola
+cada `${NOMBRE}` contra el entorno que deja `with-secrets.sh`, que es lo unico que lo lee. En desarrollo,
+sin ese fichero, la interpolacion lee el `.env`, de modo que levantar en local sigue necesitando solo `.env`.
 
-Los despliegues invocan `with-secrets.sh` porque hacen falta las dos vias: `env_file`
-alimenta al contenedor, pero la interpolacion de `${VAR}` dentro de `docker-compose.yml` la
-resuelve Compose contra el entorno del proceso.
+Es lo que hacen desde antes las credenciales de base de datos (`secret-keys-db.txt`) y los motores de
+`deploy/mail`. Un servicio comprometido ve sus secretos y no los de los demas; no protege frente a quien
+tenga el socket de Docker o sea root del host (`docker inspect` muestra el entorno).
 
 > **En produccion, todo `docker compose` que cree o recree contenedores va por
 > `with-secrets.sh`,** y `check-secret-sources.sh` lo comprueba en cada PR: la precaucion
@@ -66,10 +72,10 @@ resuelve Compose contra el entorno del proceso.
 > `.env`. Tres scripts de respaldo lo hacian y se quedaron con la variable vacia el dia de
 > la migracion: el respaldo nocturno habria abortado con un mensaje que no apuntaba a la
 > causa. Desde que el `.env` no tiene credenciales, un `docker compose up`
-> suelto interpola cadenas vacias y levanta el servicio SIN secretos, avisando solo con un
-> `warning` facil de pasar por alto. Los dos caminos de despliegue (`scripts/deploy-ecr.sh` y
+> suelto interpola cadenas vacias y levanta el servicio SIN secretos y sin ningun aviso (`${VAR:-}`
+> no lo emite); los servicios que exigen su secreto no arrancan, y `verify-scope.sh contenedores` lo delata. Los dos caminos de despliegue (`scripts/deploy-ecr.sh` y
 > `release.yml`) ya lo hacen; la precaucion es para el uso manual.
-> Consultar estado (`ps`, `logs`) es seguro sin el envoltorio: solo molestan los avisos.
+> Consultar estado (`ps`, `logs`) es seguro sin el envoltorio.
 >
 > **Un secreto tampoco viaja como argumento de `psql`.** Los guiones de `ops/db` que fijan una
 > contrasena (el verificador SCRAM de un rol, la contrasena del primer superadmin) la pasan por el
@@ -117,7 +123,7 @@ Pendiente en todos los entornos: la cuenta de AWS del proyecto aun no existe. Po
 ## Rotar un secreto
 
 1. Publicar el valor nuevo en el almacen (consola de AWS o `put-secret-value`).
-2. Volver a levantar los servicios afectados: `with-secrets.sh docker compose up -d --no-deps <servicios>`.
+2. Volver a levantar los servicios afectados (los de su fila en `reparto.tsv`, ninguno mas): `with-secrets.sh docker compose up -d --no-deps <servicios>`.
 
 Las variables de entorno se fijan al crear el contenedor: reiniciarlo no basta, hay que
 recrearlo. Las llaves de cifrado tienen ademas su propio procedimiento de re-cifrado de
@@ -130,7 +136,9 @@ antes que ella y un orden propio (`ops/security/jwt-keygen.sh`,
 
 1. Anadir la variable a `secret-keys.txt`.
 2. Publicar su valor en el almacen.
-3. Usarla en el servicio como cualquier variable de entorno.
+3. Una fila por contenedor que la lea en `reparto.tsv` (evidencia: fichero y linea donde la lee) y la linea
+   `NOMBRE: ${NOMBRE:-}` en el `environment:` de ese contenedor. Sin ella no le llega: ya no hay `env_file` de
+   secretos. `make check-secret-scope` falla si falta cualquiera de las tres partes.
 
 Si falta el paso 2, `fetch-secrets.sh` falla en vez de escribir un fichero incompleto: un
 servicio con la credencial vacia falla de formas mucho mas dificiles de diagnosticar.

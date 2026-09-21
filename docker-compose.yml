@@ -2,18 +2,15 @@
 # compose en deploy/mail/docker-compose.mail.yml y se levantan aparte, por celda.
 #
 # Entorno de los servicios: cada uno lee .env (configuracion NO sensible: puertos, hosts,
-# URLs) y, si existe, el fichero de secretos que ops/security/secrets/fetch-secrets.sh
-# materializa en memoria desde AWS Secrets Manager. En el entorno local ese fichero no
-# existe y Compose lo omite (required: false), asi que el desarrollo sigue arrancando solo
-# con .env. Ver ops/security/secrets/README.md.
-#
-# El fichero de secretos llega entero a cada servicio, asi que un secreto de un solo
-# servicio se vacia en los demas con `environment:`. La clave de firma del token de acceso
-# (JWT_SIGNING_KEY) solo la recibe identity: con ella se forja cualquier sesion, y el
-# gateway verifica con las claves publicas (JWT_PUBLIC_KEYS). Todo servicio nuevo lleva
-# `JWT_SIGNING_KEY: ""`; ops/security/secrets/check-secrets.sh lo comprueba. Lo mismo vale para
-# la llave de la cadena de hash de auditoria (AUDIT_HASH_KEY y AUDIT_HASH_KEYS_OLD): solo la recibe
-# audit, y todo servicio nuevo lleva las dos vaciadas.
+# URLs) y, ademas, SOLO los secretos que su fila de ops/security/secrets/reparto.tsv le
+# asigna, declarados uno a uno en su `environment:` como `NOMBRE: ${NOMBRE:-}`. Compose los
+# interpola contra el entorno que deja ops/security/secrets/with-secrets.sh (el fichero de
+# secretos materializado no llega por env_file a ningun contenedor), asi que un servicio
+# comprometido no ve el resto: con la clave de firma del token de acceso (JWT_SIGNING_KEY,
+# solo identity) se forja cualquier sesion, y el gateway verifica con las claves publicas
+# (JWT_PUBLIC_KEYS). En desarrollo, sin fichero de secretos, la interpolacion lee el .env.
+# Un servicio nuevo declara solo lo que su codigo lee y su fila en reparto.tsv;
+# `make check-secret-scope` lo comprueba. Ver docs/adr/0007-minimo-privilegio-en-secretos.md.
 services:
   postgres-primary:
     image: pgvector/pgvector:pg16
@@ -93,6 +90,7 @@ services:
     image: redis:7-alpine
     command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-} --maxmemory 512mb --maxmemory-policy allkeys-lru --hz 20
     environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
       TZ: ${TZ:-America/Lima}
     ports:
       - "127.0.0.1:6379:6379"
@@ -144,12 +142,9 @@ services:
       - "127.0.0.1:${GATEWAY_PORT:-8080}:8080"
     env_file:
       - .env
-      - path: /dev/shm/core-force-mail/secrets.env
-        required: false
     environment:
-      AUDIT_HASH_KEY: ""
-      AUDIT_HASH_KEYS_OLD: ""
-      JWT_SIGNING_KEY: ""
+      INTERNAL_GATEWAY_TOKEN: ${INTERNAL_GATEWAY_TOKEN:-}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
       # Aqui no hay proxy de borde: al gateway se llega directo desde el anfitrion (o desde el
       # contenedor web) y nadie legitimo escribe X-Real-IP. Sin este valor el gateway confiaria
       # en todo RFC1918 y cualquiera de esas redes elegiria la IP con la que se le limita.
@@ -181,11 +176,9 @@ services:
       - "127.0.0.1:${IDENTITY_PORT:-8001}:8001"
     env_file:
       - .env
-      - path: /dev/shm/core-force-mail/secrets.env
-        required: false
     environment:
-      AUDIT_HASH_KEY: ""
-      AUDIT_HASH_KEYS_OLD: ""
+      INTERNAL_GATEWAY_TOKEN: ${INTERNAL_GATEWAY_TOKEN:-}
+      JWT_SIGNING_KEY: ${JWT_SIGNING_KEY:-}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
     depends_on:
       pgbouncer:
@@ -205,13 +198,10 @@ services:
       - "127.0.0.1:${ACCESS_CONTROL_PORT:-8002}:8002"
     env_file:
       - .env
-      - path: /dev/shm/core-force-mail/secrets.env
-        required: false
     environment:
-      AUDIT_HASH_KEY: ""
-      AUDIT_HASH_KEYS_OLD: ""
+      INTERNAL_GATEWAY_TOKEN: ${INTERNAL_GATEWAY_TOKEN:-}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
-      JWT_SIGNING_KEY: ""
     depends_on:
       pgbouncer:
         condition: service_healthy
@@ -232,13 +222,9 @@ services:
       - "127.0.0.1:${ORGANIZATION_PORT:-8003}:8003"
     env_file:
       - .env
-      - path: /dev/shm/core-force-mail/secrets.env
-        required: false
     environment:
-      AUDIT_HASH_KEY: ""
-      AUDIT_HASH_KEYS_OLD: ""
+      INTERNAL_GATEWAY_TOKEN: ${INTERNAL_GATEWAY_TOKEN:-}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
-      JWT_SIGNING_KEY: ""
       # Las migraciones viajan dentro de la imagen del servicio que las aplica.
       TENANT_MIGRATION_DIR: /app/migrations/tenant/canonical
     depends_on:
@@ -259,14 +245,14 @@ services:
       - "127.0.0.1:${AUDIT_PORT:-8030}:8030"
     env_file:
       - .env
-      - path: /dev/shm/core-force-mail/secrets.env
-        required: false
     environment:
+      INTERNAL_GATEWAY_TOKEN: ${INTERNAL_GATEWAY_TOKEN:-}
+      AUDIT_HASH_KEY: ${AUDIT_HASH_KEY:-}
+      AUDIT_HASH_KEYS_OLD: ${AUDIT_HASH_KEYS_OLD:-}
       POSTGRES_PASSWORD: ${TENANT_SERVICES_PLATFORM_PASSWORD:-}
       REGISTRY_DB_PASSWORD: ${TENANT_ROUTER_DB_PASSWORD:-}
       TENANT_DB_USER: mail_svc_audit
       TENANT_DB_PASSWORD: ${AUDIT_DB_PASSWORD:-}
-      JWT_SIGNING_KEY: ""
     depends_on:
       pgbouncer:
         condition: service_healthy
@@ -285,16 +271,12 @@ services:
       - "127.0.0.1:${SCHEDULER_PORT:-8033}:8033"
     env_file:
       - .env
-      - path: /dev/shm/core-force-mail/secrets.env
-        required: false
     environment:
-      AUDIT_HASH_KEY: ""
-      AUDIT_HASH_KEYS_OLD: ""
+      INTERNAL_GATEWAY_TOKEN: ${INTERNAL_GATEWAY_TOKEN:-}
       POSTGRES_PASSWORD: ${TENANT_SERVICES_PLATFORM_PASSWORD:-}
       REGISTRY_DB_PASSWORD: ${TENANT_ROUTER_DB_PASSWORD:-}
       TENANT_DB_USER: mail_svc_scheduler
       TENANT_DB_PASSWORD: ${SCHEDULER_DB_PASSWORD:-}
-      JWT_SIGNING_KEY: ""
     depends_on:
       pgbouncer:
         condition: service_healthy
@@ -313,13 +295,9 @@ services:
       - "127.0.0.1:${MAIL_DIRECTORY_PORT:-8040}:8040"
     env_file:
       - .env
-      - path: /dev/shm/core-force-mail/secrets.env
-        required: false
     environment:
-      AUDIT_HASH_KEY: ""
-      AUDIT_HASH_KEYS_OLD: ""
+      INTERNAL_GATEWAY_TOKEN: ${INTERNAL_GATEWAY_TOKEN:-}
       CELL_DB_PASSWORD: ${CELL_DB_PASSWORD:-}
-      JWT_SIGNING_KEY: ""
       # La credencial de plataforma no llega a los servicios de celda: usan la de su celda
       # (secreto CELL_DB_PASSWORD). Solo en desarrollo, sin rol de celda, se les puede dar
       # la de plataforma con CELL_SERVICES_PLATFORM_PASSWORD; en produccion queda vacia.
@@ -342,13 +320,10 @@ services:
       - "127.0.0.1:${MAIL_AUTH_PORT:-8041}:8041"
     env_file:
       - .env
-      - path: /dev/shm/core-force-mail/secrets.env
-        required: false
     environment:
-      AUDIT_HASH_KEY: ""
-      AUDIT_HASH_KEYS_OLD: ""
+      INTERNAL_GATEWAY_TOKEN: ${INTERNAL_GATEWAY_TOKEN:-}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
       CELL_DB_PASSWORD: ${CELL_DB_PASSWORD:-}
-      JWT_SIGNING_KEY: ""
       # La credencial de plataforma no llega a los servicios de celda: usan la de su celda
       # (secreto CELL_DB_PASSWORD). Solo en desarrollo, sin rol de celda, se les puede dar
       # la de plataforma con CELL_SERVICES_PLATFORM_PASSWORD; en produccion queda vacia.
@@ -375,13 +350,13 @@ services:
       - "127.0.0.1:${MAIL_SECURITY_PORT:-8042}:8042"
     env_file:
       - .env
-      - path: /dev/shm/core-force-mail/secrets.env
-        required: false
     environment:
-      AUDIT_HASH_KEY: ""
-      AUDIT_HASH_KEYS_OLD: ""
+      INTERNAL_GATEWAY_TOKEN: ${INTERNAL_GATEWAY_TOKEN:-}
+      MAIL_REDIS_PASSWORD: ${MAIL_REDIS_PASSWORD:-}
+      MAIL_LINK_SIGNING_KEY: ${MAIL_LINK_SIGNING_KEY:-}
+      DOVEADM_API_KEY: ${DOVEADM_API_KEY:-}
+      QUEUE_AGENT_API_KEY: ${QUEUE_AGENT_API_KEY:-}
       CELL_DB_PASSWORD: ${CELL_DB_PASSWORD:-}
-      JWT_SIGNING_KEY: ""
       # La credencial de plataforma no llega a los servicios de celda: usan la de su celda
       # (secreto CELL_DB_PASSWORD). Solo en desarrollo, sin rol de celda, se les puede dar
       # la de plataforma con CELL_SERVICES_PLATFORM_PASSWORD; en produccion queda vacia.
@@ -411,13 +386,12 @@ services:
       - "127.0.0.1:${WEBMAIL_PORT:-8044}:8044"
     env_file:
       - .env
-      - path: /dev/shm/core-force-mail/secrets.env
-        required: false
     environment:
-      AUDIT_HASH_KEY: ""
-      AUDIT_HASH_KEYS_OLD: ""
+      INTERNAL_GATEWAY_TOKEN: ${INTERNAL_GATEWAY_TOKEN:-}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      WEBMAIL_MASTER_USER: ${WEBMAIL_MASTER_USER:-}
+      WEBMAIL_MASTER_PASSWORD: ${WEBMAIL_MASTER_PASSWORD:-}
       CELL_DB_PASSWORD: ${CELL_DB_PASSWORD:-}
-      JWT_SIGNING_KEY: ""
       # La credencial de plataforma no llega a los servicios de celda: usan la de su celda
       # (secreto CELL_DB_PASSWORD). Solo en desarrollo, sin rol de celda, se les puede dar
       # la de plataforma con CELL_SERVICES_PLATFORM_PASSWORD; en produccion queda vacia.
@@ -444,16 +418,14 @@ services:
       - "127.0.0.1:${DOMAIN_SERVICE_PORT:-8043}:8043"
     env_file:
       - .env
-      - path: /dev/shm/core-force-mail/secrets.env
-        required: false
     environment:
-      AUDIT_HASH_KEY: ""
-      AUDIT_HASH_KEYS_OLD: ""
+      INTERNAL_GATEWAY_TOKEN: ${INTERNAL_GATEWAY_TOKEN:-}
+      MAIL_ENCRYPTION_KEY: ${MAIL_ENCRYPTION_KEY:-}
+      MAIL_ENCRYPTION_KEYS_OLD: ${MAIL_ENCRYPTION_KEYS_OLD:-}
       POSTGRES_PASSWORD: ${TENANT_SERVICES_PLATFORM_PASSWORD:-}
       REGISTRY_DB_PASSWORD: ${TENANT_ROUTER_DB_PASSWORD:-}
       TENANT_DB_USER: mail_svc_domains
       TENANT_DB_PASSWORD: ${DOMAIN_SERVICE_DB_PASSWORD:-}
-      JWT_SIGNING_KEY: ""
     depends_on:
       pgbouncer:
         condition: service_healthy
@@ -475,16 +447,15 @@ services:
       - "127.0.0.1:${MAIL_MIGRATION_PORT:-8056}:8056"
     env_file:
       - .env
-      - path: /dev/shm/core-force-mail/secrets.env
-        required: false
     environment:
-      AUDIT_HASH_KEY: ""
-      AUDIT_HASH_KEYS_OLD: ""
+      INTERNAL_GATEWAY_TOKEN: ${INTERNAL_GATEWAY_TOKEN:-}
+      MAIL_ENCRYPTION_KEY: ${MAIL_ENCRYPTION_KEY:-}
+      MAIL_ENCRYPTION_KEYS_OLD: ${MAIL_ENCRYPTION_KEYS_OLD:-}
+      MAIL_MIGRATION_RUNNER_KEY: ${MAIL_MIGRATION_RUNNER_KEY:-}
       POSTGRES_PASSWORD: ${TENANT_SERVICES_PLATFORM_PASSWORD:-}
       REGISTRY_DB_PASSWORD: ${TENANT_ROUTER_DB_PASSWORD:-}
       TENANT_DB_USER: mail_svc_mail_migration
       TENANT_DB_PASSWORD: ${MAIL_MIGRATION_DB_PASSWORD:-}
-      JWT_SIGNING_KEY: ""
     depends_on:
       pgbouncer:
         condition: service_healthy
@@ -508,16 +479,12 @@ services:
       - "127.0.0.1:${MAIL_DAV_PORT:-8058}:8058"
     env_file:
       - .env
-      - path: /dev/shm/core-force-mail/secrets.env
-        required: false
     environment:
-      AUDIT_HASH_KEY: ""
-      AUDIT_HASH_KEYS_OLD: ""
+      INTERNAL_GATEWAY_TOKEN: ${INTERNAL_GATEWAY_TOKEN:-}
       POSTGRES_PASSWORD: ${TENANT_SERVICES_PLATFORM_PASSWORD:-}
       REGISTRY_DB_PASSWORD: ${TENANT_ROUTER_DB_PASSWORD:-}
       TENANT_DB_USER: mail_svc_mail_dav
       TENANT_DB_PASSWORD: ${MAIL_DAV_DB_PASSWORD:-}
-      JWT_SIGNING_KEY: ""
     depends_on:
       pgbouncer:
         condition: service_healthy
@@ -536,16 +503,15 @@ services:
       - "127.0.0.1:${TRANSACTIONAL_PORT:-8045}:8045"
     env_file:
       - .env
-      - path: /dev/shm/core-force-mail/secrets.env
-        required: false
     environment:
-      AUDIT_HASH_KEY: ""
-      AUDIT_HASH_KEYS_OLD: ""
+      INTERNAL_GATEWAY_TOKEN: ${INTERNAL_GATEWAY_TOKEN:-}
+      MAIL_LINK_SIGNING_KEY: ${MAIL_LINK_SIGNING_KEY:-}
+      SES_ACCESS_KEY_ID: ${SES_ACCESS_KEY_ID:-}
+      SES_SECRET_ACCESS_KEY: ${SES_SECRET_ACCESS_KEY:-}
       POSTGRES_PASSWORD: ${TENANT_SERVICES_PLATFORM_PASSWORD:-}
       REGISTRY_DB_PASSWORD: ${TENANT_ROUTER_DB_PASSWORD:-}
       TENANT_DB_USER: mail_svc_transactional
       TENANT_DB_PASSWORD: ${TRANSACTIONAL_DB_PASSWORD:-}
-      JWT_SIGNING_KEY: ""
     depends_on:
       pgbouncer:
         condition: service_healthy
@@ -566,16 +532,12 @@ services:
       - "127.0.0.1:${SUPPRESSION_PORT:-8046}:8046"
     env_file:
       - .env
-      - path: /dev/shm/core-force-mail/secrets.env
-        required: false
     environment:
-      AUDIT_HASH_KEY: ""
-      AUDIT_HASH_KEYS_OLD: ""
+      INTERNAL_GATEWAY_TOKEN: ${INTERNAL_GATEWAY_TOKEN:-}
       POSTGRES_PASSWORD: ${TENANT_SERVICES_PLATFORM_PASSWORD:-}
       REGISTRY_DB_PASSWORD: ${TENANT_ROUTER_DB_PASSWORD:-}
       TENANT_DB_USER: mail_svc_suppression
       TENANT_DB_PASSWORD: ${SUPPRESSION_DB_PASSWORD:-}
-      JWT_SIGNING_KEY: ""
     depends_on:
       pgbouncer:
         condition: service_healthy
@@ -594,16 +556,12 @@ services:
       - "127.0.0.1:${TEMPLATES_PORT:-8047}:8047"
     env_file:
       - .env
-      - path: /dev/shm/core-force-mail/secrets.env
-        required: false
     environment:
-      AUDIT_HASH_KEY: ""
-      AUDIT_HASH_KEYS_OLD: ""
+      INTERNAL_GATEWAY_TOKEN: ${INTERNAL_GATEWAY_TOKEN:-}
       POSTGRES_PASSWORD: ${TENANT_SERVICES_PLATFORM_PASSWORD:-}
       REGISTRY_DB_PASSWORD: ${TENANT_ROUTER_DB_PASSWORD:-}
       TENANT_DB_USER: mail_svc_templates
       TENANT_DB_PASSWORD: ${TEMPLATES_DB_PASSWORD:-}
-      JWT_SIGNING_KEY: ""
     depends_on:
       pgbouncer:
         condition: service_healthy
@@ -622,16 +580,12 @@ services:
       - "127.0.0.1:${CONTACTS_PORT:-8050}:8050"
     env_file:
       - .env
-      - path: /dev/shm/core-force-mail/secrets.env
-        required: false
     environment:
-      AUDIT_HASH_KEY: ""
-      AUDIT_HASH_KEYS_OLD: ""
+      INTERNAL_GATEWAY_TOKEN: ${INTERNAL_GATEWAY_TOKEN:-}
       POSTGRES_PASSWORD: ${TENANT_SERVICES_PLATFORM_PASSWORD:-}
       REGISTRY_DB_PASSWORD: ${TENANT_ROUTER_DB_PASSWORD:-}
       TENANT_DB_USER: mail_svc_contacts
       TENANT_DB_PASSWORD: ${CONTACTS_DB_PASSWORD:-}
-      JWT_SIGNING_KEY: ""
     depends_on:
       pgbouncer:
         condition: service_healthy
@@ -650,13 +604,9 @@ services:
       - "127.0.0.1:${BILLING_PORT:-8055}:8055"
     env_file:
       - .env
-      - path: /dev/shm/core-force-mail/secrets.env
-        required: false
     environment:
-      AUDIT_HASH_KEY: ""
-      AUDIT_HASH_KEYS_OLD: ""
+      INTERNAL_GATEWAY_TOKEN: ${INTERNAL_GATEWAY_TOKEN:-}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
-      JWT_SIGNING_KEY: ""
     depends_on:
       pgbouncer:
         condition: service_healthy
@@ -675,16 +625,13 @@ services:
       - "127.0.0.1:${REPUTATION_PORT:-8054}:8054"
     env_file:
       - .env
-      - path: /dev/shm/core-force-mail/secrets.env
-        required: false
     environment:
-      AUDIT_HASH_KEY: ""
-      AUDIT_HASH_KEYS_OLD: ""
+      INTERNAL_GATEWAY_TOKEN: ${INTERNAL_GATEWAY_TOKEN:-}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
       POSTGRES_PASSWORD: ${TENANT_SERVICES_PLATFORM_PASSWORD:-}
       REGISTRY_DB_PASSWORD: ${TENANT_ROUTER_DB_PASSWORD:-}
       TENANT_DB_USER: mail_svc_reputation
       TENANT_DB_PASSWORD: ${REPUTATION_DB_PASSWORD:-}
-      JWT_SIGNING_KEY: ""
     depends_on:
       pgbouncer:
         condition: service_healthy
@@ -705,16 +652,12 @@ services:
       - "127.0.0.1:${CAMPAIGNS_PORT:-8052}:8052"
     env_file:
       - .env
-      - path: /dev/shm/core-force-mail/secrets.env
-        required: false
     environment:
-      AUDIT_HASH_KEY: ""
-      AUDIT_HASH_KEYS_OLD: ""
+      INTERNAL_GATEWAY_TOKEN: ${INTERNAL_GATEWAY_TOKEN:-}
       POSTGRES_PASSWORD: ${TENANT_SERVICES_PLATFORM_PASSWORD:-}
       REGISTRY_DB_PASSWORD: ${TENANT_ROUTER_DB_PASSWORD:-}
       TENANT_DB_USER: mail_svc_campaigns
       TENANT_DB_PASSWORD: ${CAMPAIGNS_DB_PASSWORD:-}
-      JWT_SIGNING_KEY: ""
     depends_on:
       pgbouncer:
         condition: service_healthy
@@ -733,16 +676,12 @@ services:
       - "127.0.0.1:${AUTOMATIONS_PORT:-8051}:8051"
     env_file:
       - .env
-      - path: /dev/shm/core-force-mail/secrets.env
-        required: false
     environment:
-      AUDIT_HASH_KEY: ""
-      AUDIT_HASH_KEYS_OLD: ""
+      INTERNAL_GATEWAY_TOKEN: ${INTERNAL_GATEWAY_TOKEN:-}
       POSTGRES_PASSWORD: ${TENANT_SERVICES_PLATFORM_PASSWORD:-}
       REGISTRY_DB_PASSWORD: ${TENANT_ROUTER_DB_PASSWORD:-}
       TENANT_DB_USER: mail_svc_automations
       TENANT_DB_PASSWORD: ${AUTOMATIONS_DB_PASSWORD:-}
-      JWT_SIGNING_KEY: ""
     depends_on:
       pgbouncer:
         condition: service_healthy
@@ -761,16 +700,12 @@ services:
       - "127.0.0.1:${ANALYTICS_PORT:-8053}:8053"
     env_file:
       - .env
-      - path: /dev/shm/core-force-mail/secrets.env
-        required: false
     environment:
-      AUDIT_HASH_KEY: ""
-      AUDIT_HASH_KEYS_OLD: ""
+      INTERNAL_GATEWAY_TOKEN: ${INTERNAL_GATEWAY_TOKEN:-}
       POSTGRES_PASSWORD: ${TENANT_SERVICES_PLATFORM_PASSWORD:-}
       REGISTRY_DB_PASSWORD: ${TENANT_ROUTER_DB_PASSWORD:-}
       TENANT_DB_USER: mail_svc_analytics
       TENANT_DB_PASSWORD: ${ANALYTICS_DB_PASSWORD:-}
-      JWT_SIGNING_KEY: ""
     depends_on:
       pgbouncer:
         condition: service_healthy

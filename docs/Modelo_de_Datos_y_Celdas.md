@@ -719,8 +719,9 @@ desarrollo, nunca con la de plataforma.
   `make e2e`, que corre los tres servicios de celda con su credencial y sin la de
   plataforma.
 
-Reparto de secretos por servicio (V, 2026-09-15). El fichero de secretos se entrega ENTERO a
-cada servicio que lo declara en `env_file`, asi que una credencial de base que viva ahi la ve
+Reparto de secretos por servicio (V, 2026-09-15; el resto de secretos siguio el mismo patron el 2026-09-21,
+`docs/adr/0007-minimo-privilegio-en-secretos.md`). El fichero de secretos se entregaba ENTERO a
+cada servicio que lo declaraba en `env_file`, asi que una credencial de base que viva ahi la ve
 todo el despliegue, y vaciarla servicio a servicio crece con el cuadrado de los servicios.
 Por eso las credenciales de base salieron de esa lista: `secret-keys-db.txt` se materializa en
 `secrets-db.env`, que NINGUN contenedor recibe por `env_file`, y cada credencial llega solo al
