@@ -11,6 +11,8 @@ import (
 	"encoding/pem"
 	"errors"
 	"math/big"
+	"net/http"
+	"net/http/httptest"
 	"sync"
 	"testing"
 	"time"
@@ -266,5 +268,24 @@ func TestConfirmSubscriptionGuardsSSRF(t *testing.T) {
 	}
 	if f.total() != 1 {
 		t.Fatalf("solo la URL legitima debe visitarse, visitas = %d", f.total())
+	}
+}
+
+// El destino ya esta restringido a SNS por expresion regular; una redireccion de esa respuesta no
+// puede llevar la descarga a otro sitio (SSRF hacia la red interna).
+func TestLaDescargaNoSigueRedirecciones(t *testing.T) {
+	var hits int
+	interno := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { hits++ }))
+	defer interno.Close()
+	origen := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, interno.URL, http.StatusFound)
+	}))
+	defer origen.Close()
+
+	if _, err := NewVerifier().httpFetch(context.Background(), origen.URL); err == nil {
+		t.Fatal("una redireccion no es un certificado")
+	}
+	if hits != 0 {
+		t.Fatalf("la redireccion se siguio: %d visitas", hits)
 	}
 }

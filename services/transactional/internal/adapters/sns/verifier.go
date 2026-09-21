@@ -74,7 +74,10 @@ type Verifier struct {
 
 func NewVerifier() *Verifier {
 	v := &Verifier{
-		http:  &http.Client{Timeout: 10 * time.Second},
+		http: &http.Client{
+			Timeout:       10 * time.Second,
+			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+		},
 		certs: make(map[string]*x509.Certificate),
 	}
 	v.fetch = v.httpFetch

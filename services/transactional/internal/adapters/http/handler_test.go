@@ -29,6 +29,9 @@ import (
 
 const certURL = "https://sns.us-east-1.amazonaws.com/SimpleNotificationService-test.pem"
 
+// testTopic es el topic de sesNotification: el que SES_EVENTS_TOPIC_ARN fija en produccion.
+const testTopic = "arn:aws:sns:us-east-1:123456789012:cfm-transactional-events"
+
 type allowAll struct{}
 
 func (allowAll) RequirePermission(string, string, string) func(nethttp.Handler) nethttp.Handler {
@@ -125,7 +128,7 @@ func sesNotification(tenant uuid.UUID) *sns.Envelope {
 		`"bounce":{"bounceType":"Permanent","bouncedRecipients":[{"emailAddress":"ana@example.com"}]}}`
 	return &sns.Envelope{
 		Type: sns.TypeNotification, MessageID: uuid.New().String(),
-		TopicArn:  "arn:aws:sns:us-east-1:123456789012:cfm-transactional-events",
+		TopicArn:  testTopic,
 		Message:   msg,
 		Timestamp: "2026-09-12T12:00:00.000Z",
 	}
@@ -141,7 +144,7 @@ func marshal(t *testing.T, v any) string {
 }
 
 func TestSESEventsRejectsInvalidSignature(t *testing.T) {
-	ts := newTestServer(t, "")
+	ts := newTestServer(t, testTopic)
 	tenant := uuid.New()
 	e := sesNotification(tenant)
 	ts.signEnvelope(t, e)
@@ -153,7 +156,7 @@ func TestSESEventsRejectsInvalidSignature(t *testing.T) {
 }
 
 func TestSESEventsRejectsTenantMismatch(t *testing.T) {
-	ts := newTestServer(t, "")
+	ts := newTestServer(t, testTopic)
 	e := sesNotification(uuid.New())
 	ts.signEnvelope(t, e)
 	rec := ts.do(nethttp.MethodPost, "/api/v1/public/transactional/ses-events/"+uuid.New().String(), "text/plain", marshal(t, e))
@@ -174,7 +177,7 @@ func TestSESEventsRejectsForeignTopic(t *testing.T) {
 }
 
 func TestSESEventsBodyLimit(t *testing.T) {
-	ts := newTestServer(t, "")
+	ts := newTestServer(t, testTopic)
 	body := `{"Type":"Notification","Message":"` + strings.Repeat("a", maxSNSBody) + `"}`
 	rec := ts.do(nethttp.MethodPost, "/api/v1/public/transactional/ses-events/"+uuid.New().String(), "text/plain", body)
 	if rec.Code != nethttp.StatusBadRequest {
@@ -186,7 +189,7 @@ func TestSESEventsBodyLimit(t *testing.T) {
 }
 
 func TestSESEventsSubscriptionConfirmationGuardsSSRF(t *testing.T) {
-	ts := newTestServer(t, "")
+	ts := newTestServer(t, "arn:aws:sns:us-east-1:123456789012:cfm")
 	e := &sns.Envelope{
 		Type: sns.TypeSubscriptionConfirmation, MessageID: uuid.New().String(), Token: "tok",
 		TopicArn: "arn:aws:sns:us-east-1:123456789012:cfm", Message: "confirm",
@@ -262,6 +265,36 @@ func TestSESEventsSinEmpresaExigeTopicConfigurado(t *testing.T) {
 	}
 	if len(ts.fetched) != 0 {
 		t.Fatalf("no debe descargar certificados sin topic configurado: %v", ts.fetched)
+	}
+}
+
+// Con la empresa en la ruta pasa lo mismo: sin un topic fijado, quien tenga un topic SNS propio en
+// cualquier cuenta de AWS consigue una firma valida de SNS sobre el mensaje que quiera y, con solo
+// el identificador de una empresa (el enlace de baja de cualquier correo lo lleva), da de alta en
+// su lista de supresion las direcciones que elija. Se rechaza antes de tocar la red.
+func TestSESEventsConEmpresaTambienExigeTopicConfigurado(t *testing.T) {
+	ts := newTestServer(t, "")
+	tenant := uuid.New()
+	e := sesNotification(tenant)
+	ts.signEnvelope(t, e)
+	rec := ts.do(nethttp.MethodPost, "/api/v1/public/transactional/ses-events/"+tenant.String(), "text/plain", marshal(t, e))
+	if rec.Code != nethttp.StatusForbidden {
+		t.Fatalf("sin topic configurado: status %d", rec.Code)
+	}
+	if len(ts.fetched) != 0 {
+		t.Fatalf("no debe descargar certificados sin topic configurado: %v", ts.fetched)
+	}
+}
+
+// El topic se compara antes de verificar la firma: un topic ajeno no cuesta ni una descarga de
+// certificado, y un peticionario anonimo no fuerza salidas de red del servicio.
+func TestSESEventsUnTopicAjenoNoDescargaCertificados(t *testing.T) {
+	ts := newTestServer(t, "arn:aws:sns:us-east-1:123456789012:esperado")
+	e := sesNotification(uuid.New())
+	ts.signEnvelope(t, e)
+	rec := ts.do(nethttp.MethodPost, "/api/v1/public/transactional/ses-events", "text/plain", marshal(t, e))
+	if rec.Code != nethttp.StatusForbidden || len(ts.fetched) != 0 {
+		t.Fatalf("status %d, descargas %v", rec.Code, ts.fetched)
 	}
 }
 

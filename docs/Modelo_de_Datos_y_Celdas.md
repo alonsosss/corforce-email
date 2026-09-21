@@ -197,7 +197,10 @@ domain-service lee el modo y el id en `GET /internal/mail-directory/mta-sts/{dom
 misma respuesta que la de la interfaz) para anunciarlo en el TXT `_mta-sts`. La politica publica se sirve sin sesion en
 `GET /public/mail-directory/mta-sts/{cell}/{dominio}` (el gateway la enruta por `{cell}`, como todo servicio de celda;
 `{cell}` solo enruta), como `text/plain` con `version: STSv1`, `mode`, un unico `mx: <MAIL_MX_HOSTNAME>` y `max_age`,
-en CRLF; responde 404 igual a un dominio desconocido, inactivo, invalido o en `none`. Pendiente del borde (ADR 0003):
+en CRLF; responde 404 igual a un dominio desconocido, inactivo, invalido o en `none`. Una politica cacheada envenena la
+entrega de correo, asi que el 200 lleva `Cache-Control: no-cache` y `X-Content-Type-Options: nosniff`, y toda respuesta
+de error `Cache-Control: no-store` (un 404 recordado por el borde dejaria sin politica a un dominio que se activa
+despues). Pendiente del borde (ADR 0003):
 que el nombre `mta-sts.<dominio>` llegue a esa ruta con un certificado valido; la comprobacion del certificado no forma
 parte de la validacion de `enforce`.
 

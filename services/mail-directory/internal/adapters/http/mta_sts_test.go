@@ -265,8 +265,11 @@ func TestLaPoliticaPublicaEsTextoPlanoSinSesion(t *testing.T) {
 		e.h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/public/mail-directory/mta-sts/pe-01/"+dominio, nil))
 		return rec
 	}
-	if rec := get("acme.test"); rec.Code != http.StatusNotFound {
-		t.Fatalf("sin politica: %d", rec.Code)
+	// Una respuesta de error no se guarda en ninguna cache: un 404 recordado por el borde dejaria sin
+	// politica a un dominio al que se le activa despues, y un 200 servido de una cache no puede
+	// sobrevivir a un cambio de modo.
+	if rec := get("acme.test"); rec.Code != http.StatusNotFound || rec.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("sin politica: %d, Cache-Control %q", rec.Code, rec.Header().Get("Cache-Control"))
 	}
 	e.admin(http.MethodPut, "/api/v1/mail-domains/mta-sts/acme.test", `{"mode":"testing"}`)
 	rec := get("acme.test")
@@ -276,6 +279,9 @@ func TestLaPoliticaPublicaEsTextoPlanoSinSesion(t *testing.T) {
 	}
 	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/plain") {
 		t.Fatalf("Content-Type: %q", ct)
+	}
+	if rec.Header().Get("Cache-Control") != "no-cache" || rec.Header().Get("X-Content-Type-Options") != "nosniff" {
+		t.Fatalf("cabeceras de la politica: %v", rec.Header())
 	}
 	e.admin(http.MethodPut, "/api/v1/mail-domains/mta-sts/acme.test", `{"mode":"none"}`)
 	if rec := get("acme.test"); rec.Code != http.StatusNotFound {

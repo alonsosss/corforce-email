@@ -46,8 +46,8 @@ type Deps struct {
 	TenantDB *db.TenantDB
 	Perms    PermissionGuard
 	SNS      *sns.Verifier
-	// TopicARN opcional (SES_EVENTS_TOPIC_ARN): si esta, solo se aceptan notificaciones
-	// de ese topic.
+	// TopicARN (SES_EVENTS_TOPIC_ARN): el unico topic cuyas notificaciones se aceptan. Sin el, las
+	// dos rutas de eventos rechazan todo.
 	TopicARN string
 	Logger   *zap.Logger
 }
@@ -465,9 +465,16 @@ func (h *Handler) MarketingBatch(w http.ResponseWriter, r *http.Request) {
 // SESEvents recibe los eventos de SES que publica SNS. La empresa sale de la etiqueta
 // tenant_id que el propio emisor pone en cada envio: SES la devuelve dentro del mensaje
 // firmado por SNS, y con la firma y el topic comprobados nadie de fuera puede fabricarla.
-// Por eso la ruta sin empresa exige SES_EVENTS_TOPIC_ARN: sin topic fijado, cualquier
-// topic de cualquier cuenta con una firma valida de SNS podria atribuirse eventos.
+// Por eso las dos rutas exigen SES_EVENTS_TOPIC_ARN: una firma valida de SNS solo prueba que el
+// mensaje lo firmo AWS, y cualquier cuenta de AWS puede crear un topic y suscribir esta URL. Sin
+// topic fijado, quien conozca el identificador de una empresa (el enlace de baja de cualquier
+// correo lo lleva) se atribuiria bajas y quejas de las direcciones que elija.
 func (h *Handler) SESEvents(w http.ResponseWriter, r *http.Request) {
+	if h.topicARN == "" {
+		h.logger.Warn("transactional: evento de SES sin SES_EVENTS_TOPIC_ARN; se rechaza")
+		response.ErrForbidden(w, "events topic not configured")
+		return
+	}
 	var routeTenant uuid.UUID
 	if raw := chi.URLParam(r, "tenantID"); raw != "" {
 		parsed, err := uuid.Parse(raw)
@@ -476,10 +483,6 @@ func (h *Handler) SESEvents(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		routeTenant = parsed
-	} else if h.topicARN == "" {
-		h.logger.Warn("transactional: evento de SES sin empresa en la ruta y sin SES_EVENTS_TOPIC_ARN; se rechaza")
-		response.ErrForbidden(w, "events topic not configured")
-		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxSNSBody)
 	var env sns.Envelope
@@ -487,15 +490,17 @@ func (h *Handler) SESEvents(w http.ResponseWriter, r *http.Request) {
 		response.ErrBadRequest(w, "invalid SNS envelope")
 		return
 	}
+	// El topic va antes de la firma: un peticionario anonimo no obliga al servicio a descargar
+	// certificados. Una vez verificada la firma, el TopicArn ya no puede ser otro (va firmado).
+	if env.TopicArn != h.topicARN {
+		h.logger.Warn("transactional: notificacion de un topic no esperado", zap.String("topic", env.TopicArn))
+		response.ErrForbidden(w, "unexpected topic")
+		return
+	}
 	if err := h.sns.Verify(r.Context(), &env); err != nil {
 		h.logger.Warn("transactional: notificacion SNS rechazada", zap.String("route_tenant", routeTenant.String()),
 			zap.String("sns_message_id", env.MessageID), zap.String("topic", env.TopicArn), zap.Error(err))
 		response.ErrForbidden(w, "invalid SNS signature")
-		return
-	}
-	if h.topicARN != "" && env.TopicArn != h.topicARN {
-		h.logger.Warn("transactional: notificacion de un topic no esperado", zap.String("topic", env.TopicArn))
-		response.ErrForbidden(w, "unexpected topic")
 		return
 	}
 

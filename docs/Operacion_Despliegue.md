@@ -441,6 +441,11 @@ buzones dio 500 y `mail-auth` no pudo leer el buzon del remitente de las alertas
   suscripción HTTPS a `/api/v1/public/transactional/ses-events`, que `transactional`
   confirma y verifica. `--check` muestra el conjunto de cambios sin aplicarlo. Sus salidas
   son `SES_EVENTS_TOPIC_ARN`, `SES_CONFIG_SET_TRANSACTIONAL` y `SES_CONFIG_SET_MARKETING`.
+  `SES_EVENTS_TOPIC_ARN` es **obligatoria** para las dos rutas de eventos (la global y
+  `/ses-events/{empresa}`): una firma valida de SNS solo prueba que firmo AWS, y cualquier cuenta
+  de AWS puede crear un topic y suscribir esta URL, asi que sin el ARN fijado se rechaza todo. El
+  topic se compara antes de verificar la firma (un topic ajeno no cuesta una descarga de certificado)
+  y la descarga no sigue redirecciones.
   No verifica dominios ni saca la cuenta del sandbox: eso es por empresa y con su DNS.
 * Antes y después de recrear, en los dos caminos (`ops/scaffold/check-deploy-preflight.sh`,
   sección 10 de `validate.sh`). Antes: `ops/db/pgbouncer-userlist.sh --ensure` genera el

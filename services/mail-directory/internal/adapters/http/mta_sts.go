@@ -77,10 +77,12 @@ func (h *Handler) SetMTASTS(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) PublicMTASTS(w http.ResponseWriter, r *http.Request) {
 	body, err := h.uc.PublishedMTASTS(r.Context(), chi.URLParam(r, "domain"))
 	if err != nil {
+		w.Header().Set("Cache-Control", "no-store")
 		writeMTASTSError(w, err)
 		return
 	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(body))
