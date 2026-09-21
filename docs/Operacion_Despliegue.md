@@ -283,6 +283,16 @@ para llamar a la API hace falta ya un superadmin. Después, todo por API: `POST 
   `-- Schema | Service`, nunca cambiar el tipo de una columna sin
   `ops/maintenance/pgbouncer-reconnect.sh` después (los planes preparados viven en el pooler).
 
+Antes de desplegar servicios nuevos, la comprobacion de que no falta ninguna migracion no se hace con la lista que
+alguien recuerde: se barren TODAS las canonicas, que son idempotentes. Registro y celda, fichero a fichero con
+`ops/db/apply-migration.sh` por su numero (`sort -V`), y las de empresa con `bash ops/apply-all-canonical.sh` (48
+ficheros, sin errores reales en produccion el 2026-09-21). Motivo: una columna nueva de `mail.mailboxes`
+(`11_mailbox_dav_access.sql`) no estaba en la lista recibida y, con el servicio nuevo ya desplegado, crear y listar
+buzones dio 500 y `mail-auth` no pudo leer el buzon del remitente de las alertas durante unos minutos. Tras un
+`ALTER TABLE` que cambia las columnas de una tabla que los servicios ya consultan hace falta ademas
+`ops/maintenance/pgbouncer-reconnect.sh`: PgBouncer conserva sentencias preparadas con el tipo anterior y sigue dando
+`cached plan must not change result type` o `prepared statement ... does not exist` hasta renovar sus conexiones.
+
 ## 5. Despliegue
 
 * `scripts/deploy-ecr.sh` desde el PC: compila en local, publica a ECR etiquetando por
