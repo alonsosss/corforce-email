@@ -4,6 +4,7 @@ import (
 	"context"
 	"net"
 	"reflect"
+	"sort"
 	"testing"
 
 	"golang.org/x/net/dns/dnsmessage"
@@ -53,6 +54,8 @@ func TestLookupMXDevuelveLosNombresPublicados(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Go baraja los MX de igual preferencia (RFC 2782): el orden no es parte del contrato.
+	sort.Strings(got)
 	if want := []string{"mx.plataforma.example.", "mx2.plataforma.example."}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("MX: %v", got)
 	}
