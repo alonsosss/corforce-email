@@ -138,6 +138,7 @@ func (h *Handler) Routes() chi.Router {
 		r.With(h.can("quarantine", "delete")).Delete("/quarantine/{id}", h.DeleteQuarantine)
 		r.With(h.can("quarantine", "release")).Post("/quarantine/{id}/release", h.ReleaseQuarantine)
 		r.With(h.can("quarantine", "learn")).Post("/quarantine/{id}/learn-spam", h.LearnSpam)
+		r.With(h.can("quarantine", "release"), h.can("quarantine", "learn")).Post("/quarantine/{id}/release-ham", h.ReleaseQuarantineAsHam)
 
 		r.With(h.can("quarantine_settings", "read")).Get("/quarantine-settings", h.GetQuarantineSettings)
 		r.With(h.can("quarantine_settings", "update")).Put("/quarantine-settings", h.PutQuarantineSettings)
@@ -737,6 +738,24 @@ func (h *Handler) ReleaseQuarantine(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.quarantine.Release(r.Context(), tenantID, id, middleware.GetUserID(r.Context())); err != nil {
+		writeError(w, err)
+		return
+	}
+	response.JSON(w, http.StatusOK, map[string]string{"status": "released"})
+}
+
+// ReleaseQuarantineAsHam libera el mensaje y lo usa para entrenar el clasificador como legitimo: exige el
+// permiso de liberar y el de entrenar.
+func (h *Handler) ReleaseQuarantineAsHam(w http.ResponseWriter, r *http.Request) {
+	tenantID, ok := tenantFrom(w, r)
+	if !ok {
+		return
+	}
+	id, ok := idParam(w, r, "id")
+	if !ok {
+		return
+	}
+	if err := h.quarantine.ReleaseAndLearnHam(r.Context(), tenantID, id, middleware.GetUserID(r.Context())); err != nil {
 		writeError(w, err)
 		return
 	}

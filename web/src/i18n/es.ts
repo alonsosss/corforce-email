@@ -1455,6 +1455,10 @@ export const es = {
   'quarantine.releaseWarning':
     'Libera solo mensajes que sepas legitimos: al liberarlo llega a la bandeja de entrada.',
   'quarantine.released': 'Mensaje liberado.',
+  'quarantine.releaseHam': 'Liberar y marcar como legitimo',
+  'quarantine.releaseHamConfirm':
+    'Se entregara el mensaje y Rspamd aprendera que este tipo de correo es legitimo. Usalo solo si estas seguro: entrenar con spam empeora el filtro.',
+  'quarantine.releasedHam': 'Mensaje liberado y marcado como legitimo.',
   'quarantine.learnSpam': 'Ensenar como spam',
   'quarantine.learnConfirm': 'Rspamd aprendera este mensaje como spam.',
   'quarantine.learned': 'Rspamd aprendio el mensaje como spam.',

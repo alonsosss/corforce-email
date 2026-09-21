@@ -10,13 +10,18 @@ import { formatBytes } from '@/lib/quota';
 import { t, type MessageKey } from '@/i18n';
 import { QuarantineMessage } from './QuarantineMessageView';
 
-type Operation = 'release' | 'learn' | 'delete';
+type Operation = 'release' | 'releaseHam' | 'learn' | 'delete';
 
 const CONFIRM: Record<Operation, { message: MessageKey; done: MessageKey; label: MessageKey }> = {
   release: {
     message: 'quarantine.releaseConfirm',
     done: 'quarantine.released',
     label: 'quarantine.release',
+  },
+  releaseHam: {
+    message: 'quarantine.releaseHamConfirm',
+    done: 'quarantine.releasedHam',
+    label: 'quarantine.releaseHam',
   },
   learn: {
     message: 'quarantine.learnConfirm',
@@ -49,6 +54,7 @@ export function QuarantineDetail({ item, onClose, onRemoved }: QuarantineDetailP
 
   const run = useAction(async (operation: Operation) => {
     if (operation === 'release') await mailSecurityApi.releaseQuarantine(item.id);
+    else if (operation === 'releaseHam') await mailSecurityApi.releaseQuarantineAsHam(item.id);
     else if (operation === 'learn') await mailSecurityApi.learnSpam(item.id);
     else await mailSecurityApi.deleteQuarantine(item.id);
   });
@@ -91,6 +97,9 @@ export function QuarantineDetail({ item, onClose, onRemoved }: QuarantineDetailP
           {t('common.delete')}
         </Button>
       ) : null}
+      {can(...PERMISSIONS.quarantine.release) && can(...PERMISSIONS.quarantine.learn) ? (
+        <Button onClick={() => setPending('releaseHam')}>{t('quarantine.releaseHam')}</Button>
+      ) : null}
       {can(...PERMISSIONS.quarantine.release) ? (
         <Button variant="primary" onClick={() => setPending('release')}>
           {t('quarantine.release')}
@@ -102,7 +111,7 @@ export function QuarantineDetail({ item, onClose, onRemoved }: QuarantineDetailP
   return (
     <Modal open size="lg" title={t('quarantine.detailTitle')} onClose={onClose} footer={footer}>
       <div className="cf-stack" style={{ gap: 'var(--cf-space-4)' }}>
-        {pending === 'release' ? (
+        {pending === 'release' || pending === 'releaseHam' ? (
           <Alert tone="warning">{t('quarantine.releaseWarning')}</Alert>
         ) : null}
         {run.error ? (

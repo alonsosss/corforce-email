@@ -49,7 +49,7 @@ func New() *Metrics {
 		}, []string{"reason"}),
 		quarantine: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "mail_security_quarantine_messages_total",
-			Help: "Mensajes de la cuarentena de la celda por lo que paso con ellos (stored: retenidos; released: liberados por su dueno o por enlace, los falsos positivos; discarded: descartados; learned_spam: usados para entrenar el clasificador como spam). released frente a stored mide los falsos positivos del antispam.",
+			Help: "Mensajes de la cuarentena de la celda por lo que paso con ellos (stored: retenidos; released: liberados por su dueno o por enlace, los falsos positivos; discarded: descartados; learned_spam: usados para entrenar el clasificador como spam; learned_ham: liberados y usados para entrenarlo como legitimos). released frente a stored mide los falsos positivos del antispam.",
 		}, []string{"outcome"}),
 		queueMessages: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "mail_security_postfix_queue_messages",
@@ -78,7 +78,7 @@ func New() *Metrics {
 	for _, reason := range domain.SessionRevocationFailures() {
 		m.dovecotFailures.WithLabelValues(string(reason))
 	}
-	for _, outcome := range []string{"stored", "released", "discarded", "learned_spam"} {
+	for _, outcome := range []string{"stored", "released", "discarded", "learned_spam", "learned_ham"} {
 		m.quarantine.WithLabelValues(outcome)
 	}
 	for _, queue := range domain.QueueNames() {
@@ -132,3 +132,4 @@ func (m *Metrics) QuarantineStored()      { m.quarantine.WithLabelValues("stored
 func (m *Metrics) QuarantineReleased()    { m.quarantine.WithLabelValues("released").Inc() }
 func (m *Metrics) QuarantineDiscarded()   { m.quarantine.WithLabelValues("discarded").Inc() }
 func (m *Metrics) QuarantineLearnedSpam() { m.quarantine.WithLabelValues("learned_spam").Inc() }
+func (m *Metrics) QuarantineLearnedHam()  { m.quarantine.WithLabelValues("learned_ham").Inc() }

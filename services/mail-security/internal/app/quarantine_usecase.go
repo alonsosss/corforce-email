@@ -134,6 +134,30 @@ func (uc *QuarantineUseCase) release(ctx context.Context, tenantID, id uuid.UUID
 	return err
 }
 
+// ReleaseAndLearnHam libera el mensaje y, ya liberado, entrena el clasificador con el como legitimo. El
+// entrenamiento va despues y no deshace la liberacion: si el controller de Rspamd no responde, el dueno ya
+// tiene su correo y el fallo solo se registra. Es un acto explicito, distinto de liberar: quien libera por
+// prisa un spam no debe envenenar el clasificador.
+func (uc *QuarantineUseCase) ReleaseAndLearnHam(ctx context.Context, tenantID, id uuid.UUID, userID string) error {
+	if uc.learner == nil {
+		return domain.ErrNotConfigured
+	}
+	var msg []byte
+	err := uc.release(ctx, tenantID, id, userID, func(_ context.Context, item *domain.QuarantineItem) error {
+		msg = item.Msg
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	if lerr := uc.learner.LearnHam(ctx, msg); lerr != nil {
+		uc.logger.Warn("mensaje liberado pero no aprendido como legitimo", zap.String("id", id.String()), zap.Error(lerr))
+		return nil
+	}
+	uc.metrics.QuarantineLearnedHam()
+	return nil
+}
+
 // LearnSpam entrena el clasificador con el mensaje. La fila se conserva.
 func (uc *QuarantineUseCase) LearnSpam(ctx context.Context, tenantID, id uuid.UUID) error {
 	if uc.learner == nil {
@@ -156,6 +180,7 @@ func (noopQuarantineMetrics) QuarantineStored()      {}
 func (noopQuarantineMetrics) QuarantineReleased()    {}
 func (noopQuarantineMetrics) QuarantineDiscarded()   {}
 func (noopQuarantineMetrics) QuarantineLearnedSpam() {}
+func (noopQuarantineMetrics) QuarantineLearnedHam()  {}
 
 func quarantineMetricsOrNoop(m ports.QuarantineMetrics) ports.QuarantineMetrics {
 	if m == nil {

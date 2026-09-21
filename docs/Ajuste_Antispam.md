@@ -13,6 +13,7 @@ que lo justifique, y cada cambio se registra con su motivo y con la medida que l
 | `released` | Retenidos que su dueno libero (por la pantalla o por el enlace del aviso): los **falsos positivos** confirmados por una persona |
 | `discarded` | Retenidos que se descartaron (por la pantalla o por el enlace) |
 | `learned_spam` | Retenidos que alguien uso para entrenar el clasificador como spam: los **verdaderos positivos** confirmados |
+| `learned_ham` | Liberados con "Liberar y marcar como legitimo": ademas de entregarse, ensenaron al clasificador que ese correo es bueno |
 
 Son totales de la celda, sin etiqueta de empresa ni de buzon: una etiqueta asi no acota su cardinalidad. Las
 series nacen a cero, de modo que `increase()` ve la primera.
@@ -53,8 +54,11 @@ Una fila por cambio, en el mismo commit o tarea que lo hace; se rellena la medid
 ## Aprendizaje que ya existe
 
 Lo que el usuario marca como spam desde la cuarentena entrena el clasificador (`POST .../quarantine/{id}/learn-spam`,
-contador `learned_spam`). Falta el camino contrario, marcar como legitimo lo que se libera: hoy solo se
-libera. Es la mejora mas util pendiente de esta parte y esta anotada en el plan.
+contador `learned_spam`). El camino contrario es "Liberar y marcar como legitimo"
+(`POST .../quarantine/{id}/release-ham`, contador `learned_ham`): libera el mensaje y despues lo usa para
+entrenar Rspamd como legitimo. Exige el permiso de liberar y el de entrenar, va aparte de liberar a secas (que no
+entrena: quien libera por prisa un spam no debe envenenar el clasificador) y, si el controller de Rspamd no
+responde, el mensaje queda liberado igualmente y el fallo solo se registra.
 
 ## DQS de Spamhaus
 

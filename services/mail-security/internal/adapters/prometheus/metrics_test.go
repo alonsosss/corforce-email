@@ -145,8 +145,9 @@ func TestLaCuarentenaCuentaCadaDesenlaceConSuEtiqueta(t *testing.T) {
 	m.QuarantineReleased()
 	m.QuarantineDiscarded()
 	m.QuarantineLearnedSpam()
+	m.QuarantineLearnedHam()
 	after := seriesCon(t, "mail_security_quarantine_")
-	for outcome, want := range map[string]float64{"stored": 2, "released": 1, "discarded": 1, "learned_spam": 1} {
+	for outcome, want := range map[string]float64{"stored": 2, "released": 1, "discarded": 1, "learned_spam": 1, "learned_ham": 1} {
 		key := "mail_security_quarantine_messages_total{outcome=" + outcome + "}"
 		if _, ok := before[key]; !ok {
 			t.Errorf("la serie %s debe nacer a cero", key)

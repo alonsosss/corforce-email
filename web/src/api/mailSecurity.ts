@@ -255,6 +255,9 @@ export const mailSecurityApi = {
     }),
   releaseQuarantine: (id: string) =>
     api.post<StatusResponse>(endpoints.mailSecurity.quarantineRelease(id)),
+  /** Libera el mensaje y lo usa para entrenar el clasificador como legitimo (permisos release y learn). */
+  releaseQuarantineAsHam: (id: string) =>
+    api.post<StatusResponse>(endpoints.mailSecurity.quarantineReleaseHam(id)),
   learnSpam: (id: string) =>
     api.post<StatusResponse>(endpoints.mailSecurity.quarantineLearnSpam(id)),
   deleteQuarantine: (id: string) => api.delete<null>(endpoints.mailSecurity.quarantineItem(id)),

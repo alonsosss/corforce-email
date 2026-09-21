@@ -163,6 +163,8 @@ export const endpoints = {
     quarantineItem: (id: string) => `${API_PREFIX}/mail-security/quarantine/${seg(id)}`,
     quarantineMessage: (id: string) => `${API_PREFIX}/mail-security/quarantine/${seg(id)}/message`,
     quarantineRelease: (id: string) => `${API_PREFIX}/mail-security/quarantine/${seg(id)}/release`,
+    quarantineReleaseHam: (id: string) =>
+      `${API_PREFIX}/mail-security/quarantine/${seg(id)}/release-ham`,
     quarantineLearnSpam: (id: string) =>
       `${API_PREFIX}/mail-security/quarantine/${seg(id)}/learn-spam`,
     quarantineSettings: `${API_PREFIX}/mail-security/quarantine-settings`,

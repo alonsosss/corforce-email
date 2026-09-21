@@ -31,10 +31,19 @@ func New(baseURL, password string) *Learner {
 }
 
 func (l *Learner) LearnSpam(ctx context.Context, msg []byte) error {
+	return l.learn(ctx, "/learnspam", msg)
+}
+
+// LearnHam entrena el clasificador con un mensaje legitimo (el que un dueno libero de la cuarentena).
+func (l *Learner) LearnHam(ctx context.Context, msg []byte) error {
+	return l.learn(ctx, "/learnham", msg)
+}
+
+func (l *Learner) learn(ctx context.Context, path string, msg []byte) error {
 	if l.password == "" {
 		return domain.ErrNotConfigured
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, l.baseURL+"/learnspam", bytes.NewReader(msg))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, l.baseURL+path, bytes.NewReader(msg))
 	if err != nil {
 		return err
 	}
@@ -52,7 +61,7 @@ func (l *Learner) LearnSpam(ctx context.Context, msg []byte) error {
 	case http.StatusForbidden, http.StatusUnauthorized:
 		return fmt.Errorf("%w: el controller rechazo la contrasena", domain.ErrNotConfigured)
 	case http.StatusAlreadyReported:
-		// 208: el mensaje ya estaba aprendido como spam.
+		// 208: el mensaje ya estaba aprendido con esa clase.
 		return nil
 	default:
 		return fmt.Errorf("controller de rspamd: %d %s", resp.StatusCode, bytes.TrimSpace(body))

@@ -272,6 +272,7 @@ type QuarantineMetrics interface {
 	QuarantineReleased()
 	QuarantineDiscarded()
 	QuarantineLearnedSpam()
+	QuarantineLearnedHam()
 }
 
 // SessionRevocationMetrics cuenta la revocacion de credenciales en Dovecot.
@@ -296,6 +297,7 @@ type Reinjector interface {
 // SpamLearner entrena el clasificador de Rspamd con un mensaje.
 type SpamLearner interface {
 	LearnSpam(ctx context.Context, msg []byte) error
+	LearnHam(ctx context.Context, msg []byte) error
 }
 
 // Transactor abre la transaccion bajo la que corre el API de administracion: cambia al
