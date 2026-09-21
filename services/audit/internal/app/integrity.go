@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
+	"time"
 
 	"github.com/alonsosss/corforce-email/services/audit/internal/domain"
 	"github.com/google/uuid"
@@ -12,10 +14,52 @@ import (
 
 var anchoredChains = []domain.ChainName{domain.ChainAuditLogs, domain.ChainSecurityEvents}
 
+const (
+	// maxConcurrentVerifications acota los recorridos de cadena a la vez en un proceso: cada uno lee
+	// entera la tabla de auditoria de una empresa, en una base que comparten todas.
+	maxConcurrentVerifications = 4
+	// defaultVerifyTimeout corta un recorrido que no termina; el contexto de la peticion ya lo
+	// cancela si el cliente se va.
+	defaultVerifyTimeout = 15 * time.Minute
+)
+
+// verificationGate deja un solo recorrido por empresa y un tope global, para que verificar la
+// cadena no sea una forma de saturar la base de datos compartida.
+type verificationGate struct {
+	mu      sync.Mutex
+	running map[uuid.UUID]struct{}
+}
+
+func (g *verificationGate) acquire(tenantID uuid.UUID) (release func(), ok bool) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if _, busy := g.running[tenantID]; busy || len(g.running) >= maxConcurrentVerifications {
+		return nil, false
+	}
+	if g.running == nil {
+		g.running = make(map[uuid.UUID]struct{}, maxConcurrentVerifications)
+	}
+	g.running[tenantID] = struct{}{}
+	return func() {
+		g.mu.Lock()
+		delete(g.running, tenantID)
+		g.mu.Unlock()
+	}, true
+}
+
 // VerifyChainIntegrity verifica las filas de cada cadena y luego las contrasta con las anclas:
 // una cadena cuyas filas enlazan bien pero cuya cabeza es anterior a un ancla publicada perdio
-// sus ultimas filas.
+// sus ultimas filas. Devuelve domain.ErrVerificationBusy si la empresa ya tiene un recorrido en
+// curso o el proceso esta en su tope.
 func (uc *AuditUseCase) VerifyChainIntegrity(ctx context.Context, tenantID uuid.UUID) (*domain.ChainIntegrity, error) {
+	release, ok := uc.verifying.acquire(tenantID)
+	if !ok {
+		return nil, domain.ErrVerificationBusy
+	}
+	defer release()
+	ctx, cancel := context.WithTimeout(ctx, uc.verifyTimeout)
+	defer cancel()
+
 	logs, err := uc.logs.VerifyChain(ctx, tenantID)
 	if err != nil {
 		return nil, err

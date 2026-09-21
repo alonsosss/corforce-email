@@ -104,8 +104,8 @@ func trailLog(eventID string, tenantID uuid.UUID, data map[string]interface{}) *
 	l := &domain.AuditLog{
 		TenantID:  tenantID,
 		UserID:    userID,
-		Action:    trailStr(data["method"]),
-		Module:    trailStr(data["module"]),
+		Action:    truncateRunes(trailStr(data["method"]), maxShortColumn),
+		Module:    truncateRunes(trailStr(data["module"]), maxShortColumn),
 		Resource:  trailStr(data["path"]),
 		IPAddress: ip,
 		Severity:  severity,
@@ -117,6 +117,7 @@ func trailLog(eventID string, tenantID uuid.UUID, data map[string]interface{}) *
 		l.UserAgent = &ua
 	}
 	if rid := trailStr(data["request_id"]); rid != "" {
+		rid = truncateRunes(rid, maxShortColumn)
 		l.RequestID = &rid
 	}
 	l.Changes = trailChanges(data)
@@ -136,6 +137,21 @@ func trailChanges(data map[string]interface{}) *string {
 	}
 	d := string(b)
 	return &d
+}
+
+// maxShortColumn es el largo de action, module y request_id en audit.audit_logs (varchar(100)). Un
+// valor mas largo haria fallar el INSERT en cada reentrega y la escritura quedaria sin apunte.
+const maxShortColumn = 100
+
+func truncateRunes(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	r := []rune(s)
+	if len(r) <= max {
+		return s
+	}
+	return string(r[:max])
 }
 
 func trailStr(v interface{}) string {

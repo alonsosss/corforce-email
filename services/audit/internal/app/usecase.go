@@ -37,6 +37,9 @@ type AuditUseCase struct {
 	anchors      ports.ChainAnchorRepository
 	anchorEvents ports.ChainAnchorPublisher
 	tx           ports.Transactor
+
+	verifying     verificationGate
+	verifyTimeout time.Duration
 }
 
 func NewAuditUseCase(deps AuditDeps) *AuditUseCase {
@@ -51,6 +54,8 @@ func NewAuditUseCase(deps AuditDeps) *AuditUseCase {
 		anchors:      deps.Anchors,
 		anchorEvents: deps.AnchorEvents,
 		tx:           deps.Tx,
+
+		verifyTimeout: defaultVerifyTimeout,
 	}
 }
 

@@ -223,7 +223,12 @@ Orden, cada paso reversible salvo el último:
 * **Quitar la clave tras ponerla** deja el verificador en rojo por diseño (`hash_key_missing` y
   `hash_version_regression`): es lo mismo que vería un atacante que intente volver a la versión 1.
 * **`GET /integrity` es lineal** en el tamaño de la cadena, como antes; la versión 2 añade un HMAC por fila, sin coste
-  apreciable frente a la lectura.
+  apreciable frente a la lectura. El recorrido lee las filas en flujo (memoria acotada a una fila) y con el contexto de
+  la petición (se cancela si el cliente se va), pero cada uno ocupa una conexión y lee la tabla entera de una empresa en
+  una base que comparten todas, así que `audit` lo limita (2026-09-21, revisión de seguridad): **uno por empresa y
+  cuatro a la vez por proceso** (`verificationGate` en `app`), 429 `VERIFICATION_BUSY` con `Retry-After: 30` al resto
+  y corte a los 15 minutos. Los 30 s de `WriteTimeout` de los servicios hacen que una cadena de millones de filas no
+  pueda contestar dentro de la petición: la salida es un trabajo asíncrono (ver "Mejoras futuras").
 * **Rotación sin retirada**: cada llave retirada debe conservarse mientras existan filas con su `key_id`.
 
 ## Mejoras futuras (no implementadas)
@@ -233,3 +238,8 @@ Orden, cada paso reversible salvo el último:
 * Métrica y regla de alerta de Prometheus por ancla ausente, en lugar de solo el log.
 * Compactación de anclas antiguas.
 * Verificación incremental (desde el último punto verificado) en lugar de recorrer toda la cadena.
+* Verificación como trabajo asíncrono (`POST` que la lanza y `GET` que lee el resultado, con el cupo por empresa en
+  Redis para que valga entre réplicas): hoy el cupo y el corte son por proceso y la respuesta debe caber en el
+  `WriteTimeout` del servicio.
+* Marcar el origen de cada apunte (`POST /logs` y `/logs/bulk` los escribe quien tenga `audit/logs/create`, con
+  cualquier módulo y acción, a su propio nombre): hoy un apunte del API es indistinguible de uno del gateway o del bus.

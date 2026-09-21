@@ -21,6 +21,9 @@ import (
 
 const permModule = "audit"
 
+// verifyRetryAfterSeconds: cuando reintentar una verificacion rechazada por estar ya en curso.
+const verifyRetryAfterSeconds = "30"
+
 type Handler struct {
 	uc    *app.AuditUseCase
 	authz *authz.Checker
@@ -71,6 +74,11 @@ func (h *Handler) verifyIntegrity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	res, err := h.uc.VerifyChainIntegrity(r.Context(), tenantID)
+	if errors.Is(err, domain.ErrVerificationBusy) {
+		w.Header().Set("Retry-After", verifyRetryAfterSeconds)
+		response.Err(w, http.StatusTooManyRequests, "VERIFICATION_BUSY", "ya hay una verificacion de la cadena en curso; reintenta cuando termine")
+		return
+	}
 	if err != nil {
 		response.ErrInternal(w)
 		return

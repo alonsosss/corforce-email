@@ -465,6 +465,18 @@ func TestIntegridadDevuelveElVeredictoDeLaCadena(t *testing.T) {
 	}
 }
 
+func TestIntegridadOcupadaEsUn429ConReintento(t *testing.T) {
+	f := newFlow()
+	f.logs.err = domain.ErrVerificationBusy
+	rec := f.do(http.MethodGet, base+"/integrity", "")
+	if rec.Code != http.StatusTooManyRequests || rec.Header().Get("Retry-After") == "" {
+		t.Fatalf("%d, Retry-After %q", rec.Code, rec.Header().Get("Retry-After"))
+	}
+	if env := decode(t, rec); env.Error == nil || env.Error.Code != "VERIFICATION_BUSY" {
+		t.Fatalf("%s", rec.Body)
+	}
+}
+
 func TestIntegridadDiceLaCausaLaCadenaYLaVersionDeLaFilaRota(t *testing.T) {
 	f := newFlow()
 	seq, version := int64(41), 2

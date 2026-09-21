@@ -2,6 +2,7 @@ package nats
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -50,6 +51,25 @@ func TestLaSeveridadYLaIPDelRastroSalenDelResultado(t *testing.T) {
 		if l.IPAddress != "0.0.0.0" || l.UserAgent != nil || l.RequestID != nil {
 			t.Errorf("sin ip, agente ni id de peticion: %+v", l)
 		}
+	}
+}
+
+// request_id, action y module son varchar(100): un valor mas largo hace fallar el INSERT, el apunte
+// no se guarda nunca (el bus lo reentrega hasta abandonarlo) y la escritura queda sin rastro. El
+// identificador lo elige el cliente, asi que el apunte se recorta en lugar de perderse.
+func TestElApunteDelRastroNoSuperaLasColumnasDeLaBitacora(t *testing.T) {
+	largo := strings.Repeat("x", 500)
+	l := trailLog("", uuid.New(), map[string]interface{}{
+		"request_id": largo, "module": largo, "method": largo, "path": "/api/v1/x",
+	})
+	if l.RequestID == nil || len(*l.RequestID) != maxShortColumn || len(l.Module) != maxShortColumn || len(l.Action) != maxShortColumn {
+		t.Fatalf("request_id %v, module %d, action %d", l.RequestID, len(l.Module), len(l.Action))
+	}
+	if l.Resource != "/api/v1/x" {
+		t.Fatalf("un valor corto no se toca: %q", l.Resource)
+	}
+	if got := truncateRunes("ñ"+largo, 3); got != "ñxx" {
+		t.Fatalf("el recorte no parte un caracter: %q", got)
 	}
 }
 
