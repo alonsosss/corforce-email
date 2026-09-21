@@ -102,6 +102,19 @@ existen; una evidencia rota) y comprueba que una cita en un comentario o en un m
 cumplirse ni incumplirse; `check-db-credentials.sh` reconoce los servicios propios por su Dockerfile y no por
 `secrets.env`; `make new-service` imprime el bloque nuevo con solo el token interno y su fila de reparto.
 
+### 4. Verificación de arranque
+
+Sobre las imágenes del commit `35fb349` (`--user 65532 --read-only --cap-drop ALL`, en una red interna con un Postgres y
+un NATS desechables, `ENVIRONMENT=production`), cada servicio Go arranca con **solo** su fila y termina en los mismos
+mensajes que con los 21 secretos (la base y el bus de la prueba están vacíos y Redis no existe: `relation ... does not
+exist` y `lookup redis` son esperables). Como control, quitar de la fila un secreto que el servicio exige lo hace fallar con
+su mensaje (`WEBMAIL_MASTER_PASSWORD`, `DOVEADM_API_KEY`, `MAIL_LINK_SIGNING_KEY`, `MAIL_ENCRYPTION_KEY`,
+`JWT_SIGNING_KEY`) o degradar con su aviso (`AUDIT_HASH_KEY`), y sin ningún secreto el proceso se niega a arrancar
+(`INTERNAL_GATEWAY_TOKEN is required`). Los motores no cambian: `docker compose config` con valores centinela confirma que
+Dovecot, Postfix, el ejecutor de migración y el resto reciben exactamente lo de su fila. Lo que la prueba no alcanza: el
+camino de Redis con TLS (mail-auth, webmail, access-control, reputation) y el `queue-agent` de Postfix, cubiertos por la
+lectura del código y por `make check-secret-scope`, no por ejecución.
+
 ## Alternativas
 
 **(b) Ficheros de secreto por servicio** (`secrets:` de Compose o montaje de un fichero 0400, y el código lee
