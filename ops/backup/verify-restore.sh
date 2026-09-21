@@ -172,6 +172,17 @@ faltan="$(LC_ALL=C comm -23 <(printf '%s\n' "$esperados") <(q "SELECT nspname FR
 [[ $sin_fichero -eq 0 ]] \
   || echo "  aviso: $sin_fichero migraciones del historial no están en $migraciones; su esquema no se comprueba"
 
+# Cadena de auditoria con clave (docs/adr/0006): el volcado trae las filas de version 2 pero NO la llave
+# que las verifica (AUDIT_HASH_KEY vive en el almacen de secretos, no en la base). Sin ella, la cadena
+# restaurada existe y no se puede comprobar, asi que se dice en cada verificacion en vez de descubrirlo
+# tras un desastre.
+if [[ "$plano" == empresa && "$(q "SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'audit' AND table_name = 'audit_logs' AND column_name = 'hash_version')")" == "t" ]]; then
+  filas_v2="$(q "SELECT count(*) FROM audit.audit_logs WHERE hash_version = 2")" || falla "no se pudo leer audit.audit_logs"
+  if [[ "${filas_v2:-0}" -gt 0 ]]; then
+    echo "  aviso: la cadena de auditoria restaurada tiene $filas_v2 filas de version 2: solo se verifican con AUDIT_HASH_KEY, que no esta en este respaldo (guardarla aparte, ops/backup/README.md)"
+  fi
+fi
+
 if [[ "$plano" == registro ]]; then
   usuarios="$(q "SELECT count(*) FROM identity.users")" || falla "no se pudo leer identity.users"
   [[ "${usuarios:-0}" -ge 1 ]] || falla "el registro restaurado no tiene usuarios: sin el superadmin la plataforma no se opera"

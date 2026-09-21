@@ -149,6 +149,26 @@ faltar en ESA copia (está en la siguiente). `tar` lo señala con el código 1, 
 Un archivo sin ese riesgo exige `doveadm backup` buzón a buzón (más lento, y duplica el espacio) o
 parar Dovecot; hoy no se hace ninguna de las dos, y queda anotado como mejora.
 
+## Lo que el respaldo no trae y hay que guardar aparte
+
+Los volcados (`mail_%`) llevan TODOS los esquemas de cada base, incluidos los de `mail_dav`,
+`mail_migration` y `audit` (`chain_anchors` y las filas de la cadena de hash de la versión 2), y
+`verify-restore.sh` exige los esquemas de las migraciones aplicadas: un servicio nuevo con su esquema
+queda cubierto sin tocar los guiones. Lo que **no** viaja en un volcado, y sin lo cual una
+restauración en un servidor nuevo queda a medias, son las claves del almacén de secretos:
+
+| Clave | Sin ella tras un desastre |
+|---|---|
+| `MAIL_ENCRYPTION_KEY` (y `MAIL_ENCRYPTION_KEYS_OLD`) | Las credenciales cifradas en la base (relayhosts, claves DKIM, SES propio, contraseñas de origen de migraciones) no se pueden descifrar |
+| `AUDIT_HASH_KEY` (y `AUDIT_HASH_KEYS_OLD`) | Las filas de versión 2 de la cadena de auditoría se restauran pero no se pueden verificar (`hash_key_missing`); `verify-restore.sh` avisa cuando la base restaurada las tiene |
+| `JWT_SIGNING_KEY`, `MAIL_LINK_SIGNING_KEY` | Las sesiones caen (se emiten de nuevo) y los enlaces de baja ya enviados dejan de validar |
+| Contraseñas de los roles de Postgres | Los roles (`mail_svc_*`, celda) no viajan en un volcado por base: se recrean con `ops/db/tenant-service-role.sh --all`, `cell-service-role.sh` y `cell-engine-role.sh` desde el almacén |
+
+Estas claves no están en ningún archivo de `BACKUP_DIR` ni del bucket: hay que copiarlas fuera del
+servidor (una vez, y cada vez que se rote una) y guardarlas con el mismo cuidado que la frase de
+cifrado. Tampoco se respaldan el JetStream de NATS (los eventos en vuelo: los críticos siguen en la
+`event_outbox` de su base y se republican) ni el Redis de la plataforma (sesiones y contadores).
+
 ## Configuración
 
 Las credenciales de Postgres salen del resolvedor común `ops/db/pg-credentials.sh`: la

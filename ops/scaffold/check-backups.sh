@@ -270,6 +270,17 @@ if not re.search(r'\[\[ "\$vol" == crypt-vol \]\] && ! cf_externo_cifra', correo
 if "--exclude=./_garbage" not in correo:
     fallos.append("backup-mail-volumes.sh archiva _garbage (lo que Dovecot ya borro)")
 
+# --- claves que el volcado no trae -----------------------------------------------------------------
+# Una restauracion en un servidor nuevo necesita las claves del almacen, que no estan en ningun archivo
+# del respaldo. El README las enumera y verify-restore.sh avisa de la cadena de auditoria de version 2,
+# que sin AUDIT_HASH_KEY se restaura pero no se puede verificar.
+lectura = leer(f"{backup}/README.md")
+for clave in ("MAIL_ENCRYPTION_KEY", "AUDIT_HASH_KEY", "JWT_SIGNING_KEY", "MAIL_LINK_SIGNING_KEY"):
+    if clave not in lectura.split("## Lo que el respaldo no trae", 1)[-1].split("## Configuración", 1)[0]:
+        fallos.append(f"ops/backup/README.md no lista {clave} entre lo que el respaldo no trae y hay que guardar aparte")
+if "AUDIT_HASH_KEY" not in leer(f"{backup}/verify-restore.sh"):
+    fallos.append("verify-restore.sh ya no avisa de que la cadena de auditoria de version 2 restaurada exige AUDIT_HASH_KEY")
+
 # --- cada trabajo programado tiene alerta ---------------------------------------------------------
 reglas = leer("ops/observability/prometheus/rules/plataforma.yml")
 trabajos = set()
