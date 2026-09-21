@@ -193,6 +193,12 @@ herramienta, que marca los commits de mailcow con palabras de seguridad.
 Para recoger parches del sistema aunque no cambie el codigo, las imagenes se reconstruyen una vez al mes
 (`scripts/deploy-mail.sh`, de un motor a la vez). Ese despliegue lo hace quien opera el servidor.
 
+Cada mes `.github/workflows/imagenes-motores.yml` construye las imagenes y las escanea con Trivy
+(`ops/security/escanear-motores.sh`): solo gravedad critica o alta y solo con version corregida publicada. Mantiene
+una incidencia abierta mientras haya algo que corregir. No se usa Dependabot para las imagenes de los motores: sus
+etiquetas son de version mayor de Alpine o Debian, y subir una (por ejemplo la de Dovecot) puede cambiar la version
+mayor del motor; ese cambio se decide con el informe de mailcow y `make e2e-mail`, no con una propuesta automatica.
+
 ## 10. Revision trimestral
 
 Cada trimestre se anota, en una linea al final de esta seccion, el numero de ficheros modificados, cuantos

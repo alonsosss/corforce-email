@@ -1,0 +1,64 @@
+name: Vulnerabilidades de las imagenes de los motores
+
+# Una vez al mes construye cada imagen de deploy/mail y la escanea con Trivy: solo gravedad critica o
+# alta y solo con arreglo publicado. Mantiene UNA incidencia abierta mientras haya algo que corregir y la
+# cierra cuando no queda nada. Solo lee: no despliega ni escribe en el repositorio. Los parches de los
+# motores llegan al reconstruir la imagen (deploy/mail/UPSTREAM.md, seccion 9); ClamAV se compila, asi
+# que el trabajo tarda.
+on:
+  schedule:
+    - cron: '0 9 1 * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: imagenes-motores
+  cancel-in-progress: false
+
+jobs:
+  escanear:
+    name: Escaneo de las imagenes de los motores
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Construir y escanear
+        run: ops/security/escanear-motores.sh escanear resultados > informe.md
+
+      - name: Resumen
+        run: sed 1d informe.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Resultados de Trivy
+        uses: actions/upload-artifact@v7
+        with:
+          name: trivy-motores
+          path: resultados/*.json
+          retention-days: 90
+
+      - name: Incidencia
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          read -r _ criticas altas < <(sed -n 's/^CORREGIBLES: /CORREGIBLES: /p' informe.md | head -1)
+          # Un cuerpo de incidencia admite 65536 caracteres: se recorta por debajo.
+          sed 1d informe.md | head -c 60000 > cuerpo.md
+          numero="$(gh issue list --state open --label imagenes-motores --json number --jq '.[0].number // empty')"
+          if [ "${criticas:-0}" -eq 0 ] && [ "${altas:-0}" -eq 0 ]; then
+            echo "Sin vulnerabilidades criticas ni altas con arreglo."
+            if [ -n "$numero" ]; then
+              gh issue close "$numero" --comment "Sin vulnerabilidades criticas ni altas con arreglo publicado en las imagenes de los motores."
+            fi
+            exit 0
+          fi
+          gh label create imagenes-motores --color d93f0b --description "Vulnerabilidades con arreglo en las imagenes de los motores" 2>/dev/null || true
+          titulo="Vulnerabilidades con arreglo en las imagenes de los motores: ${criticas:-0} criticas, ${altas:-0} altas"
+          if [ -n "$numero" ]; then
+            gh issue edit "$numero" --title "$titulo" --body-file cuerpo.md
+          else
+            gh issue create --title "$titulo" --label imagenes-motores --body-file cuerpo.md
+          fi

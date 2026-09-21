@@ -111,6 +111,11 @@ if ! bash "$ROOT/ops/scaffold/check-deliverability-tool.sh"; then
   FAIL=1
 fi
 
+echo "== 16. Escaneo de las imagenes de los motores: el informe cuenta cada CVE una vez y falla ante entradas rotas =="
+if ! bash "$ROOT/ops/scaffold/check-motor-scan.sh"; then
+  FAIL=1
+fi
+
 echo ""
 if [[ $FAIL -ne 0 ]]; then
   echo "VALIDACION: FALLA"; exit 1
