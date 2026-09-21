@@ -9,7 +9,7 @@ implementas algo marcado P, muevelo a V en la misma tarea.
 |---|---|---|---|---|
 | Registro | `mail_registry` (una) | identity, access-control, organization, billing; el gateway indirectamente | empresas, celdas, usuarios, sesiones, roles, permisos, catalogo de modulos, planes, suscripciones y contadores de consumo | `migrations/registry/` |
 | Celda | `mail_cell_<code>` (una por celda) | Postfix, Dovecot, Rspamd via `mail-auth`/`mail-policy`; mail-directory, mail-security | directorio de correo (`mail`), politicas antispam y cuarentena (`mail_security`) | `migrations/cell/canonical/<svc>/` |
-| Empresa | `mail_tenant_<slug>` (una por empresa) | el resto de servicios | auditoria, scheduler, dominios y claves DKIM (`domains`), trabajos de migracion de buzones (`mail_migration`), contactos, campanas, plantillas, envios, supresion | `migrations/tenant/canonical/<svc>/` |
+| Empresa | `mail_tenant_<slug>` (una por empresa) | el resto de servicios | auditoria, scheduler, dominios y claves DKIM (`domains`), trabajos de migracion de buzones (`mail_migration`), libretas y contactos personales de cada buzon (`mail_dav`), contactos, campanas, plantillas, envios, supresion | `migrations/tenant/canonical/<svc>/` |
 
 Las tres bases llevan además el esquema `platform` con `event_outbox` (`pkg/outbox`).
 
@@ -233,7 +233,7 @@ de buzon deja fila y evento, sin permiso de `INSERT` no deja ninguna, y el rele 
 evento con el id de su fila. Los cambios de credencial de un buzon salen como
 `mail.mailbox.credentials_changed` con `credential`: `password` (su contrasena principal) o
 `app_password` (una contrasena de aplicacion que pierde un inicio de sesion: se desactiva, se borra
-activa o pierde `imap_access`, `pop3_access`, `smtp_access` o `sieve_access`); darla de alta,
+activa o pierde `imap_access`, `pop3_access`, `smtp_access` o `sieve_access`; `dav_access` no cuenta: `mail-dav` no guarda sesion ni cache que cerrar); darla de alta,
 reactivarla o ampliarla no publica nada (V, 2026-09-15, `app_passwords_integration_test.go`, tambien
 sin permiso de `INSERT`: la revocacion no se confirma). Un cambio del propio buzon que le quita un
 inicio de sesion (se apaga, pasa a solo recepcion o pierde uno de esos cuatro flags) lo pierden
@@ -563,6 +563,40 @@ solo servicios, por la instancia de la celda de la empresa con `tenantcell.Calle
   latido ni cierra el trabajo de otra; lease ajeno, vencido, reintentos y agotamiento; el rol de servicio
   solo alcanza su esquema y su outbox; y el recorrido completo con cifrado real (la columna no contiene la
   contrasena, el ejecutor la recibe descifrada, al cerrar no queda rastro y el mensaje de error la retira).
+
+### 4.2 Contactos personales por CardDAV: `mail_dav` (V, 2026-09-21)
+
+`mail-dav` (`docs/adr/0004-contactos-y-calendario-carddav-caldav.md`) guarda en la base de cada empresa las libretas
+de contactos de sus buzones. El buzon dueno vive en la celda: aqui solo se guarda su id (`mailbox_id`), sin clave
+foranea entre esquemas. Las claves foraneas son de dentro del esquema y llevan empresa y buzon.
+
+* `mail_dav.addressbooks` (`migrations/tenant/canonical/mail-dav/01_mail_dav.sql`): `tenant_id`, `mailbox_id`, `slug`
+  (`^[a-z0-9][a-z0-9-]{0,62}$`, unico por buzon), nombre, descripcion, `sync_seq` (el `ctag` y el numero del token de
+  sincronizacion, sube en cada cambio) y `changes_floor` (el ultimo cambio podado).
+* `mail_dav.contacts`: `resource_name` (`*.vcf`), `uid` (unico por libreta), `vcard` (el texto tal cual lo envio el
+  cliente, hasta 4 MiB en la fila y menos por configuracion), `etag` (SHA-256 de esos bytes) y los campos indexados
+  `display_name` y `emails`. Clave foranea compuesta `(addressbook_id, tenant_id, mailbox_id)`: un contacto no puede
+  apuntar a la libreta de otro buzon.
+* `mail_dav.collection_changes`: registro de cambios por libreta (`seq`, recurso, borrado) para `sync-collection`
+  (RFC 6578); se poda a `MAIL_DAV_CHANGES_RETAINED` y el token es `urn:mail-dav:sync:<libreta>:<seq>`.
+* **RLS**: `mailbox_isolation` en las tres tablas para el grupo `mail_dav_service`, con
+  `tenant_id = app.current_tenant_id AND mailbox_id = app.current_user_id`. En este servicio `app.current_user_id`
+  es el id del BUZON autenticado por `mail-auth` (no hay usuario de la plataforma). Sin esos valores no pasa nada
+  (fail-closed). Solo vale para el rol de login `mail_svc_mail_dav` (`ops/db/tenant-service-role.sh --service
+  mail-dav`, `MAIL_DAV_DB_PASSWORD?` del almacen), que no es dueno de las tablas y solo tiene DML; sin credencial propia
+  (desarrollo) el servicio corre como dueno, exento de las politicas, y rigen solo los filtros de sus consultas.
+* Limites por buzon (`MAIL_DAV_MAX_*`): tamano y propiedades de un vCard, contactos y libretas; se cuentan bajo un
+  cerrojo consultivo por buzon. Pasarlos a derechos del plan de `billing` esta pendiente.
+* Sin eventos ni outbox. El borrado de los datos de un buzon borrado en `mail-directory` esta pendiente (hoy quedan
+  hasta que se borra la empresa).
+* Probado (integracion contra Postgres 16, `IT_PACKAGES='./services/mail-dav/...' make test-integration`, con el rol de
+  servicio real): migraciones dos veces; ciclo de libretas y contactos con `If-Match`/`If-None-Match`; UID unico; el
+  ctag no avanza si el contenido no cambia; sincronizacion incremental y poda del registro; 20 altas simultaneas
+  respetan el limite del buzon y las secuencias no se repiten; un buzon de otra empresa, uno de la misma empresa, la
+  consulta sin filtro, la escritura como otro buzon y la sesion vacia no ven ni tocan lo de otro, y con la politica
+  apagada (mutacion, revertida) la misma consulta si lo veria, y como dueno de las tablas (exento de las politicas) los
+  filtros de cada consulta aislan por si solos (quitar un filtro hace fallar esa prueba); las restricciones de la base (recurso con ruta, etag,
+  tamano, libreta ajena) y que el rol de servicio no hace DDL ni `TRUNCATE`.
 
 ## 5. Enrutado por peticion y por celda (V)
 

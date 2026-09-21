@@ -30,7 +30,7 @@ import { t } from '@/i18n';
 import { FormModal } from '@/pages/shared/FormModal';
 import { RowActions } from '@/pages/shared/RowActions';
 import { ActiveBadge } from '@/pages/shared/StatusBadges';
-import { APP_PASSWORD_ACCESS_KEYS, AccessCheckboxes, ProtocolBadges, allAccess } from './access';
+import { AccessCheckboxes, MAILBOX_ACCESS_KEYS, ProtocolBadges, allAccess } from './access';
 
 const NAME_MAX_LENGTH = 100;
 
@@ -157,7 +157,7 @@ function AppPasswordForm({
   onCreated: (result: CreatedAppPassword) => void;
 }) {
   const [name, setName] = useState('');
-  const [access, setAccess] = useState(allAccess(APP_PASSWORD_ACCESS_KEYS, true));
+  const [access, setAccess] = useState(allAccess(MAILBOX_ACCESS_KEYS, true));
   const [nameError, setNameError] = useState<string | null>(null);
 
   const action = useAction(async () => {
@@ -201,7 +201,7 @@ function AppPasswordForm({
         />
       </FormField>
       <div className="cf-form__section">{t('mailboxes.form.access')}</div>
-      <AccessCheckboxes keys={APP_PASSWORD_ACCESS_KEYS} value={access} onChange={setAccess} />
+      <AccessCheckboxes keys={MAILBOX_ACCESS_KEYS} value={access} onChange={setAccess} />
     </FormModal>
   );
 }

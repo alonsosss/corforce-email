@@ -78,7 +78,7 @@ func (h *Handler) CreateMailbox(w http.ResponseWriter, r *http.Request) {
 		LocalPart: req.LocalPart, Domain: req.Domain, Password: req.Password, DisplayName: req.DisplayName,
 		QuotaBytes: req.QuotaBytes, Active: req.Active, Kind: req.Kind, TLSEnforceIn: req.TLSEnforceIn,
 		TLSEnforceOut: req.TLSEnforceOut, IMAPAccess: req.IMAPAccess, POP3Access: req.POP3Access,
-		SMTPAccess: req.SMTPAccess, SieveAccess: req.SieveAccess, ForcePwUpdate: req.ForcePwUpdate,
+		SMTPAccess: req.SMTPAccess, SieveAccess: req.SieveAccess, DAVAccess: req.DAVAccess, ForcePwUpdate: req.ForcePwUpdate,
 		RelayhostID: req.RelayhostID,
 	})
 	if err != nil {
@@ -112,7 +112,7 @@ func (h *Handler) UpdateMailbox(w http.ResponseWriter, r *http.Request) {
 	m, err := h.uc.UpdateMailbox(r.Context(), tenantID, id, app.UpdateMailboxRequest{
 		DisplayName: req.DisplayName, QuotaBytes: req.QuotaBytes, Active: req.Active, Kind: req.Kind,
 		TLSEnforceIn: req.TLSEnforceIn, TLSEnforceOut: req.TLSEnforceOut, IMAPAccess: req.IMAPAccess,
-		POP3Access: req.POP3Access, SMTPAccess: req.SMTPAccess, SieveAccess: req.SieveAccess,
+		POP3Access: req.POP3Access, SMTPAccess: req.SMTPAccess, SieveAccess: req.SieveAccess, DAVAccess: req.DAVAccess,
 		ForcePwUpdate: req.ForcePwUpdate, RelayhostID: req.RelayhostID.Value,
 		ClearRelayhost: req.RelayhostID.Set && req.RelayhostID.Value == nil,
 	})

@@ -137,9 +137,9 @@ func TestUnCambioInofensivoNoRevoca(t *testing.T) {
 		{"quota_bytes"},
 		{"display_name", "quota_bytes"},
 		{"kind", "tls_enforce_in", "tls_enforce_out", "relayhost_id", "force_pw_update"},
-		// El webmail no usa pop3 ni sieve: perderlos no invalida su sesion aunque si cierre la
+		// El webmail no usa pop3, sieve ni dav: perderlos no invalida su sesion aunque si cierre la
 		// sesion IMAP o POP3 que los usara (eso lo hace mail-security en Dovecot).
-		{"pop3_access", "sieve_access"},
+		{"pop3_access", "sieve_access", "dav_access"},
 		// Lista vacia: el cambio no toco ningun atributo.
 		{},
 	} {

@@ -20,13 +20,13 @@ func NewMailboxRepo(pool *db.ContextPool) *MailboxRepo { return &MailboxRepo{poo
 // mailboxColumns no incluye password_hash: solo lo escribe este servicio y lo lee mail-auth.
 const mailboxColumns = `id, tenant_id, username, local_part, domain, display_name, quota_bytes, active, kind,
  tls_enforce_in, tls_enforce_out, relayhost_id, imap_access, pop3_access, smtp_access, sieve_access,
- force_pw_update, created_at, updated_at`
+ dav_access, force_pw_update, created_at, updated_at`
 
 func scanMailbox(row pgx.Row) (domain.Mailbox, error) {
 	var m domain.Mailbox
 	err := row.Scan(&m.ID, &m.TenantID, &m.Username, &m.LocalPart, &m.Domain, &m.DisplayName, &m.QuotaBytes, &m.Active,
 		&m.Kind, &m.TLSEnforceIn, &m.TLSEnforceOut, &m.RelayhostID, &m.IMAPAccess, &m.POP3Access, &m.SMTPAccess,
-		&m.SieveAccess, &m.ForcePwUpdate, &m.CreatedAt, &m.UpdatedAt)
+		&m.SieveAccess, &m.DAVAccess, &m.ForcePwUpdate, &m.CreatedAt, &m.UpdatedAt)
 	return m, mapErr(err)
 }
 
@@ -62,11 +62,11 @@ func (r *MailboxRepo) GetByUsername(ctx context.Context, tenantID uuid.UUID, use
 func (r *MailboxRepo) Create(ctx context.Context, m *domain.Mailbox) error {
 	return mapErr(r.pool.QueryRow(ctx,
 		`INSERT INTO mail.mailboxes (id, tenant_id, username, local_part, domain, password_hash, display_name, quota_bytes,
- active, kind, tls_enforce_in, tls_enforce_out, relayhost_id, imap_access, pop3_access, smtp_access, sieve_access, force_pw_update)
- VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18) RETURNING created_at, updated_at`,
+ active, kind, tls_enforce_in, tls_enforce_out, relayhost_id, imap_access, pop3_access, smtp_access, sieve_access, dav_access, force_pw_update)
+ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19) RETURNING created_at, updated_at`,
 		m.ID, m.TenantID, m.Username, m.LocalPart, m.Domain, m.PasswordHash, m.DisplayName, m.QuotaBytes,
 		m.Active, m.Kind, m.TLSEnforceIn, m.TLSEnforceOut, m.RelayhostID, m.IMAPAccess, m.POP3Access, m.SMTPAccess,
-		m.SieveAccess, m.ForcePwUpdate,
+		m.SieveAccess, m.DAVAccess, m.ForcePwUpdate,
 	).Scan(&m.CreatedAt, &m.UpdatedAt))
 }
 
@@ -74,10 +74,10 @@ func (r *MailboxRepo) Update(ctx context.Context, m *domain.Mailbox) error {
 	return mapErr(r.pool.QueryRow(ctx,
 		`UPDATE mail.mailboxes SET display_name = $3, quota_bytes = $4, active = $5, kind = $6, tls_enforce_in = $7,
  tls_enforce_out = $8, relayhost_id = $9, imap_access = $10, pop3_access = $11, smtp_access = $12, sieve_access = $13,
- force_pw_update = $14
+ dav_access = $14, force_pw_update = $15
  WHERE tenant_id = $1 AND id = $2 RETURNING updated_at`,
 		m.TenantID, m.ID, m.DisplayName, m.QuotaBytes, m.Active, m.Kind, m.TLSEnforceIn, m.TLSEnforceOut,
-		m.RelayhostID, m.IMAPAccess, m.POP3Access, m.SMTPAccess, m.SieveAccess, m.ForcePwUpdate,
+		m.RelayhostID, m.IMAPAccess, m.POP3Access, m.SMTPAccess, m.SieveAccess, m.DAVAccess, m.ForcePwUpdate,
 	).Scan(&m.UpdatedAt))
 }
 

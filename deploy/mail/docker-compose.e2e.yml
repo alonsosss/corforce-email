@@ -107,6 +107,8 @@ services:
       - ${E2E_TLS_DIR:?lo fija ops/e2e/mail.sh}:/run/cfm-e2e/tls:ro
     ports:
       - "127.0.0.1:${E2E_PORT_MAIL_AUTH:?lo fija ops/e2e/mail.sh}:8041"
+      # El listener TLS, para mail-dav (corre en el host): su certificado lleva tambien 127.0.0.1.
+      - "127.0.0.1:${E2E_PORT_MAIL_AUTH_TLS:?lo fija ops/e2e/mail.sh}:9082"
     networks:
       mail-engines:
         aliases:

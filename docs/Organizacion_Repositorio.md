@@ -100,6 +100,11 @@ los motores entienden traducida a PostgreSQL.
   modulo Go propio sin dependencias): migracion de buzones desde otro proveedor
   (`docs/adr/0002-migracion-de-buzones-con-imapsync.md`). `imapsync` no se copio de mailcow: se instala
   desde el paquete de Alpine (community, serie 2.314; Debian y Ubuntu no lo empaquetan) en la imagen del ejecutor.
+* `services/mail-dav` (plano de empresa): CardDAV, con su esquema `mail_dav` en `migrations/tenant/canonical/mail-dav/`
+  (tablas, RLS y rol de servicio). El protocolo WebDAV/CardDAV se escribio a mano en
+  `internal/adapters/http` (no se copio ni se importo nada de un servidor DAV: `docs/adr/0004-contactos-y-calendario-carddav-caldav.md`).
+  Tocan a otros servicios el flag `dav_access` (`mail-auth`, `mail-directory`, migracion `11_mailbox_dav_access.sql` de
+  la celda) y el gateway (`services/gateway/webdav.go`: metodos WebDAV y `/.well-known/carddav`).
 * Fases siguientes: `mail-directory`, `mail-auth`, `mail-policy`, `domain-service`,
   `transactional`, `contacts`, `campaigns`, `templates`, `suppression`, `reputation`,
   `analytics`, `billing`, `policy`, `web/`.

@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -65,6 +67,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("MAIL_MX_HOSTNAME %q: %v", os.Getenv("MAIL_MX_HOSTNAME"), err)
 	}
+	davServerURL, err := davServerURLFromEnv()
+	if err != nil {
+		log.Fatal(err)
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	pool, err := db.NewCellPool(ctx, cfg.Postgres, logger)
@@ -106,6 +112,7 @@ func main() {
 		MTASTSPublic: postgres.NewMTASTSPublicReader(ctxPool),
 		MX:           dnsadapter.New(strings.TrimSpace(os.Getenv("MAIL_DNS_RESOLVER"))),
 		PlatformMX:   platformMX,
+		DAVServerURL: davServerURL,
 		Secrets:      secrets.New(),
 		Events:       outboxadapter.NewPublisher(ctxPool),
 		Logger:       logger,
@@ -119,6 +126,27 @@ func main() {
 	if runErr != nil {
 		logger.Fatal("server error", zap.Error(runErr))
 	}
+}
+
+// davServerURLFromEnv lee MAIL_DAV_PUBLIC_URL, la URL con la que un cliente CardDAV llega a mail-dav por el
+// gateway. Es opcional: vacia, el directorio no ofrece datos de conexion. Con valor exige https (http solo
+// en desarrollo y prueba), sin credenciales, consulta ni fragmento, y la devuelve con barra final.
+func davServerURLFromEnv() (string, error) {
+	raw := strings.TrimSpace(os.Getenv("MAIL_DAV_PUBLIC_URL"))
+	if raw == "" {
+		return "", nil
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Opaque != "" {
+		return "", fmt.Errorf("MAIL_DAV_PUBLIC_URL %q no es una URL https sin credenciales, consulta ni fragmento", raw)
+	}
+	if u.Scheme != "https" && !(u.Scheme == "http" && config.DeclaredDevelopmentOrTest()) {
+		return "", fmt.Errorf("MAIL_DAV_PUBLIC_URL %q debe ser https (http solo con ENVIRONMENT development o test)", raw)
+	}
+	if !strings.HasSuffix(u.Path, "/") {
+		u.Path += "/"
+	}
+	return u.String(), nil
 }
 
 // apiRouter monta todo lo que el servicio sirve tras el token interno: el API con sesion que

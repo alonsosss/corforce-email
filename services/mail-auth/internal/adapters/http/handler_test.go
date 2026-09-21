@@ -16,11 +16,13 @@ type stubVerifier struct {
 	result      domain.Result
 	displayName string
 	got         *domain.VerifyRequest
+	tenantID    uuid.UUID
+	mailboxID   uuid.UUID
 }
 
 func (s *stubVerifier) Authenticate(_ context.Context, req domain.VerifyRequest) domain.Verification {
 	s.got = &req
-	return domain.Verification{Result: s.result, DisplayName: s.displayName}
+	return domain.Verification{Result: s.result, DisplayName: s.displayName, Username: "ana@empresa.pe", TenantID: s.tenantID, MailboxID: s.mailboxID}
 }
 
 func (s *stubVerifier) RecentLogins(context.Context, uuid.UUID, string, int) ([]domain.Login, error) {
@@ -173,5 +175,47 @@ func TestVerifyRechazaOtrosMetodos(t *testing.T) {
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("status = %d, se esperaba 405", rec.Code)
+	}
+}
+
+// mail-dav no puede deducir la empresa ni el buzon del nombre: solo a el se le devuelven, y solo si entra.
+func TestVerifyDevuelveLaIdentidadSoloAMailDAV(t *testing.T) {
+	stub := &stubVerifier{result: domain.ResultOK, displayName: "Ana Perez", tenantID: uuid.New(), mailboxID: uuid.New()}
+	h := NewHandler(stub).VerifyRoutes()
+	decode := func(rec *httptest.ResponseRecorder) map[string]any {
+		t.Helper()
+		var body map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatalf("cuerpo no es JSON: %q", rec.Body.String())
+		}
+		return body
+	}
+
+	dav := decode(post(t, h, "/", `{"username":"Ana@Empresa.PE","password":"s3cr3t","real_rip":"203.0.113.7","service":"dav"}`))
+	if dav["success"] != true || dav["username"] != "ana@empresa.pe" || dav["tenant_id"] != stub.tenantID.String() ||
+		dav["mailbox_id"] != stub.mailboxID.String() {
+		t.Fatalf("dav: %v", dav)
+	}
+	if _, ok := dav["display_name"]; ok {
+		t.Fatalf("dav no necesita el nombre visible: %v", dav)
+	}
+	for _, service := range []string{"imap", "webmail", "sieve"} {
+		body := decode(post(t, h, "/", `{"username":"ana@empresa.pe","password":"s3cr3t","real_rip":"203.0.113.7","service":"`+service+`"}`))
+		for _, k := range []string{"username", "tenant_id", "mailbox_id"} {
+			if _, ok := body[k]; ok {
+				t.Fatalf("%s no debe recibir %s: %v", service, k, body)
+			}
+		}
+	}
+
+	stub.result = domain.ResultNoAccess
+	rec := post(t, h, "/", `{"username":"ana@empresa.pe","password":"x","real_rip":"203.0.113.7","service":"dav"}`)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("rechazo: status = %d", rec.Code)
+	}
+	for _, k := range []string{"username", "tenant_id", "mailbox_id"} {
+		if _, ok := decode(rec)[k]; ok {
+			t.Fatalf("un rechazo no debe llevar %s: %q", k, rec.Body.String())
+		}
 	}
 }

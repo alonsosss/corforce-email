@@ -23,7 +23,7 @@ func TestAppPasswordLoginsRevoked(t *testing.T) {
 		{"sin pop3", full, with(func(p *AppPassword) { p.POP3Access = false }), true},
 		{"sin smtp", full, with(func(p *AppPassword) { p.SMTPAccess = false }), true},
 		{"sin sieve", full, with(func(p *AppPassword) { p.SieveAccess = false }), true},
-		{"sin dav: la plataforma no sirve DAV", full, with(func(p *AppPassword) { p.DAVAccess = false }), false},
+		{"sin dav: mail-dav no guarda sesion ni cache que cerrar", full, with(func(p *AppPassword) { p.DAVAccess = false }), false},
 		{"reactivada", *with(func(p *AppPassword) { p.Active = false }), &full, false},
 		{"con mas protocolos", *with(func(p *AppPassword) { p.IMAPAccess = false }), &full, false},
 		{"borrada inactiva", *with(func(p *AppPassword) { p.Active = false }), nil, false},
@@ -41,7 +41,7 @@ func TestAppPasswordLoginsRevoked(t *testing.T) {
 }
 
 func TestMailboxLoginsRevoked(t *testing.T) {
-	full := Mailbox{Username: "ana@acme.test", Active: ActiveOn, IMAPAccess: true, POP3Access: true, SMTPAccess: true, SieveAccess: true}
+	full := Mailbox{Username: "ana@acme.test", Active: ActiveOn, IMAPAccess: true, POP3Access: true, SMTPAccess: true, SieveAccess: true, DAVAccess: true}
 	with := func(change func(*Mailbox)) Mailbox {
 		m := full
 		change(&m)
@@ -60,6 +60,7 @@ func TestMailboxLoginsRevoked(t *testing.T) {
 		{"sin pop3", full, with(func(m *Mailbox) { m.POP3Access = false }), true},
 		{"sin smtp", full, with(func(m *Mailbox) { m.SMTPAccess = false }), true},
 		{"sin sieve", full, with(func(m *Mailbox) { m.SieveAccess = false }), true},
+		{"sin dav: mail-dav no guarda sesion ni cache que cerrar", full, with(func(m *Mailbox) { m.DAVAccess = false }), false},
 		{"apagado", full, with(func(m *Mailbox) { m.Active = ActiveOff }), true},
 		{"solo recepcion", full, with(func(m *Mailbox) { m.Active = ActiveReceiveOnly }), true},
 		{"de solo recepcion a apagado", with(func(m *Mailbox) { m.Active = ActiveReceiveOnly }), with(func(m *Mailbox) { m.Active = ActiveOff }), false},

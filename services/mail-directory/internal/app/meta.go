@@ -15,6 +15,14 @@ type Meta struct {
 	Limits      LimitsMeta     `json:"limits"`
 	Pagination  PaginationMeta `json:"pagination"`
 	Search      SearchMeta     `json:"search"`
+	// DAV es null mientras el operador no publique la URL de mail-dav (MAIL_DAV_PUBLIC_URL): la
+	// interfaz no ofrece datos de conexion que no existen.
+	DAV *DAVMeta `json:"dav"`
+}
+
+// DAVMeta son los datos que un cliente de contactos necesita para conectarse a mail-dav.
+type DAVMeta struct {
+	ServerURL string `json:"server_url"`
 }
 
 type MailboxMeta struct {
@@ -55,6 +63,15 @@ type PaginationMeta struct {
 
 type SearchMeta struct {
 	MaxLength int `json:"max_length"`
+}
+
+// Meta son las reglas del directorio mas lo que el despliegue configura (hoy la URL de mail-dav).
+func (uc *UseCase) Meta() Meta {
+	m := DirectoryMeta()
+	if uc.davServerURL != "" {
+		m.DAV = &DAVMeta{ServerURL: uc.davServerURL}
+	}
+	return m
 }
 
 // DirectoryMeta no depende de la empresa ni de la base: son reglas del servicio.

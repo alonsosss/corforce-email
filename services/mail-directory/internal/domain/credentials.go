@@ -17,8 +17,8 @@ func (c Credential) Valid() bool {
 }
 
 // appPasswordLogins son los inicios de sesion que abre una contrasena de aplicacion: los protocolos
-// que mail-auth le comprueba (imap, pop3, smtp y sieve) mientras esta activa. dav_access no abre nada
-// en la plataforma, que no sirve DAV.
+// que mail-auth le comprueba (imap, pop3, smtp y sieve) mientras esta activa. dav_access queda fuera: mail-dav
+// autentica cada peticion contra mail-auth sin sesion ni cache, asi que perderlo no deja nada que cerrar.
 func (p AppPassword) appPasswordLogins() [4]bool {
 	if !p.Active {
 		return [4]bool{}
@@ -28,7 +28,8 @@ func (p AppPassword) appPasswordLogins() [4]bool {
 
 // mailboxLogins son los inicios de sesion que abre el buzon con cualquiera de sus credenciales:
 // mail-auth exige active 1 y el flag del protocolo tanto a la contrasena principal como a las de
-// aplicacion, y el webmail necesita imap y smtp.
+// aplicacion, y el webmail necesita imap y smtp. dav_access tampoco cuenta, por lo mismo que en la de
+// aplicacion.
 func (m Mailbox) mailboxLogins() [4]bool {
 	if m.Active != ActiveOn {
 		return [4]bool{}

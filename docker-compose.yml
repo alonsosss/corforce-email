@@ -457,6 +457,36 @@ services:
       - mail-internal
       - mail-migration
 
+  # CardDAV: contactos personales de cada buzon (docs/adr/0004). Su usuario es un buzon: cada peticion se
+  # autentica con HTTP Basic contra mail-auth (service "dav", por la red de los motores) y el gateway lo
+  # expone como prefijo autenticado por el servicio. Sus datos viven en el esquema mail_dav de la base de cada
+  # empresa. Basic solo es admisible porque el proxy de borde termina TLS antes del gateway.
+  mail-dav:
+    build:
+      context: .
+      dockerfile: ./services/mail-dav/Dockerfile
+    ports:
+      - "127.0.0.1:${MAIL_DAV_PORT:-8058}:8058"
+    env_file:
+      - .env
+      - path: /dev/shm/core-force-mail/secrets.env
+        required: false
+    environment:
+      POSTGRES_PASSWORD: ${TENANT_SERVICES_PLATFORM_PASSWORD:-}
+      REGISTRY_DB_PASSWORD: ${TENANT_ROUTER_DB_PASSWORD:-}
+      TENANT_DB_USER: mail_svc_mail_dav
+      TENANT_DB_PASSWORD: ${MAIL_DAV_DB_PASSWORD:-}
+      JWT_SIGNING_KEY: ""
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
+    restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    networks:
+      - mail-internal
+      # mail-auth (verificacion de la credencial del buzon) esta en la red de los motores.
+      - mail-engines
+
   transactional:
     build:
       context: .

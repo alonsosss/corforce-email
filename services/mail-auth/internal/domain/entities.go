@@ -20,6 +20,9 @@ const (
 	ProtocolPOP3  Protocol = "pop3"
 	ProtocolSMTP  Protocol = "smtp"
 	ProtocolSieve Protocol = "sieve"
+	// ProtocolDAV es mail-dav (CardDAV): HTTP Basic con la contrasena principal o una de
+	// aplicacion, sin sesion, de modo que cada peticion vuelve a pasar por aqui.
+	ProtocolDAV Protocol = "dav"
 	// ProtocolWebmail es el webmail de la plataforma. El buzon no tiene flag propio: el
 	// webmail lee por IMAP y envia por SMTP con la credencial maestra de Dovecot, que no
 	// vuelve a pasar por aqui, asi que exige los DOS flags. Si bastara imap_access, un
@@ -43,6 +46,7 @@ var serviceProtocols = map[string]Protocol{
 	"lmtp":        ProtocolSMTP,
 	"sieve":       ProtocolSieve,
 	"managesieve": ProtocolSieve,
+	"dav":         ProtocolDAV,
 	"webmail":     ProtocolWebmail,
 }
 
@@ -74,13 +78,14 @@ type Mailbox struct {
 	Access              ProtocolAccess
 }
 
-// ProtocolAccess son los cuatro flags *_access, comunes al buzon y a la contrasena de
+// ProtocolAccess son los cinco flags *_access, comunes al buzon y a la contrasena de
 // aplicacion.
 type ProtocolAccess struct {
 	IMAP  bool
 	POP3  bool
 	SMTP  bool
 	Sieve bool
+	DAV   bool
 }
 
 // Allows indica si el flag del protocolo esta encendido.
@@ -94,6 +99,8 @@ func (a ProtocolAccess) Allows(p Protocol) bool {
 		return a.SMTP
 	case ProtocolSieve:
 		return a.Sieve
+	case ProtocolDAV:
+		return a.DAV
 	case ProtocolWebmail:
 		return a.IMAP && a.SMTP
 	}
@@ -151,9 +158,14 @@ const (
 // Authorized indica si el resultado abre la sesion.
 func (r Result) Authorized() bool { return r == ResultOK }
 
-// Verification es el desenlace con el nombre visible del buzon, que solo se rellena
-// cuando la credencial abre la sesion (el webmail lo usa como nombre del remitente).
+// Verification es el desenlace con lo que se sabe del buzon, que solo se rellena cuando la
+// credencial abre la sesion: el nombre visible (el webmail lo usa como nombre del remitente) y
+// la identidad canonica (mail-dav necesita la empresa para elegir su base y el buzon para
+// acotar sus datos, y no puede deducir ninguna de las dos del nombre).
 type Verification struct {
 	Result      Result
 	DisplayName string
+	Username    string
+	TenantID    uuid.UUID
+	MailboxID   uuid.UUID
 }

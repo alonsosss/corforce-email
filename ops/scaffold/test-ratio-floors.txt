@@ -13,6 +13,7 @@ services/domain-service 1.01
 services/gateway 0.93
 services/identity 0.85
 services/mail-auth 0.65
+services/mail-dav 0.77
 services/mail-directory 0.72
 services/mail-migration 0.75
 services/mail-security 0.48

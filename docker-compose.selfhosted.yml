@@ -219,6 +219,13 @@ services:
     restart: *reinicio
     environment: *go-service-env
     volumes: *internal-ca
+  mail-dav:
+    restart: *reinicio
+    environment:
+      <<: *go-service-env
+      # Verifica mail-auth (certificado de la CA interna) al autenticar cada peticion.
+      MAIL_DAV_TLS_CA_FILE: /run/core-force-mail/tls/publico/ca.crt
+    volumes: *internal-ca
   transactional:
     restart: *reinicio
     environment: *go-service-env

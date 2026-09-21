@@ -13,7 +13,7 @@ import (
 func TestMailboxChanges(t *testing.T) {
 	relay, otro := uuid.New(), uuid.New()
 	full := Mailbox{Username: "ana@acme.test", Active: ActiveOn, IMAPAccess: true, POP3Access: true,
-		SMTPAccess: true, SieveAccess: true, QuotaBytes: 1 << 20, DisplayName: "Ana"}
+		SMTPAccess: true, SieveAccess: true, DAVAccess: true, QuotaBytes: 1 << 20, DisplayName: "Ana"}
 	with := func(change func(*Mailbox)) Mailbox {
 		m := full
 		change(&m)
@@ -36,6 +36,7 @@ func TestMailboxChanges(t *testing.T) {
 		{"sin pop3", with(func(m *Mailbox) { m.POP3Access = false }), []MailboxAttr{AttrPOP3Access}},
 		{"sin smtp", with(func(m *Mailbox) { m.SMTPAccess = false }), []MailboxAttr{AttrSMTPAccess}},
 		{"sin sieve", with(func(m *Mailbox) { m.SieveAccess = false }), []MailboxAttr{AttrSieveAccess}},
+		{"sin dav", with(func(m *Mailbox) { m.DAVAccess = false }), []MailboxAttr{AttrDAVAccess}},
 		{"reenvio de contrasena", with(func(m *Mailbox) { m.ForcePwUpdate = true }), []MailboxAttr{AttrForcePwUpdate}},
 		{"cuota y nombre a la vez", with(func(m *Mailbox) { m.DisplayName, m.QuotaBytes = "Otra", 3<<20 }),
 			[]MailboxAttr{AttrDisplayName, AttrQuotaBytes}},
@@ -66,13 +67,13 @@ func TestMailboxChanges(t *testing.T) {
 
 func TestMailboxAttrValid(t *testing.T) {
 	for _, a := range []MailboxAttr{AttrDisplayName, AttrQuotaBytes, AttrActive, AttrKind, AttrTLSEnforceIn,
-		AttrTLSEnforceOut, AttrRelayhostID, AttrIMAPAccess, AttrPOP3Access, AttrSMTPAccess, AttrSieveAccess,
+		AttrTLSEnforceOut, AttrRelayhostID, AttrIMAPAccess, AttrPOP3Access, AttrSMTPAccess, AttrSieveAccess, AttrDAVAccess,
 		AttrForcePwUpdate, AttrPassword, AttrAppPassword} {
 		if !a.Valid() {
 			t.Errorf("%q deberia ser valido", a)
 		}
 	}
-	for _, a := range []MailboxAttr{"", "ACTIVE", "dav_access", "username"} {
+	for _, a := range []MailboxAttr{"", "ACTIVE", "caldav_access", "username"} {
 		if a.Valid() {
 			t.Errorf("%q no deberia ser valido", a)
 		}

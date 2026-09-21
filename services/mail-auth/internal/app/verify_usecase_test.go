@@ -84,7 +84,7 @@ func activeMailbox() *domain.Mailbox {
 		Username:     "ana@empresa.pe",
 		PasswordHash: hashMain,
 		Active:       domain.MailboxActive,
-		Access:       domain.ProtocolAccess{IMAP: true, POP3: true, SMTP: true, Sieve: true},
+		Access:       domain.ProtocolAccess{IMAP: true, POP3: true, SMTP: true, Sieve: true, DAV: true},
 	}
 }
 
@@ -223,7 +223,7 @@ func TestVerifyFrenoActivoNoConsultaLaBase(t *testing.T) {
 func TestVerifyServicioDesconocidoDeniega(t *testing.T) {
 	h := newHarness(activeMailbox())
 
-	if got := h.uc.Verify(context.Background(), request("principal", "dav")); got != domain.ResultUnknownService {
+	if got := h.uc.Verify(context.Background(), request("principal", "carddav")); got != domain.ResultUnknownService {
 		t.Fatalf("resultado = %s, se esperaba unknown_service", got)
 	}
 	if h.repo.finds != 0 {
@@ -301,5 +301,48 @@ func TestVerifySinFrenoConfiguradoFunciona(t *testing.T) {
 
 	if got := uc.Verify(context.Background(), request("principal", "imap")); got != domain.ResultOK {
 		t.Fatalf("resultado = %s, se esperaba ok", got)
+	}
+}
+
+// DAV es un protocolo mas: su flag manda, y una contrasena de aplicacion solo entra por DAV si lleva el suyo.
+func TestVerifyDAVUsaSuFlagYLaPrincipalOUnaDeAplicacion(t *testing.T) {
+	mb := activeMailbox()
+	mb.Access.DAV = false
+	h := newHarness(mb)
+	if got := h.uc.Verify(context.Background(), request("principal", "dav")); got != domain.ResultNoAccess {
+		t.Fatalf("sin dav_access: %s, se esperaba no_access", got)
+	}
+	if got := h.uc.Verify(context.Background(), request("principal", "imap")); got != domain.ResultOK {
+		t.Fatalf("imap no depende de dav_access: %s", got)
+	}
+
+	mb.Access.DAV = true
+	if got := h.uc.Verify(context.Background(), request("principal", "dav")); got != domain.ResultOK {
+		t.Fatalf("con dav_access: %s, se esperaba ok", got)
+	}
+
+	appID := uuid.New()
+	h.repo.appPasswords = []domain.AppPassword{{ID: appID, Name: "contactos", PasswordHash: hashApp}}
+	h.repo.appProtocol = domain.ProtocolDAV
+	if got := h.uc.Verify(context.Background(), request("movil", "dav")); got != domain.ResultOK {
+		t.Fatalf("contrasena de aplicacion con dav_access: %s, se esperaba ok", got)
+	}
+	if got := h.uc.Verify(context.Background(), request("movil", "imap")); got != domain.ResultBadPassword {
+		t.Fatalf("la misma contrasena por imap: %s, se esperaba bad_password", got)
+	}
+}
+
+// La identidad canonica (buzon y empresa) sale solo si la credencial abre la sesion.
+func TestAuthenticateDevuelveLaIdentidadSoloSiAutoriza(t *testing.T) {
+	mb := activeMailbox()
+	h := newHarness(mb)
+
+	v := h.uc.Authenticate(context.Background(), request("principal", "dav"))
+	if v.Result != domain.ResultOK || v.Username != mb.Username || v.TenantID != mb.TenantID || v.MailboxID != mb.ID {
+		t.Fatalf("verificacion inesperada: %+v", v)
+	}
+	if v := h.uc.Authenticate(context.Background(), request("otra", "dav")); v.Result != domain.ResultBadPassword ||
+		v.Username != "" || v.TenantID != uuid.Nil || v.MailboxID != uuid.Nil {
+		t.Fatalf("un rechazo no debe llevar la identidad: %+v", v)
 	}
 }

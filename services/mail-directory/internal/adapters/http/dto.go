@@ -86,6 +86,7 @@ type createMailboxRequest struct {
 	POP3Access    *bool      `json:"pop3_access"`
 	SMTPAccess    *bool      `json:"smtp_access"`
 	SieveAccess   *bool      `json:"sieve_access"`
+	DAVAccess     *bool      `json:"dav_access"`
 	ForcePwUpdate bool       `json:"force_pw_update"`
 	RelayhostID   *uuid.UUID `json:"relayhost_id"`
 }
@@ -101,6 +102,7 @@ type updateMailboxRequest struct {
 	POP3Access    *bool        `json:"pop3_access"`
 	SMTPAccess    *bool        `json:"smtp_access"`
 	SieveAccess   *bool        `json:"sieve_access"`
+	DAVAccess     *bool        `json:"dav_access"`
 	ForcePwUpdate *bool        `json:"force_pw_update"`
 	RelayhostID   nullableUUID `json:"relayhost_id"`
 }

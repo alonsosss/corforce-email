@@ -186,3 +186,32 @@ func TestLasLlamadasSinEmpresaNoSeComprueban(t *testing.T) {
 		t.Fatalf("sin token interno: %d, atendidas %d, consultas %d", rec.Code, atendidas, org.Calls())
 	}
 }
+
+func TestDAVServerURLFromEnv(t *testing.T) {
+	cases := []struct {
+		name, env, raw string
+		want           string
+		wantErr        bool
+	}{
+		{"sin configurar no ofrece nada", "production", "", "", false},
+		{"https con barra final", "production", "https://mail.acme.test/api/v1/dav/", "https://mail.acme.test/api/v1/dav/", false},
+		{"anade la barra final", "production", "https://mail.acme.test/api/v1/dav", "https://mail.acme.test/api/v1/dav/", false},
+		{"http en produccion", "production", "http://mail.acme.test/api/v1/dav/", "", true},
+		{"http en desarrollo", "development", "http://localhost:8080/api/v1/dav/", "http://localhost:8080/api/v1/dav/", false},
+		{"con credenciales", "production", "https://ana:clave@mail.acme.test/api/v1/dav/", "", true},
+		{"con consulta", "production", "https://mail.acme.test/api/v1/dav/?x=1", "", true},
+		{"con fragmento", "production", "https://mail.acme.test/api/v1/dav/#x", "", true},
+		{"sin host", "production", "https:///api/v1/dav/", "", true},
+		{"otro esquema", "production", "ftp://mail.acme.test/dav/", "", true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Setenv("ENVIRONMENT", c.env)
+			t.Setenv("MAIL_DAV_PUBLIC_URL", c.raw)
+			got, err := davServerURLFromEnv()
+			if (err != nil) != c.wantErr || got != c.want {
+				t.Fatalf("got %q, %v; quiero %q, error=%v", got, err, c.want, c.wantErr)
+			}
+		})
+	}
+}

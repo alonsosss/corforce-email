@@ -75,6 +75,7 @@ func main() {
 	r := chi.NewRouter()
 	// Strip trusted internal headers first to prevent client header injection.
 	r.Use(middleware.StripInternalHeaders)
+	r.Use(webdavGuard(table))
 	// La celda destino que pide el cliente no sigue hacia ningun servicio: se guarda para las
 	// rutas con sesion, que la validan (target.go).
 	r.Use(captureTargetCell)
@@ -123,6 +124,8 @@ func main() {
 	} else if mediaStore != nil {
 		r.Get("/media/*", mediaHandler(mediaStore, logger))
 	}
+
+	mountWellKnown(r, table, limiter.Limit)
 
 	if table.Frontend != "" {
 		r.Handle("/*", reverseProxy(table.serviceURL(table.Frontend), internalToken))

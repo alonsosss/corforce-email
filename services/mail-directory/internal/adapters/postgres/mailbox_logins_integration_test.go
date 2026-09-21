@@ -90,6 +90,8 @@ func TestProtocolosDelBuzonEnLaOutbox(t *testing.T) {
 		{"quitar sieve", app.UpdateMailboxRequest{SieveAccess: &no}, true},
 		{"solo recepcion", app.UpdateMailboxRequest{Active: &receiveOnly}, true},
 		{"quitar pop3 sin inicio de sesion", app.UpdateMailboxRequest{POP3Access: &no}, false},
+		{"quitar dav", app.UpdateMailboxRequest{DAVAccess: &no}, false},
+		{"devolver dav", app.UpdateMailboxRequest{DAVAccess: &yes}, false},
 		{"reactivar", app.UpdateMailboxRequest{Active: &on}, false},
 	} {
 		_, err := uc.UpdateMailbox(actx, tenant, mb.ID, step.req)

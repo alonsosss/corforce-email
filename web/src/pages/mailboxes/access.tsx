@@ -7,10 +7,10 @@ export const MAILBOX_ACCESS_KEYS = [
   'pop3_access',
   'smtp_access',
   'sieve_access',
+  'dav_access',
 ] as const;
-export const APP_PASSWORD_ACCESS_KEYS = [...MAILBOX_ACCESS_KEYS, 'dav_access'] as const;
 
-export type AccessKey = (typeof APP_PASSWORD_ACCESS_KEYS)[number];
+export type AccessKey = (typeof MAILBOX_ACCESS_KEYS)[number];
 
 export function allAccess<K extends AccessKey>(
   keys: readonly K[],
@@ -59,7 +59,7 @@ export function AccessCheckboxes<K extends AccessKey>({
 }
 
 export function ProtocolBadges({ value }: { value: Partial<Record<AccessKey, boolean>> }) {
-  const enabled = APP_PASSWORD_ACCESS_KEYS.filter((key) => value[key]);
+  const enabled = MAILBOX_ACCESS_KEYS.filter((key) => value[key]);
   return (
     <span className="cf-inline-list">
       {enabled.map((key) => (

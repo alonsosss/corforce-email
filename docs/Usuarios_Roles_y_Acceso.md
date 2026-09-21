@@ -290,7 +290,7 @@ Quitar `imap_access` o `smtp_access` las cierra porque el webmail necesita los d
 V (2026-09-15): los dos eventos de cambio llevan `changed`, los atributos que cambiaron
 (`domain.MailboxChanges` en mail-directory, en la misma transaccion del cambio), y el webmail revoca
 salvo que TODOS sean inofensivos para su sesion (nombre visible, cuota, `kind`, TLS, relayhost,
-`force_pw_update`, `pop3_access` y `sieve_access`): cambiar la cuota o el nombre visible ya no echa
+`force_pw_update`, `pop3_access`, `sieve_access` y `dav_access`): cambiar la cuota o el nombre visible ya no echa
 al usuario, que es lo que pasaba cuando revocaba con todo `mail.mailbox.updated`. La lista del
 webmail es de lo inofensivo, no de lo peligroso, asi que un atributo que no reconozca, un `changed`
 ilegible o su ausencia (un publicador anterior al campo) revocan igual que antes; el campo es
@@ -298,6 +298,22 @@ aditivo y un consumidor que no lo lea se comporta como hasta ahora. `changed` va
 `app_password` cuando lo que cambio fue la credencial misma, y la baja de la empresa apaga cada
 buzon con `active`, que revoca. mail-security no lo lee: sigue decidiendo con el estado real del
 directorio.
+
+Acceso DAV (CardDAV, V, 2026-09-21, `docs/adr/0004-contactos-y-calendario-carddav-caldav.md`): un cliente de contactos
+(iOS, Thunderbird, DAVx5) no tiene sesion ni JWT, autentica cada peticion con HTTP Basic contra el BUZON. `mail-dav`
+no valida la credencial: la verifica `mail-auth` con `service: "dav"`, que exige `active = 1` y el flag `dav_access`
+(en el buzon y, si entra con una contrasena de aplicacion, en esa contrasena; la contrasena principal tambien vale) y
+aplica el freno de fuerza bruta por (buzon, IP) y por IP como en IMAP. `mail-auth` devuelve solo a `dav` la empresa y
+el buzon (`tenant_id`, `mailbox_id`, `username`): la empresa elige la base, el buzon acota todo lo que se lee o se
+escribe (filtros de consulta y politicas RLS por buzon) y ninguna ruta o cabecera los sustituye. El gateway lo
+declara como prefijo `self_authenticated` (`/api/v1/dav`, sin JWT ni RBAC por modulo, con su cupo general por IP); un
+fallo de `mail-auth` es 503 y no 401. No hay revocacion de sesiones porque no hay sesion ni cache: apagar `dav_access`
+o desactivar una contrasena de aplicacion se aplica en la siguiente peticion, y por eso perder `dav_access` no
+publica `mail.mailbox.credentials_changed` (que echaria a IMAP sin necesidad) y el webmail lo cuenta entre los
+cambios inofensivos. Administrar el flag es una accion de `mailboxes` (la ficha del buzon y sus contrasenas de
+aplicacion; la ficha muestra la URL del servidor que ofrece `mail-directory` desde `MAIL_DAV_PUBLIC_URL`). Basic solo
+es admisible porque el proxy de borde termina TLS.
+
 
 V (2026-09-15, contra Dovecot y Postfix reales con `make e2e-mail`): Dovecot deja de aceptar al
 momento la credencial de un buzon apagado, borrado o con la contrasena cambiada, aunque la tuviera

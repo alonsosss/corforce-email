@@ -81,6 +81,7 @@ function DataForm({ mailbox, onChange, meta }: MailboxDataTabProps & { meta: Dir
       pop3_access: changed(access.pop3_access, mailbox.pop3_access),
       smtp_access: changed(access.smtp_access, mailbox.smtp_access),
       sieve_access: changed(access.sieve_access, mailbox.sieve_access),
+      dav_access: changed(access.dav_access, mailbox.dav_access),
       tls_enforce_in: changed(tlsIn, mailbox.tls_enforce_in),
       tls_enforce_out: changed(tlsOut, mailbox.tls_enforce_out),
       force_pw_update: changed(forcePassword, mailbox.force_pw_update),

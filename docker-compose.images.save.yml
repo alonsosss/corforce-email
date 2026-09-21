@@ -38,6 +38,9 @@ services:
   mail-migration:
     image: core-force-mail/mail-migration:${DEPLOY_TAG:?lo fija scripts/deploy-ecr.sh}
     pull_policy: never
+  mail-dav:
+    image: core-force-mail/mail-dav:${DEPLOY_TAG:?lo fija scripts/deploy-ecr.sh}
+    pull_policy: never
   transactional:
     image: core-force-mail/transactional:${DEPLOY_TAG:?lo fija scripts/deploy-ecr.sh}
     pull_policy: never

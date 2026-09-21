@@ -47,13 +47,16 @@ func (uc *UseCase) Verify(ctx context.Context, req domain.VerifyRequest) domain.
 	return uc.Authenticate(ctx, req).Result
 }
 
-// Authenticate es Verify con el nombre visible del buzon, que solo sale si la
-// credencial abre la sesion.
+// Authenticate es Verify con la identidad del buzon, que solo sale si la credencial abre la
+// sesion.
 func (uc *UseCase) Authenticate(ctx context.Context, req domain.VerifyRequest) domain.Verification {
 	result, mailbox := uc.verify(ctx, req)
 	v := domain.Verification{Result: uc.finish(req.Service, result)}
 	if result.Authorized() && mailbox != nil {
 		v.DisplayName = mailbox.DisplayName
+		v.Username = mailbox.Username
+		v.TenantID = mailbox.TenantID
+		v.MailboxID = mailbox.ID
 	}
 	return v
 }

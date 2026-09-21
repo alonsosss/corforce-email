@@ -24,6 +24,7 @@ type CreateMailboxRequest struct {
 	POP3Access    *bool
 	SMTPAccess    *bool
 	SieveAccess   *bool
+	DAVAccess     *bool
 	ForcePwUpdate bool
 	RelayhostID   *uuid.UUID
 }
@@ -39,6 +40,7 @@ type UpdateMailboxRequest struct {
 	POP3Access     *bool
 	SMTPAccess     *bool
 	SieveAccess    *bool
+	DAVAccess      *bool
 	ForcePwUpdate  *bool
 	RelayhostID    *uuid.UUID
 	ClearRelayhost bool
@@ -47,7 +49,7 @@ type UpdateMailboxRequest struct {
 func (r UpdateMailboxRequest) empty() bool {
 	return r.DisplayName == nil && r.QuotaBytes == nil && r.Active == nil && r.Kind == nil &&
 		r.TLSEnforceIn == nil && r.TLSEnforceOut == nil && r.IMAPAccess == nil && r.POP3Access == nil &&
-		r.SMTPAccess == nil && r.SieveAccess == nil && r.ForcePwUpdate == nil && r.RelayhostID == nil && !r.ClearRelayhost
+		r.SMTPAccess == nil && r.SieveAccess == nil && r.DAVAccess == nil && r.ForcePwUpdate == nil && r.RelayhostID == nil && !r.ClearRelayhost
 }
 
 func boolOr(v *bool, def bool) bool {
@@ -115,7 +117,7 @@ func (uc *UseCase) CreateMailbox(ctx context.Context, tenantID uuid.UUID, req Cr
 		TLSEnforceIn: req.TLSEnforceIn, TLSEnforceOut: req.TLSEnforceOut, RelayhostID: req.RelayhostID,
 		IMAPAccess: boolOr(req.IMAPAccess, true), POP3Access: boolOr(req.POP3Access, true),
 		SMTPAccess: boolOr(req.SMTPAccess, true), SieveAccess: boolOr(req.SieveAccess, true),
-		ForcePwUpdate: req.ForcePwUpdate,
+		DAVAccess: boolOr(req.DAVAccess, true), ForcePwUpdate: req.ForcePwUpdate,
 	}
 	err = uc.writeTx(ctx, tenantID, func(ctx context.Context) error {
 		d, err := uc.ownDomain(ctx, tenantID, name)
@@ -257,6 +259,9 @@ func applyMailboxUpdate(m *domain.Mailbox, req UpdateMailboxRequest) {
 	}
 	if req.SieveAccess != nil {
 		m.SieveAccess = *req.SieveAccess
+	}
+	if req.DAVAccess != nil {
+		m.DAVAccess = *req.DAVAccess
 	}
 	if req.ForcePwUpdate != nil {
 		m.ForcePwUpdate = *req.ForcePwUpdate

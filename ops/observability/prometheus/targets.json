@@ -100,6 +100,15 @@
   },
   {
     "targets": [
+      "mail-dav:8058"
+    ],
+    "labels": {
+      "job": "mail-services",
+      "service": "mail-dav"
+    }
+  },
+  {
+    "targets": [
       "mail-directory:8040"
     ],
     "labels": {

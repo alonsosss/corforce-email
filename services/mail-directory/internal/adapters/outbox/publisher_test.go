@@ -121,7 +121,7 @@ func TestAvisoDeCredencialDesconocidaNoSeEncola(t *testing.T) {
 // transaccion), que es donde se ve.
 func TestAtributoDesconocidoNoSeEncola(t *testing.T) {
 	m := &domain.Mailbox{ID: uuid.New(), TenantID: uuid.New(), Username: "ana@acme.test"}
-	for _, changed := range [][]domain.MailboxAttr{{"dav_access"}, {domain.AttrActive, "inventado"}} {
+	for _, changed := range [][]domain.MailboxAttr{{"caldav_access"}, {domain.AttrActive, "inventado"}} {
 		exec := &execCapturado{}
 		if err := NewPublisher(exec).MailboxUpdated(context.Background(), m, changed); err == nil {
 			t.Fatalf("%v deberia fallar", changed)

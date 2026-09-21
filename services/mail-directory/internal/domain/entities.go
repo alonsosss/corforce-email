@@ -100,6 +100,7 @@ type Mailbox struct {
 	POP3Access    bool       `json:"pop3_access"`
 	SMTPAccess    bool       `json:"smtp_access"`
 	SieveAccess   bool       `json:"sieve_access"`
+	DAVAccess     bool       `json:"dav_access"`
 	ForcePwUpdate bool       `json:"force_pw_update"`
 	CreatedAt     time.Time  `json:"created_at"`
 	UpdatedAt     time.Time  `json:"updated_at"`

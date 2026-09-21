@@ -57,12 +57,20 @@ type metaContract struct {
 	Search struct {
 		MaxLength int `json:"max_length"`
 	} `json:"search"`
+	DAV *struct {
+		ServerURL string `json:"server_url"`
+	} `json:"dav"`
 }
 
 func metaRequest(t *testing.T, roles ...string) *httptest.ResponseRecorder {
 	t.Helper()
+	return metaRequestWith(t, app.Deps{}, roles...)
+}
+
+func metaRequestWith(t *testing.T, deps app.Deps, roles ...string) *httptest.ResponseRecorder {
+	t.Helper()
 	// access-control inalcanzable: solo un rol del sistema pasa sin consultarlo.
-	h := NewHandler(app.New(app.Deps{}), authz.NewChecker("http://127.0.0.1:9", ""))
+	h := NewHandler(app.New(deps), authz.NewChecker("http://127.0.0.1:9", ""))
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/mail-directory/meta", nil)
 	ctx := middleware.WithIdentity(req.Context(), uuid.NewString(), uuid.NewString())
 	ctx = context.WithValue(ctx, middleware.CtxRoles, roles)
@@ -87,7 +95,7 @@ func TestMetaDelDirectorioContrato(t *testing.T) {
 	if err := json.Unmarshal(env.Data, &top); err != nil {
 		t.Fatal(err)
 	}
-	wantKeys := []string{"alias", "bcc_map_types", "domain", "limits", "mailbox", "pagination", "search", "sieve", "tls_policies"}
+	wantKeys := []string{"alias", "bcc_map_types", "domain", "limits", "mailbox", "dav", "pagination", "search", "sieve", "tls_policies"}
 	for _, k := range wantKeys {
 		if _, ok := top[k]; !ok {
 			t.Errorf("falta la clave %q", k)
@@ -134,9 +142,30 @@ func TestMetaDelDirectorioContrato(t *testing.T) {
 			t.Errorf("%s = %v, quiero %v", c.name, c.got, c.want)
 		}
 	}
+	if got.DAV != nil {
+		t.Errorf("sin MAIL_DAV_PUBLIC_URL no hay datos de conexion: %+v", got.DAV)
+	}
 	// NormalizePage acota a la pagina maxima que declara el contrato.
 	if _, perPage, _ := app.NormalizePage(1, got.Pagination.MaxPageSize+1); perPage != got.Pagination.MaxPageSize {
 		t.Errorf("max_page_size no es el tope real: %d", perPage)
+	}
+}
+
+// Con la URL de mail-dav configurada el directorio la ofrece tal cual: la interfaz no la construye.
+func TestMetaOfreceLaURLDeDAV(t *testing.T) {
+	const url = "https://mail.acme.test/api/v1/dav/"
+	rec := metaRequestWith(t, app.Deps{DAVServerURL: url}, middleware.RoleTenantAdmin)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+	}
+	var env struct {
+		Data metaContract `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
+		t.Fatal(err)
+	}
+	if env.Data.DAV == nil || env.Data.DAV.ServerURL != url {
+		t.Fatalf("dav = %+v, quiero %q", env.Data.DAV, url)
 	}
 }
 

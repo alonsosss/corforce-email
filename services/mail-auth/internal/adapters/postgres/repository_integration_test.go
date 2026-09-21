@@ -94,8 +94,8 @@ func TestRepositorioContraEsquemaReal(t *testing.T) {
 
 	var mailboxID uuid.UUID
 	err = pool.QueryRow(ctx, `
-		INSERT INTO mail.mailboxes (tenant_id, username, local_part, domain, password_hash, pop3_access)
-		VALUES ($1, $2, split_part($2, '@', 1), split_part($2, '@', 2), $3, false)
+		INSERT INTO mail.mailboxes (tenant_id, username, local_part, domain, password_hash, pop3_access, dav_access)
+		VALUES ($1, $2, split_part($2, '@', 1), split_part($2, '@', 2), $3, false, true)
 		RETURNING id`, tenantID, username, string(hash)).Scan(&mailboxID)
 	if err != nil {
 		t.Fatalf("sembrar buzon: %v", err)
@@ -109,8 +109,8 @@ func TestRepositorioContraEsquemaReal(t *testing.T) {
 
 	var appID uuid.UUID
 	err = pool.QueryRow(ctx, `
-		INSERT INTO mail.app_passwords (tenant_id, mailbox_id, name, password_hash, imap_access, smtp_access)
-		VALUES ($1, $2, 'movil', $3, false, true)
+		INSERT INTO mail.app_passwords (tenant_id, mailbox_id, name, password_hash, imap_access, smtp_access, dav_access)
+		VALUES ($1, $2, 'movil', $3, false, true, false)
 		RETURNING id`, tenantID, mailboxID, string(hash)).Scan(&appID)
 	if err != nil {
 		t.Fatalf("sembrar contrasena de aplicacion: %v", err)
@@ -125,7 +125,7 @@ func TestRepositorioContraEsquemaReal(t *testing.T) {
 	if mb.ID != mailboxID || mb.TenantID != tenantID || mb.Active != domain.MailboxActive {
 		t.Fatalf("buzon inesperado: %+v", mb)
 	}
-	if !mb.Access.IMAP || mb.Access.POP3 {
+	if !mb.Access.IMAP || mb.Access.POP3 || !mb.Access.DAV {
 		t.Fatalf("flags inesperados: %+v", mb.Access)
 	}
 	if bcrypt.CompareHashAndPassword([]byte(mb.PasswordHash), []byte("secreta")) != nil {
@@ -148,6 +148,19 @@ func TestRepositorioContraEsquemaReal(t *testing.T) {
 	}
 	if len(imap) != 0 {
 		t.Fatalf("imap debe filtrar por flag: %+v", imap)
+	}
+	dav, err := repo.ListAppPasswords(ctx, mailboxID, domain.ProtocolDAV)
+	if err != nil {
+		t.Fatalf("ListAppPasswords dav: %v", err)
+	}
+	if len(dav) != 0 {
+		t.Fatalf("dav debe filtrar por su flag: %+v", dav)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE mail.app_passwords SET dav_access = true WHERE id = $1`, appID); err != nil {
+		t.Fatalf("encender dav_access: %v", err)
+	}
+	if dav, err = repo.ListAppPasswords(ctx, mailboxID, domain.ProtocolDAV); err != nil || len(dav) != 1 || dav[0].ID != appID {
+		t.Fatalf("dav con su flag: %+v, err=%v", dav, err)
 	}
 
 	if err := repo.TouchAppPassword(ctx, appID); err != nil {

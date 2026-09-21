@@ -20,6 +20,7 @@ import { t } from '@/i18n';
 import { paths } from '@/paths';
 import { ActiveStateBadge } from '@/pages/shared/StatusBadges';
 import { AppPasswordsTab } from './AppPasswordsTab';
+import { DavTab } from './DavTab';
 import { LoginsTab } from './LoginsTab';
 import { MailboxDataTab } from './MailboxDataTab';
 import { MailboxPasswordTab } from './MailboxPasswordTab';
@@ -29,7 +30,15 @@ import { SieveTab } from './SieveTab';
 import { VacationTab } from './VacationTab';
 
 type TabId =
-  'data' | 'password' | 'quota' | 'appPasswords' | 'sieve' | 'vacation' | 'migration' | 'logins';
+  | 'data'
+  | 'password'
+  | 'quota'
+  | 'appPasswords'
+  | 'sieve'
+  | 'vacation'
+  | 'dav'
+  | 'migration'
+  | 'logins';
 
 export default function MailboxDetailPage() {
   const { id = '' } = useParams();
@@ -54,6 +63,7 @@ export default function MailboxDetailPage() {
           { id: 'vacation' as const, label: t('mailboxes.tab.vacation') },
         ]
       : []),
+    { id: 'dav', label: t('mailboxes.tab.dav') },
     ...(can(...PERMISSIONS.mailMigrationJobs.read)
       ? [{ id: 'migration' as const, label: t('mailboxes.tab.migration') }]
       : []),
@@ -121,6 +131,14 @@ export default function MailboxDetailPage() {
       {tab === 'appPasswords' ? <AppPasswordsTab mailbox={m} /> : null}
       {tab === 'sieve' ? <SieveTab mailbox={m} /> : null}
       {tab === 'vacation' ? <VacationTab mailbox={m} /> : null}
+      {tab === 'dav' ? (
+        <DavTab
+          mailbox={m}
+          onOpenAppPasswords={
+            can(...PERMISSIONS.appPasswords.read) ? () => setTab('appPasswords') : undefined
+          }
+        />
+      ) : null}
       {tab === 'migration' ? <MigrationTab mailbox={m} /> : null}
       {tab === 'logins' ? <LoginsTab mailbox={m} /> : null}
       <ConfirmDialog

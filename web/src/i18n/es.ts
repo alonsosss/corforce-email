@@ -882,6 +882,7 @@ export const es = {
   'mailboxes.tab.sieve': 'Filtros sieve',
   'mailboxes.tab.vacation': 'Respuesta automatica',
   'mailboxes.tab.logins': 'Inicios de sesion',
+  'mailboxes.tab.dav': 'Contactos (CardDAV)',
   'mailboxes.tab.migration': 'Migracion',
   'mailboxes.form.createTitle': 'Nuevo buzon',
   'mailboxes.form.localPart': 'Usuario',
@@ -983,6 +984,22 @@ export const es = {
   'sieve.tooLarge': 'El script supera el maximo de {kib} KiB.',
   'sieve.noManageSieve':
     'Este buzon no tiene acceso Sieve: el usuario no gestiona sus propios filtros, pero estos se siguen aplicando.',
+
+  'dav.title': 'Contactos (CardDAV)',
+  'dav.description':
+    'Datos para sincronizar los contactos de este buzon con un cliente CardDAV, como el de un movil o de un programa de correo.',
+  'dav.serverUrl': 'URL del servidor',
+  'dav.username': 'Usuario',
+  'dav.password': 'Contrasena',
+  'dav.passwordHint':
+    'Usa una contrasena de aplicacion con el acceso DAV activado, no la contrasena del buzon.',
+  'dav.openAppPasswords': 'Gestionar contrasenas de aplicacion',
+  'dav.disabled.title': 'El acceso DAV esta desactivado',
+  'dav.disabled.body':
+    'Este buzon no tiene acceso DAV: ningun cliente podra sincronizar contactos hasta que se active en la pestana Datos.',
+  'dav.notConfigured.title': 'El servidor de contactos no esta configurado',
+  'dav.notConfigured.body':
+    'El operador de la plataforma no ha configurado la direccion publica del servidor de contactos, asi que no hay datos de conexion que mostrar. Avisa a soporte.',
 
   'migration.title': 'Migracion de correo',
   'migration.notConfigured.title': 'La migracion no esta disponible',

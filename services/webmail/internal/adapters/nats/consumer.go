@@ -43,8 +43,8 @@ const (
 
 // harmlessChanges son los atributos del buzon cuyo cambio NO invalida una sesion del webmail: no
 // tocan su contrasena principal ni lo que necesita para servir el buzon (active = 1 con
-// imap_access y smtp_access, que mail-auth exige al abrir la sesion). pop3_access y sieve_access
-// estan porque el webmail no usa ninguno de los dos, y kind, relayhost_id y tls_enforce_* porque
+// imap_access y smtp_access, que mail-auth exige al abrir la sesion). pop3_access, sieve_access y dav_access
+// estan porque el webmail no usa ninguno de los tres, y kind, relayhost_id y tls_enforce_* porque
 // gobiernan entrega y enrutado, no la autenticacion.
 //
 // Es una lista de lo inofensivo, no de lo peligroso: un atributo nuevo, o cualquier nombre que
@@ -52,7 +52,7 @@ const (
 var harmlessChanges = map[string]bool{
 	"display_name": true, "quota_bytes": true, "kind": true,
 	"tls_enforce_in": true, "tls_enforce_out": true, "relayhost_id": true,
-	"force_pw_update": true, "pop3_access": true, "sieve_access": true,
+	"force_pw_update": true, "pop3_access": true, "sieve_access": true, "dav_access": true,
 }
 
 // Revoker es lo que el consumidor necesita del caso de uso.

@@ -19,7 +19,10 @@
 # (con su enlace firmado por el gateway), las claves de Redis que escribe mail-security, el
 # webmail por el gateway y la migracion de buzones: mail-migration (binario del host) y su
 # ejecutor con imapsync REAL (contenedor en su propia red, deploy/mail/migration-runner) copian
-# de un buzon a otro del mismo Dovecot, con ClamAV real en el camino.
+# de un buzon a otro del mismo Dovecot, con ClamAV real en el camino, y CardDAV: mail-dav (binario del host,
+# con la credencial propia de su esquema) autentica cada peticion contra el listener TLS de mail-auth y el
+# gateway lo expone sin JWT; se prueban PROPFIND, PUT, REPORT y DELETE con la contrasena de aplicacion, el
+# aislamiento entre buzones, las politicas de fila y dav_access.
 #
 # Cada paso escribe OK o FALLA y la ejecucion termina con error si alguno falla. Las
 # credenciales se generan en cada ejecucion; ninguna vive en este fichero.
@@ -50,10 +53,13 @@ declare -A PORT=(
   [identity]=$((BASE + 1)) [access-control]=$((BASE + 2)) [organization]=$((BASE + 3))
   [mail-directory]=$((BASE + 40)) [mail-auth]=$((BASE + 41)) [mail-security]=$((BASE + 42))
   [domain-service]=$((BASE + 43)) [webmail]=$((BASE + 44)) [gateway]=$((BASE + 80)) [mail-migration]=$((BASE + 56))
+  [mail-dav]=$((BASE + 58))
 )
+# Listener TLS de mail-auth publicado en el host: mail-dav, que corre en el host, verifica con el a cada buzon.
+AUTH_TLS_PORT=$((BASE + 45))
 # API del ejecutor de mail-migration: el ejecutor, en su contenedor, la alcanza por host.docker.internal.
 MIGRATION_RUNNER_PORT=$((BASE + 57))
-e2e_fuera_del_rango_efimero "$PG_PORT" "$NATS_PORT" "$REDIS_PORT" "$DNS_PORT" "${PORT[@]}" "$MIGRATION_RUNNER_PORT"
+e2e_fuera_del_rango_efimero "$PG_PORT" "$NATS_PORT" "$REDIS_PORT" "$DNS_PORT" "${PORT[@]}" "$MIGRATION_RUNNER_PORT" "$AUTH_TLS_PORT"
 
 E2E_PREFIX=cfm-e2e-mail
 PROYECTO=cfm-e2e-mail
@@ -147,7 +153,8 @@ git ls-files -z --cached --others --exclude-standard -- deploy/mail | tar --null
   || { echo "no se pudo copiar deploy/mail" >&2; exit 1; }
 
 # CA de la prueba: certificado del servidor de correo (Postfix y Dovecot, nombre MAIL_HOSTNAME)
-# y de mail-auth (nombre mail-auth), los dos verificados por el webmail y por el cliente.
+# y de mail-auth (nombre mail-auth, y 127.0.0.1 para mail-dav, que lo alcanza desde el host), los dos
+# verificados por el webmail, por mail-dav y por el cliente.
 export MAIL_HOSTNAME=mail.cfm.test
 mkdir -p "$TLS/mail"
 openssl req -x509 -newkey rsa:2048 -nodes -days 2 -subj "/CN=Core Force Mail e2e CA" \
@@ -162,7 +169,7 @@ certificado() { # certificado <nombre> <clave> <certificado> [SAN adicional, p. 
 # de la prueba se pide por IP (mail-migration lo resuelve desde el host, donde el nombre de la prueba no
 # existe) y el ejecutor verifica su certificado como el de cualquier origen.
 certificado "$MAIL_HOSTNAME" "$TLS/mail/key.pem" "$TLS/mail/cert.pem" "IP:$MIGRATION_DOVECOT_IP" || { echo "openssl: certificado de correo" >&2; exit 1; }
-certificado mail-auth "$TLS/mail-auth-key.pem" "$TLS/mail-auth.pem" || { echo "openssl: certificado de mail-auth" >&2; exit 1; }
+certificado mail-auth "$TLS/mail-auth-key.pem" "$TLS/mail-auth.pem" "IP:127.0.0.1" || { echo "openssl: certificado de mail-auth" >&2; exit 1; }
 cp deploy/mail/ssl-example/dhparams.pem "$TLS/mail/dhparams.pem"
 chmod 644 "$TLS"/*.pem "$TLS/mail"/*.pem
 python3 ops/e2e/mail_client.py eicar > "$WORK/eicar.com"
@@ -189,7 +196,8 @@ export MAIL_DNS_RESOLVER="127.0.0.1:$DNS_PORT"
 export API_ORIGIN="http://localhost:${PORT[gateway]}" PUBLIC_BASE_URL="http://localhost:${PORT[gateway]}" CORS_ALLOWED_ORIGINS=http://localhost:3000
 export IDENTITY_PORT=${PORT[identity]} ACCESS_CONTROL_PORT=${PORT[access-control]} ORGANIZATION_PORT=${PORT[organization]}
 export DOMAIN_SERVICE_PORT=${PORT[domain-service]} GATEWAY_PORT=${PORT[gateway]} MAIL_MIGRATION_PORT=${PORT[mail-migration]}
-for s in identity access-control organization domain-service mail-directory mail-auth mail-security webmail mail-migration; do
+export MAIL_DAV_PORT=${PORT[mail-dav]}
+for s in identity access-control organization domain-service mail-directory mail-auth mail-security webmail mail-migration mail-dav; do
   var="$(echo "$s" | tr 'a-z-' 'A-Z_')_HOST"
   export "$var=127.0.0.1" "${var}_PORT=${PORT[$s]}"
 done
@@ -201,7 +209,7 @@ GW="http://127.0.0.1:${PORT[gateway]}/api/v1"
 export E2E_REPO_ROOT="$ROOT" E2E_TLS_DIR="$TLS"
 export E2E_PG_HOST="$E2E_PREFIX-pg" E2E_NATS_HOST="$E2E_PREFIX-nats" E2E_REDIS_HOST="$E2E_PREFIX-redis"
 export E2E_PORT_MAIL_DIRECTORY=${PORT[mail-directory]} E2E_PORT_MAIL_AUTH=${PORT[mail-auth]}
-export E2E_PORT_MAIL_SECURITY=${PORT[mail-security]} E2E_PORT_WEBMAIL=${PORT[webmail]}
+export E2E_PORT_MAIL_SECURITY=${PORT[mail-security]} E2E_PORT_WEBMAIL=${PORT[webmail]} E2E_PORT_MAIL_AUTH_TLS=$AUTH_TLS_PORT
 # organization corre en el host; mail-directory y mail-security le preguntan desde la red de
 # los motores si cada empresa es de su celda.
 export E2E_PORT_ORGANIZATION=${PORT[organization]}
@@ -220,7 +228,7 @@ t0=$SECONDS
 if compose build >"$WORK/log/build.log" 2>&1; then ok "imagenes construidas ($((SECONDS - t0))s)"; else
   mal "compose build"; tail -30 "$WORK/log/build.log" >&2; exit 1
 fi
-e2e_compilar organization identity access-control gateway domain-service mail-migration || exit 1
+e2e_compilar organization identity access-control gateway domain-service mail-migration mail-dav || exit 1
 
 echo "== Red de los motores e infraestructura desechable"
 docker volume create "$E2E_MAIL_CLAMAV_VOLUME" >/dev/null || exit 1
@@ -914,6 +922,171 @@ esperar "y su sesion del webmail, que necesita imap, se cierra" 20 webmail_cerra
 api PATCH "/mailboxes/$BEAID" '{"imap_access":true}'
 expect "bea recupera imap" "$API_CODE/$(echo "$API_BODY" | jget data.imap_access)" "200/True"
 esperar "y vuelve a entrar por IMAP" 20 login_aceptado bea@acme.test "$BEA_PASS"
+
+# ── CardDAV (docs/adr/0004) ────────────────────────────────────────────────────────────────────────
+# mail-dav corre en el host con la credencial PROPIA de su esquema (mail_svc_mail_dav, sujeta a las politicas
+# de fila) y verifica a cada buzon contra el listener TLS de mail-auth, con la CA de la prueba. Todo pasa por
+# el gateway: prefijo autenticado por el servicio (sin JWT), con HTTP Basic y la contrasena de aplicacion.
+echo "== CardDAV: contactos por el gateway con la contrasena de aplicacion (mail-dav)"
+DAV_DB_PASS="$(rand_hex 24)"
+MAIL_DAV_DB_PASSWORD="${DAV_DB_PASS}" PGHOST=127.0.0.1 bash ops/db/tenant-service-role.sh --service mail-dav >"$WORK/log/dav-role.log" 2>&1 ||
+  { mal "tenant-service-role.sh --service mail-dav"; tail -5 "$WORK/log/dav-role.log" >&2; }
+MAIL_AUTH_URL="https://127.0.0.1:$AUTH_TLS_PORT" MAIL_DAV_TLS_CA_FILE="$TLS/ca.pem" MAIL_DAV_MAX_VCARD_BYTES=2048 \
+  TENANT_DB_USER=mail_svc_mail_dav TENANT_DB_PASSWORD="$DAV_DB_PASS" arrancar mail-dav
+esperar_salud mail-dav "${PORT[mail-dav]}" && ok "mail-dav responde"
+expect "el gateway no exige JWT al prefijo dav: el desafio Basic es de mail-dav" \
+  "$(curl -s -D - -o /dev/null -X PROPFIND "$GW/dav/" | grep -ci '^www-authenticate: basic')" "1"
+
+# dav <usuario:contrasena> <metodo> <ruta> [opciones de curl]: deja DAV_CODE, DAV_BODY y DAV_HDR.
+dav() {
+  local cred="$1" metodo="$2" ruta="$3"
+  shift 3
+  DAV_CODE=$(curl -s -o "$WORK/dav.out" -D "$WORK/dav.hdr" -w '%{http_code}' -u "$cred" -X "$metodo" "$GW/dav$ruta" "$@")
+  DAV_BODY=$(cat "$WORK/dav.out")
+  DAV_HDR=$(cat "$WORK/dav.hdr")
+}
+CARDDAV_NS='xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:carddav" xmlns:cs="http://calendarserver.org/ns/"'
+REDIR=$(curl -s -o /dev/null -w '%{http_code} %{redirect_url}' "http://127.0.0.1:${PORT[gateway]}/.well-known/carddav")
+expect "/.well-known/carddav redirige al prefijo de mail-dav (RFC 6764)" "$REDIR" "301 http://127.0.0.1:${PORT[gateway]}/api/v1/dav/"
+
+dav "ana@acme.test:$ANA_PASS" OPTIONS /
+contains "OPTIONS anuncia CardDAV" "$DAV_HDR" "addressbook"
+dav "ana@acme.test:$(rand_hex 6)" PROPFIND / -H 'Depth: 0'
+expect "una contrasena incorrecta es un 401 con el desafio Basic" "$DAV_CODE/$(grep -ci '^www-authenticate: basic' <<<"$DAV_HDR")" "401/1"
+dav "ana@acme.test:$ANA_PASS" PROPFIND / -H 'Depth: 0' -H 'Content-Type: application/xml' \
+  --data "<d:propfind $CARDDAV_NS><d:prop><d:current-user-principal/></d:prop></d:propfind>"
+expect "la contrasena principal de ana abre DAV (dav_access esta encendido)" "$DAV_CODE" "207"
+contains "y el principal es el suyo" "$DAV_BODY" "/api/v1/dav/principals/ana@acme.test/"
+
+# Contrasena de aplicacion solo para DAV: ni IMAP ni SMTP ni Sieve.
+api POST "/mailboxes/$ANAID/app-passwords" '{"name":"contactos-e2e","imap_access":false,"pop3_access":false,"smtp_access":false,"sieve_access":false,"dav_access":true}'
+ANA_DAV=$(echo "$API_BODY" | jget data.password)
+ANA_DAV_ID=$(echo "$API_BODY" | jget data.app_password.id)
+expect "alta de una contrasena de aplicacion de ana solo con dav_access" "$API_CODE/${ANA_DAV:+clave}" "201/clave"
+ANA_APP="ana@acme.test:$ANA_DAV"
+contains "no abre IMAP (mail-auth le comprueba imap_access)" "$(cliente login ana@acme.test "$ANA_DAV")" "NO"
+dav "$ANA_APP" PROPFIND / -H 'Depth: 0' -H 'Content-Type: application/xml' \
+  --data "<d:propfind $CARDDAV_NS><d:prop><d:current-user-principal/></d:prop></d:propfind>"
+expect "pero si abre DAV" "$DAV_CODE" "207"
+expect "el inicio de DAV queda en mail.sasl_logins (service dav) con la contrasena de aplicacion" \
+  "$(sql mail_cell_pe_01 "SELECT count(*) > 0 FROM mail.sasl_logins WHERE username = 'ana@acme.test' AND service = 'dav' AND app_password_id IS NOT NULL")" "t"
+
+# Descubrimiento como lo hace DAVx5: principal, home set y libretas (la de por defecto se crea sola).
+dav "$ANA_APP" PROPFIND /principals/ana@acme.test/ -H 'Depth: 0' -H 'Content-Type: application/xml' \
+  --data "<d:propfind $CARDDAV_NS><d:prop><c:addressbook-home-set/></d:prop></d:propfind>"
+contains "el home set del principal" "$DAV_BODY" "/api/v1/dav/addressbooks/ana@acme.test/"
+dav "$ANA_APP" PROPFIND /addressbooks/ana@acme.test/ -H 'Depth: 1' -H 'Content-Type: application/xml' \
+  --data "<d:propfind $CARDDAV_NS><d:prop><d:resourcetype/><d:displayname/><cs:getctag/><d:sync-token/></d:prop></d:propfind>"
+expect "el home lista su libreta de contactos" "$DAV_CODE" "207"
+contains "la libreta es un addressbook con ctag y sync-token" "$DAV_BODY" "/addressbooks/ana@acme.test/contacts/"
+contains "y tiene sync-token" "$DAV_BODY" "urn:mail-dav:sync:"
+
+BOOK=/addressbooks/ana@acme.test/contacts
+CARD_UID="e2e-$(rand_hex 6)"
+CARD_URL="$BOOK/$CARD_UID.vcf"
+tarjeta() { printf 'BEGIN:VCARD\r\nVERSION:3.0\r\nUID:%s\r\nFN:%s\r\nN:Contacto;%s;;;\r\nEMAIL;TYPE=WORK:%s@ejemplo.test\r\nEND:VCARD\r\n' "$CARD_UID" "$1" "$1" "$CARD_UID"; }
+tarjeta "Carla Prueba" >"$WORK/tarjeta1.vcf"
+dav "$ANA_APP" PUT "$CARD_URL" -H 'Content-Type: text/vcard; charset=utf-8' -H 'If-None-Match: *' --data-binary "@$WORK/tarjeta1.vcf"
+expect "PUT crea el contacto (If-None-Match: *)" "$DAV_CODE" "201"
+ETAG1=$(grep -i '^etag:' <<<"$DAV_HDR" | tr -d '\r' | sed 's/^[^:]*: *//')
+[[ "$ETAG1" == \"*\" ]] && ok "y devuelve su ETag" || mal "PUT sin ETag valido: '$ETAG1'"
+dav "$ANA_APP" PUT "$CARD_URL" -H 'Content-Type: text/vcard; charset=utf-8' -H 'If-None-Match: *' --data-binary "@$WORK/tarjeta1.vcf"
+expect "crearlo otra vez con If-None-Match: * es un 412" "$DAV_CODE" "412"
+dav "$ANA_APP" GET "$CARD_URL"
+expect "GET devuelve exactamente lo guardado" "$(cmp -s "$WORK/dav.out" "$WORK/tarjeta1.vcf" && echo igual)" "igual"
+tarjeta "Carla Editada" >"$WORK/tarjeta2.vcf"
+dav "$ANA_APP" PUT "$CARD_URL" -H 'Content-Type: text/vcard; charset=utf-8' -H 'If-Match: "0000"' --data-binary "@$WORK/tarjeta2.vcf"
+expect "editar con un If-Match viejo es un 412" "$DAV_CODE" "412"
+dav "$ANA_APP" PUT "$CARD_URL" -H 'Content-Type: text/vcard; charset=utf-8' -H "If-Match: $ETAG1" --data-binary "@$WORK/tarjeta2.vcf"
+expect "y con el ETag vigente es un 204" "$DAV_CODE" "204"
+dav "$ANA_APP" PUT "$BOOK/invalido.vcf" -H 'Content-Type: text/vcard; charset=utf-8' --data 'esto no es un vCard'
+expect "un cuerpo que no es un vCard es un 403 (valid-address-data)" "$DAV_CODE" "403"
+head -c 4096 /dev/zero | tr '\0' 'A' >"$WORK/enorme.vcf"
+dav "$ANA_APP" PUT "$BOOK/enorme.vcf" -H 'Content-Type: text/vcard; charset=utf-8' --data-binary "@$WORK/enorme.vcf"
+expect "un vCard mas grande que el limite (2048 bytes en esta prueba) se rechaza (413)" "$DAV_CODE" "413"
+
+# Sincronizacion como iOS y DAVx5: sync-collection inicial, multiget y consulta.
+dav "$ANA_APP" REPORT "$BOOK/" -H 'Depth: 0' -H 'Content-Type: application/xml' \
+  --data "<d:sync-collection $CARDDAV_NS><d:sync-token/><d:sync-level>1</d:sync-level><d:prop><d:getetag/></d:prop></d:sync-collection>"
+expect "sync-collection inicial" "$DAV_CODE" "207"
+contains "lista el contacto" "$DAV_BODY" "$CARD_URL"
+SYNC_TOKEN=$(grep -o 'urn:mail-dav:sync:[0-9a-f-]*:[0-9]*' <<<"$DAV_BODY" | head -1)
+[[ -n "$SYNC_TOKEN" ]] && ok "y da un token de sincronizacion" || mal "sin sync-token"
+dav "$ANA_APP" REPORT "$BOOK/" -H 'Depth: 1' -H 'Content-Type: application/xml' \
+  --data "<c:addressbook-multiget $CARDDAV_NS><d:prop><d:getetag/><c:address-data/></d:prop><d:href>/api/v1/dav$CARD_URL</d:href></c:addressbook-multiget>"
+contains "multiget trae el vCard editado" "$DAV_BODY" "Carla Editada"
+dav "$ANA_APP" REPORT "$BOOK/" -H 'Depth: 1' -H 'Content-Type: application/xml' \
+  --data "<c:addressbook-query $CARDDAV_NS><d:prop><d:getetag/></d:prop><c:filter><c:prop-filter name=\"FN\"><c:text-match match-type=\"contains\">editada</c:text-match></c:prop-filter></c:filter></c:addressbook-query>"
+contains "addressbook-query filtra por FN" "$DAV_BODY" "$CARD_URL"
+
+# Aislamiento: bea, de la misma empresa, con su propia contrasena de aplicacion, no ve nada de ana.
+api POST "/mailboxes/$BEAID/app-passwords" '{"name":"contactos-e2e","imap_access":false,"pop3_access":false,"smtp_access":false,"sieve_access":false,"dav_access":true}'
+BEA_DAV=$(echo "$API_BODY" | jget data.password)
+BEA_APP="bea@acme.test:$BEA_DAV"
+dav "$BEA_APP" GET "$CARD_URL"
+expect "bea no lee el contacto de ana por su URL" "$DAV_CODE" "404"
+dav "$BEA_APP" PROPFIND /addressbooks/ana@acme.test/ -H 'Depth: 1'
+expect "ni lista el home de ana" "$DAV_CODE" "404"
+dav "$BEA_APP" PUT "$CARD_URL" -H 'Content-Type: text/vcard; charset=utf-8' --data-binary "@$WORK/tarjeta2.vcf"
+expect "ni escribe en su libreta" "$DAV_CODE" "404"
+dav "$BEA_APP" PROPFIND /addressbooks/bea@acme.test/ -H 'Depth: 1'
+contains "bea tiene su propia libreta, creada al descubrirla" "$DAV_BODY" "/addressbooks/bea@acme.test/contacts/"
+dav "$BEA_APP" REPORT /addressbooks/bea@acme.test/contacts/ -H 'Depth: 1' -H 'Content-Type: application/xml' \
+  --data "<c:addressbook-query $CARDDAV_NS><d:prop><d:getetag/></d:prop><c:filter/></c:addressbook-query>"
+lacks "y en ella no hay contactos de ana" "$DAV_BODY" "$CARD_UID"
+expect "ana sigue viendo el suyo" "$(dav "$ANA_APP" GET "$CARD_URL"; echo "$DAV_CODE")" "200"
+DAV_SESION="$(PGPASSWORD="$DAV_DB_PASS" PGHOST=127.0.0.1 psql -U mail_svc_mail_dav -d mail_tenant_acme -At -c 'SELECT count(*) FROM mail_dav.contacts' 2>&1)"
+expect "el rol de mail-dav sin sesion de buzon no ve ningun contacto aunque hay uno (RLS fail-closed)" "$DAV_SESION" "0"
+expect "y el dueno de la base si lo ve" "$(sql mail_tenant_acme "SELECT count(*) FROM mail_dav.contacts WHERE uid = '$CARD_UID'")" "1"
+
+# Borrado y sincronizacion incremental con el token de antes.
+dav "$ANA_APP" DELETE "$CARD_URL" -H 'If-Match: "0000"'
+expect "borrar con un If-Match viejo es un 412" "$DAV_CODE" "412"
+dav "$ANA_APP" DELETE "$CARD_URL"
+expect "DELETE borra el contacto" "$DAV_CODE" "204"
+dav "$ANA_APP" REPORT "$BOOK/" -H 'Depth: 0' -H 'Content-Type: application/xml' \
+  --data "<d:sync-collection $CARDDAV_NS><d:sync-token>$SYNC_TOKEN</d:sync-token><d:sync-level>1</d:sync-level><d:prop><d:getetag/></d:prop></d:sync-collection>"
+contains "sync-collection con el token anterior informa el borrado" "$DAV_BODY" "404 Not Found"
+dav "$ANA_APP" REPORT "$BOOK/" -H 'Depth: 0' -H 'Content-Type: application/xml' \
+  --data "<d:sync-collection $CARDDAV_NS><d:sync-token>urn:mail-dav:sync:basura</d:sync-token><d:sync-level>1</d:sync-level></d:sync-collection>"
+expect "un token que no se puede resolver obliga a sincronizar de nuevo (403 valid-sync-token)" "$DAV_CODE/$(grep -c valid-sync-token <<<"$DAV_BODY")" "403/1"
+
+# dav_access se aplica en la siguiente peticion, sin cache: mail-dav pregunta a mail-auth cada vez.
+api PATCH "/mailboxes/$ANAID/app-passwords/$ANA_DAV_ID" '{"dav_access":false}'
+expect "mail-directory apaga dav_access de la contrasena de aplicacion" "$API_CODE/$(echo "$API_BODY" | jget data.dav_access)" "200/False"
+dav "$ANA_APP" PROPFIND / -H 'Depth: 0'
+expect "esa contrasena deja de abrir DAV al momento" "$DAV_CODE" "401"
+api PATCH "/mailboxes/$ANAID/app-passwords/$ANA_DAV_ID" '{"dav_access":true}'
+dav "$ANA_APP" PROPFIND / -H 'Depth: 0'
+expect "y vuelve a abrirlo al reactivarlo" "$DAV_CODE" "207"
+api PATCH "/mailboxes/$ANAID" '{"dav_access":false}'
+expect "mail-directory apaga dav_access del buzon" "$API_CODE/$(echo "$API_BODY" | jget data.dav_access)" "200/False"
+dav "$ANA_APP" PROPFIND / -H 'Depth: 0'
+expect "ni la contrasena de aplicacion ni la principal abren DAV sin el flag del buzon (la de aplicacion)" "$DAV_CODE" "401"
+dav "ana@acme.test:$ANA_PASS" PROPFIND / -H 'Depth: 0'
+expect "(la principal)" "$DAV_CODE" "401"
+expect "y ana sigue entrando por IMAP: el flag es solo de DAV" "$(cliente login ana@acme.test "$ANA_PASS")" "OK"
+contains "mail-auth lo rechaza por el protocolo, no por la contrasena" \
+  "$(docker logs "$(c mail-auth)" 2>&1 | grep '"username":"ana@acme.test"' | grep '"service":"dav"')" "protocolo deshabilitado para el buzon"
+api PATCH "/mailboxes/$ANAID" '{"dav_access":true}'
+expect "ana recupera dav_access" "$API_CODE/$(echo "$API_BODY" | jget data.dav_access)" "200/True"
+dav "$ANA_APP" PROPFIND / -H 'Depth: 0'
+expect "y DAV vuelve a abrir" "$DAV_CODE" "207"
+
+# Metodos y rutas que el servicio no admite.
+dav "$ANA_APP" PROPPATCH "$BOOK/" -H 'Content-Type: application/xml' --data "<d:propertyupdate $CARDDAV_NS/>"
+expect "PROPPATCH no se admite (405)" "$DAV_CODE" "405"
+dav "$ANA_APP" GET "/addressbooks/ana@acme.test/contacts/..%2f..%2fbea@acme.test/x.vcf"
+expect "una ruta con ..%2f no llega a ningun recurso" "$([[ $DAV_CODE == 404 || $DAV_CODE == 400 ]] && echo bien || echo "$DAV_CODE")" "bien"
+dav "ana@acme.test:$ANA_PASS" PROPFIND / -H 'Depth: infinity'
+expect "PROPFIND con Depth infinity se rechaza (403)" "$DAV_CODE" "403"
+
+# Ninguna contrasena en el registro de mail-dav.
+if grep -qF -e "$ANA_DAV" -e "$BEA_DAV" -e "$ANA_PASS" -e "$DAV_DB_PASS" "$WORK/log/mail-dav.log"; then
+  mal "una contrasena aparece en el registro de mail-dav"
+else
+  ok "el registro de mail-dav no contiene ninguna contrasena"
+fi
 
 # Apagar el buzon y cambiar su contrasena SI cierran la sesion del webmail al momento: son los dos
 # cambios que la invalidan sin tocar un protocolo, y con changed siguen cerrandola como antes.

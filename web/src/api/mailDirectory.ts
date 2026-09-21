@@ -44,6 +44,8 @@ export interface DirectoryMeta {
   limits: { quota_unit: string; unlimited: number };
   pagination: { default_page_size: number; max_page_size: number };
   search: { max_length: number };
+  /** null: el operador no configuro el servidor de contactos (MAIL_DAV_PUBLIC_URL). */
+  dav: { server_url: string } | null;
 }
 
 export interface DirectoryDomainQuery extends PageQuery {
@@ -121,6 +123,7 @@ export interface MailboxAccess {
   pop3_access: boolean;
   smtp_access: boolean;
   sieve_access: boolean;
+  dav_access: boolean;
 }
 
 export interface Mailbox extends MailboxAccess {
@@ -177,11 +180,7 @@ export interface SaslLogin {
   logged_at: string;
 }
 
-export interface AppPasswordAccess extends MailboxAccess {
-  dav_access: boolean;
-}
-
-export interface AppPassword extends AppPasswordAccess {
+export interface AppPassword extends MailboxAccess {
   id: string;
   tenant_id: string;
   mailbox_id: string;
@@ -192,11 +191,11 @@ export interface AppPassword extends AppPasswordAccess {
   updated_at: string;
 }
 
-export interface CreateAppPasswordRequest extends Partial<AppPasswordAccess> {
+export interface CreateAppPasswordRequest extends Partial<MailboxAccess> {
   name: string;
 }
 
-export interface UpdateAppPasswordRequest extends Partial<AppPasswordAccess> {
+export interface UpdateAppPasswordRequest extends Partial<MailboxAccess> {
   name?: string;
   active?: boolean;
 }

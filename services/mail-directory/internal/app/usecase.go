@@ -45,9 +45,11 @@ type Deps struct {
 	// PlatformMX es MAIL_MX_HOSTNAME: el unico mx de toda politica MTA-STS y el MX que enforce
 	// exige en el DNS del dominio.
 	PlatformMX string
-	Secrets    ports.Secrets
-	Events     ports.EventPublisher
-	Logger     *zap.Logger
+	// DAVServerURL es MAIL_DAV_PUBLIC_URL, ya validada; vacia si mail-dav no se publica.
+	DAVServerURL string
+	Secrets      ports.Secrets
+	Events       ports.EventPublisher
+	Logger       *zap.Logger
 }
 
 type UseCase struct {
@@ -73,6 +75,7 @@ type UseCase struct {
 	mtaSTSPublisher ports.MTASTSPublisher
 	mx              ports.MXResolver
 	platformMX      string
+	davServerURL    string
 	secrets         ports.Secrets
 	events          ports.EventPublisher
 	logger          *zap.Logger
@@ -89,7 +92,7 @@ func New(d Deps) *UseCase {
 		senderACL: d.SenderACL, relayhosts: d.Relayhosts, transports: d.Transports,
 		tlsPolicies: d.TLSPolicies, recipientMap: d.RecipientMap, bccMaps: d.BCCMaps,
 		senders: d.Senders, retirements: d.Retirements, mtaSTS: d.MTASTS, mtaSTSPublisher: d.MTASTSPublic, mx: d.MX,
-		platformMX: d.PlatformMX, secrets: d.Secrets, events: d.Events, logger: logger,
+		platformMX: d.PlatformMX, davServerURL: d.DAVServerURL, secrets: d.Secrets, events: d.Events, logger: logger,
 	}
 }
 

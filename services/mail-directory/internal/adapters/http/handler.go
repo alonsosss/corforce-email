@@ -224,9 +224,9 @@ func deleteOf(del func(context.Context, uuid.UUID, uuid.UUID) error) http.Handle
 
 // ── Dominios ──────────────────────────────────────────────────────────────────
 
-// Meta responde las reglas del directorio (app.DirectoryMeta).
+// Meta responde las reglas del directorio (app.UseCase.Meta).
 func (h *Handler) Meta(w http.ResponseWriter, r *http.Request) {
-	response.JSON(w, http.StatusOK, app.DirectoryMeta())
+	response.JSON(w, http.StatusOK, h.uc.Meta())
 }
 
 func (h *Handler) domainRoutes(r chi.Router) {

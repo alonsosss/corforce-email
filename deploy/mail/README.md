@@ -322,6 +322,11 @@ POST /            Content-Type: application/json
 400  {"success": false}   cuerpo incompleto
 ```
 
+Con `"service": "dav"` (solo entonces) un 200 lleva ademas `username` (el del buzon, en minusculas), `tenant_id` y
+`mailbox_id`: `mail-dav` no puede deducir la empresa ni el buzon del nombre, y las necesita para elegir la base de la
+empresa y acotar cada consulta. Un rechazo no lleva ninguno. Con `webmail` la respuesta lleva `display_name`; con los
+demas servicios, solo `success`.
+
 Cualquier otro codigo o un JSON invalido se trata como fallo de contrasena
 (`PASSDB_RESULT_PASSWORD_MISMATCH`), lo que invalida la cache de auth de ese
 usuario. El servicio debe validar contrasena principal y `mail.app_passwords`
@@ -336,7 +341,9 @@ en memoria avisado en log; con ellos, relee el par cada 15 s cuando cambia en di
 reiniciar; en el perfil autoalojado los emite la CA interna con SAN `mail-auth`,
 `docs/Operacion_Despliegue.md` 11); `POST /` y `POST /auth`; `service` se traduce a flag
 (`imap`, `pop3`, `smtp`/`submission`/`lmtp` -> `smtp_access`,
-`sieve`/`managesieve` -> `sieve_access`; `webmail` exige `imap_access` Y
+`sieve`/`managesieve` -> `sieve_access`; `dav` -> `dav_access`, el servicio con el que
+`mail-dav` (CardDAV) verifica a cada buzon por HTTP Basic, con la contrasena principal o una de aplicacion
+con `dav_access` (docs/adr/0004); `webmail` exige `imap_access` Y
 `smtp_access`, porque el webmail lee y envia con la credencial maestra, que no vuelve a
 pasar por aqui; cualquier otro se deniega); bcrypt sobre la contrasena principal y
 despues sobre las de aplicacion activas con ese flag (actualiza `last_used_at`; el
@@ -405,9 +412,10 @@ directorio:
   `app_password` cuando una contrasena de aplicacion pierde un
   inicio de sesion que tenia (se desactiva, se borra activa, pierde `imap_access`, `pop3_access`,
   `smtp_access` o `sieve_access`). Darla de alta, reactivarla, ampliar sus
-  protocolos, renombrarla o cambiar `dav_access` (la plataforma no sirve DAV) no publica nada: no
-  deja en la cache una credencial que ya no valga, y la cache negativa no bloquea una contrasena
-  buena. Este consumidor no lee `credential`; el webmail si, y con `app_password` no cierra sus
+  protocolos o renombrarla no publica nada: no deja en la cache una credencial que ya no valga, y la
+  cache negativa no bloquea una contrasena buena. `dav_access` (del buzon o de la contrasena de aplicacion) tampoco
+  publica `credentials_changed`: `mail-dav` verifica cada peticion contra `mail-auth`, sin sesion ni cache, y
+  perderlo se aplica en la siguiente; el evento `mail.mailbox.updated` si lo lista en `changed`. Este consumidor no lee `credential`; el webmail si, y con `app_password` no cierra sus
   sesiones, porque solo admite la principal. La baja de la empresa no lo publica: cada buzon que
   apaga ya sale como `mail.mailbox.updated`, que echa, y ninguno puede reactivarse despues.
 
@@ -415,7 +423,7 @@ directorio:
   atributos que cambio ese hecho (`domain.MailboxChanges`), con los nombres del JSON del buzon, o
   `password` / `app_password` cuando lo que cambio fue la credencial misma. Es aditivo y lo usa el
   WEBMAIL para no cerrar la sesion de su usuario ante un cambio que no la invalida (cuota, nombre
-  visible, `kind`, TLS, relayhost, `force_pw_update`, `pop3_access`, `sieve_access`), revocando ante
+  visible, `kind`, TLS, relayhost, `force_pw_update`, `pop3_access`, `sieve_access`, `dav_access`), revocando ante
   cualquier otro atributo, ante uno que no reconozca y ante la falta del campo. Este consumidor NO lo
   lee: decide con el estado real del buzon, que es mas fiable que cualquier lista.
 * **Idempotencia y reintento**: un `kick` sin sesiones (salida 68) es un exito y vaciar dos veces no

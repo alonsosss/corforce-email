@@ -34,11 +34,11 @@ func (r *Repository) FindByUsername(ctx context.Context, username string) (*doma
 	var m domain.Mailbox
 	err := r.pool.QueryRow(ctx, `
 		SELECT id, tenant_id, username, display_name, password_hash, active, force_pw_update,
-		       imap_access, pop3_access, smtp_access, sieve_access
+		       imap_access, pop3_access, smtp_access, sieve_access, dav_access
 		  FROM mail.mailboxes
 		 WHERE username = $1`, username,
 	).Scan(&m.ID, &m.TenantID, &m.Username, &m.DisplayName, &m.PasswordHash, &m.Active, &m.ForcePasswordUpdate,
-		&m.Access.IMAP, &m.Access.POP3, &m.Access.SMTP, &m.Access.Sieve)
+		&m.Access.IMAP, &m.Access.POP3, &m.Access.SMTP, &m.Access.Sieve, &m.Access.DAV)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, domain.ErrNotFound
 	}
@@ -55,6 +55,7 @@ var accessColumns = map[domain.Protocol]string{
 	domain.ProtocolPOP3:  "pop3_access",
 	domain.ProtocolSMTP:  "smtp_access",
 	domain.ProtocolSieve: "sieve_access",
+	domain.ProtocolDAV:   "dav_access",
 }
 
 func (r *Repository) ListAppPasswords(ctx context.Context, mailboxID uuid.UUID, p domain.Protocol) ([]domain.AppPassword, error) {

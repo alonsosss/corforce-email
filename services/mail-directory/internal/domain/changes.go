@@ -21,6 +21,7 @@ const (
 	AttrPOP3Access    MailboxAttr = "pop3_access"
 	AttrSMTPAccess    MailboxAttr = "smtp_access"
 	AttrSieveAccess   MailboxAttr = "sieve_access"
+	AttrDAVAccess     MailboxAttr = "dav_access"
 	AttrForcePwUpdate MailboxAttr = "force_pw_update"
 	AttrPassword      MailboxAttr = "password"
 	AttrAppPassword   MailboxAttr = "app_password"
@@ -29,7 +30,7 @@ const (
 var mailboxAttrs = map[MailboxAttr]bool{
 	AttrDisplayName: true, AttrQuotaBytes: true, AttrActive: true, AttrKind: true,
 	AttrTLSEnforceIn: true, AttrTLSEnforceOut: true, AttrRelayhostID: true,
-	AttrIMAPAccess: true, AttrPOP3Access: true, AttrSMTPAccess: true, AttrSieveAccess: true,
+	AttrIMAPAccess: true, AttrPOP3Access: true, AttrSMTPAccess: true, AttrSieveAccess: true, AttrDAVAccess: true,
 	AttrForcePwUpdate: true, AttrPassword: true, AttrAppPassword: true,
 }
 
@@ -56,6 +57,7 @@ func MailboxChanges(before, after Mailbox) []MailboxAttr {
 	add(before.POP3Access != after.POP3Access, AttrPOP3Access)
 	add(before.SMTPAccess != after.SMTPAccess, AttrSMTPAccess)
 	add(before.SieveAccess != after.SieveAccess, AttrSieveAccess)
+	add(before.DAVAccess != after.DAVAccess, AttrDAVAccess)
 	add(before.ForcePwUpdate != after.ForcePwUpdate, AttrForcePwUpdate)
 	return out
 }

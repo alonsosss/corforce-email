@@ -59,6 +59,9 @@ type routeTable struct {
 	// sesion), que ademas pasan por el limitador de autenticacion. Un prefijo de un servicio
 	// de celda declara como se enruta por celda (CellLogin y CellCookie, selfauthcells.go).
 	SelfAuthenticated []selfAuthSpec `json:"self_authenticated,omitempty"`
+	// WellKnown: rutas de descubrimiento en la raiz del dominio que redirigen al prefijo de un
+	// servicio autenticado por el servicio (webdav.go).
+	WellKnown []wellKnownSpec `json:"well_known,omitempty"`
 	// Frontend: servicio que sirve la aplicacion web (comodin /*). Opcional: sin el,
 	// el gateway solo expone el API.
 	Frontend string `json:"frontend,omitempty"`
@@ -82,6 +85,9 @@ type selfAuthSpec struct {
 	// por la que se enruta el resto. Solo en un servicio de celda, y los dos juntos.
 	CellLogin  *cellLoginSpec `json:"cell_login,omitempty"`
 	CellCookie string         `json:"cell_cookie,omitempty"`
+	// Methods son los metodos WebDAV (PROPFIND, REPORT...) que el prefijo admite ademas de los
+	// habituales; sin declararlos el gateway responde 405 (webdav.go).
+	Methods []string `json:"methods,omitempty"`
 }
 
 type cellLoginSpec struct {
@@ -266,6 +272,9 @@ func (t *routeTable) validate() error {
 		if _, ok := t.Services[t.Frontend]; !ok {
 			return fmt.Errorf("tabla de rutas: frontend %q no esta en services", t.Frontend)
 		}
+	}
+	if err := t.validateWellKnown(); err != nil {
+		return err
 	}
 	return t.validateCellServices()
 }
