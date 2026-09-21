@@ -1,0 +1,25 @@
+# Suelo de lineas de prueba por linea de codigo Go (sin lineas en blanco), por servicio y para pkg.
+# Es un trinquete: no se baja. Subirlo cuando un servicio mejora es libre; bajarlo exige una razon en el commit.
+# Un servicio que no figura aqui debe cumplir el suelo por defecto de check-test-ratio.sh.
+TOTAL 0.77
+services/access-control 0.72
+services/analytics 0.67
+services/audit 0.19
+services/automations 0.37
+services/billing 0.60
+services/campaigns 0.72
+services/contacts 0.79
+services/domain-service 1.01
+services/gateway 0.93
+services/identity 0.85
+services/mail-auth 0.65
+services/mail-directory 0.72
+services/mail-security 0.48
+services/organization 0.77
+services/reputation 0.64
+services/scheduler 1.80
+services/suppression 1.10
+services/templates 0.43
+services/transactional 0.83
+services/webmail 0.74
+pkg 0.83

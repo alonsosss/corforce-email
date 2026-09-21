@@ -116,6 +116,11 @@ if ! bash "$ROOT/ops/scaffold/check-motor-scan.sh"; then
   FAIL=1
 fi
 
+echo "== 17. Proporcion entre pruebas y codigo Go: ningun servicio baja de su suelo y uno nuevo nace con pruebas =="
+if ! bash "$ROOT/ops/scaffold/check-test-ratio.sh"; then
+  FAIL=1
+fi
+
 echo ""
 if [[ $FAIL -ne 0 ]]; then
   echo "VALIDACION: FALLA"; exit 1

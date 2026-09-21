@@ -72,6 +72,11 @@ cambie cualquiera de estas líneas.
 
 ## Deuda conocida que sale de la copia (no bloquea la fase 0)
 
+* Pruebas de `audit` (registrada el 2026-09-21): 0,23 líneas de prueba por línea de código, la
+  proporción más baja de los servicios (`ops/scaffold/test-ratio-floors.txt`; el resto está entre 0,4 y
+  1,8). Es el servicio de la cadena de hashes: cubrir la verificación de la cadena, los huecos y la
+  manipulación de una fila con pruebas contra Postgres es lo primero. El suelo actual impide que
+  baje, no que siga bajo.
 * Outbox disponible en `pkg/outbox` (probado contra Postgres): los servicios copiados en
   fase 0 siguen publicando tras el commit; se migran a `Enqueue` cuando se toquen. Los
   servicios nuevos lo usan desde el principio para sus publicaciones críticas. Los de celda
