@@ -218,6 +218,33 @@ iniciar sesión. Si la clave se compromete, los pasos 2 y 4 van juntos (se publi
 se retira la anterior en el mismo paso, recreando gateway e identity a la vez): todos los
 access tokens caen de golpe y se renuevan con el refresh.
 
+Llave de la cadena de hash de auditoría (`docs/adr/0006-cadena-de-auditoria-con-hmac-y-anclas.md`):
+`AUDIT_HASH_KEY` (64 hex) y `AUDIT_HASH_KEYS_OLD` (retiradas, separadas por coma) son **opcionales** en
+`secret-keys.txt`: **sin ellas nada cambia**, `audit` sigue escribiendo el hash sin clave (versión 1), no encadena los
+eventos de seguridad y lo avisa en el arranque (`audit: sin AUDIT_HASH_KEY`). Las recibe solo `audit`; los demás
+servicios las llevan vaciadas en `docker-compose.yml` y `make check-secrets` lo comprueba. Orden de alta:
+
+1. Migraciones `07`, `08` y `09` de `audit` en cada base de empresa **antes** del código (`bash
+   ops/apply-all-canonical.sh`, idempotentes) y `ops/maintenance/pgbouncer-reconnect.sh` después.
+2. Desplegar el código sin la llave: ya se anclan las cabezas de las cadenas (`AUDIT_ANCHOR_INTERVAL`, 15 minutos por
+   defecto, en el `.env`).
+3. Generar la llave en el servidor, sin imprimirla ni dejarla en el historial:
+   `VALOR="$(openssl rand -hex 32)" ops/security/secrets/add-secret.sh AUDIT_HASH_KEY --apply`. Debe ser **distinta** de
+   `MAIL_ENCRYPTION_KEY`. Recrear solo `audit` con `with-secrets.sh docker compose up -d --no-deps audit`; si hay varias
+   réplicas, todas a la vez (una sin llave escribiría versión 1 tras filas de versión 2 y el verificador lo da por
+   regresión).
+4. Comprobar `GET /api/v1/audit/integrity`: `ok: true` y `versions` con las dos versiones. El arranque registra el
+   identificador de la llave (`key_id`), que no es la llave.
+5. Copiar la llave al respaldo de secretos. Perderla deja las filas de versión 2 sin verificar (`hash_key_missing`).
+   Una vez puesta **no se quita**: el verificador da como rotura toda fila sin clave posterior a una firmada.
+
+Rotación: `ops/security/secrets/rotate-key.sh AUDIT_HASH_KEY AUDIT_HASH_KEYS_OLD --apply` pone la nueva como activa y
+pasa la anterior a la lista, y se recrea `audit`. A diferencia de `MAIL_ENCRYPTION_KEYS_OLD`, la lista **no se vacía**
+mientras haya filas firmadas con esas llaves: una fila append-only no se re-firma. Causas del verificador y qué hacer
+con cada una: ADR 0006, sección 5. El ancla externa (correo diario de las cabezas a una dirección fuera de la
+plataforma) está decidida y sin implementar: hasta entonces la cabeza anclada solo vive en la base, en el stream
+`AUDIT_CHAIN` y en el log del servidor.
+
 ## 3. Arranque de una plataforma vacía
 
 `ops/db/bootstrap-platform.sh` crea la celda inicial, la empresa `platform` y su primer

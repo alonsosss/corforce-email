@@ -130,7 +130,9 @@ migraciones conectan directo.
   recortado pase por limpio, y un analisis que no se pudo hacer acaba en `soft reject`
   (451) por `force_actions.conf`, nunca en una entrega sin analizar
   (`deploy/mail/README.md`, Tamano de los mensajes).
-* Auditoria con cadena de hashes; exfiltracion detectada en el gateway.
+* Auditoria con cadena de hashes (HMAC con clave por fila, version por fila, anclas de la cabeza y la cadena de
+  eventos de seguridad: `docs/adr/0006-cadena-de-auditoria-con-hmac-y-anclas.md`, `Modelo_de_Datos_y_Celdas.md` 4.3);
+  exfiltracion detectada en el gateway.
 
 ## 5. Fases
 

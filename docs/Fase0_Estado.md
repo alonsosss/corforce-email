@@ -73,7 +73,7 @@ cambie cualquiera de estas líneas.
 ## Deuda conocida que sale de la copia (no bloquea la fase 0)
 
 * Pruebas de `audit` (registrada el 2026-09-21, saldada el mismo día): estaba en 0,23 líneas de prueba
-  por línea de código, la proporción más baja; ahora está en 1,46 (suelo 1,42). Cubren, contra
+  por línea de código, la proporción más baja; ahora está en 1,46 (1,52 tras la cadena de la versión 2; suelo 1,49). Cubren, contra
   Postgres real (`AUDIT_TEST_DSN`, corriendo bajo el rol `audit_service` de producción): el formato
   del hash fijado con vectores calculados fuera de Go y contra un cálculo independiente en SQL, la
   verificación de la cadena ante la edición de cada columna cubierta, el borrado de la primera,
@@ -89,17 +89,27 @@ cambie cualquiera de estas líneas.
   rol del servicio podía borrar y reescribir el rastro (`06_append_only_role.sql`, aplicar con el
   resto de migraciones de empresa); y las entradas inválidas del lote y las que desbordaban una columna
   daban 500 en vez de 422.
-  Sigue abierto, y es diseño, no prueba (cambiar el hash invalida las cadenas existentes, así que
-  exige versionarlo): (1) el hash une los campos con `|` sin prefijo de longitud, de modo que dos
-  campos contiguos que contengan `|` pueden intercambiar contenido sin alterar el hash; (2) `user_agent`
-  no entra en el hash; (3) el hash no lleva clave, y quien escribe en la base y conoce el formato puede
-  recalcular la cadena entera, y borrar las últimas filas no deja discontinuidad: falta anclar la cabeza
-  de la cadena fuera de la base (HMAC con `MAIL_ENCRYPTION_KEY` o sello periódico); (4)
-  `audit.security_events` no está encadenada. Antes de desplegar: en cada base de empresa,
-  `SELECT count(*) FROM audit.audit_logs WHERE seq IS NOT NULL AND entry_hash IS NULL` cuenta las
-  filas que un `/logs/bulk` anterior dejó fuera de la cadena; el verificador ya las señala como
-  rotura, y un resultado distinto de cero pide decidir qué hacer con ellas antes de que el
-  endpoint de integridad se ponga en rojo.
+  Resuelto el mismo día en `docs/adr/0006-cadena-de-auditoria-con-hmac-y-anclas.md` (probado contra Postgres real y
+  con mutaciones: sin clave en el HMAC, sin longitud por campo y sin ancla, y las pruebas fallan; suelo de `audit` en
+  1,49): (1) la ambigüedad de los separadores, con una serialización con longitud por campo en la versión 2 del
+  hash (la colisión demostrada no existe en ella); (2) `user_agent`, que entra en la versión 2; (3) el hash sin clave, con
+  HMAC-SHA256 (`AUDIT_HASH_KEY`, con identificador de llave por fila y anillo de retiradas como
+  `MAIL_ENCRYPTION_KEY`) y la cabeza de la cadena anclada cada `AUDIT_ANCHOR_INTERVAL` en `audit.chain_anchors`
+  (solo añadir), en el evento `audit.chain.anchored` por la outbox y en el log, con el verificador contrastando todas las
+  anclas (`head_behind_anchor`, `anchor_mismatch`); (4) `audit.security_events`, encadenada con el mismo esquema sobre
+  sus campos inmutables (el reconocimiento queda fuera a propósito) y con el rol del servicio sin `DELETE` ni `UPDATE`
+  salvo el reconocimiento. Las filas existentes siguen en la versión 1, sin reescribirse. Migraciones `07`, `08` y `09`
+  de `audit` (aplicar antes del código; sin `AUDIT_HASH_KEY` todo sigue como antes y `audit` lo avisa al arrancar).
+  Sigue abierto: (a) **poner la llave** (`Operacion_Despliegue.md` 2: hasta entonces no hay versión 2 ni cadena de
+  eventos); (b) **el ancla externa**: la cabeza anclada vive en la misma base, en el stream `AUDIT_CHAIN` y en el log
+  del mismo servidor, y solo protege contra quien no pueda escribir también `audit.chain_anchors`; la protección completa
+  exige un consumidor de `audit.chain.anchored` que la entregue fuera del servidor (correo diario a una dirección externa
+  o un objeto con retención inmutable fuera del host), decidido en el ADR y sin implementar por falta de destino y
+  credenciales; (c) el tramo en versión 1 conserva sus debilidades (sin `user_agent`, separadores ambiguos, recalculable);
+  (d) una alerta de Prometheus por ancla ausente y la compactación de anclas antiguas. Antes de desplegar: en cada base de
+  empresa, `SELECT count(*) FROM audit.audit_logs WHERE seq IS NOT NULL AND entry_hash IS NULL` cuenta las filas que un
+  `/logs/bulk` anterior dejó fuera de la cadena; el verificador ya las señala como rotura, y un resultado distinto de
+  cero pide decidir qué hacer con ellas antes de que el endpoint de integridad se ponga en rojo.
 * Outbox disponible en `pkg/outbox` (probado contra Postgres): los servicios copiados en
   fase 0 siguen publicando tras el commit; se migran a `Enqueue` cuando se toquen. Los
   servicios nuevos lo usan desde el principio para sus publicaciones críticas. Los de celda

@@ -341,20 +341,6 @@ func TestGetAuditLogDistingueAusenteDeFallo(t *testing.T) {
 	}
 }
 
-func TestVerifyChainIntegrityDevuelveElVeredictoTalCual(t *testing.T) {
-	r := newRig()
-	broken := uuid.New()
-	r.log.verified = &domain.ChainIntegrity{OK: false, Checked: 7, BrokenID: &broken}
-	res, err := r.uc.VerifyChainIntegrity(context.Background(), uuid.New())
-	if err != nil || res.OK || res.Checked != 7 || *res.BrokenID != broken {
-		t.Fatalf("%+v %v", res, err)
-	}
-	r.log.verifyErr = errBoom
-	if _, err := r.uc.VerifyChainIntegrity(context.Background(), uuid.New()); !errors.Is(err, errBoom) {
-		t.Fatalf("un fallo de lectura no puede convertirse en un veredicto: %v", err)
-	}
-}
-
 func TestAcknowledgeSoloReconoceUnEventoDeLaEmpresa(t *testing.T) {
 	r := newRig()
 	evt, by := uuid.New(), uuid.New()

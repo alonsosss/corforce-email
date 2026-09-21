@@ -11,7 +11,9 @@
 # servicio se vacia en los demas con `environment:`. La clave de firma del token de acceso
 # (JWT_SIGNING_KEY) solo la recibe identity: con ella se forja cualquier sesion, y el
 # gateway verifica con las claves publicas (JWT_PUBLIC_KEYS). Todo servicio nuevo lleva
-# `JWT_SIGNING_KEY: ""`; ops/security/secrets/check-secrets.sh lo comprueba.
+# `JWT_SIGNING_KEY: ""`; ops/security/secrets/check-secrets.sh lo comprueba. Lo mismo vale para
+# la llave de la cadena de hash de auditoria (AUDIT_HASH_KEY y AUDIT_HASH_KEYS_OLD): solo la recibe
+# audit, y todo servicio nuevo lleva las dos vaciadas.
 services:
   postgres-primary:
     image: pgvector/pgvector:pg16
@@ -135,6 +137,8 @@ services:
       - path: /dev/shm/core-force-mail/secrets.env
         required: false
     environment:
+      AUDIT_HASH_KEY: ""
+      AUDIT_HASH_KEYS_OLD: ""
       JWT_SIGNING_KEY: ""
     depends_on:
       pgbouncer:
@@ -165,6 +169,8 @@ services:
       - path: /dev/shm/core-force-mail/secrets.env
         required: false
     environment:
+      AUDIT_HASH_KEY: ""
+      AUDIT_HASH_KEYS_OLD: ""
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
     depends_on:
       pgbouncer:
@@ -187,6 +193,8 @@ services:
       - path: /dev/shm/core-force-mail/secrets.env
         required: false
     environment:
+      AUDIT_HASH_KEY: ""
+      AUDIT_HASH_KEYS_OLD: ""
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
       JWT_SIGNING_KEY: ""
     depends_on:
@@ -212,6 +220,8 @@ services:
       - path: /dev/shm/core-force-mail/secrets.env
         required: false
     environment:
+      AUDIT_HASH_KEY: ""
+      AUDIT_HASH_KEYS_OLD: ""
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
       JWT_SIGNING_KEY: ""
       # Las migraciones viajan dentro de la imagen del servicio que las aplica.
@@ -263,6 +273,8 @@ services:
       - path: /dev/shm/core-force-mail/secrets.env
         required: false
     environment:
+      AUDIT_HASH_KEY: ""
+      AUDIT_HASH_KEYS_OLD: ""
       POSTGRES_PASSWORD: ${TENANT_SERVICES_PLATFORM_PASSWORD:-}
       REGISTRY_DB_PASSWORD: ${TENANT_ROUTER_DB_PASSWORD:-}
       TENANT_DB_USER: mail_svc_scheduler
@@ -289,6 +301,8 @@ services:
       - path: /dev/shm/core-force-mail/secrets.env
         required: false
     environment:
+      AUDIT_HASH_KEY: ""
+      AUDIT_HASH_KEYS_OLD: ""
       CELL_DB_PASSWORD: ${CELL_DB_PASSWORD:-}
       JWT_SIGNING_KEY: ""
       # La credencial de plataforma no llega a los servicios de celda: usan la de su celda
@@ -316,6 +330,8 @@ services:
       - path: /dev/shm/core-force-mail/secrets.env
         required: false
     environment:
+      AUDIT_HASH_KEY: ""
+      AUDIT_HASH_KEYS_OLD: ""
       CELL_DB_PASSWORD: ${CELL_DB_PASSWORD:-}
       JWT_SIGNING_KEY: ""
       # La credencial de plataforma no llega a los servicios de celda: usan la de su celda
@@ -347,6 +363,8 @@ services:
       - path: /dev/shm/core-force-mail/secrets.env
         required: false
     environment:
+      AUDIT_HASH_KEY: ""
+      AUDIT_HASH_KEYS_OLD: ""
       CELL_DB_PASSWORD: ${CELL_DB_PASSWORD:-}
       JWT_SIGNING_KEY: ""
       # La credencial de plataforma no llega a los servicios de celda: usan la de su celda
@@ -381,6 +399,8 @@ services:
       - path: /dev/shm/core-force-mail/secrets.env
         required: false
     environment:
+      AUDIT_HASH_KEY: ""
+      AUDIT_HASH_KEYS_OLD: ""
       CELL_DB_PASSWORD: ${CELL_DB_PASSWORD:-}
       JWT_SIGNING_KEY: ""
       # La credencial de plataforma no llega a los servicios de celda: usan la de su celda
@@ -412,6 +432,8 @@ services:
       - path: /dev/shm/core-force-mail/secrets.env
         required: false
     environment:
+      AUDIT_HASH_KEY: ""
+      AUDIT_HASH_KEYS_OLD: ""
       POSTGRES_PASSWORD: ${TENANT_SERVICES_PLATFORM_PASSWORD:-}
       REGISTRY_DB_PASSWORD: ${TENANT_ROUTER_DB_PASSWORD:-}
       TENANT_DB_USER: mail_svc_domains
@@ -441,6 +463,8 @@ services:
       - path: /dev/shm/core-force-mail/secrets.env
         required: false
     environment:
+      AUDIT_HASH_KEY: ""
+      AUDIT_HASH_KEYS_OLD: ""
       POSTGRES_PASSWORD: ${TENANT_SERVICES_PLATFORM_PASSWORD:-}
       REGISTRY_DB_PASSWORD: ${TENANT_ROUTER_DB_PASSWORD:-}
       TENANT_DB_USER: mail_svc_mail_migration
@@ -472,6 +496,8 @@ services:
       - path: /dev/shm/core-force-mail/secrets.env
         required: false
     environment:
+      AUDIT_HASH_KEY: ""
+      AUDIT_HASH_KEYS_OLD: ""
       POSTGRES_PASSWORD: ${TENANT_SERVICES_PLATFORM_PASSWORD:-}
       REGISTRY_DB_PASSWORD: ${TENANT_ROUTER_DB_PASSWORD:-}
       TENANT_DB_USER: mail_svc_mail_dav
@@ -498,6 +524,8 @@ services:
       - path: /dev/shm/core-force-mail/secrets.env
         required: false
     environment:
+      AUDIT_HASH_KEY: ""
+      AUDIT_HASH_KEYS_OLD: ""
       POSTGRES_PASSWORD: ${TENANT_SERVICES_PLATFORM_PASSWORD:-}
       REGISTRY_DB_PASSWORD: ${TENANT_ROUTER_DB_PASSWORD:-}
       TENANT_DB_USER: mail_svc_transactional
@@ -526,6 +554,8 @@ services:
       - path: /dev/shm/core-force-mail/secrets.env
         required: false
     environment:
+      AUDIT_HASH_KEY: ""
+      AUDIT_HASH_KEYS_OLD: ""
       POSTGRES_PASSWORD: ${TENANT_SERVICES_PLATFORM_PASSWORD:-}
       REGISTRY_DB_PASSWORD: ${TENANT_ROUTER_DB_PASSWORD:-}
       TENANT_DB_USER: mail_svc_suppression
@@ -552,6 +582,8 @@ services:
       - path: /dev/shm/core-force-mail/secrets.env
         required: false
     environment:
+      AUDIT_HASH_KEY: ""
+      AUDIT_HASH_KEYS_OLD: ""
       POSTGRES_PASSWORD: ${TENANT_SERVICES_PLATFORM_PASSWORD:-}
       REGISTRY_DB_PASSWORD: ${TENANT_ROUTER_DB_PASSWORD:-}
       TENANT_DB_USER: mail_svc_templates
@@ -578,6 +610,8 @@ services:
       - path: /dev/shm/core-force-mail/secrets.env
         required: false
     environment:
+      AUDIT_HASH_KEY: ""
+      AUDIT_HASH_KEYS_OLD: ""
       POSTGRES_PASSWORD: ${TENANT_SERVICES_PLATFORM_PASSWORD:-}
       REGISTRY_DB_PASSWORD: ${TENANT_ROUTER_DB_PASSWORD:-}
       TENANT_DB_USER: mail_svc_contacts
@@ -604,6 +638,8 @@ services:
       - path: /dev/shm/core-force-mail/secrets.env
         required: false
     environment:
+      AUDIT_HASH_KEY: ""
+      AUDIT_HASH_KEYS_OLD: ""
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
       JWT_SIGNING_KEY: ""
     depends_on:
@@ -627,6 +663,8 @@ services:
       - path: /dev/shm/core-force-mail/secrets.env
         required: false
     environment:
+      AUDIT_HASH_KEY: ""
+      AUDIT_HASH_KEYS_OLD: ""
       POSTGRES_PASSWORD: ${TENANT_SERVICES_PLATFORM_PASSWORD:-}
       REGISTRY_DB_PASSWORD: ${TENANT_ROUTER_DB_PASSWORD:-}
       TENANT_DB_USER: mail_svc_reputation
@@ -655,6 +693,8 @@ services:
       - path: /dev/shm/core-force-mail/secrets.env
         required: false
     environment:
+      AUDIT_HASH_KEY: ""
+      AUDIT_HASH_KEYS_OLD: ""
       POSTGRES_PASSWORD: ${TENANT_SERVICES_PLATFORM_PASSWORD:-}
       REGISTRY_DB_PASSWORD: ${TENANT_ROUTER_DB_PASSWORD:-}
       TENANT_DB_USER: mail_svc_campaigns
@@ -681,6 +721,8 @@ services:
       - path: /dev/shm/core-force-mail/secrets.env
         required: false
     environment:
+      AUDIT_HASH_KEY: ""
+      AUDIT_HASH_KEYS_OLD: ""
       POSTGRES_PASSWORD: ${TENANT_SERVICES_PLATFORM_PASSWORD:-}
       REGISTRY_DB_PASSWORD: ${TENANT_ROUTER_DB_PASSWORD:-}
       TENANT_DB_USER: mail_svc_automations
@@ -707,6 +749,8 @@ services:
       - path: /dev/shm/core-force-mail/secrets.env
         required: false
     environment:
+      AUDIT_HASH_KEY: ""
+      AUDIT_HASH_KEYS_OLD: ""
       POSTGRES_PASSWORD: ${TENANT_SERVICES_PLATFORM_PASSWORD:-}
       REGISTRY_DB_PASSWORD: ${TENANT_ROUTER_DB_PASSWORD:-}
       TENANT_DB_USER: mail_svc_analytics

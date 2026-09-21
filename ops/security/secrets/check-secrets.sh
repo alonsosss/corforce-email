@@ -109,7 +109,12 @@ import re
 import sys
 
 # Secreto -> servicios de compose que SI lo reciben.
-DESTINATARIOS = {"JWT_SIGNING_KEY": {"identity"}}
+DESTINATARIOS = {
+    "JWT_SIGNING_KEY": {"identity"},
+    # Con la llave de la cadena de auditoria, quien escribe en la base de una empresa recalcula la cadena.
+    "AUDIT_HASH_KEY": {"audit"},
+    "AUDIT_HASH_KEYS_OLD": {"audit"},
+}
 
 servicio_re = re.compile(r"^  ([A-Za-z0-9_.-]+):\s*$")
 hallazgos = []

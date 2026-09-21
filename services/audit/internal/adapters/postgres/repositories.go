@@ -2,13 +2,12 @@ package postgres
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
 	"time"
 
+	"github.com/alonsosss/corforce-email/pkg/crypto"
 	"github.com/alonsosss/corforce-email/pkg/db"
 	"github.com/alonsosss/corforce-email/services/audit/internal/domain"
 	"github.com/alonsosss/corforce-email/services/audit/internal/ports"
@@ -16,52 +15,15 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-type AuditLogRepo struct{ pool *db.ContextPool }
-
-func NewAuditLogRepo(pool *db.ContextPool) *AuditLogRepo { return &AuditLogRepo{pool: pool} }
-
-// auditChainLockKey serializa la escritura de la cadena de hash dentro de la base
-// de un tenant (cada empresa tiene su propia base, asi que el lock es por-empresa).
-const auditChainLockKey = 4771001
-
-// chainHash calcula el eslabon de esta fila: SHA-256 del hash anterior mas el
-// contenido del evento TAL COMO LO ALMACENA la base. Es clave usar la forma
-// almacenada: Postgres normaliza el jsonb (reordena/limpia) y guarda created_at con
-// precision de microsegundos, asi que hashear el valor en memoria no cuadraria con
-// lo que se lee al verificar. Por eso before/after/changes llegan como el texto del
-// jsonb devuelto por la BD, y createdAt es el valor almacenado.
-func chainHash(prev string, l *domain.AuditLog, before, after, changes string, createdAt time.Time) string {
-	var b strings.Builder
-	w := func(s string) { b.WriteString(s); b.WriteByte('|') }
-	w(prev)
-	w(l.ID.String())
-	w(l.TenantID.String())
-	w(l.UserID.String())
-	if l.SessionID != nil {
-		w(l.SessionID.String())
-	} else {
-		w("")
-	}
-	w(l.Action)
-	w(l.Module)
-	w(l.Resource)
-	w(derefStr(l.ResourceID))
-	w(l.IPAddress)
-	w(derefStr(l.RequestID))
-	w(before)
-	w(after)
-	w(changes)
-	w(l.Severity)
-	b.WriteString(createdAt.UTC().Format(time.RFC3339Nano))
-	sum := sha256.Sum256([]byte(b.String()))
-	return hex.EncodeToString(sum[:])
+// AuditLogRepo escribe y verifica la cadena de audit_logs. hashKeys nil deja al servicio en la
+// version 1 del hash; con anillo, las filas nuevas se firman con la version 2 y la llave activa.
+type AuditLogRepo struct {
+	pool     *db.ContextPool
+	hashKeys *crypto.MACKeyRing
 }
 
-func derefStr(s *string) string {
-	if s == nil {
-		return ""
-	}
-	return *s
+func NewAuditLogRepo(pool *db.ContextPool, hashKeys *crypto.MACKeyRing) *AuditLogRepo {
+	return &AuditLogRepo{pool: pool, hashKeys: hashKeys}
 }
 
 // Create inserta la fila encadenada. No hay camino alternativo sin hash: la
@@ -69,38 +31,22 @@ func derefStr(s *string) string {
 // tenant, y una base que no las tenga debe fallar en vez de escribir una
 // bitacora que el verificador no puede comprobar.
 func (r *AuditLogRepo) Create(ctx context.Context, l *domain.AuditLog) error {
-	tx, err := r.beginChained(ctx)
+	tx, err := beginChained(ctx, r.pool, auditChainLockKey)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
 
-	if err := appendChained(ctx, tx, l); err != nil {
+	if err := r.appendChained(ctx, tx, l); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
 }
 
-// beginChained abre la transaccion que escribe en la cadena y serializa a los
-// escritores de este tenant: dos inserciones concurrentes no pueden leer el mismo
-// "ultimo hash" y bifurcar la cadena. El candado es de transaccion, asi que se
-// suelta solo al confirmar o revertir.
-func (r *AuditLogRepo) beginChained(ctx context.Context) (pgx.Tx, error) {
-	tx, err := r.pool.Begin(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, auditChainLockKey); err != nil {
-		_ = tx.Rollback(ctx)
-		return nil, err
-	}
-	return tx, nil
-}
-
 // appendChained anade l al final de la cadena. Exige el candado de beginChained.
 // Devuelve ErrLogAlreadyRecorded, sin escribir nada, si el id ya esta en la bitacora:
 // es lo que hace idempotente una reentrega del bus.
-func appendChained(ctx context.Context, tx pgx.Tx, l *domain.AuditLog) error {
+func (r *AuditLogRepo) appendChained(ctx context.Context, tx pgx.Tx, l *domain.AuditLog) error {
 	var prev string
 	if err := tx.QueryRow(ctx,
 		`SELECT COALESCE((SELECT entry_hash FROM audit.audit_logs WHERE entry_hash IS NOT NULL ORDER BY seq DESC LIMIT 1),'')`,
@@ -108,17 +54,22 @@ func appendChained(ctx context.Context, tx pgx.Tx, l *domain.AuditLog) error {
 		return err
 	}
 
+	version, keyID := hashVersionUnkeyed, ""
+	if r.hashKeys != nil {
+		version, keyID = hashVersionKeyed, r.hashKeys.ActiveID()
+	}
+
 	// Se inserta y se devuelve la forma ALMACENADA (jsonb normalizado, created_at con
 	// la precision real) para calcular el hash sobre exactamente eso.
-	var storedCreated time.Time
-	var storedBefore, storedAfter, storedChanges string
+	stored := *l
+	var seq int64
 	err := tx.QueryRow(ctx,
-		`INSERT INTO audit.audit_logs (id,tenant_id,user_id,session_id,action,module,resource,resource_id,ip_address,user_agent,request_id,before_data,after_data,changes,severity)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+		`INSERT INTO audit.audit_logs (id,tenant_id,user_id,session_id,action,module,resource,resource_id,ip_address,user_agent,request_id,before_data,after_data,changes,severity,hash_version,hash_key_id)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,NULLIF($17,''))
 		 ON CONFLICT (id) DO NOTHING
-		 RETURNING created_at, COALESCE(before_data::text,''), COALESCE(after_data::text,''), COALESCE(changes::text,'')`,
-		l.ID, l.TenantID, l.UserID, l.SessionID, l.Action, l.Module, l.Resource, l.ResourceID, l.IPAddress, l.UserAgent, l.RequestID, l.Before, l.After, l.Changes, l.Severity).
-		Scan(&storedCreated, &storedBefore, &storedAfter, &storedChanges)
+		 RETURNING seq, created_at, before_data::text, after_data::text, changes::text`,
+		l.ID, l.TenantID, l.UserID, l.SessionID, l.Action, l.Module, l.Resource, l.ResourceID, l.IPAddress, l.UserAgent, l.RequestID, l.Before, l.After, l.Changes, l.Severity, version, keyID).
+		Scan(&seq, &stored.CreatedAt, &stored.Before, &stored.After, &stored.Changes)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.ErrLogAlreadyRecorded
 	}
@@ -126,14 +77,22 @@ func appendChained(ctx context.Context, tx pgx.Tx, l *domain.AuditLog) error {
 		return err
 	}
 
-	entry := chainHash(prev, l, storedBefore, storedAfter, storedChanges, storedCreated)
+	var entry string
+	if version == hashVersionKeyed {
+		if entry, err = signCanonical(r.hashKeys, keyID, auditLogCanonicalV2(keyID, seq, prev, &stored)); err != nil {
+			return err
+		}
+	} else {
+		entry = chainHash(prev, l, derefStr(stored.Before), derefStr(stored.After), derefStr(stored.Changes), stored.CreatedAt)
+	}
 	_, err = tx.Exec(ctx, `UPDATE audit.audit_logs SET prev_hash=$1, entry_hash=$2 WHERE id=$3`, prev, entry, l.ID)
 	return err
 }
 
 // VerifyChain recorre la cadena por orden y detecta la primera fila cuyo hash no
 // cuadra (contenido alterado) o cuyo prev_hash no enlaza con la anterior (fila
-// borrada o insertada). Devuelve OK=true si la cadena esta intacta.
+// borrada o insertada). Cada fila se verifica con la formula de SU version; las de version 2
+// exigen la llave con la que se firmaron.
 //
 // Forman parte de la cadena las filas con seq o con entry_hash: solo las anteriores a
 // la migracion 03 tienen ambos a NULL. Filtrar solo por entry_hash dejaria a quien
@@ -141,31 +100,33 @@ func appendChained(ctx context.Context, tx pgx.Tx, l *domain.AuditLog) error {
 // note; una fila con seq y sin hash se lee con hash vacio y rompe la cadena.
 func (r *AuditLogRepo) VerifyChain(ctx context.Context, tenantID uuid.UUID) (*domain.ChainIntegrity, error) {
 	rows, err := r.pool.Query(ctx,
-		`SELECT id,tenant_id,user_id,session_id,action,module,resource,resource_id,ip_address,request_id,severity,created_at,COALESCE(before_data::text,''),COALESCE(after_data::text,''),COALESCE(changes::text,''),COALESCE(prev_hash,''),COALESCE(entry_hash,'')
+		`SELECT id,tenant_id,user_id,session_id,action,module,resource,resource_id,ip_address,user_agent,request_id,severity,created_at,
+		        before_data::text,after_data::text,changes::text,seq,hash_version,COALESCE(hash_key_id,''),COALESCE(prev_hash,''),COALESCE(entry_hash,'')
 		   FROM audit.audit_logs WHERE seq IS NOT NULL OR entry_hash IS NOT NULL ORDER BY seq ASC`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	res := &domain.ChainIntegrity{OK: true}
-	expectedPrev := ""
+	v := newChainVerifier(domain.ChainAuditLogs, r.hashKeys, tenantID)
 	for rows.Next() {
 		var l domain.AuditLog
-		var before, after, changes, prevHash, entryHash string
-		if err := rows.Scan(&l.ID, &l.TenantID, &l.UserID, &l.SessionID, &l.Action, &l.Module, &l.Resource, &l.ResourceID, &l.IPAddress, &l.RequestID, &l.Severity, &l.CreatedAt, &before, &after, &changes, &prevHash, &entryHash); err != nil {
+		var row storedRow
+		if err := rows.Scan(&l.ID, &l.TenantID, &l.UserID, &l.SessionID, &l.Action, &l.Module, &l.Resource, &l.ResourceID, &l.IPAddress, &l.UserAgent, &l.RequestID, &l.Severity, &l.CreatedAt,
+			&l.Before, &l.After, &l.Changes, &row.seq, &row.version, &row.keyID, &row.prev, &row.entry); err != nil {
 			return nil, err
 		}
-		res.Checked++
-		if prevHash != expectedPrev || chainHash(prevHash, &l, before, after, changes, l.CreatedAt) != entryHash {
-			res.OK = false
-			id := l.ID
-			res.BrokenID = &id
-			return res, nil
+		row.id, row.tenantID = l.ID, l.TenantID
+		ok := v.check(row,
+			func() string {
+				return chainHash(row.prev, &l, derefStr(l.Before), derefStr(l.After), derefStr(l.Changes), l.CreatedAt)
+			},
+			func(keyID string, seq int64) []byte { return auditLogCanonicalV2(keyID, seq, row.prev, &l) })
+		if !ok {
+			return v.res, nil
 		}
-		expectedPrev = entryHash
 	}
-	return res, rows.Err()
+	return v.res, rows.Err()
 }
 
 func (r *AuditLogRepo) GetByID(ctx context.Context, id, tenantID uuid.UUID) (*domain.AuditLog, error) {
@@ -208,13 +169,13 @@ func (r *AuditLogRepo) Count(ctx context.Context, q domain.AuditQuery) (int64, e
 // BulkCreate anade el lote a la cadena, en una sola transaccion y con el candado tomado una
 // vez. Las filas repetidas (mismo id) se omiten.
 func (r *AuditLogRepo) BulkCreate(ctx context.Context, logs []*domain.AuditLog) error {
-	tx, err := r.beginChained(ctx)
+	tx, err := beginChained(ctx, r.pool, auditChainLockKey)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
 	for _, l := range logs {
-		if err := appendChained(ctx, tx, l); err != nil && !errors.Is(err, domain.ErrLogAlreadyRecorded) {
+		if err := r.appendChained(ctx, tx, l); err != nil && !errors.Is(err, domain.ErrLogAlreadyRecorded) {
 			return err
 		}
 	}
@@ -321,10 +282,15 @@ func buildAuditWhere(q domain.AuditQuery) (string, []interface{}) {
 	return "WHERE " + strings.Join(conds, " AND "), args
 }
 
-type SecurityEventRepo struct{ pool *db.ContextPool }
+// SecurityEventRepo guarda los eventos de seguridad. Con hashKeys los encadena con la version 2 del
+// hash; sin ellas los escribe sin cadena, como antes de que existiera.
+type SecurityEventRepo struct {
+	pool     *db.ContextPool
+	hashKeys *crypto.MACKeyRing
+}
 
-func NewSecurityEventRepo(pool *db.ContextPool) *SecurityEventRepo {
-	return &SecurityEventRepo{pool: pool}
+func NewSecurityEventRepo(pool *db.ContextPool, hashKeys *crypto.MACKeyRing) *SecurityEventRepo {
+	return &SecurityEventRepo{pool: pool, hashKeys: hashKeys}
 }
 
 // host(ip_address): la columna es inet y el destino un string; sin la conversion
@@ -340,8 +306,70 @@ func (r *SecurityEventRepo) scanEvent(row pgx.Row) (*domain.SecurityEvent, error
 }
 
 func (r *SecurityEventRepo) Create(ctx context.Context, e *domain.SecurityEvent) error {
-	_, err := r.pool.Exec(ctx, `INSERT INTO audit.security_events (id,tenant_id,user_id,event_type,ip_address,user_agent,detail,risk_level) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`, e.ID, e.TenantID, e.UserID, e.EventType, e.IPAddress, e.UserAgent, e.Detail, e.RiskLevel)
-	return err
+	if r.hashKeys == nil {
+		_, err := r.pool.Exec(ctx, `INSERT INTO audit.security_events (id,tenant_id,user_id,event_type,ip_address,user_agent,detail,risk_level) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`, e.ID, e.TenantID, e.UserID, e.EventType, e.IPAddress, e.UserAgent, e.Detail, e.RiskLevel)
+		return err
+	}
+	tx, err := beginChained(ctx, r.pool, securityChainLockKey)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	var prev string
+	if err := tx.QueryRow(ctx,
+		`SELECT COALESCE((SELECT entry_hash FROM audit.security_events WHERE entry_hash IS NOT NULL ORDER BY seq DESC LIMIT 1),'')`,
+	).Scan(&prev); err != nil {
+		return err
+	}
+	keyID := r.hashKeys.ActiveID()
+	stored := securityEventRecord{ID: e.ID, TenantID: e.TenantID, UserID: e.UserID, EventType: e.EventType, UserAgent: e.UserAgent, Detail: &e.Detail, RiskLevel: e.RiskLevel}
+	var seq int64
+	if err := tx.QueryRow(ctx,
+		`INSERT INTO audit.security_events (id,tenant_id,user_id,event_type,ip_address,user_agent,detail,risk_level,seq,hash_version,hash_key_id)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,nextval('audit.security_events_seq'),$9,$10)
+		 RETURNING seq, created_at, host(ip_address)`,
+		e.ID, e.TenantID, e.UserID, e.EventType, e.IPAddress, e.UserAgent, e.Detail, e.RiskLevel, hashVersionKeyed, keyID).
+		Scan(&seq, &stored.CreatedAt, &stored.IP); err != nil {
+		return err
+	}
+	entry, err := signCanonical(r.hashKeys, keyID, securityEventCanonicalV2(keyID, seq, prev, &stored))
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE audit.security_events SET prev_hash=$1, entry_hash=$2 WHERE id=$3`, prev, entry, e.ID); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// VerifyChain recorre la cadena de los eventos con el mismo criterio que la de audit_logs. Las
+// filas sin seq ni hash son anteriores a la cadena, o de un servicio sin clave, y no forman
+// parte de ella; el reconocimiento no entra en el hash.
+func (r *SecurityEventRepo) VerifyChain(ctx context.Context, tenantID uuid.UUID) (*domain.ChainIntegrity, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT id,tenant_id,user_id,event_type,host(ip_address),user_agent,detail,risk_level,created_at,
+		        seq,COALESCE(hash_version,0),COALESCE(hash_key_id,''),COALESCE(prev_hash,''),COALESCE(entry_hash,'')
+		   FROM audit.security_events WHERE seq IS NOT NULL OR entry_hash IS NOT NULL ORDER BY seq ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	v := newChainVerifier(domain.ChainSecurityEvents, r.hashKeys, tenantID)
+	for rows.Next() {
+		var e securityEventRecord
+		var row storedRow
+		if err := rows.Scan(&e.ID, &e.TenantID, &e.UserID, &e.EventType, &e.IP, &e.UserAgent, &e.Detail, &e.RiskLevel, &e.CreatedAt,
+			&row.seq, &row.version, &row.keyID, &row.prev, &row.entry); err != nil {
+			return nil, err
+		}
+		row.id, row.tenantID = e.ID, e.TenantID
+		if !v.check(row, nil, func(keyID string, seq int64) []byte { return securityEventCanonicalV2(keyID, seq, row.prev, &e) }) {
+			return v.res, nil
+		}
+	}
+	return v.res, rows.Err()
 }
 
 func (r *SecurityEventRepo) GetByID(ctx context.Context, id, tenantID uuid.UUID) (*domain.SecurityEvent, error) {

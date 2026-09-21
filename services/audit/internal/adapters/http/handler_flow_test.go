@@ -84,6 +84,9 @@ type stubSecurity struct {
 }
 
 func (s *stubSecurity) Create(context.Context, *domain.SecurityEvent) error { return nil }
+func (s *stubSecurity) VerifyChain(context.Context, uuid.UUID) (*domain.ChainIntegrity, error) {
+	return &domain.ChainIntegrity{OK: true, Chain: domain.ChainSecurityEvents}, s.err
+}
 func (s *stubSecurity) GetByID(context.Context, uuid.UUID, uuid.UUID) (*domain.SecurityEvent, error) {
 	return s.byID, s.err
 }
@@ -134,6 +137,18 @@ func (s *stubSummary) GetUserActivity(_ context.Context, _, _ uuid.UUID, from, t
 
 type stubPublisher struct{}
 
+// stubAnchors hace de tabla de anclas vacia: la cadena no tiene ninguna, asi que el veredicto
+// lo dan solo las filas.
+type stubAnchors struct{}
+
+func (stubAnchors) Head(context.Context, domain.ChainName) (*domain.ChainHead, error) {
+	return nil, nil
+}
+func (stubAnchors) Findings(context.Context, domain.ChainName) (domain.AnchorFindings, error) {
+	return domain.AnchorFindings{}, nil
+}
+func (stubAnchors) Save(context.Context, *domain.ChainAnchor) (bool, error) { return false, nil }
+
 func (stubPublisher) PublishSecurityAlert(_, _, _, _, _, _ string) error { return nil }
 
 type flow struct {
@@ -153,7 +168,7 @@ func newFlow() *flow {
 	f := &flow{logs: &stubLogs{}, security: &stubSecurity{}, changes: &stubChanges{}, summary: &stubSummary{},
 		tenant: uuid.NewString(), user: uuid.NewString()}
 	uc := app.NewAuditUseCase(app.AuditDeps{Logs: f.logs, Security: f.security, Changes: f.changes,
-		Summary: f.summary, Events: stubPublisher{}, Logger: zap.NewNop()})
+		Summary: f.summary, Events: stubPublisher{}, Logger: zap.NewNop(), Anchors: stubAnchors{}})
 	r := chi.NewRouter()
 	r.Use(middleware.InjectFromGateway)
 	r.Mount(base, NewHandler(uc, authz.NewChecker(unreachable, "")).Routes())
@@ -445,8 +460,31 @@ func TestIntegridadDevuelveElVeredictoDeLaCadena(t *testing.T) {
 
 	f.logs.verdict = &domain.ChainIntegrity{OK: true, Checked: 9}
 	rec = f.do(http.MethodGet, base+"/integrity", "")
-	if strings.Contains(rec.Body.String(), "broken_id") {
-		t.Fatalf("una cadena intacta no senala ninguna fila: %s", rec.Body)
+	if strings.Contains(rec.Body.String(), "broken_id") || strings.Contains(rec.Body.String(), "reason") {
+		t.Fatalf("una cadena intacta no senala ninguna fila ni causa: %s", rec.Body)
+	}
+}
+
+func TestIntegridadDiceLaCausaLaCadenaYLaVersionDeLaFilaRota(t *testing.T) {
+	f := newFlow()
+	seq, version := int64(41), 2
+	f.logs.verdict = &domain.ChainIntegrity{
+		OK: false, Checked: 40, Chain: domain.ChainAuditLogs, Reason: domain.ReasonHashKeyMissing,
+		BrokenSeq: &seq, BrokenVersion: &version, Versions: map[string]int{"1": 10, "2": 30},
+	}
+	rec := f.do(http.MethodGet, base+"/integrity", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("%d", rec.Code)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(decode(t, rec).Data, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["reason"] != "hash_key_missing" || got["chain"] != "audit_logs" || got["broken_seq"] != float64(41) || got["broken_hash_version"] != float64(2) {
+		t.Fatalf("%v", got)
+	}
+	if v, _ := got["versions"].(map[string]any); v["1"] != float64(10) || v["2"] != float64(30) {
+		t.Fatalf("no reporta las filas por version: %v", got["versions"])
 	}
 }
 

@@ -29,12 +29,16 @@ import (
 )
 
 var migrations = []string{
+	"migrations/tenant/canonical/platform/00_outbox.sql",
 	"migrations/tenant/canonical/audit/01_audit.sql",
 	"migrations/tenant/canonical/audit/02_security_events.sql",
 	"migrations/tenant/canonical/audit/03_audit_hashchain.sql",
 	"migrations/tenant/canonical/audit/04_service_role.sql",
 	"migrations/tenant/canonical/audit/05_data_change_records.sql",
 	"migrations/tenant/canonical/audit/06_append_only_role.sql",
+	"migrations/tenant/canonical/audit/07_audit_hashchain_v2.sql",
+	"migrations/tenant/canonical/audit/08_chain_anchors.sql",
+	"migrations/tenant/canonical/audit/09_security_events_chain.sql",
 }
 
 // integrationEnv devuelve la variable de entorno que apunta a la infraestructura de la
@@ -79,6 +83,7 @@ type env struct {
 	security *SecurityEventRepo
 	changes  *DataChangeRepo
 	summary  *AuditSummaryRepo
+	anchors  *ChainAnchorRepo
 
 	tenant uuid.UUID
 	user   uuid.UUID
@@ -96,7 +101,7 @@ func setup(t *testing.T) *env {
 		applyMigration(t, admin, rel)
 	}
 	if _, err := admin.Exec(context.Background(),
-		`TRUNCATE audit.data_change_records, audit.audit_logs, audit.security_events RESTART IDENTITY`); err != nil {
+		`TRUNCATE audit.data_change_records, audit.audit_logs, audit.security_events, audit.chain_anchors, platform.event_outbox RESTART IDENTITY`); err != nil {
 		t.Fatal(err)
 	}
 
@@ -120,10 +125,11 @@ func setup(t *testing.T) *env {
 		ctx:      db.WithPool(context.Background(), svc),
 		admin:    admin,
 		svc:      svc,
-		logs:     NewAuditLogRepo(cp),
-		security: NewSecurityEventRepo(cp),
+		logs:     NewAuditLogRepo(cp, nil),
+		security: NewSecurityEventRepo(cp, nil),
 		changes:  NewDataChangeRepo(cp),
 		summary:  NewAuditSummaryRepo(cp),
+		anchors:  NewChainAnchorRepo(cp),
 		tenant:   uuid.New(),
 		user:     uuid.New(),
 	}
@@ -339,12 +345,16 @@ func TestCambiarCualquierColumnaCubiertaRompeLaCadenaEnEsaFila(t *testing.T) {
 			ids := e.seedChain(t, 5)
 			e.assertIntact(t, 5)
 			e.tamper(t, `UPDATE audit.audit_logs SET `+set+` WHERE seq = 3`)
-			// Con "id" cambiado la fila ya no tiene el id original: se identifica por posicion.
+			// Con "id" cambiado la fila ya no tiene el id original: se identifica por posicion. Con
+			// "tenant_id" cambiado la fila pasa a ser de otra empresa y el veredicto no la nombra.
 			res := e.verify(t)
-			if res.OK || res.BrokenID == nil || res.Checked != 3 {
+			if res.OK || res.Checked != 3 || (name != "tenant_id" && res.BrokenID == nil) {
 				t.Fatalf("no se detecto o se detecto en otra fila: %+v", res)
 			}
-			if name != "id" && *res.BrokenID != ids[2] {
+			if name == "tenant_id" && res.BrokenID != nil {
+				t.Fatalf("el veredicto nombra una fila de otra empresa: %+v", res)
+			}
+			if name != "id" && name != "tenant_id" && *res.BrokenID != ids[2] {
 				t.Fatalf("rota en %v, se esperaba %v", *res.BrokenID, ids[2])
 			}
 		})

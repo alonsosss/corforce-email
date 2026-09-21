@@ -383,6 +383,8 @@ cat <<EOF
         required: false
     environment:
       JWT_SIGNING_KEY: ""
+      AUDIT_HASH_KEY: ""
+      AUDIT_HASH_KEYS_OLD: ""
     depends_on:
       pgbouncer: { condition: service_healthy }
       nats: { condition: service_healthy }

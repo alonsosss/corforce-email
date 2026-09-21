@@ -549,6 +549,24 @@ export const es = {
     'Ningun registro fue editado, borrado ni insertado fuera de orden.',
   'audit.integrity.brokenDescription':
     'Alguien altero el rastro en la base. Conserva este resultado y escala el incidente.',
+  'audit.integrity.chainLabel': 'Cadena afectada',
+  'audit.integrity.brokenSeq': 'Posicion afectada',
+  'audit.integrity.chain.audit_logs': 'Registros de auditoria',
+  'audit.integrity.chain.security_events': 'Eventos de seguridad',
+  'audit.integrity.reason.chain_broken':
+    'Un registro fue editado, borrado o insertado fuera de orden. Conserva este resultado y escala el incidente.',
+  'audit.integrity.reason.hash_key_missing':
+    'Hay registros firmados con clave y el servicio no tiene la clave configurada, asi que no se pueden verificar. Es un problema de configuracion hasta que se demuestre lo contrario.',
+  'audit.integrity.reason.hash_key_unknown':
+    'Hay registros firmados con una llave que ya no esta configurada, asi que no se pueden verificar.',
+  'audit.integrity.reason.hash_version_regression':
+    'Un registro sin clave aparece despues de registros firmados con clave. Conserva este resultado y escala el incidente.',
+  'audit.integrity.reason.hash_version_unsupported':
+    'Hay registros con una version de hash que este servicio no conoce.',
+  'audit.integrity.reason.head_behind_anchor':
+    'La cadena termina antes de una cabeza ya anclada: se borraron los ultimos registros. Conserva este resultado y escala el incidente.',
+  'audit.integrity.reason.anchor_mismatch':
+    'Un ancla ya publicada no coincide con la cadena actual: se reescribio parte del rastro. Conserva este resultado y escala el incidente.',
 
   'quota.unlimited': 'Sin limite',
   'quota.zeroUnlimited': '0 significa sin limite.',

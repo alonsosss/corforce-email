@@ -344,7 +344,7 @@ Todo inicio, fallo, bloqueo, logout y revocacion publica `identity.*`; el gatewa
 `audit.api.write` por cada escritura autenticada y por cada peticion con celda destino
 (tambien lecturas y rechazadas), con `target_cell`, y `gateway.security.exfiltration` cuando
 un usuario supera el umbral de lecturas; `audit` los persiste en cadena de hashes por
-empresa y el detector genera eventos de seguridad (fuerza bruta, IP o dispositivo nuevo,
+empresa (con clave por fila y la cabeza anclada periodicamente, ADR 0006) y el detector genera eventos de seguridad (fuerza bruta, IP o dispositivo nuevo,
 viaje imposible, exfiltracion) que reconoce quien tiene `audit/security_events/acknowledge`
 (el `tenant_admin` siempre).
 

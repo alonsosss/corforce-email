@@ -6,7 +6,7 @@ import { useAccess } from '@/access/useAccess';
 import { useAction } from '@/hooks/useAction';
 import { Button, Card, DescriptionList, EmptyState, PageHeader } from '@/design/components';
 import { IconAlertTriangle, IconCheckCircle, IconLink } from '@/design/icons';
-import { t } from '@/i18n';
+import { t, tEnum } from '@/i18n';
 
 export default function IntegrityPage() {
   const { can } = useAccess();
@@ -70,14 +70,26 @@ export default function IntegrityPage() {
                 </span>
               }
               title={t('audit.integrity.broken')}
-              description={t('audit.integrity.brokenDescription')}
+              description={
+                result.reason
+                  ? tEnum('audit.integrity.reason', result.reason)
+                  : t('audit.integrity.brokenDescription')
+              }
             />
             <DescriptionList
               items={[
                 { label: t('audit.integrity.checked', { n: result.checked }), value: '' },
                 {
+                  label: t('audit.integrity.chainLabel'),
+                  value: tEnum('audit.integrity.chain', result.chain),
+                },
+                {
                   label: t('audit.integrity.brokenId'),
                   value: <span className="cf-mono">{result.broken_id ?? t('common.dash')}</span>,
+                },
+                {
+                  label: t('audit.integrity.brokenSeq'),
+                  value: <span className="cf-mono">{result.broken_seq ?? t('common.dash')}</span>,
                 },
               ]}
             />

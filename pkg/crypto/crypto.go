@@ -7,7 +7,9 @@ package crypto
 import (
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -130,6 +132,99 @@ func (kr *KeyRing) Rotate(data []byte) (out []byte, rotated bool, err error) {
 // HasOldKeys dice si hay llaves retiradas en el anillo, es decir, si queda una rotacion
 // por terminar.
 func (kr *KeyRing) HasOldKeys() bool { return len(kr.old) > 0 }
+
+// ErrUnknownKeyID: el identificador de llave no esta en el anillo. Es lo que distingue una
+// llave retirada antes de tiempo de un dato manipulado.
+var ErrUnknownKeyID = errors.New("crypto: unknown mac key id")
+
+// macKeyLabel separa el identificador de la llave de cualquier otro uso del mismo HMAC.
+const macKeyLabel = "core-force-mail/mac-key-id/v1"
+
+type macKey struct {
+	id  string
+	key []byte
+}
+
+// MACKeyRing es el anillo de llaves HMAC-SHA256: la activa firma y las viejas solo sirven
+// para volver a calcular lo firmado con ellas. Cada llave se identifica por un id derivado
+// de la propia llave (HMAC de una etiqueta fija, no reversible), asi que el id se guarda junto
+// a lo firmado sin exponerla ni depender de un nombre que alguien tenga que mantener.
+//
+// A diferencia del anillo AES, una firma no se re-cifra al rotar: lo firmado con una llave
+// vieja solo se verifica con ella, y retirarla lo deja sin verificar.
+type MACKeyRing struct {
+	active macKey
+	old    []macKey
+}
+
+// LoadMACKeyRing lee la llave activa (64 hex) de activeEnv y las retiradas (64 hex separadas
+// por coma) de oldEnv. Devuelve nil, nil si no hay ninguna de las dos: el anillo es opcional
+// para quien lo trata asi. Retiradas sin activa, una llave repetida o una mal formada son
+// error, nunca un anillo a medias.
+func LoadMACKeyRing(activeEnv, oldEnv string) (*MACKeyRing, error) {
+	rawActive := strings.TrimSpace(os.Getenv(activeEnv))
+	rawOld := strings.TrimSpace(os.Getenv(oldEnv))
+	if rawActive == "" {
+		if rawOld != "" {
+			return nil, fmt.Errorf("%s: hay llaves retiradas pero falta la activa en %s", oldEnv, activeEnv)
+		}
+		return nil, nil
+	}
+	activeKey, err := parseHexKey(rawActive)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", activeEnv, err)
+	}
+	kr := &MACKeyRing{active: newMACKey(activeKey)}
+	seen := map[string]bool{kr.active.id: true}
+	for _, hk := range strings.Split(rawOld, ",") {
+		hk = strings.TrimSpace(hk)
+		if hk == "" {
+			continue
+		}
+		k, err := parseHexKey(hk)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", oldEnv, err)
+		}
+		mk := newMACKey(k)
+		if seen[mk.id] {
+			return nil, fmt.Errorf("%s: llave repetida", oldEnv)
+		}
+		seen[mk.id] = true
+		kr.old = append(kr.old, mk)
+	}
+	return kr, nil
+}
+
+func newMACKey(key []byte) macKey {
+	return macKey{id: hex.EncodeToString(macSum(key, []byte(macKeyLabel))[:8]), key: key}
+}
+
+// ActiveID es el identificador de la llave con la que se firma.
+func (kr *MACKeyRing) ActiveID() string { return kr.active.id }
+
+// SignWith firma data con la llave de ese id, activa o retirada: con ActiveID se firma y con
+// el id guardado junto a lo firmado se vuelve a calcular para verificarlo. ErrUnknownKeyID si
+// el anillo no la tiene.
+func (kr *MACKeyRing) SignWith(keyID string, data []byte) ([]byte, error) {
+	if kr.active.id == keyID {
+		return macSum(kr.active.key, data), nil
+	}
+	for _, k := range kr.old {
+		if k.id == keyID {
+			return macSum(k.key, data), nil
+		}
+	}
+	return nil, ErrUnknownKeyID
+}
+
+// HasOldKeys dice si quedan llaves retiradas en el anillo.
+func (kr *MACKeyRing) HasOldKeys() bool { return len(kr.old) > 0 }
+
+func macSum(key, data []byte) []byte {
+	m := hmac.New(sha256.New, key)
+	m.Write(data)
+	return m.Sum(nil)
+}
 
 func parseHexKey(hexKey string) ([]byte, error) {
 	hexKey = strings.TrimSpace(hexKey)

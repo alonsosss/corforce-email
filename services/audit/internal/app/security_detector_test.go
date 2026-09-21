@@ -47,6 +47,15 @@ func (f *fakeLogs) CountRecentByActionIP(context.Context, uuid.UUID, string, str
 type fakeSecurity struct {
 	created    []*domain.SecurityEvent
 	duplicated bool
+	verified   *domain.ChainIntegrity
+	verifyErr  error
+}
+
+func (f *fakeSecurity) VerifyChain(context.Context, uuid.UUID) (*domain.ChainIntegrity, error) {
+	if f.verified != nil || f.verifyErr != nil {
+		return f.verified, f.verifyErr
+	}
+	return &domain.ChainIntegrity{OK: true, Chain: domain.ChainSecurityEvents}, nil
 }
 
 func (f *fakeSecurity) Create(_ context.Context, e *domain.SecurityEvent) error {

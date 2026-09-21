@@ -63,10 +63,33 @@ export interface SecurityEventQuery extends PageQuery {
   acknowledged?: boolean;
 }
 
+export interface ChainHead {
+  seq: number;
+  hash: string;
+  hash_version: number;
+}
+
+export interface ChainAnchor {
+  head_seq: number;
+  head_hash: string;
+  hash_version: number;
+  anchored_at: string;
+}
+
+/** Veredicto del conjunto: filas de las dos cadenas y sus anclas. `chain` y `reason` dicen
+ * cual fallo primero y por que; `security_events` es el resultado de la segunda cadena. */
 export interface ChainIntegrity {
   ok: boolean;
   checked: number;
+  chain: string;
+  reason?: string;
   broken_id?: string;
+  broken_seq?: number;
+  broken_hash_version?: number;
+  versions?: Record<string, number>;
+  head?: ChainHead;
+  anchor?: ChainAnchor;
+  security_events?: ChainIntegrity;
 }
 
 interface StatusResponse {

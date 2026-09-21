@@ -20,6 +20,10 @@ type AuditDeps struct {
 	Summary  ports.AuditSummaryRepository
 	Events   ports.EventPublisher
 	Logger   *zap.Logger
+
+	Anchors      ports.ChainAnchorRepository
+	AnchorEvents ports.ChainAnchorPublisher
+	Tx           ports.Transactor
 }
 
 type AuditUseCase struct {
@@ -29,6 +33,10 @@ type AuditUseCase struct {
 	summary  ports.AuditSummaryRepository
 	events   ports.EventPublisher
 	logger   *zap.Logger
+
+	anchors      ports.ChainAnchorRepository
+	anchorEvents ports.ChainAnchorPublisher
+	tx           ports.Transactor
 }
 
 func NewAuditUseCase(deps AuditDeps) *AuditUseCase {
@@ -39,6 +47,10 @@ func NewAuditUseCase(deps AuditDeps) *AuditUseCase {
 		summary:  deps.Summary,
 		events:   deps.Events,
 		logger:   deps.Logger,
+
+		anchors:      deps.Anchors,
+		anchorEvents: deps.AnchorEvents,
+		tx:           deps.Tx,
 	}
 }
 
@@ -123,10 +135,6 @@ func (uc *AuditUseCase) GetAuditLog(ctx context.Context, id, tenantID uuid.UUID)
 		return nil, domain.ErrLogNotFound
 	}
 	return l, nil
-}
-
-func (uc *AuditUseCase) VerifyChainIntegrity(ctx context.Context, tenantID uuid.UUID) (*domain.ChainIntegrity, error) {
-	return uc.logs.VerifyChain(ctx, tenantID)
 }
 
 func (uc *AuditUseCase) GetSecurityEvents(ctx context.Context, tenantID uuid.UUID, filters ports.SecurityFilters, page, pageSize int) ([]*domain.SecurityEvent, int64, error) {

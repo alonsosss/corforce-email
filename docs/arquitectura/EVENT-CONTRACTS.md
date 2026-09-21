@@ -13,6 +13,7 @@ subject y payload. `opaco` = el payload no se puede leer estaticamente.
 | Subject | Servicio | Campos |
 |---|---|---|
 | `audit.api.write` | gateway | `ip`, `method`, `module`, `path`, `request_id`, `roles`, `status`, `target_cell`, `tenant_id`, `user_agent`, `user_id` |
+| `audit.chain.anchored` | audit | `anchored_at`, `chain`, `hash_version`, `head_hash`, `head_seq`, `tenant_id` |
 | `audit.security.alert` | audit | `detail`, `event_type`, `ip`, `risk_level`, `user_id` |
 | `automations.run.completed` | automations | `contact_id`, `reason`, `run_id`, `tenant_id`, `workflow_id` |
 | `automations.run.failed` | automations | `contact_id`, `reason`, `run_id`, `tenant_id`, `workflow_id` |

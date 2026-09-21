@@ -10,13 +10,17 @@ import (
 
 	"github.com/alonsosss/corforce-email/pkg/authz"
 	"github.com/alonsosss/corforce-email/pkg/config"
+	"github.com/alonsosss/corforce-email/pkg/crypto"
 	"github.com/alonsosss/corforce-email/pkg/db"
 	"github.com/alonsosss/corforce-email/pkg/events"
 	"github.com/alonsosss/corforce-email/pkg/middleware"
+	"github.com/alonsosss/corforce-email/pkg/outbox"
 	"github.com/alonsosss/corforce-email/pkg/server"
 	handler "github.com/alonsosss/corforce-email/services/audit/internal/adapters/http"
 	natsadapter "github.com/alonsosss/corforce-email/services/audit/internal/adapters/nats"
+	outboxadapter "github.com/alonsosss/corforce-email/services/audit/internal/adapters/outbox"
 	"github.com/alonsosss/corforce-email/services/audit/internal/adapters/postgres"
+	"github.com/alonsosss/corforce-email/services/audit/internal/adapters/sweep"
 	"github.com/alonsosss/corforce-email/services/audit/internal/app"
 	"github.com/alonsosss/corforce-email/services/audit/internal/domain"
 	"github.com/go-chi/chi/v5"
@@ -34,6 +38,12 @@ const (
 	// El recuento y la alerta unica por IP comparten la ventana: con mas de un dia, una errata
 	// callaria las alertas repetidas de esa IP durante todo ese tiempo.
 	maxBruteForceWindowMin = 24 * 60
+
+	// AUDIT_ANCHOR_INTERVAL: cada cuanto se registra la cabeza de las cadenas. Es lo que puede
+	// tardar en notarse el borrado de las ultimas filas escritas desde el ultimo ancla.
+	defaultAnchorInterval = 15 * time.Minute
+	minAnchorInterval     = time.Minute
+	maxAnchorInterval     = 24 * time.Hour
 )
 
 func main() {
@@ -56,12 +66,29 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	anchorEvery, err := config.EnvDuration("AUDIT_ANCHOR_INTERVAL", defaultAnchorInterval, minAnchorInterval, maxAnchorInterval)
+	if err != nil {
+		log.Fatal(err)
+	}
 	perms, err := authz.CheckerFromEnv()
 	if err != nil {
 		log.Fatal(err)
 	}
+	hashKeys, err := crypto.LoadMACKeyRing("AUDIT_HASH_KEY", "AUDIT_HASH_KEYS_OLD")
+	if err != nil {
+		log.Fatalf("audit: clave de la cadena de hash: %v", err)
+	}
+	if hashKeys == nil {
+		logger.Warn("audit: sin AUDIT_HASH_KEY: las filas nuevas se firman con el hash sin clave (version 1) y los eventos de seguridad no se encadenan; quien escriba en la base puede recalcular la cadena (docs/adr/0006)")
+	} else {
+		logger.Info("audit: cadena de hash con clave (version 2)",
+			zap.String("key_id", hashKeys.ActiveID()), zap.Bool("retired_keys", hashKeys.HasOldKeys()))
+	}
 
-	ctx := context.Background()
+	// ctx gobierna los trabajos de fondo (rele de la outbox, anclaje de cadenas): se cancela
+	// cuando el HTTP termina de apagarse.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
 	registryPool, err := db.NewPool(ctx, cfg.Postgres.DSN(), logger)
 	if err != nil {
@@ -79,20 +106,30 @@ func main() {
 	}
 	defer bus.Close()
 
-	logRepo := postgres.NewAuditLogRepo(ctxPool)
-	secRepo := postgres.NewSecurityEventRepo(ctxPool)
+	logRepo := postgres.NewAuditLogRepo(ctxPool, hashKeys)
+	secRepo := postgres.NewSecurityEventRepo(ctxPool, hashKeys)
 	changeRepo := postgres.NewDataChangeRepo(ctxPool)
 	summaryRepo := postgres.NewAuditSummaryRepo(ctxPool)
 	eventPub := natsadapter.NewEventPublisher(bus)
 
 	uc := app.NewAuditUseCase(app.AuditDeps{
-		Logs:     logRepo,
-		Security: secRepo,
-		Changes:  changeRepo,
-		Summary:  summaryRepo,
-		Events:   eventPub,
-		Logger:   logger,
+		Logs:         logRepo,
+		Security:     secRepo,
+		Changes:      changeRepo,
+		Summary:      summaryRepo,
+		Events:       eventPub,
+		Logger:       logger,
+		Anchors:      postgres.NewChainAnchorRepo(ctxPool),
+		AnchorEvents: outboxadapter.NewPublisher(ctxPool),
+		Tx:           ctxPool,
 	})
+
+	// El anuncio de cada ancla sale por la outbox: se encola con el ancla y el rele lo entrega.
+	if err := bus.EnsureStream("AUDIT_CHAIN", []string{"audit.chain.>"}); err != nil {
+		logger.Warn("ensure stream AUDIT_CHAIN", zap.Error(err))
+	}
+	go outbox.RunForTenants(ctx, tenantDB, db.PoolFromCtx, bus, logger, outbox.Options{})
+	go sweep.New(registryPool.Pool, tenantDB, uc, logger, anchorEvery).Run(ctx)
 
 	h := handler.NewHandler(uc, perms)
 

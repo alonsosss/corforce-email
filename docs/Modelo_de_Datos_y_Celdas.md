@@ -613,6 +613,34 @@ foranea entre esquemas. Las claves foraneas son de dentro del esquema y llevan e
   de servicio y como dueno de las tablas (otro buzon de la empresa, uno recreado con el mismo nombre y otra empresa no
   pierden nada; quitar el filtro de empresa o el de buzon del `DELETE` hace fallar la prueba).
 
+### 4.3 Cadena de hash de auditoría: `audit` (V, 2026-09-21)
+
+Decisión y razones: `docs/adr/0006-cadena-de-auditoria-con-hmac-y-anclas.md`. Vive en la base de cada empresa (una
+cadena por empresa y por tabla), la escribe solo el servicio `audit` bajo el rol `audit_service` y se verifica con
+`GET /api/v1/audit/integrity`.
+
+* **`audit.audit_logs`**: `seq`, `prev_hash`, `entry_hash` (migración `03`) más `hash_version` (`DEFAULT 1`) y
+  `hash_key_id` (`07`). Versión 1: SHA-256 sin clave sobre campos unidos con `|` (las filas anteriores a la llave, que no
+  se reescriben; sin `user_agent` y con la ambigüedad de los separadores). Versión 2: HMAC-SHA256 con `AUDIT_HASH_KEY`
+  sobre una serialización con prefijo de longitud por campo, que incluye `user_agent`, `seq` y la llave. Sin clave el
+  servicio escribe versión 1; con ella, versión 2; una fila de versión 1 posterior a una de versión 2 es una rotura.
+* **`audit.chain_anchors`** (`08`): la cabeza de cada cadena (`chain`, `head_seq`, `head_hash`, `hash_version`), única por
+  `(chain, head_seq)`. El rol del servicio solo lee e inserta. Cada `AUDIT_ANCHOR_INTERVAL` el servicio ancla la cabeza
+  y encola `audit.chain.anchored` por la outbox en la misma transacción. Un ancla en la misma base protege contra quien
+  no pueda escribirla también; la copia fuera del servidor está decidida y sin implementar (ADR 0006).
+* **`audit.security_events`** (`09`): encadenada con el mismo esquema, solo en versión 2 y solo con clave (sin ella se
+  escribe sin `seq` ni hash, como antes). El hash cubre lo inmutable; el reconocimiento (`acknowledged*`) queda fuera a
+  propósito. `audit_service` ya no puede borrar ni reescribir eventos: su `UPDATE` se limita a las tres columnas del
+  reconocimiento y a los dos hashes.
+* **Verificación**: por fila con la fórmula de su versión, con la llave que dice su `hash_key_id` (`AUDIT_HASH_KEYS_OLD`
+  cubre las retiradas), y después contra todas las anclas. Distingue `chain_broken`, `hash_key_missing`,
+  `hash_key_unknown`, `hash_version_regression`, `head_behind_anchor` y `anchor_mismatch`, informa las filas por versión y
+  no nombra filas de otra empresa ni deja ver la llave.
+* **Límites**: una fila sin `seq` ni hash no forma parte de la cadena; la llave está en el proceso de `audit`, así que
+  quien la tenga y escriba en la base recalcula las filas de versión 2; y las anclas solo valen contra quien no las escriba.
+  Pruebas contra Postgres real en `services/audit/internal/adapters/postgres` (cadena mixta, manipulación de cada
+  columna, recalculo sin la clave, rotación, anclas, eventos y concurrencia).
+
 ## 5. Enrutado por peticion y por celda (V)
 
 El gateway pone `X-Tenant-ID` desde el JWT; `db.TenantPoolMiddleware` resuelve la empresa

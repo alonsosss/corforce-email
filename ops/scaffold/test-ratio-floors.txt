@@ -4,7 +4,7 @@
 TOTAL 0.77
 services/access-control 0.72
 services/analytics 0.67
-services/audit 1.42
+services/audit 1.49
 services/automations 0.37
 services/billing 0.60
 services/campaigns 0.72
