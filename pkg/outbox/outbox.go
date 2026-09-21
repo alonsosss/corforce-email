@@ -21,8 +21,20 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 )
+
+// exhausted cuenta los eventos que el rele dejo de reintentar: su fila queda en la outbox con
+// attempts al maximo y nada la vuelve a tomar. Es un efecto de negocio que nunca llego al bus (un
+// dominio verificado que no llega a Redis, una baja de buzon sin propagar). Sin etiqueta service: la pone
+// el recolector.
+var exhausted = prometheus.NewCounter(prometheus.CounterOpts{
+	Name: "outbox_events_exhausted_total",
+	Help: "Eventos de la outbox que agotaron sus intentos de publicacion sin llegar a JetStream y ya no se reintentan (payload ilegible o el bus rechazo cada intento).",
+})
+
+func init() { prometheus.MustRegister(exhausted) }
 
 // Execer es lo que necesita Enqueue: el ContextPool de pkg/db, que enruta por la
 // transaccion del contexto cuando la hay.
@@ -238,6 +250,7 @@ func drain(ctx context.Context, pool *pgxpool.Pool, publisher Publisher, logger 
 				return 0, err
 			}
 			logger.Error("outbox: payload ilegible, descartado", zap.String("id", p.id), zap.String("subject", p.subject))
+			exhausted.Inc()
 			continue
 		}
 		evt.ID = p.id
@@ -247,6 +260,7 @@ func drain(ctx context.Context, pool *pgxpool.Pool, publisher Publisher, logger 
 			}
 			if p.attempts+1 >= maxAttempts {
 				logger.Error("outbox: evento agotado sin publicar", zap.String("id", p.id), zap.String("subject", p.subject), zap.Error(err))
+				exhausted.Inc()
 			}
 			continue
 		}

@@ -15,8 +15,25 @@ import (
 	"github.com/alonsosss/corforce-email/pkg/db"
 	"github.com/alonsosss/corforce-email/pkg/events"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 )
+
+// exhaustedCount lee el contador del registro por defecto, como lo haria el recolector.
+func exhaustedCount(t *testing.T) float64 {
+	t.Helper()
+	families, err := prometheus.DefaultGatherer.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range families {
+		if f.GetName() == "outbox_events_exhausted_total" {
+			return f.GetMetric()[0].GetCounter().GetValue()
+		}
+	}
+	t.Fatal("outbox_events_exhausted_total no esta registrada")
+	return 0
+}
 
 type publicadorFalso struct {
 	mu      sync.Mutex
@@ -124,6 +141,32 @@ func TestReleVaciaLaOutboxYReintentaLoQueFalla(t *testing.T) {
 	borradas, err := Purge(ctx, pool, 24*time.Hour)
 	if err != nil || borradas != 2 {
 		t.Fatalf("poda: %d %v", borradas, err)
+	}
+}
+
+// Un evento que agota sus intentos sin publicarse se cuenta: es un efecto de negocio que nunca llego
+// al bus y que nada vuelve a tomar, y sin contador solo quedaria una linea de registro.
+func TestEventoAgotadoSeCuenta(t *testing.T) {
+	ctx := context.Background()
+	pool := outboxDB(t)
+	if _, err := pool.Exec(ctx, "DELETE FROM platform.event_outbox"); err != nil {
+		t.Fatal(err)
+	}
+	e := events.Event{ID: "44444444-4444-4444-8444-444444444444", Type: "a.b.e"}
+	if err := Enqueue(ctx, pool, "a.b.e", e); err != nil {
+		t.Fatal(err)
+	}
+	pub := &publicadorFalso{fallaEn: map[string]bool{e.ID: true}}
+	relay := NewRelay(pool, pub, zap.NewNop(), Options{Batch: 10, MaxAttempts: 2})
+
+	before := exhaustedCount(t)
+	for i := 0; i < 4; i++ {
+		if _, err := relay.Drain(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := exhaustedCount(t) - before; got != 1 {
+		t.Fatalf("outbox_events_exhausted_total subio %v; se esperaba 1 (una vez, al agotarse; las pasadas siguientes ya no lo toman)", got)
 	}
 }
 

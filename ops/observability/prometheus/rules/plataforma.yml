@@ -196,6 +196,19 @@ groups:
           resumen: "El servidor esta escribiendo a swap de forma sostenida"
           detalle: "Paginado de salida continuo: la RAM ya no alcanza y el rendimiento se degrada antes de cualquier OOM. Umbral del runbook de escalado."
 
+      # El kernel mato un proceso por falta de memoria. Desde que los servicios Go tienen mem_limit
+      # (docker-compose.selfhosted.yml) es tambien la forma de enterarse de que uno toco su techo: el
+      # contenedor se reinicia solo y de otro modo solo se veria como un arranque mas. node_vmstat_oom_kill
+      # cuenta los de todo el host, con limite de contenedor o sin el; 'dmesg' y el campo
+      # State.OOMKilled de 'docker inspect' dicen quien fue.
+      - alert: ProcesoMatadoPorFaltaDeMemoria
+        expr: increase(node_vmstat_oom_kill[15m]) > 0
+        labels:
+          severidad: alta
+        annotations:
+          resumen: "El kernel mato un proceso por falta de memoria"
+          detalle: "Un contenedor supero su mem_limit o el servidor se quedo sin RAM. Ver 'dmesg' y el campo State.OOMKilled de 'docker inspect' del contenedor reiniciado. Si es un servicio Go tocando su techo, subir su mem_limit y GOMEMLIMIT en docker-compose.selfhosted.yml tras medir con 'docker stats' (presupuesto en docs/Operacion_Despliegue.md); si es Postgres o un motor, revisar el presupuesto de memoria del servidor."
+
   # Los trabajos de ops/backup publican su resultado en un fichero .prom que node-exporter recoge
   # (ops/backup/report-metric.sh). Lo que se vigila es la MARCA DE TIEMPO del ultimo exito, no el
   # codigo de salida: el caso peligroso no es el respaldo que falla -deja un error en el journal-
@@ -509,3 +522,15 @@ groups:
         annotations:
           resumen: "EVENTS_DLQ guarda {{ $value }} eventos abandonados desde hace mas de un dia"
           detalle: "Cada mensaje es un efecto de negocio que no se aplico. nats stream subjects EVENTS_DLQ los cuenta por subject y las cabeceras Dlq-Stream, Dlq-Consumer y Dlq-Reason de cada uno dicen quien lo abandono y por que. Reproducir los que sigan siendo validos y retirar de la cola los reproducidos y los descartados (docs/Operacion_Despliegue.md, seccion 10): a los 30 dias EVENTS_DLQ los borra sin que nadie los haya reproducido."
+
+      # La outbox agota sus intentos y deja de reintentar la fila: el evento nunca llego a JetStream y
+      # nada lo vuelve a tomar (50 intentos por defecto). Es la misma perdida que el abandono en
+      # EVENTS_DLQ pero antes del bus, y hasta ahora solo dejaba una linea de registro. 'service' dice
+      # que servicio lo publicaba; la fila sigue en platform.event_outbox de su base con last_error.
+      - alert: EventosDeOutboxAgotados
+        expr: sum by (service) (increase(outbox_events_exhausted_total[1h])) > 0
+        labels:
+          severidad: alta
+        annotations:
+          resumen: "{{ $labels.service }} dejo de reintentar eventos de su outbox sin publicarlos"
+          detalle: "Un evento de la outbox de {{ $labels.service }} agoto sus intentos sin llegar a JetStream (payload ilegible o el bus rechazo cada intento) y nada lo vuelve a tomar. Buscar en platform.event_outbox de la base afectada las filas con published_at nulo y attempts al maximo: last_error dice la causa. Corregirla y reponer los intentos (UPDATE platform.event_outbox SET attempts = 0 WHERE published_at IS NULL AND attempts >= 50); el id del evento deduplica en JetStream, asi que republicar no duplica."

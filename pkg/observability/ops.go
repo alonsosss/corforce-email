@@ -6,7 +6,7 @@ import (
 )
 
 // WithOps antepone al router de un servicio las dos rutas operativas de la plataforma:
-// /healthz (liveness del proceso) y /metrics (exposicion Prometheus), y mide todo lo
+// /healthz (liveness del proceso), /readyz (dependencias) y /metrics (exposicion Prometheus), y mide todo lo
 // demas. Se resuelve por comparacion exacta de ruta, sin un multiplexor intermedio, para
 // no alterar en nada la semantica de ruteo del servicio (limpieza de rutas, redirecciones
 // o escapes) que ya esta en produccion.
@@ -28,9 +28,13 @@ func WithOps(handler http.Handler) http.Handler {
 		metered = HTTPMetrics()(handler)
 	}
 	metrics := Handler()
+	ready := readyHandler()
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case ReadyPath:
+			ready.ServeHTTP(w, r)
+			return
 		case HealthPath:
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)

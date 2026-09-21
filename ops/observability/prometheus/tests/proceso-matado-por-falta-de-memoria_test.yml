@@ -1,0 +1,43 @@
+# Pruebas de la alerta ProcesoMatadoPorFaltaDeMemoria.
+#
+# node_vmstat_oom_kill es un contador de todo el host: sube cuando el kernel mata un proceso por falta
+# de memoria, incluidos los contenedores que tocan su mem_limit. Sin muertes no dispara; con una, avisa
+# al momento y calla cuando sale de la ventana de 15 minutos.
+#
+#   make check-alertas
+
+rule_files:
+  - ../rules/plataforma.yml
+
+evaluation_interval: 1m
+
+tests:
+  - interval: 1m
+    input_series:
+      - series: 'node_vmstat_oom_kill{job="host"}'
+        values: '4x60'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: ProcesoMatadoPorFaltaDeMemoria
+        exp_alerts: []
+
+  - interval: 1m
+    input_series:
+      - series: 'node_vmstat_oom_kill{job="host"}'
+        values: '4x10 5x50'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: ProcesoMatadoPorFaltaDeMemoria
+        exp_alerts: []
+      - eval_time: 12m
+        alertname: ProcesoMatadoPorFaltaDeMemoria
+        exp_alerts:
+          - exp_labels:
+              severidad: alta
+              job: host
+            exp_annotations:
+              resumen: "El kernel mato un proceso por falta de memoria"
+              detalle: "Un contenedor supero su mem_limit o el servidor se quedo sin RAM. Ver 'dmesg' y el campo State.OOMKilled de 'docker inspect' del contenedor reiniciado. Si es un servicio Go tocando su techo, subir su mem_limit y GOMEMLIMIT en docker-compose.selfhosted.yml tras medir con 'docker stats' (presupuesto en docs/Operacion_Despliegue.md); si es Postgres o un motor, revisar el presupuesto de memoria del servidor."
+      - eval_time: 40m
+        alertname: ProcesoMatadoPorFaltaDeMemoria
+        exp_alerts: []

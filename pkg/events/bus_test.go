@@ -1,6 +1,11 @@
 package events
 
-import "testing"
+import (
+	"testing"
+	"time"
+
+	"github.com/nats-io/nats.go"
+)
 
 // Un suscriptor comodin ("*.>") tambien recibe los subjects internos de NATS: el token
 // "*" casa con "$JS". Sin este filtro, cada acuse de JetStream ("+ACK", que no es JSON)
@@ -22,5 +27,20 @@ func TestIsSystemSubject(t *testing.T) {
 		if got := isSystemSubject(c.subject); got != c.want {
 			t.Errorf("isSystemSubject(%q) = %v; want %v", c.subject, got, c.want)
 		}
+	}
+}
+
+// Todo stream de aplicacion acota su disco por tamano ademas de por tiempo: solo con la retencion
+// por tiempo, un productor desbocado llenaria el volumen del servidor antes de que caduque nada.
+func TestStreamConfigBoundsDiskUse(t *testing.T) {
+	cfg := streamConfig("TEST", []string{"test.>"}, 7*24*time.Hour)
+	if cfg.Storage != nats.FileStorage {
+		t.Errorf("Storage = %v; se esperaba disco", cfg.Storage)
+	}
+	if cfg.MaxBytes <= 0 || cfg.MaxBytes != streamMaxBytes {
+		t.Errorf("MaxBytes = %d; se esperaba %d", cfg.MaxBytes, streamMaxBytes)
+	}
+	if cfg.MaxAge != 7*24*time.Hour {
+		t.Errorf("MaxAge = %v", cfg.MaxAge)
 	}
 }

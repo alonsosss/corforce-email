@@ -1,15 +1,24 @@
 package events
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
 
+	"github.com/alonsosss/corforce-email/pkg/observability"
 	"github.com/google/uuid"
 	"github.com/nats-io/nats.go"
 	"go.uber.org/zap"
 )
+
+// streamMaxBytes acota el disco de cada stream de JetStream. La retencion por tiempo sola no protege
+// el disco: un productor desbocado o un consumidor caido llenaria el volumen del servidor (donde
+// tambien viven la base y los buzones) mucho antes de los 7 dias. Al llegar al tope se descartan los
+// mensajes mas viejos; 1 GiB son millones de eventos de unos cientos de bytes, muy por encima de la
+// carga normal, asi que llegar aqui es un incidente y no el funcionamiento habitual.
+const streamMaxBytes = 1 << 30
 
 type Event struct {
 	ID        string      `json:"id"`
@@ -20,6 +29,9 @@ type Event struct {
 	Timestamp time.Time   `json:"timestamp"`
 	Data      interface{} `json:"data"`
 }
+
+// readinessName es la dependencia del bus en /readyz.
+const readinessName = "nats"
 
 type Bus struct {
 	conn   *nats.Conn
@@ -37,6 +49,12 @@ func NewBus(url string, logger *zap.Logger) (*Bus, error) {
 	}
 
 	logger.Info("event bus connected", zap.String("url", url))
+	observability.RegisterReadiness(readinessName, func(context.Context) error {
+		if !conn.IsConnected() {
+			return nats.ErrDisconnected
+		}
+		return nil
+	})
 	return &Bus{conn: conn, logger: logger}, nil
 }
 
@@ -51,6 +69,20 @@ func (b *Bus) Publish(subject string, evt Event) error {
 		return fmt.Errorf("marshal event: %w", err)
 	}
 	return b.conn.Publish(subject, data)
+}
+
+// streamConfig es la configuracion de todo stream de aplicacion: disco, retencion por tiempo Y por
+// tamano, y deduplicacion de 5 minutos.
+func streamConfig(name string, subjects []string, maxAge time.Duration) *nats.StreamConfig {
+	return &nats.StreamConfig{
+		Name:       name,
+		Subjects:   subjects,
+		Storage:    nats.FileStorage,
+		MaxAge:     maxAge,
+		MaxBytes:   streamMaxBytes,
+		Duplicates: 5 * time.Minute,
+		Replicas:   1,
+	}
 }
 
 // EnsureStream creates or verifies a JetStream stream backed by disk storage.
@@ -73,14 +105,7 @@ func (b *Bus) EnsureStreamWithMaxAge(name string, subjects []string, maxAge time
 	if err != nil {
 		return fmt.Errorf("jetstream context: %w", err)
 	}
-	cfg := &nats.StreamConfig{
-		Name:       name,
-		Subjects:   subjects,
-		Storage:    nats.FileStorage,
-		MaxAge:     maxAge,
-		Duplicates: 5 * time.Minute,
-		Replicas:   1,
-	}
+	cfg := streamConfig(name, subjects, maxAge)
 
 	// Varios servicios de un mismo cluster aseguran el MISMO stream al arrancar,
 	// y arrancan a la vez tras cada despliegue. Eso produce dos carreras que no
@@ -130,12 +155,13 @@ func (b *Bus) EnsureStreamWithMaxAge(name string, subjects []string, maxAge time
 				added = true
 			}
 		}
-		if !added && info.Config.MaxAge == maxAge {
+		if !added && info.Config.MaxAge == maxAge && info.Config.MaxBytes == streamMaxBytes {
 			return nil
 		}
 		updated := info.Config
 		updated.Subjects = merged
 		updated.MaxAge = maxAge
+		updated.MaxBytes = streamMaxBytes
 		if _, err = js.UpdateStream(&updated); err != nil {
 			ultimo = err
 			continue
@@ -301,6 +327,7 @@ func (b *Bus) QueueSubscribe(subject, queue string, handler func(Event)) (*nats.
 
 func (b *Bus) Close() {
 	dlqDepth.unbind(b)
+	observability.UnregisterReadiness(readinessName)
 	b.conn.Close()
 	b.logger.Info("event bus closed")
 }

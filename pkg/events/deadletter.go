@@ -26,6 +26,9 @@ const (
 	dlqStreamName    = "EVENTS_DLQ"
 	dlqSubjectPrefix = "dlq."
 	dlqMaxAge        = 30 * 24 * time.Hour
+	// dlqMaxBytes: los abandonados son pocos y pequenos; el tope solo evita que un consumidor con un
+	// fallo permanente llene el disco de copias.
+	dlqMaxBytes = 256 << 20
 	// dlqDepthTimeout acota la consulta a JetStream que hace cada recoleccion de /metrics.
 	dlqDepthTimeout = 2 * time.Second
 )
@@ -116,7 +119,7 @@ func (c *durableConsumer) deliver(d delivery) {
 	// ackear: `acked` se consulta con Swap para que la decision sea de uno u otro,
 	// nunca de los dos.
 	var acked atomic.Bool
-	c.handler(evt, func() {
+	c.invoke(evt, func() {
 		if !acked.Swap(true) {
 			_ = d.Ack()
 		}
@@ -130,6 +133,21 @@ func (c *durableConsumer) deliver(d delivery) {
 		return
 	}
 	c.abandon(d, meta, reasonMaxDeliveries, nil)
+}
+
+// invoke llama al handler y convierte su panic en un mensaje sin confirmar. nats.go entrega en su
+// propia goroutine y un panic ahi tumba el proceso: con un evento venenoso, el servicio arrancaba,
+// recibia la reentrega, caia otra vez y asi hasta el agotamiento de las entregas. Sin ack, el mensaje
+// sigue el camino normal (reentrega y, tras maxDeliverCount, EVENTS_DLQ).
+func (c *durableConsumer) invoke(evt Event, ack func()) {
+	defer func() {
+		if r := recover(); r != nil {
+			c.logger.Error("el handler de un evento hizo panic; queda sin confirmar",
+				zap.String("stream", c.stream), zap.String("consumer", c.name), zap.String("event_id", evt.ID),
+				zap.Any("panic", r), zap.Stack("stack"))
+		}
+	}()
+	c.handler(evt, ack)
 }
 
 // abandon copia el mensaje en EVENTS_DLQ y lo termina. Si la copia falla y le quedan entregas, no
@@ -192,6 +210,7 @@ func (b *Bus) deadLetter(m *nats.Msg) error {
 			Subjects: []string{"dlq.>"},
 			Storage:  nats.FileStorage,
 			MaxAge:   dlqMaxAge,
+			MaxBytes: dlqMaxBytes,
 			Replicas: 1,
 		})
 		// Otra instancia pudo crearla a la vez: la copia se intenta igual.

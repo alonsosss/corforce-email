@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/alonsosss/corforce-email/pkg/observability"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 )
@@ -46,6 +47,7 @@ func NewNamedPool(ctx context.Context, dsn, name string, logger *zap.Logger) (*P
 
 	logger.Info("database connected", zap.String("host", cfg.ConnConfig.Host))
 	RegisterPoolMetrics(name, pool)
+	observability.RegisterReadiness(readinessName(name), pool.Ping)
 	return &Pool{Pool: pool, name: name, logger: logger}, nil
 }
 
@@ -53,8 +55,11 @@ func NewNamedPool(ctx context.Context, dsn, name string, logger *zap.Logger) (*P
 // pertenece a una empresa concreta.
 const registryPoolName = "registry"
 
+func readinessName(pool string) string { return "postgres:" + pool }
+
 func (p *Pool) Close() {
 	UnregisterPoolMetrics(p.name)
+	observability.UnregisterReadiness(readinessName(p.name))
 	p.Pool.Close()
 	p.logger.Info("database connection closed")
 }

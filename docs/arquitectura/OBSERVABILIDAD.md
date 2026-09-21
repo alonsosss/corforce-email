@@ -25,6 +25,7 @@ Cada servicio expone `/metrics` en su propio puerto, en formato Prometheus:
 | `mail_security_dkim_reconcile_removals_total{reason}`, `mail_security_dkim_reconcile_unresolved_total`, `mail_security_dkim_reconcile_last_success_timestamp_seconds` | Repaso de las claves DKIM de los motores en mail-security: dominios a los que retiro las claves (`not_served`, `tenant_gone`), dominios que conservo porque organization no dio su empresa, e instante de su ultima pasada completa (0 si ninguna desde el arranque). Los contadores nacen a cero. |
 | `mail_security_dovecot_revocations_total{action}`, `mail_security_dovecot_revocation_failures_total{reason}` | Revocacion en Dovecot desde mail-security (`deploy/mail/README.md`): buzones cuya credencial retiro por un evento del directorio (`flush`, cache de autenticacion vaciada; `kick`, ademas sesiones cerradas) y fallos que esperan la reentrega del evento (`unreachable`, `rejected`, `command`, `directory`). Nacen a cero. |
 | `events_dead_lettered_total{stream,consumer,reason}`, `events_dead_letter_failures_total{stream,consumer,reason}`, `events_dlq_messages` | Eventos que un consumidor durable abandono (`pkg/events`): copiados en `EVENTS_DLQ` (`max_deliveries`, agoto sus 20 entregas; `undecodable`, no es un evento legible), abandonados sin poder copiarlos, y mensajes que guarda `EVENTS_DLQ`. Los contadores nacen a cero al suscribirse cada consumidor; la profundidad se pregunta a JetStream en cada recoleccion y falta si no responde (Eventos, abajo). |
+| `outbox_events_exhausted_total` | Eventos de la outbox (`pkg/outbox`) que agotaron sus intentos sin llegar a JetStream y ya no se reintentan (payload ilegible o el bus rechazo cada intento). Es la perdida que antes solo dejaba una linea de registro; avisa `EventosDeOutboxAgotados`. Nace a cero. |
 | `go_*`, `process_*` | Memoria, goroutines, arranques del proceso (detecta reinicios en bucle). |
 
 La identidad del servicio **no** viaja dentro de la metrica: la aporta el recolector desde
@@ -61,6 +62,18 @@ HEALTHCHECK CMD ["/lending", "--healthcheck", "8093"]
 
 La comprobacion se resuelve en un `init()` de `pkg/observability`, antes de `main`, para que
 el proceso del healthcheck no abra conexiones a la base ni se suscriba a NATS.
+
+## Disponibilidad: `/readyz`
+
+`/healthz` dice que el proceso responde y nada mas: es lo que usa el healthcheck del contenedor, porque reiniciar un
+servicio no arregla una base caida. `/readyz` (misma ruta operativa, fuera de la cadena de middlewares y solo alcanzable
+desde la red interna) dice si sus dependencias reales estan al alcance: responde 200 `{"status":"ready"}` o 503
+`{"status":"unready"}` con `checks` por dependencia (`ok` o `fail`, nunca el texto del error: el de un driver puede llevar
+host y usuario). Las dependencias las registran los paquetes que las abren, de modo que todo servicio las tiene sin
+cablearlas: `postgres:<pool>` (un `Ping` de cada pool con nombre, el del registro y los de celda; `pkg/db`) y `nats`
+(la conexion viva; `pkg/events`). Cada comprobacion tiene 2 s. Los pools por empresa no entran: una empresa con la base
+rota no vuelve no disponible al servicio para las demas. Redis no esta registrado (lo usan el limitador y las sesiones, que
+degradan por su cuenta; `LimitadorSinRedis` lo avisa).
 
 ## El stack
 

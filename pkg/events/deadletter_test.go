@@ -136,6 +136,25 @@ func TestLasEtiquetasDeLosAbandonosSonAcotadas(t *testing.T) {
 	}
 }
 
+// Un handler que hace panic no tumba el proceso: el mensaje queda sin confirmar, se reentrega y, tras
+// la ultima entrega permitida, pasa a EVENTS_DLQ como cualquier otro que no se pudo aplicar.
+func TestUnPanicDelHandlerNoTumbaAlProcesoYAcabaEnLaDLQ(t *testing.T) {
+	q := &dlqDoble{}
+	c := consumidor("prueba-panic", func(Event, func()) { panic("evento venenoso") }, q)
+
+	primera := entrega(eventoDePrueba, 1, 7)
+	c.deliver(primera)
+	if primera.acks != 0 || primera.terms != 0 || len(q.copias) != 0 {
+		t.Fatalf("una entrega con panic no se confirma ni se abandona: acks=%d terms=%d copias=%d", primera.acks, primera.terms, len(q.copias))
+	}
+
+	ultima := entrega(eventoDePrueba, maxDeliverCount, 7)
+	c.deliver(ultima)
+	if ultima.terms != 1 || len(q.copias) != 1 {
+		t.Fatalf("tras la ultima entrega debia ir a la DLQ: terms=%d copias=%d", ultima.terms, len(q.copias))
+	}
+}
+
 // Tras la ultima entrega permitida sin ack, el mensaje se copia en EVENTS_DLQ con su subject y su
 // cuerpo intactos y quien lo abandono en cabeceras, se termina y se cuenta.
 func TestTrasLaUltimaEntregaLoGuardaEnLaDLQYLoCuenta(t *testing.T) {

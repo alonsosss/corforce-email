@@ -1,0 +1,43 @@
+# Pruebas de la alerta EventosDeOutboxAgotados.
+#
+# El rele de la outbox deja de reintentar una fila tras agotar sus intentos y lo cuenta en
+# outbox_events_exhausted_total (sin etiqueta service: la pone el recolector). Avisa al primero y calla a
+# la hora, como los abandonos de EVENTS_DLQ.
+#
+#   make check-alertas
+
+rule_files:
+  - ../rules/plataforma.yml
+
+evaluation_interval: 1m
+
+tests:
+  - interval: 1m
+    input_series:
+      - series: 'outbox_events_exhausted_total{job="mail-services",service="mail-migration"}'
+        values: '0x90'
+    alert_rule_test:
+      - eval_time: 60m
+        alertname: EventosDeOutboxAgotados
+        exp_alerts: []
+
+  - interval: 1m
+    input_series:
+      - series: 'outbox_events_exhausted_total{job="mail-services",service="mail-migration"}'
+        values: '0x10 1x80'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: EventosDeOutboxAgotados
+        exp_alerts: []
+      - eval_time: 11m
+        alertname: EventosDeOutboxAgotados
+        exp_alerts:
+          - exp_labels:
+              severidad: alta
+              service: mail-migration
+            exp_annotations:
+              resumen: "mail-migration dejo de reintentar eventos de su outbox sin publicarlos"
+              detalle: "Un evento de la outbox de mail-migration agoto sus intentos sin llegar a JetStream (payload ilegible o el bus rechazo cada intento) y nada lo vuelve a tomar. Buscar en platform.event_outbox de la base afectada las filas con published_at nulo y attempts al maximo: last_error dice la causa. Corregirla y reponer los intentos (UPDATE platform.event_outbox SET attempts = 0 WHERE published_at IS NULL AND attempts >= 50); el id del evento deduplica en JetStream, asi que republicar no duplica."
+      - eval_time: 75m
+        alertname: EventosDeOutboxAgotados
+        exp_alerts: []
