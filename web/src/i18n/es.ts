@@ -1816,6 +1816,10 @@ export const es = {
   'error.code.SEND_IN_PROGRESS': 'Este mensaje ya se esta enviando. Espera unos segundos.',
   'error.code.DELIVERY_UNCERTAIN':
     'No se pudo confirmar si el mensaje salio: pudo quedar en cola. Revisa Enviados o pregunta a los destinatarios antes de volver a enviarlo.',
+  // mail-directory (services/mail-directory/internal/adapters/http/handler.go).
+  'error.code.ADDRESS_RECENTLY_DELETED':
+    'Esa direccion se borro hace poco y su buzon anterior aun se esta retirando del servidor. Vuelve a intentarlo en unos minutos.',
+  'error.code.TENANT_RETIRED': 'La empresa esta dada de baja: no se pueden crear ni modificar buzones.',
 
   'webmail.title': 'Correo web',
   'webmail.checking': 'Comprobando la sesion del buzon',
