@@ -7,16 +7,23 @@
 # sola implementacion del cifrado y la lectura de la frase: cambiar el algoritmo o el sitio donde
 # vive el almacen se hace aqui una vez, no en cada script.
 #
-# SECRETS_STORE_FILE           fichero cifrado (por defecto, junto a este script; fuera de git).
 # SECRETS_STORE_PASSPHRASE_FILE  frase de descifrado, 0600 del usuario que despliega (por
 #                                 defecto /opt/core-force-mail/secrets/passphrase). NUNCA en el
 #                                 .env ni en un argumento visible en `ps`.
+# SECRETS_STORE_FILE           fichero cifrado; por defecto store.json.gpg EN EL MISMO DIRECTORIO que
+#                              la frase, fuera de cualquier arbol que sincronice el despliegue. No
+#                              puede vivir junto a estos scripts: el servidor tiene DOS copias de
+#                              ops/security/secrets (la de la plataforma en /opt/core-force-mail/app y
+#                              la de los motores en /opt/core-force-mail/mail-src, que rellena
+#                              scripts/deploy-mail.sh), y un almacen relativo al script solo existia
+#                              en una de ellas: el despliegue de un motor abortaba por "no existe el
+#                              almacen" (comprobado en produccion el 2026-09-21).
 #
 # Sin `set -e`: se sourcea desde scripts con sus propias opciones.
 
 STORE_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-STORE_FILE="${SECRETS_STORE_FILE:-$STORE_SCRIPT_DIR/store.json.gpg}"
 STORE_PASSPHRASE_FILE="${SECRETS_STORE_PASSPHRASE_FILE:-/opt/core-force-mail/secrets/passphrase}"
+STORE_FILE="${SECRETS_STORE_FILE:-$(dirname "$STORE_PASSPHRASE_FILE")/store.json.gpg}"
 STORE_FRASE_MINIMA=20
 
 # _store_frase: lee la frase del fichero, exigiendo que sea 0600 del usuario que ejecuta. Una

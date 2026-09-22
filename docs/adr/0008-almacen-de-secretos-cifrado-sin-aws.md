@@ -44,10 +44,15 @@ dependencia nueva al servidor.
 La frase vive en `SECRETS_STORE_PASSPHRASE_FILE` (por defecto
 `/opt/core-force-mail/secrets/passphrase`), 0600 del usuario que despliega, fuera del árbol que
 `git archive`/rsync copian al servidor (`FICHEROS_SERVIDOR` de `scripts/deploy-ecr.sh`) y fuera de
-`.env`. `store.json.gpg` vive junto a los scripts (`ops/security/secrets/`, en el servidor, fuera
-de git) precisamente porque `rsync -a` (sin `--delete`) que usa `deploy-ecr.sh` nunca borra un
-fichero que no está en el árbol sincronizado: un fichero ahí, no versionado, sobrevive a todos los
-despliegues futuros.
+`.env`. `store.json.gpg` vive en el mismo directorio que la frase
+(`/opt/core-force-mail/secrets/`), fuera de cualquier árbol que sincronice un despliegue. La primera
+versión lo dejaba junto a los scripts (`ops/security/secrets/`, no versionado) fiándose de que el
+`rsync -a` sin `--delete` de `deploy-ecr.sh` nunca lo borraría; era cierto, pero el servidor tiene
+DOS copias de esos scripts: la de la plataforma (`/opt/core-force-mail/app`) y la de los motores
+(`/opt/core-force-mail/mail-src`, que rellena `scripts/deploy-mail.sh` y desde la que ejecuta
+`with-secrets.sh`). Un almacén relativo al script solo existía en una, y el primer despliegue de un
+motor tras la migración abortó con "no existe el almacén" (2026-09-21). Junto a la frase hay una
+sola copia para las dos.
 
 ### 2. Contrato de `fetch-secrets.sh`, `load.sh` y `with-secrets.sh`: sin cambios
 

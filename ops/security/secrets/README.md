@@ -68,11 +68,14 @@ ninguna dependencia nueva (`gnupg` ya lo instala `ops/server-template/bootstrap.
 
 Dos ficheros, ambos fuera de git:
 
-* `SECRETS_STORE_FILE` (por defecto, junto a estos scripts: `ops/security/secrets/store.json.gpg`).
-  Viaja al servidor con el resto de `ops/security` en el primer despliegue, pero **no** es un
-  fichero del repositorio: esta en `.gitignore`, y como `scripts/deploy-ecr.sh` sincroniza con
-  `rsync -a` (sin `--delete`) desde un `git archive` de HEAD, un fichero que no esta en git nunca
-  se toca ni se borra en los despliegues siguientes. Sobrevive indefinidamente en el servidor.
+* `SECRETS_STORE_FILE` (por defecto `store.json.gpg` en el mismo directorio que la frase:
+  `/opt/core-force-mail/secrets/store.json.gpg`). Fuera del arbol de la aplicacion y de git. No
+  vive junto a estos scripts a proposito: el servidor tiene DOS copias de `ops/security/secrets`
+  (la de la plataforma en `/opt/core-force-mail/app` y la de los motores en
+  `/opt/core-force-mail/mail-src`, que rellena `scripts/deploy-mail.sh` y desde la que ejecuta
+  `with-secrets.sh`); un almacen relativo al script solo existia en una y el despliegue de un
+  motor abortaba con "no existe el almacen". Junto a la frase hay una sola copia para las dos y
+  ningun rsync ni `git archive` la toca.
 * `SECRETS_STORE_PASSPHRASE_FILE` (por defecto `/opt/core-force-mail/secrets/passphrase`), la
   frase de descifrado, 0600 del usuario que despliega, **fuera** del arbol de la aplicacion
   (`/opt/core-force-mail/app`) y fuera del `.env`. Es el UNICO acceso a los secretos: perderla es

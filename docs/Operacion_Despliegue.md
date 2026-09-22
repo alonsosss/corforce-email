@@ -1179,7 +1179,7 @@ dominio solo publica una política que nadie descarga; no hay que pasarlo a `enf
 * La cola de Postfix (`postfix-vol`) y el Redis de los motores no se respaldan: lo encolado se
   reintenta desde el emisor y el bayes de Rspamd se reaprende.
 * Secretos: RESUELTO (2026-09-21, `docs/adr/0008-almacen-de-secretos-cifrado-sin-aws.md`). El
-  almacén del perfil ya no es una decisión pendiente: es `ops/security/secrets/store.json.gpg`, un
+  almacén del perfil ya no es una decisión pendiente: es `/opt/core-force-mail/secrets/store.json.gpg`, un
   fichero cifrado con gpg simétrico (mismo patrón que `ops/backup/destino-externo.sh`) y una frase
   en `/opt/core-force-mail/secrets/passphrase` (0600, fuera del `.env` y fuera del árbol que
   sincroniza el despliegue). `with-secrets.sh` sigue siendo el único camino; `fetch-secrets.sh` ya
