@@ -167,5 +167,25 @@ else
   falla "fetch-secrets no recupero lo que push-secrets migro"
 fi
 
+# La ruta POR DEFECTO del almacen y de la frase nunca puede caer dentro del repositorio ni de los dos
+# arboles que el despliegue sincroniza al servidor (DEPLOY_PATH de deploy-ecr.sh y MAIL_DEPLOY_PATH de
+# deploy-mail.sh): el 2026-09-22 el almacen se creo junto a los scripts, en /opt/core-force-mail/app, y
+# deploy-mail.sh, que corre desde la copia de /opt/core-force-mail/mail-src, no lo encontro.
+REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+DEFAULTS="$(env -u SECRETS_STORE_FILE -u SECRETS_STORE_PASSPHRASE_FILE bash -c '. "$0"; printf "%s\n%s\n" "$STORE_FILE" "$STORE_PASSPHRASE_FILE"' "$SCRIPT_DIR/store.sh")"
+fuera=1
+while IFS= read -r ruta; do
+  case "$ruta" in
+    "$REPO_ROOT"/*|/opt/core-force-mail/app/*|/opt/core-force-mail/mail-src/*|./*|ops/*|*/ops/security/secrets/*) fuera=0 ;;
+    /*) ;;
+    *) fuera=0 ;;
+  esac
+done <<<"$DEFAULTS"
+if [[ $fuera -eq 1 ]]; then
+  paso "las rutas por defecto del almacen y la frase quedan fuera del repositorio y de los arboles sincronizados"
+else
+  falla "una ruta por defecto del almacen cae dentro de un arbol que el despliegue sincroniza: $(tr '\n' ' ' <<<"$DEFAULTS")"
+fi
+
 [[ $FAIL -eq 0 ]] || exit 1
 echo "  OK: el almacen cifrado de secretos se comporta como documenta el README."
