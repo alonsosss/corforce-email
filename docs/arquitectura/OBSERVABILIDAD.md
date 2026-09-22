@@ -27,6 +27,7 @@ Cada servicio expone `/metrics` en su propio puerto, en formato Prometheus:
 | `events_dead_lettered_total{stream,consumer,reason}`, `events_dead_letter_failures_total{stream,consumer,reason}`, `events_dlq_messages` | Eventos que un consumidor durable abandono (`pkg/events`): copiados en `EVENTS_DLQ` (`max_deliveries`, agoto sus 20 entregas; `undecodable`, no es un evento legible), abandonados sin poder copiarlos, y mensajes que guarda `EVENTS_DLQ`. Los contadores nacen a cero al suscribirse cada consumidor; la profundidad se pregunta a JetStream en cada recoleccion y falta si no responde (Eventos, abajo). |
 | `outbox_events_exhausted_total` | Eventos de la outbox (`pkg/outbox`) que agotaron sus intentos sin llegar a JetStream y ya no se reintentan (payload ilegible o el bus rechazo cada intento). Es la perdida que antes solo dejaba una linea de registro; avisa `EventosDeOutboxAgotados`. Nace a cero. |
 | `audit_integrity_runs_total{origin,outcome}`, `audit_integrity_sweep_broken_tenants`, `audit_events_discarded_total{reason}` | Verificaciones de la cadena de hash de `audit` terminadas (origen `manual`, `sweep` o `request`; desenlace `ok`, `broken`, `cancelled` o `failed`), empresas con la cadena rota en la ultima pasada completa del barrido periodico, y eventos del bus que `audit` dio por tratados sin guardarlos (`no_tenant`, `unknown_tenant`). Ninguna lleva la empresa: esta en el registro del servicio (`docs/adr/0006`, seccion 6). Alertas `CadenaDeAuditoriaRota`, `VerificacionDeCadenaSinTerminar` y `EventosDeAuditoriaDescartados`. |
+| `audit_anchor_reports_total{result}`, `audit_anchor_report_last_success_timestamp_seconds`, `audit_anchor_report_interval_seconds` | Informe de anclas de auditoria (la copia de la cabeza de cada cadena fuera del servidor, `docs/adr/0006` seccion 8): envios por direccion de `AUDIT_ANCHOR_RUA` y resultado (`sent`, `suppressed`: la direccion esta suprimida, `rejected`: transactional lo rechazo, `failed`: no llego), instante del ultimo informe que salio hacia al menos una direccion (0 si ninguno desde el arranque) y el intervalo configurado (0 si el informe esta desactivado). Los contadores nacen a cero. Alerta `AnclaDeAuditoriaSinEnviar`. |
 | `go_*`, `process_*` | Memoria, goroutines, arranques del proceso (detecta reinicios en bucle). |
 
 La identidad del servicio **no** viaja dentro de la metrica: la aporta el recolector desde
@@ -130,7 +131,7 @@ familia: disponibilidad (servicio caido, reinicios en bucle), version desplegada
 compilada en el servidor), trafico (errores 5xx, latencia), base de datos (pool al limite,
 esperas), seguridad (pico de denegaciones RBAC), host (disco, memoria, CPU, robo de CPU, swap),
 limites de peticiones (limitador sin
-Redis), respaldos (abajo), celdas, claves DKIM, revocacion en Dovecot y eventos (abajo).
+Redis), respaldos (abajo), celdas, claves DKIM, revocacion en Dovecot, auditoria (abajo) y eventos (abajo).
 
 Una alerta mal escrita no falla: se queda callada. Las reglas nuevas llevan su prueba de
 promtool en `ops/observability/prometheus/tests/<alerta>_test.yml`, que `make check-alertas`
@@ -204,6 +205,21 @@ minutos, pasa a `EVENTS_DLQ`.
 | `RevocacionEnDovecotFallida` | sube `mail_security_dovecot_revocation_failures_total` en cada ventana de 5 min, por motivo | 10 min | alta | Un fallo suelto que la reentrega resuelve no avisa; unas siete reentregas fallidas si, antes de que el evento acabe en `EVENTS_DLQ`. Mientras dura, un buzon apagado o con la credencial cambiada conserva sus sesiones y entra con la credencial vieja hasta `auth_cache_ttl` (300 s). `rejected` es configuracion: `DOVEADM_API_KEY` distinta en los dos lados, una orden fuera de `doveadm_allowed_commands` o el certificado. |
 | `ColaDePostfixAtascada` | el mensaje mas antiguo sin retener de la cola de Postfix (`mail_security_postfix_queue_oldest_arrival_timestamp_seconds`) lleva mas de 4 horas | 15 min | media | Postfix avisa al remitente del retraso a las 4 horas (`delay_warning_time`): un mensaje asi es un problema de entrega real. La pantalla Cola de correo (superadmin) da el motivo de cada uno: destino caido, lista negra, puerto 25 de salida bloqueado o rechazo del remoto. Los retenidos a mano no cuentan. |
 | `GestorDeColaSinRespuesta` | sube `mail_security_postfix_queue_poll_failures_total` en cada ventana de 10 min | 15 min | media | El agente de la cola (8590 del contenedor de Postfix) no responde a `mail-security`: caido, `QUEUE_AGENT_API_KEY` distinta o certificado que no casa. Sin el, `ColaDePostfixAtascada` no ve la cola. Con el gestor desactivado no hay consultas y no avisa. |
+
+### Auditoria
+
+La cadena de hash de `audit` (`docs/adr/0006`) tiene su verificacion en segundo plano y su copia externa; las tres
+primeras vienen de la seccion 6 del ADR y la cuarta de la 8.
+
+| Alerta | Cuando | Espera | Severidad | Por que |
+|---|---|---|---|---|
+| `CadenaDeAuditoriaRota` | el barrido dejo empresas con la cadena rota o una verificacion dio `broken` en la ultima hora | ninguna | critica | Es la evidencia de que el rastro se altero; `hash_key_missing` y `hash_key_unknown` son de configuracion y el detalle dice como distinguirlos. |
+| `VerificacionDeCadenaSinTerminar` | una verificacion del barrido fallo por causa tecnica en las ultimas 6 h | 30 min | media | Mientras dure nadie comprueba la cadena; no dice nada de ella. |
+| `EventosDeAuditoriaDescartados` | `audit` dio por tratado un evento del bus sin guardarlo en la ultima hora | ninguna | media | Un hueco concreto en el rastro: sin empresa en el sobre o empresa que ya no existe. |
+| `AnclaDeAuditoriaSinEnviar` | mas de dos intervalos (`audit_anchor_report_interval_seconds`, 24 h por defecto) sin que el informe de anclas salga hacia ninguna direccion, con `AUDIT_ANCHOR_RUA` configurada; una replica sin envios cuenta desde su arranque | 30 min | alta | Mientras dure, el rastro reciente no tiene copia fuera del servidor: si se ve comprometido, el ultimo correo recibido es la unica referencia. `audit_anchor_reports_total{result}` dice si es transactional o SES (`failed`), un rechazo de configuracion (`rejected`) o la direccion suprimida (`suppressed`). |
+
+La ultima lee el intervalo de la propia metrica: cambiar `AUDIT_ANCHOR_REPORT_INTERVAL` no obliga a tocar la regla,
+y con el informe desactivado (intervalo 0) la expresion no casa y no avisa.
 
 ### Eventos
 

@@ -69,7 +69,20 @@ func (uc *AuditUseCase) VerifyChainIntegrity(ctx context.Context, tenantID uuid.
 	if err != nil {
 		return nil, err
 	}
-	return uc.conclude(ctx, logs, events)
+	res, err := uc.conclude(ctx, logs, events)
+	if err == nil && !res.OK {
+		uc.noteChainBroken(ctx, tenantID, res.Chain, res.Reason)
+	}
+	return res, err
+}
+
+// noteChainBroken avisa fuera del servidor de una cadena rota, si hay a quien. El aviso no
+// bloquea ni cambia el veredicto.
+func (uc *AuditUseCase) noteChainBroken(ctx context.Context, tenantID uuid.UUID, chain domain.ChainName, reason string) {
+	if uc.chainBreaks == nil {
+		return
+	}
+	uc.chainBreaks.ChainBroken(ctx, tenantID, chain, reason)
 }
 
 // conclude contrasta cada cadena con sus anclas y da el veredicto del conjunto: el de las filas de
@@ -150,6 +163,7 @@ func (uc *AuditUseCase) anchorChain(ctx context.Context, tenantID uuid.UUID, cha
 		uc.logger.Error("audit: la cadena no contiene un ancla ya publicada",
 			zap.String("tenant_id", tenantID.String()), zap.String("chain", string(chain)),
 			zap.String("reason", reason), zap.Int64("head_seq", head.Seq))
+		uc.noteChainBroken(ctx, tenantID, chain, reason)
 		return res, nil
 	}
 	if found.Last != nil && found.Last.HeadSeq == head.Seq {

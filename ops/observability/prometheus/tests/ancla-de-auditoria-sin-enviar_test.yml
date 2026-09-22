@@ -1,0 +1,139 @@
+# Pruebas de la alerta AnclaDeAuditoriaSinEnviar.
+#
+# Con AUDIT_ANCHOR_RUA configurada, audit envia el informe de anclas cada AUDIT_ANCHOR_REPORT_INTERVAL
+# (24 h por defecto) y publica el intervalo en audit_anchor_report_interval_seconds (0 si esta
+# desactivado). Avisa cuando pasan mas de dos intervalos sin que el informe salga hacia ninguna
+# direccion y la situacion dura 30 min mas. Una replica que no envio ninguno cuenta desde su arranque.
+#
+# Las series van a un minuto: con muestras mas separadas que la ventana de busqueda de Prometheus
+# (5 min) la serie queda sin valor entre muestras y el "for" se reinicia.
+#
+#   make check-alertas
+
+rule_files:
+  - ../rules/plataforma.yml
+
+evaluation_interval: 1m
+
+tests:
+  # ── Un informe al dia: nada que avisar ─────────────────────────────────────
+  - interval: 1m
+    input_series:
+      - series: 'audit_anchor_report_last_success_timestamp_seconds{job="mail-services",service="audit",instance="audit:8030"}'
+        values: '0 1800x1439 88200x1440 174600x1500'
+      - series: 'audit_anchor_report_interval_seconds{job="mail-services",service="audit",instance="audit:8030"}'
+        values: '86400x4400'
+      - series: 'process_start_time_seconds{job="mail-services",service="audit",instance="audit:8030"}'
+        values: '0x4400'
+    alert_rule_test:
+      - eval_time: 71h
+        alertname: AnclaDeAuditoriaSinEnviar
+        exp_alerts: []
+
+  # ── El ultimo informe salio a la media hora y ninguno mas ──────────────────
+  - interval: 1m
+    input_series:
+      - series: 'audit_anchor_report_last_success_timestamp_seconds{job="mail-services",service="audit",instance="audit:8030"}'
+        values: '0 1800x3200'
+      - series: 'audit_anchor_report_interval_seconds{job="mail-services",service="audit",instance="audit:8030"}'
+        values: '86400x3200'
+      - series: 'process_start_time_seconds{job="mail-services",service="audit",instance="audit:8030"}'
+        values: '0x3200'
+    alert_rule_test:
+      # Dos intervalos justos: todavia no.
+      - eval_time: 48h
+        alertname: AnclaDeAuditoriaSinEnviar
+        exp_alerts: []
+      # Mas de dos intervalos, en espera 30 min.
+      - eval_time: 48h45m
+        alertname: AnclaDeAuditoriaSinEnviar
+        exp_alerts: []
+      - eval_time: 49h30m
+        alertname: AnclaDeAuditoriaSinEnviar
+        exp_alerts:
+          - exp_labels:
+              severidad: alta
+              service: audit
+            exp_annotations:
+              resumen: "El informe de anclas de auditoria de audit no sale desde hace mas de dos intervalos"
+              detalle: "La cabeza de las cadenas de auditoria no esta llegando a la direccion externa (AUDIT_ANCHOR_RUA): si el servidor se ve comprometido, el ultimo correo recibido es la unica referencia y cada intervalo sin el es un tramo del rastro sin copia fuera. audit_anchor_reports_total{result} y el registro de audit (informe de anclas no entregado) dicen si transactional no responde (failed), rechazo el envio (rejected: PLATFORM_FROM_EMAIL o PLATFORM_TENANT_ID) o la direccion esta suprimida (suppressed: un rebote o una queja de esa direccion). docs/adr/0006, seccion 8."
+
+  # ── Proceso arrancado a las dos horas que aun no envio ninguno: cuenta desde su arranque ──
+  - interval: 1m
+    input_series:
+      - series: 'audit_anchor_report_last_success_timestamp_seconds{job="mail-services",service="audit",instance="audit:8030"}'
+        values: '_x120 0x3200'
+      - series: 'audit_anchor_report_interval_seconds{job="mail-services",service="audit",instance="audit:8030"}'
+        values: '_x120 86400x3200'
+      - series: 'process_start_time_seconds{job="mail-services",service="audit",instance="audit:8030"}'
+        values: '_x120 7200x3200'
+    alert_rule_test:
+      - eval_time: 50h
+        alertname: AnclaDeAuditoriaSinEnviar
+        exp_alerts: []
+      - eval_time: 51h
+        alertname: AnclaDeAuditoriaSinEnviar
+        exp_alerts:
+          - exp_labels:
+              severidad: alta
+              service: audit
+            exp_annotations:
+              resumen: "El informe de anclas de auditoria de audit no sale desde hace mas de dos intervalos"
+              detalle: "La cabeza de las cadenas de auditoria no esta llegando a la direccion externa (AUDIT_ANCHOR_RUA): si el servidor se ve comprometido, el ultimo correo recibido es la unica referencia y cada intervalo sin el es un tramo del rastro sin copia fuera. audit_anchor_reports_total{result} y el registro de audit (informe de anclas no entregado) dicen si transactional no responde (failed), rechazo el envio (rejected: PLATFORM_FROM_EMAIL o PLATFORM_TENANT_ID) o la direccion esta suprimida (suppressed: un rebote o una queja de esa direccion). docs/adr/0006, seccion 8."
+
+  # ── Informe desactivado (AUDIT_ANCHOR_RUA vacia): nunca avisa ──────────────
+  - interval: 1m
+    input_series:
+      - series: 'audit_anchor_report_last_success_timestamp_seconds{job="mail-services",service="audit",instance="audit:8030"}'
+        values: '0x6000'
+      - series: 'audit_anchor_report_interval_seconds{job="mail-services",service="audit",instance="audit:8030"}'
+        values: '0x6000'
+      - series: 'process_start_time_seconds{job="mail-services",service="audit",instance="audit:8030"}'
+        values: '0x6000'
+    alert_rule_test:
+      - eval_time: 96h
+        alertname: AnclaDeAuditoriaSinEnviar
+        exp_alerts: []
+
+  # ── Intervalo de una hora: avisa pasadas dos horas y media ─────────────────
+  - interval: 1m
+    input_series:
+      - series: 'audit_anchor_report_last_success_timestamp_seconds{job="mail-services",service="audit",instance="audit:8030"}'
+        values: '0 300x400'
+      - series: 'audit_anchor_report_interval_seconds{job="mail-services",service="audit",instance="audit:8030"}'
+        values: '3600x400'
+      - series: 'process_start_time_seconds{job="mail-services",service="audit",instance="audit:8030"}'
+        values: '0x400'
+    alert_rule_test:
+      - eval_time: 2h30m
+        alertname: AnclaDeAuditoriaSinEnviar
+        exp_alerts: []
+      - eval_time: 2h40m
+        alertname: AnclaDeAuditoriaSinEnviar
+        exp_alerts:
+          - exp_labels:
+              severidad: alta
+              service: audit
+            exp_annotations:
+              resumen: "El informe de anclas de auditoria de audit no sale desde hace mas de dos intervalos"
+              detalle: "La cabeza de las cadenas de auditoria no esta llegando a la direccion externa (AUDIT_ANCHOR_RUA): si el servidor se ve comprometido, el ultimo correo recibido es la unica referencia y cada intervalo sin el es un tramo del rastro sin copia fuera. audit_anchor_reports_total{result} y el registro de audit (informe de anclas no entregado) dicen si transactional no responde (failed), rechazo el envio (rejected: PLATFORM_FROM_EMAIL o PLATFORM_TENANT_ID) o la direccion esta suprimida (suppressed: un rebote o una queja de esa direccion). docs/adr/0006, seccion 8."
+
+  # ── Dos replicas: la que no gana el cerrojo no retrasa nada ────────────────
+  - interval: 1m
+    input_series:
+      - series: 'audit_anchor_report_last_success_timestamp_seconds{job="mail-services",service="audit",instance="10.0.0.1:8030"}'
+        values: '0 1800x1439 88200x1440 174600x1500'
+      - series: 'audit_anchor_report_last_success_timestamp_seconds{job="mail-services",service="audit",instance="10.0.0.2:8030"}'
+        values: '0x4400'
+      - series: 'audit_anchor_report_interval_seconds{job="mail-services",service="audit",instance="10.0.0.1:8030"}'
+        values: '86400x4400'
+      - series: 'audit_anchor_report_interval_seconds{job="mail-services",service="audit",instance="10.0.0.2:8030"}'
+        values: '86400x4400'
+      - series: 'process_start_time_seconds{job="mail-services",service="audit",instance="10.0.0.1:8030"}'
+        values: '0x4400'
+      - series: 'process_start_time_seconds{job="mail-services",service="audit",instance="10.0.0.2:8030"}'
+        values: '0x4400'
+    alert_rule_test:
+      - eval_time: 71h
+        alertname: AnclaDeAuditoriaSinEnviar
+        exp_alerts: []

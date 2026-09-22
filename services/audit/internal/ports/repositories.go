@@ -2,6 +2,8 @@ package ports
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"time"
 
 	"github.com/alonsosss/corforce-email/services/audit/internal/domain"
@@ -127,4 +129,56 @@ type IntegrityMetrics interface {
 	RunFinished(origin domain.RunTrigger, outcome string)
 	// SweepBroken es cuantas empresas dejo con la cadena rota la ultima pasada del barrido.
 	SweepBroken(tenants int)
+}
+
+// TenantDirectory lista las empresas activas del registro con su slug, para nombrarlas en el
+// informe de anclas.
+type TenantDirectory interface {
+	ActiveTenants(ctx context.Context) ([]domain.TenantRef, error)
+}
+
+// ReportSigner firma el bloque del informe de anclas con la llave activa de la cadena, para que
+// quien lo recibe pueda comprobar que no se fabrico.
+type ReportSigner interface {
+	KeyID() string
+	Sign(data []byte) []byte
+}
+
+// ErrReportUnavailable: el envio no llego a transactional o este no pudo atenderlo; repetirlo mas
+// tarde puede salir bien.
+var ErrReportUnavailable = errors.New("el informe de anclas no se pudo entregar a transactional")
+
+// ReportRejectedError: transactional rechazo el informe con un error que repetir no arregla
+// (remitente de plataforma sin configurar, destinatario invalido).
+type ReportRejectedError struct {
+	Status  int
+	Code    string
+	Message string
+}
+
+func (e *ReportRejectedError) Error() string {
+	return fmt.Sprintf("transactional rechazo el informe de anclas: %d %s %s", e.Status, e.Code, e.Message)
+}
+
+// AnchorReportSender entrega un informe en texto plano a una direccion, como correo de la propia
+// plataforma. suppressed es verdadero si transactional lo dejo sin enviar porque la direccion
+// esta suprimida (rebote, queja): el informe no salio del servidor.
+type AnchorReportSender interface {
+	SendAnchorReport(ctx context.Context, to, subject, text string) (suppressed bool, err error)
+}
+
+// AnchorReportMetrics cuenta los envios del informe de anclas. result toma los valores
+// domain.ReportResult*, cerrados.
+type AnchorReportMetrics interface {
+	ReportResult(result string)
+	ReportSucceeded(at time.Time)
+	// ReportSchedule publica el intervalo configurado: la alerta lo lee para saber cuanto silencio
+	// es demasiado, y cero significa que el informe esta desactivado.
+	ReportSchedule(interval time.Duration)
+}
+
+// ChainBreakNotifier recibe cada cadena que una verificacion o el anclaje dan por rota, para
+// avisar fuera del servidor sin esperar al informe periodico. No bloquea a quien lo llama.
+type ChainBreakNotifier interface {
+	ChainBroken(ctx context.Context, tenantID uuid.UUID, chain domain.ChainName, reason string)
 }

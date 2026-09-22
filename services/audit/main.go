@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log"
 	"os"
 	"strings"
@@ -16,14 +18,20 @@ import (
 	"github.com/alonsosss/corforce-email/pkg/outbox"
 	"github.com/alonsosss/corforce-email/pkg/response"
 	"github.com/alonsosss/corforce-email/pkg/server"
+	"github.com/alonsosss/corforce-email/pkg/validate"
+	"github.com/alonsosss/corforce-email/services/audit/internal/adapters/cli"
 	handler "github.com/alonsosss/corforce-email/services/audit/internal/adapters/http"
+	"github.com/alonsosss/corforce-email/services/audit/internal/adapters/keyring"
 	natsadapter "github.com/alonsosss/corforce-email/services/audit/internal/adapters/nats"
 	outboxadapter "github.com/alonsosss/corforce-email/services/audit/internal/adapters/outbox"
 	"github.com/alonsosss/corforce-email/services/audit/internal/adapters/postgres"
 	metrics "github.com/alonsosss/corforce-email/services/audit/internal/adapters/prometheus"
 	"github.com/alonsosss/corforce-email/services/audit/internal/adapters/sweep"
+	"github.com/alonsosss/corforce-email/services/audit/internal/adapters/transactionalcli"
 	"github.com/alonsosss/corforce-email/services/audit/internal/app"
+	"github.com/alonsosss/corforce-email/services/audit/internal/ports"
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
 
@@ -61,9 +69,18 @@ const (
 	// Vacio o 0 lo desactiva.
 	minSweepInterval = time.Hour
 	maxSweepInterval = 7 * 24 * time.Hour
+
+	// AUDIT_ANCHOR_REPORT_INTERVAL: cada cuanto sale el informe de anclas a AUDIT_ANCHOR_RUA
+	// (docs/adr/0006, seccion 8). Sin direcciones no hay informe.
+	defaultAnchorReportInterval = 24 * time.Hour
+	minAnchorReportInterval     = time.Hour
+	maxAnchorReportInterval     = 7 * 24 * time.Hour
 )
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == cli.VerifyCommand {
+		os.Exit(cli.VerifyAnchors(os.Args[2:], os.Stdout, os.Stderr, openTenantChain))
+	}
 	logger, _ := zap.NewProduction()
 	defer logger.Sync()
 	response.SetUnexpectedLogger(logger)
@@ -105,6 +122,10 @@ func main() {
 		log.Fatal(err)
 	}
 	sweepEvery, err := integritySweepInterval()
+	if err != nil {
+		log.Fatal(err)
+	}
+	anchorReport, err := loadAnchorReportSettings()
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -151,6 +172,36 @@ func main() {
 	eventPub := natsadapter.NewEventPublisher(bus)
 
 	integrityMetrics := metrics.New()
+	anchorRepo := postgres.NewChainAnchorRepo(ctxPool)
+	tenantDirectory := postgres.NewRegistryTenants(registryPool.Pool)
+
+	// Ancla externa (docs/adr/0006, seccion 8): el informe de anclas sale como correo de la
+	// plataforma a AUDIT_ANCHOR_RUA. Sin direcciones, nada cambia. Va antes del caso de uso porque
+	// tambien recibe las cadenas que una verificacion da por rotas.
+	var (
+		anchorReporter *app.AnchorReporter
+		chainBreaks    ports.ChainBreakNotifier
+	)
+	integrityMetrics.ReportSchedule(0)
+	if len(anchorReport.recipients) > 0 {
+		anchorReporter = app.NewAnchorReporter(app.AnchorReporterDeps{
+			Anchors:    anchorRepo,
+			Directory:  tenantDirectory,
+			Sender:     transactionalcli.New(anchorReport.transactionalURL, anchorReport.internalToken, anchorReport.platformTenant),
+			Signer:     keyring.NewSigner(hashKeys),
+			Metrics:    integrityMetrics,
+			Recipients: anchorReport.recipients,
+			Logger:     logger,
+		})
+		chainBreaks = anchorReporter
+		integrityMetrics.ReportSchedule(anchorReport.every)
+		if hashKeys == nil {
+			logger.Warn("audit: el informe de anclas saldra sin firma (sin AUDIT_HASH_KEY): quien lo reciba no podra comprobar que no se fabrico")
+		}
+	} else {
+		logger.Info("audit: sin informe de anclas a una direccion externa (AUDIT_ANCHOR_RUA vacia); la cabeza anclada solo vive en este servidor (docs/adr/0006)")
+	}
+
 	uc := app.NewAuditUseCase(app.AuditDeps{
 		Logs:         logRepo,
 		Security:     secRepo,
@@ -158,9 +209,10 @@ func main() {
 		Summary:      summaryRepo,
 		Events:       eventPub,
 		Logger:       logger,
-		Anchors:      postgres.NewChainAnchorRepo(ctxPool),
+		Anchors:      anchorRepo,
 		AnchorEvents: outboxadapter.NewPublisher(ctxPool),
 		Tx:           ctxPool,
+		ChainBreaks:  chainBreaks,
 
 		VerifyTimeout: verifyTimeout,
 		Integrity: app.IntegrityRunConfig{
@@ -183,6 +235,9 @@ func main() {
 		go sweep.NewIntegrity(registryPool.Pool, tenantDB, uc, integrityMetrics, logger, sweepEvery).Run(ctx)
 	} else {
 		logger.Info("audit: sin barrido periodico de verificacion de las cadenas (AUDIT_INTEGRITY_SWEEP_INTERVAL); solo se verifica bajo demanda")
+	}
+	if anchorReporter != nil {
+		go sweep.NewAnchorReport(registryPool.Pool, tenantDB, tenantDirectory, anchorReporter, logger, anchorReport.every).Run(ctx)
 	}
 
 	h := handler.NewHandler(uc, perms)
@@ -255,6 +310,71 @@ func auditSubjects() []string {
 		}
 	}
 	return subjects
+}
+
+// anchorReportSettings es la configuracion del informe de anclas. AUDIT_ANCHOR_RUA (direcciones de
+// correo separadas por coma) lo activa; vacia, el servicio arranca igual y no envia nada. Con
+// direcciones, hacen falta TRANSACTIONAL_URL, PLATFORM_TENANT_ID (la empresa de plataforma, como
+// en identity: el remitente del sistema solo esta verificado en ella) y el token interno: un
+// informe configurado que no puede salir es un error de configuracion, no un aviso.
+type anchorReportSettings struct {
+	recipients       []string
+	every            time.Duration
+	transactionalURL string
+	internalToken    string
+	platformTenant   uuid.UUID
+}
+
+func loadAnchorReportSettings() (anchorReportSettings, error) {
+	var st anchorReportSettings
+	seen := map[string]bool{}
+	for _, raw := range strings.Split(os.Getenv("AUDIT_ANCHOR_RUA"), ",") {
+		addr := strings.ToLower(strings.TrimSpace(raw))
+		if addr == "" || seen[addr] {
+			continue
+		}
+		v := validate.New()
+		v.Email("AUDIT_ANCHOR_RUA", addr)
+		if !v.Valid() {
+			return st, fmt.Errorf("AUDIT_ANCHOR_RUA: %q no es una direccion de correo", addr)
+		}
+		seen[addr] = true
+		st.recipients = append(st.recipients, addr)
+	}
+	var err error
+	if st.every, err = config.EnvDuration("AUDIT_ANCHOR_REPORT_INTERVAL", defaultAnchorReportInterval, minAnchorReportInterval, maxAnchorReportInterval); err != nil {
+		return st, err
+	}
+	if len(st.recipients) == 0 {
+		return st, nil
+	}
+	if st.transactionalURL, err = config.ServiceURL("TRANSACTIONAL_URL", ""); err != nil {
+		return st, err
+	}
+	if st.transactionalURL == "" {
+		return st, errors.New("AUDIT_ANCHOR_RUA esta configurada y falta TRANSACTIONAL_URL")
+	}
+	if st.internalToken, err = middleware.InternalGatewayToken(); err != nil {
+		return st, err
+	}
+	rawTenant := strings.TrimSpace(os.Getenv("PLATFORM_TENANT_ID"))
+	if rawTenant == "" {
+		return st, errors.New("AUDIT_ANCHOR_RUA esta configurada y falta PLATFORM_TENANT_ID (la empresa de plataforma con la que sale el correo del sistema)")
+	}
+	if st.platformTenant, err = uuid.Parse(rawTenant); err != nil {
+		return st, fmt.Errorf("PLATFORM_TENANT_ID no es un uuid valido: %w", err)
+	}
+	return st, nil
+}
+
+// openTenantChain abre la base de empresa que se da a `audit verificar-ancla` con el adaptador de
+// Postgres del servicio.
+func openTenantChain(ctx context.Context, dsn string) (cli.ChainFactsReader, func(), error) {
+	chain, err := postgres.OpenTenantChain(ctx, dsn)
+	if err != nil {
+		return nil, nil, err
+	}
+	return chain, chain.Close, nil
 }
 
 // integritySweepInterval lee AUDIT_INTEGRITY_SWEEP_INTERVAL. Esta desactivado por defecto: verificar

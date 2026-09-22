@@ -563,6 +563,25 @@ groups:
           resumen: "El barrido de verificacion de la cadena de auditoria no logra terminar"
           detalle: "Una verificacion del barrido termino con fallo tecnico (error_code en audit.integrity_runs: internal_error o timeout). El registro de audit dice la causa. Si es timeout, la cadena de esa empresa no cabe en AUDIT_INTEGRITY_RUN_TIMEOUT: subirlo o dejar que el barrido siga incremental."
 
+      # El informe de anclas (la copia de la cabeza de cada cadena fuera del servidor, docs/adr/0006
+      # seccion 8) no sale desde hace mas de dos intervalos, con AUDIT_ANCHOR_RUA configurada (el
+      # intervalo publicado es mayor que cero; desactivado, la expresion no casa). Una replica que no
+      # envio ninguno cuenta desde su arranque; entre replicas vale la ultima que lo logro, porque el
+      # cerrojo de lider decide cual envia. Alta: mientras dure, el rastro reciente no tiene copia fuera.
+      - alert: AnclaDeAuditoriaSinEnviar
+        expr: |
+          time() - max by (service) (
+              audit_anchor_report_last_success_timestamp_seconds > 0
+            or on (job, service, instance)
+              (process_start_time_seconds and on (job, service, instance) audit_anchor_report_last_success_timestamp_seconds)
+          ) > 2 * max by (service) (audit_anchor_report_interval_seconds > 0)
+        for: 30m
+        labels:
+          severidad: alta
+        annotations:
+          resumen: "El informe de anclas de auditoria de {{ $labels.service }} no sale desde hace mas de dos intervalos"
+          detalle: "La cabeza de las cadenas de auditoria no esta llegando a la direccion externa (AUDIT_ANCHOR_RUA): si el servidor se ve comprometido, el ultimo correo recibido es la unica referencia y cada intervalo sin el es un tramo del rastro sin copia fuera. audit_anchor_reports_total{result} y el registro de {{ $labels.service }} (informe de anclas no entregado) dicen si transactional no responde (failed), rechazo el envio (rejected: PLATFORM_FROM_EMAIL o PLATFORM_TENANT_ID) o la direccion esta suprimida (suppressed: un rebote o una queja de esa direccion). docs/adr/0006, seccion 8."
+
       # Un evento del bus que audit dio por tratado sin guardarlo: no tiene empresa (no hay base donde
       # escribirlo) o su empresa ya no existe. El evento falta en el rastro. Media: un hueco concreto,
       # no una caida.

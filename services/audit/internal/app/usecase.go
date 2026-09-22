@@ -24,6 +24,9 @@ type AuditDeps struct {
 	Anchors      ports.ChainAnchorRepository
 	AnchorEvents ports.ChainAnchorPublisher
 	Tx           ports.Transactor
+	// ChainBreaks recibe cada cadena que una verificacion o el anclaje dan por rota; nil si no hay
+	// a quien avisar fuera del servidor.
+	ChainBreaks ports.ChainBreakNotifier
 
 	// VerifyTimeout es el plazo de cada verificacion de cadena; cero toma DefaultVerifyTimeout.
 	VerifyTimeout time.Duration
@@ -42,6 +45,7 @@ type AuditUseCase struct {
 	anchors      ports.ChainAnchorRepository
 	anchorEvents ports.ChainAnchorPublisher
 	tx           ports.Transactor
+	chainBreaks  ports.ChainBreakNotifier
 
 	verifying     verificationGate
 	verifyTimeout time.Duration
@@ -65,6 +69,7 @@ func NewAuditUseCase(deps AuditDeps) *AuditUseCase {
 		anchors:      deps.Anchors,
 		anchorEvents: deps.AnchorEvents,
 		tx:           deps.Tx,
+		chainBreaks:  deps.ChainBreaks,
 
 		verifyTimeout: verifyTimeout,
 		integrity:     newIntegrityRuns(deps.Integrity),

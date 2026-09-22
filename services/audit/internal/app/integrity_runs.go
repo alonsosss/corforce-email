@@ -374,6 +374,7 @@ func (uc *AuditUseCase) execute(ctx context.Context, run *domain.IntegrityRun, r
 			uc.logger.Error("audit: la verificacion de la cadena encontro una rotura",
 				zap.String("tenant_id", run.TenantID.String()), zap.String("run_id", run.ID.String()),
 				zap.String("chain", string(verdict.Chain)), zap.String("reason", verdict.Reason), zap.Any("broken_seq", verdict.BrokenSeq))
+			uc.noteChainBroken(ctx, run.TenantID, verdict.Chain, verdict.Reason)
 		}
 		return verdict
 	case errors.Is(err, domain.ErrRunCancelled):

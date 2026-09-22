@@ -302,9 +302,46 @@ servicios no las reciben (`reparto.tsv`, `make check-secret-scope`). Orden de al
 Rotación: `ops/security/secrets/rotate-key.sh AUDIT_HASH_KEY AUDIT_HASH_KEYS_OLD --apply` pone la nueva como activa y
 pasa la anterior a la lista, y se recrea `audit`. A diferencia de `MAIL_ENCRYPTION_KEYS_OLD`, la lista **no se vacía**
 mientras haya filas firmadas con esas llaves: una fila append-only no se re-firma. Causas del verificador y qué hacer
-con cada una: ADR 0006, sección 5. El ancla externa (correo diario de las cabezas a una dirección fuera de la
-plataforma) está decidida y sin implementar: hasta entonces la cabeza anclada solo vive en la base, en el stream
-`AUDIT_CHAIN` y en el log del servidor.
+con cada una: ADR 0006, sección 5.
+
+Ancla externa (ADR 0006, sección 8): la cabeza anclada vive en la base, en el stream `AUDIT_CHAIN` y en el log del
+mismo servidor, y solo protege contra quien no pueda escribir también `audit.chain_anchors`. La copia fuera es un correo:
+
+1. **`AUDIT_ANCHOR_RUA`** en el `.env`: una o varias direcciones separadas por coma, **fuera de la plataforma** (un buzón
+   en otro proveedor, que archive lo que recibe). Vacía (por defecto) no cambia nada. Con ella puesta, `audit` exige
+   `TRANSACTIONAL_URL` y `PLATFORM_TENANT_ID` (los mismos que usa `identity` para el correo del sistema) y no arranca sin
+   ellos. `AUDIT_ANCHOR_REPORT_INTERVAL` (24h por defecto, de 1h a 7d) fija el ritmo; el envío se alinea al reloj UTC
+   (con 24h, a las 00:00), así que un despliegue ni lo repite ni lo salta. Poner la llave (`AUDIT_HASH_KEY`) **antes**:
+   sin ella el informe sale con `signature: none` y no prueba nada.
+2. Recrear `audit` y comprobar en el log `audit: proximo informe de anclas`. Cada informe lleva, por empresa y cadena,
+   id y slug de la empresa, la posición y el hash de la cabeza, la versión del hash y el instante del ancla, firmados con
+   HMAC-SHA256 y la llave activa de la cadena; nunca contenido de apuntes ni datos personales. Asunto:
+   `[Core Force Mail] Anclas de auditoria <fecha>`, y `: cadena rota` cuando lo dispara una verificación que encontró
+   una rotura (sale en el acto, como mucho una vez por hora y empresa).
+3. **Conservar los correos fuera del servidor**: son la única referencia que un atacante con la base no puede tocar.
+   Vigilar `audit_anchor_reports_total{result}` (`failed`: transactional o SES no responden; `rejected`: falta
+   `PLATFORM_FROM_EMAIL` o la dirección no vale; `suppressed`: la dirección rebotó o se quejó y `suppression` la bloquea)
+   y la alerta `AnclaDeAuditoriaSinEnviar` (más de dos intervalos sin envío).
+
+**Cotejo ante una sospecha de compromiso.** Desde un equipo que **no** sea el servidor, con la llave del respaldo de
+secretos exportada en el entorno como `AUDIT_HASH_KEY` (y `AUDIT_HASH_KEYS_OLD` si el correo es anterior a una
+rotación), sin escribirla en ningún fichero ni en la línea de órdenes:
+
+```
+ops/security/verificar-ancla.sh ultimo-informe.eml
+ops/security/verificar-ancla.sh ultimo-informe.eml \
+    --dsn 'postgres://<usuario>:<clave>@<host>:<puerto>/mail_tenant_<slug>' --tenant <slug>
+```
+
+La primera forma comprueba solo la firma (acepta el `.eml` completo o el texto pegado). La segunda coteja cada ancla
+del correo con la cadena actual de esa empresa: **cualquier `seq` de la cabeza menor que el del correo, o un hash
+distinto en ese `seq`, es evidencia de manipulación** (`head_behind_anchor`: se borraron las últimas filas;
+`anchor_mismatch`: se reescribió o se borró la fila y se siguió escribiendo), aunque `GET /audit/integrity` diga que todo
+está bien, porque el API solo conoce las anclas que quedan en la base. Un `AVISO` de que `chain_anchors` ya no conserva
+el ancla es que alguien la borró desde la base. Salida 0: auténtico y contenido en la cadena; 1: evidencia; 2: no se
+pudo comprobar (llave ausente o retirada sin `AUDIT_HASH_KEYS_OLD`, base inaccesible). No reiniciar `audit` ni tocar la
+base antes de guardar el resultado y el correo con el que se cotejó. Con varias empresas en el informe, `--tenant` elige
+cuál; la DSN es la de la base de esa empresa con un rol que lea `audit.*` (la del almacén de secretos).
 
 Verificación en segundo plano y eventos por consumidores durables (`docs/adr/0006-cadena-de-auditoria-con-hmac-y-anclas.md`,
 secciones 6 y 7). Orden de despliegue:

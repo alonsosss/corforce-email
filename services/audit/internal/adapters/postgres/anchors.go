@@ -8,6 +8,7 @@ import (
 	"github.com/alonsosss/corforce-email/pkg/db"
 	"github.com/alonsosss/corforce-email/services/audit/internal/domain"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // chainTables fija la tabla de cada cadena. El nombre nunca viene de fuera: solo se interpola uno
@@ -86,6 +87,48 @@ func (r *ChainAnchorRepo) Findings(ctx context.Context, chain domain.ChainName) 
 	f.Mismatched = mismatched
 	return f, nil
 }
+
+// Facts es lo que la cadena dice hoy de un ancla recibida por otro canal (el correo de anclas):
+// la posicion de su cabeza, el hash que ocupa la posicion del ancla y si la tabla de anclas la
+// conserva. Lo usa el verificador externo (audit verificar-ancla), con la base que se le da.
+func (r *ChainAnchorRepo) Facts(ctx context.Context, a domain.ChainAnchor) (domain.ChainFacts, error) {
+	var f domain.ChainFacts
+	table, err := chainTable(a.Chain)
+	if err != nil {
+		return f, err
+	}
+	err = r.pool.QueryRow(ctx, fmt.Sprintf(`
+		SELECT COALESCE((SELECT max(seq) FROM %[1]s WHERE entry_hash IS NOT NULL), 0),
+		       COALESCE((SELECT entry_hash FROM %[1]s WHERE seq = $1), ''),
+		       EXISTS (SELECT 1 FROM audit.chain_anchors WHERE chain = $2 AND head_seq = $1 AND head_hash = $3)`, table),
+		a.HeadSeq, string(a.Chain), a.HeadHash).Scan(&f.HeadSeq, &f.HashAtSeq, &f.AnchorRecorded)
+	return f, err
+}
+
+// TenantChain es la cadena de una base de empresa abierta por su DSN, para el verificador externo
+// (audit verificar-ancla): lee los hechos de cada ancla con el mismo repositorio que el servicio.
+type TenantChain struct {
+	repo *ChainAnchorRepo
+	pool *pgxpool.Pool
+}
+
+func OpenTenantChain(ctx context.Context, dsn string) (*TenantChain, error) {
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		return nil, err
+	}
+	if err := pool.Ping(ctx); err != nil {
+		pool.Close()
+		return nil, err
+	}
+	return &TenantChain{repo: NewChainAnchorRepo(&db.ContextPool{}), pool: pool}, nil
+}
+
+func (c *TenantChain) Facts(ctx context.Context, a domain.ChainAnchor) (domain.ChainFacts, error) {
+	return c.repo.Facts(db.WithPool(ctx, c.pool), a)
+}
+
+func (c *TenantChain) Close() { c.pool.Close() }
 
 func (r *ChainAnchorRepo) Save(ctx context.Context, a *domain.ChainAnchor) (bool, error) {
 	err := r.pool.QueryRow(ctx,

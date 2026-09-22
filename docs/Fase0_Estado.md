@@ -101,12 +101,18 @@ cambie cualquiera de estas líneas.
   salvo el reconocimiento. Las filas existentes siguen en la versión 1, sin reescribirse. Migraciones `07`, `08` y `09`
   de `audit` (aplicar antes del código; sin `AUDIT_HASH_KEY` todo sigue como antes y `audit` lo avisa al arrancar).
   Sigue abierto: (a) **poner la llave** (`Operacion_Despliegue.md` 2: hasta entonces no hay versión 2 ni cadena de
-  eventos); (b) **el ancla externa**: la cabeza anclada vive en la misma base, en el stream `AUDIT_CHAIN` y en el log
-  del mismo servidor, y solo protege contra quien no pueda escribir también `audit.chain_anchors`; la protección completa
-  exige un consumidor de `audit.chain.anchored` que la entregue fuera del servidor (correo diario a una dirección externa
-  o un objeto con retención inmutable fuera del host), decidido en el ADR y sin implementar por falta de destino y
-  credenciales; (c) el tramo en versión 1 conserva sus debilidades (sin `user_agent`, separadores ambiguos, recalculable);
-  (d) una alerta de Prometheus por ancla ausente y la compactación de anclas antiguas. Antes de desplegar: en cada base de
+  eventos); (b) **el ancla externa**, resuelta por correo el mismo día (ADR 0006, sección 8; sin desplegar y sin
+  migraciones): con `AUDIT_ANCHOR_RUA` puesta, `audit` envía cada `AUDIT_ANCHOR_REPORT_INTERVAL` (24 h, alineado al reloj
+  UTC) un informe en texto plano con la última ancla de cada cadena de cada empresa (solo ids, posiciones y hashes),
+  firmado con `AUDIT_HASH_KEY`, como correo de la plataforma (`POST /internal/send-email`, el mismo contrato que el
+  reinicio de contraseña), y de inmediato el de la empresa cuya cadena una verificación da por rota; `ops/security/
+  verificar-ancla.sh` comprueba la firma fuera del servidor y coteja el correo con la cadena por la base
+  (`head_behind_anchor`, `anchor_mismatch`); métrica `audit_anchor_reports_total{result}` y alerta
+  `AnclaDeAuditoriaSinEnviar`. Probado contra Postgres real con un `transactional` simulado y con mutaciones del correo y
+  de la cadena. **Queda sin hacer** la copia en un objeto con retención inmutable fuera del host (sin destino ni
+  credenciales), y la vía del correo exige que el operador configure una dirección externa y conserve los correos fuera;
+  (c) el tramo en versión 1 conserva sus debilidades (sin `user_agent`, separadores ambiguos, recalculable);
+  (d) una métrica de Prometheus por ancla ausente en el propio anclaje y la compactación de anclas antiguas. Antes de desplegar: en cada base de
   empresa, `SELECT count(*) FROM audit.audit_logs WHERE seq IS NOT NULL AND entry_hash IS NULL` cuenta las filas que un
   `/logs/bulk` anterior dejó fuera de la cadena; el verificador ya las señala como rotura, y un resultado distinto de
   cero pide decidir qué hacer con ellas antes de que el endpoint de integridad se ponga en rojo.

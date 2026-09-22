@@ -4,12 +4,17 @@
 
 Implementado y probado contra Postgres real (2026-09-21). Sin desplegar: el despliegue del código no cambia nada
 hasta que se pone `AUDIT_HASH_KEY` en el almacén de secretos. La exportación del ancla a un sistema externo está
-decidida y pendiente (sección "Ancla externa").
+implementada por correo (sección 8) y queda pendiente como objeto con retención inmutable (sección "Ancla externa").
 
 Ampliado el mismo día con dos decisiones que dejó abiertas la revisión de robustez, también implementadas y probadas
 contra Postgres y NATS reales y sin desplegar: la **verificación en segundo plano** (sección 6, migración `10`) y la
 **entrega de los eventos del bus por consumidores durables** (sección 7), sin la cual el rastro perdía lo publicado
 mientras `audit` estaba caído.
+
+Ampliado de nuevo el mismo día con el **ancla externa por correo** (sección 8): el informe de anclas sale del servidor
+como correo de la plataforma a `AUDIT_ANCHOR_RUA`, firmado con la llave de la cadena, y `audit verificar-ancla` lo
+coteja fuera. Probado contra Postgres real con un `transactional` simulado y con mutaciones del correo y de la cadena.
+Sin desplegar y sin migraciones: con `AUDIT_ANCHOR_RUA` vacía nada cambia.
 
 ## Contexto
 
@@ -287,6 +292,89 @@ señal de manipulación. La respuesta **nunca** incluye la llave ni su identific
 si la fila que rompe la cadena tiene otro `tenant_id` (una base con filas mezcladas, o un `tenant_id` editado) el
 veredicto sigue en rojo pero sin `broken_id` ni `broken_seq`. La comparación de hashes es en tiempo constante.
 
+### 8. Ancla externa por correo
+
+**Qué resuelve.** El ancla de la sección 3 vive en la misma base que la cadena: contra quien escribe como dueño de la
+base (borra las últimas filas **y** las últimas anclas, o reescribe una fila y recalcula desde ahí con la llave) no
+protege, y el stream `AUDIT_CHAIN` y el log están en el mismo servidor. Hacía falta una copia de la cabeza en un sitio
+que ese atacante no controle. La decisión de este ADR era un correo a una dirección externa o un objeto con retención
+inmutable fuera del host; lo que faltaba era el destino y sus credenciales. **El correo no exige ninguna credencial
+nueva**: `transactional` ya envía los correos de la propia plataforma por SES con `POST /internal/send-email` (el
+contrato que usa `identity` para el reinicio de contraseña: remitente `PLATFORM_FROM_EMAIL`, empresa
+`PLATFORM_TENANT_ID`, sin pasar por reputación), así que esa es la vía que se implementa. El objeto inmutable sigue
+pendiente (sección "Ancla externa").
+
+**Barrido periódico, no consumidor del evento.** `audit.chain.anchored` existe si y solo si existe el ancla, y un
+consumidor durable de ese evento habría sido lo más literal. Pero el evento sale cada `AUDIT_ANCHOR_INTERVAL` (15
+minutos) por cadena y empresa, y un correo por evento son cientos al día que nadie archiva ni coteja; lo que quien
+recibe necesita es **un resumen** con la última ancla de cada cadena de cada empresa. Por eso el informe lo hace un
+barrido (`sweep.AnchorReportRunner`) bajo cerrojo de líder sobre el registro: lee `audit.chain_anchors` de cada empresa
+activa (`Findings.Last` por cadena, con el slug de `organization.v_tenant_routing`, la única vista del registro que el
+rol de `audit` lee) y lo envía en **un correo** por dirección. La consecuencia es que el informe lleva lo que la tabla
+dice en ese momento: si alguien borró anclas antes del informe, el correo no las tiene. Lo que sí tiene siempre es la
+última cabeza que el servicio vio, y el informe anterior tiene la de un intervalo antes; es la misma garantía que el
+evento, con la frecuencia de un archivo de correo.
+
+**Calendario alineado al reloj.** Sale en cada múltiplo de `AUDIT_ANCHOR_REPORT_INTERVAL` (24 h por defecto, de 1 h a
+7 d) desde la época UTC: con 24 h, a las 00:00 UTC. Alinear al reloj y no al arranque hace que un despliegue ni repita
+el informe ni lo salte, sin guardar en ninguna parte cuándo salió el último, y que el asunto de cada día sea predecible
+(`[Core Force Mail] Anclas de auditoria 2026-09-22`) para quien lo archiva o lo filtra. Con dos réplicas, las dos
+despiertan en el mismo instante y el cerrojo decide cuál envía; si la primera termina antes de que la segunda pruebe,
+salen dos correos iguales, que no son un problema.
+
+**Envío inmediato por rotura.** Además, cuando una verificación (en línea o en segundo plano) o el propio anclaje dan
+una cadena por rota, `audit` envía en el acto el informe de esa empresa con la rotura (`cause: chain_broken`, y la
+línea `broken:` con empresa, cadena y motivo) y sus anclas, para que la evidencia salga del servidor antes de que
+nadie la borre. Sale fuera del hilo de la petición o del barrido que la detectó, con un contexto propio de 2 minutos,
+y como mucho **una vez por hora y empresa**: una cadena rota se re-verifica en cada pasada del barrido y en cada `GET
+/integrity`, y un correo por cada una no añade evidencia. El puerto es `ChainBreakNotifier`; sin `AUDIT_ANCHOR_RUA` el
+caso de uso no tiene a quién avisar y no cambia nada.
+
+**Formato del correo.** Texto plano (`text_body`, sin HTML): un archivo de correo lo conserva legible y un cliente no
+lo reescribe. Lleva **solo** identificadores de empresa (id y slug), la cadena, la posición y el hash de la cabeza, la
+versión del hash y el instante del ancla; nunca contenido de apuntes, IP, `user_agent` ni usuario (la prueba
+`TestElCuerpoSoloLlevaIdentificadoresPosicionesYHashes` fija el contrato de cada línea). El bloque entre
+`-----BEGIN CORE FORCE MAIL AUDIT ANCHORS-----` y `-----END ...-----` es lo que se firma: `format`, `generated_at`,
+`cause`, `broken:` si la hay, y una línea `anchor: tenant=... slug=... chain=... seq=... hash=... hash_version=...
+anchored_at=...` por cadena, con las empresas por id y las cadenas por nombre para que el mismo contenido dé los mismos
+bytes. Después, `signature: hmac-sha256 key_id=<id> mac=<hex>`: HMAC-SHA256 del bloque con la **llave activa de la
+cadena** (`AUDIT_HASH_KEY`, el mismo anillo y el mismo `key_id` de la sección 2), de modo que quien recibe el correo
+puede comprobar que no se fabricó ni se alteró, y un informe firmado con una llave ya retirada se comprueba por su
+`key_id` con `AUDIT_HASH_KEYS_OLD`. Sin llave el informe sale con `signature: none` y lo dice en el cuerpo; el
+verificador que sí tiene llave lo trata como no fiable, porque un correo fabricado diría exactamente eso.
+
+**Verificador externo.** `ops/security/verificar-ancla.sh <correo.eml | texto> [--dsn DSN [--tenant id|slug]]`
+ejecuta `go run ./services/audit verificar-ancla`: un subcomando del propio binario, así que el formato del informe y
+el anillo de llaves son los del código que lo envió y no una copia en bash. Lee un `.eml` completo (baja por las partes
+MIME hasta el `text/plain` y decodifica quoted-printable o base64, que es como SES lo entrega) o el texto pegado,
+comprueba la firma con `AUDIT_HASH_KEY`/`AUDIT_HASH_KEYS_OLD` del entorno y, con `--dsn`, coteja cada ancla con la
+cadena actual por la base de la empresa (`ChainAnchorRepo.Facts`: posición de la cabeza, hash que ocupa hoy la posición
+del ancla y si `chain_anchors` la conserva) con los mismos códigos que el verificador del servicio: `head_behind_anchor`
+si la cabeza actual va por detrás del ancla del correo (se borraron las últimas filas) y `anchor_mismatch` si en esa
+posición hay otro hash o ninguna fila (se reescribió, o se borró y se siguió escribiendo). Se eligió la base y no `GET
+/integrity` porque el API da la cabeza y el ancla más alta que **el servidor** conoce, y un atacante que borró anclas
+deja el API en verde; la comparación que vale es "la fila que hoy ocupa la posición del correo tiene el hash del
+correo". Salida: 0 auténtico y contenido en la cadena, 1 evidencia de manipulación, 2 no se pudo comprobar. La firma
+inválida manda sobre un cotejo correcto.
+
+**Métricas y alerta.** `audit_anchor_reports_total{result}` (`sent`, `suppressed`, `rejected`, `failed`, una serie por
+envío y dirección), `audit_anchor_report_last_success_timestamp_seconds` (último informe que salió hacia al menos una
+dirección) y `audit_anchor_report_interval_seconds` (el intervalo configurado, 0 desactivado). `AnclaDeAuditoriaSinEnviar`
+(alta) avisa cuando pasan más de dos intervalos sin envío correcto con el informe activado, con la misma forma que
+`RepasoDKIMDetenido` (una réplica sin envíos cuenta desde su arranque; entre réplicas vale la última que lo logró) y el
+intervalo leído de la métrica, así que vale para cualquier `AUDIT_ANCHOR_REPORT_INTERVAL`.
+
+**Probado** (`make test-integration`, `services/audit/internal/adapters/postgres/anchor_report_integration_test.go`,
+contra Postgres real y un `transactional` simulado con `httptest` que captura el correo): el informe sale como la
+empresa de plataforma con el token interno, en texto plano y sin datos de los apuntes; el verificador lo lee tal cual
+y da OK por el mismo DSN, también después de que la cadena crezca; alterar una posición del correo o quitar la firma es
+evidencia aunque la cadena esté intacta; borrar las últimas filas **y** sus anclas deja la cadena enlazada y el API en
+verde, y el correo lo delata (`head_behind_anchor`, con aviso de que `chain_anchors` ya no conserva el ancla); reescribir
+la fila anclada y recalcular con la llave se delata (`anchor_mismatch`); y una verificación rota envía el aviso
+inmediato una sola vez por hora. Las pruebas unitarias cubren el formato, el parseo estricto (bloque repetido, línea
+desconocida, campo de más, mac corto), el `.eml` con quoted-printable, la llave retirada, el freno del aviso y los
+tres enganches del caso de uso.
+
 ## Alternativas
 
 1. **Corregir solo la ambigüedad (longitud por campo) sin clave.** Descartada: no impide recalcular la cadena, que es la
@@ -302,31 +390,37 @@ veredicto sigue en rojo pero sin `broken_id` ni `broken_seq`. La comparación de
 5. **Árbol de Merkle con puntos de control firmados** en vez de una cadena. Más escalable para verificar un rango, pero
    otro formato entero de almacenamiento y verificación; sin métricas que lo pidan (`CLAUDE.md`, "No se introduce
    infraestructura nueva sin ADR").
-6. **Guardar el ancla solo fuera de la base.** Es la meta (sección siguiente), pero el repositorio no puede dejarla
-   hecha: necesita un destino externo y credenciales que hoy no existen.
+6. **Guardar el ancla solo fuera de la base.** Es la meta (sección "Ancla externa"): la copia por correo está hecha
+   (sección 8) y la de objeto inmutable necesita un destino externo y credenciales que hoy no existen.
+7. **Un consumidor durable de `audit.chain.anchored` que envíe un correo por evento**, en vez del barrido de la sección
+   8. Descartado: cientos de correos al día por empresa y cadena que nadie archiva; el resumen periódico lleva la misma
+   cabeza con la frecuencia de un archivo de correo, y la rotura tiene su envío inmediato.
+8. **Cotejar el correo con `GET /integrity` en vez de con la base.** Descartado: el API da la cabeza y el ancla más alta
+   que el servidor conoce, y un atacante que borró anclas y filas lo deja en verde; la comparación que vale es la fila
+   que hoy ocupa la posición del correo (sección 8).
 
-## Ancla externa (decidida, pendiente)
+## Ancla externa (correo implementado; objeto inmutable pendiente)
 
-**Lo que protege hoy el ancla.** La tabla, el evento y el log dan tres cosas: detectan el borrado de las últimas filas y
+**Lo que protege el ancla dentro de la base.** La tabla, el evento y el log detectan el borrado de las últimas filas y
 la reescritura de la cadena contra un atacante que **no pueda escribir también `audit.chain_anchors`** (el rol del
-servicio no puede; el dueño de la base sí), y dejan la cabeza en un stream de NATS y en el log. Un ancla dentro de la
-**misma base** no protege contra quien escribe en ambas tablas: borra las últimas filas y las últimas anclas. Presentarla
-como protección completa sería falso.
+servicio no puede; el dueño de la base sí). Un ancla dentro de la **misma base** no protege contra quien escribe en
+ambas tablas: borra las últimas filas y las últimas anclas.
 
-**Lo que la completa.** Sacar la cabeza a un sistema que ese atacante no controle. Decisión: un consumidor de
-`audit.chain.anchored` (evento ya publicado con todo lo necesario, así que no hay cambio de formato) que la entregue
-fuera del servidor. Destinos válidos, por orden de preferencia:
+**Lo que la completa.** Sacar la cabeza a un sistema que ese atacante no controle. De los dos destinos decididos:
 
-1. Un resumen diario de las cabezas por correo a una dirección externa a la plataforma (`ALERT_EMAIL_TO`, la que ya usa el
-   Alertmanager de `docs/adr/0005-entrega-de-alertas-con-alertmanager.md`). Un correo enviado no se puede borrar desde
-   el servidor, y no necesita infraestructura nueva. Una alerta del Alertmanager cuando `audit` registre el error de
-   ancla ausente cubre el aviso inmediato.
-2. Un objeto con retención inmutable (S3 con Object Lock o equivalente) **fuera del host**. MinIO en el mismo host no
-   sirve: el atacante que escribe en la base escribe ahí.
+1. **Correo a una dirección externa: hecho** (sección 8). Un resumen por intervalo con la última ancla de cada cadena
+   de cada empresa, firmado con la llave de la cadena, a `AUDIT_ANCHOR_RUA` por el correo de la plataforma que ya
+   existe; y el informe inmediato de la empresa cuya cadena una verificación da por rota. Un correo enviado no se puede
+   borrar desde el servidor y no necesitó infraestructura ni credenciales nuevas. La dirección debe ser **externa a la
+   plataforma** (un buzón en otro proveedor) y quien la recibe debe **conservar los correos fuera del servidor**: son
+   la referencia con la que `ops/security/verificar-ancla.sh` coteja la cadena si el servidor se ve comprometido.
+2. **Un objeto con retención inmutable (S3 con Object Lock o equivalente) fuera del host: pendiente.** MinIO en el mismo
+   host no sirve (el atacante que escribe en la base escribe ahí) y sigue sin haber un destino con credenciales
+   decidido. Cuando lo haya, el mismo informe (el bloque firmado) es lo que se guarda.
 
-No se implementa porque necesita decidir el destino y darle credenciales que hoy no existen (el mismo bloqueo que la
-caída total en el ADR 0005). Hasta entonces, `audit.chain.anchored` en JetStream y el log son la única copia fuera de la
-base, y los dos viven en el mismo servidor.
+Lo que el correo no cubre: un atacante que controle también la salida por SES o la cuenta de correo receptora, y el
+tramo entre el último informe y el ataque (como mucho un intervalo, salvo que una verificación lo vea antes y dispare
+el envío inmediato).
 
 ## Migración y despliegue
 
@@ -364,6 +458,18 @@ Ampliación (verificación en segundo plano y consumidores durables), con este o
 4. **Comprobar**: `POST /api/v1/audit/integrity/runs` y `GET .../runs/{id}` hasta `completed`; `nats consumer ls IDENTITY`
    debe listar `audit-identity-all` y `nats consumer ls EVENTS_DLQ` no debe crecer.
 
+Ampliación (ancla externa por correo), sin migraciones:
+
+1. Elegir una dirección **fuera de la plataforma** que archive lo que recibe, y ponerla en `AUDIT_ANCHOR_RUA` del `.env`
+   (varias, separadas por coma). Con ella puesta, `audit` exige `TRANSACTIONAL_URL` y `PLATFORM_TENANT_ID` (ya en el
+   `.env` para `identity`) y no arranca sin ellas: un informe configurado que no puede salir es un error, no un aviso.
+   `AUDIT_ANCHOR_REPORT_INTERVAL` (24h por defecto) fija el ritmo.
+2. Recrear `audit`. El arranque registra `audit: proximo informe de anclas` con el instante del siguiente envío; si no
+   hay llave, avisa de que el informe saldrá sin firma.
+3. Comprobar que el primer correo llega y guardarlo fuera; `ops/security/verificar-ancla.sh <correo>` con la llave del
+   respaldo de secretos debe dar `Firma correcta`. Vigilar `audit_anchor_reports_total{result}` y
+   `AnclaDeAuditoriaSinEnviar`.
+
 ## Riesgos
 
 * **La llave es el punto único.** Quien tenga `AUDIT_HASH_KEY` y escriba en la base recalcula las filas de versión 2.
@@ -398,14 +504,29 @@ Ampliación (verificación en segundo plano y consumidores durables), con este o
 * **Los eventos del bus**: el `audit` viejo pierde una sola vez lo publicado entre su parada y la creación de los
   consumidores nuevos (sección 7, "Transición"); un `audit` caído más de 7 días pierde lo más antiguo (retención de los
   streams); tras 20 entregas fallidas (30 minutos) un evento pasa a `EVENTS_DLQ` y hay que reproducirlo a mano.
-* **Rotación sin retirada**: cada llave retirada debe conservarse mientras existan filas con su `key_id`.
+* **Rotación sin retirada**: cada llave retirada debe conservarse mientras existan filas con su `key_id`. Los informes
+  de anclas firmados con una llave retirada se comprueban con ella por su `key_id`: la llave retirada hace falta también
+  para leer los correos antiguos.
+* **El informe de anclas depende de SES y del receptor.** Si `transactional` o SES no responden, el envío falla y no se
+  reintenta hasta el siguiente intervalo (o la siguiente verificación rota); `audit_anchor_reports_total{result="failed"}`
+  lo cuenta y `AnclaDeAuditoriaSinEnviar` avisa tras dos intervalos. Si la dirección rebota o se queja, `suppression` la
+  suprime y el informe deja de salir (`result="suppressed"`) hasta que se retire la supresión o se cambie la dirección.
+  Si el receptor pierde los correos, la referencia externa desaparece con ellos: el correo protege solo lo que se
+  conserva fuera. Y el informe lleva lo que `chain_anchors` dice en ese instante: un borrado de anclas anterior al
+  informe no está en él, aunque sí en el anterior.
+* **El aviso inmediato de rotura sale como mucho una vez por hora y empresa**, también si el envío falló: una rotura
+  detectada durante una caída de SES espera al informe periódico o a la siguiente verificación pasada esa hora.
+* **Un informe sin firma no prueba nada**: sin `AUDIT_HASH_KEY` el correo sale con `signature: none` y el verificador
+  con llave lo rechaza. Poner la llave antes que la dirección.
 
 ## Mejoras futuras (no implementadas)
 
-* Consumidor de `audit.chain.anchored` que entregue la cabeza fuera del servidor (sección "Ancla externa").
+* Copia del informe firmado en un objeto con retención inmutable fuera del host (sección "Ancla externa"), cuando exista
+  un destino con credenciales.
 * Puntos de control firmados con la llave activa cada cierto número de filas, para poder retirar llaves viejas.
-* Métrica y regla de alerta de Prometheus por ancla ausente, en lugar de solo el log (la verificación ya avisa de
-  `head_behind_anchor` y `anchor_mismatch` por `CadenaDeAuditoriaRota`, pero el barrido no la da por rota hasta que corre).
+* Métrica de Prometheus por ancla ausente en el propio anclaje, además del correo inmediato y del log (la verificación
+  ya avisa de `head_behind_anchor` y `anchor_mismatch` por `CadenaDeAuditoriaRota`, pero el barrido no la da por rota
+  hasta que corre).
 * Compactación de anclas antiguas.
 * Cupo global de verificaciones entre réplicas (hoy por proceso; el de una por empresa ya vale entre réplicas), por
   ejemplo en Redis.
