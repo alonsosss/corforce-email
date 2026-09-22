@@ -79,8 +79,11 @@ degradan por su cuenta; `LimitadorSinRedis` lo avisa, tambien para el contador `
 ## El stack
 
 ```bash
-docker compose -f docker-compose.observability.yml up -d
+ops/security/secrets/with-secrets.sh docker compose -f docker-compose.observability.yml up -d
 ```
+
+Siempre por `with-secrets.sh`: `GRAFANA_ADMIN_PASSWORD` vive en el almacen de secretos, no en el `.env`, y sin ella
+Compose se niega a interpolar. A secas falla con `required variable GRAFANA_ADMIN_PASSWORD is missing`.
 
 - **Prometheus** (`127.0.0.1:9090`): recolecta y evalua las alertas.
 - **Alertmanager** (solo red interna): las agrupa y las entrega por correo ("Entrega de las alertas").

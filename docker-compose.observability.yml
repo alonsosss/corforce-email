@@ -2,7 +2,10 @@
 # negocio a proposito: se levanta, se actualiza y se apaga sin tocar los servicios de la plataforma,
 # y una caida del monitoreo no puede arrastrar al producto.
 #
-#   docker compose -f docker-compose.observability.yml up -d
+#   ops/security/secrets/with-secrets.sh docker compose -f docker-compose.observability.yml up -d
+#
+# Siempre por with-secrets.sh: GRAFANA_ADMIN_PASSWORD vive en el almacen de secretos y no en el .env, y sin
+# ella Compose se niega a interpolar (a proposito: Grafana no arranca con una contrasena conocida).
 #
 # El nombre del proyecto va FIJADO abajo (`name: obs`) y no se deja al azar. Compose lo
 # deriva del nombre del directorio cuando no se declara, y aqui ese directorio es
