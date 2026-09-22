@@ -909,6 +909,15 @@
 .cf-pre--tall {
   max-height: 520px;
 }
+/* Lineas de registro: lista sin vinetas dentro de un bloque monoespaciado con scroll. */
+.cf-log-lines {
+  list-style: none;
+  margin: 0;
+  overflow: auto;
+}
+.cf-log-line {
+  padding: 1px 0;
+}
 .cf-split {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));

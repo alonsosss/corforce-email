@@ -12,6 +12,16 @@ const dateTimeFormat = () =>
 const dateFormat = () =>
   new Intl.DateTimeFormat(getLocale(), { year: 'numeric', month: '2-digit', day: '2-digit' });
 
+const timestampFormat = () =>
+  new Intl.DateTimeFormat(getLocale(), {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  });
+
 function parse(value: string | null | undefined): Date | null {
   if (!value) return null;
   const d = new Date(value);
@@ -26,6 +36,13 @@ export function formatDateTime(value: string | null | undefined): string {
 export function formatDate(value: string | null | undefined): string {
   const d = parse(value);
   return d ? dateFormat().format(d) : t('common.dash');
+}
+
+/** Instante con segundos y milisegundos, para lineas de registro. */
+export function formatTimestamp(value: string | null | undefined): string {
+  const d = parse(value);
+  if (!d) return t('common.dash');
+  return `${timestampFormat().format(d)}.${String(d.getMilliseconds()).padStart(3, '0')}`;
 }
 
 export function fullName(first: string, last: string, fallback = ''): string {

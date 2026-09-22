@@ -51,6 +51,75 @@ export interface QueueListing {
   items: QueueMessage[];
 }
 
+/** Tope de filas del historial de Rspamd (domain.MaxRspamdHistoryRows). */
+export const RSPAMD_HISTORY_MAX_ROWS = 200;
+
+/** Contadores del controller de Rspamd de la celda (domain.RspamdStats). Solo lectura. */
+export interface RspamdStats {
+  version: string;
+  uptime_seconds: number;
+  scanned: number;
+  learned: number;
+  spam_count: number;
+  ham_count: number;
+  /** Mensajes por veredicto: reject, add header, greylist, no action... */
+  actions: Record<string, number>;
+  connections: number;
+  control_connections: number;
+  total_learns: number;
+  statfiles: RspamdStatfile[];
+  /** Hashes por almacen fuzzy. */
+  fuzzy_hashes: Record<string, number>;
+  scan_time: {
+    samples: number;
+    /** Decimales serializados como cadena. */
+    average_ms: string;
+    max_ms: string;
+  };
+}
+
+export interface RspamdStatfile {
+  symbol: string;
+  type: string;
+  revision: number;
+  used: number;
+  total: number;
+  size: number;
+  languages: number;
+  users: number;
+}
+
+export interface RspamdSymbol {
+  name: string;
+  score: string;
+}
+
+/** Sobre y veredicto de un mensaje analizado, nunca su contenido (domain.RspamdHistoryRow). */
+export interface RspamdHistoryRow {
+  id: string;
+  /** RFC 3339. */
+  time: string;
+  ip: string;
+  user?: string;
+  sender: string;
+  recipients: string[];
+  subject: string;
+  score: string;
+  required_score: string;
+  action: string;
+  symbols: RspamdSymbol[];
+  size: number;
+  scan_time_ms: string;
+  skipped: boolean;
+}
+
+export interface RspamdHistory {
+  /** Filas que el controller devolvio, aunque rows traiga menos. */
+  total: number;
+  truncated: boolean;
+  rows: RspamdHistoryRow[];
+}
+
 export interface SpamScore {
   id: string;
   tenant_id: string;
@@ -269,6 +338,12 @@ export const mailSecurityApi = {
     api.post<null>(endpoints.mailSecurity.queueAction(id, action)),
   deleteQueueMessage: (id: string) => api.delete<null>(endpoints.mailSecurity.queueMessage(id)),
   flushQueue: () => api.post<StatusResponse>(endpoints.mailSecurity.queueFlush),
+  /** Lectura del controller de Rspamd de la celda: solo el superadmin (permiso mail_security/rspamd/read). */
+  rspamdStats: async (signal?: AbortSignal) =>
+    (await api.get<RspamdStats>(endpoints.mailSecurity.rspamdStats, { signal })).data,
+  rspamdHistory: async (limit: number, signal?: AbortSignal) =>
+    (await api.get<RspamdHistory>(endpoints.mailSecurity.rspamdHistory, { params: { limit }, signal }))
+      .data,
 
   getQuarantineSettings: () =>
     api.get<QuarantineSettings>(endpoints.mailSecurity.quarantineSettings),

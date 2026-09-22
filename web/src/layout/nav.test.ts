@@ -97,6 +97,8 @@ describe('menu frente a rutas', () => {
       paths.platformBilling,
       paths.platformReputation,
       paths.platformMailQueue,
+      paths.platformRspamd,
+      paths.platformLogs,
     ];
     for (const to of platform) {
       const item = allItems.find((i) => i.to === to);

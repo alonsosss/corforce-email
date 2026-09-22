@@ -210,6 +210,18 @@ export const NAV: NavGroup[] = [
         icon: IconMailOpen,
         role: SYSTEM_ROLES.superadmin,
       },
+      {
+        to: paths.platformRspamd,
+        labelKey: 'nav.platformRspamd',
+        icon: IconShieldCheck,
+        role: SYSTEM_ROLES.superadmin,
+      },
+      {
+        to: paths.platformLogs,
+        labelKey: 'nav.platformLogs',
+        icon: IconFileText,
+        role: SYSTEM_ROLES.superadmin,
+      },
     ],
   },
   {

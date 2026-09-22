@@ -181,9 +181,12 @@ Cada permiso del catalogo tiene un alcance (`access_control.permissions.scope`,
 `018_permission_scope.sql`): `tenant` o `platform`. Los de plataforma (`organization/*`,
 `identity/platform_sessions/*`, `billing/plans/*`, `billing/subscriptions/*`,
 `reputation/tenants/*`, `mail_security/firewall/*` de
-`021_mail_security_access_permissions.sql` y `mail_security/queue/*` de
-`033_mail_security_queue_permissions.sql`, que `mail-security` vuelve a exigir al
-superadmin en el caso de uso porque el cortafuegos y la cola de Postfix son de toda la celda) los ejerce solo el
+`021_mail_security_access_permissions.sql`, `mail_security/queue/*` de
+`033_mail_security_queue_permissions.sql` y `mail_security/rspamd/read` de
+`036_mail_security_rspamd_permissions.sql`, que `mail-security` vuelve a exigir al
+superadmin en el caso de uso porque el cortafuegos, la cola de Postfix y el historial del antispam son de toda la celda,
+y `observability/logs/read` de `037_observability_permissions.sql`, que `observability` exige con el rol `superadmin`
+en el handler y de nuevo en el caso de uso porque los registros mezclan a todas las empresas; `docs/adr/0009`) los ejerce solo el
 `superadmin`, que no los necesita en ningun rol. Ningun rol de empresa los recibe: el
 sembrado del `tenant_admin` filtra por alcance, `PUT /roles/{id}/permissions` responde 403
 si se pide uno y el catalogo `GET /permissions` los oculta a quien no es `superadmin`. Una
@@ -225,7 +228,7 @@ solo le atiende rutas de plataforma, nunca datos de una empresa.
 
 Triple `(module, resource, action)` en `access_control.permissions`, con comodin `*` en
 `resource` y `action`. Modulos de permiso: `organization`, `identity`, `access`, `audit`,
-`scheduler` (plano de control, siempre disponibles) y los de correo (`domains`,
+`scheduler`, `observability` (plano de control, siempre disponibles; `observability` solo tiene permisos de plataforma) y los de correo (`domains`,
 `mailboxes`, `mail_routing`, `mail_security`, `mail_storage`, `migration`, `transactional`,
 `templates`, `suppression`, `reputation`, `contacts`, `segments`, `campaigns`,
 `automations`, `analytics`, `billing`, `policy`), que solo estan disponibles si la empresa

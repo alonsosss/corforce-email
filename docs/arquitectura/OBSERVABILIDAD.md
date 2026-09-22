@@ -266,12 +266,32 @@ decision y sus alternativas estan en `docs/adr/0005-entrega-de-alertas-con-alert
 que no cae con ella; para la caida total hace falta ademas un canal que no dependa de este servidor (Telegram, un
 servicio externo de latido), que requiere credenciales que hoy no hay.
 
+## Registros centralizados y visor
+
+promtail lee los ficheros que Docker ya escribe (nunca el controlador de log `loki`, que ataria el
+producto al monitoreo) y los manda a **Loki** (`loki:3100`, sin puerto publicado) con cuatro etiquetas:
+`servicio` (el nombre de servicio de compose), `contenedor`, `plano` (proyecto de compose) y `flujo`
+(`stdout` o `stderr`). A proposito ninguna mas: el tenant, el usuario o el id de peticion multiplicarian
+los flujos por miles; eso se filtra al consultar. Los descubre por el proxy de solo lectura del socket
+de Docker (`docker-socket-ro`), nunca por el socket directo.
+
+Se consultan de dos maneras:
+
+- **Grafana** (por tunel SSH): el tablero de entrega ya lee de Loki las entregas, diferidos, rebotes y
+  rechazos de Postfix (`entrega.json`).
+- **La pantalla Registros de la plataforma** (`/platform/logs`, solo el superadmin), servida por el
+  servicio `observability` (`docs/adr/0009-visor-de-registros-y-lectura-del-antispam.md`). Nunca acepta
+  LogQL del cliente: recibe un servicio de una lista blanca fija, un texto que se convierte en UN filtro
+  de linea literal, una ventana de 24 h como mucho y hasta 500 lineas, y construye la consulta en Go.
+  Cada consulta queda en su registro con quien la hizo, el servicio y la ventana (nunca el texto
+  buscado) y en `observability_log_queries_total{service,outcome}`. Sin `LOKI_URL` responde 503
+  `NOT_CONFIGURED`; el perfil autoalojado la fija a `http://loki:3100`.
+
+Un servicio Go nuevo entra en la lista blanca del visor (`services/observability/internal/domain/logs.go`);
+una prueba la contrasta con `docker-compose.yml` y `deploy/mail/docker-compose.mail.yml` y falla si falta.
+
 ## Lo que todavia no hay
 
-- **Logs centralizados.** Los logs rotan por contenedor (20 MB x 5, comprimidos) y se leen
-  con `docker logs`. Agregarlos exige o bien montar el socket de Docker en un recolector
-  (privilegio que no compensa) o bien enviarlos a CloudWatch con el driver `awslogs`, lo que
-  requiere ampliar la politica del rol de la instancia. Decision pendiente.
 - **Trazas distribuidas.** Con `X-Request-ID` ya se puede seguir una peticion entre
   servicios en los logs; no hay OpenTelemetry.
 - **Metricas de negocio** (comprobantes emitidos, cobranzas del dia). Hoy se consultan por

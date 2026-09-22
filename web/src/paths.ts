@@ -81,4 +81,6 @@ export const paths = {
   platformBilling: '/platform/billing',
   platformReputation: '/platform/reputation',
   platformMailQueue: '/platform/mail-queue',
+  platformLogs: '/platform/logs',
+  platformRspamd: '/platform/rspamd',
 } as const;

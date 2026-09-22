@@ -1155,6 +1155,17 @@ Lo que se comprobó de punta a punta con un buzón real, y las trampas que salie
   `postfix-mail`; el 8590 solo existe en la red `mail-engines` y desde fuera no conecta. El superadmin recibe 200 en
   `/api/v1/mail-security/queue` y un administrador de empresa 403. Para rotarla: nueva clave en el `.env`, recrear
   `mail-security` y después `postfix-mail`.
+* **Visor de registros y lectura del antispam** (`docs/adr/0009`, 2026-09-21, sin desplegar). Servicio nuevo
+  `observability` (imagen nueva, que el despliegue construye como a los demás; entra en `routes.json`, así que
+  hay que recrear también el `gateway`) con `LOKI_URL`, que el perfil autoalojado fija a `http://loki:3100`; sin la
+  pila de observabilidad levantada la pantalla Registros responde 503 `NOT_CONFIGURED` y nada más cambia. Migraciones
+  del registro `036` (permiso `mail_security/rspamd/read`) y `037` (`observability/logs/read`), las dos de plataforma.
+  Para la pantalla Antispam hace falta la contraseña del controller de Rspamd en los dos lados: en
+  `deploy/mail/rspamd/override.d/worker-controller-password.inc` del servidor (fichero ignorado por git;
+  `password = "<hash>";` con el hash de `rspamadm pw`) y `RSPAMD_CONTROLLER_PASSWORD` en `mail-security`; después
+  recrear `rspamd-mail` y `mail-security`. Sin ella la pantalla responde 503 `NOT_CONFIGURED` y el entrenamiento desde
+  la cuarentena sigue igual de desactivado que hasta ahora. Pendiente (P): mover `RSPAMD_CONTROLLER_PASSWORD` del
+  `.env` al almacén de secretos con su fila en `reparto.tsv`.
 
 ### Correo del sistema (recuperacion de contrasena)
 

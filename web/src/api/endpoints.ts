@@ -175,6 +175,12 @@ export const endpoints = {
     queueAction: (id: string, action: string) =>
       `${API_PREFIX}/mail-security/queue/${seg(id)}/${seg(action)}`,
     queueFlush: `${API_PREFIX}/mail-security/queue/flush`,
+    rspamdStats: `${API_PREFIX}/mail-security/rspamd/stats`,
+    rspamdHistory: `${API_PREFIX}/mail-security/rspamd/history`,
+  },
+  observability: {
+    logServices: `${API_PREFIX}/observability/logs/services`,
+    logs: `${API_PREFIX}/observability/logs`,
   },
   templates: {
     ...collectionOf('/templates'),
