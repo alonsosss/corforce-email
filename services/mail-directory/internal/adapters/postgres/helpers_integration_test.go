@@ -11,6 +11,7 @@ import (
 	"sort"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/alonsosss/corforce-email/pkg/db"
 	outboxadapter "github.com/alonsosss/corforce-email/services/mail-directory/internal/adapters/outbox"
@@ -94,12 +95,20 @@ type fixedMX struct{ hosts []string }
 
 func (f fixedMX) LookupMX(context.Context, string) ([]string, error) { return f.hosts, nil }
 
+// testRecreateHold es la retencion de una direccion recien borrada con la que corren las pruebas, como en
+// produccion (MAIL_DIRECTORY_MAILBOX_RECREATE_HOLD).
+const testRecreateHold = 15 * time.Minute
+
 // newUseCase cablea el caso de uso con los repositorios reales y la outbox, como main.go.
 func newUseCase(ctxPool *db.ContextPool) *app.UseCase {
 	return newUseCaseWithMX(ctxPool, fixedMX{hosts: []string{testPlatformMX}})
 }
 
 func newUseCaseWithMX(ctxPool *db.ContextPool, mx ports.MXResolver) *app.UseCase {
+	return newUseCaseWith(ctxPool, mx, testRecreateHold)
+}
+
+func newUseCaseWith(ctxPool *db.ContextPool, mx ports.MXResolver, recreateHold time.Duration) *app.UseCase {
 	return app.New(app.Deps{
 		Tx: NewTransactor(ctxPool), Domains: NewDomainRepo(ctxPool), AliasDomains: NewAliasDomainRepo(ctxPool),
 		Mailboxes: NewMailboxRepo(ctxPool), AppPasswords: NewAppPasswordRepo(ctxPool), Sieve: NewSieveRepo(ctxPool), Vacation: NewVacationRepo(ctxPool), Locator: NewMailboxLocator(ctxPool),
@@ -107,6 +116,6 @@ func newUseCaseWithMX(ctxPool *db.ContextPool, mx ports.MXResolver) *app.UseCase
 		Relayhosts: NewRelayhostRepo(ctxPool), Transports: NewTransportRepo(ctxPool), TLSPolicies: NewTLSPolicyRepo(ctxPool),
 		RecipientMap: NewRecipientMapRepo(ctxPool), BCCMaps: NewBCCMapRepo(ctxPool), Retirements: NewRetirementRepo(ctxPool),
 		MTASTS: NewMTASTSRepo(ctxPool), MTASTSPublic: NewMTASTSPublicReader(ctxPool), MX: mx, PlatformMX: testPlatformMX,
-		Secrets: secrets.New(), Events: outboxadapter.NewPublisher(ctxPool),
+		MailboxRecreateHold: recreateHold, Secrets: secrets.New(), Events: outboxadapter.NewPublisher(ctxPool),
 	})
 }

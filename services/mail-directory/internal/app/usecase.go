@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/alonsosss/corforce-email/services/mail-directory/internal/domain"
@@ -47,9 +48,13 @@ type Deps struct {
 	PlatformMX string
 	// DAVServerURL es MAIL_DAV_PUBLIC_URL, ya validada; vacia si mail-dav no se publica.
 	DAVServerURL string
-	Secrets      ports.Secrets
-	Events       ports.EventPublisher
-	Logger       *zap.Logger
+	// MailboxRecreateHold es MAIL_DIRECTORY_MAILBOX_RECREATE_HOLD: mientras la marca de baja de una
+	// direccion sea mas joven que esto y el barrido de Dovecot no la haya consumido, no se crea un buzon
+	// con ese nombre (su maildir anterior sigue en el disco). Cero desactiva la retencion.
+	MailboxRecreateHold time.Duration
+	Secrets             ports.Secrets
+	Events              ports.EventPublisher
+	Logger              *zap.Logger
 }
 
 type UseCase struct {
@@ -76,6 +81,7 @@ type UseCase struct {
 	mx              ports.MXResolver
 	platformMX      string
 	davServerURL    string
+	recreateHold    time.Duration
 	secrets         ports.Secrets
 	events          ports.EventPublisher
 	logger          *zap.Logger
@@ -92,7 +98,8 @@ func New(d Deps) *UseCase {
 		senderACL: d.SenderACL, relayhosts: d.Relayhosts, transports: d.Transports,
 		tlsPolicies: d.TLSPolicies, recipientMap: d.RecipientMap, bccMaps: d.BCCMaps,
 		senders: d.Senders, retirements: d.Retirements, mtaSTS: d.MTASTS, mtaSTSPublisher: d.MTASTSPublic, mx: d.MX,
-		platformMX: d.PlatformMX, davServerURL: d.DAVServerURL, secrets: d.Secrets, events: d.Events, logger: logger,
+		platformMX: d.PlatformMX, davServerURL: d.DAVServerURL, recreateHold: d.MailboxRecreateHold,
+		secrets: d.Secrets, events: d.Events, logger: logger,
 	}
 }
 

@@ -120,9 +120,71 @@ func TestDeleteMailboxLimpiaLoQueCuelga(t *testing.T) {
 	if len(h.mailboxes.items) != 0 || h.published("mail.mailbox.deleted") != 1 {
 		t.Errorf("buzon no borrado o evento ausente")
 	}
+	if _, marked := h.mailboxes.deletions["ana@acme.com"]; !marked {
+		t.Errorf("sin marca de baja para el barrido de maildir de Dovecot")
+	}
 	// Un segundo tenant no borra lo que no es suyo.
 	if err := h.uc.DeleteMailbox(context.Background(), uuid.New(), m.ID); !errors.Is(err, domain.ErrNotFound) {
 		t.Errorf("borrado ajeno: %v", err)
+	}
+}
+
+// Una direccion recien borrada no se vuelve a crear mientras el barrido de Dovecot no haya retirado su
+// maildir (la marca sigue viva): el buzon nuevo no puede nacer con el correo del anterior. En cuanto el
+// barrido consume la marca, o vencida la retencion si el barrido no corre, se crea.
+func TestRecrearBuzonEsperaAlBarridoDeMaildir(t *testing.T) {
+	h := newHarness()
+	tenant := uuid.New()
+	h.addDomain(tenant, "acme.com", domain.DomainLimits{})
+	m := h.addMailbox(tenant, "ana@acme.com", 0)
+	if err := h.uc.DeleteMailbox(context.Background(), tenant, m.ID); err != nil {
+		t.Fatalf("borrar: %v", err)
+	}
+	crear := func() error {
+		_, err := h.uc.CreateMailbox(context.Background(), tenant, CreateMailboxRequest{LocalPart: "ana", Domain: "acme.com", Password: testPassword})
+		return err
+	}
+	if err := crear(); !errors.Is(err, domain.ErrAddressRecentlyDeleted) {
+		t.Fatalf("recrear con la marca viva debia esperar al barrido, dio %v", err)
+	}
+	if len(h.mailboxes.items) != 0 || h.published("mail.mailbox.created") != 0 {
+		t.Fatalf("la creacion rechazada dejo rastro")
+	}
+	// Otra direccion del mismo dominio no espera a nada.
+	if _, err := h.uc.CreateMailbox(context.Background(), tenant, CreateMailboxRequest{LocalPart: "luis", Domain: "acme.com", Password: testPassword}); err != nil {
+		t.Fatalf("otra direccion: %v", err)
+	}
+	// Vencida la retencion sin que el barrido haya pasado, se crea igual.
+	h.mailboxes.now = h.mailboxes.now.Add(testRecreateHold)
+	if err := crear(); err != nil {
+		t.Fatalf("vencida la retencion: %v", err)
+	}
+}
+
+func TestRecrearBuzonTrasElBarridoOSinRetencion(t *testing.T) {
+	h := newHarness()
+	tenant := uuid.New()
+	h.addDomain(tenant, "acme.com", domain.DomainLimits{})
+	m := h.addMailbox(tenant, "ana@acme.com", 0)
+	if err := h.uc.DeleteMailbox(context.Background(), tenant, m.ID); err != nil {
+		t.Fatalf("borrar: %v", err)
+	}
+	// El barrido de Dovecot movio el maildir y consumio la marca.
+	delete(h.mailboxes.deletions, "ana@acme.com")
+	if _, err := h.uc.CreateMailbox(context.Background(), tenant, CreateMailboxRequest{LocalPart: "ana", Domain: "acme.com", Password: testPassword}); err != nil {
+		t.Fatalf("tras el barrido: %v", err)
+	}
+
+	// Sin retencion (MAIL_DIRECTORY_MAILBOX_RECREATE_HOLD=0) no se consulta la marca.
+	h2 := newHarness()
+	h2.uc.recreateHold = 0
+	h2.addDomain(tenant, "acme.com", domain.DomainLimits{})
+	m2 := h2.addMailbox(tenant, "bea@acme.com", 0)
+	if err := h2.uc.DeleteMailbox(context.Background(), tenant, m2.ID); err != nil {
+		t.Fatalf("borrar: %v", err)
+	}
+	if _, err := h2.uc.CreateMailbox(context.Background(), tenant, CreateMailboxRequest{LocalPart: "bea", Domain: "acme.com", Password: testPassword}); err != nil {
+		t.Fatalf("sin retencion: %v", err)
 	}
 }
 

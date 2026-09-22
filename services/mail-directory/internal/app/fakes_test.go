@@ -247,6 +247,22 @@ type fakeMailboxes struct {
 	lastFilter   ports.MailboxFilter
 	lastTenant   uuid.UUID
 	lastPage     ports.Page
+	// deletions son las marcas de baja (username -> cuando), con el reloj now de la base simulada.
+	deletions map[string]time.Time
+	now       time.Time
+}
+
+func (f *fakeMailboxes) RecordDeletion(_ context.Context, m *domain.Mailbox) error {
+	if f.deletions == nil {
+		f.deletions = map[string]time.Time{}
+	}
+	f.deletions[m.Username] = f.now
+	return nil
+}
+
+func (f *fakeMailboxes) DeletionPending(_ context.Context, username string, hold time.Duration) (bool, error) {
+	at, ok := f.deletions[username]
+	return ok && f.now.Sub(at) < hold, nil
 }
 
 func (f *fakeMailboxes) ExistingIDs(_ context.Context, tenantID uuid.UUID, ids []uuid.UUID) ([]uuid.UUID, error) {
@@ -787,7 +803,7 @@ func newHarness() *harness {
 		appPasswords: &fakeAppPasswords{}, sieve: &fakeSieve{}, vacation: &fakeVacation{}, mtaSTS: &fakeMTASTS{}, mx: &fakeMX{hosts: []string{platformMXForTests}}, spamAliases: &fakeSpamAliases{},
 		senderACL: &fakeSenderACL{}, relayhosts: &fakeRelayhosts{}, transports: &fakeTransports{}, events: &fakeEvents{},
 	}
-	h.mailboxes = &fakeMailboxes{aliases: h.aliases}
+	h.mailboxes = &fakeMailboxes{aliases: h.aliases, now: time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)}
 	locator := &fakeLocator{h: h}
 	h.retirements = &fakeRetirements{h: h, retired: map[uuid.UUID]time.Time{}, now: time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)}
 	h.events.tx = h.tx
@@ -797,10 +813,13 @@ func newHarness() *harness {
 		AppPasswords: h.appPasswords, Sieve: h.sieve, Vacation: h.vacation, Locator: locator, Aliases: h.aliases, SpamAliases: h.spamAliases,
 		SenderACL: h.senderACL, Relayhosts: h.relayhosts, Transports: h.transports, Retirements: h.retirements,
 		MTASTS: h.mtaSTS, MTASTSPublic: fakeMTASTSPublisher{h: h}, MX: h.mx, PlatformMX: platformMXForTests,
-		Secrets: fakeSecrets{}, Events: h.events,
+		MailboxRecreateHold: testRecreateHold, Secrets: fakeSecrets{}, Events: h.events,
 	})
 	return h
 }
+
+// testRecreateHold es la retencion de una direccion recien borrada con la que corren las pruebas.
+const testRecreateHold = 15 * time.Minute
 
 func (h *harness) addDomain(tenantID uuid.UUID, name string, limits domain.DomainLimits) *domain.Domain {
 	d := &domain.Domain{

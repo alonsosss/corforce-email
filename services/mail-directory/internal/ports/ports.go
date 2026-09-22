@@ -82,6 +82,12 @@ type MailboxRepository interface {
 	Logins(ctx context.Context, tenantID uuid.UUID, username string, limit int) ([]domain.SASLLogin, error)
 	// AddressInUse responde si la direccion ya es buzon, alias o alias temporal de la empresa.
 	AddressInUse(ctx context.Context, tenantID uuid.UUID, address string) (bool, error)
+	// RecordDeletion deja la marca de baja del buzon (mail.mailbox_deletions) que el barrido de maildir
+	// de Dovecot consume al retirar su directorio del disco. Va en la transaccion del borrado.
+	RecordDeletion(ctx context.Context, m *domain.Mailbox) error
+	// DeletionPending dice si la direccion tiene, de cualquier empresa de la celda, una marca de baja mas
+	// joven que hold que el barrido aun no consumio: su maildir sigue en el disco.
+	DeletionPending(ctx context.Context, username string, hold time.Duration) (bool, error)
 }
 
 type AppPasswordRepository interface {

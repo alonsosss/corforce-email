@@ -71,6 +71,12 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	// Retencion de una direccion recien borrada: mayor que la gracia mas la cadencia del barrido de
+	// maildir de Dovecot (deploy/mail/README.md, "Maildir de un buzon borrado"); 0 la desactiva.
+	recreateHold, err := config.EnvDuration("MAIL_DIRECTORY_MAILBOX_RECREATE_HOLD", 15*time.Minute, 0, 24*time.Hour)
+	if err != nil {
+		log.Fatal(err)
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	pool, err := db.NewCellPool(ctx, cfg.Postgres, logger)
@@ -90,32 +96,33 @@ func main() {
 	}
 
 	uc := app.New(app.Deps{
-		Tx:           postgres.NewTransactor(ctxPool),
-		Domains:      postgres.NewDomainRepo(ctxPool),
-		AliasDomains: postgres.NewAliasDomainRepo(ctxPool),
-		Mailboxes:    postgres.NewMailboxRepo(ctxPool),
-		AppPasswords: postgres.NewAppPasswordRepo(ctxPool),
-		Sieve:        postgres.NewSieveRepo(ctxPool),
-		Vacation:     postgres.NewVacationRepo(ctxPool),
-		Locator:      postgres.NewMailboxLocator(ctxPool),
-		Aliases:      postgres.NewAliasRepo(ctxPool),
-		SpamAliases:  postgres.NewSpamAliasRepo(ctxPool),
-		SenderACL:    postgres.NewSenderACLRepo(ctxPool),
-		Relayhosts:   postgres.NewRelayhostRepo(ctxPool),
-		Transports:   postgres.NewTransportRepo(ctxPool),
-		TLSPolicies:  postgres.NewTLSPolicyRepo(ctxPool),
-		RecipientMap: postgres.NewRecipientMapRepo(ctxPool),
-		BCCMaps:      postgres.NewBCCMapRepo(ctxPool),
-		Senders:      postgres.NewSenderIdentityRepo(ctxPool),
-		Retirements:  postgres.NewRetirementRepo(ctxPool),
-		MTASTS:       postgres.NewMTASTSRepo(ctxPool),
-		MTASTSPublic: postgres.NewMTASTSPublicReader(ctxPool),
-		MX:           dnsadapter.New(strings.TrimSpace(os.Getenv("MAIL_DNS_RESOLVER"))),
-		PlatformMX:   platformMX,
-		DAVServerURL: davServerURL,
-		Secrets:      secrets.New(),
-		Events:       outboxadapter.NewPublisher(ctxPool),
-		Logger:       logger,
+		Tx:                  postgres.NewTransactor(ctxPool),
+		Domains:             postgres.NewDomainRepo(ctxPool),
+		AliasDomains:        postgres.NewAliasDomainRepo(ctxPool),
+		Mailboxes:           postgres.NewMailboxRepo(ctxPool),
+		AppPasswords:        postgres.NewAppPasswordRepo(ctxPool),
+		Sieve:               postgres.NewSieveRepo(ctxPool),
+		Vacation:            postgres.NewVacationRepo(ctxPool),
+		Locator:             postgres.NewMailboxLocator(ctxPool),
+		Aliases:             postgres.NewAliasRepo(ctxPool),
+		SpamAliases:         postgres.NewSpamAliasRepo(ctxPool),
+		SenderACL:           postgres.NewSenderACLRepo(ctxPool),
+		Relayhosts:          postgres.NewRelayhostRepo(ctxPool),
+		Transports:          postgres.NewTransportRepo(ctxPool),
+		TLSPolicies:         postgres.NewTLSPolicyRepo(ctxPool),
+		RecipientMap:        postgres.NewRecipientMapRepo(ctxPool),
+		BCCMaps:             postgres.NewBCCMapRepo(ctxPool),
+		Senders:             postgres.NewSenderIdentityRepo(ctxPool),
+		Retirements:         postgres.NewRetirementRepo(ctxPool),
+		MTASTS:              postgres.NewMTASTSRepo(ctxPool),
+		MTASTSPublic:        postgres.NewMTASTSPublicReader(ctxPool),
+		MX:                  dnsadapter.New(strings.TrimSpace(os.Getenv("MAIL_DNS_RESOLVER"))),
+		PlatformMX:          platformMX,
+		DAVServerURL:        davServerURL,
+		MailboxRecreateHold: recreateHold,
+		Secrets:             secrets.New(),
+		Events:              outboxadapter.NewPublisher(ctxPool),
+		Logger:              logger,
 	})
 
 	r := apiRouter(pool.Pool, membership, handler.NewHandler(uc, perms).Routes(), logger)

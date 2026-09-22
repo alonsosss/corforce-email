@@ -51,6 +51,9 @@ var (
 	ErrDomainQuotaExceeded    = errors.New("la suma de cuotas supera la cuota del dominio")
 	// ErrAddressTaken: la direccion ya la usa un buzon, un alias o un alias temporal.
 	ErrAddressTaken = errors.New("la direccion ya esta en uso")
+	// ErrAddressRecentlyDeleted: un buzon con esa direccion se borro hace poco y Dovecot aun no retiro
+	// su maildir del disco; crearlo ahora heredaria el correo del titular anterior.
+	ErrAddressRecentlyDeleted = errors.New("la direccion se dio de baja hace poco y su buzon en disco esta en retirada: reintente en unos minutos")
 
 	// ErrPlatformOnly: las rutas de plataforma (sin empresa) solo las administra quien
 	// opera la plataforma.

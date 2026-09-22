@@ -31,6 +31,9 @@ const (
 
 	// codeTenantRetired: la empresa esta dada de baja en la celda (domain.ErrTenantRetired).
 	codeTenantRetired = "TENANT_RETIRED"
+	// codeAddressRecentlyDeleted: el maildir del buzon anterior con esa direccion sigue en Dovecot
+	// (domain.ErrAddressRecentlyDeleted); la web puede ofrecer reintentar en unos minutos.
+	codeAddressRecentlyDeleted = "ADDRESS_RECENTLY_DELETED"
 )
 
 type Handler struct {
@@ -161,6 +164,8 @@ func writeError(w http.ResponseWriter, err error) {
 		response.ErrForbidden(w, err.Error())
 	case errors.Is(err, domain.ErrTenantRetired):
 		response.Err(w, http.StatusConflict, codeTenantRetired, err.Error())
+	case errors.Is(err, domain.ErrAddressRecentlyDeleted):
+		response.Err(w, http.StatusConflict, codeAddressRecentlyDeleted, err.Error())
 	case isAny(err, conflictErrors):
 		response.ErrConflict(w, err.Error())
 	case isAny(err, validationErrors):

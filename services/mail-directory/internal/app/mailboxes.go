@@ -170,6 +170,9 @@ func (uc *UseCase) CreateMailbox(ctx context.Context, tenantID uuid.UUID, req Cr
 		if err := uc.addressFree(ctx, tenantID, m.Username); err != nil {
 			return err
 		}
+		if err := uc.maildirRetired(ctx, m.Username); err != nil {
+			return err
+		}
 		if err := uc.mailboxes.Create(ctx, m); err != nil {
 			return err
 		}
@@ -179,6 +182,25 @@ func (uc *UseCase) CreateMailbox(ctx context.Context, tenantID uuid.UUID, req Cr
 		return nil, err
 	}
 	return m, nil
+}
+
+// maildirRetired exige que el maildir de un buzon anterior con la misma direccion ya no este en el
+// disco de Dovecot: sin marca de baja viva mas joven que la retencion. El barrido de Dovecot
+// (deploy/mail/README.md, "Maildir de un buzon borrado") consume la marca al mover el maildir, asi
+// que en operacion normal el buzon nuevo nace limpio; la retencion acota la espera si el barrido
+// no corre. La marca se busca en toda la celda: el maildir no sabe de empresas.
+func (uc *UseCase) maildirRetired(ctx context.Context, username string) error {
+	if uc.recreateHold <= 0 {
+		return nil
+	}
+	pending, err := uc.mailboxes.DeletionPending(ctx, username, uc.recreateHold)
+	if err != nil {
+		return err
+	}
+	if pending {
+		return domain.ErrAddressRecentlyDeleted
+	}
+	return nil
 }
 
 func (uc *UseCase) checkQuota(ctx context.Context, d *domain.Domain, m *domain.Mailbox) error {
@@ -302,7 +324,9 @@ func applyMailboxUpdate(m *domain.Mailbox, req UpdateMailboxRequest) {
 // DeleteMailbox retira el buzon y todo lo que solo tiene sentido con el: contrasenas de
 // aplicacion, filtros sieve, respuesta automatica, uso de cuota, permisos de remitente y aliases temporales que
 // entregaban en el. El uso de cuota se borra ANTES que el buzon: la politica que lo
-// permite exige que el buzon exista.
+// permite exige que el buzon exista. Su maildir en Dovecot no lo alcanza ningun servicio: la marca de
+// baja que queda en la misma transaccion es lo que el barrido del contenedor de Dovecot consume para
+// moverlo a _garbage (deploy/mail/README.md, "Maildir de un buzon borrado").
 func (uc *UseCase) DeleteMailbox(ctx context.Context, tenantID, id uuid.UUID) error {
 	return uc.writeTx(ctx, tenantID, func(ctx context.Context) error {
 		m, err := uc.mailboxes.Get(ctx, tenantID, id)
@@ -316,6 +340,7 @@ func (uc *UseCase) DeleteMailbox(ctx context.Context, tenantID, id uuid.UUID) er
 			func() error { return uc.vacation.DeleteByUsername(ctx, tenantID, m.Username) },
 			func() error { return uc.senderACL.DeleteByLoggedInAs(ctx, tenantID, m.Username) },
 			func() error { return uc.spamAliases.DeleteByGoto(ctx, tenantID, m.Username) },
+			func() error { return uc.mailboxes.RecordDeletion(ctx, m) },
 			func() error { return uc.mailboxes.Delete(ctx, tenantID, id) },
 			func() error { return uc.events.MailboxDeleted(ctx, m) },
 		}

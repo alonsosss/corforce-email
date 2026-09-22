@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"net/netip"
+	"time"
 
 	"github.com/alonsosss/corforce-email/pkg/db"
 	"github.com/alonsosss/corforce-email/services/mail-directory/internal/domain"
@@ -178,6 +179,25 @@ func (r *MailboxRepo) AddressInUse(ctx context.Context, tenantID uuid.UUID, addr
         OR EXISTS (SELECT 1 FROM mail.spam_aliases WHERE tenant_id = $1 AND address = $2)`,
 		tenantID, address).Scan(&inUse)
 	return inUse, err
+}
+
+func (r *MailboxRepo) RecordDeletion(ctx context.Context, m *domain.Mailbox) error {
+	_, err := r.pool.Exec(ctx,
+		`INSERT INTO mail.mailbox_deletions (tenant_id, mailbox_id, username, local_part, domain)
+    VALUES ($1, $2, $3, $4, $5)`,
+		m.TenantID, m.ID, m.Username, m.LocalPart, m.Domain)
+	return err
+}
+
+// DeletionPending pregunta por la funcion SECURITY DEFINER de la migracion 12: mail_app solo ve las
+// marcas de su empresa y la respuesta tiene que cubrir toda la celda. La retencion la mide la base,
+// con el mismo reloj que puso deleted_at.
+func (r *MailboxRepo) DeletionPending(ctx context.Context, username string, hold time.Duration) (bool, error) {
+	var pending bool
+	err := r.pool.QueryRow(ctx,
+		`SELECT mail.mailbox_deletion_pending($1, make_interval(secs => $2))`,
+		username, hold.Seconds()).Scan(&pending)
+	return pending, err
 }
 
 // ── Contrasenas de aplicacion ─────────────────────────────────────────────────
