@@ -20,6 +20,9 @@ services:
   scheduler:
     image: core-force-mail/scheduler:${DEPLOY_TAG:?lo fija scripts/deploy-ecr.sh}
     pull_policy: never
+  observability:
+    image: core-force-mail/observability:${DEPLOY_TAG:?lo fija scripts/deploy-ecr.sh}
+    pull_policy: never
   mail-directory:
     image: core-force-mail/mail-directory:${DEPLOY_TAG:?lo fija scripts/deploy-ecr.sh}
     pull_policy: never

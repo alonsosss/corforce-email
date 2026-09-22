@@ -58,7 +58,7 @@ trap limpiar EXIT
 echo "== Infraestructura desechable"
 e2e_infra_up || exit 1
 
-SERVICES=(organization identity access-control gateway mail-directory mail-auth domain-service mail-security templates suppression billing reputation contacts scheduler analytics transactional campaigns automations webmail)
+SERVICES=(organization identity access-control gateway mail-directory mail-auth domain-service mail-security templates suppression billing reputation contacts scheduler analytics transactional campaigns automations webmail observability)
 echo "== Compilacion (${SERVICES[*]})"
 e2e_compilar "${SERVICES[@]}" || exit 1
 
@@ -118,7 +118,7 @@ declare -A PORT=(
   [identity]=$((BASE + 1)) [access-control]=$((BASE + 2)) [organization]=$((BASE + 3))
   [mail-directory]=$((BASE + 40)) [mail-auth]=$((BASE + 41)) [mail-security]=$((BASE + 42)) [domain-service]=$((BASE + 43)) [webmail]=$((BASE + 44))
   [suppression]=$((BASE + 46)) [templates]=$((BASE + 47)) [transactional]=$((BASE + 45)) [contacts]=$((BASE + 50)) [campaigns]=$((BASE + 52)) [automations]=$((BASE + 51)) [analytics]=$((BASE + 53)) [reputation]=$((BASE + 54)) [billing]=$((BASE + 55)) [scheduler]=$((BASE + 33))
-  [gateway]=$((BASE + 80))
+  [gateway]=$((BASE + 80)) [observability]=$((BASE + 59))
 )
 MAPS_PORT=$((BASE + 81))
 AUTH_TLS_PORT=$((BASE + 82))
@@ -130,6 +130,7 @@ export MAIL_DIRECTORY_PORT=${PORT[mail-directory]} MAIL_SECURITY_PORT=${PORT[mai
 export SUPPRESSION_PORT=${PORT[suppression]} TEMPLATES_PORT=${PORT[templates]} GATEWAY_PORT=${PORT[gateway]}
 export BILLING_PORT=${PORT[billing]} REPUTATION_PORT=${PORT[reputation]} CONTACTS_PORT=${PORT[contacts]} ANALYTICS_PORT=${PORT[analytics]}
 export TRANSACTIONAL_PORT=${PORT[transactional]} CAMPAIGNS_PORT=${PORT[campaigns]} AUTOMATIONS_PORT=${PORT[automations]} SCHEDULER_PORT=${PORT[scheduler]}
+export OBSERVABILITY_PORT=${PORT[observability]}
 export MAIL_POLICY_MAPS_PORT=$MAPS_PORT MAIL_POLICY_EXPORT_PORT=$EXPORT_PORT
 export MAIL_AUTH_PORT=${PORT[mail-auth]} MAIL_AUTH_TLS_PORT=$AUTH_TLS_PORT
 # domain-service verifica contra el DNS de la prueba: la zona es $WORK/zona.json, que la prueba
@@ -148,7 +149,7 @@ export CLOUDFLARE_API_URL="http://127.0.0.1:$CF_PORT"
 export API_ORIGIN="http://localhost:${PORT[gateway]}" PUBLIC_BASE_URL="http://localhost:${PORT[gateway]}"
 # Direcciones internas: las que el gateway lee de routes.json por <SERVICIO>_HOST(_PORT) y
 # las que los servicios usan entre si.
-for s in identity access-control organization mail-directory mail-security domain-service suppression templates billing reputation contacts scheduler analytics transactional campaigns automations webmail; do
+for s in identity access-control organization mail-directory mail-security domain-service suppression templates billing reputation contacts scheduler analytics transactional campaigns automations webmail observability; do
   var="$(echo "$s" | tr 'a-z-' 'A-Z_')_HOST"
   export "$var=127.0.0.1" "${var}_PORT=${PORT[$s]}"
 done
@@ -238,7 +239,7 @@ contains "pero no la tabla de empresas" \
 contains "ni las cuentas de identity" \
   "$(como_router mail_registry 'SELECT 1 FROM identity.users LIMIT 1')" "permission denied"
 
-ARRANQUE=(identity access-control mail-directory mail-auth domain-service mail-security templates suppression billing reputation contacts scheduler analytics transactional campaigns automations gateway)
+ARRANQUE=(identity access-control mail-directory mail-auth domain-service mail-security templates suppression billing reputation contacts scheduler analytics transactional campaigns automations observability gateway)
 for s in "${ARRANQUE[@]}"; do arrancar "$s"; done
 for s in "${ARRANQUE[@]}"; do esperar_salud "$s" "${PORT[$s]}"; done
 
@@ -385,6 +386,30 @@ contains "el tenant_admin recibe los modulos de correo" "$(curl -s "$GW/access/m
 expect "el tenant_admin no ve las celdas" "$(curl -s -o /dev/null -w '%{http_code}' "$GW/cells" -H "$A2")" "403"
 expect "el tenant_admin lista sus usuarios" "$(curl -s -o /dev/null -w '%{http_code}' "$GW/users" -H "$A2")" "200"
 expect "sin token no hay API" "$(curl -s -o /dev/null -w '%{http_code}' "$GW/users")" "401"
+
+echo "== Visor de registros (observability, solo superadmin; sin Loki en esta prueba)"
+# Loki no corre aqui y LOKI_URL queda vacia: el servicio arranca igual y el visor responde 503
+# NOT_CONFIGURED (deploy-safe). La lista blanca y los permisos si se comprueban de punta a punta.
+registros() { # registros <cabecera> <ruta>: deja REG_CODE y REG_BODY
+  REG_CODE=$(curl -s -o "$WORK/registros.json" -w '%{http_code}' "$GW/observability/logs$2" -H "$1")
+  REG_BODY=$(cat "$WORK/registros.json")
+}
+registros "$A1" "/services"
+expect "el superadmin recibe la lista blanca de servicios" "$REG_CODE" "200"
+contains "con los motores de correo" "$REG_BODY" '"postfix-mail"'
+contains "y los servicios Go" "$REG_BODY" '"gateway"'
+lacks "sin la base de datos, que no esta en la lista" "$REG_BODY" '"postgres-primary"'
+registros "$A1" "?service=gateway&q=hola"
+expect "sin LOKI_URL el visor responde 503 NOT_CONFIGURED" "$REG_CODE/$(echo "$REG_BODY" | jget error.code)" "503/NOT_CONFIGURED"
+registros "$A1" "?service=postgres-primary"
+expect "un servicio fuera de la lista blanca se rechaza antes de mirar Loki" "$REG_CODE" "422"
+registros "$A1" "?service=gateway&since=ayer"
+expect "y una fecha que no es RFC 3339 tambien" "$REG_CODE" "400"
+registros "$A2" "/services"
+expect "un administrador de empresa no ve la lista" "$REG_CODE" "403"
+registros "$A2" "?service=gateway"
+expect "ni consulta registros" "$REG_CODE" "403"
+expect "sin sesion tampoco" "$(curl -s -o /dev/null -w '%{http_code}' "$GW/observability/logs/services")" "401"
 
 echo "== Correo corporativo en la celda"
 DOM=$(curl -s -X POST "$GW/domains" -H "$A2" -H 'Content-Type: application/json' -d '{"domain":"acme.test","purpose":"both"}')

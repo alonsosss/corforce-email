@@ -213,6 +213,18 @@ services:
       <<: *go-service-env
       GOMEMLIMIT: 100MiB
     volumes: *internal-ca
+  observability:
+    restart: *reinicio
+    <<: *go-runtime
+    # Una consulta lee como mucho 4 MiB de Loki (500 lineas); el techo cubre varias a la vez.
+    mem_limit: 96m
+    environment:
+      <<: *go-service-env
+      GOMEMLIMIT: 75MiB
+      # La pila de observabilidad corre en este servidor (docker-compose.observability.yml, red compartida):
+      # Loki se alcanza por su nombre de servicio y nunca publica puerto.
+      LOKI_URL: ${LOKI_URL:-http://loki:3100}
+    volumes: *internal-ca
   mail-directory:
     restart: *reinicio
     <<: *go-runtime

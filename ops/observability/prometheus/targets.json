@@ -136,6 +136,15 @@
   },
   {
     "targets": [
+      "observability:8059"
+    ],
+    "labels": {
+      "job": "mail-services",
+      "service": "observability"
+    }
+  },
+  {
+    "targets": [
       "organization:8003"
     ],
     "labels": {

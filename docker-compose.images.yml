@@ -13,6 +13,8 @@ services:
     image: ${ECR_REGISTRY:?definir en .env}/core-force-mail/audit:${DEPLOY_TAG:-latest}
   scheduler:
     image: ${ECR_REGISTRY:?definir en .env}/core-force-mail/scheduler:${DEPLOY_TAG:-latest}
+  observability:
+    image: ${ECR_REGISTRY:?definir en .env}/core-force-mail/observability:${DEPLOY_TAG:-latest}
   mail-directory:
     image: ${ECR_REGISTRY:?definir en .env}/core-force-mail/mail-directory:${DEPLOY_TAG:-latest}
   mail-auth:

@@ -287,6 +287,24 @@ services:
     networks:
       - mail-internal
 
+  # Visor de registros del superadmin sobre Loki (docs/adr/0009). Sin base de datos ni bus: solo
+  # consulta la pila de docker-compose.observability.yml por la red compartida. Sin LOKI_URL arranca
+  # igual y el visor responde 503 NOT_CONFIGURED; el perfil autoalojado la fija a http://loki:3100.
+  observability:
+    build:
+      context: .
+      dockerfile: ./services/observability/Dockerfile
+    ports:
+      - "127.0.0.1:${OBSERVABILITY_PORT:-8059}:8059"
+    env_file:
+      - .env
+    environment:
+      INTERNAL_GATEWAY_TOKEN: ${INTERNAL_GATEWAY_TOKEN:-}
+    restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    networks:
+      - mail-internal
+
   mail-directory:
     build:
       context: .
