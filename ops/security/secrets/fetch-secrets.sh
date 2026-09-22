@@ -1,45 +1,41 @@
 #!/usr/bin/env bash
-# Materializa los secretos de produccion desde AWS Secrets Manager a un fichero de entorno
+# Materializa los secretos de produccion desde el almacen cifrado local a un fichero de entorno
 # en memoria (tmpfs), que es lo que consumen Compose y los contenedores.
 #
 # Por que asi:
 #   - El fichero vive en /dev/shm (memoria): no queda texto plano en disco ni en las copias
 #     de seguridad del volumen, y desaparece al reiniciar la maquina.
-#   - La identidad la aporta el rol IAM de la instancia; no hay ninguna credencial de AWS
-#     en el servidor, y cada lectura queda registrada en CloudTrail.
+#   - El almacen (ops/security/secrets/store.sh) es un JSON cifrado con gpg simetrico (AES-256),
+#     el mismo patron ya auditado de ops/backup/destino-externo.sh: no hay ninguna credencial de
+#     un proveedor externo en el servidor, solo una frase local (docs/adr/0008).
 #   - La escritura es atomica y solo se publica si TODOS los secretos requeridos vinieron:
 #     un fichero a medias arrancaria servicios sin credencial, que es peor que no arrancar.
 #
 # Uso:
 #   ops/security/secrets/fetch-secrets.sh          # materializa
-#   SECRETS_ID=core-force-mail/staging ... fetch-secrets.sh
+#   SECRETS_STORE_FILE=/otra/ruta/store.json.gpg ... fetch-secrets.sh
 #
 # Los scripts de despliegue lo invocan antes de cualquier 'docker compose up'.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=./store.sh
+. "$SCRIPT_DIR/store.sh"
+
 KEYS_FILE="${SECRET_KEYS_FILE:-$SCRIPT_DIR/secret-keys.txt}"
 # Las credenciales de BASE se materializan aparte: el fichero de arriba lo reciben los
 # contenedores por env_file, asi que una credencial de base que viviera ahi la veria TODO el
 # despliegue. Las de abajo solo llegan al servicio al que su bloque de compose se las pasa
-# por `environment:` (ops/db/service-credentials.json).
+# por `environment:`, que Compose interpola contra el entorno de with-secrets.sh.
 KEYS_DB_FILE="${SECRET_KEYS_DB_FILE:-$SCRIPT_DIR/secret-keys-db.txt}"
-SECRET_ID="${SECRETS_ID:-core-force-mail/prod}"
-REGION="${AWS_REGION:-us-east-1}"
 OUT="${SECRETS_ENV_FILE:-/dev/shm/core-force-mail/secrets.env}"
 OUT_DB="${SECRETS_DB_ENV_FILE:-/dev/shm/core-force-mail/secrets-db.env}"
 
-command -v aws >/dev/null || { echo "fetch-secrets: falta el CLI de AWS" >&2; exit 1; }
 [[ -f "$KEYS_FILE" ]] || { echo "fetch-secrets: no existe $KEYS_FILE" >&2; exit 1; }
 [[ -f "$KEYS_DB_FILE" ]] || { echo "fetch-secrets: no existe $KEYS_DB_FILE" >&2; exit 1; }
+command -v gpg >/dev/null || { echo "fetch-secrets: falta gpg (paquete gnupg)" >&2; exit 1; }
 
-payload="$(aws secretsmanager get-secret-value \
-    --secret-id "$SECRET_ID" --region "$REGION" \
-    --query SecretString --output text)" || {
-  echo "fetch-secrets: no se pudo leer $SECRET_ID en $REGION." >&2
-  echo "  Revisar que el rol de la instancia tenga la politica core-force-mail-secretos (ops/aws/setup-iam.sh)." >&2
-  exit 1
-}
+payload="$(store_leer_json)" || exit 1
 
 mkdir -p "$(dirname "$OUT")"
 chmod 700 "$(dirname "$OUT")"

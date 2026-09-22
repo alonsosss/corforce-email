@@ -20,9 +20,11 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=./store.sh
+. "$SCRIPT_DIR/store.sh"
+
 KEYS_FILE="${SECRET_KEYS_FILE:-$SCRIPT_DIR/secret-keys.txt}"
-SECRET_ID="${SECRETS_ID:-core-force-mail/prod}"
-REGION="${AWS_REGION:-us-east-1}"
+KEYS_DB_FILE="${SECRET_KEYS_DB_FILE:-$SCRIPT_DIR/secret-keys-db.txt}"
 
 CLAVE="${1:-}"
 shift || true
@@ -39,12 +41,13 @@ while [ $# -gt 0 ]; do
 done
 
 [ -n "$CLAVE" ] || { echo "uso: add-secret.sh CLAVE [--desde-env .env] [--quitar-del-env] [--apply]" >&2; exit 1; }
+command -v gpg >/dev/null || { echo "add-secret: falta gpg (paquete gnupg)" >&2; exit 1; }
 
-# La clave tiene que estar declarada como secreto. Sin esto se podria subir cualquier
-# variable al almacen y fetch-secrets.sh no la materializaria nunca: quedaria guardada
-# donde nadie la lee, con la falsa sensacion de estar protegida.
-if ! grep -qE "^${CLAVE}\??$" "$KEYS_FILE"; then
-    echo "ERROR: $CLAVE no esta en secret-keys.txt." >&2
+# La clave tiene que estar declarada como secreto (en cualquiera de los dos ficheros). Sin esto
+# se podria subir cualquier variable al almacen y fetch-secrets.sh no la materializaria nunca:
+# quedaria guardada donde nadie la lee, con la falsa sensacion de estar protegida.
+if ! grep -qE "^${CLAVE}\??$" "$KEYS_FILE" && ! grep -qE "^${CLAVE}\??$" "$KEYS_DB_FILE"; then
+    echo "ERROR: $CLAVE no esta en secret-keys.txt ni en secret-keys-db.txt." >&2
     echo "Declararla ahi es parte de introducir el secreto: si no, no se materializa." >&2
     exit 1
 fi
@@ -69,25 +72,15 @@ case "$VALOR" in
     exit 1 ;;
 esac
 
-# Se lee el secreto entero para reescribirlo con la clave dentro; Secrets Manager no
-# sabe modificar una sola. El JSON no sale de este proceso.
-#
-# Un fallo de LECTURA no es un almacen vacio. Tratarlos igual —credenciales caducadas, un
-# error transitorio de AWS, ejecutarlo desde una maquina sin permisos— convertiria el
-# put-secret-value de mas abajo en un reemplazo del almacen entero por una sola clave. Solo
-# se parte de cero cuando AWS dice explicitamente que el secreto no existe.
-err_tmp="$(mktemp)"
-trap 'rm -f "$err_tmp"' EXIT
-if ACTUAL="$(aws secretsmanager get-secret-value --secret-id "$SECRET_ID" --region "$REGION" \
-        --query SecretString --output text 2>"$err_tmp")"; then
-    :
-elif grep -q "ResourceNotFoundException" "$err_tmp"; then
-    ACTUAL='{}'
-    echo ">> el almacen $SECRET_ID no existe todavia: $CLAVE seria la primera clave"
+# Un fallo de LECTURA no es un almacen vacio. Tratarlos igual —frase incorrecta, un fichero
+# corrompido, ejecutarlo antes de init-store.sh— convertiria la escritura de mas abajo en un
+# reemplazo del almacen entero por una sola clave. Solo se parte de "{}" cuando el almacen
+# todavia no existe.
+if [ -f "$STORE_FILE" ]; then
+    ACTUAL="$(store_leer_json)" || { echo "ERROR: no se pudo leer el almacen; no se escribe nada." >&2; exit 1; }
 else
-    echo "ERROR: no se pudo leer el almacen $SECRET_ID; no se escribe nada." >&2
-    sed 's/^/    /' "$err_tmp" >&2
-    exit 1
+    ACTUAL='{}'
+    echo ">> el almacen $STORE_FILE no existe todavia: $CLAVE seria la primera clave"
 fi
 
 NUEVO="$(CLAVE="$CLAVE" VALOR="$VALOR" ACTUAL="$ACTUAL" python3 - <<'PY'
@@ -103,7 +96,7 @@ EXISTIA="$(echo "$NUEVO" | python3 -c 'import sys,json; print(json.load(sys.stdi
 TOTAL="$(echo "$NUEVO" | python3 -c 'import sys,json; print(json.load(sys.stdin)["total"])')"
 
 echo "clave:   $CLAVE ($([ "$EXISTIA" = "True" ] && echo 'se REEMPLAZA la que ya estaba' || echo 'nueva'))"
-echo "almacen: $SECRET_ID ($TOTAL claves tras el cambio)"
+echo "almacen: $STORE_FILE ($TOTAL claves tras el cambio)"
 [ "$QUITAR_DEL_ENV" -eq 1 ] && [ -n "$DESDE_ENV" ] && echo "y se quita de $DESDE_ENV"
 
 if [ "$APLICAR" -ne 1 ]; then
@@ -113,14 +106,12 @@ if [ "$APLICAR" -ne 1 ]; then
 fi
 
 echo "$NUEVO" | python3 -c 'import sys,json; sys.stdout.write(json.load(sys.stdin)["json"])' \
-    | aws secretsmanager put-secret-value --secret-id "$SECRET_ID" --region "$REGION" \
-        --secret-string file:///dev/stdin >/dev/null
+    | store_escribir_json
 echo ">> guardada en el almacen"
 
 # Se comprueba releyendo: que la clave este y que su valor sea el que se quiso poner. La
 # comparacion ocurre dentro del proceso; no se imprime ninguno de los dos.
-VERIF="$(aws secretsmanager get-secret-value --secret-id "$SECRET_ID" --region "$REGION" \
-    --query SecretString --output text | CLAVE="$CLAVE" VALOR="$VALOR" python3 -c '
+VERIF="$(store_leer_json | CLAVE="$CLAVE" VALOR="$VALOR" python3 -c '
 import json, os, sys
 d = json.load(sys.stdin)
 print("ok" if d.get(os.environ["CLAVE"]) == os.environ["VALOR"] else "no coincide")')"

@@ -188,4 +188,6 @@ olvidar ninguna de las tres partes. Rotar uno: publicar y recrear **solo** los c
 1. Ficheros de secreto por servicio con `NOMBRE_FILE` (opción b), empezando por `pkg/config` y `pkg/middleware`.
 2. Token interno por servicio destinatario en lugar de uno global.
 3. Usuario de ACL de Redis por servicio (`REDIS_PASSWORD`) y de cada motor (`MAIL_REDIS_PASSWORD`).
-4. Retirar el respaldo de `load.sh` al `.env` cuando todos los despliegues tengan el almacén puesto.
+4. Retirar el respaldo de `load.sh` al `.env` cuando todos los despliegues tengan el almacén puesto
+   (`docs/adr/0008-almacen-de-secretos-cifrado-sin-aws.md`: el almacén ya existe como fichero cifrado
+   local; falta que el servidor real lo tenga inicializado y el `.env` migrado).

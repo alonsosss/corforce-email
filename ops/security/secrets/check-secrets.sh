@@ -97,3 +97,54 @@ if hallazgos:
 
 print(f"  OK: ninguna de las {len(keys)} credenciales canonicas tiene valor en el repositorio.")
 PY
+
+# --- Guardarrail adicional: ningun .env.example lleva un valor real -----------------------
+#
+# El guardarrail de arriba admite placeholders (CHANGE_ME, dev_*) porque tiene que convivir con
+# fixtures y comentarios en todo el repositorio. Un `.env.example` es distinto: es la plantilla
+# que un operador copia a `.env`, y una clave de secret-keys.txt o secret-keys-db.txt con
+# CUALQUIER valor ahi (incluido un placeholder) es la puerta por la que un secreto real se
+# termina escribiendo en un `.env` de servidor en vez de en el almacen. Deben quedar vacias o
+# ausentes: la fuente es siempre ops/security/secrets (README, "Que NO va al almacen").
+python3 - "$KEYS_FILE" "$KEYS_DB_FILE" <<'PY'
+import re
+import subprocess
+import sys
+
+keys = {
+    line.strip().rstrip("?") for f in sys.argv[1:3] for line in open(f, encoding="utf-8")
+    if line.strip() and not line.startswith("#")
+}
+
+# POSTGRES_PASSWORD es la unica excepcion: docker-compose.yml ya publica en claro el mismo
+# valor como el default de desarrollo del Postgres embebido (`${POSTGRES_PASSWORD:-dev_password_123}`),
+# asi que repetirlo en .env.example no expone nada nuevo, y en blanco el servicio Go no arranca
+# (POSTGRES_PASSWORD es obligatoria sin excepcion de entorno, a diferencia de las demas).
+EXCEPCIONES = {"POSTGRES_PASSWORD": {"dev_password_123"}}
+
+rutas = subprocess.run(["git", "ls-files", "*.env.example"], capture_output=True, text=True, check=True) \
+    .stdout.splitlines()
+
+hallazgos = []
+for ruta in rutas:
+    try:
+        texto = open(ruta, encoding="utf-8").read()
+    except OSError:
+        continue
+    for n, linea in enumerate(texto.splitlines(), 1):
+        m = re.match(r"^([A-Z0-9_]+)=(.*)$", linea)
+        if not m or m.group(1) not in keys:
+            continue
+        valor = m.group(2).strip()
+        if not valor or valor in EXCEPCIONES.get(m.group(1), set()):
+            continue
+        hallazgos.append((ruta, n, m.group(1)))
+
+if hallazgos:
+    print("Claves del almacen con valor en un .env.example (deben quedar vacias o ausentes):", file=sys.stderr)
+    for ruta, n, key in hallazgos:
+        print(f"  {ruta}:{n}  {key}", file=sys.stderr)
+    sys.exit(1)
+
+print(f"  OK: ningun .env.example fija un valor para las credenciales del almacen.")
+PY

@@ -119,7 +119,7 @@ check-event-contracts:
 
 # ── Operacion ────────────────────────────────────────────────────────────────
 .PHONY: gen-observability-targets check-observability-targets check-alertas check-web
-.PHONY: check-secrets check-secret-sources check-secret-scope check-db-credentials gen-compose-images check-compose-images
+.PHONY: check-secrets check-secret-sources check-secret-scope check-secrets-store check-db-credentials gen-compose-images check-compose-images
 .PHONY: service-paths check-service-paths
 
 # make gen-observability-targets  (regenera la lista de objetivos de Prometheus desde
@@ -160,6 +160,12 @@ check-secret-sources:
 # guardarrail demuestra con mutaciones que muerde)
 check-secret-scope:
 	@bash ops/scaffold/check-secret-scope.sh
+
+# make check-secrets-store  (el almacen cifrado: init-store, fetch-secrets, add-secret,
+# rotate-key y push-secrets se comportan como documenta el README, con gpg real en un
+# directorio temporal; docs/adr/0008-almacen-de-secretos-sin-aws.md)
+check-secrets-store:
+	@bash ops/security/secrets/check-secrets-store.sh
 
 # make check-db-credentials  (cada servicio recibe SU credencial de base y ninguna otra:
 # compose, el almacen y los permisos del rol dicen lo mismo)
@@ -209,7 +215,7 @@ e2e-mail:
 # se anade aqui: un check que solo corre en CI deja pasar lo que rompe el despliegue)
 checks: build check-gofmt check-migrations check-migration-drops check-coupling check-silent-errors \
 	check-sql-arity check-streams check-event-contracts check-secrets check-secret-sources \
-	check-secret-scope check-db-credentials check-compose check-compose-images check-observability-targets \
+	check-secret-scope check-secrets-store check-db-credentials check-compose check-compose-images check-observability-targets \
 	check-service-paths check-alertas validate-scaffold
 	@$(GO) vet ./...
 	@echo "checks: OK"

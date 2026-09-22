@@ -17,9 +17,9 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=./store.sh
+. "$SCRIPT_DIR/store.sh"
 KEYS_FILE="${SECRET_KEYS_FILE:-$SCRIPT_DIR/secret-keys.txt}"
-SECRET_ID="${SECRETS_ID:-core-force-mail/prod}"
-REGION="${AWS_REGION:-us-east-1}"
 
 CLAVE_ACTIVA="${1:-}"
 CLAVE_VIEJAS="${2:-}"
@@ -35,7 +35,7 @@ done
 [ -n "$CLAVE_ACTIVA" ] && [ -n "$CLAVE_VIEJAS" ] \
     || { echo "uso: rotate-key.sh CLAVE_ACTIVA CLAVE_VIEJAS [--apply]" >&2; exit 1; }
 [ "$CLAVE_ACTIVA" != "$CLAVE_VIEJAS" ] || { echo "ERROR: la activa y la lista de retiradas no pueden ser la misma clave" >&2; exit 1; }
-command -v aws >/dev/null || { echo "ERROR: falta el CLI de AWS" >&2; exit 1; }
+command -v gpg >/dev/null || { echo "ERROR: falta gpg (paquete gnupg)" >&2; exit 1; }
 command -v openssl >/dev/null || { echo "ERROR: falta openssl" >&2; exit 1; }
 [ -f "$KEYS_FILE" ] || { echo "ERROR: no existe $KEYS_FILE" >&2; exit 1; }
 
@@ -48,9 +48,7 @@ done
 
 # El JSON del almacen no sale de este proceso. Solo se extraen las dos claves y se
 # devuelve el estado como conteos, nunca los valores.
-ACTUAL="$(aws secretsmanager get-secret-value --secret-id "$SECRET_ID" --region "$REGION" \
-    --query SecretString --output text)" \
-    || { echo "ERROR: no se pudo leer $SECRET_ID en $REGION (la escritura exige el permiso temporal, ver README)" >&2; exit 1; }
+ACTUAL="$(store_leer_json)" || exit 1
 
 ESTADO="$(ACTUAL="$ACTUAL" CLAVE_ACTIVA="$CLAVE_ACTIVA" CLAVE_VIEJAS="$CLAVE_VIEJAS" python3 - <<'PY'
 import json, os
@@ -80,7 +78,7 @@ campo() { echo "$ESTADO" | python3 -c "import sys,json; print(json.load(sys.stdi
 NUEVA="$(openssl rand -hex 32)"
 [ "${#NUEVA}" -eq 64 ] || { echo "ERROR: openssl no devolvio una llave de 32 bytes" >&2; exit 1; }
 
-echo "almacen:            $SECRET_ID"
+echo "almacen:            $STORE_FILE"
 echo "llave activa:       $CLAVE_ACTIVA -> se genera una nueva de 32 bytes"
 echo "llaves retiradas:   $CLAVE_VIEJAS -> $(campo viejas_antes) antes, $(campo viejas_despues) despues (la activa actual pasa a la lista)"
 

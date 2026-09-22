@@ -190,8 +190,9 @@ systemctl list-timers 'core-force-mail-*'
 ## Notas
 
 - **Secretos**: el `.env` de la plataforma solo lleva configuracion; las credenciales viven
-  en AWS Secrets Manager y se materializan en memoria al desplegar
-  (`ops/security/secrets/README.md`).
+  en un almacen cifrado local (gpg simetrico, `ops/security/secrets/store.json.gpg`) y se
+  materializan en memoria al desplegar, nunca en un servicio administrado de AWS
+  (`ops/security/secrets/README.md`, `docs/adr/0008-almacen-de-secretos-cifrado-sin-aws.md`).
 - **Base de datos**: con RDS, las migraciones de celda y los respaldos se hacen contra el
   endpoint (`ops/db/`, `ops/backup/`), no por `docker exec`.
 - **Reinicio por updates**: deshabilitado a proposito. Programa ventanas de

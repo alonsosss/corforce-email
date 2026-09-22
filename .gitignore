@@ -1,5 +1,10 @@
 .env
 *.env.local
+
+# Almacen cifrado de secretos (ops/security/secrets/store.sh): vive en el servidor, nunca en el
+# repositorio. Aunque esta cifrado con gpg, es el unico fichero que reune TODAS las credenciales
+# de la plataforma: no tiene sentido facilitar su distribucion por git ni siquiera cifrado.
+ops/security/secrets/store.json.gpg
 vendor/
 bin/
 dist/

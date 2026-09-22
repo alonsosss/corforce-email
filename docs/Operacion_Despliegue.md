@@ -25,9 +25,10 @@ largas de cada guardarraíl están en `ops/scaffold/README.md`, `ops/security/se
   `main.cf` de Postfix lo genera `postfix/postfix.sh` en cada arranque desde `main.cf.base`,
   que es el versionado; `webmail` exige `WEBMAIL_MASTER_USER=<DOVECOT_MASTER_USER>@platform.local`.
 * Producción (AWS): una cuenta por ambiente (dev, staging, prod). RDS PostgreSQL Multi-AZ
-  detrás de PgBouncer, ElastiCache, SES, S3, Secrets Manager. Servidor de aplicación
-  endurecido con `ops/server-template/bootstrap.sh`. PgBouncer verifica RDS con
-  `pgbouncer/rds-global-bundle.pem` (bundle público de AWS, versionado).
+  detrás de PgBouncer, ElastiCache, SES, S3. Servidor de aplicación endurecido con
+  `ops/server-template/bootstrap.sh`. PgBouncer verifica RDS con
+  `pgbouncer/rds-global-bundle.pem` (bundle público de AWS, versionado). Los secretos, en
+  cualquier perfil, nunca en Secrets Manager: `ops/security/secrets` (sección 2).
 * Producción autoalojada: un solo servidor propio, sin servicios gestionados, con el perfil
   `DEPLOY_PROFILE=selfhosted` (sección 11). Mismos controles que en AWS, dados por
   contenedores: Postgres y Redis con TLS de una CA interna y un proxy de borde con HTTPS.
@@ -134,12 +135,15 @@ largas de cada guardarraíl están en `ops/scaffold/README.md`, `ops/security/se
 
 ## 2. Secretos
 
-Ninguna credencial vive en el repositorio ni en el `.env` del servidor: la fuente es AWS
-Secrets Manager (`core-force-mail/prod`). `ops/security/secrets/fetch-secrets.sh` los
+Ninguna credencial vive en el repositorio ni en el `.env` del servidor: la fuente es un
+almacén cifrado local (`store.json.gpg`, gpg simétrico, `docs/adr/0008-almacen-de-secretos-cifrado-sin-aws.md`),
+nunca un servicio administrado de AWS. `ops/security/secrets/fetch-secrets.sh` los
 materializa en `/dev/shm/core-force-mail/secrets.env` (tmpfs, 0600, todo o nada) y
 `with-secrets.sh` envuelve cualquier `docker compose` que cree contenedores. La lista
-canónica es `ops/security/secrets/secret-keys.txt`; añadir una variable ahí es parte de
-introducir el secreto. CI: `make check-secrets`, `make check-secret-sources` y `make check-secret-scope`.
+canónica es `ops/security/secrets/secret-keys.txt` (más `secret-keys-db.txt` para las
+credenciales de base); añadir una variable ahí es parte de introducir el secreto. CI:
+`make check-secrets`, `make check-secret-sources`, `make check-secret-scope` y
+`make check-secrets-store`.
 
 **Reparto por contenedor (mínimo privilegio, `docs/adr/0007-minimo-privilegio-en-secretos.md`).** Ningún
 contenedor recibe el fichero de secretos entero: el `environment:` de cada bloque de `docker-compose.yml` declara uno a
@@ -168,6 +172,35 @@ socket de Docker o como root del host; esto acota lo que ve un servicio comprome
      estado intermedio es válido; `gateway` e `identity` al final. Redis y los motores no se recrean: su entorno no cambia.
   3. `ops/security/secrets/verify-scope.sh contenedores` (solo `docker`, imprime nombres, nunca valores): cada servicio
      debe salir `OK`; `recibe de mas` es un contenedor sin recrear y `le faltan` un obligatorio vacío.
+* **Migrar un servidor que hoy no tiene almacén (el `.env` lleva todas las credenciales) sin cortar el
+  servicio.** Es el caso real: mientras la cuenta de AWS del proyecto no existió, `fetch-secrets.sh` fallaba
+  siempre y `load.sh` seguía con las credenciales del `.env`, que `env_file` reparte enteras a los 22
+  servicios (`docs/adr/0008-almacen-de-secretos-cifrado-sin-aws.md`). Orden, todo desde
+  `/opt/core-force-mail/app` en el servidor:
+  1. `ops/security/secrets/init-store.sh`. Genera la frase en `/opt/core-force-mail/secrets/passphrase`
+     (0600) si no existe y crea el almacén vacío. **Copiar la frase a un gestor de contraseñas del equipo
+     antes de seguir** (no dentro de un respaldo cifrado con esa misma frase): sin ella el almacén es
+     irrecuperable.
+  2. `ops/security/secrets/push-secrets.sh .env` (sin `--apply`): lista qué claves subiría y confirma que
+     trae las 41 obligatorias (`secret-keys.txt` + `secret-keys-db.txt`) antes de tocar nada.
+  3. `ops/security/secrets/push-secrets.sh .env --apply`: sube, relee el almacén y compara valor por
+     valor contra lo enviado, y solo entonces reescribe el `.env` sin esas claves (copia de rescate
+     `.env.pre-secrets.<fecha>`, 0600). Los contenedores en marcha no se tocan todavía: `env_file` ya no
+     les da nada nuevo hasta que se recreen, pero tampoco pierden lo que ya tienen en su entorno actual.
+  4. Verificar antes de recrear nada: `ops/security/secrets/with-secrets.sh ops/security/secrets/verify-scope.sh entorno`
+     debe decir que coincide.
+  5. Recrear los 22 servicios Go, igual que en "Desplegar este reparto" arriba (`scripts/deploy-ecr.sh` con la
+     lista de `ops/scaffold/service-paths.sh --class go`, `gateway` e `identity` al final). Antes de esto,
+     `docker inspect` de cualquiera de ellos mostraba el `.env` entero; después, solo lo de su fila.
+  6. `ops/security/secrets/verify-scope.sh contenedores`: todos `OK`. Si alguno da `recibe de mas`, no se ha
+     recreado; si da `le faltan`, revisar que `push-secrets.sh` subió esa clave (paso 2 la habría avisado
+     como obligatoria faltante).
+  7. Solo con todos `OK`: `shred -u .env.pre-secrets.*`.
+
+  No hace falta parar la plataforma en ningún paso: cada servicio recreado arranca con lo suyo completo
+  (fila íntegra en `reparto.tsv`), así que convivir un rato con unos servicios ya recreados y otros
+  todavía con el `.env` viejo en su entorno es un estado válido, igual que en un despliegue normal de
+  este reparto.
 
 Credencial de la celda: la contraseña del rol `<CELL_DB_NAME>_svc` de la celda que sirve
 el despliegue va al almacén como `CELL_DB_PASSWORD` (obligatoria: sin ella el despliegue se
@@ -1145,17 +1178,16 @@ dominio solo publica una política que nadie descarga; no hay que pasarlo a `enf
   `doveadm backup` buzón a buzón o parar Dovecot; queda pendiente.
 * La cola de Postfix (`postfix-vol`) y el Redis de los motores no se respaldan: lo encolado se
   reintenta desde el emisor y el bayes de Rspamd se reaprende.
-* Secretos: el servidor no tiene Secrets Manager. `with-secrets.sh` sigue siendo el único camino,
-  pero `fetch-secrets.sh` falla sin el CLI y el rol de AWS y `load.sh` recurre al `.env`, que
-  entonces tiene que llevar TODAS las credenciales de `secret-keys.txt` y `secret-keys-db.txt`
-  (0600, del usuario de despliegue). En ese modo `load.sh` exporta al entorno solo las claves del
-  inventario, citadas, para que los guiones de `ops/db` (el `userlist.txt` de PgBouncer, los roles)
-  las vean igual que con el almacen. Es un secreto en disco que en AWS no existe; falta decidir el
-  almacén del perfil (por ejemplo `systemd-creds` o un fichero cifrado desbloqueado al arrancar).
-  Los secretos del respaldo no siguen ese camino a propósito: con el `.env` entregado entero a cada
-  contenedor, la credencial del bucket y la frase de cifrado quedarían a la vista de todo servicio,
-  así que viven en `BACKUP_SECRETS_FILE`, que ningún contenedor recibe. Cuando se decida el almacén
-  del perfil, esas tres claves entran con las demás (`secret-keys-backup.txt`).
+* Secretos: RESUELTO (2026-09-21, `docs/adr/0008-almacen-de-secretos-cifrado-sin-aws.md`). El
+  almacén del perfil ya no es una decisión pendiente: es `ops/security/secrets/store.json.gpg`, un
+  fichero cifrado con gpg simétrico (mismo patrón que `ops/backup/destino-externo.sh`) y una frase
+  en `/opt/core-force-mail/secrets/passphrase` (0600, fuera del `.env` y fuera del árbol que
+  sincroniza el despliegue). `with-secrets.sh` sigue siendo el único camino; `fetch-secrets.sh` ya
+  no depende de ningún CLI ni rol de AWS. Falta migrar el `.env` del servidor real al almacén con
+  `push-secrets.sh` (sección 2, "Migrar un servidor que hoy no tiene almacén"); hasta entonces,
+  `load.sh` sigue con su respaldo documentado al `.env`. Los secretos del respaldo no pasan por
+  este almacén a propósito: siguen en `BACKUP_SECRETS_FILE`, que ningún contenedor recibe
+  (`secret-keys-backup.txt`).
 * `sslmode=prefer` de las conexiones directas de `pkg/config` cifra pero no verifica el
   certificado; en este perfil el camino va por la red interna de Docker del propio servidor.
   Verificarlo pide soportar `sslrootcert` en `pkg/config`.

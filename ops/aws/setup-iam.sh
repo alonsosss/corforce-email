@@ -20,12 +20,11 @@
 # credenciales de administrador, y lo mas simple es el CloudShell de la consola AWS.
 #
 # Ninguna politica vive como JSON suelto en el repositorio: todas se renderizan aqui con la
-# cuenta de quien ejecuta (STS), la region, el namespace de ECR y el prefijo de secretos.
+# cuenta de quien ejecuta (STS), la region y el namespace de ECR.
 #
 # Uso:
 #   ops/aws/setup-iam.sh                         # aplica
 #   ops/aws/setup-iam.sh --check                 # solo dice que cambiaria, no toca nada
-#   ops/aws/setup-iam.sh --escritura-secretos    # ademas, escritura temporal en el almacen
 #   AWS_ACCOUNT_ID=<cuenta> ops/aws/setup-iam.sh --render <dir-vacio>
 #                                                # solo escribe las politicas, sin tocar AWS
 set -euo pipefail
@@ -38,15 +37,12 @@ DEPLOY_USER="${CF_DEPLOY_USER:-core-force-mail-deploy-local}"
 SSM_INSTANCE="${CF_SSM_INSTANCE:-}"
 REGION="${AWS_REGION:-us-east-1}"
 NAMESPACE="${ECR_NAMESPACE:-core-force-mail}"
-# Los secretos de ops/security/secrets se llaman <prefijo>/<entorno> (SECRETS_ID).
-SECRETS_PREFIX="${SECRETS_PREFIX:-core-force-mail}"
 BACKUP_BUCKET="${BACKUP_S3_BUCKET:-}"
 MEDIA_BUCKET="${MEDIA_S3_BUCKET:-}"
-CHECK=0; ESCRITURA_SECRETOS=0; RENDER_DIR=""
+CHECK=0; RENDER_DIR=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --check) CHECK=1 ;;
-    --escritura-secretos) ESCRITURA_SECRETOS=1 ;;
     --render) RENDER_DIR="${2:?--render necesita un directorio}"; shift ;;
     *) echo "FALLA: argumento desconocido: $1" >&2; exit 1 ;;
   esac
@@ -78,7 +74,6 @@ valida() { [[ "$2" =~ $3 ]] || { echo "FALLA: $1 no es valido: '$2'" >&2; exit 1
 valida AWS_ACCOUNT_ID "$ACC" '^[0-9]{12}$'
 valida AWS_REGION "$REGION" '^[a-z]{2}(-[a-z]+)+-[0-9]+$'
 valida ECR_NAMESPACE "$NAMESPACE" '^[a-z0-9]+([._/-][a-z0-9]+)*$'
-valida SECRETS_PREFIX "$SECRETS_PREFIX" '^[A-Za-z0-9]+([._/-][A-Za-z0-9]+)*$'
 valida BACKUP_S3_BUCKET "$BACKUP_BUCKET" '^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$'
 valida MEDIA_S3_BUCKET "$MEDIA_BUCKET" '^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$'
 [[ -z "$SSM_INSTANCE" ]] || valida CF_SSM_INSTANCE "$SSM_INSTANCE" '^i-[0-9a-f]{8,17}$'
@@ -98,25 +93,6 @@ fi
 # Una politica por capacidad, no una gigante: asi se lee cual falta, se puede quitar una
 # sin tocar las demas, y el nombre dice para que sirve.
 emit() { cat > "$out/$1.json"; }
-
-emit secretos <<EOF
-{"Version":"2012-10-17","Statement":[
- {"Sid":"LeerSecretosDeLaPlataforma","Effect":"Allow",
-  "Action":["secretsmanager:GetSecretValue","secretsmanager:DescribeSecret"],
-  "Resource":"arn:aws:secretsmanager:${REGION}:${ACC}:secret:${SECRETS_PREFIX}/*"}]}
-EOF
-
-# Escritura en el almacen: solo mientras se sube o se rota un secreto (push-secrets.sh,
-# add-secret.sh, rotate-key.sh). Se concede con --escritura-secretos y cualquier corrida
-# sin esa opcion la retira: un permiso temporal que depende de que alguien se acuerde de
-# quitarlo acaba siendo permanente.
-emit secretos-escritura <<EOF
-{"Version":"2012-10-17","Statement":[
- {"Sid":"EscribirSecretosDeLaPlataforma","Effect":"Allow",
-  "Action":["secretsmanager:CreateSecret","secretsmanager:PutSecretValue",
-            "secretsmanager:DescribeSecret","secretsmanager:GetSecretValue"],
-  "Resource":"arn:aws:secretsmanager:${REGION}:${ACC}:secret:${SECRETS_PREFIX}/*"}]}
-EOF
 
 emit ecr-push <<EOF
 {"Version":"2012-10-17","Statement":[
@@ -219,7 +195,7 @@ fi
 
 # Sin permiso para LEER la IAM no se puede informar nada honesto: "no existe" y "no lo
 # puedo ver" se leerian igual, y el informe diria que falta todo. Se comprueba primero.
-probe="$(aws iam get-role-policy --role-name "$ROLE" --policy-name core-force-mail-secretos 2>&1 || true)"
+probe="$(aws iam get-role-policy --role-name "$ROLE" --policy-name core-force-mail-ecr-push 2>&1 || true)"
 if grep -q 'AccessDenied' <<<"$probe"; then
   echo "FALLA: estas credenciales no pueden leer la IAM del rol $ROLE." >&2
   echo "       Este script se corre con un administrador de la cuenta; lo mas simple es" >&2
@@ -271,14 +247,17 @@ retira() {
   printf '  %-36s retirada\n' "$name"
 }
 
-for pol in secretos ecr-push ecr-scanning respaldos medios; do
+for pol in ecr-push ecr-scanning respaldos medios; do
   reconcilia role "$ROLE" "$pol"
 done
-if [[ $ESCRITURA_SECRETOS -eq 1 ]]; then
-  reconcilia role "$ROLE" secretos-escritura
-else
-  retira role "$ROLE" secretos-escritura
-fi
+# Los secretos de la plataforma ya no viven en Secrets Manager (docs/adr/0008): estas dos
+# politicas quedan obsoletas. Se retiran explicitamente, no solo se dejan de declarar, porque el
+# informe de "politicas que este archivo no gestiona" (mas abajo) solo lista las que NO llevan el
+# prefijo core-force-mail-, y estas dos sí lo llevan: sin este paso, una cuenta que ya las tuviera
+# concedidas conservaria acceso de lectura o escritura al almacen de AWS para siempre, sin que
+# ninguna corrida futura de este script lo mencionara.
+retira role "$ROLE" secretos
+retira role "$ROLE" secretos-escritura
 
 # Lo que el rol tiene y este archivo no declara. No se toca: puede ser deliberado. Pero
 # tiene que verse, porque concede permisos igual.
@@ -325,8 +304,6 @@ echo
 if [[ $CHECK -eq 1 ]]; then
   echo "Nada aplicado. Corre sin --check para dejar la IAM como dice este archivo."
 else
-  [[ $ESCRITURA_SECRETOS -eq 1 ]] && \
-    echo "La escritura en el almacen sigue concedida: corre de nuevo sin --escritura-secretos al terminar."
   echo "IAM reconciliada. Siguientes pasos:"
   echo "  ops/ecr/enable-scanning.sh                            # desde el servidor: escaneo de imagenes"
   echo "  aws iam create-access-key --user-name $DEPLOY_USER    # una vez, para 'aws configure' en la PC"
