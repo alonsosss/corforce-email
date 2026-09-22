@@ -90,7 +90,7 @@ identico	netfilter/modules/NFTables.py	33862a1815863e1924059dd9f18041b84e6d6c4a4
 identico	netfilter/modules/__init__.py	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
 modificado	olefy/Dockerfile	etiqueta,endurecimiento	data/Dockerfiles/olefy/Dockerfile
 identico	olefy/olefy.py	b574b972afd232917d1f17eb7dd835f1e1040efe55b4c9fc5807027ad2a1542b
-modificado	postfix-tlspol/Dockerfile	etiqueta	data/Dockerfiles/postfix-tlspol/Dockerfile
+modificado	postfix-tlspol/Dockerfile	etiqueta,arranque	data/Dockerfiles/postfix-tlspol/Dockerfile
 identico	postfix-tlspol/docker-entrypoint.sh	c604731d087286276e57b0d30cae9d1df32ab21776c4eab001995594d78e58a7
 modificado	postfix-tlspol/postfix-tlspol.sh	nombres	data/Dockerfiles/postfix-tlspol/postfix-tlspol.sh
 identico	postfix-tlspol/stop-supervisor.sh	dcd949c726ce1c2f8f36743f63beb5ffabbd5a13e85d94740171b0127d23a6cd
