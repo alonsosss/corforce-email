@@ -269,10 +269,14 @@ guardia_retroceso "$MAIL_PROJECT" "$TAG" "${SEL[@]}" || exit 1
 # Si algun dia un servicio escribe esos mapas (deploy/mail/README.md, requisito 4), hay que
 # desplegar rspamd-mail en la misma ventana: su arranque es lo que devuelve custom/* a uid 82.
 #
+# git archive escribe 664/775 salvo que se le fije tar.umask (su defecto es 002): como la extraccion
+# es de root, Postfix veia /opt/postfix/conf, master.cf y postscreen_access.cidr escribibles por el
+# grupo y lo avisaba en cada arranque. Con 022 quedan 644/755, que es lo que espera.
+#
 # Idempotente: correrlo dos veces deja el mismo arbol.
 ARBOL_MONTA="--network none -v $MAIL_DEPLOY_PATH:/arbol -w /arbol $IMAGEN_UTIL"
 "${SSH[@]}" "mkdir -p $MAIL_DEPLOY_PATH"
-if ! git archive HEAD -- "${FICHEROS_MOTORES[@]}" | "${SSH[@]}" "docker run --rm -i $ARBOL_MONTA tar -x"; then
+if ! git -c tar.umask=022 archive HEAD -- "${FICHEROS_MOTORES[@]}" | "${SSH[@]}" "docker run --rm -i $ARBOL_MONTA tar -x"; then
   echo "!! no se pudo sincronizar deploy/mail en $MAIL_DEPLOY_PATH (detalle arriba)" >&2
   echo "   los motores no se han tocado: siguen con su version anterior." >&2
   exit 1

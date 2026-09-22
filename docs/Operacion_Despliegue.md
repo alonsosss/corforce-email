@@ -482,7 +482,10 @@ buzones dio 500 y `mail-auth` no pudo leer el buzon del remitente de las alertas
   `git archive` de HEAD, con una sola lista para los tres caminos (`FICHEROS_SERVIDOR` de
   `scripts/deploy-ecr.sh`): compose (incluido `docker-compose.selfhosted.yml`), `selfhosted/`,
   `migrations/`, `ops/db`, `ops/security`, `ops/ecr`, `ops/observability`, `ops/maintenance`,
-  `ops/backup`, `pgbouncer`.
+  `ops/backup`, `pgbouncer`. Los dos `git archive` (este y el de `scripts/deploy-mail.sh`) van
+  con `-c tar.umask=022`: el defecto de git es 002 y deja 664/775, que en el árbol de los
+  motores (extraído como root) hacía que Postfix avisara al arrancar de `/opt/postfix/conf`,
+  `master.cf` y `postscreen_access.cidr` escribibles por el grupo.
 * Perfil del servidor: los dos caminos preguntan a `ops/maintenance/perfil-despliegue.sh` (que
   `release.yml` lleva en base64) los argumentos de compose y la infraestructura propia del
   perfil; con `DEPLOY_PROFILE=selfhosted` aplican lo de la sección 11.

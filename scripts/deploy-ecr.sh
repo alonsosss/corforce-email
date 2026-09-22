@@ -69,7 +69,9 @@ trap limpiar EXIT
 
 stage_head_files() {
   STAGE_DIR="$(mktemp -d)"
-  git archive HEAD -- "$@" | tar -x -C "$STAGE_DIR"
+  # tar.umask=022: git archive escribe 664/775 por defecto y el arbol del servidor no debe ser
+  # escribible por el grupo.
+  git -c tar.umask=022 archive HEAD -- "$@" | tar -x -C "$STAGE_DIR"
 }
 
 # Lo que viaja al servidor, UNA lista para los tres caminos (solo ficheros, ecr y save). Cuando
