@@ -34,18 +34,19 @@ prohibe ademas cualquier infraestructura de AWS que gestione secretos en este pr
 | `reparto.tsv` | Quien recibe cada secreto de `secret-keys.txt`: una fila (contenedor, secreto, evidencia de donde lo lee) por entrega. Ningun contenedor recibe el fichero entero, solo lo que aqui se le da (`docs/adr/0007-minimo-privilegio-en-secretos.md`). |
 | `secret-keys-db.txt` | Credenciales de BASE, con el mismo formato. Se publican en el mismo almacen que `secret-keys.txt` pero se materializan en un fichero aparte (ver "Como lo consumen los servicios"). |
 | `secret-keys-backup.txt` | Secretos del RESPALDO (credencial del bucket externo y frase de cifrado). Ningun contenedor los recibe: los leen solo los trabajos de `ops/backup` del entorno o de `BACKUP_SECRETS_FILE` (`ops/backup/README.md`). No pasan por este almacen: viven en `BACKUP_SECRETS_FILE`, fuera del `.env`. Para `check-secrets.sh` valen igual que los demas. |
-| `store.sh` | Resuelve el almacen cifrado: descifra y cifra `store.json.gpg` con gpg simetrico y la frase de `SECRETS_STORE_PASSPHRASE_FILE`. Lo sourcean los cinco scripts de abajo. |
+| `store.sh` | Resuelve el almacen cifrado: descifra y cifra `store.json.gpg` con gpg simetrico y la frase de `SECRETS_STORE_PASSPHRASE_FILE`. Lo sourcean los seis scripts de abajo. |
 | `init-store.sh` | Crea el almacen (vacio, o migrando un `.env` con `--from-env`) y, si hace falta, genera la frase. Un solo uso por servidor. |
 | `fetch-secrets.sh` | Materializa los secretos en `/dev/shm/core-force-mail/secrets.env` y `secrets-db.env` (memoria, 0600). Atomico y todo-o-nada. |
 | `with-secrets.sh` | Envoltorio: comprueba el entorno declarado, materializa, carga al entorno y ejecuta el comando (lo usan los despliegues). |
 | `require-server-environment.sh` | Guarda que `with-secrets.sh` ejecuta antes que nada: si el `.env` del servidor no dice exactamente `ENVIRONMENT=production` o `staging`, no se despliega (`docs/Operacion_Despliegue.md`, 1). |
 | `push-secrets.sh` | Migracion de una sola vez: sube el contenido del `.env` (las dos listas, `secret-keys.txt` y `secret-keys-db.txt`) al almacen y deja el `.env` sin credenciales. |
 | `add-secret.sh` | Anade o actualiza UNA clave. Es la via para introducir un secreto nuevo despues de la migracion, cuando el `.env` ya no tiene las demas y `push-secrets.sh` se niega. El valor no viaja por la linea de comandos. |
+| `remove-secret.sh` | Retira UNA clave opcional (`CLAVE?` en las listas). Se niega con una obligatoria: sin ella `fetch-secrets.sh` no materializa nada. Para el fin del ciclo de vida de un secreto (el maestro de la migracion tras probar la credencial por trabajo). |
 | `rotate-key.sh` | Rota una llave de cifrado (activa + lista de retiradas) sin dejar ilegible lo ya cifrado con la anterior. |
 | `load.sh` | Resolvedor sourceable: materializa y carga los secretos al entorno. Lo usan `with-secrets.sh` y los trabajos que necesitan una credencial para si mismos (respaldo, migraciones). |
 | `check-secrets.sh` | Guardarrail de CI: falla si una credencial canonica tiene valor en un fichero versionado, y si un `.env.example` fija cualquier valor (ni siquiera un placeholder) para una clave del almacen. |
 | `check-secret-sources.sh` | Guardarrail de CI: falla si un script se busca un secreto en el `.env`, o si un `docker compose` que crea contenedores no va por `with-secrets.sh`. |
-| `check-secrets-store.sh` | Prueba de extremo a extremo del almacen (`make check-secrets-store`): init, fetch, add, rotate y push, con gpg real en un directorio temporal, incluidas la frase incorrecta y el fichero corrompido. |
+| `check-secrets-store.sh` | Prueba de extremo a extremo del almacen (`make check-secrets-store`): init, fetch, add, remove, rotate y push, con gpg real en un directorio temporal, incluidas la frase incorrecta y el fichero corrompido. |
 | `verify-scope.sh` | Operacion, solo imprime nombres: `entorno` (bajo `with-secrets.sh`) comprueba que el valor que Compose interpola es el del fichero materializado; `contenedores` compara lo que recibe cada contenedor en marcha con su fila de `reparto.tsv`. |
 
 El reparto lo comprueba `ops/scaffold/check-secret-scope.sh` (`make check-secret-scope`, dentro de `make checks`), que ata

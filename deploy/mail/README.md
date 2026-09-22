@@ -735,7 +735,8 @@ ejecutor hace y lo que hay que operar.
      compartido" desaparece de su arranque.
   4. Lanzar una migracion real de un buzon: en `mail.sasl_logins` aparecen inicios con `service = migration` desde la IP
      del ejecutor y ninguno con el maestro.
-  5. Retirar `DOVECOT_MIGRATION_MASTER_USER` y `DOVECOT_MIGRATION_MASTER_PASS` del almacen de secretos y recrear Dovecot
+  5. Retirar `DOVECOT_MIGRATION_MASTER_USER` y `DOVECOT_MIGRATION_MASTER_PASS` del almacen de secretos
+     (`ops/security/secrets/remove-secret.sh <CLAVE> --apply`, una y otra) y recrear Dovecot
      y el ejecutor: sin ellos no queda ninguna credencial que abra mas de un buzon. Revertir es volver a ponerlos.
   Si algo falla antes del paso 5, poner `MAIL_MIGRATION_JOB_CREDENTIALS=false` devuelve el flujo anterior sin tocar nada mas.
 * **Despliegue.** `scripts/deploy-mail.sh mail-migration-runner` (imagen `core-force-mail/mail-migration-runner:<commit>`);

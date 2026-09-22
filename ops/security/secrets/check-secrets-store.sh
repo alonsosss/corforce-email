@@ -66,6 +66,32 @@ else
   falla "add-secret deberia rechazar una clave que no esta en ninguna lista: $MSG"
 fi
 
+# ── 2b. remove-secret retira solo opcionales y sin imprimir el valor ───────────────────────
+MSG="$(correr bash "$SCRIPT_DIR/remove-secret.sh" REQUERIDA --apply 2>&1)"
+if grep -q "es obligatoria" <<<"$MSG"; then
+  paso "remove-secret se niega a retirar una clave obligatoria"
+else
+  falla "remove-secret deberia negarse con una clave obligatoria: $MSG"
+fi
+SALIDA="$(correr bash "$SCRIPT_DIR/remove-secret.sh" OPCIONAL --apply 2>&1)"
+if grep -qF "valor-opcional-002" <<<"$SALIDA"; then
+  falla "remove-secret imprimio el valor en su salida"
+else
+  paso "remove-secret no imprime el valor en su salida"
+fi
+if correr bash -c '. "$0/store.sh"; store_leer_json' "$SCRIPT_DIR" 2>/dev/null | grep -q '"OPCIONAL"'; then
+  falla "remove-secret no retiro la clave opcional del almacen"
+else
+  paso "remove-secret retira la clave opcional del almacen"
+fi
+MSG="$(correr bash "$SCRIPT_DIR/remove-secret.sh" OPCIONAL --apply 2>&1)"
+if grep -q "nada que retirar" <<<"$MSG"; then
+  paso "remove-secret es idempotente"
+else
+  falla "remove-secret deberia decir que no hay nada que retirar: $MSG"
+fi
+correr env VALOR="valor-opcional-002" bash "$SCRIPT_DIR/add-secret.sh" OPCIONAL --apply >/dev/null 2>&1
+
 # ── 3. fetch-secrets: todo o nada ───────────────────────────────────────────────────────────
 OUT="$TMP/secrets.env"; OUT_DB="$TMP/secrets-db.env"
 rm -f "$OUT" "$OUT_DB"

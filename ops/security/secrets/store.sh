@@ -3,7 +3,8 @@
 # secret-keys-db.txt, cifrado con gpg simetrico (mismo patron que ops/backup/destino-externo.sh:
 # AES-256, frase por --passphrase-fd 0, nunca en un argumento de linea de comandos).
 #
-# Lo sourcean fetch-secrets.sh, push-secrets.sh, add-secret.sh, rotate-key.sh e init-store.sh. Una
+# Lo sourcean fetch-secrets.sh, push-secrets.sh, add-secret.sh, remove-secret.sh, rotate-key.sh e
+# init-store.sh. Una
 # sola implementacion del cifrado y la lectura de la frase: cambiar el algoritmo o el sitio donde
 # vive el almacen se hace aqui una vez, no en cada script.
 #
