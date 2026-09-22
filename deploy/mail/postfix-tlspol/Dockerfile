@@ -1,20 +1,17 @@
-FROM golang:1.25-bookworm AS builder
+FROM golang:1.26-trixie AS builder
 WORKDIR /src
 
 ENV CGO_ENABLED=0 \
     GO111MODULE=on \
 		NOOPT=1 \
-    VERSION=1.8.22
+    VERSION=1.11.0
 
-# golang.org/x/net v0.47.0, que fija v1.8.22, tiene cinco vulnerabilidades altas con arreglo y este
-# servicio descarga politicas MTA-STS de dominios ajenos: se sube antes de compilar.
 RUN git clone --branch v${VERSION} https://github.com/Zuplu/postfix-tlspol && \
     cd /src/postfix-tlspol && \
-    go get golang.org/x/net@v0.56.0 && go mod tidy && go mod vendor && \
     scripts/build.sh build-only
 
 
-FROM debian:bookworm-slim
+FROM debian:trixie-slim
 LABEL maintainer="Core Force Mail"
 
 ARG DEBIAN_FRONTEND=noninteractive

@@ -1,6 +1,6 @@
 # Libro de parches de deploy/mail frente a mailcow-dockerized
 
-Estado: V (medido el 2026-09-20 contra el commit base). Lo mantiene `ops/upstream/upstream.sh` y lo vigila
+Estado: V (medido el 2026-09-21 contra el commit base, tras el primer port real). Lo mantiene `ops/upstream/upstream.sh` y lo vigila
 `ops/scaffold/check-upstream-ledger.sh`: un fichero nuevo o cambiado sin explicar aqui rompe `make checks`.
 
 Los motores de `deploy/mail/` se copiaron una vez de mailcow-dockerized (`CLAUDE.md`: no se vuelve a copiar
@@ -11,9 +11,10 @@ dice que ficheros son nuestros, por que difieren y como se rehace el cambio.
 
 | Dato | Valor |
 |---|---|
-| Commit base | `02552ffefdf0` (2026-08-18, merge de la PR 7427) |
-| Version de mailcow mas reciente que lo contiene | `2026-07b` |
-| Commits de mailcow posteriores a la base, el 2026-09-20 | 0: la base es la punta de su rama principal |
+| Commit base | `ca07d8d33318` (2026-09-21, merge de la PR 7477) |
+| Version de mailcow mas reciente que lo contiene | `2026-09` |
+| Commits de mailcow posteriores a la base, el 2026-09-21 | 0: la base es la punta de su rama principal |
+| Base anterior | `02552ffefdf0` (2026-08-18, `2026-07b`); el port entre ambas (7 commits, incidencia #13) se hizo el 2026-09-21 y se anota en la seccion 10 |
 | Manifiesto legible por maquina | `deploy/mail/upstream-manifest.tsv` |
 | Mapa entre nuestras carpetas y las de mailcow | `ops/upstream/mapa.tsv` |
 
@@ -23,12 +24,12 @@ dice que ficheros son nuestros, por que difieren y como se rehace el cambio.
 |---|---|---|
 | Identico a mailcow | 86 | Sin cambios: portar una version es reaplicar el mismo cambio |
 | Modificado | 64 | Tiene equivalente en mailcow y nosotros lo cambiamos (secciones 5 y 6) |
-| Nuevo | 45 | Sin equivalente en mailcow (seccion 7) |
+| Nuevo | 47 | Sin equivalente en mailcow (seccion 7) |
 | Propio | 6 | Nuestro por definicion: compose, README y este libro |
-| Total seguido por git | 201 | |
+| Total seguido por git | 203 | |
 
-De los 64 modificados, 27 solo cambian una etiqueta o un nombre (categorias `etiqueta` y `nombres`): son
-mecanicos. Los otros 37 cambian comportamiento (PostgreSQL, quitar SOGo y PHP, servicios Go, cron o
+De los 64 modificados, 28 solo cambian una etiqueta o un nombre (categorias `etiqueta` y `nombres`): son
+mecanicos. Los otros 36 cambian comportamiento (PostgreSQL, quitar SOGo y PHP, servicios Go, cron o
 endurecimiento).
 
 El coste real se concentra en cuatro ficheros, los que reescriben logica de mailcow y no solo un nombre:
@@ -101,7 +102,7 @@ Ordenados por carpeta. "Como se rehace" es lo que hay que hacer cuando mailcow c
 | `dockerapi/modules/DockerApi.py` | sogo-php | Quita las tareas de MySQL y de SOGo (mysql_upgrade, sogo rename_user...). | Reaplicar los cambios de mailcow en las demas tareas; no reintroducir las quitadas. |
 | `dovecot/Dockerfile` | etiqueta, postgres, sogo-php, endurecimiento | Sin grupo sogo, imapsync ni Perl; drivers de PostgreSQL (`lua-sql-postgres`) en lugar de los de MySQL y MariaDB; `gosu` se compila en una etapa propia con el Go actual (el binario publicado 1.19 lleva la libreria estandar de Go 1.24.6, con una critica y veintiuna altas con arreglo que `gosu` no alcanza pero un escaner cuenta). | Reaplicar el cambio de mailcow, volver a quitar SOGo, Perl e imapsync, cambiar los drivers y conservar la etapa `gosu` (misma version, `GOSU_VERSION`, compilada con Go 1.26). |
 | `dovecot/clean_q_aged.sh` | postgres, nombres | Poda la cuarentena con psql sobre mail.quarantine; hoy no hace nada porque esa tabla no existe: la poda la hace mail-security. | Reaplicar el cambio de mailcow y volver a poner la consulta propia. |
-| `dovecot/conf/auth/passwd-verify.lua` | servicios-go | La URL de autenticacion es ${MAIL_AUTH_URL} (mail-auth), que el entrypoint renderiza con envsubst. | Reaplicar el cambio de mailcow y conservar la URL. |
+| `dovecot/conf/auth/passwd-verify.lua` | servicios-go | La URL de autenticacion es ${MAIL_AUTH_URL} (mail-auth), que el entrypoint renderiza con envsubst, y el comentario del bloque que trata la caida del backend nombra a mail-auth y no a nginx. Ese bloque es el arreglo de mailcow 7150 (portado el 2026-09-21): si `https.request` no devuelve un codigo numerico (red, DNS, tiempo agotado) responde `INTERNAL_FAILURE`, que conserva la entrada de cache de Dovecot, en lugar de `PASSWORD_MISMATCH`, que la borraba en cada reinicio de mail-auth. Aplica igual a nuestra logica porque llamamos al mismo `ssl.https` con la misma tupla de retorno; `migration-verify.lua` ya trataba ese caso. | Reaplicar el cambio de mailcow y conservar la URL. Probar con stubs de `dovecot` y `ssl.https` en `lua5.3` dentro de la imagen (fallo de red: `INTERNAL_FAILURE`; 500 y 401: `MISMATCH`; 200: `OK`) y con `make e2e-mail`. |
 | `dovecot/conf/conf.d/fts.conf` | nombres | Comentarios: mailcow.conf pasa a .env. | Reaplicar la linea. |
 | `dovecot/conf/dovecot.conf` | postgres, sogo-php, migracion | Los diccionarios de cuota y sieve son pgsql, no mysql; sin ejemplo LDAP ni SOGo; el passwd-verify.lua renderizado vive fuera del bind mount (/etc/dovecot-auth); incluye doveadm-api.conf generado; ademas declara el diccionario `sieve_vacation` y la ranura `sieve_after3` de la respuesta automatica (`mail.v_sieve_vacation`); y una passdb Lua antes de las demas (`migration-verify.lua`, la credencial de destino por trabajo de migracion) con `cache_key=%s:%u:%w:%{session}` | Reaplicar el cambio de mailcow y volver a poner las cinco lineas propias. Conservar el diccionario, `sieve_after3` y la passdb de migracion, que debe ir la primera. |
 | `dovecot/conf/global_sieve_after` | nombres | Comentario: la UI de mailcow pasa a mail.sieve_filters. | Reaplicar la linea. |
@@ -119,13 +120,13 @@ Ordenados por carpeta. "Como se rehace" es lo que hay que hacer cuando mailcow c
 | `netfilter/Dockerfile` | etiqueta, endurecimiento | Etiqueta del mantenedor. Sin `pip` en la imagen final: `pip` trae `msgpack` 1.1.2 embebido, con una vulnerabilidad alta que no se puede corregir desde aqui hasta que salga un `pip` nuevo, y el motor no lo usa al ejecutarse. | Reaplicar el cambio de mailcow y conservar `pip3 uninstall -y pip`. |
 | `netfilter/main.py` | sogo-php, nombres | Quita las expresiones de SOGo (8 y 9), renombra la cadena y la red (br-mail) y usa MAIL_REDIS_PASSWORD. El fichero de mailcow trae fin de linea CRLF y el nuestro LF. | Reaplicar el cambio de mailcow ignorando el fin de linea (diff --strip-trailing-cr). Nunca ejecutar netfilter en la maquina de desarrollo. |
 | `olefy/Dockerfile` | etiqueta, endurecimiento | Etiqueta del mantenedor; sube `setuptools` a 78.1.1 o mas (CVE-2025-47273). Sin `pip` en la imagen final: `pip` trae `msgpack` 1.1.2 embebido, con una vulnerabilidad alta que no se puede corregir desde aqui hasta que salga un `pip` nuevo, y el motor no lo usa al ejecutarse. | Reaplicar el cambio de mailcow y conservar la subida de `setuptools` y la desinstalacion de `pip`. Ojo: instala `oletools` desde la rama principal de su repositorio, sin fijar (herencia de mailcow). |
-| `postfix-tlspol/Dockerfile` | etiqueta, endurecimiento | Etiqueta del mantenedor; sube `golang.org/x/net` a v0.56.0 y regenera `vendor/` antes de compilar: la v1.8.22 fija v0.47.0, con cinco vulnerabilidades altas, y este servicio descarga politicas MTA-STS de dominios ajenos. | Reaplicar el cambio de mailcow (si sube `VERSION`, comprobar si ya trae una `x/net` corregida y, si es asi, quitar el `go get`). |
+| `postfix-tlspol/Dockerfile` | etiqueta | Solo la etiqueta del mantenedor. Hasta el 2026-09-21 ademas subia `golang.org/x/net` a v0.56.0 y regeneraba `vendor/` antes de compilar, porque la v1.8.22 fijaba v0.47.0 (cinco altas) y este servicio descarga politicas MTA-STS de dominios ajenos; la v1.11.0 que fija mailcow ya trae `x/net` v0.56.0 en su `go.mod`, asi que ese parche propio se quito y el fichero vuelve a ser el de mailcow salvo la etiqueta (Trivy: 0 criticas y 0 altas con arreglo). | Reaplicar la linea. Si mailcow sube `VERSION`, escanear la imagen (`ops/security/escanear-motores.sh escanear <carpeta> postfix-tlspol`) y, solo si `x/net` vuelve a salir con altas, reponer `go get golang.org/x/net@<corregida> && go mod tidy && go mod vendor` antes de `scripts/build.sh build-only`. |
 | `postfix-tlspol/postfix-tlspol.sh` | nombres | Espera de DNS contra letsencrypt.org en lugar de mailcow.email y variables MAIL_REDIS_*. | Reaplicar los cambios de mailcow y volver a sustituir las variables por su nombre propio. |
 | `postfix-tlspol/syslog-ng-redis_slave.conf` | nombres | REDISPASS y nombre del contenedor. | Reaplicar los cambios de mailcow y volver a sustituir las variables por su nombre propio. |
 | `postfix-tlspol/syslog-ng.conf` | nombres | Host y contrasena de Redis por variables MAIL_REDIS_*. | Reaplicar los cambios de mailcow y volver a sustituir las variables por su nombre propio. |
 | `postfix/Dockerfile` | etiqueta, postgres, cola | Etiqueta del mantenedor, postgresql-client y postfix-pgsql en lugar de mariadb-client y postfix-mysql; una etapa que compila `queue-agent` con Go, copia el binario a `/usr/local/sbin` y expone el puerto 8590. | Reaplicar las lineas y conservar la etapa `queue-agent` y su `COPY --from`. |
 | `postfix/conf/anonymize_headers.pcre` | nombres | El agente de recepcion se llama Core Force Mail, no Postcow. | Reaplicar los cambios de mailcow y volver a sustituir las variables por su nombre propio. |
-| `postfix/conf/main.cf.base` | postgres | Todos los mapas son proxy:pgsql: en lugar de proxy:mysql:. Es la plantilla de main.cf (en mailcow es main.cf); postfix.sh genera el main.cf real en cada arranque. | Reaplicar el cambio de mailcow en main.cf sobre esta plantilla y volver a poner los mapas pgsql. |
+| `postfix/conf/main.cf.base` | postgres, nombres, endurecimiento | Todos los mapas son proxy:pgsql: en lugar de proxy:mysql:; `mail_name` es Core Force Mail y el comentario de los BCC apunta a mail-policy. Ademas (commit fa468d7) `lmtp_host_lookup = native` y reintentos de cola de 1 minuto (`minimal_backoff_time`, `maximal_backoff_time`, `queue_run_delay`) para que Postfix no rebote el correo mientras Dovecot esta parado. Es la plantilla de main.cf (en mailcow es main.cf); postfix.sh genera el main.cf real en cada arranque. `smtp_tls_policy_maps` consulta a postfix-tlspol con `QUERYwithTLSRPT` (mailcow 0f06c8e5, portado el 2026-09-21): Postfix 3.10 de trixie lleva libtlsrpt y analiza los atributos `policy_type`, `policy_domain`, `mx_host_pattern` y `policy_string` de la respuesta; tlspol lo acepta desde la v1.8.22, asi que el orden de despliegue entre Postfix y tlspol no importa. | Reaplicar el cambio de mailcow en main.cf sobre esta plantilla y volver a poner los mapas pgsql, `mail_name`, `lmtp_host_lookup` y los tres tiempos de cola. Validar con `postconf -c` sobre la plantilla renderizada dentro de la imagen y con `make e2e-mail`. |
 | `postfix/conf/master.cf` | endurecimiento, sogo-php | El envio interno de la plataforma no tiene la excepcion de SOGo (allow_mailcow_local): el webmail se autentica como buzon*maestro y Postfix le aplica smtpd_sender_login_maps. | Reaplicar el cambio de mailcow y conservar las restricciones de remitente. |
 | `postfix/docker-entrypoint.sh` | arranque | La comprobacion de TLS antiguo lee main.cf.base, no main.cf, porque el main.cf real se genera despues. | Reaplicar la linea. |
 | `postfix/postfix.sh` | postgres, nombres, sogo-php | Genera los 18 mapas pgsql_*.cf contra el esquema mail en lugar de los de MySQL, sin BCC dinamicos ni SOGo, y con los nombres propios. Es el fichero que mas cuesta portar. | Aplicar los cambios de mailcow bloque a bloque, no el fichero entero, y comprobar los 18 mapas con postmap -q (make e2e-mail). |
@@ -147,13 +148,13 @@ Ordenados por carpeta. "Como se rehace" es lo que hay que hacer cuando mailcow c
 | `rspamd/local.d/ratelimit.conf` | nombres | Comentario: los limites por buzon se dan por Redis (RL_VALUE), no por la UI de mailcow. | Reaplicar la linea. |
 | `rspamd/lua/rspamd.local.lua` | servicios-go | Las URL de aliasexp, bcc y footer las sirve mail-policy, sin .php. | Reaplicar el cambio de mailcow y conservar las URL. |
 | `rspamd/settings.conf` | servicios-go | El mapa settings lo sirve mail-policy. | Reaplicar la linea. |
-| `unbound/Dockerfile` | etiqueta | Etiqueta del mantenedor. | Reaplicar la linea. |
+| `unbound/Dockerfile` | etiqueta | Etiqueta del mantenedor. La version minima de `unbound` desde `edge` (`>=1.26.1-r0`) es de mailcow (a480a96e, portada el 2026-09-21). | Reaplicar la linea; si mailcow sube la version minima, reaplicarla y comprobar que la imagen construye y arranca con el `unbound.conf` montado (`unbound-control status`, `dnssec-failed.org` debe dar SERVFAIL). |
 | `watchdog/Dockerfile` | etiqueta, sogo-php | Sin cliente de MariaDB ni comprobaciones de MySQL. | Reaplicar el cambio de mailcow y volver a quitar MySQL. |
 | `watchdog/watchdog.sh` | sogo-php, nombres | Quita las comprobaciones de nginx, MySQL, replicacion MySQL, PHP-FPM, SOGo y external_checks, y cambia el canario de DNS. Es de los ficheros que mas cuesta portar. | Aplicar los cambios de mailcow bloque a bloque y no reintroducir las comprobaciones quitadas. |
 
 ## 6. Ficheros identicos a mailcow
 
-88 ficheros, listados con su huella en el manifiesto. Cambiar uno de ellos sin pasarlo a modificado
+86 ficheros, listados con su huella en el manifiesto. Cambiar uno de ellos sin pasarlo a modificado
 y explicarlo en la seccion 5 rompe `make checks`: es el aviso de que la divergencia esta creciendo.
 
 ## 7. Ficheros nuevos y propios
@@ -188,8 +189,8 @@ De donde sale cada motor decide como llega un parche:
 | ClamAV | Se compila desde fuente en `clamav/Dockerfile` (1.4.6) | Subir la version del constructor |
 | Postfix | Paquete de Debian trixie, sin fijar | Reconstruir la imagen |
 | Dovecot y Pigeonhole | Paquete de Alpine 3.21, sin fijar (`gosu` 1.19 se compila en el Dockerfile con Go 1.26) | Reconstruir la imagen. Cambiar de Alpine puede cambiar la version mayor de Dovecot: no se hace sin probar |
-| Unbound | Repositorio `edge` de Alpine, para recibir parches | Reconstruir la imagen |
-| postfix-tlspol | Se compila la etiqueta `v1.8.22` de su repositorio, con `golang.org/x/net` v0.56.0 | Subir la etiqueta y revisar si ya trae una `x/net` corregida |
+| Unbound | Repositorio `edge` de Alpine, para recibir parches, con version minima fijada (`unbound>=1.26.1-r0`, hoy 1.26.1) | Reconstruir la imagen; subir la version minima cuando lo haga mailcow o un aviso lo exija |
+| postfix-tlspol | Se compila la etiqueta `v1.11.0` de su repositorio con `golang:1.26-trixie` (su `go.mod` fija `golang.org/x/net` v0.56.0) sobre `debian:trixie-slim` (syslog-ng 4.8) | Subir la etiqueta y escanear la imagen; si `x/net` sale con altas, subirla antes de compilar (seccion 5) |
 | imapsync (ejecutor de migracion) | Paquete `imapsync` de Alpine 3.23 (community), serie 2.314 fijada en `migration-runner/Dockerfile` (`imapsync~=2.314`; el build falla si resulta otra version). No esta en los repositorios de Debian ni de Ubuntu; no se descarga nada mas de Internet en el build. La licencia es la NO LIMIT PUBLIC LICENSE (`docs/adr/0002`) | Reconstruir la imagen recoge los parches del paquete y de Perl; subir de serie es una decision con `make e2e-mail` en verde (la salida de imapsync es lo que lee el ejecutor) |
 | Resto (netfilter, dockerapi, acme, watchdog, olefy) | Paquetes de la base | Reconstruir la imagen |
 
@@ -212,10 +213,16 @@ mayor del motor; ese cambio se decide con el informe de mailcow y `make e2e-mail
 ## 10. Revision trimestral
 
 Cada trimestre se anota, en una linea al final de esta seccion, el numero de ficheros modificados, cuantos
-son sustantivos, cuantos dias costo el ultimo port y cuantos conflictos hubo. Tras el primer port real se fija el
-umbral a partir del cual hay que decidir por escrito entre seguir igual, reducir divergencia o cambiar de
-motor. Hasta entonces no hay umbral: no se ha medido ningun port.
+son sustantivos, cuantos dias costo el ultimo port y cuantos conflictos hubo. Un conflicto es un fichero en el
+que el cambio de mailcow no se puede reaplicar linea a linea porque choca con logica propia y hay que
+reescribirlo.
+
+Umbral, fijado el 2026-09-21 con el primer port real (siete commits de mailcow en menos de un dia y sin
+conflictos): si un port cuesta mas de 3 dias de trabajo, o deja 3 o mas conflictos, o los ficheros sustantivos
+pasan de 45, se decide por escrito (ADR en `docs/adr/`) entre seguir igual, reducir divergencia o cambiar de
+motor. El umbral se revisa con cada fila nueva.
 
 | Fecha | Modificados | Sustantivos | Dias del ultimo port | Conflictos |
 |---|---|---|---|---|
 | 2026-09-20 | 62 | 35 | sin port aun | sin port aun |
+| 2026-09-21 | 64 | 36 | menos de uno: una sesion de unas dos horas para los 7 commits de `02552ffefdf0` a `ca07d8d33318` (incidencia #13): 7 ficheros tocados (`postfix-tlspol/Dockerfile` y sus dos `syslog-ng*.conf`, `unbound/Dockerfile`, `postfix/conf/postscreen_access.cidr`, `postfix/conf/main.cf.base`, `dovecot/conf/auth/passwd-verify.lua`), 4 imagenes reconstruidas y escaneadas (postfix-tlspol, unbound, postfix, dovecot), humo de cada motor y `make checks`; la divergencia bajo en un fichero (el parche propio de `x/net` en tlspol ya no hace falta) | 0 |

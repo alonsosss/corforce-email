@@ -151,7 +151,7 @@ smtp_sasl_auth_enable = yes
 smtp_sasl_password_maps = proxy:pgsql:/opt/postfix/conf/sql/pgsql_sasl_passwd_maps_sender_dependent.cf
 smtp_sasl_security_options =
 smtp_sasl_mechanism_filter = plain, login
-smtp_tls_policy_maps = proxy:pgsql:/opt/postfix/conf/sql/pgsql_tls_policy_override_maps.cf socketmap:inet:postfix-tlspol:8642:QUERY
+smtp_tls_policy_maps = proxy:pgsql:/opt/postfix/conf/sql/pgsql_tls_policy_override_maps.cf socketmap:inet:postfix-tlspol:8642:QUERYwithTLSRPT
 smtp_header_checks = pcre:/opt/postfix/conf/anonymize_headers.pcre
 mail_name = Core Force Mail
 # local_transport map catches local destinations and prevents routing local dests when the next map would route "*"

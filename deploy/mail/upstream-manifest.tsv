@@ -1,4 +1,4 @@
-#base	02552ffefdf0	2026-08-18	2026-07b
+#base	ca07d8d33318	2026-09-21	2026-09
 propio	README.md	-
 propio	UPSTREAM.md	-
 modificado	acme/Dockerfile	etiqueta,postgres	data/Dockerfiles/acme/Dockerfile
@@ -90,7 +90,7 @@ identico	netfilter/modules/NFTables.py	33862a1815863e1924059dd9f18041b84e6d6c4a4
 identico	netfilter/modules/__init__.py	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
 modificado	olefy/Dockerfile	etiqueta,endurecimiento	data/Dockerfiles/olefy/Dockerfile
 identico	olefy/olefy.py	b574b972afd232917d1f17eb7dd835f1e1040efe55b4c9fc5807027ad2a1542b
-modificado	postfix-tlspol/Dockerfile	etiqueta,endurecimiento	data/Dockerfiles/postfix-tlspol/Dockerfile
+modificado	postfix-tlspol/Dockerfile	etiqueta	data/Dockerfiles/postfix-tlspol/Dockerfile
 identico	postfix-tlspol/docker-entrypoint.sh	c604731d087286276e57b0d30cae9d1df32ab21776c4eab001995594d78e58a7
 modificado	postfix-tlspol/postfix-tlspol.sh	nombres	data/Dockerfiles/postfix-tlspol/postfix-tlspol.sh
 identico	postfix-tlspol/stop-supervisor.sh	dcd949c726ce1c2f8f36743f63beb5ffabbd5a13e85d94740171b0127d23a6cd
@@ -100,9 +100,9 @@ modificado	postfix-tlspol/syslog-ng.conf	nombres	data/Dockerfiles/postfix-tlspol
 modificado	postfix/Dockerfile	etiqueta,postgres,cola	data/Dockerfiles/postfix/Dockerfile
 modificado	postfix/conf/anonymize_headers.pcre	nombres	data/conf/postfix/anonymize_headers.pcre
 identico	postfix/conf/local_transport	6badc2520b1711e62c60988a4f28ece87b6e9e3f136d7cf5c15375a672ecefb5
-modificado	postfix/conf/main.cf.base	postgres	data/conf/postfix/main.cf
+modificado	postfix/conf/main.cf.base	postgres,nombres,endurecimiento	data/conf/postfix/main.cf
 modificado	postfix/conf/master.cf	endurecimiento,sogo-php	data/conf/postfix/master.cf
-identico	postfix/conf/postscreen_access.cidr	7f9ce43ce80e985c190adad4a47cac3d34206ce6039e32e5f1e17069006bf5e6
+identico	postfix/conf/postscreen_access.cidr	1d272d4ff60d6b52c63f36ec73b1a22016090178e5fdbb99f0f5a2580e731f72
 identico	postfix/conf/smtp_dsn_filter	daf1295d17e2c1a69d5cd81709f5663283453ba7627e9e878cd0d079c0315cef
 modificado	postfix/docker-entrypoint.sh	arranque	data/Dockerfiles/postfix/docker-entrypoint.sh
 modificado	postfix/postfix.sh	postgres,nombres,sogo-php	data/Dockerfiles/postfix/postfix.sh
