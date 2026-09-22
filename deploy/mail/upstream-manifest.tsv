@@ -35,6 +35,7 @@ modificado	dovecot/conf/global_sieve_before	nombres	data/conf/dovecot/global_sie
 nuevo	dovecot/crontab	cron	-
 modificado	dovecot/docker-entrypoint.sh	postgres,sogo-php,servicios-go,nombres,migracion	data/Dockerfiles/dovecot/docker-entrypoint.sh
 identico	dovecot/maildir_gc.sh	bafa25e04714d9d18d3665e82585f841f088ebe139dbb005f631822144b2e0d2
+nuevo	dovecot/maildir_reconcile.sh	cron,endurecimiento	-
 identico	dovecot/optimize-fts.sh	721e4191857c5433eeecb87f880ea8a2d55373d34becb720c9afc26487649af7
 modificado	dovecot/quota_notify.py	nombres	data/Dockerfiles/dovecot/quota_notify.py
 modificado	dovecot/repl_health.sh	nombres	data/Dockerfiles/dovecot/repl_health.sh

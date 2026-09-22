@@ -22,7 +22,9 @@
 # de un buzon a otro del mismo Dovecot, con ClamAV real en el camino, y CardDAV y CalDAV: mail-dav (binario del host,
 # con la credencial propia de su esquema) autentica cada peticion contra el listener TLS de mail-auth y el
 # gateway lo expone sin JWT; se prueban PROPFIND, PUT, REPORT, MKCALENDAR y DELETE con la contrasena de aplicacion, el
-# aislamiento entre buzones, las politicas de fila y dav_access.
+# aislamiento entre buzones, las politicas de fila y dav_access. Tambien el maildir de un buzon borrado: la marca
+# de baja, el barrido de Dovecot (maildir_reconcile.sh) que lo mueve a _garbage, su fail-closed y que el buzon
+# recreado con el mismo nombre nace vacio.
 #
 # Cada paso escribe OK o FALLA y la ejecucion termina con error si alguno falla. Las
 # credenciales se generan en cada ejecucion; ninguna vive en este fichero.
@@ -1305,6 +1307,67 @@ expect "y su sesion del webmail ya no sirve el buzon" "$WM_CODE" "401"
 BEA_PASS="$BEA_OTRA"
 esperar "y bea entra por IMAP con la nueva" 20 login_aceptado bea@acme.test "$BEA_PASS"
 expect "mail-security sin fallos de revocacion" "$(revocaciones fallos)" "0"
+
+echo "== Maildir de un buzon borrado: marca de baja, barrido en Dovecot y buzon recreado limpio"
+# Borrar un buzon quita su fila, pero su maildir sigue en el volumen de Dovecot y quien reciba despues la
+# misma direccion heredaria el correo del titular anterior. mail-directory deja una marca de baja
+# (mail.mailbox_deletions) en la transaccion del borrado y retiene la direccion (409) mientras la marca
+# viva; maildir_reconcile.sh (cron de Dovecot, cada 5 min) mueve el maildir a _garbage y consume la marca
+# (deploy/mail/README.md, "Maildir de un buzon borrado"). Aqui la pasada se fuerza con la gracia a cero.
+DANI_PASS="$(rand_hex 10)Aa1!"
+creado "buzon dani@acme.test" POST /mailboxes "{\"local_part\":\"dani\",\"domain\":\"acme.test\",\"password\":\"$DANI_PASS\"}"
+DANIID=$(echo "$API_BODY" | jget data.id)
+contains "ana escribe a dani" "$(cliente enviar ana@acme.test "$ANA_PASS" ana@acme.test dani@acme.test "$TOKEN-dani")" "OK 250"
+contains "y dani lo lee por IMAP" "$(cliente buscar dani@acme.test "$DANI_PASS" "$TOKEN-dani")" "OK 1"
+maildir_de() { en dovecot-mail test -d "/var/vmail/acme.test/$1"; }
+maildir_de dani && ok "el maildir /var/vmail/acme.test/dani existe en el volumen de Dovecot" || mal "sin maildir de dani en el volumen"
+# barrido [opciones de docker exec]: una pasada de maildir_reconcile.sh (se reejecuta como vmail) con la gracia a cero.
+barrido() {
+  BARRIDO_OUT=$(docker exec -e MAILDIR_RECONCILE_GRACE=0 "$@" "$(c dovecot-mail)" /usr/local/bin/maildir_reconcile.sh 2>&1)
+  BARRIDO_RC=$?
+}
+marcas_de_dani() { sql mail_cell_pe_01 "SELECT count(*) FROM mail.mailbox_deletions WHERE username = 'dani@acme.test'"; }
+en_garbage() { en dovecot-mail sh -c 'ls /var/vmail/_garbage/' 2>/dev/null | grep -E "^[0-9]{10}_$1\$"; }
+barrido
+expect "una pasada con todos los buzones vivos termina bien" "$BARRIDO_RC" "0"
+contains "y no mueve nada" "$BARRIDO_OUT" " 0 movidos a _garbage"
+maildir_de dani && maildir_de bea && ok "los maildir de dani y bea (con correo) siguen en su sitio" || mal "una pasada sin huerfanos movio un buzon vivo"
+
+api DELETE "/mailboxes/$DANIID"
+expect "mail-directory borra a dani" "$API_CODE" "204"
+expect "y deja su marca de baja en mail.mailbox_deletions" "$(marcas_de_dani)" "1"
+api POST /mailboxes "{\"local_part\":\"dani\",\"domain\":\"acme.test\",\"password\":\"$DANI_PASS\"}"
+expect "recrear dani con la marca viva se rechaza (409): su maildir sigue en el disco" "$API_CODE" "409"
+contains "con el codigo ADDRESS_RECENTLY_DELETED" "$API_BODY" "ADDRESS_RECENTLY_DELETED"
+maildir_de dani && ok "el maildir de dani sigue en el volumen tras el borrado (nadie lo toca desde Go)" || mal "el maildir de dani desaparecio sin barrido"
+
+# Fail-closed: sin acceso a la base la pasada no mueve nada ni consume la marca.
+barrido -e MAIL_DB_PASSWORD=incorrecta
+[[ "$BARRIDO_RC" -ne 0 ]] && ok "sin acceso a la base la pasada termina con error" || mal "sin acceso a la base la pasada termino en 0"
+contains "y anuncia que aborta sin mover nada" "$BARRIDO_OUT" "ABORTADA sin mover nada"
+maildir_de dani && ok "el maildir de dani sigue ahi" || mal "una pasada sin base movio el maildir de dani"
+expect "y la marca sigue viva" "$(marcas_de_dani)" "1"
+
+barrido
+expect "la pasada con acceso a la base termina bien" "$BARRIDO_RC" "0"
+contains "mueve el maildir de dani a _garbage con su marca de tiempo" "$BARRIDO_OUT" "movido acme.test/dani -> _garbage/"
+contains "anotando su tamano y el motivo" "$BARRIDO_OUT" "KiB, baja marcada en @"
+contains "y consume la marca" "$BARRIDO_OUT" "maildir de acme.test/dani movido"
+[[ -n "$(en_garbage acme.test_dani)" ]] && ok "el maildir esta en /var/vmail/_garbage/<epoch>_acme.test_dani (lo purga maildir_gc.sh a los MAILDIR_GC_TIME min)" || mal "sin <epoch>_acme.test_dani en _garbage: $(en dovecot-mail sh -c 'ls /var/vmail/_garbage/')"
+maildir_de dani && mal "el maildir de dani sigue en /var/vmail/acme.test tras el barrido" || ok "y ya no esta en /var/vmail/acme.test"
+expect "la marca de baja se consumio" "$(marcas_de_dani)" "0"
+maildir_de bea && ok "el maildir de bea (buzon vivo con correo) no se movio" || mal "el barrido movio el maildir de bea"
+
+DANI_PASS2="$(rand_hex 10)Aa1!"
+creado "dani@acme.test se vuelve a crear en cuanto la marca se consumio" POST /mailboxes "{\"local_part\":\"dani\",\"domain\":\"acme.test\",\"password\":\"$DANI_PASS2\"}"
+expect "el dani nuevo entra por IMAP" "$(cliente login dani@acme.test "$DANI_PASS2")" "OK"
+expect "y nace vacio: no hereda el mensaje del dani anterior" "$(cliente buscar dani@acme.test "$DANI_PASS2" "$TOKEN-dani" --espera 3)" "NO 0"
+contains "ana escribe al dani nuevo" "$(cliente enviar ana@acme.test "$ANA_PASS" ana@acme.test dani@acme.test "$TOKEN-dani2")" "OK 250"
+contains "y lo lee" "$(cliente buscar dani@acme.test "$DANI_PASS2" "$TOKEN-dani2")" "OK 1"
+barrido
+expect "otra pasada con el dani nuevo vivo termina bien" "$BARRIDO_RC" "0"
+contains "y no mueve nada" "$BARRIDO_OUT" " 0 movidos a _garbage"
+maildir_de dani && ok "el maildir del dani nuevo sigue en su sitio" || mal "el barrido movio el maildir del dani recreado"
 
 echo "== Gestor de la cola de Postfix (agente en el contenedor -> mail-security -> gateway, solo superadmin)"
 # Sin salida real: con defer_transports=smtp, Postfix no intenta entregar y deja el mensaje diferido en la

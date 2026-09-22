@@ -79,6 +79,7 @@ COPY rspamd-pipe-ham /usr/lib/dovecot/sieve/rspamd-pipe-ham
 COPY rspamd-pipe-spam /usr/lib/dovecot/sieve/rspamd-pipe-spam
 COPY sa-rules.sh /usr/local/bin/sa-rules.sh
 COPY maildir_gc.sh /usr/local/bin/maildir_gc.sh
+COPY maildir_reconcile.sh /usr/local/bin/maildir_reconcile.sh
 COPY docker-entrypoint.sh /
 COPY supervisord.conf /etc/supervisor/supervisord.conf
 COPY stop-supervisor.sh /usr/local/sbin/stop-supervisor.sh

@@ -368,6 +368,7 @@ chmod +x /usr/lib/dovecot/sieve/rspamd-pipe-ham \
   /usr/local/bin/sa-rules.sh \
   /usr/local/bin/clean_q_aged.sh \
   /usr/local/bin/maildir_gc.sh \
+  /usr/local/bin/maildir_reconcile.sh \
   /usr/local/sbin/stop-supervisor.sh \
   /usr/local/bin/quota_notify.py \
   /usr/local/bin/repl_health.sh \

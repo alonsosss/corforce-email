@@ -84,9 +84,13 @@ directorio de mailcow, que es la que Postfix y Dovecot entienden, traducida a Po
   `spam_aliases`, `sender_acl`, `app_passwords`, `relayhosts`, `transports`,
   `tls_policy_overrides`, `recipient_maps`, `bcc_maps`, `quota_usage` (la escribe Dovecot),
   `sieve_filters` con vistas `v_sieve_before`/`v_sieve_after`, `vacation_replies` con la vista
-  `v_sieve_vacation` (V, 2026-09-21, abajo), `mta_sts_policies` (V, 2026-09-21, abajo), `sasl_logins`.
+  `v_sieve_vacation` (V, 2026-09-21, abajo), `mta_sts_policies` (V, 2026-09-21, abajo), `sasl_logins`,
+  `mailbox_deletions` (V, 2026-09-21, `12_mailbox_deletions.sql`: la marca que deja el borrado de un
+  buzon para que el barrido de maildir de Dovecot retire su directorio del disco; `deploy/mail/README.md`,
+  "Maildir de un buzon borrado").
 * Rol `mail_engine`: `SELECT` sobre lo que consultan los motores, escritura solo en
-  `quota_usage`, nada sobre `app_passwords` ni `sasl_logins`. Los motores nunca ven un hash
+  `quota_usage` y el `DELETE` con el que consume las marcas de `mailbox_deletions`, nada sobre
+  `app_passwords` ni `sasl_logins`. Los motores nunca ven un hash
   de contrasena: la verificacion pasa por `mail-auth`.
 * `relayhosts.password` y `transports.password` van en claro por necesidad de Postfix (un
   mapa `pgsql:` no descifra); por eso solo los ve `mail_engine` y su servicio propietario,
@@ -1156,7 +1160,9 @@ tiene ninguna ruta o si falta `organization` entre los servicios.
     politicas TLS y mapas de destinatario y de copia; borra las contrasenas SASL de terceros que
     Postfix guarda en claro (relayhosts y transportes). Desactiva, no borra: como la base de la
     empresa, su directorio se conserva durante la retencion y el contenido de sus buzones sigue en
-    el almacenamiento de Dovecot. Cada dominio, dominio alias, buzon y alias apagado sale por la
+    el almacenamiento de Dovecot (el barrido de maildir no lo toca: sus buzones conservan la fila,
+    y solo cuando la purga la borre se llevara sus maildir a `_garbage`; ver abajo, "Maildir de un
+    buzon borrado"). Cada dominio, dominio alias, buzon y alias apagado sale por la
     outbox en la misma transaccion (`mail.domain.updated`, `mail.alias_domain.updated`,
     `mail.mailbox.updated`, `mail.alias.updated`): mail-security lo saca de `DOMAIN_MAP` y retira sus
     claves DKIM al momento, y el webmail cierra las sesiones de los buzones. Postfix deja de aceptar
@@ -1198,6 +1204,23 @@ tiene ninguna ruta o si falta `organization` entre los servicios.
     de autenticar al momento a un buzon que acababa de entrar, con su entrada en la cache, al que
     mail-auth rechaza por apagado, y cierra su sesion IMAP abierta, y mail-security retira
     `DOMAIN_MAP` y las claves DKIM).
+* Maildir de un buzon borrado (V, 2026-09-21; el diseno completo, la ventana residual y el orden de
+  despliegue en `deploy/mail/README.md`, "Maildir de un buzon borrado"). Borrar un buzon quitaba su
+  fila y dejaba su maildir en el volumen de Dovecot, que ningun servicio Go alcanza: un buzon
+  recreado con el mismo nombre nacia con el correo del anterior (visto en produccion). Ahora
+  `DeleteMailbox` deja una marca en `mail.mailbox_deletions` (`12_mailbox_deletions.sql`) en la
+  misma transaccion del borrado (sin poder dejarla no borra), y `mail-directory` rechaza crear la
+  direccion (409 `ADDRESS_RECENTLY_DELETED`) mientras la marca siga viva y sea mas joven que
+  `MAIL_DIRECTORY_MAILBOX_RECREATE_HOLD` (15 min): la funcion `mail.mailbox_deletion_pending`
+  (SECURITY DEFINER, un booleano) responde por toda la celda aunque `mail_app` solo vea las marcas
+  de su empresa. En el contenedor de Dovecot, `maildir_reconcile.sh` (cron cada 5 min, rol
+  `mail_engine`, que lee y consume las marcas: su unica escritura ademas de `quota_usage`) mueve el
+  maildir a `_garbage/<epoch>_<dominio>_<local>` (lo purga `maildir_gc.sh` a los `MAILDIR_GC_TIME`
+  min) y concilia ademas todo maildir o dominio sin fila. La baja de una empresa no borra filas y
+  no mueve nada; la purga futura, al borrarlas, los llevara por ese camino. Probado: unitarias e
+  integracion contra Postgres (marca en la transaccion, retencion, funcion entre empresas, permisos
+  de `mail_engine`), `ops/scaffold/check-maildir-reconcile.sh` con mutaciones y la imagen de Dovecot
+  construida; la seccion de `make e2e-mail` esta escrita y sin ejecutar.
 
 Pendiente (P):
 
@@ -1212,7 +1235,9 @@ Pendiente (P):
   entrada (5 minutos); falta invalidarla con el evento del traslado.
 * Purga del directorio de una empresa dada de baja al terminar la retencion (una operacion con
   respaldo previo, como la de su base). Mientras tanto sus dominios siguen ocupando el nombre en
-  su celda: otra empresa de la misma celda no puede activarlos (otra celda si).
+  su celda: otra empresa de la misma celda no puede activarlos (otra celda si). Al borrar sus
+  filas de `mail.mailboxes` y `mail.domains`, el barrido de maildir de Dovecot llevara sus
+  maildir a `_garbage` en sus siguientes pasadas (de 50 en 50), sin nada que anadir.
 
 ### 5.5 Webmail por celda (V, 2026-09-13)
 
@@ -1363,6 +1388,7 @@ Pendiente (P):
 | El webmail de un buzon se sirve en la celda de su dominio: el gateway lleva el inicio de sesion por el dominio del buzon y el resto por la celda del token, y cada instancia solo acepta tokens de su celda; un dominio desconocido responde como una contrasena mala (5.5) | V (2026-09-13; con `GATEWAY_BASE_CELL_CODE` y `WEBMAIL_CELL_HOSTS`) |
 | Un dominio de correo solo esta activo en una empresa y una celda: se reclama en el indice global de organization antes de activarlo y se suelta despues de desactivarlo (5.5) | V (2026-09-13) |
 | Una empresa dada de baja deja de recibir, reenviar y autenticar en su celda antes de salir del registro, nada vuelve a encender su directorio y sus dominios se sueltan del indice solo despues (5.4) | V (2026-09-15) |
+| Quien recibe una direccion de buzon reutilizada no hereda el correo de su titular anterior: el maildir de un buzon borrado sale del volumen de Dovecot a `_garbage` (marca de baja en la transaccion del borrado y barrido cada 5 min en el contenedor de Dovecot), y la direccion no se vuelve a crear hasta que salio (409 durante la retencion) (5.4; `deploy/mail/README.md`, "Maildir de un buzon borrado") | V (2026-09-21; ventana residual documentada: solo si el barrido no corre durante toda la retencion; `make e2e-mail` escrito y sin ejecutar) |
 | Un servicio de empresa solo abre su esquema y no el registro (credencial por servicio) | V (2026-09-15, 5.2; los del plano de registro -identity, access-control, billing- siguen con la de plataforma) |
 | Un servicio de empresa solo lee del registro el enrutado: `mail_router` con `SELECT` solo sobre `organization.v_tenant_routing`, sin cuentas, permisos ni facturacion (5.2) | V (2026-09-15) |
 | Respaldo por base y restauracion probada semanalmente (`ops/backup`) | V (scripts), P (programados en este entorno) |

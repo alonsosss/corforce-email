@@ -136,6 +136,11 @@ if ! bash "$ROOT/ops/scaffold/check-dashboards.sh"; then
   FAIL=1
 fi
 
+echo "== 20. Barrido de maildir de Dovecot: solo lo que no tiene buzon, fail-closed, gracia y mutaciones =="
+if ! bash "$ROOT/ops/scaffold/check-maildir-reconcile.sh"; then
+  FAIL=1
+fi
+
 echo ""
 if [[ $FAIL -ne 0 ]]; then
   echo "VALIDACION: FALLA"; exit 1

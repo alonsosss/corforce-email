@@ -153,6 +153,9 @@ services:
       - LOG_LINES=${LOG_LINES:-9999}
       - IPV4_NETWORK=${IPV4_NETWORK:-172.22.1}
       - MAILDIR_GC_TIME=${MAILDIR_GC_TIME:-7200}
+      # Barrido de maildir sin buzon (maildir_reconcile.sh, README "Maildir de un buzon borrado").
+      - MAILDIR_RECONCILE_GRACE=${MAILDIR_RECONCILE_GRACE:-10}
+      - MAILDIR_RECONCILE_MAX_MOVES=${MAILDIR_RECONCILE_MAX_MOVES:-50}
       - ACL_ANYONE=${ACL_ANYONE:-disallow}
       - SKIP_FTS=${SKIP_FTS:-y}
       - FTS_HEAP=${FTS_HEAP:-512}

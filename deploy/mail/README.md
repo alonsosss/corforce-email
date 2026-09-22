@@ -70,6 +70,10 @@ No se copiaron: `data/web`, sogo, phpfpm, nginx, mysql, `dynmaps/*.php`,
   mapas BCC de Postfix (mailcow ya los aplicaba solo desde Rspamd).
 * **Cron.** Los jobs de Dovecot que lanzaba ofelia ahora los ejecuta busybox
   `crond` dentro del contenedor, gestionado por supervisord (ver mas abajo).
+* **Maildir de un buzon borrado.** mailcow lo mueve a `_garbage` desde su PHP por dockerapi
+  en el momento del borrado; aqui lo hace `maildir_reconcile.sh` dentro del contenedor de
+  Dovecot, a partir de la marca de baja que deja mail-directory (seccion "Maildir de un buzon
+  borrado").
 * **Nombres.** `MAILCOW_HOSTNAME` -> `MAIL_HOSTNAME`, `DBUSER/DBPASS/DBNAME` ->
   `MAIL_DB_*`, `REDISPASS` -> `MAIL_REDIS_PASSWORD`, `MAILCOW_REPLICA_IP` ->
   `MAIL_REPLICA_IP`, `ONLY_MAILCOW_HOSTNAME` -> `ONLY_MAIL_HOSTNAME`,
@@ -124,7 +128,7 @@ Comunes a casi todos: `TZ`, `LOG_LINES`, `IPV4_NETWORK` (por defecto `172.22.1`)
 | Contenedor | Variables propias |
 |---|---|
 | `postfix-mail` | `MAIL_HOSTNAME`, `MAIL_DB_HOST`, `MAIL_DB_PORT`, `MAIL_DB_NAME`, `MAIL_DB_USER`, `MAIL_DB_PASSWORD`, `MAIL_POLICY_HOST`, `SKIP_LETS_ENCRYPT`, `SPAMHAUS_DQS_KEY`, `SPAMHAUS_ASN_CHECK_URL` |
-| `dovecot-mail` | `MAIL_HOSTNAME`, `MAIL_DB_*`, `MAIL_AUTH_URL`, `DOVECOT_MASTER_USER`, `DOVECOT_MASTER_PASS`, `DOVECOT_MASTER_ALLOWED_NETS`, `DOVECOT_MIGRATION_MASTER_USER`, `DOVECOT_MIGRATION_MASTER_PASS`, `DOVECOT_MIGRATION_MASTER_ALLOWED_NETS`, `MAIL_MIGRATION_IPV4_NETWORK`, `DOVEADM_API_KEY`, `MAIL_REPLICA_IP`, `DOVEADM_REPLICA_PORT`, `MAILDIR_GC_TIME`, `ACL_ANYONE`, `SKIP_FTS`, `FTS_HEAP`, `FTS_PROCS`, `MAILDIR_SUB`, `MASTER`, `COMPOSE_PROJECT_NAME` |
+| `dovecot-mail` | `MAIL_HOSTNAME`, `MAIL_DB_*`, `MAIL_AUTH_URL`, `DOVECOT_MASTER_USER`, `DOVECOT_MASTER_PASS`, `DOVECOT_MASTER_ALLOWED_NETS`, `DOVECOT_MIGRATION_MASTER_USER`, `DOVECOT_MIGRATION_MASTER_PASS`, `DOVECOT_MIGRATION_MASTER_ALLOWED_NETS`, `MAIL_MIGRATION_IPV4_NETWORK`, `DOVEADM_API_KEY`, `MAIL_REPLICA_IP`, `DOVEADM_REPLICA_PORT`, `MAILDIR_GC_TIME`, `MAILDIR_RECONCILE_GRACE`, `MAILDIR_RECONCILE_MAX_MOVES`, `ACL_ANYONE`, `SKIP_FTS`, `FTS_HEAP`, `FTS_PROCS`, `MAILDIR_SUB`, `MASTER`, `COMPOSE_PROJECT_NAME` |
 | `rspamd-mail` | `MAIL_POLICY_HOST`, `SPAMHAUS_DQS_KEY`, `SKIP_OLEFY` |
 | `acme-mail` | `MAIL_HOSTNAME`, `MAIL_DB_*`, `ADDITIONAL_SAN`, `AUTODISCOVER_SAN`, `SKIP_LETS_ENCRYPT`, `DIRECTORY_URL`, `ENABLE_SSL_SNI`, `SKIP_IP_CHECK`, `SKIP_HTTP_VERIFICATION`, `ONLY_MAIL_HOSTNAME`, `LE_STAGING`, `SNAT_TO_SOURCE`, `SNAT6_TO_SOURCE`, `ACME_DNS_CHALLENGE`, `ACME_DNS_PROVIDER`, `ACME_ACCOUNT_EMAIL`, `COMPOSE_PROJECT_NAME` |
 | `watchdog-mail` | `MAIL_HOSTNAME`, `USE_WATCHDOG`, `WATCHDOG_NOTIFY_EMAIL`, `WATCHDOG_NOTIFY_BAN`, `WATCHDOG_NOTIFY_START`, `WATCHDOG_SUBJECT`, `WATCHDOG_NOTIFY_WEBHOOK`, `WATCHDOG_NOTIFY_WEBHOOK_BODY`, `WATCHDOG_VERBOSE`, `IP_BY_DOCKER_API`, `CHECK_UNBOUND`, `SKIP_CLAMD`, `SKIP_OLEFY`, `SKIP_LETS_ENCRYPT`, `*_THRESHOLD`, `MAILQ_CRIT`, `DEV_MODE`, `COMPOSE_PROJECT_NAME` |
@@ -917,6 +921,97 @@ el script; `mail_engine` no lee la tabla `mail.vacation_replies`. V con `make e2
 
 ACME: `SELECT domain FROM mail.domains WHERE NOT backupmx AND active`.
 
+## Maildir de un buzon borrado (V, 2026-09-21)
+
+Borrar un buzon por el API de mail-directory quita su fila de `mail.mailboxes` (y, por
+`mail.mailbox.deleted`, su respuesta automatica, sus contactos y calendarios de mail-dav y sus
+trabajos de migracion), pero su maildir `/var/vmail/<dominio>/<local>/` sigue en el volumen
+`vmail-vol` de Dovecot: ningun servicio Go lo alcanza. Visto en produccion: tras borrar y volver
+a crear una direccion, el buzon nuevo NACIO con los mensajes del anterior (quien recibe una
+direccion reutilizada hereda el correo de su titular anterior), `doveadm` decia "User doesn't
+exist" con el maildir aun en el disco, y 13 directorios huerfanos ocupaban espacio. mailcow lo
+resuelve moviendo el maildir a `_garbage` desde su PHP por dockerapi; aqui dockerapi no se
+amplia, el API de doveadm solo admite la revocacion y ningun servicio recibe el socket de docker
+(seccion "Gestor de la cola", `docs/adr/0004`). Lo que se hace:
+
+* **Marca de baja en la transaccion del borrado.** `DeleteMailbox` inserta en
+  `mail.mailbox_deletions` (`migrations/cell/canonical/mail-directory/12_mailbox_deletions.sql`:
+  `id`, `tenant_id`, `mailbox_id`, `username`, `local_part`, `domain`, `deleted_at`) en la misma
+  transaccion que borra la fila: sin poder dejar la marca el buzon no se borra. `mail_app` solo
+  deja y ve las de su empresa; `mail_engine` (Dovecot) las lee y las **borra**, y nada mas: es la
+  unica tabla del esquema, ademas de `quota_usage`, en la que el rol de los motores escribe, y
+  una marca es una orden para el barrido sin credenciales ni contenido.
+* **Barrido en el contenedor de Dovecot.** `dovecot/maildir_reconcile.sh`, lanzado por
+  `dovecot/crontab` cada 5 minutos (solo `MASTER=y`) como `vmail`, con la misma conexion de
+  solo lectura del userdb (`MAIL_DB_*`, `psql`). Nunca borra: mueve a
+  `/var/vmail/_garbage/<epoch>_<dominio>_<local>/` (un dominio entero, a `<epoch>_<dominio>/`),
+  la misma convencion que mailcow, y `maildir_gc.sh` lo purga a los `MAILDIR_GC_TIME` minutos
+  (por defecto 7200, cinco dias: la ventana para deshacer). Dos pasadas:
+  1. **Marcas**: para cada marca, si el maildir existe y es anterior a la baja (algo en el tiene
+     mtime no posterior a `deleted_at`) se mueve y la marca se consume. Si el buzon se volvio a
+     crear con el mismo nombre (fila con `created_at` posterior a la marca), la referencia es esa
+     alta: un maildir en el que todo es posterior lo creo Dovecot para el buzon nuevo y no se
+     toca (la marca se consume); uno con algo anterior es del titular anterior y se mueve
+     entero, y se anota cuantos ficheros posteriores al alta se fueron con el (correo del buzon
+     nuevo, recuperable en `_garbage` durante `MAILDIR_GC_TIME`): se elige mover porque la
+     exposicion del correo del anterior no se puede deshacer y la perdida si.
+  2. **Huerfanos**: todo `/var/vmail/<dominio>/<local>` sin fila en `mail.mailboxes` (en
+     cualquier estado: un buzon apagado, por ejemplo el de una empresa dada de baja, conserva
+     su fila y no se toca) y todo `/var/vmail/<dominio>` sin fila en `mail.domains`. Cubre lo
+     borrado antes de que existiera la marca, lo que quede de un `_garbage` restaurado a mano y
+     la purga futura de una empresa dada de baja: cuando esa purga borre las filas, este barrido
+     se lleva sus maildir por el mismo camino, sin codigo nuevo.
+* **Cuidados.** El disco se lista ANTES de consultar la base, asi que un maildir que Dovecot
+  crea despues de la consulta no esta en la lista y uno que si esta tenia su fila antes de ella;
+  ademas un directorio mas joven que `MAILDIR_RECONCILE_GRACE` minutos (por defecto 10, mtime del
+  propio directorio) no se mueve. Fail-closed: cualquier fallo o salida inesperada de `psql`
+  aborta la pasada sin mover nada, y una consulta de buzones o de dominios vacia tambien (una
+  base vacia por error vaciaria el servidor). Tope de `MAILDIR_RECONCILE_MAX_MOVES` movimientos
+  por pasada (por defecto 50). Solo directorios regulares, nunca enlaces; solo nombres con forma
+  de dominio y de parte local, y nunca `_garbage`, `sieve*` ni `platform.local` (el resto se
+  ignora y se anuncia). `flock` sobre `_garbage/.reconcile.lock`, compartido con
+  `maildir_gc.sh`: nunca se solapa consigo mismo ni con la purga. Cada movimiento se registra
+  con nombre, destino, tamano y motivo, nunca contenido; la salida va al registro del contenedor
+  (crond la vuelca a su stdout). Ejecutado a mano como root (`docker exec`) se reejecuta como
+  `vmail`. Las sesiones IMAP del buzon borrado ya las cerro mail-security
+  (`mail.mailbox.deleted`, "Revocacion en Dovecot"), asi que ningun proceso escribe en el
+  maildir que se mueve.
+* **Retencion de la direccion en mail-directory.** Crear un buzon con una direccion cuya marca
+  de baja sigue viva y es mas joven que `MAIL_DIRECTORY_MAILBOX_RECREATE_HOLD` (por defecto
+  `15m`; `0` la desactiva) responde 409 `ADDRESS_RECENTLY_DELETED`: la funcion
+  `mail.mailbox_deletion_pending` (SECURITY DEFINER, solo un booleano) responde por toda la
+  celda, tambien si el nombre cambio de empresa. En cuanto el barrido consume la marca, la
+  direccion se crea al momento. La retencion tiene que ser mayor que la gracia mas la cadencia
+  del barrido (10 + 5 minutos).
+* **Ventana residual, con honestidad.** En operacion normal el buzon nuevo nunca nace sobre el
+  maildir del anterior: la marca lo retiene hasta que el barrido lo movio (a lo sumo 5 minutos
+  tras el borrado). La ventana se abre solo si el barrido no corre durante toda la retencion
+  (Dovecot parado o `MASTER=n`, cron caido, base inaccesible: cada pasada abortada queda en el
+  registro): pasados esos 15 minutos la direccion se puede crear y, hasta la siguiente pasada,
+  el buzon nuevo ve el correo del anterior; esa pasada mueve el maildir entero (con lo que el
+  buzon nuevo hubiera recibido, recuperable en `_garbage`) y el buzon nuevo sigue limpio desde
+  ahi. Lo borrado antes de desplegar esto no tiene marca: la pasada de huerfanos lo mueve en
+  las primeras ejecuciones, de 50 en 50.
+* **Baja de una empresa.** No mueve nada: la baja desactiva y conserva el directorio durante la
+  retencion, y sus buzones conservan la fila (`active = 0`), asi que el barrido no los toca; los
+  maildir acaban en `_garbage` cuando la purga de la empresa borre sus filas
+  (`docs/Modelo_de_Datos_y_Celdas.md`, 5.4).
+* **Probado.** `ops/scaffold/check-maildir-reconcile.sh` (en `make checks`): arbol de maildir y
+  `psql` falsos, cada regla y dos mutaciones. Pruebas de integracion de mail-directory contra
+  Postgres real (marca en la transaccion, retencion, funcion entre empresas, permisos de
+  `mail_engine`). La imagen construida y el guion ejecutado dentro de ella como root con un
+  arbol y un `psql` falsos (reejecucion como `vmail`, cerrojo, `flock FILE PROG` de busybox,
+  `find -newermt @epoch`, salida de crond). La seccion "Maildir de un buzon borrado" de
+  `ops/e2e/mail.sh` (Dovecot real: entrega, borrado, 409, pasada sin base que no mueve nada,
+  pasada real, `_garbage/<epoch>_acme.test_dani`, buzon recreado que nace vacio, buzon vivo con
+  correo que no se mueve) esta escrita y SIN ejecutar.
+* **Despliegue.** Primero la migracion de celda 12 en todas las celdas (sin ella el
+  mail-directory nuevo no puede borrar buzones: la marca es parte del borrado), luego
+  mail-directory, y por ultimo recrear el motor `dovecot-mail` (`scripts/deploy-mail.sh`:
+  imagen nueva con el guion y el crontab). Un Dovecot anterior no consume marcas: hasta
+  recrearlo, borrar y recrear una direccion responde 409 durante 15 minutos y despues se crea
+  sobre el maildir anterior, como hasta ahora.
+
 ## Tareas periodicas (Dovecot)
 
 `dovecot/crontab` lo ejecuta busybox `crond` bajo supervisord (mismo contenedor,
@@ -926,7 +1021,8 @@ sin scheduler externo):
 |---|---|---|
 | `trim_logs.sh` | cada hora (`MASTER=y`) | recorta las listas de log en Redis a `LOG_LINES` |
 | `clean_q_aged.sh` | diaria (`MASTER=y`) | busca `mail.quarantine`, que no existe (la cuarentena es `mail_security.quarantine`), y no hace nada. La poda por antiguedad la hace `mail-security` en su reconciliacion, con el `max_age_days` de cada empresa, sin dar a `mail_engine` permiso de borrado |
-| `maildir_gc.sh` | cada 30 min | purga `/var/vmail/_garbage` con mas de `MAILDIR_GC_TIME` min |
+| `maildir_gc.sh` | cada 30 min | purga `/var/vmail/_garbage` con mas de `MAILDIR_GC_TIME` min (ctime, que `mv` renueva); bajo el mismo cerrojo que el barrido |
+| `maildir_reconcile.sh` | cada 5 min (`MASTER=y`) | mueve a `_garbage` el maildir de cada buzon borrado (marcas de `mail.mailbox_deletions`, que consume) y los maildir y dominios sin fila en el directorio; seccion "Maildir de un buzon borrado" |
 | `sa-rules.sh` | diaria 03:00 | descarga reglas SpamAssassin de Heinlein y reinicia rspamd via dockerapi si cambian |
 | `optimize-fts.sh` | diaria | `doveadm fts optimize -A` si FTS activo |
 | `repl_health.sh` | cada 5 min | publica `DOVECOT_REPL_HEALTH` |
