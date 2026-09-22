@@ -300,6 +300,14 @@ type SpamLearner interface {
 	LearnHam(ctx context.Context, msg []byte) error
 }
 
+// AntispamInspector lee del controller de Rspamd sus contadores (GET /stat) y su historial reciente
+// (GET /history): solo lectura, nunca configuracion, pesos ni entrenamiento. Sin contrasena devuelve
+// domain.ErrNotConfigured; un controller que no responde, domain.ErrEngineUnreachable.
+type AntispamInspector interface {
+	Stats(ctx context.Context) (domain.RspamdStats, error)
+	History(ctx context.Context) ([]domain.RspamdHistoryRow, error)
+}
+
 // Transactor abre la transaccion bajo la que corre el API de administracion: cambia al
 // rol sujeto a RLS y fija la empresa de la peticion (pkg/db.ContextPool.TransactRLS).
 type Transactor interface {

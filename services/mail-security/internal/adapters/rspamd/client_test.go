@@ -12,7 +12,7 @@ import (
 	"github.com/alonsosss/corforce-email/services/mail-security/internal/domain"
 )
 
-func controller(t *testing.T, status *int) (*Learner, *[]string) {
+func controller(t *testing.T, status *int) (*Client, *[]string) {
 	t.Helper()
 	var seen []string
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

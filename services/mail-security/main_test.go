@@ -139,7 +139,8 @@ func rutasConCortafuegos() chi.Router {
 	policy.FirewallNets = []domain.FirewallNetwork{{ID: uuid.New(), List: "deny", Network: "192.0.2.0/24", Note: "red de pe-01"}}
 	fw := app.NewFirewallUseCase(app.FirewallDeps{Policy: policy, Store: apptest.NewStore(), Logger: zap.NewNop()})
 	queue := app.NewQueueUseCase(apptest.NewQueue(), zap.NewNop())
-	return handler.NewHandler(nil, nil, fw, nil, authz.NewChecker("http://127.0.0.1:9", "")).WithQueue(queue).Routes()
+	antispam := app.NewAntispamUseCase(apptest.NewAntispam(), zap.NewNop())
+	return handler.NewHandler(nil, nil, fw, nil, authz.NewChecker("http://127.0.0.1:9", "")).WithQueue(queue).WithAntispam(antispam).Routes()
 }
 
 func pedirConCeldaDestino(h http.Handler, method, path, tenant, roles, cell string, n int) *httptest.ResponseRecorder {
@@ -181,7 +182,7 @@ func TestElOperadorConCeldaDestinoSoloLlegaAlCortafuegos(t *testing.T) {
 	for _, pr := range handler.PlatformRoutes() {
 		plataformaRutas[pr.Method+" "+pr.Pattern] = true
 	}
-	if len(plataformaRutas) != 13 {
+	if len(plataformaRutas) != 15 {
 		t.Fatalf("rutas de plataforma: %v", plataformaRutas)
 	}
 	n, atendidas, rechazadas := 0, 0, 0
@@ -217,7 +218,7 @@ func TestElOperadorConCeldaDestinoSoloLlegaAlCortafuegos(t *testing.T) {
 		}
 		return nil
 	})
-	if err != nil || atendidas != 13 || rechazadas < 30 {
+	if err != nil || atendidas != 15 || rechazadas < 30 {
 		t.Fatalf("atendidas %d, rechazadas %d: %v", atendidas, rechazadas, err)
 	}
 	firewall := "/api/v1/mail-security/firewall/networks"

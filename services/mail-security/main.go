@@ -405,11 +405,14 @@ func main() {
 	policyUC := app.NewPolicyUseCase(app.PolicyDeps{
 		Tx: ctxPool, Repo: postgres.NewPolicyRepository(ctxPool), Directory: directory, Sync: redisSync, Logger: logger,
 	})
+	// Controller de Rspamd: entrena desde la cuarentena y sirve al superadmin sus contadores e historial
+	// (docs/adr/0009). Sin RSPAMD_CONTROLLER_PASSWORD las dos cosas responden 503 NOT_CONFIGURED.
+	controller := rspamd.New(st.controllerURL, os.Getenv("RSPAMD_CONTROLLER_PASSWORD"))
 	quarantineUC := app.NewQuarantineUseCase(app.QuarantineDeps{
 		Tx:         ctxPool,
 		Repo:       quarantineRepo,
 		Reinjector: smtpadapter.New(st.reinjectAddr, envOrDefault("MAIL_HOSTNAME", "mail-security")),
-		Learner:    rspamd.New(st.controllerURL, os.Getenv("RSPAMD_CONTROLLER_PASSWORD")),
+		Learner:    controller,
 		Events:     publisher,
 		Notices:    noticeRepo,
 		Links:      quarantineLinks,
@@ -462,7 +465,10 @@ func main() {
 
 	// Superficie A: API de administracion tras el gateway (y rutas internas con token). El
 	// cortafuegos es de plataforma: el superadmin lo opera en cualquier celda con celda destino.
-	routes := handler.NewHandler(policyUC, quarantineUC, firewallUC, dkimUC, st.perms).WithQueue(queueUseCase(queueAgent, logger)).Routes()
+	routes := handler.NewHandler(policyUC, quarantineUC, firewallUC, dkimUC, st.perms).
+		WithQueue(queueUseCase(queueAgent, logger)).
+		WithAntispam(app.NewAntispamUseCase(controller, logger)).
+		Routes()
 	if err := membership.AcceptOperators(routes, handler.PlatformRoutes()); err != nil {
 		log.Fatalf("celda de la instancia: %v", err)
 	}

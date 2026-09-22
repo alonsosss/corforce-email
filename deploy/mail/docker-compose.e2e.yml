@@ -139,6 +139,8 @@ services:
       QUEUE_AGENT_API_KEY: ${QUEUE_AGENT_API_KEY:?lo fija ops/e2e/mail.sh}
       QUEUE_AGENT_TLS_CA_FILE: /run/cfm-e2e/tls/ca.pem
       MAIL_QUEUE_POLL_INTERVAL: 10s
+      # La misma que ops/e2e/mail.sh escribe en worker-controller-password.inc de la copia de deploy/mail.
+      RSPAMD_CONTROLLER_PASSWORD: ${RSPAMD_CONTROLLER_PASSWORD:?lo fija ops/e2e/mail.sh}
     volumes:
       - ${E2E_TLS_DIR:?lo fija ops/e2e/mail.sh}/ca.pem:/run/cfm-e2e/tls/ca.pem:ro
     extra_hosts:

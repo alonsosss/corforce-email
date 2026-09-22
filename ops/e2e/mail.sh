@@ -85,6 +85,7 @@ en() { local s="$1"; shift; docker exec -i "$(c "$s")" "$@"; }
 compose() {
   CELL_DB_PASSWORD="${CELL_PASS}" MAIL_DB_PASSWORD="$MAIL_DB_PASS" MAIL_REDIS_PASSWORD="$MAIL_REDIS_PASS" \
     DOVECOT_MASTER_USER="${MASTER_USER}" DOVECOT_MASTER_PASS="$MASTER_PASS" DOVEADM_API_KEY="${DOVEADM_KEY}" QUEUE_AGENT_API_KEY="${QUEUE_KEY}" \
+    RSPAMD_CONTROLLER_PASSWORD="${RSPAMD_PASS}" \
     MAIL_MIGRATION_RUNNER_KEY="${MIGRATION_KEY}" DOVECOT_MIGRATION_MASTER_USER="${MIGRATION_MASTER_USER}" DOVECOT_MIGRATION_MASTER_PASS="${MIGRATION_MASTER_PASS}" \
     E2E_PORT_MAIL_MIGRATION_RUNNER="$MIGRATION_RUNNER_PORT" \
     docker compose -p "$PROYECTO" -f "$MAILDIR/docker-compose.mail.yml" -f "$MAILDIR/docker-compose.e2e.yml" "$@"
@@ -185,6 +186,12 @@ MASTER_PASS="$(rand_hex 24)"
 DOVEADM_KEY="$(rand_hex 32)"
 # Clave del agente de la cola de Postfix: la reciben Postfix y mail-security (gestor de cola).
 QUEUE_KEY="$(rand_hex 32)"
+# Contrasena del controller de Rspamd: la lee Rspamd de worker-controller-password.inc (fichero ignorado por
+# git que su entrypoint solo crea si falta; aqui se escribe en la COPIA de deploy/mail) y mail-security la
+# manda en la cabecera Password para entrenar y para la lectura del superadmin (estadisticas e historial).
+# En claro a proposito: Rspamd la admite asi (con un aviso) y la prueba no la conserva.
+RSPAMD_PASS="$(rand_hex 24)"
+printf 'password = "%s";\n' "$RSPAMD_PASS" > "$MAILDIR/rspamd/override.d/worker-controller-password.inc"
 # Clave del ejecutor de migracion (la reciben mail-migration y el ejecutor) y usuario maestro de Dovecot
 # propio de la migracion (Dovecot y el ejecutor), distinto del del webmail.
 MIGRATION_KEY="$(rand_hex 32)"
@@ -1343,6 +1350,38 @@ cola "$A2" GET ""
 expect "un administrador de empresa no ve la cola" "$COLA_CODE" "403"
 cola "$A2" DELETE "/$QID1"
 expect "ni borra un mensaje" "$COLA_CODE" "403"
+
+echo "== Lectura del antispam (controller de Rspamd -> mail-security -> gateway, solo superadmin)"
+# Rspamd ya analizo correo real mas arriba (rspamc y los envios por Postfix): sus contadores y su historial
+# (history_redis en redis-mail) tienen que reflejarlo. Solo lectura: no hay ruta que escriba en el controller.
+antispam() { # antispam <cabecera> <ruta>: deja AS_CODE y AS_BODY
+  AS_CODE=$(curl -s -o "$WORK/antispam.json" -w '%{http_code}' "$GW/mail-security/rspamd$2" -H "$1")
+  AS_BODY=$(cat "$WORK/antispam.json")
+}
+antispam "$A1" "/stats"
+expect "el superadmin lee las estadisticas del controller" "$AS_CODE" "200"
+AS_SCANNED=$(echo "$AS_BODY" | jget data.scanned)
+[[ "$AS_SCANNED" =~ ^[0-9]+$ && "$AS_SCANNED" -gt 0 ]] && ok "con mensajes analizados ($AS_SCANNED)" || mal "mensajes analizados: '$AS_SCANNED'"
+contains "los veredictos" "$AS_BODY" '"actions"'
+contains "y el clasificador bayesiano" "$AS_BODY" '"statfiles"'
+lacks "sin la contrasena del controller en la respuesta" "$AS_BODY" "$RSPAMD_PASS"
+antispam "$A1" "/history?limit=5"
+expect "y el historial reciente acotado" "$AS_CODE" "200"
+AS_ROWS=$(echo "$AS_BODY" | python3 -c 'import json, sys; d = json.load(sys.stdin)["data"]; print(len(d["rows"]), d["total"] >= len(d["rows"]))')
+[[ "$AS_ROWS" == *" True" && "${AS_ROWS%% *}" -le 5 && "${AS_ROWS%% *}" -ge 1 ]] && ok "con como mucho 5 filas ($AS_ROWS)" || mal "filas del historial: '$AS_ROWS'"
+contains "cada fila lleva el sobre y el veredicto" "$AS_BODY" '"required_score"'
+contains "con el remitente de la prueba" "$AS_BODY" "ana@acme.test"
+lacks "y nunca las opciones de los simbolos ni el cuerpo" "$AS_BODY" '"options"'
+antispam "$A1" "/history?limit=0"
+expect "un limite que no es positivo se rechaza" "$AS_CODE" "400"
+antispam "$A2" "/stats"
+expect "un administrador de empresa no lee las estadisticas" "$AS_CODE" "403"
+antispam "$A2" "/history"
+expect "ni el historial" "$AS_CODE" "403"
+# Desde fuera del bucle local (secure_ip) el controller sigue exigiendo la contrasena: la lectura del
+# superadmin no la ha abierto a nadie. Rspamd responde 401 o 403 segun la version.
+AS_SIN_CLAVE=$(en rspamd-mail wget -q -O /dev/null -S "http://$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$(c rspamd-mail)"):11334/stat" 2>&1 | awk '/HTTP\// { print $2; exit }')
+[[ "$AS_SIN_CLAVE" == 401 || "$AS_SIN_CLAVE" == 403 ]] && ok "el controller sigue exigiendo contrasena fuera del bucle local ($AS_SIN_CLAVE)" || mal "controller sin contrasena: '$AS_SIN_CLAVE'"
 cola "$A1" DELETE "/no-valido"
 expect "un identificador invalido se rechaza (422)" "$COLA_CODE" "422"
 en_cola_de() { cola_json | python3 -c 'import json, sys

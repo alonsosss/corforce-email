@@ -33,6 +33,7 @@ type Handler struct {
 	firewall   *app.FirewallUseCase
 	dkim       *app.DKIMUseCase
 	queue      *app.QueueUseCase
+	antispam   *app.AntispamUseCase
 	authz      *authz.Checker
 	// publicLimiter frena por ip los enlaces sin sesion del aviso de cuarentena, por
 	// debajo del limite general del servicio.
@@ -54,6 +55,13 @@ func (h *Handler) WithQueue(queue *app.QueueUseCase) *Handler {
 	return h
 }
 
+// WithAntispam conecta la lectura del controller de Rspamd (estadisticas e historial). Sin ella, sus rutas
+// responden 503 NOT_CONFIGURED.
+func (h *Handler) WithAntispam(antispam *app.AntispamUseCase) *Handler {
+	h.antispam = antispam
+	return h
+}
+
 func (h *Handler) can(resource, action string) func(http.Handler) http.Handler {
 	return h.authz.RequirePermission(permissionModule, resource, action)
 }
@@ -61,10 +69,10 @@ func (h *Handler) can(resource, action string) func(http.Handler) http.Handler {
 // adminPrefix es el prefijo del API de administracion, el que enruta el gateway.
 const adminPrefix = "/api/v1/mail-security"
 
-// platformRoutes son las rutas de plataforma de la celda: el cortafuegos (mail_security/firewall/*) y la
-// cola de Postfix (mail_security/queue/*). El permiso es de plataforma y, en el caso de uso, se exige
-// superadmin. Son las unicas que un operador con celda destino alcanza en una celda que no es la de su
-// empresa (PlatformRoutes).
+// platformRoutes son las rutas de plataforma de la celda: el cortafuegos (mail_security/firewall/*), la
+// cola de Postfix (mail_security/queue/*) y la lectura del antispam (mail_security/rspamd/read). El permiso
+// es de plataforma y, en el caso de uso, se exige superadmin. Son las unicas que un operador con celda
+// destino alcanza en una celda que no es la de su empresa (PlatformRoutes).
 var platformRoutes = []struct {
 	method, path, resource, action string
 	serve                          func(*Handler, http.ResponseWriter, *http.Request)
@@ -83,6 +91,9 @@ var platformRoutes = []struct {
 	{http.MethodPost, "/queue/{id}/hold", "queue", "update", queueAction(domain.QueueHold)},
 	{http.MethodPost, "/queue/{id}/unhold", "queue", "update", queueAction(domain.QueueUnhold)},
 	{http.MethodDelete, "/queue/{id}", "queue", "delete", queueAction(domain.QueueDelete)},
+
+	{http.MethodGet, "/rspamd/stats", "rspamd", "read", (*Handler).RspamdStats},
+	{http.MethodGet, "/rspamd/history", "rspamd", "read", (*Handler).RspamdHistory},
 }
 
 // PlatformRoutes son las rutas de plataforma tal como las monta Routes, para
