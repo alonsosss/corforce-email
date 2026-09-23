@@ -8,7 +8,7 @@
 # DEPLOY_PROFILE en el .env (configuracion, no secreto): vacio o aws es la plataforma sobre
 # servicios gestionados de AWS (docker-compose.yml); selfhosted es la produccion autoalojada, que
 # anade docker-compose.selfhosted.yml y levanta ella misma Postgres, Redis, PgBouncer y el proxy
-# de borde. Los dos caminos de despliegue (scripts/deploy-ecr.sh y release.yml) le preguntan a
+# de borde y MinIO. Los dos caminos de despliegue (scripts/deploy-ecr.sh y release.yml) le preguntan a
 # este guion en vez de decidirlo cada uno, para que no puedan divergir. Cualquier otro valor
 # detiene el despliegue: un perfil mal escrito no puede caer en silencio en el de AWS, que en un
 # servidor propio levanta los servicios sin base ni TLS.
@@ -70,6 +70,7 @@ case "$ACCION:$perfil" in
   compose:aws) echo "-f docker-compose.yml" ;;
   compose:selfhosted) echo "-f docker-compose.yml -f docker-compose.selfhosted.yml" ;;
   infra:aws) ;;
-  # En orden de arranque: las dependencias antes; el proxy de borde, tras el gateway.
-  infra:selfhosted) echo "postgres-primary redis pgbouncer nats edge-proxy" ;;
+  # En orden de arranque: las dependencias antes; el proxy de borde, tras el gateway. minio-init es
+  # un trabajo que sale (bucket y usuario de servicio): esperar-sanos.sh lo da por bueno si sale con 0.
+  infra:selfhosted) echo "postgres-primary redis pgbouncer nats minio minio-init edge-proxy" ;;
 esac

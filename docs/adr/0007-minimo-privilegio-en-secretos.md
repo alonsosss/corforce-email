@@ -38,7 +38,8 @@ Go (todo servicio monta `RequireGatewayToken`, `pkg/middleware/middleware.go`):
 | Contenedor | Secretos, además del token interno |
 |---|---|
 | identity | `JWT_SIGNING_KEY` |
-| gateway, access-control, mail-auth, reputation | `REDIS_PASSWORD` |
+| gateway | `REDIS_PASSWORD`, `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY` (usuario de servicio de MinIO, acotado al bucket; 2026-09-23, ADR 0012) |
+| access-control, mail-auth, reputation | `REDIS_PASSWORD` |
 | webmail | `REDIS_PASSWORD`, `WEBMAIL_MASTER_USER`, `WEBMAIL_MASTER_PASSWORD` |
 | audit | `AUDIT_HASH_KEY`, `AUDIT_HASH_KEYS_OLD` |
 | domain-service | `MAIL_ENCRYPTION_KEY`, `MAIL_ENCRYPTION_KEYS_OLD`, `SES_IDENTITIES_ACCESS_KEY_ID`, `SES_IDENTITIES_SECRET_ACCESS_KEY` |
@@ -47,6 +48,7 @@ Go (todo servicio monta `RequireGatewayToken`, `pkg/middleware/middleware.go`):
 | transactional | `MAIL_LINK_SIGNING_KEY`, `SES_ACCESS_KEY_ID`, `SES_SECRET_ACCESS_KEY` |
 | organization, scheduler, billing, mail-directory, mail-dav, suppression, templates, contacts, campaigns, automations, analytics | ninguno |
 | redis / grafana | `REDIS_PASSWORD` / `GRAFANA_ADMIN_PASSWORD` |
+| minio / minio-init (perfil autoalojado) | `MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD` / los dos y `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY` (crea el usuario de servicio) |
 | dovecot-mail | `MAIL_REDIS_PASSWORD`, `DOVECOT_MASTER_USER/PASS`, `DOVECOT_MIGRATION_MASTER_USER/PASS`, `DOVEADM_API_KEY` |
 | postfix-mail | `MAIL_REDIS_PASSWORD`, `QUEUE_AGENT_API_KEY` |
 | mail-migration-runner | `MAIL_MIGRATION_RUNNER_KEY`, `DOVECOT_MIGRATION_MASTER_USER/PASS` |
@@ -56,8 +58,10 @@ Go (todo servicio monta `RequireGatewayToken`, `pkg/middleware/middleware.go`):
 así que se retira de la lista. Un secreto que el almacén materializa y nadie usa es superficie sin dueño.
 
 El inventario sale de leer el código, no de la intuición: los literales `os.Getenv`/`config.Env*`/`crypto.LoadKeyRing`
-de cada `services/<svc>`, más tres lecturas que pasan por `pkg/` (`middleware.RequireGatewayToken` e
-`InternalGatewayToken`, `cfg.Redis` de `pkg/config/redis.go` y `auth.SignerFromEnv` de `pkg/auth/keys.go`); en los
+de cada `services/<svc>`, más las lecturas que pasan por `pkg/` (`middleware.RequireGatewayToken` e
+`InternalGatewayToken`, `cfg.Redis` de `pkg/config/redis.go`, `auth.SignerFromEnv` de `pkg/auth/keys.go` y, desde
+2026-09-23, `objectstore.FromEnv`/`FromEnvNamespace` de `pkg/objectstore`, que leen `MINIO_ACCESS_KEY` y
+`MINIO_SECRET_KEY`); en los
 motores, los `entrypoint`, `syslog-ng.conf`, `redis-conf.sh` y el código Go/Python de cada uno. `config.Load` lee
 `REDIS_PASSWORD` en todos los servicios, pero solo cinco abren Redis: los demás no lo reciben. Todo servicio Go que
 importe `go-redis` sin `cfg.Redis` (mail-security) usa el Redis de los motores (`MAIL_REDIS_PASSWORD`).

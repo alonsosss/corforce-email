@@ -20,7 +20,8 @@
 #   - unidades de systemd: plantilla coherente con install-timers.sh, UMask 0077, todos los
 #     temporizadores activados, y bootstrap.sh instalando por ese guion;
 #   - el respaldo de los volumenes de correo: imagen de tar fijada e igual en respaldo y
-#     restauracion, buzones y claves de mail_crypt por defecto y crypt-vol nunca sin cifrar fuera;
+#     restauracion, buzones y claves de mail_crypt por defecto (y minio-data en el perfil
+#     autoalojado), y crypt-vol y minio-data nunca sin cifrar fuera;
 #   - todo trabajo que publique metrica tiene alerta en plataforma.yml;
 #   - el nombre del servicio de Postgres es el de compose y el del certificado interno;
 #   - el despliegue sincroniza ops/backup, ops/db y ops/maintenance.
@@ -278,6 +279,14 @@ if 'VOLUMENES:-crypt-vol vmail-vol' not in correo:
     fallos.append("backup-mail-volumes.sh ya no respalda por defecto crypt-vol (claves de mail_crypt) y vmail-vol (buzones)")
 if not re.search(r'\[\[ "\$vol" == crypt-vol \]\] && ! cf_externo_cifra', correo):
     fallos.append("backup-mail-volumes.sh debe negarse a subir crypt-vol sin cifrar: es la clave que descifra todo el correo")
+# El almacen de objetos del perfil autoalojado (docs/adr/0012): las imagenes de los correos entran en la
+# copia, y su volumen guarda en claro la configuracion IAM de MinIO (la clave del usuario de servicio).
+if not re.search(r'CF_PERFIL_DESPLIEGUE" == selfhosted \]\]; then\n\s+VOLUMENES_APP=minio-data', correo):
+    fallos.append("backup-mail-volumes.sh ya no respalda por defecto minio-data (objetos de MinIO) en el perfil selfhosted")
+if not re.search(r'\[\[ "\$vol" == minio-data \]\] && ! cf_externo_cifra', correo):
+    fallos.append("backup-mail-volumes.sh debe negarse a subir minio-data sin cifrar: lleva la clave del usuario de servicio de MinIO")
+if not re.search(r"^  minio-data:\s*$", leer("docker-compose.selfhosted.yml"), re.M):
+    fallos.append("docker-compose.selfhosted.yml ya no declara el volumen minio-data que respalda backup-mail-volumes.sh")
 if "--exclude=./_garbage" not in correo:
     fallos.append("backup-mail-volumes.sh archiva _garbage (lo que Dovecot ya borro)")
 

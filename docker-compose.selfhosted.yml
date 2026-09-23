@@ -169,6 +169,10 @@ services:
       GOMEMLIMIT: 150MiB
       # El gateway acepta X-Real-IP solo de la red edge, donde no hay mas que el proxy de borde.
       TRUSTED_PROXY_CIDRS: ${EDGE_NETWORK_SUBNET:-172.31.255.0/28}
+      # Almacen de objetos del perfil (servicio minio, mas abajo): /media/public/* lo lee de ahi. El
+      # bucket (MINIO_BUCKET) es del .env y las claves del almacen de secretos (docker-compose.yml).
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT:-minio:9000}
+      MINIO_USE_SSL: ${MINIO_USE_SSL:-false}
     volumes: *internal-ca
     networks:
       edge: {}
@@ -389,6 +393,96 @@ services:
     restart: *reinicio
     mem_limit: 64m
 
+  # Almacen de objetos (docs/adr/0012): las imagenes de las plantillas. Solo en la red interna y sin
+  # puerto en el host ni en el borde: nadie de fuera habla con MinIO, el gateway lee de el y sirve
+  # /media/public/*. Sin consola (MINIO_BROWSER=off). La cuenta raiz la reciben solo minio y
+  # minio-init; gateway y templates usan el usuario de servicio que crea minio-init, acotado a
+  # MINIO_BUCKET. Una sola imagen, fijada por digest, para los tres contenedores (trae mc y curl).
+  # El volumen entra en el respaldo (ops/backup/backup-mail-volumes.sh) y solo sale cifrado.
+  minio:
+    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z.hotfix.7aa24e772@sha256:cf3dadcfa1fb0324f43958bad1abba986d53c4ecc04d4d50b46c7dcda28bd3cd
+    restart: *reinicio
+    user: "10001:10001"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 256
+    # Medido en reposo: 47 a 52 MiB. Las subidas son de hasta 5 MiB (POST /assets de templates).
+    mem_limit: 192m
+    entrypoint: ["/etc/core-force-mail/minio/entrypoint.sh"]
+    command: ["server", "/data", "--address", ":9000", "--certs-dir", "/tmp/certs"]
+    environment:
+      TZ: ${TZ:-America/Lima}
+      GOMEMLIMIT: 150MiB
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-}
+      MINIO_BROWSER: "off"
+      MINIO_UPDATE: "off"
+    volumes:
+      - minio-data:/data
+      - ./selfhosted/minio:/etc/core-force-mail/minio:ro
+    tmpfs:
+      - /tmp:size=16m
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://127.0.0.1:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    depends_on:
+      minio-volumen:
+        condition: service_completed_successfully
+    networks:
+      - mail-internal
+
+  # Un volumen nuevo hereda el /data de la imagen, de root: MinIO, sin root, no podria escribir. Este
+  # trabajo le da el directorio raiz al uid de minio y sale; con el volumen ya suyo no toca nada.
+  minio-volumen:
+    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z.hotfix.7aa24e772@sha256:cf3dadcfa1fb0324f43958bad1abba986d53c4ecc04d4d50b46c7dcda28bd3cd
+    restart: "no"
+    user: "0:0"
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [CHOWN]
+    security_opt: ["no-new-privileges:true"]
+    network_mode: none
+    mem_limit: 32m
+    entrypoint: ["/bin/sh", "-c"]
+    command: ['[ "$$(stat -c %u:%g /data)" = 10001:10001 ] || chown 10001:10001 /data']
+    volumes:
+      - minio-data:/data
+
+  # Inicializacion idempotente (selfhosted/minio/init.sh): bucket MINIO_BUCKET privado, politica
+  # acotada a el y usuario de servicio MINIO_ACCESS_KEY. Corre en cada despliegue tras minio sano
+  # (ops/maintenance/perfil-despliegue.sh --infra) y sale; esperar-sanos.sh exige que salga con 0.
+  minio-init:
+    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z.hotfix.7aa24e772@sha256:cf3dadcfa1fb0324f43958bad1abba986d53c4ecc04d4d50b46c7dcda28bd3cd
+    restart: "no"
+    user: "10001:10001"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 64
+    # mc supera los 64 MiB al adjuntar la politica (medido: el OOM del cgroup lo mata con 64 MiB y
+    # termina con 96); 128 deja margen.
+    mem_limit: 128m
+    entrypoint: ["/etc/core-force-mail/minio/init.sh"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-}
+      MINIO_BUCKET: ${MINIO_BUCKET:-}
+    volumes:
+      - ./selfhosted/minio:/etc/core-force-mail/minio:ro
+    tmpfs:
+      - /tmp:size=4m
+    depends_on:
+      minio:
+        condition: service_healthy
+    networks:
+      - mail-internal
+
   edge-proxy:
     # Proxy de borde: HTTPS de la web publica con el certificado que emite acme (volumen ssl de
     # deploy/mail), 80 redirige a 443, y al gateway por la red edge. Configuracion en
@@ -446,6 +540,8 @@ volumes:
   mail-ssl:
     external: true
     name: ${MAIL_SSL_VOLUME:-mail_ssl-vol}
+  # Objetos de MinIO (servicio minio). Con nombre del proyecto (app_minio-data): el respaldo lo busca asi.
+  minio-data:
 
 networks:
   # Solo el proxy de borde y el gateway. Subred fija: es la que el gateway declara de confianza

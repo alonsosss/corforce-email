@@ -661,7 +661,9 @@ separado con `pg_dump -Fc`, la lee entera para comprobar que `pg_restore` la ent
 `.sha256` y conserva `BACKUP_KEEP_DAYS` (3) días en local, podando solo tras una corrida sin
 fallos. `ops/backup/backup-mail-volumes.sh` archiva los volúmenes de correo de `deploy/mail`
 (`crypt-vol`, la clave de `mail_crypt` sin la que los buzones son ilegibles, y `vmail-vol`, los
-buzones); el resto de volúmenes se regenera y no entra (tabla en `ops/backup/README.md`).
+buzones) y, en el perfil autoalojado, `app_minio-data` (los objetos de MinIO: las imágenes que los correos
+ya enviados siguen mostrando, sección 11, «Almacén de objetos»); el resto de volúmenes se regenera y no
+entra (tabla en `ops/backup/README.md`). `crypt-vol` y `minio-data` solo salen del servidor cifrados.
 
 Cada semana `verify-restore.sh`, sin argumentos, restaura en una base desechable el último volcado
 de **una base de cada clase** (registro, la celda mayor y la empresa mayor) y comprueba, sin
@@ -903,6 +905,52 @@ contra el perfil (`test-selfhosted-profile.sh` y a mano el 2026-09-17):
 * Cloudflare admite cuerpos de hasta 100 MB en sus planes Free y Pro: por encima, el límite real
   de un envío es el suyo, no el del borde.
 
+### Almacén de objetos (MinIO)
+
+Las imágenes de las plantillas (`docs/adr/0012-editor-visual-de-correos-con-grapesjs-y-mjml.md`) viven en un
+MinIO del propio servidor. Tres contenedores de `docker-compose.selfhosted.yml`, con **una sola imagen**
+fijada por digest (`quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z.hotfix.7aa24e772`, que trae `mc` y
+`curl`; `minio/minio` ya no se publica en Docker Hub):
+
+| Contenedor | Qué hace |
+|---|---|
+| `minio` | El servidor, sin root (`10001:10001`), solo lectura, sin capacidades, `mem_limit` 192 MiB (47 a 52 MiB en reposo), sin consola (`MINIO_BROWSER=off`). Solo en `mail-internal`: **sin puerto en el host ni en el borde**; nadie de fuera habla con MinIO. Arranca por `selfhosted/minio/entrypoint.sh`, que se niega sin `MINIO_ROOT_USER`/`MINIO_ROOT_PASSWORD` (MinIO usaría la cuenta de fábrica `minioadmin`) o con una contraseña de menos de 32 caracteres |
+| `minio-volumen` | Trabajo de arranque: un volumen nuevo hereda el `/data` de la imagen, de root, y este le da el directorio raíz al uid de minio. Root solo con `CHOWN`, sin red; con el volumen ya suyo no toca nada |
+| `minio-init` | Trabajo de arranque idempotente (`selfhosted/minio/init.sh`), tras `minio` sano: crea `MINIO_BUCKET` privado (sin acceso anónimo), la política `core-force-media` (leer, escribir y listar ese bucket; **sin borrar**, porque los correos enviados siguen mostrando sus imágenes, y sin tocar su configuración) y el usuario de servicio `MINIO_ACCESS_KEY` con esa política y ninguna otra (retira cualquier otra adjunta). La raíz entra en `mc` por `MC_HOST_local` y la clave del usuario por la entrada estándar: ninguna en la línea de órdenes |
+
+Variables. En el almacén de secretos (opcionales, `?`, en `secret-keys.txt`): `MINIO_ROOT_USER` y
+`MINIO_ROOT_PASSWORD` (solo `minio` y `minio-init`), `MINIO_ACCESS_KEY` y `MINIO_SECRET_KEY` (`minio-init`,
+`gateway` y, cuando su código lea el almacén, `templates`), con el reparto de `reparto.tsv`. En el `.env`,
+configuración: `MINIO_BUCKET` (obligatoria en este perfil; sin ella `minio-init` falla y el gateway
+desactiva `/media`). El perfil fija al gateway `MINIO_ENDPOINT=minio:9000` y `MINIO_USE_SSL=false`: HTTP en
+claro dentro de `mail-internal`, como PgBouncer y NATS (ver Riesgos). Sin `MINIO_PUBLIC_URL`, la URL estable
+de los objetos es `API_ORIGIN/media/<clave>`.
+
+Arranque: `perfil-despliegue.sh --infra` incluye `minio minio-init` entre la infraestructura que el despliegue
+levanta antes de los servicios; `esperar-sanos.sh` da por bueno un trabajo con `restart: "no"` que sale con 0
+y falla, con su registro, si sale con otro código. `minio-init` se relanza en cada despliegue (idempotente: es
+también como se aplica una rotación de `MINIO_SECRET_KEY`); `deploy-ecr.sh` recrea `minio` cuando cambia
+`selfhosted/minio/entrypoint.sh`. Tras un reinicio del servidor, `minio` vuelve solo (`restart: always`).
+
+Servir: el gateway lee cada objeto `public/` y lo sirve él mismo (`services/gateway/media.go`): `GET` y `HEAD`
+de `/media/public/*`, solo `image/png`, `image/jpeg`, `image/gif` e `image/webp` (otro tipo, o más de 10 MiB,
+responde 404), con `Cache-Control: public, max-age=31536000, immutable`, `X-Content-Type-Options: nosniff`,
+`Content-Security-Policy: default-src 'none'`, `ETag` y `304` con `If-None-Match`. No hay URL prefirmada: una
+firma caduca y un correo abierto meses después perdería sus imágenes.
+
+Respaldo: `backup-mail-volumes.sh` archiva `<COMPOSE_PROJECT_NAME>_minio-data` (por defecto `app_minio-data`)
+en la misma corrida que los buzones, en caliente y sin `.minio.sys/tmp`. El volumen guarda en claro la
+configuración IAM de MinIO, con la clave del usuario de servicio: como `crypt-vol`, **nunca sale del
+servidor sin cifrar**. Restaurar: `ops/backup/restore-mail-volume.sh minio-data` (a un volumen nuevo) o
+`--force` con `minio` parado; el usuario de servicio viaja en el volumen y `minio-init` le vuelve a fijar
+la clave del almacén en el siguiente despliegue.
+
+Rotación: cambiar `MINIO_SECRET_KEY` en el almacén, desplegar (o `with-secrets.sh docker compose ... up -d
+minio-init`) y recrear `gateway` y `templates`. Cambiar `MINIO_ACCESS_KEY` crea otro usuario: el anterior se
+retira a mano (`mc admin user remove`). La cuenta raíz se rota recreando `minio` y luego `minio-init`: sin KMS,
+MinIO no cifra su configuración con ella (comprobado: con una raíz nueva sobre el mismo volumen arranca y el
+usuario de servicio sigue valiendo).
+
 ### Procedimiento en el servidor, en orden
 
 Desde el puesto de trabajo, con el repositorio en el commit a desplegar (`<srv>` es el servidor):
@@ -941,6 +989,17 @@ Desde el puesto de trabajo, con el repositorio en el commit a desplegar (`<srv>`
    `daemon.json`), `MAIL_SSL_VOLUME` si el proyecto de los motores no se llama `mail`, y
    `INTERNAL_TLS_DIR` si no es el de por defecto. `REDIS_TLS*`, `DB_UPSTREAM_*` y
    `POSTGRES_DIRECT_*`, `MAIL_AUTH_TLS_CERT`/`MAIL_AUTH_TLS_KEY` y `WEBMAIL_TLS_CA_FILE` los fija el perfil. Secretos: ver Pendientes.
+   MinIO («Almacén de objetos»): `MINIO_BUCKET` en el `.env` y, en el almacén, las cuatro claves:
+
+   ```bash
+   cd /opt/core-force-mail/app
+   for c in MINIO_ROOT_USER MINIO_ACCESS_KEY; do VALOR="$(openssl rand -hex 10)" ops/security/secrets/add-secret.sh "$c" --apply; done
+   for c in MINIO_ROOT_PASSWORD MINIO_SECRET_KEY; do VALOR="$(openssl rand -hex 20)" ops/security/secrets/add-secret.sh "$c" --apply; done
+   ```
+
+   Sin ellas `minio` no arranca, `minio-init` falla y el despliegue se detiene en la infraestructura. Solo
+   la primera vez: `add-secret.sh` reemplaza la clave que ya estuviera, y repetirlo es una rotación
+   («Almacén de objetos», Rotación).
 4. Motores y certificado público, antes que la plataforma (crean la red `mail-engines` y el volumen
    `<MAIL_PROJECT>_ssl-vol` que ella exige). En el `.env` del paso 3: `MAIL_DB_HOST=postgres`,
    `ACME_DNS_CHALLENGE=y`, `ACME_DNS_PROVIDER=dns_cf` y `ADDITIONAL_SAN=app.<dominio>`. Desde el PC:
@@ -1030,7 +1089,8 @@ ella. Tras un reinicio, comprobar con `ops/maintenance/esperar-sanos.sh --proyec
 
 No hay Security Group. UFW solo gobierna el host (SSH); los puertos que publica Docker no pasan
 por UFW. Públicos quedan 80 y 443 (`edge-proxy`, `EDGE_BIND_ADDRESS`) y los de correo de
-`deploy/mail`. Postgres, Redis, NATS, el gateway y los servicios solo en `127.0.0.1`. Si el
+`deploy/mail`. Postgres, Redis, NATS, el gateway y los servicios solo en `127.0.0.1`; MinIO, en ningún
+puerto del host (solo la red `mail-internal`). Si el
 proveedor ofrece cortafuegos externo, limitar 80 y 443 a los rangos de Cloudflare cierra el
 acceso directo también en la red.
 
@@ -1052,7 +1112,7 @@ recolector actúe antes que el OOM del cgroup), `pids_limit: 256`, `user: 65532:
 `cap_drop: [ALL]` y `stop_grace_period: 40s` (`pkg/server` espera hasta 30 s a las peticiones en vuelo tras SIGTERM; con
 los 10 s por defecto de compose el kernel las mataba a medias en cada despliegue). Ninguno escribe en disco (imágenes
 `scratch`, sin `CreateTemp` ni `WriteFile`), así que no hay tmpfs. `ops/scaffold/check-selfhosted-profile.sh` falla si
-un servicio Go pierde alguno de ellos o si la suma de `mem_limit` del perfil pasa de 6144 MiB. La rotación de logs la da
+un servicio Go pierde alguno de ellos o si la suma de `mem_limit` del perfil pasa de 6144 MiB (la de hoy: 6016). La rotación de logs la da
 el demonio (`ops/server-template/config/daemon.json`: `json-file`, 20 MiB x 5, comprimido), no cada servicio. No se fija
 límite de CPU: en 4 vCPU compartidas con la base y los motores, un tope por contenedor solo convierte una ráfaga en
 latencia (`mail-migration-runner` conserva el suyo).
@@ -1066,8 +1126,10 @@ latencia (`mail-migration-runner` conserva el suyo).
 | 512 MiB | webmail | Mensajes de hasta 25 MiB que se leen, se codifican en MIME y se envían |
 
 Resto de la plataforma: `pgbouncer` 128 MiB (medido 2,5 MiB), `redis` 640 MiB (`maxmemory 512mb` más la copia del AOF; medido
-4 MiB), `nats` 256 MiB (medido 13 MiB), `web` 64 MiB (medido 11 MiB), `edge-proxy` 384 MiB. Suma de techos de la
-plataforma: **5568 MiB**. Pila de observabilidad: Prometheus 768, Grafana 384, Loki 512, Promtail 256, Alertmanager 128,
+4 MiB), `nats` 256 MiB (medido 13 MiB), `web` 64 MiB (medido 11 MiB), `edge-proxy` 384 MiB, `minio` 192 MiB (medido 47 a 52 MiB) y sus dos trabajos de
+arranque, `minio-init` 128 MiB (`mc` supera 64 MiB al adjuntar la política: con ese techo lo mataba el OOM) y
+`minio-volumen` 32 MiB, que salen en segundos. Suma de techos de la plataforma: **6016 MiB**, de los que 160 son de
+trabajos que no quedan corriendo. Pila de observabilidad: Prometheus 768, Grafana 384, Loki 512, Promtail 256, Alertmanager 128,
 node-exporter 64 y docker-socket-ro 64 = 2176 MiB.
 
 **Lo que no lleva límite, y por qué.** Postgres (`shared_buffers` 512 MB más hasta 197 procesos de servidor: un OOM de
@@ -1076,7 +1138,7 @@ MiB, y en cada recarga de firmas llega a casi el doble: un límite estrecho lo m
 se detiene), y el resto de los motores (Rspamd 71 MiB, Dovecot 13, Postfix 16, tlspol 17, Olefy 11, Unbound 13; Postfix
 ejecuta además el `queue-agent`). `mail-migration-runner` conserva su tope de 1 GiB y 1 CPU.
 
-**La suma supera la RAM y se decide así.** Techos de la plataforma (5,4 GiB) + observabilidad (2,1) + ejecutor de migración
+**La suma supera la RAM y se decide así.** Techos de la plataforma (5,9 GiB) + observabilidad (2,1) + ejecutor de migración
 (1,0) + Postgres (hasta ~1,5) + ClamAV (1,1 a 2,2) + motores (~0,2) son 11 a 12 GiB frente a 7,9 GiB de RAM y 4 GiB de
 swap. No es un defecto: un techo no reserva nada, y el uso real es la suma de los usos (medido en producción el 2026-09-21:
 37 contenedores con 4,9 GiB libres). Lo que el techo compra es aislamiento: una fuga o una petición enorme en un servicio
@@ -1349,6 +1411,14 @@ dominio solo publica una política que nadie descarga; no hay que pasarlo a `enf
   `load.sh` sigue con su respaldo documentado al `.env`. Los secretos del respaldo no pasan por
   este almacén a propósito: siguen en `BACKUP_SECRETS_FILE`, que ningún contenedor recibe
   (`secret-keys-backup.txt`).
+* MinIO habla HTTP en claro dentro de `mail-internal` (`MINIO_USE_SSL=false`), como PgBouncer y NATS: la
+  red es del propio servidor y no entra el borde. Cifrarlo pide un certificado de la CA interna para `minio`
+  (`internal-tls.sh`) y que `pkg/objectstore` acepte esa CA; queda pendiente.
+* La imagen de MinIO es la compilación más reciente que se pudo verificar (2026-09-23): una corrección
+  (`.hotfix.7aa24e772`, 2026-03, Go 1.26.1, solo `linux/amd64`) sobre `RELEASE.2025-09-07T16-13-09Z`, que es
+  la última etiqueta `RELEASE` de `quay.io/minio/minio`; `minio/minio` ya no está en Docker Hub. Si no llegan
+  más compilaciones, las correcciones de seguridad exigirán compilar la imagen desde el código fuente o cambiar
+  de almacén S3-compatible; vigilar sus avisos de seguridad.
 * `sslmode=prefer` de las conexiones directas de `pkg/config` cifra pero no verifica el
   certificado; en este perfil el camino va por la red interna de Docker del propio servidor.
   Verificarlo pide soportar `sslrootcert` en `pkg/config`.

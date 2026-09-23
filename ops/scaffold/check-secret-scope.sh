@@ -20,8 +20,9 @@
 # de todo a todos. docker-compose.e2e.yml y los overrides de imagenes quedan fuera: el primero es un
 # arnes desechable con valores de prueba y los otros no llevan entorno.
 #
-# El codigo Go de un servicio se lee por literales ("NOMBRE") y por tres lecturas indirectas que
-# conoce (middleware.RequireGatewayToken/InternalGatewayToken, cfg.Redis y auth.SignerFromEnv); el
+# El codigo Go de un servicio se lee por literales ("NOMBRE") y por las lecturas indirectas que
+# conoce (middleware.RequireGatewayToken/InternalGatewayToken, cfg.Redis, auth.SignerFromEnv y
+# objectstore.FromEnv/FromEnvNamespace, que leen MINIO_ACCESS_KEY y MINIO_SECRET_KEY); el
 # de un motor, por el nombre en cualquier fichero que no sea un comentario. Una lectura indirecta
 # nueva se anade a INDIRECTOS.
 #
@@ -50,6 +51,8 @@ INDIRECTOS = {
     "INTERNAL_GATEWAY_TOKEN": r"middleware\.(InternalGatewayToken|RequireGatewayToken)\b",
     "REDIS_PASSWORD": r"\bcfg\.Redis\b|\bconfig\.LoadRedis\(",
     "JWT_SIGNING_KEY": r"\bauth\.SignerFromEnv\(",
+    "MINIO_ACCESS_KEY": r"\bobjectstore\.FromEnv(Namespace)?\(",
+    "MINIO_SECRET_KEY": r"\bobjectstore\.FromEnv(Namespace)?\(",
 }
 
 
@@ -243,7 +246,7 @@ falla() { echo "  FALLA: $*"; FAIL=1; }
 
 mkdir -p "$TMP/base/ops/security"
 cp "$ROOT"/docker-compose*.yml "$TMP/base/"
-cp -r "$ROOT/services" "$ROOT/deploy" "$TMP/base/"
+cp -r "$ROOT/services" "$ROOT/deploy" "$ROOT/selfhosted" "$TMP/base/"
 cp -r "$ROOT/ops/security/secrets" "$TMP/base/ops/security/"
 
 correr() { verificar "$1" 2>&1; }

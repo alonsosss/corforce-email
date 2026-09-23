@@ -44,6 +44,11 @@ if sanos inexistente; then mal "esperar-sanos: acepta un servicio sin contenedor
 grep -q 'no hay contenedor' "$TMP/sanos.out" || mal "esperar-sanos: no dice que falta el contenedor"
 if STUB_e="running healthy 0" STUB_mail_auth="restarting sin-chequeo 3" sanos e mail-auth; then mal "esperar-sanos: acepta la mezcla con uno caido"; fi
 grep -q 'no arrancaron: mail-auth$' "$TMP/sanos.out" || mal "esperar-sanos: no senala solo al servicio caido"
+STUB_f="exited sin-chequeo 0 no 0" sanos f && grep -q 'f: trabajo completado' "$TMP/sanos.out" || mal "esperar-sanos: no acepta un trabajo de arranque que salio con 0"
+if STUB_g="exited sin-chequeo 0 no 1" sanos g; then mal "esperar-sanos: acepta un trabajo de arranque que salio con error"; fi
+grep -q 'salieron con error: g$' "$TMP/sanos.out" && grep -q 'registro de g: motivo del fallo' "$TMP/sanos.out" ||
+  mal "esperar-sanos: no senala el trabajo fallido con su registro"
+if STUB_h="exited sin-chequeo 0 always 0" sanos h; then mal "esperar-sanos: acepta un servicio con restart always que salio con 0"; fi
 
 # --- claves-env.sh ------------------------------------------------------------------------
 printf 'ENVIRONMENT=production\n# SCHEDULER_URL=comentada\nPOSTGRES_PASSWORD=valor-secreto-no-imprimir\n' >"$TMP/env"

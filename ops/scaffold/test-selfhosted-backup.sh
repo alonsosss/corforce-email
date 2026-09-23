@@ -17,7 +17,8 @@
 #   - los volumenes de correo (buzones y claves de mail_crypt): se archivan en caliente con los
 #     uid de Dovecot, sin _garbage, con su suma, la clave comprobada contra su publica y cifrados
 #     al salir; una clave que no corresponde se detecta; restore-mail-volume.sh devuelve el
-#     volumen (tambien desde el bucket) con su contenido intacto;
+#     volumen (tambien desde el bucket) con su contenido intacto; el de MinIO del perfil
+#     (minio-data) entra con el uid de minio, sin .minio.sys/tmp y cifrado al salir;
 #   - los guiones de ops/db alcanzan la base con el mismo camino, y ninguno se queda con la
 #     entrada estandar del guion que los llama (tenant-service-role.sh --all crea el rol de
 #     enrutado y el de cada servicio de empresa, no solo el primero del bucle):
@@ -38,7 +39,8 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 PROYECTO="${RESPALDO_TEST_PROJECT:-cfm-respaldo-prueba}"
 PUERTO_S3="${RESPALDO_TEST_PORT:-47590}"
 IMG_PG="$(awk '/^  postgres-primary:/{d=1;next} d&&/^    image:/{print $2;exit}' "$ROOT/docker-compose.yml")"
-IMG_MINIO="${RESPALDO_TEST_MINIO_IMAGE:-minio/minio:RELEASE.2025-04-22T22-12-26Z}"
+# La misma imagen que el servicio minio del perfil (minio/minio ya no se publica en Docker Hub).
+IMG_MINIO="${RESPALDO_TEST_MINIO_IMAGE:-$(awk '/^  minio:/{d=1;next} d&&/^    image:/{print $2;exit}' "$ROOT/docker-compose.selfhosted.yml")}"
 
 CERROJO="${TMPDIR:-/tmp}/$PROYECTO.lock"
 exec 9>"$CERROJO"
@@ -291,7 +293,7 @@ cp -p "$W/empresa.dump.bueno" "$DUMP_EMPRESA"
 echo "== Copia externa S3-compatible (MinIO) =="
 CLAVE_MINIO="$(aleatorio 20)"
 USUARIO_MINIO="respaldo$(aleatorio 4)"
-MINIO_ROOT_USER="$USUARIO_MINIO" MINIO_ROOT_PASSWORD="$CLAVE_MINIO" docker run -d --name "$MINIO" -e MINIO_ROOT_USER -e MINIO_ROOT_PASSWORD \
+MINIO_ROOT_USER="${USUARIO_MINIO}" MINIO_ROOT_PASSWORD="${CLAVE_MINIO}" docker run -d --name "$MINIO" -e MINIO_ROOT_USER -e MINIO_ROOT_PASSWORD \
   -p "127.0.0.1:$PUERTO_S3:9000" "$IMG_MINIO" server /data >/dev/null
 for _ in $(seq 1 60); do
   curl -fsS "http://127.0.0.1:$PUERTO_S3/minio/health/ready" >/dev/null 2>&1 && break
@@ -481,6 +483,15 @@ echo "== Volumenes de correo (buzones y claves de mail_crypt) =="
 echo "MAIL_COMPOSE_PROJECT=$PROYECTO" >>"$APP/.env"
 docker volume create "${PROYECTO}_crypt-vol" >/dev/null
 docker volume create "${PROYECTO}_vmail-vol" >/dev/null
+# El volumen de MinIO del perfil (proyecto de la plataforma, COMPOSE_PROJECT_NAME): un objeto del uid
+# de minio y un temporal de .minio.sys/tmp, que no se respalda.
+docker volume create "${PROYECTO}_minio-data" >/dev/null
+docker run --rm -v "${PROYECTO}_minio-data:/m" --entrypoint bash "$IMG_PG" -c '
+  set -e
+  mkdir -p /m/medios/public/t/templates/abc.png /m/.minio.sys/tmp/subida
+  printf "objeto\n" > /m/medios/public/t/templates/abc.png/xl.meta
+  printf "temporal\n" > /m/.minio.sys/tmp/subida/parte
+  chown -R 10001:10001 /m' >/dev/null
 CUERPO="mensaje de prueba $(aleatorio 6)"
 CUERPO="$CUERPO" docker run --rm -e CUERPO -v "${PROYECTO}_crypt-vol:/crypt" -v "${PROYECTO}_vmail-vol:/vmail" --entrypoint bash "$IMG_PG" -c '
   set -e
@@ -502,16 +513,20 @@ else
   mal "backup-mail-volumes.sh fallo"
 fi
 CORRIDA_CORREO="$(find "$RESPALDOS/correo" -mindepth 1 -maxdepth 1 -type d -name '*T*Z' | sort | tail -1)"
-for v in crypt-vol vmail-vol; do
+for v in crypt-vol vmail-vol minio-data; do
   [[ -s "$CORRIDA_CORREO/$v.tar.gz" && -s "$CORRIDA_CORREO/$v.tar.gz.sha256" ]] && ok "archivo y suma de $v" || mal "falta el archivo o la suma de $v"
 done
+listado_minio="$(tar -tvzf "$CORRIDA_CORREO/minio-data.tar.gz")"
+grep -q 'xl.meta' <<<"$listado_minio" && grep -q '10001/10001' <<<"$listado_minio" &&
+  ok "los objetos de MinIO entran con el uid de minio (10001)" || mal "archivo de MinIO: $(head -3 <<<"$listado_minio")"
+grep -q 'minio.sys/tmp/' <<<"$listado_minio" && mal "el archivo de MinIO incluye .minio.sys/tmp" || ok ".minio.sys/tmp queda fuera del archivo de MinIO"
 permisos="$(stat -c '%a' "$CORRIDA_CORREO" "$CORRIDA_CORREO"/*.tar.gz | sort -u | paste -sd' ')"
 [[ "$permisos" == "600 700" ]] && ok "archivos de correo 0600 en un directorio 0700" || mal "permisos de los archivos de correo: $permisos"
 listado="$(tar -tvzf "$CORRIDA_CORREO/vmail-vol.tar.gz")"
 grep -q '_garbage' <<<"$listado" && mal "el archivo de buzones incluye _garbage" || ok "_garbage queda fuera del archivo de buzones"
 grep -q '5000/5000' <<<"$listado" && ok "los buzones conservan el uid de vmail (5000)" || mal "los buzones pierden el uid de vmail: $(head -3 <<<"$listado")"
 objetos_correo="$(s3 s3 ls --recursive s3://respaldos/correo/ | awk '{print $4}')"
-[[ "$(grep -c '^correo/\(crypt-vol\|vmail-vol\)/[0-9T]*Z\.tar\.gz\.gpg$' <<<"$objetos_correo")" == 2 ]] &&
+[[ "$(grep -c '^correo/\(crypt-vol\|vmail-vol\|minio-data\)/[0-9T]*Z\.tar\.gz\.gpg$' <<<"$objetos_correo")" == 3 ]] &&
   ok "buzones y claves de mail_crypt cifrados en el bucket: $(tr '\n' ' ' <<<"$objetos_correo")" || mal "objetos de correo en el bucket: $objetos_correo"
 grep -q '^core_force_job_last_success_timestamp_seconds{trabajo="respaldo_correo"}' "$METRICAS/core_force_respaldo_correo.prom" &&
   ok "metrica del respaldo de correo: exito" || mal "metrica del respaldo de correo: $(cat "$METRICAS/core_force_respaldo_correo.prom" 2>&1)"

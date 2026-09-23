@@ -8,7 +8,9 @@
 # servidor no tiene, un userlist.txt que falta) queda reiniciandose en bucle con la imagen
 # correcta, y el despliegue se daba por bueno. Aqui se espera al estado real: sano si la imagen
 # declara HEALTHCHECK y, si no, corriendo sin reiniciarse durante --estable segundos. Al vencer
-# el plazo se muestran el estado y las ultimas lineas de registro de cada uno que no llego.
+# el plazo se muestran el estado y las ultimas lineas de registro de cada uno que no llego. Un
+# trabajo de arranque (restart: "no", como minio-init) cuenta como bueno al salir con 0 y como fallo,
+# sin esperar al plazo, al salir con otro codigo.
 set -uo pipefail
 
 PROYECTO=app
@@ -34,11 +36,14 @@ contenedor() {
     --format '{{.ID}}' 2>/dev/null | head -1
 }
 estado() {
-  docker inspect --format '{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{else}}sin-chequeo{{end}} {{.RestartCount}}' "$1" 2>/dev/null
+  docker inspect --format '{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{else}}sin-chequeo{{end}} {{.RestartCount}} {{.HostConfig.RestartPolicy.Name}} {{.State.ExitCode}}' "$1" 2>/dev/null
 }
 
+# Un trabajo de arranque (restart: "no", como minio-init) no queda corriendo: su exito es salir con 0.
+# Solo esa politica: un servicio con restart always que sale con 0 sigue siendo un servicio caido.
 declare -A desde reinicios
 pendientes=("$@")
+fallidos=()
 fin=$(($(date +%s) + PLAZO))
 while :; do
   quedan=()
@@ -46,7 +51,15 @@ while :; do
   for s in "${pendientes[@]}"; do
     id=$(contenedor "$s")
     if [[ -z "$id" ]]; then quedan+=("$s"); continue; fi
-    read -r st salud rc <<<"$(estado "$id")"
+    read -r st salud rc politica salida <<<"$(estado "$id")"
+    if [[ "$st" == exited && "$politica" == no ]]; then
+      if [[ "$salida" == 0 ]]; then
+        echo "  $s: trabajo completado"
+      else
+        fallidos+=("$s")
+      fi
+      continue
+    fi
     if [[ "$st" == running && "$salud" == healthy ]]; then
       echo "  $s: sano"
       continue
@@ -61,13 +74,15 @@ while :; do
     quedan+=("$s")
   done
   pendientes=("${quedan[@]}")
-  ((${#pendientes[@]} == 0)) && { echo "esperar-sanos: todos arrancaron"; exit 0; }
+  ((${#pendientes[@]} == 0 && ${#fallidos[@]} == 0)) && { echo "esperar-sanos: todos arrancaron"; exit 0; }
+  ((${#pendientes[@]} == 0)) && break
   (($(date +%s) >= fin)) && break
   sleep "$PAUSA"
 done
 
-echo "esperar-sanos: tras ${PLAZO}s no arrancaron: ${pendientes[*]}" >&2
-for s in "${pendientes[@]}"; do
+((${#fallidos[@]} > 0)) && echo "esperar-sanos: trabajos que salieron con error: ${fallidos[*]}" >&2
+((${#pendientes[@]} > 0)) && echo "esperar-sanos: tras ${PLAZO}s no arrancaron: ${pendientes[*]}" >&2
+for s in "${fallidos[@]}" "${pendientes[@]}"; do
   id=$(contenedor "$s")
   if [[ -z "$id" ]]; then
     echo "--- $s: no hay contenedor en el proyecto $PROYECTO" >&2

@@ -4,7 +4,9 @@ Dos cosas distintas se respaldan aquí, y las dos hacen falta para volver de un 
 
 * las **bases de datos** (registro, celdas y empresas), un archivo por base;
 * los **volúmenes de correo** de `deploy/mail`: los buzones y la clave de `mail_crypt` con la
-  que Dovecot los cifra. Sin esa clave, los buzones respaldados son ilegibles.
+  que Dovecot los cifra. Sin esa clave, los buzones respaldados son ilegibles. En el perfil
+  autoalojado, también el **almacén de objetos** (`minio-data`): las imágenes que los correos ya
+  enviados siguen mostrando.
 
 El diseño de datos es **una base por empresa**, y el respaldo lo respeta: un archivo por base, no
 una foto del servidor entero. Es la diferencia entre poder devolver a UNA empresa al estado de
@@ -18,8 +20,8 @@ desastre completo; no sirve para "a esta empresa le borraron una lista de contac
 | `backup-tenants.sh` | Vuelca cada base (`mail_%`: registro, celdas y empresas) a `-Fc`, la lee entera para comprobar que `pg_restore` la entiende, deja su `.sha256` y la sube al destino externo si hay. Con el almacén en OpenBao, añade su instantánea (`openbao.snap`) a la misma corrida |
 | `verify-restore.sh` | Restaura el último volcado en una base desechable y comprueba que trae lo que dice traer. Sin argumentos, una base de cada clase y la instantánea de OpenBao en una instancia desechable (`ops/security/openbao/verificar-instantanea.sh`) |
 | `restore-tenant.sh` | Restaura UNA base. Por defecto a una base nueva; sobrescribir exige `--force` y confirmación escrita |
-| `backup-mail-volumes.sh` | Archiva los volúmenes de correo (por defecto `crypt-vol` y `vmail-vol`), los lee enteros, comprueba que la clave privada de `mail_crypt` corresponde a su pública y sube cifrado |
-| `restore-mail-volume.sh` | Restaura un volumen de correo, por defecto a un volumen NUEVO; sobrescribir el vivo exige `--force`, que ningún contenedor lo monte y confirmación escrita |
+| `backup-mail-volumes.sh` | Archiva los volúmenes de correo (por defecto `crypt-vol` y `vmail-vol`) y, en el perfil autoalojado, `minio-data` de la plataforma; los lee enteros, comprueba que la clave privada de `mail_crypt` corresponde a su pública y sube cifrado |
+| `restore-mail-volume.sh` | Restaura un volumen de correo o `minio-data`, por defecto a un volumen NUEVO; sobrescribir el vivo exige `--force`, que ningún contenedor lo monte y confirmación escrita |
 | `install-timers.sh` | Instala o repone los temporizadores de systemd en un servidor, aprovisionado o no (`sudo`) |
 | `destino-externo.sh` | Biblioteca: configuración, credenciales y cifrado del destino externo S3-compatible |
 | `report-metric.sh` | Biblioteca: publica el resultado de cada corrida como métrica |
@@ -120,6 +122,7 @@ ops/backup/verify-restore.sh mail_tenant_demo     # una base concreta
 ops/backup/restore-mail-volume.sh vmail-vol --into mail_vmail-prueba
 ops/backup/restore-mail-volume.sh crypt-vol s3://<bucket>/correo/crypt-vol/<sello>.tar.gz.gpg
 ops/backup/restore-mail-volume.sh vmail-vol --force
+ops/backup/restore-mail-volume.sh minio-data --into app_minio-data-prueba   # objetos de MinIO
 ```
 
 Casi siempre lo correcto es restaurar a una base o a un volumen nuevos y sacar de ahí lo que falta.
@@ -142,6 +145,7 @@ otro volumen y no se respaldan: `docker exec dovecot-mail doveadm force-resync -
 | `ssl-vol`, `acme-challenge-vol` | No | Certificados públicos: `acme-mail` los reemite |
 | `acme-conf-vol` | No | Cuenta de ACME y **credencial DNS del proveedor**. Se vuelve a crear con la credencial del almacén; respaldarlo sería poner una credencial de terceros en el archivo, y solo tendría sentido cifrado |
 | `postfix-tlspol-vol` | No | Caché de políticas TLS |
+| `minio-data` (plataforma, `<COMPOSE_PROJECT_NAME>_minio-data`) | **Sí**, solo en el perfil autoalojado | Los objetos de MinIO: las imágenes de las plantillas, que los correos ya enviados siguen mostrando y no se pueden regenerar. Se excluye `.minio.sys/tmp`. Lleva además la configuración IAM de MinIO con la clave del usuario de servicio **en claro**: como `crypt-vol`, **nunca sale del servidor sin cifrar**. Tras restaurarlo, `minio-init` vuelve a fijar la clave del almacén de secretos en el siguiente despliegue |
 
 Los buzones se archivan **en caliente**: Maildir escribe en `tmp/` y renombra, así que ningún
 mensaje queda a medias, pero uno que cambie de carpeta o de marcas durante el archivado puede
@@ -189,6 +193,8 @@ el día que las credenciales pasaron al almacén se quedaron con la variable vac
 | `BACKUP_SECRETS_FILE` | `/opt/core-force-mail/env/backup.env` | Secretos del respaldo, 0600 del usuario que lo corre |
 | `MAIL_COMPOSE_PROJECT` | `mail` | Proyecto de compose de `deploy/mail`: prefija los nombres de los volúmenes |
 | `BACKUP_MAIL_VOLUMES` | `crypt-vol vmail-vol` | Volúmenes de correo a respaldar |
+| `COMPOSE_PROJECT_NAME` | `app` | Proyecto de compose de la plataforma: prefija `minio-data` |
+| `BACKUP_PLATFORM_VOLUMES` | `minio-data` en el perfil autoalojado; ninguno en aws | Volúmenes de la plataforma a respaldar en la misma corrida |
 | `BACKUP_S3_CLI_IMAGE`, `BACKUP_ARCHIVE_IMAGE` | imágenes fijadas por digest | El CLI de S3 y el `tar` que corren en contenedor |
 
 Secretos, en `BACKUP_SECRETS_FILE` y declarados en
@@ -289,7 +295,8 @@ journal (`journalctl -u core-force-mail-backup.service`, `-u core-force-mail-bac
 - **`no coincide con su suma`**: el volcado se dañó en disco después de crearse. Se usa el de otra
   corrida y se revisa el disco.
 - **`no existe el volumen <proyecto>_<volumen>`**: `MAIL_COMPOSE_PROJECT` no es el proyecto de
-  compose con el que corren los motores.
+  compose con el que corren los motores (o, para `minio-data`, `COMPOSE_PROJECT_NAME` no es el de la
+  plataforma, o `minio` aún no se ha desplegado).
 - **`la clave privada de mail_crypt no corresponde a la publica`**: con esa pareja, los buzones
   respaldados no se pueden descifrar. Se investiga antes de tocar nada en `crypt-vol`.
 - **`no subió a s3://...`** o **`no se pudo cifrar`**: sobrevive a un borrado accidental, no a la

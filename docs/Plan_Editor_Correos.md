@@ -163,7 +163,7 @@ Registro (permisos nuevos de `templates`) -> empresa (`templates`) -> MinIO y su
 |---|---|
 | ADR y plan | Hecho |
 | Backend `templates` (diseno, kit, imagenes, verificador) | En curso |
-| `mail-security` spam-check | Hecho (V 2026-09-23, unitarias con Rspamd falso; contra Rspamd real pendiente de `make e2e-mail`, P) |
-| MinIO y gateway | En curso |
+| `mail-security` spam-check | Hecho (V 2026-09-23, unitarias con Rspamd falso; y contra Rspamd real con `make e2e-mail`: 638 comprobaciones) |
+| MinIO y gateway | Hecho en el código, sin desplegar: `minio`, `minio-volumen` y `minio-init` en `docker-compose.selfhosted.yml` (solo `mail-internal`, sin puertos, sin root, imagen por digest), bucket privado y usuario de servicio acotado a él (sin borrar), claves en el almacén (`MINIO_ROOT_*` solo para `minio` y `minio-init`; `MINIO_ACCESS_KEY`/`MINIO_SECRET_KEY` para `gateway`), `minio-data` en el respaldo (solo sale cifrado) y `/media/public/*` servido por el gateway (sección 5, con `HEAD`, `ETag` y `304`). Falta: la fila de `templates` en `reparto.tsv` y sus dos líneas en `docker-compose.yml` cuando su código llame a `objectstore.FromEnv` (`check-secret-scope` lo exige entonces), y `MINIO_ENDPOINT`/`MINIO_USE_SSL` en su bloque del perfil. Procedimiento: `docs/Operacion_Despliegue.md`, 11, «Almacén de objetos» |
 | Editor web | En curso |
 | Despliegue | Pendiente |

@@ -145,6 +145,9 @@ services:
     environment:
       INTERNAL_GATEWAY_TOKEN: ${INTERNAL_GATEWAY_TOKEN:-}
       REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      # Usuario de servicio del almacen de objetos (lectura de /media/public/*), acotado al bucket.
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-}
       # Aqui no hay proxy de borde: al gateway se llega directo desde el anfitrion (o desde el
       # contenedor web) y nadie legitimo escribe X-Real-IP. Sin este valor el gateway confiaria
       # en todo RFC1918 y cualquiera de esas redes elegiria la IP con la que se le limita.

@@ -125,11 +125,16 @@ en_infra() { [[ " ${INFRA[*]} " == *" $1 "* ]]; }
 
 # Infraestructura del perfil ANTES de recrear los servicios: sin base, pooler ni Redis no arranca
 # ninguno. `up -d` solo recrea lo que cambio en compose; un pg_hba nuevo se aplica con SIGHUP (sin
-# cortar conexiones) y un arranque de Redis nuevo obliga a recrearlo.
+# cortar conexiones) y un arranque de Redis o de MinIO nuevo obliga a recrearlo.
 aplicar_infra() {
   local previos=() s
   for s in "${INFRA[@]}"; do [[ "$s" != edge-proxy ]] && previos+=("$s"); done
   [[ ${#previos[@]} -eq 0 ]] && return 0
+  # minio-init relee su guion en cada `up`; el arranque de minio solo se lee al crear el contenedor.
+  # Se recrea ANTES del `up` comun para no tumbar minio mientras minio-init trabaja contra el.
+  if en_infra minio && cambio_desplegado selfhosted/minio/entrypoint.sh; then
+    remote "ops/security/secrets/with-secrets.sh docker compose $COMPOSE_ARGS up -d --force-recreate minio"
+  fi
   remote "ops/security/secrets/with-secrets.sh docker compose $COMPOSE_ARGS up -d ${previos[*]}"
   if en_infra redis && cambio_desplegado selfhosted/redis; then
     remote "ops/security/secrets/with-secrets.sh docker compose $COMPOSE_ARGS up -d --no-deps --force-recreate redis"

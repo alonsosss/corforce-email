@@ -15,6 +15,8 @@
 #   - el cuerpo maximo del proxy de borde cubre el mayor envio del webmail y la importacion de
 #     contactos de .env.example;
 #   - los rangos de Cloudflare son CIDR validos, y la imagen del borde va por digest;
+#   - MinIO (minio, minio-volumen, minio-init) con una sola imagen por digest, sin puertos, solo en
+#     la red interna, sin root (salvo el chown del volumen, sin red) y sin consola;
 #   - ops/maintenance/perfil-despliegue.sh decide bien, y los dos despliegues lo usan.
 set -euo pipefail
 
@@ -234,6 +236,37 @@ if not re.search(r"image:\s*\S+@sha256:[0-9a-f]{64}", borde):
     fallos.append("edge-proxy: la imagen no va fijada por digest")
 
 
+# --- MinIO: solo en la red interna, sin puerto, sin root salvo el chown del volumen -------------
+imagenes_minio = set()
+for svc in ("minio", "minio-volumen", "minio-init"):
+    cuerpo = "\n".join(perfil.get(svc, []))
+    if not cuerpo:
+        fallos.append(f"{svc}: falta en el perfil")
+        continue
+    m = re.search(r"^    image:\s*(\S+)$", cuerpo, re.M)
+    if not m or not re.search(r"@sha256:[0-9a-f]{64}$", m.group(1)):
+        fallos.append(f"{svc}: la imagen no va fijada por digest")
+    else:
+        imagenes_minio.add(m.group(1))
+    if re.search(r"^    ports:", cuerpo, re.M):
+        fallos.append(f"{svc}: publica un puerto; MinIO no sale de la red interna")
+    for requerido in ("read_only: true", "cap_drop: [ALL]", 'security_opt: ["no-new-privileges:true"]', "mem_limit:"):
+        if requerido not in cuerpo:
+            fallos.append(f"{svc}: falta '{requerido}'")
+    m = re.search(r'^    user:\s*"?([0-9]+):([0-9]+)"?\s*$', cuerpo, re.M)
+    if svc == "minio-volumen":
+        if "network_mode: none" not in cuerpo or not re.search(r"^    cap_add: \[CHOWN\]$", cuerpo, re.M):
+            fallos.append("minio-volumen: corre como root solo para el chown: sin red y con CHOWN como unica capacidad")
+    elif not m or m.group(1) == "0" or m.group(2) == "0":
+        fallos.append(f"{svc}: no fija un user: UID:GID numerico sin root")
+    elif not re.search(r"^    networks:\n      - mail-internal$", cuerpo, re.M) or re.search(r"^      - (edge|mail-engines)$", cuerpo, re.M):
+        fallos.append(f"{svc}: tiene que estar solo en la red mail-internal")
+if len(imagenes_minio) > 1:
+    fallos.append(f"minio, minio-volumen y minio-init usan imagenes distintas: {sorted(imagenes_minio)}")
+if "MINIO_BROWSER: \"off\"" not in "\n".join(perfil.get("minio", [])):
+    fallos.append("minio: la consola tiene que ir apagada (MINIO_BROWSER: \"off\")")
+
+
 def bytes_nginx(v):
     m = re.fullmatch(r"([1-9][0-9]*)([kKmM]?)", v)
     if not m:
@@ -291,6 +324,7 @@ if not v4 or not v6:
 
 for rel in ("selfhosted/redis/entrypoint.sh", "selfhosted/edge/entrypoint.d/10-cloudflare.sh",
             "selfhosted/edge/entrypoint.d/20-plantilla.sh", "selfhosted/edge/entrypoint.d/40-recarga-certificado.sh",
+            "selfhosted/minio/entrypoint.sh", "selfhosted/minio/init.sh",
             "ops/security/internal-tls.sh", "ops/maintenance/perfil-despliegue.sh"):
     if not os.access(os.path.join(root, rel), os.X_OK):
         fallos.append(f"{rel} no es ejecutable (el contenedor o el servidor no lo lanzarian)")
@@ -347,7 +381,7 @@ done
 [[ "$(awk '{print $NF}' "$TMP/out")" == edge-proxy ]] || mal "perfil selfhosted: el proxy de borde no va el ultimo"
 # NATS no se construye ni lo recrea ningun despliegue: si no es infraestructura del perfil, nadie
 # lo arranca y los servicios se quedan sin eventos.
-for s in postgres-primary redis pgbouncer nats; do
+for s in postgres-primary redis pgbouncer nats minio minio-init; do
   grep -qw "$s" "$TMP/out" || mal "perfil selfhosted: $s no es infraestructura del perfil"
 done
 perfil 'DEPLOY_PROFILE=selfhosted\n' --nombre && [[ "$(cat "$TMP/out")" == selfhosted ]] || mal "perfil: --nombre no necesita la CA y dice selfhosted"

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Restaura un volumen de correo (buzones o claves de mail_crypt) desde su archivo.
+# Restaura un volumen de correo (buzones o claves de mail_crypt) o de la plataforma (minio-data, los
+# objetos de MinIO) desde su archivo.
 #
 # Por defecto restaura a un volumen NUEVO (`<proyecto>_<volumen>_restore_<fecha>`), que es lo que
 # hace falta casi siempre: sacar un buzon o comprobar que la copia sirve sin tocar el correo vivo.
@@ -13,6 +14,7 @@
 #   ops/backup/restore-mail-volume.sh vmail-vol s3://<bucket>/correo/vmail-vol/<sello>.tar.gz.gpg
 #   ops/backup/restore-mail-volume.sh vmail-vol --into mail_prueba
 #   ops/backup/restore-mail-volume.sh vmail-vol --force               # SOBRESCRIBE el vivo
+#   ops/backup/restore-mail-volume.sh minio-data --force              # con minio parado
 #
 # Comprueba la suma .sha256 antes de extraer. Tras restaurar los buzones sobre el volumen vivo hay
 # que reconstruir los indices (estan en otro volumen, que no se respalda):
@@ -50,6 +52,16 @@ BACKUP_DIR="$(cf_read_env BACKUP_DIR)"
 BACKUP_DIR="${BACKUP_DIR:-/opt/core-force-mail/backups}"
 PROYECTO="$(cf_read_env MAIL_COMPOSE_PROJECT)"
 PROYECTO="${PROYECTO:-mail}"
+# Los volumenes de la plataforma (BACKUP_PLATFORM_VOLUMES, o minio-data) son del proyecto de la
+# plataforma, no del de los motores.
+VOLUMENES_APP="$(cf_read_env BACKUP_PLATFORM_VOLUMES)"
+PARAR="docker compose -p $PROYECTO -f deploy/mail/docker-compose.mail.yml stop dovecot-mail postfix-mail"
+if [[ " ${VOLUMENES_APP:-minio-data} " == *" $VOL "* ]]; then
+  PROYECTO="$(cf_read_env COMPOSE_PROJECT_NAME)"
+  PROYECTO="${PROYECTO:-app}"
+  PARAR="ops/security/secrets/with-secrets.sh docker compose \$(ops/maintenance/perfil-despliegue.sh --compose) stop minio"
+fi
+[[ "$PROYECTO" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || { echo "FALLA: proyecto de compose inesperado: $(printf '%q' "$PROYECTO")" >&2; exit 1; }
 IMAGEN="${BACKUP_ARCHIVE_IMAGE:-debian:bookworm-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171}"
 
 tmp=""
@@ -102,8 +114,8 @@ if docker volume inspect "$DESTINO" >/dev/null 2>&1; then
   fi
   usuarios="$(docker ps -q --filter "volume=$DESTINO" | wc -l)"
   if [[ "$usuarios" -ne 0 ]]; then
-    echo "FALLA: $usuarios contenedores en marcha montan $DESTINO. Para los motores de correo antes:" >&2
-    echo "  docker compose -p $PROYECTO -f deploy/mail/docker-compose.mail.yml stop dovecot-mail postfix-mail" >&2
+    echo "FALLA: $usuarios contenedores en marcha montan $DESTINO. Paralos antes:" >&2
+    echo "  $PARAR" >&2
     exit 1
   fi
   echo
@@ -116,7 +128,7 @@ else
 fi
 
 echo "Restaurando $ARCHIVO -> volumen $DESTINO ..."
-# Como root y con los uid/gid del archivo (vmail 5000, dovecot 401): los motores leen por uid.
+# Como root y con los uid/gid del archivo (vmail 5000, dovecot 401, minio 10001): leen por uid.
 if ! docker run --rm -i --network none --security-opt no-new-privileges -v "$DESTINO:/volumen" \
   "$IMAGEN" tar --numeric-owner -xzp -f - -C /volumen <"$ARCHIVO"; then
   echo "FALLA: la extracción en $DESTINO no termino bien" >&2

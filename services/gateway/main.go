@@ -116,14 +116,15 @@ func main() {
 		response.JSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 
-	// Media del almacen de objetos (S3/MinIO). El bucket es privado: el gateway
-	// genera una URL prefirmada de corta vida y redirige al cliente. Solo los
-	// objetos public/ son legibles sin sesion; los private/ los entrega cada
-	// servicio acotados al tenant autenticado.
+	// Media del almacen de objetos (S3/MinIO). El bucket es privado y no se publica: el
+	// gateway lee cada objeto public/ y lo sirve el mismo (media.go). Los private/ los
+	// entrega cada servicio acotados a la empresa autenticada.
 	if mediaStore, mErr := objectstore.FromEnv(); mErr != nil {
 		logger.Warn("media store init failed; /media disabled", zap.Error(mErr))
 	} else if mediaStore != nil {
-		r.Get("/media/*", mediaHandler(mediaStore, logger))
+		media := mediaHandler(mediaStore, logger)
+		r.Get("/media/*", media)
+		r.Head("/media/*", media)
 	}
 
 	mountWellKnown(r, table, limiter.Limit)

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Respaldo de los volumenes de correo de deploy/mail: los buzones y las claves de mail_crypt.
+# Respaldo de los volumenes de correo de deploy/mail (los buzones y las claves de mail_crypt) y, en
+# el perfil autoalojado, del almacen de objetos de la plataforma (las imagenes de los correos).
 #
 #   ops/backup/backup-mail-volumes.sh
 #
@@ -11,6 +12,11 @@
 #     asi que ningun fichero queda a medias, pero un mensaje que cambia de carpeta o de marcas
 #     durante el archivado puede faltar en ESTA copia (esta en la siguiente). tar lo avisa con el
 #     codigo 1, que aqui es un aviso y no un fallo. Se excluye _garbage (lo borrado).
+#   - minio-data (solo DEPLOY_PROFILE=selfhosted, del proyecto de la plataforma): los objetos de
+#     MinIO, las imagenes que los correos ya enviados siguen mostrando. En caliente, como vmail:
+#     MinIO escribe en .minio.sys/tmp y renombra, y ese directorio se excluye. Lleva ademas la
+#     configuracion IAM de MinIO, con la clave del usuario de servicio en claro, asi que tampoco
+#     sale del servidor sin cifrar.
 # El resto de volumenes del proyecto no se respalda: se regenera o no tiene valor tras un desastre
 # (indices, cola, firmas de ClamAV, certificados, Redis de los motores).
 #
@@ -23,6 +29,9 @@
 #   BACKUP_KEEP_DAYS        dias de retencion local (por defecto 3)
 #   MAIL_COMPOSE_PROJECT    proyecto de compose de deploy/mail (por defecto mail)
 #   BACKUP_MAIL_VOLUMES     volumenes, sin prefijo (por defecto "crypt-vol vmail-vol")
+#   COMPOSE_PROJECT_NAME    proyecto de compose de la plataforma (por defecto app)
+#   BACKUP_PLATFORM_VOLUMES volumenes de la plataforma, sin prefijo (por defecto "minio-data" en el
+#                           perfil selfhosted y ninguno en el de aws)
 #   BACKUP_ARCHIVE_IMAGE    imagen con GNU tar (por defecto debian bookworm-slim fijada por digest)
 set -uo pipefail
 umask 077
@@ -55,9 +64,16 @@ PROYECTO="$(cf_read_env MAIL_COMPOSE_PROJECT)"
 PROYECTO="${PROYECTO:-mail}"
 VOLUMENES="$(cf_read_env BACKUP_MAIL_VOLUMES)"
 VOLUMENES="${VOLUMENES:-crypt-vol vmail-vol}"
+PROYECTO_APP="$(cf_read_env COMPOSE_PROJECT_NAME)"
+PROYECTO_APP="${PROYECTO_APP:-app}"
+VOLUMENES_APP="$(cf_read_env BACKUP_PLATFORM_VOLUMES)"
+if [[ -z "$VOLUMENES_APP" && "$CF_PERFIL_DESPLIEGUE" == selfhosted ]]; then
+  VOLUMENES_APP=minio-data
+fi
 
 [[ "$KEEP_DAYS" =~ ^[0-9]+$ && "$KEEP_DAYS" -ge 1 ]] || abortar "BACKUP_KEEP_DAYS debe ser un entero de 1 en adelante"
 [[ "$PROYECTO" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || abortar "MAIL_COMPOSE_PROJECT no es un nombre de proyecto de compose"
+[[ "$PROYECTO_APP" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || abortar "COMPOSE_PROJECT_NAME no es un nombre de proyecto de compose"
 command -v docker >/dev/null || abortar "sin docker no se leen los volumenes"
 command -v openssl >/dev/null || abortar "sin openssl no se comprueba la clave de mail_crypt"
 
@@ -91,24 +107,34 @@ comprobar_clave_crypt() {
   return $rc
 }
 
-echo "Respaldo de correo $stamp -> $dest (proyecto $PROYECTO: $VOLUMENES)"
+echo "Respaldo de correo $stamp -> $dest (proyecto $PROYECTO: $VOLUMENES${VOLUMENES_APP:+; proyecto $PROYECTO_APP: $VOLUMENES_APP})"
+# Cada entrada es proyecto:volumen; las dos listas comparten corrida, destino y comprobaciones.
+entradas_vol=()
+for vol in $VOLUMENES; do entradas_vol+=("$PROYECTO:$vol"); done
+for vol in $VOLUMENES_APP; do entradas_vol+=("$PROYECTO_APP:$vol"); done
 fail=$externo_mal
 fail_local=0
 n=0
-for vol in $VOLUMENES; do
+for entrada in "${entradas_vol[@]}"; do
+  proyecto_vol="${entrada%%:*}"
+  vol="${entrada#*:}"
   [[ "$vol" =~ ^[a-z0-9][a-z0-9_.-]*$ ]] || { echo "  FALLA: volumen con nombre inesperado: $(printf '%q' "$vol")"; fail=1; fail_local=1; continue; }
-  completo="${PROYECTO}_$vol"
+  completo="${proyecto_vol}_$vol"
   if ! docker volume inspect "$completo" >/dev/null 2>&1; then
-    echo "  FALLA: no existe el volumen $completo (MAIL_COMPOSE_PROJECT=$PROYECTO)"
+    if [[ "$proyecto_vol" == "$PROYECTO" ]]; then
+      echo "  FALLA: no existe el volumen $completo (MAIL_COMPOSE_PROJECT=$PROYECTO)"
+    else
+      echo "  FALLA: no existe el volumen $completo (COMPOSE_PROJECT_NAME=$PROYECTO_APP; en el perfil selfhosted lo crea el servicio minio)"
+    fi
     fail=1; fail_local=1; continue
   fi
   archivo="$dest/$vol.tar.gz"
-  # Solo lectura, sin red y con la unica capacidad de leer ficheros de otros usuarios (vmail y
-  # dovecot). El archivo sale por la salida estandar: lo crea el usuario del respaldo, no root.
+  # Solo lectura, sin red y con la unica capacidad de leer ficheros de otros usuarios (vmail,
+  # dovecot, minio). El archivo sale por la salida estandar: lo crea el usuario del respaldo, no root.
   docker run --rm --network none --read-only --cap-drop ALL --cap-add DAC_READ_SEARCH \
     --security-opt no-new-privileges -v "$completo:/volumen:ro" "$CF_BACKUP_ARCHIVE_IMAGE" \
     tar --numeric-owner --warning=no-file-changed --warning=no-file-removed --exclude=./_garbage \
-    -czf - -C /volumen . >"$archivo" 2>"$archivo.err"
+    --exclude=./.minio.sys/tmp -czf - -C /volumen . >"$archivo" 2>"$archivo.err"
   rc=$?
   if [[ $rc -eq 1 ]]; then
     echo "  aviso: $vol cambio durante el archivado; lo que se movio en ese instante esta en la proxima copia"
@@ -136,6 +162,10 @@ for vol in $VOLUMENES; do
   if cf_externo_activo; then
     if [[ "$vol" == crypt-vol ]] && ! cf_externo_cifra; then
       echo "  FALLA: crypt-vol no sale del servidor sin cifrar (falta BACKUP_ENCRYPTION_PASSPHRASE)"
+      fail=1; continue
+    fi
+    if [[ "$vol" == minio-data ]] && ! cf_externo_cifra; then
+      echo "  FALLA: minio-data no sale del servidor sin cifrar: lleva la clave del usuario de servicio (falta BACKUP_ENCRYPTION_PASSPHRASE)"
       fail=1; continue
     fi
     origen="$archivo"

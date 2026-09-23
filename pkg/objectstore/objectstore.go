@@ -3,14 +3,15 @@
 // la autenticacion (claves estaticas o cadena de credenciales IAM), el aislamiento
 // multi-tenant por prefijo de clave y el acceso de lectura mediante URLs prefirmadas.
 //
-// Los buckets son privados (sin politica de lectura anonima): la lectura se sirve
-// siempre a traves del gateway, que genera una URL prefirmada de corta vida por
-// peticion. La URL publica estable que se persiste apunta al gateway, no al bucket,
-// de modo que nunca expira de cara al cliente.
+// Los buckets son privados (sin politica de lectura anonima). Los objetos public/ los
+// sirve el gateway leyendolos del almacen (Stat y OpenLimited): la URL publica estable
+// que se persiste apunta al gateway, no al bucket, y nunca expira ni expone el almacen.
+// Los private/ se entregan con URL prefirmada de corta vida (ResolveDownloadURL).
 package objectstore
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -176,6 +177,74 @@ func (s *Store) Get(ctx context.Context, key string) (io.ReadCloser, string, int
 		return nil, "", 0, fmt.Errorf("objectstore: stat %q: %w", key, err)
 	}
 	return obj, stat.ContentType, stat.Size, nil
+}
+
+// ErrNotFound: la clave no existe en el bucket.
+var ErrNotFound = errors.New("objectstore: objeto no encontrado")
+
+// ErrTooLarge: el objeto supera el tope que el llamador admite leer.
+var ErrTooLarge = errors.New("objectstore: objeto por encima del tope")
+
+// ObjectInfo son los metadatos de un objeto. ETag va sin comillas, como lo da S3.
+type ObjectInfo struct {
+	Key          string
+	ContentType  string
+	Size         int64
+	ETag         string
+	LastModified time.Time
+}
+
+// Stat devuelve los metadatos de un objeto sin leer su contenido.
+func (s *Store) Stat(ctx context.Context, key string) (ObjectInfo, error) {
+	info, err := s.client.StatObject(ctx, s.bucket, key, minio.StatObjectOptions{})
+	if err != nil {
+		return ObjectInfo{}, clasificar("stat", key, err)
+	}
+	return objectInfo(info), nil
+}
+
+// OpenLimited abre un objeto para servirlo en flujo, negandose antes de leer un solo byte si
+// declara mas de maxBytes. El lector entrega como mucho el tamano declarado: un objeto que
+// cambiara entre la cabecera y el cuerpo no puede hacer leer de mas.
+func (s *Store) OpenLimited(ctx context.Context, key string, maxBytes int64) (io.ReadCloser, ObjectInfo, error) {
+	obj, err := s.client.GetObject(ctx, s.bucket, key, minio.GetObjectOptions{})
+	if err != nil {
+		return nil, ObjectInfo{}, clasificar("get", key, err)
+	}
+	stat, err := obj.Stat()
+	if err != nil {
+		obj.Close()
+		return nil, ObjectInfo{}, clasificar("get", key, err)
+	}
+	info := objectInfo(stat)
+	if info.Size < 0 || info.Size > maxBytes {
+		obj.Close()
+		return nil, info, fmt.Errorf("%w: %q declara %d bytes (tope %d)", ErrTooLarge, key, info.Size, maxBytes)
+	}
+	return limitedReadCloser{Reader: io.LimitReader(obj, info.Size), Closer: obj}, info, nil
+}
+
+type limitedReadCloser struct {
+	io.Reader
+	io.Closer
+}
+
+func objectInfo(info minio.ObjectInfo) ObjectInfo {
+	return ObjectInfo{
+		Key:          info.Key,
+		ContentType:  info.ContentType,
+		Size:         info.Size,
+		ETag:         strings.Trim(info.ETag, `"`),
+		LastModified: info.LastModified,
+	}
+}
+
+func clasificar(op, key string, err error) error {
+	switch minio.ToErrorResponse(err).Code {
+	case "NoSuchKey", "NoSuchBucket", "NotFound":
+		return fmt.Errorf("%w: %q", ErrNotFound, key)
+	}
+	return fmt.Errorf("objectstore: %s %q: %w", op, key, err)
 }
 
 // Delete elimina un objeto. No es error que la clave no exista.
