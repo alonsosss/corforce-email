@@ -45,6 +45,8 @@ func setup(t *testing.T) (context.Context, *pgxpool.Pool, *Repository) {
 		"migrations/tenant/canonical/transactional/01_transactional.sql",
 		"migrations/tenant/canonical/transactional/02_marketing_lane.sql",
 		"migrations/tenant/canonical/transactional/03_test_sends.sql",
+		"migrations/tenant/canonical/transactional/05_sending_domains_trigger.sql",
+		"migrations/tenant/canonical/transactional/06_sending_ready.sql",
 	}
 	applyMigrations(t, ctx, pool, append(migrations, migrations...)...)
 	return db.WithPool(ctx, pool), pool, NewRepository(&db.ContextPool{})
