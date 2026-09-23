@@ -13,6 +13,7 @@ export const MODULES = {
   mailRouting: 'mail_routing',
   mailSecurity: 'mail_security',
   templates: 'templates',
+  transactional: 'transactional',
   suppression: 'suppression',
   contacts: 'contacts',
   segments: 'segments',

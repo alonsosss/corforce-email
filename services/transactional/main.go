@@ -47,6 +47,12 @@ const (
 	maxSendRate = 10000.0
 	// releaseInterval es la cadencia con la que se encolan los programados vencidos.
 	releaseInterval = time.Minute
+	// Vigencia del enlace de ver en el navegador: al menos un dia (el correo se lee despues
+	// de enviarse) y como mucho dos anos.
+	minViewInBrowserTTL = 24 * time.Hour
+	maxViewInBrowserTTL = 2 * 365 * 24 * time.Hour
+	// maxTestSendsPerHour solo detiene una errata: una prueba no se factura.
+	maxTestSendsPerHour = 1000
 )
 
 func main() {
@@ -130,6 +136,14 @@ func main() {
 	if err != nil {
 		log.Fatalf("MAIL_LINK_SIGNING_KEY: %v", err)
 	}
+	viewTTL, err := config.EnvDuration("VIEW_IN_BROWSER_TTL", domain.DefaultViewInBrowserTTL, minViewInBrowserTTL, maxViewInBrowserTTL)
+	if err != nil {
+		log.Fatal(err)
+	}
+	testSendsPerHour, err := config.EnvInt("TRANSACTIONAL_TEST_SENDS_PER_HOUR", domain.DefaultTestSendsPerHour, 1, maxTestSendsPerHour)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	// Los enlaces de la plataforma (baja, ver en el navegador) nunca llevan UTM; quien opera
 	// puede excluir otros dominios con MARKETING_UTM_EXCLUDED_DOMAINS.
@@ -177,6 +191,8 @@ func main() {
 			PlatformFromEmail:           os.Getenv("PLATFORM_FROM_EMAIL"),
 			PlatformFromName:            os.Getenv("PLATFORM_FROM_NAME"),
 			AllowUnverifiedPlatformFrom: strings.EqualFold(os.Getenv("PLATFORM_FROM_ALLOW_UNVERIFIED"), "true"),
+			ViewInBrowserTTL:            viewTTL,
+			TestSendsPerHour:            testSendsPerHour,
 		},
 		Logger:  logger,
 		Metrics: promadapter.New(),

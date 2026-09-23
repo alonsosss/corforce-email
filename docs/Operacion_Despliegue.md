@@ -88,8 +88,9 @@ largas de cada guardarraíl están en `ops/scaffold/README.md`, `ops/security/se
   y automations, `BILLING_URL` de reputation, `MAIL_DIRECTORY_URL` del webmail y
   `MAIL_DIRECTORY_URL` y `MAIL_SECURITY_URL` de domain-service (sus destinos base). Opcionales:
   `TEMPLATES_URL` y `REPUTATION_URL` de transactional, `TRANSACTIONAL_MAIL_URL` de identity y
-  `TRANSACTIONAL_URL` de mail-security (vacías, lo que depende de ellas no funciona y se
-  registra; en mail-security, el aviso de cuarentena); `ACCESS_CONTROL_URL`, por
+  `TRANSACTIONAL_URL` de mail-security y de templates (vacías, lo que depende de ellas no
+  funciona y se registra; en mail-security, el aviso de cuarentena; en templates, el envío de
+  prueba, que responde 503 `TEST_SEND_UNAVAILABLE`); `ACCESS_CONTROL_URL`, por
   defecto `http://access-control:8002` (`authz.CheckerFromEnv`); y en organization
   `ACCESS_CONTROL_URL`, `IDENTITY_URL` y `MAIL_DIRECTORY_URL`, que sin ellas usa
   `<SERVICIO>_HOST`. No son URLs base internas y conservan su lector: `MAIL_AUTH_URL` (el
@@ -1331,6 +1332,20 @@ Lo que se comprobó de punta a punta con un buzón real, y las trampas que salie
   `RSPAMD_CONTROLLER_PASSWORD` con valor (venía de `.env.example`), no se genera otra: se mueve al almacén con
   `add-secret.sh RSPAMD_CONTROLLER_PASSWORD --desde-env .env --quitar-del-env --apply`. Con valor en el `.env`,
   Compose lo usaría cuando el almacén no lo tuviera, y ningún guardarraíl revisa ese fichero.
+
+### Envio de prueba de plantillas y correo en el navegador
+
+`docs/Plan_Marketing_Avanzado.md`, 1-A. La prueba de una version la pide `templates` a `transactional`
+(`TRANSACTIONAL_URL` en el `.env` compartido; sin ella el boton responde 503 `TEST_SEND_UNAVAILABLE`) y sale con el
+remitente de un dominio de envio verificado de la empresa, nunca con `PLATFORM_FROM_EMAIL`. No se factura ni suma
+volumen a la reputacion, asi que tiene tope propio: `TRANSACTIONAL_TEST_SENDS_PER_HOUR` (50 por empresa y hora, de 1
+a 1000; 429 `TEST_SEND_LIMIT_REACHED`). El enlace `{{.view_in_browser_url}}` cuelga de `PUBLIC_BASE_URL`, se firma
+con `MAIL_LINK_SIGNING_KEY` (la misma clave que la baja: rotarla invalida los dos) y caduca a los
+`VIEW_IN_BROWSER_TTL` (2160h, 90 dias; de 24h a 17520h). La pagina la sirve `transactional` en
+`GET /api/v1/public/transactional/view` con el HTML guardado al enviar; el gateway la declara
+`"content": "untrusted_html"` y conserva su CSP. Orden de despliegue: registro (`039`) -> empresa (`transactional/07`)
+-> `transactional` -> `billing` y `reputation` (dejan de contar las pruebas) -> `templates` -> `gateway` -> `web`. Un
+`transactional` sin desplegar responde 404 a `templates`, que lo muestra como no disponible.
 
 ### Correo del sistema (recuperacion de contrasena)
 

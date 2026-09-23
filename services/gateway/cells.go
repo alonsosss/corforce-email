@@ -282,29 +282,38 @@ func (c cellRouter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 // mountPublic monta las rutas publicas de la tabla: las que llevan {cell}, por celda; las
-// demas, al destino base de su servicio. Un proxy por destino.
+// demas, al destino base de su servicio. Un proxy por destino y politica de contenido.
 func mountPublic(r chi.Router, t *routeTable, internalToken string, webhookLimit func(http.Handler) http.Handler) {
-	proxies := map[string]http.Handler{}
-	proxyFor := func(target string) http.Handler {
-		if p, ok := proxies[target]; ok {
+	type proxyKey struct {
+		target string
+		mode   proxyMode
+	}
+	proxies := map[proxyKey]http.Handler{}
+	proxyFor := func(target string, mode proxyMode) http.Handler {
+		key := proxyKey{target, mode}
+		if p, ok := proxies[key]; ok {
 			return p
 		}
-		p := reverseProxy(target, internalToken)
-		proxies[target] = p
+		p := reverseProxyWith(target, internalToken, mode)
+		proxies[key] = p
 		return p
 	}
-	routers := map[string]http.Handler{}
+	routers := map[proxyKey]http.Handler{}
 	for _, p := range t.Public {
-		h := proxyFor(t.serviceURL(p.Service))
+		mode := proxyEdgeCSP
+		if p.Content == publicContentUntrustedHTML {
+			mode = proxyUntrustedHTML
+		}
+		h := proxyFor(t.serviceURL(p.Service), mode)
 		if cellSegment(p.Path) {
-			router, ok := routers[p.Service]
+			router, ok := routers[proxyKey{p.Service, mode}]
 			if !ok {
 				byCell := make(map[string]http.Handler, len(t.cellTargets[p.Service]))
 				for code, target := range t.cellTargets[p.Service] {
-					byCell[code] = proxyFor(target)
+					byCell[code] = proxyFor(target, mode)
 				}
 				router = cellRouter{byCell: byCell, fallback: h}
-				routers[p.Service] = router
+				routers[proxyKey{p.Service, mode}] = router
 			}
 			h = router
 		}

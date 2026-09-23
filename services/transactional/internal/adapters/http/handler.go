@@ -66,8 +66,8 @@ func NewHandler(d Deps) *Handler {
 }
 
 // Routes monta tres superficies: el API con sesion (por el gateway), las rutas publicas
-// (webhook de SNS y enlace de baja, sin sesion) y los endpoints internos (envio de la
-// plataforma y lotes de campana).
+// (webhook de SNS, enlace de baja y correo en el navegador, sin sesion) y los endpoints
+// internos (envio de la plataforma, lotes de campana y pruebas de plantilla).
 func (h *Handler) Routes() http.Handler {
 	r := chi.NewRouter()
 	apiLimiter := middleware.NewRateLimiter(120, time.Minute)
@@ -95,6 +95,7 @@ func (h *Handler) Routes() http.Handler {
 		r.Post("/ses-events/{tenantID}", h.SESEvents)
 		r.With(publicLimiter.Limit).Get("/unsubscribe", h.UnsubscribePage)
 		r.With(publicLimiter.Limit).Post("/unsubscribe", h.Unsubscribe)
+		r.With(publicLimiter.Limit).Get("/view", h.ViewInBrowser)
 	})
 
 	r.Route("/internal", func(r chi.Router) {
@@ -103,6 +104,7 @@ func (h *Handler) Routes() http.Handler {
 		r.Post("/send-email", h.InternalSendEmail)
 		r.Post("/transactional/messages", h.InternalCreateMessages)
 		r.Post("/transactional/batch", h.MarketingBatch)
+		r.Post("/transactional/test-send", h.TemplateTestSend)
 	})
 	return r
 }
@@ -357,7 +359,19 @@ func (h *Handler) ListSendingDomains(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	response.JSON(w, http.StatusOK, list)
+	out := make([]sendingDomainResponse, len(list))
+	for i := range list {
+		out[i] = sendingDomainResponse{SendingDomain: list[i], CanSend: list[i].CanSend()}
+	}
+	response.JSON(w, http.StatusOK, out)
+}
+
+// sendingDomainResponse anade can_send: si hoy se puede enviar desde el dominio, con la misma
+// regla que aplica el envio (domain.SendingDomain.CanSend). La interfaz ofrece como remitente
+// solo esos dominios sin repetir la regla.
+type sendingDomainResponse struct {
+	domain.SendingDomain
+	CanSend bool `json:"can_send"`
 }
 
 // ── Interno (plataforma) ─────────────────────────────────────────────────────
@@ -752,6 +766,8 @@ func writeError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.As(err, &denied):
 		writeDenied(w, denied)
+	case errors.Is(err, domain.ErrTestSendLimit):
+		response.Err(w, http.StatusTooManyRequests, "TEST_SEND_LIMIT_REACHED", "se alcanzo el tope de envios de prueba de la ultima hora")
 	case errors.Is(err, domain.ErrReputationUnavailable):
 		response.Err(w, http.StatusServiceUnavailable, "REPUTATION_UNAVAILABLE", "reputation no respondio; no se encolo nada")
 	case errors.Is(err, domain.ErrTemplateNotMarketing):

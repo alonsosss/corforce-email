@@ -453,10 +453,7 @@ func (uc *UseCase) buildMessages(ctx context.Context, cmd CreateMessagesCommand)
 				TemplateID: *cmd.TemplateID,
 				Version:    cmd.TemplateVersion,
 				Variables:  cmd.Variables,
-				Reserved: ports.ReservedVariables{
-					UnsubscribeURL: uc.links.UnsubscribeURL(domain.UnsubscribeClaims{TenantID: cmd.TenantID, MessageID: msg.ID, Email: rcpt.Email}),
-					RecipientEmail: rcpt.Email,
-				},
+				Reserved:   uc.reservedFor(cmd.TenantID, msg.ID, rcpt.Email),
 			})
 			if err != nil {
 				return nil, err

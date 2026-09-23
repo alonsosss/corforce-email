@@ -187,7 +187,9 @@ lleva el sha256), `X-Content-Type-Options: nosniff` y `Content-Security-Policy: 
   video (miniatura con enlace), codigo de descuento, pie legal (del kit), preheader.
 * Paneles: estilos, capas, ajustes del bloque, kit de marca, imagenes (subir, elegir, editar), variables del
   contacto para insertar (`{{.first_name}}`...) tambien dentro de URLs, verificacion en vivo (llama a
-  `POST /check` con retraso), vista movil / escritorio / modo oscuro, envio de prueba (el existente).
+  `POST /check` con retraso), vista movil / escritorio / modo oscuro, envio de prueba (no existia: lo
+  anadio la oleada 1-A de `docs/Plan_Marketing_Avanzado.md`, `POST .../versions/{v}/test-send`, junto con el alta
+  desde la galeria o en blanco).
 * Galeria de al menos 6 plantillas prediseñadas (bienvenida, promocion, boletin, evento, carrito,
   transaccional) en MJML, versionadas en `web/`.
 * Editor de imagenes: recortar, girar, redimensionar, filtros; guarda una imagen nueva por `POST /assets`.

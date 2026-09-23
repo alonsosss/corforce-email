@@ -67,6 +67,7 @@ func TestMetaPublicaElCatalogoDelDominio(t *testing.T) {
 		MaxVariables: domain.MaxVariables, MaxSubjectBytes: domain.MaxSubjectBytes, MaxHTMLBytes: domain.MaxHTMLBytes,
 		MaxEditorBytes: domain.MaxEditorBytes, MaxBrandColors: domain.MaxBrandColors, MaxBrandFonts: domain.MaxBrandFonts,
 		MaxAssetBytes: domain.MaxAssetBytes, MaxAssetDimension: domain.MaxAssetDimension,
+		MaxTestRecipients: domain.MaxTestRecipients,
 	}
 	if !slices.Equal(meta.EditorKinds, domain.EditorKinds()) || !slices.Equal(meta.AssetContentTypes, domain.AssetContentTypes()) ||
 		!slices.Equal(meta.BrandFonts, domain.BrandFonts()) {

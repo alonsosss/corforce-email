@@ -391,15 +391,27 @@ func dropClientHopHeaders(h http.Header) {
 }
 
 func reverseProxy(target, internalToken string) http.Handler {
-	return reverseProxyWith(target, internalToken, false)
+	return reverseProxyWith(target, internalToken, proxyEdgeCSP)
 }
 
-// reverseProxyWith es reverseProxy con la opcion de conservar la CSP del servicio. Solo
-// la piden los prefijos autenticados por el servicio (self_authenticated): sus respuestas
-// son datos y adjuntos, nunca la aplicacion, y su politica es mas estricta que la del
-// borde. Con las dos cabeceras el navegador aplica la interseccion, que es la del
-// servicio; el resto de rutas sigue con una sola politica.
-func reverseProxyWith(target, internalToken string, keepUpstreamCSP bool) http.Handler {
+// proxyMode decide que politica CSP llega al navegador desde un servicio.
+type proxyMode int
+
+const (
+	// proxyEdgeCSP: una sola politica, la del borde; la del servicio se retira.
+	proxyEdgeCSP proxyMode = iota
+	// proxyServiceCSP conserva ademas la del servicio. Solo la piden los prefijos autenticados
+	// por el servicio (self_authenticated): sus respuestas son datos y adjuntos, nunca la
+	// aplicacion, y su politica es mas estricta que la del borde. Con las dos cabeceras el
+	// navegador aplica la interseccion, que es la del servicio.
+	proxyServiceCSP
+	// proxyUntrustedHTML es proxyServiceCSP sin marcar los <script> con el nonce: el documento
+	// lo escribio un tercero (el correo servido en el navegador, public con content
+	// untrusted_html) y un script suyo nunca debe recibir el nonce del borde.
+	proxyUntrustedHTML
+)
+
+func reverseProxyWith(target, internalToken string, mode proxyMode) http.Handler {
 	u, err := url.Parse(target)
 	if err != nil {
 		log.Fatalf("upstream invalido %q: %v", target, err)
@@ -413,12 +425,15 @@ func reverseProxyWith(target, internalToken string, keepUpstreamCSP bool) http.H
 		"X-XSS-Protection", "Referrer-Policy", "Permissions-Policy",
 		"Strict-Transport-Security",
 	}
-	if !keepUpstreamCSP {
+	if mode == proxyEdgeCSP {
 		stripped = append(stripped, "Content-Security-Policy")
 	}
 	proxy.ModifyResponse = func(resp *http.Response) error {
 		for _, h := range stripped {
 			resp.Header.Del(h)
+		}
+		if mode == proxyUntrustedHTML {
+			return nil
 		}
 		return stampCSPNonce(resp)
 	}

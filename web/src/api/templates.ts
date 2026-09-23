@@ -137,6 +137,8 @@ export interface TemplateLimits {
   max_brand_fonts: number;
   max_asset_bytes: number;
   max_asset_dimension: number;
+  /** Destinatarios de un envio de prueba. */
+  max_test_recipients: number;
 }
 
 /** Tipografia admitida en el kit, con su pila de alternativas seguras para correo. */
@@ -244,6 +246,18 @@ export interface CheckResult {
   spam: SpamResult;
 }
 
+/** POST /templates/{id}/versions/{v}/test-send: la prueba sale por transactional. */
+export interface TestSendRequest {
+  from: { email: string; name?: string };
+  to: string[];
+  variables?: Record<string, VariableValue>;
+}
+
+export interface TestSendResult {
+  messages: { id: string; status: string; email: string }[];
+  suppressed: { email: string; reason: string }[];
+}
+
 export interface CheckRequest {
   kind: TemplateKind;
   subject: string;
@@ -341,6 +355,18 @@ export const templatesApi = {
     toCheckResult(
       (await api.post<CheckResult>(endpoints.templates.versionCheck(id, version))).data,
     ),
+
+  /** Envia la version, tambien un borrador, a unas pocas direcciones de prueba. */
+  testSend: async (
+    id: string,
+    version: number,
+    input: TestSendRequest,
+  ): Promise<TestSendResult> => {
+    const { data } = await api.post<TestSendResult>(endpoints.templates.testSend(id, version), {
+      body: input,
+    });
+    return { messages: data.messages ?? [], suppressed: data.suppressed ?? [] };
+  },
 
   brandKit: async (): Promise<BrandKit> =>
     toBrandKit((await api.get<Partial<BrandKit> | null>(endpoints.templates.brandKit)).data),

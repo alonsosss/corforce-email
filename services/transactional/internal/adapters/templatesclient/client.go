@@ -46,6 +46,9 @@ func (c *Client) Render(ctx context.Context, tenantID uuid.UUID, r ports.RenderR
 	if r.Version != nil {
 		body["version"] = *r.Version
 	}
+	if r.Test {
+		body["test"] = true
+	}
 	payload, err := json.Marshal(body)
 	if err != nil {
 		return nil, err

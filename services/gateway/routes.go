@@ -122,10 +122,17 @@ type publicRouteSpec struct {
 	// proveedor (SNS) entrega desde pocas IP y a rafagas. Solo para rutas que autentica el
 	// servicio con la firma del proveedor.
 	Limit string `json:"limit,omitempty"`
+	// Content "untrusted_html" declara que la ruta devuelve HTML escrito por un tercero (el
+	// correo de una empresa visto en el navegador): el gateway conserva la CSP del servicio,
+	// mas estricta que la suya, y no marca sus <script> con el nonce de la aplicacion.
+	Content string `json:"content,omitempty"`
 }
 
-// publicLimitWebhook es el unico valor admitido de publicRouteSpec.Limit.
-const publicLimitWebhook = "webhook"
+// Valores admitidos en publicRouteSpec.
+const (
+	publicLimitWebhook         = "webhook"
+	publicContentUntrustedHTML = "untrusted_html"
+)
 
 type serviceSpec struct {
 	HostEnv     string `json:"host_env"`
@@ -257,6 +264,10 @@ func (t *routeTable) validate() error {
 		}
 		if p.Limit != "" && p.Limit != publicLimitWebhook {
 			return fmt.Errorf("tabla de rutas: limite %q invalido en la ruta publica %q (solo %q)", p.Limit, p.Path, publicLimitWebhook)
+		}
+		if p.Content != "" && (p.Content != publicContentUntrustedHTML || p.Method != "GET") {
+			return fmt.Errorf("tabla de rutas: contenido %q invalido en la ruta publica %s %q (solo %q y en GET)",
+				p.Content, p.Method, p.Path, publicContentUntrustedHTML)
 		}
 	}
 	for _, s := range t.SelfAuthenticated {

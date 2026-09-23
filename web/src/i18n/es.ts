@@ -1581,6 +1581,16 @@ export const es = {
   'templates.deleteNotArchived': 'Solo se puede eliminar una plantilla archivada.',
   'templates.form.createTitle': 'Nueva plantilla',
   'templates.form.editTitle': 'Editar plantilla',
+  'templates.form.start': 'Como empezar',
+  'templates.form.start.gallery': 'Desde la galeria',
+  'templates.form.start.blank': 'En blanco',
+  'templates.form.start.html': 'HTML propio',
+  'templates.form.startHint.gallery':
+    'Abre el editor con la galeria de plantillas predisenadas. La plantilla se crea al guardar el primer diseno.',
+  'templates.form.startHint.blank':
+    'Abre el editor con el lienzo vacio. La plantilla se crea al guardar el primer diseno.',
+  'templates.form.startHint.html': 'Escribe el HTML de la primera version a mano.',
+  'templates.form.openEditor': 'Abrir editor',
   'templates.tab.versions': 'Versiones',
   'templates.tab.preview': 'Previsualizacion',
   'templates.content.subject': 'Asunto',
@@ -1773,6 +1783,9 @@ export const es = {
   'error.code.PLAN_LIMIT_REACHED': 'Se alcanzo el limite del plan contratado para este recurso.',
   'error.code.SENDING_DOMAIN_NOT_VERIFIED':
     'El dominio del remitente no esta verificado para envios.',
+  'error.code.TEST_SEND_LIMIT_REACHED':
+    'Se alcanzo el tope de envios de prueba de la ultima hora. Vuelve a intentarlo mas tarde.',
+  'error.code.TEST_SEND_UNAVAILABLE': 'El envio de prueba no esta disponible en este momento.',
   'error.code.TEMPLATE_NOT_MARKETING': 'La plantilla no es de marketing.',
   'error.code.TEMPLATE_NOT_TRANSACTIONAL': 'La plantilla es de marketing y no sale por esta via.',
   'error.code.CAMPAIGN_CONTENT_INVALID':
@@ -2070,9 +2083,41 @@ export const es = {
     'La version v{n} se escribio en HTML a mano y no se puede abrir en el editor. Empieza desde la galeria o en blanco: al guardar se crea una version nueva y la v{n} se conserva.',
   'templates.editor.publishConfirm':
     'Se guardara el diseno si hay cambios y la version pasara a usarse en los envios.',
+  'templates.editor.newTemplate': 'Plantilla nueva: se crea al guardar el primer diseno',
+  'templates.editor.newMissing':
+    'Esta pantalla se abre desde el alta de una plantilla. Empieza de nuevo desde Plantillas.',
+  'templates.editor.nameTaken':
+    'Ya existe una plantilla con ese nombre. Cambialo y vuelve a guardar.',
+  'templates.editor.created': 'Plantilla creada con su primer diseno.',
+  'templates.editor.fixName': 'Escribe el nombre de la plantilla.',
   'templates.editor.leaveTitle': 'Cambios sin guardar',
   'templates.editor.leaveConfirm': 'Si sales del editor se perderan los cambios que no guardaste.',
   'templates.editor.leave': 'Salir sin guardar',
+
+  'templates.testSend.action': 'Enviar prueba',
+  'templates.testSend.title': 'Enviar prueba de la v{n}',
+  'templates.testSend.submit': 'Enviar prueba',
+  'templates.testSend.description':
+    'La prueba sale con el asunto marcado como prueba, respeta la lista de supresion y no cuenta en las estadisticas ni en el plan. Los enlaces de baja y de ver en el navegador funcionan como en un envio real.',
+  'templates.testSend.fromLocal': 'Remitente',
+  'templates.testSend.fromHint':
+    'La parte antes de la @, en uno de los dominios de envio verificados.',
+  'templates.testSend.fromDomain': 'Dominio de envio',
+  'templates.testSend.fromName': 'Nombre del remitente',
+  'templates.testSend.fromInvalid': 'Escribe una parte del remitente valida, sin la @.',
+  'templates.testSend.to': 'Destinatarios',
+  'templates.testSend.count': 'Entre 1 y {n} direcciones.',
+  'templates.testSend.values': 'Valores de ejemplo',
+  'templates.testSend.valuesHint':
+    'Las variables que dejes vacias se envian con su valor por defecto o con uno de ejemplo.',
+  'templates.testSend.done': 'Prueba enviada',
+  'templates.testSend.accepted': '{n} en cola de envio.',
+  'templates.testSend.suppressed':
+    '{email} no se envio: esta en la lista de supresion ({reason}).',
+  'templates.testSend.noDomains': 'La empresa no tiene ningun dominio de envio verificado.',
+  'templates.testSend.goToDomains': 'Ir a dominios',
+  'templates.testSend.noDomainPermission':
+    'Para elegir el remitente necesitas permiso para ver los dominios de envio.',
 
   'templates.gallery.title': 'Galeria',
   'templates.gallery.hint':

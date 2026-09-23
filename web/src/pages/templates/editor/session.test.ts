@@ -1,7 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import type { TemplateDetail, TemplateVersion, VersionSummary } from '@/api/templates';
 import { variablesToDrafts } from '../variables';
-import { applyGallery, baseVersionNumber, initialDocument, savedDraft } from './session';
+import {
+  applyGallery,
+  baseVersionNumber,
+  initialDocument,
+  readNewDraft,
+  readTestSendRequest,
+  savedDraft,
+  targetInfo,
+} from './session';
 
 function summary(version: number, status: VersionSummary['status']): VersionSummary {
   return {
@@ -118,5 +126,49 @@ describe('aplicar una plantilla de la galeria', () => {
       [],
     );
     expect(applied.doc.subject).toBe('Asunto de la galeria');
+  });
+});
+
+describe('alta desde el editor', () => {
+  const kinds = ['transactional', 'marketing'] as const;
+  const draft = {
+    name: 'Bienvenida',
+    description: '',
+    kind: 'marketing' as const,
+    start: 'blank' as const,
+  };
+
+  it('lee el alta pendiente del estado de la navegacion', () => {
+    expect(readNewDraft({ draft }, kinds)).toEqual(draft);
+  });
+
+  it('descarta un estado ausente o mal formado', () => {
+    expect(readNewDraft(null, kinds)).toBeNull();
+    expect(readNewDraft({}, kinds)).toBeNull();
+    expect(readNewDraft({ draft: { ...draft, name: ' ' } }, kinds)).toBeNull();
+    expect(readNewDraft({ draft: { ...draft, kind: 'newsletter' } }, kinds)).toBeNull();
+    expect(readNewDraft({ draft: { ...draft, start: 'html' } }, kinds)).toBeNull();
+  });
+
+  it('una plantilla por crear no tiene id y arranca como se eligio', () => {
+    expect(targetInfo({ mode: 'new', draft })).toEqual({
+      id: null,
+      name: 'Bienvenida',
+      kind: 'marketing',
+      archived: false,
+      start: 'blank',
+    });
+    const existing = targetInfo({
+      mode: 'existing',
+      template: { ...detail(0, []), status: 'archived' },
+    });
+    expect(existing).toMatchObject({ id: 't', archived: true, start: 'gallery' });
+  });
+
+  it('la prueba pendiente solo admite un numero de version valido', () => {
+    expect(readTestSendRequest({ testSend: 1 })).toBe(1);
+    expect(readTestSendRequest({ testSend: 0 })).toBeNull();
+    expect(readTestSendRequest({ testSend: '1' })).toBeNull();
+    expect(readTestSendRequest(undefined)).toBeNull();
   });
 });

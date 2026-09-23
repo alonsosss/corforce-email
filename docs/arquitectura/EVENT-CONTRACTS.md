@@ -144,7 +144,7 @@ subject y payload. `opaco` = el payload no se puede leer estaticamente.
 | `transactional.email.clicked` | automations | `campaign_id`, `class`, `contact_id`, `tenant_id` |
 | `transactional.email.complained` | reputation | _opaco_ |
 | `transactional.email.complained` | suppression | `detail`, `email`, `message_id`, `tenant_id` |
-| `transactional.email.sent` | billing | `class`, `tenant_id`, `to` |
+| `transactional.email.sent` | billing | `class`, `tenant_id`, `test`, `to` |
 | `transactional.email.sent` | reputation | _opaco_ |
 | `transactional.marketing.queued` | transactional | _opaco_ |
 | `transactional.message.queued` | transactional | _opaco_ |

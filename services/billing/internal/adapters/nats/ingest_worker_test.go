@@ -57,3 +57,20 @@ func TestTranslateEmailSentFromWirePayload(t *testing.T) {
 		t.Fatalf("traduccion del payload real: %+v", got)
 	}
 }
+
+func TestTestSendsAreNotBilled(t *testing.T) {
+	cases := map[string]struct {
+		test interface{}
+		want bool
+	}{
+		"prueba":             {true, true},
+		"envio real":         {false, false},
+		"sin campo":          {nil, false},
+		"texto no es prueba": {"true", false},
+	}
+	for name, tc := range cases {
+		if got := isTestSend(tc.test); got != tc.want {
+			t.Errorf("%s: %v", name, got)
+		}
+	}
+}

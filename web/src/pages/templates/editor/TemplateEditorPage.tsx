@@ -1,5 +1,4 @@
 import { Link, useParams } from 'react-router-dom';
-import { errorMessage } from '@/api/messages';
 import { templatesApi, templatesMeta } from '@/api/templates';
 import { PERMISSIONS } from '@/access/permissions';
 import { useAccess } from '@/access/useAccess';
@@ -8,23 +7,10 @@ import { IconChevronLeft } from '@/design/icons';
 import { useQuery } from '@/hooks/useQuery';
 import { t } from '@/i18n';
 import { paths } from '@/paths';
-import { findAsset } from '../assets';
 import { EditorWorkspace } from './EditorWorkspace';
-import { baseVersionNumber, type BrandContext, type EditorData } from './session';
+import { loadBrand } from './loadBrand';
+import { baseVersionNumber, type EditorData } from './session';
 import './editorPage.css';
-
-async function loadBrand(canReadKit: boolean, canReadAssets: boolean): Promise<BrandContext> {
-  if (!canReadKit) {
-    return { kit: null, logo: null, unavailable: t('templates.brandKit.noPermission') };
-  }
-  try {
-    const kit = await templatesApi.brandKit();
-    const logo = kit.logo_asset_id && canReadAssets ? await findAsset(kit.logo_asset_id) : null;
-    return { kit, logo, unavailable: null };
-  } catch (err) {
-    return { kit: null, logo: null, unavailable: errorMessage(err) };
-  }
-}
 
 export default function TemplateEditorPage() {
   const { id = '' } = useParams();
@@ -42,7 +28,7 @@ export default function TemplateEditorPage() {
       number ? templatesApi.getVersion(id, number).then((res) => res.data) : null,
       loadBrand(canReadKit, canReadAssets),
     ]);
-    return { template, meta, base, brand };
+    return { target: { mode: 'existing', template }, meta, base, brand };
   }, [id, canReadKit, canReadAssets]);
 
   if (data.error) {
@@ -57,5 +43,5 @@ export default function TemplateEditorPage() {
     );
   }
   if (!data.data) return <LoadingBlock />;
-  return <EditorWorkspace key={data.data.template.id} data={data.data} />;
+  return <EditorWorkspace key={id} data={data.data} />;
 }

@@ -60,6 +60,8 @@ export const paths = {
   template: (id: string) => `/sending/templates/${encodeURIComponent(id)}`,
   templateEditor: (id: string) => `/sending/templates/${encodeURIComponent(id)}/editor`,
   templateEditorPattern: '/sending/templates/:id/editor',
+  /** Editor de una plantilla por crear (el alta desde la galeria o en blanco). */
+  templateNewEditor: '/sending/templates/new/editor',
   brandKit: '/sending/brand-kit',
   suppression: '/sending/suppression',
   reputation: '/sending/reputation',

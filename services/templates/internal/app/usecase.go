@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"unicode/utf8"
 
@@ -35,7 +36,7 @@ func NormalizePage(page, pageSize int) (int, int) {
 // Deps agrupa los puertos del caso de uso. Un constructor con nombres evita cruzar dos
 // argumentos posicionales del mismo tipo.
 //
-// Store, Scanner y Spam son opcionales: sin almacen o sin ClamAV las subidas de imagenes
+// Store, Scanner, Spam y TestSender son opcionales: sin almacen o sin ClamAV las subidas de imagenes
 // responden no disponible, y sin Spam la verificacion sale sin puntuacion antispam.
 type Deps struct {
 	Repo      ports.Repository
@@ -47,20 +48,23 @@ type Deps struct {
 	Store     ports.AssetStore
 	Scanner   ports.VirusScanner
 	Spam      ports.SpamChecker
-	Logger    *zap.Logger
+	// TestSender es opcional: sin el, el envio de prueba responde no disponible.
+	TestSender ports.TestSender
+	Logger     *zap.Logger
 }
 
 type UseCase struct {
-	repo      ports.Repository
-	tx        ports.Transactor
-	renderer  ports.Renderer
-	events    ports.EventPublisher
-	brandKits ports.BrandKitRepository
-	assets    ports.AssetRepository
-	store     ports.AssetStore
-	scanner   ports.VirusScanner
-	spam      ports.SpamChecker
-	logger    *zap.Logger
+	repo       ports.Repository
+	tx         ports.Transactor
+	renderer   ports.Renderer
+	events     ports.EventPublisher
+	brandKits  ports.BrandKitRepository
+	assets     ports.AssetRepository
+	store      ports.AssetStore
+	scanner    ports.VirusScanner
+	spam       ports.SpamChecker
+	testSender ports.TestSender
+	logger     *zap.Logger
 }
 
 func New(d Deps) *UseCase {
@@ -71,7 +75,7 @@ func New(d Deps) *UseCase {
 	return &UseCase{
 		repo: d.Repo, tx: d.Tx, renderer: d.Renderer, events: d.Events,
 		brandKits: d.BrandKits, assets: d.Assets, store: d.Store, scanner: d.Scanner, spam: d.Spam,
-		logger: logger,
+		testSender: d.TestSender, logger: logger,
 	}
 }
 
@@ -309,15 +313,21 @@ func (uc *UseCase) PublishVersion(ctx context.Context, tenantID, templateID uuid
 }
 
 // RenderInput es una peticion de renderizado. Sin Version se usa la publicada. Preview
-// admite borradores y plantillas archivadas; un renderizado real, no.
+// admite borradores y plantillas archivadas; un renderizado real, no. Test es el render de
+// un envio de prueba (lo pide transactional): admite un borrador, no una plantilla archivada,
+// exige la version y completa las variables que falten con valores de ejemplo.
 type RenderInput struct {
 	Version  *int
 	Values   map[string]json.RawMessage
 	Reserved map[string]string
 	Preview  bool
+	Test     bool
 }
 
 func (uc *UseCase) Render(ctx context.Context, tenantID, templateID uuid.UUID, in RenderInput) (*domain.Rendered, error) {
+	if in.Test && in.Version == nil {
+		return nil, fmt.Errorf("%w: el render de prueba exige la version", domain.ErrInvalidTestSend)
+	}
 	t, err := uc.repo.GetTemplate(ctx, tenantID, templateID)
 	if err != nil {
 		return nil, err
@@ -330,7 +340,7 @@ func (uc *UseCase) Render(ctx context.Context, tenantID, templateID uuid.UUID, i
 		if v, err = uc.repo.GetVersion(ctx, tenantID, templateID, *in.Version); err != nil {
 			return nil, err
 		}
-		if !in.Preview && !v.WasPublished() {
+		if !in.Preview && !in.Test && !v.WasPublished() {
 			return nil, domain.ErrVersionNotPublished
 		}
 	} else {
@@ -347,7 +357,11 @@ func (uc *UseCase) Render(ctx context.Context, tenantID, templateID uuid.UUID, i
 	if err != nil {
 		return nil, err
 	}
-	values, err := domain.ResolveValues(v.Variables, in.Values, in.Reserved)
+	given := in.Values
+	if in.Test {
+		given = sampleValues(v.Variables, in.Values)
+	}
+	values, err := domain.ResolveValues(v.Variables, given, in.Reserved)
 	if err != nil {
 		return nil, err
 	}

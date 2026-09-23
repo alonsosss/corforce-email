@@ -274,6 +274,11 @@ export const FULLSCREEN_SCREENS: readonly ScreenDecl[] = [
     module: MODULES.templates,
     load: () => import('@/pages/templates/editor/TemplateEditorPage'),
   },
+  {
+    path: paths.templateNewEditor,
+    module: MODULES.templates,
+    load: () => import('@/pages/templates/editor/NewTemplateEditorPage'),
+  },
 ];
 
 const NotFoundPage = lazy(() => import('@/pages/NotFoundPage'));

@@ -35,6 +35,9 @@ type Repository interface {
 	// y devuelve sus ids. Debe llamarse dentro de Transact.
 	ReleaseDue(ctx context.Context, tenantID uuid.UUID, now time.Time, limit int) ([]uuid.UUID, error)
 	CountByStatus(ctx context.Context, tenantID uuid.UUID, from, to time.Time) ([]domain.StatusCount, error)
+	// CountTestMessagesSince cuenta los mensajes de prueba de la empresa creados desde since:
+	// el tope de pruebas por hora.
+	CountTestMessagesSince(ctx context.Context, tenantID uuid.UUID, since time.Time) (int, error)
 
 	// InsertEvent devuelve false si ya existia un evento con el mismo sns_message_id.
 	InsertEvent(ctx context.Context, e *domain.Event) (bool, error)
@@ -103,6 +106,9 @@ type RenderRequest struct {
 	Version    *int
 	Variables  map[string]any
 	Reserved   ReservedVariables
+	// Test pide el render de un envio de prueba: admite un borrador y completa las variables
+	// que falten con valores de ejemplo.
+	Test bool
 }
 
 // ReservedVariables son las variables que fija la plataforma y cambian por destinatario.

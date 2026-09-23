@@ -236,7 +236,7 @@ func (r *fakeRepo) ReleaseDue(_ context.Context, tenantID uuid.UUID, now time.Ti
 func (r *fakeRepo) CountByStatus(_ context.Context, tenantID uuid.UUID, from, to time.Time) ([]domain.StatusCount, error) {
 	counts := map[string]int64{}
 	for _, m := range r.messages {
-		if m.TenantID == tenantID && !m.CreatedAt.Before(from) && m.CreatedAt.Before(to) {
+		if m.TenantID == tenantID && !m.Test && !m.CreatedAt.Before(from) && m.CreatedAt.Before(to) {
 			counts[m.Status]++
 		}
 	}
@@ -247,6 +247,16 @@ func (r *fakeRepo) CountByStatus(_ context.Context, tenantID uuid.UUID, from, to
 		}
 	}
 	return out, nil
+}
+
+func (r *fakeRepo) CountTestMessagesSince(_ context.Context, tenantID uuid.UUID, since time.Time) (int, error) {
+	n := 0
+	for _, m := range r.messages {
+		if m.TenantID == tenantID && m.Test && !m.CreatedAt.Before(since) {
+			n++
+		}
+	}
+	return n, nil
 }
 
 func (r *fakeRepo) InsertEvent(_ context.Context, e *domain.Event) (bool, error) {

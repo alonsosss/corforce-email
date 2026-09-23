@@ -34,6 +34,12 @@ type Config struct {
 	AllowUnverifiedPlatformFrom bool
 	// Source identifica a este servicio ante suppression.
 	Source string
+	// ViewInBrowserTTL es la vigencia del enlace de ver en el navegador (VIEW_IN_BROWSER_TTL);
+	// cero usa domain.DefaultViewInBrowserTTL.
+	ViewInBrowserTTL time.Duration
+	// TestSendsPerHour acota las pruebas de plantilla por empresa y hora
+	// (TRANSACTIONAL_TEST_SENDS_PER_HOUR); cero usa domain.DefaultTestSendsPerHour.
+	TestSendsPerHour int
 }
 
 type Deps struct {
@@ -81,6 +87,12 @@ func New(d Deps) *UseCase {
 	}
 	if d.Config.Source == "" {
 		d.Config.Source = "transactional"
+	}
+	if d.Config.ViewInBrowserTTL <= 0 {
+		d.Config.ViewInBrowserTTL = domain.DefaultViewInBrowserTTL
+	}
+	if d.Config.TestSendsPerHour <= 0 {
+		d.Config.TestSendsPerHour = domain.DefaultTestSendsPerHour
 	}
 	metrics := d.Metrics
 	if metrics == nil {

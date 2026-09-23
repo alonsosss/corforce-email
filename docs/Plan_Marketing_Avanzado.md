@@ -31,6 +31,35 @@ SES, reputacion por empresa). Cada oleada se integra, se prueba (checks, integra
 * `view_in_browser_url`: enlace firmado (como la baja) a una pagina publica que muestra el correo tal como se
   envio a ese destinatario, con caducidad; rellenado en marketing y transaccional.
 
+Hecho (2026-09-23, rama de 1-A, sin desplegar; detalle en las filas de `templates` y `transactional` de
+`Arquitectura_Core_Force_Mail.md`, operacion en `Operacion_Despliegue.md`, «Envio de prueba de plantillas y correo
+en el navegador»). Migraciones: registro `039_templates_test_send_permissions.sql` y empresa
+`transactional/07_template_test_sends.sql`.
+
+* Alta: el formulario ofrece "Desde la galeria", "En blanco" y "HTML propio". Los dos primeros abren el editor en
+  `/sending/templates/new/editor` con el nombre, la descripcion y el tipo; la plantilla se crea con `POST /templates`
+  (con `editor`) al guardar, publicar o probar el primer diseno, y el editor pasa a su ruta. Un nombre repetido pide
+  otro en el propio editor sin perder el diseno.
+* Envio de prueba: `POST /api/v1/templates/{id}/versions/{v}/test-send`
+  `{"from": {"email", "name"?}, "reply_to"?, "to": [1..5], "variables"?: {..}}`, permiso `templates/test_send/create`
+  -> 202 `{"messages": [{"id", "status", "email"}], "suppressed": [{"email", "reason"}]}`. Remitente: la parte local
+  mas uno de los dominios con `can_send` de `GET /api/v1/transactional/sending-domains` (permiso
+  `transactional/sending_domains/read`). No reutiliza el lote de campanas (exige campana, contacto y plantilla de
+  marketing publicada): va por `POST /internal/transactional/test-send`, con las mismas piezas internas (remitente
+  verificado, supresion, reputation, `is_test`, carril por clase). Tope `TRANSACTIONAL_TEST_SENDS_PER_HOUR`. Boton
+  en el editor (guarda antes si hay cambios) y en cada version del detalle.
+* No cuenta: `analytics` ya descartaba `test`; ahora tampoco `billing` ni el volumen de `reputation` (sus rebotes
+  permanentes y quejas si), ni `GET /transactional/stats`. Las pruebas de campana tambien quedan fuera de esos
+  contadores.
+* `view_in_browser_url`: `GET /api/v1/public/transactional/view?t&m&x&sig`, firmado sobre `view`, empresa, mensaje y
+  caducidad (`VIEW_IN_BROWSER_TTL`, 90 dias). Sirve el HTML guardado en `transactional.messages` al renderizar: es
+  exactamente lo que recibio esa persona y no depende de que la plantilla siga igual ni de volver a resolver
+  variables. Pagina sin ejecucion (CSP `default-src 'none'` + `sandbox`), sin marco, sin indexar y sin cache; el
+  gateway conserva esa CSP (`"content": "untrusted_html"`). El host de `PUBLIC_BASE_URL` queda fuera de los UTM
+  (1-B).
+* Pendiente: comprobar en el navegador con el backend desplegado el alta desde la galeria, la prueba desde el editor
+  y la pagina publica con un correo real de SES.
+
 ### 1-B. Enlaces y analitica
 
 * UTM automaticos por campana (`utm_source`, `utm_medium=email`, `utm_campaign`, configurables y desactivables):
@@ -103,7 +132,7 @@ Hecho (2026-09-23, rama de 1-B, sin desplegar; detalle en las filas de `transact
 
 | Pieza | Estado |
 |---|---|
-| 1-A Editor | En curso |
+| 1-A Editor | Hecho en rama, sin desplegar (2026-09-23) |
 | 1-B Enlaces y analitica | Hecho en rama, sin desplegar (2026-09-23) |
 | 1-C Campanas | Hecho en rama (2026-09-23): fases de envio (`tenant/canonical/campaigns/03_phases.sql`), prueba A/B con decision auditada por outbox (`campaigns.campaign.ab_decided`), reenvio a quien no abrio (una vez, con la limitacion de Apple Mail documentada), envio por zona horaria con zona de respaldo indicada al programar (no hay zona de empresa en `organization`), `subject` opcional en el lote de `transactional`, `utm.content` por variante, `GET /campaigns/{id}/phases` y web de campanas. Sin migracion de registro (041 sin usar). Unitarias, integracion y `make e2e` sin SES real |
 | 1-D Dominio de seguimiento | Casi hecho (2026-09-23): DNS, certificado (con `AUTODISCOVER_SAN=n`), identidad verificada en SES y borde sirviendo `clics.core-force.com`; falta `SES_TRACKING_DOMAIN` en la pila (administrador de AWS) |

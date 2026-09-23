@@ -24,6 +24,7 @@ import (
 	outboxadapter "github.com/alonsosss/corforce-email/services/templates/internal/adapters/outbox"
 	"github.com/alonsosss/corforce-email/services/templates/internal/adapters/postgres"
 	"github.com/alonsosss/corforce-email/services/templates/internal/adapters/spamcheck"
+	"github.com/alonsosss/corforce-email/services/templates/internal/adapters/transactionalcli"
 	"github.com/alonsosss/corforce-email/services/templates/internal/app"
 	"github.com/alonsosss/corforce-email/services/templates/internal/ports"
 	"github.com/alonsosss/corforce-email/services/templates/internal/render"
@@ -89,16 +90,17 @@ func main() {
 
 	repo := postgres.NewRepository(ctxPool)
 	uc := app.New(app.Deps{
-		Repo:      repo,
-		Tx:        ctxPool,
-		Renderer:  render.NewPort(),
-		Events:    outboxadapter.NewPublisher(ctxPool),
-		BrandKits: repo,
-		Assets:    repo,
-		Store:     editor.store,
-		Scanner:   editor.scanner,
-		Spam:      editor.spam,
-		Logger:    logger,
+		Repo:       repo,
+		Tx:         ctxPool,
+		Renderer:   render.NewPort(),
+		Events:     outboxadapter.NewPublisher(ctxPool),
+		BrandKits:  repo,
+		Assets:     repo,
+		Store:      editor.store,
+		Scanner:    editor.scanner,
+		Spam:       editor.spam,
+		TestSender: editor.testSender,
+		Logger:     logger,
 	})
 	h := handler.NewHandler(uc, perms)
 
@@ -133,12 +135,13 @@ func main() {
 
 // editorDeps son las dependencias opcionales del editor visual (docs/Plan_Editor_Correos.md).
 // Cada una ausente degrada su funcion y el servicio arranca: sin almacen o sin ClamAV las
-// subidas responden 503, y sin mail-security la verificacion sale sin puntuacion antispam. Una
-// mal configurada impide arrancar.
+// subidas responden 503, sin mail-security la verificacion sale sin puntuacion antispam y sin
+// transactional el envio de prueba responde 503. Una mal configurada impide arrancar.
 type editorDeps struct {
-	store   ports.AssetStore
-	scanner ports.VirusScanner
-	spam    ports.SpamChecker
+	store      ports.AssetStore
+	scanner    ports.VirusScanner
+	spam       ports.SpamChecker
+	testSender ports.TestSender
 }
 
 func loadEditorDeps(ctx context.Context, logger *zap.Logger) (editorDeps, error) {
@@ -196,6 +199,21 @@ func loadEditorDeps(ctx context.Context, logger *zap.Logger) (editorDeps, error)
 			return deps, err
 		}
 		deps.spam = spam
+	}
+
+	// El envio de prueba sale por transactional, el unico que habla con SES.
+	transactionalURL, err := config.ServiceURL("TRANSACTIONAL_URL", "")
+	if err != nil {
+		return deps, err
+	}
+	if transactionalURL == "" {
+		logger.Warn("templates: sin TRANSACTIONAL_URL, el envio de prueba responde TEST_SEND_UNAVAILABLE")
+	} else {
+		token, err := middleware.InternalGatewayToken()
+		if err != nil {
+			return deps, err
+		}
+		deps.testSender = transactionalcli.New(transactionalURL, token)
 	}
 	return deps, nil
 }

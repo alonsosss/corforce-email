@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useBlocker } from 'react-router-dom';
+import { Link, useBlocker, useLocation, useNavigate } from 'react-router-dom';
 import { ERROR_CODES, isApiError } from '@/api/errors';
 import { errorMessage } from '@/api/messages';
 import {
@@ -19,6 +19,8 @@ import {
   Badge,
   Button,
   ConfirmDialog,
+  FormField,
+  Input,
   LoadingBlock,
   Tabs,
   useToast,
@@ -27,6 +29,7 @@ import {
   IconChevronLeft,
   IconGrid,
   IconImage,
+  IconMail,
   IconMonitor,
   IconMoon,
   IconRedo,
@@ -38,6 +41,7 @@ import {
 import { t } from '@/i18n';
 import { paths } from '@/paths';
 import { AssetLibrary } from '../AssetLibrary';
+import { VersionTestSend } from '../TestSendModal';
 import { contentFromDraft, type ContentErrors } from '../content';
 import type { GalleryTemplate } from '../gallery';
 import { BlocksPanel } from './BlocksPanel';
@@ -49,7 +53,16 @@ import { DocumentPanel, type DocumentDraft } from './DocumentPanel';
 import type { AssetRequest, DeviceId, EditorEngine, EngineBlocks, EngineSelection } from './engine';
 import { GalleryModal } from './GalleryModal';
 import { htmlToText, writePreheader } from './mjmlSource';
-import { applyGallery, emptyMjml, initialDocument, savedDraft, type EditorData } from './session';
+import {
+  applyGallery,
+  emptyMjml,
+  initialDocument,
+  readTestSendRequest,
+  savedDraft,
+  targetInfo,
+  type EditorData,
+  type EditorLocationState,
+} from './session';
 import { useDeliverabilityCheck } from './useDeliverabilityCheck';
 import { VariablesPanel } from './VariablesPanel';
 
@@ -67,13 +80,31 @@ const NO_SELECTION: EngineSelection = { editingText: false, hasLink: false };
 /** El documento no se puede guardar: el motivo ya se muestra junto a su campo. */
 class DocumentInvalid extends Error {}
 
+/** Version guardada; created es true cuando el guardado dio de alta la plantilla. */
+interface Persisted {
+  templateId: string;
+  version: number;
+  created: boolean;
+}
+
+/** Ir al editor de la plantilla recien creada cuando el guardado ya limpio los cambios. */
+interface Redirect {
+  templateId: string;
+  state?: EditorLocationState;
+}
+
 export function EditorWorkspace({ data }: { data: EditorData }) {
-  const { template, meta, base, brand } = data;
+  const { meta, base, brand } = data;
+  const target = targetInfo(data.target);
+  const { archived } = target;
+  const description = data.target.mode === 'new' ? data.target.draft.description : '';
   const toast = useToast();
+  const navigate = useNavigate();
+  const location = useLocation();
   const { can } = useAccess();
-  const archived = template.status === 'archived';
   const canSave = can(...PERMISSIONS.templates.create) && !archived;
   const canPublish = can(...PERMISSIONS.templates.publish) && !archived;
+  const canTestSend = can(...PERMISSIONS.templates.testSend) && !archived;
 
   const tokens = useMemo(
     () => brandTokens(brand.kit, brand.logo?.url ?? null, meta.brand_fonts),
@@ -116,9 +147,17 @@ export function EditorWorkspace({ data }: { data: EditorData }) {
   const [publishing, setPublishing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<unknown>(null);
+  const [name, setName] = useState(target.name);
+  const [nameError, setNameError] = useState<string | null>(null);
+  const [testing, setTesting] = useState<number | null>(() => readTestSendRequest(location.state));
+  const [preparingTest, setPreparingTest] = useState(false);
+  const [redirect, setRedirect] = useState<Redirect | null>(null);
 
   const dirty = canvasDirty || docDirty;
   const handDrafted = Boolean(base && !base.editor);
+  // La prueba sale de lo que se ve en el lienzo: sin cambios, el ultimo borrador guardado o la
+  // version abierta si se diseno con el editor; una escrita a mano no es lo que muestra el lienzo.
+  const testNeedsSave = dirty || !target.id || (saved === null && (!base || handDrafted));
 
   useEffect(() => {
     let cancelled = false;
@@ -153,7 +192,7 @@ export function EditorWorkspace({ data }: { data: EditorData }) {
         else instance.loadMjml(emptyMjml(tokens));
         instance.markSaved();
         setEngine(instance);
-        if (!project) setGalleryOpen(true);
+        if (!project && target.start === 'gallery') setGalleryOpen(true);
       })
       .catch((err: unknown) => {
         if (!cancelled) setEngineError(err);
@@ -172,6 +211,11 @@ export function EditorWorkspace({ data }: { data: EditorData }) {
     window.addEventListener('beforeunload', warn);
     return () => window.removeEventListener('beforeunload', warn);
   }, [dirty]);
+
+  useEffect(() => {
+    if (!redirect || dirty) return;
+    navigate(paths.templateEditor(redirect.templateId), { replace: true, state: redirect.state });
+  }, [redirect, dirty, navigate]);
 
   const blocker = useBlocker(
     ({ currentLocation, nextLocation }) =>
@@ -196,17 +240,20 @@ export function EditorWorkspace({ data }: { data: EditorData }) {
     const built = build();
     if (!built) return null;
     return {
-      kind: template.kind,
+      kind: target.kind,
       subject: doc.subject,
       html: built.html,
       text: doc.text.trim() ? doc.text : undefined,
     };
-  }, [build, template.kind, doc.subject, doc.text]);
+  }, [build, target.kind, doc.subject, doc.text]);
 
   const check = useDeliverabilityCheck(revision, buildCheck, engine !== null);
 
-  /** Guarda el diseno como una version nueva en borrador; las anteriores se conservan. */
-  const persist = async (): Promise<number> => {
+  /**
+   * Guarda el diseno como una version nueva en borrador; las anteriores se conservan. Una
+   * plantilla por crear se da de alta aqui con este diseno como version 1.
+   */
+  const persist = async (): Promise<Persisted> => {
     const built = build();
     if (!built || !engine) throw new DocumentInvalid(t('templates.editor.loadFailed'));
     const parsed = contentFromDraft(
@@ -218,7 +265,11 @@ export function EditorWorkspace({ data }: { data: EditorData }) {
       if (!parsed.errors.html) setRightTab('document');
       throw new DocumentInvalid(parsed.errors.html ?? t('templates.editor.fixDocument'));
     }
-    const editor: EditorDocument = { kind: EDITOR_KIND_GRAPESJS_MJML, project: engine.project(), mjml: built.mjml };
+    const editor: EditorDocument = {
+      kind: EDITOR_KIND_GRAPESJS_MJML,
+      project: engine.project(),
+      mjml: built.mjml,
+    };
     const editorBytes = new TextEncoder().encode(JSON.stringify(editor)).length;
     if (editorBytes > meta.limits.max_editor_bytes) {
       throw new DocumentInvalid(
@@ -226,21 +277,54 @@ export function EditorWorkspace({ data }: { data: EditorData }) {
       );
     }
     const content: TemplateContent = { ...parsed.content, editor };
-    const { data: created } = await templatesApi.createVersion(template.id, content);
+    const persisted = target.id
+      ? {
+          templateId: target.id,
+          version: (await templatesApi.createVersion(target.id, content)).data.version,
+          created: false,
+        }
+      : await createTemplate(content);
     engine.markSaved();
     setCanvasDirty(false);
     setDocDirty(false);
-    setSaved(created.version);
+    setSaved(persisted.version);
     setPublishIssues(null);
-    return created.version;
+    return persisted;
+  };
+
+  const createTemplate = async (content: TemplateContent): Promise<Persisted> => {
+    const trimmed = name.trim();
+    if (!trimmed || trimmed.length > meta.limits.max_name_length) {
+      setNameError(t('validation.required'));
+      throw new DocumentInvalid(t('templates.editor.fixName'));
+    }
+    try {
+      const { data: created } = await templatesApi.create({
+        name: trimmed,
+        description,
+        kind: target.kind,
+        ...content,
+      });
+      setNameError(null);
+      return { templateId: created.id, version: 1, created: true };
+    } catch (err) {
+      if (!isApiError(err) || !err.is(ERROR_CODES.CONFLICT)) throw err;
+      setNameError(t('templates.editor.nameTaken'));
+      throw new DocumentInvalid(t('templates.editor.nameTaken'));
+    }
   };
 
   const save = async () => {
     setSaving(true);
     setSaveError(null);
     try {
-      const version = await persist();
-      toast.success(t('templates.editor.saved', { n: version }));
+      const persisted = await persist();
+      if (persisted.created) {
+        toast.success(t('templates.editor.created'));
+        setRedirect({ templateId: persisted.templateId });
+      } else {
+        toast.success(t('templates.editor.saved', { n: persisted.version }));
+      }
     } catch (err) {
       setSaveError(err);
     } finally {
@@ -250,31 +334,71 @@ export function EditorWorkspace({ data }: { data: EditorData }) {
 
   const publish = async () => {
     setSaveError(null);
-    let version: number;
+    let persisted: Persisted;
     try {
-      version = saved !== null && !dirty ? saved : await persist();
+      persisted =
+        target.id && saved !== null && !dirty
+          ? { templateId: target.id, version: saved, created: false }
+          : await persist();
     } catch (err) {
       if (!(err instanceof DocumentInvalid)) throw err;
       setSaveError(err);
       setPublishing(false);
       return;
     }
+    const { templateId, version } = persisted;
     try {
-      await templatesApi.publish(template.id, version);
+      await templatesApi.publish(templateId, version);
     } catch (err) {
       if (!isApiError(err) || !err.is(ERROR_CODES.DELIVERABILITY_FAILED)) throw err;
       const issues =
-        deliverabilityIssues(err) ?? (await templatesApi.checkVersion(template.id, version)).issues;
+        deliverabilityIssues(err) ?? (await templatesApi.checkVersion(templateId, version)).issues;
       setPublishIssues(issues);
       setRightTab('check');
       setPublishing(false);
       toast.error(t('templates.check.publishBlocked'));
+      if (persisted.created) setRedirect({ templateId });
       return;
     }
     setSaved(null);
     setPublishIssues(null);
     setPublishing(false);
     toast.success(t('templates.versions.published', { n: version }));
+    if (persisted.created) setRedirect({ templateId });
+  };
+
+  /**
+   * La prueba sale de una version guardada: sin cambios, el ultimo borrador guardado o la que
+   * se abrio; con cambios, se guardan antes como borrador nuevo.
+   */
+  const startTestSend = async () => {
+    setSaveError(null);
+    const unchanged = testNeedsSave ? null : (saved ?? base?.version ?? null);
+    if (unchanged !== null) {
+      setTesting(unchanged);
+      return;
+    }
+    setPreparingTest(true);
+    try {
+      const persisted = await persist();
+      if (persisted.created) {
+        toast.success(t('templates.editor.created'));
+        setRedirect({ templateId: persisted.templateId, state: { testSend: persisted.version } });
+      } else {
+        setTesting(persisted.version);
+      }
+    } catch (err) {
+      setSaveError(err);
+    } finally {
+      setPreparingTest(false);
+    }
+  };
+
+  const closeTestSend = () => {
+    setTesting(null);
+    if (readTestSendRequest(location.state) !== null) {
+      navigate(location.pathname, { replace: true, state: null });
+    }
   };
 
   const chooseGallery = (choice: GalleryTemplate, mjml: string) => {
@@ -323,17 +447,22 @@ export function EditorWorkspace({ data }: { data: EditorData }) {
       ? t('templates.editor.editingDraft', { n: saved })
       : base
         ? t('templates.editor.newFrom', { n: base.version })
-        : t('templates.editor.newVersion');
+        : target.id
+          ? t('templates.editor.newVersion')
+          : t('templates.editor.newTemplate');
 
   return (
     <div className="cf-editor">
       <header className="cf-editor__bar">
-        <Link to={paths.template(template.id)} className="cf-editor__back">
+        <Link
+          to={target.id ? paths.template(target.id) : paths.templates}
+          className="cf-editor__back"
+        >
           <IconChevronLeft size={16} />
-          {t('templates.editor.back')}
+          {target.id ? t('templates.editor.back') : t('nav.templates')}
         </Link>
         <div className="cf-editor__title">
-          <strong>{template.name}</strong>
+          <strong>{name}</strong>
           <span className="cf-text-sm cf-text-secondary">
             {statusLabel}
             {dirty ? ` · ${t('templates.editor.unsaved')}` : ''}
@@ -428,6 +557,17 @@ export function EditorWorkspace({ data }: { data: EditorData }) {
               {t('templates.versions.saveDraft')}
             </Button>
           ) : null}
+          {canTestSend ? (
+            <Button
+              size="sm"
+              icon={<IconMail size={16} />}
+              loading={preparingTest}
+              disabled={!engine || (testNeedsSave && !canSave)}
+              onClick={() => void startTestSend()}
+            >
+              {t('templates.testSend.action')}
+            </Button>
+          ) : null}
           {canPublish && canSave ? (
             <Button
               size="sm"
@@ -442,8 +582,24 @@ export function EditorWorkspace({ data }: { data: EditorData }) {
         </div>
       </header>
 
-      {!canSave || handDrafted || saveError || engineError ? (
+      {!canSave || handDrafted || saveError || engineError || nameError ? (
         <div className="cf-editor__notices">
+          {nameError && !target.id ? (
+            <FormField
+              label={t('common.name')}
+              htmlFor="editor-new-name"
+              required
+              error={nameError}
+            >
+              <Input
+                id="editor-new-name"
+                value={name}
+                maxLength={meta.limits.max_name_length}
+                onChange={(e) => setName(e.target.value)}
+                invalid
+              />
+            </FormField>
+          ) : null}
           {!canSave ? (
             <Alert tone="info">
               {archived ? t('templates.archivedNotice') : t('templates.editor.readOnly')}
@@ -589,6 +745,9 @@ export function EditorWorkspace({ data }: { data: EditorData }) {
           setPendingGallery(null);
         }}
       />
+      {testing !== null && target.id ? (
+        <VersionTestSend templateId={target.id} version={testing} onClose={closeTestSend} />
+      ) : null}
       <ConfirmDialog
         open={publishing}
         title={t('templates.versions.publish')}

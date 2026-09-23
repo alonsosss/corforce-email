@@ -44,6 +44,27 @@ func TestRenderContract(t *testing.T) {
 	if _, ok := reserved["view_in_browser_url"]; !ok {
 		t.Fatal("las cuatro variables reservadas viajan siempre")
 	}
+	if _, ok := body["test"]; ok {
+		t.Fatal("un render real no pide el modo de prueba")
+	}
+}
+
+func TestRenderForATestSendAsksForTheTestMode(t *testing.T) {
+	var body map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		_, _ = w.Write([]byte(`{"data":{"subject":"Hola","html":"<p>Hola</p>","text":"Hola","version":2,"kind":"transactional"}}`))
+	}))
+	defer srv.Close()
+	version := 2
+	if _, err := New(srv.URL, "tok").Render(context.Background(), uuid.New(), ports.RenderRequest{
+		TemplateID: uuid.New(), Version: &version, Test: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if body["test"] != true || body["version"] != float64(2) {
+		t.Fatalf("cuerpo del render de prueba: %v", body)
+	}
 }
 
 // Una version de templates anterior al campo kind responde sin el: el cliente lo deja

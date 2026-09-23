@@ -167,6 +167,12 @@ func TestValidacionRechazaIncoherencias(t *testing.T) {
 		"publica con metodo raro": func(t *routeTable) {
 			t.Public = []publicRouteSpec{{Method: "PATCH", Path: "/public/x", Service: "identity"}}
 		},
+		"publica con un contenido desconocido": func(t *routeTable) {
+			t.Public = []publicRouteSpec{{Method: "GET", Path: "/public/x", Service: "identity", Content: "html"}}
+		},
+		"contenido de terceros en un POST": func(t *routeTable) {
+			t.Public = []publicRouteSpec{{Method: "POST", Path: "/public/x", Service: "identity", Content: publicContentUntrustedHTML}}
+		},
 		"autenticada por el servicio sobre una ruta con JWT": func(t *routeTable) {
 			t.SelfAuthenticated = []selfAuthSpec{{Prefix: "users", Service: "identity"}}
 		},

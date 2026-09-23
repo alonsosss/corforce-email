@@ -7,16 +7,27 @@ import (
 	"encoding/hex"
 	"errors"
 	"net/url"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 )
 
-// UnsubscribePath es la ruta publica del enlace de baja, tal como la declara el gateway.
-const UnsubscribePath = "/api/v1/public/transactional/unsubscribe"
+// Rutas publicas de los enlaces que viajan en el correo, tal como las declara el gateway.
+const (
+	UnsubscribePath   = "/api/v1/public/transactional/unsubscribe"
+	ViewInBrowserPath = "/api/v1/public/transactional/view"
+)
 
-// LinkSigner firma los enlaces de baja con HMAC-SHA256 y MAIL_LINK_SIGNING_KEY. La firma
-// va completa en hexadecimal (nunca truncada) y se compara en tiempo constante.
+// DefaultViewInBrowserTTL es la vigencia del enlace de ver en el navegador cuando
+// VIEW_IN_BROWSER_TTL no la fija.
+const DefaultViewInBrowserTTL = 90 * 24 * time.Hour
+
+// LinkSigner firma los enlaces de baja y de ver en el navegador con HMAC-SHA256 y
+// MAIL_LINK_SIGNING_KEY. Cada enlace firma un texto que empieza por su proposito, asi que la
+// firma de uno nunca vale para el otro. La firma va completa en hexadecimal (nunca truncada)
+// y se compara en tiempo constante.
 type LinkSigner struct {
 	key     []byte
 	baseURL string
@@ -40,20 +51,27 @@ func (s *LinkSigner) canonical(c UnsubscribeClaims) []byte {
 	return []byte("unsubscribe\n" + c.TenantID.String() + "\n" + c.MessageID.String() + "\n" + strings.ToLower(c.Email))
 }
 
+func (s *LinkSigner) mac(message []byte) string {
+	mac := hmac.New(sha256.New, s.key)
+	mac.Write(message)
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
+func sameSignature(expected, got string) bool {
+	if len(got) != len(expected) {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(expected), []byte(got)) == 1
+}
+
 // Sign devuelve la firma hexadecimal de las claims.
 func (s *LinkSigner) Sign(c UnsubscribeClaims) string {
-	mac := hmac.New(sha256.New, s.key)
-	mac.Write(s.canonical(c))
-	return hex.EncodeToString(mac.Sum(nil))
+	return s.mac(s.canonical(c))
 }
 
 // Verify comprueba la firma en tiempo constante.
 func (s *LinkSigner) Verify(c UnsubscribeClaims, signature string) bool {
-	expected := s.Sign(c)
-	if len(signature) != len(expected) {
-		return false
-	}
-	return subtle.ConstantTimeCompare([]byte(expected), []byte(signature)) == 1
+	return sameSignature(s.Sign(c), signature)
 }
 
 // ContainsUnsubscribeLink dice si el contenido renderizado lleva el enlace de baja de ese
@@ -72,4 +90,38 @@ func (s *LinkSigner) UnsubscribeURL(c UnsubscribeClaims) string {
 	q.Set("e", c.Email)
 	q.Set("sig", s.Sign(c))
 	return s.baseURL + UnsubscribePath + "?" + q.Encode()
+}
+
+// ViewClaims protegen el enlace de ver en el navegador: empresa, mensaje y caducidad. No
+// lleva la direccion del destinatario: el mensaje ya es de una sola persona y la URL no
+// tiene por que exponerla en historiales ni registros.
+type ViewClaims struct {
+	TenantID  uuid.UUID
+	MessageID uuid.UUID
+	ExpiresAt time.Time
+}
+
+func (s *LinkSigner) viewCanonical(c ViewClaims) []byte {
+	return []byte("view\n" + c.TenantID.String() + "\n" + c.MessageID.String() + "\n" + strconv.FormatInt(c.ExpiresAt.Unix(), 10))
+}
+
+// SignView devuelve la firma hexadecimal del enlace de ver en el navegador.
+func (s *LinkSigner) SignView(c ViewClaims) string {
+	return s.mac(s.viewCanonical(c))
+}
+
+// VerifyView comprueba la firma en tiempo constante. La caducidad la juzga quien llama, con
+// su reloj.
+func (s *LinkSigner) VerifyView(c ViewClaims, signature string) bool {
+	return sameSignature(s.SignView(c), signature)
+}
+
+// ViewInBrowserURL construye el enlace completo; la caducidad viaja en segundos Unix.
+func (s *LinkSigner) ViewInBrowserURL(c ViewClaims) string {
+	q := url.Values{}
+	q.Set("t", c.TenantID.String())
+	q.Set("m", c.MessageID.String())
+	q.Set("x", strconv.FormatInt(c.ExpiresAt.Unix(), 10))
+	q.Set("sig", s.SignView(c))
+	return s.baseURL + ViewInBrowserPath + "?" + q.Encode()
 }

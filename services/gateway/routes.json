@@ -67,6 +67,7 @@
     {"method": "POST", "path": "/public/transactional/ses-events/{tenantID}", "service": "transactional", "limit": "webhook"},
     {"method": "GET",  "path": "/public/transactional/unsubscribe",           "service": "transactional"},
     {"method": "POST", "path": "/public/transactional/unsubscribe",           "service": "transactional"},
+    {"method": "GET",  "path": "/public/transactional/view",                  "service": "transactional", "content": "untrusted_html"},
     {"method": "GET",  "path": "/public/contacts/confirm",                    "service": "contacts"},
     {"method": "POST", "path": "/public/contacts/confirm",                    "service": "contacts"},
     {"method": "GET",  "path": "/public/mail-security/quarantine/{cell}/release", "service": "mail-security"},

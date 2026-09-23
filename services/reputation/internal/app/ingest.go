@@ -58,6 +58,10 @@ type DeliveryEvent struct {
 	// Menos de 1 cuenta como 1.
 	Recipients int64
 	BounceType string
+	// Test: transactional lo marco como envio de prueba. Su volumen no cuenta; un rebote
+	// permanente o una queja de una prueba si, porque dicen lo mismo de la practica de la
+	// empresa y SES los cuenta igual en la cuenta compartida.
+	Test       bool
 	OccurredAt time.Time
 }
 
@@ -123,6 +127,9 @@ func (ev DeliveryEvent) delta() (domain.Counts, error) {
 	}
 	switch ev.Kind {
 	case KindSent:
+		if ev.Test {
+			return domain.Counts{}, nil
+		}
 		n := ev.Recipients
 		if n < 1 {
 			n = 1

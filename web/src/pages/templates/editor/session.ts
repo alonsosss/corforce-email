@@ -3,6 +3,7 @@ import {
   type BrandKit,
   type TemplateAsset,
   type TemplateDetail,
+  type TemplateKind,
   type TemplatesMeta,
   type TemplateVariable,
   type TemplateVersion,
@@ -23,12 +24,74 @@ export interface BrandContext {
   unavailable: string | null;
 }
 
+/** Como arranca el lienzo de una plantilla nueva: con la galeria abierta o vacio. */
+export type EditorStart = 'gallery' | 'blank';
+
+/** Alta pendiente: la plantilla se crea con su primer diseno al guardar (POST /templates). */
+export interface NewTemplateDraft {
+  name: string;
+  description: string;
+  kind: TemplateKind;
+  start: EditorStart;
+}
+
+export type EditorTarget =
+  { mode: 'existing'; template: TemplateDetail } | { mode: 'new'; draft: NewTemplateDraft };
+
+/** Lo que viaja en el estado de la navegacion hacia el editor. */
+export interface EditorLocationState {
+  draft?: NewTemplateDraft;
+  /** Version recien creada cuyo envio de prueba se abre al llegar. */
+  testSend?: number;
+}
+
 export interface EditorData {
-  template: TemplateDetail;
+  target: EditorTarget;
   meta: TemplatesMeta;
   /** Version de partida: el borrador mas reciente o, si no hay, la publicada. */
   base: TemplateVersion | null;
   brand: BrandContext;
+}
+
+/** Datos de la plantilla que el editor muestra, exista ya o este por crearse. */
+export function targetInfo(target: EditorTarget): {
+  id: string | null;
+  name: string;
+  kind: TemplateKind;
+  archived: boolean;
+  start: EditorStart;
+} {
+  if (target.mode === 'existing') {
+    const { template } = target;
+    return {
+      id: template.id,
+      name: template.name,
+      kind: template.kind,
+      archived: template.status === 'archived',
+      start: 'gallery',
+    };
+  }
+  const { draft } = target;
+  return { id: null, name: draft.name, kind: draft.kind, archived: false, start: draft.start };
+}
+
+/** Lee el alta pendiente del estado de la navegacion; null si falta o esta mal formada. */
+export function readNewDraft(
+  state: unknown,
+  kinds: readonly TemplateKind[],
+): NewTemplateDraft | null {
+  const draft = (state as EditorLocationState | null)?.draft;
+  if (typeof draft !== 'object' || draft === null) return null;
+  const { name, description, kind, start } = draft;
+  if (typeof name !== 'string' || !name.trim() || typeof description !== 'string') return null;
+  if (!kinds.includes(kind) || (start !== 'gallery' && start !== 'blank')) return null;
+  return { name, description, kind, start };
+}
+
+/** Version cuyo envio de prueba pide abrir la navegacion, o null. */
+export function readTestSendRequest(state: unknown): number | null {
+  const value = (state as EditorLocationState | null)?.testSend;
+  return typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : null;
 }
 
 /** Numero de la version que se abre: el borrador mas reciente, la publicada o la ultima. */

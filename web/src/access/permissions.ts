@@ -184,6 +184,11 @@ export const PERMISSIONS = {
     ...crud(MODULES.templates, 'templates'),
     publish: [MODULES.templates, 'templates', 'publish'],
     render: [MODULES.templates, 'templates', 'render'],
+    // 039: envio de prueba de una version.
+    testSend: [MODULES.templates, 'test_send', 'create'],
+  },
+  sendingDomains: {
+    read: [MODULES.transactional, 'sending_domains', 'read'],
   },
   brandKit: {
     read: [MODULES.templates, 'brand_kit', 'read'],

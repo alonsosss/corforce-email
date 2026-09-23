@@ -25,6 +25,8 @@ const (
 	// Recursos del editor visual: migrations/registry/038_templates_editor_permissions.sql.
 	permBrandKit = "brand_kit"
 	permAssets   = "assets"
+	// Envio de prueba de una version: migrations/registry/039_templates_test_send_permissions.sql.
+	permTestSend = "test_send"
 
 	actionRead    = "read"
 	actionCreate  = "create"
@@ -79,6 +81,7 @@ func (h *Handler) Routes() http.Handler {
 		r.With(h.perm(actionRead)).Get("/versions/{n}", h.GetVersion)
 		r.With(h.perm(actionPublish)).Post("/versions/{n}/publish", h.PublishVersion)
 		r.With(h.perm(actionRead)).Post("/versions/{n}/check", h.CheckVersion)
+		r.With(h.permOn(permTestSend, actionCreate)).Post("/versions/{n}/test-send", h.TestSendVersion)
 		r.With(h.perm(actionRender)).Post("/render", h.Render)
 		r.With(h.perm(actionRender)).Post("/preview", h.Preview)
 	})
@@ -137,12 +140,22 @@ func writeError(w http.ResponseWriter, err error) {
 		writeDeliverabilityFailed(w, de)
 		return
 	}
+	var rejected *domain.TestSendRejectedError
+	if errors.As(err, &rejected) {
+		if rejected.RetryAfter != "" {
+			w.Header().Set("Retry-After", rejected.RetryAfter)
+		}
+		response.Err(w, rejected.Status, rejected.Code, rejected.Message)
+		return
+	}
 	switch {
 	case errors.Is(err, domain.ErrTemplateNotFound), errors.Is(err, domain.ErrVersionNotFound),
 		errors.Is(err, domain.ErrAssetNotFound):
 		response.ErrNotFound(w, err.Error())
 	case errors.Is(err, domain.ErrScannerUnavailable):
 		response.Err(w, http.StatusServiceUnavailable, "SCANNER_UNAVAILABLE", domain.ErrScannerUnavailable.Error())
+	case errors.Is(err, domain.ErrTestSendUnavailable):
+		response.Err(w, http.StatusServiceUnavailable, "TEST_SEND_UNAVAILABLE", domain.ErrTestSendUnavailable.Error())
 	case errors.Is(err, domain.ErrStorageUnavailable):
 		response.Err(w, http.StatusServiceUnavailable, "STORAGE_UNAVAILABLE", domain.ErrStorageUnavailable.Error())
 	case errors.Is(err, domain.ErrAssetRejected):
@@ -165,7 +178,8 @@ func writeError(w http.ResponseWriter, err error) {
 		errors.Is(err, domain.ErrInvalidEditor),
 		errors.Is(err, domain.ErrInvalidBrandKit),
 		errors.Is(err, domain.ErrInvalidAsset),
-		errors.Is(err, domain.ErrInvalidCursor):
+		errors.Is(err, domain.ErrInvalidCursor),
+		errors.Is(err, domain.ErrInvalidTestSend):
 		response.ErrValidation(w, err.Error())
 	case errors.Is(err, domain.ErrMissingCreator):
 		response.ErrUnauthorized(w, err.Error())
@@ -192,6 +206,7 @@ type limitsMeta struct {
 	MaxBrandFonts        int `json:"max_brand_fonts"`
 	MaxAssetBytes        int `json:"max_asset_bytes"`
 	MaxAssetDimension    int `json:"max_asset_dimension"`
+	MaxTestRecipients    int `json:"max_test_recipients"`
 }
 
 type metaResponse struct {
@@ -234,6 +249,7 @@ func domainLimits() limitsMeta {
 		MaxHTMLBytes: domain.MaxHTMLBytes, MaxEditorBytes: domain.MaxEditorBytes,
 		MaxBrandColors: domain.MaxBrandColors, MaxBrandFonts: domain.MaxBrandFonts,
 		MaxAssetBytes: domain.MaxAssetBytes, MaxAssetDimension: domain.MaxAssetDimension,
+		MaxTestRecipients: domain.MaxTestRecipients,
 	}
 }
 
@@ -535,6 +551,8 @@ type renderRequest struct {
 type internalRenderRequest struct {
 	renderRequest
 	Reserved map[string]string `json:"reserved"`
+	// Test lo fija transactional en el envio de prueba de una version (tambien un borrador).
+	Test bool `json:"test,omitempty"`
 }
 
 func (h *Handler) Render(w http.ResponseWriter, r *http.Request) {
@@ -573,8 +591,9 @@ func (h *Handler) render(w http.ResponseWriter, r *http.Request, preview bool) {
 	response.JSON(w, http.StatusOK, renderedResponse(out))
 }
 
-// InternalRender es lo que llama transactional (y campaigns) por cada envio: siempre
-// sobre una version publicada y con las variables reservadas ya resueltas.
+// InternalRender es lo que llama transactional (y campaigns) por cada envio: sobre una
+// version publicada, o sobre cualquiera en el render de prueba, y con las variables
+// reservadas ya resueltas.
 func (h *Handler) InternalRender(w http.ResponseWriter, r *http.Request) {
 	tenantID, ok := tenantFrom(w, r)
 	if !ok {
@@ -593,6 +612,9 @@ func (h *Handler) InternalRender(w http.ResponseWriter, r *http.Request) {
 	if req.Version != nil && *req.Version < 1 {
 		v.Add("version", "debe ser mayor que cero")
 	}
+	if req.Test && req.Version == nil {
+		v.Add("version", "el render de prueba exige la version")
+	}
 	reservedNames := make([]string, 0, 4)
 	for _, rv := range domain.ReservedVariables() {
 		reservedNames = append(reservedNames, rv.Name)
@@ -605,7 +627,7 @@ func (h *Handler) InternalRender(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out, err := h.uc.Render(r.Context(), tenantID, id, app.RenderInput{
-		Version: req.Version, Values: req.Variables, Reserved: req.Reserved,
+		Version: req.Version, Values: req.Variables, Reserved: req.Reserved, Test: req.Test,
 	})
 	if err != nil {
 		writeError(w, err)

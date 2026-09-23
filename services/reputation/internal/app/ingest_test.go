@@ -32,6 +32,25 @@ func TestRecordDeliveryEsIdempotente(t *testing.T) {
 	}
 }
 
+// Una prueba no suma volumen (la tasa no se diluye con envios que no son de la practica real),
+// pero su queja si cuenta.
+func TestRecordDeliveryPruebasNoSumanVolumen(t *testing.T) {
+	h := newHarness()
+	tenant := uuid.New()
+	sent := DeliveryEvent{EventID: "t-1", TenantID: tenant, Kind: KindSent, Class: domain.ClassMarketing, Recipients: 2, Test: true}
+	res, err := h.uc.RecordDelivery(ctx, sent)
+	if err != nil || !res.Ignored {
+		t.Fatalf("envio de prueba: %+v %v", res, err)
+	}
+	complaint := DeliveryEvent{EventID: "t-2", TenantID: tenant, Kind: KindComplained, Class: domain.ClassMarketing, Test: true}
+	if _, err := h.uc.RecordDelivery(ctx, complaint); err != nil {
+		t.Fatal(err)
+	}
+	if got := h.stats.day(tenant, domain.ClassMarketing, h.today()); got.Sent != 0 || got.Complained != 1 {
+		t.Fatalf("la prueba no suma envios y su queja si: %+v", got)
+	}
+}
+
 func TestRecordDeliveryRebotesRestringenMarketing(t *testing.T) {
 	h := newHarness()
 	tenant := uuid.New()

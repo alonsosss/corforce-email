@@ -242,9 +242,11 @@ func (r *Repository) ReleaseDue(ctx context.Context, tenantID uuid.UUID, now tim
 	return ids, rows.Err()
 }
 
+// CountByStatus no cuenta los envios de prueba: las estadisticas son de lo que la empresa
+// envio de verdad.
 func (r *Repository) CountByStatus(ctx context.Context, tenantID uuid.UUID, from, to time.Time) ([]domain.StatusCount, error) {
 	rows, err := r.pool.Query(ctx, `SELECT status, count(*) FROM transactional.messages
-		WHERE tenant_id = $1 AND created_at >= $2 AND created_at < $3
+		WHERE tenant_id = $1 AND created_at >= $2 AND created_at < $3 AND NOT is_test
 		GROUP BY status ORDER BY status`, tenantID, from, to)
 	if err != nil {
 		return nil, err
@@ -259,6 +261,13 @@ func (r *Repository) CountByStatus(ctx context.Context, tenantID uuid.UUID, from
 		out = append(out, c)
 	}
 	return out, rows.Err()
+}
+
+func (r *Repository) CountTestMessagesSince(ctx context.Context, tenantID uuid.UUID, since time.Time) (int, error) {
+	var n int
+	err := r.pool.QueryRow(ctx, `SELECT count(*) FROM transactional.messages
+		WHERE tenant_id = $1 AND is_test AND created_at >= $2`, tenantID, since).Scan(&n)
+	return n, err
 }
 
 func (r *Repository) InsertEvent(ctx context.Context, e *domain.Event) (bool, error) {

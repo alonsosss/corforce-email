@@ -39,6 +39,7 @@ import {
   type ContentErrors,
 } from './content';
 import { versionStatusTone } from './templateStatus';
+import { VersionTestSend } from './TestSendModal';
 
 export interface VersionsTabProps {
   template: TemplateDetail;
@@ -57,6 +58,8 @@ export function VersionsTab({ template, onChanged, onPreview }: VersionsTabProps
   const canCreate = can(...PERMISSIONS.templates.create) && !archived;
   const canPublish = can(...PERMISSIONS.templates.publish) && !archived;
   const canRender = can(...PERMISSIONS.templates.render);
+  const canTestSend = can(...PERMISSIONS.templates.testSend) && !archived;
+  const [testing, setTesting] = useState<number | null>(null);
   const versions = [...template.versions].sort((a, b) => b.version - a.version);
   const latest = versions[0]?.version ?? null;
 
@@ -102,6 +105,11 @@ export function VersionsTab({ template, onChanged, onPreview }: VersionsTabProps
               {t('templates.tab.preview')}
             </Button>
           ) : null}
+          {canTestSend ? (
+            <Button size="sm" variant="ghost" onClick={() => setTesting(v.version)}>
+              {t('templates.testSend.action')}
+            </Button>
+          ) : null}
           {canPublish && v.status === 'draft' ? (
             <Button size="sm" variant="primary" onClick={() => setPublishing(v)}>
               {t('templates.versions.publish')}
@@ -131,6 +139,13 @@ export function VersionsTab({ template, onChanged, onPreview }: VersionsTabProps
         rowKey={(v) => v.id}
         empty={{ title: t('templates.versions.empty') }}
       />
+      {testing !== null ? (
+        <VersionTestSend
+          templateId={template.id}
+          version={testing}
+          onClose={() => setTesting(null)}
+        />
+      ) : null}
       {viewing !== null ? (
         <VersionViewer
           templateId={template.id}

@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/alonsosss/corforce-email/services/transactional/internal/domain"
 	"github.com/google/uuid"
@@ -19,7 +20,7 @@ func TestTestSendColumnAndInvariant(t *testing.T) {
 	tenant := uuid.New()
 
 	probe := marketingMessage(tenant, "ana@example.com")
-	probe.Test = true
+	probe.Test, probe.TemplateID, probe.TemplateVersion = true, ptr(uuid.New()), ptr(3)
 	if err := repo.InsertMessage(ctx, probe); err != nil {
 		t.Fatal(err)
 	}
@@ -40,11 +41,67 @@ func TestTestSendColumnAndInvariant(t *testing.T) {
 		t.Fatal("un mensaje sin marca no es de prueba")
 	}
 
-	// Solo el carril de marketing puede marcar una prueba.
-	transactional := newMessage(tenant, domain.StatusQueued, "luis@example.com")
+	// Una prueba es siempre el render de una plantilla para una sola persona: un cuerpo
+	// crudo marcado como prueba se rechaza en cualquier clase.
+	raw := newMessage(tenant, domain.StatusQueued, "luis@example.com")
+	raw.Test = true
+	if err := repo.InsertMessage(ctx, raw); err == nil {
+		t.Fatal("la base rechaza un cuerpo crudo marcado como prueba")
+	}
+}
+
+// Prueba de una version de plantilla (transactional/07): por el carril transaccional, o por el
+// de marketing sin campana ni contacto. Un mensaje de marketing que no es prueba sigue
+// exigiendo campana y contacto.
+func TestTemplateTestSendInvariants(t *testing.T) {
+	ctx, _, repo := setup(t)
+	tenant := uuid.New()
+	rendered := func(m *domain.Message) *domain.Message {
+		m.TemplateID, m.TemplateVersion = ptr(uuid.New()), ptr(1)
+		return m
+	}
+
+	transactional := rendered(newMessage(tenant, domain.StatusQueued, "luis@example.com"))
 	transactional.Test = true
-	if err := repo.InsertMessage(ctx, transactional); err == nil {
-		t.Fatal("la base rechaza un transaccional marcado como prueba")
+	if err := repo.InsertMessage(ctx, transactional); err != nil {
+		t.Fatalf("prueba transaccional de una plantilla: %v", err)
+	}
+	marketing := rendered(newMessage(tenant, domain.StatusQueued, "ana@example.com"))
+	marketing.Class, marketing.Unsubscribable, marketing.Test = domain.ClassMarketing, true, true
+	if err := repo.InsertMessage(ctx, marketing); err != nil {
+		t.Fatalf("prueba de marketing sin campana: %v", err)
+	}
+
+	noCampaign := rendered(newMessage(tenant, domain.StatusQueued, "eva@example.com"))
+	noCampaign.Class, noCampaign.Unsubscribable = domain.ClassMarketing, true
+	if err := repo.InsertMessage(ctx, noCampaign); err == nil {
+		t.Fatal("un marketing real sin campana se rechaza")
+	}
+	noUnsubscribe := rendered(newMessage(tenant, domain.StatusQueued, "eva@example.com"))
+	noUnsubscribe.Class, noUnsubscribe.Test = domain.ClassMarketing, true
+	if err := repo.InsertMessage(ctx, noUnsubscribe); err == nil {
+		t.Fatal("una prueba de marketing sin baja se rechaza")
+	}
+	two := rendered(newMessage(tenant, domain.StatusQueued, "eva@example.com", "sol@example.com"))
+	two.Test = true
+	if err := repo.InsertMessage(ctx, two); err == nil {
+		t.Fatal("una prueba va a una sola persona")
+	}
+
+	plain := newMessage(tenant, domain.StatusQueued, "real@example.com")
+	if err := repo.InsertMessage(ctx, plain); err != nil {
+		t.Fatal(err)
+	}
+	n, err := repo.CountTestMessagesSince(ctx, tenant, time.Now().Add(-time.Hour))
+	if err != nil || n != 2 {
+		t.Fatalf("pruebas de la ultima hora: %d %v", n, err)
+	}
+	if n, _ := repo.CountTestMessagesSince(ctx, tenant, time.Now().Add(time.Hour)); n != 0 {
+		t.Fatalf("fuera de la ventana no cuenta: %d", n)
+	}
+	stats, err := repo.CountByStatus(ctx, tenant, time.Now().Add(-time.Hour), time.Now().Add(time.Hour))
+	if err != nil || len(stats) != 1 || stats[0].Count != 1 {
+		t.Fatalf("las estadisticas no cuentan las pruebas: %+v %v", stats, err)
 	}
 }
 

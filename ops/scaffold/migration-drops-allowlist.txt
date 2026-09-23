@@ -1,0 +1,7 @@
+# Restricciones que check-migration-drops.sh no debe tomar por un reemplazo fallido. Una por
+# linea, en minusculas, con su motivo en el comentario de encima.
+#
+# messages_class_check (transactional) solo fija el dominio de class (transactional o
+# marketing). messages_marketing_check, que transactional/07 reemplaza, nombra class porque su
+# regla es la de la clase marketing; las dos conviven a proposito y ninguna sustituye a la otra.
+messages_class_check

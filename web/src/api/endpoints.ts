@@ -192,11 +192,16 @@ export const endpoints = {
     preview: (id: string) => `${API_PREFIX}/templates/${seg(id)}/preview`,
     versionCheck: (id: string, version: number) =>
       `${API_PREFIX}/templates/${seg(id)}/versions/${version}/check`,
+    testSend: (id: string, version: number) =>
+      `${API_PREFIX}/templates/${seg(id)}/versions/${version}/test-send`,
     check: `${API_PREFIX}/templates/check`,
     brandKit: `${API_PREFIX}/templates/brand-kit`,
     assets: `${API_PREFIX}/templates/assets`,
     asset: (id: string) => `${API_PREFIX}/templates/assets/${seg(id)}`,
     meta: `${API_PREFIX}/templates/meta`,
+  },
+  transactional: {
+    sendingDomains: `${API_PREFIX}/transactional/sending-domains`,
   },
   suppression: {
     check: `${API_PREFIX}/suppression/check`,

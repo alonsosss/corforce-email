@@ -450,6 +450,9 @@ expect "aliasexp resuelve el buzon final para Rspamd" \
   "$(curl -s -X POST "http://127.0.0.1:$MAPS_PORT/aliasexp" -H 'Rcpt: ana@acme.test')" "ana@acme.test"
 contains "settings lleva la regla del vigilante" "$(curl -s "http://127.0.0.1:$MAPS_PORT/settings")" "watchdog {"
 
+# codigo <curl args>: solo el estado HTTP.
+codigo() { curl -s -o /dev/null -w '%{http_code}' "$@"; }
+
 echo "== Plantillas"
 TP=$(curl -s -X POST "$GW/templates" -H "$A2" -H 'Content-Type: application/json' \
   -d '{"name":"bienvenida","kind":"transactional","subject":"Hola {{.name}}","html":"<p>Hola {{.name}}</p>","variables":[{"name":"name","type":"string","required":true}]}')
@@ -460,6 +463,46 @@ expect "publicacion de la version 1" \
 expect "render por el gateway (gateado como lectura)" \
   "$(curl -s -X POST "$GW/templates/$TPID/render" -H "$A2" -H 'Content-Type: application/json' -d '{"variables":{"name":"Ana"}}' | jget data.subject)" \
   "Hola Ana"
+# El alta desde el editor (galeria o en blanco) crea la plantilla con su primer diseno.
+TE=$(curl -s -X POST "$GW/templates" -H "$A2" -H 'Content-Type: application/json' \
+  -d '{"name":"desde-el-editor","kind":"transactional","subject":"Hola","html":"<p>Hola</p>","variables":[],"editor":{"kind":"grapesjs-mjml","project":{"pages":[]},"mjml":"<mjml><mj-body></mj-body></mjml>"}}' | jget data.id)
+expect "alta con el primer diseno del editor, sin paso intermedio" \
+  "$(curl -s "$GW/templates/$TE/versions/1" -H "$A2" | jget data.editor.kind)" "grapesjs-mjml"
+
+echo "== Envio de prueba de una plantilla y correo en el navegador (templates -> transactional)"
+PRUEBA='{"from":{"email":"hola@acme.test","name":"Acme"},"to":["qa@cliente.test"],"variables":{}}'
+expect "la prueba de una version respeta el remitente sin verificar (rechazo de transactional)" \
+  "$(curl -s -X POST "$GW/templates/$TPID/versions/1/test-send" -H "$A2" -H 'Content-Type: application/json' -d "$PRUEBA" | jget error.code)" \
+  "SENDING_DOMAIN_NOT_VERIFIED"
+expect "mas de cinco destinatarios se rechazan antes de llamar a transactional" \
+  "$(codigo -X POST "$GW/templates/$TPID/versions/1/test-send" -H "$A2" -H 'Content-Type: application/json' \
+    -d '{"from":{"email":"hola@acme.test"},"to":["a@c.test","b@c.test","d@c.test","e@c.test","f@c.test","g@c.test"]}')" "422"
+expect "ninguna prueba llego a encolarse" "$(sql mail_tenant_acme "SELECT count(*) FROM transactional.messages WHERE is_test")" "0"
+# El enlace {{.view_in_browser_url}} lo firma transactional al renderizar; sin SES la prueba no
+# llega a enviar, asi que se siembra un mensaje ya renderizado y el enlace se firma aqui con la
+# clave de la ejecucion y la forma de domain.LinkSigner.SignView ("view", empresa, mensaje,
+# caducidad en segundos Unix). El HTML lleva un script: el gateway no debe marcarlo con el nonce.
+enlace_ver() {
+  python3 - "$@" <<'PY'
+import hashlib, hmac, os, sys, urllib.parse
+empresa, mensaje, caducidad = sys.argv[1:]
+firma = hmac.new(os.environ["MAIL_LINK_SIGNING_KEY"].encode(), "\n".join(("view", empresa, mensaje, caducidad)).encode(), hashlib.sha256).hexdigest()
+print("/public/transactional/view?" + urllib.parse.urlencode({"t": empresa, "m": mensaje, "x": caducidad, "sig": firma}))
+PY
+}
+ACME_TENANT=$(sql mail_registry "SELECT id FROM organization.tenants WHERE slug = 'acme'")
+VMID=$(cat /proc/sys/kernel/random/uuid)
+sql mail_tenant_acme "INSERT INTO transactional.messages (id, tenant_id, from_email, \"to\", subject, html, template_id, template_version, status)
+  VALUES ('$VMID', '$ACME_TENANT', 'hola@acme.test', '[{\"email\":\"lucia@cliente.test\"}]', 'Hola', '<p>Hola desde el navegador</p><script>alert(1)</script>', '$TPID', 1, 'sent')"
+VER=$(enlace_ver "$ACME_TENANT" "$VMID" "$(( $(date +%s) + 3600 ))")
+VER_CAB=$(curl -s -D - -o "$WORK/ver.html" "$GW$VER")
+contains "el correo se ve en el navegador tal como se guardo" "$(cat "$WORK/ver.html")" "Hola desde el navegador"
+lacks "el gateway no marca los scripts del correo con el nonce" "$(cat "$WORK/ver.html")" "nonce="
+contains "con la politica del servicio, que no ejecuta nada" "$VER_CAB" "default-src 'none'"
+contains "que el buscador no indexa" "$VER_CAB" "X-Robots-Tag: noindex"
+expect "un enlace alterado no abre el correo" "$(codigo "$GW${VER/sig=/sig=0}")" "403"
+expect "un enlace caducado responde 410" "$(codigo "$GW$(enlace_ver "$ACME_TENANT" "$VMID" "$(( $(date +%s) - 60 ))")")" "410"
+expect "un mensaje que no existe responde 404" "$(codigo "$GW$(enlace_ver "$ACME_TENANT" "$(cat /proc/sys/kernel/random/uuid)" "$(( $(date +%s) + 3600 ))")")" "404"
 
 echo "== Supresion"
 expect "exclusion manual" "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$GW/suppression/entries" -H "$A2" \
@@ -474,7 +517,6 @@ for r in users domains mailboxes storage_bytes contacts transactional_messages m
   limites+="${limites:+,}{\"resource\":\"$r\",\"included\":1000,\"hard_limit\":true,\"overage_unit_price\":null}"
 done
 plan() { echo "{\"code\":\"$1\",\"name\":\"Base\",\"description\":\"Plan de la prueba\",\"currency\":\"USD\",\"base_price\":\"49.00\",\"billing_period\":\"monthly\",\"limits\":[$limites]}"; }
-codigo() { curl -s -o /dev/null -w '%{http_code}' "$@"; }
 expect "el superadmin crea un plan" \
   "$(codigo -X POST "$GW/billing/plans" -H "$A1" -H 'Content-Type: application/json' -d "$(plan e2e-base)")" "201"
 expect "el tenant_admin no crea planes" \

@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   templatesApi,
   templatesMeta,
@@ -8,20 +9,29 @@ import {
   type TemplatesMeta,
 } from '@/api/templates';
 import { ERROR_CODES } from '@/api/errors';
+import { PERMISSIONS } from '@/access/permissions';
+import { useAccess } from '@/access/useAccess';
 import { useAction } from '@/hooks/useAction';
 import { useResource } from '@/hooks/useResource';
-import { FormField, Input, Select, Textarea } from '@/design/components';
+import { FormField, Input, Select, Tabs, Textarea } from '@/design/components';
 import { rules, validateField } from '@/lib/validate';
 import { t, tEnum } from '@/i18n';
+import { paths } from '@/paths';
 import { FormModal } from '@/pages/shared/FormModal';
 import { ResourceGate } from '@/pages/shared/ResourceGate';
 import { ContentFields } from './ContentFields';
 import { contentFromDraft, emptyContent, type ContentDraft, type ContentErrors } from './content';
+import type { EditorLocationState, EditorStart } from './editor/session';
 
 export interface TemplateCreateFormProps {
   onClose: () => void;
   onCreated: (template: Template) => void;
 }
+
+/** Como empieza el alta: con el editor (galeria o en blanco) o con el HTML escrito a mano. */
+type StartMode = EditorStart | 'html';
+
+const START_MODES: readonly StartMode[] = ['gallery', 'blank', 'html'];
 
 export function TemplateCreateForm(props: TemplateCreateFormProps) {
   const meta = useResource(templatesMeta);
@@ -40,12 +50,16 @@ function CreateForm({
   onCreated,
   meta,
 }: TemplateCreateFormProps & { meta: TemplatesMeta }) {
+  const navigate = useNavigate();
+  const { can } = useAccess();
+  const [start, setStart] = useState<StartMode>('gallery');
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [kind, setKind] = useState<TemplateKind | ''>('');
   const [content, setContent] = useState<ContentDraft>(emptyContent());
   const [errors, setErrors] = useState<Record<string, string | undefined>>({});
   const [contentErrors, setContentErrors] = useState<ContentErrors>({});
+  const withEditor = start !== 'html';
 
   const action = useAction(async (input: CreateTemplateRequest) => {
     const { data } = await templatesApi.create(input);
@@ -62,10 +76,18 @@ function CreateForm({
         undefined,
       kind: kind ? undefined : t('validation.required'),
     };
-    const parsed = contentFromDraft(content, meta);
     setErrors(next);
+    if (Object.values(next).some(Boolean) || !kind) return;
+    if (start !== 'html') {
+      const state: EditorLocationState = {
+        draft: { name: name.trim(), description: description.trim(), kind, start },
+      };
+      navigate(paths.templateNewEditor, { state });
+      return;
+    }
+    const parsed = contentFromDraft(content, meta);
     setContentErrors(parsed.errors);
-    if (Object.values(next).some(Boolean) || !parsed.content || !kind) return;
+    if (!parsed.content) return;
     await action.run({
       name: name.trim(),
       description: description.trim(),
@@ -78,14 +100,27 @@ function CreateForm({
     <FormModal
       id="template-create-form"
       title={t('templates.form.createTitle')}
-      submitLabel={t('common.create')}
+      submitLabel={withEditor ? t('templates.form.openEditor') : t('common.create')}
       busy={action.busy}
       error={action.error}
       errorOverrides={{ [ERROR_CODES.CONFLICT]: 'templates.exists' }}
       onClose={onClose}
       onSubmit={submit}
+      submitDisabled={!can(...PERMISSIONS.templates.create)}
       size="lg"
     >
+      <Tabs
+        items={START_MODES.map((mode) => ({
+          id: mode,
+          label: tEnum('templates.form.start', mode),
+        }))}
+        value={start}
+        onChange={setStart}
+        label={t('templates.form.start')}
+      />
+      <span className="cf-text-sm cf-text-secondary">
+        {tEnum('templates.form.startHint', start)}
+      </span>
       <div className="cf-form__row">
         <FormField label={t('common.name')} htmlFor="template-name" required error={errors.name}>
           <Input
@@ -124,13 +159,15 @@ function CreateForm({
           onChange={(e) => setDescription(e.target.value)}
         />
       </FormField>
-      <ContentFields
-        idPrefix="template-create"
-        value={content}
-        onChange={setContent}
-        errors={contentErrors}
-        meta={meta}
-      />
+      {withEditor ? null : (
+        <ContentFields
+          idPrefix="template-create"
+          value={content}
+          onChange={setContent}
+          errors={contentErrors}
+          meta={meta}
+        />
+      )}
     </FormModal>
   );
 }

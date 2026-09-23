@@ -361,10 +361,7 @@ func (uc *UseCase) renderMarketing(ctx context.Context, tenantID uuid.UUID, msg 
 		TemplateID: *msg.TemplateID,
 		Version:    msg.TemplateVersion,
 		Variables:  msg.Variables,
-		Reserved: ports.ReservedVariables{
-			UnsubscribeURL: uc.links.UnsubscribeURL(domain.UnsubscribeClaims{TenantID: tenantID, MessageID: msg.ID, Email: rcpt}),
-			RecipientEmail: rcpt,
-		},
+		Reserved:   uc.reservedFor(tenantID, msg.ID, rcpt),
 	})
 	if err != nil {
 		return err

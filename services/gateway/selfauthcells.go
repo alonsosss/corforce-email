@@ -43,7 +43,7 @@ const maxCellLoginBody = 8 << 10
 // sesion. Sin enrutado por celda (servicio que no es de celda o despliegue de una celda) los dos
 // son el destino base.
 func selfAuthHandlers(t *routeTable, s selfAuthSpec, internalToken string, domains *tenantcell.Resolver, logger *zap.Logger) (session, login http.Handler) {
-	base := reverseProxyWith(t.serviceURL(s.Service), internalToken, true)
+	base := reverseProxyWith(t.serviceURL(s.Service), internalToken, proxyServiceCSP)
 	if s.CellLogin == nil || t.baseCell == "" {
 		return base, base
 	}
@@ -52,7 +52,7 @@ func selfAuthHandlers(t *routeTable, s selfAuthSpec, internalToken string, domai
 	}
 	byCell := map[string]http.Handler{t.baseCell: base}
 	for code, target := range t.cellTargets[s.Service] {
-		byCell[code] = reverseProxyWith(target, internalToken, true)
+		byCell[code] = reverseProxyWith(target, internalToken, proxyServiceCSP)
 	}
 	c := &selfAuthCellRouter{
 		service: s.Service, base: base, byCell: byCell, cookie: s.CellCookie,

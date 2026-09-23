@@ -23,9 +23,16 @@ BEGIN
     END IF;
 END $$;
 
+-- 07_template_test_sends.sql la sustituye por messages_test_check (pruebas de plantilla en
+-- cualquier clase): reejecutar esta migracion despues no debe volver a crearla.
 DO $$
 BEGIN
-    ALTER TABLE transactional.messages
-        ADD CONSTRAINT messages_test_marketing_check CHECK (NOT is_test OR class = 'marketing');
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+         WHERE conrelid = 'transactional.messages'::regclass AND conname = 'messages_test_check'
+    ) THEN
+        ALTER TABLE transactional.messages
+            ADD CONSTRAINT messages_test_marketing_check CHECK (NOT is_test OR class = 'marketing');
+    END IF;
 EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;

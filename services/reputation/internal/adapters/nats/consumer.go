@@ -107,6 +107,7 @@ type payload struct {
 	Class      string          `json:"class"`
 	BounceType string          `json:"bounce_type"`
 	To         json.RawMessage `json:"to"`
+	Test       bool            `json:"test"`
 }
 
 func decode(data interface{}) (payload, error) {
@@ -177,6 +178,7 @@ func (c *Consumer) handle(subject string) func(events.Event, func()) {
 			Class:      class,
 			Recipients: p.recipients(),
 			BounceType: p.BounceType,
+			Test:       p.Test,
 			OccurredAt: evt.Timestamp,
 		})
 		if err != nil {

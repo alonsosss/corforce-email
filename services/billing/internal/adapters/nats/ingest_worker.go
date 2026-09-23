@@ -239,6 +239,10 @@ func (w *IngestWorker) onDomainDeleted(evt events.Event, ack func()) {
 // entitlements/check); contar por mensaje dejaria el contador por debajo de lo autorizado.
 func (w *IngestWorker) onEmailSent(evt events.Event, ack func()) {
 	data, _ := evt.Data.(map[string]interface{})
+	if isTestSend(data["test"]) {
+		ack()
+		return
+	}
 	sent := translateEmailSent(data["class"], data["to"])
 	if !sent.known {
 		w.logger.Warn("billing: transactional.email.sent con una clase desconocida; se descarta sin contar",
@@ -251,6 +255,14 @@ func (w *IngestWorker) onEmailSent(evt events.Event, ack func()) {
 			zap.String("event_id", evt.ID))
 	}
 	w.count(evt, ack, SubjectEmailSent, str(data["tenant_id"]), sent.resource, sent.units, "", "")
+}
+
+// isTestSend dice si transactional marco el envio como prueba (de campana o de plantilla): una
+// prueba no se factura. Solo el booleano true cuenta como prueba; cualquier otro valor se
+// factura, que es lo seguro para la plataforma.
+func isTestSend(test interface{}) bool {
+	v, ok := test.(bool)
+	return ok && v
 }
 
 // Clases de transactional.email.sent segun el contrato de transactional.
