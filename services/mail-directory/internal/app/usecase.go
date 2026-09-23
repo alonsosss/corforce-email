@@ -238,10 +238,15 @@ func (uc *UseCase) planLimit(ctx context.Context, tenantID uuid.UUID, resource s
 		uc.planSkipped(ports.PlanSkipUnreachable)
 		return domain.PlanLimit{Unknown: true}
 	}
-	if allowance.Unknown {
+	if allowance.SubscriptionInactive {
+		uc.planSkipped(ports.PlanSkipInactiva)
+	} else if allowance.Unknown {
 		uc.planSkipped(ports.PlanSkipNoPlan)
 	}
-	return domain.PlanLimit{Included: allowance.Limit, HardLimit: allowance.HardLimit, Unknown: allowance.Unknown}
+	return domain.PlanLimit{
+		Included: allowance.Limit, HardLimit: allowance.HardLimit, Unknown: allowance.Unknown,
+		SubscriptionInactive: allowance.SubscriptionInactive,
+	}
 }
 
 // Recursos de billing que limitan el directorio. Los nombres son el contrato de

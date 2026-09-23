@@ -232,7 +232,7 @@ func (uc *UseCase) checkQuota(ctx context.Context, d *domain.Domain, m *domain.M
 		return err
 	}
 	limite := uc.planLimit(ctx, m.TenantID, planResourceStorage)
-	if m.QuotaBytes == domain.Unlimited && !limite.Unknown && limite.Included >= 0 && limite.HardLimit {
+	if m.QuotaBytes == domain.Unlimited && !limite.SubscriptionInactive && !limite.Unknown && limite.Included >= 0 && limite.HardLimit {
 		return domain.ErrPlanStorageExceeded
 	}
 	return domain.CheckPlanLimit(asignado+m.QuotaBytes, limite, domain.ErrPlanStorageExceeded)

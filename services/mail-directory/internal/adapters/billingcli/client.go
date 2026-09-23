@@ -50,9 +50,10 @@ func (c *Client) Configured() bool { return c.baseURL != "" }
 
 type limitsResponse struct {
 	Data struct {
-		HasPlan    bool             `json:"has_plan"`
-		Limits     map[string]int64 `json:"limits"`
-		HardLimits map[string]bool  `json:"hard_limits"`
+		HasPlan     bool             `json:"has_plan"`
+		AllowsUsage bool             `json:"allows_usage"`
+		Limits      map[string]int64 `json:"limits"`
+		HardLimits  map[string]bool  `json:"hard_limits"`
 	} `json:"data"`
 }
 
@@ -85,6 +86,11 @@ func (c *Client) Limit(ctx context.Context, tenantID uuid.UUID, resource string)
 	d := payload.Data
 	if !d.HasPlan {
 		return ports.PlanAllowance{Unknown: true}, nil
+	}
+	// Una empresa dada de baja no crece, aunque su plan incluyera mas o no limitara: es el
+	// mismo criterio que aplica entitlements/check al denegar el envio (ADR 0010).
+	if !d.AllowsUsage {
+		return ports.PlanAllowance{SubscriptionInactive: true}, nil
 	}
 	included, ok := d.Limits[resource]
 	if !ok {

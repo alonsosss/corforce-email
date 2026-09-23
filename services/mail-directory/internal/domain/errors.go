@@ -90,3 +90,8 @@ var (
 	// por encima del que incluye su plan.
 	ErrPlanStorageExceeded = errors.New("el espacio asignado superaria el que incluye el plan contratado")
 )
+
+// ErrSubscriptionInactive: la empresa tiene plan pero su suscripcion no esta vigente. No
+// crece (ni buzones ni espacio) mientras siga asi; conserva lo que ya tiene. Es el mismo
+// criterio con el que billing deniega el envio a una empresa dada de baja (ADR 0010).
+var ErrSubscriptionInactive = errors.New("la suscripcion de la empresa no esta vigente")

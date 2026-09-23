@@ -20,6 +20,10 @@ func TestCheckPlanLimit(t *testing.T) {
 		{"justo en el limite duro pasa", 10, PlanLimit{Included: 10, HardLimit: true}, nil},
 		{"por encima del limite duro se rechaza", 11, PlanLimit{Included: 10, HardLimit: true}, tope},
 		{"un plan de cero no admite nada", 1, PlanLimit{Included: 0, HardLimit: true}, tope},
+		// Una empresa dada de baja no crece aunque su plan no limitara: quien cancela no sigue
+		// consumiendo (ADR 0010). Gana sobre cualquier otra condicion.
+		{"dada de baja no crece ni con plan sin limite", 1, PlanLimit{Included: -1, HardLimit: true, SubscriptionInactive: true}, ErrSubscriptionInactive},
+		{"dada de baja no crece ni con limite blando", 1, PlanLimit{Included: 10, SubscriptionInactive: true}, ErrSubscriptionInactive},
 	}
 	for _, c := range casos {
 		t.Run(c.nombre, func(t *testing.T) {

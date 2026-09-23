@@ -296,6 +296,9 @@ type PlanAllowance struct {
 	Limit     int64
 	HardLimit bool
 	Unknown   bool
+	// SubscriptionInactive: la empresa tiene plan pero su suscripcion no esta vigente (dada
+	// de baja o suspendida). No crece, sea cual sea el limite del plan.
+	SubscriptionInactive bool
 }
 
 // PlanLimits consulta a billing lo que el plan de la empresa incluye. Una consulta que
@@ -314,6 +317,9 @@ const (
 	// PlanSkipNoPlan: la empresa no tiene plan o su plan no fija ese recurso. Es normal
 	// mientras no haya planes creados.
 	PlanSkipNoPlan = "sin_plan"
+	// PlanSkipInactiva: la empresa esta dada de baja. No es un fallo: se deniega el
+	// crecimiento a proposito.
+	PlanSkipInactiva = "suscripcion_inactiva"
 )
 
 // Metrics son las metricas propias del directorio. Opcional: sin ella no se mide nada y

@@ -16,6 +16,9 @@ func blando(n int64) ports.PlanAllowance { return ports.PlanAllowance{Limit: n} 
 
 func conPlan(h *harness, limits map[string]ports.PlanAllowance) { h.plan.limits = limits }
 
+// deBaja: la empresa tiene plan pero su suscripcion no esta vigente.
+func deBaja() ports.PlanAllowance { return ports.PlanAllowance{SubscriptionInactive: true} }
+
 func crear(h *harness, tenant uuid.UUID, local string, quota *int64) error {
 	_, err := h.uc.CreateMailbox(context.Background(), tenant, CreateMailboxRequest{
 		LocalPart: local, Domain: "acme.com", Password: testPassword, QuotaBytes: quota,
@@ -144,5 +147,47 @@ func TestUnLimiteBlandoNoBloquea(t *testing.T) {
 	}
 	if err := crear(h, tenant, "bea", nil); err != nil {
 		t.Fatalf("un limite blando no bloquea: %v", err)
+	}
+}
+
+// Una empresa dada de baja conserva lo que tiene pero no crece: ni un buzon mas ni un byte
+// mas. Es el mismo criterio con el que billing le deniega el envio (ADR 0010).
+func TestUnaEmpresaDeBajaNoCreceNiEnBuzonesNiEnEspacio(t *testing.T) {
+	h, tenant := newHarness(), uuid.New()
+	h.addDomain(tenant, "acme.com", domain.DomainLimits{})
+	conPlan(h, map[string]ports.PlanAllowance{planResourceMailboxes: deBaja(), planResourceStorage: deBaja()})
+
+	if err := crear(h, tenant, "ana", nil); !errors.Is(err, domain.ErrSubscriptionInactive) {
+		t.Fatalf("no deberia crear un buzon estando de baja: err = %v", err)
+	}
+	m := h.addMailbox(tenant, "bea@acme.com", 50)
+	q := int64(60)
+	if _, err := h.uc.UpdateMailbox(context.Background(), tenant, m.ID, UpdateMailboxRequest{QuotaBytes: &q}); !errors.Is(err, domain.ErrSubscriptionInactive) {
+		t.Fatalf("no deberia subir la cuota estando de baja: err = %v", err)
+	}
+}
+
+// La baja gana sobre un plan sin limite: si no, una empresa cancelada con plan ilimitado
+// creceria sin tope, que es justo lo contrario de darse de baja.
+func TestLaBajaGanaSobreUnPlanSinLimite(t *testing.T) {
+	h, tenant := newHarness(), uuid.New()
+	h.addDomain(tenant, "acme.com", domain.DomainLimits{})
+	conPlan(h, map[string]ports.PlanAllowance{
+		planResourceMailboxes: {Limit: -1, HardLimit: true, SubscriptionInactive: true},
+		planResourceStorage:   {Limit: -1, HardLimit: true, SubscriptionInactive: true},
+	})
+	if err := crear(h, tenant, "ana", nil); !errors.Is(err, domain.ErrSubscriptionInactive) {
+		t.Fatalf("un plan sin limite no libra de la baja: err = %v", err)
+	}
+}
+
+// Un buzon ilimitado pedido por una empresa de baja se rechaza POR LA BAJA, no por el espacio:
+// el motivo que ve quien lo pide tiene que ser el de verdad.
+func TestElMotivoDeLaBajaNoSeConfundeConElDelEspacio(t *testing.T) {
+	h, tenant := newHarness(), uuid.New()
+	h.addDomain(tenant, "acme.com", domain.DomainLimits{})
+	conPlan(h, map[string]ports.PlanAllowance{planResourceMailboxes: deBaja(), planResourceStorage: deBaja()})
+	if err := crear(h, tenant, "ana", new(int64)); !errors.Is(err, domain.ErrSubscriptionInactive) {
+		t.Fatalf("el motivo debe ser la baja: err = %v", err)
 	}
 }

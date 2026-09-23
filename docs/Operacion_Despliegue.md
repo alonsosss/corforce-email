@@ -1213,6 +1213,11 @@ otro plan. Nótese que `entitlements/check` sí mira el estado y deniega a una s
 `trialing`, `active` o `past_due`: los dos caminos no dicen lo mismo y qué debe pasar con una empresa cancelada
 está pendiente de decisión comercial.
 
+Una empresa **dada de baja o suspendida no crece**: no admite más buzones ni más espacio (409
+`SUBSCRIPTION_INACTIVE`), aunque su plan no limitara; conserva lo que tiene y sigue recibiendo correo. Para
+devolverle el crecimiento hay que volver a poner su suscripción en vigor (`active`), no basta con cambiarle el
+plan. Cancelar, por tanto, **no** es la vía para quitarle límites a una empresa: para eso se le asigna otro plan.
+
 Que el límite **deje de aplicarse** es silencioso por diseño (se falla hacia el lado abierto), así que se vigila:
 `mail_directory_plan_limits_configured` en 0 significa que no hay `BILLING_URL` y el plan no limita a nadie, y
 `mail_directory_plan_limit_skipped_total{motivo="unreachable"}` cuenta las altas resueltas sin poder consultar a

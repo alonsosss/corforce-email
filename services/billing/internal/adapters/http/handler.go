@@ -82,7 +82,7 @@ func (h *Handler) PlanLimits(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	_, plan, err := h.uc.GetSubscription(r.Context(), tenantID)
+	sub, plan, err := h.uc.GetSubscription(r.Context(), tenantID)
 	if errors.Is(err, domain.ErrSubscriptionNotFound) || errors.Is(err, domain.ErrPlanNotFound) {
 		response.JSON(w, http.StatusOK, planLimitsDTO{HasPlan: false, Limits: map[string]int64{}})
 		return
@@ -97,16 +97,25 @@ func (h *Handler) PlanLimits(w http.ResponseWriter, r *http.Request) {
 		limits[string(l.Resource)] = l.Included
 		hard[string(l.Resource)] = l.HardLimit
 	}
-	response.JSON(w, http.StatusOK, planLimitsDTO{HasPlan: true, PlanCode: plan.Code, Limits: limits, HardLimits: hard})
+	response.JSON(w, http.StatusOK, planLimitsDTO{
+		HasPlan: true, PlanCode: plan.Code, Limits: limits, HardLimits: hard,
+		Status: string(sub.Status), AllowsUsage: sub.Status.AllowsUsage(),
+	})
 }
 
 // planLimitsDTO: limits lleva lo incluido por recurso (-1 sin limite) y hard_limits si el
 // limite es duro. Sin plan, has_plan es false y los mapas van vacios, nunca nulos.
+//
+// allows_usage es el mismo criterio que aplica entitlements/check (SubscriptionStatus.AllowsUsage:
+// trialing, active y past_due): sin el, este camino y aquel respondian distinto ante una empresa
+// dada de baja, y quien consulta limites no tenia forma de saberlo (ADR 0010).
 type planLimitsDTO struct {
-	HasPlan    bool             `json:"has_plan"`
-	PlanCode   string           `json:"plan_code,omitempty"`
-	Limits     map[string]int64 `json:"limits"`
-	HardLimits map[string]bool  `json:"hard_limits,omitempty"`
+	HasPlan     bool             `json:"has_plan"`
+	PlanCode    string           `json:"plan_code,omitempty"`
+	Status      string           `json:"status,omitempty"`
+	AllowsUsage bool             `json:"allows_usage"`
+	Limits      map[string]int64 `json:"limits"`
+	HardLimits  map[string]bool  `json:"hard_limits,omitempty"`
 }
 
 func (h *Handler) Health(w http.ResponseWriter, r *http.Request) {

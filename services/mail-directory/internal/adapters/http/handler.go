@@ -38,6 +38,8 @@ const (
 	// reintentando, asi que lleva codigo propio para que la interfaz lo explique.
 	codePlanMailboxesExceeded = "PLAN_MAILBOXES_EXCEEDED"
 	codePlanStorageExceeded   = "PLAN_STORAGE_EXCEEDED"
+	// La empresa esta dada de baja: no crece hasta que su suscripcion vuelva a estar vigente.
+	codeSubscriptionInactive = "SUBSCRIPTION_INACTIVE"
 )
 
 type Handler struct {
@@ -176,6 +178,8 @@ func writeError(w http.ResponseWriter, err error) {
 		response.Err(w, http.StatusConflict, codePlanMailboxesExceeded, err.Error())
 	case errors.Is(err, domain.ErrPlanStorageExceeded):
 		response.Err(w, http.StatusConflict, codePlanStorageExceeded, err.Error())
+	case errors.Is(err, domain.ErrSubscriptionInactive):
+		response.Err(w, http.StatusConflict, codeSubscriptionInactive, err.Error())
 	case isAny(err, conflictErrors):
 		response.ErrConflict(w, err.Error())
 	case isAny(err, validationErrors):

@@ -261,6 +261,9 @@ type PlanLimit struct {
 	Included  int64
 	HardLimit bool
 	Unknown   bool
+	// SubscriptionInactive: la empresa esta dada de baja o suspendida. No crece, sea cual
+	// sea Included: quien se da de baja no sigue consumiendo.
+	SubscriptionInactive bool
 }
 
 // CheckPlanLimit aplica el limite del plan a lo que quedaria tras el cambio. No restringe
@@ -268,6 +271,9 @@ type PlanLimit struct {
 // el Unlimited de billing) o cuando el limite es blando, que en billing significa que se
 // puede exceder y se factura el exceso. resulting es el total DESPUES del cambio.
 func CheckPlanLimit(resulting int64, limit PlanLimit, exceeded error) error {
+	if limit.SubscriptionInactive {
+		return ErrSubscriptionInactive
+	}
 	if limit.Unknown || limit.Included < 0 || !limit.HardLimit {
 		return nil
 	}
