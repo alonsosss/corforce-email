@@ -94,7 +94,16 @@ aws iam create-access-key --user-name core-force-mail-ses
 
 Las dos claves de `create-access-key` van **directas** al almacen de secretos como
 `SES_ACCESS_KEY_ID` y `SES_SECRET_ACCESS_KEY` (`ops/security/secrets/add-secret.sh`, solo para
-`transactional` segun `reparto.tsv`). Nunca a un `.env`, a un chat ni a un correo.
+`transactional` segun `reparto.tsv`). Nunca a un `.env`, a un chat ni a un correo. En el servidor:
+
+```bash
+VALOR=... ops/security/secrets/add-secret.sh SES_ACCESS_KEY_ID --apply
+VALOR=... ops/security/secrets/add-secret.sh SES_SECRET_ACCESS_KEY --apply
+```
+
+Con el almacen en OpenBao (`docs/adr/0011-almacen-de-secretos-openbao.md`) el alta es la misma;
+ademas queda version de cada cambio (`python3 ops/security/secrets/openbao.py versiones`) y
+registro de cada lectura.
 
 Si ademas se quiere que el operador lea el estado desde su PC, crear el usuario
 `core-force-mail-deploy-local` (lo hace el mismo guion), darle claves y retirar
