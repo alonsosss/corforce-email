@@ -1820,6 +1820,10 @@ export const es = {
   'error.code.ADDRESS_RECENTLY_DELETED':
     'Esa direccion se borro hace poco y su buzon anterior aun se esta retirando del servidor. Vuelve a intentarlo en unos minutos.',
   'error.code.TENANT_RETIRED': 'La empresa esta dada de baja: no se pueden crear ni modificar buzones.',
+  'error.code.PLAN_MAILBOXES_EXCEEDED':
+    'El plan contratado no admite mas buzones. Para crear otro hay que cambiar de plan.',
+  'error.code.PLAN_STORAGE_EXCEEDED':
+    'El espacio asignado superaria el que incluye el plan contratado. Reduce la cuota o cambia de plan.',
 
   'webmail.title': 'Correo web',
   'webmail.checking': 'Comprobando la sesion del buzon',
