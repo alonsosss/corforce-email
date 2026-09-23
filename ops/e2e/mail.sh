@@ -1332,8 +1332,15 @@ expect "una pasada con todos los buzones vivos termina bien" "$BARRIDO_RC" "0"
 contains "y no mueve nada" "$BARRIDO_OUT" " 0 movidos a _garbage"
 maildir_de dani && maildir_de bea && ok "los maildir de dani y bea (con correo) siguen en su sitio" || mal "una pasada sin huerfanos movio un buzon vivo"
 
+K_DANI=$(revocaciones kick)
 api DELETE "/mailboxes/$DANIID"
 expect "mail-directory borra a dani" "$API_CODE" "204"
+# El borrado echa de Dovecot las sesiones de dani por un evento asincrono. Aqui el barrido se fuerza al
+# momento y dani se recrea en menos de un segundo, asi que sin esta espera la expulsion del dani borrado
+# alcanzaba la sesion del dani nuevo ("Server shutting down"). En produccion no pasa: la direccion queda
+# retenida hasta la siguiente pasada del barrido, cada 5 minutos.
+dani_expulsado() { (( $(revocaciones kick) > K_DANI )); }
+esperar "mail-security echa de Dovecot las sesiones del dani borrado" 30 dani_expulsado
 expect "y deja su marca de baja en mail.mailbox_deletions" "$(marcas_de_dani)" "1"
 api POST /mailboxes "{\"local_part\":\"dani\",\"domain\":\"acme.test\",\"password\":\"$DANI_PASS\"}"
 expect "recrear dani con la marca viva se rechaza (409): su maildir sigue en el disco" "$API_CODE" "409"
