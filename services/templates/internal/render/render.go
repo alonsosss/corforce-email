@@ -35,6 +35,8 @@ type Compiled struct {
 	text      *texttemplate.Template
 	variables []domain.Variable
 	refs      []string
+	// conditionals son los comentarios condicionales de Outlook apartados del HTML (conditional.go).
+	conditionals *conditionals
 }
 
 // Variables devuelve las variables declaradas de la version compilada.
@@ -90,7 +92,11 @@ func (e *Engine) compile(c domain.Content, declareMissing bool) (*Compiled, erro
 	if err != nil {
 		return nil, err
 	}
-	html, err := compileHTML(c.HTML, refs)
+	htmlSrc, conds, err := extractConditionals(c.HTML)
+	if err != nil {
+		return nil, err
+	}
+	html, err := compileHTML(htmlSrc, refs)
 	if err != nil {
 		return nil, err
 	}
@@ -128,7 +134,7 @@ func (e *Engine) compile(c domain.Content, declareMissing bool) (*Compiled, erro
 		}
 	}
 
-	compiled := &Compiled{subject: subject, html: html, text: text, variables: variables, refs: names}
+	compiled := &Compiled{subject: subject, html: html, text: text, variables: variables, refs: names, conditionals: conds}
 	// Ejecucion en seco con valores vacios: fuerza el escapador de html/template, que es
 	// quien detecta contextos ambiguos o mal cerrados, y deja la plantilla lista para
 	// ejecutarse en paralelo.
@@ -223,6 +229,9 @@ func (c *Compiled) Render(values map[string]any) (domain.Rendered, error) {
 	out.Subject = strings.TrimSpace(strings.NewReplacer("\r", " ", "\n", " ").Replace(subject))
 
 	if out.HTML, err = execute(c.html, values); err != nil {
+		return out, err
+	}
+	if out.HTML, err = c.conditionals.restore(out.HTML); err != nil {
 		return out, err
 	}
 	if c.text != nil {
