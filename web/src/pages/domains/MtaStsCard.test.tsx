@@ -233,6 +233,11 @@ function detail(purpose: DomainDetail['purpose']): DomainDetail {
     dmarc_policy: 'quarantine',
     dns_mode: 'manual',
     dns_published_at: null,
+    ses_identity_status: null,
+    ses_dkim_status: null,
+    ses_mail_from_status: null,
+    ses_checked_at: null,
+    ses_last_error: null,
     created_at: '2026-09-01T10:00:00Z',
     updated_at: '2026-09-12T09:00:00Z',
     dns_records: [

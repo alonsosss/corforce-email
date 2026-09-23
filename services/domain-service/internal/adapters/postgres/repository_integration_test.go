@@ -490,3 +490,79 @@ func TestRepositoryGuardaLosChecksDeMTASTSYTLSRPT(t *testing.T) {
 		t.Error("un tipo de registro que el servicio no comprueba debe rechazarse")
 	}
 }
+
+// El estado de SES solo lo escribe SaveSESState, vuelve igual, lo respeta Update y lo acotan los CHECK de
+// la migracion 07; el barrido reintenta los no verificados cuya ultima sincronizacion fallo.
+func TestRepositoryGuardaElEstadoDeSES(t *testing.T) {
+	ctx, repo := setup(t)
+	tenantID := uuid.New()
+	d := sample(tenantID, "ses-"+uuid.NewString()[:8]+".test")
+	d.Purpose = domain.PurposeSending
+	if err := repo.Create(ctx, d); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	got, err := repo.GetByID(ctx, tenantID, d.ID)
+	if err != nil || got.SES != (domain.SESState{}) {
+		t.Fatalf("nace sin estado de SES: %+v %v", got.SES, err)
+	}
+
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	got.SES = domain.SESState{
+		IdentityStatus: domain.SESIdentityPending, DKIMStatus: domain.SESCheckTemporaryFailure,
+		MailFromStatus: domain.SESCheckSuccess, CheckedAt: &now, LastError: "GetEmailIdentity: limite",
+	}
+	if err := repo.SaveSESState(ctx, got); err != nil {
+		t.Fatalf("SaveSESState: %v", err)
+	}
+	got.DMARCPolicy = domain.DMARCReject
+	got.SES = domain.SESState{}
+	if err := repo.Update(ctx, got); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	back, err := repo.GetByID(ctx, tenantID, d.ID)
+	if err != nil || back.SES.IdentityStatus != domain.SESIdentityPending || back.SES.DKIMStatus != domain.SESCheckTemporaryFailure ||
+		back.SES.MailFromStatus != domain.SESCheckSuccess || back.SES.CheckedAt == nil || !back.SES.CheckedAt.Equal(now) ||
+		back.SES.LastError != "GetEmailIdentity: limite" {
+		t.Fatalf("Update no toca el estado de SES y este vuelve igual: %+v %v", back.SES, err)
+	}
+
+	pending, err := repo.ListPendingSESSync(ctx, tenantID)
+	if err != nil || len(pending) != 1 || pending[0].ID != d.ID {
+		t.Fatalf("pendiente de SES: %d %v", len(pending), err)
+	}
+	back.Status = domain.StatusVerified
+	if err := repo.Update(ctx, back); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if pending, _ := repo.ListPendingSESSync(ctx, tenantID); len(pending) != 0 {
+		t.Error("un verificado se sincroniza al reverificarse, no en esta lista")
+	}
+
+	back.SES = domain.SESState{}
+	if err := repo.SaveSESState(ctx, back); err != nil {
+		t.Fatalf("SaveSESState vacio: %v", err)
+	}
+	if cleared, _ := repo.GetByID(ctx, tenantID, d.ID); cleared.SES != (domain.SESState{}) {
+		t.Errorf("olvidar el estado deja las columnas nulas: %+v", cleared.SES)
+	}
+
+	back.SES = domain.SESState{IdentityStatus: "aprobado"}
+	if err := repo.SaveSESState(ctx, back); err == nil {
+		t.Error("un estado de identidad desconocido debe rechazarse")
+	}
+	back.SES = domain.SESState{IdentityStatus: domain.SESIdentityFailed, LastError: strings.Repeat("x", domain.MaxSESErrorLength+1)}
+	if err := repo.SaveSESState(ctx, back); err == nil {
+		t.Error("un error mas largo que el tope debe rechazarse")
+	}
+	back.ID = uuid.New()
+	if err := repo.SaveSESState(ctx, back); !errors.Is(err, domain.ErrDomainNotFound) {
+		t.Errorf("SaveSESState de un dominio que no existe: %v", err)
+	}
+
+	check := func(kind domain.RecordKind) domain.DNSCheck {
+		return domain.DNSCheck{TenantID: tenantID, DomainID: d.ID, CheckedAt: now, Record: kind, Expected: "v=spf1", OK: true}
+	}
+	if err := repo.SaveChecks(ctx, []domain.DNSCheck{check(domain.RecordSESMailFromMX), check(domain.RecordSESMailFromSPF)}); err != nil {
+		t.Fatalf("SaveChecks del MAIL FROM: %v", err)
+	}
+}

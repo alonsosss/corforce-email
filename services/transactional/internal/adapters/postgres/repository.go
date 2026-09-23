@@ -330,10 +330,11 @@ func (r *Repository) InsertSubmission(ctx context.Context, s *domain.Submission)
 }
 
 func (r *Repository) UpsertSendingDomain(ctx context.Context, d *domain.SendingDomain) error {
-	_, err := r.pool.Exec(ctx, `INSERT INTO transactional.sending_domains (tenant_id, domain, status, purpose, updated_at)
-		VALUES ($1, $2, $3, $4, $5)
-		ON CONFLICT (tenant_id, domain) DO UPDATE SET status = EXCLUDED.status, purpose = EXCLUDED.purpose, updated_at = EXCLUDED.updated_at`,
-		d.TenantID, d.Domain, d.Status, d.Purpose, d.UpdatedAt)
+	_, err := r.pool.Exec(ctx, `INSERT INTO transactional.sending_domains (tenant_id, domain, status, purpose, sending_ready, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6)
+		ON CONFLICT (tenant_id, domain) DO UPDATE SET status = EXCLUDED.status, purpose = EXCLUDED.purpose,
+			sending_ready = COALESCE(EXCLUDED.sending_ready, transactional.sending_domains.sending_ready), updated_at = EXCLUDED.updated_at`,
+		d.TenantID, d.Domain, d.Status, d.Purpose, d.SendingReady, d.UpdatedAt)
 	return err
 }
 
@@ -344,9 +345,9 @@ func (r *Repository) DeleteSendingDomain(ctx context.Context, tenantID uuid.UUID
 
 func (r *Repository) GetSendingDomain(ctx context.Context, tenantID uuid.UUID, name string) (*domain.SendingDomain, error) {
 	var d domain.SendingDomain
-	err := r.pool.QueryRow(ctx, `SELECT tenant_id, domain, status, purpose, updated_at
+	err := r.pool.QueryRow(ctx, `SELECT tenant_id, domain, status, purpose, sending_ready, updated_at
 		FROM transactional.sending_domains WHERE tenant_id = $1 AND domain = $2`, tenantID, name).
-		Scan(&d.TenantID, &d.Domain, &d.Status, &d.Purpose, &d.UpdatedAt)
+		Scan(&d.TenantID, &d.Domain, &d.Status, &d.Purpose, &d.SendingReady, &d.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, domain.ErrNotFound
 	}
@@ -357,7 +358,7 @@ func (r *Repository) GetSendingDomain(ctx context.Context, tenantID uuid.UUID, n
 }
 
 func (r *Repository) ListSendingDomains(ctx context.Context, tenantID uuid.UUID) ([]domain.SendingDomain, error) {
-	rows, err := r.pool.Query(ctx, `SELECT tenant_id, domain, status, purpose, updated_at
+	rows, err := r.pool.Query(ctx, `SELECT tenant_id, domain, status, purpose, sending_ready, updated_at
 		FROM transactional.sending_domains WHERE tenant_id = $1 ORDER BY domain`, tenantID)
 	if err != nil {
 		return nil, err
@@ -366,7 +367,7 @@ func (r *Repository) ListSendingDomains(ctx context.Context, tenantID uuid.UUID)
 	out := []domain.SendingDomain{}
 	for rows.Next() {
 		var d domain.SendingDomain
-		if err := rows.Scan(&d.TenantID, &d.Domain, &d.Status, &d.Purpose, &d.UpdatedAt); err != nil {
+		if err := rows.Scan(&d.TenantID, &d.Domain, &d.Status, &d.Purpose, &d.SendingReady, &d.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, d)

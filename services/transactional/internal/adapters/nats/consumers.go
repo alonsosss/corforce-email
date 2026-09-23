@@ -214,7 +214,7 @@ func (c *DomainsConsumer) Stop() {
 func (c *DomainsConsumer) handle(evt events.Event, ack func()) {
 	action := evt.Type[strings.LastIndex(evt.Type, ".")+1:]
 	switch action {
-	case "verified", "failed", "deleted":
+	case "verified", "failed", "deleted", "sending_status_changed":
 	default:
 		ack()
 		return
@@ -247,6 +247,8 @@ func (c *DomainsConsumer) handle(evt events.Event, ack func()) {
 		Domain:   str(data["domain"]),
 		Purpose:  str(data["purpose"]),
 		Status:   str(data["status"]),
+		// Solo domains.domain.verified y domains.domain.sending_status_changed lo traen.
+		SendingReady: optionalBool(data["sending_ready"]),
 	})
 	if err != nil {
 		c.logger.Warn("transactional: proyeccion de dominio no aplicada; se reintentara",
@@ -254,6 +256,15 @@ func (c *DomainsConsumer) handle(evt events.Event, ack func()) {
 		return
 	}
 	ack()
+}
+
+// optionalBool devuelve nil si el campo falta o no es booleano.
+func optionalBool(v interface{}) *bool {
+	b, ok := v.(bool)
+	if !ok {
+		return nil
+	}
+	return &b
 }
 
 func str(v interface{}) string {

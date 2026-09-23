@@ -110,6 +110,10 @@ func evaluateRecord(d *Domain, rec DNSRecord, obs Observation) (ok bool, observe
 		return evaluateMTASTS(parseTags(rec.Value)["id"], obs.TXT)
 	case RecordTLSRPT:
 		return evaluateTLSRPT(parseTags(rec.Value)["rua"], obs.TXT)
+	case RecordSESMailFromMX:
+		return evaluateMX(rec.Value, obs.MX)
+	case RecordSESMailFromSPF:
+		return evaluateSPF(rec.Value, obs.TXT)
 	}
 	return false, "", "registro desconocido"
 }

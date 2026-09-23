@@ -196,7 +196,7 @@ func ParseRecordKinds(raw []string) (map[domain.RecordKind]bool, error) {
 		kind := domain.RecordKind(strings.TrimSpace(k))
 		switch kind {
 		case domain.RecordOwnershipTXT, domain.RecordMX, domain.RecordSPF, domain.RecordDKIM, domain.RecordDKIMPrevious, domain.RecordDMARC,
-			domain.RecordMTASTS, domain.RecordTLSRPT:
+			domain.RecordMTASTS, domain.RecordTLSRPT, domain.RecordSESMailFromMX, domain.RecordSESMailFromSPF:
 			out[kind] = true
 		default:
 			return nil, domain.ErrInvalidRecordKind

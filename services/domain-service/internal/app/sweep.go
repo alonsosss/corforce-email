@@ -17,7 +17,10 @@ type SweepReport struct {
 	Retired     int
 	// Revoked son las revocaciones por clave comprometida que la celda confirmo en esta pasada.
 	Revoked int
-	Pruned  int64
+	// SESRetried son los dominios no verificados cuya sincronizacion con Amazon SES habia fallado y
+	// se completo en esta pasada.
+	SESRetried int
+	Pruned     int64
 }
 
 // SweepTenant termina primero las revocaciones de claves comprometidas que la celda no confirmo
@@ -65,6 +68,26 @@ func (uc *UseCase) SweepTenant(ctx context.Context, tenantID uuid.UUID) SweepRep
 			continue
 		}
 		report.Deactivated++
+	}
+
+	// Los verificados se sincronizan con SES al reverificarlos; aqui solo los demas cuya ultima
+	// sincronizacion fallo (una revocacion que no llego a SES).
+	if uc.sesEnabled() {
+		retry, err := uc.repo.ListPendingSESSync(ctx, tenantID)
+		if err != nil {
+			log.Error("barrido: listar dominios con SES sin sincronizar", zap.Error(err))
+		}
+		for _, d := range retry {
+			if ctx.Err() != nil {
+				return report
+			}
+			if err := uc.syncSES(ctx, d); err != nil {
+				log.Warn("barrido: la identidad de Amazon SES sigue sin sincronizarse; se reintenta en el siguiente",
+					zap.String("domain", d.Domain), zap.Error(err))
+				continue
+			}
+			report.SESRetried++
+		}
 	}
 
 	domains, err := uc.repo.ListForRecheck(ctx, tenantID, now.Add(-uc.pendingWindow))

@@ -28,7 +28,8 @@ const domainColumns = `id, tenant_id, domain, purpose, status, verification_toke
  dkim_selector, dkim_private_key_enc, dkim_public_key, dkim_key_bits,
  dkim_previous_selector, dkim_previous_private_key_enc, dkim_previous_public_key, dkim_rotated_at,
  dkim_previous_signed_at, dkim_confirmed_at, dkim_revocation_pending,
- dmarc_policy, directory_deactivation_pending, dns_mode, dns_published_at, created_at, updated_at`
+ dmarc_policy, directory_deactivation_pending, dns_mode, dns_published_at,
+ ses_identity_status, ses_dkim_status, ses_mail_from_status, ses_checked_at, ses_last_error, created_at, updated_at`
 
 // dkimLockClass es el espacio de los cerrojos consultivos de claves DKIM en la base de la empresa;
 // el segundo entero es el hash del id del dominio.
@@ -36,13 +37,14 @@ const dkimLockClass int32 = 0x646b696d // "dkim"
 
 func scanDomain(row pgx.Row) (*domain.Domain, error) {
 	d := &domain.Domain{}
-	var prevSelector, prevPublic *string
+	var prevSelector, prevPublic, sesIdentity, sesDKIM, sesMailFrom, sesError *string
 	err := row.Scan(
 		&d.ID, &d.TenantID, &d.Domain, &d.Purpose, &d.Status, &d.VerificationToken, &d.VerifiedAt, &d.LastCheckedAt,
 		&d.DKIMSelector, &d.DKIMPrivateKeyEnc, &d.DKIMPublicKey, &d.DKIMKeyBits,
 		&prevSelector, &d.DKIMPreviousPrivateKeyEnc, &prevPublic, &d.DKIMRotatedAt,
 		&d.DKIMPreviousSignedAt, &d.DKIMConfirmedAt, &d.DKIMRevocationPending,
-		&d.DMARCPolicy, &d.DirectoryDeactivationPending, &d.DNSMode, &d.DNSPublishedAt, &d.CreatedAt, &d.UpdatedAt,
+		&d.DMARCPolicy, &d.DirectoryDeactivationPending, &d.DNSMode, &d.DNSPublishedAt,
+		&sesIdentity, &sesDKIM, &sesMailFrom, &d.SES.CheckedAt, &sesError, &d.CreatedAt, &d.UpdatedAt,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -56,7 +58,18 @@ func scanDomain(row pgx.Row) (*domain.Domain, error) {
 	if prevPublic != nil {
 		d.DKIMPreviousPublicKey = *prevPublic
 	}
+	d.SES.IdentityStatus = domain.SESIdentityStatus(deref(sesIdentity))
+	d.SES.DKIMStatus = domain.SESCheckStatus(deref(sesDKIM))
+	d.SES.MailFromStatus = domain.SESCheckStatus(deref(sesMailFrom))
+	d.SES.LastError = deref(sesError)
 	return d, nil
+}
+
+func deref(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }
 
 func nullable(s string) *string {
@@ -223,6 +236,38 @@ func (r *Repository) ListPendingDKIMRevocation(ctx context.Context, tenantID uui
 	}
 	defer rows.Close()
 	return collect(rows)
+}
+
+// ListPendingSESSync: los verificados se sincronizan con SES en cada reverificacion.
+func (r *Repository) ListPendingSESSync(ctx context.Context, tenantID uuid.UUID) ([]*domain.Domain, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT `+domainColumns+` FROM domains.domains
+ WHERE tenant_id = $1 AND ses_last_error IS NOT NULL AND status <> $2
+ ORDER BY domain`,
+		tenantID, domain.StatusVerified)
+	if err != nil {
+		return nil, schemaNotReady(err)
+	}
+	defer rows.Close()
+	return collect(rows)
+}
+
+// SaveSESState escribe solo las columnas ses_*: el resto de la fila es de Update y de los metodos DKIM.
+func (r *Repository) SaveSESState(ctx context.Context, d *domain.Domain) error {
+	tag, err := r.pool.Exec(ctx,
+		`UPDATE domains.domains SET ses_identity_status = $3, ses_dkim_status = $4, ses_mail_from_status = $5,
+ ses_checked_at = $6, ses_last_error = $7
+ WHERE tenant_id = $1 AND id = $2`,
+		d.TenantID, d.ID, nullable(string(d.SES.IdentityStatus)), nullable(string(d.SES.DKIMStatus)),
+		nullable(string(d.SES.MailFromStatus)), d.SES.CheckedAt, nullable(d.SES.LastError),
+	)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return domain.ErrDomainNotFound
+	}
+	return nil
 }
 
 // WithDKIMLock toma pg_advisory_xact_lock sobre el dominio: se suelta al terminar la transaccion,

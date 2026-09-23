@@ -51,6 +51,12 @@ type Deps struct {
 	DNSProviders ports.DNSProviderRepository
 	DNSAPIs      map[domain.DNSProvider]ports.DNSProviderAPI
 	DNSEvents    ports.DNSEvents
+	// SES y SendingEvents dan de alta los dominios de envio como identidades de Amazon SES y anuncian
+	// su aptitud para enviar; SESConfigurationSet es el conjunto por defecto de esas identidades
+	// (SES_CONFIG_SET_TRANSACTIONAL). Sin SES la integracion esta desactivada.
+	SES                 ports.SESIdentityClient
+	SendingEvents       ports.SendingEvents
+	SESConfigurationSet string
 	// Platform son los valores que aparecen en los registros del cliente.
 	Platform domain.PlatformDNS
 	// PlatformHostname es MAIL_HOSTNAME: ni el ni sus subdominios se dan de alta.
@@ -76,6 +82,9 @@ type UseCase struct {
 	dnsRepo       ports.DNSProviderRepository
 	dnsAPIs       map[domain.DNSProvider]ports.DNSProviderAPI
 	dnsEvents     ports.DNSEvents
+	ses           ports.SESIdentityClient
+	sendingEvents ports.SendingEvents
+	sesConfigSet  string
 	platform      domain.PlatformDNS
 	platformHost  string
 	rotationGrace time.Duration
@@ -90,6 +99,7 @@ func New(d Deps) *UseCase {
 		repo: d.Repo, dns: d.DNS, cipher: d.Cipher,
 		mailDirectory: d.MailDirectory, mailSecurity: d.MailSecurity, mtaSTS: d.MTASTS, index: d.DomainIndex, events: d.Events, keyEvents: d.KeyEvents,
 		dnsRepo: d.DNSProviders, dnsAPIs: d.DNSAPIs, dnsEvents: d.DNSEvents,
+		ses: d.SES, sendingEvents: d.SendingEvents, sesConfigSet: d.SESConfigurationSet,
 		platform: d.Platform, platformHost: d.PlatformHostname,
 		rotationGrace: d.DKIMRotationGrace, pendingWindow: d.PendingRecheckWindow,
 		retention: d.CheckRetention, logger: d.Logger, now: d.Now,
@@ -226,7 +236,8 @@ type UpdateRequest struct {
 // Update cambia el uso o la politica DMARC. Anadir el uso corporativo exige un MX que
 // todavia no se ha comprobado, asi que un dominio verificado vuelve a pending; quitarlo
 // lo desactiva en el directorio de la celda (mail-directory se niega si quedan buzones) y lo
-// suelta del indice global de dominios.
+// suelta del indice global de dominios. Quitar el envio borra su identidad de Amazon SES antes de
+// guardar el cambio; anadirlo la crea en la siguiente verificacion o barrido.
 func (uc *UseCase) Update(ctx context.Context, tenantID, id uuid.UUID, req UpdateRequest) (*domain.Domain, error) {
 	if req.Purpose == nil && req.DMARCPolicy == nil {
 		return nil, domain.ErrNothingToUpdate
@@ -235,6 +246,7 @@ func (uc *UseCase) Update(ctx context.Context, tenantID, id uuid.UUID, req Updat
 	if err != nil {
 		return nil, err
 	}
+	stopsSending := false
 	if req.DMARCPolicy != nil {
 		policy := domain.DMARCPolicy(*req.DMARCPolicy)
 		if !policy.Valid() {
@@ -248,6 +260,7 @@ func (uc *UseCase) Update(ctx context.Context, tenantID, id uuid.UUID, req Updat
 			return nil, domain.ErrInvalidPurpose
 		}
 		wasCorporate, isCorporate := d.Purpose.IncludesCorporate(), purpose.IncludesCorporate()
+		stopsSending = d.Purpose.IncludesSending() && !purpose.IncludesSending()
 		d.Purpose = purpose
 		switch {
 		case d.Status == domain.StatusVerified && !wasCorporate && isCorporate:
@@ -259,15 +272,27 @@ func (uc *UseCase) Update(ctx context.Context, tenantID, id uuid.UUID, req Updat
 			}
 		}
 	}
+	if stopsSending && uc.sesEnabled() {
+		if err := uc.retireFromSES(ctx, d); err != nil {
+			return nil, integrationError("retirar la identidad de Amazon SES", err)
+		}
+	}
 	if err := uc.repo.Update(ctx, d); err != nil {
 		return nil, err
+	}
+	if stopsSending && uc.sesEnabled() {
+		if err := uc.forgetSES(ctx, tenantID, id); err != nil {
+			return nil, err
+		}
+		d.SES = domain.SESState{}
 	}
 	return d, nil
 }
 
 // Delete retira el dominio: primero lo desactiva en el directorio (409 si hay buzones), tambien
 // si ya no es corporativo pero su desactivacion seguia pendiente, y lo suelta del indice global
-// de dominios; despues borra sus claves del Redis de los motores y solo entonces borra la fila.
+// de dominios; despues borra sus claves del Redis de los motores y su identidad de Amazon SES, y solo
+// entonces borra la fila.
 // Si un servicio no responde, la fila se queda: una clave de firma huerfana en Redis o un dominio
 // que sigue reclamado por una empresa que ya no lo tiene son peores que un dominio que tarda en
 // borrarse.
@@ -283,6 +308,11 @@ func (uc *UseCase) Delete(ctx context.Context, tenantID, id uuid.UUID) error {
 	}
 	if err := uc.mailSecurity.DeleteDKIM(ctx, tenantID, d.Domain); err != nil {
 		return integrationError("retirar claves DKIM en mail-security", err)
+	}
+	if uc.sesEnabled() && (d.Purpose.IncludesSending() || d.SES.Checked()) {
+		if err := uc.retireFromSES(ctx, d); err != nil {
+			return integrationError("retirar la identidad de Amazon SES", err)
+		}
 	}
 	if err := uc.repo.Delete(ctx, tenantID, id); err != nil {
 		return err

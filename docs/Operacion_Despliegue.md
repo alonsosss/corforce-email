@@ -618,6 +618,27 @@ buzones dio 500 y `mail-auth` no pudo leer el buzon del remitente de las alertas
   grupo `salida-ses` (`plataforma.yml`, con sus pruebas en `tests/salida-ses_test.yml`) avisan de
   la cuenta pausada, rebotes y quejas por debajo de los umbrales de AWS, cuota casi agotada,
   intentos fallando, envios sin eventos, rechazos sostenidos en la ruta y el vigilante sin datos.
+* Identidades de SES de los dominios de las empresas: `domain-service` da de alta en SES cada dominio
+  de envio (`sending` o `both`) al verificarse, con BYODKIM (su misma clave DKIM y selector), MAIL
+  FROM `bounce.<dominio>` y `SES_CONFIG_SET_TRANSACTIONAL` por defecto, y el barrido guarda su estado.
+  Variables: `SES_REGION` y `SES_CONFIG_SET_TRANSACTIONAL` (las mismas del `.env` que usa
+  `transactional`) y las claves `SES_IDENTITIES_ACCESS_KEY_ID` y `SES_IDENTITIES_SECRET_ACCESS_KEY`,
+  en el almacen y solo para `domain-service`, del usuario `core-force-mail-ses-identidades` de
+  `setup-iam.sh` (politica `ses-identidades`: leer cualquier identidad; crear y etiquetar solo con la
+  clave `cfm_tenant_id`; borrar y fijar DKIM, MAIL FROM y conjunto solo en identidades con esa
+  etiqueta, porque la cuenta de SES es compartida con otros proyectos; y como conjunto por defecto
+  solo `configuration-set/<SES_CONFIG_SET_TRANSACTIONAL>`).
+  Sin las dos claves la integracion queda desactivada (aviso en el log) y todo sigue como antes; con
+  una sola, o con una region o un conjunto invalidos, el servicio no arranca. Orden de despliegue:
+  migraciones de empresa (`domain-service/07_ses_identities.sql` y
+  `transactional/06_sending_ready.sql`) -> `domain-service` -> `transactional`; `domain-service` lee
+  las columnas nuevas en cada consulta y, sin la migracion, el barrido salta la empresa. Con la
+  integracion activa, un dominio de envio que ya enviaba deja de estar apto en `transactional` hasta
+  que SES lo verifique (el primer barrido lo anuncia). Una identidad sin etiqueta (creada a mano)
+  solo se adopta si su conjunto por defecto ya es `SES_CONFIG_SET_TRANSACTIONAL`, y al adoptarla se
+  etiqueta; si tiene otro conjunto es de otro proyecto de la cuenta y no se toca ni se borra. La de
+  la plataforma (`avisos.core-force.com`, Easy DKIM) se adopta y conserva su DKIM mientras SES la
+  tenga verificada.
 * Antes y después de recrear, en los dos caminos (`ops/scaffold/check-deploy-preflight.sh`,
   sección 10 de `validate.sh`). Antes: `ops/db/pgbouncer-userlist.sh --ensure` genera el
   `userlist.txt` si falta, porque sin él PgBouncer no arranca, y si no coincide solo avisa:

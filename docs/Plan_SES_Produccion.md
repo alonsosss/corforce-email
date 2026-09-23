@@ -182,16 +182,20 @@ procesan solos.
    (DKIM `pass`, SPF `pass` con `bounce.avisos.core-force.com`, DMARC `pass`).
 4. Si AWS pide algo mas, se contesta en el mismo caso de soporte.
 
-### Paso 8. Dominios de las empresas (despues)
+### Paso 8. Dominios de las empresas
 
-Hoy el dominio de una empresa se verifica en `domain-service` (DNS de la plataforma), pero no
-se da de alta en SES: nadie llama a `CreateEmailIdentity`. Hasta que exista esa integracion,
-una empresa solo puede enviar por SES si su dominio se verifica a mano en la cuenta. La
-integracion correcta es que `domain-service` cree la identidad con DKIM y MAIL FROM al
-registrar el dominio y publique los registros que SES devuelve junto a los suyos; exige dar al
-usuario de envio (o a uno propio de `domain-service`) `ses:CreateEmailIdentity`,
-`ses:GetEmailIdentity`, `ses:DeleteEmailIdentity` y `ses:PutEmailIdentityMailFromAttributes`.
-Queda fuera de este cambio.
+Codigo hecho (2026-09-23): `domain-service` da de alta en SES cada dominio de envio al
+verificarse, con BYODKIM (la misma clave DKIM y el mismo selector que ya publica el cliente, asi
+que no hay registros nuevos de DKIM), MAIL FROM `bounce.<dominio>` y el conjunto transaccional, y
+pide el MX y el SPF de ese MAIL FROM. `transactional` solo envia desde un dominio que SES verifico.
+Las reglas estan en `docs/Operacion_Despliegue.md` ("Identidades de SES"). Para activarlo en
+produccion, quien administra la cuenta:
+
+1. `ops/aws/setup-iam.sh --check` y despues sin `--check`: crea `core-force-mail-ses-identidades`
+   con `core-force-mail-ses-identidades`.
+2. `aws iam create-access-key --user-name core-force-mail-ses-identidades` directo al almacen
+   (`SES_IDENTITIES_ACCESS_KEY_ID`, `SES_IDENTITIES_SECRET_ACCESS_KEY`).
+3. Desplegar las migraciones, `domain-service` y `transactional`, en ese orden.
 
 ## 4. Costes
 
@@ -212,7 +216,7 @@ metricas de reputacion en CloudWatch mientras el volumen no lo justifique.
 | 5. Credenciales en el servidor | Hecho (2026-09-23): las dos claves en el almacen, `transactional` recreado, `verify-scope contenedores` OK. Tasas a la cuota del modo de pruebas (1 por segundo): `SES_MAX_SEND_RATE=1` y `SES_MAX_SEND_RATE_MARKETING=1` |
 | 6. Prueba con el simulador | Hecho (2026-09-23), por `/internal/send-email` desde la empresa de plataforma: `success@` quedo `delivered`, `bounce@` `bounced` y alta en `suppression` con `hard_bounce`, `complaint@` `complained` y alta con `complaint`. Las dos entradas del simulador se dejaron en `suppression` como constancia |
 | 7. Acceso de produccion | Esperando a AWS Support. Al llegar: subir `SES_MAX_SEND_RATE` a la cuota asignada, poner `AUDIT_ANCHOR_RUA` y hacer el envio real del paso 7 |
-| 8. Dominios de empresa en SES | Sin empezar |
+| 8. Dominios de empresa en SES | Codigo hecho (2026-09-23): `domain-service` (identidades BYODKIM, MAIL FROM, estado en `07_ses_identities.sql`) y `transactional` (`sending_ready`, `06_sending_ready.sql`). Falta en produccion: usuario IAM y claves (paso 8) y desplegar |
 
 Queda en la cuenta `my-first-configuration-set`, conjunto por defecto de `core-force.com` y de una
 direccion personal. No es de esta plataforma (`core-force.com` lo usa el SES del ERP) y no se

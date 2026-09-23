@@ -6,8 +6,8 @@
 # en la consola". Con tres es incomodo; con un servidor por vertical es la clase de deuda
 # que hace que una capacidad quede a medias en un entorno y nadie se entere.
 #
-# Aqui las capacidades del rol de instancia, el usuario de deploy local y el usuario de envio
-# por SES se declaran como codigo. Correrlo de nuevo los deja como dice este archivo, aunque
+# Aqui las capacidades del rol de instancia, el usuario de deploy local, el usuario de envio
+# por SES y el de identidades de SES se declaran como codigo. Correrlo de nuevo los deja como dice este archivo, aunque
 # alguien los haya tocado a mano: eso es lo que hace que aprovisionar una cuenta nueva sea un
 # comando y no una lista de clics.
 #
@@ -38,6 +38,10 @@ DEPLOY_USER="${CF_DEPLOY_USER:-core-force-mail-deploy-local}"
 # almacen de secretos). Es propio y no el de deploy: una clave de envio filtrada no publica
 # imagenes, y una de deploy no envia correo en nombre de las empresas.
 SES_USER="${CF_SES_USER:-core-force-mail-ses}"
+# Usuario cuyas claves usa domain-service (SES_IDENTITIES_ACCESS_KEY_ID y
+# SES_IDENTITIES_SECRET_ACCESS_KEY) para dar de alta los dominios de envio de las empresas como
+# identidades de SES. Separado del de envio: esta clave cambia claves DKIM y MAIL FROM, no envia.
+SES_IDENTITIES_USER="${CF_SES_IDENTITIES_USER:-core-force-mail-ses-identidades}"
 SES_SET_TRANSACTIONAL="${SES_CONFIG_SET_TRANSACTIONAL:-cfm-transactional}"
 SES_SET_MARKETING="${SES_CONFIG_SET_MARKETING:-cfm-marketing}"
 # Instancia sobre la que se permite abrir terminal por SSM. Acotar a una sola es el punto:
@@ -219,6 +223,24 @@ emit ses-envio <<EOF
   "Resource":"*"}]}
 EOF
 
+# Identidades de SES: domain-service crea, lee, corrige y borra la identidad de cada dominio de envio
+# de las empresas, firmando con la clave DKIM que el custodia (BYODKIM). La identidad va con comodin
+# porque cada empresa trae su dominio; TagResource porque la identidad nace con la etiqueta de su
+# empresa, que impide que la baja en una borre la de otra. El conjunto por defecto que puede fijar es
+# solo el transaccional: una identidad con otro conjunto enviaria sin los eventos de la plataforma.
+emit ses-identidades <<EOF
+{"Version":"2012-10-17","Statement":[
+ {"Sid":"GestionarLasIdentidadesDeLasEmpresas","Effect":"Allow",
+  "Action":["ses:CreateEmailIdentity","ses:GetEmailIdentity","ses:DeleteEmailIdentity",
+            "ses:PutEmailIdentityDkimSigningAttributes","ses:PutEmailIdentityMailFromAttributes",
+            "ses:TagResource"],
+  "Resource":"arn:aws:ses:${REGION}:${ACC}:identity/*"},
+ {"Sid":"ConjuntoPorDefectoSoloElTransaccional","Effect":"Allow",
+  "Action":["ses:CreateEmailIdentity","ses:PutEmailIdentityConfigurationSetAttributes"],
+  "Resource":["arn:aws:ses:${REGION}:${ACC}:identity/*",
+              "arn:aws:ses:${REGION}:${ACC}:configuration-set/${SES_SET_TRANSACTIONAL}"]}]}
+EOF
+
 if [[ -n "$RENDER_DIR" ]]; then
   for f in "$out"/*.json; do
     python3 -m json.tool "$f" >/dev/null || { echo "FALLA: $f no es JSON valido" >&2; exit 1; }
@@ -368,6 +390,25 @@ if aws iam get-user --user-name "$SES_USER" >/dev/null 2>&1; then
 fi
 echo
 
+# --- Usuario de identidades de SES -----------------------------------------------------
+# Como el de envio: sus claves las crea quien administra la cuenta, UNA vez, y van directo al almacen
+# de secretos, solo para domain-service:
+#   aws iam create-access-key --user-name $SES_IDENTITIES_USER
+echo "Usuario de identidades $SES_IDENTITIES_USER (conjunto $SES_SET_TRANSACTIONAL)"
+if ! aws iam get-user --user-name "$SES_IDENTITIES_USER" >/dev/null 2>&1; then
+  if [[ $CHECK -eq 1 ]]; then
+    echo "  FALTA: se crearia"
+  else
+    aws iam create-user --user-name "$SES_IDENTITIES_USER" \
+        --tags Key=proposito,Value=identidades-ses-domain-service >/dev/null
+    echo "  creado"
+  fi
+fi
+if aws iam get-user --user-name "$SES_IDENTITIES_USER" >/dev/null 2>&1; then
+  reconcilia user "$SES_IDENTITIES_USER" ses-identidades
+fi
+echo
+
 if [[ $CHECK -eq 1 ]]; then
   echo "Nada aplicado. Corre sin --check para dejar la IAM como dice este archivo."
 else
@@ -375,4 +416,5 @@ else
   echo "  ops/ecr/enable-scanning.sh                            # desde el servidor: escaneo de imagenes"
   echo "  aws iam create-access-key --user-name $DEPLOY_USER    # una vez, para 'aws configure' en la PC"
   echo "  aws iam create-access-key --user-name $SES_USER       # una vez, al almacen de secretos de transactional"
+  echo "  aws iam create-access-key --user-name $SES_IDENTITIES_USER  # una vez, al almacen de secretos de domain-service"
 fi

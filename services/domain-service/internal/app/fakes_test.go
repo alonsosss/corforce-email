@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -245,6 +246,31 @@ func (r *fakeRepo) ListPendingDKIMRevocation(_ context.Context, tenantID uuid.UU
 	return out, nil
 }
 
+func (r *fakeRepo) SaveSESState(_ context.Context, d *domain.Domain) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	stored, ok := r.domains[d.ID]
+	if !ok || stored.TenantID != d.TenantID {
+		return domain.ErrDomainNotFound
+	}
+	c := clone(stored)
+	c.SES = d.SES
+	r.domains[d.ID] = c
+	return nil
+}
+
+func (r *fakeRepo) ListPendingSESSync(_ context.Context, tenantID uuid.UUID) ([]*domain.Domain, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []*domain.Domain
+	for _, d := range r.domains {
+		if d.TenantID == tenantID && d.SES.LastError != "" && d.Status != domain.StatusVerified {
+			out = append(out, clone(d))
+		}
+	}
+	return out, nil
+}
+
 func (r *fakeRepo) Delete(_ context.Context, tenantID, id uuid.UUID) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -368,7 +394,7 @@ func (f *fakeDNS) publishZone(uc *UseCase, d *domain.Domain) {
 	for _, rec := range uc.ExpectedRecords(context.Background(), d) {
 		switch rec.Type {
 		case "MX":
-			f.mx[rec.Host] = []domain.MXRecord{{Host: uc.platform.MXHostname, Priority: 10}}
+			f.mx[rec.Host] = []domain.MXRecord{{Host: strings.Fields(rec.Value)[0], Priority: 10}}
 		default:
 			f.txt[rec.Host] = []string{rec.Value}
 		}
@@ -478,11 +504,16 @@ func (f *fakeSecurity) lastPublished() published {
 	return f.published[len(f.published)-1]
 }
 
-// fakePublisher hace de publicador de NATS y de outbox de claves (ports.KeyEvents).
+// fakePublisher hace de publicador de NATS y de outbox de claves (ports.KeyEvents) y de aptitud para
+// enviar (ports.SendingEvents).
 type fakePublisher struct {
 	subjects  []string
 	rotations []domain.DKIMRotation
-	err       error
+	// verifiedReady es el sending_ready de cada domains.domain.verified; sending, el de cada
+	// domains.domain.sending_status_changed.
+	verifiedReady []*bool
+	sending       []bool
+	err           error
 }
 
 func (f *fakePublisher) record(subject string) error {
@@ -496,8 +527,19 @@ func (f *fakePublisher) record(subject string) error {
 func (f *fakePublisher) DomainCreated(context.Context, *domain.Domain) error {
 	return f.record("domains.domain.created")
 }
-func (f *fakePublisher) DomainVerified(context.Context, *domain.Domain) error {
-	return f.record("domains.domain.verified")
+func (f *fakePublisher) DomainVerified(_ context.Context, _ *domain.Domain, ready *bool) error {
+	if err := f.record("domains.domain.verified"); err != nil {
+		return err
+	}
+	f.verifiedReady = append(f.verifiedReady, ready)
+	return nil
+}
+func (f *fakePublisher) SendingStatusChanged(_ context.Context, _ *domain.Domain, ready bool) error {
+	if err := f.record("domains.domain.sending_status_changed"); err != nil {
+		return err
+	}
+	f.sending = append(f.sending, ready)
+	return nil
 }
 func (f *fakePublisher) DomainFailed(context.Context, *domain.Domain) error {
 	return f.record("domains.domain.failed")
@@ -531,3 +573,94 @@ func (f *fakePublisher) count(subject string) int {
 }
 
 var errDown = errors.New("servicio caido")
+
+// fakeSES es la cuenta de Amazon SES: identidades por nombre, con la clave que firma cada una.
+type fakeSES struct {
+	identities map[string]*sesIdentity
+	// calls anota cada llamada que cambia algo: "create acme.com", "dkim acme.com cfm202609", ...
+	calls []string
+	// err hace fallar toda llamada; verifyOnCreate deja la identidad verificada al crearla.
+	err            error
+	verifyOnCreate bool
+}
+
+type sesIdentity struct {
+	obs domain.SESIdentityObservation
+	key ports.DKIMKey
+}
+
+func newFakeSES() *fakeSES { return &fakeSES{identities: map[string]*sesIdentity{}} }
+
+func (f *fakeSES) GetIdentity(_ context.Context, name string) (domain.SESIdentityObservation, error) {
+	if f.err != nil {
+		return domain.SESIdentityObservation{}, f.err
+	}
+	id, ok := f.identities[name]
+	if !ok {
+		return domain.SESIdentityObservation{}, domain.ErrSESIdentityNotFound
+	}
+	obs := id.obs
+	obs.DKIMSelectors = append([]string(nil), id.obs.DKIMSelectors...)
+	return obs, nil
+}
+
+func (f *fakeSES) CreateIdentity(_ context.Context, tenantID uuid.UUID, name string, key ports.DKIMKey, configSet string) error {
+	if f.err != nil {
+		return f.err
+	}
+	if _, ok := f.identities[name]; ok {
+		return domain.ErrSESIdentityExists
+	}
+	f.calls = append(f.calls, "create "+name+" "+key.Selector)
+	f.identities[name] = &sesIdentity{key: key, obs: domain.SESIdentityObservation{
+		VerifiedForSending: f.verifyOnCreate, DKIMOrigin: domain.SESDKIMOriginExternal,
+		DKIMSelectors: []string{key.Selector}, DKIMStatus: domain.SESCheckPending,
+		ConfigurationSet: configSet, TenantTag: tenantID.String(),
+	}}
+	return nil
+}
+
+func (f *fakeSES) SetDKIMKey(_ context.Context, name string, key ports.DKIMKey) error {
+	if f.err != nil {
+		return f.err
+	}
+	f.calls = append(f.calls, "dkim "+name+" "+key.Selector)
+	id := f.identities[name]
+	id.key = key
+	id.obs.DKIMOrigin, id.obs.DKIMSelectors = domain.SESDKIMOriginExternal, []string{key.Selector}
+	return nil
+}
+
+func (f *fakeSES) SetMailFrom(_ context.Context, name, mailFrom string) error {
+	if f.err != nil {
+		return f.err
+	}
+	f.calls = append(f.calls, "mailfrom "+name+" "+mailFrom)
+	id := f.identities[name]
+	id.obs.MailFromDomain, id.obs.BehaviorOnMXFailure, id.obs.MailFromStatus = mailFrom, domain.SESBehaviorOnMXFailure, domain.SESCheckPending
+	return nil
+}
+
+func (f *fakeSES) SetConfigurationSet(_ context.Context, name, configSet string) error {
+	if f.err != nil {
+		return f.err
+	}
+	f.calls = append(f.calls, "configset "+name+" "+configSet)
+	f.identities[name].obs.ConfigurationSet = configSet
+	return nil
+}
+
+func (f *fakeSES) DeleteIdentity(_ context.Context, name string) error {
+	if f.err != nil {
+		return f.err
+	}
+	f.calls = append(f.calls, "delete "+name)
+	delete(f.identities, name)
+	return nil
+}
+
+// verify simula que SES comprobo el DKIM de la identidad.
+func (f *fakeSES) verify(name string) {
+	id := f.identities[name]
+	id.obs.VerifiedForSending, id.obs.DKIMStatus = true, domain.SESCheckSuccess
+}

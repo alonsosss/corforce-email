@@ -41,7 +41,7 @@ Go (todo servicio monta `RequireGatewayToken`, `pkg/middleware/middleware.go`):
 | gateway, access-control, mail-auth, reputation | `REDIS_PASSWORD` |
 | webmail | `REDIS_PASSWORD`, `WEBMAIL_MASTER_USER`, `WEBMAIL_MASTER_PASSWORD` |
 | audit | `AUDIT_HASH_KEY`, `AUDIT_HASH_KEYS_OLD` |
-| domain-service | `MAIL_ENCRYPTION_KEY`, `MAIL_ENCRYPTION_KEYS_OLD` |
+| domain-service | `MAIL_ENCRYPTION_KEY`, `MAIL_ENCRYPTION_KEYS_OLD`, `SES_IDENTITIES_ACCESS_KEY_ID`, `SES_IDENTITIES_SECRET_ACCESS_KEY` |
 | mail-migration | `MAIL_ENCRYPTION_KEY`, `MAIL_ENCRYPTION_KEYS_OLD`, `MAIL_MIGRATION_RUNNER_KEY` |
 | mail-security | `MAIL_REDIS_PASSWORD`, `MAIL_LINK_SIGNING_KEY`, `DOVEADM_API_KEY`, `QUEUE_AGENT_API_KEY` |
 | transactional | `MAIL_LINK_SIGNING_KEY`, `SES_ACCESS_KEY_ID`, `SES_SECRET_ACCESS_KEY` |

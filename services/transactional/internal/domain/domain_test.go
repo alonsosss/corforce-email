@@ -157,6 +157,7 @@ func TestStatusForEventNeverRegresses(t *testing.T) {
 }
 
 func TestSendingDomainCanSend(t *testing.T) {
+	ready, notReady := true, false
 	cases := []struct {
 		d    *SendingDomain
 		want bool
@@ -166,6 +167,10 @@ func TestSendingDomainCanSend(t *testing.T) {
 		{&SendingDomain{Status: "verified", Purpose: "corporate"}, false},
 		{&SendingDomain{Status: "failed", Purpose: "sending"}, false},
 		{&SendingDomain{Status: "pending", Purpose: "both"}, false},
+		{&SendingDomain{Status: "verified", Purpose: "sending", SendingReady: &ready}, true},
+		{&SendingDomain{Status: "verified", Purpose: "both", SendingReady: &notReady}, false},
+		{&SendingDomain{Status: "failed", Purpose: "sending", SendingReady: &ready}, false},
+		{&SendingDomain{Status: "verified", Purpose: "corporate", SendingReady: &ready}, false},
 		{nil, false},
 	}
 	for _, tc := range cases {

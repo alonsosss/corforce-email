@@ -30,6 +30,7 @@ import (
 	"github.com/alonsosss/corforce-email/services/domain-service/internal/adapters/organizationcli"
 	outboxadapter "github.com/alonsosss/corforce-email/services/domain-service/internal/adapters/outbox"
 	"github.com/alonsosss/corforce-email/services/domain-service/internal/adapters/postgres"
+	"github.com/alonsosss/corforce-email/services/domain-service/internal/adapters/sescli"
 	"github.com/alonsosss/corforce-email/services/domain-service/internal/app"
 	"github.com/alonsosss/corforce-email/services/domain-service/internal/domain"
 	"github.com/alonsosss/corforce-email/services/domain-service/internal/ports"
@@ -295,9 +296,29 @@ func main() {
 		go outbox.RunForTenants(ctx, tenantDB, db.PoolFromCtx, bus, logger, outbox.Options{})
 	}
 
+	sesOptions := sescli.OptionsFromEnv()
+	var sesIdentities ports.SESIdentityClient
+	var sendingEvents ports.SendingEvents
+	if sesOptions.Enabled() {
+		client, err := sescli.New(ctx, sesOptions)
+		if err != nil {
+			log.Fatalf("domain-service: identidades de Amazon SES: %v", err)
+		}
+		sesIdentities = client
+		st.platform.SESRegion = sesOptions.Region
+		logger.Info("identidades de Amazon SES activas: los dominios de envio se dan de alta en SES al verificarse",
+			zap.String("region", sesOptions.Region), zap.String("configuration_set", sesOptions.ConfigurationSet))
+	} else {
+		logger.Warn("identidades de Amazon SES desactivadas (sin SES_IDENTITIES_ACCESS_KEY_ID ni SES_IDENTITIES_SECRET_ACCESS_KEY): " +
+			"los dominios de envio no se dan de alta en SES ni se piden sus registros MAIL FROM")
+	}
+
 	repo := postgres.NewRepository(ctxPool)
 	directory := maildirectorycli.New(tenantcell.NewCaller("mail-directory", st.directoryTargets, st.internalToken, logger, tenantcell.CallerOptions{}))
 	keyEvents := outboxadapter.NewPublisher(ctxPool)
+	if sesIdentities != nil {
+		sendingEvents = keyEvents
+	}
 	uc := app.New(app.Deps{
 		Repo:                 repo,
 		DNS:                  dnsadapter.New(st.dnsResolver),
@@ -311,6 +332,9 @@ func main() {
 		DNSProviders:         repo,
 		DNSAPIs:              map[domain.DNSProvider]ports.DNSProviderAPI{domain.DNSProviderCloudflare: cloudflare.New(st.cloudflareURL, cloudflare.DefaultTimeout)},
 		DNSEvents:            keyEvents,
+		SES:                  sesIdentities,
+		SendingEvents:        sendingEvents,
+		SESConfigurationSet:  sesOptions.ConfigurationSet,
 		Platform:             st.platform,
 		PlatformHostname:     st.platformHostname,
 		DKIMRotationGrace:    st.rotationGrace,
@@ -364,6 +388,7 @@ func runSweeps(ctx context.Context, tenantDB *db.TenantDB, registry *db.Pool, uc
 			total.Deactivated += rep.Deactivated
 			total.Retired += rep.Retired
 			total.Revoked += rep.Revoked
+			total.SESRetried += rep.SESRetried
 			total.Pruned += rep.Pruned
 			mu.Unlock()
 		})
@@ -375,6 +400,7 @@ func runSweeps(ctx context.Context, tenantDB *db.TenantDB, registry *db.Pool, uc
 			zap.Int("rechecked", total.Rechecked), zap.Int("failed", total.Failed),
 			zap.Int("deactivated", total.Deactivated),
 			zap.Int("dkim_retired", total.Retired), zap.Int("dkim_revocations_completed", total.Revoked),
+			zap.Int("ses_retried", total.SESRetried),
 			zap.Int64("checks_pruned", total.Pruned),
 			zap.Duration("took", time.Since(started)))
 	}

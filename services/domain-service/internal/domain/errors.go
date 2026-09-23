@@ -39,6 +39,11 @@ var (
 	ErrDKIMSelectorNotCurrent = errors.New("el selector indicado no es la clave DKIM actual del dominio; recargue el dominio")
 	// ErrDKIMKeysChanged: otra operacion cambio las claves del dominio mientras esta decidia.
 	ErrDKIMKeysChanged = errors.New("las claves DKIM del dominio cambiaron durante la operacion; reintente")
+	// ErrSESIdentityNotFound y ErrSESIdentityExists: Amazon SES no tiene, o ya tiene, la identidad.
+	ErrSESIdentityNotFound = errors.New("amazon ses no tiene la identidad del dominio")
+	ErrSESIdentityExists   = errors.New("amazon ses ya tiene la identidad del dominio")
+	// ErrSESIdentityOwnedElsewhere: la identidad de SES del dominio lleva la etiqueta de otra empresa.
+	ErrSESIdentityOwnedElsewhere = errors.New("la identidad de amazon ses del dominio es de otra empresa de la plataforma")
 	// ErrInvalidRevocationReason: el motivo de una revocacion es obligatorio y texto plano.
 	ErrInvalidRevocationReason = errors.New("reason es obligatorio, sin caracteres de control y de 500 caracteres como mucho")
 )

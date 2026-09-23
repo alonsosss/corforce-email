@@ -392,7 +392,8 @@ func (h *Handler) RevokeDKIM(w http.ResponseWriter, r *http.Request) {
 // domainResponse expone el dominio sin material privado: las claves cifradas nunca
 // salen, y la publica solo como valor del TXT que el cliente debe publicar.
 // dkim_previous_until es hasta cuando, como pronto, debe seguir publicado el TXT de la clave
-// anterior; dkim_revocation_pending, que una revocacion sigue sin confirmar en la celda.
+// anterior; dkim_revocation_pending, que una revocacion sigue sin confirmar en la celda. ses_* es el
+// estado de su identidad en Amazon SES, nulo si no la tiene.
 func (h *Handler) domainResponse(d *domain.Domain) map[string]interface{} {
 	res := map[string]interface{}{
 		"id":                      d.ID.String(),
@@ -412,6 +413,11 @@ func (h *Handler) domainResponse(d *domain.Domain) map[string]interface{} {
 		"dmarc_policy":            string(d.DMARCPolicy),
 		"dns_mode":                dnsMode(d),
 		"dns_published_at":        d.DNSPublishedAt,
+		"ses_identity_status":     nilSafeString(string(d.SES.IdentityStatus)),
+		"ses_dkim_status":         nilSafeString(string(d.SES.DKIMStatus)),
+		"ses_mail_from_status":    nilSafeString(string(d.SES.MailFromStatus)),
+		"ses_checked_at":          d.SES.CheckedAt,
+		"ses_last_error":          nilSafeString(d.SES.LastError),
 		"created_at":              d.CreatedAt,
 		"updated_at":              d.UpdatedAt,
 	}

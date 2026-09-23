@@ -220,16 +220,23 @@ type SuppressedRecipient struct {
 
 // SendingDomain es la proyeccion local de un dominio publicado por domain-service.
 type SendingDomain struct {
-	TenantID  uuid.UUID `json:"tenant_id"`
-	Domain    string    `json:"domain"`
-	Status    string    `json:"status"`
-	Purpose   string    `json:"purpose"`
-	UpdatedAt time.Time `json:"updated_at"`
+	TenantID uuid.UUID `json:"tenant_id"`
+	Domain   string    `json:"domain"`
+	Status   string    `json:"status"`
+	Purpose  string    `json:"purpose"`
+	// SendingReady es si Amazon SES acepta ya envios del dominio, cuando domain-service gestiona su
+	// identidad en SES; nil si no lo ha dicho.
+	SendingReady *bool     `json:"sending_ready"`
+	UpdatedAt    time.Time `json:"updated_at"`
 }
 
-// CanSend dice si el dominio autoriza a enviar por SES.
+// CanSend dice si el dominio autoriza a enviar por SES: verificado, de envio y, si domain-service
+// gestiona su identidad en SES, verificado tambien alli.
 func (d *SendingDomain) CanSend() bool {
 	if d == nil || d.Status != DomainStatusVerified {
+		return false
+	}
+	if d.SendingReady != nil && !*d.SendingReady {
 		return false
 	}
 	return d.Purpose == DomainPurposeSending || d.Purpose == DomainPurposeBoth

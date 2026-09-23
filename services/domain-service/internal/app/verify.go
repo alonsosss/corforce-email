@@ -88,7 +88,7 @@ func (uc *UseCase) verify(ctx context.Context, d *domain.Domain, sweep bool) (*V
 	case d.Status == domain.StatusVerified:
 		out.IntegrationErrors = uc.syncVerified(ctx, d, result.SignWithPrevious)
 		if previous != domain.StatusVerified {
-			uc.publish("domains.domain.verified", d, func() error { return uc.events.DomainVerified(ctx, d) })
+			uc.publish("domains.domain.verified", d, func() error { return uc.events.DomainVerified(ctx, d, uc.sendingReadiness(d)) })
 		}
 	case d.Status == domain.StatusFailed && previous == domain.StatusVerified:
 		if wasActive {
@@ -120,8 +120,9 @@ func lostRoutingRecord(checks []domain.DNSCheck) bool {
 }
 
 // syncVerified aplica lo que un dominio verificado debe tener fuera de esta base: reclamado en
-// el indice global de dominios y activo en el directorio de la celda si recibe correo, y sus
-// claves DKIM en los motores. Todas las llamadas son idempotentes y se repiten en cada barrido,
+// el indice global de dominios y activo en el directorio de la celda si recibe correo, sus
+// claves DKIM en los motores y, si envia por SES, su identidad en Amazon SES. SES va al final y su
+// fallo no toca el camino corporativo: un dominio both se activa en la celda aunque SES no responda. Todas las llamadas son idempotentes y se repiten en cada barrido,
 // que es lo que las cura si aqui fallan (tambien si no llegan a la celda de la empresa: el
 // estado sale solo del DNS) y lo que hace converger el indice.
 func (uc *UseCase) syncVerified(ctx context.Context, d *domain.Domain, signWithPrevious bool) []string {
@@ -144,6 +145,13 @@ func (uc *UseCase) syncVerified(ctx context.Context, d *domain.Domain, signWithP
 		uc.logger.Error("no se pudieron publicar las claves DKIM; se reintenta en el barrido",
 			zap.String("domain", d.Domain), zap.String("tenant_id", d.TenantID.String()), zap.Error(err))
 		failures = append(failures, "publicar DKIM en mail-security: "+err.Error())
+	}
+	if uc.sesEnabled() && d.Purpose.IncludesSending() {
+		if err := uc.syncSES(ctx, d); err != nil {
+			uc.logger.Error("no se pudo sincronizar la identidad de Amazon SES; se reintenta en el barrido",
+				zap.String("domain", d.Domain), zap.String("tenant_id", d.TenantID.String()), zap.Error(err))
+			failures = append(failures, "sincronizar la identidad de Amazon SES: "+err.Error())
+		}
 	}
 	return failures
 }

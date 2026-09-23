@@ -18,8 +18,13 @@ export type DnsRecordKind =
   | 'dkim_previous'
   | 'dmarc'
   | 'mta_sts'
-  | 'tls_rpt';
+  | 'tls_rpt'
+  | 'ses_mail_from_mx'
+  | 'ses_mail_from_spf';
 export type VerifyOutcome = 'verified' | 'failed' | 'inconclusive';
+/** Estado de la identidad del dominio en Amazon SES; solo verified permite enviar por SES. */
+export type SesIdentityStatus = 'pending' | 'verified' | 'failed';
+export type SesCheckStatus = 'pending' | 'success' | 'failed' | 'temporary_failure' | 'not_started';
 
 /** Como se publica el DNS del dominio: a mano o por la plataforma en el proveedor conectado. */
 export type DnsProvider = 'cloudflare';
@@ -51,6 +56,13 @@ export interface ManagedDomain {
   dns_mode: DnsMode;
   /** Ultima publicacion automatica completa en el proveedor. */
   dns_published_at: string | null;
+  /** Identidad en Amazon SES de un dominio de envio; null si no la tiene. */
+  ses_identity_status: SesIdentityStatus | null;
+  ses_dkim_status: SesCheckStatus | null;
+  ses_mail_from_status: SesCheckStatus | null;
+  ses_checked_at: string | null;
+  /** Ultimo fallo al sincronizar con SES; se reintenta en el barrido. */
+  ses_last_error: string | null;
   created_at: string;
   updated_at: string;
 }

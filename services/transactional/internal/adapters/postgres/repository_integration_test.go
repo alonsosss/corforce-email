@@ -543,8 +543,20 @@ func TestSendingDomainsAndUnsubscribes(t *testing.T) {
 	if err != nil || got.Status != "failed" {
 		t.Fatalf("el upsert actualiza el estado: %+v %v", got, err)
 	}
-	if list, _ := repo.ListSendingDomains(ctx, tenant); len(list) != 1 {
-		t.Fatal("ListSendingDomains")
+	if list, _ := repo.ListSendingDomains(ctx, tenant); len(list) != 1 || list[0].SendingReady != nil {
+		t.Fatal("ListSendingDomains: sin sending_ready la fila lo deja nulo")
+	}
+	notReady := false
+	d.Status, d.SendingReady = "verified", &notReady
+	if err := repo.UpsertSendingDomain(ctx, d); err != nil {
+		t.Fatal(err)
+	}
+	d.SendingReady = nil
+	if err := repo.UpsertSendingDomain(ctx, d); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := repo.GetSendingDomain(ctx, tenant, "shop.example.com"); err != nil || got.SendingReady == nil || *got.SendingReady || got.CanSend() {
+		t.Fatalf("un evento sin sending_ready conserva el ultimo que dijo domain-service: %+v %v", got, err)
 	}
 	if err := repo.UpsertSendingDomain(ctx, &domain.SendingDomain{TenantID: tenant, Domain: "Mayus.example.com", Status: "verified", Purpose: "both", UpdatedAt: time.Now()}); err == nil {
 		t.Fatal("la proyeccion exige dominios en minusculas")

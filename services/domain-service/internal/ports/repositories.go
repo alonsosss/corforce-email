@@ -48,6 +48,11 @@ type Repository interface {
 	UsedDKIMSelectors(ctx context.Context, tenantID, domainID uuid.UUID) ([]string, error)
 	// ListPendingDKIMRevocation devuelve los dominios con una revocacion sin confirmar en la celda.
 	ListPendingDKIMRevocation(ctx context.Context, tenantID uuid.UUID) ([]*domain.Domain, error)
+	// SaveSESState guarda el estado de la identidad del dominio en Amazon SES (d.SES). Es lo unico
+	// que escribe esas columnas.
+	SaveSESState(ctx context.Context, d *domain.Domain) error
+	// ListPendingSESSync devuelve los dominios no verificados cuya ultima sincronizacion con SES fallo.
+	ListPendingSESSync(ctx context.Context, tenantID uuid.UUID) ([]*domain.Domain, error)
 
 	// ListForRecheck devuelve los dominios que el barrido debe reverificar: los
 	// verificados y los pendientes creados despues de pendingSince.
@@ -124,10 +129,36 @@ type MailSecurityClient interface {
 	DeleteDKIM(ctx context.Context, tenantID uuid.UUID, name string) error
 }
 
+// SESIdentityClient da de alta y mantiene el dominio como identidad de envio en Amazon SES (API v2),
+// firmando con la clave DKIM que custodia domain-service (BYODKIM). Ningun error repite la clave.
+type SESIdentityClient interface {
+	// GetIdentity devuelve la identidad, o domain.ErrSESIdentityNotFound si SES no la tiene.
+	GetIdentity(ctx context.Context, name string) (domain.SESIdentityObservation, error)
+	// CreateIdentity la crea firmando con key, con configSet como conjunto por defecto y la etiqueta
+	// de la empresa (domain.SESTenantTag). Devuelve domain.ErrSESIdentityExists si ya existia.
+	CreateIdentity(ctx context.Context, tenantID uuid.UUID, name string, key DKIMKey, configSet string) error
+	// SetDKIMKey pasa la identidad a firmar con key (origen EXTERNAL).
+	SetDKIMKey(ctx context.Context, name string, key DKIMKey) error
+	// SetMailFrom fija el subdominio MAIL FROM con domain.SESBehaviorOnMXFailure.
+	SetMailFrom(ctx context.Context, name, mailFromDomain string) error
+	// SetConfigurationSet fija el conjunto por defecto de la identidad.
+	SetConfigurationSet(ctx context.Context, name, configSet string) error
+	// DeleteIdentity la borra; no falla si SES no la tiene.
+	DeleteIdentity(ctx context.Context, name string) error
+}
+
+// SendingEvents encola en la outbox de la empresa, en la transaccion que guarda el estado de SES, el
+// cambio de la aptitud del dominio para enviar por SES. Es lo que lleva a transactional el "apto".
+type SendingEvents interface {
+	SendingStatusChanged(ctx context.Context, d *domain.Domain, sendingReady bool) error
+}
+
 // EventPublisher emite los hechos del dominio en el stream DOMAINS. Nunca lleva claves.
 type EventPublisher interface {
 	DomainCreated(ctx context.Context, d *domain.Domain) error
-	DomainVerified(ctx context.Context, d *domain.Domain) error
+	// DomainVerified lleva sendingReady si domain-service gestiona la identidad del dominio en SES;
+	// nil si esa integracion esta desactivada y no sabe si SES acepta sus envios.
+	DomainVerified(ctx context.Context, d *domain.Domain, sendingReady *bool) error
 	DomainFailed(ctx context.Context, d *domain.Domain) error
 	DomainDeleted(ctx context.Context, d *domain.Domain) error
 }

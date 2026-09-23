@@ -305,8 +305,14 @@ func (r *fakeRepo) InsertSubmission(_ context.Context, s *domain.Submission) (bo
 
 func domainKey(tenantID uuid.UUID, name string) string { return tenantID.String() + "|" + name }
 
+// UpsertSendingDomain conserva sending_ready si el evento no lo trae, como el repositorio real.
 func (r *fakeRepo) UpsertSendingDomain(_ context.Context, d *domain.SendingDomain) error {
-	r.domains[domainKey(d.TenantID, d.Domain)] = *d
+	k := domainKey(d.TenantID, d.Domain)
+	next := *d
+	if prev, ok := r.domains[k]; ok && next.SendingReady == nil {
+		next.SendingReady = prev.SendingReady
+	}
+	r.domains[k] = next
 	return nil
 }
 

@@ -75,6 +75,28 @@ func (p *Publisher) enqueue(ctx context.Context, subject string, d *domain.Domai
 	return outbox.Enqueue(ctx, p.q, subject, evt)
 }
 
+// SubjectSendingStatusChanged anuncia que cambio la aptitud del dominio para enviar por Amazon SES.
+const SubjectSendingStatusChanged = "domains.domain.sending_status_changed"
+
+// SendingStatusChanged lleva los campos comunes de domains.domain.*, si SES acepta ya envios del
+// dominio (sending_ready) y el estado de su identidad en SES. Se encola en la transaccion que guarda
+// ese estado: transactional no ve apto un dominio que SES no verifico, ni deja de verlo si lo pierde.
+func (p *Publisher) SendingStatusChanged(ctx context.Context, d *domain.Domain, sendingReady bool) error {
+	evt := events.Event{
+		Type: SubjectSendingStatusChanged, Source: source, TenantID: d.TenantID.String(),
+		Data: map[string]interface{}{
+			"tenant_id":           d.TenantID.String(),
+			"domain_id":           d.ID.String(),
+			"domain":              d.Domain,
+			"purpose":             string(d.Purpose),
+			"status":              string(d.Status),
+			"sending_ready":       sendingReady,
+			"ses_identity_status": string(d.SES.IdentityStatus),
+		},
+	}
+	return outbox.Enqueue(ctx, p.q, SubjectSendingStatusChanged, evt)
+}
+
 // Subjects de la publicacion automatica del DNS. Ninguno lleva el token ni su pista.
 const (
 	SubjectDNSProviderConnected    = "domains.dns_provider.connected"

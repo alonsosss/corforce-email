@@ -281,6 +281,13 @@ func (uc *UseCase) RevokeDKIM(ctx context.Context, tenantID, id uuid.UUID, req R
 	if err != nil {
 		return nil, err
 	}
+	// SES tampoco puede seguir firmando con una clave revocada: pasa a la nueva ya, aunque su TXT no
+	// este publicado y la identidad quede pendiente hasta que se publique.
+	if err := uc.syncSES(ctx, d); err != nil {
+		uc.logger.Error("revocacion DKIM guardada pero sin llegar a Amazon SES: SES puede seguir firmando con la clave revocada; se reintenta en el barrido",
+			zap.String("tenant_id", tenantID.String()), zap.String("domain", d.Domain), zap.Error(err))
+		res.IntegrationErrors = append(res.IntegrationErrors, "fijar la clave nueva en Amazon SES: "+err.Error())
+	}
 	res.Domain = d
 	res.EnginesRetired = !d.DKIMRevocationPending
 	res.Record = currentDKIMRecord(d)

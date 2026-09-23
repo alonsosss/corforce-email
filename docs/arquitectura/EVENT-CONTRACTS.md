@@ -48,7 +48,8 @@ subject y payload. `opaco` = el payload no se puede leer estaticamente.
 | `domains.domain.dkim_rotated` | domain-service | `domain`, `domain_id`, `previous_selector`, `purpose`, `rotated_at`, `selector`, `status`, `tenant_id` |
 | `domains.domain.dns_published` | domain-service | `conflicts`, `created`, `domain`, `domain_id`, `failed`, `provider`, `published_at`, `purpose`, `removed`, `replaced`, `status`, `tenant_id`, `unchanged`, `updated`, `zone` |
 | `domains.domain.failed` | domain-service | `domain`, `domain_id`, `purpose`, `status`, `tenant_id` |
-| `domains.domain.verified` | domain-service | `domain`, `domain_id`, `purpose`, `status`, `tenant_id` |
+| `domains.domain.sending_status_changed` | domain-service | `domain`, `domain_id`, `purpose`, `sending_ready`, `ses_identity_status`, `status`, `tenant_id` |
+| `domains.domain.verified` | domain-service | `domain`, `domain_id`, `purpose`, `sending_ready`, `status`, `tenant_id` |
 | `gateway.security.exfiltration` | gateway | `count`, `ip`, `tenant_id`, `user_id`, `window` |
 | `identity.session.revoked_by_admin` | identity | `ip`, `session_id`, `target_user_id` |
 | `identity.user.created` | identity | `email` |
@@ -115,7 +116,7 @@ subject y payload. `opaco` = el payload no se puede leer estaticamente.
 | `contacts.contact.created` | billing | `tenant_id` |
 | `contacts.contact.deleted` | billing | `tenant_id` |
 | `contacts.contact.resubscribed` | suppression | `consented_at`, `email`, `tenant_id` |
-| `domains.domain.*` | transactional | `domain`, `purpose`, `status`, `tenant_id` |
+| `domains.domain.*` | transactional | `domain`, `purpose`, `sending_ready`, `status`, `tenant_id` |
 | `domains.domain.created` | billing | `domain`, `tenant_id` |
 | `domains.domain.deleted` | billing | `domain`, `tenant_id` |
 | `identity.user.deleted` | access-control | `tenant_id`, `user_id` |

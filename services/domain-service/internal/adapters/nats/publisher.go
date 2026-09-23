@@ -49,19 +49,25 @@ func (p *Publisher) DomainCreated(_ context.Context, d *domain.Domain) error {
 	})
 }
 
-func (p *Publisher) DomainVerified(_ context.Context, d *domain.Domain) error {
+// DomainVerified lleva sending_ready (si SES acepta ya envios del dominio) solo cuando domain-service
+// gestiona su identidad en SES; sin la integracion lo omite, porque no lo sabe.
+func (p *Publisher) DomainVerified(_ context.Context, d *domain.Domain, sendingReady *bool) error {
 	if !p.enabled() {
 		return nil
 	}
+	data := map[string]interface{}{
+		"tenant_id": d.TenantID.String(),
+		"domain_id": d.ID.String(),
+		"domain":    d.Domain,
+		"purpose":   string(d.Purpose),
+		"status":    string(d.Status),
+	}
+	if sendingReady != nil {
+		data["sending_ready"] = *sendingReady
+	}
 	return p.bus.PublishPersistent(SubjectDomainVerified, events.Event{
 		Type: SubjectDomainVerified, Source: eventSource, TenantID: d.TenantID.String(),
-		Data: map[string]interface{}{
-			"tenant_id": d.TenantID.String(),
-			"domain_id": d.ID.String(),
-			"domain":    d.Domain,
-			"purpose":   string(d.Purpose),
-			"status":    string(d.Status),
-		},
+		Data: data,
 	})
 }
 

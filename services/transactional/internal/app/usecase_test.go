@@ -742,3 +742,39 @@ func TestApplyDomainEventProjection(t *testing.T) {
 		t.Fatal("deleted retira el dominio de la proyeccion")
 	}
 }
+
+// Con la integracion de SES de domain-service, un dominio verificado en su DNS solo envia cuando SES lo
+// verifico; un evento que no dice nada de SES no borra lo ultimo que se supo.
+func TestSoloEnviaElDominioQueSESVerifico(t *testing.T) {
+	f := newFixture(t, Config{})
+	ready, notReady := true, false
+	apply := func(action, status string, sendingReady *bool) {
+		t.Helper()
+		if err := f.uc.ApplyDomainEvent(ctx, DomainEvent{Action: action, TenantID: f.tenant, Domain: "shop.example.com",
+			Purpose: "both", Status: status, SendingReady: sendingReady}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	blocked := func(msg string) {
+		t.Helper()
+		if _, err := f.uc.CreateMessages(ctx, rawCommand(f, "ana@example.com")); !errors.Is(err, domain.ErrSendingDomainNotVerified) {
+			t.Fatalf("%s: %v", msg, err)
+		}
+	}
+
+	apply("verified", "verified", &notReady)
+	blocked("verificado en DNS pero no en SES")
+	apply("failed", "failed", nil)
+	apply("verified", "verified", nil)
+	blocked("un evento sin sending_ready conserva el no de SES")
+	apply("sending_status_changed", "verified", &ready)
+	if _, err := f.uc.CreateMessages(ctx, rawCommand(f, "ana@example.com")); err != nil {
+		t.Fatalf("SES lo verifico: %v", err)
+	}
+	apply("sending_status_changed", "verified", &notReady)
+	blocked("SES dejo de aceptarlo")
+
+	if err := f.uc.ApplyDomainEvent(ctx, DomainEvent{Action: "sending_status_changed", TenantID: f.tenant, Domain: "shop.example.com", SendingReady: &ready}); !domain.IsValidation(err) {
+		t.Fatalf("sending_status_changed sin status: %v", err)
+	}
+}

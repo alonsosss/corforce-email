@@ -28,6 +28,12 @@ func (p Purpose) IncludesCorporate() bool {
 	return p == PurposeCorporate || p == PurposeBoth
 }
 
+// IncludesSending indica si el dominio envia por Amazon SES: es lo que decide si se da de alta como
+// identidad de SES y si se piden los registros de su MAIL FROM.
+func (p Purpose) IncludesSending() bool {
+	return p == PurposeSending || p == PurposeBoth
+}
+
 func (p Purpose) Valid() bool {
 	switch p {
 	case PurposeCorporate, PurposeSending, PurposeBoth:
@@ -116,6 +122,10 @@ type Domain struct {
 	DNSMode        DNSMode
 	DNSPublishedAt *time.Time
 
+	// SES es el estado de su identidad en Amazon SES, que solo existe si envia por SES. Solo lo
+	// cambia SaveSESState del repositorio, nunca Update.
+	SES SESState
+
 	DMARCPolicy DMARCPolicy
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
@@ -199,6 +209,11 @@ const (
 	// y donde enviar los informes de fallos de TLS (RFC 8460). Recomendados, no requeridos.
 	RecordMTASTS RecordKind = "mta_sts"
 	RecordTLSRPT RecordKind = "tls_rpt"
+	// RecordSESMailFromMX y RecordSESMailFromSPF son el MX y el SPF del subdominio MAIL FROM que
+	// Amazon SES usa como remitente de sobre (bounce.<dominio>). Recomendados, no requeridos: sin
+	// ellos SES envia con su propio MAIL FROM y el DMARC se sigue alineando por DKIM.
+	RecordSESMailFromMX  RecordKind = "ses_mail_from_mx"
+	RecordSESMailFromSPF RecordKind = "ses_mail_from_spf"
 )
 
 // DNSCheck es el resultado de comprobar un registro en una verificacion concreta.

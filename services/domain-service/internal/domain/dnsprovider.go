@@ -195,7 +195,7 @@ func DesiredRecords(d *Domain, platform PlatformDNS, mtaSTSPolicyID string) []De
 	for _, rec := range expected {
 		dr := DesiredRecord{Kind: rec.Record, Type: rec.Type, Name: rec.Host, Content: rec.Value}
 		if rec.Type == "MX" {
-			dr.Content, dr.Priority = normalizeHost(platform.MXHostname), mxPriority
+			dr.Content, dr.Priority = normalizeHost(strings.Fields(rec.Value)[0]), mxPriority
 		}
 		out = append(out, dr)
 	}
@@ -212,7 +212,7 @@ func (r DesiredRecord) sameFamily(e ProviderRecord) bool {
 	}
 	content := strings.ToLower(normalizeTXT(e.Content))
 	switch r.Kind {
-	case RecordSPF:
+	case RecordSPF, RecordSESMailFromSPF:
 		return content == "v=spf1" || strings.HasPrefix(content, "v=spf1 ")
 	case RecordDMARC:
 		return strings.HasPrefix(content, "v=dmarc1")

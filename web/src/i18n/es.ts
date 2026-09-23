@@ -748,6 +748,8 @@ export const es = {
   'domains.record.dmarc': 'DMARC',
   'domains.record.mta_sts': 'MTA-STS',
   'domains.record.tls_rpt': 'TLS-RPT',
+  'domains.record.ses_mail_from_mx': 'MX del MAIL FROM (SES)',
+  'domains.record.ses_mail_from_spf': 'SPF del MAIL FROM (SES)',
   'domains.mtaSts.title': 'MTA-STS',
   'domains.mtaSts.description':
     'Obliga a otros servidores a entregar el correo de este dominio por una conexion cifrada y verificada.',
