@@ -136,7 +136,7 @@ largas de cada guardarraíl están en `ops/scaffold/README.md`, `ops/security/se
 ## 2. Secretos
 
 Ninguna credencial vive en el repositorio ni en el `.env` del servidor: la fuente es el almacén del
-propio servidor, **OpenBao** (`docs/adr/0011-almacen-de-secretos-openbao.md`: contenedor `core-force-openbao`
+propio servidor, **OpenBao** (`docs/adr/0011-almacen-de-secretos-openbao.md`: contenedor `core-force-mail-openbao`
 solo en loopback, desbloqueo automático, credencial de solo lectura para desplegar, registro de cada acceso,
 versiones e instantánea en cada respaldo) o, en un servidor sin migrar, el fichero cifrado `store.json.gpg`
 (`docs/adr/0008-almacen-de-secretos-cifrado-sin-aws.md`); nunca un servicio administrado de AWS. Instalar y

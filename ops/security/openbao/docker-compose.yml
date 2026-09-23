@@ -1,16 +1,16 @@
 # OpenBao, el almacen de secretos de la plataforma (docs/adr/0011-almacen-de-secretos-openbao.md).
 #
-# Proyecto propio (core-force-openbao), fuera de docker-compose.yml: es de donde salen los
+# Proyecto propio (core-force-mail-openbao), fuera de docker-compose.yml: es de donde salen los
 # secretos del resto, asi que no puede depender de with-secrets.sh para arrancar ni recrearse
 # en un despliegue de la plataforma. Lo levanta y actualiza solo instalar.sh. No interpola
 # ningun secreto: la llave de desbloqueo llega como fichero montado.
-name: core-force-openbao
+name: core-force-mail-openbao
 
 services:
   openbao:
     # Fijada por digest: es la custodia de todas las credenciales.
     image: openbao/openbao:2.6.2@sha256:11fd73a2102cda9c55d5d881a8c3210303146a7ec1e8ac76f526e175c6d24641
-    container_name: ${OPENBAO_CONTENEDOR:-core-force-openbao}
+    container_name: ${OPENBAO_CONTENEDOR:-core-force-mail-openbao}
     command: ["server", "-config=/openbao/config/config.hcl"]
     # Red del host con listener en 127.0.0.1: ningun contenedor de la plataforma lo alcanza y las
     # credenciales AppRole quedan atadas a 127.0.0.1/32 (con puerto publicado llegarian desde la

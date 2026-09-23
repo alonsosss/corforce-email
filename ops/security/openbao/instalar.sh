@@ -25,8 +25,8 @@ PUERTO_CLUSTER=$((OPENBAO_PUERTO + 1))
 LLAVE_DIR="$SECRETS_DIR/openbao-llave"
 LLAVE="$LLAVE_DIR/desbloqueo.key"
 export OPENBAO_CRED_DIR="${OPENBAO_CRED_DIR:-$SECRETS_DIR/openbao}"
-OPENBAO_PROYECTO="${OPENBAO_PROYECTO:-core-force-openbao}"
-export OPENBAO_CONTENEDOR="${OPENBAO_CONTENEDOR:-core-force-openbao}"
+OPENBAO_PROYECTO="${OPENBAO_PROYECTO:-core-force-mail-openbao}"
+export OPENBAO_CONTENEDOR="${OPENBAO_CONTENEDOR:-core-force-mail-openbao}"
 export OPENBAO_ADDR="http://127.0.0.1:$OPENBAO_PUERTO"
 
 die() { echo "openbao/instalar: $*" >&2; exit 1; }

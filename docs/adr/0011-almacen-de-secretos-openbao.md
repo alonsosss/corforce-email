@@ -48,7 +48,7 @@ reinicio. Se descartó (decisión del responsable del producto, 2026-09-23): el 
 
 ### 3. Fuera de la plataforma, solo en loopback
 
-* **Proyecto de Compose propio** (`core-force-openbao`), fuera de `docker-compose.yml`. Es de donde salen los
+* **Proyecto de Compose propio** (`core-force-mail-openbao`), fuera de `docker-compose.yml`. Es de donde salen los
   secretos del resto: no puede arrancar a través de `with-secrets.sh`, que depende de él, ni recrearse en un
   despliegue de la plataforma. No interpola ningún secreto. Lo levanta y actualiza solo
   `ops/security/openbao/instalar.sh`; `check-secret-sources.sh` lo exime por nombre, con el motivo.
@@ -92,7 +92,7 @@ peticiones por despliegue sin dar ningún permiso nuevo que se pueda usar.
 `config.hcl.tmpl` declara un dispositivo de auditoría `file` a stdout. Declarativo porque OpenBao 2.6 no deja
 crearlo por la API, lo que tiene una consecuencia buena: un token comprometido no puede apagarlo. Cada petición
 queda con el rol, la ruta y el resultado; los valores y los tokens van con HMAC, nunca en claro. El registro del
-contenedor se rota (10 × 50 MB) y promtail lo lleva a Loki con el resto: `{contenedor="core-force-openbao"}`.
+contenedor se rota (10 × 50 MB) y promtail lo lleva a Loki con el resto: `{contenedor="core-force-mail-openbao"}`.
 
 ### 7. Respaldo que se comprueba
 

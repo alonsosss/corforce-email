@@ -16,7 +16,7 @@ que los dos materializan lo mismo. Sin ninguno de los dos, gpg. Un valor descono
 
 | | OpenBao (`openbao`) | Fichero gpg (`gpg`) |
 |---|---|---|
-| Donde | Contenedor `core-force-openbao`, `127.0.0.1:8200`, documento `cf/plataforma` | `/opt/core-force-mail/secrets/store.json.gpg` |
+| Donde | Contenedor `core-force-mail-openbao`, `127.0.0.1:8200`, documento `cf/plataforma` | `/opt/core-force-mail/secrets/store.json.gpg` |
 | Leer (desplegar) | Credencial AppRole `despliegue`, solo lectura | La frase |
 | Escribir | Credencial `administracion` | La misma frase |
 | Registro de accesos | Cada peticion, en el registro del contenedor y en Loki | Ninguno |
