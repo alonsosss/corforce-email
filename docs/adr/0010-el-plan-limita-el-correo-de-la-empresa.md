@@ -71,6 +71,28 @@ es cambiar de plan, no corregir la entrada ni reintentar, y la interfaz tiene qu
   2 s de plazo máximo, un intento y cortacircuitos.
 * Mientras no haya planes creados, nada cambia: es un despliegue seguro.
 
+## El estado de la suscripción no se mira, y hoy los dos caminos no dicen lo mismo
+
+`/internal/billing/plan-limits` devuelve lo que el plan incluye **sin mirar el estado de la suscripción**
+(`subscriptionWithPlan` no filtra por `Status`). Una suscripción `cancelled` o `suspended`, e incluso con el plan
+retirado del catálogo, sigue limitando con las cifras de ese plan: la empresa queda congelada donde estaba.
+`/internal/billing/entitlements/check`, en cambio, sí lo mira: `SubscriptionStatus.AllowsUsage()` admite
+`trialing`, `active` y `past_due`, y con cualquier otro estado `Evaluate` deniega con `subscription_inactive`.
+
+Los dos caminos, por tanto, responden distinto a la misma situación: ante una empresa con la suscripción
+cancelada, `reputation` (que consulta derechos) la deniega y `mail-directory` (que consulta límites) la deja
+crecer hasta las cifras del plan cancelado. Con un plan sin límite (`-1`) la diferencia es mayor: crece sin tope.
+
+**Esto no se resuelve aquí porque es una decisión comercial, no técnica.** Las dos lecturas son coherentes:
+
+* *Una empresa cancelada no consume*: se alinea con `AllowsUsage()` y con `entitlements/check`; dejaría de poder
+  crear buzones ni subir cuotas, y es lo que cabe esperar de un servicio que se dio de baja.
+* *Una empresa cancelada no crece*: es el comportamiento de hoy; conserva lo que tiene y no añade más.
+
+Lo que no es defendible es que cada servicio aplique una distinta. Mientras se decide, queda escrito aquí: el
+efecto práctico es que **cancelar una suscripción no levanta los límites**, y para quitarlos hay que asignar otro
+plan. Quien opere la plataforma debe saberlo antes de cancelar nada con un cliente delante.
+
 ## Lo que no se decide aquí
 
 **Que el superadmin vea o edite los dominios y buzones de una empresa cliente.** Hoy no puede: la empresa sale de

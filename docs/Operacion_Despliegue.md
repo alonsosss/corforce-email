@@ -1204,6 +1204,15 @@ queda el aviso en el registro: el límite del dominio sigue aplicándose. Los pl
 el superadmin por API (`POST /api/v1/billing/plans`, `PUT /api/v1/billing/subscriptions/{empresa}`), nunca una
 migración.
 
+Dos cosas que sorprenden al operar y conviene saber antes, no durante (el porqué está en el ADR 0010):
+**cambiar lo que incluye un plan que ya tiene suscriptores no se admite** (`ErrPlanInUse`): no se altera en
+silencio lo que alguien contrató, así que para darle más espacio a un cliente se crea otro plan y se mueve su
+suscripción. Y **cancelar la suscripción no levanta los límites**: `plan-limits` no mira el estado, de modo que un
+plan cancelado, o incluso retirado del catálogo, sigue limitando con sus cifras; para quitarlos hay que asignar
+otro plan. Nótese que `entitlements/check` sí mira el estado y deniega a una suscripción que no esté en
+`trialing`, `active` o `past_due`: los dos caminos no dicen lo mismo y qué debe pasar con una empresa cancelada
+está pendiente de decisión comercial.
+
 Que el límite **deje de aplicarse** es silencioso por diseño (se falla hacia el lado abierto), así que se vigila:
 `mail_directory_plan_limits_configured` en 0 significa que no hay `BILLING_URL` y el plan no limita a nadie, y
 `mail_directory_plan_limit_skipped_total{motivo="unreachable"}` cuenta las altas resueltas sin poder consultar a
