@@ -207,24 +207,26 @@ func TestIntegrationTimezoneSlots(t *testing.T) {
 	}
 	h.clock.t = *got.ScheduledAt
 	h.tick(t)
-	if n := countRows(t, pool, `SELECT count(*) FROM campaigns.phases WHERE campaign_id = $1 AND kind = 'zone'`, c.ID); n != 3 {
-		t.Fatalf("primer tramo y uno por zona: %d", n)
+	if n := countRows(t, pool, `SELECT count(*) FROM campaigns.phases WHERE campaign_id = $1 AND kind = 'zone'`, c.ID); n != 4 {
+		t.Fatalf("primer tramo, uno por zona y el de cierre: %d", n)
 	}
 	l, _ := domain.ParseLocalDateTime(local)
 	madridAt := l.In(mustLoad(t, "Europe/Madrid"))
 	if err := h.uc.registerSlots(ctx, got, []time.Time{madridAt}); err != nil {
 		t.Fatal(err)
 	}
-	if n := countRows(t, pool, `SELECT count(*) FROM campaigns.phases WHERE campaign_id = $1 AND kind = 'zone'`, c.ID); n != 3 {
+	if n := countRows(t, pool, `SELECT count(*) FROM campaigns.phases WHERE campaign_id = $1 AND kind = 'zone'`, c.ID); n != 4 {
 		t.Fatalf("dar de alta un tramo existente no lo duplica: %d", n)
 	}
 	h.clock.t = madridAt
 	h.tick(t)
 	h.clock.t = l.In(mustLoad(t, "America/Lima"))
 	h.tick(t)
+	h.clock.t = l.Latest()
+	h.tick(t)
 	got, _ = h.uc.Get(ctx, h.tenantID, c.ID)
 	if got.Status != domain.StatusCompleted || len(h.sender.calls) != 2 {
-		t.Fatalf("un lote por tramo y la campana termina: %s %d", got.Status, len(h.sender.calls))
+		t.Fatalf("un lote por tramo y la campana termina en el tramo de cierre: %s %d", got.Status, len(h.sender.calls))
 	}
 	if h.sender.calls[0].Recipients[0].Email != madrid[0].Email || h.sender.calls[1].Recipients[0].Email != lima[0].Email {
 		t.Fatal("cada contacto en su tramo")
