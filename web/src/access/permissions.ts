@@ -185,6 +185,15 @@ export const PERMISSIONS = {
     publish: [MODULES.templates, 'templates', 'publish'],
     render: [MODULES.templates, 'templates', 'render'],
   },
+  brandKit: {
+    read: [MODULES.templates, 'brand_kit', 'read'],
+    update: [MODULES.templates, 'brand_kit', 'update'],
+  },
+  templateAssets: {
+    read: [MODULES.templates, 'assets', 'read'],
+    create: [MODULES.templates, 'assets', 'create'],
+    delete: [MODULES.templates, 'assets', 'delete'],
+  },
 
   suppressionEntries: {
     read: [MODULES.suppression, 'entries', 'read'],

@@ -195,6 +195,34 @@ Reglas de la interfaz que no se relajan:
   variables de la plantilla (`domain.QuarantineNoticeData`) se listan en
   `QUARANTINE_NOTICE_TEMPLATE` porque mail-security no publica un catalogo de ellas.
 
+## Editor visual de plantillas
+
+| Ruta                            | Pantalla                                            | Modulo      |
+| ------------------------------- | --------------------------------------------------- | ----------- |
+| `/sending/templates/:id/editor` | Editor de pantalla completa (fuera del Shell)       | `templates` |
+| `/sending/brand-kit`            | Kit de marca: logo, colores, tipografias, pie legal | `templates` |
+
+Decision en `docs/adr/0012-editor-visual-de-correos-con-grapesjs-y-mjml.md`, contratos y estado en
+`docs/Plan_Editor_Correos.md` (6.1).
+
+- `pages/templates/editor/engine.ts` es el unico modulo que importa GrapesJS, grapesjs-mjml y
+  mjml-browser; la pantalla lo carga con `import()` y le habla por `EditorEngine`. El resto (bloques,
+  galeria, preheader, texto plano) son funciones puras en `blocks.ts`, `gallery/`, `mjmlSource.ts` y
+  `session.ts`, probadas sin lienzo. `mjml.ts` compila con mjml-browser y lo usan el motor y las pruebas.
+- El lienzo es un iframe de GrapesJS del mismo origen: hereda la CSP de la aplicacion y el parser se
+  configura sin scripts, atributos `on*` ni `javascript:`. Las vistas previas de la galeria siguen en
+  `HtmlPreviewFrame`.
+- Sin recursos de terceros: `cssIcons: ''`, `telemetry: false`, fuentes de MJML vacias (no enlaza
+  Google Fonts) y el plugin `cf-without-global-eval` de `vite.config.ts`. Cualquier cambio de version de
+  estas dependencias se vuelve a comprobar en un navegador con la CSP de produccion.
+- Guardar crea una version nueva con `editor` (`kind`, `project` de `getProjectData()`, `mjml`) y el
+  `html` compilado; la verificacion de entregabilidad (`POST /templates/check`) corre 1,5 s despues del
+  ultimo cambio.
+- Imagenes: `AssetLibrary.tsx` (subir, elegir, editar, retirar) sobre `/templates/assets`; el editor de
+  imagenes usa cropperjs 1.6.3 (MIT, sin dependencias) y guarda siempre una imagen nueva.
+- No hay envio de prueba desde el editor: el unico que existe es el de una campana
+  (`POST /campaigns/{id}/test`). Falta un endpoint de prueba por plantilla.
+
 ## Trabajos programados
 
 | Menu                 | Ruta                           | Modulo      | API                                       |

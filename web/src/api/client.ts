@@ -110,6 +110,10 @@ export type QueryParams = Record<string, string | number | boolean | undefined |
 
 export interface RequestOptions {
   params?: QueryParams;
+  /**
+   * Cuerpo JSON, o FormData para multipart/form-data: en ese caso el navegador pone el
+   * Content-Type con su boundary y el cuerpo se reenvia igual en los reintentos.
+   */
   body?: unknown;
   signal?: AbortSignal;
   /** Cabecera Accept; por defecto JSON. */
@@ -231,7 +235,7 @@ async function exchange<T>(
   method: Method,
   url: string,
   headers: Record<string, string>,
-  body: string | undefined,
+  body: string | FormData | undefined,
   signal: AbortSignal | undefined,
   kind: ResponseKind,
 ): Promise<Exchange<T>> {
@@ -263,6 +267,12 @@ function toError(res: Response, json: Envelope<unknown> | null): ApiError {
   return new ApiError(res.status, json?.error ?? null, json);
 }
 
+function encodeBody(body: unknown): string | FormData | undefined {
+  if (body === undefined) return undefined;
+  if (body instanceof FormData) return body;
+  return JSON.stringify(body);
+}
+
 async function send<T>(
   method: Method,
   path: string,
@@ -271,8 +281,8 @@ async function send<T>(
 ): Promise<Exchange<T>> {
   const url = buildUrl(path, opts?.params);
   const headers: Record<string, string> = { Accept: opts?.accept ?? 'application/json' };
-  const body = opts?.body === undefined ? undefined : JSON.stringify(opts.body);
-  if (body !== undefined) headers['Content-Type'] = 'application/json';
+  const body = encodeBody(opts?.body);
+  if (typeof body === 'string') headers['Content-Type'] = 'application/json';
 
   const token = await getValidToken();
   if (token) headers.Authorization = `Bearer ${token}`;

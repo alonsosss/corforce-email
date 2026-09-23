@@ -136,6 +136,11 @@ export const SCREENS: readonly ScreenDecl[] = [
     load: () => import('@/pages/templates/TemplateDetailPage'),
   },
   {
+    path: paths.brandKit,
+    module: MODULES.templates,
+    load: () => import('@/pages/templates/brandKit/BrandKitPage'),
+  },
+  {
     path: paths.suppression,
     module: MODULES.suppression,
     load: () => import('@/pages/suppression/SuppressionPage'),
@@ -254,6 +259,18 @@ export const SCREENS: readonly ScreenDecl[] = [
   },
 ];
 
+/**
+ * Pantallas de pantalla completa: con sesion y con la misma primera capa de control, pero
+ * fuera del Shell (sin menu ni barra superior), como el editor visual de plantillas.
+ */
+export const FULLSCREEN_SCREENS: readonly ScreenDecl[] = [
+  {
+    path: paths.templateEditorPattern,
+    module: MODULES.templates,
+    load: () => import('@/pages/templates/editor/TemplateEditorPage'),
+  },
+];
+
 const NotFoundPage = lazy(() => import('@/pages/NotFoundPage'));
 
 function lazyElement(load: PageLoader) {
@@ -284,6 +301,14 @@ export function createAppRouter() {
         {
           element: <RequireAuth />,
           children: [
+            ...FULLSCREEN_SCREENS.map((screen) => ({
+              path: screen.path,
+              element: (
+                <RequireModule module={screen.module} role={screen.role}>
+                  {lazyElement(screen.load)}
+                </RequireModule>
+              ),
+            })),
             {
               element: <Shell />,
               children: [

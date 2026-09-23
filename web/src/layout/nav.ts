@@ -25,6 +25,7 @@ import {
   IconLayers,
   IconLink,
   IconMonitor,
+  IconPalette,
   IconRoute,
   IconSend,
   IconServer,
@@ -106,6 +107,12 @@ export const NAV: NavGroup[] = [
         to: paths.templates,
         labelKey: 'nav.templates',
         icon: IconFileText,
+        module: MODULES.templates,
+      },
+      {
+        to: paths.brandKit,
+        labelKey: 'nav.brandKit',
+        icon: IconPalette,
         module: MODULES.templates,
       },
       {

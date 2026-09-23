@@ -28,7 +28,7 @@ import {
   Textarea,
   useToast,
 } from '@/design/components';
-import { IconArchive, IconEdit, IconRefresh, IconTrash } from '@/design/icons';
+import { IconArchive, IconEdit, IconLayers, IconRefresh, IconTrash } from '@/design/icons';
 import { changed, isEmptyPatch } from '@/lib/patch';
 import { rules, validateField } from '@/lib/validate';
 import { t, tEnum } from '@/i18n';
@@ -127,6 +127,15 @@ export default function TemplateDetailPage() {
         back={{ to: paths.templates, label: t('nav.templates') }}
         actions={
           <>
+            {can(...PERMISSIONS.templates.create) && !archived ? (
+              <Button
+                variant="primary"
+                icon={<IconLayers size={16} />}
+                onClick={() => navigate(paths.templateEditor(tpl.id))}
+              >
+                {t('templates.editor.open')}
+              </Button>
+            ) : null}
             {canUpdate ? (
               <Button icon={<IconEdit size={16} />} onClick={() => setDialog('edit')}>
                 {t('common.edit')}

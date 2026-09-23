@@ -1,0 +1,58 @@
+/* GrapesJS con los tokens del sistema de diseno: los paneles propios (estilos, ajustes y
+   capas) toman los colores de la aplicacion en claro y en oscuro. */
+
+.cf-editor .gjs-one-bg {
+  background-color: var(--cf-surface);
+}
+
+.cf-editor .gjs-two-color {
+  color: var(--cf-text);
+}
+
+.cf-editor .gjs-three-bg {
+  background-color: var(--cf-accent);
+  color: var(--cf-accent-contrast);
+}
+
+.cf-editor .gjs-four-color,
+.cf-editor .gjs-four-color-h:hover {
+  color: var(--cf-accent);
+}
+
+.cf-editor .gjs-pn-panel {
+  display: none;
+}
+
+.cf-editor .gjs-cv-canvas {
+  top: 0;
+  width: 100%;
+  height: 100%;
+  background-color: var(--cf-surface-muted);
+}
+
+.cf-editor .gjs-editor,
+.cf-editor .gjs-sm-sector,
+.cf-editor .gjs-trt-traits,
+.cf-editor .gjs-layer {
+  font-family: var(--cf-font-sans);
+  font-size: var(--cf-text-sm);
+}
+
+.cf-editor .gjs-sm-sector .gjs-sm-sector-title,
+.cf-editor .gjs-layer-item {
+  background-color: var(--cf-surface-muted);
+  border-bottom: 1px solid var(--cf-border);
+  color: var(--cf-text);
+}
+
+.cf-editor .gjs-field,
+.cf-editor .gjs-clm-tags {
+  background-color: var(--cf-surface-muted);
+  border: 1px solid var(--cf-border);
+  border-radius: var(--cf-radius-sm);
+  color: var(--cf-text);
+}
+
+.cf-editor .gjs-layer.gjs-selected .gjs-layer-item {
+  background-color: var(--cf-accent-soft);
+}

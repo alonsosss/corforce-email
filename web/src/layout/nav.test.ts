@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { MODULES } from '@/access/modules';
 import { SYSTEM_ROLES } from '@/access/roles';
 import { paths } from '@/paths';
-import { PUBLIC_SCREENS, SCREENS, WEBMAIL_ROUTE } from '@/routes';
+import { FULLSCREEN_SCREENS, PUBLIC_SCREENS, SCREENS, WEBMAIL_ROUTE } from '@/routes';
 import { canSee, NAV, visibleNav } from './nav';
 
 const allItems = NAV.flatMap((group) => group.items);
@@ -32,7 +32,7 @@ describe('menu frente a rutas', () => {
   });
 
   it('no hay rutas duplicadas ni entradas repetidas en el menu', () => {
-    const paths = [...PUBLIC_SCREENS, ...SCREENS].map((s) => s.path);
+    const paths = [...PUBLIC_SCREENS, ...SCREENS, ...FULLSCREEN_SCREENS].map((s) => s.path);
     expect(new Set(paths).size).toBe(paths.length);
     const targets = allItems.map((i) => i.to);
     expect(new Set(targets).size).toBe(targets.length);
@@ -80,6 +80,7 @@ describe('menu frente a rutas', () => {
     ]);
     expect(group('nav.group.sending')?.items.map((i) => [i.to, i.module])).toEqual([
       [paths.templates, MODULES.templates],
+      [paths.brandKit, MODULES.templates],
       [paths.suppression, MODULES.suppression],
       [paths.reputation, MODULES.reputation],
     ]);

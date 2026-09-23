@@ -20,6 +20,11 @@ export interface VariableDraft {
 
 let sequence = 0;
 
+/** Nombre utilizable como {{.nombre}}: el mismo patron que valida el servicio. */
+export function isVariableName(name: string): boolean {
+  return NAME.test(name);
+}
+
 export function newVariableDraft(type: VariableType = 'string'): VariableDraft {
   sequence += 1;
   return { key: `variable-${sequence}`, name: '', type, required: false, defaultValue: '' };

@@ -189,6 +189,36 @@ lleva el sha256), `X-Content-Type-Options: nosniff` y `Content-Security-Policy: 
 * Editor de imagenes: recortar, girar, redimensionar, filtros; guarda una imagen nueva por `POST /assets`.
 * Todo compatible con la CSP actual (sin `unsafe-eval`), comprobado en un navegador real.
 
+### 6.1 Estado del editor web (verificado en el codigo)
+
+* Ruta `/sending/templates/:id/editor` fuera del Shell (`FULLSCREEN_SCREENS` en `web/src/routes.tsx`),
+  con el mismo `RequireModule` del modulo `templates`; boton "Abrir editor" en el detalle con
+  `templates.create`. Pantalla `/sending/brand-kit` en el menu de Envios.
+* GrapesJS 0.23.6 + grapesjs-mjml 1.0.8 + mjml-browser 4.18.0 en su propio chunk
+  (`pages/templates/editor/engine.ts`, cargado con `import()`): 3,6 MB sin comprimir, 1,04 MB gzip,
+  solo al abrir el editor. grapesjs-mjml lleva dentro su propia copia de mjml; se le pasa la de
+  `mjml-browser` como `mjmlParser` para que lienzo, guardado, galeria y pruebas compilen con la misma
+  version fijada (unos 350 KB gzip duplicados, ver mejoras).
+* Guardar crea siempre una version nueva en borrador (`POST .../versions` con `editor`): el servicio no
+  publica `PUT .../versions/{v}`, asi que ningun borrador, tampoco uno escrito a mano, se reescribe.
+  Publicar guarda antes si hay cambios; el 409 `DELIVERABILITY_FAILED` pinta `error.issues` y, si no
+  llegaran, las pide a `POST .../versions/{v}/check`.
+* El MJML guardado incluye el preheader como `<mj-preview>` (MJML lo emite como el div oculto al
+  principio del cuerpo); el lienzo no lo edita, es un ajuste del panel Documento.
+* Tipografias, formatos de imagen y topes (`brand_fonts`, `asset_content_types`, `max_editor_bytes`,
+  `max_brand_colors`, `max_brand_fonts`, `max_asset_bytes`, `max_asset_dimension`) salen de
+  `GET /templates/meta`; el tope del documento se comprueba antes de enviar.
+* CSP: comprobado en Chromium con la politica exacta de `SecureHeaders` (nonce y `strict-dynamic`, sin
+  `unsafe-eval`) sirviendo `dist/` con el nonce estampado: el editor, el lienzo, la galeria, las vistas
+  movil y oscura y la seleccion de elementos funcionan sin ninguna violacion. Para ello GrapesJS va con
+  `cssIcons: ''` (por defecto carga Font Awesome de cdnjs) y `telemetry: false` (por defecto llama a
+  app.grapesjs.com), y `vite.config.ts` sustituye en mjml-browser y grapesjs-mjml el
+  `new Function("return this")()` por `globalThis` (el unico eval que llegaba a ejecutarse; el
+  `_.template` de underscore no se usa).
+* Riesgo para el backend: el render usa `html/template`, que elimina los comentarios HTML; el HTML de
+  MJML lleva comentarios condicionales `<!--[if mso | IE]>` para Outlook de escritorio. Si el render no
+  los conserva, Outlook pierde las tablas de respaldo.
+
 ## 7. Orden de despliegue
 
 Registro (permisos nuevos de `templates`) -> empresa (`templates`) -> MinIO y sus claves -> motores
@@ -202,5 +232,5 @@ Registro (permisos nuevos de `templates`) -> empresa (`templates`) -> MinIO y su
 | Backend `templates` (diseno, kit, imagenes, verificador) | Hecho (2026-09-23): migraciones de empresa `templates/03_editor_brand_assets.sql` y de registro `038_templates_editor_permissions.sql`; `pkg/clamav` compartido con el webmail; red `mail-scan` para clamd; pruebas unitarias de cada regla e integracion contra Postgres. Sin probar contra clamd, MinIO ni `mail-security` reales |
 | `mail-security` spam-check | Hecho (V 2026-09-23, unitarias con Rspamd falso; y contra Rspamd real con `make e2e-mail`: 638 comprobaciones) |
 | MinIO y gateway | Hecho en el código, sin desplegar: `minio`, `minio-volumen` y `minio-init` en `docker-compose.selfhosted.yml` (solo `mail-internal`, sin puertos, sin root, imagen por digest), bucket privado y usuario de servicio acotado a él (sin borrar), claves en el almacén (`MINIO_ROOT_*` solo para `minio` y `minio-init`; `MINIO_ACCESS_KEY`/`MINIO_SECRET_KEY` para `gateway`), `minio-data` en el respaldo (solo sale cifrado) y `/media/public/*` servido por el gateway (sección 5, con `HEAD`, `ETag` y `304`). Falta: la fila de `templates` en `reparto.tsv` y sus dos líneas en `docker-compose.yml` cuando su código llame a `objectstore.FromEnv` (`check-secret-scope` lo exige entonces), y `MINIO_ENDPOINT`/`MINIO_USE_SSL` en su bloque del perfil. Procedimiento: `docs/Operacion_Despliegue.md`, 11, «Almacén de objetos» |
-| Editor web | En curso |
+| Editor web | Hecho en `web/` (6.1); falta comprobarlo contra el backend nuevo desplegado (en local se probo contra el `templates` anterior) |
 | Despliegue | Pendiente |

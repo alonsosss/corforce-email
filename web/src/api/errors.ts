@@ -61,6 +61,11 @@ export const ERROR_CODES = {
   RECIPIENT_REJECTED: 'RECIPIENT_REJECTED',
   DELIVERY_UNCERTAIN: 'DELIVERY_UNCERTAIN',
   SEND_IN_PROGRESS: 'SEND_IN_PROGRESS',
+  // templates: imagenes sin antivirus configurado (503) o rechazadas por el (422), y una
+  // version de marketing que no pasa la verificacion de entregabilidad al publicar (409).
+  SCANNER_UNAVAILABLE: 'SCANNER_UNAVAILABLE',
+  ASSET_REJECTED: 'ASSET_REJECTED',
+  DELIVERABILITY_FAILED: 'DELIVERABILITY_FAILED',
   // Fabricados por el cliente: sin respuesta o respuesta que no es JSON.
   NETWORK_ERROR: 'NETWORK_ERROR',
   INVALID_RESPONSE: 'INVALID_RESPONSE',

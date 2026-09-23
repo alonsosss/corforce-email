@@ -1,0 +1,115 @@
+/* Imagenes de la empresa, editor de imagenes y muestras del kit de marca: los comparten la
+   pantalla del kit y el editor visual. */
+
+.cf-asset-grid {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: var(--cf-space-3);
+}
+
+.cf-asset {
+  display: grid;
+  gap: var(--cf-space-2);
+  padding: var(--cf-space-2);
+  border: 1px solid var(--cf-border);
+  border-radius: var(--cf-radius-md);
+}
+
+.cf-asset__thumb {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 120px;
+  background: var(--cf-surface-muted);
+  border-radius: var(--cf-radius-sm);
+  overflow: hidden;
+}
+
+.cf-asset__thumb img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+.cf-asset__meta {
+  display: grid;
+  min-width: 0;
+}
+
+.cf-asset__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--cf-text-sm);
+  font-weight: var(--cf-weight-medium);
+}
+
+.cf-asset__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--cf-space-1);
+}
+
+.cf-image-editor__stage {
+  max-height: 420px;
+  background: var(--cf-surface-muted);
+}
+
+.cf-image-editor__stage img {
+  display: block;
+  max-width: 100%;
+}
+
+.cf-image-editor__tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--cf-space-2);
+}
+
+.cf-swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--cf-space-2);
+}
+
+.cf-swatch {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--cf-space-1);
+}
+
+.cf-swatch__chip {
+  width: 18px;
+  height: 18px;
+  border-radius: var(--cf-radius-sm);
+  border: 1px solid var(--cf-border-strong);
+}
+
+.cf-brand-logo {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  max-width: 220px;
+  padding: var(--cf-space-2);
+  border: 1px solid var(--cf-border);
+  border-radius: var(--cf-radius-md);
+  background: var(--cf-surface-muted);
+}
+
+.cf-brand-logo img {
+  max-width: 100%;
+  max-height: 80px;
+}
+
+.cf-color-input {
+  width: 40px;
+  height: 36px;
+  padding: 2px;
+  border: 1px solid var(--cf-border);
+  border-radius: var(--cf-radius-sm);
+  background: var(--cf-surface);
+  cursor: pointer;
+}

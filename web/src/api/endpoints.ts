@@ -190,6 +190,12 @@ export const endpoints = {
     publish: (id: string, version: number) =>
       `${API_PREFIX}/templates/${seg(id)}/versions/${version}/publish`,
     preview: (id: string) => `${API_PREFIX}/templates/${seg(id)}/preview`,
+    versionCheck: (id: string, version: number) =>
+      `${API_PREFIX}/templates/${seg(id)}/versions/${version}/check`,
+    check: `${API_PREFIX}/templates/check`,
+    brandKit: `${API_PREFIX}/templates/brand-kit`,
+    assets: `${API_PREFIX}/templates/assets`,
+    asset: (id: string) => `${API_PREFIX}/templates/assets/${seg(id)}`,
     meta: `${API_PREFIX}/templates/meta`,
   },
   suppression: {
