@@ -155,6 +155,6 @@ seguimiento, que funciona.
 | A3 Verificador de SNS | Hecho (2026-09-23): region del topic y cache de fallos acotada, con pruebas |
 | B1 Metricas y vigilante | Hecho (2026-09-23): puerto `Metrics`, adaptador Prometheus, vigilante con GetAccount y CloudWatch; politica `ses-envio` ampliada y aplicada |
 | B2 Alertas | Hecho (2026-09-23): grupo `salida-ses` con 10 alertas y sus pruebas de promtool |
-| C Dominios de empresa en SES | Pendiente |
+| C Dominios de empresa en SES | Codigo hecho (2026-09-23), sin desplegar: BYODKIM, MAIL FROM, estado en `domains.domains` (migracion de empresa `domain-service/07`), `sending_ready` en `transactional.sending_domains` (`transactional/06`); una identidad sin etiqueta solo se adopta si ya sale por `cfm-transactional`, y en IAM borrar o modificar exige la etiqueta (probado con el simulador de IAM) |
 | D Dominio de seguimiento | Aplazada hasta activar marketing (seccion 5) |
 | E Limpieza | Hecho salvo cerrar la sesion raiz (al terminar C) y la decision de respuestas (seccion 7) |
