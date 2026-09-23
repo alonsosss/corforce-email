@@ -117,11 +117,25 @@ un dominio de la plataforma que no sea de la empresa de plataforma (regla ya exi
 `r.us-east-1.awstrack.me`, y `SES_TRACKING_DOMAIN=clics.core-force.com` en la pila (HTTPS obligatorio).
 Solo afecta a marketing.
 
+**Aplazada (2026-09-23), con motivo.** El certificado del borde lo emite el `acme` de
+`deploy/mail`, el mismo que usan Postfix y Dovecot: anadir el nombre obliga a reemitirlo y a
+desplegar los motores uno a uno con `make e2e-mail`. Es un riesgo sobre el correo corporativo para
+una funcion que hoy no se usa (no hay campanas). Se hace al activar el marketing, en este orden:
+registro A `clics` en Cloudflare sin proxy; el nombre en el `ADDITIONAL_SAN` de `acme`; un bloque
+`server` en `selfhosted/edge/templates` activado por `EDGE_TRACKING_HOST` (vacio lo desactiva)
+que reenvia con `proxy_ssl_server_name on` y `Host r.<region>.awstrack.me`; y
+`SES_TRACKING_DOMAIN` en `setup-ses.sh`. Hasta entonces SES reescribe los enlaces a su dominio de
+seguimiento, que funciona.
+
 ## 6. Fase E: limpieza
 
 * `core-force-deploy-local`: mirar su ultimo uso (`get-access-key-last-used`). Si solo lo usa esta PC,
   darle clave a `core-force-mail-deploy-local`, cambiar el perfil local y retirar la vieja; si lo usa el
   ERP, se queda y se documenta.
+  **Resultado (2026-09-23):** es el usuario de despliegue del ERP (publica en sus repositorios
+  `core-force/*` de ECR y abre sesiones SSM; ultimo uso el mismo dia). **No se retira.** Esta
+  plataforma deja de usarlo: `core-force-mail-deploy-local` tiene clave propia en el perfil local
+  `core-force-mail`, y con el `verificar-ses.sh` ya funciona sin la cuenta raiz.
 * Cerrar la sesion de la cuenta raiz (`aws logout --profile secrets`) al terminar las fases que la
   necesitan (A1, B1 y C tocan la cuenta).
 * `avisos.core-force.com`: decision del usuario (ver seccion 7).
@@ -142,5 +156,5 @@ Solo afecta a marketing.
 | B1 Metricas y vigilante | Hecho (2026-09-23): puerto `Metrics`, adaptador Prometheus, vigilante con GetAccount y CloudWatch; politica `ses-envio` ampliada y aplicada |
 | B2 Alertas | Hecho (2026-09-23): grupo `salida-ses` con 10 alertas y sus pruebas de promtool |
 | C Dominios de empresa en SES | Pendiente |
-| D Dominio de seguimiento | Pendiente |
-| E Limpieza | Pendiente |
+| D Dominio de seguimiento | Aplazada hasta activar marketing (seccion 5) |
+| E Limpieza | Hecho salvo cerrar la sesion raiz (al terminar C) y la decision de respuestas (seccion 7) |
