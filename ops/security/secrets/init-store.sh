@@ -30,6 +30,10 @@ while [[ $# -gt 0 ]]; do
     *) echo "opcion desconocida: $1" >&2; exit 1 ;;
   esac
 done
+[[ "$STORE_BACKEND" == gpg ]] || {
+  echo "init-store: el almacen de este servidor es $STORE_BACKEND; lo crea ops/security/openbao/instalar.sh" >&2
+  exit 1
+}
 command -v gpg >/dev/null || { echo "init-store: falta gpg (paquete gnupg)" >&2; exit 1; }
 command -v openssl >/dev/null || { echo "init-store: falta openssl" >&2; exit 1; }
 

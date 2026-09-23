@@ -1,7 +1,16 @@
 #!/usr/bin/env bash
-# Resuelve el almacen cifrado de secretos: un JSON con todas las claves de secret-keys.txt y
-# secret-keys-db.txt, cifrado con gpg simetrico (mismo patron que ops/backup/destino-externo.sh:
-# AES-256, frase por --passphrase-fd 0, nunca en un argumento de linea de comandos).
+# Resuelve el almacen de secretos: un JSON con todas las claves de secret-keys.txt y
+# secret-keys-db.txt. Dos backends con el mismo contrato (store_leer_json/store_escribir_json):
+#
+#   openbao  el documento cf/plataforma de OpenBao (docs/adr/0011): registro de cada lectura,
+#            credencial de solo lectura para desplegar, versiones. Es el de produccion.
+#   gpg      un fichero cifrado con gpg simetrico (mismo patron que ops/backup/destino-externo.sh:
+#            AES-256, frase por --passphrase-fd 0, nunca en un argumento). Es el de un servidor
+#            sin OpenBao y el camino de vuelta de migrar.sh.
+#
+# Cual se usa lo dice SECRETS_BACKEND o, sin ella, el fichero `backend` junto a la frase, que
+# escribe ops/security/openbao/migrar.sh solo despues de comprobar que OpenBao devuelve lo mismo
+# que el fichero gpg. Sin ninguno de los dos, gpg: un servidor sin migrar sigue igual.
 #
 # Lo sourcean fetch-secrets.sh, push-secrets.sh, add-secret.sh, remove-secret.sh, rotate-key.sh e
 # init-store.sh. Una
@@ -26,6 +35,41 @@ STORE_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STORE_PASSPHRASE_FILE="${SECRETS_STORE_PASSPHRASE_FILE:-/opt/core-force-mail/secrets/passphrase}"
 STORE_FILE="${SECRETS_STORE_FILE:-$(dirname "$STORE_PASSPHRASE_FILE")/store.json.gpg}"
 STORE_FRASE_MINIMA=20
+STORE_DIR="$(dirname "$STORE_PASSPHRASE_FILE")"
+STORE_BACKEND="${SECRETS_BACKEND:-$(cat "$STORE_DIR/backend" 2>/dev/null || echo gpg)}"
+STORE_OPENBAO="$STORE_SCRIPT_DIR/openbao.py"
+export OPENBAO_CRED_DIR="${OPENBAO_CRED_DIR:-$STORE_DIR/openbao}"
+
+# store_requisitos: que el backend elegido existe y tiene sus herramientas. Un valor desconocido
+# en `backend` es un error, no un gpg por defecto: caer en silencio al fichero viejo desplegaria
+# secretos desactualizados.
+store_requisitos() {
+  case "$STORE_BACKEND" in
+    gpg) command -v gpg >/dev/null || { echo "almacen: falta gpg (paquete gnupg)" >&2; return 1; } ;;
+    openbao) command -v python3 >/dev/null || { echo "almacen: falta python3" >&2; return 1; } ;;
+    *) echo "almacen: backend desconocido '$STORE_BACKEND' (SECRETS_BACKEND o $STORE_DIR/backend)" >&2; return 1 ;;
+  esac
+}
+
+# store_descripcion: donde vive el almacen, para los mensajes. Nunca un valor.
+store_descripcion() {
+  if [[ "$STORE_BACKEND" == openbao ]]; then
+    echo "OpenBao ${OPENBAO_ADDR:-http://127.0.0.1:8200}, cf/plataforma"
+  else
+    echo "$STORE_FILE"
+  fi
+}
+
+# store_existe: cierto si el almacen ya tiene contenido.
+store_existe() {
+  if [[ "$STORE_BACKEND" == openbao ]]; then
+    local contenido
+    contenido="$(python3 "$STORE_OPENBAO" leer --permitir-vacio)" || return 2
+    [[ "$contenido" != "{}" ]]
+  else
+    [[ -f "$STORE_FILE" ]]
+  fi
+}
 
 # _store_frase: lee la frase del fichero, exigiendo que sea 0600 del usuario que ejecuta. Una
 # frase legible por otros o de un fichero ajeno no protege nada: cualquiera con esa lectura
@@ -70,6 +114,10 @@ _store_gpg() {
 # almacen real). Con --permitir-vacio, un almacen inexistente devuelve "{}" (para add-secret.sh y
 # push-secrets.sh, cuando el almacen todavia no se ha creado).
 store_leer_json() {
+  if [[ "$STORE_BACKEND" == openbao ]]; then
+    python3 "$STORE_OPENBAO" leer "$@"
+    return
+  fi
   if [[ ! -f "$STORE_FILE" ]]; then
     if [[ "${1:-}" == "--permitir-vacio" ]]; then
       printf '{}'
@@ -100,6 +148,17 @@ store_leer_json() {
 store_escribir_json() {
   local json tmp_out rc descifrado
   json="$(cat)"
+  if [[ "$STORE_BACKEND" == openbao ]]; then
+    printf '%s' "$json" | python3 "$STORE_OPENBAO" escribir || return 1
+    # Se relee con la credencial de despliegue, la que usara fetch-secrets.sh: si esa no ve lo
+    # escrito, el siguiente despliegue materializaria otra cosa.
+    descifrado="$(python3 "$STORE_OPENBAO" leer)" || return 1
+    ESPERADO="$json" LEIDO="$descifrado" python3 -c 'import json,os,sys; sys.exit(json.loads(os.environ["ESPERADO"]) != json.loads(os.environ["LEIDO"]))' || {
+      echo "OpenBao no devuelve lo que se acaba de escribir" >&2
+      return 1
+    }
+    return 0
+  fi
   [[ -f "$STORE_PASSPHRASE_FILE" ]] || {
     echo "no hay frase en $STORE_PASSPHRASE_FILE (corre ops/security/secrets/init-store.sh)" >&2
     return 1

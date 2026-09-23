@@ -15,8 +15,8 @@ desastre completo; no sirve para "a esta empresa le borraron una lista de contac
 
 | Script | Qué hace |
 |---|---|
-| `backup-tenants.sh` | Vuelca cada base (`mail_%`: registro, celdas y empresas) a `-Fc`, la lee entera para comprobar que `pg_restore` la entiende, deja su `.sha256` y la sube al destino externo si hay |
-| `verify-restore.sh` | Restaura el último volcado en una base desechable y comprueba que trae lo que dice traer. Sin argumentos, una base de cada clase |
+| `backup-tenants.sh` | Vuelca cada base (`mail_%`: registro, celdas y empresas) a `-Fc`, la lee entera para comprobar que `pg_restore` la entiende, deja su `.sha256` y la sube al destino externo si hay. Con el almacén en OpenBao, añade su instantánea (`openbao.snap`) a la misma corrida |
+| `verify-restore.sh` | Restaura el último volcado en una base desechable y comprueba que trae lo que dice traer. Sin argumentos, una base de cada clase y la instantánea de OpenBao en una instancia desechable (`ops/security/openbao/verificar-instantanea.sh`) |
 | `restore-tenant.sh` | Restaura UNA base. Por defecto a una base nueva; sobrescribir exige `--force` y confirmación escrita |
 | `backup-mail-volumes.sh` | Archiva los volúmenes de correo (por defecto `crypt-vol` y `vmail-vol`), los lee enteros, comprueba que la clave privada de `mail_crypt` corresponde a su pública y sube cifrado |
 | `restore-mail-volume.sh` | Restaura un volumen de correo, por defecto a un volumen NUEVO; sobrescribir el vivo exige `--force`, que ningún contenedor lo monte y confirmación escrita |
@@ -164,9 +164,12 @@ restauración en un servidor nuevo queda a medias, son las claves del almacén d
 | `JWT_SIGNING_KEY`, `MAIL_LINK_SIGNING_KEY` | Las sesiones caen (se emiten de nuevo) y los enlaces de baja ya enviados dejan de validar |
 | Contraseñas de los roles de Postgres | Los roles (`mail_svc_*`, celda) no viajan en un volcado por base: se recrean con `ops/db/tenant-service-role.sh --all`, `cell-service-role.sh` y `cell-engine-role.sh` desde el almacén |
 
-Estas claves no están en ningún archivo de `BACKUP_DIR` ni del bucket: hay que copiarlas fuera del
-servidor (una vez, y cada vez que se rote una) y guardarlas con el mismo cuidado que la frase de
-cifrado. Tampoco se respaldan el JetStream de NATS (los eventos en vuelo: los críticos siguen en la
+Con el almacén en OpenBao (`docs/adr/0011-almacen-de-secretos-openbao.md`) estas claves **sí** viajan en
+cada corrida, dentro de `openbao.snap`, pero cifradas con la llave de desbloqueo de OpenBao, que no está en
+ningún archivo de `BACKUP_DIR` ni del bucket. Lo que hay que tener fuera del servidor es esa llave
+(`base64 -w0 /opt/core-force-mail/secrets/openbao-llave/desbloqueo.key`, una vez y cada vez que se rote),
+guardada con el mismo cuidado que la frase de cifrado: con ella y la última instantánea se recupera el
+almacén entero. Sin OpenBao, las claves no están en el respaldo y hay que copiarlas una a una. Tampoco se respaldan el JetStream de NATS (los eventos en vuelo: los críticos siguen en la
 `event_outbox` de su base y se republican) ni el Redis de la plataforma (sesiones y contadores).
 
 ## Configuración

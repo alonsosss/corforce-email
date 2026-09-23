@@ -109,12 +109,16 @@ def sentencias(texto):
         yield primera, logica.strip()
 
 
+# OpenBao ES el almacen del que with-secrets.sh saca los secretos: su compose no interpola
+# ninguno (la llave de desbloqueo llega como fichero montado) y no puede depender de el mismo.
+EXENTOS_COMPOSE = {"ops/security/openbao/instalar.sh"}
+
 sueltos = []
 for ruta in open(sys.argv[2], "rb").read().split(b"\0"):
     if not ruta:
         continue
     ruta = ruta.decode()
-    if not ruta.endswith((".sh", ".bash", ".yml", ".yaml")):
+    if not ruta.endswith((".sh", ".bash", ".yml", ".yaml")) or ruta in EXENTOS_COMPOSE:
         continue
     try:
         contenido = open(ruta, encoding="utf-8").read()

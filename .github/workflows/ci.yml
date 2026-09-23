@@ -138,6 +138,9 @@ jobs:
           IT_REDIS_CONTAINER: ${{ job.services.redis.id }}
           IT_REDIS_PORT: '27001'
         run: make test-integration
+      # El almacen de secretos de produccion, con la imagen de OpenBao fijada por digest.
+      - name: make check-openbao
+        run: make check-openbao
 
   web:
     name: Aplicacion web (lint, typecheck, tests, build)

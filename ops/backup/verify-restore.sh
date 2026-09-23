@@ -79,8 +79,22 @@ if [[ -z "$DB" ]]; then
     tablas_base="$(sed -n 's/^VERIFICACIÓN OK: .*(\([0-9]*\) tablas)$/\1/p' <<<"$salida")"
     total=$((total + ${tablas_base:-0}))
   done
+  # El almacen de secretos de la misma corrida: que la instantanea abra con la llave del servidor
+  # y devuelva los secretos. Sin esto, restaurar las bases tras perder el servidor dejaria las
+  # credenciales cifradas en ellas sin llave con que leerlas.
+  # shellcheck source=/dev/null
+  . "$HERE/../security/secrets/store.sh"
+  secretos=""
+  if [[ "$STORE_BACKEND" == openbao ]]; then
+    secretos=" y almacen de secretos"
+    [[ -f "$corrida/openbao.snap" ]] || { cf_publicar_metrica verificacion_respaldo 1 "$total"; echo "FALLA: la corrida $corrida no tiene instantanea de OpenBao" >&2; exit 1; }
+    (cd "$corrida" && sha256sum -c --quiet openbao.snap.sha256) ||
+      { cf_publicar_metrica verificacion_respaldo 1 "$total"; echo "FALLA: la instantanea de OpenBao no coincide con su suma" >&2; exit 1; }
+    bash "$HERE/../security/openbao/verificar-instantanea.sh" "$corrida/openbao.snap" ||
+      { cf_publicar_metrica verificacion_respaldo 1 "$total"; echo "FALLA: la instantanea de OpenBao no restaura" >&2; exit 1; }
+  fi
   cf_publicar_metrica verificacion_respaldo 0 "$total"
-  echo "VERIFICACIÓN COMPLETA OK: ${bases[*]} ($total tablas)"
+  echo "VERIFICACIÓN COMPLETA OK: ${bases[*]} ($total tablas)$secretos"
   exit 0
 fi
 

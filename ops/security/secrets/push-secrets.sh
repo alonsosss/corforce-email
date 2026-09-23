@@ -26,7 +26,7 @@ KEYS_DB_FILE="${SECRET_KEYS_DB_FILE:-$SCRIPT_DIR/secret-keys-db.txt}"
 ENV_FILE="${1:-}"
 APPLY="${2:-}"
 [[ -n "$ENV_FILE" && -f "$ENV_FILE" ]] || { echo "uso: push-secrets.sh <ruta-al-.env> [--apply]" >&2; exit 1; }
-command -v gpg >/dev/null || { echo "push-secrets: falta gpg (paquete gnupg)" >&2; exit 1; }
+store_requisitos || exit 1
 
 payload_file="$(mktemp)"
 sanitized_file="$(mktemp)"
@@ -100,7 +100,7 @@ actual.update(nuevo)
 print(json.dumps(actual))
 ')"
 printf '%s' "$NUEVO" | store_escribir_json
-echo "push-secrets: almacen actualizado en $STORE_FILE"
+echo "push-secrets: almacen actualizado en $(store_descripcion)"
 
 # Verificacion antes de tocar el .env: lo que quedo guardado debe ser identico a lo enviado.
 STORED_PAYLOAD="$(store_leer_json)" || { echo "push-secrets: no se pudo releer el almacen recien escrito; el .env NO se toca" >&2; exit 1; }

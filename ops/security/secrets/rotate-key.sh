@@ -35,7 +35,7 @@ done
 [ -n "$CLAVE_ACTIVA" ] && [ -n "$CLAVE_VIEJAS" ] \
     || { echo "uso: rotate-key.sh CLAVE_ACTIVA CLAVE_VIEJAS [--apply]" >&2; exit 1; }
 [ "$CLAVE_ACTIVA" != "$CLAVE_VIEJAS" ] || { echo "ERROR: la activa y la lista de retiradas no pueden ser la misma clave" >&2; exit 1; }
-command -v gpg >/dev/null || { echo "ERROR: falta gpg (paquete gnupg)" >&2; exit 1; }
+store_requisitos || exit 1
 command -v openssl >/dev/null || { echo "ERROR: falta openssl" >&2; exit 1; }
 [ -f "$KEYS_FILE" ] || { echo "ERROR: no existe $KEYS_FILE" >&2; exit 1; }
 
@@ -78,7 +78,7 @@ campo() { echo "$ESTADO" | python3 -c "import sys,json; print(json.load(sys.stdi
 NUEVA="$(openssl rand -hex 32)"
 [ "${#NUEVA}" -eq 64 ] || { echo "ERROR: openssl no devolvio una llave de 32 bytes" >&2; exit 1; }
 
-echo "almacen:            $STORE_FILE"
+echo "almacen:            $(store_descripcion)"
 echo "llave activa:       $CLAVE_ACTIVA -> se genera una nueva de 32 bytes"
 echo "llaves retiradas:   $CLAVE_VIEJAS -> $(campo viejas_antes) antes, $(campo viejas_despues) despues (la activa actual pasa a la lista)"
 

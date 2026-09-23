@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Materializa los secretos de produccion desde el almacen cifrado local a un fichero de entorno
-# en memoria (tmpfs), que es lo que consumen Compose y los contenedores.
+# Materializa los secretos de produccion desde el almacen (OpenBao o el fichero gpg, ver store.sh)
+# a un fichero de entorno en memoria (tmpfs), que es lo que consumen Compose y los contenedores.
 #
 # Por que asi:
 #   - El fichero vive en /dev/shm (memoria): no queda texto plano en disco ni en las copias
 #     de seguridad del volumen, y desaparece al reiniciar la maquina.
-#   - El almacen (ops/security/secrets/store.sh) es un JSON cifrado con gpg simetrico (AES-256),
-#     el mismo patron ya auditado de ops/backup/destino-externo.sh: no hay ninguna credencial de
-#     un proveedor externo en el servidor, solo una frase local (docs/adr/0008).
+#   - El almacen (ops/security/secrets/store.sh) es OpenBao en el propio servidor (docs/adr/0011) o,
+#     sin migrar, un JSON cifrado con gpg (docs/adr/0008): ninguna credencial de un proveedor
+#     externo, nada fuera de la maquina.
 #   - La escritura es atomica y solo se publica si TODOS los secretos requeridos vinieron:
 #     un fichero a medias arrancaria servicios sin credencial, que es peor que no arrancar.
 #
@@ -33,7 +33,7 @@ OUT_DB="${SECRETS_DB_ENV_FILE:-/dev/shm/core-force-mail/secrets-db.env}"
 
 [[ -f "$KEYS_FILE" ]] || { echo "fetch-secrets: no existe $KEYS_FILE" >&2; exit 1; }
 [[ -f "$KEYS_DB_FILE" ]] || { echo "fetch-secrets: no existe $KEYS_DB_FILE" >&2; exit 1; }
-command -v gpg >/dev/null || { echo "fetch-secrets: falta gpg (paquete gnupg)" >&2; exit 1; }
+store_requisitos || exit 1
 
 payload="$(store_leer_json)" || exit 1
 

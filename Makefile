@@ -119,7 +119,7 @@ check-event-contracts:
 
 # ── Operacion ────────────────────────────────────────────────────────────────
 .PHONY: gen-observability-targets check-observability-targets check-alertas check-web
-.PHONY: check-secrets check-secret-sources check-secret-scope check-secrets-store check-db-credentials gen-compose-images check-compose-images
+.PHONY: check-secrets check-secret-sources check-secret-scope check-secrets-store check-openbao check-db-credentials gen-compose-images check-compose-images
 .PHONY: service-paths check-service-paths
 
 # make gen-observability-targets  (regenera la lista de objetivos de Prometheus desde
@@ -170,6 +170,12 @@ check-secret-scope:
 # directorio temporal; docs/adr/0008-almacen-de-secretos-sin-aws.md)
 check-secrets-store:
 	@bash ops/security/secrets/check-secrets-store.sh
+
+# make check-openbao  (el almacen en OpenBao de punta a punta con la imagen fijada: instalacion,
+# desbloqueo tras reinicio, privilegios, migracion desde gpg y vuelta, instantanea que restaura;
+# docs/adr/0011. Necesita docker; sin el avisa y no falla)
+check-openbao:
+	@bash ops/security/openbao/check-openbao.sh
 
 # make check-db-credentials  (cada servicio recibe SU credencial de base y ninguna otra:
 # compose, el almacen y los permisos del rol dicen lo mismo)

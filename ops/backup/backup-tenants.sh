@@ -142,6 +142,39 @@ for db in "${dbs[@]}"; do
   fi
 done
 
+# El almacen de secretos va en la misma corrida que las bases: restaurar unas sin las llaves que
+# descifran sus credenciales de terceros no sirve. La instantanea sale cifrada por OpenBao y solo
+# se lee con la llave de desbloqueo, que se guarda fuera del servidor (docs/adr/0011).
+# shellcheck source=/dev/null
+. "$SCRIPT_DIR/../security/secrets/store.sh"
+if [[ $# -eq 0 && "$STORE_BACKEND" == openbao ]]; then
+  snap="$dest/openbao.snap"
+  if python3 "$STORE_OPENBAO" instantanea "$snap" 2>"$snap.err" &&
+    (cd "$dest" && sha256sum openbao.snap >openbao.snap.sha256); then
+    rm -f "$snap.err"
+    echo "  OK almacen de secretos (instantanea de OpenBao, $(du -h "$snap" | cut -f1))"
+    if cf_externo_activo; then
+      origen="$snap"
+      clave="openbao/$stamp.snap"
+      if cf_externo_cifra; then
+        origen="$snap.gpg"
+        clave="$clave.gpg"
+        cf_cifrar "$snap" "$origen" || origen=""
+      fi
+      if [[ -z "$origen" ]]; then
+        echo "  AVISO: la instantanea de OpenBao no se pudo cifrar; no sale del servidor"; fail=1
+      elif ! cf_externo_subir "$origen" "$clave"; then
+        echo "  AVISO: la instantanea de OpenBao no subio a s3://$CF_S3_BUCKET"; fail=1
+      fi
+      rm -f "$snap.gpg"
+    fi
+  else
+    echo "  FALLA: no se pudo sacar la instantanea de OpenBao"; sed 's/^/      /' "$snap.err" | head -3
+    rm -f "$snap" "$snap.err"
+    fail=1; fail_local=1
+  fi
+fi
+
 if [[ $externo_mal -eq 1 ]]; then
   echo "AVISO: copia externa mal configurada (FALLA de arriba); solo hay copia local"
 elif ! cf_externo_activo; then

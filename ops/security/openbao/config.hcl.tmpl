@@ -1,0 +1,45 @@
+# Configuracion de OpenBao. La renderiza instalar.sh sustituyendo __PUERTO__ y __PUERTO_CLUSTER__.
+# docs/adr/0011-almacen-de-secretos-openbao.md explica cada decision.
+
+ui = false
+
+# Raft desaconseja mlock (mapea su base en memoria) y el contenedor no corre como root ni tiene
+# IPC_LOCK. Consecuencia: una pagina con un secreto podria acabar en el swapfile del servidor,
+# que solo lee root; la misma frontera que la llave de desbloqueo.
+disable_mlock = true
+
+api_addr     = "http://127.0.0.1:__PUERTO__"
+cluster_addr = "http://127.0.0.1:__PUERTO_CLUSTER__"
+
+storage "raft" {
+  path    = "/openbao/data"
+  node_id = "core-force-1"
+}
+
+# Solo loopback y sin TLS: el contenedor usa la red del host y el puerto no es alcanzable desde
+# fuera de la maquina ni desde ningun contenedor (sus redes no llegan al 127.0.0.1 del host).
+# Leer trafico de loopback exige root, que ya lee la llave de desbloqueo.
+listener "tcp" {
+  address         = "127.0.0.1:__PUERTO__"
+  cluster_address = "127.0.0.1:__PUERTO_CLUSTER__"
+  tls_disable     = true
+}
+
+# Desbloqueo automatico con una llave estatica de 32 bytes que vive en el servidor, fuera del
+# volumen de datos: tras un reinicio OpenBao arranca solo. Quien sea root lee la llave; es la
+# misma frontera que el almacen gpg al que sustituye (ADR 0011, "Que no protege").
+seal "static" {
+  current_key_id = "__ID_LLAVE__"
+  current_key    = "file:///openbao/llave/desbloqueo.key"
+}
+
+# Registro de accesos. Declarativo: OpenBao 2.6 no permite crearlo por la API, asi que un token
+# comprometido tampoco puede apagarlo. A stdout: lo guarda el registro del contenedor (rotado en
+# docker-compose.yml) y promtail lo lleva a Loki. Los valores van con HMAC, nunca en claro. Si el
+# unico dispositivo no pudiera escribir, OpenBao rechazaria la peticion: stdout no se llena.
+audit "file" "stdout" {
+  description = "Quien lee y quien cambia cada secreto"
+  options {
+    file_path = "stdout"
+  }
+}

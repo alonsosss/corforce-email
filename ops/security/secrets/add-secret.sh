@@ -41,7 +41,7 @@ while [ $# -gt 0 ]; do
 done
 
 [ -n "$CLAVE" ] || { echo "uso: add-secret.sh CLAVE [--desde-env .env] [--quitar-del-env] [--apply]" >&2; exit 1; }
-command -v gpg >/dev/null || { echo "add-secret: falta gpg (paquete gnupg)" >&2; exit 1; }
+store_requisitos || exit 1
 
 # La clave tiene que estar declarada como secreto (en cualquiera de los dos ficheros). Sin esto
 # se podria subir cualquier variable al almacen y fetch-secrets.sh no la materializaria nunca:
@@ -76,11 +76,12 @@ esac
 # corrompido, ejecutarlo antes de init-store.sh— convertiria la escritura de mas abajo en un
 # reemplazo del almacen entero por una sola clave. Solo se parte de "{}" cuando el almacen
 # todavia no existe.
-if [ -f "$STORE_FILE" ]; then
+if store_existe; then
     ACTUAL="$(store_leer_json)" || { echo "ERROR: no se pudo leer el almacen; no se escribe nada." >&2; exit 1; }
 else
+    [ $? -eq 1 ] || { echo "ERROR: no se pudo leer el almacen; no se escribe nada." >&2; exit 1; }
     ACTUAL='{}'
-    echo ">> el almacen $STORE_FILE no existe todavia: $CLAVE seria la primera clave"
+    echo ">> el almacen $(store_descripcion) no existe todavia: $CLAVE seria la primera clave"
 fi
 
 NUEVO="$(CLAVE="$CLAVE" VALOR="$VALOR" ACTUAL="$ACTUAL" python3 - <<'PY'
@@ -96,7 +97,7 @@ EXISTIA="$(echo "$NUEVO" | python3 -c 'import sys,json; print(json.load(sys.stdi
 TOTAL="$(echo "$NUEVO" | python3 -c 'import sys,json; print(json.load(sys.stdin)["total"])')"
 
 echo "clave:   $CLAVE ($([ "$EXISTIA" = "True" ] && echo 'se REEMPLAZA la que ya estaba' || echo 'nueva'))"
-echo "almacen: $STORE_FILE ($TOTAL claves tras el cambio)"
+echo "almacen: $(store_descripcion) ($TOTAL claves tras el cambio)"
 [ "$QUITAR_DEL_ENV" -eq 1 ] && [ -n "$DESDE_ENV" ] && echo "y se quita de $DESDE_ENV"
 
 if [ "$APLICAR" -ne 1 ]; then

@@ -36,7 +36,7 @@ while [ $# -gt 0 ]; do
 done
 
 [ -n "$CLAVE" ] || { echo "uso: remove-secret.sh CLAVE [--apply]" >&2; exit 1; }
-command -v gpg >/dev/null || { echo "remove-secret: falta gpg (paquete gnupg)" >&2; exit 1; }
+store_requisitos || exit 1
 
 if grep -qE "^${CLAVE}$" "$KEYS_FILE" "$KEYS_DB_FILE"; then
     echo "ERROR: $CLAVE es obligatoria en secret-keys.txt o secret-keys-db.txt; sin ella fetch-secrets.sh no materializa nada." >&2
@@ -48,7 +48,7 @@ if ! grep -qE "^${CLAVE}\?$" "$KEYS_FILE" "$KEYS_DB_FILE"; then
     exit 1
 fi
 
-[ -f "$STORE_FILE" ] || { echo "ERROR: no existe el almacen $STORE_FILE" >&2; exit 1; }
+store_existe || { echo "ERROR: el almacen $(store_descripcion) no existe o no responde" >&2; exit 1; }
 ACTUAL="$(store_leer_json)" || { echo "ERROR: no se pudo leer el almacen; no se escribe nada." >&2; exit 1; }
 
 NUEVO="$(CLAVE="$CLAVE" ACTUAL="$ACTUAL" python3 - <<'PY'
@@ -68,7 +68,7 @@ if [ "$EXISTIA" != "True" ]; then
     exit 0
 fi
 echo "clave:   $CLAVE (se RETIRA del almacen)"
-echo "almacen: $STORE_FILE ($TOTAL claves tras el cambio)"
+echo "almacen: $(store_descripcion) ($TOTAL claves tras el cambio)"
 
 if [ "$APLICAR" -ne 1 ]; then
     echo

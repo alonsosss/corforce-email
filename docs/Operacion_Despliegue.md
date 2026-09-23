@@ -135,15 +135,18 @@ largas de cada guardarraíl están en `ops/scaffold/README.md`, `ops/security/se
 
 ## 2. Secretos
 
-Ninguna credencial vive en el repositorio ni en el `.env` del servidor: la fuente es un
-almacén cifrado local (`store.json.gpg`, gpg simétrico, `docs/adr/0008-almacen-de-secretos-cifrado-sin-aws.md`),
-nunca un servicio administrado de AWS. `ops/security/secrets/fetch-secrets.sh` los
+Ninguna credencial vive en el repositorio ni en el `.env` del servidor: la fuente es el almacén del
+propio servidor, **OpenBao** (`docs/adr/0011-almacen-de-secretos-openbao.md`: contenedor `core-force-openbao`
+solo en loopback, desbloqueo automático, credencial de solo lectura para desplegar, registro de cada acceso,
+versiones e instantánea en cada respaldo) o, en un servidor sin migrar, el fichero cifrado `store.json.gpg`
+(`docs/adr/0008-almacen-de-secretos-cifrado-sin-aws.md`); nunca un servicio administrado de AWS. Instalar y
+migrar: `ops/security/openbao/instalar.sh` y `ops/security/openbao/migrar.sh --apply` (pasos en la ADR 0011). `ops/security/secrets/fetch-secrets.sh` los
 materializa en `/dev/shm/core-force-mail/secrets.env` (tmpfs, 0600, todo o nada) y
 `with-secrets.sh` envuelve cualquier `docker compose` que cree contenedores. La lista
 canónica es `ops/security/secrets/secret-keys.txt` (más `secret-keys-db.txt` para las
 credenciales de base); añadir una variable ahí es parte de introducir el secreto. CI:
-`make check-secrets`, `make check-secret-sources`, `make check-secret-scope` y
-`make check-secrets-store`.
+`make check-secrets`, `make check-secret-sources`, `make check-secret-scope`,
+`make check-secrets-store` y, con docker, `make check-openbao`.
 
 **Reparto por contenedor (mínimo privilegio, `docs/adr/0007-minimo-privilegio-en-secretos.md`).** Ningún
 contenedor recibe el fichero de secretos entero: el `environment:` de cada bloque de `docker-compose.yml` declara uno a
@@ -1285,7 +1288,9 @@ dominio solo publica una política que nadie descarga; no hay que pasarlo a `enf
   `doveadm backup` buzón a buzón o parar Dovecot; queda pendiente.
 * La cola de Postfix (`postfix-vol`) y el Redis de los motores no se respaldan: lo encolado se
   reintenta desde el emisor y el bayes de Rspamd se reaprende.
-* Secretos: RESUELTO (2026-09-21, `docs/adr/0008-almacen-de-secretos-cifrado-sin-aws.md`). El
+* Secretos: RESUELTO (2026-09-21, `docs/adr/0008-almacen-de-secretos-cifrado-sin-aws.md`; desde
+  2026-09-23 el almacén de producción es OpenBao, `docs/adr/0011-almacen-de-secretos-openbao.md`, y su
+  instantánea entra en cada respaldo). El
   almacén del perfil ya no es una decisión pendiente: es `/opt/core-force-mail/secrets/store.json.gpg`, un
   fichero cifrado con gpg simétrico (mismo patrón que `ops/backup/destino-externo.sh`) y una frase
   en `/opt/core-force-mail/secrets/passphrase` (0600, fuera del `.env` y fuera del árbol que

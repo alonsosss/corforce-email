@@ -1,9 +1,32 @@
 # Secretos de produccion
 
 Las credenciales, llaves de cifrado y tokens de la plataforma **no viven en ningun fichero
-del repositorio ni en el `.env` del servidor**. Su fuente unica es un almacen cifrado local
-(`store.json.gpg`, gpg simetrico); en el servidor se materializan en memoria solo el tiempo
-necesario para levantar los contenedores.
+del repositorio ni en el `.env` del servidor**. Su fuente unica es el almacen del propio servidor:
+**OpenBao** en produccion (`docs/adr/0011-almacen-de-secretos-openbao.md`, `ops/security/openbao/`) o,
+en un servidor sin migrar, un fichero cifrado con gpg (`store.json.gpg`, `docs/adr/0008`). En el
+servidor se materializan en memoria solo el tiempo necesario para levantar los contenedores.
+
+## Los dos backends
+
+`store.sh` resuelve el almacen con el mismo contrato para los dos (`store_leer_json` y
+`store_escribir_json` sobre un JSON plano `{"CLAVE": "valor"}`); ningun script de encima sabe cual es.
+Lo elige `SECRETS_BACKEND` o, sin ella, el fichero `backend` junto a la frase
+(`/opt/core-force-mail/secrets/backend`), que solo escribe `ops/security/openbao/migrar.sh` tras comprobar
+que los dos materializan lo mismo. Sin ninguno de los dos, gpg. Un valor desconocido es un error.
+
+| | OpenBao (`openbao`) | Fichero gpg (`gpg`) |
+|---|---|---|
+| Donde | Contenedor `core-force-openbao`, `127.0.0.1:8200`, documento `cf/plataforma` | `/opt/core-force-mail/secrets/store.json.gpg` |
+| Leer (desplegar) | Credencial AppRole `despliegue`, solo lectura | La frase |
+| Escribir | Credencial `administracion` | La misma frase |
+| Registro de accesos | Cada peticion, en el registro del contenedor y en Loki | Ninguno |
+| Historial | 30 versiones (`openbao.py versiones`, `volver-a-version N`) | Ninguno |
+| Tras reiniciar | Se desbloquea solo (llave estatica) | Siempre disponible |
+| Respaldo | Instantanea en cada corrida de `backup-tenants.sh`, verificada cada semana | Fuera del respaldo |
+
+Operar OpenBao: `ops/security/openbao/instalar.sh` (instala o reaplica la configuracion),
+`migrar.sh [--volver-a-gpg] [--apply]`, `python3 ops/security/secrets/openbao.py salud|versiones|volver-a-version N`
+y `make check-openbao` (prueba completa con docker). Los scripts de esta carpeta funcionan igual con los dos.
 
 ## Por que
 
@@ -34,7 +57,8 @@ prohibe ademas cualquier infraestructura de AWS que gestione secretos en este pr
 | `reparto.tsv` | Quien recibe cada secreto de `secret-keys.txt`: una fila (contenedor, secreto, evidencia de donde lo lee) por entrega. Ningun contenedor recibe el fichero entero, solo lo que aqui se le da (`docs/adr/0007-minimo-privilegio-en-secretos.md`). |
 | `secret-keys-db.txt` | Credenciales de BASE, con el mismo formato. Se publican en el mismo almacen que `secret-keys.txt` pero se materializan en un fichero aparte (ver "Como lo consumen los servicios"). |
 | `secret-keys-backup.txt` | Secretos del RESPALDO (credencial del bucket externo y frase de cifrado). Ningun contenedor los recibe: los leen solo los trabajos de `ops/backup` del entorno o de `BACKUP_SECRETS_FILE` (`ops/backup/README.md`). No pasan por este almacen: viven en `BACKUP_SECRETS_FILE`, fuera del `.env`. Para `check-secrets.sh` valen igual que los demas. |
-| `store.sh` | Resuelve el almacen cifrado: descifra y cifra `store.json.gpg` con gpg simetrico y la frase de `SECRETS_STORE_PASSPHRASE_FILE`. Lo sourcean los seis scripts de abajo. |
+| `store.sh` | Resuelve el almacen: OpenBao (via `openbao.py`) o `store.json.gpg` con gpg simetrico y la frase de `SECRETS_STORE_PASSPHRASE_FILE`, segun el backend (arriba). Lo sourcean los scripts de abajo y el respaldo. |
+| `openbao.py` | Cliente de OpenBao con la biblioteca estandar de Python: inicia sesion con la credencial AppRole del rol que toca (ficheros 0600 en `/opt/core-force-mail/secrets/openbao/`), hace la operacion y revoca su token. Ningun token pasa por argumentos ni por el entorno. |
 | `init-store.sh` | Crea el almacen (vacio, o migrando un `.env` con `--from-env`) y, si hace falta, genera la frase. Un solo uso por servidor. |
 | `fetch-secrets.sh` | Materializa los secretos en `/dev/shm/core-force-mail/secrets.env` y `secrets-db.env` (memoria, 0600). Atomico y todo-o-nada. |
 | `with-secrets.sh` | Envoltorio: comprueba el entorno declarado, materializa, carga al entorno y ejecuta el comando (lo usan los despliegues). |
