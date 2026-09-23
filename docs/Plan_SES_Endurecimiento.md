@@ -117,7 +117,10 @@ un dominio de la plataforma que no sea de la empresa de plataforma (regla ya exi
 `r.us-east-1.awstrack.me`, y `SES_TRACKING_DOMAIN=clics.core-force.com` en la pila (HTTPS obligatorio).
 Solo afecta a marketing.
 
-**Aplazada (2026-09-23), con motivo.** El certificado del borde lo emite el `acme` de
+**En curso (2026-09-23):** el bloque del borde esta hecho (`selfhosted/edge/templates/tracking.conf.template`,
+activado por `EDGE_TRACKING_HOST`; reenvia con el `Host` del visitante, sin su IP ni sus cookies, verifica el
+certificado de AWS y solo admite GET y HEAD), probado contra `r.us-east-1.awstrack.me`. Queda en el servidor:
+DNS, `ADDITIONAL_SAN`, verificar el subdominio en SES y `SES_TRACKING_DOMAIN`. Motivo del aplazamiento inicial: El certificado del borde lo emite el `acme` de
 `deploy/mail`, el mismo que usan Postfix y Dovecot: anadir el nombre obliga a reemitirlo y a
 desplegar los motores uno a uno con `make e2e-mail`. Es un riesgo sobre el correo corporativo para
 una funcion que hoy no se usa (no hay campanas). Se hace al activar el marketing, en este orden:

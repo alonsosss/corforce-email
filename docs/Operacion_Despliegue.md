@@ -905,6 +905,12 @@ contra el perfil (`test-selfhosted-profile.sh` y a mano el 2026-09-17):
   nginx cuando acme lo renueva.
 * 80 redirige a `https://<host>`; otro nombre en 80 se cierra sin respuesta y en 443 se rechaza
   el saludo TLS sin presentar certificado.
+* Dominio de seguimiento de marketing (opcional): con `EDGE_TRACKING_HOST` (p. ej.
+  `clics.core-force.com`) el borde sirve ese nombre y lo reenvia a `EDGE_TRACKING_ORIGIN`
+  (`r.<SES_REGION>.awstrack.me` por defecto) con el `Host` del visitante, sin su IP, sus cookies ni
+  `Authorization`, verificando el certificado de AWS y solo con GET y HEAD. Requiere el nombre en
+  `ADDITIONAL_SAN` de acme, el subdominio verificado en SES y `SES_TRACKING_DOMAIN` en
+  `ops/aws/setup-ses.sh`; vacio, el bloque no existe.
 * Con `EDGE_REQUIRE_CLOUDFLARE=true` (por defecto) solo atiende conexiones desde los rangos de
   `selfhosted/edge/cloudflare-ips.txt` (403 al resto), y solo de esas toma la IP del visitante de
   `CF-Connecting-IP`. Reescribe `X-Real-IP` y `X-Forwarded-For` y borra `CF-Connecting-IP`. El

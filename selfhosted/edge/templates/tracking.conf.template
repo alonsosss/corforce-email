@@ -1,0 +1,58 @@
+# Dominio propio de seguimiento de aperturas y clics de marketing (SES_TRACKING_DOMAIN en
+# ops/aws/setup-ses.sh; docs/Plan_SES_Endurecimiento.md, fase D). SES reescribe los enlaces a
+# https://${EDGE_TRACKING_HOST}/... y este bloque los entrega a su dominio de seguimiento de la
+# region, con el Host del visitante, que es como SES sabe de que configuracion es (lo exige su guia
+# de dominios HTTPS). Solo se renderiza con EDGE_TRACKING_HOST; vacio, este fichero no existe.
+#
+# Hacia AWS no va la IP del visitante ni sus cookies de la plataforma: el seguimiento no necesita
+# saber quien es, solo que se pulso. El certificado de AWS se verifica.
+
+server {
+  listen 80;
+  server_name ${EDGE_TRACKING_HOST};
+  location / {
+    return 301 https://${EDGE_TRACKING_HOST}$request_uri;
+  }
+}
+
+server {
+  listen 443 ssl;
+  http2 on;
+  server_name ${EDGE_TRACKING_HOST};
+
+  ssl_certificate ${EDGE_TLS_CERT_FILE};
+  ssl_certificate_key ${EDGE_TLS_KEY_FILE};
+
+  add_header Strict-Transport-Security "max-age=${EDGE_HSTS_MAX_AGE}" always;
+
+  if ($edge_rechazar) {
+    return 403;
+  }
+
+  location / {
+    # Solo lo que SES sirve en su dominio de seguimiento: la redireccion de un clic y el pixel de
+    # apertura, sin cuerpo.
+    limit_except GET HEAD {
+      deny all;
+    }
+    set $edge_tracking_origin ${EDGE_TRACKING_ORIGIN};
+    proxy_pass https://$edge_tracking_origin;
+    proxy_http_version 1.1;
+    proxy_connect_timeout 5s;
+    proxy_send_timeout 15s;
+    proxy_read_timeout 15s;
+    proxy_ssl_server_name on;
+    proxy_ssl_name ${EDGE_TRACKING_ORIGIN};
+    proxy_ssl_verify on;
+    proxy_ssl_verify_depth 3;
+    proxy_ssl_trusted_certificate /etc/ssl/certs/ca-certificates.crt;
+
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP "";
+    proxy_set_header X-Forwarded-For "";
+    proxy_set_header CF-Connecting-IP "";
+    proxy_set_header True-Client-IP "";
+    proxy_set_header Cookie "";
+    proxy_set_header Authorization "";
+  }
+}

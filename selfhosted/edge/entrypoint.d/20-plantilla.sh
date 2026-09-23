@@ -45,5 +45,18 @@ export EDGE_PUBLIC_HOST EDGE_UPSTREAM EDGE_TLS_CERT_FILE EDGE_TLS_KEY_FILE EDGE_
 # Lista explicita: las variables propias de nginx ($host, $remote_addr...) no se tocan.
 envsubst '${EDGE_PUBLIC_HOST} ${EDGE_UPSTREAM} ${EDGE_TLS_CERT_FILE} ${EDGE_TLS_KEY_FILE} ${EDGE_MAX_BODY_SIZE} ${EDGE_HSTS_MAX_AGE} ${EDGE_REQUIRE_CLOUDFLARE_FLAG}' \
   <"$plantilla" >"$destino"
+
+# Dominio de seguimiento de marketing (opcional): vacio, no se sirve y su fichero no existe.
+seguimiento=/etc/nginx/conf.d/20-seguimiento.conf
+rm -f "$seguimiento"
+if [ -n "${EDGE_TRACKING_HOST:-}" ]; then
+  EDGE_TRACKING_ORIGIN="${EDGE_TRACKING_ORIGIN:-r.${SES_REGION:-us-east-1}.awstrack.me}"
+  cumple "$EDGE_TRACKING_HOST" "$host" || falla "EDGE_TRACKING_HOST no es un nombre de host valido: '$EDGE_TRACKING_HOST'"
+  [ "$EDGE_TRACKING_HOST" != "$EDGE_PUBLIC_HOST" ] || falla "EDGE_TRACKING_HOST no puede ser el host publico de la web"
+  cumple "$EDGE_TRACKING_ORIGIN" '^r\.[a-z]{2}(-gov)?-[a-z]+-[0-9]\.awstrack\.me$' || falla "EDGE_TRACKING_ORIGIN debe ser el dominio de seguimiento de SES de una region (r.<region>.awstrack.me): '$EDGE_TRACKING_ORIGIN'"
+  export EDGE_TRACKING_HOST EDGE_TRACKING_ORIGIN
+  envsubst '${EDGE_TRACKING_HOST} ${EDGE_TRACKING_ORIGIN} ${EDGE_TLS_CERT_FILE} ${EDGE_TLS_KEY_FILE} ${EDGE_HSTS_MAX_AGE}' \
+    <"${EDGE_TRACKING_TEMPLATE:-/etc/core-force-mail/edge/templates/tracking.conf.template}" >"$seguimiento"
+fi
 nginx -t -q
-echo "edge: configuracion para $EDGE_PUBLIC_HOST -> $EDGE_UPSTREAM (cuerpo maximo $EDGE_MAX_BODY_SIZE, solo Cloudflare: $EDGE_REQUIRE_CLOUDFLARE)"
+echo "edge: configuracion para $EDGE_PUBLIC_HOST -> $EDGE_UPSTREAM (cuerpo maximo $EDGE_MAX_BODY_SIZE, solo Cloudflare: $EDGE_REQUIRE_CLOUDFLARE, seguimiento: ${EDGE_TRACKING_HOST:-no})"

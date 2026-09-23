@@ -509,6 +509,11 @@ services:
       EDGE_TLS_KEY_FILE: ${EDGE_TLS_KEY_FILE:-/etc/ssl/mail/key.pem}
       EDGE_MAX_BODY_SIZE: ${EDGE_MAX_BODY_SIZE:-101m}
       EDGE_HSTS_MAX_AGE: ${EDGE_HSTS_MAX_AGE:-31536000}
+      # Dominio propio de seguimiento de marketing (vacio: no se sirve). Su nombre va tambien en el
+      # certificado (ADDITIONAL_SAN de acme) y en SES_TRACKING_DOMAIN de ops/aws/setup-ses.sh.
+      EDGE_TRACKING_HOST: ${EDGE_TRACKING_HOST:-}
+      EDGE_TRACKING_ORIGIN: ${EDGE_TRACKING_ORIGIN:-}
+      SES_REGION: ${SES_REGION:-us-east-1}
       EDGE_REQUIRE_CLOUDFLARE: ${EDGE_REQUIRE_CLOUDFLARE:-true}
       EDGE_CERT_CHECK_INTERVAL: ${EDGE_CERT_CHECK_INTERVAL:-3600}
     ports:
