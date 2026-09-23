@@ -1824,6 +1824,8 @@ export const es = {
     'El plan contratado no admite mas buzones. Para crear otro hay que cambiar de plan.',
   'error.code.PLAN_STORAGE_EXCEEDED':
     'El espacio asignado superaria el que incluye el plan contratado. Reduce la cuota o cambia de plan.',
+  'error.code.SUBSCRIPTION_INACTIVE':
+    'La suscripcion de la empresa no esta vigente: no se pueden crear buzones ni ampliar su espacio. Lo que ya existe se conserva.',
 
   'webmail.title': 'Correo web',
   'webmail.checking': 'Comprobando la sesion del buzon',
