@@ -89,7 +89,7 @@ SES, reputacion por empresa). Cada oleada se integra, se prueba (checks, integra
 | 1-A Editor | En curso |
 | 1-B Enlaces y analitica | En curso |
 | 1-C Campanas | En curso |
-| 1-D Dominio de seguimiento | Pendiente |
+| 1-D Dominio de seguimiento | Casi hecho (2026-09-23): DNS, certificado (con `AUTODISCOVER_SAN=n`), identidad verificada en SES y borde sirviendo `clics.core-force.com`; falta `SES_TRACKING_DOMAIN` en la pila (administrador de AWS) |
 | 2-E Comportamiento y automatizaciones | Pendiente |
 | 2-F Captacion | Pendiente |
 | 3-G API y SMTP | Pendiente |

@@ -910,7 +910,12 @@ contra el perfil (`test-selfhosted-profile.sh` y a mano el 2026-09-17):
   (`r.<SES_REGION>.awstrack.me` por defecto) con el `Host` del visitante, sin su IP, sus cookies ni
   `Authorization`, verificando el certificado de AWS y solo con GET y HEAD. Requiere el nombre en
   `ADDITIONAL_SAN` de acme, el subdominio verificado en SES y `SES_TRACKING_DOMAIN` en
-  `ops/aws/setup-ses.sh`; vacio, el bloque no existe.
+  `ops/aws/setup-ses.sh`; vacio, el bloque no existe. En produccion (2026-09-23): `clics.core-force.com`,
+  registro A sin proxy, verificado en SES como dominio de envio de la plataforma por `domain-service`.
+* Certificado de acme en produccion: `AUTODISCOVER_SAN=n`. Con el reto DNS de Cloudflare solo se certifican
+  nombres de las zonas que alcanza el token (`core-force.com`); con `y`, acme anade `autoconfig` y
+  `autodiscover` de cada dominio de las empresas (`mentorenergy.uk`), el reto falla y NO se emite ningun
+  certificado, tampoco la renovacion del actual (visto el 2026-09-23 al anadir un nombre).
 * Con `EDGE_REQUIRE_CLOUDFLARE=true` (por defecto) solo atiende conexiones desde los rangos de
   `selfhosted/edge/cloudflare-ips.txt` (403 al resto), y solo de esas toma la IP del visitante de
   `CF-Connecting-IP`. Reescribe `X-Real-IP` y `X-Forwarded-For` y borra `CF-Connecting-IP`. El
