@@ -399,6 +399,21 @@ func TestMarketingBatchDecodesContract(t *testing.T) {
 	}
 }
 
+// Un envio que no salio de transactional (la consola de SES, el conjunto por defecto del
+// dominio) llega firmado y por nuestro topic pero sin etiquetas: se acepta sin tocar ninguna
+// base, porque rechazarlo solo provoca los reintentos de SNS.
+func TestSESEventsIgnoraEventoSinEtiquetasDelServicio(t *testing.T) {
+	ts := newTestServer(t, testTopic)
+	e := sesNotification(uuid.New())
+	e.Message = `{"eventType":"Bounce","mail":{"messageId":"0100-consola","destination":["ana@example.com"],"tags":{}},` +
+		`"bounce":{"bounceType":"Permanent","bouncedRecipients":[{"emailAddress":"ana@example.com"}]}}`
+	ts.signEnvelope(t, e)
+	rec := ts.do(nethttp.MethodPost, "/api/v1/public/transactional/ses-events", "text/plain", marshal(t, e))
+	if rec.Code != nethttp.StatusOK || !strings.Contains(rec.Body.String(), "ignored") {
+		t.Fatalf("evento sin etiquetas: status %d, cuerpo %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestSESEventsSinEmpresaRechazaFirmaAlterada(t *testing.T) {
 	ts := newTestServer(t, "arn:aws:sns:us-east-1:123456789012:cfm-transactional-events")
 	e := sesNotification(uuid.New())

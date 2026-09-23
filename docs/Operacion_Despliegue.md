@@ -582,6 +582,24 @@ buzones dio 500 y `mail-auth` no pudo leer el buzon del remitente de las alertas
   topic se compara antes de verificar la firma (un topic ajeno no cuesta una descarga de certificado)
   y la descarga no sigue redirecciones.
   No verifica dominios ni saca la cuenta del sandbox: eso es por empresa y con su DNS.
+  `SES_DEFAULT_SET_IDENTITIES` (identidades separadas por espacios) pone el conjunto
+  transaccional como conjunto por defecto de esas identidades, para que lo enviado sin conjunto
+  (la consola, una prueba a mano) publique tambien en el topic de la pila; el guion nombra los
+  conjuntos de la cuenta que la pila no gestiona y no los borra. Un evento firmado de ese topic
+  que no lleva las etiquetas `tenant_id` y `message_id` (no lo envio `transactional`) se
+  responde con 200 y se ignora: un 4xx solo provoca los reintentos de SNS.
+  La credencial de envio es el usuario `core-force-mail-ses` de `ops/aws/setup-iam.sh`, con la
+  politica `ses-envio`: solo `ses:SendEmail`, desde cualquier identidad verificada de la cuenta
+  (cada empresa verifica la suya) y solo por los dos conjuntos de la pila, porque lo que sale
+  por otro conjunto sale sin eventos y sus rebotes no llegan a `suppression`. En el servidor
+  propio no hay rol de instancia: sus claves van al almacen de secretos
+  (`SES_ACCESS_KEY_ID`, `SES_SECRET_ACCESS_KEY`, solo para `transactional`), y `setup-iam.sh`
+  omite la parte del rol cuando el rol no existe.
+  `ops/aws/verificar-ses.sh <ambiente> [identidad ...]` comprueba sin cambiar nada la cuenta
+  (acceso de produccion, envio, supresion), la pila, el destino de eventos de cada conjunto, la
+  suscripcion confirmada y cada identidad (verificada, DKIM, MAIL FROM, conjunto por defecto), e
+  imprime los cuatro valores `SES_*` del ambiente; le basta la politica `observacion`. El plan
+  de puesta en marcha y su estado estan en `docs/Plan_SES_Produccion.md`.
 * Antes y después de recrear, en los dos caminos (`ops/scaffold/check-deploy-preflight.sh`,
   sección 10 de `validate.sh`). Antes: `ops/db/pgbouncer-userlist.sh --ensure` genera el
   `userlist.txt` si falta, porque sin él PgBouncer no arranca, y si no coincide solo avisa:

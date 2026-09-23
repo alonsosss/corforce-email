@@ -14,7 +14,10 @@
 #
 # Opcionales: SES_TRACKING_DOMAIN (subdominio propio de seguimiento de marketing, con su
 # CNAME y certificado ya publicados), SES_MARKETING_POOL (pool de IP dedicadas existente),
-# SES_TRANSACTIONAL_TLS y SES_MARKETING_TLS (OPTIONAL | REQUIRE).
+# SES_TRANSACTIONAL_TLS y SES_MARKETING_TLS (OPTIONAL | REQUIRE), y SES_DEFAULT_SET_IDENTITIES:
+# identidades (separadas por espacios) cuyo conjunto por defecto pasa a ser el transaccional de
+# esta pila. Es lo que sale sin conjunto (la consola, una prueba a mano): asi tambien publica
+# sus eventos en el topic de la plataforma y no en uno que nadie escucha.
 #
 # Antes de enviar: el dominio de cada empresa debe estar verificado en SES (DKIM y MAIL
 # FROM) y la cuenta fuera del sandbox. Eso no lo crea esta pila.
@@ -32,6 +35,10 @@ esac
   echo "FALLA: SES_EVENTS_URL debe ser https y sin parametros: $SES_EVENTS_URL" >&2; exit 2; }
 for v in SES_TRACKING_DOMAIN SES_MARKETING_POOL; do
   [[ "${!v:-}" =~ ^[A-Za-z0-9._-]*$ ]] || { echo "FALLA: $v con caracteres no validos" >&2; exit 2; }
+done
+read -r -a DEFAULT_SET_IDENTITIES <<<"${SES_DEFAULT_SET_IDENTITIES:-}"
+for ident in "${DEFAULT_SET_IDENTITIES[@]}"; do
+  [[ "$ident" =~ ^[A-Za-z0-9.@_+-]+$ ]] || { echo "FALLA: identidad no valida en SES_DEFAULT_SET_IDENTITIES: $ident" >&2; exit 2; }
 done
 
 command -v aws >/dev/null 2>&1 || { echo "FALLA: falta el AWS CLI" >&2; exit 1; }
@@ -53,6 +60,16 @@ PARAMS=(
 
 echo "Cuenta $ACC / region $REGION / pila $STACK"
 
+# Conjuntos de la cuenta que esta pila no gestiona: uno creado a mano sigue aceptando envios
+# y, si es el conjunto por defecto de un dominio, se lleva sus eventos a otro destino. No se
+# borran aqui (pueden ser de otro proyecto de la cuenta): se nombran para que alguien decida.
+ajenos() {
+  local listados
+  listados="$(aws sesv2 list-configuration-sets --region "$REGION" --query 'ConfigurationSets[]' \
+    --output text 2>/dev/null | tr '\t' '\n' | grep -v '^$' || true)"
+  grep -vxF -e "cfm-transactional" -e "cfm-marketing" <<<"$listados" || true
+}
+
 if [[ $CHECK -eq 1 ]]; then
   echo "(modo --check: no se aplica nada)"
   aws cloudformation deploy --region "$REGION" --stack-name "$STACK" \
@@ -68,12 +85,30 @@ if [[ $CHECK -eq 1 ]]; then
   else
     echo "Sin cambios."
   fi
+  otros="$(ajenos)"
+  [[ -z "$otros" ]] || { echo; echo "Conjuntos de SES que esta pila no gestiona (revisalos):"; sed 's/^/  /' <<<"$otros"; }
   exit 0
 fi
 
 aws cloudformation deploy --region "$REGION" --stack-name "$STACK" \
   --template-file "$HERE/ses-mail.yaml" --parameter-overrides "${PARAMS[@]}" \
   --tags Project=core-force-mail "Environment=$ENVIRONMENT" --no-fail-on-empty-changeset
+
+TRANSACTIONAL_SET="$(aws cloudformation describe-stacks --region "$REGION" --stack-name "$STACK" \
+  --query 'Stacks[0].Outputs[?OutputKey==`TransactionalConfigurationSet`].OutputValue' --output text)"
+for ident in "${DEFAULT_SET_IDENTITIES[@]}"; do
+  aws sesv2 put-email-identity-configuration-set-attributes --region "$REGION" \
+    --email-identity "$ident" --configuration-set-name "$TRANSACTIONAL_SET"
+  echo "Conjunto por defecto de $ident: $TRANSACTIONAL_SET"
+done
+
+otros="$(ajenos)"
+if [[ -n "$otros" ]]; then
+  echo
+  echo "Conjuntos de SES que esta pila no gestiona (revisalos; si ninguna identidad los usa"
+  echo "como conjunto por defecto, se borran con aws sesv2 delete-configuration-set):"
+  sed 's/^/  /' <<<"$otros"
+fi
 
 echo
 echo "Valores para el almacen de configuracion de transactional:"

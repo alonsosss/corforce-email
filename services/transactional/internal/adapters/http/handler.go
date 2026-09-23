@@ -525,6 +525,15 @@ func (h *Handler) SESEvents(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ev, err := sns.ParseSESEvent([]byte(env.Message), env.MessageID)
+	// Firmado y de nuestro topic, pero sin las etiquetas del servicio: lo envio otro emisor de la
+	// cuenta (la consola de SES, un conjunto por defecto del dominio). No hay mensaje al que
+	// atribuirlo y un 4xx solo haria que SNS lo reintentara.
+	if errors.Is(err, sns.ErrNotOurs) {
+		h.logger.Warn("transactional: evento de SES sin etiquetas del servicio; se ignora",
+			zap.String("sns_message_id", env.MessageID), zap.Error(err))
+		response.JSON(w, http.StatusOK, map[string]string{"status": "ignored"})
+		return
+	}
 	if err != nil {
 		h.logger.Warn("transactional: evento de SES ilegible", zap.String("sns_message_id", env.MessageID), zap.Error(err))
 		response.ErrBadRequest(w, "invalid SES event")
