@@ -14,6 +14,7 @@ export interface AnalyticsMeta {
   timezone: string;
   range: { max_days: number; default_days: number };
   domains: { default_limit: number; max_limit: number };
+  links: { default_limit: number; max_limit: number };
   pagination: { default_per_page: number; max_per_page: number };
 }
 
@@ -83,6 +84,29 @@ export interface DomainsReport extends RangeEcho {
   domains: DomainReport[];
 }
 
+export interface CampaignDetailReport extends CampaignReport, RangeEcho {
+  points: DayPoint[];
+}
+
+/** Clics de una URL de la campana; url vacia (other) acumula las que pasan del tope. */
+export interface LinkReport {
+  url: string;
+  other: boolean;
+  clicks: number;
+  unique_clicks: number;
+  first_clicked_at: string;
+  last_clicked_at: string;
+}
+
+/** GET /analytics/campaigns/{id}/links. Los totales cubren todas las URL, no solo la lista. */
+export interface CampaignLinksReport {
+  campaign_id: string;
+  total_links: number;
+  total_clicks: number;
+  limit: number;
+  links: LinkReport[];
+}
+
 export interface RangeQuery {
   /** AAAA-MM-DD; sin fechas el servicio usa su rango por defecto. */
   from?: string;
@@ -97,6 +121,14 @@ export const analyticsApi = {
     (await api.get<Timeseries>(endpoints.analytics.timeseries, { params: { ...query } })).data,
   campaigns: (query: PageQuery): Promise<Page<CampaignReport>> =>
     fetchPage<CampaignReport>(endpoints.analytics.campaigns.collection, { ...query }),
+  campaign: async (id: string): Promise<CampaignDetailReport> =>
+    (await api.get<CampaignDetailReport>(endpoints.analytics.campaigns.byId(id))).data,
+  campaignLinks: async (id: string, limit?: number): Promise<CampaignLinksReport> =>
+    (
+      await api.get<CampaignLinksReport>(endpoints.analytics.campaignLinks(id), {
+        params: { limit },
+      })
+    ).data,
   domains: async (query: RangeQuery & { limit?: number }): Promise<DomainsReport> =>
     (await api.get<DomainsReport>(endpoints.analytics.domains, { params: { ...query } })).data,
   meta: async (): Promise<AnalyticsMeta> =>

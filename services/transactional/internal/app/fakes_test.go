@@ -407,12 +407,14 @@ type fakeTemplates struct {
 	withoutUnsubscribe bool
 	// kind es el tipo que informa templates; vacio simula una version sin el campo.
 	kind string
+	// extraHTML se anade al cuerpo renderizado (enlaces de contenido).
+	extraHTML string
 }
 
 func (f *fakeTemplates) Render(_ context.Context, _ uuid.UUID, req ports.RenderRequest) (*ports.Rendered, error) {
 	f.mu.Lock()
 	f.calls = append(f.calls, req)
-	err, without, kind := f.err, f.withoutUnsubscribe, f.kind
+	err, without, kind, extra := f.err, f.withoutUnsubscribe, f.kind, f.extraHTML
 	f.mu.Unlock()
 	if err != nil {
 		return nil, err
@@ -423,6 +425,7 @@ func (f *fakeTemplates) Render(_ context.Context, _ uuid.UUID, req ports.RenderR
 	} else if err := renderedBody.Execute(&html, req.Reserved.UnsubscribeURL); err != nil {
 		return nil, err
 	}
+	html.WriteString(extra)
 	version := 3
 	if req.Version != nil {
 		version = *req.Version
@@ -538,7 +541,8 @@ func newFixture(t *testing.T, cfg Config) *fixture {
 	f.deps = Deps{
 		Repo: f.repo, Events: f.repo, Suppression: f.supp, Templates: f.tpl, Reputation: f.rep,
 		Sender: f.sender, Limiter: f.limiter, Marketing: Lane{Sender: f.mSender, Limiter: f.mLimiter},
-		Links: links, Config: cfg, Logger: zap.NewNop(), Metrics: f.metrics,
+		Links: links, UTM: domain.NewLinkTagger([]string{domain.HostOf("https://app.example.com")}),
+		Config: cfg, Logger: zap.NewNop(), Metrics: f.metrics,
 		Now: func() time.Time { return f.now },
 	}
 	f.uc = New(f.deps)

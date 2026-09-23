@@ -44,6 +44,14 @@ func (uc *UseCase) IngestMessageEvent(ctx context.Context, ev domain.MessageEven
 		if err != nil {
 			return err
 		}
+		// Cada clic cuenta en su enlace aunque el hito del mensaje ya estuviera: el
+		// segundo clic de una persona no mueve clicked_unique pero si los clics del enlace.
+		if click, ok := linkClick(ev, fact); ok {
+			if err := uc.links.RecordClick(ctx, click); err != nil {
+				return err
+			}
+			res.Changed = true
+		}
 		change := fact.Apply(ev)
 		if !change.Changed {
 			return nil
@@ -63,6 +71,18 @@ func (uc *UseCase) IngestMessageEvent(ctx context.Context, ev domain.MessageEven
 		return IngestResult{}, err
 	}
 	return res, nil
+}
+
+// linkClick es el clic a desglosar por enlace: solo los de campana con URL agregable. La
+// campana sale de la fila del mensaje, fijada por su primer evento.
+func linkClick(ev domain.MessageEvent, fact *domain.MessageFact) (domain.LinkClick, bool) {
+	if ev.Milestone != domain.MilestoneClicked || ev.Link == "" || fact.CampaignID == nil {
+		return domain.LinkClick{}, false
+	}
+	return domain.LinkClick{
+		TenantID: fact.TenantID, CampaignID: *fact.CampaignID, MessageID: fact.MessageID,
+		URL: ev.Link, At: ev.OccurredAt,
+	}, true
 }
 
 // IngestCampaignEvent registra un cambio de estado de una campana, idempotente por id de
@@ -110,8 +130,9 @@ func (uc *UseCase) IngestCampaignEvent(ctx context.Context, ev domain.CampaignEv
 
 // PruneResult cuenta lo borrado por la poda de una empresa.
 type PruneResult struct {
-	Messages int64
-	Events   int64
+	Messages   int64
+	Events     int64
+	LinkClicks int64
 }
 
 // Prune borra las filas de mensaje sin actividad en la retencion configurada y los ids de
@@ -124,6 +145,9 @@ func (uc *UseCase) Prune(ctx context.Context, tenantID uuid.UUID) (PruneResult, 
 		return res, err
 	}
 	if res.Events, err = uc.ledger.PruneProcessed(ctx, tenantID, now.Add(-ProcessedEventsRetention)); err != nil {
+		return res, err
+	}
+	if res.LinkClicks, err = uc.links.PruneClicks(ctx, tenantID, now.Add(-uc.retention)); err != nil {
 		return res, err
 	}
 	return res, nil

@@ -34,6 +34,7 @@ import {
   type Column,
 } from '@/design/components';
 import {
+  IconBarChart,
   IconCalendar,
   IconEdit,
   IconPause,
@@ -156,6 +157,14 @@ export default function CampaignDetailPage() {
             <Button variant="ghost" icon={<IconRefresh size={16} />} onClick={campaign.reload}>
               {t('common.refresh')}
             </Button>
+            {hasModule(MODULES.analytics) && can(...PERMISSIONS.analyticsReports.read) ? (
+              <Button
+                icon={<IconBarChart size={16} />}
+                onClick={() => navigate(paths.analyticsCampaignLinks(c.id))}
+              >
+                {t('analytics.campaigns.linksAction')}
+              </Button>
+            ) : null}
             {can(...PERMISSIONS.campaigns.update) && info?.editable ? (
               <Button icon={<IconEdit size={16} />} onClick={() => setDialog('edit')}>
                 {t('common.edit')}

@@ -80,6 +80,7 @@ func main() {
 		Facts:            postgres.NewFacts(ctxPool),
 		Stats:            postgres.NewStats(ctxPool),
 		Campaigns:        postgres.NewCampaigns(ctxPool),
+		Links:            postgres.NewLinks(ctxPool),
 		Reports:          postgres.NewReports(ctxPool),
 		MessageRetention: time.Duration(retentionDays) * 24 * time.Hour,
 	})

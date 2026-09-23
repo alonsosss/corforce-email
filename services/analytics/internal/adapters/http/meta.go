@@ -12,6 +12,7 @@ type metaRange struct {
 	DefaultDays int `json:"default_days"`
 }
 
+// metaDomains es el tope de una lista (dominios, enlaces de una campana).
 type metaDomains struct {
 	DefaultLimit int `json:"default_limit"`
 	MaxLimit     int `json:"max_limit"`
@@ -27,6 +28,7 @@ type metaResponse struct {
 	Timezone   string         `json:"timezone"`
 	Range      metaRange      `json:"range"`
 	Domains    metaDomains    `json:"domains"`
+	Links      metaDomains    `json:"links"`
 	Pagination metaPagination `json:"pagination"`
 }
 
@@ -46,6 +48,7 @@ func buildMeta() metaResponse {
 		Timezone:   domain.ReportTimezone,
 		Range:      metaRange{MaxDays: domain.MaxRangeDays, DefaultDays: domain.DefaultRangeDays},
 		Domains:    metaDomains{DefaultLimit: domain.DefaultDomainLimit, MaxLimit: domain.MaxDomainLimit},
+		Links:      metaDomains{DefaultLimit: domain.DefaultLinksLimit, MaxLimit: domain.MaxLinksLimit},
 		Pagination: metaPagination{DefaultPerPage: defaultPerPage, MaxPerPage: maxPerPage},
 	}
 }

@@ -187,6 +187,7 @@ func (uc *UseCase) SendTest(ctx context.Context, tenantID, id uuid.UUID, in Test
 	}
 	return uc.sender.SendBatch(ctx, tenantID, ports.BatchRequest{
 		CampaignID:      c.ID,
+		CampaignName:    c.Name,
 		IdempotencyKey:  domain.TestIdempotencyKey(c.ID, uuid.New()),
 		FromEmail:       c.FromEmail,
 		FromName:        c.FromName,

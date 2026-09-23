@@ -406,6 +406,20 @@ func TestMarketingBatchDecodesContract(t *testing.T) {
 	if rec := call(tenant, strings.Replace(valid, `"reply_to"`, `"reply"`, 1)); rec.Code != nethttp.StatusBadRequest {
 		t.Fatalf("un campo fuera del contrato se rechaza: %d", rec.Code)
 	}
+	withUTM := func(utm string) string { return strings.Replace(valid, `"tags":`, `"utm":`+utm+`,"tags":`, 1) }
+	rec = call(tenant, withUTM(`{"enabled":true,"source":"!!!"}`))
+	_ = json.Unmarshal(rec.Body.Bytes(), &body)
+	if rec.Code != nethttp.StatusUnprocessableEntity || !strings.Contains(body.Error.Message, "utm.source") {
+		t.Fatalf("el objeto utm llega al caso de uso: %d %s", rec.Code, rec.Body.String())
+	}
+	rec = call(tenant, withUTM(`{"enabled":false,"source":"!!!"}`))
+	_ = json.Unmarshal(rec.Body.Bytes(), &body)
+	if rec.Code != nethttp.StatusUnprocessableEntity || !strings.Contains(body.Error.Message, "tags") {
+		t.Fatalf("utm desactivado no valida sus valores: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := call(tenant, withUTM(`{"medium":"social"}`)); rec.Code != nethttp.StatusBadRequest {
+		t.Fatalf("utm_medium no es configurable: %d", rec.Code)
+	}
 }
 
 // Un envio que no salio de transactional (la consola de SES, el conjunto por defecto del

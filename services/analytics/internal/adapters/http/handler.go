@@ -46,6 +46,7 @@ func (h *Handler) Routes() http.Handler {
 	r.Get("/timeseries", h.Timeseries)
 	r.Get("/campaigns", h.ListCampaigns)
 	r.Get("/campaigns/{id}", h.GetCampaign)
+	r.Get("/campaigns/{id}/links", h.CampaignLinks)
 	r.Get("/domains", h.Domains)
 	r.Get("/meta", h.Meta)
 	return r
@@ -90,6 +91,24 @@ type campaignDetailResponse struct {
 	To       string     `json:"to"`
 	Timezone string     `json:"timezone"`
 	Points   []pointDTO `json:"points"`
+}
+
+type linkDTO struct {
+	// URL vacia: los clics de las URL por encima del tope de la campana.
+	URL            string    `json:"url"`
+	Other          bool      `json:"other"`
+	Clicks         int64     `json:"clicks"`
+	UniqueClicks   int64     `json:"unique_clicks"`
+	FirstClickedAt time.Time `json:"first_clicked_at"`
+	LastClickedAt  time.Time `json:"last_clicked_at"`
+}
+
+type campaignLinksResponse struct {
+	CampaignID  uuid.UUID `json:"campaign_id"`
+	TotalLinks  int64     `json:"total_links"`
+	TotalClicks int64     `json:"total_clicks"`
+	Limit       int       `json:"limit"`
+	Links       []linkDTO `json:"links"`
 }
 
 type domainDTO struct {
@@ -185,6 +204,41 @@ func (h *Handler) GetCampaign(w http.ResponseWriter, r *http.Request) {
 		campaignDTO: toCampaignDTO(detail.Summary),
 		From:        domain.FormatDate(detail.Range.From), To: domain.FormatDate(detail.Range.To),
 		Timezone: domain.ReportTimezone, Points: points(detail.Series),
+	})
+}
+
+// CampaignLinks devuelve los clics por enlace de una campana. Una campana sin clics (o que
+// analytics aun no conoce) responde con la lista vacia: no hay nada que ocultar.
+func (h *Handler) CampaignLinks(w http.ResponseWriter, r *http.Request) {
+	tenantID, ok := tenantFrom(w, r)
+	if !ok {
+		return
+	}
+	campaignID, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		response.ErrBadRequest(w, "identificador de campana no valido")
+		return
+	}
+	limit, err := domain.ParseLinksLimit(r.URL.Query().Get("limit"))
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	links, err := h.uc.CampaignLinks(r.Context(), tenantID, campaignID, limit)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	out := make([]linkDTO, 0, len(links.Links))
+	for _, l := range links.Links {
+		out = append(out, linkDTO{
+			URL: l.URL, Other: l.URL == domain.OtherLinks, Clicks: l.Clicks, UniqueClicks: l.UniqueClicks,
+			FirstClickedAt: l.FirstClickedAt.UTC(), LastClickedAt: l.LastClickedAt.UTC(),
+		})
+	}
+	response.JSON(w, http.StatusOK, campaignLinksResponse{
+		CampaignID: campaignID, TotalLinks: links.TotalLinks, TotalClicks: links.TotalClicks,
+		Limit: limit, Links: out,
 	})
 }
 

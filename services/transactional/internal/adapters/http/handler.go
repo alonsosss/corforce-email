@@ -408,6 +408,14 @@ type batchRequest struct {
 	TemplateVersion *int                `json:"template_version"`
 	Recipients      []batchRecipientDTO `json:"recipients"`
 	Tags            map[string]string   `json:"tags,omitempty"`
+	UTM             *batchUTMDTO        `json:"utm,omitempty"`
+}
+
+type batchUTMDTO struct {
+	Enabled  *bool  `json:"enabled,omitempty"`
+	Source   string `json:"source,omitempty"`
+	Campaign string `json:"campaign,omitempty"`
+	Content  string `json:"content,omitempty"`
 }
 
 // MarketingBatch es el contrato que usa campaigns: 202 al crear el lote (tambien con todos
@@ -441,6 +449,9 @@ func (h *Handler) MarketingBatch(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.TemplateVersion != nil {
 		cmd.TemplateVersion = *req.TemplateVersion
+	}
+	if req.UTM != nil {
+		cmd.UTM = &app.UTMInput{Enabled: req.UTM.Enabled, Source: req.UTM.Source, Campaign: req.UTM.Campaign, Content: req.UTM.Content}
 	}
 	for i, rcpt := range req.Recipients {
 		cmd.Recipients[i] = app.MarketingRecipient{Email: rcpt.Email, Name: rcpt.Name, Variables: rcpt.Variables}

@@ -99,7 +99,7 @@ func newUseCase(now func() time.Time) *app.UseCase {
 	p := &db.ContextPool{}
 	return app.New(app.Deps{
 		Tx: p, Ledger: NewLedger(p), Facts: NewFacts(p), Stats: NewStats(p),
-		Campaigns: NewCampaigns(p), Reports: NewReports(p),
+		Campaigns: NewCampaigns(p), Links: NewLinks(p), Reports: NewReports(p),
 		MessageRetention: 90 * 24 * time.Hour, Now: now,
 	})
 }

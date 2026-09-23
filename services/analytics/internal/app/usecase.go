@@ -18,6 +18,7 @@ type Deps struct {
 	Facts     ports.FactRepository
 	Stats     ports.StatsRepository
 	Campaigns ports.CampaignRepository
+	Links     ports.LinkRepository
 	Reports   ports.ReportRepository
 	// MessageRetention es cuanto se conserva la fila de un mensaje sin actividad
 	// (ANALYTICS_MESSAGE_RETENTION_DAYS). Los agregados no se podan.
@@ -32,6 +33,7 @@ type UseCase struct {
 	facts     ports.FactRepository
 	stats     ports.StatsRepository
 	campaigns ports.CampaignRepository
+	links     ports.LinkRepository
 	reports   ports.ReportRepository
 	retention time.Duration
 	now       func() time.Time
@@ -44,7 +46,7 @@ func New(d Deps) *UseCase {
 	}
 	return &UseCase{
 		tx: d.Tx, ledger: d.Ledger, facts: d.Facts, stats: d.Stats, campaigns: d.Campaigns,
-		reports: d.Reports, retention: d.MessageRetention, now: now,
+		links: d.Links, reports: d.Reports, retention: d.MessageRetention, now: now,
 	}
 }
 

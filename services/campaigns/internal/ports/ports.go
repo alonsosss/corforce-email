@@ -155,7 +155,9 @@ type AudienceSource interface {
 }
 
 type BatchRequest struct {
-	CampaignID      uuid.UUID
+	CampaignID uuid.UUID
+	// CampaignName da el utm_campaign por defecto de los enlaces del lote.
+	CampaignName    string
 	IdempotencyKey  string
 	FromEmail       string
 	FromName        string

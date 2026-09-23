@@ -222,6 +222,7 @@ func (uc *UseCase) deliver(ctx context.Context, c *domain.Campaign, b *domain.Ba
 	}
 	res, err := uc.sender.SendBatch(callCtx, c.TenantID, ports.BatchRequest{
 		CampaignID:      c.ID,
+		CampaignName:    c.Name,
 		IdempotencyKey:  b.IdempotencyKey(),
 		FromEmail:       c.FromEmail,
 		FromName:        c.FromName,

@@ -147,6 +147,9 @@ type MessageEvent struct {
 	CampaignID      *uuid.UUID
 	RecipientDomain string
 	BounceKind      BounceKind
+	// Link es la URL de un clic ya normalizada (NormalizeLink): sin utm_ ni identificadores
+	// del destinatario. Vacia en los demas hitos o si no es agregable.
+	Link string
 	// Test: el mensaje es un envio de prueba de una campana (lo marca transactional en su
 	// lote interno). No es actividad real y no se cuenta.
 	Test bool

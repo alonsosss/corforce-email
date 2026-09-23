@@ -48,6 +48,13 @@ type batchRequest struct {
 	TemplateVersion int                `json:"template_version"`
 	Recipients      []domain.Recipient `json:"recipients"`
 	Tags            map[string]string  `json:"tags,omitempty"`
+	UTM             *utmSettings       `json:"utm,omitempty"`
+}
+
+// utmSettings es el objeto utm del lote: transactional normaliza los valores y deriva
+// utm_source del remitente.
+type utmSettings struct {
+	Campaign string `json:"campaign,omitempty"`
 }
 
 func (c *Client) SendBatch(ctx context.Context, tenantID uuid.UUID, r ports.BatchRequest) (*ports.BatchResult, error) {
@@ -71,6 +78,7 @@ func (c *Client) SendBatch(ctx context.Context, tenantID uuid.UUID, r ports.Batc
 		TemplateVersion: r.TemplateVersion,
 		Recipients:      recipients,
 		Tags:            r.Tags,
+		UTM:             &utmSettings{Campaign: r.CampaignName},
 	}, true, &out)
 	if err != nil {
 		return nil, internalapi.Classify(err)

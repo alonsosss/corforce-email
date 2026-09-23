@@ -216,6 +216,11 @@ export const SCREENS: readonly ScreenDecl[] = [
     load: () => import('@/pages/analytics/AnalyticsPage'),
   },
   {
+    path: paths.analyticsCampaignLinksPattern,
+    module: MODULES.analytics,
+    load: () => import('@/pages/analytics/CampaignLinksPage'),
+  },
+  {
     path: paths.billing,
     module: MODULES.billing,
     load: () => import('@/pages/billing/PlanPage'),

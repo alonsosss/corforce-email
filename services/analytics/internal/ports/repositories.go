@@ -64,6 +64,16 @@ type CampaignRepository interface {
 	Save(ctx context.Context, c *domain.CampaignSeen) error
 }
 
+// LinkRepository agrega los clics por enlace de cada campana.
+type LinkRepository interface {
+	// RecordClick suma el clic a su URL y, si es el primero de ese mensaje en esa URL, a
+	// sus unicos. Corre dentro de la transaccion de la ingesta, con la fila del mensaje
+	// ya bloqueada.
+	RecordClick(ctx context.Context, c domain.LinkClick) error
+	// PruneClicks olvida que mensaje pulso que URL antes de before. Los agregados no se tocan.
+	PruneClicks(ctx context.Context, tenantID uuid.UUID, before time.Time) (int64, error)
+}
+
 // ReportRepository responde las consultas del panel. Las series devuelven un punto por
 // cada dia del rango, con ceros donde no hubo actividad.
 type ReportRepository interface {
@@ -77,4 +87,6 @@ type ReportRepository interface {
 	CampaignSeries(ctx context.Context, tenantID, campaignID uuid.UUID, r domain.Range) ([]domain.DayCounters, error)
 	// TopDomains ordena por enviados descendente.
 	TopDomains(ctx context.Context, tenantID uuid.UUID, q domain.ClassQuery, limit int) ([]domain.DomainStats, error)
+	// CampaignLinks ordena por clics descendente; sin clics devuelve la lista vacia.
+	CampaignLinks(ctx context.Context, tenantID, campaignID uuid.UUID, limit int) (*domain.CampaignLinks, error)
 }

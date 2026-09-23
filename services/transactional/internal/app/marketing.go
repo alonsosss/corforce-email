@@ -37,6 +37,20 @@ type MarketingBatchCommand struct {
 	TemplateVersion int
 	Recipients      []MarketingRecipient
 	Tags            map[string]string
+	// UTM es la configuracion de UTM de la campana; nil aplica los valores por defecto.
+	UTM *UTMInput
+
+	utm domain.UTMSettings
+}
+
+// UTMInput es el objeto utm del lote. Enabled nil equivale a true. Los valores vacios se
+// derivan: source del nombre del remitente (o de su dominio), campaign del identificador
+// de la campana. Todos se normalizan con domain.UTMValue.
+type UTMInput struct {
+	Enabled  *bool
+	Source   string
+	Campaign string
+	Content  string
 }
 
 // BatchResult es la respuesta del lote. Replayed indica que la clave ya existia y se
@@ -179,7 +193,51 @@ func validateBatch(cmd *MarketingBatchCommand) error {
 			r.Variables = map[string]any{}
 		}
 	}
+	utm, err := resolveUTM(cmd.UTM, cmd.From, cmd.CampaignID)
+	if err != nil {
+		return err
+	}
+	cmd.utm = utm
 	return domain.ValidateTags(cmd.Tags)
+}
+
+// resolveUTM valida el objeto utm y completa lo que falte. Un valor dado que no conserva
+// ningun caracter valido se rechaza: callarlo mandaria la campana con otro nombre.
+func resolveUTM(in *UTMInput, from domain.Recipient, campaignID uuid.UUID) (domain.UTMSettings, error) {
+	if in == nil {
+		in = &UTMInput{}
+	}
+	if in.Enabled != nil && !*in.Enabled {
+		return domain.UTMSettings{}, nil
+	}
+	out := domain.UTMSettings{Enabled: true}
+	for _, f := range []struct {
+		name, raw string
+		out       *string
+	}{
+		{"source", in.Source, &out.Source},
+		{"campaign", in.Campaign, &out.Campaign},
+		{"content", in.Content, &out.Content},
+	} {
+		if len(f.raw) > domain.MaxUTMInputLen {
+			return domain.UTMSettings{}, domain.NewValidationError("utm.%s must be at most %d characters", f.name, domain.MaxUTMInputLen)
+		}
+		*f.out = domain.UTMValue(f.raw)
+		if strings.TrimSpace(f.raw) != "" && *f.out == "" {
+			return domain.UTMSettings{}, domain.NewValidationError("utm.%s must contain letters or digits", f.name)
+		}
+	}
+	if out.Source == "" {
+		out.Source = domain.UTMValue(from.Name)
+	}
+	if out.Source == "" {
+		_, host, _ := strings.Cut(from.Email, "@")
+		out.Source = domain.UTMValue(host)
+	}
+	if out.Campaign == "" {
+		out.Campaign = campaignID.String()
+	}
+	return out, nil
 }
 
 // replayBatch devuelve la respuesta guardada de un lote con la misma clave. Una clave que
@@ -233,7 +291,7 @@ launch:
 		go func(msg *domain.Message) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			if err := uc.renderMarketing(ctx, cmd.TenantID, msg); err != nil {
+			if err := uc.renderMarketing(ctx, cmd.TenantID, msg, cmd.utm); err != nil {
 				once.Do(func() {
 					firstErr = err
 					cancel()
@@ -275,8 +333,9 @@ func (uc *UseCase) newMarketingMessage(cmd MarketingBatchCommand, r MarketingRec
 // plantilla sea de tipo marketing segun templates, y que su contenido visible lleve el
 // enlace de baja de este mensaje (RFC 8058). La primera impide que una plantilla
 // transaccional que use unsubscribe_url salga como campana; la segunda, que salga una de
-// marketing sin enlace de baja.
-func (uc *UseCase) renderMarketing(ctx context.Context, tenantID uuid.UUID, msg *domain.Message) error {
+// marketing sin enlace de baja. Los UTM se anaden despues del render y antes de medir el
+// tamano, sin tocar los enlaces de la plataforma (baja, ver en el navegador).
+func (uc *UseCase) renderMarketing(ctx context.Context, tenantID uuid.UUID, msg *domain.Message, utm domain.UTMSettings) error {
 	rcpt := msg.To[0].Email
 	rendered, err := uc.templates.Render(ctx, tenantID, ports.RenderRequest{
 		TemplateID: *msg.TemplateID,
@@ -298,6 +357,9 @@ func (uc *UseCase) renderMarketing(ctx context.Context, tenantID uuid.UUID, msg 
 		return fmt.Errorf("%w: el render no informa el tipo de plantilla", domain.ErrTemplatesUnavailable)
 	default:
 		return domain.ErrTemplateNotMarketing
+	}
+	if uc.utm != nil {
+		rendered.HTML = uc.utm.Tag(rendered.HTML, utm)
 	}
 	if len(rendered.HTML)+len(rendered.Text) > domain.MaxBodyBytes {
 		return domain.NewValidationError("la plantilla renderizada supera el limite de %d bytes", domain.MaxBodyBytes)

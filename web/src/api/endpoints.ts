@@ -253,6 +253,7 @@ export const endpoints = {
     overview: `${API_PREFIX}/analytics/overview`,
     timeseries: `${API_PREFIX}/analytics/timeseries`,
     campaigns: collectionOf('/analytics/campaigns'),
+    campaignLinks: (id: string) => `${API_PREFIX}/analytics/campaigns/${seg(id)}/links`,
     domains: `${API_PREFIX}/analytics/domains`,
   },
   billing: {

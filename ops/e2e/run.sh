@@ -606,6 +606,15 @@ expect "el orquestador recorre la audiencia y transactional rechaza el lote" "$e
 contains "con el motivo de transactional" "$(curl -s "$GW/campaigns/$CPID" -H "$A2" | jget data.failure_reason)" "SENDING_DOMAIN_NOT_VERIFIED"
 expect "ningun mensaje de marketing llego a encolarse" \
   "$(sql mail_tenant_acme "SELECT count(*) FROM transactional.messages WHERE class = 'marketing'")" "0"
+# El objeto utm del lote (docs/Plan_Marketing_Avanzado.md, 1-B): se valida antes que el
+# remitente, y uno valido deja el lote en el mismo rechazo por remitente sin verificar.
+lote_utm() {
+  interno "${PORT[transactional]}/internal/transactional/batch" "{\"class\":\"marketing\",\"campaign_id\":\"$CPID\",\"idempotency_key\":\"e2e-utm-$1\",\"from\":{\"email\":\"hola@acme.test\",\"name\":\"Acme\"},\"template_id\":\"$TMID\",\"template_version\":1,\"recipients\":[{\"email\":\"marta@cliente.test\",\"contact_id\":\"$CT2\"}],\"utm\":$2}"
+}
+contains "transactional rechaza un utm sin caracteres validos" "$(lote_utm invalido '{"source":"!!!"}' | jget error.message)" "utm.source"
+expect "y acepta el objeto utm del lote hasta el remitente sin verificar" \
+  "$(lote_utm valido '{"enabled":true,"source":"Boletin","campaign":"Lanzamiento de Otono","content":"cabecera"}' | jget error.code)" \
+  "SENDING_DOMAIN_NOT_VERIFIED"
 
 echo "== Doble opt-in (contacts -> automations -> transactional)"
 TD=$(curl -s -X POST "$GW/templates" -H "$A2" -H 'Content-Type: application/json' \
@@ -629,6 +638,10 @@ contains "con el motivo de transactional" "$(echo "$ENT" | jget data.0.reason)" 
 echo "== Analitica"
 expect "el panel responde sin envios" "$(curl -s "$GW/analytics/overview" -H "$A2" | jget data.totals.sent)" "0"
 expect "un rango invertido se rechaza" "$(codigo "$GW/analytics/overview?from=2026-09-10&to=2026-09-01" -H "$A2")" "422"
+LNK=$(curl -s "$GW/analytics/campaigns/$CPID/links" -H "$A2")
+expect "los clics por enlace de una campana sin clics salen en cero" "$(echo "$LNK" | jget data.total_clicks)/$(echo "$LNK" | jget data.links)" "0/[]"
+expect "un tope de enlaces fuera de rango se rechaza" "$(codigo "$GW/analytics/campaigns/$CPID/links?limit=0" -H "$A2")" "422"
+contains "el catalogo publica el tope de la lista de enlaces" "$(curl -s "$GW/analytics/meta" -H "$A2")" '"links":{"default_limit"'
 
 echo "== Planificador (scheduler)"
 # El catalogo de manejadores ya no esta vacio: analytics declara analytics.retention.prune y

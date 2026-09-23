@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -28,6 +29,15 @@ type fakeReports struct {
 	query    domain.ClassQuery
 	limit    int
 	campaign *domain.CampaignSummary
+	links    *domain.CampaignLinks
+}
+
+func (f *fakeReports) CampaignLinks(_ context.Context, _, id uuid.UUID, limit int) (*domain.CampaignLinks, error) {
+	f.limit = limit
+	if f.links == nil {
+		return &domain.CampaignLinks{CampaignID: id, Links: []domain.LinkStats{}}, nil
+	}
+	return f.links, nil
 }
 
 func (f *fakeReports) Totals(_ context.Context, _ uuid.UUID, q domain.ClassQuery) (domain.Counters, error) {
@@ -190,5 +200,43 @@ func TestCampana(t *testing.T) {
 	decode(t, rec, &got)
 	if got.CampaignID != id || got.From != "2026-09-01" || got.To != "2026-09-01" || got.Rates.Delivery != "1.0000" || got.FirstDay == nil {
 		t.Fatalf("detalle: %+v", got)
+	}
+}
+
+func TestEnlacesDeCampana(t *testing.T) {
+	id := uuid.New()
+	at := time.Date(2026, 9, 2, 10, 0, 0, 0, time.FixedZone("x", -5*3600))
+	rep := &fakeReports{links: &domain.CampaignLinks{CampaignID: id, TotalLinks: 1, TotalClicks: 5, Links: []domain.LinkStats{
+		{URL: "https://tienda.test/o", Clicks: 4, UniqueClicks: 3, FirstClickedAt: at, LastClickedAt: at},
+		{URL: domain.OtherLinks, Clicks: 1, UniqueClicks: 1, FirstClickedAt: at, LastClickedAt: at},
+	}}}
+	if rec := serve(t, rep, "/campaigns/no-es-uuid/links", true); rec.Code != http.StatusBadRequest {
+		t.Fatalf("id invalido: %d", rec.Code)
+	}
+	if rec := serve(t, rep, "/campaigns/"+id.String()+"/links?limit=0", true); rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("limite invalido: %d", rec.Code)
+	}
+	if rec := serve(t, rep, "/campaigns/"+id.String()+"/links", false); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("sin empresa: %d", rec.Code)
+	}
+	rec := serve(t, rep, "/campaigns/"+id.String()+"/links?limit=10", true)
+	if rec.Code != http.StatusOK || rep.limit != 10 {
+		t.Fatalf("status %d limit %d: %s", rec.Code, rep.limit, rec.Body.String())
+	}
+	var got campaignLinksResponse
+	decode(t, rec, &got)
+	if got.CampaignID != id || got.TotalClicks != 5 || got.TotalLinks != 1 || got.Limit != 10 || len(got.Links) != 2 {
+		t.Fatalf("enlaces: %+v", got)
+	}
+	if got.Links[0].Other || got.Links[0].UniqueClicks != 3 || got.Links[0].FirstClickedAt.Location() != time.UTC {
+		t.Fatalf("primer enlace: %+v", got.Links[0])
+	}
+	if !got.Links[1].Other || got.Links[1].URL != "" {
+		t.Fatalf("fila de otros: %+v", got.Links[1])
+	}
+
+	empty := serve(t, &fakeReports{}, "/campaigns/"+uuid.NewString()+"/links", true)
+	if empty.Code != http.StatusOK || !strings.Contains(empty.Body.String(), `"links":[]`) {
+		t.Fatalf("sin clics la lista va vacia, no nula: %d %s", empty.Code, empty.Body.String())
 	}
 }

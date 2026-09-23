@@ -203,7 +203,7 @@ func (stubSuppression) Add(context.Context, uuid.UUID, ports.SuppressionEntry) e
 type linkTemplates struct{}
 
 func (linkTemplates) Render(_ context.Context, _ uuid.UUID, req ports.RenderRequest) (*ports.Rendered, error) {
-	return &ports.Rendered{Subject: "Otono", HTML: `<a href="` + req.Reserved.UnsubscribeURL + `">Baja</a>`, Version: *req.Version, Kind: domain.TemplateKindMarketing}, nil
+	return &ports.Rendered{Subject: "Otono", HTML: `<a href="https://shop.example.com/oferta?id=1">Oferta</a><a href="` + req.Reserved.UnsubscribeURL + `">Baja</a>`, Version: *req.Version, Kind: domain.TemplateKindMarketing}, nil
 }
 
 type allowReputation struct{}
@@ -240,6 +240,7 @@ func TestMarketingBatchWritesMessagesAndOutboxInOneTransaction(t *testing.T) {
 		return app.New(app.Deps{
 			Repo: r, Events: NewOutboxPublisher(&db.ContextPool{}), Suppression: stubSuppression{"eva@example.com": "hard_bounce"},
 			Templates: linkTemplates{}, Reputation: allowReputation{}, Links: links, Logger: zap.NewNop(),
+			UTM: domain.NewLinkTagger([]string{"app.example.com"}),
 		})
 	}
 	batch := func(key string) app.MarketingBatchCommand {
@@ -282,6 +283,14 @@ func TestMarketingBatchWritesMessagesAndOutboxInOneTransaction(t *testing.T) {
 	}
 	if m, o, s := counts(cmd.CampaignID); m != 3 || o != 3 || s != 1 {
 		t.Fatalf("N filas de marketing y N eventos de outbox en la misma transaccion: mensajes=%d outbox=%d peticiones=%d", m, o, s)
+	}
+	stored, err := repo.GetMessage(ctx, tenant, res.MessageIDs[0])
+	if err != nil || stored.HTML == nil {
+		t.Fatalf("mensaje guardado: %v", err)
+	}
+	if !strings.Contains(*stored.HTML, `oferta?id=1&amp;utm_source=tienda&amp;utm_medium=email&amp;utm_campaign=`+cmd.CampaignID.String()+`"`) ||
+		strings.Count(*stored.HTML, "utm_source") != 1 {
+		t.Fatalf("se guarda el HTML con los UTM y la baja sin tocar: %s", *stored.HTML)
 	}
 	var outboxTenant string
 	_ = pool.QueryRow(ctx, `SELECT DISTINCT tenant_id::text FROM platform.event_outbox WHERE payload->'data'->>'message_id' = $1`, res.MessageIDs[0].String()).Scan(&outboxTenant)

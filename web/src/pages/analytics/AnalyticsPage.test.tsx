@@ -18,6 +18,7 @@ const META: AnalyticsMeta = {
   timezone: 'America/Lima',
   range: { max_days: 60, default_days: 30 },
   domains: { default_limit: 20, max_limit: 100 },
+  links: { default_limit: 100, max_limit: 501 },
   pagination: { default_per_page: 25, max_per_page: 100 },
 };
 

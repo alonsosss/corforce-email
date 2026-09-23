@@ -787,7 +787,8 @@ export const es = {
   'domains.dnsMode.manual': 'Manual',
   'domains.dnsMode.cloudflare': 'Automatico con Cloudflare',
   'domains.dns.title': 'Publicacion del DNS',
-  'domains.dns.description': 'Como llegan a la zona DNS del dominio los registros de la tabla de abajo.',
+  'domains.dns.description':
+    'Como llegan a la zona DNS del dominio los registros de la tabla de abajo.',
   'domains.dns.mode': 'Modo',
   'domains.dns.publishedAt': 'Ultima publicacion completa',
   'domains.dns.manualHint':
@@ -802,7 +803,8 @@ export const es = {
   'domains.dns.modeChanged': 'Modo de publicacion actualizado.',
   'domains.dns.published': 'Registros publicados en Cloudflare.',
   'domains.dns.result.title': 'Publicacion en la zona {zone}',
-  'domains.dns.result.complete': 'Todos los registros quedaron publicados. El dominio se verifico a continuacion.',
+  'domains.dns.result.complete':
+    'Todos los registros quedaron publicados. El dominio se verifico a continuacion.',
   'domains.dns.result.incomplete':
     'Algunos registros no se publicaron. Revisa los conflictos y los fallos de la tabla.',
   'domains.dns.column.action': 'Resultado',
@@ -818,7 +820,8 @@ export const es = {
   'domains.dns.conflict.existing': 'Valor actual: {value}',
   'domains.dns.conflict.replace': 'Reemplazar el registro {record}',
   'domains.dns.conflict.confirm': 'Reemplazar los seleccionados',
-  'domains.dns.automation.published': 'La plataforma ya publico en tu zona de Cloudflare el registro de la clave nueva.',
+  'domains.dns.automation.published':
+    'La plataforma ya publico en tu zona de Cloudflare el registro de la clave nueva.',
   'domains.dns.automation.removed':
     'La plataforma retiro de tu zona de Cloudflare los TXT revocados que habia publicado.',
   'domains.dns.automation.kept':
@@ -852,18 +855,15 @@ export const es = {
   'domains.dnsProvider.form.submit': 'Validar y conectar',
   'domains.dnsProvider.form.howToTitle': 'Como crear el token en Cloudflare',
   'domains.dnsProvider.form.howToLink': 'Abrir Tokens de API de Cloudflare',
-  'domains.dnsProvider.form.howToStep1':
-    'Boton "Create Token" (arriba a la derecha).',
+  'domains.dnsProvider.form.howToStep1': 'Boton "Create Token" (arriba a la derecha).',
   'domains.dnsProvider.form.howToStep2':
     'Busca la plantilla "Edit zone DNS" y pulsa "Use template": ya trae los permisos correctos armados.',
-  'domains.dnsProvider.form.howToStep3':
-    'Confirma en "Permissions" que quedan estas dos filas:',
+  'domains.dnsProvider.form.howToStep3': 'Confirma en "Permissions" que quedan estas dos filas:',
   'domains.dnsProvider.form.howToStep4':
     'En "Zone Resources", cambia "All zones" por "Include" -> "Specific zone" y elige el dominio de tu empresa.',
   'domains.dnsProvider.form.howToStep5':
     'Opcional: en "Client IP Address Filtering" limita el token a la IP de tu servidor.',
-  'domains.dnsProvider.form.howToStep6':
-    'Pulsa "Continue to summary" y despues "Create Token".',
+  'domains.dnsProvider.form.howToStep6': 'Pulsa "Continue to summary" y despues "Create Token".',
   'domains.dnsProvider.form.howToStep7':
     'Cloudflare lo muestra una sola vez: copialo entero y pegalo aqui abajo.',
 
@@ -1727,21 +1727,27 @@ export const es = {
 
   'error.code.DKIM_ROTATION_IN_PROGRESS':
     'La clave DKIM anterior sigue en su periodo de gracia. Espera a que se retire o revoca las claves si estan comprometidas.',
-  'error.code.DKIM_SELECTOR_NOT_CURRENT': 'Las claves DKIM del dominio cambiaron. Recarga la pagina.',
-  'error.code.DKIM_KEYS_CHANGED': 'Otra operacion cambio las claves DKIM del dominio. Vuelve a intentarlo.',
+  'error.code.DKIM_SELECTOR_NOT_CURRENT':
+    'Las claves DKIM del dominio cambiaron. Recarga la pagina.',
+  'error.code.DKIM_KEYS_CHANGED':
+    'Otra operacion cambio las claves DKIM del dominio. Vuelve a intentarlo.',
   'error.code.DNS_PROVIDER_UNSUPPORTED': 'Ese proveedor DNS no esta disponible.',
   'error.code.DNS_PROVIDER_TOKEN_INVALID':
     'Cloudflare no acepta el token: comprueba que lo copiaste entero, que esta activo y que no ha caducado.',
   'error.code.DNS_PROVIDER_PERMISSION_DENIED':
     'El token no tiene permiso para leer tus zonas o editar sus registros DNS. Dale Zona: Leer y DNS: Editar.',
-  'error.code.DNS_PROVIDER_NO_ZONES': 'El token no ve ninguna zona DNS. Limitalo a las zonas de tus dominios.',
+  'error.code.DNS_PROVIDER_NO_ZONES':
+    'El token no ve ninguna zona DNS. Limitalo a las zonas de tus dominios.',
   'error.code.DNS_PROVIDER_NOT_CONNECTED':
     'Cloudflare no esta conectado. Conectalo en la pagina de Dominios antes de publicar automaticamente.',
-  'error.code.DNS_MODE_MANUAL': 'El dominio publica su DNS a mano. Cambia a publicacion automatica antes de publicar.',
+  'error.code.DNS_MODE_MANUAL':
+    'El dominio publica su DNS a mano. Cambia a publicacion automatica antes de publicar.',
   'error.code.DNS_ZONE_NOT_FOUND':
     'El token de Cloudflare no ve la zona de este dominio. Anadela al token o publica a mano.',
-  'error.code.DNS_PROVIDER_RATE_LIMITED': 'Cloudflare esta limitando las peticiones. Vuelve a intentarlo en unos minutos.',
-  'error.code.DNS_PROVIDER_UNAVAILABLE': 'Cloudflare no responde. Vuelve a intentarlo en unos minutos.',
+  'error.code.DNS_PROVIDER_RATE_LIMITED':
+    'Cloudflare esta limitando las peticiones. Vuelve a intentarlo en unos minutos.',
+  'error.code.DNS_PROVIDER_UNAVAILABLE':
+    'Cloudflare no responde. Vuelve a intentarlo en unos minutos.',
   'error.code.DNS_PROVIDER_REJECTED': 'Cloudflare rechazo el registro.',
   'error.code.DNS_RECORD_CONFLICT': 'Cloudflare ya tiene ese registro.',
   'error.code.CONTACT_EXISTS': 'Ya existe un contacto con esa direccion.',
@@ -1821,7 +1827,8 @@ export const es = {
   // mail-directory (services/mail-directory/internal/adapters/http/handler.go).
   'error.code.ADDRESS_RECENTLY_DELETED':
     'Esa direccion se borro hace poco y su buzon anterior aun se esta retirando del servidor. Vuelve a intentarlo en unos minutos.',
-  'error.code.TENANT_RETIRED': 'La empresa esta dada de baja: no se pueden crear ni modificar buzones.',
+  'error.code.TENANT_RETIRED':
+    'La empresa esta dada de baja: no se pueden crear ni modificar buzones.',
   'error.code.PLAN_MAILBOXES_EXCEEDED':
     'El plan contratado no admite mas buzones. Para crear otro hay que cambiar de plan.',
   'error.code.PLAN_STORAGE_EXCEEDED':
@@ -2076,7 +2083,8 @@ export const es = {
   'templates.gallery.replaceConfirm':
     'El lienzo se sustituira por la plantilla elegida. Podras deshacerlo mientras no guardes.',
   'templates.gallery.welcome': 'Bienvenida',
-  'templates.gallery.welcomeHint': 'Primer correo tras el alta, con lo que la persona va a recibir.',
+  'templates.gallery.welcomeHint':
+    'Primer correo tras el alta, con lo que la persona va a recibir.',
   'templates.gallery.promotion': 'Promocion',
   'templates.gallery.promotionHint': 'Oferta con codigo de descuento y llamada a la accion.',
   'templates.gallery.newsletter': 'Boletin',
@@ -2312,7 +2320,8 @@ export const es = {
     'Lineas de registro de un servicio de la plataforma o de un motor de correo, desde Loki. Una ventana de hasta 24 horas y hasta 500 lineas por consulta; el texto se busca de forma literal.',
   'logs.notConfigured':
     'El visor de registros no esta configurado: falta LOKI_URL en el servicio observability o la pila de observabilidad no esta levantada.',
-  'logs.unavailable': 'El almacen de registros no pudo atender la consulta. Vuelve a intentarlo en unos segundos.',
+  'logs.unavailable':
+    'El almacen de registros no pudo atender la consulta. Vuelve a intentarlo en unos segundos.',
   'logs.filter.service': 'Servicio',
   'logs.filter.servicePlaceholder': 'Elige un servicio',
   'logs.filter.text': 'Texto (literal)',
@@ -2333,7 +2342,8 @@ export const es = {
   'logs.serviceRequired': 'Elige un servicio.',
   'logs.idle': 'Elige un servicio y consulta.',
   'logs.empty': 'Ninguna linea en la ventana consultada.',
-  'logs.truncated': 'Se muestran las primeras {limit} lineas de la ventana: acota el texto o la ventana para ver el resto.',
+  'logs.truncated':
+    'Se muestran las primeras {limit} lineas de la ventana: acota el texto o la ventana para ver el resto.',
   'logs.results': 'Lineas de {service} entre {since} y {until}',
   'logs.stream.stderr': 'stderr',
 
@@ -2828,6 +2838,34 @@ export const es = {
   'analytics.campaigns.days': 'Dias con envios',
   'analytics.campaigns.dayRange': 'Del {from} al {to}',
   'analytics.campaigns.empty': 'Aun no hay campanas con envios.',
+  'analytics.campaigns.links': 'Enlaces',
+  'analytics.campaigns.linksAction': 'Clics por enlace',
+  'analytics.links.title': 'Clics por enlace',
+  'analytics.links.subtitle':
+    'Clics de cada enlace de la campana, sin parametros UTM ni datos del destinatario.',
+  'analytics.links.summary': 'Resumen',
+  'analytics.links.totalClicks': 'Clics totales',
+  'analytics.links.totalLinks': 'Enlaces distintos',
+  'analytics.links.heatmap': 'Mapa de calor',
+  'analytics.links.heatmapHint':
+    'Vista previa de la version enviada con el porcentaje de los clics de cada enlace.',
+  'analytics.links.badge': '{share} ({n})',
+  'analytics.links.noCampaign': 'Sin acceso a la campana no se puede mostrar su vista previa.',
+  'analytics.links.noPreviewPermission':
+    'Para ver la vista previa hace falta el permiso de leer y renderizar plantillas.',
+  'analytics.links.noVersion': 'La campana aun no fijo la version de su plantilla.',
+  'analytics.links.unmatched':
+    '{n} enlaces con clics no aparecen en la vista previa: suelen llevar valores personalizados. Estan en la tabla.',
+  'analytics.links.table': 'Enlaces',
+  'analytics.links.truncated': 'Se muestran los {n} enlaces con mas clics.',
+  'analytics.links.url': 'URL',
+  'analytics.links.other': 'Otros enlaces (por encima del tope de la campana)',
+  'analytics.links.clicks': 'Clics',
+  'analytics.links.unique': 'Clics unicos',
+  'analytics.links.share': 'Del total',
+  'analytics.links.lastClick': 'Ultimo clic',
+  'analytics.links.empty': 'Aun no hay clics en los enlaces de esta campana.',
+  'analytics.links.openCampaign': 'Ir a la campana',
 
   'billing.title': 'Plan y consumo',
   'billing.subtitle': 'El plan de tu empresa, sus limites y lo consumido en el periodo vigente.',

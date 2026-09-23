@@ -17,7 +17,7 @@ import (
 func request(campaignID uuid.UUID) ports.BatchRequest {
 	contactID := uuid.New()
 	return ports.BatchRequest{
-		CampaignID: campaignID, IdempotencyKey: domain.BatchIdempotencyKey(campaignID, 1),
+		CampaignID: campaignID, CampaignName: "Otono 2026", IdempotencyKey: domain.BatchIdempotencyKey(campaignID, 1),
 		FromEmail: "news@shop.example.com", FromName: "Tienda", TemplateID: uuid.New(), TemplateVersion: 3,
 		Recipients: []domain.Recipient{
 			{Email: "a@example.com", Name: "Ana", ContactID: &contactID, Variables: map[string]json.RawMessage{"first_name": json.RawMessage(`"Ana"`)}},
@@ -61,6 +61,9 @@ func TestSendBatchContract(t *testing.T) {
 	}
 	if _, ok := body["tags"]; ok {
 		t.Fatal("sin etiquetas no se envia tags")
+	}
+	if utm, ok := body["utm"].(map[string]any); !ok || utm["campaign"] != "Otono 2026" || len(utm) != 1 {
+		t.Fatalf("utm lleva el nombre de la campana y deja el resto a transactional: %v", body["utm"])
 	}
 	recipients := body["recipients"].([]any)
 	first, second := recipients[0].(map[string]any), recipients[1].(map[string]any)

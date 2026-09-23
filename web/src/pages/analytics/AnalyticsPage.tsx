@@ -247,6 +247,15 @@ function AnalyticsView({ meta }: { meta: AnalyticsMeta }) {
       align: 'right',
       render: (c) => formatRate(c.rates.bounce),
     },
+    {
+      key: 'links',
+      header: t('analytics.campaigns.links'),
+      render: (c) => (
+        <Link to={paths.analyticsCampaignLinks(c.campaign_id)}>
+          {t('analytics.campaigns.linksAction')}
+        </Link>
+      ),
+    },
   ];
 
   return (

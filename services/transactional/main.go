@@ -131,6 +131,18 @@ func main() {
 		log.Fatalf("MAIL_LINK_SIGNING_KEY: %v", err)
 	}
 
+	// Los enlaces de la plataforma (baja, ver en el navegador) nunca llevan UTM; quien opera
+	// puede excluir otros dominios con MARKETING_UTM_EXCLUDED_DOMAINS.
+	utmExcluded, err := domain.ParseExcludedDomains(os.Getenv("MARKETING_UTM_EXCLUDED_DOMAINS"))
+	if err != nil {
+		log.Fatalf("MARKETING_UTM_EXCLUDED_DOMAINS: %v", err)
+	}
+	platformHost := domain.HostOf(linkBase)
+	if platformHost == "" {
+		log.Fatal("PUBLIC_BASE_URL debe ser una URL absoluta con host")
+	}
+	utmTagger := domain.NewLinkTagger(append(utmExcluded, platformHost))
+
 	sesOpts := sesclient.OptionsFromEnv()
 	sender, err := sesclient.New(ctx, sesOpts)
 	if err != nil {
@@ -160,6 +172,7 @@ func main() {
 			Limiter: natsadapter.NewTokenBucket(marketingRate, int(marketingRate)),
 		},
 		Links: links,
+		UTM:   utmTagger,
 		Config: app.Config{
 			PlatformFromEmail:           os.Getenv("PLATFORM_FROM_EMAIL"),
 			PlatformFromName:            os.Getenv("PLATFORM_FROM_NAME"),

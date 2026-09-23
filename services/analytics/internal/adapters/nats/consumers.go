@@ -141,8 +141,9 @@ func (c *Consumers) Stop() {
 }
 
 // onEmailEvent cuenta un hito de transactional.email.<accion>. Payload:
-// {tenant_id, message_id, email | to[], class?, campaign_id?, bounce_type?, occurred_at?,
-// test?}. De la direccion solo se conserva el dominio. Un envio de prueba (test: true) se
+// {tenant_id, message_id, email | to[], class?, campaign_id?, contact_id?, bounce_type?,
+// link?, occurred_at?, test?}. De la direccion solo se conserva el dominio, y del enlace de
+// un clic la URL normalizada sin los identificadores del destinatario. Un envio de prueba (test: true) se
 // confirma sin contarlo; sin el campo, o con otro valor que no sea el booleano true, cuenta.
 func (c *Consumers) onEmailEvent(evt events.Event, ack func()) {
 	milestone, ok := domain.MilestoneFromAction(actionOf(evt.Type))
@@ -172,15 +173,21 @@ func (c *Consumers) onEmailEvent(evt events.Event, ack func()) {
 	if email == "" {
 		email = firstString(data["to"])
 	}
+	messageID := str(data["message_id"])
+	var link string
+	if milestone == domain.MilestoneClicked {
+		link = domain.NormalizeLink(str(data["link"]), email, str(data["contact_id"]), messageID)
+	}
 	ev := domain.MessageEvent{
 		EventID:         parseUUID(evt.ID),
 		TenantID:        tenantID,
-		MessageID:       parseUUID(str(data["message_id"])),
+		MessageID:       parseUUID(messageID),
 		Milestone:       milestone,
 		Class:           class,
 		CampaignID:      campaignID,
 		RecipientDomain: domain.RecipientDomain(email),
 		BounceKind:      domain.BounceKindFromProvider(str(data["bounce_type"])),
+		Link:            link,
 		Test:            data["test"] == true,
 		OccurredAt:      parseTime(str(data["occurred_at"])),
 		PublishedAt:     evt.Timestamp,
@@ -282,8 +289,9 @@ func eventTenant(evt events.Event, raw string) (uuid.UUID, error) {
 
 // pruneResult es lo que el scheduler guarda como resultado de la ejecucion.
 type pruneResult struct {
-	Messages int64 `json:"messages"`
-	Events   int64 `json:"events"`
+	Messages   int64 `json:"messages"`
+	Events     int64 `json:"events"`
+	LinkClicks int64 `json:"link_clicks"`
 }
 
 // onSchedulerJob ejecuta la poda que el scheduler despacho y la cierra por su API interna.
@@ -311,7 +319,7 @@ func (c *Consumers) onSchedulerJob(evt events.Event, ack func()) {
 		return
 	}
 	c.close(evt, ack, c.scheduler.Complete(ctx, job.tenantID, job.executionID,
-		pruneResult{Messages: res.Messages, Events: res.Events}))
+		pruneResult{Messages: res.Messages, Events: res.Events, LinkClicks: res.LinkClicks}))
 }
 
 // onSchedulerTask ejecuta una tarea puntual que el scheduler despacho. No hay ejecucion que
@@ -339,7 +347,7 @@ func (c *Consumers) onSchedulerTask(evt events.Event, ack func()) {
 		return
 	}
 	c.logger.Info("analytics: tarea de poda ejecutada", zap.String("tenant_id", tenantID.String()),
-		zap.Int64("messages", res.Messages), zap.Int64("events", res.Events))
+		zap.Int64("messages", res.Messages), zap.Int64("events", res.Events), zap.Int64("link_clicks", res.LinkClicks))
 	ack()
 }
 

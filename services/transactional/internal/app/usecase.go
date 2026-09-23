@@ -49,8 +49,10 @@ type Deps struct {
 	// la cola en vez de salir por el transaccional.
 	Marketing Lane
 	Links     *domain.LinkSigner
-	Config    Config
-	Logger    *zap.Logger
+	// UTM anade los parametros de campana a los enlaces del marketing; nil no los anade.
+	UTM    *domain.LinkTagger
+	Config Config
+	Logger *zap.Logger
 	// Metrics es opcional; nil no cuenta nada.
 	Metrics ports.Metrics
 	// Now permite fijar el reloj en pruebas; nil usa time.Now.
@@ -66,6 +68,7 @@ type UseCase struct {
 	lanes       map[string]Lane
 	metrics     ports.Metrics
 	links       *domain.LinkSigner
+	utm         *domain.LinkTagger
 	cfg         Config
 	logger      *zap.Logger
 	now         func() time.Time
@@ -95,6 +98,7 @@ func New(d Deps) *UseCase {
 		},
 		metrics: metrics,
 		links:   d.Links,
+		utm:     d.UTM,
 		cfg:     d.Config,
 		logger:  d.Logger,
 		now:     now,

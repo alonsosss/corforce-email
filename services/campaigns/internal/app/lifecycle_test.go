@@ -240,7 +240,7 @@ func TestSendTestUsesTestKeyWithoutContacts(t *testing.T) {
 	if !strings.HasPrefix(call.IdempotencyKey, "campaign:"+c.ID.String()+":test:") || call.Tags["test"] != "true" {
 		t.Fatalf("clave o etiqueta de prueba: %q %v", call.IdempotencyKey, call.Tags)
 	}
-	if len(call.Recipients) != 2 || call.TemplateVersion != 1 || h.templates.calls != 0 {
+	if len(call.Recipients) != 2 || call.TemplateVersion != 1 || call.CampaignName != c.Name || h.templates.calls != 0 {
 		t.Fatalf("peticion de prueba: %+v llamadas a templates=%d", call, h.templates.calls)
 	}
 	for _, r := range call.Recipients {

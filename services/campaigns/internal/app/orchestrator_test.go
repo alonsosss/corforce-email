@@ -92,7 +92,7 @@ func TestProcessBatchNewBatchThenRetryWithSameKey(t *testing.T) {
 		string(r.Variables["email"]) != `"a@example.com"` || r.Name != "Ana Diaz" {
 		t.Fatalf("destinatario mal armado: %+v vars=%v", r, r.Variables)
 	}
-	if first.TemplateVersion != 1 || first.FromEmail != c.FromEmail || first.CampaignID != c.ID {
+	if first.TemplateVersion != 1 || first.FromEmail != c.FromEmail || first.CampaignID != c.ID || first.CampaignName != c.Name {
 		t.Fatalf("peticion mal armada: %+v", first)
 	}
 }

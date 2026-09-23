@@ -38,8 +38,11 @@ type fakeStore struct {
 	campaign  map[campaignKey]domain.Counters
 	domains   map[domainKey]domain.Counters
 	campaigns map[uuid.UUID]domain.CampaignSeen
+	links     map[linkKey]domain.LinkStats
+	clicks    map[clickKey]bool
 
-	failApply error
+	failApply    error
+	clicksBefore time.Time
 
 	factsBefore, eventsBefore time.Time
 
@@ -56,12 +59,80 @@ func newFakeStore() *fakeStore {
 		campaign:  map[campaignKey]domain.Counters{},
 		domains:   map[domainKey]domain.Counters{},
 		campaigns: map[uuid.UUID]domain.CampaignSeen{},
+		links:     map[linkKey]domain.LinkStats{},
+		clicks:    map[clickKey]bool{},
 	}
+}
+
+type linkKey struct {
+	campaign uuid.UUID
+	url      string
+}
+
+type clickKey struct {
+	message uuid.UUID
+	url     string
+}
+
+func (s *fakeStore) RecordClick(_ context.Context, c domain.LinkClick) error {
+	url := c.URL
+	if _, ok := s.links[linkKey{c.CampaignID, url}]; !ok {
+		distinct := 0
+		for k := range s.links {
+			if k.campaign == c.CampaignID && k.url != domain.OtherLinks {
+				distinct++
+			}
+		}
+		if distinct >= domain.MaxLinksPerCampaign {
+			url = domain.OtherLinks
+		}
+	}
+	k := linkKey{c.CampaignID, url}
+	st := s.links[k]
+	if st.Clicks == 0 {
+		st = domain.LinkStats{URL: url, FirstClickedAt: c.At, LastClickedAt: c.At}
+	}
+	st.Clicks++
+	if !s.clicks[clickKey{c.MessageID, url}] {
+		s.clicks[clickKey{c.MessageID, url}] = true
+		st.UniqueClicks++
+	}
+	if c.At.After(st.LastClickedAt) {
+		st.LastClickedAt = c.At
+	}
+	if c.At.Before(st.FirstClickedAt) {
+		st.FirstClickedAt = c.At
+	}
+	s.links[k] = st
+	return nil
+}
+
+func (s *fakeStore) PruneClicks(_ context.Context, _ uuid.UUID, before time.Time) (int64, error) {
+	s.clicksBefore = before
+	return 0, nil
+}
+
+func (s *fakeStore) CampaignLinks(_ context.Context, _, campaignID uuid.UUID, limit int) (*domain.CampaignLinks, error) {
+	out := &domain.CampaignLinks{CampaignID: campaignID, Links: []domain.LinkStats{}}
+	for k, st := range s.links {
+		if k.campaign != campaignID {
+			continue
+		}
+		if k.url != domain.OtherLinks {
+			out.TotalLinks++
+		}
+		out.TotalClicks += st.Clicks
+		out.Links = append(out.Links, st)
+	}
+	if len(out.Links) > limit {
+		out.Links = out.Links[:limit]
+	}
+	return out, nil
 }
 
 func newTestUseCase(s *fakeStore, now time.Time) *UseCase {
 	return New(Deps{
-		Tx: s, Ledger: s, Facts: s, Stats: s, Campaigns: campaignRepo{s}, Reports: s,
+		Tx: s, Ledger: s, Facts: s, Stats: s, Campaigns: campaignRepo{s}, Links: s, Reports: s,
 		MessageRetention: 90 * 24 * time.Hour,
 		Now:              func() time.Time { return now },
 	})
@@ -78,9 +149,11 @@ func copyMap[K comparable, V any](m map[K]V) map[K]V {
 func (s *fakeStore) Transact(ctx context.Context, fn func(ctx context.Context) error) error {
 	processed, facts, class := copyMap(s.processed), copyMap(s.facts), copyMap(s.class)
 	campaign, domains, campaigns := copyMap(s.campaign), copyMap(s.domains), copyMap(s.campaigns)
+	links, clicks := copyMap(s.links), copyMap(s.clicks)
 	if err := fn(ctx); err != nil {
 		s.processed, s.facts, s.class = processed, facts, class
 		s.campaign, s.domains, s.campaigns = campaign, domains, campaigns
+		s.links, s.clicks = links, clicks
 		return err
 	}
 	return nil

@@ -64,3 +64,8 @@ func (uc *UseCase) Campaign(ctx context.Context, tenantID, campaignID uuid.UUID,
 func (uc *UseCase) Domains(ctx context.Context, tenantID uuid.UUID, q domain.ClassQuery, limit int) ([]domain.DomainStats, error) {
 	return uc.reports.TopDomains(ctx, tenantID, q, limit)
 }
+
+// CampaignLinks devuelve los enlaces de una campana con sus clics.
+func (uc *UseCase) CampaignLinks(ctx context.Context, tenantID, campaignID uuid.UUID, limit int) (*domain.CampaignLinks, error) {
+	return uc.reports.CampaignLinks(ctx, tenantID, campaignID, limit)
+}

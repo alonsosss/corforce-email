@@ -24,7 +24,7 @@ func TestMetaPublicaLasConstantesDelDominio(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
 	}
-	for _, k := range []string{"classes", "timezone", "range", "domains", "pagination"} {
+	for _, k := range []string{"classes", "timezone", "range", "domains", "links", "pagination"} {
 		if _, ok := body.Data[k]; !ok {
 			t.Errorf("falta la clave %q", k)
 		}
@@ -41,7 +41,8 @@ func TestMetaPublicaLasConstantesDelDominio(t *testing.T) {
 	m := buildMeta()
 	if m.Timezone != domain.ReportTimezone || m.Range.MaxDays != domain.MaxRangeDays ||
 		m.Range.DefaultDays != domain.DefaultRangeDays || m.Domains.MaxLimit != domain.MaxDomainLimit ||
-		m.Domains.DefaultLimit != domain.DefaultDomainLimit || m.Pagination.MaxPerPage != maxPerPage {
+		m.Domains.DefaultLimit != domain.DefaultDomainLimit || m.Pagination.MaxPerPage != maxPerPage ||
+		m.Links.DefaultLimit != domain.DefaultLinksLimit || m.Links.MaxLimit != domain.MaxLinksLimit {
 		t.Errorf("catalogo desalineado con el dominio: %+v", m)
 	}
 }

@@ -38,6 +38,23 @@ SES, reputacion por empresa). Cada oleada se integra, se prueba (checks, integra
 * Clics por enlace: agregar la URL de cada evento de clic de SES por campana (sin datos personales en la
   agregacion) y exponerlo; mapa de calor sobre la vista previa de la campana (porcentaje de clics por enlace).
 
+Hecho (2026-09-23, rama de 1-B, sin desplegar; detalle en las filas de `transactional` y `analytics` de
+`Arquitectura_Core_Force_Mail.md`):
+
+* Contrato del lote (`POST /internal/transactional/batch`): objeto opcional
+  `"utm": {"enabled": true, "source": "", "campaign": "", "content": ""}`. Ausente = activado con valores
+  derivados; `source` del nombre del remitente (o su dominio), `campaign` del nombre de la campana que envia
+  `campaigns` (o de su id), `utm_medium=email` fijo. Configuracion de quien opera:
+  `MARKETING_UTM_EXCLUDED_DOMAINS`. `campaigns` solo cambia la construccion del lote (`CampaignName` en
+  `ports.BatchRequest`, rellenado en `orchestrator.go` y en el envio de prueba de `lifecycle.go`, y el objeto
+  `utm` en `transactionalclient`). Pendiente: guardar por campana `enabled`, `source` y `content` editables
+  (campo de `campaigns`, oleada de 1-C o posterior); hoy van los valores por defecto.
+* Clics por enlace: migracion de empresa `analytics/03_campaign_links.sql`, sin permisos nuevos (se usa
+  `analytics/reports/read`; el numero de registro 040 queda libre). API
+  `GET /api/v1/analytics/campaigns/{id}/links`.
+* Web: `/marketing/analytics/campaigns/:id/links` (`CampaignLinksPage`, `linkHeatmap.ts`), enlazada desde la
+  tabla de campanas de la analitica y con un boton en el detalle de la campana.
+
 ### 1-C. Campanas
 
 * Prueba A/B de asunto o de contenido (2 a 4 variantes), muestra configurable, criterio (aperturas o clics),
@@ -87,7 +104,7 @@ SES, reputacion por empresa). Cada oleada se integra, se prueba (checks, integra
 | Pieza | Estado |
 |---|---|
 | 1-A Editor | En curso |
-| 1-B Enlaces y analitica | En curso |
+| 1-B Enlaces y analitica | Hecho en rama, sin desplegar (2026-09-23) |
 | 1-C Campanas | En curso |
 | 1-D Dominio de seguimiento | Casi hecho (2026-09-23): DNS, certificado (con `AUTODISCOVER_SAN=n`), identidad verificada en SES y borde sirviendo `clics.core-force.com`; falta `SES_TRACKING_DOMAIN` en la pila (administrador de AWS) |
 | 2-E Comportamiento y automatizaciones | Pendiente |

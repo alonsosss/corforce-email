@@ -78,6 +78,9 @@ export const paths = {
   automationRun: (id: string) => `/marketing/automations/runs/${encodeURIComponent(id)}`,
   automationRunPattern: '/marketing/automations/runs/:id',
   analytics: '/marketing/analytics',
+  analyticsCampaignLinks: (id: string) =>
+    `/marketing/analytics/campaigns/${encodeURIComponent(id)}/links`,
+  analyticsCampaignLinksPattern: '/marketing/analytics/campaigns/:id/links',
   billing: '/billing',
   scheduler: '/scheduler',
   schedulerJob: (id: string) => `/scheduler/${encodeURIComponent(id)}`,

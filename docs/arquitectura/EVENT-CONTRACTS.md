@@ -136,7 +136,7 @@ subject y payload. `opaco` = el payload no se puede leer estaticamente.
 | `suppression.entry.added` | contacts | `email`, `reason`, `reasons`, `source`, `tenant_id` |
 | `suppression.entry.expired` | contacts | `email`, `reason`, `reasons`, `source`, `tenant_id` |
 | `suppression.entry.removed` | contacts | `email`, `reason`, `reasons`, `source`, `tenant_id` |
-| `transactional.email.*` | analytics | `bounce_type`, `campaign_id`, `class`, `email`, `message_id`, `occurred_at`, `tenant_id`, `test`, `to` |
+| `transactional.email.*` | analytics | `bounce_type`, `campaign_id`, `class`, `contact_id`, `email`, `link`, `message_id`, `occurred_at`, `tenant_id`, `test`, `to` |
 | `transactional.email.>` | campaigns | _opaco_ |
 | `transactional.email.bounced` | reputation | _opaco_ |
 | `transactional.email.bounced` | suppression | `bounce_type`, `detail`, `email`, `message_id`, `tenant_id` |
