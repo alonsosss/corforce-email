@@ -342,8 +342,8 @@ func TestUnaIdentidadConEasyDKIMQueYaEnviaConservaSuDKIM(t *testing.T) {
 		MailFromStatus: domain.SESCheckSuccess, ConfigurationSet: testSESConfigSet,
 	}}
 	d := h.verifiedSending(t, "avisos.com", domain.PurposeSending)
-	if len(ses.calls) != 0 {
-		t.Fatalf("pasarla a BYODKIM la dejaria pendiente y sin enviar: %v", ses.calls)
+	if len(ses.calls) != 1 || ses.calls[0] != "tag avisos.com" {
+		t.Fatalf("solo se etiqueta: pasarla a BYODKIM la dejaria pendiente y sin enviar: %v", ses.calls)
 	}
 	if !d.SES.VerifiedForSending() || h.events.sending[0] != true {
 		t.Fatalf("queda apta: %+v %v", d.SES, h.events.sending)
@@ -405,5 +405,30 @@ func TestLosRegistrosDelMailFromSePidenYNoBloqueanLaVerificacion(t *testing.T) {
 		if (c.Record == domain.RecordSESMailFromMX || c.Record == domain.RecordSESMailFromSPF) && !c.OK {
 			t.Errorf("%s publicado: %s", c.Record, c.Detail)
 		}
+	}
+}
+
+// La cuenta de SES es compartida: una identidad sin etiqueta con otro conjunto (la de otro proyecto de
+// la cuenta) no se adopta, no se modifica y la baja del dominio no la borra.
+func TestUnaIdentidadSinEtiquetaDeOtroProyectoNoSeTocaNiSeBorra(t *testing.T) {
+	h, ses := newSESHarness(t)
+	ses.identities["ajena.com"] = &sesIdentity{obs: domain.SESIdentityObservation{
+		VerifiedForSending: true, DKIMOrigin: "AWS_SES", DKIMStatus: domain.SESCheckSuccess,
+		ConfigurationSet: "my-first-configuration-set",
+	}}
+	d := h.create(t, "ajena.com", domain.PurposeSending)
+	h.dns.publishZone(h.uc, d)
+	res := h.verify(t, d.ID)
+	if len(ses.calls) != 0 || len(res.IntegrationErrors) != 1 {
+		t.Fatalf("no se toca: %v %v", ses.calls, res.IntegrationErrors)
+	}
+	if ready := h.events.verifiedReady[0]; ready == nil || *ready {
+		t.Fatal("una identidad ajena no deja el dominio apto")
+	}
+	if err := h.uc.Delete(context.Background(), h.tenantID, d.ID); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if _, ok := ses.identities["ajena.com"]; !ok {
+		t.Fatal("la baja no borra una identidad sin etiqueta")
 	}
 }

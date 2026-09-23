@@ -130,11 +130,20 @@ func (uc *UseCase) reconcileSESIdentity(ctx context.Context, d *domain.Domain, c
 	if err != nil {
 		return obs, fmt.Errorf("leer la identidad en SES: %w", err)
 	}
-	if !obs.OwnedBy(d.TenantID) {
+	changed := false
+	switch {
+	case obs.OwnedBy(d.TenantID):
+	case obs.Adoptable(uc.sesConfigSet):
+		if err := uc.ses.TagIdentity(ctx, d.TenantID, d.Domain); err != nil {
+			return obs, fmt.Errorf("etiquetar la identidad adoptada en SES: %w", err)
+		}
+		uc.logger.Info("identidad de SES creada a mano adoptada por la empresa",
+			zap.String("domain", d.Domain), zap.String("tenant_id", d.TenantID.String()))
+		changed = true
+	default:
 		return obs, domain.ErrSESIdentityOwnedElsewhere
 	}
 
-	changed := false
 	if !obs.SignsWith(key.Selector) {
 		if obs.DKIMOrigin == domain.SESDKIMOriginExternal || !obs.VerifiedForSending {
 			if err := uc.ses.SetDKIMKey(ctx, d.Domain, key); err != nil {
@@ -167,8 +176,8 @@ func (uc *UseCase) reconcileSESIdentity(ctx context.Context, d *domain.Domain, c
 	return obs, nil
 }
 
-// retireFromSES borra la identidad del dominio en SES, salvo que sea de otra empresa. No falla si SES
-// ya no la tiene.
+// retireFromSES borra la identidad del dominio en SES solo si lleva la etiqueta de la empresa: una sin
+// etiqueta puede ser de otro proyecto de la cuenta. No falla si SES ya no la tiene.
 func (uc *UseCase) retireFromSES(ctx context.Context, d *domain.Domain) error {
 	obs, err := uc.ses.GetIdentity(ctx, d.Domain)
 	if errors.Is(err, domain.ErrSESIdentityNotFound) {
@@ -178,7 +187,7 @@ func (uc *UseCase) retireFromSES(ctx context.Context, d *domain.Domain) error {
 		return fmt.Errorf("leer la identidad en SES: %w", err)
 	}
 	if !obs.OwnedBy(d.TenantID) {
-		uc.logger.Warn("la identidad de SES del dominio es de otra empresa; no se borra",
+		uc.logger.Warn("la identidad de SES del dominio no lleva la etiqueta de la empresa; no se borra",
 			zap.String("domain", d.Domain), zap.String("tenant_id", d.TenantID.String()))
 		return nil
 	}

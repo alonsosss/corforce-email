@@ -85,10 +85,17 @@ type SESIdentityObservation struct {
 // dominio en una empresa borraria la identidad con la que envia otra.
 const SESTenantTag = "cfm_tenant_id"
 
-// OwnedBy dice si la identidad es de la empresa: lleva su etiqueta o no lleva ninguna (creada a mano
-// por quien opera la cuenta, que se adopta).
+// OwnedBy dice si la identidad lleva la etiqueta de la empresa.
 func (o SESIdentityObservation) OwnedBy(tenantID uuid.UUID) bool {
-	return o.TenantTag == "" || strings.EqualFold(o.TenantTag, tenantID.String())
+	return o.TenantTag != "" && strings.EqualFold(o.TenantTag, tenantID.String())
+}
+
+// Adoptable dice si una identidad sin etiqueta puede pasar a la empresa: solo si ya sale por el
+// conjunto de la plataforma, porque quien la creo a mano lo hizo para la plataforma. La cuenta de SES
+// es compartida (otros proyectos tienen ahi sus identidades, con sus conjuntos): una identidad sin
+// etiqueta con otro conjunto no es de la plataforma y no se toca ni se borra.
+func (o SESIdentityObservation) Adoptable(platformConfigSet string) bool {
+	return o.TenantTag == "" && platformConfigSet != "" && o.ConfigurationSet == platformConfigSet
 }
 
 // SESBehaviorOnMXFailure es lo que SES hace si el MX del MAIL FROM falta: enviar con su propio MAIL

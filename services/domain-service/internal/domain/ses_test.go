@@ -142,8 +142,20 @@ func TestEstadosDeSES(t *testing.T) {
 
 func TestLaIdentidadEsDeLaEmpresaDeSuEtiquetaODeQuienLaAdopta(t *testing.T) {
 	tenant := uuid.New()
-	if !(SESIdentityObservation{}).OwnedBy(tenant) {
-		t.Error("una identidad sin etiqueta, creada a mano, se adopta")
+	if (SESIdentityObservation{}).OwnedBy(tenant) {
+		t.Error("una identidad sin etiqueta no es de nadie hasta adoptarla")
+	}
+	if !(SESIdentityObservation{ConfigurationSet: "cfm-transactional"}).Adoptable("cfm-transactional") {
+		t.Error("sin etiqueta y con el conjunto de la plataforma se adopta")
+	}
+	if (SESIdentityObservation{ConfigurationSet: "my-first-configuration-set"}).Adoptable("cfm-transactional") {
+		t.Error("sin etiqueta y con otro conjunto es de otro proyecto de la cuenta")
+	}
+	if (SESIdentityObservation{}).Adoptable("") {
+		t.Error("sin conjunto de plataforma no se adopta nada")
+	}
+	if (SESIdentityObservation{TenantTag: uuid.NewString(), ConfigurationSet: "cfm-transactional"}).Adoptable("cfm-transactional") {
+		t.Error("una etiquetada por otra empresa no se adopta")
 	}
 	if !(SESIdentityObservation{TenantTag: strings.ToUpper(tenant.String())}).OwnedBy(tenant) {
 		t.Error("la etiqueta propia")

@@ -16,6 +16,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sesv2"
 	"github.com/aws/aws-sdk-go-v2/service/sesv2/types"
+	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/google/uuid"
 )
 
@@ -136,6 +137,7 @@ func TestLaObservacionTraduceLaRespuestaDeSES(t *testing.T) {
 type fakeAPI struct {
 	err     error
 	deleted []string
+	tagged  []string
 	mailIn  *sesv2.PutEmailIdentityMailFromAttributesInput
 }
 
@@ -161,6 +163,35 @@ func (f *fakeAPI) PutEmailIdentityConfigurationSetAttributes(context.Context, *s
 func (f *fakeAPI) DeleteEmailIdentity(_ context.Context, in *sesv2.DeleteEmailIdentityInput, _ ...func(*sesv2.Options)) (*sesv2.DeleteEmailIdentityOutput, error) {
 	f.deleted = append(f.deleted, aws.ToString(in.EmailIdentity))
 	return &sesv2.DeleteEmailIdentityOutput{}, f.err
+}
+
+func (f *fakeAPI) TagResource(_ context.Context, in *sesv2.TagResourceInput, _ ...func(*sesv2.Options)) (*sesv2.TagResourceOutput, error) {
+	f.tagged = append(f.tagged, aws.ToString(in.ResourceArn))
+	return &sesv2.TagResourceOutput{}, f.err
+}
+
+type fakeSTS struct{ calls int }
+
+func (f *fakeSTS) GetCallerIdentity(context.Context, *sts.GetCallerIdentityInput, ...func(*sts.Options)) (*sts.GetCallerIdentityOutput, error) {
+	f.calls++
+	return &sts.GetCallerIdentityOutput{Account: aws.String("123456789012")}, nil
+}
+
+// Al adoptar una identidad se etiqueta por su ARN, con la cuenta de las credenciales, preguntada
+// una sola vez.
+func TestTagIdentityUsaElARNDeLaIdentidad(t *testing.T) {
+	api, st := &fakeAPI{}, &fakeSTS{}
+	c := &Client{api: api, sts: st, region: "us-east-1"}
+	tenant := uuid.New()
+	for i := 0; i < 2; i++ {
+		if err := c.TagIdentity(context.Background(), tenant, "avisos.example.com"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	want := "arn:aws:ses:us-east-1:123456789012:identity/avisos.example.com"
+	if len(api.tagged) != 2 || api.tagged[0] != want || st.calls != 1 {
+		t.Fatalf("etiquetas %v, llamadas a STS %d", api.tagged, st.calls)
+	}
 }
 
 func TestLosErroresDeSESSeTraducenALosDelDominio(t *testing.T) {

@@ -659,6 +659,17 @@ func (f *fakeSES) DeleteIdentity(_ context.Context, name string) error {
 	return nil
 }
 
+func (f *fakeSES) TagIdentity(_ context.Context, tenantID uuid.UUID, name string) error {
+	if f.err != nil {
+		return f.err
+	}
+	f.calls = append(f.calls, "tag "+name)
+	if id, ok := f.identities[name]; ok {
+		id.obs.TenantTag = tenantID.String()
+	}
+	return nil
+}
+
 // verify simula que SES comprobo el DKIM de la identidad.
 func (f *fakeSES) verify(name string) {
 	id := f.identities[name]

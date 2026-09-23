@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/alonsosss/corforce-email/services/domain-service/internal/domain"
@@ -22,6 +23,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/sesv2"
 	"github.com/aws/aws-sdk-go-v2/service/sesv2/types"
+	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/google/uuid"
 )
 
@@ -36,11 +38,21 @@ type api interface {
 	PutEmailIdentityMailFromAttributes(ctx context.Context, in *sesv2.PutEmailIdentityMailFromAttributesInput, opts ...func(*sesv2.Options)) (*sesv2.PutEmailIdentityMailFromAttributesOutput, error)
 	PutEmailIdentityConfigurationSetAttributes(ctx context.Context, in *sesv2.PutEmailIdentityConfigurationSetAttributesInput, opts ...func(*sesv2.Options)) (*sesv2.PutEmailIdentityConfigurationSetAttributesOutput, error)
 	DeleteEmailIdentity(ctx context.Context, in *sesv2.DeleteEmailIdentityInput, opts ...func(*sesv2.Options)) (*sesv2.DeleteEmailIdentityOutput, error)
+	TagResource(ctx context.Context, in *sesv2.TagResourceInput, opts ...func(*sesv2.Options)) (*sesv2.TagResourceOutput, error)
+}
+
+// accountAPI da la cuenta de las credenciales, que forma el ARN de la identidad al etiquetarla.
+type accountAPI interface {
+	GetCallerIdentity(ctx context.Context, in *sts.GetCallerIdentityInput, opts ...func(*sts.Options)) (*sts.GetCallerIdentityOutput, error)
 }
 
 // Client implementa ports.SESIdentityClient.
 type Client struct {
-	api api
+	api     api
+	sts     accountAPI
+	region  string
+	mu      sync.Mutex
+	account string
 }
 
 var _ ports.SESIdentityClient = (*Client)(nil)
@@ -97,7 +109,45 @@ func New(ctx context.Context, opt Options) (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("configurar AWS: %w", err)
 	}
-	return &Client{api: sesv2.NewFromConfig(cfg)}, nil
+	return &Client{api: sesv2.NewFromConfig(cfg), sts: sts.NewFromConfig(cfg), region: opt.Region}, nil
+}
+
+// TagIdentity etiqueta la identidad con la empresa. La cuenta se pregunta una vez a STS (no necesita
+// permiso) y se recuerda.
+func (c *Client) TagIdentity(ctx context.Context, tenantID uuid.UUID, name string) error {
+	ctx, cancel := context.WithTimeout(ctx, callTimeout)
+	defer cancel()
+	account, err := c.accountID(ctx)
+	if err != nil {
+		return err
+	}
+	arn := fmt.Sprintf("arn:aws:ses:%s:%s:identity/%s", c.region, account, name)
+	_, err = c.api.TagResource(ctx, &sesv2.TagResourceInput{
+		ResourceArn: aws.String(arn),
+		Tags:        []types.Tag{{Key: aws.String(domain.SESTenantTag), Value: aws.String(tenantID.String())}},
+	})
+	if err != nil {
+		return classify("TagResource", err)
+	}
+	return nil
+}
+
+func (c *Client) accountID(ctx context.Context) (string, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.account != "" {
+		return c.account, nil
+	}
+	out, err := c.sts.GetCallerIdentity(ctx, &sts.GetCallerIdentityInput{})
+	if err != nil {
+		return "", fmt.Errorf("STS GetCallerIdentity: %w", err)
+	}
+	account := aws.ToString(out.Account)
+	if len(account) != 12 {
+		return "", fmt.Errorf("STS devolvio una cuenta no valida: %q", account)
+	}
+	c.account = account
+	return account, nil
 }
 
 func (c *Client) GetIdentity(ctx context.Context, name string) (domain.SESIdentityObservation, error) {

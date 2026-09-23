@@ -225,20 +225,28 @@ EOF
 
 # Identidades de SES: domain-service crea, lee, corrige y borra la identidad de cada dominio de envio
 # de las empresas, firmando con la clave DKIM que el custodia (BYODKIM). La identidad va con comodin
-# porque cada empresa trae su dominio; TagResource porque la identidad nace con la etiqueta de su
-# empresa, que impide que la baja en una borre la de otra. El conjunto por defecto que puede fijar es
-# solo el transaccional: una identidad con otro conjunto enviaria sin los eventos de la plataforma.
+# porque cada empresa trae su dominio. La cuenta de SES es compartida con otros proyectos: modificar o
+# borrar solo se permite sobre identidades con la etiqueta cfm_tenant_id (la pone domain-service al
+# crear o al adoptar una hecha a mano para la plataforma), asi que ni un fallo del servicio toca la
+# identidad de otro proyecto. Etiquetar solo admite esa clave. El conjunto por defecto que puede fijar
+# es solo el transaccional: una identidad con otro conjunto enviaria sin los eventos de la plataforma.
 emit ses-identidades <<EOF
 {"Version":"2012-10-17","Statement":[
- {"Sid":"GestionarLasIdentidadesDeLasEmpresas","Effect":"Allow",
-  "Action":["ses:CreateEmailIdentity","ses:GetEmailIdentity","ses:DeleteEmailIdentity",
-            "ses:PutEmailIdentityDkimSigningAttributes","ses:PutEmailIdentityMailFromAttributes",
-            "ses:TagResource"],
+ {"Sid":"LeerIdentidades","Effect":"Allow",
+  "Action":"ses:GetEmailIdentity",
   "Resource":"arn:aws:ses:${REGION}:${ACC}:identity/*"},
+ {"Sid":"CrearYEtiquetarSoloConLaEmpresa","Effect":"Allow",
+  "Action":["ses:TagResource","ses:CreateEmailIdentity"],
+  "Resource":"arn:aws:ses:${REGION}:${ACC}:identity/*",
+  "Condition":{"ForAllValues:StringEquals":{"aws:TagKeys":["cfm_tenant_id"]}}},
+ {"Sid":"ModificarSoloLasDeLaPlataforma","Effect":"Allow",
+  "Action":["ses:DeleteEmailIdentity","ses:PutEmailIdentityDkimSigningAttributes",
+            "ses:PutEmailIdentityMailFromAttributes","ses:PutEmailIdentityConfigurationSetAttributes"],
+  "Resource":"arn:aws:ses:${REGION}:${ACC}:identity/*",
+  "Condition":{"Null":{"aws:ResourceTag/cfm_tenant_id":"false"}}},
  {"Sid":"ConjuntoPorDefectoSoloElTransaccional","Effect":"Allow",
   "Action":["ses:CreateEmailIdentity","ses:PutEmailIdentityConfigurationSetAttributes"],
-  "Resource":["arn:aws:ses:${REGION}:${ACC}:identity/*",
-              "arn:aws:ses:${REGION}:${ACC}:configuration-set/${SES_SET_TRANSACTIONAL}"]}]}
+  "Resource":"arn:aws:ses:${REGION}:${ACC}:configuration-set/${SES_SET_TRANSACTIONAL}"}]}
 EOF
 
 if [[ -n "$RENDER_DIR" ]]; then

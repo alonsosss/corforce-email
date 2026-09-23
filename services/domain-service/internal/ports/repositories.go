@@ -145,6 +145,8 @@ type SESIdentityClient interface {
 	SetConfigurationSet(ctx context.Context, name, configSet string) error
 	// DeleteIdentity la borra; no falla si SES no la tiene.
 	DeleteIdentity(ctx context.Context, name string) error
+	// TagIdentity pone a la identidad la etiqueta de la empresa (domain.SESTenantTag).
+	TagIdentity(ctx context.Context, tenantID uuid.UUID, name string) error
 }
 
 // SendingEvents encola en la outbox de la empresa, en la transaccion que guarda el estado de SES, el
