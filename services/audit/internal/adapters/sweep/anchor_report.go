@@ -50,6 +50,11 @@ func (r *AnchorReportRunner) Run(ctx context.Context) {
 			return
 		case <-time.After(time.Until(next)):
 		}
+		// Si los dos casos estan listos a la vez, select elige al azar: sin esta comprobacion
+		// un apagado podria arrancar una pasada mas con el contexto ya cancelado.
+		if ctx.Err() != nil {
+			return
+		}
 		r.pass(ctx)
 	}
 }
