@@ -198,9 +198,9 @@ metricas de reputacion en CloudWatch mientras el volumen no lo justifique.
 |---|---|
 | 1. Codigo | Hecho |
 | 2. IAM | Pendiente (cuenta) |
-| 3. Topic fijado en el servidor | Pendiente (servidor; no depende de nadie) |
+| 3. Topic fijado en el servidor | Hecho (2026-09-23): `SES_EVENTS_TOPIC_ARN` en el `.env` de produccion, `transactional` y `web` en `cd74ee9`; la ruta responde `403 unexpected topic` |
 | 4. Pila de SES | Pendiente (cuenta, despues de 3) |
-| 5. Credenciales en el servidor | Pendiente (despues de 2 y 4) |
+| 5. Credenciales en el servidor | Pendiente (despues de 2 y 4). Cola revisada el 2026-09-23: nada pendiente (un solo mensaje, ya `failed`, del 2026-09-21) |
 | 6. Prueba con el simulador | Pendiente (despues de 5) |
 | 7. Acceso de produccion | Esperando a AWS Support |
 | 8. Dominios de empresa en SES | Sin empezar |
