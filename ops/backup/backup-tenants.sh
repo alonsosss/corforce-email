@@ -58,8 +58,13 @@ if ! cf_externo_cargar; then
 fi
 
 # Un solo respaldo a la vez, y la verificacion espera a que termine: leeria un volcado a medias.
+# Este tambien ESPERA, como el de buzones y la verificacion. Con -n abortaba en cuanto encontraba el
+# cerrojo tomado, y eso pasa siempre que los dos temporizadores se disparan juntos: al instalarlos,
+# tras un reinicio o tras una caida (Persistent=true recupera los turnos perdidos a la vez). El
+# respaldo de buzones tomaba el cerrojo y el de las bases fallaba ese turno entero (visto en
+# produccion el 2026-09-23 al pasar a cada seis horas).
 exec 8>"$BACKUP_DIR/.respaldo.lock"
-flock -n 8 || abortar "otro respaldo o verificacion esta en curso sobre $BACKUP_DIR"
+flock -w 7200 8 || abortar "otro respaldo o verificacion sigue en curso sobre $BACKUP_DIR tras dos horas"
 
 stamp="$(date -u +%Y%m%dT%H%M%SZ)"
 dest="$BACKUP_DIR/$stamp"

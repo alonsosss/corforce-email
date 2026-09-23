@@ -226,6 +226,17 @@ for rel in abren_base:
 respaldo = leer(f"{backup}/backup-tenants.sh")
 if "LIKE 'mail\\_%'" not in respaldo:
     fallos.append("backup-tenants.sh ya no lista todas las bases mail_* (registro, celdas y empresas)")
+# Los tres trabajos comparten el cerrojo de BACKUP_DIR y los tres tienen que ESPERARLO. Con
+# `flock -n` uno abortaba en cuanto encontraba el cerrojo tomado, que pasa siempre que dos
+# temporizadores se disparan juntos (al instalarlos, tras un reinicio o una caida, por Persistent=true):
+# el respaldo de las bases perdia el turno entero (2026-09-23).
+for trabajo in ("backup-tenants.sh", "backup-mail-volumes.sh", "verify-restore.sh"):
+    texto = leer(f"{backup}/{trabajo}")
+    if re.search(r"\bflock\s+-n\b", texto):
+        fallos.append(f"{trabajo} no espera el cerrojo (flock -n): falla el turno si otro trabajo lo tiene")
+    elif not re.search(r"\bflock\s+-w\s+\d+", texto):
+        fallos.append(f"{trabajo} no toma el cerrojo de BACKUP_DIR con espera (flock -w)")
+
 verificacion = leer(f"{backup}/verify-restore.sh")
 for patron in ("mail_registry.dump", "'mail_cell_*.dump'", "'mail_tenant_*.dump'"):
     if patron not in verificacion:
