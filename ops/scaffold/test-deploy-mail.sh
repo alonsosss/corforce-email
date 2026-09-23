@@ -12,8 +12,9 @@
 #     versionado y no toca lo generado;
 #   - la migracion con motores explicitos: cada motor pasa a core-force-mail/<motor>:<commit> sin
 #     recrear la red, que la plataforma ya encuentra;
-#   - un commit nuevo desplegado sin argumentos (detecta los motores afectados) y una segunda
-#     pasada sin nada que desplegar;
+#   - un commit nuevo: el modo plan (DEPLOY_PLAN=1) lo anuncia sin tocar nada, desplegado sin
+#     argumentos detecta los motores afectados, deja su linea en .deploy-log, y una segunda pasada
+#     no tiene nada que desplegar;
 #   - un retroceso: rechazado, y con DEPLOY_ALLOW_ROLLBACK=1 aplicado sin reconstruir (la imagen
 #     sigue en el servidor);
 #   - un motor que no arranca: el despliegue falla, no registra su commit y los motores que iban
@@ -167,8 +168,11 @@ else
 fi
 
 imagen() { srv "docker ps -a --filter label=com.docker.compose.project=mail --filter label=com.docker.compose.service=$1 --format '{{.Image}}'"; }
+# La puerta de regresion (make e2e-mail en verde en GitHub) se omite: el clon no tiene remoto de GitHub
+# y lo que aqui se prueba es la mecanica del despliegue. La puerta tiene sus propias pruebas en
+# check-deploy-mail.sh, con un gh falso.
 desplegar() {
-  (cd "$REPO" && MAIL_DEPLOY_PLAZO="${PLAZO:-240}" MAIL_DEPLOY_ESTABLE=10 bash scripts/deploy-mail.sh "$@") >"$W/deploy.out" 2>&1
+  (cd "$REPO" && MAIL_DEPLOY_REGRESION=omitir MAIL_DEPLOY_PLAZO="${PLAZO:-240}" MAIL_DEPLOY_ESTABLE=10 bash scripts/deploy-mail.sh "$@") >"$W/deploy.out" 2>&1
 }
 mostrar() { sed 's/^/    /' "$W/deploy.out" >&2; }
 
@@ -194,18 +198,40 @@ srv "grep -q basura $R/actions.conf" && mal "la sincronizacion no reemplazo un f
   mal "el fichero generado por el motor cambio"
 [[ "$(srv "stat -c %u:%g $R/redis.conf")" == "101:82" ]] && ok "lo generado conserva su dueno (los 640 root:postfix de Postfix siguen intactos)" ||
   mal "el fichero generado cambio de dueno: $(srv "stat -c %u:%g $R/redis.conf")"
-externos && ok "con los motores desplegados la plataforma encuentra la red mail-engines" || mal "recursos-externos sigue fallando tras desplegar los motores"
+# La plataforma tambien usa la red mail-migration, pero la crean dovecot-mail y el ejecutor de
+# migraciones, que esta prueba no levanta: aqui solo se juzga la red que crean los motores desplegados.
+if externos; then
+  ok "con los motores desplegados la plataforma encuentra sus redes externas"
+elif grep -q "externo mail-engines" "$W/externos.out"; then
+  mal "recursos-externos sigue echando en falta mail-engines tras desplegar los motores"; sed 's/^/    /' "$W/externos.out" >&2
+else
+  ok "con los motores desplegados la plataforma encuentra la red mail-engines"
+fi
 
 # --- commit nuevo, deteccion automatica -------------------------------------------------------------
 echo "== Commit nuevo sin argumentos =="
 echo "# cambio de la prueba" >>"$REPO/deploy/mail/docker-compose.mail.images.yml"
 T2="$(commit "cambio que afecta a todos los motores")"
 ETIQUETAS+=("$T2")
+TAGS_ANTES="$(srv 'cat /opt/core-force-mail/mail-src/.deployed-tags')"
+rc=0; DEPLOY_PLAN=1 desplegar || rc=$?
+if [[ $rc == 0 ]] && grep -qE "^olefy-mail +$T1 +PENDIENTE" "$W/deploy.out" && grep -q "^motores: .*olefy-mail" "$W/deploy.out"; then
+  ok "el modo plan anuncia los motores pendientes con el commit que corren"
+else
+  mal "el modo plan sale $rc"; mostrar
+fi
+[[ "$(imagen olefy-mail)" == "core-force-mail/olefy-mail:$T1" && "$(srv 'cat /opt/core-force-mail/mail-src/.deployed-tags')" == "$TAGS_ANTES" ]] &&
+  ok "el modo plan no recrea ni registra nada" || mal "el modo plan cambio el servidor"
 rc=0; desplegar || rc=$?
 if [[ $rc == 0 ]] && grep -q "motores (2): " "$W/deploy.out"; then ok "detecta y despliega los dos motores afectados"; else mal "deteccion automatica sale $rc"; mostrar; fi
 [[ "$(imagen olefy-mail)" == "core-force-mail/olefy-mail:$T2" ]] || mal "olefy-mail no paso a $T2"
+srv 'cat /opt/core-force-mail/mail-src/.deploy-log' | grep -qP "\tmotores\t$T2\tolefy-mail\t" &&
+  ok ".deploy-log registra el despliegue de cada motor" || mal ".deploy-log sin la linea de olefy-mail en $T2"
 rc=0; desplegar || rc=$?
 [[ $rc == 0 ]] && grep -q "nada que desplegar" "$W/deploy.out" && ok "segunda pasada: nada que desplegar" || { mal "segunda pasada sale $rc"; mostrar; }
+rc=0; DEPLOY_PLAN=1 desplegar || rc=$?
+[[ $rc == 0 ]] && grep -q "^motores: ninguno$" "$W/deploy.out" && grep -qE "^olefy-mail +$T2 +al dia" "$W/deploy.out" &&
+  ok "el modo plan con todo al dia no anuncia nada" || { mal "el modo plan al dia sale $rc"; mostrar; }
 
 # --- retroceso ------------------------------------------------------------------------------------
 echo "== Retroceso a $T1 =="

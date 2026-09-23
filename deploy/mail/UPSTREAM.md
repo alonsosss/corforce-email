@@ -195,8 +195,10 @@ De donde sale cada motor decide como llega un parche:
 | imapsync (ejecutor de migracion) | Paquete `imapsync` de Alpine 3.23 (community), serie 2.314 fijada en `migration-runner/Dockerfile` (`imapsync~=2.314`; el build falla si resulta otra version). No esta en los repositorios de Debian ni de Ubuntu; no se descarga nada mas de Internet en el build. La licencia es la NO LIMIT PUBLIC LICENSE (`docs/adr/0002`) | Reconstruir la imagen recoge los parches del paquete y de Perl; subir de serie es una decision con `make e2e-mail` en verde (la salida de imapsync es lo que lee el ejecutor) |
 | Resto (netfilter, dockerapi, acme, watchdog, olefy) | Paquetes de la base | Reconstruir la imagen |
 
-Objetivos (propuestos en `docs/Plan_Estrategico_Mejoras_Correo.md`, a confirmar con el primer parche real):
-parche critico en produccion en 72 horas desde el aviso y parche importante en 14 dias.
+Plazos comprometidos (confirmados el 2026-09-23; `docs/Operacion_Despliegue.md`, seccion 12): parche critico
+en produccion en 72 horas desde el aviso y parche importante en 14 dias. La incidencia mensual de
+`imagenes-motores.yml` escribe la fecha limite en su primera linea y se asigna al responsable de
+mantenimiento.
 
 Fuentes de aviso que debe leer quien opere el despliegue: anuncios de seguridad de Postfix, Dovecot,
 Rspamd, ClamAV y Unbound; los avisos de Debian y Alpine para las bases; y el informe semanal de esta

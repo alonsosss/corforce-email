@@ -34,6 +34,9 @@ jobs:
       - name: Incidencia
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Quien atiende el mantenimiento (docs/Operacion_Despliegue.md, Mantenimiento): la variable de
+          # repositorio MANTENIMIENTO_RESPONSABLE o, sin ella, el dueno del repositorio.
+          RESPONSABLE: ${{ vars.MANTENIMIENTO_RESPONSABLE || github.repository_owner }}
         run: |
           set -euo pipefail
           relevantes="$(sed -n 's/^RELEVANTES: //p' informe.md | head -1)"
@@ -51,5 +54,9 @@ jobs:
           if [ -n "$numero" ]; then
             gh issue edit "$numero" --body-file cuerpo.md
           else
-            gh issue create --title "Cambios de mailcow-dockerized pendientes de portar" --label upstream-mailcow --body-file cuerpo.md
+            numero="$(gh issue create --title "Cambios de mailcow-dockerized pendientes de portar" --label upstream-mailcow --body-file cuerpo.md | sed 's|.*/||')"
           fi
+          # Una incidencia sin nadie asignado no la atiende nadie. Si no se puede asignar (una
+          # organizacion como duena, un usuario sin acceso) se avisa en el resumen y no se falla.
+          gh issue edit "$numero" --add-assignee "$RESPONSABLE" ||
+            echo "::warning::no se pudo asignar la incidencia $numero a $RESPONSABLE (define la variable MANTENIMIENTO_RESPONSABLE)"

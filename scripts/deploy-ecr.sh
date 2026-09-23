@@ -7,6 +7,8 @@
 #   scripts/deploy-ecr.sh                    # detecta servicios cambiados vs .deployed-tag
 #   scripts/deploy-ecr.sh svc1 svc2 ...      # servicios explicitos
 #   TRANSPORT=save scripts/deploy-ecr.sh ... # sin AWS local: docker save | ssh load
+#   DEPLOY_PLAN=1 scripts/deploy-ecr.sh      # solo dice que desplegaria: no compila, no toma el
+#                                            # candado ni escribe nada (scripts/estado-produccion.sh)
 set -euo pipefail
 
 ROOT="$(git -C "$(dirname "$0")" rev-parse --show-toplevel)"; cd "$ROOT"
@@ -27,6 +29,7 @@ ECR_REGION="${ECR_REGION:-us-east-1}"; NS=core-force-mail
 
 remote() { "${SSH[@]}" "cd $DEPLOY_PATH && $*"; }
 
+DEPLOY_PLAN="${DEPLOY_PLAN:-0}"
 despliegue_comprobar_conexion || exit 1
 
 # Prometheus monta ops/observability/prometheus como configuracion, pero lee las reglas al
@@ -42,7 +45,8 @@ recargar_prometheus() {
   fi
 }
 
-despliegue_comprobar_arbol || exit 1
+# El plan compara HEAD con el servidor: lo que haya sin commitear no entra en ninguna de las dos cosas.
+[[ "$DEPLOY_PLAN" == 1 ]] || despliegue_comprobar_arbol || exit 1
 
 # Ficheros que viajan al servidor: SIEMPRE desde HEAD (git archive), nunca desde el
 # arbol de trabajo. Una migracion nueva sin commitear no puede colarse a produccion.
@@ -152,13 +156,13 @@ aplicar_borde() {
   }
 }
 
-despliegue_comprobar_buildkit || exit 1
+[[ "$DEPLOY_PLAN" == 1 ]] || despliegue_comprobar_buildkit || exit 1
 
 # El transporte ecr exige credenciales AWS locales (access key IAM). Sin ellas el
 # camino correcto sigue siendo compilar aqui: se degrada a save (docker save | ssh load)
 # en vez de abortar, porque la alternativa real seria compilar en el servidor, y eso
 # compite por CPU con lo que esta sirviendo produccion.
-if [[ "$TRANSPORT" == "ecr" ]] && ! aws sts get-caller-identity >/dev/null 2>&1; then
+if [[ "$DEPLOY_PLAN" != 1 && "$TRANSPORT" == "ecr" ]] && ! aws sts get-caller-identity >/dev/null 2>&1; then
   echo ">> sin credenciales AWS locales (o sesion expirada): se usa save." >&2
   echo ">> para habilitar ecr: ops/aws/setup-iam.sh crea el usuario core-force-mail-deploy-local;" >&2
   echo ">> con su llave, 'aws configure' (region us-east-1) deja credenciales permanentes." >&2
@@ -224,6 +228,18 @@ fi
 # EJECUTA o MONTA (migraciones, compose, ops/security...) viaja por rsync, no dentro de una
 # imagen. El caso se resuelve mas abajo, cuando ya existen el candado y la guarda.
 [[ ${#SVCS[@]} -eq 0 ]] && SOLO_FICHEROS=1
+
+# Modo plan: lo mismo que decidiria el despliegue, y nada mas. Sale antes de la guardia de retroceso
+# (que tambien es de solo lectura) porque el plan de un commit viejo no es un retroceso: no se aplica.
+if [[ "$DEPLOY_PLAN" == 1 ]]; then
+  echo "servicios: ${SVCS[*]:-ninguno}"
+  if git diff --quiet "$(remote 'cat .deployed-tag 2>/dev/null' || echo HEAD)" HEAD -- "${FICHEROS_SERVIDOR[@]}" 2>/dev/null; then
+    echo "ficheros del servidor: sin cambios"
+  else
+    echo "ficheros del servidor: con cambios (viajan por rsync aunque no haya imagenes que reconstruir)"
+  fi
+  exit 0
+fi
 if [[ "${SOLO_FICHEROS:-0}" != "1" ]]; then
   echo ">> tag $TAG | servicios (${#SVCS[@]}): ${SVCS[*]}"
 fi
@@ -257,6 +273,7 @@ if [[ "${SOLO_FICHEROS:-0}" == "1" ]]; then
   aplicar_infra
   aplicar_borde
   remote "echo $TAG > .deployed-tag"
+  registrar_despliegue "$DEPLOY_PATH" plataforma "$TAG"
   echo ">> DEPLOY $TAG COMPLETO (solo ficheros)"
   exit 0
 fi
@@ -422,6 +439,7 @@ remote "ops/maintenance/pgbouncer-reconnect.sh $RECONNECT_ARGS" || echo ">> avis
 # secretos Compose avisa de cada ${VAR} vacia: ese ruido al final de cada despliegue es lo que
 # hace invisible el aviso que si importa.
 remote "echo $TAG > .deployed-tag && ops/security/secrets/with-secrets.sh docker compose ps --format '{{.Name}} {{.Status}}' | grep -E \"$(IFS='|'; echo "${SVCS[*]}")\" | head -20"
+registrar_despliegue "$DEPLOY_PATH" plataforma "$TAG" "${SVCS[@]}"
 
 # Un servicio que retrocedio de ECR a una imagen compilada en el servidor corre codigo
 # posiblemente ANTERIOR al desplegado, sin sintoma visible. Se revisa aqui porque el

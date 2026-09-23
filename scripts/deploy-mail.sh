@@ -6,6 +6,8 @@
 # Uso:
 #   scripts/deploy-mail.sh                           # motores con cambios desde el commit que corre cada uno
 #   scripts/deploy-mail.sh dovecot-mail rspamd-mail  # motores explicitos
+#   DEPLOY_PLAN=1 scripts/deploy-mail.sh             # solo dice que commit corre cada motor y cuales
+#                                                    # desplegaria: no construye ni escribe nada
 #
 # Destino y candado: los de scripts/deploy-ecr.sh (scripts/lib/despliegue.sh), con DEPLOY_HOST,
 # DEPLOY_USER, DEPLOY_SSH_KEY y DEPLOY_PATH (donde esta el .env del servidor). Ademas:
@@ -67,9 +69,12 @@ compose_local() {
     -f "$COMPOSE_MOTORES" -f "$COMPOSE_IMAGENES" "$@"
 }
 
+DEPLOY_PLAN="${DEPLOY_PLAN:-0}"
 despliegue_comprobar_conexion || exit 1
-despliegue_comprobar_arbol || exit 1
-despliegue_comprobar_buildkit || exit 1
+if [[ "$DEPLOY_PLAN" != 1 ]]; then
+  despliegue_comprobar_arbol || exit 1
+  despliegue_comprobar_buildkit || exit 1
+fi
 
 # ── modelo de los motores, desde el propio compose ──────────────────────────
 # Una linea por servicio en orden de arranque (dependencias antes):
@@ -185,12 +190,32 @@ else
     if [[ -z "$base" ]]; then desconocidos+=("$m"); continue; fi
     cambio_desde "$base" "$m" && SEL+=("$m")
   done
-  if [[ ${#desconocidos[@]} -gt 0 ]]; then
+  if [[ ${#desconocidos[@]} -gt 0 && "$DEPLOY_PLAN" != 1 ]]; then
     echo "deploy-mail: no se sabe que commit corren: ${desconocidos[*]}" >&2
     echo "  (imagen sin etiqueta de commit y sin entrada en $MAIL_DEPLOY_PATH/.deployed-tags)" >&2
     echo "  indica los motores explicitamente: $0 ${desconocidos[*]}" >&2
     exit 1
   fi
+fi
+# Modo plan: una linea por motor levantado en el servidor (motor, commit que corre, estado) y la
+# seleccion que haria el despliegue. Con motores explicitos, la seleccion es la pedida.
+if [[ "$DEPLOY_PLAN" == 1 ]]; then
+  for m in "${ORDEN[@]}"; do
+    [[ -n "${VIVO[$m]:-}" ]] || continue
+    if [[ "${CONSTRUIDO[$m]}" == 0 ]]; then
+      printf '%-22s %-9s %s\n' "$m" "-" "imagen fijada por version (${IMAGEN[$m]})"; continue
+    fi
+    base="$(base_de "$m")"
+    if [[ -z "$base" ]]; then
+      printf '%-22s %-9s %s\n' "$m" "?" "no se sabe que commit corre"
+    elif cambio_desde "$base" "$m"; then
+      printf '%-22s %-9s %s\n' "$m" "${base:0:9}" "PENDIENTE: cambio desde entonces"
+    else
+      printf '%-22s %-9s %s\n' "$m" "${base:0:9}" "al dia"
+    fi
+  done
+  echo "motores: ${SEL[*]:-ninguno}"
+  exit 0
 fi
 if [[ ${#SEL[@]} -eq 0 ]]; then
   echo "nada que desplegar"; exit 0
@@ -316,6 +341,7 @@ for m in "${SEL[@]}"; do
     exit 1
   }
   remote_mail "{ grep -v '^$m ' .deployed-tags 2>/dev/null || true; echo '$m $TAG'; } > .deployed-tags.tmp && mv .deployed-tags.tmp .deployed-tags"
+  registrar_despliegue "$MAIL_DEPLOY_PATH" motores "$TAG" "$m"
 done
 
 # Lo que se sincronizo tambien llega a los motores que no se recrearon; lo leeran al reiniciar.

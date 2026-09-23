@@ -1325,3 +1325,79 @@ dominio solo publica una política que nadie descarga; no hay que pasarlo a `enf
   servicio) en `deploy/mail/README.md`, «Despliegue en un servidor», paso 5.
 * La configuración sincronizada llega también a los motores que no se recrean: el despliegue lo
   avisa, y conviene desplegarlos en la misma ventana.
+
+## 12. Mantenimiento: ritmo, responsable y estado de producción
+
+Decidido el 2026-09-23. Todo lo que vigila el proyecto avisa solo; lo que faltaba era quién actúa y
+dónde se ve qué corre en producción sin depender de que alguien lo recuerde.
+
+### Responsable
+
+Las incidencias que abren los flujos programados se asignan a la variable de repositorio
+`MANTENIMIENTO_RESPONSABLE` (un usuario de GitHub) o, sin ella, al dueño del repositorio. Si no se
+puede asignar, el flujo lo dice en su resumen y no falla. Los fallos de `mail-engines.yml` (la prueba
+nocturna) los notifica GitHub por correo a quien lo tiene configurado.
+
+### Qué avisa solo
+
+| Cuándo | Qué | Aviso |
+|---|---|---|
+| Cada commit | CI: compilación, pruebas, `validate.sh`, `govulncheck` | el commit sale rojo |
+| Cada noche (04:17 UTC) | `mail-engines.yml`: `make e2e-mail` con los motores reales | correo de GitHub |
+| Lunes | `upstream-mailcow.yml`: cambios de mailcow por portar | una incidencia `upstream-mailcow`, asignada |
+| Lunes | Dependabot: Go, web y acciones | como mucho un PR por familia |
+| Día 1 del mes | `imagenes-motores.yml`: Trivy sobre las 11 imágenes | una incidencia `imagenes-motores`, asignada y con su plazo |
+| Cada semana, en el servidor | `ops/backup/verify-restore.sh` restaura el último volcado | alerta si no sirve |
+
+### Ritmo
+
+* **Lunes, unos 30 minutos.** Leer la incidencia de mailcow: lo marcado como seguridad se porta esa
+  semana (`deploy/mail/UPSTREAM.md`, sección 3). Los PR de Dependabot de versión menor se aceptan con la
+  CI en verde; los de versión mayor se leen uno a uno. Mirar `scripts/estado-produccion.sh`.
+* **Mensual.** Reconstruir las imágenes de los motores aunque no cambie el código, para recoger los
+  parches de sus bases: `scripts/deploy-mail.sh <motor>`, de uno en uno, comprobando entrada de correo e
+  IMAP tras cada uno.
+* **Trimestral.** Una fila en `deploy/mail/UPSTREAM.md`, sección 10, con el coste del último port.
+
+### Plazos de los parches de seguridad
+
+Comprometidos, no propuestos: **72 horas** desde el aviso para una vulnerabilidad crítica con arreglo
+publicado en un motor, y **14 días** para una alta. El reloj empieza con el aviso: la apertura de la
+incidencia de `imagenes-motores.yml`, que escribe la fecha límite en su primera línea, o el anuncio
+del proyecto (Postfix, Dovecot, Rspamd, ClamAV, Unbound) si llega antes. Una crítica que aparece en
+una incidencia que solo tenía altas cuenta desde ese informe, no desde que se abrió.
+
+### Qué corre en producción y qué falta
+
+```bash
+git switch main && git pull
+scripts/estado-produccion.sh          # con DEPLOY_HOST y compañía, como los despliegues
+```
+
+Lee del servidor el commit de la plataforma (`.deployed-tag`), el de cada motor (`.deployed-tags`) y
+el historial, y lo compara con HEAD: commits sin desplegar, **migraciones por capa** (registro, celda,
+empresa; marca como `MODIFICADA` una ya publicada que se editó, porque son aditivas), los servicios y
+los motores que se recrearían y el estado de la CI de HEAD. Para servicios y motores no calcula nada
+propio: corre `scripts/deploy-ecr.sh` y `scripts/deploy-mail.sh` con `DEPLOY_PLAN=1`, que deciden lo
+mismo que un despliegue y salen sin compilar, sin tomar el candado y sin escribir. Sale 0 si todo
+está al día, 2 si queda algo y 1 si no pudo averiguarlo. El cálculo de motores necesita docker en el
+puesto (lee `deploy/mail` con `docker compose config`); sin él se omite y se dice.
+
+Cada despliegue terminado añade una línea a `.deploy-log` (en `DEPLOY_PATH` la plataforma y en
+`MAIL_DEPLOY_PATH` los motores): fecha UTC, plano, commit, qué se recreó y desde qué puesto. Solo se
+añade, nunca se reescribe; que no se pueda escribir se avisa y no deshace el despliegue. Vive en el
+servidor: un servidor nuevo empieza sin historial, y el estado actual sigue saliendo de
+`.deployed-tag` y `.deployed-tags`.
+
+Así el traspaso entre quienes despliegan deja de depender de mensajes: lo pendiente y el orden los
+dice el servidor.
+
+### Orden de un despliegue
+
+1. CI de HEAD en verde (CI, Motores, Release) y, si cambian motores o el camino del correo,
+   `make e2e-mail`.
+2. Migraciones que lista `estado-produccion.sh`, capa por capa (`ops/db/apply-migration.sh`), antes que
+   los servicios: un servicio nuevo sobre un esquema viejo responde 500.
+3. `scripts/deploy-ecr.sh`.
+4. `scripts/deploy-mail.sh`, un motor a la vez.
+5. Prueba real (nunca sobre una empresa cliente) y `estado-produccion.sh` otra vez: debe salir 0.

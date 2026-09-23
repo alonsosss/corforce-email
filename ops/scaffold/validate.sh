@@ -131,13 +131,18 @@ if ! bash "$ROOT/ops/scaffold/check-migration-runner.sh"; then
   FAIL=1
 fi
 
-echo "== 19. Paneles de Grafana: JSON valido, origenes aprovisionados y metricas que existen =="
+echo "== 20. Paneles de Grafana: JSON valido, origenes aprovisionados y metricas que existen =="
 if ! bash "$ROOT/ops/scaffold/check-dashboards.sh"; then
   FAIL=1
 fi
 
-echo "== 20. Barrido de maildir de Dovecot: solo lo que no tiene buzon, fail-closed, gracia y mutaciones =="
+echo "== 21. Barrido de maildir de Dovecot: solo lo que no tiene buzon, fail-closed, gracia y mutaciones =="
 if ! bash "$ROOT/ops/scaffold/check-maildir-reconcile.sh"; then
+  FAIL=1
+fi
+
+echo "== 22. Estado de produccion: lo pendiente por capa, sin escribir en el servidor =="
+if ! bash "$ROOT/ops/scaffold/check-estado-produccion.sh"; then
   FAIL=1
 fi
 

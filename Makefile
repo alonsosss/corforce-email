@@ -139,8 +139,12 @@ check-observability-targets:
 # `pnpm typecheck` (tsconfig.json y tsconfig.node.json). Con este destino un cambio de web no llega a la CI
 # roto por algo que su autor pudo ver: Array.prototype.at, que la lib ES2020 del proyecto no tiene, fallo dos
 # veces en el mismo dia.
+# La version de Node es la de web/.nvmrc (la de la imagen y la CI): con otra, vitest no llega a
+# ejecutar ninguna prueba y el error no dice por que.
 check-web:
-	@cd web && pnpm install --frozen-lockfile --silent && pnpm lint && pnpm typecheck && pnpm test
+	@cd web && req="$$(cat .nvmrc)" && have="$$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null)" && \
+	  if [ "$$have" != "$$req" ]; then echo "check-web: la web exige Node $$req (web/.nvmrc) y aqui hay Node $${have:-ninguno}: cd web && nvm use" >&2; exit 1; fi && \
+	  pnpm install --frozen-lockfile --silent && pnpm lint && pnpm typecheck && pnpm test
 
 # make check-alertas  (una alerta mal escrita no falla: se queda callada)
 check-alertas:

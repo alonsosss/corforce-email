@@ -267,3 +267,21 @@ verificar_imagen_desplegada() {
   done
   return $fallo
 }
+
+# registrar_despliegue <directorio remoto> <plano> <tag> <elemento>...
+#
+# Deja una linea en <directorio remoto>/.deploy-log por despliegue terminado: fecha UTC, plano
+# (plataforma | motores), commit, que se recreo y desde donde se lanzo. .deployed-tag y
+# .deployed-tags dicen que corre AHORA; este fichero dice como se llego ahi, y vive en el servidor,
+# no en la memoria de quien desplego. Solo se anade, nunca se reescribe. Que no se pueda escribir
+# no deshace el despliegue, que ya esta hecho: se avisa y se sigue. Lo lee scripts/estado-produccion.sh.
+registrar_despliegue() {
+  local dir="${1:?directorio}" plano="${2:?plano}" tag="${3:?tag}" linea origen
+  shift 3
+  origen="${USER:-desconocido}@$(hostname -s 2>/dev/null || echo desconocido)"
+  printf -v linea '%s\t%s\t%s\t%s\t%s' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$plano" "$tag" "${*:-solo-ficheros}" "$origen"
+  if ! printf '%s\n' "$linea" | "${SSH[@]}" "cat >> $dir/.deploy-log"; then
+    echo ">> aviso: no se pudo anadir el despliegue a $dir/.deploy-log (el despliegue esta hecho)" >&2
+  fi
+  return 0
+}

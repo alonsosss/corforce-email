@@ -42,6 +42,9 @@ jobs:
       - name: Incidencia
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Quien atiende el mantenimiento (docs/Operacion_Despliegue.md, Mantenimiento): la variable de
+          # repositorio MANTENIMIENTO_RESPONSABLE o, sin ella, el dueno del repositorio.
+          RESPONSABLE: ${{ vars.MANTENIMIENTO_RESPONSABLE || github.repository_owner }}
         run: |
           set -euo pipefail
           read -r _ criticas altas < <(sed -n 's/^CORREGIBLES: /CORREGIBLES: /p' informe.md | head -1)
@@ -57,8 +60,25 @@ jobs:
           fi
           gh label create imagenes-motores --color d93f0b --description "Vulnerabilidades con arreglo en las imagenes de los motores" 2>/dev/null || true
           titulo="Vulnerabilidades con arreglo en las imagenes de los motores: ${criticas:-0} criticas, ${altas:-0} altas"
+          # Plazo comprometido (deploy/mail/UPSTREAM.md, seccion 9): 72 horas con alguna critica y 14 dias
+          # con solo altas. Cuenta desde que se aviso: la apertura de la incidencia o, si la critica aparece
+          # en una incidencia que hasta ahora no tenia ninguna, desde este informe.
+          ahora="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          desde="$ahora"
           if [ -n "$numero" ]; then
-            gh issue edit "$numero" --title "$titulo" --body-file cuerpo.md
-          else
-            gh issue create --title "$titulo" --label imagenes-motores --body-file cuerpo.md
+            read -r abierta titulo_previo < <(gh issue view "$numero" --json createdAt,title --jq '.createdAt + " " + .title')
+            desde="$abierta"
+            if [ "${criticas:-0}" -gt 0 ] && printf '%s' "$titulo_previo" | grep -q ': 0 criticas'; then desde="$ahora"; fi
           fi
+          if [ "${criticas:-0}" -gt 0 ]; then horas=72; gravedad="critica"; else horas=336; gravedad="alta"; fi
+          limite="$(date -u -d "$desde + $horas hours" '+%Y-%m-%d %H:%M UTC')"
+          { printf '**Plazo para desplegar el arreglo: %s** (%s horas desde %s por la gravedad mas alta, %s).\n\n' \
+              "$limite" "$horas" "$desde" "$gravedad"
+            cat cuerpo.md; } > cuerpo-plazo.md
+          if [ -n "$numero" ]; then
+            gh issue edit "$numero" --title "$titulo" --body-file cuerpo-plazo.md
+          else
+            numero="$(gh issue create --title "$titulo" --label imagenes-motores --body-file cuerpo-plazo.md | sed 's|.*/||')"
+          fi
+          gh issue edit "$numero" --add-assignee "$RESPONSABLE" ||
+            echo "::warning::no se pudo asignar la incidencia $numero a $RESPONSABLE (define la variable MANTENIMIENTO_RESPONSABLE)"
