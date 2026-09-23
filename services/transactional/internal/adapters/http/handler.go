@@ -494,12 +494,14 @@ func (h *Handler) SESEvents(w http.ResponseWriter, r *http.Request) {
 	// certificados. Una vez verificada la firma, el TopicArn ya no puede ser otro (va firmado).
 	if env.TopicArn != h.topicARN {
 		h.logger.Warn("transactional: notificacion de un topic no esperado", zap.String("topic", env.TopicArn))
+		h.uc.NoteSESEventRejected(domain.EventRejectTopic)
 		response.ErrForbidden(w, "unexpected topic")
 		return
 	}
 	if err := h.sns.Verify(r.Context(), &env); err != nil {
 		h.logger.Warn("transactional: notificacion SNS rechazada", zap.String("route_tenant", routeTenant.String()),
 			zap.String("sns_message_id", env.MessageID), zap.String("topic", env.TopicArn), zap.Error(err))
+		h.uc.NoteSESEventRejected(domain.EventRejectSignature)
 		response.ErrForbidden(w, "invalid SNS signature")
 		return
 	}
@@ -531,20 +533,24 @@ func (h *Handler) SESEvents(w http.ResponseWriter, r *http.Request) {
 	if errors.Is(err, sns.ErrNotOurs) {
 		h.logger.Warn("transactional: evento de SES sin etiquetas del servicio; se ignora",
 			zap.String("sns_message_id", env.MessageID), zap.Error(err))
+		h.uc.NoteSESEventRejected(domain.EventRejectUntagged)
 		response.JSON(w, http.StatusOK, map[string]string{"status": "ignored"})
 		return
 	}
 	if err != nil {
 		h.logger.Warn("transactional: evento de SES ilegible", zap.String("sns_message_id", env.MessageID), zap.Error(err))
+		h.uc.NoteSESEventRejected(domain.EventRejectUnreadable)
 		response.ErrBadRequest(w, "invalid SES event")
 		return
 	}
 	if routeTenant != uuid.Nil && ev.TenantID != routeTenant {
 		h.logger.Warn("transactional: evento de SES de otra empresa", zap.String("route_tenant", routeTenant.String()),
 			zap.String("event_tenant", ev.TenantID.String()), zap.String("sns_message_id", env.MessageID))
+		h.uc.NoteSESEventRejected(domain.EventRejectTenantMismatch)
 		response.ErrForbidden(w, "tenant mismatch")
 		return
 	}
+	h.uc.NoteSESEvent(ev.Type)
 	tenant := ev.TenantID
 	pool, err := h.tenantDB.ResolveForTenant(r.Context(), tenant.String())
 	if err != nil {

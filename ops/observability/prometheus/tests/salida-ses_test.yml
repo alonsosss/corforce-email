@@ -1,0 +1,147 @@
+# Pruebas de las alertas de la salida por SES (grupo salida-ses).
+#
+# La cuenta pausada avisa, pero no en un entorno sin SES (vigilante apagado: todo a cero); la
+# tasa de rebotes avisa por tramos; los envios sin eventos avisan y con eventos no; el vigilante
+# que deja de leer avisa.
+#
+#   make check-alertas
+
+rule_files:
+  - ../rules/plataforma.yml
+
+evaluation_interval: 1m
+
+tests:
+  # ── Cuenta pausada, con el vigilante leyendo ──────────────────────────────
+  - interval: 1m
+    input_series:
+      - series: 'transactional_ses_account_sending_enabled{job="mail-services",service="transactional"}'
+        values: '0x20'
+      - series: 'transactional_ses_account_last_success_timestamp_seconds{job="mail-services",service="transactional"}'
+        values: '60+60x20'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: EnvioSESPausado
+        exp_alerts:
+          - exp_labels:
+              severidad: critica
+            exp_annotations:
+              resumen: "La cuenta de SES no tiene el envio habilitado"
+              detalle: "SES rechaza todo envio de la plataforma: correo transaccional, avisos (recuperacion de contrasena) y marketing. Revisar en la consola de SES el estado de la cuenta (Account dashboard) y el correo de AWS: una pausa por reputacion exige responder en el caso que abre AWS."
+
+  # ── Entorno sin SES: vigilante apagado, todo a cero, ningun aviso ─────────
+  - interval: 1m
+    input_series:
+      - series: 'transactional_ses_account_sending_enabled{job="mail-services",service="transactional"}'
+        values: '0x60'
+      - series: 'transactional_ses_account_last_success_timestamp_seconds{job="mail-services",service="transactional"}'
+        values: '0x60'
+      - series: 'transactional_ses_account_check_failures_total{job="mail-services",service="transactional"}'
+        values: '0x60'
+    alert_rule_test:
+      - eval_time: 50m
+        alertname: EnvioSESPausado
+        exp_alerts: []
+      - eval_time: 50m
+        alertname: VigilanteSESSinDatos
+        exp_alerts: []
+
+  # ── Rebotes al 3 %: alta; al 4,5 %: critica y no alta ─────────────────────
+  - interval: 1m
+    input_series:
+      - series: 'transactional_ses_reputation_bounce_rate{job="mail-services",service="transactional"}'
+        values: '0.03x30 0.045x30'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: RebotesSESAltos
+        exp_alerts:
+          - exp_labels:
+              severidad: alta
+            exp_annotations:
+              resumen: "La tasa de rebotes de la cuenta de SES es 3%"
+              detalle: "AWS pone la cuenta en revision al 5 %. Ver en reputation que empresa concentra los rebotes (reputation_state_changes_total) y revisar sus listas: una importacion sin doble opt-in es la causa habitual."
+      - eval_time: 45m
+        alertname: RebotesSESAltos
+        exp_alerts: []
+      - eval_time: 45m
+        alertname: RebotesSESCriticos
+        exp_alerts:
+          - exp_labels:
+              severidad: critica
+            exp_annotations:
+              resumen: "La tasa de rebotes de la cuenta de SES es 4.5%"
+              detalle: "A un paso de la revision de AWS (5 %) y de la pausa (10 %). Suspender el marketing de la empresa que concentra los rebotes (reputation) antes de que AWS pause la cuenta entera."
+
+  # ── Envios sin eventos: avisa; con eventos: no ────────────────────────────
+  - interval: 1m
+    input_series:
+      - series: 'transactional_send_attempts_total{job="mail-services",service="transactional",class="transactional",result="sent"}'
+        values: '0+1x180'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: EventosSESSinLlegar
+        exp_alerts:
+          - exp_labels:
+              severidad: alta
+            exp_annotations:
+              resumen: "Hay envios a SES y no llega ningun evento desde hace 2 horas"
+              detalle: "Sin eventos no se registran rebotes ni quejas en suppression. Comprobar la suscripcion (ops/aws/verificar-ses.sh prod), que SES_EVENTS_TOPIC_ARN sea el topic de la pila y transactional_ses_events_rejected_total{reason}: topic o signature apuntan a un topic mal fijado."
+  - interval: 1m
+    input_series:
+      - series: 'transactional_send_attempts_total{job="mail-services",service="transactional",class="transactional",result="sent"}'
+        values: '0+1x180'
+      - series: 'transactional_ses_events_total{job="mail-services",service="transactional",type="delivery"}'
+        values: '0+1x180'
+    alert_rule_test:
+      - eval_time: 60m
+        alertname: EventosSESSinLlegar
+        exp_alerts: []
+
+  # ── Throttling sostenido: mas del 10 % de los intentos fallan ─────────────
+  - interval: 1m
+    input_series:
+      - series: 'transactional_send_attempts_total{job="mail-services",service="transactional",class="transactional",result="sent"}'
+        values: '0+8x60'
+      - series: 'transactional_send_attempts_total{job="mail-services",service="transactional",class="transactional",result="throttled"}'
+        values: '0+2x60'
+    alert_rule_test:
+      - eval_time: 45m
+        alertname: EnviosSESFallando
+        exp_alerts:
+          - exp_labels:
+              severidad: alta
+            exp_annotations:
+              resumen: "Falla el 20% de los intentos de envio a SES"
+              detalle: "transactional_send_attempts_total{result} dice que pasa: throttled (la tasa supera la cuota: bajar SES_MAX_SEND_RATE), paused (la cuenta esta pausada), permanent (identidad o remitente no verificado, credencial) o transient (red o SES). El registro de transactional da el codigo de SES."
+
+  # ── El vigilante leyo y dejo de leer ──────────────────────────────────────
+  - interval: 1m
+    input_series:
+      - series: 'transactional_ses_account_last_success_timestamp_seconds{job="mail-services",service="transactional"}'
+        values: '60x60'
+    alert_rule_test:
+      - eval_time: 40m
+        alertname: VigilanteSESSinDatos
+        exp_alerts:
+          - exp_labels:
+              severidad: media
+            exp_annotations:
+              resumen: "transactional no puede leer el estado de la cuenta de SES"
+              detalle: "Sin esa lectura no avisan EnvioSESPausado ni las alertas de reputacion. El registro de transactional (no se pudo leer el estado de la cuenta de SES) da el error: AccessDenied es la politica core-force-mail-ses-envio de ops/aws/setup-iam.sh (ses:GetAccount, cloudwatch:GetMetricData)."
+
+  # ── El vigilante nunca pudo leer (permiso denegado desde el arranque) ─────
+  - interval: 1m
+    input_series:
+      - series: 'transactional_ses_account_last_success_timestamp_seconds{job="mail-services",service="transactional"}'
+        values: '0x60'
+      - series: 'transactional_ses_account_check_failures_total{job="mail-services",service="transactional"}'
+        values: '0+1x60'
+    alert_rule_test:
+      - eval_time: 40m
+        alertname: VigilanteSESSinDatos
+        exp_alerts:
+          - exp_labels:
+              severidad: media
+            exp_annotations:
+              resumen: "transactional no puede leer el estado de la cuenta de SES"
+              detalle: "Sin esa lectura no avisan EnvioSESPausado ni las alertas de reputacion. El registro de transactional (no se pudo leer el estado de la cuenta de SES) da el error: AccessDenied es la politica core-force-mail-ses-envio de ops/aws/setup-iam.sh (ses:GetAccount, cloudwatch:GetMetricData)."

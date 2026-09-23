@@ -51,6 +51,8 @@ type Deps struct {
 	Links     *domain.LinkSigner
 	Config    Config
 	Logger    *zap.Logger
+	// Metrics es opcional; nil no cuenta nada.
+	Metrics ports.Metrics
 	// Now permite fijar el reloj en pruebas; nil usa time.Now.
 	Now func() time.Time
 }
@@ -62,6 +64,7 @@ type UseCase struct {
 	templates   ports.TemplateRenderer
 	reputation  ports.ReputationClient
 	lanes       map[string]Lane
+	metrics     ports.Metrics
 	links       *domain.LinkSigner
 	cfg         Config
 	logger      *zap.Logger
@@ -76,6 +79,10 @@ func New(d Deps) *UseCase {
 	if d.Config.Source == "" {
 		d.Config.Source = "transactional"
 	}
+	metrics := d.Metrics
+	if metrics == nil {
+		metrics = noopMetrics{}
+	}
 	return &UseCase{
 		repo:        d.Repo,
 		events:      d.Events,
@@ -86,12 +93,21 @@ func New(d Deps) *UseCase {
 			domain.ClassTransactional: {Sender: d.Sender, Limiter: d.Limiter},
 			domain.ClassMarketing:     d.Marketing,
 		},
-		links:  d.Links,
-		cfg:    d.Config,
-		logger: d.Logger,
-		now:    now,
+		metrics: metrics,
+		links:   d.Links,
+		cfg:     d.Config,
+		logger:  d.Logger,
+		now:     now,
 	}
 }
+
+type noopMetrics struct{}
+
+func (noopMetrics) SendAttempt(string, string)         {}
+func (noopMetrics) SESEvent(string)                    {}
+func (noopMetrics) SESEventRejected(string)            {}
+func (noopMetrics) SESAccount(domain.SESAccountStatus) {}
+func (noopMetrics) SESAccountCheckFailed()             {}
 
 // laneFor devuelve el carril de la clase del mensaje. Una clase sin carril completo es un
 // error de configuracion: el mensaje no sale por el carril de otra clase.

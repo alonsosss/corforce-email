@@ -205,14 +205,18 @@ EOF
 # porque cada empresa verifica su propio dominio en la cuenta y SES solo deja enviar desde
 # una identidad verificada. El conjunto no: lo que sale por otro conjunto sale sin los
 # eventos de la plataforma, y sus rebotes y quejas no llegan a suppression. Ni SendRawEmail
-# ni plantillas de SES: el servicio no los usa.
+# ni plantillas de SES: el servicio no los usa. El vigilante de la cuenta (cuota, pausa y
+# reputacion para las alertas) solo lee: GetAccount y GetMetricData no admiten recurso acotado.
 emit ses-envio <<EOF
 {"Version":"2012-10-17","Statement":[
  {"Sid":"EnviarPorLosConjuntosDeLaPlataforma","Effect":"Allow",
   "Action":"ses:SendEmail",
   "Resource":["arn:aws:ses:${REGION}:${ACC}:identity/*",
               "arn:aws:ses:${REGION}:${ACC}:configuration-set/${SES_SET_TRANSACTIONAL}",
-              "arn:aws:ses:${REGION}:${ACC}:configuration-set/${SES_SET_MARKETING}"]}]}
+              "arn:aws:ses:${REGION}:${ACC}:configuration-set/${SES_SET_MARKETING}"]},
+ {"Sid":"LeerEstadoYReputacionDeLaCuenta","Effect":"Allow",
+  "Action":["ses:GetAccount","cloudwatch:GetMetricData"],
+  "Resource":"*"}]}
 EOF
 
 if [[ -n "$RENDER_DIR" ]]; then

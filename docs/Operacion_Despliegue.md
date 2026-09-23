@@ -603,6 +603,21 @@ buzones dio 500 y `mail-auth` no pudo leer el buzon del remitente de las alertas
   suscripcion confirmada y cada identidad (verificada, DKIM, MAIL FROM, conjunto por defecto), e
   imprime los cuatro valores `SES_*` del ambiente; le basta la politica `observacion`. El plan
   de puesta en marcha y su estado estan en `docs/Plan_SES_Produccion.md`.
+  Endurecimiento (`docs/Plan_SES_Endurecimiento.md`): la suscripcion lleva una politica de entrega
+  con unos 51 minutos de reintentos (SNS no admite mas de 3600 s para HTTPS) y un tope de entregas
+  por segundo (`SES_EVENTS_MAX_PER_SECOND` en `setup-ses.sh`, 50 por defecto), asi que un
+  despliegue o un reinicio no pierde eventos. Las dos rutas de eventos llevan `"limit": "webhook"`
+  en `routes.json`: salen del cupo general por IP del gateway y pasan por
+  `WEBHOOK_RATE_LIMIT_PER_MIN` (6000). El certificado de SNS solo se acepta de la region del topic
+  fijado y una descarga fallida se recuerda 5 minutos. `transactional` publica
+  `transactional_send_attempts_total{class,result}`, `transactional_ses_events_total{type}`,
+  `transactional_ses_events_rejected_total{reason}` y, con el vigilante
+  (`SES_ACCOUNT_MONITOR_INTERVAL`, 5m; 0 lo apaga), el estado de la cuenta y su reputacion
+  (`transactional_ses_account_*`, `transactional_ses_reputation_*`); el vigilante necesita
+  `ses:GetAccount` y `cloudwatch:GetMetricData`, que da la politica `ses-envio`. Las alertas del
+  grupo `salida-ses` (`plataforma.yml`, con sus pruebas en `tests/salida-ses_test.yml`) avisan de
+  la cuenta pausada, rebotes y quejas por debajo de los umbrales de AWS, cuota casi agotada,
+  intentos fallando, envios sin eventos, rechazos sostenidos en la ruta y el vigilante sin datos.
 * Antes y después de recrear, en los dos caminos (`ops/scaffold/check-deploy-preflight.sh`,
   sección 10 de `validate.sh`). Antes: `ops/db/pgbouncer-userlist.sh --ensure` genera el
   `userlist.txt` si falta, porque sin él PgBouncer no arranca, y si no coincide solo avisa:

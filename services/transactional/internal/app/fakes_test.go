@@ -504,6 +504,7 @@ type fixture struct {
 	mSender  *fakeSender
 	mLimiter *fakeLimiter
 	links    *domain.LinkSigner
+	metrics  *fakeMetrics
 	tenant   uuid.UUID
 	now      time.Time
 }
@@ -523,6 +524,7 @@ func newFixture(t *testing.T, cfg Config) *fixture {
 		limiter:  &fakeLimiter{},
 		mSender:  &fakeSender{},
 		mLimiter: &fakeLimiter{},
+		metrics:  &fakeMetrics{},
 		links:    links,
 		tenant:   uuid.New(),
 		now:      time.Date(2026, 9, 12, 12, 0, 0, 0, time.UTC),
@@ -530,7 +532,7 @@ func newFixture(t *testing.T, cfg Config) *fixture {
 	f.deps = Deps{
 		Repo: f.repo, Events: f.repo, Suppression: f.supp, Templates: f.tpl, Reputation: f.rep,
 		Sender: f.sender, Limiter: f.limiter, Marketing: Lane{Sender: f.mSender, Limiter: f.mLimiter},
-		Links: links, Config: cfg, Logger: zap.NewNop(),
+		Links: links, Config: cfg, Logger: zap.NewNop(), Metrics: f.metrics,
 		Now: func() time.Time { return f.now },
 	}
 	f.uc = New(f.deps)
@@ -550,3 +552,30 @@ func fastRetries(t *testing.T) {
 	transientRetryDelays = []time.Duration{time.Millisecond, time.Millisecond, time.Millisecond}
 	t.Cleanup(func() { transientRetryDelays = saved })
 }
+
+type fakeMetrics struct {
+	mu       sync.Mutex
+	attempts []string
+	events   []string
+	rejected []string
+	accounts []domain.SESAccountStatus
+	failures int
+}
+
+func (m *fakeMetrics) SendAttempt(class, result string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.attempts = append(m.attempts, class+"/"+result)
+}
+func (m *fakeMetrics) SESEvent(t string) { m.mu.Lock(); m.events = append(m.events, t); m.mu.Unlock() }
+func (m *fakeMetrics) SESEventRejected(r string) {
+	m.mu.Lock()
+	m.rejected = append(m.rejected, r)
+	m.mu.Unlock()
+}
+func (m *fakeMetrics) SESAccount(s domain.SESAccountStatus) {
+	m.mu.Lock()
+	m.accounts = append(m.accounts, s)
+	m.mu.Unlock()
+}
+func (m *fakeMetrics) SESAccountCheckFailed() { m.mu.Lock(); m.failures++; m.mu.Unlock() }

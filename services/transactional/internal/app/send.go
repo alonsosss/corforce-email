@@ -51,7 +51,7 @@ func (uc *UseCase) SendQueued(ctx context.Context, tenantID, messageID uuid.UUID
 		}
 
 		email := uc.outgoing(msg)
-		providerID, sendErr := uc.sendWithRetries(ctx, lane, email)
+		providerID, sendErr := uc.sendWithRetries(ctx, domain.ClassOrDefault(msg.Class), lane, email)
 		if sendErr == nil {
 			sentAt := uc.now()
 			if err := uc.repo.MarkSent(ctx, tenantID, msg.ID, providerID, sentAt); err != nil {
@@ -131,7 +131,7 @@ func (uc *UseCase) failMessage(ctx context.Context, tenantID uuid.UUID, msg *dom
 
 // sendWithRetries respeta el limitador de tasa del carril en cada intento y repite solo
 // los fallos transitorios, con una espera corta entre ellos.
-func (uc *UseCase) sendWithRetries(ctx context.Context, lane Lane, email domain.OutgoingEmail) (string, error) {
+func (uc *UseCase) sendWithRetries(ctx context.Context, class string, lane Lane, email domain.OutgoingEmail) (string, error) {
 	var lastErr error
 	for attempt := 0; attempt <= len(transientRetryDelays); attempt++ {
 		if attempt > 0 {
@@ -147,6 +147,7 @@ func (uc *UseCase) sendWithRetries(ctx context.Context, lane Lane, email domain.
 			return "", err
 		}
 		id, err := lane.Sender.Send(ctx, email)
+		uc.metrics.SendAttempt(class, domain.SendResult(err))
 		if err == nil {
 			return id, nil
 		}

@@ -44,25 +44,35 @@ type Options struct {
 }
 
 func New(ctx context.Context, opt Options) (*Sender, error) {
+	cfg, err := loadConfig(ctx, opt)
+	if err != nil {
+		return nil, err
+	}
+	// El SDK reintenta por su cuenta; aqui se desactiva para que la clasificacion y el
+	// backoff los gobierne el worker con el limitador de tasa.
+	cfg.RetryMaxAttempts = 1
+	return &Sender{client: sesv2.NewFromConfig(cfg), configSet: opt.ConfigurationSet}, nil
+}
+
+// loadConfig arma la configuracion de AWS con la region y, si se dieron, las claves estaticas;
+// sin claves usa la cadena del host (rol IAM en EC2).
+func loadConfig(ctx context.Context, opt Options) (aws.Config, error) {
 	if opt.Region == "" {
-		return nil, errors.New("SES_REGION es obligatoria")
+		return aws.Config{}, errors.New("SES_REGION es obligatoria")
 	}
 	loaders := []func(*config.LoadOptions) error{config.WithRegion(opt.Region)}
 	if opt.AccessKeyID != "" || opt.SecretAccessKey != "" {
 		if opt.AccessKeyID == "" || opt.SecretAccessKey == "" {
-			return nil, errors.New("SES_ACCESS_KEY_ID y SES_SECRET_ACCESS_KEY deben definirse juntas")
+			return aws.Config{}, errors.New("SES_ACCESS_KEY_ID y SES_SECRET_ACCESS_KEY deben definirse juntas")
 		}
 		loaders = append(loaders, config.WithCredentialsProvider(
 			credentials.NewStaticCredentialsProvider(opt.AccessKeyID, opt.SecretAccessKey, "")))
 	}
 	cfg, err := config.LoadDefaultConfig(ctx, loaders...)
 	if err != nil {
-		return nil, fmt.Errorf("configurar AWS: %w", err)
+		return aws.Config{}, fmt.Errorf("configurar AWS: %w", err)
 	}
-	// El SDK reintenta por su cuenta; aqui se desactiva para que la clasificacion y el
-	// backoff los gobierne el worker con el limitador de tasa.
-	cfg.RetryMaxAttempts = 1
-	return &Sender{client: sesv2.NewFromConfig(cfg), configSet: opt.ConfigurationSet}, nil
+	return cfg, nil
 }
 
 // OptionsFromEnv lee las variables del entorno.

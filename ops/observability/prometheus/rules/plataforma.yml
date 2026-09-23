@@ -616,3 +616,114 @@ groups:
         annotations:
           resumen: "audit descarto eventos del bus sin guardarlos en el rastro"
           detalle: "El registro de audit (evento sin apunte) da el tipo, el emisor y el id de cada evento. reason=no_tenant: quien lo publica no puso empresa en el sobre, un fallo del emisor a corregir; reason=unknown_tenant: la empresa ya no existe en el registro."
+
+  # Salida por Amazon SES (docs/Plan_SES_Endurecimiento.md, fase B). El estado de la cuenta lo
+  # lee el vigilante de transactional (SES_ACCOUNT_MONITOR_INTERVAL); con el vigilante apagado sus
+  # series quedan a cero y la marca de la ultima lectura tambien, asi que las alertas de la
+  # cuenta exigen que haya habido una lectura (last_success > 0) para no avisar en un entorno sin
+  # SES. Los umbrales quedan por debajo de los de AWS: revisa la cuenta con 5 % de rebotes o 0,1 %
+  # de quejas y la pausa con 10 % o 0,5 %.
+  - name: salida-ses
+    rules:
+      - alert: EnvioSESPausado
+        expr: |
+          max(transactional_ses_account_sending_enabled) == 0
+            and on () max(transactional_ses_account_last_success_timestamp_seconds) > 0
+        for: 5m
+        labels:
+          severidad: critica
+        annotations:
+          resumen: "La cuenta de SES no tiene el envio habilitado"
+          detalle: "SES rechaza todo envio de la plataforma: correo transaccional, avisos (recuperacion de contrasena) y marketing. Revisar en la consola de SES el estado de la cuenta (Account dashboard) y el correo de AWS: una pausa por reputacion exige responder en el caso que abre AWS."
+
+      - alert: RebotesSESAltos
+        expr: max(transactional_ses_reputation_bounce_rate) >= 0.02 and max(transactional_ses_reputation_bounce_rate) < 0.04
+        for: 15m
+        labels:
+          severidad: alta
+        annotations:
+          resumen: "La tasa de rebotes de la cuenta de SES es {{ $value | humanizePercentage }}"
+          detalle: "AWS pone la cuenta en revision al 5 %. Ver en reputation que empresa concentra los rebotes (reputation_state_changes_total) y revisar sus listas: una importacion sin doble opt-in es la causa habitual."
+
+      - alert: RebotesSESCriticos
+        expr: max(transactional_ses_reputation_bounce_rate) >= 0.04
+        for: 5m
+        labels:
+          severidad: critica
+        annotations:
+          resumen: "La tasa de rebotes de la cuenta de SES es {{ $value | humanizePercentage }}"
+          detalle: "A un paso de la revision de AWS (5 %) y de la pausa (10 %). Suspender el marketing de la empresa que concentra los rebotes (reputation) antes de que AWS pause la cuenta entera."
+
+      - alert: QuejasSESAltas
+        expr: max(transactional_ses_reputation_complaint_rate) >= 0.0005 and max(transactional_ses_reputation_complaint_rate) < 0.0008
+        for: 15m
+        labels:
+          severidad: alta
+        annotations:
+          resumen: "La tasa de quejas de la cuenta de SES es {{ $value | humanizePercentage }}"
+          detalle: "AWS pone la cuenta en revision al 0,1 %. Las quejas casi siempre son marketing a destinatarios que no lo pidieron: revisar la empresa y la campana en reputation."
+
+      - alert: QuejasSESCriticas
+        expr: max(transactional_ses_reputation_complaint_rate) >= 0.0008
+        for: 5m
+        labels:
+          severidad: critica
+        annotations:
+          resumen: "La tasa de quejas de la cuenta de SES es {{ $value | humanizePercentage }}"
+          detalle: "A un paso de la revision de AWS (0,1 %). Suspender el marketing de la empresa responsable antes de que AWS pause la cuenta entera."
+
+      - alert: CuotaSESCasiAgotada
+        expr: |
+          max(transactional_ses_account_sent_last_24h)
+            / (max(transactional_ses_account_max_24h_send) > 0) >= 0.8
+        for: 10m
+        labels:
+          severidad: media
+        annotations:
+          resumen: "Se uso el {{ $value | humanizePercentage }} de la cuota diaria de SES"
+          detalle: "Lo que no quepa en la cuota se reintenta y llega tarde. Pedir a AWS mas cuota (Service Quotas, Sending quota) o repartir el marketing en mas dias."
+
+      - alert: EnviosSESFallando
+        expr: |
+          sum(rate(transactional_send_attempts_total{result!="sent"}[15m]))
+            / (sum(rate(transactional_send_attempts_total[15m])) > 0) > 0.1
+        for: 15m
+        labels:
+          severidad: alta
+        annotations:
+          resumen: "Falla el {{ $value | humanizePercentage }} de los intentos de envio a SES"
+          detalle: "transactional_send_attempts_total{result} dice que pasa: throttled (la tasa supera la cuota: bajar SES_MAX_SEND_RATE), paused (la cuenta esta pausada), permanent (identidad o remitente no verificado, credencial) o transient (red o SES). El registro de transactional da el codigo de SES."
+
+      - alert: EventosSESSinLlegar
+        expr: |
+          sum(increase(transactional_send_attempts_total{result="sent"}[2h])) > 0
+            unless on () sum(increase(transactional_ses_events_total[2h])) > 0
+        for: 15m
+        labels:
+          severidad: alta
+        annotations:
+          resumen: "Hay envios a SES y no llega ningun evento desde hace 2 horas"
+          detalle: "Sin eventos no se registran rebotes ni quejas en suppression. Comprobar la suscripcion (ops/aws/verificar-ses.sh prod), que SES_EVENTS_TOPIC_ARN sea el topic de la pila y transactional_ses_events_rejected_total{reason}: topic o signature apuntan a un topic mal fijado."
+
+      - alert: EventosSESRechazados
+        expr: sum by (reason) (rate(transactional_ses_events_rejected_total{reason=~"topic|signature"}[15m])) > 0.1
+        for: 15m
+        labels:
+          severidad: media
+        annotations:
+          resumen: "La ruta de eventos de SES rechaza notificaciones ({{ $labels.reason }})"
+          detalle: "Mas de 6 por minuto sostenidas. Si coincide con EventosSESSinLlegar, el topic fijado en SES_EVENTS_TOPIC_ARN no es el de la pila; si no, alguien envia sobres falsos a la ruta publica y el gateway los frena con WEBHOOK_RATE_LIMIT_PER_MIN."
+
+      - alert: VigilanteSESSinDatos
+        expr: |
+          (max(transactional_ses_account_last_success_timestamp_seconds) > 0
+            and on () time() - max(transactional_ses_account_last_success_timestamp_seconds) > 1200)
+          or on ()
+          (sum(increase(transactional_ses_account_check_failures_total[30m])) >= 5
+            and on () time() - max(transactional_ses_account_last_success_timestamp_seconds) > 1200)
+        for: 5m
+        labels:
+          severidad: media
+        annotations:
+          resumen: "transactional no puede leer el estado de la cuenta de SES"
+          detalle: "Sin esa lectura no avisan EnvioSESPausado ni las alertas de reputacion. El registro de transactional (no se pudo leer el estado de la cuenta de SES) da el error: AccessDenied es la politica core-force-mail-ses-envio de ops/aws/setup-iam.sh (ses:GetAccount, cloudwatch:GetMetricData)."

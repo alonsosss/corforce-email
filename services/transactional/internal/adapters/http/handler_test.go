@@ -43,7 +43,16 @@ type testServer struct {
 	key     *rsa.PrivateKey
 	links   *domain.LinkSigner
 	fetched []string
+	metrics *recordingMetrics
 }
+
+type recordingMetrics struct{ rejected, events []string }
+
+func (m *recordingMetrics) SendAttempt(string, string)         {}
+func (m *recordingMetrics) SESEvent(t string)                  { m.events = append(m.events, t) }
+func (m *recordingMetrics) SESEventRejected(r string)          { m.rejected = append(m.rejected, r) }
+func (m *recordingMetrics) SESAccount(domain.SESAccountStatus) {}
+func (m *recordingMetrics) SESAccountCheckFailed()             {}
 
 // newTestServer arma el handler sin base de datos: las rutas que se prueban aqui
 // deciden antes de resolver la empresa (firma, enlace, coherencia de empresa).
@@ -64,7 +73,7 @@ func newTestServer(t *testing.T, topicARN string) *testServer {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ts := &testServer{key: key, links: links}
+	ts := &testServer{key: key, links: links, metrics: &recordingMetrics{}}
 	verifier := sns.NewVerifierWithFetcher(func(_ context.Context, u string) ([]byte, error) {
 		ts.fetched = append(ts.fetched, u)
 		if u == certURL {
@@ -72,7 +81,7 @@ func newTestServer(t *testing.T, topicARN string) *testServer {
 		}
 		return nil, errors.New("no servido")
 	})
-	uc := app.New(app.Deps{Links: links, Logger: zap.NewNop()})
+	uc := app.New(app.Deps{Links: links, Logger: zap.NewNop(), Metrics: ts.metrics})
 	ts.handler = NewHandler(Deps{UC: uc, Perms: allowAll{}, SNS: verifier, TopicARN: topicARN, Logger: zap.NewNop()}).Routes()
 	return ts
 }
@@ -411,6 +420,25 @@ func TestSESEventsIgnoraEventoSinEtiquetasDelServicio(t *testing.T) {
 	rec := ts.do(nethttp.MethodPost, "/api/v1/public/transactional/ses-events", "text/plain", marshal(t, e))
 	if rec.Code != nethttp.StatusOK || !strings.Contains(rec.Body.String(), "ignored") {
 		t.Fatalf("evento sin etiquetas: status %d, cuerpo %s", rec.Code, rec.Body.String())
+	}
+	if got := ts.metrics.rejected; len(got) != 1 || got[0] != domain.EventRejectUntagged {
+		t.Fatalf("se cuenta como ignorado sin etiquetas: %v", got)
+	}
+}
+
+// Un topic ajeno y una firma falsa se cuentan: la alerta de rechazos sostenidos los mira.
+func TestSESEventsCuentaLosRechazos(t *testing.T) {
+	ts := newTestServer(t, testTopic)
+	ajeno := sesNotification(uuid.New())
+	ajeno.TopicArn = "arn:aws:sns:us-east-1:123456789012:otro"
+	ts.signEnvelope(t, ajeno)
+	ts.do(nethttp.MethodPost, "/api/v1/public/transactional/ses-events", "text/plain", marshal(t, ajeno))
+	falsa := sesNotification(uuid.New())
+	ts.signEnvelope(t, falsa)
+	falsa.Message = strings.Replace(falsa.Message, "Permanent", "Transient", 1)
+	ts.do(nethttp.MethodPost, "/api/v1/public/transactional/ses-events", "text/plain", marshal(t, falsa))
+	if got := ts.metrics.rejected; len(got) != 2 || got[0] != domain.EventRejectTopic || got[1] != domain.EventRejectSignature {
+		t.Fatalf("rechazos contados: %v", got)
 	}
 }
 

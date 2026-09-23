@@ -60,11 +60,13 @@ que no es publica.
 
 Etiquetas de conjuntos cerrados, nunca datos de fuera:
 
-* `transactional_send_total{class, result}`: `sent`, `transient`, `permanent`, `throttled`, `paused`.
+* `transactional_send_attempts_total{class, result}`, por intento (tambien los reintentos): `sent`,
+  `transient`, `permanent`, `throttled`, `paused`.
 * `transactional_ses_events_total{type}`: `send`, `delivery`, `bounce`, `complaint`, `reject`, ...
 * `transactional_ses_events_rejected_total{reason}`: `topic`, `signature`, `unreadable`, `untagged`,
   `tenant_mismatch`.
-* Estado de la cuenta, leido cada 5 minutos por un vigilante con cerrojo de lider:
+* Estado de la cuenta, leido cada 5 minutos (`SES_ACCOUNT_MONITOR_INTERVAL`; 0 lo apaga) por un
+  vigilante en cada replica, sin cerrojo: son dos lecturas baratas y las alertas toman el maximo:
   `transactional_ses_account_sending_enabled`, `_production_access`, `_max_24h_send`,
   `_sent_last_24h`, `_max_send_rate`, y `transactional_ses_reputation_{bounce,complaint}_rate`
   (metricas `Reputation.BounceRate` y `Reputation.ComplaintRate` de CloudWatch, que SES publica sin
@@ -134,11 +136,11 @@ Solo afecta a marketing.
 
 | Fase | Estado |
 |---|---|
-| A1 Politica de entrega | En curso |
-| A2 Limitador de webhooks | En curso |
-| A3 Verificador de SNS | En curso |
-| B1 Metricas y vigilante | Pendiente |
-| B2 Alertas | Pendiente |
+| A1 Politica de entrega | Hecho (2026-09-23): aplicada en la pila de prod; `EffectiveDeliveryPolicy` con 20 reintentos y 50 entregas por segundo, suscripcion confirmada |
+| A2 Limitador de webhooks | Hecho (2026-09-23): `"limit": "webhook"` y `WEBHOOK_RATE_LIMIT_PER_MIN`, con pruebas |
+| A3 Verificador de SNS | Hecho (2026-09-23): region del topic y cache de fallos acotada, con pruebas |
+| B1 Metricas y vigilante | Hecho (2026-09-23): puerto `Metrics`, adaptador Prometheus, vigilante con GetAccount y CloudWatch; politica `ses-envio` ampliada y aplicada |
+| B2 Alertas | Hecho (2026-09-23): grupo `salida-ses` con 10 alertas y sus pruebas de promtool |
 | C Dominios de empresa en SES | Pendiente |
 | D Dominio de seguimiento | Pendiente |
 | E Limpieza | Pendiente |

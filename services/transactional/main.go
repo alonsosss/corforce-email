@@ -18,6 +18,7 @@ import (
 	handler "github.com/alonsosss/corforce-email/services/transactional/internal/adapters/http"
 	natsadapter "github.com/alonsosss/corforce-email/services/transactional/internal/adapters/nats"
 	"github.com/alonsosss/corforce-email/services/transactional/internal/adapters/postgres"
+	promadapter "github.com/alonsosss/corforce-email/services/transactional/internal/adapters/prometheus"
 	"github.com/alonsosss/corforce-email/services/transactional/internal/adapters/reputationclient"
 	"github.com/alonsosss/corforce-email/services/transactional/internal/adapters/sesclient"
 	"github.com/alonsosss/corforce-email/services/transactional/internal/adapters/sns"
@@ -31,11 +32,12 @@ import (
 )
 
 const (
-	defaultPort              = 8045
-	defaultWorkers           = 4
-	defaultSendRate          = 10.0
-	defaultMarketingWorkers  = 4
-	defaultMarketingSendRate = 10.0
+	defaultPort                   = 8045
+	defaultWorkers                = 4
+	defaultSendRate               = 10.0
+	defaultMarketingWorkers       = 4
+	defaultMarketingSendRate      = 10.0
+	defaultAccountMonitorInterval = 5 * time.Minute
 	// maxWorkers acota cada carril: un trabajador ocupa una conexion del pool de la empresa
 	// (10, pkg/db) mientras envia y la tasa ya la fija SES_MAX_SEND_RATE; mas solo esperan.
 	maxWorkers = 64
@@ -76,6 +78,14 @@ func main() {
 	marketingRate, err := config.EnvFloat("SES_MAX_SEND_RATE_MARKETING", defaultMarketingSendRate, minSendRate, maxSendRate)
 	if err != nil {
 		log.Fatal(err)
+	}
+	// Vigilante del estado de la cuenta de SES (cuota, pausa, reputacion). "0" lo apaga: un
+	// entorno sin SES no debe disparar la alerta de datos viejos.
+	var accountInterval time.Duration
+	if strings.TrimSpace(os.Getenv("SES_ACCOUNT_MONITOR_INTERVAL")) != "0" {
+		if accountInterval, err = config.EnvDuration("SES_ACCOUNT_MONITOR_INTERVAL", defaultAccountMonitorInterval, time.Minute, time.Hour); err != nil {
+			log.Fatal(err)
+		}
 	}
 	// Sin suppression no se encola ningun envio (toda exclusion se respeta antes de encolar), asi
 	// que su URL es obligatoria. Templates y reputation son opcionales: sin ellas fallan o se
@@ -155,8 +165,16 @@ func main() {
 			PlatformFromName:            os.Getenv("PLATFORM_FROM_NAME"),
 			AllowUnverifiedPlatformFrom: strings.EqualFold(os.Getenv("PLATFORM_FROM_ALLOW_UNVERIFIED"), "true"),
 		},
-		Logger: logger,
+		Logger:  logger,
+		Metrics: promadapter.New(),
 	})
+	if accountInterval > 0 {
+		accountReader, err := sesclient.NewAccountReader(ctx, sesOpts)
+		if err != nil {
+			log.Fatalf("configurar el vigilante de SES: %v", err)
+		}
+		go uc.RunSESAccountMonitor(ctx, accountReader, accountInterval)
+	}
 
 	// Sin NATS el API sigue aceptando mensajes: quedan en la outbox y en la cola de la
 	// base hasta que el bus vuelva. Lo que no hay es worker de envio ni proyeccion.

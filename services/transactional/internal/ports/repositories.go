@@ -133,3 +133,18 @@ type TemplateRenderer interface {
 type Sender interface {
 	Send(ctx context.Context, email domain.OutgoingEmail) (providerMessageID string, err error)
 }
+
+// Metrics cuenta lo que hace el servicio con el proveedor. Las etiquetas son de conjuntos
+// cerrados (clase, resultado, tipo de evento, motivo).
+type Metrics interface {
+	SendAttempt(class, result string)
+	SESEvent(eventType string)
+	SESEventRejected(reason string)
+	SESAccount(status domain.SESAccountStatus)
+	SESAccountCheckFailed()
+}
+
+// SESAccountReader lee el estado de la cuenta de SES y su reputacion.
+type SESAccountReader interface {
+	AccountStatus(ctx context.Context) (domain.SESAccountStatus, error)
+}
