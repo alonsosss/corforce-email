@@ -216,6 +216,30 @@ groups:
   # respaldo se ve igual que uno con respaldo hasta el dia que hace falta. Por eso hay dos alertas
   # por trabajo: la de antiguedad no puede sonar si la serie desaparece, porque no hay nada que
   # comparar.
+  # El limite del plan falla hacia el lado ABIERTO a proposito (docs/adr/0010): si no se puede
+  # consultar, el alta sigue sin el. Eso lo hace silencioso, y un BILLING_URL mal puesto o un
+  # billing caido dejarian de limitar a todas las empresas sin que nadie lo note. Estas dos
+  # reglas son las que distinguen "nadie se pasa del plan" de "el plan no esta limitando nada".
+  - name: limites-de-plan
+    rules:
+      - alert: LimitesDePlanSinConfigurar
+        expr: mail_directory_plan_limits_configured == 0
+        for: 15m
+        labels:
+          severidad: alta
+        annotations:
+          resumen: "mail-directory no sabe a quien preguntar los limites del plan"
+          detalle: "Sin BILLING_URL el plan contratado no limita ni los buzones ni el espacio de ninguna empresa: cada administrador puede asignarse el que quiera y solo queda el limite del dominio. Revisar BILLING_URL en el .env del despliegue y recrear mail-directory."
+
+      - alert: LimitesDePlanSinAplicar
+        expr: increase(mail_directory_plan_limit_skipped_total{motivo="unreachable"}[15m]) > 0
+        for: 5m
+        labels:
+          severidad: alta
+        annotations:
+          resumen: "Se estan resolviendo altas sin poder consultar el plan de la empresa"
+          detalle: "billing no responde y las altas de buzon y los cambios de cuota se resuelven sin el limite del plan (se permite y se registra). Revisar billing y la red entre el y mail-directory; mientras tanto una empresa puede pasarse de lo que incluye su plan."
+
   - name: respaldos
     rules:
       - alert: RespaldoSinExitoReciente

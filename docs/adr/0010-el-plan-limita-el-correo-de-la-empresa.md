@@ -43,10 +43,16 @@ Cuatro decisiones que no son evidentes:
    veredicto de `check` para el espacio habría comparado contra un consumo que siempre vale cero, y hacer que
    `billing` lo contara habría exigido meter la cuota en el contrato de los eventos de buzón, con el riesgo de
    deriva y una reconciliación para los buzones ya existentes. Cada servicio aporta lo que de verdad sabe.
-3. **Se falla hacia el lado abierto.** Si `billing` no responde, o la empresa no tiene plan, o el plan no fija ese
-   recurso, no se restringe: se registra el aviso y el alta sigue, con los límites del dominio aplicándose igual.
-   Un `billing` caído no puede dejar a una empresa sin poder dar de alta un buzón. Es el mismo criterio que
-   `reputation` con su derecho mensual, y la exposición es acotada y visible (queda en el registro).
+3. **Se falla hacia el lado abierto, y por eso se vigila.** Si `billing` no responde, o la empresa no tiene plan, o
+   el plan no fija ese recurso, no se restringe: se registra el aviso y el alta sigue, con los límites del dominio
+   aplicándose igual. Un `billing` caído no puede dejar a una empresa sin poder dar de alta un buzón. Es el mismo
+   criterio que `reputation` con su derecho mensual. El precio de esa elección es que **dejar de limitar es
+   silencioso**: un `BILLING_URL` mal puesto no rompe nada y nadie se entera de que el plan ya no limita a nadie.
+   Se cierra con dos señales y sus alertas (`limites-de-plan` en `plataforma.yml`): el indicador
+   `mail_directory_plan_limits_configured`, que se publica al arrancar y descubre la mala configuración sin
+   esperar a que alguien cree un buzón, y el contador `mail_directory_plan_limit_skipped_total{motivo}`, que
+   separa `unreachable` (billing no respondió: se avisa) de `sin_plan` (normal mientras no haya planes: no se
+   avisa).
 4. **Un límite blando no bloquea.** En `billing`, un límite blando es el que se puede exceder facturando el exceso;
    solo el duro rechaza. El espacio ilimitado (cuota 0) no cabe en un plan con espacio acotado, igual que no cabe
    en un dominio con cuota acotada.

@@ -24,6 +24,7 @@ import (
 	handler "github.com/alonsosss/corforce-email/services/mail-directory/internal/adapters/http"
 	outboxadapter "github.com/alonsosss/corforce-email/services/mail-directory/internal/adapters/outbox"
 	"github.com/alonsosss/corforce-email/services/mail-directory/internal/adapters/postgres"
+	prometheusadapter "github.com/alonsosss/corforce-email/services/mail-directory/internal/adapters/prometheus"
 	"github.com/alonsosss/corforce-email/services/mail-directory/internal/adapters/secrets"
 	"github.com/alonsosss/corforce-email/services/mail-directory/internal/app"
 	"github.com/alonsosss/corforce-email/services/mail-directory/internal/domain"
@@ -100,6 +101,8 @@ func main() {
 	// directorio aplica solo los limites del dominio, como antes de que hubiera planes, y lo
 	// avisa al arrancar en vez de negarse a servir.
 	planLimits := billingcli.New(os.Getenv("BILLING_URL"), os.Getenv("INTERNAL_GATEWAY_TOKEN"))
+	metrics := prometheusadapter.New()
+	metrics.PlanLimitsConfigured(planLimits.Configured())
 	if !planLimits.Configured() {
 		logger.Warn("mail-directory: sin BILLING_URL no se aplican los limites del plan a los buzones ni al espacio")
 	}
@@ -132,6 +135,7 @@ func main() {
 		Secrets:             secrets.New(),
 		Events:              outboxadapter.NewPublisher(ctxPool),
 		Plan:                planLimits,
+		Metrics:             metrics,
 		Logger:              logger,
 	})
 

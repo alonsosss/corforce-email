@@ -56,8 +56,10 @@ type Deps struct {
 	Events              ports.EventPublisher
 	// Plan consulta a billing lo que incluye el plan de la empresa. Opcional: sin el, el
 	// directorio aplica solo los limites del dominio, como antes de que hubiera planes.
-	Plan   ports.PlanLimits
-	Logger *zap.Logger
+	Plan ports.PlanLimits
+	// Metrics es opcional: sin ella no se mide nada y todo lo demas funciona igual.
+	Metrics ports.Metrics
+	Logger  *zap.Logger
 }
 
 type UseCase struct {
@@ -88,6 +90,7 @@ type UseCase struct {
 	secrets         ports.Secrets
 	events          ports.EventPublisher
 	plan            ports.PlanLimits
+	metrics         ports.Metrics
 	logger          *zap.Logger
 }
 
@@ -103,7 +106,7 @@ func New(d Deps) *UseCase {
 		tlsPolicies: d.TLSPolicies, recipientMap: d.RecipientMap, bccMaps: d.BCCMaps,
 		senders: d.Senders, retirements: d.Retirements, mtaSTS: d.MTASTS, mtaSTSPublisher: d.MTASTSPublic, mx: d.MX,
 		platformMX: d.PlatformMX, davServerURL: d.DAVServerURL, recreateHold: d.MailboxRecreateHold,
-		secrets: d.Secrets, events: d.Events, plan: d.Plan, logger: logger,
+		secrets: d.Secrets, events: d.Events, plan: d.Plan, metrics: d.Metrics, logger: logger,
 	}
 }
 
@@ -225,13 +228,18 @@ func (uc *UseCase) addressFree(ctx context.Context, tenantID uuid.UUID, address 
 // a una empresa sin poder crear buzones; el limite del dominio se aplica igual.
 func (uc *UseCase) planLimit(ctx context.Context, tenantID uuid.UUID, resource string) domain.PlanLimit {
 	if uc.plan == nil {
+		uc.planSkipped(ports.PlanSkipNoPlan)
 		return domain.PlanLimit{Unknown: true}
 	}
 	allowance, err := uc.plan.Limit(ctx, tenantID, resource)
 	if err != nil {
 		uc.logger.Warn("mail-directory: billing no respondio; se sigue sin el limite del plan",
 			zap.String("tenant_id", tenantID.String()), zap.String("resource", resource), zap.Error(err))
+		uc.planSkipped(ports.PlanSkipUnreachable)
 		return domain.PlanLimit{Unknown: true}
+	}
+	if allowance.Unknown {
+		uc.planSkipped(ports.PlanSkipNoPlan)
 	}
 	return domain.PlanLimit{Included: allowance.Limit, HardLimit: allowance.HardLimit, Unknown: allowance.Unknown}
 }
@@ -242,3 +250,10 @@ const (
 	planResourceMailboxes = "mailboxes"
 	planResourceStorage   = "storage_bytes"
 )
+
+// planSkipped anota que se decidio sin el limite del plan. La metrica es opcional.
+func (uc *UseCase) planSkipped(motivo string) {
+	if uc.metrics != nil {
+		uc.metrics.PlanLimitSkipped(motivo)
+	}
+}

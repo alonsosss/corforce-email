@@ -1204,6 +1204,12 @@ queda el aviso en el registro: el límite del dominio sigue aplicándose. Los pl
 el superadmin por API (`POST /api/v1/billing/plans`, `PUT /api/v1/billing/subscriptions/{empresa}`), nunca una
 migración.
 
+Que el límite **deje de aplicarse** es silencioso por diseño (se falla hacia el lado abierto), así que se vigila:
+`mail_directory_plan_limits_configured` en 0 significa que no hay `BILLING_URL` y el plan no limita a nadie, y
+`mail_directory_plan_limit_skipped_total{motivo="unreachable"}` cuenta las altas resueltas sin poder consultar a
+`billing`. Las dos tienen alerta (grupo `limites-de-plan`). Que exista un plan con `mailboxes` y `storage_bytes`
+fijados es condición para que el límite llegue a aplicarse: hasta entonces no se restringe nada.
+
 
 ### Informes DMARC
 

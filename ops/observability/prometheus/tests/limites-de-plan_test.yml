@@ -1,0 +1,78 @@
+# Pruebas de las alertas del limite del plan (docs/adr/0010). Lo que se vigila es que el
+# limite DEJE de aplicarse: falla hacia el lado abierto, asi que sin estas alertas seria
+# silencioso.
+#
+#   make check-alertas
+
+rule_files:
+  - ../rules/plataforma.yml
+
+evaluation_interval: 1m
+
+tests:
+  # Configurado y sin fallos: nada que avisar.
+  - interval: 1m
+    input_series:
+      - series: 'mail_directory_plan_limits_configured{job="mail-services",instance="mail-directory:8040"}'
+        values: '1x120'
+      - series: 'mail_directory_plan_limit_skipped_total{motivo="unreachable",job="mail-services",instance="mail-directory:8040"}'
+        values: '0x120'
+    alert_rule_test:
+      - eval_time: 90m
+        alertname: LimitesDePlanSinConfigurar
+        exp_alerts: []
+      - eval_time: 90m
+        alertname: LimitesDePlanSinAplicar
+        exp_alerts: []
+
+  # Sin BILLING_URL: el plan no limita a nadie y hay que enterarse.
+  - interval: 1m
+    input_series:
+      - series: 'mail_directory_plan_limits_configured{job="mail-services",instance="mail-directory:8040"}'
+        values: '0x120'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: LimitesDePlanSinConfigurar
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: LimitesDePlanSinConfigurar
+        exp_alerts:
+          - exp_labels:
+              severidad: alta
+              job: mail-services
+              instance: mail-directory:8040
+            exp_annotations:
+              resumen: "mail-directory no sabe a quien preguntar los limites del plan"
+              detalle: "Sin BILLING_URL el plan contratado no limita ni los buzones ni el espacio de ninguna empresa: cada administrador puede asignarse el que quiera y solo queda el limite del dominio. Revisar BILLING_URL en el .env del despliegue y recrear mail-directory."
+
+  # billing caido: las altas se resuelven sin el limite del plan.
+  - interval: 1m
+    input_series:
+      - series: 'mail_directory_plan_limits_configured{job="mail-services",instance="mail-directory:8040"}'
+        values: '1x120'
+      - series: 'mail_directory_plan_limit_skipped_total{motivo="unreachable",job="mail-services",instance="mail-directory:8040"}'
+        values: '0+3x120'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: LimitesDePlanSinAplicar
+        exp_alerts:
+          - exp_labels:
+              severidad: alta
+              motivo: unreachable
+              job: mail-services
+              instance: mail-directory:8040
+            exp_annotations:
+              resumen: "Se estan resolviendo altas sin poder consultar el plan de la empresa"
+              detalle: "billing no responde y las altas de buzon y los cambios de cuota se resuelven sin el limite del plan (se permite y se registra). Revisar billing y la red entre el y mail-directory; mientras tanto una empresa puede pasarse de lo que incluye su plan."
+
+  # Una empresa sin plan es normal mientras no haya planes creados: no avisa.
+  - interval: 1m
+    input_series:
+      - series: 'mail_directory_plan_limits_configured{job="mail-services",instance="mail-directory:8040"}'
+        values: '1x120'
+      - series: 'mail_directory_plan_limit_skipped_total{motivo="sin_plan",job="mail-services",instance="mail-directory:8040"}'
+        values: '0+5x120'
+    alert_rule_test:
+      - eval_time: 60m
+        alertname: LimitesDePlanSinAplicar
+        exp_alerts: []

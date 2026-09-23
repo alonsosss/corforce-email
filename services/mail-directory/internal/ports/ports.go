@@ -305,3 +305,22 @@ type PlanAllowance struct {
 type PlanLimits interface {
 	Limit(ctx context.Context, tenantID uuid.UUID, resource string) (PlanAllowance, error)
 }
+
+// Motivos por los que un alta se resuelve sin aplicar el limite del plan. Conjunto cerrado:
+// son etiquetas de metrica.
+const (
+	// PlanSkipUnreachable: billing no respondio. Es el caso que hay que vigilar.
+	PlanSkipUnreachable = "unreachable"
+	// PlanSkipNoPlan: la empresa no tiene plan o su plan no fija ese recurso. Es normal
+	// mientras no haya planes creados.
+	PlanSkipNoPlan = "sin_plan"
+)
+
+// Metrics son las metricas propias del directorio. Opcional: sin ella no se mide nada y
+// todo lo demas funciona igual.
+type Metrics interface {
+	// PlanLimitsConfigured publica si hay a quien preguntar los limites del plan.
+	PlanLimitsConfigured(ok bool)
+	// PlanLimitSkipped cuenta una decision tomada sin el limite del plan.
+	PlanLimitSkipped(motivo string)
+}
