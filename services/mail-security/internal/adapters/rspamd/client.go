@@ -313,6 +313,7 @@ func (c *Client) Check(ctx context.Context, msg []byte) (domain.SpamCheckResult,
 	req.Header.Set("Content-Type", "message/rfc822")
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Flags", "no_log,no_stat")
+	req.Header.Set("Settings", contentOnlySettings)
 	resp, err := c.check.Do(req)
 	if err != nil {
 		return domain.SpamCheckResult{}, fmt.Errorf("%w: controller de rspamd: %w", domain.ErrEngineUnreachable, err)
@@ -342,6 +343,15 @@ func (c *Client) Check(ctx context.Context, msg []byte) (domain.SpamCheckResult,
 	}
 	return raw.toDomain(), nil
 }
+
+// contentOnlySettings deja fuera de la puntuacion de una plantilla lo que depende del camino de
+// entrega y no del contenido: el mensaje se construye para puntuarlo, no llega de ningun servidor
+// ni va firmado. Sin esto, HFILTER_HOSTNAME_UNKNOWN (8,5), DMARC_POLICY_QUARANTINE (8, sin la firma
+// DKIM que pone SES) y MIME_FROM_MX_NONE (4) daban "reject" a cualquier correo correcto (medido en
+// produccion: 20,79 -> 0,19 con el mismo mensaje). Quedan el bayesiano, las listas de URL, el
+// fuzzy y las reglas de contenido y de cabeceras del mensaje.
+const contentOnlySettings = `{"groups_disabled":["hfilter","policies"],` +
+	`"symbols_disabled":["MIME_FROM_MX_NONE","MX_INVALID","MX_MISSING","ONCE_RECEIVED","RCVD_COUNT_ZERO","RCVD_NO_TLS_LAST"]}`
 
 // checkResponse es la parte de la respuesta de /checkv2 que se lee.
 type checkResponse struct {

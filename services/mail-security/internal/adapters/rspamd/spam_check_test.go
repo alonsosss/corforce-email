@@ -2,10 +2,12 @@ package rspamd
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -32,7 +34,7 @@ const mimePlantilla = "From: Acme <ventas@acme.test>\r\nTo: cliente@ejemplo.org\
 	"Content-Type: text/html; charset=utf-8\r\n\r\n<p>Visita <a href=\"https://bit.ly/x\">la tienda</a></p>\r\n"
 
 type escaneo struct {
-	method, path, rawQuery, password, flags, queueID, contentType, body string
+	method, path, rawQuery, password, flags, queueID, contentType, settings, body string
 }
 
 func rspamdQuePuntua(t *testing.T, status int, reply string) (*Client, *[]escaneo) {
@@ -41,7 +43,7 @@ func rspamdQuePuntua(t *testing.T, status int, reply string) (*Client, *[]escane
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		seen = append(seen, escaneo{method: r.Method, path: r.URL.Path, rawQuery: r.URL.RawQuery, password: r.Header.Get("Password"),
-			flags: r.Header.Get("Flags"), queueID: r.Header.Get("Queue-Id"), contentType: r.Header.Get("Content-Type"), body: string(body)})
+			flags: r.Header.Get("Flags"), queueID: r.Header.Get("Queue-Id"), contentType: r.Header.Get("Content-Type"), settings: r.Header.Get("Settings"), body: string(body)})
 		w.WriteHeader(status)
 		_, _ = w.Write([]byte(reply))
 	}))
@@ -68,6 +70,18 @@ func TestLaPuntuacionUsaCheckv2ConLaContrasenaDeLecturaYSinDejarHuella(t *testin
 	// Sin Queue-Id el bayesiano no aprende solo; no_log y no_stat lo dejan fuera del historial y de /stat.
 	if req.queueID != "" || !strings.Contains(req.flags, "no_log") || !strings.Contains(req.flags, "no_stat") {
 		t.Fatalf("huella: queue-id %q flags %q", req.queueID, req.flags)
+	}
+	// La puntuacion es del contenido: el camino de entrega (hfilter, SPF/DKIM/DMARC, MX, Received) no
+	// existe en un mensaje construido para puntuarlo.
+	var settings struct {
+		Groups  []string `json:"groups_disabled"`
+		Symbols []string `json:"symbols_disabled"`
+	}
+	if err := json.Unmarshal([]byte(req.settings), &settings); err != nil {
+		t.Fatalf("Settings no es JSON: %q", req.settings)
+	}
+	if !slices.Contains(settings.Groups, "hfilter") || !slices.Contains(settings.Groups, "policies") || !slices.Contains(settings.Symbols, "MIME_FROM_MX_NONE") {
+		t.Fatalf("Settings: %+v", settings)
 	}
 	if got.Score.String() != "6.92" || got.Required.String() != "15" || got.Action != "no action" {
 		t.Fatalf("veredicto: %s %s %s", got.Score, got.Required, got.Action)

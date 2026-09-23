@@ -809,7 +809,11 @@ escritura), asi que no hace falta abrir el worker normal (11333). Se manda sin `
 aprendizaje automatico del bayesiano lo exige, `require_queue_id` de `lua_bayes_learn`), con
 `Flags: no_log,no_stat` (ni historial `history_redis`, ni registro del motor, ni contadores de `/stat`)
 y sin sobre SMTP: la regla `QUARANTINE` de `/pipe` puede dispararse, pero llega con `rcpt` `unknown` y no
-guarda nada. Plazo de 8 s, por debajo del `task_timeout` de 30 s de `options.inc`.
+guarda nada. Plazo de 8 s, por debajo del `task_timeout` de 30 s de `options.inc`. Con `Settings` se
+desactivan los grupos `hfilter` y `policies` (SPF, DKIM, DMARC, ARC) y los simbolos de MX y de
+`Received`: el mensaje se construye para puntuarlo, no llega de ningun servidor ni va firmado, y sin eso
+cualquier plantilla correcta salia con `reject` (medido en produccion el 2026-09-23: 20,79 con
+`HFILTER_HOSTNAME_UNKNOWN`, `DMARC_POLICY_QUARANTINE` y `MIME_FROM_MX_NONE`; 0,19 con `Settings`).
 
 `pushover` no se migra.
 

@@ -167,6 +167,10 @@ ilegible) y `503 NOT_CONFIGURED` (sin `RSPAMD_CONTROLLER_PASSWORD` o rechazada).
 controller: Rspamd 4.1.4 lo atiende con la contrasena de lectura, sin variable nueva. Plazo de 8 s. Sin
 usuario, la ruta no pasa por el filtro de celda (la empresa en `X-Tenant-ID`, si la manda, se ignora): no
 toca datos de ninguna empresa. Comparte el limite de 120 peticiones por minuto e IP del servicio.
+La puntuacion es solo del contenido: la peticion lleva `Settings` sin `hfilter`, `policies` ni los
+simbolos de MX y `Received`, que dependen del camino de entrega (el envio real por SES va firmado con
+DKIM y sale de servidores con nombre); medido en produccion, un correo correcto pasaba de 20,79
+(`reject`) a 0,19.
 Contrato con los motores en `deploy/mail/README.md` (Controller de Rspamd).
 
 ## 5. Imagenes servidas por el gateway
