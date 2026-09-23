@@ -31,6 +31,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY settings.conf /etc/rspamd/settings.conf
 COPY set_worker_password.sh /set_worker_password.sh
+COPY controller-password.sh /controller-password.sh
 COPY docker-entrypoint.sh /docker-entrypoint.sh
 
 ENTRYPOINT ["/docker-entrypoint.sh"]

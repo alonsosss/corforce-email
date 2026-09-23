@@ -87,7 +87,7 @@ en() { local s="$1"; shift; docker exec -i "$(c "$s")" "$@"; }
 compose() {
   CELL_DB_PASSWORD="${CELL_PASS}" MAIL_DB_PASSWORD="$MAIL_DB_PASS" MAIL_REDIS_PASSWORD="$MAIL_REDIS_PASS" \
     DOVECOT_MASTER_USER="${MASTER_USER}" DOVECOT_MASTER_PASS="$MASTER_PASS" DOVEADM_API_KEY="${DOVEADM_KEY}" QUEUE_AGENT_API_KEY="${QUEUE_KEY}" \
-    RSPAMD_CONTROLLER_PASSWORD="${RSPAMD_PASS}" \
+    RSPAMD_CONTROLLER_PASSWORD="${RSPAMD_PASS}" RSPAMD_CONTROLLER_ENABLE_PASSWORD="${RSPAMD_LEARN_PASS}" \
     MAIL_MIGRATION_RUNNER_KEY="${MIGRATION_KEY}" DOVECOT_MIGRATION_MASTER_USER="${MIGRATION_MASTER_USER}" DOVECOT_MIGRATION_MASTER_PASS="${MIGRATION_MASTER_PASS}" \
     E2E_PORT_MAIL_MIGRATION_RUNNER="$MIGRATION_RUNNER_PORT" \
     docker compose -p "$PROYECTO" -f "$MAILDIR/docker-compose.mail.yml" -f "$MAILDIR/docker-compose.e2e.yml" "$@"
@@ -188,12 +188,11 @@ MASTER_PASS="$(rand_hex 24)"
 DOVEADM_KEY="$(rand_hex 32)"
 # Clave del agente de la cola de Postfix: la reciben Postfix y mail-security (gestor de cola).
 QUEUE_KEY="$(rand_hex 32)"
-# Contrasena del controller de Rspamd: la lee Rspamd de worker-controller-password.inc (fichero ignorado por
-# git que su entrypoint solo crea si falta; aqui se escribe en la COPIA de deploy/mail) y mail-security la
-# manda en la cabecera Password para entrenar y para la lectura del superadmin (estadisticas e historial).
-# En claro a proposito: Rspamd la admite asi (con un aviso) y la prueba no la conserva.
-RSPAMD_PASS="$(rand_hex 24)"
-printf 'password = "%s";\n' "$RSPAMD_PASS" > "$MAILDIR/rspamd/override.d/worker-controller-password.inc"
+# Contrasenas del controller de Rspamd, como en produccion: las reciben rspamd-mail (que al arrancar guarda
+# solo sus hashes, rspamd/controller-password.sh) y mail-security. La de lectura sirve la pantalla del
+# superadmin; la de escritura, el aprendizaje desde la cuarentena.
+RSPAMD_PASS="$(rand_hex 32)"
+RSPAMD_LEARN_PASS="$(rand_hex 32)"
 # Clave del ejecutor de migracion (la reciben mail-migration y el ejecutor) y usuario maestro de Dovecot
 # propio de la migracion (Dovecot y el ejecutor), distinto del del webmail.
 MIGRATION_KEY="$(rand_hex 32)"
@@ -1445,6 +1444,26 @@ expect "ni el historial" "$AS_CODE" "403"
 # superadmin no la ha abierto a nadie. Rspamd responde 401 o 403 segun la version.
 AS_SIN_CLAVE=$(en rspamd-mail wget -q -O /dev/null -S "http://$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$(c rspamd-mail)"):11334/stat" 2>&1 | awk '/HTTP\// { print $2; exit }')
 [[ "$AS_SIN_CLAVE" == 401 || "$AS_SIN_CLAVE" == 403 ]] && ok "el controller sigue exigiendo contrasena fuera del bucle local ($AS_SIN_CLAVE)" || mal "controller sin contrasena: '$AS_SIN_CLAVE'"
+# Una contrasena por permiso: la de lectura lee y no puede entrenar a Rspamd; la de escritura si. Rspamd deja
+# que la lectura escriba si falta enable_password, asi que esto prueba que el arranque la pone.
+controller_codigo() { # controller_codigo <contrasena> <ruta> [cuerpo]: codigo HTTP desde fuera del bucle local
+  local ip; ip="$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$(c rspamd-mail)")"
+  en rspamd-mail wget -q -O /dev/null -S --header "Password: $1" ${3:+--post-data "$3"} "http://$ip:11334$2" 2>&1 |
+    awk '/HTTP\// { print $2; exit }'
+}
+MENSAJE_APRENDER=$'From: e2e@acme.test\r\nTo: ana@acme.test\r\nSubject: aprendizaje\r\n\r\nmensaje de prueba del aprendizaje'
+expect "la contrasena de lectura lee las estadisticas" "$(controller_codigo "$RSPAMD_PASS" /stat)" "200"
+AS_APRENDE_LECTURA="$(controller_codigo "$RSPAMD_PASS" /learnspam "$MENSAJE_APRENDER")"
+[[ "$AS_APRENDE_LECTURA" == 401 || "$AS_APRENDE_LECTURA" == 403 ]] && ok "y no puede entrenar a Rspamd ($AS_APRENDE_LECTURA)" ||
+  mal "la contrasena de lectura entrena a Rspamd: '$AS_APRENDE_LECTURA'"
+AS_APRENDE_ESCRITURA="$(controller_codigo "$RSPAMD_LEARN_PASS" /learnspam "$MENSAJE_APRENDER")"
+[[ -n "$AS_APRENDE_ESCRITURA" && "$AS_APRENDE_ESCRITURA" != 401 && "$AS_APRENDE_ESCRITURA" != 403 ]] &&
+  ok "la de escritura si esta autorizada a entrenar ($AS_APRENDE_ESCRITURA)" || mal "la contrasena de escritura no esta autorizada: '$AS_APRENDE_ESCRITURA'"
+AS_FICHERO="$(en rspamd-mail cat /etc/rspamd/override.d/worker-controller-password.inc)"
+lacks "el fichero del controller no guarda la contrasena de lectura en claro" "$AS_FICHERO" "$RSPAMD_PASS"
+lacks "ni la de escritura" "$AS_FICHERO" "$RSPAMD_LEARN_PASS"
+contains "guarda sus hashes" "$AS_FICHERO" 'enable_password = "$'
+contains "y el arranque dice que activo las dos" "$(docker logs "$(c rspamd-mail)" 2>&1)" "controller-password: lectura activada; aprendizaje activado"
 cola "$A1" DELETE "/no-valido"
 expect "un identificador invalido se rechaza (422)" "$COLA_CODE" "422"
 en_cola_de() { cola_json | python3 -c 'import json, sys

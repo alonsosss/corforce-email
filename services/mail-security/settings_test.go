@@ -12,25 +12,27 @@ import (
 func setSettingsEnv(t *testing.T, environment, token string) {
 	t.Helper()
 	for key, value := range map[string]string{
-		"ENVIRONMENT":                     environment,
-		"INTERNAL_GATEWAY_TOKEN":          token,
-		"ORGANIZATION_URL":                "http://organization:8003",
-		"ACCESS_CONTROL_URL":              "",
-		"TRANSACTIONAL_URL":               "",
-		"RSPAMD_CONTROLLER_URL":           "",
-		"MAIL_SECURITY_PORT":              "",
-		"MAIL_POLICY_MAPS_PORT":           "",
-		"MAIL_POLICY_EXPORT_PORT":         "",
-		"MAIL_REDIS_HOST":                 "",
-		"MAIL_REDIS_PORT":                 "",
-		"MAIL_QUARANTINE_REINJECT_HOST":   "",
-		"MAIL_QUARANTINE_REINJECT_PORT":   "",
-		"MAIL_LOG_LINES":                  "",
-		"MAIL_QUARANTINE_MAX_BODY_MB":     "",
-		"MAIL_REDIS_RECONCILE_INTERVAL":   "",
-		"MAIL_DKIM_RECONCILE_INTERVAL":    "",
-		"MAIL_QUARANTINE_NOTIFY_INTERVAL": "",
-		"MAIL_QUARANTINE_LINK_TTL":        "",
+		"ENVIRONMENT":                       environment,
+		"INTERNAL_GATEWAY_TOKEN":            token,
+		"ORGANIZATION_URL":                  "http://organization:8003",
+		"ACCESS_CONTROL_URL":                "",
+		"TRANSACTIONAL_URL":                 "",
+		"RSPAMD_CONTROLLER_URL":             "",
+		"RSPAMD_CONTROLLER_PASSWORD":        "",
+		"RSPAMD_CONTROLLER_ENABLE_PASSWORD": "",
+		"MAIL_SECURITY_PORT":                "",
+		"MAIL_POLICY_MAPS_PORT":             "",
+		"MAIL_POLICY_EXPORT_PORT":           "",
+		"MAIL_REDIS_HOST":                   "",
+		"MAIL_REDIS_PORT":                   "",
+		"MAIL_QUARANTINE_REINJECT_HOST":     "",
+		"MAIL_QUARANTINE_REINJECT_PORT":     "",
+		"MAIL_LOG_LINES":                    "",
+		"MAIL_QUARANTINE_MAX_BODY_MB":       "",
+		"MAIL_REDIS_RECONCILE_INTERVAL":     "",
+		"MAIL_DKIM_RECONCILE_INTERVAL":      "",
+		"MAIL_QUARANTINE_NOTIFY_INTERVAL":   "",
+		"MAIL_QUARANTINE_LINK_TTL":          "",
 	} {
 		t.Setenv(key, value)
 	}
@@ -115,6 +117,14 @@ func TestLoadSettingsRangos(t *testing.T) {
 		"access-control con ruta":               {map[string]string{"ACCESS_CONTROL_URL": "http://access-control:8002/api"}, "ACCESS_CONTROL_URL"},
 		"organization con ruta":                 {map[string]string{"ORGANIZATION_URL": "http://organization:8003/api"}, "ORGANIZATION_URL"},
 		"sin organization":                      {map[string]string{"ORGANIZATION_URL": ""}, "ORGANIZATION_URL"},
+		"controller solo con lectura":           {map[string]string{"RSPAMD_CONTROLLER_PASSWORD": strings.Repeat("r", 32)}, ""},
+		"controller con lectura y escritura": {map[string]string{"RSPAMD_CONTROLLER_PASSWORD": strings.Repeat("r", 32),
+			"RSPAMD_CONTROLLER_ENABLE_PASSWORD": strings.Repeat("w", 32)}, ""},
+		"lectura corta":                      {map[string]string{"RSPAMD_CONTROLLER_PASSWORD": strings.Repeat("r", 31)}, "RSPAMD_CONTROLLER_PASSWORD"},
+		"lectura que rompe la cabecera":      {map[string]string{"RSPAMD_CONTROLLER_PASSWORD": strings.Repeat("r", 32) + "\r\nX: y"}, "RSPAMD_CONTROLLER_PASSWORD"},
+		"escritura con caracter no admitido": {map[string]string{"RSPAMD_CONTROLLER_ENABLE_PASSWORD": strings.Repeat("w", 32) + "!"}, "RSPAMD_CONTROLLER_ENABLE_PASSWORD"},
+		"la misma en lectura y escritura": {map[string]string{"RSPAMD_CONTROLLER_PASSWORD": strings.Repeat("x", 32),
+			"RSPAMD_CONTROLLER_ENABLE_PASSWORD": strings.Repeat("x", 32)}, "no pueden ser la misma"},
 	} {
 		setSettingsEnv(t, "staging", "gateway-token-0123456789")
 		for key, value := range c.env {
@@ -180,5 +190,26 @@ func TestLoadSettingsNormalizaLasURLs(t *testing.T) {
 		st.organizationURL != "http://organization:8003" || st.reinjectAddr != "[fd00::25]:590" {
 		t.Errorf("controller %q, transactional %q, organization %q, reinyeccion %q",
 			st.controllerURL, st.transactionalURL, st.organizationURL, st.reinjectAddr)
+	}
+}
+
+// Cada contrasena del controller llega a su cliente y a ningun otro: la de lectura a la pantalla del
+// antispam y la de escritura al aprendizaje.
+func TestLoadSettingsContrasenasDelController(t *testing.T) {
+	setSettingsEnv(t, "staging", "gateway-token-0123456789")
+	lectura, escritura := strings.Repeat("r", 40), strings.Repeat("w", 40)
+	t.Setenv("RSPAMD_CONTROLLER_PASSWORD", " "+lectura+" ")
+	t.Setenv("RSPAMD_CONTROLLER_ENABLE_PASSWORD", escritura)
+	st, err := loadSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.controllerReadPassword != lectura || st.controllerLearnPassword != escritura {
+		t.Errorf("lectura %q, escritura %q", st.controllerReadPassword, st.controllerLearnPassword)
+	}
+
+	t.Setenv("RSPAMD_CONTROLLER_ENABLE_PASSWORD", "")
+	if st, err = loadSettings(); err != nil || st.controllerLearnPassword != "" || st.controllerReadPassword != lectura {
+		t.Errorf("solo lectura: err %v, escritura %q", err, st.controllerLearnPassword)
 	}
 }

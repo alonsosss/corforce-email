@@ -89,6 +89,10 @@ services:
       - MAIL_POLICY_HOST=${MAIL_POLICY_HOST:-mail-policy}
       - SPAMHAUS_DQS_KEY=${SPAMHAUS_DQS_KEY:-}
       - SKIP_OLEFY=${SKIP_OLEFY:-n}
+      # Contrasenas del controller (almacen de secretos): el arranque solo guarda sus hashes
+      # (rspamd/controller-password.sh). Vacias, el controller queda cerrado fuera del bucle local.
+      - RSPAMD_CONTROLLER_PASSWORD=${RSPAMD_CONTROLLER_PASSWORD:-}
+      - RSPAMD_CONTROLLER_ENABLE_PASSWORD=${RSPAMD_CONTROLLER_ENABLE_PASSWORD:-}
     volumes:
       - ./rspamd/custom/:/etc/rspamd/custom:z
       - ./rspamd/override.d/:/etc/rspamd/override.d:Z

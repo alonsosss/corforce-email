@@ -146,6 +146,11 @@ if ! bash "$ROOT/ops/scaffold/check-estado-produccion.sh"; then
   FAIL=1
 fi
 
+echo "== 23. Contrasenas del controller de Rspamd: solo hashes, la lectura nunca escribe =="
+if ! bash "$ROOT/ops/scaffold/check-rspamd-controller-password.sh"; then
+  FAIL=1
+fi
+
 echo ""
 if [[ $FAIL -ne 0 ]]; then
   echo "VALIDACION: FALLA"; exit 1

@@ -127,7 +127,8 @@ modificado	postfix/syslog-ng-redis_slave.conf	nombres	data/Dockerfiles/postfix/s
 modificado	postfix/syslog-ng.conf	nombres	data/Dockerfiles/postfix/syslog-ng.conf
 modificado	postfix/whitelist_forwardinghosts.sh	servicios-go	data/Dockerfiles/postfix/whitelist_forwardinghosts.sh
 modificado	redis/redis-conf.sh	nombres	data/conf/redis/redis-conf.sh
-modificado	rspamd/Dockerfile	etiqueta	data/Dockerfiles/rspamd/Dockerfile
+modificado	rspamd/Dockerfile	etiqueta,arranque	data/Dockerfiles/rspamd/Dockerfile
+nuevo	rspamd/controller-password.sh	endurecimiento	-
 identico	rspamd/custom/bad_asn.map	015ed8230c1f3cf52678ff98a5116040d696ca7e526d4618e8227dccbd78a7e0
 identico	rspamd/custom/bad_header.map	6935f7493b41137297deda9b6da4866e5ce8c233df00e18e10c3fb9741ca05a1
 identico	rspamd/custom/bad_languages.map	2dedce5e38ab99487c7d8308a3e0cdd1c96df9338ab2600439e7490b5cc99145
@@ -143,7 +144,7 @@ identico	rspamd/custom/global_smtp_from_blacklist.map	271880e44a80d96b3649503efd
 identico	rspamd/custom/global_smtp_from_whitelist.map	271880e44a80d96b3649503efd4251061f64fe8fd374f6d40f84576f9ff6406b
 identico	rspamd/custom/ip_wl.map	fd77533a7d60e6de089869a914a5059b73f2a7510dc8cc2641ebecec29be28f4
 identico	rspamd/custom/monitoring_nolog.map	0d4728d97e48d8aeabb7a6959624efef0131e4f72553bc1aa81e9cdeee5e06aa
-modificado	rspamd/docker-entrypoint.sh	servicios-go,nombres	data/Dockerfiles/rspamd/docker-entrypoint.sh
+modificado	rspamd/docker-entrypoint.sh	servicios-go,nombres,endurecimiento	data/Dockerfiles/rspamd/docker-entrypoint.sh
 identico	rspamd/local.d/actions.conf	0b80bcce3793fc2af3a8f925728a8db2271ca9a995f77c1c940644a29015a65f
 modificado	rspamd/local.d/antivirus.conf	endurecimiento	data/conf/rspamd/local.d/antivirus.conf
 identico	rspamd/local.d/arc.conf	66754defb47556e7b4e44f63b47c16a903aa7a5a9f738a6934caf4dfba2f47ad

@@ -83,7 +83,7 @@ Permiso nuevo `mail_security/rspamd/read` (`036_mail_security_rspamd_permissions
 `platform`); el caso de uso vuelve a exigir el operador; cada lectura queda en el registro con
 quien la hizo. La contrasena viaja solo en la cabecera `Password`, nunca en la URL, y ningun error la
 repite; sin `RSPAMD_CONTROLLER_PASSWORD` las rutas responden `503 NOT_CONFIGURED` y el servicio
-arranca igual. No existe ninguna ruta de escritura ni de configuracion del controller
+arranca igual. La lectura usa su propia contrasena, distinta de la del aprendizaje (seccion 4). No existe ninguna ruta de escritura ni de configuracion del controller
 (`/saveactions`, `/savesymbols`, `/scan`, `/learn*` fuera de los que la cuarentena ya usaba):
 el adaptador solo expone `LearnSpam`, `LearnHam`, `Stats` e `History`.
 
@@ -93,6 +93,27 @@ Dos pantallas de plataforma para el rol `superadmin`, sin modulo de menu (como l
 `/platform/logs` (selector de servicio alimentado por el API, texto, ventana, orden y limite;
 resultados en monoespaciado con instante, pintados como texto: nada se interpreta como HTML) y
 `/platform/rspamd` (pestanas de estadisticas e historial).
+
+### 4. Una contrasena por permiso, generada desde el almacen (2026-09-23)
+
+Rspamd distingue `password` (lectura) y `enable_password` (escritura), pero comprobado con Rspamd
+4.1.4 desde fuera del bucle local: **si falta `enable_password`, la contrasena de lectura autoriza
+tambien las ordenes de escritura** (`/learnspam` pasa la autenticacion). Con una sola contrasena, dar
+la pantalla del antispam daba el aprendizaje, y por eso produccion no la habia puesto. Sin ninguna de
+las dos, el controller responde 401 a todo lo que no llega del bucle local.
+
+* Dos secretos opcionales del almacen: `RSPAMD_CONTROLLER_PASSWORD` (lectura: la pantalla) y
+  `RSPAMD_CONTROLLER_ENABLE_PASSWORD` (escritura: el aprendizaje desde la cuarentena). Los reciben solo
+  `rspamd-mail` y `mail-security` (`reparto.tsv`); `mail-security` usa un cliente para cada uno y exige
+  que sean distintas y de 32 a 256 caracteres de `[A-Za-z0-9_-]` (viajan en una cabecera).
+* `deploy/mail/rspamd/controller-password.sh` escribe `worker-controller-password.inc` en cada
+  arranque con los hashes de `rspamadm pw`: nunca queda una contrasena en claro en el disco. Sin
+  contrasena de escritura pone una aleatoria que nadie conoce, para que la lectura no pueda escribir.
+  Si el guion falla, el controller queda cerrado y Rspamd arranca igual: una contrasena mal puesta no
+  puede dejar el correo sin filtrar.
+* Antes, la contrasena salia del `.env` (fuera del almacen) y el hash de un fichero escrito a mano en
+  el servidor, que tenia que coincidir con ella. Ya no se escribe a mano: lo que deje otro (la ruta
+  `worker_password` de dockerapi, heredada de mailcow) dura hasta el siguiente arranque.
 
 ## Alternativas descartadas
 
@@ -139,11 +160,9 @@ resultados en monoespaciado con instante, pintados como texto: nada se interpret
   `docker-compose.selfhosted.yml` (`LOKI_URL` por defecto), `docker-compose.images*.yml`,
   `targets.json` (generado), `reparto.tsv` (solo `INTERNAL_GATEWAY_TOKEN`), `test-ratio-floors.txt`.
 * Dos migraciones del registro (`036`, `037`), idempotentes y solo aditivas.
-* Para que la lectura de Rspamd funcione en produccion hace falta la contrasena del controller en los
-  dos lados: `worker-controller-password.inc` de Rspamd (`password = "<hash de rspamadm pw>";`,
-  fichero ignorado por git en `deploy/mail/rspamd/override.d/`) y `RSPAMD_CONTROLLER_PASSWORD` en
-  `mail-security`. Hoy esa variable se lee del `.env` (asi venia); moverla al almacen de secretos es
-  una mejora aparte (`Operacion_Despliegue.md`).
+* Para que la lectura de Rspamd funcione en produccion basta con poner `RSPAMD_CONTROLLER_PASSWORD` en
+  el almacen y recrear `rspamd-mail` y `mail-security` (seccion 4); el aprendizaje se activa aparte,
+  con `RSPAMD_CONTROLLER_ENABLE_PASSWORD`.
 * `make e2e` comprueba la lista blanca, el 503 sin Loki y el 403 del administrador de empresa;
   `make e2e-mail` lee estadisticas e historial reales tras los envios de la prueba, con la contrasena
   del controller generada en cada ejecucion. Las dos secciones estan escritas y pendientes de
@@ -165,5 +184,10 @@ resultados en monoespaciado con instante, pintados como texto: nada se interpret
   la cabecera y nunca en la URL ni en los errores, 401/403 como `NOT_CONFIGURED`, respuesta acotada,
   asunto recortado, destinatarios como lista o como cadena, simbolos sin opciones.
 * `services/mail-security/internal/app` y `main_test.go`: solo el operador, orden y tope del
-  historial, rutas de plataforma con celda destino (15 en total).
+  historial, rutas de plataforma con celda destino (15 en total). `settings_test.go`: formato de las
+  dos contrasenas, que no sean la misma y que cada una llegue a su cliente.
+* `ops/scaffold/check-rspamd-controller-password.sh`: el guion del arranque con un `rspamadm` falso
+  (hashes, escritura aleatoria, controller cerrado, errores sin tocar el fichero, nada en claro) y una
+  mutacion. `make e2e-mail`, contra Rspamd real: la lectura lee y no puede entrenar, la escritura si,
+  y el fichero solo lleva hashes.
 * `web/`: vitest de las dos pantallas y del cliente del API.

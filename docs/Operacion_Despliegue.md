@@ -96,8 +96,8 @@ largas de cada guardarraíl están en `ops/scaffold/README.md`, `ops/security/se
   endpoint https que llaman tal cual Dovecot y el webmail), `PUBLIC_BASE_URL`,
   `PASSWORD_BREACH_API_URL`, `MINIO_PUBLIC_URL` y `NATS_URL`. Las dos direcciones de los motores
   que mail-security llama como URL base siguen la misma regla con su valor por defecto:
-  `RSPAMD_CONTROLLER_URL` (`http://rspamd:11334`; le pega `/learnspam` y manda la contraseña
-  en su cabecera) y `DOVEADM_API_URL` (`https://dovecot:8443`), que además tiene que ser
+  `RSPAMD_CONTROLLER_URL` (`http://rspamd:11334`; le pega `/learnspam` o `/stat` y manda en su
+  cabecera la contraseña de cada permiso) y `DOVEADM_API_URL` (`https://dovecot:8443`), que además tiene que ser
   `https` (`doveadm.New`): la clave del API viaja en cada petición.
 * Entorno declarado (`ENVIRONMENT`). Un servidor declara exactamente
   `ENVIRONMENT=production` o `ENVIRONMENT=staging` en el `.env` de `DEPLOY_PATH`, el que
@@ -1184,12 +1184,25 @@ Lo que se comprobó de punta a punta con un buzón real, y las trampas que salie
   hay que recrear también el `gateway`) con `LOKI_URL`, que el perfil autoalojado fija a `http://loki:3100`; sin la
   pila de observabilidad levantada la pantalla Registros responde 503 `NOT_CONFIGURED` y nada más cambia. Migraciones
   del registro `036` (permiso `mail_security/rspamd/read`) y `037` (`observability/logs/read`), las dos de plataforma.
-  Para la pantalla Antispam hace falta la contraseña del controller de Rspamd en los dos lados: en
-  `deploy/mail/rspamd/override.d/worker-controller-password.inc` del servidor (fichero ignorado por git;
-  `password = "<hash>";` con el hash de `rspamadm pw`) y `RSPAMD_CONTROLLER_PASSWORD` en `mail-security`; después
-  recrear `rspamd-mail` y `mail-security`. Sin ella la pantalla responde 503 `NOT_CONFIGURED` y el entrenamiento desde
-  la cuarentena sigue igual de desactivado que hasta ahora. Pendiente (P): mover `RSPAMD_CONTROLLER_PASSWORD` del
-  `.env` al almacén de secretos con su fila en `reparto.tsv`.
+  La pantalla Antispam necesita la contraseña de lectura del controller de Rspamd, que ya vive en el almacén de
+  secretos (`docs/adr/0009`, sección 4). Hay dos, una por permiso, porque Rspamd deja que la de lectura escriba si
+  falta la de escritura:
+
+  ```bash
+  # En el servidor. Solo la pantalla (lectura):
+  VALOR="$(openssl rand -hex 32)" ops/security/secrets/add-secret.sh RSPAMD_CONTROLLER_PASSWORD --apply
+  # Y, si se decide activar el aprendizaje desde la cuarentena, la de escritura (distinta):
+  VALOR="$(openssl rand -hex 32)" ops/security/secrets/add-secret.sh RSPAMD_CONTROLLER_ENABLE_PASSWORD --apply
+  ```
+
+  Después, `scripts/deploy-mail.sh rspamd-mail` (su arranque escribe los hashes en
+  `override.d/worker-controller-password.inc`, que ya no se edita a mano) y recrear `mail-security`. El registro de
+  `rspamd-mail` dice qué quedó activo (`controller-password: lectura activada; aprendizaje ...`) y el de
+  `mail-security` lo mismo al arrancar. Sin la de lectura la pantalla responde 503 `NOT_CONFIGURED`; sin la de
+  escritura el aprendizaje queda desactivado y la de lectura no puede escribir. Si el `.env` del servidor tiene
+  `RSPAMD_CONTROLLER_PASSWORD` con valor (venía de `.env.example`), no se genera otra: se mueve al almacén con
+  `add-secret.sh RSPAMD_CONTROLLER_PASSWORD --desde-env .env --quitar-del-env --apply`. Con valor en el `.env`,
+  Compose lo usaría cuando el almacén no lo tuviera, y ningún guardarraíl revisa ese fichero.
 
 ### Correo del sistema (recuperacion de contrasena)
 

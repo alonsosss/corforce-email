@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -123,7 +124,12 @@ type settings struct {
 	reinjectAddr               string
 	// controllerURL es el controller de Rspamd; transactionalURL, vacia, desactiva el aviso de
 	// cuarentena.
-	controllerURL            string
+	controllerURL string
+	// controllerReadPassword abre la lectura del controller (estadisticas e historial) y
+	// controllerLearnPassword la escritura (el aprendizaje desde la cuarentena). Vacias, cada cosa
+	// queda desactivada por separado.
+	controllerReadPassword   string
+	controllerLearnPassword  string
 	transactionalURL         string
 	organizationURL          string
 	internalToken            string
@@ -179,6 +185,9 @@ func loadSettings() (settings, error) {
 	// El learner le pega /learnspam y manda la contrasena en su cabecera: la misma regla que una
 	// URL base entre servicios, en http dentro de la red de la celda.
 	if st.controllerURL, err = config.ServiceURL("RSPAMD_CONTROLLER_URL", defaultControllerURL); err != nil {
+		return st, err
+	}
+	if st.controllerReadPassword, st.controllerLearnPassword, err = controllerPasswordsFromEnv(); err != nil {
 		return st, err
 	}
 	if st.transactionalURL, err = config.ServiceURL("TRANSACTIONAL_URL", ""); err != nil {
@@ -273,6 +282,27 @@ func doveadmFromEnv(logger *zap.Logger) (*doveadm.Client, error) {
 		ServerName: envOrDefault("DOVEADM_API_TLS_SERVER_NAME", strings.TrimSpace(os.Getenv("MAIL_HOSTNAME"))),
 		CAFile:     strings.TrimSpace(os.Getenv("DOVEADM_API_TLS_CA_FILE")),
 	})
+}
+
+// controllerPasswordPattern: la contrasena viaja en la cabecera Password, asi que no admite nada que
+// pueda romperla; es la misma regla que las otras claves compartidas con un motor.
+var controllerPasswordPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{32,256}$`)
+
+// controllerPasswordsFromEnv lee las dos contrasenas del controller de Rspamd, que genera en el motor
+// deploy/mail/rspamd/controller-password.sh desde el mismo almacen. Son distintas a proposito: con una
+// sola, Rspamd deja que la lectura escriba, y dar la pantalla del antispam no puede dar el aprendizaje.
+func controllerPasswordsFromEnv() (read, learn string, err error) {
+	read = strings.TrimSpace(os.Getenv("RSPAMD_CONTROLLER_PASSWORD"))
+	learn = strings.TrimSpace(os.Getenv("RSPAMD_CONTROLLER_ENABLE_PASSWORD"))
+	for name, value := range map[string]string{"RSPAMD_CONTROLLER_PASSWORD": read, "RSPAMD_CONTROLLER_ENABLE_PASSWORD": learn} {
+		if value != "" && !controllerPasswordPattern.MatchString(value) {
+			return "", "", fmt.Errorf("%s debe tener de 32 a 256 caracteres de [A-Za-z0-9_-]", name)
+		}
+	}
+	if read != "" && read == learn {
+		return "", "", errors.New("RSPAMD_CONTROLLER_PASSWORD y RSPAMD_CONTROLLER_ENABLE_PASSWORD no pueden ser la misma: la lectura podria escribir")
+	}
+	return read, learn, nil
 }
 
 // queueFromEnv lee el agente de la cola de Postfix de la celda. Sin QUEUE_AGENT_API_KEY el servicio arranca
@@ -405,14 +435,18 @@ func main() {
 	policyUC := app.NewPolicyUseCase(app.PolicyDeps{
 		Tx: ctxPool, Repo: postgres.NewPolicyRepository(ctxPool), Directory: directory, Sync: redisSync, Logger: logger,
 	})
-	// Controller de Rspamd: entrena desde la cuarentena y sirve al superadmin sus contadores e historial
-	// (docs/adr/0009). Sin RSPAMD_CONTROLLER_PASSWORD las dos cosas responden 503 NOT_CONFIGURED.
-	controller := rspamd.New(st.controllerURL, os.Getenv("RSPAMD_CONTROLLER_PASSWORD"))
+	// Controller de Rspamd, con una contrasena por permiso (docs/adr/0009): la de escritura entrena desde la
+	// cuarentena y la de lectura sirve al superadmin sus contadores e historial. Sin la suya, cada una
+	// responde 503 NOT_CONFIGURED por separado.
+	learner := rspamd.New(st.controllerURL, st.controllerLearnPassword)
+	antispamReader := rspamd.New(st.controllerURL, st.controllerReadPassword)
+	logger.Info("controller de Rspamd",
+		zap.Bool("lectura", st.controllerReadPassword != ""), zap.Bool("aprendizaje", st.controllerLearnPassword != ""))
 	quarantineUC := app.NewQuarantineUseCase(app.QuarantineDeps{
 		Tx:         ctxPool,
 		Repo:       quarantineRepo,
 		Reinjector: smtpadapter.New(st.reinjectAddr, envOrDefault("MAIL_HOSTNAME", "mail-security")),
-		Learner:    controller,
+		Learner:    learner,
 		Events:     publisher,
 		Notices:    noticeRepo,
 		Links:      quarantineLinks,
@@ -467,7 +501,7 @@ func main() {
 	// cortafuegos es de plataforma: el superadmin lo opera en cualquier celda con celda destino.
 	routes := handler.NewHandler(policyUC, quarantineUC, firewallUC, dkimUC, st.perms).
 		WithQueue(queueUseCase(queueAgent, logger)).
-		WithAntispam(app.NewAntispamUseCase(controller, logger)).
+		WithAntispam(app.NewAntispamUseCase(antispamReader, logger)).
 		Routes()
 	if err := membership.AcceptOperators(routes, handler.PlatformRoutes()); err != nil {
 		log.Fatalf("celda de la instancia: %v", err)

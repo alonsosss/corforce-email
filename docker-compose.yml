@@ -374,6 +374,8 @@ services:
       MAIL_LINK_SIGNING_KEY: ${MAIL_LINK_SIGNING_KEY:-}
       DOVEADM_API_KEY: ${DOVEADM_API_KEY:-}
       QUEUE_AGENT_API_KEY: ${QUEUE_AGENT_API_KEY:-}
+      RSPAMD_CONTROLLER_PASSWORD: ${RSPAMD_CONTROLLER_PASSWORD:-}
+      RSPAMD_CONTROLLER_ENABLE_PASSWORD: ${RSPAMD_CONTROLLER_ENABLE_PASSWORD:-}
       CELL_DB_PASSWORD: ${CELL_DB_PASSWORD:-}
       # La credencial de plataforma no llega a los servicios de celda: usan la de su celda
       # (secreto CELL_DB_PASSWORD). Solo en desarrollo, sin rol de celda, se les puede dar
