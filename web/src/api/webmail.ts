@@ -266,7 +266,55 @@ async function toError(res: Response): Promise<ApiError> {
   return error;
 }
 
+/*
+ * Esperas antes de repetir una lectura que no llego a responder. Cubren el reinicio de un tramo
+ * del camino (el borde, el gateway, el propio servicio o Dovecot al desplegar o renovar el
+ * certificado), que corta las conexiones abiertas unos segundos: sin reintento, el usuario veia
+ * "No se pudo conectar" y tenia que recargar. Solo GET: una escritura repetida podria aplicarse dos
+ * veces, y el envio ya tiene su propia Idempotency-Key.
+ */
+const READ_RETRY_DELAYS_MS = [1000, 3000];
+
+function isTransient(err: unknown): boolean {
+  if (!(err instanceof ApiError)) return false;
+  if (err.code === ERROR_CODES.NETWORK_ERROR) return true;
+  if (err.status === 502 || err.status === 504) return true;
+  // Otros 503 (avisos desactivados, antivirus caido) no se arreglan esperando unos segundos.
+  return err.status === 503 && err.code === ERROR_CODES.SERVICE_UNAVAILABLE;
+}
+
+function wait(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new DOMException('Aborted', 'AbortError'));
+      return;
+    }
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(new DOMException('Aborted', 'AbortError'));
+    };
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
 async function send(method: Method, path: string, init: RequestInit, accept: string) {
+  if (method !== 'GET') return sendOnce(method, path, init, accept);
+  for (const delay of READ_RETRY_DELAYS_MS) {
+    try {
+      return await sendOnce(method, path, init, accept);
+    } catch (err) {
+      if (!isTransient(err)) throw err;
+      await wait(delay, init.signal);
+    }
+  }
+  return sendOnce(method, path, init, accept);
+}
+
+async function sendOnce(method: Method, path: string, init: RequestInit, accept: string) {
   const headers: Record<string, string> = { ...init.headers, Accept: accept };
   let body: BodyInit | undefined;
   if (init.json !== undefined) {

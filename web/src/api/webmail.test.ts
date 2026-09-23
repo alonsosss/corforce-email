@@ -395,3 +395,64 @@ describe('libreta de direcciones de la empresa', () => {
     expect(await webmailApi.addressBook('')).toEqual([]);
   });
 });
+
+describe('reintento de lecturas del webmail', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  const unavailable = () =>
+    json(503, { error: { code: ERROR_CODES.SERVICE_UNAVAILABLE, message: 'imap' } });
+
+  it('una lectura cortada por un reinicio se repite y el usuario no ve el fallo', async () => {
+    vi.useFakeTimers();
+    let n = 0;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        n += 1;
+        if (n === 1) throw new TypeError('Failed to fetch');
+        if (n === 2) return unavailable();
+        return json(200, { data: [] });
+      }),
+    );
+
+    const result = webmailApi.folders();
+    await vi.advanceTimersByTimeAsync(1000);
+    await vi.advanceTimersByTimeAsync(3000);
+
+    await expect(result).resolves.toEqual([]);
+    expect(n).toBe(3);
+  });
+
+  it('si sigue sin responder tras los reintentos, llega el error de red', async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(async () => {
+      throw new TypeError('Failed to fetch');
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = webmailApi.folders();
+    const settled = expect(result).rejects.toMatchObject({ code: ERROR_CODES.NETWORK_ERROR });
+    await vi.advanceTimersByTimeAsync(4000);
+    await settled;
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it('no repite escrituras ni errores que esperar no arregla', async () => {
+    const calls = mockFetch(() =>
+      json(503, { error: { code: 'SCAN_UNAVAILABLE', message: 'clamav' } }),
+    );
+    await expect(webmailApi.folders()).rejects.toBeInstanceOf(ApiError);
+    expect(calls).toHaveLength(1);
+
+    const failing = vi.fn(async () => {
+      throw new TypeError('Failed to fetch');
+    });
+    vi.stubGlobal('fetch', failing);
+    await expect(webmailApi.logout()).rejects.toMatchObject({ code: ERROR_CODES.NETWORK_ERROR });
+    expect(failing).toHaveBeenCalledTimes(1);
+  });
+});
