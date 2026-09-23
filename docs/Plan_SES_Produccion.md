@@ -206,10 +206,19 @@ metricas de reputacion en CloudWatch mientras el volumen no lo justifique.
 | Paso | Estado |
 |---|---|
 | 1. Codigo | Hecho |
-| 2. IAM | Pendiente (cuenta) |
-| 3. Topic fijado en el servidor | Hecho (2026-09-23): `SES_EVENTS_TOPIC_ARN` en el `.env` de produccion, `transactional` y `web` en `cd74ee9`; la ruta responde `403 unexpected topic` |
-| 4. Pila de SES | Pendiente (cuenta, despues de 3) |
-| 5. Credenciales en el servidor | Pendiente (despues de 2 y 4). Cola revisada el 2026-09-23: nada pendiente (un solo mensaje, ya `failed`, del 2026-09-21) |
-| 6. Prueba con el simulador | Pendiente (despues de 5) |
-| 7. Acceso de produccion | Esperando a AWS Support |
+| 2. IAM | Hecho (2026-09-23): `core-force-mail-ses` con `core-force-mail-ses-envio`; su clave se creo y se guardo en el almacen en un solo paso (nunca paso por disco ni por la conversacion) |
+| 3. Topic fijado en el servidor | Hecho (2026-09-23): `SES_EVENTS_TOPIC_ARN` en el `.env` de produccion, `transactional` y `web` en `cd74ee9` |
+| 4. Pila de SES | Hecho (2026-09-23): `cfm-prod-ses-mail`, suscripcion confirmada sola, `avisos.core-force.com` con `cfm-transactional` por defecto; retirados `core-force-transactional` y `ses-avisos-core-force-events`. `verificar-ses.sh prod avisos.core-force.com`: todo en orden salvo el aviso del modo de pruebas |
+| 5. Credenciales en el servidor | Hecho (2026-09-23): las dos claves en el almacen, `transactional` recreado, `verify-scope contenedores` OK. Tasas a la cuota del modo de pruebas (1 por segundo): `SES_MAX_SEND_RATE=1` y `SES_MAX_SEND_RATE_MARKETING=1` |
+| 6. Prueba con el simulador | Hecho (2026-09-23), por `/internal/send-email` desde la empresa de plataforma: `success@` quedo `delivered`, `bounce@` `bounced` y alta en `suppression` con `hard_bounce`, `complaint@` `complained` y alta con `complaint`. Las dos entradas del simulador se dejaron en `suppression` como constancia |
+| 7. Acceso de produccion | Esperando a AWS Support. Al llegar: subir `SES_MAX_SEND_RATE` a la cuota asignada, poner `AUDIT_ANCHOR_RUA` y hacer el envio real del paso 7 |
 | 8. Dominios de empresa en SES | Sin empezar |
+
+Queda en la cuenta `my-first-configuration-set`, conjunto por defecto de `core-force.com` y de una
+direccion personal. No es de esta plataforma (`core-force.com` lo usa el SES del ERP) y no se
+toca: llevarlo a `cfm-transactional` mandaria los eventos del ERP a este topic, donde se
+ignorarian por no llevar las etiquetas del servicio.
+
+Cada mensaje muestra dos eventos `send`: el que registra `transactional` al entregarlo a SES
+(`source: api`) y el `Send` que publica SES. Las estadisticas cuentan por estado del mensaje,
+no por eventos, asi que no se duplica ningun total.
