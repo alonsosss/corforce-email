@@ -150,11 +150,11 @@ seguimiento, que funciona.
 
 | Fase | Estado |
 |---|---|
-| A1 Politica de entrega | Hecho (2026-09-23): aplicada en la pila de prod; `EffectiveDeliveryPolicy` con 20 reintentos y 50 entregas por segundo, suscripcion confirmada |
+| A1 Politica de entrega | Hecho y desplegado (2026-09-23): aplicada en la pila de prod; `EffectiveDeliveryPolicy` con 20 reintentos y 50 entregas por segundo, suscripcion confirmada |
 | A2 Limitador de webhooks | Hecho (2026-09-23): `"limit": "webhook"` y `WEBHOOK_RATE_LIMIT_PER_MIN`, con pruebas |
 | A3 Verificador de SNS | Hecho (2026-09-23): region del topic y cache de fallos acotada, con pruebas |
 | B1 Metricas y vigilante | Hecho (2026-09-23): puerto `Metrics`, adaptador Prometheus, vigilante con GetAccount y CloudWatch; politica `ses-envio` ampliada y aplicada |
-| B2 Alertas | Hecho (2026-09-23): grupo `salida-ses` con 10 alertas y sus pruebas de promtool |
-| C Dominios de empresa en SES | Codigo hecho (2026-09-23), sin desplegar: BYODKIM, MAIL FROM, estado en `domains.domains` (migracion de empresa `domain-service/07`), `sending_ready` en `transactional.sending_domains` (`transactional/06`); una identidad sin etiqueta solo se adopta si ya sale por `cfm-transactional`, y en IAM borrar o modificar exige la etiqueta (probado con el simulador de IAM) |
+| B2 Alertas | Hecho (2026-09-23): grupo `salida-ses` con 10 alertas y sus pruebas de promtool; cargado en el Prometheus de produccion y recogiendo las metricas de `transactional` |
+| C Dominios de empresa en SES | Hecho y desplegado (2026-09-23, `5674f2d`): migraciones aplicadas en las dos empresas, usuario `core-force-mail-ses-identidades` con su clave en OpenBao, `domain-service` adopto y etiqueto `avisos.core-force.com` (conserva su DKIM, `sending_ready` verdadero); `core-force.com` del ERP intacto. Simulador tras el despliegue: `success@` entregado, `bounce@` rechazado por la lista de supresion |
 | D Dominio de seguimiento | Aplazada hasta activar marketing (seccion 5) |
 | E Limpieza | Hecho salvo cerrar la sesion raiz (al terminar C) y la decision de respuestas (seccion 7) |
