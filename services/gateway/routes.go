@@ -118,7 +118,14 @@ type publicRouteSpec struct {
 	Method  string `json:"method"`
 	Path    string `json:"path"`
 	Service string `json:"service"`
+	// Limit "webhook" saca la ruta del cupo general por IP y la pasa por el de webhooks: un
+	// proveedor (SNS) entrega desde pocas IP y a rafagas. Solo para rutas que autentica el
+	// servicio con la firma del proveedor.
+	Limit string `json:"limit,omitempty"`
 }
+
+// publicLimitWebhook es el unico valor admitido de publicRouteSpec.Limit.
+const publicLimitWebhook = "webhook"
 
 type serviceSpec struct {
 	HostEnv     string `json:"host_env"`
@@ -247,6 +254,9 @@ func (t *routeTable) validate() error {
 		}
 		if err := t.validatePublicCell(p); err != nil {
 			return err
+		}
+		if p.Limit != "" && p.Limit != publicLimitWebhook {
+			return fmt.Errorf("tabla de rutas: limite %q invalido en la ruta publica %q (solo %q)", p.Limit, p.Path, publicLimitWebhook)
 		}
 	}
 	for _, s := range t.SelfAuthenticated {

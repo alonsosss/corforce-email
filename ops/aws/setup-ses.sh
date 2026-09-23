@@ -14,7 +14,8 @@
 #
 # Opcionales: SES_TRACKING_DOMAIN (subdominio propio de seguimiento de marketing, con su
 # CNAME y certificado ya publicados), SES_MARKETING_POOL (pool de IP dedicadas existente),
-# SES_TRANSACTIONAL_TLS y SES_MARKETING_TLS (OPTIONAL | REQUIRE), y SES_DEFAULT_SET_IDENTITIES:
+# SES_TRANSACTIONAL_TLS y SES_MARKETING_TLS (OPTIONAL | REQUIRE), SES_EVENTS_MAX_PER_SECOND
+# (entregas por segundo de SNS a transactional, 50 por defecto) y SES_DEFAULT_SET_IDENTITIES:
 # identidades (separadas por espacios) cuyo conjunto por defecto pasa a ser el transaccional de
 # esta pila. Es lo que sale sin conjunto (la consola, una prueba a mano): asi tambien publica
 # sus eventos en el topic de la plataforma y no en uno que nadie escucha.
@@ -33,6 +34,7 @@ esac
 : "${SES_EVENTS_URL:?falta SES_EVENTS_URL (URL https de la ruta publica ses-events)}"
 [[ "$SES_EVENTS_URL" =~ ^https://[A-Za-z0-9.-]+(:[0-9]+)?/[A-Za-z0-9/._-]+$ ]] || {
   echo "FALLA: SES_EVENTS_URL debe ser https y sin parametros: $SES_EVENTS_URL" >&2; exit 2; }
+[[ "${SES_EVENTS_MAX_PER_SECOND:-50}" =~ ^[0-9]{1,4}$ ]] || { echo "FALLA: SES_EVENTS_MAX_PER_SECOND debe ser un numero" >&2; exit 2; }
 for v in SES_TRACKING_DOMAIN SES_MARKETING_POOL; do
   [[ "${!v:-}" =~ ^[A-Za-z0-9._-]*$ ]] || { echo "FALLA: $v con caracteres no validos" >&2; exit 2; }
 done
@@ -56,6 +58,7 @@ PARAMS=(
   "MarketingSendingPoolName=${SES_MARKETING_POOL:-}"
   "TransactionalTlsPolicy=${SES_TRANSACTIONAL_TLS:-OPTIONAL}"
   "MarketingTlsPolicy=${SES_MARKETING_TLS:-OPTIONAL}"
+  "EventsMaxReceivesPerSecond=${SES_EVENTS_MAX_PER_SECOND:-50}"
 )
 
 echo "Cuenta $ACC / region $REGION / pila $STACK"

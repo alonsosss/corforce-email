@@ -161,6 +161,9 @@ func TestValidacionRechazaIncoherencias(t *testing.T) {
 		"publica fuera de /public": func(t *routeTable) {
 			t.Public = []publicRouteSpec{{Method: "POST", Path: "/auth/login", Service: "identity"}}
 		},
+		"publica con un limite desconocido": func(t *routeTable) {
+			t.Public = []publicRouteSpec{{Method: "POST", Path: "/public/x", Service: "identity", Limit: "ninguno"}}
+		},
 		"publica con metodo raro": func(t *routeTable) {
 			t.Public = []publicRouteSpec{{Method: "PATCH", Path: "/public/x", Service: "identity"}}
 		},

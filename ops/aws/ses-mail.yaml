@@ -17,6 +17,14 @@ Parameters:
       URL HTTPS publica de la ruta sin empresa de transactional
       (.../api/v1/public/transactional/ses-events). Transactional confirma la suscripcion
       y verifica la firma de cada mensaje.
+  EventsMaxReceivesPerSecond:
+    Type: Number
+    Default: 50
+    MinValue: 1
+    MaxValue: 1000
+    Description: >-
+      Entregas por segundo que SNS hace a transactional. Lo que excede espera en SNS. Se sube
+      con la cuota de SES y con las replicas de transactional.
   TransactionalSetName:
     Type: String
     Default: cfm-transactional
@@ -143,6 +151,23 @@ Resources:
       Endpoint: !Ref EventsEndpointUrl
       # transactional verifica la firma del sobre SNS: la entrega no puede ser en crudo.
       RawMessageDelivery: false
+      # La politica por defecto (3 reintentos a 20 s) pierde los eventos de un corte de un
+      # minuto. SNS admite para HTTPS 3600 s de reintentos en total (limite duro): 3 a 10 s,
+      # 10 con espera exponencial de 10 s a 300 s y 7 a 300 s suman unos 51 minutos. El
+      # limite de entregas por segundo deja en SNS lo que transactional no absorbe.
+      DeliveryPolicy:
+        healthyRetryPolicy:
+          numRetries: 20
+          numNoDelayRetries: 0
+          numMinDelayRetries: 3
+          minDelayTarget: 10
+          numMaxDelayRetries: 7
+          maxDelayTarget: 300
+          backoffFunction: exponential
+        throttlePolicy:
+          maxReceivesPerSecond: !Ref EventsMaxReceivesPerSecond
+        requestPolicy:
+          headerContentType: "text/plain; charset=UTF-8"
 
   TransactionalSet:
     Type: AWS::SES::ConfigurationSet

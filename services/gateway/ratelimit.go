@@ -17,6 +17,8 @@ const (
 	authLimiterName = "gateway:auth"
 	// exfilLimiterName es el contador de lecturas del detector de extraccion masiva (audit.go).
 	exfilLimiterName = "gateway:exfil"
+	// webhookLimiterName es el cupo de las rutas publicas marcadas "limit": "webhook".
+	webhookLimiterName = "gateway:webhook"
 )
 
 // newRateLimitStore abre el Redis de la plataforma (REDIS_*) para los cupos del gateway,
@@ -68,4 +70,11 @@ func newRateLimiters(store middleware.RateLimitStore, apiRate, authRate int, log
 // degrada el conteo a la memoria de cada replica.
 func newExfilCounter(store middleware.RateLimitStore, threshold int, window time.Duration, logger *zap.Logger) *middleware.RateLimiter {
 	return middleware.NewSharedRateLimiter(store, exfilLimiterName, threshold, window, logger)
+}
+
+// newWebhookLimiter es el cupo por IP de los webhooks de proveedores. Va aparte del general
+// para que una rafaga de eventos no agote el cupo de las personas que comparten esa IP ni el
+// general frene los eventos; sigue siendo un limite, porque la ruta es anonima.
+func newWebhookLimiter(store middleware.RateLimitStore, ratePerMin int, logger *zap.Logger) *middleware.RateLimiter {
+	return middleware.NewSharedRateLimiter(store, webhookLimiterName, ratePerMin, time.Minute, logger)
 }

@@ -283,7 +283,7 @@ func (c cellRouter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // mountPublic monta las rutas publicas de la tabla: las que llevan {cell}, por celda; las
 // demas, al destino base de su servicio. Un proxy por destino.
-func mountPublic(r chi.Router, t *routeTable, internalToken string) {
+func mountPublic(r chi.Router, t *routeTable, internalToken string, webhookLimit func(http.Handler) http.Handler) {
 	proxies := map[string]http.Handler{}
 	proxyFor := func(target string) http.Handler {
 		if p, ok := proxies[target]; ok {
@@ -307,6 +307,9 @@ func mountPublic(r chi.Router, t *routeTable, internalToken string) {
 				routers[p.Service] = router
 			}
 			h = router
+		}
+		if p.Limit == publicLimitWebhook {
+			h = webhookLimit(h)
 		}
 		r.Method(p.Method, p.Path, h)
 	}
@@ -392,4 +395,31 @@ func (c tenantCellRouter) refuse(w http.ResponseWriter, reason, tenantID, cell s
 	c.logger.Warn("celdas: peticion no enviada a ninguna celda",
 		zap.String("service", c.service), zap.String("reason", reason),
 		zap.String("tenant_id", tenantID), zap.String("cell", cell))
+}
+
+// exceptWebhooks aplica limit a todo /api/v1 menos a las rutas publicas marcadas como webhook,
+// que llevan su propio cupo en mountPublic. Se decide antes de enrutar, con un enrutador que
+// solo conoce esas rutas: la plantilla ({tenantID}) casa igual que en el enrutador real.
+func exceptWebhooks(t *routeTable, limit func(http.Handler) http.Handler) func(http.Handler) http.Handler {
+	webhooks := chi.NewRouter()
+	n := 0
+	for _, p := range t.Public {
+		if p.Limit == publicLimitWebhook {
+			webhooks.Method(p.Method, "/api/v1"+p.Path, http.NotFoundHandler())
+			n++
+		}
+	}
+	if n == 0 {
+		return limit
+	}
+	return func(next http.Handler) http.Handler {
+		limited := limit(next)
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if webhooks.Match(chi.NewRouteContext(), r.Method, r.URL.Path) {
+				next.ServeHTTP(w, r)
+				return
+			}
+			limited.ServeHTTP(w, r)
+		})
+	}
 }

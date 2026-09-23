@@ -10,6 +10,7 @@ import (
 	"encoding/base64"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -287,5 +288,72 @@ func TestLaDescargaNoSigueRedirecciones(t *testing.T) {
 	}
 	if hits != 0 {
 		t.Fatalf("la redireccion se siguio: %d visitas", hits)
+	}
+}
+
+func TestRegionFromTopicARN(t *testing.T) {
+	for arn, want := range map[string]string{
+		"arn:aws:sns:us-east-1:123456789012:cfm-prod-ses-events": "us-east-1",
+		"arn:aws-us-gov:sns:us-gov-west-1:123456789012:t":        "us-gov-west-1",
+	} {
+		if got, err := RegionFromTopicARN(arn); err != nil || got != want {
+			t.Errorf("%s: %q, %v", arn, got, err)
+		}
+	}
+	for _, arn := range []string{"", "arn:aws:sqs:us-east-1:123456789012:q", "arn:aws:sns:us-east-1:12345:t", "arn:aws:sns:us-east-1:123456789012:"} {
+		if _, err := RegionFromTopicARN(arn); err == nil {
+			t.Errorf("%q deberia rechazarse", arn)
+		}
+	}
+}
+
+// Con el topic fijado, un certificado de otra region no se descarga: quien conoce el ARN no
+// hace que el servicio salga a cualquier region de AWS.
+func TestCertificadoSoloDeLaRegionDelTopic(t *testing.T) {
+	var fetched []string
+	v := NewVerifierWithFetcher(func(_ context.Context, u string) ([]byte, error) {
+		fetched = append(fetched, u)
+		return nil, errors.New("no servido")
+	})
+	if _, err := v.ForTopic("arn:aws:sns:us-east-1:123456789012:cfm-prod-ses-events"); err != nil {
+		t.Fatal(err)
+	}
+	_, err := v.certificate(context.Background(), "https://sns.eu-west-1.amazonaws.com/SimpleNotificationService-x.pem")
+	if !errors.Is(err, ErrCertURL) || len(fetched) != 0 {
+		t.Fatalf("otra region: %v, descargas %v", err, fetched)
+	}
+	if _, err := v.certificate(context.Background(), "https://sns.us-east-1.amazonaws.com/SimpleNotificationService-x.pem"); err == nil || len(fetched) != 1 {
+		t.Fatalf("la region del topic si se intenta: %v, descargas %v", err, fetched)
+	}
+}
+
+// Una descarga fallida no se repite durante failedCertTTL, y la tabla no crece sin limite.
+func TestCertificadoFallidoSeRecuerda(t *testing.T) {
+	calls := 0
+	v := NewVerifierWithFetcher(func(context.Context, string) ([]byte, error) {
+		calls++
+		return nil, errors.New("404")
+	})
+	now := time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
+	v.now = func() time.Time { return now }
+	const u = "https://sns.us-east-1.amazonaws.com/SimpleNotificationService-inventado.pem"
+	for i := 0; i < 3; i++ {
+		if _, err := v.certificate(context.Background(), u); err == nil {
+			t.Fatal("un certificado que no existe no se acepta")
+		}
+	}
+	if calls != 1 {
+		t.Fatalf("descargas dentro de la ventana: %d", calls)
+	}
+	now = now.Add(failedCertTTL + time.Second)
+	_, _ = v.certificate(context.Background(), u)
+	if calls != 2 {
+		t.Fatalf("pasada la ventana se reintenta: %d", calls)
+	}
+	for i := 0; i < 3*maxCachedCerts; i++ {
+		_, _ = v.certificate(context.Background(), fmt.Sprintf("https://sns.us-east-1.amazonaws.com/SimpleNotificationService-n%d.pem", i))
+	}
+	if n := len(v.failed); n > maxCachedCerts {
+		t.Fatalf("la tabla de fallos crece sin limite: %d", n)
 	}
 }

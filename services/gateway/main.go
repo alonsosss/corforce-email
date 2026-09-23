@@ -108,6 +108,7 @@ func main() {
 		log.Fatalf("redis: %v", err)
 	}
 	limiter, authLimiter := newRateLimiters(rateStore, st.apiRatePerMin, st.authRatePerMin, logger)
+	webhookLimiter := newWebhookLimiter(rateStore, st.webhookPerMin, logger)
 
 	identity := reverseProxy(table.serviceURL("identity"), internalToken)
 
@@ -132,7 +133,7 @@ func main() {
 	}
 
 	r.Route("/api/v1", func(r chi.Router) {
-		r.Use(limiter.Limit)
+		r.Use(exceptWebhooks(table, limiter.Limit))
 		// Auth publico: login, refresh y el reto MFA (paso del propio login).
 		// Rutas explicitas (no subrouter) para no solapar con las MFA autenticadas.
 		// Limitador estricto en las rutas atacables por fuerza bruta. /auth/refresh
@@ -151,7 +152,7 @@ func main() {
 		// Rutas publicas declaradas en la tabla: webhooks de proveedores y enlaces que
 		// llegan por correo. Sin JWT; el servicio verifica la firma o el enlace. Las de un
 		// servicio de celda se enrutan por el segmento {cell} (cells.go).
-		mountPublic(r, table, internalToken)
+		mountPublic(r, table, internalToken, webhookLimiter.Limit)
 
 		// Prefijos que autentica el propio servicio con su sesion (el webmail): sin JWT
 		// ni RBAC, con el limitador general y el estricto en su inicio de sesion, y los de un
@@ -269,6 +270,11 @@ const (
 	// contra el barrido de cuentas.
 	maxAPIRatePerMin  = 60000
 	maxAuthRatePerMin = 600
+	// Webhooks: SNS entrega a rafagas desde pocas IP; 6000 por minuto e IP son 100 por segundo,
+	// el doble del limite de entregas que fija la suscripcion (ops/aws/ses-mail.yaml).
+	defaultWebhookRatePerMin = 6000
+	minWebhookRatePerMin     = 60
+	maxWebhookRatePerMin     = 600000
 
 	defaultExfilReads     = 400
 	defaultExfilWindowMin = 5
@@ -286,6 +292,7 @@ type settings struct {
 	port           int
 	apiRatePerMin  int
 	authRatePerMin int
+	webhookPerMin  int
 	exfilReads     int
 	exfilWindow    time.Duration
 }
@@ -306,6 +313,9 @@ func loadSettings() (settings, error) {
 	// mayor que el general no frenaria nunca nada.
 	if st.authRatePerMin > st.apiRatePerMin {
 		return st, fmt.Errorf("AUTH_RATE_LIMIT_PER_MIN=%d must not exceed API_RATE_LIMIT_PER_MIN=%d", st.authRatePerMin, st.apiRatePerMin)
+	}
+	if st.webhookPerMin, err = config.EnvInt("WEBHOOK_RATE_LIMIT_PER_MIN", defaultWebhookRatePerMin, minWebhookRatePerMin, maxWebhookRatePerMin); err != nil {
+		return st, err
 	}
 	if st.exfilReads, err = config.EnvInt("EXFIL_READ_THRESHOLD", defaultExfilReads, 1, maxExfilReads); err != nil {
 		return st, err

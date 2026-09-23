@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-var settingsKeys = []string{"GATEWAY_PORT", "API_RATE_LIMIT_PER_MIN", "AUTH_RATE_LIMIT_PER_MIN", "EXFIL_READ_THRESHOLD", "EXFIL_WINDOW_MIN"}
+var settingsKeys = []string{"GATEWAY_PORT", "API_RATE_LIMIT_PER_MIN", "AUTH_RATE_LIMIT_PER_MIN", "WEBHOOK_RATE_LIMIT_PER_MIN", "EXFIL_READ_THRESHOLD", "EXFIL_WINDOW_MIN"}
 
 func setSettingsEnv(t *testing.T, env map[string]string) {
 	t.Helper()
@@ -23,18 +23,18 @@ func TestLoadSettingsDefectosYExtremos(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if st != (settings{port: 8080, apiRatePerMin: 600, authRatePerMin: 30, exfilReads: 400, exfilWindow: 5 * time.Minute}) {
+	if st != (settings{port: 8080, apiRatePerMin: 600, authRatePerMin: 30, webhookPerMin: 6000, exfilReads: 400, exfilWindow: 5 * time.Minute}) {
 		t.Fatalf("defectos: %+v", st)
 	}
 	setSettingsEnv(t, map[string]string{
 		"GATEWAY_PORT": "65535", "API_RATE_LIMIT_PER_MIN": "60000", "AUTH_RATE_LIMIT_PER_MIN": "600",
-		"EXFIL_READ_THRESHOLD": "100000", "EXFIL_WINDOW_MIN": "60",
+		"WEBHOOK_RATE_LIMIT_PER_MIN": "600000", "EXFIL_READ_THRESHOLD": "100000", "EXFIL_WINDOW_MIN": "60",
 	})
 	st, err = loadSettings()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if st != (settings{port: 65535, apiRatePerMin: 60000, authRatePerMin: 600, exfilReads: 100000, exfilWindow: time.Hour}) {
+	if st != (settings{port: 65535, apiRatePerMin: 60000, authRatePerMin: 600, webhookPerMin: 600000, exfilReads: 100000, exfilWindow: time.Hour}) {
 		t.Fatalf("maximos: %+v", st)
 	}
 }
@@ -43,11 +43,12 @@ func TestLoadSettingsDefectosYExtremos(t *testing.T) {
 // defecto dejaria el gateway con un cupo que nadie eligio.
 func TestLoadSettingsRangos(t *testing.T) {
 	refused := map[string][]string{
-		"GATEWAY_PORT":            {"0", "65536", "80a"},
-		"API_RATE_LIMIT_PER_MIN":  {"0", "-5", "60001", "abc", "4.5"},
-		"AUTH_RATE_LIMIT_PER_MIN": {"0", "601", "treinta"},
-		"EXFIL_READ_THRESHOLD":    {"0", "100001"},
-		"EXFIL_WINDOW_MIN":        {"0", "61", "5m"},
+		"GATEWAY_PORT":               {"0", "65536", "80a"},
+		"API_RATE_LIMIT_PER_MIN":     {"0", "-5", "60001", "abc", "4.5"},
+		"AUTH_RATE_LIMIT_PER_MIN":    {"0", "601", "treinta"},
+		"WEBHOOK_RATE_LIMIT_PER_MIN": {"59", "600001", "mucho"},
+		"EXFIL_READ_THRESHOLD":       {"0", "100001"},
+		"EXFIL_WINDOW_MIN":           {"0", "61", "5m"},
 	}
 	for key, values := range refused {
 		for _, value := range values {

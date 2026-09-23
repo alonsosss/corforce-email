@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"strings"
 	"sync"
 	"time"
 )
@@ -61,6 +62,14 @@ var (
 // maxCertBytes acota la descarga del certificado.
 const maxCertBytes = 64 << 10
 
+// Cache de certificados. Una descarga fallida se recuerda failedCertTTL: sin eso, quien conozca
+// el ARN del topic fuerza una salida de red por peticion cambiando el nombre del fichero. Las dos
+// tablas se acotan a maxCachedCerts; al llenarse se vacian (los certificados reales son pocos).
+const (
+	failedCertTTL  = 5 * time.Minute
+	maxCachedCerts = 64
+)
+
 // Fetcher descarga un recurso https; se sustituye en pruebas.
 type Fetcher func(ctx context.Context, rawURL string) ([]byte, error)
 
@@ -68,8 +77,13 @@ type Verifier struct {
 	fetch Fetcher
 	http  *http.Client
 
-	mu    sync.Mutex
-	certs map[string]*x509.Certificate
+	// region, si se fija, es la unica de la que se acepta el certificado: la del topic.
+	region string
+
+	mu     sync.Mutex
+	certs  map[string]*x509.Certificate
+	failed map[string]time.Time
+	now    func() time.Time
 }
 
 func NewVerifier() *Verifier {
@@ -78,10 +92,34 @@ func NewVerifier() *Verifier {
 			Timeout:       10 * time.Second,
 			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 		},
-		certs: make(map[string]*x509.Certificate),
+		certs:  make(map[string]*x509.Certificate),
+		failed: make(map[string]time.Time),
+		now:    time.Now,
 	}
 	v.fetch = v.httpFetch
 	return v
+}
+
+// ForTopic limita el certificado a la region del topic (arn:aws:sns:<region>:<cuenta>:<nombre>).
+// Un ARN que no tiene esa forma no restringe nada y se informa como error.
+func (v *Verifier) ForTopic(topicARN string) (*Verifier, error) {
+	region, err := RegionFromTopicARN(topicARN)
+	if err != nil {
+		return v, err
+	}
+	v.region = region
+	return v, nil
+}
+
+var topicARNPattern = regexp.MustCompile(`^arn:aws(?:-[a-z]+)*:sns:([a-z]{2}(?:-gov)?-[a-z]+-\d):\d{12}:[A-Za-z0-9_-]{1,256}$`)
+
+// RegionFromTopicARN devuelve la region de un ARN de topic SNS.
+func RegionFromTopicARN(topicARN string) (string, error) {
+	m := topicARNPattern.FindStringSubmatch(topicARN)
+	if m == nil {
+		return "", fmt.Errorf("sns: ARN de topic no valido: %q", topicARN)
+	}
+	return m[1], nil
 }
 
 // NewVerifierWithFetcher permite inyectar la descarga (pruebas).
@@ -190,17 +228,53 @@ func (v *Verifier) certificate(ctx context.Context, rawURL string) (*x509.Certif
 	if !certURLPattern.MatchString(rawURL) {
 		return nil, ErrCertURL
 	}
-	now := time.Now()
+	if v.region != "" && !strings.HasPrefix(rawURL, "https://sns."+v.region+".amazonaws.com/") {
+		return nil, fmt.Errorf("%w: el certificado no es de la region del topic (%s)", ErrCertURL, v.region)
+	}
+	now := v.now()
 	v.mu.Lock()
 	cert, ok := v.certs[rawURL]
 	if ok && now.After(cert.NotAfter) {
 		delete(v.certs, rawURL)
 		ok = false
 	}
+	until, recentlyFailed := v.failed[rawURL]
+	if recentlyFailed && now.After(until) {
+		delete(v.failed, rawURL)
+		recentlyFailed = false
+	}
 	v.mu.Unlock()
 	if ok {
 		return cert, nil
 	}
+	if recentlyFailed {
+		return nil, errors.New("sns: certificado no disponible (fallo reciente)")
+	}
+	cert, err := v.load(ctx, rawURL, now)
+	if err != nil {
+		v.remember(rawURL, now.Add(failedCertTTL))
+		return nil, err
+	}
+	v.mu.Lock()
+	if len(v.certs) >= maxCachedCerts {
+		v.certs = make(map[string]*x509.Certificate)
+	}
+	v.certs[rawURL] = cert
+	v.mu.Unlock()
+	return cert, nil
+}
+
+func (v *Verifier) remember(key string, until time.Time) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if len(v.failed) >= maxCachedCerts {
+		v.failed = make(map[string]time.Time)
+	}
+	v.failed[key] = until
+}
+
+// load descarga y valida el certificado.
+func (v *Verifier) load(ctx context.Context, rawURL string, now time.Time) (*x509.Certificate, error) {
 	data, err := v.fetch(ctx, rawURL)
 	if err != nil {
 		return nil, fmt.Errorf("sns: descargar certificado: %w", err)
@@ -209,7 +283,7 @@ func (v *Verifier) certificate(ctx context.Context, rawURL string) (*x509.Certif
 	if block == nil || block.Type != "CERTIFICATE" {
 		return nil, errors.New("sns: el certificado no es PEM")
 	}
-	cert, err = x509.ParseCertificate(block.Bytes)
+	cert, err := x509.ParseCertificate(block.Bytes)
 	if err != nil {
 		return nil, fmt.Errorf("sns: certificado ilegible: %w", err)
 	}
@@ -219,9 +293,6 @@ func (v *Verifier) certificate(ctx context.Context, rawURL string) (*x509.Certif
 	if _, ok := cert.PublicKey.(*rsa.PublicKey); !ok {
 		return nil, errors.New("sns: el certificado no lleva una clave RSA")
 	}
-	v.mu.Lock()
-	v.certs[rawURL] = cert
-	v.mu.Unlock()
 	return cert, nil
 }
 

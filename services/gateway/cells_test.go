@@ -124,7 +124,9 @@ func newCellGateway(t *testing.T, hits *[]string) http.Handler {
 	}
 	r := chi.NewRouter()
 	r.Use(middleware.StripInternalHeaders)
-	r.Route("/api/v1", func(r chi.Router) { mountPublic(r, tbl, "token-interno") })
+	r.Route("/api/v1", func(r chi.Router) {
+		mountPublic(r, tbl, "token-interno", func(h http.Handler) http.Handler { return h })
+	})
 	return r
 }
 

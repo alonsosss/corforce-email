@@ -190,12 +190,19 @@ func main() {
 
 	go releaseScheduled(ctx, tenantDB, uc, logger)
 
+	topicARN := strings.TrimSpace(os.Getenv("SES_EVENTS_TOPIC_ARN"))
+	verifier := sns.NewVerifier()
+	if topicARN != "" {
+		if _, err := verifier.ForTopic(topicARN); err != nil {
+			log.Fatalf("SES_EVENTS_TOPIC_ARN: %v", err)
+		}
+	}
 	h := handler.NewHandler(handler.Deps{
 		UC:       uc,
 		TenantDB: tenantDB,
 		Perms:    perms,
-		SNS:      sns.NewVerifier(),
-		TopicARN: strings.TrimSpace(os.Getenv("SES_EVENTS_TOPIC_ARN")),
+		SNS:      verifier,
+		TopicARN: topicARN,
 		Logger:   logger,
 	})
 
