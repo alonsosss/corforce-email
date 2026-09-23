@@ -577,8 +577,16 @@ CT2=$(curl -s -X POST "$GW/contacts" -H "$A2" -H 'Content-Type: application/json
   -d '{"email":"marta@cliente.test","first_name":"Marta","source":"api","consent":{"status":"granted","method":"api","source":"e2e"}}' | jget data.id)
 expect "un contacto enviable entra en la lista" \
   "$(curl -s -X POST "$GW/contacts/lists/$LID/members" -H "$A2" -H 'Content-Type: application/json' -d "{\"contact_ids\":[\"$CT2\"]}" | jget data.added)" "1"
+# El verificador de entregabilidad no deja publicar marketing sin la direccion fisica del remitente
+# (docs/Plan_Editor_Correos.md, 3.5): se publica con el kit de marca y el pie legal en el cuerpo.
+TSIN=$(curl -s -X POST "$GW/templates" -H "$A2" -H 'Content-Type: application/json' \
+  -d '{"name":"sin-direccion","kind":"marketing","subject":"Novedades","html":"<p>Novedades de Acme</p><p><a href=\"{{.unsubscribe_url}}\">Darse de baja</a></p>","variables":[]}' | jget data.id)
+expect "marketing sin direccion fisica no se publica" \
+  "$(curl -s -X POST "$GW/templates/$TSIN/versions/1/publish" -H "$A2" | jget error.code)" "DELIVERABILITY_FAILED"
+expect "kit de marca con la direccion del remitente" "$(codigo -X PUT "$GW/templates/brand-kit" -H "$A2" -H 'Content-Type: application/json' \
+  -d '{"colors":["#0B5FFF"],"fonts":["Arial"],"footer":{"company":"Acme SAC","address":"Av. Principal 123, Lima, Peru"}}')" "200"
 TMID=$(curl -s -X POST "$GW/templates" -H "$A2" -H 'Content-Type: application/json' \
-  -d '{"name":"novedades","kind":"marketing","subject":"Novedades","html":"<p>Novedades de Acme</p><p><a href=\"{{.unsubscribe_url}}\">Darse de baja</a></p>","variables":[]}' | jget data.id)
+  -d '{"name":"novedades","kind":"marketing","subject":"Novedades","html":"<p>Novedades de Acme</p><p>Acme SAC, Av. Principal 123, Lima, Peru</p><p><a href=\"{{.unsubscribe_url}}\">Darse de baja</a></p>","variables":[]}' | jget data.id)
 expect "plantilla de marketing publicada" "$(codigo -X POST "$GW/templates/$TMID/versions/1/publish" -H "$A2")" "200"
 CP=$(curl -s -X POST "$GW/campaigns" -H "$A2" -H 'Content-Type: application/json' \
   -d "{\"name\":\"Lanzamiento\",\"template_id\":\"$TMID\",\"from_email\":\"hola@acme.test\",\"from_name\":\"Acme\",\"audience\":{\"list_ids\":[\"$LID\"]}}")

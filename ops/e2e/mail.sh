@@ -74,6 +74,10 @@ export E2E_MIGRATION_NETWORK="${E2E_MIGRATION_NETWORK:-cfm-e2e-mail-migration}"
 export E2E_MIGRATION_BRIDGE="${E2E_MIGRATION_BRIDGE:-br-cfme2emig}"
 export MAIL_MIGRATION_IPV4_NETWORK="${E2E_MAIL_MIGRATION_IPV4_NETWORK:-172.30.30}"
 MIGRATION_DOVECOT_IP="$MAIL_MIGRATION_IPV4_NETWORK.250"
+# Red propia del analisis antivirus de templates (la de produccion se llama mail-scan).
+export E2E_SCAN_NETWORK="${E2E_SCAN_NETWORK:-cfm-e2e-mail-scan}"
+export E2E_SCAN_BRIDGE="${E2E_SCAN_BRIDGE:-br-cfme2escan}"
+export MAIL_SCAN_IPV4_NETWORK="${E2E_MAIL_SCAN_IPV4_NETWORK:-172.30.31}"
 e2e_reservar
 WORK="$(mktemp -d)"
 MAILDIR="$WORK/repo/deploy/mail"
@@ -98,7 +102,7 @@ restos() {
   ids=$(docker ps -aq --filter "label=com.docker.compose.project=$PROYECTO")
   # shellcheck disable=SC2086
   docker rm -f $ids "$E2E_PREFIX-pg" "$E2E_PREFIX-nats" "$E2E_PREFIX-redis" "$E2E_PREFIX-dns" >/dev/null 2>&1
-  docker network rm "$E2E_MAIL_NETWORK" "$E2E_MIGRATION_NETWORK" >/dev/null 2>&1
+  docker network rm "$E2E_MAIL_NETWORK" "$E2E_MIGRATION_NETWORK" "$E2E_SCAN_NETWORK" >/dev/null 2>&1
   ids=$(docker volume ls -q --filter "label=com.docker.compose.project=$PROYECTO")
   # shellcheck disable=SC2086
   [[ -n "$ids" ]] && docker volume rm $ids >/dev/null 2>&1
@@ -137,17 +141,19 @@ docker network inspect $(docker network ls -q) --format '{{.Name}} {{range .IPAM
   python3 -c '
 import ipaddress, sys
 mias = [ipaddress.ip_network(a) for a in sys.argv[1:]]
-if mias[0].overlaps(mias[1]):
-    sys.exit(f"E2E: las subredes {mias[0]} y {mias[1]} se pisan; usa E2E_MAIL_IPV4_NETWORK y E2E_MAIL_MIGRATION_IPV4_NETWORK")
+for i, a in enumerate(mias):
+    for b in mias[i + 1:]:
+        if a.overlaps(b):
+            sys.exit(f"E2E: las subredes {a} y {b} se pisan; usa E2E_MAIL_IPV4_NETWORK, E2E_MAIL_MIGRATION_IPV4_NETWORK o E2E_MAIL_SCAN_IPV4_NETWORK")
 for linea in sys.stdin:
     nombre, *redes = linea.split()
     for r in redes:
         try:
             for mia in mias:
                 if ipaddress.ip_network(r, strict=False).overlaps(mia):
-                    sys.exit(f"E2E: la subred {mia} choca con la red {nombre} ({r}); usa E2E_MAIL_IPV4_NETWORK o E2E_MAIL_MIGRATION_IPV4_NETWORK")
+                    sys.exit(f"E2E: la subred {mia} choca con la red {nombre} ({r}); usa E2E_MAIL_IPV4_NETWORK, E2E_MAIL_MIGRATION_IPV4_NETWORK o E2E_MAIL_SCAN_IPV4_NETWORK")
         except ValueError:
-            pass' "$IPV4_NETWORK.0/24" "$MAIL_MIGRATION_IPV4_NETWORK.0/24" || exit 2
+            pass' "$IPV4_NETWORK.0/24" "$MAIL_MIGRATION_IPV4_NETWORK.0/24" "$MAIL_SCAN_IPV4_NETWORK.0/24" || exit 2
 
 # Copia de deploy/mail con lo versionado y lo nuevo no ignorado: los entrypoints reescriben
 # ficheros de sus bind mounts (main.cf, mapas con la credencial) y el repositorio no se toca.

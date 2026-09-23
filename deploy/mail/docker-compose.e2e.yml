@@ -207,6 +207,13 @@ networks:
     ipam:
       config: !override
         - subnet: ${MAIL_MIGRATION_IPV4_NETWORK:?lo fija ops/e2e/mail.sh}.0/24
+  mail-scan:
+    name: ${E2E_SCAN_NETWORK:?lo fija ops/e2e/mail.sh}
+    driver_opts:
+      com.docker.network.bridge.name: ${E2E_SCAN_BRIDGE:?lo fija ops/e2e/mail.sh}
+    ipam:
+      config: !override
+        - subnet: ${MAIL_SCAN_IPV4_NETWORK:?lo fija ops/e2e/mail.sh}.0/24
 
 volumes:
   clamav-signatures:
