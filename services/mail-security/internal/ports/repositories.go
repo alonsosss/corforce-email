@@ -308,6 +308,18 @@ type AntispamInspector interface {
 	History(ctx context.Context) ([]domain.RspamdHistoryRow, error)
 }
 
+// SpamScanner puntua un mensaje con Rspamd sin entregarlo, sin guardarlo en su historial y sin que el
+// clasificador aprenda de el. Sin contrasena devuelve domain.ErrNotConfigured; un Rspamd que no responde o
+// cuya respuesta no se entiende, domain.ErrEngineUnreachable o domain.ErrEngineCommand.
+type SpamScanner interface {
+	Check(ctx context.Context, msg []byte) (domain.SpamCheckResult, error)
+}
+
+// SpamCheckMetrics cuenta las puntuaciones antispam por desenlace.
+type SpamCheckMetrics interface {
+	SpamChecked(outcome domain.SpamCheckOutcome)
+}
+
 // Transactor abre la transaccion bajo la que corre el API de administracion: cambia al
 // rol sujeto a RLS y fija la empresa de la peticion (pkg/db.ContextPool.TransactRLS).
 type Transactor interface {

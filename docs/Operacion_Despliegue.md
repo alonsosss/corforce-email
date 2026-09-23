@@ -96,7 +96,7 @@ largas de cada guardarraíl están en `ops/scaffold/README.md`, `ops/security/se
   endpoint https que llaman tal cual Dovecot y el webmail), `PUBLIC_BASE_URL`,
   `PASSWORD_BREACH_API_URL`, `MINIO_PUBLIC_URL` y `NATS_URL`. Las dos direcciones de los motores
   que mail-security llama como URL base siguen la misma regla con su valor por defecto:
-  `RSPAMD_CONTROLLER_URL` (`http://rspamd:11334`; le pega `/learnspam` o `/stat` y manda en su
+  `RSPAMD_CONTROLLER_URL` (`http://rspamd:11334`; le pega `/learnspam`, `/stat` o `/checkv2` y manda en su
   cabecera la contraseña de cada permiso) y `DOVEADM_API_URL` (`https://dovecot:8443`), que además tiene que ser
   `https` (`doveadm.New`): la clave del API viaja en cada petición.
 * Entorno declarado (`ENVIRONMENT`). Un servidor declara exactamente

@@ -34,6 +34,7 @@ type Handler struct {
 	dkim       *app.DKIMUseCase
 	queue      *app.QueueUseCase
 	antispam   *app.AntispamUseCase
+	spamCheck  *app.SpamCheckUseCase
 	authz      *authz.Checker
 	// publicLimiter frena por ip los enlaces sin sesion del aviso de cuarentena, por
 	// debajo del limite general del servicio.
@@ -169,9 +170,11 @@ func (h *Handler) Routes() chi.Router {
 	// Enlaces del aviso de cuarentena: publicos, los verifica la firma del enlace.
 	r.Route("/api/v1/public/mail-security/quarantine", h.publicRoutes)
 
-	// Rutas internas: las llama domain-service con el token de gateway y X-Tenant-ID.
-	// Sin permiso de usuario porque no hay usuario: la autoridad es el servicio.
+	// Rutas internas: las llaman domain-service (DKIM, con X-Tenant-ID) y templates (spam-check, sin
+	// empresa) con el token de gateway. Sin permiso de usuario porque no hay usuario: la autoridad es el
+	// servicio.
 	r.Route("/internal/mail-security", func(r chi.Router) {
+		r.Post("/spam-check", h.SpamCheck)
 		r.Put("/dkim/{domain}", h.PutDKIM)
 		r.Delete("/dkim/{domain}", h.DeleteDKIMDomain)
 		r.Delete("/dkim/{domain}/{selector}", h.DeleteDKIMSelector)

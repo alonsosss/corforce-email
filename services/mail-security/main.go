@@ -436,8 +436,8 @@ func main() {
 		Tx: ctxPool, Repo: postgres.NewPolicyRepository(ctxPool), Directory: directory, Sync: redisSync, Logger: logger,
 	})
 	// Controller de Rspamd, con una contrasena por permiso (docs/adr/0009): la de escritura entrena desde la
-	// cuarentena y la de lectura sirve al superadmin sus contadores e historial. Sin la suya, cada una
-	// responde 503 NOT_CONFIGURED por separado.
+	// cuarentena y la de lectura sirve al superadmin sus contadores e historial y puntua las plantillas
+	// (/checkv2). Sin la suya, cada una responde 503 NOT_CONFIGURED por separado.
 	learner := rspamd.New(st.controllerURL, st.controllerLearnPassword)
 	antispamReader := rspamd.New(st.controllerURL, st.controllerReadPassword)
 	logger.Info("controller de Rspamd",
@@ -502,6 +502,7 @@ func main() {
 	routes := handler.NewHandler(policyUC, quarantineUC, firewallUC, dkimUC, st.perms).
 		WithQueue(queueUseCase(queueAgent, logger)).
 		WithAntispam(app.NewAntispamUseCase(antispamReader, logger)).
+		WithSpamCheck(app.NewSpamCheckUseCase(antispamReader, metrics, logger)).
 		Routes()
 	if err := membership.AcceptOperators(routes, handler.PlatformRoutes()); err != nil {
 		log.Fatalf("celda de la instancia: %v", err)
@@ -544,7 +545,7 @@ func main() {
 }
 
 // apiRouter monta la superficie A: el API de administracion que llega por el gateway, los
-// enlaces publicos de cuarentena y las rutas internas de domain-service, todo tras el token
+// enlaces publicos de cuarentena y las rutas internas de domain-service y templates, todo tras el token
 // interno. Una peticion por una empresa que no es de esta celda se rechaza antes de llegar a
 // ninguna ruta (tenantcell.Membership).
 func apiRouter(pool *pgxpool.Pool, membership *tenantcell.Membership, routes http.Handler, logger *zap.Logger) http.Handler {
@@ -556,9 +557,24 @@ func apiRouter(pool *pgxpool.Pool, membership *tenantcell.Membership, routes htt
 	r.Use(middleware.SecureHeaders)
 	r.Use(middleware.Logger(logger))
 	r.Use(middleware.NewRateLimiter(120, time.Minute).Limit)
-	r.Use(membership.Require)
+	r.Use(cellGate(membership.Require))
 	r.Mount("/", routes)
 	return r
+}
+
+// cellGate aplica el filtro de celda salvo a las rutas que no tocan datos de ninguna empresa
+// (handler.CellFreeRequest).
+func cellGate(require func(http.Handler) http.Handler) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		gated := require(next)
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if handler.CellFreeRequest(r) {
+				next.ServeHTTP(w, r)
+				return
+			}
+			gated.ServeHTTP(w, r)
+		})
+	}
 }
 
 // runCellRelay vacia la outbox de la celda hacia JetStream. Antes asegura el stream de sus

@@ -23,6 +23,7 @@ type Metrics struct {
 	queueOldest        prometheus.Gauge
 	queuePollSuccess   prometheus.Gauge
 	queuePollFailures  prometheus.Counter
+	spamChecks         *prometheus.CounterVec
 }
 
 func New() *Metrics {
@@ -67,6 +68,10 @@ func New() *Metrics {
 			Name: "mail_security_postfix_queue_poll_failures_total",
 			Help: "Consultas a la cola de Postfix que fallaron (agente caido, clave o certificado rechazados).",
 		}),
+		spamChecks: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "mail_security_spam_checks_total",
+			Help: "Puntuaciones antispam de correos sin enviar (verificador de plantillas), por desenlace (scanned: Rspamd dio veredicto; invalid: mensaje vacio o mayor que 2 MiB; unavailable: Rspamd no respondio o no se entendio; not_configured: sin contrasena de lectura del controller o rechazada).",
+		}, []string{"outcome"}),
 	}
 	// Las series nacen a cero: un contador que aparece ya en 1 no da increase().
 	for _, reason := range domain.DKIMRemovalReasons() {
@@ -84,8 +89,11 @@ func New() *Metrics {
 	for _, queue := range domain.QueueNames() {
 		m.queueMessages.WithLabelValues(queue)
 	}
+	for _, outcome := range domain.SpamCheckOutcomes() {
+		m.spamChecks.WithLabelValues(string(outcome))
+	}
 	prometheus.MustRegister(m.dkimRemovals, m.dkimUnresolved, m.dkimLastSuccess, m.dovecotRevocations, m.dovecotFailures,
-		m.quarantine, m.queueMessages, m.queueOldest, m.queuePollSuccess, m.queuePollFailures)
+		m.quarantine, m.queueMessages, m.queueOldest, m.queuePollSuccess, m.queuePollFailures, m.spamChecks)
 	return m
 }
 
@@ -127,6 +135,10 @@ func (m *Metrics) QueueObserved(counts map[string]int, oldestArrival time.Time) 
 }
 
 func (m *Metrics) QueuePollFailed() { m.queuePollFailures.Inc() }
+
+func (m *Metrics) SpamChecked(outcome domain.SpamCheckOutcome) {
+	m.spamChecks.WithLabelValues(string(outcome)).Inc()
+}
 
 func (m *Metrics) QuarantineStored()      { m.quarantine.WithLabelValues("stored").Inc() }
 func (m *Metrics) QuarantineReleased()    { m.quarantine.WithLabelValues("released").Inc() }

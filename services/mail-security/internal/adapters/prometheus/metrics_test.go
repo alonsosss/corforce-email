@@ -137,6 +137,25 @@ func TestUnaConsultaFallidaCuentaSinTocarLaUltimaCorrecta(t *testing.T) {
 	}
 }
 
+func TestLaPuntuacionAntispamCuentaCadaDesenlaceConSuEtiqueta(t *testing.T) {
+	m := metricas()
+	before := seriesCon(t, "mail_security_spam_checks_")
+	m.SpamChecked(domain.SpamCheckScanned)
+	m.SpamChecked(domain.SpamCheckScanned)
+	m.SpamChecked(domain.SpamCheckUnavailable)
+	after := seriesCon(t, "mail_security_spam_checks_")
+	for _, outcome := range domain.SpamCheckOutcomes() {
+		key := "mail_security_spam_checks_total{outcome=" + string(outcome) + "}"
+		if _, ok := before[key]; !ok {
+			t.Errorf("la serie %s debe nacer a cero", key)
+		}
+		want := map[domain.SpamCheckOutcome]float64{domain.SpamCheckScanned: 2, domain.SpamCheckUnavailable: 1}[outcome]
+		if after[key]-before[key] != want {
+			t.Errorf("%s: sumo %v, se esperaba %v", key, after[key]-before[key], want)
+		}
+	}
+}
+
 func TestLaCuarentenaCuentaCadaDesenlaceConSuEtiqueta(t *testing.T) {
 	m := metricas()
 	before := seriesCon(t, "mail_security_quarantine_")

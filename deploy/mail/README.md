@@ -793,6 +793,19 @@ a `HEAD` con las mismas cabeceras que el `GET` (V, 2026-09-13, `make e2e-mail`: 
 | `/pipe` | `metadata_exporter`, regla `QUARANTINE` (selector `reject_no_global_bl`: accion reject/add header/rewrite subject sin lista negra global) | `POST multipart/form-data` (frontera entre comillas, cada parte `Content-Transfer-Encoding: binary`): fichero `message` (`message.eml`, RFC822 crudo) y campo `metadata` (JSON con `qid`, `subject`, `score`, `rcpt[]`, `user`, `ip`, `action`, `from`, `symbols[]`, `fuzzy[]`, `message_id`). Rspamd 4 manda cada simbolo como objeto (`name`, `score`, `options`, `groups`) y `rcpt` como la cadena `unknown` si no hay destinatarios SMTP; se admiten tambien simbolos como cadenas y se guarda el nombre de cada uno | `200` guardado; `400` partes ausentes o JSON invalido; `505` mensaje mayor que `Q_MAX_SIZE` MiB; `502` error resolviendo destinatarios; `503` error al insertar (`504` no se da: `/pipe` no depende de Redis). Expande cada rcpt hasta sus buzones finales (misma logica que `/aliasexp`) y aplica los ajustes de la EMPRESA de cada buzon (`mail_security.quarantine_settings`: tamano, dominios excluidos, retencion); guarda una fila por buzon en `mail_security.quarantine` y recorta por buzon. `505` solo si ningun buzon lo guardo por tamano |
 | `/pipe_rl` | `metadata_exporter`, regla `RLINFO` (selector `ratelimited`, formato json) | `POST application/json`: `{rcpt[], from, user, symbols[{name, options[]}], qid, ip, message_id, header_subject[], header_from[]}` | `200`. El servidor extrae de `symbols[RATELIMITED].options` el texto `nombre(hash)` y hace `LPUSH RL_LOG` con `{time, rcpt, from, user, rl_info, rl_name, rl_hash, qid, ip, message_id, header_subject, header_from}` |
 
+### Controller de Rspamd (11334), llamado por mail-security
+
+En sentido contrario, `mail-security` llama al controller (`RSPAMD_CONTROLLER_URL`) con la contrasena
+de cada permiso en la cabecera `Password` (docs/adr/0009): `/learnspam` y `/learnham` con la de
+escritura; `/stat`, `/history` y `/checkv2` con la de lectura. `/checkv2` puntua sin entregar el MIME de
+una plantilla (`POST /internal/mail-security/spam-check`, `docs/Plan_Editor_Correos.md`): Rspamd 4.1.4
+lo atiende en el controller con la contrasena de lectura (`rspamd_controller_handle_scan` no pide la de
+escritura), asi que no hace falta abrir el worker normal (11333). Se manda sin `Queue-Id` (el
+aprendizaje automatico del bayesiano lo exige, `require_queue_id` de `lua_bayes_learn`), con
+`Flags: no_log,no_stat` (ni historial `history_redis`, ni registro del motor, ni contadores de `/stat`)
+y sin sobre SMTP: la regla `QUARANTINE` de `/pipe` puede dispararse, pero llega con `rcpt` `unknown` y no
+guarda nada. Plazo de 8 s, por debajo del `task_timeout` de 30 s de `options.inc`.
+
 `pushover` no se migra.
 
 ## Contrato Redis

@@ -1471,6 +1471,34 @@ lacks "el fichero del controller no guarda la contrasena de lectura en claro" "$
 lacks "ni la de escritura" "$AS_FICHERO" "$RSPAMD_LEARN_PASS"
 contains "guarda sus hashes" "$AS_FICHERO" 'enable_password = "$'
 contains "y el arranque dice que activo las dos" "$(docker logs "$(c rspamd-mail)" 2>&1)" "controller-password: lectura activada; aprendizaje activado"
+
+echo "== Puntuacion antispam de una plantilla (templates -> mail-security -> /checkv2 del controller)"
+# La ruta interna que usa el verificador de templates: token de gateway, sin sesion, con la contrasena de
+# lectura. El mensaje no deja huella en Rspamd: ni en su historial ni en el registro del motor.
+SPAM_MARCA="plantilla-$(rand_hex 6)"
+SPAM_MIME=$(printf 'From: Tienda <ventas@acme.test>\r\nTo: cliente@acme.test\r\nSubject: %s\r\nMIME-Version: 1.0\r\nContent-Type: text/html; charset=utf-8\r\n\r\n<p>Oferta <a href="https://bit.ly/x">aqui</a></p>\r\n' "$SPAM_MARCA")
+spam_check() { # spam_check <cuerpo JSON>: deja SC_CODE y SC_BODY
+  SC_CODE=$(curl -s -o "$WORK/spam-check.json" -w '%{http_code}' -X POST "http://127.0.0.1:${PORT[mail-security]}/internal/mail-security/spam-check" \
+    -H "X-Gateway-Token: $INTERNAL_GATEWAY_TOKEN" -H 'Content-Type: application/json' --data-binary "$1")
+  SC_BODY=$(cat "$WORK/spam-check.json")
+}
+spam_check "$(python3 -c 'import json, sys; print(json.dumps({"message": sys.argv[1]}))' "$SPAM_MIME")"
+expect "mail-security puntua la plantilla con Rspamd" "$SC_CODE" "200"
+SC_RESUMEN=$(echo "$SC_BODY" | python3 -c 'import json, sys
+d = json.load(sys.stdin)["data"]
+s = [x["score"] for x in d["symbols"]]
+print(isinstance(d["score"], (int, float)), d["required"] == 15, bool(d["action"]), len(s) > 0, s == sorted(s, reverse=True))' 2>/dev/null)
+expect "con puntuacion, umbral de rechazo, accion y simbolos ordenados" "$SC_RESUMEN" "True True True True True"
+lacks "sin las opciones de los simbolos" "$SC_BODY" '"options"'
+antispam "$A1" "/history?limit=200"
+lacks "la plantilla no entra en el historial de Rspamd (no_log)" "$AS_BODY" "$SPAM_MARCA"
+lacks "ni en el registro del motor" "$(docker logs "$(c rspamd-mail)" 2>&1)" "$SPAM_MARCA"
+lacks "ni en el de mail-security" "$(docker logs "$(c mail-security)" 2>&1)" "$SPAM_MARCA"
+spam_check '{"message":""}'
+expect "un mensaje vacio se rechaza (400)" "$SC_CODE/$(echo "$SC_BODY" | jget error.code)" "400/MESSAGE_REQUIRED"
+SC_SIN_TOKEN=$(curl -s -o /dev/null -w '%{http_code}' -X POST "http://127.0.0.1:${PORT[mail-security]}/internal/mail-security/spam-check" -d '{"message":"x"}')
+[[ "$SC_SIN_TOKEN" == 401 || "$SC_SIN_TOKEN" == 403 ]] && ok "sin el token interno no se atiende ($SC_SIN_TOKEN)" || mal "spam-check sin token: '$SC_SIN_TOKEN'"
+contains "la metrica cuenta la puntuacion" "$(curl -s "http://127.0.0.1:${PORT[mail-security]}/metrics")" 'mail_security_spam_checks_total{outcome="scanned"} 1'
 cola "$A1" DELETE "/no-valido"
 expect "un identificador invalido se rechaza (422)" "$COLA_CODE" "422"
 en_cola_de() { cola_json | python3 -c 'import json, sys

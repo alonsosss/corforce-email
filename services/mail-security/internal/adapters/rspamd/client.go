@@ -1,5 +1,6 @@
 // Package rspamd habla con el controller de Rspamd (11334): entrena el clasificador
-// (/learnspam, /learnham) y lee sus contadores e historial (/stat, /history). El controller
+// (/learnspam, /learnham), lee sus contadores e historial (/stat, /history) y puntua sin entregar
+// un mensaje que todavia no se envia (/checkv2). El controller
 // exige contrasena salvo desde secure_ip (solo loopback en la configuracion copiada), asi que
 // sin RSPAMD_CONTROLLER_PASSWORD no se intenta. La contrasena viaja solo en la cabecera
 // Password, nunca en la URL, y ningun error la repite. No hay aqui ninguna ruta que escriba
@@ -30,6 +31,10 @@ const (
 	maxHistoryBody = 8 << 20
 	readTimeout    = 15 * time.Second
 	learnTimeout   = 30 * time.Second
+	// checkTimeout queda por debajo de los 10 s con los que templates espera la puntuacion, para que
+	// reciba un 503 claro y no su propio plazo vencido.
+	checkTimeout = 8 * time.Second
+	maxCheckBody = 1 << 20
 )
 
 type Client struct {
@@ -37,6 +42,7 @@ type Client struct {
 	password string
 	learn    *httpclient.Client
 	read     *httpclient.Client
+	check    *httpclient.Client
 }
 
 // New recibe la URL del controller (por defecto http://rspamd:11334) y su contrasena.
@@ -46,6 +52,7 @@ func New(baseURL, password string) *Client {
 		password: password,
 		learn:    httpclient.New("rspamd-controller", httpclient.Options{Timeout: learnTimeout, MaxAttempts: 1}),
 		read:     httpclient.New("rspamd-controller-read", httpclient.Options{Timeout: readTimeout, MaxAttempts: 1}),
+		check:    httpclient.New("rspamd-controller-check", httpclient.Options{Timeout: checkTimeout, MaxAttempts: 1}),
 	}
 }
 
@@ -286,4 +293,78 @@ func integer(n json.Number) int64 {
 		return int64(f)
 	}
 	return 0
+}
+
+// Check puntua un mensaje con POST /checkv2 del controller, que en Rspamd 4.1.4 solo exige la contrasena
+// de lectura (rspamd_controller_handle_scan comprueba la contrasena sin la de escritura). La tarea no deja
+// huella: sin Queue-Id el aprendizaje automatico del bayesiano no la toma (require_queue_id de
+// lua_bayes_learn), la bandera no_log la saca del historial (history_redis) y del registro del motor, y
+// no_stat, de los contadores de /stat. Sin sobre SMTP (IP, remitente, destinatarios) el exportador de la
+// cuarentena no tiene a quien guardarla.
+func (c *Client) Check(ctx context.Context, msg []byte) (domain.SpamCheckResult, error) {
+	if c.password == "" {
+		return domain.SpamCheckResult{}, domain.ErrNotConfigured
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/checkv2", bytes.NewReader(msg))
+	if err != nil {
+		return domain.SpamCheckResult{}, err
+	}
+	req.Header.Set("Password", c.password)
+	req.Header.Set("Content-Type", "message/rfc822")
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Flags", "no_log,no_stat")
+	resp, err := c.check.Do(req)
+	if err != nil {
+		return domain.SpamCheckResult{}, fmt.Errorf("%w: controller de rspamd: %w", domain.ErrEngineUnreachable, err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxCheckBody+1))
+	if err != nil {
+		return domain.SpamCheckResult{}, fmt.Errorf("%w: controller de rspamd: %w", domain.ErrEngineUnreachable, err)
+	}
+	switch {
+	case resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusUnauthorized:
+		return domain.SpamCheckResult{}, fmt.Errorf("%w: el controller rechazo la contrasena", domain.ErrNotConfigured)
+	case resp.StatusCode >= 500:
+		return domain.SpamCheckResult{}, fmt.Errorf("%w: controller de rspamd: %d", domain.ErrEngineUnreachable, resp.StatusCode)
+	case resp.StatusCode != http.StatusOK:
+		return domain.SpamCheckResult{}, fmt.Errorf("%w: controller de rspamd: %d", domain.ErrEngineCommand, resp.StatusCode)
+	case int64(len(body)) > maxCheckBody:
+		return domain.SpamCheckResult{}, fmt.Errorf("%w: la respuesta de /checkv2 supera %d bytes", domain.ErrEngineCommand, maxCheckBody)
+	}
+	var raw checkResponse
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return domain.SpamCheckResult{}, fmt.Errorf("%w: /checkv2 ilegible: %w", domain.ErrEngineCommand, err)
+	}
+	if raw.Error != "" || raw.Action == "" {
+		// El texto del error de Rspamd puede citar el mensaje: no se propaga.
+		return domain.SpamCheckResult{}, fmt.Errorf("%w: /checkv2 no devolvio veredicto", domain.ErrEngineCommand)
+	}
+	return raw.toDomain(), nil
+}
+
+// checkResponse es la parte de la respuesta de /checkv2 que se lee.
+type checkResponse struct {
+	Error         string          `json:"error"`
+	Score         decimal.Decimal `json:"score"`
+	RequiredScore decimal.Decimal `json:"required_score"`
+	Action        string          `json:"action"`
+	Symbols       map[string]struct {
+		Name        string          `json:"name"`
+		Score       decimal.Decimal `json:"score"`
+		Description string          `json:"description"`
+	} `json:"symbols"`
+}
+
+func (r checkResponse) toDomain() domain.SpamCheckResult {
+	symbols := make([]domain.SpamCheckSymbol, 0, len(r.Symbols))
+	for key, s := range r.Symbols {
+		name := s.Name
+		if name == "" {
+			name = key
+		}
+		symbols = append(symbols, domain.SpamCheckSymbol{Name: name, Score: s.Score, Description: s.Description})
+	}
+	domain.SortSpamCheckSymbols(symbols)
+	return domain.SpamCheckResult{Score: r.Score, Required: r.RequiredScore, Action: r.Action, Symbols: symbols}
 }

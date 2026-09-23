@@ -99,6 +99,10 @@ func TestCadaRutaRechazaUnaEmpresaQueNoEsDeLaCelda(t *testing.T) {
 		for _, quien := range []llamada{{tenant: ajena, user: uuid.NewString()}, {tenant: ajena}, {tenant: nadie, user: uuid.NewString()}} {
 			n++
 			c := llamada{method: ruta.method, path: ruta.path, tenant: quien.tenant, user: quien.user, n: n}
+			if ruta.path == handler.SpamCheckPath && quien.user == "" {
+				// Sin datos de empresa: la cubre TestLaPuntuacionAntispamNoPreguntaLaCelda.
+				continue
+			}
 			if rec := pedir(router, c); rec.Code != http.StatusForbidden || codigoDeError(rec) != tenantcell.CodeNotInCell {
 				t.Fatalf("%s %s como %+v: %d %s", c.method, c.path, quien, rec.Code, rec.Body)
 			}
@@ -111,6 +115,33 @@ func TestCadaRutaRechazaUnaEmpresaQueNoEsDeLaCelda(t *testing.T) {
 	}
 	if org.Calls() != 2 {
 		t.Fatalf("consultas a organization: %d", org.Calls())
+	}
+}
+
+// La puntuacion antispam la pide templates, sin usuario, para empresas de cualquier celda: no pregunta a
+// organization y llega a su handler aunque la empresa sea de otra celda o desconocida. Con usuario sigue
+// el filtro de celda, y sin el token interno no pasa.
+func TestLaPuntuacionAntispamNoPreguntaLaCelda(t *testing.T) {
+	ajena := uuid.NewString()
+	org, router := celdaPe01(t, map[string]string{ajena: "pe-02"}, rutasReales())
+	for i, tenant := range []string{"", ajena, uuid.NewString()} {
+		rec := pedir(router, llamada{method: http.MethodPost, path: handler.SpamCheckPath, tenant: tenant, n: i})
+		if rec.Code != http.StatusBadRequest || codigoDeError(rec) != "MESSAGE_REQUIRED" {
+			t.Fatalf("empresa %q: %d %s", tenant, rec.Code, rec.Body)
+		}
+	}
+	if org.Calls() != 0 {
+		t.Fatalf("consultas a organization: %d", org.Calls())
+	}
+	rec := pedir(router, llamada{method: http.MethodPost, path: handler.SpamCheckPath, tenant: ajena, user: uuid.NewString(), n: 9})
+	if rec.Code != http.StatusForbidden || codigoDeError(rec) != tenantcell.CodeNotInCell {
+		t.Fatalf("con usuario: %d %s", rec.Code, rec.Body)
+	}
+	req := httptest.NewRequest(http.MethodPost, handler.SpamCheckPath, strings.NewReader(`{}`))
+	sinToken := httptest.NewRecorder()
+	router.ServeHTTP(sinToken, req)
+	if sinToken.Code != http.StatusUnauthorized && sinToken.Code != http.StatusForbidden {
+		t.Fatalf("sin token interno: %d %s", sinToken.Code, sinToken.Body)
 	}
 }
 
