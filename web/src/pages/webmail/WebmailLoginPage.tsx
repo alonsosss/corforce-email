@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react';
-import { Navigate, useLocation } from 'react-router-dom';
+import { Link, Navigate, useLocation } from 'react-router-dom';
 import { ERROR_CODES } from '@/api/errors';
 import { errorMessage } from '@/api/messages';
 import {
@@ -45,7 +45,11 @@ export function WebmailLoginPage() {
   }
 
   return (
-    <AuthLayout title={t('webmail.login.title')} subtitle={t('webmail.login.subtitle')}>
+    <AuthLayout
+      title={t('webmail.login.title')}
+      subtitle={t('webmail.login.subtitle')}
+      footer={<Link to={paths.login}>{t('webmail.login.platformLink')}</Link>}
+    >
       {status === 'unavailable' ? (
         <ErrorState
           error={checkError}

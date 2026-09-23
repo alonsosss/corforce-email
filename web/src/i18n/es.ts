@@ -105,11 +105,11 @@ export const es = {
 
   'auth.hydrating': 'Comprobando la sesion',
   'auth.login.title': 'Iniciar sesion',
-  'auth.login.subtitle': 'Accede al plano de control de tu empresa.',
+  'auth.login.subtitle': 'Entra con tu correo y tu contrasena.',
   'auth.login.tenantSlug': 'Empresa',
   'auth.login.tenantToggle': 'Indicar mi empresa',
   'auth.login.tenantSlugHint':
-    'Identificador de la empresa (slug). Solo hace falta si no consigues entrar sin indicarla.',
+    'Identificador de la empresa (slug). Con la empresa indicada se entra siempre al panel de administracion, no al buzon.',
   'auth.login.submit': 'Entrar',
   'auth.login.forgot': 'Olvide mi contrasena',
   'auth.login.invalidCredentials': 'Correo o contrasena incorrectos.',
@@ -1846,6 +1846,7 @@ export const es = {
   'webmail.login.invalid': 'Buzon o contrasena incorrectos.',
   'webmail.login.rateLimited':
     'Demasiados intentos seguidos. Espera unos minutos antes de volver a intentarlo.',
+  'webmail.login.platformLink': 'Acceso de administradores',
   'webmail.login.expired': 'Tu sesion del buzon termino. Vuelve a entrar para seguir.',
   'webmail.settings.open': 'Respuesta automatica',
   'webmail.settings.title': 'Ajustes del buzon',

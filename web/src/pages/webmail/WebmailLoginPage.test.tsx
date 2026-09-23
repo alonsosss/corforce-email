@@ -36,6 +36,14 @@ describe('inicio de sesion del buzon', () => {
 
   afterEach(() => vi.restoreAllMocks());
 
+  it('ofrece la entrada de la plataforma a quien administra', () => {
+    renderLogin();
+    expect(screen.getByRole('link', { name: t('webmail.login.platformLink') })).toHaveAttribute(
+      'href',
+      '/login',
+    );
+  });
+
   it('buzon inexistente y contrasena mala dan el mismo mensaje y se borra la contrasena', async () => {
     const user = userEvent.setup();
     vi.spyOn(webmailApi, 'login').mockRejectedValue(

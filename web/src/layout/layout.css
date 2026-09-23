@@ -245,6 +245,15 @@
   text-decoration: underline;
 }
 
+/* Paso entre la entrada de la plataforma y la del correo web. */
+.cf-auth__switch {
+  margin-top: var(--cf-space-5);
+  padding-top: var(--cf-space-4);
+  border-top: 1px solid var(--cf-border);
+  font-size: var(--cf-text-sm);
+  text-align: center;
+}
+
 /* Matriz de permisos */
 .cf-matrix {
   width: 100%;

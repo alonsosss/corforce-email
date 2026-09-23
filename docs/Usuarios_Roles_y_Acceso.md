@@ -287,6 +287,24 @@ tiempo de respuesta no dice que direcciones existen; `mail-auth` lee como mucho 
 un acierto `MAIL_DAV_AUTH_CACHE_TTL` (10 segundos), asi que apagar `dav_access`, desactivar o cambiar una contrasena, o dar
 de baja el buzon, alcanza a DAV como mucho a los 10 segundos. La retencion de `mail.sasl_logins` sigue pendiente.
 
+V (2026-09-23, pruebas de componente en jsdom; P: en navegador real): **un solo inicio de sesion**
+para las dos cuentas. `/login` (a donde lleva la raiz sin sesion) pide correo y contrasena y
+prueba primero el buzon (`POST /api/v1/webmail/session`) y, si no coincide, la plataforma
+(`POST /api/v1/auth/login`): el buzon abre el webmail (`/webmail`, solo su correo), la cuenta
+de la plataforma abre el panel con los modulos de su rol. La orquestacion es de la interfaz
+(`web/src/auth/signIn.ts`); los dos servicios no cambian y cada uno sigue contando y frenando
+sus propios fallos. El orden es deliberado: probar antes la plataforma le contaria a identity un
+fallo por cada entrada de un empleado (y bloquearia la cuenta de la plataforma de quien tiene
+ademas un buzon con la misma direccion y otra contrasena); al reves, cada entrada de un
+administrador cuesta un fallo en el freno de `mail-auth` (10 por buzon y 50 por IP cada 15
+minutos por defecto), que ademas no pasa por el detector de fuerza bruta de audit. Con la
+empresa indicada (`tenant_slug`) se prueba solo la plataforma: es la salida de quien tiene
+buzon y cuenta de la plataforma con la misma direccion y la misma contrasena, que sin ella
+entraria al buzon. Si la plataforma rechaza la credencial y el buzon no llego a comprobarse
+(servicio caido o freno), se muestra el motivo del buzon y no "contrasena incorrecta". El
+cliente del webmail se carga bajo demanda y no entra en el chunk de la plataforma;
+`/webmail/login` sigue existiendo para volver a entrar cuando caduca la sesion del buzon.
+
 V (2026-09-13): el webmail (`services/webmail`) autentica contra el buzon por `mail-auth`
 con service `webmail`, que exige `imap_access` y `smtp_access`, acepta solo la contrasena
 principal (nunca una de aplicacion), responde igual a un buzon inexistente y a una

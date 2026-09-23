@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from 'react';
-import { Link, Navigate, useLocation } from 'react-router-dom';
+import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom';
+import { signIn } from '@/auth/signIn';
 import { useAuth } from '@/auth/useAuth';
 import { ERROR_CODES } from '@/api/errors';
 import { errorMessage } from '@/api/messages';
@@ -33,22 +34,32 @@ function CredentialsStep({ onSubmit }: { onSubmit: ReturnType<typeof useAuth>['l
   const [mostrarEmpresa, setMostrarEmpresa] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const navigate = useNavigate();
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     setBusy(true);
     setError(null);
     try {
-      await onSubmit({
-        email: email.trim(),
-        password,
-        tenant_slug: tenantSlug.trim() || undefined,
-      });
+      const outcome = await signIn(
+        { email: email.trim(), password, tenant_slug: tenantSlug.trim() || undefined },
+        onSubmit,
+      );
+      if (outcome === 'mailbox') {
+        navigate(paths.webmail, { replace: true });
+        return;
+      }
     } catch (err) {
-      setError(errorMessage(err, { [ERROR_CODES.UNAUTHORIZED]: 'auth.login.invalidCredentials' }));
-    } finally {
-      setBusy(false);
+      setPassword('');
+      setError(
+        errorMessage(err, {
+          [ERROR_CODES.UNAUTHORIZED]: 'auth.login.invalidCredentials',
+          [ERROR_CODES.INVALID_CREDENTIALS]: 'auth.login.invalidCredentials',
+          [ERROR_CODES.RATE_LIMITED]: 'webmail.login.rateLimited',
+        }),
+      );
     }
+    setBusy(false);
   };
 
   return (
