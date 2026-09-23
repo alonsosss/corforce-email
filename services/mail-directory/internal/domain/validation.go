@@ -253,3 +253,26 @@ func CheckLimit(max int, current int64, exceeded error) error {
 	}
 	return nil
 }
+
+// PlanLimit es lo que el plan de la empresa incluye de un recurso. Unknown vale por "no hay
+// plan que aplicar" (billing no respondio, la empresa no tiene plan o el plan no fija el
+// recurso) y no restringe nada: el limite del dominio sigue aplicandose igual.
+type PlanLimit struct {
+	Included  int64
+	HardLimit bool
+	Unknown   bool
+}
+
+// CheckPlanLimit aplica el limite del plan a lo que quedaria tras el cambio. No restringe
+// cuando no hay plan que aplicar, cuando el plan no limita el recurso (Included negativo,
+// el Unlimited de billing) o cuando el limite es blando, que en billing significa que se
+// puede exceder y se factura el exceso. resulting es el total DESPUES del cambio.
+func CheckPlanLimit(resulting int64, limit PlanLimit, exceeded error) error {
+	if limit.Unknown || limit.Included < 0 || !limit.HardLimit {
+		return nil
+	}
+	if resulting > limit.Included {
+		return exceeded
+	}
+	return nil
+}

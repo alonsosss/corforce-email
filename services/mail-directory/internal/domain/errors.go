@@ -81,3 +81,12 @@ var (
 	// ErrMTASTSDNSUnavailable: no se pudo comprobar el DNS del dominio; no es un fallo del dominio.
 	ErrMTASTSDNSUnavailable = errors.New("no se pudo consultar el DNS del dominio; intentalo de nuevo")
 )
+
+var (
+	// ErrPlanMailboxesExceeded: el plan contratado por la empresa no admite otro buzon. El
+	// limite es del plan (billing), no del dominio: ErrMaxMailboxesReached es el del dominio.
+	ErrPlanMailboxesExceeded = errors.New("el plan contratado no admite mas buzones")
+	// ErrPlanStorageExceeded: la cuota que se pide dejaria el espacio asignado de la empresa
+	// por encima del que incluye su plan.
+	ErrPlanStorageExceeded = errors.New("el espacio asignado superaria el que incluye el plan contratado")
+)

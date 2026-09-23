@@ -54,7 +54,10 @@ type Deps struct {
 	MailboxRecreateHold time.Duration
 	Secrets             ports.Secrets
 	Events              ports.EventPublisher
-	Logger              *zap.Logger
+	// Plan consulta a billing lo que incluye el plan de la empresa. Opcional: sin el, el
+	// directorio aplica solo los limites del dominio, como antes de que hubiera planes.
+	Plan   ports.PlanLimits
+	Logger *zap.Logger
 }
 
 type UseCase struct {
@@ -84,6 +87,7 @@ type UseCase struct {
 	recreateHold    time.Duration
 	secrets         ports.Secrets
 	events          ports.EventPublisher
+	plan            ports.PlanLimits
 	logger          *zap.Logger
 }
 
@@ -99,7 +103,7 @@ func New(d Deps) *UseCase {
 		tlsPolicies: d.TLSPolicies, recipientMap: d.RecipientMap, bccMaps: d.BCCMaps,
 		senders: d.Senders, retirements: d.Retirements, mtaSTS: d.MTASTS, mtaSTSPublisher: d.MTASTSPublic, mx: d.MX,
 		platformMX: d.PlatformMX, davServerURL: d.DAVServerURL, recreateHold: d.MailboxRecreateHold,
-		secrets: d.Secrets, events: d.Events, logger: logger,
+		secrets: d.Secrets, events: d.Events, plan: d.Plan, logger: logger,
 	}
 }
 
@@ -214,3 +218,27 @@ func (uc *UseCase) addressFree(ctx context.Context, tenantID uuid.UUID, address 
 	}
 	return nil
 }
+
+// planLimit consulta a billing lo que el plan de la empresa incluye del recurso. Nunca
+// falla hacia arriba: si no hay a quien preguntar o billing no responde, devuelve un limite
+// desconocido, que no restringe, y lo deja en el registro. Un billing caido no puede dejar
+// a una empresa sin poder crear buzones; el limite del dominio se aplica igual.
+func (uc *UseCase) planLimit(ctx context.Context, tenantID uuid.UUID, resource string) domain.PlanLimit {
+	if uc.plan == nil {
+		return domain.PlanLimit{Unknown: true}
+	}
+	allowance, err := uc.plan.Limit(ctx, tenantID, resource)
+	if err != nil {
+		uc.logger.Warn("mail-directory: billing no respondio; se sigue sin el limite del plan",
+			zap.String("tenant_id", tenantID.String()), zap.String("resource", resource), zap.Error(err))
+		return domain.PlanLimit{Unknown: true}
+	}
+	return domain.PlanLimit{Included: allowance.Limit, HardLimit: allowance.HardLimit, Unknown: allowance.Unknown}
+}
+
+// Recursos de billing que limitan el directorio. Los nombres son el contrato de
+// billing (services/billing/internal/domain/resource.go).
+const (
+	planResourceMailboxes = "mailboxes"
+	planResourceStorage   = "storage_bytes"
+)

@@ -350,6 +350,45 @@ func (f *fakeMailboxes) QuotaSumByDomain(_ context.Context, tenantID uuid.UUID, 
 	return sum, nil
 }
 
+func (f *fakeMailboxes) CountByTenant(_ context.Context, tenantID uuid.UUID) (int64, error) {
+	var n int64
+	for _, m := range f.items {
+		if m.TenantID == tenantID {
+			n++
+		}
+	}
+	return n, nil
+}
+
+func (f *fakeMailboxes) QuotaSumByTenant(_ context.Context, tenantID uuid.UUID, exclude uuid.UUID) (int64, error) {
+	var sum int64
+	for _, m := range f.items {
+		if m.TenantID == tenantID && m.ID != exclude {
+			sum += m.QuotaBytes
+		}
+	}
+	return sum, nil
+}
+
+// fakePlan responde lo que el plan de la empresa incluye. err simula un billing caido: el
+// directorio tiene que seguir dando de alta buzones sin el limite del plan.
+type fakePlan struct {
+	limits map[string]ports.PlanAllowance
+	err    error
+	calls  int
+}
+
+func (f *fakePlan) Limit(_ context.Context, _ uuid.UUID, resource string) (ports.PlanAllowance, error) {
+	f.calls++
+	if f.err != nil {
+		return ports.PlanAllowance{Unknown: true}, f.err
+	}
+	if a, ok := f.limits[resource]; ok {
+		return a, nil
+	}
+	return ports.PlanAllowance{Unknown: true}, nil
+}
+
 func (f *fakeMailboxes) Quota(context.Context, uuid.UUID, uuid.UUID) (*domain.QuotaUsage, error) {
 	return &domain.QuotaUsage{}, nil
 }
@@ -779,6 +818,7 @@ const platformMXForTests = "mx.plataforma.example"
 
 type harness struct {
 	uc           *UseCase
+	plan         *fakePlan
 	tx           *fakeTx
 	domains      *fakeDomains
 	aliasDomains *fakeAliasDomains
@@ -802,6 +842,7 @@ func newHarness() *harness {
 		tx: &fakeTx{}, domains: &fakeDomains{}, aliasDomains: &fakeAliasDomains{}, aliases: &fakeAliases{},
 		appPasswords: &fakeAppPasswords{}, sieve: &fakeSieve{}, vacation: &fakeVacation{}, mtaSTS: &fakeMTASTS{}, mx: &fakeMX{hosts: []string{platformMXForTests}}, spamAliases: &fakeSpamAliases{},
 		senderACL: &fakeSenderACL{}, relayhosts: &fakeRelayhosts{}, transports: &fakeTransports{}, events: &fakeEvents{},
+		plan: &fakePlan{},
 	}
 	h.mailboxes = &fakeMailboxes{aliases: h.aliases, now: time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)}
 	locator := &fakeLocator{h: h}
@@ -813,7 +854,7 @@ func newHarness() *harness {
 		AppPasswords: h.appPasswords, Sieve: h.sieve, Vacation: h.vacation, Locator: locator, Aliases: h.aliases, SpamAliases: h.spamAliases,
 		SenderACL: h.senderACL, Relayhosts: h.relayhosts, Transports: h.transports, Retirements: h.retirements,
 		MTASTS: h.mtaSTS, MTASTSPublic: fakeMTASTSPublisher{h: h}, MX: h.mx, PlatformMX: platformMXForTests,
-		MailboxRecreateHold: testRecreateHold, Secrets: fakeSecrets{}, Events: h.events,
+		MailboxRecreateHold: testRecreateHold, Secrets: fakeSecrets{}, Events: h.events, Plan: h.plan,
 	})
 	return h
 }

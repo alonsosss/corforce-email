@@ -77,6 +77,11 @@ type MailboxRepository interface {
 	CountByDomain(ctx context.Context, tenantID uuid.UUID, name string) (int64, error)
 	// QuotaSumByDomain suma las cuotas de los buzones del dominio salvo el excluido.
 	QuotaSumByDomain(ctx context.Context, tenantID uuid.UUID, name string, exclude uuid.UUID) (int64, error)
+	// CountByTenant cuenta los buzones de la empresa en la celda, para el limite de su plan.
+	CountByTenant(ctx context.Context, tenantID uuid.UUID) (int64, error)
+	// QuotaSumByTenant suma las cuotas ASIGNADAS a los buzones de la empresa salvo el
+	// excluido. Es espacio comprometido, no ocupado: es lo que limita el plan.
+	QuotaSumByTenant(ctx context.Context, tenantID uuid.UUID, exclude uuid.UUID) (int64, error)
 	Quota(ctx context.Context, tenantID, id uuid.UUID) (*domain.QuotaUsage, error)
 	DeleteQuotaUsage(ctx context.Context, tenantID uuid.UUID, username string) error
 	Logins(ctx context.Context, tenantID uuid.UUID, username string, limit int) ([]domain.SASLLogin, error)
@@ -281,4 +286,22 @@ type EventPublisher interface {
 	AliasCreated(ctx context.Context, a *domain.Alias) error
 	AliasUpdated(ctx context.Context, a *domain.Alias) error
 	AliasDeleted(ctx context.Context, a *domain.Alias) error
+}
+
+// PlanAllowance es lo que el plan de la empresa incluye de un recurso: Limit es la cantidad
+// incluida (-1 sin limite) y HardLimit si no admite excederse. Unknown queda a true cuando
+// no se pudo consultar a billing, la empresa no tiene plan o el plan no fija ese recurso:
+// quien la recibe no restringe.
+type PlanAllowance struct {
+	Limit     int64
+	HardLimit bool
+	Unknown   bool
+}
+
+// PlanLimits consulta a billing lo que el plan de la empresa incluye. Una consulta que
+// falla NO bloquea el alta: devuelve Unknown y quien la llama lo registra y sigue, igual
+// que reputation con su derecho mensual. El consumo lo pone este servicio, que es el dueno
+// del directorio de su celda.
+type PlanLimits interface {
+	Limit(ctx context.Context, tenantID uuid.UUID, resource string) (PlanAllowance, error)
 }

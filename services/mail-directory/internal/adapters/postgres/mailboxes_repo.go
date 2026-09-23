@@ -124,6 +124,20 @@ func (r *MailboxRepo) QuotaSumByDomain(ctx context.Context, tenantID uuid.UUID, 
 	return sum, err
 }
 
+func (r *MailboxRepo) CountByTenant(ctx context.Context, tenantID uuid.UUID) (int64, error) {
+	var n int64
+	err := r.pool.QueryRow(ctx, `SELECT COUNT(*) FROM mail.mailboxes WHERE tenant_id = $1`, tenantID).Scan(&n)
+	return n, err
+}
+
+func (r *MailboxRepo) QuotaSumByTenant(ctx context.Context, tenantID uuid.UUID, exclude uuid.UUID) (int64, error) {
+	var sum int64
+	err := r.pool.QueryRow(ctx,
+		`SELECT COALESCE(SUM(quota_bytes), 0) FROM mail.mailboxes WHERE tenant_id = $1 AND id <> $2`,
+		tenantID, exclude).Scan(&sum)
+	return sum, err
+}
+
 // Quota une el uso que escribe Dovecot con el buzon de la empresa: quota_usage no tiene
 // tenant_id y solo se lee a traves de mailboxes.
 func (r *MailboxRepo) Quota(ctx context.Context, tenantID, id uuid.UUID) (*domain.QuotaUsage, error) {

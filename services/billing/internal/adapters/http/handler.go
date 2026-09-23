@@ -68,7 +68,45 @@ func (h *Handler) InternalRoutes() http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.RequireInternalCaller)
 	r.Post("/entitlements/check", h.CheckEntitlement)
+	r.Get("/plan-limits", h.PlanLimits)
 	return r
+}
+
+// PlanLimits da lo que el plan de la empresa INCLUYE de cada recurso, sin consumo. Existe
+// aparte de entitlements/check porque hay recursos cuyo consumo no cuenta billing y si sabe
+// el servicio que los posee (el espacio asignado a los buzones lo suma mail-directory en su
+// celda): ese servicio necesita el limite del plan y pone el consumo. Una empresa sin
+// suscripcion devuelve has_plan=false y ningun limite: quien llama no restringe.
+func (h *Handler) PlanLimits(w http.ResponseWriter, r *http.Request) {
+	tenantID, ok := tenantFrom(w, r)
+	if !ok {
+		return
+	}
+	_, plan, err := h.uc.GetSubscription(r.Context(), tenantID)
+	if errors.Is(err, domain.ErrSubscriptionNotFound) || errors.Is(err, domain.ErrPlanNotFound) {
+		response.JSON(w, http.StatusOK, planLimitsDTO{HasPlan: false, Limits: map[string]int64{}})
+		return
+	}
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	limits := make(map[string]int64, len(plan.Limits))
+	hard := make(map[string]bool, len(plan.Limits))
+	for _, l := range plan.Limits {
+		limits[string(l.Resource)] = l.Included
+		hard[string(l.Resource)] = l.HardLimit
+	}
+	response.JSON(w, http.StatusOK, planLimitsDTO{HasPlan: true, PlanCode: plan.Code, Limits: limits, HardLimits: hard})
+}
+
+// planLimitsDTO: limits lleva lo incluido por recurso (-1 sin limite) y hard_limits si el
+// limite es duro. Sin plan, has_plan es false y los mapas van vacios, nunca nulos.
+type planLimitsDTO struct {
+	HasPlan    bool             `json:"has_plan"`
+	PlanCode   string           `json:"plan_code,omitempty"`
+	Limits     map[string]int64 `json:"limits"`
+	HardLimits map[string]bool  `json:"hard_limits,omitempty"`
 }
 
 func (h *Handler) Health(w http.ResponseWriter, r *http.Request) {

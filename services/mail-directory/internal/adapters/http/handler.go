@@ -34,6 +34,10 @@ const (
 	// codeAddressRecentlyDeleted: el maildir del buzon anterior con esa direccion sigue en Dovecot
 	// (domain.ErrAddressRecentlyDeleted); la web puede ofrecer reintentar en unos minutos.
 	codeAddressRecentlyDeleted = "ADDRESS_RECENTLY_DELETED"
+	// El plan contratado no da para mas: no es un fallo de entrada ni algo que se arregle
+	// reintentando, asi que lleva codigo propio para que la interfaz lo explique.
+	codePlanMailboxesExceeded = "PLAN_MAILBOXES_EXCEEDED"
+	codePlanStorageExceeded   = "PLAN_STORAGE_EXCEEDED"
 )
 
 type Handler struct {
@@ -166,6 +170,12 @@ func writeError(w http.ResponseWriter, err error) {
 		response.Err(w, http.StatusConflict, codeTenantRetired, err.Error())
 	case errors.Is(err, domain.ErrAddressRecentlyDeleted):
 		response.Err(w, http.StatusConflict, codeAddressRecentlyDeleted, err.Error())
+	// Codigo propio: lo que hay que hacer es cambiar de plan, no reintentar. La interfaz lo
+	// distingue de un choque cualquiera para poder decirlo con esas palabras.
+	case errors.Is(err, domain.ErrPlanMailboxesExceeded):
+		response.Err(w, http.StatusConflict, codePlanMailboxesExceeded, err.Error())
+	case errors.Is(err, domain.ErrPlanStorageExceeded):
+		response.Err(w, http.StatusConflict, codePlanStorageExceeded, err.Error())
 	case isAny(err, conflictErrors):
 		response.ErrConflict(w, err.Error())
 	case isAny(err, validationErrors):

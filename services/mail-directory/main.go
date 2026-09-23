@@ -19,6 +19,7 @@ import (
 	"github.com/alonsosss/corforce-email/pkg/response"
 	"github.com/alonsosss/corforce-email/pkg/server"
 	"github.com/alonsosss/corforce-email/pkg/tenantcell"
+	"github.com/alonsosss/corforce-email/services/mail-directory/internal/adapters/billingcli"
 	dnsadapter "github.com/alonsosss/corforce-email/services/mail-directory/internal/adapters/dns"
 	handler "github.com/alonsosss/corforce-email/services/mail-directory/internal/adapters/http"
 	outboxadapter "github.com/alonsosss/corforce-email/services/mail-directory/internal/adapters/outbox"
@@ -95,6 +96,14 @@ func main() {
 		go runCellRelay(ctx, bus, pool, logger)
 	}
 
+	// Limites del plan de cada empresa (billing). Opcional a proposito: sin BILLING_URL el
+	// directorio aplica solo los limites del dominio, como antes de que hubiera planes, y lo
+	// avisa al arrancar en vez de negarse a servir.
+	planLimits := billingcli.New(os.Getenv("BILLING_URL"), os.Getenv("INTERNAL_GATEWAY_TOKEN"))
+	if !planLimits.Configured() {
+		logger.Warn("mail-directory: sin BILLING_URL no se aplican los limites del plan a los buzones ni al espacio")
+	}
+
 	uc := app.New(app.Deps{
 		Tx:                  postgres.NewTransactor(ctxPool),
 		Domains:             postgres.NewDomainRepo(ctxPool),
@@ -122,6 +131,7 @@ func main() {
 		MailboxRecreateHold: recreateHold,
 		Secrets:             secrets.New(),
 		Events:              outboxadapter.NewPublisher(ctxPool),
+		Plan:                planLimits,
 		Logger:              logger,
 	})
 

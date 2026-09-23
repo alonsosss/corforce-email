@@ -1187,6 +1187,24 @@ opera el servidor:
    verificada en SES y la cuenta fuera del sandbox. Sin ellas el mensaje se acepta y encola, pero SES lo rechaza.
 
 
+### Cuotas de correo y planes
+
+El espacio de cada buzón lo impone Dovecot desde el directorio de la celda, en tres niveles (cuota del buzón, y por
+dominio: cuota por defecto, máximo por buzón, total y número de buzones). **Cero significa ilimitado**, que era el
+valor de todo en producción hasta el 2026-09-22: un solo buzón podía llenar el disco. Al fijarlas, el orden importa:
+primero la cuota de cada buzón (con el dominio aún ilimitado) y después los topes del dominio; al revés la
+validación las rechaza, porque un buzón ilimitado no cabe en un dominio con cuota acotada. El usuario recibe aviso
+al 80 % y al 95 %.
+
+Por encima de eso manda el **plan contratado** (`docs/adr/0010-el-plan-limita-el-correo-de-la-empresa.md`):
+`mail-directory` pregunta a `billing` (`GET /internal/billing/plan-limits`, `BILLING_URL`) cuántos buzones y cuánto
+espacio incluye el plan de la empresa, y rechaza con 409 `PLAN_MAILBOXES_EXCEEDED` o `PLAN_STORAGE_EXCEEDED` lo que
+se pase. Se cuenta por empresa, no por dominio. Sin plan, sin `BILLING_URL` o con `billing` caído no se restringe y
+queda el aviso en el registro: el límite del dominio sigue aplicándose. Los planes son datos comerciales y los crea
+el superadmin por API (`POST /api/v1/billing/plans`, `PUT /api/v1/billing/subscriptions/{empresa}`), nunca una
+migración.
+
+
 ### Informes DMARC
 
 Todos los dominios de las empresas publican `rua=mailto:<MAIL_DMARC_RUA>`. Para que esos informes lleguen hace

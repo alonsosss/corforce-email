@@ -160,6 +160,16 @@ func (uc *UseCase) CreateMailbox(ctx context.Context, tenantID uuid.UUID, req Cr
 		if err := domain.CheckLimit(d.MaxMailboxes, count, domain.ErrMaxMailboxesReached); err != nil {
 			return err
 		}
+		// El plan de la empresa manda sobre el dominio: el dominio reparte dentro de lo que
+		// el plan incluye. Se cuenta por empresa, no por dominio, porque el plan es de la
+		// empresa y esta vive entera en esta celda.
+		totalBuzones, err := uc.mailboxes.CountByTenant(ctx, tenantID)
+		if err != nil {
+			return err
+		}
+		if err := domain.CheckPlanLimit(totalBuzones+1, uc.planLimit(ctx, tenantID, planResourceMailboxes), domain.ErrPlanMailboxesExceeded); err != nil {
+			return err
+		}
 		m.QuotaBytes = d.DefaultQuotaBytes
 		if req.QuotaBytes != nil {
 			m.QuotaBytes = *req.QuotaBytes
@@ -203,12 +213,29 @@ func (uc *UseCase) maildirRetired(ctx context.Context, username string) error {
 	return nil
 }
 
+// checkQuota valida la cuota de un buzon contra los limites de su dominio y contra el
+// espacio que incluye el plan de la empresa. Es el unico sitio que valida una cuota: lo
+// llaman el alta y la edicion de un buzon.
 func (uc *UseCase) checkQuota(ctx context.Context, d *domain.Domain, m *domain.Mailbox) error {
 	used, err := uc.mailboxes.QuotaSumByDomain(ctx, m.TenantID, d.Domain, m.ID)
 	if err != nil {
 		return err
 	}
-	return domain.CheckMailboxQuota(m.QuotaBytes, domainLimits(d), used)
+	if err := domain.CheckMailboxQuota(m.QuotaBytes, domainLimits(d), used); err != nil {
+		return err
+	}
+	// Espacio ASIGNADO de toda la empresa (el comprometido, no el ocupado) tras el cambio:
+	// es lo que limita el plan. Un buzon ilimitado dentro de un plan con espacio acotado no
+	// cabe, igual que no cabe en un dominio con cuota acotada.
+	asignado, err := uc.mailboxes.QuotaSumByTenant(ctx, m.TenantID, m.ID)
+	if err != nil {
+		return err
+	}
+	limite := uc.planLimit(ctx, m.TenantID, planResourceStorage)
+	if m.QuotaBytes == domain.Unlimited && !limite.Unknown && limite.Included >= 0 && limite.HardLimit {
+		return domain.ErrPlanStorageExceeded
+	}
+	return domain.CheckPlanLimit(asignado+m.QuotaBytes, limite, domain.ErrPlanStorageExceeded)
 }
 
 func (uc *UseCase) UpdateMailbox(ctx context.Context, tenantID, id uuid.UUID, req UpdateMailboxRequest) (*domain.Mailbox, error) {
