@@ -59,6 +59,7 @@
     {"prefix": "suppression", "action": "check"},
     {"prefix": "templates",   "action": "render"},
     {"prefix": "templates",   "action": "preview"},
+    {"prefix": "templates",   "action": "check"},
     {"prefix": "segments",    "action": "preview"}
   ],
   "public": [

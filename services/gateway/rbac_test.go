@@ -116,3 +116,23 @@ func TestUnPostDeConsultaSeGateaComoLectura(t *testing.T) {
 		t.Fatal("solo aplica a POST")
 	}
 }
+
+// La verificacion de entregabilidad del editor es una consulta con cuerpo: con solo lectura de
+// plantillas se usa, tanto sobre un contenido sin guardar como sobre una version; publicar no.
+func TestLaVerificacionDePlantillasEsLectura(t *testing.T) {
+	t.Setenv("GATEWAY_ROUTES_FILE", "")
+	tbl, err := loadRouteTable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := newRBACEnforcer("http://access", "tok", "", "", "", nil, tbl.readPostIndex(), nil)
+	req := func(p string) *http.Request { r, _ := http.NewRequest(http.MethodPost, p, nil); return r }
+	for _, p := range []string{"/api/v1/templates/check", "/api/v1/templates/0f0e/versions/3/check"} {
+		if !e.isReadPost(req(p)) {
+			t.Errorf("%s debe gatearse como lectura", p)
+		}
+	}
+	if e.isReadPost(req("/api/v1/templates/0f0e/versions/3/publish")) {
+		t.Error("publicar sigue siendo escritura")
+	}
+}
