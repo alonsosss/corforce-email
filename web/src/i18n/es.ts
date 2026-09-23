@@ -2068,6 +2068,9 @@ export const es = {
   'templates.gallery.hint':
     'Plantillas listas para adaptar, generadas con los colores, el logo y el pie legal del kit de marca.',
   'templates.gallery.use': 'Usar esta plantilla',
+  'templates.gallery.sampleFirstName': 'Ana',
+  'templates.gallery.sampleEmail': 'ana@ejemplo.com',
+  'templates.gallery.sampleValue': 'Ejemplo',
   'templates.gallery.replaceTitle': 'Reemplazar el diseno',
   'templates.gallery.replaceConfirm':
     'El lienzo se sustituira por la plantilla elegida. Podras deshacerlo mientras no guardes.',

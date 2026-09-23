@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { Badge, Button, HtmlPreviewFrame, Modal } from '@/design/components';
 import { t, tEnum } from '@/i18n';
 import { GALLERY, type GalleryTemplate } from '../gallery';
+import { samplePreview } from '../gallery/samplePreview';
 import type { BrandTokens } from './brand';
 import type { CompileResult } from './mjml';
 
@@ -18,7 +19,7 @@ export function GalleryModal({ brand, compile, onChoose, onClose }: GalleryModal
     () =>
       GALLERY.map((template) => {
         const mjml = template.build(brand);
-        return { template, mjml, html: compile(mjml).html };
+        return { template, mjml, html: samplePreview(compile(mjml).html, template.variables) };
       }),
     [brand, compile],
   );
