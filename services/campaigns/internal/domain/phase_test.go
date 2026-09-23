@@ -65,8 +65,11 @@ func TestInitialPhases(t *testing.T) {
 	c = draftCampaign(t)
 	c.TimezoneDelivery = &TimezoneDelivery{LocalSendAt: mustLocal(t, "2026-10-01T09:00"), FallbackTimezone: "UTC"}
 	zone := c.InitialPhases(phaseNow)
-	if len(zone) != 1 || zone[0].Kind != PhaseZone || !zone[0].SlotAt.Equal(phaseNow) || !zone[0].NotBefore.Equal(phaseNow) {
-		t.Fatalf("envio por zona: un primer tramo al arrancar: %+v", zone)
+	if len(zone) != 2 || zone[0].Kind != PhaseZone || !zone[0].SlotAt.Equal(phaseNow) || !zone[0].NotBefore.Equal(phaseNow) {
+		t.Fatalf("envio por zona: un primer tramo al arrancar y el de cierre: %+v", zone)
+	}
+	if zone[1].Kind != PhaseZone || !zone[1].SlotAt.Equal(mustLocal(t, "2026-10-01T09:00").Latest()) {
+		t.Fatalf("el tramo de cierre es la hora pedida en la ultima zona del mundo: %+v", zone[1])
 	}
 	if zone[0].Round() != RoundInitial || !zone[0].Filtered() || !zone[0].NeedsSent() {
 		t.Fatal("el tramo es de la ronda inicial y excluye a quien ya recibio")
@@ -317,5 +320,32 @@ func TestSampleResults(t *testing.T) {
 	got := SampleResults(rows)
 	if len(got) != 2 || got[1] != (VariantResult{Variant: 1, Accepted: 11, Delivered: 10, Opened: 5}) {
 		t.Fatalf("solo cuentan las muestras: %+v", got)
+	}
+}
+
+// El envio por zona arranca con el tramo de cierre ya registrado: un contacto que entra tarde con
+// una zona que nadie tenia recibe la campana como tarde en la ultima zona del mundo, nunca se queda
+// sin ella.
+func TestZoneDeliveryRegistersClosingSlot(t *testing.T) {
+	c := draftCampaign(t)
+	local := mustLocal(t, "2026-10-01T09:00")
+	c.TimezoneDelivery = &TimezoneDelivery{LocalSendAt: local, FallbackTimezone: "America/Lima"}
+	phases := c.InitialPhases(local.Earliest())
+	if len(phases) != 2 {
+		t.Fatalf("fases iniciales: %d", len(phases))
+	}
+	closing := phases[1]
+	if !closing.SlotAt.Equal(local.Latest()) || !closing.NotBefore.Equal(local.Latest()) {
+		t.Fatalf("tramo de cierre: %+v", closing)
+	}
+	late := Contact{ID: uuid.New(), Email: "tarde@example.com", Timezone: "Pacific/Pago_Pago"}
+	sel := c.Select(closing, []Contact{late}, SelectionLookup{Sent: map[uuid.UUID]bool{}})
+	if len(sel.Recipients) != 1 || len(sel.FutureSlots) != 0 {
+		t.Fatalf("el cierre recoge a quien falta: %+v", sel)
+	}
+	for _, z := range []string{"Pacific/Kiritimati", "Asia/Tokyo", "America/Lima", "Pacific/Pago_Pago", "Etc/GMT+12"} {
+		if local.In(mustZone(t, z)).After(local.Latest()) {
+			t.Errorf("%s llega despues del tramo de cierre", z)
+		}
 	}
 }

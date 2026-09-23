@@ -130,7 +130,14 @@ func (c *Campaign) InitialPhases(now time.Time) []*Phase {
 		}
 		return append(out, newPhase(c, PhaseWinner, "winner", ordinalWinner))
 	case c.TimezoneDelivery != nil:
-		return []*Phase{c.ZonePhase(now)}
+		// El tramo de cierre, en la ultima zona del mundo, recoge a quien no llego a ningun
+		// tramo: un contacto que entra en la audiencia despues del ultimo tramo descubierto,
+		// con una zona que nadie tenia, no se queda sin la campana, la recibe como tarde ahi.
+		first, closing := c.ZonePhase(now), c.ZonePhase(c.TimezoneDelivery.LocalSendAt.Latest())
+		if !closing.SlotAt.After(*first.SlotAt) {
+			return []*Phase{first}
+		}
+		return []*Phase{first, closing}
 	}
 	return []*Phase{newPhase(c, PhaseMain, "main", ordinalMain)}
 }

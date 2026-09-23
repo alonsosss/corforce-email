@@ -410,8 +410,10 @@ func TestTimezoneDeliverySlots(t *testing.T) {
 		t.Fatal("a las 19:00 UTC nadie alcanzo las 09:00")
 	}
 	slots := h.phases(c.ID)
-	if len(slots) != 4 {
-		t.Fatalf("el primer tramo y uno por instante distinto: %d", len(slots))
+	// El primero, uno por instante distinto (Madrid, Nueva York para las dos sin zona valida, Lima)
+	// y el de cierre en la ultima zona del mundo.
+	if len(slots) != 5 {
+		t.Fatalf("el primer tramo, uno por instante distinto y el de cierre: %d", len(slots))
 	}
 	madridAt := time.Date(2026, 9, 2, 7, 0, 0, 0, time.UTC)
 	if ra := h.campaign(c.ID).ResumeAfter; ra == nil || !ra.Equal(madridAt) {
@@ -448,8 +450,21 @@ func TestTimezoneDeliverySlots(t *testing.T) {
 	if !sendTimes[0].Equal(madridAt) {
 		t.Fatalf("Madrid sale a las 07:00 UTC: %s", sendTimes[0])
 	}
+	// Tras el ultimo tramo descubierto sigue abierta hasta el de cierre (09:00 en UTC-12, 21:00 UTC
+	// del dia 2), que no envia de nuevo a nadie y la cierra.
+	if h.campaign(c.ID).Status != domain.StatusSending {
+		t.Fatalf("hasta el tramo de cierre la campana sigue enviando: %s", h.campaign(c.ID).Status)
+	}
+	calls := len(h.sender.calls)
+	h.clock.t = time.Date(2026, 9, 2, 21, 0, 0, 0, time.UTC)
+	for i := 0; i < 3; i++ {
+		h.tick(t)
+	}
+	if len(h.sender.calls) != calls {
+		t.Fatalf("el tramo de cierre no repite a nadie: %d lotes", len(h.sender.calls)-calls)
+	}
 	if h.campaign(c.ID).Status != domain.StatusCompleted {
-		t.Fatalf("el ultimo tramo cierra la campana: %s", h.campaign(c.ID).Status)
+		t.Fatalf("el tramo de cierre cierra la campana: %s", h.campaign(c.ID).Status)
 	}
 }
 

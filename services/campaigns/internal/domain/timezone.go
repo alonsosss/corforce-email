@@ -14,6 +14,9 @@ const (
 	// maxUTCOffset es el mayor adelanto sobre UTC de una zona real (Pacific/Kiritimati,
 	// +14:00): nadie llega antes que ahi a una hora de pared.
 	maxUTCOffset = 14 * time.Hour
+	// maxUTCDelay es el mayor retraso sobre UTC de una zona real (Etc/GMT+12, -12:00): nadie
+	// llega despues que ahi a una hora de pared.
+	maxUTCDelay = 12 * time.Hour
 	// transitionWindow: entre dos cambios de hora de una misma zona pasan semanas, asi que
 	// el desfase 48 h antes y 48 h despues de la hora pedida es el de antes y el de despues
 	// de la transicion que la afecte.
@@ -90,6 +93,9 @@ func (l LocalDateTime) matches(t time.Time, loc *time.Location) bool {
 
 // Earliest es el primer instante en que alguna zona marca esta hora de pared.
 func (l LocalDateTime) Earliest() time.Time { return l.wall.Add(-maxUTCOffset) }
+
+// Latest es el ultimo instante en que alguna zona marca esta hora de pared.
+func (l LocalDateTime) Latest() time.Time { return l.wall.Add(maxUTCDelay) }
 
 // LoadTimezone acepta un nombre de zona IANA que el binario sepa cargar (incorpora
 // time/tzdata). "Local" no es una zona: es la del servidor.
