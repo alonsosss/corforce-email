@@ -31,7 +31,7 @@ const (
 	templateNameConstraint = "templates_tenant_name_key"
 
 	templateColumns = `id, tenant_id, name, description, kind, status, current_version, created_by, created_at, updated_at`
-	versionColumns  = `id, tenant_id, template_id, version, subject, html, text, variables, status, published_at, created_by, created_at`
+	versionColumns  = `id, tenant_id, template_id, version, subject, html, text, variables, editor, status, published_at, created_by, created_at`
 )
 
 func (r *Repository) CreateTemplate(ctx context.Context, t *domain.Template) error {
@@ -147,11 +147,15 @@ func (r *Repository) CreateVersion(ctx context.Context, v *domain.Version) error
 	if err != nil {
 		return fmt.Errorf("serializar variables: %w", err)
 	}
+	editor, err := editorJSON(v.Editor)
+	if err != nil {
+		return err
+	}
 	err = r.pool.QueryRow(ctx,
-		`INSERT INTO templates.versions (id, tenant_id, template_id, version, subject, html, text, variables, status, created_by)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		`INSERT INTO templates.versions (id, tenant_id, template_id, version, subject, html, text, variables, editor, status, created_by)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 		 RETURNING created_at`,
-		v.ID, v.TenantID, v.TemplateID, v.Version, v.Subject, v.HTML, v.Text, variables, v.Status, v.CreatedBy,
+		v.ID, v.TenantID, v.TemplateID, v.Version, v.Subject, v.HTML, v.Text, variables, editor, v.Status, v.CreatedBy,
 	).Scan(&v.CreatedAt)
 	return translate(err)
 }
@@ -246,9 +250,10 @@ func scanVersion(row pgx.Row) (*domain.Version, error) {
 	var (
 		v         domain.Version
 		variables []byte
+		editor    []byte
 	)
 	err := row.Scan(&v.ID, &v.TenantID, &v.TemplateID, &v.Version, &v.Subject, &v.HTML, &v.Text, &variables,
-		&v.Status, &v.PublishedAt, &v.CreatedBy, &v.CreatedAt)
+		&editor, &v.Status, &v.PublishedAt, &v.CreatedBy, &v.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -258,7 +263,25 @@ func scanVersion(row pgx.Row) (*domain.Version, error) {
 	if v.Variables == nil {
 		v.Variables = []domain.Variable{}
 	}
+	if editor != nil {
+		v.Editor = &domain.EditorDocument{}
+		if err := json.Unmarshal(editor, v.Editor); err != nil {
+			return nil, fmt.Errorf("leer el documento del editor de la version %s: %w", v.ID, err)
+		}
+	}
 	return &v, nil
+}
+
+// editorJSON serializa el documento del editor; nil se guarda como NULL.
+func editorJSON(e *domain.EditorDocument) ([]byte, error) {
+	if e == nil {
+		return nil, nil
+	}
+	b, err := json.Marshal(e)
+	if err != nil {
+		return nil, fmt.Errorf("serializar el documento del editor: %w", err)
+	}
+	return b, nil
 }
 
 // translate convierte la violacion del nombre unico en el error de dominio; el resto de

@@ -189,7 +189,8 @@ func (f *Tx) Transact(ctx context.Context, fn func(ctx context.Context) error) e
 }
 
 // Renderer acepta todo salvo el contenido que contenga "INVALID" y renderiza una
-// concatenacion trivial; el motor real tiene sus propias pruebas.
+// concatenacion trivial; el motor real tiene sus propias pruebas. En el HTML sustituye cada
+// {{.nombre}} por su valor de texto, para que la verificacion vea los enlaces renderizados.
 type Renderer struct{ Compiled int }
 
 type compiled struct{ content domain.Content }
@@ -202,9 +203,21 @@ func (f *Renderer) Compile(c domain.Content) (ports.CompiledTemplate, error) {
 	return &compiled{content: c}, nil
 }
 
+func (f *Renderer) CompileDraft(c domain.Content) (ports.CompiledTemplate, error) {
+	return f.Compile(c)
+}
+
+func (f *compiled) Variables() []domain.Variable { return f.content.Variables }
+
 func (f *compiled) Render(values map[string]any) (domain.Rendered, error) {
 	name, _ := values["name"].(string)
-	return domain.Rendered{Subject: f.content.Subject + "|" + name, HTML: f.content.HTML, Text: "texto"}, nil
+	html := f.content.HTML
+	for key, v := range values {
+		if s, ok := v.(string); ok {
+			html = strings.ReplaceAll(html, "{{."+key+"}}", s)
+		}
+	}
+	return domain.Rendered{Subject: f.content.Subject + "|" + name, HTML: html, Text: "texto"}, nil
 }
 
 // PublishedEvent es un templates.template.published capturado.

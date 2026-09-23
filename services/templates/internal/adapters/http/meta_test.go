@@ -65,6 +65,12 @@ func TestMetaPublicaElCatalogoDelDominio(t *testing.T) {
 	want := limitsMeta{
 		MaxNameLength: domain.MaxNameLength, MaxDescriptionLength: domain.MaxDescription,
 		MaxVariables: domain.MaxVariables, MaxSubjectBytes: domain.MaxSubjectBytes, MaxHTMLBytes: domain.MaxHTMLBytes,
+		MaxEditorBytes: domain.MaxEditorBytes, MaxBrandColors: domain.MaxBrandColors, MaxBrandFonts: domain.MaxBrandFonts,
+		MaxAssetBytes: domain.MaxAssetBytes, MaxAssetDimension: domain.MaxAssetDimension,
+	}
+	if !slices.Equal(meta.EditorKinds, domain.EditorKinds()) || !slices.Equal(meta.AssetContentTypes, domain.AssetContentTypes()) ||
+		!slices.Equal(meta.BrandFonts, domain.BrandFonts()) {
+		t.Errorf("catalogo del editor: %v %v %v", meta.EditorKinds, meta.AssetContentTypes, meta.BrandFonts)
 	}
 	if meta.Limits != want {
 		t.Errorf("limites %+v, dominio %+v", meta.Limits, want)

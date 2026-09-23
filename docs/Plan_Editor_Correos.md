@@ -113,6 +113,43 @@ devuelve el objeto vacio con `updated_at: null`.
 | `external_stylesheet` | aviso | `<link rel=stylesheet>` o `@import` (los clientes los ignoran) |
 | `spam_score_high` | aviso / error | Puntuacion de Rspamd >= 5 aviso, >= la de rechazo (action reject) error |
 
+### 3.6 Como quedo implementado (V, 2026-09-23)
+
+Lo que el contrato dejaba abierto, tal como lo sirve `templates`:
+
+* Las versiones no tienen ruta de edicion (son inmutables desde siempre): `editor` se acepta en `POST /` (alta con
+  la version 1) y en `POST /{id}/versions`, y lo devuelven `GET /{id}/versions/{v}` y el `current` del detalle.
+  `project` tiene que ser un objeto JSON y se guarda compacto. Un trigger impide cambiar el contenido (asunto,
+  HTML, texto, variables, editor) de una version que ya estuvo publicada.
+* Kit de marca: `PUT` reemplaza el kit entero; `logo_asset_id` tiene que ser una imagen vigente de la empresa. La
+  respuesta anade `logo_url` (o `null`). La lista cerrada de tipografias, con su pila CSS, sale en
+  `GET /meta` (`brand_fonts`): Arial, Helvetica, Georgia, Times New Roman, Verdana, Tahoma, Trebuchet MS, Courier
+  New y, como fuentes web con alternativa sans-serif, Inter, Roboto, Open Sans, Lato y Montserrat. `/meta` publica
+  tambien `editor_kinds`, `asset_content_types` y los topes nuevos.
+* Imagenes: `201` al crear o al reactivar una retirada; `200` con la existente si la empresa ya tenia esa misma
+  imagen vigente. Un cuerpo de mas de 5 MiB es `413 PAYLOAD_TOO_LARGE`; un tipo no admitido o unas dimensiones
+  fuera de rango, `422 VALIDATION_ERROR`; sin almacen de objetos, `503 STORAGE_UNAVAILABLE`. `GET /assets` responde
+  `{ "items": [...], "next_cursor": "..." | null }` (`limit` de 1 a 100, por defecto 50).
+* `POST /check`: `variables` son valores de ejemplo; una variable usada y no declarada se admite como cadena (el
+  panel en vivo no falla mientras se escribe), pero guardar la version sigue exigiendo declararla. Las que faltan
+  toman su default o un valor de ejemplo de su tipo; `unsubscribe_url` y `view_in_browser_url` se renderizan con
+  URLs de `example.com`.
+* `409 DELIVERABILITY_FAILED`: `{ "error": { "code", "message", "issues": [...] } }` con todas las incidencias
+  (errores y avisos). La verificacion va antes de la transaccion de publicacion.
+* `missing_physical_address`: la direccion del kit tiene que aparecer en el texto visible del correo (sin distinguir
+  mayusculas ni saltos de linea); sin direccion en el kit, el mensaje pide configurarla.
+* `text_image_ratio` = texto visible / (texto visible + 200 x imagenes): sin maquetar no se conoce el area real de
+  una imagen y cada una cuenta como un bloque de 200 caracteres.
+* `external_stylesheet` no cuenta la hoja de una fuente web de `fonts.googleapis.com` (la que genera `mj-font`): los
+  clientes que no la cargan usan la alternativa de la pila.
+* `spam_score_high` es error con `action = reject` o con la puntuacion igual o mayor que `required`.
+* Puntuacion antispam: `SPAM_CHECK_URL` + `PLATFORM_FROM_EMAIL` (remitente y destinatario del correo de prueba, con
+  `List-Unsubscribe` en marketing). Se reutiliza 10 minutos por contenido (hasta 1024 entradas) para no agotar el
+  cupo de 120 por minuto de `mail-security`; un 429 o cualquier fallo es `spam.available=false` y no se guarda.
+* Pendiente del gateway: `POST /check` y `POST /{id}/versions/{v}/check` exigen `templates.read`, pero el gateway
+  gatea un POST como escritura salvo que su accion figure en `read_posts` de `services/gateway/routes.json`
+  (`{"prefix": "templates", "action": "check"}`). Sin esa fila, un rol con solo lectura no puede verificar.
+
 ## 4. Contrato de `mail-security`
 
 `POST /internal/mail-security/spam-check` (token del gateway interno, sin sesion), cuerpo
@@ -154,15 +191,15 @@ lleva el sha256), `X-Content-Type-Options: nosniff` y `Content-Security-Policy: 
 
 ## 7. Orden de despliegue
 
-Registro (permisos nuevos de `templates`) -> empresa (`templates`) -> MinIO y sus claves -> `mail-security`
--> `templates` -> `gateway` -> `web`.
+Registro (permisos nuevos de `templates`) -> empresa (`templates`) -> MinIO y sus claves -> motores
+(`scripts/deploy-mail.sh`, crea la red `mail-scan` de clamd) -> `mail-security` -> `templates` -> `gateway` -> `web`.
 
 ## 8. Registro de estado
 
 | Pieza | Estado |
 |---|---|
 | ADR y plan | Hecho |
-| Backend `templates` (diseno, kit, imagenes, verificador) | En curso |
+| Backend `templates` (diseno, kit, imagenes, verificador) | Hecho (2026-09-23): migraciones de empresa `templates/03_editor_brand_assets.sql` y de registro `038_templates_editor_permissions.sql`; `pkg/clamav` compartido con el webmail; red `mail-scan` para clamd; pruebas unitarias de cada regla e integracion contra Postgres. Sin probar contra clamd, MinIO ni `mail-security` reales |
 | `mail-security` spam-check | Hecho (V 2026-09-23, unitarias con Rspamd falso; y contra Rspamd real con `make e2e-mail`: 638 comprobaciones) |
 | MinIO y gateway | Hecho en el código, sin desplegar: `minio`, `minio-volumen` y `minio-init` en `docker-compose.selfhosted.yml` (solo `mail-internal`, sin puertos, sin root, imagen por digest), bucket privado y usuario de servicio acotado a él (sin borrar), claves en el almacén (`MINIO_ROOT_*` solo para `minio` y `minio-init`; `MINIO_ACCESS_KEY`/`MINIO_SECRET_KEY` para `gateway`), `minio-data` en el respaldo (solo sale cifrado) y `/media/public/*` servido por el gateway (sección 5, con `HEAD`, `ETag` y `304`). Falta: la fila de `templates` en `reparto.tsv` y sus dos líneas en `docker-compose.yml` cuando su código llame a `objectstore.FromEnv` (`check-secret-scope` lo exige entonces), y `MINIO_ENDPOINT`/`MINIO_USE_SSL` en su bloque del perfil. Procedimiento: `docs/Operacion_Despliegue.md`, 11, «Almacén de objetos» |
 | Editor web | En curso |

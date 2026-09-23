@@ -69,6 +69,7 @@ RUIDO = {
     "time", "zone", "uuid", "jsonb", "json", "bigint", "smallint", "real", "double",
     "precision", "interval", "check", "constraint", "value", "values", "cast", "coalesce",
     "length", "upper", "lower", "trim", "abs", "round", "now", "current_date", "with",
+    "octet_length", "char_length", "jsonb_typeof", "cardinality",
 }
 
 

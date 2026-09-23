@@ -67,6 +67,11 @@ services:
       mail-migration:
         aliases:
           - clamd
+      # templates analiza aqui cada imagen de las plantillas antes de guardarla, sin entrar en
+      # mail-engines (mynetworks de Postfix).
+      mail-scan:
+        aliases:
+          - clamd
 
   rspamd-mail:
     build: ./rspamd
@@ -513,6 +518,19 @@ networks:
       driver: default
       config:
         - subnet: ${MAIL_MIGRATION_IPV4_NETWORK:-172.22.2}.0/24
+  # Red del analisis antivirus para la plataforma: solo clamd y los servicios que le mandan ficheros
+  # que no son correo (templates). Interna: sin salida a Internet ni acceso a los demas motores.
+  mail-scan:
+    name: ${MAIL_SCAN_NETWORK:-mail-scan}
+    driver: bridge
+    internal: true
+    driver_opts:
+      com.docker.network.bridge.name: br-mail-scan
+    enable_ipv6: false
+    ipam:
+      driver: default
+      config:
+        - subnet: ${MAIL_SCAN_IPV4_NETWORK:-172.22.3}.0/24
 
 volumes:
   vmail-vol:

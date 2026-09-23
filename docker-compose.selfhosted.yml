@@ -333,6 +333,11 @@ services:
     environment:
       <<: *go-service-env
       GOMEMLIMIT: 100MiB
+      # Almacen de objetos del perfil (servicio minio): las imagenes de las plantillas van al bucket
+      # que sirve el gateway en /media/public/*. El bucket (MINIO_BUCKET) es del .env y las claves del
+      # almacen de secretos (docker-compose.yml).
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT:-minio:9000}
+      MINIO_USE_SSL: ${MINIO_USE_SSL:-false}
     volumes: *internal-ca
   contacts:
     restart: *reinicio

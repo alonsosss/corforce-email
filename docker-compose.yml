@@ -587,6 +587,8 @@ services:
       REGISTRY_DB_PASSWORD: ${TENANT_ROUTER_DB_PASSWORD:-}
       TENANT_DB_USER: mail_svc_templates
       TENANT_DB_PASSWORD: ${TEMPLATES_DB_PASSWORD:-}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-}
     depends_on:
       pgbouncer:
         condition: service_healthy
@@ -595,7 +597,10 @@ services:
     restart: unless-stopped
     security_opt: ["no-new-privileges:true"]
     networks:
-      - mail-internal
+      mail-internal: {}
+      # clamd (TEMPLATES_CLAMD_ADDR) analiza cada imagen subida; la red mail-scan solo tiene clamd,
+      # asi que templates no entra en mail-engines, que es mynetworks de Postfix.
+      mail-scan: {}
 
   contacts:
     build:
@@ -768,3 +773,7 @@ networks:
   mail-migration:
     external: true
     name: ${MAIL_MIGRATION_NETWORK:-mail-migration}
+  # Red del analisis antivirus (la crea deploy/mail/docker-compose.mail.yml): clamd y templates.
+  mail-scan:
+    external: true
+    name: ${MAIL_SCAN_NETWORK:-mail-scan}

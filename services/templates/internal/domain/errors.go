@@ -32,4 +32,21 @@ var (
 	ErrInvalidVariables = errors.New("variables no validas")
 	// ErrOutputTooLarge: el renderizado supero el tamano maximo de salida.
 	ErrOutputTooLarge = errors.New("la salida renderizada supera el tamano maximo")
+
+	ErrInvalidEditor   = errors.New("documento del editor no valido")
+	ErrInvalidBrandKit = errors.New("kit de marca no valido")
+	ErrInvalidAsset    = errors.New("imagen no valida")
+	ErrAssetNotFound   = errors.New("imagen no encontrada")
+	ErrAssetExists     = errors.New("la imagen ya existe en la empresa")
+	ErrInvalidCursor   = errors.New("cursor de paginacion no valido")
+	// ErrAssetRejected: ClamAV encontro malware en la imagen; no se guarda.
+	ErrAssetRejected = errors.New("la imagen fue rechazada por el analisis antivirus")
+	// ErrScannerUnavailable: sin ClamAV configurado o sin respuesta limpia de el no se admite
+	// ninguna subida (falla cerrado).
+	ErrScannerUnavailable = errors.New("el analisis antivirus no esta disponible")
+	// ErrStorageUnavailable: el servicio arranco sin almacen de objetos.
+	ErrStorageUnavailable = errors.New("el almacen de imagenes no esta configurado")
+	// ErrDeliverabilityFailed: la verificacion de entregabilidad encontro errores que impiden
+	// publicar una version de marketing. Lo envuelve DeliverabilityError, que lleva el informe.
+	ErrDeliverabilityFailed = errors.New("la version no supera la verificacion de entregabilidad")
 )

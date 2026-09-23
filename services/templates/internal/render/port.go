@@ -21,3 +21,11 @@ func (p *Port) Compile(c domain.Content) (ports.CompiledTemplate, error) {
 	}
 	return compiled, nil
 }
+
+func (p *Port) CompileDraft(c domain.Content) (ports.CompiledTemplate, error) {
+	compiled, err := p.engine.CompileDraft(c)
+	if err != nil {
+		return nil, err
+	}
+	return compiled, nil
+}

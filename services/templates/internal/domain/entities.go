@@ -70,6 +70,7 @@ type Version struct {
 	HTML        string
 	Text        *string
 	Variables   []Variable
+	Editor      *EditorDocument
 	Status      string
 	PublishedAt *time.Time
 	CreatedBy   uuid.UUID
@@ -101,12 +102,14 @@ type TemplateDetail struct {
 	Versions []VersionSummary
 }
 
-// Content es lo que se compila y valida al guardar una version.
+// Content es lo que se guarda en una version. Editor no se compila ni se renderiza: es el
+// diseno del editor visual, para volver a editarla.
 type Content struct {
 	Subject   string
 	HTML      string
 	Text      *string
 	Variables []Variable
+	Editor    *EditorDocument
 }
 
 // Rendered es la salida de un renderizado. Kind es el tipo de la plantilla renderizada.

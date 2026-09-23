@@ -62,6 +62,17 @@ var forbiddenHTML = []struct {
 // Compile valida y compila el contenido de una version. Cualquier defecto se devuelve
 // envuelto en domain.ErrInvalidTemplate o domain.ErrInvalidVariableDeclaration.
 func (e *Engine) Compile(c domain.Content) (*Compiled, error) {
+	return e.compile(c, false)
+}
+
+// CompileDraft es Compile para verificar un contenido que todavia no se guarda (el panel en
+// vivo del editor): una variable usada y no declarada se declara como cadena opcional en vez
+// de rechazar la plantilla. Guardar la version sigue exigiendo declararla.
+func (e *Engine) CompileDraft(c domain.Content) (*Compiled, error) {
+	return e.compile(c, true)
+}
+
+func (e *Engine) compile(c domain.Content, declareMissing bool) (*Compiled, error) {
 	if err := checkSizes(c); err != nil {
 		return nil, err
 	}
@@ -99,13 +110,25 @@ func (e *Engine) Compile(c domain.Content) (*Compiled, error) {
 		names = append(names, name)
 	}
 	sort.Strings(names)
+	var missing []domain.Variable
 	for _, name := range names {
-		if _, ok := declared[name]; !ok && !domain.IsReserved(name) {
+		if _, ok := declared[name]; ok || domain.IsReserved(name) {
+			continue
+		}
+		if !declareMissing {
 			return nil, fmt.Errorf("%w: la variable %q se usa pero no esta declarada", domain.ErrInvalidTemplate, name)
+		}
+		missing = append(missing, domain.Variable{Name: name, Type: domain.VarString})
+	}
+	variables := c.Variables
+	if len(missing) > 0 {
+		variables = append(append([]domain.Variable(nil), c.Variables...), missing...)
+		if err := domain.ValidateDeclarations(variables); err != nil {
+			return nil, err
 		}
 	}
 
-	compiled := &Compiled{subject: subject, html: html, text: text, variables: c.Variables, refs: names}
+	compiled := &Compiled{subject: subject, html: html, text: text, variables: variables, refs: names}
 	// Ejecucion en seco con valores vacios: fuerza el escapador de html/template, que es
 	// quien detecta contextos ambiguos o mal cerrados, y deja la plantilla lista para
 	// ejecutarse en paralelo.

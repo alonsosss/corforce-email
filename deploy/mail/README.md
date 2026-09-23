@@ -171,6 +171,11 @@ Red `mail-migration` (`${MAIL_MIGRATION_IPV4_NETWORK}.0/24`, por defecto `172.22
 (alias `dovecot`), clamd (alias `clamd`), `mail-migration-runner` y, desde el compose de la plataforma,
 `mail-migration`. Es la unica red del ejecutor de migracion (seccion "Migracion de buzones").
 
+Red `mail-scan` (`${MAIL_SCAN_IPV4_NETWORK}.0/24`, por defecto `172.22.3`, bridge `br-mail-scan`, `internal`):
+clamd (alias `clamd`) y, desde el compose de la plataforma, `templates`, que analiza cada imagen de las
+plantillas antes de guardarla (`TEMPLATES_CLAMD_ADDR`). Existe para que templates no entre en `mail-engines`,
+que es `mynetworks` de Postfix.
+
 Publicados: 25 (SMTP), 465 (SMTPS), 587 (submission), 143/993 (IMAP), 110/995
 (POP3), 4190 (ManageSieve). Internos: postfix 588 (submission interna sin TLS
 obligatorio, `submission_host` de Dovecot y avisos de cuota), 590 (reinyeccion

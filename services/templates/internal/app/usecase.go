@@ -34,20 +34,33 @@ func NormalizePage(page, pageSize int) (int, int) {
 
 // Deps agrupa los puertos del caso de uso. Un constructor con nombres evita cruzar dos
 // argumentos posicionales del mismo tipo.
+//
+// Store, Scanner y Spam son opcionales: sin almacen o sin ClamAV las subidas de imagenes
+// responden no disponible, y sin Spam la verificacion sale sin puntuacion antispam.
 type Deps struct {
-	Repo     ports.Repository
-	Tx       ports.Transactor
-	Renderer ports.Renderer
-	Events   ports.EventPublisher
-	Logger   *zap.Logger
+	Repo      ports.Repository
+	Tx        ports.Transactor
+	Renderer  ports.Renderer
+	Events    ports.EventPublisher
+	BrandKits ports.BrandKitRepository
+	Assets    ports.AssetRepository
+	Store     ports.AssetStore
+	Scanner   ports.VirusScanner
+	Spam      ports.SpamChecker
+	Logger    *zap.Logger
 }
 
 type UseCase struct {
-	repo     ports.Repository
-	tx       ports.Transactor
-	renderer ports.Renderer
-	events   ports.EventPublisher
-	logger   *zap.Logger
+	repo      ports.Repository
+	tx        ports.Transactor
+	renderer  ports.Renderer
+	events    ports.EventPublisher
+	brandKits ports.BrandKitRepository
+	assets    ports.AssetRepository
+	store     ports.AssetStore
+	scanner   ports.VirusScanner
+	spam      ports.SpamChecker
+	logger    *zap.Logger
 }
 
 func New(d Deps) *UseCase {
@@ -55,7 +68,11 @@ func New(d Deps) *UseCase {
 	if logger == nil {
 		logger = zap.NewNop()
 	}
-	return &UseCase{repo: d.Repo, tx: d.Tx, renderer: d.Renderer, events: d.Events, logger: logger}
+	return &UseCase{
+		repo: d.Repo, tx: d.Tx, renderer: d.Renderer, events: d.Events,
+		brandKits: d.BrandKits, assets: d.Assets, store: d.Store, scanner: d.Scanner, spam: d.Spam,
+		logger: logger,
+	}
 }
 
 // CreateTemplateInput es el alta de una plantilla con su version 1 en borrador.
@@ -77,8 +94,8 @@ func (uc *UseCase) CreateTemplate(ctx context.Context, tenantID, userID uuid.UUI
 	if !contains(domain.Kinds(), in.Kind) {
 		return nil, nil, domain.ErrInvalidKind
 	}
-	content := normalizeContent(in.Content)
-	if _, err := uc.renderer.Compile(content); err != nil {
+	content, err := uc.prepareContent(in.Content)
+	if err != nil {
 		return nil, nil, err
 	}
 
@@ -214,12 +231,12 @@ func (uc *UseCase) CreateVersion(ctx context.Context, tenantID, templateID, user
 	if userID == uuid.Nil {
 		return nil, domain.ErrMissingCreator
 	}
-	content = normalizeContent(content)
-	if _, err := uc.renderer.Compile(content); err != nil {
+	content, err := uc.prepareContent(content)
+	if err != nil {
 		return nil, err
 	}
 	var v *domain.Version
-	err := uc.tx.Transact(ctx, func(ctx context.Context) error {
+	err = uc.tx.Transact(ctx, func(ctx context.Context) error {
 		t, err := uc.repo.GetTemplateForUpdate(ctx, tenantID, templateID)
 		if err != nil {
 			return err
@@ -242,7 +259,14 @@ func (uc *UseCase) CreateVersion(ctx context.Context, tenantID, templateID, user
 
 // PublishVersion deja una sola version publicada: la anterior pasa a supersedida, la
 // plantilla apunta a la nueva y el evento sale por la outbox en la misma transaccion.
+//
+// Una version de marketing se verifica antes (deliverability) y con errores no se publica. La
+// verificacion va fuera de la transaccion porque consulta el antispam por la red; la version
+// es inmutable, asi que lo verificado es lo que se publica.
 func (uc *UseCase) PublishVersion(ctx context.Context, tenantID, templateID uuid.UUID, version int) (*domain.Version, error) {
+	if err := uc.requireDeliverable(ctx, tenantID, templateID, version); err != nil {
+		return nil, err
+	}
 	var published *domain.Version
 	err := uc.tx.Transact(ctx, func(ctx context.Context) error {
 		t, err := uc.repo.GetTemplateForUpdate(ctx, tenantID, templateID)
@@ -346,9 +370,25 @@ func newVersion(t *domain.Template, number int, c domain.Content, userID uuid.UU
 		HTML:       c.HTML,
 		Text:       c.Text,
 		Variables:  c.Variables,
+		Editor:     c.Editor,
 		Status:     domain.VersionStatusDraft,
 		CreatedBy:  userID,
 	}
+}
+
+// prepareContent normaliza el contenido de una version nueva, valida el documento del
+// editor y compila la plantilla.
+func (uc *UseCase) prepareContent(c domain.Content) (domain.Content, error) {
+	c = normalizeContent(c)
+	editor, err := domain.NormalizeEditor(c.Editor)
+	if err != nil {
+		return c, err
+	}
+	c.Editor = editor
+	if _, err := uc.renderer.Compile(c); err != nil {
+		return c, err
+	}
+	return c, nil
 }
 
 // normalizeContent garantiza una lista de variables no nula (se guarda como [] en jsonb)

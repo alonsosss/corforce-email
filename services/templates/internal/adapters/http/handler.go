@@ -22,6 +22,9 @@ import (
 const (
 	permModule   = "templates"
 	permResource = "templates"
+	// Recursos del editor visual: migrations/registry/038_templates_editor_permissions.sql.
+	permBrandKit = "brand_kit"
+	permAssets   = "assets"
 
 	actionRead    = "read"
 	actionCreate  = "create"
@@ -32,9 +35,9 @@ const (
 )
 
 // Topes de cuerpo. El contenido admite el HTML maximo mas el sobrecoste de escaparlo en
-// JSON; un renderizado solo trae valores.
+// JSON y el documento del editor; un renderizado solo trae valores.
 const (
-	maxContentBody = 2 << 20
+	maxContentBody = 2<<20 + 2*domain.MaxEditorBytes
 	maxRenderBody  = 1 << 20
 )
 
@@ -51,12 +54,22 @@ func (h *Handler) perm(action string) func(http.Handler) http.Handler {
 	return h.authz.RequirePermission(permModule, permResource, action)
 }
 
+func (h *Handler) permOn(resource, action string) func(http.Handler) http.Handler {
+	return h.authz.RequirePermission(permModule, resource, action)
+}
+
 // Routes es el API publico, montado en /api/v1/templates detras del gateway.
 func (h *Handler) Routes() http.Handler {
 	r := chi.NewRouter()
 	r.With(h.perm(actionRead)).Get("/", h.ListTemplates)
 	r.With(h.perm(actionCreate)).Post("/", h.CreateTemplate)
 	r.With(h.perm(actionRead)).Get("/meta", h.Meta)
+	r.With(h.perm(actionRead)).Post("/check", h.CheckContent)
+	r.With(h.permOn(permBrandKit, actionRead)).Get("/brand-kit", h.GetBrandKit)
+	r.With(h.permOn(permBrandKit, actionUpdate)).Put("/brand-kit", h.UpdateBrandKit)
+	r.With(h.permOn(permAssets, actionRead)).Get("/assets", h.ListAssets)
+	r.With(h.permOn(permAssets, actionCreate)).Post("/assets", h.UploadAsset)
+	r.With(h.permOn(permAssets, actionDelete)).Delete("/assets/{assetID}", h.DeleteAsset)
 	r.Route("/{id}", func(r chi.Router) {
 		r.With(h.perm(actionRead)).Get("/", h.GetTemplate)
 		r.With(h.perm(actionUpdate)).Patch("/", h.UpdateTemplate)
@@ -65,6 +78,7 @@ func (h *Handler) Routes() http.Handler {
 		r.With(h.perm(actionCreate)).Post("/versions", h.CreateVersion)
 		r.With(h.perm(actionRead)).Get("/versions/{n}", h.GetVersion)
 		r.With(h.perm(actionPublish)).Post("/versions/{n}/publish", h.PublishVersion)
+		r.With(h.perm(actionRead)).Post("/versions/{n}/check", h.CheckVersion)
 		r.With(h.perm(actionRender)).Post("/render", h.Render)
 		r.With(h.perm(actionRender)).Post("/preview", h.Preview)
 	})
@@ -119,9 +133,20 @@ func versionParam(w http.ResponseWriter, r *http.Request) (int, bool) {
 }
 
 func writeError(w http.ResponseWriter, err error) {
+	if de, ok := app.IsDeliverabilityError(err); ok {
+		writeDeliverabilityFailed(w, de)
+		return
+	}
 	switch {
-	case errors.Is(err, domain.ErrTemplateNotFound), errors.Is(err, domain.ErrVersionNotFound):
+	case errors.Is(err, domain.ErrTemplateNotFound), errors.Is(err, domain.ErrVersionNotFound),
+		errors.Is(err, domain.ErrAssetNotFound):
 		response.ErrNotFound(w, err.Error())
+	case errors.Is(err, domain.ErrScannerUnavailable):
+		response.Err(w, http.StatusServiceUnavailable, "SCANNER_UNAVAILABLE", domain.ErrScannerUnavailable.Error())
+	case errors.Is(err, domain.ErrStorageUnavailable):
+		response.Err(w, http.StatusServiceUnavailable, "STORAGE_UNAVAILABLE", domain.ErrStorageUnavailable.Error())
+	case errors.Is(err, domain.ErrAssetRejected):
+		response.Err(w, http.StatusUnprocessableEntity, "ASSET_REJECTED", domain.ErrAssetRejected.Error())
 	case errors.Is(err, domain.ErrTemplateNameTaken),
 		errors.Is(err, domain.ErrTemplateNotArchived),
 		errors.Is(err, domain.ErrTemplateArchived),
@@ -136,7 +161,11 @@ func writeError(w http.ResponseWriter, err error) {
 		errors.Is(err, domain.ErrNothingToUpdate),
 		errors.Is(err, domain.ErrInvalidName),
 		errors.Is(err, domain.ErrInvalidKind),
-		errors.Is(err, domain.ErrInvalidTemplateStatus):
+		errors.Is(err, domain.ErrInvalidTemplateStatus),
+		errors.Is(err, domain.ErrInvalidEditor),
+		errors.Is(err, domain.ErrInvalidBrandKit),
+		errors.Is(err, domain.ErrInvalidAsset),
+		errors.Is(err, domain.ErrInvalidCursor):
 		response.ErrValidation(w, err.Error())
 	case errors.Is(err, domain.ErrMissingCreator):
 		response.ErrUnauthorized(w, err.Error())
@@ -158,6 +187,11 @@ type limitsMeta struct {
 	MaxVariables         int `json:"max_variables"`
 	MaxSubjectBytes      int `json:"max_subject_bytes"`
 	MaxHTMLBytes         int `json:"max_html_bytes"`
+	MaxEditorBytes       int `json:"max_editor_bytes"`
+	MaxBrandColors       int `json:"max_brand_colors"`
+	MaxBrandFonts        int `json:"max_brand_fonts"`
+	MaxAssetBytes        int `json:"max_asset_bytes"`
+	MaxAssetDimension    int `json:"max_asset_dimension"`
 }
 
 type metaResponse struct {
@@ -166,6 +200,9 @@ type metaResponse struct {
 	VersionStatuses   []string               `json:"version_statuses"`
 	VariableTypes     []string               `json:"variable_types"`
 	ReservedVariables []reservedVariableMeta `json:"reserved_variables"`
+	EditorKinds       []string               `json:"editor_kinds"`
+	BrandFonts        []domain.BrandFont     `json:"brand_fonts"`
+	AssetContentTypes []string               `json:"asset_content_types"`
 	Limits            limitsMeta             `json:"limits"`
 }
 
@@ -179,11 +216,10 @@ func (h *Handler) Meta(w http.ResponseWriter, r *http.Request) {
 		VersionStatuses:   domain.VersionStatuses(),
 		VariableTypes:     domain.VariableTypes(),
 		ReservedVariables: make([]reservedVariableMeta, 0, len(reserved)),
-		Limits: limitsMeta{
-			MaxNameLength: domain.MaxNameLength, MaxDescriptionLength: domain.MaxDescription,
-			MaxVariables: domain.MaxVariables, MaxSubjectBytes: domain.MaxSubjectBytes,
-			MaxHTMLBytes: domain.MaxHTMLBytes,
-		},
+		EditorKinds:       domain.EditorKinds(),
+		BrandFonts:        domain.BrandFonts(),
+		AssetContentTypes: domain.AssetContentTypes(),
+		Limits:            domainLimits(),
 	}
 	for _, v := range reserved {
 		out.ReservedVariables = append(out.ReservedVariables, reservedVariableMeta{Name: v.Name, Type: v.Type})
@@ -191,13 +227,24 @@ func (h *Handler) Meta(w http.ResponseWriter, r *http.Request) {
 	response.JSON(w, http.StatusOK, out)
 }
 
+func domainLimits() limitsMeta {
+	return limitsMeta{
+		MaxNameLength: domain.MaxNameLength, MaxDescriptionLength: domain.MaxDescription,
+		MaxVariables: domain.MaxVariables, MaxSubjectBytes: domain.MaxSubjectBytes,
+		MaxHTMLBytes: domain.MaxHTMLBytes, MaxEditorBytes: domain.MaxEditorBytes,
+		MaxBrandColors: domain.MaxBrandColors, MaxBrandFonts: domain.MaxBrandFonts,
+		MaxAssetBytes: domain.MaxAssetBytes, MaxAssetDimension: domain.MaxAssetDimension,
+	}
+}
+
 // ── Plantillas ───────────────────────────────────────────────────────────────
 
 type contentRequest struct {
-	Subject   string            `json:"subject"`
-	HTML      string            `json:"html"`
-	Text      *string           `json:"text,omitempty"`
-	Variables []domain.Variable `json:"variables"`
+	Subject   string                 `json:"subject"`
+	HTML      string                 `json:"html"`
+	Text      *string                `json:"text,omitempty"`
+	Variables []domain.Variable      `json:"variables"`
+	Editor    *domain.EditorDocument `json:"editor,omitempty"`
 }
 
 func (c contentRequest) validate(v *validate.Validator) {
@@ -209,7 +256,7 @@ func (c contentRequest) validate(v *validate.Validator) {
 }
 
 func (c contentRequest) toDomain() domain.Content {
-	return domain.Content{Subject: c.Subject, HTML: c.HTML, Text: c.Text, Variables: c.Variables}
+	return domain.Content{Subject: c.Subject, HTML: c.HTML, Text: c.Text, Variables: c.Variables, Editor: c.Editor}
 }
 
 type createTemplateRequest struct {
@@ -596,6 +643,7 @@ func versionResponse(v *domain.Version) map[string]any {
 		"html":         v.HTML,
 		"text":         v.Text,
 		"variables":    v.Variables,
+		"editor":       v.Editor,
 		"status":       v.Status,
 		"published_at": v.PublishedAt,
 		"created_by":   v.CreatedBy.String(),

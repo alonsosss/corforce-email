@@ -2,7 +2,11 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
+	"net"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/alonsosss/corforce-email/pkg/authz"
@@ -10,19 +14,29 @@ import (
 	"github.com/alonsosss/corforce-email/pkg/db"
 	"github.com/alonsosss/corforce-email/pkg/events"
 	"github.com/alonsosss/corforce-email/pkg/middleware"
+	"github.com/alonsosss/corforce-email/pkg/objectstore"
 	"github.com/alonsosss/corforce-email/pkg/outbox"
 	"github.com/alonsosss/corforce-email/pkg/response"
 	"github.com/alonsosss/corforce-email/pkg/server"
+	clamavadapter "github.com/alonsosss/corforce-email/services/templates/internal/adapters/clamav"
 	handler "github.com/alonsosss/corforce-email/services/templates/internal/adapters/http"
+	objectstoreadapter "github.com/alonsosss/corforce-email/services/templates/internal/adapters/objectstore"
 	outboxadapter "github.com/alonsosss/corforce-email/services/templates/internal/adapters/outbox"
 	"github.com/alonsosss/corforce-email/services/templates/internal/adapters/postgres"
+	"github.com/alonsosss/corforce-email/services/templates/internal/adapters/spamcheck"
 	"github.com/alonsosss/corforce-email/services/templates/internal/app"
+	"github.com/alonsosss/corforce-email/services/templates/internal/ports"
 	"github.com/alonsosss/corforce-email/services/templates/internal/render"
 	"github.com/go-chi/chi/v5"
 	"go.uber.org/zap"
 )
 
-const defaultPort = 8047
+const (
+	defaultPort = 8047
+	// clamdTimeout acota el analisis de una imagen (hasta 5 MiB).
+	clamdTimeout       = 30 * time.Second
+	bucketCheckTimeout = 5 * time.Second
+)
 
 func main() {
 	logger, _ := zap.NewProduction()
@@ -68,12 +82,23 @@ func main() {
 		go outbox.RunForTenants(ctx, tenantDB, db.PoolFromCtx, bus, logger, outbox.Options{})
 	}
 
+	editor, err := loadEditorDeps(ctx, logger)
+	if err != nil {
+		log.Fatalf("templates: %v", err)
+	}
+
+	repo := postgres.NewRepository(ctxPool)
 	uc := app.New(app.Deps{
-		Repo:     postgres.NewRepository(ctxPool),
-		Tx:       ctxPool,
-		Renderer: render.NewPort(),
-		Events:   outboxadapter.NewPublisher(ctxPool),
-		Logger:   logger,
+		Repo:      repo,
+		Tx:        ctxPool,
+		Renderer:  render.NewPort(),
+		Events:    outboxadapter.NewPublisher(ctxPool),
+		BrandKits: repo,
+		Assets:    repo,
+		Store:     editor.store,
+		Scanner:   editor.scanner,
+		Spam:      editor.spam,
+		Logger:    logger,
 	})
 	h := handler.NewHandler(uc, perms)
 
@@ -104,4 +129,73 @@ func main() {
 	if err := srv.Run(); err != nil {
 		logger.Fatal("server error", zap.Error(err))
 	}
+}
+
+// editorDeps son las dependencias opcionales del editor visual (docs/Plan_Editor_Correos.md).
+// Cada una ausente degrada su funcion y el servicio arranca: sin almacen o sin ClamAV las
+// subidas responden 503, y sin mail-security la verificacion sale sin puntuacion antispam. Una
+// mal configurada impide arrancar.
+type editorDeps struct {
+	store   ports.AssetStore
+	scanner ports.VirusScanner
+	spam    ports.SpamChecker
+}
+
+func loadEditorDeps(ctx context.Context, logger *zap.Logger) (editorDeps, error) {
+	var deps editorDeps
+
+	objects, err := objectstore.FromEnv()
+	if err != nil {
+		return deps, err
+	}
+	if objects == nil {
+		logger.Warn("templates: sin MINIO_ENDPOINT, las subidas de imagenes responden STORAGE_UNAVAILABLE")
+	} else {
+		store, err := objectstoreadapter.New(objects, os.Getenv("PUBLIC_BASE_URL"))
+		if err != nil {
+			return deps, err
+		}
+		verifyCtx, cancel := context.WithTimeout(ctx, bucketCheckTimeout)
+		if err := objects.Verify(verifyCtx); err != nil {
+			logger.Warn("templates: el bucket de imagenes no responde; las subidas fallaran hasta que lo haga", zap.Error(err))
+		}
+		cancel()
+		deps.store = store
+	}
+
+	if addr := strings.TrimSpace(os.Getenv("TEMPLATES_CLAMD_ADDR")); addr == "" {
+		logger.Warn("templates: sin TEMPLATES_CLAMD_ADDR, las subidas de imagenes responden SCANNER_UNAVAILABLE")
+	} else {
+		host, port, err := net.SplitHostPort(addr)
+		if err != nil || !config.ValidHost(host) {
+			return deps, fmt.Errorf("TEMPLATES_CLAMD_ADDR=%q debe ser host:puerto", addr)
+		}
+		if _, err := config.ParsePort(port); err != nil {
+			return deps, fmt.Errorf("TEMPLATES_CLAMD_ADDR: %w", err)
+		}
+		deps.scanner = clamavadapter.New(addr, clamdTimeout)
+	}
+
+	spamURL, err := config.ServiceURL("SPAM_CHECK_URL", "")
+	if err != nil {
+		return deps, err
+	}
+	from := strings.TrimSpace(os.Getenv("PLATFORM_FROM_EMAIL"))
+	switch {
+	case spamURL == "":
+		logger.Warn("templates: sin SPAM_CHECK_URL, la verificacion sale sin puntuacion antispam")
+	case from == "":
+		logger.Warn("templates: sin PLATFORM_FROM_EMAIL no hay remitente para el mensaje de prueba; la verificacion sale sin puntuacion antispam")
+	default:
+		token, err := middleware.InternalGatewayToken()
+		if err != nil {
+			return deps, err
+		}
+		spam, err := spamcheck.New(spamURL, token, from)
+		if err != nil {
+			return deps, err
+		}
+		deps.spam = spam
+	}
+	return deps, nil
 }

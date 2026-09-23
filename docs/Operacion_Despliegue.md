@@ -99,6 +99,19 @@ largas de cada guardarraíl están en `ops/scaffold/README.md`, `ops/security/se
   `RSPAMD_CONTROLLER_URL` (`http://rspamd:11334`; le pega `/learnspam`, `/stat` o `/checkv2` y manda en su
   cabecera la contraseña de cada permiso) y `DOVEADM_API_URL` (`https://dovecot:8443`), que además tiene que ser
   `https` (`doveadm.New`): la clave del API viaja en cada petición.
+* Editor de plantillas (`templates`, `docs/Plan_Editor_Correos.md`). Todo es opcional y lo que falta degrada su
+  función sin impedir el arranque; lo mal formado sí lo impide. `TEMPLATES_CLAMD_ADDR` (`host:puerto`,
+  `clamd:3310` por la red `mail-scan`): sin ella, `POST /api/v1/templates/assets` responde 503
+  `SCANNER_UNAVAILABLE`, y cualquier respuesta de clamd que no sea un OK explícito también (falla cerrado). Las
+  imágenes van al almacén de `MINIO_*` (`objectstore.FromEnv`, el mismo bucket que sirve el gateway en `/media/`):
+  sin `MINIO_ENDPOINT`, 503 `STORAGE_UNAVAILABLE`; con almacén, `PUBLIC_BASE_URL` es obligatoria (la URL absoluta
+  de cada imagen es `<PUBLIC_BASE_URL>/media/public/<empresa>/templates/<sha256>.<ext>`). `SPAM_CHECK_URL` es la
+  URL base del `mail-security` de la celda base (regla de `config.ServiceURL`) y `PLATFORM_FROM_EMAIL` el remitente
+  del correo de prueba que puntúa su Rspamd; sin cualquiera de las dos, la verificación de entregabilidad sale con
+  `spam.available=false`. `MINIO_ACCESS_KEY` y `MINIO_SECRET_KEY` (el usuario de servicio del bucket, sin
+  permiso de borrar) son secretos del almacén: los reciben `gateway` y `templates` (`reparto.tsv`), que las leen por
+  `objectstore.FromEnv`, lectura indirecta que conoce `check-secret-scope.sh`. En el perfil autoalojado,
+  `docker-compose.selfhosted.yml` fija a los dos `MINIO_ENDPOINT` (por defecto `minio:9000`) y `MINIO_USE_SSL`.
 * Entorno declarado (`ENVIRONMENT`). Un servidor declara exactamente
   `ENVIRONMENT=production` o `ENVIRONMENT=staging` en el `.env` de `DEPLOY_PATH`, el que
   Compose pasa a los contenedores; también el servidor de la cuenta de dev. `development` y
@@ -538,6 +551,12 @@ buzones dio 500 y `mail-auth` no pudo leer el buzon del remitente de las alertas
   el perfil y antes de recrear nada, comprueba con `ops/maintenance/recursos-externos.sh` las redes y
   volúmenes externos de su compose y se detiene pidiendo desplegar antes los motores. `release.yml`
   no lo comprueba (no sincroniza `ops/`); en un servidor así Compose falla con el nombre del recurso.
+* Red `mail-scan` (2026-09-23, editor de plantillas): la crea el compose de los motores (`MAIL_SCAN_NETWORK`,
+  subred `MAIL_SCAN_IPV4_NETWORK`.0/24, por defecto 172.22.3, `internal: true`) y solo une a `clamd-mail` (alias
+  `clamd`) y a `templates`, que analiza ahi cada imagen subida sin entrar en `mail-engines` (mynetworks de Postfix).
+  Como `mail-migration`, en un servidor que ya corre hay que desplegar los motores ANTES de la plataforma, o
+  `recursos-externos.sh` detiene `deploy-ecr.sh` diciendo que falta `mail-scan`. En una maquina donde 172.22.3.0/24
+  choque con otra red, fijar `MAIL_SCAN_IPV4_NETWORK` en el `.env`.
 * Red `mail-migration` (V, 2026-09-21): la crea el compose de los motores, como `mail-engines`, y une a Dovecot,
   al ejecutor `mail-migration-runner` y al servicio `mail-migration` de la plataforma (que la declara externa). Es
   la primera vez que la plataforma exige una red nueva de los motores: en un servidor que ya corre, desplegar los

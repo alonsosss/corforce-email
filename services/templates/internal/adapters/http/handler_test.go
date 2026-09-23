@@ -18,9 +18,11 @@ import (
 // El render interno es el contrato que transactional consume por cada envio: si cambia
 // de forma, los correos salen sin asunto o sin cuerpo y nada falla en compilacion.
 func TestInternalRenderRespetaElContratoDeTransactional(t *testing.T) {
-	uc := app.New(app.Deps{Repo: apptest.NewRepo(), Tx: &apptest.Tx{}, Renderer: &apptest.Renderer{}, Events: &apptest.Events{}})
+	kits := apptest.NewBrandKits()
+	uc := app.New(app.Deps{Repo: apptest.NewRepo(), Tx: &apptest.Tx{}, Renderer: &apptest.Renderer{}, Events: &apptest.Events{}, BrandKits: kits})
 	tenant, user := uuid.New(), uuid.New()
 	ctx := context.Background()
+	kits.Kits[tenant] = domain.BrandKit{TenantID: tenant, Footer: domain.BrandFooter{Address: "Av. Siempre Viva 742, Lima"}}
 	tpl, _, err := uc.CreateTemplate(ctx, tenant, user, app.CreateTemplateInput{
 		Name: "codigo", Kind: domain.KindTransactional,
 		Content: domain.Content{Subject: "Codigo", HTML: "<p>{{.name}}</p>", Variables: []domain.Variable{{Name: "name", Type: domain.VarString}}},
@@ -34,7 +36,7 @@ func TestInternalRenderRespetaElContratoDeTransactional(t *testing.T) {
 
 	promo, _, err := uc.CreateTemplate(ctx, tenant, user, app.CreateTemplateInput{
 		Name: "otono", Kind: domain.KindMarketing,
-		Content: domain.Content{Subject: "Otono", HTML: `<p>{{.name}}</p><a href="{{.unsubscribe_url}}">Baja</a>`, Variables: []domain.Variable{{Name: "name", Type: domain.VarString}}},
+		Content: domain.Content{Subject: "Otono", HTML: `<p>{{.name}}</p><p>Av. Siempre Viva 742, Lima</p><a href="{{.unsubscribe_url}}">Baja</a>`, Variables: []domain.Variable{{Name: "name", Type: domain.VarString}}},
 	})
 	if err != nil {
 		t.Fatalf("CreateTemplate marketing: %v", err)
