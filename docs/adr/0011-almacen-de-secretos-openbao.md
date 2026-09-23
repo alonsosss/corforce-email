@@ -8,6 +8,11 @@ todo el ciclo con la imagen fijada. Sustituye como fuente de producción al fich
 `docs/adr/0008-almacen-de-secretos-cifrado-sin-aws.md`, que queda como backend de un servidor sin OpenBao y como
 camino de vuelta.
 
+En producción desde el 2026-09-23 (89.58.10.80): `instalar.sh`, `migrar.sh --apply` con 34 claves y
+materialización idéntica, todos los contenedores `OK` en `verify-scope.sh contenedores`, y la primera corrida de
+`backup-tenants.sh` con `openbao.snap` restaurada por `verify-restore.sh` (35 secretos). La llave de desbloqueo y la
+clave de recuperación se copiaron fuera del servidor y la de recuperación se borró de él.
+
 ## Contexto
 
 La ADR 0008 sacó los secretos del `.env` a un fichero cifrado con gpg (`store.json.gpg`) y una frase en el mismo
