@@ -1,8 +1,10 @@
 import { useState } from 'react';
 import {
   campaignsApi,
+  campaignsMeta,
   type Audience,
   type Campaign,
+  type CampaignsMeta,
   type CreateCampaignRequest,
   type UpdateCampaignRequest,
 } from '@/api/campaigns';
@@ -18,6 +20,18 @@ import { FormModal } from '@/pages/shared/FormModal';
 import { ResourceGate } from '@/pages/shared/ResourceGate';
 import { AudiencePicker } from './AudiencePicker';
 import { loadCampaignOptions, type CampaignOptions } from './campaignOptions';
+import {
+  abDraftFrom,
+  buildABTest,
+  buildResend,
+  resendDraftFrom,
+  sameABTest,
+  sameResend,
+  type ABDraft,
+  type DraftErrors,
+  type ResendDraft,
+} from './campaignDelivery';
+import { ABTestFields, ResendFields } from './DeliveryOptionsFields';
 
 export interface CampaignFormProps {
   /** null en el alta. */
@@ -47,14 +61,14 @@ export function CampaignForm(props: CampaignFormProps) {
     lists: can(...PERMISSIONS.contactLists.read),
     segments: can(...PERMISSIONS.segments.read),
   };
-  const options = useQuery(
-    () => loadCampaignOptions(access),
-    [access.templates, access.lists, access.segments],
-  );
+  const loaded = useQuery(async () => {
+    const [options, meta] = await Promise.all([loadCampaignOptions(access), campaignsMeta.get()]);
+    return { options, meta };
+  }, [access.templates, access.lists, access.segments]);
   const title = props.campaign ? t('campaigns.form.editTitle') : t('campaigns.form.createTitle');
   return (
-    <ResourceGate resource={options} modal={{ title, onClose: props.onClose }}>
-      {(data) => <Form {...props} options={data} title={title} />}
+    <ResourceGate resource={loaded} modal={{ title, onClose: props.onClose }}>
+      {(data) => <Form {...props} options={data.options} meta={data.meta} title={title} />}
     </ResourceGate>
   );
 }
@@ -63,10 +77,11 @@ function Form({
   campaign,
   contentLocked = false,
   options,
+  meta,
   title,
   onClose,
   onSaved,
-}: CampaignFormProps & { options: CampaignOptions; title: string }) {
+}: CampaignFormProps & { options: CampaignOptions; meta: CampaignsMeta; title: string }) {
   const [name, setName] = useState(campaign?.name ?? '');
   const [description, setDescription] = useState(campaign?.description ?? '');
   const [templateId, setTemplateId] = useState(campaign?.template_id ?? '');
@@ -74,7 +89,11 @@ function Form({
   const [fromName, setFromName] = useState(campaign?.from_name ?? '');
   const [replyTo, setReplyTo] = useState(campaign?.reply_to ?? '');
   const [audience, setAudience] = useState<Audience>(campaign?.audience ?? EMPTY_AUDIENCE);
-  const [errors, setErrors] = useState<Record<string, string | undefined>>({});
+  const [ab, setAB] = useState<ABDraft>(() => abDraftFrom(campaign?.ab_test ?? null, meta));
+  const [resend, setResend] = useState<ResendDraft>(() =>
+    resendDraftFrom(campaign?.resend ?? null, meta),
+  );
+  const [errors, setErrors] = useState<DraftErrors>({});
   const locked = campaign !== null && contentLocked;
 
   const action = useAction(async (body: CreateCampaignRequest | UpdateCampaignRequest | null) => {
@@ -100,8 +119,11 @@ function Form({
           ? t('campaigns.audience.required')
           : undefined,
     };
-    setErrors(next);
-    if (Object.values(next).some(Boolean)) return;
+    const abTest = buildABTest(ab, meta);
+    const resendValue = buildResend(resend, meta);
+    const all = { ...next, ...abTest.errors, ...resendValue.errors };
+    setErrors(all);
+    if (Object.values(all).some(Boolean)) return;
 
     const values: CreateCampaignRequest = {
       name: name.trim(),
@@ -111,6 +133,8 @@ function Form({
       from_name: fromName.trim(),
       reply_to: replyTo.trim(),
       audience,
+      ab_test: abTest.value,
+      resend: resendValue.value,
     };
     if (!campaign) {
       await action.run(values);
@@ -124,6 +148,9 @@ function Form({
       reply_to: changed(values.reply_to, campaign.reply_to),
       template_id: locked ? undefined : changed(values.template_id, campaign.template_id),
       audience: locked || sameAudience(audience, campaign.audience) ? undefined : audience,
+      ab_test: locked || sameABTest(campaign.ab_test, abTest.value) ? undefined : abTest.value,
+      resend:
+        locked || sameResend(campaign.resend, resendValue.value) ? undefined : resendValue.value,
     };
     await action.run(isEmptyPatch(body) ? null : body);
   };
@@ -251,6 +278,22 @@ function Form({
         options={options}
         disabled={locked}
         error={errors.audience}
+      />
+      <ABTestFields
+        draft={ab}
+        onChange={setAB}
+        meta={meta}
+        templates={templates}
+        errors={errors}
+        disabled={locked}
+        timezoneLocked={Boolean(campaign?.timezone_delivery)}
+      />
+      <ResendFields
+        draft={resend}
+        onChange={setResend}
+        meta={meta}
+        errors={errors}
+        disabled={locked}
       />
     </FormModal>
   );

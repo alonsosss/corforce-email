@@ -35,6 +35,27 @@ type scheduleMeta struct {
 	MaxHorizonSeconds int64 `json:"max_horizon_seconds"`
 }
 
+type abTestMeta struct {
+	Criteria                 []domain.ABCriterion    `json:"criteria"`
+	MinVariants              int                     `json:"min_variants"`
+	MaxVariants              int                     `json:"max_variants"`
+	MinSamplePercent         int                     `json:"min_sample_percent"`
+	MaxSamplePercent         int                     `json:"max_sample_percent"`
+	MinDecisionWindowMinutes int                     `json:"min_decision_window_minutes"`
+	MaxDecisionWindowMinutes int                     `json:"max_decision_window_minutes"`
+	DecisionReasons          []domain.DecisionReason `json:"decision_reasons"`
+}
+
+type resendMeta struct {
+	MinDelayMinutes int `json:"min_delay_minutes"`
+	MaxDelayMinutes int `json:"max_delay_minutes"`
+}
+
+type phasesMeta struct {
+	Kinds    []domain.PhaseKind   `json:"kinds"`
+	Statuses []domain.PhaseStatus `json:"statuses"`
+}
+
 type paginationMeta struct {
 	DefaultPageSize int `json:"default_page_size"`
 	MaxPageSize     int `json:"max_page_size"`
@@ -52,6 +73,11 @@ type metaResponse struct {
 	Limits       limitsMeta     `json:"limits"`
 	Schedule     scheduleMeta   `json:"schedule"`
 	Pagination   paginationMeta `json:"pagination"`
+	ABTest       abTestMeta     `json:"ab_test"`
+	Resend       resendMeta     `json:"resend"`
+	Phases       phasesMeta     `json:"phases"`
+	// MaxSubjectLength acota el asunto de una variante y el del reenvio.
+	MaxSubjectLength int `json:"max_subject_length"`
 }
 
 func buildMeta(batchSize int) metaResponse {
@@ -71,6 +97,20 @@ func buildMeta(batchSize int) metaResponse {
 			MaxHorizonSeconds: int64(domain.MaxScheduleHorizon.Seconds()),
 		},
 		Pagination: paginationMeta{DefaultPageSize: defaultPerPage, MaxPageSize: maxPerPage},
+		ABTest: abTestMeta{
+			Criteria:    domain.ABCriteria(),
+			MinVariants: domain.MinABVariants, MaxVariants: domain.MaxABVariants,
+			MinSamplePercent: domain.MinSamplePercent, MaxSamplePercent: domain.MaxSamplePercent,
+			MinDecisionWindowMinutes: int(domain.MinDecisionWindow.Minutes()),
+			MaxDecisionWindowMinutes: int(domain.MaxDecisionWindow.Minutes()),
+			DecisionReasons:          domain.DecisionReasons(),
+		},
+		Resend: resendMeta{
+			MinDelayMinutes: int(domain.MinResendDelay.Minutes()),
+			MaxDelayMinutes: int(domain.MaxResendDelay.Minutes()),
+		},
+		Phases:           phasesMeta{Kinds: domain.PhaseKinds(), Statuses: domain.PhaseStatuses()},
+		MaxSubjectLength: domain.MaxSubjectLength,
 	}
 	for _, st := range domain.Statuses() {
 		c := domain.Campaign{Status: st}

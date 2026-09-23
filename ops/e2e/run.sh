@@ -616,6 +616,60 @@ expect "y acepta el objeto utm del lote hasta el remitente sin verificar" \
   "$(lote_utm valido '{"enabled":true,"source":"Boletin","campaign":"Lanzamiento de Otono","content":"cabecera"}' | jget error.code)" \
   "SENDING_DOMAIN_NOT_VERIFIED"
 
+echo "== Campanas: prueba A/B, reenvio y envio por zona horaria"
+# Veinte contactos: con una muestra del 50 % la probabilidad de que ninguno caiga en ella es
+# de uno entre un millon, asi que la primera muestra siempre llega a transactional.
+LAB=$(curl -s -X POST "$GW/contacts/lists" -H "$A2" -H 'Content-Type: application/json' -d '{"name":"prueba-ab"}' | jget data.id)
+IDS=""
+for i in $(seq -w 1 20); do
+  id=$(curl -s -X POST "$GW/contacts" -H "$A2" -H 'Content-Type: application/json' \
+    -d "{\"email\":\"ab$i@cliente.test\",\"source\":\"api\",\"timezone\":\"Europe/Madrid\",\"consent\":{\"status\":\"granted\",\"method\":\"api\",\"source\":\"e2e\"}}" | jget data.id)
+  IDS="$IDS${IDS:+,}\"$id\""
+done
+expect "veinte contactos en la lista de la prueba" \
+  "$(curl -s -X POST "$GW/contacts/lists/$LAB/members" -H "$A2" -H 'Content-Type: application/json' -d "{\"contact_ids\":[$IDS]}" | jget data.added)" "20"
+expect "la meta publica los topes de la prueba A/B" \
+  "$(curl -s "$GW/campaigns/meta" -H "$A2" | jget data.ab_test.max_variants)" "4"
+expect "cinco variantes se rechazan" \
+  "$(codigo -X POST "$GW/campaigns" -H "$A2" -H 'Content-Type: application/json' \
+    -d "{\"name\":\"AB invalida\",\"template_id\":\"$TMID\",\"from_email\":\"hola@acme.test\",\"audience\":{\"list_ids\":[\"$LID\"]},\"ab_test\":{\"criterion\":\"opens\",\"sample_percent\":20,\"decision_window_minutes\":60,\"variants\":[{\"subject\":\"a\"},{\"subject\":\"b\"},{\"subject\":\"c\"},{\"subject\":\"d\"},{\"subject\":\"e\"}]}}")" "422"
+AB=$(curl -s -X POST "$GW/campaigns" -H "$A2" -H 'Content-Type: application/json' \
+  -d "{\"name\":\"Prueba AB\",\"template_id\":\"$TMID\",\"from_email\":\"hola@acme.test\",\"audience\":{\"list_ids\":[\"$LAB\"]},\"ab_test\":{\"criterion\":\"clicks\",\"sample_percent\":50,\"decision_window_minutes\":60,\"variants\":[{\"subject\":\"Asunto A\"},{\"subject\":\"Asunto B\"}]},\"resend\":{\"subject\":\"Recordatorio\",\"delay_minutes\":1440}}")
+ABID=$(echo "$AB" | jget data.id)
+expect "campana A/B con reenvio en borrador" "$(echo "$AB" | jget data.ab_test.variants.1.label)" "B"
+expect "con su reenvio" "$(echo "$AB" | jget data.resend.subject)" "Recordatorio"
+DIA=$(date -u -d '+3 days' +%Y-%m-%d)
+expect "la prueba A/B no se programa por zona horaria" \
+  "$(codigo -X POST "$GW/campaigns/$ABID/schedule" -H "$A2" -H 'Content-Type: application/json' \
+    -d "{\"local_send_at\":\"${DIA}T09:00\",\"fallback_timezone\":\"America/Lima\",\"template_version\":1}")" "422"
+c=$(codigo -X POST "$GW/campaigns/$ABID/start" -H "$A2" -H 'Content-Type: application/json' -d '{"template_version":1}')
+[[ "$c" =~ ^20[02]$ ]] && ok "la campana A/B arranca y fija la version de cada variante" || mal "arranque de la campana A/B: $c"
+estado=""
+for _ in $(seq 1 40); do
+  estado=$(curl -s "$GW/campaigns/$ABID" -H "$A2" | jget data.status)
+  [[ "$estado" == failed || "$estado" == completed ]] && break; sleep 0.5
+done
+expect "la muestra llega a transactional, que rechaza el remitente" "$estado" "failed"
+contains "con el motivo de transactional" "$(curl -s "$GW/campaigns/$ABID" -H "$A2" | jget data.failure_reason)" "SENDING_DOMAIN_NOT_VERIFIED"
+PLAN=$(curl -s "$GW/campaigns/$ABID/phases" -H "$A2")
+expect "el plan tiene la muestra de A como primera fase" "$(echo "$PLAN" | jget data.phases.0.kind)" "sample"
+expect "seguida de la muestra de B" "$(echo "$PLAN" | jget data.phases.1.variant)" "1"
+expect "y de la ganadora" "$(echo "$PLAN" | jget data.phases.2.kind)" "winner"
+expect "la ganadora no se decide sin la muestra" "$(curl -s "$GW/campaigns/$ABID" -H "$A2" | jget data.ab_winner)" ""
+TZ=$(curl -s -X POST "$GW/campaigns" -H "$A2" -H 'Content-Type: application/json' \
+  -d "{\"name\":\"Por zona\",\"template_id\":\"$TMID\",\"from_email\":\"hola@acme.test\",\"audience\":{\"list_ids\":[\"$LID\"]}}")
+TZID=$(echo "$TZ" | jget data.id)
+expect "una zona de respaldo que no existe se rechaza" \
+  "$(codigo -X POST "$GW/campaigns/$TZID/schedule" -H "$A2" -H 'Content-Type: application/json' \
+    -d "{\"local_send_at\":\"${DIA}T09:00\",\"fallback_timezone\":\"Marte/Olimpo\",\"template_version\":1}")" "422"
+PROG=$(curl -s -X POST "$GW/campaigns/$TZID/schedule" -H "$A2" -H 'Content-Type: application/json' \
+  -d "{\"local_send_at\":\"${DIA}T09:00\",\"fallback_timezone\":\"America/Lima\",\"template_version\":1}")
+expect "programada a la hora local de cada contacto" "$(echo "$PROG" | jget data.status)" "scheduled"
+expect "guarda la hora de pared sin zona" "$(echo "$PROG" | jget data.timezone_delivery.local_send_at)" "${DIA}T09:00"
+expect "arranca cuando la primera zona del mundo marca esa hora (UTC+14)" \
+  "$(echo "$PROG" | jget data.scheduled_at)" "$(date -u -d "${DIA} 09:00 UTC - 14 hours" +%Y-%m-%dT%H:%M:%SZ)"
+expect "cancelar la campana por zona" "$(codigo -X POST "$GW/campaigns/$TZID/cancel" -H "$A2")" "200"
+
 echo "== Doble opt-in (contacts -> automations -> transactional)"
 TD=$(curl -s -X POST "$GW/templates" -H "$A2" -H 'Content-Type: application/json' \
   -d '{"name":"confirmacion","kind":"transactional","subject":"Confirma tu suscripcion","html":"<p><a href=\"{{.confirm_url}}\">Confirmar</a></p>","variables":[{"name":"confirm_url","type":"url","required":true}]}' | jget data.id)

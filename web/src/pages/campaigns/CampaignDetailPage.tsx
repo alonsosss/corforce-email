@@ -8,6 +8,7 @@ import {
   type CampaignBatch,
   type CampaignRates,
   type CampaignStats,
+  type ScheduleRequest,
   type TestSendResult,
 } from '@/api/campaigns';
 import { MODULES } from '@/access/modules';
@@ -29,6 +30,7 @@ import {
   FormField,
   Input,
   PageHeader,
+  Select,
   Skeleton,
   useToast,
   type Column,
@@ -55,6 +57,9 @@ import { CampaignForm } from './CampaignForm';
 import { loadCampaignOptions, nameOf, type CampaignOptions } from './campaignOptions';
 import { describeReason } from './campaignReason';
 import { BatchStatusBadge, CampaignStatusBadge } from './campaignStatus';
+import { CampaignPlanCard, hasDeliveryPlan } from './CampaignPlanCard';
+import { browserTimeZone, localSendAt, variantLabel } from './campaignDelivery';
+import { timeZoneSuggestions } from '@/pages/scheduler/jobDraft';
 
 type Dialog =
   'edit' | 'schedule' | 'start' | 'pause' | 'resume' | 'cancel' | 'delete' | 'test' | null;
@@ -253,6 +258,9 @@ export default function CampaignDetailPage() {
           showTemplateLink={hasModule(MODULES.templates)}
         />
         {c.stats ? <StatsCard stats={c.stats} /> : null}
+        {can(...PERMISSIONS.campaignStats.read) && hasDeliveryPlan(c) ? (
+          <CampaignPlanCard campaign={c} />
+        ) : null}
         {can(...PERMISSIONS.campaignStats.read) ? (
           <BatchesCard
             campaignId={c.id}
@@ -381,6 +389,40 @@ function SummaryCard({
             label: t('campaigns.audience.exclude'),
             value: names(c.audience.exclude_segment_ids, options?.segments ?? null),
           },
+          ...(c.ab_test
+            ? [
+                {
+                  label: t('campaigns.ab.title'),
+                  value: t('campaigns.ab.short', {
+                    n: c.ab_test.variants.length,
+                    percent: c.ab_test.sample_percent,
+                    criterion: tEnum('campaigns.ab.criterionOption', c.ab_test.criterion),
+                  }),
+                },
+              ]
+            : []),
+          ...(c.resend
+            ? [
+                {
+                  label: t('campaigns.resend.title'),
+                  value: t('campaigns.resend.short', {
+                    subject: c.resend.subject,
+                    hours: Math.round(c.resend.delay_minutes / 60),
+                  }),
+                },
+              ]
+            : []),
+          ...(c.timezone_delivery
+            ? [
+                {
+                  label: t('campaigns.zone.title'),
+                  value: t('campaigns.zone.summary', {
+                    local: c.timezone_delivery.local_send_at.replace('T', ' '),
+                    zone: c.timezone_delivery.fallback_timezone,
+                  }),
+                },
+              ]
+            : []),
           { label: t('campaigns.detail.scheduledAt'), value: formatDateTime(c.scheduled_at) },
           { label: t('campaigns.detail.startedAt'), value: formatDateTime(c.started_at) },
           { label: t('campaigns.detail.completedAt'), value: formatDateTime(c.completed_at) },
@@ -550,6 +592,10 @@ function VersionField({
   );
 }
 
+type ScheduleMode = 'instant' | 'local';
+
+const TIMEZONE_LIST_ID = 'campaign-schedule-timezones';
+
 function ScheduleForm({
   campaign,
   onClose,
@@ -559,11 +605,18 @@ function ScheduleForm({
   onClose: () => void;
   onDone: (c: Campaign) => void;
 }) {
+  const [mode, setMode] = useState<ScheduleMode>(campaign.timezone_delivery ? 'local' : 'instant');
   const [when, setWhen] = useState('');
+  const [local, setLocal] = useState(campaign.timezone_delivery?.local_send_at ?? '');
+  const [fallback, setFallback] = useState(
+    campaign.timezone_delivery?.fallback_timezone ?? browserTimeZone(),
+  );
   const [version, setVersion] = useState('');
   const [errors, setErrors] = useState<Record<string, string | undefined>>({});
-  const action = useAction(async (at: string, v: number | undefined) => {
-    onDone((await campaignsApi.schedule(campaign.id, at, v)).data);
+  const zones = timeZoneSuggestions(fallback);
+  const abLocked = Boolean(campaign.ab_test);
+  const action = useAction(async (body: ScheduleRequest) => {
+    onDone((await campaignsApi.schedule(campaign.id, body)).data);
   });
   return (
     <FormModal
@@ -574,36 +627,108 @@ function ScheduleForm({
       error={action.error}
       onClose={onClose}
       onSubmit={async () => {
-        const at = localToRfc3339(when);
         const v = parseVersion(version);
+        const versionError = v === null ? t('campaigns.form.versionInvalid') : undefined;
+        if (mode === 'local') {
+          const at = localSendAt(local);
+          const next = {
+            local: at ? undefined : t('validation.required'),
+            fallback: fallback.trim() ? undefined : t('validation.required'),
+            version: versionError,
+          };
+          setErrors(next);
+          if (!at || next.fallback || v === null) return;
+          await action.run({
+            local_send_at: at,
+            fallback_timezone: fallback.trim(),
+            template_version: v,
+          });
+          return;
+        }
+        const at = localToRfc3339(when);
         const next = {
           when: !at
             ? t('validation.required')
             : isPast(at)
               ? t('campaigns.schedule.past')
               : undefined,
-          version: v === null ? t('campaigns.form.versionInvalid') : undefined,
+          version: versionError,
         };
         setErrors(next);
-        if (next.when || next.version || !at || v === null) return;
-        await action.run(at, v);
+        if (next.when || !at || v === null) return;
+        await action.run({ scheduled_at: at, template_version: v });
       }}
     >
       <p className="cf-text-secondary">{t('campaigns.schedule.description')}</p>
-      <FormField
-        label={t('campaigns.schedule.when')}
-        htmlFor="campaign-schedule-when"
-        required
-        error={errors.when}
-      >
-        <Input
-          id="campaign-schedule-when"
-          type="datetime-local"
-          value={when}
-          onChange={(e) => setWhen(e.target.value)}
-          invalid={Boolean(errors.when)}
+      <FormField label={t('campaigns.schedule.mode')} htmlFor="campaign-schedule-mode">
+        <Select
+          id="campaign-schedule-mode"
+          options={[
+            { value: 'instant', label: t('campaigns.schedule.modeInstant') },
+            { value: 'local', label: t('campaigns.schedule.modeLocal'), disabled: abLocked },
+          ]}
+          value={mode}
+          onChange={(e) => setMode(e.target.value as ScheduleMode)}
         />
       </FormField>
+      {abLocked ? (
+        <span className="cf-text-sm cf-text-secondary">{t('campaigns.ab.timezoneLocked')}</span>
+      ) : null}
+      {mode === 'instant' ? (
+        <FormField
+          label={t('campaigns.schedule.when')}
+          htmlFor="campaign-schedule-when"
+          required
+          error={errors.when}
+        >
+          <Input
+            id="campaign-schedule-when"
+            type="datetime-local"
+            value={when}
+            onChange={(e) => setWhen(e.target.value)}
+            invalid={Boolean(errors.when)}
+          />
+        </FormField>
+      ) : (
+        <>
+          <FormField
+            label={t('campaigns.schedule.localWhen')}
+            htmlFor="campaign-schedule-local"
+            required
+            error={errors.local}
+            hint={t('campaigns.schedule.localHint')}
+          >
+            <Input
+              id="campaign-schedule-local"
+              type="datetime-local"
+              value={local}
+              onChange={(e) => setLocal(e.target.value)}
+              invalid={Boolean(errors.local)}
+            />
+          </FormField>
+          <FormField
+            label={t('campaigns.schedule.fallbackTimezone')}
+            htmlFor="campaign-schedule-fallback"
+            required
+            error={errors.fallback}
+            hint={t('campaigns.schedule.fallbackHint')}
+          >
+            <Input
+              id="campaign-schedule-fallback"
+              className="cf-mono"
+              list={TIMEZONE_LIST_ID}
+              value={fallback}
+              onChange={(e) => setFallback(e.target.value)}
+              invalid={Boolean(errors.fallback)}
+            />
+          </FormField>
+          <datalist id={TIMEZONE_LIST_ID}>
+            {zones.map((z) => (
+              <option key={z} value={z} />
+            ))}
+          </datalist>
+        </>
+      )}
       <VersionField
         id="campaign-schedule-version"
         value={version}
@@ -664,11 +789,13 @@ function TestForm({
 }) {
   const [emails, setEmails] = useState<string[]>([]);
   const [version, setVersion] = useState('');
+  const [variant, setVariant] = useState('');
   const [errors, setErrors] = useState<Record<string, string | undefined>>({});
   const [result, setResult] = useState<TestSendResult | null>(null);
   const format = new Intl.NumberFormat(getLocale());
   const action = useAction(async (list: string[], v: number | undefined) => {
-    setResult((await campaignsApi.sendTest(campaign.id, list, v)).data);
+    const chosen = variant === '' ? undefined : Number(variant);
+    setResult((await campaignsApi.sendTest(campaign.id, list, v, chosen)).data);
   });
   const suppressed = result?.suppressed ?? [];
   return (
@@ -712,6 +839,29 @@ function TestForm({
           rejectedLabel={(list) => t('validation.invalidAddresses', { list: list.join(', ') })}
         />
       </FormField>
+      {campaign.ab_test ? (
+        <FormField
+          label={t('campaigns.test.variant')}
+          htmlFor="campaign-test-variant"
+          hint={t('campaigns.test.variantHint')}
+        >
+          <Select
+            id="campaign-test-variant"
+            options={[
+              { value: '', label: t('campaigns.test.campaignContent') },
+              ...campaign.ab_test.variants.map((v, i) => ({
+                value: String(i),
+                label: t('campaigns.test.variantOption', {
+                  label: v.label || variantLabel(i),
+                  subject: v.subject || t('campaigns.ab.templateSubject'),
+                }),
+              })),
+            ]}
+            value={variant}
+            onChange={(e) => setVariant(e.target.value)}
+          />
+        </FormField>
+      ) : null}
       <VersionField
         id="campaign-test-version"
         value={version}

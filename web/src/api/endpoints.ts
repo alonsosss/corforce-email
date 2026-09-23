@@ -236,6 +236,7 @@ export const endpoints = {
     cancel: (id: string) => `${API_PREFIX}/campaigns/${seg(id)}/cancel`,
     test: (id: string) => `${API_PREFIX}/campaigns/${seg(id)}/test`,
     batches: (id: string) => `${API_PREFIX}/campaigns/${seg(id)}/batches`,
+    phases: (id: string) => `${API_PREFIX}/campaigns/${seg(id)}/phases`,
   },
   automations: {
     meta: `${API_PREFIX}/automations/meta`,

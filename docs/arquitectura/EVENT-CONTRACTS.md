@@ -25,6 +25,7 @@ subject y payload. `opaco` = el payload no se puede leer estaticamente.
 | `billing.subscription.changed` | billing | `cancel_at`, `current_period_end`, `current_period_start`, `plan_code`, `plan_id`, `previous_plan_code`, `previous_status`, `status`, `subscription_id`, `tenant_id`, `trial_ends_at` |
 | `billing.subscription.created` | billing | `cancel_at`, `current_period_end`, `current_period_start`, `plan_code`, `plan_id`, `status`, `subscription_id`, `tenant_id`, `trial_ends_at` |
 | `billing.subscription.suspended` | billing | `cancel_at`, `current_period_end`, `current_period_start`, `plan_code`, `plan_id`, `previous_status`, `status`, `subscription_id`, `tenant_id`, `trial_ends_at` |
+| `campaigns.campaign.ab_decided` | campaigns | `campaign_id`, `criterion`, `occurred_at`, `reason`, `results`, `status`, `tenant_id`, `winner` |
 | `campaigns.campaign.cancelled` | campaigns | `campaign_id`, `occurred_at`, `status`, `tenant_id` |
 | `campaigns.campaign.completed` | campaigns | `campaign_id`, `occurred_at`, `status`, `tenant_id` |
 | `campaigns.campaign.failed` | campaigns | `campaign_id`, `occurred_at`, `reason`, `status`, `tenant_id` |

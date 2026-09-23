@@ -46,6 +46,7 @@ type batchRequest struct {
 	ReplyTo         string             `json:"reply_to,omitempty"`
 	TemplateID      uuid.UUID          `json:"template_id"`
 	TemplateVersion int                `json:"template_version"`
+	Subject         string             `json:"subject,omitempty"`
 	Recipients      []domain.Recipient `json:"recipients"`
 	Tags            map[string]string  `json:"tags,omitempty"`
 	UTM             *utmSettings       `json:"utm,omitempty"`
@@ -55,6 +56,7 @@ type batchRequest struct {
 // utm_source del remitente.
 type utmSettings struct {
 	Campaign string `json:"campaign,omitempty"`
+	Content  string `json:"content,omitempty"`
 }
 
 func (c *Client) SendBatch(ctx context.Context, tenantID uuid.UUID, r ports.BatchRequest) (*ports.BatchResult, error) {
@@ -76,9 +78,10 @@ func (c *Client) SendBatch(ctx context.Context, tenantID uuid.UUID, r ports.Batc
 		ReplyTo:         r.ReplyTo,
 		TemplateID:      r.TemplateID,
 		TemplateVersion: r.TemplateVersion,
+		Subject:         r.Subject,
 		Recipients:      recipients,
 		Tags:            r.Tags,
-		UTM:             &utmSettings{Campaign: r.CampaignName},
+		UTM:             &utmSettings{Campaign: r.CampaignName, Content: r.UTMContent},
 	}, true, &out)
 	if err != nil {
 		return nil, internalapi.Classify(err)

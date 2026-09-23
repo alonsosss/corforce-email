@@ -406,6 +406,7 @@ type batchRequest struct {
 	ReplyTo         string              `json:"reply_to,omitempty"`
 	TemplateID      *uuid.UUID          `json:"template_id"`
 	TemplateVersion *int                `json:"template_version"`
+	Subject         string              `json:"subject,omitempty"`
 	Recipients      []batchRecipientDTO `json:"recipients"`
 	Tags            map[string]string   `json:"tags,omitempty"`
 	UTM             *batchUTMDTO        `json:"utm,omitempty"`
@@ -438,6 +439,7 @@ func (h *Handler) MarketingBatch(w http.ResponseWriter, r *http.Request) {
 		IdempotencyKey: req.IdempotencyKey,
 		From:           domain.Recipient(req.From),
 		ReplyTo:        req.ReplyTo,
+		Subject:        req.Subject,
 		Tags:           req.Tags,
 		Recipients:     make([]app.MarketingRecipient, len(req.Recipients)),
 	}

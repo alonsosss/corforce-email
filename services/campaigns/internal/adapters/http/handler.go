@@ -79,6 +79,7 @@ func (h *Handler) Routes() http.Handler {
 		r.With(h.perm(resCampaigns, actionSend)).Post("/resume", h.Resume)
 		r.With(h.perm(resCampaigns, actionCancel)).Post("/cancel", h.Cancel)
 		r.With(h.perm(resStats, actionRead)).Get("/batches", h.ListBatches)
+		r.With(h.perm(resStats, actionRead)).Get("/phases", h.Plan)
 		r.With(h.perm(resCampaigns, actionSend), h.testLimiter.LimitPerUser).Post("/test", h.SendTest)
 	})
 	return r
@@ -171,12 +172,14 @@ func writeError(w http.ResponseWriter, err error) {
 		errors.Is(err, domain.ErrNotEditable),
 		errors.Is(err, domain.ErrLockedWhilePaused),
 		errors.Is(err, domain.ErrNotDeletable),
-		errors.Is(err, domain.ErrConcurrentChange):
+		errors.Is(err, domain.ErrConcurrentChange),
+		errors.Is(err, domain.ErrABAlreadyDecided):
 		response.ErrConflict(w, err.Error())
 	case errors.Is(err, domain.ErrInvalidCampaign),
 		errors.Is(err, domain.ErrNothingToUpdate),
 		errors.Is(err, domain.ErrScheduleInPast),
 		errors.Is(err, domain.ErrScheduleTooFar),
+		errors.Is(err, domain.ErrABWithTimezone),
 		errors.Is(err, domain.ErrTemplateNotFound),
 		errors.Is(err, domain.ErrNoPublishedVersion),
 		errors.Is(err, domain.ErrTemplateNotMarketing),
@@ -225,9 +228,17 @@ type campaignResponse struct {
 	StartedAt       *time.Time      `json:"started_at"`
 	CompletedAt     *time.Time      `json:"completed_at"`
 	ResumeAfter     *time.Time      `json:"resume_after"`
-	CreatedBy       uuid.UUID       `json:"created_by"`
-	CreatedAt       time.Time       `json:"created_at"`
-	UpdatedAt       time.Time       `json:"updated_at"`
+	ABTest          *abTestResponse `json:"ab_test"`
+	// ABWinner es el indice de la variante ganadora (0 = A); ABDecision, la foto de los
+	// contadores con que se eligio, solo para quien lee estadisticas.
+	ABWinner         *int                      `json:"ab_winner"`
+	ABDecidedAt      *time.Time                `json:"ab_decided_at"`
+	ABDecision       *decisionResponse         `json:"ab_decision,omitempty"`
+	Resend           *resendResponse           `json:"resend"`
+	TimezoneDelivery *timezoneDeliveryResponse `json:"timezone_delivery"`
+	CreatedBy        uuid.UUID                 `json:"created_by"`
+	CreatedAt        time.Time                 `json:"created_at"`
+	UpdatedAt        time.Time                 `json:"updated_at"`
 	// Stats solo va a quien tiene campaigns/stats/read.
 	Stats *statsResponse `json:"stats,omitempty"`
 }
@@ -240,10 +251,13 @@ func toResponse(c *domain.Campaign, withStats bool) campaignResponse {
 		FromEmail: c.FromEmail, FromName: c.FromName, ReplyTo: c.ReplyTo,
 		Audience:    c.Audience.Normalized(),
 		ScheduledAt: c.ScheduledAt, StartedAt: c.StartedAt, CompletedAt: c.CompletedAt, ResumeAfter: c.ResumeAfter,
+		ABTest: abTestOf(c.ABTest), ABWinner: c.ABWinner, ABDecidedAt: c.ABDecidedAt,
+		Resend: resendOf(c.Resend), TimezoneDelivery: timezoneDeliveryOf(c.TimezoneDelivery),
 		CreatedBy: c.CreatedBy, CreatedAt: c.CreatedAt, UpdatedAt: c.UpdatedAt,
 	}
 	if withStats {
 		out.Stats = &statsResponse{Counters: c.Counters, Rates: c.Counters.Rates()}
+		out.ABDecision = decisionOf(c.ABDecision)
 	}
 	return out
 }
@@ -307,6 +321,8 @@ type createRequest struct {
 	FromName    string          `json:"from_name"`
 	ReplyTo     string          `json:"reply_to"`
 	Audience    domain.Audience `json:"audience"`
+	ABTest      *abTestRequest  `json:"ab_test"`
+	Resend      *resendRequest  `json:"resend"`
 }
 
 func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
@@ -327,7 +343,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	c, err := h.uc.Create(r.Context(), tenantID, domain.NewCampaignInput{
 		Name: req.Name, Description: req.Description, TemplateID: req.TemplateID,
 		FromEmail: req.FromEmail, FromName: req.FromName, ReplyTo: req.ReplyTo,
-		Audience: req.Audience, CreatedBy: userID,
+		Audience: req.Audience, ABTest: req.ABTest.toDomain(), Resend: req.Resend.toDomain(), CreatedBy: userID,
 	})
 	if err != nil {
 		writeError(w, err)
@@ -357,6 +373,9 @@ type updateRequest struct {
 	FromName    *string          `json:"from_name"`
 	ReplyTo     *string          `json:"reply_to"`
 	Audience    *domain.Audience `json:"audience"`
+	// ABTest y Resend: ausente no los toca, null los quita.
+	ABTest json.RawMessage `json:"ab_test"`
+	Resend json.RawMessage `json:"resend"`
 }
 
 func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
@@ -369,9 +388,20 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		response.ErrBadRequest(w, err.Error())
 		return
 	}
+	abTest, err := optionalField(req.ABTest, (*abTestRequest).toDomain)
+	if err != nil {
+		response.ErrBadRequest(w, errOptional("ab_test", err).Error())
+		return
+	}
+	resend, err := optionalField(req.Resend, (*resendRequest).toDomain)
+	if err != nil {
+		response.ErrBadRequest(w, errOptional("resend", err).Error())
+		return
+	}
 	c, err := h.uc.Update(r.Context(), tenantID, id, domain.Patch{
 		Name: req.Name, Description: req.Description, TemplateID: req.TemplateID,
 		FromEmail: req.FromEmail, FromName: req.FromName, ReplyTo: req.ReplyTo, Audience: req.Audience,
+		ABTest: abTest, Resend: resend,
 	})
 	if err != nil {
 		writeError(w, err)
@@ -394,10 +424,14 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 
 // ── Ciclo de vida ────────────────────────────────────────────────────────────
 
+// scheduleRequest lleva scheduled_at (un instante) o local_send_at con fallback_timezone
+// (una hora de pared "AAAA-MM-DDTHH:MM" que cada contacto recibe en su zona).
 type scheduleRequest struct {
 	ScheduledAt *time.Time `json:"scheduled_at"`
 	// TemplateVersion es opcional: sin ella se fija la version publicada ahora.
-	TemplateVersion *int `json:"template_version"`
+	TemplateVersion  *int    `json:"template_version"`
+	LocalSendAt      *string `json:"local_send_at"`
+	FallbackTimezone *string `json:"fallback_timezone"`
 }
 
 func (h *Handler) Schedule(w http.ResponseWriter, r *http.Request) {
@@ -410,11 +444,26 @@ func (h *Handler) Schedule(w http.ResponseWriter, r *http.Request) {
 		response.ErrBadRequest(w, err.Error())
 		return
 	}
-	if req.ScheduledAt == nil {
+	var (
+		c   *domain.Campaign
+		err error
+	)
+	switch {
+	case req.ScheduledAt != nil && req.LocalSendAt != nil:
+		response.ErrValidation(w, "indique scheduled_at o local_send_at, no los dos")
+		return
+	case req.LocalSendAt != nil:
+		if req.FallbackTimezone == nil {
+			response.ErrValidation(w, "fallback_timezone: es obligatorio con local_send_at")
+			return
+		}
+		c, err = h.uc.ScheduleLocal(r.Context(), tenantID, id, *req.LocalSendAt, *req.FallbackTimezone, req.TemplateVersion)
+	case req.ScheduledAt != nil:
+		c, err = h.uc.Schedule(r.Context(), tenantID, id, *req.ScheduledAt, req.TemplateVersion)
+	default:
 		response.ErrValidation(w, "scheduled_at is required")
 		return
 	}
-	c, err := h.uc.Schedule(r.Context(), tenantID, id, *req.ScheduledAt, req.TemplateVersion)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -495,6 +544,8 @@ func (h *Handler) ListBatches(w http.ResponseWriter, r *http.Request) {
 type testRequest struct {
 	Emails          []string `json:"emails"`
 	TemplateVersion *int     `json:"template_version"`
+	// Variant prueba una variante A/B (0 = A); sin ella, el contenido de la campana.
+	Variant *int `json:"variant"`
 }
 
 func (h *Handler) SendTest(w http.ResponseWriter, r *http.Request) {
@@ -507,7 +558,7 @@ func (h *Handler) SendTest(w http.ResponseWriter, r *http.Request) {
 		response.ErrBadRequest(w, err.Error())
 		return
 	}
-	res, err := h.uc.SendTest(r.Context(), tenantID, id, app.TestInput{Emails: req.Emails, TemplateVersion: req.TemplateVersion})
+	res, err := h.uc.SendTest(r.Context(), tenantID, id, app.TestInput{Emails: req.Emails, TemplateVersion: req.TemplateVersion, Variant: req.Variant})
 	if err != nil {
 		writeError(w, err)
 		return

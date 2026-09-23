@@ -30,6 +30,8 @@ type Config struct {
 type Deps struct {
 	Campaigns ports.CampaignRepository
 	Batches   ports.BatchRepository
+	Phases    ports.PhaseRepository
+	Ledger    ports.RecipientLedger
 	Stats     ports.StatsRepository
 	Tx        ports.Transactor
 	Events    ports.EventPublisher
@@ -45,6 +47,8 @@ type Deps struct {
 type UseCase struct {
 	campaigns ports.CampaignRepository
 	batches   ports.BatchRepository
+	phases    ports.PhaseRepository
+	ledger    ports.RecipientLedger
 	stats     ports.StatsRepository
 	tx        ports.Transactor
 	events    ports.EventPublisher
@@ -70,7 +74,8 @@ func New(d Deps) *UseCase {
 		logger = zap.NewNop()
 	}
 	return &UseCase{
-		campaigns: d.Campaigns, batches: d.Batches, stats: d.Stats, tx: d.Tx, events: d.Events,
+		campaigns: d.Campaigns, batches: d.Batches, phases: d.Phases, ledger: d.Ledger,
+		stats: d.Stats, tx: d.Tx, events: d.Events,
 		audience: d.Audience, sender: d.Sender, templates: d.Templates,
 		batchSize: size, logger: logger, now: now,
 	}
@@ -131,6 +136,28 @@ func (uc *UseCase) Delete(ctx context.Context, tenantID, id uuid.UUID) error {
 		}
 		return uc.campaigns.Delete(ctx, tenantID, id)
 	})
+}
+
+// PlanView es el estado de las fases de una campana y los resultados por fase y variante.
+type PlanView struct {
+	Phases     []domain.Phase
+	Engagement []domain.PhaseEngagement
+}
+
+func (uc *UseCase) Plan(ctx context.Context, tenantID, campaignID uuid.UUID) (*domain.Campaign, *PlanView, error) {
+	c, err := uc.campaigns.Get(ctx, tenantID, campaignID)
+	if err != nil {
+		return nil, nil, err
+	}
+	phases, err := uc.phases.List(ctx, tenantID, campaignID)
+	if err != nil {
+		return nil, nil, err
+	}
+	engagement, err := uc.ledger.Engagement(ctx, tenantID, campaignID)
+	if err != nil {
+		return nil, nil, err
+	}
+	return c, &PlanView{Phases: phases, Engagement: engagement}, nil
 }
 
 func (uc *UseCase) ListBatches(ctx context.Context, tenantID, campaignID uuid.UUID, page, perPage int) ([]domain.Batch, int64, error) {

@@ -420,6 +420,11 @@ func TestMarketingBatchDecodesContract(t *testing.T) {
 	if rec := call(tenant, withUTM(`{"medium":"social"}`)); rec.Code != nethttp.StatusBadRequest {
 		t.Fatalf("utm_medium no es configurable: %d", rec.Code)
 	}
+	rec = call(tenant, strings.Replace(valid, `"template_version":3,`, `"template_version":3,"subject":"Oferta\u0007",`, 1))
+	_ = json.Unmarshal(rec.Body.Bytes(), &body)
+	if rec.Code != nethttp.StatusUnprocessableEntity || !strings.Contains(body.Error.Message, "subject") {
+		t.Fatalf("el asunto opcional del lote llega al caso de uso: %d %s", rec.Code, rec.Body.String())
+	}
 }
 
 // Un envio que no salio de transactional (la consola de SES, el conjunto por defecto del

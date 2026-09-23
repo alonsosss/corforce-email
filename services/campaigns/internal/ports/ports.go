@@ -82,12 +82,47 @@ type BatchRepository interface {
 type StatsRepository interface {
 	// MarkProcessed registra el evento; false si ya se habia contado.
 	MarkProcessed(ctx context.Context, tenantID uuid.UUID, eventID string, at time.Time) (bool, error)
-	// FirstEngagement registra la primera apertura o el primer clic del mensaje; false
-	// si ya constaba. domain.ErrCampaignNotFound si la campana no existe.
-	FirstEngagement(ctx context.Context, tenantID, campaignID, messageID uuid.UUID, kind domain.DeliveryKind, at time.Time) (bool, error)
+	// FirstEngagement registra la primera apertura o el primer clic del mensaje (y su
+	// contacto si llega); false si ya constaba. domain.ErrCampaignNotFound si la campana
+	// no existe.
+	FirstEngagement(ctx context.Context, tenantID, campaignID, messageID uuid.UUID, contactID *uuid.UUID, kind domain.DeliveryKind, at time.Time) (bool, error)
+	// NoteDelivery registra la primera entrega del mensaje y su contacto (sin contar nada:
+	// el contador de entregados lo suma IncrementCounter). domain.ErrCampaignNotFound si la
+	// campana no existe.
+	NoteDelivery(ctx context.Context, tenantID, campaignID, messageID uuid.UUID, contactID *uuid.UUID, at time.Time) error
 	// IncrementCounter suma uno al contador del tipo; false si la campana no existe.
 	IncrementCounter(ctx context.Context, tenantID, campaignID uuid.UUID, kind domain.DeliveryKind) (bool, error)
 	PruneProcessed(ctx context.Context, tenantID uuid.UUID, before time.Time) (int64, error)
+}
+
+// PhaseRepository guarda las fases de envio de cada campana.
+type PhaseRepository interface {
+	// List devuelve las fases de la campana en orden de proceso (ordinal, slot_at).
+	List(ctx context.Context, tenantID, campaignID uuid.UUID) ([]domain.Phase, error)
+	Get(ctx context.Context, tenantID, id uuid.UUID) (*domain.Phase, error)
+	// Insert da de alta la fase; false si ya existia otra con la misma clave en la
+	// campana (alta idempotente).
+	Insert(ctx context.Context, p *domain.Phase) (bool, error)
+	// Update guarda estado, espera y fechas.
+	Update(ctx context.Context, p *domain.Phase) error
+	// AddTotals suma lo que devolvio la entrega de un lote de la fase.
+	AddTotals(ctx context.Context, tenantID, id uuid.UUID, targeted, accepted, suppressed int) error
+}
+
+// RecipientLedger es quien recibio la campana en cada ronda y a que fase y variante
+// pertenece cada mensaje. Solo guarda identificadores, nunca direcciones.
+type RecipientLedger interface {
+	// RecordRecipients anota los contactos de un lote entregado en su ronda (idempotente).
+	RecordRecipients(ctx context.Context, tenantID, campaignID, phaseID uuid.UUID, round domain.Round, contactIDs []uuid.UUID) error
+	// RecordMessages fija fase y variante de los mensajes aceptados de un lote.
+	RecordMessages(ctx context.Context, tenantID, campaignID uuid.UUID, kind domain.PhaseKind, variant *int, messageIDs []uuid.UUID) error
+	// Sent dice cuales de esos contactos ya constan en la ronda inicial.
+	Sent(ctx context.Context, tenantID, campaignID uuid.UUID, contactIDs []uuid.UUID) (map[uuid.UUID]bool, error)
+	// ResendEligible dice cuales recibieron la ronda inicial, tienen una entrega registrada,
+	// ninguna apertura ni clic y aun no constan en el reenvio.
+	ResendEligible(ctx context.Context, tenantID, campaignID uuid.UUID, contactIDs []uuid.UUID) (map[uuid.UUID]bool, error)
+	// Engagement agrega los mensajes de la campana por fase y variante.
+	Engagement(ctx context.Context, tenantID, campaignID uuid.UUID) ([]domain.PhaseEngagement, error)
 }
 
 // EventPublisher encola los eventos propios. Se llama DENTRO de la transaccion: el
@@ -164,8 +199,12 @@ type BatchRequest struct {
 	ReplyTo         string
 	TemplateID      uuid.UUID
 	TemplateVersion int
-	Recipients      []domain.Recipient
-	Tags            map[string]string
+	// Subject sustituye al asunto de la plantilla (variante A/B o reenvio); vacio = el de
+	// la plantilla. UTMContent es el utm_content de sus enlaces (vacio = ninguno).
+	Subject    string
+	UTMContent string
+	Recipients []domain.Recipient
+	Tags       map[string]string
 }
 
 type SuppressedRecipient struct {

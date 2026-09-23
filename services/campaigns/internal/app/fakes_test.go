@@ -25,8 +25,18 @@ type publishedEvent struct {
 
 type engagementRow struct {
 	campaignID uuid.UUID
+	contactID  *uuid.UUID
+	kind       domain.PhaseKind
+	variant    *int
+	delivered  bool
 	opened     bool
 	clicked    bool
+}
+
+type recipientKey struct {
+	campaignID uuid.UUID
+	round      domain.Round
+	contactID  uuid.UUID
 }
 
 // memStore es la base en memoria de las pruebas: transacciones con rollback, a lo sumo
@@ -36,6 +46,8 @@ type memStore struct {
 	batches    map[uuid.UUID]domain.Batch
 	processed  map[string]time.Time
 	engagement map[uuid.UUID]engagementRow
+	phases     map[uuid.UUID]domain.Phase
+	recipients map[recipientKey]uuid.UUID
 	events     []publishedEvent
 
 	// lockedByOther simula otra transaccion con la campana bloqueada (SKIP LOCKED).
@@ -50,6 +62,8 @@ func newMemStore() *memStore {
 		batches:       map[uuid.UUID]domain.Batch{},
 		processed:     map[string]time.Time{},
 		engagement:    map[uuid.UUID]engagementRow{},
+		phases:        map[uuid.UUID]domain.Phase{},
+		recipients:    map[recipientKey]uuid.UUID{},
 		lockedByOther: map[uuid.UUID]bool{},
 	}
 }
@@ -71,9 +85,18 @@ func (s *memStore) Transact(ctx context.Context, fn func(ctx context.Context) er
 	for k, v := range s.engagement {
 		engagement[k] = v
 	}
+	phases := make(map[uuid.UUID]domain.Phase, len(s.phases))
+	for k, v := range s.phases {
+		phases[k] = v
+	}
+	recipients := make(map[recipientKey]uuid.UUID, len(s.recipients))
+	for k, v := range s.recipients {
+		recipients[k] = v
+	}
 	events := append([]publishedEvent(nil), s.events...)
 	if err := fn(ctx); err != nil {
 		s.campaigns, s.batches, s.processed, s.engagement, s.events = campaigns, batches, processed, engagement, events
+		s.phases, s.recipients = phases, recipients
 		return err
 	}
 	return nil
@@ -110,7 +133,18 @@ func (f fakeCampaigns) get(tenantID, id uuid.UUID) (*domain.Campaign, error) {
 	if !ok || c.TenantID != tenantID {
 		return nil, domain.ErrCampaignNotFound
 	}
-	return &c, nil
+	return cloneCampaign(c), nil
+}
+
+// cloneCampaign copia la configuracion A/B: la base devuelve una fila nueva en cada
+// lectura, y la prueba no debe ver cambios que nadie guardo.
+func cloneCampaign(c domain.Campaign) *domain.Campaign {
+	if c.ABTest != nil {
+		ab := *c.ABTest
+		ab.Variants = append([]domain.ABVariant(nil), c.ABTest.Variants...)
+		c.ABTest = &ab
+	}
+	return &c
 }
 
 func (f fakeCampaigns) Get(_ context.Context, tenantID, id uuid.UUID) (*domain.Campaign, error) {
@@ -143,7 +177,7 @@ func (f fakeCampaigns) Update(_ context.Context, c *domain.Campaign) error {
 	if f.nameTaken(c) {
 		return domain.ErrNameTaken
 	}
-	next := *c
+	next := *cloneCampaign(*c)
 	next.Counters = old.Counters
 	next.UpdatedAt = f.now()
 	c.UpdatedAt = next.UpdatedAt
@@ -164,6 +198,16 @@ func (f fakeCampaigns) Delete(_ context.Context, tenantID, id uuid.UUID) error {
 	for mid, e := range f.s.engagement {
 		if e.campaignID == id {
 			delete(f.s.engagement, mid)
+		}
+	}
+	for pid, p := range f.s.phases {
+		if p.CampaignID == id {
+			delete(f.s.phases, pid)
+		}
+	}
+	for k := range f.s.recipients {
+		if k.campaignID == id {
+			delete(f.s.recipients, k)
 		}
 	}
 	return nil
@@ -391,12 +435,29 @@ func (f fakeStats) MarkProcessed(_ context.Context, _ uuid.UUID, eventID string,
 	return true, nil
 }
 
-func (f fakeStats) FirstEngagement(_ context.Context, _ uuid.UUID, campaignID, messageID uuid.UUID, kind domain.DeliveryKind, _ time.Time) (bool, error) {
+func (f fakeStats) NoteDelivery(_ context.Context, _ uuid.UUID, campaignID, messageID uuid.UUID, contactID *uuid.UUID, _ time.Time) error {
+	if _, ok := f.s.campaigns[campaignID]; !ok {
+		return domain.ErrCampaignNotFound
+	}
+	row := f.s.engagement[messageID]
+	row.campaignID = campaignID
+	if row.contactID == nil {
+		row.contactID = contactID
+	}
+	row.delivered = true
+	f.s.engagement[messageID] = row
+	return nil
+}
+
+func (f fakeStats) FirstEngagement(_ context.Context, _ uuid.UUID, campaignID, messageID uuid.UUID, contactID *uuid.UUID, kind domain.DeliveryKind, _ time.Time) (bool, error) {
 	if _, ok := f.s.campaigns[campaignID]; !ok {
 		return false, domain.ErrCampaignNotFound
 	}
 	row := f.s.engagement[messageID]
 	row.campaignID = campaignID
+	if row.contactID == nil {
+		row.contactID = contactID
+	}
 	switch kind {
 	case domain.KindOpened:
 		if row.opened {
@@ -440,6 +501,171 @@ func (f fakeStats) PruneProcessed(_ context.Context, _ uuid.UUID, before time.Ti
 		}
 	}
 	return n, nil
+}
+
+// ── Fases y destinatarios ────────────────────────────────────────────────────
+
+type fakePhases struct {
+	s   *memStore
+	now func() time.Time
+}
+
+func (f fakePhases) List(_ context.Context, tenantID, campaignID uuid.UUID) ([]domain.Phase, error) {
+	var out []domain.Phase
+	for _, p := range f.s.phases {
+		if p.TenantID == tenantID && p.CampaignID == campaignID {
+			out = append(out, p)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Ordinal != out[j].Ordinal {
+			return out[i].Ordinal < out[j].Ordinal
+		}
+		a, b := out[i].SlotAt, out[j].SlotAt
+		if a != nil && b != nil && !a.Equal(*b) {
+			return a.Before(*b)
+		}
+		return out[i].CreatedAt.Before(out[j].CreatedAt)
+	})
+	return out, nil
+}
+
+func (f fakePhases) Get(_ context.Context, tenantID, id uuid.UUID) (*domain.Phase, error) {
+	p, ok := f.s.phases[id]
+	if !ok || p.TenantID != tenantID {
+		return nil, fmt.Errorf("fase %s inexistente", id)
+	}
+	return &p, nil
+}
+
+func (f fakePhases) Insert(_ context.Context, p *domain.Phase) (bool, error) {
+	for _, o := range f.s.phases {
+		if o.CampaignID == p.CampaignID && o.Key == p.Key {
+			return false, nil
+		}
+	}
+	p.CreatedAt = f.now()
+	p.UpdatedAt = p.CreatedAt
+	f.s.phases[p.ID] = *p
+	return true, nil
+}
+
+func (f fakePhases) Update(_ context.Context, p *domain.Phase) error {
+	st, ok := f.s.phases[p.ID]
+	if !ok {
+		return fmt.Errorf("fase %s inexistente", p.ID)
+	}
+	st.Status, st.NotBefore, st.StartedAt, st.CompletedAt = p.Status, p.NotBefore, p.StartedAt, p.CompletedAt
+	f.s.phases[p.ID] = st
+	return nil
+}
+
+func (f fakePhases) AddTotals(_ context.Context, _ uuid.UUID, id uuid.UUID, targeted, accepted, suppressed int) error {
+	st, ok := f.s.phases[id]
+	if !ok {
+		return fmt.Errorf("fase %s inexistente", id)
+	}
+	st.Targeted += targeted
+	st.Accepted += accepted
+	st.Suppressed += suppressed
+	f.s.phases[id] = st
+	return nil
+}
+
+type fakeLedger struct{ s *memStore }
+
+func (f fakeLedger) RecordRecipients(_ context.Context, _ uuid.UUID, campaignID, phaseID uuid.UUID, round domain.Round, contactIDs []uuid.UUID) error {
+	for _, id := range contactIDs {
+		k := recipientKey{campaignID: campaignID, round: round, contactID: id}
+		if _, ok := f.s.recipients[k]; !ok {
+			f.s.recipients[k] = phaseID
+		}
+	}
+	return nil
+}
+
+func (f fakeLedger) RecordMessages(_ context.Context, _ uuid.UUID, campaignID uuid.UUID, kind domain.PhaseKind, variant *int, messageIDs []uuid.UUID) error {
+	for _, id := range messageIDs {
+		row := f.s.engagement[id]
+		row.campaignID, row.kind, row.variant = campaignID, kind, variant
+		f.s.engagement[id] = row
+	}
+	return nil
+}
+
+func (f fakeLedger) Sent(_ context.Context, _ uuid.UUID, campaignID uuid.UUID, contactIDs []uuid.UUID) (map[uuid.UUID]bool, error) {
+	out := map[uuid.UUID]bool{}
+	for _, id := range contactIDs {
+		if _, ok := f.s.recipients[recipientKey{campaignID: campaignID, round: domain.RoundInitial, contactID: id}]; ok {
+			out[id] = true
+		}
+	}
+	return out, nil
+}
+
+func (f fakeLedger) ResendEligible(_ context.Context, _ uuid.UUID, campaignID uuid.UUID, contactIDs []uuid.UUID) (map[uuid.UUID]bool, error) {
+	out := map[uuid.UUID]bool{}
+	for _, id := range contactIDs {
+		if _, ok := f.s.recipients[recipientKey{campaignID: campaignID, round: domain.RoundInitial, contactID: id}]; !ok {
+			continue
+		}
+		if _, ok := f.s.recipients[recipientKey{campaignID: campaignID, round: domain.RoundResend, contactID: id}]; ok {
+			continue
+		}
+		delivered, engaged := false, false
+		for _, e := range f.s.engagement {
+			if e.campaignID != campaignID || e.contactID == nil || *e.contactID != id {
+				continue
+			}
+			if e.delivered && e.kind != domain.PhaseResend {
+				delivered = true
+			}
+			if e.opened || e.clicked {
+				engaged = true
+			}
+		}
+		if delivered && !engaged {
+			out[id] = true
+		}
+	}
+	return out, nil
+}
+
+func (f fakeLedger) Engagement(_ context.Context, _ uuid.UUID, campaignID uuid.UUID) ([]domain.PhaseEngagement, error) {
+	type key struct {
+		kind    domain.PhaseKind
+		variant int
+	}
+	agg := map[key]*domain.PhaseEngagement{}
+	for _, e := range f.s.engagement {
+		if e.campaignID != campaignID || e.kind == "" {
+			continue
+		}
+		k := key{kind: e.kind, variant: -1}
+		if e.variant != nil {
+			k.variant = *e.variant
+		}
+		row, ok := agg[k]
+		if !ok {
+			row = &domain.PhaseEngagement{Kind: e.kind, Variant: e.variant}
+			agg[k] = row
+		}
+		row.Accepted++
+		if e.delivered {
+			row.Delivered++
+		}
+		if e.opened {
+			row.Opened++
+		}
+		if e.clicked {
+			row.Clicked++
+		}
+	}
+	out := make([]domain.PhaseEngagement, 0, len(agg))
+	for _, r := range agg {
+		out = append(out, *r)
+	}
+	return out, nil
 }
 
 type fakeEvents struct{ s *memStore }
@@ -552,6 +778,9 @@ type harness struct {
 	templates *fakeTemplates
 	clock     *fakeClock
 	tenantID  uuid.UUID
+	// ctx es el de las operaciones de los ayudantes: las pruebas de integracion le ponen
+	// el pool de la empresa.
+	ctx context.Context
 }
 
 func newHarness() *harness {
@@ -562,10 +791,13 @@ func newHarness() *harness {
 		templates: &fakeTemplates{version: 1},
 		clock:     &fakeClock{t: time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)},
 		tenantID:  uuid.New(),
+		ctx:       context.Background(),
 	}
 	h.uc = New(Deps{
 		Campaigns: fakeCampaigns{s: h.store, now: h.clock.now},
 		Batches:   fakeBatches{s: h.store, now: h.clock.now},
+		Phases:    fakePhases{s: h.store, now: h.clock.now},
+		Ledger:    fakeLedger{s: h.store},
 		Stats:     fakeStats{s: h.store},
 		Tx:        h.store,
 		Events:    fakeEvents{s: h.store},

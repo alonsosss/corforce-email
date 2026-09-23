@@ -65,6 +65,9 @@ func TestSendBatchContract(t *testing.T) {
 	if utm, ok := body["utm"].(map[string]any); !ok || utm["campaign"] != "Otono 2026" || len(utm) != 1 {
 		t.Fatalf("utm lleva el nombre de la campana y deja el resto a transactional: %v", body["utm"])
 	}
+	if _, ok := body["subject"]; ok {
+		t.Fatal("sin asunto propio no se envia subject: manda el de la plantilla")
+	}
 	recipients := body["recipients"].([]any)
 	first, second := recipients[0].(map[string]any), recipients[1].(map[string]any)
 	if first["contact_id"] == nil || first["variables"].(map[string]any)["first_name"] != "Ana" {
@@ -143,5 +146,28 @@ func TestSendBatchRepeatReturnsSameBody(t *testing.T) {
 	res, err := New(srv.URL, "tok").SendBatch(context.Background(), uuid.New(), request(uuid.New()))
 	if err != nil || res.Accepted != 2 || res.Suppressed == nil || res.MessageIDs == nil {
 		t.Fatalf("200 de una repeticion: %+v %v", res, err)
+	}
+}
+
+func TestSendBatchSubjectOverride(t *testing.T) {
+	var body map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{"data":{"accepted":0,"suppressed":[],"message_ids":[]}}`))
+	}))
+	defer srv.Close()
+	req := request(uuid.New())
+	req.Subject = "Variante B"
+	req.CampaignName = "Otono"
+	req.UTMContent = "ab-b"
+	if _, err := New(srv.URL, "tok").SendBatch(context.Background(), uuid.New(), req); err != nil {
+		t.Fatal(err)
+	}
+	if body["subject"] != "Variante B" {
+		t.Fatalf("el asunto de la variante viaja en el lote: %v", body["subject"])
+	}
+	if utm := body["utm"].(map[string]any); utm["campaign"] != "Otono" || utm["content"] != "ab-b" {
+		t.Fatalf("utm_content identifica la variante: %v", utm)
 	}
 }

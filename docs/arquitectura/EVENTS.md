@@ -6,7 +6,7 @@ Convencion de subject: `<dominio>.<entidad>.<accion>`. Un subject tiene UN dueno
 Publicar incluye encolar en la outbox (`outbox.Enqueue`); un consumidor con comodin
 (`*`, `>`) figura en cada subject publicado que recibe.
 
-Resumen: 91 publicaciones, 39 suscripciones, 91 subjects distintos.
+Resumen: 92 publicaciones, 39 suscripciones, 92 subjects distintos.
 
 ## Cruce por subject (dueno -> consumidores)
 
@@ -25,6 +25,7 @@ Resumen: 91 publicaciones, 39 suscripciones, 91 subjects distintos.
 | `billing.subscription.changed` | billing | - |
 | `billing.subscription.created` | billing | - |
 | `billing.subscription.suspended` | billing | - |
+| `campaigns.campaign.ab_decided` | campaigns | analytics |
 | `campaigns.campaign.cancelled` | campaigns | analytics |
 | `campaigns.campaign.completed` | campaigns | analytics |
 | `campaigns.campaign.failed` | campaigns | analytics |
@@ -125,7 +126,7 @@ Resumen: 91 publicaciones, 39 suscripciones, 91 subjects distintos.
 - Consume: `contacts.contact.created`, `contacts.contact.deleted`, `domains.domain.created`, `domains.domain.deleted`, `mail.domain.created`, `mail.domain.deleted`, `mail.mailbox.created`, `mail.mailbox.deleted`, `organization.tenant.created`, `organization.tenant.status_changed`, `transactional.email.sent`
 
 ### campaigns
-- Publica: `campaigns.campaign.cancelled`, `campaigns.campaign.completed`, `campaigns.campaign.failed`, `campaigns.campaign.paused`, `campaigns.campaign.resumed`, `campaigns.campaign.scheduled`, `campaigns.campaign.started`
+- Publica: `campaigns.campaign.ab_decided`, `campaigns.campaign.cancelled`, `campaigns.campaign.completed`, `campaigns.campaign.failed`, `campaigns.campaign.paused`, `campaigns.campaign.resumed`, `campaigns.campaign.scheduled`, `campaigns.campaign.started`
 - Consume: `transactional.email.>`
 
 ### contacts

@@ -30,6 +30,7 @@ var campaignFields = []string{
 	"scheduled_at", "started_at", "completed_at", "resume_after",
 	"targeted", "accepted", "suppressed", "sent", "delivered", "bounced", "complained",
 	"opened", "clicked", "unsubscribed", "failed",
+	"ab_test", "ab_winner", "ab_decided_at", "ab_decision", "resend", "local_send_at", "fallback_timezone",
 	"created_by", "created_at", "updated_at",
 }
 
@@ -55,9 +56,12 @@ func NewCampaignRepository(pool *db.ContextPool) *CampaignRepository {
 
 func scanCampaign(row pgx.Row) (*domain.Campaign, error) {
 	var (
-		c        domain.Campaign
-		status   string
-		audience []byte
+		c                          domain.Campaign
+		status                     string
+		audience, abTest, decision []byte
+		resend                     []byte
+		localSendAt                *time.Time
+		fallbackTimezone           string
 	)
 	err := row.Scan(&c.ID, &c.TenantID, &c.Name, &c.Description, &status, &c.PauseReason, &c.FailureReason,
 		&c.TemplateID, &c.TemplateVersion, &c.FromEmail, &c.FromName, &c.ReplyTo, &audience,
@@ -65,6 +69,7 @@ func scanCampaign(row pgx.Row) (*domain.Campaign, error) {
 		&c.Counters.Targeted, &c.Counters.Accepted, &c.Counters.Suppressed, &c.Counters.Sent,
 		&c.Counters.Delivered, &c.Counters.Bounced, &c.Counters.Complained, &c.Counters.Opened,
 		&c.Counters.Clicked, &c.Counters.Unsubscribed, &c.Counters.Failed,
+		&abTest, &c.ABWinner, &c.ABDecidedAt, &decision, &resend, &localSendAt, &fallbackTimezone,
 		&c.CreatedBy, &c.CreatedAt, &c.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -77,7 +82,71 @@ func scanCampaign(row pgx.Row) (*domain.Campaign, error) {
 		return nil, fmt.Errorf("audiencia ilegible en la campana %s: %w", c.ID, err)
 	}
 	c.Audience = c.Audience.Normalized()
+	if err := unmarshalOptional(abTest, &c.ABTest); err != nil {
+		return nil, fmt.Errorf("prueba A/B ilegible en la campana %s: %w", c.ID, err)
+	}
+	if err := unmarshalOptional(decision, &c.ABDecision); err != nil {
+		return nil, fmt.Errorf("decision A/B ilegible en la campana %s: %w", c.ID, err)
+	}
+	if err := unmarshalOptional(resend, &c.Resend); err != nil {
+		return nil, fmt.Errorf("reenvio ilegible en la campana %s: %w", c.ID, err)
+	}
+	if localSendAt != nil {
+		c.TimezoneDelivery = &domain.TimezoneDelivery{
+			LocalSendAt: domain.LocalDateTimeFromWall(*localSendAt), FallbackTimezone: fallbackTimezone,
+		}
+	}
 	return &c, nil
+}
+
+func unmarshalOptional[T any](raw []byte, dst **T) error {
+	if raw == nil {
+		*dst = nil
+		return nil
+	}
+	var v T
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return err
+	}
+	*dst = &v
+	return nil
+}
+
+// marshalOptional guarda nil como NULL.
+func marshalOptional[T any](v *T) ([]byte, error) {
+	if v == nil {
+		return nil, nil
+	}
+	return json.Marshal(v)
+}
+
+// campaignOptions son las columnas opcionales de la campana ya listas para escribir.
+type campaignOptions struct {
+	abTest, decision, resend []byte
+	localSendAt              *time.Time
+	fallbackTimezone         string
+}
+
+func optionsOf(c *domain.Campaign) (campaignOptions, error) {
+	var (
+		o   campaignOptions
+		err error
+	)
+	if o.abTest, err = marshalOptional(c.ABTest); err != nil {
+		return o, err
+	}
+	if o.decision, err = marshalOptional(c.ABDecision); err != nil {
+		return o, err
+	}
+	if o.resend, err = marshalOptional(c.Resend); err != nil {
+		return o, err
+	}
+	if t := c.TimezoneDelivery; t != nil {
+		wall := t.LocalSendAt.Wall()
+		o.localSendAt = &wall
+		o.fallbackTimezone = t.FallbackTimezone
+	}
+	return o, nil
 }
 
 func collectCampaigns(rows pgx.Rows) ([]domain.Campaign, error) {
@@ -106,12 +175,16 @@ func (r *CampaignRepository) Insert(ctx context.Context, c *domain.Campaign) err
 	if err != nil {
 		return err
 	}
+	opts, err := optionsOf(c)
+	if err != nil {
+		return err
+	}
 	err = r.pool.QueryRow(ctx,
-		`INSERT INTO campaigns.campaigns (id, tenant_id, name, description, status, template_id, from_email, from_name, reply_to, audience, created_by)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		`INSERT INTO campaigns.campaigns (id, tenant_id, name, description, status, template_id, from_email, from_name, reply_to, audience, created_by, ab_test, resend)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 		 RETURNING created_at, updated_at`,
 		c.ID, c.TenantID, c.Name, c.Description, string(c.Status), c.TemplateID, c.FromEmail, c.FromName,
-		c.ReplyTo, audience, c.CreatedBy,
+		c.ReplyTo, audience, c.CreatedBy, opts.abTest, opts.resend,
 	).Scan(&c.CreatedAt, &c.UpdatedAt)
 	return mapWriteError(err)
 }
@@ -148,16 +221,24 @@ func (r *CampaignRepository) Update(ctx context.Context, c *domain.Campaign) err
 	if err != nil {
 		return err
 	}
+	opts, err := optionsOf(c)
+	if err != nil {
+		return err
+	}
 	err = r.pool.QueryRow(ctx,
 		`UPDATE campaigns.campaigns
 		    SET name = $3, description = $4, status = $5, pause_reason = $6, failure_reason = $7,
 		        template_id = $8, template_version = $9, from_email = $10, from_name = $11, reply_to = $12,
-		        audience = $13, scheduled_at = $14, started_at = $15, completed_at = $16, resume_after = $17
+		        audience = $13, scheduled_at = $14, started_at = $15, completed_at = $16, resume_after = $17,
+		        ab_test = $18, ab_winner = $19, ab_decided_at = $20, ab_decision = $21, resend = $22,
+		        local_send_at = $23, fallback_timezone = $24
 		  WHERE tenant_id = $1 AND id = $2
 		  RETURNING updated_at`,
 		c.TenantID, c.ID, c.Name, c.Description, string(c.Status), c.PauseReason, c.FailureReason,
 		c.TemplateID, c.TemplateVersion, c.FromEmail, c.FromName, c.ReplyTo,
 		audience, c.ScheduledAt, c.StartedAt, c.CompletedAt, c.ResumeAfter,
+		opts.abTest, c.ABWinner, c.ABDecidedAt, opts.decision, opts.resend,
+		opts.localSendAt, opts.fallbackTimezone,
 	).Scan(&c.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.ErrCampaignNotFound

@@ -149,10 +149,18 @@ type Campaign struct {
 	// ResumeAfter aplaza el siguiente lote: lo fija un 429 de transactional (Retry-After)
 	// o la espera creciente tras un fallo transitorio.
 	ResumeAfter *time.Time
-	Counters    Counters
-	CreatedBy   uuid.UUID
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	// ABTest, Resend y TimezoneDelivery son opcionales. ABWinner y ABDecision se fijan una
+	// sola vez, al vencer la ventana de decision.
+	ABTest           *ABTest
+	ABWinner         *int
+	ABDecidedAt      *time.Time
+	ABDecision       *ABDecision
+	Resend           *Resend
+	TimezoneDelivery *TimezoneDelivery
+	Counters         Counters
+	CreatedBy        uuid.UUID
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
 }
 
 // NewCampaignInput es lo necesario para crear un borrador.
@@ -164,6 +172,8 @@ type NewCampaignInput struct {
 	FromName    string
 	ReplyTo     string
 	Audience    Audience
+	ABTest      *ABTest
+	Resend      *Resend
 	CreatedBy   uuid.UUID
 }
 
@@ -182,12 +192,21 @@ func NewCampaign(tenantID uuid.UUID, in NewCampaignInput) (*Campaign, error) {
 		FromName:    strings.TrimSpace(in.FromName),
 		ReplyTo:     strings.TrimSpace(in.ReplyTo),
 		Audience:    in.Audience.Normalized(),
+		ABTest:      cloneABTest(in.ABTest),
+		Resend:      cloneResend(in.Resend),
 		CreatedBy:   in.CreatedBy,
 	}
 	if err := c.validateContent(); err != nil {
 		return nil, err
 	}
 	return c, nil
+}
+
+// Optional es un campo de PATCH que admite quitarse: Set=false no lo toca; Set=true con
+// Value nil lo quita.
+type Optional[T any] struct {
+	Set   bool
+	Value *T
 }
 
 // Patch son los cambios de un PATCH; nil = no se toca.
@@ -199,21 +218,23 @@ type Patch struct {
 	FromName    *string
 	ReplyTo     *string
 	Audience    *Audience
+	ABTest      Optional[ABTest]
+	Resend      Optional[Resend]
 }
 
 func (p Patch) empty() bool {
 	return p.Name == nil && p.Description == nil && p.TemplateID == nil && p.FromEmail == nil &&
-		p.FromName == nil && p.ReplyTo == nil && p.Audience == nil
+		p.FromName == nil && p.ReplyTo == nil && p.Audience == nil && !p.ABTest.Set && !p.Resend.Set
 }
 
 // ApplyPatch edita la campana. Solo en borrador o en pausa; en pausa ya hay destinatarios
-// que recibieron una version concreta de una plantilla concreta, asi que la audiencia y
-// la plantilla quedan fijas hasta el final.
+// que recibieron una version concreta de una plantilla concreta, asi que la audiencia, la
+// plantilla, la prueba A/B y el reenvio quedan fijos hasta el final.
 func (c *Campaign) ApplyPatch(p Patch) error {
 	if !c.Editable() {
 		return ErrNotEditable
 	}
-	if c.ContentLocked() && (p.TemplateID != nil || p.Audience != nil) {
+	if c.ContentLocked() && (p.TemplateID != nil || p.Audience != nil || p.ABTest.Set || p.Resend.Set) {
 		return ErrLockedWhilePaused
 	}
 	if p.empty() {
@@ -240,6 +261,12 @@ func (c *Campaign) ApplyPatch(p Patch) error {
 	}
 	if p.Audience != nil {
 		next.Audience = p.Audience.Normalized()
+	}
+	if p.ABTest.Set {
+		next.ABTest = cloneABTest(p.ABTest.Value)
+	}
+	if p.Resend.Set {
+		next.Resend = cloneResend(p.Resend.Value)
 	}
 	if err := next.validateContent(); err != nil {
 		return err
@@ -270,7 +297,118 @@ func (c *Campaign) validateContent() error {
 	if err := validateAddress("reply_to", c.ReplyTo, false); err != nil {
 		return err
 	}
+	if c.ABTest != nil {
+		if err := c.ABTest.Validate(c.TemplateID); err != nil {
+			return err
+		}
+		if c.TimezoneDelivery != nil {
+			return ErrABWithTimezone
+		}
+	}
+	if c.Resend != nil {
+		if err := c.Resend.Validate(); err != nil {
+			return err
+		}
+	}
 	return c.Audience.Validate()
+}
+
+// cloneABTest copia la configuracion para que la campana no comparta la lista de
+// variantes con quien la construyo.
+func cloneABTest(a *ABTest) *ABTest {
+	if a == nil {
+		return nil
+	}
+	out := *a
+	out.Variants = make([]ABVariant, len(a.Variants))
+	for i, v := range a.Variants {
+		out.Variants[i] = ABVariant{Subject: v.Subject, TemplateID: copyPtr(v.TemplateID),
+			TemplateVersion: copyPtr(v.TemplateVersion), PinnedVersion: copyPtr(v.PinnedVersion)}
+	}
+	out.normalize()
+	return &out
+}
+
+func cloneResend(r *Resend) *Resend {
+	if r == nil {
+		return nil
+	}
+	out := *r
+	out.normalize()
+	return &out
+}
+
+func copyPtr[T any](p *T) *T {
+	if p == nil {
+		return nil
+	}
+	v := *p
+	return &v
+}
+
+// SameContent dice si otra lectura de la campana tiene la misma plantilla y la misma
+// prueba A/B: lo comprueba la transicion que fija versiones consultadas fuera de ella.
+func (c *Campaign) SameContent(o *Campaign) bool {
+	if c.TemplateID != o.TemplateID || (c.ABTest == nil) != (o.ABTest == nil) {
+		return false
+	}
+	if c.ABTest == nil {
+		return true
+	}
+	if len(c.ABTest.Variants) != len(o.ABTest.Variants) {
+		return false
+	}
+	for i := range c.ABTest.Variants {
+		a, b := c.ABTest.Variants[i], o.ABTest.Variants[i]
+		if a.Subject != b.Subject || !equalPtr(a.TemplateID, b.TemplateID) || !equalPtr(a.TemplateVersion, b.TemplateVersion) {
+			return false
+		}
+	}
+	return true
+}
+
+func equalPtr[T comparable](a, b *T) bool {
+	return (a == nil && b == nil) || (a != nil && b != nil && *a == *b)
+}
+
+// PinVariants fija la version de cada variante de la prueba A/B (en su orden). Se llama
+// junto a Schedule o Start, que exigen todas fijadas.
+func (c *Campaign) PinVariants(versions []int) error {
+	if c.ABTest == nil {
+		if len(versions) > 0 {
+			return NewValidationError("ab_test: la campana no tiene prueba A/B")
+		}
+		return nil
+	}
+	if len(versions) != len(c.ABTest.Variants) {
+		return NewValidationError("ab_test: faltan versiones de variante")
+	}
+	for i, v := range versions {
+		if err := validVersion(v); err != nil {
+			return err
+		}
+		pinned := v
+		c.ABTest.Variants[i].PinnedVersion = &pinned
+	}
+	return nil
+}
+
+// DecideWinner registra la ganadora de la prueba A/B. Solo una vez.
+func (c *Campaign) DecideWinner(d ABDecision, now time.Time) error {
+	if c.ABTest == nil {
+		return NewValidationError("ab_test: la campana no tiene prueba A/B")
+	}
+	if c.ABWinner != nil {
+		return ErrABAlreadyDecided
+	}
+	if d.Winner < 0 || d.Winner >= len(c.ABTest.Variants) {
+		return NewValidationError("ab_winner: la variante %d no existe", d.Winner)
+	}
+	w := d.Winner
+	c.ABWinner = &w
+	c.ABDecidedAt = &now
+	c.ABDecision = &d
+	return nil
 }
 
 // validateAddress acepta solo una direccion desnuda (sin nombre ni angulos): el nombre
@@ -311,7 +449,17 @@ func validateDisplayName(field, v string) error {
 
 // readyToSend es lo que se exige a una campana antes de salir de borrador.
 func (c *Campaign) readyToSend() error {
-	return c.validateContent()
+	if err := c.validateContent(); err != nil {
+		return err
+	}
+	if c.ABTest != nil {
+		for i, v := range c.ABTest.Variants {
+			if v.PinnedVersion == nil {
+				return NewValidationError("ab_test: la variante %s no tiene version fijada", VariantLabel(i))
+			}
+		}
+	}
+	return nil
 }
 
 // ValidateScheduleTime comprueba la fecha de programacion antes de consultar a nadie.
@@ -382,8 +530,53 @@ func (c *Campaign) Schedule(at time.Time, version int, now time.Time) error {
 		return err
 	}
 	at = at.UTC()
+	c.TimezoneDelivery = nil
 	c.Status = StatusScheduled
 	c.ScheduledAt = &at
+	c.TemplateVersion = &version
+	c.PauseReason = ""
+	c.ResumeAfter = nil
+	return nil
+}
+
+// ScheduleLocal la programa para que cada contacto la reciba a la hora de pared local en
+// su zona (o en fallback). Arranca en el primer instante en que alguna zona marca esa
+// hora, o en cuanto se pueda si ya paso: ahi el primer tramo envia a quien ya la alcanzo
+// y da de alta los demas. La hora en la zona de respaldo debe quedar en el futuro.
+func (c *Campaign) ScheduleLocal(local LocalDateTime, fallback string, version int, now time.Time) error {
+	if !c.CanSchedule() {
+		return TransitionError(c.Status, StatusScheduled)
+	}
+	if local.IsZero() {
+		return NewValidationError("local_send_at: es obligatorio")
+	}
+	loc, err := LoadTimezone(fallback)
+	if err != nil {
+		return NewValidationError("fallback_timezone: %q no es una zona IANA valida (America/Lima)", strings.TrimSpace(fallback))
+	}
+	if err := ValidateScheduleTime(local.In(loc), now); err != nil {
+		return err
+	}
+	if err := validVersion(version); err != nil {
+		return err
+	}
+	if c.ABTest != nil {
+		return ErrABWithTimezone
+	}
+	delivery := &TimezoneDelivery{LocalSendAt: local, FallbackTimezone: loc.String()}
+	start := local.Earliest()
+	if earliest := now.Add(MinScheduleLead); start.Before(earliest) {
+		start = earliest
+	}
+	start = start.UTC()
+	prev := c.TimezoneDelivery
+	c.TimezoneDelivery = delivery
+	if err := c.readyToSend(); err != nil {
+		c.TimezoneDelivery = prev
+		return err
+	}
+	c.Status = StatusScheduled
+	c.ScheduledAt = &start
 	c.TemplateVersion = &version
 	c.PauseReason = ""
 	c.ResumeAfter = nil
@@ -401,6 +594,7 @@ func (c *Campaign) Start(version int, now time.Time) error {
 	if err := c.readyToSend(); err != nil {
 		return err
 	}
+	c.TimezoneDelivery = nil
 	c.Status = StatusSending
 	c.TemplateVersion = &version
 	c.StartedAt = &now

@@ -24,7 +24,8 @@ func TestParseDeliveryEvent(t *testing.T) {
 
 	ev, ok := parseDeliveryEvent(base())
 	if !ok || ev.Kind != domain.KindOpened || ev.CampaignID != campaign || ev.TenantID != tenant ||
-		ev.MessageID == nil || *ev.MessageID != msg || ev.EventID != "evt-1" || !ev.OccurredAt.Equal(ts) {
+		ev.MessageID == nil || *ev.MessageID != msg || ev.EventID != "evt-1" || !ev.OccurredAt.Equal(ts) ||
+		ev.ContactID == nil || *ev.ContactID != contact {
 		t.Fatalf("evento valido: %+v ok=%v", ev, ok)
 	}
 

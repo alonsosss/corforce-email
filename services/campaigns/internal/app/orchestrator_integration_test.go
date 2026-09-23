@@ -75,8 +75,10 @@ func setupDB(t *testing.T) (context.Context, *pgxpool.Pool, *harness, *crashingB
 		for _, rel := range []string{
 			"migrations/tenant/canonical/platform/00_outbox.sql",
 			"migrations/tenant/canonical/campaigns/01_campaigns.sql",
+			"migrations/tenant/canonical/campaigns/03_phases.sql",
 			"migrations/tenant/canonical/platform/00_outbox.sql",
 			"migrations/tenant/canonical/campaigns/01_campaigns.sql",
+			"migrations/tenant/canonical/campaigns/03_phases.sql",
 		} {
 			sql, err := os.ReadFile(filepath.Join(root, rel))
 			if err != nil {
@@ -100,6 +102,8 @@ func setupDB(t *testing.T) (context.Context, *pgxpool.Pool, *harness, *crashingB
 	h.uc = New(Deps{
 		Campaigns: postgres.NewCampaignRepository(ctxPool),
 		Batches:   batches,
+		Phases:    postgres.NewPhaseRepository(ctxPool),
+		Ledger:    postgres.NewRecipientLedger(ctxPool),
 		Stats:     postgres.NewStatsRepository(ctxPool),
 		Tx:        ctxPool,
 		Events:    postgres.NewOutboxPublisher(ctxPool),
@@ -109,7 +113,8 @@ func setupDB(t *testing.T) (context.Context, *pgxpool.Pool, *harness, *crashingB
 		Config:    Config{BatchSize: domain.MaxBatchSize},
 		Now:       h.clock.now,
 	})
-	return db.WithTenant(context.Background(), pool, h.tenantID.String()), pool, h, batches
+	h.ctx = db.WithTenant(context.Background(), pool, h.tenantID.String())
+	return h.ctx, pool, h, batches
 }
 
 func createSending(t *testing.T, ctx context.Context, h *harness, name string) *domain.Campaign {

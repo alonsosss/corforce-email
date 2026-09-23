@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/alonsosss/corforce-email/services/campaigns/internal/domain"
@@ -24,13 +25,16 @@ func (uc *UseCase) Schedule(ctx context.Context, tenantID, id uuid.UUID, at time
 	if err := domain.ValidateScheduleTime(at, uc.now()); err != nil {
 		return nil, err
 	}
-	v, err := uc.resolveVersion(ctx, c, version)
+	v, variants, err := uc.resolveVersions(ctx, c, version)
 	if err != nil {
 		return nil, err
 	}
 	return uc.transition(ctx, tenantID, id, func(ctx context.Context, cur *domain.Campaign) error {
-		if cur.TemplateID != c.TemplateID {
+		if !cur.SameContent(c) {
 			return domain.ErrConcurrentChange
+		}
+		if err := cur.PinVariants(variants); err != nil {
+			return err
 		}
 		if err := cur.Schedule(at, v, uc.now()); err != nil {
 			return err
@@ -52,13 +56,16 @@ func (uc *UseCase) Start(ctx context.Context, tenantID, id uuid.UUID, version *i
 	if !c.CanStart() {
 		return nil, domain.TransitionError(c.Status, domain.StatusSending)
 	}
-	v, err := uc.resolveVersion(ctx, c, version)
+	v, variants, err := uc.resolveVersions(ctx, c, version)
 	if err != nil {
 		return nil, err
 	}
 	return uc.transition(ctx, tenantID, id, func(ctx context.Context, cur *domain.Campaign) error {
-		if cur.TemplateID != c.TemplateID {
+		if !cur.SameContent(c) {
 			return domain.ErrConcurrentChange
+		}
+		if err := cur.PinVariants(variants); err != nil {
+			return err
 		}
 		if err := cur.Start(v, uc.now()); err != nil {
 			return err
@@ -67,6 +74,41 @@ func (uc *UseCase) Start(ctx context.Context, tenantID, id uuid.UUID, version *i
 			return err
 		}
 		return uc.publishStarted(ctx, cur)
+	})
+}
+
+// ScheduleLocal programa el envio por zona horaria: cada contacto recibe la campana a la
+// hora de pared local en su zona, o en fallback si no tiene una valida.
+func (uc *UseCase) ScheduleLocal(ctx context.Context, tenantID, id uuid.UUID, local, fallback string, version *int) (*domain.Campaign, error) {
+	at, err := domain.ParseLocalDateTime(local)
+	if err != nil {
+		return nil, err
+	}
+	c, err := uc.campaigns.Get(ctx, tenantID, id)
+	if err != nil {
+		return nil, err
+	}
+	if !c.CanSchedule() {
+		return nil, domain.TransitionError(c.Status, domain.StatusScheduled)
+	}
+	if c.ABTest != nil {
+		return nil, domain.ErrABWithTimezone
+	}
+	v, err := uc.resolveVersion(ctx, c, version)
+	if err != nil {
+		return nil, err
+	}
+	return uc.transition(ctx, tenantID, id, func(ctx context.Context, cur *domain.Campaign) error {
+		if !cur.SameContent(c) {
+			return domain.ErrConcurrentChange
+		}
+		if err := cur.ScheduleLocal(at, fallback, v, uc.now()); err != nil {
+			return err
+		}
+		if err := uc.campaigns.Update(ctx, cur); err != nil {
+			return err
+		}
+		return uc.publishScheduled(ctx, cur)
 	})
 }
 
@@ -155,10 +197,41 @@ func (uc *UseCase) resolveVersion(ctx context.Context, c *domain.Campaign, reque
 	return uc.templates.PublishedVersion(ctx, c.TenantID, c.TemplateID)
 }
 
-// TestInput es un envio de prueba de la campana.
+// resolveVersions fija la version de la campana y la de cada variante A/B. Una variante
+// con su propia plantilla y sin version pedida toma la publicada de esa plantilla; sin
+// plantilla propia, la de la campana.
+func (uc *UseCase) resolveVersions(ctx context.Context, c *domain.Campaign, requested *int) (int, []int, error) {
+	v, err := uc.resolveVersion(ctx, c, requested)
+	if err != nil {
+		return 0, nil, err
+	}
+	if c.ABTest == nil {
+		return v, nil, nil
+	}
+	out := make([]int, len(c.ABTest.Variants))
+	for i, variant := range c.ABTest.Variants {
+		switch {
+		case variant.TemplateVersion != nil:
+			out[i] = *variant.TemplateVersion
+		case variant.TemplateID == nil || *variant.TemplateID == c.TemplateID:
+			out[i] = v
+		default:
+			pv, err := uc.templates.PublishedVersion(ctx, c.TenantID, *variant.TemplateID)
+			if err != nil {
+				return 0, nil, fmt.Errorf("variante %s: %w", domain.VariantLabel(i), err)
+			}
+			out[i] = pv
+		}
+	}
+	return v, out, nil
+}
+
+// TestInput es un envio de prueba de la campana. Variant elige una variante A/B (su
+// plantilla y su asunto); nil prueba el contenido de la campana.
 type TestInput struct {
 	Emails          []string
 	TemplateVersion *int
+	Variant         *int
 }
 
 // SendTest envia la campana a unas pocas direcciones por la misma via que los lotes,
@@ -174,10 +247,8 @@ func (uc *UseCase) SendTest(ctx context.Context, tenantID, id uuid.UUID, in Test
 	if err != nil {
 		return nil, err
 	}
-	var version int
-	if in.TemplateVersion == nil && c.TemplateVersion != nil {
-		version = *c.TemplateVersion
-	} else if version, err = uc.resolveVersion(ctx, c, in.TemplateVersion); err != nil {
+	content, err := uc.testContent(ctx, c, in)
+	if err != nil {
 		return nil, err
 	}
 	recipients := make([]domain.Recipient, len(emails))
@@ -192,9 +263,55 @@ func (uc *UseCase) SendTest(ctx context.Context, tenantID, id uuid.UUID, in Test
 		FromEmail:       c.FromEmail,
 		FromName:        c.FromName,
 		ReplyTo:         c.ReplyTo,
-		TemplateID:      c.TemplateID,
-		TemplateVersion: version,
+		TemplateID:      content.TemplateID,
+		TemplateVersion: content.TemplateVersion,
+		Subject:         content.Subject,
+		UTMContent:      content.UTMContent,
 		Recipients:      recipients,
 		Tags:            map[string]string{"test": "true"},
 	})
+}
+
+// testContent es lo que recibe un envio de prueba: la version pedida, la ya fijada o la
+// publicada, de la plantilla de la campana o de la variante elegida.
+func (uc *UseCase) testContent(ctx context.Context, c *domain.Campaign, in TestInput) (domain.Content, error) {
+	if in.TemplateVersion != nil && *in.TemplateVersion < 1 {
+		return domain.Content{}, domain.NewValidationError("template_version: debe ser mayor que cero")
+	}
+	if in.Variant == nil {
+		version := c.TemplateVersion
+		if in.TemplateVersion != nil {
+			version = in.TemplateVersion
+		}
+		if version != nil {
+			return domain.Content{TemplateID: c.TemplateID, TemplateVersion: *version}, nil
+		}
+		v, err := uc.templates.PublishedVersion(ctx, c.TenantID, c.TemplateID)
+		return domain.Content{TemplateID: c.TemplateID, TemplateVersion: v}, err
+	}
+	i := *in.Variant
+	if c.ABTest == nil || i < 0 || i >= len(c.ABTest.Variants) {
+		return domain.Content{}, domain.NewValidationError("variant: la campana no tiene esa variante")
+	}
+	variant := c.ABTest.Variants[i]
+	content := domain.Content{TemplateID: c.ABTest.VariantTemplate(i, c.TemplateID), Subject: variant.Subject,
+		UTMContent: domain.VariantUTMContent(i)}
+	own := content.TemplateID != c.TemplateID
+	switch {
+	case in.TemplateVersion != nil:
+		content.TemplateVersion = *in.TemplateVersion
+	case variant.PinnedVersion != nil:
+		content.TemplateVersion = *variant.PinnedVersion
+	case variant.TemplateVersion != nil:
+		content.TemplateVersion = *variant.TemplateVersion
+	case !own && c.TemplateVersion != nil:
+		content.TemplateVersion = *c.TemplateVersion
+	default:
+		v, err := uc.templates.PublishedVersion(ctx, c.TenantID, content.TemplateID)
+		if err != nil {
+			return domain.Content{}, err
+		}
+		content.TemplateVersion = v
+	}
+	return content, nil
 }

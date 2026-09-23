@@ -160,7 +160,9 @@ type Batch struct {
 	ID         uuid.UUID
 	TenantID   uuid.UUID
 	CampaignID uuid.UUID
-	Seq        int
+	// PhaseID es la fase a la que pertenece; nil en un lote anterior a las fases (main).
+	PhaseID *uuid.UUID
+	Seq     int
 	// CursorIn es el cursor con el que se pide la pagina; CursorOut el que contacts
 	// devolvio para la siguiente (nil = fin de la audiencia).
 	CursorIn  *string
@@ -181,9 +183,17 @@ type Batch struct {
 	UpdatedAt   time.Time
 }
 
-// NextBatch es el lote que sigue a last (nil para el primero), ya reservado para quien
-// lo crea.
+// NextBatch es el lote que sigue a last (nil para el primero) en una campana sin fases,
+// ya reservado para quien lo crea.
 func NextBatch(c *Campaign, last *Batch, now time.Time) *Batch {
+	return NextPhaseBatch(c, last, nil, now)
+}
+
+// NextPhaseBatch es el siguiente lote de la fase p. El numero sigue al del ultimo lote de
+// la campana (la clave de idempotencia es unica en toda ella) y el cursor al del ultimo
+// lote solo si era de la misma fase: una fase nueva recorre la audiencia desde el
+// principio.
+func NextPhaseBatch(c *Campaign, last *Batch, p *Phase, now time.Time) *Batch {
 	b := &Batch{
 		ID:         uuid.New(),
 		TenantID:   c.TenantID,
@@ -191,15 +201,31 @@ func NextBatch(c *Campaign, last *Batch, now time.Time) *Batch {
 		Seq:        1,
 		Status:     BatchPending,
 	}
+	if p != nil {
+		id := p.ID
+		b.PhaseID = &id
+	}
 	if last != nil {
 		b.Seq = last.Seq + 1
-		if last.CursorOut != nil {
+		if last.CursorOut != nil && last.InPhase(p) {
 			cursor := *last.CursorOut
 			b.CursorIn = &cursor
 		}
 	}
 	b.Lease(now)
 	return b
+}
+
+// InPhase dice si el lote es de la fase p. Un lote sin fase (anterior a ellas) es de la
+// principal.
+func (b *Batch) InPhase(p *Phase) bool {
+	if p == nil {
+		return b.PhaseID == nil
+	}
+	if b.PhaseID == nil {
+		return p.Kind == PhaseMain
+	}
+	return *b.PhaseID == p.ID
 }
 
 // Lease reserva el lote para un trabajador hasta now+BatchLease con un testigo nuevo.

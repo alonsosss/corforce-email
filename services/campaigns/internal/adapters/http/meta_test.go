@@ -53,6 +53,33 @@ type metaContract struct {
 		DefaultPageSize int `json:"default_page_size"`
 		MaxPageSize     int `json:"max_page_size"`
 	} `json:"pagination"`
+	ABTest struct {
+		Criteria                 []string `json:"criteria"`
+		MinVariants              int      `json:"min_variants"`
+		MaxVariants              int      `json:"max_variants"`
+		MinSamplePercent         int      `json:"min_sample_percent"`
+		MaxSamplePercent         int      `json:"max_sample_percent"`
+		MinDecisionWindowMinutes int      `json:"min_decision_window_minutes"`
+		MaxDecisionWindowMinutes int      `json:"max_decision_window_minutes"`
+		DecisionReasons          []string `json:"decision_reasons"`
+	} `json:"ab_test"`
+	Resend struct {
+		MinDelayMinutes int `json:"min_delay_minutes"`
+		MaxDelayMinutes int `json:"max_delay_minutes"`
+	} `json:"resend"`
+	Phases struct {
+		Kinds    []string `json:"kinds"`
+		Statuses []string `json:"statuses"`
+	} `json:"phases"`
+	MaxSubjectLength int `json:"max_subject_length"`
+}
+
+func names[T ~string](xs []T) []string {
+	out := make([]string, len(xs))
+	for i, x := range xs {
+		out[i] = string(x)
+	}
+	return out
 }
 
 func metaRequest(roles ...string) *httptest.ResponseRecorder {
@@ -117,6 +144,15 @@ func TestMetaPublicaEstadosAccionesYTopes(t *testing.T) {
 		{"schedule", [2]int64{got.Schedule.MinLeadSeconds, got.Schedule.MaxHorizonSeconds},
 			[2]int64{int64(domain.MinScheduleLead.Seconds()), int64(domain.MaxScheduleHorizon.Seconds())}},
 		{"pagination", [2]int{got.Pagination.DefaultPageSize, got.Pagination.MaxPageSize}, [2]int{defaultPerPage, maxPerPage}},
+		{"ab_test.criteria", got.ABTest.Criteria, []string{"opens", "clicks"}},
+		{"ab_test.limits", [6]int{got.ABTest.MinVariants, got.ABTest.MaxVariants, got.ABTest.MinSamplePercent,
+			got.ABTest.MaxSamplePercent, got.ABTest.MinDecisionWindowMinutes, got.ABTest.MaxDecisionWindowMinutes},
+			[6]int{2, 4, 10, 50, 60, 72 * 60}},
+		{"ab_test.decision_reasons", got.ABTest.DecisionReasons, names(domain.DecisionReasons())},
+		{"resend", [2]int{got.Resend.MinDelayMinutes, got.Resend.MaxDelayMinutes}, [2]int{24 * 60, 7 * 24 * 60}},
+		{"phases.kinds", got.Phases.Kinds, []string{"main", "sample", "winner", "zone", "resend"}},
+		{"phases.statuses", got.Phases.Statuses, []string{"pending", "done"}},
+		{"max_subject_length", got.MaxSubjectLength, domain.MaxSubjectLength},
 	}
 	for _, c := range checks {
 		if !reflect.DeepEqual(c.got, c.want) {

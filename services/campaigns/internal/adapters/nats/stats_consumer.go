@@ -141,7 +141,7 @@ func parseDeliveryEvent(evt events.Event) (domain.DeliveryEvent, bool) {
 		}
 	}
 	ev := domain.DeliveryEvent{
-		EventID: evt.ID, TenantID: tenantID, CampaignID: campaignID, Kind: kind,
+		EventID: evt.ID, TenantID: tenantID, CampaignID: campaignID, ContactID: &contactID, Kind: kind,
 		OccurredAt: occurredAt(data, evt.Timestamp),
 	}
 	if id, err := uuid.Parse(str(data["message_id"])); err == nil {

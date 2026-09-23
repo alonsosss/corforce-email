@@ -328,7 +328,15 @@ audiencia con su cursor de entrada y salida, la pagina fijada antes del primer e
 (se vacia al cerrarse) y la reserva del trabajador que lo envia, con a lo sumo un lote
 pendiente por campana por el indice parcial `uq_campaigns_batches_one_pending`;
 `processed_events` para la deduplicacion por id de evento, podada a los 30 dias;
-`message_engagement` con la primera apertura y el primer clic de cada mensaje),
+`message_engagement`, una fila por mensaje aceptado con su fase y variante, su contacto y
+la primera entrega, apertura y clic; `campaigns.phases`, las fases de envio de la campana
+(principal, muestra por variante y ganadora de la prueba A/B, tramos por zona horaria,
+reenvio) con clave unica por campana, espera `not_before` y totales, y `batches.phase_id`
+que ata cada lote a su fase; `campaigns.recipients`, quien recibio cada ronda (`initial`,
+`resend`) solo por id de contacto, sin direccion; y en la campana la configuracion
+`ab_test`, `resend`, la decision `ab_winner`/`ab_decision` y la hora local `local_send_at`
+sin zona con `fallback_timezone`, con CHECK que impide ganadora sin prueba, hora sin zona y
+prueba A/B junto a la zona horaria; `03_phases.sql`),
 `analytics` (agregados diarios por dia UTC en `analytics.daily_class_stats`,
 `daily_campaign_stats` y `daily_domain_stats`, cada uno con sus dimensiones sin NULL
 ambiguos y contadores con CHECK de no negativos; `analytics.message_facts`, una fila por

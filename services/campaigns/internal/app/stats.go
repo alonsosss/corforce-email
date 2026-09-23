@@ -29,8 +29,15 @@ func (uc *UseCase) RecordDeliveryEvent(ctx context.Context, ev domain.DeliveryEv
 			return err
 		}
 		if ev.Kind.UniquePerMessage() {
-			first, err := uc.stats.FirstEngagement(ctx, ev.TenantID, ev.CampaignID, *ev.MessageID, ev.Kind, at)
+			first, err := uc.stats.FirstEngagement(ctx, ev.TenantID, ev.CampaignID, *ev.MessageID, ev.ContactID, ev.Kind, at)
 			if err != nil || !first {
+				return err
+			}
+		}
+		// La entrega por mensaje es lo que el reenvio exige para considerar que alguien
+		// recibio la campana y no la abrio.
+		if ev.Kind == domain.KindDelivered && ev.MessageID != nil {
+			if err := uc.stats.NoteDelivery(ctx, ev.TenantID, ev.CampaignID, *ev.MessageID, ev.ContactID, at); err != nil {
 				return err
 			}
 		}

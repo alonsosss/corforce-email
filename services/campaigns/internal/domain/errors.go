@@ -16,6 +16,10 @@ var (
 	ErrScheduleInPast    = errors.New("la fecha de programacion debe quedar en el futuro")
 	ErrScheduleTooFar    = errors.New("la fecha de programacion supera el horizonte permitido")
 	ErrConcurrentChange  = errors.New("la campana cambio mientras se procesaba la peticion; vuelva a intentarlo")
+	// ErrABWithTimezone: la ventana de decision de una prueba A/B exige que toda la muestra
+	// salga a la vez, y el envio por zona horaria la repartiria en tramos.
+	ErrABWithTimezone   = errors.New("la prueba A/B no se combina con el envio por zona horaria")
+	ErrABAlreadyDecided = errors.New("la prueba A/B ya tiene ganadora")
 
 	// ErrInvalidCampaign agrupa los datos de entrada que no cumplen el contrato; los
 	// detalles viajan en ValidationError.

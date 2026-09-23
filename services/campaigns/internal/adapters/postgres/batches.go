@@ -14,7 +14,7 @@ import (
 
 // batchColumns deja fuera la pagina: lleva datos de contacto y solo la necesita el
 // orquestador al reintentar (Pending).
-const batchColumns = `id, tenant_id, campaign_id, seq, cursor_in, cursor_out, recipients, status,
+const batchColumns = `id, tenant_id, campaign_id, phase_id, seq, cursor_in, cursor_out, recipients, status,
 	accepted, suppressed, attempts, last_error, leased_until, lease_token, created_at, updated_at`
 
 type BatchRepository struct {
@@ -31,7 +31,7 @@ func scanBatch(row pgx.Row, withPage bool) (*domain.Batch, error) {
 		status string
 		page   []byte
 	)
-	dest := []interface{}{&b.ID, &b.TenantID, &b.CampaignID, &b.Seq, &b.CursorIn, &b.CursorOut, &b.Recipients,
+	dest := []interface{}{&b.ID, &b.TenantID, &b.CampaignID, &b.PhaseID, &b.Seq, &b.CursorIn, &b.CursorOut, &b.Recipients,
 		&status, &b.Accepted, &b.Suppressed, &b.Attempts, &b.LastError, &b.LeasedUntil, &b.LeaseToken,
 		&b.CreatedAt, &b.UpdatedAt}
 	if withPage {
@@ -74,10 +74,10 @@ func (r *BatchRepository) Last(ctx context.Context, tenantID, campaignID uuid.UU
 
 func (r *BatchRepository) Insert(ctx context.Context, b *domain.Batch) error {
 	return r.pool.QueryRow(ctx,
-		`INSERT INTO campaigns.batches (id, tenant_id, campaign_id, seq, cursor_in, status, leased_until, lease_token)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		`INSERT INTO campaigns.batches (id, tenant_id, campaign_id, phase_id, seq, cursor_in, status, leased_until, lease_token)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		 RETURNING created_at, updated_at`,
-		b.ID, b.TenantID, b.CampaignID, b.Seq, b.CursorIn, string(b.Status), b.LeasedUntil, b.LeaseToken,
+		b.ID, b.TenantID, b.CampaignID, b.PhaseID, b.Seq, b.CursorIn, string(b.Status), b.LeasedUntil, b.LeaseToken,
 	).Scan(&b.CreatedAt, &b.UpdatedAt)
 }
 
@@ -98,7 +98,13 @@ func (r *BatchRepository) Lease(ctx context.Context, b *domain.Batch) error {
 // SavePage exige que la campana siga en envio: si una persona la pauso o cancelo
 // mientras se pedia la pagina, el lote no llega a enviarse.
 func (r *BatchRepository) SavePage(ctx context.Context, b *domain.Batch) (bool, error) {
-	page, err := json.Marshal(b.Page)
+	recipients := b.Page
+	if recipients == nil {
+		// Una pagina sin nadie de la fase es una lista vacia, no null: la restriccion de la
+		// tabla exige un array.
+		recipients = []domain.Recipient{}
+	}
+	page, err := json.Marshal(recipients)
 	if err != nil {
 		return false, err
 	}

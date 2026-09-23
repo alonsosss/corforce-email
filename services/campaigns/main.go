@@ -5,6 +5,9 @@ import (
 	"log"
 	"os"
 	"time"
+	// El envio por zona horaria carga la zona de cada contacto: la base de zonas va en el
+	// binario y no depende de la imagen.
+	_ "time/tzdata"
 
 	"github.com/alonsosss/corforce-email/pkg/authz"
 	"github.com/alonsosss/corforce-email/pkg/config"
@@ -104,6 +107,8 @@ func main() {
 	uc := app.New(app.Deps{
 		Campaigns: postgres.NewCampaignRepository(ctxPool),
 		Batches:   postgres.NewBatchRepository(ctxPool),
+		Phases:    postgres.NewPhaseRepository(ctxPool),
+		Ledger:    postgres.NewRecipientLedger(ctxPool),
 		Stats:     postgres.NewStatsRepository(ctxPool),
 		Tx:        ctxPool,
 		Events:    postgres.NewOutboxPublisher(ctxPool),

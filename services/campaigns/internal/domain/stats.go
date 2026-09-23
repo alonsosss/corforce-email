@@ -51,8 +51,34 @@ type DeliveryEvent struct {
 	TenantID   uuid.UUID
 	CampaignID uuid.UUID
 	MessageID  *uuid.UUID
+	ContactID  *uuid.UUID
 	Kind       DeliveryKind
 	OccurredAt time.Time
+}
+
+// PhaseEngagement son los mensajes aceptados de una fase (y variante) y cuantos se
+// entregaron, abrieron y recibieron clic, contados una vez por mensaje.
+type PhaseEngagement struct {
+	Kind      PhaseKind
+	Variant   *int
+	Accepted  int64
+	Delivered int64
+	Opened    int64
+	Clicked   int64
+}
+
+// SampleResults extrae de las filas de interaccion los resultados de cada variante de la
+// muestra.
+func SampleResults(rows []PhaseEngagement) []VariantResult {
+	var out []VariantResult
+	for _, r := range rows {
+		if r.Kind != PhaseSample || r.Variant == nil {
+			continue
+		}
+		out = append(out, VariantResult{Variant: *r.Variant, Accepted: r.Accepted, Delivered: r.Delivered,
+			Opened: r.Opened, Clicked: r.Clicked})
+	}
+	return out
 }
 
 // MaxEventIDLength acota la clave de deduplicacion que se guarda.
@@ -87,6 +113,9 @@ func (c Counters) Rates() Rates {
 		UnsubscribeRate: ratio(c.Unsubscribed, c.Delivered),
 	}
 }
+
+// Ratio es n/d con cuatro cifras ("0.2512"); "0.0000" si el denominador es cero.
+func Ratio(n, d int64) string { return ratio(n, d) }
 
 func ratio(n, d int64) string {
 	if n <= 0 || d <= 0 {

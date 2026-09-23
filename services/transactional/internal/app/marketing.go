@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/alonsosss/corforce-email/services/transactional/internal/domain"
 	"github.com/alonsosss/corforce-email/services/transactional/internal/ports"
@@ -35,8 +37,11 @@ type MarketingBatchCommand struct {
 	ReplyTo         string
 	TemplateID      uuid.UUID
 	TemplateVersion int
-	Recipients      []MarketingRecipient
-	Tags            map[string]string
+	// Subject sustituye al asunto que renderiza la plantilla (variante A/B o reenvio de
+	// campaigns); vacio = el de la plantilla. Es texto literal, sin variables.
+	Subject    string
+	Recipients []MarketingRecipient
+	Tags       map[string]string
 	// UTM es la configuracion de UTM de la campana; nil aplica los valores por defecto.
 	UTM *UTMInput
 
@@ -52,6 +57,9 @@ type UTMInput struct {
 	Campaign string
 	Content  string
 }
+
+// MaxSubjectOverride acota el asunto alternativo del lote: termina en la cabecera Subject.
+const MaxSubjectOverride = 250
 
 // BatchResult es la respuesta del lote. Replayed indica que la clave ya existia y se
 // devuelve exactamente lo que se respondio entonces, sin crear nada.
@@ -169,6 +177,13 @@ func validateBatch(cmd *MarketingBatchCommand) error {
 	}
 	if cmd.TemplateVersion < 1 {
 		return domain.NewValidationError("template_version must be a published version (>= 1)")
+	}
+	cmd.Subject = strings.TrimSpace(cmd.Subject)
+	if utf8.RuneCountInString(cmd.Subject) > MaxSubjectOverride {
+		return domain.NewValidationError("subject must be at most %d characters", MaxSubjectOverride)
+	}
+	if strings.IndexFunc(cmd.Subject, unicode.IsControl) >= 0 {
+		return domain.NewValidationError("subject must not contain control characters")
 	}
 	if len(cmd.Recipients) == 0 || len(cmd.Recipients) > domain.MaxBatchRecipients {
 		return domain.NewValidationError("recipients must have between 1 and %d entries", domain.MaxBatchRecipients)
@@ -305,6 +320,11 @@ launch:
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
+	}
+	if cmd.Subject != "" {
+		for _, m := range messages {
+			m.Subject = cmd.Subject
+		}
 	}
 	return messages, nil
 }
