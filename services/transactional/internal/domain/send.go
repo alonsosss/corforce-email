@@ -28,6 +28,9 @@ type OutgoingEmail struct {
 	Headers        map[string]string
 	Tags           map[string]string
 	UnsubscribeURL string // vacio cuando el mensaje no es dable de baja
+	// Raw es el MIME completo de un mensaje de SMTP: sale tal cual (SES contenido Raw) a los
+	// destinatarios de To, que entonces son el sobre y no la cabecera.
+	Raw []byte
 }
 
 // ErrorKind clasifica un fallo del proveedor: transitorio se reintenta con backoff,

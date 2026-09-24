@@ -172,6 +172,15 @@
   },
   {
     "targets": [
+      "smtp-relay:8060"
+    ],
+    "labels": {
+      "job": "mail-services",
+      "service": "smtp-relay"
+    }
+  },
+  {
+    "targets": [
       "suppression:8046"
     ],
     "labels": {

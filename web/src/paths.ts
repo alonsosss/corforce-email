@@ -41,6 +41,7 @@ export const paths = {
   roles: '/roles',
   role: (id: string) => `/roles/${encodeURIComponent(id)}`,
   denials: '/access/denials',
+  apiKeys: '/access/api-keys',
   sessions: '/sessions',
   organizations: '/organizations',
   organization: (id: string) => `/organizations/${encodeURIComponent(id)}`,

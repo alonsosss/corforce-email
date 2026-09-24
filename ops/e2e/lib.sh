@@ -198,6 +198,7 @@ e2e_entorno_comun() {
   export MAIL_ENCRYPTION_KEY; MAIL_ENCRYPTION_KEY="$(rand_hex 32)"
   export MAIL_LINK_SIGNING_KEY; MAIL_LINK_SIGNING_KEY="$(rand_hex 32)"
   export CONTACTS_FORM_TOKEN_KEY; CONTACTS_FORM_TOKEN_KEY="$(rand_hex 32)"
+  export API_KEY_HASH_KEY; API_KEY_HASH_KEY="$(rand_hex 32)"
   export POSTGRES_HOST=127.0.0.1 POSTGRES_PORT="$PG_PORT" POSTGRES_USER=mail_admin POSTGRES_DB=mail_registry
   export NATS_URL="nats://127.0.0.1:$NATS_PORT" REDIS_HOST=127.0.0.1 REDIS_PORT="$REDIS_PORT"
   export REGISTRY_MIGRATION_DIR="$ROOT/migrations/registry" TENANT_MIGRATION_DIR="$ROOT/migrations/tenant/canonical"

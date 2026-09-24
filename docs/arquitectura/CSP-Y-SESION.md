@@ -254,8 +254,10 @@ sigue aceptando de cualquier origen, no solo de `TRUSTED_PROXY_CIDRS`; ningún s
 
 **Cabeceras internas**: el gateway las escribe él y solo él, y ningún cliente las puede fijar ni
 quitar. `StripInternalHeaders` borra las que envíe (`X-User-ID`, `X-Tenant-ID`, `X-User-Roles`,
-`X-Gateway-Token`, `X-Operator-Cell`, `X-Internal-Token`) y `X-Target-Cell` se retira antes de
-llegar a ningún servicio. Además, `ReverseProxy` borra, **después** de su `Director`, las cabeceras
+`X-Gateway-Token`, `X-Operator-Cell`, `X-Internal-Token`, y las de una clave de API, `X-Api-Key-ID` y
+`X-Api-Key-Scopes`) y `X-Target-Cell` se retira antes de llegar a ningún servicio. Con una clave de API
+(`docs/adr/0013-claves-de-api-y-relay-smtp.md`) el gateway escribe la empresa y esas dos, nunca un usuario ni roles,
+y no reenvía el `Authorization`. Además, `ReverseProxy` borra, **después** de su `Director`, las cabeceras
 que la petición nombre en `Connection`: sin defensa, un cliente con sesión escribía
 `Connection: X-User-ID` y el servicio recibía la petición sin usuario, que `RequireInternalCaller`,
 `internalOrPerm` y `Membership.Require` toman por una llamada de otro servicio (`dropClientHopHeaders`

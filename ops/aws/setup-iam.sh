@@ -205,16 +205,18 @@ emit observacion <<EOF
   "Resource":"*"}]}
 EOF
 
-# Envio por SES: transactional solo llama a SendEmail (sesv2). La identidad va con comodin
-# porque cada empresa verifica su propio dominio en la cuenta y SES solo deja enviar desde
-# una identidad verificada. El conjunto no: lo que sale por otro conjunto sale sin los
-# eventos de la plataforma, y sus rebotes y quejas no llegan a suppression. Ni SendRawEmail
-# ni plantillas de SES: el servicio no los usa. El vigilante de la cuenta (cuota, pausa y
-# reputacion para las alertas) solo lee: GetAccount y GetMetricData no admiten recurso acotado.
+# Envio por SES: transactional solo llama a SendEmail (sesv2). El correo que llega por smtp-relay sale
+# con contenido Raw, y SES autoriza ese SendEmail como ses:SendRawEmail (comprobado: la llamada con
+# contenido Raw se rechaza con "not authorized to perform 'ses:SendRawEmail'" teniendo solo ses:SendEmail,
+# aunque la Service Authorization Reference de SES v2 solo nombre ses:SendEmail), asi que la politica
+# concede las dos sobre los mismos recursos. La identidad va con comodin porque cada empresa verifica su
+# propio dominio en la cuenta y SES solo deja enviar desde una identidad verificada. El conjunto no: lo que
+# sale por otro conjunto sale sin los eventos de la plataforma, y sus rebotes y quejas no llegan a
+# suppression. Ni plantillas de SES: el servicio no las usa.
 emit ses-envio <<EOF
 {"Version":"2012-10-17","Statement":[
  {"Sid":"EnviarPorLosConjuntosDeLaPlataforma","Effect":"Allow",
-  "Action":"ses:SendEmail",
+  "Action":["ses:SendEmail","ses:SendRawEmail"],
   "Resource":["arn:aws:ses:${REGION}:${ACC}:identity/*",
               "arn:aws:ses:${REGION}:${ACC}:configuration-set/${SES_SET_TRANSACTIONAL}",
               "arn:aws:ses:${REGION}:${ACC}:configuration-set/${SES_SET_MARKETING}"]},

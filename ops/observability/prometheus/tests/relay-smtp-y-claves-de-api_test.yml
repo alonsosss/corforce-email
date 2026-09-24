@@ -1,0 +1,92 @@
+# Pruebas de las alertas del relay SMTP y de las claves de API (grupo relay-smtp-y-claves-de-api).
+#
+# Un barrido sostenido avisa y un fallo suelto no; el relay sin access-control avisa; los 451 por
+# transactional o clamd avisan; un adjunto infectado avisa; el certificado a menos de dos semanas
+# avisa y a dos meses no; las claves invalidas sostenidas en el gateway avisan.
+#
+#   make check-alertas
+
+rule_files:
+  - ../rules/plataforma.yml
+
+evaluation_interval: 1m
+
+tests:
+  - interval: 1m
+    input_series:
+      - series: 'smtp_relay_auth_total{job="mail-services",service="smtp-relay",result="failed"}'
+        values: '0+60x40'
+      - series: 'smtp_relay_auth_total{job="mail-services",service="smtp-relay",result="unavailable"}'
+        values: '0+5x20'
+      - series: 'smtp_relay_rejections_total{job="mail-services",service="smtp-relay",stage="data",reason="upstream_unavailable"}'
+        values: '0+60x30'
+      - series: 'smtp_relay_rejections_total{job="mail-services",service="smtp-relay",stage="data",reason="infected"}'
+        values: '0 0 0 1 1 1'
+      - series: 'smtp_relay_certificate_expiry_timestamp_seconds{job="mail-services",service="smtp-relay"}'
+        values: '864000x120'
+      - series: 'gateway_api_key_requests_total{job="mail-services",service="gateway",result="invalid"}'
+        values: '0+60x40'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: BarridoDeCredencialesSMTP
+        exp_alerts:
+          - exp_labels:
+              severidad: media
+            exp_annotations:
+              resumen: "El relay SMTP rechaza 1 autenticaciones por segundo"
+              detalle: "Mas de 30 por minuto sostenidas: alguien prueba credenciales o una integracion quedo con una clave revocada. El registro de smtp-relay (credencial rechazada, bloqueo por fuerza bruta) da el usuario y la IP; los bloqueos duran SMTP_RELAY_AUTH_LOCK."
+      - eval_time: 15m
+        alertname: RelaySMTPSinComprobarCredenciales
+        exp_alerts:
+          - exp_labels:
+              severidad: alta
+            exp_annotations:
+              resumen: "El relay SMTP no puede comprobar credenciales"
+              detalle: "access-control no responde a la resolucion de claves: todo AUTH recibe 454 y las integraciones reintentan. Revisar access-control y API_KEY_HASH_KEY en su entorno."
+      - eval_time: 25m
+        alertname: RelaySMTPSinEntregar
+        exp_alerts:
+          - exp_labels:
+              severidad: alta
+            exp_annotations:
+              resumen: "El relay SMTP devuelve 451 a los mensajes (1 por segundo)"
+              detalle: "transactional o clamd (SMTP_RELAY_CLAMD_ADDR, red mail-scan) no responden: los mensajes esperan en las colas de los clientes y llegan tarde. smtp_relay_rejections_total{reason} dice cual de los dos."
+      - eval_time: 5m
+        alertname: MalwarePorElRelaySMTP
+        exp_alerts:
+          - exp_labels:
+              severidad: media
+            exp_annotations:
+              resumen: "El relay SMTP rechazo mensajes con malware"
+              detalle: "Una integracion de una empresa envia adjuntos infectados: equipo comprometido o clave filtrada. El registro de smtp-relay (adjunto infectado rechazado) da la empresa y la clave; revocarla corta el envio al momento."
+      - eval_time: 90m
+        alertname: CertificadoDelRelaySMTPPorCaducar
+        exp_alerts:
+          - exp_labels:
+              severidad: alta
+            exp_annotations:
+              resumen: "El certificado del relay SMTP caduca en menos de dos semanas"
+              detalle: "acme no lo renovo o smtp-relay-certs no lo copio al relay. Comprobar que ADDITIONAL_SAN de acme lleva el nombre del relay (SMTP_RELAY_HOSTNAME) y el registro de smtp-relay-certs."
+      - eval_time: 30m
+        alertname: ClavesDeAPIProbadas
+        exp_alerts:
+          - exp_labels:
+              severidad: media
+            exp_annotations:
+              resumen: "El gateway rechaza 1 claves de API invalidas por segundo"
+              detalle: "Alguien prueba claves en la API de envio o una integracion usa una revocada. access_control_api_key_resolutions_total{result} distingue claves inexistentes (unknown), con otro secreto (secret), revocadas o caducadas."
+
+  # Un fallo suelto no es un barrido, y un certificado a dos meses no avisa.
+  - interval: 1m
+    input_series:
+      - series: 'smtp_relay_auth_total{job="mail-services",service="smtp-relay",result="failed"}'
+        values: '0 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1'
+      - series: 'smtp_relay_certificate_expiry_timestamp_seconds{job="mail-services",service="smtp-relay"}'
+        values: '5184000x120'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: BarridoDeCredencialesSMTP
+        exp_alerts: []
+      - eval_time: 90m
+        alertname: CertificadoDelRelaySMTPPorCaducar
+        exp_alerts: []

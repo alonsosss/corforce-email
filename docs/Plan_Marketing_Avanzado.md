@@ -165,6 +165,21 @@ registro `043_capture_permissions.sql`, empresa `contacts/06_subscription_forms.
   implicito), autenticacion con credenciales SMTP por empresa, entrega a `transactional` (mismas reglas que la
   API), nunca por Postfix. ADR propio.
 
+Hecho (2026-09-23, rama de 3-G, sin desplegar; `docs/adr/0013-claves-de-api-y-relay-smtp.md`, filas de `gateway`,
+`access-control`, `transactional` y `smtp-relay` de `Arquitectura_Core_Force_Mail.md`, `Usuarios_Roles_y_Acceso.md` 4.1 y
+«Claves de API y relay SMTP» de `Operacion_Despliegue.md`). Migraciones: registro `044_access_control_api_keys.sql` (tablas y
+permisos en la reservada) y empresa `transactional/08_raw_messages.sql`.
+
+* Claves en access-control: `cfm_<prefijo>_<secreto>`, HMAC-SHA256 con `API_KEY_HASH_KEY` del almacen, alcance acotado al
+  creador en el alta y en cada uso, caducidad, revocacion inmediata (marca en Redis), ultimo uso y outbox. Web en Acceso,
+  Claves de API (el secreto solo se ve al crearla, con los datos de SMTP si `SMTP_RELAY_PUBLIC_HOST` esta puesta).
+* Gateway: `api_key_routes` en `routes.json` (enviar y leer el estado de un mensaje), cupo por clave, RBAC por alcance.
+* `smtp-relay` (servicio nuevo, `make new-service`, sin ruta en el gateway ni base): 2525 STARTTLS y 2465 TLS, AUTH PLAIN y
+  LOGIN con la clave, freno, cupos, ClamAV, `pkg/rawmail` y entrega a `POST /internal/transactional/raw-messages`, que sale
+  por SES con contenido Raw.
+* Pendiente de quien opera: la politica `ses-envio` al dia en AWS (`ses:SendRawEmail`, `ops/aws/setup-iam.sh`), el secreto en el almacen, `ADDITIONAL_SAN` con `smtp.core-force.com`, el DNS y el cortafuegos
+  (`Operacion_Despliegue.md`), y comprobar en el navegador la pagina de claves y un envio real por SMTP con SES.
+
 ## 5. Riesgos
 
 * 1-D toca el certificado que usan los motores: se despliega solo `acme-mail` y se comprueba que Postfix y
@@ -181,4 +196,4 @@ registro `043_capture_permissions.sql`, empresa `contacts/06_subscription_forms.
 | 1-D Dominio de seguimiento | Casi hecho (2026-09-23): DNS, certificado (con `AUTODISCOVER_SAN=n`), identidad verificada en SES y borde sirviendo `clics.core-force.com`; falta `SES_TRACKING_DOMAIN` en la pila (administrador de AWS) |
 | 2-E Comportamiento y automatizaciones | Desplegado en produccion (2026-09-24, `4bb639e`): migraciones aplicadas en las dos empresas, servicios sanos y sin errores. Hecho en rama, sin desplegar (2026-09-23): `contacts/05_engagement.sql`, `automations/03_branches_and_dates.sql`, sin registro (042 sin usar). Unitarias, integracion y `make e2e` con la apertura sembrada en la outbox (sin SES real) |
 | 2-F Captacion | Desplegado en produccion (2026-09-24, `4bb639e`): migraciones aplicadas en las dos empresas, servicios sanos y sin errores. Hecho en rama, sin desplegar (2026-09-23): formularios con doble opt-in obligatorio y anti abuso en `contacts`, paginas de aterrizaje en `templates`, rutas publicas en el gateway y web. Unitarias, integracion y `make e2e` |
-| 3-G API y SMTP | Pendiente |
+| 3-G API y SMTP | Hecho en rama, sin desplegar (2026-09-23): claves de API en access-control (`044`), gateway con `api_key_routes`, servicio `smtp-relay` (STARTTLS y TLS implicito, AUTH con la clave, ClamAV) y ruta de MIME crudo en `transactional` (`08_raw_messages.sql`, SES Raw). Unitarias, integracion y `make e2e` (API con clave, SMTP hasta la cola de transactional y revocacion; sin SES real) |

@@ -79,7 +79,8 @@ func (h *Handler) selfOrPerm(param, resource, action string) func(http.Handler) 
 func (h *Handler) internalOrPerm(resource, action string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if middleware.GetUserID(r.Context()) == "" || h.allowed(w, r, resource, action) {
+			internal := middleware.GetUserID(r.Context()) == "" && middleware.GetAPIKeyID(r.Context()) == ""
+			if internal || h.allowed(w, r, resource, action) {
 				next.ServeHTTP(w, r)
 			}
 		})

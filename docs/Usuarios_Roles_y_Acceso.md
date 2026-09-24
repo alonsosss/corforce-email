@@ -264,6 +264,36 @@ renderizar o previsualizar una plantilla, previsualizar un segmento) se declaran
 Las denegaciones se cuentan en `rbac_denials_total` y se guardan en
 `access_control.access_denials`.
 
+### 4.1 Claves de API de empresa (V, 2026-09-23)
+
+Segunda forma de autenticarse, para integraciones y no para personas (`docs/adr/0013-claves-de-api-y-relay-smtp.md`).
+Una clave es `cfm_<prefijo>_<secreto>`: el prefijo (12 caracteres) es publico y es el usuario SMTP; el secreto (256
+bits) solo se muestra al crearla y access-control guarda su HMAC-SHA256 con la llave `API_KEY_HASH_KEY` del almacen.
+
+* **Quien la crea.** Quien tiene `access/api_keys/create` (el `tenant_admin` siempre), en `POST /api/v1/access/api-keys`
+  y con step-up si `STEP_UP_MODE=enforce`. El alcance son permisos exactos del catalogo marcados `api_key_grantable`
+  (hoy `transactional/messages/create` y `transactional/messages/read`, `044_access_control_api_keys.sql`) y nunca uno
+  que el creador no tenga (403). Caducidad opcional, de una hora a cinco anos; hasta 100 vigentes por empresa. Verla y
+  revocarla exigen `access/api_keys/read` y `access/api_keys/revoke`. Una clave no gestiona claves ni llega a las rutas
+  internas de access-control (403 aunque llegara hasta ellas).
+* **Donde vale.** Solo en las rutas de `api_key_routes` de `services/gateway/routes.json` (hoy enviar y leer el estado
+  de un mensaje transaccional) y como credencial de `smtp-relay` si lleva `transactional/messages/create`. En cualquier
+  otra ruta el gateway responde 401 `API_KEY_ROUTE_NOT_ALLOWED` sin tratarla como JWT.
+* **Que se inyecta.** Sin usuario ni roles: `X-Tenant-ID`, `X-Api-Key-ID` y `X-Api-Key-Scopes` con el alcance
+  efectivo, cabeceras que el gateway borra de toda peticion de cliente (`StripInternalHeaders`). La capa 2 exige que el
+  alcance cubra el modulo y la accion del metodo en cualquier modo del RBAC; la capa 3 (`pkg/authz`) decide solo con
+  ese alcance, nunca con la politica de una persona, y `RequireInternalCaller` e `internalOrPerm` no toman una clave por
+  una llamada entre servicios.
+* **Limites.** El alcance efectivo se recalcula en cada resolucion: el de la clave acotado a lo que su creador tiene hoy
+  (un `tenant_admin` lo tiene todo) y a los modulos contratados; si el creador pierde el permiso, se desactiva o se
+  borra, o la empresa deja de estar activa, la clave deja de valer. La revocacion es inmediata: access-control deja una
+  marca en Redis que el gateway y el relay consultan en cada uso de su cache (`API_KEY_CACHE_TTL`, 30 s; sin Redis, la
+  revocacion llega al vencer la cache). Cupo por clave en el gateway (`API_KEY_RATE_LIMIT_PER_MIN`) y en el relay
+  (`SMTP_RELAY_MESSAGES_PER_MIN_PER_KEY`). Ultimo uso (fecha e IP) como mucho una vez por minuto.
+* **Auditoria.** Alta y revocacion van por la outbox del registro (`access.api_key.created`, `access.api_key.revoked`,
+  sin secreto ni hash) al rastro de la empresa; cada escritura del API con clave lleva `api_key_id` en `audit.api.write`
+  y cada mensaje su `api_key_id` en `transactional.messages`.
+
 ## 5. Cuentas de correo frente a usuarios de la plataforma (V)
 
 Un **usuario** de la plataforma (identity) administra; un **buzon** (`mail.mailboxes`) es

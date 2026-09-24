@@ -6,12 +6,14 @@ Convencion de subject: `<dominio>.<entidad>.<accion>`. Un subject tiene UN dueno
 Publicar incluye encolar en la outbox (`outbox.Enqueue`); un consumidor con comodin
 (`*`, `>`) figura en cada subject publicado que recibe.
 
-Resumen: 92 publicaciones, 43 suscripciones, 92 subjects distintos.
+Resumen: 94 publicaciones, 43 suscripciones, 94 subjects distintos.
 
 ## Cruce por subject (dueno -> consumidores)
 
 | Subject | Publica | Consumen |
 |---|---|---|
+| `access.api_key.created` | access-control | - |
+| `access.api_key.revoked` | access-control | - |
 | `audit.api.write` | gateway | audit |
 | `audit.chain.anchored` | audit | - |
 | `audit.security.alert` | audit | - |
@@ -108,6 +110,7 @@ Resumen: 92 publicaciones, 43 suscripciones, 92 subjects distintos.
 ## Por servicio
 
 ### access-control
+- Publica: `access.api_key.created`, `access.api_key.revoked`
 - Consume: `identity.user.deleted`
 
 ### analytics

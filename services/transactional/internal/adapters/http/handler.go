@@ -105,6 +105,7 @@ func (h *Handler) Routes() http.Handler {
 		r.Post("/transactional/messages", h.InternalCreateMessages)
 		r.Post("/transactional/batch", h.MarketingBatch)
 		r.Post("/transactional/test-send", h.TemplateTestSend)
+		r.Post("/transactional/raw-messages", h.InternalRawMessage)
 	})
 	return r
 }
@@ -155,6 +156,9 @@ func (h *Handler) CreateMessages(w http.ResponseWriter, r *http.Request) {
 	cmd := req.command(tenantID, idempotencyKey(r, req))
 	if uid, err := uuid.Parse(middleware.GetUserID(r.Context())); err == nil {
 		cmd.CreatedBy = &uid
+	}
+	if keyID, err := uuid.Parse(middleware.GetAPIKeyID(r.Context())); err == nil {
+		cmd.APIKeyID = &keyID
 	}
 	h.createMessages(w, r, cmd)
 }

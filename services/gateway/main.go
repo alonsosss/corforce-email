@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/alonsosss/corforce-email/pkg/apikey"
 	"github.com/alonsosss/corforce-email/pkg/auth"
 	"github.com/alonsosss/corforce-email/pkg/config"
 	"github.com/alonsosss/corforce-email/pkg/middleware"
@@ -103,7 +104,7 @@ func main() {
 	// navegador. El bloqueo por cuenta ya frena el ataque a UNA cuenta; esto ademas
 	// frena el barrido de MUCHAS cuentas desde una misma IP. El valor por defecto
 	// aguanta el pico de una oficina tras NAT.
-	rateStore, err := newRateLimitStore(logger)
+	rateStore, rdb, err := newRateLimitStore(logger)
 	if err != nil {
 		log.Fatalf("redis: %v", err)
 	}
@@ -111,6 +112,18 @@ func main() {
 	webhookLimiter := newWebhookLimiter(rateStore, st.webhookPerMin, logger)
 
 	identity := reverseProxy(table.serviceURL("identity"), internalToken)
+
+	keySettings, err := loadAPIKeySettings()
+	if err != nil {
+		log.Fatal(err)
+	}
+	apiKeys, err := newAPIKeyGate(table,
+		apikey.NewResolver(table.serviceURL("access-control"), internalToken, keySettings.cacheTTL, apikey.NewRedisRevocations(rdb)),
+		middleware.NewSharedRateLimiter(rateStore, apiKeyLimiterName, keySettings.ratePerMin, time.Minute, logger),
+		logger)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
 		response.JSON(w, http.StatusOK, map[string]string{"status": "ok"})
@@ -193,7 +206,8 @@ func main() {
 		})
 
 		r.Group(func(r chi.Router) {
-			r.Use(jwtAuth.Authenticate)
+			// Las rutas de api_key_routes admiten tambien una clave de API de empresa (apikeys.go).
+			r.Use(apiKeys.authenticate(jwtAuth.Authenticate))
 			r.Use(enforcer.sessionCheck)
 			r.Use(enforcer.middleware)
 			// Rastro de auditoria de escrituras: publica un evento por cada
@@ -484,6 +498,12 @@ func reverseProxyWith(target, internalToken string, mode proxyMode) http.Handler
 		}
 		if roles := middleware.GetRoles(req.Context()); len(roles) > 0 {
 			req.Header.Set("X-User-Roles", strings.Join(roles, ","))
+		}
+		if keyID := middleware.GetAPIKeyID(req.Context()); keyID != "" {
+			req.Header.Set(middleware.HeaderAPIKeyID, keyID)
+			req.Header.Set(middleware.HeaderAPIKeyScopes, middleware.FormatAPIKeyScopes(middleware.GetAPIKeyScopes(req.Context())))
+			// La clave ya se consumio aqui: el servicio no la recibe.
+			req.Header.Del("Authorization")
 		}
 		if internalToken != "" {
 			req.Header.Set("X-Gateway-Token", internalToken)

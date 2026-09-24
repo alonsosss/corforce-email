@@ -108,7 +108,17 @@ func (s *Sender) Send(ctx context.Context, email domain.OutgoingEmail) (string, 
 // BuildInput arma la peticion SendEmail: contenido simple, remitente con nombre, etiquetas
 // tenant_id y message_id (por ellas se atribuye cada evento de SES) y las cabeceras de
 // baja RFC 8058 cuando el mensaje es dable de baja.
+//
+// Un mensaje de SMTP (Raw) sale con su MIME tal cual: los destinatarios son el sobre y las
+// cabeceras las trae el propio mensaje, ya sin las X-SES-* que cambiarian el carril.
 func BuildInput(email domain.OutgoingEmail, configSet string) *sesv2.SendEmailInput {
+	if len(email.Raw) > 0 {
+		return withTags(&sesv2.SendEmailInput{
+			FromEmailAddress: aws.String(email.From),
+			Destination:      &types.Destination{ToAddresses: email.To},
+			Content:          &types.EmailContent{Raw: &types.RawMessage{Data: email.Raw}},
+		}, email, configSet)
+	}
 	body := &types.Body{}
 	if email.HTML != "" {
 		body.Html = &types.Content{Data: aws.String(email.HTML), Charset: aws.String("UTF-8")}
@@ -138,10 +148,16 @@ func BuildInput(email domain.OutgoingEmail, configSet string) *sesv2.SendEmailIn
 		},
 		ReplyToAddresses: email.ReplyTo,
 		Content:          &types.EmailContent{Simple: msg},
-		EmailTags: []types.MessageTag{
-			{Name: aws.String("tenant_id"), Value: aws.String(email.TenantID.String())},
-			{Name: aws.String("message_id"), Value: aws.String(email.MessageID.String())},
-		},
+	}
+	return withTags(in, email, configSet)
+}
+
+// withTags anade las etiquetas tenant_id y message_id (por ellas se atribuye cada evento de SES),
+// las propias del mensaje y el configuration set del carril.
+func withTags(in *sesv2.SendEmailInput, email domain.OutgoingEmail, configSet string) *sesv2.SendEmailInput {
+	in.EmailTags = []types.MessageTag{
+		{Name: aws.String("tenant_id"), Value: aws.String(email.TenantID.String())},
+		{Name: aws.String("message_id"), Value: aws.String(email.MessageID.String())},
 	}
 	for name, value := range email.Tags {
 		if name == "tenant_id" || name == "message_id" {

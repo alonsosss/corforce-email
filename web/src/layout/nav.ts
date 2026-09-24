@@ -1,5 +1,6 @@
 import type { ComponentType } from 'react';
 import { MODULES, type ModuleName } from '@/access/modules';
+import { PERMISSIONS, type PermissionTripleConst } from '@/access/permissions';
 import { SYSTEM_ROLES, type SystemRole } from '@/access/roles';
 import type { Access } from '@/access/useAccess';
 import type { MessageKey } from '@/i18n';
@@ -21,6 +22,7 @@ import {
   IconGlobe,
   IconHome,
   IconInbox,
+  IconKey,
   IconMailOpen,
   IconLayers,
   IconLayout,
@@ -47,6 +49,8 @@ export interface NavItem {
   module?: ModuleName;
   /** Rol del sistema exigido por el handler. El superadmin siempre pasa. */
   role?: SystemRole;
+  /** Permiso concreto de lectura cuando el modulo solo no basta para ver la pantalla. */
+  permission?: PermissionTripleConst;
 }
 
 export interface NavGroup {
@@ -179,6 +183,13 @@ export const NAV: NavGroup[] = [
     items: [
       { to: paths.roles, labelKey: 'nav.roles', icon: IconShieldCheck, module: MODULES.access },
       { to: paths.denials, labelKey: 'nav.denials', icon: IconShieldOff, module: MODULES.access },
+      {
+        to: paths.apiKeys,
+        labelKey: 'nav.apiKeys',
+        icon: IconKey,
+        module: MODULES.access,
+        permission: PERMISSIONS.apiKeys.read,
+      },
     ],
   },
   {
@@ -259,8 +270,8 @@ export const NAV: NavGroup[] = [
 ];
 
 export function canSee(
-  access: Pick<Access, 'hasModule' | 'hasRole' | 'isSuperadmin'>,
-  item: { module?: ModuleName; role?: SystemRole },
+  access: Pick<Access, 'hasModule' | 'hasRole' | 'isSuperadmin' | 'can'>,
+  item: { module?: ModuleName; role?: SystemRole; permission?: PermissionTripleConst },
 ): boolean {
   // Los permisos de alcance plataforma (empresas, celdas, catalogo de planes) nunca se
   // conceden a ningun rol en access_control.role_permissions -ni siquiera al superadmin-,
@@ -271,11 +282,12 @@ export function canSee(
   // bloqueaba la ruta con "sin permiso".
   if (item.module && !access.isSuperadmin && !access.hasModule(item.module)) return false;
   if (item.role && !access.isSuperadmin && !access.hasRole(item.role)) return false;
+  if (item.permission && !access.can(...item.permission)) return false;
   return true;
 }
 
 export function visibleNav(
-  access: Pick<Access, 'hasModule' | 'hasRole' | 'isSuperadmin'>,
+  access: Pick<Access, 'hasModule' | 'hasRole' | 'isSuperadmin' | 'can'>,
 ): NavGroup[] {
   return NAV.map((group) => ({
     ...group,

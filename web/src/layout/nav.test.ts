@@ -7,11 +7,13 @@ import { canSee, NAV, visibleNav } from './nav';
 
 const allItems = NAV.flatMap((group) => group.items);
 
-function accessWith(modules: string[], roles: string[] = []) {
+function accessWith(modules: string[], roles: string[] = [], permissions?: string[]) {
   return {
     hasModule: (m: string) => modules.includes(m),
     hasRole: (r: string) => roles.includes(r),
     isSuperadmin: roles.includes(SYSTEM_ROLES.superadmin),
+    can: (module: string, resource: string, action: string) =>
+      permissions === undefined || permissions.includes(`${module}/${resource}/${action}`),
   };
 }
 
@@ -156,6 +158,18 @@ describe('menu frente a rutas', () => {
       const detailScreen = SCREENS.find((s) => s.path === detail);
       expect(detailScreen?.module, detail).toBe(listScreen?.module);
     }
+  });
+});
+
+describe('entradas que exigen un permiso concreto', () => {
+  it('las claves de API solo se ven con access/api_keys/read, no con el modulo solo', () => {
+    const visible = (permissions: string[]) =>
+      visibleNav(accessWith([MODULES.access], [], permissions))
+        .flatMap((g) => g.items)
+        .map((i) => i.to);
+    expect(visible(['access/roles/read'])).not.toContain(paths.apiKeys);
+    expect(visible(['access/roles/read'])).toContain(paths.roles);
+    expect(visible(['access/api_keys/read'])).toContain(paths.apiKeys);
   });
 });
 

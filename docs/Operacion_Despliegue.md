@@ -612,7 +612,7 @@ buzones dio 500 y `mail-auth` no pudo leer el buzon del remitente de las alertas
   que no lleva las etiquetas `tenant_id` y `message_id` (no lo envio `transactional`) se
   responde con 200 y se ignora: un 4xx solo provoca los reintentos de SNS.
   La credencial de envio es el usuario `core-force-mail-ses` de `ops/aws/setup-iam.sh`, con la
-  politica `ses-envio`: solo `ses:SendEmail`, desde cualquier identidad verificada de la cuenta
+  politica `ses-envio`: solo `ses:SendEmail` y `ses:SendRawEmail` (el SendEmail con contenido Raw del relay SMTP se autoriza como `ses:SendRawEmail`), desde cualquier identidad verificada de la cuenta
   (cada empresa verifica la suya) y solo por los dos conjuntos de la pila, porque lo que sale
   por otro conjunto sale sin eventos y sus rebotes no llegan a `suppression`. En el servidor
   propio no hay rol de instancia: sus claves van al almacen de secretos
@@ -1119,8 +1119,9 @@ ella. Tras un reinicio, comprobar con `ops/maintenance/esperar-sanos.sh --proyec
 ### Red y cortafuegos
 
 No hay Security Group. UFW solo gobierna el host (SSH); los puertos que publica Docker no pasan
-por UFW. Públicos quedan 80 y 443 (`edge-proxy`, `EDGE_BIND_ADDRESS`) y los de correo de
-`deploy/mail`. Postgres, Redis, NATS, el gateway y los servicios solo en `127.0.0.1`; MinIO, en ningún
+por UFW. Públicos quedan 80 y 443 (`edge-proxy`, `EDGE_BIND_ADDRESS`), los de correo de
+`deploy/mail` y, cuando se abra, el relay SMTP de envío (2525 y 2465, `SMTP_RELAY_BIND_ADDRESS`; sección
+«Claves de API y relay SMTP»). Postgres, Redis, NATS, el gateway y los servicios solo en `127.0.0.1`; MinIO, en ningún
 puerto del host (solo la red `mail-internal`). Si el
 proveedor ofrece cortafuegos externo, limitar 80 y 443 a los rangos de Cloudflare cierra el
 acceso directo también en la red.
@@ -1138,12 +1139,13 @@ el OOM, pero con ClamAV cargando la latencia se degrada.
 
 ### Presupuesto de recursos
 
-`docker-compose.selfhosted.yml` da a cada servicio Go (22) `mem_limit`, `GOMEMLIMIT` (80 % del techo, para que el
+`docker-compose.selfhosted.yml` da a cada servicio Go (24) `mem_limit`, `GOMEMLIMIT` (80 % del techo, para que el
 recolector actúe antes que el OOM del cgroup), `pids_limit: 256`, `user: 65532:65532`, `read_only: true`,
 `cap_drop: [ALL]` y `stop_grace_period: 40s` (`pkg/server` espera hasta 30 s a las peticiones en vuelo tras SIGTERM; con
 los 10 s por defecto de compose el kernel las mataba a medias en cada despliegue). Ninguno escribe en disco (imágenes
 `scratch`, sin `CreateTemp` ni `WriteFile`), así que no hay tmpfs. `ops/scaffold/check-selfhosted-profile.sh` falla si
-un servicio Go pierde alguno de ellos o si la suma de `mem_limit` del perfil pasa de 6144 MiB (la de hoy: 6016). La rotación de logs la da
+un servicio Go pierde alguno de ellos o si la suma de `mem_limit` del perfil pasa de 6400 MiB (la de hoy: 6288; el techo
+subió de 6144 con el relay SMTP, 3-G: 256 MiB de `smtp-relay` y 16 de `smtp-relay-certs`). La rotación de logs la da
 el demonio (`ops/server-template/config/daemon.json`: `json-file`, 20 MiB x 5, comprimido), no cada servicio. No se fija
 límite de CPU: en 4 vCPU compartidas con la base y los motores, un tope por contenedor solo convierte una ráfaga en
 latencia (`mail-migration-runner` conserva el suyo).
@@ -1152,15 +1154,15 @@ latencia (`mail-migration-runner` conserva el suyo).
 |---|---|---|
 | 128 MiB | access-control, analytics, automations, billing, domain-service, identity, mail-directory, organization, reputation, scheduler, suppression, templates | En reposo miden 6 a 15 MiB (medido con `docker stats` sobre la pila local, 13 h de uso); 10x de margen |
 | 192 MiB | audit, campaigns, gateway, mail-auth, mail-migration, transactional | Cuerpos de petición y ráfagas de conexiones (gateway, mail-auth); lotes de campañas y de correo transaccional |
-| 256 MiB | contacts, mail-dav | Importación de contactos; un `sync-collection` inicial materializa el calendario entero (medido: 20000 eventos de 350 bytes, +26 MiB de heap; la respuesta la acota `MAIL_DAV_MAX_RESPONSE_BYTES`, 16 MiB, y el buzón `MAIL_DAV_MAX_MAILBOX_BYTES`, 64 MiB) |
+| 256 MiB | contacts, mail-dav, smtp-relay | Importación de contactos; un `sync-collection` inicial materializa el calendario entero (medido: 20000 eventos de 350 bytes, +26 MiB de heap; la respuesta la acota `MAIL_DAV_MAX_RESPONSE_BYTES`, 16 MiB, y el buzón `MAIL_DAV_MAX_MAILBOX_BYTES`, 64 MiB); el relay lee a la vez hasta `SMTP_RELAY_MAX_CONCURRENT_DATA` mensajes (4 de hasta 10 MiB por defecto) y cada uno ocupa unas cuatro veces su tamaño (DATA, JSON hacia transactional, análisis): subir el tamaño o la concurrencia exige subir este techo |
 | 384 MiB | mail-security | Recibe de Rspamd el mensaje entero en `/pipe` (`MAIL_QUARANTINE_MAX_BODY_MB`, 50 por defecto) |
 | 512 MiB | webmail | Mensajes de hasta 25 MiB que se leen, se codifican en MIME y se envían |
 
 Resto de la plataforma: `pgbouncer` 128 MiB (medido 2,5 MiB), `redis` 640 MiB (`maxmemory 512mb` más la copia del AOF; medido
 4 MiB), `nats` 256 MiB (medido 13 MiB), `web` 64 MiB (medido 11 MiB), `edge-proxy` 384 MiB, `minio` 192 MiB (medido 47 a 52 MiB) y sus dos trabajos de
 arranque, `minio-init` 128 MiB (`mc` supera 64 MiB al adjuntar la política: con ese techo lo mataba el OOM) y
-`minio-volumen` 32 MiB, que salen en segundos. Suma de techos de la plataforma: **6016 MiB**, de los que 160 son de
-trabajos que no quedan corriendo. Pila de observabilidad: Prometheus 768, Grafana 384, Loki 512, Promtail 256, Alertmanager 128,
+`minio-volumen` 32 MiB, que salen en segundos, y `smtp-relay-certs` 16 MiB (copia el certificado del relay). Suma de techos de
+la plataforma: **6288 MiB**, de los que 160 son de trabajos que no quedan corriendo. Pila de observabilidad: Prometheus 768, Grafana 384, Loki 512, Promtail 256, Alertmanager 128,
 node-exporter 64 y docker-socket-ro 64 = 2176 MiB.
 
 **Lo que no lleva límite, y por qué.** Postgres (`shared_buffers` 512 MB más hasta 197 procesos de servidor: un OOM de
@@ -1380,6 +1382,66 @@ publica y el iframe; sin ella las paginas responden 503 `PAGES_UNAVAILABLE`.
 Orden de despliegue: registro (`043_capture_permissions.sql`) -> empresa (`contacts/06_subscription_forms.sql`,
 `templates/04_landing_pages.sql`) -> `contacts` (con `REDIS_PASSWORD` entregado) -> `templates` -> `gateway` -> `web`. Un
 gateway anterior no tiene las rutas publicas nuevas (404) ni la ruta `/p/`, que caeria en la aplicacion web.
+
+### Claves de API y relay SMTP
+
+`docs/Plan_Marketing_Avanzado.md`, 3-G, y `docs/adr/0013-claves-de-api-y-relay-smtp.md`. Las empresas crean claves de API
+en la web (Acceso, Claves de API); con ellas envían por la API (`POST /api/v1/transactional/messages`, `Authorization:
+Bearer cfm_...`) o por SMTP autenticado en `smtp-relay` (usuario = prefijo de la clave, contraseña = la clave), que
+entrega a `transactional` y sale por SES como el resto. **No pasa por Postfix ni por los motores de la celda.**
+
+**Secretos.** `API_KEY_HASH_KEY` (64 hex, `openssl rand -hex 32`; obligatoria: sin ella access-control no arranca fuera de
+development y test) y `API_KEY_HASH_KEYS_OLD` (opcional), solo para access-control (`secret-keys.txt`, `reparto.tsv`). Se
+cargan en el almacén con `ops/security/secrets/add-secret.sh API_KEY_HASH_KEY` **antes** de desplegar access-control. Rotar:
+la nueva en `API_KEY_HASH_KEY` y la anterior en `API_KEY_HASH_KEYS_OLD`; cada clave usada se vuelve a firmar con la activa, y
+retirar la vieja invalida las que no se usaron desde la rotación (se ven en la lista por su último uso).
+
+**Variables (`.env`).** Gateway: `API_KEY_RATE_LIMIT_PER_MIN` (600 por clave y minuto) y `API_KEY_CACHE_TTL` (30s; la
+revocación llega antes por la marca `apikey:revoked:<id>` en el Redis de la plataforma). access-control: `SMTP_RELAY_PUBLIC_HOST`
+(p. ej. `smtp.core-force.com`; vacía, la web no muestra SMTP), `SMTP_RELAY_PUBLIC_STARTTLS_PORT` y `SMTP_RELAY_PUBLIC_TLS_PORT`.
+smtp-relay: `SMTP_RELAY_HOSTNAME` (el nombre del certificado), `SMTP_RELAY_BIND_ADDRESS` (127.0.0.1 por defecto: el relay no
+queda expuesto hasta que se decide), `SMTP_RELAY_CLAMD_ADDR` (clamd:3310, red `mail-scan`, obligatoria fuera de development y
+test), tamaño (`SMTP_RELAY_MAX_MESSAGE_BYTES`, 10 MiB, hasta los 40 MiB de SES), destinatarios (50), conexiones (200 por
+puerto), mensajes en proceso (4), cupos por minuto (60 conexiones por IP, 300 mensajes por clave, 600 por IP), freno de AUTH (10
+fallos por usuario e IP o 30 por IP en 15 min bloquean 30 min) y tiempos (`SMTP_RELAY_READ_TIMEOUT`, `SMTP_RELAY_DELIVER_TIMEOUT`,
+2m). Todas en `.env.example`.
+
+**Certificado.** El relay sirve el certificado público de acme (volumen `mail_ssl-vol` de `deploy/mail`). Su clave es 0600 de
+root y el relay no corre como root: en el perfil autoalojado `smtp-relay-certs` (uid 0 sin capacidades, sin red) copia cada
+`SMTP_RELAY_CERT_SYNC_INTERVAL` (300 s) `cert.pem` y `key.pem` al volumen en memoria `smtp-relay-tls` con el grupo del relay
+(0640), y el relay lo recarga al cambiar (`selfhosted/smtp-relay/sync-cert.sh`). El nombre del relay tiene que ir en el
+certificado: añadir `smtp.core-force.com` a `ADDITIONAL_SAN` de acme (`deploy/mail`) y dejar que acme lo renueve; la alerta
+`CertificadoDelRelaySMTPPorCaducar` avisa a dos semanas de la caducidad.
+
+**DNS (sin aplicar).** Un registro `A` (y `AAAA` si el servidor tiene IPv6) `smtp.core-force.com` hacia la IP pública del
+servidor (hoy 89.58.10.80), **sin proxy de Cloudflare** (nube gris: Cloudflare no pasa SMTP). No hace falta MX: el relay no
+recibe correo de internet, solo de las integraciones autenticadas. SPF y DKIM no cambian: el correo sale por SES con la identidad
+verificada de cada empresa.
+
+**Cortafuegos (sin aplicar).** Docker publica sus puertos por delante de UFW, así que la regla de UFW no basta: el control es
+`SMTP_RELAY_BIND_ADDRESS` y, si se quiere acotar por origen, la cadena `DOCKER-USER`. Pasos:
+
+1. `ufw allow 2525/tcp comment 'smtp-relay STARTTLS'` y `ufw allow 2465/tcp comment 'smtp-relay TLS'` (documentan la
+   intención y cubren un relay que algún día corra fuera de Docker).
+2. `SMTP_RELAY_BIND_ADDRESS=0.0.0.0` en el `.env` del servidor y desplegar `smtp-relay` (y `smtp-relay-certs`).
+3. Para limitar a los rangos de un cliente concreto: `iptables -I DOCKER-USER -p tcp -m multiport --dports 2525,2465 ! -s
+   <rango> -j DROP` (persistido como el resto de reglas del host). Sin eso, el freno, los cupos y la alerta
+   `BarridoDeCredencialesSMTP` son la defensa ante un barrido.
+4. Comprobar desde fuera: `openssl s_client -starttls smtp -connect smtp.core-force.com:2525 -servername smtp.core-force.com`
+   y `openssl s_client -connect smtp.core-force.com:2465`, que el certificado sea el de acme y que `EHLO` antes de STARTTLS no
+   anuncie `AUTH`.
+
+**IAM.** El SendEmail con contenido Raw (lo que envía el relay) lo autoriza SES como `ses:SendRawEmail`, no como
+`ses:SendEmail` (comprobado con la respuesta `not authorized to perform 'ses:SendRawEmail'`): quien administra la cuenta de
+AWS vuelve a aplicar la política `ses-envio` con `ops/aws/setup-iam.sh` (ya la concede) antes de abrir el relay; sin ella
+los mensajes de SMTP quedan `failed` con `AccessDeniedException`.
+
+**Orden de despliegue.** Política `ses-envio` al día en AWS -> secreto `API_KEY_HASH_KEY` en el almacén -> registro (`044_access_control_api_keys.sql`) -> empresa
+(`transactional/08_raw_messages.sql`) -> `access-control` -> `transactional` -> `audit` (guarda `api_key_id` en el rastro) ->
+`gateway` -> `web` -> `smtp-relay-certs` y `smtp-relay` (tras el certificado con el nombre del relay) -> DNS y cortafuegos. Un
+gateway sin desplegar responde 401 a una clave como a un JWT inválido; un relay sin transactional nuevo recibe 404 y responde
+451. Métricas: `gateway_api_key_requests_total`, `access_control_api_key_resolutions_total` y `smtp_relay_*`; alertas del grupo
+`relay-smtp-y-claves-de-api`.
 
 ### Correo del sistema (recuperacion de contrasena)
 

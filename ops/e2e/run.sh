@@ -6,7 +6,8 @@
 # planes y derechos de billing, autorizacion de envio en reputation, alcance de permisos,
 # contactos con su consentimiento y audiencia, campanas por la via de marketing de
 # transactional (hasta su rechazo por remitente sin verificar, sin SES), el doble opt-in por
-# automations, el panel de analitica y el rechazo del token de una cuenta borrada o desactivada. Los servicios de la celda corren con la credencial
+# automations, el panel de analitica, las claves de API en la API de envio y en el relay SMTP (STARTTLS y TLS
+# implicito con AUTH, hasta transactional) y el rechazo del token de una cuenta borrada o desactivada. Los servicios de la celda corren con la credencial
 # propia de la celda (ops/db/cell-service-role.sh), sin la de plataforma. domain-service verifica
 # contra un DNS de la prueba (ops/e2e/dns_prueba.py), reclama cada dominio en el indice global de
 # organization y lo activa en la celda de su empresa; el webmail de cada celda recibe a sus buzones
@@ -58,7 +59,7 @@ trap limpiar EXIT
 echo "== Infraestructura desechable"
 e2e_infra_up || exit 1
 
-SERVICES=(organization identity access-control gateway mail-directory mail-auth domain-service mail-security templates suppression billing reputation contacts scheduler analytics transactional campaigns automations webmail observability)
+SERVICES=(organization identity access-control gateway mail-directory mail-auth domain-service mail-security templates suppression billing reputation contacts scheduler analytics transactional campaigns automations webmail observability smtp-relay)
 echo "== Compilacion (${SERVICES[*]})"
 e2e_compilar "${SERVICES[@]}" || exit 1
 
@@ -118,7 +119,7 @@ declare -A PORT=(
   [identity]=$((BASE + 1)) [access-control]=$((BASE + 2)) [organization]=$((BASE + 3))
   [mail-directory]=$((BASE + 40)) [mail-auth]=$((BASE + 41)) [mail-security]=$((BASE + 42)) [domain-service]=$((BASE + 43)) [webmail]=$((BASE + 44))
   [suppression]=$((BASE + 46)) [templates]=$((BASE + 47)) [transactional]=$((BASE + 45)) [contacts]=$((BASE + 50)) [campaigns]=$((BASE + 52)) [automations]=$((BASE + 51)) [analytics]=$((BASE + 53)) [reputation]=$((BASE + 54)) [billing]=$((BASE + 55)) [scheduler]=$((BASE + 33))
-  [gateway]=$((BASE + 80)) [observability]=$((BASE + 59))
+  [gateway]=$((BASE + 80)) [observability]=$((BASE + 59)) [smtp-relay]=$((BASE + 71))
 )
 MAPS_PORT=$((BASE + 81))
 AUTH_TLS_PORT=$((BASE + 82))
@@ -149,7 +150,7 @@ export CLOUDFLARE_API_URL="http://127.0.0.1:$CF_PORT"
 export API_ORIGIN="http://localhost:${PORT[gateway]}" PUBLIC_BASE_URL="http://localhost:${PORT[gateway]}"
 # Direcciones internas: las que el gateway lee de routes.json por <SERVICIO>_HOST(_PORT) y
 # las que los servicios usan entre si.
-for s in identity access-control organization mail-directory mail-security domain-service suppression templates billing reputation contacts scheduler analytics transactional campaigns automations webmail observability; do
+for s in identity access-control organization mail-directory mail-security domain-service suppression templates billing reputation contacts scheduler analytics transactional campaigns automations webmail observability smtp-relay; do
   var="$(echo "$s" | tr 'a-z-' 'A-Z_')_HOST"
   export "$var=127.0.0.1" "${var}_PORT=${PORT[$s]}"
 done
@@ -168,6 +169,11 @@ export SCHEDULER_URL="http://127.0.0.1:${PORT[scheduler]}"
 # SES sin credenciales: la prueba nunca llega a enviar (el remitente no esta verificado), y
 # el cliente de AWS solo pide credenciales al enviar.
 export SES_REGION=us-east-1 SES_CONFIG_SET_TRANSACTIONAL=cfm-transactional SES_CONFIG_SET_MARKETING=cfm-marketing
+# La prueba nunca habla con AWS: sin las credenciales del anfitrion (su ~/.aws, el rol de EC2) y con SES apuntado a un
+# puerto cerrado, un mensaje que llegue a la cola (el del relay SMTP) falla como transitorio sin salir de la maquina.
+unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_PROFILE
+export AWS_SHARED_CREDENTIALS_FILE=/dev/null AWS_CONFIG_FILE=/dev/null AWS_EC2_METADATA_DISABLED=true
+export AWS_ENDPOINT_URL_SESV2="http://127.0.0.1:$((BASE + 74))"
 export PLATFORM_FROM_EMAIL=no-reply@platform.test PLATFORM_FROM_NAME="Core Force Mail" PLATFORM_FROM_ALLOW_UNVERIFIED=false
 export CAMPAIGNS_TICK=1s
 # El anuncio de caducidades de suppression cada segundo: la prueba de una exclusion manual que
@@ -548,6 +554,97 @@ expect "un lote dentro del limite pasa" \
 R=$(interno "${PORT[reputation]}/internal/reputation/authorize" '{"class":"marketing","count":2}')
 expect "el siguiente lote choca con el limite por hora" "$(echo "$R" | jget data.reason)" "rate_limited"
 [[ "$(echo "$R" | jget data.retry_after_seconds)" =~ ^[1-9][0-9]*$ ]] && ok "y trae el tiempo de espera" || mal "sin retry_after_seconds: ${R:0:200}"
+
+echo "== Claves de API y relay SMTP (access-control -> gateway / smtp-relay -> transactional)"
+# La empresa crea sus claves en access-control por el gateway; el secreto solo sale en el alta. Con una clave
+# se llama a la API de envio (lista cerrada de rutas del gateway) y se autentica en smtp-relay, que entrega
+# el MIME a transactional. Sin SES real: un remitente sin verificar se rechaza (550) y uno de un dominio de
+# envio sembrado en la proyeccion se encola con su MIME. Sin clamd en esta prueba: un adjunto recibe 451.
+clave() {
+  curl -s -X POST "$GW/access/api-keys/" -H "$A2" -H 'Content-Type: application/json' \
+    -d "{\"name\":\"$1\",\"scopes\":[$2]}"
+}
+ENVIO='{"module":"transactional","resource":"messages","action":"create"}'
+LECTURA='{"module":"transactional","resource":"messages","action":"read"}'
+K1=$(clave "Tienda en linea" "$ENVIO,$LECTURA")
+K1_SECRET=$(echo "$K1" | jget data.secret)
+K1_PREFIX=$(echo "$K1" | jget data.key.prefix)
+K1_ID=$(echo "$K1" | jget data.key.id)
+[[ "$K1_SECRET" == cfm_"$K1_PREFIX"_* ]] && ok "alta de una clave de API: el secreto sale una vez" || mal "alta de clave: ${K1:0:300}"
+K2_SECRET=$(clave "Solo lectura" "$LECTURA" | jget data.secret)
+lacks "la lista nunca lleva el secreto" "$(curl -s "$GW/access/api-keys/" -H "$A2")" "$K1_SECRET"
+expect "en la base solo queda su hash" \
+  "$(sql mail_registry "SELECT count(*) FROM access_control.api_keys WHERE id = '$K1_ID' AND position(convert_to('${K1_SECRET##*_}', 'UTF8') in secret_hash) = 0")" "1"
+expect "un permiso fuera del catalogo de claves se rechaza" \
+  "$(clave x '{"module":"access","resource":"roles","action":"create"}' | jget error.code)" "SCOPE_NOT_GRANTABLE"
+expect "el alta queda en la outbox para audit" \
+  "$(sql mail_registry "SELECT count(*) FROM platform.event_outbox WHERE subject = 'access.api_key.created' AND payload->'data'->>'api_key_id' = '$K1_ID'")" "1"
+
+K="Authorization: Bearer $K1_SECRET"
+MSG='{"from":{"email":"hola@acme.test"},"to":[{"email":"qa@cliente.test"}],"subject":"Pedido","text":"Gracias"}'
+expect "con la clave el gateway deja enviar y transactional aplica sus reglas (remitente sin verificar)" \
+  "$(curl -s -X POST "$GW/transactional/messages" -H "$K" -H 'Content-Type: application/json' -d "$MSG" | jget error.code)" \
+  "SENDING_DOMAIN_NOT_VERIFIED"
+expect "la clave no abre rutas fuera de la lista cerrada" \
+  "$(curl -s "$GW/transactional/stats" -H "$K" | jget error.code)" "API_KEY_ROUTE_NOT_ALLOWED"
+expect "ni gestiona claves" "$(codigo "$GW/access/api-keys/" -H "$K")" "401"
+expect "lee el estado de un mensaje" \
+  "$(codigo "$GW/transactional/messages/$(cat /proc/sys/kernel/random/uuid)" -H "$K")" "404"
+expect "una clave solo de lectura no envia" \
+  "$(codigo -X POST "$GW/transactional/messages" -H "Authorization: Bearer $K2_SECRET" -H 'Content-Type: application/json' -d "$MSG")" "403"
+expect "una clave alterada no autentica" \
+  "$(curl -s -X POST "$GW/transactional/messages" -H "Authorization: Bearer ${K1_SECRET}x" -H 'Content-Type: application/json' -d "$MSG" | jget error.code)" \
+  "API_KEY_INVALID"
+
+SMTP_CERT="$WORK/smtp-relay"
+mkdir -p "$SMTP_CERT"
+openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 1 -subj /CN=smtp.cfm.test \
+  -addext subjectAltName=DNS:smtp.cfm.test -keyout "$SMTP_CERT/key.pem" -out "$SMTP_CERT/cert.pem" >/dev/null 2>&1 ||
+  mal "certificado de la prueba para smtp-relay"
+SMTP_STARTTLS=$((BASE + 72))
+SMTP_TLS=$((BASE + 73))
+env -u JWT_SIGNING_KEY SMTP_RELAY_PORT="${PORT[smtp-relay]}" SMTP_RELAY_STARTTLS_PORT="$SMTP_STARTTLS" SMTP_RELAY_TLS_PORT="$SMTP_TLS" \
+  SMTP_RELAY_HOSTNAME=smtp.cfm.test SMTP_RELAY_TLS_CERT_FILE="$SMTP_CERT/cert.pem" SMTP_RELAY_TLS_KEY_FILE="$SMTP_CERT/key.pem" \
+  SMTP_RELAY_CLAMD_ADDR= "$WORK/bin/smtp-relay" >"$WORK/log/smtp-relay.log" 2>&1 &
+esperar_salud smtp-relay "${PORT[smtp-relay]}"
+relay() { python3 ops/e2e/smtp_relay_client.py "$1" 127.0.0.1 "$2" smtp.cfm.test "$SMTP_CERT/cert.pem" "${@:3}"; }
+
+CLARO=$(relay claro "$SMTP_STARTTLS" "$K1_PREFIX" "$K1_SECRET")
+contains "en claro el relay no anuncia AUTH" "$CLARO" "AUTH-ANUNCIADO no"
+contains "ni la admite antes de STARTTLS" "$CLARO" "RECHAZO auth 523"
+contains "ni acepta MAIL sin AUTH" "$CLARO" "RECHAZO mail 530"
+expect "una clave solo de lectura no es credencial SMTP" \
+  "$(relay enviar "$SMTP_STARTTLS" "$(echo "${K2_SECRET#cfm_}" | cut -d_ -f1)" "$K2_SECRET" hola@acme.test qa@cliente.test | cut -d' ' -f1-3)" \
+  "RECHAZO auth 535"
+expect "STARTTLS, AUTH PLAIN y un remitente sin verificar: 550 de transactional" \
+  "$(relay enviar "$SMTP_STARTTLS" "$K1_PREFIX" "$K1_SECRET" hola@acme.test qa@cliente.test | cut -d' ' -f1-3)" "RECHAZO data 550"
+
+# Un dominio de envio verificado en la proyeccion de transactional (lo alimenta domain-service; aqui se siembra).
+sql mail_tenant_acme "INSERT INTO transactional.sending_domains (tenant_id, domain, status, purpose)
+  VALUES ('$ACME_TENANT', 'envios.acme.test', 'verified', 'sending') ON CONFLICT DO NOTHING"
+expect "TLS implicito, AUTH LOGIN y remitente verificado: 250" \
+  "$(relay enviar "$SMTP_TLS" "$K1_PREFIX" "$K1_SECRET" pedidos@envios.acme.test qa@cliente.test,baja@otro.test --implicito --login | cut -d' ' -f1-2)" \
+  "OK 250"
+SMTP_MSG="transactional.messages WHERE origin = 'smtp' AND api_key_id = '$K1_ID'"
+expect "el mensaje llega a transactional con su clave y su MIME" \
+  "$(sql mail_tenant_acme "SELECT count(*) FROM $SMTP_MSG AND EXISTS (SELECT 1 FROM transactional.raw_contents r WHERE r.message_id = messages.id)")" "1"
+expect "sin el destinatario suprimido (la supresion antes de encolar)" \
+  "$(sql mail_tenant_acme "SELECT \"to\"::text FROM $SMTP_MSG")" '[{"email": "qa@cliente.test"}]'
+expect "por el carril transaccional" "$(sql mail_tenant_acme "SELECT class || '/' || is_test FROM $SMTP_MSG")" "transactional/false"
+# Sin SES real el envio no sale; se retira de la cola para que sus reintentos no acaben en un fallo definitivo.
+sql mail_tenant_acme "UPDATE transactional.messages SET status = 'failed', error = 'e2e: sin SES'
+  WHERE origin = 'smtp' AND api_key_id = '$K1_ID' AND status = 'queued'" >/dev/null
+expect "un adjunto sin clamd no sale: 451" \
+  "$(relay enviar "$SMTP_STARTTLS" "$K1_PREFIX" "$K1_SECRET" pedidos@envios.acme.test qa@cliente.test --adjunto-eicar | cut -d' ' -f1-3)" \
+  "RECHAZO data 451"
+
+expect "revocar la clave" "$(codigo -X POST "$GW/access/api-keys/$K1_ID/revoke" -H "$A2")" "200"
+expect "la revocacion es inmediata en el gateway" \
+  "$(curl -s -X POST "$GW/transactional/messages" -H "$K" -H 'Content-Type: application/json' -d "$MSG" | jget error.code)" "API_KEY_INVALID"
+expect "y en el relay" \
+  "$(relay enviar "$SMTP_STARTTLS" "$K1_PREFIX" "$K1_SECRET" pedidos@envios.acme.test qa@cliente.test | cut -d' ' -f1-3)" "RECHAZO auth 535"
+expect "la revocacion queda en la outbox para audit" \
+  "$(sql mail_registry "SELECT count(*) FROM platform.event_outbox WHERE subject = 'access.api_key.revoked' AND payload->'data'->>'api_key_id' = '$K1_ID'")" "1"
 
 echo "== Alcance de permisos"
 contains "el superadmin ve los permisos de plataforma" "$(curl -s "$GW/permissions" -H "$A1")" '"scope":"platform"'

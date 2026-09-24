@@ -77,7 +77,13 @@ func CheckerFromEnv() (*Checker, error) {
 // Allowed indica si el usuario de la peticion puede (module, resource, action). El
 // superadmin y el tenant_admin pasan sin consultar: son los roles del sistema y sus
 // permisos no se editan.
+//
+// Una peticion de una clave de API se decide solo con su alcance, que el gateway resolvio con
+// access-control: nunca con la politica de una persona ni con un rol.
 func (c *Checker) Allowed(ctx context.Context, module, resource, action string) (bool, error) {
+	if middleware.GetAPIKeyID(ctx) != "" {
+		return middleware.APIKeyAllows(ctx, module, resource, action), nil
+	}
 	if middleware.IsPrivileged(ctx) {
 		return true, nil
 	}

@@ -44,6 +44,8 @@ var internalHeaders = []string{
 	"X-User-Roles",
 	"X-Gateway-Token",
 	HeaderOperatorCell,
+	HeaderAPIKeyID,
+	HeaderAPIKeyScopes,
 	// Token servicio-a-servicio: jamas debe llegar desde un cliente externo.
 	"X-Internal-Token",
 	// X-Real-IP y X-Forwarded-For NO se borran aqui: los evalua y consume
@@ -469,6 +471,12 @@ func InjectFromGateway(next http.Handler) http.Handler {
 		if rolesHeader := r.Header.Get("X-User-Roles"); rolesHeader != "" {
 			roles := strings.Split(rolesHeader, ",")
 			ctx = context.WithValue(ctx, CtxRoles, roles)
+		}
+		// Un alcance ilegible deja la clave sin permisos, nunca sin marca: la peticion sigue
+		// siendo de una clave y pkg/authz la deniega.
+		if keyID := r.Header.Get(HeaderAPIKeyID); keyID != "" {
+			scopes, _ := ParseAPIKeyScopes(r.Header.Get(HeaderAPIKeyScopes))
+			ctx = WithAPIKey(ctx, keyID, scopes)
 		}
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})

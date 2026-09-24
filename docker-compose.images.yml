@@ -31,6 +31,8 @@ services:
     image: ${ECR_REGISTRY:?definir en .env}/core-force-mail/mail-dav:${DEPLOY_TAG:-latest}
   transactional:
     image: ${ECR_REGISTRY:?definir en .env}/core-force-mail/transactional:${DEPLOY_TAG:-latest}
+  smtp-relay:
+    image: ${ECR_REGISTRY:?definir en .env}/core-force-mail/smtp-relay:${DEPLOY_TAG:-latest}
   suppression:
     image: ${ECR_REGISTRY:?definir en .env}/core-force-mail/suppression:${DEPLOY_TAG:-latest}
   templates:

@@ -77,6 +77,12 @@ export const endpoints = {
     denials: `${API_PREFIX}/access/denials`,
     policy: (userId: string) => `${API_PREFIX}/policy/${seg(userId)}`,
   },
+  apiKeys: {
+    collection: `${API_PREFIX}/access/api-keys`,
+    settings: `${API_PREFIX}/access/api-keys/settings`,
+    scopes: `${API_PREFIX}/access/api-keys/scopes`,
+    revoke: (id: string) => `${API_PREFIX}/access/api-keys/${seg(id)}/revoke`,
+  },
   organizations: {
     collection: `${API_PREFIX}/organizations`,
     byId: (id: string) => `${API_PREFIX}/organizations/${seg(id)}`,
@@ -212,6 +218,7 @@ export const endpoints = {
   },
   transactional: {
     sendingDomains: `${API_PREFIX}/transactional/sending-domains`,
+    messages: `${API_PREFIX}/transactional/messages`,
   },
   suppression: {
     check: `${API_PREFIX}/suppression/check`,

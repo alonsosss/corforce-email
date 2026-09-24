@@ -476,7 +476,7 @@ except ImportError:
     print("  AVISO: sin PyYAML; no se comprueban los limites de recursos del perfil", file=sys.stderr)
     sys.exit(0)
 
-CEILING_MIB = 6144
+CEILING_MIB = 6400
 
 root = sys.argv[1]
 

@@ -47,6 +47,7 @@ export const SCREENS: readonly ScreenDecl[] = [
     load: () => import('@/pages/roles/RoleDetailPage'),
   },
   { path: paths.denials, module: MODULES.access, load: () => import('@/pages/access/DenialsPage') },
+  { path: paths.apiKeys, module: MODULES.access, load: () => import('@/pages/access/ApiKeysPage') },
   {
     path: paths.sessions,
     module: MODULES.identity,

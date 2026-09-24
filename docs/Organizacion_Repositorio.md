@@ -102,6 +102,10 @@ los motores entienden traducida a PostgreSQL.
   desde el paquete de Alpine (community, serie 2.314; Debian y Ubuntu no lo empaquetan) en la imagen del ejecutor.
 * `services/observability` (plano de control): visor de registros del superadmin sobre Loki, sin base ni bus
   (`docs/adr/0009-visor-de-registros-y-lectura-del-antispam.md`). Sus permisos, en `migrations/registry/037_observability_permissions.sql`.
+* `services/smtp-relay` (plano de empresa, sin base ni ruta en el gateway): relay SMTP de envio de las empresas, con
+  sus claves de API como credencial, que entrega a `transactional` (`docs/adr/0013-claves-de-api-y-relay-smtp.md`).
+  El protocolo SMTP es `github.com/emersion/go-smtp` (MIT); la lectura del MIME, `pkg/rawmail`, compartida con
+  `transactional`, y la resolucion de claves, `pkg/apikey`, compartida con el gateway.
 * `services/mail-dav` (plano de empresa): CardDAV y CalDAV, con su esquema `mail_dav` en `migrations/tenant/canonical/mail-dav/`
   (tablas, RLS y rol de servicio). El protocolo WebDAV/CardDAV/CalDAV se escribio a mano en
   `internal/adapters/http`, y el iCalendar con sus recurrencias en `internal/domain` (no se copio ni se importo nada de

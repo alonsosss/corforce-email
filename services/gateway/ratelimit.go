@@ -26,14 +26,16 @@ const (
 // si Redis no responde, decide en memoria en vez de esperar. Un Redis caido al arrancar no
 // impide el arranque; el cliente reconecta solo. Una configuracion TLS invalida, o ausente
 // fuera de desarrollo, si lo impide.
-func newRateLimitStore(logger *zap.Logger) (*middleware.RedisRateLimitStore, error) {
+//
+// Devuelve tambien el cliente: la marca de revocacion de las claves de API vive en el mismo Redis.
+func newRateLimitStore(logger *zap.Logger) (*middleware.RedisRateLimitStore, *redis.Client, error) {
 	rc, err := config.LoadRedis()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	tlsCfg, err := rc.TLSConfig()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	rdb := redis.NewClient(&redis.Options{
 		Addr:                  rc.Addr(),
@@ -50,7 +52,7 @@ func newRateLimitStore(logger *zap.Logger) (*middleware.RedisRateLimitStore, err
 	if err := rdb.Ping(ctx).Err(); err != nil {
 		logger.Warn("gateway: Redis no disponible al arrancar; los limites se cuentan en memoria de cada replica hasta que vuelva", zap.Error(err))
 	}
-	return middleware.NewRedisRateLimitStore(rdb), nil
+	return middleware.NewRedisRateLimitStore(rdb), rdb, nil
 }
 
 // newRateLimiters crea el limitador general (todo /api/v1) y el estricto de

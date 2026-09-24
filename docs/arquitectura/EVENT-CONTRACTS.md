@@ -12,7 +12,9 @@ subject y payload. `opaco` = el payload no se puede leer estaticamente.
 
 | Subject | Servicio | Campos |
 |---|---|---|
-| `audit.api.write` | gateway | `ip`, `method`, `module`, `path`, `request_id`, `roles`, `status`, `target_cell`, `tenant_id`, `user_agent`, `user_id` |
+| `access.api_key.created` | access-control | _opaco_ |
+| `access.api_key.revoked` | access-control | _opaco_ |
+| `audit.api.write` | gateway | `api_key_id`, `ip`, `method`, `module`, `path`, `request_id`, `roles`, `status`, `target_cell`, `tenant_id`, `user_agent`, `user_id` |
 | `audit.chain.anchored` | audit | `anchored_at`, `chain`, `hash_version`, `head_hash`, `head_seq`, `tenant_id` |
 | `audit.security.alert` | audit | `detail`, `event_type`, `ip`, `risk_level`, `user_id` |
 | `automations.run.completed` | automations | `contact_id`, `reason`, `run_id`, `tenant_id`, `workflow_id` |
@@ -109,7 +111,7 @@ subject y payload. `opaco` = el payload no se puede leer estaticamente.
 
 | Subject | Servicio | Campos que lee |
 |---|---|---|
-| `audit.api.write` | audit | `ip`, `method`, `module`, `path`, `request_id`, `roles`, `status`, `target_cell`, `tenant_id`, `user_agent`, `user_id` |
+| `audit.api.write` | audit | `api_key_id`, `ip`, `method`, `module`, `path`, `request_id`, `roles`, `status`, `target_cell`, `tenant_id`, `user_agent`, `user_id` |
 | `campaigns.campaign.*` | analytics | `campaign_id`, `occurred_at`, `status`, `tenant_id` |
 | `contacts.consent.granted` | automations | `contact_id`, `purpose`, `tenant_id` |
 | `contacts.consent.requested` | automations | `confirm_url`, `contact_id`, `email`, `first_name`, `tenant_id` |

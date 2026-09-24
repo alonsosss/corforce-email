@@ -74,7 +74,7 @@ administrador de AWS (CloudShell); "Servidor" es la sesion que despliega.
 ### Paso 1. Codigo (hecho en este cambio)
 
 * `ops/aws/setup-iam.sh`: usuario de envio `core-force-mail-ses` con la politica `ses-envio`
-  (solo `ses:SendEmail`, cualquier identidad verificada de la cuenta, solo por
+  (solo `ses:SendEmail`, y desde 3-G tambien `ses:SendRawEmail` para el relay SMTP; cualquier identidad verificada de la cuenta, solo por
   `cfm-transactional` y `cfm-marketing`); la politica `observacion` pasa a leer SES, SNS y la
   pila; la parte del rol de instancia se omite cuando el rol no existe (servidor fuera de EC2).
 * `ops/aws/setup-ses.sh`: `SES_DEFAULT_SET_IDENTITIES` apunta el conjunto por defecto de esas

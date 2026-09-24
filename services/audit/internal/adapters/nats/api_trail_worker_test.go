@@ -112,3 +112,15 @@ func TestElRastroGuardaLaCeldaDestino(t *testing.T) {
 		t.Fatalf("detalle sin celda destino: %v", detail)
 	}
 }
+
+// Una escritura con clave de API no tiene usuario: el apunte guarda la clave que la hizo.
+func TestElRastroGuardaLaClaveDeAPI(t *testing.T) {
+	var detail map[string]interface{}
+	got := trailChanges(map[string]interface{}{"roles": "", "status": float64(202), "api_key_id": "5d8c7a1e-0b7e-4a52-9c3e-2f7b1c9d0e11"})
+	if got == nil || json.Unmarshal([]byte(*got), &detail) != nil {
+		t.Fatalf("detalle ilegible: %v", got)
+	}
+	if detail["api_key_id"] != "5d8c7a1e-0b7e-4a52-9c3e-2f7b1c9d0e11" || len(detail) != 3 {
+		t.Fatalf("detalle con clave de API: %v", detail)
+	}
+}

@@ -205,6 +205,9 @@ services:
       INTERNAL_GATEWAY_TOKEN: ${INTERNAL_GATEWAY_TOKEN:-}
       REDIS_PASSWORD: ${REDIS_PASSWORD:-}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
+      # HMAC de los secretos de las claves de API (docs/adr/0013): solo access-control los calcula.
+      API_KEY_HASH_KEY: ${API_KEY_HASH_KEY:-}
+      API_KEY_HASH_KEYS_OLD: ${API_KEY_HASH_KEYS_OLD:-}
     depends_on:
       pgbouncer:
         condition: service_healthy
@@ -548,6 +551,41 @@ services:
     security_opt: ["no-new-privileges:true"]
     networks:
       - mail-internal
+
+  # Relay SMTP de envio de las empresas (docs/adr/0013): SMTP autenticado con claves de API que entrega a
+  # transactional, nunca a Postfix. Los dos puertos SMTP se publican en SMTP_RELAY_BIND_ADDRESS (127.0.0.1 por
+  # defecto: abrirlo a internet es una decision de despliegue, con el cortafuegos de docs/Operacion_Despliegue.md).
+  # El puerto 8060 es solo de operativa (salud y metricas). Aqui usa el certificado de ejemplo de deploy/mail; el
+  # perfil autoalojado le da el de acme.
+  smtp-relay:
+    build:
+      context: .
+      dockerfile: ./services/smtp-relay/Dockerfile
+    ports:
+      - "127.0.0.1:${SMTP_RELAY_PORT:-8060}:8060"
+      - "${SMTP_RELAY_BIND_ADDRESS:-127.0.0.1}:${SMTP_RELAY_PUBLIC_STARTTLS_PORT:-2525}:2525"
+      - "${SMTP_RELAY_BIND_ADDRESS:-127.0.0.1}:${SMTP_RELAY_PUBLIC_TLS_PORT:-2465}:2465"
+    env_file:
+      - .env
+    environment:
+      INTERNAL_GATEWAY_TOKEN: ${INTERNAL_GATEWAY_TOKEN:-}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      SMTP_RELAY_STARTTLS_PORT: "2525"
+      SMTP_RELAY_TLS_PORT: "2465"
+      SMTP_RELAY_TLS_CERT_FILE: /run/core-force-mail/smtp-tls/cert.pem
+      SMTP_RELAY_TLS_KEY_FILE: /run/core-force-mail/smtp-tls/key.pem
+    volumes:
+      - ./deploy/mail/ssl-example:/run/core-force-mail/smtp-tls:ro
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    networks:
+      mail-internal: {}
+      # clamd (SMTP_RELAY_CLAMD_ADDR) analiza todo mensaje con adjuntos; la red mail-scan solo tiene clamd, asi
+      # que el relay no entra en mail-engines, que es mynetworks de Postfix.
+      mail-scan: {}
 
   suppression:
     build:

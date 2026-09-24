@@ -16,6 +16,10 @@ type Repository interface {
 	Transact(ctx context.Context, fn func(ctx context.Context) error) error
 
 	InsertMessage(ctx context.Context, m *domain.Message) error
+	// InsertRawContent guarda el MIME de un mensaje de SMTP y GetRawContent lo lee para
+	// enviarlo (domain.ErrNotFound si falta).
+	InsertRawContent(ctx context.Context, tenantID, messageID uuid.UUID, raw []byte) error
+	GetRawContent(ctx context.Context, tenantID, messageID uuid.UUID) ([]byte, error)
 	GetMessage(ctx context.Context, tenantID, id uuid.UUID) (*domain.Message, error)
 	// GetAttribution lee solo la clase, la campana y el contacto del mensaje: es lo que
 	// necesitan los eventos de la ingesta y de la baja, sin cargar el cuerpo.

@@ -238,6 +238,12 @@ func (e *rbacEnforcer) denyRevoked(w http.ResponseWriter) {
 
 func (e *rbacEnforcer) middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if middleware.GetAPIKeyID(r.Context()) != "" {
+			if e.allowAPIKey(w, r) {
+				next.ServeHTTP(w, r)
+			}
+			return
+		}
 		if e.mode == "off" {
 			next.ServeHTTP(w, r)
 			return

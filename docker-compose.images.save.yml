@@ -47,6 +47,9 @@ services:
   transactional:
     image: core-force-mail/transactional:${DEPLOY_TAG:?lo fija scripts/deploy-ecr.sh}
     pull_policy: never
+  smtp-relay:
+    image: core-force-mail/smtp-relay:${DEPLOY_TAG:?lo fija scripts/deploy-ecr.sh}
+    pull_policy: never
   suppression:
     image: core-force-mail/suppression:${DEPLOY_TAG:?lo fija scripts/deploy-ecr.sh}
     pull_policy: never

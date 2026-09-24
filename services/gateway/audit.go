@@ -165,6 +165,9 @@ func (a *auditTrail) middleware(next http.Handler) http.Handler {
 		if targeted {
 			data["target_cell"] = target.auditValue()
 		}
+		if keyID := middleware.GetAPIKeyID(r.Context()); keyID != "" {
+			data["api_key_id"] = keyID
+		}
 		evt := events.Event{
 			Type:     "audit.api.write",
 			Source:   "gateway",

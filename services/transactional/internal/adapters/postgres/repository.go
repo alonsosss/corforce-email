@@ -34,7 +34,7 @@ func (r *Repository) Transact(ctx context.Context, fn func(ctx context.Context) 
 const messageColumns = `id, tenant_id, submission_id, idempotency_key, from_email, from_name, reply_to,
 	"to", cc, bcc, subject, template_id, template_version, variables, html, text, headers, tags,
 	unsubscribable, class, campaign_id, contact_id, status, ses_message_id, error, attempts, scheduled_at,
-	sent_at, created_by, created_at, updated_at, is_test`
+	sent_at, created_by, created_at, updated_at, is_test, origin, api_key_id`
 
 type rowScanner interface {
 	Scan(dest ...any) error
@@ -45,7 +45,7 @@ func scanMessage(row rowScanner) (*domain.Message, error) {
 	err := row.Scan(&m.ID, &m.TenantID, &m.SubmissionID, &m.IdempotencyKey, &m.FromEmail, &m.FromName, &m.ReplyTo,
 		&m.To, &m.Cc, &m.Bcc, &m.Subject, &m.TemplateID, &m.TemplateVersion, &m.Variables, &m.HTML, &m.Text,
 		&m.Headers, &m.Tags, &m.Unsubscribable, &m.Class, &m.CampaignID, &m.ContactID, &m.Status, &m.SESMessageID,
-		&m.Error, &m.Attempts, &m.ScheduledAt, &m.SentAt, &m.CreatedBy, &m.CreatedAt, &m.UpdatedAt, &m.Test)
+		&m.Error, &m.Attempts, &m.ScheduledAt, &m.SentAt, &m.CreatedBy, &m.CreatedAt, &m.UpdatedAt, &m.Test, &m.Origin, &m.APIKeyID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, domain.ErrNotFound
 	}
@@ -82,14 +82,17 @@ func (r *Repository) InsertMessage(ctx context.Context, m *domain.Message) error
 		m.Tags = map[string]string{}
 	}
 	m.Class = domain.ClassOrDefault(m.Class)
+	m.Origin = domain.OriginOrDefault(m.Origin)
 	_, err := r.pool.Exec(ctx, `INSERT INTO transactional.messages (
 		id, tenant_id, submission_id, idempotency_key, from_email, from_name, reply_to,
 		"to", cc, bcc, subject, template_id, template_version, variables, html, text, headers, tags,
-		unsubscribable, class, campaign_id, contact_id, status, attempts, scheduled_at, created_by, created_at, updated_at, is_test
-	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29)`,
+		unsubscribable, class, campaign_id, contact_id, status, attempts, scheduled_at, created_by, created_at, updated_at, is_test,
+		origin, api_key_id
+	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31)`,
 		m.ID, m.TenantID, m.SubmissionID, m.IdempotencyKey, m.FromEmail, m.FromName, m.ReplyTo,
 		m.To, m.Cc, m.Bcc, m.Subject, m.TemplateID, m.TemplateVersion, m.Variables, m.HTML, m.Text, m.Headers, m.Tags,
-		m.Unsubscribable, m.Class, m.CampaignID, m.ContactID, m.Status, m.Attempts, m.ScheduledAt, m.CreatedBy, m.CreatedAt, m.UpdatedAt, m.Test)
+		m.Unsubscribable, m.Class, m.CampaignID, m.ContactID, m.Status, m.Attempts, m.ScheduledAt, m.CreatedBy, m.CreatedAt, m.UpdatedAt, m.Test,
+		m.Origin, m.APIKeyID)
 	if err != nil {
 		return fmt.Errorf("insert message: %w", err)
 	}
@@ -99,6 +102,26 @@ func (r *Repository) InsertMessage(ctx context.Context, m *domain.Message) error
 func (r *Repository) GetMessage(ctx context.Context, tenantID, id uuid.UUID) (*domain.Message, error) {
 	row := r.pool.QueryRow(ctx, `SELECT `+messageColumns+` FROM transactional.messages WHERE tenant_id = $1 AND id = $2`, tenantID, id)
 	return scanMessage(row)
+}
+
+// InsertRawContent guarda el MIME de un mensaje de SMTP; va en la misma transaccion que la fila.
+func (r *Repository) InsertRawContent(ctx context.Context, tenantID, messageID uuid.UUID, raw []byte) error {
+	_, err := r.pool.Exec(ctx, `INSERT INTO transactional.raw_contents (message_id, tenant_id, content, size_bytes)
+		VALUES ($1, $2, $3, $4)`, messageID, tenantID, raw, len(raw))
+	if err != nil {
+		return fmt.Errorf("insert raw content: %w", err)
+	}
+	return nil
+}
+
+func (r *Repository) GetRawContent(ctx context.Context, tenantID, messageID uuid.UUID) ([]byte, error) {
+	var raw []byte
+	err := r.pool.QueryRow(ctx, `SELECT content FROM transactional.raw_contents WHERE tenant_id = $1 AND message_id = $2`,
+		tenantID, messageID).Scan(&raw)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, domain.ErrNotFound
+	}
+	return raw, err
 }
 
 func (r *Repository) GetAttribution(ctx context.Context, tenantID, id uuid.UUID) (*domain.MessageAttribution, error) {

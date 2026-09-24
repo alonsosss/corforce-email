@@ -727,3 +727,61 @@ groups:
         annotations:
           resumen: "transactional no puede leer el estado de la cuenta de SES"
           detalle: "Sin esa lectura no avisan EnvioSESPausado ni las alertas de reputacion. El registro de transactional (no se pudo leer el estado de la cuenta de SES) da el error: AccessDenied es la politica core-force-mail-ses-envio de ops/aws/setup-iam.sh (ses:GetAccount, cloudwatch:GetMetricData)."
+
+  # Relay SMTP y claves de API (docs/adr/0013): un puerto publico nuevo. Se vigila el barrido de
+  # credenciales, que el relay no pueda comprobarlas o entregar, el malware que llega por el y la
+  # caducidad de su certificado, que no es el del borde.
+  - name: relay-smtp-y-claves-de-api
+    rules:
+      - alert: BarridoDeCredencialesSMTP
+        expr: sum(rate(smtp_relay_auth_total{result=~"failed|blocked"}[10m])) > 0.5
+        for: 10m
+        labels:
+          severidad: media
+        annotations:
+          resumen: "El relay SMTP rechaza {{ $value | humanize }} autenticaciones por segundo"
+          detalle: "Mas de 30 por minuto sostenidas: alguien prueba credenciales o una integracion quedo con una clave revocada. El registro de smtp-relay (credencial rechazada, bloqueo por fuerza bruta) da el usuario y la IP; los bloqueos duran SMTP_RELAY_AUTH_LOCK."
+
+      - alert: RelaySMTPSinComprobarCredenciales
+        expr: sum(rate(smtp_relay_auth_total{result="unavailable"}[5m])) > 0
+        for: 5m
+        labels:
+          severidad: alta
+        annotations:
+          resumen: "El relay SMTP no puede comprobar credenciales"
+          detalle: "access-control no responde a la resolucion de claves: todo AUTH recibe 454 y las integraciones reintentan. Revisar access-control y API_KEY_HASH_KEY en su entorno."
+
+      - alert: RelaySMTPSinEntregar
+        expr: sum(rate(smtp_relay_rejections_total{stage="data",reason=~"upstream_unavailable|scan_unavailable"}[10m])) > 0.05
+        for: 10m
+        labels:
+          severidad: alta
+        annotations:
+          resumen: "El relay SMTP devuelve 451 a los mensajes ({{ $value | humanize }} por segundo)"
+          detalle: "transactional o clamd (SMTP_RELAY_CLAMD_ADDR, red mail-scan) no responden: los mensajes esperan en las colas de los clientes y llegan tarde. smtp_relay_rejections_total{reason} dice cual de los dos."
+
+      - alert: MalwarePorElRelaySMTP
+        expr: sum(increase(smtp_relay_rejections_total{reason="infected"}[15m])) > 0
+        labels:
+          severidad: media
+        annotations:
+          resumen: "El relay SMTP rechazo mensajes con malware"
+          detalle: "Una integracion de una empresa envia adjuntos infectados: equipo comprometido o clave filtrada. El registro de smtp-relay (adjunto infectado rechazado) da la empresa y la clave; revocarla corta el envio al momento."
+
+      - alert: CertificadoDelRelaySMTPPorCaducar
+        expr: min(smtp_relay_certificate_expiry_timestamp_seconds) - time() < 14 * 86400
+        for: 1h
+        labels:
+          severidad: alta
+        annotations:
+          resumen: "El certificado del relay SMTP caduca en menos de dos semanas"
+          detalle: "acme no lo renovo o smtp-relay-certs no lo copio al relay. Comprobar que ADDITIONAL_SAN de acme lleva el nombre del relay (SMTP_RELAY_HOSTNAME) y el registro de smtp-relay-certs."
+
+      - alert: ClavesDeAPIProbadas
+        expr: sum(rate(gateway_api_key_requests_total{result="invalid"}[10m])) > 0.5
+        for: 10m
+        labels:
+          severidad: media
+        annotations:
+          resumen: "El gateway rechaza {{ $value | humanize }} claves de API invalidas por segundo"
+          detalle: "Alguien prueba claves en la API de envio o una integracion usa una revocada. access_control_api_key_resolutions_total{result} distingue claves inexistentes (unknown), con otro secreto (secret), revocadas o caducadas."

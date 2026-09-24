@@ -20,6 +20,7 @@
     "campaigns":      {"host_env": "CAMPAIGNS_HOST",      "default_host": "campaigns",      "default_port": "8052"},
     "analytics":      {"host_env": "ANALYTICS_HOST",      "default_host": "analytics",      "default_port": "8053"},
     "mail-dav":       {"host_env": "MAIL_DAV_HOST",       "default_host": "mail-dav",       "default_port": "8058"},
+    "smtp-relay":     {"host_env": "SMTP_RELAY_HOST",     "default_host": "smtp-relay",     "default_port": "8060"},
     "webmail":        {"host_env": "WEBMAIL_HOST",        "default_host": "webmail",        "default_port": "8044", "cell_hosts_env": "WEBMAIL_CELL_HOSTS"},
     "web":            {"host_env": "WEB_HOST",            "default_host": "web",            "default_port": "80"}
   },
@@ -91,6 +92,11 @@
   "well_known": [
     {"path": "/.well-known/carddav", "prefix": "dav"},
     {"path": "/.well-known/caldav", "prefix": "dav"}
+  ],
+  "api_key_routes": [
+    {"method": "POST", "path": "/transactional/messages"},
+    {"method": "GET",  "path": "/transactional/messages/{id}"},
+    {"method": "GET",  "path": "/transactional/messages/{id}/events"}
   ],
   "frontend": "web"
 }

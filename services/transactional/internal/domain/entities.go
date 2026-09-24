@@ -97,8 +97,10 @@ const (
 	// MaxBodyBytes es el tope del cuerpo total (html + texto): el limite de SES v2 sin
 	// adjuntos. Los adjuntos no se admiten en esta fase.
 	MaxBodyBytes = 10 << 20
-	MaxHeaders   = 10
-	MaxTags      = 10
+	// MaxRawBytes es el tope de un mensaje MIME de SMTP: el de SES v2 con adjuntos.
+	MaxRawBytes = 40 << 20
+	MaxHeaders  = 10
+	MaxTags     = 10
 )
 
 // Recipient es una direccion con nombre opcional.
@@ -142,6 +144,25 @@ type Message struct {
 	// Test: envio de prueba de una campana (ver IsTestSend). Viaja en todos los eventos
 	// transactional.email.* para que la analitica no lo cuente.
 	Test bool `json:"test"`
+	// Origin es por donde entro el mensaje (OriginAPI u OriginSMTP); uno de SMTP sale con su
+	// MIME guardado aparte (RawContent) y no con los cuerpos de la fila.
+	Origin string `json:"origin"`
+	// APIKeyID es la clave de API con la que se creo, si la hubo.
+	APIKeyID *uuid.UUID `json:"api_key_id,omitempty"`
+}
+
+// Origenes de un mensaje.
+const (
+	OriginAPI  = "api"
+	OriginSMTP = "smtp"
+)
+
+// OriginOrDefault: una fila anterior a la columna es del API.
+func OriginOrDefault(origin string) string {
+	if origin == "" {
+		return OriginAPI
+	}
+	return origin
 }
 
 // AllRecipients devuelve las direcciones de to, cc y bcc en ese orden.

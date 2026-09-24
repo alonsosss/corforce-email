@@ -62,6 +62,11 @@ type routeTable struct {
 	// WellKnown: rutas de descubrimiento en la raiz del dominio que redirigen al prefijo de un
 	// servicio autenticado por el servicio (webdav.go).
 	WellKnown []wellKnownSpec `json:"well_known,omitempty"`
+	// APIKeyRoutes: la lista cerrada de rutas con sesion que admiten, ademas del JWT, una clave
+	// de API de empresa (Authorization: Bearer cfm_...). Metodo y ruta exactos con la sintaxis de
+	// chi bajo /api/v1; cada una cuelga de un prefijo de routes con modulo, y el RBAC la gatea
+	// con el alcance de la clave (apikeys.go).
+	APIKeyRoutes []methodPathSpec `json:"api_key_routes,omitempty"`
 	// Frontend: servicio que sirve la aplicacion web (comodin /*). Opcional: sin el,
 	// el gateway solo expone el API.
 	Frontend string `json:"frontend,omitempty"`
@@ -368,6 +373,9 @@ func (t *routeTable) validate() error {
 		}
 	}
 	if err := t.validateWellKnown(); err != nil {
+		return err
+	}
+	if err := t.validateAPIKeyRoutes(); err != nil {
 		return err
 	}
 	return t.validateCellServices()

@@ -326,6 +326,51 @@ services:
       <<: *go-service-env
       GOMEMLIMIT: 100MiB
     volumes: *internal-ca
+  smtp-relay:
+    restart: *reinicio
+    <<: *go-runtime
+    # Lee a la vez hasta SMTP_RELAY_MAX_CONCURRENT_DATA mensajes (4 x 10 MiB por defecto) y cada uno ocupa unas
+    # cuatro veces su tamano (DATA, JSON hacia transactional y analisis): 256 MiB con margen.
+    mem_limit: 256m
+    environment:
+      <<: *go-service-env
+      GOMEMLIMIT: 200MiB
+    volumes:
+      - ${INTERNAL_TLS_DIR:-/opt/core-force-mail/tls}/publico:/run/core-force-mail/tls/publico:ro
+      # El certificado publico de acme, copiado por smtp-relay-certs a un volumen en memoria legible por el
+      # grupo del relay: la clave de acme es 0600 de root y el relay no corre como root.
+      - smtp-relay-tls:/run/core-force-mail/smtp-tls:ro
+    depends_on:
+      smtp-relay-certs:
+        condition: service_healthy
+
+  # Copia cert.pem y key.pem de acme (volumen mail-ssl) al volumen en memoria smtp-relay-tls con el grupo del
+  # relay (0640, root:65532) cada SMTP_RELAY_CERT_SYNC_INTERVAL segundos si cambiaron; el relay recarga el
+  # certificado solo. Corre como uid 0 SIN ninguna capacidad: lee la clave por ser su dueno y crea los ficheros
+  # con su grupo primario, sin chown. Sin red.
+  smtp-relay-certs:
+    image: nginx:1.30.5-alpine@sha256:25820c39dba41369486df729ad6697de2fab631ca809e0503e1d1e0c73d9a232
+    restart: *reinicio
+    user: "0:65532"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    network_mode: none
+    pids_limit: 16
+    mem_limit: 16m
+    entrypoint: ["/bin/sh", "/etc/core-force-mail/smtp-relay/sync-cert.sh"]
+    environment:
+      SMTP_RELAY_CERT_SYNC_INTERVAL: ${SMTP_RELAY_CERT_SYNC_INTERVAL:-300}
+    volumes:
+      - ./selfhosted/smtp-relay:/etc/core-force-mail/smtp-relay:ro
+      - mail-ssl:/etc/ssl/mail:ro
+      - smtp-relay-tls:/run/core-force-mail/smtp-tls
+    healthcheck:
+      test: ["CMD", "test", "-s", "/run/core-force-mail/smtp-tls/key.pem"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+
   templates:
     restart: *reinicio
     <<: *go-runtime
@@ -550,6 +595,13 @@ volumes:
   mail-ssl:
     external: true
     name: ${MAIL_SSL_VOLUME:-mail_ssl-vol}
+  # Certificado del relay SMTP en memoria (smtp-relay-certs): nunca en disco, de root con el grupo del relay.
+  smtp-relay-tls:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: "size=1m,uid=0,gid=65532,mode=0750"
   # Objetos de MinIO (servicio minio). Con nombre del proyecto (app_minio-data): el respaldo lo busca asi.
   minio-data:
 

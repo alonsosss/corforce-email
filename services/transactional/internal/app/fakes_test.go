@@ -34,6 +34,7 @@ type fakeRepo struct {
 	domains     map[string]domain.SendingDomain
 	unsubs      map[string]bool
 	outbox      []outboxEvent
+	raw         map[uuid.UUID][]byte
 
 	// commitBeforeNextTx simula una transaccion concurrente que confirma justo antes de
 	// que empiece la siguiente.
@@ -48,6 +49,7 @@ func newFakeRepo() *fakeRepo {
 		submissions: map[string]domain.Submission{},
 		domains:     map[string]domain.SendingDomain{},
 		unsubs:      map[string]bool{},
+		raw:         map[uuid.UUID][]byte{},
 	}
 }
 
@@ -59,6 +61,7 @@ type repoState struct {
 	domains     map[string]domain.SendingDomain
 	unsubs      map[string]bool
 	outbox      []outboxEvent
+	raw         map[uuid.UUID][]byte
 }
 
 func copyMap[K comparable, V any](in map[K]V) map[K]V {
@@ -78,12 +81,14 @@ func (r *fakeRepo) snapshot() repoState {
 		domains:     copyMap(r.domains),
 		unsubs:      copyMap(r.unsubs),
 		outbox:      append([]outboxEvent(nil), r.outbox...),
+		raw:         copyMap(r.raw),
 	}
 }
 
 func (r *fakeRepo) restore(s repoState) {
 	r.messages, r.order, r.events = s.messages, s.order, s.events
 	r.submissions, r.domains, r.unsubs, r.outbox = s.submissions, s.domains, s.unsubs, s.outbox
+	r.raw = s.raw
 }
 
 func (r *fakeRepo) Transact(ctx context.Context, fn func(ctx context.Context) error) error {
@@ -121,6 +126,23 @@ func (r *fakeRepo) InsertMessage(_ context.Context, m *domain.Message) error {
 	r.messages[m.ID] = *m
 	r.order = append(r.order, m.ID)
 	return nil
+}
+
+func (r *fakeRepo) InsertRawContent(_ context.Context, tenantID, messageID uuid.UUID, raw []byte) error {
+	if m, ok := r.messages[messageID]; !ok || m.TenantID != tenantID {
+		return errors.New("raw content without message")
+	}
+	r.raw[messageID] = append([]byte(nil), raw...)
+	return nil
+}
+
+func (r *fakeRepo) GetRawContent(_ context.Context, tenantID, messageID uuid.UUID) ([]byte, error) {
+	m, ok := r.messages[messageID]
+	raw, found := r.raw[messageID]
+	if !ok || !found || m.TenantID != tenantID {
+		return nil, domain.ErrNotFound
+	}
+	return raw, nil
 }
 
 func (r *fakeRepo) GetMessage(_ context.Context, tenantID, id uuid.UUID) (*domain.Message, error) {

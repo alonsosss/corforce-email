@@ -37,6 +37,8 @@ type CreateMessagesCommand struct {
 	// Purpose solo llega por el envio interno (domain.Purposes); el API publico no lo
 	// acepta.
 	Purpose string
+	// APIKeyID es la clave de API de la peticion, si la autentico una.
+	APIKeyID *uuid.UUID
 }
 
 // MessageSummary es lo que se devuelve por cada mensaje creado.
@@ -92,16 +94,25 @@ func (uc *UseCase) CreateMessages(ctx context.Context, cmd CreateMessagesCommand
 		return nil, err
 	}
 
+	return uc.storeSubmission(ctx, cmd.TenantID, cmd.IdempotencyKey, messages, result, nil)
+}
+
+// storeSubmission guarda los mensajes (y la peticion, con clave de idempotencia) en una
+// transaccion y encola los que quedan en queued. extra corre en la misma transaccion tras
+// insertar cada mensaje (el MIME de uno de SMTP). Si otra peticion con la misma clave gano la
+// carrera, devuelve lo que creo aquella.
+func (uc *UseCase) storeSubmission(ctx context.Context, tenantID uuid.UUID, key string, messages []*domain.Message,
+	result *CreateResult, extra func(ctx context.Context, m *domain.Message) error) (*CreateResult, error) {
 	replayed := false
-	err = uc.repo.Transact(ctx, func(ctx context.Context) error {
-		if cmd.IdempotencyKey != "" {
+	err := uc.repo.Transact(ctx, func(ctx context.Context) error {
+		if key != "" {
 			ids := make([]uuid.UUID, len(messages))
 			for i, m := range messages {
 				ids[i] = m.ID
 			}
 			sub := &domain.Submission{
-				ID: uuid.New(), TenantID: cmd.TenantID, IdempotencyKey: cmd.IdempotencyKey,
-				Class: domain.ClassTransactional, MessageIDs: ids, Suppressed: suppressed,
+				ID: uuid.New(), TenantID: tenantID, IdempotencyKey: key,
+				Class: domain.ClassTransactional, MessageIDs: ids, Suppressed: result.Suppressed,
 			}
 			inserted, err := uc.repo.InsertSubmission(ctx, sub)
 			if err != nil {
@@ -120,6 +131,11 @@ func (uc *UseCase) CreateMessages(ctx context.Context, cmd CreateMessagesCommand
 			if err := uc.repo.InsertMessage(ctx, m); err != nil {
 				return err
 			}
+			if extra != nil {
+				if err := extra(ctx, m); err != nil {
+					return err
+				}
+			}
 			if m.Status == domain.StatusQueued {
 				if err := uc.publishQueued(ctx, m); err != nil {
 					return err
@@ -129,9 +145,9 @@ func (uc *UseCase) CreateMessages(ctx context.Context, cmd CreateMessagesCommand
 		return nil
 	})
 	if replayed {
-		replay, err := uc.replaySubmission(ctx, cmd.TenantID, cmd.IdempotencyKey)
+		replay, err := uc.replaySubmission(ctx, tenantID, key)
 		if err == nil && replay == nil {
-			err = fmt.Errorf("la clave de idempotencia %q existe pero no se pudo leer", cmd.IdempotencyKey)
+			err = fmt.Errorf("la clave de idempotencia %q existe pero no se pudo leer", key)
 		}
 		return replay, err
 	}
@@ -503,6 +519,8 @@ func (uc *UseCase) newMessage(cmd CreateMessagesCommand, to []domain.Recipient) 
 		CreatedBy:       cmd.CreatedBy,
 		CreatedAt:       now,
 		UpdatedAt:       now,
+		Origin:          domain.OriginAPI,
+		APIKeyID:        cmd.APIKeyID,
 	}
 	if cmd.IdempotencyKey != "" {
 		key := cmd.IdempotencyKey

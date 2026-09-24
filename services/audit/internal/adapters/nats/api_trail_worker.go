@@ -149,12 +149,16 @@ func trailLog(eventID string, tenantID uuid.UUID, data map[string]interface{}) *
 	return l
 }
 
-// trailChanges es el detalle del apunte: roles y resultado y, si la peticion eligio celda
-// destino (operador de la plataforma), la celda pedida.
+// trailChanges es el detalle del apunte: roles y resultado, la celda pedida si la peticion eligio
+// celda destino (operador de la plataforma) y la clave de API si la autentico una.
 func trailChanges(data map[string]interface{}) *string {
 	detail := map[string]interface{}{"roles": trailStr(data["roles"]), "status": data["status"]}
 	if cell := trailStr(data["target_cell"]); cell != "" {
 		detail["target_cell"] = cell
+	}
+	// Una escritura con clave de API no tiene usuario: la clave es quien la hizo.
+	if key := trailStr(data["api_key_id"]); key != "" {
+		detail["api_key_id"] = key
 	}
 	b, err := json.Marshal(detail)
 	if err != nil {

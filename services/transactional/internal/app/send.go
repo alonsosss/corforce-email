@@ -51,6 +51,17 @@ func (uc *UseCase) SendQueued(ctx context.Context, tenantID, messageID uuid.UUID
 		}
 
 		email := uc.outgoing(msg)
+		if domain.OriginOrDefault(msg.Origin) == domain.OriginSMTP {
+			raw, err := uc.repo.GetRawContent(ctx, tenantID, msg.ID)
+			if errors.Is(err, domain.ErrNotFound) {
+				return uc.failMessage(ctx, tenantID, msg, &domain.SendError{Kind: domain.ErrorPermanent, Code: "RawContentMissing",
+					Message: "el mensaje de SMTP no tiene su contenido guardado"}, &outcome)
+			}
+			if err != nil {
+				return err
+			}
+			email.Raw = raw
+		}
 		providerID, sendErr := uc.sendWithRetries(ctx, domain.ClassOrDefault(msg.Class), lane, email)
 		if sendErr == nil {
 			sentAt := uc.now()
@@ -60,7 +71,7 @@ func (uc *UseCase) SendQueued(ctx context.Context, tenantID, messageID uuid.UUID
 			if _, err := uc.repo.InsertEvent(ctx, &domain.Event{
 				ID: uuid.New(), TenantID: tenantID, MessageID: msg.ID, Type: domain.EventSend,
 				Recipient:  firstRecipient(msg),
-				Detail:     map[string]any{"ses_message_id": providerID, "source": "api"},
+				Detail:     map[string]any{"ses_message_id": providerID, "source": domain.OriginOrDefault(msg.Origin)},
 				OccurredAt: sentAt, CreatedAt: sentAt,
 			}); err != nil {
 				return err

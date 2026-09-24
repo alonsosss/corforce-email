@@ -159,6 +159,9 @@ func (rl *RateLimiter) LimitPerUser(next http.Handler) http.Handler {
 		if uid := GetUserID(r.Context()); uid != "" {
 			return "u:" + digest(uid)
 		}
+		if keyID := GetAPIKeyID(r.Context()); keyID != "" {
+			return "k:" + digest(keyID)
+		}
 		return ipIdentity(extractIP(r))
 	})
 }

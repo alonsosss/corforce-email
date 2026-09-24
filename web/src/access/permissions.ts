@@ -51,6 +51,12 @@ export const PERMISSIONS = {
   denials: {
     read: [MODULES.access, 'denials', 'read'],
   },
+  // 044: claves de API de la empresa, que sirven tambien de credencial SMTP.
+  apiKeys: {
+    read: [MODULES.access, 'api_keys', 'read'],
+    create: [MODULES.access, 'api_keys', 'create'],
+    revoke: [MODULES.access, 'api_keys', 'revoke'],
+  },
   tenants: {
     read: [MODULES.organization, 'tenants', 'read'],
     create: [MODULES.organization, 'tenants', 'create'],
