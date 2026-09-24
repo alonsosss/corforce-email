@@ -952,13 +952,20 @@ contra el perfil (`test-selfhosted-profile.sh` y a mano el 2026-09-17):
 
 Las imágenes de las plantillas (`docs/adr/0012-editor-visual-de-correos-con-grapesjs-y-mjml.md`) viven en un
 MinIO del propio servidor. Tres contenedores de `docker-compose.selfhosted.yml`, con **una sola imagen**
-fijada por digest (`quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z.hotfix.7aa24e772`, que trae `mc` y
-`curl`; `minio/minio` ya no se publica en Docker Hub):
+propia, `core-force-mail/minio:silo-<release>-<hash>` (`docs/adr/0016-imagen-propia-del-almacen-s3.md`): Silo,
+la bifurcación mantenida de MinIO (mismo formato en disco, mismas variables `MINIO_*` y mismas API), y su
+cliente `mc`, compilados desde su código fuente con `selfhosted/minio/imagen/Dockerfile`, con busybox para los
+guiones y el `wget` del chequeo de salud, sin `curl` ni gestor de paquetes. MinIO ya no publica imágenes
+(quay.io y Docker Hub piden autenticación) y su código abierto no corrige los fallos de 2026. La etiqueta la
+calcula `scripts/imagen-minio.sh --referencia` (versión de Silo y hash de la receta) y los compose la piden
+con `pull_policy: never`: no está en ningún registro. La construye el puesto de trabajo
+(`scripts/imagen-minio.sh --construir`, unos dos minutos en frío) y `deploy-ecr.sh` la envía al servidor con
+`docker save | ssh docker load` cuando el servidor no tiene esa etiqueta; el servidor nunca la compila:
 
 | Contenedor | Qué hace |
 |---|---|
 | `minio` | El servidor, sin root (`10001:10001`), solo lectura, sin capacidades, `mem_limit` 192 MiB (47 a 52 MiB en reposo), sin consola (`MINIO_BROWSER=off`). Solo en `mail-internal`: **sin puerto en el host ni en el borde**; nadie de fuera habla con MinIO. Arranca por `selfhosted/minio/entrypoint.sh`, que se niega sin `MINIO_ROOT_USER`/`MINIO_ROOT_PASSWORD` (MinIO usaría la cuenta de fábrica `minioadmin`) o con una contraseña de menos de 32 caracteres |
-| `minio-volumen` | Trabajo de arranque: un volumen nuevo hereda el `/data` de la imagen, de root, y este le da el directorio raíz al uid de minio. Root solo con `CHOWN`, sin red; con el volumen ya suyo no toca nada |
+| `minio-volumen` | Trabajo de arranque: un volumen creado con la imagen anterior heredó su `/data`, de root, y este le da el directorio raíz al uid de minio (la imagen propia ya trae `/data` del uid 10001). Root solo con `CHOWN`, sin red; con el volumen ya suyo no toca nada |
 | `minio-init` | Trabajo de arranque idempotente (`selfhosted/minio/init.sh`), tras `minio` sano: crea `MINIO_BUCKET` privado (sin acceso anónimo), la política `core-force-media` (leer, escribir y listar ese bucket; **sin borrar**, porque los correos enviados siguen mostrando sus imágenes, y sin tocar su configuración) y el usuario de servicio `MINIO_ACCESS_KEY` con esa política y ninguna otra (retira cualquier otra adjunta). La raíz entra en `mc` por `MC_HOST_local` y la clave del usuario por la entrada estándar: ninguna en la línea de órdenes |
 
 Variables. En el almacén de secretos (opcionales, `?`, en `secret-keys.txt`): `MINIO_ROOT_USER` y
@@ -973,7 +980,10 @@ Arranque: `perfil-despliegue.sh --infra` incluye `minio minio-init` entre la inf
 levanta antes de los servicios; `esperar-sanos.sh` da por bueno un trabajo con `restart: "no"` que sale con 0
 y falla, con su registro, si sale con otro código. `minio-init` se relanza en cada despliegue (idempotente: es
 también como se aplica una rotación de `MINIO_SECRET_KEY`); `deploy-ecr.sh` recrea `minio` cuando cambia
-`selfhosted/minio/entrypoint.sh`. Tras un reinicio del servidor, `minio` vuelve solo (`restart: always`).
+`selfhosted/minio/entrypoint.sh` y, antes de levantar la infraestructura, envía la imagen propia si el
+servidor no tiene su etiqueta (una receta nueva recrea `minio` sobre el mismo volumen y relanza
+`minio-init`; el procedimiento de la primera vez, con respaldo previo, comprobación y vuelta atrás, está en
+el ADR 0016). Tras un reinicio del servidor, `minio` vuelve solo (`restart: always`).
 
 Servir: el gateway lee cada objeto `public/` y lo sirve él mismo (`services/gateway/media.go`): `GET` y `HEAD`
 de `/media/public/*`, solo `image/png`, `image/jpeg`, `image/gif` e `image/webp` (otro tipo, o más de 10 MiB,
@@ -1570,11 +1580,11 @@ dominio solo publica una política que nadie descarga; no hay que pasarlo a `enf
 * MinIO habla HTTP en claro dentro de `mail-internal` (`MINIO_USE_SSL=false`), como PgBouncer y NATS: la
   red es del propio servidor y no entra el borde. Cifrarlo pide un certificado de la CA interna para `minio`
   (`internal-tls.sh`) y que `pkg/objectstore` acepte esa CA; queda pendiente.
-* La imagen de MinIO es la compilación más reciente que se pudo verificar (2026-09-23): una corrección
-  (`.hotfix.7aa24e772`, 2026-03, Go 1.26.1, solo `linux/amd64`) sobre `RELEASE.2025-09-07T16-13-09Z`, que es
-  la última etiqueta `RELEASE` de `quay.io/minio/minio`; `minio/minio` ya no está en Docker Hub. Si no llegan
-  más compilaciones, las correcciones de seguridad exigirán compilar la imagen desde el código fuente o cambiar
-  de almacén S3-compatible; vigilar sus avisos de seguridad.
+* El almacén S3 es Silo, una bifurcación comunitaria de MinIO (ADR 0016): sus correcciones de seguridad
+  dependen de ese proyecto y nadie las vigila por nosotros (`escanear-motores.sh` no cubre esta imagen).
+  Revisar su registro de avisos (`https://silo.pgsty.com/about/security-advisories/`) en cada mantenimiento
+  y actualizar la receta con el procedimiento del ADR. Si dejara de mantenerse, el camino es otra
+  bifurcación con el mismo formato en disco o migrar los datos a otro almacén (coste en el ADR).
 * `sslmode=prefer` de las conexiones directas de `pkg/config` cifra pero no verifica el
   certificado; en este perfil el camino va por la red interna de Docker del propio servidor.
   Verificarlo pide soportar `sslrootcert` en `pkg/config`.

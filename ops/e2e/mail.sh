@@ -254,6 +254,11 @@ t0=$SECONDS
 if compose build >"$WORK/log/build.log" 2>&1; then ok "imagenes construidas ($((SECONDS - t0))s)"; else
   mal "compose build"; tail -30 "$WORK/log/build.log" >&2; exit 1
 fi
+# MinIO del perfil ficheros: la imagen propia (docs/adr/0016), que el compose pide con pull_policy: never.
+t0=$SECONDS
+if scripts/imagen-minio.sh --construir >"$WORK/log/build-minio.log" 2>&1; then ok "imagen de MinIO $(scripts/imagen-minio.sh --referencia) ($((SECONDS - t0))s)"; else
+  mal "scripts/imagen-minio.sh --construir"; tail -30 "$WORK/log/build-minio.log" >&2; exit 1
+fi
 e2e_compilar organization identity access-control gateway domain-service mail-migration mail-dav mail-files || exit 1
 
 echo "== Red de los motores e infraestructura desechable"

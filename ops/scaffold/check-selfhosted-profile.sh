@@ -15,8 +15,11 @@
 #   - el cuerpo maximo del proxy de borde cubre el mayor envio del webmail y la importacion de
 #     contactos de .env.example;
 #   - los rangos de Cloudflare son CIDR validos, y la imagen del borde va por digest;
-#   - MinIO (minio, minio-volumen, minio-init) con una sola imagen por digest, sin puertos, solo en
-#     la red interna, sin root (salvo el chown del volumen, sin red) y sin consola;
+#   - MinIO (minio, minio-volumen, minio-init) con una sola imagen, la propia que dice
+#     scripts/imagen-minio.sh (version y hash de su Dockerfile) con pull_policy: never, tambien en el
+#     compose de la prueba de los motores; su Dockerfile con las bases por digest y las fuentes por
+#     commit; sin puertos, solo en la red interna, sin root (salvo el chown del volumen, sin red) y
+#     sin consola;
 #   - ops/maintenance/perfil-despliegue.sh decide bien, y los dos despliegues lo usan.
 set -euo pipefail
 
@@ -237,18 +240,45 @@ if not re.search(r"image:\s*\S+@sha256:[0-9a-f]{64}", borde):
     fallos.append("edge-proxy: la imagen no va fijada por digest")
 
 
-# --- MinIO: solo en la red interna, sin puerto, sin root salvo el chown del volumen -------------
-imagenes_minio = set()
+# --- MinIO: la imagen propia, solo en la red interna, sin puerto, sin root salvo el chown del volumen
+# La etiqueta la calcula scripts/imagen-minio.sh a partir de su Dockerfile: un compose que referencia
+# otra corre una receta que ya no es la del repositorio, o una imagen que el despliegue no sabe enviar.
+try:
+    imagen_minio = subprocess.run([os.path.join(root, "scripts/imagen-minio.sh"), "--referencia"],
+                                  capture_output=True, text=True, check=True).stdout.strip()
+except (OSError, subprocess.CalledProcessError) as e:
+    imagen_minio = ""
+    fallos.append(f"scripts/imagen-minio.sh --referencia fallo: {getattr(e, 'stderr', '') or e}")
+receta_minio = leer("selfhosted/minio/imagen/Dockerfile")
+for base in re.findall(r"^FROM\s+(\S+)", receta_minio, re.M):
+    if not re.search(r"@sha256:[0-9a-f]{64}$", base):
+        fallos.append(f"selfhosted/minio/imagen/Dockerfile: la base {base} no va fijada por digest")
+for arg in ("SILO_COMMIT", "MC_COMMIT"):
+    if not re.search(rf"^ARG {arg}=[0-9a-f]{{40}}$", receta_minio, re.M):
+        fallos.append(f"selfhosted/minio/imagen/Dockerfile: {arg} no fija un commit completo")
+if not re.search(r"^USER 10001:10001$", receta_minio, re.M):
+    fallos.append("selfhosted/minio/imagen/Dockerfile: la imagen no corre con el uid 10001 del perfil")
+
+
+def comprobar_imagen_minio(fichero, svc, cuerpo):
+    m = re.search(r"^    image:\s*(\S+)$", cuerpo, re.M)
+    if not m or (imagen_minio and m.group(1) != imagen_minio):
+        fallos.append(f"{fichero} {svc}: la imagen tiene que ser {imagen_minio or 'la de scripts/imagen-minio.sh'}"
+                      f" (tiene {m.group(1) if m else 'ninguna'}); tras cambiar el Dockerfile, pon la nueva referencia")
+    if not re.search(r"^    pull_policy: never$", cuerpo, re.M):
+        fallos.append(f"{fichero} {svc}: falta pull_policy: never (la imagen propia no esta en ningun registro)")
+
+
+e2e_motores = bloques(leer("deploy/mail/docker-compose.e2e.yml"))
+for svc in ("minio", "minio-init"):
+    comprobar_imagen_minio("deploy/mail/docker-compose.e2e.yml", svc, "\n".join(e2e_motores.get(svc, [])))
+
 for svc in ("minio", "minio-volumen", "minio-init"):
     cuerpo = "\n".join(perfil.get(svc, []))
     if not cuerpo:
         fallos.append(f"{svc}: falta en el perfil")
         continue
-    m = re.search(r"^    image:\s*(\S+)$", cuerpo, re.M)
-    if not m or not re.search(r"@sha256:[0-9a-f]{64}$", m.group(1)):
-        fallos.append(f"{svc}: la imagen no va fijada por digest")
-    else:
-        imagenes_minio.add(m.group(1))
+    comprobar_imagen_minio("docker-compose.selfhosted.yml", svc, cuerpo)
     if re.search(r"^    ports:", cuerpo, re.M):
         fallos.append(f"{svc}: publica un puerto; MinIO no sale de la red interna")
     for requerido in ("read_only: true", "cap_drop: [ALL]", 'security_opt: ["no-new-privileges:true"]', "mem_limit:"):
@@ -262,8 +292,6 @@ for svc in ("minio", "minio-volumen", "minio-init"):
         fallos.append(f"{svc}: no fija un user: UID:GID numerico sin root")
     elif not re.search(r"^    networks:\n      - mail-internal$", cuerpo, re.M) or re.search(r"^      - (edge|mail-engines)$", cuerpo, re.M):
         fallos.append(f"{svc}: tiene que estar solo en la red mail-internal")
-if len(imagenes_minio) > 1:
-    fallos.append(f"minio, minio-volumen y minio-init usan imagenes distintas: {sorted(imagenes_minio)}")
 if "MINIO_BROWSER: \"off\"" not in "\n".join(perfil.get("minio", [])):
     fallos.append("minio: la consola tiene que ir apagada (MINIO_BROWSER: \"off\")")
 
@@ -361,6 +389,10 @@ for n, linea in enumerate(deploy.splitlines(), 1):
         fallos.append(f"deploy-ecr.sh:{n}: compose remoto sin los argumentos del perfil")
 if deploy.count("leer_perfil") < 4 or deploy.count("aplicar_infra") < 4 or deploy.count("aplicar_borde") < 4:
     fallos.append("deploy-ecr.sh: algun camino no lee el perfil o no levanta su infraestructura")
+m = re.search(r"^aplicar_infra\(\) \{\n(.*?)^\}", deploy, re.S | re.M)
+if not m or not re.search(r"^  enviar_imagen_minio$", m.group(1), re.M) or \
+        m.group(1).find("enviar_imagen_minio") > m.group(1).find("docker compose"):
+    fallos.append("deploy-ecr.sh: aplicar_infra no envia la imagen propia de MinIO antes de levantar la infraestructura")
 release = leer(".github/workflows/release.yml")
 for marca in ("perfil-despliegue.sh", 'perfil-despliegue.sh" --env .env --compose', "--no-deps edge-proxy"):
     if marca not in release:

@@ -39,8 +39,12 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 PROYECTO="${RESPALDO_TEST_PROJECT:-cfm-respaldo-prueba}"
 PUERTO_S3="${RESPALDO_TEST_PORT:-47590}"
 IMG_PG="$(awk '/^  postgres-primary:/{d=1;next} d&&/^    image:/{print $2;exit}' "$ROOT/docker-compose.yml")"
-# La misma imagen que el servicio minio del perfil (minio/minio ya no se publica en Docker Hub).
-IMG_MINIO="${RESPALDO_TEST_MINIO_IMAGE:-$(awk '/^  minio:/{d=1;next} d&&/^    image:/{print $2;exit}' "$ROOT/docker-compose.selfhosted.yml")}"
+# La misma imagen que el servicio minio del perfil: la propia, compilada desde el codigo fuente (docs/adr/0016).
+IMG_MINIO="${RESPALDO_TEST_MINIO_IMAGE:-}"
+if [[ -z "$IMG_MINIO" ]]; then
+  "$ROOT/scripts/imagen-minio.sh" --construir || exit 1
+  IMG_MINIO="$("$ROOT/scripts/imagen-minio.sh" --referencia)"
+fi
 
 CERROJO="${TMPDIR:-/tmp}/$PROYECTO.lock"
 exec 9>"$CERROJO"

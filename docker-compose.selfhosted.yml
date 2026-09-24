@@ -466,10 +466,13 @@ services:
   # puerto en el host ni en el borde: nadie de fuera habla con MinIO, el gateway lee de el y sirve
   # /media/public/*. Sin consola (MINIO_BROWSER=off). La cuenta raiz la reciben solo minio y
   # minio-init; gateway y templates usan el usuario de servicio que crea minio-init, acotado a
-  # MINIO_BUCKET. Una sola imagen, fijada por digest, para los tres contenedores (trae mc y curl).
+  # MINIO_BUCKET. Una sola imagen para los tres contenedores, la propia compilada desde el codigo fuente
+  # (docs/adr/0016, scripts/imagen-minio.sh; trae mc y el wget de busybox): la etiqueta lleva el hash de
+  # su receta y pull_policy: never, porque solo existe donde se construyo o donde el despliegue la envio.
   # El volumen entra en el respaldo (ops/backup/backup-mail-volumes.sh) y solo sale cifrado.
   minio:
-    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z.hotfix.7aa24e772@sha256:cf3dadcfa1fb0324f43958bad1abba986d53c4ecc04d4d50b46c7dcda28bd3cd
+    image: core-force-mail/minio:silo-RELEASE.2026-09-16T00-00-00Z-4d66955a0c9d
+    pull_policy: never
     restart: *reinicio
     user: "10001:10001"
     read_only: true
@@ -493,7 +496,7 @@ services:
     tmpfs:
       - /tmp:size=16m
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://127.0.0.1:9000/minio/health/live"]
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9000/minio/health/live"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -504,10 +507,12 @@ services:
     networks:
       - mail-internal
 
-  # Un volumen nuevo hereda el /data de la imagen, de root: MinIO, sin root, no podria escribir. Este
-  # trabajo le da el directorio raiz al uid de minio y sale; con el volumen ya suyo no toca nada.
+  # Un volumen creado con la imagen anterior heredo su /data, de root: MinIO, sin root, no podria escribir.
+  # Este trabajo le da el directorio raiz al uid de minio y sale; con el volumen ya suyo no toca nada (la
+  # imagen propia ya trae /data del uid 10001, asi que en un volumen nuevo tampoco hace nada).
   minio-volumen:
-    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z.hotfix.7aa24e772@sha256:cf3dadcfa1fb0324f43958bad1abba986d53c4ecc04d4d50b46c7dcda28bd3cd
+    image: core-force-mail/minio:silo-RELEASE.2026-09-16T00-00-00Z-4d66955a0c9d
+    pull_policy: never
     restart: "no"
     user: "0:0"
     read_only: true
@@ -525,7 +530,8 @@ services:
   # acotada a el y usuario de servicio MINIO_ACCESS_KEY. Corre en cada despliegue tras minio sano
   # (ops/maintenance/perfil-despliegue.sh --infra) y sale; esperar-sanos.sh exige que salga con 0.
   minio-init:
-    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z.hotfix.7aa24e772@sha256:cf3dadcfa1fb0324f43958bad1abba986d53c4ecc04d4d50b46c7dcda28bd3cd
+    image: core-force-mail/minio:silo-RELEASE.2026-09-16T00-00-00Z-4d66955a0c9d
+    pull_policy: never
     restart: "no"
     user: "10001:10001"
     read_only: true

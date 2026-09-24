@@ -95,6 +95,9 @@ los motores entienden traducida a PostgreSQL.
   y compartidos con él).
 * `docker-compose.images.save.yml`: override de imagen del transporte `save`, generado junto al de
   ECR (`make gen-compose-images`).
+* `selfhosted/minio/imagen/Dockerfile` y `scripts/imagen-minio.sh`: la imagen propia del almacén S3 del perfil
+  autoalojado, compilada desde el código fuente de Silo, la bifurcación mantenida de MinIO, porque MinIO ya no
+  publica imágenes (`docs/adr/0016-imagen-propia-del-almacen-s3.md`).
 * `docs/*` de este producto.
 * `services/mail-migration` (plano de empresa) y `deploy/mail/migration-runner` (ejecutor con `imapsync`,
   modulo Go propio sin dependencias): migracion de buzones desde otro proveedor

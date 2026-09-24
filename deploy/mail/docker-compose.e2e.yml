@@ -194,13 +194,15 @@ services:
       mail-engines: {}
 
   # Almacen de los ficheros grandes por enlace (perfil ficheros: ops/e2e/mail.sh lo arranca en el bloque C4).
-  # MinIO con la imagen fijada, el arranque y la inicializacion del perfil autoalojado (selfhosted/minio: sin
-  # cuenta de fabrica, bucket privado y usuario de servicio con politica acotada); los datos en tmpfs.
+  # MinIO con la imagen propia del perfil autoalojado (ops/e2e/mail.sh la construye antes con
+  # scripts/imagen-minio.sh), su arranque y su inicializacion (selfhosted/minio: sin cuenta de fabrica, bucket
+  # privado y usuario de servicio con politica acotada); los datos en tmpfs.
   # mail-files corre en el host, como los demas servicios del plano de empresa de la prueba, y le llega por
   # el puerto publicado en 127.0.0.1. Las credenciales se generan en cada ejecucion y solo llegan por el
   # entorno.
   minio:
-    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z.hotfix.7aa24e772@sha256:cf3dadcfa1fb0324f43958bad1abba986d53c4ecc04d4d50b46c7dcda28bd3cd
+    image: core-force-mail/minio:silo-RELEASE.2026-09-16T00-00-00Z-4d66955a0c9d
+    pull_policy: never
     profiles: ["ficheros"]
     user: "10001:10001"
     read_only: true
@@ -219,7 +221,7 @@ services:
     ports:
       - "127.0.0.1:${E2E_PORT_MINIO:?lo fija ops/e2e/mail.sh}:9000"
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://127.0.0.1:9000/minio/health/live"]
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9000/minio/health/live"]
       interval: 2s
       timeout: 5s
       retries: 30
@@ -229,7 +231,8 @@ services:
           - minio
 
   minio-init:
-    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z.hotfix.7aa24e772@sha256:cf3dadcfa1fb0324f43958bad1abba986d53c4ecc04d4d50b46c7dcda28bd3cd
+    image: core-force-mail/minio:silo-RELEASE.2026-09-16T00-00-00Z-4d66955a0c9d
+    pull_policy: never
     profiles: ["ficheros"]
     restart: "no"
     user: "10001:10001"

@@ -123,6 +123,23 @@ cambio_desplegado() {
 
 en_infra() { [[ " ${INFRA[*]} " == *" $1 "* ]]; }
 
+# MinIO corre la imagen propia (docs/adr/0016), que no esta en ningun registro y el perfil pide con
+# pull_policy: never. Su etiqueta cambia con su receta: si el servidor no la tiene, se construye aqui
+# (el servidor nunca compila) y viaja con docker save | ssh docker load, como las de los servicios.
+enviar_imagen_minio() {
+  en_infra minio || return 0
+  local imagen
+  imagen="$(scripts/imagen-minio.sh --referencia)" || exit 1
+  "${SSH[@]}" "docker image inspect $imagen >/dev/null 2>&1" && return 0
+  echo ">> minio: el servidor no tiene $imagen; se construye aqui y se envia"
+  scripts/imagen-minio.sh --construir || exit 1
+  docker save "$imagen" | gzip | "${SSH[@]}" 'gunzip | docker load' >/dev/null
+  "${SSH[@]}" "docker image inspect $imagen >/dev/null" || {
+    echo "!! el servidor no tiene $imagen tras el docker load" >&2
+    exit 1
+  }
+}
+
 # Infraestructura del perfil ANTES de recrear los servicios: sin base, pooler ni Redis no arranca
 # ninguno. `up -d` solo recrea lo que cambio en compose; un pg_hba nuevo se aplica con SIGHUP (sin
 # cortar conexiones) y un arranque de Redis o de MinIO nuevo obliga a recrearlo.
@@ -130,6 +147,7 @@ aplicar_infra() {
   local previos=() s
   for s in "${INFRA[@]}"; do [[ "$s" != edge-proxy ]] && previos+=("$s"); done
   [[ ${#previos[@]} -eq 0 ]] && return 0
+  enviar_imagen_minio
   # minio-init relee su guion en cada `up`; el arranque de minio solo se lee al crear el contenedor.
   # Se recrea ANTES del `up` comun para no tumbar minio mientras minio-init trabaja contra el.
   if en_infra minio && cambio_desplegado selfhosted/minio/entrypoint.sh; then
