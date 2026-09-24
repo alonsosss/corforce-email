@@ -164,7 +164,7 @@ identico	rspamd/local.d/milter_headers.conf	99fffa14789a0e0b0be8e0d263cc0849c46a
 identico	rspamd/local.d/mime_types.conf	5e3bb90a7634ab9363cbe4399ff3cdd67b155630165f5c262ea8f425ea236030
 identico	rspamd/local.d/mime_types_group.conf	72d2e37adcb4a329d69776b381c07554367c227b9583795f3433ada16898a8b7
 identico	rspamd/local.d/multimap.conf	ac89faf83ce10f0fff6d35d567f8df5ea8eef4d1ec6ebff7bd4f9c29813f0253
-identico	rspamd/local.d/mx_check.conf	d59170accae5d4c7be0896f411ae26c0aaeb2afb00662893c38b63c2d0f809ec
+modificado	rspamd/local.d/mx_check.conf	endurecimiento	data/conf/rspamd/local.d/mx_check.conf
 modificado	rspamd/local.d/options.inc	nombres,endurecimiento	data/conf/rspamd/local.d/options.inc
 identico	rspamd/local.d/phishing.conf	f513223367d1f2b4d3a9e52c6932fbfdf6925f1af09ec514f32f8075f303ada2
 identico	rspamd/local.d/policies_group.conf	67912a03ea10a466b174403b4a2dda3ff18c387fe87a9f758f0858e0c4ff8dd5
