@@ -22,6 +22,8 @@ func setEnv(t *testing.T, kv map[string]string) {
 		"MAIL_DAV_CHANGES_RETAINED", "MAIL_DAV_MAX_REQUEST_BYTES", "MAIL_DAV_RATE_LIMIT_PER_MIN", "MAIL_DAV_TLS_CA_FILE",
 		"MAIL_DAV_MAX_MAILBOX_BYTES", "MAIL_DAV_MAX_RESPONSE_BYTES", "MAIL_DAV_MAX_INFLIGHT", "MAIL_DAV_REQUEST_TIMEOUT",
 		"MAIL_DAV_AUTH_CACHE_TTL", "MAIL_DAV_AUTH_MAX_CONCURRENT",
+		"MAIL_DAV_MAX_IMPORT_BYTES", "MAIL_DAV_MAX_IMPORT_CARDS", "MAIL_DAV_MAX_EVENT_WINDOW_DAYS", "MAIL_DAV_MAX_OCCURRENCES",
+		"MAIL_DAV_MAX_CONTACTS_PAGE_SIZE", "MAIL_DAV_CONTACTS_PAGE_SIZE",
 		"MAIL_DAV_TLS_INSECURE_SKIP_VERIFY", "MAIL_AUTH_URL", "MAIL_AUTH_CELL_URLS", "GATEWAY_BASE_CELL_CODE", "ORGANIZATION_URL",
 	} {
 		t.Setenv(k, "")
@@ -60,6 +62,10 @@ func TestLosValoresPorDefectoSonLosDelADR(t *testing.T) {
 	if err := cal.Validate(); err != nil {
 		t.Fatal(err)
 	}
+	if api := st.api; api.MaxBodyBytes != st.maxXMLBytes || api.MaxImportBytes != 4<<20 || api.MaxImportCards != 1000 || api.MaxWindowDays != 62 ||
+		api.MaxOccurrences != 5000 || api.DefaultPerPage != 50 || api.MaxPerPage != 100 {
+		t.Fatalf("API interna: %+v", api)
+	}
 	if st.mailAuth.BaseURL != "https://mail-auth:9082" || len(st.mailAuth.CellURLs) != 0 || st.mailAuth.TLS == nil {
 		t.Fatalf("mail-auth: %+v", st.mailAuth)
 	}
@@ -90,6 +96,10 @@ func TestLaConfiguracionInvalidaImpideArrancar(t *testing.T) {
 		"trabajo de recurrencia en cero":   {"MAIL_DAV_MAX_RECURRENCE_WORK": "0"},
 		"trabajo de consulta desmedido":    {"MAIL_DAV_MAX_QUERY_RECURRENCE_WORK": "1000000000"},
 		"sin token interno":                {"INTERNAL_GATEWAY_TOKEN": ""},
+		"importacion diminuta":             {"MAIL_DAV_MAX_IMPORT_BYTES": "10"},
+		"ventana de un anio y medio":       {"MAIL_DAV_MAX_EVENT_WINDOW_DAYS": "500"},
+		"apariciones en cero":              {"MAIL_DAV_MAX_OCCURRENCES": "0"},
+		"pagina mayor que el maximo":       {"MAIL_DAV_MAX_CONTACTS_PAGE_SIZE": "20", "MAIL_DAV_CONTACTS_PAGE_SIZE": "50"},
 		"TLS sin verificar en produccion":  {"MAIL_DAV_TLS_INSECURE_SKIP_VERIFY": "true"},
 		"booleano ilegible":                {"MAIL_DAV_TLS_INSECURE_SKIP_VERIFY": "quizas"},
 		"CA inexistente":                   {"MAIL_DAV_TLS_CA_FILE": "/no/existe.pem"},
@@ -140,7 +150,7 @@ func TestElRouterExigeElTokenDelGatewayYLimitaPorIP(t *testing.T) {
 	t.Setenv("INTERNAL_GATEWAY_TOKEN", "token-interno")
 	var served int
 	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { served++ })
-	h := router(inner, settings{ratePerMin: 2, maxInflight: 8, reqTimeout: time.Minute}, zap.NewNop())
+	h := router(inner, http.NotFoundHandler(), settings{ratePerMin: 2, maxInflight: 8, reqTimeout: time.Minute}, zap.NewNop())
 
 	call := func(token, ip string) int {
 		req := httptest.NewRequest("PROPFIND", "/api/v1/dav/", nil)
@@ -222,6 +232,59 @@ func TestElPrefijoCoincideConLaTablaDelGateway(t *testing.T) {
 	}
 }
 
+// La API interna del webmail va por su propia cadena: solo servicios con el token interno, nunca una peticion
+// con usuario de la plataforma, y el cupo es por buzon (todas llegan desde la IP del webmail).
+func TestLaAPIInternaSoloParaServiciosYConCupoPorBuzon(t *testing.T) {
+	t.Setenv("INTERNAL_GATEWAY_TOKEN", "token-interno")
+	var davServed, apiServed int
+	dav := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { davServed++ })
+	api := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { apiServed++ })
+	h := router(dav, api, settings{ratePerMin: 2, maxInflight: 8, reqTimeout: time.Minute}, zap.NewNop())
+	mailboxA, mailboxB := "6f1c1f8e-3f55-4a55-9f39-1f8a2f0b7a11", "0b8f5e4a-2c1d-4e3f-8a9b-7c6d5e4f3a21"
+	call := func(path, token, mailbox, user string) int {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.RemoteAddr = "10.0.0.9:1234"
+		if token != "" {
+			req.Header.Set("X-Gateway-Token", token)
+		}
+		if mailbox != "" {
+			req.Header.Set("X-Mailbox-ID", mailbox)
+		}
+		if user != "" {
+			req.Header.Set("X-User-ID", user)
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec.Code
+	}
+	if got := call("/internal/mail-dav/contacts", "", mailboxA, ""); got != http.StatusUnauthorized {
+		t.Fatalf("sin token: %d", got)
+	}
+	if got := call("/internal/mail-dav/contacts", "token-interno", mailboxA, "usuario-1"); got != http.StatusForbidden {
+		t.Fatalf("con usuario de la plataforma: %d", got)
+	}
+	if apiServed != 0 {
+		t.Fatal("la API no se sirvio a quien no debia")
+	}
+	for i := 0; i < 2; i++ {
+		if got := call("/internal/mail-dav/contacts", "token-interno", mailboxA, ""); got != http.StatusOK {
+			t.Fatalf("dentro del cupo: %d", got)
+		}
+	}
+	if got := call("/internal/mail-dav/contacts", "token-interno", mailboxA, ""); got != http.StatusTooManyRequests {
+		t.Fatalf("pasado el cupo del buzon: %d", got)
+	}
+	if got := call("/internal/mail-dav/contacts", "token-interno", mailboxB, ""); got != http.StatusOK {
+		t.Fatalf("otro buzon desde la misma IP tiene su cupo: %d", got)
+	}
+	if got := call("/api/v1/dav/", "token-interno", "", ""); got != http.StatusOK || davServed != 1 || apiServed != 3 {
+		t.Fatalf("el resto sigue en DAV: %d dav=%d api=%d", got, davServed, apiServed)
+	}
+	if got := call("/internal/mail-davx", "token-interno", "", ""); got != http.StatusOK || davServed != 2 {
+		t.Fatalf("un prefijo parecido no es la API: %d", got)
+	}
+}
+
 func TestLaCacheDeAutenticacionSePuedeApagar(t *testing.T) {
 	setEnv(t, map[string]string{"MAIL_AUTH_URL": "https://mail-auth:9082", "MAIL_DAV_AUTH_CACHE_TTL": "0s"})
 	st, err := loadSettings(zap.NewNop())
@@ -241,7 +304,7 @@ func TestElRouterAcotaLasPeticionesSimultaneasYPoneUnPlazo(t *testing.T) {
 		entered <- struct{}{}
 		<-release
 	})
-	h := router(inner, settings{ratePerMin: 1000, maxInflight: 1, reqTimeout: time.Minute}, zap.NewNop())
+	h := router(inner, http.NotFoundHandler(), settings{ratePerMin: 1000, maxInflight: 1, reqTimeout: time.Minute}, zap.NewNop())
 	call := func() int {
 		req := httptest.NewRequest("PROPFIND", "/api/v1/dav/", nil)
 		req.RemoteAddr = "10.0.0.5:1234"

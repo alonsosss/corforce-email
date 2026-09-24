@@ -64,8 +64,9 @@ type verifyResponse struct {
 	// DisplayName solo viaja al webmail (service "webmail"), que lo usa como nombre del
 	// remitente. passwd-verify.lua solo lee success e ignora el resto.
 	DisplayName *string `json:"display_name,omitempty"`
-	// Username, TenantID y MailboxID solo viajan a mail-dav (service "dav"), que no tiene otra
-	// forma de saber a que empresa y a que buzon pertenece una credencial verificada.
+	// TenantID y MailboxID viajan a mail-dav (service "dav") y al webmail, que no tienen otra forma
+	// de saber a que empresa y a que buzon pertenece una credencial verificada: el webmail los guarda
+	// en su sesion para hablar con mail-dav. Username solo viaja a mail-dav.
 	Username  *string `json:"username,omitempty"`
 	TenantID  *string `json:"tenant_id,omitempty"`
 	MailboxID *string `json:"mailbox_id,omitempty"`
@@ -97,7 +98,8 @@ func (h *Handler) Verify(w http.ResponseWriter, r *http.Request) {
 	resp := verifyResponse{Success: true}
 	switch p, _ := domain.ProtocolFromService(body.Service); p {
 	case domain.ProtocolWebmail:
-		resp.DisplayName = &v.DisplayName
+		tenantID, mailboxID := v.TenantID.String(), v.MailboxID.String()
+		resp.DisplayName, resp.TenantID, resp.MailboxID = &v.DisplayName, &tenantID, &mailboxID
 	case domain.ProtocolDAV:
 		tenantID, mailboxID := v.TenantID.String(), v.MailboxID.String()
 		resp.Username, resp.TenantID, resp.MailboxID = &v.Username, &tenantID, &mailboxID

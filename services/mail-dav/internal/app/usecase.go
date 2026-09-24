@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/alonsosss/corforce-email/services/mail-dav/internal/domain"
 	"github.com/alonsosss/corforce-email/services/mail-dav/internal/ports"
@@ -29,6 +30,8 @@ type Deps struct {
 	Index     ports.MailboxIndex
 	Config    Config
 	Logger    *zap.Logger
+	// Now es el reloj de las marcas de tiempo que escribe la API estructurada (REV, DTSTAMP); nulo es time.Now.
+	Now func() time.Time
 }
 
 type UseCase struct {
@@ -39,6 +42,7 @@ type UseCase struct {
 	index     ports.MailboxIndex
 	cfg       Config
 	logger    *zap.Logger
+	now       func() time.Time
 }
 
 func New(d Deps) (*UseCase, error) {
@@ -58,7 +62,11 @@ func New(d Deps) (*UseCase, error) {
 	if logger == nil {
 		logger = zap.NewNop()
 	}
-	return &UseCase{auth: d.Auth, tenant: d.Tenant, store: d.Store, calendars: d.Calendars, index: d.Index, cfg: d.Config, logger: logger}, nil
+	now := d.Now
+	if now == nil {
+		now = time.Now
+	}
+	return &UseCase{auth: d.Auth, tenant: d.Tenant, store: d.Store, calendars: d.Calendars, index: d.Index, cfg: d.Config, logger: logger, now: now}, nil
 }
 
 func (uc *UseCase) Limits() domain.Limits { return uc.cfg.Limits }

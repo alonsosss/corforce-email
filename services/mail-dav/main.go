@@ -2,7 +2,8 @@
 // con iOS, Thunderbird y DAVx5 (docs/adr/0004). Plano de EMPRESA: los datos viven en el esquema mail_dav de la base de cada
 // empresa. Su usuario es un buzon, no un usuario de la plataforma: cada peticion se autentica con HTTP
 // Basic contra mail-auth (service "dav") y el gateway lo expone como prefijo autenticado por el servicio
-// (routes.json, self_authenticated). Basic solo es admisible porque el borde termina TLS.
+// (routes.json, self_authenticated). Basic solo es admisible porque el borde termina TLS. Ademas sirve al webmail
+// una API JSON interna (/internal/mail-dav, que el gateway no enruta) sobre los mismos datos.
 package main
 
 import (
@@ -10,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math"
 	"net/http"
 	"os"
 	"strconv"
@@ -32,6 +34,7 @@ import (
 	"github.com/alonsosss/corforce-email/services/mail-dav/internal/adapters/reconcile"
 	"github.com/alonsosss/corforce-email/services/mail-dav/internal/adapters/tenantdb"
 	"github.com/alonsosss/corforce-email/services/mail-dav/internal/app"
+	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
 
@@ -62,6 +65,13 @@ const (
 	defaultMaxCalendars          = 10
 	defaultMaxRecurrenceWork     = 20000
 	defaultMaxQueryRecurrentWork = 500000
+
+	defaultMaxImportBytes   = 4 << 20
+	defaultMaxImportCards   = 1000
+	defaultMaxWindowDays    = 62
+	defaultMaxOccurrences   = 5000
+	defaultContactsPageSize = 50
+	defaultMaxPageSize      = 100
 
 	// El limite de fila de las migraciones (mail_dav_contacts_size_check, mail_dav_events_size_check) es de
 	// 4 MiB: ningun tope de tamano configurable puede pasar de ahi.
@@ -97,6 +107,7 @@ type settings struct {
 	organization string
 	internalTok  string
 	reconcile    mailreconcile.Config
+	api          handler.APILimits
 }
 
 func loadSettings(logger *zap.Logger) (settings, error) {
@@ -195,7 +206,37 @@ func loadSettings(logger *zap.Logger) (settings, error) {
 	if st.reconcile, err = mailreconcile.ConfigFromEnv("MAIL_DAV"); err != nil {
 		return st, err
 	}
+	if st.api, err = apiLimitsFromEnv(st.maxXMLBytes); err != nil {
+		return st, err
+	}
 	return st, nil
+}
+
+// apiLimitsFromEnv lee los topes de la API interna del webmail. El cuerpo JSON de un alta se acota como el de
+// una peticion DAV (MAIL_DAV_MAX_REQUEST_BYTES).
+func apiLimitsFromEnv(maxBody int64) (handler.APILimits, error) {
+	lim := handler.APILimits{MaxBodyBytes: maxBody}
+	importBytes, err := config.EnvInt("MAIL_DAV_MAX_IMPORT_BYTES", defaultMaxImportBytes, 1<<10, 64<<20)
+	if err != nil {
+		return lim, err
+	}
+	lim.MaxImportBytes = int64(importBytes)
+	if lim.MaxImportCards, err = config.EnvInt("MAIL_DAV_MAX_IMPORT_CARDS", defaultMaxImportCards, 1, 100_000); err != nil {
+		return lim, err
+	}
+	if lim.MaxWindowDays, err = config.EnvInt("MAIL_DAV_MAX_EVENT_WINDOW_DAYS", defaultMaxWindowDays, 1, 366); err != nil {
+		return lim, err
+	}
+	if lim.MaxOccurrences, err = config.EnvInt("MAIL_DAV_MAX_OCCURRENCES", defaultMaxOccurrences, 1, 100_000); err != nil {
+		return lim, err
+	}
+	if lim.MaxPerPage, err = config.EnvInt("MAIL_DAV_MAX_CONTACTS_PAGE_SIZE", defaultMaxPageSize, 1, 1000); err != nil {
+		return lim, err
+	}
+	if lim.DefaultPerPage, err = config.EnvInt("MAIL_DAV_CONTACTS_PAGE_SIZE", defaultContactsPageSize, 1, lim.MaxPerPage); err != nil {
+		return lim, err
+	}
+	return lim, lim.Validate()
 }
 
 // mailAuthFromEnv arma el destino de la verificacion. MAIL_AUTH_URL es el mail-auth de la celda base
@@ -330,7 +371,12 @@ func main() {
 		log.Fatalf("mail-dav: %v", err)
 	}
 
-	srv := server.New(st.port, router(dav, st, logger), logger)
+	api, err := handler.NewAPI(uc, st.api, logger)
+	if err != nil {
+		log.Fatalf("mail-dav: %v", err)
+	}
+
+	srv := server.New(st.port, router(dav, api.Routes(), st, logger), logger)
 	runErr := srv.Run()
 	// Los cierres de abajo (NATS, pools) van antes que el cancel diferido: se detiene primero el consumidor
 	// para que no pida conexiones a un pool que se esta cerrando.
@@ -342,31 +388,49 @@ func main() {
 
 // router es la cadena de la peticion. Unica entrada: el gateway; sin su token no se acepta X-Real-IP,
 // que alimenta el freno de fuerza bruta de mail-auth. No usa chi: los metodos WebDAV (PROPFIND, REPORT,
-// MKCOL, MKCALENDAR) no estan en su tabla de metodos. Tras el cupo por IP, las peticiones que se atienden
-// a la vez y el tiempo de cada una estan acotados: el pool de la base de una empresa es de diez conexiones
-// y una peticion que espera una o que se queda calculando no puede sostenerse indefinidamente.
-func router(dav http.Handler, st settings, logger *zap.Logger) http.Handler {
-	limiter := middleware.NewRateLimiter(st.ratePerMin, time.Minute)
-	chain := []func(http.Handler) http.Handler{
-		middleware.RequestID,
-		middleware.RequireGatewayToken,
-		middleware.SecureHeaders,
-		middleware.Logger(logger),
-		limiter.Limit,
-		limitInflight(st.maxInflight),
+// MKCOL, MKCALENDAR) no estan en su tabla de metodos. Tras el cupo, las peticiones que se atienden a la vez
+// (DAV y API interna juntas) y el tiempo de cada una estan acotados: el pool de la base de una empresa es de
+// diez conexiones y una peticion que espera una o que se queda calculando no puede sostenerse indefinidamente.
+//
+// InternalPrefix va a la API interna del webmail: solo servicios de la plataforma (RequireInternalCaller) y
+// con el cupo por buzon, porque todas sus peticiones llegan desde las pocas IP del webmail.
+func router(dav, api http.Handler, st settings, logger *zap.Logger) http.Handler {
+	slots := make(chan struct{}, st.maxInflight)
+	davChain := chain(dav,
+		middleware.NewRateLimiter(st.ratePerMin, time.Minute).Limit,
+		limitInflight(slots, func(w http.ResponseWriter) { http.Error(w, "servicio ocupado", http.StatusServiceUnavailable) }),
 		withDeadline(st.reqTimeout),
-	}
-	h := dav
-	for i := len(chain) - 1; i >= 0; i-- {
-		h = chain[i](h)
+	)
+	apiChain := chain(api,
+		middleware.InjectFromGateway,
+		middleware.RequireInternalCaller,
+		limitPerMailbox(middleware.NewRateLimiter(st.ratePerMin, time.Minute)),
+		limitInflight(slots, func(w http.ResponseWriter) {
+			response.Err(w, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", "servicio ocupado")
+		}),
+		withDeadline(st.reqTimeout),
+	)
+	split := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == handler.InternalPrefix || strings.HasPrefix(r.URL.Path, handler.InternalPrefix+"/") {
+			apiChain.ServeHTTP(w, r)
+			return
+		}
+		davChain.ServeHTTP(w, r)
+	})
+	return chain(split, middleware.RequestID, middleware.RequireGatewayToken, middleware.SecureHeaders, middleware.Logger(logger))
+}
+
+// chain envuelve h con los middlewares en orden: el primero es el mas externo.
+func chain(h http.Handler, mws ...func(http.Handler) http.Handler) http.Handler {
+	for i := len(mws) - 1; i >= 0; i-- {
+		h = mws[i](h)
 	}
 	return h
 }
 
-// limitInflight rechaza con 503 lo que llega cuando ya se atienden max peticiones: mejor que el cliente
-// reintente que acumular peticiones esperando una conexion de la base.
-func limitInflight(max int) func(http.Handler) http.Handler {
-	slots := make(chan struct{}, max)
+// limitInflight rechaza con 503 lo que llega cuando ya se atienden tantas peticiones como huecos tiene slots:
+// mejor que el cliente reintente que acumular peticiones esperando una conexion de la base.
+func limitInflight(slots chan struct{}, busy func(http.ResponseWriter)) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			select {
@@ -375,8 +439,27 @@ func limitInflight(max int) func(http.Handler) http.Handler {
 				next.ServeHTTP(w, r)
 			default:
 				w.Header().Set("Retry-After", "5")
-				http.Error(w, "servicio ocupado", http.StatusServiceUnavailable)
+				busy(w)
 			}
+		})
+	}
+}
+
+// limitPerMailbox es el cupo de la API interna por buzon (la cabecera que lo nombra): una cabecera que no es
+// un UUID cuenta en un cupo comun y la rechaza despues el manejador.
+func limitPerMailbox(rl *middleware.RateLimiter) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			key := "mailbox:invalid"
+			if id, err := uuid.Parse(strings.TrimSpace(r.Header.Get(handler.MailboxHeader))); err == nil {
+				key = "mailbox:" + id.String()
+			}
+			if ok, reset := rl.AllowKey(r.Context(), key); !ok {
+				w.Header().Set("Retry-After", strconv.Itoa(max(1, int(math.Ceil(reset.Seconds())))))
+				response.Err(w, http.StatusTooManyRequests, "RATE_LIMITED", "demasiadas peticiones del buzon")
+				return
+			}
+			next.ServeHTTP(w, r)
 		})
 	}
 }
