@@ -40,7 +40,7 @@ services:
       - prometheus-data:/prometheus
     ports:
       - "127.0.0.1:${PROMETHEUS_PORT:-9090}:9090"
-    restart: unless-stopped
+    restart: always
     # 22 objetivos cada 30 s son unas decenas de miles de series: cientos de MiB como mucho. El techo
     # evita que el monitoreo compita por la RAM con la base y los motores si algun dia crecen las series.
     mem_limit: 768m
@@ -67,7 +67,7 @@ services:
     volumes:
       - /:/host:ro,rslave
       - ${METRICS_TEXTFILE_DIR:-/opt/core-force-mail/metrics}:/textfile:ro
-    restart: unless-stopped
+    restart: always
     mem_limit: 64m
     networks:
       - app
@@ -91,7 +91,7 @@ services:
       - "127.0.0.1:${GRAFANA_PORT:-3000}:3000"
     depends_on:
       - prometheus
-    restart: unless-stopped
+    restart: always
     mem_limit: 384m
     networks:
       - app
@@ -119,7 +119,7 @@ services:
       - ./ops/observability/alertmanager:/etc/alertmanager:ro
       - ${ALERT_SMTP_PASS_FILE:-/opt/core-force-mail/env/alert-smtp.pass}:/etc/alertmanager-secretos/smtp.pass:ro
       - alertmanager-data:/alertmanager
-    restart: unless-stopped
+    restart: always
     mem_limit: 128m
     networks:
       - app
@@ -143,7 +143,7 @@ services:
       - ./ops/observability/loki:/etc/loki:ro
       - loki-data:/loki
     # Sin puerto publicado: solo Grafana y el recolector lo alcanzan por la red interna.
-    restart: unless-stopped
+    restart: always
     # Tope de memoria: el monitoreo no puede ser quien deje sin RAM a la plataforma. 512 MiB es
     # holgado para este volumen y acota el peor caso.
     mem_limit: 512m
@@ -170,7 +170,7 @@ services:
       - POST=0
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
-    restart: unless-stopped
+    restart: always
     mem_limit: 64m
     security_opt: ["no-new-privileges:true"]
     networks:
@@ -192,7 +192,7 @@ services:
     depends_on:
       - loki
       - docker-socket-ro
-    restart: unless-stopped
+    restart: always
     mem_limit: 256m
     security_opt: ["no-new-privileges:true"]
     networks:
