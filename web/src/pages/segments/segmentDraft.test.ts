@@ -9,6 +9,7 @@ import {
   newCondition,
   newGroup,
   toDefinition,
+  usesEngagement,
   withField,
   withOperator,
   type DraftCondition,
@@ -32,6 +33,9 @@ describe('definicion de un segmento desde el editor', () => {
       'created_at',
       'tags',
       'list',
+      'campaign',
+      'last_campaigns',
+      'last_days',
       'attributes.puntos',
       'attributes.vip',
     ]);
@@ -110,5 +114,41 @@ describe('definicion de un segmento desde el editor', () => {
     expect(toIn).toMatchObject({ op: 'in', value: '', values: ['ana@acme.test'] });
     expect(withOperator(catalog, toIn, 'eq')).toMatchObject({ value: 'ana@acme.test', values: [] });
     expect(withField(catalog, base, 'status')).toMatchObject({ op: 'eq', value: '', values: [] });
+  });
+
+  it('construye las reglas de comportamiento con sus topes', () => {
+    const campaign = '5F0C1A2B-3C4D-4E5F-8A9B-0C1D2E3F4A5B';
+    const draft = group([
+      cond('campaign', 'opened', campaign),
+      cond('last_campaigns', 'not_opened', '3'),
+      cond('last_days', 'clicked', '30'),
+    ]);
+    expect(usesEngagement(catalog, draft)).toBe(true);
+    expect(usesEngagement(catalog, group([cond('tags', 'exists')]))).toBe(false);
+    const wide = { ...catalog, limits: { ...catalog.limits, max_string_value: 500 } };
+    expect(toDefinition(draft, wide).definition).toEqual({
+      match: 'all',
+      rules: [
+        { field: 'campaign', op: 'opened', value: campaign.toLowerCase() },
+        { field: 'last_campaigns', op: 'not_opened', value: 3 },
+        { field: 'last_days', op: 'clicked', value: 30 },
+      ],
+    });
+  });
+
+  it('rechaza un N fuera de su tope o una campana que no es un id', () => {
+    const bad = group([
+      cond('last_campaigns', 'opened', '51'),
+      cond('last_days', 'opened', '0'),
+      cond('last_days', 'opened', '2.5'),
+      cond('campaign', 'clicked', 'lanzamiento'),
+    ]);
+    const { definition, errors } = toDefinition(bad, catalog);
+    expect(definition).toBeNull();
+    const errorOf = (i: number) => errors[bad.rules[i]?.key ?? ''];
+    expect(errorOf(0)).toBe(t('segments.error.expectCount', { max: 50 }));
+    expect(errorOf(1)).toBe(t('segments.error.expectCount', { max: 365 }));
+    expect(errorOf(2)).toBe(t('segments.error.expectCount', { max: 365 }));
+    expect(errorOf(3)).toBe(t('segments.error.expectCampaign'));
   });
 });

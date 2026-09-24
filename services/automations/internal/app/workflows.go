@@ -62,7 +62,8 @@ func (uc *UseCase) DeleteWorkflow(ctx context.Context, tenantID, id uuid.UUID) e
 	})
 }
 
-// ActivateWorkflow comprueba cada plantilla en templates FUERA de la transaccion, fija la
+// ActivateWorkflow comprueba cada plantilla en templates, y en contacts los segmentos y
+// atributos de las ramas y del disparador por fecha, FUERA de la transaccion; fija la
 // version de cada paso de envio y activa. Si el flujo cambio entre la comprobacion y la
 // activacion, se rechaza: se habria activado algo distinto de lo comprobado.
 func (uc *UseCase) ActivateWorkflow(ctx context.Context, tenantID, id uuid.UUID) (*domain.Workflow, error) {
@@ -83,6 +84,9 @@ func (uc *UseCase) ActivateWorkflow(ctx context.Context, tenantID, id uuid.UUID)
 			return nil, fmt.Errorf("steps[%d]: %w", i, err)
 		}
 		versions[i] = v
+	}
+	if err := uc.checkRules(ctx, tenantID, w); err != nil {
+		return nil, err
 	}
 
 	var out *domain.Workflow

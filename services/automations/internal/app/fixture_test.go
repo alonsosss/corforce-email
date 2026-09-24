@@ -19,6 +19,9 @@ type fixture struct {
 	sender    *apptest.Sender
 	contacts  *apptest.Contacts
 	templates *apptest.Templates
+	rules     *apptest.Rules
+	messages  *apptest.RunMessages
+	scans     *apptest.DateScans
 	tenant    uuid.UUID
 	user      uuid.UUID
 }
@@ -29,6 +32,7 @@ func newFixture(t *testing.T, cfg Config) *fixture {
 	f := &fixture{
 		clock: clock, store: apptest.NewStore(clock), sender: &apptest.Sender{}, contacts: apptest.NewContacts(),
 		templates: &apptest.Templates{Kind: KindMarketing, Version: 3}, tenant: uuid.New(), user: uuid.New(),
+		rules: apptest.NewRules(), messages: &apptest.RunMessages{}, scans: apptest.NewDateScans(),
 	}
 	if cfg.PublicBaseURL == "" {
 		cfg.PublicBaseURL = "https://app.example.com"
@@ -37,6 +41,7 @@ func newFixture(t *testing.T, cfg Config) *fixture {
 		Settings: apptest.Settings{S: f.store}, Deliveries: apptest.Deliveries{S: f.store},
 		Workflows: apptest.Workflows{S: f.store}, Runs: apptest.Runs{S: f.store}, Processed: apptest.Processed{S: f.store},
 		Tx: f.store, Events: f.store, Sender: f.sender, Contacts: f.contacts, Templates: f.templates,
+		Rules: f.rules, RunMessages: f.messages, DateScans: f.scans,
 		Config: cfg, Now: clock.Now,
 	})
 	return f

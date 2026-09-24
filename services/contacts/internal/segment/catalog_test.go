@@ -21,8 +21,10 @@ func sample(valueType string, enumValues []string) any {
 		return "2026-01-01"
 	case string(ValueTag):
 		return "vip"
-	case string(ValueList):
+	case string(ValueList), string(ValueCampaign):
 		return sampleListID
+	case string(ValueCount):
+		return 3
 	case string(AttrNumber):
 		return 5
 	case string(AttrBoolean):

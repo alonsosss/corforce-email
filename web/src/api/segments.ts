@@ -44,8 +44,12 @@ export interface SegmentPreview {
 }
 
 export type OperatorArity = 'none' | 'one' | 'many';
-/** Forma del valor de un campo fijo; los atributos usan su tipo declarado. */
-export type FieldValueType = 'email' | 'text' | 'enum' | 'timestamp' | 'tag' | 'list';
+/**
+ * Forma del valor de un campo fijo; los atributos usan su tipo declarado. campaign es el id
+ * de una campana y count un entero entre 1 y FieldInfo.max (reglas de comportamiento).
+ */
+export type FieldValueType =
+  'email' | 'text' | 'enum' | 'timestamp' | 'tag' | 'list' | 'campaign' | 'count';
 
 export interface OperatorInfo {
   op: string;
@@ -57,6 +61,8 @@ export interface FieldInfo {
   value_type: FieldValueType;
   operators: string[];
   values?: string[];
+  /** Tope de N en los campos de valor count. */
+  max?: number;
 }
 
 export interface AttributeTypeInfo {
@@ -75,6 +81,8 @@ export interface SegmentLimits {
   max_in_values: number;
   max_string_value: number;
   max_definition_bytes: number;
+  max_last_campaigns: number;
+  max_last_days: number;
 }
 
 export interface SegmentCatalog {

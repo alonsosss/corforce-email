@@ -22,8 +22,8 @@ import (
 
 const (
 	permModule = "automations"
-	// bodyLimit: 20 pasos con sus campos caben con holgura.
-	bodyLimit      = 128 << 10
+	// bodyLimit: 40 pasos con sus campos y condiciones caben con holgura.
+	bodyLimit      = 512 << 10
 	defaultPerPage = 25
 	maxPerPage     = 100
 	maxSearchLen   = 200
@@ -144,10 +144,16 @@ func (h *Handler) ListDeliveries(w http.ResponseWriter, r *http.Request) {
 type triggerDTO struct {
 	Type       string     `json:"type"`
 	CampaignID *uuid.UUID `json:"campaign_id,omitempty"`
+	Attribute  string     `json:"attribute,omitempty"`
+	Hour       *int       `json:"hour,omitempty"`
+	Timezone   string     `json:"timezone,omitempty"`
 }
 
 func (t *triggerDTO) toDomain() domain.Trigger {
-	return domain.Trigger{Type: domain.TriggerType(strings.TrimSpace(t.Type)), CampaignID: t.CampaignID}
+	return domain.Trigger{
+		Type: domain.TriggerType(strings.TrimSpace(t.Type)), CampaignID: t.CampaignID,
+		Attribute: t.Attribute, Hour: t.Hour, Timezone: t.Timezone,
+	}
 }
 
 type createWorkflowRequest struct {

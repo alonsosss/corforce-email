@@ -13,8 +13,9 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-const workflowColumns = `id, tenant_id, name, description, status, trigger_type, trigger_campaign_id, list_id,
-	re_entry, steps, pause_reason, created_by, activated_at, created_at, updated_at`
+const workflowColumns = `id, tenant_id, name, description, status, trigger_type, trigger_campaign_id,
+	trigger_attribute, trigger_hour, trigger_timezone, list_id, re_entry, steps, pause_reason, created_by, activated_at,
+	created_at, updated_at`
 
 // activeStatus es el predicado del indice parcial idx_automations_workflows_active_trigger.
 const activeStatus = `status = '` + string(domain.StatusActive) + `'`
@@ -29,12 +30,16 @@ func NewWorkflowRepository(pool *db.ContextPool) *WorkflowRepository {
 
 func scanWorkflow(row pgx.Row) (*domain.Workflow, error) {
 	var (
-		w               domain.Workflow
-		status, typ     string
-		steps           []byte
-		triggerCampaign *uuid.UUID
+		w                domain.Workflow
+		status, typ      string
+		steps            []byte
+		triggerCampaign  *uuid.UUID
+		triggerAttribute *string
+		triggerHour      *int16
+		triggerTimezone  *string
 	)
-	err := row.Scan(&w.ID, &w.TenantID, &w.Name, &w.Description, &status, &typ, &triggerCampaign, &w.ListID,
+	err := row.Scan(&w.ID, &w.TenantID, &w.Name, &w.Description, &status, &typ, &triggerCampaign,
+		&triggerAttribute, &triggerHour, &triggerTimezone, &w.ListID,
 		&w.ReEntry, &steps, &w.PauseReason, &w.CreatedBy, &w.ActivatedAt, &w.CreatedAt, &w.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, domain.ErrWorkflowNotFound
@@ -44,9 +49,20 @@ func scanWorkflow(row pgx.Row) (*domain.Workflow, error) {
 	}
 	w.Status = domain.Status(status)
 	w.Trigger = domain.Trigger{Type: domain.TriggerType(typ), CampaignID: triggerCampaign}
+	if triggerAttribute != nil {
+		w.Trigger.Attribute = *triggerAttribute
+	}
+	if triggerHour != nil {
+		h := int(*triggerHour)
+		w.Trigger.Hour = &h
+	}
+	if triggerTimezone != nil {
+		w.Trigger.Timezone = *triggerTimezone
+	}
 	if err := json.Unmarshal(steps, &w.Steps); err != nil {
 		return nil, fmt.Errorf("pasos ilegibles en el flujo %s: %w", w.ID, err)
 	}
+	domain.UpgradeLegacySteps(w.Steps)
 	return &w, nil
 }
 
@@ -55,13 +71,14 @@ func (r *WorkflowRepository) Insert(ctx context.Context, w *domain.Workflow) err
 	if err != nil {
 		return err
 	}
+	attribute, hour, timezone := dateTriggerColumns(w.Trigger)
 	err = r.pool.QueryRow(ctx,
 		`INSERT INTO automations.workflows (id, tenant_id, name, description, status, trigger_type,
-		        trigger_campaign_id, list_id, re_entry, steps, created_by)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		        trigger_campaign_id, trigger_attribute, trigger_hour, trigger_timezone, list_id, re_entry, steps, created_by)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 		 RETURNING created_at, updated_at`,
 		w.ID, w.TenantID, w.Name, w.Description, string(w.Status), string(w.Trigger.Type),
-		w.Trigger.CampaignID, w.ListID, w.ReEntry, steps, w.CreatedBy,
+		w.Trigger.CampaignID, attribute, hour, timezone, w.ListID, w.ReEntry, steps, w.CreatedBy,
 	).Scan(&w.CreatedAt, &w.UpdatedAt)
 	if isUniqueViolation(err) {
 		return domain.ErrNameTaken
@@ -84,14 +101,16 @@ func (r *WorkflowRepository) Update(ctx context.Context, w *domain.Workflow) err
 	if err != nil {
 		return err
 	}
+	attribute, hour, timezone := dateTriggerColumns(w.Trigger)
 	err = r.pool.QueryRow(ctx,
 		`UPDATE automations.workflows
 		    SET name = $3, description = $4, status = $5, trigger_type = $6, trigger_campaign_id = $7,
-		        list_id = $8, re_entry = $9, steps = $10, pause_reason = $11, activated_at = $12
+		        list_id = $8, re_entry = $9, steps = $10, pause_reason = $11, activated_at = $12,
+		        trigger_attribute = $13, trigger_hour = $14, trigger_timezone = $15
 		  WHERE tenant_id = $1 AND id = $2
 		  RETURNING updated_at`,
 		w.TenantID, w.ID, w.Name, w.Description, string(w.Status), string(w.Trigger.Type), w.Trigger.CampaignID,
-		w.ListID, w.ReEntry, steps, w.PauseReason, w.ActivatedAt,
+		w.ListID, w.ReEntry, steps, w.PauseReason, w.ActivatedAt, attribute, hour, timezone,
 	).Scan(&w.UpdatedAt)
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
@@ -145,6 +164,16 @@ func (r *WorkflowRepository) ListActiveByTrigger(ctx context.Context, tenantID u
 		return nil, err
 	}
 	return collectWorkflows(rows)
+}
+
+// dateTriggerColumns son las columnas del disparador por fecha: NULL en los demas, como
+// exige automations_workflows_trigger_date_check.
+func dateTriggerColumns(t domain.Trigger) (*string, *int16, *string) {
+	if !t.Type.IsDate() || t.Hour == nil {
+		return nil, nil, nil
+	}
+	attribute, timezone, hour := t.Attribute, t.Timezone, int16(*t.Hour)
+	return &attribute, &hour, &timezone
 }
 
 func collectWorkflows(rows pgx.Rows) ([]domain.Workflow, error) {

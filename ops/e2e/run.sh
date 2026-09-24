@@ -731,6 +731,80 @@ expect "automations intenta el correo y transactional rechaza el remitente sin v
 contains "con el motivo de transactional" "$(echo "$ENT" | jget data.0.reason)" "SENDING_DOMAIN_NOT_VERIFIED"
 [[ "$ENT" != *confirm* ]] && ok "el historial no expone el enlace de confirmacion" || mal "el historial expone el enlace de confirmacion"
 
+echo "== Segmentos por comportamiento y automatizaciones con ramas y por fecha (2-E)"
+# No hay SES: la apertura se siembra en la outbox de la empresa con el contrato de
+# transactional.email.opened, y cualquier rele de la base la publica.
+CAMP_OPEN=$(cat /proc/sys/kernel/random/uuid)
+sql mail_tenant_acme "INSERT INTO platform.event_outbox (id, subject, tenant_id, payload) VALUES (gen_random_uuid(), 'transactional.email.opened', '$ACME_TENANT',
+  jsonb_build_object('id', gen_random_uuid()::text, 'type', 'transactional.email.opened', 'source', 'e2e', 'tenant_id', '$ACME_TENANT',
+    'timestamp', to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'),
+    'data', jsonb_build_object('tenant_id', '$ACME_TENANT', 'message_id', gen_random_uuid()::text, 'email', 'marta@cliente.test',
+      'class', 'marketing', 'campaign_id', '$CAMP_OPEN', 'contact_id', '$CT2', 'test', false,
+      'occurred_at', to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'))))"
+abrio() { curl -s -X POST "$GW/segments/preview" -H "$A2" -H 'Content-Type: application/json' -d "{\"definition\":{\"match\":\"all\",\"rules\":[$1]}}" | jget data.count; }
+n=""
+for _ in $(seq 1 60); do
+  n=$(abrio "{\"field\":\"campaign\",\"op\":\"opened\",\"value\":\"$CAMP_OPEN\"}")
+  [[ "$n" == 1 ]] && break; sleep 0.5
+done
+expect "la apertura llega a la proyeccion y el segmento 'abrio la campana' la encuentra" "$n" "1"
+expect "la proyeccion solo guarda ids y horas" \
+  "$(sql mail_tenant_acme "SELECT count(*) FROM contacts.engagement WHERE contact_id = '$CT2' AND campaign_id = '$CAMP_OPEN' AND last_opened_at IS NOT NULL AND last_clicked_at IS NULL")" "1"
+expect "abrio en los ultimos 7 dias" "$(abrio '{"field":"last_days","op":"opened","value":7}')" "1"
+expect "sin clic en la campana no entra en 'hizo clic'" "$(abrio "{\"field\":\"campaign\",\"op\":\"clicked\",\"value\":\"$CAMP_OPEN\"}")" "0"
+expect "una regla de comportamiento fuera de su tope se rechaza" \
+  "$(codigo -X POST "$GW/segments/preview" -H "$A2" -H 'Content-Type: application/json' -d '{"definition":{"match":"all","rules":[{"field":"last_campaigns","op":"opened","value":51}]}}')" "422"
+contains "el catalogo publica las reglas de comportamiento" "$(curl -s "$GW/segments/meta" -H "$A2")" '"last_campaigns"'
+
+# Rama por atributo: plan oro va a una lista y el resto a otra.
+expect "atributo plan declarado" "$(codigo -X POST "$GW/contacts/attributes" -H "$A2" -H 'Content-Type: application/json' -d '{"key":"plan","type":"string"}')" "201"
+LORO=$(curl -s -X POST "$GW/contacts/lists" -H "$A2" -H 'Content-Type: application/json' -d '{"name":"plan-oro"}' | jget data.id)
+LRESTO=$(curl -s -X POST "$GW/contacts/lists" -H "$A2" -H 'Content-Type: application/json' -d '{"name":"plan-resto"}' | jget data.id)
+RAMA=$(curl -s -X POST "$GW/automations/workflows" -H "$A2" -H 'Content-Type: application/json' -d "{\"name\":\"Rama por plan\",\"trigger\":{\"type\":\"contact.created\"},\"steps\":[
+  {\"id\":\"rama\",\"type\":\"branch\",\"condition\":{\"kind\":\"attribute\",\"attribute\":\"plan\",\"op\":\"eq\",\"value\":\"oro\"},\"then\":\"oro\",\"else\":\"resto\"},
+  {\"id\":\"oro\",\"type\":\"add_to_list\",\"list_id\":\"$LORO\"},{\"id\":\"resto\",\"type\":\"add_to_list\",\"list_id\":\"$LRESTO\"}]}")
+RAMAID=$(echo "$RAMA" | jget data.id)
+expect "flujo con rama en borrador" "$(echo "$RAMA" | jget data.steps.0.then)" "oro"
+expect "un ciclo se rechaza en el dominio" \
+  "$(codigo -X PATCH "$GW/automations/workflows/$RAMAID" -H "$A2" -H 'Content-Type: application/json' -d '{"steps":[{"id":"a","type":"wait","duration":"1d","next":"b"},{"id":"b","type":"wait","duration":"1d","next":"a"}]}')" "422"
+expect "la rama se activa tras comprobar la condicion en contacts" "$(curl -s -X POST "$GW/automations/workflows/$RAMAID/activate" -H "$A2" | jget data.status)" "active"
+curl -s -o /dev/null -X POST "$GW/contacts" -H "$A2" -H 'Content-Type: application/json' -d '{"email":"oro@cliente.test","source":"api","attributes":{"plan":"oro"}}'
+curl -s -o /dev/null -X POST "$GW/contacts" -H "$A2" -H 'Content-Type: application/json' -d '{"email":"plata@cliente.test","source":"api","attributes":{"plan":"plata"}}'
+oro=""; resto=""
+for _ in $(seq 1 90); do
+  oro=$(curl -s "$GW/contacts?list_id=$LORO" -H "$A2" | jget data.0.email)
+  resto=$(curl -s "$GW/contacts?list_id=$LRESTO" -H "$A2" | jget data.0.email)
+  [[ -n "$oro" && -n "$resto" ]] && break; sleep 0.5
+done
+expect "quien cumple la condicion sigue por then" "$oro" "oro@cliente.test"
+expect "y quien no, por else" "$resto" "plata@cliente.test"
+expect "archivar el flujo con rama" "$(codigo -X POST "$GW/automations/workflows/$RAMAID/archive" -H "$A2")" "200"
+
+# Disparador por fecha: el aniversario de hoy (UTC) desde las 00:00 de la zona del contacto.
+expect "atributo de fecha declarado" "$(codigo -X POST "$GW/contacts/attributes" -H "$A2" -H 'Content-Type: application/json' -d '{"key":"cumple","type":"date"}')" "201"
+LCUMPLE=$(curl -s -X POST "$GW/contacts/lists" -H "$A2" -H 'Content-Type: application/json' -d '{"name":"cumpleanos"}' | jget data.id)
+curl -s -o /dev/null -X POST "$GW/contacts" -H "$A2" -H 'Content-Type: application/json' \
+  -d "{\"email\":\"cumple@cliente.test\",\"source\":\"api\",\"timezone\":\"UTC\",\"attributes\":{\"cumple\":\"1990-$(date -u +%m-%d)\"}}"
+fecha_flujo() {
+  curl -s -X POST "$GW/automations/workflows" -H "$A2" -H 'Content-Type: application/json' -d "{\"name\":\"$1\",\"re_entry\":true,
+    \"trigger\":{\"type\":\"contact.date\",\"attribute\":\"$2\",\"hour\":0,\"timezone\":\"UTC\"},\"steps\":[{\"id\":\"regalo\",\"type\":\"add_to_list\",\"list_id\":\"$LCUMPLE\"}]}"
+}
+MALA=$(fecha_flujo "Aniversario de un texto" plan | jget data.id)
+expect "un disparador por fecha sobre un atributo que no es de fecha no se activa" \
+  "$(codigo -X POST "$GW/automations/workflows/$MALA/activate" -H "$A2")" "422"
+FECHA=$(fecha_flujo "Cumpleanos" cumple)
+FECHAID=$(echo "$FECHA" | jget data.id)
+expect "el disparador por fecha guarda su hora local" "$(echo "$FECHA" | jget data.trigger.hour)" "0"
+expect "el flujo por fecha se activa" "$(curl -s -X POST "$GW/automations/workflows/$FECHAID/activate" -H "$A2" | jget data.status)" "active"
+cumple=""
+for _ in $(seq 1 120); do
+  cumple=$(curl -s "$GW/contacts?list_id=$LCUMPLE" -H "$A2" | jget data.0.email)
+  [[ -n "$cumple" ]] && break; sleep 0.5
+done
+expect "el aniversario de hoy hace entrar al contacto" "$cumple" "cumple@cliente.test"
+expect "una sola entrada este ano aunque el recorrido se repita" \
+  "$(sql mail_tenant_acme "SELECT count(*) FROM automations.runs WHERE workflow_id = '$FECHAID' AND entry_key = 'date:$(date -u +%Y)'")" "1"
+
 echo "== Analitica"
 expect "el panel responde sin envios" "$(curl -s "$GW/analytics/overview" -H "$A2" | jget data.totals.sent)" "0"
 expect "un rango invertido se rechaza" "$(codigo "$GW/analytics/overview?from=2026-09-10&to=2026-09-01" -H "$A2")" "422"

@@ -36,7 +36,14 @@ type Config struct {
 	// PublicBaseURL es la URL publica de la plataforma, sin barra final. De ella cuelga el
 	// enlace de prueba con que se comprueba la plantilla del doble opt-in.
 	PublicBaseURL string
+	// DateScanInterval es cada cuanto se recorren los aniversarios de un flujo por fecha
+	// (AUTOMATIONS_DATE_SCAN_INTERVAL). Un aniversario se detecta con este retraso como
+	// mucho despues de su hora local.
+	DateScanInterval time.Duration
 }
+
+// DefaultDateScanInterval es el valor por defecto de Config.DateScanInterval.
+const DefaultDateScanInterval = 10 * time.Minute
 
 type Deps struct {
 	Settings   ports.SettingsRepository
@@ -49,26 +56,34 @@ type Deps struct {
 	Sender     ports.Sender
 	Contacts   ports.Contacts
 	Templates  ports.Templates
-	Config     Config
-	Logger     *zap.Logger
+	// Rules evalua en contacts las ramas por segmento o atributo y los aniversarios;
+	// RunMessages y DateScans son las tablas de ramas y fechas.
+	Rules       ports.ContactRules
+	RunMessages ports.RunMessageRepository
+	DateScans   ports.DateScanRepository
+	Config      Config
+	Logger      *zap.Logger
 	// Now permite fijar el reloj en las pruebas; nil = time.Now en UTC.
 	Now func() time.Time
 }
 
 type UseCase struct {
-	settings   ports.SettingsRepository
-	deliveries ports.DeliveryRepository
-	workflows  ports.WorkflowRepository
-	runs       ports.RunRepository
-	processed  ports.ProcessedRepository
-	tx         ports.Transactor
-	events     ports.EventPublisher
-	sender     ports.Sender
-	contacts   ports.Contacts
-	templates  ports.Templates
-	cfg        Config
-	logger     *zap.Logger
-	now        func() time.Time
+	settings    ports.SettingsRepository
+	deliveries  ports.DeliveryRepository
+	workflows   ports.WorkflowRepository
+	runs        ports.RunRepository
+	processed   ports.ProcessedRepository
+	tx          ports.Transactor
+	events      ports.EventPublisher
+	sender      ports.Sender
+	contacts    ports.Contacts
+	templates   ports.Templates
+	rules       ports.ContactRules
+	runMessages ports.RunMessageRepository
+	dateScans   ports.DateScanRepository
+	cfg         Config
+	logger      *zap.Logger
+	now         func() time.Time
 }
 
 func New(d Deps) *UseCase {
@@ -87,10 +102,14 @@ func New(d Deps) *UseCase {
 	if cfg.PauseAfterFailures < 1 {
 		cfg.PauseAfterFailures = 20
 	}
+	if cfg.DateScanInterval <= 0 {
+		cfg.DateScanInterval = DefaultDateScanInterval
+	}
 	return &UseCase{
 		settings: d.Settings, deliveries: d.Deliveries, workflows: d.Workflows, runs: d.Runs,
 		processed: d.Processed, tx: d.Tx, events: d.Events, sender: d.Sender, contacts: d.Contacts,
-		templates: d.Templates, cfg: cfg, logger: logger, now: now,
+		templates: d.Templates, rules: d.Rules, runMessages: d.RunMessages, dateScans: d.DateScans,
+		cfg: cfg, logger: logger, now: now,
 	}
 }
 

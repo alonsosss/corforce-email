@@ -140,8 +140,8 @@ func (h *Handler) PublicRoutes() http.Handler {
 
 // InternalRoutes cuelga de /internal/contacts: servicio a servicio con el token interno
 // y la empresa en X-Tenant-ID. La audiencia la pide campaigns; los enviables por id, la
-// pertenencia a una lista y el alta y baja de miembros, automations (las dos ultimas son
-// los mismos casos de uso que el API con sesion).
+// pertenencia a una lista, el alta y baja de miembros (los mismos casos de uso que el API
+// con sesion), la coincidencia con un segmento y los aniversarios, automations.
 func (h *Handler) InternalRoutes() http.Handler {
 	r := chi.NewRouter()
 	r.Post("/audience", h.Audience)
@@ -149,6 +149,8 @@ func (h *Handler) InternalRoutes() http.Handler {
 	r.Post("/lists/{listID}/members", h.AddMembers)
 	r.Post("/lists/{listID}/members/remove", h.RemoveMembers)
 	r.Post("/lists/{listID}/members/check", h.CheckMembers)
+	r.Post("/match", h.Match)
+	r.Post("/anniversaries", h.Anniversaries)
 	return r
 }
 

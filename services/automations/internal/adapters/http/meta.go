@@ -23,6 +23,14 @@ type triggerMeta struct {
 	Type domain.TriggerType `json:"type"`
 	// CampaignFilter: el disparador admite trigger.campaign_id.
 	CampaignFilter bool `json:"campaign_filter"`
+	// Date: el disparador es un aniversario y exige attribute, hour y timezone.
+	Date bool `json:"date"`
+}
+
+type conditionMeta struct {
+	Kind domain.ConditionKind `json:"kind"`
+	// Step: la condicion mira el correo de un paso send_email anterior (condition.step).
+	Step bool `json:"step"`
 }
 
 type waitUnitMeta struct {
@@ -53,6 +61,10 @@ type limitsMeta struct {
 	MaxDescriptionLength int `json:"max_description_length"`
 	MaxPauseReasonLength int `json:"max_pause_reason_length"`
 	MaxSearchLength      int `json:"max_search_length"`
+	MaxDepth             int `json:"max_depth"`
+	MaxStepIDLength      int `json:"max_step_id_length"`
+	MaxTriggerHour       int `json:"max_trigger_hour"`
+	MaxConditionValue    int `json:"max_condition_value_bytes"`
 }
 
 type paginationMeta struct {
@@ -64,6 +76,7 @@ type metaResponse struct {
 	Statuses          []statusMeta       `json:"statuses"`
 	TriggerTypes      []triggerMeta      `json:"trigger_types"`
 	StepTypes         []domain.StepType  `json:"step_types"`
+	ConditionKinds    []conditionMeta    `json:"condition_kinds"`
 	Wait              waitMeta           `json:"wait"`
 	RunStatuses       []domain.RunStatus `json:"run_statuses"`
 	DOIStatuses       []domain.DOIStatus `json:"doi_statuses"`
@@ -89,7 +102,8 @@ func buildMeta(limits domain.DOILimits) metaResponse {
 		Limits: limitsMeta{
 			MinSteps: domain.MinSteps, MaxSteps: domain.MaxSteps, MaxNameLength: domain.MaxNameLen,
 			MaxDescriptionLength: domain.MaxDescriptionLen, MaxPauseReasonLength: domain.MaxPauseReasonLen,
-			MaxSearchLength: maxSearchLen,
+			MaxSearchLength: maxSearchLen, MaxDepth: domain.MaxDepth, MaxStepIDLength: domain.MaxStepIDLen,
+			MaxTriggerHour: domain.MaxTriggerHour, MaxConditionValue: domain.MaxConditionValueBytes,
 		},
 		Pagination: paginationMeta{DefaultPageSize: defaultPerPage, MaxPageSize: maxPerPage},
 	}
@@ -101,7 +115,10 @@ func buildMeta(limits domain.DOILimits) metaResponse {
 		})
 	}
 	for _, tt := range domain.TriggerTypes() {
-		out.TriggerTypes = append(out.TriggerTypes, triggerMeta{Type: tt, CampaignFilter: tt.AcceptsCampaign()})
+		out.TriggerTypes = append(out.TriggerTypes, triggerMeta{Type: tt, CampaignFilter: tt.AcceptsCampaign(), Date: tt.IsDate()})
+	}
+	for _, k := range domain.ConditionKinds() {
+		out.ConditionKinds = append(out.ConditionKinds, conditionMeta{Kind: k, Step: k.ReferencesStep()})
 	}
 	for _, u := range domain.WaitUnits() {
 		out.Wait.Units = append(out.Wait.Units, waitUnitMeta{Unit: u.Code, Seconds: int64(u.Duration.Seconds())})

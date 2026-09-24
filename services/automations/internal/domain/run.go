@@ -102,6 +102,56 @@ func NewRun(w *Workflow, ev TriggerEvent, now time.Time) *Run {
 	}
 }
 
+// dateLayout es la forma de la fecha local de un aniversario.
+const dateLayout = "2006-01-02"
+
+// NewDateRun es la entrada de un contacto por el aniversario de occurrence (fecha local
+// AAAA-MM-DD que devuelve contacts). Con reentrada la clave es el ano: una vez al ano,
+// aunque el recorrido de aniversarios se repita o el servicio se reinicie; sin reentrada,
+// una sola vez.
+func NewDateRun(w *Workflow, contactID uuid.UUID, occurrence string, now time.Time) (*Run, error) {
+	day, err := time.Parse(dateLayout, occurrence)
+	if err != nil || contactID == uuid.Nil {
+		return nil, NewValidationError("aniversario sin contacto o con una fecha no valida: %q", occurrence)
+	}
+	key := EntryOnce
+	if w.ReEntry {
+		key = "date:" + day.Format("2006")
+	}
+	return &Run{
+		ID: uuid.New(), TenantID: w.TenantID, WorkflowID: w.ID, ContactID: contactID,
+		TriggerEventID: "date:" + day.Format(dateLayout), EntryKey: key, Status: RunWaiting, NextRunAt: now,
+	}, nil
+}
+
+// RunMessage es el correo que envio un paso send_email de una ejecucion, con su apertura
+// y su clic tal como los anuncia transactional. Solo ids y horas.
+type RunMessage struct {
+	TenantID   uuid.UUID
+	RunID      uuid.UUID
+	WorkflowID uuid.UUID
+	ContactID  uuid.UUID
+	StepID     string
+	MessageID  uuid.UUID
+	OpenedAt   *time.Time
+	ClickedAt  *time.Time
+}
+
+// Satisfies dice si el correo cumple la condicion de una rama. Un clic cuenta como
+// apertura.
+func (m *RunMessage) Satisfies(kind ConditionKind) bool {
+	if m == nil {
+		return false
+	}
+	switch kind {
+	case ConditionEmailOpened:
+		return m.OpenedAt != nil || m.ClickedAt != nil
+	case ConditionEmailClicked:
+		return m.ClickedAt != nil
+	}
+	return false
+}
+
 // IdempotencyKey identifica el envio de un paso. Depende solo de la ejecucion y del paso:
 // un reintento tras una caida lleva la misma clave y transactional devuelve lo ya creado.
 func (r *Run) IdempotencyKey() string {

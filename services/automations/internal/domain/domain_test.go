@@ -86,6 +86,9 @@ func TestTriggers(t *testing.T) {
 	for _, tt := range TriggerTypes() {
 		in := base
 		in.Trigger = Trigger{Type: tt}
+		if tt.IsDate() {
+			in.Trigger = Trigger{Type: tt, Attribute: "cumple", Hour: ptr(9), Timezone: "America/Lima"}
+		}
 		if _, err := NewWorkflow(uuid.New(), in); err != nil {
 			t.Errorf("%s: %v", tt, err)
 		}

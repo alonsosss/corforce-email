@@ -1213,3 +1213,164 @@
   display: flex;
   gap: var(--cf-space-1);
 }
+
+/* Lienzo de un flujo de automatizacion (pages/automations/FlowCanvas.tsx). Las posiciones
+   las fija el componente por la API de estilos del DOM. */
+.cf-flow {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cf-space-2);
+}
+.cf-flow__palette {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--cf-space-2);
+}
+.cf-flow__tool {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--cf-space-1);
+  padding: var(--cf-space-1) var(--cf-space-2);
+  border: 1px solid var(--cf-border);
+  border-radius: var(--cf-radius-sm);
+  background: var(--cf-surface);
+  color: var(--cf-text);
+  font-size: var(--cf-text-sm);
+  cursor: grab;
+}
+.cf-flow__tool:hover {
+  background: var(--cf-surface-hover);
+}
+.cf-flow__tool--armed {
+  border-color: var(--cf-accent);
+  background: var(--cf-accent-soft);
+}
+.cf-flow__tool:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+.cf-flow__viewport {
+  overflow: auto;
+  max-height: 70vh;
+  border: 1px solid var(--cf-border);
+  border-radius: var(--cf-radius-md);
+  background: var(--cf-surface-muted);
+}
+.cf-flow__canvas {
+  position: relative;
+  margin: 0 auto;
+}
+.cf-flow__edges {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.cf-flow__edge {
+  fill: none;
+  stroke: var(--cf-border-strong);
+  stroke-width: 1.5;
+}
+.cf-flow__edge--then {
+  stroke: var(--cf-success);
+}
+.cf-flow__edge--else {
+  stroke: var(--cf-warning);
+}
+.cf-flow__arrow {
+  fill: var(--cf-border-strong);
+}
+.cf-flow__end {
+  fill: var(--cf-surface);
+  stroke: var(--cf-border-strong);
+}
+.cf-flow__label {
+  fill: var(--cf-text-secondary);
+  font-size: var(--cf-text-xs);
+}
+.cf-flow__node {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  padding: var(--cf-space-2) var(--cf-space-3);
+  border: 1px solid var(--cf-border);
+  border-radius: var(--cf-radius-md);
+  background: var(--cf-surface);
+  overflow: hidden;
+}
+.cf-flow__node--trigger {
+  background: var(--cf-accent-soft);
+  border-color: var(--cf-accent);
+}
+.cf-flow__node--branch {
+  border-style: dashed;
+}
+.cf-flow__node--selected {
+  box-shadow: 0 0 0 2px var(--cf-accent);
+}
+.cf-flow__node--invalid {
+  border-color: var(--cf-danger);
+  background: var(--cf-danger-soft);
+}
+.cf-flow__node-button {
+  all: unset;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  cursor: pointer;
+  min-width: 0;
+}
+.cf-flow__node-button:focus-visible {
+  outline: 2px solid var(--cf-accent);
+  outline-offset: 4px;
+}
+.cf-flow__node-type {
+  display: flex;
+  align-items: center;
+  gap: var(--cf-space-1);
+  font-weight: var(--cf-weight-semibold);
+  font-size: var(--cf-text-sm);
+}
+.cf-flow__node-id {
+  margin-left: auto;
+  color: var(--cf-text-muted);
+  font-size: var(--cf-text-xs);
+  font-weight: var(--cf-weight-medium);
+}
+.cf-flow__node-summary {
+  color: var(--cf-text-secondary);
+  font-size: var(--cf-text-xs);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cf-flow__slot {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--cf-accent);
+  border-radius: 50%;
+  background: var(--cf-surface);
+  color: var(--cf-accent);
+  cursor: pointer;
+}
+.cf-flow__slot--idle {
+  border-color: var(--cf-border-strong);
+  color: var(--cf-text-muted);
+}
+.cf-flow__slot--active {
+  background: var(--cf-accent);
+  color: var(--cf-surface);
+  transform: translate(-50%, -50%) scale(1.25);
+}
+.cf-flow__issues {
+  margin: 0;
+  padding-left: var(--cf-space-4);
+}

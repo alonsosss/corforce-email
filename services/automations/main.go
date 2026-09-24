@@ -8,6 +8,9 @@ import (
 	"os"
 	"strings"
 	"time"
+	// La imagen es scratch y no trae la base de zonas horarias: sin esto, validar la zona
+	// de respaldo de un disparador por fecha fallaria para todas salvo UTC.
+	_ "time/tzdata"
 
 	"github.com/alonsosss/corforce-email/pkg/authz"
 	"github.com/alonsosss/corforce-email/pkg/config"
@@ -100,6 +103,12 @@ func main() {
 		log.Fatal(err)
 	}
 
+	dateScan, err := config.EnvDuration("AUTOMATIONS_DATE_SCAN_INTERVAL", app.DefaultDateScanInterval, 10*time.Second, 6*time.Hour)
+	if err != nil {
+		log.Fatal(err)
+	}
+	contacts := contactsclient.New(contactsURL, internalToken)
+
 	// ctx gobierna los trabajos de fondo (ejecutor, rele de la outbox, consumidores): se
 	// cancela cuando el HTTP termina de apagarse.
 	ctx, cancel := context.WithCancel(context.Background())
@@ -116,18 +125,23 @@ func main() {
 	ctxPool := &db.ContextPool{}
 
 	uc := app.New(app.Deps{
-		Settings:   postgres.NewSettingsRepository(ctxPool),
-		Deliveries: postgres.NewDeliveryRepository(ctxPool),
-		Workflows:  postgres.NewWorkflowRepository(ctxPool),
-		Runs:       postgres.NewRunRepository(ctxPool),
-		Processed:  postgres.NewProcessedRepository(ctxPool),
-		Tx:         ctxPool,
-		Events:     postgres.NewOutboxPublisher(ctxPool),
-		Sender:     transactionalclient.New(transactionalURL, internalToken),
-		Contacts:   contactsclient.New(contactsURL, internalToken),
-		Templates:  templatesclient.New(templatesURL, internalToken),
-		Config:     app.Config{DOILimits: limits, PauseAfterFailures: pauseAfter, PublicBaseURL: publicBase},
-		Logger:     logger,
+		Settings:    postgres.NewSettingsRepository(ctxPool),
+		Deliveries:  postgres.NewDeliveryRepository(ctxPool),
+		Workflows:   postgres.NewWorkflowRepository(ctxPool),
+		Runs:        postgres.NewRunRepository(ctxPool),
+		Processed:   postgres.NewProcessedRepository(ctxPool),
+		Tx:          ctxPool,
+		Events:      postgres.NewOutboxPublisher(ctxPool),
+		Sender:      transactionalclient.New(transactionalURL, internalToken),
+		Contacts:    contacts,
+		Templates:   templatesclient.New(templatesURL, internalToken),
+		Rules:       contacts,
+		RunMessages: postgres.NewRunMessageRepository(ctxPool),
+		DateScans:   postgres.NewDateScanRepository(ctxPool),
+		Config: app.Config{
+			DOILimits: limits, PauseAfterFailures: pauseAfter, PublicBaseURL: publicBase, DateScanInterval: dateScan,
+		},
+		Logger: logger,
 	})
 
 	// Sin NATS el API sigue sirviendo y el ejecutor avanza las ejecuciones ya creadas; lo
@@ -171,7 +185,9 @@ func main() {
 	}
 }
 
-// runExecutor recorre cada AUTOMATIONS_TICK las empresas activas. Todas las replicas lo
+// runExecutor recorre cada AUTOMATIONS_TICK las empresas activas: primero los aniversarios
+// de los flujos por fecha (cada uno como mucho una vez por AUTOMATIONS_DATE_SCAN_INTERVAL),
+// despues los pasos debidos. Todas las replicas lo
 // corren: SKIP LOCKED y la reserva de cada ejecucion reparten el trabajo sin que dos hagan
 // el mismo paso a la vez.
 func runExecutor(ctx context.Context, tenantDB *db.TenantDB, uc *app.UseCase, tick time.Duration, logger *zap.Logger) {
@@ -189,6 +205,9 @@ func runExecutor(ctx context.Context, tenantDB *db.TenantDB, uc *app.UseCase, ti
 			id, err := uuid.Parse(tenantID)
 			if err != nil {
 				return
+			}
+			if _, err := uc.ScanDateTriggers(tctx, id); err != nil && tctx.Err() == nil {
+				logger.Warn("automations: recorrido de aniversarios incompleto", zap.String("tenant_id", tenantID), zap.Error(err))
 			}
 			if err := uc.Tick(tctx, id); err != nil && tctx.Err() == nil {
 				logger.Warn("automations: pasada del ejecutor incompleta", zap.String("tenant_id", tenantID), zap.Error(err))

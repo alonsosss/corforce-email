@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import type { Contact } from '@/api/contacts';
+import { campaignsApi } from '@/api/campaigns';
 import { contactsApi } from '@/api/contacts';
 import { PICKER_PAGE_SIZE } from '@/api/paging';
 import {
@@ -37,12 +38,19 @@ import { getLocale, t } from '@/i18n';
 import { paths } from '@/paths';
 import { ConsentBadge, ContactStatusBadge } from '@/pages/contacts/contactStatus';
 import { SegmentEditor, type ListOption } from './SegmentEditor';
-import { fromDefinition, newGroup, toDefinition, type DraftGroup } from './segmentDraft';
+import {
+  fromDefinition,
+  newGroup,
+  toDefinition,
+  usesEngagement,
+  type DraftGroup,
+} from './segmentDraft';
 
 export default function SegmentEditorPage() {
   const { id } = useParams();
   const { can } = useAccess();
   const canReadLists = can(...PERMISSIONS.contactLists.read);
+  const canReadCampaigns = can(...PERMISSIONS.campaigns.read);
   const catalog = useQuery(() => segmentsApi.meta(), []);
   const segment = useQuery(async () => (id ? (await segmentsApi.get(id)).data : null), [id]);
   const lists = useQuery(
@@ -51,6 +59,15 @@ export default function SegmentEditorPage() {
         ? (await contactsApi.listLists({ page: 1, per_page: PICKER_PAGE_SIZE })).items
         : null,
     [canReadLists],
+  );
+  const campaigns = useQuery(
+    async (): Promise<ListOption[] | null> =>
+      canReadCampaigns
+        ? (await campaignsApi.list({ page: 1, per_page: PICKER_PAGE_SIZE })).items.map(
+            ({ id, name }) => ({ id, name }),
+          )
+        : null,
+    [canReadCampaigns],
   );
 
   const failed = catalog.error ?? segment.error;
@@ -74,7 +91,7 @@ export default function SegmentEditorPage() {
       </div>
     );
   }
-  if (!catalog.data || segment.loading || lists.loading) {
+  if (!catalog.data || segment.loading || lists.loading || campaigns.loading) {
     return (
       <Card>
         <Skeleton lines={8} />
@@ -87,6 +104,7 @@ export default function SegmentEditorPage() {
       catalog={catalog.data}
       segment={segment.data}
       lists={lists.data}
+      campaigns={campaigns.data}
     />
   );
 }
@@ -95,10 +113,12 @@ function SegmentForm({
   catalog,
   segment,
   lists,
+  campaigns,
 }: {
   catalog: SegmentCatalog;
   segment: Segment | null;
   lists: ListOption[] | null;
+  campaigns: ListOption[] | null;
 }) {
   const navigate = useNavigate();
   const toast = useToast();
@@ -207,6 +227,9 @@ function SegmentForm({
           </div>
         </Card>
         <Card title={t('segments.editor.rules')} description={t('segments.editor.rulesHint')}>
+          {usesEngagement(catalog, draft) ? (
+            <Alert tone="info">{t('segments.editor.engagementHint')}</Alert>
+          ) : null}
           <SegmentEditor
             catalog={catalog}
             value={draft}
@@ -216,6 +239,7 @@ function SegmentForm({
             }}
             errors={ruleErrors}
             lists={lists}
+            campaigns={campaigns}
             disabled={!canSave}
           />
         </Card>

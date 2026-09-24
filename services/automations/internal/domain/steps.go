@@ -8,8 +8,8 @@ import (
 	"github.com/google/uuid"
 )
 
-// StepType es la lista blanca de pasos de un flujo. Los flujos son lineales: las ramas
-// quedan para una version posterior.
+// StepType es la lista blanca de pasos de un flujo. Un flujo es un grafo acotado sin
+// ciclos (graph.go): cada paso sigue en next y una rama (branch) en then o en else.
 type StepType string
 
 const (
@@ -17,21 +17,28 @@ const (
 	StepSendEmail      StepType = "send_email"
 	StepAddToList      StepType = "add_to_list"
 	StepRemoveFromList StepType = "remove_from_list"
+	StepBranch         StepType = "branch"
 )
 
 func StepTypes() []StepType {
-	return []StepType{StepWait, StepSendEmail, StepAddToList, StepRemoveFromList}
+	return []StepType{StepWait, StepSendEmail, StepAddToList, StepRemoveFromList, StepBranch}
 }
 
 const (
 	MinSteps = 1
-	MaxSteps = 20
+	MaxSteps = 40
+	// MaxDepth es el maximo de pasos de cualquier recorrido de principio a fin. Un flujo
+	// lineal anterior a las ramas (hasta 20 pasos) sigue cabiendo.
+	MaxDepth = 20
 	MinWait  = time.Minute
 	MaxWait  = 90 * 24 * time.Hour
 )
 
-// Step es un paso. Cada tipo usa solo sus campos; el resto debe llegar vacio.
+// Step es un paso. Cada tipo usa solo sus campos; el resto debe llegar vacio. ID es su
+// nombre en el grafo; Next, el paso que sigue ("" = fin). Una rama no usa Next: sigue en
+// Then si la condicion se cumple y en Else si no ("" = fin).
 type Step struct {
+	ID              string     `json:"id,omitempty"`
 	Type            StepType   `json:"type"`
 	Duration        string     `json:"duration,omitempty"`
 	TemplateID      *uuid.UUID `json:"template_id,omitempty"`
@@ -40,6 +47,10 @@ type Step struct {
 	FromName        string     `json:"from_name,omitempty"`
 	ReplyTo         string     `json:"reply_to,omitempty"`
 	ListID          *uuid.UUID `json:"list_id,omitempty"`
+	Condition       *Condition `json:"condition,omitempty"`
+	Next            string     `json:"next,omitempty"`
+	Then            string     `json:"then,omitempty"`
+	Else            string     `json:"else,omitempty"`
 }
 
 // WaitUnit es una unidad admitida en la duracion de una espera.
@@ -97,23 +108,26 @@ func (s Step) WaitDuration() time.Duration {
 	return d
 }
 
-// ValidateSteps normaliza y valida la lista entera. Los mensajes nombran el paso.
-func ValidateSteps(steps []Step) error {
-	if len(steps) < MinSteps || len(steps) > MaxSteps {
-		return NewValidationError("steps debe tener entre %d y %d pasos", MinSteps, MaxSteps)
-	}
-	for i := range steps {
-		if err := steps[i].normalize(i); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 func (s *Step) normalize(i int) error {
 	field := "steps[" + strconv.Itoa(i) + "]."
 	hasSend := s.TemplateID != nil || s.TemplateVersion != nil || s.FromEmail != "" || s.FromName != "" || s.ReplyTo != ""
+	if s.Type != StepBranch && (s.Condition != nil || s.Then != "" || s.Else != "") {
+		return NewValidationError("%s: condition, then y else solo aplican a un paso branch", field+"type")
+	}
 	switch s.Type {
+	case StepBranch:
+		if hasSend || s.ListID != nil || s.Duration != "" {
+			return NewValidationError("%s: un paso branch solo admite condition, then y else", field+"type")
+		}
+		if s.Next != "" {
+			return NewValidationError("%snext no aplica a un paso branch: sigue en then o en else", field)
+		}
+		if s.Condition == nil {
+			return NewValidationError("%scondition es obligatoria", field)
+		}
+		if err := s.Condition.normalize(field + "condition."); err != nil {
+			return err
+		}
 	case StepWait:
 		if hasSend || s.ListID != nil {
 			return NewValidationError("%s: un paso wait solo admite duration", field+"type")
@@ -142,7 +156,7 @@ func (s *Step) normalize(i int) error {
 			return NewValidationError("%slist_id es obligatorio", field)
 		}
 	default:
-		return NewValidationError("%stype debe ser wait, send_email, add_to_list o remove_from_list", field)
+		return NewValidationError("%stype debe ser wait, send_email, add_to_list, remove_from_list o branch", field)
 	}
 	return nil
 }
@@ -163,6 +177,10 @@ func cloneSteps(in []Step) []Step {
 		if s.ListID != nil {
 			id := *s.ListID
 			out[i].ListID = &id
+		}
+		if s.Condition != nil {
+			c := s.Condition.clone()
+			out[i].Condition = &c
 		}
 	}
 	return out

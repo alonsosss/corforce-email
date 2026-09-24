@@ -15,6 +15,7 @@ import { useAccess } from '@/access/useAccess';
 import { useAction } from '@/hooks/useAction';
 import { useQuery } from '@/hooks/useQuery';
 import { Checkbox, ChipsInput, FormField, Input, Select } from '@/design/components';
+import { browserTimezones } from '@/lib/datetime';
 import { changed, isEmptyPatch } from '@/lib/patch';
 import { rules, validateField } from '@/lib/validate';
 import { t, tEnum } from '@/i18n';
@@ -31,12 +32,6 @@ export interface ContactFormProps {
 }
 
 const TIMEZONES_LIST_ID = 'contact-timezones';
-
-/** Zonas IANA que conoce el navegador, para sugerir sin copiar ninguna lista. */
-function browserTimezones(): string[] {
-  const intl = Intl as unknown as { supportedValuesOf?: (key: string) => string[] };
-  return intl.supportedValuesOf?.('timeZone') ?? [];
-}
 
 function normalizeTag(raw: string): string | null {
   const tag = raw.trim().toLowerCase();

@@ -53,12 +53,13 @@ function useEditorContext(): QueryState<EditorContext> {
     templates: can(...PERMISSIONS.templates.read),
     lists: can(...PERMISSIONS.contactLists.read),
     campaigns: can(...PERMISSIONS.campaigns.read),
+    segments: can(...PERMISSIONS.segments.read),
   };
   return useQuery(async () => {
     const meta = await automationsMeta.get();
     const options = await loadWorkflowOptions(access, meta.template_kinds.send_email);
     return { meta, options };
-  }, [access.templates, access.lists, access.campaigns]);
+  }, [access.templates, access.lists, access.campaigns, access.segments]);
 }
 
 /** /marketing/automations/new y /marketing/automations/:id. */

@@ -8,7 +8,9 @@ import {
   emptyDraft,
   emptyStep,
   formatWait,
-  moveStep,
+  graphErrors,
+  withFreshId,
+  type StepDraft,
   type WorkflowDraft,
 } from './workflowDraft';
 
@@ -44,14 +46,16 @@ describe('borrador de un flujo', () => {
       list_id: null,
       re_entry: false,
       steps: [
-        { type: 'wait', duration: '3d' },
+        { id: 's1', next: 's2', type: 'wait', duration: '3d' },
         {
+          id: 's2',
+          next: 's3',
           type: 'send_email',
           template_id: TEMPLATE,
           from_email: 'news@shop.example.com',
           from_name: 'Tienda',
         },
-        { type: 'add_to_list', list_id: LIST },
+        { id: 's3', type: 'add_to_list', list_id: LIST },
       ],
     });
   });
@@ -69,7 +73,7 @@ describe('borrador de un flujo', () => {
   it('aplica los topes del catalogo: pasos y espera', () => {
     const empty = buildRequest({ ...validDraft(), steps: [] }, meta);
     expect(empty.request).toBeNull();
-    expect(empty.errors.steps).toBe(t('automations.steps.count', { min: 1, max: 20 }));
+    expect(empty.errors.steps).toBe(t('automations.steps.count', { min: 1, max: 40 }));
 
     const draft = validDraft();
     const [wait] = draft.steps;
@@ -122,10 +126,113 @@ describe('borrador de un flujo', () => {
     expect(again.request?.steps).toEqual(workflow.steps);
   });
 
-  it('reordena los pasos sin salirse de la lista', () => {
-    const steps = validDraft().steps;
-    expect(moveStep(steps, 0, 1).map((s) => s.type)).toEqual(['send_email', 'wait', 'add_to_list']);
-    expect(moveStep(steps, 0, -1)).toEqual(steps);
+  it('arma una rama por apertura con sus dos salidas y la condicion', () => {
+    const send: StepDraft = {
+      ...emptyStep('send_email', meta),
+      id: 'e',
+      next: 'r',
+      templateId: TEMPLATE,
+      fromEmail: 'news@shop.example.com',
+    };
+    const branch: StepDraft = {
+      ...emptyStep('branch', meta),
+      id: 'r',
+      then: 'si',
+      else: '',
+      conditionKind: 'email_opened',
+      conditionStep: 'e',
+    };
+    const add: StepDraft = { ...emptyStep('add_to_list', meta), id: 'si', listId: LIST };
+    const { request, errors } = buildRequest({ ...validDraft(), steps: [send, branch, add] }, meta);
+    expect(errors).toEqual({});
+    expect(request?.steps[1]).toEqual({
+      id: 'r',
+      type: 'branch',
+      then: 'si',
+      condition: { kind: 'email_opened', step: 'e' },
+    });
+
+    const noStep = { ...branch, conditionStep: '' };
+    const bad = buildRequest({ ...validDraft(), steps: [send, noStep, add] }, meta);
+    expect(bad.errors[`${noStep.key}.conditionStep`]).toBe(t('validation.required'));
+  });
+
+  it('arma las condiciones de segmento y de atributo', () => {
+    const seg: StepDraft = {
+      ...emptyStep('branch', meta),
+      id: 'r',
+      conditionKind: 'segment',
+      conditionStep: undefined,
+      segmentId: LIST,
+    };
+    expect(
+      buildRequest({ ...validDraft(), steps: [seg] }, meta).request?.steps[0]?.condition,
+    ).toEqual({
+      kind: 'segment',
+      segment_id: LIST,
+    });
+    const attr: StepDraft = {
+      ...seg,
+      conditionKind: 'attribute',
+      segmentId: '',
+      attribute: 'plan',
+      op: 'eq',
+      value: '"oro"',
+    };
+    expect(
+      buildRequest({ ...validDraft(), steps: [attr] }, meta).request?.steps[0]?.condition,
+    ).toEqual({
+      kind: 'attribute',
+      attribute: 'plan',
+      op: 'eq',
+      value: 'oro',
+    });
+    const broken = { ...attr, value: '{' };
+    expect(
+      buildRequest({ ...validDraft(), steps: [broken] }, meta).errors[`${broken.key}.value`],
+    ).toBe(t('automations.condition.valueInvalid'));
+  });
+
+  it('valida el grafo en vivo: ciclos, pasos sueltos y envios que no dominan la rama', () => {
+    const a: StepDraft = { ...emptyStep('wait', meta), id: 'a', next: 'b', amount: '1', unit: 'd' };
+    const b: StepDraft = { ...emptyStep('wait', meta), id: 'b', next: 'a', amount: '1', unit: 'd' };
+    const loop = graphErrors({ ...validDraft(), steps: [a, b] }, meta);
+    expect(loop[`${a.key}.graph`]).toBe(t('automations.graph.cycle'));
+    const lone: StepDraft = { ...emptyStep('wait', meta), id: 'c', amount: '1', unit: 'd' };
+    const tail = { ...b, next: '' };
+    expect(
+      graphErrors({ ...validDraft(), steps: [a, tail, lone] }, meta)[`${lone.key}.graph`],
+    ).toBe(t('automations.graph.unreachable'));
+    const request = buildRequest({ ...validDraft(), steps: [a, b] }, meta);
+    expect(request.request).toBeNull();
+  });
+
+  it('un paso nuevo recibe un id libre', () => {
+    const steps = validDraft().steps.map((s, i) => ({ ...s, id: `s${i + 1}` }));
+    expect(withFreshId(emptyStep('wait', meta), steps).id).toBe('s4');
+  });
+
+  it('el disparador por fecha exige atributo, hora y zona', () => {
+    const draft = { ...validDraft(), triggerType: 'contact.date' };
+    const { request, errors } = buildRequest(draft, meta);
+    expect(request).toBeNull();
+    expect(errors.dateAttribute).toBe(t('validation.required'));
+    expect(errors.timezone).toBe(t('validation.required'));
+    const ok = buildRequest(
+      { ...draft, dateAttribute: 'cumple', hour: '8', timezone: 'America/Lima' },
+      meta,
+    );
+    expect(ok.request?.trigger).toEqual({
+      type: 'contact.date',
+      attribute: 'cumple',
+      hour: 8,
+      timezone: 'America/Lima',
+    });
+    const late = buildRequest(
+      { ...draft, dateAttribute: 'cumple', hour: '24', timezone: 'UTC' },
+      meta,
+    );
+    expect(late.errors.hour).toBe(t('automations.editor.hourInvalid', { max: 23 }));
   });
 
   it('muestra una espera en la mayor unidad que la divide', () => {

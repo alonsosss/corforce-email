@@ -142,8 +142,13 @@ subject y payload. `opaco` = el payload no se puede leer estaticamente.
 | `transactional.email.bounced` | reputation | _opaco_ |
 | `transactional.email.bounced` | suppression | `bounce_type`, `detail`, `email`, `message_id`, `tenant_id` |
 | `transactional.email.clicked` | automations | `campaign_id`, `class`, `contact_id`, `tenant_id` |
+| `transactional.email.clicked` | automations | `campaign_id`, `class`, `message_id`, `occurred_at`, `tenant_id`, `test` |
+| `transactional.email.clicked` | contacts | `campaign_id`, `class`, `contact_id`, `occurred_at`, `tenant_id`, `test` |
 | `transactional.email.complained` | reputation | _opaco_ |
 | `transactional.email.complained` | suppression | `detail`, `email`, `message_id`, `tenant_id` |
+| `transactional.email.delivered` | contacts | `campaign_id`, `class`, `contact_id`, `occurred_at`, `tenant_id`, `test` |
+| `transactional.email.opened` | automations | `campaign_id`, `class`, `message_id`, `occurred_at`, `tenant_id`, `test` |
+| `transactional.email.opened` | contacts | `campaign_id`, `class`, `contact_id`, `occurred_at`, `tenant_id`, `test` |
 | `transactional.email.sent` | billing | `class`, `tenant_id`, `test`, `to` |
 | `transactional.email.sent` | reputation | _opaco_ |
 | `transactional.marketing.queued` | transactional | _opaco_ |

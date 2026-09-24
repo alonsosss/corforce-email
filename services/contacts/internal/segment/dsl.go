@@ -9,6 +9,12 @@
 //     con OR y se excluyen con NOT, y un NULL dentro de un NOT sacaria en silencio a
 //     contactos que no estan en la exclusion.
 //
+// Las reglas de interaccion (campaign, last_campaigns, last_days) leen la proyeccion
+// contacts.engagement que mantiene el consumidor de transactional.email.*. Una apertura
+// la registra el pixel de seguimiento, y Apple Mail (Mail Privacy Protection) y algunos
+// antivirus lo descargan sin que la persona abra el correo: "abrio" sobrestima y "no
+// abrio" subestima. El clic es la senal fiable; el editor lo advierte.
+//
 // Sin dependencias fuera de la biblioteca estandar.
 package segment
 
@@ -36,8 +42,13 @@ const (
 	MaxStringValue = 500
 	// MaxDefinitionBytes es el tamano maximo de una definicion serializada.
 	MaxDefinitionBytes = 64 << 10
-	maxNumberLength    = 40
-	dateLayout         = "2006-01-02"
+	// MaxLastCampaigns es el tope de N en las reglas de las ultimas N campanas.
+	MaxLastCampaigns = 50
+	// MaxLastDays es el tope de N en las reglas de los ultimos N dias. La retencion de la
+	// proyeccion (CONTACTS_ENGAGEMENT_RETENTION_DAYS) no puede ser menor.
+	MaxLastDays     = 365
+	maxNumberLength = 40
+	dateLayout      = "2006-01-02"
 )
 
 // ErrInvalid envuelve todo error de validacion de una definicion.
@@ -75,6 +86,9 @@ const (
 	OpHasTag     Op = "has_tag"
 	OpInList     Op = "in_list"
 	OpNotInList  Op = "not_in_list"
+	OpOpened     Op = "opened"
+	OpClicked    Op = "clicked"
+	OpNotOpened  Op = "not_opened"
 )
 
 // AttrType es el tipo declarado de un atributo (mismos nombres que en el dominio).
@@ -290,13 +304,16 @@ var (
 type kind int
 
 const (
-	kindEmail        kind = iota // NOT NULL, en minusculas
-	kindText                     // NOT NULL; '' = sin valor
-	kindNullableText             // puede ser NULL
-	kindEnum                     // NOT NULL, valores del Schema.Enums
-	kindTimestamp                // NOT NULL
-	kindTags                     // text[] NOT NULL
-	kindList                     // pertenencia a lista
+	kindEmail         kind = iota // NOT NULL, en minusculas
+	kindText                      // NOT NULL; '' = sin valor
+	kindNullableText              // puede ser NULL
+	kindEnum                      // NOT NULL, valores del Schema.Enums
+	kindTimestamp                 // NOT NULL
+	kindTags                      // text[] NOT NULL
+	kindList                      // pertenencia a lista
+	kindCampaign                  // interaccion con una campana concreta
+	kindLastCampaigns             // interaccion con las ultimas N campanas recibidas
+	kindLastDays                  // interaccion en los ultimos N dias
 )
 
 type fixedField struct {
@@ -320,6 +337,9 @@ var fieldSpecs = []fixedField{
 	{"created_at", "c.created_at", kindTimestamp},
 	{"tags", "c.tags", kindTags},
 	{"list", "", kindList},
+	{"campaign", "", kindCampaign},
+	{"last_campaigns", "", kindLastCampaigns},
+	{"last_days", "", kindLastDays},
 }
 
 var fixedFields = indexFields(fieldSpecs)
@@ -408,6 +428,12 @@ func (c *compiler) leaf(r Rule, path string) (string, error) {
 		return c.tags(f.column, r, path)
 	case kindList:
 		return c.list(r, path)
+	case kindCampaign:
+		return c.campaign(r, path)
+	case kindLastCampaigns:
+		return c.lastCampaigns(r, path)
+	case kindLastDays:
+		return c.lastDays(r, path)
 	}
 	return "", invalid(path, "campo no permitido: %q", clip(r.Field))
 }
@@ -628,6 +654,71 @@ func (c *compiler) list(r Rule, path string) (string, error) {
 		return "NOT " + sub, nil
 	}
 	return sub, nil
+}
+
+// ── Interaccion (contacts.engagement) ────────────────────────────────────────
+//
+// Una fila por contacto y envio de marketing (campana o flujo de automations) con la hora
+// en que lo recibio y las de su ultima apertura y su ultimo clic. Un clic cuenta tambien
+// como apertura. Todas las subconsultas van por la clave (contact_id, ...) de sus indices.
+
+const engagementTable = "contacts.engagement e"
+
+func engagementColumn(op Op) string {
+	if op == OpClicked {
+		return "e.last_clicked_at"
+	}
+	return "e.last_opened_at"
+}
+
+func (c *compiler) campaign(r Rule, path string) (string, error) {
+	if r.Op != OpOpened && r.Op != OpClicked {
+		return "", badOp(path, "campaign", r.Op)
+	}
+	v, err := stringValue(r.Value, path)
+	if err != nil {
+		return "", err
+	}
+	id := strings.ToLower(strings.TrimSpace(v))
+	if !uuidRegex.MatchString(id) {
+		return "", invalid(path, "value debe ser el id de una campana")
+	}
+	return "EXISTS (SELECT 1 FROM " + engagementTable + " WHERE e.contact_id = c.id AND e.campaign_id = " +
+		c.args.Add(id) + "::uuid AND " + engagementColumn(r.Op) + " IS NOT NULL)", nil
+}
+
+// lastCampaigns mira las N ultimas campanas que recibio el contacto. not_opened exige que
+// haya recibido al menos N: un contacto recien llegado no es un inactivo.
+func (c *compiler) lastCampaigns(r Rule, path string) (string, error) {
+	if r.Op != OpOpened && r.Op != OpClicked && r.Op != OpNotOpened {
+		return "", badOp(path, "last_campaigns", r.Op)
+	}
+	n, err := countValue(r.Value, MaxLastCampaigns, path)
+	if err != nil {
+		return "", err
+	}
+	limit := c.args.Add(n)
+	recent := "(SELECT e.last_opened_at, e.last_clicked_at FROM " + engagementTable +
+		" WHERE e.contact_id = c.id ORDER BY e.received_at DESC LIMIT " + limit + "::int) t"
+	switch r.Op {
+	case OpOpened:
+		return "EXISTS (SELECT 1 FROM " + recent + " WHERE t.last_opened_at IS NOT NULL)", nil
+	case OpClicked:
+		return "EXISTS (SELECT 1 FROM " + recent + " WHERE t.last_clicked_at IS NOT NULL)", nil
+	}
+	return "(SELECT count(*) = " + limit + "::int AND count(t.last_opened_at) = 0 FROM " + recent + ")", nil
+}
+
+func (c *compiler) lastDays(r Rule, path string) (string, error) {
+	if r.Op != OpOpened && r.Op != OpClicked {
+		return "", badOp(path, "last_days", r.Op)
+	}
+	n, err := countValue(r.Value, MaxLastDays, path)
+	if err != nil {
+		return "", err
+	}
+	return "EXISTS (SELECT 1 FROM " + engagementTable + " WHERE e.contact_id = c.id AND " + engagementColumn(r.Op) +
+		" >= now() - make_interval(days => " + c.args.Add(n) + "::int))", nil
 }
 
 // attribute compila una condicion sobre attributes.<key>. La clave viaja como argumento
@@ -907,6 +998,23 @@ func numberValues(raw json.RawMessage, path string) ([]string, error) {
 		out = append(out, s)
 	}
 	return out, nil
+}
+
+// countValue exige un entero JSON entre 1 y max.
+func countValue(raw json.RawMessage, max int, path string) (int, error) {
+	var v any
+	if err := strictDecode(raw, &v); err != nil {
+		return 0, invalid(path, "value debe ser un entero entre 1 y %d", max)
+	}
+	num, ok := v.(json.Number)
+	if !ok {
+		return 0, invalid(path, "value debe ser un entero entre 1 y %d", max)
+	}
+	n, err := strconv.Atoi(num.String())
+	if err != nil || n < 1 || n > max {
+		return 0, invalid(path, "value debe ser un entero entre 1 y %d", max)
+	}
+	return n, nil
 }
 
 func dateValue(raw json.RawMessage, path string) (string, error) {

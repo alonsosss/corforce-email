@@ -42,32 +42,64 @@ const (
 	TriggerConsentGranted TriggerType = "consent.granted"
 	// TriggerEmailClicked: clic en un correo de marketing con contacto (transactional).
 	TriggerEmailClicked TriggerType = "email.clicked"
+	// TriggerContactDate: aniversario (dia y mes) de un atributo de fecha del contacto, a
+	// una hora local, en la zona del contacto o en la de respaldo. No llega por un evento:
+	// lo busca el ejecutor en contacts (ScanDateTriggers).
+	TriggerContactDate TriggerType = "contact.date"
 )
 
 func TriggerTypes() []TriggerType {
-	return []TriggerType{TriggerContactCreated, TriggerConsentGranted, TriggerEmailClicked}
+	return []TriggerType{TriggerContactCreated, TriggerConsentGranted, TriggerEmailClicked, TriggerContactDate}
 }
 
 // AcceptsCampaign dice si el disparador admite acotarse a una campana (CampaignID).
 func (t TriggerType) AcceptsCampaign() bool { return t == TriggerEmailClicked }
 
+// IsDate dice si el disparador es un aniversario (Attribute, Hour y Timezone).
+func (t TriggerType) IsDate() bool { return t == TriggerContactDate }
+
+// MaxTriggerHour es la ultima hora local de un disparador por fecha (0..23).
+const MaxTriggerHour = 23
+
 // PurposeMarketing es el unico proposito de consentimiento que dispara un flujo.
 const PurposeMarketing = "marketing"
 
 // Trigger es el disparador de un flujo. CampaignID solo aplica a email.clicked y acota
-// los clics a los de una campana concreta.
+// los clics a los de una campana concreta. Attribute (clave de un atributo de fecha de
+// contacts), Hour (hora local) y Timezone (zona IANA de respaldo para quien no tiene la
+// suya) solo aplican a contact.date, y los tres son obligatorios.
 type Trigger struct {
 	Type       TriggerType `json:"type"`
 	CampaignID *uuid.UUID  `json:"campaign_id,omitempty"`
+	Attribute  string      `json:"attribute,omitempty"`
+	Hour       *int        `json:"hour,omitempty"`
+	Timezone   string      `json:"timezone,omitempty"`
 }
 
-func (t Trigger) validate() error {
+func (t *Trigger) validate() error {
 	known := false
 	for _, tt := range TriggerTypes() {
 		known = known || t.Type == tt
 	}
 	if !known {
-		return NewValidationError("trigger.type debe ser contact.created, consent.granted o email.clicked")
+		return NewValidationError("trigger.type debe ser contact.created, consent.granted, email.clicked o contact.date")
+	}
+	t.Attribute = strings.TrimSpace(t.Attribute)
+	t.Timezone = strings.TrimSpace(t.Timezone)
+	if !t.Type.IsDate() {
+		if t.Attribute != "" || t.Hour != nil || t.Timezone != "" {
+			return NewValidationError("trigger.attribute, trigger.hour y trigger.timezone solo aplican a contact.date")
+		}
+	} else {
+		if !attributeKeyPattern.MatchString(t.Attribute) {
+			return NewValidationError("trigger.attribute debe ser la clave de un atributo de fecha declarado")
+		}
+		if t.Hour == nil || *t.Hour < 0 || *t.Hour > MaxTriggerHour {
+			return NewValidationError("trigger.hour es obligatoria y va de 0 a %d (hora local)", MaxTriggerHour)
+		}
+		if _, err := LoadTimezone(t.Timezone); err != nil {
+			return err
+		}
 	}
 	if t.CampaignID != nil {
 		if !t.Type.AcceptsCampaign() {
@@ -78,6 +110,19 @@ func (t Trigger) validate() error {
 		}
 	}
 	return nil
+}
+
+// LoadTimezone valida la zona de respaldo de un disparador por fecha: IANA, sin "Local"
+// (la del servidor no dice nada de la empresa).
+func LoadTimezone(name string) (*time.Location, error) {
+	if name == "" || name == "Local" || len(name) > 64 {
+		return nil, NewValidationError("trigger.timezone debe ser una zona IANA (America/Lima)")
+	}
+	loc, err := time.LoadLocation(name)
+	if err != nil {
+		return nil, NewValidationError("trigger.timezone debe ser una zona IANA (America/Lima)")
+	}
+	return loc, nil
 }
 
 // TriggerEvent es un evento de disparo ya interpretado por el adaptador.
@@ -262,7 +307,7 @@ func (w *Workflow) Deletable() bool { return w.Status == StatusDraft || w.Status
 // lo resuelve contacts). Un clic en un correo del propio flujo no lo vuelve a disparar:
 // sin esa regla, un flujo de clic sin campana concreta se realimentaria a si mismo.
 func (w *Workflow) Accepts(ev TriggerEvent) bool {
-	if w.Status != StatusActive || w.Trigger.Type != ev.Type || ev.ContactID == uuid.Nil {
+	if w.Status != StatusActive || w.Trigger.Type != ev.Type || ev.ContactID == uuid.Nil || ev.Type.IsDate() {
 		return false
 	}
 	if ev.Type != TriggerEmailClicked {

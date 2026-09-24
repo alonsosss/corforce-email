@@ -6,7 +6,7 @@ Convencion de subject: `<dominio>.<entidad>.<accion>`. Un subject tiene UN dueno
 Publicar incluye encolar en la outbox (`outbox.Enqueue`); un consumidor con comodin
 (`*`, `>`) figura en cada subject publicado que recibe.
 
-Resumen: 92 publicaciones, 39 suscripciones, 92 subjects distintos.
+Resumen: 92 publicaciones, 43 suscripciones, 92 subjects distintos.
 
 ## Cruce por subject (dueno -> consumidores)
 
@@ -95,11 +95,11 @@ Resumen: 92 publicaciones, 39 suscripciones, 92 subjects distintos.
 | `suppression.entry.removed` | suppression | contacts |
 | `templates.template.published` | templates | - |
 | `transactional.email.bounced` | transactional | analytics, campaigns, reputation, suppression |
-| `transactional.email.clicked` | transactional | analytics, automations, campaigns |
+| `transactional.email.clicked` | transactional | analytics, automations, campaigns, contacts |
 | `transactional.email.complained` | transactional | analytics, campaigns, reputation, suppression |
-| `transactional.email.delivered` | transactional | analytics, campaigns |
+| `transactional.email.delivered` | transactional | analytics, campaigns, contacts |
 | `transactional.email.failed` | transactional | analytics, campaigns |
-| `transactional.email.opened` | transactional | analytics, campaigns |
+| `transactional.email.opened` | transactional | analytics, automations, campaigns, contacts |
 | `transactional.email.sent` | transactional | analytics, billing, campaigns, reputation |
 | `transactional.email.unsubscribed` | transactional | analytics, campaigns |
 | `transactional.marketing.queued` | transactional | transactional |
@@ -119,7 +119,7 @@ Resumen: 92 publicaciones, 39 suscripciones, 92 subjects distintos.
 
 ### automations
 - Publica: `automations.run.completed`, `automations.run.failed`, `automations.workflow.activated`, `automations.workflow.archived`, `automations.workflow.paused`
-- Consume: `contacts.consent.granted`, `contacts.consent.requested`, `contacts.contact.created`, `transactional.email.clicked`
+- Consume: `contacts.consent.granted`, `contacts.consent.requested`, `contacts.contact.created`, `transactional.email.clicked`, `transactional.email.opened`
 
 ### billing
 - Publica: `billing.limit.reached`, `billing.period.closed`, `billing.subscription.changed`, `billing.subscription.created`, `billing.subscription.suspended`
@@ -131,7 +131,7 @@ Resumen: 92 publicaciones, 39 suscripciones, 92 subjects distintos.
 
 ### contacts
 - Publica: `contacts.consent.granted`, `contacts.consent.requested`, `contacts.consent.revoked`, `contacts.contact.created`, `contacts.contact.deleted`, `contacts.contact.resubscribed`, `contacts.contact.updated`, `contacts.import.completed`
-- Consume: `suppression.entry.added`, `suppression.entry.expired`, `suppression.entry.removed`
+- Consume: `suppression.entry.added`, `suppression.entry.expired`, `suppression.entry.removed`, `transactional.email.clicked`, `transactional.email.delivered`, `transactional.email.opened`
 
 ### domain-service
 - Publica: `domains.dns_provider.connected`, `domains.dns_provider.disconnected`, `domains.domain.created`, `domains.domain.deleted`, `domains.domain.dkim_revoked`, `domains.domain.dkim_rotated`, `domains.domain.dns_published`, `domains.domain.failed`, `domains.domain.sending_status_changed`, `domains.domain.verified`

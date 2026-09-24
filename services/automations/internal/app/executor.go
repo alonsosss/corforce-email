@@ -23,7 +23,8 @@ import (
 //     automation:<run_id>:step:<indice>, que depende solo de la ejecucion y del paso: si
 //     el proceso muere entre la respuesta de transactional y nuestro commit, el reintento
 //     manda la misma clave y transactional devuelve lo ya creado. No hay duplicados.
-//  3. Registrar (otra transaccion): avanzar step_index y fijar next_run_at, aplazar, o
+//  3. Registrar (otra transaccion): avanzar step_index al paso siguiente del grafo (el de
+//     next, o el de then o else en una rama) y fijar next_run_at, aplazar, o
 //     terminar la ejecucion con su evento. Toda escritura exige lease_token y status
 //     running, y el avance exige ademas el mismo step_index: un trabajador cuya reserva
 //     vencio no puede pisar a quien la retomo. No hay perdidas: ningun paso avanza sin
@@ -112,11 +113,13 @@ func (uc *UseCase) ProcessRun(ctx context.Context, run *domain.Run) (Outcome, er
 	step := w.Steps[run.StepIndex]
 	switch step.Type {
 	case domain.StepWait:
-		return uc.advance(ctx, w, run, uc.now().Add(step.WaitDuration()))
+		return uc.advance(ctx, w, run, domain.NextIndex(w.Steps, run.StepIndex, false), uc.now().Add(step.WaitDuration()))
 	case domain.StepSendEmail:
 		return uc.stepSend(ctx, w, run, step)
 	case domain.StepAddToList, domain.StepRemoveFromList:
 		return uc.stepList(ctx, w, run, step)
+	case domain.StepBranch:
+		return uc.stepBranch(ctx, w, run, step)
 	}
 	return uc.finish(ctx, w, run, domain.RunFailed, "INVALID_STEP", "tipo de paso desconocido: "+string(step.Type))
 }
@@ -144,7 +147,7 @@ func (uc *UseCase) stepSend(ctx context.Context, w *domain.Workflow, run *domain
 		return uc.finish(ctx, w, run, domain.RunSkipped, domain.CodeContactNotSendable,
 			"el contacto no esta activo o no tiene consentimiento de marketing vigente")
 	}
-	_, err = uc.sender.SendMarketing(callCtx, run.TenantID, ports.MarketingMessage{
+	res, err := uc.sender.SendMarketing(callCtx, run.TenantID, ports.MarketingMessage{
 		WorkflowID:      w.ID,
 		IdempotencyKey:  run.IdempotencyKey(),
 		FromEmail:       step.FromEmail,
@@ -158,7 +161,71 @@ func (uc *UseCase) stepSend(ctx context.Context, w *domain.Workflow, run *domain
 	if err != nil {
 		return uc.onFailure(ctx, w, run, fmt.Errorf("transactional: %w", err))
 	}
-	return uc.advance(ctx, w, run, uc.now())
+	if err := uc.recordMessage(ctx, w, run, step, res); err != nil {
+		return OutcomeAborted, err
+	}
+	return uc.advance(ctx, w, run, domain.NextIndex(w.Steps, run.StepIndex, false), uc.now())
+}
+
+// recordMessage guarda el correo del paso para las ramas que lo miran. Va antes de avanzar
+// y es idempotente: si el proceso cae entre las dos escrituras, el reintento manda la misma
+// clave, transactional devuelve el mismo mensaje y el registro no se duplica. Un envio que
+// la supresion retiro no deja mensaje: la rama lo trata como no abierto.
+func (uc *UseCase) recordMessage(ctx context.Context, w *domain.Workflow, run *domain.Run, step domain.Step, res *ports.BatchResult) error {
+	if uc.runMessages == nil || res == nil || len(res.MessageIDs) == 0 {
+		return nil
+	}
+	rctx, cancel := recordContext(ctx)
+	defer cancel()
+	return uc.runMessages.Record(rctx, domain.RunMessage{
+		TenantID: run.TenantID, RunID: run.ID, WorkflowID: w.ID, ContactID: run.ContactID,
+		StepID: step.ID, MessageID: res.MessageIDs[0],
+	})
+}
+
+// stepBranch evalua la condicion y sigue por then o por else. Un segmento o un atributo que
+// ya no existen son un rechazo de contacts y terminan la ejecucion como fallida con su
+// codigo; un fallo transitorio se reintenta como cualquier paso.
+func (uc *UseCase) stepBranch(ctx context.Context, w *domain.Workflow, run *domain.Run, step domain.Step) (Outcome, error) {
+	if step.Condition == nil {
+		return uc.finish(ctx, w, run, domain.RunFailed, "INVALID_STEP", "rama sin condicion")
+	}
+	taken, err := uc.evaluate(ctx, run, *step.Condition)
+	if err != nil {
+		return uc.onFailure(ctx, w, run, err)
+	}
+	return uc.advance(ctx, w, run, domain.NextIndex(w.Steps, run.StepIndex, taken), uc.now())
+}
+
+func (uc *UseCase) evaluate(ctx context.Context, run *domain.Run, c domain.Condition) (bool, error) {
+	switch c.Kind {
+	case domain.ConditionEmailOpened, domain.ConditionEmailClicked:
+		m, err := uc.runMessages.Get(ctx, run.TenantID, run.ID, c.Step)
+		if err != nil {
+			return false, err
+		}
+		return m.Satisfies(c.Kind), nil
+	case domain.ConditionSegment, domain.ConditionAttribute:
+		q := ports.MatchQuery{ContactIDs: []uuid.UUID{run.ContactID}}
+		if c.Kind == domain.ConditionSegment {
+			q.SegmentID = c.SegmentID
+		} else {
+			q.Definition = c.AttributeDefinition()
+		}
+		callCtx, cancel := context.WithTimeout(ctx, domain.CallTimeout)
+		defer cancel()
+		ids, err := uc.rules.Match(callCtx, run.TenantID, q)
+		if err != nil {
+			return false, fmt.Errorf("contacts: %w", err)
+		}
+		for _, id := range ids {
+			if id == run.ContactID {
+				return true, nil
+			}
+		}
+		return false, nil
+	}
+	return false, &ports.RejectedError{Code: "INVALID_STEP", Message: "condicion desconocida: " + string(c.Kind)}
 }
 
 // stepList anade o quita al contacto de una lista. Las dos operaciones son idempotentes
@@ -176,13 +243,12 @@ func (uc *UseCase) stepList(ctx context.Context, w *domain.Workflow, run *domain
 	if err != nil {
 		return uc.onFailure(ctx, w, run, fmt.Errorf("contacts: %w", err))
 	}
-	return uc.advance(ctx, w, run, uc.now())
+	return uc.advance(ctx, w, run, domain.NextIndex(w.Steps, run.StepIndex, false), uc.now())
 }
 
-// advance cierra el paso: pasa al siguiente con next_run_at. Si no queda ninguno y no hay
-// espera, la ejecucion termina aqui mismo.
-func (uc *UseCase) advance(ctx context.Context, w *domain.Workflow, run *domain.Run, nextRunAt time.Time) (Outcome, error) {
-	next := run.StepIndex + 1
+// advance cierra el paso: pasa al de la posicion next con next_run_at. Si next es el fin
+// (len(steps)) y no hay espera, la ejecucion termina aqui mismo.
+func (uc *UseCase) advance(ctx context.Context, w *domain.Workflow, run *domain.Run, next int, nextRunAt time.Time) (Outcome, error) {
 	if next >= len(w.Steps) && !nextRunAt.After(uc.now()) {
 		return uc.finish(ctx, w, run, domain.RunCompleted, "", "")
 	}

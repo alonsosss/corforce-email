@@ -31,6 +31,9 @@ type Config struct {
 	PublicBaseURL string
 	DOITTL        time.Duration
 	ImportMaxRows int
+	// EngagementRetention es cuanto se conserva la interaccion de un contacto con un envio
+	// desde su ultimo hito (CONTACTS_ENGAGEMENT_RETENTION_DAYS).
+	EngagementRetention time.Duration
 }
 
 type Deps struct {
@@ -47,8 +50,12 @@ type Deps struct {
 	// Suppression da las causas vigentes con que se decide el estado del contacto al
 	// consumir los eventos de suppression.
 	Suppression ports.SuppressionState
-	Config      Config
-	Logger      *zap.Logger
+	// Engagement es la proyeccion de interaccion; Matcher, las consultas por contacto de
+	// automations (ramas y aniversarios).
+	Engagement ports.EngagementRepository
+	Matcher    ports.ContactMatcher
+	Config     Config
+	Logger     *zap.Logger
 	// Now fija el reloj en las pruebas; nil = time.Now en UTC.
 	Now func() time.Time
 	// Random es la fuente de los tokens; nil = crypto/rand.
@@ -67,6 +74,8 @@ type UseCase struct {
 	tx          ports.Transactor
 	events      ports.EventPublisher
 	suppression ports.SuppressionState
+	engagement  ports.EngagementRepository
+	matcher     ports.ContactMatcher
 	cfg         Config
 	logger      *zap.Logger
 	now         func() time.Time
@@ -89,6 +98,9 @@ func New(d Deps) *UseCase {
 	if cfg.ImportMaxRows <= 0 {
 		cfg.ImportMaxRows = DefaultImportMaxRows
 	}
+	if cfg.EngagementRetention <= 0 {
+		cfg.EngagementRetention = domain.DefaultEngagementRetentionDays * 24 * time.Hour
+	}
 	logger := d.Logger
 	if logger == nil {
 		logger = zap.NewNop()
@@ -96,7 +108,7 @@ func New(d Deps) *UseCase {
 	return &UseCase{
 		contacts: d.Contacts, consents: d.Consents, tokens: d.Tokens, lists: d.Lists,
 		attributes: d.Attributes, segments: d.Segments, query: d.Query, imports: d.Imports,
-		tx: d.Tx, events: d.Events, suppression: d.Suppression, cfg: cfg, logger: logger, now: now, random: random,
+		tx: d.Tx, events: d.Events, suppression: d.Suppression, engagement: d.Engagement, matcher: d.Matcher, cfg: cfg, logger: logger, now: now, random: random,
 	}
 }
 

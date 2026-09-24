@@ -16,6 +16,9 @@ export const catalogFixture: SegmentCatalog = {
     { op: 'exists', arity: 'none' },
     { op: 'has_tag', arity: 'one' },
     { op: 'in_list', arity: 'one' },
+    { op: 'opened', arity: 'one' },
+    { op: 'clicked', arity: 'one' },
+    { op: 'not_opened', arity: 'one' },
   ],
   fields: [
     { field: 'email', value_type: 'email', operators: ['eq', 'neq', 'contains', 'in'] },
@@ -28,6 +31,14 @@ export const catalogFixture: SegmentCatalog = {
     { field: 'created_at', value_type: 'timestamp', operators: ['gt'] },
     { field: 'tags', value_type: 'tag', operators: ['has_tag', 'in', 'exists'] },
     { field: 'list', value_type: 'list', operators: ['in_list'] },
+    { field: 'campaign', value_type: 'campaign', operators: ['opened', 'clicked'] },
+    {
+      field: 'last_campaigns',
+      value_type: 'count',
+      operators: ['opened', 'clicked', 'not_opened'],
+      max: 50,
+    },
+    { field: 'last_days', value_type: 'count', operators: ['opened', 'clicked'], max: 365 },
   ],
   attribute_types: [
     { type: 'string', operators: ['eq', 'contains', 'exists'] },
@@ -45,5 +56,7 @@ export const catalogFixture: SegmentCatalog = {
     max_in_values: 3,
     max_string_value: 20,
     max_definition_bytes: 65536,
+    max_last_campaigns: 50,
+    max_last_days: 365,
   },
 };

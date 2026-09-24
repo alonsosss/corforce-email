@@ -29,6 +29,8 @@ export interface SegmentEditorProps {
   errors: Record<string, string>;
   /** Listas de la empresa para in_list; null si el rol no puede leerlas (se escribe el id). */
   lists: readonly ListOption[] | null;
+  /** Campanas para las reglas de comportamiento; null sin permiso (se escribe el id). */
+  campaigns?: readonly ListOption[] | null;
   disabled?: boolean;
 }
 
@@ -80,6 +82,7 @@ function GroupEditor({
   onRemove,
   errors,
   lists,
+  campaigns = null,
   disabled,
 }: GroupEditorProps) {
   const { max_depth: maxDepth, max_rules: maxRules } = catalog.limits;
@@ -136,6 +139,7 @@ function GroupEditor({
               onRemove={() => remove(node.key)}
               errors={errors}
               lists={lists}
+              campaigns={campaigns}
               disabled={disabled}
             />
           ) : (
@@ -145,6 +149,7 @@ function GroupEditor({
               condition={node}
               error={errors[node.key]}
               lists={lists}
+              campaigns={campaigns}
               onChange={(next) => replace(node.key, next)}
               onRemove={() => remove(node.key)}
             />
@@ -180,6 +185,7 @@ function ConditionRow({
   condition,
   error,
   lists,
+  campaigns,
   onChange,
   onRemove,
 }: {
@@ -187,6 +193,7 @@ function ConditionRow({
   condition: DraftCondition;
   error?: string;
   lists: readonly ListOption[] | null;
+  campaigns: readonly ListOption[] | null;
   onChange: (next: DraftCondition) => void;
   onRemove: () => void;
 }) {
@@ -227,6 +234,7 @@ function ConditionRow({
               many={arity === 'many'}
               condition={condition}
               lists={lists}
+              campaigns={campaigns}
               onChange={onChange}
               invalid={Boolean(error)}
             />
@@ -259,6 +267,7 @@ function ValueInput({
   many,
   condition,
   lists,
+  campaigns,
   onChange,
   invalid,
 }: {
@@ -266,6 +275,7 @@ function ValueInput({
   many: boolean;
   condition: DraftCondition;
   lists: readonly ListOption[] | null;
+  campaigns: readonly ListOption[] | null;
   onChange: (next: DraftCondition) => void;
   invalid: boolean;
 }) {
@@ -311,6 +321,48 @@ function ValueInput({
         aria-label={label}
         placeholder={t('common.select')}
         options={lists.map((l) => ({ value: l.id, label: l.name }))}
+        value={condition.value}
+        onChange={(e) => setValue(e.target.value)}
+        invalid={invalid}
+      />
+    );
+  }
+  if (spec.valueKind === 'campaign') {
+    if (campaigns) {
+      const options = campaigns.map((c) => ({ value: c.id, label: c.name }));
+      if (condition.value && !options.some((o) => o.value === condition.value)) {
+        options.push({ value: condition.value, label: condition.value });
+      }
+      return (
+        <Select
+          aria-label={label}
+          placeholder={t('common.select')}
+          options={options}
+          value={condition.value}
+          onChange={(e) => setValue(e.target.value)}
+          invalid={invalid}
+        />
+      );
+    }
+    return (
+      <Input
+        aria-label={label}
+        className="cf-mono"
+        placeholder={t('segments.editor.campaignId')}
+        value={condition.value}
+        onChange={(e) => setValue(e.target.value)}
+        invalid={invalid}
+      />
+    );
+  }
+  if (spec.valueKind === 'count') {
+    return (
+      <Input
+        aria-label={tEnum('segments.countLabel', spec.field)}
+        type="number"
+        min={1}
+        max={spec.max ?? undefined}
+        step={1}
         value={condition.value}
         onChange={(e) => setValue(e.target.value)}
         invalid={invalid}

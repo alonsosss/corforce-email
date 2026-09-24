@@ -14,7 +14,7 @@ const (
 // operators es el catalogo completo de operadores, en el orden en que se presentan.
 var operators = []Op{
 	OpEq, OpNeq, OpContains, OpStartsWith, OpGt, OpGte, OpLt, OpLte, OpIn,
-	OpExists, OpNotExists, OpHasTag, OpInList, OpNotInList,
+	OpExists, OpNotExists, OpHasTag, OpInList, OpNotInList, OpOpened, OpClicked, OpNotOpened,
 }
 
 // Arity es el numero de valores que exige el operador.
@@ -32,13 +32,16 @@ func (o Op) Arity() Arity {
 // campo y por tipo de atributo. catalog_test.go comprueba contra Compile que cada entrada
 // compila y que ningun otro operador lo hace: la tabla no puede desviarse del compilador.
 var kindOperators = map[kind][]Op{
-	kindEmail:        {OpEq, OpNeq, OpContains, OpStartsWith, OpIn},
-	kindText:         {OpEq, OpNeq, OpContains, OpStartsWith, OpIn, OpExists, OpNotExists},
-	kindNullableText: {OpEq, OpNeq, OpContains, OpStartsWith, OpIn, OpExists, OpNotExists},
-	kindEnum:         {OpEq, OpNeq, OpIn},
-	kindTimestamp:    {OpGt, OpGte, OpLt, OpLte},
-	kindTags:         {OpHasTag, OpNeq, OpIn, OpExists, OpNotExists},
-	kindList:         {OpInList, OpNotInList},
+	kindEmail:         {OpEq, OpNeq, OpContains, OpStartsWith, OpIn},
+	kindText:          {OpEq, OpNeq, OpContains, OpStartsWith, OpIn, OpExists, OpNotExists},
+	kindNullableText:  {OpEq, OpNeq, OpContains, OpStartsWith, OpIn, OpExists, OpNotExists},
+	kindEnum:          {OpEq, OpNeq, OpIn},
+	kindTimestamp:     {OpGt, OpGte, OpLt, OpLte},
+	kindTags:          {OpHasTag, OpNeq, OpIn, OpExists, OpNotExists},
+	kindList:          {OpInList, OpNotInList},
+	kindCampaign:      {OpOpened, OpClicked},
+	kindLastCampaigns: {OpOpened, OpClicked, OpNotOpened},
+	kindLastDays:      {OpOpened, OpClicked},
 }
 
 var attrOperators = map[AttrType][]Op{
@@ -61,16 +64,23 @@ const (
 	ValueTimestamp ValueType = "timestamp"
 	ValueTag       ValueType = "tag"
 	ValueList      ValueType = "list"
+	// ValueCampaign es el id de una campana; ValueCount, un entero entre 1 y el tope del
+	// campo (Limits).
+	ValueCampaign ValueType = "campaign"
+	ValueCount    ValueType = "count"
 )
 
 var kindValueTypes = map[kind]ValueType{
-	kindEmail:        ValueEmail,
-	kindText:         ValueText,
-	kindNullableText: ValueText,
-	kindEnum:         ValueEnum,
-	kindTimestamp:    ValueTimestamp,
-	kindTags:         ValueTag,
-	kindList:         ValueList,
+	kindEmail:         ValueEmail,
+	kindText:          ValueText,
+	kindNullableText:  ValueText,
+	kindEnum:          ValueEnum,
+	kindTimestamp:     ValueTimestamp,
+	kindTags:          ValueTag,
+	kindList:          ValueList,
+	kindCampaign:      ValueCampaign,
+	kindLastCampaigns: ValueCount,
+	kindLastDays:      ValueCount,
 }
 
 // Catalog describe lo que una definicion puede usar con el esquema de una empresa: el
@@ -90,13 +100,17 @@ type OperatorInfo struct {
 	Arity Arity `json:"arity"`
 }
 
-// FieldInfo es un campo fijo. Values solo existe en los enumerados.
+// FieldInfo es un campo fijo. Values solo existe en los enumerados; Max, en los de valor
+// count (el tope de N).
 type FieldInfo struct {
 	Field     string    `json:"field"`
 	ValueType ValueType `json:"value_type"`
 	Operators []Op      `json:"operators"`
 	Values    []string  `json:"values,omitempty"`
+	Max       int       `json:"max,omitempty"`
 }
+
+var kindMax = map[kind]int{kindLastCampaigns: MaxLastCampaigns, kindLastDays: MaxLastDays}
 
 type AttributeTypeInfo struct {
 	Type      AttrType `json:"type"`
@@ -114,6 +128,8 @@ type Limits struct {
 	MaxInValues        int `json:"max_in_values"`
 	MaxStringValue     int `json:"max_string_value"`
 	MaxDefinitionBytes int `json:"max_definition_bytes"`
+	MaxLastCampaigns   int `json:"max_last_campaigns"`
+	MaxLastDays        int `json:"max_last_days"`
 }
 
 // Describe arma el catalogo con el esquema dado. Los atributos salen ordenados por clave.
@@ -128,6 +144,7 @@ func Describe(schema Schema) Catalog {
 		Limits: Limits{
 			MaxDepth: MaxDepth, MaxRules: MaxRules, MaxInValues: MaxInValues,
 			MaxStringValue: MaxStringValue, MaxDefinitionBytes: MaxDefinitionBytes,
+			MaxLastCampaigns: MaxLastCampaigns, MaxLastDays: MaxLastDays,
 		},
 	}
 	for _, op := range operators {
@@ -138,6 +155,7 @@ func Describe(schema Schema) Catalog {
 		if f.kind == kindEnum {
 			info.Values = append([]string{}, schema.Enums[f.name]...)
 		}
+		info.Max = kindMax[f.kind]
 		c.Fields = append(c.Fields, info)
 	}
 	for _, t := range attrTypes {

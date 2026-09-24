@@ -84,8 +84,10 @@ func setupDB(t *testing.T, cfg Config) *dbFixture {
 		for _, rel := range []string{
 			"migrations/tenant/canonical/platform/00_outbox.sql",
 			"migrations/tenant/canonical/automations/01_automations.sql",
+			"migrations/tenant/canonical/automations/03_branches_and_dates.sql",
 			"migrations/tenant/canonical/platform/00_outbox.sql",
 			"migrations/tenant/canonical/automations/01_automations.sql",
+			"migrations/tenant/canonical/automations/03_branches_and_dates.sql",
 		} {
 			sql, err := os.ReadFile(filepath.Join(root, rel))
 			if err != nil {
@@ -106,6 +108,7 @@ func setupDB(t *testing.T, cfg Config) *dbFixture {
 	f := &fixture{
 		clock: clock, sender: &apptest.Sender{}, contacts: apptest.NewContacts(),
 		templates: &apptest.Templates{Kind: KindMarketing, Version: 3}, tenant: uuid.New(), user: uuid.New(),
+		rules: apptest.NewRules(),
 	}
 	if cfg.PublicBaseURL == "" {
 		cfg.PublicBaseURL = "https://app.example.com"
@@ -116,7 +119,8 @@ func setupDB(t *testing.T, cfg Config) *dbFixture {
 		Settings: postgres.NewSettingsRepository(ctxPool), Deliveries: postgres.NewDeliveryRepository(ctxPool),
 		Workflows: postgres.NewWorkflowRepository(ctxPool), Runs: runs, Processed: postgres.NewProcessedRepository(ctxPool),
 		Tx: ctxPool, Events: postgres.NewOutboxPublisher(ctxPool), Sender: f.sender, Contacts: f.contacts,
-		Templates: f.templates, Config: cfg, Now: clock.Now,
+		Templates: f.templates, Rules: f.rules, RunMessages: postgres.NewRunMessageRepository(ctxPool),
+		DateScans: postgres.NewDateScanRepository(ctxPool), Config: cfg, Now: clock.Now,
 	})
 	return &dbFixture{fixture: f, pool: pool, runs: runs, ctx: db.WithTenant(context.Background(), pool, f.tenant.String())}
 }

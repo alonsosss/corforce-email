@@ -24,9 +24,12 @@ import (
 	natsadapter "github.com/alonsosss/corforce-email/services/contacts/internal/adapters/nats"
 	outboxadapter "github.com/alonsosss/corforce-email/services/contacts/internal/adapters/outbox"
 	"github.com/alonsosss/corforce-email/services/contacts/internal/adapters/postgres"
+	"github.com/alonsosss/corforce-email/services/contacts/internal/adapters/prune"
 	"github.com/alonsosss/corforce-email/services/contacts/internal/adapters/suppressionclient"
 	"github.com/alonsosss/corforce-email/services/contacts/internal/adapters/sweep"
 	"github.com/alonsosss/corforce-email/services/contacts/internal/app"
+	"github.com/alonsosss/corforce-email/services/contacts/internal/domain"
+	"github.com/alonsosss/corforce-email/services/contacts/internal/segment"
 	"github.com/go-chi/chi/v5"
 	"go.uber.org/zap"
 )
@@ -75,6 +78,13 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	// La retencion no baja del tope de las reglas de los ultimos N dias: una regla de 365
+	// dias sobre 90 de historia diria que nadie abrio sin que sea cierto.
+	retentionDays, err := config.EnvInt("CONTACTS_ENGAGEMENT_RETENTION_DAYS", domain.DefaultEngagementRetentionDays,
+		segment.MaxLastDays, domain.MaxEngagementRetentionDays)
+	if err != nil {
+		log.Fatal(err)
+	}
 	port, err := config.EnvInt("CONTACTS_PORT", defaultPort, 1, config.MaxPort)
 	if err != nil {
 		log.Fatal(err)
@@ -106,8 +116,13 @@ func main() {
 		Tx:          ctxPool,
 		Events:      outboxadapter.NewPublisher(ctxPool),
 		Suppression: suppressionclient.New(suppressionURL, os.Getenv("INTERNAL_GATEWAY_TOKEN")),
-		Config:      app.Config{PublicBaseURL: publicBase, DOITTL: doiTTL, ImportMaxRows: importMax},
-		Logger:      logger,
+		Engagement:  postgres.NewEngagementRepository(ctxPool),
+		Matcher:     postgres.NewSegmentQuery(ctxPool),
+		Config: app.Config{
+			PublicBaseURL: publicBase, DOITTL: doiTTL, ImportMaxRows: importMax,
+			EngagementRetention: time.Duration(retentionDays) * 24 * time.Hour,
+		},
+		Logger: logger,
 	})
 
 	// Sin NATS el servicio sigue sirviendo el API y la audiencia; los eventos propios
@@ -130,12 +145,22 @@ func main() {
 		worker := natsadapter.NewSuppressionWorker(bus, uc, tenantDB, logger)
 		worker.Start(ctx)
 		defer worker.Stop()
+
+		// La proyeccion de interaccion lee los hitos de transactional; se declara su stream
+		// con los subjects de su dueno.
+		if err := bus.EnsureStream("TRANSACTIONAL", []string{"transactional.>"}); err != nil {
+			logger.Warn("ensure stream TRANSACTIONAL", zap.Error(err))
+		}
+		engagement := natsadapter.NewEngagementWorker(bus, uc, tenantDB, logger)
+		engagement.Start(ctx)
+		defer engagement.Stop()
 	}
 
 	// La caducidad de una exclusion manual llega por suppression.entry.expired; el barrido
 	// diario contrasta todos los contactos con suppression y corrige lo que no llego por
 	// evento. No depende de NATS: consulta suppression por HTTP y publica por la outbox.
 	go sweep.New(registryPool.Pool, tenantDB, uc, logger, fullSweepAt).Run(ctx)
+	go prune.New(registryPool.Pool, tenantDB, uc, logger).Run(ctx)
 
 	h := handler.NewHandler(handler.Deps{UC: uc, Perms: perms, TenantDB: tenantDB, Logger: logger})
 

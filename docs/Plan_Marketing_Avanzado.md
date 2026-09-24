@@ -106,6 +106,31 @@ Hecho (2026-09-23, rama de 1-B, sin desplegar; detalle en las filas de `transact
 * Automatizaciones con ramas (si abrio, si hizo clic, si cumple un segmento), disparadores por fecha de un
   atributo del contacto (cumpleanos, aniversario, con hora y zona), y editor visual del flujo en la web.
 
+Hecho (2026-09-23, rama de 2-E, sin desplegar; detalle en las filas de `contacts` y `automations` de
+`Arquitectura_Core_Force_Mail.md` y en `Modelo_de_Datos_y_Celdas.md`). Migraciones de empresa
+`contacts/05_engagement.sql` y `automations/03_branches_and_dates.sql`; sin migracion de registro (042 sin usar:
+todo usa los permisos existentes de `segments` y `automations`).
+
+* Proyeccion: `contacts.engagement` por contacto y envio (campana o flujo), alimentada por tres durables de
+  `transactional.email.delivered/opened/clicked`, idempotente por construccion (LEAST/GREATEST), poda por
+  `CONTACTS_ENGAGEMENT_RETENTION_DAYS` (400; 365..3650). "Ultimas N campanas" son las ultimas que recibio cada
+  contacto, sin consumir `campaigns.*`.
+* DSL: `campaign` `opened|clicked`, `last_campaigns` `opened|clicked|not_opened` (N 1..50, `not_opened` exige
+  haber recibido N), `last_days` `opened|clicked` (N 1..365). El catalogo (`GET /segments/meta`) publica los
+  campos, `max` por campo y los topes; el editor de segmentos los ofrece con selector de campana y avisa de la
+  limitacion de Apple Mail. La barrida de contacts contra suppression no se toca.
+* Automatizaciones: grafo acotado (40 pasos, 20 de profundidad, sin ciclos, todo alcanzable; `domain/graph.go`),
+  paso `branch` con `then`/`else` y condiciones `email_opened`, `email_clicked` (sobre un envio que domina la
+  rama), `segment` y `attribute` (evaluadas en `POST /internal/contacts/match`). Disparador `contact.date`
+  (aniversario de un atributo de fecha a una hora local, zona del contacto o de respaldo, una vez al ano por la
+  clave `date:<ano>`; 29 de febrero el 28 en anos no bisiestos) con `POST /internal/contacts/anniversaries` y
+  `AUTOMATIONS_DATE_SCAN_INTERVAL` (10 min). Flujos lineales anteriores compatibles sin migrar datos.
+* Web: lienzo propio en `web/src/pages/automations` (`FlowCanvas.tsx`, `workflowGraph.ts`, sin dependencias
+  nuevas, compatible con la CSP: posiciones por la API de estilos del DOM, sin `eval` ni HTML), con paleta
+  arrastrable, huecos para insertar por teclado, ramas con dos salidas, reenlazado a cualquier paso y validacion
+  en vivo; constructor de segmentos con las reglas nuevas.
+* Pendiente: comprobar en el navegador con el backend desplegado y con aperturas reales de SES.
+
 ### 2-F. Captacion
 
 * Formularios de suscripcion por empresa: campos del contacto, lista destino, doble opt-in obligatorio,
@@ -136,6 +161,6 @@ Hecho (2026-09-23, rama de 1-B, sin desplegar; detalle en las filas de `transact
 | 1-B Enlaces y analitica | Desplegado en produccion (2026-09-23, `bfbf81a`): migraciones aplicadas en las dos empresas, servicios sanos y sin errores. Hecho en rama, sin desplegar (2026-09-23) |
 | 1-C Campanas | Desplegado en produccion (2026-09-23, `bfbf81a`): migraciones aplicadas en las dos empresas, servicios sanos y sin errores. Hecho en rama (2026-09-23): fases de envio (`tenant/canonical/campaigns/03_phases.sql`), prueba A/B con decision auditada por outbox (`campaigns.campaign.ab_decided`), reenvio a quien no abrio (una vez, con la limitacion de Apple Mail documentada), envio por zona horaria con zona de respaldo indicada al programar (no hay zona de empresa en `organization`), `subject` opcional en el lote de `transactional`, `utm.content` por variante, `GET /campaigns/{id}/phases` y web de campanas. Sin migracion de registro (041 sin usar). Unitarias, integracion y `make e2e` sin SES real |
 | 1-D Dominio de seguimiento | Casi hecho (2026-09-23): DNS, certificado (con `AUTODISCOVER_SAN=n`), identidad verificada en SES y borde sirviendo `clics.core-force.com`; falta `SES_TRACKING_DOMAIN` en la pila (administrador de AWS) |
-| 2-E Comportamiento y automatizaciones | Pendiente |
+| 2-E Comportamiento y automatizaciones | Hecho en rama, sin desplegar (2026-09-23): `contacts/05_engagement.sql`, `automations/03_branches_and_dates.sql`, sin registro (042 sin usar). Unitarias, integracion y `make e2e` con la apertura sembrada en la outbox (sin SES real) |
 | 2-F Captacion | Pendiente |
 | 3-G API y SMTP | Pendiente |

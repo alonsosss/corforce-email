@@ -11,7 +11,8 @@ import type { Page, PageQuery } from './types';
 // GET /automations/meta (adapters/http/meta.go).
 
 export type WorkflowStatus = 'draft' | 'active' | 'paused' | 'archived';
-export type StepType = 'wait' | 'send_email' | 'add_to_list' | 'remove_from_list';
+export type StepType = 'wait' | 'send_email' | 'add_to_list' | 'remove_from_list' | 'branch';
+export type ConditionKind = 'email_opened' | 'email_clicked' | 'segment' | 'attribute';
 export type RunStatus = 'waiting' | 'running' | 'completed' | 'failed' | 'cancelled' | 'skipped';
 export type DoiStatus = 'pending' | 'sent' | 'skipped' | 'failed';
 
@@ -19,11 +20,36 @@ export interface WorkflowTrigger {
   type: string;
   /** Solo en los disparadores con campaign_filter del catalogo. */
   campaign_id?: string;
+  /** Solo en los disparadores con date: atributo de fecha, hora local y zona de respaldo. */
+  attribute?: string;
+  hour?: number;
+  timezone?: string;
 }
 
-/** Cada tipo usa solo sus campos; el servicio rechaza los que no le corresponden. */
+/** Condicion de un paso branch (domain/condition.go). Cada tipo usa solo sus campos. */
+export interface WorkflowCondition {
+  kind: ConditionKind;
+  /** email_opened y email_clicked: id del paso send_email cuyo correo se mira. */
+  step?: string;
+  segment_id?: string;
+  /** attribute: clave, operador y valor del DSL de segmentos de contacts. */
+  attribute?: string;
+  op?: string;
+  value?: unknown;
+}
+
+/**
+ * Cada tipo usa solo sus campos; el servicio rechaza los que no le corresponden. El flujo es
+ * un grafo sin ciclos (domain/graph.go): el primer paso es la entrada, next el siguiente y
+ * en una rama then y else; un destino ausente es el fin.
+ */
 export interface WorkflowStep {
+  id?: string;
   type: StepType;
+  next?: string;
+  then?: string;
+  else?: string;
+  condition?: WorkflowCondition;
   /** wait: entero y unidad del catalogo (30m, 12h, 3d). */
   duration?: string;
   template_id?: string;
@@ -142,6 +168,13 @@ export interface WorkflowStatusInfo {
 export interface TriggerInfo {
   type: string;
   campaign_filter: boolean;
+  date: boolean;
+}
+
+export interface ConditionInfo {
+  kind: ConditionKind;
+  /** La condicion mira el correo de un paso send_email anterior. */
+  step: boolean;
 }
 
 export interface WaitUnit {
@@ -154,6 +187,7 @@ export interface AutomationsMeta {
   statuses: WorkflowStatusInfo[];
   trigger_types: TriggerInfo[];
   step_types: StepType[];
+  condition_kinds: ConditionInfo[];
   wait: { units: WaitUnit[]; min_seconds: number; max_seconds: number };
   run_statuses: RunStatus[];
   doi_statuses: DoiStatus[];
@@ -169,6 +203,10 @@ export interface AutomationsMeta {
     max_description_length: number;
     max_pause_reason_length: number;
     max_search_length: number;
+    max_depth: number;
+    max_step_id_length: number;
+    max_trigger_hour: number;
+    max_condition_value_bytes: number;
   };
   pagination: { default_page_size: number; max_page_size: number };
 }

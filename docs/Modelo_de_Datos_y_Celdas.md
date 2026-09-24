@@ -358,7 +358,12 @@ la proyeccion del consentimiento vigente mantenida por un trigger de `contacts.c
 TRUNCATE salvo la seudonimizacion del borrado del titular, con `SET LOCAL app.erasure = 'on'`
 en su transaccion); `contacts.confirmation_tokens` guarda solo el sha256 del token del doble
 opt-in; `contacts.lists`, `contacts.list_members`, `contacts.segments` (el DSL validado,
-nunca SQL) y `contacts.imports`. El indice parcial `idx_contacts_contacts_sendable
+nunca SQL) y `contacts.imports`. `contacts.engagement` (V, 2026-09-23, `05_engagement.sql`) es la
+proyeccion de interaccion que leen los segmentos por comportamiento: `PRIMARY KEY (contact_id,
+campaign_id)` con clave foranea a `contacts.contacts` `ON DELETE CASCADE`, `received_at`,
+`last_opened_at`, `last_clicked_at` y `last_event_at` (poda); solo ids y horas, sin direccion,
+enlace ni ip. `campaign_id` es el id de la campana o del flujo de `automations` que transactional
+pone en sus eventos, sin clave foranea (otro esquema). El indice parcial `idx_contacts_contacts_sendable
 (tenant_id, id) WHERE status = 'active' AND marketing_consent = 'granted'` sirve la audiencia
 por keyset y la consulta interna de enviables por id. El `status` que implica la supresion
 (V, 2026-09-13) lo decide el consumidor de `suppression.entry.added|removed|expired` con las causas
@@ -528,13 +533,20 @@ enlace de confirmacion, que es una credencial y nunca se guarda; el indice parci
 `(tenant_id, contact_id, created_at) WHERE status IN ('pending','sent')` sirve el limite por
 contacto; `automations.workflows` con nombre unico por empresa sin distinguir mayusculas,
 estado y disparador con CHECK (lista blanca), campana solo para `email.clicked`, pasos en
-`jsonb` (1..20 por CHECK) e indice parcial de los activos por disparador;
+`jsonb` (1..40 por CHECK desde `03_branches_and_dates.sql`, V 2026-09-23: grafo con ids y enlaces que
+valida el dominio; las listas anteriores sin ids se leen como cadena) e indice parcial de los activos
+por disparador; `trigger_attribute`, `trigger_hour` (0..23) y `trigger_timezone` existen solo con
+`contact.date` (CHECK `automations_workflows_trigger_date_check`);
 `automations.runs`, una ejecucion por contacto y flujo con `UNIQUE (workflow_id, contact_id,
 trigger_event_id)` y `UNIQUE (workflow_id, contact_id, entry_key)` (`entry_key` = id del
 evento con reentrada, `once` sin ella), la reserva `lease_token`/`lease_until` que solo existe
 en `running` y `finished_at` que solo existe en los terminales (CHECK), indice parcial de las
-debidas y de las fallidas por flujo; `automations.processed_events` para la deduplicacion por
-id de evento, podada a los 30 dias.
+debidas y de las fallidas por flujo (`entry_key` = `date:<ano>` en las entradas por aniversario
+con reentrada); `automations.processed_events` para la deduplicacion por id de evento, podada a
+los 30 dias; `automations.run_messages` (V, 2026-09-23), el correo de cada paso de envio de una
+ejecucion con `UNIQUE (run_id, step_id)` y `UNIQUE (message_id)` y su primera apertura y primer clic,
+que cae con la ejecucion; `automations.date_scans`, la hora del ultimo recorrido de aniversarios de
+cada flujo, que reparte el trabajo entre replicas.
 
 ### 4.1 Migracion de buzones: `mail_migration` (V, 2026-09-21)
 

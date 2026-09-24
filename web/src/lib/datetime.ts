@@ -14,3 +14,9 @@ export function isPast(value: string | null | undefined, now: Date = new Date())
   const d = new Date(value);
   return !Number.isNaN(d.getTime()) && d.getTime() < now.getTime();
 }
+
+/** Zonas IANA que conoce el navegador, para sugerir sin copiar ninguna lista. */
+export function browserTimezones(): string[] {
+  const intl = Intl as unknown as { supportedValuesOf?: (key: string) => string[] };
+  return intl.supportedValuesOf?.('timeZone') ?? [];
+}

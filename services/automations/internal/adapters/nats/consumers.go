@@ -1,5 +1,6 @@
 // Package nats contiene los consumidores durables de automations: el del doble opt-in
-// (contacts.consent.requested) y uno por disparador de flujo.
+// (contacts.consent.requested), uno por disparador de flujo y los que anotan la apertura y
+// el clic de los correos de los flujos (ramas).
 package nats
 
 import (
@@ -24,6 +25,11 @@ const (
 	contactCreatedDurable = "automations-contact-created"
 	consentGrantedDurable = "automations-consent-granted"
 	emailClickedDurable   = "automations-email-clicked"
+	// messageOpenedDurable y messageClickedDurable anotan la apertura y el clic de los
+	// correos de los pasos de envio, para las ramas que los miran. Son durables propios y no
+	// el del disparador por clic: cada uno avanza y reintenta por su cuenta.
+	messageOpenedDurable  = "automations-message-opened"
+	messageClickedDurable = "automations-message-clicked"
 
 	// subscribeRetry: si el stream aun no existe, la suscripcion se reintenta sin
 	// bloquear el HTTP.
@@ -73,6 +79,12 @@ func (c *Consumers) Start(ctx context.Context) {
 	})
 	c.keepSubscribing(ctx, emailClickedDurable, func() (*natsgo.Subscription, error) {
 		return c.bus.DurableQueueSubscribe("transactional.email.clicked", emailClickedDurable, c.handleEmailClicked)
+	})
+	c.keepSubscribing(ctx, messageOpenedDurable, func() (*natsgo.Subscription, error) {
+		return c.bus.DurableQueueSubscribe("transactional.email.opened", messageOpenedDurable, c.handleMessage(false))
+	})
+	c.keepSubscribing(ctx, messageClickedDurable, func() (*natsgo.Subscription, error) {
+		return c.bus.DurableQueueSubscribe("transactional.email.clicked", messageClickedDurable, c.handleMessage(true))
 	})
 }
 
@@ -207,6 +219,52 @@ func (c *Consumers) handleEmailClicked(evt events.Event, ack func()) {
 		ev.CampaignID = &id
 	}
 	c.enroll(evt, ack, ev)
+}
+
+// messageEvent interpreta la apertura o el clic de un correo. ok=false: no puede ser de un
+// paso de envio (no es marketing, es una prueba o no trae mensaje ni campana).
+func messageEvent(evt events.Event, data map[string]interface{}) (tenantID, messageID uuid.UUID, at time.Time, ok bool) {
+	if str(data["class"]) != classMarketing {
+		return uuid.Nil, uuid.Nil, time.Time{}, false
+	}
+	if test, _ := data["test"].(bool); test {
+		return uuid.Nil, uuid.Nil, time.Time{}, false
+	}
+	tenantID, messageID = eventTenant(evt, data), parseID(data["message_id"])
+	if tenantID == uuid.Nil || messageID == uuid.Nil || parseID(data["campaign_id"]) == uuid.Nil {
+		return uuid.Nil, uuid.Nil, time.Time{}, false
+	}
+	at, err := time.Parse(time.RFC3339, str(data["occurred_at"]))
+	if err != nil {
+		at = evt.Timestamp
+	}
+	return tenantID, messageID, at, true
+}
+
+// handleMessage anota la apertura o el clic. Idempotente: se conserva la primera hora.
+func (c *Consumers) handleMessage(clicked bool) func(events.Event, func()) {
+	return func(evt events.Event, ack func()) {
+		data, _ := evt.Data.(map[string]interface{})
+		tenantID, messageID, at, ok := messageEvent(evt, data)
+		if !ok {
+			ack()
+			return
+		}
+		ctx, cancel, resolved, doAck := c.tenantContext(tenantID)
+		if !resolved {
+			if doAck {
+				ack()
+			}
+			return
+		}
+		defer cancel()
+		if _, err := c.uc.RecordMessageEngagement(ctx, tenantID, messageID, clicked, at); err != nil {
+			c.logger.Warn("automations: apertura o clic sin anotar; se reintentara",
+				zap.String("event_id", evt.ID), zap.String("tenant_id", tenantID.String()), zap.Error(err))
+			return
+		}
+		ack()
+	}
 }
 
 func (c *Consumers) enroll(evt events.Event, ack func(), ev domain.TriggerEvent) {

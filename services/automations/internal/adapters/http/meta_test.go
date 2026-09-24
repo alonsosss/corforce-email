@@ -44,9 +44,14 @@ type metaContract struct {
 	TriggerTypes []struct {
 		Type           string `json:"type"`
 		CampaignFilter bool   `json:"campaign_filter"`
+		Date           bool   `json:"date"`
 	} `json:"trigger_types"`
-	StepTypes []string `json:"step_types"`
-	Wait      struct {
+	StepTypes      []string `json:"step_types"`
+	ConditionKinds []struct {
+		Kind string `json:"kind"`
+		Step bool   `json:"step"`
+	} `json:"condition_kinds"`
+	Wait struct {
 		Units []struct {
 			Unit    string `json:"unit"`
 			Seconds int64  `json:"seconds"`
@@ -72,6 +77,10 @@ type metaContract struct {
 		MaxDescriptionLength int `json:"max_description_length"`
 		MaxPauseReasonLength int `json:"max_pause_reason_length"`
 		MaxSearchLength      int `json:"max_search_length"`
+		MaxDepth             int `json:"max_depth"`
+		MaxStepIDLength      int `json:"max_step_id_length"`
+		MaxTriggerHour       int `json:"max_trigger_hour"`
+		MaxConditionValue    int `json:"max_condition_value_bytes"`
 	} `json:"limits"`
 	Pagination struct {
 		DefaultPageSize int `json:"default_page_size"`
@@ -133,6 +142,16 @@ func TestMetaPublicaElCatalogoDelDominio(t *testing.T) {
 		if tt.CampaignFilter != domain.TriggerType(tt.Type).AcceptsCampaign() {
 			t.Errorf("filtro de campana de %s", tt.Type)
 		}
+		if tt.Date != domain.TriggerType(tt.Type).IsDate() {
+			t.Errorf("disparador por fecha %s", tt.Type)
+		}
+	}
+	kinds := make([]string, 0, len(got.ConditionKinds))
+	for _, k := range got.ConditionKinds {
+		kinds = append(kinds, k.Kind)
+		if k.Step != domain.ConditionKind(k.Kind).ReferencesStep() {
+			t.Errorf("condicion %s", k.Kind)
+		}
 	}
 	units := make([]string, 0, len(got.Wait.Units))
 	for i, u := range got.Wait.Units {
@@ -148,6 +167,11 @@ func TestMetaPublicaElCatalogoDelDominio(t *testing.T) {
 		{"statuses", statuses, names(domain.Statuses())},
 		{"trigger_types", triggers, names(domain.TriggerTypes())},
 		{"step_types", got.StepTypes, names(domain.StepTypes())},
+		{"condition_kinds", kinds, names(domain.ConditionKinds())},
+		{"max_depth", got.Limits.MaxDepth, domain.MaxDepth},
+		{"max_step_id_length", got.Limits.MaxStepIDLength, domain.MaxStepIDLen},
+		{"max_trigger_hour", got.Limits.MaxTriggerHour, domain.MaxTriggerHour},
+		{"max_condition_value_bytes", got.Limits.MaxConditionValue, domain.MaxConditionValueBytes},
 		{"run_statuses", got.RunStatuses, names(domain.RunStatuses())},
 		{"doi_statuses", got.DOIStatuses, names(domain.DOIStatuses())},
 		{"wait.units", len(units), len(domain.WaitUnits())},

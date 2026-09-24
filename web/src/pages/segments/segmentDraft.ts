@@ -51,6 +51,22 @@ export interface FieldSpec {
   valueKind: ValueKind;
   operators: string[];
   values: string[];
+  /** Tope de N de los campos count. */
+  max: number | null;
+}
+
+/** Campos de comportamiento: leen las aperturas y los clics registrados de cada contacto. */
+export function isEngagementKind(kind: ValueKind): boolean {
+  return kind === 'campaign' || kind === 'count';
+}
+
+/** Si alguna condicion del borrador usa aperturas o clics (para advertir de Apple Mail). */
+export function usesEngagement(catalog: SegmentCatalog, group: DraftGroup): boolean {
+  return group.rules.some((node) =>
+    node.kind === 'group'
+      ? usesEngagement(catalog, node)
+      : isEngagementKind(specFor(catalog, node.field)?.valueKind ?? 'text'),
+  );
 }
 
 export function fieldSpecs(catalog: SegmentCatalog): FieldSpec[] {
@@ -60,6 +76,7 @@ export function fieldSpecs(catalog: SegmentCatalog): FieldSpec[] {
     valueKind: f.value_type,
     operators: f.operators,
     values: f.values ?? [],
+    max: f.max ?? null,
   }));
   const attributes: FieldSpec[] = catalog.attributes.map((a) => ({
     field: `${catalog.attribute_prefix}${a.key}`,
@@ -67,6 +84,7 @@ export function fieldSpecs(catalog: SegmentCatalog): FieldSpec[] {
     valueKind: a.type,
     operators: catalog.attribute_types.find((x) => x.type === a.type)?.operators ?? [],
     values: [],
+    max: null,
   }));
   return [...fixed, ...attributes];
 }
@@ -157,6 +175,8 @@ export function fromDefinition(def: SegmentGroup): DraftGroup {
 
 const NUMBER = /^-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?$/;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
+const COUNT = /^[1-9]\d*$/;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export type Converted = { ok: true; value: SegmentScalar } | { ok: false; error: string };
 
@@ -184,6 +204,17 @@ export function convertValue(catalog: SegmentCatalog, spec: FieldSpec, raw: stri
       return DATE.test(text)
         ? { ok: true, value: text }
         : { ok: false, error: t('segments.error.expectDate') };
+    case 'count': {
+      const max = spec.max ?? 1;
+      const n = Number(text);
+      return COUNT.test(text) && n <= max
+        ? { ok: true, value: n }
+        : { ok: false, error: t('segments.error.expectCount', { max }) };
+    }
+    case 'campaign':
+      return UUID.test(text)
+        ? { ok: true, value: text.toLowerCase() }
+        : { ok: false, error: t('segments.error.expectCampaign') };
     case 'enum':
       return spec.values.includes(text)
         ? { ok: true, value: text }

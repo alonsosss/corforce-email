@@ -1,17 +1,24 @@
-import { useState } from 'react';
-import type { AutomationsMeta, StepType } from '@/api/automations';
-import { Button, Checkbox, FormField, Input, Select, Textarea } from '@/design/components';
-import { IconChevronDown, IconChevronUp, IconPlus, IconTrash } from '@/design/icons';
+import { useMemo, useState } from 'react';
+import type { AutomationsMeta, ConditionKind, StepType } from '@/api/automations';
+import { Alert, Button, Checkbox, FormField, Input, Select, Textarea } from '@/design/components';
+import { IconTrash } from '@/design/icons';
 import { t, tEnum } from '@/i18n';
+import { browserTimezones } from '@/lib/datetime';
+import { FlowCanvas } from './FlowCanvas';
+import { ConditionFields } from './ConditionFields';
 import {
+  conditionUsesStep,
   emptyStep,
   formatWait,
-  moveStep,
+  graphErrors,
+  withFreshId,
   type DraftErrors,
   type StepDraft,
   type WorkflowDraft,
 } from './workflowDraft';
-import { namedSelectOptions, type NamedOption, type WorkflowOptions } from './workflowOptions';
+import { insertAt, portsOf, relink, removeNode, type Anchor, type Port } from './workflowGraph';
+import { IdPicker } from './IdPicker';
+import { namedSelectOptions, optionName, type WorkflowOptions } from './workflowOptions';
 
 export interface WorkflowEditorProps {
   meta: AutomationsMeta;
@@ -23,7 +30,12 @@ export interface WorkflowEditorProps {
   readOnly: boolean;
 }
 
-/** Editor de un flujo lineal: datos, disparador, filtro de lista, reentrada y pasos. */
+const TIMEZONES_LIST_ID = 'workflow-timezones';
+
+/**
+ * Editor de un flujo: datos, disparador (por evento o por fecha), filtro de lista, reentrada y
+ * el lienzo con los pasos y sus ramas. El panel de abajo edita el paso elegido en el lienzo.
+ */
 export function WorkflowEditor({
   meta,
   options,
@@ -32,12 +44,65 @@ export function WorkflowEditor({
   errors,
   readOnly,
 }: WorkflowEditorProps) {
-  const [newStepType, setNewStepType] = useState<StepType | ''>(meta.step_types[0] ?? '');
+  const [selected, setSelected] = useState<string | null>(null);
+  const timezones = useMemo(browserTimezones, []);
   const set = (patch: Partial<WorkflowDraft>) => onChange({ ...draft, ...patch });
+  const setSteps = (steps: StepDraft[]) => set({ steps });
   const setStep = (key: string, patch: Partial<StepDraft>) =>
-    set({ steps: draft.steps.map((s) => (s.key === key ? { ...s, ...patch } : s)) });
+    setSteps(draft.steps.map((s) => (s.key === key ? { ...s, ...patch } : s)));
   const trigger = meta.trigger_types.find((tt) => tt.type === draft.triggerType);
-  const atMax = draft.steps.length >= meta.limits.max_steps;
+
+  // Validacion en vivo del grafo; las de los campos llegan al guardar (errors).
+  const live = graphErrors(draft, meta);
+  const allErrors: DraftErrors = { ...errors, ...live };
+  const invalid = new Set(
+    draft.steps
+      .filter((s) => Object.keys(allErrors).some((k) => k.startsWith(`${s.key}.`)))
+      .map((s) => s.key),
+  );
+  const current = draft.steps.find((s) => s.key === selected) ?? null;
+  const dateAttributes = options.catalog?.attributes.filter((a) => a.type === 'date') ?? null;
+
+  const insert = (anchor: Anchor, type: StepType) => {
+    const step = withFreshId(emptyStep(type, meta), draft.steps);
+    setSteps(insertAt(draft.steps, anchor, step));
+    setSelected(step.key);
+  };
+
+  const summary = (step: StepDraft): string => {
+    switch (step.type) {
+      case 'wait': {
+        const unit = meta.wait.units.find((u) => u.unit === step.unit);
+        const n = Number(step.amount);
+        return unit && Number.isSafeInteger(n) && n > 0
+          ? formatWait(n * unit.seconds, meta)
+          : t('automations.canvas.incomplete');
+      }
+      case 'send_email':
+        return step.templateId
+          ? (options.templates?.find((tpl) => tpl.id === step.templateId)?.name ?? step.templateId)
+          : t('automations.canvas.incomplete');
+      case 'add_to_list':
+      case 'remove_from_list':
+        return step.listId
+          ? optionName(options.lists, step.listId)
+          : t('automations.canvas.incomplete');
+      case 'branch':
+        return step.conditionKind
+          ? tEnum('automations.condition.kind', step.conditionKind)
+          : t('automations.canvas.incomplete');
+    }
+    return '';
+  };
+
+  const triggerLabel = trigger
+    ? trigger.date && draft.dateAttribute
+      ? t('automations.canvas.dateTrigger', {
+          attribute: draft.dateAttribute,
+          hour: draft.hour,
+        })
+      : tEnum('automations.trigger', trigger.type)
+    : t('automations.canvas.incomplete');
 
   return (
     <div className="cf-form">
@@ -67,7 +132,15 @@ export function WorkflowEditor({
               label: tEnum('automations.trigger', tt.type),
             }))}
             value={draft.triggerType}
-            onChange={(e) => set({ triggerType: e.target.value, campaignId: '' })}
+            onChange={(e) => {
+              const next = meta.trigger_types.find((tt) => tt.type === e.target.value);
+              // Un aniversario se repite cada ano: la reentrada es lo que se espera.
+              set({
+                triggerType: e.target.value,
+                campaignId: '',
+                reEntry: next?.date ? true : draft.reEntry,
+              });
+            }}
             disabled={readOnly}
             invalid={Boolean(errors.trigger)}
           />
@@ -88,6 +161,84 @@ export function WorkflowEditor({
           invalid={Boolean(errors.description)}
         />
       </FormField>
+      {trigger?.date ? (
+        <div className="cf-form__row">
+          <FormField
+            label={t('automations.editor.dateAttribute')}
+            htmlFor="workflow-date-attribute"
+            required
+            error={errors.dateAttribute}
+            hint={t('automations.editor.dateAttributeHint')}
+          >
+            {dateAttributes ? (
+              <Select
+                id="workflow-date-attribute"
+                placeholder={t('common.select')}
+                options={namedSelectOptions(
+                  dateAttributes.map((a) => ({ id: a.key, name: a.key })),
+                  draft.dateAttribute,
+                )}
+                value={draft.dateAttribute}
+                onChange={(e) => set({ dateAttribute: e.target.value })}
+                disabled={readOnly}
+                invalid={Boolean(errors.dateAttribute)}
+              />
+            ) : (
+              <Input
+                id="workflow-date-attribute"
+                className="cf-mono"
+                value={draft.dateAttribute}
+                onChange={(e) => set({ dateAttribute: e.target.value })}
+                disabled={readOnly}
+                invalid={Boolean(errors.dateAttribute)}
+              />
+            )}
+          </FormField>
+          <FormField
+            label={t('automations.editor.hour')}
+            htmlFor="workflow-hour"
+            required
+            error={errors.hour}
+          >
+            <Select
+              id="workflow-hour"
+              options={Array.from({ length: meta.limits.max_trigger_hour + 1 }, (_, h) => ({
+                value: String(h),
+                label: t('automations.editor.hourOption', { h: String(h).padStart(2, '0') }),
+              }))}
+              value={draft.hour}
+              onChange={(e) => set({ hour: e.target.value })}
+              disabled={readOnly}
+              invalid={Boolean(errors.hour)}
+            />
+          </FormField>
+          <FormField
+            label={t('automations.editor.timezone')}
+            htmlFor="workflow-timezone"
+            required
+            error={errors.timezone}
+            hint={t('automations.editor.timezoneHint')}
+          >
+            <Input
+              id="workflow-timezone"
+              value={draft.timezone}
+              list={timezones.length ? TIMEZONES_LIST_ID : undefined}
+              placeholder="America/Lima"
+              onChange={(e) => set({ timezone: e.target.value })}
+              disabled={readOnly}
+              invalid={Boolean(errors.timezone)}
+              autoComplete="off"
+            />
+          </FormField>
+          {timezones.length ? (
+            <datalist id={TIMEZONES_LIST_ID}>
+              {timezones.map((zone) => (
+                <option key={zone} value={zone} />
+              ))}
+            </datalist>
+          ) : null}
+        </div>
+      ) : null}
       <div className="cf-form__row">
         {trigger?.campaign_filter ? (
           <FormField
@@ -130,7 +281,11 @@ export function WorkflowEditor({
         onChange={(e) => set({ reEntry: e.target.checked })}
         disabled={readOnly}
       />
-      <span className="cf-text-sm cf-text-secondary">{t('automations.editor.reEntryHint')}</span>
+      <span className="cf-text-sm cf-text-secondary">
+        {trigger?.date
+          ? t('automations.editor.reEntryDateHint')
+          : t('automations.editor.reEntryHint')}
+      </span>
 
       <div className="cf-form__section">
         {t('automations.editor.steps', {
@@ -143,153 +298,136 @@ export function WorkflowEditor({
           {errors.steps}
         </div>
       ) : null}
+      {Object.keys(live).length ? (
+        <Alert tone="warning" title={t('automations.canvas.issues')}>
+          <ul className="cf-flow__issues">
+            {draft.steps
+              .filter((s) => live[`${s.key}.graph`])
+              .map((s) => (
+                <li key={s.key}>
+                  <span className="cf-mono">{s.id}</span>: {live[`${s.key}.graph`]}
+                </li>
+              ))}
+          </ul>
+        </Alert>
+      ) : null}
+      <FlowCanvas
+        steps={draft.steps}
+        stepTypes={meta.step_types}
+        triggerLabel={triggerLabel}
+        selected={selected}
+        onSelect={setSelected}
+        onInsert={readOnly ? null : insert}
+        summary={summary}
+        invalid={invalid}
+        maxSteps={meta.limits.max_steps}
+      />
       {draft.steps.length === 0 ? (
         <span className="cf-text-sm cf-text-secondary">{t('automations.editor.noSteps')}</span>
-      ) : (
-        <ol className="cf-steps" aria-label={t('automations.editor.stepsLabel')}>
-          {draft.steps.map((step, index) => (
-            <li key={step.key} className="cf-step">
-              <div className="cf-step__head">
-                <strong>
-                  {t('automations.step.title', {
-                    n: index + 1,
-                    type: tEnum('automations.stepType', step.type),
-                  })}
-                </strong>
-                {readOnly ? null : (
-                  <div className="cf-step__actions">
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      iconOnly
-                      icon={<IconChevronUp size={14} />}
-                      disabled={index === 0}
-                      onClick={() => set({ steps: moveStep(draft.steps, index, -1) })}
-                    >
-                      {t('automations.step.moveUp', { n: index + 1 })}
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      iconOnly
-                      icon={<IconChevronDown size={14} />}
-                      disabled={index === draft.steps.length - 1}
-                      onClick={() => set({ steps: moveStep(draft.steps, index, 1) })}
-                    >
-                      {t('automations.step.moveDown', { n: index + 1 })}
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      iconOnly
-                      icon={<IconTrash size={14} />}
-                      onClick={() => set({ steps: draft.steps.filter((s) => s.key !== step.key) })}
-                    >
-                      {t('automations.step.remove', { n: index + 1 })}
-                    </Button>
-                  </div>
-                )}
+      ) : null}
+      {current ? (
+        <section className="cf-step" aria-label={t('automations.canvas.selected')}>
+          <div className="cf-step__head">
+            <strong>
+              {t('automations.step.title', {
+                n: current.id,
+                type: tEnum('automations.stepType', current.type),
+              })}
+            </strong>
+            {readOnly ? null : (
+              <div className="cf-step__actions">
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  icon={<IconTrash size={14} />}
+                  onClick={() => {
+                    setSteps(removeNode(draft.steps, current.key));
+                    setSelected(null);
+                  }}
+                >
+                  {current.type === 'branch'
+                    ? t('automations.canvas.removeBranch')
+                    : t('automations.canvas.remove')}
+                </Button>
               </div>
-              <StepFields
-                step={step}
-                meta={meta}
-                options={options}
-                errors={errors}
-                readOnly={readOnly}
-                onChange={(patch) => setStep(step.key, patch)}
-              />
-            </li>
-          ))}
-        </ol>
-      )}
-      {readOnly ? null : (
-        <div className="cf-form__row">
-          <FormField
-            label={t('automations.editor.newStep')}
-            htmlFor="workflow-new-step"
-            hint={
-              atMax ? t('automations.editor.maxSteps', { max: meta.limits.max_steps }) : undefined
-            }
-          >
-            <Select
-              id="workflow-new-step"
-              options={meta.step_types.map((type) => ({
-                value: type,
-                label: tEnum('automations.stepType', type),
-              }))}
-              value={newStepType}
-              onChange={(e) => setNewStepType(e.target.value as StepType)}
-              disabled={atMax}
-            />
-          </FormField>
-          <div className="cf-field" style={{ justifyContent: 'flex-end' }}>
-            <Button
-              icon={<IconPlus size={16} />}
-              disabled={atMax || !newStepType}
-              onClick={() => {
-                if (newStepType) set({ steps: [...draft.steps, emptyStep(newStepType, meta)] });
-              }}
-            >
-              {t('automations.editor.addStep')}
-            </Button>
+            )}
           </div>
-        </div>
-      )}
+          {allErrors[`${current.key}.graph`] ? (
+            <span className="cf-field__error" role="alert">
+              {allErrors[`${current.key}.graph`]}
+            </span>
+          ) : null}
+          <StepFields
+            step={current}
+            steps={draft.steps}
+            meta={meta}
+            options={options}
+            errors={allErrors}
+            readOnly={readOnly}
+            onChange={(patch) => setStep(current.key, patch)}
+          />
+          <LinkFields
+            step={current}
+            steps={draft.steps}
+            readOnly={readOnly}
+            onRelink={(port, target) => setSteps(relink(draft.steps, current.key, port, target))}
+          />
+        </section>
+      ) : draft.steps.length ? (
+        <span className="cf-text-sm cf-text-secondary">{t('automations.canvas.selectHint')}</span>
+      ) : null}
     </div>
   );
 }
 
-/** Selector por nombre si el rol puede leer la coleccion; si no, el identificador a mano. */
-function IdPicker({
-  id,
-  options,
-  value,
-  onChange,
-  emptyLabel,
-  disabled,
-  invalid,
-  required,
+/** Destinos del paso: el siguiente, o en una rama el de si y el de no. Permite juntar ramas. */
+function LinkFields({
+  step,
+  steps,
+  readOnly,
+  onRelink,
 }: {
-  id: string;
-  options: NamedOption[] | null;
-  value: string;
-  onChange: (value: string) => void;
-  emptyLabel: string;
-  disabled: boolean;
-  invalid: boolean;
-  required?: boolean;
+  step: StepDraft;
+  steps: StepDraft[];
+  readOnly: boolean;
+  onRelink: (port: Port, target: string) => void;
 }) {
-  if (options) {
-    return (
-      <Select
-        id={id}
-        placeholder={emptyLabel}
-        options={namedSelectOptions(options, value)}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        disabled={disabled}
-        invalid={invalid}
-        required={required}
-      />
-    );
-  }
+  const targets = [
+    { value: '', label: t('automations.canvas.end') },
+    ...steps
+      .filter((s) => s.key !== step.key)
+      .map((s) => ({
+        value: s.id,
+        label: t('automations.canvas.stepOption', {
+          id: s.id,
+          type: tEnum('automations.stepType', s.type),
+        }),
+      })),
+  ];
   return (
-    <Input
-      id={id}
-      className="cf-mono"
-      placeholder={t('automations.editor.idPlaceholder')}
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      disabled={disabled}
-      invalid={invalid}
-      autoComplete="off"
-      spellCheck={false}
-    />
+    <div className="cf-form__row">
+      {portsOf(step).map((port) => (
+        <FormField
+          key={port}
+          label={tEnum('automations.canvas.port', port)}
+          htmlFor={`step-${step.key}-${port}`}
+        >
+          <Select
+            id={`step-${step.key}-${port}`}
+            options={targets}
+            value={step[port]}
+            onChange={(e) => onRelink(port, e.target.value)}
+            disabled={readOnly}
+          />
+        </FormField>
+      ))}
+    </div>
   );
 }
 
 function StepFields({
   step,
+  steps,
   meta,
   options,
   errors,
@@ -297,6 +435,7 @@ function StepFields({
   onChange,
 }: {
   step: StepDraft;
+  steps: StepDraft[];
   meta: AutomationsMeta;
   options: WorkflowOptions;
   errors: DraftErrors;
@@ -305,6 +444,30 @@ function StepFields({
 }) {
   const id = (field: string) => `step-${step.key}-${field}`;
   const error = (field: string) => errors[`${step.key}.${field}`];
+
+  if (step.type === 'branch') {
+    return (
+      <ConditionFields
+        step={step}
+        steps={steps}
+        meta={meta}
+        options={options}
+        errors={errors}
+        readOnly={readOnly}
+        onChange={onChange}
+        onKind={(kind: ConditionKind) =>
+          onChange({
+            conditionKind: kind,
+            conditionStep: conditionUsesStep(meta, kind) ? '' : undefined,
+            segmentId: '',
+            attribute: '',
+            op: '',
+            value: '',
+          })
+        }
+      />
+    );
+  }
 
   if (step.type === 'wait') {
     return (

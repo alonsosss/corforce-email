@@ -5,3 +5,9 @@
 # marketing). messages_marketing_check, que transactional/07 reemplaza, nombra class porque su
 # regla es la de la clase marketing; las dos conviven a proposito y ninguna sustituye a la otra.
 messages_class_check
+#
+# automations_workflows_trigger_campaign_check (automations) solo exige que trigger_campaign_id
+# vaya con email.clicked. automations/03 reemplaza automations_workflows_trigger_check (la lista
+# de disparadores) y anade automations_workflows_trigger_date_check (los campos de contact.date);
+# las tres nombran trigger_type y conviven a proposito: ninguna sustituye a otra.
+automations_workflows_trigger_campaign_check
