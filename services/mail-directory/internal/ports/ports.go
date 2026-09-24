@@ -122,6 +122,47 @@ type VacationRepository interface {
 	DeleteByUsername(ctx context.Context, tenantID uuid.UUID, username string) error
 }
 
+// SignatureRepository guarda la firma de un buzon (mail.mailbox_signatures). Una fila por buzon.
+type SignatureRepository interface {
+	// ByUsername devuelve domain.ErrNotFound si el buzon nunca la guardo.
+	ByUsername(ctx context.Context, tenantID uuid.UUID, username string) (*domain.MailboxSignature, error)
+	Upsert(ctx context.Context, s *domain.MailboxSignature) error
+	DeleteByUsername(ctx context.Context, tenantID uuid.UUID, username string) error
+}
+
+// FilterRepository guarda las reglas y el reenvio de un buzon (mail.mailbox_filters) con su script
+// generado. Una fila por buzon.
+type FilterRepository interface {
+	// ByUsername devuelve domain.ErrNotFound si el buzon nunca guardo reglas.
+	ByUsername(ctx context.Context, tenantID uuid.UUID, username string) (*domain.MailboxFilters, error)
+	Upsert(ctx context.Context, f *domain.MailboxFilters) error
+	DeleteByUsername(ctx context.Context, tenantID uuid.UUID, username string) error
+}
+
+// ScheduledSendRepository guarda los envios programados (mail.scheduled_sends). Las operaciones de un
+// buzon van acotadas por empresa y nombre; las del trabajador (Claim, ForUpdate, Close) recorren toda
+// la celda con el rol de servicio, como MailboxLocator.
+type ScheduledSendRepository interface {
+	Create(ctx context.Context, s *domain.ScheduledSend) error
+	// ListByUsername devuelve las pendientes, en curso y fallidas del buzon, por hora de envio.
+	ListByUsername(ctx context.Context, tenantID uuid.UUID, username string, limit int) ([]domain.ScheduledSend, error)
+	// CountPending cuenta las pendientes y en curso del buzon.
+	CountPending(ctx context.Context, tenantID uuid.UUID, username string) (int, error)
+	// GetForUpdate bloquea la fila del buzon; domain.ErrNotFound si no es suya.
+	GetForUpdate(ctx context.Context, tenantID uuid.UUID, username string, id uuid.UUID) (*domain.ScheduledSend, error)
+	Reschedule(ctx context.Context, tenantID, id uuid.UUID, sendAt time.Time) (*domain.ScheduledSend, error)
+	Cancel(ctx context.Context, tenantID, id uuid.UUID) error
+	DeleteByUsername(ctx context.Context, tenantID uuid.UUID, username string) error
+	// Claim cierra como failed las filas cuyo arriendo vencio sin intentos restantes, purga las terminadas mas
+	// viejas que retention y reclama hasta p.Limit vencidas (pending con send_at pasado, o sending con
+	// el arriendo vencido) con FOR UPDATE SKIP LOCKED: pasan a sending con arriendo y un intento mas.
+	Claim(ctx context.Context, p domain.ClaimParams, maxAttempts int, retention time.Duration) ([]domain.ScheduledSend, error)
+	// ClaimedForUpdate bloquea una fila de cualquier buzon de la celda.
+	ClaimedForUpdate(ctx context.Context, id uuid.UUID) (*domain.ScheduledSend, error)
+	// Close aplica la transicion con la hora de la base (send_at = now() + RetryAfter al reintentar).
+	Close(ctx context.Context, id uuid.UUID, t domain.ScheduledTransition) (*domain.ScheduledSend, error)
+}
+
 // MTASTSRepository guarda la politica MTA-STS de los dominios de una empresa
 // (mail.mta_sts_policies). Un dominio sin fila no publica politica.
 type MTASTSRepository interface {

@@ -941,6 +941,19 @@ contra `mail.v_sieve_before`/`mail.v_sieve_after` y, para la respuesta automatic
 descartan o archivan como spam no recibe respuesta). La vista solo trae lo activo y mail-directory genera
 el script; `mail_engine` no lee la tabla `mail.vacation_replies`. V con `make e2e-mail` (2026-09-21).
 
+Las reglas y el reenvio que cada usuario configura en el webmail los lee `mail.v_sieve_user`
+(`dovecot-dict-sql-sieve_user.conf`, en la ranura `sieve_before3`: despues del prefiltro del administrador
+y antes del script personal, de los postfiltros y del archivado de spam de `global_sieve_after`).
+mail-directory genera el script desde las reglas estructuradas (`mail.mailbox_filters`,
+`13_webmail_settings.sql`); los textos del usuario solo entran como cadenas citadas y todo el script va
+dentro de `if not header :contains "X-Spam-Flag" "YES"`, asi que una regla nunca reenvia ni archiva
+spam. Una regla que archiva, descarta o reenvia sin copia cancela la entrega implicita y Pigeonhole no
+ejecuta el resto de la cadena (tampoco la respuesta automatica). El reenvio sale con el remitente del
+buzon (`sieve_redirect_envelope_from = recipient`). `mail_engine` solo lee la vista, nunca la tabla.
+V: los scripts generados (todas las acciones y condiciones, con comillas, barras y llaves en los textos)
+compilan con el `sievec` de la imagen `dovecot-mail` (2026-09-24). P: la entrega real por la ranura
+`sieve_before3` queda para el e2e del bloque B5 del plan del webmail.
+
 ACME: `SELECT domain FROM mail.domains WHERE NOT backupmx AND active`.
 
 ## Maildir de un buzon borrado (V, 2026-09-21)

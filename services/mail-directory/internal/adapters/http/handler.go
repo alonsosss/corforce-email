@@ -40,6 +40,10 @@ const (
 	codePlanStorageExceeded   = "PLAN_STORAGE_EXCEEDED"
 	// La empresa esta dada de baja: no crece hasta que su suscripcion vuelva a estar vigente.
 	codeSubscriptionInactive = "SUBSCRIPTION_INACTIVE"
+	// Envios programados: la fila ya no admite el cambio pedido, o el buzon llego a su tope.
+	codeScheduledNotPending = "SCHEDULED_SEND_NOT_PENDING"
+	codeScheduledNotClaimed = "SCHEDULED_SEND_NOT_CLAIMED"
+	codeScheduledLimit      = "SCHEDULED_SEND_LIMIT"
 )
 
 type Handler struct {
@@ -81,6 +85,22 @@ func (h *Handler) Routes() chi.Router {
 	r.Get("/internal/mail-directory/vacation", h.InternalGetVacation)
 	r.Put("/internal/mail-directory/vacation", h.InternalPutVacation)
 	r.Get("/internal/mail-directory/directory", h.InternalSearchDirectory)
+	// Ajustes del buzon del webmail y sus envios programados: solo servicios, sin X-Tenant-ID. claim y
+	// finish son del trabajador del webmail y recorren toda la celda.
+	r.Group(func(r chi.Router) {
+		r.Use(middleware.RequireInternalCaller)
+		r.Get("/internal/mail-directory/signature", h.InternalGetSignature)
+		r.Put("/internal/mail-directory/signature", h.InternalPutSignature)
+		r.Get("/internal/mail-directory/filters", h.InternalGetFilters)
+		r.Put("/internal/mail-directory/filters", h.InternalPutFilters)
+		r.Put("/internal/mail-directory/password", h.InternalSetPassword)
+		r.Post("/internal/mail-directory/scheduled-sends", h.InternalCreateScheduledSend)
+		r.Get("/internal/mail-directory/scheduled-sends", h.InternalListScheduledSends)
+		r.Post("/internal/mail-directory/scheduled-sends/claim", h.InternalClaimScheduledSends)
+		r.Patch("/internal/mail-directory/scheduled-sends/{id}", h.InternalRescheduleSend)
+		r.Delete("/internal/mail-directory/scheduled-sends/{id}", h.InternalCancelScheduledSend)
+		r.Post("/internal/mail-directory/scheduled-sends/{id}/finish", h.InternalFinishScheduledSend)
+	})
 	return r
 }
 
@@ -163,7 +183,11 @@ func isAny(err error, list []error) bool {
 }
 
 func writeError(w http.ResponseWriter, err error) {
+	var fieldErr *domain.FieldError
 	switch {
+	case errors.As(err, &fieldErr):
+		response.ErrWithDetails(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", fieldErr.Error(),
+			map[string]string{"field": fieldErr.Field})
 	case errors.Is(err, domain.ErrNotFound):
 		response.ErrNotFound(w, err.Error())
 	case errors.Is(err, domain.ErrPlatformOnly):
@@ -180,6 +204,12 @@ func writeError(w http.ResponseWriter, err error) {
 		response.Err(w, http.StatusConflict, codePlanStorageExceeded, err.Error())
 	case errors.Is(err, domain.ErrSubscriptionInactive):
 		response.Err(w, http.StatusConflict, codeSubscriptionInactive, err.Error())
+	case errors.Is(err, domain.ErrScheduledSendNotPending):
+		response.Err(w, http.StatusConflict, codeScheduledNotPending, err.Error())
+	case errors.Is(err, domain.ErrScheduledSendNotClaimed):
+		response.Err(w, http.StatusConflict, codeScheduledNotClaimed, err.Error())
+	case errors.Is(err, domain.ErrScheduledSendLimit):
+		response.Err(w, http.StatusConflict, codeScheduledLimit, err.Error())
 	case isAny(err, conflictErrors):
 		response.ErrConflict(w, err.Error())
 	case isAny(err, validationErrors):

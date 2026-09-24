@@ -29,6 +29,9 @@ type Deps struct {
 	AppPasswords ports.AppPasswordRepository
 	Sieve        ports.SieveRepository
 	Vacation     ports.VacationRepository
+	Signatures   ports.SignatureRepository
+	Filters      ports.FilterRepository
+	Scheduled    ports.ScheduledSendRepository
 	Locator      ports.MailboxLocator
 	Aliases      ports.AliasRepository
 	SpamAliases  ports.SpamAliasRepository
@@ -59,7 +62,9 @@ type Deps struct {
 	Plan ports.PlanLimits
 	// Metrics es opcional: sin ella no se mide nada y todo lo demas funciona igual.
 	Metrics ports.Metrics
-	Logger  *zap.Logger
+	// Clock es opcional (time.Now): las pruebas fijan la hora con la que se validan los envios programados.
+	Clock  func() time.Time
+	Logger *zap.Logger
 }
 
 type UseCase struct {
@@ -70,6 +75,9 @@ type UseCase struct {
 	appPasswords    ports.AppPasswordRepository
 	sieve           ports.SieveRepository
 	vacation        ports.VacationRepository
+	signatures      ports.SignatureRepository
+	filters         ports.FilterRepository
+	scheduled       ports.ScheduledSendRepository
 	locator         ports.MailboxLocator
 	aliases         ports.AliasRepository
 	spamAliases     ports.SpamAliasRepository
@@ -91,6 +99,7 @@ type UseCase struct {
 	events          ports.EventPublisher
 	plan            ports.PlanLimits
 	metrics         ports.Metrics
+	now             func() time.Time
 	logger          *zap.Logger
 }
 
@@ -99,14 +108,19 @@ func New(d Deps) *UseCase {
 	if logger == nil {
 		logger = zap.NewNop()
 	}
+	now := d.Clock
+	if now == nil {
+		now = time.Now
+	}
 	return &UseCase{
 		tx: d.Tx, domains: d.Domains, aliasDomains: d.AliasDomains, mailboxes: d.Mailboxes,
-		appPasswords: d.AppPasswords, sieve: d.Sieve, vacation: d.Vacation, locator: d.Locator, aliases: d.Aliases, spamAliases: d.SpamAliases,
+		appPasswords: d.AppPasswords, sieve: d.Sieve, vacation: d.Vacation,
+		signatures: d.Signatures, filters: d.Filters, scheduled: d.Scheduled, locator: d.Locator, aliases: d.Aliases, spamAliases: d.SpamAliases,
 		senderACL: d.SenderACL, relayhosts: d.Relayhosts, transports: d.Transports,
 		tlsPolicies: d.TLSPolicies, recipientMap: d.RecipientMap, bccMaps: d.BCCMaps,
 		senders: d.Senders, retirements: d.Retirements, mtaSTS: d.MTASTS, mtaSTSPublisher: d.MTASTSPublic, mx: d.MX,
 		platformMX: d.PlatformMX, davServerURL: d.DAVServerURL, recreateHold: d.MailboxRecreateHold,
-		secrets: d.Secrets, events: d.Events, plan: d.Plan, metrics: d.Metrics, logger: logger,
+		secrets: d.Secrets, events: d.Events, plan: d.Plan, metrics: d.Metrics, now: now, logger: logger,
 	}
 }
 

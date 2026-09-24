@@ -250,6 +250,8 @@ type fakeMailboxes struct {
 	// deletions son las marcas de baja (username -> cuando), con el reloj now de la base simulada.
 	deletions map[string]time.Time
 	now       time.Time
+	// passwords anota el hash guardado por buzon.
+	passwords map[uuid.UUID]string
 }
 
 func (f *fakeMailboxes) RecordDeletion(_ context.Context, m *domain.Mailbox) error {
@@ -316,7 +318,11 @@ func (f *fakeMailboxes) Create(_ context.Context, m *domain.Mailbox) error {
 }
 
 func (f *fakeMailboxes) Update(context.Context, *domain.Mailbox) error { return nil }
-func (f *fakeMailboxes) UpdatePassword(context.Context, uuid.UUID, uuid.UUID, string) error {
+func (f *fakeMailboxes) UpdatePassword(_ context.Context, _ uuid.UUID, id uuid.UUID, hash string) error {
+	if f.passwords == nil {
+		f.passwords = map[uuid.UUID]string{}
+	}
+	f.passwords[id] = hash
 	return nil
 }
 
@@ -826,6 +832,10 @@ type harness struct {
 	appPasswords *fakeAppPasswords
 	sieve        *fakeSieve
 	vacation     *fakeVacation
+	signatures   *fakeSignatures
+	filters      *fakeFilters
+	scheduled    *fakeScheduled
+	clock        time.Time
 	mtaSTS       *fakeMTASTS
 	mx           *fakeMX
 	aliases      *fakeAliases
@@ -842,8 +852,10 @@ func newHarness() *harness {
 		tx: &fakeTx{}, domains: &fakeDomains{}, aliasDomains: &fakeAliasDomains{}, aliases: &fakeAliases{},
 		appPasswords: &fakeAppPasswords{}, sieve: &fakeSieve{}, vacation: &fakeVacation{}, mtaSTS: &fakeMTASTS{}, mx: &fakeMX{hosts: []string{platformMXForTests}}, spamAliases: &fakeSpamAliases{},
 		senderACL: &fakeSenderACL{}, relayhosts: &fakeRelayhosts{}, transports: &fakeTransports{}, events: &fakeEvents{},
-		plan: &fakePlan{},
+		plan: &fakePlan{}, signatures: &fakeSignatures{}, filters: &fakeFilters{},
+		clock: time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC),
 	}
+	h.scheduled = &fakeScheduled{now: func() time.Time { return h.clock }}
 	h.mailboxes = &fakeMailboxes{aliases: h.aliases, now: time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)}
 	locator := &fakeLocator{h: h}
 	h.retirements = &fakeRetirements{h: h, retired: map[uuid.UUID]time.Time{}, now: time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)}
@@ -851,7 +863,8 @@ func newHarness() *harness {
 	h.tx.snapshot = h.snapshot
 	h.uc = New(Deps{
 		Tx: h.tx, Domains: h.domains, AliasDomains: h.aliasDomains, Mailboxes: h.mailboxes,
-		AppPasswords: h.appPasswords, Sieve: h.sieve, Vacation: h.vacation, Locator: locator, Aliases: h.aliases, SpamAliases: h.spamAliases,
+		AppPasswords: h.appPasswords, Sieve: h.sieve, Vacation: h.vacation, Locator: locator,
+		Signatures: h.signatures, Filters: h.filters, Scheduled: h.scheduled, Clock: func() time.Time { return h.clock }, Aliases: h.aliases, SpamAliases: h.spamAliases,
 		SenderACL: h.senderACL, Relayhosts: h.relayhosts, Transports: h.transports, Retirements: h.retirements,
 		MTASTS: h.mtaSTS, MTASTSPublic: fakeMTASTSPublisher{h: h}, MX: h.mx, PlatformMX: platformMXForTests,
 		MailboxRecreateHold: testRecreateHold, Secrets: fakeSecrets{}, Events: h.events, Plan: h.plan,
@@ -911,6 +924,13 @@ func (h *harness) snapshot() func() {
 		c := *v
 		mtaSTS[k] = &c
 	}
+	signatures := maps.Clone(h.signatures.items)
+	filters := maps.Clone(h.filters.items)
+	scheduled := map[uuid.UUID]*domain.ScheduledSend{}
+	for k, v := range h.scheduled.items {
+		c := *v
+		scheduled[k] = &c
+	}
 	subjects := append([]string(nil), h.events.subjects...)
 	credentials := append([]credentialEvent(nil), h.events.credentials...)
 	retired := maps.Clone(h.retirements.retired)
@@ -919,6 +939,7 @@ func (h *harness) snapshot() func() {
 		h.mailboxes.items, h.aliases.items = mailboxes, aliases
 		h.appPasswords.items = appPasswords
 		h.vacation.items = vacation
+		h.signatures.items, h.filters.items, h.scheduled.items = signatures, filters, scheduled
 		h.mtaSTS.items = mtaSTS
 		h.events.subjects, h.events.credentials = subjects, credentials
 		h.retirements.retired = retired
