@@ -94,6 +94,15 @@ func (h *Handler) ListMessages(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
+	view, err := domain.ParseListView(q.Get("view"))
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	if view == domain.ViewThreads {
+		h.listThreads(w, r, folder, query)
+		return
+	}
 	ctx, cancel := h.opContext(r)
 	defer cancel()
 	result, err := h.app.ListMessages(ctx, sessionFrom(r), folder, query)
@@ -113,6 +122,9 @@ func searchFilter(q url.Values) (domain.SearchFilter, error) {
 		return f, err
 	}
 	if f.Before, err = domain.ParseSearchDate("before", q.Get("before")); err != nil {
+		return f, err
+	}
+	if f.Category, err = domain.ParseCategory(q.Get("category")); err != nil {
 		return f, err
 	}
 	for _, flag := range []struct {

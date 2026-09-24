@@ -36,6 +36,7 @@ import (
 	redisadapter "github.com/alonsosss/corforce-email/services/webmail/internal/adapters/redis"
 	"github.com/alonsosss/corforce-email/services/webmail/internal/adapters/rfc5322"
 	smtpadapter "github.com/alonsosss/corforce-email/services/webmail/internal/adapters/smtp"
+	"github.com/alonsosss/corforce-email/services/webmail/internal/adapters/unsubscribe"
 	"github.com/alonsosss/corforce-email/services/webmail/internal/app"
 	"github.com/alonsosss/corforce-email/services/webmail/internal/domain"
 	"github.com/alonsosss/corforce-email/services/webmail/internal/ports"
@@ -101,6 +102,9 @@ const (
 	mailAuthTimeout    = 15 * time.Second
 	clamdTimeout       = 60 * time.Second
 	rateLimitPerMinute = 600
+
+	// unsubscribeTimeout acota de principio a fin la baja en un clic contra el servidor del boletin.
+	unsubscribeTimeout = 10 * time.Second
 )
 
 type settings struct {
@@ -250,6 +254,10 @@ func main() {
 			ScheduledPollInterval: st.scheduledPoll, ScheduledBatch: st.scheduledBatch,
 			MaxImportBytes: st.maxImportBytes,
 		},
+
+		// La baja en un clic es la unica salida del webmail a servidores de terceros: el cliente
+		// solo conecta con direcciones publicas y sin redirecciones.
+		Unsubscriber: unsubscribe.New(unsubscribeTimeout),
 	})
 	if err != nil {
 		log.Fatalf("webmail: %v", err)

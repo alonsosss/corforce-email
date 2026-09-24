@@ -1961,6 +1961,69 @@ export const es = {
   'webmail.list.noSender': '(sin remitente)',
   'webmail.list.noRecipients': '(sin destinatarios)',
   'webmail.list.searchTooLong': 'La busqueda es demasiado larga: acortala.',
+  'webmail.view.label': 'Vista del listado',
+  'webmail.view.threads': 'Conversaciones',
+  'webmail.view.messages': 'Mensajes',
+  'webmail.tabs.label': 'Pestanas de la bandeja de entrada',
+  'webmail.tabs.primary': 'Principal',
+  'webmail.tabs.notifications': 'Notificaciones',
+  'webmail.tabs.newsletters': 'Boletines',
+  'webmail.tabs.all': 'Todos',
+  'webmail.tabs.searchAll': 'La busqueda recorre todas las pestanas.',
+  'webmail.thread.count': '{n} mensajes en la conversacion',
+  'webmail.thread.label': 'Mensajes de la conversacion',
+  'webmail.thread.sent': 'Enviado por ti',
+  'webmail.thread.capped': 'Se muestran los {n} mensajes mas recientes de la conversacion.',
+  'webmail.shield.label': 'Escudo antifraude',
+  'webmail.shield.dangerTitle': 'Cuidado: este mensaje puede ser un fraude',
+  'webmail.shield.cautionTitle': 'Revisa este remitente antes de actuar',
+  'webmail.shield.advice':
+    'No pagues, no cambies datos bancarios ni abras adjuntos sin confirmarlo antes por otro medio, como una llamada.',
+  'webmail.shield.external': 'Remitente externo',
+  'webmail.shield.externalHint': 'Este mensaje viene de fuera de tu empresa ({domain}).',
+  'webmail.shield.partial':
+    'No se pudo consultar el directorio de la empresa: la comprobacion de este mensaje es parcial.',
+  'webmail.shield.reportFraud': 'Marcar como fraude',
+  'webmail.shield.fraudDone': 'Mensaje movido a Spam como fraude. El filtro aprendera de el.',
+  'webmail.shield.reason.spf_fail':
+    'El servidor que lo envio no esta autorizado por {domain} (SPF).',
+  'webmail.shield.reason.dkim_fail':
+    'La firma de {domain} no es valida (DKIM): el mensaje pudo alterarse por el camino.',
+  'webmail.shield.reason.dmarc_fail':
+    '{domain} no respalda este mensaje (DMARC): es probable que alguien use su nombre.',
+  'webmail.shield.reason.own_domain_unverified':
+    'Dice venir de tu propio dominio ({domain}), pero no salio de los servidores de tu empresa.',
+  'webmail.shield.reason.lookalike_domain':
+    'El dominio {domain} se parece a {resembles}, de tu empresa, pero no es el mismo.',
+  'webmail.shield.reason.homoglyph_domain':
+    'El dominio {domain} imita a {resembles} con letras que se confunden a la vista.',
+  'webmail.shield.reason.colleague_name':
+    'Usa el nombre de {colleague} ({address}), de tu empresa, desde una direccion externa.',
+  'webmail.shield.reason.embedded_address':
+    'El nombre visible muestra {address}, que no es la direccion real del remitente.',
+  'webmail.shield.reason.reply_to_mismatch':
+    'Las respuestas irian a otro dominio ({domain}), no al del remitente.',
+  'webmail.shield.reason.unknown': 'Se detecto otra senal de riesgo en el remitente.',
+  'webmail.unsubscribe.action': 'Darse de baja',
+  'webmail.unsubscribe.title': 'Darse de baja de este boletin',
+  'webmail.unsubscribe.confirmOneClick':
+    'Se pedira la baja a {target} en tu nombre. El servicio no visita ninguna pagina.',
+  'webmail.unsubscribe.confirmMailto': 'Se enviara un correo de baja desde tu buzon a {target}.',
+  'webmail.unsubscribe.done': 'Baja solicitada a {target}.',
+  'webmail.unsubscribe.openPage': 'Abrir la pagina de baja de {target}',
+  'webmail.sender.open': 'Ficha del remitente',
+  'webmail.sender.title': 'Ficha de {name}',
+  'webmail.sender.internal': 'De tu empresa',
+  'webmail.sender.contact': 'Contacto personal',
+  'webmail.sender.notContact': 'No esta en tus contactos.',
+  'webmail.sender.addContact': 'Anadir a contactos',
+  'webmail.sender.previous': 'Correos anteriores',
+  'webmail.sender.previousNone': 'No hay otros correos suyos en {folder}.',
+  'webmail.sender.previousAll': 'Ver todos ({n})',
+  'webmail.sender.meetings': 'Proximas reuniones',
+  'webmail.sender.meetingsHint': 'Eventos de los proximos {days} dias que lo mencionan.',
+  'webmail.sender.meetingsNone': 'Ninguna reunion proxima lo menciona.',
+  'webmail.sender.loadError': 'No se pudo cargar esta seccion.',
   'webmail.reader.label': 'Lectura del mensaje',
   'webmail.reader.none': 'Ningun mensaje seleccionado',
   'webmail.reader.noneHint': 'Elige un mensaje de la lista para leerlo.',
@@ -2461,6 +2524,12 @@ export const es = {
   'error.code.FOLDER_HAS_CHILDREN': 'La carpeta tiene subcarpetas: borralas antes.',
   'error.code.FOLDER_EXISTS': 'Ya existe una carpeta con ese nombre.',
   'error.code.FOLDER_NOT_EMPTIABLE': 'Solo se pueden vaciar la Papelera y Spam.',
+  'error.code.UNSUBSCRIBE_NOT_AVAILABLE':
+    'Este mensaje no ofrece una baja que se pueda hacer desde aqui.',
+  'error.code.UNSUBSCRIBE_TARGET_REFUSED':
+    'La direccion de baja del boletin no es segura y no se contacto.',
+  'error.code.UNSUBSCRIBE_FAILED':
+    'El remitente del boletin no confirmo la baja. Prueba mas tarde.',
   'error.code.SCHEDULED_SEND_NOT_PENDING':
     'Ese envio ya esta saliendo o ya salio: no se puede cambiar ni cancelar.',
   'error.code.SCHEDULED_SEND_NOT_FOUND':

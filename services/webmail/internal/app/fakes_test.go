@@ -210,6 +210,9 @@ type fakeMailbox struct {
 	emptied   []string
 	emptyN    int
 	createErr error
+
+	// conversaciones, ficha del remitente y baja (insight_fakes_test.go).
+	insight fakeInsight
 }
 
 func (m *fakeMailbox) Close() error {
@@ -717,6 +720,7 @@ type harness struct {
 	sanitizer *fakeSanitizer
 	scanner   *fakeScanner
 	clock     *testClock
+	unsub     *fakeUnsubscriber
 }
 
 const (
@@ -740,6 +744,7 @@ func newHarness(t *testing.T) *harness {
 		sanitizer: &fakeSanitizer{},
 		scanner:   &fakeScanner{},
 		clock:     clock,
+		unsub:     &fakeUnsubscriber{},
 	}
 	h.mb.folders = []domain.Folder{
 		{Name: "INBOX", Role: domain.RoleInbox, Selectable: true},
@@ -765,8 +770,9 @@ func (h *harness) deps() Deps {
 		PartURL: func(folder string, uid uint32, part string) string {
 			return fmt.Sprintf("/parts/%s/%d/%s", folder, uid, part)
 		},
-		Clock:  h.clock.Now,
-		Logger: zap.NewNop(),
+		Clock:        h.clock.Now,
+		Logger:       zap.NewNop(),
+		Unsubscriber: h.unsub,
 		Config: Config{
 			CellCode:              testCell,
 			Sessions:              domain.SessionPolicy{Idle: 30 * time.Minute, Max: 12 * time.Hour},

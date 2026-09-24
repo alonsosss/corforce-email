@@ -120,6 +120,9 @@ func (h *Handler) Routes() http.Handler {
 			r.Get("/calendar/events/{id}", h.Event)
 			r.Put("/calendar/events/{id}", h.UpdateEvent)
 			r.Delete("/calendar/events/{id}", h.DeleteEvent)
+			r.Get("/threads", h.Conversation)
+			r.Get("/sender-insight", h.SenderInsight)
+			r.Post("/unsubscribe", h.Unsubscribe)
 		})
 	})
 	return r
@@ -264,6 +267,12 @@ func writeError(w http.ResponseWriter, err error) {
 		response.Err(w, http.StatusUnprocessableEntity, "ATTACHMENT_INFECTED", domain.ErrAttachmentInfected.Error())
 	case errors.Is(err, domain.ErrScanUnavailable):
 		response.Err(w, http.StatusServiceUnavailable, "SCAN_UNAVAILABLE", domain.ErrScanUnavailable.Error())
+	case errors.Is(err, domain.ErrUnsubscribeNotAvailable):
+		response.Err(w, http.StatusConflict, "UNSUBSCRIBE_NOT_AVAILABLE", domain.ErrUnsubscribeNotAvailable.Error())
+	case errors.Is(err, domain.ErrUnsubscribeRefused):
+		response.Err(w, http.StatusUnprocessableEntity, "UNSUBSCRIBE_TARGET_REFUSED", domain.ErrUnsubscribeRefused.Error())
+	case errors.Is(err, domain.ErrUnsubscribeFailed):
+		response.Err(w, http.StatusBadGateway, "UNSUBSCRIBE_FAILED", domain.ErrUnsubscribeFailed.Error())
 	case errors.Is(err, domain.ErrUnavailable):
 		response.Err(w, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", domain.ErrUnavailable.Error())
 	default:

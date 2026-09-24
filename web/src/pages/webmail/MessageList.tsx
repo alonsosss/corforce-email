@@ -20,6 +20,7 @@ import { t } from '@/i18n';
 import { webmailMeta } from '@/webmail/catalogs';
 import { showsRecipients } from './folders';
 import { addressLabel, formatMailDate } from './format';
+import { rowUnread } from './smartInbox';
 import {
   criteriaProblems,
   criteriaSummary,
@@ -53,6 +54,8 @@ export interface MessageListProps {
   folderAction?: ReactNode;
   /** El atajo "/" pide el foco del buscador. */
   searchFocusTick?: number;
+  /** Conmutador de vista y pestanas de la bandeja, bajo el titulo. */
+  controls?: ReactNode;
 }
 
 export function MessageList({
@@ -72,6 +75,7 @@ export function MessageList({
   selectionBar,
   folderAction,
   searchFocusTick = 0,
+  controls,
 }: MessageListProps) {
   const [draft, setDraft] = useState<SearchCriteria>(criteria);
   const [advanced, setAdvanced] = useState(hasAdvanced(criteria));
@@ -132,6 +136,7 @@ export function MessageList({
             </Button>
           </div>
         </div>
+        {controls}
         <form
           role="search"
           className="cf-wm-searchform"
@@ -367,9 +372,11 @@ function MessageRow({
   onCheck: (checked: boolean) => void;
   href: string;
 }) {
-  const unread = !hasFlag(message, FLAGS.seen);
+  const unread = rowUnread(message, hasFlag(message, FLAGS.seen));
   const flagged = hasFlag(message, FLAGS.flagged);
-  const people = (recipients ? message.to : message.from).map(addressLabel).join(', ');
+  const thread = message.thread;
+  const senders = thread && !recipients ? thread.participants : message.from;
+  const people = (recipients ? message.to : senders).map(addressLabel).join(', ');
   const subject = message.subject || t('webmail.noSubject');
   const classes = [
     'cf-wm-message',
@@ -394,6 +401,17 @@ function MessageRow({
         <span className="cf-wm-message__date">{formatMailDate(message.date)}</span>
         <span className="cf-wm-message__subject">{subject}</span>
         <span className="cf-wm-message__marks">
+          {thread && thread.size > 1 ? (
+            <span
+              className="cf-wm-message__count"
+              title={t('webmail.thread.count', { n: thread.size })}
+            >
+              <span aria-hidden="true">{thread.size}</span>
+              <span className="cf-visually-hidden">
+                {t('webmail.thread.count', { n: thread.size })}
+              </span>
+            </span>
+          ) : null}
           {message.has_attachments ? (
             <IconPaperclip size={14} title={t('webmail.list.hasAttachments')} />
           ) : null}

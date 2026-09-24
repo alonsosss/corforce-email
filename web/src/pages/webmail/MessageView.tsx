@@ -40,6 +40,7 @@ import { addressList } from './format';
 import { MessageBody } from './MessageBody';
 import { MoveDialog } from './MoveDialog';
 import { printMessage } from './print';
+import { SenderShield } from './SenderShield';
 
 export interface MessageViewProps {
   folderName: string;
@@ -327,6 +328,19 @@ export function MessageView({
           <HeaderRow label={t('webmail.header.date')} value={formatDateTime(data.date)} />
         </dl>
       </header>
+      <SenderShield
+        folderName={folderName}
+        role={role}
+        uid={uid}
+        folders={folders}
+        sender={sender}
+        onReportFraud={
+          canReportSpam && junk
+            ? () => void reclassify.run(junk, t('webmail.shield.fraudDone'))
+            : undefined
+        }
+        reporting={reclassify.busy}
+      />
       <MessageBody
         message={data}
         remoteAllowed={remote}

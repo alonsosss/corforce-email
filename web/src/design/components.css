@@ -183,14 +183,68 @@
   cursor: pointer;
   user-select: none;
 }
+/*
+ * Casilla dibujada con los tokens del tema. La nativa sigue el esquema de color del sistema
+ * operativo y no el del tema elegido: con el sistema en oscuro y la aplicacion en claro, Chrome la
+ * pintaba como un cuadrado relleno oscuro aunque estuviera desmarcada.
+ */
 .cf-checkbox input {
+  appearance: none;
+  -webkit-appearance: none;
+  flex: none;
+  display: inline-grid;
+  place-content: center;
   width: 16px;
   height: 16px;
-  accent-color: var(--cf-accent);
+  margin: 0;
+  border: 1.5px solid var(--cf-border-strong);
+  border-radius: 4px;
+  background: var(--cf-surface);
   cursor: pointer;
+  transition:
+    background-color var(--cf-transition),
+    border-color var(--cf-transition);
+}
+.cf-checkbox input::before {
+  content: '';
+  width: 10px;
+  height: 10px;
+  background: var(--cf-accent-contrast);
+  clip-path: polygon(14% 44%, 0 65%, 50% 100%, 100% 16%, 80% 0%, 43% 62%);
+  transform: scale(0);
+  transition: transform var(--cf-transition);
+}
+.cf-checkbox input:checked,
+.cf-checkbox input:indeterminate {
+  background: var(--cf-accent);
+  border-color: var(--cf-accent);
+}
+.cf-checkbox input:checked::before {
+  transform: scale(1);
+}
+.cf-checkbox input:indeterminate::before {
+  height: 2px;
+  clip-path: none;
+  transform: scale(1);
+}
+.cf-checkbox input:hover:not(:disabled) {
+  border-color: var(--cf-accent);
+}
+.cf-checkbox input:focus-visible {
+  box-shadow: var(--cf-focus-ring);
 }
 .cf-checkbox input:disabled {
   cursor: not-allowed;
+  opacity: 0.5;
+}
+@media (forced-colors: active) {
+  .cf-checkbox input {
+    appearance: auto;
+    -webkit-appearance: auto;
+  }
+  .cf-checkbox input::before {
+    content: none;
+  }
 }
 
 .cf-form {

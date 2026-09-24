@@ -32,7 +32,23 @@ import { defaultFolder, folderLabel, folderWithRole, isEmptiable } from './folde
 import { parsePositiveInt } from './format';
 import { MessageList } from './MessageList';
 import { MessageView } from './MessageView';
-import { criteriaToFilters, criteriaToView, readCriteria, type SearchCriteria } from './search';
+import { ConversationPanel } from './ConversationPanel';
+import {
+  criteriaToFilters,
+  criteriaToView,
+  isSearching,
+  readCriteria,
+  type SearchCriteria,
+} from './search';
+import { InboxTabs, ViewToggle } from './SmartInboxControls';
+import {
+  activeTab,
+  categoryFilter,
+  expandSelection,
+  inboxTabs,
+  THREADS_VIEW,
+  withRowFlags,
+} from './smartInbox';
 import { useWebmailOutlet } from './webmailContext';
 
 /** Carpeta, mensaje, pagina y busqueda salen de la query: una recarga vuelve al mismo sitio. */
@@ -70,7 +86,9 @@ function MailboxView({ folderName }: { folderName: string }) {
   const { folders, adjustUnread, reloadFolders, inboxTick } = useWebmailOutlet();
   const refreshSession = useWebmailStore((s) => s.refresh);
   const toast = useToast();
-  const maxBatch = useResource(webmailMeta).data?.limits.max_batch_uids ?? null;
+  const metaQuery = useResource(webmailMeta);
+  const meta = metaQuery.data;
+  const maxBatch = meta?.limits.max_batch_uids ?? null;
   const [params] = useSearchParams();
   const navigate = useNavigate();
   const uid = parsePositiveInt(params.get('uid'));
@@ -79,6 +97,19 @@ function MailboxView({ folderName }: { folderName: string }) {
   const criteriaKey = JSON.stringify(criteria);
   const folder = folders.data?.find((f) => f.name === folderName) ?? null;
   const role = folder?.role ?? '';
+  const threadsView = params.get('view') === THREADS_VIEW;
+  const isInbox = role === FOLDER_ROLES.inbox;
+  const tabs = useMemo(
+    () => (isInbox ? inboxTabs(meta?.inbox_categories ?? []) : []),
+    [isInbox, meta],
+  );
+  const rawTab = params.get('tab');
+  const tab = activeTab(rawTab, tabs);
+  const searching = isSearching(criteria);
+  const category = categoryFilter(tab, isInbox, searching);
+  // La pestana por defecto sale de la meta: la bandeja espera a tenerla para no pedir el listado dos
+  // veces (sin filtro y luego con el). Si la meta falla, se lista sin pestanas.
+  const awaitingTabs = isInbox && meta === null && metaQuery.loading;
   const [checked, setChecked] = useState<Set<number>>(() => new Set());
   const [purging, setPurging] = useState<number[] | null>(null);
   const [emptying, setEmptying] = useState(false);
@@ -88,28 +119,44 @@ function MailboxView({ folderName }: { folderName: string }) {
   const liveTick = role === FOLDER_ROLES.inbox ? inboxTick : 0;
   const list = useQuery(
     (signal) =>
-      webmailApi.messages(
-        folderName,
-        { page, search: criteria.q || undefined, ...criteriaToFilters(criteria) },
-        signal,
-      ),
+      awaitingTabs
+        ? new Promise<never>(() => undefined)
+        : webmailApi.messages(
+            folderName,
+            {
+              page,
+              search: criteria.q || undefined,
+              ...criteriaToFilters(criteria),
+              view: threadsView ? THREADS_VIEW : undefined,
+              category,
+            },
+            signal,
+          ),
     // criteriaKey resume criteria: cambia solo cuando cambia la busqueda.
-    [folderName, page, criteriaKey, liveTick],
+    [folderName, page, criteriaKey, liveTick, threadsView, category, awaitingTabs],
   );
   const { setData: setList, reload: reloadList } = list;
   const rows = list.data?.items;
 
-  useEffect(() => setChecked(new Set()), [page, criteriaKey]);
+  useEffect(() => setChecked(new Set()), [page, criteriaKey, threadsView, category]);
 
   const viewHref = useCallback(
-    (next: { uid?: number; page?: number; criteria?: SearchCriteria }) =>
+    (next: {
+      uid?: number;
+      page?: number;
+      criteria?: SearchCriteria;
+      view?: string;
+      tab?: string;
+    }) =>
       paths.webmailView({
         folder: folderName,
         uid: next.uid,
         page: next.page && next.page > 1 ? next.page : undefined,
         ...criteriaToView(next.criteria ?? criteria),
+        view: (next.view ?? (threadsView ? THREADS_VIEW : '')) || undefined,
+        tab: (next.tab ?? rawTab ?? '') || undefined,
       }),
-    [folderName, criteria],
+    [folderName, criteria, threadsView, rawTab],
   );
   const listHref = viewHref({ page });
 
@@ -121,7 +168,7 @@ function MailboxView({ folderName }: { folderName: string }) {
               ...current,
               items: current.items.map((row) =>
                 uids.includes(row.uid)
-                  ? { ...row, flags: applyFlagChange(row.flags, change) }
+                  ? withRowFlags(row, applyFlagChange(row.flags, change))
                   : row,
               ),
             }
@@ -160,7 +207,7 @@ function MailboxView({ folderName }: { folderName: string }) {
         current
           ? {
               ...current,
-              items: current.items.map((r) => (r.uid === changedUid ? { ...r, flags } : r)),
+              items: current.items.map((r) => (r.uid === changedUid ? withRowFlags(r, flags) : r)),
             }
           : current,
       );
@@ -203,6 +250,12 @@ function MailboxView({ folderName }: { folderName: string }) {
 
   const batchFlags = async (uids: number[], change: FlagChange) => {
     await runBatch(uids, { action: 'flags', add: change.add, remove: change.remove });
+    // Una fila de conversacion resume varios mensajes: los contadores se vuelven a leer.
+    if (threadsView) {
+      reloadList();
+      reloadFolders();
+      return;
+    }
     const seenBefore = (rows ?? []).filter((r) => uids.includes(r.uid) && hasFlag(r, FLAGS.seen));
     if (change.add?.includes(FLAGS.seen))
       adjustUnread(folderName, -(uids.length - seenBefore.length));
@@ -228,7 +281,7 @@ function MailboxView({ folderName }: { folderName: string }) {
   const archive = folders.data ? folderWithRole(folders.data, FOLDER_ROLES.archive) : undefined;
 
   // Atajos sobre el mensaje abierto o, sin mensaje abierto, sobre los marcados.
-  const targets = (): number[] => (uid ? [uid] : [...checked]);
+  const targets = (): number[] => expandSelection(rows ?? [], uid ? [uid] : [...checked]);
   const step = (delta: 1 | -1) => {
     if (!rows?.length) return;
     const at = uid ? rows.findIndex((r) => r.uid === uid) : -1;
@@ -305,12 +358,26 @@ function MailboxView({ folderName }: { folderName: string }) {
           onCheckAll={(value) => setChecked(new Set(value ? (rows ?? []).map((r) => r.uid) : []))}
           folderAction={emptyAction}
           searchFocusTick={searchFocus}
+          controls={
+            <div className="cf-wm-listcontrols">
+              <ViewToggle
+                threads={threadsView}
+                onChange={(next) => navigate(viewHref({ view: next ? THREADS_VIEW : '' }))}
+              />
+              <InboxTabs
+                tabs={tabs}
+                value={tab}
+                searching={searching}
+                onChange={(next) => navigate(viewHref({ tab: next }))}
+              />
+            </div>
+          }
           selectionBar={
             <BatchBar
               role={role}
               folderName={folderName}
               folders={folders.data ?? []}
-              uids={[...checked]}
+              uids={expandSelection(rows ?? [], [...checked])}
               onFlags={batchFlags}
               onMove={batchMove}
               onDelete={async (uids) => {
@@ -322,6 +389,15 @@ function MailboxView({ folderName }: { folderName: string }) {
         />
       </section>
       <section className="cf-wm-mailbox__reader" aria-label={t('webmail.reader.label')}>
+        {uid && threadsView ? (
+          <ConversationPanel
+            key={`c-${uid}`}
+            folderName={folderName}
+            uid={uid}
+            folders={folders.data ?? []}
+            hrefFor={(rowUid) => viewHref({ uid: rowUid, page })}
+          />
+        ) : null}
         {uid ? (
           <MessageView
             key={uid}
