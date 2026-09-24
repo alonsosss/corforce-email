@@ -20,6 +20,9 @@ type Config struct {
 	Calendar               domain.CalendarLimits
 	DefaultAddressbookName string
 	DefaultCalendarName    string
+	// Scheduling rige la ocupacion materializada, la disponibilidad y las citas; sin horizonte no se materializa
+	// nada y esas funciones no estan.
+	Scheduling SchedulingConfig
 }
 
 type Deps struct {
@@ -28,8 +31,10 @@ type Deps struct {
 	Store     ports.Store
 	Calendars ports.CalendarStore
 	Index     ports.MailboxIndex
-	Config    Config
-	Logger    *zap.Logger
+	// Scheduling es opcional: sin el, la disponibilidad, las invitaciones y las citas responden que no estan.
+	Scheduling ports.SchedulingStore
+	Config     Config
+	Logger     *zap.Logger
 	// Now es el reloj de las marcas de tiempo que escribe la API estructurada (REV, DTSTAMP); nulo es time.Now.
 	Now func() time.Time
 }
@@ -43,6 +48,9 @@ type UseCase struct {
 	cfg       Config
 	logger    *zap.Logger
 	now       func() time.Time
+
+	scheduling ports.SchedulingStore
+	addresses  *addressCache
 }
 
 func New(d Deps) (*UseCase, error) {
@@ -58,6 +66,9 @@ func New(d Deps) (*UseCase, error) {
 	if strings.TrimSpace(d.Config.DefaultCalendarName) == "" {
 		return nil, errors.New("falta el nombre del calendario por defecto")
 	}
+	if err := d.Config.Scheduling.Validate(); err != nil {
+		return nil, err
+	}
 	logger := d.Logger
 	if logger == nil {
 		logger = zap.NewNop()
@@ -66,7 +77,8 @@ func New(d Deps) (*UseCase, error) {
 	if now == nil {
 		now = time.Now
 	}
-	return &UseCase{auth: d.Auth, tenant: d.Tenant, store: d.Store, calendars: d.Calendars, index: d.Index, cfg: d.Config, logger: logger, now: now}, nil
+	return &UseCase{auth: d.Auth, tenant: d.Tenant, store: d.Store, calendars: d.Calendars, index: d.Index, cfg: d.Config, logger: logger, now: now,
+		scheduling: d.Scheduling, addresses: newAddressCache()}, nil
 }
 
 func (uc *UseCase) Limits() domain.Limits { return uc.cfg.Limits }

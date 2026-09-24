@@ -2,18 +2,33 @@ package domain
 
 import (
 	"sort"
+	"strings"
 	"time"
 )
 
 // Occurrence es una aparicion de un evento dentro de un rango: la de la serie (con el texto del VEVENT
-// principal) o la de una sobrescritura (con el suyo). Recurring la marca como parte de una serie.
+// principal) o la de una sobrescritura (con el suyo). Recurring la marca como parte de una serie y RecurrenceID
+// es el instante que la identifica dentro de ella (su inicio original, el RECURRENCE-ID de RFC 5545). Free es la
+// aparicion que no ocupa el tiempo de su dueno: transparente, cancelada o de dia completo sin TRANSP:OPAQUE.
 type Occurrence struct {
-	Start     time.Time
-	End       time.Time
-	AllDay    bool
-	Title     string
-	Location  string
-	Recurring bool
+	Start        time.Time
+	End          time.Time
+	AllDay       bool
+	Title        string
+	Location     string
+	Recurring    bool
+	RecurrenceID time.Time
+	Free         bool
+}
+
+// free dice si un componente no ocupa tiempo: TRANSP:TRANSPARENT, STATUS:CANCELLED o, sin TRANSP explicito, un
+// dia completo (como lo tratan los clientes de calendario habituales).
+func (c eventComponent) free() bool {
+	transp := strings.ToUpper(c.text("TRANSP"))
+	if transp == "TRANSPARENT" || strings.EqualFold(c.text("STATUS"), "CANCELLED") {
+		return true
+	}
+	return c.start.date && transp != "OPAQUE"
 }
 
 // Occurrences expande el objeto dentro del rango [r.Start, r.End), que debe traer los dos extremos: la serie
@@ -33,17 +48,18 @@ func (o CalendarObject) Occurrences(r TimeRange, b *Budget) []Occurrence {
 			overridden[o.zones.instant(*c.recurrenceID).Unix()] = true
 		}
 	}
-	emit := func(c eventComponent, start time.Time, recurring bool) {
+	emit := func(c eventComponent, start, rid time.Time, recurring bool) {
 		out = append(out, Occurrence{
 			Start: start, End: start.Add(c.dur), AllDay: c.start.date,
 			Title: c.text("SUMMARY"), Location: c.text("LOCATION"), Recurring: recurring,
+			RecurrenceID: rid, Free: c.free(),
 		})
 	}
 	for _, c := range o.events {
 		start := o.zones.instant(c.start)
 		if c.recurrenceID != nil {
 			if r.overlaps(start, c.dur) {
-				emit(c, start, true)
+				emit(c, start, o.zones.instant(*c.recurrenceID), true)
 			}
 			continue
 		}
@@ -62,7 +78,7 @@ func (o CalendarObject) Occurrences(r TimeRange, b *Budget) []Occurrence {
 				return
 			}
 			seen[key] = true
-			emit(c, inst, recurring)
+			emit(c, inst, inst, recurring)
 		}
 		// DTSTART es siempre la primera aparicion (RFC 5545, 3.8.5.3), y la unica que se da por segura de lo que
 		// no se sabe expandir.

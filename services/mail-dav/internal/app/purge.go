@@ -26,5 +26,11 @@ func (uc *UseCase) PurgeMailbox(ctx context.Context, tenantID, mailboxID uuid.UU
 	if err != nil {
 		return domain.PurgeResult{}, err
 	}
+	if uc.scheduling != nil {
+		if err := uc.scheduling.DeleteMailboxScheduling(bound, p); err != nil {
+			return domain.PurgeResult{}, err
+		}
+		uc.addresses.forget(p)
+	}
 	return domain.PurgeResult{Addressbooks: books, Calendars: calendars}, nil
 }

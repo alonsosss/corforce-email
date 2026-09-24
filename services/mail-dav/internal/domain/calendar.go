@@ -261,21 +261,5 @@ func (c CompFilter) propsMatch(props []Property) bool {
 // NewEvent valida el iCalendar y arma el evento con su etag y sus campos indexados. Los identificadores y
 // las fechas los pone quien lo guarda.
 func NewEvent(resourceName, raw string, lim CalendarLimits) (Event, error) {
-	if !ValidEventResourceName(resourceName) {
-		return Event{}, ErrInvalidName
-	}
-	obj, err := ParseCalendarObject(raw, lim)
-	if err != nil {
-		return Event{}, err
-	}
-	return Event{
-		ResourceName: resourceName,
-		UID:          obj.UID,
-		ICal:         raw,
-		Size:         len(raw),
-		ETag:         ETagOf(raw),
-		Summary:      obj.Summary,
-		FirstStart:   obj.FirstStart,
-		LastEnd:      obj.LastEnd,
-	}, nil
+	return NewEventAt(resourceName, raw, lim, BusyPlan{})
 }

@@ -132,11 +132,12 @@ func (uc *UseCase) PutEvent(ctx context.Context, p domain.Principal, slug, resou
 	if !domain.ValidSlug(slug) {
 		return "", false, domain.ErrNotFound
 	}
-	e, err := domain.NewEvent(resource, raw, uc.cfg.Calendar)
+	e, err := uc.newEvent(resource, raw)
 	if err != nil {
 		return "", false, err
 	}
 	e.ID, e.TenantID, e.MailboxID = uuid.New(), p.TenantID, p.MailboxID
+	uc.rememberAddress(ctx, p)
 	created, err = uc.calendars.PutEvent(ctx, p, slug, e, cond, uc.cfg.Limits.Write(uc.cfg.Calendar.MaxEventsPerMailbox))
 	if err != nil {
 		return "", false, err

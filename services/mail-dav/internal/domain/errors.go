@@ -75,3 +75,10 @@ type FieldError struct {
 func (e *FieldError) Error() string { return e.Field + ": " + e.Reason }
 
 func fieldError(field, reason string) *FieldError { return &FieldError{Field: field, Reason: reason} }
+
+var (
+	// ErrBookingLimit: la pagina de citas alcanzo su tope diario de reservas, o el visitante el suyo.
+	ErrBookingLimit = errors.New("se alcanzo el maximo de reservas por dia")
+	// ErrSlotUnavailable: el hueco pedido ya no esta libre o no es un hueco de la pagina.
+	ErrSlotUnavailable = errors.New("el hueco ya no esta disponible")
+)

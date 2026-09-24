@@ -400,6 +400,7 @@ func (uc *UseCase) ImportContacts(ctx context.Context, p domain.Principal, raw s
 // por inicio. La expansion gasta el mismo presupuesto por evento y por consulta que calendar-query; pasar de
 // maxOccurrences es domain.ErrResultTooLarge.
 func (uc *UseCase) EventOccurrences(ctx context.Context, p domain.Principal, start, end time.Time, maxOccurrences int) ([]OccurrenceView, error) {
+	uc.rememberAddress(ctx, p)
 	slug, err := uc.defaultCalendar(ctx, p)
 	if err != nil {
 		return nil, err
@@ -458,7 +459,8 @@ func (uc *UseCase) EventByID(ctx context.Context, p domain.Principal, id string)
 }
 
 func (uc *UseCase) saveEvent(ctx context.Context, p domain.Principal, slug, resource, raw string, cond domain.Precondition) (EventView, error) {
-	e, err := domain.NewEvent(resource, raw, uc.cfg.Calendar)
+	uc.rememberAddress(ctx, p)
+	e, err := uc.newEvent(resource, raw)
 	if err != nil {
 		return EventView{}, err
 	}
