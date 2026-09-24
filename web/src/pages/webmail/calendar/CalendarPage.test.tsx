@@ -44,7 +44,10 @@ describe('calendario', () => {
     resetWebmailCatalogs();
     vi.spyOn(webmailApi, 'davMeta').mockResolvedValue({ limits: {} });
   });
-  afterEach(() => vi.restoreAllMocks());
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
 
   it('pide solo la ventana visible del mes y pinta sus eventos', async () => {
     const list = vi.spyOn(webmailApi, 'calendarOccurrences').mockResolvedValue([WEEKLY]);
@@ -68,8 +71,9 @@ describe('calendario', () => {
   it('la agenda titula cada día con mayúscula inicial', async () => {
     vi.spyOn(webmailApi, 'calendarOccurrences').mockResolvedValue([WEEKLY]);
     renderCalendar('/webmail/calendar?view=agenda&date=2026-09-15');
-    const day = await screen.findByRole('heading', { level: 2, name: /15 de septiembre/ });
-    expect(day.textContent).toMatch(/^[A-ZÁÉÍÓÚ][a-záéíóú]+, 15 de septiembre$/);
+    // El dia en que cae el evento depende de la zona del navegador: basta con cualquiera de septiembre.
+    const [day] = await screen.findAllByRole('heading', { level: 2, name: /\d+ de septiembre/ });
+    expect(day?.textContent).toMatch(/^[A-ZÁÉÍÓÚ][a-záéíóú]+, \d+ de septiembre$/);
   });
 
   it('parte la peticion si el servicio admite una ventana menor', async () => {
@@ -175,6 +179,10 @@ describe('calendario', () => {
   });
 
   it('con invitados muestra su disponibilidad y envia la invitacion', async () => {
+    // El formulario propone la hora a partir de la actual: sin fijar el reloj, segun la hora a la que
+    // corre la prueba el evento caia fuera del dia ocupado de bea.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(2026, 8, 10, 10, 0, 0));
     const user = userEvent.setup();
     vi.spyOn(webmailApi, 'calendarOccurrences').mockResolvedValue([]);
     const availability = vi.spyOn(webmailApi, 'availability').mockResolvedValue([
@@ -182,7 +190,7 @@ describe('calendario', () => {
         address: 'bea@empresa.pe',
         known: true,
         partial: false,
-        busy: [{ start: '2026-09-15T00:00:00Z', end: '2026-09-16T00:00:00Z' }],
+        busy: [{ start: '2026-09-14T00:00:00Z', end: '2026-09-17T00:00:00Z' }],
       },
     ]);
     const create = vi
