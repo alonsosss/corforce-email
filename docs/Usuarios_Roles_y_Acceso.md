@@ -161,8 +161,10 @@ V = verificado en el codigo. P = propuesto, todavia no implementado.
   apagar, identity atiende lo encolado durante 10 s despues de cerrar el servidor. Queda: una
   caida pierde las solicitudes en espera (el usuario la repite: la respuesta nunca prometio el
   envio), y el trabajo del trabajador comparte base y CPU con las peticiones, un efecto que no
-  se atribuye a ninguna. El envio por transactional (`POST /internal/send-email`) no lo recorre
-  ninguna prueba de punta a punta (P).
+  se atribuye a ninguna. El correo lleva `html_body` y `text_body` con el mismo contenido y el
+  enlace completo en la parte de texto, y sale por SES como `multipart/alternative`; el nombre
+  del usuario va escapado en la parte HTML (V, 2026-09-24, unitarias). El envio por transactional
+  (`POST /internal/send-email`) no lo recorre ninguna prueba de punta a punta (P).
 
 ## 2. Roles (V)
 

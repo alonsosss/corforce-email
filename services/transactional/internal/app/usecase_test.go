@@ -663,13 +663,17 @@ func TestInternalSend(t *testing.T) {
 	f := newFixture(t, cfg)
 	f.setDomain(f.tenant, "platform.example.com", "verified", "sending")
 
-	res, err := f.uc.InternalSend(ctx, InternalSendCommand{TenantID: f.tenant, To: "ana@example.com", Subject: "Restablecer contrasena", HTMLBody: "<p>enlace</p>"})
+	res, err := f.uc.InternalSend(ctx, InternalSendCommand{TenantID: f.tenant, To: "ana@example.com", Subject: "Restablecer contrasena", HTMLBody: "<p>enlace</p>", TextBody: "enlace"})
 	if err != nil || res.Status != domain.StatusQueued {
 		t.Fatalf("envio interno: %+v, %v", res, err)
 	}
 	msg := f.repo.messages[res.MessageID]
 	if msg.FromEmail != "no-reply@platform.example.com" || msg.FromName != "Core Force Mail" || msg.Unsubscribable {
 		t.Fatalf("remitente de plataforma: %+v", msg)
+	}
+	// Las dos partes se guardan: el envio por SES las junta en un multipart/alternative.
+	if msg.HTML == nil || *msg.HTML != "<p>enlace</p>" || msg.Text == nil || *msg.Text != "enlace" {
+		t.Fatalf("el envio interno pierde una de sus partes: html %v, texto %v", msg.HTML, msg.Text)
 	}
 	if len(f.repo.published("transactional.message.queued")) != 1 {
 		t.Fatal("el envio interno se encola igual que el del API")

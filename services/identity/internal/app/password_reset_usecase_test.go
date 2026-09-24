@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/url"
 	"regexp"
+	"strings"
 	"testing"
 	"time"
 
@@ -84,8 +85,8 @@ func (r *rsResets) GetByTokenHash(_ context.Context, hash string) (*domain.Passw
 }
 
 type rsMail struct {
-	tenant            uuid.UUID
-	to, subject, body string
+	tenant uuid.UUID
+	ports.OutgoingMail
 }
 
 type rsMailer struct {
@@ -93,8 +94,8 @@ type rsMailer struct {
 	sent       []rsMail
 }
 
-func (m *rsMailer) Send(_ context.Context, tenant uuid.UUID, to, subject, body string) error {
-	m.sent = append(m.sent, rsMail{tenant, to, subject, body})
+func (m *rsMailer) Send(_ context.Context, tenant uuid.UUID, mail ports.OutgoingMail) error {
+	m.sent = append(m.sent, rsMail{tenant, mail})
 	return nil
 }
 func (m *rsMailer) Configured() bool { return m.configured }
@@ -218,13 +219,17 @@ func TestAtenderLaSolicitudDeUnaCuenta(t *testing.T) {
 		t.Fatalf("invalidados %d, creados %d, enviados %d", f.resets.invalidated, len(f.resets.created), len(f.mailer.sent))
 	}
 	mail := f.mailer.sent[0]
-	m := resetLink.FindStringSubmatch(mail.body)
-	if m == nil || mail.to != f.known.Email || mail.tenant != f.known.TenantID {
+	m := resetLink.FindStringSubmatch(mail.HTMLBody)
+	if m == nil || mail.To != f.known.Email || mail.tenant != f.known.TenantID {
 		t.Fatalf("correo %+v sin el enlace esperado", mail)
 	}
 	token, err := url.QueryUnescape(m[1])
 	if err != nil {
 		t.Fatal(err)
+	}
+	link := resetBaseURL + "/reset-password?token=" + m[1]
+	if !strings.Contains(mail.TextBody, "\n"+link+"\n") || strings.Contains(mail.TextBody, "<") {
+		t.Errorf("la alternativa de texto no lleva el enlace en su propia línea o trae marcado: %q", mail.TextBody)
 	}
 	tok := f.resets.created[0]
 	if tok.TokenHash != hashResetToken(token) || tok.TokenHash == token {
@@ -293,5 +298,35 @@ func TestSinColaNoHayCasoDeUso(t *testing.T) {
 	}
 	if _, err := NewPasswordResetUseCase(PasswordResetDeps{Queue: &rsQueue{}}); err == nil {
 		t.Fatal("sin cliente de correo el caso de uso no debe construirse")
+	}
+}
+
+// El correo sale con las dos partes y el mismo contenido: la de texto es la que ven los clientes
+// que no muestran HTML. El nombre lo escribe el usuario: en HTML va escapado y en texto, tal cual.
+func TestElCorreoDeReinicioLlevaTextoYHTMLConElMismoContenido(t *testing.T) {
+	const link = resetBaseURL + "/reset-password?token=abc123"
+	name := `Ana <b>"x"</b>`
+
+	htmlBody := resetEmailHTML(name, link)
+	if strings.Contains(htmlBody, "<b>") || !strings.Contains(htmlBody, "Hola Ana &lt;b&gt;&#34;x&#34;&lt;/b&gt;,") {
+		t.Errorf("el nombre no va escapado en HTML: %s", htmlBody)
+	}
+	if !strings.Contains(htmlBody, `href="`+link+`"`) {
+		t.Errorf("la parte HTML no enlaza al reinicio: %s", htmlBody)
+	}
+
+	text := resetEmailText(name, link)
+	for _, want := range []string{
+		"Hola " + name + ", recibimos una solicitud para restablecer la contraseña de tu cuenta en " + productName + ".",
+		"\n" + link + "\n",
+		"El enlace vence en 30 minutos y solo puede usarse una vez.",
+		"tu contraseña actual sigue vigente.",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("la parte de texto no contiene %q:\n%s", want, text)
+		}
+	}
+	if !strings.HasPrefix(resetEmailText("  ", link), "Hola, recibimos") {
+		t.Errorf("sin nombre el saludo es solo Hola: %q", resetEmailText("  ", link))
 	}
 }

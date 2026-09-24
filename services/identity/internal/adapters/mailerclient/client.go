@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/alonsosss/corforce-email/services/identity/internal/ports"
 	"github.com/google/uuid"
 )
 
@@ -55,14 +56,23 @@ func New(baseURL, token string, platformTenantID uuid.UUID) *Client {
 // no para fallar: identity sigue autenticando aunque no pueda mandar correos.
 func (c *Client) Configured() bool { return c.baseURL != "" }
 
-func (c *Client) Send(ctx context.Context, tenantID uuid.UUID, to, subject, htmlBody string) error {
+// sendEmailRequest es el cuerpo de POST /internal/send-email de transactional.
+type sendEmailRequest struct {
+	To       string `json:"to"`
+	Subject  string `json:"subject"`
+	HTMLBody string `json:"html_body,omitempty"`
+	TextBody string `json:"text_body,omitempty"`
+}
+
+func (c *Client) Send(ctx context.Context, tenantID uuid.UUID, mail ports.OutgoingMail) error {
 	if !c.Configured() {
 		return errNotConfigured
 	}
-	payload, err := json.Marshal(map[string]string{
-		"to":        to,
-		"subject":   subject,
-		"html_body": htmlBody,
+	payload, err := json.Marshal(sendEmailRequest{
+		To:       mail.To,
+		Subject:  mail.Subject,
+		HTMLBody: mail.HTMLBody,
+		TextBody: mail.TextBody,
 	})
 	if err != nil {
 		return err
@@ -85,7 +95,9 @@ func (c *Client) Send(ctx context.Context, tenantID uuid.UUID, to, subject, html
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("correo transaccional respondio %d", resp.StatusCode)
+		return fmt.Errorf("correo transaccional respondió %d", resp.StatusCode)
 	}
 	return nil
 }
+
+var _ ports.TransactionalMailer = (*Client)(nil)

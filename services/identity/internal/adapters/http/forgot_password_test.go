@@ -51,7 +51,7 @@ func (r fpResets) InvalidateForUser(context.Context, uuid.UUID) error { r.seen.n
 
 type fpMailer struct{ seen *fpLookups }
 
-func (m fpMailer) Send(context.Context, uuid.UUID, string, string, string) error {
+func (m fpMailer) Send(context.Context, uuid.UUID, ports.OutgoingMail) error {
 	m.seen.n++
 	return nil
 }

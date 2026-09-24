@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"html"
 	"net/url"
 	"strings"
 	"time"
@@ -173,9 +174,13 @@ func (uc *PasswordResetUseCase) ProcessReset(ctx context.Context, req ports.Pass
 	}
 
 	resetURL := fmt.Sprintf("%s/reset-password?token=%s", uc.publicBaseURL, url.QueryEscape(token))
-	subject := "Restablece tu contraseña de " + productName
-	body := resetEmailBody(user.FirstName, resetURL)
-	if err := uc.mailer.Send(ctx, tenantID, user.Email, subject, body); err != nil {
+	mail := ports.OutgoingMail{
+		To:       user.Email,
+		Subject:  "Restablece tu contraseña de " + productName,
+		HTMLBody: resetEmailHTML(user.FirstName, resetURL),
+		TextBody: resetEmailText(user.FirstName, resetURL),
+	}
+	if err := uc.mailer.Send(ctx, tenantID, mail); err != nil {
 		uc.logger.Error("password reset: enviar correo", zap.String("email", email), zap.Error(err))
 		return
 	}
@@ -272,16 +277,38 @@ func hashResetToken(token string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func resetEmailBody(firstName, resetURL string) string {
-	greeting := "Hola"
-	if strings.TrimSpace(firstName) != "" {
-		greeting = "Hola " + strings.TrimSpace(firstName)
+func resetGreeting(firstName string) string {
+	if name := strings.TrimSpace(firstName); name != "" {
+		return "Hola " + name
 	}
+	return "Hola"
+}
+
+// El nombre lo escribe el propio usuario o su administrador: en la parte HTML va escapado
+// para que no pueda inyectar marcado en un correo que sale con el remitente de la plataforma.
+func resetEmailHTML(firstName, resetURL string) string {
+	greeting := html.EscapeString(resetGreeting(firstName))
+	link := html.EscapeString(resetURL)
 	return fmt.Sprintf(`<div style="font-family:system-ui,-apple-system,sans-serif;max-width:520px;margin:0 auto;padding:24px">
 <h2 style="font-size:18px;margin:0 0 16px">Restablecer contraseña</h2>
 <p style="color:#333;line-height:1.5">%s, recibimos una solicitud para restablecer la contraseña de tu cuenta en %s.</p>
 <p style="margin:24px 0"><a href="%s" style="background:#111;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;display:inline-block">Crear contraseña nueva</a></p>
-<p style="color:#666;font-size:13px;line-height:1.5">El enlace vence en 30 minutos y solo puede usarse una vez. Si no solicitaste este cambio, ignora este correo: tu contraseña actual sigue vigente.</p>
+<p style="color:#666;font-size:13px;line-height:1.5">El enlace vence en %d minutos y solo puede usarse una vez. Si no solicitaste este cambio, ignora este correo: tu contraseña actual sigue vigente.</p>
 <p style="color:#999;font-size:12px;margin-top:24px">Si el botón no funciona, copia y pega esta dirección en tu navegador:<br>%s</p>
-</div>`, greeting, productName, resetURL, resetURL)
+</div>`, greeting, productName, link, resetTTLMinutes(), link)
 }
+
+// resetEmailText es la alternativa text/plain de resetEmailHTML, con el mismo contenido y el
+// enlace completo en su propia línea para que los clientes de texto lo detecten.
+func resetEmailText(firstName, resetURL string) string {
+	return fmt.Sprintf(`%s, recibimos una solicitud para restablecer la contraseña de tu cuenta en %s.
+
+Para crear una contraseña nueva, abre este enlace:
+
+%s
+
+El enlace vence en %d minutos y solo puede usarse una vez. Si no solicitaste este cambio, ignora este correo: tu contraseña actual sigue vigente.
+`, resetGreeting(firstName), productName, resetURL, resetTTLMinutes())
+}
+
+func resetTTLMinutes() int { return int(resetTokenTTL / time.Minute) }

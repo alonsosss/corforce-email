@@ -66,10 +66,20 @@ type PasswordHasher interface {
 	NeedsRehash(hash string) bool
 }
 
+// OutgoingMail es un correo del flujo de identidad. HTMLBody y TextBody llevan el mismo
+// contenido: con los dos, transactional lo envia como multipart/alternative y el cliente que
+// no muestra HTML (o lo bloquea) sigue viendo el texto y el enlace.
+type OutgoingMail struct {
+	To       string
+	Subject  string
+	HTMLBody string
+	TextBody string
+}
+
 // TransactionalMailer envia los correos transaccionales del flujo de identidad
 // (recuperacion de contrasena) a traves del servicio de correo transaccional.
 type TransactionalMailer interface {
-	Send(ctx context.Context, tenantID uuid.UUID, to, subject, htmlBody string) error
+	Send(ctx context.Context, tenantID uuid.UUID, mail OutgoingMail) error
 	// Configured dice si hay a donde enviar; no depende de ningun destinatario.
 	Configured() bool
 }
