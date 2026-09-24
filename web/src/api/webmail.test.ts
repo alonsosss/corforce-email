@@ -456,3 +456,176 @@ describe('reintento de lecturas del webmail', () => {
     expect(failing).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('webmail competitivo: contrato del API', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  const headersOf = (call?: Call) => (call?.init.headers ?? {}) as Record<string, string>;
+
+  it('actua sobre varios mensajes con un solo POST y el cuerpo del contrato', async () => {
+    const calls = mockFetch(() => json(200, { data: { affected: 2, permanent: false } }));
+    const result = await webmailApi.batch('INBOX', [1, 2], { action: 'move', to: 'Junk' });
+    expect(result).toEqual({ affected: 2, permanent: false });
+    expect(calls[0]?.url).toBe(endpoints.webmail.batch('INBOX'));
+    expect(calls[0]?.init.method).toBe('POST');
+    expect(JSON.parse(String(calls[0]?.init.body))).toEqual({
+      uids: [1, 2],
+      action: 'move',
+      to: 'Junk',
+    });
+  });
+
+  it('crea, renombra, borra y vacia carpetas con el nombre completo codificado', async () => {
+    const calls = mockFetch((call) =>
+      call.init.method === 'DELETE'
+        ? new Response(null, { status: 204 })
+        : json(call.url.endsWith('/empty') ? 200 : 201, {
+            data: call.url.endsWith('/empty') ? { removed: 3 } : { name: 'Clientes/2026' },
+          }),
+    );
+    await webmailApi.createFolder('Clientes/2026');
+    await webmailApi.renameFolder('Clientes/2026', 'Clientes/2027');
+    await webmailApi.deleteFolder('Clientes/2027');
+    expect(await webmailApi.emptyFolder('Trash')).toEqual({ removed: 3 });
+    expect(calls.map((c) => [c.init.method, c.url])).toEqual([
+      ['POST', endpoints.webmail.folders],
+      ['PATCH', '/api/v1/webmail/folders/Clientes%2F2026'],
+      ['DELETE', '/api/v1/webmail/folders/Clientes%2F2027'],
+      ['POST', '/api/v1/webmail/folders/Trash/empty'],
+    ]);
+    expect(JSON.parse(String(calls[1]?.init.body))).toEqual({ name: 'Clientes/2027' });
+  });
+
+  it('un 409 de carpeta protegida llega con su codigo', async () => {
+    mockFetch(() => json(409, { error: { code: 'FOLDER_PROTECTED', message: 'protegida' } }));
+    await expect(webmailApi.deleteFolder('INBOX')).rejects.toMatchObject({
+      status: 409,
+      code: 'FOLDER_PROTECTED',
+    });
+  });
+
+  it('la busqueda avanzada viaja en la query con los nombres del contrato', async () => {
+    const calls = mockFetch(() => json(200, { data: [] }));
+    await webmailApi.messages('INBOX', {
+      from: 'luis',
+      since: '2026-09-01',
+      before: '2026-09-10',
+      unread: true,
+      hasAttachments: true,
+      flagged: false,
+    });
+    const url = new URL(calls[0]?.url ?? '', 'http://x');
+    expect(Object.fromEntries(url.searchParams)).toEqual({
+      from: 'luis',
+      since: '2026-09-01',
+      before: '2026-09-10',
+      unread: 'true',
+      has_attachments: 'true',
+    });
+  });
+
+  it('descarga el original como bytes con el nombre del servicio', async () => {
+    const calls = mockFetch(
+      () =>
+        new Response('From: a@x', {
+          status: 200,
+          headers: {
+            'Content-Type': 'message/rfc822',
+            'Content-Disposition': 'attachment; filename="pedido.eml"',
+          },
+        }),
+    );
+    const raw = await webmailApi.downloadRaw('INBOX', 5);
+    expect(calls[0]?.url).toBe(endpoints.webmail.raw('INBOX', 5));
+    expect(raw.filename).toBe('pedido.eml');
+    expect(raw.contentType).toBe('message/rfc822');
+  });
+
+  it('programa el envio con send_at, la clave de idempotencia y el html', async () => {
+    const calls = mockFetch(() =>
+      json(202, { data: { scheduled: { id: 's1', send_at: '2026-09-25T08:00:00Z' } } }),
+    );
+    const ref = await webmailApi.schedule(
+      {
+        to: ['a@x.com'],
+        cc: [],
+        bcc: [],
+        subject: 'Hola',
+        text: '',
+        html: '<p>Hola</p>',
+        attachments: [],
+      },
+      '2026-09-25T08:00:00Z',
+      { idempotencyKey: 'clave-programada-0001' },
+    );
+    expect(ref).toEqual({ id: 's1', send_at: '2026-09-25T08:00:00Z' });
+    const form = calls[0]?.init.body as FormData;
+    expect(form.get('send_at')).toBe('2026-09-25T08:00:00Z');
+    expect(form.get('html')).toBe('<p>Hola</p>');
+    expect(headersOf(calls[0])['Idempotency-Key']).toBe('clave-programada-0001');
+  });
+
+  it('cambia la hora y cancela envios programados', async () => {
+    const calls = mockFetch((call) =>
+      call.init.method === 'DELETE' ? new Response(null, { status: 204 }) : json(200, { data: {} }),
+    );
+    await webmailApi.reschedule('s1', '2026-09-26T08:00:00Z');
+    await webmailApi.cancelScheduled('s1');
+    expect(calls.map((c) => c.init.method)).toEqual(['PATCH', 'DELETE']);
+    expect(calls[0]?.url).toBe(endpoints.webmail.scheduledItem('s1'));
+  });
+
+  it('guarda un contacto con If-Match y un 412 llega como PRECONDITION_FAILED', async () => {
+    const calls = mockFetch(() =>
+      json(412, { error: { code: 'PRECONDITION_FAILED', message: 'cambio' } }),
+    );
+    const input = {
+      name: 'Luis',
+      given_name: '',
+      family_name: '',
+      emails: [],
+      phones: [],
+      organization: '',
+      title: '',
+      notes: '',
+      birthday: '',
+    };
+    await expect(webmailApi.updateContact('c1', input, '"etag-1"')).rejects.toMatchObject({
+      status: 412,
+      code: ERROR_CODES.PRECONDITION_FAILED,
+    });
+    expect(calls[0]?.init.method).toBe('PUT');
+    expect(headersOf(calls[0])['If-Match']).toBe('"etag-1"');
+  });
+
+  it('importa vCard como multipart en el campo file', async () => {
+    const calls = mockFetch(() => json(200, { data: { imported: 2, updated: 0, skipped: [] } }));
+    const file = new File(['BEGIN:VCARD'], 'agenda.vcf', { type: 'text/vcard' });
+    expect(await webmailApi.importContacts(file)).toEqual({ imported: 2, updated: 0, skipped: [] });
+    expect((calls[0]?.init.body as FormData).get('file')).toBeInstanceOf(File);
+  });
+
+  it('pide las ocurrencias de la ventana visible y una respuesta vacia es una lista', async () => {
+    const calls = mockFetch(() => json(200, { data: null }));
+    const list = await webmailApi.calendarOccurrences(
+      '2026-09-01T00:00:00.000Z',
+      '2026-10-13T00:00:00.000Z',
+    );
+    expect(list).toEqual([]);
+    const url = new URL(calls[0]?.url ?? '', 'http://x');
+    expect(url.pathname).toBe(endpoints.webmail.calendarEvents);
+    expect(url.searchParams.get('start')).toBe('2026-09-01T00:00:00.000Z');
+  });
+
+  it('cambia la contrasena con la actual y la nueva; 204 sin cuerpo', async () => {
+    const calls = mockFetch(() => new Response(null, { status: 204 }));
+    await webmailApi.changePassword('vieja', 'nueva-segura');
+    expect(JSON.parse(String(calls[0]?.init.body))).toEqual({
+      current_password: 'vieja',
+      new_password: 'nueva-segura',
+    });
+  });
+});

@@ -1,5 +1,6 @@
 import { FOLDER_ROLES, type WebmailFolder } from '@/api/webmail';
 import { hasMessage, t } from '@/i18n';
+import { utf8Length } from './format';
 
 export interface FolderItem {
   folder: WebmailFolder;
@@ -59,6 +60,82 @@ export function defaultFolder(folders: readonly WebmailFolder[]): string | null 
     folderWithRole(folders, FOLDER_ROLES.inbox)?.name ??
     folders.find((f) => f.selectable)?.name ??
     null
+  );
+}
+
+/** INBOX y las carpetas con papel no se renombran ni se borran (FOLDER_PROTECTED). */
+export function isProtectedFolder(folder: WebmailFolder): boolean {
+  return Boolean(folder.role) || folder.name.toUpperCase() === 'INBOX';
+}
+
+/** Solo Papelera y Spam se vacian. */
+export function isEmptiable(role: string): boolean {
+  return role === FOLDER_ROLES.trash || role === FOLDER_ROLES.junk;
+}
+
+/** Separador de jerarquia del servidor; sin ninguno, las carpetas son planas. */
+export function folderDelimiter(folders: readonly WebmailFolder[]): string {
+  return folders.find((f) => f.delimiter)?.delimiter ?? '';
+}
+
+/** Carpeta que contiene a esta, o '' si es de primer nivel. */
+export function parentPath(folder: WebmailFolder): string {
+  if (!folder.delimiter) return '';
+  const at = folder.name.lastIndexOf(folder.delimiter);
+  return at > 0 ? folder.name.slice(0, at) : '';
+}
+
+export function joinFolderPath(parent: string, leaf: string, delimiter: string): string {
+  return parent && delimiter ? `${parent}${delimiter}${leaf}` : leaf;
+}
+
+export function hasChildren(folders: readonly WebmailFolder[], folder: WebmailFolder): boolean {
+  if (!folder.delimiter) return false;
+  const prefix = `${folder.name}${folder.delimiter}`;
+  return folders.some((f) => f.name.startsWith(prefix));
+}
+
+// Controles C0, DEL y C1: los rechaza ValidateFolderName del servicio.
+function hasControl(text: string): boolean {
+  return Array.from(text).some((char) => {
+    const code = char.codePointAt(0) ?? 0;
+    return code <= 0x1f || (code >= 0x7f && code <= 0x9f);
+  });
+}
+
+/**
+ * Nombre de una carpeta nueva o renombrada con los criterios del servicio: el tramo sin el
+ * separador ni comodines, y la ruta completa dentro del tope de bytes que sirve la meta.
+ */
+export function folderNameProblem(
+  leaf: string,
+  path: string,
+  delimiter: string,
+  maxBytes: number | null,
+): string | null {
+  const name = leaf.trim();
+  if (!name) return t('webmail.folderAdmin.nameRequired');
+  if (delimiter && name.includes(delimiter)) {
+    return t('webmail.folderAdmin.nameDelimiter', { delimiter });
+  }
+  if (name.includes('*') || name.includes('%') || hasControl(name)) {
+    return t('webmail.folderAdmin.nameInvalid');
+  }
+  if (maxBytes !== null && utf8Length(path) > maxBytes) {
+    return t('webmail.folderAdmin.nameTooLong');
+  }
+  return null;
+}
+
+/** Ya hay una carpeta con esa ruta (sin distinguir mayusculas); INBOX esta reservada (RFC 3501). */
+export function folderNameTaken(
+  folders: readonly WebmailFolder[],
+  path: string,
+  except?: string,
+): boolean {
+  const wanted = path.toLowerCase();
+  return (
+    wanted === 'inbox' || folders.some((f) => f.name !== except && f.name.toLowerCase() === wanted)
   );
 }
 

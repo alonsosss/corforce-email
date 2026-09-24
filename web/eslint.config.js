@@ -23,11 +23,15 @@ export default tseslint.config(
         'error',
         { argsIgnorePattern: '^_', varsIgnorePattern: '^_' },
       ],
-      // La sesion nunca toca el almacenamiento del navegador. La unica excepcion es el
-      // tema visual, y vive en un solo fichero (ver override mas abajo).
+      // La sesion nunca toca el almacenamiento del navegador. Las unicas excepciones son
+      // preferencias de interfaz de este navegador: el tema visual y los avisos de escritorio
+      // del webmail, cada una en su fichero (ver override mas abajo).
       'no-restricted-globals': [
         'error',
-        { name: 'localStorage', message: 'Solo src/design/theme.ts puede usar localStorage.' },
+        {
+          name: 'localStorage',
+          message: 'Solo las preferencias de interfaz (ver override) usan localStorage.',
+        },
         { name: 'sessionStorage', message: 'La sesion no se persiste en el navegador.' },
       ],
       'no-restricted-properties': [
@@ -53,7 +57,7 @@ export default tseslint.config(
     },
   },
   {
-    files: ['src/design/theme.ts'],
+    files: ['src/design/theme.ts', 'src/webmail/notifications.ts'],
     rules: { 'no-restricted-globals': 'off', 'no-restricted-properties': 'off' },
   },
   {

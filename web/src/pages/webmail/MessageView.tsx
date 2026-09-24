@@ -5,39 +5,41 @@ import {
   FOLDER_ROLES,
   webmailApi,
   type FlagChange,
+  type MailAddress,
   type WebmailFolder,
 } from '@/api/webmail';
 import { errorMessage } from '@/api/messages';
 import { useAction } from '@/hooks/useAction';
 import { useQuery } from '@/hooks/useQuery';
+import { Button, ConfirmDialog, ErrorState, Skeleton, useToast } from '@/design/components';
 import {
-  Button,
-  ConfirmDialog,
-  ErrorState,
-  FormField,
-  Modal,
-  Select,
-  Skeleton,
-  useToast,
-} from '@/design/components';
-import {
+  IconBan,
   IconChevronLeft,
+  IconDownload,
   IconEdit,
   IconFolder,
   IconForward,
+  IconInbox,
   IconMailOpen,
+  IconPrinter,
   IconReply,
   IconReplyAll,
   IconStar,
   IconTrash,
+  IconUserPlus,
 } from '@/design/icons';
+import { saveBlob } from '@/lib/download';
 import { formatDateTime } from '@/lib/format';
 import { t } from '@/i18n';
 import { paths } from '@/paths';
+import { ContactFormDialog } from './contacts/ContactFormDialog';
+import { contactFromSender } from './contacts/contacts';
 import { applyFlagChange } from './flags';
-import { orderFolders } from './folders';
+import { folderWithRole } from './folders';
 import { addressList } from './format';
 import { MessageBody } from './MessageBody';
+import { MoveDialog } from './MoveDialog';
+import { printMessage } from './print';
 
 export interface MessageViewProps {
   folderName: string;
@@ -50,6 +52,15 @@ export interface MessageViewProps {
   onFlagsChanged: (uid: number, flags: string[]) => void;
   /** El mensaje se movio o se borro: ya no esta en esta carpeta. */
   onGone: () => void;
+}
+
+/** Nombre del .eml cuando el servicio no manda uno. */
+function rawFilename(subject: string, uid: number): string {
+  const base = subject
+    .replace(/[^\p{L}\p{N} _-]+/gu, '')
+    .trim()
+    .slice(0, 60);
+  return `${base || t('webmail.reader.rawDefault', { uid })}.eml`;
 }
 
 export function MessageView({
@@ -69,6 +80,7 @@ export function MessageView({
   const [flags, setFlags] = useState<string[] | null>(null);
   const [moving, setMoving] = useState(false);
   const [purging, setPurging] = useState(false);
+  const [newContact, setNewContact] = useState<MailAddress | null>(null);
 
   const message = useQuery(
     (signal) =>
@@ -96,6 +108,20 @@ export function MessageView({
     onGone();
   });
 
+  // Spam y no spam es mover a y desde Spam: Dovecot avisa a Rspamd para que aprenda.
+  const junk = folderWithRole(folders, FOLDER_ROLES.junk);
+  const inbox = folderWithRole(folders, FOLDER_ROLES.inbox);
+  const reclassify = useAction(async (to: WebmailFolder, done: string) => {
+    await webmailApi.move(folderName, uid, to.name);
+    toast.success(done);
+    onGone();
+  });
+
+  const download = useAction(async () => {
+    const raw = await webmailApi.downloadRaw(folderName, uid);
+    saveBlob(raw.blob, raw.filename ?? rawFilename(data?.subject ?? '', uid));
+  });
+
   const back = (
     <Link to={backHref} className="cf-btn cf-btn--ghost cf-btn--sm cf-wm-reader__back">
       <IconChevronLeft size={16} />
@@ -116,14 +142,18 @@ export function MessageView({
     );
   }
 
-  const isTrash = folder?.role === FOLDER_ROLES.trash;
-  const isDrafts = folder?.role === FOLDER_ROLES.drafts;
+  const role = folder?.role ?? '';
+  const isTrash = role === FOLDER_ROLES.trash;
+  const isDrafts = role === FOLDER_ROLES.drafts;
+  const isJunk = role === FOLDER_ROLES.junk;
+  const canReportSpam = Boolean(junk) && !isJunk && !isDrafts && role !== FOLDER_ROLES.sent;
   const seen = flags?.includes(FLAGS.seen) ?? true;
   const flagged = flags?.includes(FLAGS.flagged) ?? false;
-  const actionError = changeFlags.error ?? trash.error;
+  const actionError = changeFlags.error ?? trash.error ?? reclassify.error ?? download.error;
   const compose = (mode: string) => navigate(paths.webmailComposeFrom(mode, folderName, uid));
   const seenLabel = t(seen ? 'webmail.reader.markUnread' : 'webmail.reader.markRead');
   const deleteLabel = t(isTrash ? 'webmail.reader.deleteForever' : 'webmail.reader.delete');
+  const sender = data.from[0];
 
   return (
     <article className="cf-wm-reader" aria-labelledby="wm-subject">
@@ -194,6 +224,32 @@ export function MessageView({
         >
           {t('webmail.reader.move')}
         </Button>
+        {canReportSpam && junk ? (
+          <Button
+            size="sm"
+            variant="ghost"
+            iconOnly
+            title={t('webmail.reader.spam')}
+            icon={<IconBan size={16} />}
+            loading={reclassify.busy}
+            onClick={() => void reclassify.run(junk, t('webmail.reader.spamDone'))}
+          >
+            {t('webmail.reader.spam')}
+          </Button>
+        ) : null}
+        {isJunk && inbox ? (
+          <Button
+            size="sm"
+            variant="ghost"
+            iconOnly
+            title={t('webmail.reader.notSpam')}
+            icon={<IconInbox size={16} />}
+            loading={reclassify.busy}
+            onClick={() => void reclassify.run(inbox, t('webmail.reader.notSpamDone'))}
+          >
+            {t('webmail.reader.notSpam')}
+          </Button>
+        ) : null}
         <Button
           size="sm"
           variant="ghost"
@@ -204,6 +260,27 @@ export function MessageView({
           onClick={() => (isTrash ? setPurging(true) : void trash.run())}
         >
           {deleteLabel}
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          iconOnly
+          title={t('webmail.reader.print')}
+          icon={<IconPrinter size={16} />}
+          onClick={() => printMessage(data, { allowRemoteImages: remote })}
+        >
+          {t('webmail.reader.print')}
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          iconOnly
+          title={t('webmail.reader.raw')}
+          icon={<IconDownload size={16} />}
+          loading={download.busy}
+          onClick={() => void download.run()}
+        >
+          {t('webmail.reader.raw')}
         </Button>
       </div>
       {actionError ? (
@@ -221,7 +298,22 @@ export function MessageView({
           {data.subject || t('webmail.noSubject')}
         </h2>
         <dl className="cf-dl cf-wm-reader__meta">
-          <HeaderRow label={t('webmail.header.from')} value={addressList(data.from)} />
+          <dt>{t('webmail.header.from')}</dt>
+          <dd className="cf-wm-reader__from">
+            <span>{addressList(data.from) || t('common.dash')}</span>
+            {sender ? (
+              <Button
+                size="sm"
+                variant="ghost"
+                iconOnly
+                title={t('webmail.reader.addContact', { address: sender.email })}
+                icon={<IconUserPlus size={14} />}
+                onClick={() => setNewContact(sender)}
+              >
+                {t('webmail.reader.addContact', { address: sender.email })}
+              </Button>
+            ) : null}
+          </dd>
           <HeaderRow label={t('webmail.header.to')} value={addressList(data.to)} />
           {data.cc.length ? (
             <HeaderRow label={t('webmail.header.cc')} value={addressList(data.cc)} />
@@ -243,6 +335,7 @@ export function MessageView({
       />
       {moving ? (
         <MoveDialog
+          title={t('webmail.move.title')}
           folders={folders}
           current={folderName}
           onClose={() => setMoving(false)}
@@ -252,6 +345,13 @@ export function MessageView({
             setMoving(false);
             onGone();
           }}
+        />
+      ) : null}
+      {newContact ? (
+        <ContactFormDialog
+          seed={contactFromSender(newContact)}
+          onClose={() => setNewContact(null)}
+          onSaved={() => setNewContact(null)}
         />
       ) : null}
       <ConfirmDialog
@@ -278,78 +378,5 @@ function HeaderRow({ label, value }: { label: string; value: string }) {
       <dt>{label}</dt>
       <dd>{value || t('common.dash')}</dd>
     </>
-  );
-}
-
-function MoveDialog({
-  folders,
-  current,
-  onClose,
-  onMove,
-}: {
-  folders: readonly WebmailFolder[];
-  current: string;
-  onClose: () => void;
-  onMove: (to: string, label: string) => Promise<void>;
-}) {
-  const targets = orderFolders(folders).filter(
-    (item) => item.folder.selectable && item.folder.name !== current,
-  );
-  const [to, setTo] = useState(targets[0]?.folder.name ?? '');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<unknown>(null);
-  const target = targets.find((item) => item.folder.name === to);
-
-  const submit = async () => {
-    if (!target) return;
-    setBusy(true);
-    setError(null);
-    try {
-      await onMove(target.folder.name, target.label);
-    } catch (err) {
-      setError(err);
-      setBusy(false);
-    }
-  };
-
-  return (
-    <Modal
-      open
-      title={t('webmail.move.title')}
-      onClose={() => (busy ? undefined : onClose())}
-      footer={
-        <>
-          <Button onClick={onClose} disabled={busy}>
-            {t('common.cancel')}
-          </Button>
-          <Button variant="primary" loading={busy} disabled={!target} onClick={() => void submit()}>
-            {t('webmail.move.submit')}
-          </Button>
-        </>
-      }
-    >
-      <div className="cf-stack" style={{ gap: 'var(--cf-space-3)' }}>
-        {targets.length ? (
-          <FormField label={t('webmail.move.to')} htmlFor="wm-move-to">
-            <Select
-              id="wm-move-to"
-              options={targets.map((item) => ({
-                value: item.folder.name,
-                label: `${'  '.repeat(item.depth)}${item.label}`,
-              }))}
-              value={to}
-              onChange={(e) => setTo(e.target.value)}
-            />
-          </FormField>
-        ) : (
-          <p className="cf-modal__message">{t('webmail.move.none')}</p>
-        )}
-        {error ? (
-          <div className="cf-form__error" role="alert">
-            {errorMessage(error)}
-          </div>
-        ) : null}
-      </div>
-    </Modal>
   );
 }

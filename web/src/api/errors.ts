@@ -61,6 +61,12 @@ export const ERROR_CODES = {
   RECIPIENT_REJECTED: 'RECIPIENT_REJECTED',
   DELIVERY_UNCERTAIN: 'DELIVERY_UNCERTAIN',
   SEND_IN_PROGRESS: 'SEND_IN_PROGRESS',
+  // Contactos y eventos: el If-Match ya no coincide (412), el recurso cambio en otro dispositivo.
+  PRECONDITION_FAILED: 'PRECONDITION_FAILED',
+  // Envio programado que ya esta saliendo o salio (409) o que ya no existe (404): la lista
+  // estaba desfasada.
+  SCHEDULED_SEND_NOT_PENDING: 'SCHEDULED_SEND_NOT_PENDING',
+  SCHEDULED_SEND_NOT_FOUND: 'SCHEDULED_SEND_NOT_FOUND',
   // templates: imagenes sin antivirus configurado (503) o rechazadas por el (422), y una
   // version de marketing que no pasa la verificacion de entregabilidad al publicar (409).
   SCANNER_UNAVAILABLE: 'SCANNER_UNAVAILABLE',

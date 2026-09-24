@@ -30,6 +30,7 @@ describe('inicio de sesion del buzon', () => {
       status: 'anonymous',
       session: null,
       expired: false,
+      passwordChanged: false,
       checkError: null,
     });
   });
@@ -100,5 +101,24 @@ describe('inicio de sesion del buzon', () => {
     useWebmailStore.setState({ expired: true });
     renderLogin();
     expect(screen.getByText(t('webmail.login.expired'))).toBeInTheDocument();
+  });
+
+  it('tras cambiar la contrasena pide entrar con la nueva, y el aviso se va al entrar', async () => {
+    const user = userEvent.setup();
+    useWebmailStore.setState({ status: 'authenticated' });
+    useWebmailStore.getState().endAfterPasswordChange();
+    expect(useWebmailStore.getState()).toMatchObject({ status: 'anonymous', session: null });
+    vi.spyOn(webmailApi, 'login').mockRejectedValue(
+      new ApiError(401, { code: ERROR_CODES.INVALID_CREDENTIALS, message: '' }),
+    );
+    const form = renderLogin();
+    expect(screen.getByText(t('webmail.login.passwordChanged'))).toBeInTheDocument();
+    expect(screen.queryByText(t('webmail.login.expired'))).toBeNull();
+
+    await user.type(form.username, 'ana@empresa.com');
+    await user.type(form.password, 'vieja');
+    await user.click(form.submit);
+    expect(await screen.findByText(t('webmail.login.invalid'))).toBeInTheDocument();
+    expect(screen.queryByText(t('webmail.login.passwordChanged'))).toBeNull();
   });
 });
