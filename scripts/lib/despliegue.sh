@@ -285,3 +285,43 @@ registrar_despliegue() {
   fi
   return 0
 }
+
+# enviar_imagenes <imagen>...: lleva al servidor las imagenes que no tiene y, de cada una, solo las capas
+# que le faltan. docker save entrega cada capa como blobs/sha256/<diffID>; el servidor (almacen de
+# containerd) acepta en docker load un archivo OCI sin los blobs de las capas que ya guarda. Con la
+# linea lenta hacia el servidor, reenviar las capas base de cada imagen costaba horas; asi viaja el
+# codigo nuevo y poco mas. Una imagen que ya esta con su etiqueta no se reenvia.
+enviar_imagenes() {
+  local img faltan=()
+  for img in "$@"; do
+    "${SSH[@]}" "docker image inspect $img >/dev/null 2>&1" || faltan+=("$img")
+  done
+  if ((${#faltan[@]} == 0)); then
+    echo ">> el servidor ya tiene las $# imagen(es)"
+    return 0
+  fi
+  local tiene dir d quitadas=0 rc
+  tiene="$("${SSH[@]}" 'ids=$(docker image ls -q --no-trunc | sort -u); [ -z "$ids" ] || docker image inspect --format "{{range .RootFS.Layers}}{{println .}}{{end}}" $ids' 2>/dev/null | sort -u)"
+  dir="$(mktemp -d)"
+  if ! docker save "${faltan[@]}" | tar -x -C "$dir"; then
+    rm -rf "$dir"
+    return 1
+  fi
+  while IFS= read -r d; do
+    d="${d#sha256:}"
+    [[ -n "$d" && -f "$dir/blobs/sha256/$d" ]] || continue
+    rm -f "$dir/blobs/sha256/$d"
+    quitadas=$((quitadas + 1))
+  done <<<"$tiene"
+  echo ">> enviando ${#faltan[@]} imagen(es); $quitadas capa(s) ya estaban en el servidor y no viajan"
+  tar -c -C "$dir" . | gzip -1 | "${SSH[@]}" 'gunzip | docker load' >/dev/null
+  rc=$?
+  rm -rf "$dir"
+  if ((rc != 0 && quitadas > 0)); then
+    # Un demonio sin el almacen de containerd exige todas las capas en el archivo.
+    echo ">> el servidor no acepto el envio sin capas; se reenvian completas" >&2
+    docker save "${faltan[@]}" | gzip -1 | "${SSH[@]}" 'gunzip | docker load' >/dev/null
+    rc=$?
+  fi
+  return $rc
+}

@@ -264,7 +264,7 @@ if [[ ${#CONSTRUIR[@]} -gt 0 ]]; then
   IMAGENES=()
   for m in "${CONSTRUIR[@]}"; do IMAGENES+=("$(imagen_de "$m")"); done
   echo ">> enviando ${#IMAGENES[@]} imagen(es) al servidor"
-  docker save "${IMAGENES[@]}" | gzip -1 | "${SSH[@]}" 'gunzip | docker load' >/dev/null
+  enviar_imagenes "${IMAGENES[@]}" || { echo "!! no se pudieron enviar las imagenes" >&2; exit 1; }
   "${SSH[@]}" "docker image inspect ${IMAGENES[*]} >/dev/null" || {
     echo "!! el servidor no tiene las imagenes tras el docker load" >&2
     exit 1

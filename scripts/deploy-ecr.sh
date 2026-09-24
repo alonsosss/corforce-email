@@ -125,7 +125,7 @@ en_infra() { [[ " ${INFRA[*]} " == *" $1 "* ]]; }
 
 # MinIO corre la imagen propia (docs/adr/0016), que no esta en ningun registro y el perfil pide con
 # pull_policy: never. Su etiqueta cambia con su receta: si el servidor no la tiene, se construye aqui
-# (el servidor nunca compila) y viaja con docker save | ssh docker load, como las de los servicios.
+# (el servidor nunca compila) y viaja con enviar_imagenes, como las de los servicios.
 enviar_imagen_minio() {
   en_infra minio || return 0
   local imagen
@@ -133,7 +133,7 @@ enviar_imagen_minio() {
   "${SSH[@]}" "docker image inspect $imagen >/dev/null 2>&1" && return 0
   echo ">> minio: el servidor no tiene $imagen; se construye aqui y se envia"
   scripts/imagen-minio.sh --construir || exit 1
-  docker save "$imagen" | gzip | "${SSH[@]}" 'gunzip | docker load' >/dev/null
+  enviar_imagenes "$imagen" || exit 1
   "${SSH[@]}" "docker image inspect $imagen >/dev/null" || {
     echo "!! el servidor no tiene $imagen tras el docker load" >&2
     exit 1
@@ -430,7 +430,7 @@ else
   echo ">> build local OK"
   IMAGENES=()
   for s in "${SVCS[@]}"; do IMAGENES+=("$NS/$s:$TAG"); done
-  docker save "${IMAGENES[@]}" | gzip | "${SSH[@]}" 'gunzip | docker load' >/dev/null
+  enviar_imagenes "${IMAGENES[@]}" || { echo "!! no se pudieron enviar las imagenes" >&2; exit 1; }
   "${SSH[@]}" "docker image inspect ${IMAGENES[*]} >/dev/null" || {
     echo "!! el servidor no tiene las imagenes tras el docker load" >&2
     exit 1
