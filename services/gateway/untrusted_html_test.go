@@ -28,7 +28,7 @@ func pedirDocumento(t *testing.T, tbl *routeTable, path string) *http.Response {
 	r := chi.NewRouter()
 	r.Use(middleware.SecureHeaders)
 	r.Route("/api/v1", func(r chi.Router) {
-		mountPublic(r, tbl, tokenInternoPrueba, func(next http.Handler) http.Handler { return next })
+		mountPublic(r, tbl, tokenInternoPrueba, publicLimits{webhook: passThrough, strict: passThrough})
 	})
 	front := httptest.NewServer(r)
 	t.Cleanup(front.Close)

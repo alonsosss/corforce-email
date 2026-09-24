@@ -168,7 +168,7 @@ func main() {
 		// Rutas publicas declaradas en la tabla: webhooks de proveedores y enlaces que
 		// llegan por correo. Sin JWT; el servicio verifica la firma o el enlace. Las de un
 		// servicio de celda se enrutan por el segmento {cell} (cells.go).
-		mountPublic(r, table, internalToken, webhookLimiter.Limit)
+		mountPublic(r, table, internalToken, publicLimits{webhook: webhookLimiter.Limit, strict: authLimiter.Limit})
 
 		// Prefijos que autentica el propio servicio con su sesion (el webmail): sin JWT
 		// ni RBAC, con el limitador general y el estricto en su inicio de sesion, y los de un
