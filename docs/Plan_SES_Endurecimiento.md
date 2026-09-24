@@ -127,8 +127,8 @@ una funcion que hoy no se usa (no hay campanas). Se hace al activar el marketing
 registro A `clics` en Cloudflare sin proxy; el nombre en el `ADDITIONAL_SAN` de `acme`; un bloque
 `server` en `selfhosted/edge/templates` activado por `EDGE_TRACKING_HOST` (vacio lo desactiva)
 que reenvia con `proxy_ssl_server_name on` y `Host r.<region>.awstrack.me`; y
-`SES_TRACKING_DOMAIN` en `setup-ses.sh`. Hasta entonces SES reescribe los enlaces a su dominio de
-seguimiento, que funciona.
+`SES_TRACKING_DOMAIN` en `setup-ses.sh`. Hecho el 2026-09-24: todo el orden aplicado y el conjunto
+`cfm-marketing` reescribe los enlaces a `clics.core-force.com` con HTTPS obligatorio.
 
 ## 6. Fase E: limpieza
 

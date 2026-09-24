@@ -912,7 +912,8 @@ contra el perfil (`test-selfhosted-profile.sh` y a mano el 2026-09-17):
   `Authorization`, verificando el certificado de AWS y solo con GET y HEAD. Requiere el nombre en
   `ADDITIONAL_SAN` de acme, el subdominio verificado en SES y `SES_TRACKING_DOMAIN` en
   `ops/aws/setup-ses.sh`; vacio, el bloque no existe. En produccion (2026-09-23): `clics.core-force.com`,
-  registro A sin proxy, verificado en SES como dominio de envio de la plataforma por `domain-service`.
+  registro A sin proxy, verificado en SES como dominio de envio de la plataforma por `domain-service`, y
+  `SES_TRACKING_DOMAIN` aplicado en la pila el 2026-09-24 (`cfm-marketing`, HTTPS obligatorio).
 * Certificado de acme en produccion: `AUTODISCOVER_SAN=n`. Con el reto DNS de Cloudflare solo se certifican
   nombres de las zonas que alcanza el token (`core-force.com`); con `y`, acme anade `autoconfig` y
   `autodiscover` de cada dominio de las empresas (`mentorenergy.uk`), el reto falla y NO se emite ningun
@@ -1420,7 +1421,8 @@ servidor (hoy 89.58.10.80), **sin proxy de Cloudflare** (nube gris: Cloudflare n
 recibe correo de internet, solo de las integraciones autenticadas. SPF y DKIM no cambian: el correo sale por SES con la identidad
 verificada de cada empresa.
 
-**Cortafuegos (sin aplicar).** Docker publica sus puertos por delante de UFW, así que la regla de UFW no basta: el control es
+**Cortafuegos (aplicado el 2026-09-24 con `SMTP_RELAY_BIND_ADDRESS=0.0.0.0`; faltan las reglas de UFW del paso 1, que
+necesitan root y solo documentan la intención).** Docker publica sus puertos por delante de UFW, así que la regla de UFW no basta: el control es
 `SMTP_RELAY_BIND_ADDRESS` y, si se quiere acotar por origen, la cadena `DOCKER-USER`. Pasos:
 
 1. `ufw allow 2525/tcp comment 'smtp-relay STARTTLS'` y `ufw allow 2465/tcp comment 'smtp-relay TLS'` (documentan la
@@ -1436,7 +1438,8 @@ verificada de cada empresa.
 **IAM.** El SendEmail con contenido Raw (lo que envía el relay) lo autoriza SES como `ses:SendRawEmail`, no como
 `ses:SendEmail` (comprobado con la respuesta `not authorized to perform 'ses:SendRawEmail'`): quien administra la cuenta de
 AWS vuelve a aplicar la política `ses-envio` con `ops/aws/setup-iam.sh` (ya la concede) antes de abrir el relay; sin ella
-los mensajes de SMTP quedan `failed` con `AccessDeniedException`.
+los mensajes de SMTP quedan `failed` con `AccessDeniedException`. Aplicado el 2026-09-24 y comprobado con un envío por
+2525 al simulador de SES (`delivered`).
 
 **Orden de despliegue.** Política `ses-envio` al día en AWS -> secreto `API_KEY_HASH_KEY` en el almacén -> registro (`044_access_control_api_keys.sql`) -> empresa
 (`transactional/08_raw_messages.sql`) -> `access-control` -> `transactional` -> `audit` (guarda `api_key_id` en el rastro) ->
