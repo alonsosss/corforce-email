@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	"github.com/alonsosss/corforce-email/services/mail-dav/internal/domain"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -162,7 +163,13 @@ func (r *Repository) GetEvents(ctx context.Context, p domain.Principal, slug str
 }
 
 func (r *Repository) PutEvent(ctx context.Context, p domain.Principal, slug string, e domain.Event, cond domain.Precondition, lim domain.WriteLimits) (bool, error) {
-	return r.putItem(ctx, p, calendarsKind, slug, itemWrite{
+	return r.putItem(ctx, p, calendarsKind, slug, r.eventWrite(p, e), cond, lim)
+}
+
+// eventWrite es la escritura de un evento con su ocupacion: la materializada (e.BusyPlanned) o, sin ella, la
+// marca de pendiente (busy_until = -infinity) para que la complete la primera consulta de disponibilidad.
+func (r *Repository) eventWrite(p domain.Principal, e domain.Event) itemWrite {
+	return itemWrite{
 		resource: e.ResourceName, uid: e.UID, etag: e.ETag, size: int64(len(e.ICal)),
 		insert: func(ctx context.Context, cal domain.Calendar) error {
 			_, err := r.pool.Exec(ctx,
@@ -178,7 +185,16 @@ func (r *Repository) PutEvent(ctx context.Context, p domain.Principal, slug stri
 				cal.ID, p.TenantID, p.MailboxID, e.UID, e.ICal, e.ETag, e.Summary, e.FirstStart, e.LastEnd, e.ResourceName)
 			return err
 		},
-	}, cond, lim)
+		after: func(ctx context.Context, cal domain.Calendar) error {
+			var id uuid.UUID
+			if err := r.pool.QueryRow(ctx,
+				`SELECT id FROM mail_dav.events WHERE calendar_id = $1 AND tenant_id = $2 AND mailbox_id = $3 AND resource_name = $4`,
+				cal.ID, p.TenantID, p.MailboxID, e.ResourceName).Scan(&id); err != nil {
+				return err
+			}
+			return r.writeBusy(ctx, p, id, e.BusyPlanned, e.Busy, e.BusyUntil)
+		},
+	}
 }
 
 func (r *Repository) DeleteEvent(ctx context.Context, p domain.Principal, slug, resource string, cond domain.Precondition, maxChanges int) error {

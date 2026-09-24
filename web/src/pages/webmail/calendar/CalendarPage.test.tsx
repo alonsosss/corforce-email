@@ -16,6 +16,7 @@ const WEEKLY: Occurrence = {
   title: 'Comite',
   location: 'Sala 2',
   recurring: true,
+  recurrence_id: '2026-09-15T09:00:00Z',
 };
 
 const EVENT: CalendarEvent = {
@@ -29,6 +30,9 @@ const EVENT: CalendarEvent = {
   description: '',
   recurrence: { freq: 'weekly', interval: 1, count: null, until: null, by_day: ['TU'] },
   reminder_minutes: 15,
+  timezone: '',
+  attendees: [],
+  organizer: null,
 };
 
 function renderCalendar(url = '/webmail/calendar?view=month&date=2026-09-15') {
@@ -77,18 +81,21 @@ describe('calendario', () => {
     await waitFor(() => expect(list).toHaveBeenCalledTimes(2));
   });
 
-  it('editar una ocurrencia avisa de que cambia la serie y guarda con If-Match', async () => {
+  it('editar la serie desde una ocurrencia guarda con If-Match y conserva la zona', async () => {
     const user = userEvent.setup();
     vi.spyOn(webmailApi, 'calendarOccurrences').mockResolvedValue([WEEKLY]);
     vi.spyOn(webmailApi, 'calendarEvent').mockResolvedValue(EVENT);
     const update = vi
       .spyOn(webmailApi, 'updateCalendarEvent')
-      .mockImplementation(async (_id, input) => ({ ...EVENT, ...input }));
+      .mockImplementation(async (_id, input) => ({ ...EVENT, ...input, invitations: null }));
     renderCalendar();
 
     await user.click(await screen.findByRole('button', { name: /Comite/ }));
     const dialog = await screen.findByRole('dialog');
-    expect(within(dialog).getAllByText(t('webmail.calendar.seriesNote')).length).toBeGreaterThan(0);
+    await user.selectOptions(
+      within(dialog).getByLabelText(t('webmail.calendar.scope')),
+      t('webmail.calendar.scope.series'),
+    );
     const title = within(dialog).getByLabelText(new RegExp(t('webmail.calendar.eventTitle')));
     await user.clear(title);
     await user.type(title, 'Comite mensual');
@@ -101,8 +108,109 @@ describe('calendario', () => {
           title: 'Comite mensual',
           recurrence: expect.objectContaining({ freq: 'weekly', by_day: ['TU'] }),
           reminder_minutes: 15,
+          timezone: '',
         }),
         '"7"',
+        true,
+      ),
+    );
+  });
+
+  it('cambia o borra solo una aparicion de la serie', async () => {
+    const user = userEvent.setup();
+    vi.spyOn(webmailApi, 'calendarOccurrences').mockResolvedValue([WEEKLY]);
+    vi.spyOn(webmailApi, 'calendarEvent').mockResolvedValue(EVENT);
+    const one = vi
+      .spyOn(webmailApi, 'updateCalendarOccurrence')
+      .mockImplementation(async () => ({ ...EVENT, invitations: null }));
+    const removeOne = vi
+      .spyOn(webmailApi, 'deleteCalendarOccurrence')
+      .mockResolvedValue({ ...EVENT, invitations: null });
+    renderCalendar();
+
+    await user.click(await screen.findByRole('button', { name: /Comite/ }));
+    let dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByLabelText(t('webmail.calendar.scope'))).toHaveValue('one');
+    expect(within(dialog).queryByLabelText(t('webmail.calendar.repeat'))).not.toBeInTheDocument();
+    const title = within(dialog).getByLabelText(new RegExp(t('webmail.calendar.eventTitle')));
+    await user.clear(title);
+    await user.type(title, 'Comite especial');
+    await user.click(within(dialog).getByRole('button', { name: t('common.save') }));
+    await waitFor(() =>
+      expect(one).toHaveBeenCalledWith(
+        'ev1',
+        '2026-09-15T09:00:00Z',
+        expect.objectContaining({ title: 'Comite especial', recurrence: null }),
+        '"7"',
+        true,
+      ),
+    );
+
+    await user.click(await screen.findByRole('button', { name: /Comite/ }));
+    dialog = await screen.findByRole('dialog');
+    await user.click(within(dialog).getByRole('button', { name: t('webmail.calendar.deleteOne') }));
+    const confirm = screen.getByRole('dialog');
+    expect(
+      within(confirm).getByText(t('webmail.calendar.deleteOneConfirm', { title: 'Comite' })),
+    ).toBeInTheDocument();
+    await user.click(within(confirm).getByRole('button', { name: t('common.delete') }));
+    await waitFor(() =>
+      expect(removeOne).toHaveBeenCalledWith('ev1', '2026-09-15T09:00:00Z', '"7"', true),
+    );
+  });
+
+  it('con invitados muestra su disponibilidad y envia la invitacion', async () => {
+    const user = userEvent.setup();
+    vi.spyOn(webmailApi, 'calendarOccurrences').mockResolvedValue([]);
+    const availability = vi.spyOn(webmailApi, 'availability').mockResolvedValue([
+      {
+        address: 'bea@empresa.pe',
+        known: true,
+        partial: false,
+        busy: [{ start: '2026-09-15T00:00:00Z', end: '2026-09-16T00:00:00Z' }],
+      },
+    ]);
+    const create = vi
+      .spyOn(webmailApi, 'createCalendarEvent')
+      .mockImplementation(async (input) => ({
+        ...input,
+        id: 'n1',
+        etag: '"1"',
+        organizer: { email: 'ana@empresa.pe', name: 'Ana' },
+        invitations: { method: 'REQUEST', recipients: 1, sent: true },
+      }));
+    renderCalendar();
+
+    await user.click(await screen.findByRole('button', { name: t('webmail.calendar.new') }));
+    const dialog = screen.getByRole('dialog');
+    await user.type(
+      within(dialog).getByLabelText(new RegExp(t('webmail.calendar.eventTitle'))),
+      'Revision',
+    );
+    const start = within(dialog).getByLabelText(t('webmail.calendar.start'));
+    await user.clear(start);
+    await user.type(start, '2026-09-15');
+    const end = within(dialog).getByLabelText(t('webmail.calendar.end'));
+    await user.clear(end);
+    await user.type(end, '2026-09-15');
+    await user.type(
+      within(dialog).getByLabelText(t('webmail.calendar.attendees')),
+      'bea@empresa.pe{enter}',
+    );
+    await waitFor(() => expect(availability).toHaveBeenCalled());
+    expect(
+      await within(dialog).findByText(t('webmail.calendar.availability.busyThen')),
+    ).toBeInTheDocument();
+    expect(within(dialog).getByLabelText(t('webmail.calendar.notify'))).toBeChecked();
+    await user.click(within(dialog).getByRole('button', { name: t('common.save') }));
+    await waitFor(() =>
+      expect(create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: 'Revision',
+          attendees: [{ email: 'bea@empresa.pe', name: '', partstat: 'NEEDS-ACTION' }],
+          timezone: expect.any(String),
+        }),
+        true,
       ),
     );
   });
@@ -112,7 +220,13 @@ describe('calendario', () => {
     vi.spyOn(webmailApi, 'calendarOccurrences').mockResolvedValue([]);
     const create = vi
       .spyOn(webmailApi, 'createCalendarEvent')
-      .mockImplementation(async (input) => ({ ...input, id: 'n1', etag: '"1"' }));
+      .mockImplementation(async (input) => ({
+        ...input,
+        id: 'n1',
+        etag: '"1"',
+        organizer: null,
+        invitations: null,
+      }));
     renderCalendar();
 
     await user.click(await screen.findByRole('button', { name: t('webmail.calendar.new') }));
@@ -143,6 +257,7 @@ describe('calendario', () => {
           start: '2026-09-20T00:00:00Z',
           end: '2026-09-23T00:00:00Z',
         }),
+        true,
       ),
     );
   });
@@ -155,6 +270,10 @@ describe('calendario', () => {
     renderCalendar('/webmail/calendar?view=agenda&date=2026-09-15');
 
     await user.click(await screen.findByRole('button', { name: /Comite/ }));
+    await user.selectOptions(
+      await screen.findByLabelText(t('webmail.calendar.scope')),
+      t('webmail.calendar.scope.series'),
+    );
     await user.click(
       await screen.findByRole('button', { name: t('webmail.calendar.deleteSeries') }),
     );
@@ -163,6 +282,6 @@ describe('calendario', () => {
       within(confirm).getByText(t('webmail.calendar.deleteSeriesConfirm', { title: 'Comite' })),
     ).toBeInTheDocument();
     await user.click(within(confirm).getByRole('button', { name: t('common.delete') }));
-    await waitFor(() => expect(remove).toHaveBeenCalledWith('ev1'));
+    await waitFor(() => expect(remove).toHaveBeenCalledWith('ev1', true));
   });
 });

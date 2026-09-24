@@ -462,7 +462,7 @@ func TestCalendarioPorHTTP(t *testing.T) {
 	event := `{"title":"Revision","start":"2026-09-25T10:00:00Z","end":"2026-09-25T11:00:00Z","all_day":false,"location":"","description":"",` +
 		`"recurrence":{"freq":"weekly","interval":1,"count":null,"until":null,"by_day":["MO"]},"reminder_minutes":15}`
 	rec = do(env.h, http.MethodPost, BasePath+"/calendar/events", body(event), jsonOrigin, cookie)
-	var got eventDTO
+	var got savedEventDTO
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("crear: %d %s", rec.Code, rec.Body)
 	}

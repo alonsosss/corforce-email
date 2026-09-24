@@ -125,7 +125,9 @@ type publicRouteSpec struct {
 	Service string `json:"service"`
 	// Limit "webhook" saca la ruta del cupo general por IP y la pasa por el de webhooks: un
 	// proveedor (SNS) entrega desde pocas IP y a rafagas. Solo para rutas que autentica el
-	// servicio con la firma del proveedor.
+	// servicio con la firma del proveedor. "strict" la pasa ademas por el cupo estricto por IP
+	// (el de autenticacion): una accion anonima con efecto, como reservar una cita en la pagina
+	// publica, que no debe poder repetirse a rafagas desde una IP.
 	Limit string `json:"limit,omitempty"`
 	// Content "untrusted_html" declara que la ruta devuelve HTML escrito por un tercero (el
 	// correo de una empresa visto en el navegador): el gateway conserva la CSP del servicio,
@@ -150,6 +152,7 @@ type publicRouteSpec struct {
 // Valores admitidos en publicRouteSpec.
 const (
 	publicLimitWebhook          = "webhook"
+	publicLimitStrict           = "strict"
 	publicContentUntrustedHTML  = "untrusted_html"
 	publicContentEmbeddableHTML = "embeddable_html"
 	publicCORSService           = "service"
@@ -341,8 +344,8 @@ func (t *routeTable) validate() error {
 		if err := t.validatePublicCell(p); err != nil {
 			return err
 		}
-		if p.Limit != "" && p.Limit != publicLimitWebhook {
-			return fmt.Errorf("tabla de rutas: limite %q invalido en la ruta publica %q (solo %q)", p.Limit, p.Path, publicLimitWebhook)
+		if p.Limit != "" && p.Limit != publicLimitWebhook && p.Limit != publicLimitStrict {
+			return fmt.Errorf("tabla de rutas: limite %q invalido en la ruta publica %q (solo %q o %q)", p.Limit, p.Path, publicLimitWebhook, publicLimitStrict)
 		}
 		if err := validatePublicExtras(p); err != nil {
 			return err

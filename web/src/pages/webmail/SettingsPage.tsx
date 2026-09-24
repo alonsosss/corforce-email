@@ -5,6 +5,7 @@ import { Card, ErrorState, PageHeader, Skeleton, Tabs } from '@/design/component
 import { t } from '@/i18n';
 import { paths } from '@/paths';
 import { VacationForm } from '@/pages/shared/VacationForm';
+import { BookingSettings } from './settings/BookingSettings';
 import { FiltersSettings } from './settings/FiltersSettings';
 import { LargeFilesSettings } from './settings/LargeFilesSettings';
 import { PasswordSettings } from './settings/PasswordSettings';
@@ -19,6 +20,7 @@ const TABS = [
   'forwarding',
   'password',
   'files',
+  'booking',
 ] as const;
 type SettingsTab = (typeof TABS)[number];
 
@@ -30,6 +32,7 @@ const TAB_LABELS = {
   forwarding: 'webmail.settings.tab.forwarding',
   password: 'webmail.settings.tab.password',
   files: 'webmail.settings.tab.files',
+  booking: 'webmail.settings.tab.booking',
 } as const;
 
 function parseTab(raw: string | null): SettingsTab {
@@ -61,6 +64,7 @@ export default function SettingsPage() {
         {tab === 'forwarding' ? <FiltersSettings part="forwarding" /> : null}
         {tab === 'password' ? <PasswordSettings /> : null}
         {tab === 'files' ? <LargeFilesSettings /> : null}
+        {tab === 'booking' ? <BookingSettings /> : null}
       </div>
     </div>
   );

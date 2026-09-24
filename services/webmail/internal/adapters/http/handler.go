@@ -143,7 +143,23 @@ func (h *Handler) Routes() http.Handler {
 			r.Post("/large-files", h.UploadLargeFile)
 			r.Delete("/large-files/{id}", h.RevokeLargeFile)
 			h.assistantRoutes(r)
+			r.Put("/calendar/events/{id}/occurrences/{rid}", h.UpdateOccurrence)
+			r.Delete("/calendar/events/{id}/occurrences/{rid}", h.DeleteOccurrence)
+			r.Get("/invitations/{folder}/{uid}", h.Invitation)
+			r.Post("/invitations/{folder}/{uid}/respond", h.RespondInvitation)
+			r.Post("/invitations/{folder}/{uid}/apply", h.ApplyInvitation)
+			r.Get("/availability", h.Availability)
+			r.Get("/booking", h.BookingSettings)
+			r.Put("/booking", h.SaveBookingSettings)
 		})
+	})
+	// Pagina publica de citas: sin sesion, con las mismas cabeceras del API y el mismo control de origen en la
+	// reserva. El gateway la declara como ruta publica con su limite por IP (routes.json).
+	r.Route(PublicBookingPath, func(r chi.Router) {
+		r.Use(apiHeaders)
+		r.Use(h.origins.Middleware)
+		r.Get("/{cell}/{tenant}/{page}", h.PublicBooking)
+		r.Post("/{cell}/{tenant}/{page}", h.Book)
 	})
 	return r
 }
@@ -198,6 +214,7 @@ var rejectionStatus = map[domain.RejectionKind]int{
 	domain.RejectQuota:        http.StatusInsufficientStorage,
 	domain.RejectRateLimited:  http.StatusTooManyRequests,
 	domain.RejectUnavailable:  http.StatusServiceUnavailable,
+	domain.RejectConflict:     http.StatusConflict,
 }
 
 // writeRejection entrega un rechazo de mail-dav tal cual: codigo, mensaje y detalles, con la version

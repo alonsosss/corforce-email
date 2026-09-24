@@ -55,8 +55,7 @@ func TestFicherosGrandesConLaEmpresaYElBuzonDeLaSesion(t *testing.T) {
 	files := &fakeLargeFiles{}
 	svc := largeFilesHarness(t, files)
 	ctx := context.Background()
-	want := domain.MailboxRef{TenantID: testTenant, MailboxID: testMailbox}
-	if _, err := svc.UploadLargeFile(ctx, davSession(), "a.pdf", strings.NewReader("contenido"), domain.LargeFileOptions{}); err != nil || files.mb != want || files.body != "contenido" {
+	if _, err := svc.UploadLargeFile(ctx, davSession(), "a.pdf", strings.NewReader("contenido"), domain.LargeFileOptions{}); err != nil || files.mb.TenantID != testTenant || files.mb.MailboxID != testMailbox || files.body != "contenido" {
 		t.Fatalf("subida: %v %+v", err, files)
 	}
 	if l, err := svc.LargeFiles(ctx, davSession()); err != nil || !l.Enabled {

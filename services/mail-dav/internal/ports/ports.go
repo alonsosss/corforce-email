@@ -95,3 +95,34 @@ type MailboxIndex interface {
 	// mayores que after, cuyo elemento mas antiguo es anterior a before.
 	StaleMailboxIDs(ctx context.Context, tenantID uuid.UUID, before time.Time, after uuid.UUID, limit int) ([]uuid.UUID, error)
 }
+
+// SchedulingStore es la planificacion sobre los calendarios (migracion 05_scheduling.sql): la ocupacion
+// materializada de los eventos, la direccion de cada buzon y las paginas de citas. Lo que cruza buzones de la
+// misma empresa (resolver direcciones, leer ocupacion, encontrar el dueno de una pagina) solo devuelve ids e
+// intervalos; lo demas se acota al buzon del Principal como CalendarStore.
+type SchedulingStore interface {
+	// ReplaceBusy materializa de nuevo la ocupacion de un evento si su etag sigue siendo etag.
+	ReplaceBusy(ctx context.Context, p domain.Principal, eventID uuid.UUID, etag string, busy []domain.Interval, until *time.Time) (bool, error)
+	// EventsByID lee con su iCalendar los eventos del buzon con esos ids, de cualquiera de sus calendarios.
+	EventsByID(ctx context.Context, p domain.Principal, ids []uuid.UUID) ([]domain.Event, error)
+	// EventByUID lee el evento del calendario con ese UID; domain.ErrNotFound si no esta.
+	EventByUID(ctx context.Context, p domain.Principal, slug, uid string) (domain.Event, error)
+	// RegisterAddress anota la direccion del buzon del Principal.
+	RegisterAddress(ctx context.Context, p domain.Principal, address string) error
+	// ResolveMailboxes devuelve el buzon de la empresa de cada direccion registrada (hasta 50).
+	ResolveMailboxes(ctx context.Context, p domain.Principal, addresses []string) (map[string]uuid.UUID, error)
+	// BusyIntervals devuelve la ocupacion materializada de esos buzones en [from, to): inicio y fin.
+	BusyIntervals(ctx context.Context, p domain.Principal, mailboxes []uuid.UUID, from, to time.Time) (map[uuid.UUID][]domain.Interval, error)
+	// PendingBusy devuelve, por buzon, hasta limit eventos cuya ocupacion no esta materializada hasta until.
+	PendingBusy(ctx context.Context, p domain.Principal, mailboxes []uuid.UUID, until time.Time, limit int) (map[uuid.UUID][]uuid.UUID, error)
+	// BookingPage lee la pagina de citas del buzon; domain.ErrNotFound si no tiene.
+	BookingPage(ctx context.Context, p domain.Principal) (domain.BookingPage, error)
+	SaveBookingPage(ctx context.Context, p domain.Principal, page domain.BookingPage) (domain.BookingPage, error)
+	// BookingPageOwner devuelve el buzon dueno de la pagina activa de la empresa de p con ese enlace, o uuid.Nil.
+	BookingPageOwner(ctx context.Context, p domain.Principal, publicID string) (uuid.UUID, error)
+	// ReserveBooking guarda la cita y su registro en una transaccion con el cerrojo del buzon. Errores:
+	// domain.ErrBookingLimit, domain.ErrSlotUnavailable y los de PutEvent.
+	ReserveBooking(ctx context.Context, p domain.Principal, slug string, e domain.Event, b domain.Booking, lim domain.BookingLimits) error
+	// DeleteMailboxScheduling retira la direccion y la pagina de citas de un buzon dado de baja.
+	DeleteMailboxScheduling(ctx context.Context, p domain.Principal) error
+}

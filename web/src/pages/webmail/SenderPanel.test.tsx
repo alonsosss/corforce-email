@@ -91,6 +91,7 @@ describe('ficha del remitente', () => {
         location: '',
         all_day: false,
         recurring: false,
+        recurrence_id: soon,
       },
       {
         id: 'e2',
@@ -100,6 +101,7 @@ describe('ficha del remitente', () => {
         location: '',
         all_day: false,
         recurring: false,
+        recurrence_id: soon,
       },
     ]);
     const panel = renderPanel();

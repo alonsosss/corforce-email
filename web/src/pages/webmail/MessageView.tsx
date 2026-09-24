@@ -39,6 +39,7 @@ import { contactFromSender } from './contacts/contacts';
 import { applyFlagChange } from './flags';
 import { folderWithRole } from './folders';
 import { addressList } from './format';
+import { hasInvitation, InvitationCard } from './InvitationCard';
 import { MessageBody } from './MessageBody';
 import { MoveDialog } from './MoveDialog';
 import { printMessage } from './print';
@@ -373,6 +374,7 @@ export function MessageView({
           }
         />
       )}
+      {hasInvitation(data) ? <InvitationCard folder={folderName} uid={uid} /> : null}
       <MessageBody
         message={data}
         remoteAllowed={remote}

@@ -7,7 +7,9 @@ Hecho: el servicio `mail-dav` con CardDAV (contactos personales de cada buzon) y
 `VEVENT` de cada buzon), sincronizables con iOS, Thunderbird y DAVx5; su autenticacion contra `mail-auth`, el flag
 `dav_access` del buzon, los datos de conexion en la ficha del buzon y las pruebas. **Pendiente**: comparticion entre
 buzones, la libreta de solo lectura "Directorio de la empresa", limites como derechos del plan de `billing`, y de
-CalDAV lo que dice "Pendiente" al final (tareas, invitaciones, alarmas, `free-busy-query`, `PROPPATCH`). El borrado
+CalDAV lo que dice "Pendiente" al final (tareas, planificacion por CalDAV, alarmas, `free-busy-query`, `PROPPATCH`). Las
+invitaciones por correo, la disponibilidad del equipo, la zona horaria, las apariciones sueltas y la pagina de citas
+estan hechas (2026-09-24, "Invitaciones, disponibilidad y citas"). El borrado
 de los contactos y de los calendarios de un buzon borrado esta hecho (2026-09-21, ver "Borrado de los datos de un
 buzon"). Cierra el diseno de `Plan_Estrategico_Mejoras_Correo.md`, C3 fase 2. La fase 1 (libreta compartida de la
 empresa en el webmail) ya estaba hecha y no depende de esto.
@@ -88,8 +90,8 @@ Los objetos importados se validan y se acotan: un vCard o un iCalendar es entrad
 * **Traductores** (`internal/domain/contact_fields.go`, `event_fields.go`): vCard 4.0 e iCalendar con un `VEVENT`,
   textos escapados (RFC 6350 y 5545) y plegados a 75 octetos; todo lo generado vuelve a pasar `ParseVCard` y
   `ParseCalendarObject` (fuzz incluido). Al actualizar se conserva todo lo que la API no expresa (version y UID del vCard,
-  `PHOTO`, `X-*`, grupos de etiquetas, `ATTENDEE`, otros `VALARM`, `VTIMEZONE`) y la linea original de cada valor que no
-  cambio. Si cambia el inicio, el tipo de dia o la repeticion, se retiran `EXDATE`, `RDATE` y las sobrescrituras
+  `PHOTO`, `X-*`, grupos de etiquetas, otros `VALARM`, `VTIMEZONE`) y la linea original de cada valor que no cambio; desde
+  2026-09-24 la API expresa tambien la zona, el organizador y los invitados (ver "Invitaciones, disponibilidad y citas"). Si cambia el inicio, el tipo de dia o la repeticion, se retiran `EXDATE`, `RDATE` y las sobrescrituras
   (nombran apariciones que ya no existen); si el inicio tenia una zona IANA, las horas nuevas se escriben en esa zona. Una
   regla que la API no expresa (`HOURLY`, `BYSETPOS`...) se lee como sin repeticion o simplificada y, si no se toca, se
   conserva tal cual.
@@ -99,6 +101,105 @@ Los objetos importados se validan y se acotan: un vCard o un iCalendar es entrad
 * **Topes nuevos** (`.env.example`, servidos en `/internal/mail-dav/meta`): `MAIL_DAV_MAX_IMPORT_BYTES` (4 MiB),
   `MAIL_DAV_MAX_IMPORT_CARDS` (1000), `MAIL_DAV_MAX_EVENT_WINDOW_DAYS` (62), `MAIL_DAV_MAX_OCCURRENCES` (5000),
   `MAIL_DAV_CONTACTS_PAGE_SIZE` (50) y `MAIL_DAV_MAX_CONTACTS_PAGE_SIZE` (100).
+
+### Invitaciones, disponibilidad y citas (2026-09-24)
+
+`docs/Plan_Webmail_Innovador.md`, bloque C3 (G9 a G12, decisiones 6 a 8). Migracion de empresa
+`migrations/tenant/canonical/mail-dav/05_scheduling.sql`.
+
+* **Zona horaria (G9).** `EventInput.timezone` (IANA). Con zona, `DTSTART`/`DTEND` se escriben con `TZID` y el objeto
+  lleva un `VTIMEZONE` generado de la base embebida (`time/tzdata`, `vtimezone.go`): una observancia `STANDARD` o
+  `DAYLIGHT` por clase de transicion con su regla anual (`FREQ=YEARLY;BYMONTH;BYDAY`) si una regla describe las de los
+  doce anios alrededor del evento, o sus fechas enumeradas (`RDATE`) si no. Probado que, leido con el evaluador propio de
+  `VTIMEZONE` (como lo leeria un cliente que no conoce el nombre), da los mismos instantes que la zona real de 2026 a
+  2031 en Madrid, Nueva York, Sidney, Lima, Santiago y Calcuta. La expansion sigue el reloj de pared, asi que una serie
+  semanal de las 10:00 en Madrid es 08:00 UTC en verano y 09:00 en invierno (probado). Vacio en una actualizacion conserva
+  la zona del evento; `UTC` la quita; cambiarla cuenta como cambiar el inicio (se retiran las excepciones). Un dia
+  completo no lleva zona.
+* **Una sola aparicion (G9).** `PUT` y `DELETE /calendar/events/{id}/occurrences/{rid}`, con `rid` el `recurrence_id` que
+  ahora devuelve cada aparicion (su inicio original). Cambiar escribe (o reemplaza) la sobrescritura `RECURRENCE-ID` con
+  las horas en la forma del `DTSTART` de la serie (`TZID`, UTC, fecha o flotante) y los invitados de la serie; borrar
+  anade el `EXDATE` y retira la sobrescritura. Una `rid` que no es una aparicion viva es 404. Sube la `SEQUENCE`.
+* **Reuniones (G10).** `EventInput.organizer` y `attendees` (`email`, `name`, `partstat`). El webmail pone siempre al buzon
+  de la sesion como organizador si hay invitados. Al cambiar la hora el organizador pide respuesta de nuevo (`PARTSTAT`
+  vuelve a `NEEDS-ACTION` con `RSVP`); un invitado que no cambio conserva su linea original. La copia de una reunion que
+  organiza otro conserva su `ORGANIZER`.
+* **iTIP (G10), `itip.go`.** `ParseInvitation` acota el iCalendar de un correo como un `PUT` (bytes, lineas,
+  anidamiento, UTF-8) y exige un `METHOD` `REQUEST`, `REPLY` o `CANCEL`; `REQUEST` y `CANCEL` deben ser, sin `METHOD`, un
+  objeto de calendario valido (`ParseCalendarObject`), y un `REPLY` solo necesita UID y el invitado que responde. Se
+  guarda siempre sin `METHOD`. `BuildInvitation` escribe `REQUEST` (la serie y sus sobrescrituras, sin `VALARM`) o `CANCEL`
+  (`STATUS:CANCELLED`, `SEQUENCE+1`). `RespondToInvitation` guarda la copia del invitado con su `PARTSTAT` y escribe el
+  `REPLY`; aceptar o dejar en tentativo guarda (reemplaza si ya estaba con ese UID, salvo que la guardada sea mas
+  reciente), rechazar la quita. `ApplyReply` solo cuenta si el remitente del correo es el propio invitado, si el evento
+  lo organiza el buzon y si no es de una `SEQUENCE` anterior; `CANCEL` solo si lo envia el organizador del evento (con
+  `RECURRENCE-ID`, borra esa aparicion). Ida y vuelta y fuzz (`FuzzParseInvitation`, 2,5 millones de entradas sin
+  panico) probados.
+* **Disponibilidad (G11).** Cada evento materializa al guardarse su ocupacion en `mail_dav.event_busy` (inicio y fin de
+  sus apariciones que ocupan tiempo: sin `TRANSP:TRANSPARENT`, sin `STATUS:CANCELLED` y, un dia completo, solo con
+  `TRANSP:OPAQUE`) desde `MAIL_DAV_BUSY_LOOKBACK_DAYS` atras hasta `MAIL_DAV_BUSY_HORIZON_DAYS` adelante, con
+  `MAIL_DAV_MAX_BUSY_PER_EVENT` tramos como mucho; `events.busy_until` dice hasta donde (`NULL`: todas). Los eventos
+  anteriores a la migracion quedan con `-infinity` (pendientes) y los completa, con la identidad de su propio buzon, la
+  primera consulta que los necesita (hasta `MAIL_DAV_BUSY_REFRESH_MAX`; `partial` si quedan). La direccion de cada buzon
+  (`mail_dav.mailbox_addresses`) la registra el propio buzon al usar el calendario (la de `mail-auth` en DAV, la de la
+  sesion en el webmail por `X-Mailbox-Address`). Las politicas de fila dejan ver solo el buzon de la sesion; cruzar
+  buzones lo hacen funciones `SECURITY DEFINER` (`search_path` fijo, empresa de la sesion o `42501`, topes de filas,
+  solo `EXECUTE` para `mail_dav_service`): `resolve_busy_mailboxes` (direccion a buzon, hasta 50),
+  `busy_intervals` (tres columnas: buzon, inicio y fin; ventana de 62 dias como mucho) y `busy_pending_events` (ids).
+  Probado contra Postgres con el rol de servicio: otra empresa no aparece ni pidiendola por id, la sesion no puede
+  preguntar por otra empresa ni sin sesion, la tabla no se ve fuera del buzon, y quitar el filtro de empresa de
+  `busy_intervals` hace fallar la prueba (mutacion revertida).
+* **Citas (G12).** `mail_dav.booking_pages` (una por buzon: titulo, duracion, franjas por dia, antelacion minima y
+  maxima, margen, tope diario, zona, activa, y el dueno que pone el webmail con la sesion) y `mail_dav.bookings` (solo lo
+  que piden los topes: pagina, evento, horas y SHA-256 del correo del visitante con el id de la pagina; lo de mas de dos
+  dias se retira). El enlace es un identificador de 144 bits aleatorios que se puede regenerar. La pagina publica llega
+  sin buzon: `booking_page_owner` (`SECURITY DEFINER`, solo paginas activas de la empresa de la sesion) da el dueno y
+  desde ahi se trabaja con su identidad. Reservar comprueba que el hueco sea uno de la pagina y este libre, y guarda el
+  evento (dueno organizador que ya acepto, visitante invitado, la nota solo en la descripcion del dueno) y la reserva en
+  una transaccion con el cerrojo del buzon, con los topes diario (`daily_limit`, techo `MAIL_DAV_BOOKING_MAX_DAILY`) y por
+  visitante (`MAIL_DAV_BOOKING_MAX_PER_VISITOR`); diez reservas simultaneas del mismo hueco dejan una (probado). La
+  invitacion al visitante no lleva la descripcion.
+
+**Contratos de la API interna** (`/internal/mail-dav`, token interno; con buzon salvo las de `booking/public`):
+
+| Metodo y ruta | Entrada | Salida |
+|---|---|---|
+| `PUT /calendar/events/{id}/occurrences/{rid}` | evento (`title`, `start`, `end`, `all_day`, `location`, `description`), `If-Match` | evento |
+| `DELETE /calendar/events/{id}/occurrences/{rid}` | `If-Match` | evento |
+| `POST /calendar/events/{id}/itip` | `{method: REQUEST\|CANCEL}` | `{method, ical, recipients[], event}` |
+| `POST /itip/inspect` | `{ical, addresses[]}` | invitacion con `event_id`, `attendee`, `partstat`, `is_organizer` |
+| `POST /itip/respond` | `{ical, addresses[], response}` | `{reply, organizer, attendee, event_id}` |
+| `POST /itip/apply` | `{ical, from, addresses[]}` | `{method, changed, event_id}` |
+| `POST /availability` | `{addresses[], start, end}` | `[{address, known, partial, busy[{start, end}]}]` |
+| `GET` / `PUT /booking` | configuracion (`weekly` como `{"MO": [{"start":"09:00","end":"13:00"}]}`), `owner_name`, `regenerate_link` | pagina con `public_id` y dueno |
+| `GET /booking/public/{tenant}/{page}?start&end` | | pagina, `owner_address` (solo para el webmail) y `slots[]` |
+| `POST /booking/public/{tenant}/{page}/reservations` | `{start, name, email, note}` | `{event_id, title, start, end, timezone, owner, invitation}` |
+
+Los eventos ganan `timezone`, `organizer` y `attendees`; las apariciones, `recurrence_id`. Errores nuevos: 409
+`SLOT_UNAVAILABLE` y 429 `LIMIT_EXCEEDED` (`limit: bookings`, con `Retry-After`). El cupo de `booking/public` es por
+empresa, no por buzon.
+
+**El webmail** envia desde el buzon, por su `Sender` (el submission de la celda, autenticado como el buzon), un correo
+`multipart/mixed` con el texto y el iCalendar en `text/calendar; method=...` mas el mismo `.ics` adjunto: `REQUEST` al
+crear o cambiar una reunion que organiza (y una aparicion), `CANCEL` al borrarla, `REPLY` al organizador al responder
+(desde la direccion invitada, que debe ser un remitente del buzon). El texto del correo es del servidor
+(`domain/invitation_mail.go`). Un fallo del envio no deshace el cambio del calendario: la respuesta lo dice
+(`invitations.sent`). Rutas: `/calendar/events/{id}/occurrences/{rid}`, `/invitations/{folder}/{uid}` (`GET`,
+`/respond`, `/apply`), `/availability?addresses=&start=&end=`, `/booking`, y `?notify=false` en los cambios del
+calendario para no avisar. La pagina publica es `/api/v1/public/booking/{cell}/{tenant}/{page}` (`GET` huecos, `POST`
+reservar), ruta publica del gateway hacia el webmail de la celda del enlace, con el cupo general y, la reserva, el
+estricto por IP (`"limit": "strict"` en `routes.json`); el webmail rechaza una celda que no es la suya, comprueba que el
+dueno sea un buzon de su celda (sus remitentes) antes de reservar, ignora sin reservar lo que rellena la trampa para
+robots y envia la invitacion al visitante con copia al dueno desde el buzon del dueno, que es la confirmacion.
+
+**Configuracion nueva** (`.env.example`; todo arranca con sus valores): `MAIL_DAV_BUSY_HORIZON_DAYS` (400, `0` apaga la
+planificacion y sus rutas responden 503), `MAIL_DAV_BUSY_LOOKBACK_DAYS` (7), `MAIL_DAV_MAX_BUSY_PER_EVENT` (1000),
+`MAIL_DAV_BUSY_REFRESH_MAX` (500), `MAIL_DAV_AVAILABILITY_MAX_ADDRESSES` (20, hasta 50), `MAIL_DAV_BOOKING_MAX_DAILY` (50),
+`MAIL_DAV_BOOKING_MAX_PER_VISITOR` (2), `MAIL_DAV_BOOKING_MAX_SLOTS` (300) y `MAIL_DAV_BOOKING_MAX_WINDOW_DAYS` (31).
+
+**Limites conocidos.** Un `REPLY` o un `CANCEL` falsificado con el `From` del invitado o del organizador pasaria la
+comprobacion de remitente: el escudo antifraude del lector (SPF, DKIM y DMARC) es lo que lo delata. Una serie sin fin se
+materializa hasta el horizonte y se completa cuando una consulta lo pasa. Un buzon que nunca uso el calendario aparece
+como "sin datos" (`known: false`). Las invitaciones no se guardan en Enviados.
 
 ## Lo decidido al implementar (CardDAV)
 
@@ -506,9 +607,9 @@ un bcrypt por peticion). Un acierto recordado no pasa por el freno de `mail-auth
 
 * **Comparticion entre buzones** (`shares`, solo lectura o escritura), de libretas y de calendarios, y la libreta de
   solo lectura "Directorio de la empresa" generada desde `mail-directory`.
-* **Invitaciones y planificacion** (iTIP/iMIP, RFC 6638: `schedule-inbox`/`outbox`, `ATTENDEE`, respuestas por correo):
-  hoy un evento con asistentes se guarda y se sincroniza, pero el servidor no envia ni procesa invitaciones. Es el
-  paso siguiente natural y necesita decidir como sale el correo (Postfix del corporativo, nunca SES de marketing).
+* **Planificacion por CalDAV** (RFC 6638: `schedule-inbox`/`outbox`, `CALDAV:schedule-*`): las invitaciones iMIP las
+  envia y procesa el webmail (seccion "Invitaciones, disponibilidad y citas"); un cliente CalDAV que crea una reunion
+  la guarda y la sincroniza, pero el servidor no envia su invitacion.
 * **Alarmas** (`VALARM`): se guardan y se devuelven; el servidor no las dispara y no se pueden consultar.
 * **Tareas** (`VTODO`) y diarios: fuera de la primera version (ver arriba).
 * `free-busy-query`, `PROPPATCH` (renombrar o pintar un calendario o una libreta desde el cliente),

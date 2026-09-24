@@ -83,7 +83,9 @@
     {"method": "POST", "path": "/public/mail-security/quarantine/{cell}/discard", "service": "mail-security"},
     {"method": "GET",  "path": "/public/mail-directory/mta-sts/{cell}/{domain}", "service": "mail-directory"},
     {"method": "GET",  "path": "/public/files/{tenant}/{file}",               "service": "mail-files"},
-    {"method": "POST", "path": "/public/files/{tenant}/{file}",               "service": "mail-files", "transfer": "download"}
+    {"method": "POST", "path": "/public/files/{tenant}/{file}",               "service": "mail-files", "transfer": "download"},
+    {"method": "GET",  "path": "/public/booking/{cell}/{tenant}/{page}",     "service": "webmail"},
+    {"method": "POST", "path": "/public/booking/{cell}/{tenant}/{page}",     "service": "webmail", "limit": "strict"}
   ],
   "self_authenticated": [
     {"prefix": "webmail", "service": "webmail",

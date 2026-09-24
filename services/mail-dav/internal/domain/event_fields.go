@@ -43,15 +43,21 @@ type Recurrence struct {
 
 // EventFields es un evento en la forma de la API estructurada. Start y End son instantes en UTC; en un evento
 // de dia completo son la medianoche UTC del primer dia y del dia siguiente al ultimo (fin exclusivo, como DTEND).
+// TimeZone es la zona IANA en la que se escriben las horas (vacio: UTC); con ella una serie semanal conserva su
+// hora de pared a traves del cambio de horario. Organizer y Attendees son la reunion (iTIP): sin invitados no hay
+// organizador.
 type EventFields struct {
 	Title           string
 	Start           time.Time
 	End             time.Time
 	AllDay          bool
+	TimeZone        string
 	Location        string
 	Description     string
 	Recurrence      *Recurrence
 	ReminderMinutes *int
+	Organizer       *Party
+	Attendees       []Attendee
 }
 
 // ParseEventTime lee una fecha de la API: RFC 3339, o en un evento de dia completo tambien AAAA-MM-DD. De
@@ -179,6 +185,23 @@ func (f EventFields) Normalize() (EventFields, error) {
 		return EventFields{}, err
 	}
 	out.Recurrence = rec
+	out.TimeZone = ""
+	if tz := strings.TrimSpace(f.TimeZone); tz != "" && !out.AllDay {
+		loc := ianaLocation(tz)
+		if loc == nil {
+			return EventFields{}, fieldError("timezone", "no es una zona horaria IANA")
+		}
+		out.TimeZone = loc.String()
+	}
+	if out.Organizer, err = normalizeParty("organizer", f.Organizer); err != nil {
+		return EventFields{}, err
+	}
+	if out.Attendees, err = normalizeAttendees(f.Attendees); err != nil {
+		return EventFields{}, err
+	}
+	if len(out.Attendees) == 0 {
+		out.Attendees = nil
+	}
 	if f.ReminderMinutes != nil {
 		if m := *f.ReminderMinutes; m < 0 || m > MaxReminderMinutes {
 			return EventFields{}, fieldError("reminder_minutes", "fuera de rango")
@@ -256,6 +279,9 @@ func (c *rawComp) write(w *contentWriter) {
 
 // master es el VEVENT sin RECURRENCE-ID (o el primero, si el objeto solo trae sobrescrituras).
 func (c *rawComp) master() *rawComp {
+	if c == nil {
+		return nil
+	}
 	var first *rawComp
 	for _, sub := range c.comps {
 		if sub.name != componentEvent {
@@ -363,9 +389,42 @@ func (o CalendarObject) fields(tree *rawComp) EventFields {
 	if tree != nil {
 		if raw := tree.master(); raw != nil {
 			f.ReminderMinutes, _ = raw.reminder()
+			f.Organizer = raw.organizer()
+			f.Attendees = raw.attendees()
+			if dt, ok := raw.first("DTSTART"); ok && !m.start.date {
+				if loc := ianaLocation(dt.param("TZID")); loc != nil && loc != time.UTC {
+					f.TimeZone = loc.String()
+				}
+			}
 		}
 	}
 	return f
+}
+
+// zoneOf es la zona en la que se escriben las horas de f: nil es UTC.
+func zoneOf(f EventFields) *time.Location {
+	if f.AllDay || f.TimeZone == "" {
+		return nil
+	}
+	if loc := ianaLocation(f.TimeZone); loc != nil && loc != time.UTC {
+		return loc
+	}
+	return nil
+}
+
+// meetingLines son el organizador y los invitados de una reunion; sin invitados no hay reunion.
+func meetingLines(org *Party, attendees []Attendee) []rawLine {
+	if len(attendees) == 0 {
+		return nil
+	}
+	var out []rawLine
+	if org != nil {
+		out = append(out, generated(organizerLine(*org)))
+	}
+	for _, a := range attendees {
+		out = append(out, generated(attendeeLine(a)))
+	}
+	return out
 }
 
 func formatWhen(prop string, t time.Time, allDay bool, loc *time.Location) string {
@@ -426,16 +485,20 @@ func generated(text string) rawLine {
 func BuildCalendarObject(existing, uid string, f EventFields, now time.Time) (string, error) {
 	stamp := now.UTC().Format(layoutStamp)
 	if existing == "" {
+		loc := zoneOf(f)
 		var w contentWriter
 		w.line("BEGIN:VCALENDAR")
 		w.line("VERSION:2.0")
 		w.line("PRODID:" + ProdID)
 		w.line("CALSCALE:GREGORIAN")
+		if loc != nil {
+			buildVTimezone(loc, f.Start).write(&w)
+		}
 		ev := &rawComp{name: componentEvent}
 		for _, text := range []string{"UID:" + escapeText(uid), "DTSTAMP:" + stamp, "CREATED:" + stamp, "LAST-MODIFIED:" + stamp, "SEQUENCE:0"} {
 			ev.props = append(ev.props, generated(text))
 		}
-		ev.props = append(ev.props, generated(formatWhen("DTSTART", f.Start, f.AllDay, nil)), generated(formatWhen("DTEND", f.End, f.AllDay, nil)))
+		ev.props = append(ev.props, generated(formatWhen("DTSTART", f.Start, f.AllDay, loc)), generated(formatWhen("DTEND", f.End, f.AllDay, loc)))
 		for _, p := range []struct{ name, value string }{{"SUMMARY", f.Title}, {"LOCATION", f.Location}, {"DESCRIPTION", f.Description}} {
 			if p.value != "" {
 				ev.props = append(ev.props, generated(p.name+":"+escapeText(p.value)))
@@ -444,6 +507,7 @@ func BuildCalendarObject(existing, uid string, f EventFields, now time.Time) (st
 		if f.Recurrence != nil {
 			ev.props = append(ev.props, generated(formatRRule(f.Recurrence, f.AllDay)))
 		}
+		ev.props = append(ev.props, meetingLines(f.Organizer, f.Attendees)...)
 		if f.ReminderMinutes != nil {
 			ev.comps = append(ev.comps, newAlarm(f.Title, *f.ReminderMinutes))
 		}
@@ -460,15 +524,32 @@ func BuildCalendarObject(existing, uid string, f EventFields, now time.Time) (st
 	master := tree.master()
 	old := obj.fields(tree)
 
-	startChanged := !old.Start.Equal(f.Start) || old.AllDay != f.AllDay
+	var loc *time.Location
+	if dt, ok := master.first("DTSTART"); ok && !f.AllDay {
+		if loc = ianaLocation(dt.param("TZID")); loc == time.UTC {
+			loc = nil
+		}
+	}
+	zoneChanged := false
+	if f.TimeZone != "" && !f.AllDay {
+		next := zoneOf(f)
+		zoneChanged = next.String() != loc.String() || (next == nil) != (loc == nil)
+		loc = next
+	}
+
+	startChanged := !old.Start.Equal(f.Start) || old.AllDay != f.AllDay || zoneChanged
 	endChanged := startChanged || !old.End.Equal(f.End)
 	seriesChanged := startChanged || !old.Recurrence.equal(f.Recurrence)
 	keepRule := old.AllDay == f.AllDay && old.Recurrence.equal(f.Recurrence)
 
-	var loc *time.Location
-	if dt, ok := master.first("DTSTART"); ok && !f.AllDay {
-		loc = ianaLocation(dt.param("TZID"))
+	oldOrganizer := master.organizer()
+	organizer := oldOrganizer
+	if organizer == nil {
+		organizer = f.Organizer
 	}
+	// Solo el organizador pide de nuevo respuesta al cambiar la hora; la copia de un invitado no la toca.
+	isOrganizer := oldOrganizer == nil || (f.Organizer != nil && f.Organizer.Email == oldOrganizer.Email)
+	resetReplies := isOrganizer && (endChanged || seriesChanged)
 	sequence := 0
 	if s, ok := master.first("SEQUENCE"); ok {
 		if n, err := strconv.Atoi(strings.TrimSpace(s.value)); err == nil && n >= 0 {
@@ -497,8 +578,10 @@ func BuildCalendarObject(existing, uid string, f EventFields, now time.Time) (st
 			drop = !keepRule
 		case "EXDATE", "RDATE":
 			drop = seriesChanged
-		case "DTSTAMP", "LAST-MODIFIED", "SEQUENCE":
+		case "DTSTAMP", "LAST-MODIFIED", "SEQUENCE", "ATTENDEE":
 			drop = true
+		case "ORGANIZER":
+			drop = len(f.Attendees) == 0
 		}
 		if !drop {
 			props = append(props, l)
@@ -523,7 +606,20 @@ func BuildCalendarObject(existing, uid string, f EventFields, now time.Time) (st
 	if !keepRule && f.Recurrence != nil {
 		props = append(props, generated(formatRRule(f.Recurrence, f.AllDay)))
 	}
+	if len(f.Attendees) > 0 {
+		organizerEmail := ""
+		if organizer != nil {
+			organizerEmail = organizer.Email
+			if oldOrganizer == nil {
+				props = append(props, generated(organizerLine(*organizer)))
+			}
+		}
+		props = append(props, rewriteAttendees(master, f.Attendees, organizerEmail, resetReplies)...)
+	}
 	master.props = props
+	if loc != nil && (startChanged || endChanged) {
+		ensureVTimezone(tree, loc, f.Start)
+	}
 
 	if oldMinutes, idx := master.reminder(); !sameMinutes(oldMinutes, f.ReminderMinutes) || (oldMinutes != nil && old.Title != f.Title) {
 		if idx >= 0 {
@@ -547,4 +643,53 @@ func BuildCalendarObject(existing, uid string, f EventFields, now time.Time) (st
 	}
 	w.line("END:VCALENDAR")
 	return w.String(), nil
+}
+
+// rewriteAttendees escribe los invitados en el orden pedido. Uno que no cambio conserva su linea original (con
+// los parametros que el traductor no conoce); si el organizador cambio la hora, los demas vuelven a
+// NEEDS-ACTION con RSVP para que respondan de nuevo.
+func rewriteAttendees(master *rawComp, attendees []Attendee, organizer string, reset bool) []rawLine {
+	old := map[string]rawLine{}
+	oldParsed := map[string]Attendee{}
+	for _, l := range master.props {
+		if l.name != "ATTENDEE" {
+			continue
+		}
+		if email, ok := mailtoAddress(l.value); ok {
+			if _, dup := old[email]; !dup {
+				old[email] = l
+			}
+		}
+	}
+	for _, a := range master.attendees() {
+		oldParsed[a.Email] = a
+	}
+	out := make([]rawLine, 0, len(attendees))
+	for _, a := range attendees {
+		if reset && a.Email != organizer {
+			a.PartStat = PartStatNeedsAction
+		}
+		if l, ok := old[a.Email]; ok {
+			if prev := oldParsed[a.Email]; prev.Name == a.Name && prev.PartStat == a.PartStat {
+				out = append(out, l)
+				continue
+			}
+		}
+		out = append(out, generated(attendeeLine(a)))
+	}
+	return out
+}
+
+// ensureVTimezone anade el VTIMEZONE de la zona si el objeto no lo trae: todo TZID que se escribe debe tener el
+// suyo (RFC 5545, 3.6.5).
+func ensureVTimezone(tree *rawComp, loc *time.Location, from time.Time) {
+	for _, c := range tree.comps {
+		if c.name != "VTIMEZONE" {
+			continue
+		}
+		if l, ok := c.first("TZID"); ok && strings.TrimSpace(l.value) == loc.String() {
+			return
+		}
+	}
+	tree.comps = append([]*rawComp{buildVTimezone(loc, from)}, tree.comps...)
 }

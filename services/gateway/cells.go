@@ -282,10 +282,19 @@ func (c cellRouter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	c.fallback.ServeHTTP(w, r)
 }
 
+// publicLimits son los cupos propios de las rutas publicas: el de webhooks (en lugar del general) y el
+// estricto por IP (ademas del general).
+type publicLimits struct {
+	webhook func(http.Handler) http.Handler
+	strict  func(http.Handler) http.Handler
+}
+
+func passThrough(h http.Handler) http.Handler { return h }
+
 // publicHandlers arma el manejador final de cada ruta publica de la tabla, en su orden: las
 // que llevan {cell}, por celda; las demas, al destino base de su servicio. Un proxy por destino
 // y politica de contenido.
-func publicHandlers(t *routeTable, internalToken string, webhookLimit func(http.Handler) http.Handler) []http.Handler {
+func publicHandlers(t *routeTable, internalToken string, limits publicLimits) []http.Handler {
 	type proxyKey struct {
 		target string
 		mode   proxyMode
@@ -326,8 +335,11 @@ func publicHandlers(t *routeTable, internalToken string, webhookLimit func(http.
 		if mode == proxyEmbeddableHTML {
 			h = withoutEdgeFraming(h)
 		}
-		if p.Limit == publicLimitWebhook {
-			h = webhookLimit(h)
+		switch p.Limit {
+		case publicLimitWebhook:
+			h = limits.webhook(h)
+		case publicLimitStrict:
+			h = limits.strict(h)
 		}
 		if p.Transfer == publicTransferDownload {
 			h = withDownloadDeadline(h)
@@ -339,8 +351,8 @@ func publicHandlers(t *routeTable, internalToken string, webhookLimit func(http.
 
 // mountPublic monta las rutas publicas bajo /api/v1. Una ruta que deja CORS al servicio recibe
 // tambien su comprobacion previa (OPTIONS), que el gateway ya no contesta por ella.
-func mountPublic(r chi.Router, t *routeTable, internalToken string, webhookLimit func(http.Handler) http.Handler) {
-	handlers := publicHandlers(t, internalToken, webhookLimit)
+func mountPublic(r chi.Router, t *routeTable, internalToken string, limits publicLimits) {
+	handlers := publicHandlers(t, internalToken, limits)
 	preflight := map[string]bool{}
 	for i, p := range t.Public {
 		r.Method(p.Method, p.Path, handlers[i])
@@ -354,7 +366,7 @@ func mountPublic(r chi.Router, t *routeTable, internalToken string, webhookLimit
 // mountPublicAliases monta en la raiz los alias de las rutas publicas: la peticion sigue con la
 // ruta declarada (los parametros del alias en su sitio) y el cupo general por IP.
 func mountPublicAliases(r chi.Router, t *routeTable, internalToken string, limit func(http.Handler) http.Handler) {
-	handlers := publicHandlers(t, internalToken, func(h http.Handler) http.Handler { return h })
+	handlers := publicHandlers(t, internalToken, publicLimits{webhook: passThrough, strict: passThrough})
 	for i, p := range t.Public {
 		if p.Alias == "" {
 			continue

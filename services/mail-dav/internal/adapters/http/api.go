@@ -28,6 +28,12 @@ const (
 	InternalPrefix = "/internal/mail-dav"
 	TenantHeader   = "X-Mailbox-Tenant-ID"
 	MailboxHeader  = "X-Mailbox-ID"
+	// AddressHeader es la direccion del buzon (opcional): con ella el buzon queda localizable para la
+	// disponibilidad de sus companeros y es el dueno de su pagina de citas.
+	AddressHeader = "X-Mailbox-Address"
+	// PublicBookingPrefix son las rutas de la pagina publica de citas: sin buzon, las pide el webmail en nombre
+	// de un visitante.
+	PublicBookingPrefix = InternalPrefix + "/booking/public"
 )
 
 // multipartOverhead es lo que se admite de mas sobre el fichero en una importacion: las cabeceras de la parte
@@ -48,6 +54,9 @@ type APILimits struct {
 	// DefaultPerPage y MaxPerPage son el tamano de pagina por omision y el maximo del listado de contactos.
 	DefaultPerPage int
 	MaxPerPage     int
+	// MaxITIPBodyBytes acota el cuerpo JSON que lleva un iCalendar recibido por correo (invitaciones); nunca es
+	// menor que MaxBodyBytes.
+	MaxITIPBodyBytes int64
 }
 
 func (l APILimits) Validate() error {
@@ -79,6 +88,7 @@ func NewAPI(uc *app.UseCase, lim APILimits, logger *zap.Logger) (*API, error) {
 	if logger == nil {
 		logger = zap.NewNop()
 	}
+	lim.MaxITIPBodyBytes = max(lim.MaxITIPBodyBytes, lim.MaxBodyBytes)
 	return &API{uc: uc, lim: lim, logger: logger}, nil
 }
 
@@ -103,7 +113,18 @@ func (a *API) Routes() http.Handler {
 			r.Get("/calendar/events/{id}", a.getEvent)
 			r.Put("/calendar/events/{id}", a.updateEvent)
 			r.Delete("/calendar/events/{id}", a.deleteEvent)
+			r.Put("/calendar/events/{id}/occurrences/{rid}", a.updateOccurrence)
+			r.Delete("/calendar/events/{id}/occurrences/{rid}", a.deleteOccurrence)
+			r.Post("/calendar/events/{id}/itip", a.eventInvitation)
+			r.Post("/itip/inspect", a.inspectInvitation)
+			r.Post("/itip/respond", a.respondInvitation)
+			r.Post("/itip/apply", a.applyInvitation)
+			r.Post("/availability", a.availability)
+			r.Get("/booking", a.bookingSettings)
+			r.Put("/booking", a.saveBookingSettings)
 		})
+		r.Get("/booking/public/{tenant}/{page}", a.publicBooking)
+		r.Post("/booking/public/{tenant}/{page}/reservations", a.book)
 	})
 	r.NotFound(func(w http.ResponseWriter, _ *http.Request) { apiresponse.ErrNotFound(w, "ruta desconocida") })
 	r.MethodNotAllowed(func(w http.ResponseWriter, _ *http.Request) {
@@ -137,6 +158,14 @@ func (a *API) mailbox(next http.Handler) http.Handler {
 		if err != nil {
 			a.fail(w, r, err)
 			return
+		}
+		if raw := strings.TrimSpace(r.Header.Get(AddressHeader)); raw != "" {
+			address, err := domain.NormalizeAddress(AddressHeader, raw)
+			if err != nil {
+				a.fail(w, r, err)
+				return
+			}
+			p.Username = address
 		}
 		next.ServeHTTP(w, r.WithContext(context.WithValue(ctx, principalKey{}, p)))
 	})
@@ -178,6 +207,11 @@ func (a *API) fail(w http.ResponseWriter, r *http.Request, err error) {
 		limitExceeded(w, http.StatusInsufficientStorage, "result", err.Error())
 	case errors.Is(err, domain.ErrImportTooManyCards):
 		limitExceeded(w, http.StatusRequestEntityTooLarge, "import_cards", err.Error())
+	case errors.Is(err, domain.ErrBookingLimit):
+		w.Header().Set("Retry-After", "3600")
+		limitExceeded(w, http.StatusTooManyRequests, "bookings", err.Error())
+	case errors.Is(err, domain.ErrSlotUnavailable):
+		apiresponse.Err(w, http.StatusConflict, "SLOT_UNAVAILABLE", err.Error())
 	case errors.As(err, &bad):
 		if bad.TooLarge {
 			limitExceeded(w, http.StatusRequestEntityTooLarge, "object", bad.Reason)
@@ -517,15 +551,29 @@ type recurrenceJSON struct {
 	ByDay    []string `json:"by_day"`
 }
 
+type partyJSON struct {
+	Email string `json:"email"`
+	Name  string `json:"name"`
+}
+
+type attendeeJSON struct {
+	Email    string `json:"email"`
+	Name     string `json:"name"`
+	PartStat string `json:"partstat"`
+}
+
 type eventInput struct {
 	Title           string          `json:"title"`
 	Start           string          `json:"start"`
 	End             string          `json:"end"`
 	AllDay          bool            `json:"all_day"`
+	TimeZone        string          `json:"timezone"`
 	Location        string          `json:"location"`
 	Description     string          `json:"description"`
 	Recurrence      *recurrenceJSON `json:"recurrence"`
 	ReminderMinutes *int            `json:"reminder_minutes"`
+	Organizer       *partyJSON      `json:"organizer"`
+	Attendees       []attendeeJSON  `json:"attendees"`
 }
 
 type eventJSON struct {
@@ -535,20 +583,27 @@ type eventJSON struct {
 }
 
 type occurrenceJSON struct {
-	ID        string `json:"id"`
-	Start     string `json:"start"`
-	End       string `json:"end"`
-	AllDay    bool   `json:"all_day"`
-	Title     string `json:"title"`
-	Location  string `json:"location"`
-	Recurring bool   `json:"recurring"`
+	ID           string `json:"id"`
+	Start        string `json:"start"`
+	End          string `json:"end"`
+	AllDay       bool   `json:"all_day"`
+	Title        string `json:"title"`
+	Location     string `json:"location"`
+	Recurring    bool   `json:"recurring"`
+	RecurrenceID string `json:"recurrence_id"`
 }
 
 // formatTime escribe un instante en RFC 3339 y UTC; en un dia completo es la medianoche UTC de la fecha.
 func formatTime(t time.Time) string { return t.UTC().Format(time.RFC3339) }
 
 func (in eventInput) fields() (domain.EventFields, error) {
-	f := domain.EventFields{Title: in.Title, AllDay: in.AllDay, Location: in.Location, Description: in.Description, ReminderMinutes: in.ReminderMinutes}
+	f := domain.EventFields{Title: in.Title, AllDay: in.AllDay, TimeZone: in.TimeZone, Location: in.Location, Description: in.Description, ReminderMinutes: in.ReminderMinutes}
+	if in.Organizer != nil {
+		f.Organizer = &domain.Party{Email: in.Organizer.Email, Name: in.Organizer.Name}
+	}
+	for _, at := range in.Attendees {
+		f.Attendees = append(f.Attendees, domain.Attendee{Email: at.Email, Name: at.Name, PartStat: at.PartStat})
+	}
 	var err error
 	if f.Start, err = domain.ParseEventTime("start", in.Start, in.AllDay); err != nil {
 		return f, err
@@ -578,9 +633,15 @@ func (in eventInput) fields() (domain.EventFields, error) {
 func eventOut(v app.EventView) eventJSON {
 	f := v.Fields
 	out := eventJSON{ID: v.ID, ETag: v.ETag, eventInput: eventInput{
-		Title: f.Title, Start: formatTime(f.Start), End: formatTime(f.End), AllDay: f.AllDay,
-		Location: f.Location, Description: f.Description, ReminderMinutes: f.ReminderMinutes,
+		Title: f.Title, Start: formatTime(f.Start), End: formatTime(f.End), AllDay: f.AllDay, TimeZone: f.TimeZone,
+		Location: f.Location, Description: f.Description, ReminderMinutes: f.ReminderMinutes, Attendees: []attendeeJSON{},
 	}}
+	if f.Organizer != nil {
+		out.Organizer = &partyJSON{Email: f.Organizer.Email, Name: f.Organizer.Name}
+	}
+	for _, at := range f.Attendees {
+		out.Attendees = append(out.Attendees, attendeeJSON{Email: at.Email, Name: at.Name, PartStat: at.PartStat})
+	}
 	if rec := f.Recurrence; rec != nil {
 		rj := &recurrenceJSON{Freq: rec.Freq, Interval: rec.Interval, ByDay: rec.ByDay}
 		if rj.ByDay == nil {
@@ -627,7 +688,7 @@ func (a *API) listOccurrences(w http.ResponseWriter, r *http.Request) {
 	out := make([]occurrenceJSON, len(occs))
 	for i, o := range occs {
 		out[i] = occurrenceJSON{ID: o.ID, Start: formatTime(o.Start), End: formatTime(o.End), AllDay: o.AllDay,
-			Title: o.Title, Location: o.Location, Recurring: o.Recurring}
+			Title: o.Title, Location: o.Location, Recurring: o.Recurring, RecurrenceID: formatTime(o.RecurrenceID)}
 	}
 	apiresponse.JSON(w, http.StatusOK, out)
 }

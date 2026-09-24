@@ -94,7 +94,7 @@ func gatewayConLaTablaReal(t *testing.T, destino http.Handler) (http.Handler, *r
 	mountWellKnown(r, tbl, pass)
 	r.Handle("/*", reverseProxy(tbl.serviceURL(tbl.Frontend), tokenInternoPrueba))
 	r.Route("/api/v1", func(r chi.Router) {
-		mountPublic(r, tbl, tokenInternoPrueba, pass)
+		mountPublic(r, tbl, tokenInternoPrueba, publicLimits{webhook: passThrough, strict: passThrough})
 		mountSelfAuthenticated(r, tbl, pass, tokenInternoPrueba, nil, logger)
 		r.Group(func(r chi.Router) {
 			r.Use(jwtAuth.Authenticate)

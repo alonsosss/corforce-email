@@ -66,7 +66,7 @@ func gatewayDeCaptacion(tbl *routeTable) http.Handler {
 	pass := func(next http.Handler) http.Handler { return next }
 	mountPublicAliases(r, tbl, tokenInternoPrueba, pass)
 	r.Route("/api/v1", func(r chi.Router) {
-		mountPublic(r, tbl, tokenInternoPrueba, pass)
+		mountPublic(r, tbl, tokenInternoPrueba, publicLimits{webhook: passThrough, strict: passThrough})
 	})
 	return r
 }

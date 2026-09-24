@@ -181,46 +181,70 @@ func (s *Service) Event(ctx context.Context, sess domain.Session, id string) (do
 	return e, nil
 }
 
-func (s *Service) CreateEvent(ctx context.Context, sess domain.Session, in domain.EventInput) (domain.Event, error) {
+// CreateEvent crea el evento; con invitados, el organizador es el buzon de la sesion y, si notify, la invitacion
+// (REQUEST) sale desde el buzon por el mismo camino que un correo.
+func (s *Service) CreateEvent(ctx context.Context, sess domain.Session, in domain.EventInput, notify bool) (domain.SavedEvent, error) {
 	mb, err := mailboxOf(sess)
 	if err != nil {
-		return domain.Event{}, err
+		return domain.SavedEvent{}, err
 	}
+	s.asOrganizer(sess, &in)
 	e, err := s.calendar.CreateEvent(ctx, mb, in)
 	if err != nil {
-		return domain.Event{}, s.davError("no se pudo crear el evento", sess, err)
+		return domain.SavedEvent{}, s.davError("no se pudo crear el evento", sess, err)
 	}
-	return e, nil
+	return s.notifyChange(ctx, sess, mb, e, notify), nil
 }
 
-func (s *Service) UpdateEvent(ctx context.Context, sess domain.Session, id string, in domain.EventInput, ifMatch string) (domain.Event, error) {
+// UpdateEvent guarda el evento; con invitados y notify, envia la invitacion actualizada (REQUEST).
+func (s *Service) UpdateEvent(ctx context.Context, sess domain.Session, id string, in domain.EventInput, ifMatch string, notify bool) (domain.SavedEvent, error) {
 	mb, err := mailboxOf(sess)
 	if err != nil {
-		return domain.Event{}, err
+		return domain.SavedEvent{}, err
 	}
 	if err := domain.ValidateResourceID(id); err != nil {
-		return domain.Event{}, err
+		return domain.SavedEvent{}, err
 	}
 	if err := domain.ValidateIfMatch(ifMatch); err != nil {
-		return domain.Event{}, err
+		return domain.SavedEvent{}, err
 	}
+	s.asOrganizer(sess, &in)
 	e, err := s.calendar.UpdateEvent(ctx, mb, id, in, ifMatch)
 	if err != nil {
-		return domain.Event{}, s.davError("no se pudo guardar el evento", sess, err)
+		return domain.SavedEvent{}, s.davError("no se pudo guardar el evento", sess, err)
 	}
-	return e, nil
+	return s.notifyChange(ctx, sess, mb, e, notify), nil
 }
 
-func (s *Service) DeleteEvent(ctx context.Context, sess domain.Session, id string) error {
+// DeleteEvent borra el evento entero; si el buzon lo organizaba con invitados y notify, les envia la cancelacion
+// (CANCEL), que se escribe antes de borrar.
+func (s *Service) DeleteEvent(ctx context.Context, sess domain.Session, id string, notify bool) (*domain.InvitationDelivery, error) {
 	mb, err := mailboxOf(sess)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if err := domain.ValidateResourceID(id); err != nil {
-		return err
+		return nil, err
+	}
+	var cancel *domain.ITIPMessage
+	var current domain.Event
+	if notify && s.scheduling != nil {
+		if current, err = s.calendar.Event(ctx, mb, id); err != nil {
+			return nil, s.davError("no se pudo leer el evento", sess, err)
+		}
+		if s.organizes(sess, current) {
+			msg, err := s.scheduling.EventInvitation(ctx, mb, id, domain.MethodCancel)
+			if err != nil {
+				return nil, s.davError("no se pudo escribir la cancelacion", sess, err)
+			}
+			cancel = &msg
+		}
 	}
 	if err := s.calendar.DeleteEvent(ctx, mb, id); err != nil {
-		return s.davError("no se pudo borrar el evento", sess, err)
+		return nil, s.davError("no se pudo borrar el evento", sess, err)
 	}
-	return nil
+	if cancel == nil {
+		return nil, nil
+	}
+	return s.deliverInvitation(ctx, sess, *cancel, domain.InvitationCancel, summaryOf(current.EventInput)), nil
 }

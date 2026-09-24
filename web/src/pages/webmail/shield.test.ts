@@ -62,7 +62,16 @@ function contact(emails: string[]): Contact {
 }
 
 function occurrence(title: string, start: string, end: string, location = ''): Occurrence {
-  return { id: title, title, start, end, location, all_day: false, recurring: false };
+  return {
+    id: title,
+    title,
+    start,
+    end,
+    location,
+    all_day: false,
+    recurring: false,
+    recurrence_id: start,
+  };
 }
 
 describe('ficha del remitente', () => {

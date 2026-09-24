@@ -15,6 +15,7 @@ import (
 	"net/textproto"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/alonsosss/corforce-email/pkg/httpclient"
@@ -28,6 +29,7 @@ const (
 
 	tenantHeader  = "X-Mailbox-Tenant-ID"
 	mailboxHeader = "X-Mailbox-ID"
+	addressHeader = "X-Mailbox-Address"
 
 	requestTimeout = 10 * time.Second
 )
@@ -59,6 +61,10 @@ func identity(mb domain.MailboxRef) http.Header {
 	h := http.Header{}
 	h.Set(tenantHeader, mb.TenantID)
 	h.Set(mailboxHeader, mb.MailboxID)
+	// La direccion solo viaja si es una direccion: un nombre de buzon de otra forma no registra nada.
+	if a, err := domain.NewAddress("address", "", mb.Address); err == nil {
+		h.Set(addressHeader, strings.ToLower(a.Email))
+	}
 	return h
 }
 
@@ -260,15 +266,29 @@ type recurrenceJSON struct {
 	ByDay    []string `json:"by_day"`
 }
 
+type partyJSON struct {
+	Email string `json:"email"`
+	Name  string `json:"name"`
+}
+
+type attendeeJSON struct {
+	Email    string `json:"email"`
+	Name     string `json:"name"`
+	PartStat string `json:"partstat"`
+}
+
 type eventInputJSON struct {
 	Title           string          `json:"title"`
 	Start           string          `json:"start"`
 	End             string          `json:"end"`
 	AllDay          bool            `json:"all_day"`
+	TimeZone        string          `json:"timezone"`
 	Location        string          `json:"location"`
 	Description     string          `json:"description"`
 	Recurrence      *recurrenceJSON `json:"recurrence"`
 	ReminderMinutes *int            `json:"reminder_minutes"`
+	Organizer       *partyJSON      `json:"organizer,omitempty"`
+	Attendees       []attendeeJSON  `json:"attendees"`
 }
 
 type eventJSON struct {
@@ -278,22 +298,29 @@ type eventJSON struct {
 }
 
 type occurrenceJSON struct {
-	ID        string `json:"id"`
-	Start     string `json:"start"`
-	End       string `json:"end"`
-	AllDay    bool   `json:"all_day"`
-	Title     string `json:"title"`
-	Location  string `json:"location"`
-	Recurring bool   `json:"recurring"`
+	ID           string `json:"id"`
+	Start        string `json:"start"`
+	End          string `json:"end"`
+	AllDay       bool   `json:"all_day"`
+	Title        string `json:"title"`
+	Location     string `json:"location"`
+	Recurring    bool   `json:"recurring"`
+	RecurrenceID string `json:"recurrence_id"`
 }
 
 func toEventInput(in domain.EventInput) eventInputJSON {
 	out := eventInputJSON{
-		Title: in.Title, Start: in.Start, End: in.End, AllDay: in.AllDay, Location: in.Location,
-		Description: in.Description, ReminderMinutes: in.ReminderMinutes,
+		Title: in.Title, Start: in.Start, End: in.End, AllDay: in.AllDay, TimeZone: in.TimeZone, Location: in.Location,
+		Description: in.Description, ReminderMinutes: in.ReminderMinutes, Attendees: []attendeeJSON{},
 	}
 	if r := in.Recurrence; r != nil {
 		out.Recurrence = &recurrenceJSON{Freq: r.Freq, Interval: r.Interval, Count: r.Count, Until: r.Until, ByDay: r.ByDay}
+	}
+	if o := in.Organizer; o != nil {
+		out.Organizer = &partyJSON{Email: o.Email, Name: o.Name}
+	}
+	for _, a := range in.Attendees {
+		out.Attendees = append(out.Attendees, attendeeJSON{Email: a.Email, Name: a.Name, PartStat: a.PartStat})
 	}
 	return out
 }
@@ -301,13 +328,19 @@ func toEventInput(in domain.EventInput) eventInputJSON {
 func (e eventJSON) toDomain() domain.Event {
 	out := domain.Event{
 		EventInput: domain.EventInput{
-			Title: e.Title, Start: e.Start, End: e.End, AllDay: e.AllDay, Location: e.Location,
+			Title: e.Title, Start: e.Start, End: e.End, AllDay: e.AllDay, TimeZone: e.TimeZone, Location: e.Location,
 			Description: e.Description, ReminderMinutes: e.ReminderMinutes,
 		},
 		ID: e.ID, ETag: e.ETag,
 	}
 	if r := e.Recurrence; r != nil {
 		out.Recurrence = &domain.Recurrence{Freq: r.Freq, Interval: r.Interval, Count: r.Count, Until: r.Until, ByDay: r.ByDay}
+	}
+	if o := e.Organizer; o != nil {
+		out.Organizer = &domain.Party{Email: o.Email, Name: o.Name}
+	}
+	for _, a := range e.Attendees {
+		out.Attendees = append(out.Attendees, domain.Attendee{Email: a.Email, Name: a.Name, PartStat: a.PartStat})
 	}
 	return out
 }
@@ -322,7 +355,7 @@ func (c *Client) Occurrences(ctx context.Context, mb domain.MailboxRef, w domain
 	}
 	out := make([]domain.Occurrence, len(rows))
 	for i, r := range rows {
-		out[i] = domain.Occurrence{ID: r.ID, Start: r.Start, End: r.End, AllDay: r.AllDay, Title: r.Title, Location: r.Location, Recurring: r.Recurring}
+		out[i] = domain.Occurrence{ID: r.ID, Start: r.Start, End: r.End, AllDay: r.AllDay, Title: r.Title, Location: r.Location, Recurring: r.Recurring, RecurrenceID: r.RecurrenceID}
 	}
 	return out, nil
 }

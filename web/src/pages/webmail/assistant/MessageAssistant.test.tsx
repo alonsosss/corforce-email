@@ -3,7 +3,7 @@ import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { ApiError } from '@/api/errors';
-import { webmailApi, type CalendarEvent } from '@/api/webmail';
+import { webmailApi, type SavedCalendarEvent } from '@/api/webmail';
 import { assistantApi, type AssistantStatus } from '@/api/webmailAssistant';
 import { ToastProvider } from '@/design/components';
 import { t } from '@/i18n';
@@ -113,7 +113,7 @@ describe('asistente en el lector', () => {
     });
     const create = vi
       .spyOn(webmailApi, 'createCalendarEvent')
-      .mockResolvedValue({ id: 'e1', etag: '"1"' } as CalendarEvent);
+      .mockResolvedValue({ id: 'e1', etag: '"1"', invitations: null } as SavedCalendarEvent);
     renderAssistant();
     await userEvent.click(
       await screen.findByRole('button', { name: t('webmail.assistant.extract') }),

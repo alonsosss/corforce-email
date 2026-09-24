@@ -66,6 +66,16 @@ const (
 	defaultMaxRecurrenceWork     = 20000
 	defaultMaxQueryRecurrentWork = 500000
 
+	defaultBusyHorizonDays     = 400
+	defaultBusyLookbackDays    = 7
+	defaultMaxBusyPerEvent     = 1000
+	defaultBusyRefreshMax      = 500
+	defaultAvailabilityMax     = 20
+	defaultBookingMaxDaily     = 50
+	defaultBookingMaxPerVisit  = 2
+	defaultBookingMaxSlots     = 300
+	defaultBookingMaxWindowDay = 31
+
 	defaultMaxImportBytes   = 4 << 20
 	defaultMaxImportCards   = 1000
 	defaultMaxWindowDays    = 62
@@ -209,7 +219,52 @@ func loadSettings(logger *zap.Logger) (settings, error) {
 	if st.api, err = apiLimitsFromEnv(st.maxXMLBytes); err != nil {
 		return st, err
 	}
+	st.api.MaxITIPBodyBytes = 2*int64(cal.MaxEventBytes) + multipartSlack
+	if st.app.Scheduling, err = schedulingFromEnv(); err != nil {
+		return st, err
+	}
 	return st, nil
+}
+
+// multipartSlack es lo que se admite de mas sobre dos veces el tope de un evento en el cuerpo JSON de una
+// invitacion: el iCalendar escapado en JSON y las direcciones del buzon.
+const multipartSlack = 64 << 10
+
+// schedulingFromEnv lee la planificacion (disponibilidad, invitaciones y citas). MAIL_DAV_BUSY_HORIZON_DAYS=0 la
+// apaga: los eventos se guardan sin ocupacion materializada y esas rutas responden 503.
+func schedulingFromEnv() (app.SchedulingConfig, error) {
+	var c app.SchedulingConfig
+	days := func(key string, def, lo, hi int) (time.Duration, error) {
+		n, err := config.EnvInt(key, def, lo, hi)
+		return time.Duration(n) * 24 * time.Hour, err
+	}
+	var err error
+	if c.BusyHorizon, err = days("MAIL_DAV_BUSY_HORIZON_DAYS", defaultBusyHorizonDays, 0, 3650); err != nil {
+		return c, err
+	}
+	if c.BusyLookback, err = days("MAIL_DAV_BUSY_LOOKBACK_DAYS", defaultBusyLookbackDays, 1, 62); err != nil {
+		return c, err
+	}
+	if c.BookingMaxWindow, err = days("MAIL_DAV_BOOKING_MAX_WINDOW_DAYS", defaultBookingMaxWindowDay, 1, 62); err != nil {
+		return c, err
+	}
+	for _, v := range []struct {
+		key         string
+		dst         *int
+		def, lo, hi int
+	}{
+		{"MAIL_DAV_MAX_BUSY_PER_EVENT", &c.MaxBusyPerEvent, defaultMaxBusyPerEvent, 1, 100_000},
+		{"MAIL_DAV_BUSY_REFRESH_MAX", &c.BusyRefreshMax, defaultBusyRefreshMax, 1, 10_000},
+		{"MAIL_DAV_AVAILABILITY_MAX_ADDRESSES", &c.MaxAvailabilityAddresses, defaultAvailabilityMax, 1, 50},
+		{"MAIL_DAV_BOOKING_MAX_DAILY", &c.BookingMaxDaily, defaultBookingMaxDaily, 1, 1000},
+		{"MAIL_DAV_BOOKING_MAX_PER_VISITOR", &c.BookingMaxPerVisitor, defaultBookingMaxPerVisit, 1, 100},
+		{"MAIL_DAV_BOOKING_MAX_SLOTS", &c.BookingMaxSlots, defaultBookingMaxSlots, 1, 5000},
+	} {
+		if *v.dst, err = config.EnvInt(v.key, v.def, v.lo, v.hi); err != nil {
+			return c, err
+		}
+	}
+	return c, c.Validate()
 }
 
 // apiLimitsFromEnv lee los topes de la API interna del webmail. El cuerpo JSON de un alta se acota como el de
@@ -322,13 +377,14 @@ func main() {
 	}
 	repo := postgres.NewRepository(&db.ContextPool{})
 	uc, err := app.New(app.Deps{
-		Auth:      guard,
-		Tenant:    tenantdb.NewBinder(tenantDB),
-		Store:     repo,
-		Calendars: repo,
-		Index:     repo,
-		Config:    st.app,
-		Logger:    logger,
+		Auth:       guard,
+		Tenant:     tenantdb.NewBinder(tenantDB),
+		Store:      repo,
+		Calendars:  repo,
+		Index:      repo,
+		Scheduling: repo,
+		Config:     st.app,
+		Logger:     logger,
 	})
 	if err != nil {
 		log.Fatalf("mail-dav: %v", err)
@@ -453,6 +509,8 @@ func limitPerMailbox(rl *middleware.RateLimiter) func(http.Handler) http.Handler
 			key := "mailbox:invalid"
 			if id, err := uuid.Parse(strings.TrimSpace(r.Header.Get(handler.MailboxHeader))); err == nil {
 				key = "mailbox:" + id.String()
+			} else if tenant, ok := publicBookingTenant(r.URL.Path); ok {
+				key = "booking:" + tenant
 			}
 			if ok, reset := rl.AllowKey(r.Context(), key); !ok {
 				w.Header().Set("Retry-After", strconv.Itoa(max(1, int(math.Ceil(reset.Seconds())))))
@@ -462,6 +520,21 @@ func limitPerMailbox(rl *middleware.RateLimiter) func(http.Handler) http.Handler
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// publicBookingTenant es la empresa de una ruta de la pagina publica de citas, que no lleva buzon: su cupo es por
+// empresa, para que el trafico anonimo de una no gaste el de las demas.
+func publicBookingTenant(path string) (string, bool) {
+	rest, ok := strings.CutPrefix(path, handler.PublicBookingPrefix+"/")
+	if !ok {
+		return "", false
+	}
+	tenant, _, _ := strings.Cut(rest, "/")
+	id, err := uuid.Parse(tenant)
+	if err != nil {
+		return "", false
+	}
+	return id.String(), true
 }
 
 // withDeadline pone un plazo a la peticion: al vencer se cancelan sus consultas a la base y el trabajo que

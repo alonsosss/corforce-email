@@ -23,7 +23,7 @@ import { EventDialog } from './EventDialog';
 const MONTH_CELL_EVENTS = 3;
 
 type Editing =
-  { kind: 'new'; day: Date } | { kind: 'edit'; id: string; day: Date; recurring: boolean };
+  { kind: 'new'; day: Date } | { kind: 'edit'; id: string; day: Date; occurrence: Occurrence };
 
 /** Calendario personal del buzon (CalDAV en mail-dav). Solo se pide la ventana visible. */
 export default function CalendarPage() {
@@ -72,7 +72,7 @@ export default function CalendarPage() {
   const timeFormat = new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit' });
 
   const openOccurrence = (occurrence: Occurrence, day: Date) =>
-    setEditing({ kind: 'edit', id: occurrence.id, day, recurring: occurrence.recurring });
+    setEditing({ kind: 'edit', id: occurrence.id, day, occurrence });
 
   const eventButton = (occurrence: Occurrence, day: Date, compact: boolean) => (
     <button
@@ -246,7 +246,7 @@ export default function CalendarPage() {
       {editing ? (
         <EventDialog
           eventId={editing.kind === 'edit' ? editing.id : undefined}
-          recurring={editing.kind === 'edit' ? editing.recurring : false}
+          occurrence={editing.kind === 'edit' ? editing.occurrence : undefined}
           day={editing.day}
           onClose={() => setEditing(null)}
           onChanged={occurrences.reload}

@@ -15,6 +15,8 @@ const (
 	RejectQuota
 	RejectRateLimited
 	RejectUnavailable
+	// RejectConflict es un estado que ya no admite lo pedido (un hueco de citas que se reservo antes).
+	RejectConflict
 )
 
 // ErrResourceNotFound es un contacto o un evento que no existe (o no es del buzon).

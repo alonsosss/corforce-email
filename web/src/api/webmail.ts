@@ -466,21 +466,61 @@ export interface Recurrence {
   by_day: Weekday[] | null;
 }
 
+/** Respuesta de un invitado (PARTSTAT de RFC 5545). */
+export const PARTSTATS = [
+  'NEEDS-ACTION',
+  'ACCEPTED',
+  'TENTATIVE',
+  'DECLINED',
+  'DELEGATED',
+] as const;
+export type PartStat = (typeof PARTSTATS)[number];
+/** Lo que el buzon puede responder a una invitacion. */
+export const INVITATION_RESPONSES = ['ACCEPTED', 'TENTATIVE', 'DECLINED'] as const;
+export type InvitationResponse = (typeof INVITATION_RESPONSES)[number];
+
+export interface Attendee {
+  email: string;
+  name: string;
+  partstat: PartStat | string;
+}
+
+export interface Party {
+  email: string;
+  name: string;
+}
+
 export interface CalendarEventInput {
   title: string;
   /** RFC 3339. Un evento de todo el dia va de las 00:00 UTC de su primer dia al dia siguiente al ultimo. */
   start: string;
   end: string;
   all_day: boolean;
+  /** Zona IANA en la que se escriben las horas; vacio es UTC. Con ella una serie no se corre con el horario de verano. */
+  timezone: string;
   location: string;
   description: string;
   recurrence: Recurrence | null;
   reminder_minutes: number | null;
+  /** Invitados: con ellos el organizador es el buzon y la invitacion sale por correo. */
+  attendees: Attendee[];
 }
 
 export interface CalendarEvent extends CalendarEventInput {
   id: string;
   etag: string;
+  organizer: Party | null;
+}
+
+/** Lo que paso con la invitacion de un cambio del calendario; null si no habia que enviar nada. */
+export interface InvitationDelivery {
+  method: string;
+  recipients: number;
+  sent: boolean;
+}
+
+export interface SavedCalendarEvent extends CalendarEvent {
+  invitations: InvitationDelivery | null;
 }
 
 export interface Occurrence {
@@ -490,8 +530,87 @@ export interface Occurrence {
   all_day: boolean;
   title: string;
   location: string;
-  /** Pertenece a una serie: editarla cambia la serie entera. */
+  /** Pertenece a una serie: se puede cambiar solo esta aparicion o la serie entera. */
   recurring: boolean;
+  /** Identifica la aparicion dentro de su serie (su inicio original, RFC 3339). */
+  recurrence_id: string;
+}
+
+/** Invitacion (text/calendar) de un mensaje cruzada con el calendario del buzon. */
+export interface Invitation {
+  method: 'REQUEST' | 'REPLY' | 'CANCEL' | string;
+  uid: string;
+  sequence: number;
+  title: string;
+  location: string;
+  description: string;
+  start: string | null;
+  end: string | null;
+  all_day: boolean;
+  timezone: string;
+  recurring: boolean;
+  recurrence_id: string | null;
+  organizer: Party | null;
+  attendees: Attendee[];
+  /** Evento con ese UID en el calendario del buzon; vacio si no esta. */
+  event_id: string;
+  /** Direccion con la que el buzon esta invitado; vacia si no lo esta. */
+  attendee: string;
+  partstat: string;
+  is_organizer: boolean;
+}
+
+export interface InvitationResult {
+  event_id: string;
+  reply_sent: boolean;
+}
+
+export interface InvitationApplied {
+  method: string;
+  changed: boolean;
+  event_id: string;
+}
+
+export interface BusyInterval {
+  start: string;
+  end: string;
+}
+
+/** Ocupacion de un companero: solo inicio y fin. known falso: la direccion no usa el calendario. */
+export interface MailboxAvailability {
+  address: string;
+  known: boolean;
+  partial: boolean;
+  busy: BusyInterval[];
+}
+
+export interface BookingWindow {
+  start: string;
+  end: string;
+}
+
+export interface BookingSettings {
+  title: string;
+  description: string;
+  duration_minutes: number;
+  buffer_minutes: number;
+  min_notice_minutes: number;
+  max_advance_days: number;
+  daily_limit: number;
+  timezone: string;
+  /** Franjas por dia de la semana (MO..SU), HH:MM. */
+  weekly: Partial<Record<Weekday, BookingWindow[]>>;
+  active: boolean;
+}
+
+/** Pagina de citas del buzon con las piezas de su enlace publico. */
+export interface BookingPage extends BookingSettings {
+  public_id: string;
+  owner_address: string;
+  owner_name: string;
+  updated_at: string | null;
+  cell: string;
+  tenant_id: string;
 }
 
 type Method = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
@@ -928,12 +1047,68 @@ export const webmailApi = {
     })) ?? [],
   calendarEvent: (id: string, signal?: AbortSignal) =>
     request<CalendarEvent>('GET', wm.calendarEvent(id), { signal }),
-  createCalendarEvent: (input: CalendarEventInput) =>
-    request<CalendarEvent>('POST', wm.calendarEvents, { json: input }),
-  updateCalendarEvent: (id: string, input: CalendarEventInput, etag?: string) =>
-    request<CalendarEvent>('PUT', wm.calendarEvent(id), { json: input, headers: ifMatch(etag) }),
-  /** Borra la serie entera. */
-  deleteCalendarEvent: (id: string) => request<null>('DELETE', wm.calendarEvent(id)),
+  /** Con invitados y notify, la invitacion sale desde el buzon; su desenlace va en invitations. */
+  createCalendarEvent: (input: CalendarEventInput, notify = true) =>
+    request<SavedCalendarEvent>('POST', wm.calendarEvents, {
+      json: input,
+      params: { notify: notify ? undefined : 'false' },
+    }),
+  updateCalendarEvent: (id: string, input: CalendarEventInput, etag?: string, notify = true) =>
+    request<SavedCalendarEvent>('PUT', wm.calendarEvent(id), {
+      json: input,
+      headers: ifMatch(etag),
+      params: { notify: notify ? undefined : 'false' },
+    }),
+  /** Borra la serie entera; si el buzon la organizaba con invitados, les envia la cancelacion. */
+  deleteCalendarEvent: async (id: string, notify = true) =>
+    (
+      await request<{ invitations: InvitationDelivery } | null>('DELETE', wm.calendarEvent(id), {
+        params: { notify: notify ? undefined : 'false' },
+      })
+    )?.invitations ?? null,
+  /** Cambia solo una aparicion de una serie (recurrenceId es su recurrence_id). */
+  updateCalendarOccurrence: (
+    id: string,
+    recurrenceId: string,
+    input: CalendarEventInput,
+    etag?: string,
+    notify = true,
+  ) =>
+    request<SavedCalendarEvent>('PUT', wm.calendarOccurrence(id, recurrenceId), {
+      json: input,
+      headers: ifMatch(etag),
+      params: { notify: notify ? undefined : 'false' },
+    }),
+  deleteCalendarOccurrence: (id: string, recurrenceId: string, etag?: string, notify = true) =>
+    request<SavedCalendarEvent>('DELETE', wm.calendarOccurrence(id, recurrenceId), {
+      headers: ifMatch(etag),
+      params: { notify: notify ? undefined : 'false' },
+    }),
+
+  invitation: (folder: string, uid: number, signal?: AbortSignal) =>
+    request<Invitation>('GET', wm.invitation(folder, uid), { signal }),
+  respondInvitation: (folder: string, uid: number, response: InvitationResponse) =>
+    request<InvitationResult>('POST', wm.invitationRespond(folder, uid), { json: { response } }),
+  applyInvitation: (folder: string, uid: number) =>
+    request<InvitationApplied>('POST', wm.invitationApply(folder, uid)),
+
+  /** Ocupacion (solo inicio y fin) de companeros de la empresa en [start, end). */
+  availability: async (
+    addresses: readonly string[],
+    start: string,
+    end: string,
+    signal?: AbortSignal,
+  ): Promise<MailboxAvailability[]> =>
+    (await request<MailboxAvailability[] | null>('GET', wm.availability, {
+      params: { addresses: addresses.join(','), start, end },
+      signal,
+    })) ?? [],
+
+  bookingSettings: (signal?: AbortSignal) => request<BookingPage>('GET', wm.booking, { signal }),
+  saveBookingSettings: (input: BookingSettings, regenerateLink = false) =>
+    request<BookingPage>('PUT', wm.booking, {
+      json: { ...input, regenerate_link: regenerateLink },
+    }),
 };
 
 export function hasFlag(envelope: Pick<MessageEnvelope, 'flags'>, flag: string): boolean {

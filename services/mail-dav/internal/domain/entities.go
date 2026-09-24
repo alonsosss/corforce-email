@@ -79,6 +79,11 @@ type Event struct {
 	LastEnd    *time.Time
 	CreatedAt  time.Time
 	UpdatedAt  time.Time
+	// Busy son los tramos que el evento ocupa, materializados al guardarlo hasta BusyUntil (nil: todos); solo
+	// cuentan si BusyPlanned (ver NewEventAt).
+	Busy        []Interval
+	BusyUntil   *time.Time
+	BusyPlanned bool
 }
 
 // EventWindow acota por tiempo los eventos que se leen: solo los que pueden tener una aparicion que

@@ -260,3 +260,27 @@ type Calendar interface {
 	UpdateEvent(ctx context.Context, mb domain.MailboxRef, id string, in domain.EventInput, ifMatch string) (domain.Event, error)
 	DeleteEvent(ctx context.Context, mb domain.MailboxRef, id string) error
 }
+
+// Scheduling es la planificacion de mail-dav sobre el calendario del buzon (docs/adr/0004): una aparicion de una
+// serie, las invitaciones iTIP, la disponibilidad del equipo y la pagina de citas. Errores como ContactBook.
+type Scheduling interface {
+	UpdateOccurrence(ctx context.Context, mb domain.MailboxRef, id, recurrenceID string, in domain.EventInput, ifMatch string) (domain.Event, error)
+	DeleteOccurrence(ctx context.Context, mb domain.MailboxRef, id, recurrenceID, ifMatch string) (domain.Event, error)
+	// EventInvitation escribe la invitacion (REQUEST o CANCEL) de un evento del buzon.
+	EventInvitation(ctx context.Context, mb domain.MailboxRef, id, method string) (domain.ITIPMessage, error)
+	InspectInvitation(ctx context.Context, mb domain.MailboxRef, ical string, addresses []string) (domain.Invitation, error)
+	RespondInvitation(ctx context.Context, mb domain.MailboxRef, ical string, addresses []string, response string) (domain.InvitationAnswer, error)
+	ApplyInvitation(ctx context.Context, mb domain.MailboxRef, ical, from string, addresses []string) (domain.InvitationApplied, error)
+	Availability(ctx context.Context, mb domain.MailboxRef, addresses []string, w domain.EventWindow) ([]domain.MailboxAvailability, error)
+	BookingSettings(ctx context.Context, mb domain.MailboxRef) (domain.BookingPage, error)
+	SaveBookingSettings(ctx context.Context, mb domain.MailboxRef, in domain.BookingSettings, ownerName string, regenerate bool) (domain.BookingPage, error)
+	// PublicBooking y Book no llevan buzon: son la pagina publica de una empresa.
+	PublicBooking(ctx context.Context, tenantID, publicID string, w domain.EventWindow) (domain.PublicBookingPage, error)
+	Book(ctx context.Context, tenantID, publicID string, in domain.BookingRequest) (domain.BookingConfirmation, error)
+}
+
+// InvitationComposer arma el correo iMIP (RFC 6047) de una invitacion, una respuesta o una cancelacion: texto
+// para personas y el iCalendar con su METHOD en una parte text/calendar.
+type InvitationComposer interface {
+	ComposeInvitation(msg domain.InvitationMail) ([]byte, error)
+}

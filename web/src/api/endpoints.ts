@@ -375,5 +375,21 @@ export const endpoints = {
     assistantReply: `${API_PREFIX}/webmail/assistant/reply`,
     assistantTone: `${API_PREFIX}/webmail/assistant/tone`,
     assistantExtract: `${API_PREFIX}/webmail/assistant/extract`,
+    calendarOccurrence: (id: string, recurrenceId: string) =>
+      `${API_PREFIX}/webmail/calendar/events/${seg(id)}/occurrences/${seg(recurrenceId)}`,
+    invitation: (folder: string, uid: number) =>
+      `${API_PREFIX}/webmail/invitations/${seg(folder)}/${uid}`,
+    invitationRespond: (folder: string, uid: number) =>
+      `${API_PREFIX}/webmail/invitations/${seg(folder)}/${uid}/respond`,
+    invitationApply: (folder: string, uid: number) =>
+      `${API_PREFIX}/webmail/invitations/${seg(folder)}/${uid}/apply`,
+    availability: `${API_PREFIX}/webmail/availability`,
+    booking: `${API_PREFIX}/webmail/booking`,
+  },
+  // Pagina publica de citas (sin sesion): la sirve el webmail de la celda del enlace. Solo la usa
+  // api/booking.ts.
+  publicBooking: {
+    page: (cell: string, tenant: string, page: string) =>
+      `${API_PREFIX}/public/booking/${seg(cell)}/${seg(tenant)}/${seg(page)}`,
   },
 } as const;

@@ -106,7 +106,7 @@ func TestSubidaDeFicheroGrandeVaAMailFilesConElBuzonDeLaSesion(t *testing.T) {
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("subida: %d %s", rec.Code, rec.Body.String())
 	}
-	if files.mb != (domain.MailboxRef{TenantID: testTenant, MailboxID: testMailbox}) || files.name != "planos final.dwg" ||
+	if files.mb.TenantID != testTenant || files.mb.MailboxID != testMailbox || files.name != "planos final.dwg" ||
 		files.content != "contenido" || files.opts != (domain.LargeFileOptions{ExpiresInDays: 3, MaxDownloads: 4}) {
 		t.Fatalf("llamada: %+v", files)
 	}

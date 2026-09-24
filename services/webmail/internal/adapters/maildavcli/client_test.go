@@ -185,7 +185,7 @@ func TestCalendarioContraMailDav(t *testing.T) {
 	if err != nil || e.ID != "e1" || e.Recurrence == nil || e.Recurrence.ByDay[0] != "MO" || *e.ReminderMinutes != 15 {
 		t.Fatalf("crear: %+v %v", e, err)
 	}
-	if created["recurrence"] == nil || len(created) != 8 {
+	if created["recurrence"] == nil || len(created) != 10 || created["timezone"] != "" {
 		t.Fatalf("cuerpo del evento: %v", created)
 	}
 }

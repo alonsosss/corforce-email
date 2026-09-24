@@ -384,6 +384,8 @@ type itemWrite struct {
 	size     int64
 	insert   func(ctx context.Context, coll domain.Addressbook) error
 	update   func(ctx context.Context, coll domain.Addressbook) error
+	// after corre tras el alta o la actualizacion, en la misma transaccion (la ocupacion de un evento).
+	after func(ctx context.Context, coll domain.Addressbook) error
 }
 
 // storageExceeded dice si guardar w dejaria al buzon por encima de su espacio. Reemplazar un objeto por
@@ -405,7 +407,17 @@ func (r *Repository) storageExceeded(ctx context.Context, p domain.Principal, k 
 // la baja de los datos de un buzon, de modo que ninguna escritura y ninguna baja se esperan la una a la otra.
 func (r *Repository) putItem(ctx context.Context, p domain.Principal, k collectionKind, slug string, w itemWrite, cond domain.Precondition, lim domain.WriteLimits) (bool, error) {
 	var created bool
-	err := r.scoped(ctx, p, func(ctx context.Context) error {
+	err := r.scoped(ctx, p, func(ctx context.Context) (err error) {
+		created, err = r.putItemIn(ctx, p, k, slug, w, cond, lim)
+		return err
+	})
+	return created && err == nil, err
+}
+
+// putItemIn es putItem dentro de una transaccion ya abierta con la identidad del buzon.
+func (r *Repository) putItemIn(ctx context.Context, p domain.Principal, k collectionKind, slug string, w itemWrite, cond domain.Precondition, lim domain.WriteLimits) (bool, error) {
+	var created bool
+	err := func() error {
 		if err := r.lockMailbox(ctx, p); err != nil {
 			return err
 		}
@@ -458,8 +470,13 @@ func (r *Repository) putItem(ctx context.Context, p domain.Principal, k collecti
 			}
 			return err
 		}
+		if w.after != nil {
+			if err := w.after(ctx, coll); err != nil {
+				return err
+			}
+		}
 		return r.recordChange(ctx, p, k, coll, w.resource, false, lim.MaxChanges)
-	})
+	}()
 	return created && err == nil, err
 }
 
