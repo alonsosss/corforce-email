@@ -1350,10 +1350,11 @@ env -u POSTGRES_PASSWORD -u JWT_SIGNING_KEY CELL_CODE=pe-02 CELL_DB_NAME=mail_ce
 WM_MASTER_USER="e2e-webmail@platform.local"
 WM_MASTER_PASS=$(rand_hex 20)
 # webmail_de <celda> <puerto> <puerto TLS de su mail-auth> <mail-directory de su celda>. El webmail
-# no abre ninguna base, pero config.Load exige una credencial: conserva la de la prueba.
+# no abre ninguna base, pero config.Load exige una credencial: conserva la de la prueba. Esta prueba
+# no llega a IMAP, SMTP ni mail-dav: sus direcciones son obligatorias y quedan inalcanzables.
 webmail_de() {
   env -u JWT_SIGNING_KEY CELL_CODE="$1" WEBMAIL_PORT="$2" MAIL_AUTH_URL="https://127.0.0.1:$3" \
-    MAIL_DIRECTORY_URL="$4" WEBMAIL_IMAP_ADDR=127.0.0.1:1 WEBMAIL_IMAP_TLS=none WEBMAIL_SMTP_ADDR=127.0.0.1:1 \
+    MAIL_DIRECTORY_URL="$4" MAIL_DAV_URL=http://127.0.0.1:1 WEBMAIL_IMAP_ADDR=127.0.0.1:1 WEBMAIL_IMAP_TLS=none WEBMAIL_SMTP_ADDR=127.0.0.1:1 \
     WEBMAIL_TLS_INSECURE_SKIP_VERIFY=true WEBMAIL_ALLOW_UNSCANNED_ATTACHMENTS=true NATS_URL=nats://127.0.0.1:1 \
     WEBMAIL_MASTER_USER="${WM_MASTER_USER}" WEBMAIL_MASTER_PASSWORD="${WM_MASTER_PASS}" \
     "$WORK/bin/webmail" >"$WORK/log/webmail-$1.log" 2>&1 &
