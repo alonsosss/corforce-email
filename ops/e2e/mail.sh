@@ -1473,7 +1473,15 @@ expect "ana cambia su contrasena desde el webmail" "$WM_CODE" "204"
 wm "$TARRO_ANA2" GET /folders
 expect "y su sesion queda revocada" "$WM_CODE" "401"
 esperar "IMAP acepta la nueva" 20 login_aceptado ana@acme.test "$ANA_NUEVA"
-wm "$TARRO_ANA2" POST /session -H 'Content-Type: application/json' -d "{\"username\":\"ana@acme.test\",\"password\":\"$ANA_NUEVA\"}"
+# Como con bea arriba: una sesion abierta dentro del margen de revocacion del cambio cae con su evento.
+ana_sesion_estable() {
+  wm "$TARRO_ANA2" POST /session -H 'Content-Type: application/json' -d "{\"username\":\"ana@acme.test\",\"password\":\"$ANA_NUEVA\"}"
+  [[ $WM_CODE == 200 ]] || return 1
+  sleep 3
+  wm "$TARRO_ANA2" GET /folders
+  [[ $WM_CODE == 200 ]]
+}
+esperar "ana entra con la nueva en una sesion que sobrevive a la revocacion" 30 ana_sesion_estable
 wm "$TARRO_ANA2" POST /password -H 'Content-Type: application/json' -d "{\"current_password\":\"$ANA_NUEVA\",\"new_password\":\"$ANA_PASS\"}"
 expect "y vuelve a la anterior para el resto de la prueba" "$WM_CODE" "204"
 esperar "IMAP acepta otra vez la anterior" 20 login_aceptado ana@acme.test "$ANA_PASS"
