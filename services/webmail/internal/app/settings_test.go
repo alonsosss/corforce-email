@@ -142,7 +142,7 @@ func TestLibretaYCalendarioUsanLaEmpresaYElBuzonDeLaSesion(t *testing.T) {
 	if occ, err := h.svc.Occurrences(ctx, sess, w); err != nil || len(occ) != 1 || !h.dav.window.Start.Equal(w.Start) {
 		t.Fatalf("%+v %v", occ, err)
 	}
-	if err := h.svc.DeleteEvent(ctx, sess, "e1"); err != nil || h.dav.id != "e1" {
+	if _, err := h.svc.DeleteEvent(ctx, sess, "e1", true); err != nil || h.dav.id != "e1" {
 		t.Fatalf("%v %q", err, h.dav.id)
 	}
 }
@@ -154,7 +154,7 @@ func TestUnaSesionSinEmpresaVuelveAlInicioDeSesion(t *testing.T) {
 	if _, err := h.svc.ListContacts(ctx, sess, domain.ContactQuery{}); !errors.Is(err, domain.ErrSessionInvalid) {
 		t.Fatalf("contactos: %v", err)
 	}
-	if _, err := h.svc.CreateEvent(ctx, sess, domain.EventInput{}); !errors.Is(err, domain.ErrSessionInvalid) {
+	if _, err := h.svc.CreateEvent(ctx, sess, domain.EventInput{}, true); !errors.Is(err, domain.ErrSessionInvalid) {
 		t.Fatalf("eventos: %v", err)
 	}
 	if h.dav.calls != 0 {
@@ -170,7 +170,7 @@ func TestLibretaValidaIdsYTopes(t *testing.T) {
 	if _, err := h.svc.Contact(ctx, sess, "../../internal"); !errors.As(err, &verr) {
 		t.Fatalf("id: %v", err)
 	}
-	if _, err := h.svc.UpdateEvent(ctx, sess, "e1", domain.EventInput{}, "\"x\"\r\nX-Mailbox-ID: otro"); !errors.As(err, &verr) {
+	if _, err := h.svc.UpdateEvent(ctx, sess, "e1", domain.EventInput{}, "\"x\"\r\nX-Mailbox-ID: otro", true); !errors.As(err, &verr) {
 		t.Fatalf("If-Match con salto de linea: %v", err)
 	}
 	if _, err := h.svc.ImportContacts(ctx, sess, "a.vcf", make([]byte, 2<<10)); !errors.Is(err, domain.ErrImportTooLarge) {
@@ -201,7 +201,7 @@ func TestLosRechazosDeMailDavPasanTalCual(t *testing.T) {
 		}
 	}
 	h.dav.err = &domain.ServiceRejection{Kind: domain.RejectPrecondition, Code: "PRECONDITION_FAILED"}
-	if _, err := h.svc.UpdateEvent(ctx, sess, "e1", domain.EventInput{}, `"v1"`); !errors.Is(err, domain.ErrPreconditionFailed) {
+	if _, err := h.svc.UpdateEvent(ctx, sess, "e1", domain.EventInput{}, `"v1"`, true); !errors.Is(err, domain.ErrPreconditionFailed) {
 		t.Fatalf("una precondicion se reconoce como tal: %v", err)
 	}
 	h.dav.err = errors.New("conexion rehusada")

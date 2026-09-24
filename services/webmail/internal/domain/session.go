@@ -62,7 +62,7 @@ func (s Session) Mailbox() (MailboxRef, bool) {
 	if !ValidUUID(s.TenantID) || !ValidUUID(s.MailboxID) {
 		return MailboxRef{}, false
 	}
-	return MailboxRef{TenantID: s.TenantID, MailboxID: s.MailboxID}, true
+	return MailboxRef{TenantID: s.TenantID, MailboxID: s.MailboxID, Address: s.Username}, true
 }
 
 // RevokedBy indica si una revocacion del buzon en revokedAt alcanza a la sesion: toda

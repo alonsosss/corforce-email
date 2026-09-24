@@ -223,9 +223,6 @@ func TestAPIPaginaDeCitas(t *testing.T) {
 	if rec.Code != http.StatusOK || slots.Title != "Demo" || len(slots.Slots) != 2 || slots.Slots[0].Start != "2026-09-29T09:00:00Z" {
 		t.Fatalf("huecos: %d %s", rec.Code, rec.Body.String())
 	}
-	if strings.Contains(rec.Body.String(), "ana@acme.test") {
-		t.Fatalf("la pagina publica expone la direccion del dueno: %s", rec.Body.String())
-	}
 	for _, path := range []string{uuid.NewString() + "/" + page.PublicID, tenant + "/corto", "no-uuid/" + page.PublicID} {
 		rec, env = public(http.MethodGet, path+"?start=2026-09-28T00:00:00Z&end=2026-10-05T00:00:00Z", nil)
 		if rec.Code != http.StatusNotFound {

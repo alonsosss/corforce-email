@@ -64,6 +64,7 @@ var rejectionKinds = map[int]domain.RejectionKind{
 	http.StatusInsufficientStorage:   domain.RejectQuota,
 	http.StatusTooManyRequests:       domain.RejectRateLimited,
 	http.StatusServiceUnavailable:    domain.RejectUnavailable,
+	http.StatusConflict:              domain.RejectConflict,
 }
 
 // Request es una llamada interna. Body se envia como JSON salvo que Raw lo sustituya (con su

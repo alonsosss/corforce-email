@@ -396,7 +396,8 @@ func (a *API) publicTarget(w http.ResponseWriter, r *http.Request) (uuid.UUID, s
 	return tenant, page, true
 }
 
-// publicBooking es lo que ve el visitante: la pagina activa y sus huecos libres en [start, end).
+// publicBooking es la pagina activa y sus huecos libres en [start, end). La direccion del dueno es para el webmail
+// (comprueba que el dueno es de su celda antes de reservar) y el webmail no la reenvia al visitante.
 func (a *API) publicBooking(w http.ResponseWriter, r *http.Request) {
 	tenant, page, ok := a.publicTarget(w, r)
 	if !ok {
@@ -420,7 +421,7 @@ func (a *API) publicBooking(w http.ResponseWriter, r *http.Request) {
 	p := res.Page
 	apiresponse.JSON(w, http.StatusOK, map[string]any{
 		"title": p.Title, "description": p.Description, "duration_minutes": p.DurationMinutes, "timezone": p.TimeZone,
-		"owner_name": p.OwnerName, "min_notice_minutes": p.MinNoticeMinutes, "max_advance_days": p.MaxAdvanceDays,
+		"owner_name": p.OwnerName, "owner_address": p.OwnerAddress, "min_notice_minutes": p.MinNoticeMinutes, "max_advance_days": p.MaxAdvanceDays,
 		"slots": intervalsOut(res.Slots),
 	})
 }

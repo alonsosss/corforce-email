@@ -315,15 +315,31 @@ type recurrenceDTO struct {
 	ByDay    []string `json:"by_day"`
 }
 
+type partyDTO struct {
+	Email string `json:"email"`
+	Name  string `json:"name"`
+}
+
+type attendeeDTO struct {
+	Email    string `json:"email"`
+	Name     string `json:"name"`
+	PartStat string `json:"partstat"`
+}
+
+// eventInputDTO es un evento tal como lo edita la interfaz. El organizador solo sale: con invitados lo pone el
+// servicio con el buzon de la sesion.
 type eventInputDTO struct {
 	Title           string         `json:"title"`
 	Start           string         `json:"start"`
 	End             string         `json:"end"`
 	AllDay          bool           `json:"all_day"`
+	TimeZone        string         `json:"timezone"`
 	Location        string         `json:"location"`
 	Description     string         `json:"description"`
 	Recurrence      *recurrenceDTO `json:"recurrence"`
 	ReminderMinutes *int           `json:"reminder_minutes"`
+	Organizer       *partyDTO      `json:"organizer"`
+	Attendees       []attendeeDTO  `json:"attendees"`
 }
 
 type eventDTO struct {
@@ -333,22 +349,26 @@ type eventDTO struct {
 }
 
 type occurrenceDTO struct {
-	ID        string `json:"id"`
-	Start     string `json:"start"`
-	End       string `json:"end"`
-	AllDay    bool   `json:"all_day"`
-	Title     string `json:"title"`
-	Location  string `json:"location"`
-	Recurring bool   `json:"recurring"`
+	ID           string `json:"id"`
+	Start        string `json:"start"`
+	End          string `json:"end"`
+	AllDay       bool   `json:"all_day"`
+	Title        string `json:"title"`
+	Location     string `json:"location"`
+	Recurring    bool   `json:"recurring"`
+	RecurrenceID string `json:"recurrence_id"`
 }
 
 func (in eventInputDTO) toDomain() domain.EventInput {
 	out := domain.EventInput{
-		Title: in.Title, Start: in.Start, End: in.End, AllDay: in.AllDay, Location: in.Location,
+		Title: in.Title, Start: in.Start, End: in.End, AllDay: in.AllDay, TimeZone: in.TimeZone, Location: in.Location,
 		Description: in.Description, ReminderMinutes: in.ReminderMinutes,
 	}
 	if rr := in.Recurrence; rr != nil {
 		out.Recurrence = &domain.Recurrence{Freq: rr.Freq, Interval: rr.Interval, Count: rr.Count, Until: rr.Until, ByDay: rr.ByDay}
+	}
+	for _, a := range in.Attendees {
+		out.Attendees = append(out.Attendees, domain.Attendee{Email: a.Email, Name: a.Name, PartStat: a.PartStat})
 	}
 	return out
 }
@@ -357,12 +377,18 @@ func toEventDTO(e domain.Event) eventDTO {
 	out := eventDTO{
 		ID: e.ID, ETag: e.ETag,
 		eventInputDTO: eventInputDTO{
-			Title: e.Title, Start: e.Start, End: e.End, AllDay: e.AllDay, Location: e.Location,
-			Description: e.Description, ReminderMinutes: e.ReminderMinutes,
+			Title: e.Title, Start: e.Start, End: e.End, AllDay: e.AllDay, TimeZone: e.TimeZone, Location: e.Location,
+			Description: e.Description, ReminderMinutes: e.ReminderMinutes, Attendees: []attendeeDTO{},
 		},
 	}
 	if rr := e.Recurrence; rr != nil {
 		out.Recurrence = &recurrenceDTO{Freq: rr.Freq, Interval: rr.Interval, Count: rr.Count, Until: rr.Until, ByDay: nonNil(rr.ByDay)}
+	}
+	if o := e.Organizer; o != nil {
+		out.Organizer = &partyDTO{Email: o.Email, Name: o.Name}
+	}
+	for _, a := range e.Attendees {
+		out.Attendees = append(out.Attendees, attendeeDTO{Email: a.Email, Name: a.Name, PartStat: a.PartStat})
 	}
 	return out
 }
@@ -385,7 +411,7 @@ func (h *Handler) Occurrences(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]occurrenceDTO, len(list))
 	for i, o := range list {
-		out[i] = occurrenceDTO{ID: o.ID, Start: o.Start, End: o.End, AllDay: o.AllDay, Title: o.Title, Location: o.Location, Recurring: o.Recurring}
+		out[i] = occurrenceDTO{ID: o.ID, Start: o.Start, End: o.End, AllDay: o.AllDay, Title: o.Title, Location: o.Location, Recurring: o.Recurring, RecurrenceID: o.RecurrenceID}
 	}
 	response.JSON(w, http.StatusOK, out)
 }
@@ -410,13 +436,13 @@ func (h *Handler) CreateEvent(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := h.opContext(r)
 	defer cancel()
-	e, err := h.app.CreateEvent(ctx, sessionFrom(r), req.toDomain())
+	e, err := h.app.CreateEvent(ctx, sessionFrom(r), req.toDomain(), notifyParam(r))
 	if err != nil {
 		h.fail(w, r, err)
 		return
 	}
 	withETag(w, e.ETag)
-	response.JSON(w, http.StatusCreated, toEventDTO(e))
+	response.JSON(w, http.StatusCreated, toSavedEventDTO(e))
 }
 
 func (h *Handler) UpdateEvent(w http.ResponseWriter, r *http.Request) {
@@ -427,22 +453,28 @@ func (h *Handler) UpdateEvent(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := h.opContext(r)
 	defer cancel()
-	e, err := h.app.UpdateEvent(ctx, sessionFrom(r), chi.URLParam(r, "id"), req.toDomain(), ifMatch(r))
+	e, err := h.app.UpdateEvent(ctx, sessionFrom(r), chi.URLParam(r, "id"), req.toDomain(), ifMatch(r), notifyParam(r))
 	if err != nil {
 		h.fail(w, r, err)
 		return
 	}
 	withETag(w, e.ETag)
-	response.JSON(w, http.StatusOK, toEventDTO(e))
+	response.JSON(w, http.StatusOK, toSavedEventDTO(e))
 }
 
-// DeleteEvent borra el evento entero, con toda su serie.
+// DeleteEvent borra el evento entero, con toda su serie. Si el buzon lo organizaba con invitados, responde 200 con
+// lo que paso con la cancelacion; si no, 204.
 func (h *Handler) DeleteEvent(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := h.opContext(r)
 	defer cancel()
-	if err := h.app.DeleteEvent(ctx, sessionFrom(r), chi.URLParam(r, "id")); err != nil {
+	delivery, err := h.app.DeleteEvent(ctx, sessionFrom(r), chi.URLParam(r, "id"), notifyParam(r))
+	if err != nil {
 		h.fail(w, r, err)
 		return
 	}
-	w.WriteHeader(http.StatusNoContent)
+	if delivery == nil {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	response.JSON(w, http.StatusOK, map[string]*deliveryDTO{"invitations": toDeliveryDTO(delivery)})
 }

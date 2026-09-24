@@ -19,6 +19,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	// La base de zonas va en el binario (imagen scratch): los correos de invitacion escriben la hora en la zona
+	// del evento.
+	_ "time/tzdata"
 
 	"github.com/alonsosss/corforce-email/pkg/config"
 	"github.com/alonsosss/corforce-email/pkg/events"
@@ -236,6 +239,8 @@ func main() {
 		Scheduled:   directory,
 		Contacts:    dav,
 		Calendar:    dav,
+		Scheduling:  dav,
+		Invitations: rfc5322.New(),
 		Watcher:     watcher,
 		Ledger:      redisadapter.NewSendLedger(rdb, st.cellCode),
 		Composer:    rfc5322.New(),

@@ -6,10 +6,12 @@ import (
 )
 
 // MailboxRef identifica el buzon ante mail-dav, que vive en la base de la empresa: la empresa y
-// el buzon que mail-auth devolvio al abrir la sesion.
+// el buzon que mail-auth devolvio al abrir la sesion. Address es la direccion del buzon (la de la
+// sesion): con ella sus companeros pueden pedir su disponibilidad y es el dueno de su pagina de citas.
 type MailboxRef struct {
 	TenantID  string
 	MailboxID string
+	Address   string
 }
 
 // resourceIDPattern es el nombre de un recurso de la libreta o del calendario sin extension, tal
@@ -107,10 +109,13 @@ type EventInput struct {
 	Start           string
 	End             string
 	AllDay          bool
+	TimeZone        string
 	Location        string
 	Description     string
 	Recurrence      *Recurrence
 	ReminderMinutes *int
+	Organizer       *Party
+	Attendees       []Attendee
 }
 
 // Event es un evento del calendario personal del buzon.
@@ -122,13 +127,14 @@ type Event struct {
 
 // Occurrence es una aparicion de un evento en una ventana de tiempo.
 type Occurrence struct {
-	ID        string
-	Start     string
-	End       string
-	AllDay    bool
-	Title     string
-	Location  string
-	Recurring bool
+	ID           string
+	Start        string
+	End          string
+	AllDay       bool
+	Title        string
+	Location     string
+	Recurring    bool
+	RecurrenceID string
 }
 
 // EventWindow es la ventana de la agenda; su tope lo aplica mail-dav.
