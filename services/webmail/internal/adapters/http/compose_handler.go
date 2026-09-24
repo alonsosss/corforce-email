@@ -7,6 +7,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/alonsosss/corforce-email/pkg/response"
 	"github.com/alonsosss/corforce-email/services/webmail/internal/domain"
@@ -28,7 +29,7 @@ const idempotencyHeader = "Idempotency-Key"
 var composeFields = map[string]bool{
 	"from": true, "to": true, "cc": true, "bcc": true, "subject": true, "text": true, "html": true,
 	"in_reply_to": true, "in_reply_to_folder": true, "replace_uid": true,
-	"source_folder": true, "source_uid": true, "source_parts": true,
+	"source_folder": true, "source_uid": true, "source_parts": true, "send_at": true,
 }
 
 // listFields admiten varios valores (y las direcciones, cada valor una lista separada por
@@ -38,10 +39,13 @@ var listFields = map[string]bool{"to": true, "cc": true, "bcc": true, "source_pa
 type composeForm struct {
 	draft      domain.Draft
 	replaceUID uint32
+	// sendAt, si no es cero, programa el envio en vez de entregarlo ya.
+	sendAt time.Time
 }
 
 // Send entrega el mensaje. replace_uid retira ese borrador en la misma operacion y
-// source_folder, source_uid y source_parts adjuntan partes de un mensaje del buzon.
+// source_folder, source_uid y source_parts adjuntan partes de un mensaje del buzon. Con send_at el
+// mensaje no sale: queda programado y la respuesta es {"scheduled":{"id","send_at"}}.
 func (h *Handler) Send(w http.ResponseWriter, r *http.Request) {
 	key := strings.TrimSpace(r.Header.Get(idempotencyHeader))
 	if err := domain.ValidateIdempotencyKey(key); err != nil {
@@ -56,7 +60,17 @@ func (h *Handler) Send(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), h.cfg.TransferTimeout)
 	defer cancel()
-	result, err := h.app.Send(ctx, sessionFrom(r), form.draft, domain.SendOptions{IdempotencyKey: key, ReplaceUID: form.replaceUID})
+	opts := domain.SendOptions{IdempotencyKey: key, ReplaceUID: form.replaceUID}
+	if !form.sendAt.IsZero() {
+		scheduled, err := h.app.Schedule(ctx, sessionFrom(r), form.draft, form.sendAt, opts)
+		if err != nil {
+			h.fail(w, r, err)
+			return
+		}
+		response.JSON(w, http.StatusAccepted, scheduleDTO{Scheduled: scheduledRefDTO{ID: scheduled.ID, SendAt: formatTime(scheduled.SendAt)}})
+		return
+	}
+	result, err := h.app.Send(ctx, sessionFrom(r), form.draft, opts)
 	if err != nil {
 		h.fail(w, r, err)
 		return
@@ -71,6 +85,10 @@ func (h *Handler) SaveDraft(w http.ResponseWriter, r *http.Request) {
 	form, err := h.readCompose(w, r)
 	if err != nil {
 		writeError(w, err)
+		return
+	}
+	if !form.sendAt.IsZero() {
+		writeError(w, domain.NewValidationError("send_at", "un borrador no se programa: se programa al enviarlo"))
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), h.cfg.TransferTimeout)
@@ -176,6 +194,13 @@ func buildComposeForm(fields map[string][]string, attachments []domain.Attachmen
 			folder = "INBOX"
 		}
 		d.InReplyTo = &domain.ReplyTarget{Folder: folder, UID: uid}
+	}
+	if raw := single(fields, "send_at"); raw != "" {
+		at, err := domain.ParseSendAt(raw)
+		if err != nil {
+			return composeForm{}, err
+		}
+		form.sendAt = at
 	}
 	if raw := single(fields, "replace_uid"); raw != "" {
 		uid, err := domain.ParseUID(raw)

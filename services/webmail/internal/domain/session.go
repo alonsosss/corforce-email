@@ -31,10 +31,14 @@ func ParseSessionToken(token string) (cell string, ok bool) {
 	return cell, found && ValidCellCode(cell) && sessionSecretPattern.MatchString(secret)
 }
 
-// Identity es lo que la verificacion del buzon devuelve al abrir el webmail.
+// Identity es lo que la verificacion del buzon devuelve al abrir el webmail. TenantID y MailboxID
+// son la empresa y el buzon (UUID) que mail-auth devuelve para service webmail; vacios si una
+// version anterior de mail-auth no los envia.
 type Identity struct {
 	Username    string
 	DisplayName string
+	TenantID    string
+	MailboxID   string
 }
 
 // Session es una sesion de webmail.
@@ -45,8 +49,20 @@ type Identity struct {
 type Session struct {
 	Username    string
 	DisplayName string
+	TenantID    string
+	MailboxID   string
 	CreatedAt   time.Time
 	ExpiresAt   time.Time
+}
+
+// Mailbox es la empresa y el buzon de la sesion, que exigen la libreta personal y el calendario
+// (mail-dav). Una sesion abierta antes de que mail-auth los devolviera no los tiene: ok es false y
+// el usuario debe volver a entrar.
+func (s Session) Mailbox() (MailboxRef, bool) {
+	if !ValidUUID(s.TenantID) || !ValidUUID(s.MailboxID) {
+		return MailboxRef{}, false
+	}
+	return MailboxRef{TenantID: s.TenantID, MailboxID: s.MailboxID}, true
 }
 
 // RevokedBy indica si una revocacion del buzon en revokedAt alcanza a la sesion: toda
@@ -76,6 +92,8 @@ func (p SessionPolicy) Open(id Identity, verificationStartedAt time.Time) Sessio
 	return Session{
 		Username:    id.Username,
 		DisplayName: id.DisplayName,
+		TenantID:    id.TenantID,
+		MailboxID:   id.MailboxID,
 		CreatedAt:   verificationStartedAt,
 		ExpiresAt:   verificationStartedAt.Add(p.Max),
 	}

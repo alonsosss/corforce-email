@@ -225,6 +225,56 @@ type ListQuery struct {
 	Page    int
 	PerPage int
 	Search  string
+	Filter  SearchFilter
+}
+
+// SearchFilter son los criterios de la busqueda avanzada; el valor cero de cada uno no filtra.
+// Las fechas son de calendario y se comparan con la fecha del mensaje (cabecera Date): Since
+// incluye ese dia y Before lo excluye, como SENTSINCE y SENTBEFORE de IMAP.
+type SearchFilter struct {
+	From           string
+	To             string
+	Subject        string
+	Since          time.Time
+	Before         time.Time
+	Unread         bool
+	Flagged        bool
+	HasAttachments bool
+}
+
+// searchDateLayout es el formato de las fechas de la busqueda (YYYY-MM-DD).
+const searchDateLayout = "2006-01-02"
+
+// ParseSearchDate interpreta una fecha de la busqueda; vacia es sin fecha.
+func ParseSearchDate(field, raw string) (time.Time, error) {
+	if raw == "" {
+		return time.Time{}, nil
+	}
+	t, err := time.Parse(searchDateLayout, raw)
+	if err != nil {
+		return time.Time{}, invalid(field, "debe ser una fecha AAAA-MM-DD")
+	}
+	return t, nil
+}
+
+// WithFilter anade los criterios de la busqueda avanzada. Cada texto se acota y se limpia igual
+// que la busqueda libre; Before debe ser posterior a Since.
+func (q ListQuery) WithFilter(f SearchFilter) (ListQuery, error) {
+	for _, field := range []struct {
+		name  string
+		value *string
+	}{{"from", &f.From}, {"to", &f.To}, {"subject", &f.Subject}} {
+		v, err := searchText(field.name, *field.value)
+		if err != nil {
+			return ListQuery{}, err
+		}
+		*field.value = v
+	}
+	if !f.Since.IsZero() && !f.Before.IsZero() && !f.Before.After(f.Since) {
+		return ListQuery{}, invalid("before", "debe ser posterior a since")
+	}
+	q.Filter = f
+	return q, nil
 }
 
 // NewListQuery aplica los valores por defecto y los limites. La busqueda viaja como una
@@ -240,19 +290,28 @@ func NewListQuery(page, perPage int, search string) (ListQuery, error) {
 	if perPage > MaxPerPage {
 		perPage = MaxPerPage
 	}
-	search = strings.TrimSpace(search)
-	if len(search) > MaxSearchBytes {
-		return ListQuery{}, invalid("search", "demasiado larga")
-	}
-	if !utf8.ValidString(search) {
-		return ListQuery{}, invalid("search", "no es UTF-8 valido")
-	}
-	for _, r := range search {
-		if isControl(r) {
-			return ListQuery{}, invalid("search", "contiene caracteres de control")
-		}
+	search, err := searchText("search", search)
+	if err != nil {
+		return ListQuery{}, err
 	}
 	return ListQuery{Page: page, PerPage: perPage, Search: search}, nil
+}
+
+// searchText acota un texto de busqueda y rechaza lo que no puede viajar en IMAP SEARCH.
+func searchText(field, v string) (string, error) {
+	v = strings.TrimSpace(v)
+	if len(v) > MaxSearchBytes {
+		return "", invalid(field, "demasiado larga")
+	}
+	if !utf8.ValidString(v) {
+		return "", invalid(field, "no es UTF-8 valido")
+	}
+	for _, r := range v {
+		if isControl(r) {
+			return "", invalid(field, "contiene caracteres de control")
+		}
+	}
+	return v, nil
 }
 
 // Window devuelve el rango [start, end) de la pagina sobre un resultado de total filas.
@@ -264,10 +323,27 @@ func (q ListQuery) Window(total int) (int, int) {
 	return start, min(start+q.PerPage, total)
 }
 
-// MessagePage es una pagina del listado y el total de coincidencias.
+// MessagePage es una pagina del listado y el total de coincidencias. Capped indica que el
+// total se calculo sobre los mensajes mas recientes y puede haber mas (filtro por adjuntos).
 type MessagePage struct {
-	Items []Envelope
-	Total int
+	Items  []Envelope
+	Total  int
+	Capped bool
+}
+
+// StoredMessage identifica un mensaje guardado en una carpeta: su UID solo vale con la
+// UIDVALIDITY de la carpeta, y el Message-ID lo reconoce aunque cambie de UID.
+type StoredMessage struct {
+	UIDValidity uint32
+	UID         uint32
+	MessageID   string
+	Size        int64
+}
+
+// AppendedMessage es la referencia IMAP de un mensaje recien guardado (APPENDUID).
+type AppendedMessage struct {
+	UID         uint32
+	UIDValidity uint32
 }
 
 // inertTypes son los tipos que un navegador puede recibir sin ejecutar nada: con

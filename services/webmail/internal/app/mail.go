@@ -137,7 +137,7 @@ func (s *Service) ChangeFlags(ctx context.Context, sess domain.Session, folder s
 		return err
 	}
 	return s.withMailbox(ctx, sess, func(mb ports.Mailbox) error {
-		return mb.SetFlags(ctx, folder, uid, change)
+		return requireOne(mb.SetFlags(ctx, folder, []uint32{uid}, change))
 	})
 }
 
@@ -157,7 +157,7 @@ func (s *Service) Move(ctx context.Context, sess domain.Session, folder string, 
 		return domain.NewValidationError("to", "el mensaje ya esta en esa carpeta")
 	}
 	return s.withMailbox(ctx, sess, func(mb ports.Mailbox) error {
-		return mb.Move(ctx, folder, uid, dest)
+		return requireOne(mb.Move(ctx, folder, []uint32{uid}, dest))
 	})
 }
 
@@ -167,24 +167,85 @@ func (s *Service) Delete(ctx context.Context, sess domain.Session, folder string
 	if err := domain.ValidateFolderName(folder); err != nil {
 		return false, err
 	}
-	permanent := false
+	var res domain.BatchResult
 	err := s.withMailbox(ctx, sess, func(mb ports.Mailbox) error {
-		folders, err := mb.Folders(ctx, false)
-		if err != nil {
-			return err
+		var err error
+		res, err = s.deleteMessages(ctx, mb, folder, []uint32{uid})
+		if err == nil && res.Affected == 0 {
+			return domain.ErrMessageNotFound
 		}
-		trash, ok := domain.FolderWithRole(folders, domain.RoleTrash)
-		if !ok {
-			return domain.ErrTrashNotFound
-		}
-		if trash.Name == folder {
-			permanent = true
-			return mb.Expunge(ctx, folder, uid)
-		}
-		return mb.Move(ctx, folder, uid, trash.Name)
+		return err
 	})
 	if err != nil {
 		return false, err
 	}
-	return permanent, nil
+	return res.Permanent, nil
+}
+
+// Batch aplica una accion a varios mensajes de la carpeta en una sola conexion. Affected cuenta
+// los que existian: un UID que ya no esta (otro cliente lo movio) no es un error.
+func (s *Service) Batch(ctx context.Context, sess domain.Session, folder string, b domain.Batch) (domain.BatchResult, error) {
+	if err := domain.ValidateFolderName(folder); err != nil {
+		return domain.BatchResult{}, err
+	}
+	var res domain.BatchResult
+	err := s.withMailbox(ctx, sess, func(mb ports.Mailbox) error {
+		var err error
+		switch b.Action {
+		case domain.BatchFlags:
+			res.Affected, err = mb.SetFlags(ctx, folder, b.UIDs, b.Flags)
+		case domain.BatchMove:
+			res.Affected, err = mb.Move(ctx, folder, b.UIDs, b.To)
+		case domain.BatchDelete:
+			res, err = s.deleteMessages(ctx, mb, folder, b.UIDs)
+		default:
+			err = domain.NewValidationError("action", "accion desconocida")
+		}
+		return err
+	})
+	return res, err
+}
+
+// deleteMessages mueve a la papelera o, desde la papelera, borra para siempre.
+func (s *Service) deleteMessages(ctx context.Context, mb ports.Mailbox, folder string, uids []uint32) (domain.BatchResult, error) {
+	folders, err := mb.Folders(ctx, false)
+	if err != nil {
+		return domain.BatchResult{}, err
+	}
+	trash, ok := domain.FolderWithRole(folders, domain.RoleTrash)
+	if !ok {
+		return domain.BatchResult{}, domain.ErrTrashNotFound
+	}
+	if trash.Name == folder {
+		n, err := mb.Expunge(ctx, folder, uids)
+		return domain.BatchResult{Affected: n, Permanent: true}, err
+	}
+	n, err := mb.Move(ctx, folder, uids, trash.Name)
+	return domain.BatchResult{Affected: n}, err
+}
+
+// StreamRaw entrega el mensaje original (.eml) a emit, acotado por el tope de descarga.
+func (s *Service) StreamRaw(ctx context.Context, sess domain.Session, folder string, uid uint32, emit func(domain.StoredMessage, io.Reader) error) error {
+	if err := domain.ValidateFolderName(folder); err != nil {
+		return err
+	}
+	return s.withMailbox(ctx, sess, func(mb ports.Mailbox) error {
+		msg, body, err := mb.OpenRaw(ctx, folder, uid, s.cfg.MaxAttachmentBytes)
+		if err != nil {
+			return err
+		}
+		defer body.Close()
+		return emit(msg, body)
+	})
+}
+
+// requireOne traduce una operacion sobre un solo UID que no encontro el mensaje.
+func requireOne(n int, err error) error {
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return domain.ErrMessageNotFound
+	}
+	return nil
 }

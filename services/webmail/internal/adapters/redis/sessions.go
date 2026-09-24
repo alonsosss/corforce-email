@@ -46,6 +46,8 @@ func NewSessionStore(rdb *goredis.Client, cellCode string, maxLifetime time.Dura
 type record struct {
 	Username    string `json:"u"`
 	DisplayName string `json:"n"`
+	TenantID    string `json:"t,omitempty"`
+	MailboxID   string `json:"m,omitempty"`
 	CreatedAt   int64  `json:"c"`
 	ExpiresAt   int64  `json:"e"`
 }
@@ -56,7 +58,7 @@ func (s *SessionStore) revokedKey(username string) string { return s.prefix + "r
 
 func (s *SessionStore) Create(ctx context.Context, key string, sess domain.Session, ttl time.Duration) error {
 	data, err := json.Marshal(record{
-		Username: sess.Username, DisplayName: sess.DisplayName,
+		Username: sess.Username, DisplayName: sess.DisplayName, TenantID: sess.TenantID, MailboxID: sess.MailboxID,
 		CreatedAt: sess.CreatedAt.UnixMicro(), ExpiresAt: sess.ExpiresAt.UnixMicro(),
 	})
 	if err != nil {
@@ -85,7 +87,7 @@ func (s *SessionStore) Get(ctx context.Context, key string) (domain.Session, err
 		return domain.Session{}, domain.ErrSessionInvalid
 	}
 	return domain.Session{
-		Username: r.Username, DisplayName: r.DisplayName,
+		Username: r.Username, DisplayName: r.DisplayName, TenantID: r.TenantID, MailboxID: r.MailboxID,
 		CreatedAt: time.UnixMicro(r.CreatedAt).UTC(), ExpiresAt: time.UnixMicro(r.ExpiresAt).UTC(),
 	}, nil
 }

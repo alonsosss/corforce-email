@@ -18,6 +18,7 @@ func setSettingsEnv(t *testing.T, environment string, overrides map[string]strin
 		"MAIL_AUTH_URL":                       "https://mail-auth:9082",
 		"MAIL_HOSTNAME":                       "mail.cfm.test",
 		"MAIL_DIRECTORY_URL":                  "http://mail-directory:8040",
+		"MAIL_DAV_URL":                        "http://mail-dav:8058",
 		"INTERNAL_GATEWAY_TOKEN":              "gateway-token-0123456789",
 		"WEBMAIL_IMAP_ADDR":                   "dovecot:993",
 		"WEBMAIL_SMTP_ADDR":                   "postfix:587",
@@ -37,6 +38,10 @@ func setSettingsEnv(t *testing.T, environment string, overrides map[string]strin
 		"WEBMAIL_MAX_MESSAGE_BYTES":           "",
 		"WEBMAIL_MAX_BODY_PART_BYTES":         "",
 		"WEBMAIL_MAX_ATTACHMENT_BYTES":        "",
+		"WEBMAIL_SCHEDULED_POLL_INTERVAL":     "",
+		"WEBMAIL_SCHEDULED_BATCH":             "",
+		"WEBMAIL_SCHEDULED_MAX_DAYS":          "",
+		"WEBMAIL_MAX_IMPORT_BYTES":            "",
 		"AUTH_COOKIE_SECURE":                  "",
 		"CORS_ALLOWED_ORIGINS":                "",
 		"API_ORIGIN":                          "",
@@ -158,5 +163,53 @@ func TestLoadSettingsURLDeMailDirectory(t *testing.T) {
 	setSettingsEnv(t, "production", map[string]string{"MAIL_DIRECTORY_URL": "http://mail-directory:8040/"})
 	if st, err := loadSettings(); err != nil || st.mailDirectoryURL != "http://mail-directory:8040" {
 		t.Fatalf("URL valida: %q %v", st.mailDirectoryURL, err)
+	}
+}
+
+// MAIL_DAV_URL es obligatoria como MAIL_DIRECTORY_URL: sin ella no hay libreta personal ni calendario.
+func TestLoadSettingsURLDeMailDav(t *testing.T) {
+	for _, value := range []string{"", "mail-dav:8058", "http://mail-dav:8058/internal", "http://u@mail-dav:8058"} {
+		setSettingsEnv(t, "production", map[string]string{"MAIL_DAV_URL": value})
+		if _, err := loadSettings(); !errorMentions("MAIL_DAV_URL")(err) {
+			t.Errorf("MAIL_DAV_URL=%q deberia impedir el arranque: %v", value, err)
+		}
+	}
+	setSettingsEnv(t, "production", nil)
+	if st, err := loadSettings(); err != nil || st.mailDavURL != "http://mail-dav:8058" {
+		t.Fatalf("MAIL_DAV_URL: %q %v", st.mailDavURL, err)
+	}
+}
+
+// El trabajador de envios programados y la importacion tienen valores por defecto y rangos.
+func TestLoadSettingsEnvioProgramadoEImportacion(t *testing.T) {
+	setSettingsEnv(t, "production", nil)
+	st, err := loadSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.scheduledPoll != defaultScheduledPollInterval || st.scheduledBatch != defaultScheduledBatch ||
+		st.scheduledMaxDays != defaultScheduledMaxDays || st.maxImportBytes != defaultMaxImportBytes {
+		t.Fatalf("valores por defecto: %+v", st)
+	}
+	refused := map[string][]string{
+		"WEBMAIL_SCHEDULED_POLL_INTERVAL": {"0s", "500ms", "6m", "15"},
+		"WEBMAIL_SCHEDULED_BATCH":         {"0", "21", "x"},
+		"WEBMAIL_SCHEDULED_MAX_DAYS":      {"0", "366"},
+		"WEBMAIL_MAX_IMPORT_BYTES":        {"0", "52428801"},
+	}
+	for key, values := range refused {
+		for _, value := range values {
+			setSettingsEnv(t, "production", map[string]string{key: value})
+			if _, err := loadSettings(); !errorMentions(key)(err) {
+				t.Errorf("%s=%q deberia impedir el arranque: %v", key, value, err)
+			}
+		}
+	}
+	setSettingsEnv(t, "production", map[string]string{
+		"WEBMAIL_SCHEDULED_POLL_INTERVAL": "1m", "WEBMAIL_SCHEDULED_BATCH": "20",
+		"WEBMAIL_SCHEDULED_MAX_DAYS": "30", "WEBMAIL_MAX_IMPORT_BYTES": "1048576",
+	})
+	if st, err = loadSettings(); err != nil || st.scheduledPoll.Minutes() != 1 || st.scheduledBatch != 20 || st.scheduledMaxDays != 30 || st.maxImportBytes != 1<<20 {
+		t.Fatalf("valores fijados: %+v %v", st, err)
 	}
 }

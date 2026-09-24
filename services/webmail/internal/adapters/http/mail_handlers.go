@@ -85,6 +85,15 @@ func (h *Handler) ListMessages(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
+	filter, err := searchFilter(q)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	if query, err = query.WithFilter(filter); err != nil {
+		writeError(w, err)
+		return
+	}
 	ctx, cancel := h.opContext(r)
 	defer cancel()
 	result, err := h.app.ListMessages(ctx, sessionFrom(r), folder, query)
@@ -93,7 +102,28 @@ func (h *Handler) ListMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response.JSONWithMeta(w, http.StatusOK, toEnvelopeDTOs(result.Items),
-		response.PageMeta(int64(result.Total), query.Page, query.PerPage))
+		response.PageMetaCapped(int64(result.Total), result.Capped, query.Page, query.PerPage))
+}
+
+// searchFilter lee los criterios de la busqueda avanzada de la query.
+func searchFilter(q url.Values) (domain.SearchFilter, error) {
+	f := domain.SearchFilter{From: q.Get("from"), To: q.Get("to"), Subject: q.Get("subject")}
+	var err error
+	if f.Since, err = domain.ParseSearchDate("since", q.Get("since")); err != nil {
+		return f, err
+	}
+	if f.Before, err = domain.ParseSearchDate("before", q.Get("before")); err != nil {
+		return f, err
+	}
+	for _, flag := range []struct {
+		name string
+		dst  *bool
+	}{{"unread", &f.Unread}, {"flagged", &f.Flagged}, {"has_attachments", &f.HasAttachments}} {
+		if *flag.dst, err = optionalBool(q.Get(flag.name), flag.name); err != nil {
+			return f, err
+		}
+	}
+	return f, nil
 }
 
 func (h *Handler) ReadMessage(w http.ResponseWriter, r *http.Request) {
@@ -227,6 +257,16 @@ func (h *Handler) DeleteMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response.JSON(w, http.StatusOK, deleteDTO{Permanent: permanent})
+}
+
+func optionalBool(raw, field string) (bool, error) {
+	switch raw {
+	case "", "false":
+		return false, nil
+	case "true":
+		return true, nil
+	}
+	return false, domain.NewValidationError(field, "debe ser true o false")
 }
 
 func optionalInt(raw, field string) (int, error) {

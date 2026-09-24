@@ -26,12 +26,9 @@ func servicioConWatcher(t *testing.T, w *watcherFalso) (*Service, domain.Session
 	if w == nil {
 		return h.svc, sess, token
 	}
-	svc, err := New(Deps{
-		Auth: h.auth, Sessions: h.store, Mail: h.mail, Sender: h.sender, Directory: h.directory, Vacations: h.directory,
-		AddressBook: h.directory, Ledger: h.ledger, Composer: h.composer, Sanitizer: h.sanitizer, Scanner: h.scanner,
-		PartURL: func(string, uint32, string) string { return "" }, Clock: h.clock.Now, Logger: h.svc.logger, Config: h.svc.cfg,
-		Watcher: w,
-	})
+	d := h.deps()
+	d.Watcher = w
+	svc, err := New(d)
 	if err != nil {
 		t.Fatal(err)
 	}

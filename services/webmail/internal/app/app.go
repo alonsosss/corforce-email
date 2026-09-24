@@ -24,6 +24,14 @@ type Config struct {
 	// SendTimeout acota un envio de principio a fin (adjuntos del buzon, ClamAV y SMTP); de
 	// el sale cuanto vive la reserva de su clave de idempotencia.
 	SendTimeout time.Duration
+	// MaxScheduledDays es lo mas lejos que se puede programar un envio.
+	MaxScheduledDays int
+	// ScheduledPollInterval y ScheduledBatch rigen el trabajador de envios programados: cada
+	// cuanto reclama filas vencidas y cuantas a la vez.
+	ScheduledPollInterval time.Duration
+	ScheduledBatch        int
+	// MaxImportBytes acota el fichero vCard que se importa a la libreta personal.
+	MaxImportBytes int64
 }
 
 type Deps struct {
@@ -34,6 +42,12 @@ type Deps struct {
 	Directory   ports.SenderDirectory
 	Vacations   ports.VacationDirectory
 	AddressBook ports.AddressBook
+	Signatures  ports.SignatureDirectory
+	Filters     ports.FilterDirectory
+	Passwords   ports.PasswordDirectory
+	Scheduled   ports.ScheduledDirectory
+	Contacts    ports.ContactBook
+	Calendar    ports.Calendar
 	// Watcher es opcional: sin el, GET /events responde que los avisos estan desactivados y la interfaz
 	// refresca por sondeo.
 	Watcher   ports.MailboxWatcher
@@ -58,6 +72,12 @@ type Service struct {
 	directory   ports.SenderDirectory
 	vacations   ports.VacationDirectory
 	addressBook ports.AddressBook
+	signatures  ports.SignatureDirectory
+	filters     ports.FilterDirectory
+	passwords   ports.PasswordDirectory
+	scheduled   ports.ScheduledDirectory
+	contacts    ports.ContactBook
+	calendar    ports.Calendar
 	watcher     ports.MailboxWatcher
 	ledger      ports.SendLedger
 	composer    ports.Composer
@@ -72,6 +92,7 @@ type Service struct {
 // New valida la configuracion y las dependencias: un webmail a medio cablear no arranca.
 func New(d Deps) (*Service, error) {
 	if d.Auth == nil || d.Sessions == nil || d.Mail == nil || d.Sender == nil || d.Directory == nil || d.Vacations == nil || d.AddressBook == nil ||
+		d.Signatures == nil || d.Filters == nil || d.Passwords == nil || d.Scheduled == nil || d.Contacts == nil || d.Calendar == nil ||
 		d.Ledger == nil || d.Composer == nil || d.Sanitizer == nil || d.PartURL == nil || d.Logger == nil {
 		return nil, errors.New("webmail: faltan dependencias del caso de uso")
 	}
@@ -90,12 +111,16 @@ func New(d Deps) (*Service, error) {
 	if d.Config.MaxBodyPartBytes < 1 || d.Config.MaxAttachmentBytes < 1 {
 		return nil, fmt.Errorf("webmail: los topes de lectura deben ser positivos")
 	}
+	if d.Config.MaxScheduledDays < 1 || d.Config.ScheduledPollInterval <= 0 || d.Config.ScheduledBatch < 1 || d.Config.MaxImportBytes < 1 {
+		return nil, errors.New("webmail: el plazo de programacion, el intervalo y el lote del trabajador y el tope de importacion deben ser positivos")
+	}
 	clock := d.Clock
 	if clock == nil {
 		clock = time.Now
 	}
 	return &Service{
 		auth: d.Auth, sessions: d.Sessions, mail: d.Mail, sender: d.Sender, directory: d.Directory, vacations: d.Vacations, addressBook: d.AddressBook, watcher: d.Watcher,
+		signatures: d.Signatures, filters: d.Filters, passwords: d.Passwords, scheduled: d.Scheduled, contacts: d.Contacts, calendar: d.Calendar,
 		ledger: d.Ledger, composer: d.Composer, sanitizer: d.Sanitizer, scanner: d.Scanner,
 		partURL: d.PartURL, clock: clock, logger: d.Logger, cfg: d.Config,
 	}, nil

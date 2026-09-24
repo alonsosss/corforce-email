@@ -55,17 +55,7 @@ type eventsServer struct {
 func newEventsServer(t *testing.T, watcher *fakeWatcher, tune func(*Config)) *eventsServer {
 	t.Helper()
 	store := &touchStore{memStore: memStore{m: map[string]domain.Session{}}}
-	deps := app.Deps{
-		Auth: stubAuth{}, Sessions: store, Mail: stubMail{mb: &stubMailbox{}},
-		Sender: nopSender{}, Directory: stubDirectory{}, Vacations: &stubVacations{}, AddressBook: &stubAddressBook{},
-		Ledger: &memLedger{m: map[string]domain.SendRecord{}}, Composer: nopComposer{}, Sanitizer: nopSanitizer{}, PartURL: PartURL,
-		Logger: zap.NewNop(),
-		Config: app.Config{
-			CellCode: testCell, Sessions: domain.SessionPolicy{Idle: 30 * time.Minute, Max: 12 * time.Hour},
-			Limits: domain.Limits{MaxRecipients: 2, MaxMessageBytes: 4096}, MaxBodyPartBytes: 1024, MaxAttachmentBytes: 1024,
-			SendTimeout: 5 * time.Second,
-		},
-	}
+	deps := testDeps(store, &stubMailbox{}, nopSender{}, &stubVacations{}, &stubAddressBook{}, newStubSettings(), &stubDAV{})
 	if watcher != nil {
 		deps.Watcher = watcher
 	}

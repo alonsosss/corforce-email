@@ -21,6 +21,9 @@ type Meta struct {
 	MaxSubjectChars    int
 	MaxSearchBytes     int
 	MaxFolderNameBytes int
+	MaxBatchUIDs       int
+	MaxScheduledDays   int
+	MaxImportBytes     int64
 	DefaultPageSize    int
 	MaxPageSize        int
 	FolderRoles        []domain.FolderRole
@@ -39,6 +42,9 @@ func (s *Service) Meta() Meta {
 		MaxSubjectChars:    domain.MaxSubjectRunes,
 		MaxSearchBytes:     domain.MaxSearchBytes,
 		MaxFolderNameBytes: domain.MaxFolderNameBytes,
+		MaxBatchUIDs:       domain.MaxBatchUIDs,
+		MaxScheduledDays:   s.cfg.MaxScheduledDays,
+		MaxImportBytes:     s.cfg.MaxImportBytes,
 		DefaultPageSize:    domain.DefaultPerPage,
 		MaxPageSize:        domain.MaxPerPage,
 		FolderRoles:        append([]domain.FolderRole(nil), domain.SpecialRoles...),

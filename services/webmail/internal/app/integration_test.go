@@ -52,39 +52,8 @@ const (
 
 func TestIntegracionWebmailContraIMAPYSMTP(t *testing.T) {
 	ctx := context.Background()
-	tlsServer, tlsClient := testTLS(t)
-	imapAddr := startIMAP(t, tlsServer)
-	smtpSrv := startSMTP(t, tlsServer)
-
-	store, err := imapadapter.NewStore(imapadapter.Config{
-		Addr: imapAddr, TLSMode: imapadapter.TLSImplicit, TLSConfig: tlsClient,
-		MasterUser: masterUser, MasterPassword: masterPass,
-	}, zap.NewNop())
-	if err != nil {
-		t.Fatal(err)
-	}
-	sender, err := smtpadapter.NewSender(smtpadapter.Config{
-		Addr: smtpSrv.addr, TLSMode: smtpadapter.TLSStartTLS, TLSConfig: tlsClient,
-		MasterUser: masterUser, MasterPassword: masterPass, HeloName: "webmail.test",
-	}, zap.NewNop())
-	if err != nil {
-		t.Fatal(err)
-	}
-	svc, err := app.New(app.Deps{
-		Auth: staticAuth{}, Sessions: newMemSessions(), Mail: store, Sender: sender,
-		Directory: staticDirectory{ids: []string{"ventas@empresa.test"}}, Vacations: staticDirectory{}, AddressBook: staticDirectory{}, Ledger: newMemLedger(),
-		Composer: rfc5322.New(), Sanitizer: htmlsafe.New(), PartURL: handler.PartURL, Logger: zap.NewNop(),
-		Config: app.Config{
-			CellCode:         "pe-01",
-			Sessions:         domain.SessionPolicy{Idle: 30 * time.Minute, Max: 12 * time.Hour},
-			Limits:           domain.Limits{MaxRecipients: 10, MaxMessageBytes: 1 << 20},
-			MaxBodyPartBytes: 64 << 10, MaxAttachmentBytes: 1 << 20,
-			SendTimeout: time.Minute,
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	env := newIntegration(t)
+	svc, store, smtpSrv := env.svc, env.store, env.smtp
 
 	seed(t, store)
 
@@ -356,6 +325,56 @@ func TestIntegracionWebmailContraIMAPYSMTP(t *testing.T) {
 	if got := len(smtpSrv.received()); got != 4 {
 		t.Fatalf("el envio en duda llego una sola vez al servidor: %d", got)
 	}
+}
+
+// integration es el webmail con sus adaptadores reales contra IMAP y SMTP en proceso.
+type integration struct {
+	svc       *app.Service
+	store     *imapadapter.Store
+	smtp      *smtpServer
+	scheduled *memScheduled
+}
+
+func newIntegration(t *testing.T) *integration {
+	t.Helper()
+	tlsServer, tlsClient := testTLS(t)
+	imapAddr := startIMAP(t, tlsServer)
+	smtpSrv := startSMTP(t, tlsServer)
+
+	store, err := imapadapter.NewStore(imapadapter.Config{
+		Addr: imapAddr, TLSMode: imapadapter.TLSImplicit, TLSConfig: tlsClient,
+		MasterUser: masterUser, MasterPassword: masterPass,
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sender, err := smtpadapter.NewSender(smtpadapter.Config{
+		Addr: smtpSrv.addr, TLSMode: smtpadapter.TLSStartTLS, TLSConfig: tlsClient,
+		MasterUser: masterUser, MasterPassword: masterPass, HeloName: "webmail.test",
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatal(err)
+	}
+	scheduled := newMemScheduled()
+	dir := staticDirectory{ids: []string{"ventas@empresa.test"}}
+	svc, err := app.New(app.Deps{
+		Auth: staticAuth{}, Sessions: newMemSessions(), Mail: store, Sender: sender,
+		Directory: dir, Vacations: dir, AddressBook: dir, Signatures: dir, Filters: dir, Passwords: dir,
+		Scheduled: scheduled, Contacts: noDAV{}, Calendar: noDAV{}, Ledger: newMemLedger(),
+		Composer: rfc5322.New(), Sanitizer: htmlsafe.New(), PartURL: handler.PartURL, Logger: zap.NewNop(),
+		Config: app.Config{
+			CellCode:         "pe-01",
+			Sessions:         domain.SessionPolicy{Idle: 30 * time.Minute, Max: 12 * time.Hour},
+			Limits:           domain.Limits{MaxRecipients: 10, MaxMessageBytes: 1 << 20},
+			MaxBodyPartBytes: 64 << 10, MaxAttachmentBytes: 1 << 20,
+			SendTimeout: time.Minute, MaxScheduledDays: 30, ScheduledPollInterval: 50 * time.Millisecond,
+			ScheduledBatch: 5, MaxImportBytes: 1 << 20,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &integration{svc: svc, store: store, smtp: smtpSrv, scheduled: scheduled}
 }
 
 func listAll(t *testing.T, svc *app.Service, sess domain.Session, folder string) []domain.Envelope {
