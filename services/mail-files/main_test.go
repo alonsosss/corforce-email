@@ -145,7 +145,7 @@ func TestCadenaDeLaPeticion(t *testing.T) {
 		t.Fatalf("persona en la API interna: %d", rec.Code)
 	}
 	target := domain.DownloadPath + "/" + uuid.NewString() + "/" + uuid.NewString() + "?x=1&s=" + strings.Repeat("a", 64)
-	if rec := do(http.MethodGet, target, gw); rec.Code != http.StatusNotFound || !strings.Contains(rec.Body.String(), "Enlace no valido") {
+	if rec := do(http.MethodGet, target, gw); rec.Code != http.StatusNotFound || !strings.Contains(rec.Body.String(), "Enlace no válido") {
 		t.Fatalf("enlace publico: %d", rec.Code)
 	}
 	if rec := do(http.MethodGet, "/api/v1/otra-cosa", gw); rec.Code != http.StatusNotFound {

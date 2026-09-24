@@ -54,7 +54,7 @@ button{background:#1f2933;color:#fff;border:0;border-radius:6px;padding:12px 20p
 <p>{{.Body}}</p>
 {{if .File}}<dl>
 <dt>Fichero</dt><dd>{{.File.Name}}</dd>
-<dt>Tamano</dt><dd>{{.File.Size}}</dd>
+<dt>Tamaño</dt><dd>{{.File.Size}}</dd>
 <dt>Disponible hasta</dt><dd>{{.File.Expires}}</dd>
 <dt>Descargas restantes</dt><dd>{{.File.Remaining}}</dd>
 <dt>Huella SHA-256</dt><dd><code>{{.File.SHA256}}</code></dd>
@@ -83,14 +83,14 @@ type pageData struct {
 var (
 	// pageInvalidLink es la misma respuesta para cualquier enlace que no sirve: firma alterada,
 	// caducado, revocado, agotado o de una empresa que no existe.
-	pageInvalidLink = pageData{Title: "Enlace no valido", Body: "Este enlace no es valido o ya no esta vigente. Si necesitas el fichero, pideselo de nuevo a quien te lo envio."}
-	pageUnavailable = pageData{Title: "Servicio no disponible", Body: "No se pudo completar la operacion en este momento. Vuelve a intentarlo en unos minutos."}
+	pageInvalidLink = pageData{Title: "Enlace no válido", Body: "Este enlace no es válido o ya no está vigente. Si necesitas el fichero, pídeselo de nuevo a quien te lo envió."}
+	pageUnavailable = pageData{Title: "Servicio no disponible", Body: "No se pudo completar la operación en este momento. Vuelve a intentarlo en unos minutos."}
 )
 
 func pageDownload(f domain.File, action string) pageData {
 	return pageData{
 		Title: "Fichero compartido",
-		Body:  "Te han enviado este fichero por enlace. Se analizo con antivirus antes de publicarse.",
+		Body:  "Te han enviado este fichero por enlace. Se analizó con antivirus antes de publicarse.",
 		File: &pageFile{
 			Name: f.Name, Size: humanSize(f.SizeBytes), Expires: f.ExpiresAt.UTC().Format("02/01/2006 15:04") + " UTC",
 			Remaining: f.RemainingDownloads(), SHA256: f.SHA256,

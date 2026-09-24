@@ -233,7 +233,7 @@ func (h *Handler) writeEmbed(w http.ResponseWriter, status int, f *domain.Subscr
 
 func (h *Handler) writeFormUnavailable(w http.ResponseWriter, err error) {
 	status := http.StatusNotFound
-	msg := messagePage{Title: "Formulario no disponible", Body: "Este formulario ya no esta disponible."}
+	msg := messagePage{Title: "Formulario no disponible", Body: "Este formulario ya no está disponible."}
 	if !errors.Is(err, domain.ErrFormNotFound) {
 		status = http.StatusServiceUnavailable
 		msg = messagePage{Title: "Servicio no disponible", Body: "No se pudo cargar el formulario en este momento. Vuelve a intentarlo en unos minutos."}
@@ -511,7 +511,7 @@ func (h *Handler) submitFailed(w http.ResponseWriter, mode submitMode, f *domain
 		h.writeEmbed(w, http.StatusUnprocessableEntity, f, defs, formErrorMessage(err), values)
 	case errors.As(err, &limited):
 		w.Header().Set("Retry-After", strconv.Itoa(int(math.Ceil(math.Max(limited.RetryAfter.Seconds(), 1)))))
-		h.writeFormPage(w, http.StatusTooManyRequests, f, messageTemplate, messagePage{Title: "Demasiados envios", Body: limited.Error()})
+		h.writeFormPage(w, http.StatusTooManyRequests, f, messageTemplate, messagePage{Title: "Demasiados envíos", Body: "Vuelve a intentarlo en unos minutos."})
 	case errors.Is(err, errOriginNotAllowed):
 		h.writeFormPage(w, http.StatusForbidden, nil, messageTemplate, messagePage{Title: "Formulario no disponible", Body: errOriginNotAllowed.Error()})
 	case errors.Is(err, domain.ErrFormNotFound):
@@ -520,7 +520,7 @@ func (h *Handler) submitFailed(w http.ResponseWriter, mode submitMode, f *domain
 		h.writeFormUnavailable(w, err)
 	default:
 		h.logger.Error("contacts: el envio del formulario no se pudo registrar", zap.Error(err))
-		h.writeFormPage(w, http.StatusInternalServerError, f, messageTemplate, messagePage{Title: "Servicio no disponible", Body: "No se pudo registrar la suscripcion. Vuelve a intentarlo en unos minutos."})
+		h.writeFormPage(w, http.StatusInternalServerError, f, messageTemplate, messagePage{Title: "Servicio no disponible", Body: "No se pudo registrar la suscripción. Vuelve a intentarlo en unos minutos."})
 	}
 }
 

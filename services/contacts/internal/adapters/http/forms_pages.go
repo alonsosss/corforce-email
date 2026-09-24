@@ -66,7 +66,7 @@ var embedTemplate = template.Must(template.New("embed").Parse(`<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
 <meta name="referrer" content="no-referrer">
-<title>{{if .Title}}{{.Title}}{{else}}Suscripcion{{end}}</title>
+<title>{{if .Title}}{{.Title}}{{else}}Suscripción{{end}}</title>
 <style>` + formStyles + `</style>
 </head>
 <body>
@@ -78,7 +78,7 @@ var embedTemplate = template.Must(template.New("embed").Parse(`<!DOCTYPE html>
 <input type="hidden" name="{{.TokenField}}" value="{{.Token}}">
 {{range .Fields}}{{if eq .Input "checkbox"}}<div class="field"><label class="check"><input type="checkbox" name="{{.Name}}" value="on"{{if .Checked}} checked{{end}}><span>{{.Label}}</span></label></div>
 {{else}}<div class="field"><label for="{{.Name}}">{{.Label}}{{if .Required}} *{{end}}</label><input id="{{.Name}}" type="{{.Input}}" name="{{.Name}}" value="{{.Value}}"{{if .Placeholder}} placeholder="{{.Placeholder}}"{{end}} autocomplete="{{.Autocomplete}}"{{if .Required}} required{{end}}{{if eq .Input "text"}} maxlength="1000"{{end}}{{if eq .Input "number"}} step="any"{{end}}></div>
-{{end}}{{end}}<div class="hp" aria-hidden="true"><label for="{{.HoneypotField}}">Deja este campo vacio</label><input id="{{.HoneypotField}}" type="text" name="{{.HoneypotField}}" value="" tabindex="-1" autocomplete="off"></div>
+{{end}}{{end}}<div class="hp" aria-hidden="true"><label for="{{.HoneypotField}}">Deja este campo vacío</label><input id="{{.HoneypotField}}" type="text" name="{{.HoneypotField}}" value="" tabindex="-1" autocomplete="off"></div>
 <div class="field"><label class="check"><input type="checkbox" name="{{.ConsentField}}" value="on" required><span>{{.ConsentText}}</span></label></div>
 <button type="submit">{{.SubmitLabel}}</button>
 </form>

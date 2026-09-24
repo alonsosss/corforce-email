@@ -37,9 +37,9 @@ var textViewTemplate = template.Must(template.New("text").Parse(`<!DOCTYPE html>
 `))
 
 var (
-	pageViewInvalid  = pageData{Title: "Enlace no valido", Body: "Este enlace no es valido o ha sido alterado."}
-	pageViewExpired  = pageData{Title: "Enlace caducado", Body: "Este enlace ya no esta disponible. El correo sigue en tu bandeja de entrada."}
-	pageViewNotFound = pageData{Title: "Correo no disponible", Body: "Este correo ya no esta disponible."}
+	pageViewInvalid  = pageData{Title: "Enlace no válido", Body: "Este enlace no es válido o ha sido alterado."}
+	pageViewExpired  = pageData{Title: "Enlace caducado", Body: "Este enlace ya no está disponible. El correo sigue en tu bandeja de entrada."}
+	pageViewNotFound = pageData{Title: "Correo no disponible", Body: "Este correo ya no está disponible."}
 
 	pageUnavailableView = pageData{Title: "Servicio no disponible", Body: "No se pudo mostrar el correo en este momento. Vuelve a intentarlo en unos minutos."}
 )

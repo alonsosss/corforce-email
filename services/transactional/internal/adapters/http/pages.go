@@ -42,20 +42,20 @@ type pageData struct {
 }
 
 var (
-	pageInvalidLink = pageData{Title: "Enlace no valido", Body: "Este enlace de baja no es valido o ha sido alterado. Si sigues recibiendo correos, contacta con el remitente."}
+	pageInvalidLink = pageData{Title: "Enlace no válido", Body: "Este enlace de baja no es válido o ha sido alterado. Si sigues recibiendo correos, contacta con el remitente."}
 	pageUnavailable = pageData{Title: "Servicio no disponible", Body: "No se pudo registrar la baja en este momento. Vuelve a intentarlo en unos minutos."}
 )
 
 func pageConfirm(action, email string) pageData {
 	return pageData{
 		Title:  "Confirmar baja",
-		Body:   "Vas a dejar de recibir correos en " + email + ". Pulsa el boton para confirmar.",
+		Body:   "Vas a dejar de recibir correos en " + email + ". Pulsa el botón para confirmar.",
 		Action: action,
 	}
 }
 
 func pageDone(email string) pageData {
-	return pageData{Title: "Baja registrada", Body: "La direccion " + email + " ya no recibira mas correos de este remitente."}
+	return pageData{Title: "Baja registrada", Body: "La dirección " + email + " ya no recibirá más correos de este remitente."}
 }
 
 func writePage(w http.ResponseWriter, status int, data pageData) {

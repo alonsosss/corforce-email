@@ -247,7 +247,7 @@ func marker(n *xhtml.Node) (key string, height int, ok bool) {
 func formIframe(key string, height int, base string) *xhtml.Node {
 	return &xhtml.Node{Type: xhtml.ElementNode, Data: "iframe", DataAtom: atom.Iframe, Attr: []xhtml.Attribute{
 		{Key: "src", Val: base + FormsEmbedPath + "/" + key + "/embed"},
-		{Key: "title", Val: "Formulario de suscripcion"},
+		{Key: "title", Val: "Formulario de suscripción"},
 		{Key: "loading", Val: "lazy"},
 		{Key: "style", Val: "width:100%;border:0;height:" + strconv.Itoa(height) + "px"},
 		{Key: "sandbox", Val: "allow-forms allow-same-origin allow-top-navigation-by-user-activation"},

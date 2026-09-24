@@ -432,5 +432,5 @@ func writePublicPageMissing(w http.ResponseWriter) {
 	w.Header().Set("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'")
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusNotFound)
-	_, _ = w.Write([]byte("pagina no encontrada\n"))
+	_, _ = w.Write([]byte("página no encontrada\n"))
 }

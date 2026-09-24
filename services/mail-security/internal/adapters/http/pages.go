@@ -53,16 +53,16 @@ type pageData struct {
 var (
 	// pageInvalidLink es la misma respuesta para una firma alterada, un enlace caducado o
 	// usado, un mensaje que ya no esta en cuarentena o una empresa que no existe.
-	pageInvalidLink = pageData{Title: "Enlace no valido", Body: "Este enlace no es valido o ya no esta vigente. Si necesitas recuperar el mensaje, pideselo al administrador de tu correo."}
-	pageUnavailable = pageData{Title: "Servicio no disponible", Body: "No se pudo completar la operacion en este momento. Vuelve a intentarlo en unos minutos."}
-	pageReleased    = pageData{Title: "Mensaje liberado", Body: "El mensaje se ha entregado en tu buzon."}
+	pageInvalidLink = pageData{Title: "Enlace no válido", Body: "Este enlace no es válido o ya no está vigente. Si necesitas recuperar el mensaje, pídeselo al administrador de tu correo."}
+	pageUnavailable = pageData{Title: "Servicio no disponible", Body: "No se pudo completar la operación en este momento. Vuelve a intentarlo en unos minutos."}
+	pageReleased    = pageData{Title: "Mensaje liberado", Body: "El mensaje se ha entregado en tu buzón."}
 	pageDiscarded   = pageData{Title: "Mensaje descartado", Body: "El mensaje se ha borrado de la cuarentena."}
 )
 
 func pageConfirmRelease(action, subject, sender string) pageData {
 	return pageData{
 		Title:   "Liberar mensaje",
-		Body:    "El mensaje se entregara en tu buzon. Liberalo solo si reconoces al remitente: puede ser malicioso.",
+		Body:    "El mensaje se entregará en tu buzón. Libéralo solo si reconoces al remitente: puede ser malicioso.",
 		Subject: subject, Sender: sender, Action: action, Button: "Liberar mensaje",
 	}
 }
@@ -70,7 +70,7 @@ func pageConfirmRelease(action, subject, sender string) pageData {
 func pageConfirmDiscard(action, subject, sender string) pageData {
 	return pageData{
 		Title:   "Descartar mensaje",
-		Body:    "El mensaje se borrara de la cuarentena y no podra recuperarse.",
+		Body:    "El mensaje se borrará de la cuarentena y no podrá recuperarse.",
 		Subject: subject, Sender: sender, Action: action, Button: "Descartar mensaje",
 	}
 }

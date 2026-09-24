@@ -30,7 +30,7 @@ button{background:#1f2933;color:#fff;border:0;border-radius:6px;padding:12px 20p
 <main>
 <h1>{{.Title}}</h1>
 <p>{{.Body}}</p>
-{{if .Action}}<form method="post" action="{{.Action}}"><button type="submit">Confirmar suscripcion</button></form>{{end}}
+{{if .Action}}<form method="post" action="{{.Action}}"><button type="submit">Confirmar suscripción</button></form>{{end}}
 </main>
 </body>
 </html>
@@ -45,15 +45,15 @@ type pageData struct {
 var (
 	// pageInvalidLink es la misma respuesta para un token inexistente, usado, caducado o
 	// de otra empresa: quien prueba enlaces no aprende nada de cual fallo.
-	pageInvalidLink = pageData{Title: "Enlace no valido", Body: "Este enlace de confirmacion no es valido o ya no esta vigente. Si quieres suscribirte, vuelve a solicitarlo al remitente."}
-	pageUnavailable = pageData{Title: "Servicio no disponible", Body: "No se pudo registrar la confirmacion en este momento. Vuelve a intentarlo en unos minutos."}
-	pageConfirmed   = pageData{Title: "Suscripcion confirmada", Body: "Gracias. Tu suscripcion ha quedado confirmada."}
+	pageInvalidLink = pageData{Title: "Enlace no válido", Body: "Este enlace de confirmación no es válido o ya no está vigente. Si quieres suscribirte, vuelve a solicitarlo al remitente."}
+	pageUnavailable = pageData{Title: "Servicio no disponible", Body: "No se pudo registrar la confirmación en este momento. Vuelve a intentarlo en unos minutos."}
+	pageConfirmed   = pageData{Title: "Suscripción confirmada", Body: "Gracias. Tu suscripción ha quedado confirmada."}
 )
 
 func pageConfirm(action string) pageData {
 	return pageData{
-		Title:  "Confirmar suscripcion",
-		Body:   "Pulsa el boton para confirmar que quieres recibir comunicaciones de este remitente.",
+		Title:  "Confirmar suscripción",
+		Body:   "Pulsa el botón para confirmar que quieres recibir comunicaciones de este remitente.",
 		Action: action,
 	}
 }

@@ -273,7 +273,9 @@ func TestPaginaDelEnlaceEscapaElNombreYNoCuenta(t *testing.T) {
 	if rec.Code != http.StatusOK || strings.Contains(body, "<script>") || !strings.Contains(body, "&lt;script&gt;") {
 		t.Fatalf("%d %s", rec.Code, body)
 	}
-	if !strings.Contains(body, `method="post"`) || !strings.Contains(body, "Descargar") || !strings.Contains(body, "noindex") {
+	if !strings.Contains(body, `method="post"`) || !strings.Contains(body, "Descargar") || !strings.Contains(body, "noindex") ||
+		!strings.Contains(body, "Tamaño") || !strings.Contains(body, "Se analizó con antivirus") ||
+		!strings.Contains(body, `<meta charset="utf-8">`) || rec.Header().Get("Content-Type") != "text/html; charset=utf-8" {
 		t.Fatalf("pagina: %s", body)
 	}
 	if rec.Header().Get("Cache-Control") != "no-store" || uc.claims.FileID != f.ID || uc.sig != strings.Repeat("c", 64) {
@@ -288,7 +290,7 @@ func TestEnlaceInvalidoMismaRespuesta(t *testing.T) {
 		for _, method := range []string{http.MethodGet, http.MethodPost} {
 			rec := httptest.NewRecorder()
 			h.PublicRoutes().ServeHTTP(rec, httptest.NewRequest(method, target, nil))
-			if rec.Code != http.StatusNotFound || !strings.Contains(rec.Body.String(), "Enlace no valido") {
+			if rec.Code != http.StatusNotFound || !strings.Contains(rec.Body.String(), "Enlace no válido") {
 				t.Errorf("%s %s: %d", method, target, rec.Code)
 			}
 		}

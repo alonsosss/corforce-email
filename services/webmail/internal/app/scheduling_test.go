@@ -125,7 +125,7 @@ func TestUnEventoConInvitadosLoOrganizaElBuzonYEnviaLaInvitacion(t *testing.T) {
 		t.Fatalf("envio: %+v", call)
 	}
 	mail := composer.mails[0]
-	if mail.Method != domain.MethodRequest || mail.Subject != "Invitacion: Revision" || !strings.Contains(mail.Text, "2026-10-01 10:00 - 11:00 (America/Lima)") {
+	if mail.Method != domain.MethodRequest || mail.Subject != "Invitación: Revision" || !strings.Contains(mail.Text, "2026-10-01 10:00 - 11:00 (America/Lima)") {
 		t.Fatalf("correo: %+v", mail)
 	}
 

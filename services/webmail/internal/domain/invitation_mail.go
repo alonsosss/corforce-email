@@ -62,7 +62,7 @@ func ReplyKind(response string) InvitationKind {
 // Textos de los correos de calendario. Son del producto, no de la interfaz: salen del servidor para que la pagina
 // publica de citas no pueda decidir que se escribe en un correo enviado desde el buzon de una empresa.
 var invitationSubjects = map[InvitationKind]string{
-	InvitationRequest:   "Invitacion: ",
+	InvitationRequest:   "Invitación: ",
 	InvitationCancel:    "Cancelada: ",
 	InvitationAccepted:  "Aceptada: ",
 	InvitationTentative: "Tentativa: ",
@@ -71,12 +71,12 @@ var invitationSubjects = map[InvitationKind]string{
 }
 
 var invitationLeads = map[InvitationKind]string{
-	InvitationRequest:   "Te invitan a una reunion.",
-	InvitationCancel:    "Esta reunion se ha cancelado.",
-	InvitationAccepted:  "La invitacion ha sido aceptada.",
-	InvitationTentative: "La invitacion ha sido aceptada de forma tentativa.",
-	InvitationDeclined:  "La invitacion ha sido rechazada.",
-	InvitationBooking:   "La cita esta confirmada.",
+	InvitationRequest:   "Te invitan a una reunión.",
+	InvitationCancel:    "Esta reunión se ha cancelado.",
+	InvitationAccepted:  "La invitación ha sido aceptada.",
+	InvitationTentative: "La invitación ha sido aceptada de forma tentativa.",
+	InvitationDeclined:  "La invitación ha sido rechazada.",
+	InvitationBooking:   "La cita está confirmada.",
 }
 
 // InvitationSummary es lo que el texto del correo cuenta del evento.
@@ -144,7 +144,7 @@ func InvitationText(kind InvitationKind, s InvitationSummary) string {
 		}
 	}
 	add("Asunto: ", s.Title)
-	add("Cuando: ", formatWhen(s))
+	add("Cuándo: ", formatWhen(s))
 	add("Lugar: ", s.Location)
 	add("Organiza: ", s.Organizer)
 	add("Responde: ", s.Attendee)

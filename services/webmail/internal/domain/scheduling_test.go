@@ -9,7 +9,7 @@ func TestTextosDeLasInvitaciones(t *testing.T) {
 	s := InvitationSummary{Title: "Plan", Start: "2026-10-01T15:00:00Z", End: "2026-10-01T16:30:00Z", TimeZone: "America/Lima",
 		Location: "Sala 1", Organizer: "Ana <ana@empresa.pe>"}
 	text := InvitationText(InvitationRequest, s)
-	for _, want := range []string{"Te invitan a una reunion.", "Asunto: Plan", "Cuando: 2026-10-01 10:00 - 11:30 (America/Lima)", "Lugar: Sala 1", "Organiza: Ana"} {
+	for _, want := range []string{"Te invitan a una reunión.", "Asunto: Plan", "Cuándo: 2026-10-01 10:00 - 11:30 (America/Lima)", "Lugar: Sala 1", "Organiza: Ana"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("falta %q en %q", want, text)
 		}
@@ -19,7 +19,7 @@ func TestTextosDeLasInvitaciones(t *testing.T) {
 		t.Fatal("una zona desconocida se escribe en UTC")
 	}
 	day := InvitationSummary{Title: "Feriado", Start: "2026-10-08T00:00:00Z", End: "2026-10-10T00:00:00Z", AllDay: true}
-	if !strings.Contains(InvitationText(InvitationBooking, day), "Cuando: 2026-10-08 - 2026-10-09") {
+	if booking := InvitationText(InvitationBooking, day); !strings.HasPrefix(booking, "La cita está confirmada.") || !strings.Contains(booking, "Cuándo: 2026-10-08 - 2026-10-09") {
 		t.Fatalf("dia completo: %q", InvitationText(InvitationBooking, day))
 	}
 	if InvitationSubject(ReplyKind(PartStatTentative), "Plan") != "Tentativa: Plan" || InvitationSubject(ReplyKind(PartStatDeclined), "x") != "Rechazada: x" {

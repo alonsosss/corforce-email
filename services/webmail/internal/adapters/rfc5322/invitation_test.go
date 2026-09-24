@@ -17,18 +17,21 @@ func TestComposeInvitation(t *testing.T) {
 	ical := "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nMETHOD:REQUEST\r\nBEGIN:VEVENT\r\nUID:x\r\nSUMMARY:Reunión\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
 	raw, err := Composer{}.ComposeInvitation(domain.InvitationMail{
 		From: domain.Address{Name: "Ana Pérez", Email: "ana@empresa.pe"}, To: []domain.Address{{Email: "bea@cliente.pe"}},
-		Cc: []domain.Address{{Email: "ana@empresa.pe"}}, Subject: "Invitacion: Reunión", Text: "Te invitan.\n",
+		Cc: []domain.Address{{Email: "ana@empresa.pe"}}, Subject: "Invitación: Reunión", Text: "Te invitan.\n",
 		Method: "REQUEST", ICal: ical, MessageID: "m1@empresa.pe", Date: time.Date(2026, 9, 28, 10, 0, 0, 0, time.UTC),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	assertCRLF(t, raw)
+	if head, _, _ := bytes.Cut(raw, []byte("\r\n\r\n")); !isASCII(head) || !bytes.Contains(head, []byte("Subject: =?utf-8?")) {
+		t.Fatalf("el asunto con tildes debe ir codificado (RFC 2047): %s", head)
+	}
 	mr, err := mail.CreateReader(bytes.NewReader(raw))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if subject, _ := mr.Header.Subject(); subject != "Invitacion: Reunión" {
+	if subject, _ := mr.Header.Subject(); subject != "Invitación: Reunión" {
 		t.Fatalf("asunto: %q", subject)
 	}
 	var calendars, attachments int
@@ -67,4 +70,13 @@ func TestComposeInvitation(t *testing.T) {
 	if strings.Contains(string(raw), "\nBcc:") {
 		t.Fatal("una invitacion no lleva Bcc")
 	}
+}
+
+func isASCII(b []byte) bool {
+	for _, c := range b {
+		if c > 0x7e {
+			return false
+		}
+	}
+	return true
 }
