@@ -317,11 +317,21 @@ enviar_imagenes() {
   tar -c -C "$dir" . | gzip -1 | "${SSH[@]}" 'gunzip | docker load' >/dev/null
   rc=$?
   rm -rf "$dir"
-  if ((rc != 0 && quitadas > 0)); then
-    # Un demonio sin el almacen de containerd exige todas las capas en el archivo.
-    echo ">> el servidor no acepto el envio sin capas; se reenvian completas" >&2
-    docker save "${faltan[@]}" | gzip -1 | "${SSH[@]}" 'gunzip | docker load' >/dev/null
-    rc=$?
+  ((quitadas > 0)) || return $rc
+  # Que una capa figure en otra imagen no garantiza que el almacen de contenido guarde su blob (la capa
+  # vacia comun, las de imagenes descargadas comprimidas): docker load no lo detecta y el fallo sale al
+  # crear el contenedor. Se comprueba leyendo cada imagen entera y se reenvian completas las que no.
+  local incompletas=()
+  for img in "${faltan[@]}"; do
+    "${SSH[@]}" "docker image save $img >/dev/null 2>&1" || incompletas+=("$img")
+  done
+  if ((rc != 0 || ${#incompletas[@]} > 0)); then
+    ((rc != 0)) && incompletas=("${faltan[@]}")
+    echo ">> ${#incompletas[@]} imagen(es) sin todas sus capas en el servidor; se reenvian completas" >&2
+    docker save "${incompletas[@]}" | gzip -1 | "${SSH[@]}" 'gunzip | docker load' >/dev/null || return 1
+    for img in "${incompletas[@]}"; do
+      "${SSH[@]}" "docker image save $img >/dev/null 2>&1" || { echo "!! $img sigue incompleta en el servidor" >&2; return 1; }
+    done
   fi
-  return $rc
+  return 0
 }
