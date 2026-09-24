@@ -85,7 +85,7 @@ largas de cada guardarraíl están en `ops/scaffold/README.md`, `ops/security/se
   domain-service, `tenantcell.OrganizationURLFromEnv`), `SUPPRESSION_URL` de contacts y de
   transactional (sin suppression transactional no encola ningún envío: toda exclusión se
   respeta antes de encolar), `CONTACTS_URL`, `TRANSACTIONAL_URL` y `TEMPLATES_URL` de campaigns
-  y automations, `BILLING_URL` de reputation, `MAIL_DIRECTORY_URL` del webmail y
+  y automations, `BILLING_URL` de reputation, `MAIL_DIRECTORY_URL` y `MAIL_DAV_URL` del webmail y
   `MAIL_DIRECTORY_URL` y `MAIL_SECURITY_URL` de domain-service (sus destinos base). Opcionales:
   `TEMPLATES_URL` y `REPUTATION_URL` de transactional, `TRANSACTIONAL_MAIL_URL` de identity y
   `TRANSACTIONAL_URL` de mail-security y de templates (vacías, lo que depende de ellas no

@@ -1,6 +1,6 @@
 # Plan: webmail competitivo
 
-Estado: en ejecucion (2026-09-24). Decision del responsable del producto: implementar todo lo de este
+Estado: implementado, en verificacion (2026-09-24). Decision del responsable del producto: implementar todo lo de este
 plan, sin fases de aprobacion intermedias, y desplegar al terminar cada bloque verificado.
 
 ## 1. Objetivo
@@ -238,8 +238,12 @@ de la empresa para limitar el reenvio externo.
 
 | Bloque | Estado |
 |---|---|
-| B1 | en curso |
-| B2 | en curso |
-| B3 | en curso |
-| B4 | en curso |
-| B5 | pendiente |
+| B1 | Hecho (V, 2026-09-24): firma, reglas y reenvio con Sieve generado en `sieve_before3`, contrasena por el dueno y `mail.scheduled_sends`; scripts compilados con el `sievec` real y reclamacion concurrente probada contra Postgres. La carpeta `Scheduled` no se declara en Dovecot: la crea el webmail al primer uso |
+| B2 | Hecho (V, 2026-09-24): API JSON interna de `mail-dav` (`/internal/mail-dav/...`, mas `/meta` con los topes), traductores vCard e iCalendar que conservan lo que no conocen, `Occurrences`; `mail-auth` devuelve `tenant_id` y `mailbox_id` al webmail. Fuzz de ida y vuelta |
+| B3 | Hecho (V, 2026-09-24): todo `services/webmail`; `MAIL_DAV_URL` obligatoria; `WEBMAIL_SCHEDULED_{POLL_INTERVAL,BATCH,MAX_DAYS}` y `WEBMAIL_MAX_IMPORT_BYTES` con defecto; topes de mail-dav en `GET /meta/dav` |
+| B4 | Hecho (V, 2026-09-24): toda la interfaz F1-F18, 771 pruebas de vitest |
+| B5 | En curso: integracion en la rama `webmail-competitivo`, seccion "Webmail completo" de `ops/e2e/mail.sh` |
+
+Limites conocidos: un evento repetido nuevo se guarda en UTC (en zonas con horario de verano la serie se
+desplaza una hora al cambiar de horario; mejora: zona horaria en `EventInput`); editar una ocurrencia suelta
+no esta en el alcance; la busqueda con adjuntos mira los 2000 mensajes mas recientes (`total_capped`).

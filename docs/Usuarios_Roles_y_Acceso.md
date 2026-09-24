@@ -335,6 +335,15 @@ entraria al buzon. Si la plataforma rechaza la credencial y el buzon no llego a 
 cliente del webmail se carga bajo demanda y no entra en el chunk de la plataforma;
 `/webmail/login` sigue existiendo para volver a entrar cuando caduca la sesion del buzon.
 
+V (2026-09-24, `make e2e-mail`; `docs/Plan_Webmail_Competitivo.md`): **el dueno del buzon cambia su
+contrasena** desde el webmail (`POST /api/v1/webmail/password`). El webmail comprueba primero la actual en
+`mail-auth` (service `webmail`, con la IP real y su freno; una actual mala es 401 `INVALID_CREDENTIALS` y no
+cambia nada) y solo entonces pide el cambio a `mail-directory` por `PUT /internal/mail-directory/password`,
+que aplica la misma politica, el mismo bcrypt y el mismo evento `mail.mailbox.credentials_changed` que el
+cambio del administrador. El webmail revoca en el acto las sesiones del buzon, tambien la suya, y el evento
+lo repite para las demas instancias y para Dovecot. `mail-auth` devuelve ahora al webmail `tenant_id` y
+`mailbox_id`, que su sesion guarda para hablar con `mail-dav`.
+
 V (2026-09-13): el webmail (`services/webmail`) autentica contra el buzon por `mail-auth`
 con service `webmail`, que exige `imap_access` y `smtp_access`, acepta solo la contrasena
 principal (nunca una de aplicacion), responde igual a un buzon inexistente y a una

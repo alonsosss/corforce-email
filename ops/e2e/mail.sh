@@ -1317,11 +1317,20 @@ expect "mail-security sin fallos de revocacion" "$(revocaciones fallos)" "0"
 
 echo "== Webmail completo: carpetas, lote, spam, firma, reglas, reenvio, programado, contactos, calendario y contrasena"
 # docs/Plan_Webmail_Competitivo.md: todo por el gateway, contra Dovecot, Postfix, Rspamd y mail-dav reales.
-TARRO_ANA2="$WORK/ana2.cookies"; TARRO_BEA2="$WORK/bea2.cookies"
+# enviar_wm escribe como ana con TARRO_ANA: la sesion anterior se cerro arriba.
+TARRO_ANA="$WORK/ana2.cookies"; TARRO_ANA2="$TARRO_ANA"; TARRO_BEA2="$WORK/bea2.cookies"
 wm "$TARRO_ANA2" POST /session -H 'Content-Type: application/json' -d "{\"username\":\"ana@acme.test\",\"password\":\"$ANA_PASS\"}"
 expect "ana vuelve a entrar al webmail" "$WM_CODE" "200"
-wm "$TARRO_BEA2" POST /session -H 'Content-Type: application/json' -d "{\"username\":\"bea@acme.test\",\"password\":\"$BEA_PASS\"}"
-expect "bea vuelve a entrar al webmail" "$WM_CODE" "200"
+# La contrasena de bea acaba de cambiar: el webmail revoca hasta 2 s despues del cambio (revocationMargin), asi que
+# una sesion abierta en ese margen cae con el evento. Se espera a una que sobreviva, como haria una persona.
+bea_sesion_estable() {
+  wm "$TARRO_BEA2" POST /session -H 'Content-Type: application/json' -d "{\"username\":\"bea@acme.test\",\"password\":\"$BEA_PASS\"}"
+  [[ $WM_CODE == 200 ]] || return 1
+  sleep 3
+  wm "$TARRO_BEA2" GET /folders
+  [[ $WM_CODE == 200 ]]
+}
+esperar "bea vuelve a entrar al webmail con una sesion que sobrevive a la revocacion anterior" 30 bea_sesion_estable
 wm "$TARRO_ANA2" GET /meta
 expect "/meta sirve el tope del lote y los dias de programado" "$WM_CODE/$(echo "$WM_BODY" | jget data.limits.max_batch_uids)/$(echo "$WM_BODY" | jget data.limits.max_scheduled_days)" "200/500/365"
 contains "y el papel scheduled" "$WM_BODY" '"scheduled"'
@@ -1468,6 +1477,11 @@ wm "$TARRO_ANA2" POST /session -H 'Content-Type: application/json' -d "{\"userna
 wm "$TARRO_ANA2" POST /password -H 'Content-Type: application/json' -d "{\"current_password\":\"$ANA_NUEVA\",\"new_password\":\"$ANA_PASS\"}"
 expect "y vuelve a la anterior para el resto de la prueba" "$WM_CODE" "204"
 esperar "IMAP acepta otra vez la anterior" 20 login_aceptado ana@acme.test "$ANA_PASS"
+# Esta seccion espera al envio programado y alarga la prueba: los access tokens de la plataforma caducarian antes de las siguientes.
+T1=$(e2e_login "$ADMIN_EMAIL" "$ADMIN_PASS" | jget data.access_token)
+T2=$(e2e_login admin@acme.test "$TENANT_PASS" | jget data.access_token)
+A2="Authorization: Bearer $T2"
+[[ -n "$T1" && -n "$T2" ]] && ok "se renuevan los access tokens de la plataforma" || mal "no se pudieron renovar los access tokens"
 
 echo "== Maildir de un buzon borrado: marca de baja, barrido en Dovecot y buzon recreado limpio"
 # Borrar un buzon quita su fila, pero su maildir sigue en el volumen de Dovecot y quien reciba despues la

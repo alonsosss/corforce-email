@@ -178,6 +178,22 @@ en `GET`/`PUT /internal/mail-directory/vacation?username=` (token de gateway, si
 sesion del webmail). Limitacion: contesta a lo dirigido a la direccion del buzon, no a sus alias (no se
 enumeran los `:addresses`); las fechas se comparan con la del servidor (UTC).
 
+`13_webmail_settings.sql` (mail-directory, V 2026-09-24, unitarias, integracion contra Postgres y `make e2e-mail`
+con Dovecot real; `docs/Plan_Webmail_Competitivo.md`): los ajustes del buzon que edita su dueno desde el
+webmail. `mail.mailbox_signatures` (una fila por buzon: `enabled`, `html` saneado por el webmail, `text`,
+`on_replies`). `mail.mailbox_filters` (una fila por buzon: reglas y reenvio en `jsonb` validados por
+`mail-directory`, y el `script_data` Sieve que genera al guardar); Dovecot lo lee por `mail.v_sieve_user`
+(misma forma que `v_sieve_vacation`) en la ranura `sieve_before3`, antes del archivado global de spam, y el
+script entero va dentro de `if not header :contains "X-Spam-Flag" "YES"`: una regla nunca reenvia ni archiva
+spam. Como en vacaciones, el texto del usuario solo entra como cadena citada, `script_data` no sale por ningun
+API y `mail_engine` solo tiene `SELECT` sobre la vista. `mail.scheduled_sends`: el indice durable del envio
+programado (el mensaje vive en la carpeta `Scheduled` del buzon; Redis no sirve porque produccion corre con
+`allkeys-lru`), con estados `pending`, `sending`, `sent`, `failed` y `canceled`, reclamacion de toda la celda
+con `FOR UPDATE SKIP LOCKED` y arriendo, reintentos con espera creciente hasta 5 intentos y purga de las
+terminadas a los 30 dias. Las tres llevan `tenant_isolation` para `mail_app` y `service_all` para
+`mail_service`, y se borran con el buzon. El webmail las usa por `/internal/mail-directory/{signature,filters,
+password,scheduled-sends}` (token de gateway, `RequireInternalCaller`, el buzon sale de su sesion).
+
 `10_mta_sts.sql` (mail-directory, V 2026-09-21, unitarias, integracion contra Postgres y comprobaciones en
 `ops/e2e/mail.sh` sin ejecutar todavia): la politica MTA-STS (RFC 8461) por dominio de una empresa, para lo que
 otros servidores nos entregan. `mail.mta_sts_policies` guarda una fila por dominio (`UNIQUE (domain)`, `domain =
