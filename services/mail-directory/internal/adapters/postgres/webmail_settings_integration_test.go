@@ -24,6 +24,7 @@ type webmailFixture struct {
 	pool      *pgxpool.Pool
 	uc        *app.UseCase
 	internal  context.Context
+	ctxA      context.Context
 	ctxB      context.Context
 	tenantA   uuid.UUID
 	tenantB   uuid.UUID
@@ -55,6 +56,7 @@ func newWebmailFixture(t *testing.T) *webmailFixture {
 		return middleware.WithIdentity(db.WithPool(ctx, pool), uuid.New().String(), tenant.String())
 	}
 	ctxA := as(f.tenantA)
+	f.ctxA = ctxA
 	f.ctxB = as(f.tenantB)
 	f.internal = db.WithPool(ctx, pool)
 	quota := int64(50 << 20)

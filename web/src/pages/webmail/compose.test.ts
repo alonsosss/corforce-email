@@ -237,6 +237,7 @@ const LIMITS: WebmailMeta['limits'] = {
   max_folder_name_bytes: 20,
   max_batch_uids: 500,
   max_scheduled_days: 30,
+  max_reminder_days: 30,
 };
 
 const CHECK = {

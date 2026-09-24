@@ -108,6 +108,16 @@ func (h *Handler) Routes() http.Handler {
 			r.Get("/scheduled", h.ListScheduled)
 			r.Patch("/scheduled/{id}", h.Reschedule)
 			r.Delete("/scheduled/{id}", h.CancelScheduled)
+			r.Get("/snooze", h.ListSnoozed)
+			r.Post("/snooze", h.Snooze)
+			r.Patch("/snooze/{id}", h.RescheduleSnooze)
+			r.Delete("/snooze/{id}", h.Unsnooze)
+			r.Get("/follow-ups", h.ListFollowUps)
+			r.Delete("/follow-ups/{id}", h.CancelFollowUp)
+			r.Get("/quick-replies", h.QuickReplies)
+			r.Post("/quick-replies", h.CreateQuickReply)
+			r.Put("/quick-replies/{id}", h.UpdateQuickReply)
+			r.Delete("/quick-replies/{id}", h.DeleteQuickReply)
 			r.Get("/contacts", h.ListContacts)
 			r.Post("/contacts", h.CreateContact)
 			r.Get("/contacts/export", h.ExportContacts)
@@ -197,6 +207,9 @@ func writeError(w http.ResponseWriter, err error) {
 	var verr *domain.ValidationError
 	var rcpt *domain.RecipientRejectedError
 	var rejection *domain.ServiceRejection
+	if writeReminderError(w, err) {
+		return
+	}
 	switch {
 	case errors.As(err, &rejection):
 		writeRejection(w, rejection)

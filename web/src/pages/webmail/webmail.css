@@ -781,6 +781,55 @@ a.cf-wm-message:hover {
   gap: var(--cf-space-1);
 }
 
+/* Respuestas rapidas: selector de la redaccion y lista de ajustes */
+.cf-wm-quick-replies {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+}
+.cf-wm-quick-replies__item {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  min-width: 0;
+  padding: var(--cf-space-2) var(--cf-space-3);
+  border: 0;
+  border-radius: var(--cf-radius-sm);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.cf-wm-quick-replies__item:hover,
+.cf-wm-quick-replies__item:focus-visible {
+  background: var(--cf-surface-hover);
+}
+.cf-wm-quick-replies__row {
+  display: flex;
+  align-items: center;
+  gap: var(--cf-space-2);
+  padding: var(--cf-space-2) 0;
+  border-bottom: 1px solid var(--cf-border);
+}
+.cf-wm-quick-replies__row:last-child {
+  border-bottom: 0;
+}
+.cf-wm-quick-replies__name {
+  font-weight: var(--cf-weight-medium);
+  overflow-wrap: anywhere;
+}
+.cf-wm-quick-replies__vars dl {
+  display: grid;
+  gap: var(--cf-space-1);
+}
+.cf-wm-quick-replies__var {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--cf-space-2);
+  font-size: var(--cf-text-sm);
+}
+
 /* Ajustes: reglas */
 .cf-wm-rules {
   list-style: none;

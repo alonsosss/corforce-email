@@ -162,6 +162,10 @@ type sendDTO struct {
 	SavedToSent  bool   `json:"saved_to_sent"`
 	DraftRemoved bool   `json:"draft_removed"`
 	Replayed     bool   `json:"replayed"`
+	// FollowUp es el seguimiento pedido con follow_up_days; FollowUpError, el codigo si no se pudo
+	// registrar (el mensaje ya salio igualmente).
+	FollowUp      *followUpRefDTO `json:"follow_up,omitempty"`
+	FollowUpError string          `json:"follow_up_error,omitempty"`
 }
 
 type metaDTO struct {
@@ -183,6 +187,7 @@ type metaLimitsDTO struct {
 	MaxFolderNameBytes int   `json:"max_folder_name_bytes"`
 	MaxBatchUIDs       int   `json:"max_batch_uids"`
 	MaxScheduledDays   int   `json:"max_scheduled_days"`
+	MaxReminderDays    int   `json:"max_reminder_days"`
 	MaxImportBytes     int64 `json:"max_import_bytes"`
 }
 
@@ -207,6 +212,7 @@ func toMetaDTO(m app.Meta) metaDTO {
 			MaxDownloadBytes: m.MaxDownloadBytes, MaxBodyPartBytes: m.MaxBodyPartBytes, MaxSubjectChars: m.MaxSubjectChars,
 			MaxSearchBytes: m.MaxSearchBytes, MaxFolderNameBytes: m.MaxFolderNameBytes,
 			MaxBatchUIDs: m.MaxBatchUIDs, MaxScheduledDays: m.MaxScheduledDays, MaxImportBytes: m.MaxImportBytes,
+			MaxReminderDays: m.MaxReminderDays,
 		},
 		Pagination:   metaPaginationDTO{DefaultPageSize: m.DefaultPageSize, MaxPageSize: m.MaxPageSize},
 		FolderRoles:  roles,

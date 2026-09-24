@@ -32,6 +32,11 @@ type Config struct {
 	ScheduledBatch        int
 	// MaxImportBytes acota el fichero vCard que se importa a la libreta personal.
 	MaxImportBytes int64
+	// MaxReminderDays es lo mas lejos que se puede posponer un mensaje o fijar un seguimiento;
+	// ReminderPollInterval y ReminderBatch rigen el trabajador de recordatorios como los de programados.
+	MaxReminderDays      int
+	ReminderPollInterval time.Duration
+	ReminderBatch        int
 }
 
 type Deps struct {
@@ -61,6 +66,9 @@ type Deps struct {
 	Clock   func() time.Time
 	Logger  *zap.Logger
 	Config  Config
+	// Recordatorios (posponer y seguimiento) y respuestas rapidas del buzon, en mail-directory.
+	Reminders    ports.ReminderDirectory
+	QuickReplies ports.QuickReplyDirectory
 }
 
 // Service es el caso de uso del webmail.
@@ -87,6 +95,9 @@ type Service struct {
 	clock       func() time.Time
 	logger      *zap.Logger
 	cfg         Config
+	// Recordatorios y respuestas rapidas (Deps.Reminders, Deps.QuickReplies).
+	reminders    ports.ReminderDirectory
+	quickReplies ports.QuickReplyDirectory
 }
 
 // New valida la configuracion y las dependencias: un webmail a medio cablear no arranca.
@@ -95,6 +106,12 @@ func New(d Deps) (*Service, error) {
 		d.Signatures == nil || d.Filters == nil || d.Passwords == nil || d.Scheduled == nil || d.Contacts == nil || d.Calendar == nil ||
 		d.Ledger == nil || d.Composer == nil || d.Sanitizer == nil || d.PartURL == nil || d.Logger == nil {
 		return nil, errors.New("webmail: faltan dependencias del caso de uso")
+	}
+	if d.Reminders == nil || d.QuickReplies == nil {
+		return nil, errors.New("webmail: faltan los recordatorios o las respuestas rapidas del directorio")
+	}
+	if d.Config.MaxReminderDays < 1 || d.Config.ReminderPollInterval <= 0 || d.Config.ReminderBatch < 1 {
+		return nil, errors.New("webmail: el plazo, el intervalo y el lote de los recordatorios deben ser positivos")
 	}
 	if !domain.ValidCellCode(d.Config.CellCode) {
 		return nil, fmt.Errorf("webmail: %q no es un codigo de celda", d.Config.CellCode)
@@ -123,6 +140,7 @@ func New(d Deps) (*Service, error) {
 		signatures: d.Signatures, filters: d.Filters, passwords: d.Passwords, scheduled: d.Scheduled, contacts: d.Contacts, calendar: d.Calendar,
 		ledger: d.Ledger, composer: d.Composer, sanitizer: d.Sanitizer, scanner: d.Scanner,
 		partURL: d.PartURL, clock: clock, logger: d.Logger, cfg: d.Config,
+		reminders: d.Reminders, quickReplies: d.QuickReplies,
 	}, nil
 }
 

@@ -132,7 +132,7 @@ export function cleanHtml(html: string, options: CleanOptions = {}): string {
   return container.innerHTML;
 }
 
-function escapeHtml(text: string): string {
+export function escapeHtml(text: string): string {
   return text
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')

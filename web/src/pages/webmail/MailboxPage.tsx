@@ -5,6 +5,7 @@ import {
   FOLDER_ROLES,
   hasFlag,
   webmailApi,
+  webmailRemindersApi,
   type BatchAction,
   type FlagChange,
   type WebmailFolder,
@@ -32,6 +33,8 @@ import { defaultFolder, folderLabel, folderWithRole, isEmptiable } from './folde
 import { parsePositiveInt } from './format';
 import { MessageList } from './MessageList';
 import { MessageView } from './MessageView';
+import { formatScheduled } from './schedule';
+import { canSnooze } from './snooze';
 import { criteriaToFilters, criteriaToView, readCriteria, type SearchCriteria } from './search';
 import { useWebmailOutlet } from './webmailContext';
 
@@ -216,6 +219,20 @@ function MailboxView({ folderName }: { folderName: string }) {
     afterRemoval(uids);
   };
 
+  // El servicio acota cada peticion a max_batch_uids, como el resto de acciones en lote.
+  const batchSnooze = async (uids: number[], until: string) => {
+    let snoozed = 0;
+    let failed = 0;
+    for (const part of chunk(uids, maxBatch ?? uids.length)) {
+      const result = await webmailRemindersApi.snooze(folderName, part, until);
+      snoozed += result.snoozed.length;
+      failed += result.failed.length;
+    }
+    toast.success(t('webmail.snooze.done', { n: snoozed, when: formatScheduled(until) }));
+    if (failed) toast.error(t('webmail.snooze.partial', { n: failed }));
+    afterRemoval(uids);
+  };
+
   const batchDelete = async (uids: number[]) => {
     const { affected, permanent } = await runBatch(uids, { action: 'delete' });
     toast.success(
@@ -313,6 +330,7 @@ function MailboxView({ folderName }: { folderName: string }) {
               uids={[...checked]}
               onFlags={batchFlags}
               onMove={batchMove}
+              onSnooze={canSnooze(role) ? batchSnooze : undefined}
               onDelete={async (uids) => {
                 if (isTrash) setPurging(uids);
                 else await batchDelete(uids);

@@ -4,6 +4,7 @@ import {
   FLAGS,
   FOLDER_ROLES,
   webmailApi,
+  webmailRemindersApi,
   type FlagChange,
   type MailAddress,
   type WebmailFolder,
@@ -14,6 +15,7 @@ import { useQuery } from '@/hooks/useQuery';
 import { Button, ConfirmDialog, ErrorState, Skeleton, useToast } from '@/design/components';
 import {
   IconBan,
+  IconBell,
   IconChevronLeft,
   IconDownload,
   IconEdit,
@@ -40,6 +42,9 @@ import { addressList } from './format';
 import { MessageBody } from './MessageBody';
 import { MoveDialog } from './MoveDialog';
 import { printMessage } from './print';
+import { formatScheduled } from './schedule';
+import { canSnooze } from './snooze';
+import { SnoozeDialog } from './SnoozeDialog';
 
 export interface MessageViewProps {
   folderName: string;
@@ -81,6 +86,7 @@ export function MessageView({
   const [moving, setMoving] = useState(false);
   const [purging, setPurging] = useState(false);
   const [newContact, setNewContact] = useState<MailAddress | null>(null);
+  const [snoozing, setSnoozing] = useState(false);
 
   const message = useQuery(
     (signal) =>
@@ -224,6 +230,18 @@ export function MessageView({
         >
           {t('webmail.reader.move')}
         </Button>
+        {canSnooze(role) ? (
+          <Button
+            size="sm"
+            variant="ghost"
+            iconOnly
+            title={t('webmail.snooze.action')}
+            icon={<IconBell size={16} />}
+            onClick={() => setSnoozing(true)}
+          >
+            {t('webmail.snooze.action')}
+          </Button>
+        ) : null}
         {canReportSpam && junk ? (
           <Button
             size="sm"
@@ -343,6 +361,23 @@ export function MessageView({
             await webmailApi.move(folderName, uid, to);
             toast.success(t('webmail.move.done', { folder: label }));
             setMoving(false);
+            onGone();
+          }}
+        />
+      ) : null}
+      {snoozing ? (
+        <SnoozeDialog
+          title={t('webmail.snooze.title')}
+          confirmLabel={t('webmail.snooze.confirm')}
+          onClose={() => setSnoozing(false)}
+          onConfirm={async (until) => {
+            const result = await webmailRemindersApi.snooze(folderName, [uid], until);
+            if (result.snoozed.length) {
+              toast.success(t('webmail.snooze.done', { n: 1, when: formatScheduled(until) }));
+            } else {
+              toast.error(t('webmail.snooze.gone'));
+            }
+            setSnoozing(false);
             onGone();
           }}
         />

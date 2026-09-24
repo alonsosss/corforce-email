@@ -694,6 +694,10 @@ func (m *mailbox) stat(folder string, uid uint32) (domain.StoredMessage, error) 
 	msg := domain.StoredMessage{UIDValidity: m.uidValidity, UID: uint32(bufs[0].UID), Size: bufs[0].RFC822Size}
 	if env := bufs[0].Envelope; env != nil {
 		msg.MessageID = bareMessageID(env.MessageID)
+		msg.Subject = env.Subject
+		if from := addressesOf(env.From); len(from) > 0 {
+			msg.From = from[0].Email
+		}
 	}
 	return msg, nil
 }

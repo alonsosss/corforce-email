@@ -9,6 +9,7 @@ import MailboxPage from './MailboxPage';
 import CalendarPage from './calendar/CalendarPage';
 import ContactsPage from './contacts/ContactsPage';
 import ScheduledPage from './ScheduledPage';
+import SnoozedPage from './SnoozedPage';
 import SettingsPage from './SettingsPage';
 import { WebmailLoginPage } from './WebmailLoginPage';
 import { WebmailShell } from './WebmailShell';
@@ -32,6 +33,7 @@ export default function WebmailApp() {
           <Route path="compose" element={<ComposePage />} />
           <Route path="settings" element={<SettingsPage />} />
           <Route path="scheduled" element={<ScheduledPage />} />
+          <Route path="snoozed" element={<SnoozedPage />} />
           <Route path="contacts" element={<ContactsPage />} />
           <Route path="calendar" element={<CalendarPage />} />
         </Route>

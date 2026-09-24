@@ -20,6 +20,9 @@ const (
 	// RoleScheduled es la carpeta de los envios programados. RFC 6154 no tiene atributo para
 	// ella: se reconoce siempre por el nombre (ScheduledFolderName).
 	RoleScheduled FolderRole = "scheduled"
+	// RoleSnoozed es la carpeta de los mensajes pospuestos; como la de programados, por el nombre
+	// (SnoozedFolderName).
+	RoleSnoozed FolderRole = "snoozed"
 )
 
 // ScheduledFolderName es la carpeta donde espera el mensaje de un envio programado. La declara
@@ -28,7 +31,7 @@ const (
 const ScheduledFolderName = "Scheduled"
 
 // SpecialRoles son los papeles que reconoce el webmail, en el orden en que se presentan.
-var SpecialRoles = []FolderRole{RoleInbox, RoleDrafts, RoleScheduled, RoleSent, RoleArchive, RoleJunk, RoleTrash}
+var SpecialRoles = []FolderRole{RoleInbox, RoleDrafts, RoleScheduled, RoleSnoozed, RoleSent, RoleArchive, RoleJunk, RoleTrash}
 
 // Folder es una carpeta del buzon. Total y Unread son cero cuando no se pidieron.
 type Folder struct {
@@ -82,6 +85,7 @@ var roleByName = map[string]FolderRole{
 	"spam":             RoleJunk,
 	"archive":          RoleArchive,
 	"scheduled":        RoleScheduled,
+	"snoozed":          RoleSnoozed,
 }
 
 // RoleByName deduce el papel por el nombre. INBOX es siempre la bandeja de entrada y no
@@ -143,7 +147,7 @@ func ValidateNewFolderName(name, delimiter string) error {
 	if err := ValidateFolderName(name); err != nil {
 		return asField(err, "name")
 	}
-	if strings.EqualFold(name, "INBOX") || IsScheduledFolderName(name) {
+	if strings.EqualFold(name, "INBOX") || IsScheduledFolderName(name) || IsSnoozedFolderName(name) {
 		return invalid("name", "es un nombre reservado")
 	}
 	if strings.TrimSpace(name) != name {

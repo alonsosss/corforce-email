@@ -67,6 +67,9 @@ export const ERROR_CODES = {
   // estaba desfasada.
   SCHEDULED_SEND_NOT_PENDING: 'SCHEDULED_SEND_NOT_PENDING',
   SCHEDULED_SEND_NOT_FOUND: 'SCHEDULED_SEND_NOT_FOUND',
+  // Pospuesto o seguimiento que ya volvio, se aviso o se cancelo en otro dispositivo.
+  REMINDER_NOT_FOUND: 'REMINDER_NOT_FOUND',
+  REMINDER_NOT_PENDING: 'REMINDER_NOT_PENDING',
   // templates: imagenes sin antivirus configurado (503) o rechazadas por el (422), y una
   // version de marketing que no pasa la verificacion de entregabilidad al publicar (409).
   SCANNER_UNAVAILABLE: 'SCANNER_UNAVAILABLE',

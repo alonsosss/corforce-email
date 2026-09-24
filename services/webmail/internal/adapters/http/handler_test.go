@@ -327,6 +327,7 @@ func testDeps(store ports.SessionStore, mb *stubMailbox, sender ports.Sender, va
 		Sender: sender, Directory: stubDirectory{}, Vacations: vac, AddressBook: book,
 		Signatures: settings, Filters: settings, Passwords: settings, Scheduled: settings, Contacts: dav, Calendar: dav,
 		Ledger: &memLedger{m: map[string]domain.SendRecord{}}, Composer: nopComposer{}, Sanitizer: nopSanitizer{}, PartURL: PartURL,
+		Reminders: settings.reminders, QuickReplies: settings.reminders,
 		Logger: zap.NewNop(),
 		Config: app.Config{
 			CellCode:         testCell,
@@ -334,7 +335,8 @@ func testDeps(store ports.SessionStore, mb *stubMailbox, sender ports.Sender, va
 			Limits:           domain.Limits{MaxRecipients: 2, MaxMessageBytes: 4096},
 			MaxBodyPartBytes: 1024, MaxAttachmentBytes: 1024,
 			SendTimeout: 5 * time.Second, MaxScheduledDays: 30, ScheduledPollInterval: time.Minute, ScheduledBatch: 5,
-			MaxImportBytes: 512,
+			MaxImportBytes:  512,
+			MaxReminderDays: 30, ReminderPollInterval: time.Minute, ReminderBatch: 5,
 		},
 	}
 }

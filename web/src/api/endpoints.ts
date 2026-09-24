@@ -358,5 +358,11 @@ export const endpoints = {
     contactsImport: `${API_PREFIX}/webmail/contacts/import`,
     calendarEvents: `${API_PREFIX}/webmail/calendar/events`,
     calendarEvent: (id: string) => `${API_PREFIX}/webmail/calendar/events/${seg(id)}`,
+    snooze: `${API_PREFIX}/webmail/snooze`,
+    snoozeItem: (id: string) => `${API_PREFIX}/webmail/snooze/${seg(id)}`,
+    followUps: `${API_PREFIX}/webmail/follow-ups`,
+    followUp: (id: string) => `${API_PREFIX}/webmail/follow-ups/${seg(id)}`,
+    quickReplies: `${API_PREFIX}/webmail/quick-replies`,
+    quickReply: (id: string) => `${API_PREFIX}/webmail/quick-replies/${seg(id)}`,
   },
 } as const;

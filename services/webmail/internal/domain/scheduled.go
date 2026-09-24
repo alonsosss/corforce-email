@@ -73,6 +73,8 @@ type ScheduledResult struct {
 	ID       string
 	SendAt   time.Time
 	Replayed bool
+	// MessageID es el del mensaje programado: el seguimiento lo busca en Enviados cuando salga.
+	MessageID string
 }
 
 // ValidateSendAt exige una hora de envio entre MinScheduleLead y maxDays dias desde now.

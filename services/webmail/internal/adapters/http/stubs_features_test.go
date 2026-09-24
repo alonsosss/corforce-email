@@ -22,9 +22,13 @@ type stubSettings struct {
 	rows        map[string]domain.ScheduledSend
 	created     []domain.NewScheduledSend
 	canceled    []string
+	// reminders hace de mail-directory para los recordatorios y las respuestas rapidas.
+	reminders *stubReminders
 }
 
-func newStubSettings() *stubSettings { return &stubSettings{rows: map[string]domain.ScheduledSend{}} }
+func newStubSettings() *stubSettings {
+	return &stubSettings{rows: map[string]domain.ScheduledSend{}, reminders: newStubReminders()}
+}
 
 func (s *stubSettings) Signature(_ context.Context, username string) (domain.Signature, error) {
 	s.mu.Lock()

@@ -717,6 +717,7 @@ type harness struct {
 	sanitizer *fakeSanitizer
 	scanner   *fakeScanner
 	clock     *testClock
+	reminders *fakeReminders
 }
 
 const (
@@ -740,6 +741,7 @@ func newHarness(t *testing.T) *harness {
 		sanitizer: &fakeSanitizer{},
 		scanner:   &fakeScanner{},
 		clock:     clock,
+		reminders: newFakeReminders(),
 	}
 	h.mb.folders = []domain.Folder{
 		{Name: "INBOX", Role: domain.RoleInbox, Selectable: true},
@@ -762,6 +764,7 @@ func (h *harness) deps() Deps {
 		Auth: h.auth, Sessions: h.store, Mail: h.mail, Sender: h.sender, Directory: h.directory, Vacations: h.directory, AddressBook: h.directory,
 		Signatures: h.directory, Filters: h.directory, Passwords: h.directory, Scheduled: h.directory, Contacts: h.dav, Calendar: h.dav,
 		Ledger: h.ledger, Composer: h.composer, Sanitizer: h.sanitizer, Scanner: h.scanner,
+		Reminders: h.reminders, QuickReplies: h.reminders,
 		PartURL: func(folder string, uid uint32, part string) string {
 			return fmt.Sprintf("/parts/%s/%d/%s", folder, uid, part)
 		},
@@ -778,6 +781,9 @@ func (h *harness) deps() Deps {
 			ScheduledPollInterval: time.Second,
 			ScheduledBatch:        5,
 			MaxImportBytes:        1 << 10,
+			MaxReminderDays:       30,
+			ReminderPollInterval:  time.Second,
+			ReminderBatch:         5,
 		},
 	}
 }

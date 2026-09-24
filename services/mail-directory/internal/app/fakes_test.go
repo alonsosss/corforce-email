@@ -835,6 +835,8 @@ type harness struct {
 	signatures   *fakeSignatures
 	filters      *fakeFilters
 	scheduled    *fakeScheduled
+	reminders    *fakeReminders
+	quickReplies *fakeQuickReplies
 	clock        time.Time
 	mtaSTS       *fakeMTASTS
 	mx           *fakeMX
@@ -856,6 +858,8 @@ func newHarness() *harness {
 		clock: time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC),
 	}
 	h.scheduled = &fakeScheduled{now: func() time.Time { return h.clock }}
+	h.reminders = &fakeReminders{now: func() time.Time { return h.clock }}
+	h.quickReplies = &fakeQuickReplies{now: func() time.Time { return h.clock }}
 	h.mailboxes = &fakeMailboxes{aliases: h.aliases, now: time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)}
 	locator := &fakeLocator{h: h}
 	h.retirements = &fakeRetirements{h: h, retired: map[uuid.UUID]time.Time{}, now: time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)}
@@ -864,7 +868,7 @@ func newHarness() *harness {
 	h.uc = New(Deps{
 		Tx: h.tx, Domains: h.domains, AliasDomains: h.aliasDomains, Mailboxes: h.mailboxes,
 		AppPasswords: h.appPasswords, Sieve: h.sieve, Vacation: h.vacation, Locator: locator,
-		Signatures: h.signatures, Filters: h.filters, Scheduled: h.scheduled, Clock: func() time.Time { return h.clock }, Aliases: h.aliases, SpamAliases: h.spamAliases,
+		Signatures: h.signatures, Filters: h.filters, Scheduled: h.scheduled, Reminders: h.reminders, QuickReplies: h.quickReplies, Clock: func() time.Time { return h.clock }, Aliases: h.aliases, SpamAliases: h.spamAliases,
 		SenderACL: h.senderACL, Relayhosts: h.relayhosts, Transports: h.transports, Retirements: h.retirements,
 		MTASTS: h.mtaSTS, MTASTSPublic: fakeMTASTSPublisher{h: h}, MX: h.mx, PlatformMX: platformMXForTests,
 		MailboxRecreateHold: testRecreateHold, Secrets: fakeSecrets{}, Events: h.events, Plan: h.plan,
@@ -931,6 +935,16 @@ func (h *harness) snapshot() func() {
 		c := *v
 		scheduled[k] = &c
 	}
+	reminders := map[uuid.UUID]*domain.Reminder{}
+	for k, v := range h.reminders.items {
+		c := *v
+		reminders[k] = &c
+	}
+	quickReplies := map[uuid.UUID]*domain.QuickReply{}
+	for k, v := range h.quickReplies.items {
+		c := *v
+		quickReplies[k] = &c
+	}
 	subjects := append([]string(nil), h.events.subjects...)
 	credentials := append([]credentialEvent(nil), h.events.credentials...)
 	retired := maps.Clone(h.retirements.retired)
@@ -940,6 +954,7 @@ func (h *harness) snapshot() func() {
 		h.appPasswords.items = appPasswords
 		h.vacation.items = vacation
 		h.signatures.items, h.filters.items, h.scheduled.items = signatures, filters, scheduled
+		h.reminders.items, h.quickReplies.items = reminders, quickReplies
 		h.mtaSTS.items = mtaSTS
 		h.events.subjects, h.events.credentials = subjects, credentials
 		h.retirements.retired = retired

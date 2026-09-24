@@ -23,6 +23,7 @@ type Meta struct {
 	MaxFolderNameBytes int
 	MaxBatchUIDs       int
 	MaxScheduledDays   int
+	MaxReminderDays    int
 	MaxImportBytes     int64
 	DefaultPageSize    int
 	MaxPageSize        int
@@ -44,6 +45,7 @@ func (s *Service) Meta() Meta {
 		MaxFolderNameBytes: domain.MaxFolderNameBytes,
 		MaxBatchUIDs:       domain.MaxBatchUIDs,
 		MaxScheduledDays:   s.cfg.MaxScheduledDays,
+		MaxReminderDays:    s.cfg.MaxReminderDays,
 		MaxImportBytes:     s.cfg.MaxImportBytes,
 		DefaultPageSize:    domain.DefaultPerPage,
 		MaxPageSize:        domain.MaxPerPage,
