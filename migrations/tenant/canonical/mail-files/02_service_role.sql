@@ -15,7 +15,12 @@
 DO $$
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'mail_files_service') THEN
-        CREATE ROLE mail_files_service NOLOGIN;
+        BEGIN
+            CREATE ROLE mail_files_service NOLOGIN;
+        EXCEPTION WHEN duplicate_object OR unique_violation THEN
+            -- Los roles son del cluster: otra base de empresa que migraba a la vez lo acaba de crear.
+            NULL;
+        END;
     END IF;
 END $$;
 
