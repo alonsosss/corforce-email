@@ -1432,8 +1432,7 @@ servidor (hoy 89.58.10.80), **sin proxy de Cloudflare** (nube gris: Cloudflare n
 recibe correo de internet, solo de las integraciones autenticadas. SPF y DKIM no cambian: el correo sale por SES con la identidad
 verificada de cada empresa.
 
-**Cortafuegos (aplicado el 2026-09-24 con `SMTP_RELAY_BIND_ADDRESS=0.0.0.0`; faltan las reglas de UFW del paso 1, que
-necesitan root y solo documentan la intención).** Docker publica sus puertos por delante de UFW, así que la regla de UFW no basta: el control es
+**Cortafuegos (aplicado el 2026-09-24: `SMTP_RELAY_BIND_ADDRESS=0.0.0.0` y las reglas de UFW del paso 1).** Docker publica sus puertos por delante de UFW, así que la regla de UFW no basta: el control es
 `SMTP_RELAY_BIND_ADDRESS` y, si se quiere acotar por origen, la cadena `DOCKER-USER`. Pasos:
 
 1. `ufw allow 2525/tcp comment 'smtp-relay STARTTLS'` y `ufw allow 2465/tcp comment 'smtp-relay TLS'` (documentan la

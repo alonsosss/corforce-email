@@ -193,7 +193,13 @@ Detalle operativo en `deploy/mail/README.md` ("Migración de buzones"). Lo decid
 * **Red.** Solo la red `mail-migration` (bridge propio `br-mail-migr`): ejecutor, Dovecot, clamd y
   `mail-migration`. No está en `mail-engines` ni en la de la plataforma, así que no ve Postgres, Redis, NATS,
   Postfix, mail-auth ni mail-policy. Sale a Internet por NAT. Dentro de esa red Dovecot expone todos sus
-  puertos; la segunda barrera recomendada es una regla `DOCKER-USER` en el host que este compose no pone.
+  puertos; la segunda barrera es una regla `DOCKER-USER` en el host que este compose no pone:
+  `ops/security/migration-egress.sh` (servicio `core-force-mail-migration-egress`, instalado como root con `--install`)
+  la pone en el host desde el 2026-09-24: lo que el ejecutor manda fuera de su red solo va a los puertos de
+  `MAIL_MIGRATION_SOURCE_PORTS` de una direccion publica; redes privadas, CGNAT, enlace local (metadata), loopback,
+  multicast y los puertos publicados del propio host se rechazan. Reaplica con cada arranque del ejecutor (su IP
+  cambia al recrearlo). Lo que habla dentro de su red no pasa por iptables sin `br_netfilter`, que no se carga
+  porque filtraria todas las redes Docker: esa parte la cubren la credencial por trabajo y la guarda del ejecutor.
 * **Contenedor.** Usuario 10001, `read_only`, `cap_drop: ALL`, `no-new-privileges`, `pids_limit`, memoria y
   CPU acotadas, `ulimit core=0`, sin puertos publicados; tiempo por pasada (`MIGRATION_JOB_TIMEOUT`, 24 h)
   que mata el grupo de procesos, y la salida de imapsync y las respuestas de la API acotadas.
@@ -454,7 +460,8 @@ servicios) compara los `mailbox_id` que el servicio guarda con los buzones que e
 * **TLS entre `mail-migration` y el ejecutor**: hoy HTTP en una red de cuatro miembros de confianza; la
   respuesta del reclamo lleva la contraseña de origen. Un certificado de la CA interna en el listener 8057 lo
   cierra.
-* **Regla `DOCKER-USER`** en el host que limite lo que el ejecutor alcanza dentro de su red (Dovecot solo por
+* **Regla `DOCKER-USER`** (la salida, hecha el 2026-09-24 con `ops/security/migration-egress.sh`; queda lo de dentro
+  de la red, que necesita `br_netfilter`) en el host que limite lo que el ejecutor alcanza dentro de su red (Dovecot solo por
   993, clamd por 3310, `mail-migration` por 8057) y que le impida las redes privadas y el metadata del
   proveedor. La guarda del ejecutor ya lo rechaza; la regla es la segunda barrera y no la pone el compose.
 * **Varias celdas**: el ejecutor tiene un solo destino Dovecot (`MIGRATION_DEST_HOST`); con más de una celda

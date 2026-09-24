@@ -651,7 +651,13 @@ ejecutor hace y lo que hay que operar.
   Dovecot expone todos sus puertos, no solo el 993: **regla recomendada en el host**, en `DOCKER-USER`,
   para que el ejecutor solo pueda llegar a Dovecot por 993, a clamd por 3310 y a `mail-migration` por 8057,
   y no a las redes privadas ni al metadata del proveedor (`br-mail-migr`; la guarda de origen del
-  ejecutor ya rechaza esas direcciones, la regla es la segunda barrera). Esa regla no la pone este compose.
+  ejecutor ya rechaza esas direcciones, la regla es la segunda barrera). Esa regla no la pone este compose:
+  `ops/security/migration-egress.sh` (servicio `core-force-mail-migration-egress`, instalado como root con `--install`)
+  la pone en el host desde el 2026-09-24: lo que el ejecutor manda fuera de su red solo va a los puertos de
+  `MAIL_MIGRATION_SOURCE_PORTS` de una direccion publica; redes privadas, CGNAT, enlace local (metadata), loopback,
+  multicast y los puertos publicados del propio host se rechazan. Reaplica con cada arranque del ejecutor (su IP
+  cambia al recrearlo). Lo que habla dentro de su red no pasa por iptables sin `br_netfilter`, que no se carga
+  porque filtraria todas las redes Docker: esa parte la cubren la credencial por trabajo y la guarda del ejecutor.
 * **Sin la clave no hace nada.** Sin `MAIL_MIGRATION_RUNNER_KEY` arranca, lo avisa por el registro, queda sano
   y no reclama trabajos. Con la configuracion incompleta o incoherente (falta un dato, `MIGRATION_ALLOW_PRIVATE_SOURCES`
   fuera de `development` y `test`, sin `MIGRATION_CLAMD_ADDR` y sin `MIGRATION_ALLOW_UNSCANNED=true`) tampoco
