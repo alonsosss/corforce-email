@@ -420,23 +420,23 @@ func TestAPIEventos(t *testing.T) {
 		t.Fatalf("con excepcion: %+v", occs)
 	}
 
-	for q, field := range map[string]string{
-		"start=2026-10-01T00:00:00Z&end=2026-12-15T00:00:00Z": "end",
-		"start=2026-10-02T00:00:00Z&end=2026-10-01T00:00:00Z": "end",
-		"end=2026-10-01T00:00:00Z":                            "start",
-		"start=2026-10-01&end=2026-10-02T00:00:00Z":           "start",
+	for _, c := range []struct{ query, field string }{
+		{"start=2026-10-02T00:00:00Z&end=2026-10-01T00:00:00Z", "end"},
+		{"end=2026-10-01T00:00:00Z", "start"},
+		{"start=2026-10-01&end=2026-10-02T00:00:00Z", "start"},
 	} {
-		rec, env = a.call(ana, http.MethodGet, "/calendar/events?"+q, nil)
+		rec, env = a.call(ana, http.MethodGet, "/calendar/events?"+c.query, nil)
 		expectError(t, rec, env, http.StatusUnprocessableEntity, "VALIDATION_ERROR")
-		if env.Error.Details["field"] != field {
-			t.Fatalf("%s: %v", q, env.Error.Details)
+		if env.Error.Details["field"] != c.field {
+			t.Fatalf("%s: %v", c.query, env.Error.Details)
+		}
+		if env.Error.Details["max_days"] != "" {
+			t.Fatalf("%s: max_days solo acompana a la ventana excesiva", c.query)
 		}
 	}
-	if env.Error.Details["max_days"] != "" {
-		t.Fatal("max_days solo acompana a la ventana excesiva")
-	}
 	rec, env = a.call(ana, http.MethodGet, "/calendar/events?start=2026-10-01T00:00:00Z&end=2026-12-15T00:00:00Z", nil)
-	if env.Error.Details["max_days"] != strconv.Itoa(testAPILimits.MaxWindowDays) {
+	expectError(t, rec, env, http.StatusUnprocessableEntity, "VALIDATION_ERROR")
+	if env.Error.Details["field"] != "end" || env.Error.Details["max_days"] != strconv.Itoa(testAPILimits.MaxWindowDays) {
 		t.Fatalf("ventana: %v", env.Error.Details)
 	}
 
