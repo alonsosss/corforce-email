@@ -42,6 +42,9 @@ SES_USER="${CF_SES_USER:-core-force-mail-ses}"
 # SES_IDENTITIES_SECRET_ACCESS_KEY) para dar de alta los dominios de envio de las empresas como
 # identidades de SES. Separado del de envio: esta clave cambia claves DKIM y MAIL FROM, no envia.
 SES_IDENTITIES_USER="${CF_SES_IDENTITIES_USER:-core-force-mail-ses-identidades}"
+# Usuario cuyas claves usan los trabajos de ops/backup en un servidor fuera de EC2 (BACKUP_S3_ACCESS_KEY_ID y
+# BACKUP_S3_SECRET_ACCESS_KEY, en BACKUP_SECRETS_FILE): la misma politica de respaldos que el rol, sin borrar.
+BACKUP_USER="${CF_BACKUP_USER:-core-force-mail-respaldos}"
 SES_SET_TRANSACTIONAL="${SES_CONFIG_SET_TRANSACTIONAL:-cfm-transactional}"
 SES_SET_MARKETING="${SES_CONFIG_SET_MARKETING:-cfm-marketing}"
 # Instancia sobre la que se permite abrir terminal por SSM. Acotar a una sola es el punto:
@@ -77,9 +80,10 @@ if [[ -z "$RENDER_DIR" || -z "$ACC" ]]; then
   ACC="$llamador"
 fi
 
-# Los buckets llevan el id de cuenta en el nombre, asi que se derivan salvo override.
-: "${BACKUP_BUCKET:=cf-backups-${ACC}}"
-: "${MEDIA_BUCKET:=cf-media-${ACC}}"
+# Los buckets llevan el id de cuenta en el nombre, asi que se derivan salvo override. El prefijo es cfm-:
+# la cuenta la comparte otro proyecto con buckets cf-*, que nada de aqui debe tocar.
+: "${BACKUP_BUCKET:=cfm-backups-${ACC}}"
+: "${MEDIA_BUCKET:=cfm-media-${ACC}}"
 
 # Cada valor se interpola dentro de un ARN: un comodin o una comilla colados por una
 # variable ampliarian el recurso o romperian la politica.
@@ -167,7 +171,8 @@ emit respaldos <<EOF
 {"Version":"2012-10-17","Statement":[
  {"Sid":"EscribirRespaldos","Effect":"Allow",
   "Action":["s3:PutObject","s3:GetObject","s3:ListBucket"],
-  "Resource":["arn:aws:s3:::${BACKUP_BUCKET}","arn:aws:s3:::${BACKUP_BUCKET}/postgres/*"]}]}
+  "Resource":["arn:aws:s3:::${BACKUP_BUCKET}","arn:aws:s3:::${BACKUP_BUCKET}/postgres/*",
+              "arn:aws:s3:::${BACKUP_BUCKET}/correo/*","arn:aws:s3:::${BACKUP_BUCKET}/openbao/*"]}]}
 EOF
 
 emit medios <<EOF
@@ -416,6 +421,27 @@ if ! aws iam get-user --user-name "$SES_IDENTITIES_USER" >/dev/null 2>&1; then
 fi
 if aws iam get-user --user-name "$SES_IDENTITIES_USER" >/dev/null 2>&1; then
   reconcilia user "$SES_IDENTITIES_USER" ses-identidades
+fi
+echo
+
+# --- Usuario de respaldos (servidor fuera de EC2) ---------------------------------------
+# En EC2 los respaldos usan el rol de la instancia; en el servidor propio no hay rol y ops/backup
+# necesita una credencial. Escribe y lee en el bucket de respaldos pero no borra: quien tome el
+# servidor no puede destruir lo que permitiria recuperarse. Sus claves las crea quien administra la
+# cuenta, UNA vez, y van directo a BACKUP_SECRETS_FILE del servidor (0600 del usuario de despliegue):
+#   aws iam create-access-key --user-name $BACKUP_USER
+echo "Usuario de respaldos $BACKUP_USER (bucket $BACKUP_BUCKET)"
+if ! aws iam get-user --user-name "$BACKUP_USER" >/dev/null 2>&1; then
+  if [[ $CHECK -eq 1 ]]; then
+    echo "  FALTA: se crearia"
+  else
+    aws iam create-user --user-name "$BACKUP_USER" \
+        --tags Key=proposito,Value=respaldos-servidor-propio >/dev/null
+    echo "  creado"
+  fi
+fi
+if aws iam get-user --user-name "$BACKUP_USER" >/dev/null 2>&1; then
+  reconcilia user "$BACKUP_USER" respaldos
 fi
 echo
 

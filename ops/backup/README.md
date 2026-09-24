@@ -199,7 +199,8 @@ el día que las credenciales pasaron al almacén se quedaron con la variable vac
 
 Secretos, en `BACKUP_SECRETS_FILE` y declarados en
 `ops/security/secrets/secret-keys-backup.txt`: `BACKUP_S3_ACCESS_KEY_ID`,
-`BACKUP_S3_SECRET_ACCESS_KEY` (vacías en AWS: rol de la instancia) y
+`BACKUP_S3_SECRET_ACCESS_KEY` (vacías en EC2: rol de la instancia; en el servidor propio, las del usuario
+`core-force-mail-respaldos` que crea `ops/aws/setup-iam.sh`, que escribe y lee pero no borra) y
 `BACKUP_ENCRYPTION_PASSPHRASE`. **No van en el `.env`**: Compose entrega el `.env` entero a cada
 contenedor, y con la credencial del bucket y la frase de cifrado, quien comprometa un servicio
 cualquiera lee y borra el histórico de respaldos. El fichero se rechaza si no es del usuario del
@@ -230,8 +231,19 @@ ninguno.
 Con Amazon S3, el bucket (distinto al de medios, `MINIO_BUCKET`) debe tener acceso público
 bloqueado en las cuatro dimensiones, cifrado en reposo por defecto, versionado y ciclo de vida
 (`STANDARD_IA` a los 30 días, expiración a los 180, versiones no vigentes a los 30, multiparte
-incompletas a los 7). `ops/aws/setup-iam.sh`, `setup-buckets.sh` y `setup-auditoria.sh` lo derivan
-de la cuenta y leen la misma `BACKUP_S3_BUCKET`. Con R2 o cualquier otro S3-compatible, el
+incompletas a los 7), solo por TLS y candado de retencion de 30 dias en modo gobernanza.
+`ops/aws/setup-buckets.sh` lo crea si falta y lo deja asi; `setup-iam.sh` da el permiso (escribir y leer
+`postgres/`, `correo/` y `openbao/`, nunca borrar) al rol de EC2 o al usuario del servidor propio. Los dos
+derivan el nombre de la cuenta con el prefijo `cfm-` (`cfm-backups-<cuenta>`) y leen la misma
+`BACKUP_S3_BUCKET`: la cuenta la comparte otro proyecto con buckets `cf-*`, que no se tocan.
+`setup-auditoria.sh` actua sobre toda la cuenta (CloudTrail): no se corre en una cuenta compartida sin
+acordarlo con el otro proyecto.
+
+En produccion (2026-09-24): Amazon S3 `cfm-backups-<cuenta>` en us-east-1, usuario
+`core-force-mail-respaldos` con su clave en `BACKUP_SECRETS_FILE` y cifrado gpg de todo lo que sale. La
+frase de cifrado y la llave de desbloqueo de OpenBao estan tambien fuera del servidor, en el equipo de
+quien opera. Recuperacion probada desde fuera del servidor: un volcado bajado del bucket se descifra con
+la copia externa de la frase en un `PGDMP` valido. Con R2 o cualquier otro S3-compatible, el
 equivalente se configura en su panel: bucket privado, versionado y credencial limitada a ese
 bucket.
 
