@@ -7,6 +7,7 @@ import type {
   MessagePart,
   ReplyTarget,
   SenderIdentity,
+  Signature,
   WebmailMeta,
 } from '@/api/webmail';
 import { formatDateTime } from '@/lib/format';
@@ -14,6 +15,7 @@ import { formatBytes } from '@/lib/quota';
 import { t } from '@/i18n';
 import { addressList, utf8Length } from './format';
 import { referencedInlineParts } from './inlineImages';
+import { signatureHtml, signatureText, textToHtml } from './richText';
 
 export const COMPOSE_MODES = ['reply', 'replyAll', 'forward', 'draft'] as const;
 export type ComposeMode = (typeof COMPOSE_MODES)[number];
@@ -36,6 +38,8 @@ export interface DraftSeed {
   bcc: string[];
   subject: string;
   text: string;
+  /** HTML del borrador que se sigue redactando, si lo tenia; el editor lo limpia al cargarlo. */
+  html?: string;
   /** Mensaje al que se responde: el servicio encadena In-Reply-To y References. */
   inReplyTo?: ReplyTarget;
   /** Borrador que se esta editando: se reemplaza al guardar y se retira al enviar. */
@@ -190,6 +194,7 @@ export function buildDraft(mode: ComposeMode, message: MailMessage, ownAddress: 
       bcc: recipients(message.bcc),
       subject: message.subject,
       text: body,
+      html: message.html.trim() ? message.html : undefined,
       draftUid: message.uid,
       fromCandidates: message.from.map((a) => a.email),
       source: serverAttachments(message),
@@ -230,6 +235,32 @@ export function buildDraft(mode: ComposeMode, message: MailMessage, ownAddress: 
     text: `\n\n${t('webmail.compose.replyHeader', { date, sender })}\n${quote(body)}`,
     inReplyTo: { folder: message.folder, uid: message.uid },
     fromCandidates: [...message.to, ...message.cc].map((a) => a.email),
+  };
+}
+
+/**
+ * Cuerpo con el que se abre la redaccion, en texto y en HTML. La firma va en los mensajes
+ * nuevos y, si el buzon lo pide, en respuestas y reenvios, encima de la cita; un borrador
+ * que se sigue redactando ya la lleva.
+ */
+export function initialBody(
+  seed: DraftSeed,
+  mode: ComposeMode | null,
+  signature: Pick<Signature, 'enabled' | 'on_replies' | 'html' | 'text'> | null,
+): { text: string; html: string } {
+  const withSignature =
+    signature?.enabled === true &&
+    (signature.html.trim() !== '' || signature.text.trim() !== '') &&
+    (mode === null || (mode !== 'draft' && signature.on_replies));
+  if (!withSignature || !signature) {
+    return { text: seed.text, html: seed.html ?? textToHtml(seed.text) };
+  }
+  const signatureBody = signature.html.trim()
+    ? signatureHtml(signature.html)
+    : signatureHtml(textToHtml(signature.text));
+  return {
+    text: `${signatureText(signature.text)}${seed.text}`,
+    html: `${signatureBody}${textToHtml(seed.text)}`,
   };
 }
 

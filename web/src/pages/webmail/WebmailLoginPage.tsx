@@ -33,6 +33,7 @@ export function WebmailLoginPage() {
   const status = useWebmailStore((s) => s.status);
   const checkError = useWebmailStore((s) => s.checkError);
   const expired = useWebmailStore((s) => s.expired);
+  const passwordChanged = useWebmailStore((s) => s.passwordChanged);
   const location = useLocation();
 
   if (status === 'authenticated') return <Navigate to={returnPath(location.state)} replace />;
@@ -57,13 +58,13 @@ export function WebmailLoginPage() {
           onRetry={() => void useWebmailStore.getState().check()}
         />
       ) : (
-        <LoginForm expired={expired} />
+        <LoginForm expired={expired} passwordChanged={passwordChanged} />
       )}
     </AuthLayout>
   );
 }
 
-function LoginForm({ expired }: { expired: boolean }) {
+function LoginForm({ expired, passwordChanged }: { expired: boolean; passwordChanged: boolean }) {
   const login = useWebmailStore((s) => s.login);
   const acknowledgeExpired = useWebmailStore((s) => s.acknowledgeExpired);
   const [username, setUsername] = useState('');
@@ -98,7 +99,11 @@ function LoginForm({ expired }: { expired: boolean }) {
 
   return (
     <form className="cf-form" onSubmit={(e) => void submit(e)} noValidate>
-      {expired ? <Alert tone="warning">{t('webmail.login.expired')}</Alert> : null}
+      {passwordChanged ? (
+        <Alert tone="success">{t('webmail.login.passwordChanged')}</Alert>
+      ) : expired ? (
+        <Alert tone="warning">{t('webmail.login.expired')}</Alert>
+      ) : null}
       <FormField
         label={t('webmail.login.username')}
         htmlFor="wm-username"

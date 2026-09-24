@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
+import { ApiError } from '@/api/errors';
 import { webmailApi, type MailMessage, type WebmailFolder } from '@/api/webmail';
 import { ToastProvider } from '@/design/components';
 import { saveBlob } from '@/lib/download';
@@ -200,5 +201,107 @@ describe('lectura de un mensaje', () => {
     await user.click(flag);
     await waitFor(() => expect(flag).toHaveAttribute('aria-pressed', 'true'));
     expect(setFlags).toHaveBeenLastCalledWith('INBOX', 5, { add: ['\\Flagged'] });
+  });
+});
+
+describe('lectura: spam, original, impresion y contactos', () => {
+  const JUNK: WebmailFolder = { ...INBOX, name: 'Junk', role: 'junk', unread: 0 };
+  afterEach(() => {
+    vi.restoreAllMocks();
+    document.querySelectorAll('iframe[data-cf-print]').forEach((frame) => frame.remove());
+  });
+
+  it('marcar como spam mueve el mensaje a Spam para que el filtro aprenda', async () => {
+    const user = userEvent.setup();
+    vi.spyOn(webmailApi, 'message').mockResolvedValue(MESSAGE);
+    const move = vi.spyOn(webmailApi, 'move').mockResolvedValue(null);
+    const props = renderView({ folders: [INBOX, TRASH, JUNK] });
+
+    await user.click(await screen.findByRole('button', { name: t('webmail.reader.spam') }));
+    await waitFor(() => expect(move).toHaveBeenCalledWith('INBOX', 5, 'Junk'));
+    expect(props.onGone).toHaveBeenCalled();
+  });
+
+  it('desde Spam, no es spam lo devuelve a la bandeja; un fallo se muestra', async () => {
+    const user = userEvent.setup();
+    vi.spyOn(webmailApi, 'message').mockResolvedValue({ ...MESSAGE, folder: 'Junk' });
+    vi.spyOn(webmailApi, 'move').mockRejectedValue(
+      new ApiError(404, { code: 'MESSAGE_NOT_FOUND', message: '' }),
+    );
+    const props = renderView({ folderName: 'Junk', folder: JUNK, folders: [INBOX, JUNK] });
+
+    expect(await screen.findByRole('button', { name: t('webmail.reader.notSpam') })).toBeVisible();
+    expect(screen.queryByRole('button', { name: t('webmail.reader.spam') })).toBeNull();
+    await user.click(screen.getByRole('button', { name: t('webmail.reader.notSpam') }));
+    expect(await screen.findByText(t('error.code.MESSAGE_NOT_FOUND'))).toBeInTheDocument();
+    expect(props.onGone).not.toHaveBeenCalled();
+  });
+
+  it('descarga el original como .eml en memoria; un fallo se muestra', async () => {
+    const user = userEvent.setup();
+    vi.spyOn(webmailApi, 'message').mockResolvedValue(MESSAGE);
+    const blob = new Blob(['From: luis']);
+    const raw = vi
+      .spyOn(webmailApi, 'downloadRaw')
+      .mockResolvedValueOnce({ blob, filename: null, contentType: 'message/rfc822' })
+      .mockRejectedValueOnce(new ApiError(503, { code: 'SERVICE_UNAVAILABLE', message: '' }));
+    renderView();
+
+    const button = await screen.findByRole('button', { name: t('webmail.reader.raw') });
+    await user.click(button);
+    await waitFor(() => expect(saveBlob).toHaveBeenCalledWith(blob, 'Pedido.eml'));
+    expect(raw).toHaveBeenCalledWith('INBOX', 5);
+
+    await user.click(button);
+    expect(await screen.findByText(t('error.serviceUnavailable'))).toBeInTheDocument();
+  });
+
+  it('imprime desde un marco aislado sin scripts, con cabeceras escapadas', async () => {
+    const user = userEvent.setup();
+    vi.spyOn(webmailApi, 'message').mockResolvedValue({
+      ...MESSAGE,
+      subject: '<b>Pedido</b>',
+      html: '<p>Hola mundo</p><script>alert(1)</script>',
+    });
+    renderView();
+
+    await user.click(await screen.findByRole('button', { name: t('webmail.reader.print') }));
+    const frame = document.querySelector('iframe[data-cf-print]');
+    expect(frame).not.toBeNull();
+    const sandbox = frame?.getAttribute('sandbox') ?? '';
+    expect(sandbox).not.toContain('allow-scripts');
+    const doc = frame?.getAttribute('srcdoc') ?? '';
+    expect(doc).toContain('&lt;b&gt;Pedido&lt;/b&gt;');
+    expect(doc).toContain('Hola mundo');
+    expect(doc).not.toContain('<script');
+  });
+
+  it('anade el remitente a contactos desde la cabecera', async () => {
+    const user = userEvent.setup();
+    vi.spyOn(webmailApi, 'message').mockResolvedValue(MESSAGE);
+    const create = vi.spyOn(webmailApi, 'createContact').mockImplementation(async (input) => ({
+      ...input,
+      id: 'c1',
+      etag: 'e1',
+      updated_at: '2026-09-24T10:00:00Z',
+    }));
+    renderView();
+
+    await user.click(
+      await screen.findByRole('button', {
+        name: t('webmail.reader.addContact', { address: 'luis@cliente.com' }),
+      }),
+    );
+    const dialog = screen.getByRole('dialog');
+    expect(within(dialog).getByLabelText(t('webmail.contacts.name'))).toHaveValue('Luis');
+    await user.click(within(dialog).getByRole('button', { name: t('common.save') }));
+    await waitFor(() =>
+      expect(create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: 'Luis',
+          emails: [{ value: 'luis@cliente.com', type: 'other' }],
+        }),
+      ),
+    );
   });
 });

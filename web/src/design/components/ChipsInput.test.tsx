@@ -1,10 +1,10 @@
 import { useState } from 'react';
 import { describe, expect, it } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { normalizeEmail } from '@/lib/mailAddress';
 import { t } from '@/i18n';
-import { ChipsInput } from './ChipsInput';
+import { ChipsInput, type ChipSuggestion } from './ChipsInput';
 
 function Harness({ initial = [] }: { initial?: string[] }) {
   const [values, setValues] = useState<string[]>(initial);
@@ -74,5 +74,68 @@ describe('ChipsInput con destinos de alias', () => {
     await user.click(screen.getByLabelText('destinos'));
     await user.keyboard('{Backspace}');
     expect(screen.getByTestId('goto')).toHaveTextContent(/^b@x\.pe$/);
+  });
+});
+
+function Suggesting({ suggestions }: { suggestions: ChipSuggestion[] }) {
+  const [values, setValues] = useState<string[]>(['eva@x.pe']);
+  const [query, setQuery] = useState('');
+  return (
+    <>
+      <label htmlFor="para">para</label>
+      <ChipsInput
+        id="para"
+        values={values}
+        onChange={setValues}
+        normalize={normalizeEmail}
+        removeLabel={(value) => t('common.removeValue', { value })}
+        rejectedLabel={(rejected) => rejected.join(',')}
+        suggestions={suggestions}
+        onQueryChange={setQuery}
+        suggestionsLabel="propuestas"
+      />
+      <output data-testid="valores">{values.join(',')}</output>
+      <output data-testid="consulta">{query}</output>
+    </>
+  );
+}
+
+describe('ChipsInput con propuestas', () => {
+  const SUGGESTIONS: ChipSuggestion[] = [
+    { value: 'luis@x.pe', label: 'Luis', detail: 'luis@x.pe' },
+    { value: 'lucia@x.pe', label: 'Lucia' },
+    { value: 'eva@x.pe', label: 'Eva' },
+  ];
+
+  it('se recorren con flechas y Enter elige; las ya anadidas no se proponen', async () => {
+    const user = userEvent.setup();
+    render(<Suggesting suggestions={SUGGESTIONS} />);
+    const input = screen.getByRole('combobox', { name: 'para' });
+
+    await user.type(input, 'lu');
+    expect(screen.getByTestId('consulta')).toHaveTextContent('lu');
+    const list = screen.getByRole('listbox', { name: 'propuestas' });
+    expect(within(list).getAllByRole('option')).toHaveLength(2);
+    expect(input).toHaveAttribute('aria-expanded', 'true');
+
+    await user.keyboard('{ArrowDown}{ArrowDown}');
+    expect(input.getAttribute('aria-activedescendant')).toBe(
+      within(list).getAllByRole('option')[1]?.id,
+    );
+    await user.keyboard('{Enter}');
+    expect(screen.getByTestId('valores')).toHaveTextContent('eva@x.pe,lucia@x.pe');
+    expect(input).toHaveValue('');
+  });
+
+  it('Escape las cierra y Enter confirma lo escrito tal cual', async () => {
+    const user = userEvent.setup();
+    render(<Suggesting suggestions={SUGGESTIONS} />);
+    const input = screen.getByRole('combobox', { name: 'para' });
+
+    await user.type(input, 'luis@otro.pe');
+    await user.keyboard('{Escape}');
+    expect(input).toHaveAttribute('aria-expanded', 'false');
+    await user.keyboard('{Enter}');
+    expect(screen.getByTestId('valores')).toHaveTextContent('eva@x.pe,luis@otro.pe');
   });
 });

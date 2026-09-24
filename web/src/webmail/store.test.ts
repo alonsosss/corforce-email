@@ -22,6 +22,7 @@ describe('sesion del webmail', () => {
       status: 'anonymous',
       session: null,
       expired: false,
+      passwordChanged: false,
       checkError: null,
     });
   });

@@ -25,6 +25,10 @@ export function Modal({
 }: ModalProps) {
   const titleId = useId();
   const panelRef = useRef<HTMLDivElement>(null);
+  // onClose suele ser una funcion nueva en cada render: si fuera dependencia del efecto, cada
+  // tecla en un campo del dialogo devolveria el foco al primer campo.
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
 
   useEffect(() => {
     if (!open) return;
@@ -35,7 +39,7 @@ export function Modal({
     );
     (first ?? panel)?.focus();
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && dismissible) onClose();
+      if (e.key === 'Escape' && dismissible) onCloseRef.current();
     };
     document.addEventListener('keydown', onKey);
     const { overflow } = document.body.style;
@@ -45,7 +49,7 @@ export function Modal({
       document.body.style.overflow = overflow;
       previous?.focus();
     };
-  }, [open, onClose, dismissible]);
+  }, [open, dismissible]);
 
   if (!open) return null;
 

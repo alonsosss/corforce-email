@@ -16,6 +16,8 @@ export interface WebmailState {
   session: WebmailSession | null;
   /** La sesion cayo sin que el usuario la cerrara (inactividad, vida maxima, revocacion). */
   expired: boolean;
+  /** La sesion termino porque el usuario cambio su contrasena: todas quedan revocadas. */
+  passwordChanged: boolean;
   /** Por que no se pudo comprobar la sesion (el servicio no respondio). */
   checkError: unknown;
   check: () => Promise<void>;
@@ -23,6 +25,8 @@ export interface WebmailState {
   logout: () => Promise<void>;
   /** Relee la sesion: la cuota cambia al enviar, guardar o borrar. */
   refresh: () => Promise<void>;
+  /** Tras cambiar la contrasena: el servicio ya revoco la cookie, se vuelve al acceso. */
+  endAfterPasswordChange: () => void;
   acknowledgeExpired: () => void;
 }
 
@@ -57,6 +61,7 @@ export const useWebmailStore = create<WebmailState>((set, get) => {
     status: 'checking',
     session: null,
     expired: false,
+    passwordChanged: false,
     checkError: null,
 
     check: () => {
@@ -69,7 +74,13 @@ export const useWebmailStore = create<WebmailState>((set, get) => {
     login: async (username, password) => {
       const session = await webmailApi.login(username, password);
       resetWebmailCatalogs();
-      set({ status: 'authenticated', session, expired: false, checkError: null });
+      set({
+        status: 'authenticated',
+        session,
+        expired: false,
+        passwordChanged: false,
+        checkError: null,
+      });
       // El inicio de sesion no trae la cuota; se pide aparte sin bloquear la entrada.
       void get().refresh();
     },
@@ -96,6 +107,11 @@ export const useWebmailStore = create<WebmailState>((set, get) => {
       }
     },
 
-    acknowledgeExpired: () => set({ expired: false }),
+    endAfterPasswordChange: () => {
+      resetWebmailCatalogs();
+      set({ ...signedOut, status: 'anonymous', expired: false, passwordChanged: true });
+    },
+
+    acknowledgeExpired: () => set({ expired: false, passwordChanged: false }),
   };
 });

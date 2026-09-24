@@ -16,6 +16,15 @@ export interface WebmailView {
   uid?: number;
   page?: number;
   q?: string;
+  // Busqueda avanzada: fechas AAAA-MM-DD y marcas como "1".
+  from?: string;
+  to?: string;
+  subject?: string;
+  since?: string;
+  before?: string;
+  unread?: string;
+  flagged?: string;
+  attachments?: string;
 }
 
 export const paths = {
@@ -29,6 +38,11 @@ export const paths = {
   webmailView: (view: WebmailView) => withQuery('/webmail', { ...view }),
   webmailComposeFrom: (mode: string, folder: string, uid: number) =>
     withQuery('/webmail/compose', { mode, folder, uid }),
+  webmailComposeTo: (to: string) => withQuery('/webmail/compose', { to }),
+  webmailSettingsTab: (tab: string) => withQuery('/webmail/settings', { tab }),
+  webmailScheduled: '/webmail/scheduled',
+  webmailContacts: '/webmail/contacts',
+  webmailCalendar: '/webmail/calendar',
 
   home: '/',
   login: '/login',

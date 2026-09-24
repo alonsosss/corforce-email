@@ -235,6 +235,8 @@ const LIMITS: WebmailMeta['limits'] = {
   max_subject_chars: 5,
   max_search_bytes: 10,
   max_folder_name_bytes: 20,
+  max_batch_uids: 500,
+  max_scheduled_days: 30,
 };
 
 const CHECK = {

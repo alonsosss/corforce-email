@@ -26,6 +26,7 @@ export const FOLDER_ROLES = {
   trash: 'trash',
   junk: 'junk',
   archive: 'archive',
+  scheduled: 'scheduled',
 } as const;
 
 /** Flags de sistema IMAP (RFC 3501) del API. Los que el cliente puede cambiar llegan en la meta. */
@@ -70,11 +71,23 @@ export interface WebmailMeta {
     max_subject_chars: number;
     max_search_bytes: number;
     max_folder_name_bytes: number;
+    /** UIDs por operacion sobre varios mensajes. */
+    max_batch_uids: number;
+    /** Hasta cuantos dias en el futuro admite un envio programado. */
+    max_scheduled_days: number;
   };
   pagination: { default_page_size: number; max_page_size: number };
   folder_roles: string[];
   mutable_flags: string[];
   session: { idle_timeout_seconds: number; max_lifetime_seconds: number };
+}
+
+/**
+ * GET /webmail/meta/dav: topes de contactos y calendario tal como los sirve mail-dav. Se leen
+ * solo con davLimits() de webmail/catalogs.ts.
+ */
+export interface DavMeta {
+  limits: Partial<Record<string, number>>;
 }
 
 /**
@@ -147,7 +160,19 @@ export interface MailMessage extends MessageEnvelope {
   attachments: MessagePart[];
 }
 
-export interface MessageQuery {
+/** Filtros de la busqueda avanzada; las fechas en AAAA-MM-DD. */
+export interface MessageFilters {
+  from?: string;
+  to?: string;
+  subject?: string;
+  since?: string;
+  before?: string;
+  unread?: boolean;
+  flagged?: boolean;
+  hasAttachments?: boolean;
+}
+
+export interface MessageQuery extends MessageFilters {
   page?: number;
   search?: string;
 }
@@ -188,6 +213,8 @@ export interface ComposeInput {
   bcc: string[];
   subject: string;
   text: string;
+  /** Cuerpo con formato; el servicio lo sanea y, sin texto, genera la parte de texto. */
+  html?: string;
   inReplyTo?: ReplyTarget;
   attachments: File[];
   source?: PartSource;
@@ -217,7 +244,183 @@ export interface DownloadedPart {
   contentType: string;
 }
 
-type Method = 'GET' | 'POST' | 'PUT' | 'DELETE';
+/** POST /send con send_at (202): el mensaje queda en Programados hasta su hora. */
+export interface ScheduledRef {
+  id: string;
+  send_at: string;
+}
+
+export interface ScheduledSend {
+  id: string;
+  send_at: string;
+  subject: string;
+  recipients: string[];
+  created_at: string;
+  status: string;
+}
+
+export type BatchAction =
+  | { action: 'flags'; add?: MutableFlag[]; remove?: MutableFlag[] }
+  | { action: 'move'; to: string }
+  | { action: 'delete' };
+
+export interface BatchResult {
+  affected: number;
+  permanent: boolean;
+}
+
+export interface Signature {
+  enabled: boolean;
+  html: string;
+  on_replies: boolean;
+  /** Version en texto que genera el servicio. */
+  text: string;
+  updated_at: string | null;
+  limits: { max_html_bytes: number; max_text_bytes: number };
+}
+
+export type SignatureInput = Pick<Signature, 'enabled' | 'html' | 'on_replies'>;
+
+export const RULE_FIELDS = ['from', 'to', 'cc', 'recipient', 'subject'] as const;
+export const RULE_OPERATORS = ['contains', 'not_contains', 'is'] as const;
+export const RULE_ACTIONS = ['move', 'mark_read', 'flag', 'forward', 'discard'] as const;
+
+export interface RuleCondition {
+  field: (typeof RULE_FIELDS)[number];
+  op: (typeof RULE_OPERATORS)[number];
+  value: string;
+}
+
+export type RuleAction =
+  | { type: 'move'; folder: string }
+  | { type: 'mark_read' }
+  | { type: 'flag' }
+  | { type: 'forward'; address: string; keep_copy: boolean }
+  | { type: 'discard' };
+
+export interface MailRule {
+  /** Vacio en una regla nueva: el directorio le asigna uno al guardar. */
+  id: string;
+  name: string;
+  enabled: boolean;
+  match: 'all' | 'any';
+  conditions: RuleCondition[];
+  actions: RuleAction[];
+  stop: boolean;
+}
+
+export interface Forwarding {
+  enabled: boolean;
+  addresses: string[];
+  keep_copy: boolean;
+}
+
+/** Topes que aplica mail-directory a las reglas y al reenvio. */
+export interface FilterLimits {
+  max_rules: number;
+  max_conditions: number;
+  max_actions: number;
+  max_forward_addresses: number;
+  /** Caracteres de cada valor de una condicion. */
+  max_value_length: number;
+  /** Caracteres del nombre de una regla. */
+  max_name_length: number;
+  /** Bytes del nombre de la carpeta de destino. */
+  max_folder_bytes: number;
+}
+
+export interface MailFilters {
+  rules: MailRule[];
+  forwarding: Forwarding;
+  updated_at: string | null;
+  limits: FilterLimits;
+}
+
+/** El PUT solo admite los campos del contrato: sin limits ni updated_at (400). */
+export type MailFiltersInput = Pick<MailFilters, 'rules' | 'forwarding'>;
+
+export const CONTACT_VALUE_TYPES = ['home', 'work', 'mobile', 'other'] as const;
+export type ContactValueType = (typeof CONTACT_VALUE_TYPES)[number];
+
+export interface ContactValue {
+  value: string;
+  type: ContactValueType;
+}
+
+export interface ContactInput {
+  name: string;
+  given_name: string;
+  family_name: string;
+  emails: ContactValue[];
+  phones: ContactValue[];
+  organization: string;
+  title: string;
+  notes: string;
+  /** AAAA-MM-DD o vacio. */
+  birthday: string;
+}
+
+export interface Contact extends ContactInput {
+  id: string;
+  etag: string;
+  updated_at: string;
+}
+
+export interface ContactQuery {
+  q?: string;
+  page?: number;
+}
+
+export interface ContactImportResult {
+  imported: number;
+  updated: number;
+  skipped: { index: number; reason: string }[];
+}
+
+export const RECURRENCE_FREQUENCIES = ['daily', 'weekly', 'monthly', 'yearly'] as const;
+export type RecurrenceFrequency = (typeof RECURRENCE_FREQUENCIES)[number];
+/** Dias de la semana de iCalendar (RFC 5545), de lunes a domingo. */
+export const WEEKDAYS = ['MO', 'TU', 'WE', 'TH', 'FR', 'SA', 'SU'] as const;
+export type Weekday = (typeof WEEKDAYS)[number];
+
+export interface Recurrence {
+  freq: RecurrenceFrequency;
+  interval: number;
+  count: number | null;
+  /** RFC 3339. */
+  until: string | null;
+  by_day: Weekday[] | null;
+}
+
+export interface CalendarEventInput {
+  title: string;
+  /** RFC 3339. Un evento de todo el dia va de las 00:00 UTC de su primer dia al dia siguiente al ultimo. */
+  start: string;
+  end: string;
+  all_day: boolean;
+  location: string;
+  description: string;
+  recurrence: Recurrence | null;
+  reminder_minutes: number | null;
+}
+
+export interface CalendarEvent extends CalendarEventInput {
+  id: string;
+  etag: string;
+}
+
+export interface Occurrence {
+  id: string;
+  start: string;
+  end: string;
+  all_day: boolean;
+  title: string;
+  location: string;
+  /** Pertenece a una serie: editarla cambia la serie entera. */
+  recurring: boolean;
+}
+
+type Method = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 
 interface RequestInit {
   params?: Record<string, string | number | boolean | undefined>;
@@ -395,6 +598,7 @@ export function composeFormData(input: ComposeInput, replaceUid?: number): FormD
   list('bcc', input.bcc);
   form.append('subject', input.subject);
   form.append('text', input.text);
+  if (input.html) form.append('html', input.html);
   if (input.inReplyTo) {
     form.append('in_reply_to', String(input.inReplyTo.uid));
     form.append('in_reply_to_folder', input.inReplyTo.folder);
@@ -410,6 +614,23 @@ export function composeFormData(input: ComposeInput, replaceUid?: number): FormD
 }
 
 const wm = endpoints.webmail;
+
+function flag(value: boolean | undefined): string | undefined {
+  return value ? 'true' : undefined;
+}
+
+async function download(path: string, signal?: AbortSignal): Promise<DownloadedPart> {
+  const res = await send('GET', path, { signal }, '*/*');
+  return {
+    blob: await res.blob(),
+    filename: filenameFromDisposition(res.headers.get('Content-Disposition')),
+    contentType: (res.headers.get('Content-Type') ?? '').split(';')[0]?.trim().toLowerCase() ?? '',
+  };
+}
+
+function ifMatch(etag?: string): Record<string, string> | undefined {
+  return etag ? { 'If-Match': etag } : undefined;
+}
 
 /**
  * Flujo de avisos de la bandeja (Server-Sent Events). Va con la cookie del webmail y solo hacia
@@ -427,6 +648,7 @@ export const webmailApi = {
 
   /** Topes y catalogos del servicio. Se leen por sesion con webmail/catalogs.ts. */
   meta: (signal?: AbortSignal) => request<WebmailMeta>('GET', wm.meta, { signal }),
+  davMeta: (signal?: AbortSignal) => request<DavMeta>('GET', wm.metaDav, { signal }),
 
   /** Remitentes del buzon, el propio primero. Se leen por sesion con webmail/catalogs.ts. */
   identities: async (signal?: AbortSignal): Promise<SenderIdentity[]> =>
@@ -456,7 +678,21 @@ export const webmailApi = {
     const res = await send(
       'GET',
       wm.messages(folder),
-      { params: { page: query.page, search: query.search }, signal },
+      {
+        params: {
+          page: query.page,
+          search: query.search,
+          from: query.from,
+          to: query.to,
+          subject: query.subject,
+          since: query.since,
+          before: query.before,
+          unread: flag(query.unread),
+          flagged: flag(query.flagged),
+          has_attachments: flag(query.hasAttachments),
+        },
+        signal,
+      },
       'application/json',
     );
     const json = await readEnvelope<MessageEnvelope[] | null>(res);
@@ -488,20 +724,24 @@ export const webmailApi = {
     request<{ permanent: boolean }>('DELETE', wm.message(folder, uid)),
 
   /** Una parte como bytes en memoria, para descargarla o incrustarla; nunca se navega a ella. */
-  downloadPart: async (
-    folder: string,
-    uid: number,
-    part: string,
-    signal?: AbortSignal,
-  ): Promise<DownloadedPart> => {
-    const res = await send('GET', wm.part(folder, uid, part), { signal }, '*/*');
-    return {
-      blob: await res.blob(),
-      filename: filenameFromDisposition(res.headers.get('Content-Disposition')),
-      contentType:
-        (res.headers.get('Content-Type') ?? '').split(';')[0]?.trim().toLowerCase() ?? '',
-    };
-  },
+  downloadPart: (folder: string, uid: number, part: string, signal?: AbortSignal) =>
+    download(wm.part(folder, uid, part), signal),
+
+  /** El mensaje tal como esta en el buzon (message/rfc822), para guardarlo como .eml. */
+  downloadRaw: (folder: string, uid: number, signal?: AbortSignal) =>
+    download(wm.raw(folder, uid), signal),
+
+  /** Varios mensajes de la carpeta en una operacion; como mucho limits.max_batch_uids. */
+  batch: (folder: string, uids: number[], action: BatchAction) =>
+    request<BatchResult>('POST', wm.batch(folder), { json: { uids, ...action } }),
+
+  /** Nombre completo de la carpeta, con el separador del servidor. */
+  createFolder: (name: string) => request<WebmailFolder>('POST', wm.folders, { json: { name } }),
+  renameFolder: (folder: string, name: string) =>
+    request<WebmailFolder>('PATCH', wm.folder(folder), { json: { name } }),
+  deleteFolder: (folder: string) => request<null>('DELETE', wm.folder(folder)),
+  /** Solo Papelera y Spam. */
+  emptyFolder: (folder: string) => request<{ removed: number }>('POST', wm.emptyFolder(folder)),
 
   /** Envia y, con replaceUid, retira ese borrador en la misma operacion. */
   send: (input: ComposeInput, options: SendOptions) =>
@@ -513,6 +753,81 @@ export const webmailApi = {
   /** Guarda en Borradores; replaceUid es el borrador anterior del mismo mensaje. */
   saveDraft: (input: ComposeInput, replaceUid?: number) =>
     request<{ uid: number }>('POST', wm.drafts, { form: composeFormData(input, replaceUid) }),
+
+  /** Programa el envio para sendAt (RFC 3339); el mensaje espera en Programados. */
+  schedule: async (input: ComposeInput, sendAt: string, options: SendOptions) => {
+    const form = composeFormData(input, options.replaceUid);
+    form.append('send_at', sendAt);
+    const result = await request<{ scheduled: ScheduledRef }>('POST', wm.send, {
+      form,
+      headers: { 'Idempotency-Key': options.idempotencyKey },
+    });
+    return result.scheduled;
+  },
+  scheduled: async (signal?: AbortSignal): Promise<ScheduledSend[]> =>
+    (await request<ScheduledSend[] | null>('GET', wm.scheduled, { signal })) ?? [],
+  reschedule: (id: string, sendAt: string) =>
+    request<ScheduledSend>('PATCH', wm.scheduledItem(id), { json: { send_at: sendAt } }),
+  /** El mensaje vuelve a Borradores. */
+  cancelScheduled: (id: string) => request<null>('DELETE', wm.scheduledItem(id)),
+
+  signature: (signal?: AbortSignal) => request<Signature>('GET', wm.signature, { signal }),
+  setSignature: (input: SignatureInput) => request<Signature>('PUT', wm.signature, { json: input }),
+
+  filters: (signal?: AbortSignal) => request<MailFilters>('GET', wm.filters, { signal }),
+  setFilters: (input: MailFiltersInput) => request<MailFilters>('PUT', wm.filters, { json: input }),
+
+  /** 204: el cambio revoca todas las sesiones del buzon, tambien esta. */
+  changePassword: (currentPassword: string, newPassword: string) =>
+    request<null>('POST', wm.password, {
+      json: { current_password: currentPassword, new_password: newPassword },
+    }),
+
+  contacts: async (query: ContactQuery, signal?: AbortSignal): Promise<Page<Contact>> => {
+    const res = await send(
+      'GET',
+      wm.contacts,
+      { params: { q: query.q, page: query.page }, signal },
+      'application/json',
+    );
+    const json = await readEnvelope<Contact[] | null>(res);
+    return toPage(
+      { data: json?.data ?? [], meta: json?.meta },
+      { page: query.page ?? 1, per_page: 0 },
+    );
+  },
+  contact: (id: string, signal?: AbortSignal) =>
+    request<Contact>('GET', wm.contact(id), { signal }),
+  createContact: (input: ContactInput) => request<Contact>('POST', wm.contacts, { json: input }),
+  /** Con etag, el servicio responde 412 si el contacto cambio desde que se leyo. */
+  updateContact: (id: string, input: ContactInput, etag?: string) =>
+    request<Contact>('PUT', wm.contact(id), { json: input, headers: ifMatch(etag) }),
+  deleteContact: (id: string) => request<null>('DELETE', wm.contact(id)),
+  exportContacts: (signal?: AbortSignal) => download(wm.contactsExport, signal),
+  importContacts: (file: File) => {
+    const form = new FormData();
+    form.append('file', file, file.name);
+    return request<ContactImportResult>('POST', wm.contactsImport, { form });
+  },
+
+  /** Ocurrencias entre start y end (RFC 3339); el servicio acota la ventana. */
+  calendarOccurrences: async (
+    start: string,
+    end: string,
+    signal?: AbortSignal,
+  ): Promise<Occurrence[]> =>
+    (await request<Occurrence[] | null>('GET', wm.calendarEvents, {
+      params: { start, end },
+      signal,
+    })) ?? [],
+  calendarEvent: (id: string, signal?: AbortSignal) =>
+    request<CalendarEvent>('GET', wm.calendarEvent(id), { signal }),
+  createCalendarEvent: (input: CalendarEventInput) =>
+    request<CalendarEvent>('POST', wm.calendarEvents, { json: input }),
+  updateCalendarEvent: (id: string, input: CalendarEventInput, etag?: string) =>
+    request<CalendarEvent>('PUT', wm.calendarEvent(id), { json: input, headers: ifMatch(etag) }),
+  /** Borra la serie entera. */
+  deleteCalendarEvent: (id: string) => request<null>('DELETE', wm.calendarEvent(id)),
 };
 
 export function hasFlag(envelope: Pick<MessageEnvelope, 'flags'>, flag: string): boolean {
