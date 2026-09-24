@@ -1025,3 +1025,9 @@ export const webmailRemindersApi = {
     request<QuickReply>('PUT', wm.quickReply(id), { json: input }),
   deleteQuickReply: (id: string) => request<null>('DELETE', wm.quickReply(id)),
 };
+
+/**
+ * Peticion JSON al webmail con su sesion, sus reintentos de lectura y su aviso de sesion caducada,
+ * para los modulos de API del webmail que viven en su propio fichero (api/largeFiles.ts).
+ */
+export { request as webmailRequest };

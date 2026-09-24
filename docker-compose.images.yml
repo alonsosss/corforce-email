@@ -49,5 +49,7 @@ services:
     image: ${ECR_REGISTRY:?definir en .env}/core-force-mail/automations:${DEPLOY_TAG:-latest}
   analytics:
     image: ${ECR_REGISTRY:?definir en .env}/core-force-mail/analytics:${DEPLOY_TAG:-latest}
+  mail-files:
+    image: ${ECR_REGISTRY:?definir en .env}/core-force-mail/mail-files:${DEPLOY_TAG:-latest}
   web:
     image: ${ECR_REGISTRY:?definir en .env}/core-force-mail/web:${DEPLOY_TAG:-latest}

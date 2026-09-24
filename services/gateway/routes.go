@@ -142,6 +142,9 @@ type publicRouteSpec struct {
 	// Alias es una ruta en la raiz del dominio que sirve lo mismo (p. ej. /p/{tenant}/{slug} para
 	// las paginas de aterrizaje). Solo GET y con los mismos parametros que la ruta.
 	Alias string `json:"alias,omitempty"`
+	// Transfer "download" declara que la ruta entrega un fichero grande (el enlace de un fichero
+	// compartido): el gateway amplia su plazo de escritura (transfer.go) y el del servicio acota.
+	Transfer string `json:"transfer,omitempty"`
 }
 
 // Valores admitidos en publicRouteSpec.
@@ -150,6 +153,7 @@ const (
 	publicContentUntrustedHTML  = "untrusted_html"
 	publicContentEmbeddableHTML = "embeddable_html"
 	publicCORSService           = "service"
+	publicTransferDownload      = "download"
 )
 
 // aliasRe: una ruta en la raiz con segmentos fijos o parametros enteros.
@@ -180,6 +184,9 @@ func validatePublicExtras(p publicRouteSpec) error {
 	}
 	if p.CORS != "" && p.Limit == publicLimitWebhook {
 		return fmt.Errorf("tabla de rutas: la ruta publica %q no puede ser webhook y dejar CORS al servicio", p.Path)
+	}
+	if err := validatePublicTransfer(p); err != nil {
+		return err
 	}
 	if p.Alias == "" {
 		return nil

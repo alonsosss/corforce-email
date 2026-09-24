@@ -384,6 +384,25 @@ services:
       MINIO_ENDPOINT: ${MINIO_ENDPOINT:-minio:9000}
       MINIO_USE_SSL: ${MINIO_USE_SSL:-false}
     volumes: *internal-ca
+  mail-files:
+    restart: *reinicio
+    <<: *go-runtime
+    # Las subidas pasan en flujo por el directorio temporal, clamd y el almacen: la memoria no crece con
+    # el tamano del fichero.
+    mem_limit: 96m
+    environment:
+      <<: *go-service-env
+      GOMEMLIMIT: 72MiB
+      # Almacen de objetos del perfil (servicio minio), espacio private/ que el gateway nunca sirve. El
+      # bucket (MINIO_BUCKET) es del .env y las claves del almacen de secretos (docker-compose.yml).
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT:-minio:9000}
+      MINIO_USE_SSL: ${MINIO_USE_SSL:-false}
+    volumes:
+      - ${INTERNAL_TLS_DIR:-/opt/core-force-mail/tls}/publico:/run/core-force-mail/tls/publico:ro
+      # Subidas en espera del veredicto de ClamAV (MAIL_FILES_SPOOL_DIR): en disco y no en tmpfs porque
+      # un fichero de cien megas en RAM no cabe en el presupuesto de memoria del perfil. Solo del
+      # servicio (0700), se borra al terminar cada subida y lo abandonado se borra al arrancar.
+      - mail-files-spool:/var/spool/mail-files
   contacts:
     restart: *reinicio
     <<: *go-runtime
@@ -604,6 +623,8 @@ volumes:
       o: "size=1m,uid=0,gid=65532,mode=0750"
   # Objetos de MinIO (servicio minio). Con nombre del proyecto (app_minio-data): el respaldo lo busca asi.
   minio-data:
+  # Subidas de mail-files en espera de ClamAV. Transitorio: no se respalda.
+  mail-files-spool:
 
 networks:
   # Solo el proxy de borde y el gateway. Subred fija: es la que el gateway declara de confianza

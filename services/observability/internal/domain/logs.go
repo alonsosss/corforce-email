@@ -23,6 +23,7 @@ var logServices = []string{
 	"gateway", "identity", "access-control", "organization", "audit", "scheduler", "observability",
 	// Correo corporativo.
 	"mail-directory", "mail-auth", "mail-security", "webmail", "domain-service", "mail-migration", "mail-dav",
+	"mail-files",
 	// Correo transaccional y marketing.
 	"transactional", "suppression", "templates", "contacts", "billing", "reputation", "campaigns",
 	"automations", "analytics", "smtp-relay",

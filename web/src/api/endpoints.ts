@@ -367,5 +367,7 @@ export const endpoints = {
     followUp: (id: string) => `${API_PREFIX}/webmail/follow-ups/${seg(id)}`,
     quickReplies: `${API_PREFIX}/webmail/quick-replies`,
     quickReply: (id: string) => `${API_PREFIX}/webmail/quick-replies/${seg(id)}`,
+    largeFiles: `${API_PREFIX}/webmail/large-files`,
+    largeFile: (id: string) => `${API_PREFIX}/webmail/large-files/${seg(id)}`,
   },
 } as const;

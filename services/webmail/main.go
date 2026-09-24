@@ -32,6 +32,7 @@ import (
 	"github.com/alonsosss/corforce-email/services/webmail/internal/adapters/mailauth"
 	"github.com/alonsosss/corforce-email/services/webmail/internal/adapters/maildavcli"
 	"github.com/alonsosss/corforce-email/services/webmail/internal/adapters/maildirectorycli"
+	"github.com/alonsosss/corforce-email/services/webmail/internal/adapters/mailfilescli"
 	natsadapter "github.com/alonsosss/corforce-email/services/webmail/internal/adapters/nats"
 	redisadapter "github.com/alonsosss/corforce-email/services/webmail/internal/adapters/redis"
 	"github.com/alonsosss/corforce-email/services/webmail/internal/adapters/rfc5322"
@@ -119,6 +120,10 @@ const (
 	unsubscribeTimeout = 10 * time.Second
 )
 
+// largeFileCeiling es lo que se deja pasar hacia mail-files en una subida de fichero grande: el mismo
+// techo que clamd analiza entero, que mail-files aplica tambien al suyo (MAIL_FILES_MAX_FILE_BYTES).
+const largeFileCeiling = postfixMessageSizeLimit
+
 type settings struct {
 	port               int
 	cellCode           string
@@ -142,6 +147,7 @@ type settings struct {
 	heloName           string
 	mailDirectoryURL   string
 	mailDavURL         string
+	mailFilesURL       string
 	internalToken      string
 	scheduledPoll      time.Duration
 	scheduledBatch     int
@@ -227,6 +233,14 @@ func main() {
 	if err != nil {
 		log.Fatalf("webmail: %v", err)
 	}
+	var largeFiles ports.LargeFiles
+	if st.mailFilesURL != "" {
+		if largeFiles, err = mailfilescli.New(st.mailFilesURL, st.internalToken, transferTimeout); err != nil {
+			log.Fatalf("webmail: %v", err)
+		}
+	} else {
+		logger.Warn("webmail: MAIL_FILES_URL sin definir; el envio de ficheros grandes por enlace queda desactivado")
+	}
 	var scanner ports.VirusScanner
 	if st.clamdAddr != "" {
 		scanner = clamav.New(st.clamdAddr, clamdTimeout)
@@ -255,6 +269,7 @@ func main() {
 		Scheduled:   directory,
 		Contacts:    dav,
 		Calendar:    dav,
+		LargeFiles:  largeFiles,
 		Watcher:     watcher,
 		Ledger:      redisadapter.NewSendLedger(rdb, st.cellCode),
 		Composer:    rfc5322.New(),
@@ -284,6 +299,7 @@ func main() {
 		CookieSecure: st.cookieSecure, SessionIdle: st.sessions.Idle, SessionMax: st.sessions.Max,
 		AllowedOrigins: st.origins, MaxMessageBytes: st.limits.MaxMessageBytes,
 		OperationTimeout: operationTimeout, TransferTimeout: transferTimeout,
+		MaxLargeFileBytes: largeFileCeiling,
 	}, logger)
 	if err != nil {
 		log.Fatalf("webmail: %v", err)
@@ -424,6 +440,10 @@ func loadSettings() (settings, error) {
 	}
 	// La libreta personal y el calendario los sirve mail-dav en la base de la empresa.
 	if st.mailDavURL, err = config.RequiredServiceURL("MAIL_DAV_URL"); err != nil {
+		return st, err
+	}
+	// Los ficheros grandes por enlace los guarda mail-files; sin el la funcion queda apagada.
+	if st.mailFilesURL, err = config.ServiceURL("MAIL_FILES_URL", ""); err != nil {
 		return st, err
 	}
 	if st.scheduledPoll, err = config.EnvDuration("WEBMAIL_SCHEDULED_POLL_INTERVAL", defaultScheduledPollInterval, minScheduledPollInterval, maxScheduledPollInterval); err != nil {

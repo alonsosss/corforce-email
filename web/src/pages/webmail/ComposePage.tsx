@@ -32,6 +32,9 @@ import { mailboxSignature, senderIdentities, webmailMeta } from '@/webmail/catal
 import { useWebmailStore } from '@/webmail/store';
 import { AddressBookPicker } from './AddressBookPicker';
 import { AttachmentPicker } from './AttachmentPicker';
+import type { LargeFile } from '@/api/largeFiles';
+import { LargeFilePicker } from './LargeFilePicker';
+import { insertLargeFileLink, largeFileLinkHtml, largeFileLinkText } from './largeFiles';
 import {
   buildDraft,
   composeErrorMessage,
@@ -436,6 +439,19 @@ function ComposeForm({
     queueSend(false);
   };
 
+  // El enlace de un fichero grande va al cuerpo; si era un adjunto, sale de los adjuntos.
+  const addLargeFileLink = (shared: LargeFile, source?: File) => {
+    const quoted = mode !== null && mode !== 'draft';
+    if (source) setFiles((current) => current.filter((file) => file !== source));
+    if (format === 'html') {
+      setHtml((current) => insertLargeFileLink(current, largeFileLinkHtml(shared), 'html', quoted));
+      setEditorKey((k) => k + 1);
+    } else {
+      setText((current) => insertLargeFileLink(current, largeFileLinkText(shared), 'text', quoted));
+    }
+    setVersion((v) => v + 1);
+  };
+
   const switchFormat = () => {
     if (format === 'html') {
       setText(htmlToPlainText(html));
@@ -652,6 +668,11 @@ function ComposeForm({
           disabled={busy}
         />
       </FormField>
+      <LargeFilePicker
+        suggest={problems.attachments ? files : []}
+        disabled={busy}
+        onShared={addLargeFileLink}
+      />
       {waiting ? (
         <div className="cf-wm-undo" role="status">
           <span>{t('webmail.compose.sendingSoon', { s: Math.round(UNDO_SEND_MS / 1000) })}</span>

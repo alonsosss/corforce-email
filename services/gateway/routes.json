@@ -21,6 +21,7 @@
     "analytics":      {"host_env": "ANALYTICS_HOST",      "default_host": "analytics",      "default_port": "8053"},
     "mail-dav":       {"host_env": "MAIL_DAV_HOST",       "default_host": "mail-dav",       "default_port": "8058"},
     "smtp-relay":     {"host_env": "SMTP_RELAY_HOST",     "default_host": "smtp-relay",     "default_port": "8060"},
+    "mail-files":     {"host_env": "MAIL_FILES_HOST",     "default_host": "mail-files",     "default_port": "8061"},
     "webmail":        {"host_env": "WEBMAIL_HOST",        "default_host": "webmail",        "default_port": "8044", "cell_hosts_env": "WEBMAIL_CELL_HOSTS"},
     "web":            {"host_env": "WEB_HOST",            "default_host": "web",            "default_port": "80"}
   },
@@ -80,7 +81,9 @@
     {"method": "POST", "path": "/public/mail-security/quarantine/{cell}/release", "service": "mail-security"},
     {"method": "GET",  "path": "/public/mail-security/quarantine/{cell}/discard", "service": "mail-security"},
     {"method": "POST", "path": "/public/mail-security/quarantine/{cell}/discard", "service": "mail-security"},
-    {"method": "GET",  "path": "/public/mail-directory/mta-sts/{cell}/{domain}", "service": "mail-directory"}
+    {"method": "GET",  "path": "/public/mail-directory/mta-sts/{cell}/{domain}", "service": "mail-directory"},
+    {"method": "GET",  "path": "/public/files/{tenant}/{file}",               "service": "mail-files"},
+    {"method": "POST", "path": "/public/files/{tenant}/{file}",               "service": "mail-files", "transfer": "download"}
   ],
   "self_authenticated": [
     {"prefix": "webmail", "service": "webmail",

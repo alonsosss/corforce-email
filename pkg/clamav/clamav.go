@@ -5,6 +5,7 @@ package clamav
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/binary"
 	"errors"
@@ -42,9 +43,15 @@ func New(addr string, timeout time.Duration) *Scanner {
 // Scan envia data a clamd. nil significa limpio; si no, el error envuelve ErrInfected o
 // ErrUnavailable.
 func (s *Scanner) Scan(ctx context.Context, data []byte) error {
+	return s.ScanReader(ctx, bytes.NewReader(data))
+}
+
+// ScanReader envia a clamd el contenido de r en trozos, sin cargarlo entero en memoria (los
+// ficheros grandes del webmail). Igual que Scan: nil es limpio y un fallo de lectura de r cuenta
+// como ErrUnavailable, porque sin el contenido completo no hay veredicto.
+func (s *Scanner) ScanReader(ctx context.Context, r io.Reader) error {
 	ctx, cancel := context.WithTimeout(ctx, s.timeout)
 	defer cancel()
-
 	var d net.Dialer
 	conn, err := d.DialContext(ctx, "tcp", s.addr)
 	if err != nil {
@@ -54,21 +61,29 @@ func (s *Scanner) Scan(ctx context.Context, data []byte) error {
 	if deadline, ok := ctx.Deadline(); ok {
 		_ = conn.SetDeadline(deadline)
 	}
-
 	w := bufio.NewWriter(conn)
 	// El prefijo z pide respuestas terminadas en NUL.
 	if _, err := w.WriteString("zINSTREAM\x00"); err != nil {
 		return fmt.Errorf("%w: %v", ErrUnavailable, err)
 	}
 	var size [4]byte
-	for off := 0; off < len(data); off += chunkBytes {
-		end := min(off+chunkBytes, len(data))
-		binary.BigEndian.PutUint32(size[:], uint32(end-off))
-		if _, err := w.Write(size[:]); err != nil {
-			return fmt.Errorf("%w: %v", ErrUnavailable, err)
+	chunk := make([]byte, chunkBytes)
+	for {
+		n, rerr := io.ReadFull(r, chunk)
+		if n > 0 {
+			binary.BigEndian.PutUint32(size[:], uint32(n))
+			if _, err := w.Write(size[:]); err != nil {
+				return fmt.Errorf("%w: %v", ErrUnavailable, err)
+			}
+			if _, err := w.Write(chunk[:n]); err != nil {
+				return fmt.Errorf("%w: %v", ErrUnavailable, err)
+			}
 		}
-		if _, err := w.Write(data[off:end]); err != nil {
-			return fmt.Errorf("%w: %v", ErrUnavailable, err)
+		if errors.Is(rerr, io.EOF) || errors.Is(rerr, io.ErrUnexpectedEOF) {
+			break
+		}
+		if rerr != nil {
+			return fmt.Errorf("%w: leer el contenido: %v", ErrUnavailable, rerr)
 		}
 	}
 	binary.BigEndian.PutUint32(size[:], 0)
@@ -78,7 +93,6 @@ func (s *Scanner) Scan(ctx context.Context, data []byte) error {
 	if err := w.Flush(); err != nil {
 		return fmt.Errorf("%w: enviar a clamd: %v", ErrUnavailable, err)
 	}
-
 	reply, err := bufio.NewReader(io.LimitReader(conn, maxReply)).ReadString(0)
 	if err != nil && reply == "" {
 		return fmt.Errorf("%w: leer respuesta de clamd: %v", ErrUnavailable, err)

@@ -53,6 +53,8 @@ type Deps struct {
 	Scheduled   ports.ScheduledDirectory
 	Contacts    ports.ContactBook
 	Calendar    ports.Calendar
+	// LargeFiles es opcional: sin mail-files configurado la funcion de ficheros grandes queda apagada.
+	LargeFiles ports.LargeFiles
 	// Watcher es opcional: sin el, GET /events responde que los avisos estan desactivados y la interfaz
 	// refresca por sondeo.
 	Watcher   ports.MailboxWatcher
@@ -89,6 +91,7 @@ type Service struct {
 	scheduled   ports.ScheduledDirectory
 	contacts    ports.ContactBook
 	calendar    ports.Calendar
+	largeFiles  ports.LargeFiles
 	watcher     ports.MailboxWatcher
 	ledger      ports.SendLedger
 	composer    ports.Composer
@@ -145,7 +148,7 @@ func New(d Deps) (*Service, error) {
 		signatures: d.Signatures, filters: d.Filters, passwords: d.Passwords, scheduled: d.Scheduled, contacts: d.Contacts, calendar: d.Calendar,
 		ledger: d.Ledger, composer: d.Composer, sanitizer: d.Sanitizer, scanner: d.Scanner,
 		partURL: d.PartURL, clock: clock, logger: d.Logger, cfg: d.Config, unsubscriber: d.Unsubscriber,
-		reminders: d.Reminders, quickReplies: d.QuickReplies,
+		reminders: d.Reminders, quickReplies: d.QuickReplies, largeFiles: d.LargeFiles,
 	}, nil
 }
 
