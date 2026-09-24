@@ -24,7 +24,10 @@
 # gateway lo expone sin JWT; se prueban PROPFIND, PUT, REPORT, MKCALENDAR y DELETE con la contrasena de aplicacion, el
 # aislamiento entre buzones, las politicas de fila y dav_access. Tambien el maildir de un buzon borrado: la marca
 # de baja, el barrido de Dovecot (maildir_reconcile.sh) que lo mueve a _garbage, su fail-closed y que el buzon
-# recreado con el mismo nombre nace vacio.
+# recreado con el mismo nombre nace vacio. Y el webmail de la fase 2 (docs/Plan_Webmail_Innovador.md): conversaciones,
+# bandeja inteligente, escudo antifraude con correo entregado al MX, baja RFC 8058, posponer, seguimiento, respuestas
+# rapidas, zona horaria y apariciones sueltas, invitaciones iTIP entre dos buzones, disponibilidad, la pagina publica
+# de citas, los ficheros grandes por enlace (mail-files con ClamAV real y MinIO) y el asistente apagado sin clave.
 #
 # Cada paso escribe OK o FALLA y la ejecucion termina con error si alguno falla. Las
 # credenciales se generan en cada ejecucion; ninguna vive en este fichero.
@@ -55,13 +58,15 @@ declare -A PORT=(
   [identity]=$((BASE + 1)) [access-control]=$((BASE + 2)) [organization]=$((BASE + 3))
   [mail-directory]=$((BASE + 40)) [mail-auth]=$((BASE + 41)) [mail-security]=$((BASE + 42))
   [domain-service]=$((BASE + 43)) [webmail]=$((BASE + 44)) [gateway]=$((BASE + 80)) [mail-migration]=$((BASE + 56))
-  [mail-dav]=$((BASE + 58))
+  [mail-dav]=$((BASE + 58)) [mail-files]=$((BASE + 61))
 )
 # Listener TLS de mail-auth publicado en el host: mail-dav, que corre en el host, verifica con el a cada buzon.
 AUTH_TLS_PORT=$((BASE + 45))
 # API del ejecutor de mail-migration: el ejecutor, en su contenedor, la alcanza por host.docker.internal.
 MIGRATION_RUNNER_PORT=$((BASE + 57))
-e2e_fuera_del_rango_efimero "$PG_PORT" "$NATS_PORT" "$REDIS_PORT" "$DNS_PORT" "${PORT[@]}" "$MIGRATION_RUNNER_PORT" "$AUTH_TLS_PORT"
+# clamd y MinIO publicados en el host para mail-files, que corre en el host (bloque C4 del webmail).
+CLAMD_PORT=$((BASE + 62)) MINIO_PORT=$((BASE + 63))
+e2e_fuera_del_rango_efimero "$PG_PORT" "$NATS_PORT" "$REDIS_PORT" "$DNS_PORT" "${PORT[@]}" "$MIGRATION_RUNNER_PORT" "$AUTH_TLS_PORT" "$CLAMD_PORT" "$MINIO_PORT"
 
 E2E_PREFIX=cfm-e2e-mail
 PROYECTO=cfm-e2e-mail
@@ -136,7 +141,7 @@ trap limpiar EXIT
 
 echo "== Preparacion"
 restos
-e2e_puertos_libres "$PG_PORT" "$NATS_PORT" "$REDIS_PORT" "$DNS_PORT" "${PORT[@]}" "$MIGRATION_RUNNER_PORT"
+e2e_puertos_libres "$PG_PORT" "$NATS_PORT" "$REDIS_PORT" "$DNS_PORT" "${PORT[@]}" "$MIGRATION_RUNNER_PORT" "$CLAMD_PORT" "$MINIO_PORT"
 docker network inspect $(docker network ls -q) --format '{{.Name}} {{range .IPAM.Config}}{{.Subnet}} {{end}}' 2>/dev/null |
   python3 -c '
 import ipaddress, sys
@@ -211,7 +216,7 @@ export API_ORIGIN="http://localhost:${PORT[gateway]}" PUBLIC_BASE_URL="http://lo
 export IDENTITY_PORT=${PORT[identity]} ACCESS_CONTROL_PORT=${PORT[access-control]} ORGANIZATION_PORT=${PORT[organization]}
 export DOMAIN_SERVICE_PORT=${PORT[domain-service]} GATEWAY_PORT=${PORT[gateway]} MAIL_MIGRATION_PORT=${PORT[mail-migration]}
 export MAIL_DAV_PORT=${PORT[mail-dav]}
-for s in identity access-control organization domain-service mail-directory mail-auth mail-security webmail mail-migration mail-dav; do
+for s in identity access-control organization domain-service mail-directory mail-auth mail-security webmail mail-migration mail-dav mail-files; do
   var="$(echo "$s" | tr 'a-z-' 'A-Z_')_HOST"
   export "$var=127.0.0.1" "${var}_PORT=${PORT[$s]}"
 done
@@ -229,6 +234,8 @@ export E2E_PORT_MAIL_SECURITY=${PORT[mail-security]} E2E_PORT_WEBMAIL=${PORT[web
 export E2E_PORT_MAIL_MIGRATION=${PORT[mail-migration]}
 # mail-dav corre en el host; el webmail (contenedor) le pide contactos y eventos por la pasarela de docker.
 export E2E_PORT_MAIL_DAV=${PORT[mail-dav]}
+# mail-files (host) y MinIO (perfil ficheros del compose de prueba) arrancan en el bloque C4 del webmail.
+export E2E_PORT_MAIL_FILES=${PORT[mail-files]} E2E_PORT_CLAMD=$CLAMD_PORT E2E_PORT_MINIO=$MINIO_PORT E2E_MINIO_BUCKET=cfm-e2e-ficheros
 # organization corre en el host; mail-directory y mail-security le preguntan desde la red de
 # los motores si cada empresa es de su celda.
 export E2E_PORT_ORGANIZATION=${PORT[organization]}
@@ -247,7 +254,7 @@ t0=$SECONDS
 if compose build >"$WORK/log/build.log" 2>&1; then ok "imagenes construidas ($((SECONDS - t0))s)"; else
   mal "compose build"; tail -30 "$WORK/log/build.log" >&2; exit 1
 fi
-e2e_compilar organization identity access-control gateway domain-service mail-migration mail-dav || exit 1
+e2e_compilar organization identity access-control gateway domain-service mail-migration mail-dav mail-files || exit 1
 
 echo "== Red de los motores e infraestructura desechable"
 docker volume create "$E2E_MAIL_CLAMAV_VOLUME" >/dev/null || exit 1
@@ -1491,6 +1498,450 @@ T2=$(e2e_login admin@acme.test "$TENANT_PASS" | jget data.access_token)
 A2="Authorization: Bearer $T2"
 [[ -n "$T1" && -n "$T2" ]] && ok "se renuevan los access tokens de la plataforma" || mal "no se pudieron renovar los access tokens"
 
+# ── Webmail innovador (docs/Plan_Webmail_Innovador.md, fase 2) ─────────────────────────────────────────────
+# Cada bloque contra los motores reales: lo que calcula el webmail sale de las cabeceras que dejan Postfix y
+# Rspamd, lo durable de la celda (mail-directory) o de la base de la empresa (mail-dav, mail-files).
+# jpy <expresion> [args...]: evalua la expresion de Python sobre el JSON de la entrada (d; los argumentos en a).
+jpy() { python3 -c 'import json, sys; d = json.load(sys.stdin); a = sys.argv[2:]; print(eval(sys.argv[1]))' "$@" 2>/dev/null; }
+# fila <tarro> <carpeta> <asunto> <expresion>: del listado de la carpeta, la expresion sobre el mensaje (m) cuyo
+# asunto es exactamente ese; vacio si no esta.
+fila() {
+  wm "$1" GET "/folders/$2/messages?subject=$(python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1]))' "$3")"
+  echo "$WM_BODY" | python3 -c '
+import json, sys
+m = next((m for m in json.load(sys.stdin)["data"] if m["subject"] == sys.argv[1]), None)
+print("" if m is None else eval(sys.argv[2]))' "$3" "$4" 2>/dev/null
+}
+echo "== Webmail C1: conversaciones, bandeja inteligente, escudo antifraude y baja RFC 8058"
+# Volver a la contrasena anterior cerro la sesion de ana: una nueva, fuera del margen de revocacion del cambio.
+ana_sesion_final() {
+  wm "$TARRO_ANA2" POST /session -H 'Content-Type: application/json' -d "{\"username\":\"ana@acme.test\",\"password\":\"$ANA_PASS\"}"
+  [[ $WM_CODE == 200 ]] || return 1
+  sleep 3
+  wm "$TARRO_ANA2" GET /folders
+  [[ $WM_CODE == 200 ]]
+}
+esperar "ana vuelve a entrar al webmail con su contrasena de siempre" 30 ana_sesion_final
+HILO="$TOKEN-hilo"
+enviar_wm ana@acme.test "$HILO" -H "Idempotency-Key: $(rand_hex 16)"
+expect "ana escribe a bea por el webmail" "$WM_CODE" "202"
+contains "bea lo recibe" "$(cliente buscar bea@acme.test "$BEA_PASS" "$HILO")" "OK 1"
+HILO_BEA=$(fila "$TARRO_BEA2" INBOX "$HILO" 'm["uid"]')
+wm "$TARRO_BEA2" POST /send -H "Idempotency-Key: $(rand_hex 16)" -F from=bea@acme.test -F to=ana@acme.test \
+  -F "subject=Re: $HILO" -F "text=Respuesta de bea." -F "in_reply_to=$HILO_BEA" -F in_reply_to_folder=INBOX
+expect "bea responde desde el webmail (in_reply_to)" "$WM_CODE/$(echo "$WM_BODY" | jget data.saved_to_sent)" "202/True"
+contains "ana recibe la respuesta" "$(cliente buscar ana@acme.test "$ANA_PASS" "Re: $HILO")" "OK 1"
+RESP_ANA=$(fila "$TARRO_ANA2" INBOX "Re: $HILO" 'm["uid"]')
+wm "$TARRO_ANA2" GET "/threads?folder=INBOX&uid=$RESP_ANA"
+expect "ana abre la conversacion: dos mensajes, su envio (de $ENVIADOS) y la respuesta (de INBOX)" \
+  "$WM_CODE/$(echo "$WM_BODY" | jpy '" ".join(m["folder"] + ":" + m["subject"] for m in d["data"])')" "200/$ENVIADOS:$HILO INBOX:Re: $HILO"
+contains "cada uno con su Message-ID" "$(echo "$WM_BODY" | jpy 'all(m["message_id"] for m in d["data"])')" "True"
+wm "$TARRO_BEA2" GET "/threads?folder=INBOX&uid=$HILO_BEA"
+expect "bea ve la misma conversacion desde el original, con su propia respuesta" \
+  "$(echo "$WM_BODY" | jpy '" ".join(m["folder"] + ":" + m["subject"] for m in d["data"])')" "INBOX:$HILO $ENVIADOS:Re: $HILO"
+wm "$TARRO_ANA2" POST /send -H "Idempotency-Key: $(rand_hex 16)" -F from=ana@acme.test -F to=bea@acme.test \
+  -F "subject=Re: $HILO" -F "text=Segunda de ana." -F "in_reply_to=$RESP_ANA" -F in_reply_to_folder=INBOX
+expect "ana contesta a la respuesta" "$WM_CODE" "202"
+contains "y bea la recibe" "$(cliente buscar bea@acme.test "$BEA_PASS" "Re: $HILO")" "OK 1"
+wm "$TARRO_BEA2" GET "/folders/INBOX/messages?view=threads&subject=$HILO"
+expect "la vista por conversaciones de bea agrupa los dos recibidos en una fila (THREAD de Dovecot)" \
+  "$WM_CODE/$(echo "$WM_BODY" | jpy 'len(d["data"])')/$(echo "$WM_BODY" | jpy 'd["data"][0]["thread"]["size"]')" "200/1/2"
+expect "la fila muestra el ultimo mensaje" "$(echo "$WM_BODY" | jpy 'd["data"][0]["subject"]')" "Re: $HILO"
+ULTIMO_BEA=$(echo "$WM_BODY" | jpy 'd["data"][0]["uid"]')
+wm "$TARRO_BEA2" GET "/threads?folder=INBOX&uid=$ULTIMO_BEA"
+expect "y abierta desde el ultimo son tres, en orden" \
+  "$(echo "$WM_BODY" | jpy '" ".join(m["folder"] for m in d["data"])')" "INBOX $ENVIADOS INBOX"
+
+# Bandeja inteligente: un boletin (List-Id y List-Unsubscribe, por submission con cabeceras propias) cae en
+# newsletters; un correo normal, en primary.
+BOLETIN="$TOKEN-boletin"
+contains "ana envia un boletin a bea con List-Id y baja en un clic hacia una IP privada" \
+  "$(cliente enviar ana@acme.test "$ANA_PASS" ana@acme.test bea@acme.test "$BOLETIN" \
+    --cabecera "List-Id: Novedades <novedades.acme.test>" --cabecera "List-Unsubscribe: <https://10.20.30.40/baja?u=1>" \
+    --cabecera "List-Unsubscribe-Post: List-Unsubscribe=One-Click")" "OK 250"
+contains "bea lo recibe" "$(cliente buscar bea@acme.test "$BEA_PASS" "$BOLETIN")" "OK 1"
+expect "el listado lo clasifica como boletin" "$(fila "$TARRO_BEA2" INBOX "$BOLETIN" 'm["category"]')" "newsletters"
+expect "y el correo de la conversacion como principal" "$(fila "$TARRO_BEA2" INBOX "$HILO" 'm["category"]')" "primary"
+wm "$TARRO_BEA2" GET "/folders/INBOX/messages?category=newsletters"
+contains "la pestana Boletines lo filtra en el servidor" "$WM_BODY" "$BOLETIN"
+lacks "sin el correo principal" "$WM_BODY" "\"subject\":\"$HILO\""
+wm "$TARRO_BEA2" GET "/folders/INBOX/messages?category=primary"
+lacks "y la principal no lo trae" "$WM_BODY" "$BOLETIN"
+contains "pero si el correo normal" "$WM_BODY" "\"subject\":\"$HILO\""
+BOLETIN_UID=$(fila "$TARRO_BEA2" INBOX "$BOLETIN" 'm["uid"]')
+wm "$TARRO_BEA2" GET "/sender-insight?folder=INBOX&uid=$BOLETIN_UID"
+expect "la ficha del boletin: pestana, baja en un clic y su destino" \
+  "$WM_CODE/$(echo "$WM_BODY" | jpy 'd["data"]["category"]')/$(echo "$WM_BODY" | jpy 'd["data"]["unsubscribe"]["method"]')/$(echo "$WM_BODY" | jpy 'd["data"]["unsubscribe"]["target"]')" \
+  "200/newsletters/one_click/10.20.30.40"
+wm "$TARRO_BEA2" POST /unsubscribe -H 'Content-Type: application/json' -d "{\"folder\":\"INBOX\",\"uid\":$BOLETIN_UID}"
+expect "la baja en un clic hacia una IP privada la rechaza la proteccion SSRF" "$WM_CODE/$(echo "$WM_BODY" | jget error.code)" "422/UNSUBSCRIBE_TARGET_REFUSED"
+contains "y el webmail lo registra sin la URL" "$(docker logs "$(c webmail)" 2>&1 | grep 'baja en un clic rechazada' | tail -1)" '"host":"10.20.30.40"'
+BOLETIN_LOCAL="$TOKEN-boletin-local"
+contains "otro boletin con la baja en loopback por nombre" \
+  "$(cliente enviar ana@acme.test "$ANA_PASS" ana@acme.test bea@acme.test "$BOLETIN_LOCAL" \
+    --cabecera "List-Unsubscribe: <https://localhost/baja>" --cabecera "List-Unsubscribe-Post: List-Unsubscribe=One-Click")" "OK 250"
+contains "bea lo recibe" "$(cliente buscar bea@acme.test "$BEA_PASS" "$BOLETIN_LOCAL")" "OK 1"
+wm "$TARRO_BEA2" POST /unsubscribe -H 'Content-Type: application/json' -d "{\"folder\":\"INBOX\",\"uid\":$(fila "$TARRO_BEA2" INBOX "$BOLETIN_LOCAL" 'm["uid"]')}"
+expect "un nombre que resuelve a loopback tambien se rechaza" "$WM_CODE/$(echo "$WM_BODY" | jget error.code)" "422/UNSUBSCRIBE_TARGET_REFUSED"
+BOLETIN_MAILTO="$TOKEN-boletin-mailto"
+contains "un boletin cuya baja es solo por correo (mailto:)" \
+  "$(cliente enviar ana@acme.test "$ANA_PASS" ana@acme.test bea@acme.test "$BOLETIN_MAILTO" \
+    --cabecera "List-Unsubscribe: <mailto:ana@acme.test?subject=baja-$TOKEN>")" "OK 250"
+contains "bea lo recibe" "$(cliente buscar bea@acme.test "$BEA_PASS" "$BOLETIN_MAILTO")" "OK 1"
+wm "$TARRO_BEA2" POST /unsubscribe -H 'Content-Type: application/json' -d "{\"folder\":\"INBOX\",\"uid\":$(fila "$TARRO_BEA2" INBOX "$BOLETIN_MAILTO" 'm["uid"]')}"
+expect "la baja sale por correo desde el propio buzon" "$WM_CODE/$(echo "$WM_BODY" | jget data.method)/$(echo "$WM_BODY" | jget data.target)" "200/mailto/ana@acme.test"
+contains "y llega al remitente del boletin por Postfix" "$(cliente buscar ana@acme.test "$ANA_PASS" "baja-$TOKEN")" "OK 1"
+
+# Escudo antifraude y ficha del remitente. Un companero no lleva aviso; desde fuera, por el MX (25, sin
+# autenticarse), un dominio que imita al propio y el nombre visible de un companero son peligro.
+wm "$TARRO_BEA2" GET "/sender-insight?folder=INBOX&uid=$HILO_BEA"
+expect "un correo de una companera: interno y sin aviso" \
+  "$(echo "$WM_BODY" | jpy 'd["data"]["shield"]["level"]')/$(echo "$WM_BODY" | jpy 'd["data"]["shield"]["external"]')/$(echo "$WM_BODY" | jpy 'len(d["data"]["shield"]["reasons"])')/$(echo "$WM_BODY" | jpy 'd["data"]["sender"]["email"]')" \
+  "none/False/0/ana@acme.test"
+PARECIDO="$TOKEN-parecido"
+contains "un servidor de fuera entrega al MX un correo de facturas@acrne.test (rn por m)" \
+  "$(cliente enviar - - facturas@acrne.test bea@acme.test "$PARECIDO" --mx)" "OK 250"
+contains "bea lo recibe" "$(cliente buscar bea@acme.test "$BEA_PASS" "$PARECIDO")" "OK 1"
+wm "$TARRO_BEA2" GET "/sender-insight?folder=INBOX&uid=$(fila "$TARRO_BEA2" INBOX "$PARECIDO" 'm["uid"]')"
+expect "el escudo lo marca como peligro: externo y dominio que se confunde con acme.test" \
+  "$(echo "$WM_BODY" | jpy 'd["data"]["shield"]["level"]')/$(echo "$WM_BODY" | jpy 'd["data"]["shield"]["external"]')/$(echo "$WM_BODY" | jpy '" ".join(sorted(r["code"] for r in d["data"]["shield"]["reasons"]))')" \
+  "danger/True/external_sender homoglyph_domain"
+expect "y dice a que dominio se parece" "$(echo "$WM_BODY" | jpy 'next(r["params"]["resembles"] for r in d["data"]["shield"]["reasons"] if r["code"] == "homoglyph_domain")')" "acme.test"
+wm "$TARRO_BEA2" GET "/address-book?q=ana@acme.test"
+ANA_NOMBRE=$(echo "$WM_BODY" | jpy 'd["data"][0]["display_name"]')
+SUPLANTA="$TOKEN-suplanta"
+contains "desde fuera, un correo con el nombre visible de ana ($ANA_NOMBRE) y otra direccion" \
+  "$(cliente enviar - - ceo.urgente@correo-externo.test bea@acme.test "$SUPLANTA" --mx --de-visible "\"$ANA_NOMBRE\" <ceo.urgente@correo-externo.test>")" "OK 250"
+contains "bea lo recibe" "$(cliente buscar bea@acme.test "$BEA_PASS" "$SUPLANTA")" "OK 1"
+wm "$TARRO_BEA2" GET "/sender-insight?folder=INBOX&uid=$(fila "$TARRO_BEA2" INBOX "$SUPLANTA" 'm["uid"]')"
+expect "el escudo avisa de la suplantacion de una companera (peligro)" \
+  "$(echo "$WM_BODY" | jpy 'd["data"]["shield"]["level"]')/$(echo "$WM_BODY" | jpy 'next((r["params"]["address"] for r in d["data"]["shield"]["reasons"] if r["code"] == "colleague_name"), "")')" \
+  "danger/ana@acme.test"
+expect "con el directorio de la empresa completo (no parcial)" "$(echo "$WM_BODY" | jpy 'd["data"]["shield"]["partial"]')" "False"
+
+echo "== Webmail C2: posponer, seguimiento y respuestas rapidas (mail-directory: mail.mailbox_reminders)"
+# Posponer: el mensaje va a Snoozed y a su hora (65 s; WEBMAIL_REMINDERS_POLL_INTERVAL es 2 s en la prueba)
+# vuelve a INBOX sin \Seen. La vuelta se comprueba al final del bloque C3 para no esperar parados.
+POSPONER="$TOKEN-posponer"
+enviar_wm ana@acme.test "$POSPONER" -H "Idempotency-Key: $(rand_hex 16)"
+contains "bea recibe un correo que va a posponer" "$(cliente buscar bea@acme.test "$BEA_PASS" "$POSPONER")" "OK 1"
+POSPONER_UID=$(fila "$TARRO_BEA2" INBOX "$POSPONER" 'm["uid"]')
+wm "$TARRO_BEA2" POST /folders/INBOX/messages/batch -H 'Content-Type: application/json' -d "{\"uids\":[$POSPONER_UID],\"action\":\"flags\",\"add\":[\"\\\\Seen\"]}"
+expect "lo lee" "$WM_CODE/$(fila "$TARRO_BEA2" INBOX "$POSPONER" '"\\Seen" in m["flags"]')" "200/True"
+wm "$TARRO_BEA2" POST /snooze -H 'Content-Type: application/json' \
+  -d "{\"folder\":\"INBOX\",\"uids\":[$POSPONER_UID],\"until\":\"$(date -u -d '+30 seconds' +%Y-%m-%dT%H:%M:%SZ)\"}"
+expect "posponer menos de un minuto se rechaza" "$WM_CODE" "422"
+wm "$TARRO_BEA2" POST /snooze -H 'Content-Type: application/json' \
+  -d "{\"folder\":\"INBOX\",\"uids\":[$POSPONER_UID],\"until\":\"$(date -u -d '+65 seconds' +%Y-%m-%dT%H:%M:%SZ)\"}"
+POSPONER_ID=$(echo "$WM_BODY" | jpy 'd["data"]["snoozed"][0]["id"]')
+expect "bea lo pospone 65 s" "$WM_CODE/${POSPONER_ID:+id}/$(echo "$WM_BODY" | jpy 'd["data"]["snoozed"][0]["return_folder"]')/$(echo "$WM_BODY" | jpy 'len(d["data"]["failed"])')" "200/id/INBOX/0"
+expect "sale de INBOX" "$(fila "$TARRO_BEA2" INBOX "$POSPONER" 'm["uid"]')" ""
+expect "y espera en Snoozed" "$(fila "$TARRO_BEA2" Snoozed "$POSPONER" 'm["subject"]')" "$POSPONER"
+expect "la fila durable esta en la celda, pendiente" \
+  "$(sql mail_cell_pe_01 "SELECT kind || '/' || status FROM mail.mailbox_reminders WHERE id = '$POSPONER_ID'")" "snooze/pending"
+wm "$TARRO_BEA2" GET /snooze
+contains "y en la lista de pospuestos" "$WM_BODY" "$POSPONER_ID"
+CANCELAR_POS="$TOKEN-posponer-cancelado"
+enviar_wm ana@acme.test "$CANCELAR_POS" -H "Idempotency-Key: $(rand_hex 16)"
+contains "bea recibe otro" "$(cliente buscar bea@acme.test "$BEA_PASS" "$CANCELAR_POS")" "OK 1"
+wm "$TARRO_BEA2" POST /snooze -H 'Content-Type: application/json' \
+  -d "{\"folder\":\"INBOX\",\"uids\":[$(fila "$TARRO_BEA2" INBOX "$CANCELAR_POS" 'm["uid"]')],\"until\":\"$(date -u -d '+1 hour' +%Y-%m-%dT%H:%M:%SZ)\"}"
+CANCELAR_POS_ID=$(echo "$WM_BODY" | jpy 'd["data"]["snoozed"][0]["id"]')
+expect "lo pospone una hora" "$WM_CODE/${CANCELAR_POS_ID:+id}" "200/id"
+wm "$TARRO_BEA2" DELETE "/snooze/$CANCELAR_POS_ID"
+expect "y lo saca a mano" "$WM_CODE" "204"
+expect "vuelve a INBOX al momento" "$(fila "$TARRO_BEA2" INBOX "$CANCELAR_POS" 'm["subject"]')" "$CANCELAR_POS"
+expect "y la fila queda cancelada" "$(sql mail_cell_pe_01 "SELECT status FROM mail.mailbox_reminders WHERE id = '$CANCELAR_POS_ID'")" "canceled"
+
+# Seguimiento: registrar y cancelar; y dos que vencen (se adelanta due_at en la celda, que es lo que
+# haria el reloj): sin respuesta, el enviado vuelve a INBOX destacado y sin leer; con respuesta, se cierra.
+seguimiento() { # seguimiento <asunto> <dias>
+  wm "$TARRO_ANA2" POST /send -H "Idempotency-Key: $(rand_hex 16)" -F from=ana@acme.test -F to=bea@acme.test \
+    -F "subject=$1" -F "text=Espero respuesta." -F "follow_up_days=$2"
+}
+seguimiento "$TOKEN-seguimiento-0" 0
+expect "un seguimiento de 0 dias se rechaza sin enviar" "$WM_CODE/$(echo "$WM_BODY" | jget error.details.field)" "422/follow_up_days"
+lacks "y bea no recibe nada" "$(cliente buscar bea@acme.test "$BEA_PASS" "$TOKEN-seguimiento-0" --espera 3)" "OK 1"
+seguimiento "$TOKEN-seguimiento" 3
+SEG_ID=$(echo "$WM_BODY" | jget data.follow_up.id)
+expect "ana envia con seguimiento a 3 dias" "$WM_CODE/${SEG_ID:+id}/$(echo "$WM_BODY" | jget data.follow_up_error)" "202/id/"
+wm "$TARRO_ANA2" GET /follow-ups
+expect "aparece en sus seguimientos, pendiente" "$(echo "$WM_BODY" | jpy 'next((f["status"] for f in d["data"] if f["id"] == a[0]), "")' "$SEG_ID")" "pending"
+expect "con vencimiento a 3 dias en la celda" \
+  "$(sql mail_cell_pe_01 "SELECT kind || '/' || (due_at - now() BETWEEN interval '71 hours' AND interval '73 hours') FROM mail.mailbox_reminders WHERE id = '$SEG_ID'")" "follow_up/true"
+wm "$TARRO_ANA2" DELETE "/follow-ups/$SEG_ID"
+expect "ana lo cancela" "$WM_CODE" "204"
+expect "y queda cancelado en la celda" "$(sql mail_cell_pe_01 "SELECT status FROM mail.mailbox_reminders WHERE id = '$SEG_ID'")" "canceled"
+wm "$TARRO_ANA2" DELETE "/follow-ups/$SEG_ID"
+expect "cancelarlo otra vez no falla (idempotente)" "$WM_CODE" "204"
+SIN_RESP="$TOKEN-sin-respuesta"
+seguimiento "$SIN_RESP" 1
+SIN_RESP_ID=$(echo "$WM_BODY" | jget data.follow_up.id)
+CON_RESP="$TOKEN-con-respuesta"
+seguimiento "$CON_RESP" 1
+CON_RESP_ID=$(echo "$WM_BODY" | jget data.follow_up.id)
+[[ -n "$SIN_RESP_ID" && -n "$CON_RESP_ID" ]] && ok "ana envia otros dos con seguimiento" || mal "seguimientos: '$SIN_RESP_ID' '$CON_RESP_ID'"
+contains "bea recibe el que va a contestar" "$(cliente buscar bea@acme.test "$BEA_PASS" "$CON_RESP")" "OK 1"
+wm "$TARRO_BEA2" POST /send -H "Idempotency-Key: $(rand_hex 16)" -F from=bea@acme.test -F to=ana@acme.test \
+  -F "subject=Re: $CON_RESP" -F "text=Contestado." -F "in_reply_to=$(fila "$TARRO_BEA2" INBOX "$CON_RESP" 'm["uid"]')" -F in_reply_to_folder=INBOX
+expect "y lo contesta" "$WM_CODE" "202"
+contains "la respuesta llega a ana" "$(cliente buscar ana@acme.test "$ANA_PASS" "Re: $CON_RESP")" "OK 1"
+expect "se adelantan los dos vencimientos" \
+  "$(sql mail_cell_pe_01 "UPDATE mail.mailbox_reminders SET due_at = now() WHERE id IN ('$SIN_RESP_ID', '$CON_RESP_ID') AND status = 'pending' RETURNING 1" | wc -l)" "2"
+recordatorio() { [[ "$(sql mail_cell_pe_01 "SELECT status || '/' || result FROM mail.mailbox_reminders WHERE id = '$1'")" == "done/$2" ]]; }
+esperar "el trabajador del webmail cierra el que tuvo respuesta (replied)" 60 recordatorio "$CON_RESP_ID" replied
+esperar "y el que no, lo recuerda (reminded)" 60 recordatorio "$SIN_RESP_ID" reminded
+expect "el enviado sin respuesta vuelve al INBOX de ana destacado y sin leer" \
+  "$(fila "$TARRO_ANA2" INBOX "$SIN_RESP" '"\\Flagged" in m["flags"] and "\\Seen" not in m["flags"]')" "True"
+expect "el contestado no se copia" "$(fila "$TARRO_ANA2" INBOX "$CON_RESP" 'm["uid"]')" ""
+wm "$TARRO_ANA2" DELETE "/follow-ups/$CON_RESP_ID"
+expect "uno ya resuelto no se cancela" "$WM_CODE/$(echo "$WM_BODY" | jget error.code)" "409/REMINDER_NOT_PENDING"
+
+# Respuestas rapidas: CRUD del buzon en la celda, HTML saneado y las variables tal cual.
+wm "$TARRO_BEA2" POST /quick-replies -H 'Content-Type: application/json' \
+  -d '{"name":"Saludo","html":"<p>Hola {nombre}, gracias por escribir a {empresa}.</p><script>x()</script>"}'
+RAPIDA=$(echo "$WM_BODY" | jget data.id)
+expect "bea crea una respuesta rapida" "$WM_CODE/${RAPIDA:+id}" "201/id"
+lacks "guardada saneada" "$WM_BODY" "<script>"
+contains "con sus variables tal cual en el texto" "$(echo "$WM_BODY" | jget data.text)" "Hola {nombre}, gracias por escribir a {empresa}."
+wm "$TARRO_BEA2" POST /quick-replies -H 'Content-Type: application/json' -d '{"name":"saludo","html":"<p>Otra</p>"}'
+expect "el nombre es unico en el buzon sin distinguir mayusculas" "$WM_CODE/$(echo "$WM_BODY" | jget error.code)" "409/QUICK_REPLY_EXISTS"
+wm "$TARRO_BEA2" POST /quick-replies -H 'Content-Type: application/json' -d '{"name":"Vacia","html":""}'
+expect "sin contenido es un 422 en su campo" "$WM_CODE/$(echo "$WM_BODY" | jget error.details.field)" "422/html"
+wm "$TARRO_BEA2" PUT "/quick-replies/$RAPIDA" -H 'Content-Type: application/json' -d '{"name":"Saludo formal","html":"<p>Estimado {nombre}:</p>"}'
+expect "la edita" "$WM_CODE/$(echo "$WM_BODY" | jget data.name)" "200/Saludo formal"
+wm "$TARRO_BEA2" GET /quick-replies
+expect "la lista la trae con sus topes" "$(echo "$WM_BODY" | jpy '[i["name"] for i in d["data"]["items"]]')/$(echo "$WM_BODY" | jpy 'd["data"]["limits"]["max_items"] > 0')" "['Saludo formal']/True"
+expect "es del buzon de bea en la celda" "$(sql mail_cell_pe_01 "SELECT count(*) FROM mail.mailbox_quick_replies WHERE id = '$RAPIDA'")" "1"
+wm "$TARRO_ANA2" GET /quick-replies
+lacks "ana no la ve" "$WM_BODY" "Saludo formal"
+wm "$TARRO_ANA2" DELETE "/quick-replies/$RAPIDA"
+expect "ni la puede borrar" "$WM_CODE/$(echo "$WM_BODY" | jget error.code)" "404/QUICK_REPLY_NOT_FOUND"
+wm "$TARRO_BEA2" DELETE "/quick-replies/$RAPIDA"
+expect "bea la borra" "$WM_CODE" "204"
+wm "$TARRO_BEA2" GET /quick-replies
+expect "y ya no esta" "$(echo "$WM_BODY" | jpy 'len(d["data"]["items"])')" "0"
+
+echo "== Webmail C3: zona horaria, apariciones sueltas, invitaciones iTIP, disponibilidad y citas (mail-dav)"
+# Una serie semanal en Europe/Madrid: CalDAV la guarda con su VTIMEZONE y DTSTART con TZID, y una aparicion
+# editada sola queda como un VEVENT con RECURRENCE-ID en la zona de la serie.
+DIA_SERIE=$(date -u -d '+10 days' +%Y-%m-%d)
+madrid() { TZ=Europe/Madrid date -d "$1" +%Y-%m-%dT%H:%M:%S%:z; }
+wm "$TARRO_ANA2" POST "/calendar/events?notify=false" -H 'Content-Type: application/json' -d "{\"title\":\"Comite $TOKEN\",\"start\":\"$(madrid "$DIA_SERIE 09:00")\",\"end\":\"$(madrid "$DIA_SERIE 10:00")\",\"all_day\":false,\"timezone\":\"Europe/Madrid\",\"location\":\"\",\"description\":\"\",\"recurrence\":{\"freq\":\"weekly\",\"interval\":1,\"count\":3,\"until\":null,\"by_day\":[]}}"
+SERIE=$(echo "$WM_BODY" | jget data.id)
+expect "ana crea una serie semanal de tres en Europe/Madrid" "$WM_CODE/${SERIE:+id}/$(echo "$WM_BODY" | jget data.timezone)" "201/id/Europe/Madrid"
+VENTANA="start=$(date -u -d "$DIA_SERIE -1 day" +%Y-%m-%dT00:00:00Z)&end=$(date -u -d "$DIA_SERIE +20 days" +%Y-%m-%dT00:00:00Z)"
+wm "$TARRO_ANA2" GET "/calendar/events?$VENTANA"
+RIDS=$(echo "$WM_BODY" | jpy '" ".join(o["recurrence_id"] for o in d["data"] if o["id"] == a[0])' "$SERIE")
+expect "sus tres apariciones" "$(wc -w <<<"$RIDS")" "3"
+expect "a las 09:00 de Madrid, en UTC" "$(echo "$WM_BODY" | jpy 'next(o["start"] for o in d["data"] if o["id"] == a[0])' "$SERIE")" \
+  "$(date -u -d "$(madrid "$DIA_SERIE 09:00")" +%Y-%m-%dT%H:%M:%SZ)"
+RID2=$(awk '{print $2}' <<<"$RIDS") RID3=$(awk '{print $3}' <<<"$RIDS")
+DIA2=$(date -u -d "$RID2" +%Y-%m-%d)
+wm "$TARRO_ANA2" PUT "/calendar/events/$SERIE/occurrences/$RID2?notify=false" -H 'Content-Type: application/json' -d "{\"title\":\"Comite movido $TOKEN\",\"start\":\"$(madrid "$DIA2 11:00")\",\"end\":\"$(madrid "$DIA2 12:00")\",\"all_day\":false,\"timezone\":\"Europe/Madrid\",\"location\":\"Sala 2\",\"description\":\"\"}"
+expect "ana mueve solo la segunda a las 11:00" "$WM_CODE" "200"
+wm "$TARRO_ANA2" DELETE "/calendar/events/$SERIE/occurrences/$RID3?notify=false"
+expect "y borra solo la tercera" "$WM_CODE" "200"
+wm "$TARRO_ANA2" GET "/calendar/events?$VENTANA"
+expect "quedan dos apariciones: la original y la movida" \
+  "$(echo "$WM_BODY" | jpy '" | ".join(o["title"] + " " + o["start"] for o in d["data"] if o["id"] == a[0])' "$SERIE")" \
+  "Comite $TOKEN $(date -u -d "$(madrid "$DIA_SERIE 09:00")" +%Y-%m-%dT%H:%M:%SZ) | Comite movido $TOKEN $(date -u -d "$(madrid "$DIA2 11:00")" +%Y-%m-%dT%H:%M:%SZ)"
+dav "ana@acme.test:$ANA_PASS" GET "$CAL/$SERIE.ics"
+expect "CalDAV devuelve la serie" "$DAV_CODE" "200"
+contains "con la zona como VTIMEZONE" "$DAV_BODY" "TZID:Europe/Madrid"
+contains "y DTSTART en hora de Madrid" "$DAV_BODY" "DTSTART;TZID=Europe/Madrid:${DIA_SERIE//-/}T090000"
+contains "la aparicion editada es un VEVENT con RECURRENCE-ID en la zona de la serie" "$DAV_BODY" "RECURRENCE-ID;TZID=Europe/Madrid:${DIA2//-/}T090000"
+contains "con su nuevo titulo" "$DAV_BODY" "SUMMARY:Comite movido $TOKEN"
+contains "y la borrada es un EXDATE" "$DAV_BODY" "EXDATE;TZID=Europe/Madrid:$(date -u -d "$RID3" +%Y%m%d)T090000"
+wm "$TARRO_ANA2" DELETE "/calendar/events/$SERIE?notify=false"
+expect "se borra la serie" "$WM_CODE" "204"
+
+# Invitacion iTIP/iMIP: ana invita a bea; llega un text/calendar con METHOD:REQUEST, bea acepta desde el webmail
+# (su calendario gana el evento y sale un REPLY), ana aplica el REPLY y ve a bea aceptada.
+REUNION="Reunion $TOKEN"
+INV_INI=$(date -u -d 'tomorrow 15:00' +%Y-%m-%dT%H:%M:%SZ) INV_FIN=$(date -u -d 'tomorrow 16:00' +%Y-%m-%dT%H:%M:%SZ)
+wm "$TARRO_ANA2" POST /calendar/events -H 'Content-Type: application/json' -d "{\"title\":\"$REUNION\",\"start\":\"$INV_INI\",\"end\":\"$INV_FIN\",\"all_day\":false,\"timezone\":\"UTC\",\"location\":\"Sala 3\",\"description\":\"Orden del dia\",\"attendees\":[{\"email\":\"bea@acme.test\",\"name\":\"Bea\"}]}"
+INV=$(echo "$WM_BODY" | jget data.id)
+expect "ana crea una reunion con bea como invitada y el webmail envia la invitacion" \
+  "$WM_CODE/${INV:+id}/$(echo "$WM_BODY" | jget data.invitations.method)/$(echo "$WM_BODY" | jget data.invitations.recipients)/$(echo "$WM_BODY" | jget data.invitations.sent)" "201/id/REQUEST/1/True"
+expect "ana es la organizadora" "$(echo "$WM_BODY" | jget data.organizer.email)" "ana@acme.test"
+contains "bea recibe la invitacion por Postfix y Dovecot" "$(cliente buscar bea@acme.test "$BEA_PASS" "Invitacion: $REUNION")" "OK 1"
+INV_UID=$(fila "$TARRO_BEA2" INBOX "Invitacion: $REUNION" 'm["uid"]')
+INV_RAW=$(curl -s -b "$TARRO_BEA2" -H "Origin: $API_ORIGIN" "$WM/folders/INBOX/messages/$INV_UID/raw")
+contains "el mensaje lleva la parte text/calendar con method=REQUEST" "$INV_RAW" "text/calendar; charset=utf-8; method=REQUEST"
+wm "$TARRO_BEA2" GET "/invitations/INBOX/$INV_UID"
+expect "el webmail la interpreta: REQUEST de ana, bea invitada, sin responder y aun fuera de su calendario" \
+  "$WM_CODE/$(echo "$WM_BODY" | jget data.method)/$(echo "$WM_BODY" | jget data.organizer.email)/$(echo "$WM_BODY" | jget data.attendee)/$(echo "$WM_BODY" | jpy 'd["data"]["attendees"][0]["partstat"]')/$(echo "$WM_BODY" | jget data.event_id)" \
+  "200/REQUEST/ana@acme.test/bea@acme.test/NEEDS-ACTION/"
+wm "$TARRO_BEA2" POST "/invitations/INBOX/$INV_UID/respond" -H 'Content-Type: application/json' -d '{"response":"ACCEPTED"}'
+INV_BEA=$(echo "$WM_BODY" | jget data.event_id)
+expect "bea acepta desde el webmail y sale la respuesta" "$WM_CODE/${INV_BEA:+id}/$(echo "$WM_BODY" | jget data.reply_sent)" "200/id/True"
+wm "$TARRO_BEA2" GET "/calendar/events/$INV_BEA"
+expect "la reunion queda en el calendario de bea" "$WM_CODE/$(echo "$WM_BODY" | jget data.title)/$(echo "$WM_BODY" | jget data.start)" "200/$REUNION/$INV_INI"
+wm "$TARRO_BEA2" GET "/invitations/INBOX/$INV_UID"
+expect "y la invitacion ya muestra su respuesta y su evento" "$(echo "$WM_BODY" | jget data.partstat)/$(echo "$WM_BODY" | jget data.event_id)" "ACCEPTED/$INV_BEA"
+contains "ana recibe el REPLY" "$(cliente buscar ana@acme.test "$ANA_PASS" "Aceptada: $REUNION")" "OK 1"
+REPLY_UID=$(fila "$TARRO_ANA2" INBOX "Aceptada: $REUNION" 'm["uid"]')
+wm "$TARRO_ANA2" GET "/invitations/INBOX/$REPLY_UID"
+expect "es un METHOD:REPLY de bea sobre su reunion" \
+  "$(echo "$WM_BODY" | jget data.method)/$(echo "$WM_BODY" | jget data.event_id)/$(echo "$WM_BODY" | jpy 'd["data"]["attendees"][0]["partstat"]')" "REPLY/$INV/ACCEPTED"
+wm "$TARRO_ANA2" POST "/invitations/INBOX/$REPLY_UID/apply"
+expect "ana lo aplica a su calendario" "$WM_CODE/$(echo "$WM_BODY" | jget data.method)/$(echo "$WM_BODY" | jget data.changed)/$(echo "$WM_BODY" | jget data.event_id)" "200/REPLY/True/$INV"
+wm "$TARRO_ANA2" GET "/calendar/events/$INV"
+expect "y su evento muestra a bea aceptada" \
+  "$(echo "$WM_BODY" | jpy '" ".join(x["email"] + "=" + x["partstat"] for x in d["data"]["attendees"])')" "bea@acme.test=ACCEPTED"
+dav "ana@acme.test:$ANA_PASS" GET "$CAL/$INV.ics"
+contains "CalDAV lo guarda en el ATTENDEE" "$(tr -d '\r\n ' <<<"$DAV_BODY")" "PARTSTAT=ACCEPTED"
+lacks "sin METHOD en el objeto guardado" "$DAV_BODY" "METHOD:"
+
+# Disponibilidad: bea ve cuando esta ocupada ana, solo el intervalo, nunca el contenido.
+wm "$TARRO_BEA2" GET "/availability?addresses=ana@acme.test&start=$(date -u -d 'tomorrow 00:00' +%Y-%m-%dT%H:%M:%SZ)&end=$(date -u -d 'tomorrow 23:59' +%Y-%m-%dT%H:%M:%SZ)"
+expect "bea ve a ana ocupada durante la reunion" \
+  "$WM_CODE/$(echo "$WM_BODY" | jpy 'd["data"][0]["known"]')/$(echo "$WM_BODY" | jpy '" ".join(b["start"] + "-" + b["end"] for b in d["data"][0]["busy"])')" "200/True/$INV_INI-$INV_FIN"
+expect "solo con inicio y fin" "$(echo "$WM_BODY" | jpy 'sorted(set(k for b in d["data"][0]["busy"] for k in b))')" "['end', 'start']"
+lacks "sin el titulo" "$WM_BODY" "$REUNION"
+lacks "ni el lugar" "$WM_BODY" "Sala 3"
+
+# Pagina publica de citas: ana la configura; un visitante sin sesion lista huecos, reserva y el hueco desaparece.
+wm "$TARRO_ANA2" PUT /booking -H 'Content-Type: application/json' -d '{"title":"Citas con ana","description":"Treinta minutos","duration_minutes":30,"buffer_minutes":0,"min_notice_minutes":0,"max_advance_days":30,"daily_limit":5,"timezone":"UTC","weekly":{"MO":[{"start":"00:00","end":"24:00"}],"TU":[{"start":"00:00","end":"24:00"}],"WE":[{"start":"00:00","end":"24:00"}],"TH":[{"start":"00:00","end":"24:00"}],"FR":[{"start":"00:00","end":"24:00"}],"SA":[{"start":"00:00","end":"24:00"}],"SU":[{"start":"00:00","end":"24:00"}]},"active":true,"regenerate_link":false}'
+PAGINA=$(echo "$WM_BODY" | jget data.public_id)
+expect "ana configura su pagina de citas" "$WM_CODE/${PAGINA:+id}/$(echo "$WM_BODY" | jget data.cell)/$(echo "$WM_BODY" | jget data.tenant_id)" "200/id/pe-01/$TID"
+CITAS="$GW/public/booking/pe-01/$TID/$PAGINA"
+CITA_DIA=$(date -u -d '+3 days' +%Y-%m-%d)
+CITA_VENTANA="start=${CITA_DIA}T00:00:00Z&end=$(date -u -d "$CITA_DIA +1 day" +%Y-%m-%d)T00:00:00Z"
+publico() { # publico <metodo> <url> [curl...]: deja PUB_CODE y PUB_BODY
+  local metodo="$1" url="$2"
+  shift 2
+  PUB_CODE=$(curl -s -o "$WORK/pub.out" -w '%{http_code}' -X "$metodo" "$url" "$@")
+  PUB_BODY=$(cat "$WORK/pub.out")
+}
+publico GET "$CITAS?$CITA_VENTANA"
+HUECO=$(echo "$PUB_BODY" | jpy 'd["data"]["slots"][4]["start"]')
+expect "sin sesion, por el gateway, la pagina lista sus huecos de 30 minutos" \
+  "$PUB_CODE/$(echo "$PUB_BODY" | jpy 'd["data"]["title"]')/$(echo "$PUB_BODY" | jpy 'len(d["data"]["slots"])')/$HUECO" "200/Citas con ana/48/${CITA_DIA}T02:00:00Z"
+lacks "sin la direccion de ana" "$PUB_BODY" "ana@acme.test"
+publico GET "$GW/public/booking/pe-01/$TID/$(rand_hex 16)?$CITA_VENTANA"
+expect "una pagina que no existe es 404" "$PUB_CODE" "404"
+reservar() { publico POST "$CITAS" -H "Origin: $API_ORIGIN" -H 'Content-Type: application/json' -d "$1"; }
+reservar "{\"start\":\"$HUECO\",\"name\":\"Robot\",\"email\":\"carla@acme.test\",\"note\":\"\",\"website\":\"https://spam.example\"}"
+expect "la trampa para robots responde como si reservara" "$PUB_CODE" "201"
+publico GET "$CITAS?$CITA_VENTANA"
+contains "pero el hueco sigue libre" "$PUB_BODY" "\"start\":\"$HUECO\""
+reservar "{\"start\":\"$HUECO\",\"name\":\"Carla Cliente\",\"email\":\"carla@acme.test\",\"note\":\"Quiero una demo\",\"website\":\"\"}"
+expect "un visitante reserva el hueco" "$PUB_CODE/$(echo "$PUB_BODY" | jget data.start)/$(echo "$PUB_BODY" | jget data.confirmation_sent)" "201/$HUECO/True"
+publico GET "$CITAS?$CITA_VENTANA"
+lacks "el hueco ya no aparece" "$PUB_BODY" "\"start\":\"$HUECO\""
+expect "y quedan los demas" "$(echo "$PUB_BODY" | jpy 'len(d["data"]["slots"])')" "47"
+reservar "{\"start\":\"$HUECO\",\"name\":\"Otra\",\"email\":\"bea@acme.test\",\"note\":\"\",\"website\":\"\"}"
+expect "reservar el mismo hueco es SLOT_UNAVAILABLE" "$PUB_CODE/$(echo "$PUB_BODY" | jget error.code)" "409/SLOT_UNAVAILABLE"
+wm "$TARRO_ANA2" GET "/calendar/events?start=${CITA_DIA}T00:00:00Z&end=${CITA_DIA}T23:59:59Z"
+CITA=$(echo "$WM_BODY" | jpy 'next(o["id"] for o in d["data"] if o["start"] == a[0])' "$HUECO")
+expect "la cita esta en el calendario de ana" "$(echo "$WM_BODY" | jpy 'next(o["title"] for o in d["data"] if o["start"] == a[0])' "$HUECO")" "Citas con ana"
+wm "$TARRO_ANA2" GET "/calendar/events/$CITA"
+expect "con ana aceptada y el visitante invitado" \
+  "$(echo "$WM_BODY" | jpy '" ".join(sorted(x["email"] + "=" + x["partstat"] for x in d["data"]["attendees"]))')" "ana@acme.test=ACCEPTED carla@acme.test=NEEDS-ACTION"
+contains "y quien reservo en la descripcion" "$(echo "$WM_BODY" | jget data.description)" "Carla Cliente <carla@acme.test>"
+contains "la confirmacion llega al visitante" "$(cliente buscar carla@acme.test "$CARLA_PASS" "Cita confirmada: Citas con ana")" "OK 1"
+contains "y a ana en copia" "$(cliente buscar ana@acme.test "$ANA_PASS" "Cita confirmada: Citas con ana")" "OK 1"
+wm "$TARRO_ANA2" DELETE "/calendar/events/$CITA?notify=false"
+wm "$TARRO_ANA2" DELETE "/calendar/events/$INV?notify=false"
+expect "se retiran la cita y la reunion" "$WM_CODE" "204"
+
+echo "== Webmail C2: el mensaje pospuesto vuelve a su hora"
+volvio() { [[ "$(sql mail_cell_pe_01 "SELECT status || '/' || result FROM mail.mailbox_reminders WHERE id = '$POSPONER_ID'")" == done/returned ]]; }
+esperar "el trabajador del webmail lo devuelve (returned)" 120 volvio
+expect "vuelve a INBOX sin \\Seen" "$(fila "$TARRO_BEA2" INBOX "$POSPONER" '"\\Seen" in m["flags"]')" "False"
+expect "y sale de Snoozed" "$(fila "$TARRO_BEA2" Snoozed "$POSPONER" 'm["uid"]')" ""
+wm "$TARRO_BEA2" GET /snooze
+lacks "ni sigue en la lista de pospuestos" "$WM_BODY" "$POSPONER_ID"
+
+echo "== Webmail C4: ficheros grandes por enlace (mail-files con ClamAV real y MinIO, enlace publico por el gateway)"
+# mail-files es del plano de EMPRESA y corre en el host, como mail-dav: la base de la empresa se alcanza por el
+# host de Postgres que el registro guarda para la celda (127.0.0.1 en la prueba), que un contenedor no ve. Entra
+# con su credencial propia (tenant-service-role.sh) y el rol de enrutado, analiza con el clamd de los motores y
+# guarda en un MinIO desechable con la imagen, el arranque y la inicializacion del perfil autoalojado
+# (selfhosted/minio: bucket privado y usuario de servicio con politica acotada).
+ROUTER_PASS="$(rand_hex 24)"
+e2e_credencial_enrutado "$ROUTER_PASS"
+FILES_DB_PASS="$(rand_hex 24)"
+MAIL_FILES_DB_PASSWORD="${FILES_DB_PASS}" PGHOST=127.0.0.1 bash ops/db/tenant-service-role.sh --service mail-files >"$WORK/log/files-role.log" 2>&1 &&
+  ok "credencial propia de mail-files en la base de la empresa (tenant-service-role.sh)" ||
+  { mal "tenant-service-role.sh --service mail-files"; tail -5 "$WORK/log/files-role.log" >&2; }
+MINIO_RAIZ=e2e-raiz MINIO_ROOT_PASS="$(rand_hex 20)" MINIO_SVC_KEY="svc$(rand_hex 8)" MINIO_SVC_SECRET="$(rand_hex 18)"
+MINIO_ROOT_USER="${MINIO_RAIZ}" MINIO_ROOT_PASSWORD="$MINIO_ROOT_PASS" MINIO_ACCESS_KEY="$MINIO_SVC_KEY" MINIO_SECRET_KEY="$MINIO_SVC_SECRET" \
+  compose --profile ficheros up -d minio minio-init >"$WORK/log/compose-ficheros.log" 2>&1 ||
+  { mal "compose up de MinIO"; tail -20 "$WORK/log/compose-ficheros.log" >&2; }
+minio_listo() { [[ "$(docker inspect -f '{{.State.Status}}/{{.State.ExitCode}}' "$(c minio-init)" 2>/dev/null)" == exited/0 ]]; }
+esperar "MinIO sano y minio-init deja el bucket privado y el usuario de servicio" 90 minio_listo
+mkdir -m 700 "$WORK/spool-ficheros"
+SERVICIOS_DE_EMPRESA=" mail-files " MAIL_FILES_PORT="${PORT[mail-files]}" TENANT_DB_USER=mail_svc_mail_files TENANT_DB_PASSWORD="$FILES_DB_PASS" \
+  MAIL_FILES_CLAMD_ADDR="127.0.0.1:$CLAMD_PORT" MAIL_FILES_SPOOL_DIR="$WORK/spool-ficheros" \
+  MINIO_ENDPOINT="127.0.0.1:$MINIO_PORT" MINIO_USE_SSL=false MINIO_BUCKET="$E2E_MINIO_BUCKET" MINIO_ACCESS_KEY="$MINIO_SVC_KEY" MINIO_SECRET_KEY="$MINIO_SVC_SECRET" \
+  arrancar mail-files
+esperar_salud mail-files "${PORT[mail-files]}" && ok "mail-files responde"
+minio_objeto() { docker exec -e MC_HOST_local="http://$MINIO_RAIZ:$MINIO_ROOT_PASS@127.0.0.1:9000" "$(c minio)" mc --config-dir /tmp/mc --quiet stat "local/$E2E_MINIO_BUCKET/$1" >/dev/null 2>&1; }
+wm "$TARRO_ANA2" GET /large-files
+expect "el webmail ofrece la funcion con los topes de mail-files" \
+  "$WM_CODE/$(echo "$WM_BODY" | jget data.enabled)/$(echo "$WM_BODY" | jpy 'd["data"]["limits"]["max_file_bytes"]')" "200/True/104857600"
+head -c $((3 << 20)) /dev/urandom >"$WORK/plano.bin"
+PLANO_SHA=$(sha256sum "$WORK/plano.bin" | cut -d' ' -f1)
+wm "$TARRO_ANA2" POST "/large-files?expires_in_days=2&max_downloads=3" -F "file=@$WORK/plano.bin;filename=plano-obra.bin;type=application/octet-stream"
+FICHERO=$(echo "$WM_BODY" | jget data.id) ENLACE=$(echo "$WM_BODY" | jget data.url)
+expect "ana sube un fichero de 3 MiB: ClamAV lo analiza y queda activo" \
+  "$WM_CODE/${FICHERO:+id}/$(echo "$WM_BODY" | jget data.state)/$(echo "$WM_BODY" | jget data.size_bytes)/$(echo "$WM_BODY" | jget data.sha256)" \
+  "201/id/active/$((3 << 20))/$PLANO_SHA"
+expect "con un enlace publico del gateway firmado y con caducidad" \
+  "$(python3 -c 'import sys, urllib.parse as u; p = u.urlsplit(sys.argv[1]); q = u.parse_qs(p.query); print(p.scheme + "://" + p.netloc + p.path, sorted(q), len(q["s"][0]))' "$ENLACE" 2>/dev/null)" \
+  "$PUBLIC_BASE_URL/api/v1/public/files/$TID/$FICHERO ['s', 'x'] 64"
+expect "el objeto esta en el espacio privado del almacen" "$(minio_objeto "private/$TID/mail-files/$FICHERO" && echo si)" "si"
+expect "y la fila en la base de la empresa, lista" "$(sql mail_tenant_acme "SELECT status FROM mail_files.shared_files WHERE id = '$FICHERO'")" "ready"
+publico GET "$ENLACE" -D "$WORK/pub.hdr"
+expect "el enlace sin sesion muestra la ficha del fichero (HTML)" "$PUB_CODE/$(grep -ci '^content-type: text/html' "$WORK/pub.hdr")" "200/1"
+contains "con su nombre" "$PUB_BODY" "plano-obra.bin"
+wm "$TARRO_ANA2" GET /large-files
+expect "ver la ficha no cuenta como descarga" "$(echo "$WM_BODY" | jpy 'next(i["downloads"] for i in d["data"]["items"] if i["id"] == a[0])' "$FICHERO")" "0"
+PUB_CODE=$(curl -s -o "$WORK/descarga.bin" -D "$WORK/pub.hdr" -w '%{http_code}' -X POST "$ENLACE" -H "Origin: $API_ORIGIN")
+expect "la descarga (POST) entrega el mismo fichero" "$PUB_CODE/$(sha256sum "$WORK/descarga.bin" | cut -d' ' -f1)" "200/$PLANO_SHA"
+contains "como adjunto" "$(grep -i '^content-disposition:' "$WORK/pub.hdr")" 'attachment; filename="plano-obra.bin"'
+contains "con nosniff" "$(grep -i '^x-content-type-options:' "$WORK/pub.hdr")" "nosniff"
+contains "y como octet-stream, nunca con el tipo que dijo quien lo subio" "$(grep -i '^content-type:' "$WORK/pub.hdr")" "application/octet-stream"
+wm "$TARRO_ANA2" GET /large-files
+expect "cuenta una descarga" "$(echo "$WM_BODY" | jpy 'next(str(i["downloads"]) + "/" + str(i["remaining_downloads"]) for i in d["data"]["items"] if i["id"] == a[0])' "$FICHERO")" "1/2"
+publico GET "$(python3 -c 'import re, sys; print(re.sub(r"([?&]s=)[0-9a-f]+", r"\g<1>" + sys.argv[2], sys.argv[1]))' "$ENLACE" "$(rand_hex 32)")"
+expect "una firma alterada es 404" "$PUB_CODE" "404"
+wm "$TARRO_ANA2" POST /large-files -F "file=@$WORK/eicar.com;filename=factura.exe;type=application/octet-stream"
+expect "un fichero con EICAR lo rechaza ClamAV antes de guardarlo" "$WM_CODE/$(echo "$WM_BODY" | jget error.code)" "422/FILE_INFECTED"
+expect "sin fila lista para el" "$(sql mail_tenant_acme "SELECT count(*) FROM mail_files.shared_files WHERE file_name = 'factura.exe' AND status = 'ready'")" "0"
+wm "$TARRO_BEA2" DELETE "/large-files/$FICHERO"
+expect "bea no puede revocar el enlace de ana" "$WM_CODE/$(echo "$WM_BODY" | jget error.code)" "404/FILE_NOT_FOUND"
+wm "$TARRO_ANA2" DELETE "/large-files/$FICHERO"
+expect "ana revoca el enlace" "$WM_CODE/$(echo "$WM_BODY" | jget data.state)/$(echo "$WM_BODY" | jget data.url)" "200/revoked/"
+publico GET "$ENLACE"
+expect "el enlace revocado es 404" "$PUB_CODE" "404"
+publico POST "$ENLACE" -H "Origin: $API_ORIGIN"
+expect "y no descarga" "$PUB_CODE" "404"
+expect "el objeto se borra del almacen al revocar (con la politica del usuario de servicio)" \
+  "$(minio_objeto "private/$TID/mail-files/$FICHERO" && echo sigue || echo borrado)" "borrado"
+expect "y la fila lo anota" "$(sql mail_tenant_acme "SELECT status || '/' || (object_deleted_at IS NOT NULL) FROM mail_files.shared_files WHERE id = '$FICHERO'")" "revoked/true"
+
+echo "== Webmail C5: asistente sin ANTHROPIC_API_KEY (apagado)"
+wm "$TARRO_ANA2" GET /assistant
+expect "sin clave el asistente dice que no esta disponible y por que" \
+  "$WM_CODE/$(echo "$WM_BODY" | jget data.available)/$(echo "$WM_BODY" | jget data.reason)" "200/False/not_configured"
+wm "$TARRO_ANA2" POST /assistant/summarize -H 'Content-Type: application/json' -d "{\"messages\":[{\"folder\":\"INBOX\",\"uid\":$RESP_ANA}]}"
+expect "resumir responde 503 ASSISTANT_NOT_CONFIGURED" "$WM_CODE/$(echo "$WM_BODY" | jget error.code)" "503/ASSISTANT_NOT_CONFIGURED"
+wm "$TARRO_ANA2" POST /assistant/reply -H 'Content-Type: application/json' -d "{\"folder\":\"INBOX\",\"uid\":$RESP_ANA,\"instructions\":\"breve\"}"
+expect "proponer respuesta tambien" "$WM_CODE/$(echo "$WM_BODY" | jget error.code)" "503/ASSISTANT_NOT_CONFIGURED"
+wm "$TARRO_ANA2" POST /assistant/tone -H 'Content-Type: application/json' -d '{"text":"hola, te escribo por lo de ayer","tone":"formal"}'
+expect "cambiar el tono tambien" "$WM_CODE/$(echo "$WM_BODY" | jget error.code)" "503/ASSISTANT_NOT_CONFIGURED"
+wm "$TARRO_ANA2" POST /assistant/extract -H 'Content-Type: application/json' -d "{\"folder\":\"INBOX\",\"uid\":$RESP_ANA,\"today\":\"$(date -u +%Y-%m-%d)\"}"
+expect "y extraer tareas y fechas" "$WM_CODE/$(echo "$WM_BODY" | jget error.code)" "503/ASSISTANT_NOT_CONFIGURED"
+# Los bloques de la fase 2 esperan a los motores varias veces: se renuevan los access tokens de la plataforma.
+T1=$(e2e_login "$ADMIN_EMAIL" "$ADMIN_PASS" | jget data.access_token)
+T2=$(e2e_login admin@acme.test "$TENANT_PASS" | jget data.access_token)
+A2="Authorization: Bearer $T2"
+[[ -n "$T1" && -n "$T2" ]] && ok "se renuevan los access tokens de la plataforma" || mal "no se pudieron renovar los access tokens"
+
 echo "== Maildir de un buzon borrado: marca de baja, barrido en Dovecot y buzon recreado limpio"
 # Borrar un buzon quita su fila, pero su maildir sigue en el volumen de Dovecot y quien reciba despues la
 # misma direccion heredaria el correo del titular anterior. mail-directory deja una marca de baja
@@ -2049,7 +2500,7 @@ errores=$(docker logs "$(c postfix-mail)" 2>&1 | grep -E 'fatal:|panic:|pgsql.*(
 # El maestro sobre nadie@ es una comprobacion de arriba y Dovecot la registra como error.
 errores=$(docker logs "$(c dovecot-mail)" 2>&1 | grep -E 'Fatal:|Panic:|auth.*Error' | grep -v 'nadie@acme.test')
 [[ -z "$errores" ]] && ok "Dovecot sin Fatal ni errores de autenticacion" || { mal "Dovecot"; head -3 <<<"$errores" >&2; }
-for s in unbound-mail redis-mail clamd-mail rspamd-mail dovecot-mail postfix-mail postfix-tlspol-mail olefy-mail mail-directory mail-auth mail-security webmail mail-migration-runner; do
+for s in unbound-mail redis-mail clamd-mail rspamd-mail dovecot-mail postfix-mail postfix-tlspol-mail olefy-mail mail-directory mail-auth mail-security webmail mail-migration-runner minio; do
   reinicios=$(docker inspect -f '{{.RestartCount}}' "$(c "$s")" 2>/dev/null)
   [[ "$reinicios" == 0 ]] || mal "$s se reinicio ($reinicios veces)"
 done

@@ -1206,6 +1206,18 @@ IMAP; un cambio de nombre no la cierra); la migracion de buzones (el ejecutor ai
 privilegios, las dos credenciales maestras acotadas cada una a su red, dos migraciones reales de un buzon a otro
 con imapsync, la repeticion sin duplicar, una contrasena de origen equivocada, un mensaje EICAR que ClamAV
 detiene sin tocar el origen, y que la contrasena de origen no queda en la base de la empresa ni en los registros);
+el webmail de la fase 2 (`docs/Plan_Webmail_Innovador.md`): conversaciones (THREAD de Dovecot y el mensaje propio de
+Enviados al abrir la respuesta recibida), pestanas de la bandeja inteligente con boletines enviados con `List-Id` y
+`List-Unsubscribe`, baja RFC 8058 rechazada por la proteccion SSRF (IP privada y loopback por nombre) y baja por
+`mailto:` que sale por Postfix, el escudo antifraude con correo entregado al MX (25) desde fuera (dominio que se
+confunde con el propio y nombre visible de una companera), posponer con vuelta a INBOX sin `\Seen`, seguimiento
+(registrar, cancelar, y vencido con y sin respuesta), respuestas rapidas, serie en `Europe/Madrid` con una aparicion
+movida y otra borrada leida por CalDAV (`VTIMEZONE`, `RECURRENCE-ID`, `EXDATE`), invitacion iTIP de ana a bea con
+`REQUEST`, aceptacion y `REPLY` aplicado, disponibilidad solo con inicio y fin, la pagina publica de citas por el
+gateway sin sesion (huecos, trampa para robots, reserva, `SLOT_UNAVAILABLE`, evento y confirmacion), los ficheros
+grandes por enlace (mail-files en el host con su credencial de empresa, ClamAV real y un MinIO desechable con la
+inicializacion de `selfhosted/minio`: subida, ficha que no cuenta, descarga como adjunto con `nosniff`, EICAR
+rechazado, revocacion con el objeto borrado del almacen) y el asistente apagado sin `ANTHROPIC_API_KEY`;
 y registros sin errores ni reinicios.
 
 Diferencias con produccion (solo en `docker-compose.e2e.yml` y el entorno del script; ningun
@@ -1220,6 +1232,7 @@ fichero de configuracion de los motores cambia para la prueba):
 | `SKIP_UNBOUND_HEALTHCHECK=y` | `n` | El chequeo hace ping a resolvers publicos y los runners de CI no dejan salir ICMP; la resolucion con DNSSEC se comprueba aparte |
 | Firmas de ClamAV en un volumen que sobrevive entre ejecuciones | Volumen del despliegue | freshclam actualiza por diferencias en vez de bajar la base entera cada vez (la CDN de ClamAV limita las descargas repetidas) |
 | DNS de `acme.test` servido por un Unbound de la prueba | DNS del cliente | El dominio de la prueba no existe en internet |
+| mail-files como binario del host y MinIO desechable (perfil `ficheros`, datos en tmpfs, puerto en 127.0.0.1); clamd publicado en 127.0.0.1 | mail-files y MinIO en contenedores de la red interna, sin puertos | La base de la empresa se alcanza por el host que el registro guarda para la celda (127.0.0.1 en la prueba), como mail-dav; el MinIO usa la misma imagen, arranque e inicializacion que el perfil autoalojado |
 | mail-security sin `TRANSACTIONAL_URL` | Con transactional | El aviso de cuarentena sale por SES; queda desactivado y lo registra como error, que la prueba descuenta. El enlace del aviso lo firma la propia prueba con `MAIL_LINK_SIGNING_KEY` de la ejecucion |
 
 En CI corre en su propio flujo (`.github/workflows/mail-engines.yml`), sin bloquear: cuando

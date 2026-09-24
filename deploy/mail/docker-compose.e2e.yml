@@ -14,6 +14,9 @@
 #   * los servicios de celda que los motores llaman por nombre (mail-auth, mail-policy) y los
 #     que la prueba usa (mail-directory, webmail), con sus Dockerfile y publicados solo en
 #     127.0.0.1 para el plano de control, que corre en el host;
+#   * para los ficheros grandes por enlace (mail-files corre en el host, como mail-dav): un MinIO desechable
+#     (perfil ficheros) con la imagen, el arranque y la inicializacion de selfhosted/minio, datos en tmpfs, y
+#     clamd publicado en 127.0.0.1;
 #   * el ejecutor de migracion (mail-migration-runner) en su red propia. Aqui, Y SOLO AQUI, arranca con
 #     ENVIRONMENT=test y MIGRATION_ALLOW_PRIVATE_SOURCES=true: la prueba migra entre dos buzones del
 #     mismo Dovecot (el origen esta en una red privada, que la guarda de origen rechaza en
@@ -48,6 +51,9 @@ services:
   clamd-mail:
     volumes:
       - clamav-signatures:/var/lib/clamav
+    # mail-files corre en el host (bloque C4 de ops/e2e/mail.sh) y analiza cada fichero con este clamd.
+    ports:
+      - "127.0.0.1:${E2E_PORT_CLAMD:?lo fija ops/e2e/mail.sh}:3310"
 
   dovecot-mail:
     depends_on: !override
@@ -166,6 +172,9 @@ services:
       # mail-dav corre en el host (ops/e2e/mail.sh); el webmail lo alcanza por la pasarela de docker.
       MAIL_DAV_URL: http://host.docker.internal:${E2E_PORT_MAIL_DAV:?lo fija ops/e2e/mail.sh}
       WEBMAIL_SCHEDULED_POLL_INTERVAL: 2s
+      WEBMAIL_REMINDERS_POLL_INTERVAL: 2s
+      # mail-files corre en el host (ops/e2e/mail.sh), como mail-dav.
+      MAIL_FILES_URL: http://host.docker.internal:${E2E_PORT_MAIL_FILES:?lo fija ops/e2e/mail.sh}
       WEBMAIL_IMAP_ADDR: dovecot:993
       WEBMAIL_SMTP_ADDR: postfix:587
       WEBMAIL_TLS_CA_FILE: /run/cfm-e2e/tls/ca.pem
@@ -181,6 +190,64 @@ services:
       - "127.0.0.1:${E2E_PORT_WEBMAIL:?lo fija ops/e2e/mail.sh}:8044"
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    networks:
+      mail-engines: {}
+
+  # Almacen de los ficheros grandes por enlace (perfil ficheros: ops/e2e/mail.sh lo arranca en el bloque C4).
+  # MinIO con la imagen fijada, el arranque y la inicializacion del perfil autoalojado (selfhosted/minio: sin
+  # cuenta de fabrica, bucket privado y usuario de servicio con politica acotada); los datos en tmpfs.
+  # mail-files corre en el host, como los demas servicios del plano de empresa de la prueba, y le llega por
+  # el puerto publicado en 127.0.0.1. Las credenciales se generan en cada ejecucion y solo llegan por el
+  # entorno.
+  minio:
+    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z.hotfix.7aa24e772@sha256:cf3dadcfa1fb0324f43958bad1abba986d53c4ecc04d4d50b46c7dcda28bd3cd
+    profiles: ["ficheros"]
+    user: "10001:10001"
+    read_only: true
+    entrypoint: ["/etc/core-force-mail/minio/entrypoint.sh"]
+    command: ["server", "/data", "--address", ":9000", "--certs-dir", "/tmp/certs"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-}
+      MINIO_BROWSER: "off"
+      MINIO_UPDATE: "off"
+    volumes:
+      - ${E2E_REPO_ROOT:?lo fija ops/e2e/mail.sh}/selfhosted/minio:/etc/core-force-mail/minio:ro
+    tmpfs:
+      - /data:size=512m,uid=10001,gid=10001
+      - /tmp:size=16m,uid=10001,gid=10001
+    ports:
+      - "127.0.0.1:${E2E_PORT_MINIO:?lo fija ops/e2e/mail.sh}:9000"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://127.0.0.1:9000/minio/health/live"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+    networks:
+      mail-engines:
+        aliases:
+          - minio
+
+  minio-init:
+    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z.hotfix.7aa24e772@sha256:cf3dadcfa1fb0324f43958bad1abba986d53c4ecc04d4d50b46c7dcda28bd3cd
+    profiles: ["ficheros"]
+    restart: "no"
+    user: "10001:10001"
+    read_only: true
+    entrypoint: ["/etc/core-force-mail/minio/init.sh"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-}
+      MINIO_BUCKET: ${E2E_MINIO_BUCKET:?lo fija ops/e2e/mail.sh}
+    volumes:
+      - ${E2E_REPO_ROOT:?lo fija ops/e2e/mail.sh}/selfhosted/minio:/etc/core-force-mail/minio:ro
+    tmpfs:
+      - /tmp:size=4m,uid=10001,gid=10001
+    depends_on:
+      minio:
+        condition: service_healthy
     networks:
       mail-engines: {}
 

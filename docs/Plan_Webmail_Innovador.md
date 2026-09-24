@@ -127,4 +127,4 @@ la ficha del remitente.
 | C3 | en curso |
 | C4 | en curso |
 | C5 | en curso |
-| B6 | pendiente |
+| B6 | en curso: `ops/e2e/mail.sh` prueba C1-C5 contra los motores reales (`make e2e-mail` en verde, 869 comprobaciones); encontro y arreglo la conversacion abierta desde una respuesta recibida (sin el mensaje propio de Enviados) y la politica de MinIO sin permiso para borrar los ficheros de mail-files; falta desplegar |

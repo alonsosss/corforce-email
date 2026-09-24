@@ -151,11 +151,14 @@ def orden_doveadm(args):
 
 def orden_enviar(args):
     msg = EmailMessage()
-    msg["From"] = args.de
+    msg["From"] = args.de_visible or args.de
     msg["To"] = args.para
     msg["Subject"] = args.asunto
     msg["Date"] = email.utils.formatdate(localtime=False)
     msg["Message-ID"] = email.utils.make_msgid(domain="e2e.test")
+    for cabecera in args.cabecera:
+        nombre, _, valor = cabecera.partition(":")
+        msg[nombre.strip()] = valor.strip()
     msg.set_content("Mensaje de prueba de los motores de Core Force Mail.\n")
     if args.relleno_mib:
         # Relleno aleatorio (no se comprime ni casa con ninguna firma) para llevar el mensaje
@@ -167,11 +170,13 @@ def orden_enviar(args):
     if args.eicar:
         msg.add_attachment(EICAR.encode(), maintype="application", subtype="octet-stream", filename="eicar.com")
     try:
-        s = SMTPTLS(args.smtp_host, args.smtp_puerto, args.nombre)
+        # --mx entrega como un servidor de fuera: al MX (25) y sin autenticarse; login y clave no se usan.
+        s = SMTPTLS(args.smtp_host, 25 if args.mx else args.smtp_puerto, args.nombre)
         s.ehlo()
         s.starttls(context=contexto(args))
         s.ehlo()
-        s.login(args.login, args.clave)
+        if not args.mx:
+            s.login(args.login, args.clave)
     except smtplib.SMTPAuthenticationError as e:
         print(f"RECHAZO AUTH {e.smtp_code} {e.smtp_error.decode('utf-8', 'replace')}")
         return
@@ -246,6 +251,9 @@ def main():
     o.add_argument("asunto")
     o.add_argument("--eicar", action="store_true")
     o.add_argument("--relleno-mib", type=int, default=0)
+    o.add_argument("--cabecera", action="append", default=[], help="cabecera adicional 'Nombre: valor'")
+    o.add_argument("--de-visible", default="", help="From del mensaje, si no es el remitente del sobre")
+    o.add_argument("--mx", action="store_true", help="entregar al MX (25) sin autenticarse")
     o.set_defaults(fn=orden_enviar)
 
     o = sub.add_parser("eicar")
