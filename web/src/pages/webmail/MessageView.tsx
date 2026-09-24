@@ -46,6 +46,8 @@ import { SenderShield } from './SenderShield';
 import { formatScheduled } from './schedule';
 import { canSnooze } from './snooze';
 import { SnoozeDialog } from './SnoozeDialog';
+import { assistantNavigationState } from './assistant/assistant';
+import { MessageAssistant } from './assistant/MessageAssistant';
 
 export interface MessageViewProps {
   folderName: string;
@@ -359,6 +361,18 @@ export function MessageView({
         }
         reporting={reclassify.busy}
       />
+      {isDrafts ? null : (
+        <MessageAssistant
+          key={`${folderName}:${uid}`}
+          folder={folderName}
+          uid={uid}
+          onReplyWith={(text) =>
+            navigate(paths.webmailComposeFrom('reply', folderName, uid), {
+              state: assistantNavigationState(text),
+            })
+          }
+        />
+      )}
       <MessageBody
         message={data}
         remoteAllowed={remote}

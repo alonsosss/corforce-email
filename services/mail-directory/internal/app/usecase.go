@@ -34,6 +34,8 @@ type Deps struct {
 	Scheduled    ports.ScheduledSendRepository
 	Reminders    ports.ReminderRepository
 	QuickReplies ports.QuickReplyRepository
+	// Assistant guarda el interruptor del asistente del webmail por empresa.
+	Assistant    ports.AssistantSettingsRepository
 	Locator      ports.MailboxLocator
 	Aliases      ports.AliasRepository
 	SpamAliases  ports.SpamAliasRepository
@@ -82,6 +84,7 @@ type UseCase struct {
 	scheduled       ports.ScheduledSendRepository
 	reminders       ports.ReminderRepository
 	quickReplies    ports.QuickReplyRepository
+	assistant       ports.AssistantSettingsRepository
 	locator         ports.MailboxLocator
 	aliases         ports.AliasRepository
 	spamAliases     ports.SpamAliasRepository
@@ -125,6 +128,7 @@ func New(d Deps) *UseCase {
 		senders: d.Senders, retirements: d.Retirements, mtaSTS: d.MTASTS, mtaSTSPublisher: d.MTASTSPublic, mx: d.MX,
 		platformMX: d.PlatformMX, davServerURL: d.DAVServerURL, recreateHold: d.MailboxRecreateHold,
 		secrets: d.Secrets, events: d.Events, plan: d.Plan, metrics: d.Metrics, now: now, logger: logger,
+		assistant: d.Assistant,
 	}
 }
 

@@ -1028,6 +1028,7 @@ export const webmailRemindersApi = {
 
 /**
  * Peticion JSON al webmail con su sesion, sus reintentos de lectura y su aviso de sesion caducada,
- * para los modulos de API del webmail que viven en su propio fichero (api/largeFiles.ts).
+ * para los modulos de API del webmail que viven en su propio fichero (api/largeFiles.ts,
+ * api/webmailAssistant.ts).
  */
 export { request as webmailRequest };

@@ -6,7 +6,7 @@ Convencion de subject: `<dominio>.<entidad>.<accion>`. Un subject tiene UN dueno
 Publicar incluye encolar en la outbox (`outbox.Enqueue`); un consumidor con comodin
 (`*`, `>`) figura en cada subject publicado que recibe.
 
-Resumen: 94 publicaciones, 43 suscripciones, 94 subjects distintos.
+Resumen: 95 publicaciones, 43 suscripciones, 95 subjects distintos.
 
 ## Cruce por subject (dueno -> consumidores)
 
@@ -106,6 +106,7 @@ Resumen: 94 publicaciones, 43 suscripciones, 94 subjects distintos.
 | `transactional.email.unsubscribed` | transactional | analytics, campaigns |
 | `transactional.marketing.queued` | transactional | transactional |
 | `transactional.message.queued` | transactional | transactional |
+| `webmail.assistant.used` | webmail | - |
 
 ## Por servicio
 
@@ -181,5 +182,6 @@ Resumen: 94 publicaciones, 43 suscripciones, 94 subjects distintos.
 - Consume: `domains.domain.*`, `transactional.marketing.queued`, `transactional.message.queued`
 
 ### webmail
+- Publica: `webmail.assistant.used`
 - Consume: `mail.mailbox.>`
 

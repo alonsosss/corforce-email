@@ -289,8 +289,10 @@ func main() {
 // auditoria: identidad, organizacion, accesos, el gateway, los trabajos
 // programados, los dominios de correo (alta, verificacion y claves DKIM: una
 // revocacion por clave comprometida lleva motivo y actor) y las migraciones de
-// buzones (quien las lanzo, sobre que buzon y desde que servidor).
-const defaultAuditSubjects = "identity.>,organization.>,access.>,gateway.>,scheduler.>,domains.>,migration.>"
+// buzones (quien las lanzo, sobre que buzon y desde que servidor), y el uso del
+// asistente del webmail (quien, que accion y cuanto texto salio al proveedor, sin
+// contenido; docs/adr/0015).
+const defaultAuditSubjects = "identity.>,organization.>,access.>,gateway.>,scheduler.>,domains.>,migration.>,webmail.assistant.used"
 
 // auditSubjects lee de AUDIT_SUBJECTS (lista separada por comas) los subjects que
 // se vuelcan en la bitacora. Va por configuracion y no en codigo porque la

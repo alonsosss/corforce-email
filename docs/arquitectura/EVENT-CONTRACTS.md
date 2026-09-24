@@ -106,6 +106,7 @@ subject y payload. `opaco` = el payload no se puede leer estaticamente.
 | `transactional.email.unsubscribed` | transactional | `campaign_id`, `class`, `contact_id`, `email`, `message_id`, `occurred_at`, `tenant_id`, `test` |
 | `transactional.marketing.queued` | transactional | `message_id`, `tenant_id` |
 | `transactional.message.queued` | transactional | `message_id`, `tenant_id` |
+| `webmail.assistant.used` | webmail | `action`, `at`, `input_chars`, `input_tokens`, `mailbox_id`, `messages`, `model`, `outcome`, `output_chars`, `output_tokens`, `tenant_id`, `username` |
 
 ## Consumido
 

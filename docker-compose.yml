@@ -417,6 +417,7 @@ services:
       REDIS_PASSWORD: ${REDIS_PASSWORD:-}
       WEBMAIL_MASTER_USER: ${WEBMAIL_MASTER_USER:-}
       WEBMAIL_MASTER_PASSWORD: ${WEBMAIL_MASTER_PASSWORD:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       CELL_DB_PASSWORD: ${CELL_DB_PASSWORD:-}
       # La credencial de plataforma no llega a los servicios de celda: usan la de su celda
       # (secreto CELL_DB_PASSWORD). Solo en desarrollo, sin rol de celda, se les puede dar

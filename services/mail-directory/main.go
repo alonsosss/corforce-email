@@ -116,6 +116,7 @@ func main() {
 		Sieve:               postgres.NewSieveRepo(ctxPool),
 		Vacation:            postgres.NewVacationRepo(ctxPool),
 		Signatures:          postgres.NewSignatureRepo(ctxPool),
+		Assistant:           postgres.NewAssistantSettingsRepo(ctxPool),
 		Filters:             postgres.NewFilterRepo(ctxPool),
 		Scheduled:           postgres.NewScheduledSendRepo(ctxPool),
 		Reminders:           postgres.NewReminderRepo(ctxPool),

@@ -120,6 +120,7 @@ export const endpoints = {
   },
   mailDirectory: {
     meta: `${API_PREFIX}/mail-directory/meta`,
+    assistant: `${API_PREFIX}/mail-directory/assistant`,
   },
   mailDomains: {
     ...collectionOf('/mail-domains'),
@@ -369,5 +370,10 @@ export const endpoints = {
     quickReply: (id: string) => `${API_PREFIX}/webmail/quick-replies/${seg(id)}`,
     largeFiles: `${API_PREFIX}/webmail/large-files`,
     largeFile: (id: string) => `${API_PREFIX}/webmail/large-files/${seg(id)}`,
+    assistant: `${API_PREFIX}/webmail/assistant`,
+    assistantSummarize: `${API_PREFIX}/webmail/assistant/summarize`,
+    assistantReply: `${API_PREFIX}/webmail/assistant/reply`,
+    assistantTone: `${API_PREFIX}/webmail/assistant/tone`,
+    assistantExtract: `${API_PREFIX}/webmail/assistant/extract`,
   },
 } as const;
