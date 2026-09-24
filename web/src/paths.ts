@@ -43,6 +43,10 @@ export const paths = {
   webmailScheduled: '/webmail/scheduled',
   webmailContacts: '/webmail/contacts',
   webmailCalendar: '/webmail/calendar',
+  /** Pagina publica de citas de un buzon: fuera de las dos sesiones (plataforma y webmail). */
+  publicBookingPattern: '/citas/:cell/:tenant/:page',
+  publicBooking: (cell: string, tenant: string, page: string) =>
+    `/citas/${encodeURIComponent(cell)}/${encodeURIComponent(tenant)}/${encodeURIComponent(page)}`,
 
   home: '/',
   login: '/login',

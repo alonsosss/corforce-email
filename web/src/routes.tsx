@@ -322,6 +322,11 @@ export const WEBMAIL_ROUTE = `${paths.webmail}/*`;
 export function createAppRouter() {
   return createBrowserRouter([
     { path: WEBMAIL_ROUTE, element: lazyElement(() => import('@/pages/webmail/WebmailApp')) },
+    // Pagina publica de citas: sin ninguna de las dos sesiones.
+    {
+      path: paths.publicBookingPattern,
+      element: lazyElement(() => import('@/pages/booking/PublicBookingPage')),
+    },
     {
       element: <PlatformSession />,
       children: [

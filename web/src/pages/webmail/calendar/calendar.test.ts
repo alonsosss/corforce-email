@@ -8,10 +8,15 @@ import {
   formToInput,
   groupByDay,
   mergeOccurrences,
+  instantInZone,
   newEventForm,
   occurrenceDays,
+  occurrenceToForm,
+  overlapping,
   splitWindow,
+  timeZoneOptions,
   visibleRange,
+  wallInZone,
 } from './calendar';
 
 describe('ventana visible del calendario', () => {
@@ -41,6 +46,7 @@ describe('ventana visible del calendario', () => {
       title: '',
       location: '',
       recurring: false,
+      recurrence_id: '2026-09-01T10:00:00Z',
     };
     expect(mergeOccurrences([[o], [o]])).toHaveLength(1);
   });
@@ -66,6 +72,7 @@ describe('dias que ocupa una ocurrencia', () => {
         title: 'B',
         location: '',
         recurring: false,
+        recurrence_id: '2026-10-01T10:00:00Z',
       },
       {
         id: 'a',
@@ -75,6 +82,7 @@ describe('dias que ocupa una ocurrencia', () => {
         title: 'A',
         location: '',
         recurring: false,
+        recurrence_id: '2026-10-01T00:00:00Z',
       },
     ]);
     const key = dayKey(new Date('2026-10-01T10:00:00Z'));
@@ -140,5 +148,90 @@ describe('formulario del evento', () => {
       interval: t('webmail.calendar.intervalInvalid'),
       until: t('webmail.calendar.untilInvalid'),
     });
+  });
+});
+
+describe('zona horaria del evento', () => {
+  it('convierte la hora de pared de una zona a un instante a ambos lados del cambio de hora', () => {
+    // Madrid: +02:00 en verano, +01:00 desde el 25 de octubre de 2026.
+    expect(instantInZone('2026-10-19', '10:00', 'Europe/Madrid')?.toISOString()).toBe(
+      '2026-10-19T08:00:00.000Z',
+    );
+    expect(instantInZone('2026-10-26', '10:00', 'Europe/Madrid')?.toISOString()).toBe(
+      '2026-10-26T09:00:00.000Z',
+    );
+    expect(instantInZone('2026-10-01', '09:30', 'America/Lima')?.toISOString()).toBe(
+      '2026-10-01T14:30:00.000Z',
+    );
+    expect(wallInZone(new Date('2026-10-26T09:00:00Z'), 'Europe/Madrid')).toEqual({
+      date: '2026-10-26',
+      time: '10:00',
+    });
+    expect(instantInZone('2026-10-01', '25:00', 'UTC')).toBeNull();
+  });
+
+  it('el formulario se lee y se escribe en la zona del evento, no en la del navegador', () => {
+    const event: CalendarEvent = {
+      id: 'e',
+      etag: '"1"',
+      title: 'Comite',
+      start: '2026-10-19T08:00:00Z',
+      end: '2026-10-19T09:00:00Z',
+      all_day: false,
+      timezone: 'Europe/Madrid',
+      location: '',
+      description: '',
+      recurrence: null,
+      reminder_minutes: null,
+      attendees: [{ email: 'bea@empresa.pe', name: 'Bea', partstat: 'ACCEPTED' }],
+      organizer: { email: 'ana@empresa.pe', name: 'Ana' },
+    };
+    const form = eventToForm(event);
+    expect(form).toMatchObject({
+      startDate: '2026-10-19',
+      startTime: '10:00',
+      timezone: 'Europe/Madrid',
+    });
+    const input = formToInput({ ...form, attendees: ['bea@empresa.pe', 'carlos@empresa.pe'] });
+    expect(input.start).toBe('2026-10-19T08:00:00.000Z');
+    expect(input.timezone).toBe('Europe/Madrid');
+    // El invitado que ya respondio conserva su respuesta; el nuevo queda pendiente.
+    expect(input.attendees).toEqual([
+      { email: 'bea@empresa.pe', name: 'Bea', partstat: 'ACCEPTED' },
+      { email: 'carlos@empresa.pe', name: '', partstat: 'NEEDS-ACTION' },
+    ]);
+    expect(formToInput({ ...form, allDay: true }).timezone).toBe('');
+
+    const one = occurrenceToForm(
+      {
+        ...event,
+        recurrence: { freq: 'weekly', interval: 1, count: null, until: null, by_day: null },
+      },
+      {
+        start: '2026-10-26T09:00:00Z',
+        end: '2026-10-26T10:00:00Z',
+        title: 'Comite (movido)',
+        location: 'Sala 3',
+      },
+    );
+    expect(one).toMatchObject({
+      startDate: '2026-10-26',
+      startTime: '10:00',
+      title: 'Comite (movido)',
+      location: 'Sala 3',
+      repeat: '',
+    });
+  });
+
+  it('ofrece la zona actual aunque el navegador no la liste y detecta choques de ocupacion', () => {
+    expect(timeZoneOptions('Etc/GMT+5')).toContain('Etc/GMT+5');
+    expect(timeZoneOptions('')).toContain('UTC');
+    const busy = [{ start: '2026-10-01T10:00:00Z', end: '2026-10-01T11:00:00Z' }];
+    expect(
+      overlapping(busy, new Date('2026-10-01T10:30:00Z'), new Date('2026-10-01T12:00:00Z')),
+    ).toHaveLength(1);
+    expect(
+      overlapping(busy, new Date('2026-10-01T11:00:00Z'), new Date('2026-10-01T12:00:00Z')),
+    ).toHaveLength(0);
   });
 });

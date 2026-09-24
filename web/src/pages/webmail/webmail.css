@@ -1049,6 +1049,97 @@ a.cf-wm-message:hover {
   padding: 1px var(--cf-space-1);
   font-size: var(--cf-text-xs);
 }
+.cf-wm-availability,
+.cf-wm-invitation {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cf-space-2);
+  padding: var(--cf-space-3);
+  border: 1px solid var(--cf-border);
+  border-radius: var(--cf-radius-md);
+  background: var(--cf-surface-muted);
+}
+.cf-wm-invitation {
+  margin: var(--cf-space-3) 0;
+  border-left: 3px solid var(--cf-accent);
+}
+.cf-wm-availability__title,
+.cf-wm-invitation__head {
+  display: flex;
+  align-items: center;
+  gap: var(--cf-space-2);
+  margin: 0;
+  font-size: var(--cf-text-sm);
+}
+.cf-wm-invitation__title {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.cf-wm-availability__list,
+.cf-wm-attendees {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cf-space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.cf-wm-availability__item,
+.cf-wm-attendees__item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--cf-space-2);
+  font-size: var(--cf-text-sm);
+}
+.cf-wm-availability__address {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.cf-wm-availability__busy {
+  color: var(--cf-text-secondary);
+}
+.cf-wm-invitation__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--cf-space-2);
+}
+.cf-wm-invitation__link {
+  align-self: flex-start;
+  font-size: var(--cf-text-sm);
+  color: var(--cf-link);
+}
+.cf-wm-booking__day {
+  display: grid;
+  grid-template-columns: 8rem minmax(0, 1fr);
+  gap: var(--cf-space-2);
+  align-items: start;
+  padding: var(--cf-space-2) 0;
+  border-bottom: 1px solid var(--cf-border);
+}
+.cf-wm-booking__windows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cf-space-2);
+}
+.cf-wm-booking__window {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--cf-space-2);
+}
+.cf-wm-booking__link {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--cf-space-2);
+  overflow-wrap: anywhere;
+}
+@media (max-width: 720px) {
+  .cf-wm-booking__day {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
 .cf-wm-event__time {
   color: var(--cf-text-secondary);
   white-space: nowrap;

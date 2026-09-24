@@ -7,13 +7,17 @@ import {
   WEEKDAYS,
   webmailApi,
   type CalendarEvent,
+  type InvitationDelivery,
+  type Occurrence,
   type Weekday,
 } from '@/api/webmail';
 import { useQuery } from '@/hooks/useQuery';
 import {
   Alert,
+  Badge,
   Button,
   Checkbox,
+  ChipsInput,
   ConfirmDialog,
   ErrorState,
   FormField,
@@ -23,15 +27,24 @@ import {
   Skeleton,
   Textarea,
   useToast,
+  type BadgeTone,
 } from '@/design/components';
 import { IconTrash } from '@/design/icons';
-import { t } from '@/i18n';
+import { hasMessage, t } from '@/i18n';
+import { useWebmailStore } from '@/webmail/store';
+import { normalizeRecipient } from '../compose';
+import { useRecipientSuggestions } from '../recipients';
+import { AvailabilityPanel } from './AvailabilityPanel';
 import {
   EVENT_API_FIELDS,
   eventProblems,
   eventToForm,
   formToInput,
+  formZone,
+  instantInZone,
   newEventForm,
+  occurrenceToForm,
+  timeZoneOptions,
   weekdayOf,
   type EventField,
   type EventForm,
@@ -40,23 +53,25 @@ import {
 // Recordatorios habituales, en minutos antes del inicio.
 const REMINDER_OPTIONS = [0, 5, 15, 30, 60, 1440] as const;
 
+type Scope = 'one' | 'series';
+
+const PARTSTAT_TONES: Record<string, BadgeTone> = {
+  ACCEPTED: 'success',
+  TENTATIVE: 'warning',
+  DECLINED: 'danger',
+};
+
 export interface EventDialogProps {
   /** Evento que se edita; sin el se crea uno en `day`. */
   eventId?: string;
-  /** La ocurrencia pertenece a una serie: los cambios se aplican a toda ella. */
-  recurring?: boolean;
+  /** Aparicion desde la que se abrio: si es de una serie, se puede cambiar solo ella. */
+  occurrence?: Occurrence;
   day: Date;
   onClose: () => void;
   onChanged: () => void;
 }
 
-export function EventDialog({
-  eventId,
-  recurring = false,
-  day,
-  onClose,
-  onChanged,
-}: EventDialogProps) {
+export function EventDialog({ eventId, occurrence, day, onClose, onChanged }: EventDialogProps) {
   const loaded = useQuery(
     (signal) => (eventId ? webmailApi.calendarEvent(eventId, signal) : Promise.resolve(null)),
     [eventId],
@@ -77,7 +92,7 @@ export function EventDialog({
     <EventFormDialog
       key={loaded.data?.etag ?? 'nuevo'}
       event={loaded.data}
-      recurring={recurring}
+      occurrence={occurrence}
       day={day}
       onClose={onClose}
       onChanged={onChanged}
@@ -86,35 +101,65 @@ export function EventDialog({
   );
 }
 
+function sameAddress(a: string, b: string): boolean {
+  return a.trim().toLowerCase() === b.trim().toLowerCase();
+}
+
 function EventFormDialog({
   event,
-  recurring,
+  occurrence,
   day,
   onClose,
   onChanged,
   onReload,
 }: {
   event: CalendarEvent | null;
-  recurring: boolean;
+  occurrence: Occurrence | undefined;
   day: Date;
   onClose: () => void;
   onChanged: () => void;
   onReload: () => void;
 }) {
   const toast = useToast();
-  const [form, setForm] = useState<EventForm>(() =>
+  const username = useWebmailStore((s) => s.session?.username ?? '');
+  const single = Boolean(event && occurrence?.recurring && occurrence.recurrence_id);
+  const [scope, setScope] = useState<Scope>(single ? 'one' : 'series');
+  const [seriesForm, setSeriesForm] = useState<EventForm>(() =>
     event ? eventToForm(event) : newEventForm(day),
+  );
+  const [oneForm, setOneForm] = useState<EventForm | null>(() =>
+    event && occurrence && single ? occurrenceToForm(event, occurrence) : null,
   );
   const [problems, setProblems] = useState<Partial<Record<EventField, string>>>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const [conflict, setConflict] = useState(false);
   const [removing, setRemoving] = useState(false);
-  const series = Boolean(event?.recurrence) || recurring;
+  const [notify, setNotify] = useState(true);
+  const [attendeeQuery, setAttendeeQuery] = useState('');
+  const suggestions = useRecipientSuggestions(attendeeQuery);
+
+  const onlyThis = scope === 'one' && oneForm !== null;
+  const form = onlyThis && oneForm ? oneForm : seriesForm;
+  const series = Boolean(event?.recurrence) || Boolean(occurrence?.recurring);
+  // La copia de una reunion que organiza otro: sus invitados no se cambian desde aqui.
+  const organizedByOther = Boolean(
+    event?.organizer && !sameAddress(event.organizer.email, username),
+  );
+  const canInvite = !organizedByOther && !onlyThis;
+  const invites = form.attendees.length > 0 && !organizedByOther;
 
   const update = (patch: Partial<EventForm>) => {
-    setForm((current) => ({ ...current, ...patch }));
+    if (onlyThis) setOneForm((current) => (current ? { ...current, ...patch } : current));
+    else setSeriesForm((current) => ({ ...current, ...patch }));
     setProblems({});
+  };
+
+  const report = (delivery: InvitationDelivery | null | undefined) => {
+    if (!delivery || delivery.recipients === 0) return;
+    if (delivery.sent)
+      toast.success(t('webmail.calendar.invitationsSent', { n: delivery.recipients }));
+    else toast.error(t('webmail.calendar.invitationsFailed'));
   };
 
   const submit = async () => {
@@ -125,9 +170,20 @@ function EventFormDialog({
     setError(null);
     try {
       const input = formToInput(form);
-      if (event) await webmailApi.updateCalendarEvent(event.id, input, event.etag);
-      else await webmailApi.createCalendarEvent(input);
+      const saved =
+        event && onlyThis && occurrence
+          ? await webmailApi.updateCalendarOccurrence(
+              event.id,
+              occurrence.recurrence_id,
+              input,
+              event.etag,
+              notify,
+            )
+          : event
+            ? await webmailApi.updateCalendarEvent(event.id, input, event.etag, notify)
+            : await webmailApi.createCalendarEvent(input, notify);
       toast.success(t(event ? 'webmail.calendar.updated' : 'webmail.calendar.created'));
+      report(saved.invitations);
       onChanged();
       onClose();
     } catch (err) {
@@ -151,6 +207,19 @@ function EventFormDialog({
 
   const startDay = new Date(`${form.startDate}T00:00:00`);
   const weekdayLabel = (weekday: Weekday) => t(`webmail.calendar.weekday.${weekday}`);
+  const zone = formZone(form);
+  const zoneOptions = timeZoneOptions(form.timezone);
+  const slotStart = form.allDay ? null : instantInZone(form.startDate, form.startTime, zone);
+  const slotEnd = form.allDay ? null : instantInZone(form.endDate, form.endTime, zone);
+  const deleteKey = onlyThis
+    ? 'webmail.calendar.deleteOne'
+    : series
+      ? 'webmail.calendar.deleteSeries'
+      : 'webmail.calendar.delete';
+  const partstatLabel = (value: string) => {
+    const key = `webmail.calendar.partstat.${value}`;
+    return hasMessage(key) ? t(key) : value;
+  };
 
   return (
     <>
@@ -168,7 +237,7 @@ function EventFormDialog({
                 disabled={busy}
                 onClick={() => setRemoving(true)}
               >
-                {t(series ? 'webmail.calendar.deleteSeries' : 'webmail.calendar.delete')}
+                {t(deleteKey)}
               </Button>
             ) : null}
             <span className="cf-wm-reader__spacer" />
@@ -194,7 +263,31 @@ function EventFormDialog({
             void submit();
           }}
         >
-          {series ? <Alert tone="info">{t('webmail.calendar.seriesNote')}</Alert> : null}
+          {single ? (
+            <FormField label={t('webmail.calendar.scope')} htmlFor="wm-event-scope">
+              <Select
+                id="wm-event-scope"
+                value={scope}
+                options={[
+                  { value: 'one', label: t('webmail.calendar.scope.one') },
+                  { value: 'series', label: t('webmail.calendar.scope.series') },
+                ]}
+                onChange={(e) => {
+                  setScope(e.target.value === 'series' ? 'series' : 'one');
+                  setProblems({});
+                }}
+              />
+            </FormField>
+          ) : series ? (
+            <Alert tone="info">{t('webmail.calendar.seriesNote')}</Alert>
+          ) : null}
+          {organizedByOther && event?.organizer ? (
+            <Alert tone="info">
+              {t('webmail.calendar.organizedBy', {
+                organizer: event.organizer.name || event.organizer.email,
+              })}
+            </Alert>
+          ) : null}
           {conflict ? (
             <Alert tone="warning" title={t('webmail.contacts.conflictTitle')}>
               <p>{t('webmail.calendar.conflict')}</p>
@@ -216,11 +309,13 @@ function EventFormDialog({
               onChange={(e) => update({ title: e.target.value })}
             />
           </FormField>
-          <Checkbox
-            label={t('webmail.calendar.allDay')}
-            checked={form.allDay}
-            onChange={(e) => update({ allDay: e.target.checked })}
-          />
+          {onlyThis ? null : (
+            <Checkbox
+              label={t('webmail.calendar.allDay')}
+              checked={form.allDay}
+              onChange={(e) => update({ allDay: e.target.checked })}
+            />
+          )}
           <div className="cf-form__row">
             <FormField
               label={t('webmail.calendar.start')}
@@ -269,6 +364,28 @@ function EventFormDialog({
               </div>
             </FormField>
           </div>
+          {form.allDay || onlyThis ? null : (
+            <FormField
+              label={t('webmail.calendar.timezone')}
+              htmlFor="wm-event-timezone"
+              hint={t('webmail.calendar.timezoneHint')}
+            >
+              <Select
+                id="wm-event-timezone"
+                value={form.timezone}
+                options={[
+                  ...(form.timezone === ''
+                    ? [{ value: '', label: t('webmail.calendar.timezone.keep', { zone }) }]
+                    : []),
+                  ...zoneOptions.map((z) => ({ value: z, label: z })),
+                ]}
+                onChange={(e) => {
+                  // Cambiar de zona conserva la hora de pared escrita: 10:00 sigue siendo 10:00 en la nueva.
+                  update({ timezone: e.target.value });
+                }}
+              />
+            </FormField>
+          )}
           <FormField
             label={t('webmail.calendar.location')}
             htmlFor="wm-event-location"
@@ -292,47 +409,98 @@ function EventFormDialog({
               onChange={(e) => update({ description: e.target.value })}
             />
           </FormField>
-          <div className="cf-form__row">
-            <FormField label={t('webmail.calendar.repeat')} htmlFor="wm-event-repeat">
-              <Select
-                id="wm-event-repeat"
-                value={form.repeat}
-                options={[
-                  { value: '', label: t('webmail.calendar.repeat.none') },
-                  ...RECURRENCE_FREQUENCIES.map((freq) => ({
-                    value: freq,
-                    label: t(`webmail.calendar.repeat.${freq}`),
-                  })),
-                ]}
-                onChange={(e) =>
-                  update({
-                    repeat: RECURRENCE_FREQUENCIES.find((f) => f === e.target.value) ?? '',
-                    byDay:
-                      e.target.value === 'weekly' &&
-                      form.byDay.length === 0 &&
-                      !Number.isNaN(startDay.getTime())
-                        ? [weekdayOf(startDay)]
-                        : form.byDay,
-                  })
+          {canInvite ? (
+            <FormField
+              label={t('webmail.calendar.attendees')}
+              htmlFor="wm-event-attendees"
+              hint={t('webmail.calendar.attendeesHint')}
+            >
+              <ChipsInput
+                id="wm-event-attendees"
+                values={form.attendees}
+                onChange={(attendees) => update({ attendees })}
+                normalize={normalizeRecipient}
+                removeLabel={(value) => t('webmail.calendar.attendeeRemove', { address: value })}
+                rejectedLabel={(rejected) =>
+                  t('webmail.calendar.attendeeRejected', { addresses: rejected.join(', ') })
                 }
+                suggestions={suggestions}
+                onQueryChange={setAttendeeQuery}
+                suggestionsLabel={t('webmail.suggest.label')}
               />
             </FormField>
-            <FormField label={t('webmail.calendar.reminder')} htmlFor="wm-event-reminder">
-              <Select
-                id="wm-event-reminder"
-                value={form.reminder}
-                options={[
-                  { value: '', label: t('webmail.calendar.reminder.none') },
-                  ...REMINDER_OPTIONS.map((minutes) => ({
-                    value: String(minutes),
-                    label: t(`webmail.calendar.reminder.${minutes}`),
-                  })),
-                ]}
-                onChange={(e) => update({ reminder: e.target.value })}
-              />
-            </FormField>
-          </div>
-          {form.repeat ? (
+          ) : null}
+          {event && event.attendees.length ? (
+            <ul className="cf-wm-attendees" aria-label={t('webmail.calendar.responses')}>
+              {event.attendees.map((a) => (
+                <li key={a.email} className="cf-wm-attendees__item">
+                  <span>{a.name ? `${a.name} <${a.email}>` : a.email}</span>
+                  <Badge tone={PARTSTAT_TONES[a.partstat] ?? 'neutral'}>
+                    {partstatLabel(a.partstat)}
+                  </Badge>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          {invites && !form.allDay && canInvite ? (
+            <AvailabilityPanel
+              attendees={form.attendees}
+              date={form.startDate}
+              zone={zone}
+              start={slotStart}
+              end={slotEnd}
+            />
+          ) : null}
+          {invites ? (
+            <Checkbox
+              label={t('webmail.calendar.notify')}
+              checked={notify}
+              onChange={(e) => setNotify(e.target.checked)}
+            />
+          ) : null}
+          {onlyThis ? null : (
+            <div className="cf-form__row">
+              <FormField label={t('webmail.calendar.repeat')} htmlFor="wm-event-repeat">
+                <Select
+                  id="wm-event-repeat"
+                  value={form.repeat}
+                  options={[
+                    { value: '', label: t('webmail.calendar.repeat.none') },
+                    ...RECURRENCE_FREQUENCIES.map((freq) => ({
+                      value: freq,
+                      label: t(`webmail.calendar.repeat.${freq}`),
+                    })),
+                  ]}
+                  onChange={(e) =>
+                    update({
+                      repeat: RECURRENCE_FREQUENCIES.find((f) => f === e.target.value) ?? '',
+                      byDay:
+                        e.target.value === 'weekly' &&
+                        form.byDay.length === 0 &&
+                        !Number.isNaN(startDay.getTime())
+                          ? [weekdayOf(startDay)]
+                          : form.byDay,
+                    })
+                  }
+                />
+              </FormField>
+              <FormField label={t('webmail.calendar.reminder')} htmlFor="wm-event-reminder">
+                <Select
+                  id="wm-event-reminder"
+                  value={form.reminder}
+                  options={[
+                    { value: '', label: t('webmail.calendar.reminder.none') },
+                    ...REMINDER_OPTIONS.map((minutes) => ({
+                      value: String(minutes),
+                      label: t(`webmail.calendar.reminder.${minutes}`),
+                    })),
+                  ]}
+                  onChange={(e) => update({ reminder: e.target.value })}
+                />
+              </FormField>
+            </div>
+          )}
+          {form.repeat && !onlyThis ? (
             <fieldset className="cf-wm-fieldset">
               <legend className="cf-field__label">{t('webmail.calendar.recurrence')}</legend>
               <FormField
@@ -427,19 +595,31 @@ function EventFormDialog({
       </Modal>
       <ConfirmDialog
         open={removing}
-        title={t(series ? 'webmail.calendar.deleteSeries' : 'webmail.calendar.delete')}
+        title={t(deleteKey)}
         message={t(
-          series ? 'webmail.calendar.deleteSeriesConfirm' : 'webmail.calendar.deleteConfirm',
-          {
-            title: event?.title ?? '',
-          },
+          onlyThis
+            ? 'webmail.calendar.deleteOneConfirm'
+            : series
+              ? 'webmail.calendar.deleteSeriesConfirm'
+              : 'webmail.calendar.deleteConfirm',
+          { title: event?.title ?? '' },
         )}
         confirmLabel={t('common.delete')}
         danger
         onCancel={() => setRemoving(false)}
         onConfirm={async () => {
           if (!event) return;
-          await webmailApi.deleteCalendarEvent(event.id);
+          if (onlyThis && occurrence) {
+            const saved = await webmailApi.deleteCalendarOccurrence(
+              event.id,
+              occurrence.recurrence_id,
+              event.etag,
+              notify,
+            );
+            report(saved.invitations);
+          } else {
+            report(await webmailApi.deleteCalendarEvent(event.id, notify));
+          }
           toast.success(t('webmail.calendar.deleted'));
           onChanged();
           onClose();

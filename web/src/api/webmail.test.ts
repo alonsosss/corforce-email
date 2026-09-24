@@ -620,6 +620,35 @@ describe('webmail competitivo: contrato del API', () => {
     expect(url.searchParams.get('start')).toBe('2026-09-01T00:00:00.000Z');
   });
 
+  it('planificacion: invitaciones sin notificar, apariciones, disponibilidad y respuestas', async () => {
+    const calls = mockFetch((call) => {
+      if (call.init.method === 'DELETE' && call.url.includes('/occurrences/')) {
+        return json(200, { data: { id: 'e1', invitations: null } });
+      }
+      if (call.init.method === 'DELETE') return new Response(null, { status: 204 });
+      return json(200, { data: [] });
+    });
+    expect(await webmailApi.deleteCalendarEvent('e1', false)).toBeNull();
+    expect(new URL(calls[0]?.url ?? '', 'http://x').searchParams.get('notify')).toBe('false');
+    await webmailApi.deleteCalendarOccurrence('e1', '2026-10-02T15:00:00Z', '"v1"');
+    expect(new URL(calls[1]?.url ?? '', 'http://x').pathname).toBe(
+      endpoints.webmail.calendarOccurrence('e1', '2026-10-02T15:00:00Z'),
+    );
+    expect(new URL(calls[1]?.url ?? '', 'http://x').searchParams.get('notify')).toBeNull();
+    expect((calls[1]?.init.headers as Record<string, string>)['If-Match']).toBe('"v1"');
+    await webmailApi.availability(
+      ['a@x.pe', 'b@x.pe'],
+      '2026-10-01T00:00:00Z',
+      '2026-10-02T00:00:00Z',
+    );
+    const availability = new URL(calls[2]?.url ?? '', 'http://x');
+    expect(availability.pathname).toBe(endpoints.webmail.availability);
+    expect(availability.searchParams.get('addresses')).toBe('a@x.pe,b@x.pe');
+    await webmailApi.respondInvitation('Clientes/2026', 7, 'TENTATIVE');
+    expect(calls[3]?.url).toContain('/webmail/invitations/Clientes%2F2026/7/respond');
+    expect(JSON.parse(String(calls[3]?.init.body))).toEqual({ response: 'TENTATIVE' });
+  });
+
   it('cambia la contrasena con la actual y la nueva; 204 sin cuerpo', async () => {
     const calls = mockFetch(() => new Response(null, { status: 204 }));
     await webmailApi.changePassword('vieja', 'nueva-segura');
