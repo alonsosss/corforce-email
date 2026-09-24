@@ -227,6 +227,8 @@ export E2E_PORT_MAIL_SECURITY=${PORT[mail-security]} E2E_PORT_WEBMAIL=${PORT[web
 # mail-migration corre en el host; mail-auth le pregunta desde la red de los motores si una credencial de
 # destino de un trabajo sigue viva.
 export E2E_PORT_MAIL_MIGRATION=${PORT[mail-migration]}
+# mail-dav corre en el host; el webmail (contenedor) le pide contactos y eventos por la pasarela de docker.
+export E2E_PORT_MAIL_DAV=${PORT[mail-dav]}
 # organization corre en el host; mail-directory y mail-security le preguntan desde la red de
 # los motores si cada empresa es de su celda.
 export E2E_PORT_ORGANIZATION=${PORT[organization]}
@@ -1312,6 +1314,160 @@ expect "y su sesion del webmail ya no sirve el buzon" "$WM_CODE" "401"
 BEA_PASS="$BEA_OTRA"
 esperar "y bea entra por IMAP con la nueva" 20 login_aceptado bea@acme.test "$BEA_PASS"
 expect "mail-security sin fallos de revocacion" "$(revocaciones fallos)" "0"
+
+echo "== Webmail completo: carpetas, lote, spam, firma, reglas, reenvio, programado, contactos, calendario y contrasena"
+# docs/Plan_Webmail_Competitivo.md: todo por el gateway, contra Dovecot, Postfix, Rspamd y mail-dav reales.
+TARRO_ANA2="$WORK/ana2.cookies"; TARRO_BEA2="$WORK/bea2.cookies"
+wm "$TARRO_ANA2" POST /session -H 'Content-Type: application/json' -d "{\"username\":\"ana@acme.test\",\"password\":\"$ANA_PASS\"}"
+expect "ana vuelve a entrar al webmail" "$WM_CODE" "200"
+wm "$TARRO_BEA2" POST /session -H 'Content-Type: application/json' -d "{\"username\":\"bea@acme.test\",\"password\":\"$BEA_PASS\"}"
+expect "bea vuelve a entrar al webmail" "$WM_CODE" "200"
+wm "$TARRO_ANA2" GET /meta
+expect "/meta sirve el tope del lote y los dias de programado" "$WM_CODE/$(echo "$WM_BODY" | jget data.limits.max_batch_uids)/$(echo "$WM_BODY" | jget data.limits.max_scheduled_days)" "200/500/365"
+contains "y el papel scheduled" "$WM_BODY" '"scheduled"'
+
+# Carpetas propias.
+CARPETA="Clientes-$(rand_hex 3)"
+wm "$TARRO_ANA2" POST /folders -H 'Content-Type: application/json' -d "{\"name\":\"$CARPETA\"}"
+expect "ana crea una carpeta propia en Dovecot" "$WM_CODE/$(echo "$WM_BODY" | jget data.name)" "201/$CARPETA"
+wm "$TARRO_ANA2" POST /folders -H 'Content-Type: application/json' -d "{\"name\":\"$CARPETA\"}"
+expect "la misma otra vez es FOLDER_EXISTS" "$WM_CODE/$(echo "$WM_BODY" | jget error.code)" "409/FOLDER_EXISTS"
+wm "$TARRO_ANA2" POST /folders -H 'Content-Type: application/json' -d "{\"name\":\"$CARPETA/2026\"}"
+expect "y una subcarpeta" "$WM_CODE" "201"
+wm "$TARRO_ANA2" DELETE "/folders/$CARPETA"
+expect "una carpeta con subcarpetas no se borra" "$WM_CODE/$(echo "$WM_BODY" | jget error.code)" "409/FOLDER_HAS_CHILDREN"
+wm "$TARRO_ANA2" DELETE /folders/INBOX
+expect "INBOX esta protegida" "$WM_CODE/$(echo "$WM_BODY" | jget error.code)" "409/FOLDER_PROTECTED"
+wm "$TARRO_ANA2" PATCH "/folders/$CARPETA%2F2026" -H 'Content-Type: application/json' -d "{\"name\":\"$CARPETA/2027\"}"
+expect "renombrar la subcarpeta" "$WM_CODE" "200"
+wm "$TARRO_ANA2" DELETE "/folders/$CARPETA%2F2027"
+expect "borrar la subcarpeta" "$WM_CODE" "204"
+wm "$TARRO_ANA2" DELETE "/folders/$CARPETA"
+expect "y despues la carpeta" "$WM_CODE" "204"
+
+# Lote y spam: dos mensajes a bea, marcados y movidos a Junk de una vez; imapsieve se lo ensena a Rspamd.
+for n in 1 2; do enviar_wm ana@acme.test "$TOKEN-lote-$n" -H "Idempotency-Key: $(rand_hex 16)"; done
+contains "bea recibe los dos del lote" "$(cliente buscar bea@acme.test "$BEA_PASS" "$TOKEN-lote-2")" "OK 1"
+wm "$TARRO_BEA2" GET "/folders/INBOX/messages?subject=$TOKEN-lote"
+UIDS=$(echo "$WM_BODY" | python3 -c 'import json, sys; print(",".join(str(m["uid"]) for m in json.load(sys.stdin)["data"]))' 2>/dev/null)
+expect "la busqueda por asunto encuentra justo los dos" "$(tr ',' '\n' <<<"$UIDS" | grep -c .)" "2"
+wm "$TARRO_BEA2" POST /folders/INBOX/messages/batch -H 'Content-Type: application/json' -d "{\"uids\":[$UIDS],\"action\":\"flags\",\"add\":[\"\\\\Seen\",\"\\\\Flagged\"]}"
+expect "el lote los marca leidos y destacados" "$WM_CODE/$(echo "$WM_BODY" | jget data.affected)" "200/2"
+wm "$TARRO_BEA2" GET "/folders/INBOX/messages?subject=$TOKEN-lote&flagged=true"
+expect "y la busqueda de destacados los ve" "$(echo "$WM_BODY" | python3 -c 'import json, sys; print(len(json.load(sys.stdin)["data"]))')" "2"
+APRENDIDOS_ANTES=$(docker logs "$(c rspamd-mail)" 2>&1 | grep -ci 'learn')
+wm "$TARRO_BEA2" GET /folders
+SPAM=$(echo "$WM_BODY" | python3 -c 'import json, sys; print(next((f["name"] for f in json.load(sys.stdin)["data"] if f["role"] == "junk"), ""))' 2>/dev/null)
+PAPELERA=$(echo "$WM_BODY" | python3 -c 'import json, sys; print(next((f["name"] for f in json.load(sys.stdin)["data"] if f["role"] == "trash"), ""))' 2>/dev/null)
+wm "$TARRO_BEA2" POST /folders/INBOX/messages/batch -H 'Content-Type: application/json' -d "{\"uids\":[$UIDS],\"action\":\"move\",\"to\":\"$SPAM\"}"
+expect "marcar como spam mueve los dos a $SPAM" "$WM_CODE/$(echo "$WM_BODY" | jget data.affected)" "200/2"
+aprendido() { (( $(docker logs "$(c rspamd-mail)" 2>&1 | grep -ci 'learn') > APRENDIDOS_ANTES )); }
+esperar "y Rspamd recibe el aprendizaje de imapsieve aunque entra el usuario maestro" 20 aprendido
+wm "$TARRO_BEA2" POST "/folders/$SPAM/empty"
+expect "vaciar Spam los borra para siempre" "$WM_CODE/$(echo "$WM_BODY" | jget data.removed)" "200/2"
+wm "$TARRO_BEA2" POST "/folders/INBOX/empty"
+expect "INBOX no se vacia de golpe" "$WM_CODE/$(echo "$WM_BODY" | jget error.code)" "409/FOLDER_NOT_EMPTIABLE"
+wm "$TARRO_BEA2" GET "/folders/INBOX/messages?subject=$TOKEN-webmail-ventas"
+UID_ORIG=$(echo "$WM_BODY" | jget data.0.uid)
+ORIG=$(curl -s -b "$TARRO_BEA2" -H "Origin: $API_ORIGIN" -D "$WORK/raw.hdr" "$WM/folders/INBOX/messages/$UID_ORIG/raw")
+contains "ver original descarga el .eml completo" "$ORIG" "Subject: $TOKEN-webmail-ventas"
+contains "como adjunto message/rfc822" "$(cat "$WORK/raw.hdr")" "message/rfc822"
+
+# Firma.
+wm "$TARRO_ANA2" PUT /signature -H 'Content-Type: application/json' -d '{"enabled":true,"html":"<p>Ana <b>Acme</b><script>x()</script></p>","on_replies":true}'
+expect "ana guarda su firma" "$WM_CODE/$(echo "$WM_BODY" | jget data.enabled)" "200/True"
+lacks "y el webmail la guarda saneada" "$WM_BODY" "<script>"
+contains "con su version en texto" "$(echo "$WM_BODY" | jget data.text)" "Ana"
+
+# Reglas y reenvio: Sieve generado, leido por Dovecot en sieve_before3.
+REGLA="$TOKEN-regla"
+wm "$TARRO_BEA2" PUT /filters -H 'Content-Type: application/json' -d "{\"rules\":[{\"id\":\"\",\"name\":\"A proyectos\",\"enabled\":true,\"match\":\"all\",\"conditions\":[{\"field\":\"subject\",\"op\":\"contains\",\"value\":\"$REGLA\"}],\"actions\":[{\"type\":\"move\",\"folder\":\"Proyectos\"},{\"type\":\"flag\"}],\"stop\":false}],\"forwarding\":{\"enabled\":true,\"addresses\":[\"ana@acme.test\"],\"keep_copy\":true}}"
+expect "bea guarda una regla y un reenvio con copia" "$WM_CODE" "200"
+expect "el script queda en la vista que lee Dovecot, solo para bea" "$(sql mail_cell_pe_01 "SELECT string_agg(username, ',') FROM mail.v_sieve_user WHERE username IN ('ana@acme.test','bea@acme.test')")" "bea@acme.test"
+wm "$TARRO_BEA2" PUT /filters -H 'Content-Type: application/json' -d '{"rules":[],"forwarding":{"enabled":true,"addresses":["bea@acme.test"],"keep_copy":true}}'
+expect "reenviar al propio buzon es un 422 en su campo" "$WM_CODE/$(echo "$WM_BODY" | jget error.details.field)" "422/forwarding.addresses[0]"
+wm "$TARRO_BEA2" PUT /filters -H 'Content-Type: application/json' -d "{\"rules\":[{\"id\":\"\",\"name\":\"A proyectos\",\"enabled\":true,\"match\":\"all\",\"conditions\":[{\"field\":\"subject\",\"op\":\"contains\",\"value\":\"$REGLA\"}],\"actions\":[{\"type\":\"move\",\"folder\":\"Proyectos\"},{\"type\":\"flag\"}],\"stop\":false}],\"forwarding\":{\"enabled\":true,\"addresses\":[\"ana@acme.test\"],\"keep_copy\":true}}"
+enviar_wm ana@acme.test "$REGLA" -H "Idempotency-Key: $(rand_hex 16)"
+expect "ana envia a bea un correo que cumple la regla" "$WM_CODE" "202"
+en_proyectos() { wm "$TARRO_BEA2" GET /folders/Proyectos/messages; [[ "$WM_BODY" == *"$REGLA"* ]]; }
+esperar "Dovecot aplica la regla: el correo acaba en Proyectos (fileinto :create)" 30 en_proyectos
+contains "y destacado por la misma regla" "$WM_BODY" '\\Flagged'
+contains "el reenvio con copia llega a ana" "$(cliente buscar ana@acme.test "$ANA_PASS" "$REGLA")" "OK"
+wm "$TARRO_BEA2" PUT /filters -H 'Content-Type: application/json' -d '{"rules":[],"forwarding":{"enabled":false,"addresses":[],"keep_copy":true}}'
+expect "sin reglas ni reenvio, bea sale de la vista de Dovecot" "$WM_CODE/$(sql mail_cell_pe_01 "SELECT count(*) FROM mail.v_sieve_user WHERE username = 'bea@acme.test'")" "200/0"
+
+# Envio programado: el mensaje espera en Scheduled y el trabajador lo entrega a su hora.
+programar() { # programar <asunto> <segundos>
+  wm "$TARRO_ANA2" POST /send -H "Idempotency-Key: $(rand_hex 16)" -F from=ana@acme.test -F to=bea@acme.test -F "subject=$1" \
+    -F "text=Programado." -F "send_at=$(date -u -d "+$2 seconds" +%Y-%m-%dT%H:%M:%SZ)"
+}
+programar "$TOKEN-programado" 65
+PROG_ID=$(echo "$WM_BODY" | jget data.scheduled.id)
+expect "ana programa un envio para dentro de un minuto" "$WM_CODE/${PROG_ID:+id}" "202/id"
+wm "$TARRO_ANA2" GET /folders/Scheduled/messages
+contains "espera en su carpeta Scheduled" "$WM_BODY" "$TOKEN-programado"
+wm "$TARRO_ANA2" GET /scheduled
+contains "y en la lista de programados" "$WM_BODY" "$PROG_ID"
+expect "la fila durable esta en la celda, pendiente" "$(sql mail_cell_pe_01 "SELECT status FROM mail.scheduled_sends WHERE id = '$PROG_ID'")" "pending"
+lacks "bea todavia no lo tiene" "$(cliente buscar bea@acme.test "$BEA_PASS" "$TOKEN-programado")" "OK 1"
+programar "$TOKEN-cancelado" 600
+CANC_ID=$(echo "$WM_BODY" | jget data.scheduled.id)
+wm "$TARRO_ANA2" DELETE "/scheduled/$CANC_ID"
+expect "cancelar un programado" "$WM_CODE" "204"
+wm "$TARRO_ANA2" GET /folders
+BORRADORES=$(echo "$WM_BODY" | python3 -c 'import json, sys; print(next((f["name"] for f in json.load(sys.stdin)["data"] if f["role"] == "drafts"), ""))' 2>/dev/null)
+wm "$TARRO_ANA2" GET "/folders/$BORRADORES/messages?subject=$TOKEN-cancelado"
+contains "y vuelve a Borradores" "$WM_BODY" "$TOKEN-cancelado"
+enviado() { [[ "$(sql mail_cell_pe_01 "SELECT status FROM mail.scheduled_sends WHERE id = '$PROG_ID'")" == sent ]]; }
+esperar "el trabajador del webmail lo envia a su hora" 120 enviado
+contains "bea lo recibe una vez" "$(cliente buscar bea@acme.test "$BEA_PASS" "$TOKEN-programado" --estable 5)" "OK 1"
+wm "$TARRO_ANA2" GET /folders/Scheduled/messages
+lacks "y ya no esta en Scheduled" "$WM_BODY" "$TOKEN-programado"
+wm "$TARRO_ANA2" GET "/folders/$ENVIADOS/messages?subject=$TOKEN-programado"
+contains "sino en enviados" "$WM_BODY" "$TOKEN-programado"
+
+# Contactos y calendario por el webmail, sobre el mismo almacen que CardDAV y CalDAV.
+wm "$TARRO_ANA2" POST /contacts -H 'Content-Type: application/json' -d '{"name":"Lucia Web","given_name":"Lucia","family_name":"Web","emails":[{"value":"lucia@ejemplo.test","type":"work"}],"phones":[{"value":"+51 999 000 111","type":"mobile"}],"organization":"Acme","title":"","notes":"Linea uno\nlinea dos, con coma; y punto y coma","birthday":""}'
+CONTACTO=$(echo "$WM_BODY" | jget data.id)
+expect "ana crea un contacto desde el webmail" "$WM_CODE/${CONTACTO:+id}" "201/id"
+wm "$TARRO_ANA2" GET "/contacts?q=lucia"
+contains "la busqueda lo encuentra" "$WM_BODY" "lucia@ejemplo.test"
+dav "ana@acme.test:$ANA_PASS" GET "$BOOK/$CONTACTO.vcf"
+expect "CardDAV devuelve la misma tarjeta" "$DAV_CODE" "200"
+contains "como vCard con su correo" "$DAV_BODY" "lucia@ejemplo.test"
+contains "y la nota escapada segun RFC 6350" "$DAV_BODY" 'Linea uno\nlinea dos\, con coma\; y punto y coma'
+wm "$TARRO_ANA2" PUT "/contacts/$CONTACTO" -H 'If-Match: "0000"' -H 'Content-Type: application/json' -d '{"name":"Lucia Cambiada","emails":[{"value":"lucia@ejemplo.test","type":"work"}]}'
+expect "un If-Match viejo es 412" "$WM_CODE/$(echo "$WM_BODY" | jget error.code)" "412/PRECONDITION_FAILED"
+EXPORT=$(curl -s -b "$TARRO_ANA2" -H "Origin: $API_ORIGIN" "$WM/contacts/export")
+contains "exportar devuelve vCard" "$EXPORT" "BEGIN:VCARD"
+DESDE=$(date -u -d 'tomorrow 10:00' +%Y-%m-%dT%H:%M:%SZ); HASTA=$(date -u -d 'tomorrow 11:00' +%Y-%m-%dT%H:%M:%SZ)
+wm "$TARRO_ANA2" POST /calendar/events -H 'Content-Type: application/json' -d "{\"title\":\"Reunion web\",\"start\":\"$DESDE\",\"end\":\"$HASTA\",\"all_day\":false,\"location\":\"Sala 1\",\"description\":\"\",\"recurrence\":{\"freq\":\"weekly\",\"interval\":1,\"count\":3,\"until\":null,\"by_day\":[]},\"reminder_minutes\":15}"
+EVENTO=$(echo "$WM_BODY" | jget data.id)
+expect "ana crea un evento semanal de tres veces" "$WM_CODE/${EVENTO:+id}" "201/id"
+wm "$TARRO_ANA2" GET "/calendar/events?start=$(date -u +%Y-%m-%dT00:00:00Z)&end=$(date -u -d '+30 days' +%Y-%m-%dT00:00:00Z)"
+expect "la ventana de 30 dias trae sus tres apariciones" "$(echo "$WM_BODY" | python3 -c "import json, sys; print(sum(1 for o in json.load(sys.stdin)['data'] if o['id'] == '$EVENTO'))")" "3"
+dav "ana@acme.test:$ANA_PASS" GET "$CAL/$EVENTO.ics"
+expect "CalDAV devuelve el mismo evento" "$DAV_CODE" "200"
+contains "con su regla de repeticion" "$DAV_BODY" "RRULE:FREQ=WEEKLY"
+contains "y su aviso" "$DAV_BODY" "TRIGGER:-PT15M"
+wm "$TARRO_ANA2" DELETE "/calendar/events/$EVENTO"
+expect "borrar el evento" "$WM_CODE" "204"
+wm "$TARRO_ANA2" DELETE "/contacts/$CONTACTO"
+expect "y el contacto" "$WM_CODE" "204"
+
+# Cambiar la contrasena: la actual se comprueba en mail-auth y el cambio revoca las sesiones.
+ANA_NUEVA="Nueva-$(rand_hex 10)"
+wm "$TARRO_ANA2" POST /password -H 'Content-Type: application/json' -d "{\"current_password\":\"no-$ANA_PASS\",\"new_password\":\"$ANA_NUEVA\"}"
+expect "con la contrasena actual mala no cambia nada" "$WM_CODE/$(echo "$WM_BODY" | jget error.code)" "401/INVALID_CREDENTIALS"
+wm "$TARRO_ANA2" POST /password -H 'Content-Type: application/json' -d "{\"current_password\":\"$ANA_PASS\",\"new_password\":\"$ANA_NUEVA\"}"
+expect "ana cambia su contrasena desde el webmail" "$WM_CODE" "204"
+wm "$TARRO_ANA2" GET /folders
+expect "y su sesion queda revocada" "$WM_CODE" "401"
+esperar "IMAP acepta la nueva" 20 login_aceptado ana@acme.test "$ANA_NUEVA"
+wm "$TARRO_ANA2" POST /session -H 'Content-Type: application/json' -d "{\"username\":\"ana@acme.test\",\"password\":\"$ANA_NUEVA\"}"
+wm "$TARRO_ANA2" POST /password -H 'Content-Type: application/json' -d "{\"current_password\":\"$ANA_NUEVA\",\"new_password\":\"$ANA_PASS\"}"
+expect "y vuelve a la anterior para el resto de la prueba" "$WM_CODE" "204"
+esperar "IMAP acepta otra vez la anterior" 20 login_aceptado ana@acme.test "$ANA_PASS"
 
 echo "== Maildir de un buzon borrado: marca de baja, barrido en Dovecot y buzon recreado limpio"
 # Borrar un buzon quita su fila, pero su maildir sigue en el volumen de Dovecot y quien reciba despues la

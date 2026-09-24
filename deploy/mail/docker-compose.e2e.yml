@@ -163,6 +163,9 @@ services:
       MAIL_HOSTNAME: ${MAIL_HOSTNAME:?lo fija ops/e2e/mail.sh}
       MAIL_AUTH_URL: https://mail-auth:9082
       MAIL_DIRECTORY_URL: http://mail-directory:8040
+      # mail-dav corre en el host (ops/e2e/mail.sh); el webmail lo alcanza por la pasarela de docker.
+      MAIL_DAV_URL: http://host.docker.internal:${E2E_PORT_MAIL_DAV:?lo fija ops/e2e/mail.sh}
+      WEBMAIL_SCHEDULED_POLL_INTERVAL: 2s
       WEBMAIL_IMAP_ADDR: dovecot:993
       WEBMAIL_SMTP_ADDR: postfix:587
       WEBMAIL_TLS_CA_FILE: /run/cfm-e2e/tls/ca.pem
@@ -176,6 +179,8 @@ services:
       - ${E2E_TLS_DIR:?lo fija ops/e2e/mail.sh}/ca.pem:/run/cfm-e2e/tls/ca.pem:ro
     ports:
       - "127.0.0.1:${E2E_PORT_WEBMAIL:?lo fija ops/e2e/mail.sh}:8044"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       mail-engines: {}
 
