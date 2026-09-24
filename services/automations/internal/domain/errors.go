@@ -6,10 +6,10 @@ import (
 )
 
 var (
-	ErrWorkflowNotFound  = errors.New("flujo no encontrado")
-	ErrRunNotFound       = errors.New("ejecucion no encontrada")
-	ErrNameTaken         = errors.New("ya existe un flujo con ese nombre")
-	ErrNotEditable       = errors.New("el flujo solo se edita en borrador o en pausa")
+	ErrWorkflowNotFound = errors.New("flujo no encontrado")
+	ErrRunNotFound      = errors.New("ejecucion no encontrada")
+	ErrNameTaken        = errors.New("ya existe un flujo con ese nombre")
+	ErrNotEditable      = errors.New("el flujo solo se edita en borrador o en pausa")
 	// ErrStepsLockedByRuns: las ejecuciones apuntan a su paso por posicion; cambiar los pasos con
 	// ejecuciones abiertas las llevaria a otro paso (un correo que no les toca).
 	ErrStepsLockedByRuns = errors.New("el flujo tiene ejecuciones en curso: sus pasos no cambian hasta que terminen o se cancelen; duplica el flujo para cambiarlos")
