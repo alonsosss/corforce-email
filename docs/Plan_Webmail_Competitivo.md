@@ -1,6 +1,6 @@
 # Plan: webmail competitivo
 
-Estado: implementado, en verificacion (2026-09-24). Decision del responsable del producto: implementar todo lo de este
+Estado: implementado y en produccion (2026-09-24). Decision del responsable del producto: implementar todo lo de este
 plan, sin fases de aprobacion intermedias, y desplegar al terminar cada bloque verificado.
 
 ## 1. Objetivo
@@ -198,7 +198,7 @@ carpeta `Scheduled` en `dovecot.folders.conf` (`auto = no`). `UPSTREAM.md` y el 
 | B2 | F12, F13 (lado de datos) y 4.4 | `services/mail-dav`, `services/mail-auth` |
 | B3 | Todo el lado del webmail (F1-F10, F12, F13) | `services/webmail` |
 | B4 | Toda la interfaz (F1-F18) | `web/` |
-| B5 | Integracion, e2e, documentos, despliegue | `ops/e2e`, `docs/`, despliegue |
+| B5 | Hecho (V, 2026-09-24): integracion, seccion "Webmail completo" de `ops/e2e/mail.sh` (704 comprobaciones en verde), `make e2e`, CI en verde. En produccion: migracion de celda `13_webmail_settings.sql` aplicada en `mail_cell_pe_01`, `MAIL_DAV_URL` en el `.env` del servidor, `mail-directory`, `mail-auth`, `mail-dav`, `webmail` y `web` en 2dc9597, `dovecot-mail` en 45f9883. Probado en produccion con buzones reales: una regla archiva en su carpeta a los 5 s y un envio programado sale a los 5 s de su hora |
 
 B1-B4 se construyen en paralelo contra los contratos de la seccion 4. B5 los une.
 
