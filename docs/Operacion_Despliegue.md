@@ -1399,7 +1399,7 @@ retirar la vieja invalida las que no se usaron desde la rotación (se ven en la 
 **Variables (`.env`).** Gateway: `API_KEY_RATE_LIMIT_PER_MIN` (600 por clave y minuto) y `API_KEY_CACHE_TTL` (30s; la
 revocación llega antes por la marca `apikey:revoked:<id>` en el Redis de la plataforma). access-control: `SMTP_RELAY_PUBLIC_HOST`
 (p. ej. `smtp.core-force.com`; vacía, la web no muestra SMTP), `SMTP_RELAY_PUBLIC_STARTTLS_PORT` y `SMTP_RELAY_PUBLIC_TLS_PORT`.
-smtp-relay: `SMTP_RELAY_HOSTNAME` (el nombre del certificado), `SMTP_RELAY_BIND_ADDRESS` (127.0.0.1 por defecto: el relay no
+smtp-relay: `SMTP_RELAY_HOSTNAME` (el nombre del certificado; sin ella el relay no arranca: en producción `smtp.core-force.com`), `SMTP_RELAY_BIND_ADDRESS` (127.0.0.1 por defecto: el relay no
 queda expuesto hasta que se decide), `SMTP_RELAY_CLAMD_ADDR` (clamd:3310, red `mail-scan`, obligatoria fuera de development y
 test), tamaño (`SMTP_RELAY_MAX_MESSAGE_BYTES`, 10 MiB, hasta los 40 MiB de SES), destinatarios (50), conexiones (200 por
 puerto), mensajes en proceso (4), cupos por minuto (60 conexiones por IP, 300 mensajes por clave, 600 por IP), freno de AUTH (10
@@ -1409,11 +1409,13 @@ fallos por usuario e IP o 30 por IP en 15 min bloquean 30 min) y tiempos (`SMTP_
 **Certificado.** El relay sirve el certificado público de acme (volumen `mail_ssl-vol` de `deploy/mail`). Su clave es 0600 de
 root y el relay no corre como root: en el perfil autoalojado `smtp-relay-certs` (uid 0 sin capacidades, sin red) copia cada
 `SMTP_RELAY_CERT_SYNC_INTERVAL` (300 s) `cert.pem` y `key.pem` al volumen en memoria `smtp-relay-tls` con el grupo del relay
-(0640), y el relay lo recarga al cambiar (`selfhosted/smtp-relay/sync-cert.sh`). El nombre del relay tiene que ir en el
+(0640), y el relay lo recarga al cambiar (`selfhosted/smtp-relay/sync-cert.sh`). `smtp-relay-certs` es infraestructura del
+perfil (`perfil-despliegue.sh --infra`): el despliegue lo levanta antes de los servicios, que se recrean con `--no-deps`, y lo
+recrea cuando cambia `selfhosted/smtp-relay/`. El nombre del relay tiene que ir en el
 certificado: añadir `smtp.core-force.com` a `ADDITIONAL_SAN` de acme (`deploy/mail`) y dejar que acme lo renueve; la alerta
 `CertificadoDelRelaySMTPPorCaducar` avisa a dos semanas de la caducidad.
 
-**DNS (sin aplicar).** Un registro `A` (y `AAAA` si el servidor tiene IPv6) `smtp.core-force.com` hacia la IP pública del
+**DNS (aplicado el 2026-09-24).** Un registro `A` (y `AAAA` si el servidor tiene IPv6) `smtp.core-force.com` hacia la IP pública del
 servidor (hoy 89.58.10.80), **sin proxy de Cloudflare** (nube gris: Cloudflare no pasa SMTP). No hace falta MX: el relay no
 recibe correo de internet, solo de las integraciones autenticadas. SPF y DKIM no cambian: el correo sale por SES con la identidad
 verificada de cada empresa.

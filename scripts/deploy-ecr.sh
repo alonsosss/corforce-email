@@ -139,6 +139,10 @@ aplicar_infra() {
   if en_infra redis && cambio_desplegado selfhosted/redis; then
     remote "ops/security/secrets/with-secrets.sh docker compose $COMPOSE_ARGS up -d --no-deps --force-recreate redis"
   fi
+  # sync-cert.sh se lee al arrancar el contenedor y despues queda en su bucle.
+  if en_infra smtp-relay-certs && cambio_desplegado selfhosted/smtp-relay; then
+    remote "ops/security/secrets/with-secrets.sh docker compose $COMPOSE_ARGS up -d --no-deps --force-recreate smtp-relay-certs"
+  fi
   if en_infra postgres-primary && cambio_desplegado selfhosted/postgres; then
     remote "docker kill -s HUP \$(docker ps -q --filter label=com.docker.compose.project=app --filter label=com.docker.compose.service=postgres-primary)" >/dev/null
     echo ">> postgres-primary: pg_hba recargado"

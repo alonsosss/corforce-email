@@ -72,5 +72,7 @@ case "$ACCION:$perfil" in
   infra:aws) ;;
   # En orden de arranque: las dependencias antes; el proxy de borde, tras el gateway. minio-init es
   # un trabajo que sale (bucket y usuario de servicio): esperar-sanos.sh lo da por bueno si sale con 0.
-  infra:selfhosted) echo "postgres-primary redis pgbouncer nats minio minio-init edge-proxy" ;;
+  # smtp-relay-certs copia el certificado de acme que smtp-relay necesita para arrancar: los servicios se
+  # recrean con --no-deps, asi que si no fuera infraestructura nadie lo crearia.
+  infra:selfhosted) echo "postgres-primary redis pgbouncer nats minio minio-init smtp-relay-certs edge-proxy" ;;
 esac
