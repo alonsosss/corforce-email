@@ -1,6 +1,6 @@
 # Plan: webmail innovador para la empresa
 
-Estado: en ejecucion (2026-09-24). Continua `docs/Plan_Webmail_Competitivo.md` (fase 1, en produccion).
+Estado: implementado y en produccion (2026-09-24). Continua `docs/Plan_Webmail_Competitivo.md` (fase 1, en produccion).
 Decision del responsable del producto: implementar todo, sin fases de aprobacion intermedias, y
 desplegar al terminar cada bloque verificado.
 
@@ -122,9 +122,9 @@ la ficha del remitente.
 
 | Bloque | Estado |
 |---|---|
-| C1 | en curso |
-| C2 | en curso |
-| C3 | en curso |
-| C4 | en curso |
-| C5 | en curso |
-| B6 | en curso: `ops/e2e/mail.sh` prueba C1-C5 contra los motores reales (`make e2e-mail` en verde, 869 comprobaciones); encontro y arreglo la conversacion abierta desde una respuesta recibida (sin el mensaje propio de Enviados) y la politica de MinIO sin permiso para borrar los ficheros de mail-files; falta desplegar |
+| C1 | Hecho (V, 2026-09-24): hilos, bandeja inteligente, escudo antifraude, ficha del remitente, PWA y casillas |
+| C2 | Hecho (V, 2026-09-24): posponer, seguimiento y respuestas rapidas (celda 14) |
+| C3 | Hecho (V, 2026-09-24): zona horaria, apariciones sueltas, iTIP, disponibilidad y citas (empresa mail-dav/05) |
+| C4 | Hecho (V, 2026-09-24): servicio nuevo `mail-files` (ADR 0014) |
+| C5 | Hecho (V, 2026-09-24): asistente con Claude (ADR 0015), apagado hasta cargar `ANTHROPIC_API_KEY` y activarlo por empresa |
+| B6 | Hecho (V, 2026-09-24): `make e2e-mail` en verde (869 comprobaciones), CI en verde. En produccion: celda 14 y 15 aplicadas a mano en `mail_cell_pe_01`; registro 045 y empresa `mail-dav/05`, `mail-files/01-02` por organization (la primera pasada fallo por la carrera del rol de servicio, arreglada en 8352c4f); `MAIL_FILES_DB_PASSWORD` en OpenBao, rol `mail_svc_mail_files`, userlist de PgBouncer; servicios en 6782b32; MinIO pasa a la imagen propia de Silo (ADR 0016) en 6f7a823. Probado en produccion: subida, descarga y revocacion de un fichero grande. Auditoria en navegador real (Chrome DevTools y Lighthouse): accesibilidad 97-98, buenas practicas 96-100; sus hallazgos (textos sin tildes, barra en las pestanas, objetivos tactiles, robots.txt, landmark, capitalizacion del calendario) se corrigen aparte |

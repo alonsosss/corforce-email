@@ -222,6 +222,10 @@ cat >"$TMP/bin/docker" <<'STUB'
 E="$STUB_SRV/estado"
 echo "docker $*" >>"$E/ordenes"
 servicio_filtrado() { local a; for a in "$@"; do [[ "$a" == label=com.docker.compose.service=* ]] && echo "${a##*=}"; done; }
+# Modelo de imagenes por capas, que es lo que el envio incremental necesita: cada imagen son la capa
+# base comun y una suya. El "servidor" guarda los nombres cargados (cargadas) y los blobs que de
+# verdad viajaron (blobs); una imagen solo se lee entera si estan todos sus blobs.
+capas_de() { local n; for n in cfm-base "$1"; do printf 'sha256:%s\n' "$(printf '%s' "$n" | sha256sum | cut -d' ' -f1)"; done; }
 case "$1" in
   buildx) exit 0 ;;
   info) echo daemon-unico ;;
@@ -242,7 +246,24 @@ case "$1" in
     linea="$(grep "^$svc " "$E/ps" 2>/dev/null)" || exit 0
     [[ "$*" == *'{{.ID}}'* ]] && echo "$svc" || echo "${linea#* }" ;;
   inspect) echo "running healthy 0" ;;
-  image) shift 2; for i in "$@"; do grep -qx "$i" "$E/cargadas" 2>/dev/null || exit 1; done ;;
+  image)
+    sub="$2"; shift 2
+    case "$sub" in
+      ls) grep -v '^$' "$E/cargadas" 2>/dev/null | sort -u || true ;;
+      inspect)
+        fmt=""; imgs=()
+        while [[ $# -gt 0 ]]; do
+          case "$1" in --format) fmt="$2"; shift 2 ;; *) imgs+=("$1"); shift ;; esac
+        done
+        for i in "${imgs[@]}"; do grep -qx "$i" "$E/cargadas" 2>/dev/null || exit 1; done
+        if [[ "$fmt" == *RootFS* ]]; then for i in "${imgs[@]}"; do capas_de "$i"; done; fi ;;
+      save)
+        for i in "$@"; do
+          grep -qx "$i" "$E/cargadas" 2>/dev/null || exit 1
+          while read -r c; do grep -qx "${c#sha256:}" "$E/blobs" 2>/dev/null || exit 1; done < <(capas_de "$i")
+        done ;;
+      *) for i in "$@"; do grep -qx "$i" "$E/cargadas" 2>/dev/null || exit 1; done ;;
+    esac ;;
   run)
     # Se ejecuta la orden dentro del directorio montado, que es lo que hace el contenedor.
     shift; monta=""; img=""; cmd=()
@@ -256,8 +277,22 @@ case "$1" in
     done
     [[ -n "$monta" ]] || exit 1
     mkdir -p "$monta" && cd "$monta" && "${cmd[@]}" ;;
-  save) shift; echo "$*" ;;
-  load) tr ' ' '\n' >>"$E/cargadas" ;;
+  save)
+    shift
+    d="$(mktemp -d)"; mkdir -p "$d/blobs/sha256"
+    for i in "$@"; do
+      echo "$i" >>"$d/imagenes.txt"
+      while read -r c; do c="${c#sha256:}"; echo "capa $c" >"$d/blobs/sha256/$c"; done < <(capas_de "$i")
+    done
+    tar -c -C "$d" .
+    rm -rf "$d" ;;
+  load)
+    d="$(mktemp -d)"
+    if tar -x -C "$d" 2>/dev/null && [[ -f "$d/imagenes.txt" ]]; then
+      cat "$d/imagenes.txt" >>"$E/cargadas"
+      ls "$d/blobs/sha256" 2>/dev/null >>"$E/blobs"
+    fi
+    rm -rf "$d" ;;
   images | logs) ;;
 esac
 STUB
@@ -322,6 +357,27 @@ rc=0; desplegar dovecot-mail unbound-mail redis-mail || rc=$?
 [[ -e "$S/candado" ]] && mal "deploy-mail: deja el candado puesto"
 grep -q "unbound-mail: sano" "$TMP/dm.out" || mal "deploy-mail: no espera a que cada motor arranque"
 if grep -q "valor-de-prueba" "$TMP/dm.out" "$O"; then mal "deploy-mail: imprime un secreto"; fi
+
+# Envio incremental: al servidor le falta una imagen y la otra ya le dio la capa base, que no vuelve a
+# viajar; la imagen tiene que quedar ENTERA (docker image save), porque una capa presente en otra
+# imagen no garantiza que su blob este en el almacen y el fallo saldria al crear el contenedor.
+: >"$O"
+grep -vx "core-force-mail/dovecot-mail:$TAG" "$S/estado/cargadas" >"$S/estado/cargadas.tmp" || true
+mv "$S/estado/cargadas.tmp" "$S/estado/cargadas"
+rc=0; desplegar dovecot-mail || rc=$?
+[[ $rc == 0 ]] || { mal "deploy-mail: el reenvio de una sola imagen falla (salida $rc)"; sed 's/^/    /' "$TMP/dm.out" >&2; }
+grep -q "1 capa(s) ya estaban en el servidor y no viajan" "$TMP/dm.out" ||
+  mal "deploy-mail: reenvia capas que el servidor ya tiene: $(grep -c 'capa(s)' "$TMP/dm.out")"
+grep -qx "core-force-mail/dovecot-mail:$TAG" "$S/estado/cargadas" || mal "deploy-mail: la imagen no quedo en el servidor"
+# Una imagen a la que le falta un blob se reenvia completa en vez de darse por buena.
+: >"$O"
+grep -vx "core-force-mail/dovecot-mail:$TAG" "$S/estado/cargadas" >"$S/estado/cargadas.tmp" || true
+mv "$S/estado/cargadas.tmp" "$S/estado/cargadas"
+: >"$S/estado/blobs"
+rc=0; desplegar dovecot-mail || rc=$?
+[[ $rc == 0 ]] || mal "deploy-mail: no rehace el envio de una imagen incompleta (salida $rc)"
+grep -q "sin todas sus capas en el servidor" "$TMP/dm.out" ||
+  mal "deploy-mail: da por buena una imagen sin todos sus blobs en el servidor"
 
 # Segunda pasada sin cambios: nada que construir ni recrear.
 : >"$O"

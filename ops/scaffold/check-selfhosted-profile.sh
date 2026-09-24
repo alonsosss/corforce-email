@@ -487,6 +487,26 @@ if sin_politica:
     sys.exit(1)
 PY
 
+# La pila de observabilidad es otro compose y no hereda el ancla del perfil: tras el reinicio real del
+# 2026-09-24 Prometheus se quedo parado (unless-stopped) y el monitoreo, sin datos.
+python3 - "$ROOT/docker-compose.observability.yml" <<'PY' || FALLOS=1
+import re, sys
+texto = open(sys.argv[1], encoding="utf-8").read()
+cuerpo = texto.split("\nservices:\n", 1)[1]
+for corte in ("\nnetworks:\n", "\nvolumes:\n"):
+    if corte in cuerpo:
+        cuerpo = cuerpo.split(corte, 1)[0]
+malos = []
+for b in re.split(r"\n(?=  [a-z][a-z0-9-]*:\n)", "\n" + cuerpo):
+    m = re.match(r"\n?  ([a-z][a-z0-9-]*):\n", b)
+    if m and not re.search(r"^    restart: always$", b, re.M):
+        malos.append(m.group(1))
+if malos:
+    print("  FALLA: servicios de docker-compose.observability.yml sin `restart: always` (no vuelven tras un"
+          " reinicio del servidor): " + " ".join(sorted(malos)), file=sys.stderr)
+    sys.exit(1)
+PY
+
 # Dovecot mantiene conexiones largas a la base por PgBouncer: con el corte de clientes ociosos
 # (600 s por defecto) el primer inicio de sesion IMAP tras un rato sin uso fallaba con
 # "client_idle_timeout". El perfil lo desactiva; sin esto el fallo vuelve sin ningun aviso.

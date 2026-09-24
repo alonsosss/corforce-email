@@ -1138,6 +1138,16 @@ quedo reintentando. El perfil fija `restart: always` para todos sus servicios (a
 y `ops/scaffold/check-selfhosted-profile.sh` falla si un servicio del compose base se queda sin
 ella. Tras un reinicio, comprobar con `ops/maintenance/esperar-sanos.sh --proyecto app`.
 
+Reinicio real del 2026-09-24 (parches del nucleo, 6.8.0-139 a 6.8.0-142): el servidor volvio en unos 2 minutos,
+OpenBao se desbloqueo solo y volvieron la plataforma y los motores, el cortafuegos del ejecutor de migraciones
+(`core-force-mail-migration-egress`) y los temporizadores de respaldo. No volvio Prometheus: la pila de
+observabilidad (`docker-compose.observability.yml`) usaba `unless-stopped`; ahora usa `always` y
+`check-selfhosted-profile.sh` lo exige. Tampoco Grafana, por un `provisioning/alerting/entrega.yml` que solo
+existia en el servidor, resto de la entrega de alertas por Grafana que se retiro (46de6c7): el despliegue copia
+los ficheros nuevos pero no borra los retirados del repositorio. Se aparto a `backups/obsoletos/`. Tras un
+reinicio: `docker ps -a` sin `Exited` fuera de `minio-init` y `minio-volumen`, y el mismo numero de contenedores
+que antes.
+
 ### Red y cortafuegos
 
 No hay Security Group. UFW solo gobierna el host (SSH); los puertos que publica Docker no pasan
