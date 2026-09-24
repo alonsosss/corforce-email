@@ -95,9 +95,6 @@
 .cf-wm .cf-btn--secondary {
   border-color: var(--cf-border);
 }
-.cf-wm .cf-tabs {
-  overflow-y: hidden;
-}
 /* El contenedor de destinatarios ya marca el foco con su borde. */
 .cf-wm .cf-chips__input:focus-visible {
   box-shadow: none;
@@ -1754,7 +1751,7 @@ a.cf-wm-message:hover {
 .cf-wm-inboxtabs .cf-tabs {
   gap: var(--cf-space-1);
   margin-bottom: 0;
-  border-bottom: 0;
+  box-shadow: none;
 }
 .cf-wm-inboxtabs .cf-tab {
   margin-bottom: 0;
