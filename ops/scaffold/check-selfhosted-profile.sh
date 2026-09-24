@@ -26,6 +26,7 @@ trap 'rm -rf "$TMP"' EXIT
 
 python3 - "$ROOT" <<'PY'
 import ipaddress
+import json
 import os
 import re
 import subprocess
@@ -265,6 +266,23 @@ if len(imagenes_minio) > 1:
     fallos.append(f"minio, minio-volumen y minio-init usan imagenes distintas: {sorted(imagenes_minio)}")
 if "MINIO_BROWSER: \"off\"" not in "\n".join(perfil.get("minio", [])):
     fallos.append("minio: la consola tiene que ir apagada (MINIO_BROWSER: \"off\")")
+
+# La politica del usuario de servicio (selfhosted/minio/init.sh) solo deja borrar los ficheros de
+# mail-files, que se borran al revocar o caducar su enlace; nunca public/, que muestran correos ya enviados.
+politica_minio = re.search(r"cat >/tmp/politica.json <<EOF\n(.*?)\nEOF", leer("selfhosted/minio/init.sh"), re.S)
+if not politica_minio:
+    fallos.append("selfhosted/minio/init.sh: no se encuentra la politica del usuario de servicio")
+else:
+    try:
+        sentencias = json.loads(politica_minio.group(1).replace("$BUCKET", "bucket"))["Statement"]
+    except (ValueError, KeyError) as e:
+        sentencias = []
+        fallos.append(f"selfhosted/minio/init.sh: la politica no es JSON valido ({e})")
+    borrado = [r for st in sentencias if st.get("Effect") == "Allow"
+               for a in st.get("Action", []) if a in ("s3:DeleteObject", "s3:*", "*")
+               for r in st.get("Resource", [])]
+    if borrado != ["arn:aws:s3:::bucket/private/*/mail-files/*"]:
+        fallos.append(f"selfhosted/minio/init.sh: el usuario de servicio tiene que poder borrar solo private/*/mail-files/* (tiene {borrado})")
 
 
 def bytes_nginx(v):

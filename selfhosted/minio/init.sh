@@ -2,9 +2,10 @@
 # Inicializacion idempotente de MinIO en la produccion autoalojada (servicio minio-init de
 # docker-compose.selfhosted.yml). Corre en cada despliegue despues de que minio este sano y deja:
 #   - el bucket MINIO_BUCKET, privado (sin ninguna lectura anonima);
-#   - la politica core-force-media, acotada a ese bucket: leer, escribir y listar, sin borrar
-#     (los objetos public/ son imagenes que correos ya enviados siguen mostrando) y sin tocar
-#     la configuracion del bucket;
+#   - la politica core-force-media, acotada a ese bucket: leer, escribir y listar, sin tocar la
+#     configuracion del bucket y sin borrar nada salvo los ficheros de mail-files
+#     (private/<empresa>/mail-files/*), que se borran al revocar o caducar su enlace (docs/adr/0014);
+#     los objetos public/ son imagenes que correos ya enviados siguen mostrando y no se borran;
 #   - el usuario de servicio MINIO_ACCESS_KEY/MINIO_SECRET_KEY con esa politica y ninguna otra,
 #     que es la credencial que reciben gateway y templates (pkg/objectstore).
 #
@@ -67,6 +68,11 @@ cat >/tmp/politica.json <<EOF
       "Effect": "Allow",
       "Action": ["s3:GetObject", "s3:PutObject"],
       "Resource": ["arn:aws:s3:::$BUCKET/*"]
+    },
+    {
+      "Effect": "Allow",
+      "Action": ["s3:DeleteObject"],
+      "Resource": ["arn:aws:s3:::$BUCKET/private/*/mail-files/*"]
     }
   ]
 }

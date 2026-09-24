@@ -109,8 +109,10 @@ largas de cada guardarraíl están en `ops/scaffold/README.md`, `ops/security/se
   de cada imagen es `<PUBLIC_BASE_URL>/media/public/<empresa>/templates/<sha256>.<ext>`). `SPAM_CHECK_URL` es la
   URL base del `mail-security` de la celda base (regla de `config.ServiceURL`) y `PLATFORM_FROM_EMAIL` el remitente
   del correo de prueba que puntúa su Rspamd; sin cualquiera de las dos, la verificación de entregabilidad sale con
-  `spam.available=false`. `MINIO_ACCESS_KEY` y `MINIO_SECRET_KEY` (el usuario de servicio del bucket, sin
-  permiso de borrar) son secretos del almacén: los reciben `gateway` y `templates` (`reparto.tsv`), que las leen por
+  `spam.available=false`. `MINIO_ACCESS_KEY` y `MINIO_SECRET_KEY` (el usuario de servicio del bucket, que solo
+  puede borrar los ficheros de `mail-files` en `private/*/mail-files/*`, nunca `public/`: `selfhosted/minio/init.sh`,
+  comprobado por `check-selfhosted-profile.sh`) son secretos del almacén: los reciben `gateway`, `templates` y
+  `mail-files` (`reparto.tsv`), que las leen por
   `objectstore.FromEnv`, lectura indirecta que conoce `check-secret-scope.sh`. En el perfil autoalojado,
   `docker-compose.selfhosted.yml` fija a los dos `MINIO_ENDPOINT` (por defecto `minio:9000`) y `MINIO_USE_SSL`.
 * Entorno declarado (`ENVIRONMENT`). Un servidor declara exactamente

@@ -49,7 +49,10 @@ base de la empresa de un servicio que la tenga.
 
 4. **Almacen**: el bucket de la plataforma (`MINIO_*`), espacio `private/<empresa>/mail-files/<id>`,
    siempre como `application/octet-stream` y sin el nombre del usuario en la clave. El gateway solo sirve
-   `public/` en `/media/*`: nada de `private/` es alcanzable salvo por mail-files.
+   `public/` en `/media/*`: nada de `private/` es alcanzable salvo por mail-files. La politica del usuario
+   de servicio (`selfhosted/minio/init.sh`) le deja borrar solo `private/*/mail-files/*`: sin ese permiso el
+   borrado al revocar o caducar fallaba con Access Denied y los objetos se quedaban para siempre (lo detecto
+   `make e2e-mail`, que usa la misma inicializacion).
 
 5. **Enlace**: `PUBLIC_BASE_URL/api/v1/public/files/{empresa}/{fichero}?x=<caducidad unix>&s=<firma>`,
    HMAC-SHA256 con `MAIL_LINK_SIGNING_KEY` sobre `mail-files`, empresa, fichero y caducidad (el prefijo
