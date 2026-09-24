@@ -1770,8 +1770,9 @@ INV=$(echo "$WM_BODY" | jget data.id)
 expect "ana crea una reunion con bea como invitada y el webmail envia la invitacion" \
   "$WM_CODE/${INV:+id}/$(echo "$WM_BODY" | jget data.invitations.method)/$(echo "$WM_BODY" | jget data.invitations.recipients)/$(echo "$WM_BODY" | jget data.invitations.sent)" "201/id/REQUEST/1/True"
 expect "ana es la organizadora" "$(echo "$WM_BODY" | jget data.organizer.email)" "ana@acme.test"
-contains "bea recibe la invitacion por Postfix y Dovecot" "$(cliente buscar bea@acme.test "$BEA_PASS" "Invitacion: $REUNION")" "OK 1"
-INV_UID=$(fila "$TARRO_BEA2" INBOX "Invitacion: $REUNION" 'm["uid"]')
+# El asunto es "Invitación: <titulo>": se busca por el titulo, unico, para no depender de la tilde en IMAP SEARCH.
+contains "bea recibe la invitacion por Postfix y Dovecot" "$(cliente buscar bea@acme.test "$BEA_PASS" "$REUNION")" "OK 1"
+INV_UID=$(fila "$TARRO_BEA2" INBOX "$REUNION" 'm["uid"]')
 INV_RAW=$(curl -s -b "$TARRO_BEA2" -H "Origin: $API_ORIGIN" "$WM/folders/INBOX/messages/$INV_UID/raw")
 contains "el mensaje lleva la parte text/calendar con method=REQUEST" "$INV_RAW" "text/calendar; charset=utf-8; method=REQUEST"
 wm "$TARRO_BEA2" GET "/invitations/INBOX/$INV_UID"
