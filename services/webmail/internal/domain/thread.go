@@ -136,6 +136,9 @@ type ThreadPage struct {
 type ConversationMessage struct {
 	Folder    string
 	MessageID string
+	// InReplyTo son los Message-ID a los que responde (In-Reply-To): con ellos se encuentra en
+	// Enviados el mensaje propio que abrio la conversacion cuando solo se tiene la respuesta.
+	InReplyTo []string
 	Envelope
 }
 

@@ -350,6 +350,11 @@ func (m *mailbox) conversationMessages(folder string, uids []imaplib.UID) ([]dom
 		msg := domain.ConversationMessage{Folder: folder, Envelope: env}
 		if b.Envelope != nil {
 			msg.MessageID = bareMessageID(b.Envelope.MessageID)
+			for _, id := range b.Envelope.InReplyTo {
+				if id = bareMessageID(id); id != "" {
+					msg.InReplyTo = append(msg.InReplyTo, id)
+				}
+			}
 		}
 		byUID[b.UID] = msg
 	}

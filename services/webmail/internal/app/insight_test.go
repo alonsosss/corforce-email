@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -49,6 +50,41 @@ func TestConversationSumaLasRespuestasPropiasDeEnviadosEnOrden(t *testing.T) {
 	}
 	if h.mb.insight.relatedFolder != "Sent" || len(h.mb.insight.relatedIDs) != 2 {
 		t.Fatalf("debe buscar en Enviados con los Message-ID: %q %v", h.mb.insight.relatedFolder, h.mb.insight.relatedIDs)
+	}
+}
+
+// Abrir la respuesta recibida a un correo propio: el propio esta en Enviados y solo se le conoce por el
+// In-Reply-To de la respuesta, asi que tambien se busca por el.
+func TestConversationBuscaEnEnviadosElMensajePropioAlQueResponde(t *testing.T) {
+	h := newHarness(t)
+	_, sess := h.login(t)
+	base := time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC)
+	reply := convMsg("INBOX", "r1@cliente.test", 7, base.Add(time.Hour))
+	reply.InReplyTo = []string{"o1@empresa.pe", "R1@cliente.test"}
+	h.mb.insight.conversation = []domain.ConversationMessage{reply}
+	h.mb.insight.related = []domain.ConversationMessage{convMsg("Sent", "o1@empresa.pe", 3, base)}
+	msgs, err := h.svc.Conversation(context.Background(), sess, "INBOX", 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msgs) != 2 || msgs[0].Folder != "Sent" || msgs[1].UID != 7 {
+		t.Fatalf("la conversacion debe empezar por el mensaje propio de Enviados: %+v", msgs)
+	}
+	if got := h.mb.insight.relatedIDs; len(got) != 2 || got[0] != "r1@cliente.test" || got[1] != "o1@empresa.pe" {
+		t.Fatalf("debe buscar por su Message-ID y por el que responde, sin repetidos: %v", got)
+	}
+}
+
+func TestRelatedMessageIDsSeAcotan(t *testing.T) {
+	var msgs []domain.ConversationMessage
+	for i := range domain.MaxRelatedMessageIDs {
+		m := convMsg("INBOX", fmt.Sprintf("m%d@x", i), uint32(i+1), time.Time{})
+		m.InReplyTo = []string{fmt.Sprintf("p%d@x", i)}
+		msgs = append(msgs, m)
+	}
+	ids := relatedMessageIDs(msgs)
+	if len(ids) != domain.MaxRelatedMessageIDs || ids[0] != "m0@x" {
+		t.Fatalf("tope de identificadores: %d %v", len(ids), ids[:1])
 	}
 }
 

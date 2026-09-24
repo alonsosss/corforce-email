@@ -102,3 +102,44 @@ func TestIntegracionConversacionesFichaYBaja(t *testing.T) {
 		t.Fatalf("correo de baja: from=%s rcpts=%v", last.from, last.rcpts)
 	}
 }
+
+// La respuesta recibida a un correo propio: el propio solo esta en Enviados y la respuesta lo cita en
+// In-Reply-To, sin References. Abrirla desde INBOX trae los dos.
+func TestIntegracionConversacionDesdeLaRespuestaTraeElPropioDeEnviados(t *testing.T) {
+	ctx := context.Background()
+	env := newIntegration(t)
+	mb, err := env.store.Open(ctx, mailbox)
+	if err != nil {
+		t.Fatal(err)
+	}
+	put := func(folder, raw string) {
+		t.Helper()
+		if _, err := mb.Append(ctx, folder, []byte(strings.ReplaceAll(raw, "\n", "\r\n")), nil, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	put("Sent", "From: Ana <ana@empresa.test>\nTo: c@cliente.test\nSubject: Oferta\nDate: Mon, 1 Sep 2026 10:00:00 +0000\nMessage-ID: <o1@empresa.test>\n\nPropuesta\n")
+	put("INBOX", "From: Cliente <c@cliente.test>\nTo: ana@empresa.test\nSubject: Re: Oferta\nDate: Mon, 1 Sep 2026 11:00:00 +0000\nMessage-ID: <c1@cliente.test>\nIn-Reply-To: <o1@empresa.test>\n\nDe acuerdo\n")
+	_ = mb.Close()
+
+	token, _, err := env.svc.Login(ctx, mailbox, password, "203.0.113.7", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess, err := env.svc.Authenticate(ctx, token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	q, _ := domain.NewListQuery(1, 10, "")
+	page, err := env.svc.ListMessages(ctx, sess, "INBOX", q)
+	if err != nil || len(page.Items) != 1 {
+		t.Fatalf("INBOX: %+v %v", page, err)
+	}
+	conv, err := env.svc.Conversation(ctx, sess, "INBOX", page.Items[0].UID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(conv) != 2 || conv[0].Folder != "Sent" || conv[0].MessageID != "o1@empresa.test" || conv[1].MessageID != "c1@cliente.test" {
+		t.Fatalf("la conversacion debe traer el mensaje propio de Enviados: %+v", conv)
+	}
+}

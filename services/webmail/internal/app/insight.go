@@ -56,12 +56,7 @@ func (s *Service) Conversation(ctx context.Context, sess domain.Session, folder 
 		if !ok || sent.Name == folder {
 			return nil
 		}
-		var ids []string
-		for _, m := range msgs {
-			if m.MessageID != "" && len(ids) < domain.MaxRelatedMessageIDs {
-				ids = append(ids, m.MessageID)
-			}
-		}
+		ids := relatedMessageIDs(msgs)
 		related, err := mb.Related(ctx, sent.Name, ids, domain.MaxThreadMessages)
 		if err != nil {
 			// Sin Enviados la conversacion se muestra igual con lo recibido.
@@ -76,6 +71,31 @@ func (s *Service) Conversation(ctx context.Context, sess domain.Session, folder 
 		return nil, err
 	}
 	return orderConversation(out), nil
+}
+
+// relatedMessageIDs son los identificadores con los que se buscan en Enviados los mensajes propios de la
+// conversacion: los de sus mensajes, para las respuestas propias, y aquellos a los que responden, para el
+// mensaje propio que la abrio (la respuesta recibida lo cita en In-Reply-To). Sin repetidos y acotados.
+func relatedMessageIDs(msgs []domain.ConversationMessage) []string {
+	var ids []string
+	seen := map[string]bool{}
+	add := func(id string) {
+		key := strings.ToLower(id)
+		if id == "" || seen[key] || len(ids) >= domain.MaxRelatedMessageIDs {
+			return
+		}
+		seen[key] = true
+		ids = append(ids, id)
+	}
+	for _, m := range msgs {
+		add(m.MessageID)
+	}
+	for _, m := range msgs {
+		for _, id := range m.InReplyTo {
+			add(id)
+		}
+	}
+	return ids
 }
 
 // orderConversation quita repetidos y deja los MaxThreadMessages mas recientes, del mas antiguo
