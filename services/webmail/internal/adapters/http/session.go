@@ -2,7 +2,6 @@ package http
 
 import (
 	"context"
-	"errors"
 	"net"
 	"net/http"
 
@@ -87,9 +86,6 @@ func (h *Handler) sessionMiddleware(next http.Handler, authenticate func(context
 		sess, err := authenticate(ctx, token)
 		cancel()
 		if err != nil {
-			if errors.Is(err, domain.ErrSessionInvalid) {
-				h.clearCookie(w)
-			}
 			h.fail(w, r, err)
 			return
 		}

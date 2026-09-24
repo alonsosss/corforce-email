@@ -80,19 +80,46 @@ func (h *Handler) Routes() http.Handler {
 			r.Use(h.requireSession)
 			r.Get("/session", h.Session)
 			r.Get("/meta", h.Meta)
+			r.Get("/meta/dav", h.DAVMeta)
 			r.Get("/identities", h.Identities)
 			r.Get("/address-book", h.AddressBook)
 			r.Get("/vacation", h.Vacation)
 			r.Put("/vacation", h.SetVacation)
+			r.Get("/signature", h.Signature)
+			r.Put("/signature", h.SetSignature)
+			r.Get("/filters", h.Filters)
+			r.Put("/filters", h.SetFilters)
+			r.Post("/password", h.ChangePassword)
 			r.Get("/folders", h.Folders)
+			r.Post("/folders", h.CreateFolder)
+			r.Patch("/folders/{folder}", h.RenameFolder)
+			r.Delete("/folders/{folder}", h.DeleteFolder)
+			r.Post("/folders/{folder}/empty", h.EmptyFolder)
 			r.Get("/folders/{folder}/messages", h.ListMessages)
+			r.Post("/folders/{folder}/messages/batch", h.BatchMessages)
 			r.Get("/folders/{folder}/messages/{uid}", h.ReadMessage)
 			r.Delete("/folders/{folder}/messages/{uid}", h.DeleteMessage)
+			r.Get("/folders/{folder}/messages/{uid}/raw", h.DownloadRaw)
 			r.Get("/folders/{folder}/messages/{uid}/parts/{part}", h.DownloadPart)
 			r.Post("/folders/{folder}/messages/{uid}/flags", h.ChangeFlags)
 			r.Post("/folders/{folder}/messages/{uid}/move", h.MoveMessage)
 			r.Post("/send", h.Send)
 			r.Post("/drafts", h.SaveDraft)
+			r.Get("/scheduled", h.ListScheduled)
+			r.Patch("/scheduled/{id}", h.Reschedule)
+			r.Delete("/scheduled/{id}", h.CancelScheduled)
+			r.Get("/contacts", h.ListContacts)
+			r.Post("/contacts", h.CreateContact)
+			r.Get("/contacts/export", h.ExportContacts)
+			r.Post("/contacts/import", h.ImportContacts)
+			r.Get("/contacts/{id}", h.Contact)
+			r.Put("/contacts/{id}", h.UpdateContact)
+			r.Delete("/contacts/{id}", h.DeleteContact)
+			r.Get("/calendar/events", h.Occurrences)
+			r.Post("/calendar/events", h.CreateEvent)
+			r.Get("/calendar/events/{id}", h.Event)
+			r.Put("/calendar/events/{id}", h.UpdateEvent)
+			r.Delete("/calendar/events/{id}", h.DeleteEvent)
 		})
 	})
 	return r
@@ -117,19 +144,62 @@ func (h *Handler) opContext(r *http.Request) (context.Context, context.CancelFun
 	return context.WithTimeout(r.Context(), h.cfg.OperationTimeout)
 }
 
-// fail registra lo que el cliente no puede ver (fallos de infraestructura) y responde.
+// fail registra lo que el cliente no puede ver (fallos de infraestructura) y responde. Una sesion
+// que ya no sirve se cierra aqui tambien (la cookie y su registro): la interfaz vuelve al inicio de
+// sesion.
 func (h *Handler) fail(w http.ResponseWriter, r *http.Request, err error) {
 	if errors.Is(err, domain.ErrUnavailable) || errors.Is(err, domain.ErrScanUnavailable) {
 		h.logger.Warn("webmail: dependencia no disponible", zap.String("path", r.URL.Path),
 			zap.String("request_id", middleware.GetRequestID(r.Context())), zap.Error(err))
 	}
+	if errors.Is(err, domain.ErrSessionInvalid) {
+		if token := cookieValue(r); token != "" {
+			ctx, cancel := h.opContext(r)
+			if lerr := h.app.Logout(ctx, token); lerr != nil {
+				h.logger.Warn("webmail: no se pudo cerrar una sesion invalida", zap.Error(lerr))
+			}
+			cancel()
+		}
+		h.clearCookie(w)
+	}
 	writeError(w, err)
+}
+
+// rejectionStatus es el codigo HTTP de cada clase de rechazo de un servicio dueno del dato.
+var rejectionStatus = map[domain.RejectionKind]int{
+	domain.RejectBadRequest:   http.StatusBadRequest,
+	domain.RejectValidation:   http.StatusUnprocessableEntity,
+	domain.RejectNotFound:     http.StatusNotFound,
+	domain.RejectPrecondition: http.StatusPreconditionFailed,
+	domain.RejectTooLarge:     http.StatusRequestEntityTooLarge,
+	domain.RejectQuota:        http.StatusInsufficientStorage,
+	domain.RejectRateLimited:  http.StatusTooManyRequests,
+	domain.RejectUnavailable:  http.StatusServiceUnavailable,
+}
+
+// writeRejection entrega un rechazo de mail-dav tal cual: codigo, mensaje y detalles, con la version
+// vigente (ETag) en una precondicion fallida y Retry-After en un cupo o una saturacion.
+func writeRejection(w http.ResponseWriter, r *domain.ServiceRejection) {
+	status, ok := rejectionStatus[r.Kind]
+	if !ok {
+		status = http.StatusServiceUnavailable
+	}
+	if r.ETag != "" && r.Kind == domain.RejectPrecondition {
+		w.Header().Set("ETag", r.ETag)
+	}
+	if r.RetryAfter != "" && (r.Kind == domain.RejectRateLimited || r.Kind == domain.RejectUnavailable) {
+		w.Header().Set("Retry-After", r.RetryAfter)
+	}
+	response.ErrWithDetails(w, status, r.Code, r.Message, r.Details)
 }
 
 func writeError(w http.ResponseWriter, err error) {
 	var verr *domain.ValidationError
 	var rcpt *domain.RecipientRejectedError
+	var rejection *domain.ServiceRejection
 	switch {
+	case errors.As(err, &rejection):
+		writeRejection(w, rejection)
 	case errors.As(err, &verr):
 		response.ErrWithDetails(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", verr.Error(),
 			map[string]string{"field": verr.Field})
@@ -156,6 +226,24 @@ func writeError(w http.ResponseWriter, err error) {
 		response.Err(w, http.StatusNotFound, "MESSAGE_NOT_FOUND", domain.ErrMessageNotFound.Error())
 	case errors.Is(err, domain.ErrPartNotFound):
 		response.Err(w, http.StatusNotFound, "PART_NOT_FOUND", domain.ErrPartNotFound.Error())
+	case errors.Is(err, domain.ErrFolderProtected):
+		response.Err(w, http.StatusConflict, "FOLDER_PROTECTED", domain.ErrFolderProtected.Error())
+	case errors.Is(err, domain.ErrFolderHasChildren):
+		response.Err(w, http.StatusConflict, "FOLDER_HAS_CHILDREN", domain.ErrFolderHasChildren.Error())
+	case errors.Is(err, domain.ErrFolderExists):
+		response.Err(w, http.StatusConflict, "FOLDER_EXISTS", domain.ErrFolderExists.Error())
+	case errors.Is(err, domain.ErrFolderNotEmptiable):
+		response.Err(w, http.StatusConflict, "FOLDER_NOT_EMPTIABLE", domain.ErrFolderNotEmptiable.Error())
+	case errors.Is(err, domain.ErrScheduledNotFound):
+		response.Err(w, http.StatusNotFound, "SCHEDULED_SEND_NOT_FOUND", domain.ErrScheduledNotFound.Error())
+	case errors.Is(err, domain.ErrScheduledNotPending):
+		response.Err(w, http.StatusConflict, "SCHEDULED_SEND_NOT_PENDING", domain.ErrScheduledNotPending.Error())
+	case errors.Is(err, domain.ErrScheduledNotClaimed):
+		response.Err(w, http.StatusConflict, "SCHEDULED_SEND_NOT_CLAIMED", domain.ErrScheduledNotClaimed.Error())
+	case errors.Is(err, domain.ErrScheduledLimit):
+		response.Err(w, http.StatusConflict, "SCHEDULED_SEND_LIMIT", domain.ErrScheduledLimit.Error())
+	case errors.Is(err, domain.ErrImportTooLarge):
+		response.Err(w, http.StatusRequestEntityTooLarge, "IMPORT_TOO_LARGE", domain.ErrImportTooLarge.Error())
 	case errors.Is(err, domain.ErrTrashNotFound):
 		response.Err(w, http.StatusConflict, "TRASH_NOT_FOUND", domain.ErrTrashNotFound.Error())
 	case errors.Is(err, domain.ErrDraftsNotFound):

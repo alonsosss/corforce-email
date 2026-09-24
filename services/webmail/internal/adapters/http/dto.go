@@ -42,10 +42,14 @@ type folderDTO struct {
 	Unread     uint32 `json:"unread"`
 }
 
+func toFolderDTO(f domain.Folder) folderDTO {
+	return folderDTO{Name: f.Name, Delimiter: f.Delimiter, Role: string(f.Role), Selectable: f.Selectable, Total: f.Total, Unread: f.Unread}
+}
+
 func toFolderDTOs(folders []domain.Folder) []folderDTO {
 	out := make([]folderDTO, len(folders))
 	for i, f := range folders {
-		out[i] = folderDTO{Name: f.Name, Delimiter: f.Delimiter, Role: string(f.Role), Selectable: f.Selectable, Total: f.Total, Unread: f.Unread}
+		out[i] = toFolderDTO(f)
 	}
 	return out
 }
@@ -177,6 +181,9 @@ type metaLimitsDTO struct {
 	MaxSubjectChars    int   `json:"max_subject_chars"`
 	MaxSearchBytes     int   `json:"max_search_bytes"`
 	MaxFolderNameBytes int   `json:"max_folder_name_bytes"`
+	MaxBatchUIDs       int   `json:"max_batch_uids"`
+	MaxScheduledDays   int   `json:"max_scheduled_days"`
+	MaxImportBytes     int64 `json:"max_import_bytes"`
 }
 
 type metaPaginationDTO struct {
@@ -199,6 +206,7 @@ func toMetaDTO(m app.Meta) metaDTO {
 			MaxRecipients: m.MaxRecipients, MaxMessageBytes: m.MaxMessageBytes, MaxAttachments: m.MaxAttachments,
 			MaxDownloadBytes: m.MaxDownloadBytes, MaxBodyPartBytes: m.MaxBodyPartBytes, MaxSubjectChars: m.MaxSubjectChars,
 			MaxSearchBytes: m.MaxSearchBytes, MaxFolderNameBytes: m.MaxFolderNameBytes,
+			MaxBatchUIDs: m.MaxBatchUIDs, MaxScheduledDays: m.MaxScheduledDays, MaxImportBytes: m.MaxImportBytes,
 		},
 		Pagination:   metaPaginationDTO{DefaultPageSize: m.DefaultPageSize, MaxPageSize: m.MaxPageSize},
 		FolderRoles:  roles,

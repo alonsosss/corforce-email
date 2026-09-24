@@ -182,12 +182,13 @@ func (s *Service) SaveDraft(ctx context.Context, sess domain.Session, d domain.D
 		if !ok {
 			return domain.ErrDraftsNotFound
 		}
-		uid, err = mb.Append(ctx, drafts.Name, stored, []domain.Flag{domain.FlagDraft, domain.FlagSeen}, out.Date)
+		saved, err := mb.Append(ctx, drafts.Name, stored, []domain.Flag{domain.FlagDraft, domain.FlagSeen}, out.Date)
 		if err != nil {
 			return err
 		}
+		uid = saved.UID
 		if replaceUID != 0 && replaceUID != uid {
-			if err := mb.Expunge(ctx, drafts.Name, replaceUID); err != nil && !errors.Is(err, domain.ErrMessageNotFound) {
+			if _, err := mb.Expunge(ctx, drafts.Name, []uint32{replaceUID}); err != nil {
 				s.logger.Warn("webmail: no se pudo retirar el borrador anterior", zap.String("username", sess.Username),
 					zap.Uint32("uid", replaceUID), zap.Error(err))
 			}
@@ -408,7 +409,7 @@ func (s *Service) afterSend(ctx context.Context, sess domain.Session, stored []b
 		}
 		if target := out.Draft.InReplyTo; target != nil {
 			change := domain.FlagChange{Add: []domain.Flag{domain.FlagAnswered}}
-			if err := mb.SetFlags(ctx, target.Folder, target.UID, change); err != nil {
+			if _, err := mb.SetFlags(ctx, target.Folder, []uint32{target.UID}, change); err != nil {
 				s.logger.Warn("webmail: no se pudo marcar el original como respondido", zap.String("username", sess.Username), zap.Error(err))
 			}
 		}
@@ -433,11 +434,10 @@ func (s *Service) retireDraft(ctx context.Context, mb ports.Mailbox, folders []d
 	if !ok {
 		return false, domain.ErrDraftsNotFound
 	}
-	err := mb.Expunge(ctx, drafts.Name, uid)
-	if err == nil || errors.Is(err, domain.ErrMessageNotFound) {
-		return true, nil
+	if _, err := mb.Expunge(ctx, drafts.Name, []uint32{uid}); err != nil {
+		return false, err
 	}
-	return false, err
+	return true, nil
 }
 
 // newMessageID genera un Message-ID con el dominio del remitente (sin corchetes).

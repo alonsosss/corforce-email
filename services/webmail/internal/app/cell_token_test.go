@@ -4,10 +4,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/alonsosss/corforce-email/services/webmail/internal/domain"
-	"go.uber.org/zap"
 )
 
 // testCell es la celda de la instancia de las pruebas.
@@ -55,16 +53,9 @@ func TestUnTokenDeOtraCeldaSeRechazaSinBuscarlo(t *testing.T) {
 func TestNewExigeUnaCeldaValida(t *testing.T) {
 	h := newHarness(t)
 	for _, cell := range []string{"", "pe.01", "PE-01", "pe_01"} {
-		_, err := New(Deps{
-			Auth: h.auth, Sessions: h.store, Mail: h.mail, Sender: h.sender, Directory: h.directory, Vacations: h.directory, AddressBook: h.directory, Ledger: h.ledger,
-			Composer: h.composer, Sanitizer: h.sanitizer, Scanner: h.scanner,
-			PartURL: func(string, uint32, string) string { return "" }, Logger: zap.NewNop(),
-			Config: Config{
-				CellCode: cell, Sessions: domain.SessionPolicy{Idle: time.Minute, Max: time.Hour},
-				Limits: domain.Limits{MaxRecipients: 1, MaxMessageBytes: 1}, MaxBodyPartBytes: 1, MaxAttachmentBytes: 1,
-				SendTimeout: time.Minute,
-			},
-		})
+		d := h.deps()
+		d.Config.CellCode = cell
+		_, err := New(d)
 		if err == nil {
 			t.Errorf("celda %q aceptada", cell)
 		}

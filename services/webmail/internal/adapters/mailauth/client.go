@@ -67,6 +67,8 @@ type verifyRequest struct {
 type verifyResponse struct {
 	Success     bool   `json:"success"`
 	DisplayName string `json:"display_name"`
+	TenantID    string `json:"tenant_id"`
+	MailboxID   string `json:"mailbox_id"`
 }
 
 // Verify devuelve domain.ErrInvalidCredentials para cualquier rechazo (401 o success
@@ -100,7 +102,10 @@ func (c *Client) Verify(ctx context.Context, username, password, remoteIP string
 		if !out.Success {
 			return domain.Identity{}, domain.ErrInvalidCredentials
 		}
-		return domain.Identity{Username: username, DisplayName: displayName(out.DisplayName)}, nil
+		return domain.Identity{
+			Username: username, DisplayName: displayName(out.DisplayName),
+			TenantID: uuidOrEmpty(out.TenantID), MailboxID: uuidOrEmpty(out.MailboxID),
+		}, nil
 	case http.StatusUnauthorized:
 		return domain.Identity{}, domain.ErrInvalidCredentials
 	default:
@@ -116,4 +121,14 @@ func displayName(name string) string {
 		return ""
 	}
 	return name
+}
+
+// uuidOrEmpty descarta un identificador que no sea un UUID: viaja despues en las cabeceras de las
+// llamadas a mail-dav, y una sesion sin el pide volver a entrar en vez de usar uno roto.
+func uuidOrEmpty(v string) string {
+	v = strings.ToLower(strings.TrimSpace(v))
+	if !domain.ValidUUID(v) {
+		return ""
+	}
+	return v
 }

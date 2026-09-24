@@ -64,6 +64,9 @@ type metaContract struct {
 		MaxSubjectChars    int   `json:"max_subject_chars"`
 		MaxSearchBytes     int   `json:"max_search_bytes"`
 		MaxFolderNameBytes int   `json:"max_folder_name_bytes"`
+		MaxBatchUIDs       int   `json:"max_batch_uids"`
+		MaxScheduledDays   int   `json:"max_scheduled_days"`
+		MaxImportBytes     int64 `json:"max_import_bytes"`
 	} `json:"limits"`
 	Pagination struct {
 		DefaultPageSize int `json:"default_page_size"`
@@ -109,6 +112,9 @@ func TestMetaSirveLosTopesQueAplicaElServicio(t *testing.T) {
 		{"max_subject_chars", got.Limits.MaxSubjectChars, domain.MaxSubjectRunes},
 		{"max_search_bytes", got.Limits.MaxSearchBytes, domain.MaxSearchBytes},
 		{"max_folder_name_bytes", got.Limits.MaxFolderNameBytes, domain.MaxFolderNameBytes},
+		{"max_batch_uids", got.Limits.MaxBatchUIDs, domain.MaxBatchUIDs},
+		{"max_scheduled_days", got.Limits.MaxScheduledDays, 30},
+		{"max_import_bytes", got.Limits.MaxImportBytes, int64(512)},
 		{"default_page_size", got.Pagination.DefaultPageSize, domain.DefaultPerPage},
 		{"max_page_size", got.Pagination.MaxPageSize, domain.MaxPerPage},
 		{"folder_roles", got.FolderRoles, roles},

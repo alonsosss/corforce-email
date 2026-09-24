@@ -29,9 +29,19 @@ const (
 
 type stubAuth struct{}
 
+const (
+	testTenant  = "11111111-1111-4111-8111-111111111111"
+	testMailbox = "22222222-2222-4222-8222-222222222222"
+	// legacyUser inicia sesion como un buzon ante un mail-auth que aun no devuelve empresa ni buzon.
+	legacyUser = "antigua@empresa.pe"
+)
+
 func (stubAuth) Verify(_ context.Context, username, password, _ string) (domain.Identity, error) {
-	if username == testUser && password == testPass {
-		return domain.Identity{Username: username, DisplayName: "Ana"}, nil
+	switch {
+	case username == testUser && password == testPass:
+		return domain.Identity{Username: username, DisplayName: "Ana", TenantID: testTenant, MailboxID: testMailbox}, nil
+	case username == legacyUser && password == testPass:
+		return domain.Identity{Username: username, DisplayName: "Antigua"}, nil
 	}
 	return domain.Identity{}, domain.ErrInvalidCredentials
 }
@@ -73,25 +83,43 @@ type stubMail struct{ mb *stubMailbox }
 func (m stubMail) Open(context.Context, string) (ports.Mailbox, error) { return m.mb, nil }
 
 type stubMailbox struct {
-	listed   string
-	part     domain.Part
-	body     string
-	expunged []uint32
-	partReqs []string
+	mu        sync.Mutex
+	listed    string
+	listQuery domain.ListQuery
+	part      domain.Part
+	body      string
+	expunged  []uint32
+	partReqs  []string
+	moved     []uint32
+	created   []string
+	renamed   []string
+	deleted   []string
+	emptied   []string
+	folders   []domain.Folder
+	raw       string
+	capped    bool
 }
 
 func (m *stubMailbox) Close() error { return nil }
 func (m *stubMailbox) Folders(context.Context, bool) ([]domain.Folder, error) {
+	if m.folders != nil {
+		return m.folders, nil
+	}
 	return []domain.Folder{
-		{Name: "INBOX", Role: domain.RoleInbox, Selectable: true},
-		{Name: "Sent", Role: domain.RoleSent, Selectable: true},
-		{Name: "Drafts", Role: domain.RoleDrafts, Selectable: true},
+		{Name: "INBOX", Delimiter: "/", Role: domain.RoleInbox, Selectable: true},
+		{Name: "Sent", Delimiter: "/", Role: domain.RoleSent, Selectable: true},
+		{Name: "Drafts", Delimiter: "/", Role: domain.RoleDrafts, Selectable: true},
+		{Name: "Trash", Delimiter: "/", Role: domain.RoleTrash, Selectable: true},
+		{Name: "Junk", Delimiter: "/", Role: domain.RoleJunk, Selectable: true},
+		{Name: "Clientes", Delimiter: "/", Selectable: true},
+		{Name: "Clientes/2026", Delimiter: "/", Selectable: true},
+		{Name: "Viejos", Delimiter: "/", Selectable: true},
 	}, nil
 }
 func (m *stubMailbox) Quota(context.Context) (*domain.Quota, error) { return nil, nil }
-func (m *stubMailbox) List(_ context.Context, folder string, _ domain.ListQuery) (domain.MessagePage, error) {
-	m.listed = folder
-	return domain.MessagePage{}, nil
+func (m *stubMailbox) List(_ context.Context, folder string, q domain.ListQuery) (domain.MessagePage, error) {
+	m.listed, m.listQuery = folder, q
+	return domain.MessagePage{Total: 2000, Capped: m.capped}, nil
 }
 func (m *stubMailbox) Read(context.Context, string, uint32, domain.ReadOptions) (*domain.RawMessage, error) {
 	return nil, domain.ErrMessageNotFound
@@ -103,14 +131,52 @@ func (m *stubMailbox) OpenPart(_ context.Context, _ string, _ uint32, partID str
 func (m *stubMailbox) ReplyReference(context.Context, string, uint32) (domain.ReplyReference, error) {
 	return domain.ReplyReference{}, nil
 }
-func (m *stubMailbox) SetFlags(context.Context, string, uint32, domain.FlagChange) error { return nil }
-func (m *stubMailbox) Move(context.Context, string, uint32, string) error                { return nil }
-func (m *stubMailbox) Expunge(_ context.Context, _ string, uid uint32) error {
-	m.expunged = append(m.expunged, uid)
+func (m *stubMailbox) SetFlags(_ context.Context, _ string, uids []uint32, _ domain.FlagChange) (int, error) {
+	return len(uids), nil
+}
+func (m *stubMailbox) Move(_ context.Context, _ string, uids []uint32, _ string) (int, error) {
+	m.moved = append(m.moved, uids...)
+	return len(uids), nil
+}
+func (m *stubMailbox) Expunge(_ context.Context, _ string, uids []uint32) (int, error) {
+	m.expunged = append(m.expunged, uids...)
+	return len(uids), nil
+}
+func (m *stubMailbox) Empty(_ context.Context, folder string) (int, error) {
+	m.emptied = append(m.emptied, folder)
+	return 3, nil
+}
+func (m *stubMailbox) Append(context.Context, string, []byte, []domain.Flag, time.Time) (domain.AppendedMessage, error) {
+	return domain.AppendedMessage{UID: 1, UIDValidity: 1}, nil
+}
+func (m *stubMailbox) Stat(_ context.Context, _ string, uid uint32) (domain.StoredMessage, error) {
+	if m.raw == "" {
+		return domain.StoredMessage{}, domain.ErrMessageNotFound
+	}
+	return domain.StoredMessage{UIDValidity: 1, UID: uid, Size: int64(len(m.raw))}, nil
+}
+func (m *stubMailbox) OpenRaw(ctx context.Context, folder string, uid uint32, maxBytes int64) (domain.StoredMessage, io.ReadCloser, error) {
+	st, err := m.Stat(ctx, folder, uid)
+	if err != nil {
+		return domain.StoredMessage{}, nil, err
+	}
+	if st.Size > maxBytes {
+		return domain.StoredMessage{}, nil, domain.ErrMessageTooLarge
+	}
+	return st, io.NopCloser(strings.NewReader(m.raw)), nil
+}
+func (m *stubMailbox) FindByMessageID(context.Context, string, string) (uint32, error) { return 0, nil }
+func (m *stubMailbox) CreateFolder(_ context.Context, name string) error {
+	m.created = append(m.created, name)
 	return nil
 }
-func (m *stubMailbox) Append(context.Context, string, []byte, []domain.Flag, time.Time) (uint32, error) {
-	return 1, nil
+func (m *stubMailbox) RenameFolder(_ context.Context, name, newName string) error {
+	m.renamed = append(m.renamed, name+"->"+newName)
+	return nil
+}
+func (m *stubMailbox) DeleteFolder(_ context.Context, name string) error {
+	m.deleted = append(m.deleted, name)
+	return nil
 }
 
 type nopSender struct{}
@@ -120,6 +186,9 @@ func (nopSender) Send(context.Context, string, string, []string, []byte) error {
 type nopComposer struct{}
 
 func (nopComposer) Compose(domain.Outgoing, bool) ([]byte, error) { return []byte("x"), nil }
+func (nopComposer) Finalize(stored []byte, _ time.Time) (domain.FinalizedMessage, error) {
+	return domain.FinalizedMessage{Wire: stored, Stored: stored}, nil
+}
 
 type nopSanitizer struct{}
 
@@ -237,20 +306,43 @@ func newTestHandlerFull(t *testing.T, sender ports.Sender) (http.Handler, *stubM
 
 func newTestHandlerAll(t *testing.T, sender ports.Sender) (http.Handler, *stubMailbox, *stubVacations, *stubAddressBook) {
 	t.Helper()
-	mb, vac, book := &stubMailbox{}, &stubVacations{}, &stubAddressBook{}
-	svc, err := app.New(app.Deps{
-		Auth: stubAuth{}, Sessions: &memStore{m: map[string]domain.Session{}}, Mail: stubMail{mb: mb},
-		Sender: sender, Directory: stubDirectory{}, Vacations: vac, AddressBook: book, Ledger: &memLedger{m: map[string]domain.SendRecord{}},
-		Composer: nopComposer{}, Sanitizer: nopSanitizer{}, PartURL: PartURL,
+	env := newTestEnv(t, sender)
+	return env.h, env.mb, env.vac, env.book
+}
+
+// testEnv es el API del webmail con todas sus dependencias falsas a mano de la prueba.
+type testEnv struct {
+	h        http.Handler
+	mb       *stubMailbox
+	vac      *stubVacations
+	book     *stubAddressBook
+	settings *stubSettings
+	dav      *stubDAV
+}
+
+// testDeps son las dependencias del caso de uso con los stubs dados.
+func testDeps(store ports.SessionStore, mb *stubMailbox, sender ports.Sender, vac *stubVacations, book *stubAddressBook, settings *stubSettings, dav *stubDAV) app.Deps {
+	return app.Deps{
+		Auth: stubAuth{}, Sessions: store, Mail: stubMail{mb: mb},
+		Sender: sender, Directory: stubDirectory{}, Vacations: vac, AddressBook: book,
+		Signatures: settings, Filters: settings, Passwords: settings, Scheduled: settings, Contacts: dav, Calendar: dav,
+		Ledger: &memLedger{m: map[string]domain.SendRecord{}}, Composer: nopComposer{}, Sanitizer: nopSanitizer{}, PartURL: PartURL,
 		Logger: zap.NewNop(),
 		Config: app.Config{
 			CellCode:         testCell,
 			Sessions:         domain.SessionPolicy{Idle: 30 * time.Minute, Max: 12 * time.Hour},
 			Limits:           domain.Limits{MaxRecipients: 2, MaxMessageBytes: 4096},
 			MaxBodyPartBytes: 1024, MaxAttachmentBytes: 1024,
-			SendTimeout: 5 * time.Second,
+			SendTimeout: 5 * time.Second, MaxScheduledDays: 30, ScheduledPollInterval: time.Minute, ScheduledBatch: 5,
+			MaxImportBytes: 512,
 		},
-	})
+	}
+}
+
+func newTestEnv(t *testing.T, sender ports.Sender) *testEnv {
+	t.Helper()
+	env := &testEnv{mb: &stubMailbox{}, vac: &stubVacations{}, book: &stubAddressBook{}, settings: newStubSettings(), dav: &stubDAV{}}
+	svc, err := app.New(testDeps(&memStore{m: map[string]domain.Session{}}, env.mb, sender, env.vac, env.book, env.settings, env.dav))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -262,7 +354,8 @@ func newTestHandlerAll(t *testing.T, sender ports.Sender) (http.Handler, *stubMa
 	if err != nil {
 		t.Fatal(err)
 	}
-	return h.Routes(), mb, vac, book
+	env.h = h.Routes()
+	return env
 }
 
 func do(h http.Handler, method, path string, body io.Reader, headers map[string]string, cookie *http.Cookie) *httptest.ResponseRecorder {

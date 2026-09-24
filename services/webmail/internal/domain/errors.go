@@ -20,6 +20,21 @@ var (
 	ErrDraftsNotFound  = errors.New("el buzon no tiene carpeta de borradores")
 	ErrQuotaExceeded   = errors.New("el buzon supero su cuota")
 
+	ErrFolderProtected    = errors.New("la carpeta es del sistema y no se puede renombrar ni borrar")
+	ErrFolderHasChildren  = errors.New("la carpeta tiene subcarpetas: borra primero las subcarpetas")
+	ErrFolderExists       = errors.New("ya existe una carpeta con ese nombre")
+	ErrFolderNotEmptiable = errors.New("solo se pueden vaciar la papelera y el spam")
+
+	ErrScheduledNotFound   = errors.New("envio programado no encontrado")
+	ErrScheduledNotPending = errors.New("el envio programado ya no esta pendiente")
+	ErrScheduledNotClaimed = errors.New("el envio programado no estaba reclamado")
+	ErrScheduledLimit      = errors.New("el buzon alcanzo el maximo de envios programados pendientes")
+
+	// ErrPreconditionFailed es una edicion sobre una version que otro cliente ya cambio (If-Match).
+	ErrPreconditionFailed = errors.New("el recurso cambio desde que se leyo")
+	// ErrImportTooLarge es un fichero de contactos por encima del tope del webmail.
+	ErrImportTooLarge = errors.New("el fichero supera el tamano maximo de importacion")
+
 	ErrTooManyRecipients  = errors.New("demasiados destinatarios")
 	ErrMessageTooLarge    = errors.New("el mensaje supera el tamano maximo")
 	ErrPartTooLarge       = errors.New("la parte supera el tamano maximo de lectura")

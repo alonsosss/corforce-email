@@ -347,6 +347,9 @@ func roleOf(d *imaplib.ListData, specialUse bool) domain.FolderRole {
 	if !specialUse {
 		return domain.RoleByName(d.Mailbox)
 	}
+	if domain.IsScheduledFolderName(d.Mailbox) {
+		return domain.RoleScheduled
+	}
 	for _, a := range d.Attrs {
 		if role, ok := specialUseRoles[strings.ToLower(string(a))]; ok {
 			return role

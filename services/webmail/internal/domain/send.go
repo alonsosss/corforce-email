@@ -23,6 +23,9 @@ const (
 	// mensaje pudo quedar en cola. Con esa clave no se vuelve a intentar: reenviar es una
 	// decision del usuario, con otra clave.
 	SendUncertain SendState = "uncertain"
+	// SendScheduled: el mensaje quedo programado (ScheduledID). Repetir la peticion no programa
+	// otro.
+	SendScheduled SendState = "scheduled"
 )
 
 // SendRecord es lo que se recuerda de un envio por su clave. Fingerprint resume el mensaje
@@ -34,6 +37,7 @@ type SendRecord struct {
 	MessageID    string
 	SavedToSent  bool
 	DraftRemoved bool
+	ScheduledID  string
 	Token        string
 }
 

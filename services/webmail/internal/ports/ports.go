@@ -50,12 +50,30 @@ type Mailbox interface {
 	// falla con domain.ErrPartTooLarge si la parte supera maxBytes.
 	OpenPart(ctx context.Context, folder string, uid uint32, partID string, maxBytes int64) (domain.Part, io.ReadCloser, error)
 	ReplyReference(ctx context.Context, folder string, uid uint32) (domain.ReplyReference, error)
-	SetFlags(ctx context.Context, folder string, uid uint32, change domain.FlagChange) error
-	Move(ctx context.Context, folder string, uid uint32, dest string) error
-	// Expunge borra el mensaje de forma definitiva.
-	Expunge(ctx context.Context, folder string, uid uint32) error
-	// Append guarda un mensaje y devuelve su UID (0 si el servidor no lo informa).
-	Append(ctx context.Context, folder string, raw []byte, flags []domain.Flag, date time.Time) (uint32, error)
+	// SetFlags, Move y Expunge actuan sobre los UIDs que existen en la carpeta y devuelven cuantos
+	// eran: un UID que no existe no cuenta y no es un error. Expunge borra de forma definitiva.
+	SetFlags(ctx context.Context, folder string, uids []uint32, change domain.FlagChange) (int, error)
+	Move(ctx context.Context, folder string, uids []uint32, dest string) (int, error)
+	Expunge(ctx context.Context, folder string, uids []uint32) (int, error)
+	// Empty borra de forma definitiva todos los mensajes de la carpeta y devuelve cuantos eran.
+	Empty(ctx context.Context, folder string) (int, error)
+	// Append guarda un mensaje y devuelve su referencia (UID 0 si el servidor no la informa).
+	Append(ctx context.Context, folder string, raw []byte, flags []domain.Flag, date time.Time) (domain.AppendedMessage, error)
+	// Stat identifica el mensaje sin leerlo: UIDVALIDITY de la carpeta, Message-ID y tamano. Un
+	// UID que no existe es domain.ErrMessageNotFound.
+	Stat(ctx context.Context, folder string, uid uint32) (domain.StoredMessage, error)
+	// OpenRaw devuelve el mensaje entero tal como esta guardado. El lector es valido hasta que se
+	// cierra; un mensaje mayor que maxBytes es domain.ErrMessageTooLarge.
+	OpenRaw(ctx context.Context, folder string, uid uint32, maxBytes int64) (domain.StoredMessage, io.ReadCloser, error)
+	// FindByMessageID busca en la carpeta el mensaje con esa cabecera Message-ID (sin corchetes) y
+	// devuelve su UID, 0 si no esta.
+	FindByMessageID(ctx context.Context, folder, messageID string) (uint32, error)
+	// CreateFolder crea la carpeta y la suscribe. Una que ya existe es domain.ErrFolderExists.
+	CreateFolder(ctx context.Context, name string) error
+	// RenameFolder la renombra (con sus subcarpetas) y traslada la suscripcion.
+	RenameFolder(ctx context.Context, name, newName string) error
+	// DeleteFolder la borra con sus mensajes y retira la suscripcion.
+	DeleteFolder(ctx context.Context, name string) error
 }
 
 // Sender entrega un mensaje por el submission de la celda autenticado como el buzon, de
@@ -112,6 +130,10 @@ type SendLedger interface {
 // nunca viaja en el mensaje que se entrega.
 type Composer interface {
 	Compose(msg domain.Outgoing, includeBcc bool) ([]byte, error)
+	// Finalize prepara para salir un mensaje ya compuesto y guardado (envio programado): fija la
+	// fecha de envio, quita el Bcc de la version que viaja y saca el sobre de sus cabeceras. Un
+	// mensaje ilegible o sin remitente es un *domain.ValidationError.
+	Finalize(stored []byte, date time.Time) (domain.FinalizedMessage, error)
 }
 
 // HTMLSanitizer sanea el HTML de terceros y el que redacta el usuario.
@@ -129,3 +151,63 @@ type VirusScanner interface {
 
 // PartURL construye la URL con la que el cliente pide una parte (imagenes cid:).
 type PartURL func(folder string, uid uint32, partID string) string
+
+// SignatureDirectory lee y guarda la firma del buzon en mail-directory. Un valor que el directorio
+// rechaza es un *domain.ValidationError; cualquier otro fallo, domain.ErrUnavailable.
+type SignatureDirectory interface {
+	Signature(ctx context.Context, username string) (domain.Signature, error)
+	SetSignature(ctx context.Context, username string, in domain.SignatureInput) (domain.Signature, error)
+}
+
+// FilterDirectory lee y reemplaza las reglas y el reenvio del buzon en mail-directory, que las
+// valida y genera el script Sieve. Errores como SignatureDirectory.
+type FilterDirectory interface {
+	Filters(ctx context.Context, username string) (domain.MailFilters, error)
+	SetFilters(ctx context.Context, username string, in domain.MailFiltersInput) (domain.MailFilters, error)
+}
+
+// PasswordDirectory cambia la contrasena del buzon con la politica y el evento del directorio.
+// Una contrasena que la politica rechaza es un *domain.ValidationError.
+type PasswordDirectory interface {
+	SetPassword(ctx context.Context, username, password string) error
+}
+
+// ScheduledDirectory es el indice durable de los envios programados de la celda (mail-directory).
+// Una fila que no existe o no es del buzon es domain.ErrScheduledNotFound; una que ya no esta
+// pendiente, domain.ErrScheduledNotPending; cualquier otro fallo, domain.ErrUnavailable.
+type ScheduledDirectory interface {
+	CreateScheduled(ctx context.Context, in domain.NewScheduledSend) (string, error)
+	ListScheduled(ctx context.Context, username string) ([]domain.ScheduledSend, error)
+	RescheduleScheduled(ctx context.Context, username, id string, at time.Time) (domain.ScheduledSend, error)
+	CancelScheduled(ctx context.Context, username, id string) error
+	// ClaimScheduled reclama hasta limit filas vencidas de toda la celda con un arriendo de lease.
+	ClaimScheduled(ctx context.Context, limit int, lease time.Duration) ([]domain.ScheduledClaim, error)
+	FinishScheduled(ctx context.Context, id string, outcome domain.ScheduledOutcome) error
+}
+
+// ContactBook es la libreta personal del buzon en mail-dav (la misma que sirve CardDAV). Todo lo que
+// mail-dav rechaza es un *domain.ServiceRejection con su codigo y sus detalles (un id que no existe,
+// un If-Match que ya no casa, un dato invalido, una cuota, un cupo); un fallo de la llamada es
+// domain.ErrUnavailable.
+type ContactBook interface {
+	ListContacts(ctx context.Context, mb domain.MailboxRef, q domain.ContactQuery) (domain.ContactPage, error)
+	Contact(ctx context.Context, mb domain.MailboxRef, id string) (domain.Contact, error)
+	CreateContact(ctx context.Context, mb domain.MailboxRef, in domain.ContactInput) (domain.Contact, error)
+	UpdateContact(ctx context.Context, mb domain.MailboxRef, id string, in domain.ContactInput, ifMatch string) (domain.Contact, error)
+	DeleteContact(ctx context.Context, mb domain.MailboxRef, id string) error
+	// ExportContacts entrega todas las tarjetas en text/vcard; el lector lo cierra quien lo pide.
+	ExportContacts(ctx context.Context, mb domain.MailboxRef) (io.ReadCloser, error)
+	ImportContacts(ctx context.Context, mb domain.MailboxRef, filename string, data []byte) (domain.ImportResult, error)
+	// Limits son los topes de la libreta y del calendario que sirve mail-dav, por nombre.
+	Limits(ctx context.Context) (map[string]int64, error)
+}
+
+// Calendar es el calendario personal del buzon en mail-dav (el mismo que sirve CalDAV). Errores
+// como ContactBook.
+type Calendar interface {
+	Occurrences(ctx context.Context, mb domain.MailboxRef, w domain.EventWindow) ([]domain.Occurrence, error)
+	Event(ctx context.Context, mb domain.MailboxRef, id string) (domain.Event, error)
+	CreateEvent(ctx context.Context, mb domain.MailboxRef, in domain.EventInput) (domain.Event, error)
+	UpdateEvent(ctx context.Context, mb domain.MailboxRef, id string, in domain.EventInput, ifMatch string) (domain.Event, error)
+	DeleteEvent(ctx context.Context, mb domain.MailboxRef, id string) error
+}

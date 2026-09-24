@@ -1,8 +1,9 @@
 // Package maildirectorycli pregunta a mail-directory con que direcciones puede enviar un
-// buzon (GET /internal/mail-directory/sender-identities) y lee y cambia su respuesta automatica
-// (GET y PUT /internal/mail-directory/vacation) y busca en la libreta de la empresa
-// (GET /internal/mail-directory/directory). Son llamadas internas con el token de gateway y
-// sin empresa: el webmail no la conoce y el buzon es unico en la celda.
+// buzon (GET /internal/mail-directory/sender-identities), lee y cambia su respuesta automatica
+// (GET y PUT /internal/mail-directory/vacation), su firma, sus reglas y su contrasena, busca en la
+// libreta de la empresa (GET /internal/mail-directory/directory) y lleva el indice de los envios
+// programados (/internal/mail-directory/scheduled-sends). Son llamadas internas con el token de
+// gateway y sin empresa: el buzon es unico en la celda.
 //
 // Por que asi y no leyendo la base de la celda: el webmail no tiene credencial de base y no
 // debe tenerla (ya guarda la credencial maestra de Dovecot); mail-directory es el dueno del
@@ -21,6 +22,7 @@ import (
 	"time"
 
 	"github.com/alonsosss/corforce-email/pkg/httpclient"
+	"github.com/alonsosss/corforce-email/services/webmail/internal/adapters/internalapi"
 	"github.com/alonsosss/corforce-email/services/webmail/internal/domain"
 )
 
@@ -32,8 +34,11 @@ const (
 	requestTimeout   = 5 * time.Second
 )
 
-// Client implementa ports.SenderDirectory, ports.VacationDirectory y ports.AddressBook.
+// Client implementa ports.SenderDirectory, ports.VacationDirectory, ports.AddressBook,
+// ports.SignatureDirectory, ports.FilterDirectory, ports.PasswordDirectory y
+// ports.ScheduledDirectory.
 type Client struct {
+	api       *internalapi.Caller
 	endpoint  string
 	vacation  string
 	directory string
@@ -46,12 +51,14 @@ func New(baseURL, token string) (*Client, error) {
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil {
 		return nil, fmt.Errorf("MAIL_DIRECTORY_URL debe ser una URL http(s) sin credenciales: %q", baseURL)
 	}
+	client := httpclient.New("mail-directory", httpclient.Options{Timeout: requestTimeout, MaxAttempts: 3})
 	return &Client{
+		api:       internalapi.New("mail-directory", u.String(), token, client),
 		endpoint:  u.String() + identitiesPath,
 		vacation:  u.String() + vacationPath,
 		directory: u.String() + directoryPath,
 		token:     token,
-		http:      httpclient.New("mail-directory", httpclient.Options{Timeout: requestTimeout, MaxAttempts: 3}),
+		http:      client,
 	}, nil
 }
 

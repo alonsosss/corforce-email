@@ -30,6 +30,7 @@ import (
 	handler "github.com/alonsosss/corforce-email/services/webmail/internal/adapters/http"
 	imapadapter "github.com/alonsosss/corforce-email/services/webmail/internal/adapters/imap"
 	"github.com/alonsosss/corforce-email/services/webmail/internal/adapters/mailauth"
+	"github.com/alonsosss/corforce-email/services/webmail/internal/adapters/maildavcli"
 	"github.com/alonsosss/corforce-email/services/webmail/internal/adapters/maildirectorycli"
 	natsadapter "github.com/alonsosss/corforce-email/services/webmail/internal/adapters/nats"
 	redisadapter "github.com/alonsosss/corforce-email/services/webmail/internal/adapters/redis"
@@ -59,6 +60,25 @@ const (
 	defaultMaxMessageBytes     = 25 << 20
 	defaultMaxBodyPartBytes    = 2 << 20
 	defaultMaxAttachmentBytes  = 50 << 20
+
+	// Envio programado: cada cuanto el trabajador reclama filas vencidas y cuantas a la vez, y lo
+	// mas lejos que se puede programar. El intervalo es el retraso maximo con el que sale un envio
+	// respecto de su hora. El lote se envia en paralelo y cada envio en curso puede ocupar en memoria
+	// unas cuatro veces WEBMAIL_MAX_MESSAGE_BYTES (mensaje leido, copia y version sin Bcc): el tope
+	// del lote acota esa memoria dentro del limite del contenedor.
+	defaultScheduledPollInterval = 15 * time.Second
+	minScheduledPollInterval     = time.Second
+	maxScheduledPollInterval     = 5 * time.Minute
+	defaultScheduledBatch        = 4
+	maxScheduledBatch            = 20
+	defaultScheduledMaxDays      = 365
+	// maxScheduledMaxDays queda por debajo de lo que admite mail-directory (366 dias): una hora
+	// que el webmail acepta nunca la rechaza el directorio.
+	maxScheduledMaxDays = 365
+
+	// Importacion de la libreta personal: el fichero vCard se lee entero en memoria.
+	defaultMaxImportBytes = 5 << 20
+	maxMaxImportBytes     = 50 << 20
 
 	// Topes de los motores de la celda, por donde entra y sale todo mensaje: el
 	// message_size_limit de deploy/mail/postfix/conf/main.cf.base (ningun mensaje, ni por tanto
@@ -105,7 +125,12 @@ type settings struct {
 	origins            []string
 	heloName           string
 	mailDirectoryURL   string
+	mailDavURL         string
 	internalToken      string
+	scheduledPoll      time.Duration
+	scheduledBatch     int
+	scheduledMaxDays   int
+	maxImportBytes     int64
 	eventsPerMailbox   int
 	eventsMailboxes    int
 }
@@ -179,6 +204,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("webmail: %v", err)
 	}
+	dav, err := maildavcli.New(st.mailDavURL, st.internalToken, transferTimeout)
+	if err != nil {
+		log.Fatalf("webmail: %v", err)
+	}
 	var scanner ports.VirusScanner
 	if st.clamdAddr != "" {
 		scanner = clamav.New(st.clamdAddr, clamdTimeout)
@@ -201,6 +230,12 @@ func main() {
 		Directory:   directory,
 		Vacations:   directory,
 		AddressBook: directory,
+		Signatures:  directory,
+		Filters:     directory,
+		Passwords:   directory,
+		Scheduled:   directory,
+		Contacts:    dav,
+		Calendar:    dav,
 		Watcher:     watcher,
 		Ledger:      redisadapter.NewSendLedger(rdb, st.cellCode),
 		Composer:    rfc5322.New(),
@@ -211,7 +246,9 @@ func main() {
 		Config: app.Config{
 			CellCode: st.cellCode, Sessions: st.sessions, Limits: st.limits,
 			MaxBodyPartBytes: st.maxBodyPartBytes, MaxAttachmentBytes: st.maxAttachmentBytes,
-			SendTimeout: transferTimeout,
+			SendTimeout: transferTimeout, MaxScheduledDays: st.scheduledMaxDays,
+			ScheduledPollInterval: st.scheduledPoll, ScheduledBatch: st.scheduledBatch,
+			MaxImportBytes: st.maxImportBytes,
 		},
 	})
 	if err != nil {
@@ -235,6 +272,10 @@ func main() {
 		defer bus.Close()
 		go natsadapter.NewConsumer(bus, svc, logger).Run(ctx)
 	}
+
+	// Envio programado: reclama las filas vencidas de la celda (cada replica lo hace; el arriendo de
+	// mail-directory evita que dos envien la misma) y termina con ctx.
+	go svc.RunScheduledSends(ctx)
 
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
@@ -353,6 +394,24 @@ func loadSettings() (settings, error) {
 	if st.mailDirectoryURL, err = config.RequiredServiceURL("MAIL_DIRECTORY_URL"); err != nil {
 		return st, err
 	}
+	// La libreta personal y el calendario los sirve mail-dav en la base de la empresa.
+	if st.mailDavURL, err = config.RequiredServiceURL("MAIL_DAV_URL"); err != nil {
+		return st, err
+	}
+	if st.scheduledPoll, err = config.EnvDuration("WEBMAIL_SCHEDULED_POLL_INTERVAL", defaultScheduledPollInterval, minScheduledPollInterval, maxScheduledPollInterval); err != nil {
+		return st, err
+	}
+	if st.scheduledBatch, err = config.EnvInt("WEBMAIL_SCHEDULED_BATCH", defaultScheduledBatch, 1, maxScheduledBatch); err != nil {
+		return st, err
+	}
+	if st.scheduledMaxDays, err = config.EnvInt("WEBMAIL_SCHEDULED_MAX_DAYS", defaultScheduledMaxDays, 1, maxScheduledMaxDays); err != nil {
+		return st, err
+	}
+	importBytes, err := config.EnvInt("WEBMAIL_MAX_IMPORT_BYTES", defaultMaxImportBytes, 1, maxMaxImportBytes)
+	if err != nil {
+		return st, err
+	}
+	st.maxImportBytes = int64(importBytes)
 	if st.internalToken, err = middleware.InternalGatewayToken(); err != nil {
 		return st, fmt.Errorf("%w (sin el mail-directory rechaza la consulta de remitentes)", err)
 	}

@@ -86,7 +86,7 @@ func (l *SendLedger) Release(ctx context.Context, key, token string) error {
 func recordFields(rec domain.SendRecord) []any {
 	return []any{
 		"t", rec.Token, "s", string(rec.State), "f", rec.Fingerprint, "m", rec.MessageID,
-		"c", boolField(rec.SavedToSent), "d", boolField(rec.DraftRemoved),
+		"c", boolField(rec.SavedToSent), "d", boolField(rec.DraftRemoved), "i", rec.ScheduledID,
 	}
 }
 
@@ -99,7 +99,7 @@ func parseRecord(values []any) domain.SendRecord {
 	}
 	return domain.SendRecord{
 		State: domain.SendState(fields["s"]), Fingerprint: fields["f"], MessageID: fields["m"],
-		SavedToSent: fields["c"] == "1", DraftRemoved: fields["d"] == "1", Token: fields["t"],
+		SavedToSent: fields["c"] == "1", DraftRemoved: fields["d"] == "1", ScheduledID: fields["i"], Token: fields["t"],
 	}
 }
 

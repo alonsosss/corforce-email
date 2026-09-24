@@ -132,10 +132,11 @@ func (s *Store) dial(ctx context.Context, username string, unilateral *imapclien
 // mailbox implementa ports.Mailbox sobre una conexion autenticada. No es concurrente:
 // cada peticion HTTP abre la suya.
 type mailbox struct {
-	c        *imapclient.Client
-	logger   *zap.Logger
-	selected string
-	writable bool
+	c           *imapclient.Client
+	logger      *zap.Logger
+	selected    string
+	writable    bool
+	uidValidity uint32
 }
 
 // watch cierra la conexion si el contexto se cancela: imapclient no acepta contexto por
@@ -163,11 +164,12 @@ func (m *mailbox) selectFolder(name string, writable bool) error {
 	if m.selected == name && (m.writable || !writable) {
 		return nil
 	}
-	if _, err := m.c.Select(name, &imaplib.SelectOptions{ReadOnly: !writable}).Wait(); err != nil {
+	data, err := m.c.Select(name, &imaplib.SelectOptions{ReadOnly: !writable}).Wait()
+	if err != nil {
 		m.selected = ""
 		return mapError(err, domain.ErrFolderNotFound)
 	}
-	m.selected, m.writable = name, writable
+	m.selected, m.writable, m.uidValidity = name, writable, data.UIDValidity
 	return nil
 }
 
@@ -232,15 +234,21 @@ func (m *mailbox) List(ctx context.Context, folder string, q domain.ListQuery) (
 	if err := m.selectFolder(folder, false); err != nil {
 		return domain.MessagePage{}, err
 	}
-	uids, err := m.sortedUIDs(q.Search)
+	uids, err := m.sortedUIDs(searchCriteria(q))
 	if err != nil {
 		return domain.MessagePage{}, err
+	}
+	capped := false
+	if q.Filter.HasAttachments {
+		if uids, capped, err = m.withAttachments(uids); err != nil {
+			return domain.MessagePage{}, err
+		}
 	}
 	total := len(uids)
 	start, end := q.Window(total)
 	page := uids[start:end]
 	if len(page) == 0 {
-		return domain.MessagePage{Total: total}, nil
+		return domain.MessagePage{Total: total, Capped: capped}, nil
 	}
 	bufs, err := m.c.Fetch(imaplib.UIDSetNum(page...), &imaplib.FetchOptions{
 		UID: true, Envelope: true, Flags: true, RFC822Size: true, InternalDate: true,
@@ -259,17 +267,80 @@ func (m *mailbox) List(ctx context.Context, folder string, q domain.ListQuery) (
 			items = append(items, envelopeOf(b))
 		}
 	}
-	return domain.MessagePage{Items: items, Total: total}, nil
+	return domain.MessagePage{Items: items, Total: total, Capped: capped}, nil
+}
+
+// searchCriteria traduce la busqueda a IMAP SEARCH. Los textos los cita la libreria y Dovecot los
+// busca como subcadena sin distinguir mayusculas; las fechas son las de la cabecera Date, las
+// mismas por las que se ordena el listado.
+func searchCriteria(q domain.ListQuery) *imaplib.SearchCriteria {
+	c := &imaplib.SearchCriteria{}
+	if q.Search != "" {
+		c.Text = []string{q.Search}
+	}
+	f := q.Filter
+	for _, h := range []struct{ key, value string }{{"From", f.From}, {"To", f.To}, {"Subject", f.Subject}} {
+		if h.value != "" {
+			c.Header = append(c.Header, imaplib.SearchCriteriaHeaderField{Key: h.key, Value: h.value})
+		}
+	}
+	c.SentSince, c.SentBefore = f.Since, f.Before
+	if f.Unread {
+		c.NotFlag = append(c.NotFlag, imaplib.FlagSeen)
+	}
+	if f.Flagged {
+		c.Flag = append(c.Flag, imaplib.FlagFlagged)
+	}
+	if f.HasAttachments {
+		// Descarta en el servidor los mensajes de una sola parte de texto, que no pueden llevar
+		// adjuntos; el resto se decide con BODYSTRUCTURE (withAttachments).
+		c.Not = append(c.Not, imaplib.SearchCriteria{Header: []imaplib.SearchCriteriaHeaderField{{Key: "Content-Type", Value: "text/"}}})
+	}
+	return c
+}
+
+// Filtro por adjuntos: IMAP SEARCH no sabe si un mensaje tiene adjuntos, asi que se decide con la
+// misma regla que marca has_attachments en el listado (hasAttachments sobre BODYSTRUCTURE), leida
+// por lotes y solo sobre los mensajes mas recientes que casan con el resto de criterios. Si hay
+// mas, el total se declara acotado (capped) en vez de recorrer la carpeta entera.
+const (
+	attachmentScanLimit = 2000
+	attachmentScanBatch = 500
+)
+
+func (m *mailbox) withAttachments(uids []imaplib.UID) ([]imaplib.UID, bool, error) {
+	capped := len(uids) > attachmentScanLimit
+	if capped {
+		uids = uids[:attachmentScanLimit]
+	}
+	with := make(map[imaplib.UID]bool, len(uids))
+	for start := 0; start < len(uids); start += attachmentScanBatch {
+		chunk := uids[start:min(start+attachmentScanBatch, len(uids))]
+		bufs, err := m.c.Fetch(imaplib.UIDSetNum(chunk...), &imaplib.FetchOptions{
+			UID: true, BodyStructure: &imaplib.FetchItemBodyStructure{Extended: true},
+		}).Collect()
+		if err != nil {
+			return nil, false, mapError(err, nil)
+		}
+		for _, b := range bufs {
+			if b.BodyStructure != nil && hasAttachments(b.BodyStructure) {
+				with[b.UID] = true
+			}
+		}
+	}
+	out := make([]imaplib.UID, 0, len(with))
+	for _, uid := range uids {
+		if with[uid] {
+			out = append(out, uid)
+		}
+	}
+	return out, capped, nil
 }
 
 // sortedUIDs devuelve los UIDs que casan con la busqueda, del mas reciente al mas
 // antiguo. Con SORT (Dovecot) ordena el servidor por fecha; sin el, por UID, que sigue
 // el orden de llegada.
-func (m *mailbox) sortedUIDs(search string) ([]imaplib.UID, error) {
-	criteria := &imaplib.SearchCriteria{}
-	if search != "" {
-		criteria.Text = []string{search}
-	}
+func (m *mailbox) sortedUIDs(criteria *imaplib.SearchCriteria) ([]imaplib.UID, error) {
 	if m.c.Caps().Has(imaplib.CapSort) {
 		nums, err := m.c.UIDSort(&imapclient.SortOptions{
 			SearchCriteria: criteria,
@@ -410,18 +481,7 @@ func (m *mailbox) openPart(folder string, uid uint32, partID string, maxBytes in
 	}
 
 	cmd := m.c.Fetch(set, &imaplib.FetchOptions{UID: true, BodySection: []*imaplib.FetchItemBodySection{{Part: path, Peek: true}}})
-	msg := cmd.Next()
-	if msg == nil {
-		_ = cmd.Close()
-		return domain.Part{}, nil, domain.ErrMessageNotFound
-	}
-	var literal imaplib.LiteralReader
-	for item := msg.Next(); item != nil; item = msg.Next() {
-		if section, ok := item.(imapclient.FetchItemDataBodySection); ok {
-			literal = section.Literal
-			break
-		}
-	}
+	literal := firstLiteral(cmd)
 	if literal == nil {
 		_ = cmd.Close()
 		return domain.Part{}, nil, domain.ErrPartNotFound
@@ -447,12 +507,17 @@ type partReader struct {
 	finish    func() error
 	release   func()
 	closed    bool
+	// tooLarge es el error al pasar del tope; sin fijar, domain.ErrPartTooLarge.
+	tooLarge error
 }
 
 func (p *partReader) Read(b []byte) (int, error) {
 	if p.remaining <= 0 {
 		var probe [1]byte
 		if n, _ := p.r.Read(probe[:]); n > 0 {
+			if p.tooLarge != nil {
+				return 0, p.tooLarge
+			}
 			return 0, domain.ErrPartTooLarge
 		}
 		return 0, io.EOF
@@ -498,14 +563,14 @@ func (m *mailbox) ReplyReference(ctx context.Context, folder string, uid uint32)
 	return ref, nil
 }
 
-func (m *mailbox) SetFlags(ctx context.Context, folder string, uid uint32, change domain.FlagChange) error {
+func (m *mailbox) SetFlags(ctx context.Context, folder string, uids []uint32, change domain.FlagChange) (int, error) {
 	defer m.watch(ctx)()
 	if err := m.selectFolder(folder, true); err != nil {
-		return err
+		return 0, err
 	}
-	set := imaplib.UIDSetNum(imaplib.UID(uid))
-	if err := m.requireMessage(set); err != nil {
-		return err
+	set, n, err := m.existing(uids)
+	if err != nil || n == 0 {
+		return 0, err
 	}
 	for _, op := range []struct {
 		kind  imaplib.StoreFlagsOp
@@ -515,42 +580,66 @@ func (m *mailbox) SetFlags(ctx context.Context, folder string, uid uint32, chang
 			continue
 		}
 		if err := m.c.Store(set, &imaplib.StoreFlags{Op: op.kind, Silent: true, Flags: imapFlags(op.flags)}, nil).Close(); err != nil {
-			return mapError(err, nil)
+			return 0, mapError(err, nil)
 		}
 	}
-	return nil
+	return n, nil
 }
 
-func (m *mailbox) Move(ctx context.Context, folder string, uid uint32, dest string) error {
+func (m *mailbox) Move(ctx context.Context, folder string, uids []uint32, dest string) (int, error) {
 	defer m.watch(ctx)()
 	if err := m.selectFolder(folder, true); err != nil {
-		return err
+		return 0, err
 	}
-	set := imaplib.UIDSetNum(imaplib.UID(uid))
-	if err := m.requireMessage(set); err != nil {
-		return err
+	set, n, err := m.existing(uids)
+	if err != nil || n == 0 {
+		return 0, err
 	}
 	if _, err := m.c.Move(set, dest).Wait(); err != nil {
-		return mapError(err, domain.ErrFolderNotFound)
+		return 0, mapError(err, domain.ErrFolderNotFound)
 	}
-	return nil
+	return n, nil
 }
 
-// Expunge borra un unico mensaje. Exige UID EXPUNGE (UIDPLUS): un EXPUNGE sin UID
+// Expunge borra los mensajes indicados. Exige UID EXPUNGE (UIDPLUS): un EXPUNGE sin UID
 // borraria tambien cualquier otro mensaje que otro cliente hubiera marcado \Deleted.
-func (m *mailbox) Expunge(ctx context.Context, folder string, uid uint32) error {
+func (m *mailbox) Expunge(ctx context.Context, folder string, uids []uint32) (int, error) {
 	defer m.watch(ctx)()
-	caps := m.c.Caps()
-	if !caps.Has(imaplib.CapUIDPlus) && !caps.Has(imaplib.CapIMAP4rev2) {
-		return fmt.Errorf("%w: el servidor IMAP no admite UID EXPUNGE", domain.ErrUnavailable)
+	if err := m.requireUIDPlus(); err != nil {
+		return 0, err
 	}
 	if err := m.selectFolder(folder, true); err != nil {
-		return err
+		return 0, err
 	}
-	set := imaplib.UIDSetNum(imaplib.UID(uid))
-	if err := m.requireMessage(set); err != nil {
-		return err
+	set, n, err := m.existing(uids)
+	if err != nil || n == 0 {
+		return 0, err
 	}
+	return n, m.expungeSet(set)
+}
+
+// Empty borra todos los mensajes de la carpeta con UID EXPUNGE sobre los UIDs que habia al
+// empezar: un mensaje que llegue mientras tanto no se borra.
+func (m *mailbox) Empty(ctx context.Context, folder string) (int, error) {
+	defer m.watch(ctx)()
+	if err := m.requireUIDPlus(); err != nil {
+		return 0, err
+	}
+	if err := m.selectFolder(folder, true); err != nil {
+		return 0, err
+	}
+	data, err := m.c.UIDSearch(&imaplib.SearchCriteria{}, nil).Wait()
+	if err != nil {
+		return 0, mapError(err, nil)
+	}
+	uids := data.AllUIDs()
+	if len(uids) == 0 {
+		return 0, nil
+	}
+	return len(uids), m.expungeSet(imaplib.UIDSetNum(uids...))
+}
+
+func (m *mailbox) expungeSet(set imaplib.UIDSet) error {
 	store := &imaplib.StoreFlags{Op: imaplib.StoreFlagsAdd, Silent: true, Flags: []imaplib.Flag{imaplib.FlagDeleted}}
 	if err := m.c.Store(set, store, nil).Close(); err != nil {
 		return mapError(err, nil)
@@ -561,34 +650,180 @@ func (m *mailbox) Expunge(ctx context.Context, folder string, uid uint32) error 
 	return nil
 }
 
-func (m *mailbox) Append(ctx context.Context, folder string, raw []byte, flags []domain.Flag, date time.Time) (uint32, error) {
+func (m *mailbox) requireUIDPlus() error {
+	caps := m.c.Caps()
+	if !caps.Has(imaplib.CapUIDPlus) && !caps.Has(imaplib.CapIMAP4rev2) {
+		return fmt.Errorf("%w: el servidor IMAP no admite UID EXPUNGE", domain.ErrUnavailable)
+	}
+	return nil
+}
+
+func (m *mailbox) Append(ctx context.Context, folder string, raw []byte, flags []domain.Flag, date time.Time) (domain.AppendedMessage, error) {
 	defer m.watch(ctx)()
 	cmd := m.c.Append(folder, int64(len(raw)), &imaplib.AppendOptions{Flags: imapFlags(flags), Time: date})
 	if _, err := cmd.Write(raw); err != nil {
 		_ = cmd.Close()
-		return 0, unavailable("APPEND", err)
+		return domain.AppendedMessage{}, unavailable("APPEND", err)
 	}
 	if err := cmd.Close(); err != nil {
-		return 0, unavailable("APPEND", err)
+		return domain.AppendedMessage{}, unavailable("APPEND", err)
 	}
 	data, err := cmd.Wait()
 	if err != nil {
-		return 0, mapError(err, domain.ErrFolderNotFound)
+		return domain.AppendedMessage{}, mapError(err, domain.ErrFolderNotFound)
 	}
-	return uint32(data.UID), nil
+	return domain.AppendedMessage{UID: uint32(data.UID), UIDValidity: data.UIDValidity}, nil
 }
 
-// requireMessage comprueba que el UID existe: STORE y MOVE sobre un UID inexistente
-// responden OK sin hacer nada y el cliente creeria que la operacion se aplico.
-func (m *mailbox) requireMessage(set imaplib.UIDSet) error {
-	bufs, err := m.c.Fetch(set, &imaplib.FetchOptions{UID: true}).Collect()
+func (m *mailbox) Stat(ctx context.Context, folder string, uid uint32) (domain.StoredMessage, error) {
+	defer m.watch(ctx)()
+	return m.stat(folder, uid)
+}
+
+func (m *mailbox) stat(folder string, uid uint32) (domain.StoredMessage, error) {
+	if err := m.selectFolder(folder, false); err != nil {
+		return domain.StoredMessage{}, err
+	}
+	bufs, err := m.c.Fetch(imaplib.UIDSetNum(imaplib.UID(uid)), &imaplib.FetchOptions{UID: true, Envelope: true, RFC822Size: true}).Collect()
 	if err != nil {
-		return mapError(err, nil)
+		return domain.StoredMessage{}, mapError(err, nil)
 	}
 	if len(bufs) == 0 {
-		return domain.ErrMessageNotFound
+		return domain.StoredMessage{}, domain.ErrMessageNotFound
+	}
+	msg := domain.StoredMessage{UIDValidity: m.uidValidity, UID: uint32(bufs[0].UID), Size: bufs[0].RFC822Size}
+	if env := bufs[0].Envelope; env != nil {
+		msg.MessageID = bareMessageID(env.MessageID)
+	}
+	return msg, nil
+}
+
+// OpenRaw entrega el mensaje tal como esta guardado (BODY.PEEK[]: no lo marca como leido).
+func (m *mailbox) OpenRaw(ctx context.Context, folder string, uid uint32, maxBytes int64) (domain.StoredMessage, io.ReadCloser, error) {
+	stop := m.watch(ctx)
+	msg, err := m.stat(folder, uid)
+	if err == nil && msg.Size > maxBytes {
+		err = domain.ErrMessageTooLarge
+	}
+	if err != nil {
+		stop()
+		return domain.StoredMessage{}, nil, err
+	}
+	cmd := m.c.Fetch(imaplib.UIDSetNum(imaplib.UID(uid)), &imaplib.FetchOptions{UID: true, BodySection: []*imaplib.FetchItemBodySection{{Peek: true}}})
+	literal := firstLiteral(cmd)
+	if literal == nil {
+		_ = cmd.Close()
+		stop()
+		return domain.StoredMessage{}, nil, domain.ErrMessageNotFound
+	}
+	return msg, &partReader{r: literal, remaining: maxBytes, finish: cmd.Close, release: stop, tooLarge: domain.ErrMessageTooLarge}, nil
+}
+
+// firstLiteral devuelve la primera seccion de cuerpo de la respuesta FETCH, o nil.
+func firstLiteral(cmd *imapclient.FetchCommand) imaplib.LiteralReader {
+	msg := cmd.Next()
+	if msg == nil {
+		return nil
+	}
+	for item := msg.Next(); item != nil; item = msg.Next() {
+		if section, ok := item.(imapclient.FetchItemDataBodySection); ok {
+			return section.Literal
+		}
 	}
 	return nil
+}
+
+func (m *mailbox) FindByMessageID(ctx context.Context, folder, messageID string) (uint32, error) {
+	defer m.watch(ctx)()
+	if err := m.selectFolder(folder, false); err != nil {
+		return 0, err
+	}
+	criteria := &imaplib.SearchCriteria{Header: []imaplib.SearchCriteriaHeaderField{{Key: "Message-ID", Value: "<" + messageID + ">"}}}
+	data, err := m.c.UIDSearch(criteria, nil).Wait()
+	if err != nil {
+		return 0, mapError(err, nil)
+	}
+	var found uint32
+	for _, uid := range data.AllUIDs() {
+		found = max(found, uint32(uid))
+	}
+	return found, nil
+}
+
+func (m *mailbox) CreateFolder(ctx context.Context, name string) error {
+	defer m.watch(ctx)()
+	if err := m.c.Create(name, nil).Wait(); err != nil {
+		return folderError(err)
+	}
+	m.subscribe(name)
+	return nil
+}
+
+// subscribe suscribe la carpeta para que los demas clientes IMAP la muestren. Un fallo no deshace
+// la carpeta: se registra. SUBSCRIBE se invoca como valor de metodo porque el analizador de
+// contratos de eventos (ops/scaffold/eventcontracts) lee toda llamada .Subscribe(...) como una
+// suscripcion de NATS.
+func (m *mailbox) subscribe(name string) {
+	imapSubscribe := m.c.Subscribe
+	if err := imapSubscribe(name).Wait(); err != nil {
+		m.logger.Warn("webmail: carpeta sin suscribir", zap.String("folder", name), zap.Error(err))
+	}
+}
+
+func (m *mailbox) RenameFolder(ctx context.Context, name, newName string) error {
+	defer m.watch(ctx)()
+	m.selected = ""
+	if err := m.c.Rename(name, newName, nil).Wait(); err != nil {
+		return folderError(err)
+	}
+	m.subscribe(newName)
+	_ = m.c.Unsubscribe(name).Wait()
+	return nil
+}
+
+func (m *mailbox) DeleteFolder(ctx context.Context, name string) error {
+	defer m.watch(ctx)()
+	m.selected = ""
+	if err := m.c.Delete(name).Wait(); err != nil {
+		return mapError(err, domain.ErrFolderNotFound)
+	}
+	_ = m.c.Unsubscribe(name).Wait()
+	return nil
+}
+
+// existing se queda con los UIDs que siguen en la carpeta: STORE y MOVE sobre un UID
+// inexistente responden OK sin hacer nada y el cliente creeria que la operacion se aplico.
+func (m *mailbox) existing(uids []uint32) (imaplib.UIDSet, int, error) {
+	if len(uids) == 0 {
+		return nil, 0, nil
+	}
+	req := make([]imaplib.UID, len(uids))
+	for i, u := range uids {
+		req[i] = imaplib.UID(u)
+	}
+	bufs, err := m.c.Fetch(imaplib.UIDSetNum(req...), &imaplib.FetchOptions{UID: true}).Collect()
+	if err != nil {
+		return nil, 0, mapError(err, nil)
+	}
+	found := make([]imaplib.UID, 0, len(bufs))
+	for _, b := range bufs {
+		found = append(found, b.UID)
+	}
+	if len(found) == 0 {
+		return nil, 0, nil
+	}
+	return imaplib.UIDSetNum(found...), len(found), nil
+}
+
+// folderError traduce el rechazo de CREATE o RENAME: un nombre que ya existe, una carpeta que no
+// existe o un nombre que el servidor no admite (CANNOT: demasiado largo o con caracteres que su
+// almacen no guarda) son del usuario; lo demas es indisponibilidad.
+func folderError(err error) error {
+	var ie *imaplib.Error
+	if errors.As(err, &ie) && ie.Code == imaplib.ResponseCodeCannot {
+		return domain.NewValidationError("name", "el servidor de correo no admite ese nombre de carpeta")
+	}
+	return mapError(err, nil)
 }
 
 // mapError traduce una respuesta IMAP. onNo es el error de dominio de un NO sin codigo
@@ -601,6 +836,8 @@ func mapError(err error, onNo error) error {
 			return domain.ErrFolderNotFound
 		case imaplib.ResponseCodeOverQuota:
 			return domain.ErrQuotaExceeded
+		case imaplib.ResponseCodeAlreadyExists:
+			return domain.ErrFolderExists
 		}
 		if ie.Type == imaplib.StatusResponseTypeNo && onNo != nil {
 			return onNo

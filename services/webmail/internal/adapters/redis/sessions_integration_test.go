@@ -53,13 +53,14 @@ func TestIntegracionSesionesEnRedis(t *testing.T) {
 	ctx := context.Background()
 	store, rdb := testStore(t)
 	t0 := time.Now().UTC().Truncate(time.Microsecond)
-	old := domain.Session{Username: "ana@empresa.pe", DisplayName: "Ana", CreatedAt: t0, ExpiresAt: t0.Add(12 * time.Hour)}
+	old := domain.Session{Username: "ana@empresa.pe", DisplayName: "Ana", CreatedAt: t0, ExpiresAt: t0.Add(12 * time.Hour),
+		TenantID: "11111111-1111-4111-8111-111111111111", MailboxID: "22222222-2222-4222-8222-222222222222"}
 
 	if err := store.Create(ctx, "k-old", old, time.Minute); err != nil {
 		t.Fatal(err)
 	}
 	got, err := store.Get(ctx, "k-old")
-	if err != nil || got.Username != old.Username || got.DisplayName != old.DisplayName ||
+	if err != nil || got.Username != old.Username || got.DisplayName != old.DisplayName || got.TenantID != old.TenantID || got.MailboxID != old.MailboxID ||
 		!got.CreatedAt.Equal(old.CreatedAt) || !got.ExpiresAt.Equal(old.ExpiresAt) {
 		t.Fatalf("got %+v %v", got, err)
 	}

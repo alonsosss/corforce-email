@@ -50,12 +50,13 @@ func TestRegistroDeEnviosContraRedis(t *testing.T) {
 		t.Fatalf("otra marca no actualiza: %v %v", ok, err)
 	}
 	sent := mine
-	sent.State, sent.MessageID, sent.SavedToSent = domain.SendSent, "abc@empresa.pe", true
+	sent.State, sent.MessageID, sent.SavedToSent, sent.ScheduledID = domain.SendSent, "abc@empresa.pe", true, "00000000-0000-4000-8000-000000000001"
 	if ok, err := ledger.Update(ctx, key, sent, time.Hour); err != nil || !ok {
 		t.Fatalf("actualizar: %v %v", ok, err)
 	}
 	current, _, _ = ledger.Reserve(ctx, key, pending, time.Minute)
-	if current.State != domain.SendSent || current.MessageID != "abc@empresa.pe" || !current.SavedToSent || current.DraftRemoved {
+	if current.State != domain.SendSent || current.MessageID != "abc@empresa.pe" || !current.SavedToSent || current.DraftRemoved ||
+		current.ScheduledID != "00000000-0000-4000-8000-000000000001" {
 		t.Fatalf("registro guardado: %+v", current)
 	}
 	if ttl := rdb.PTTL(ctx, redisKey).Val(); ttl <= time.Minute {

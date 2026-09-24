@@ -4,12 +4,17 @@
 package rfc5322
 
 import (
+	"bufio"
 	"bytes"
 	"fmt"
 	"io"
+	"strings"
+	"time"
 
 	"github.com/alonsosss/corforce-email/services/webmail/internal/domain"
+	gomessage "github.com/emersion/go-message"
 	"github.com/emersion/go-message/mail"
+	"github.com/emersion/go-message/textproto"
 )
 
 // Composer implementa ports.Composer.
@@ -142,6 +147,70 @@ func writeInlineParts(iw *mail.InlineWriter, text, html string) error {
 		}
 	}
 	return nil
+}
+
+// Finalize prepara un mensaje guardado para salir a su hora: la cabecera Date pasa a ser la del
+// envio, la version que viaja pierde el Bcc y el sobre se saca de From, To, Cc y Bcc. El cuerpo no
+// se toca: los bytes que salen son los que el usuario programo.
+func (Composer) Finalize(stored []byte, date time.Time) (domain.FinalizedMessage, error) {
+	br := bufio.NewReader(bytes.NewReader(stored))
+	th, err := textproto.ReadHeader(br)
+	if err != nil {
+		return domain.FinalizedMessage{}, domain.NewValidationError("message", "cabeceras ilegibles")
+	}
+	body, err := io.ReadAll(br)
+	if err != nil {
+		return domain.FinalizedMessage{}, domain.NewValidationError("message", "cuerpo ilegible")
+	}
+	h := mail.Header{Header: gomessage.Header{Header: th}}
+	from, err := h.AddressList("From")
+	if err != nil || len(from) != 1 {
+		return domain.FinalizedMessage{}, domain.NewValidationError("from", "el mensaje debe tener un unico remitente")
+	}
+	sender, err := domain.NewAddress("from", "", from[0].Address)
+	if err != nil {
+		return domain.FinalizedMessage{}, err
+	}
+	var recipients []string
+	seen := map[string]bool{}
+	for _, key := range []string{"To", "Cc", "Bcc"} {
+		field := strings.ToLower(key)
+		list, err := h.AddressList(key)
+		if err != nil {
+			return domain.FinalizedMessage{}, domain.NewValidationError(field, "lista de direcciones invalida")
+		}
+		for _, a := range list {
+			addr, err := domain.NewAddress(field, "", a.Address)
+			if err != nil {
+				return domain.FinalizedMessage{}, err
+			}
+			if k := strings.ToLower(addr.Email); !seen[k] {
+				seen[k] = true
+				recipients = append(recipients, addr.Email)
+			}
+		}
+	}
+	h.SetDate(date)
+	storedCopy, err := withHeader(h.Header.Header, body)
+	if err != nil {
+		return domain.FinalizedMessage{}, err
+	}
+	wireHeader := h.Header.Header.Copy()
+	wireHeader.Del("Bcc")
+	wire, err := withHeader(wireHeader, body)
+	if err != nil {
+		return domain.FinalizedMessage{}, err
+	}
+	return domain.FinalizedMessage{From: sender.Email, Recipients: recipients, Wire: wire, Stored: storedCopy}, nil
+}
+
+func withHeader(h textproto.Header, body []byte) ([]byte, error) {
+	var buf bytes.Buffer
+	if err := textproto.WriteHeader(&buf, h); err != nil {
+		return nil, fmt.Errorf("escribir las cabeceras: %w", err)
+	}
+	buf.Write(body)
+	return buf.Bytes(), nil
 }
 
 func writeAndClose(w io.WriteCloser, data []byte) error {
