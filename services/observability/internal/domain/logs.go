@@ -25,7 +25,7 @@ var logServices = []string{
 	"mail-directory", "mail-auth", "mail-security", "webmail", "domain-service", "mail-migration", "mail-dav",
 	// Correo transaccional y marketing.
 	"transactional", "suppression", "templates", "contacts", "billing", "reputation", "campaigns",
-	"automations", "analytics",
+	"automations", "analytics", "smtp-relay",
 }
 
 // LogServices devuelve una copia ordenada de la lista blanca.
