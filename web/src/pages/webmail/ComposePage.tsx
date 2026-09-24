@@ -26,6 +26,7 @@ import { mailboxSignature, senderIdentities, webmailMeta } from '@/webmail/catal
 import { useWebmailStore } from '@/webmail/store';
 import { AddressBookPicker } from './AddressBookPicker';
 import { AttachmentPicker } from './AttachmentPicker';
+import { ComposeAssistant } from './assistant/ComposeAssistant';
 import {
   buildDraft,
   composeErrorMessage,
@@ -429,6 +430,27 @@ function ComposeForm({
     setVersion((v) => v + 1);
   };
 
+  // Texto propuesto por el asistente: una respuesta va delante (encima de la cita); un cambio de tono
+  // sustituye el cuerpo. El editor no es controlado, asi que se vuelve a montar con el contenido nuevo.
+  const insertAssistantText = (value: string) => {
+    if (format === 'html') {
+      setHtml((current) => textToHtml(value) + current);
+      setEditorKey((k) => k + 1);
+    } else {
+      setText((current) => (current ? `${value}\n\n${current}` : value));
+    }
+    setVersion((v) => v + 1);
+  };
+  const replaceWithAssistantText = (value: string) => {
+    if (format === 'html') {
+      setHtml(textToHtml(value));
+      setEditorKey((k) => k + 1);
+    } else {
+      setText(value);
+    }
+    setVersion((v) => v + 1);
+  };
+
   const discard = async () => {
     // Un borrador que solo existe porque se guardo solo se retira con lo descartado.
     const drafts = folders.data ? folderWithRole(folders.data, FOLDER_ROLES.drafts) : undefined;
@@ -586,6 +608,13 @@ function ComposeForm({
           />
         )}
       </div>
+      <ComposeAssistant
+        bodyText={() => (format === 'html' ? htmlToPlainText(html) : text)}
+        replyTo={seed.inReplyTo}
+        disabled={busy}
+        onInsert={insertAssistantText}
+        onReplace={replaceWithAssistantText}
+      />
       <AttachmentPicker
         files={files}
         serverParts={serverParts}

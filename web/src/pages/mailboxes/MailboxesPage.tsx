@@ -24,6 +24,7 @@ import { paths } from '@/paths';
 import { DirectoryDomainPicker } from '@/pages/shared/DirectoryDomainPicker';
 import { ActiveStateBadge } from '@/pages/shared/StatusBadges';
 import { ProtocolBadges } from './access';
+import { AssistantSettingsCard } from './AssistantSettingsCard';
 import { MailboxCreateForm } from './MailboxCreateForm';
 
 const SEARCH_DEBOUNCE_MS = 300;
@@ -178,6 +179,11 @@ export default function MailboxesPage() {
           }}
         />
       </Card>
+      {can(...PERMISSIONS.assistantSettings.read) ? (
+        <div style={{ marginTop: 'var(--cf-space-6)' }}>
+          <AssistantSettingsCard />
+        </div>
+      ) : null}
       {creating ? (
         <MailboxCreateForm
           onClose={() => setCreating(false)}

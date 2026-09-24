@@ -33,6 +33,7 @@ import (
 	"github.com/alonsosss/corforce-email/services/webmail/internal/adapters/maildavcli"
 	"github.com/alonsosss/corforce-email/services/webmail/internal/adapters/maildirectorycli"
 	natsadapter "github.com/alonsosss/corforce-email/services/webmail/internal/adapters/nats"
+	promadapter "github.com/alonsosss/corforce-email/services/webmail/internal/adapters/prometheus"
 	redisadapter "github.com/alonsosss/corforce-email/services/webmail/internal/adapters/redis"
 	"github.com/alonsosss/corforce-email/services/webmail/internal/adapters/rfc5322"
 	smtpadapter "github.com/alonsosss/corforce-email/services/webmail/internal/adapters/smtp"
@@ -40,6 +41,7 @@ import (
 	"github.com/alonsosss/corforce-email/services/webmail/internal/domain"
 	"github.com/alonsosss/corforce-email/services/webmail/internal/ports"
 	"github.com/go-chi/chi/v5"
+	"github.com/prometheus/client_golang/prometheus"
 	goredis "github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 )
@@ -145,6 +147,10 @@ func main() {
 		log.Fatalf("load config: %v", err)
 	}
 	st, err := loadSettings()
+	if err != nil {
+		log.Fatalf("webmail: %v", err)
+	}
+	assistantCfg, err := loadAssistantSettings()
 	if err != nil {
 		log.Fatalf("webmail: %v", err)
 	}
@@ -266,12 +272,28 @@ func main() {
 	// Revocacion por eventos del directorio. Sin NATS el servicio sirve igual, pero un
 	// cambio de contrasena no cierra las sesiones abiertas hasta su inactividad o su vida
 	// maxima: se avisa.
+	var auditBus natsadapter.Publisher
 	if bus, err := events.NewBus(cfg.NATS.URL, logger); err != nil {
 		logger.Warn("webmail: NATS no disponible; sin revocacion de sesiones por eventos de buzon", zap.Error(err))
 	} else {
 		defer bus.Close()
 		go natsadapter.NewConsumer(bus, svc, logger).Run(ctx)
+		auditBus = bus
 	}
+
+	// Asistente: sin NATS cada uso se cuenta como uso sin apunte de auditoria
+	// (webmail_assistant_audit_failures_total).
+	assistant, err := newAssistant(assistantCfg, app.AssistantDeps{
+		Settings: directory,
+		Quota:    redisadapter.NewAssistantQuota(rdb, st.cellCode),
+		Audit:    natsadapter.NewAssistantAudit(auditBus),
+		Metrics:  promadapter.NewAssistantMetrics(prometheus.DefaultRegisterer),
+		Source:   svc,
+	}, logger)
+	if err != nil {
+		log.Fatalf("webmail: %v", err)
+	}
+	h.SetAssistant(assistant)
 
 	// Envio programado: reclama las filas vencidas de la celda (cada replica lo hace; el arriendo de
 	// mail-directory evita que dos envien la misma) y termina con ctx.

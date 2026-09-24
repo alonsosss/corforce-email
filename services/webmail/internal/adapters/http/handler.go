@@ -49,6 +49,9 @@ type Handler struct {
 	cfg     Config
 	origins *OriginGuard
 	logger  *zap.Logger
+
+	// assistant es opcional (SetAssistant): sin el, /assistant responde que no esta disponible.
+	assistant *app.AssistantService
 }
 
 func NewHandler(svc *app.Service, cfg Config, logger *zap.Logger) (*Handler, error) {
@@ -120,6 +123,7 @@ func (h *Handler) Routes() http.Handler {
 			r.Get("/calendar/events/{id}", h.Event)
 			r.Put("/calendar/events/{id}", h.UpdateEvent)
 			r.Delete("/calendar/events/{id}", h.DeleteEvent)
+			h.assistantRoutes(r)
 		})
 	})
 	return r

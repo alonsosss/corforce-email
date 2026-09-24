@@ -64,6 +64,7 @@ func (h *Handler) Routes() chi.Router {
 		// Reglas del directorio para la interfaz: sin datos de la empresa, pero detras del
 		// mismo permiso de lectura que el listado de buzones que las usa.
 		r.With(h.require(moduleMailboxes, "mailboxes", actionRead)).Get("/mail-directory/meta", h.Meta)
+		r.Route("/mail-directory/assistant", h.assistantRoutes)
 	})
 	// Ruta servicio-a-servicio: la protege RequireGatewayToken en main y toma la empresa
 	// de X-Tenant-ID; no pasa por el gateway ni por permisos de usuario.
@@ -100,6 +101,7 @@ func (h *Handler) Routes() chi.Router {
 		r.Patch("/internal/mail-directory/scheduled-sends/{id}", h.InternalRescheduleSend)
 		r.Delete("/internal/mail-directory/scheduled-sends/{id}", h.InternalCancelScheduledSend)
 		r.Post("/internal/mail-directory/scheduled-sends/{id}/finish", h.InternalFinishScheduledSend)
+		r.Get("/internal/mail-directory/assistant", h.InternalAssistant)
 	})
 	return r
 }

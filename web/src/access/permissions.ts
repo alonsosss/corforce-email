@@ -129,6 +129,11 @@ export const PERMISSIONS = {
     read: [MODULES.mailboxes, 'sieve', 'read'],
     update: [MODULES.mailboxes, 'sieve', 'update'],
   },
+  // Asistente del webmail por empresa (migrations/registry/045, docs/adr/0014).
+  assistantSettings: {
+    read: [MODULES.mailboxes, 'assistant_settings', 'read'],
+    update: [MODULES.mailboxes, 'assistant_settings', 'update'],
+  },
 
   // Migracion de buzones desde otro servidor IMAP (mail-migration).
   mailMigrationJobs: {

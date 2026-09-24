@@ -40,6 +40,8 @@ import { addressList } from './format';
 import { MessageBody } from './MessageBody';
 import { MoveDialog } from './MoveDialog';
 import { printMessage } from './print';
+import { assistantNavigationState } from './assistant/assistant';
+import { MessageAssistant } from './assistant/MessageAssistant';
 
 export interface MessageViewProps {
   folderName: string;
@@ -327,6 +329,18 @@ export function MessageView({
           <HeaderRow label={t('webmail.header.date')} value={formatDateTime(data.date)} />
         </dl>
       </header>
+      {isDrafts ? null : (
+        <MessageAssistant
+          key={`${folderName}:${uid}`}
+          folder={folderName}
+          uid={uid}
+          onReplyWith={(text) =>
+            navigate(paths.webmailComposeFrom('reply', folderName, uid), {
+              state: assistantNavigationState(text),
+            })
+          }
+        />
+      )}
       <MessageBody
         message={data}
         remoteAllowed={remote}

@@ -833,3 +833,16 @@ export const webmailApi = {
 export function hasFlag(envelope: Pick<MessageEnvelope, 'flags'>, flag: string): boolean {
   return envelope.flags.includes(flag);
 }
+
+/**
+ * Peticion JSON con la sesion del buzon para los clientes de otras funciones del webmail (asistente),
+ * con las mismas reglas que webmailApi: cookie cf_wm, Origin y aviso de SESSION_EXPIRED.
+ */
+export function webmailJson<T>(
+  method: 'GET' | 'POST',
+  path: string,
+  json?: unknown,
+  signal?: AbortSignal,
+): Promise<T> {
+  return request<T>(method, path, { json, signal });
+}
