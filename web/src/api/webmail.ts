@@ -27,6 +27,7 @@ export const FOLDER_ROLES = {
   junk: 'junk',
   archive: 'archive',
   scheduled: 'scheduled',
+  snoozed: 'snoozed',
 } as const;
 
 /** Flags de sistema IMAP (RFC 3501) del API. Los que el cliente puede cambiar llegan en la meta. */
@@ -77,6 +78,8 @@ export interface WebmailMeta {
     max_scheduled_days: number;
     /** Mensajes de una conversacion que devuelve el servicio (sus UIDs y al abrirla). */
     max_thread_messages: number;
+    /** Hasta cuantos dias en el futuro se pospone un mensaje o vence un seguimiento. */
+    max_reminder_days: number;
   };
   pagination: { default_page_size: number; max_page_size: number };
   folder_roles: string[];
@@ -289,6 +292,8 @@ export interface SendOptions {
   idempotencyKey: string;
   /** Borrador que el envio retira de Borradores en la misma operacion. */
   replaceUid?: number;
+  /** Avisar si nadie responde en estos dias desde la salida (seguimiento). */
+  followUpDays?: number;
 }
 
 export interface SendResult {
@@ -299,6 +304,9 @@ export interface SendResult {
   draft_removed: boolean;
   /** La peticion repetia un envio ya hecho con la misma clave: no salio nada nuevo. */
   replayed: boolean;
+  /** Seguimiento pedido con followUpDays; follow_up_error si no se pudo registrar (el mensaje salio). */
+  follow_up?: FollowUpRef;
+  follow_up_error?: string;
 }
 
 export interface DownloadedPart {
@@ -312,6 +320,8 @@ export interface DownloadedPart {
 export interface ScheduledRef {
   id: string;
   send_at: string;
+  follow_up?: FollowUpRef;
+  follow_up_error?: string;
 }
 
 export interface ScheduledSend {
@@ -829,25 +839,36 @@ export const webmailApi = {
   emptyFolder: (folder: string) => request<{ removed: number }>('POST', wm.emptyFolder(folder)),
 
   /** Envia y, con replaceUid, retira ese borrador en la misma operacion. */
-  send: (input: ComposeInput, options: SendOptions) =>
-    request<SendResult>('POST', wm.send, {
-      form: composeFormData(input, options.replaceUid),
+  send: (input: ComposeInput, options: SendOptions) => {
+    const form = composeFormData(input, options.replaceUid);
+    appendFollowUp(form, options);
+    return request<SendResult>('POST', wm.send, {
+      form,
       headers: { 'Idempotency-Key': options.idempotencyKey },
-    }),
+    });
+  },
 
   /** Guarda en Borradores; replaceUid es el borrador anterior del mismo mensaje. */
   saveDraft: (input: ComposeInput, replaceUid?: number) =>
     request<{ uid: number }>('POST', wm.drafts, { form: composeFormData(input, replaceUid) }),
 
   /** Programa el envio para sendAt (RFC 3339); el mensaje espera en Programados. */
-  schedule: async (input: ComposeInput, sendAt: string, options: SendOptions) => {
+  schedule: async (
+    input: ComposeInput,
+    sendAt: string,
+    options: SendOptions,
+  ): Promise<ScheduledRef> => {
     const form = composeFormData(input, options.replaceUid);
     form.append('send_at', sendAt);
-    const result = await request<{ scheduled: ScheduledRef }>('POST', wm.send, {
-      form,
-      headers: { 'Idempotency-Key': options.idempotencyKey },
-    });
-    return result.scheduled;
+    appendFollowUp(form, options);
+    const result = await request<
+      { scheduled: ScheduledRef } & Omit<ScheduledRef, 'id' | 'send_at'>
+    >('POST', wm.send, { form, headers: { 'Idempotency-Key': options.idempotencyKey } });
+    return {
+      ...result.scheduled,
+      follow_up: result.follow_up,
+      follow_up_error: result.follow_up_error,
+    };
   },
   scheduled: async (signal?: AbortSignal): Promise<ScheduledSend[]> =>
     (await request<ScheduledSend[] | null>('GET', wm.scheduled, { signal })) ?? [],
@@ -918,3 +939,89 @@ export const webmailApi = {
 export function hasFlag(envelope: Pick<MessageEnvelope, 'flags'>, flag: string): boolean {
   return envelope.flags.includes(flag);
 }
+
+/** Pospuesto (GET /snooze): espera en Snoozed (folder, uid) y vuelve a return_folder a su hora. */
+export interface SnoozedMessage {
+  id: string;
+  folder: string;
+  uid: number;
+  return_folder: string;
+  subject: string;
+  from: string;
+  until: string;
+  status: string;
+}
+
+export interface SnoozeResult {
+  snoozed: SnoozedMessage[];
+  /** UIDs que no se pospusieron: ya no estaban o el directorio no los registro. */
+  failed: number[];
+}
+
+/** Seguimiento pendiente (GET /follow-ups): si nadie responde antes de due_at, vuelve a la entrada. */
+export interface FollowUp {
+  id: string;
+  subject: string;
+  recipients: string[];
+  due_at: string;
+  status: string;
+}
+
+export interface FollowUpRef {
+  id: string;
+  due_at: string;
+}
+
+/** Respuesta rapida del buzon. Las variables ({nombre}, {empresa}...) llegan sin resolver. */
+export interface QuickReply {
+  id: string;
+  name: string;
+  html: string;
+  /** Version en texto que genera el servicio. */
+  text: string;
+  updated_at: string;
+}
+
+export interface QuickReplyList {
+  items: QuickReply[];
+  limits: {
+    max_items: number;
+    max_name_chars: number;
+    max_html_bytes: number;
+    max_text_bytes: number;
+  };
+}
+
+export interface QuickReplyInput {
+  name: string;
+  html: string;
+}
+
+function appendFollowUp(form: FormData, options: SendOptions) {
+  if (options.followUpDays) form.append('follow_up_days', String(options.followUpDays));
+}
+
+/** Posponer, seguimiento y respuestas rapidas del buzon de la sesion (mail-directory por el webmail). */
+export const webmailRemindersApi = {
+  snoozed: async (signal?: AbortSignal): Promise<SnoozedMessage[]> =>
+    (await request<SnoozedMessage[] | null>('GET', wm.snooze, { signal })) ?? [],
+  /** Mueve los mensajes a Pospuestos hasta until (RFC 3339); como mucho limits.max_batch_uids. */
+  snooze: (folder: string, uids: number[], until: string) =>
+    request<SnoozeResult>('POST', wm.snooze, { json: { folder, uids, until } }),
+  reschedule: (id: string, until: string) =>
+    request<SnoozedMessage>('PATCH', wm.snoozeItem(id), { json: { until } }),
+  /** El mensaje vuelve ya a su carpeta. */
+  unsnooze: (id: string) => request<null>('DELETE', wm.snoozeItem(id)),
+
+  followUps: async (signal?: AbortSignal): Promise<FollowUp[]> =>
+    (await request<FollowUp[] | null>('GET', wm.followUps, { signal })) ?? [],
+  cancelFollowUp: (id: string) => request<null>('DELETE', wm.followUp(id)),
+
+  quickReplies: (signal?: AbortSignal) =>
+    request<QuickReplyList>('GET', wm.quickReplies, { signal }),
+  createQuickReply: (input: QuickReplyInput) =>
+    request<QuickReply>('POST', wm.quickReplies, { json: input }),
+  updateQuickReply: (id: string, input: QuickReplyInput) =>
+    request<QuickReply>('PUT', wm.quickReply(id), { json: input }),
+  deleteQuickReply: (id: string) => request<null>('DELETE', wm.quickReply(id)),
+};

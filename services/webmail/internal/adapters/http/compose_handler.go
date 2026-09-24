@@ -6,6 +6,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -30,6 +31,7 @@ var composeFields = map[string]bool{
 	"from": true, "to": true, "cc": true, "bcc": true, "subject": true, "text": true, "html": true,
 	"in_reply_to": true, "in_reply_to_folder": true, "replace_uid": true,
 	"source_folder": true, "source_uid": true, "source_parts": true, "send_at": true,
+	"follow_up_days": true,
 }
 
 // listFields admiten varios valores (y las direcciones, cada valor una lista separada por
@@ -41,6 +43,8 @@ type composeForm struct {
 	replaceUID uint32
 	// sendAt, si no es cero, programa el envio en vez de entregarlo ya.
 	sendAt time.Time
+	// followUpDays, si no es cero, pide seguimiento: avisar si nadie responde en esos dias.
+	followUpDays int
 }
 
 // Send entrega el mensaje. replace_uid retira ese borrador en la misma operacion y
@@ -60,6 +64,12 @@ func (h *Handler) Send(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), h.cfg.TransferTimeout)
 	defer cancel()
+	if form.followUpDays != 0 {
+		if err := h.app.CheckFollowUp(form.followUpDays, form.sendAt); err != nil {
+			writeError(w, err)
+			return
+		}
+	}
 	opts := domain.SendOptions{IdempotencyKey: key, ReplaceUID: form.replaceUID}
 	if !form.sendAt.IsZero() {
 		scheduled, err := h.app.Schedule(ctx, sessionFrom(r), form.draft, form.sendAt, opts)
@@ -67,7 +77,9 @@ func (h *Handler) Send(w http.ResponseWriter, r *http.Request) {
 			h.fail(w, r, err)
 			return
 		}
-		response.JSON(w, http.StatusAccepted, scheduleDTO{Scheduled: scheduledRefDTO{ID: scheduled.ID, SendAt: formatTime(scheduled.SendAt)}})
+		out := scheduleDTO{Scheduled: scheduledRefDTO{ID: scheduled.ID, SendAt: formatTime(scheduled.SendAt)}}
+		out.FollowUp, out.FollowUpError = h.followUp(ctx, r, form, scheduled.MessageID, scheduled.SendAt)
+		response.JSON(w, http.StatusAccepted, out)
 		return
 	}
 	result, err := h.app.Send(ctx, sessionFrom(r), form.draft, opts)
@@ -75,9 +87,11 @@ func (h *Handler) Send(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
-	response.JSON(w, http.StatusAccepted, sendDTO{
+	out := sendDTO{
 		MessageID: result.MessageID, SavedToSent: result.SavedToSent, DraftRemoved: result.DraftRemoved, Replayed: result.Replayed,
-	})
+	}
+	out.FollowUp, out.FollowUpError = h.followUp(ctx, r, form, result.MessageID, time.Time{})
+	response.JSON(w, http.StatusAccepted, out)
 }
 
 func (h *Handler) SaveDraft(w http.ResponseWriter, r *http.Request) {
@@ -89,6 +103,10 @@ func (h *Handler) SaveDraft(w http.ResponseWriter, r *http.Request) {
 	}
 	if !form.sendAt.IsZero() {
 		writeError(w, domain.NewValidationError("send_at", "un borrador no se programa: se programa al enviarlo"))
+		return
+	}
+	if form.followUpDays != 0 {
+		writeError(w, domain.NewValidationError("follow_up_days", "el seguimiento se pide al enviar"))
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), h.cfg.TransferTimeout)
@@ -201,6 +219,13 @@ func buildComposeForm(fields map[string][]string, attachments []domain.Attachmen
 			return composeForm{}, err
 		}
 		form.sendAt = at
+	}
+	if raw := single(fields, "follow_up_days"); raw != "" {
+		days, err := strconv.Atoi(strings.TrimSpace(raw))
+		if err != nil || days < 1 {
+			return composeForm{}, domain.NewValidationError("follow_up_days", "debe ser un numero de dias positivo")
+		}
+		form.followUpDays = days
 	}
 	if raw := single(fields, "replace_uid"); raw != "" {
 		uid, err := domain.ParseUID(raw)

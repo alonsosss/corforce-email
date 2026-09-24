@@ -85,7 +85,7 @@ func (h *Handler) Routes() chi.Router {
 	r.Get("/internal/mail-directory/vacation", h.InternalGetVacation)
 	r.Put("/internal/mail-directory/vacation", h.InternalPutVacation)
 	r.Get("/internal/mail-directory/directory", h.InternalSearchDirectory)
-	// Ajustes del buzon del webmail y sus envios programados: solo servicios, sin X-Tenant-ID. claim y
+	// Ajustes del buzon del webmail, sus envios programados, recordatorios y respuestas rapidas: solo servicios, sin X-Tenant-ID. claim y
 	// finish son del trabajador del webmail y recorren toda la celda.
 	r.Group(func(r chi.Router) {
 		r.Use(middleware.RequireInternalCaller)
@@ -100,6 +100,16 @@ func (h *Handler) Routes() chi.Router {
 		r.Patch("/internal/mail-directory/scheduled-sends/{id}", h.InternalRescheduleSend)
 		r.Delete("/internal/mail-directory/scheduled-sends/{id}", h.InternalCancelScheduledSend)
 		r.Post("/internal/mail-directory/scheduled-sends/{id}/finish", h.InternalFinishScheduledSend)
+		r.Post("/internal/mail-directory/reminders", h.InternalCreateReminder)
+		r.Get("/internal/mail-directory/reminders", h.InternalListReminders)
+		r.Post("/internal/mail-directory/reminders/claim", h.InternalClaimReminders)
+		r.Patch("/internal/mail-directory/reminders/{id}", h.InternalRescheduleReminder)
+		r.Delete("/internal/mail-directory/reminders/{id}", h.InternalCancelReminder)
+		r.Post("/internal/mail-directory/reminders/{id}/finish", h.InternalFinishReminder)
+		r.Get("/internal/mail-directory/quick-replies", h.InternalListQuickReplies)
+		r.Post("/internal/mail-directory/quick-replies", h.InternalCreateQuickReply)
+		r.Put("/internal/mail-directory/quick-replies/{id}", h.InternalUpdateQuickReply)
+		r.Delete("/internal/mail-directory/quick-replies/{id}", h.InternalDeleteQuickReply)
 	})
 	return r
 }

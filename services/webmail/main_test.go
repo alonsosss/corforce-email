@@ -41,6 +41,9 @@ func setSettingsEnv(t *testing.T, environment string, overrides map[string]strin
 		"WEBMAIL_SCHEDULED_POLL_INTERVAL":     "",
 		"WEBMAIL_SCHEDULED_BATCH":             "",
 		"WEBMAIL_SCHEDULED_MAX_DAYS":          "",
+		"WEBMAIL_REMINDERS_POLL_INTERVAL":     "",
+		"WEBMAIL_REMINDERS_BATCH":             "",
+		"WEBMAIL_REMINDERS_MAX_DAYS":          "",
 		"WEBMAIL_MAX_IMPORT_BYTES":            "",
 		"AUTH_COOKIE_SECURE":                  "",
 		"CORS_ALLOWED_ORIGINS":                "",
@@ -210,6 +213,36 @@ func TestLoadSettingsEnvioProgramadoEImportacion(t *testing.T) {
 		"WEBMAIL_SCHEDULED_MAX_DAYS": "30", "WEBMAIL_MAX_IMPORT_BYTES": "1048576",
 	})
 	if st, err = loadSettings(); err != nil || st.scheduledPoll.Minutes() != 1 || st.scheduledBatch != 20 || st.scheduledMaxDays != 30 || st.maxImportBytes != 1<<20 {
+		t.Fatalf("valores fijados: %+v %v", st, err)
+	}
+}
+
+func TestLoadSettingsRecordatorios(t *testing.T) {
+	setSettingsEnv(t, "production", nil)
+	st, err := loadSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.remindersPoll != defaultRemindersPollInterval || st.remindersBatch != defaultRemindersBatch || st.remindersMaxDays != defaultRemindersMaxDays {
+		t.Fatalf("valores por defecto: %+v", st)
+	}
+	refused := map[string][]string{
+		"WEBMAIL_REMINDERS_POLL_INTERVAL": {"0s", "500ms", "6m", "30"},
+		"WEBMAIL_REMINDERS_BATCH":         {"0", "21", "x"},
+		"WEBMAIL_REMINDERS_MAX_DAYS":      {"0", "366"},
+	}
+	for key, values := range refused {
+		for _, value := range values {
+			setSettingsEnv(t, "production", map[string]string{key: value})
+			if _, err := loadSettings(); !errorMentions(key)(err) {
+				t.Errorf("%s=%q deberia impedir el arranque: %v", key, value, err)
+			}
+		}
+	}
+	setSettingsEnv(t, "production", map[string]string{
+		"WEBMAIL_REMINDERS_POLL_INTERVAL": "10s", "WEBMAIL_REMINDERS_BATCH": "20", "WEBMAIL_REMINDERS_MAX_DAYS": "90",
+	})
+	if st, err = loadSettings(); err != nil || st.remindersPoll.Seconds() != 10 || st.remindersBatch != 20 || st.remindersMaxDays != 90 {
 		t.Fatalf("valores fijados: %+v %v", st, err)
 	}
 }

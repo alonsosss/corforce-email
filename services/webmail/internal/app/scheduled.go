@@ -59,7 +59,7 @@ func (s *Service) Schedule(ctx context.Context, sess domain.Session, d domain.Dr
 	s.record(ctx, key, rec)
 	s.logger.Info("webmail: envio programado", zap.String("username", sess.Username), zap.String("scheduled_id", id),
 		zap.String("message_id", out.MessageID), zap.Time("send_at", at))
-	return domain.ScheduledResult{ID: id, SendAt: at}, nil
+	return domain.ScheduledResult{ID: id, SendAt: at, MessageID: out.MessageID}, nil
 }
 
 func (s *Service) replaySchedule(sess domain.Session, rec domain.SendRecord, fp string, at time.Time) (domain.ScheduledResult, error) {
@@ -71,7 +71,7 @@ func (s *Service) replaySchedule(sess domain.Session, rec domain.SendRecord, fp 
 	case domain.SendPending:
 		return domain.ScheduledResult{}, domain.ErrSendInProgress
 	case domain.SendScheduled:
-		return domain.ScheduledResult{ID: rec.ScheduledID, SendAt: at, Replayed: true}, nil
+		return domain.ScheduledResult{ID: rec.ScheduledID, SendAt: at, MessageID: rec.MessageID, Replayed: true}, nil
 	default:
 		return domain.ScheduledResult{}, unavailable(fmt.Errorf("estado de envio programado desconocido %q", rec.State))
 	}

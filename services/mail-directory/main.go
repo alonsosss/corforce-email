@@ -118,6 +118,8 @@ func main() {
 		Signatures:          postgres.NewSignatureRepo(ctxPool),
 		Filters:             postgres.NewFilterRepo(ctxPool),
 		Scheduled:           postgres.NewScheduledSendRepo(ctxPool),
+		Reminders:           postgres.NewReminderRepo(ctxPool),
+		QuickReplies:        postgres.NewQuickReplyRepo(ctxPool),
 		Locator:             postgres.NewMailboxLocator(ctxPool),
 		Aliases:             postgres.NewAliasRepo(ctxPool),
 		SpamAliases:         postgres.NewSpamAliasRepo(ctxPool),

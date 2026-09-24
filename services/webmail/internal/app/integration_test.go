@@ -334,6 +334,7 @@ type integration struct {
 	store     *imapadapter.Store
 	smtp      *smtpServer
 	scheduled *memScheduled
+	reminders *memReminders
 }
 
 func newIntegration(t *testing.T) *integration {
@@ -357,6 +358,7 @@ func newIntegration(t *testing.T) *integration {
 		t.Fatal(err)
 	}
 	scheduled := newMemScheduled()
+	reminders := newMemReminders()
 	dir := staticDirectory{ids: []string{"ventas@empresa.test"}}
 	svc, err := app.New(app.Deps{
 		Auth: staticAuth{}, Sessions: newMemSessions(), Mail: store, Sender: sender,
@@ -364,6 +366,7 @@ func newIntegration(t *testing.T) *integration {
 		Scheduled: scheduled, Contacts: noDAV{}, Calendar: noDAV{}, Ledger: newMemLedger(),
 		Composer: rfc5322.New(), Sanitizer: htmlsafe.New(), PartURL: handler.PartURL, Logger: zap.NewNop(),
 		Unsubscriber: unsubscribe.New(time.Second),
+		Reminders:    reminders, QuickReplies: reminders,
 		Config: app.Config{
 			CellCode:         "pe-01",
 			Sessions:         domain.SessionPolicy{Idle: 30 * time.Minute, Max: 12 * time.Hour},
@@ -371,12 +374,13 @@ func newIntegration(t *testing.T) *integration {
 			MaxBodyPartBytes: 64 << 10, MaxAttachmentBytes: 1 << 20,
 			SendTimeout: time.Minute, MaxScheduledDays: 30, ScheduledPollInterval: 50 * time.Millisecond,
 			ScheduledBatch: 5, MaxImportBytes: 1 << 20,
+			MaxReminderDays: 30, ReminderPollInterval: 50 * time.Millisecond, ReminderBatch: 5,
 		},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &integration{svc: svc, store: store, smtp: smtpSrv, scheduled: scheduled}
+	return &integration{svc: svc, store: store, smtp: smtpSrv, scheduled: scheduled, reminders: reminders}
 }
 
 func listAll(t *testing.T, svc *app.Service, sess domain.Session, folder string) []domain.Envelope {

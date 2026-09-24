@@ -128,7 +128,9 @@ export function WebmailShell() {
     ? (params.get('folder') ?? (folders.data ? defaultFolder(folders.data) : null))
     : location.pathname === paths.webmailScheduled && folders.data
       ? (folderWithRole(folders.data, FOLDER_ROLES.scheduled)?.name ?? null)
-      : null;
+      : location.pathname === paths.webmailSnoozed && folders.data
+        ? (folderWithRole(folders.data, FOLDER_ROLES.snoozed)?.name ?? null)
+        : null;
 
   const signOut = async () => {
     setSigningOut(true);

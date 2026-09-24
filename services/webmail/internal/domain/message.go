@@ -342,6 +342,9 @@ type StoredMessage struct {
 	UID         uint32
 	MessageID   string
 	Size        int64
+	// Subject y From (la primera direccion del remitente) son lo que se lista con un recordatorio.
+	Subject string
+	From    string
 }
 
 // AppendedMessage es la referencia IMAP de un mensaje recien guardado (APPENDUID).

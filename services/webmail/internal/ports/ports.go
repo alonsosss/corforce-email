@@ -85,6 +85,12 @@ type Mailbox interface {
 	Related(ctx context.Context, folder string, messageIDs []string, max int) ([]domain.ConversationMessage, error)
 	// Insight lee el remitente y las cabeceras de la ficha sin marcar el mensaje como leido.
 	Insight(ctx context.Context, folder string, uid uint32) (domain.InsightSource, error)
+	// MoveTracked mueve un mensaje y devuelve su referencia en la carpeta de destino (COPYUID); UID 0
+	// si el servidor no la informa. Un UID que no existe es domain.ErrMessageNotFound.
+	MoveTracked(ctx context.Context, folder string, uid uint32, dest string) (domain.AppendedMessage, error)
+	// HasReply dice si algun mensaje de la carpeta cita ese Message-ID (sin corchetes) en In-Reply-To o
+	// References.
+	HasReply(ctx context.Context, folder, messageID string) (bool, error)
 }
 
 // Unsubscriber hace la baja en un clic de RFC 8058: un POST a la URL https que declara el boletin.
@@ -202,6 +208,30 @@ type ScheduledDirectory interface {
 	// ClaimScheduled reclama hasta limit filas vencidas de toda la celda con un arriendo de lease.
 	ClaimScheduled(ctx context.Context, limit int, lease time.Duration) ([]domain.ScheduledClaim, error)
 	FinishScheduled(ctx context.Context, id string, outcome domain.ScheduledOutcome) error
+}
+
+// ReminderDirectory es el indice durable de los recordatorios de la celda (mail-directory): posponer y
+// seguimiento. Una fila que no existe o no es del buzon es domain.ErrReminderNotFound; una que ya no esta
+// pendiente, domain.ErrReminderNotPending; un mismo mensaje con otro recordatorio activo del mismo tipo,
+// domain.ErrReminderExists; cualquier otro fallo, domain.ErrUnavailable.
+type ReminderDirectory interface {
+	CreateReminder(ctx context.Context, in domain.NewReminder) (domain.Reminder, error)
+	ListReminders(ctx context.Context, username string, kind domain.ReminderKind) ([]domain.Reminder, error)
+	RescheduleReminder(ctx context.Context, username, id string, at time.Time) (domain.Reminder, error)
+	CancelReminder(ctx context.Context, username, id string) error
+	// ClaimReminders reclama hasta limit recordatorios vencidos de toda la celda con un arriendo de lease.
+	ClaimReminders(ctx context.Context, limit int, lease time.Duration) ([]domain.ReminderClaim, error)
+	FinishReminder(ctx context.Context, id string, outcome domain.ReminderOutcome) error
+}
+
+// QuickReplyDirectory guarda las respuestas rapidas del buzon en mail-directory, que aplica sus topes.
+// Un valor que rechaza es un *domain.ValidationError; un nombre repetido, domain.ErrQuickReplyExists;
+// el tope, domain.ErrQuickReplyLimit; una que no es del buzon, domain.ErrQuickReplyNotFound.
+type QuickReplyDirectory interface {
+	QuickReplies(ctx context.Context, username string) (domain.QuickReplyList, error)
+	CreateQuickReply(ctx context.Context, username string, q domain.QuickReply) (domain.QuickReply, error)
+	UpdateQuickReply(ctx context.Context, username string, q domain.QuickReply) (domain.QuickReply, error)
+	DeleteQuickReply(ctx context.Context, username, id string) error
 }
 
 // ContactBook es la libreta personal del buzon en mail-dav (la misma que sirve CardDAV). Todo lo que

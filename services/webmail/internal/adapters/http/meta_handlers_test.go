@@ -66,6 +66,7 @@ type metaContract struct {
 		MaxFolderNameBytes int   `json:"max_folder_name_bytes"`
 		MaxBatchUIDs       int   `json:"max_batch_uids"`
 		MaxScheduledDays   int   `json:"max_scheduled_days"`
+		MaxReminderDays    int   `json:"max_reminder_days"`
 		MaxImportBytes     int64 `json:"max_import_bytes"`
 		MaxThreadMessages  int   `json:"max_thread_messages"`
 	} `json:"limits"`
@@ -116,6 +117,7 @@ func TestMetaSirveLosTopesQueAplicaElServicio(t *testing.T) {
 		{"max_folder_name_bytes", got.Limits.MaxFolderNameBytes, domain.MaxFolderNameBytes},
 		{"max_batch_uids", got.Limits.MaxBatchUIDs, domain.MaxBatchUIDs},
 		{"max_scheduled_days", got.Limits.MaxScheduledDays, 30},
+		{"max_reminder_days", got.Limits.MaxReminderDays, 30},
 		{"max_import_bytes", got.Limits.MaxImportBytes, int64(512)},
 		{"default_page_size", got.Pagination.DefaultPageSize, domain.DefaultPerPage},
 		{"max_page_size", got.Pagination.MaxPageSize, domain.MaxPerPage},

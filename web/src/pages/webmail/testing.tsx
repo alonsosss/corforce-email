@@ -36,6 +36,7 @@ export const META: WebmailMeta = {
     max_batch_uids: 2,
     max_scheduled_days: 30,
     max_thread_messages: 200,
+    max_reminder_days: 30,
   },
   pagination: { default_page_size: 50, max_page_size: 100 },
   folder_roles: ['inbox', 'sent', 'drafts', 'trash', 'junk', 'archive', 'scheduled'],

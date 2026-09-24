@@ -1,6 +1,12 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { FOLDER_ROLES, webmailApi, type ComposeInput, type Signature } from '@/api/webmail';
+import {
+  FOLDER_ROLES,
+  webmailApi,
+  type ComposeInput,
+  type QuickReply,
+  type Signature,
+} from '@/api/webmail';
 import { ERROR_CODES, errorCode } from '@/api/errors';
 import { useAction } from '@/hooks/useAction';
 import { useQuery } from '@/hooks/useQuery';
@@ -48,6 +54,9 @@ import { parsePositiveInt } from './format';
 import { useRecipientSuggestions } from './recipients';
 import { RichEditor, type RichEditorHandle } from './RichEditor';
 import { htmlHasContent, textToHtml } from './richText';
+import { namesOf, quickReplyValues, resolveQuickReply } from './quickReplies';
+import { QuickReplyPicker } from './QuickReplyPicker';
+import { followUpChoices } from './snooze';
 import { formatScheduled } from './schedule';
 import { ScheduleDialog } from './ScheduleDialog';
 import { useWebmailOutlet } from './webmailContext';
@@ -131,6 +140,7 @@ export default function ComposePage() {
       seed={seed}
       signature={signature.data}
       backHref={backHref}
+      recipientNames={mode && source.data ? namesOf(source.data) : undefined}
     />
   );
 }
@@ -164,11 +174,14 @@ function ComposeForm({
   seed,
   signature,
   backHref,
+  recipientNames,
 }: {
   mode: ComposeMode | null;
   seed: DraftSeed;
   signature: Signature | null;
   backHref: string;
+  /** Nombres visibles del mensaje al que se responde: resuelven {nombre} de una respuesta rapida. */
+  recipientNames?: Readonly<Record<string, string>>;
 }) {
   const toast = useToast();
   const navigate = useNavigate();
@@ -204,6 +217,10 @@ function ComposeForm({
   const [uncertain, setUncertain] = useState(false);
   const [scheduling, setScheduling] = useState(false);
   const [waiting, setWaiting] = useState(false);
+  // Seguimiento: dias sin respuesta tras los que el mensaje vuelve a la entrada (0, sin aviso).
+  const [followUpDays, setFollowUpDays] = useState(0);
+  const mailboxName = useWebmailStore((s) => s.session?.display_name ?? '');
+  const mailboxAddress = useWebmailStore((s) => s.session?.username ?? '');
   const attempt = useRef<SendAttempt | null>(null);
   const bodyRef = useRef<HTMLTextAreaElement>(null);
   const editorRef = useRef<RichEditorHandle>(null);
@@ -308,7 +325,9 @@ function ComposeForm({
       const result = await webmailApi.send(payload, {
         idempotencyKey: current.key,
         replaceUid: draftUid,
+        followUpDays: followUpDays || undefined,
       });
+      if (result.follow_up_error) toast.error(t('webmail.followUp.failed'));
       toast.success(t(result.replayed ? 'webmail.compose.alreadySent' : 'webmail.compose.sent'));
       if (!result.saved_to_sent) toast.info(t('webmail.compose.notSavedToSent'));
       if (draftUid && !result.draft_removed) toast.info(t('webmail.compose.draftKept'));
@@ -427,6 +446,25 @@ function ComposeForm({
       setEditorKey((k) => k + 1);
     }
     setVersion((v) => v + 1);
+  };
+
+  // La respuesta rapida entra al principio del cuerpo, encima de la cita y la firma, con sus
+  // variables resueltas para el primer destinatario.
+  const insertQuickReply = (reply: QuickReply) => {
+    const values = quickReplyValues({
+      recipient: to[0] ?? cc[0] ?? bcc[0],
+      names: recipientNames,
+      mailbox: { email: mailboxAddress, name: mailboxName },
+      now: new Date(),
+    });
+    if (format === 'html') {
+      const piece = resolveQuickReply(reply.html || textToHtml(reply.text), values, true);
+      edit(setHtml)(piece + html);
+      setEditorKey((k) => k + 1);
+    } else {
+      const piece = resolveQuickReply(reply.text, values, false);
+      edit(setText)(text ? `${piece}\n\n${text}` : piece);
+    }
   };
 
   const discard = async () => {
@@ -559,6 +597,7 @@ function ComposeForm({
               {t('webmail.compose.body')}
             </label>
           )}
+          <QuickReplyPicker disabled={busy} onPick={insertQuickReply} />
           <Button size="sm" variant="ghost" disabled={busy} onClick={switchFormat}>
             {t(format === 'html' ? 'webmail.compose.toPlain' : 'webmail.compose.toRich')}
           </Button>
@@ -597,6 +636,22 @@ function ComposeForm({
         error={problems.attachments ?? null}
         disabled={busy}
       />
+      <FormField label={t('webmail.followUp.label')} htmlFor="compose-follow-up">
+        <Select
+          id="compose-follow-up"
+          options={[
+            { value: '0', label: t('webmail.followUp.none') },
+            ...followUpChoices(limits?.max_reminder_days ?? null).map((days) => ({
+              value: String(days),
+              label:
+                days === 1 ? t('webmail.followUp.oneDay') : t('webmail.followUp.days', { n: days }),
+            })),
+          ]}
+          value={String(followUpDays)}
+          onChange={(e) => setFollowUpDays(Number(e.target.value))}
+          disabled={busy}
+        />
+      </FormField>
       {waiting ? (
         <div className="cf-wm-undo" role="status">
           <span>{t('webmail.compose.sendingSoon', { s: Math.round(UNDO_SEND_MS / 1000) })}</span>
@@ -665,7 +720,9 @@ function ComposeForm({
             const scheduled = await webmailApi.schedule(input(), sendAt, {
               idempotencyKey: crypto.randomUUID(),
               replaceUid: draftUid,
+              followUpDays: followUpDays || undefined,
             });
+            if (scheduled.follow_up_error) toast.error(t('webmail.followUp.failed'));
             toast.success(t('webmail.schedule.done', { when: formatScheduled(scheduled.send_at) }));
             setScheduling(false);
             leave();

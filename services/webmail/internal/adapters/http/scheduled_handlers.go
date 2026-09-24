@@ -17,6 +17,9 @@ type scheduledRefDTO struct {
 
 type scheduleDTO struct {
 	Scheduled scheduledRefDTO `json:"scheduled"`
+	// Como en sendDTO: el seguimiento cuenta desde la hora de salida.
+	FollowUp      *followUpRefDTO `json:"follow_up,omitempty"`
+	FollowUpError string          `json:"follow_up_error,omitempty"`
 }
 
 type scheduledDTO struct {

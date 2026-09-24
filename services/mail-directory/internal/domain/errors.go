@@ -115,3 +115,14 @@ var (
 	// ErrScheduledSendLimit: el buzon alcanzo el maximo de envios programados pendientes.
 	ErrScheduledSendLimit = errors.New("el buzon alcanzo su maximo de envios programados pendientes")
 )
+
+var (
+	// ErrReminderNotPending: el recordatorio ya no se cambia ni se cancela (se esta procesando o ya termino).
+	ErrReminderNotPending = errors.New("el recordatorio ya no esta pendiente")
+	// ErrReminderNotClaimed: se cierra una fila que no esta reclamada (status running).
+	ErrReminderNotClaimed = errors.New("el recordatorio no esta en curso")
+	// ErrReminderLimit: el buzon alcanzo el maximo de recordatorios activos.
+	ErrReminderLimit = errors.New("el buzon alcanzo su maximo de recordatorios activos")
+	// ErrQuickReplyLimit: el buzon alcanzo el maximo de respuestas rapidas.
+	ErrQuickReplyLimit = errors.New("el buzon alcanzo su maximo de respuestas rapidas")
+)

@@ -163,6 +163,42 @@ type ScheduledSendRepository interface {
 	Close(ctx context.Context, id uuid.UUID, t domain.ScheduledTransition) (*domain.ScheduledSend, error)
 }
 
+// ReminderRepository guarda los recordatorios del webmail (mail.mailbox_reminders). Como
+// ScheduledSendRepository: lo de un buzon va acotado por empresa y nombre; Claim, ClaimedForUpdate y
+// Close recorren toda la celda con el rol de servicio.
+type ReminderRepository interface {
+	Create(ctx context.Context, r *domain.Reminder) error
+	// ListByUsername devuelve los pendientes, en curso y fallidos del buzon de ese tipo, por hora.
+	ListByUsername(ctx context.Context, tenantID uuid.UUID, username, kind string, limit int) ([]domain.Reminder, error)
+	// CountActive cuenta los pendientes y en curso del buzon, de todos los tipos.
+	CountActive(ctx context.Context, tenantID uuid.UUID, username string) (int, error)
+	// GetForUpdate bloquea la fila del buzon; domain.ErrNotFound si no es suya.
+	GetForUpdate(ctx context.Context, tenantID uuid.UUID, username string, id uuid.UUID) (*domain.Reminder, error)
+	Reschedule(ctx context.Context, tenantID, id uuid.UUID, due time.Time) (*domain.Reminder, error)
+	Cancel(ctx context.Context, tenantID, id uuid.UUID) error
+	DeleteByUsername(ctx context.Context, tenantID uuid.UUID, username string) error
+	// Claim hace lo mismo que ScheduledSendRepository.Claim sobre los recordatorios: cierra como failed
+	// los arriendos vencidos sin intentos, purga los terminados mas viejos que retention y reclama hasta
+	// p.Limit vencidos con FOR UPDATE SKIP LOCKED, que pasan a running con arriendo y un intento mas.
+	Claim(ctx context.Context, p domain.ClaimParams, maxAttempts int, retention time.Duration) ([]domain.Reminder, error)
+	// ClaimedForUpdate bloquea una fila de cualquier buzon de la celda.
+	ClaimedForUpdate(ctx context.Context, id uuid.UUID) (*domain.Reminder, error)
+	// Close aplica la transicion con la hora de la base (due_at = now() + RetryAfter al reintentar).
+	Close(ctx context.Context, id uuid.UUID, t domain.ReminderTransition) (*domain.Reminder, error)
+}
+
+// QuickReplyRepository guarda las respuestas rapidas de un buzon (mail.mailbox_quick_replies). Un
+// nombre repetido en el buzon es domain.ErrAlreadyExists.
+type QuickReplyRepository interface {
+	ListByUsername(ctx context.Context, tenantID uuid.UUID, username string) ([]domain.QuickReply, error)
+	Count(ctx context.Context, tenantID uuid.UUID, username string) (int, error)
+	Create(ctx context.Context, q *domain.QuickReply) error
+	// Update reemplaza nombre y contenido; domain.ErrNotFound si la respuesta no es del buzon.
+	Update(ctx context.Context, q *domain.QuickReply) error
+	Delete(ctx context.Context, tenantID uuid.UUID, username string, id uuid.UUID) error
+	DeleteByUsername(ctx context.Context, tenantID uuid.UUID, username string) error
+}
+
 // MTASTSRepository guarda la politica MTA-STS de los dominios de una empresa
 // (mail.mta_sts_policies). Un dominio sin fila no publica politica.
 type MTASTSRepository interface {

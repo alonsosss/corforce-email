@@ -44,6 +44,7 @@ export const paths = {
   webmailComposeTo: (to: string) => withQuery('/webmail/compose', { to }),
   webmailSettingsTab: (tab: string) => withQuery('/webmail/settings', { tab }),
   webmailScheduled: '/webmail/scheduled',
+  webmailSnoozed: '/webmail/snoozed',
   webmailContacts: '/webmail/contacts',
   webmailCalendar: '/webmail/calendar',
 

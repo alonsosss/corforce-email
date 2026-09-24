@@ -7,14 +7,16 @@ import { paths } from '@/paths';
 import { VacationForm } from '@/pages/shared/VacationForm';
 import { FiltersSettings } from './settings/FiltersSettings';
 import { PasswordSettings } from './settings/PasswordSettings';
+import { QuickRepliesSettings } from './settings/QuickRepliesSettings';
 import { SignatureSettings } from './settings/SignatureSettings';
 
-const TABS = ['vacation', 'signature', 'rules', 'forwarding', 'password'] as const;
+const TABS = ['vacation', 'signature', 'quickReplies', 'rules', 'forwarding', 'password'] as const;
 type SettingsTab = (typeof TABS)[number];
 
 const TAB_LABELS = {
   vacation: 'webmail.settings.tab.vacation',
   signature: 'webmail.settings.tab.signature',
+  quickReplies: 'webmail.settings.tab.quickReplies',
   rules: 'webmail.settings.tab.rules',
   forwarding: 'webmail.settings.tab.forwarding',
   password: 'webmail.settings.tab.password',
@@ -44,6 +46,7 @@ export default function SettingsPage() {
       <div role="tabpanel" aria-label={t(TAB_LABELS[tab])} className="cf-wm-settings__panel">
         {tab === 'vacation' ? <VacationSettings /> : null}
         {tab === 'signature' ? <SignatureSettings /> : null}
+        {tab === 'quickReplies' ? <QuickRepliesSettings /> : null}
         {tab === 'rules' ? <FiltersSettings part="rules" /> : null}
         {tab === 'forwarding' ? <FiltersSettings part="forwarding" /> : null}
         {tab === 'password' ? <PasswordSettings /> : null}

@@ -23,6 +23,7 @@ type Meta struct {
 	MaxFolderNameBytes int
 	MaxBatchUIDs       int
 	MaxScheduledDays   int
+	MaxReminderDays    int
 	MaxImportBytes     int64
 	MaxThreadMessages  int
 	InboxCategories    []domain.Category
@@ -46,6 +47,7 @@ func (s *Service) Meta() Meta {
 		MaxFolderNameBytes: domain.MaxFolderNameBytes,
 		MaxBatchUIDs:       domain.MaxBatchUIDs,
 		MaxScheduledDays:   s.cfg.MaxScheduledDays,
+		MaxReminderDays:    s.cfg.MaxReminderDays,
 		MaxImportBytes:     s.cfg.MaxImportBytes,
 		MaxThreadMessages:  domain.MaxThreadMessages,
 		InboxCategories:    append([]domain.Category(nil), domain.Categories...),

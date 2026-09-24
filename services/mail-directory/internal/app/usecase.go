@@ -32,6 +32,8 @@ type Deps struct {
 	Signatures   ports.SignatureRepository
 	Filters      ports.FilterRepository
 	Scheduled    ports.ScheduledSendRepository
+	Reminders    ports.ReminderRepository
+	QuickReplies ports.QuickReplyRepository
 	Locator      ports.MailboxLocator
 	Aliases      ports.AliasRepository
 	SpamAliases  ports.SpamAliasRepository
@@ -78,6 +80,8 @@ type UseCase struct {
 	signatures      ports.SignatureRepository
 	filters         ports.FilterRepository
 	scheduled       ports.ScheduledSendRepository
+	reminders       ports.ReminderRepository
+	quickReplies    ports.QuickReplyRepository
 	locator         ports.MailboxLocator
 	aliases         ports.AliasRepository
 	spamAliases     ports.SpamAliasRepository
@@ -115,7 +119,7 @@ func New(d Deps) *UseCase {
 	return &UseCase{
 		tx: d.Tx, domains: d.Domains, aliasDomains: d.AliasDomains, mailboxes: d.Mailboxes,
 		appPasswords: d.AppPasswords, sieve: d.Sieve, vacation: d.Vacation,
-		signatures: d.Signatures, filters: d.Filters, scheduled: d.Scheduled, locator: d.Locator, aliases: d.Aliases, spamAliases: d.SpamAliases,
+		signatures: d.Signatures, filters: d.Filters, scheduled: d.Scheduled, reminders: d.Reminders, quickReplies: d.QuickReplies, locator: d.Locator, aliases: d.Aliases, spamAliases: d.SpamAliases,
 		senderACL: d.SenderACL, relayhosts: d.Relayhosts, transports: d.Transports,
 		tlsPolicies: d.TLSPolicies, recipientMap: d.RecipientMap, bccMaps: d.BCCMaps,
 		senders: d.Senders, retirements: d.Retirements, mtaSTS: d.MTASTS, mtaSTSPublisher: d.MTASTSPublic, mx: d.MX,

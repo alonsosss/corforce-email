@@ -5,6 +5,7 @@ import { Button } from '@/design/components';
 import {
   IconArchive,
   IconBan,
+  IconBell,
   IconClock,
   IconEdit,
   IconFolder,
@@ -28,6 +29,7 @@ const ROLE_ICONS: Record<string, ComponentType<IconProps>> = {
   [FOLDER_ROLES.junk]: IconBan,
   [FOLDER_ROLES.archive]: IconArchive,
   [FOLDER_ROLES.scheduled]: IconClock,
+  [FOLDER_ROLES.snoozed]: IconBell,
 };
 
 const INDENT_REM = 0.75;
@@ -86,7 +88,9 @@ export function FolderNav({ folders, current, onChanged }: FolderNavProps) {
           const href =
             folder.role === FOLDER_ROLES.scheduled
               ? paths.webmailScheduled
-              : paths.webmailView({ folder: folder.name });
+              : folder.role === FOLDER_ROLES.snoozed
+                ? paths.webmailSnoozed
+                : paths.webmailView({ folder: folder.name });
           return (
             <li key={folder.name} style={indent} className="cf-wm-folders__item">
               <Link

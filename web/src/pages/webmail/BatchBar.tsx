@@ -4,6 +4,7 @@ import { errorMessage } from '@/api/messages';
 import { Button } from '@/design/components';
 import {
   IconBan,
+  IconBell,
   IconCheckSquare,
   IconFolder,
   IconInbox,
@@ -15,6 +16,7 @@ import {
 import { t, type MessageKey } from '@/i18n';
 import { folderWithRole } from './folders';
 import { MoveDialog } from './MoveDialog';
+import { SnoozeDialog } from './SnoozeDialog';
 
 export interface BatchBarProps {
   role: string;
@@ -24,6 +26,8 @@ export interface BatchBarProps {
   onFlags: (uids: number[], change: FlagChange) => Promise<void>;
   onMove: (uids: number[], to: WebmailFolder, done: MessageKey) => Promise<void>;
   onDelete: (uids: number[]) => Promise<void>;
+  /** Posponer los marcados hasta until (RFC 3339); sin el, la carpeta no admite posponer. */
+  onSnooze?: (uids: number[], until: string) => Promise<void>;
 }
 
 /** Acciones sobre los mensajes marcados de la pagina. */
@@ -35,10 +39,12 @@ export function BatchBar({
   onFlags,
   onMove,
   onDelete,
+  onSnooze,
 }: BatchBarProps) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const [moving, setMoving] = useState(false);
+  const [snoozing, setSnoozing] = useState(false);
   const junk = folderWithRole(folders, FOLDER_ROLES.junk);
   const inbox = folderWithRole(folders, FOLDER_ROLES.inbox);
   const isJunk = role === FOLDER_ROLES.junk;
@@ -100,6 +106,19 @@ export function BatchBar({
       >
         {t('webmail.batch.move')}
       </Button>
+      {onSnooze ? (
+        <Button
+          size="sm"
+          variant="ghost"
+          iconOnly
+          title={t('webmail.snooze.action')}
+          icon={<IconBell size={16} />}
+          disabled={busy}
+          onClick={() => setSnoozing(true)}
+        >
+          {t('webmail.snooze.action')}
+        </Button>
+      ) : null}
       {canReportSpam && junk
         ? button('webmail.batch.reportSpam', <IconBan size={16} />, () =>
             onMove(uids, junk, 'webmail.batch.spamDone'),
@@ -119,6 +138,17 @@ export function BatchBar({
         <div className="cf-form__error cf-wm-batch__error" role="alert">
           {errorMessage(error)}
         </div>
+      ) : null}
+      {snoozing && onSnooze ? (
+        <SnoozeDialog
+          title={t('webmail.snooze.batchTitle', { n: uids.length })}
+          confirmLabel={t('webmail.snooze.confirm')}
+          onClose={() => setSnoozing(false)}
+          onConfirm={async (until) => {
+            await onSnooze(uids, until);
+            setSnoozing(false);
+          }}
+        />
       ) : null}
       {moving ? (
         <MoveDialog

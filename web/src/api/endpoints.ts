@@ -361,5 +361,11 @@ export const endpoints = {
     threads: `${API_PREFIX}/webmail/threads`,
     senderInsight: `${API_PREFIX}/webmail/sender-insight`,
     unsubscribe: `${API_PREFIX}/webmail/unsubscribe`,
+    snooze: `${API_PREFIX}/webmail/snooze`,
+    snoozeItem: (id: string) => `${API_PREFIX}/webmail/snooze/${seg(id)}`,
+    followUps: `${API_PREFIX}/webmail/follow-ups`,
+    followUp: (id: string) => `${API_PREFIX}/webmail/follow-ups/${seg(id)}`,
+    quickReplies: `${API_PREFIX}/webmail/quick-replies`,
+    quickReply: (id: string) => `${API_PREFIX}/webmail/quick-replies/${seg(id)}`,
   },
 } as const;

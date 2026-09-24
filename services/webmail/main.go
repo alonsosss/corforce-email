@@ -77,6 +77,18 @@ const (
 	// que el webmail acepta nunca la rechaza el directorio.
 	maxScheduledMaxDays = 365
 
+	// Recordatorios (posponer y seguimiento): como el envio programado, el intervalo es el retraso
+	// maximo con el que vuelve un pospuesto o se avisa de un seguimiento. Cada recordatorio del lote
+	// ocupa una conexion IMAP; el de seguimiento lee en memoria como mucho un mensaje enviado.
+	defaultRemindersPollInterval = 30 * time.Second
+	minRemindersPollInterval     = time.Second
+	maxRemindersPollInterval     = 5 * time.Minute
+	defaultRemindersBatch        = 4
+	maxRemindersBatch            = 20
+	defaultRemindersMaxDays      = 365
+	// maxRemindersMaxDays queda por debajo de lo que admite mail-directory (366 dias).
+	maxRemindersMaxDays = 365
+
 	// Importacion de la libreta personal: el fichero vCard se lee entero en memoria.
 	defaultMaxImportBytes = 5 << 20
 	maxMaxImportBytes     = 50 << 20
@@ -134,6 +146,9 @@ type settings struct {
 	scheduledPoll      time.Duration
 	scheduledBatch     int
 	scheduledMaxDays   int
+	remindersPoll      time.Duration
+	remindersBatch     int
+	remindersMaxDays   int
 	maxImportBytes     int64
 	eventsPerMailbox   int
 	eventsMailboxes    int
@@ -252,12 +267,15 @@ func main() {
 			MaxBodyPartBytes: st.maxBodyPartBytes, MaxAttachmentBytes: st.maxAttachmentBytes,
 			SendTimeout: transferTimeout, MaxScheduledDays: st.scheduledMaxDays,
 			ScheduledPollInterval: st.scheduledPoll, ScheduledBatch: st.scheduledBatch,
-			MaxImportBytes: st.maxImportBytes,
+			MaxImportBytes:  st.maxImportBytes,
+			MaxReminderDays: st.remindersMaxDays, ReminderPollInterval: st.remindersPoll, ReminderBatch: st.remindersBatch,
 		},
 
 		// La baja en un clic es la unica salida del webmail a servidores de terceros: el cliente
 		// solo conecta con direcciones publicas y sin redirecciones.
 		Unsubscriber: unsubscribe.New(unsubscribeTimeout),
+		Reminders:    directory,
+		QuickReplies: directory,
 	})
 	if err != nil {
 		log.Fatalf("webmail: %v", err)
@@ -284,6 +302,8 @@ func main() {
 	// Envio programado: reclama las filas vencidas de la celda (cada replica lo hace; el arriendo de
 	// mail-directory evita que dos envien la misma) y termina con ctx.
 	go svc.RunScheduledSends(ctx)
+	// Recordatorios: el mismo reparto por arriendo, con su propio intervalo y lote.
+	go svc.RunReminders(ctx)
 
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
@@ -413,6 +433,15 @@ func loadSettings() (settings, error) {
 		return st, err
 	}
 	if st.scheduledMaxDays, err = config.EnvInt("WEBMAIL_SCHEDULED_MAX_DAYS", defaultScheduledMaxDays, 1, maxScheduledMaxDays); err != nil {
+		return st, err
+	}
+	if st.remindersPoll, err = config.EnvDuration("WEBMAIL_REMINDERS_POLL_INTERVAL", defaultRemindersPollInterval, minRemindersPollInterval, maxRemindersPollInterval); err != nil {
+		return st, err
+	}
+	if st.remindersBatch, err = config.EnvInt("WEBMAIL_REMINDERS_BATCH", defaultRemindersBatch, 1, maxRemindersBatch); err != nil {
+		return st, err
+	}
+	if st.remindersMaxDays, err = config.EnvInt("WEBMAIL_REMINDERS_MAX_DAYS", defaultRemindersMaxDays, 1, maxRemindersMaxDays); err != nil {
 		return st, err
 	}
 	importBytes, err := config.EnvInt("WEBMAIL_MAX_IMPORT_BYTES", defaultMaxImportBytes, 1, maxMaxImportBytes)
