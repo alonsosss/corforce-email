@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 
 	"github.com/alonsosss/corforce-email/services/automations/internal/domain"
@@ -37,6 +38,15 @@ func (uc *UseCase) UpdateWorkflow(ctx context.Context, tenantID, id uuid.UUID, p
 		if err != nil {
 			return err
 		}
+		if p.Steps != nil && !reflect.DeepEqual(p.Steps, w.Steps) {
+			open, err := uc.openRuns(ctx, tenantID, id)
+			if err != nil {
+				return err
+			}
+			if open > 0 {
+				return domain.ErrStepsLockedByRuns
+			}
+		}
 		if err := w.ApplyPatch(p); err != nil {
 			return err
 		}
@@ -47,6 +57,19 @@ func (uc *UseCase) UpdateWorkflow(ctx context.Context, tenantID, id uuid.UUID, p
 		return nil
 	})
 	return out, err
+}
+
+// openRuns cuenta las ejecuciones del flujo que aun no terminaron.
+func (uc *UseCase) openRuns(ctx context.Context, tenantID, id uuid.UUID) (int64, error) {
+	var total int64
+	for _, st := range []domain.RunStatus{domain.RunWaiting, domain.RunRunning} {
+		_, n, err := uc.runs.List(ctx, tenantID, ports.RunFilter{WorkflowID: id, Status: st, Page: 1, PerPage: 1})
+		if err != nil {
+			return 0, err
+		}
+		total += n
+	}
+	return total, nil
 }
 
 func (uc *UseCase) DeleteWorkflow(ctx context.Context, tenantID, id uuid.UUID) error {

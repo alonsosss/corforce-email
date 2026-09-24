@@ -184,3 +184,30 @@ func TestEjecucionesDeUnFlujoYDeOtraEmpresa(t *testing.T) {
 		t.Fatalf("flujo de otra empresa: %v", err)
 	}
 }
+
+// Las ejecuciones apuntan a su paso por posicion: con ejecuciones abiertas los pasos de un flujo
+// pausado no cambian (una ejecucion caeria en otro paso). El nombre si, y reenviar los mismos
+// pasos no cuenta como cambio; tras archivar, que cancela las ejecuciones, vuelve a poder editarse.
+func TestLosPasosNoCambianConEjecucionesAbiertas(t *testing.T) {
+	f := newFixture(t, Config{})
+	c := f.sendable("ana@example.com")
+	w := f.activeWorkflow(t, contactCreated, false, domain.Step{Type: domain.StepWait, Duration: "1d"}, sendEmail())
+	if f.enter(t, c.ID) != 1 {
+		t.Fatal("entra")
+	}
+	if _, err := f.uc.PauseWorkflow(ctx, f.tenant, w.ID, ""); err != nil {
+		t.Fatal(err)
+	}
+	reordered := []domain.Step{sendEmail(), {Type: domain.StepWait, Duration: "1d"}}
+	if _, err := f.uc.UpdateWorkflow(ctx, f.tenant, w.ID, domain.Patch{Steps: reordered}); !errors.Is(err, domain.ErrStepsLockedByRuns) {
+		t.Fatalf("reordenar con una ejecucion abierta: %v", err)
+	}
+	name := "Renombrado"
+	same := f.store.Workflow(w.ID).Steps
+	if _, err := f.uc.UpdateWorkflow(ctx, f.tenant, w.ID, domain.Patch{Name: &name, Steps: same}); err != nil {
+		t.Fatalf("renombrar reenviando los mismos pasos: %v", err)
+	}
+	if got := f.onlyRun(t, w); got.Status != domain.RunWaiting {
+		t.Fatalf("la ejecucion sigue esperando en su paso: %+v", got)
+	}
+}

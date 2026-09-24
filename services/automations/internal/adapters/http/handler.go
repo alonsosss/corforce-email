@@ -445,6 +445,8 @@ func writeError(w http.ResponseWriter, err error) {
 		response.Err(w, http.StatusConflict, "NAME_TAKEN", err.Error())
 	case errors.Is(err, domain.ErrNotEditable):
 		response.Err(w, http.StatusConflict, "NOT_EDITABLE", err.Error())
+	case errors.Is(err, domain.ErrStepsLockedByRuns):
+		response.Err(w, http.StatusConflict, "STEPS_LOCKED_BY_RUNS", err.Error())
 	case errors.Is(err, domain.ErrNotDeletable):
 		response.Err(w, http.StatusConflict, "NOT_DELETABLE", err.Error())
 	case errors.Is(err, domain.ErrInvalidTransition):
