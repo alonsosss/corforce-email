@@ -90,11 +90,20 @@ func (c *Client) Check(ctx context.Context, tenantID uuid.UUID, class domain.Cla
 	}
 	return domain.Entitlement{
 		Allowed:   d.Allowed,
-		Limit:     d.Limit,
+		Limit:     unlimitedAsNil(d.Limit),
 		Used:      d.Used,
-		Remaining: d.Remaining,
+		Remaining: unlimitedAsNil(d.Remaining),
 		HardLimit: d.HardLimit,
 		Reason:    d.Reason,
 		Requested: quantity,
 	}, nil
+}
+
+// unlimitedAsNil traduce el -1 con que billing dice que el plan no limita al nil del dominio: un
+// remanente negativo con limite duro deniega cualquier envio.
+func unlimitedAsNil(v *int64) *int64 {
+	if v == nil || *v < 0 {
+		return nil
+	}
+	return v
 }

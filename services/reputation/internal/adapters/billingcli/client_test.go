@@ -56,6 +56,24 @@ func TestCheckSinLimiteYDenegado(t *testing.T) {
 	}
 }
 
+func TestCheckPlanIlimitadoAdmiteElEnvio(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"data":{"allowed":true,"resource":"transactional_messages","limit":-1,"used":4,"remaining":-1,"hard_limit":true}}`))
+	}))
+	defer srv.Close()
+
+	ent, err := New(srv.URL, "t").Check(context.Background(), uuid.New(), domain.ClassTransactional, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ent.Limit != nil || ent.Remaining != nil {
+		t.Fatalf("un plan sin limite debe llegar sin limite: %+v", ent)
+	}
+	if ok, reason := ent.Admits(1, 1000); !ok {
+		t.Fatalf("un plan sin limite deniega: %s", reason)
+	}
+}
+
 func TestCheckErrores(t *testing.T) {
 	cases := map[string]http.HandlerFunc{
 		"status no 200": func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusServiceUnavailable) },
