@@ -45,6 +45,17 @@ export function formatTimestamp(value: string | null | undefined): string {
   return `${timestampFormat().format(d)}.${String(d.getMilliseconds()).padStart(3, '0')}`;
 }
 
+/**
+ * Mayúscula solo en la primera letra, como pide la ortografía en un título de fecha
+ * ("septiembre de 2026" pasa a "Septiembre de 2026"; CSS capitalize pondría "De").
+ */
+export function capitalizeFirst(text: string, locale = getLocale()): string {
+  const first = text.codePointAt(0);
+  if (first === undefined) return text;
+  const head = String.fromCodePoint(first);
+  return head.toLocaleUpperCase(locale) + text.slice(head.length);
+}
+
 export function fullName(first: string, last: string, fallback = ''): string {
   const name = `${first} ${last}`.trim();
   return name || fallback;

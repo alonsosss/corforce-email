@@ -143,7 +143,9 @@ export default function ContactsPage() {
                 ref={fileRef}
                 type="file"
                 accept=".vcf,text/vcard,text/x-vcard"
-                className="cf-visually-hidden"
+                name="vcard-import"
+                hidden
+                aria-hidden="true"
                 aria-label={t('webmail.contacts.importFile')}
                 tabIndex={-1}
                 onChange={(e) => {

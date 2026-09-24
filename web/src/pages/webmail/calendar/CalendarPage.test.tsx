@@ -57,6 +57,21 @@ describe('calendario', () => {
     expect(Math.round(days)).toBe(42);
   });
 
+  it('titula el mes y los días de la agenda con mayúscula solo en la primera letra', async () => {
+    vi.spyOn(webmailApi, 'calendarOccurrences').mockResolvedValue([WEEKLY]);
+    renderCalendar();
+    expect(await screen.findByRole('heading', { level: 1 })).toHaveTextContent(
+      /^Septiembre de 2026$/,
+    );
+  });
+
+  it('la agenda titula cada día con mayúscula inicial', async () => {
+    vi.spyOn(webmailApi, 'calendarOccurrences').mockResolvedValue([WEEKLY]);
+    renderCalendar('/webmail/calendar?view=agenda&date=2026-09-15');
+    const day = await screen.findByRole('heading', { level: 2, name: /15 de septiembre/ });
+    expect(day.textContent).toMatch(/^[A-ZÁÉÍÓÚ][a-záéíóú]+, 15 de septiembre$/);
+  });
+
   it('parte la peticion si el servicio admite una ventana menor', async () => {
     vi.mocked(webmailApi.davMeta).mockResolvedValue({
       limits: { max_event_window_days: 31 },

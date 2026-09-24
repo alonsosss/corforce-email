@@ -79,6 +79,13 @@ describe('contactos personales', () => {
 
     await user.click(await screen.findByRole('button', { name: t('webmail.contacts.new') }));
     const dialog = screen.getByRole('dialog');
+    await user.click(within(dialog).getByRole('button', { name: t('webmail.contacts.addEmail') }));
+    await user.click(within(dialog).getByRole('button', { name: t('webmail.contacts.addPhone') }));
+    const fields = Array.from(dialog.querySelectorAll('input, select, textarea'));
+    const ids = fields.map((field) => field.id);
+    expect(ids.every(Boolean)).toBe(true);
+    expect(new Set(ids).size).toBe(ids.length);
+
     await user.click(within(dialog).getByRole('button', { name: t('common.save') }));
     expect(within(dialog).getByText(t('webmail.contacts.nameOrEmail'))).toBeInTheDocument();
     expect(create).not.toHaveBeenCalled();
@@ -143,6 +150,10 @@ describe('contactos personales', () => {
     renderContacts();
 
     const input = await screen.findByLabelText(t('webmail.contacts.importFile'));
+    // El boton visible abre el selector: el input no debe contar para lectores ni tabulador.
+    expect(input).toHaveAttribute('aria-hidden', 'true');
+    expect(input).toHaveAttribute('tabindex', '-1');
+    expect(input).not.toBeVisible();
     fireEvent.change(input, {
       target: { files: [new File(['BEGIN:VCARD'], 'agenda.vcf', { type: 'text/vcard' })] },
     });
@@ -175,7 +186,7 @@ describe('contactos personales', () => {
     const input = await screen.findByLabelText(t('webmail.contacts.importFile'));
     await waitFor(() => expect(webmailApi.davMeta).toHaveBeenCalled());
     fireEvent.change(input, { target: { files: [new File(['x'.repeat(40)], 'grande.vcf')] } });
-    expect(await screen.findByText(/el maximo es/)).toBeInTheDocument();
+    expect(await screen.findByText(/el máximo es/)).toBeInTheDocument();
     expect(upload).not.toHaveBeenCalled();
 
     fireEvent.change(input, { target: { files: [new File(['x'], 'uno.vcf')] } });

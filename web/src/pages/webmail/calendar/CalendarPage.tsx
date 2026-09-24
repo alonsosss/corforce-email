@@ -7,6 +7,7 @@ import { useQuery } from '@/hooks/useQuery';
 import { Button, EmptyState, Skeleton, Tabs } from '@/design/components';
 import { IconCalendar, IconChevronLeft, IconChevronRight, IconPlus } from '@/design/icons';
 import { getLocale, t } from '@/i18n';
+import { capitalizeFirst } from '@/lib/format';
 import {
   CALENDAR_VIEWS,
   dayKey,
@@ -67,7 +68,10 @@ export default function CalendarPage() {
           month: 'short',
           year: 'numeric',
         }).format(range.days[range.days.length - 1] ?? range.start)}`
-      : new Intl.DateTimeFormat(locale, { month: 'long', year: 'numeric' }).format(anchor);
+      : capitalizeFirst(
+          new Intl.DateTimeFormat(locale, { month: 'long', year: 'numeric' }).format(anchor),
+          locale,
+        );
   const weekdayFormat = new Intl.DateTimeFormat(locale, { weekday: 'short' });
   const timeFormat = new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit' });
 
@@ -102,7 +106,12 @@ export default function CalendarPage() {
   );
 
   const dayLabel = (day: Date) =>
-    new Intl.DateTimeFormat(locale, { weekday: 'long', day: 'numeric', month: 'long' }).format(day);
+    capitalizeFirst(
+      new Intl.DateTimeFormat(locale, { weekday: 'long', day: 'numeric', month: 'long' }).format(
+        day,
+      ),
+      locale,
+    );
 
   return (
     <div className="cf-wm-calendar">

@@ -5,7 +5,7 @@
  * gateway lo sirve en cada visita con un nonce nuevo en la CSP, y el correo y la sesion no pasan por
  * aqui. Sin conexion, una navegacion recibe la pagina estatica sin conexion.
  */
-const CACHE = 'cf-shell-v1';
+const CACHE = 'cf-shell-v2';
 const OFFLINE_URL = '/offline.html';
 const STATIC_FILES = [
   OFFLINE_URL,

@@ -187,26 +187,46 @@
  * Casilla dibujada con los tokens del tema. La nativa sigue el esquema de color del sistema
  * operativo y no el del tema elegido: con el sistema en oscuro y la aplicacion en claro, Chrome la
  * pintaba como un cuadrado relleno oscuro aunque estuviera desmarcada.
+ *
+ * El input es el objetivo táctil (24px, 44px con puntero grueso) y es transparente; la caja
+ * visible de 16px es ::before y la marca ::after. El margen negativo conserva en escritorio el
+ * hueco de 16px que ocupaba la casilla; con puntero grueso la fila crece lo justo.
  */
+.cf-checkbox {
+  --cf-checkbox-box: 16px;
+  --cf-checkbox-target: 24px;
+}
 .cf-checkbox input {
   appearance: none;
   -webkit-appearance: none;
   flex: none;
   display: inline-grid;
-  place-content: center;
-  width: 16px;
-  height: 16px;
-  margin: 0;
+  place-items: center;
+  width: var(--cf-checkbox-target);
+  height: var(--cf-checkbox-target);
+  margin: calc((var(--cf-checkbox-box) - var(--cf-checkbox-target)) / 2);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+.cf-checkbox input::before,
+.cf-checkbox input::after {
+  content: '';
+  grid-area: 1 / 1;
+}
+.cf-checkbox input::before {
+  box-sizing: border-box;
+  width: var(--cf-checkbox-box);
+  height: var(--cf-checkbox-box);
   border: 1.5px solid var(--cf-border-strong);
   border-radius: 4px;
   background: var(--cf-surface);
-  cursor: pointer;
   transition:
     background-color var(--cf-transition),
     border-color var(--cf-transition);
 }
-.cf-checkbox input::before {
-  content: '';
+.cf-checkbox input::after {
   width: 10px;
   height: 10px;
   background: var(--cf-accent-contrast);
@@ -214,35 +234,50 @@
   transform: scale(0);
   transition: transform var(--cf-transition);
 }
-.cf-checkbox input:checked,
-.cf-checkbox input:indeterminate {
+.cf-checkbox input:checked::before,
+.cf-checkbox input:indeterminate::before {
   background: var(--cf-accent);
   border-color: var(--cf-accent);
 }
-.cf-checkbox input:checked::before {
+.cf-checkbox input:checked::after {
   transform: scale(1);
 }
-.cf-checkbox input:indeterminate::before {
+.cf-checkbox input:indeterminate::after {
   height: 2px;
   clip-path: none;
   transform: scale(1);
 }
-.cf-checkbox input:hover:not(:disabled) {
+.cf-checkbox input:hover:not(:disabled)::before {
   border-color: var(--cf-accent);
 }
 .cf-checkbox input:focus-visible {
+  outline: none;
+}
+.cf-checkbox input:focus-visible::before {
   box-shadow: var(--cf-focus-ring);
 }
 .cf-checkbox input:disabled {
   cursor: not-allowed;
   opacity: 0.5;
 }
+@media (pointer: coarse) {
+  .cf-checkbox {
+    --cf-checkbox-target: 44px;
+  }
+  .cf-checkbox input {
+    margin: calc((var(--cf-checkbox-box) - var(--cf-space-6)) / 2);
+  }
+}
 @media (forced-colors: active) {
   .cf-checkbox input {
     appearance: auto;
     -webkit-appearance: auto;
+    width: var(--cf-checkbox-box);
+    height: var(--cf-checkbox-box);
+    margin: 0;
   }
-  .cf-checkbox input::before {
+  .cf-checkbox input::before,
+  .cf-checkbox input::after {
     content: none;
   }
 }
@@ -495,13 +530,21 @@
 .cf-tabs {
   display: flex;
   gap: var(--cf-space-1);
-  border-bottom: 1px solid var(--cf-border);
   margin-bottom: var(--cf-space-5);
+  /* La línea base es una sombra interior: un borde con margen negativo en las pestañas
+     desborda en vertical y, con overflow-x, el navegador pinta una barra con flechas. */
+  box-shadow: inset 0 -1px 0 var(--cf-border);
   overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+}
+.cf-tabs::-webkit-scrollbar {
+  display: none;
 }
 .cf-tab {
+  flex: none;
   padding: var(--cf-space-2) var(--cf-space-3);
-  margin-bottom: -1px;
   border-bottom: 2px solid transparent;
   font-size: var(--cf-text-sm);
   font-weight: var(--cf-weight-medium);

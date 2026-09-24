@@ -6,6 +6,7 @@ import { useAccess } from '@/access/useAccess';
 import { useAction } from '@/hooks/useAction';
 import { useQuery } from '@/hooks/useQuery';
 import {
+  Alert,
   Badge,
   Button,
   Card,
@@ -22,6 +23,10 @@ import { t } from '@/i18n';
  * Interruptor del asistente del webmail para la empresa (mail-directory, docs/adr/0015). Apagado por
  * defecto; activarlo exige aceptar el aviso de tratamiento de datos, porque el texto que cada usuario
  * pida procesar sale a un proveedor externo. Apagarlo no pide confirmacion.
+ *
+ * Si la plataforma tiene o no la clave del proveedor solo lo sabe el webmail (GET /webmail/assistant,
+ * reason not_configured), con la sesion del buzon; mail-directory no lo expone, asi que aqui solo se
+ * avisa de la dependencia.
  */
 export function AssistantSettingsCard() {
   const { can } = useAccess();
@@ -71,6 +76,9 @@ export function AssistantSettingsCard() {
             },
           ]}
         />
+        <Alert title={t('mailboxes.assistant.providerTitle')}>
+          {t('mailboxes.assistant.providerNotice')}
+        </Alert>
         {disable.error ? (
           <div className="cf-form__error" role="alert">
             {errorMessage(disable.error)}

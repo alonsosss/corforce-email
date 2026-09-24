@@ -188,7 +188,7 @@ describe('posponer desde el lector y en lote', () => {
 
     await user.click(await screen.findByRole('button', { name: t('webmail.snooze.action') }));
     const dialog = screen.getByRole('dialog');
-    await user.click(within(dialog).getByRole('button', { name: /^Manana/ }));
+    await user.click(within(dialog).getByRole('button', { name: /^Mañana/ }));
     await user.click(within(dialog).getByRole('button', { name: t('webmail.snooze.confirm') }));
     await waitFor(() => expect(snooze).toHaveBeenCalledWith('INBOX', [5], expect.any(String)));
     const until = new Date(snooze.mock.calls[0]![2]);

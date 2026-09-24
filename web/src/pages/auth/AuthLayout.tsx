@@ -12,7 +12,7 @@ export interface AuthLayoutProps {
 
 export function AuthLayout({ title, subtitle, children, footer }: AuthLayoutProps) {
   return (
-    <div className="cf-auth">
+    <main className="cf-auth">
       <div className="cf-auth__card">
         <div className="cf-auth__brand">
           <BrandMark />
@@ -22,6 +22,6 @@ export function AuthLayout({ title, subtitle, children, footer }: AuthLayoutProp
         {children}
         {footer ? <div className="cf-auth__switch">{footer}</div> : null}
       </div>
-    </div>
+    </main>
   );
 }

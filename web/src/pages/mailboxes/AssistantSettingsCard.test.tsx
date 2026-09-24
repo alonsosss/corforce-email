@@ -64,6 +64,7 @@ describe('ajuste del asistente en el panel', () => {
     const set = vi.spyOn(assistantSettingsApi, 'set').mockResolvedValue(ok(ON));
     renderCard();
     expect(await screen.findByText(t('mailboxes.assistant.off'))).toBeInTheDocument();
+    expect(screen.getByText(t('mailboxes.assistant.providerNotice'))).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: t('mailboxes.assistant.enable') }));
     expect(set).not.toHaveBeenCalled();
     const dialog = await screen.findByRole('dialog');

@@ -109,6 +109,8 @@ export function ContactFormDialog({ contact, seed, onClose, onSaved }: ContactFo
             <div key={i} className="cf-wm-rule-row">
               <div className="cf-wm-rule-row__value">
                 <Input
+                  id={`wm-contact-${kind}-${i}`}
+                  name={`${kind}[${i}].value`}
                   type={inputType}
                   aria-label={label}
                   value={item.value}
@@ -124,6 +126,8 @@ export function ContactFormDialog({ contact, seed, onClose, onSaved }: ContactFo
                 ) : null}
               </div>
               <Select
+                id={`wm-contact-${kind}-${i}-type`}
+                name={`${kind}[${i}].type`}
                 aria-label={t('webmail.contacts.valueType')}
                 value={item.type}
                 options={TYPE_OPTIONS()}

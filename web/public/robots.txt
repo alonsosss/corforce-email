@@ -1,0 +1,6 @@
+# La aplicación (webmail, panel y API) no se indexa. Solo lo público pensado para buscadores:
+# las landing pages (/p/, cada una puede pedir noindex por su cuenta) y las páginas de citas.
+User-agent: *
+Allow: /p/
+Allow: /citas/
+Disallow: /

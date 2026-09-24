@@ -560,6 +560,12 @@ a.cf-wm-message:hover {
     opacity: 1;
   }
 }
+/* Sin puntero fino no suele haber teclado: la ayuda de atajos sobra, el atajo "?" sigue vivo. */
+@media (hover: none) and (pointer: coarse) {
+  .cf-btn.cf-wm__help {
+    display: none;
+  }
+}
 
 /* Lista: busqueda avanzada, casillas y acciones sobre varios */
 .cf-wm-listbar__tools {
@@ -1006,7 +1012,6 @@ a.cf-wm-message:hover {
 }
 .cf-wm-calendar__title {
   flex: 1 1 12rem;
-  text-transform: capitalize;
 }
 .cf-wm-calendar__nav {
   display: flex;
@@ -1261,7 +1266,6 @@ a.cf-wm-message:hover {
   margin-bottom: var(--cf-space-2);
   font-size: var(--cf-text-sm);
   font-weight: var(--cf-weight-semibold);
-  text-transform: capitalize;
 }
 .cf-wm-datetime {
   display: flex;

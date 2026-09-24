@@ -45,6 +45,13 @@ describe('inicio de sesion unico', () => {
   });
   afterEach(() => vi.restoreAllMocks());
 
+  it('el formulario vive dentro del landmark main', () => {
+    const campos = renderLogin();
+    const main = screen.getByRole('main');
+    expect(main).toContainElement(campos.email as HTMLElement);
+    expect(main).toContainElement(screen.getByRole('heading', { name: t('auth.login.title') }));
+  });
+
   it('quien tiene buzon entra a su correo sin tocar la plataforma', async () => {
     const mailbox = vi.spyOn(useWebmailStore.getState(), 'login').mockResolvedValue(undefined);
     const platform = vi.spyOn(useAuthStore.getState(), 'login');

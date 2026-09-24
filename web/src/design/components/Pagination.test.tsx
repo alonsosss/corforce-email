@@ -10,7 +10,7 @@ describe('total del paginador', () => {
     expect(screen.getByText(t('common.totalRows', { total: 137 }))).toBeInTheDocument();
   });
 
-  it('dice "mas de" cuando el total es un tope', () => {
+  it('dice "más de" cuando el total es un tope', () => {
     render(
       <Pagination
         page={2}
@@ -21,7 +21,7 @@ describe('total del paginador', () => {
         onPageChange={vi.fn()}
       />,
     );
-    expect(screen.getByText('Mas de 10000 registros')).toBeInTheDocument();
+    expect(screen.getByText('Más de 10000 registros')).toBeInTheDocument();
     expect(screen.queryByText(t('common.totalRows', { total: 10000 }))).toBeNull();
   });
 });
