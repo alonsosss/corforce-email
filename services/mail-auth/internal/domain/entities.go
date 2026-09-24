@@ -194,7 +194,8 @@ func (r Result) Authorized() bool { return r == ResultOK }
 // Verification es el desenlace con lo que se sabe del buzon, que solo se rellena cuando la
 // credencial abre la sesion: el nombre visible (el webmail lo usa como nombre del remitente) y
 // la identidad canonica (mail-dav necesita la empresa para elegir su base y el buzon para
-// acotar sus datos, y no puede deducir ninguna de las dos del nombre).
+// acotar sus datos, y no puede deducir ninguna de las dos del nombre; el webmail las guarda en
+// su sesion para llamar a mail-dav en nombre del buzon).
 type Verification struct {
 	Result      Result
 	DisplayName string

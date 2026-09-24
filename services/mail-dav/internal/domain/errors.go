@@ -63,3 +63,15 @@ type ICalError struct {
 }
 
 func (e *ICalError) Error() string { return "iCalendar no valido: " + e.Reason }
+
+// FieldError: un campo de la API estructurada (contactos y eventos en JSON) no es valido. Field es la ruta del
+// campo tal como la envio el cliente (emails[1].value, recurrence.until) y Reason va al cliente, asi que nunca
+// repite el valor.
+type FieldError struct {
+	Field  string
+	Reason string
+}
+
+func (e *FieldError) Error() string { return e.Field + ": " + e.Reason }
+
+func fieldError(field, reason string) *FieldError { return &FieldError{Field: field, Reason: reason} }

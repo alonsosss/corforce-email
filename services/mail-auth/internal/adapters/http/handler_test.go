@@ -130,7 +130,7 @@ func TestVerifySinServicioLlegaAlCasoDeUso(t *testing.T) {
 }
 
 func TestVerifyDevuelveElNombreSoloAlWebmail(t *testing.T) {
-	stub := &stubVerifier{result: domain.ResultOK, displayName: "Ana Perez"}
+	stub := &stubVerifier{result: domain.ResultOK, displayName: "Ana Perez", tenantID: uuid.New(), mailboxID: uuid.New()}
 	h := NewHandler(stub).VerifyRoutes()
 
 	decode := func(rec *httptest.ResponseRecorder) map[string]any {
@@ -146,8 +146,12 @@ func TestVerifyDevuelveElNombreSoloAlWebmail(t *testing.T) {
 	if webmail.Code != http.StatusOK {
 		t.Fatalf("webmail: status = %d", webmail.Code)
 	}
-	if got := decode(webmail)["display_name"]; got != "Ana Perez" {
-		t.Fatalf("webmail: display_name = %v", got)
+	got := decode(webmail)
+	if got["display_name"] != "Ana Perez" || got["tenant_id"] != stub.tenantID.String() || got["mailbox_id"] != stub.mailboxID.String() {
+		t.Fatalf("webmail: %v", got)
+	}
+	if _, ok := got["username"]; ok {
+		t.Fatalf("webmail no necesita el nombre de usuario: %v", got)
 	}
 
 	// Dovecot sigue recibiendo exactamente {"success":true}.
@@ -163,8 +167,10 @@ func TestVerifyDevuelveElNombreSoloAlWebmail(t *testing.T) {
 	if denied.Code != http.StatusUnauthorized {
 		t.Fatalf("rechazo: status = %d", denied.Code)
 	}
-	if _, ok := decode(denied)["display_name"]; ok {
-		t.Fatalf("rechazo: no debe llevar display_name: %q", denied.Body.String())
+	for _, k := range []string{"display_name", "tenant_id", "mailbox_id"} {
+		if _, ok := decode(denied)[k]; ok {
+			t.Fatalf("rechazo: no debe llevar %s: %q", k, denied.Body.String())
+		}
 	}
 }
 
@@ -178,7 +184,8 @@ func TestVerifyRechazaOtrosMetodos(t *testing.T) {
 	}
 }
 
-// mail-dav no puede deducir la empresa ni el buzon del nombre: solo a el se le devuelven, y solo si entra.
+// mail-dav y el webmail no pueden deducir la empresa ni el buzon del nombre: solo a ellos se les devuelven, y
+// solo si entra. El nombre de usuario solo lo recibe mail-dav.
 func TestVerifyDevuelveLaIdentidadSoloAMailDAV(t *testing.T) {
 	stub := &stubVerifier{result: domain.ResultOK, displayName: "Ana Perez", tenantID: uuid.New(), mailboxID: uuid.New()}
 	h := NewHandler(stub).VerifyRoutes()
@@ -199,7 +206,7 @@ func TestVerifyDevuelveLaIdentidadSoloAMailDAV(t *testing.T) {
 	if _, ok := dav["display_name"]; ok {
 		t.Fatalf("dav no necesita el nombre visible: %v", dav)
 	}
-	for _, service := range []string{"imap", "webmail", "sieve"} {
+	for _, service := range []string{"imap", "sieve", "smtp"} {
 		body := decode(post(t, h, "/", `{"username":"ana@empresa.pe","password":"s3cr3t","real_rip":"203.0.113.7","service":"`+service+`"}`))
 		for _, k := range []string{"username", "tenant_id", "mailbox_id"} {
 			if _, ok := body[k]; ok {

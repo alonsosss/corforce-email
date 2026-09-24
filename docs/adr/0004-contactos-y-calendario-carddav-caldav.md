@@ -70,8 +70,35 @@ Los objetos importados se validan y se acotan: un vCard o un iCalendar es entrad
 * La libreta compartida de la fase 1 (directorio de buzones activos de la empresa) se ofrecera como una libreta
   de solo lectura "Directorio de la empresa" de cada buzon, sin duplicar datos: se genera desde `mail-directory`.
   Pendiente.
-* El webmail no cambia: sigue con su libreta y su selector. Una pantalla de contactos y calendario en el webmail
-  es una fase posterior y opcional.
+* El webmail usa los contactos y el calendario personales por una API JSON interna de `mail-dav` (ver "API interna
+  para el webmail"), sobre los mismos almacenes que CardDAV y CalDAV: lo que se crea en la web aparece en el movil y
+  al reves. La libreta de la empresa sigue siendo la de `mail-directory`.
+
+### API interna para el webmail (2026-09-24)
+
+`docs/Plan_Webmail_Competitivo.md` (4.3) la define; su contrato exacto esta alli y en
+`services/mail-dav/internal/adapters/http/api.go`. Lo que decide este servicio:
+
+* **Entrada**: `/internal/mail-dav/...` va por su propia cadena en `main.go` (token interno, `RequireInternalCaller`, cupo
+  por buzon y no por IP, porque todo llega desde el webmail, y el mismo tope de peticiones simultaneas y plazo que DAV). El
+  buzon lo nombran `X-Mailbox-Tenant-ID` y `X-Mailbox-ID` (UUID, obligatorias), que el webmail toma de la respuesta de
+  `mail-auth` al abrir su sesion; se liga como una peticion DAV (`BindMailbox`, RLS por empresa y buzon).
+* **Colecciones**: la libreta `contacts` y el calendario `calendar` por defecto (se crean si faltan); si el buzon los
+  borro por DAV, la primera que tenga.
+* **Traductores** (`internal/domain/contact_fields.go`, `event_fields.go`): vCard 4.0 e iCalendar con un `VEVENT`,
+  textos escapados (RFC 6350 y 5545) y plegados a 75 octetos; todo lo generado vuelve a pasar `ParseVCard` y
+  `ParseCalendarObject` (fuzz incluido). Al actualizar se conserva todo lo que la API no expresa (version y UID del vCard,
+  `PHOTO`, `X-*`, grupos de etiquetas, `ATTENDEE`, otros `VALARM`, `VTIMEZONE`) y la linea original de cada valor que no
+  cambio. Si cambia el inicio, el tipo de dia o la repeticion, se retiran `EXDATE`, `RDATE` y las sobrescrituras
+  (nombran apariciones que ya no existen); si el inicio tenia una zona IANA, las horas nuevas se escriben en esa zona. Una
+  regla que la API no expresa (`HOURLY`, `BYSETPOS`...) se lee como sin repeticion o simplificada y, si no se toca, se
+  conserva tal cual.
+* **Apariciones**: `CalendarObject.Occurrences` expande con `RRule.Each` y el mismo presupuesto por evento y por consulta
+  que `calendar-query`, con `EXDATE`, `RDATE` y sobrescrituras; lo que no se sabe expandir aparece en su primera
+  ocurrencia con `recurring: true`.
+* **Topes nuevos** (`.env.example`, servidos en `/internal/mail-dav/meta`): `MAIL_DAV_MAX_IMPORT_BYTES` (4 MiB),
+  `MAIL_DAV_MAX_IMPORT_CARDS` (1000), `MAIL_DAV_MAX_EVENT_WINDOW_DAYS` (62), `MAIL_DAV_MAX_OCCURRENCES` (5000),
+  `MAIL_DAV_CONTACTS_PAGE_SIZE` (50) y `MAIL_DAV_MAX_CONTACTS_PAGE_SIZE` (100).
 
 ## Lo decidido al implementar (CardDAV)
 

@@ -326,15 +326,16 @@ Lo llama `passwd-verify.lua` en cada autenticacion IMAP/POP3/ManageSieve/SMTP
 POST /            Content-Type: application/json
 {"username": "user@dominio", "password": "...", "real_rip": "1.2.3.4", "service": "imap|pop3|sieve|smtp|lmtp|webmail"}
 
-200  {"success": true}                          (con service "webmail": {"success": true, "display_name": "..."})
+200  {"success": true}                          (con service "webmail": {"success": true, "display_name": "...", "tenant_id": "...", "mailbox_id": "..."})
 401  {"success": false}
 400  {"success": false}   cuerpo incompleto
 ```
 
 Con `"service": "dav"` (solo entonces) un 200 lleva ademas `username` (el del buzon, en minusculas), `tenant_id` y
 `mailbox_id`: `mail-dav` no puede deducir la empresa ni el buzon del nombre, y las necesita para elegir la base de la
-empresa y acotar cada consulta. Un rechazo no lleva ninguno. Con `webmail` la respuesta lleva `display_name`; con los
-demas servicios, solo `success`.
+empresa y acotar cada consulta. Un rechazo no lleva ninguno. Con `webmail` la respuesta lleva `display_name`,
+`tenant_id` y `mailbox_id` (el webmail los guarda en su sesion y con ellos llama a la API interna de `mail-dav`), sin
+`username`; con los demas servicios, solo `success`.
 
 Con `"service": "migration"` (solo lo envia `migration-verify.lua`, para una contrasena que empieza por `cfmj1.`) la
 peticion es la credencial de destino de un trabajo de migracion, no una contrasena del buzon: `mail-auth` no la compara
