@@ -25,7 +25,18 @@ import {
   useToast,
   type ChipsInputProps,
 } from '@/design/components';
-import { IconChevronLeft, IconClock, IconSend, IconUndo } from '@/design/icons';
+import {
+  IconChevronLeft,
+  IconChevronUp,
+  IconClock,
+  IconMaximize,
+  IconMinimize,
+  IconMinus,
+  IconSend,
+  IconTrash,
+  IconUndo,
+  IconX,
+} from '@/design/icons';
 import { getLocale, t, type MessageKey } from '@/i18n';
 import { paths } from '@/paths';
 import { mailboxSignature, senderIdentities, webmailMeta } from '@/webmail/catalogs';
@@ -63,6 +74,7 @@ import { QuickReplyPicker } from './QuickReplyPicker';
 import { followUpChoices } from './snooze';
 import { formatScheduled } from './schedule';
 import { ScheduleDialog } from './ScheduleDialog';
+import { useComposeWindow } from './composeWindow';
 import { useWebmailOutlet } from './webmailContext';
 
 const TITLES: Record<ComposeMode | 'new', MessageKey> = {
@@ -231,6 +243,10 @@ function ComposeForm({
   const mounted = useRef(true);
   const pending = useRef<{ timer: number; toastId: number; flush: () => void } | null>(null);
   const dirty = version !== savedVersion;
+  const windowed = useComposeWindow();
+  // Salir a proposito (enviar, programar, descartar) no deja borrador; salir de otro modo, si.
+  const closing = useRef(false);
+  const saveOnLeave = useRef<() => void>(() => undefined);
 
   useEffect(() => {
     // Al responder se escribe encima de la cita; en lo demas se empieza por el destinatario.
@@ -254,6 +270,7 @@ function ComposeForm({
       mounted.current = false;
       // Salir de la redaccion dentro de la aplicacion no cancela un envio en espera: sale ya.
       pending.current?.flush();
+      saveOnLeave.current();
     };
   }, []);
 
@@ -308,6 +325,7 @@ function ComposeForm({
   });
 
   const leave = () => {
+    closing.current = true;
     reloadFolders();
     void refreshSession();
     if (mounted.current) navigate(backHref, { replace: true });
@@ -423,6 +441,20 @@ function ComposeForm({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [version, dirty, hasContent, blocked, waiting, send.busy, save.busy, autosaving]);
 
+  // En la ventana flotante, cerrarla o navegar por el buzon de fondo guarda lo escrito como
+  // borrador en lugar de perderlo (lo pendiente de guardar solo en los ultimos segundos).
+  saveOnLeave.current = () => {
+    if (!windowed || closing.current || !dirty || !hasContent || blocked) return;
+    if (waiting || send.busy || save.busy || autosaving) return;
+    webmailApi.saveDraft(input(), draftUid).then(
+      () => {
+        toast.info(t('webmail.composer.savedOnLeave'));
+        reloadFolders();
+      },
+      () => toast.error(t('webmail.composer.saveOnLeaveFailed')),
+    );
+  };
+
   const ready = (): boolean => {
     if (to.length + cc.length + bcc.length === 0) {
       setRecipientError(t('webmail.compose.noRecipients'));
@@ -506,6 +538,7 @@ function ComposeForm({
   };
 
   const discard = async () => {
+    closing.current = true;
     // Un borrador que solo existe porque se guardo solo se retira con lo descartado.
     const drafts = folders.data ? folderWithRole(folders.data, FOLDER_ROLES.drafts) : undefined;
     if (draftOrigin === 'auto' && draftUid && drafts) {
@@ -535,14 +568,83 @@ function ComposeForm({
       aria-labelledby="wm-compose-title"
     >
       <div className="cf-wm-compose__head">
-        <Link to={backHref} className="cf-btn cf-btn--ghost cf-btn--sm">
-          <IconChevronLeft size={16} />
-          {t('webmail.reader.back')}
-        </Link>
+        {windowed ? null : (
+          <Link to={backHref} className="cf-btn cf-btn--ghost cf-btn--sm">
+            <IconChevronLeft size={16} />
+            {t('webmail.reader.back')}
+          </Link>
+        )}
         <h1 id="wm-compose-title" className="cf-wm-compose__title">
-          {t(TITLES[mode ?? 'new'])}
+          {windowed ? (
+            <button
+              type="button"
+              className="cf-wm-compose__titlebutton"
+              aria-expanded={windowed.size !== 'minimized'}
+              onClick={() =>
+                windowed.setSize(windowed.size === 'minimized' ? 'normal' : 'minimized')
+              }
+            >
+              {subject.trim() || t(TITLES[mode ?? 'new'])}
+            </button>
+          ) : (
+            t(TITLES[mode ?? 'new'])
+          )}
         </h1>
         <AutosaveStatus state={autosave} dirty={dirty} />
+        {windowed ? (
+          <div className="cf-wm-compose__window">
+            <Button
+              size="sm"
+              variant="ghost"
+              iconOnly
+              icon={
+                windowed.size === 'minimized' ? (
+                  <IconChevronUp size={16} />
+                ) : (
+                  <IconMinus size={16} />
+                )
+              }
+              onClick={() =>
+                windowed.setSize(windowed.size === 'minimized' ? 'normal' : 'minimized')
+              }
+            >
+              {t(
+                windowed.size === 'minimized'
+                  ? 'webmail.composer.restore'
+                  : 'webmail.composer.minimize',
+              )}
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              iconOnly
+              className="cf-wm-compose__expand"
+              icon={
+                windowed.size === 'expanded' ? (
+                  <IconMinimize size={16} />
+                ) : (
+                  <IconMaximize size={16} />
+                )
+              }
+              onClick={() => windowed.setSize(windowed.size === 'expanded' ? 'normal' : 'expanded')}
+            >
+              {t(
+                windowed.size === 'expanded'
+                  ? 'webmail.composer.collapse'
+                  : 'webmail.composer.expand',
+              )}
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              iconOnly
+              icon={<IconX size={16} />}
+              onClick={() => navigate(backHref)}
+            >
+              {t('webmail.composer.close')}
+            </Button>
+          </div>
+        ) : null}
       </div>
       {senders.length > 1 ? (
         <FormField label={t('webmail.header.from')} htmlFor="compose-from">
@@ -723,15 +825,27 @@ function ComposeForm({
       ) : null}
       <div className="cf-form__actions cf-wm-compose__actions">
         <Button
-          variant="ghost"
-          disabled={busy}
-          onClick={() =>
-            dirty || draftOrigin === 'auto' ? setConfirmDiscard(true) : navigate(backHref)
-          }
+          type="submit"
+          variant="primary"
+          icon={<IconSend size={16} />}
+          loading={send.busy}
+          disabled={save.busy || waiting || autosaving}
         >
-          {t('webmail.compose.discard')}
+          {t('webmail.compose.send')}
         </Button>
         <Button
+          variant="ghost"
+          iconOnly
+          icon={<IconClock size={18} />}
+          disabled={busy}
+          onClick={() => {
+            if (ready()) setScheduling(true);
+          }}
+        >
+          {t('webmail.compose.sendLater')}
+        </Button>
+        <Button
+          variant="ghost"
           loading={save.busy}
           disabled={send.busy || waiting || blocked || autosaving}
           onClick={() => {
@@ -743,22 +857,16 @@ function ComposeForm({
           {t('webmail.compose.saveDraft')}
         </Button>
         <Button
-          icon={<IconClock size={16} />}
+          variant="ghost"
+          iconOnly
+          className="cf-wm-compose__discard"
+          icon={<IconTrash size={18} />}
           disabled={busy}
-          onClick={() => {
-            if (ready()) setScheduling(true);
-          }}
+          onClick={() =>
+            dirty || draftOrigin === 'auto' ? setConfirmDiscard(true) : navigate(backHref)
+          }
         >
-          {t('webmail.compose.sendLater')}
-        </Button>
-        <Button
-          type="submit"
-          variant="primary"
-          icon={<IconSend size={16} />}
-          loading={send.busy}
-          disabled={save.busy || waiting || autosaving}
-        >
-          {t('webmail.compose.send')}
+          {t('webmail.compose.discard')}
         </Button>
       </div>
       {scheduling ? (

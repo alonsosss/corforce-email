@@ -116,7 +116,6 @@ function MailboxView({ folderName }: { folderName: string }) {
   const [checked, setChecked] = useState<Set<number>>(() => new Set());
   const [purging, setPurging] = useState<number[] | null>(null);
   const [emptying, setEmptying] = useState(false);
-  const [searchFocus, setSearchFocus] = useState(0);
 
   // Un aviso de la bandeja vuelve a leer la lista solo si es la bandeja de entrada.
   const liveTick = role === FOLDER_ROLES.inbox ? inboxTick : 0;
@@ -316,7 +315,6 @@ function MailboxView({ folderName }: { folderName: string }) {
     r: () => reply('reply'),
     a: () => reply('replyAll'),
     f: () => reply('forward'),
-    '/': () => setSearchFocus((n) => n + 1),
     e: () => {
       const uids = targets();
       if (!archive || role === FOLDER_ROLES.archive || !uids.length) return;
@@ -374,7 +372,6 @@ function MailboxView({ folderName }: { folderName: string }) {
           }
           onCheckAll={(value) => setChecked(new Set(value ? (rows ?? []).map((r) => r.uid) : []))}
           folderAction={emptyAction}
-          searchFocusTick={searchFocus}
           controls={
             <div className="cf-wm-listcontrols">
               <ViewToggle

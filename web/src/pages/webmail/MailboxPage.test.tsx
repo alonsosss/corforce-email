@@ -6,6 +6,7 @@ import { webmailApi, type MessageEnvelope } from '@/api/webmail';
 import { t } from '@/i18n';
 import { resetWebmailCatalogs } from '@/webmail/catalogs';
 import MailboxPage from './MailboxPage';
+import { SearchBar } from './SearchBar';
 import { ARCHIVE, INBOX, JUNK, META, TRASH, outletFor, renderScreen } from './testing';
 
 function envelope(uid: number, overrides: Partial<MessageEnvelope> = {}): MessageEnvelope {
@@ -28,6 +29,16 @@ function page(items: MessageEnvelope[]) {
 }
 
 const FOLDERS = [INBOX, TRASH, JUNK, ARCHIVE];
+
+/** El buscador vive en la barra superior del marco: se monta junto al buzon, como alli. */
+function MailboxWithSearch() {
+  return (
+    <>
+      <SearchBar folder="INBOX" />
+      <MailboxPage />
+    </>
+  );
+}
 
 describe('buzon: varios mensajes, vaciar, busqueda avanzada y atajos', () => {
   beforeEach(() => {
@@ -116,7 +127,10 @@ describe('buzon: varios mensajes, vaciar, busqueda avanzada y atajos', () => {
   it('la busqueda avanzada viaja en la URL y llega al API', async () => {
     const user = userEvent.setup();
     const messages = vi.spyOn(webmailApi, 'messages').mockResolvedValue(page([]));
-    renderScreen(<MailboxPage />, { url: '/webmail?folder=INBOX', outlet: outletFor(FOLDERS) });
+    renderScreen(<MailboxWithSearch />, {
+      url: '/webmail?folder=INBOX',
+      outlet: outletFor(FOLDERS),
+    });
 
     await user.click(await screen.findByRole('button', { name: t('webmail.search.advanced') }));
     await user.type(screen.getByLabelText(t('webmail.search.from')), 'luis');
@@ -141,7 +155,10 @@ describe('buzon: varios mensajes, vaciar, busqueda avanzada y atajos', () => {
   it('un rango de fechas invertido no busca y se explica junto al campo', async () => {
     const user = userEvent.setup();
     const messages = vi.spyOn(webmailApi, 'messages').mockResolvedValue(page([]));
-    renderScreen(<MailboxPage />, { url: '/webmail?folder=INBOX', outlet: outletFor(FOLDERS) });
+    renderScreen(<MailboxWithSearch />, {
+      url: '/webmail?folder=INBOX',
+      outlet: outletFor(FOLDERS),
+    });
 
     await user.click(await screen.findByRole('button', { name: t('webmail.search.advanced') }));
     fireEvent.change(screen.getByLabelText(t('webmail.search.since')), {
@@ -166,7 +183,10 @@ describe('buzon: varios mensajes, vaciar, busqueda avanzada y atajos', () => {
     const batch = vi
       .spyOn(webmailApi, 'batch')
       .mockResolvedValue({ affected: 1, permanent: false });
-    renderScreen(<MailboxPage />, { url: '/webmail?folder=INBOX', outlet: outletFor(FOLDERS) });
+    renderScreen(<MailboxWithSearch />, {
+      url: '/webmail?folder=INBOX',
+      outlet: outletFor(FOLDERS),
+    });
 
     const search = await screen.findByLabelText(t('webmail.list.search'));
     await user.type(search, '#je');

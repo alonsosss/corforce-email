@@ -8,8 +8,9 @@ import { t } from '@/i18n';
 import type { InboxWatchHandlers } from '@/webmail/events';
 import { readNotifyPreference, writeNotifyPreference } from '@/webmail/notifications';
 import { useWebmailStore } from '@/webmail/store';
+import { resetWebmailCatalogs } from '@/webmail/catalogs';
 import { WebmailShell } from './WebmailShell';
-import { INBOX } from './testing';
+import { INBOX, META } from './testing';
 
 const watchers: InboxWatchHandlers[] = [];
 vi.mock('@/webmail/events', () => ({
@@ -21,7 +22,7 @@ vi.mock('@/webmail/events', () => ({
 
 function Where() {
   const location = useLocation();
-  return <output data-testid="location">{location.pathname}</output>;
+  return <output data-testid="location">{`${location.pathname}${location.search}`}</output>;
 }
 
 function renderShell() {
@@ -58,6 +59,8 @@ describe('marco del webmail', () => {
     FakeNotification.permission = 'default';
     vi.stubGlobal('Notification', FakeNotification);
     writeNotifyPreference(false);
+    resetWebmailCatalogs();
+    vi.spyOn(webmailApi, 'meta').mockResolvedValue(META);
     useWebmailStore.setState({
       status: 'authenticated',
       session: {
@@ -140,5 +143,45 @@ describe('marco del webmail', () => {
     await user.click(screen.getByRole('button', { name: t('webmail.notify.enable') }));
     expect(await screen.findByText(t('webmail.notify.denied'))).toBeInTheDocument();
     expect(readNotifyPreference()).toBe(false);
+  });
+
+  it('la cuenta se abre bajo el avatar, cierra con Escape y cierra la sesion', async () => {
+    const user = userEvent.setup();
+    vi.spyOn(webmailApi, 'folders').mockResolvedValue([INBOX]);
+    const logout = vi.fn().mockResolvedValue(undefined);
+    useWebmailStore.setState({ logout });
+    renderShell();
+
+    const trigger = screen.getByRole('button', {
+      name: t('webmail.profile.open', { name: 'Ana' }),
+    });
+    await user.click(trigger);
+    expect(trigger).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByText('ana@empresa.com')).toBeInTheDocument();
+    expect(screen.getByText(t('webmail.profile.greeting', { name: 'Ana' }))).toBeInTheDocument();
+
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(trigger).toHaveAttribute('aria-expanded', 'false');
+    expect(trigger).toHaveFocus();
+
+    await user.click(trigger);
+    await user.click(screen.getByRole('button', { name: t('webmail.logout') }));
+    expect(logout).toHaveBeenCalledTimes(1);
+  });
+
+  it('busca desde la barra superior en la carpeta abierta y / pone el foco', async () => {
+    const user = userEvent.setup();
+    vi.spyOn(webmailApi, 'folders').mockResolvedValue([INBOX]);
+    renderShell();
+
+    const search = screen.getByLabelText(t('webmail.list.search'));
+    fireEvent.keyDown(document.body, { key: '/' });
+    expect(search).toHaveFocus();
+    await screen.findByRole('link', { name: /Bandeja de entrada/ });
+    await user.type(search, 'factura{Enter}');
+    expect(screen.getByTestId('location').textContent).toBe('/webmail?folder=INBOX&q=factura');
+
+    await user.click(screen.getByRole('button', { name: t('webmail.search.clear') }));
+    expect(screen.getByTestId('location').textContent).toBe('/webmail?folder=INBOX');
   });
 });

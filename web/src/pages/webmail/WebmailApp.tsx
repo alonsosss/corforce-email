@@ -4,7 +4,7 @@ import { ErrorState, LoadingBlock } from '@/design/components';
 import { t } from '@/i18n';
 import { paths } from '@/paths';
 import { useWebmailStore } from '@/webmail/store';
-import ComposePage from './ComposePage';
+import ComposeRoute from './ComposeWindow';
 import MailboxPage from './MailboxPage';
 import CalendarPage from './calendar/CalendarPage';
 import ContactsPage from './contacts/ContactsPage';
@@ -30,7 +30,7 @@ export default function WebmailApp() {
       <Route element={<RequireWebmailSession />}>
         <Route element={<WebmailShell />}>
           <Route index element={<MailboxPage />} />
-          <Route path="compose" element={<ComposePage />} />
+          <Route path="compose" element={<ComposeRoute />} />
           <Route path="settings" element={<SettingsPage />} />
           <Route path="scheduled" element={<ScheduledPage />} />
           <Route path="snoozed" element={<SnoozedPage />} />
