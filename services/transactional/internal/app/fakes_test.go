@@ -239,6 +239,15 @@ func (r *fakeRepo) TransitionStatus(_ context.Context, tenantID, id uuid.UUID, t
 	return changed, err
 }
 
+func (r *fakeRepo) DeferQueued(_ context.Context, tenantID, id uuid.UUID, until time.Time) error {
+	m, ok := r.messages[id]
+	if ok && m.TenantID == tenantID && m.Status == domain.StatusQueued {
+		m.Status, m.ScheduledAt = domain.StatusAccepted, &until
+		r.messages[id] = m
+	}
+	return nil
+}
+
 func (r *fakeRepo) ReleaseDue(_ context.Context, tenantID uuid.UUID, now time.Time, limit int) ([]uuid.UUID, error) {
 	var ids []uuid.UUID
 	for _, id := range r.order {
@@ -602,6 +611,7 @@ type fakeMetrics struct {
 	rejected []string
 	accounts []domain.SESAccountStatus
 	failures int
+	deferred int
 }
 
 func (m *fakeMetrics) SendAttempt(class, result string) {
@@ -621,3 +631,4 @@ func (m *fakeMetrics) SESAccount(s domain.SESAccountStatus) {
 	m.mu.Unlock()
 }
 func (m *fakeMetrics) SESAccountCheckFailed() { m.mu.Lock(); m.failures++; m.mu.Unlock() }
+func (m *fakeMetrics) MarketingDeferred()     { m.mu.Lock(); m.deferred++; m.mu.Unlock() }

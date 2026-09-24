@@ -85,6 +85,11 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	quotaReserve, err := config.EnvFloat("SES_MARKETING_QUOTA_RESERVE", domain.DefaultMarketingQuotaReserve,
+		domain.MinMarketingQuotaReserve, domain.MaxMarketingQuotaReserve)
+	if err != nil {
+		log.Fatal(err)
+	}
 	// Vigilante del estado de la cuenta de SES (cuota, pausa, reputacion). "0" lo apaga: un
 	// entorno sin SES no debe disparar la alerta de datos viejos.
 	var accountInterval time.Duration
@@ -193,6 +198,7 @@ func main() {
 			AllowUnverifiedPlatformFrom: strings.EqualFold(os.Getenv("PLATFORM_FROM_ALLOW_UNVERIFIED"), "true"),
 			ViewInBrowserTTL:            viewTTL,
 			TestSendsPerHour:            testSendsPerHour,
+			MarketingQuotaReserve:       quotaReserve,
 		},
 		Logger:  logger,
 		Metrics: promadapter.New(),

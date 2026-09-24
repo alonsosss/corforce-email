@@ -240,6 +240,12 @@ func (r *Repository) TransitionStatus(ctx context.Context, tenantID, id uuid.UUI
 	return tag.RowsAffected() > 0, nil
 }
 
+func (r *Repository) DeferQueued(ctx context.Context, tenantID, id uuid.UUID, until time.Time) error {
+	_, err := r.pool.Exec(ctx, `UPDATE transactional.messages SET status = $3, scheduled_at = $4
+		WHERE tenant_id = $1 AND id = $2 AND status = $5`, tenantID, id, domain.StatusAccepted, until, domain.StatusQueued)
+	return err
+}
+
 func (r *Repository) ReleaseDue(ctx context.Context, tenantID uuid.UUID, now time.Time, limit int) ([]uuid.UUID, error) {
 	rows, err := r.pool.Query(ctx, `WITH due AS (
 			SELECT id FROM transactional.messages

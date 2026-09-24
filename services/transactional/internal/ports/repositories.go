@@ -38,6 +38,9 @@ type Repository interface {
 	// ReleaseDue pasa a queued los mensajes programados vencidos (FOR UPDATE SKIP LOCKED)
 	// y devuelve sus ids. Debe llamarse dentro de Transact.
 	ReleaseDue(ctx context.Context, tenantID uuid.UUID, now time.Time, limit int) ([]uuid.UUID, error)
+	// DeferQueued devuelve a programado (accepted con scheduled_at = until) un mensaje en queued, para
+	// que ReleaseDue lo vuelva a encolar sin gastar intentos ni reentregas de la cola.
+	DeferQueued(ctx context.Context, tenantID, id uuid.UUID, until time.Time) error
 	CountByStatus(ctx context.Context, tenantID uuid.UUID, from, to time.Time) ([]domain.StatusCount, error)
 	// CountTestMessagesSince cuenta los mensajes de prueba de la empresa creados desde since:
 	// el tope de pruebas por hora.
@@ -152,6 +155,8 @@ type Metrics interface {
 	SESEventRejected(reason string)
 	SESAccount(status domain.SESAccountStatus)
 	SESAccountCheckFailed()
+	// MarketingDeferred cuenta un mensaje de marketing aplazado por la reserva de cuota.
+	MarketingDeferred()
 }
 
 // SESAccountReader lee el estado de la cuenta de SES y su reputacion.
