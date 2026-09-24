@@ -74,6 +74,25 @@ type Mailbox interface {
 	RenameFolder(ctx context.Context, name, newName string) error
 	// DeleteFolder la borra con sus mensajes y retira la suscripcion.
 	DeleteFolder(ctx context.Context, name string) error
+	// ListThreads agrupa en conversaciones los mensajes de la carpeta que casan con q y devuelve la
+	// pagina pedida, de la conversacion con actividad mas reciente a la mas antigua.
+	ListThreads(ctx context.Context, folder string, q domain.ListQuery) (domain.ThreadPage, error)
+	// Conversation devuelve los mensajes de la carpeta de la conversacion del UID, del mas reciente
+	// al mas antiguo y como mucho max. Un UID que no existe es domain.ErrMessageNotFound.
+	Conversation(ctx context.Context, folder string, uid uint32, max int) ([]domain.ConversationMessage, error)
+	// Related busca en la carpeta los mensajes que son alguno de messageIDs o responden a uno de
+	// ellos, del mas reciente al mas antiguo y como mucho max.
+	Related(ctx context.Context, folder string, messageIDs []string, max int) ([]domain.ConversationMessage, error)
+	// Insight lee el remitente y las cabeceras de la ficha sin marcar el mensaje como leido.
+	Insight(ctx context.Context, folder string, uid uint32) (domain.InsightSource, error)
+}
+
+// Unsubscriber hace la baja en un clic de RFC 8058: un POST a la URL https que declara el boletin.
+// Solo conecta con direcciones publicas, comprobadas en cada conexion. Una URL o un destino que no
+// admite es domain.ErrUnsubscribeRefused; una respuesta que no confirma la baja o un fallo de red,
+// domain.ErrUnsubscribeFailed.
+type Unsubscriber interface {
+	OneClick(ctx context.Context, target string) error
 }
 
 // Sender entrega un mensaje por el submission de la celda autenticado como el buzon, de

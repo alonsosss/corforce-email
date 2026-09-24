@@ -25,6 +25,9 @@ export interface WebmailView {
   unread?: string;
   flagged?: string;
   attachments?: string;
+  // Vista por conversaciones ("threads") y pestana de la bandeja inteligente.
+  view?: string;
+  tab?: string;
 }
 
 export const paths = {

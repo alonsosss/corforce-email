@@ -6,6 +6,14 @@ import globals from 'globals';
 
 export default tseslint.config(
   { ignores: ['dist', 'node_modules', 'coverage'] },
+  {
+    files: ['public/sw.js'],
+    languageOptions: {
+      ecmaVersion: 2022,
+      sourceType: 'script',
+      globals: { ...globals.serviceworker },
+    },
+  },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {

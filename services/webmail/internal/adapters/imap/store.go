@@ -253,6 +253,7 @@ func (m *mailbox) List(ctx context.Context, folder string, q domain.ListQuery) (
 	bufs, err := m.c.Fetch(imaplib.UIDSetNum(page...), &imaplib.FetchOptions{
 		UID: true, Envelope: true, Flags: true, RFC822Size: true, InternalDate: true,
 		BodyStructure: &imaplib.FetchItemBodyStructure{Extended: true},
+		BodySection:   []*imaplib.FetchItemBodySection{categorySection()},
 	}).Collect()
 	if err != nil {
 		return domain.MessagePage{}, mapError(err, nil)
@@ -264,7 +265,9 @@ func (m *mailbox) List(ctx context.Context, folder string, q domain.ListQuery) (
 	items := make([]domain.Envelope, 0, len(page))
 	for _, uid := range page {
 		if b := byUID[uid]; b != nil {
-			items = append(items, envelopeOf(b))
+			env := envelopeOf(b)
+			env.Category = domain.Classify(parseHeaderFields(headerSection(b)), env.From)
+			items = append(items, env)
 		}
 	}
 	return domain.MessagePage{Items: items, Total: total, Capped: capped}, nil
@@ -295,6 +298,9 @@ func searchCriteria(q domain.ListQuery) *imaplib.SearchCriteria {
 		// Descarta en el servidor los mensajes de una sola parte de texto, que no pueden llevar
 		// adjuntos; el resto se decide con BODYSTRUCTURE (withAttachments).
 		c.Not = append(c.Not, imaplib.SearchCriteria{Header: []imaplib.SearchCriteriaHeaderField{{Key: "Content-Type", Value: "text/"}}})
+	}
+	if category := categoryCriteria(f.Category); category != nil {
+		c.And(category)
 	}
 	return c
 }

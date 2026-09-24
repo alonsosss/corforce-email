@@ -75,11 +75,15 @@ export interface WebmailMeta {
     max_batch_uids: number;
     /** Hasta cuantos dias en el futuro admite un envio programado. */
     max_scheduled_days: number;
+    /** Mensajes de una conversacion que devuelve el servicio (sus UIDs y al abrirla). */
+    max_thread_messages: number;
   };
   pagination: { default_page_size: number; max_page_size: number };
   folder_roles: string[];
   mutable_flags: string[];
   session: { idle_timeout_seconds: number; max_lifetime_seconds: number };
+  /** Pestanas de la bandeja inteligente, en su orden (domain.Categories). */
+  inbox_categories: string[];
 }
 
 /**
@@ -133,6 +137,62 @@ export interface MessageEnvelope {
   flags: string[];
   size: number;
   has_attachments: boolean;
+  /** Pestana de la bandeja inteligente; solo en los listados. */
+  category?: string;
+  /** Solo en el listado por conversaciones: la fila es el ultimo mensaje de la conversacion. */
+  thread?: ThreadInfo;
+}
+
+/** Resumen de una conversacion (GET /folders/{folder}/messages?view=threads). */
+export interface ThreadInfo {
+  /** Mensajes de la conversacion en la carpeta. */
+  size: number;
+  unread: number;
+  /** Del mas reciente al mas antiguo, como mucho limits.max_thread_messages. */
+  uids: number[];
+  participants: MailAddress[];
+}
+
+/** Un mensaje de una conversacion abierta (GET /threads): las respuestas propias estan en Enviados. */
+export interface ConversationMessage extends MessageEnvelope {
+  folder: string;
+  message_id: string;
+}
+
+export type ShieldLevel = 'none' | 'info' | 'caution' | 'danger';
+
+export interface ShieldReason {
+  code: string;
+  level: ShieldLevel;
+  params: Record<string, string>;
+}
+
+export type UnsubscribeMethod = 'one_click' | 'mailto' | 'web';
+
+/** GET /sender-insight: pestana, escudo antifraude y baja de un mensaje recibido. */
+export interface SenderInsight {
+  sender: MailAddress | null;
+  category: string;
+  shield: {
+    level: ShieldLevel;
+    external: boolean;
+    /** El directorio de la empresa no respondio: no se comprobo todo. */
+    partial: boolean;
+    authentication: { spf: string | null; dkim: string | null; dmarc: string | null };
+    reasons: ShieldReason[];
+  };
+  unsubscribe: {
+    method: UnsubscribeMethod | null;
+    /** Servidor (one_click) o direccion (mailto) que recibe la baja. */
+    target: string;
+    /** Solo con web: la pagina que el usuario abre por su cuenta. */
+    url?: string;
+  };
+}
+
+export interface UnsubscribeResult {
+  method: Exclude<UnsubscribeMethod, 'web'>;
+  target: string;
 }
 
 export interface MessagePart {
@@ -175,6 +235,10 @@ export interface MessageFilters {
 export interface MessageQuery extends MessageFilters {
   page?: number;
   search?: string;
+  /** Agrupa el listado por conversaciones. */
+  view?: 'threads';
+  /** Pestana de la bandeja inteligente (una de meta.inbox_categories). */
+  category?: string;
 }
 
 export interface ReadOptions {
@@ -690,6 +754,8 @@ export const webmailApi = {
           unread: flag(query.unread),
           flagged: flag(query.flagged),
           has_attachments: flag(query.hasAttachments),
+          view: query.view,
+          category: query.category,
         },
         signal,
       },
@@ -730,6 +796,25 @@ export const webmailApi = {
   /** El mensaje tal como esta en el buzon (message/rfc822), para guardarlo como .eml. */
   downloadRaw: (folder: string, uid: number, signal?: AbortSignal) =>
     download(wm.raw(folder, uid), signal),
+
+  /** La conversacion del mensaje, de la mas antigua a la mas reciente. */
+  conversation: async (
+    folder: string,
+    uid: number,
+    signal?: AbortSignal,
+  ): Promise<ConversationMessage[]> =>
+    (await request<ConversationMessage[] | null>('GET', wm.threads, {
+      params: { folder, uid },
+      signal,
+    })) ?? [],
+
+  /** Ficha del mensaje: no lo marca como leido. */
+  senderInsight: (folder: string, uid: number, signal?: AbortSignal) =>
+    request<SenderInsight>('GET', wm.senderInsight, { params: { folder, uid }, signal }),
+
+  /** La baja la decide el mensaje guardado: el cliente solo dice cual es. */
+  unsubscribe: (folder: string, uid: number) =>
+    request<UnsubscribeResult>('POST', wm.unsubscribe, { json: { folder, uid } }),
 
   /** Varios mensajes de la carpeta en una operacion; como mucho limits.max_batch_uids. */
   batch: (folder: string, uids: number[], action: BatchAction) =>

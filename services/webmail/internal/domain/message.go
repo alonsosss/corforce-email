@@ -105,6 +105,8 @@ type Envelope struct {
 	Flags          []Flag
 	Size           int64
 	HasAttachments bool
+	// Category es la pestana de la bandeja inteligente; vacia si no se leyeron sus cabeceras.
+	Category Category
 }
 
 // Part describe una parte descargable: un adjunto o una imagen en linea (cid:).
@@ -240,6 +242,8 @@ type SearchFilter struct {
 	Unread         bool
 	Flagged        bool
 	HasAttachments bool
+	// Category filtra por la pestana de la bandeja inteligente (Classify).
+	Category Category
 }
 
 // searchDateLayout es el formato de las fechas de la busqueda (YYYY-MM-DD).

@@ -1,6 +1,7 @@
 /* Tokens del sistema de diseño. Modo claro por defecto; oscuro por [data-theme="dark"]. */
 
 :root {
+  color-scheme: light;
   --cf-brand-50: #eef3fb;
   --cf-brand-100: #d6e1f3;
   --cf-brand-200: #aec3e6;
@@ -115,6 +116,7 @@
 }
 
 [data-theme='dark'] {
+  color-scheme: dark;
   --cf-bg: #0d1220;
   --cf-surface: #161c2a;
   --cf-surface-raised: #1d2434;

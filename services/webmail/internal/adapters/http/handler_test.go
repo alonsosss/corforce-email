@@ -98,6 +98,8 @@ type stubMailbox struct {
 	folders   []domain.Folder
 	raw       string
 	capped    bool
+	// conversaciones y ficha del remitente (insight_handlers_test.go).
+	insight stubInsight
 }
 
 func (m *stubMailbox) Close() error { return nil }
@@ -327,7 +329,7 @@ func testDeps(store ports.SessionStore, mb *stubMailbox, sender ports.Sender, va
 		Sender: sender, Directory: stubDirectory{}, Vacations: vac, AddressBook: book,
 		Signatures: settings, Filters: settings, Passwords: settings, Scheduled: settings, Contacts: dav, Calendar: dav,
 		Ledger: &memLedger{m: map[string]domain.SendRecord{}}, Composer: nopComposer{}, Sanitizer: nopSanitizer{}, PartURL: PartURL,
-		Logger: zap.NewNop(),
+		Logger: zap.NewNop(), Unsubscriber: &stubUnsubscriber{},
 		Config: app.Config{
 			CellCode:         testCell,
 			Sessions:         domain.SessionPolicy{Idle: 30 * time.Minute, Max: 12 * time.Hour},

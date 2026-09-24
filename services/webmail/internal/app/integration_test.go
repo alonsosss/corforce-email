@@ -39,6 +39,7 @@ import (
 	imapadapter "github.com/alonsosss/corforce-email/services/webmail/internal/adapters/imap"
 	"github.com/alonsosss/corforce-email/services/webmail/internal/adapters/rfc5322"
 	smtpadapter "github.com/alonsosss/corforce-email/services/webmail/internal/adapters/smtp"
+	"github.com/alonsosss/corforce-email/services/webmail/internal/adapters/unsubscribe"
 	"github.com/alonsosss/corforce-email/services/webmail/internal/app"
 	"github.com/alonsosss/corforce-email/services/webmail/internal/domain"
 )
@@ -362,6 +363,7 @@ func newIntegration(t *testing.T) *integration {
 		Directory: dir, Vacations: dir, AddressBook: dir, Signatures: dir, Filters: dir, Passwords: dir,
 		Scheduled: scheduled, Contacts: noDAV{}, Calendar: noDAV{}, Ledger: newMemLedger(),
 		Composer: rfc5322.New(), Sanitizer: htmlsafe.New(), PartURL: handler.PartURL, Logger: zap.NewNop(),
+		Unsubscriber: unsubscribe.New(time.Second),
 		Config: app.Config{
 			CellCode:         "pe-01",
 			Sessions:         domain.SessionPolicy{Idle: 30 * time.Minute, Max: 12 * time.Hour},

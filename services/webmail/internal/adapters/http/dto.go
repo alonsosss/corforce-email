@@ -77,6 +77,8 @@ type envelopeDTO struct {
 	Flags          []string     `json:"flags"`
 	Size           int64        `json:"size"`
 	HasAttachments bool         `json:"has_attachments"`
+	// Category es la pestana de la bandeja inteligente; solo en los listados.
+	Category string `json:"category,omitempty"`
 }
 
 func toEnvelopeDTO(e domain.Envelope) envelopeDTO {
@@ -90,6 +92,7 @@ func toEnvelopeDTO(e domain.Envelope) envelopeDTO {
 		Flags:          toFlagStrings(e.Flags),
 		Size:           e.Size,
 		HasAttachments: e.HasAttachments,
+		Category:       string(e.Category),
 	}
 }
 
@@ -170,6 +173,8 @@ type metaDTO struct {
 	FolderRoles  []string          `json:"folder_roles"`
 	MutableFlags []string          `json:"mutable_flags"`
 	Session      metaSessionDTO    `json:"session"`
+	// InboxCategories son las pestanas de la bandeja inteligente, en su orden.
+	InboxCategories []string `json:"inbox_categories"`
 }
 
 type metaLimitsDTO struct {
@@ -184,6 +189,7 @@ type metaLimitsDTO struct {
 	MaxBatchUIDs       int   `json:"max_batch_uids"`
 	MaxScheduledDays   int   `json:"max_scheduled_days"`
 	MaxImportBytes     int64 `json:"max_import_bytes"`
+	MaxThreadMessages  int   `json:"max_thread_messages"`
 }
 
 type metaPaginationDTO struct {
@@ -207,6 +213,7 @@ func toMetaDTO(m app.Meta) metaDTO {
 			MaxDownloadBytes: m.MaxDownloadBytes, MaxBodyPartBytes: m.MaxBodyPartBytes, MaxSubjectChars: m.MaxSubjectChars,
 			MaxSearchBytes: m.MaxSearchBytes, MaxFolderNameBytes: m.MaxFolderNameBytes,
 			MaxBatchUIDs: m.MaxBatchUIDs, MaxScheduledDays: m.MaxScheduledDays, MaxImportBytes: m.MaxImportBytes,
+			MaxThreadMessages: m.MaxThreadMessages,
 		},
 		Pagination:   metaPaginationDTO{DefaultPageSize: m.DefaultPageSize, MaxPageSize: m.MaxPageSize},
 		FolderRoles:  roles,
@@ -214,6 +221,7 @@ func toMetaDTO(m app.Meta) metaDTO {
 		Session: metaSessionDTO{
 			IdleTimeoutSeconds: int64(m.SessionIdle.Seconds()), MaxLifetimeSeconds: int64(m.SessionMax.Seconds()),
 		},
+		InboxCategories: categoryStrings(m.InboxCategories),
 	}
 }
 
@@ -294,4 +302,12 @@ type vacationRequest struct {
 	IntervalDays int     `json:"interval_days"`
 	StartsOn     *string `json:"starts_on"`
 	EndsOn       *string `json:"ends_on"`
+}
+
+func categoryStrings(list []domain.Category) []string {
+	out := make([]string, len(list))
+	for i, c := range list {
+		out[i] = string(c)
+	}
+	return out
 }

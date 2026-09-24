@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
@@ -77,6 +77,13 @@ function renderView(overrides: Partial<MessageViewProps> = {}) {
 }
 
 const bodyTitle = t('webmail.reader.bodyTitle', { subject: 'Pedido' });
+
+// El escudo del remitente tiene sus propias pruebas (SenderShield.test.tsx): aqui no responde.
+beforeEach(() => {
+  vi.spyOn(webmailApi, 'senderInsight').mockRejectedValue(
+    new ApiError(503, { code: 'SERVICE_UNAVAILABLE', message: '' }),
+  );
+});
 
 describe('lectura de un mensaje', () => {
   afterEach(() => vi.restoreAllMocks());

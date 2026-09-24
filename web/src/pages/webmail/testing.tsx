@@ -35,11 +35,13 @@ export const META: WebmailMeta = {
     max_folder_name_bytes: 30,
     max_batch_uids: 2,
     max_scheduled_days: 30,
+    max_thread_messages: 200,
   },
   pagination: { default_page_size: 50, max_page_size: 100 },
   folder_roles: ['inbox', 'sent', 'drafts', 'trash', 'junk', 'archive', 'scheduled'],
   mutable_flags: ['\\Seen', '\\Flagged', '\\Answered'],
   session: { idle_timeout_seconds: 1800, max_lifetime_seconds: 43200 },
+  inbox_categories: ['primary', 'notifications', 'newsletters'],
 };
 
 export function outletFor(folders: WebmailFolder[]): WebmailOutlet {

@@ -61,6 +61,9 @@ type Deps struct {
 	Clock   func() time.Time
 	Logger  *zap.Logger
 	Config  Config
+
+	// Unsubscriber hace la baja en un clic (RFC 8058) de los boletines.
+	Unsubscriber ports.Unsubscriber
 }
 
 // Service es el caso de uso del webmail.
@@ -87,13 +90,15 @@ type Service struct {
 	clock       func() time.Time
 	logger      *zap.Logger
 	cfg         Config
+
+	unsubscriber ports.Unsubscriber
 }
 
 // New valida la configuracion y las dependencias: un webmail a medio cablear no arranca.
 func New(d Deps) (*Service, error) {
 	if d.Auth == nil || d.Sessions == nil || d.Mail == nil || d.Sender == nil || d.Directory == nil || d.Vacations == nil || d.AddressBook == nil ||
 		d.Signatures == nil || d.Filters == nil || d.Passwords == nil || d.Scheduled == nil || d.Contacts == nil || d.Calendar == nil ||
-		d.Ledger == nil || d.Composer == nil || d.Sanitizer == nil || d.PartURL == nil || d.Logger == nil {
+		d.Unsubscriber == nil || d.Ledger == nil || d.Composer == nil || d.Sanitizer == nil || d.PartURL == nil || d.Logger == nil {
 		return nil, errors.New("webmail: faltan dependencias del caso de uso")
 	}
 	if !domain.ValidCellCode(d.Config.CellCode) {
@@ -122,7 +127,7 @@ func New(d Deps) (*Service, error) {
 		auth: d.Auth, sessions: d.Sessions, mail: d.Mail, sender: d.Sender, directory: d.Directory, vacations: d.Vacations, addressBook: d.AddressBook, watcher: d.Watcher,
 		signatures: d.Signatures, filters: d.Filters, passwords: d.Passwords, scheduled: d.Scheduled, contacts: d.Contacts, calendar: d.Calendar,
 		ledger: d.Ledger, composer: d.Composer, sanitizer: d.Sanitizer, scanner: d.Scanner,
-		partURL: d.PartURL, clock: clock, logger: d.Logger, cfg: d.Config,
+		partURL: d.PartURL, clock: clock, logger: d.Logger, cfg: d.Config, unsubscriber: d.Unsubscriber,
 	}, nil
 }
 

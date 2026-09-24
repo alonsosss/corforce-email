@@ -67,6 +67,7 @@ type metaContract struct {
 		MaxBatchUIDs       int   `json:"max_batch_uids"`
 		MaxScheduledDays   int   `json:"max_scheduled_days"`
 		MaxImportBytes     int64 `json:"max_import_bytes"`
+		MaxThreadMessages  int   `json:"max_thread_messages"`
 	} `json:"limits"`
 	Pagination struct {
 		DefaultPageSize int `json:"default_page_size"`
@@ -78,6 +79,7 @@ type metaContract struct {
 		IdleTimeoutSeconds int64 `json:"idle_timeout_seconds"`
 		MaxLifetimeSeconds int64 `json:"max_lifetime_seconds"`
 	} `json:"session"`
+	InboxCategories []string `json:"inbox_categories"`
 }
 
 func TestMetaSirveLosTopesQueAplicaElServicio(t *testing.T) {

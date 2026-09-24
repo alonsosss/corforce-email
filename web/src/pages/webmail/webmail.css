@@ -1213,3 +1213,201 @@ a.cf-wm-message:hover {
     display: none;
   }
 }
+
+/* Bandeja inteligente: vista por conversaciones y pestanas */
+.cf-wm-listcontrols {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cf-space-2);
+}
+.cf-wm-viewtoggle {
+  display: inline-flex;
+  align-self: flex-start;
+  border: 1px solid var(--cf-border);
+  border-radius: var(--cf-radius);
+  overflow: hidden;
+}
+.cf-wm-viewtoggle__option {
+  padding: var(--cf-space-1) var(--cf-space-3);
+  font-size: var(--cf-text-xs);
+  font-weight: var(--cf-weight-medium);
+  color: var(--cf-text-secondary);
+  background: var(--cf-surface);
+}
+.cf-wm-viewtoggle__option + .cf-wm-viewtoggle__option {
+  border-left: 1px solid var(--cf-border);
+}
+.cf-wm-viewtoggle__option:hover {
+  color: var(--cf-text);
+  background: var(--cf-surface-hover);
+}
+.cf-wm-viewtoggle__option[aria-pressed='true'] {
+  color: var(--cf-accent);
+  background: var(--cf-accent-soft);
+}
+.cf-wm-inboxtabs .cf-tabs {
+  margin-bottom: 0;
+}
+.cf-wm-message__count {
+  min-width: 1.25rem;
+  padding: 0 var(--cf-space-1);
+  border-radius: var(--cf-radius);
+  background: var(--cf-surface-active);
+  color: var(--cf-text-secondary);
+  font-size: var(--cf-text-xs);
+  text-align: center;
+}
+
+/* Conversacion abierta */
+.cf-wm-conversation {
+  max-width: 1000px;
+  margin-bottom: var(--cf-space-4);
+  border: 1px solid var(--cf-border);
+  border-radius: var(--cf-radius-md);
+  background: var(--cf-surface);
+}
+.cf-wm-conversation__count {
+  padding: var(--cf-space-2) var(--cf-space-3);
+  font-size: var(--cf-text-xs);
+  font-weight: var(--cf-weight-semibold);
+  color: var(--cf-text-secondary);
+  border-bottom: 1px solid var(--cf-border);
+}
+.cf-wm-conversation__list {
+  list-style: none;
+}
+.cf-wm-conversation__item {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--cf-space-2);
+  padding: var(--cf-space-2) var(--cf-space-3);
+  font-size: var(--cf-text-sm);
+  color: var(--cf-text-secondary);
+  text-decoration: none;
+}
+.cf-wm-conversation__list li + li .cf-wm-conversation__item {
+  border-top: 1px solid var(--cf-border);
+}
+.cf-wm-conversation__item:hover {
+  background: var(--cf-surface-hover);
+}
+.cf-wm-conversation__item--unread {
+  font-weight: var(--cf-weight-semibold);
+  color: var(--cf-text);
+}
+.cf-wm-conversation__item--current {
+  background: var(--cf-accent-soft);
+  box-shadow: inset 3px 0 0 var(--cf-accent);
+  color: var(--cf-text);
+}
+.cf-wm-conversation__who {
+  min-width: 0;
+}
+.cf-wm-conversation__date {
+  flex: none;
+  font-size: var(--cf-text-xs);
+  color: var(--cf-text-muted);
+}
+
+/* Escudo antifraude y ficha del remitente */
+.cf-wm-shield {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cf-space-2);
+}
+.cf-wm-shield__reasons {
+  margin: var(--cf-space-1) 0 var(--cf-space-2) var(--cf-space-4);
+  font-size: var(--cf-text-sm);
+}
+.cf-wm-shield__reasons li + li {
+  margin-top: var(--cf-space-1);
+}
+.cf-wm-shield__advice {
+  margin-bottom: var(--cf-space-2);
+  font-size: var(--cf-text-sm);
+  font-weight: var(--cf-weight-medium);
+}
+.cf-wm-shield__bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--cf-space-2);
+}
+.cf-wm-sidepanel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: var(--cf-z-dropdown);
+  display: flex;
+  flex-direction: column;
+  gap: var(--cf-space-4);
+  width: min(360px, 100vw);
+  padding: var(--cf-space-4);
+  overflow-y: auto;
+  background: var(--cf-surface-raised);
+  border-left: 1px solid var(--cf-border);
+  box-shadow: var(--cf-shadow-lg);
+}
+.cf-wm-sidepanel__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--cf-space-2);
+}
+.cf-wm-sidepanel__title {
+  font-size: var(--cf-text-lg);
+  font-weight: var(--cf-weight-semibold);
+  overflow-wrap: anywhere;
+}
+.cf-wm-sidepanel__title:focus {
+  outline: none;
+}
+.cf-wm-sidepanel__who {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--cf-space-2);
+  font-size: var(--cf-text-sm);
+  color: var(--cf-text-secondary);
+}
+.cf-wm-sidepanel__section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cf-space-2);
+  padding-top: var(--cf-space-3);
+  border-top: 1px solid var(--cf-border);
+}
+.cf-wm-sidepanel__heading {
+  display: flex;
+  align-items: center;
+  gap: var(--cf-space-2);
+  font-size: var(--cf-text-sm);
+  font-weight: var(--cf-weight-semibold);
+}
+.cf-wm-sidepanel__contact dd {
+  margin: 0;
+  font-size: var(--cf-text-sm);
+}
+.cf-wm-sidepanel__list {
+  list-style: none;
+}
+.cf-wm-sidepanel__list a {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--cf-space-2);
+  padding: var(--cf-space-1) 0;
+  font-size: var(--cf-text-sm);
+}
+.cf-wm-sidepanel__date {
+  flex: none;
+  font-size: var(--cf-text-xs);
+  color: var(--cf-text-muted);
+}
+@media print {
+  .cf-wm-shield,
+  .cf-wm-sidepanel,
+  .cf-wm-conversation {
+    display: none;
+  }
+}
