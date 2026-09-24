@@ -132,9 +132,9 @@ Hecho (2026-09-23, rama de 1-B, sin desplegar; detalle en las filas de `transact
 
 | Pieza | Estado |
 |---|---|
-| 1-A Editor | Hecho en rama, sin desplegar (2026-09-23) |
-| 1-B Enlaces y analitica | Hecho en rama, sin desplegar (2026-09-23) |
-| 1-C Campanas | Hecho en rama (2026-09-23): fases de envio (`tenant/canonical/campaigns/03_phases.sql`), prueba A/B con decision auditada por outbox (`campaigns.campaign.ab_decided`), reenvio a quien no abrio (una vez, con la limitacion de Apple Mail documentada), envio por zona horaria con zona de respaldo indicada al programar (no hay zona de empresa en `organization`), `subject` opcional en el lote de `transactional`, `utm.content` por variante, `GET /campaigns/{id}/phases` y web de campanas. Sin migracion de registro (041 sin usar). Unitarias, integracion y `make e2e` sin SES real |
+| 1-A Editor | Desplegado en produccion (2026-09-23, `bfbf81a`): migraciones aplicadas en las dos empresas, servicios sanos y sin errores. Hecho en rama, sin desplegar (2026-09-23) |
+| 1-B Enlaces y analitica | Desplegado en produccion (2026-09-23, `bfbf81a`): migraciones aplicadas en las dos empresas, servicios sanos y sin errores. Hecho en rama, sin desplegar (2026-09-23) |
+| 1-C Campanas | Desplegado en produccion (2026-09-23, `bfbf81a`): migraciones aplicadas en las dos empresas, servicios sanos y sin errores. Hecho en rama (2026-09-23): fases de envio (`tenant/canonical/campaigns/03_phases.sql`), prueba A/B con decision auditada por outbox (`campaigns.campaign.ab_decided`), reenvio a quien no abrio (una vez, con la limitacion de Apple Mail documentada), envio por zona horaria con zona de respaldo indicada al programar (no hay zona de empresa en `organization`), `subject` opcional en el lote de `transactional`, `utm.content` por variante, `GET /campaigns/{id}/phases` y web de campanas. Sin migracion de registro (041 sin usar). Unitarias, integracion y `make e2e` sin SES real |
 | 1-D Dominio de seguimiento | Casi hecho (2026-09-23): DNS, certificado (con `AUTODISCOVER_SAN=n`), identidad verificada en SES y borde sirviendo `clics.core-force.com`; falta `SES_TRACKING_DOMAIN` en la pila (administrador de AWS) |
 | 2-E Comportamiento y automatizaciones | Pendiente |
 | 2-F Captacion | Pendiente |
