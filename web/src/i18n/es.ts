@@ -2048,6 +2048,7 @@ export const es = {
   'webmail.reader.actions': 'Acciones del mensaje',
   'webmail.reader.back': 'Volver',
   'webmail.reader.reply': 'Responder',
+  'webmail.reader.replyTo': 'Responder a {name}',
   'webmail.reader.replyAll': 'Responder a todos',
   'webmail.reader.forward': 'Reenviar',
   'webmail.reader.editDraft': 'Seguir redactando',

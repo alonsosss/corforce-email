@@ -33,6 +33,7 @@ import {
 import { SHORTCUTS, useShortcuts } from '@/webmail/shortcuts';
 import { useWebmailStore } from '@/webmail/store';
 import { FolderNav } from './FolderNav';
+import { initialsOf } from './format';
 import { defaultFolder, folderWithRole } from './folders';
 import type { WebmailOutlet } from './webmailContext';
 
@@ -193,12 +194,17 @@ export function WebmailShell() {
         <div className="cf-wm__account">
           {session ? (
             <div className="cf-wm__identity">
-              <span className="cf-wm__identity-name">
-                {session.display_name || session.username}
+              <span className="cf-wm-avatar" aria-hidden="true">
+                {initialsOf(session.display_name || session.username)}
               </span>
-              {session.display_name ? (
-                <span className="cf-wm__identity-address">{session.username}</span>
-              ) : null}
+              <span className="cf-wm__identity-text">
+                <span className="cf-wm__identity-name">
+                  {session.display_name || session.username}
+                </span>
+                {session.display_name ? (
+                  <span className="cf-wm__identity-address">{session.username}</span>
+                ) : null}
+              </span>
             </div>
           ) : null}
           {notificationsSupported() ? (
@@ -239,6 +245,14 @@ export function WebmailShell() {
           >
             {t('webmail.logout')}
           </Button>
+          <Button
+            variant="primary"
+            className="cf-wm__compose"
+            icon={<IconEdit size={16} />}
+            onClick={() => navigate(paths.webmailCompose)}
+          >
+            <span className="cf-wm__compose-label">{t('webmail.compose.new')}</span>
+          </Button>
         </div>
       </header>
       <aside
@@ -247,14 +261,6 @@ export function WebmailShell() {
           .filter(Boolean)
           .join(' ')}
       >
-        <Button
-          variant="primary"
-          block
-          icon={<IconEdit size={16} />}
-          onClick={() => navigate(paths.webmailCompose)}
-        >
-          {t('webmail.compose.new')}
-        </Button>
         <nav aria-label={t('webmail.apps.label')}>
           <ul className="cf-wm-apps">
             {appLink(paths.webmail, t('webmail.apps.mail'), <IconMail size={16} />, true)}
@@ -293,7 +299,9 @@ export function WebmailShell() {
         aria-hidden="true"
       />
       <main className="cf-wm__main" id="wm-main" tabIndex={-1}>
-        <Outlet context={outlet} />
+        <div className="cf-wm__surface">
+          <Outlet context={outlet} />
+        </div>
       </main>
       <Modal
         open={helpOpen}

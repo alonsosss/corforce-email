@@ -6,6 +6,17 @@ export function addressLabel(address: MailAddress): string {
   return address.name.trim() || address.email;
 }
 
+/** Hasta dos iniciales de un nombre o una direccion, para el avatar. */
+export function initialsOf(label: string): string {
+  return label
+    .split(/[\s@.]+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((word) => Array.from(word)[0] ?? '')
+    .join('')
+    .toUpperCase();
+}
+
 /** Lista legible: "Nombre <direccion>" o la direccion sola. */
 export function addressList(list: readonly MailAddress[] | null | undefined): string {
   return (list ?? [])

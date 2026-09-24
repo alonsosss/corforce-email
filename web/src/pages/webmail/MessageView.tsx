@@ -38,7 +38,7 @@ import { ContactFormDialog } from './contacts/ContactFormDialog';
 import { contactFromSender } from './contacts/contacts';
 import { applyFlagChange } from './flags';
 import { folderWithRole } from './folders';
-import { addressList } from './format';
+import { addressLabel, addressList, initialsOf } from './format';
 import { hasInvitation, InvitationCard } from './InvitationCard';
 import { MessageBody } from './MessageBody';
 import { MoveDialog } from './MoveDialog';
@@ -319,35 +319,40 @@ export function MessageView({
         <h2 id="wm-subject" className="cf-wm-reader__subject">
           {data.subject || t('webmail.noSubject')}
         </h2>
-        <dl className="cf-dl cf-wm-reader__meta">
-          <dt>{t('webmail.header.from')}</dt>
-          <dd className="cf-wm-reader__from">
-            <span>{addressList(data.from) || t('common.dash')}</span>
-            {sender ? (
-              <Button
-                size="sm"
-                variant="ghost"
-                iconOnly
-                title={t('webmail.reader.addContact', { address: sender.email })}
-                icon={<IconUserPlus size={14} />}
-                onClick={() => setNewContact(sender)}
-              >
-                {t('webmail.reader.addContact', { address: sender.email })}
-              </Button>
+        <div className="cf-wm-reader__sender">
+          <span className="cf-wm-avatar cf-wm-avatar--lg" aria-hidden="true">
+            {sender ? initialsOf(addressLabel(sender)) : null}
+          </span>
+          <dl className="cf-dl cf-wm-reader__meta">
+            <dt>{t('webmail.header.from')}</dt>
+            <dd className="cf-wm-reader__from">
+              <span>{addressList(data.from) || t('common.dash')}</span>
+              {sender ? (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  iconOnly
+                  title={t('webmail.reader.addContact', { address: sender.email })}
+                  icon={<IconUserPlus size={14} />}
+                  onClick={() => setNewContact(sender)}
+                >
+                  {t('webmail.reader.addContact', { address: sender.email })}
+                </Button>
+              ) : null}
+            </dd>
+            <HeaderRow label={t('webmail.header.to')} value={addressList(data.to)} />
+            {data.cc.length ? (
+              <HeaderRow label={t('webmail.header.cc')} value={addressList(data.cc)} />
             ) : null}
-          </dd>
-          <HeaderRow label={t('webmail.header.to')} value={addressList(data.to)} />
-          {data.cc.length ? (
-            <HeaderRow label={t('webmail.header.cc')} value={addressList(data.cc)} />
-          ) : null}
-          {data.bcc.length ? (
-            <HeaderRow label={t('webmail.header.bcc')} value={addressList(data.bcc)} />
-          ) : null}
-          {data.reply_to.length ? (
-            <HeaderRow label={t('webmail.header.replyTo')} value={addressList(data.reply_to)} />
-          ) : null}
-          <HeaderRow label={t('webmail.header.date')} value={formatDateTime(data.date)} />
-        </dl>
+            {data.bcc.length ? (
+              <HeaderRow label={t('webmail.header.bcc')} value={addressList(data.bcc)} />
+            ) : null}
+            {data.reply_to.length ? (
+              <HeaderRow label={t('webmail.header.replyTo')} value={addressList(data.reply_to)} />
+            ) : null}
+            <HeaderRow label={t('webmail.header.date')} value={formatDateTime(data.date)} />
+          </dl>
+        </div>
       </header>
       <SenderShield
         folderName={folderName}
@@ -375,12 +380,28 @@ export function MessageView({
         />
       )}
       {hasInvitation(data) ? <InvitationCard folder={folderName} uid={uid} /> : null}
-      <MessageBody
-        message={data}
-        remoteAllowed={remote}
-        remoteLoading={remote && message.loading}
-        onAllowRemote={() => setRemote(true)}
-      />
+      <div className="cf-wm-reader__body">
+        <MessageBody
+          message={data}
+          remoteAllowed={remote}
+          remoteLoading={remote && message.loading}
+          onAllowRemote={() => setRemote(true)}
+        />
+      </div>
+      {isDrafts ? null : (
+        <div className="cf-wm-replybar">
+          <button type="button" className="cf-wm-replybar__field" onClick={() => compose('reply')}>
+            <span className="cf-wm-replybar__text">
+              {t('webmail.reader.replyTo', {
+                name: sender ? addressLabel(sender) : t('webmail.list.noSender'),
+              })}
+            </span>
+            <span className="cf-wm-replybar__send" aria-hidden="true">
+              <IconReply size={18} />
+            </span>
+          </button>
+        </div>
+      )}
       {moving ? (
         <MoveDialog
           title={t('webmail.move.title')}

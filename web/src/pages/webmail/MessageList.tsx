@@ -19,7 +19,7 @@ import { IconFilter, IconPaperclip, IconRefresh, IconSearch, IconStar } from '@/
 import { t } from '@/i18n';
 import { webmailMeta } from '@/webmail/catalogs';
 import { showsRecipients } from './folders';
-import { addressLabel, formatMailDate } from './format';
+import { addressLabel, formatMailDate, initialsOf } from './format';
 import { rowUnread } from './smartInbox';
 import {
   criteriaProblems,
@@ -376,7 +376,8 @@ function MessageRow({
   const flagged = hasFlag(message, FLAGS.flagged);
   const thread = message.thread;
   const senders = thread && !recipients ? thread.participants : message.from;
-  const people = (recipients ? message.to : senders).map(addressLabel).join(', ');
+  const shown = recipients ? message.to : senders;
+  const people = shown.map(addressLabel).join(', ');
   const subject = message.subject || t('webmail.noSubject');
   const classes = [
     'cf-wm-message',
@@ -394,6 +395,9 @@ function MessageRow({
         onChange={(e) => onCheck(e.target.checked)}
       />
       <Link to={href} className={classes} aria-current={selected ? 'true' : undefined}>
+        <span className="cf-wm-avatar cf-wm-message__avatar" aria-hidden="true">
+          {shown[0] ? initialsOf(addressLabel(shown[0])) : null}
+        </span>
         <span className="cf-wm-message__who">
           {unread ? <span className="cf-visually-hidden">{t('webmail.list.unread')} </span> : null}
           {people || t(recipients ? 'webmail.list.noRecipients' : 'webmail.list.noSender')}

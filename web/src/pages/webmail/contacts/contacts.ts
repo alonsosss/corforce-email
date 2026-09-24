@@ -1,5 +1,6 @@
 import type { Contact, ContactInput, ContactValue, MailAddress } from '@/api/webmail';
 import { getLocale, t } from '@/i18n';
+import { initialsOf } from '../format';
 
 export function emptyContact(): ContactInput {
   return {
@@ -48,14 +49,7 @@ export function contactName(
 
 /** Iniciales para el avatar de la lista: dos letras como mucho. */
 export function contactInitials(contact: Contact): string {
-  const words = contactName(contact)
-    .split(/[\s@.]+/)
-    .filter(Boolean);
-  return words
-    .slice(0, 2)
-    .map((word) => Array.from(word)[0] ?? '')
-    .join('')
-    .toUpperCase();
+  return initialsOf(contactName(contact));
 }
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
