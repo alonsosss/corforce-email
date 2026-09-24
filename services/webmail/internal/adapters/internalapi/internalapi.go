@@ -215,7 +215,7 @@ func (c *Caller) statusError(resp *http.Response, apiErr *APIError, errs Errors)
 	if mapped, ok := errs.ByStatus[status]; ok && mapped != nil {
 		return mapped
 	}
-	return c.unavailable(fmt.Sprintf("respondio %d", status))
+	return c.unavailable(fmt.Sprintf("respondió %d", status))
 }
 
 func (c *Caller) unavailable(reason string) error {

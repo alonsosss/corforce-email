@@ -9,7 +9,7 @@ import (
 
 // ErrTenantRetired: la empresa esta dada de baja en la celda. Su directorio no admite cambios y no
 // activa ningun dominio; solo se puede apagar uno que ya tiene.
-var ErrTenantRetired = errors.New("la empresa esta dada de baja en la celda: su directorio no admite cambios")
+var ErrTenantRetired = errors.New("la empresa está dada de baja en la celda: su directorio no admite cambios")
 
 // TenantRetirement es la baja de una empresa en el directorio de la celda: desde RetiredAt nada
 // suyo recibe, reenvia ni autentica en la celda. Deactivated cuenta lo que apago la llamada que la

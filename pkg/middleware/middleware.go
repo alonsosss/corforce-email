@@ -453,7 +453,7 @@ func RequireStepUp(verifier *auth.Verifier) func(http.Handler) http.Handler {
 func stepUpRequired(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusForbidden)
-	_, _ = w.Write([]byte(`{"error":{"code":"STEP_UP_REQUIRED","message":"esta operacion requiere reconfirmar tu identidad"}}`))
+	_, _ = w.Write([]byte(`{"error":{"code":"STEP_UP_REQUIRED","message":"esta operación requiere reconfirmar tu identidad"}}`))
 }
 
 // InjectFromGateway reads X-User-ID, X-Tenant-ID and X-User-Roles headers

@@ -42,7 +42,7 @@ func NormalizeSMTPNetwork(raw string) (netip.Prefix, error) {
 		min = minSMTPPrefixV6
 	}
 	if p.Bits() < min {
-		return netip.Prefix{}, newValidation(fmt.Sprintf("%s es demasiado ancha: el minimo es /%d", p, min))
+		return netip.Prefix{}, newValidation(fmt.Sprintf("%s es demasiado ancha: el mínimo es /%d", p, min))
 	}
 	return p, nil
 }
@@ -62,7 +62,7 @@ func NormalizeSMTPNetworks(raw []string) ([]netip.Prefix, error) {
 		}
 	}
 	if len(out) == 0 {
-		return nil, newValidation("networks no puede ir vacio; para quitar la restriccion borra la entrada")
+		return nil, newValidation("networks no puede ir vacío; para quitar la restricción borra la entrada")
 	}
 	if len(out) > MaxSMTPAccessNetworks {
 		return nil, newValidation(fmt.Sprintf("networks admite como mucho %d redes", MaxSMTPAccessNetworks))

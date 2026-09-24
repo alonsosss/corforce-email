@@ -94,7 +94,7 @@ func (p Policy) Validate() error {
 	}
 	for _, f := range fractions {
 		if !f.value.IsPositive() || !f.value.LessThan(one) {
-			return fmt.Errorf("%w: %s debe ser una fraccion mayor que 0 y menor que 1", ErrInvalidPolicy, f.name)
+			return fmt.Errorf("%w: %s debe ser una fracción mayor que 0 y menor que 1", ErrInvalidPolicy, f.name)
 		}
 	}
 	if !t.BounceWarn.LessThan(t.BounceBlock) {
@@ -107,15 +107,15 @@ func (p Policy) Validate() error {
 		return fmt.Errorf("%w: min_volume debe ser mayor que 0", ErrInvalidPolicy)
 	}
 	if p.WindowDays < 1 || p.WindowDays > MaxWindowDays {
-		return fmt.Errorf("%w: la ventana debe tener entre 1 y %d dias", ErrInvalidPolicy, MaxWindowDays)
+		return fmt.Errorf("%w: la ventana debe tener entre 1 y %d días", ErrInvalidPolicy, MaxWindowDays)
 	}
 	for _, c := range Classes() {
 		l, ok := p.Defaults[c]
 		if !ok {
-			return fmt.Errorf("%w: faltan los limites por defecto de %s", ErrInvalidPolicy, c)
+			return fmt.Errorf("%w: faltan los límites por defecto de %s", ErrInvalidPolicy, c)
 		}
 		if err := l.Validate(); err != nil {
-			return fmt.Errorf("%w: limites por defecto de %s: %v", ErrInvalidPolicy, c, err)
+			return fmt.Errorf("%w: límites por defecto de %s: %v", ErrInvalidPolicy, c, err)
 		}
 	}
 	return nil

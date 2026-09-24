@@ -32,7 +32,7 @@ func subjectIssues(subject string, add func(code, severity string, count int, fo
 		return
 	}
 	add(CodeSubjectAllCaps, SeverityWarning, boolCount(isAllCaps(subject)),
-		"El asunto esta escrito en mayusculas")
+		"El asunto está escrito en mayúsculas")
 	punct := 0
 	for _, p := range subjectPunctuation {
 		punct += strings.Count(subject, p)
@@ -41,10 +41,10 @@ func subjectIssues(subject string, add func(code, severity string, count int, fo
 		"El asunto repite signos como !! o $$")
 	n := utf8.RuneCountInString(subject)
 	add(CodeSubjectTooLong, SeverityWarning, boolCount(n > MaxSubjectChars),
-		"El asunto tiene %d caracteres; mas de %d se corta en la mayoria de bandejas", n, MaxSubjectChars)
+		"El asunto tiene %d caracteres; más de %d se corta en la mayoría de bandejas", n, MaxSubjectChars)
 	words := spamWordsIn(subject)
 	add(CodeSubjectSpamWords, SeverityWarning, len(words),
-		"El asunto contiene expresiones tipicas del spam: %s", strings.Join(words, ", "))
+		"El asunto contiene expresiones típicas del spam: %s", strings.Join(words, ", "))
 }
 
 func isAllCaps(s string) bool {

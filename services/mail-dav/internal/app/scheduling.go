@@ -52,13 +52,13 @@ func (c SchedulingConfig) Validate() error {
 		return fmt.Errorf("MaxAvailabilityAddresses no puede pasar de %d", domain.MaxBusyMailboxes)
 	}
 	if c.BusyLookback <= 0 || c.BookingMaxWindow <= 0 || c.BookingMaxWindow > domain.MaxBusyWindow {
-		return errors.New("BusyLookback y BookingMaxWindow deben ser positivos y la ventana de citas no puede pasar de la de ocupacion")
+		return errors.New("BusyLookback y BookingMaxWindow deben ser positivos y la ventana de citas no puede pasar de la de ocupación")
 	}
 	return nil
 }
 
 // ErrSchedulingDisabled: la planificacion no esta configurada en este despliegue.
-var ErrSchedulingDisabled = fmt.Errorf("%w: planificacion no configurada", domain.ErrUnavailable)
+var ErrSchedulingDisabled = fmt.Errorf("%w: planificación no configurada", domain.ErrUnavailable)
 
 func (uc *UseCase) schedulingStore() error {
 	if uc.scheduling == nil || !uc.cfg.Scheduling.enabled() {
@@ -204,11 +204,11 @@ func (uc *UseCase) checkBusyWindow(from, to time.Time) error {
 	case !to.After(from):
 		return &domain.FieldError{Field: "end", Reason: "debe ser posterior al inicio"}
 	case to.Sub(from) > domain.MaxBusyWindow:
-		return &domain.FieldError{Field: "end", Reason: "la ventana supera el maximo de dias"}
+		return &domain.FieldError{Field: "end", Reason: "la ventana supera el máximo de días"}
 	case from.Before(now.Add(-uc.cfg.Scheduling.BusyLookback)):
-		return &domain.FieldError{Field: "start", Reason: "es anterior a la ocupacion que se conserva"}
+		return &domain.FieldError{Field: "start", Reason: "es anterior a la ocupación que se conserva"}
 	case to.After(now.Add(uc.cfg.Scheduling.BusyHorizon)):
-		return &domain.FieldError{Field: "end", Reason: "supera el horizonte de la ocupacion"}
+		return &domain.FieldError{Field: "end", Reason: "supera el horizonte de la ocupación"}
 	}
 	return nil
 }
@@ -297,7 +297,7 @@ func (uc *UseCase) SaveBookingSettings(ctx context.Context, p domain.Principal, 
 	}
 	owner, err := domain.NormalizeAddress("owner", p.Username)
 	if err != nil {
-		return domain.BookingPage{}, &domain.FieldError{Field: "owner", Reason: "falta la direccion del buzon"}
+		return domain.BookingPage{}, &domain.FieldError{Field: "owner", Reason: "falta la dirección del buzón"}
 	}
 	settings, err := in.Normalize(uc.cfg.Scheduling.BookingMaxDaily)
 	if err != nil {
@@ -393,7 +393,7 @@ func (uc *UseCase) PublicBookingSlots(ctx context.Context, tenantID uuid.UUID, p
 		return PublicBooking{}, &domain.FieldError{Field: "end", Reason: "debe ser posterior al inicio"}
 	}
 	if to.Sub(from) > uc.cfg.Scheduling.BookingMaxWindow {
-		return PublicBooking{}, &domain.FieldError{Field: "end", Reason: "la ventana supera el maximo de dias"}
+		return PublicBooking{}, &domain.FieldError{Field: "end", Reason: "la ventana supera el máximo de días"}
 	}
 	now := uc.now().UTC()
 	if earliest := now.Add(time.Duration(page.MinNoticeMinutes) * time.Minute); from.Before(earliest) {
@@ -439,7 +439,7 @@ func (uc *UseCase) Book(ctx context.Context, tenantID uuid.UUID, publicID string
 		return BookingResult{}, err
 	}
 	if req.Email == page.OwnerAddress {
-		return BookingResult{}, &domain.FieldError{Field: "email", Reason: "no puede ser la direccion del dueno de la pagina"}
+		return BookingResult{}, &domain.FieldError{Field: "email", Reason: "no puede ser la dirección del dueño de la página"}
 	}
 	now := uc.now().UTC()
 	dur := time.Duration(page.DurationMinutes) * time.Minute
@@ -608,7 +608,7 @@ func (uc *UseCase) RespondInvitation(ctx context.Context, p domain.Principal, ra
 		return InvitationAnswer{}, err
 	}
 	if found && domain.SequenceOf(existing.ICal) > inv.Sequence {
-		return InvitationAnswer{}, &domain.FieldError{Field: "sequence", Reason: "el calendario ya tiene una version mas reciente de esta invitacion"}
+		return InvitationAnswer{}, &domain.FieldError{Field: "sequence", Reason: "el calendario ya tiene una versión más reciente de esta invitación"}
 	}
 	out := InvitationAnswer{Reply: res.Reply, Organizer: *inv.Organizer, Attendee: res.Attendee}
 	ps, _ := domain.NormalizePartStat("response", response)
@@ -680,7 +680,7 @@ func (uc *UseCase) ApplyInvitation(ctx context.Context, p domain.Principal, raw,
 	case domain.MethodCancel:
 		org := domain.OrganizerOf(existing.ICal)
 		if org == nil || inv.Organizer == nil || inv.Organizer.Email != org.Email || sender != org.Email {
-			return InvitationApplied{}, &domain.FieldError{Field: "from", Reason: "la cancelacion no la envia el organizador del evento"}
+			return InvitationApplied{}, &domain.FieldError{Field: "from", Reason: "la cancelación no la envía el organizador del evento"}
 		}
 		if inv.RecurrenceID == nil {
 			if err := uc.calendars.DeleteEvent(ctx, p, slug, existing.ResourceName, cond, uc.cfg.Limits.MaxChangesRetained); err != nil {
@@ -701,7 +701,7 @@ func (uc *UseCase) ApplyInvitation(ctx context.Context, p domain.Principal, raw,
 		}
 		out.Changed = true
 	default:
-		return InvitationApplied{}, &domain.FieldError{Field: "method", Reason: "una invitacion (REQUEST) se responde, no se aplica"}
+		return InvitationApplied{}, &domain.FieldError{Field: "method", Reason: "una invitación (REQUEST) se responde, no se aplica"}
 	}
 	return out, nil
 }

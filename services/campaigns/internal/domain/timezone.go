@@ -102,14 +102,14 @@ func (l LocalDateTime) Latest() time.Time { return l.wall.Add(maxUTCDelay) }
 func LoadTimezone(name string) (*time.Location, error) {
 	name = strings.TrimSpace(name)
 	if name == "" || name == "Local" || len(name) > maxTimezoneLength || !timezoneRegex.MatchString(name) {
-		return nil, NewValidationError("timezone: %q no es una zona IANA valida (America/Lima)", name)
+		return nil, NewValidationError("timezone: %q no es una zona IANA válida (America/Lima)", name)
 	}
 	if loc, ok := zoneCache.Load(name); ok {
 		return loc.(*time.Location), nil
 	}
 	loc, err := time.LoadLocation(name)
 	if err != nil {
-		return nil, NewValidationError("timezone: %q no es una zona IANA valida (America/Lima)", name)
+		return nil, NewValidationError("timezone: %q no es una zona IANA válida (America/Lima)", name)
 	}
 	zoneCache.Store(name, loc)
 	return loc, nil

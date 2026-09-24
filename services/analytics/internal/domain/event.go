@@ -41,7 +41,7 @@ func EventClass(s string) (Class, error) {
 	}
 	c := Class(s)
 	if !c.Valid() {
-		return "", invalidEvent("clase de envio desconocida %q", s)
+		return "", invalidEvent("clase de envío desconocida %q", s)
 	}
 	return c, nil
 }
@@ -169,9 +169,9 @@ func (e MessageEvent) Validate() error {
 	case e.MessageID == uuid.Nil:
 		return invalidEvent("evento sin message_id")
 	case !e.Class.Valid():
-		return invalidEvent("clase de envio desconocida %q", e.Class)
+		return invalidEvent("clase de envío desconocida %q", e.Class)
 	case e.CampaignID != nil && *e.CampaignID == uuid.Nil:
-		return invalidEvent("campaign_id vacio")
+		return invalidEvent("campaign_id vacío")
 	case e.OccurredAt.IsZero():
 		return invalidEvent("evento sin instante")
 	}

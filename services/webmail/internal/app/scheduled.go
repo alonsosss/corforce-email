@@ -73,7 +73,7 @@ func (s *Service) replaySchedule(sess domain.Session, rec domain.SendRecord, fp 
 	case domain.SendScheduled:
 		return domain.ScheduledResult{ID: rec.ScheduledID, SendAt: at, MessageID: rec.MessageID, Replayed: true}, nil
 	default:
-		return domain.ScheduledResult{}, unavailable(fmt.Errorf("estado de envio programado desconocido %q", rec.State))
+		return domain.ScheduledResult{}, unavailable(fmt.Errorf("estado de envío programado desconocido %q", rec.State))
 	}
 }
 
@@ -346,7 +346,7 @@ func failed(reason string, retry bool) domain.ScheduledOutcome {
 func (s *Service) deliverScheduled(ctx context.Context, c domain.ScheduledClaim) domain.ScheduledOutcome {
 	username, ok := domain.NormalizeUsername(c.Username)
 	if !ok || !domain.IsValidMessageID(c.MessageID) {
-		return failed("fila invalida", false)
+		return failed("fila inválida", false)
 	}
 	sess := domain.Session{Username: username}
 	key := sendKey(username, "scheduled\x00"+c.ID)
@@ -354,7 +354,7 @@ func (s *Service) deliverScheduled(ctx context.Context, c domain.ScheduledClaim)
 	rec, reserved, err := s.ledger.Reserve(ctx, key, domain.SendRecord{State: domain.SendPending, Fingerprint: fp}, s.cfg.SendTimeout+pendingMargin)
 	if err != nil {
 		s.logger.Warn("webmail: registro de envios no disponible para un envio programado", zap.String("scheduled_id", c.ID), zap.Error(err))
-		return failed("registro de envios no disponible", true)
+		return failed("registro de envíos no disponible", true)
 	}
 	if !reserved {
 		switch rec.State {
@@ -362,7 +362,7 @@ func (s *Service) deliverScheduled(ctx context.Context, c domain.ScheduledClaim)
 			s.settleScheduled(ctx, sess, c, nil)
 			return domain.ScheduledOutcome{Status: domain.ScheduledSent}
 		case domain.SendUncertain:
-			return failed("no se pudo confirmar si el servidor de correo acepto el mensaje", false)
+			return failed("no se pudo confirmar si el servidor de correo aceptó el mensaje", false)
 		default:
 			return domain.ScheduledOutcome{}
 		}
@@ -372,13 +372,13 @@ func (s *Service) deliverScheduled(ctx context.Context, c domain.ScheduledClaim)
 	if err != nil {
 		s.release(ctx, key, rec.Token)
 		s.logger.Warn("webmail: no se pudo leer el mensaje programado", zap.String("scheduled_id", c.ID), zap.Error(err))
-		return failed("buzon no disponible", true)
+		return failed("buzón no disponible", true)
 	}
 	if !located {
 		sent, err := s.alreadyInSent(ctx, sess, c.MessageID)
 		if err != nil {
 			s.release(ctx, key, rec.Token)
-			return failed("buzon no disponible", true)
+			return failed("buzón no disponible", true)
 		}
 		if sent {
 			rec.State, rec.MessageID, rec.SavedToSent = domain.SendSent, c.MessageID, true
@@ -386,7 +386,7 @@ func (s *Service) deliverScheduled(ctx context.Context, c domain.ScheduledClaim)
 			return domain.ScheduledOutcome{Status: domain.ScheduledSent}
 		}
 		s.release(ctx, key, rec.Token)
-		return domain.ScheduledOutcome{Status: domain.ScheduledCanceled, Error: "el mensaje ya no esta en la carpeta de envios programados"}
+		return domain.ScheduledOutcome{Status: domain.ScheduledCanceled, Error: "el mensaje ya no está en la carpeta de envíos programados"}
 	}
 
 	final, err := s.composer.Finalize(stored, s.clock())
@@ -500,7 +500,7 @@ func (s *Service) settleScheduled(ctx context.Context, sess domain.Session, c do
 		}
 		sent, ok := domain.FolderWithRole(folders, domain.RoleSent)
 		if !ok {
-			return errors.New("el buzon no tiene carpeta de enviados")
+			return errors.New("el buzón no tiene carpeta de enviados")
 		}
 		uid, err := locateScheduled(ctx, mb, folders, c.Folder, c.UIDValidity, c.UID, c.MessageID)
 		if err != nil {

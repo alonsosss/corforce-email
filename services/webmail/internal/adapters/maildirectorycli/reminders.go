@@ -78,7 +78,7 @@ func (c *Client) CreateReminder(ctx context.Context, in domain.NewReminder) (dom
 		return domain.Reminder{}, err
 	}
 	if !domain.ValidUUID(row.ID) {
-		return domain.Reminder{}, c.api.Unavailable("id de recordatorio invalido")
+		return domain.Reminder{}, c.api.Unavailable("id de recordatorio inválido")
 	}
 	return row.toDomain(), nil
 }
@@ -207,7 +207,7 @@ func (c *Client) CreateQuickReply(ctx context.Context, username string, q domain
 		return domain.QuickReply{}, err
 	}
 	if !domain.ValidUUID(row.ID) {
-		return domain.QuickReply{}, c.api.Unavailable("id de respuesta rapida invalido")
+		return domain.QuickReply{}, c.api.Unavailable("id de respuesta rápida inválido")
 	}
 	return row.toDomain(), nil
 }

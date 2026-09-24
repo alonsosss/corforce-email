@@ -35,10 +35,10 @@ const validation = (message: string) =>
 describe('errores del aviso de cuarentena', () => {
   it('asocia el 422 al campo que nombra el servicio', () => {
     expect(
-      noticeFieldError(validation('notify.sender debe ser una direccion de correo valida')),
+      noticeFieldError(validation('notify.sender debe ser una dirección de correo válida')),
     ).toEqual({
       field: 'sender',
-      message: 'notify.sender debe ser una direccion de correo valida',
+      message: 'notify.sender debe ser una dirección de correo válida',
     });
     expect(noticeFieldError(validation('notify.subject es obligatorio'))?.field).toBe('subject');
     expect(

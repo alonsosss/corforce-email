@@ -37,7 +37,7 @@ func (h *Handler) Match(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(req.ContactIDs) > app.MaxMatchIDs {
-		response.ErrValidation(w, "contact_ids admite como maximo "+strconv.Itoa(app.MaxMatchIDs)+" contactos")
+		response.ErrValidation(w, "contact_ids admite como máximo "+strconv.Itoa(app.MaxMatchIDs)+" contactos")
 		return
 	}
 	definition := req.Definition

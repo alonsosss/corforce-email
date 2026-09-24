@@ -38,7 +38,7 @@ func (c *Client) RetireTenant(ctx context.Context, cellCode string, tenantID uui
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("mail-directory de la celda %s: la baja de la empresa respondio %d %s",
+		return fmt.Errorf("mail-directory de la celda %s: la baja de la empresa respondió %d %s",
 			cellCode, resp.StatusCode, tenantcell.ErrorCode(resp))
 	}
 	_, _ = io.Copy(io.Discard, resp.Body)

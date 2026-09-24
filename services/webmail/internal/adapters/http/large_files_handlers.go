@@ -157,12 +157,12 @@ func largeFileOptions(r *http.Request) (domain.LargeFileOptions, error) {
 	var err error
 	if v := q.Get("expires_in_days"); v != "" {
 		if opts.ExpiresInDays, err = strconv.Atoi(v); err != nil || opts.ExpiresInDays < 1 {
-			return opts, domain.NewValidationError("expires_in_days", "la caducidad debe ser un numero de dias")
+			return opts, domain.NewValidationError("expires_in_days", "la caducidad debe ser un número de días")
 		}
 	}
 	if v := q.Get("max_downloads"); v != "" {
 		if opts.MaxDownloads, err = strconv.Atoi(v); err != nil || opts.MaxDownloads < 1 {
-			return opts, domain.NewValidationError("max_downloads", "las descargas deben ser un numero positivo")
+			return opts, domain.NewValidationError("max_downloads", "las descargas deben ser un número positivo")
 		}
 	}
 	return opts, nil

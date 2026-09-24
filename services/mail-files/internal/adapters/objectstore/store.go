@@ -42,7 +42,7 @@ func (s *Store) Open(ctx context.Context, key string, size int64) (io.ReadCloser
 	case errors.Is(err, objectstore.ErrNotFound):
 		return nil, domain.ErrNotFound
 	case err != nil:
-		return nil, fmt.Errorf("%w: almacen: %v", domain.ErrUnavailable, err)
+		return nil, fmt.Errorf("%w: almacén: %v", domain.ErrUnavailable, err)
 	case info.Size != size:
 		_ = rc.Close()
 		return nil, fmt.Errorf("%w: el objeto %q mide %d bytes y se guardaron %d", domain.ErrUnavailable, key, info.Size, size)

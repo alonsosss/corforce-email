@@ -104,7 +104,7 @@ func canReadTenant(r *http.Request, id uuid.UUID) bool {
 func parseIDParam(w http.ResponseWriter, r *http.Request, what string) (uuid.UUID, bool) {
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		response.ErrBadRequest(w, "identificador de "+what+" no valido")
+		response.ErrBadRequest(w, "identificador de "+what+" no válido")
 		return uuid.Nil, false
 	}
 	return id, true
@@ -208,7 +208,7 @@ func (h *Handler) ListTenants(w http.ResponseWriter, r *http.Request) {
 	if !isSuperadmin(r) {
 		tenantID := callerTenantID(r)
 		if tenantID == uuid.Nil {
-			response.ErrUnauthorized(w, "la sesion no lleva tenant")
+			response.ErrUnauthorized(w, "la sesión no lleva tenant")
 			return
 		}
 		tenant, err := h.uc.GetTenant(r.Context(), tenantID)

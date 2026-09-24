@@ -19,16 +19,16 @@ var reservedHeaderPrefixes = []string{"x-ses-", "x-amz-", "x-mailer"}
 // ValidateHeaders comprueba nombres y valores de las cabeceras del cliente.
 func ValidateHeaders(headers map[string]string) error {
 	if len(headers) > MaxHeaders {
-		return NewValidationError("headers: no se admiten mas de %d cabeceras", MaxHeaders)
+		return NewValidationError("headers: no se admiten más de %d cabeceras", MaxHeaders)
 	}
 	for name, value := range headers {
 		if !headerNamePattern.MatchString(name) {
-			return NewValidationError("headers: la cabecera %q no es una cabecera X- valida", name)
+			return NewValidationError("headers: la cabecera %q no es una cabecera X- válida", name)
 		}
 		lower := strings.ToLower(name)
 		for _, p := range reservedHeaderPrefixes {
 			if strings.HasPrefix(lower, p) {
-				return NewValidationError("headers: la cabecera %q esta reservada", name)
+				return NewValidationError("headers: la cabecera %q está reservada", name)
 			}
 		}
 		if err := validHeaderValue(name, value); err != nil {
@@ -57,16 +57,16 @@ var ReservedTagNames = []string{"tenant_id", "message_id"}
 // ValidateTags comprueba las etiquetas del mensaje con el formato que exige SES.
 func ValidateTags(tags map[string]string) error {
 	if len(tags) > MaxTags {
-		return NewValidationError("tags: no se admiten mas de %d etiquetas", MaxTags)
+		return NewValidationError("tags: no se admiten más de %d etiquetas", MaxTags)
 	}
 	for k, v := range tags {
 		for _, reserved := range ReservedTagNames {
 			if strings.EqualFold(k, reserved) {
-				return NewValidationError("tags: %q esta reservada", k)
+				return NewValidationError("tags: %q está reservada", k)
 			}
 		}
 		if !tagPattern.MatchString(k) || !tagPattern.MatchString(v) {
-			return NewValidationError("tags: %q solo admite letras, numeros, guion y guion bajo (1..256)", k)
+			return NewValidationError("tags: %q solo admite letras, números, guion y guion bajo (1..256)", k)
 		}
 	}
 	return nil

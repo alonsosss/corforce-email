@@ -64,7 +64,7 @@ func New(cfg Config, resolver CellResolver) (*Client, error) {
 	cells := make(map[string]string, len(cfg.CellURLs))
 	for code, raw := range cfg.CellURLs {
 		if !tenantcell.ValidCode(code) || code == cfg.BaseCell {
-			return nil, fmt.Errorf("celda %q no valida o repetida con la base", code)
+			return nil, fmt.Errorf("celda %q no válida o repetida con la base", code)
 		}
 		if cells[code], err = httpsURL(raw); err != nil {
 			return nil, fmt.Errorf("celda %s: %w", code, err)
@@ -109,7 +109,7 @@ func (c *Client) endpoint(ctx context.Context, username string) (string, error) 
 	case errors.Is(err, tenantcell.ErrUnknownDomain):
 		return c.base, nil
 	case err != nil:
-		return "", fmt.Errorf("%w: celda del buzon: %v", domain.ErrUnavailable, err)
+		return "", fmt.Errorf("%w: celda del buzón: %v", domain.ErrUnavailable, err)
 	case cell == c.baseCell:
 		return c.base, nil
 	}
@@ -170,7 +170,7 @@ func (c *Client) Authenticate(ctx context.Context, username, password, remoteIP 
 	case http.StatusUnauthorized:
 		return domain.Principal{}, domain.ErrInvalidCredentials
 	default:
-		return domain.Principal{}, fmt.Errorf("%w: mail-auth respondio %d", domain.ErrUnavailable, resp.StatusCode)
+		return domain.Principal{}, fmt.Errorf("%w: mail-auth respondió %d", domain.ErrUnavailable, resp.StatusCode)
 	}
 }
 
@@ -187,7 +187,7 @@ func principalFrom(raw []byte, asked string) (domain.Principal, error) {
 	tenantID, terr := uuid.Parse(out.TenantID)
 	mailboxID, merr := uuid.Parse(out.MailboxID)
 	if terr != nil || merr != nil || tenantID == uuid.Nil || mailboxID == uuid.Nil || out.Username != asked {
-		return domain.Principal{}, fmt.Errorf("%w: mail-auth no devolvio la identidad del buzon", domain.ErrUnavailable)
+		return domain.Principal{}, fmt.Errorf("%w: mail-auth no devolvió la identidad del buzón", domain.ErrUnavailable)
 	}
 	return domain.Principal{TenantID: tenantID, MailboxID: mailboxID, Username: out.Username}, nil
 }

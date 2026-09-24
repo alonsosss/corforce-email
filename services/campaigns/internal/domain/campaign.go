@@ -35,7 +35,7 @@ func ParseStatus(s string) (Status, error) {
 			return st, nil
 		}
 	}
-	return "", NewValidationError("status: valor no valido %q", s)
+	return "", NewValidationError("status: valor no válido %q", s)
 }
 
 const (
@@ -179,7 +179,7 @@ type NewCampaignInput struct {
 
 func NewCampaign(tenantID uuid.UUID, in NewCampaignInput) (*Campaign, error) {
 	if in.CreatedBy == uuid.Nil {
-		return nil, NewValidationError("created_by: la peticion no lleva usuario")
+		return nil, NewValidationError("created_by: la petición no lleva usuario")
 	}
 	c := &Campaign{
 		ID:          uuid.New(),
@@ -280,10 +280,10 @@ func (c *Campaign) validateContent() error {
 		return NewValidationError("name: es obligatorio")
 	}
 	if utf8.RuneCountInString(c.Name) > MaxNameLength {
-		return NewValidationError("name: admite como maximo %d caracteres", MaxNameLength)
+		return NewValidationError("name: admite como máximo %d caracteres", MaxNameLength)
 	}
 	if utf8.RuneCountInString(c.Description) > MaxDescriptionLength {
-		return NewValidationError("description: admite como maximo %d caracteres", MaxDescriptionLength)
+		return NewValidationError("description: admite como máximo %d caracteres", MaxDescriptionLength)
 	}
 	if c.TemplateID == uuid.Nil {
 		return NewValidationError("template_id: es obligatorio")
@@ -376,7 +376,7 @@ func equalPtr[T comparable](a, b *T) bool {
 func (c *Campaign) PinVariants(versions []int) error {
 	if c.ABTest == nil {
 		if len(versions) > 0 {
-			return NewValidationError("ab_test: la campana no tiene prueba A/B")
+			return NewValidationError("ab_test: la campaña no tiene prueba A/B")
 		}
 		return nil
 	}
@@ -396,7 +396,7 @@ func (c *Campaign) PinVariants(versions []int) error {
 // DecideWinner registra la ganadora de la prueba A/B. Solo una vez.
 func (c *Campaign) DecideWinner(d ABDecision, now time.Time) error {
 	if c.ABTest == nil {
-		return NewValidationError("ab_test: la campana no tiene prueba A/B")
+		return NewValidationError("ab_test: la campaña no tiene prueba A/B")
 	}
 	if c.ABWinner != nil {
 		return ErrABAlreadyDecided
@@ -455,7 +455,7 @@ func (c *Campaign) readyToSend() error {
 	if c.ABTest != nil {
 		for i, v := range c.ABTest.Variants {
 			if v.PinnedVersion == nil {
-				return NewValidationError("ab_test: la variante %s no tiene version fijada", VariantLabel(i))
+				return NewValidationError("ab_test: la variante %s no tiene versión fijada", VariantLabel(i))
 			}
 		}
 	}
@@ -552,7 +552,7 @@ func (c *Campaign) ScheduleLocal(local LocalDateTime, fallback string, version i
 	}
 	loc, err := LoadTimezone(fallback)
 	if err != nil {
-		return NewValidationError("fallback_timezone: %q no es una zona IANA valida (America/Lima)", strings.TrimSpace(fallback))
+		return NewValidationError("fallback_timezone: %q no es una zona IANA válida (America/Lima)", strings.TrimSpace(fallback))
 	}
 	if err := ValidateScheduleTime(local.In(loc), now); err != nil {
 		return err

@@ -68,13 +68,13 @@ func ValidateDeclarations(vars []Variable) error {
 	seen := make(map[string]struct{}, len(vars))
 	for i, v := range vars {
 		if !variableNameRegex.MatchString(v.Name) {
-			return fmt.Errorf("%w: variables[%d].name %q debe ser un identificador en minusculas (a-z, 0-9, _) de hasta 64 caracteres", ErrInvalidVariableDeclaration, i, v.Name)
+			return fmt.Errorf("%w: variables[%d].name %q debe ser un identificador en minúsculas (a-z, 0-9, _) de hasta 64 caracteres", ErrInvalidVariableDeclaration, i, v.Name)
 		}
 		if IsReserved(v.Name) {
 			return fmt.Errorf("%w: %q es una variable reservada y no se declara", ErrInvalidVariableDeclaration, v.Name)
 		}
 		if _, dup := seen[v.Name]; dup {
-			return fmt.Errorf("%w: la variable %q esta declarada dos veces", ErrInvalidVariableDeclaration, v.Name)
+			return fmt.Errorf("%w: la variable %q está declarada dos veces", ErrInvalidVariableDeclaration, v.Name)
 		}
 		seen[v.Name] = struct{}{}
 		if !validType(v.Type) {
@@ -179,12 +179,12 @@ func coerce(name, typ string, raw json.RawMessage) (any, error) {
 		if err := dec.Decode(&n); err != nil {
 			var s string
 			if json.Unmarshal(raw, &s) != nil {
-				return nil, fmt.Errorf("la variable %q debe ser numerica", name)
+				return nil, fmt.Errorf("la variable %q debe ser numérica", name)
 			}
 			n = json.Number(strings.TrimSpace(s))
 		}
 		if _, err := n.Float64(); err != nil {
-			return nil, fmt.Errorf("la variable %q debe ser numerica", name)
+			return nil, fmt.Errorf("la variable %q debe ser numérica", name)
 		}
 		return n, nil
 	case VarBoolean:
@@ -218,7 +218,7 @@ func checkString(name, typ, s string) error {
 	case VarEmail:
 		addr, err := mail.ParseAddress(s)
 		if err != nil || addr.Address != s || !strings.Contains(s, "@") {
-			return fmt.Errorf("la variable %q debe ser un correo valido", name)
+			return fmt.Errorf("la variable %q debe ser un correo válido", name)
 		}
 	}
 	return nil

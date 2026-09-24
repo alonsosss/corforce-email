@@ -26,7 +26,7 @@ var queueIDPattern = regexp.MustCompile(`^[0-9A-Za-z]{5,25}$`)
 // ValidateQueueID rechaza lo que no es un identificador de cola.
 func ValidateQueueID(id string) error {
 	if !queueIDPattern.MatchString(id) {
-		return newValidation("identificador de cola no valido")
+		return newValidation("identificador de cola no válido")
 	}
 	return nil
 }

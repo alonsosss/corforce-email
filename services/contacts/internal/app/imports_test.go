@@ -48,7 +48,7 @@ func TestImportacionSaltaInvalidosYRegistraMotivos(t *testing.T) {
 	if strings.Join(lines, ",") != "2,3,4,5,6,7,8" {
 		t.Fatalf("lineas con error: %v (%+v)", lines, imp.Errors)
 	}
-	if !strings.Contains(imp.Errors[1].Reason, "linea 1") {
+	if !strings.Contains(imp.Errors[1].Reason, "línea 1") {
 		t.Fatalf("la repetida dice cual es la original: %q", imp.Errors[1].Reason)
 	}
 	// Un evento por importacion, ninguno por contacto.

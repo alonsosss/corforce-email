@@ -753,7 +753,7 @@ func writeDenied(w http.ResponseWriter, d *domain.SendingDeniedError) {
 		response.Err(w, http.StatusTooManyRequests, "RATE_LIMITED", d.Reason)
 	case d.ExceedsRateWindow():
 		response.Err(w, http.StatusForbidden, "SENDING_RESTRICTED",
-			d.Reason+": lo pedido supera el limite de tasa de la ventana; esperar no basta, hay que partir el envio")
+			d.Reason+": lo pedido supera el límite de tasa de la ventana; esperar no basta, hay que partir el envío")
 	case d.Restricted():
 		response.Err(w, http.StatusForbidden, "SENDING_RESTRICTED", d.Reason)
 	default:
@@ -771,31 +771,31 @@ func writeError(w http.ResponseWriter, err error) {
 	case errors.As(err, &denied):
 		writeDenied(w, denied)
 	case errors.Is(err, domain.ErrTestSendLimit):
-		response.Err(w, http.StatusTooManyRequests, "TEST_SEND_LIMIT_REACHED", "se alcanzo el tope de envios de prueba de la ultima hora")
+		response.Err(w, http.StatusTooManyRequests, "TEST_SEND_LIMIT_REACHED", "se alcanzó el tope de envíos de prueba de la última hora")
 	case errors.Is(err, domain.ErrReputationUnavailable):
-		response.Err(w, http.StatusServiceUnavailable, "REPUTATION_UNAVAILABLE", "reputation no respondio; no se encolo nada")
+		response.Err(w, http.StatusServiceUnavailable, "REPUTATION_UNAVAILABLE", "reputation no respondió; no se encoló nada")
 	case errors.Is(err, domain.ErrTemplateNotMarketing):
 		response.Err(w, http.StatusUnprocessableEntity, "TEMPLATE_NOT_MARKETING", "la plantilla no es de tipo marketing")
 	case errors.Is(err, domain.ErrTemplateMissingUnsubscribe):
 		response.Err(w, http.StatusUnprocessableEntity, "TEMPLATE_MISSING_UNSUBSCRIBE", "la plantilla de marketing no lleva el enlace de baja obligatorio")
 	case errors.Is(err, domain.ErrTemplateNotTransactional):
-		response.Err(w, http.StatusUnprocessableEntity, "TEMPLATE_NOT_TRANSACTIONAL", "la plantilla es de marketing: una campana sale por la via de marketing")
+		response.Err(w, http.StatusUnprocessableEntity, "TEMPLATE_NOT_TRANSACTIONAL", "la plantilla es de marketing: una campaña sale por la vía de marketing")
 	case errors.Is(err, domain.ErrIdempotencyKeyReused):
-		response.Err(w, http.StatusConflict, "IDEMPOTENCY_KEY_REUSED", "la clave de idempotencia ya identifica una peticion de otra clase")
+		response.Err(w, http.StatusConflict, "IDEMPOTENCY_KEY_REUSED", "la clave de idempotencia ya identifica una petición de otra clase")
 	case errors.Is(err, domain.ErrNotFound):
 		response.ErrNotFound(w, "recurso no encontrado")
 	case errors.Is(err, domain.ErrAttachmentsNotSupported):
 		response.Err(w, http.StatusUnprocessableEntity, "ATTACHMENTS_NOT_SUPPORTED", "los adjuntos no se admiten en esta fase")
 	case errors.Is(err, domain.ErrSendingDomainNotVerified):
-		response.Err(w, http.StatusUnprocessableEntity, "SENDING_DOMAIN_NOT_VERIFIED", "el dominio del remitente no esta verificado para envio")
+		response.Err(w, http.StatusUnprocessableEntity, "SENDING_DOMAIN_NOT_VERIFIED", "el dominio del remitente no está verificado para envío")
 	case errors.Is(err, domain.ErrTemplateNotFound):
-		response.Err(w, http.StatusUnprocessableEntity, "TEMPLATE_NOT_FOUND", "la plantilla o su version no existe")
+		response.Err(w, http.StatusUnprocessableEntity, "TEMPLATE_NOT_FOUND", "la plantilla o su versión no existe")
 	case errors.Is(err, domain.ErrSuppressionUnavailable):
-		response.Err(w, http.StatusServiceUnavailable, "SUPPRESSION_UNAVAILABLE", "la lista de supresion no esta disponible; no se encolo nada")
+		response.Err(w, http.StatusServiceUnavailable, "SUPPRESSION_UNAVAILABLE", "la lista de supresión no está disponible; no se encoló nada")
 	case errors.Is(err, domain.ErrTemplatesUnavailable):
-		response.Err(w, http.StatusServiceUnavailable, "TEMPLATES_UNAVAILABLE", "el servicio de plantillas no esta disponible")
+		response.Err(w, http.StatusServiceUnavailable, "TEMPLATES_UNAVAILABLE", "el servicio de plantillas no está disponible")
 	case errors.Is(err, domain.ErrTenantMismatch), errors.Is(err, domain.ErrInvalidSignature):
-		response.ErrForbidden(w, "operacion no permitida")
+		response.ErrForbidden(w, "operación no permitida")
 	case domain.IsValidation(err):
 		response.ErrValidation(w, err.Error())
 	default:

@@ -15,7 +15,7 @@ import (
 const PublicPagePath = "/p/"
 
 // ErrPagesUnavailable: el servicio arranco sin lo necesario para las paginas de aterrizaje.
-var ErrPagesUnavailable = errors.New("las paginas de aterrizaje no estan disponibles")
+var ErrPagesUnavailable = errors.New("las páginas de aterrizaje no están disponibles")
 
 // maxRenderedPages acota la cache de documentos servidos; una version publicada no cambia, asi
 // que su documento se arma una vez.

@@ -89,7 +89,7 @@ func (s *Store) Open(ctx context.Context, username string) (ports.Mailbox, error
 // sin que se le pida (mensajes nuevos, banderas), que es lo que usa la vigilancia de la bandeja.
 func (s *Store) dial(ctx context.Context, username string, unilateral *imapclient.UnilateralDataHandler) (*imapclient.Client, error) {
 	if username == "" || strings.ContainsAny(username, masterSeparator+"\r\n\x00 \"") {
-		return nil, fmt.Errorf("%w: nombre de buzon invalido", domain.ErrUnavailable)
+		return nil, fmt.Errorf("%w: nombre de buzón inválido", domain.ErrUnavailable)
 	}
 	d := net.Dialer{Timeout: s.cfg.DialTimeout}
 	conn, err := d.DialContext(ctx, "tcp", s.cfg.Addr)

@@ -171,7 +171,7 @@ func (uc *UseCase) buildTestMessage(ctx context.Context, cmd TemplateTestCommand
 		return nil, fmt.Errorf("%w: el render no informa el tipo de plantilla", domain.ErrTemplatesUnavailable)
 	}
 	if len(rendered.HTML)+len(rendered.Text) > domain.MaxBodyBytes {
-		return nil, domain.NewValidationError("la plantilla renderizada supera el limite de %d bytes", domain.MaxBodyBytes)
+		return nil, domain.NewValidationError("la plantilla renderizada supera el límite de %d bytes", domain.MaxBodyBytes)
 	}
 	msg.Subject = domain.TestSubjectPrefix + rendered.Subject
 	msg.HTML = optional(rendered.HTML)

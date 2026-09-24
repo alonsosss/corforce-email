@@ -85,7 +85,7 @@ func (o Options) Validate() error {
 		problems = append(problems, "SES_IDENTITIES_ACCESS_KEY_ID y SES_IDENTITIES_SECRET_ACCESS_KEY deben definirse juntas")
 	}
 	if !domain.ValidSESRegion(o.Region) {
-		problems = append(problems, fmt.Sprintf("SES_REGION %q no es una region de AWS", o.Region))
+		problems = append(problems, fmt.Sprintf("SES_REGION %q no es una región de AWS", o.Region))
 	}
 	if o.ConfigurationSet == "" {
 		problems = append(problems, "falta SES_CONFIG_SET_TRANSACTIONAL, el conjunto por defecto de las identidades")
@@ -144,7 +144,7 @@ func (c *Client) accountID(ctx context.Context) (string, error) {
 	}
 	account := aws.ToString(out.Account)
 	if len(account) != 12 {
-		return "", fmt.Errorf("STS devolvio una cuenta no valida: %q", account)
+		return "", fmt.Errorf("STS devolvió una cuenta no válida: %q", account)
 	}
 	c.account = account
 	return account, nil
@@ -295,7 +295,7 @@ func signingAttributes(key ports.DKIMKey) (*types.DkimSigningAttributes, error) 
 func privateKeyDER(privatePEM string) ([]byte, error) {
 	block, rest := pem.Decode([]byte(privatePEM))
 	if block == nil || block.Type != "RSA PRIVATE KEY" || len(strings.TrimSpace(string(rest))) > 0 {
-		return nil, errors.New("la clave DKIM no es un unico PEM RSA PKCS#1")
+		return nil, errors.New("la clave DKIM no es un único PEM RSA PKCS#1")
 	}
 	return block.Bytes, nil
 }

@@ -46,7 +46,7 @@ type Attendee struct {
 func NormalizeAddress(field, raw string) (string, error) {
 	a := strings.ToLower(strings.TrimSpace(raw))
 	if len(a) > maxAddressLength || !addressRe.MatchString(a) {
-		return "", fieldError(field, "no es una direccion de correo valida")
+		return "", fieldError(field, "no es una dirección de correo válida")
 	}
 	return a, nil
 }

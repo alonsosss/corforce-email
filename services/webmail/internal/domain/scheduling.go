@@ -155,7 +155,7 @@ func NewAvailabilityQuery(raw []string) ([]string, error) {
 		}
 	}
 	if len(out) == 0 {
-		return nil, invalid("addresses", "hace falta al menos una direccion")
+		return nil, invalid("addresses", "hace falta al menos una dirección")
 	}
 	if len(out) > MaxAvailabilityAddresses {
 		return nil, invalid("addresses", "demasiadas direcciones")

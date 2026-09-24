@@ -31,7 +31,7 @@ type TenantModuleState struct {
 }
 
 var (
-	ErrModuleNotFound = errors.New("modulo no encontrado en el catalogo")
-	ErrModuleCore     = errors.New("un modulo esencial no puede deshabilitarse")
-	ErrModuleRequired = errors.New("otro modulo habilitado depende de este")
+	ErrModuleNotFound = errors.New("módulo no encontrado en el catálogo")
+	ErrModuleCore     = errors.New("un módulo esencial no puede deshabilitarse")
+	ErrModuleRequired = errors.New("otro módulo habilitado depende de este")
 )

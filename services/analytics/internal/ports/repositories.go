@@ -11,10 +11,10 @@ import (
 
 var (
 	// ErrSchedulerUnavailable: el scheduler no respondio. El cierre se vuelve a intentar.
-	ErrSchedulerUnavailable = errors.New("el scheduler no esta disponible")
+	ErrSchedulerUnavailable = errors.New("el scheduler no está disponible")
 	// ErrReportRejected: el scheduler rechazo el cierre de forma definitiva (la ejecucion ya
 	// vencio, se cancelo o no es de esta empresa). Repetirlo daria siempre lo mismo.
-	ErrReportRejected = errors.New("el scheduler rechazo el cierre de la ejecucion")
+	ErrReportRejected = errors.New("el scheduler rechazó el cierre de la ejecución")
 )
 
 // SchedulerReporter cierra en el scheduler la ejecucion que despacho un trabajo. Es el

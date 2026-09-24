@@ -191,7 +191,7 @@ func (h *Handler) GetCampaign(w http.ResponseWriter, r *http.Request) {
 	}
 	campaignID, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		response.ErrBadRequest(w, "identificador de campana no valido")
+		response.ErrBadRequest(w, "identificador de campaña no válido")
 		return
 	}
 	q := r.URL.Query()
@@ -216,7 +216,7 @@ func (h *Handler) CampaignLinks(w http.ResponseWriter, r *http.Request) {
 	}
 	campaignID, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		response.ErrBadRequest(w, "identificador de campana no valido")
+		response.ErrBadRequest(w, "identificador de campaña no válido")
 		return
 	}
 	limit, err := domain.ParseLinksLimit(r.URL.Query().Get("limit"))
@@ -275,7 +275,7 @@ func (h *Handler) Domains(w http.ResponseWriter, r *http.Request) {
 func tenantFrom(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
 	id, err := uuid.Parse(middleware.GetTenantID(r.Context()))
 	if err != nil {
-		response.ErrUnauthorized(w, "empresa no valida")
+		response.ErrUnauthorized(w, "empresa no válida")
 		return uuid.Nil, false
 	}
 	return id, true

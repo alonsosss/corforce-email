@@ -92,7 +92,7 @@ describe('visor de registros del superadmin', () => {
   it('sin Loki configurado lo dice y no deja consultar', async () => {
     vi.spyOn(observabilityApi, 'listLogServices').mockResolvedValue(SERVICES);
     vi.spyOn(observabilityApi, 'queryLogs').mockRejectedValue(
-      new ApiError(503, { code: 'NOT_CONFIGURED', message: 'integracion no configurada' }),
+      new ApiError(503, { code: 'NOT_CONFIGURED', message: 'integración no configurada' }),
     );
     const user = userEvent.setup();
     render(<LogsPage />);

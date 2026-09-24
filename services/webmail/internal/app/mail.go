@@ -154,7 +154,7 @@ func (s *Service) Move(ctx context.Context, sess domain.Session, folder string, 
 		return err
 	}
 	if dest == folder {
-		return domain.NewValidationError("to", "el mensaje ya esta en esa carpeta")
+		return domain.NewValidationError("to", "el mensaje ya está en esa carpeta")
 	}
 	return s.withMailbox(ctx, sess, func(mb ports.Mailbox) error {
 		return requireOne(mb.Move(ctx, folder, []uint32{uid}, dest))
@@ -199,7 +199,7 @@ func (s *Service) Batch(ctx context.Context, sess domain.Session, folder string,
 		case domain.BatchDelete:
 			res, err = s.deleteMessages(ctx, mb, folder, b.UIDs)
 		default:
-			err = domain.NewValidationError("action", "accion desconocida")
+			err = domain.NewValidationError("action", "acción desconocida")
 		}
 		return err
 	})

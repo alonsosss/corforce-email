@@ -195,7 +195,7 @@ func (p *DBProvisioner) databaseMarker(ctx context.Context, target domain.DBTarg
 func (p *DBProvisioner) CreateDatabase(ctx context.Context, target domain.DBTarget, tenantID uuid.UUID) error {
 	name := sanitizeDBName(target.DBName)
 	if name == "" {
-		return fmt.Errorf("nombre de base vacio para la empresa %s", tenantID)
+		return fmt.Errorf("nombre de base vacío para la empresa %s", tenantID)
 	}
 	marker := tenantDBMarker(tenantID)
 	err := p.adminExec(ctx, target, "CREATE DATABASE "+name)

@@ -20,7 +20,7 @@ const destinationSecretBytes = 32
 // ErrCredentialInvalid es el unico motivo que sale de una verificacion fallida: un formato malo, un
 // trabajo que no existe, uno cerrado, cancelado o con el lease vencido, un secreto que no coincide o un
 // buzon distinto son lo mismo para quien pregunta.
-var ErrCredentialInvalid = errors.New("credencial de destino no valida")
+var ErrCredentialInvalid = errors.New("credencial de destino no válida")
 
 // DestinationCredential es la credencial que abre el buzon destino de UN trabajo mientras dura. Token
 // viaja una sola vez, al ejecutor que reclama el trabajo; el servicio solo guarda Hash, el SHA-256 del

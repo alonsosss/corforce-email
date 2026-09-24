@@ -6,7 +6,7 @@ import (
 )
 
 // ErrImportTooManyCards: el fichero trae mas tarjetas de las que admite una importacion.
-var ErrImportTooManyCards = errors.New("el fichero trae mas tarjetas de las que admite una importacion")
+var ErrImportTooManyCards = errors.New("el fichero trae más tarjetas de las que admite una importación")
 
 // SplitVCards parte un fichero .vcf con varias tarjetas en el texto de cada una, sin validarlas: cada
 // tarjeta se valida despues por separado, de modo que una mala no impide importar las demas. Lo que queda

@@ -229,7 +229,7 @@ func (v *Verifier) certificate(ctx context.Context, rawURL string) (*x509.Certif
 		return nil, ErrCertURL
 	}
 	if v.region != "" && !strings.HasPrefix(rawURL, "https://sns."+v.region+".amazonaws.com/") {
-		return nil, fmt.Errorf("%w: el certificado no es de la region del topic (%s)", ErrCertURL, v.region)
+		return nil, fmt.Errorf("%w: el certificado no es de la región del topic (%s)", ErrCertURL, v.region)
 	}
 	now := v.now()
 	v.mu.Lock()

@@ -111,11 +111,11 @@ func (h *Handler) writeIntegrityError(w http.ResponseWriter, err error) bool {
 		return false
 	case errors.Is(err, domain.ErrVerificationBusy):
 		w.Header().Set("Retry-After", verifyRetryAfterSeconds)
-		response.Err(w, http.StatusTooManyRequests, "VERIFICATION_BUSY", "ya hay una verificacion de la cadena en curso; reintenta cuando termine")
+		response.Err(w, http.StatusTooManyRequests, "VERIFICATION_BUSY", "ya hay una verificación de la cadena en curso; reintenta cuando termine")
 	case errors.Is(err, context.DeadlineExceeded):
-		response.Err(w, http.StatusGatewayTimeout, "VERIFICATION_TIMEOUT", "la verificacion de la cadena excedio su plazo")
+		response.Err(w, http.StatusGatewayTimeout, "VERIFICATION_TIMEOUT", "la verificación de la cadena excedió su plazo")
 	case errors.Is(err, domain.ErrRunNotFound):
-		response.ErrNotFound(w, "verificacion no encontrada")
+		response.ErrNotFound(w, "verificación no encontrada")
 	default:
 		response.Unexpected(w, err)
 	}
@@ -149,7 +149,7 @@ func (h *Handler) startIntegrityRun(w http.ResponseWriter, r *http.Request) {
 	if errors.Is(err, domain.ErrRunActive) {
 		w.Header().Set("Location", runLocation(run.ID))
 		response.ErrWithDetails(w, http.StatusConflict, "VERIFICATION_RUNNING",
-			"la empresa ya tiene una verificacion de la cadena en curso", map[string]string{"run_id": run.ID.String()})
+			"la empresa ya tiene una verificación de la cadena en curso", map[string]string{"run_id": run.ID.String()})
 		return
 	}
 	if h.writeIntegrityError(w, err) {

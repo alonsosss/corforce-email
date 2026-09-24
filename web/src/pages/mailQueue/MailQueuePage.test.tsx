@@ -148,7 +148,7 @@ describe('cola de correo del superadmin', () => {
 
   it('sin agente configurado lo dice y no ofrece vaciar la cola', async () => {
     vi.spyOn(mailSecurityApi, 'listQueue').mockRejectedValue(
-      new ApiError(503, { code: 'NOT_CONFIGURED', message: 'integracion no configurada' }),
+      new ApiError(503, { code: 'NOT_CONFIGURED', message: 'integración no configurada' }),
     );
     renderPage();
     expect(await screen.findByText(t('mailQueue.notConfigured'))).toBeInTheDocument();

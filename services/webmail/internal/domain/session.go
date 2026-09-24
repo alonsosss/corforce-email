@@ -77,7 +77,7 @@ type SessionPolicy struct {
 	Max  time.Duration
 }
 
-var errInvalidSessionPolicy = errors.New("politica de sesion invalida: inactividad y vida maxima deben ser positivas y la inactividad no puede superar la vida maxima")
+var errInvalidSessionPolicy = errors.New("política de sesión inválida: inactividad y vida máxima deben ser positivas y la inactividad no puede superar la vida máxima")
 
 // Validate rechaza una politica que dejaria sesiones sin limite o incoherentes.
 func (p SessionPolicy) Validate() error {

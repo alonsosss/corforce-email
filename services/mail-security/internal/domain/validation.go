@@ -31,7 +31,7 @@ func ValidateRateLimitValue(value string) error {
 func ValidateListPattern(pattern string) error {
 	p := strings.ToLower(strings.TrimSpace(pattern))
 	if p == "" || p == "*" || p == "@" || !listPattern.MatchString(p) {
-		return newValidation("pattern debe ser una direccion, @dominio o un comodin con *")
+		return newValidation("pattern debe ser una dirección, @dominio o un comodín con *")
 	}
 	if strings.Count(p, "@") > 1 {
 		return newValidation("pattern solo admite una @")
@@ -44,7 +44,7 @@ func ValidateListPattern(pattern string) error {
 func ValidateSettingsMapContent(content string) error {
 	trimmed := strings.TrimSpace(content)
 	if trimmed == "" {
-		return newValidation("content no puede estar vacio")
+		return newValidation("content no puede estar vacío")
 	}
 	if strings.Contains(strings.ToLower(strings.Join(strings.Fields(trimmed), " ")), "settings {") {
 		return newValidation("content no puede contener un bloque settings { }")
@@ -57,7 +57,7 @@ func ValidateSettingsMapContent(content string) error {
 		case '}':
 			depth--
 			if depth < 0 {
-				return newValidation("content cierra una llave que no abrio")
+				return newValidation("content cierra una llave que no abrió")
 			}
 		}
 	}
@@ -81,7 +81,7 @@ func ValidateQuarantineMaxSize(bytes int64) error {
 // no guardar nada mas que el ultimo mensaje es una decision de la empresa.
 func ValidateQuarantineRetentionSize(size int) error {
 	if size < 0 || size > MaxQuarantineRetentionSize {
-		return newValidation(fmt.Sprintf("retention_size debe estar entre 0 y %d mensajes por buzon, lo que la celda guarda y deja revisar", MaxQuarantineRetentionSize))
+		return newValidation(fmt.Sprintf("retention_size debe estar entre 0 y %d mensajes por buzón, lo que la celda guarda y deja revisar", MaxQuarantineRetentionSize))
 	}
 	return nil
 }
@@ -89,7 +89,7 @@ func ValidateQuarantineRetentionSize(size int) error {
 // ValidateQuarantineMaxAgeDays acota cuanto conserva la celda un mensaje en cuarentena.
 func ValidateQuarantineMaxAgeDays(days int) error {
 	if days <= 0 || days > MaxQuarantineMaxAgeDays {
-		return newValidation(fmt.Sprintf("max_age_days debe estar entre 1 y %d dias, lo que la celda conserva el correo en cuarentena", MaxQuarantineMaxAgeDays))
+		return newValidation(fmt.Sprintf("max_age_days debe estar entre 1 y %d días, lo que la celda conserva el correo en cuarentena", MaxQuarantineMaxAgeDays))
 	}
 	return nil
 }
@@ -121,7 +121,7 @@ func NormalizeHost(host string) (string, error) {
 // ValidateDomainName acepta un nombre de dominio en minusculas.
 func ValidateDomainName(domain string) error {
 	if !domainName.MatchString(domain) || len(domain) > 253 {
-		return newValidation("domain no es un nombre de dominio valido")
+		return newValidation("domain no es un nombre de dominio válido")
 	}
 	return nil
 }
@@ -129,7 +129,7 @@ func ValidateDomainName(domain string) error {
 // ValidateDKIMSelector acota el selector a lo que cabe en un nombre DNS.
 func ValidateDKIMSelector(selector string) error {
 	if !dkimSelector.MatchString(selector) || len(selector) > 63 {
-		return newValidation("selector no es valido")
+		return newValidation("selector no es válido")
 	}
 	return nil
 }
@@ -174,7 +174,7 @@ func ValidateObject(object string) error {
 	}
 	local, domain, ok := SplitAddress(object)
 	if !ok || !listPattern.MatchString(local) || strings.Contains(local, "*") || strings.Contains(local, "@") {
-		return newValidation("object debe ser un buzon (user@dominio) o un dominio")
+		return newValidation("object debe ser un buzón (user@dominio) o un dominio")
 	}
 	return ValidateDomainName(domain)
 }

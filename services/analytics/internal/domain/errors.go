@@ -11,7 +11,7 @@ var (
 	ErrInvalidEvent = errors.New("evento no contabilizable")
 	// ErrCampaignNotFound: la campana no aparece ni en los eventos de campaigns ni en
 	// los agregados de envio de la empresa.
-	ErrCampaignNotFound = errors.New("campana sin datos de envio")
+	ErrCampaignNotFound = errors.New("campaña sin datos de envío")
 )
 
 // ValidationError es un parametro de consulta fuera de contrato.

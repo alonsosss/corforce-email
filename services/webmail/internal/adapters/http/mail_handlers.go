@@ -30,7 +30,7 @@ func folderParam(r *http.Request) (string, error) {
 	if r.URL.RawPath != "" {
 		decoded, err := url.PathUnescape(raw)
 		if err != nil {
-			return "", domain.NewValidationError("folder", "codificacion invalida")
+			return "", domain.NewValidationError("folder", "codificación inválida")
 		}
 		raw = decoded
 	}

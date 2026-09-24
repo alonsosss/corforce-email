@@ -226,7 +226,7 @@ func (h *Handler) Plan(w http.ResponseWriter, r *http.Request) {
 func errOptional(field string, err error) error {
 	var syntax *json.SyntaxError
 	if errors.As(err, &syntax) {
-		return errors.New(field + ": JSON no valido")
+		return errors.New(field + ": JSON no válido")
 	}
 	return errors.New(field + ": " + err.Error())
 }

@@ -38,11 +38,11 @@ func (uc *UseCase) SendTest(ctx context.Context, tenantID, userID, templateID uu
 	}
 	from := strings.TrimSpace(in.FromEmail)
 	if !domain.ValidEmailAddress(from) {
-		return nil, fmt.Errorf("%w: from.email no es un correo valido", domain.ErrInvalidTestSend)
+		return nil, fmt.Errorf("%w: from.email no es un correo válido", domain.ErrInvalidTestSend)
 	}
 	replyTo := strings.TrimSpace(in.ReplyTo)
 	if replyTo != "" && !domain.ValidEmailAddress(replyTo) {
-		return nil, fmt.Errorf("%w: reply_to no es un correo valido", domain.ErrInvalidTestSend)
+		return nil, fmt.Errorf("%w: reply_to no es un correo válido", domain.ErrInvalidTestSend)
 	}
 	t, err := uc.repo.GetTemplate(ctx, tenantID, templateID)
 	if err != nil {

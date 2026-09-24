@@ -25,7 +25,7 @@ type DOISettings struct {
 // dejarlos a medias, pero lo que se indique debe ser valido.
 func (s *DOISettings) Normalize() error {
 	if s.TemplateID != nil && *s.TemplateID == uuid.Nil {
-		return NewValidationError("template_id no es valido")
+		return NewValidationError("template_id no es válido")
 	}
 	if s.Enabled && s.TemplateID == nil {
 		return NewValidationError("template_id es obligatorio para activar el doble opt-in")
@@ -39,11 +39,11 @@ func (s *DOISettings) Normalize() error {
 	s.FromEmail = ""
 	s.FromName = strings.TrimSpace(s.FromName)
 	if utf8.RuneCountInString(s.FromName) > MaxNameLen {
-		return NewValidationError("from_name admite como maximo %d caracteres", MaxNameLen)
+		return NewValidationError("from_name admite como máximo %d caracteres", MaxNameLen)
 	}
 	s.ReplyTo = NormalizeEmail(s.ReplyTo)
 	if s.ReplyTo != "" && !ValidEmail(s.ReplyTo) {
-		return NewValidationError("reply_to debe ser un correo valido")
+		return NewValidationError("reply_to debe ser un correo válido")
 	}
 	return nil
 }
@@ -116,7 +116,7 @@ type DOILimits struct {
 
 func (l DOILimits) Validate() error {
 	if l.PerDay < 1 || l.Per30Days < l.PerDay {
-		return NewValidationError("los limites del doble opt-in deben cumplir 1 <= por dia <= por 30 dias")
+		return NewValidationError("los límites del doble opt-in deben cumplir 1 <= por día <= por 30 días")
 	}
 	return nil
 }
@@ -142,18 +142,18 @@ const maxEventIDLen = 200
 // hay correo posible y reintentar no lo arregla.
 func (r *ConsentRequest) Validate() error {
 	if r.EventID == "" || len(r.EventID) > maxEventIDLen {
-		return NewValidationError("evento sin id valido")
+		return NewValidationError("evento sin id válido")
 	}
 	if r.TenantID == uuid.Nil || r.ContactID == uuid.Nil {
 		return NewValidationError("evento sin empresa o contacto")
 	}
 	r.Email = NormalizeEmail(r.Email)
 	if !ValidEmail(r.Email) {
-		return NewValidationError("evento sin direccion valida")
+		return NewValidationError("evento sin dirección válida")
 	}
 	u, err := url.Parse(strings.TrimSpace(r.ConfirmURL))
 	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
-		return NewValidationError("evento sin enlace de confirmacion valido")
+		return NewValidationError("evento sin enlace de confirmación válido")
 	}
 	r.FirstName = strings.TrimSpace(r.FirstName)
 	if utf8.RuneCountInString(r.FirstName) > MaxNameLen {

@@ -106,7 +106,7 @@ func (t *Trigger) validate() error {
 			return NewValidationError("trigger.campaign_id solo aplica a email.clicked")
 		}
 		if *t.CampaignID == uuid.Nil {
-			return NewValidationError("trigger.campaign_id no es valido")
+			return NewValidationError("trigger.campaign_id no es válido")
 		}
 	}
 	return nil
@@ -188,17 +188,17 @@ func NewWorkflow(tenantID uuid.UUID, in NewWorkflowInput) (*Workflow, error) {
 func (w *Workflow) validate() error {
 	w.Name = strings.TrimSpace(w.Name)
 	if w.Name == "" || utf8.RuneCountInString(w.Name) > MaxNameLen {
-		return NewValidationError("name es obligatorio y admite como maximo %d caracteres", MaxNameLen)
+		return NewValidationError("name es obligatorio y admite como máximo %d caracteres", MaxNameLen)
 	}
 	w.Description = strings.TrimSpace(w.Description)
 	if utf8.RuneCountInString(w.Description) > MaxDescriptionLen {
-		return NewValidationError("description admite como maximo %d caracteres", MaxDescriptionLen)
+		return NewValidationError("description admite como máximo %d caracteres", MaxDescriptionLen)
 	}
 	if err := w.Trigger.validate(); err != nil {
 		return err
 	}
 	if w.ListID != nil && *w.ListID == uuid.Nil {
-		return NewValidationError("list_id no es valido")
+		return NewValidationError("list_id no es válido")
 	}
 	return ValidateSteps(w.Steps)
 }
@@ -272,7 +272,7 @@ func (w *Workflow) Activate(now time.Time) error {
 	}
 	for i, s := range w.Steps {
 		if s.Type == StepSendEmail && s.TemplateVersion == nil {
-			return NewValidationError("steps[%d].template_version no esta fijada", i)
+			return NewValidationError("steps[%d].template_version no está fijada", i)
 		}
 	}
 	w.Status = StatusActive

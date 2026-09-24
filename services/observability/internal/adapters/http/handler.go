@@ -123,7 +123,7 @@ func writeError(w http.ResponseWriter, err error) {
 	case errors.Is(err, domain.ErrNotConfigured):
 		response.Err(w, http.StatusServiceUnavailable, "NOT_CONFIGURED", err.Error())
 	case errors.Is(err, domain.ErrStoreUnavailable), errors.Is(err, domain.ErrStoreRejected):
-		response.Err(w, http.StatusBadGateway, "LOGS_UNAVAILABLE", "el almacen de registros no pudo atender la consulta")
+		response.Err(w, http.StatusBadGateway, "LOGS_UNAVAILABLE", "el almacén de registros no pudo atender la consulta")
 	default:
 		response.Unexpected(w, err)
 	}

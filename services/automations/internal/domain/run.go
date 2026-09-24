@@ -112,7 +112,7 @@ const dateLayout = "2006-01-02"
 func NewDateRun(w *Workflow, contactID uuid.UUID, occurrence string, now time.Time) (*Run, error) {
 	day, err := time.Parse(dateLayout, occurrence)
 	if err != nil || contactID == uuid.Nil {
-		return nil, NewValidationError("aniversario sin contacto o con una fecha no valida: %q", occurrence)
+		return nil, NewValidationError("aniversario sin contacto o con una fecha no válida: %q", occurrence)
 	}
 	key := EntryOnce
 	if w.ReEntry {

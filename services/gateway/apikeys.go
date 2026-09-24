@@ -169,7 +169,7 @@ func (g *apiKeyGate) authenticate(jwt func(http.Handler) http.Handler) func(http
 			switch {
 			case errors.Is(err, apikey.ErrInvalid):
 				apiKeyRequests.WithLabelValues(apiKeyResultInvalid).Inc()
-				apiKeyError(w, http.StatusUnauthorized, "API_KEY_INVALID", "clave de API invalida, revocada o caducada")
+				apiKeyError(w, http.StatusUnauthorized, "API_KEY_INVALID", "clave de API inválida, revocada o caducada")
 				return
 			case err != nil:
 				apiKeyRequests.WithLabelValues(apiKeyResultUnavailable).Inc()
@@ -180,7 +180,7 @@ func (g *apiKeyGate) authenticate(jwt func(http.Handler) http.Handler) func(http
 			if ok, reset := g.limiter.AllowKey(r.Context(), p.ID); !ok {
 				apiKeyRequests.WithLabelValues(apiKeyResultRateLimited).Inc()
 				w.Header().Set("Retry-After", strconv.Itoa(max(1, int(reset.Seconds()+0.999))))
-				apiKeyError(w, http.StatusTooManyRequests, "RATE_LIMITED", "la clave supero su cupo de peticiones")
+				apiKeyError(w, http.StatusTooManyRequests, "RATE_LIMITED", "la clave superó su cupo de peticiones")
 				return
 			}
 			apiKeyRequests.WithLabelValues(apiKeyResultOK).Inc()

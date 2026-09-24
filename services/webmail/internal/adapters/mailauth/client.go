@@ -109,7 +109,7 @@ func (c *Client) Verify(ctx context.Context, username, password, remoteIP string
 	case http.StatusUnauthorized:
 		return domain.Identity{}, domain.ErrInvalidCredentials
 	default:
-		return domain.Identity{}, fmt.Errorf("%w: mail-auth respondio %d", domain.ErrUnavailable, resp.StatusCode)
+		return domain.Identity{}, fmt.Errorf("%w: mail-auth respondió %d", domain.ErrUnavailable, resp.StatusCode)
 	}
 }
 

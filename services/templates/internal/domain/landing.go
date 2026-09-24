@@ -35,15 +35,15 @@ var pageSlugRegex = regexp.MustCompile(PageSlugPattern)
 func PageStatuses() []string { return []string{PageStatusActive, PageStatusArchived} }
 
 var (
-	ErrPageNotFound        = errors.New("pagina no encontrada")
-	ErrPageVersionNotFound = errors.New("version de pagina no encontrada")
-	ErrPageNameTaken       = errors.New("ya existe una pagina con ese nombre")
-	ErrPageSlugTaken       = errors.New("ya existe una pagina con esa direccion")
-	ErrPageNotArchived     = errors.New("la pagina debe estar archivada para borrarse")
-	ErrPageArchived        = errors.New("la pagina esta archivada")
-	ErrPageNotPublished    = errors.New("la pagina no tiene ninguna version publicada")
+	ErrPageNotFound        = errors.New("página no encontrada")
+	ErrPageVersionNotFound = errors.New("versión de página no encontrada")
+	ErrPageNameTaken       = errors.New("ya existe una página con ese nombre")
+	ErrPageSlugTaken       = errors.New("ya existe una página con esa dirección")
+	ErrPageNotArchived     = errors.New("la página debe estar archivada para borrarse")
+	ErrPageArchived        = errors.New("la página está archivada")
+	ErrPageNotPublished    = errors.New("la página no tiene ninguna versión publicada")
 	// ErrInvalidPage envuelve cualquier defecto de la cabecera o del contenido de una pagina.
-	ErrInvalidPage = errors.New("pagina no valida")
+	ErrInvalidPage = errors.New("página no válida")
 )
 
 func invalidPage(format string, args ...any) error {
@@ -104,7 +104,7 @@ type LandingDetail struct {
 func NormalizePageName(raw string) (string, error) {
 	s := strings.TrimSpace(raw)
 	if s == "" || utf8.RuneCountInString(s) > MaxNameLength || strings.ContainsAny(s, "\x00\r\n") {
-		return "", invalidPage("name es obligatorio y admite como maximo %d caracteres", MaxNameLength)
+		return "", invalidPage("name es obligatorio y admite como máximo %d caracteres", MaxNameLength)
 	}
 	return s, nil
 }
@@ -113,7 +113,7 @@ func NormalizePageName(raw string) (string, error) {
 func NormalizePageSlug(raw string) (string, error) {
 	s := strings.TrimSpace(raw)
 	if !pageSlugRegex.MatchString(s) || strings.Contains(s, "--") {
-		return "", invalidPage("slug admite de 1 a %d minusculas, digitos y guiones sueltos, sin guion al principio ni al final", MaxPageSlugLength)
+		return "", invalidPage("slug admite de 1 a %d minúsculas, dígitos y guiones sueltos, sin guion al principio ni al final", MaxPageSlugLength)
 	}
 	return s, nil
 }
@@ -122,11 +122,11 @@ func NormalizePageSlug(raw string) (string, error) {
 func NormalizePageMeta(title, description string) (string, string, error) {
 	t := strings.TrimSpace(title)
 	if t == "" || utf8.RuneCountInString(t) > MaxPageTitleLength || strings.ContainsAny(t, "\x00\r\n") {
-		return "", "", invalidPage("title es obligatorio y admite una linea de como maximo %d caracteres", MaxPageTitleLength)
+		return "", "", invalidPage("title es obligatorio y admite una línea de como máximo %d caracteres", MaxPageTitleLength)
 	}
 	d := strings.TrimSpace(description)
 	if utf8.RuneCountInString(d) > MaxPageDescriptionLen || strings.ContainsAny(d, "\x00\r\n") {
-		return "", "", invalidPage("description admite una linea de como maximo %d caracteres", MaxPageDescriptionLen)
+		return "", "", invalidPage("description admite una línea de como máximo %d caracteres", MaxPageDescriptionLen)
 	}
 	return t, d, nil
 }
@@ -145,7 +145,7 @@ func NormalizePageEditor(e *PageEditorDocument) (*PageEditorDocument, error) {
 	}
 	var compact bytes.Buffer
 	if err := json.Compact(&compact, project); err != nil {
-		return nil, invalidPage("editor.project no es JSON valido")
+		return nil, invalidPage("editor.project no es JSON válido")
 	}
 	out := &PageEditorDocument{Kind: e.Kind, Project: compact.Bytes()}
 	serialized, err := json.Marshal(out)

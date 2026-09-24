@@ -183,7 +183,7 @@ type InternalSendResult struct {
 // practica de envio de la empresa, y no pueden quedar bloqueados por su reputacion.
 func (uc *UseCase) InternalSend(ctx context.Context, cmd InternalSendCommand) (*InternalSendResult, error) {
 	if uc.cfg.PlatformFromEmail == "" {
-		return nil, domain.NewValidationError("PLATFORM_FROM_EMAIL no esta configurado")
+		return nil, domain.NewValidationError("PLATFORM_FROM_EMAIL no está configurado")
 	}
 	cmd.To = domain.NormalizeEmail(cmd.To)
 	if !domain.ValidEmail(cmd.To) {
@@ -196,7 +196,7 @@ func (uc *UseCase) InternalSend(ctx context.Context, cmd InternalSendCommand) (*
 		return nil, domain.NewValidationError("html_body or text_body is required")
 	}
 	if len(cmd.HTMLBody)+len(cmd.TextBody) > domain.MaxBodyBytes {
-		return nil, domain.NewValidationError("el cuerpo supera el limite de %d bytes", domain.MaxBodyBytes)
+		return nil, domain.NewValidationError("el cuerpo supera el límite de %d bytes", domain.MaxBodyBytes)
 	}
 
 	from := domain.NormalizeEmail(uc.cfg.PlatformFromEmail)
@@ -290,7 +290,7 @@ func (uc *UseCase) validateCreate(cmd *CreateMessagesCommand) error {
 		return domain.NewValidationError("template_version requires template_id")
 	}
 	if len(cmd.HTML)+len(cmd.Text) > domain.MaxBodyBytes {
-		return domain.NewValidationError("el cuerpo supera el limite de %d bytes", domain.MaxBodyBytes)
+		return domain.NewValidationError("el cuerpo supera el límite de %d bytes", domain.MaxBodyBytes)
 	}
 	if fansOut(*cmd) && (len(cmd.Cc) > 0 || len(cmd.Bcc) > 0) {
 		// Con plantilla o enlace de baja cada destinatario recibe su propio mensaje; un
@@ -480,7 +480,7 @@ func (uc *UseCase) buildMessages(ctx context.Context, cmd CreateMessagesCommand)
 				return nil, domain.ErrTemplateNotTransactional
 			}
 			if len(rendered.HTML)+len(rendered.Text) > domain.MaxBodyBytes {
-				return nil, domain.NewValidationError("la plantilla renderizada supera el limite de %d bytes", domain.MaxBodyBytes)
+				return nil, domain.NewValidationError("la plantilla renderizada supera el límite de %d bytes", domain.MaxBodyBytes)
 			}
 			msg.Subject = rendered.Subject
 			msg.HTML = optional(rendered.HTML)

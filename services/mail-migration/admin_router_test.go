@@ -24,7 +24,7 @@ func TestLaVerificacionDeCredencialesSoloExigeElTokenDeGateway(t *testing.T) {
 	req.Header.Set("X-Gateway-Token", strings.Repeat("g", 40))
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
-	if rec.Code != http.StatusUnauthorized || !strings.Contains(rec.Body.String(), "credencial no valida") {
+	if rec.Code != http.StatusUnauthorized || !strings.Contains(rec.Body.String(), "credencial no válida") {
 		t.Fatalf("con el token de gateway debe llegar al verificador: %d %s", rec.Code, rec.Body)
 	}
 
@@ -35,7 +35,7 @@ func TestLaVerificacionDeCredencialesSoloExigeElTokenDeGateway(t *testing.T) {
 		}
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, req)
-		if rec.Code != http.StatusUnauthorized || strings.Contains(rec.Body.String(), "credencial no valida") {
+		if rec.Code != http.StatusUnauthorized || strings.Contains(rec.Body.String(), "credencial no válida") {
 			t.Errorf("%s: %d %s", name, rec.Code, rec.Body)
 		}
 	}

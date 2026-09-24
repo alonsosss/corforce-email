@@ -103,7 +103,7 @@ func (h *Handler) InternalRoutes() http.Handler {
 func tenantFrom(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
 	id, err := uuid.Parse(middleware.GetTenantID(r.Context()))
 	if err != nil {
-		response.ErrUnauthorized(w, "la sesion no lleva empresa")
+		response.ErrUnauthorized(w, "la sesión no lleva empresa")
 		return uuid.Nil, false
 	}
 	return id, true
@@ -112,7 +112,7 @@ func tenantFrom(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
 func userFrom(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
 	id, err := uuid.Parse(middleware.GetUserID(r.Context()))
 	if err != nil {
-		response.ErrUnauthorized(w, "la sesion no lleva usuario")
+		response.ErrUnauthorized(w, "la sesión no lleva usuario")
 		return uuid.Nil, false
 	}
 	return id, true
@@ -121,7 +121,7 @@ func userFrom(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
 func idParam(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		response.ErrBadRequest(w, "identificador de plantilla no valido")
+		response.ErrBadRequest(w, "identificador de plantilla no válido")
 		return uuid.Nil, false
 	}
 	return id, true
@@ -130,7 +130,7 @@ func idParam(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
 func versionParam(w http.ResponseWriter, r *http.Request) (int, bool) {
 	n, err := strconv.Atoi(chi.URLParam(r, "n"))
 	if err != nil || n < 1 {
-		response.ErrBadRequest(w, "numero de version no valido")
+		response.ErrBadRequest(w, "número de versión no válido")
 		return 0, false
 	}
 	return n, true
@@ -268,7 +268,7 @@ func (c contentRequest) validate(v *validate.Validator) {
 	v.Required("subject", c.Subject)
 	v.Required("html", c.HTML)
 	if len(c.Variables) > domain.MaxVariables {
-		v.Add("variables", "supera el maximo de "+strconv.Itoa(domain.MaxVariables))
+		v.Add("variables", "supera el máximo de "+strconv.Itoa(domain.MaxVariables))
 	}
 }
 
@@ -614,7 +614,7 @@ func (h *Handler) InternalRender(w http.ResponseWriter, r *http.Request) {
 		v.Add("version", "debe ser mayor que cero")
 	}
 	if req.Test && req.Version == nil {
-		v.Add("version", "el render de prueba exige la version")
+		v.Add("version", "el render de prueba exige la versión")
 	}
 	reservedNames := make([]string, 0, 4)
 	for _, rv := range domain.ReservedVariables() {

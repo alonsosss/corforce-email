@@ -85,7 +85,7 @@ func (h *Handler) requireProvider(action string) func(http.Handler) http.Handler
 func tenantFromRequest(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
 	tenantID, err := uuid.Parse(middleware.GetTenantID(r.Context()))
 	if err != nil {
-		response.ErrUnauthorized(w, "la sesion no lleva empresa")
+		response.ErrUnauthorized(w, "la sesión no lleva empresa")
 		return uuid.Nil, false
 	}
 	return tenantID, true
@@ -96,7 +96,7 @@ func tenantFromRequest(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool)
 func actorFromRequest(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
 	actor, err := uuid.Parse(middleware.GetUserID(r.Context()))
 	if err != nil || actor == uuid.Nil {
-		response.ErrUnauthorized(w, "la sesion no lleva usuario")
+		response.ErrUnauthorized(w, "la sesión no lleva usuario")
 		return uuid.Nil, false
 	}
 	return actor, true
@@ -105,7 +105,7 @@ func actorFromRequest(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) 
 func parseIDParam(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		response.ErrBadRequest(w, "identificador de dominio no valido")
+		response.ErrBadRequest(w, "identificador de dominio no válido")
 		return uuid.Nil, false
 	}
 	return id, true

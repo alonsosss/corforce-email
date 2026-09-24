@@ -207,7 +207,7 @@ func decodeWeekly(raw []byte) ([7][]domain.DayWindow, error) {
 	for code, day := range in {
 		d, ok := domain.WeekdayOf(code)
 		if !ok {
-			return out, fmt.Errorf("dia %q desconocido en las franjas", code)
+			return out, fmt.Errorf("día %q desconocido en las franjas", code)
 		}
 		for _, win := range day {
 			s, err := domain.ParseClock("weekly", win[0])

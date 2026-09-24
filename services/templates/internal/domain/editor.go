@@ -38,7 +38,7 @@ func NormalizeEditor(e *EditorDocument) (*EditorDocument, error) {
 	}
 	var compact bytes.Buffer
 	if err := json.Compact(&compact, project); err != nil {
-		return nil, fmt.Errorf("%w: editor.project no es JSON valido", ErrInvalidEditor)
+		return nil, fmt.Errorf("%w: editor.project no es JSON válido", ErrInvalidEditor)
 	}
 	out := &EditorDocument{Kind: e.Kind, Project: compact.Bytes(), MJML: e.MJML}
 	serialized, err := json.Marshal(out)

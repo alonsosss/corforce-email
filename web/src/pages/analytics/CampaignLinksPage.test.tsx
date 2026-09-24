@@ -67,7 +67,7 @@ function mockApi() {
       [endpoints.templates.version(TEMPLATE_ID, 3)]: { data: { version: 3, variables: [] } },
     };
     if (path === endpoints.analytics.campaigns.byId(CAMPAIGN_ID)) {
-      throw new ApiError(404, { code: 'NOT_FOUND', message: 'campana sin datos de envio' });
+      throw new ApiError(404, { code: 'NOT_FOUND', message: 'campaña sin datos de envío' });
     }
     return responses[path] ?? { data: null };
   }) as typeof api.get);

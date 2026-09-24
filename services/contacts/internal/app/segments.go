@@ -36,7 +36,7 @@ func (uc *UseCase) checkDefinition(ctx context.Context, tenantID uuid.UUID, raw 
 		for _, l := range refs.Lists {
 			id, err := uuid.Parse(l)
 			if err != nil {
-				return segment.Definition{}, segment.Schema{}, nil, segmentError{fmt.Errorf("%w: lista %s no valida", segment.ErrInvalid, l)}
+				return segment.Definition{}, segment.Schema{}, nil, segmentError{fmt.Errorf("%w: lista %s no válida", segment.ErrInvalid, l)}
 			}
 			ids = append(ids, id)
 		}

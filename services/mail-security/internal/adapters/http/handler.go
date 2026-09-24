@@ -200,7 +200,7 @@ func tenantFrom(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
 func idParam(w http.ResponseWriter, r *http.Request, name string) (uuid.UUID, bool) {
 	id, err := uuid.Parse(chi.URLParam(r, name))
 	if err != nil {
-		response.ErrBadRequest(w, name+" invalido")
+		response.ErrBadRequest(w, name+" inválido")
 		return uuid.Nil, false
 	}
 	return id, true
@@ -228,7 +228,7 @@ func writeError(w http.ResponseWriter, err error) {
 	case errors.Is(err, domain.ErrDKIMDomainNotActive):
 		response.Err(w, http.StatusConflict, "DKIM_DOMAIN_NOT_ACTIVE", err.Error())
 	case errors.Is(err, domain.ErrEngineUnreachable), errors.Is(err, domain.ErrEngineRejected), errors.Is(err, domain.ErrEngineCommand):
-		response.Err(w, http.StatusBadGateway, "ENGINE_UNAVAILABLE", "el motor de correo no pudo completar la operacion")
+		response.Err(w, http.StatusBadGateway, "ENGINE_UNAVAILABLE", "el motor de correo no pudo completar la operación")
 	case errors.Is(err, domain.ErrRedisUnavailable):
 		response.Err(w, http.StatusServiceUnavailable, "REDIS_UNAVAILABLE", "el redis de los motores no responde")
 	case errors.As(err, &verr):
@@ -670,7 +670,7 @@ func (h *Handler) ListQuarantine(w http.ResponseWriter, r *http.Request) {
 	if s := q.Get("score_min"); s != "" {
 		min, err := decimal.NewFromString(s)
 		if err != nil {
-			response.ErrBadRequest(w, "score_min invalido")
+			response.ErrBadRequest(w, "score_min inválido")
 			return
 		}
 		f.ScoreMin = &min

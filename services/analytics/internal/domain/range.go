@@ -55,7 +55,7 @@ func ParseRange(from, to string, now time.Time) (Range, error) {
 		return Range{}, &ValidationError{Field: "from", Message: "no puede ser posterior a to"}
 	}
 	if r.Days() > MaxRangeDays {
-		return Range{}, &ValidationError{Field: "to", Message: fmt.Sprintf("el rango admite como maximo %d dias", MaxRangeDays)}
+		return Range{}, &ValidationError{Field: "to", Message: fmt.Sprintf("el rango admite como máximo %d días", MaxRangeDays)}
 	}
 	return r, nil
 }

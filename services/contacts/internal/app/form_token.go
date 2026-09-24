@@ -26,7 +26,7 @@ const (
 
 // ErrFormTokenInvalid cubre el token alterado, de otro formulario, caducado, reutilizado o
 // enviado antes del tiempo minimo de rellenado: quien automatiza envios no aprende cual fallo.
-var ErrFormTokenInvalid = errors.New("el formulario caduco o se envio demasiado rapido: vuelve a cargarlo y envialo de nuevo")
+var ErrFormTokenInvalid = errors.New("el formulario caducó o se envió demasiado rápido: vuelve a cargarlo y envíalo de nuevo")
 
 // FormTokenSigner emite y comprueba el token con que la plataforma sirve cada formulario. Lleva
 // la hora de emision firmada: el envio exige un tiempo minimo de rellenado (un robot que envia
@@ -40,7 +40,7 @@ type FormTokenSigner struct {
 // la clave de los tokens no es el secreto ni sirve para nada mas.
 func NewFormTokenSigner(secret string, random io.Reader) (*FormTokenSigner, error) {
 	if len(secret) < minFormSecretLength {
-		return nil, errors.New("CONTACTS_FORM_TOKEN_KEY falta o es demasiado corta (minimo 32 caracteres: openssl rand -hex 32)")
+		return nil, errors.New("CONTACTS_FORM_TOKEN_KEY falta o es demasiado corta (mínimo 32 caracteres: openssl rand -hex 32)")
 	}
 	mac := hmac.New(sha256.New, []byte(secret))
 	mac.Write([]byte(formTokenKeyLabel))

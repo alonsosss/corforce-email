@@ -22,7 +22,7 @@ const bookingProbe = time.Minute
 
 func (s *Service) schedulingReady() error {
 	if s.scheduling == nil || s.invitations == nil {
-		return unavailable(errors.New("planificacion sin cablear"))
+		return unavailable(errors.New("planificación sin cablear"))
 	}
 	return nil
 }

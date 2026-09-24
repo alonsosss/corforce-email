@@ -98,7 +98,7 @@ const (
 	// MaxFolders y maxFolderNameRunes acotan lo que el ejecutor puede hacer crecer en la fila.
 	MaxFolders            = 500
 	maxFolderNameRunes    = 200
-	runnerLostMessage     = "el ejecutor dejo de responder y se agotaron los reintentos"
+	runnerLostMessage     = "el ejecutor dejó de responder y se agotaron los reintentos"
 	credentialLostMessage = "la credencial de origen no se pudo descifrar con las claves configuradas"
 )
 

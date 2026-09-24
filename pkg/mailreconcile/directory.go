@@ -88,7 +88,7 @@ func (c *DirectoryClient) Existing(ctx context.Context, tenantID uuid.UUID, ids 
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("mail-directory respondio %d a la consulta de existencia", resp.StatusCode)
+		return nil, fmt.Errorf("mail-directory respondió %d a la consulta de existencia", resp.StatusCode)
 	}
 	var out existenceResponse
 	if err := json.NewDecoder(io.LimitReader(resp.Body, maxResponseBody)).Decode(&out); err != nil {

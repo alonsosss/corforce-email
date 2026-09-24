@@ -75,7 +75,7 @@ func (c *Client) CreateScheduled(ctx context.Context, in domain.NewScheduledSend
 		return "", err
 	}
 	if !domain.ValidUUID(out.ID) {
-		return "", c.api.Unavailable("id de envio programado invalido")
+		return "", c.api.Unavailable("id de envío programado inválido")
 	}
 	return out.ID, nil
 }

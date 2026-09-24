@@ -240,7 +240,7 @@ func (r *ContactRepository) UpdateMany(ctx context.Context, contacts []domain.Co
 // herede el permiso.
 func (r *ContactRepository) Erase(ctx context.Context, tenantID, id, pseudonym uuid.UUID, emailSHA256 string) error {
 	if !db.HasTx(ctx) {
-		return fmt.Errorf("el borrado del titular debe correr dentro de una transaccion")
+		return fmt.Errorf("el borrado del titular debe correr dentro de una transacción")
 	}
 	if _, err := r.pool.Exec(ctx, `SET LOCAL app.erasure = 'on'`); err != nil {
 		return err

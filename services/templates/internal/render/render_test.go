@@ -230,7 +230,7 @@ func TestFuncionesProhibidas(t *testing.T) {
 			HTML:      "<p>" + src + "</p>",
 			Variables: vars(domain.Variable{Name: "name", Type: domain.VarString}),
 		})
-		if !errors.Is(err, domain.ErrInvalidTemplate) || !strings.Contains(err.Error(), "funcion no permitida") {
+		if !errors.Is(err, domain.ErrInvalidTemplate) || !strings.Contains(err.Error(), "función no permitida") {
 			t.Errorf("%s: esperaba rechazo por funcion no permitida, obtuve %v", src, err)
 		}
 	}

@@ -183,7 +183,7 @@ func VariantUTMContent(i int) string { return "ab-" + strings.ToLower(VariantLab
 // anterior a las fases, que es la principal.
 func (c *Campaign) ContentFor(p *Phase) (Content, error) {
 	if c.TemplateVersion == nil {
-		return Content{}, NewValidationError("template_version: la campana no tiene version fijada")
+		return Content{}, NewValidationError("template_version: la campaña no tiene versión fijada")
 	}
 	base := Content{TemplateID: c.TemplateID, TemplateVersion: *c.TemplateVersion}
 	if p == nil {
@@ -194,7 +194,7 @@ func (c *Campaign) ContentFor(p *Phase) (Content, error) {
 		return c.variantContent(*p.Variant)
 	case PhaseWinner:
 		if c.ABWinner == nil {
-			return Content{}, NewValidationError("ab_winner: la ganadora aun no se decidio")
+			return Content{}, NewValidationError("ab_winner: la ganadora aún no se decidió")
 		}
 		return c.variantContent(*c.ABWinner)
 	case PhaseResend:
@@ -220,7 +220,7 @@ func (c *Campaign) variantContent(i int) (Content, error) {
 	}
 	v := c.ABTest.Variants[i]
 	if v.PinnedVersion == nil {
-		return Content{}, NewValidationError("ab_test: la variante %s no tiene version fijada", VariantLabel(i))
+		return Content{}, NewValidationError("ab_test: la variante %s no tiene versión fijada", VariantLabel(i))
 	}
 	return Content{
 		TemplateID:      c.ABTest.VariantTemplate(i, c.TemplateID),

@@ -467,7 +467,7 @@ func (c tenantCellRouter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h, served := c.byCell[cell]
 		if !served {
 			c.refuse(w, routingNotServed, middleware.GetTenantID(r.Context()), cell)
-			response.Err(w, http.StatusServiceUnavailable, tenantcell.CodeCellUnavailable, "el servicio no esta disponible en la celda destino")
+			response.Err(w, http.StatusServiceUnavailable, tenantcell.CodeCellUnavailable, "el servicio no está disponible en la celda destino")
 			return
 		}
 		r.Header.Set(middleware.HeaderOperatorCell, cell)
@@ -479,17 +479,17 @@ func (c tenantCellRouter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if errors.Is(err, tenantcell.ErrUnknownTenant) {
 			c.refuse(w, routingUnknownTenant, tenantID, "")
-			response.Err(w, http.StatusForbidden, "FORBIDDEN", "la sesion no corresponde a ninguna empresa")
+			response.Err(w, http.StatusForbidden, "FORBIDDEN", "la sesión no corresponde a ninguna empresa")
 			return
 		}
 		c.refuse(w, routingUnresolved, tenantID, "")
-		response.Err(w, http.StatusServiceUnavailable, "CELL_UNAVAILABLE", "no se pudo determinar la celda de tu empresa; intentalo de nuevo")
+		response.Err(w, http.StatusServiceUnavailable, "CELL_UNAVAILABLE", "no se pudo determinar la celda de tu empresa; inténtalo de nuevo")
 		return
 	}
 	h, ok := c.byCell[cell]
 	if !ok {
 		c.refuse(w, routingNotServed, tenantID, cell)
-		response.Err(w, http.StatusServiceUnavailable, "CELL_UNAVAILABLE", "el servicio no esta disponible para la celda de tu empresa")
+		response.Err(w, http.StatusServiceUnavailable, "CELL_UNAVAILABLE", "el servicio no está disponible para la celda de tu empresa")
 		return
 	}
 	h.ServeHTTP(w, r)

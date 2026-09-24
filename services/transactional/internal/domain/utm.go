@@ -72,7 +72,7 @@ func ParseExcludedDomains(list string) ([]string, error) {
 			continue
 		}
 		if !validHostname(d) {
-			return nil, NewValidationError("dominio excluido de UTM no valido: %q", part)
+			return nil, NewValidationError("dominio excluido de UTM no válido: %q", part)
 		}
 		out = append(out, d)
 	}

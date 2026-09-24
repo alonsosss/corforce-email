@@ -143,7 +143,7 @@ func evaluateMX(expected string, mx []MXRecord) (bool, string, string) {
 			return true, strings.Join(seen, " | "), ""
 		}
 	}
-	return false, strings.Join(seen, " | "), "ningun MX apunta a " + wantHost
+	return false, strings.Join(seen, " | "), "ningún MX apunta a " + wantHost
 }
 
 // evaluateSPF exige un unico registro SPF (RFC 7208: mas de uno invalida la politica) que
@@ -159,7 +159,7 @@ func evaluateSPF(expected string, txt []string) (bool, string, string) {
 		return false, "", "no hay registro SPF"
 	}
 	if len(spf) > 1 {
-		return false, strings.Join(spf, " | "), "hay mas de un registro SPF; debe quedar uno solo"
+		return false, strings.Join(spf, " | "), "hay más de un registro SPF; debe quedar uno solo"
 	}
 	include := strings.Fields(expected)[1]
 	for _, mech := range strings.Fields(spf[0]) {
@@ -189,9 +189,9 @@ func evaluateDKIM(publicKey string, txt []string) (bool, string, string) {
 		if strings.Join(strings.Fields(p), "") == want {
 			return true, v, ""
 		}
-		return false, v, "la clave publica del registro DKIM no coincide con la del selector"
+		return false, v, "la clave pública del registro DKIM no coincide con la del selector"
 	}
-	return false, strings.Join(txt, " | "), "el registro DKIM no lleva la etiqueta p con la clave publica"
+	return false, strings.Join(txt, " | "), "el registro DKIM no lleva la etiqueta p con la clave pública"
 }
 
 // evaluateDMARC acepta cualquier politica valida; si es mas laxa que la configurada lo
@@ -204,10 +204,10 @@ func evaluateDMARC(configured DMARCPolicy, txt []string) (bool, string, string) 
 		}
 		policy := DMARCPolicy(strings.ToLower(tags["p"]))
 		if !policy.Valid() {
-			return false, v, "el registro DMARC no declara una politica p valida"
+			return false, v, "el registro DMARC no declara una política p válida"
 		}
 		if policy != configured {
-			return true, v, fmt.Sprintf("la politica publicada es %s y la configurada %s", policy, configured)
+			return true, v, fmt.Sprintf("la política publicada es %s y la configurada %s", policy, configured)
 		}
 		return true, v, ""
 	}
@@ -222,10 +222,10 @@ func evaluateMTASTS(policyID string, txt []string) (bool, string, string) {
 	case len(records) == 0:
 		return false, strings.Join(txt, " | "), "no hay registro MTA-STS (recomendado)"
 	case len(records) > 1:
-		return false, strings.Join(records, " | "), "hay mas de un registro MTA-STS; debe quedar uno solo"
+		return false, strings.Join(records, " | "), "hay más de un registro MTA-STS; debe quedar uno solo"
 	}
 	if got := parseTags(records[0])["id"]; got != policyID {
-		return false, records[0], fmt.Sprintf("el id publicado es %q y el de la politica vigente %q", got, policyID)
+		return false, records[0], fmt.Sprintf("el id publicado es %q y el de la política vigente %q", got, policyID)
 	}
 	return true, records[0], ""
 }
@@ -238,14 +238,14 @@ func evaluateTLSRPT(rua string, txt []string) (bool, string, string) {
 	case len(records) == 0:
 		return false, strings.Join(txt, " | "), "no hay registro TLS-RPT (recomendado)"
 	case len(records) > 1:
-		return false, strings.Join(records, " | "), "hay mas de un registro TLS-RPT; debe quedar uno solo"
+		return false, strings.Join(records, " | "), "hay más de un registro TLS-RPT; debe quedar uno solo"
 	}
 	for _, target := range strings.Split(parseTags(records[0])["rua"], ",") {
 		if strings.EqualFold(strings.TrimSpace(target), rua) {
 			return true, records[0], ""
 		}
 	}
-	return false, records[0], "el registro TLS-RPT no envia los informes a " + rua
+	return false, records[0], "el registro TLS-RPT no envía los informes a " + rua
 }
 
 // recordsWithVersion filtra los TXT cuya etiqueta tag vale value, sin distinguir mayusculas.

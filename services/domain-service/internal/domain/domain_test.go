@@ -276,7 +276,7 @@ func TestEvaluateTwoSPFRecordsFail(t *testing.T) {
 	obs := allOK(d)
 	obs[RecordSPF] = Observation{TXT: []string{"v=spf1 include:spf.plataforma.example -all", "v=spf1 -all"}}
 	res := Evaluate(d, ExpectedRecords(d, platform, ""), obs, time.Now())
-	if res.Outcome != OutcomeFailed || !strings.Contains(checkByKind(res.Checks, RecordSPF).Detail, "mas de un") {
+	if res.Outcome != OutcomeFailed || !strings.Contains(checkByKind(res.Checks, RecordSPF).Detail, "más de un") {
 		t.Errorf("res = %+v", res)
 	}
 }

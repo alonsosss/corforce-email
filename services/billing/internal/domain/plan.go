@@ -117,7 +117,7 @@ func ParseUnitPrice(s string) (decimal.Decimal, error) {
 // separadores de miles, que son las formas en que un importe se malinterpreta.
 func parseAmount(s string, scale int32, limit decimal.Decimal) (decimal.Decimal, error) {
 	if len(s) > maxAmountLength || !amountPattern.MatchString(s) {
-		return decimal.Decimal{}, fmt.Errorf("%w: %q no es un importe (digitos y punto decimal)", ErrInvalidAmount, s)
+		return decimal.Decimal{}, fmt.Errorf("%w: %q no es un importe (dígitos y punto decimal)", ErrInvalidAmount, s)
 	}
 	d, err := decimal.NewFromString(s)
 	if err != nil {
@@ -134,10 +134,10 @@ func checkAmount(d decimal.Decimal, scale int32, limit decimal.Decimal) error {
 		return fmt.Errorf("%w: no puede ser negativo", ErrInvalidAmount)
 	}
 	if !d.Equal(d.Round(scale)) {
-		return fmt.Errorf("%w: admite como maximo %d decimales", ErrInvalidAmount, scale)
+		return fmt.Errorf("%w: admite como máximo %d decimales", ErrInvalidAmount, scale)
 	}
 	if d.GreaterThanOrEqual(limit) {
-		return fmt.Errorf("%w: supera el maximo admitido", ErrInvalidAmount)
+		return fmt.Errorf("%w: supera el máximo admitido", ErrInvalidAmount)
 	}
 	return nil
 }
@@ -145,13 +145,13 @@ func checkAmount(d decimal.Decimal, scale int32, limit decimal.Decimal) error {
 // Validate comprueba el plan completo antes de guardarlo.
 func (p *Plan) Validate() error {
 	if !planCodePattern.MatchString(p.Code) {
-		return invalidPlan("code debe empezar por una letra minuscula y tener de 2 a 40 caracteres a-z, 0-9, _ o -")
+		return invalidPlan("code debe empezar por una letra minúscula y tener de 2 a 40 caracteres a-z, 0-9, _ o -")
 	}
 	if err := ValidatePlanText(p.Name, p.Description); err != nil {
 		return err
 	}
 	if !currencyPattern.MatchString(p.Currency) {
-		return invalidPlan("currency debe ser un codigo ISO 4217 de tres letras mayusculas")
+		return invalidPlan("currency debe ser un código ISO 4217 de tres letras mayúsculas")
 	}
 	if err := checkAmount(p.BasePrice, PriceScale, maxPrice); err != nil {
 		return invalidPlan("base_price: %v", err)
@@ -184,7 +184,7 @@ func ValidateLimits(limits []PlanLimit) error {
 			return invalidPlan("limits: recurso %q desconocido", l.Resource)
 		}
 		if seen[l.Resource] {
-			return invalidPlan("limits: %s aparece mas de una vez", l.Resource)
+			return invalidPlan("limits: %s aparece más de una vez", l.Resource)
 		}
 		seen[l.Resource] = true
 		if l.Included < Unlimited {
@@ -192,7 +192,7 @@ func ValidateLimits(limits []PlanLimit) error {
 		}
 		if l.OverageUnitPrice != nil {
 			if l.HardLimit || l.Included == Unlimited {
-				return invalidPlan("limits: overage_unit_price de %s solo aplica a un limite blando con cantidad incluida", l.Resource)
+				return invalidPlan("limits: overage_unit_price de %s solo aplica a un límite blando con cantidad incluida", l.Resource)
 			}
 			if err := checkAmount(*l.OverageUnitPrice, UnitPriceScale, maxUnitPrice); err != nil {
 				return invalidPlan("limits: overage_unit_price de %s: %v", l.Resource, err)
@@ -201,7 +201,7 @@ func ValidateLimits(limits []PlanLimit) error {
 	}
 	for _, r := range resources {
 		if !seen[r] {
-			return invalidPlan("limits: falta el limite de %s", r)
+			return invalidPlan("limits: falta el límite de %s", r)
 		}
 	}
 	return nil

@@ -16,7 +16,7 @@ func (uc *UseCase) RecordDeliveryEvent(ctx context.Context, ev domain.DeliveryEv
 		return false, domain.NewValidationError("event_id: el evento no trae un id utilizable")
 	}
 	if ev.Kind.UniquePerMessage() && ev.MessageID == nil {
-		return false, domain.NewValidationError("message_id: %s sin mensaje no se puede contar como unico", ev.Kind)
+		return false, domain.NewValidationError("message_id: %s sin mensaje no se puede contar como único", ev.Kind)
 	}
 	at := ev.OccurredAt
 	if at.IsZero() {

@@ -107,7 +107,7 @@ func (s *Service) replay(ctx context.Context, sess domain.Session, key string, r
 		return domain.SendResult{}, domain.ErrDeliveryUncertain
 	case domain.SendSent:
 	default:
-		return domain.SendResult{}, unavailable(fmt.Errorf("estado de envio desconocido %q", rec.State))
+		return domain.SendResult{}, unavailable(fmt.Errorf("estado de envío desconocido %q", rec.State))
 	}
 	if replaceUID != 0 && rec.SavedToSent && !rec.DraftRemoved {
 		err := s.withMailbox(ctx, sess, func(mb ports.Mailbox) error {
@@ -233,7 +233,7 @@ func (s *Service) prepare(ctx context.Context, sess domain.Session, d *domain.Dr
 			return err
 		}
 		if d.InReplyTo.UID == 0 {
-			return domain.NewValidationError("in_reply_to", "debe ser un UID valido")
+			return domain.NewValidationError("in_reply_to", "debe ser un UID válido")
 		}
 	}
 	if err := s.checkSender(ctx, sess, &d.From); err != nil {

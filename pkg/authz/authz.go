@@ -180,7 +180,7 @@ func (c *Checker) RequirePermission(module, resource, action string) func(http.H
 				return
 			}
 			if !ok {
-				response.ErrForbidden(w, "su rol no tiene permiso para esta operacion")
+				response.ErrForbidden(w, "su rol no tiene permiso para esta operación")
 				return
 			}
 			next.ServeHTTP(w, r)

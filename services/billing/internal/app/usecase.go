@@ -88,7 +88,7 @@ func (uc *UseCase) subscriptionWithPlan(ctx context.Context, tenantID uuid.UUID)
 // validateEventRef rechaza el evento que no se puede deduplicar ni atribuir.
 func validateEventRef(eventID string, tenantID uuid.UUID) error {
 	if strings.TrimSpace(eventID) == "" || len(eventID) > domain.MaxEventIDLength {
-		return fmt.Errorf("%w: id de evento vacio o demasiado largo", domain.ErrInvalidEvent)
+		return fmt.Errorf("%w: id de evento vacío o demasiado largo", domain.ErrInvalidEvent)
 	}
 	if tenantID == uuid.Nil {
 		return fmt.Errorf("%w: sin tenant_id", domain.ErrInvalidEvent)

@@ -24,7 +24,7 @@ import (
 
 // ErrNotInCell: la instancia rechazo a la empresa porque no es de su celda. Llegar a la
 // instancia de otra celda es siempre un error de despliegue.
-var ErrNotInCell = errors.New("la instancia no atiende a la empresa porque no es de su celda (TENANT_NOT_IN_CELL): revisar la configuracion de celdas")
+var ErrNotInCell = errors.New("la instancia no atiende a la empresa porque no es de su celda (TENANT_NOT_IN_CELL): revisar la configuración de celdas")
 
 // Motivos, etiqueta reason de cell_call_failures_total.
 const (

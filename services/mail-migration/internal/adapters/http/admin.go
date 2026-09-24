@@ -68,7 +68,7 @@ func (h *Handler) Health(w http.ResponseWriter, r *http.Request) {
 func tenantFrom(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
 	id, err := uuid.Parse(middleware.GetTenantID(r.Context()))
 	if err != nil {
-		response.ErrUnauthorized(w, "la peticion no lleva empresa")
+		response.ErrUnauthorized(w, "la petición no lleva empresa")
 		return uuid.Nil, false
 	}
 	return id, true
@@ -77,7 +77,7 @@ func tenantFrom(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
 func actorFrom(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
 	id, err := uuid.Parse(middleware.GetUserID(r.Context()))
 	if err != nil {
-		response.ErrUnauthorized(w, "la peticion no lleva usuario")
+		response.ErrUnauthorized(w, "la petición no lleva usuario")
 		return uuid.Nil, false
 	}
 	return id, true
@@ -156,7 +156,7 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	if raw := q.Get("status"); raw != "" {
 		status, ok := domain.ParseStatus(raw)
 		if !ok {
-			response.ErrBadRequest(w, "status no valido")
+			response.ErrBadRequest(w, "status no válido")
 			return
 		}
 		filter.Status = &status
@@ -183,7 +183,7 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		response.ErrBadRequest(w, "identificador no valido")
+		response.ErrBadRequest(w, "identificador no válido")
 		return
 	}
 	job, err := h.uc.Get(r.Context(), tenantID, id)
@@ -205,7 +205,7 @@ func (h *Handler) Cancel(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		response.ErrBadRequest(w, "identificador no valido")
+		response.ErrBadRequest(w, "identificador no válido")
 		return
 	}
 	job, err := h.uc.Cancel(r.Context(), tenantID, actorID, id)

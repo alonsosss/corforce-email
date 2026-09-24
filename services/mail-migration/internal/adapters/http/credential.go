@@ -57,7 +57,7 @@ func (h *CredentialHandler) Verify(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	var req verifyRequest
 	if err := validate.DecodeJSONLimit(w, r, &req, maxVerifyBody); err != nil {
-		response.ErrBadRequest(w, "cuerpo no valido")
+		response.ErrBadRequest(w, "cuerpo no válido")
 		return
 	}
 	if req.Token == "" || req.Username == "" {
@@ -71,7 +71,7 @@ func (h *CredentialHandler) Verify(w http.ResponseWriter, r *http.Request) {
 			TenantID: v.TenantID.String(), JobID: v.JobID.String(), MailboxID: v.MailboxID.String(), Username: v.Username,
 		})
 	case errors.Is(err, domain.ErrCredentialInvalid):
-		response.ErrUnauthorized(w, "credencial no valida")
+		response.ErrUnauthorized(w, "credencial no válida")
 	default:
 		response.Unexpected(w, err)
 	}

@@ -14,7 +14,7 @@ const MaxSpamCheckMessageBytes = 2 << 20
 
 var (
 	// ErrSpamCheckEmpty: el cuerpo no trae mensaje que analizar.
-	ErrSpamCheckEmpty = errors.New("el mensaje a analizar esta vacio")
+	ErrSpamCheckEmpty = errors.New("el mensaje a analizar está vacío")
 	// ErrSpamCheckTooLarge: el mensaje supera MaxSpamCheckMessageBytes.
 	ErrSpamCheckTooLarge = errors.New("el mensaje a analizar supera 2 MiB")
 )

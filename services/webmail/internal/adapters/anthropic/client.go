@@ -67,7 +67,7 @@ type Client struct {
 func New(cfg Config, logger *zap.Logger) (*Client, error) {
 	u, err := url.Parse(strings.TrimRight(strings.TrimSpace(cfg.BaseURL), "/"))
 	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" || u.User != nil {
-		return nil, fmt.Errorf("URL del proveedor del asistente invalida: %q", cfg.BaseURL)
+		return nil, fmt.Errorf("URL del proveedor del asistente inválida: %q", cfg.BaseURL)
 	}
 	if strings.TrimSpace(cfg.APIKey) == "" {
 		return nil, errors.New("falta la clave del proveedor del asistente")
@@ -212,9 +212,9 @@ func (c *Client) attempt(ctx context.Context, body []byte) (*messagesResponse, t
 	c.logger.Warn("webmail: el proveedor del asistente rechazo la peticion", zap.Int("status", resp.StatusCode),
 		zap.String("error_type", e.Error.Type), zap.String("request_id", requestID), zap.Duration("elapsed", time.Since(started)))
 	if retryable(resp.StatusCode) {
-		return nil, retryAfter(resp.Header.Get("retry-after")), fmt.Errorf("%w: el proveedor respondio %d", domain.ErrAssistantBusy, resp.StatusCode)
+		return nil, retryAfter(resp.Header.Get("retry-after")), fmt.Errorf("%w: el proveedor respondió %d", domain.ErrAssistantBusy, resp.StatusCode)
 	}
-	return nil, -1, fmt.Errorf("%w: el proveedor respondio %d (%s)", domain.ErrAssistantFailed, resp.StatusCode, e.Error.Type)
+	return nil, -1, fmt.Errorf("%w: el proveedor respondió %d (%s)", domain.ErrAssistantFailed, resp.StatusCode, e.Error.Type)
 }
 
 func (c *Client) completion(model string, r *messagesResponse) (domain.AssistantCompletion, error) {

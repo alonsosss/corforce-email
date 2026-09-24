@@ -73,7 +73,7 @@ func (r *IntegrityRunRepo) Open(ctx context.Context, run *domain.IntegrityRun) (
 			return active, domain.ErrRunActive
 		}
 	}
-	return nil, errors.New("no se pudo abrir la verificacion: la empresa cambia de estado sin parar")
+	return nil, errors.New("no se pudo abrir la verificación: la empresa cambia de estado sin parar")
 }
 
 func (r *IntegrityRunRepo) Get(ctx context.Context, tenantID, id uuid.UUID) (*domain.IntegrityRun, error) {

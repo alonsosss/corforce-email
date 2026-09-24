@@ -184,7 +184,7 @@ func buildComposeForm(fields map[string][]string, attachments []domain.Attachmen
 			return composeForm{}, err
 		}
 		if len(from) != 1 {
-			return composeForm{}, domain.NewValidationError("from", "debe ser una sola direccion")
+			return composeForm{}, domain.NewValidationError("from", "debe ser una sola dirección")
 		}
 		d.From = from[0]
 	}
@@ -223,7 +223,7 @@ func buildComposeForm(fields map[string][]string, attachments []domain.Attachmen
 	if raw := single(fields, "follow_up_days"); raw != "" {
 		days, err := strconv.Atoi(strings.TrimSpace(raw))
 		if err != nil || days < 1 {
-			return composeForm{}, domain.NewValidationError("follow_up_days", "debe ser un numero de dias positivo")
+			return composeForm{}, domain.NewValidationError("follow_up_days", "debe ser un número de días positivo")
 		}
 		form.followUpDays = days
 	}
@@ -274,5 +274,5 @@ func bodyError(err error) error {
 	if errors.As(err, &tooLarge) {
 		return domain.ErrMessageTooLarge
 	}
-	return domain.NewValidationError("body", "formulario multipart invalido")
+	return domain.NewValidationError("body", "formulario multipart inválido")
 }

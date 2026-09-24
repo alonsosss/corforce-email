@@ -65,7 +65,7 @@ func (c *Client) Audience(ctx context.Context, tenantID uuid.UUID, q ports.Audie
 	// Una pagina mayor que el limite pedido romperia el tope del lote de transactional:
 	// es un incumplimiento del contrato y no se envia.
 	if len(out.Data.Contacts) > q.Limit {
-		return nil, fmt.Errorf("%w: contacts devolvio %d contactos con limite %d",
+		return nil, fmt.Errorf("%w: contacts devolvió %d contactos con límite %d",
 			ports.ErrUnavailable, len(out.Data.Contacts), q.Limit)
 	}
 	page := &ports.AudiencePage{Contacts: make([]domain.Contact, 0, len(out.Data.Contacts))}

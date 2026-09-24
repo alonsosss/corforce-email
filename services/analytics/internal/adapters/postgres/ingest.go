@@ -176,7 +176,7 @@ func (c *Campaigns) Lock(ctx context.Context, tenantID, campaignID uuid.UUID) (*
 		    FOR UPDATE`, campaignID, tenantID,
 	).Scan(&s.CampaignID, &s.TenantID, &s.Status, &s.StatusAt, &s.StartedAt, &s.CompletedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, fmt.Errorf("%w: la campana %s pertenece a otra empresa", domain.ErrInvalidEvent, campaignID)
+		return nil, fmt.Errorf("%w: la campaña %s pertenece a otra empresa", domain.ErrInvalidEvent, campaignID)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("bloquear campana: %w", err)
@@ -194,7 +194,7 @@ func (c *Campaigns) Save(ctx context.Context, s *domain.CampaignSeen) error {
 		return fmt.Errorf("guardar campana: %w", err)
 	}
 	if tag.RowsAffected() != 1 {
-		return fmt.Errorf("guardar campana %s: no existe", s.CampaignID)
+		return fmt.Errorf("guardar campaña %s: no existe", s.CampaignID)
 	}
 	return nil
 }

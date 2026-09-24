@@ -111,8 +111,8 @@ func TestSinTextoNoHayFiltroYElServicioVaEntreComillas(t *testing.T) {
 }
 
 func TestElTextoRechazaSaltosDeLineaControlUTF8InvalidoYExceso(t *testing.T) {
-	esValidacion(t, LogQueryInput{Service: "gateway", Text: "a\nb"}, "saltos de linea")
-	esValidacion(t, LogQueryInput{Service: "gateway", Text: "a\rb"}, "saltos de linea")
+	esValidacion(t, LogQueryInput{Service: "gateway", Text: "a\nb"}, "saltos de línea")
+	esValidacion(t, LogQueryInput{Service: "gateway", Text: "a\rb"}, "saltos de línea")
 	esValidacion(t, LogQueryInput{Service: "gateway", Text: "a\tb"}, "control")
 	esValidacion(t, LogQueryInput{Service: "gateway", Text: "a\x00b"}, "control")
 	esValidacion(t, LogQueryInput{Service: "gateway", Text: "a\x1bb"}, "control")

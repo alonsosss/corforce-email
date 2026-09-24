@@ -142,7 +142,7 @@ func (uc *AuditUseCase) StartIntegrityRun(ctx context.Context, tenantID uuid.UUI
 // que quien ejecute la verificacion lo suelte al terminar.
 func (uc *AuditUseCase) openRun(ctx context.Context, tenantID uuid.UUID, requestedBy *uuid.UUID, mode domain.RunMode, origin domain.RunTrigger) (*domain.IntegrityRun, func(), error) {
 	if !mode.Valid() {
-		return nil, nil, fmt.Errorf("modo de verificacion %q desconocido", mode)
+		return nil, nil, fmt.Errorf("modo de verificación %q desconocido", mode)
 	}
 	runs := uc.integrity.Runs
 	active, err := runs.Active(ctx, tenantID)

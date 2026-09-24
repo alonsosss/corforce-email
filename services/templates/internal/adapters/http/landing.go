@@ -43,7 +43,7 @@ func (h *Handler) pageRoutes(r chi.Router) {
 func pageIDParam(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
 	id, err := uuid.Parse(chi.URLParam(r, "pageID"))
 	if err != nil {
-		response.ErrBadRequest(w, "identificador de pagina no valido")
+		response.ErrBadRequest(w, "identificador de página no válido")
 		return uuid.Nil, false
 	}
 	return id, true

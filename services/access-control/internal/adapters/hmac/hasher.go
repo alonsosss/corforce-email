@@ -15,7 +15,7 @@ import (
 )
 
 // ErrNoKey: sin llave activa no se crea ni se resuelve ninguna clave.
-var ErrNoKey = errors.New("API_KEY_HASH_KEY no esta configurada")
+var ErrNoKey = errors.New("API_KEY_HASH_KEY no está configurada")
 
 // Hasher implementa ports.APIKeyHasher.
 type Hasher struct {

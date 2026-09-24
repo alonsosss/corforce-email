@@ -128,7 +128,7 @@ func (a *API) Routes() http.Handler {
 	})
 	r.NotFound(func(w http.ResponseWriter, _ *http.Request) { apiresponse.ErrNotFound(w, "ruta desconocida") })
 	r.MethodNotAllowed(func(w http.ResponseWriter, _ *http.Request) {
-		apiresponse.Err(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "metodo no admitido")
+		apiresponse.Err(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "método no admitido")
 	})
 	return r
 }
@@ -192,7 +192,7 @@ func (a *API) fail(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.Is(err, domain.ErrTenantUnknown), errors.Is(err, domain.ErrNotFound):
 		apiresponse.ErrNotFound(w, "no existe")
 	case errors.Is(err, domain.ErrPreconditionFailed):
-		apiresponse.Err(w, http.StatusPreconditionFailed, "PRECONDITION_FAILED", "el recurso cambio: vuelva a leerlo")
+		apiresponse.Err(w, http.StatusPreconditionFailed, "PRECONDITION_FAILED", "el recurso cambió: vuelva a leerlo")
 	case errors.Is(err, domain.ErrContactLimit):
 		limitExceeded(w, http.StatusInsufficientStorage, "contacts", err.Error())
 	case errors.Is(err, domain.ErrEventLimit):
@@ -248,11 +248,11 @@ func (a *API) decode(w http.ResponseWriter, r *http.Request, v any) bool {
 	case err == nil:
 		return true
 	case errors.As(err, &tooLarge):
-		limitExceeded(w, http.StatusRequestEntityTooLarge, "body", "el cuerpo supera el tamano maximo")
+		limitExceeded(w, http.StatusRequestEntityTooLarge, "body", "el cuerpo supera el tamaño máximo")
 	case errors.As(err, &typeErr) && typeErr.Field != "":
-		apiresponse.ErrWithDetails(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "tipo de dato no valido", map[string]string{"field": typeErr.Field})
+		apiresponse.ErrWithDetails(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "tipo de dato no válido", map[string]string{"field": typeErr.Field})
 	default:
-		apiresponse.ErrBadRequest(w, "el cuerpo no es un JSON valido")
+		apiresponse.ErrBadRequest(w, "el cuerpo no es un JSON válido")
 	}
 	return false
 }
@@ -380,7 +380,7 @@ func (a *API) listContacts(w http.ResponseWriter, r *http.Request) {
 	}
 	q := r.URL.Query().Get("q")
 	if len([]rune(q)) > domain.MaxContactTextRunes {
-		a.fail(w, r, &domain.FieldError{Field: "q", Reason: "supera el largo maximo"})
+		a.fail(w, r, &domain.FieldError{Field: "q", Reason: "supera el largo máximo"})
 		return
 	}
 	views, total, err := a.uc.ContactPage(r.Context(), principalOf(r), q, page, perPage)
@@ -498,7 +498,7 @@ func (a *API) readImportFile(w http.ResponseWriter, r *http.Request) (string, bo
 			a.fail(w, r, &domain.FieldError{Field: "file", Reason: "falta el fichero"})
 			return "", false
 		case errors.As(err, &tooLarge):
-			limitExceeded(w, http.StatusRequestEntityTooLarge, "import_bytes", "el fichero supera el tamano maximo")
+			limitExceeded(w, http.StatusRequestEntityTooLarge, "import_bytes", "el fichero supera el tamaño máximo")
 			return "", false
 		case err != nil:
 			apiresponse.ErrBadRequest(w, "multipart mal formado")
@@ -511,7 +511,7 @@ func (a *API) readImportFile(w http.ResponseWriter, r *http.Request) (string, bo
 		data, err := io.ReadAll(io.LimitReader(part, a.lim.MaxImportBytes+1))
 		_ = part.Close()
 		if errors.As(err, &tooLarge) || int64(len(data)) > a.lim.MaxImportBytes {
-			limitExceeded(w, http.StatusRequestEntityTooLarge, "import_bytes", "el fichero supera el tamano maximo")
+			limitExceeded(w, http.StatusRequestEntityTooLarge, "import_bytes", "el fichero supera el tamaño máximo")
 			return "", false
 		}
 		if err != nil {
@@ -676,7 +676,7 @@ func (a *API) listOccurrences(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if end.Sub(start) > time.Duration(a.lim.MaxWindowDays)*24*time.Hour {
-		apiresponse.ErrWithDetails(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "la ventana supera el maximo de dias",
+		apiresponse.ErrWithDetails(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "la ventana supera el máximo de días",
 			map[string]string{"field": "end", "max_days": strconv.Itoa(a.lim.MaxWindowDays)})
 		return
 	}

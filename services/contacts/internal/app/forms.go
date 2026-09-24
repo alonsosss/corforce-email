@@ -43,13 +43,13 @@ func (c FormConfig) withDefaults() FormConfig {
 }
 
 // ErrFormsUnavailable: el servicio arranco sin lo necesario para los formularios publicos.
-var ErrFormsUnavailable = errors.New("los formularios de suscripcion no estan disponibles")
+var ErrFormsUnavailable = errors.New("los formularios de suscripción no están disponibles")
 
 // RateLimitedError es un envio publico por encima del cupo por IP o por formulario.
 type RateLimitedError struct{ RetryAfter time.Duration }
 
 func (e *RateLimitedError) Error() string {
-	return "demasiados envios: vuelve a intentarlo en unos minutos"
+	return "demasiados envíos: vuelve a intentarlo en unos minutos"
 }
 
 // FormInput es el alta de un formulario.

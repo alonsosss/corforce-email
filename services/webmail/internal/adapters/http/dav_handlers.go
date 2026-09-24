@@ -304,7 +304,7 @@ func importBodyError(err error) error {
 	if errors.As(err, &tooLarge) {
 		return domain.ErrImportTooLarge
 	}
-	return domain.NewValidationError("body", "formulario multipart invalido")
+	return domain.NewValidationError("body", "formulario multipart inválido")
 }
 
 type recurrenceDTO struct {

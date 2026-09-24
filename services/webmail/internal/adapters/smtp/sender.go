@@ -66,7 +66,7 @@ func NewSender(cfg Config, logger *zap.Logger) (*Sender, error) {
 // Send entrega raw a los destinatarios con envelopeFrom como remitente del sobre.
 func (s *Sender) Send(ctx context.Context, username, envelopeFrom string, recipients []string, raw []byte) error {
 	if strings.ContainsAny(username, "*\r\n") {
-		return fmt.Errorf("%w: nombre de buzon invalido", domain.ErrUnavailable)
+		return fmt.Errorf("%w: nombre de buzón inválido", domain.ErrUnavailable)
 	}
 	ctx, cancel := context.WithTimeout(ctx, s.cfg.Timeout)
 	defer cancel()
@@ -113,7 +113,7 @@ func (s *Sender) Send(ctx context.Context, username, envelopeFrom string, recipi
 	auth := netsmtp.PlainAuth("", username+"*"+s.cfg.MasterUser, s.cfg.MasterPassword, serverName)
 	if err := c.Auth(auth); err != nil {
 		s.logger.Error("webmail: el submission rechazo la autenticacion del buzon", zap.String("username", username), zap.Error(err))
-		return fmt.Errorf("%w: autenticacion SMTP: %v", domain.ErrUnavailable, err)
+		return fmt.Errorf("%w: autenticación SMTP: %v", domain.ErrUnavailable, err)
 	}
 	if err := c.Mail(envelopeFrom); err != nil {
 		return classify(err, "")

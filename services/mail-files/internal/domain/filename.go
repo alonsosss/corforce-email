@@ -54,7 +54,7 @@ func SafeFileName(raw string) (string, error) {
 	}
 	name = strings.Trim(b.String(), " .")
 	if name == "" {
-		return "", NewValidationError("name", "el fichero no tiene un nombre valido")
+		return "", NewValidationError("name", "el fichero no tiene un nombre válido")
 	}
 	stem, _, _ := strings.Cut(name, ".")
 	if windowsDevices[strings.ToUpper(strings.TrimSpace(stem))] {

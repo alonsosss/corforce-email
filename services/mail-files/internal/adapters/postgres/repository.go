@@ -110,7 +110,7 @@ func (r *Repository) MarkReady(ctx context.Context, tenantID, id uuid.UUID) (dom
 			RETURNING `+columns, tenantID, id))
 		if errors.Is(err, pgx.ErrNoRows) {
 			// Revocado o dado por fallido mientras subia: el barrido borra lo que llego al almacen.
-			return fmt.Errorf("%w: el fichero dejo de estar pendiente durante la subida", domain.ErrUnavailable)
+			return fmt.Errorf("%w: el fichero dejó de estar pendiente durante la subida", domain.ErrUnavailable)
 		}
 		return err
 	})

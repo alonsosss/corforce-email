@@ -152,29 +152,29 @@ func Analyze(in Input) Report {
 	add(CodeHTMLTooLarge, SeverityError, boolCount(stats.HTMLBytes > MaxHTMLBytes),
 		"El HTML ocupa %d bytes; Gmail recorta a partir de %d y oculta el final del mensaje", stats.HTMLBytes, MaxHTMLBytes)
 	add(CodeImageOnly, SeverityError, boolCount(doc.images > 0 && doc.textChars < MinTextChars),
-		"El correo tiene imagenes y solo %d caracteres de texto visible; se necesitan al menos %d", doc.textChars, MinTextChars)
+		"El correo tiene imágenes y solo %d caracteres de texto visible; se necesitan al menos %d", doc.textChars, MinTextChars)
 	add(CodeLinkShortener, SeverityError, doc.shorteners,
-		"Hay enlaces a acortadores publicos; los filtros los bloquean porque ocultan el destino")
+		"Hay enlaces a acortadores públicos; los filtros los bloquean porque ocultan el destino")
 	add(CodeDeceptiveLink, SeverityError, doc.deceptive,
-		"El texto de un enlace muestra una direccion de otro dominio que la de su destino")
+		"El texto de un enlace muestra una dirección de otro dominio que la de su destino")
 	add(CodeForbiddenContent, SeverityError, doc.forbidden,
 		"El HTML contiene script, iframe, formularios, atributos on* o javascript:")
 
 	add(CodeLowTextRatio, SeverityWarning, boolCount(doc.images > 0 && stats.TextImageRatio < MinTextImageRatio),
-		"La proporcion de texto frente a imagenes es %.2f; se recomienda al menos %.1f", stats.TextImageRatio, MinTextImageRatio)
+		"La proporción de texto frente a imágenes es %.2f; se recomienda al menos %.1f", stats.TextImageRatio, MinTextImageRatio)
 	add(CodeMissingAlt, SeverityWarning, doc.missingAlt,
-		"Hay imagenes sin atributo alt; muchos clientes no cargan imagenes por defecto")
+		"Hay imágenes sin atributo alt; muchos clientes no cargan imágenes por defecto")
 	add(CodeMissingPreheader, SeverityWarning, boolCount(!doc.hasPreheader),
-		"Falta el texto de previsualizacion oculto al principio del cuerpo")
+		"Falta el texto de previsualización oculto al principio del cuerpo")
 	subjectIssues(in.Subject, add)
 	add(CodeInsecureLink, SeverityWarning, doc.insecure,
 		"Hay enlaces http://; use https://")
 	add(CodeTooManyLinks, SeverityWarning, boolCount(doc.links > MaxLinks),
-		"El correo tiene %d enlaces; mas de %d es un rasgo tipico del spam", doc.links, MaxLinks)
+		"El correo tiene %d enlaces; más de %d es un rasgo típico del spam", doc.links, MaxLinks)
 	add(CodeWidthTooLarge, SeverityWarning, doc.wideElements,
-		"Hay anchos fijos de mas de %d px; el correo no se adaptara a pantallas pequenas", MaxFixedWidthPx)
+		"Hay anchos fijos de más de %d px; el correo no se adaptará a pantallas pequeñas", MaxFixedWidthPx)
 	add(CodeExternalStylesheet, SeverityWarning, doc.externalStyles,
-		"Hay hojas de estilo externas o @import; la mayoria de clientes de correo las ignoran")
+		"Hay hojas de estilo externas o @import; la mayoría de clientes de correo las ignoran")
 	spamIssue(in.Spam, add)
 
 	ordered := make([]Issue, 0, len(issues))
@@ -201,10 +201,10 @@ func spamIssue(s Spam, add func(code, severity string, count int, format string,
 	switch {
 	case s.Action == ActionReject || (s.Required > 0 && s.Score >= s.Required):
 		add(CodeSpamScoreHigh, SeverityError, 1,
-			"El antispam puntua el correo con %.1f y lo rechazaria (umbral %.1f)", s.Score, s.Required)
+			"El antispam puntúa el correo con %.1f y lo rechazaría (umbral %.1f)", s.Score, s.Required)
 	case s.Score >= SpamScoreWarning:
 		add(CodeSpamScoreHigh, SeverityWarning, 1,
-			"El antispam puntua el correo con %.1f; a partir de %.1f muchos receptores lo marcan", s.Score, SpamScoreWarning)
+			"El antispam puntúa el correo con %.1f; a partir de %.1f muchos receptores lo marcan", s.Score, SpamScoreWarning)
 	}
 }
 
@@ -225,7 +225,7 @@ func boolCount(b bool) int {
 
 func missingAddressMessage(address string) string {
 	if address == "" {
-		return "Falta la direccion fisica: configurela en el pie legal del kit de marca e incluya el pie en el correo"
+		return "Falta la dirección física: configúrela en el pie legal del kit de marca e incluya el pie en el correo"
 	}
-	return "El correo no muestra la direccion fisica del kit de marca: incluya el pie legal"
+	return "El correo no muestra la dirección física del kit de marca: incluya el pie legal"
 }

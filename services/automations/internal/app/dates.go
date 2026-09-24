@@ -97,7 +97,7 @@ func (uc *UseCase) scanWorkflow(ctx context.Context, w *domain.Workflow) (int, e
 		}
 		cursor = res.NextCursor
 	}
-	return entered, fmt.Errorf("mas de %d tandas de aniversarios", maxDateScanPages)
+	return entered, fmt.Errorf("más de %d tandas de aniversarios", maxDateScanPages)
 }
 
 // pauseDateWorkflow pausa el flujo cuyo atributo dejo de existir o de ser una fecha, o cuya

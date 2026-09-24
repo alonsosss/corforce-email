@@ -79,7 +79,7 @@ func (a *ABTest) VariantTemplate(i int, campaignTemplate uuid.UUID) uuid.UUID {
 
 func (a *ABTest) Validate(campaignTemplate uuid.UUID) error {
 	if a.Criterion != CriterionOpens && a.Criterion != CriterionClicks {
-		return NewValidationError("ab_test.criterion: valor no valido %q", a.Criterion)
+		return NewValidationError("ab_test.criterion: valor no válido %q", a.Criterion)
 	}
 	if a.SamplePercent < MinSamplePercent || a.SamplePercent > MaxSamplePercent {
 		return NewValidationError("ab_test.sample_percent: debe estar entre %d y %d", MinSamplePercent, MaxSamplePercent)
@@ -103,7 +103,7 @@ func (a *ABTest) Validate(campaignTemplate uuid.UUID) error {
 			return err
 		}
 		if v.TemplateID != nil && *v.TemplateID == uuid.Nil {
-			return NewValidationError("ab_test.variants.template_id: identificador vacio")
+			return NewValidationError("ab_test.variants.template_id: identificador vacío")
 		}
 		if v.TemplateVersion != nil && *v.TemplateVersion < 1 {
 			return NewValidationError("ab_test.variants.template_version: debe ser mayor que cero")

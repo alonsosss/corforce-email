@@ -121,15 +121,15 @@ type Policy struct {
 func (p Policy) Validate() error {
 	switch {
 	case p.MaxFileBytes <= 0:
-		return errors.New("el tamano maximo de fichero debe ser positivo")
+		return errors.New("el tamaño máximo de fichero debe ser positivo")
 	case p.MaxExpiryDays < 1 || p.DefaultExpiryDays < 1 || p.DefaultExpiryDays > p.MaxExpiryDays:
-		return fmt.Errorf("caducidad por defecto (%d dias) fuera de 1..%d", p.DefaultExpiryDays, p.MaxExpiryDays)
+		return fmt.Errorf("caducidad por defecto (%d días) fuera de 1..%d", p.DefaultExpiryDays, p.MaxExpiryDays)
 	case p.MaxDownloads < 1 || p.DefaultMaxDownloads < 1 || p.DefaultMaxDownloads > p.MaxDownloads:
 		return fmt.Errorf("descargas por defecto (%d) fuera de 1..%d", p.DefaultMaxDownloads, p.MaxDownloads)
 	case p.MailboxQuotaBytes < p.MaxFileBytes || p.TenantQuotaBytes < p.MailboxQuotaBytes:
-		return errors.New("las cuotas deben cumplir fichero maximo <= cuota del buzon <= cuota de la empresa")
+		return errors.New("las cuotas deben cumplir fichero máximo <= cuota del buzón <= cuota de la empresa")
 	case p.MaxActivePerMailbox < 1:
-		return errors.New("el maximo de enlaces vigentes por buzon debe ser positivo")
+		return errors.New("el máximo de enlaces vigentes por buzón debe ser positivo")
 	}
 	return nil
 }
@@ -141,7 +141,7 @@ func (p Policy) Resolve(o UploadOptions) (expiresIn time.Duration, maxDownloads 
 		days = p.DefaultExpiryDays
 	}
 	if days < 1 || days > p.MaxExpiryDays {
-		return 0, 0, NewValidationError("expires_in_days", fmt.Sprintf("la caducidad debe estar entre 1 y %d dias", p.MaxExpiryDays))
+		return 0, 0, NewValidationError("expires_in_days", fmt.Sprintf("la caducidad debe estar entre 1 y %d días", p.MaxExpiryDays))
 	}
 	maxDownloads = o.MaxDownloads
 	if maxDownloads == 0 {

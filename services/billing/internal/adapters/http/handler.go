@@ -125,7 +125,7 @@ func (h *Handler) Health(w http.ResponseWriter, r *http.Request) {
 func tenantFrom(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
 	id, err := uuid.Parse(middleware.GetTenantID(r.Context()))
 	if err != nil || id == uuid.Nil {
-		response.ErrUnauthorized(w, "empresa no valida")
+		response.ErrUnauthorized(w, "empresa no válida")
 		return uuid.Nil, false
 	}
 	return id, true
@@ -134,7 +134,7 @@ func tenantFrom(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
 func uuidParam(w http.ResponseWriter, r *http.Request, name, label string) (uuid.UUID, bool) {
 	id, err := uuid.Parse(chi.URLParam(r, name))
 	if err != nil {
-		response.ErrBadRequest(w, "identificador de "+label+" no valido")
+		response.ErrBadRequest(w, "identificador de "+label+" no válido")
 		return uuid.Nil, false
 	}
 	return id, true
@@ -324,7 +324,7 @@ func (h *Handler) UpdatePlan(w http.ResponseWriter, r *http.Request) {
 		patch.Limits, patch.ReplaceLimits = limits, true
 	}
 	if patch.Empty() {
-		response.ErrValidation(w, "el cambio no incluye ningun campo")
+		response.ErrValidation(w, "el cambio no incluye ningún campo")
 		return
 	}
 	p, err := h.uc.UpdatePlan(r.Context(), id, patch)

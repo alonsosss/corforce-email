@@ -83,7 +83,7 @@ func (h *Handler) Health(w http.ResponseWriter, r *http.Request) {
 func tenantFrom(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
 	id, err := uuid.Parse(middleware.GetTenantID(r.Context()))
 	if err != nil {
-		response.ErrUnauthorized(w, "empresa no valida")
+		response.ErrUnauthorized(w, "empresa no válida")
 		return uuid.Nil, false
 	}
 	return id, true
@@ -92,7 +92,7 @@ func tenantFrom(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
 func userFrom(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
 	id, err := uuid.Parse(middleware.GetUserID(r.Context()))
 	if err != nil {
-		response.ErrUnauthorized(w, "usuario no valido")
+		response.ErrUnauthorized(w, "usuario no válido")
 		return uuid.Nil, false
 	}
 	return id, true
@@ -102,7 +102,7 @@ func userFrom(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
 func targetFrom(w http.ResponseWriter, r *http.Request) (uuid.UUID, domain.Class, bool) {
 	tenantID, err := uuid.Parse(chi.URLParam(r, "tenantID"))
 	if err != nil {
-		response.ErrBadRequest(w, "identificador de empresa no valido")
+		response.ErrBadRequest(w, "identificador de empresa no válido")
 		return uuid.Nil, "", false
 	}
 	class, err := domain.ParseClass(chi.URLParam(r, "class"))

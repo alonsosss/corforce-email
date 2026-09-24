@@ -63,7 +63,7 @@ func (c *Client) PublishedVersion(ctx context.Context, tenantID, templateID uuid
 		return 0, fmt.Errorf("%w: templates: %v", ports.ErrUnavailable, se)
 	}
 	if out.Data.Version < 1 {
-		return 0, fmt.Errorf("%w: templates no devolvio el numero de version", ports.ErrUnavailable)
+		return 0, fmt.Errorf("%w: templates no devolvió el número de versión", ports.ErrUnavailable)
 	}
 	if out.Data.Kind != "" && out.Data.Kind != kindMarketing {
 		return 0, domain.ErrTemplateNotMarketing

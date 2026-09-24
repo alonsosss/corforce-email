@@ -141,7 +141,7 @@ describe('textos de error', () => {
   it('un error de validacion nombra el campo que fallo', () => {
     const err = new ApiError(
       422,
-      { code: 'VALIDATION_ERROR', message: 'invalido' },
+      { code: 'VALIDATION_ERROR', message: 'inválido' },
       { error: { code: 'VALIDATION_ERROR', details: { field: 'source_username' } } },
     );
     expect(migrationErrorMessage(err)).toBe(t('migration.error.field.source_username'));

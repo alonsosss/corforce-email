@@ -157,7 +157,7 @@ type ReportRejectedError struct {
 }
 
 func (e *ReportRejectedError) Error() string {
-	return fmt.Sprintf("transactional rechazo el informe de anclas: %d %s %s", e.Status, e.Code, e.Message)
+	return fmt.Sprintf("transactional rechazó el informe de anclas: %d %s %s", e.Status, e.Code, e.Message)
 }
 
 // AnchorReportSender entrega un informe en texto plano a una direccion, como correo de la propia

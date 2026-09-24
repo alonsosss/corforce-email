@@ -25,14 +25,14 @@ type DomainEvent struct {
 func (uc *UseCase) ApplyDomainEvent(ctx context.Context, ev DomainEvent) error {
 	name := strings.ToLower(strings.TrimSpace(ev.Domain))
 	if name == "" {
-		return domain.NewValidationError("domain vacio")
+		return domain.NewValidationError("domain vacío")
 	}
 	switch ev.Action {
 	case "verified", "failed", "sending_status_changed":
 		status := ev.Status
 		if status == "" {
 			if ev.Action == "sending_status_changed" {
-				return domain.NewValidationError("status vacio")
+				return domain.NewValidationError("status vacío")
 			}
 			status = ev.Action
 		}

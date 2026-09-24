@@ -66,7 +66,7 @@ func ValidateSteps(steps []Step) error {
 	index := make(map[string]int, len(steps))
 	for i, s := range steps {
 		if !stepIDPattern.MatchString(s.ID) {
-			return NewValidationError("%s.id es obligatorio: minusculas, digitos, _ y -, hasta %d", stepField(i), MaxStepIDLen)
+			return NewValidationError("%s.id es obligatorio: minúsculas, dígitos, _ y -, hasta %d", stepField(i), MaxStepIDLen)
 		}
 		if _, dup := index[s.ID]; dup {
 			return NewValidationError("%s.id repite %q", stepField(i), s.ID)
@@ -99,7 +99,7 @@ func ValidateSteps(steps []Step) error {
 		}
 	}
 	if d := longestPath(adj); d > MaxDepth {
-		return NewValidationError("un recorrido del flujo tiene %d pasos; el maximo es %d", d, MaxDepth)
+		return NewValidationError("un recorrido del flujo tiene %d pasos; el máximo es %d", d, MaxDepth)
 	}
 	for i, s := range steps {
 		if s.Type != StepBranch || !s.Condition.Kind.ReferencesStep() {
@@ -113,7 +113,7 @@ func ValidateSteps(steps []Step) error {
 			return NewValidationError("%s.condition.step debe ser un paso send_email", stepField(i))
 		}
 		if !dominates(adj, j, i) {
-			return NewValidationError("%s.condition.step debe ser un envio por el que pase todo recorrido que llega a la rama", stepField(i))
+			return NewValidationError("%s.condition.step debe ser un envío por el que pase todo recorrido que llega a la rama", stepField(i))
 		}
 	}
 	return nil

@@ -125,7 +125,7 @@ func (c *Client) OneClick(ctx context.Context, target string) error {
 	defer resp.Body.Close()
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxResponseBytes))
 	if resp.StatusCode < 200 || resp.StatusCode >= 400 {
-		return fmt.Errorf("%w: el servidor respondio %d", domain.ErrUnsubscribeFailed, resp.StatusCode)
+		return fmt.Errorf("%w: el servidor respondió %d", domain.ErrUnsubscribeFailed, resp.StatusCode)
 	}
 	return nil
 }

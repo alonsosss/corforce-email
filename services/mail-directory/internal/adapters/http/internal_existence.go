@@ -35,7 +35,7 @@ func (h *Handler) InternalMailboxExistence(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if len(req.IDs) > app.MaxExistenceIDs {
-		response.ErrValidation(w, "la consulta supera el maximo de identificadores")
+		response.ErrValidation(w, "la consulta supera el máximo de identificadores")
 		return
 	}
 	existing, err := h.uc.ExistingMailboxIDs(r.Context(), tenantID, req.IDs)

@@ -11,9 +11,9 @@ import (
 
 var (
 	// ErrLargeFilesDisabled: este webmail no tiene mail-files configurado.
-	ErrLargeFilesDisabled = errors.New("el envio de ficheros grandes no esta disponible")
+	ErrLargeFilesDisabled = errors.New("el envío de ficheros grandes no está disponible")
 	// ErrLargeFileTooLarge: la subida supera lo que el webmail deja pasar hacia mail-files.
-	ErrLargeFileTooLarge = errors.New("el fichero supera el tamano maximo")
+	ErrLargeFileTooLarge = errors.New("el fichero supera el tamaño máximo")
 )
 
 // LargeFileLimits son los topes que aplica mail-files.

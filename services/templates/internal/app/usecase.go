@@ -349,7 +349,7 @@ type RenderInput struct {
 
 func (uc *UseCase) Render(ctx context.Context, tenantID, templateID uuid.UUID, in RenderInput) (*domain.Rendered, error) {
 	if in.Test && in.Version == nil {
-		return nil, fmt.Errorf("%w: el render de prueba exige la version", domain.ErrInvalidTestSend)
+		return nil, fmt.Errorf("%w: el render de prueba exige la versión", domain.ErrInvalidTestSend)
 	}
 	t, err := uc.repo.GetTemplate(ctx, tenantID, templateID)
 	if err != nil {

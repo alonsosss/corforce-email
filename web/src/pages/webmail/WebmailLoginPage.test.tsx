@@ -50,7 +50,7 @@ describe('inicio de sesion del buzon', () => {
     vi.spyOn(webmailApi, 'login').mockRejectedValue(
       new ApiError(401, {
         code: ERROR_CODES.INVALID_CREDENTIALS,
-        message: 'usuario o contrasena incorrectos',
+        message: 'usuario o contraseña incorrectos',
       }),
     );
     const form = renderLogin();

@@ -212,7 +212,7 @@ type mkcalendarReq struct {
 	Set     []setBlock `xml:"DAV: set"`
 }
 
-var errEmptyBody = errors.New("cuerpo vacio")
+var errEmptyBody = errors.New("cuerpo vacío")
 
 // decodeRoot lee el primer elemento del cuerpo y, segun su nombre, decodifica el resto en el destino
 // que elija choose (nil si no lo admite).

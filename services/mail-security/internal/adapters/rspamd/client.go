@@ -85,7 +85,7 @@ func (c *Client) learnWith(ctx context.Context, path string, msg []byte) error {
 	case http.StatusOK:
 		return nil
 	case http.StatusForbidden, http.StatusUnauthorized:
-		return fmt.Errorf("%w: el controller rechazo la contrasena", domain.ErrNotConfigured)
+		return fmt.Errorf("%w: el controller rechazó la contraseña", domain.ErrNotConfigured)
 	case http.StatusAlreadyReported:
 		// 208: el mensaje ya estaba aprendido con esa clase.
 		return nil
@@ -152,7 +152,7 @@ func (c *Client) get(ctx context.Context, path string, maxBody int64) ([]byte, e
 	case resp.StatusCode == http.StatusOK:
 		return body, nil
 	case resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusUnauthorized:
-		return nil, fmt.Errorf("%w: el controller rechazo la contrasena", domain.ErrNotConfigured)
+		return nil, fmt.Errorf("%w: el controller rechazó la contraseña", domain.ErrNotConfigured)
 	case resp.StatusCode >= 500:
 		return nil, fmt.Errorf("%w: controller de rspamd: %d", domain.ErrEngineUnreachable, resp.StatusCode)
 	default:
@@ -325,7 +325,7 @@ func (c *Client) Check(ctx context.Context, msg []byte) (domain.SpamCheckResult,
 	}
 	switch {
 	case resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusUnauthorized:
-		return domain.SpamCheckResult{}, fmt.Errorf("%w: el controller rechazo la contrasena", domain.ErrNotConfigured)
+		return domain.SpamCheckResult{}, fmt.Errorf("%w: el controller rechazó la contraseña", domain.ErrNotConfigured)
 	case resp.StatusCode >= 500:
 		return domain.SpamCheckResult{}, fmt.Errorf("%w: controller de rspamd: %d", domain.ErrEngineUnreachable, resp.StatusCode)
 	case resp.StatusCode != http.StatusOK:
@@ -339,7 +339,7 @@ func (c *Client) Check(ctx context.Context, msg []byte) (domain.SpamCheckResult,
 	}
 	if raw.Error != "" || raw.Action == "" {
 		// El texto del error de Rspamd puede citar el mensaje: no se propaga.
-		return domain.SpamCheckResult{}, fmt.Errorf("%w: /checkv2 no devolvio veredicto", domain.ErrEngineCommand)
+		return domain.SpamCheckResult{}, fmt.Errorf("%w: /checkv2 no devolvió veredicto", domain.ErrEngineCommand)
 	}
 	return raw.toDomain(), nil
 }

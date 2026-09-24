@@ -131,7 +131,7 @@ func Classify(err error) error {
 	case http.StatusBadRequest, http.StatusNotFound, http.StatusConflict, http.StatusUnprocessableEntity:
 		msg := se.Message
 		if msg == "" {
-			msg = "peticion rechazada (status " + strconv.Itoa(se.Status) + ")"
+			msg = "petición rechazada (status " + strconv.Itoa(se.Status) + ")"
 		}
 		return &ports.RejectedError{Status: se.Status, Code: se.Code, Message: msg}
 	}

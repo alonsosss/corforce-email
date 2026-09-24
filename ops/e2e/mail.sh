@@ -689,7 +689,7 @@ expect "la celda cambiada a una desconocida (zz-99) y una firma alterada dan 403
   "$(pagina POST "$OTRA_CELDA" "$WORK/q-celda.html")/$(pagina POST "$ALTERADA" "$WORK/q-firma.html")" "403/403"
 cmp -s "$WORK/q-celda.html" "$WORK/q-firma.html" && ok "con la misma pagina byte a byte: no delata que celdas existen" \
   || mal "las paginas 403 de la celda desconocida y de la firma alterada difieren"
-contains "la de enlace no valido, servida por mail-security" "$(cat "$WORK/q-firma.html")" "Enlace no valido"
+contains "la de enlace no valido, servida por mail-security" "$(cat "$WORK/q-firma.html")" "Enlace no válido"
 expect "y el mensaje sigue en cuarentena sin uso registrado" \
   "$(en_la_fila)/$(sql mail_cell_pe_01 "SELECT count(*) FROM mail_security.quarantine_link_uses WHERE quarantine_id = '$QID'")" "1/0"
 expect "GET del enlace valido por el gateway: 200 y no ejecuta nada" "$(pagina GET "$LIBERAR" "$WORK/q-pagina.html")/$(en_la_fila)" "200/1"

@@ -125,7 +125,7 @@ func (h *Handler) require(module, resource, action string) func(http.Handler) ht
 func tenantFrom(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
 	id, err := uuid.Parse(middleware.GetTenantID(r.Context()))
 	if err != nil {
-		response.ErrUnauthorized(w, "la peticion no lleva empresa")
+		response.ErrUnauthorized(w, "la petición no lleva empresa")
 		return uuid.Nil, false
 	}
 	return id, true
@@ -144,7 +144,7 @@ func scopeFrom(w http.ResponseWriter, r *http.Request) (app.Scope, bool) {
 func idParam(w http.ResponseWriter, r *http.Request, name string) (uuid.UUID, bool) {
 	id, err := uuid.Parse(chi.URLParam(r, name))
 	if err != nil {
-		response.ErrBadRequest(w, "identificador no valido")
+		response.ErrBadRequest(w, "identificador no válido")
 		return uuid.Nil, false
 	}
 	return id, true

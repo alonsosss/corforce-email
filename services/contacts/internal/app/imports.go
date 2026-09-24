@@ -160,7 +160,7 @@ func prepareRows(in []ImportRow, defs domain.Definitions, imp *domain.Import) []
 			continue
 		}
 		if prev, dup := seen[email]; dup {
-			reject(line, fmt.Sprintf("direccion repetida en la importacion (linea %d)", prev))
+			reject(line, fmt.Sprintf("dirección repetida en la importación (línea %d)", prev))
 			continue
 		}
 		c := domain.Contact{Email: email, Status: domain.StatusActive, ConsentStatus: domain.ConsentNone, Source: domain.SourceImport}

@@ -116,7 +116,7 @@ func DecodeJSONLimit(w http.ResponseWriter, r *http.Request, dst interface{}, ma
 	if err := dec.Decode(dst); err != nil {
 		var tooLarge *http.MaxBytesError
 		if errors.As(err, &tooLarge) {
-			return fmt.Errorf("el contenido supera el limite de %d KB", maxBytes/1024)
+			return fmt.Errorf("el contenido supera el límite de %d KB", maxBytes/1024)
 		}
 		return fmt.Errorf("invalid JSON: %w", err)
 	}

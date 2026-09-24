@@ -168,7 +168,7 @@ func owner(r *http.Request) (domain.Owner, bool) {
 func (h *Handler) withOwner(w http.ResponseWriter, r *http.Request) (domain.Owner, bool) {
 	o, ok := owner(r)
 	if !ok {
-		response.Err(w, http.StatusBadRequest, "MAILBOX_REQUIRED", "falta la empresa o el buzon de la sesion")
+		response.Err(w, http.StatusBadRequest, "MAILBOX_REQUIRED", "falta la empresa o el buzón de la sesión")
 	}
 	return o, ok
 }
@@ -229,12 +229,12 @@ func uploadOptions(days, downloads string) (domain.UploadOptions, error) {
 	var err error
 	if days != "" {
 		if opts.ExpiresInDays, err = strconv.Atoi(days); err != nil || opts.ExpiresInDays < 1 {
-			return opts, domain.NewValidationError("expires_in_days", "la caducidad debe ser un numero de dias")
+			return opts, domain.NewValidationError("expires_in_days", "la caducidad debe ser un número de días")
 		}
 	}
 	if downloads != "" {
 		if opts.MaxDownloads, err = strconv.Atoi(downloads); err != nil || opts.MaxDownloads < 1 {
-			return opts, domain.NewValidationError("max_downloads", "las descargas deben ser un numero positivo")
+			return opts, domain.NewValidationError("max_downloads", "las descargas deben ser un número positivo")
 		}
 	}
 	return opts, nil

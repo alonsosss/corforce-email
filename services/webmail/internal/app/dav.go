@@ -142,7 +142,7 @@ func (s *Service) ImportContacts(ctx context.Context, sess domain.Session, filen
 		return domain.ImportResult{}, err
 	}
 	if len(data) == 0 {
-		return domain.ImportResult{}, domain.NewValidationError("file", "el fichero esta vacio")
+		return domain.ImportResult{}, domain.NewValidationError("file", "el fichero está vacío")
 	}
 	if int64(len(data)) > s.cfg.MaxImportBytes {
 		return domain.ImportResult{}, domain.ErrImportTooLarge

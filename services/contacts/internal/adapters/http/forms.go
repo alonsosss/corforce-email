@@ -87,7 +87,7 @@ func (h *Handler) toFormResponse(f *domain.SubscriptionForm) formResponse {
 func userFrom(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
 	id, err := uuid.Parse(middleware.GetUserID(r.Context()))
 	if err != nil || id == uuid.Nil {
-		response.ErrUnauthorized(w, "la sesion no lleva usuario")
+		response.ErrUnauthorized(w, "la sesión no lleva usuario")
 		return uuid.Nil, false
 	}
 	return id, true
@@ -295,7 +295,7 @@ func (h *Handler) FormStats(w http.ResponseWriter, r *http.Request) {
 	if raw := r.URL.Query().Get("days"); raw != "" {
 		n, err := strconv.Atoi(raw)
 		if err != nil {
-			response.ErrValidation(w, "days debe ser un numero de dias")
+			response.ErrValidation(w, "days debe ser un número de días")
 			return
 		}
 		days = n

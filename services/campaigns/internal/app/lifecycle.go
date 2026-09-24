@@ -291,7 +291,7 @@ func (uc *UseCase) testContent(ctx context.Context, c *domain.Campaign, in TestI
 	}
 	i := *in.Variant
 	if c.ABTest == nil || i < 0 || i >= len(c.ABTest.Variants) {
-		return domain.Content{}, domain.NewValidationError("variant: la campana no tiene esa variante")
+		return domain.Content{}, domain.NewValidationError("variant: la campaña no tiene esa variante")
 	}
 	variant := c.ABTest.Variants[i]
 	content := domain.Content{TemplateID: c.ABTest.VariantTemplate(i, c.TemplateID), Subject: variant.Subject,

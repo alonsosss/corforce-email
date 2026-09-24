@@ -188,7 +188,7 @@ func (uc *UseCase) Upload(ctx context.Context, owner domain.Owner, rawName strin
 		if ferr := uc.repo.MarkFailed(context.WithoutCancel(bound), owner.TenantID, id); ferr != nil {
 			uc.logger.Warn("mail-files: subida fallida sin cerrar; la cerrara el barrido", zap.String("file_id", id.String()), zap.Error(ferr))
 		}
-		return domain.SharedFile{}, fmt.Errorf("%w: almacen: %v", domain.ErrUnavailable, err)
+		return domain.SharedFile{}, fmt.Errorf("%w: almacén: %v", domain.ErrUnavailable, err)
 	}
 	ready, err := uc.repo.MarkReady(bound, owner.TenantID, id)
 	if err != nil {

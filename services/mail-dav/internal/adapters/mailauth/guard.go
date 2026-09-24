@@ -53,7 +53,7 @@ type cachedPrincipal struct {
 
 func NewGuard(inner ports.Authenticator, cfg GuardConfig) (*Guard, error) {
 	if inner == nil || cfg.MaxConcurrent < 1 || cfg.Wait <= 0 || cfg.CacheTTL < 0 || (cfg.CacheTTL > 0 && cfg.MaxCached < 1) {
-		return nil, errors.New("configuracion del guarda de autenticacion invalida")
+		return nil, errors.New("configuración del guarda de autenticación inválida")
 	}
 	g := &Guard{inner: inner, cfg: cfg, now: time.Now, slots: make(chan struct{}, cfg.MaxConcurrent), cached: map[[32]byte]cachedPrincipal{}}
 	if _, err := rand.Read(g.key[:]); err != nil {

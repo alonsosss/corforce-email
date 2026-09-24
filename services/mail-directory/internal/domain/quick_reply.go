@@ -39,7 +39,7 @@ type QuickReply struct {
 func (q *QuickReply) Normalize() error {
 	q.Name = strings.Join(strings.Fields(q.Name), " ")
 	if !utf8.ValidString(q.Name) || strings.ContainsFunc(q.Name, unicode.IsControl) {
-		return fieldErr("name", "tiene caracteres no validos")
+		return fieldErr("name", "tiene caracteres no válidos")
 	}
 	if q.Name == "" {
 		return fieldErr("name", "es obligatorio")

@@ -13,7 +13,7 @@ const SESSION: WebmailSession = {
 };
 
 const expired = () =>
-  new ApiError(401, { code: ERROR_CODES.SESSION_EXPIRED, message: 'sesion invalida o caducada' });
+  new ApiError(401, { code: ERROR_CODES.SESSION_EXPIRED, message: 'sesión inválida o caducada' });
 
 describe('sesion del webmail', () => {
   beforeEach(() => {

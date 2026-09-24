@@ -117,7 +117,7 @@ func (uc *UseCase) RecordDelivery(ctx context.Context, ev DeliveryEvent) (Ingest
 // delta valida el evento y devuelve lo que suma; cero si el hecho no cuenta.
 func (ev DeliveryEvent) delta() (domain.Counts, error) {
 	if ev.EventID == "" || len(ev.EventID) > maxEventIDLength {
-		return domain.Counts{}, fmt.Errorf("%w: id de evento vacio o demasiado largo", domain.ErrInvalidEvent)
+		return domain.Counts{}, fmt.Errorf("%w: id de evento vacío o demasiado largo", domain.ErrInvalidEvent)
 	}
 	if ev.TenantID == uuid.Nil {
 		return domain.Counts{}, fmt.Errorf("%w: sin empresa", domain.ErrInvalidEvent)

@@ -103,7 +103,7 @@ func errorMessage(body io.Reader) string {
 		} `json:"error"`
 	}
 	if err := json.NewDecoder(io.LimitReader(body, 64<<10)).Decode(&env); err != nil || env.Error.Message == "" {
-		return "la plantilla no acepto las variables"
+		return "la plantilla no aceptó las variables"
 	}
 	return env.Error.Message
 }

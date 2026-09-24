@@ -33,7 +33,7 @@ const (
 )
 
 var (
-	ErrInvalidEngagement = errors.New("evento de interaccion sin empresa, contacto, campana o tipo valido")
+	ErrInvalidEngagement = errors.New("evento de interacción sin empresa, contacto, campaña o tipo válido")
 )
 
 // EngagementEvent es un hito ya interpretado por el adaptador.

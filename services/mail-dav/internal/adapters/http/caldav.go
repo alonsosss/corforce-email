@@ -466,12 +466,12 @@ func compFilterFrom(sub calSubFilterReq) (domain.CompFilter, *filterFailure) {
 	}
 	cf := domain.CompFilter{Name: name, IsNotDefined: sub.IsNotDefined != nil}
 	if cf.IsNotDefined && (sub.TimeRange != nil || len(sub.PropFilters) > 0) {
-		return domain.CompFilter{}, badFilter("is-not-defined no admite mas condiciones")
+		return domain.CompFilter{}, badFilter("is-not-defined no admite más condiciones")
 	}
 	if sub.TimeRange != nil {
 		tr, err := domain.ParseTimeRange(sub.TimeRange.Start, sub.TimeRange.End)
 		if err != nil {
-			return domain.CompFilter{}, badFilter("time-range no valido: fechas y horas en UTC, con al menos un extremo")
+			return domain.CompFilter{}, badFilter("time-range no válido: fechas y horas en UTC, con al menos un extremo")
 		}
 		cf.Range = &tr
 	}

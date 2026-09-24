@@ -53,7 +53,7 @@ func (s *Service) Login(ctx context.Context, rawUsername, password, remoteIP, pr
 	sess := s.cfg.Sessions.Open(id, started)
 	ttl, alive := s.cfg.Sessions.Remaining(sess, s.clock())
 	if !alive {
-		return "", domain.Session{}, unavailable(errors.New("la verificacion supero la vida maxima de la sesion"))
+		return "", domain.Session{}, unavailable(errors.New("la verificación superó la vida máxima de la sesión"))
 	}
 	if err := s.sessions.Create(ctx, key, sess, ttl); err != nil {
 		s.logger.Error("webmail: no se pudo guardar la sesion", zap.String("username", username), zap.Error(err))

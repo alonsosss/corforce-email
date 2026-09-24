@@ -35,7 +35,7 @@ func NewBatch(folder string, uids []uint32, action string, add, remove []string,
 		return Batch{}, invalid("uids", "hace falta al menos un mensaje")
 	}
 	if len(uids) > MaxBatchUIDs {
-		return Batch{}, invalid("uids", "demasiados mensajes en una sola accion")
+		return Batch{}, invalid("uids", "demasiados mensajes en una sola acción")
 	}
 	seen := make(map[uint32]bool, len(uids))
 	out := make([]uint32, 0, len(uids))
@@ -61,7 +61,7 @@ func NewBatch(folder string, uids []uint32, action string, add, remove []string,
 			return Batch{}, asField(err, "to")
 		}
 		if to == folder {
-			return Batch{}, invalid("to", "los mensajes ya estan en esa carpeta")
+			return Batch{}, invalid("to", "los mensajes ya están en esa carpeta")
 		}
 		b.To = to
 	case BatchDelete:

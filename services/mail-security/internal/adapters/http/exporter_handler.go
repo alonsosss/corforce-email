@@ -121,7 +121,7 @@ func (h *ExporterHandler) Routes(allowedCIDRs string) http.Handler {
 // error al insertar.
 func (h *ExporterHandler) Pipe(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseMultipartForm(h.pipeMaxBody); err != nil {
-		plain(w, http.StatusBadRequest, "multipart invalido")
+		plain(w, http.StatusBadRequest, "multipart inválido")
 		return
 	}
 	metaField := r.FormValue("metadata")
@@ -131,7 +131,7 @@ func (h *ExporterHandler) Pipe(w http.ResponseWriter, r *http.Request) {
 	}
 	var wire pipeMetadata
 	if err := json.Unmarshal([]byte(metaField), &wire); err != nil {
-		plain(w, http.StatusBadRequest, "metadata invalido")
+		plain(w, http.StatusBadRequest, "metadata inválido")
 		return
 	}
 	meta := wire.toDomain()
@@ -143,7 +143,7 @@ func (h *ExporterHandler) Pipe(w http.ResponseWriter, r *http.Request) {
 	defer file.Close()
 	msg, err := io.ReadAll(file)
 	if err != nil || len(msg) == 0 {
-		plain(w, http.StatusBadRequest, "message vacio")
+		plain(w, http.StatusBadRequest, "message vacío")
 		return
 	}
 
@@ -181,7 +181,7 @@ func (h *ExporterHandler) PipeRateLimit(w http.ResponseWriter, r *http.Request) 
 		} `json:"symbols"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-		plain(w, http.StatusBadRequest, "json invalido")
+		plain(w, http.StatusBadRequest, "json inválido")
 		return
 	}
 	entry := domain.RateLimitLog{

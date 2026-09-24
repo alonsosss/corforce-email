@@ -83,7 +83,7 @@ func (c *Client) callVacation(ctx context.Context, method, username string, body
 		return domain.Vacation{}, domain.NewValidationError("vacation", decoded.Error.Message)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return domain.Vacation{}, fmt.Errorf("%w: mail-directory respondio %d", domain.ErrUnavailable, resp.StatusCode)
+		return domain.Vacation{}, fmt.Errorf("%w: mail-directory respondió %d", domain.ErrUnavailable, resp.StatusCode)
 	}
 	if decodeErr != nil {
 		return domain.Vacation{}, fmt.Errorf("%w: respuesta de mail-directory ilegible", domain.ErrUnavailable)

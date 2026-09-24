@@ -85,7 +85,7 @@ func (c *Client) SenderIdentities(ctx context.Context, username string) ([]strin
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("%w: mail-directory respondio %d", domain.ErrUnavailable, resp.StatusCode)
+		return nil, fmt.Errorf("%w: mail-directory respondió %d", domain.ErrUnavailable, resp.StatusCode)
 	}
 	var body identitiesResponse
 	if err := json.NewDecoder(io.LimitReader(resp.Body, maxResponseBytes)).Decode(&body); err != nil {

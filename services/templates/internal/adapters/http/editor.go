@@ -152,7 +152,7 @@ func (h *Handler) UpdateBrandKit(w http.ResponseWriter, r *http.Request) {
 	if req.LogoAssetID != nil && *req.LogoAssetID != "" {
 		id, err := uuid.Parse(*req.LogoAssetID)
 		if err != nil {
-			response.ErrValidation(w, "logo_asset_id no es un identificador valido")
+			response.ErrValidation(w, "logo_asset_id no es un identificador válido")
 			return
 		}
 		kit.LogoAssetID = &id
@@ -311,7 +311,7 @@ func (h *Handler) DeleteAsset(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := uuid.Parse(chi.URLParam(r, "assetID"))
 	if err != nil {
-		response.ErrBadRequest(w, "identificador de imagen no valido")
+		response.ErrBadRequest(w, "identificador de imagen no válido")
 		return
 	}
 	if err := h.uc.DeleteAsset(r.Context(), tenantID, id); err != nil {

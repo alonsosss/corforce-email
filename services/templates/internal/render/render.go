@@ -80,7 +80,7 @@ func (e *Engine) compile(c domain.Content, declareMissing bool) (*Compiled, erro
 	}
 	for _, f := range forbiddenHTML {
 		if loc := f.re.FindStringIndex(c.HTML); loc != nil {
-			return nil, fmt.Errorf("%w: html: %s (posicion %d)", domain.ErrInvalidTemplate, f.msg, loc[0])
+			return nil, fmt.Errorf("%w: html: %s (posición %d)", domain.ErrInvalidTemplate, f.msg, loc[0])
 		}
 	}
 	if err := domain.ValidateDeclarations(c.Variables); err != nil {
@@ -122,7 +122,7 @@ func (e *Engine) compile(c domain.Content, declareMissing bool) (*Compiled, erro
 			continue
 		}
 		if !declareMissing {
-			return nil, fmt.Errorf("%w: la variable %q se usa pero no esta declarada", domain.ErrInvalidTemplate, name)
+			return nil, fmt.Errorf("%w: la variable %q se usa pero no está declarada", domain.ErrInvalidTemplate, name)
 		}
 		missing = append(missing, domain.Variable{Name: name, Type: domain.VarString})
 	}
@@ -151,7 +151,7 @@ func checkSizes(c domain.Content) error {
 	case len(c.Subject) > domain.MaxSubjectBytes:
 		return fmt.Errorf("%w: subject supera %d bytes", domain.ErrInvalidTemplate, domain.MaxSubjectBytes)
 	case strings.ContainsAny(c.Subject, "\r\n"):
-		return fmt.Errorf("%w: subject no admite saltos de linea", domain.ErrInvalidTemplate)
+		return fmt.Errorf("%w: subject no admite saltos de línea", domain.ErrInvalidTemplate)
 	case strings.TrimSpace(c.HTML) == "":
 		return fmt.Errorf("%w: html es obligatorio", domain.ErrInvalidTemplate)
 	case len(c.HTML) > domain.MaxHTMLBytes:
@@ -319,7 +319,7 @@ func (w *walker) walk(n parse.Node) error {
 	case *parse.BreakNode, *parse.ContinueNode:
 		return w.reject(n, "break y continue no se admiten")
 	default:
-		return w.reject(n, "construccion no admitida")
+		return w.reject(n, "construcción no admitida")
 	}
 }
 
@@ -350,7 +350,7 @@ func (w *walker) arg(n parse.Node) error {
 		return nil
 	case *parse.IdentifierNode:
 		if !isAllowedFunc(n.Ident) {
-			return w.reject(n, fmt.Sprintf("funcion no permitida %q; se admiten upper, lower, title, default y date", n.Ident))
+			return w.reject(n, fmt.Sprintf("función no permitida %q; se admiten upper, lower, title, default y date", n.Ident))
 		}
 		return nil
 	case *parse.StringNode, *parse.NumberNode, *parse.BoolNode, *parse.NilNode:
@@ -364,6 +364,6 @@ func (w *walker) arg(n parse.Node) error {
 	case *parse.ChainNode:
 		return w.reject(n, "no se admiten accesos encadenados")
 	default:
-		return w.reject(n, "expresion no admitida")
+		return w.reject(n, "expresión no admitida")
 	}
 }

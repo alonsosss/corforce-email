@@ -142,7 +142,7 @@ func TestGrafoInvalido(t *testing.T) {
 		}
 		deep[i] = waitStep("p"+strconv.Itoa(i), next)
 	}
-	expectGraphError(t, "demasiado profundo", deep, "maximo")
+	expectGraphError(t, "demasiado profundo", deep, "máximo")
 	if err := ValidateSteps(deep[:MaxDepth]); err == nil {
 		t.Fatal("con el ultimo paso apuntando a uno que ya no existe debe fallar")
 	}

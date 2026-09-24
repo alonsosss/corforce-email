@@ -32,7 +32,7 @@ type Limits struct {
 // Validate rechaza topes que desactivarian el control.
 func (l Limits) Validate() error {
 	if l.MaxRecipients < 1 || l.MaxMessageBytes < 1 {
-		return invalid("limits", "los topes de envio deben ser positivos")
+		return invalid("limits", "los topes de envío deben ser positivos")
 	}
 	return nil
 }
@@ -80,7 +80,7 @@ func NewPartSource(folder string, uid uint32, parts []string) (*PartSource, erro
 	seen := make(map[string]bool, len(parts))
 	for _, p := range parts {
 		if _, err := ParsePartID(p); err != nil {
-			return nil, invalid("source_parts", "identificador de parte invalido")
+			return nil, invalid("source_parts", "identificador de parte inválido")
 		}
 		if seen[p] {
 			return nil, invalid("source_parts", "parte repetida")
@@ -151,10 +151,10 @@ func (d Draft) validate(l Limits) error {
 		return invalid("subject", "demasiado largo")
 	}
 	if !utf8.ValidString(d.Text) {
-		return invalid("text", "no es UTF-8 valido")
+		return invalid("text", "no es UTF-8 válido")
 	}
 	if !utf8.ValidString(d.HTML) {
-		return invalid("html", "no es UTF-8 valido")
+		return invalid("html", "no es UTF-8 válido")
 	}
 	if len(d.Attachments)+d.pendingParts() > MaxAttachments {
 		return invalid("attachments", "demasiados adjuntos")
@@ -210,14 +210,14 @@ func ValidateHeaderText(field, value string, maxBytes int) error {
 		return invalid(field, "demasiado largo")
 	}
 	if !utf8.ValidString(value) {
-		return invalid(field, "no es UTF-8 valido")
+		return invalid(field, "no es UTF-8 válido")
 	}
 	for _, r := range value {
 		if r == '\t' {
 			continue
 		}
 		if isControl(r) {
-			return invalid(field, "contiene saltos de linea o caracteres de control")
+			return invalid(field, "contiene saltos de línea o caracteres de control")
 		}
 	}
 	return nil
@@ -235,15 +235,15 @@ func NewAddress(field, name, email string) (Address, error) {
 	email = strings.TrimSpace(email)
 	at := strings.LastIndexByte(email, '@')
 	if at <= 0 || at == len(email)-1 {
-		return Address{}, invalid(field, "direccion invalida")
+		return Address{}, invalid(field, "dirección inválida")
 	}
 	local, host := email[:at], strings.ToLower(email[at+1:])
 	if !localPartPattern.MatchString(local) || strings.HasPrefix(local, ".") ||
 		strings.HasSuffix(local, ".") || strings.Contains(local, "..") {
-		return Address{}, invalid(field, "direccion invalida")
+		return Address{}, invalid(field, "dirección inválida")
 	}
 	if len(host) > 253 || !domainPattern.MatchString(host) {
-		return Address{}, invalid(field, "direccion invalida")
+		return Address{}, invalid(field, "dirección inválida")
 	}
 	name = strings.TrimSpace(name)
 	if err := ValidateHeaderText(field, name, 4*maxDisplayNameRunes); err != nil {
@@ -269,7 +269,7 @@ func ParseAddressField(field string, values []string) ([]Address, error) {
 		}
 		list, err := mail.ParseAddressList(v)
 		if err != nil {
-			return nil, invalid(field, "lista de direcciones invalida")
+			return nil, invalid(field, "lista de direcciones inválida")
 		}
 		for _, a := range list {
 			addr, err := NewAddress(field, a.Name, a.Address)

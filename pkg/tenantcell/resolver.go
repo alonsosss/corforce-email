@@ -246,7 +246,7 @@ func (c *Resolver) fetch(ctx context.Context, key string) (string, error) {
 	case resp.StatusCode == http.StatusNotFound && decodeErr == nil && payload.Error.Code == c.subject.notFoundCode:
 		return "", c.subject.notFound
 	case resp.StatusCode != http.StatusOK:
-		return "", fmt.Errorf("%w: organization respondio %d", ErrUnresolved, resp.StatusCode)
+		return "", fmt.Errorf("%w: organization respondió %d", ErrUnresolved, resp.StatusCode)
 	case decodeErr != nil:
 		return "", fmt.Errorf("%w: respuesta ilegible: %v", ErrUnresolved, decodeErr)
 	case payload.Data[c.subject.field] != key || !ValidCode(payload.Data["cell_code"]):

@@ -54,12 +54,12 @@ func (d *SecurityDetector) Inspect(ctx context.Context, l *domain.AuditLog, user
 			"Cuenta bloqueada por intentos fallidos repetidos", userAgent)
 	case "session.revoked_by_admin":
 		d.raise(ctx, l, "session_revoked_by_admin", "low",
-			"Un administrador cerro remotamente una sesion", userAgent)
+			"Un administrador cerró remotamente una sesión", userAgent)
 	case "user.bulk_read":
 		// El gateway detecto un volumen inusual de lecturas/descargas del usuario:
 		// la firma de una cuenta comprometida extrayendo datos en masa.
 		d.raise(ctx, l, "bulk_exfiltration", "high",
-			"Volumen inusual de lecturas o descargas: posible extraccion masiva de datos", userAgent)
+			"Volumen inusual de lecturas o descargas: posible extracción masiva de datos", userAgent)
 	}
 }
 
@@ -82,11 +82,11 @@ func (d *SecurityDetector) inspectLogin(ctx context.Context, l *domain.AuditLog,
 	hasHistory := len(agents) > 0
 	if !known && hasHistory {
 		d.raise(ctx, l, "login_new_ip", "medium",
-			"Inicio de sesion desde una IP nunca vista para este usuario", userAgent)
+			"Inicio de sesión desde una IP nunca vista para este usuario", userAgent)
 	}
 	if userAgent != "" && hasHistory && !knownDeviceFamily(agents, userAgent) {
 		d.raise(ctx, l, "login_new_device", "low",
-			"Inicio de sesion desde un dispositivo nuevo: "+deviceFamily(userAgent), userAgent)
+			"Inicio de sesión desde un dispositivo nuevo: "+deviceFamily(userAgent), userAgent)
 	}
 
 	// Viaje imposible: el mismo usuario inicio sesion desde OTRA IP real hace muy
@@ -101,7 +101,7 @@ func (d *SecurityDetector) inspectLogin(ctx context.Context, l *domain.AuditLog,
 	}
 	if realIP(other) {
 		d.raise(ctx, l, "impossible_travel", "high",
-			"Inicio de sesion desde dos IPs distintas en pocos minutos: "+other+" y "+l.IPAddress, userAgent)
+			"Inicio de sesión desde dos IPs distintas en pocos minutos: "+other+" y "+l.IPAddress, userAgent)
 	}
 }
 
@@ -124,7 +124,7 @@ func (d *SecurityDetector) inspectFailedLogin(ctx context.Context, l *domain.Aud
 		return
 	}
 	d.raise(ctx, l, "brute_force", "high",
-		fmt.Sprintf("%d intentos fallidos de inicio de sesion desde la IP %s en %s",
+		fmt.Sprintf("%d intentos fallidos de inicio de sesión desde la IP %s en %s",
 			n, l.IPAddress, d.cfg.BruteForceWindow), "")
 }
 

@@ -124,7 +124,7 @@ type CreateTenantRequest struct {
 func (uc *OrganizationUseCase) CreateTenant(ctx context.Context, req CreateTenantRequest) (*domain.Tenant, error) {
 	slug := strings.ToLower(strings.TrimSpace(req.Slug))
 	if !slugRegex.MatchString(slug) {
-		return nil, fmt.Errorf("formato de slug no valido")
+		return nil, fmt.Errorf("formato de slug no válido")
 	}
 	if req.AdminEmail == "" || req.AdminPassword == "" {
 		return nil, domain.ErrAdminUserRequired

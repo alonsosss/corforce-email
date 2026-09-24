@@ -379,7 +379,7 @@ func (uc *UseCase) renderMarketing(ctx context.Context, tenantID uuid.UUID, msg 
 		rendered.HTML = uc.utm.Tag(rendered.HTML, utm)
 	}
 	if len(rendered.HTML)+len(rendered.Text) > domain.MaxBodyBytes {
-		return domain.NewValidationError("la plantilla renderizada supera el limite de %d bytes", domain.MaxBodyBytes)
+		return domain.NewValidationError("la plantilla renderizada supera el límite de %d bytes", domain.MaxBodyBytes)
 	}
 	visible := rendered.HTML
 	if strings.TrimSpace(visible) == "" {

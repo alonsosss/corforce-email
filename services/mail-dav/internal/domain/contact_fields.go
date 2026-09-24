@@ -55,13 +55,13 @@ type ContactFields struct {
 
 func validText(field, v string, maxRunes int, multiline bool) error {
 	if !utf8.ValidString(v) {
-		return fieldError(field, "no es UTF-8 valido")
+		return fieldError(field, "no es UTF-8 válido")
 	}
 	if hasControl(v, multiline) {
 		return fieldError(field, "contiene caracteres de control")
 	}
 	if utf8.RuneCountInString(v) > maxRunes {
-		return fieldError(field, "supera el largo maximo")
+		return fieldError(field, "supera el largo máximo")
 	}
 	return nil
 }
@@ -109,13 +109,13 @@ func (f ContactFields) Normalize() (ContactFields, error) {
 		return ContactFields{}, fieldError("emails", "demasiados correos")
 	}
 	if len(f.Phones) > MaxContactPhones {
-		return ContactFields{}, fieldError("phones", "demasiados telefonos")
+		return ContactFields{}, fieldError("phones", "demasiados teléfonos")
 	}
 	for i, e := range f.Emails {
 		field := "emails[" + strconv.Itoa(i) + "]"
 		v := strings.TrimSpace(e.Value)
 		if hasControl(v, false) || !validEmail(v) {
-			return ContactFields{}, fieldError(field+".value", "no es una direccion de correo valida")
+			return ContactFields{}, fieldError(field+".value", "no es una dirección de correo válida")
 		}
 		t, err := normalizeType(field+".type", e.Type)
 		if err != nil {
@@ -127,7 +127,7 @@ func (f ContactFields) Normalize() (ContactFields, error) {
 		field := "phones[" + strconv.Itoa(i) + "]"
 		v := strings.TrimSpace(p.Value)
 		if v == "" {
-			return ContactFields{}, fieldError(field+".value", "esta vacio")
+			return ContactFields{}, fieldError(field+".value", "está vacío")
 		}
 		if err := validText(field+".value", v, maxPhoneRunes, false); err != nil {
 			return ContactFields{}, err
@@ -142,7 +142,7 @@ func (f ContactFields) Normalize() (ContactFields, error) {
 		return ContactFields{}, fieldError("birthday", "se espera AAAA-MM-DD o --MM-DD")
 	}
 	if out.Name == "" && out.GivenName == "" && out.FamilyName == "" && out.Organization == "" && len(out.Emails) == 0 && len(out.Phones) == 0 {
-		return ContactFields{}, fieldError("name", "el contacto necesita un nombre, una empresa, un correo o un telefono")
+		return ContactFields{}, fieldError("name", "el contacto necesita un nombre, una empresa, un correo o un teléfono")
 	}
 	return out, nil
 }

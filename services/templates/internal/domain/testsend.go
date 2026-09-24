@@ -14,10 +14,10 @@ const MaxTestRecipients = 5
 var (
 	// ErrInvalidTestSend envuelve los defectos de la peticion de prueba: destinatarios,
 	// remitente o respuesta.
-	ErrInvalidTestSend = errors.New("envio de prueba no valido")
+	ErrInvalidTestSend = errors.New("envío de prueba no válido")
 	// ErrTestSendUnavailable: el servicio arranco sin TRANSACTIONAL_URL o transactional no
 	// respondio; la prueba no salio.
-	ErrTestSendUnavailable = errors.New("el envio de prueba no esta disponible")
+	ErrTestSendUnavailable = errors.New("el envío de prueba no está disponible")
 )
 
 // TestSendRejectedError es el rechazo de la prueba por transactional (remitente sin
@@ -31,7 +31,7 @@ type TestSendRejectedError struct {
 }
 
 func (e *TestSendRejectedError) Error() string {
-	return fmt.Sprintf("transactional rechazo la prueba (%d %s): %s", e.Status, e.Code, e.Message)
+	return fmt.Sprintf("transactional rechazó la prueba (%d %s): %s", e.Status, e.Code, e.Message)
 }
 
 // NormalizeTestRecipients recorta y valida los destinatarios de una prueba: entre 1 y
@@ -45,11 +45,11 @@ func NormalizeTestRecipients(to []string) ([]string, error) {
 	for i, raw := range to {
 		email := strings.TrimSpace(raw)
 		if !ValidEmailAddress(email) {
-			return nil, fmt.Errorf("%w: to[%d] no es un correo valido", ErrInvalidTestSend, i)
+			return nil, fmt.Errorf("%w: to[%d] no es un correo válido", ErrInvalidTestSend, i)
 		}
 		key := strings.ToLower(email)
 		if seen[key] {
-			return nil, fmt.Errorf("%w: %s esta repetido", ErrInvalidTestSend, email)
+			return nil, fmt.Errorf("%w: %s está repetido", ErrInvalidTestSend, email)
 		}
 		seen[key] = true
 		out = append(out, email)

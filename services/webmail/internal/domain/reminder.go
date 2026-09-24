@@ -110,7 +110,7 @@ func ValidateReminderAt(field string, at, now time.Time, maxDays int) error {
 		return invalid(field, "debe ser al menos un minuto en el futuro")
 	}
 	if at.After(now.AddDate(0, 0, maxDays)) {
-		return invalid(field, "supera el plazo maximo de un recordatorio")
+		return invalid(field, "supera el plazo máximo de un recordatorio")
 	}
 	return nil
 }
@@ -118,7 +118,7 @@ func ValidateReminderAt(field string, at, now time.Time, maxDays int) error {
 // ValidateFollowUpDays exige un plazo de seguimiento entero entre 1 y maxDays dias.
 func ValidateFollowUpDays(days, maxDays int) error {
 	if days < 1 || days > maxDays {
-		return invalid("follow_up_days", "debe estar entre 1 y el plazo maximo de un recordatorio")
+		return invalid("follow_up_days", "debe estar entre 1 y el plazo máximo de un recordatorio")
 	}
 	return nil
 }
@@ -126,7 +126,7 @@ func ValidateFollowUpDays(days, maxDays int) error {
 // ValidateReminderID exige el identificador de una fila (UUID): viaja en la ruta interna.
 func ValidateReminderID(id string) error {
 	if !ValidUUID(id) {
-		return invalid("id", "identificador de recordatorio invalido")
+		return invalid("id", "identificador de recordatorio inválido")
 	}
 	return nil
 }
@@ -146,7 +146,7 @@ func NormalizeUIDs(uids []uint32) ([]uint32, error) {
 		return nil, invalid("uids", "hace falta al menos un mensaje")
 	}
 	if len(uids) > MaxBatchUIDs {
-		return nil, invalid("uids", "demasiados mensajes en una sola accion")
+		return nil, invalid("uids", "demasiados mensajes en una sola acción")
 	}
 	seen := make(map[uint32]bool, len(uids))
 	out := make([]uint32, 0, len(uids))
@@ -185,9 +185,9 @@ type SnoozeResult struct {
 
 var (
 	ErrReminderNotFound   = errors.New("recordatorio no encontrado")
-	ErrReminderNotPending = errors.New("el recordatorio ya no esta pendiente")
+	ErrReminderNotPending = errors.New("el recordatorio ya no está pendiente")
 	ErrReminderNotClaimed = errors.New("el recordatorio no estaba reclamado")
-	ErrReminderLimit      = errors.New("el buzon alcanzo el maximo de recordatorios activos")
+	ErrReminderLimit      = errors.New("el buzón alcanzó el máximo de recordatorios activos")
 	// ErrReminderExists: el mensaje ya tiene un recordatorio activo de ese tipo.
 	ErrReminderExists = errors.New("el mensaje ya tiene un recordatorio activo de ese tipo")
 )
@@ -232,10 +232,10 @@ func (in QuickReplyInput) Validate() error {
 		return invalid("name", "es obligatorio")
 	}
 	if !utf8.ValidString(in.Name) {
-		return invalid("name", "no es UTF-8 valido")
+		return invalid("name", "no es UTF-8 válido")
 	}
 	if !utf8.ValidString(in.HTML) {
-		return invalid("html", "no es UTF-8 valido")
+		return invalid("html", "no es UTF-8 válido")
 	}
 	if strings.TrimSpace(in.HTML) == "" {
 		return invalid("html", "la respuesta necesita contenido")
@@ -246,13 +246,13 @@ func (in QuickReplyInput) Validate() error {
 // ValidateQuickReplyID exige el identificador de una respuesta (UUID).
 func ValidateQuickReplyID(id string) error {
 	if !ValidUUID(id) {
-		return invalid("id", "identificador de respuesta rapida invalido")
+		return invalid("id", "identificador de respuesta rápida inválido")
 	}
 	return nil
 }
 
 var (
-	ErrQuickReplyNotFound = errors.New("respuesta rapida no encontrada")
-	ErrQuickReplyExists   = errors.New("ya existe una respuesta rapida con ese nombre")
-	ErrQuickReplyLimit    = errors.New("el buzon alcanzo el maximo de respuestas rapidas")
+	ErrQuickReplyNotFound = errors.New("respuesta rápida no encontrada")
+	ErrQuickReplyExists   = errors.New("ya existe una respuesta rápida con ese nombre")
+	ErrQuickReplyLimit    = errors.New("el buzón alcanzó el máximo de respuestas rápidas")
 )

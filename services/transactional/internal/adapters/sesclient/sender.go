@@ -100,7 +100,7 @@ func (s *Sender) Send(ctx context.Context, email domain.OutgoingEmail) (string, 
 		return "", Classify(err)
 	}
 	if out == nil || out.MessageId == nil {
-		return "", &domain.SendError{Kind: domain.ErrorTransient, Code: "EmptyResponse", Message: "SES no devolvio MessageId"}
+		return "", &domain.SendError{Kind: domain.ErrorTransient, Code: "EmptyResponse", Message: "SES no devolvió MessageId"}
 	}
 	return *out.MessageId, nil
 }

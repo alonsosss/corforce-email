@@ -10,8 +10,8 @@ import (
 // Errores de la baja de un boletin.
 var (
 	ErrUnsubscribeNotAvailable = errors.New("el mensaje no ofrece una baja que el webmail pueda hacer")
-	ErrUnsubscribeRefused      = errors.New("la direccion de baja no es una URL publica admitida")
-	ErrUnsubscribeFailed       = errors.New("el remitente no confirmo la baja")
+	ErrUnsubscribeRefused      = errors.New("la dirección de baja no es una URL pública admitida")
+	ErrUnsubscribeFailed       = errors.New("el remitente no confirmó la baja")
 )
 
 // UnsubscribeMethod es como se hace la baja, por orden de preferencia.

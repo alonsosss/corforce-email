@@ -114,7 +114,7 @@ func (f *MailboxFilters) Normalize() error {
 		f.Rules = []FilterRule{}
 	}
 	if len(f.Rules) > MaxFilterRules {
-		return fieldErr("rules", "supera el maximo de "+strconv.Itoa(MaxFilterRules)+" reglas")
+		return fieldErr("rules", "supera el máximo de "+strconv.Itoa(MaxFilterRules)+" reglas")
 	}
 	seen := make(map[uuid.UUID]struct{}, len(f.Rules))
 	for i := range f.Rules {
@@ -124,7 +124,7 @@ func (f *MailboxFilters) Normalize() error {
 			r.ID = uuid.New()
 		}
 		if _, dup := seen[r.ID]; dup {
-			return fieldErr(prefix+".id", "esta repetido")
+			return fieldErr(prefix+".id", "está repetido")
 		}
 		seen[r.ID] = struct{}{}
 		if err := r.normalize(prefix, f.Username); err != nil {
@@ -147,7 +147,7 @@ func (r *FilterRule) normalize(prefix, username string) error {
 		return fieldErr(prefix+".name", "es obligatorio")
 	}
 	if !validFilterLine(r.Name, MaxFilterNameRunes) {
-		return fieldErr(prefix+".name", "tiene caracteres no validos o supera los "+strconv.Itoa(MaxFilterNameRunes))
+		return fieldErr(prefix+".name", "tiene caracteres no válidos o supera los "+strconv.Itoa(MaxFilterNameRunes))
 	}
 	switch r.Match {
 	case "":
@@ -157,10 +157,10 @@ func (r *FilterRule) normalize(prefix, username string) error {
 		return fieldErr(prefix+".match", "debe ser all o any")
 	}
 	if len(r.Conditions) == 0 {
-		return fieldErr(prefix+".conditions", "hace falta al menos una condicion")
+		return fieldErr(prefix+".conditions", "hace falta al menos una condición")
 	}
 	if len(r.Conditions) > MaxFilterConditions {
-		return fieldErr(prefix+".conditions", "supera el maximo de "+strconv.Itoa(MaxFilterConditions)+" condiciones")
+		return fieldErr(prefix+".conditions", "supera el máximo de "+strconv.Itoa(MaxFilterConditions)+" condiciones")
 	}
 	for j := range r.Conditions {
 		if err := r.Conditions[j].normalize(prefix + ".conditions[" + strconv.Itoa(j) + "]"); err != nil {
@@ -168,10 +168,10 @@ func (r *FilterRule) normalize(prefix, username string) error {
 		}
 	}
 	if len(r.Actions) == 0 {
-		return fieldErr(prefix+".actions", "hace falta al menos una accion")
+		return fieldErr(prefix+".actions", "hace falta al menos una acción")
 	}
 	if len(r.Actions) > MaxFilterActions {
-		return fieldErr(prefix+".actions", "supera el maximo de "+strconv.Itoa(MaxFilterActions)+" acciones")
+		return fieldErr(prefix+".actions", "supera el máximo de "+strconv.Itoa(MaxFilterActions)+" acciones")
 	}
 	count := map[string]int{}
 	forwards := map[string]struct{}{}
@@ -184,11 +184,11 @@ func (r *FilterRule) normalize(prefix, username string) error {
 		count[a.Type]++
 		if a.Type == FilterActionForward {
 			if _, dup := forwards[a.Address]; dup {
-				return fieldErr(field+".address", "esta repetida en la regla")
+				return fieldErr(field+".address", "está repetida en la regla")
 			}
 			forwards[a.Address] = struct{}{}
 		} else if count[a.Type] > 1 {
-			return fieldErr(field+".type", "esta repetida en la regla")
+			return fieldErr(field+".type", "está repetida en la regla")
 		}
 		// Descartar y a la vez archivar o marcar no tiene sentido: el mensaje no se guarda en ningun sitio.
 		if count[FilterActionDiscard] > 0 && count[FilterActionMove]+count[FilterActionMarkRead]+count[FilterActionFlag] > 0 {
@@ -212,7 +212,7 @@ func (c *FilterCondition) normalize(prefix string) error {
 		return fieldErr(prefix+".value", "es obligatorio")
 	}
 	if !validFilterLine(c.Value, MaxFilterValueRunes) {
-		return fieldErr(prefix+".value", "tiene caracteres no validos o supera los "+strconv.Itoa(MaxFilterValueRunes))
+		return fieldErr(prefix+".value", "tiene caracteres no válidos o supera los "+strconv.Itoa(MaxFilterValueRunes))
 	}
 	return nil
 }
@@ -241,7 +241,7 @@ func (a *FilterAction) normalize(prefix, username string) error {
 		a.Address = addr
 	case FilterActionMarkRead, FilterActionFlag, FilterActionDiscard:
 		if a.Folder != "" || a.Address != "" || a.KeepCopy {
-			return fieldErr(prefix+".type", a.Type+" no lleva parametros")
+			return fieldErr(prefix+".type", a.Type+" no lleva parámetros")
 		}
 	default:
 		return fieldErr(prefix+".type", "debe ser move, mark_read, flag, forward o discard")
@@ -256,7 +256,7 @@ func (fw *Forwarding) normalize(username string) error {
 		fw.Addresses = []string{}
 	}
 	if len(fw.Addresses) > MaxForwardAddresses {
-		return fieldErr("forwarding.addresses", "supera el maximo de "+strconv.Itoa(MaxForwardAddresses)+" direcciones")
+		return fieldErr("forwarding.addresses", "supera el máximo de "+strconv.Itoa(MaxForwardAddresses)+" direcciones")
 	}
 	seen := make(map[string]struct{}, len(fw.Addresses))
 	for i, raw := range fw.Addresses {
@@ -266,13 +266,13 @@ func (fw *Forwarding) normalize(username string) error {
 			return fieldErr(field, err.Error())
 		}
 		if _, dup := seen[addr]; dup {
-			return fieldErr(field, "esta repetida")
+			return fieldErr(field, "está repetida")
 		}
 		seen[addr] = struct{}{}
 		fw.Addresses[i] = addr
 	}
 	if fw.Enabled && len(fw.Addresses) == 0 {
-		return fieldErr("forwarding.addresses", "hace falta al menos una direccion")
+		return fieldErr("forwarding.addresses", "hace falta al menos una dirección")
 	}
 	return nil
 }
@@ -284,10 +284,10 @@ func (r filterReason) Error() string { return string(r) }
 func normalizeForwardAddress(raw, username string) (string, error) {
 	addr, _, err := NormalizeEmail(raw)
 	if err != nil {
-		return "", filterReason("no es una direccion de correo valida")
+		return "", filterReason("no es una dirección de correo válida")
 	}
 	if addr == strings.ToLower(username) {
-		return "", filterReason("no puede ser el propio buzon")
+		return "", filterReason("no puede ser el propio buzón")
 	}
 	return addr, nil
 }
@@ -299,16 +299,16 @@ func normalizeFilterFolder(folder string) (string, error) {
 		return "", filterReason("es obligatoria")
 	}
 	if len(folder) > MaxFilterFolderBytes || !utf8.ValidString(folder) {
-		return "", filterReason("es demasiado larga o no es UTF-8 valido")
+		return "", filterReason("es demasiado larga o no es UTF-8 válido")
 	}
 	for _, r := range folder {
 		if unicode.IsControl(r) || r == '*' || r == '%' {
-			return "", filterReason("contiene caracteres no validos")
+			return "", filterReason("contiene caracteres no válidos")
 		}
 	}
 	for _, level := range strings.Split(folder, "/") {
 		if strings.TrimSpace(level) == "" {
-			return "", filterReason("tiene un nivel vacio")
+			return "", filterReason("tiene un nivel vacío")
 		}
 	}
 	return folder, nil

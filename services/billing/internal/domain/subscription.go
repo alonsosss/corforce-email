@@ -109,12 +109,12 @@ func (s *Subscription) ApplyUpdate(u SubscriptionUpdate, now time.Time) error {
 	}
 	if u.Status != nil {
 		if *u.Status == StatusTrialing && (s.TrialEndsAt == nil || !s.TrialEndsAt.After(now)) {
-			return fmt.Errorf("%w: una suscripcion en prueba necesita trial_ends_at futura", ErrInvalidSubscription)
+			return fmt.Errorf("%w: una suscripción en prueba necesita trial_ends_at futura", ErrInvalidSubscription)
 		}
 		s.Status = *u.Status
 	}
 	if s.Status == StatusTrialing && s.TrialEndsAt == nil {
-		return fmt.Errorf("%w: una suscripcion en prueba necesita trial_ends_at", ErrInvalidSubscription)
+		return fmt.Errorf("%w: una suscripción en prueba necesita trial_ends_at", ErrInvalidSubscription)
 	}
 	return nil
 }

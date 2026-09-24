@@ -71,7 +71,7 @@ type TimeRange struct {
 	End   *time.Time
 }
 
-var ErrInvalidFilter = errors.New("filtro de consulta no valido")
+var ErrInvalidFilter = errors.New("filtro de consulta no válido")
 
 func parseUTCInstant(v string) (*time.Time, error) {
 	if v == "" {

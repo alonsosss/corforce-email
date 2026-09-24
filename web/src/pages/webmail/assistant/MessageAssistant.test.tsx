@@ -145,7 +145,7 @@ describe('asistente en el lector', () => {
     vi.spyOn(assistantApi, 'summarize').mockRejectedValue(
       new ApiError(429, {
         code: 'ASSISTANT_QUOTA_EXCEEDED',
-        message: 'alcanzaste el maximo de peticiones al asistente de hoy',
+        message: 'alcanzaste el máximo de peticiones al asistente de hoy',
       }),
     );
     renderAssistant();
@@ -153,7 +153,7 @@ describe('asistente en el lector', () => {
       await screen.findByRole('button', { name: t('webmail.assistant.summarize') }),
     );
     expect(await screen.findByRole('alert')).toHaveTextContent(
-      'alcanzaste el maximo de peticiones al asistente de hoy',
+      'alcanzaste el máximo de peticiones al asistente de hoy',
     );
   });
 });

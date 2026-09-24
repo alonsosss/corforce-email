@@ -90,7 +90,7 @@ func ParseWait(s string) (time.Duration, error) {
 	}
 	n, err := strconv.Atoi(m[1])
 	if err != nil {
-		return 0, NewValidationError("duration no valida")
+		return 0, NewValidationError("duration no válida")
 	}
 	if int64(n) > int64(MaxWait/unit) {
 		return 0, NewValidationError("duration no puede superar 90d")

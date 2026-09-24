@@ -94,7 +94,7 @@ func (h *Handler) Health(w http.ResponseWriter, r *http.Request) {
 func tenantFrom(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
 	id, err := uuid.Parse(middleware.GetTenantID(r.Context()))
 	if err != nil {
-		response.ErrUnauthorized(w, "la sesion no lleva empresa")
+		response.ErrUnauthorized(w, "la sesión no lleva empresa")
 		return uuid.Nil, false
 	}
 	return id, true
@@ -103,7 +103,7 @@ func tenantFrom(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
 func idParam(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		response.ErrBadRequest(w, "identificador de campana no valido")
+		response.ErrBadRequest(w, "identificador de campaña no válido")
 		return uuid.Nil, false
 	}
 	return id, true
@@ -140,7 +140,7 @@ func decodeOptional(w http.ResponseWriter, r *http.Request, dst any, maxBytes in
 	if err != nil {
 		var tooLarge *http.MaxBytesError
 		if errors.As(err, &tooLarge) {
-			return fmt.Errorf("el contenido supera el limite de %d KB", maxBytes/1024)
+			return fmt.Errorf("el contenido supera el límite de %d KB", maxBytes/1024)
 		}
 		return fmt.Errorf("no se pudo leer el cuerpo: %w", err)
 	}
@@ -188,7 +188,7 @@ func writeError(w http.ResponseWriter, err error) {
 	case errors.As(err, &limited):
 		secs := int(math.Ceil(domain.ClampRetryAfter(limited.RetryAfter).Seconds()))
 		w.Header().Set("Retry-After", strconv.Itoa(secs))
-		response.Err(w, http.StatusTooManyRequests, "RATE_LIMITED", "el envio esta limitado; vuelva a intentarlo mas tarde")
+		response.Err(w, http.StatusTooManyRequests, "RATE_LIMITED", "el envío está limitado; vuelva a intentarlo más tarde")
 	case errors.As(err, &blocked):
 		response.Err(w, http.StatusForbidden, blocked.Code, blocked.Message)
 	case errors.As(err, &rejected):
@@ -198,7 +198,7 @@ func writeError(w http.ResponseWriter, err error) {
 		}
 		response.Err(w, http.StatusUnprocessableEntity, code, rejected.Message)
 	case errors.Is(err, ports.ErrUnavailable):
-		response.Err(w, http.StatusServiceUnavailable, "DEPENDENCY_UNAVAILABLE", "un servicio necesario no respondio; vuelva a intentarlo")
+		response.Err(w, http.StatusServiceUnavailable, "DEPENDENCY_UNAVAILABLE", "un servicio necesario no respondió; vuelva a intentarlo")
 	default:
 		response.Unexpected(w, err)
 	}
@@ -332,7 +332,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	userID, err := uuid.Parse(middleware.GetUserID(r.Context()))
 	if err != nil {
-		response.ErrUnauthorized(w, "la sesion no lleva usuario")
+		response.ErrUnauthorized(w, "la sesión no lleva usuario")
 		return
 	}
 	var req createRequest

@@ -150,14 +150,14 @@ func validateText(raw string) (string, error) {
 		return "", nil
 	}
 	if !utf8.ValidString(text) {
-		return "", newValidation("q debe ser UTF-8 valido")
+		return "", newValidation("q debe ser UTF-8 válido")
 	}
 	if utf8.RuneCountInString(text) > MaxLogTextRunes {
 		return "", newValidation("q no puede superar los 200 caracteres")
 	}
 	for _, r := range text {
 		if unicode.IsControl(r) {
-			return "", newValidation("q no admite saltos de linea ni caracteres de control")
+			return "", newValidation("q no admite saltos de línea ni caracteres de control")
 		}
 	}
 	return text, nil

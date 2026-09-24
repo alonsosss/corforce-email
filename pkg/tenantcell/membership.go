@@ -87,7 +87,7 @@ type Membership struct {
 // NewMembership cierra el servicio a las empresas que no son de la celda cell.
 func NewMembership(cell string, resolver *Resolver, logger *zap.Logger) (*Membership, error) {
 	if !ValidCode(cell) {
-		return nil, fmt.Errorf("CELL_CODE %q no es un codigo de celda (minusculas, digitos y guiones)", cell)
+		return nil, fmt.Errorf("CELL_CODE %q no es un código de celda (minúsculas, dígitos y guiones)", cell)
 	}
 	if resolver == nil {
 		return nil, errors.New("sin resolvedor de celdas")
@@ -131,7 +131,7 @@ func (m *Membership) AcceptOperators(routes chi.Routes, platform []Route) error 
 	declared := make(map[Route]bool, len(platform))
 	for _, rt := range platform {
 		if !mounted[rt] {
-			return fmt.Errorf("rutas de plataforma: %s %s no esta montada en el servicio", rt.Method, rt.Pattern)
+			return fmt.Errorf("rutas de plataforma: %s %s no está montada en el servicio", rt.Method, rt.Pattern)
 		}
 		declared[rt] = true
 	}
@@ -161,13 +161,13 @@ func (m *Membership) Require(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 		case err == nil:
 			m.refuse(w, r, reasonForeign, tenantID, cell)
-			response.Err(w, http.StatusForbidden, CodeNotInCell, "la empresa de la peticion no pertenece a esta celda")
+			response.Err(w, http.StatusForbidden, CodeNotInCell, "la empresa de la petición no pertenece a esta celda")
 		case errors.Is(err, ErrUnknownTenant):
 			m.refuse(w, r, reasonUnknown, tenantID, "")
-			response.Err(w, http.StatusForbidden, CodeNotInCell, "la empresa de la peticion no pertenece a esta celda")
+			response.Err(w, http.StatusForbidden, CodeNotInCell, "la empresa de la petición no pertenece a esta celda")
 		default:
 			m.refuse(w, r, reasonUnresolved, tenantID, "")
-			response.Err(w, http.StatusServiceUnavailable, CodeCellUnavailable, "no se pudo comprobar la celda de tu empresa; intentalo de nuevo")
+			response.Err(w, http.StatusServiceUnavailable, CodeCellUnavailable, "no se pudo comprobar la celda de tu empresa; inténtalo de nuevo")
 		}
 	})
 }
@@ -180,7 +180,7 @@ func (m *Membership) requireOperator(w http.ResponseWriter, r *http.Request, nex
 	switch {
 	case len(targets) != 1 || targets[0] != m.cell:
 		m.refuse(w, r, reasonOperatorWrongCell, tenantID, strings.Join(targets, ","))
-		response.Err(w, http.StatusForbidden, CodeTargetCellMismatch, "la celda destino de la peticion no es esta celda")
+		response.Err(w, http.StatusForbidden, CodeTargetCellMismatch, "la celda destino de la petición no es esta celda")
 	case !platformOperator(r):
 		m.refuse(w, r, reasonOperatorNotPlatform, tenantID, targets[0])
 		response.Err(w, http.StatusForbidden, CodePlatformScopeOnly, "con celda destino solo se atiende a un operador de la plataforma")

@@ -36,7 +36,7 @@ func parseDateTime(value string, params map[string]string) (dtValue, error) {
 		}
 		t, err := time.Parse(layoutDate, value)
 		if err != nil {
-			return dtValue{}, errors.New("fecha no valida")
+			return dtValue{}, errors.New("fecha no válida")
 		}
 		return dtValue{wall: t, date: true}, nil
 	}
@@ -46,7 +46,7 @@ func parseDateTime(value string, params map[string]string) (dtValue, error) {
 	utc := strings.HasSuffix(value, "Z")
 	t, err := time.Parse(layoutDateTime, strings.TrimSuffix(value, "Z"))
 	if err != nil {
-		return dtValue{}, errors.New("fecha y hora no validas")
+		return dtValue{}, errors.New("fecha y hora no válidas")
 	}
 	tzid := params["TZID"]
 	if utc && tzid != "" {
@@ -72,7 +72,7 @@ func parseDuration(v string) (time.Duration, error) {
 		v = v[1:]
 	}
 	if !strings.HasPrefix(v, "P") || len(v) < 2 {
-		return 0, errors.New("DURATION no valida")
+		return 0, errors.New("DURATION no válida")
 	}
 	v = v[1:]
 	var total time.Duration
@@ -80,7 +80,7 @@ func parseDuration(v string) (time.Duration, error) {
 	for len(v) > 0 {
 		if v[0] == 'T' {
 			if inTime {
-				return 0, errors.New("DURATION no valida")
+				return 0, errors.New("DURATION no válida")
 			}
 			inTime, v = true, v[1:]
 			continue
@@ -90,7 +90,7 @@ func parseDuration(v string) (time.Duration, error) {
 			i++
 		}
 		if i == 0 || i > 9 || i == len(v) {
-			return 0, errors.New("DURATION no valida")
+			return 0, errors.New("DURATION no válida")
 		}
 		n, _ := strconv.Atoi(v[:i])
 		var unit time.Duration
@@ -106,7 +106,7 @@ func parseDuration(v string) (time.Duration, error) {
 		case v[i] == 'S' && inTime:
 			unit = time.Second
 		default:
-			return 0, errors.New("DURATION no valida")
+			return 0, errors.New("DURATION no válida")
 		}
 		total += time.Duration(n) * unit
 		if total > maxDurationDays*24*time.Hour {
@@ -116,7 +116,7 @@ func parseDuration(v string) (time.Duration, error) {
 		v = v[i+1:]
 	}
 	if !seen || (inTime && !timePart) {
-		return 0, errors.New("DURATION no valida")
+		return 0, errors.New("DURATION no válida")
 	}
 	return sign * total, nil
 }
@@ -271,7 +271,7 @@ func (z *vtimezone) toInstant(wall time.Time) time.Time {
 func parseUTCOffset(v string) (int, error) {
 	v = strings.TrimSpace(v)
 	if !utcOffsetRe.MatchString(v) {
-		return 0, errors.New("desfase UTC no valido")
+		return 0, errors.New("desfase UTC no válido")
 	}
 	h, _ := strconv.Atoi(v[1:3])
 	m, _ := strconv.Atoi(v[3:5])
@@ -280,7 +280,7 @@ func parseUTCOffset(v string) (int, error) {
 		s, _ = strconv.Atoi(v[5:7])
 	}
 	if h > 23 || m > 59 || s > 59 {
-		return 0, errors.New("desfase UTC no valido")
+		return 0, errors.New("desfase UTC no válido")
 	}
 	total := h*3600 + m*60 + s
 	if v[0] == '-' {

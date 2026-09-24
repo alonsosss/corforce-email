@@ -230,7 +230,7 @@ func (r *Resolver) fetch(ctx context.Context, token, clientIP string) (*Principa
 	case http.StatusUnauthorized:
 		return nil, ErrInvalid
 	default:
-		return nil, fmt.Errorf("%w: access-control respondio %d", ErrUnavailable, resp.StatusCode)
+		return nil, fmt.Errorf("%w: access-control respondió %d", ErrUnavailable, resp.StatusCode)
 	}
 	var payload struct {
 		Data Principal `json:"data"`

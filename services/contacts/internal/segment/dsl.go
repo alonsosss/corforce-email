@@ -52,7 +52,7 @@ const (
 )
 
 // ErrInvalid envuelve todo error de validacion de una definicion.
-var ErrInvalid = errors.New("definicion de segmento no valida")
+var ErrInvalid = errors.New("definición de segmento no válida")
 
 func invalid(path, format string, args ...any) error {
 	msg := fmt.Sprintf(format, args...)
@@ -138,7 +138,7 @@ func (r Rule) MarshalJSON() ([]byte, error) {
 // a la vez condicion y grupo, o un cuerpo que no es un objeto, son errores.
 func Parse(raw []byte) (Definition, error) {
 	if len(raw) > MaxDefinitionBytes {
-		return Definition{}, invalid("", "supera el tamano maximo de %d KB", MaxDefinitionBytes>>10)
+		return Definition{}, invalid("", "supera el tamaño máximo de %d KB", MaxDefinitionBytes>>10)
 	}
 	return parseGroup(raw, "definition")
 }
@@ -188,7 +188,7 @@ func parseRule(raw []byte, path string) (Rule, error) {
 	if hasMatch || hasRules {
 		for k := range probe {
 			if k != "match" && k != "rules" {
-				return Rule{}, invalid(path, "una regla no puede ser a la vez condicion y grupo")
+				return Rule{}, invalid(path, "una regla no puede ser a la vez condición y grupo")
 			}
 		}
 		g, err := parseGroup(raw, path)
@@ -199,7 +199,7 @@ func parseRule(raw []byte, path string) (Rule, error) {
 	}
 	for k := range probe {
 		if k != "field" && k != "op" && k != "value" {
-			return Rule{}, invalid(path, "clave no admitida en una condicion: %q", clip(k))
+			return Rule{}, invalid(path, "clave no admitida en una condición: %q", clip(k))
 		}
 	}
 	var r Rule
@@ -214,7 +214,7 @@ func parseRule(raw []byte, path string) (Rule, error) {
 	if v, ok := probe["value"]; ok && !isNull(v) {
 		var buf bytes.Buffer
 		if err := json.Compact(&buf, v); err != nil {
-			return Rule{}, invalid(path, "value no es JSON valido")
+			return Rule{}, invalid(path, "value no es JSON válido")
 		}
 		r.Value = buf.Bytes()
 	}
@@ -360,7 +360,7 @@ type compiler struct {
 
 func (c *compiler) group(def Definition, depth int, path string) (string, error) {
 	if depth > MaxDepth {
-		return "", invalid(path, "supera la profundidad maxima de %d niveles", MaxDepth)
+		return "", invalid(path, "supera la profundidad máxima de %d niveles", MaxDepth)
 	}
 	var joiner string
 	switch def.Match {
@@ -372,13 +372,13 @@ func (c *compiler) group(def Definition, depth int, path string) (string, error)
 		return "", invalid(path, "match debe ser all o any")
 	}
 	if len(def.Rules) == 0 {
-		return "", invalid(path, "rules no puede estar vacio")
+		return "", invalid(path, "rules no puede estar vacío")
 	}
 	parts := make([]string, 0, len(def.Rules))
 	for i, r := range def.Rules {
 		c.rules++
 		if c.rules > MaxRules {
-			return "", invalid("", "supera el maximo de %d reglas", MaxRules)
+			return "", invalid("", "supera el máximo de %d reglas", MaxRules)
 		}
 		rpath := fmt.Sprintf("%s.rules[%d]", path, i)
 		var (
@@ -401,11 +401,11 @@ func (c *compiler) group(def Definition, depth int, path string) (string, error)
 func (c *compiler) leaf(r Rule, path string) (string, error) {
 	if key, ok := strings.CutPrefix(r.Field, attrPrefix); ok {
 		if !attrKeyRegex.MatchString(key) {
-			return "", invalid(path, "clave de atributo no valida")
+			return "", invalid(path, "clave de atributo no válida")
 		}
 		typ, declared := c.schema.Attributes[key]
 		if !declared {
-			return "", invalid(path, "el atributo %q no esta declarado", key)
+			return "", invalid(path, "el atributo %q no está declarado", key)
 		}
 		return c.attribute(key, typ, r, path)
 	}
@@ -681,7 +681,7 @@ func (c *compiler) campaign(r Rule, path string) (string, error) {
 	}
 	id := strings.ToLower(strings.TrimSpace(v))
 	if !uuidRegex.MatchString(id) {
-		return "", invalid(path, "value debe ser el id de una campana")
+		return "", invalid(path, "value debe ser el id de una campaña")
 	}
 	return "EXISTS (SELECT 1 FROM " + engagementTable + " WHERE e.contact_id = c.id AND e.campaign_id = " +
 		c.args.Add(id) + "::uuid AND " + engagementColumn(r.Op) + " IS NOT NULL)", nil
@@ -911,10 +911,10 @@ func noValue(raw json.RawMessage, path string) error {
 
 func checkString(s, path string) error {
 	if strings.TrimSpace(s) == "" {
-		return invalid(path, "value no puede estar vacio")
+		return invalid(path, "value no puede estar vacío")
 	}
 	if utf8.RuneCountInString(s) > MaxStringValue || strings.ContainsRune(s, 0) {
-		return invalid(path, "value admite como maximo %d caracteres", MaxStringValue)
+		return invalid(path, "value admite como máximo %d caracteres", MaxStringValue)
 	}
 	return nil
 }
@@ -936,10 +936,10 @@ func stringValues(raw json.RawMessage, path string) ([]string, error) {
 		return nil, invalid(path, "value debe ser una lista de textos")
 	}
 	if len(vs) == 0 {
-		return nil, invalid(path, "value no puede ser una lista vacia")
+		return nil, invalid(path, "value no puede ser una lista vacía")
 	}
 	if len(vs) > MaxInValues {
-		return nil, invalid(path, "in admite como maximo %d valores", MaxInValues)
+		return nil, invalid(path, "in admite como máximo %d valores", MaxInValues)
 	}
 	for _, v := range vs {
 		if err := checkString(v, path); err != nil {
@@ -951,11 +951,11 @@ func stringValues(raw json.RawMessage, path string) ([]string, error) {
 
 func numberLiteral(n json.Number, path string) (string, error) {
 	if len(n) > maxNumberLength {
-		return "", invalid(path, "numero demasiado largo")
+		return "", invalid(path, "número demasiado largo")
 	}
 	f, err := strconv.ParseFloat(n.String(), 64)
 	if err != nil || math.IsInf(f, 0) || math.IsNaN(f) {
-		return "", invalid(path, "value debe ser un numero finito")
+		return "", invalid(path, "value debe ser un número finito")
 	}
 	return n.String(), nil
 }
@@ -965,11 +965,11 @@ func numberLiteral(n json.Number, path string) (string, error) {
 func numberValue(raw json.RawMessage, path string) (string, error) {
 	var v any
 	if err := strictDecode(raw, &v); err != nil {
-		return "", invalid(path, "value debe ser un numero")
+		return "", invalid(path, "value debe ser un número")
 	}
 	n, ok := v.(json.Number)
 	if !ok {
-		return "", invalid(path, "value debe ser un numero")
+		return "", invalid(path, "value debe ser un número")
 	}
 	return numberLiteral(n, path)
 }
@@ -977,19 +977,19 @@ func numberValue(raw json.RawMessage, path string) (string, error) {
 func numberValues(raw json.RawMessage, path string) ([]string, error) {
 	var vs []any
 	if err := strictDecode(raw, &vs); err != nil {
-		return nil, invalid(path, "value debe ser una lista de numeros")
+		return nil, invalid(path, "value debe ser una lista de números")
 	}
 	if len(vs) == 0 {
-		return nil, invalid(path, "value no puede ser una lista vacia")
+		return nil, invalid(path, "value no puede ser una lista vacía")
 	}
 	if len(vs) > MaxInValues {
-		return nil, invalid(path, "in admite como maximo %d valores", MaxInValues)
+		return nil, invalid(path, "in admite como máximo %d valores", MaxInValues)
 	}
 	out := make([]string, 0, len(vs))
 	for _, v := range vs {
 		n, ok := v.(json.Number)
 		if !ok {
-			return nil, invalid(path, "value debe ser una lista de numeros")
+			return nil, invalid(path, "value debe ser una lista de números")
 		}
 		s, err := numberLiteral(n, path)
 		if err != nil {
@@ -1048,7 +1048,7 @@ func timestampValue(raw json.RawMessage, path string) (time.Time, error) {
 func normalizeTag(s, path string) (string, error) {
 	t := strings.ToLower(strings.TrimSpace(s))
 	if t == "" || utf8.RuneCountInString(t) > 64 {
-		return "", invalid(path, "etiqueta no valida")
+		return "", invalid(path, "etiqueta no válida")
 	}
 	return t, nil
 }

@@ -60,7 +60,7 @@ type Client struct {
 
 func New(cfg Config) (*Client, error) {
 	if !strings.HasPrefix(cfg.BaseURL, "https://") {
-		return nil, errors.New("DOVEADM_API_URL debe ser https: la clave del API viaja en cada peticion")
+		return nil, errors.New("DOVEADM_API_URL debe ser https: la clave del API viaja en cada petición")
 	}
 	if !apiKeyPattern.MatchString(cfg.APIKey) {
 		return nil, errors.New("DOVEADM_API_KEY debe tener de 32 a 256 caracteres de [A-Za-z0-9_-]")
@@ -138,7 +138,7 @@ func (c *Client) ForgetCredentials(ctx context.Context, username string, kick bo
 	case resp.StatusCode != http.StatusOK:
 		return fmt.Errorf("%w: HTTP %d", domain.ErrEngineCommand, resp.StatusCode)
 	case len(raw) > maxResponseBytes:
-		return fmt.Errorf("%w: respuesta de mas de %d bytes", domain.ErrEngineCommand, maxResponseBytes)
+		return fmt.Errorf("%w: respuesta de más de %d bytes", domain.ErrEngineCommand, maxResponseBytes)
 	}
 	results, err := parseResults(raw)
 	if err != nil {
@@ -198,9 +198,9 @@ func (rs results) check(tag string, kick bool) error {
 	case r.kind == "doveadmResponse":
 		return nil
 	case r.kind != "error":
-		return fmt.Errorf("%w: %s respondio %q", domain.ErrEngineCommand, tag, r.kind)
+		return fmt.Errorf("%w: %s respondió %q", domain.ErrEngineCommand, tag, r.kind)
 	case r.errType == "unAuthorized" || r.errType == "unknownMethod":
-		return fmt.Errorf("%w: %s: %s (doveadm_allowed_commands o version de Dovecot)", domain.ErrEngineRejected, tag, r.errType)
+		return fmt.Errorf("%w: %s: %s (doveadm_allowed_commands o versión de Dovecot)", domain.ErrEngineRejected, tag, r.errType)
 	case kick && r.errType == "exitCode" && r.exitCode == exitNoUsersKicked:
 		return nil
 	default:

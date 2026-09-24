@@ -74,10 +74,10 @@ var (
 	ErrFormExists   = errors.New("ya existe un formulario con ese nombre")
 	// ErrListInUseByForm: una lista destino de un formulario no se borra; quien confirme
 	// despues no tendria donde entrar.
-	ErrListInUseByForm = errors.New("la lista es la destino de al menos un formulario de suscripcion")
-	ErrInvalidForm     = errors.New("formulario no valido")
+	ErrListInUseByForm = errors.New("la lista es la destino de al menos un formulario de suscripción")
+	ErrInvalidForm     = errors.New("formulario no válido")
 	// ErrInvalidSubmission: los datos enviados por un formulario publico no son validos.
-	ErrInvalidSubmission = errors.New("datos del formulario no validos")
+	ErrInvalidSubmission = errors.New("datos del formulario no válidos")
 	// ErrConsentNotAccepted: el envio no marca la casilla del texto de consentimiento.
 	ErrConsentNotAccepted = errors.New("hay que aceptar el texto de consentimiento para suscribirse")
 )
@@ -170,7 +170,7 @@ func (f *SubscriptionForm) normalizeFields(defs Definitions) error {
 			return err
 		}
 		if seen[fd.Key] {
-			return invalidForm("el campo %s esta repetido", fd.Key)
+			return invalidForm("el campo %s está repetido", fd.Key)
 		}
 		seen[fd.Key] = true
 		var err error
@@ -230,7 +230,7 @@ func formText(field, raw string, max int, required bool) (string, error) {
 		return "", invalidForm("%s es obligatorio", field)
 	}
 	if utf8.RuneCountInString(s) > max || !utf8.ValidString(s) || strings.ContainsAny(s, "\x00\r\n") {
-		return "", invalidForm("%s admite una linea de como maximo %d caracteres", field, max)
+		return "", invalidForm("%s admite una línea de como máximo %d caracteres", field, max)
 	}
 	return s, nil
 }
@@ -242,7 +242,7 @@ func formMultiline(field, raw string, max int, required bool) (string, error) {
 		return "", invalidForm("%s es obligatorio", field)
 	}
 	if utf8.RuneCountInString(s) > max || !utf8.ValidString(s) || strings.ContainsAny(s, "\x00\r") {
-		return "", invalidForm("%s admite como maximo %d caracteres", field, max)
+		return "", invalidForm("%s admite como máximo %d caracteres", field, max)
 	}
 	return s, nil
 }
@@ -290,7 +290,7 @@ func NormalizeOrigin(raw string) (string, error) {
 	}
 	host := strings.ToLower(u.Hostname())
 	if host == "" || strings.Contains(host, "*") || !validOriginHost(host) {
-		return "", invalidForm("allowed_origins: %q no es un dominio valido", truncate(s, 80))
+		return "", invalidForm("allowed_origins: %q no es un dominio válido", truncate(s, 80))
 	}
 	origin := "https://" + host
 	if strings.Contains(host, ":") {
@@ -299,7 +299,7 @@ func NormalizeOrigin(raw string) (string, error) {
 	if port := u.Port(); port != "" {
 		n, err := strconv.Atoi(port)
 		if err != nil || n < 1 || n > 65535 {
-			return "", invalidForm("allowed_origins: %q lleva un puerto no valido", truncate(s, 80))
+			return "", invalidForm("allowed_origins: %q lleva un puerto no válido", truncate(s, 80))
 		}
 		if n != 443 {
 			origin += ":" + strconv.Itoa(n)
@@ -331,7 +331,7 @@ func validOriginHost(host string) bool {
 // NormalizeOrigins normaliza y deduplica la lista, conservando su orden.
 func NormalizeOrigins(raw []string) ([]string, error) {
 	if len(raw) > MaxFormAllowedOrigins {
-		return nil, invalidForm("allowed_origins admite como maximo %d origenes", MaxFormAllowedOrigins)
+		return nil, invalidForm("allowed_origins admite como máximo %d orígenes", MaxFormAllowedOrigins)
 	}
 	out := make([]string, 0, len(raw))
 	seen := make(map[string]bool, len(raw))
@@ -437,14 +437,14 @@ func (f *SubscriptionForm) ParseSubmission(values map[string]json.RawMessage, de
 		case FieldEmail, FieldFirstName, FieldLastName:
 			var s string
 			if err := json.Unmarshal(raw, &s); err != nil {
-				return nil, invalidSubmission("%s no es valido", fd.Label)
+				return nil, invalidSubmission("%s no es válido", fd.Label)
 			}
 			if err := out.setBuiltin(fd, s); err != nil {
 				return nil, err
 			}
 		default:
 			if _, err := ParseAttributeValue(defs[fd.Key].Type, raw); err != nil {
-				return nil, invalidSubmission("%s no es valido", fd.Label)
+				return nil, invalidSubmission("%s no es válido", fd.Label)
 			}
 			out.Attributes[fd.Key] = raw
 		}
@@ -457,13 +457,13 @@ func (s *FormSubmission) setBuiltin(fd FormField, raw string) error {
 	case FieldEmail:
 		email, err := NormalizeEmail(raw)
 		if err != nil {
-			return invalidSubmission("%s no es una direccion de correo valida", fd.Label)
+			return invalidSubmission("%s no es una dirección de correo válida", fd.Label)
 		}
 		s.Email = email
 	case FieldFirstName, FieldLastName:
 		name, err := NormalizeName(raw)
 		if err != nil {
-			return invalidSubmission("%s admite como maximo %d caracteres", fd.Label, MaxNameLength)
+			return invalidSubmission("%s admite como máximo %d caracteres", fd.Label, MaxNameLength)
 		}
 		if fd.Key == FieldFirstName {
 			s.FirstName = name
@@ -511,14 +511,14 @@ func (f *SubscriptionForm) FormValuesFromStrings(in map[string]string, defs Defi
 			// El literal pasa tal cual (sin float64 de por medio, que perderia precision); el tipo
 			// y el rango los comprueba ParseAttributeValue.
 			if !jsonNumberRegex.MatchString(v) || len(v) > maxNumberLength {
-				return nil, invalidSubmission("%s tiene que ser un numero", fd.Label)
+				return nil, invalidSubmission("%s tiene que ser un número", fd.Label)
 			}
 			out[fd.Key] = json.RawMessage(v)
 			continue
 		}
 		b, err := json.Marshal(v)
 		if err != nil {
-			return nil, invalidSubmission("%s no es valido", fd.Label)
+			return nil, invalidSubmission("%s no es válido", fd.Label)
 		}
 		out[fd.Key] = b
 	}

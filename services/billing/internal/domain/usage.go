@@ -46,7 +46,7 @@ type UsageChange struct {
 // Validate rechaza lo que ningun reintento va a arreglar.
 func (c UsageChange) Validate() error {
 	if strings.TrimSpace(c.EventID) == "" || len(c.EventID) > MaxEventIDLength {
-		return fmt.Errorf("%w: id de evento vacio o demasiado largo", ErrInvalidEvent)
+		return fmt.Errorf("%w: id de evento vacío o demasiado largo", ErrInvalidEvent)
 	}
 	if c.TenantID == uuid.Nil {
 		return fmt.Errorf("%w: sin tenant_id", ErrInvalidEvent)

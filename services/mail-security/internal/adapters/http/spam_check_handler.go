@@ -72,7 +72,7 @@ func (h *Handler) SpamCheck(w http.ResponseWriter, r *http.Request) {
 			writeSpamCheckError(w, domain.ErrSpamCheckTooLarge)
 			return
 		}
-		response.ErrBadRequest(w, "cuerpo JSON invalido: se espera {\"message\": \"<MIME>\"}")
+		response.ErrBadRequest(w, "cuerpo JSON inválido: se espera {\"message\": \"<MIME>\"}")
 		return
 	}
 	if in.Message == nil {
@@ -98,7 +98,7 @@ func writeSpamCheckError(w http.ResponseWriter, err error) {
 	case errors.Is(err, domain.ErrSpamCheckEmpty):
 		response.Err(w, http.StatusBadRequest, "MESSAGE_REQUIRED", err.Error())
 	case errors.Is(err, domain.ErrNotConfigured):
-		response.Err(w, http.StatusServiceUnavailable, "NOT_CONFIGURED", "la puntuacion antispam no esta configurada en esta celda")
+		response.Err(w, http.StatusServiceUnavailable, "NOT_CONFIGURED", "la puntuación antispam no está configurada en esta celda")
 	case errors.Is(err, domain.ErrEngineUnreachable), errors.Is(err, domain.ErrEngineCommand):
 		response.Err(w, http.StatusServiceUnavailable, "SPAM_CHECK_UNAVAILABLE", "rspamd no pudo puntuar el mensaje")
 	default:

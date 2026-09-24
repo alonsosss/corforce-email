@@ -56,7 +56,7 @@ func ParseInvitation(raw string, lim CalendarLimits) (Invitation, error) {
 	}
 	m, n := tree.first("METHOD")
 	if n != 1 {
-		return Invitation{}, icalError(ICalObject, "una invitacion lleva un METHOD")
+		return Invitation{}, icalError(ICalObject, "una invitación lleva un METHOD")
 	}
 	method := strings.ToUpper(strings.TrimSpace(m.Value))
 	if method != MethodRequest && method != MethodReply && method != MethodCancel {
@@ -127,7 +127,7 @@ func parseReply(tree *icalComp, stored string) (Invitation, error) {
 		}
 	}
 	if first == nil {
-		return Invitation{}, icalError(ICalObject, "el objeto no tiene ningun VEVENT")
+		return Invitation{}, icalError(ICalObject, "el objeto no tiene ningún VEVENT")
 	}
 	inv.Sequence = first.sequence()
 	inv.Organizer = first.organizer()
@@ -179,10 +179,10 @@ func RespondToInvitation(inv Invitation, addresses []string, partStat string, no
 		return InvitationReply{}, fieldError("response", "se espera ACCEPTED, TENTATIVE o DECLINED")
 	}
 	if inv.Method != MethodRequest {
-		return InvitationReply{}, fieldError("method", "solo se responde a una invitacion (REQUEST)")
+		return InvitationReply{}, fieldError("method", "solo se responde a una invitación (REQUEST)")
 	}
 	if inv.Organizer == nil {
-		return InvitationReply{}, fieldError("organizer", "la invitacion no tiene organizador")
+		return InvitationReply{}, fieldError("organizer", "la invitación no tiene organizador")
 	}
 	mine := normalizedAddresses(addresses)
 	tree := parseRawTree(inv.Object)
@@ -199,7 +199,7 @@ func RespondToInvitation(inv Invitation, addresses []string, partStat string, no
 		}
 	}
 	if me == "" {
-		return InvitationReply{}, fieldError("attendee", "el buzon no figura entre los invitados")
+		return InvitationReply{}, fieldError("attendee", "el buzón no figura entre los invitados")
 	}
 
 	var w contentWriter

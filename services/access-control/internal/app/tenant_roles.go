@@ -11,7 +11,7 @@ import (
 )
 
 // tenantAdminDescription es la descripcion con la que nace el rol del sistema de cada empresa.
-const tenantAdminDescription = "Administrador del tenant: usuarios, dominios y politicas de su propia organizacion"
+const tenantAdminDescription = "Administrador del tenant: usuarios, dominios y políticas de su propia organización"
 
 // TenantRolesDeps agrupa los puertos de TenantRolesUseCase.
 type TenantRolesDeps struct {

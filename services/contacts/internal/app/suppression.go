@@ -13,7 +13,7 @@ import (
 // ErrSuppressionUnavailable: suppression no devolvio las causas vigentes con que se decide
 // el estado de un contacto nuevo o el consentimiento de una importacion. El alta y cada lote
 // de la importacion fallan sin escribir nada (admissionCauses).
-var ErrSuppressionUnavailable = errors.New("la lista de exclusiones no respondio: no se escribio ningun contacto sin comprobarla; vuelve a intentarlo")
+var ErrSuppressionUnavailable = errors.New("la lista de exclusiones no respondió: no se escribió ningún contacto sin comprobarla; vuelve a intentarlo")
 
 // admissionCauses lee de suppression las causas vigentes de las direcciones que entran por
 // el alta o por un lote de la importacion, fuera de la transaccion (la llamada no retiene

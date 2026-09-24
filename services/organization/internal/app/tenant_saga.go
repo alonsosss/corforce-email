@@ -44,7 +44,7 @@ const maxSagaErrorLen = 1000
 
 // errAdminUnavailable: el alta necesita la contrasena del primer administrador y la saga se
 // retomo sin la peticion original. Solo un reintento de la peticion la trae.
-var errAdminUnavailable = errors.New("el alta necesita la contrasena del primer administrador: reintenta la peticion de alta")
+var errAdminUnavailable = errors.New("el alta necesita la contraseña del primer administrador: reintenta la petición de alta")
 
 type sagaStep struct {
 	done string
@@ -481,7 +481,7 @@ func (uc *OrganizationUseCase) recoverSaga(ctx context.Context, tenantID uuid.UU
 		// quedar a medias cuando se corto.
 		saga.Step = domain.NextCreateStep(saga.Step)
 		if saga.LastError == "" {
-			saga.LastError = "alta interrumpida: la instancia que la ejecutaba no termino"
+			saga.LastError = "alta interrumpida: la instancia que la ejecutaba no terminó"
 		}
 	}
 	return uc.compensateCreate(runCtx, run)

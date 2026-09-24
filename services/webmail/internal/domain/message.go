@@ -88,7 +88,7 @@ func NewFlagChange(add, remove []string) (FlagChange, error) {
 	}
 	for _, f := range removeFlags {
 		if addSet[f] {
-			return FlagChange{}, invalid("flags", "un mismo flag no puede anadirse y quitarse a la vez")
+			return FlagChange{}, invalid("flags", "un mismo flag no puede añadirse y quitarse a la vez")
 		}
 	}
 	return FlagChange{Add: addFlags, Remove: removeFlags}, nil
@@ -183,14 +183,14 @@ var partIDPattern = regexp.MustCompile(`^[1-9][0-9]{0,3}(\.[1-9][0-9]{0,3}){0,9}
 // ParsePartID convierte "1.2" en [1 2].
 func ParsePartID(raw string) ([]int, error) {
 	if !partIDPattern.MatchString(raw) {
-		return nil, invalid("part", "identificador de parte invalido")
+		return nil, invalid("part", "identificador de parte inválido")
 	}
 	segments := strings.Split(raw, ".")
 	out := make([]int, len(segments))
 	for i, s := range segments {
 		n, err := strconv.Atoi(s)
 		if err != nil {
-			return nil, invalid("part", "identificador de parte invalido")
+			return nil, invalid("part", "identificador de parte inválido")
 		}
 		out[i] = n
 	}
@@ -308,7 +308,7 @@ func searchText(field, v string) (string, error) {
 		return "", invalid(field, "demasiado larga")
 	}
 	if !utf8.ValidString(v) {
-		return "", invalid(field, "no es UTF-8 valido")
+		return "", invalid(field, "no es UTF-8 válido")
 	}
 	for _, r := range v {
 		if isControl(r) {

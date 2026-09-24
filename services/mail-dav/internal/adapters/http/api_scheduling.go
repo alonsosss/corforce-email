@@ -26,9 +26,9 @@ func (a *API) decodeLimit(w http.ResponseWriter, r *http.Request, v any, limit i
 	case err == nil:
 		return true
 	case errors.As(err, &tooLarge):
-		limitExceeded(w, http.StatusRequestEntityTooLarge, "body", "el cuerpo supera el tamano maximo")
+		limitExceeded(w, http.StatusRequestEntityTooLarge, "body", "el cuerpo supera el tamaño máximo")
 	default:
-		apiresponse.ErrBadRequest(w, "el cuerpo no es un JSON valido")
+		apiresponse.ErrBadRequest(w, "el cuerpo no es un JSON válido")
 	}
 	return false
 }
@@ -310,10 +310,10 @@ func (in bookingSettingsJSON) settings() (domain.BookingSettings, error) {
 	for code, day := range in.Weekly {
 		d, ok := domain.WeekdayOf(code)
 		if !ok {
-			return s, &domain.FieldError{Field: "weekly", Reason: "se espera un dia MO, TU, WE, TH, FR, SA o SU"}
+			return s, &domain.FieldError{Field: "weekly", Reason: "se espera un día MO, TU, WE, TH, FR, SA o SU"}
 		}
 		if len(day) > domain.MaxBookingWindowsPerDay {
-			return s, &domain.FieldError{Field: "weekly." + code, Reason: "demasiadas franjas en el dia"}
+			return s, &domain.FieldError{Field: "weekly." + code, Reason: "demasiadas franjas en el día"}
 		}
 		for _, win := range day {
 			start, err := domain.ParseClock("weekly."+code, win.Start)

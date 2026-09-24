@@ -87,7 +87,7 @@ func RequireRoles(roles ...string) func(http.Handler) http.Handler {
 			}
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusForbidden)
-			_, _ = w.Write([]byte(`{"error":{"code":"FORBIDDEN","message":"su rol no permite esta operacion"}}`))
+			_, _ = w.Write([]byte(`{"error":{"code":"FORBIDDEN","message":"su rol no permite esta operación"}}`))
 		})
 	}
 }

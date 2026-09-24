@@ -68,7 +68,7 @@ func publicFormError(w http.ResponseWriter, err error) {
 	case errors.Is(err, domain.ErrInvalidSubmission), errors.Is(err, domain.ErrConsentNotAccepted):
 		response.ErrValidation(w, err.Error())
 	case errors.Is(err, app.ErrSuppressionUnavailable), errors.Is(err, app.ErrFormsUnavailable), errors.Is(err, errTenantUnavailable):
-		response.Err(w, http.StatusServiceUnavailable, "FORMS_UNAVAILABLE", "no se pudo registrar la suscripcion en este momento; vuelve a intentarlo en unos minutos")
+		response.Err(w, http.StatusServiceUnavailable, "FORMS_UNAVAILABLE", "no se pudo registrar la suscripción en este momento; vuelve a intentarlo en unos minutos")
 	default:
 		response.Unexpected(w, err)
 	}
@@ -385,7 +385,7 @@ func (h *Handler) SubmitForm(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	mode, ok := submitModeOf(r)
 	if !ok {
-		response.Err(w, http.StatusUnsupportedMediaType, "UNSUPPORTED_MEDIA_TYPE", "el envio va en JSON o como formulario HTML")
+		response.Err(w, http.StatusUnsupportedMediaType, "UNSUPPORTED_MEDIA_TYPE", "el envío va en JSON o como formulario HTML")
 		return
 	}
 	ip := r.Header.Get("X-Real-IP")
@@ -407,7 +407,7 @@ func (h *Handler) SubmitForm(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		var tooLarge *http.MaxBytesError
 		if errors.As(err, &tooLarge) {
-			response.Err(w, http.StatusRequestEntityTooLarge, "PAYLOAD_TOO_LARGE", "el envio supera el tamano maximo")
+			response.Err(w, http.StatusRequestEntityTooLarge, "PAYLOAD_TOO_LARGE", "el envío supera el tamaño máximo")
 			return
 		}
 		h.submitFailed(w, mode, f, defs, nil, fmt.Errorf("%w: %v", domain.ErrInvalidSubmission, err))

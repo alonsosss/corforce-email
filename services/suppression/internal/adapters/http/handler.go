@@ -83,7 +83,7 @@ func (h *Handler) Health(w http.ResponseWriter, r *http.Request) {
 func tenantFrom(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
 	id, err := uuid.Parse(middleware.GetTenantID(r.Context()))
 	if err != nil {
-		response.ErrUnauthorized(w, "empresa no valida")
+		response.ErrUnauthorized(w, "empresa no válida")
 		return uuid.Nil, false
 	}
 	return id, true
@@ -92,7 +92,7 @@ func tenantFrom(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
 func parseIDParam(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		response.ErrBadRequest(w, "identificador de exclusion no valido")
+		response.ErrBadRequest(w, "identificador de exclusión no válido")
 		return uuid.Nil, false
 	}
 	return id, true
@@ -168,7 +168,7 @@ func (h *Handler) Check(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(req.Emails) > app.MaxCheckEmails {
-		response.ErrValidation(w, "emails admite como maximo "+strconv.Itoa(app.MaxCheckEmails)+" direcciones")
+		response.ErrValidation(w, "emails admite como máximo "+strconv.Itoa(app.MaxCheckEmails)+" direcciones")
 		return
 	}
 	suppressed, err := h.uc.Check(r.Context(), tenantID, req.Emails)
@@ -297,7 +297,7 @@ func (h *Handler) ImportEntries(w http.ResponseWriter, r *http.Request) {
 	}
 	userID, err := uuid.Parse(middleware.GetUserID(r.Context()))
 	if err != nil {
-		response.ErrUnauthorized(w, "usuario no valido")
+		response.ErrUnauthorized(w, "usuario no válido")
 		return
 	}
 	var req importRequest
@@ -312,10 +312,10 @@ func (h *Handler) ImportEntries(w http.ResponseWriter, r *http.Request) {
 	v.OneOf("reason", req.Reason, manualReasons())
 	v.MaxLength("detail", req.Detail, maxDetailLength)
 	if len(req.Emails) == 0 {
-		v.Add("emails", "no puede estar vacio")
+		v.Add("emails", "no puede estar vacío")
 	}
 	if len(req.Emails) > app.MaxImportEmails {
-		v.Add("emails", "admite como maximo "+strconv.Itoa(app.MaxImportEmails)+" direcciones")
+		v.Add("emails", "admite como máximo "+strconv.Itoa(app.MaxImportEmails)+" direcciones")
 	}
 	if !v.Valid() {
 		response.ErrValidation(w, v.Error())

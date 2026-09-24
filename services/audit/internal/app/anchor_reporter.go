@@ -121,7 +121,7 @@ func (r *AnchorReporter) deliver(ctx context.Context, to, subject, body string) 
 	case err != nil:
 		return domain.ReportResultFailed, err
 	case suppressed:
-		return domain.ReportResultSuppressed, errors.New("la direccion esta suprimida en transactional; el informe no salio")
+		return domain.ReportResultSuppressed, errors.New("la dirección está suprimida en transactional; el informe no salió")
 	}
 	return domain.ReportResultSent, nil
 }

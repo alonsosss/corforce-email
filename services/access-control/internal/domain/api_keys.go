@@ -182,7 +182,7 @@ func ValidateAPIKeyExpiry(expiresAt *time.Time, now time.Time) error {
 		return nil
 	}
 	if expiresAt.Before(now.Add(MinAPIKeyLifetime)) {
-		return errors.New("la caducidad debe ser al menos una hora posterior a la creacion")
+		return errors.New("la caducidad debe ser al menos una hora posterior a la creación")
 	}
 	if expiresAt.After(now.Add(MaxAPIKeyLifetime)) {
 		return errors.New("la caducidad no puede superar cinco anos")

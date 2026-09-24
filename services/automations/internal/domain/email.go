@@ -52,15 +52,15 @@ func TruncateReason(s string) string {
 func normalizeSender(field string, email, name, replyTo *string) error {
 	*email = NormalizeEmail(*email)
 	if !ValidEmail(*email) {
-		return NewValidationError("%sfrom_email debe ser un correo valido", field)
+		return NewValidationError("%sfrom_email debe ser un correo válido", field)
 	}
 	*name = strings.TrimSpace(*name)
 	if utf8.RuneCountInString(*name) > MaxNameLen {
-		return NewValidationError("%sfrom_name admite como maximo %d caracteres", field, MaxNameLen)
+		return NewValidationError("%sfrom_name admite como máximo %d caracteres", field, MaxNameLen)
 	}
 	*replyTo = NormalizeEmail(*replyTo)
 	if *replyTo != "" && !ValidEmail(*replyTo) {
-		return NewValidationError("%sreply_to debe ser un correo valido", field)
+		return NewValidationError("%sreply_to debe ser un correo válido", field)
 	}
 	return nil
 }

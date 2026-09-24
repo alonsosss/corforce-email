@@ -143,7 +143,7 @@ type RateLimitedError struct {
 }
 
 func (e *RateLimitedError) Error() string {
-	return fmt.Sprintf("limite de tasa alcanzado; reintentar en %s", e.RetryAfter)
+	return fmt.Sprintf("límite de tasa alcanzado; reintentar en %s", e.RetryAfter)
 }
 
 // BlockedError: la empresa no puede enviar ahora (403 SENDING_RESTRICTED por reputacion

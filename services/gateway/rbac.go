@@ -233,7 +233,7 @@ func (e *rbacEnforcer) sessionRejected(r *http.Request) bool {
 func (e *rbacEnforcer) denyRevoked(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusUnauthorized)
-	_, _ = w.Write([]byte(`{"error":{"code":"SESSION_REVOKED","message":"tu sesion fue cerrada; vuelve a iniciar sesion"}}`))
+	_, _ = w.Write([]byte(`{"error":{"code":"SESSION_REVOKED","message":"tu sesión fue cerrada; vuelve a iniciar sesión"}}`))
 }
 
 func (e *rbacEnforcer) middleware(next http.Handler) http.Handler {
@@ -376,7 +376,7 @@ func (e *rbacEnforcer) recordDenial(userID, tenantID, module, action, method, pa
 func (e *rbacEnforcer) deny(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusForbidden)
-	_, _ = w.Write([]byte(`{"error":{"code":"FORBIDDEN","message":"su rol no tiene permiso para esta operacion"}}`))
+	_, _ = w.Write([]byte(`{"error":{"code":"FORBIDDEN","message":"su rol no tiene permiso para esta operación"}}`))
 }
 
 // modulesFor resuelve el acceso del usuario desde la cache (rbacCacheTTL) o access-control.

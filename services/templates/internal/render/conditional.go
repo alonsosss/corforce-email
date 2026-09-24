@@ -58,7 +58,7 @@ func extractConditionals(src string) (string, *conditionals, error) {
 			return m
 		}
 		if len(kept) >= maxConditionals {
-			failure = fmt.Errorf("%w: html: mas de %d comentarios condicionales", domain.ErrInvalidTemplate, maxConditionals)
+			failure = fmt.Errorf("%w: html: más de %d comentarios condicionales", domain.ErrInvalidTemplate, maxConditionals)
 			return m
 		}
 		kept = append(kept, m)

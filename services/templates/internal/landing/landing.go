@@ -98,7 +98,7 @@ func SanitizeHTML(raw string) (string, error) {
 	}
 	out := policy.Sanitize(raw)
 	if strings.TrimSpace(out) == "" {
-		return "", fmt.Errorf("%w: la pagina no tiene contenido", domain.ErrInvalidPage)
+		return "", fmt.Errorf("%w: la página no tiene contenido", domain.ErrInvalidPage)
 	}
 	return out, nil
 }
@@ -131,7 +131,7 @@ func CheckCSS(css string) error {
 		if strings.HasPrefix(lower, "https://") || dataImage.MatchString(target) {
 			continue
 		}
-		return fmt.Errorf("%w: url() del CSS solo admite https o imagenes data:", domain.ErrInvalidPage)
+		return fmt.Errorf("%w: url() del CSS solo admite https o imágenes data:", domain.ErrInvalidPage)
 	}
 	return nil
 }

@@ -75,14 +75,14 @@ func parseContentHead(head string) (string, map[string]string, *ICalError) {
 	parts := splitOutsideQuotes(head, ';')
 	name := strings.ToUpper(parts[0])
 	if !icalNameRe.MatchString(name) {
-		return "", nil, invalid("nombre de propiedad no valido")
+		return "", nil, invalid("nombre de propiedad no válido")
 	}
 	var params map[string]string
 	for _, p := range parts[1:] {
 		k, v, ok := strings.Cut(p, "=")
 		k = strings.ToUpper(k)
 		if !ok || !icalNameRe.MatchString(k) {
-			return "", nil, invalid("parametro mal formado")
+			return "", nil, invalid("parámetro mal formado")
 		}
 		if params == nil {
 			params = map[string]string{}
@@ -97,10 +97,10 @@ func parseContentHead(head string) (string, map[string]string, *ICalError) {
 // No interpreta valores: eso lo hace ParseCalendarObject.
 func parseICalTree(raw string, lim CalendarLimits) (*icalComp, *ICalError) {
 	if len(raw) > lim.MaxEventBytes {
-		return nil, icalError(ICalTooLarge, "el evento supera el tamano maximo")
+		return nil, icalError(ICalTooLarge, "el evento supera el tamaño máximo")
 	}
 	if !utf8.ValidString(raw) {
-		return nil, invalid("no es UTF-8 valido")
+		return nil, invalid("no es UTF-8 válido")
 	}
 	if reason := controlProblem(raw); reason != "" {
 		return nil, invalid(reason)
@@ -114,7 +114,7 @@ func parseICalTree(raw string, lim CalendarLimits) (*icalComp, *ICalError) {
 	for _, line := range lines {
 		head, value, ok := splitContentLine(line)
 		if !ok {
-			return nil, invalid("linea sin nombre o sin valor")
+			return nil, invalid("línea sin nombre o sin valor")
 		}
 		name, params, err := parseContentHead(head)
 		if err != nil {
@@ -124,10 +124,10 @@ func parseICalTree(raw string, lim CalendarLimits) (*icalComp, *ICalError) {
 		case "BEGIN":
 			cname := strings.ToUpper(strings.TrimSpace(value))
 			if !icalNameRe.MatchString(cname) {
-				return nil, invalid("nombre de componente no valido")
+				return nil, invalid("nombre de componente no válido")
 			}
 			if len(stack) == 0 && (root != nil || cname != "VCALENDAR") {
-				return nil, invalid("el objeto debe ser un unico VCALENDAR")
+				return nil, invalid("el objeto debe ser un único VCALENDAR")
 			}
 			if len(stack) >= maxICalDepth {
 				return nil, invalid("componentes anidados en exceso")
@@ -249,7 +249,7 @@ func parseCalendarObject(raw string, lim CalendarLimits) (CalendarObject, error)
 		}
 	}
 	if len(obj.events) == 0 {
-		return CalendarObject{}, icalError(ICalObject, "el objeto no tiene ningun VEVENT")
+		return CalendarObject{}, icalError(ICalObject, "el objeto no tiene ningún VEVENT")
 	}
 	if masters > 1 {
 		return CalendarObject{}, icalError(ICalObject, "un objeto tiene a lo sumo un VEVENT sin RECURRENCE-ID")
@@ -426,7 +426,7 @@ func parseVTimezone(c *icalComp) (string, *vtimezone, *ICalError) {
 		tz.observances = append(tz.observances, obs)
 	}
 	if len(tz.observances) == 0 {
-		return "", nil, invalid("el VTIMEZONE no define ningun STANDARD ni DAYLIGHT")
+		return "", nil, invalid("el VTIMEZONE no define ningún STANDARD ni DAYLIGHT")
 	}
 	return id, tz, nil
 }

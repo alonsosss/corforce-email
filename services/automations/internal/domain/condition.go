@@ -61,7 +61,7 @@ func (c *Condition) normalize(field string) error {
 			return NewValidationError("%skind %s solo admite step", field, c.Kind)
 		}
 		if c.Step == "" {
-			return NewValidationError("%sstep es obligatorio: el paso de envio cuyo correo se mira", field)
+			return NewValidationError("%sstep es obligatorio: el paso de envío cuyo correo se mira", field)
 		}
 	case ConditionSegment:
 		if c.Step != "" || hasAttr {
@@ -78,7 +78,7 @@ func (c *Condition) normalize(field string) error {
 			return NewValidationError("%sattribute debe ser la clave de un atributo declarado", field)
 		}
 		if !conditionOpPattern.MatchString(c.Op) {
-			return NewValidationError("%sop no es valido", field)
+			return NewValidationError("%sop no es válido", field)
 		}
 		if len(c.Value) > MaxConditionValueBytes {
 			return NewValidationError("%svalue supera %d KB", field, MaxConditionValueBytes>>10)
@@ -86,7 +86,7 @@ func (c *Condition) normalize(field string) error {
 		if len(c.Value) > 0 {
 			var buf bytes.Buffer
 			if err := json.Compact(&buf, c.Value); err != nil {
-				return NewValidationError("%svalue no es JSON valido", field)
+				return NewValidationError("%svalue no es JSON válido", field)
 			}
 			c.Value = buf.Bytes()
 			if bytes.Equal(c.Value, []byte("null")) {

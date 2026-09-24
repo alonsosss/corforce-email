@@ -86,7 +86,7 @@ func (c *Client) Check(ctx context.Context, tenantID uuid.UUID, class domain.Cla
 	}
 	d := payload.Data
 	if d.Resource != "" && d.Resource != class.BillingResource() {
-		return domain.Entitlement{}, fmt.Errorf("billing entitlements/check: respondio por %q en vez de %q", d.Resource, class.BillingResource())
+		return domain.Entitlement{}, fmt.Errorf("billing entitlements/check: respondió por %q en vez de %q", d.Resource, class.BillingResource())
 	}
 	return domain.Entitlement{
 		Allowed:   d.Allowed,

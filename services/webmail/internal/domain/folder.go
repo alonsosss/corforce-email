@@ -58,7 +58,7 @@ func ValidateFolderName(name string) error {
 		return invalid("folder", "demasiado largo")
 	}
 	if !utf8.ValidString(name) {
-		return invalid("folder", "no es UTF-8 valido")
+		return invalid("folder", "no es UTF-8 válido")
 	}
 	for _, r := range name {
 		if isControl(r) {
@@ -158,7 +158,7 @@ func ValidateNewFolderName(name, delimiter string) error {
 	}
 	for _, level := range strings.Split(name, delimiter) {
 		if strings.TrimSpace(level) == "" || level == "." || level == ".." {
-			return invalid("name", "tiene un nivel vacio o invalido")
+			return invalid("name", "tiene un nivel vacío o inválido")
 		}
 	}
 	return nil

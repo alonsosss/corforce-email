@@ -48,7 +48,7 @@ const (
 	ScheduledRetention = 30 * 24 * time.Hour
 	// ScheduledLeaseExpiredError es el error de una fila cuyo trabajador no la cerro antes de que vencieran
 	// su arriendo y todos sus intentos.
-	ScheduledLeaseExpiredError = "el envio no se cerro antes de vencer su arriendo"
+	ScheduledLeaseExpiredError = "el envío no se cerró antes de vencer su arriendo"
 )
 
 // ScheduledSend es el indice durable de un mensaje ya compuesto que espera en la carpeta Scheduled del
@@ -78,12 +78,12 @@ type ScheduledSend struct {
 func (s *ScheduledSend) Normalize(now time.Time) error {
 	s.MessageID = strings.TrimSpace(s.MessageID)
 	if s.MessageID == "" || len(s.MessageID) > MaxScheduledMessageID || !printableASCII(s.MessageID) {
-		return fieldErr("message_id", "no es un Message-ID valido")
+		return fieldErr("message_id", "no es un Message-ID válido")
 	}
 	if s.Folder == "" || len(s.Folder) > MaxScheduledFolderBytes || !utf8.ValidString(s.Folder) || strings.ContainsFunc(s.Folder, func(r rune) bool {
 		return unicode.IsControl(r) || r == '*' || r == '%'
 	}) {
-		return fieldErr("folder", "no es un nombre de carpeta valido")
+		return fieldErr("folder", "no es un nombre de carpeta válido")
 	}
 	if s.UIDValidity == 0 {
 		return fieldErr("uid_validity", "es obligatorio")
@@ -96,18 +96,18 @@ func (s *ScheduledSend) Normalize(now time.Time) error {
 	}
 	s.Subject = strings.TrimSpace(s.Subject)
 	if !utf8.ValidString(s.Subject) || utf8.RuneCountInString(s.Subject) > MaxScheduledSubjectRunes || strings.ContainsFunc(s.Subject, unicode.IsControl) {
-		return fieldErr("subject", "tiene caracteres no validos o es demasiado largo")
+		return fieldErr("subject", "tiene caracteres no válidos o es demasiado largo")
 	}
 	if len(s.Recipients) == 0 {
 		return fieldErr("recipients", "hace falta al menos un destinatario")
 	}
 	if len(s.Recipients) > MaxScheduledRecipients {
-		return fieldErr("recipients", "supera el maximo de destinatarios")
+		return fieldErr("recipients", "supera el máximo de destinatarios")
 	}
 	for i, r := range s.Recipients {
 		r = strings.TrimSpace(r)
 		if !validRecipientShape(r) {
-			return fieldErr("recipients["+strconv.Itoa(i)+"]", "no es una direccion de correo")
+			return fieldErr("recipients["+strconv.Itoa(i)+"]", "no es una dirección de correo")
 		}
 		s.Recipients[i] = r
 	}
@@ -123,7 +123,7 @@ func ValidateSendAt(sendAt, now time.Time) error {
 		return fieldErr("send_at", "debe ser una hora futura")
 	}
 	if sendAt.After(now.AddDate(0, 0, MaxScheduledDays)) {
-		return fieldErr("send_at", "supera el plazo maximo de programacion")
+		return fieldErr("send_at", "supera el plazo máximo de programación")
 	}
 	return nil
 }

@@ -149,7 +149,7 @@ type NoticeRejectedError struct {
 }
 
 func (e *NoticeRejectedError) Error() string {
-	return fmt.Sprintf("transactional rechazo el aviso (%d %s): %s", e.Status, e.Code, e.Message)
+	return fmt.Sprintf("transactional rechazó el aviso (%d %s): %s", e.Status, e.Code, e.Message)
 }
 
 // NoticeSender es transactional visto desde este servicio: el envio interno con

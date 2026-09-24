@@ -166,7 +166,7 @@ func (p RetryPolicy) Validate() error {
 		return errors.New("la espera base de reintento debe ser positiva")
 	}
 	if p.MaxDelay < p.BaseDelay {
-		return errors.New("la espera maxima de reintento no puede ser menor que la base")
+		return errors.New("la espera máxima de reintento no puede ser menor que la base")
 	}
 	return nil
 }

@@ -105,7 +105,7 @@ func NormalizeBrandKit(k BrandKit) (BrandKit, error) {
 			return k, fmt.Errorf("%w: colors[%d] debe tener la forma #RRGGBB", ErrInvalidBrandKit, i)
 		}
 		if seenColor[c] {
-			return k, fmt.Errorf("%w: el color %s esta repetido", ErrInvalidBrandKit, c)
+			return k, fmt.Errorf("%w: el color %s está repetido", ErrInvalidBrandKit, c)
 		}
 		seenColor[c] = true
 		colors = append(colors, c)
@@ -118,10 +118,10 @@ func NormalizeBrandKit(k BrandKit) (BrandKit, error) {
 	for i, f := range k.Fonts {
 		f = strings.TrimSpace(f)
 		if !isBrandFont(f) {
-			return k, fmt.Errorf("%w: fonts[%d] %q no esta en la lista de tipografias seguras para correo", ErrInvalidBrandKit, i, f)
+			return k, fmt.Errorf("%w: fonts[%d] %q no está en la lista de tipografías seguras para correo", ErrInvalidBrandKit, i, f)
 		}
 		if seenFont[f] {
-			return k, fmt.Errorf("%w: la tipografia %q esta repetida", ErrInvalidBrandKit, f)
+			return k, fmt.Errorf("%w: la tipografía %q está repetida", ErrInvalidBrandKit, f)
 		}
 		seenFont[f] = true
 		fonts = append(fonts, f)
@@ -159,7 +159,7 @@ func NormalizeBrandKit(k BrandKit) (BrandKit, error) {
 	if footer.SupportEmail != "" {
 		addr, err := mail.ParseAddress(footer.SupportEmail)
 		if err != nil || addr.Address != footer.SupportEmail {
-			return k, fmt.Errorf("%w: footer.support_email debe ser un correo valido", ErrInvalidBrandKit)
+			return k, fmt.Errorf("%w: footer.support_email debe ser un correo válido", ErrInvalidBrandKit)
 		}
 	}
 	k.Footer = footer

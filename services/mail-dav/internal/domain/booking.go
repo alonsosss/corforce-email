@@ -139,7 +139,7 @@ func (s BookingSettings) Normalize(maxDaily int) (BookingSettings, error) {
 		day := append([]DayWindow(nil), s.Weekly[d]...)
 		field := "weekly." + dayCodes[d]
 		if len(day) > MaxBookingWindowsPerDay {
-			return BookingSettings{}, fieldError(field, "demasiadas franjas en el dia")
+			return BookingSettings{}, fieldError(field, "demasiadas franjas en el día")
 		}
 		sort.Slice(day, func(i, j int) bool { return day[i].Start < day[j].Start })
 		for i, w := range day {
@@ -154,7 +154,7 @@ func (s BookingSettings) Normalize(maxDaily int) (BookingSettings, error) {
 		windows += len(day)
 	}
 	if out.Active && windows == 0 {
-		return BookingSettings{}, fieldError("weekly", "una pagina activa necesita al menos una franja")
+		return BookingSettings{}, fieldError("weekly", "una página activa necesita al menos una franja")
 	}
 	return out, nil
 }
@@ -236,7 +236,7 @@ func (r BookingRequest) Normalize() (BookingRequest, error) {
 		return BookingRequest{}, fieldError("name", "es obligatorio")
 	}
 	if len([]rune(out.Name)) > MaxBookingNameRunes {
-		return BookingRequest{}, fieldError("name", "supera el largo maximo")
+		return BookingRequest{}, fieldError("name", "supera el largo máximo")
 	}
 	out.Note = strings.TrimSpace(strings.ReplaceAll(r.Note, "\r\n", "\n"))
 	if err := validText("note", out.Note, MaxBookingNoteRunes, true); err != nil {

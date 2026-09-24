@@ -84,7 +84,7 @@ describe('cliente del webmail', () => {
     const listener = vi.fn();
     const off = onWebmailSessionExpired(listener);
     mockFetch(() =>
-      json(401, { error: { code: 'SESSION_EXPIRED', message: 'sesion invalida o caducada' } }),
+      json(401, { error: { code: 'SESSION_EXPIRED', message: 'sesión inválida o caducada' } }),
     );
 
     await expect(webmailApi.folders()).rejects.toMatchObject({

@@ -14,7 +14,7 @@ import (
 // MaxAnniversaryHour es la ultima hora local admitida (0..23).
 const MaxAnniversaryHour = 23
 
-var ErrInvalidAnniversary = errors.New("aniversario no valido: atributo de fecha declarado, hora entre 0 y 23 y zona IANA de respaldo")
+var ErrInvalidAnniversary = errors.New("aniversario no válido: atributo de fecha declarado, hora entre 0 y 23 y zona IANA de respaldo")
 
 // AnniversaryOccurrence dice si el aniversario del valor (AAAA-MM-DD) cae en la fecha
 // local de now en loc y si ya es la hora hour o posterior. occurrence es esa fecha local

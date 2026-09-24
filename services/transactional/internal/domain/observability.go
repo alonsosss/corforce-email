@@ -64,7 +64,7 @@ type SESAccountStatus struct {
 func (s SESAccountStatus) Validate() error {
 	check := func(name string, v float64) error {
 		if math.IsNaN(v) || math.IsInf(v, 0) || v < 0 {
-			return fmt.Errorf("SES: valor no valido en %s: %v", name, v)
+			return fmt.Errorf("SES: valor no válido en %s: %v", name, v)
 		}
 		return nil
 	}

@@ -89,7 +89,7 @@ func NewQuarantineLinkSigner(key, baseURL, cell string, ttl time.Duration) (*Qua
 		return nil, errors.New("PUBLIC_BASE_URL debe ser una URL absoluta http(s)")
 	}
 	if len(cell) > maxCellCodeLen || !cellCodeRe.MatchString(cell) {
-		return nil, errors.New("CELL_CODE debe ser el codigo de la celda (minusculas, digitos y guiones)")
+		return nil, errors.New("CELL_CODE debe ser el código de la celda (minúsculas, dígitos y guiones)")
 	}
 	if ttl <= 0 {
 		return nil, errors.New("MAIL_QUARANTINE_LINK_TTL debe ser positiva")
@@ -371,7 +371,7 @@ func ParseNoticeTemplate(src string) (*NoticeTemplate, error) {
 }
 
 // ErrNoticeTooLarge: el HTML renderizado supera MaxNoticeHTMLBytes.
-var ErrNoticeTooLarge = errors.New("el aviso renderizado supera el tamano maximo")
+var ErrNoticeTooLarge = errors.New("el aviso renderizado supera el tamaño máximo")
 
 // Render ejecuta la plantilla. La salida se corta al superar MaxNoticeHTMLBytes.
 func (t *NoticeTemplate) Render(data QuarantineNoticeData) (string, error) {
@@ -413,11 +413,11 @@ func ValidateQuarantineNotify(n QuarantineNotify) error {
 	sender := strings.TrimSpace(n.Sender)
 	local, dom, ok := SplitAddress(sender)
 	if !ok || len(sender) > maxAddressLen || strings.ContainsAny(local, " \t\r\n<>\",;") || ValidateDomainName(strings.ToLower(dom)) != nil {
-		return newValidation("notify.sender debe ser una direccion de correo valida")
+		return newValidation("notify.sender debe ser una dirección de correo válida")
 	}
 	subject := strings.TrimSpace(n.Subject)
 	if subject == "" || utf8.RuneCountInString(subject) > maxNotifySubjectRunes || strings.ContainsAny(subject, "\r\n") {
-		return newValidation("notify.subject es obligatorio, de una linea y de hasta 255 caracteres")
+		return newValidation("notify.subject es obligatorio, de una línea y de hasta 255 caracteres")
 	}
 	tpl, err := ParseNoticeTemplate(n.HTMLTemplate)
 	if err != nil {

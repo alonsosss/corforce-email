@@ -164,11 +164,11 @@ func (g *targetCellGate) middleware(next http.Handler) http.Handler {
 		case !isPlatformOperator(r.Context()):
 			g.refuse(w, r, targetNotOperator, req, http.StatusForbidden, codeTargetCellForbidden, "solo un operador de la plataforma elige la celda destino")
 		case req.auditValue() == invalidTargetAudit:
-			g.refuse(w, r, targetMalformed, req, http.StatusBadRequest, codeInvalidTargetCell, "la celda destino no es un codigo de celda")
+			g.refuse(w, r, targetMalformed, req, http.StatusBadRequest, codeInvalidTargetCell, "la celda destino no es un código de celda")
 		case !g.cellServices[service]:
 			g.refuse(w, r, targetNotCellService, req, http.StatusBadRequest, codeTargetCellNotApplicable, "la ruta no es de un servicio de celda")
 		case !g.served(service, req.values[0]):
-			g.refuse(w, r, targetNotServed, req, http.StatusServiceUnavailable, tenantcell.CodeCellUnavailable, "el servicio no esta disponible en la celda destino")
+			g.refuse(w, r, targetNotServed, req, http.StatusServiceUnavailable, tenantcell.CodeCellUnavailable, "el servicio no está disponible en la celda destino")
 		default:
 			cell := req.values[0]
 			g.logger.Info("celdas: operador con celda destino",

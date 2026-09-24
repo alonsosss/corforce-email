@@ -52,7 +52,7 @@ const (
 	ReminderRetention = 30 * 24 * time.Hour
 	// ReminderLeaseExpiredError es el error de una fila cuyo trabajador no la cerro antes de que
 	// vencieran su arriendo y todos sus intentos.
-	ReminderLeaseExpiredError = "el recordatorio no se cerro antes de vencer su arriendo"
+	ReminderLeaseExpiredError = "el recordatorio no se cerró antes de vencer su arriendo"
 )
 
 // Reminder es el indice durable de un recordatorio del buzon. El mensaje vive en IMAP; aqui su
@@ -93,10 +93,10 @@ func (r *Reminder) Normalize(now time.Time) error {
 	}
 	r.MessageID = strings.TrimSpace(r.MessageID)
 	if len(r.MessageID) > MaxScheduledMessageID || (r.MessageID != "" && !printableASCII(r.MessageID)) {
-		return fieldErr("message_id", "no es un Message-ID valido")
+		return fieldErr("message_id", "no es un Message-ID válido")
 	}
 	if !validReminderFolder(r.Folder) {
-		return fieldErr("folder", "no es un nombre de carpeta valido")
+		return fieldErr("folder", "no es un nombre de carpeta válido")
 	}
 	if (r.UID == 0) != (r.UIDValidity == 0) {
 		return fieldErr("uid", "uid y uid_validity van juntos")
@@ -107,7 +107,7 @@ func (r *Reminder) Normalize(now time.Time) error {
 			return fieldErr("uid", "es obligatorio")
 		}
 		if !validReminderFolder(r.ReturnFolder) {
-			return fieldErr("return_folder", "no es un nombre de carpeta valido")
+			return fieldErr("return_folder", "no es un nombre de carpeta válido")
 		}
 	case ReminderFollowUp:
 		if r.MessageID == "" {
@@ -122,16 +122,16 @@ func (r *Reminder) Normalize(now time.Time) error {
 	}
 	r.Subject = strings.TrimSpace(r.Subject)
 	if !utf8.ValidString(r.Subject) || utf8.RuneCountInString(r.Subject) > MaxScheduledSubjectRunes || strings.ContainsFunc(r.Subject, unicode.IsControl) {
-		return fieldErr("subject", "tiene caracteres no validos o es demasiado largo")
+		return fieldErr("subject", "tiene caracteres no válidos o es demasiado largo")
 	}
 	if len(r.Addresses) > MaxReminderAddresses {
-		return fieldErr("addresses", "supera el maximo de direcciones")
+		return fieldErr("addresses", "supera el máximo de direcciones")
 	}
 	addresses := make([]string, 0, len(r.Addresses))
 	for i, a := range r.Addresses {
 		a = strings.TrimSpace(a)
 		if !validRecipientShape(a) {
-			return fieldErr("addresses["+strconv.Itoa(i)+"]", "no es una direccion de correo")
+			return fieldErr("addresses["+strconv.Itoa(i)+"]", "no es una dirección de correo")
 		}
 		addresses = append(addresses, a)
 	}
@@ -149,7 +149,7 @@ func ValidateReminderDue(due, now time.Time) error {
 		return fieldErr("due_at", "debe ser una hora futura")
 	}
 	if due.After(now.AddDate(0, 0, MaxReminderDays)) {
-		return fieldErr("due_at", "supera el plazo maximo de un recordatorio")
+		return fieldErr("due_at", "supera el plazo máximo de un recordatorio")
 	}
 	return nil
 }

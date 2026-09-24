@@ -25,7 +25,7 @@ func (h *Handler) allowed(w http.ResponseWriter, r *http.Request, resource, acti
 	userID, errUser := uuid.Parse(middleware.GetUserID(ctx))
 	tenantID, errTenant := uuid.Parse(middleware.GetTenantID(ctx))
 	if errUser != nil || errTenant != nil {
-		response.ErrForbidden(w, "su rol no tiene permiso para esta operacion")
+		response.ErrForbidden(w, "su rol no tiene permiso para esta operación")
 		return false
 	}
 	ok, err := h.rbac.CheckAccess(ctx, userID, tenantID, permModule, resource, action)
@@ -34,7 +34,7 @@ func (h *Handler) allowed(w http.ResponseWriter, r *http.Request, resource, acti
 		return false
 	}
 	if !ok {
-		response.ErrForbidden(w, "su rol no tiene permiso para esta operacion")
+		response.ErrForbidden(w, "su rol no tiene permiso para esta operación")
 		return false
 	}
 	return true

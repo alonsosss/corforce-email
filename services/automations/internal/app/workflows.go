@@ -162,7 +162,7 @@ func (uc *UseCase) checkMarketingTemplate(ctx context.Context, tenantID uuid.UUI
 		return 0, domain.ErrTemplateNotMarketing
 	}
 	if rendered.Version < 1 {
-		return 0, fmt.Errorf("%w: templates no devolvio el numero de version", ports.ErrUnavailable)
+		return 0, fmt.Errorf("%w: templates no devolvió el número de versión", ports.ErrUnavailable)
 	}
 	return rendered.Version, nil
 }

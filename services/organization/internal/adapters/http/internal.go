@@ -115,7 +115,7 @@ func (h *InternalHandler) MailDomainCell(w http.ResponseWriter, r *http.Request)
 	name, cell, err := h.uc.MailDomainCell(r.Context(), chi.URLParam(r, "domain"))
 	switch {
 	case errors.Is(err, domain.ErrMailDomainNotFound):
-		response.Err(w, http.StatusNotFound, codeMailDomainNotFound, "el dominio no esta activo en ninguna celda")
+		response.Err(w, http.StatusNotFound, codeMailDomainNotFound, "el dominio no está activo en ninguna celda")
 	case err != nil:
 		response.Unexpected(w, fmt.Errorf("celda del dominio de correo: %w", err))
 	default:
@@ -126,7 +126,7 @@ func (h *InternalHandler) MailDomainCell(w http.ResponseWriter, r *http.Request)
 func tenantParam(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
 	tenantID, err := uuid.Parse(chi.URLParam(r, "tenantID"))
 	if err != nil {
-		response.ErrBadRequest(w, "identificador de empresa no valido")
+		response.ErrBadRequest(w, "identificador de empresa no válido")
 		return uuid.Nil, false
 	}
 	return tenantID, true

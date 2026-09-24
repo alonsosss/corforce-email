@@ -82,7 +82,7 @@ func AssetContentTypes() []string {
 // la cabecera y aplica los topes de tamano y de dimensiones.
 func InspectImage(data []byte) (ImageInfo, error) {
 	if len(data) == 0 {
-		return ImageInfo{}, fmt.Errorf("%w: el fichero esta vacio", ErrInvalidAsset)
+		return ImageInfo{}, fmt.Errorf("%w: el fichero está vacío", ErrInvalidAsset)
 	}
 	if len(data) > MaxAssetBytes {
 		return ImageInfo{}, fmt.Errorf("%w: la imagen supera %d bytes", ErrInvalidAsset, MaxAssetBytes)
@@ -93,7 +93,7 @@ func InspectImage(data []byte) (ImageInfo, error) {
 		}
 		cfg, err := f.decodeConfig(bytes.NewReader(data))
 		if err != nil {
-			return ImageInfo{}, fmt.Errorf("%w: la cabecera de la imagen %s no es valida", ErrInvalidAsset, f.ext)
+			return ImageInfo{}, fmt.Errorf("%w: la cabecera de la imagen %s no es válida", ErrInvalidAsset, f.ext)
 		}
 		if cfg.Width < 1 || cfg.Height < 1 || cfg.Width > MaxAssetDimension || cfg.Height > MaxAssetDimension {
 			return ImageInfo{}, fmt.Errorf("%w: las dimensiones %dx%d superan %dx%d", ErrInvalidAsset, cfg.Width, cfg.Height, MaxAssetDimension, MaxAssetDimension)

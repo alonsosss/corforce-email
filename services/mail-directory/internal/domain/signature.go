@@ -54,10 +54,10 @@ func (s *MailboxSignature) Normalize() error {
 
 func checkSignaturePart(field, s string, maxBytes int) error {
 	if len(s) > maxBytes {
-		return fieldErr(field, "supera el tamano maximo")
+		return fieldErr(field, "supera el tamaño máximo")
 	}
 	if !utf8.ValidString(s) {
-		return fieldErr(field, "no es UTF-8 valido")
+		return fieldErr(field, "no es UTF-8 válido")
 	}
 	for _, r := range s {
 		if r != '\n' && r != '\r' && r != '\t' && unicode.IsControl(r) {

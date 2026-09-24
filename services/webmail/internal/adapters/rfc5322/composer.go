@@ -165,7 +165,7 @@ func (Composer) Finalize(stored []byte, date time.Time) (domain.FinalizedMessage
 	h := mail.Header{Header: gomessage.Header{Header: th}}
 	from, err := h.AddressList("From")
 	if err != nil || len(from) != 1 {
-		return domain.FinalizedMessage{}, domain.NewValidationError("from", "el mensaje debe tener un unico remitente")
+		return domain.FinalizedMessage{}, domain.NewValidationError("from", "el mensaje debe tener un único remitente")
 	}
 	sender, err := domain.NewAddress("from", "", from[0].Address)
 	if err != nil {
@@ -177,7 +177,7 @@ func (Composer) Finalize(stored []byte, date time.Time) (domain.FinalizedMessage
 		field := strings.ToLower(key)
 		list, err := h.AddressList(key)
 		if err != nil {
-			return domain.FinalizedMessage{}, domain.NewValidationError(field, "lista de direcciones invalida")
+			return domain.FinalizedMessage{}, domain.NewValidationError(field, "lista de direcciones inválida")
 		}
 		for _, a := range list {
 			addr, err := domain.NewAddress(field, "", a.Address)

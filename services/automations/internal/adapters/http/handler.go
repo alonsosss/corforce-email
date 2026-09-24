@@ -172,7 +172,7 @@ func (h *Handler) CreateWorkflow(w http.ResponseWriter, r *http.Request) {
 	}
 	userID := userFrom(r)
 	if userID == nil {
-		response.ErrUnauthorized(w, "usuario no valido")
+		response.ErrUnauthorized(w, "usuario no válido")
 		return
 	}
 	var req createWorkflowRequest
@@ -211,7 +211,7 @@ func (h *Handler) ListWorkflows(w http.ResponseWriter, r *http.Request) {
 		f.Status = st
 	}
 	if len(f.Search) > maxSearchLen {
-		response.ErrValidation(w, fmt.Sprintf("search admite como maximo %d caracteres", maxSearchLen))
+		response.ErrValidation(w, fmt.Sprintf("search admite como máximo %d caracteres", maxSearchLen))
 		return
 	}
 	f.Page, f.PerPage = pagination(r)
@@ -329,7 +329,7 @@ func (h *Handler) PauseWorkflow(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if len([]rune(req.Reason)) > domain.MaxPauseReasonLen {
-		response.ErrValidation(w, fmt.Sprintf("reason admite como maximo %d caracteres", domain.MaxPauseReasonLen))
+		response.ErrValidation(w, fmt.Sprintf("reason admite como máximo %d caracteres", domain.MaxPauseReasonLen))
 		return
 	}
 	wf, err := h.uc.PauseWorkflow(r.Context(), tenantID, id, req.Reason)
@@ -396,7 +396,7 @@ func (h *Handler) GetRun(w http.ResponseWriter, r *http.Request) {
 func tenantFrom(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
 	id, err := uuid.Parse(middleware.GetTenantID(r.Context()))
 	if err != nil {
-		response.ErrUnauthorized(w, "empresa no valida")
+		response.ErrUnauthorized(w, "empresa no válida")
 		return uuid.Nil, false
 	}
 	return id, true
@@ -471,7 +471,7 @@ func writeError(w http.ResponseWriter, err error) {
 		response.ErrValidation(w, err.Error())
 	case errors.Is(err, domain.ErrTemplateKindUnknown), errors.Is(err, ports.ErrUnavailable),
 		errors.Is(err, context.DeadlineExceeded):
-		response.Err(w, http.StatusServiceUnavailable, "DEPENDENCY_UNAVAILABLE", "un servicio dependiente no respondio; vuelva a intentarlo")
+		response.Err(w, http.StatusServiceUnavailable, "DEPENDENCY_UNAVAILABLE", "un servicio dependiente no respondió; vuelva a intentarlo")
 	default:
 		response.Unexpected(w, err)
 	}

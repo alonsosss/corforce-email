@@ -119,13 +119,13 @@ func (c *selfAuthCellRouter) byLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	case err != nil:
 		c.refuse(w, routingUnresolved, name, "")
-		response.Err(w, http.StatusServiceUnavailable, tenantcell.CodeCellUnavailable, "no se pudo determinar la celda del buzon; intentalo de nuevo")
+		response.Err(w, http.StatusServiceUnavailable, tenantcell.CodeCellUnavailable, "no se pudo determinar la celda del buzón; inténtalo de nuevo")
 		return
 	}
 	h, served := c.byCell[cell]
 	if !served {
 		c.refuse(w, routingNotServed, name, cell)
-		response.Err(w, http.StatusServiceUnavailable, tenantcell.CodeCellUnavailable, "el servicio no esta disponible para la celda del buzon")
+		response.Err(w, http.StatusServiceUnavailable, tenantcell.CodeCellUnavailable, "el servicio no está disponible para la celda del buzón")
 		return
 	}
 	h.ServeHTTP(w, r)

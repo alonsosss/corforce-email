@@ -243,7 +243,7 @@ func Sanitize(raw []byte, now time.Time) ([]byte, error) {
 	normalized := toCRLF(raw)
 	headerEnd := bytes.Index(normalized, []byte("\r\n\r\n"))
 	if headerEnd < 0 {
-		return nil, fmt.Errorf("%w: sin separacion entre cabecera y cuerpo", ErrMalformed)
+		return nil, fmt.Errorf("%w: sin separación entre cabecera y cuerpo", ErrMalformed)
 	}
 	head, body := normalized[:headerEnd+2], normalized[headerEnd+2:]
 
@@ -263,7 +263,7 @@ func Sanitize(raw []byte, now time.Time) ([]byte, error) {
 		}
 		name, _, ok := bytes.Cut(line, []byte(":"))
 		if !ok {
-			return nil, fmt.Errorf("%w: linea de cabecera sin nombre", ErrMalformed)
+			return nil, fmt.Errorf("%w: línea de cabecera sin nombre", ErrMalformed)
 		}
 		keep = !droppedHeader(string(name))
 		switch strings.ToLower(strings.TrimSpace(string(name))) {

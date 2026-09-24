@@ -199,7 +199,7 @@ func (h *Handler) ForgotPassword(w http.ResponseWriter, r *http.Request) {
 	}
 	h.reset.RequestReset(r.Context(), req.Email, extractClientIP(r))
 	response.JSON(w, http.StatusOK, map[string]string{
-		"message": "Si el correo esta registrado, recibiras un enlace para restablecer tu contrasena.",
+		"message": "Si el correo está registrado, recibirás un enlace para restablecer tu contraseña.",
 	})
 }
 
@@ -225,7 +225,7 @@ func (h *Handler) ResetPasswordPublic(w http.ResponseWriter, r *http.Request) {
 	if err := h.reset.ConfirmReset(r.Context(), req.Token, req.NewPassword); err != nil {
 		switch err {
 		case domain.ErrResetTokenInvalid:
-			response.Err(w, http.StatusBadRequest, "RESET_TOKEN_INVALID", "el enlace es invalido, expiro o ya fue usado")
+			response.Err(w, http.StatusBadRequest, "RESET_TOKEN_INVALID", "el enlace es inválido, expiró o ya fue usado")
 		case domain.ErrPasswordPolicyFail, domain.ErrPasswordBreached:
 			respondPasswordRejected(w, err)
 		default:
@@ -233,7 +233,7 @@ func (h *Handler) ResetPasswordPublic(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	response.JSON(w, http.StatusOK, map[string]string{"message": "Contrasena actualizada. Ya puedes iniciar sesion."})
+	response.JSON(w, http.StatusOK, map[string]string{"message": "Contraseña actualizada. Ya puedes iniciar sesión."})
 }
 
 // respondPasswordRejected es la unica voz para una contrasena rechazada: mismo codigo y
@@ -241,11 +241,11 @@ func (h *Handler) ResetPasswordPublic(w http.ResponseWriter, r *http.Request) {
 func respondPasswordRejected(w http.ResponseWriter, err error) {
 	switch err {
 	case domain.ErrPasswordBreached:
-		response.Err(w, http.StatusUnprocessableEntity, "PASSWORD_BREACHED", "esa contrasena aparece en filtraciones publicas; elige otra distinta")
+		response.Err(w, http.StatusUnprocessableEntity, "PASSWORD_BREACHED", "esa contraseña aparece en filtraciones públicas; elige otra distinta")
 	case domain.ErrPasswordReused:
-		response.Err(w, http.StatusUnprocessableEntity, "PASSWORD_REUSED", "esa contrasena ya se uso hace poco; elige otra distinta")
+		response.Err(w, http.StatusUnprocessableEntity, "PASSWORD_REUSED", "esa contraseña ya se usó hace poco; elige otra distinta")
 	default:
-		response.Err(w, http.StatusUnprocessableEntity, "PASSWORD_POLICY", "la contrasena no cumple las reglas de tu empresa")
+		response.Err(w, http.StatusUnprocessableEntity, "PASSWORD_POLICY", "la contraseña no cumple las reglas de tu empresa")
 	}
 }
 
@@ -260,7 +260,7 @@ func (h *Handler) GetPasswordResetPolicy(w http.ResponseWriter, r *http.Request)
 	rules, err := h.reset.RulesForToken(r.Context(), token)
 	if err != nil {
 		if err == domain.ErrResetTokenInvalid {
-			response.Err(w, http.StatusBadRequest, "RESET_TOKEN_INVALID", "el enlace es invalido, expiro o ya fue usado")
+			response.Err(w, http.StatusBadRequest, "RESET_TOKEN_INVALID", "el enlace es inválido, expiró o ya fue usado")
 			return
 		}
 		response.ErrInternal(w)
@@ -322,7 +322,7 @@ func (h *Handler) RefreshToken(w http.ResponseWriter, r *http.Request) {
 		// El cierre por inactividad se distingue para que el cliente pueda explicar
 		// por que se cerro la sesion en vez de mostrar un fallo generico.
 		if err == domain.ErrSessionIdle {
-			response.ErrUnauthorized(w, "la sesion se cerro por inactividad")
+			response.ErrUnauthorized(w, "la sesión se cerró por inactividad")
 			return
 		}
 		response.ErrUnauthorized(w, "invalid or expired refresh token")
@@ -519,7 +519,7 @@ func (h *Handler) SaveSessionPolicy(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := h.auth.SaveSessionPolicy(r.Context(), policy, actorID); err != nil {
 		if err == domain.ErrInvalidSessionPolicy {
-			response.ErrValidation(w, "valores fuera de rango: la duracion va de 1 a 8760 horas, el maximo de sesiones de 0 a 100 y la inactividad de 0 a 43200 minutos")
+			response.ErrValidation(w, "valores fuera de rango: la duración va de 1 a 8760 horas, el máximo de sesiones de 0 a 100 y la inactividad de 0 a 43200 minutos")
 			return
 		}
 		response.ErrInternal(w)
@@ -601,7 +601,7 @@ func (h *Handler) permitted(w http.ResponseWriter, r *http.Request, resource, ac
 		return false
 	}
 	if !ok {
-		response.ErrForbidden(w, "su rol no tiene permiso para esta operacion")
+		response.ErrForbidden(w, "su rol no tiene permiso para esta operación")
 		return false
 	}
 	return true

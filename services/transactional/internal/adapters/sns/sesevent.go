@@ -194,7 +194,7 @@ func tagUUID(tags map[string][]string, name string) (uuid.UUID, error) {
 	}
 	id, err := uuid.Parse(values[0])
 	if err != nil {
-		return uuid.Nil, fmt.Errorf("%w: %s invalido", ErrNotOurs, name)
+		return uuid.Nil, fmt.Errorf("%w: %s inválido", ErrNotOurs, name)
 	}
 	return id, nil
 }

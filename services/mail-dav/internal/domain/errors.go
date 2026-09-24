@@ -8,18 +8,18 @@ import (
 var (
 	ErrNotFound           = errors.New("no existe")
 	ErrAlreadyExists      = errors.New("ya existe")
-	ErrPreconditionFailed = errors.New("la precondicion de la peticion no se cumple")
-	ErrAddressbookLimit   = errors.New("el buzon alcanzo su numero maximo de libretas")
-	ErrContactLimit       = errors.New("el buzon alcanzo su numero maximo de contactos")
-	ErrCalendarLimit      = errors.New("el buzon alcanzo su numero maximo de calendarios")
-	ErrEventLimit         = errors.New("el buzon alcanzo su numero maximo de eventos")
-	ErrStorageLimit       = errors.New("el buzon alcanzo su espacio maximo")
-	ErrResultTooLarge     = errors.New("el resultado supera el tamano maximo de una respuesta")
-	ErrInvalidSyncToken   = errors.New("el token de sincronizacion no es valido")
-	ErrInvalidCredentials = errors.New("credenciales invalidas")
+	ErrPreconditionFailed = errors.New("la precondición de la petición no se cumple")
+	ErrAddressbookLimit   = errors.New("el buzón alcanzó su número máximo de libretas")
+	ErrContactLimit       = errors.New("el buzón alcanzó su número máximo de contactos")
+	ErrCalendarLimit      = errors.New("el buzón alcanzó su número máximo de calendarios")
+	ErrEventLimit         = errors.New("el buzón alcanzó su número máximo de eventos")
+	ErrStorageLimit       = errors.New("el buzón alcanzó su espacio máximo")
+	ErrResultTooLarge     = errors.New("el resultado supera el tamaño máximo de una respuesta")
+	ErrInvalidSyncToken   = errors.New("el token de sincronización no es válido")
+	ErrInvalidCredentials = errors.New("credenciales inválidas")
 	ErrUnavailable        = errors.New("un servicio del que depende mail-dav no responde")
-	ErrInvalidName        = errors.New("nombre de recurso no valido")
-	ErrInvalidMailbox     = errors.New("identificador de buzon o de empresa no valido")
+	ErrInvalidName        = errors.New("nombre de recurso no válido")
+	ErrInvalidMailbox     = errors.New("identificador de buzón o de empresa no válido")
 	// ErrTenantUnknown es la empresa que ya no figura en el registro: un fallo definitivo, no una base que no responde.
 	ErrTenantUnknown = errors.New("empresa desconocida")
 )
@@ -39,7 +39,7 @@ type VCardError struct {
 	TooLarge bool
 }
 
-func (e *VCardError) Error() string { return "vCard no valido: " + e.Reason }
+func (e *VCardError) Error() string { return "vCard no válido: " + e.Reason }
 
 // ICalErrorKind distingue la precondicion de CalDAV (RFC 4791, 5.3.2.1) que incumple un PUT.
 type ICalErrorKind int
@@ -62,7 +62,7 @@ type ICalError struct {
 	Reason string
 }
 
-func (e *ICalError) Error() string { return "iCalendar no valido: " + e.Reason }
+func (e *ICalError) Error() string { return "iCalendar no válido: " + e.Reason }
 
 // FieldError: un campo de la API estructurada (contactos y eventos en JSON) no es valido. Field es la ruta del
 // campo tal como la envio el cliente (emails[1].value, recurrence.until) y Reason va al cliente, asi que nunca
@@ -78,7 +78,7 @@ func fieldError(field, reason string) *FieldError { return &FieldError{Field: fi
 
 var (
 	// ErrBookingLimit: la pagina de citas alcanzo su tope diario de reservas, o el visitante el suyo.
-	ErrBookingLimit = errors.New("se alcanzo el maximo de reservas por dia")
+	ErrBookingLimit = errors.New("se alcanzó el máximo de reservas por día")
 	// ErrSlotUnavailable: el hueco pedido ya no esta libre o no es un hueco de la pagina.
-	ErrSlotUnavailable = errors.New("el hueco ya no esta disponible")
+	ErrSlotUnavailable = errors.New("el hueco ya no está disponible")
 )

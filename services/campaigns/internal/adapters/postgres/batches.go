@@ -90,7 +90,7 @@ func (r *BatchRepository) Lease(ctx context.Context, b *domain.Batch) error {
 		return err
 	}
 	if tag.RowsAffected() == 0 {
-		return fmt.Errorf("el lote %s ya no esta pendiente", b.ID)
+		return fmt.Errorf("el lote %s ya no está pendiente", b.ID)
 	}
 	return nil
 }

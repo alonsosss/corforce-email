@@ -360,7 +360,7 @@ func (h *Handler) Book(w http.ResponseWriter, r *http.Request) {
 // pasa por la traduccion comun.
 func writePublicError(w http.ResponseWriter, err error) {
 	if errors.Is(err, domain.ErrResourceNotFound) {
-		response.ErrNotFound(w, "la pagina de citas no existe")
+		response.ErrNotFound(w, "la página de citas no existe")
 		return
 	}
 	writeError(w, err)

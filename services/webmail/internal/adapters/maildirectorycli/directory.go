@@ -47,7 +47,7 @@ func (c *Client) Search(ctx context.Context, username, query string, limit int) 
 		return nil, domain.NewValidationError("q", decoded.Error.Message)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("%w: mail-directory respondio %d", domain.ErrUnavailable, resp.StatusCode)
+		return nil, fmt.Errorf("%w: mail-directory respondió %d", domain.ErrUnavailable, resp.StatusCode)
 	}
 	if decodeErr != nil {
 		return nil, fmt.Errorf("%w: respuesta de mail-directory ilegible", domain.ErrUnavailable)

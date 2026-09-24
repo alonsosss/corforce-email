@@ -37,10 +37,10 @@ func vcardError(reason string) *VCardError { return &VCardError{Reason: reason} 
 // ni valores: solo la estructura que hace falta para que lo guardado sea siempre una tarjeta completa.
 func ParseVCard(raw string, lim Limits) (Card, error) {
 	if len(raw) > lim.MaxVCardBytes {
-		return Card{}, &VCardError{Reason: "el vCard supera el tamano maximo", TooLarge: true}
+		return Card{}, &VCardError{Reason: "el vCard supera el tamaño máximo", TooLarge: true}
 	}
 	if !utf8.ValidString(raw) {
-		return Card{}, vcardError("no es UTF-8 valido")
+		return Card{}, vcardError("no es UTF-8 válido")
 	}
 	if err := rejectControl(raw); err != nil {
 		return Card{}, err
@@ -167,11 +167,11 @@ func splitContentLine(line string) (head, value string, ok bool) {
 func parseLine(line string) (Property, error) {
 	head, value, ok := splitContentLine(line)
 	if !ok {
-		return Property{}, vcardError("linea sin nombre o sin valor")
+		return Property{}, vcardError("línea sin nombre o sin valor")
 	}
 	name, _, _ := strings.Cut(head, ";")
 	if !propertyNameRe.MatchString(name) {
-		return Property{}, vcardError("nombre de propiedad no valido")
+		return Property{}, vcardError("nombre de propiedad no válido")
 	}
 	group, bare := "", name
 	if g, n, ok := strings.Cut(name, "."); ok {

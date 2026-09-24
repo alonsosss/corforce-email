@@ -38,10 +38,10 @@ type Handler struct {
 
 func NewHandler(uc *app.UseCase, cfg Config) (*Handler, error) {
 	if !basePathRe.MatchString(cfg.BasePath) {
-		return nil, fmt.Errorf("BasePath %q no es una ruta de segmentos en minusculas sin barra final", cfg.BasePath)
+		return nil, fmt.Errorf("BasePath %q no es una ruta de segmentos en minúsculas sin barra final", cfg.BasePath)
 	}
 	if strings.TrimSpace(cfg.Realm) == "" || strings.ContainsAny(cfg.Realm, "\"\\\r\n") {
-		return nil, errors.New("el realm de autenticacion es obligatorio y no admite comillas ni saltos de linea")
+		return nil, errors.New("el realm de autenticación es obligatorio y no admite comillas ni saltos de línea")
 	}
 	if cfg.MaxXMLBytes < 1 {
 		return nil, errors.New("MaxXMLBytes debe ser mayor que cero")

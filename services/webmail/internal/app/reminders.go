@@ -266,7 +266,7 @@ func (s *Service) CreateFollowUp(ctx context.Context, sess domain.Session, req F
 		return domain.Reminder{}, err
 	}
 	if !domain.IsValidMessageID(req.MessageID) {
-		return domain.Reminder{}, domain.NewValidationError("message_id", "no es un Message-ID valido")
+		return domain.Reminder{}, domain.NewValidationError("message_id", "no es un Message-ID válido")
 	}
 	due := s.followUpDue(req.Days, req.Base)
 	in := domain.NewReminder{
@@ -280,7 +280,7 @@ func (s *Service) CreateFollowUp(ctx context.Context, sess domain.Session, req F
 		}
 		sent, ok := domain.FolderWithRole(folders, domain.RoleSent)
 		if !ok {
-			return errors.New("el buzon no tiene carpeta de enviados")
+			return errors.New("el buzón no tiene carpeta de enviados")
 		}
 		in.Folder = sent.Name
 		uid, err := mb.FindByMessageID(ctx, sent.Name, req.MessageID)
@@ -435,7 +435,7 @@ func reminderDone(result domain.ReminderResult) domain.ReminderOutcome {
 func (s *Service) applyReminder(ctx context.Context, c domain.ReminderClaim) domain.ReminderOutcome {
 	username, ok := domain.NormalizeUsername(c.Username)
 	if !ok {
-		return reminderFailed("fila invalida", false)
+		return reminderFailed("fila inválida", false)
 	}
 	sess := domain.Session{Username: username}
 	var outcome domain.ReminderOutcome
@@ -459,7 +459,7 @@ func (s *Service) applyReminder(ctx context.Context, c domain.ReminderClaim) dom
 	}
 	if err != nil {
 		s.logger.Warn("webmail: recordatorio sin aplicar", zap.String("reminder_id", c.ID), zap.String("username", username), zap.Error(err))
-		return reminderFailed("buzon no disponible", true)
+		return reminderFailed("buzón no disponible", true)
 	}
 	return outcome
 }

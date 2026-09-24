@@ -332,7 +332,7 @@ func (s *Service) AssistantMessages(ctx context.Context, sess domain.Session, re
 			return nil, err
 		}
 		if ref.UID == 0 {
-			return nil, domain.NewValidationError("uid", "identificador de mensaje invalido")
+			return nil, domain.NewValidationError("uid", "identificador de mensaje inválido")
 		}
 	}
 	out := make([]domain.AssistantSourceMessage, 0, len(refs))

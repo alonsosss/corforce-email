@@ -21,7 +21,7 @@ var resourceIDPattern = regexp.MustCompile(`^[A-Za-z0-9._@=+~-]{1,255}$`)
 // ValidateResourceID rechaza lo que no puede ser el id de un contacto o de un evento.
 func ValidateResourceID(id string) error {
 	if !resourceIDPattern.MatchString(id) || id == "." || id == ".." {
-		return invalid("id", "identificador invalido")
+		return invalid("id", "identificador inválido")
 	}
 	return nil
 }
@@ -33,7 +33,7 @@ var ifMatchPattern = regexp.MustCompile(`^[!-~][ -~]{0,255}$`)
 // ValidateIfMatch admite vacio (sin condicion) o un valor de If-Match bien formado.
 func ValidateIfMatch(v string) error {
 	if v != "" && !ifMatchPattern.MatchString(v) {
-		return invalid("if_match", "cabecera If-Match invalida")
+		return invalid("if_match", "cabecera If-Match inválida")
 	}
 	return nil
 }

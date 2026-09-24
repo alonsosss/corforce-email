@@ -129,7 +129,7 @@ func (uc *UseCase) ProcessRun(ctx context.Context, run *domain.Run) (Outcome, er
 // lote de un destinatario, con campaign_id = id del flujo.
 func (uc *UseCase) stepSend(ctx context.Context, w *domain.Workflow, run *domain.Run, step domain.Step) (Outcome, error) {
 	if step.TemplateID == nil || step.TemplateVersion == nil {
-		return uc.finish(ctx, w, run, domain.RunFailed, "TEMPLATE_VERSION_MISSING", "el paso de envio no tiene la version de plantilla fijada")
+		return uc.finish(ctx, w, run, domain.RunFailed, "TEMPLATE_VERSION_MISSING", "el paso de envío no tiene la versión de plantilla fijada")
 	}
 	callCtx, cancel := context.WithTimeout(ctx, domain.CallTimeout)
 	defer cancel()
@@ -145,7 +145,7 @@ func (uc *UseCase) stepSend(ctx context.Context, w *domain.Workflow, run *domain
 	}
 	if contact == nil {
 		return uc.finish(ctx, w, run, domain.RunSkipped, domain.CodeContactNotSendable,
-			"el contacto no esta activo o no tiene consentimiento de marketing vigente")
+			"el contacto no está activo o no tiene consentimiento de marketing vigente")
 	}
 	res, err := uc.sender.SendMarketing(callCtx, run.TenantID, ports.MarketingMessage{
 		WorkflowID:      w.ID,
@@ -188,7 +188,7 @@ func (uc *UseCase) recordMessage(ctx context.Context, w *domain.Workflow, run *d
 // codigo; un fallo transitorio se reintenta como cualquier paso.
 func (uc *UseCase) stepBranch(ctx context.Context, w *domain.Workflow, run *domain.Run, step domain.Step) (Outcome, error) {
 	if step.Condition == nil {
-		return uc.finish(ctx, w, run, domain.RunFailed, "INVALID_STEP", "rama sin condicion")
+		return uc.finish(ctx, w, run, domain.RunFailed, "INVALID_STEP", "rama sin condición")
 	}
 	taken, err := uc.evaluate(ctx, run, *step.Condition)
 	if err != nil {
@@ -225,7 +225,7 @@ func (uc *UseCase) evaluate(ctx context.Context, run *domain.Run, c domain.Condi
 		}
 		return false, nil
 	}
-	return false, &ports.RejectedError{Code: "INVALID_STEP", Message: "condicion desconocida: " + string(c.Kind)}
+	return false, &ports.RejectedError{Code: "INVALID_STEP", Message: "condición desconocida: " + string(c.Kind)}
 }
 
 // stepList anade o quita al contacto de una lista. Las dos operaciones son idempotentes

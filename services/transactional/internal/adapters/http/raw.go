@@ -81,14 +81,14 @@ func (h *Handler) InternalRawMessage(w http.ResponseWriter, r *http.Request) {
 func writeRawError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, rawmail.ErrTooLarge):
-		response.Err(w, http.StatusRequestEntityTooLarge, "MESSAGE_TOO_LARGE", "el mensaje supera el tamano maximo")
+		response.Err(w, http.StatusRequestEntityTooLarge, "MESSAGE_TOO_LARGE", "el mensaje supera el tamaño máximo")
 	case errors.Is(err, rawmail.ErrFrom):
-		response.Err(w, http.StatusUnprocessableEntity, "MESSAGE_FROM_INVALID", "el mensaje debe llevar un unico remitente valido en From")
+		response.Err(w, http.StatusUnprocessableEntity, "MESSAGE_FROM_INVALID", "el mensaje debe llevar un único remitente válido en From")
 	case errors.Is(err, rawmail.ErrTooManyParts):
-		response.Err(w, http.StatusUnprocessableEntity, "MESSAGE_TOO_MANY_PARTS", "el mensaje supera el numero de partes MIME")
+		response.Err(w, http.StatusUnprocessableEntity, "MESSAGE_TOO_MANY_PARTS", "el mensaje supera el número de partes MIME")
 	case errors.Is(err, rawmail.ErrLineTooLong):
-		response.Err(w, http.StatusUnprocessableEntity, "MESSAGE_LINE_TOO_LONG", "una linea del mensaje supera 998 octetos")
+		response.Err(w, http.StatusUnprocessableEntity, "MESSAGE_LINE_TOO_LONG", "una línea del mensaje supera 998 octetos")
 	default:
-		response.Err(w, http.StatusUnprocessableEntity, "MESSAGE_MALFORMED", "el mensaje MIME no es valido")
+		response.Err(w, http.StatusUnprocessableEntity, "MESSAGE_MALFORMED", "el mensaje MIME no es válido")
 	}
 }

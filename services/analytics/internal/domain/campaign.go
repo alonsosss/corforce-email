@@ -76,7 +76,7 @@ func (e CampaignEvent) Validate() error {
 		return invalidEvent("evento sin instante")
 	}
 	if _, ok := CampaignActionFrom(string(e.Action)); !ok {
-		return invalidEvent("accion de campana desconocida %q", e.Action)
+		return invalidEvent("acción de campaña desconocida %q", e.Action)
 	}
 	return nil
 }

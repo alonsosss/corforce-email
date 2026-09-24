@@ -143,7 +143,7 @@ func ParseRRule(value string) (RRule, error) {
 			case "HOURLY", "MINUTELY", "SECONDLY":
 				r.Unsupported = true
 			default:
-				return RRule{}, errors.New("FREQ no valida")
+				return RRule{}, errors.New("FREQ no válida")
 			}
 			r.Freq = f
 		case "INTERVAL":
@@ -157,13 +157,13 @@ func ParseRRule(value string) (RRule, error) {
 		case "UNTIL":
 			u, err := parseDateTime(val, nil)
 			if err != nil || u.tzid != "" {
-				return RRule{}, errors.New("UNTIL no valido")
+				return RRule{}, errors.New("UNTIL no válido")
 			}
 			r.Until = &u
 		case "WKST":
 			wd, ok := weekdayIdx[strings.ToUpper(val)]
 			if !ok {
-				return RRule{}, errors.New("WKST no valido")
+				return RRule{}, errors.New("WKST no válido")
 			}
 			r.WeekStart = wd
 		case "BYMONTH":
@@ -218,7 +218,7 @@ func parseByDay(v string) ([]weekdayRule, error) {
 	for _, p := range parts {
 		m := byDayRe.FindStringSubmatch(strings.ToUpper(strings.TrimSpace(p)))
 		if m == nil {
-			return nil, errors.New("BYDAY no valido")
+			return nil, errors.New("BYDAY no válido")
 		}
 		n := 0
 		if m[1] != "" {

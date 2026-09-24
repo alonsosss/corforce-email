@@ -175,7 +175,7 @@ func (h *Handler) Health(w http.ResponseWriter, r *http.Request) {
 func tenantFrom(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
 	id, err := uuid.Parse(middleware.GetTenantID(r.Context()))
 	if err != nil {
-		response.ErrUnauthorized(w, "empresa no valida")
+		response.ErrUnauthorized(w, "empresa no válida")
 		return uuid.Nil, false
 	}
 	return id, true
@@ -184,7 +184,7 @@ func tenantFrom(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
 func uuidParam(w http.ResponseWriter, r *http.Request, name string) (uuid.UUID, bool) {
 	id, err := uuid.Parse(chi.URLParam(r, name))
 	if err != nil {
-		response.ErrBadRequest(w, "identificador no valido: "+name)
+		response.ErrBadRequest(w, "identificador no válido: "+name)
 		return uuid.Nil, false
 	}
 	return id, true
@@ -209,7 +209,7 @@ func decodeOptionalJSON(w http.ResponseWriter, r *http.Request, dst any, limit i
 	if err != nil {
 		var tooLarge *http.MaxBytesError
 		if errors.As(err, &tooLarge) {
-			return fmt.Errorf("el contenido supera el limite de %d KB", limit/1024)
+			return fmt.Errorf("el contenido supera el límite de %d KB", limit/1024)
 		}
 		return err
 	}
@@ -234,7 +234,7 @@ func parseEvidence(raw json.RawMessage) (map[string]any, error) {
 		return nil, nil
 	}
 	if len(t) > maxEvidenceBytes {
-		return nil, fmt.Errorf("evidence admite como maximo %d KB", maxEvidenceBytes>>10)
+		return nil, fmt.Errorf("evidence admite como máximo %d KB", maxEvidenceBytes>>10)
 	}
 	dec := json.NewDecoder(bytes.NewReader(t))
 	dec.UseNumber()
@@ -575,7 +575,7 @@ func (h *Handler) Import(w http.ResponseWriter, r *http.Request) {
 	}
 	userID, err := uuid.Parse(middleware.GetUserID(r.Context()))
 	if err != nil {
-		response.ErrUnauthorized(w, "usuario no valido")
+		response.ErrUnauthorized(w, "usuario no válido")
 		return
 	}
 	maxRows := h.uc.ImportMaxRows()
@@ -590,10 +590,10 @@ func (h *Handler) Import(w http.ResponseWriter, r *http.Request) {
 	}
 	v := validate.New()
 	if len(req.Rows) == 0 {
-		v.Add("rows", "no puede estar vacio")
+		v.Add("rows", "no puede estar vacío")
 	}
 	if len(req.Rows) > maxRows {
-		v.Add("rows", "admite como maximo "+strconv.Itoa(maxRows)+" filas")
+		v.Add("rows", "admite como máximo "+strconv.Itoa(maxRows)+" filas")
 	}
 	v.Required("consent.status", consent.Status)
 	v.OneOf("consent.status", consent.Status, stringsOf(importConsentStatuses()))
@@ -799,10 +799,10 @@ func decodeMembers(w http.ResponseWriter, r *http.Request) (tenantID, listID uui
 	}
 	v := validate.New()
 	if len(req.ContactIDs) == 0 {
-		v.Add("contact_ids", "no puede estar vacio")
+		v.Add("contact_ids", "no puede estar vacío")
 	}
 	if len(req.ContactIDs) > app.MaxMembersPerRequest {
-		v.Add("contact_ids", "admite como maximo "+strconv.Itoa(app.MaxMembersPerRequest)+" contactos")
+		v.Add("contact_ids", "admite como máximo "+strconv.Itoa(app.MaxMembersPerRequest)+" contactos")
 	}
 	if !v.Valid() {
 		response.ErrValidation(w, v.Error())
@@ -1212,10 +1212,10 @@ func (h *Handler) Sendable(w http.ResponseWriter, r *http.Request) {
 	}
 	v := validate.New()
 	if len(req.ContactIDs) == 0 {
-		v.Add("contact_ids", "no puede estar vacio")
+		v.Add("contact_ids", "no puede estar vacío")
 	}
 	if len(req.ContactIDs) > app.MaxSendableIDs {
-		v.Add("contact_ids", "admite como maximo "+strconv.Itoa(app.MaxSendableIDs)+" contactos")
+		v.Add("contact_ids", "admite como máximo "+strconv.Itoa(app.MaxSendableIDs)+" contactos")
 	}
 	if !v.Valid() {
 		response.ErrValidation(w, v.Error())
@@ -1390,7 +1390,7 @@ func writeError(w http.ResponseWriter, err error) {
 	case errors.Is(err, app.ErrSuppressionUnavailable):
 		response.Err(w, http.StatusServiceUnavailable, "SUPPRESSION_UNAVAILABLE", app.ErrSuppressionUnavailable.Error())
 	case errors.Is(err, context.DeadlineExceeded):
-		response.Err(w, http.StatusServiceUnavailable, "QUERY_TIMEOUT", "la consulta supero el tiempo maximo; acota el segmento")
+		response.Err(w, http.StatusServiceUnavailable, "QUERY_TIMEOUT", "la consulta superó el tiempo máximo; acota el segmento")
 	case isValidationError(err):
 		response.ErrValidation(w, err.Error())
 	default:

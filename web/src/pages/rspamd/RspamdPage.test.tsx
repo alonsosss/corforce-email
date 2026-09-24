@@ -134,7 +134,7 @@ describe('antispam de la celda (superadmin)', () => {
 
   it('sin contrasena del controller lo dice y no ofrece nada mas', async () => {
     vi.spyOn(mailSecurityApi, 'rspamdStats').mockRejectedValue(
-      new ApiError(503, { code: 'NOT_CONFIGURED', message: 'integracion no configurada' }),
+      new ApiError(503, { code: 'NOT_CONFIGURED', message: 'integración no configurada' }),
     );
     const history = vi.spyOn(mailSecurityApi, 'rspamdHistory').mockResolvedValue(HISTORY);
     renderPage();

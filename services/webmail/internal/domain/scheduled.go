@@ -86,7 +86,7 @@ func ValidateSendAt(at, now time.Time, maxDays int) error {
 		return invalid("send_at", "debe ser al menos un minuto en el futuro")
 	}
 	if at.After(now.AddDate(0, 0, maxDays)) {
-		return invalid("send_at", "supera el plazo maximo de programacion")
+		return invalid("send_at", "supera el plazo máximo de programación")
 	}
 	return nil
 }
@@ -108,7 +108,7 @@ func ValidUUID(v string) bool { return uuidPattern.MatchString(v) }
 // ValidateScheduledID exige el identificador de una fila (UUID): viaja en la ruta interna.
 func ValidateScheduledID(id string) error {
 	if !ValidUUID(id) {
-		return invalid("id", "identificador de envio programado invalido")
+		return invalid("id", "identificador de envío programado inválido")
 	}
 	return nil
 }

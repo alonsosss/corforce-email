@@ -52,17 +52,17 @@ func ParseAssistantTone(raw string) (AssistantToneName, error) {
 var (
 	// ErrAssistantNotConfigured: la plataforma no tiene clave del proveedor. La interfaz no ofrece el
 	// asistente.
-	ErrAssistantNotConfigured = errors.New("el asistente no esta disponible en esta plataforma")
+	ErrAssistantNotConfigured = errors.New("el asistente no está disponible en esta plataforma")
 	// ErrAssistantDisabled: la empresa del buzon no lo activo.
-	ErrAssistantDisabled = errors.New("el asistente no esta activado para tu empresa")
+	ErrAssistantDisabled = errors.New("el asistente no está activado para tu empresa")
 	// ErrAssistantBusy: el proveedor sigue saturado o limitando tras los reintentos.
-	ErrAssistantBusy = errors.New("el asistente esta saturado; prueba en unos minutos")
+	ErrAssistantBusy = errors.New("el asistente está saturado; prueba en unos minutos")
 	// ErrAssistantFailed: el proveedor respondio con un error que reintentar no arregla.
-	ErrAssistantFailed = errors.New("el asistente no pudo procesar la peticion")
+	ErrAssistantFailed = errors.New("el asistente no pudo procesar la petición")
 	// ErrAssistantRefused: el proveedor declino la peticion.
 	ErrAssistantRefused = errors.New("el asistente no puede procesar este contenido")
 	// ErrAssistantEmptyResult: la respuesta no trae texto utilizable.
-	ErrAssistantEmptyResult = errors.New("el asistente no devolvio ningun resultado")
+	ErrAssistantEmptyResult = errors.New("el asistente no devolvió ningún resultado")
 )
 
 // AssistantQuotaScope dice que tope diario se alcanzo.
@@ -81,9 +81,9 @@ type AssistantQuotaError struct {
 
 func (e *AssistantQuotaError) Error() string {
 	if e.Scope == QuotaTenant {
-		return "tu empresa alcanzo el maximo de peticiones al asistente de hoy"
+		return "tu empresa alcanzó el máximo de peticiones al asistente de hoy"
 	}
-	return "alcanzaste el maximo de peticiones al asistente de hoy"
+	return "alcanzaste el máximo de peticiones al asistente de hoy"
 }
 
 // AssistantLimits son los topes que se aplican y se sirven a la interfaz.
@@ -380,8 +380,8 @@ Tarea: redacta el cuerpo de una respuesta al correo, escrita por el usuario, en 
 
 var assistantToneGuides = map[AssistantToneName]string{
 	ToneFormal:   "formal y profesional, con tratamiento de usted si el idioma lo tiene, sin coloquialismos",
-	ToneFriendly: "cercano y cordial, natural, sin perder la correccion",
-	ToneBrief:    "breve y directo: lo mismo en el menor numero de palabras, sin perder ningun dato ni peticion",
+	ToneFriendly: "cercano y cordial, natural, sin perder la corrección",
+	ToneBrief:    "breve y directo: lo mismo en el menor número de palabras, sin perder ningún dato ni petición",
 }
 
 // BuildTonePrompt reescribe el borrador del usuario con otro tono. Un borrador mayor que el tope se
@@ -461,7 +461,7 @@ var assistantExtractionSchema = map[string]any{
 // usuario, para resolver "manana" o "el jueves".
 func BuildExtractPrompt(m AssistantSourceMessage, today string, limits AssistantLimits) (AssistantPrompt, error) {
 	if !validAssistantDate(today) {
-		return AssistantPrompt{}, invalid("today", "fecha no valida (AAAA-MM-DD)")
+		return AssistantPrompt{}, invalid("today", "fecha no válida (AAAA-MM-DD)")
 	}
 	body, truncated := CleanAssistantText(m.Body, limits.MaxInputChars)
 	if body == "" {

@@ -126,7 +126,7 @@ func SetOccurrence(existing string, rid time.Time, f EventFields, now time.Time)
 		return "", err
 	}
 	if f.AllDay != t.main.start.date {
-		return "", fieldError("all_day", "una aparicion conserva el tipo de dia de la serie")
+		return "", fieldError("all_day", "una aparición conserva el tipo de día de la serie")
 	}
 	rid = rid.UTC()
 	if !t.hasOccurrence(rid) {

@@ -53,7 +53,7 @@ type Client struct {
 
 func New(cfg Config) (*Client, error) {
 	if !strings.HasPrefix(cfg.BaseURL, "https://") {
-		return nil, errors.New("QUEUE_AGENT_URL debe ser https: la clave del agente viaja en cada peticion")
+		return nil, errors.New("QUEUE_AGENT_URL debe ser https: la clave del agente viaja en cada petición")
 	}
 	if !apiKeyPattern.MatchString(cfg.APIKey) {
 		return nil, errors.New("QUEUE_AGENT_API_KEY debe tener de 32 a 256 caracteres de [A-Za-z0-9_-]")
@@ -152,7 +152,7 @@ func (c *Client) do(ctx context.Context, method, endpoint string, out any) error
 		return fmt.Errorf("%w: leer la respuesta: %v", domain.ErrEngineUnreachable, err)
 	}
 	if len(raw) > maxResponseBytes {
-		return fmt.Errorf("%w: respuesta de mas de %d bytes", domain.ErrEngineCommand, maxResponseBytes)
+		return fmt.Errorf("%w: respuesta de más de %d bytes", domain.ErrEngineCommand, maxResponseBytes)
 	}
 	if err := json.Unmarshal(raw, out); err != nil {
 		return fmt.Errorf("%w: respuesta ilegible: %v", domain.ErrEngineCommand, err)

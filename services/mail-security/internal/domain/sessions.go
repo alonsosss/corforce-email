@@ -80,7 +80,7 @@ func NormalizeSessionUser(raw string) (string, error) {
 	u := strings.ToLower(strings.TrimSpace(raw))
 	local, domainName, ok := SplitAddress(u)
 	if !ok || !sessionLocalPart.MatchString(local) || ValidateDomainName(domainName) != nil {
-		return "", newValidation("username no es un buzon valido")
+		return "", newValidation("username no es un buzón válido")
 	}
 	return u, nil
 }

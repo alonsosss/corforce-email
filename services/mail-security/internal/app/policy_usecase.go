@@ -402,7 +402,7 @@ func (uc *PolicyUseCase) GetMailboxTags(ctx context.Context, tenantID uuid.UUID,
 
 func (uc *PolicyUseCase) PutMailboxTags(ctx context.Context, tenantID uuid.UUID, username string, subjectTag, subfolderTag bool) (out *domain.MailboxTags, err error) {
 	if domain.ObjectKindOf(username) != domain.ObjectMailbox {
-		return nil, &domain.ValidationError{Msg: "username debe ser un buzon"}
+		return nil, &domain.ValidationError{Msg: "username debe ser un buzón"}
 	}
 	err = uc.tx.TransactRLS(ctx, func(ctx context.Context) error {
 		user, err := uc.ownedObject(ctx, tenantID, username)
@@ -459,7 +459,7 @@ func (uc *PolicyUseCase) GetSMTPAccess(ctx context.Context, tenantID uuid.UUID, 
 // puntua 999 cualquier otro origen (SMTP_ACCESS).
 func (uc *PolicyUseCase) PutSMTPAccess(ctx context.Context, tenantID uuid.UUID, username string, networks []string) (out *domain.SMTPAccess, err error) {
 	if domain.ObjectKindOf(username) != domain.ObjectMailbox {
-		return nil, &domain.ValidationError{Msg: "username debe ser un buzon"}
+		return nil, &domain.ValidationError{Msg: "username debe ser un buzón"}
 	}
 	prefixes, err := domain.NormalizeSMTPNetworks(networks)
 	if err != nil {
