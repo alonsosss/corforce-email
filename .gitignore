@@ -51,6 +51,7 @@ __pycache__/
 /observability
 /reputation
 /webmail
+/smtp-relay
 services/*/gateway
 
 # Artefactos TypeScript sueltos bajo src/ (la salida real va a dist/)
