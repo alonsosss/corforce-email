@@ -86,3 +86,22 @@ func (s SESAccountStatus) Validate() error {
 	}
 	return nil
 }
+
+// Reserva de la cuota diaria de SES para el correo transaccional (SES_MARKETING_QUOTA_RESERVE): la
+// fraccion de Max24HourSend que el marketing no puede consumir, para que una campana nunca deje sin
+// cuota los codigos de acceso ni las recuperaciones de contrasena de todas las empresas.
+const (
+	DefaultMarketingQuotaReserve = 0.2
+	MinMarketingQuotaReserve     = 0.05
+	MaxMarketingQuotaReserve     = 0.9
+)
+
+// MarketingQuotaOpen dice si el marketing puede seguir saliendo: lo enviado en 24 h (la lectura de
+// SES, que incluye lo de cualquier otro emisor de la cuenta, mas sentSince, lo que este proceso envio
+// desde esa lectura) queda por debajo de la cuota menos la reserva. Una cuota sin dato no frena.
+func (s SESAccountStatus) MarketingQuotaOpen(sentSince int64, reserve float64) bool {
+	if s.Max24HourSend <= 0 {
+		return true
+	}
+	return s.SentLast24Hours+float64(sentSince) < s.Max24HourSend*(1-reserve)
+}

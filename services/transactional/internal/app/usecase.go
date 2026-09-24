@@ -40,6 +40,9 @@ type Config struct {
 	// TestSendsPerHour acota las pruebas de plantilla por empresa y hora
 	// (TRANSACTIONAL_TEST_SENDS_PER_HOUR); cero usa domain.DefaultTestSendsPerHour.
 	TestSendsPerHour int
+	// MarketingQuotaReserve es la fraccion de la cuota diaria de SES reservada al transaccional
+	// (SES_MARKETING_QUOTA_RESERVE); cero usa domain.DefaultMarketingQuotaReserve.
+	MarketingQuotaReserve float64
 }
 
 type Deps struct {
@@ -78,6 +81,7 @@ type UseCase struct {
 	cfg         Config
 	logger      *zap.Logger
 	now         func() time.Time
+	quota       quotaGate
 }
 
 func New(d Deps) *UseCase {
@@ -90,6 +94,9 @@ func New(d Deps) *UseCase {
 	}
 	if d.Config.ViewInBrowserTTL <= 0 {
 		d.Config.ViewInBrowserTTL = domain.DefaultViewInBrowserTTL
+	}
+	if d.Config.MarketingQuotaReserve <= 0 {
+		d.Config.MarketingQuotaReserve = domain.DefaultMarketingQuotaReserve
 	}
 	if d.Config.TestSendsPerHour <= 0 {
 		d.Config.TestSendsPerHour = domain.DefaultTestSendsPerHour
@@ -124,6 +131,7 @@ func (noopMetrics) SESEvent(string)                    {}
 func (noopMetrics) SESEventRejected(string)            {}
 func (noopMetrics) SESAccount(domain.SESAccountStatus) {}
 func (noopMetrics) SESAccountCheckFailed()             {}
+func (noopMetrics) MarketingDeferred()                 {}
 
 // laneFor devuelve el carril de la clase del mensaje. Una clase sin carril completo es un
 // error de configuracion: el mensaje no sale por el carril de otra clase.

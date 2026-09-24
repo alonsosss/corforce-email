@@ -19,7 +19,7 @@ Region `us-east-1`. El id de la cuenta no se escribe aqui (el repositorio es pub
 | Conjunto `core-force-transactional` | Creado a mano, TLS obligatorio, conjunto por defecto del dominio |
 | Topic `ses-avisos-core-force-events` | Creado a mano; recibe rebotes, quejas, rechazos y errores de plantilla. **Sin suscriptor** |
 | Supresion de la cuenta | Activa para rebotes y quejas |
-| Acceso de produccion | **Pendiente**: caso nuevo "SES Production Access - us-east-1" en AWS Support (la solicitud anterior se cerro en julio sin respuesta) |
+| Acceso de produccion | **Concedido** (2026-09-24): 50000 correos al dia, 14 por segundo |
 | Usuario IAM de envio | **No existe**: crear usuarios con claves lo hace quien administra la cuenta |
 | Planes de SES, VDM, metricas de reputacion en CloudWatch, IP dedicada | Apagados a proposito (coste) |
 
@@ -215,7 +215,7 @@ metricas de reputacion en CloudWatch mientras el volumen no lo justifique.
 | 4. Pila de SES | Hecho (2026-09-23): `cfm-prod-ses-mail`, suscripcion confirmada sola, `avisos.core-force.com` con `cfm-transactional` por defecto; retirados `core-force-transactional` y `ses-avisos-core-force-events`. `verificar-ses.sh prod avisos.core-force.com`: todo en orden salvo el aviso del modo de pruebas |
 | 5. Credenciales en el servidor | Hecho (2026-09-23): las dos claves en el almacen, `transactional` recreado, `verify-scope contenedores` OK. Tasas a la cuota del modo de pruebas (1 por segundo): `SES_MAX_SEND_RATE=1` y `SES_MAX_SEND_RATE_MARKETING=1` |
 | 6. Prueba con el simulador | Hecho (2026-09-23), por `/internal/send-email` desde la empresa de plataforma: `success@` quedo `delivered`, `bounce@` `bounced` y alta en `suppression` con `hard_bounce`, `complaint@` `complained` y alta con `complaint`. Las dos entradas del simulador se dejaron en `suppression` como constancia |
-| 7. Acceso de produccion | Esperando a AWS Support. Al llegar: subir `SES_MAX_SEND_RATE` a la cuota asignada, poner `AUDIT_ANCHOR_RUA` y hacer el envio real del paso 7 |
+| 7. Acceso de produccion | Concedido (2026-09-24): 50000 al dia y 14 por segundo, `verificar-ses.sh prod` todo en orden. `SES_MAX_SEND_RATE=8` y `SES_MAX_SEND_RATE_MARKETING=5`, reserva del 20 % de la cuota para el transaccional (`SES_MARKETING_QUOTA_RESERVE`). Primer envio real a un buzon propio por internet: DKIM, SPF y DMARC `pass`, bandeja de entrada; se anadio el MX de `avisos.core-force.com` (`10 mx.core-force.com`), que Rspamd penalizaba con `MIME_FROM_MX_NONE`. Falta `AUDIT_ANCHOR_RUA` (una direccion fuera de la plataforma que elija quien opera) |
 | 8. Dominios de empresa en SES | Codigo hecho (2026-09-23): `domain-service` (identidades BYODKIM, MAIL FROM, estado en `07_ses_identities.sql`) y `transactional` (`sending_ready`, `06_sending_ready.sql`). Falta en produccion: usuario IAM y claves (paso 8) y desplegar |
 
 Queda en la cuenta `my-first-configuration-set`, conjunto por defecto de `core-force.com` y de una

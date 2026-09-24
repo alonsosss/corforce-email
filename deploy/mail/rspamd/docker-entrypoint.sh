@@ -28,6 +28,11 @@ if ! /controller-password.sh; then
   echo '# controller-password.sh fallo en el arranque: controller cerrado.' > /etc/rspamd/override.d/worker-controller-password.inc
 fi
 
+# mx_check da por bueno el MX propio sin sondearlo: desde un contenedor no se alcanza el puerto 25 de la IP
+# publica del mismo host, y el correo que llega desde los dominios de las empresas se penalizaba con
+# MX_TIMEOUT_CONNECT. Vacio si no hay MAIL_HOSTNAME: el mapa no excluye nada.
+printf '%s\n' ${MAIL_HOSTNAME} > /etc/rspamd/custom/own_mx.map
+
 echo ${IPV4_NETWORK}.0/24 > /etc/rspamd/custom/platform_networks.map
 echo ${IPV6_NETWORK} >> /etc/rspamd/custom/platform_networks.map
 

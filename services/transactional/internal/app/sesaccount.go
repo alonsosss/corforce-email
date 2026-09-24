@@ -28,6 +28,7 @@ func (uc *UseCase) RunSESAccountMonitor(ctx context.Context, reader ports.SESAcc
 			return
 		}
 		uc.metrics.SESAccount(status)
+		uc.quota.observe(status, uc.now(), 3*interval)
 	}
 	check()
 	ticker := time.NewTicker(interval)

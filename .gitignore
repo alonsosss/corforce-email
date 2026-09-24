@@ -107,6 +107,7 @@ deploy/mail/postfix/conf/.main.cf.*
 deploy/mail/postfix/conf/custom_postscreen_whitelist.cidr
 deploy/mail/postfix/conf/custom_transport.pcre
 deploy/mail/rspamd/custom/dovecot_trusted.map
+deploy/mail/rspamd/custom/own_mx.map
 deploy/mail/rspamd/custom/platform_networks.map
 deploy/mail/rspamd/custom/rspamd_trusted.map
 deploy/mail/rspamd/custom/sa-rules

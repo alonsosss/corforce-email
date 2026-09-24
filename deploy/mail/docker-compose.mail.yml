@@ -92,6 +92,9 @@ services:
       - MAIL_REDIS_HOST=${MAIL_REDIS_HOST:-redis}
       - MAIL_REDIS_PASSWORD=${MAIL_REDIS_PASSWORD}
       - MAIL_POLICY_HOST=${MAIL_POLICY_HOST:-mail-policy}
+      # El MX propio (rspamd/custom/own_mx.map): mx_check no puede sondear el puerto 25 de la IP
+      # publica del mismo host desde un contenedor y lo daba por caido en el correo de las empresas.
+      - MAIL_HOSTNAME=${MAIL_HOSTNAME}
       - SPAMHAUS_DQS_KEY=${SPAMHAUS_DQS_KEY:-}
       - SKIP_OLEFY=${SKIP_OLEFY:-n}
       # Contrasenas del controller (almacen de secretos): el arranque solo guarda sus hashes

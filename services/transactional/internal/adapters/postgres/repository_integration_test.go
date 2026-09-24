@@ -495,6 +495,39 @@ func TestReleaseDueSkipsLockedRows(t *testing.T) {
 	}
 }
 
+func TestDeferQueuedVuelveAProgramado(t *testing.T) {
+	ctx, _, repo := setup(t)
+	tenant := uuid.New()
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	queued := newMessage(tenant, domain.StatusQueued, "ana@example.com")
+	sent := newMessage(tenant, domain.StatusSent, "eva@example.com")
+	for _, m := range []*domain.Message{queued, sent} {
+		if err := repo.InsertMessage(ctx, m); err != nil {
+			t.Fatal(err)
+		}
+	}
+	until := now.Add(10 * time.Minute)
+	for _, m := range []*domain.Message{queued, sent} {
+		if err := repo.DeferQueued(ctx, tenant, m.ID, until); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if m, _ := repo.GetMessage(ctx, tenant, queued.ID); m.Status != domain.StatusAccepted || m.ScheduledAt == nil || !m.ScheduledAt.Equal(until) {
+		t.Fatalf("el encolado vuelve a programado a su hora: %+v", m)
+	}
+	if m, _ := repo.GetMessage(ctx, tenant, sent.ID); m.Status != domain.StatusSent || m.ScheduledAt != nil {
+		t.Fatalf("un mensaje que ya no esta en la cola no se toca: %+v", m)
+	}
+	var released []uuid.UUID
+	if err := repo.Transact(ctx, func(ctx context.Context) error {
+		var err error
+		released, err = repo.ReleaseDue(ctx, tenant, until, 10)
+		return err
+	}); err != nil || len(released) != 1 || released[0] != queued.ID {
+		t.Fatalf("ReleaseDue lo vuelve a encolar: %v %v", released, err)
+	}
+}
+
 func TestOutboxEnqueueFollowsTransaction(t *testing.T) {
 	ctx, pool, repo := setup(t)
 	pub := NewOutboxPublisher(&db.ContextPool{})

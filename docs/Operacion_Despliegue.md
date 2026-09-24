@@ -640,6 +640,15 @@ buzones dio 500 y `mail-auth` no pudo leer el buzon del remitente de las alertas
   grupo `salida-ses` (`plataforma.yml`, con sus pruebas en `tests/salida-ses_test.yml`) avisan de
   la cuenta pausada, rebotes y quejas por debajo de los umbrales de AWS, cuota casi agotada,
   intentos fallando, envios sin eventos, rechazos sostenidos en la ruta y el vigilante sin datos.
+* Reserva de cuota del transaccional (`SES_MARKETING_QUOTA_RESERVE`, 0.2): la cuota diaria de SES es de toda
+  la cuenta (la comparten todas las empresas y cualquier otro emisor de la cuenta), asi que el marketing no
+  puede consumir su ultimo 20 %. Con la lectura del vigilante mas lo enviado desde ella, cuando lo enviado en
+  24 h llega a la cuota menos la reserva, `transactional` devuelve cada mensaje de marketing a programado 10
+  minutos despues (sin gastar intentos ni reentregas de NATS; lo reencola el liberador de programados) y el
+  transaccional sigue saliendo. Metrica `transactional_marketing_quota_deferred_total`; aviso en el log al
+  entrar y al salir de la reserva. Sin lectura reciente del vigilante (apagado o fallando) no frena: SES aplica
+  su propia cuota. En produccion (2026-09-24): cuota de 50000 al dia y 14 por segundo; tasas
+  `SES_MAX_SEND_RATE=8` y `SES_MAX_SEND_RATE_MARKETING=5` (13 de 14, el transaccional con mas).
 * Identidades de SES de los dominios de las empresas: `domain-service` da de alta en SES cada dominio
   de envio (`sending` o `both`) al verificarse, con BYODKIM (su misma clave DKIM y selector), MAIL
   FROM `bounce.<dominio>` y `SES_CONFIG_SET_TRANSACTIONAL` por defecto, y el barrido guarda su estado.

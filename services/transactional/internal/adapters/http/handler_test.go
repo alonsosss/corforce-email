@@ -53,6 +53,7 @@ func (m *recordingMetrics) SESEvent(t string)                  { m.events = appe
 func (m *recordingMetrics) SESEventRejected(r string)          { m.rejected = append(m.rejected, r) }
 func (m *recordingMetrics) SESAccount(domain.SESAccountStatus) {}
 func (m *recordingMetrics) SESAccountCheckFailed()             {}
+func (m *recordingMetrics) MarketingDeferred()                 {}
 
 // newTestServer arma el handler sin base de datos: las rutas que se prueban aqui
 // deciden antes de resolver la empresa (firma, enlace, coherencia de empresa).

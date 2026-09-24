@@ -12,20 +12,21 @@ import (
 // Metrics implementa ports.Metrics. Las etiquetas toman valores de conjuntos cerrados: la clase,
 // el resultado del intento, el tipo de evento normalizado y el motivo de rechazo.
 type Metrics struct {
-	sendAttempts     *prometheus.CounterVec
-	sesEvents        *prometheus.CounterVec
-	sesRejected      *prometheus.CounterVec
-	sendingEnabled   prometheus.Gauge
-	productionAccess prometheus.Gauge
-	max24h           prometheus.Gauge
-	sent24h          prometheus.Gauge
-	maxRate          prometheus.Gauge
-	bounceRate       prometheus.Gauge
-	complaintRate    prometheus.Gauge
-	reputationKnown  *prometheus.GaugeVec
-	lastSuccess      prometheus.Gauge
-	checkFailures    prometheus.Counter
-	now              func() time.Time
+	sendAttempts      *prometheus.CounterVec
+	sesEvents         *prometheus.CounterVec
+	sesRejected       *prometheus.CounterVec
+	sendingEnabled    prometheus.Gauge
+	productionAccess  prometheus.Gauge
+	max24h            prometheus.Gauge
+	sent24h           prometheus.Gauge
+	maxRate           prometheus.Gauge
+	bounceRate        prometheus.Gauge
+	complaintRate     prometheus.Gauge
+	reputationKnown   *prometheus.GaugeVec
+	lastSuccess       prometheus.Gauge
+	checkFailures     prometheus.Counter
+	marketingDeferred prometheus.Counter
+	now               func() time.Time
 }
 
 func New() *Metrics {
@@ -61,10 +62,14 @@ func New() *Metrics {
 			Name: "transactional_ses_account_check_failures_total",
 			Help: "Lecturas fallidas del estado de la cuenta de SES.",
 		}),
+		marketingDeferred: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "transactional_marketing_quota_deferred_total",
+			Help: "Mensajes de marketing aplazados porque la cuenta de SES entro en la reserva de cuota del transaccional.",
+		}),
 		now: time.Now,
 	}
 	prometheus.MustRegister(m.sendAttempts, m.sesEvents, m.sesRejected, m.sendingEnabled, m.productionAccess,
-		m.max24h, m.sent24h, m.maxRate, m.bounceRate, m.complaintRate, m.reputationKnown, m.lastSuccess, m.checkFailures)
+		m.max24h, m.sent24h, m.maxRate, m.bounceRate, m.complaintRate, m.reputationKnown, m.lastSuccess, m.checkFailures, m.marketingDeferred)
 	return m
 }
 
@@ -88,6 +93,8 @@ func (m *Metrics) SESAccount(s domain.SESAccountStatus) {
 }
 
 func (m *Metrics) SESAccountCheckFailed() { m.checkFailures.Inc() }
+
+func (m *Metrics) MarketingDeferred() { m.marketingDeferred.Inc() }
 
 func setRate(g prometheus.Gauge, known prometheus.Gauge, v *float64) {
 	if v == nil {

@@ -50,6 +50,15 @@ func (uc *UseCase) SendQueued(ctx context.Context, tenantID, messageID uuid.UUID
 			return fmt.Errorf("mensaje %s: %w", msg.ID, err)
 		}
 
+		if domain.ClassOrDefault(msg.Class) == domain.ClassMarketing && !uc.marketingQuotaOpen() {
+			if err := uc.repo.DeferQueued(ctx, tenantID, msg.ID, uc.now().Add(marketingQuotaDeferral)); err != nil {
+				return err
+			}
+			uc.metrics.MarketingDeferred()
+			outcome.Status = domain.StatusAccepted
+			return nil
+		}
+
 		email := uc.outgoing(msg)
 		if domain.OriginOrDefault(msg.Origin) == domain.OriginSMTP {
 			raw, err := uc.repo.GetRawContent(ctx, tenantID, msg.ID)
@@ -64,6 +73,7 @@ func (uc *UseCase) SendQueued(ctx context.Context, tenantID, messageID uuid.UUID
 		}
 		providerID, sendErr := uc.sendWithRetries(ctx, domain.ClassOrDefault(msg.Class), lane, email)
 		if sendErr == nil {
+			uc.quota.noteSent()
 			sentAt := uc.now()
 			if err := uc.repo.MarkSent(ctx, tenantID, msg.ID, providerID, sentAt); err != nil {
 				return err
