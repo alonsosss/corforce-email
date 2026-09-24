@@ -42,6 +42,9 @@ type Config struct {
 	EventsHeartbeat    time.Duration
 	EventsSessionCheck time.Duration
 	EventsMaxLifetime  time.Duration
+	// MaxLargeFileBytes es lo que el webmail deja pasar hacia mail-files en una subida de fichero
+	// grande; el tope exacto lo aplica mail-files.
+	MaxLargeFileBytes int64
 }
 
 type Handler struct {
@@ -120,6 +123,9 @@ func (h *Handler) Routes() http.Handler {
 			r.Get("/calendar/events/{id}", h.Event)
 			r.Put("/calendar/events/{id}", h.UpdateEvent)
 			r.Delete("/calendar/events/{id}", h.DeleteEvent)
+			r.Get("/large-files", h.LargeFiles)
+			r.Post("/large-files", h.UploadLargeFile)
+			r.Delete("/large-files/{id}", h.RevokeLargeFile)
 		})
 	})
 	return r

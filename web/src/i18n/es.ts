@@ -1901,6 +1901,22 @@ export const es = {
   'error.code.SEND_IN_PROGRESS': 'Este mensaje ya se esta enviando. Espera unos segundos.',
   'error.code.DELIVERY_UNCERTAIN':
     'No se pudo confirmar si el mensaje salio: pudo quedar en cola. Revisa Enviados o pregunta a los destinatarios antes de volver a enviarlo.',
+  // mail-files, a traves del webmail (ficheros grandes por enlace).
+  'error.code.FILE_TOO_LARGE': 'El fichero supera el tamano maximo permitido.',
+  'error.code.FILE_EMPTY': 'El fichero esta vacio.',
+  'error.code.FILE_INFECTED': 'El fichero contiene malware y no se ha guardado.',
+  'error.code.UPLOAD_INCOMPLETE': 'La subida se corto antes de terminar. Vuelve a intentarlo.',
+  'error.code.MAILBOX_FILES_QUOTA_EXCEEDED':
+    'El fichero no cabe en tu espacio de ficheros compartidos. Revoca los enlaces que ya no necesites.',
+  'error.code.TENANT_FILES_QUOTA_EXCEEDED':
+    'La empresa ha llenado su espacio de ficheros compartidos. Avisa a tu administrador.',
+  'error.code.SHARED_FILES_LIMIT':
+    'Has llegado al maximo de enlaces vigentes. Revoca alguno para compartir otro fichero.',
+  'error.code.UPLOADS_BUSY':
+    'Hay demasiadas subidas en curso. Vuelve a intentarlo en unos segundos.',
+  'error.code.LARGE_FILES_DISABLED': 'El envio de ficheros grandes por enlace no esta disponible.',
+  'error.code.FILE_NOT_FOUND': 'El fichero compartido ya no existe.',
+  'error.code.FILE_NOT_ACTIVE': 'El enlace ya no estaba vigente.',
   // mail-directory (services/mail-directory/internal/adapters/http/handler.go).
   'error.code.ADDRESS_RECENTLY_DELETED':
     'Esa direccion se borro hace poco y su buzon anterior aun se esta retirando del servidor. Vuelve a intentarlo en unos minutos.',
@@ -4281,4 +4297,54 @@ export const es = {
   'scheduler.taskStatus.scheduled': 'Programada',
   'scheduler.taskStatus.executed': 'Ejecutada',
   'scheduler.taskStatus.cancelled': 'Cancelada',
+
+  'webmail.settings.tab.files': 'Ficheros compartidos',
+  'webmail.largeFiles.title': 'Ficheros compartidos por enlace',
+  'webmail.largeFiles.description':
+    'Ficheros grandes que has enviado por enlace. Cada uno se analizo con antivirus antes de publicarse y deja de descargarse al caducar, al agotar sus descargas o al revocarlo.',
+  'webmail.largeFiles.unavailable': 'No se pudieron cargar los ficheros compartidos.',
+  'webmail.largeFiles.disabled':
+    'El envio de ficheros grandes por enlace no esta disponible en este servidor.',
+  'webmail.largeFiles.empty': 'Aun no has compartido ningun fichero por enlace.',
+  'webmail.largeFiles.usage': '{used} de {quota} usados, {n} enlaces vigentes de {max}',
+  'webmail.largeFiles.usageLabel': 'Espacio de ficheros compartidos',
+  'webmail.largeFiles.col.name': 'Fichero',
+  'webmail.largeFiles.col.size': 'Tamano',
+  'webmail.largeFiles.col.state': 'Estado',
+  'webmail.largeFiles.col.downloads': 'Descargas',
+  'webmail.largeFiles.col.expires': 'Caduca',
+  'webmail.largeFiles.downloads': '{n} de {max}',
+  'webmail.largeFiles.state.uploading': 'Subiendo',
+  'webmail.largeFiles.state.active': 'Vigente',
+  'webmail.largeFiles.state.expired': 'Caducado',
+  'webmail.largeFiles.state.exhausted': 'Descargas agotadas',
+  'webmail.largeFiles.state.revoked': 'Revocado',
+  'webmail.largeFiles.state.failed': 'Fallido',
+  'webmail.largeFiles.copy': 'Copiar el enlace de {name}',
+  'webmail.largeFiles.revoke': 'Revocar',
+  'webmail.largeFiles.revokeLabel': 'Revocar el enlace de {name}',
+  'webmail.largeFiles.revokeTitle': 'Revocar enlace',
+  'webmail.largeFiles.revokeConfirm':
+    'El enlace de "{name}" dejara de funcionar en el acto y el fichero se borrara. Quien lo tenga ya no podra descargarlo.',
+  'webmail.largeFiles.revoked': 'Enlace revocado.',
+  'webmail.largeFiles.compose.title': 'Ficheros grandes por enlace',
+  'webmail.largeFiles.compose.hint':
+    'Hasta {size} por fichero. Se analiza con antivirus y el mensaje lleva un enlace de descarga en lugar del adjunto.',
+  'webmail.largeFiles.compose.pick': 'Enviar un fichero por enlace',
+  'webmail.largeFiles.compose.expiry': 'Caduca en',
+  'webmail.largeFiles.compose.expiryDays': '{n} dias',
+  'webmail.largeFiles.compose.expiryDay': '1 dia',
+  'webmail.largeFiles.compose.maxDownloads': 'Descargas maximas',
+  'webmail.largeFiles.compose.uploading': 'Subiendo y analizando {name}',
+  'webmail.largeFiles.compose.added': 'Enlace de {name} anadido al mensaje.',
+  'webmail.largeFiles.compose.convertHint':
+    'Los adjuntos superan el tamano del mensaje: puedes enviarlos como enlace.',
+  'webmail.largeFiles.compose.convert': 'Enviar {name} como enlace',
+  'webmail.largeFiles.compose.tooLarge': '{name} supera el tamano maximo de {size}.',
+  'webmail.largeFiles.compose.noQuota':
+    '{name} no cabe en tu espacio de ficheros compartidos: quedan {free} libres.',
+  'webmail.largeFiles.compose.tooMany':
+    'Ya tienes {max} enlaces vigentes: revoca alguno en Ajustes para compartir otro.',
+  'webmail.largeFiles.link.prefix': 'Fichero compartido:',
+  'webmail.largeFiles.link.details': '({size}, disponible hasta el {date})',
 } as const;

@@ -69,6 +69,7 @@ declare -A BASES=(
   [MAIL_AUTH_TEST_DSN]=it_mail_auth
   [MAIL_DAV_TEST_DSN]=it_mail_dav
   [MAIL_DIRECTORY_TEST_DSN]=it_mail_directory
+  [MAIL_FILES_TEST_DSN]=it_mail_files
   [MAIL_MIGRATION_TEST_DSN]=it_mail_migration
   [MAIL_SECURITY_TEST_DSN]=it_mail_security
   [ORGANIZATION_TEST_DSN]=it_organization

@@ -833,3 +833,9 @@ export const webmailApi = {
 export function hasFlag(envelope: Pick<MessageEnvelope, 'flags'>, flag: string): boolean {
   return envelope.flags.includes(flag);
 }
+
+/**
+ * Peticion JSON al webmail con su sesion, sus reintentos de lectura y su aviso de sesion caducada,
+ * para los modulos de API del webmail que viven en su propio fichero (api/largeFiles.ts).
+ */
+export { request as webmailRequest };

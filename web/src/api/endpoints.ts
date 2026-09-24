@@ -358,5 +358,7 @@ export const endpoints = {
     contactsImport: `${API_PREFIX}/webmail/contacts/import`,
     calendarEvents: `${API_PREFIX}/webmail/calendar/events`,
     calendarEvent: (id: string) => `${API_PREFIX}/webmail/calendar/events/${seg(id)}`,
+    largeFiles: `${API_PREFIX}/webmail/large-files`,
+    largeFile: (id: string) => `${API_PREFIX}/webmail/large-files/${seg(id)}`,
   },
 } as const;

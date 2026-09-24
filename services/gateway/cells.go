@@ -329,6 +329,9 @@ func publicHandlers(t *routeTable, internalToken string, webhookLimit func(http.
 		if p.Limit == publicLimitWebhook {
 			h = webhookLimit(h)
 		}
+		if p.Transfer == publicTransferDownload {
+			h = withDownloadDeadline(h)
+		}
 		out = append(out, h)
 	}
 	return out

@@ -87,3 +87,25 @@ func TestScanFallaCerrado(t *testing.T) {
 		t.Fatalf("clamd caido: %v", err)
 	}
 }
+
+// ScanReader manda el flujo en trozos sin cargarlo entero y cuenta un fallo de lectura como falta de
+// veredicto: un fichero leido a medias nunca se da por limpio.
+func TestScanReaderEnFlujo(t *testing.T) {
+	addr, received := fakeClamd(t, "stream: OK")
+	payload := bytes.Repeat([]byte("abcdefghij"), 30000)
+	if err := New(addr, 5*time.Second).ScanReader(context.Background(), bytes.NewReader(payload)); err != nil {
+		t.Fatal(err)
+	}
+	if got := <-received; !bytes.Equal(got, payload) {
+		t.Fatalf("clamd recibio %d bytes de %d", len(got), len(payload))
+	}
+	addr, _ = fakeClamd(t, "stream: OK")
+	broken := io.MultiReader(bytes.NewReader(payload[:100]), brokenReader{})
+	if err := New(addr, 5*time.Second).ScanReader(context.Background(), broken); !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("lectura rota: %v", err)
+	}
+}
+
+type brokenReader struct{}
+
+func (brokenReader) Read([]byte) (int, error) { return 0, errors.New("disco roto") }

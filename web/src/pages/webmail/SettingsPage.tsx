@@ -6,10 +6,11 @@ import { t } from '@/i18n';
 import { paths } from '@/paths';
 import { VacationForm } from '@/pages/shared/VacationForm';
 import { FiltersSettings } from './settings/FiltersSettings';
+import { LargeFilesSettings } from './settings/LargeFilesSettings';
 import { PasswordSettings } from './settings/PasswordSettings';
 import { SignatureSettings } from './settings/SignatureSettings';
 
-const TABS = ['vacation', 'signature', 'rules', 'forwarding', 'password'] as const;
+const TABS = ['vacation', 'signature', 'rules', 'forwarding', 'password', 'files'] as const;
 type SettingsTab = (typeof TABS)[number];
 
 const TAB_LABELS = {
@@ -18,6 +19,7 @@ const TAB_LABELS = {
   rules: 'webmail.settings.tab.rules',
   forwarding: 'webmail.settings.tab.forwarding',
   password: 'webmail.settings.tab.password',
+  files: 'webmail.settings.tab.files',
 } as const;
 
 function parseTab(raw: string | null): SettingsTab {
@@ -47,6 +49,7 @@ export default function SettingsPage() {
         {tab === 'rules' ? <FiltersSettings part="rules" /> : null}
         {tab === 'forwarding' ? <FiltersSettings part="forwarding" /> : null}
         {tab === 'password' ? <PasswordSettings /> : null}
+        {tab === 'files' ? <LargeFilesSettings /> : null}
       </div>
     </div>
   );

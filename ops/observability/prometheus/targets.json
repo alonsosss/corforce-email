@@ -118,6 +118,15 @@
   },
   {
     "targets": [
+      "mail-files:8061"
+    ],
+    "labels": {
+      "job": "mail-services",
+      "service": "mail-files"
+    }
+  },
+  {
+    "targets": [
       "mail-migration:8056"
     ],
     "labels": {

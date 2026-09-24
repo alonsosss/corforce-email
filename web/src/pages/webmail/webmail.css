@@ -1213,3 +1213,39 @@ a.cf-wm-message:hover {
     display: none;
   }
 }
+
+/* Ficheros grandes por enlace */
+.cf-wm-largefiles__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--cf-space-3);
+}
+.cf-wm-largefiles__option {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cf-space-1);
+  min-width: 9rem;
+}
+.cf-wm-largefiles__suggest {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--cf-space-2);
+}
+.cf-wm-largefiles__usage {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cf-space-2);
+  margin-block: var(--cf-space-3);
+}
+.cf-wm-largefiles__name {
+  overflow-wrap: anywhere;
+  unicode-bidi: isolate;
+}
+.cf-wm-largefiles__actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--cf-space-2);
+}

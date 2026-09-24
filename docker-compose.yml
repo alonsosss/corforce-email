@@ -788,6 +788,34 @@ services:
     networks:
       - mail-internal
 
+  mail-files:
+    build:
+      context: .
+      dockerfile: ./services/mail-files/Dockerfile
+    ports:
+      - "127.0.0.1:${MAIL_FILES_PORT:-8061}:8061"
+    env_file:
+      - .env
+    environment:
+      INTERNAL_GATEWAY_TOKEN: ${INTERNAL_GATEWAY_TOKEN:-}
+      MAIL_LINK_SIGNING_KEY: ${MAIL_LINK_SIGNING_KEY:-}
+      POSTGRES_PASSWORD: ${TENANT_SERVICES_PLATFORM_PASSWORD:-}
+      REGISTRY_DB_PASSWORD: ${TENANT_ROUTER_DB_PASSWORD:-}
+      TENANT_DB_USER: mail_svc_mail_files
+      TENANT_DB_PASSWORD: ${MAIL_FILES_DB_PASSWORD:-}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-}
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
+    restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    networks:
+      mail-internal: {}
+      # clamd (MAIL_FILES_CLAMD_ADDR) analiza cada fichero antes de guardarlo; la red mail-scan solo
+      # tiene clamd, asi que mail-files no entra en mail-engines, que es mynetworks de Postfix.
+      mail-scan: {}
+
   web:
     build:
       context: ./web
@@ -815,7 +843,7 @@ networks:
   mail-migration:
     external: true
     name: ${MAIL_MIGRATION_NETWORK:-mail-migration}
-  # Red del analisis antivirus (la crea deploy/mail/docker-compose.mail.yml): clamd y templates.
+  # Red del analisis antivirus (la crea deploy/mail/docker-compose.mail.yml): clamd, templates y mail-files.
   mail-scan:
     external: true
     name: ${MAIL_SCAN_NETWORK:-mail-scan}

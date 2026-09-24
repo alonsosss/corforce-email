@@ -74,6 +74,9 @@ services:
   analytics:
     image: core-force-mail/analytics:${DEPLOY_TAG:?lo fija scripts/deploy-ecr.sh}
     pull_policy: never
+  mail-files:
+    image: core-force-mail/mail-files:${DEPLOY_TAG:?lo fija scripts/deploy-ecr.sh}
+    pull_policy: never
   web:
     image: core-force-mail/web:${DEPLOY_TAG:?lo fija scripts/deploy-ecr.sh}
     pull_policy: never
