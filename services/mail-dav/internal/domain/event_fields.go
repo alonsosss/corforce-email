@@ -279,6 +279,9 @@ func (c *rawComp) write(w *contentWriter) {
 
 // master es el VEVENT sin RECURRENCE-ID (o el primero, si el objeto solo trae sobrescrituras).
 func (c *rawComp) master() *rawComp {
+	if c == nil {
+		return nil
+	}
 	var first *rawComp
 	for _, sub := range c.comps {
 		if sub.name != componentEvent {

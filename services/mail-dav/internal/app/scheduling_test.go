@@ -88,7 +88,10 @@ func TestDisponibilidadDelEquipo(t *testing.T) {
 	}
 	var fe *domain.FieldError
 	for name, call := range map[string]func() error{
-		"sin direcciones": func() error { _, err := env.uc.Availability(ctx, ana.Principal, nil, schedNow, schedNow.Add(time.Hour)); return err },
+		"sin direcciones": func() error {
+			_, err := env.uc.Availability(ctx, ana.Principal, nil, schedNow, schedNow.Add(time.Hour))
+			return err
+		},
 		"ventana larga": func() error {
 			_, err := env.uc.Availability(ctx, ana.Principal, []string{"cris@acme.test"}, schedNow, schedNow.Add(63*24*time.Hour))
 			return err
