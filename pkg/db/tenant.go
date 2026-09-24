@@ -459,8 +459,15 @@ func IsUnknownTenant(err error) bool {
 // ResolveBySlug resuelve el pool de una empresa activa por su slug (rutas publicas
 // que identifican a la empresa por nombre y no por token).
 func (t *TenantDB) ResolveBySlug(ctx context.Context, slug string) (*pgxpool.Pool, error) {
+	_, pool, err := t.ResolveTenantBySlug(ctx, slug)
+	return pool, err
+}
+
+// ResolveTenantBySlug es ResolveBySlug con el id de la empresa, que las rutas publicas
+// necesitan para acotar sus consultas. Una empresa inexistente o no activa es IsUnknownTenant.
+func (t *TenantDB) ResolveTenantBySlug(ctx context.Context, slug string) (string, *pgxpool.Pool, error) {
 	if slug == "" {
-		return nil, fmt.Errorf("empty slug")
+		return "", nil, fmt.Errorf("empty slug")
 	}
 	var tenantID string
 	var target DBTarget
@@ -468,11 +475,22 @@ func (t *TenantDB) ResolveBySlug(ctx context.Context, slug string) (*pgxpool.Poo
 		`SELECT t.tenant_id, `+targetColumns+`WHERE t.slug = $1 AND t.status = 'active'`, slug,
 	).Scan(&tenantID, &target.DBName, &target.Host, &target.Port)
 	if err != nil {
-		return nil, fmt.Errorf("resolve tenant by slug %s: %w", slug, err)
+		return "", nil, fmt.Errorf("resolve tenant by slug %s: %w", slug, err)
 	}
 	target = t.normalize(target)
 	t.manager.cacheTarget(tenantID, target)
-	return t.manager.GetPool(ctx, target)
+	pool, err := t.manager.GetPool(ctx, target)
+	return tenantID, pool, err
+}
+
+// TenantSlug devuelve el slug de la empresa: con el se forman sus direcciones publicas.
+func (t *TenantDB) TenantSlug(ctx context.Context, tenantID string) (string, error) {
+	var slug string
+	err := t.registry.QueryRow(ctx, `SELECT t.slug FROM organization.v_tenant_routing t WHERE t.tenant_id = $1`, tenantID).Scan(&slug)
+	if err != nil {
+		return "", fmt.Errorf("slug de la empresa %s: %w", tenantID, err)
+	}
+	return slug, nil
 }
 
 // ForEachActiveTenant fetches all active tenants from the registry and calls fn

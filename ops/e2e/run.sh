@@ -173,6 +173,9 @@ export CAMPAIGNS_TICK=1s
 # El anuncio de caducidades de suppression cada segundo: la prueba de una exclusion manual que
 # caduca espera segundos, no el minuto por defecto.
 export SUPPRESSION_EXPIRY_SWEEP_INTERVAL=1s
+# Formularios publicos: el tiempo minimo de rellenado a un segundo (la prueba espera, no rellena)
+# y un cupo por IP pequeno para ver el 429 sin cientos de envios.
+export CONTACTS_FORM_MIN_FILL=1s CONTACTS_FORM_SUBMITS_PER_IP=5
 
 # Los servicios de la celda arrancan con SU credencial y sin la de plataforma: un permiso que
 # le falte al rol de la celda hace fallar las comprobaciones del correo de mas abajo.
@@ -804,6 +807,93 @@ done
 expect "el aniversario de hoy hace entrar al contacto" "$cumple" "cumple@cliente.test"
 expect "una sola entrada este ano aunque el recorrido se repita" \
   "$(sql mail_tenant_acme "SELECT count(*) FROM automations.runs WHERE workflow_id = '$FECHAID' AND entry_key = 'date:$(date -u +%Y)'")" "1"
+
+echo "== Captacion: formularios de suscripcion (contacts) y paginas de aterrizaje (templates)"
+RAIZ="${GW%/api/v1}"
+FLID=$(curl -s -X POST "$GW/contacts/lists" -H "$A2" -H 'Content-Type: application/json' -d '{"name":"suscritos-web"}' | jget data.id)
+FORM=$(curl -s -X POST "$GW/contacts/forms" -H "$A2" -H 'Content-Type: application/json' -d "{\"name\":\"portada\",\"list_id\":\"$FLID\",
+  \"fields\":[{\"key\":\"email\",\"label\":\"Correo\"},{\"key\":\"first_name\",\"label\":\"Nombre\"}],
+  \"texts\":{\"title\":\"Boletin\",\"consent_text\":\"Acepto recibir el boletin de Acme\",\"success_message\":\"Revisa tu correo para confirmar\"},
+  \"allowed_origins\":[\"https://acme.test\"]}")
+FKEY=$(echo "$FORM" | jget data.embed.key)
+[[ -n "$FKEY" ]] && ok "alta de un formulario con su clave publica" || mal "alta de formulario: ${FORM:0:300}"
+expect "el formulario exige su permiso de lectura por el gateway" "$(codigo "$GW/contacts/forms" -H "$A2")" "200"
+expect "la lista destino de un formulario no se borra" "$(codigo -X DELETE "$GW/contacts/lists/$FLID" -H "$A2")" "409"
+FPUB="$GW/public/contacts/forms/$FKEY"
+DEF_CAB=$(curl -s -D - -o "$WORK/form.json" "$FPUB" -H 'Origin: https://acme.test')
+contains "la definicion publica lleva CORS para el origen declarado" "$DEF_CAB" "Access-Control-Allow-Origin: https://acme.test"
+lacks "sin credenciales" "$DEF_CAB" "Access-Control-Allow-Credentials"
+expect "un origen no declarado no usa el formulario" "$(codigo "$FPUB" -H 'Origin: https://evil.test')" "403"
+PRE=$(curl -s -D - -o /dev/null -X OPTIONS "$FPUB/submit" -H 'Origin: https://acme.test' -H 'Access-Control-Request-Method: POST' -H 'Access-Control-Request-Headers: content-type')
+contains "la comprobacion previa la contesta contacts" "$PRE" "Access-Control-Allow-Origin: https://acme.test"
+lacks "y no el CORS del gateway" "$PRE" "Access-Control-Allow-Credentials"
+EMB_CAB=$(curl -s -D - -o "$WORK/embed.html" "$FPUB/embed")
+contains "el iframe se deja incrustar solo en la plataforma y en el origen declarado" "$EMB_CAB" "frame-ancestors 'self' https://acme.test"
+lacks "sin el X-Frame-Options del borde" "$EMB_CAB" "X-Frame-Options"
+lacks "el formulario no lleva scripts" "$(cat "$WORK/embed.html")" "<script"
+contains "y lleva el campo trampa" "$(cat "$WORK/embed.html")" 'name="homepage"'
+contains "el script para incrustar crea el iframe" "$(curl -s "$FPUB/embed.js")" "/embed"
+# envio <ip> <cuerpo sin token> [token]: POST JSON desde una IP de documentacion (X-Real-IP, que el
+# gateway acepta de loopback como de su proxy de borde), con un token recien servido.
+token_formulario() { curl -s "$FPUB" | jget data.token; }
+envio() {
+  curl -s -o "$WORK/envio.json" -w '%{http_code}' -X POST "$FPUB/submit" -H 'Content-Type: application/json' \
+    -H 'Origin: https://acme.test' -H "X-Real-IP: $1" -d "{\"token\":\"$3\",$2}"
+}
+TK=$(token_formulario); sleep 1.2
+expect "un envio valido se acepta" "$(envio 198.51.100.21 '"fields":{"email":"web@cliente.test","first_name":"Wendy"},"consent":true,"homepage":""' "$TK")" "202"
+WEB=$(curl -s "$GW/contacts?search=web@cliente" -H "$A2")
+expect "el contacto entra pendiente de confirmar el doble opt-in" "$(echo "$WEB" | jget data.0.consent_status)" "pending"
+expect "con el formulario como origen" "$(echo "$WEB" | jget data.0.source)" "form"
+EVID=$(sql mail_tenant_acme "SELECT evidence->>'ip_prefix' || '|' || (evidence ? 'consent_text') FROM contacts.consents WHERE source LIKE 'form:%' ORDER BY occurred_at DESC LIMIT 1")
+expect "la evidencia guarda la ip truncada y el texto aceptado" "$EVID" "198.51.100.0/24|true"
+expect "el mismo token no vale dos veces" "$(envio 198.51.100.21 '"fields":{"email":"otra@cliente.test"},"consent":true' "$TK")" "400"
+expect "una direccion ya existente recibe la misma respuesta" \
+  "$(TK=$(token_formulario); sleep 1.2; envio 198.51.100.22 '"fields":{"email":"web@cliente.test","first_name":"Otro"},"consent":true' "$TK")" "202"
+expect "y el envio publico no le cambia el nombre" "$(curl -s "$GW/contacts?search=web@cliente" -H "$A2" | jget data.0.first_name)" "Wendy"
+expect "exclusion manual de una direccion" "$(codigo -X POST "$GW/suppression/entries" -H "$A2" -H 'Content-Type: application/json' \
+  -d '{"email":"suprimida-web@cliente.test","reason":"manual"}')" "201"
+expect "el envio de una suprimida recibe la misma respuesta" \
+  "$(TK=$(token_formulario); sleep 1.2; envio 198.51.100.23 '"fields":{"email":"suprimida-web@cliente.test"},"consent":true' "$TK")" "202"
+SUPR=$(curl -s "$GW/contacts?search=suprimida-web" -H "$A2")
+expect "la suprimida queda excluida" "$(echo "$SUPR" | jget data.0.status)" "excluded"
+expect "sin pedirle el doble opt-in (no recibe el correo de confirmacion)" \
+  "$(sql mail_tenant_acme "SELECT count(*) FROM contacts.consents k JOIN contacts.contacts c ON c.id = k.contact_id WHERE c.email = 'suprimida-web@cliente.test'")" "0"
+expect "el campo trampa recibe la misma respuesta" \
+  "$(TK=$(token_formulario); sleep 1.2; envio 198.51.100.24 '"fields":{"email":"robot@cliente.test"},"consent":true,"homepage":"https://spam.test"' "$TK")" "202"
+expect "y no crea nada" "$(curl -s "$GW/contacts?search=robot@cliente" -H "$A2" | jget data)" "[]"
+expect "un envio antes del tiempo minimo se rechaza" \
+  "$(envio 198.51.100.25 '"fields":{"email":"rapido@cliente.test"},"consent":true' "$(token_formulario)")" "400"
+cupo=""
+for _ in 1 2 3 4 5 6; do cupo=$(envio 198.51.100.26 '"fields":{"email":"cupo@cliente.test"},"consent":true' "x"); done
+expect "por encima del cupo por IP responde 429" "$cupo" "429"
+TK=$(token_formulario); sleep 1.2
+HTMLRESP=$(curl -s -w '\n%{http_code}' -X POST "$FPUB/submit" -H "X-Real-IP: 198.51.100.27" \
+  --data-urlencode "_token=$TK" --data-urlencode "field.email=html@cliente.test" --data-urlencode "consent=on")
+contains "el envio desde el iframe responde la pagina de gracias" "$HTMLRESP" "Revisa tu correo para confirmar"
+expect "con 200" "${HTMLRESP##*$'\n'}" "200"
+expect "las estadisticas cuentan los envios validos" "$(curl -s "$GW/contacts/forms/$(echo "$FORM" | jget data.id)/stats" -H "$A2" | jget data.submitted)" "4"
+
+PG=$(curl -s -X POST "$GW/templates/pages" -H "$A2" -H 'Content-Type: application/json' -d "{\"name\":\"Oferta\",\"slug\":\"oferta\",
+  \"content\":{\"title\":\"Oferta de Acme\",\"description\":\"Descuento\",\"css\":\".h{color:#123}\",
+  \"html\":\"<h1 class=\\\"h\\\" onclick=\\\"x()\\\">Oferta</h1><script>alert(1)</script><div data-cf-form=\\\"$FKEY\\\"></div>\",
+  \"editor\":{\"kind\":\"grapesjs-web\",\"project\":{\"pages\":[]}}}}")
+PGID=$(echo "$PG" | jget data.page.id)
+[[ -n "$PGID" ]] && ok "alta de una pagina de aterrizaje con su primera version" || mal "alta de pagina: ${PG:0:300}"
+lacks "el HTML se guarda saneado" "$(curl -s "$GW/templates/pages/$PGID/versions/1" -H "$A2" | jget data.html)" "script"
+expect "un CSS que carga otra hoja se rechaza" "$(codigo -X POST "$GW/templates/pages/$PGID/versions" -H "$A2" -H 'Content-Type: application/json' \
+  -d '{"title":"x","html":"<p>x</p>","css":"@import url(https://evil.test/a.css);"}')" "422"
+expect "sin publicar no se sirve" "$(codigo "$RAIZ/p/acme/oferta")" "404"
+expect "publicacion de la pagina" "$(codigo -X POST "$GW/templates/pages/$PGID/versions/1/publish" -H "$A2")" "200"
+PAG_CAB=$(curl -s -D - -o "$WORK/pagina.html" "$RAIZ/p/acme/oferta")
+contains "la pagina publicada se sirve en /p/<empresa>/<slug>" "$PAG_CAB" "200"
+contains "con la politica del servicio, que no ejecuta nada" "$PAG_CAB" "default-src 'none'"
+contains "sin indexar por defecto" "$PAG_CAB" "X-Robots-Tag: noindex"
+lacks "sin scripts del usuario ni nonce del gateway" "$(cat "$WORK/pagina.html")" "<script"
+contains "con el formulario de la empresa en su iframe" "$(cat "$WORK/pagina.html")" "/public/contacts/forms/$FKEY/embed"
+expect "otra empresa no sirve la pagina" "$(codigo "$RAIZ/p/no-existe/oferta")" "404"
+expect "retirar la pagina" "$(codigo -X POST "$GW/templates/pages/$PGID/unpublish" -H "$A2")" "200"
+expect "retirada ya no se sirve" "$(codigo "$RAIZ/p/acme/oferta")" "404"
 
 echo "== Analitica"
 expect "el panel responde sin envios" "$(curl -s "$GW/analytics/overview" -H "$A2" | jget data.totals.sent)" "0"

@@ -100,7 +100,12 @@ func main() {
 		Scanner:    editor.scanner,
 		Spam:       editor.spam,
 		TestSender: editor.testSender,
-		Logger:     logger,
+		Pages:      repo,
+		// El slug de cada empresa, para la direccion publica de sus paginas, sale de la vista de
+		// enrutado del registro, la unica que puede leer el rol de enrutado.
+		Tenants:       tenantDB,
+		PublicBaseURL: os.Getenv("PUBLIC_BASE_URL"),
+		Logger:        logger,
 	})
 	h := handler.NewHandler(uc, perms)
 
@@ -117,6 +122,13 @@ func main() {
 		r.Use(db.TenantPoolMiddleware(tenantDB))
 		r.Use(middleware.NewRateLimiter(120, time.Minute).LimitPerUser)
 		r.Mount("/api/v1/templates", h.Routes())
+	})
+
+	// Publico, sin sesion: las paginas de aterrizaje publicadas (el gateway las sirve tambien en
+	// /p/<empresa>/<slug>). Cupo por IP, que aqui es la unica identidad (X-Real-IP del gateway).
+	r.Group(func(r chi.Router) {
+		r.Use(middleware.NewRateLimiter(600, time.Minute).Limit)
+		r.Mount("/api/v1/public/templates", h.PublicRoutes(tenantDB, logger))
 	})
 
 	// API interno para transactional y campaigns: un renderizado por envio, sin cupo. La

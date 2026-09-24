@@ -85,14 +85,14 @@ func main() {
 	r.Use(middleware.RequestID)
 	r.Use(middleware.SecureHeaders)
 	r.Use(middleware.Logger(logger))
-	r.Use(cors.Handler(cors.Options{
+	r.Use(corsExceptService(table, cors.Handler(cors.Options{
 		AllowedOrigins:   allowedOrigins,
 		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
 		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-Request-ID", "X-Auth-Mode", "X-Step-Up", targetCellHeader},
 		ExposedHeaders:   []string{"X-Request-ID"},
 		AllowCredentials: true,
 		MaxAge:           86400,
-	}))
+	})))
 
 	// Los cupos son por IP y comunes a todas las replicas (Redis de la plataforma): con
 	// N replicas un cliente no obtiene N veces su cupo.
@@ -128,6 +128,8 @@ func main() {
 	}
 
 	mountWellKnown(r, table, limiter.Limit)
+	// Alias en la raiz de rutas publicas (las paginas de aterrizaje en /p/<empresa>/<slug>).
+	mountPublicAliases(r, table, internalToken, limiter.Limit)
 
 	if table.Frontend != "" {
 		r.Handle("/*", reverseProxy(table.serviceURL(table.Frontend), internalToken))
@@ -409,7 +411,15 @@ const (
 	// lo escribio un tercero (el correo servido en el navegador, public con content
 	// untrusted_html) y un script suyo nunca debe recibir el nonce del borde.
 	proxyUntrustedHTML
+	// proxyEmbeddableHTML es HTML de la plataforma que se incrusta en otros sitios (public con
+	// content embeddable_html): solo vale la CSP del servicio, que declara frame-ancestors. Si no
+	// la declara, se pone una que no deja incrustar nada: nunca se sirve sin politica de marco.
+	proxyEmbeddableHTML
 )
+
+// embeddableFallbackCSP es la politica de una respuesta embeddable_html cuyo servicio no dijo
+// donde se puede incrustar.
+const embeddableFallbackCSP = "default-src 'none'; frame-ancestors 'none'"
 
 func reverseProxyWith(target, internalToken string, mode proxyMode) http.Handler {
 	u, err := url.Parse(target)
@@ -431,6 +441,13 @@ func reverseProxyWith(target, internalToken string, mode proxyMode) http.Handler
 	proxy.ModifyResponse = func(resp *http.Response) error {
 		for _, h := range stripped {
 			resp.Header.Del(h)
+		}
+		if mode == proxyEmbeddableHTML {
+			if !strings.Contains(resp.Header.Get("Content-Security-Policy"), "frame-ancestors") {
+				resp.Header.Set("Content-Security-Policy", embeddableFallbackCSP)
+				resp.Header.Set("X-Frame-Options", "DENY")
+			}
+			return nil
 		}
 		if mode == proxyUntrustedHTML {
 			return nil

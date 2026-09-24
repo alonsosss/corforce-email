@@ -1347,6 +1347,40 @@ con `MAIL_LINK_SIGNING_KEY` (la misma clave que la baja: rotarla invalida los do
 -> `transactional` -> `billing` y `reputation` (dejan de contar las pruebas) -> `templates` -> `gateway` -> `web`. Un
 `transactional` sin desplegar responde 404 a `templates`, que lo muestra como no disponible.
 
+### Captacion: formularios de suscripcion y paginas de aterrizaje
+
+`docs/Plan_Marketing_Avanzado.md`, 2-F. Rutas publicas nuevas (sin sesion, declaradas en `services/gateway/routes.json`):
+
+| Ruta | Servicio | Declaracion | Proteccion |
+|---|---|---|---|
+| `GET /api/v1/public/contacts/forms/{clave}` | contacts | `"cors": "service"` | Definicion y token para una integracion propia; CORS solo para los `allowed_origins` del formulario, sin credenciales; un `Origin` no declarado recibe 403 |
+| `POST /api/v1/public/contacts/forms/{clave}/submit` | contacts | `"cors": "service"`, `"content": "embeddable_html"` | Token firmado de un solo uso con tiempo minimo, campo trampa, casilla de consentimiento, cupos por IP y por formulario, tope de 32 KiB, misma respuesta exista o no la direccion |
+| `GET /api/v1/public/contacts/forms/{clave}/embed` | contacts | `"content": "embeddable_html"` | HTML sin JavaScript; `frame-ancestors 'self'` mas los origenes declarados |
+| `GET /api/v1/public/contacts/forms/{clave}/embed.js` | contacts | ninguna | Inserta el iframe; cache 5 minutos, sin token |
+| `GET /p/{empresa}/{slug}` (alias de `/api/v1/public/templates/pages/{empresa}/{slug}`) | templates | `"content": "untrusted_html"`, `"alias"` | Solo versiones publicadas de paginas activas; HTML saneado al guardar y CSP sin scripts |
+
+La clave publica del formulario es `<empresa>.<formulario>` (dos uuid): no es un secreto. Tres conceptos nuevos del
+gateway: `"cors": "service"` saca la ruta del CORS del gateway (que lleva credenciales) y le pasa la comprobacion
+previa `OPTIONS`; `"content": "embeddable_html"` retira la CSP y el `X-Frame-Options` del borde para que manden los
+del servicio y, si el servicio no declara `frame-ancestors`, pone `default-src 'none'; frame-ancestors 'none'`;
+`"alias"` monta la misma ruta en la raiz (solo GET, mismos parametros, nunca bajo `/api`, `/media`, `/health`,
+`/metrics` ni `/.well-known`). El borde no cambia.
+
+Variables de `contacts` (en `.env.example`): `CONTACTS_FORM_MIN_FILL` (3s), `CONTACTS_FORM_TOKEN_TTL` (2h),
+`CONTACTS_FORM_SUBMITS_PER_IP` (10) en `CONTACTS_FORM_IP_WINDOW` (10m) y `CONTACTS_FORM_SUBMITS_PER_FORM_HOUR` (300).
+`contacts` pasa a recibir `REDIS_PASSWORD` (cupos y nonces en el Redis de la plataforma, con respaldo en memoria si no
+responde; fila nueva en `ops/security/secrets/reparto.tsv` y en su bloque de `docker-compose.yml`). La clave de los
+tokens es un secreto propio, `CONTACTS_FORM_TOKEN_KEY` (al menos 32 caracteres, `openssl rand -hex 32`, en el
+almacen y solo para `contacts`; sin ella el servicio no arranca), de la que se deriva la de firma con HMAC-SHA256 y
+una etiqueta propia. No se deriva del `INTERNAL_GATEWAY_TOKEN`: cualquier servicio que lo tiene podria forjar
+tokens. Rotarla invalida los formularios servidos en las ultimas `CONTACTS_FORM_TOKEN_TTL`, y quien los tenga
+abiertos recibe «vuelve a cargarlo». `templates` usa `PUBLIC_BASE_URL` (ya en el `.env`) para la direccion
+publica y el iframe; sin ella las paginas responden 503 `PAGES_UNAVAILABLE`.
+
+Orden de despliegue: registro (`043_capture_permissions.sql`) -> empresa (`contacts/06_subscription_forms.sql`,
+`templates/04_landing_pages.sql`) -> `contacts` (con `REDIS_PASSWORD` entregado) -> `templates` -> `gateway` -> `web`. Un
+gateway anterior no tiene las rutas publicas nuevas (404) ni la ruta `/p/`, que caeria en la aplicacion web.
+
 ### Correo del sistema (recuperacion de contrasena)
 
 El correo que envia la propia plataforma sale por `transactional` y por Amazon SES, como el resto del transaccional

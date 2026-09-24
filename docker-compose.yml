@@ -612,6 +612,8 @@ services:
       - .env
     environment:
       INTERNAL_GATEWAY_TOKEN: ${INTERNAL_GATEWAY_TOKEN:-}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      CONTACTS_FORM_TOKEN_KEY: ${CONTACTS_FORM_TOKEN_KEY:-}
       POSTGRES_PASSWORD: ${TENANT_SERVICES_PLATFORM_PASSWORD:-}
       REGISTRY_DB_PASSWORD: ${TENANT_ROUTER_DB_PASSWORD:-}
       TENANT_DB_USER: mail_svc_contacts
@@ -620,6 +622,8 @@ services:
       pgbouncer:
         condition: service_healthy
       nats:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     restart: unless-stopped
     security_opt: ["no-new-privileges:true"]

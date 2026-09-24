@@ -92,49 +92,75 @@ type ConfirmationRequest struct {
 	ContactID uuid.UUID            `json:"contact_id"`
 	Status    domain.ConsentStatus `json:"status"`
 	ExpiresAt time.Time            `json:"expires_at"`
+	// TokenID es el enlace emitido; lo guarda el envio de un formulario para reconocer su
+	// confirmacion.
+	TokenID uuid.UUID `json:"-"`
+}
+
+// pendingConsent es lo que queda como evidencia de la peticion: su origen y, si la pidio un
+// formulario, el texto aceptado, la ip truncada y el user agent.
+type pendingConsent struct {
+	Source    string
+	Evidence  map[string]any
+	UserAgent *string
 }
 
 // RequestConfirmation inicia el doble opt-in: fila pending, token de un solo uso (solo se
 // guarda su sha256) y evento con el enlace. Un enlace anterior sin usar deja de valer.
 func (uc *UseCase) RequestConfirmation(ctx context.Context, tenantID, contactID uuid.UUID, source string) (*ConfirmationRequest, error) {
-	raw := make([]byte, tokenBytes)
-	if _, err := io.ReadFull(uc.random, raw); err != nil {
-		return nil, err
-	}
-	token := base64.RawURLEncoding.EncodeToString(raw)
 	source = strings.TrimSpace(source)
 	if source == "" {
 		source = "api"
 	}
-	now := uc.now()
-	out := &ConfirmationRequest{ContactID: contactID, Status: domain.ConsentPending, ExpiresAt: now.Add(uc.cfg.DOITTL)}
+	var out *ConfirmationRequest
 	err := uc.tx.Transact(ctx, func(ctx context.Context) error {
 		c, err := uc.contacts.GetForUpdate(ctx, tenantID, contactID)
 		if err != nil {
 			return err
 		}
-		if err := domain.CheckConfirmationRequest(c); err != nil {
-			return err
-		}
-		if err := uc.tokens.DeleteUnused(ctx, tenantID, contactID); err != nil {
-			return err
-		}
-		t := &domain.ConfirmationToken{TenantID: tenantID, ContactID: contactID, TokenHash: hashToken(raw), ExpiresAt: out.ExpiresAt}
-		if err := uc.tokens.Create(ctx, t); err != nil {
-			return err
-		}
-		pending := &domain.Consent{
-			TenantID: tenantID, ContactID: contactID, Purpose: domain.PurposeMarketing,
-			Status: domain.ConsentPending, Method: domain.MethodDoubleOptIn, Source: source,
-			Evidence: map[string]any{"token_id": t.ID.String()},
-		}
-		if err := uc.consents.Append(ctx, pending); err != nil {
-			return err
-		}
-		c.ConsentStatus = domain.ConsentPending
-		return uc.events.ConsentRequested(ctx, c, uc.confirmURL(tenantID, token))
+		out, err = uc.requestConfirmation(ctx, c, pendingConsent{Source: source})
+		return err
 	})
 	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// requestConfirmation pide el doble opt-in de un contacto YA bloqueado en la transaccion.
+func (uc *UseCase) requestConfirmation(ctx context.Context, c *domain.Contact, p pendingConsent) (*ConfirmationRequest, error) {
+	if err := domain.CheckConfirmationRequest(c); err != nil {
+		return nil, err
+	}
+	raw := make([]byte, tokenBytes)
+	if _, err := io.ReadFull(uc.random, raw); err != nil {
+		return nil, err
+	}
+	token := base64.RawURLEncoding.EncodeToString(raw)
+	out := &ConfirmationRequest{ContactID: c.ID, Status: domain.ConsentPending, ExpiresAt: uc.now().Add(uc.cfg.DOITTL)}
+	if err := uc.tokens.DeleteUnused(ctx, c.TenantID, c.ID); err != nil {
+		return nil, err
+	}
+	t := &domain.ConfirmationToken{TenantID: c.TenantID, ContactID: c.ID, TokenHash: hashToken(raw), ExpiresAt: out.ExpiresAt}
+	if err := uc.tokens.Create(ctx, t); err != nil {
+		return nil, err
+	}
+	out.TokenID = t.ID
+	evidence := make(map[string]any, len(p.Evidence)+1)
+	for k, v := range p.Evidence {
+		evidence[k] = v
+	}
+	evidence["token_id"] = t.ID.String()
+	pending := &domain.Consent{
+		TenantID: c.TenantID, ContactID: c.ID, Purpose: domain.PurposeMarketing,
+		Status: domain.ConsentPending, Method: domain.MethodDoubleOptIn, Source: p.Source,
+		UserAgent: p.UserAgent, Evidence: evidence,
+	}
+	if err := uc.consents.Append(ctx, pending); err != nil {
+		return nil, err
+	}
+	c.ConsentStatus = domain.ConsentPending
+	if err := uc.events.ConsentRequested(ctx, c, uc.confirmURL(c.TenantID, token)); err != nil {
 		return nil, err
 	}
 	return out, nil
@@ -212,6 +238,9 @@ func (uc *UseCase) Confirm(ctx context.Context, tenantID uuid.UUID, k, ip, userA
 		if err := uc.tokens.MarkUsed(ctx, tenantID, t.ID, now); err != nil {
 			return err
 		}
+		if err := uc.joinFormList(ctx, tenantID, t.ID, c.ID, now); err != nil {
+			return err
+		}
 		granted := &domain.Consent{
 			TenantID: tenantID, ContactID: c.ID, Purpose: domain.PurposeMarketing,
 			Status: domain.ConsentGranted, Method: domain.MethodDoubleOptIn,
@@ -221,4 +250,18 @@ func (uc *UseCase) Confirm(ctx context.Context, tenantID uuid.UUID, k, ip, userA
 		}
 		return uc.appendConsent(ctx, c, granted)
 	})
+}
+
+// joinFormList cierra el envio de formulario que pidio el token, si lo hubo: lo marca
+// confirmado y pone al contacto en la lista destino del formulario.
+func (uc *UseCase) joinFormList(ctx context.Context, tenantID, tokenID, contactID uuid.UUID, at time.Time) error {
+	if uc.forms == nil {
+		return nil
+	}
+	listID, err := uc.forms.ConfirmSubmission(ctx, tenantID, tokenID, at)
+	if err != nil || listID == nil {
+		return err
+	}
+	_, err = uc.lists.AddMembers(ctx, tenantID, *listID, []uuid.UUID{contactID})
+	return err
 }

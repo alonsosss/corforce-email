@@ -81,6 +81,15 @@ func (uc *UseCase) DeleteList(ctx context.Context, tenantID, id uuid.UUID) error
 	if used {
 		return domain.ErrListInUse
 	}
+	if uc.forms != nil {
+		byForm, err := uc.forms.UsingList(ctx, tenantID, id)
+		if err != nil {
+			return err
+		}
+		if byForm {
+			return domain.ErrListInUseByForm
+		}
+	}
 	return uc.lists.Delete(ctx, tenantID, id)
 }
 

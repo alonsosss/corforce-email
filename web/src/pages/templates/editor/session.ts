@@ -95,7 +95,9 @@ export function readTestSendRequest(state: unknown): number | null {
 }
 
 /** Numero de la version que se abre: el borrador mas reciente, la publicada o la ultima. */
-export function baseVersionNumber(template: TemplateDetail): number | null {
+export function baseVersionNumber(
+  template: Pick<TemplateDetail, 'versions' | 'current_version'>,
+): number | null {
   const versions = [...template.versions].sort((a, b) => b.version - a.version);
   const latest = versions[0];
   if (!latest) return null;

@@ -1,0 +1,60 @@
+/* Editor y detalle de los formularios de suscripcion. */
+
+.cf-form-fields {
+  display: grid;
+  gap: var(--cf-space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.cf-form-fields__item {
+  display: grid;
+  gap: var(--cf-space-2);
+  padding: var(--cf-space-3);
+  border: 1px solid var(--cf-border);
+  border-radius: var(--cf-radius-md);
+}
+
+.cf-form-fields__head {
+  display: flex;
+  align-items: center;
+  gap: var(--cf-space-2);
+  flex-wrap: wrap;
+}
+
+.cf-form-fields__head .cf-table__actions {
+  margin-left: auto;
+}
+
+.cf-form-fields__add {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--cf-space-2);
+}
+
+.cf-form-fields__add .cf-field {
+  flex: 1;
+  min-width: 0;
+}
+
+.cf-embed-frame {
+  display: block;
+  width: 100%;
+  min-height: 480px;
+  border: 1px solid var(--cf-border);
+  border-radius: var(--cf-radius-md);
+  background: var(--cf-surface);
+}
+
+.cf-embed-code {
+  display: grid;
+  gap: var(--cf-space-2);
+}
+
+.cf-embed-code__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--cf-space-2);
+}

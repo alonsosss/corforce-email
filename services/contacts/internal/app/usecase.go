@@ -34,6 +34,8 @@ type Config struct {
 	// EngagementRetention es cuanto se conserva la interaccion de un contacto con un envio
 	// desde su ultimo hito (CONTACTS_ENGAGEMENT_RETENTION_DAYS).
 	EngagementRetention time.Duration
+	// Forms son los ajustes de los formularios de suscripcion publicos.
+	Forms FormConfig
 }
 
 type Deps struct {
@@ -54,6 +56,11 @@ type Deps struct {
 	// automations (ramas y aniversarios).
 	Engagement ports.EngagementRepository
 	Matcher    ports.ContactMatcher
+	// Forms, FormGuard y FormTokens sirven los formularios de suscripcion; sin ellos los
+	// formularios no existen (las rutas publicas responden no disponible).
+	Forms      ports.FormRepository
+	FormGuard  ports.SubmissionGuard
+	FormTokens *FormTokenSigner
 	Config     Config
 	Logger     *zap.Logger
 	// Now fija el reloj en las pruebas; nil = time.Now en UTC.
@@ -76,6 +83,9 @@ type UseCase struct {
 	suppression ports.SuppressionState
 	engagement  ports.EngagementRepository
 	matcher     ports.ContactMatcher
+	forms       ports.FormRepository
+	formGuard   ports.SubmissionGuard
+	formTokens  *FormTokenSigner
 	cfg         Config
 	logger      *zap.Logger
 	now         func() time.Time
@@ -101,6 +111,7 @@ func New(d Deps) *UseCase {
 	if cfg.EngagementRetention <= 0 {
 		cfg.EngagementRetention = domain.DefaultEngagementRetentionDays * 24 * time.Hour
 	}
+	cfg.Forms = cfg.Forms.withDefaults()
 	logger := d.Logger
 	if logger == nil {
 		logger = zap.NewNop()
@@ -108,7 +119,8 @@ func New(d Deps) *UseCase {
 	return &UseCase{
 		contacts: d.Contacts, consents: d.Consents, tokens: d.Tokens, lists: d.Lists,
 		attributes: d.Attributes, segments: d.Segments, query: d.Query, imports: d.Imports,
-		tx: d.Tx, events: d.Events, suppression: d.Suppression, engagement: d.Engagement, matcher: d.Matcher, cfg: cfg, logger: logger, now: now, random: random,
+		tx: d.Tx, events: d.Events, suppression: d.Suppression, engagement: d.Engagement, matcher: d.Matcher,
+		forms: d.Forms, formGuard: d.FormGuard, formTokens: d.FormTokens, cfg: cfg, logger: logger, now: now, random: random,
 	}
 }
 

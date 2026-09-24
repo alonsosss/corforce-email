@@ -81,6 +81,7 @@ describe('menu frente a rutas', () => {
     expect(group('nav.group.sending')?.items.map((i) => [i.to, i.module])).toEqual([
       [paths.templates, MODULES.templates],
       [paths.brandKit, MODULES.templates],
+      [paths.landingPages, MODULES.templates],
       [paths.suppression, MODULES.suppression],
       [paths.reputation, MODULES.reputation],
     ]);

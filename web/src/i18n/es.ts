@@ -1764,7 +1764,9 @@ export const es = {
   'error.code.LIST_EXISTS': 'Ya existe una lista con ese nombre.',
   'error.code.SEGMENT_EXISTS': 'Ya existe un segmento con ese nombre.',
   'error.code.ATTRIBUTE_EXISTS': 'Ese atributo ya esta declarado.',
-  'error.code.LIST_IN_USE': 'La lista la usa al menos un segmento: quitala de sus reglas antes.',
+  'error.code.LIST_IN_USE':
+    'La lista la usa al menos un segmento o un formulario de suscripcion: quitala de ellos antes.',
+  'error.code.FORM_EXISTS': 'Ya existe un formulario con ese nombre.',
   'error.code.ATTRIBUTE_IN_USE':
     'El atributo lo usa al menos un segmento: quitalo de sus reglas antes.',
   'error.code.RESUBSCRIBE_REQUIRES_OPT_IN':
@@ -2112,8 +2114,7 @@ export const es = {
     'Las variables que dejes vacias se envian con su valor por defecto o con uno de ejemplo.',
   'templates.testSend.done': 'Prueba enviada',
   'templates.testSend.accepted': '{n} en cola de envio.',
-  'templates.testSend.suppressed':
-    '{email} no se envio: esta en la lista de supresion ({reason}).',
+  'templates.testSend.suppressed': '{email} no se envio: esta en la lista de supresion ({reason}).',
   'templates.testSend.noDomains': 'La empresa no tiene ningun dominio de envio verificado.',
   'templates.testSend.goToDomains': 'Ir a dominios',
   'templates.testSend.noDomainPermission':
@@ -2185,6 +2186,95 @@ export const es = {
   'templates.imageEditor.loadFailed': 'No se pudo cargar la imagen para editarla.',
 
   'nav.brandKit': 'Kit de marca',
+  'nav.landingPages': 'Paginas de aterrizaje',
+  'templates.pages.title': 'Paginas de aterrizaje',
+  'templates.pages.subtitle':
+    'Paginas web publicadas bajo la direccion de la empresa, con formularios de suscripcion.',
+  'templates.pages.new': 'Nueva pagina',
+  'templates.pages.empty': 'No hay paginas de aterrizaje',
+  'templates.pages.emptyDescription': 'Crea la primera y disenala con el editor.',
+  'templates.pages.searchPlaceholder': 'Buscar por nombre o direccion',
+  'templates.pages.status.active': 'Activa',
+  'templates.pages.status.archived': 'Archivada',
+  'templates.pages.unpublished': 'Sin publicar',
+  'templates.pages.notServed': 'No publicada',
+  'templates.pages.publicUrl': 'URL publica',
+  'templates.pages.notFound': 'No se encontro la pagina',
+  'templates.pages.exists': 'Ya existe una pagina con ese nombre o esa direccion.',
+  'templates.pages.form.createTitle': 'Nueva pagina de aterrizaje',
+  'templates.pages.form.editTitle': 'Editar pagina de aterrizaje',
+  'templates.pages.slug': 'Direccion',
+  'templates.pages.slugHint': 'Se publicara en {url}',
+  'templates.pages.slugChangeWarning':
+    'La pagina esta publicada: al cambiar la direccion, la anterior deja de funcionar.',
+  'templates.pages.noindex': 'Ocultar a los buscadores',
+  'templates.pages.noindexHint':
+    'La pagina se sirve con noindex para que no aparezca en los resultados de busqueda.',
+  'templates.pages.indexing': 'Buscadores',
+  'templates.pages.noindexOn': 'Oculta (noindex)',
+  'templates.pages.noindexOff': 'Visible',
+  'templates.pages.created': 'Pagina creada.',
+  'templates.pages.updated': 'Pagina actualizada.',
+  'templates.pages.archived': 'Pagina archivada.',
+  'templates.pages.restored': 'Pagina restaurada.',
+  'templates.pages.deleted': 'Pagina eliminada.',
+  'templates.pages.delete': 'Eliminar pagina',
+  'templates.pages.deleteConfirm': 'Se eliminara la pagina {name} con todas sus versiones.',
+  'templates.pages.deleteNotArchived': 'Solo se puede eliminar una pagina archivada.',
+  'templates.pages.archiveConfirm':
+    'La pagina {name} se archivara y dejara de poder editarse hasta restaurarla.',
+  'templates.pages.restoreConfirm': 'La pagina {name} volvera a estar activa.',
+  'templates.pages.archivedNotice':
+    'La pagina esta archivada: restaurala para editarla o publicarla.',
+  'templates.pages.openEditor': 'Abrir editor',
+  'templates.pages.unpublish': 'Retirar',
+  'templates.pages.unpublishConfirm':
+    'La pagina {name} dejara de servirse en su URL publica. Sus versiones se conservan.',
+  'templates.pages.unpublishDone': 'Pagina retirada.',
+  'templates.pages.summary': 'Resumen',
+  'templates.pages.versionsHint':
+    'Cada guardado crea una version en borrador; la publicada es la que se sirve en la URL publica.',
+  'templates.pages.noVersions': 'Aun no hay versiones: abre el editor para disenar la pagina.',
+  'templates.pages.live': 'Publicada',
+  'templates.pages.publishFirst': 'La version v{n} se servira en la URL publica.',
+  'templates.pages.publishReplace': 'La version v{n} sustituira a la v{current} en la URL publica.',
+  'templates.pages.preview': 'Vista previa de la version',
+  'templates.pages.documentTitle': 'Titulo de la pagina',
+  'templates.pages.documentTitleHint': 'Aparece en la pestana del navegador y en los buscadores.',
+  'templates.pages.documentDescriptionHint':
+    'Resumen que muestran los buscadores y las redes sociales.',
+  'templates.pages.editor.back': 'Volver a la pagina',
+  'templates.pages.editor.firstVersion': 'Primera version',
+  'templates.pages.editor.saved': 'Pagina guardada como borrador v{n}.',
+  'templates.pages.editor.fixDocument': 'Revisa los campos marcados en Documento.',
+  'templates.pages.editor.readOnly': 'Tu rol puede ver el editor, pero no guardar versiones.',
+  'templates.pages.editor.foreignBase':
+    'La v{n} no se diseno con este editor: se abre su HTML y al guardar se crea una version nueva.',
+  'templates.pages.editor.publishConfirm':
+    'Se guardaran los cambios y esta version se servira en {url}.',
+  'templates.pages.editor.traitsHint':
+    'Enlace, texto alternativo y otros ajustes del elemento seleccionado.',
+  'templates.pages.editor.blocksHint':
+    'Arrastra un bloque al lienzo o pulsalo para anadirlo detras de la seleccion.',
+  'templates.pages.editor.category.capture': 'Captacion',
+  'templates.pages.editor.block.form': 'Formulario',
+  'templates.pages.editor.formNoPermission': 'Tu rol no puede ver los formularios de suscripcion.',
+  'templates.pages.editor.formPickerTitle': 'Insertar formulario de suscripcion',
+  'templates.pages.editor.formPickerHint':
+    'El formulario se incrusta al servir la pagina; los cambios que le hagas se veran sin volver a publicarla.',
+  'templates.pages.editor.form': 'Formulario',
+  'templates.pages.editor.insertForm': 'Insertar',
+  'templates.pages.editor.noForms':
+    'No hay formularios: crealos en Contactos, pestana Formularios.',
+  'templates.pages.editor.formDisabled':
+    'El formulario esta desactivado: no se mostrara hasta activarlo.',
+  'templates.pages.editor.formMarker': 'Formulario de suscripcion: {name}',
+  'templates.pages.editor.formMarkerUnknown': 'Formulario de suscripcion no disponible',
+  'templates.pages.editor.imagePending':
+    'Hay imagenes sin elegir: sustituyelas o quitalas antes de guardar.',
+  'templates.pages.editor.htmlTooLarge': 'El HTML de la pagina supera {n} bytes.',
+  'templates.pages.editor.cssTooLarge': 'Los estilos de la pagina superan {n} bytes.',
+  'templates.pages.editor.tooLarge': 'El diseno supera {n} bytes: simplificalo antes de guardar.',
   'templates.brandKit.title': 'Kit de marca',
   'templates.brandKit.subtitle':
     'Logo, colores, tipografias y datos del pie legal que usan el editor y la galeria.',
@@ -2421,6 +2511,114 @@ export const es = {
   'contacts.tab.lists': 'Listas',
   'contacts.tab.attributes': 'Atributos',
   'contacts.tab.imports': 'Importar',
+  'contacts.tab.forms': 'Formularios',
+  'contacts.forms.title': 'Formularios de suscripcion',
+  'contacts.forms.description':
+    'Formularios para tu sitio web que suman contactos a una lista con doble opt-in.',
+  'contacts.forms.new': 'Nuevo formulario',
+  'contacts.forms.empty': 'No hay formularios de suscripcion',
+  'contacts.forms.created': 'Formulario creado.',
+  'contacts.forms.updated': 'Formulario actualizado.',
+  'contacts.forms.deleted': 'Formulario eliminado.',
+  'contacts.forms.delete': 'Eliminar formulario',
+  'contacts.forms.deleteConfirm':
+    'Se eliminara el formulario {name}. Los sitios que lo incrustan dejaran de mostrarlo; los contactos ya suscritos se conservan.',
+  'contacts.forms.notFound': 'No se encontro el formulario',
+  'contacts.forms.createTitle': 'Nuevo formulario de suscripcion',
+  'contacts.forms.editTitle': 'Editar formulario de suscripcion',
+  'contacts.forms.status.active': 'Activo',
+  'contacts.forms.status.disabled': 'Desactivado',
+  'contacts.forms.disabledNotice':
+    'El formulario esta desactivado: los sitios que lo incrustan no lo muestran y no admite envios.',
+  'contacts.forms.doubleOptIn':
+    'El doble opt-in es siempre obligatorio: cada persona recibe un correo para confirmar su suscripcion y solo entra en la lista cuando lo confirma.',
+  'contacts.forms.doubleOptInLabel': 'Doble opt-in',
+  'contacts.forms.doubleOptInAlways': 'Siempre obligatorio',
+  'contacts.forms.list': 'Lista destino',
+  'contacts.forms.listHint': 'Los contactos confirmados entran en esta lista.',
+  'contacts.forms.noListPermission':
+    'Tu rol no puede ver las listas de contactos: sin ellas no se puede elegir la lista destino.',
+  'contacts.forms.fields': 'Campos',
+  'contacts.forms.fieldsHint':
+    'El correo electronico va siempre y es obligatorio. Los atributos declarados como obligatorios tambien tienen que estar.',
+  'contacts.forms.noAttributePermission':
+    'Tu rol no puede ver los atributos de contacto: solo se ofrecen el nombre y los apellidos.',
+  'contacts.forms.addField': 'Anadir campo',
+  'contacts.forms.add': 'Anadir',
+  'contacts.forms.fieldLabel': 'Etiqueta',
+  'contacts.forms.fieldPlaceholder': 'Texto de ayuda en el campo',
+  'contacts.forms.fieldRequired': 'Obligatorio',
+  'contacts.forms.emailAlwaysRequired': 'Obligatorio siempre',
+  'contacts.forms.attributeRequired': 'Obligatorio (el atributo lo es)',
+  'contacts.forms.moveUp': 'Subir {key}',
+  'contacts.forms.moveDown': 'Bajar {key}',
+  'contacts.forms.removeField': 'Quitar {key}',
+  'contacts.forms.fieldType.email': 'Correo',
+  'contacts.forms.fieldType.string': 'Texto',
+  'contacts.forms.fieldType.number': 'Numero',
+  'contacts.forms.fieldType.boolean': 'Si o no',
+  'contacts.forms.fieldType.date': 'Fecha',
+  'contacts.forms.texts': 'Textos',
+  'contacts.forms.textTitle': 'Titulo',
+  'contacts.forms.submitLabel': 'Texto del boton',
+  'contacts.forms.submitLabelHint': 'Vacio, el boton dice Suscribirme.',
+  'contacts.forms.consentText': 'Texto de consentimiento',
+  'contacts.forms.consentHint':
+    'Lo que la persona acepta al suscribirse. Se guarda como evidencia del consentimiento.',
+  'contacts.forms.afterSubmit': 'Despues del envio',
+  'contacts.forms.redirectUrl': 'Redirigir a',
+  'contacts.forms.redirectHint':
+    'Opcional. Direccion https a la que se lleva a la persona tras enviar.',
+  'contacts.forms.successMessage': 'Mensaje de confirmacion',
+  'contacts.forms.successHint':
+    'Se muestra al enviar, avisando de que llegara un correo para confirmar.',
+  'contacts.forms.allowedOrigins': 'Sitios autorizados',
+  'contacts.forms.originsHint':
+    'Origenes https://dominio[:puerto] sin ruta que pueden incrustar el formulario. Hasta {n}.',
+  'contacts.forms.originPlaceholder': 'https://www.ejemplo.com',
+  'contacts.forms.removeOrigin': 'Quitar {origin}',
+  'contacts.forms.noOrigins': 'Ninguno',
+  'contacts.forms.error.emailRequired':
+    'El formulario tiene que llevar el correo electronico como obligatorio.',
+  'contacts.forms.error.duplicateField': 'Un campo no puede repetirse.',
+  'contacts.forms.error.unknownField': 'Campos que no existen: {keys}.',
+  'contacts.forms.error.tooManyFields': 'El formulario admite como mucho {n} campos.',
+  'contacts.forms.error.mandatoryMissing':
+    'Faltan atributos obligatorios, o no estan marcados como obligatorios: {keys}.',
+  'contacts.forms.error.redirectHttps': 'Tiene que ser una direccion https completa.',
+  'contacts.forms.error.origin':
+    'Origenes no validos (https://dominio[:puerto], sin ruta): {origins}.',
+  'contacts.forms.error.tooManyOrigins': 'Como mucho {n} sitios autorizados.',
+  'contacts.forms.summary': 'Resumen',
+  'contacts.forms.preview': 'Vista previa',
+  'contacts.forms.previewHint':
+    'El formulario tal como lo sirve la plataforma. Aqui no se puede enviar.',
+  'contacts.forms.previewTitle': 'Vista previa del formulario {name}',
+  'contacts.forms.embed': 'Codigo para incrustar',
+  'contacts.forms.embedHint':
+    'Pega el script donde quieras mostrar el formulario, o el iframe si tu sitio no admite scripts.',
+  'contacts.forms.embedNoOrigins':
+    'Sin sitios autorizados ningun dominio puede incrustar el formulario: anadelos al editarlo.',
+  'contacts.forms.embedScript': 'Script',
+  'contacts.forms.embedIframe': 'Iframe',
+  'contacts.forms.integration': 'Integracion propia',
+  'contacts.forms.integrationHint':
+    'Para tu propio formulario: pide la definicion (devuelve el token y solo responde a los sitios autorizados) y envia los datos en JSON con ese token. El campo homepage va siempre vacio.',
+  'contacts.forms.definitionUrl': 'Definicion (GET)',
+  'contacts.forms.submitUrl': 'Envio (POST)',
+  'contacts.forms.submitBody': 'Cuerpo del envio',
+  'contacts.forms.tokenPlaceholder': 'TOKEN_DE_LA_DEFINICION',
+  'contacts.forms.stats': 'Estadisticas',
+  'contacts.forms.statsPeriod': 'Periodo',
+  'contacts.forms.lastDays': 'Ultimos {n} dias',
+  'contacts.forms.statsRange': 'Del {from} al {to}',
+  'contacts.forms.statsDaily': 'Envios y confirmaciones por dia',
+  'contacts.forms.statsEmpty': 'Sin envios en el periodo.',
+  'contacts.forms.counter.submitted': 'Envios',
+  'contacts.forms.counter.confirmation_sent': 'Confirmaciones enviadas',
+  'contacts.forms.counter.already_subscribed': 'Ya suscritos',
+  'contacts.forms.counter.not_reachable': 'No contactables',
+  'contacts.forms.counter.confirmed': 'Confirmados',
   'contacts.list.title': 'Contactos',
   'contacts.list.description':
     'Solo reciben marketing los contactos activos con consentimiento concedido.',

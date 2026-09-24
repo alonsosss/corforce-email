@@ -5,10 +5,11 @@ import { Card, EmptyState, PageHeader, Tabs } from '@/design/components';
 import { t } from '@/i18n';
 import { AttributesTab } from './AttributesTab';
 import { ContactsTab } from './ContactsTab';
+import { FormsTab } from './forms/FormsTab';
 import { ImportTab } from './ImportTab';
 import { ListsTab } from './ListsTab';
 
-type TabId = 'contacts' | 'lists' | 'attributes' | 'imports';
+type TabId = 'contacts' | 'lists' | 'attributes' | 'imports' | 'forms';
 
 export default function ContactsPage() {
   const { can } = useAccess();
@@ -24,6 +25,9 @@ export default function ContactsPage() {
       : []),
     ...(can(...PERMISSIONS.contacts.import)
       ? [{ id: 'imports' as const, label: t('contacts.tab.imports') }]
+      : []),
+    ...(can(...PERMISSIONS.subscriptionForms.read)
+      ? [{ id: 'forms' as const, label: t('contacts.tab.forms') }]
       : []),
   ];
   const available = tabs.map((item) => item.id);
@@ -44,6 +48,7 @@ export default function ContactsPage() {
       {show('lists') ? <ListsTab /> : null}
       {show('attributes') ? <AttributesTab /> : null}
       {show('imports') ? <ImportTab /> : null}
+      {show('forms') ? <FormsTab /> : null}
     </div>
   );
 }

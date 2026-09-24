@@ -181,6 +181,19 @@ func (rl *RateLimiter) middleware(next http.Handler, identity func(*http.Request
 	})
 }
 
+// AllowIP cuenta una operacion de la IP y dice si cabe en el cupo, con cuanto falta para que
+// la ventana se reabra. Es Limit para quien decide dentro del handler (una respuesta que no es
+// JSON, un cupo que solo cuenta cierto tipo de peticion); la IP se agrupa igual (IPv6 por /64).
+func (rl *RateLimiter) AllowIP(ctx context.Context, ip string) (bool, time.Duration) {
+	return rl.decide(ctx, ipIdentity(ip))
+}
+
+// AllowKey es AllowIP para una identidad que no es una IP (un formulario, un token de un solo
+// uso). La clave viaja resumida al almacen, como la de un usuario.
+func (rl *RateLimiter) AllowKey(ctx context.Context, key string) (bool, time.Duration) {
+	return rl.decide(ctx, "k:"+digest(key))
+}
+
 // decide es observe con el veredicto del cupo: permitida mientras el total de la ventana
 // no lo supere.
 func (rl *RateLimiter) decide(ctx context.Context, identity string) (bool, time.Duration) {

@@ -125,14 +125,81 @@ type publicRouteSpec struct {
 	// Content "untrusted_html" declara que la ruta devuelve HTML escrito por un tercero (el
 	// correo de una empresa visto en el navegador): el gateway conserva la CSP del servicio,
 	// mas estricta que la suya, y no marca sus <script> con el nonce de la aplicacion.
+	// "embeddable_html" es HTML de la plataforma que se incrusta en sitios de terceros (el
+	// formulario de suscripcion): la CSP y el permiso de marco (frame-ancestors) son solo los del
+	// servicio, sin los del borde, que prohiben todo marco; si el servicio no declara
+	// frame-ancestors, el gateway pone una politica que no deja incrustar nada.
 	Content string `json:"content,omitempty"`
+	// CORS "service" deja la politica CORS al servicio (la decide por recurso, p. ej. los
+	// origenes declarados de un formulario): el gateway no aplica la suya a la ruta y le pasa la
+	// comprobacion previa (OPTIONS).
+	CORS string `json:"cors,omitempty"`
+	// Alias es una ruta en la raiz del dominio que sirve lo mismo (p. ej. /p/{tenant}/{slug} para
+	// las paginas de aterrizaje). Solo GET y con los mismos parametros que la ruta.
+	Alias string `json:"alias,omitempty"`
 }
 
 // Valores admitidos en publicRouteSpec.
 const (
-	publicLimitWebhook         = "webhook"
-	publicContentUntrustedHTML = "untrusted_html"
+	publicLimitWebhook          = "webhook"
+	publicContentUntrustedHTML  = "untrusted_html"
+	publicContentEmbeddableHTML = "embeddable_html"
+	publicCORSService           = "service"
 )
+
+// aliasRe: una ruta en la raiz con segmentos fijos o parametros enteros.
+var (
+	aliasRe       = regexp.MustCompile(`^(/([a-z0-9][a-z0-9-]*|\{[a-zA-Z]+\}))+$`)
+	pathParamRe   = regexp.MustCompile(`\{([a-zA-Z]+)\}`)
+	aliasReserved = []string{"/api", "/media", "/health", "/healthz", "/metrics", "/.well-known"}
+)
+
+// validatePublicExtras comprueba content, cors y alias de una ruta publica.
+func validatePublicExtras(p publicRouteSpec) error {
+	switch p.Content {
+	case "":
+	case publicContentUntrustedHTML:
+		if p.Method != "GET" {
+			return fmt.Errorf("tabla de rutas: contenido %q solo en GET (%s %q)", p.Content, p.Method, p.Path)
+		}
+	case publicContentEmbeddableHTML:
+		if p.Method != "GET" && p.Method != "POST" {
+			return fmt.Errorf("tabla de rutas: contenido %q solo en GET o POST (%s %q)", p.Content, p.Method, p.Path)
+		}
+	default:
+		return fmt.Errorf("tabla de rutas: contenido %q invalido en la ruta publica %s %q (solo %q o %q)",
+			p.Content, p.Method, p.Path, publicContentUntrustedHTML, publicContentEmbeddableHTML)
+	}
+	if p.CORS != "" && p.CORS != publicCORSService {
+		return fmt.Errorf("tabla de rutas: cors %q invalido en la ruta publica %q (solo %q)", p.CORS, p.Path, publicCORSService)
+	}
+	if p.CORS != "" && p.Limit == publicLimitWebhook {
+		return fmt.Errorf("tabla de rutas: la ruta publica %q no puede ser webhook y dejar CORS al servicio", p.Path)
+	}
+	if p.Alias == "" {
+		return nil
+	}
+	if p.Method != "GET" || !aliasRe.MatchString(p.Alias) || cellSegment(p.Path) {
+		return fmt.Errorf("tabla de rutas: alias %q invalido para %s %q (solo GET, sin celda, con segmentos simples)", p.Alias, p.Method, p.Path)
+	}
+	for _, r := range aliasReserved {
+		if p.Alias == r || strings.HasPrefix(p.Alias, r+"/") {
+			return fmt.Errorf("tabla de rutas: el alias %q ocupa una ruta del gateway", p.Alias)
+		}
+	}
+	params := func(s string) []string {
+		var out []string
+		for _, m := range pathParamRe.FindAllStringSubmatch(s, -1) {
+			out = append(out, m[1])
+		}
+		slices.Sort(out)
+		return out
+	}
+	if !slices.Equal(params(p.Alias), params(p.Path)) {
+		return fmt.Errorf("tabla de rutas: el alias %q no lleva los mismos parametros que %q", p.Alias, p.Path)
+	}
+	return nil
+}
 
 type serviceSpec struct {
 	HostEnv     string `json:"host_env"`
@@ -265,9 +332,8 @@ func (t *routeTable) validate() error {
 		if p.Limit != "" && p.Limit != publicLimitWebhook {
 			return fmt.Errorf("tabla de rutas: limite %q invalido en la ruta publica %q (solo %q)", p.Limit, p.Path, publicLimitWebhook)
 		}
-		if p.Content != "" && (p.Content != publicContentUntrustedHTML || p.Method != "GET") {
-			return fmt.Errorf("tabla de rutas: contenido %q invalido en la ruta publica %s %q (solo %q y en GET)",
-				p.Content, p.Method, p.Path, publicContentUntrustedHTML)
+		if err := validatePublicExtras(p); err != nil {
+			return err
 		}
 	}
 	for _, s := range t.SelfAuthenticated {

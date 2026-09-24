@@ -40,6 +40,7 @@ export { IconInbox } from './IconInbox';
 export { IconInfo } from './IconInfo';
 export { IconKey } from './IconKey';
 export { IconLayers } from './IconLayers';
+export { IconLayout } from './IconLayout';
 export { IconLink } from './IconLink';
 export { IconLock } from './IconLock';
 export { IconLogOut } from './IconLogOut';

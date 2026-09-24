@@ -199,6 +199,11 @@ export const PERMISSIONS = {
     create: [MODULES.templates, 'assets', 'create'],
     delete: [MODULES.templates, 'assets', 'delete'],
   },
+  // 043: paginas de aterrizaje.
+  landingPages: {
+    ...crud(MODULES.templates, 'pages'),
+    publish: [MODULES.templates, 'pages', 'publish'],
+  },
 
   suppressionEntries: {
     read: [MODULES.suppression, 'entries', 'read'],
@@ -220,6 +225,8 @@ export const PERMISSIONS = {
   },
   contactLists: crud(MODULES.contacts, 'lists'),
   contactAttributes: crud(MODULES.contacts, 'attributes'),
+  // 043: formularios de suscripcion.
+  subscriptionForms: crud(MODULES.contacts, 'forms'),
   consents: {
     read: [MODULES.contacts, 'consents', 'read'],
     create: [MODULES.contacts, 'consents', 'create'],

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 	"unicode/utf8"
 
@@ -50,7 +51,12 @@ type Deps struct {
 	Spam      ports.SpamChecker
 	// TestSender es opcional: sin el, el envio de prueba responde no disponible.
 	TestSender ports.TestSender
-	Logger     *zap.Logger
+	// Pages, Tenants y PublicBaseURL sirven las paginas de aterrizaje; sin ellos responden no
+	// disponible.
+	Pages         ports.PageRepository
+	Tenants       ports.TenantDirectory
+	PublicBaseURL string
+	Logger        *zap.Logger
 }
 
 type UseCase struct {
@@ -64,7 +70,13 @@ type UseCase struct {
 	scanner    ports.VirusScanner
 	spam       ports.SpamChecker
 	testSender ports.TestSender
-	logger     *zap.Logger
+	pages      ports.PageRepository
+	tenants    ports.TenantDirectory
+	// publicBaseURL y platformOrigin son la base publica sin barra final y su origen.
+	publicBaseURL  string
+	platformOrigin string
+	rendered       renderedPages
+	logger         *zap.Logger
 }
 
 func New(d Deps) *UseCase {
@@ -75,8 +87,19 @@ func New(d Deps) *UseCase {
 	return &UseCase{
 		repo: d.Repo, tx: d.Tx, renderer: d.Renderer, events: d.Events,
 		brandKits: d.BrandKits, assets: d.Assets, store: d.Store, scanner: d.Scanner, spam: d.Spam,
-		testSender: d.TestSender, logger: logger,
+		testSender: d.TestSender, pages: d.Pages, tenants: d.Tenants,
+		publicBaseURL: strings.TrimRight(d.PublicBaseURL, "/"), platformOrigin: originOf(d.PublicBaseURL),
+		logger: logger,
 	}
+}
+
+// originOf reduce la base publica a su origen (esquema y host); vacio si no es una URL http(s).
+func originOf(raw string) string {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") {
+		return ""
+	}
+	return u.Scheme + "://" + u.Host
 }
 
 // CreateTemplateInput es el alta de una plantilla con su version 1 en borrador.

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"sort"
 	"strings"
@@ -281,9 +282,10 @@ func (c cellRouter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	c.fallback.ServeHTTP(w, r)
 }
 
-// mountPublic monta las rutas publicas de la tabla: las que llevan {cell}, por celda; las
-// demas, al destino base de su servicio. Un proxy por destino y politica de contenido.
-func mountPublic(r chi.Router, t *routeTable, internalToken string, webhookLimit func(http.Handler) http.Handler) {
+// publicHandlers arma el manejador final de cada ruta publica de la tabla, en su orden: las
+// que llevan {cell}, por celda; las demas, al destino base de su servicio. Un proxy por destino
+// y politica de contenido.
+func publicHandlers(t *routeTable, internalToken string, webhookLimit func(http.Handler) http.Handler) []http.Handler {
 	type proxyKey struct {
 		target string
 		mode   proxyMode
@@ -299,10 +301,14 @@ func mountPublic(r chi.Router, t *routeTable, internalToken string, webhookLimit
 		return p
 	}
 	routers := map[proxyKey]http.Handler{}
+	out := make([]http.Handler, 0, len(t.Public))
 	for _, p := range t.Public {
 		mode := proxyEdgeCSP
-		if p.Content == publicContentUntrustedHTML {
+		switch p.Content {
+		case publicContentUntrustedHTML:
 			mode = proxyUntrustedHTML
+		case publicContentEmbeddableHTML:
+			mode = proxyEmbeddableHTML
 		}
 		h := proxyFor(t.serviceURL(p.Service), mode)
 		if cellSegment(p.Path) {
@@ -317,11 +323,87 @@ func mountPublic(r chi.Router, t *routeTable, internalToken string, webhookLimit
 			}
 			h = router
 		}
+		if mode == proxyEmbeddableHTML {
+			h = withoutEdgeFraming(h)
+		}
 		if p.Limit == publicLimitWebhook {
 			h = webhookLimit(h)
 		}
-		r.Method(p.Method, p.Path, h)
+		out = append(out, h)
 	}
+	return out
+}
+
+// mountPublic monta las rutas publicas bajo /api/v1. Una ruta que deja CORS al servicio recibe
+// tambien su comprobacion previa (OPTIONS), que el gateway ya no contesta por ella.
+func mountPublic(r chi.Router, t *routeTable, internalToken string, webhookLimit func(http.Handler) http.Handler) {
+	handlers := publicHandlers(t, internalToken, webhookLimit)
+	preflight := map[string]bool{}
+	for i, p := range t.Public {
+		r.Method(p.Method, p.Path, handlers[i])
+		if p.CORS == publicCORSService && !preflight[p.Path] {
+			preflight[p.Path] = true
+			r.Method(http.MethodOptions, p.Path, handlers[i])
+		}
+	}
+}
+
+// mountPublicAliases monta en la raiz los alias de las rutas publicas: la peticion sigue con la
+// ruta declarada (los parametros del alias en su sitio) y el cupo general por IP.
+func mountPublicAliases(r chi.Router, t *routeTable, internalToken string, limit func(http.Handler) http.Handler) {
+	handlers := publicHandlers(t, internalToken, func(h http.Handler) http.Handler { return h })
+	for i, p := range t.Public {
+		if p.Alias == "" {
+			continue
+		}
+		target, next := "/api/v1"+p.Path, handlers[i]
+		r.With(limit).Method(p.Method, p.Alias, http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			path := target
+			for _, m := range pathParamRe.FindAllStringSubmatch(target, -1) {
+				path = strings.Replace(path, m[0], url.PathEscape(chi.URLParam(req, m[1])), 1)
+			}
+			rewritten := req.Clone(req.Context())
+			rewritten.URL.Path, rewritten.URL.RawPath = path, ""
+			rewritten.RequestURI = ""
+			next.ServeHTTP(w, rewritten)
+		}))
+	}
+}
+
+// corsExceptService aplica la politica CORS del gateway salvo en las rutas publicas que la dejan
+// al servicio: alli la suya contestaria la comprobacion previa por el y con otros origenes.
+func corsExceptService(t *routeTable, corsMW func(http.Handler) http.Handler) func(http.Handler) http.Handler {
+	own := chi.NewRouter()
+	n := 0
+	for _, p := range t.Public {
+		if p.CORS == publicCORSService {
+			own.Handle("/api/v1"+p.Path, http.NotFoundHandler())
+			n++
+		}
+	}
+	if n == 0 {
+		return corsMW
+	}
+	return func(next http.Handler) http.Handler {
+		withCORS := corsMW(next)
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if own.Match(chi.NewRouteContext(), r.Method, r.URL.Path) {
+				next.ServeHTTP(w, r)
+				return
+			}
+			withCORS.ServeHTTP(w, r)
+		})
+	}
+}
+
+// withoutEdgeFraming retira la CSP y el X-Frame-Options del borde antes de pasar la respuesta
+// del servicio: en una ruta embeddable_html la politica de marco es la del servicio.
+func withoutEdgeFraming(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Del("Content-Security-Policy")
+		w.Header().Del("X-Frame-Options")
+		next.ServeHTTP(w, r)
+	})
 }
 
 // sessionHandlers devuelve, por servicio, el manejador final de sus rutas con sesion: su

@@ -58,17 +58,28 @@ type Deps struct {
 	Perms    PermissionGuard
 	TenantDB *db.TenantDB
 	Logger   *zap.Logger
+	// PublicBaseURL es la URL publica de la plataforma (sin barra final): de ella cuelgan las
+	// direcciones para incrustar los formularios, y su origen es el que siempre los puede usar.
+	PublicBaseURL string
 }
 
 type Handler struct {
-	uc       *app.UseCase
-	perms    PermissionGuard
-	tenantDB *db.TenantDB
-	logger   *zap.Logger
+	uc             *app.UseCase
+	perms          PermissionGuard
+	tenantDB       *db.TenantDB
+	logger         *zap.Logger
+	publicBaseURL  string
+	platformOrigin string
 }
 
 func NewHandler(d Deps) *Handler {
-	return &Handler{uc: d.UC, perms: d.Perms, tenantDB: d.TenantDB, logger: d.Logger}
+	if d.Logger == nil {
+		d.Logger = zap.NewNop()
+	}
+	return &Handler{
+		uc: d.UC, perms: d.Perms, tenantDB: d.TenantDB, logger: d.Logger,
+		publicBaseURL: d.PublicBaseURL, platformOrigin: app.OriginOf(d.PublicBaseURL),
+	}
 }
 
 // ContactRoutes cuelga de /api/v1/contacts (modulo contacts). El gateway ya gateo el
@@ -95,6 +106,7 @@ func (h *Handler) ContactRoutes() http.Handler {
 		r.With(perm(modContacts, "lists", "update")).Post("/{listID}/members", h.AddMembers)
 		r.With(perm(modContacts, "lists", "update")).Post("/{listID}/members/remove", h.RemoveMembers)
 	})
+	r.Route("/forms", h.formRoutes)
 	r.Route("/attributes", func(r chi.Router) {
 		r.With(perm(modContacts, "attributes", "read")).Get("/", h.ListAttributes)
 		r.With(perm(modContacts, "attributes", "create")).Post("/", h.CreateAttribute)
@@ -1345,6 +1357,7 @@ func stringsOf[T ~string](in []T) []string {
 func writeError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, domain.ErrContactNotFound),
+		errors.Is(err, domain.ErrFormNotFound),
 		errors.Is(err, domain.ErrListNotFound),
 		errors.Is(err, domain.ErrSegmentNotFound),
 		errors.Is(err, domain.ErrAttributeNotFound),
@@ -1358,8 +1371,12 @@ func writeError(w http.ResponseWriter, err error) {
 		response.Err(w, http.StatusConflict, "SEGMENT_EXISTS", err.Error())
 	case errors.Is(err, domain.ErrAttributeExists):
 		response.Err(w, http.StatusConflict, "ATTRIBUTE_EXISTS", err.Error())
-	case errors.Is(err, domain.ErrListInUse):
+	case errors.Is(err, domain.ErrListInUse), errors.Is(err, domain.ErrListInUseByForm):
 		response.Err(w, http.StatusConflict, "LIST_IN_USE", err.Error())
+	case errors.Is(err, domain.ErrFormExists):
+		response.Err(w, http.StatusConflict, "FORM_EXISTS", err.Error())
+	case errors.Is(err, app.ErrFormsUnavailable):
+		response.Err(w, http.StatusServiceUnavailable, "FORMS_UNAVAILABLE", err.Error())
 	case errors.Is(err, domain.ErrAttributeInUse):
 		response.Err(w, http.StatusConflict, "ATTRIBUTE_IN_USE", err.Error())
 	case errors.Is(err, domain.ErrResubscribeRequiresOptIn):
@@ -1390,7 +1407,7 @@ var validationErrors = []error{
 	domain.ErrInvalidConsentMethod, domain.ErrInvalidIP, domain.ErrInvalidSegment, domain.ErrInvalidCursor,
 	domain.ErrNoImportRows, domain.ErrTooManyRows, domain.ErrConsentBasis, domain.ErrInvalidAudience,
 	domain.ErrInvalidListName, domain.ErrInvalidSegmentName, domain.ErrTooManyMembers, domain.ErrInvalidLimit,
-	domain.ErrInvalidContactIDs,
+	domain.ErrInvalidContactIDs, domain.ErrInvalidForm,
 }
 
 func isValidationError(err error) bool {

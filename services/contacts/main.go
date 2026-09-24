@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"fmt"
 	"log"
 	"net/url"
@@ -20,6 +21,7 @@ import (
 	"github.com/alonsosss/corforce-email/pkg/outbox"
 	"github.com/alonsosss/corforce-email/pkg/response"
 	"github.com/alonsosss/corforce-email/pkg/server"
+	"github.com/alonsosss/corforce-email/services/contacts/internal/adapters/formguard"
 	handler "github.com/alonsosss/corforce-email/services/contacts/internal/adapters/http"
 	natsadapter "github.com/alonsosss/corforce-email/services/contacts/internal/adapters/nats"
 	outboxadapter "github.com/alonsosss/corforce-email/services/contacts/internal/adapters/outbox"
@@ -31,6 +33,7 @@ import (
 	"github.com/alonsosss/corforce-email/services/contacts/internal/domain"
 	"github.com/alonsosss/corforce-email/services/contacts/internal/segment"
 	"github.com/go-chi/chi/v5"
+	goredis "github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 )
 
@@ -39,6 +42,12 @@ const (
 	// maxImportRows es el techo que admite CONTACTS_IMPORT_MAX_ROWS: el cuerpo de una
 	// importacion se lee entero en memoria.
 	maxImportRows = 200000
+
+	// Cupos por defecto de los envios publicos de formularios: una persona envia una vez; una
+	// oficina o una red movil tras la misma IP, unas pocas.
+	defaultFormSubmitsPerIP       = 10
+	defaultFormIPWindow           = 10 * time.Minute
+	defaultFormSubmitsPerFormHour = 300
 )
 
 func main() {
@@ -89,6 +98,17 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	forms, err := loadFormSettings()
+	if err != nil {
+		log.Fatal(err)
+	}
+	// Clave propia de los tokens de formulario, del almacen de secretos: derivarla del token
+	// interno del gateway dejaria forjarlos a cualquier servicio que lo tenga, y rotar uno
+	// invalidaria el otro.
+	formTokens, err := app.NewFormTokenSigner(os.Getenv("CONTACTS_FORM_TOKEN_KEY"), rand.Reader)
+	if err != nil {
+		log.Fatalf("tokens de los formularios publicos: %v", err)
+	}
 
 	// ctx gobierna los trabajos de fondo (rele de la outbox, consumidor de suppression).
 	ctx, cancel := context.WithCancel(context.Background())
@@ -104,6 +124,15 @@ func main() {
 	defer mgr.CloseAll()
 	ctxPool := &db.ContextPool{}
 
+	rdb, err := newRedis(ctx, cfg.Redis, logger)
+	if err != nil {
+		log.Fatalf("redis: %v", err)
+	}
+	defer rdb.Close()
+	formGuard := formguard.New(middleware.NewRedisRateLimitStore(rdb), formguard.Config{
+		PerIP: forms.perIP, IPWindow: forms.ipWindow, PerFormHour: forms.perFormHour, TokenTTL: forms.tokenTTL,
+	}, logger)
+
 	uc := app.New(app.Deps{
 		Contacts:    postgres.NewContactRepository(ctxPool),
 		Consents:    postgres.NewConsentRepository(ctxPool),
@@ -118,9 +147,13 @@ func main() {
 		Suppression: suppressionclient.New(suppressionURL, os.Getenv("INTERNAL_GATEWAY_TOKEN")),
 		Engagement:  postgres.NewEngagementRepository(ctxPool),
 		Matcher:     postgres.NewSegmentQuery(ctxPool),
+		Forms:       postgres.NewFormRepository(ctxPool),
+		FormGuard:   formGuard,
+		FormTokens:  formTokens,
 		Config: app.Config{
 			PublicBaseURL: publicBase, DOITTL: doiTTL, ImportMaxRows: importMax,
 			EngagementRetention: time.Duration(retentionDays) * 24 * time.Hour,
+			Forms:               app.FormConfig{MinFill: forms.minFill, TokenTTL: forms.tokenTTL, PlatformOrigin: app.OriginOf(publicBase)},
 		},
 		Logger: logger,
 	})
@@ -162,7 +195,7 @@ func main() {
 	go sweep.New(registryPool.Pool, tenantDB, uc, logger, fullSweepAt).Run(ctx)
 	go prune.New(registryPool.Pool, tenantDB, uc, logger).Run(ctx)
 
-	h := handler.NewHandler(handler.Deps{UC: uc, Perms: perms, TenantDB: tenantDB, Logger: logger})
+	h := handler.NewHandler(handler.Deps{UC: uc, Perms: perms, TenantDB: tenantDB, Logger: logger, PublicBaseURL: publicBase})
 
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
@@ -184,6 +217,10 @@ func main() {
 		r.Use(middleware.NewRateLimiter(30, time.Minute).Limit)
 		r.Mount("/api/v1/public/contacts", h.PublicRoutes())
 	})
+	// Publico, sin sesion: los formularios de suscripcion. Sin el limite anterior, que frenaria
+	// a los visitantes de una pagina concurrida tras la misma NAT: el envio lleva sus propios
+	// cupos por IP y por formulario en Redis, y la carga del formulario el general del gateway.
+	r.Mount(handler.FormsPublicPath, h.PublicFormRoutes())
 	// Interno: campaigns pide la audiencia con el token interno y la empresa en la
 	// cabecera. Sin limite por ip: todo llega del mismo servicio.
 	r.Group(func(r chi.Router) {
@@ -195,6 +232,62 @@ func main() {
 	if err := srv.Run(); err != nil {
 		logger.Fatal("server error", zap.Error(err))
 	}
+}
+
+// formSettings son los ajustes de los formularios publicos (CONTACTS_FORM_*).
+type formSettings struct {
+	minFill     time.Duration
+	tokenTTL    time.Duration
+	perIP       int
+	ipWindow    time.Duration
+	perFormHour int
+}
+
+func loadFormSettings() (formSettings, error) {
+	var s formSettings
+	var err error
+	if s.minFill, err = config.EnvDuration("CONTACTS_FORM_MIN_FILL", app.DefaultFormMinFill, time.Second, time.Minute); err != nil {
+		return s, err
+	}
+	if s.tokenTTL, err = config.EnvDuration("CONTACTS_FORM_TOKEN_TTL", app.DefaultFormTokenTTL, 10*time.Minute, 24*time.Hour); err != nil {
+		return s, err
+	}
+	if s.perIP, err = config.EnvInt("CONTACTS_FORM_SUBMITS_PER_IP", defaultFormSubmitsPerIP, 1, 1000); err != nil {
+		return s, err
+	}
+	if s.ipWindow, err = config.EnvDuration("CONTACTS_FORM_IP_WINDOW", defaultFormIPWindow, time.Minute, 24*time.Hour); err != nil {
+		return s, err
+	}
+	if s.perFormHour, err = config.EnvInt("CONTACTS_FORM_SUBMITS_PER_FORM_HOUR", defaultFormSubmitsPerFormHour, 1, 100000); err != nil {
+		return s, err
+	}
+	return s, nil
+}
+
+// newRedis abre el Redis de la plataforma para los cupos de los formularios. Un Redis caido al
+// arrancar no impide el arranque: los cupos se cuentan en la memoria de cada replica hasta que
+// vuelva (pkg/middleware.NewSharedRateLimiter).
+func newRedis(ctx context.Context, rc config.RedisConfig, logger *zap.Logger) (*goredis.Client, error) {
+	tlsCfg, err := rc.TLSConfig()
+	if err != nil {
+		return nil, err
+	}
+	rdb := goredis.NewClient(&goredis.Options{
+		Addr:                  rc.Addr(),
+		Password:              rc.Password,
+		TLSConfig:             tlsCfg,
+		DialTimeout:           time.Second,
+		ReadTimeout:           250 * time.Millisecond,
+		WriteTimeout:          250 * time.Millisecond,
+		PoolTimeout:           250 * time.Millisecond,
+		ContextTimeoutEnabled: true,
+	})
+	pingCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	if err := rdb.Ping(pingCtx).Err(); err != nil {
+		logger.Warn("contacts: Redis no disponible al arrancar; los cupos de los formularios se cuentan en memoria de cada replica hasta que vuelva", zap.Error(err))
+	}
+	return rdb, nil
 }
 
 // absoluteURL valida la URL publica del doble opt-in, obligatoria: el servicio no arranca a

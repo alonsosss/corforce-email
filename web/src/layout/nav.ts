@@ -23,6 +23,7 @@ import {
   IconInbox,
   IconMailOpen,
   IconLayers,
+  IconLayout,
   IconLink,
   IconMonitor,
   IconPalette,
@@ -113,6 +114,12 @@ export const NAV: NavGroup[] = [
         to: paths.brandKit,
         labelKey: 'nav.brandKit',
         icon: IconPalette,
+        module: MODULES.templates,
+      },
+      {
+        to: paths.landingPages,
+        labelKey: 'nav.landingPages',
+        icon: IconLayout,
         module: MODULES.templates,
       },
       {

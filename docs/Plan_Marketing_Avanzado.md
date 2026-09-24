@@ -137,6 +137,24 @@ todo usa los permisos existentes de `segments` y `automations`).
   proteccion anti-abuso (limite por IP, campo trampa, tiempo minimo), incrustables por script o iframe.
 * Paginas de aterrizaje simples con el editor (bloques web) servidas en la ruta publica de la empresa.
 
+Hecho (2026-09-23, rama de 2-F, sin desplegar; detalle en las filas de `contacts` y `templates` de
+`Arquitectura_Core_Force_Mail.md`, operacion y rutas publicas en `Operacion_Despliegue.md`, «Captacion»). Migraciones:
+registro `043_capture_permissions.sql`, empresa `contacts/06_subscription_forms.sql` y `templates/04_landing_pages.sql`.
+
+* Formularios: CRUD con permisos `contacts/forms/*`, doble opt-in obligatorio sobre el flujo existente
+  (`contacts.consent.requested` -> `automations` -> `transactional`), evidencia con texto aceptado e ip truncada,
+  supresion respetada (a una excluida no se le pide), misma respuesta siempre, token firmado de un solo uso con tiempo
+  minimo, campo trampa, cupos por IP y por formulario en Redis, CORS y `frame-ancestors` solo para los origenes
+  declarados. Un envio publico no cambia los datos de un contacto existente. Estadisticas de envios y confirmaciones.
+* Paginas: CRUD y versiones con permisos `templates/pages/*`, editor GrapesJS en modo web, HTML saneado y CSS
+  comprobado al guardar, formulario incrustado por marcador, servidas en `/p/<empresa>/<slug>` con CSP sin scripts.
+* Gateway: `"cors": "service"`, `"content": "embeddable_html"` y `"alias"` en las rutas publicas.
+* Web: pestana Formularios en contactos (`/marketing/forms/:id` con vista previa, codigo para incrustar y
+  estadisticas) y paginas en Envios (`/sending/pages`, detalle y editor a pantalla completa).
+* Pendiente: comprobar en el navegador con el backend desplegado el editor de paginas y un formulario incrustado en un
+  sitio de otro origen; un atributo obligatorio declarado despues de crear un formulario bloquea sus envios hasta que
+  se anada al formulario.
+
 ## 4. Oleada 3
 
 ### 3-G. Claves de API y SMTP
@@ -162,5 +180,5 @@ todo usa los permisos existentes de `segments` y `automations`).
 | 1-C Campanas | Desplegado en produccion (2026-09-23, `bfbf81a`): migraciones aplicadas en las dos empresas, servicios sanos y sin errores. Hecho en rama (2026-09-23): fases de envio (`tenant/canonical/campaigns/03_phases.sql`), prueba A/B con decision auditada por outbox (`campaigns.campaign.ab_decided`), reenvio a quien no abrio (una vez, con la limitacion de Apple Mail documentada), envio por zona horaria con zona de respaldo indicada al programar (no hay zona de empresa en `organization`), `subject` opcional en el lote de `transactional`, `utm.content` por variante, `GET /campaigns/{id}/phases` y web de campanas. Sin migracion de registro (041 sin usar). Unitarias, integracion y `make e2e` sin SES real |
 | 1-D Dominio de seguimiento | Casi hecho (2026-09-23): DNS, certificado (con `AUTODISCOVER_SAN=n`), identidad verificada en SES y borde sirviendo `clics.core-force.com`; falta `SES_TRACKING_DOMAIN` en la pila (administrador de AWS) |
 | 2-E Comportamiento y automatizaciones | Hecho en rama, sin desplegar (2026-09-23): `contacts/05_engagement.sql`, `automations/03_branches_and_dates.sql`, sin registro (042 sin usar). Unitarias, integracion y `make e2e` con la apertura sembrada en la outbox (sin SES real) |
-| 2-F Captacion | Pendiente |
+| 2-F Captacion | Hecho en rama, sin desplegar (2026-09-23): formularios con doble opt-in obligatorio y anti abuso en `contacts`, paginas de aterrizaje en `templates`, rutas publicas en el gateway y web. Unitarias, integracion y `make e2e` |
 | 3-G API y SMTP | Pendiente |

@@ -199,6 +199,16 @@ export const endpoints = {
     assets: `${API_PREFIX}/templates/assets`,
     asset: (id: string) => `${API_PREFIX}/templates/assets/${seg(id)}`,
     meta: `${API_PREFIX}/templates/meta`,
+    pages: {
+      ...collectionOf('/templates/pages'),
+      meta: `${API_PREFIX}/templates/pages/meta`,
+      versions: (id: string) => `${API_PREFIX}/templates/pages/${seg(id)}/versions`,
+      version: (id: string, version: number) =>
+        `${API_PREFIX}/templates/pages/${seg(id)}/versions/${version}`,
+      publish: (id: string, version: number) =>
+        `${API_PREFIX}/templates/pages/${seg(id)}/versions/${version}/publish`,
+      unpublish: (id: string) => `${API_PREFIX}/templates/pages/${seg(id)}/unpublish`,
+    },
   },
   transactional: {
     sendingDomains: `${API_PREFIX}/transactional/sending-domains`,
@@ -224,6 +234,11 @@ export const endpoints = {
     listMembersRemove: (id: string) => `${API_PREFIX}/contacts/lists/${seg(id)}/members/remove`,
     attributes: `${API_PREFIX}/contacts/attributes`,
     attribute: (key: string) => `${API_PREFIX}/contacts/attributes/${seg(key)}`,
+    forms: {
+      ...collectionOf('/contacts/forms'),
+      meta: `${API_PREFIX}/contacts/forms/meta`,
+      stats: (id: string) => `${API_PREFIX}/contacts/forms/${seg(id)}/stats`,
+    },
   },
   segments: {
     ...collectionOf('/segments'),

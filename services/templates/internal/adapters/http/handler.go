@@ -72,6 +72,7 @@ func (h *Handler) Routes() http.Handler {
 	r.With(h.permOn(permAssets, actionRead)).Get("/assets", h.ListAssets)
 	r.With(h.permOn(permAssets, actionCreate)).Post("/assets", h.UploadAsset)
 	r.With(h.permOn(permAssets, actionDelete)).Delete("/assets/{assetID}", h.DeleteAsset)
+	r.Route("/pages", h.pageRoutes)
 	r.Route("/{id}", func(r chi.Router) {
 		r.With(h.perm(actionRead)).Get("/", h.GetTemplate)
 		r.With(h.perm(actionUpdate)).Patch("/", h.UpdateTemplate)

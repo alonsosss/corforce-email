@@ -141,6 +141,16 @@ export const SCREENS: readonly ScreenDecl[] = [
     load: () => import('@/pages/templates/brandKit/BrandKitPage'),
   },
   {
+    path: paths.landingPages,
+    module: MODULES.templates,
+    load: () => import('@/pages/templates/landing/LandingPagesPage'),
+  },
+  {
+    path: `${paths.landingPages}/:id`,
+    module: MODULES.templates,
+    load: () => import('@/pages/templates/landing/LandingPageDetailPage'),
+  },
+  {
     path: paths.suppression,
     module: MODULES.suppression,
     load: () => import('@/pages/suppression/SuppressionPage'),
@@ -164,6 +174,11 @@ export const SCREENS: readonly ScreenDecl[] = [
     path: paths.contactListPattern,
     module: MODULES.contacts,
     load: () => import('@/pages/contacts/ListDetailPage'),
+  },
+  {
+    path: paths.contactFormPattern,
+    module: MODULES.contacts,
+    load: () => import('@/pages/contacts/forms/FormDetailPage'),
   },
   {
     path: paths.segments,
@@ -278,6 +293,11 @@ export const FULLSCREEN_SCREENS: readonly ScreenDecl[] = [
     path: paths.templateNewEditor,
     module: MODULES.templates,
     load: () => import('@/pages/templates/editor/NewTemplateEditorPage'),
+  },
+  {
+    path: paths.landingPageEditorPattern,
+    module: MODULES.templates,
+    load: () => import('@/pages/templates/landing/editor/PageEditorPage'),
   },
 ];
 
