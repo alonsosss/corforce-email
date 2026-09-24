@@ -349,8 +349,8 @@ func applyMailboxUpdate(m *domain.Mailbox, req UpdateMailboxRequest) {
 }
 
 // DeleteMailbox retira el buzon y todo lo que solo tiene sentido con el: contrasenas de
-// aplicacion, filtros sieve, respuesta automatica, uso de cuota, permisos de remitente y aliases temporales que
-// entregaban en el. El uso de cuota se borra ANTES que el buzon: la politica que lo
+// aplicacion, filtros sieve, respuesta automatica, firma, reglas y reenvio, envios programados, uso de
+// cuota, permisos de remitente y aliases temporales que entregaban en el. El uso de cuota se borra ANTES que el buzon: la politica que lo
 // permite exige que el buzon exista. Su maildir en Dovecot no lo alcanza ningun servicio: la marca de
 // baja que queda en la misma transaccion es lo que el barrido del contenedor de Dovecot consume para
 // moverlo a _garbage (deploy/mail/README.md, "Maildir de un buzon borrado").
@@ -365,6 +365,9 @@ func (uc *UseCase) DeleteMailbox(ctx context.Context, tenantID, id uuid.UUID) er
 			func() error { return uc.appPasswords.DeleteByMailbox(ctx, tenantID, id) },
 			func() error { return uc.sieve.DeleteByUsername(ctx, tenantID, m.Username) },
 			func() error { return uc.vacation.DeleteByUsername(ctx, tenantID, m.Username) },
+			func() error { return uc.signatures.DeleteByUsername(ctx, tenantID, m.Username) },
+			func() error { return uc.filters.DeleteByUsername(ctx, tenantID, m.Username) },
+			func() error { return uc.scheduled.DeleteByUsername(ctx, tenantID, m.Username) },
 			func() error { return uc.senderACL.DeleteByLoggedInAs(ctx, tenantID, m.Username) },
 			func() error { return uc.spamAliases.DeleteByGoto(ctx, tenantID, m.Username) },
 			func() error { return uc.mailboxes.RecordDeletion(ctx, m) },
@@ -398,6 +401,17 @@ func (uc *UseCase) SetMailboxPassword(ctx context.Context, tenantID, id uuid.UUI
 		}
 		return uc.events.MailboxCredentialsChanged(ctx, m, domain.CredentialPassword, []domain.MailboxAttr{domain.AttrPassword})
 	})
+}
+
+// SetPasswordByUsername es el cambio de contrasena que pide el propio buzon desde el webmail, que ya
+// comprobo la actual contra mail-auth. Sigue el mismo camino que el del administrador: misma
+// politica, mismo hash y el mismo evento, que revoca todas las sesiones del buzon.
+func (uc *UseCase) SetPasswordByUsername(ctx context.Context, username, password string) error {
+	tenantID, mailboxID, err := uc.locate(ctx, username)
+	if err != nil {
+		return err
+	}
+	return uc.SetMailboxPassword(ctx, tenantID, mailboxID, password)
 }
 
 func (uc *UseCase) MailboxQuota(ctx context.Context, tenantID, id uuid.UUID) (q *domain.QuotaUsage, err error) {

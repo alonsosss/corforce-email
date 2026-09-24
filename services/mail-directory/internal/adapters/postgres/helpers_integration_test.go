@@ -111,7 +111,8 @@ func newUseCaseWithMX(ctxPool *db.ContextPool, mx ports.MXResolver) *app.UseCase
 func newUseCaseWith(ctxPool *db.ContextPool, mx ports.MXResolver, recreateHold time.Duration) *app.UseCase {
 	return app.New(app.Deps{
 		Tx: NewTransactor(ctxPool), Domains: NewDomainRepo(ctxPool), AliasDomains: NewAliasDomainRepo(ctxPool),
-		Mailboxes: NewMailboxRepo(ctxPool), AppPasswords: NewAppPasswordRepo(ctxPool), Sieve: NewSieveRepo(ctxPool), Vacation: NewVacationRepo(ctxPool), Locator: NewMailboxLocator(ctxPool),
+		Mailboxes: NewMailboxRepo(ctxPool), AppPasswords: NewAppPasswordRepo(ctxPool), Sieve: NewSieveRepo(ctxPool), Vacation: NewVacationRepo(ctxPool),
+		Signatures: NewSignatureRepo(ctxPool), Filters: NewFilterRepo(ctxPool), Scheduled: NewScheduledSendRepo(ctxPool), Locator: NewMailboxLocator(ctxPool),
 		Aliases: NewAliasRepo(ctxPool), SpamAliases: NewSpamAliasRepo(ctxPool), SenderACL: NewSenderACLRepo(ctxPool),
 		Relayhosts: NewRelayhostRepo(ctxPool), Transports: NewTransportRepo(ctxPool), TLSPolicies: NewTLSPolicyRepo(ctxPool),
 		RecipientMap: NewRecipientMapRepo(ctxPool), BCCMaps: NewBCCMapRepo(ctxPool), Retirements: NewRetirementRepo(ctxPool),

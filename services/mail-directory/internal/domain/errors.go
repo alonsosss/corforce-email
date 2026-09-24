@@ -95,3 +95,23 @@ var (
 // crece (ni buzones ni espacio) mientras siga asi; conserva lo que ya tiene. Es el mismo
 // criterio con el que billing deniega el envio a una empresa dada de baja (ADR 0010).
 var ErrSubscriptionInactive = errors.New("la suscripcion de la empresa no esta vigente")
+
+// FieldError es un fallo de entrada ligado a un campo del cuerpo (rules[3].conditions[0].value,
+// forwarding.addresses[1]): se responde 422 con details.field para que la interfaz lo senale.
+type FieldError struct {
+	Field  string
+	Reason string
+}
+
+func (e *FieldError) Error() string { return e.Field + ": " + e.Reason }
+
+func fieldErr(field, reason string) *FieldError { return &FieldError{Field: field, Reason: reason} }
+
+var (
+	// ErrScheduledSendNotPending: la fila ya no se cambia ni se cancela (se esta enviando o ya salio).
+	ErrScheduledSendNotPending = errors.New("el envio programado ya no esta pendiente")
+	// ErrScheduledSendNotClaimed: se cierra una fila que no esta reclamada (status sending).
+	ErrScheduledSendNotClaimed = errors.New("el envio programado no esta en curso")
+	// ErrScheduledSendLimit: el buzon alcanzo el maximo de envios programados pendientes.
+	ErrScheduledSendLimit = errors.New("el buzon alcanzo su maximo de envios programados pendientes")
+)
