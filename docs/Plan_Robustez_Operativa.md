@@ -18,9 +18,20 @@ Y lo que hay fuera son cuatro cosas, ni una más:
 | Los volcados de las bases y la instantánea de OpenBao | S3, cifrados |
 | Los volúmenes de correo (buzones y sus claves) | S3, cifrados |
 | La frase de cifrado de los respaldos | Fuera del servidor |
-| La llave de desbloqueo de OpenBao | Fuera del servidor |
+| La llave de desbloqueo de OpenBao **y su identificador** | Fuera del servidor |
+| La credencial de despliegue del almacén (`despliegue.role_id` y `.secret_id`) | Fuera del servidor |
 
 Si con eso no se vuelve, el respaldo no vale. Y eso no se sabe hasta intentarlo.
+
+**Las dos últimas filas las descubrió el propio ensayo.** Antes de correrlo se daba por hecho que
+bastaban la frase y la llave. No bastan:
+
+* el sello estático necesita **el identificador** de la llave, no solo la llave;
+* y, una vez restaurada la instantánea, el token raíz anterior **deja de valer** (la instantánea trae
+  su propio almacén de tokens) y `sys/generate-root` responde error con este sello, así que la clave
+  de recuperación **no abre nada**. Lo único que abre es la credencial de AppRole de despliegue, que
+  hasta ahora solo existía dentro del servidor. Es decir: **si el servidor hubiera ardido ayer, los
+  secretos del respaldo no se habrían podido leer.**
 
 **Qué se hace.** Un guion de ensayo, `ops/backup/ensayo-recuperacion.sh`, que corre en contenedores
 desechables (como `make e2e`) y, **sin tocar producción ni leer nada del servidor**, parte del bucket
@@ -44,6 +55,12 @@ desastre.
 
 **Criterio de cierre.** El ensayo pasa entero, queda en `make` y se corre cada mes; su resultado y su
 duración van a `docs/Operacion_Despliegue.md`.
+
+**Resultado del primero (2026-09-25): OK en 44 s**, partiendo solo del bucket y de lo de fuera, con
+4 bases restauradas, 44 secretos leídos y 5 buzones comprobados contra su directorio. Tres fallos
+encontrados y arreglados por el camino: el identificador de la llave y la credencial de despliegue
+que faltaban fuera, y un lector de configuración que se comía el relleno final de la llave en base64
+(OpenBao arrancaba y fallaba mucho después, que es la peor forma de fallar).
 
 ## 2. Nada se despliega con la CI en rojo
 
@@ -98,7 +115,7 @@ dónde se retoma. Nada más: no se empieza la fase B2 hasta cerrar los puntos 1 
 
 | Punto | Estado |
 |---|---|
-| 1. Ensayo de recuperación | Pendiente |
+| 1. Ensayo de recuperación | Hecho: `ops/backup/ensayo-recuperacion.sh`, primera corrida OK en 44 s, con tres huecos encontrados y cerrados |
 | 2. Guardia de CI en verde | Hecho: `despliegue_comprobar_ci` en los dos despliegues, con sus cuatro casos probados y dos mutaciones |
 | 3. Rotación de lo expuesto | Hecho en lo que depende de la plataforma: las dos contraseñas de Campovivo rotadas y comprobadas (la vieja ya no entra, ni por web ni por IMAP). Falta el token de Cloudflare, que lo rota quien opera |
 | 4. Integración del ERP aparcada | Hecho: `docs/Plan_Integracion_ERP.md` dice desde dónde se retoma |

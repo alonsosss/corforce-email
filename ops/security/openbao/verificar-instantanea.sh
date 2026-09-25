@@ -38,9 +38,14 @@ docker run -d --name "$nombre" --network host --user "$(id -u):$(id -g)" --read-
   "$imagen" server -config=/openbao/config/config.hcl >/dev/null
 
 export OPENBAO_ADDR="http://127.0.0.1:$puerto"
-for _ in $(seq 1 30); do
+for _ in $(seq 1 60); do
   python3 -c 'import sys, urllib.request; urllib.request.urlopen(sys.argv[1] + "/v1/sys/seal-status", timeout=2)' \
     "$OPENBAO_ADDR" 2>/dev/null && break
   sleep 1
 done
+if ! python3 -c 'import sys, urllib.request; urllib.request.urlopen(sys.argv[1] + "/v1/sys/seal-status", timeout=2)' "$OPENBAO_ADDR" 2>/dev/null; then
+  echo "verificar-instantanea: la instancia desechable no respondio; su registro:" >&2
+  docker logs "$nombre" 2>&1 | tail -15 >&2
+  exit 1
+fi
 python3 "$SECRETS_SCRIPTS/openbao.py" verificar-instantanea "$SNAP"
