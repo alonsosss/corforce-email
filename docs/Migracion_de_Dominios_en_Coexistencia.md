@@ -32,8 +32,15 @@ buzón.
 
 * El dominio dado de alta en `domain-service` con propósito `corporate` (o `both` si además enviará
   campañas), y su clave DKIM generada.
-* Acceso al DNS del dominio. La zona de la plataforma (`core-force.com`) la publica el proveedor
-  automático; la de un cliente casi siempre la publica él.
+* Acceso al DNS del dominio, por una de estas dos vías:
+  * **Proveedor automático (recomendado).** La empresa conecta su propio token de Cloudflare en
+    Dominios -> Proveedor DNS de la web. Solo pide `Zone — DNS — Edit` y `Zone — Zone — Read`, y el
+    token se guarda cifrado (`MAIL_ENCRYPTION_KEY`), nunca en claro. A partir de ahí la plataforma
+    publica y comprueba los registros sola (`dns_mode: cloudflare`, `POST /api/v1/domains/{id}/publish-dns`).
+    El token se acota a **la zona de esa empresa y a ninguna más**: un token de cliente no debe poder
+    tocar la zona de la plataforma.
+  * **Manual.** La empresa publica los registros que da `GET /api/v1/domains/{id}` y la plataforma
+    solo verifica.
 * Los datos del proveedor anterior: su servidor de entrada (el MX que tiene hoy) y, para copiar el
   histórico, el servidor IMAP y las credenciales de cada buzón.
 
@@ -47,6 +54,8 @@ Estos dos registros conviven con el correo actual y se pueden publicar en cualqu
 |---|---|---|
 | TXT | `_cfm-verify.<dominio>` | el `cfm-verify=...` que da `GET /api/v1/domains/{id}` |
 | TXT | `<selector>._domainkey.<dominio>` | la clave DKIM de la plataforma |
+
+Con el proveedor automático conectado, `publish-dns` los publica sin tocar el MX ni el SPF.
 
 El DKIM del proveedor anterior usa otro selector y sigue publicado: **no se toca**. Dos selectores
 conviven sin problema, que es lo que permite que ambos firmen durante la transición.
