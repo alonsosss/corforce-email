@@ -167,12 +167,17 @@ EOF
 # Respaldos: escribir y leer, pero NO borrar. Un respaldo que el servidor puede borrar no
 # protege del caso que mas importa, que es alguien -o algo- con acceso al servidor. La
 # retencion la hace la regla de ciclo de vida del bucket, no la instancia.
+#
+# Los prefijos son los cuatro que el respaldo escribe: bases, correo, almacen de secretos y
+# configuracion del servidor. Uno que falte no da error al aprovisionar: falla el dia del respaldo,
+# con un AVISO en el registro y una parte del respaldo que nunca sale del servidor.
 emit respaldos <<EOF
 {"Version":"2012-10-17","Statement":[
  {"Sid":"EscribirRespaldos","Effect":"Allow",
   "Action":["s3:PutObject","s3:GetObject","s3:ListBucket"],
   "Resource":["arn:aws:s3:::${BACKUP_BUCKET}","arn:aws:s3:::${BACKUP_BUCKET}/postgres/*",
-              "arn:aws:s3:::${BACKUP_BUCKET}/correo/*","arn:aws:s3:::${BACKUP_BUCKET}/openbao/*"]}]}
+              "arn:aws:s3:::${BACKUP_BUCKET}/correo/*","arn:aws:s3:::${BACKUP_BUCKET}/openbao/*",
+              "arn:aws:s3:::${BACKUP_BUCKET}/config/*"]}]}
 EOF
 
 emit medios <<EOF

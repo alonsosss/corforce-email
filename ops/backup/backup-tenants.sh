@@ -186,10 +186,13 @@ if [[ $# -eq 0 ]]; then
   cfg="$dest/config.tar.gz"
   cfg_dir="$(mktemp -d)"
   n_cfg=0
-  for f in "$APP_DIR/.env" "${MAIL_DEPLOY_PATH:-/opt/core-force-mail/mail-src}/.env"; do
+  # Hoy los motores usan el .env de la plataforma (deploy-mail.sh: --env-file $DEPLOY_PATH/.env), asi
+  # que normalmente hay uno solo; el segundo se recoge si algun servidor llega a tener el suyo.
+  for f in "$APP_DIR/.env" "${MAIL_DEPLOY_PATH:-/opt/core-force-mail/mail-src}/deploy/mail/.env"; do
     [[ -r "$f" ]] || continue
     # El nombre dice de donde sale, para poder reponerlo sin adivinar.
     destino_cfg="$cfg_dir/$(basename "$(dirname "$f")").env"
+    [[ -e "$destino_cfg" ]] && destino_cfg="$cfg_dir/motores-$(basename "$(dirname "$f")").env"
     cp -p "$f" "$destino_cfg" && n_cfg=$((n_cfg + 1))
   done
   if [[ $n_cfg -eq 0 ]]; then
