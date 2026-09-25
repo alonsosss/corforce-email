@@ -118,7 +118,26 @@ dónde se retoma. Nada más: no se empieza la fase B2 hasta cerrar los puntos 1 
 
 **Criterio de cierre.** El estado del plan dice «aparcado» con la fecha y el motivo.
 
-## 5. Estado
+## 5. Auditoria del 2026-09-25
+
+Con todo lo anterior escrito, una revision adversaria del dia encontro cinco cosas reales, corregidas
+en `545a715`. Se dejan aqui porque el patron importa mas que los fallos:
+
+* **Un buzon `active=2` («solo recibe») se reenviaba al proveedor anterior.** Es el mismo fallo que
+  `b359a0d`, con otro estado, y justo el que se usa al cortar el acceso a alguien durante una
+  migracion. El arreglo anterior no miro los otros valores de la columna.
+* **El gateway daba por buena una credencial sin familia**, que casaba con cualquiera de las dos. La
+  unica capa que separa los poderes estaba escrita a prueba de fallos al reves.
+* **La disyuncion de las dos listas de rutas se comprobaba por texto**, no por URL: dos patrones
+  distintos que casan la misma direccion pasaban la validacion.
+* **La puerta de la CI podia bloquear un rollback de emergencia** y culpaba en falso de no haber
+  empujado el commit.
+* **Los documentos rectores** seguian describiendo una sola familia de credencial.
+
+Lo que se aprende: cada arreglo deja un borde sin mirar, y las guardias nuevas hay que probarlas
+tambien en el dia malo, no solo en el bueno.
+
+## 6. Estado
 
 | Punto | Estado |
 |---|---|
