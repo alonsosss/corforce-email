@@ -43,6 +43,7 @@ import { hasInvitation, InvitationCard } from './InvitationCard';
 import { MessageBody } from './MessageBody';
 import { MoveDialog } from './MoveDialog';
 import { printMessage } from './print';
+import { useInlineImages } from './useInlineImages';
 import { SenderShield } from './SenderShield';
 import { formatScheduled } from './schedule';
 import { canSnooze } from './snooze';
@@ -98,6 +99,7 @@ export function MessageView({
     [folderName, uid, remote],
   );
   const data = message.data;
+  const inlineImages = useInlineImages(data);
 
   useEffect(() => {
     if (!data || flags !== null) return;
@@ -289,7 +291,7 @@ export function MessageView({
           iconOnly
           title={t('webmail.reader.print')}
           icon={<IconPrinter size={16} />}
-          onClick={() => printMessage(data, { allowRemoteImages: remote })}
+          onClick={() => printMessage(data, { allowRemoteImages: remote, inlineImages })}
         >
           {t('webmail.reader.print')}
         </Button>
@@ -386,6 +388,7 @@ export function MessageView({
           remoteAllowed={remote}
           remoteLoading={remote && message.loading}
           onAllowRemote={() => setRemote(true)}
+          inlineImages={inlineImages}
         />
       </div>
       {isDrafts ? null : (

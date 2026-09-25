@@ -96,6 +96,18 @@ describe('firma al redactar', () => {
     expect(withSignature.text.indexOf('Ana')).toBeLessThan(withSignature.text.indexOf('> hola'));
   });
 
+  it('en una respuesta con formato va encima de la cita en HTML', () => {
+    const seed = {
+      ...EMPTY_DRAFT,
+      text: '\n\nLuis escribio:\n> hola',
+      html: '<div><br></div><blockquote><p>hola</p></blockquote>',
+    };
+    const body = initialBody(seed, 'reply', { ...signature, on_replies: true });
+    expect(body.html.indexOf('<b>Ana</b>')).toBeLessThan(body.html.indexOf('<blockquote>'));
+    expect(body.html).toContain('<blockquote><p>hola</p></blockquote>');
+    expect(initialBody(seed, 'reply', signature).html).toBe(seed.html);
+  });
+
   it('desactivada no se anade', () => {
     expect(initialBody(EMPTY_DRAFT, null, { ...signature, enabled: false }).text).toBe('');
   });

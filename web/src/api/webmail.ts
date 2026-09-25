@@ -56,6 +56,17 @@ export interface WebmailSession {
   quota: WebmailQuota | null;
 }
 
+/** POST /session con la verificacion en dos pasos activa: falta el codigo (cookie cf_wm_mfa). */
+export interface WebmailMfaChallenge {
+  mfa_required: true;
+}
+
+export type WebmailLoginResult = WebmailSession | WebmailMfaChallenge;
+
+export function isMfaChallenge(result: WebmailLoginResult): result is WebmailMfaChallenge {
+  return 'mfa_required' in result && result.mfa_required === true;
+}
+
 /**
  * GET /webmail/meta (app.Meta): los topes y catalogos que el servicio aplica, sacados de su
  * dominio y su configuracion. La interfaz valida con ellos antes de enviar; no los copia.
@@ -412,6 +423,62 @@ export interface MailFilters {
 
 /** El PUT solo admite los campos del contrato: sin limits ni updated_at (400). */
 export type MailFiltersInput = Pick<MailFilters, 'rules' | 'forwarding'>;
+
+/**
+ * Confirmacion de identidad en una accion sensible: la contrasena actual y, con la verificacion
+ * en dos pasos activa, un codigo (TOTP o de recuperacion).
+ */
+export interface Reauthentication {
+  current_password: string;
+  code?: string;
+}
+
+/** Protocolos de una contrasena de aplicacion, con el nombre del cuerpo de POST /security/app-passwords. */
+export const APP_PASSWORD_PROTOCOLS = ['imap', 'pop3', 'smtp', 'sieve', 'dav'] as const;
+export type AppPasswordProtocol = (typeof APP_PASSWORD_PROTOCOLS)[number];
+
+export interface WebmailMfaStatus {
+  enabled: boolean;
+  enabled_at: string | null;
+  recovery_remaining: number;
+}
+
+export interface WebmailAppPassword {
+  id: string;
+  name: string;
+  imap_access: boolean;
+  pop3_access: boolean;
+  smtp_access: boolean;
+  sieve_access: boolean;
+  dav_access: boolean;
+  active: boolean;
+  last_used_at: string | null;
+  created_at: string;
+}
+
+/** GET /security: verificacion en dos pasos y contrasenas de aplicacion del buzon. */
+export interface WebmailSecurity {
+  mfa: WebmailMfaStatus;
+  app_passwords: WebmailAppPassword[];
+  app_passwords_max: number;
+}
+
+/** POST /security/mfa/setup: nada queda guardado hasta activar con un codigo. */
+export interface WebmailMfaSetup {
+  secret: string;
+  provisioning_uri: string;
+}
+
+export interface RecoveryCodes {
+  recovery_codes: string[];
+}
+
+export type AppPasswordInput = { name: string } & Record<AppPasswordProtocol, boolean>;
+
+/** La contrasena generada viaja una sola vez. */
+export interface CreatedWebmailAppPassword extends WebmailAppPassword {
+  password: string;
+}
 
 export const CONTACT_VALUE_TYPES = ['home', 'work', 'mobile', 'other'] as const;
 export type ContactValueType = (typeof CONTACT_VALUE_TYPES)[number];
@@ -835,7 +902,9 @@ export function openWebmailEvents(): EventSource {
 
 export const webmailApi = {
   login: (username: string, password: string) =>
-    request<WebmailSession>('POST', wm.session, { json: { username, password } }),
+    request<WebmailLoginResult>('POST', wm.session, { json: { username, password } }),
+  /** Segundo paso del acceso: la cookie cf_wm_mfa del primero identifica el desafio. */
+  loginMfa: (code: string) => request<WebmailSession>('POST', wm.sessionMfa, { json: { code } }),
   session: (signal?: AbortSignal) => request<WebmailSession>('GET', wm.session, { signal }),
   logout: () => request<null>('DELETE', wm.session),
 
@@ -1000,13 +1069,32 @@ export const webmailApi = {
   setSignature: (input: SignatureInput) => request<Signature>('PUT', wm.signature, { json: input }),
 
   filters: (signal?: AbortSignal) => request<MailFilters>('GET', wm.filters, { signal }),
-  setFilters: (input: MailFiltersInput) => request<MailFilters>('PUT', wm.filters, { json: input }),
+  /** Con un reenvio externo nuevo el servicio exige reautenticacion (403 REAUTH_REQUIRED). */
+  setFilters: (input: MailFiltersInput, reauth?: Reauthentication) =>
+    request<MailFilters>('PUT', wm.filters, { json: { ...input, ...reauth } }),
 
   /** 204: el cambio revoca todas las sesiones del buzon, tambien esta. */
-  changePassword: (currentPassword: string, newPassword: string) =>
+  changePassword: (currentPassword: string, newPassword: string, code?: string) =>
     request<null>('POST', wm.password, {
-      json: { current_password: currentPassword, new_password: newPassword },
+      json: { current_password: currentPassword, new_password: newPassword, code },
     }),
+
+  security: (signal?: AbortSignal) => request<WebmailSecurity>('GET', wm.security, { signal }),
+  mfaSetup: (currentPassword: string) =>
+    request<WebmailMfaSetup>('POST', wm.securityMfaSetup, {
+      json: { current_password: currentPassword },
+    }),
+  mfaActivate: (secret: string, code: string) =>
+    request<RecoveryCodes>('POST', wm.securityMfaActivate, { json: { secret, code } }),
+  regenerateRecoveryCodes: (code: string) =>
+    request<RecoveryCodes>('POST', wm.securityRecoveryCodes, { json: { code } }),
+  disableMfa: (currentPassword: string, code: string) =>
+    request<null>('DELETE', wm.securityMfa, { json: { current_password: currentPassword, code } }),
+  createAppPassword: (input: AppPasswordInput, reauth: Reauthentication) =>
+    request<CreatedWebmailAppPassword>('POST', wm.securityAppPasswords, {
+      json: { ...input, ...reauth },
+    }),
+  deleteAppPassword: (id: string) => request<null>('DELETE', wm.securityAppPassword(id)),
 
   contacts: async (query: ContactQuery, signal?: AbortSignal): Promise<Page<Contact>> => {
     const res = await send(

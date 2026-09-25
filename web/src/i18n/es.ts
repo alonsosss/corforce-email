@@ -4712,4 +4712,127 @@ export const es = {
   'mailboxes.assistant.providerTitle': 'Depende de la plataforma',
   'mailboxes.assistant.providerNotice':
     'El asistente solo funciona cuando la plataforma tiene configurado su proveedor de inteligencia artificial. Si tras activarlo tus usuarios no lo ven en el webmail, el proveedor aún no está disponible: consúltalo con el soporte de la plataforma.',
+  'webmail.login.mfa.description':
+    'Tu buzón {mailbox} tiene la verificación en dos pasos activa. Escribe el código de {n} cifras de tu aplicación de autenticación.',
+  'webmail.login.mfa.recoveryDescription':
+    'Escribe uno de los códigos de recuperación que guardaste al activar la verificación en dos pasos de {mailbox}. Cada código sirve una sola vez.',
+  'webmail.login.mfa.code': 'Código de verificación',
+  'webmail.login.mfa.recoveryCode': 'Código de recuperación',
+  'webmail.login.mfa.recoveryPlaceholder': 'XXXXX-XXXXX',
+  'webmail.login.mfa.submit': 'Verificar',
+  'webmail.login.mfa.useRecovery': 'Usar un código de recuperación',
+  'webmail.login.mfa.useTotp': 'Usar el código de la aplicación',
+  'webmail.login.mfa.cancel': 'Volver al inicio',
+  'webmail.login.mfa.missing': 'Escribe el código de tu aplicación de autenticación.',
+  'webmail.login.mfa.recoveryMissing': 'Escribe un código de recuperación.',
+  'webmail.login.mfa.invalid': 'El código no es válido. Vuelve a intentarlo.',
+  'webmail.login.mfa.expired':
+    'La verificación tardó demasiado o tuvo demasiados intentos. Vuelve a escribir tu contraseña.',
+  'webmail.settings.tab.security': 'Seguridad',
+  'webmail.security.unavailable': 'No se pudo cargar la seguridad del buzón.',
+  'webmail.security.code': 'Código de verificación',
+  'webmail.security.codeRequired': 'Escribe el código de {n} cifras de tu aplicación.',
+  'webmail.security.codeMissing': 'Escribe el código de verificación.',
+  'webmail.security.codeOrRecoveryHint':
+    'El código de tu aplicación de autenticación o uno de tus códigos de recuperación.',
+  'webmail.security.mfa.title': 'Verificación en dos pasos',
+  'webmail.security.mfa.description':
+    'Además de la contraseña, el acceso al correo web pide un código de tu móvil. Si alguien consigue tu contraseña, no podrá entrar sin él.',
+  'webmail.security.mfa.status': 'Estado',
+  'webmail.security.mfa.on': 'Activa',
+  'webmail.security.mfa.off': 'No activa',
+  'webmail.security.mfa.enabledAt': 'Activada',
+  'webmail.security.mfa.recoveryRemaining': 'Códigos de recuperación disponibles',
+  'webmail.security.mfa.recoveryLow':
+    'Te quedan {n} códigos de recuperación. Genera otros antes de quedarte sin ninguno.',
+  'webmail.security.mfa.appsTitle': 'Programas de correo',
+  'webmail.security.mfa.appsNotice':
+    'Con la verificación en dos pasos activa, Outlook, Thunderbird, las aplicaciones de correo del móvil y cualquier otro programa dejan de aceptar tu contraseña principal: necesitarán una contraseña de aplicación, que puedes crear más abajo.',
+  'webmail.security.mfa.enable': 'Activar',
+  'webmail.security.mfa.enableTitle': 'Activar la verificación en dos pasos',
+  'webmail.security.mfa.passwordStep': 'Para empezar, confirma tu contraseña actual.',
+  'webmail.security.mfa.continue': 'Continuar',
+  'webmail.security.mfa.scan':
+    'Escanea el código QR con tu aplicación de autenticación (por ejemplo, Google Authenticator o Microsoft Authenticator) y escribe el código que te muestre.',
+  'webmail.security.mfa.qrAlt': 'Código QR para la aplicación de autenticación',
+  'webmail.security.mfa.secret': 'Clave para introducirla a mano',
+  'webmail.security.mfa.secretHint':
+    'Si no puedes escanear el QR, escribe esta clave en la aplicación.',
+  'webmail.security.mfa.activate': 'Activar',
+  'webmail.security.mfa.disable': 'Desactivar',
+  'webmail.security.mfa.disableTitle': 'Desactivar la verificación en dos pasos',
+  'webmail.security.mfa.disableDescription':
+    'Tu buzón volverá a quedar protegido solo por la contraseña. Confirma con tu contraseña y un código.',
+  'webmail.security.mfa.disabledDone': 'Verificación en dos pasos desactivada.',
+  'webmail.security.mfa.regenerate': 'Generar códigos nuevos',
+  'webmail.security.mfa.regenerateTitle': 'Generar códigos de recuperación nuevos',
+  'webmail.security.mfa.regenerateDescription':
+    'Los códigos anteriores dejarán de servir. Confirma con un código de verificación.',
+  'webmail.security.recovery.title': 'Códigos de recuperación',
+  'webmail.security.recovery.onceTitle': 'Se muestran una sola vez',
+  'webmail.security.recovery.once':
+    'Guárdalos en un lugar seguro. Si pierdes el móvil, cada código te deja entrar una vez. No podrás volver a verlos.',
+  'webmail.security.recovery.copy': 'Copiar los códigos',
+  'webmail.security.recovery.download': 'Descargar (.txt)',
+  'webmail.security.recovery.filename': 'codigos-recuperacion-{mailbox}.txt',
+  'webmail.security.recovery.fileHeader': 'Códigos de recuperación del buzón {mailbox}',
+  'webmail.security.recovery.confirm': 'He guardado los códigos',
+  'webmail.security.apps.description':
+    'Para los programas de correo (Outlook, Thunderbird, el móvil) cuando la verificación en dos pasos está activa. Cada programa usa la suya y puedes revocarla sin cambiar tu contraseña.',
+  'webmail.security.apps.protocols': 'Protocolos',
+  'webmail.security.apps.nameRequired': 'Escribe un nombre para reconocerla.',
+  'webmail.security.apps.protocolsRequired': 'Elige al menos un protocolo.',
+  'webmail.security.apps.passwordHint':
+    'Una contraseña de aplicación da acceso permanente al buzón: por eso se pide tu contraseña actual.',
+  'webmail.security.apps.full':
+    'Has llegado al máximo de {max} contraseñas de aplicación. Revoca alguna para crear otra.',
+  'webmail.security.apps.revokeName': 'Revocar {name}',
+  'webmail.security.apps.revokeConfirm':
+    'El programa que usa «{name}» dejará de conectarse al buzón. Esta acción no se puede deshacer.',
+  'webmail.forwarding.externalDisabled':
+    'Tu empresa no permite reenviar el correo fuera de la empresa: {list}.',
+  'webmail.reauth.title': 'Confirma que eres tú',
+  'webmail.reauth.description':
+    'Vas a reenviar correo a direcciones de fuera de la empresa. Para protegerte si alguien usa tu sesión, confirma tu contraseña.',
+  'webmail.reauth.addresses': 'Direcciones externas',
+  'webmail.reauth.submit': 'Confirmar y guardar',
+  'error.code.MFA_REQUIRED': 'Escribe el código de la verificación en dos pasos.',
+  'error.code.INVALID_MFA_CODE': 'El código de verificación no es válido.',
+  'error.code.MFA_CHALLENGE_EXPIRED':
+    'La verificación caducó. Vuelve a escribir tu buzón y tu contraseña.',
+  'error.code.MFA_ALREADY_ENABLED': 'La verificación en dos pasos ya está activa.',
+  'error.code.MFA_NOT_ENABLED': 'La verificación en dos pasos no está activa.',
+  'error.code.REAUTH_REQUIRED':
+    'Reenviar a direcciones de fuera de la empresa exige confirmar tu contraseña.',
+  'error.code.EXTERNAL_FORWARDING_DISABLED':
+    'Tu empresa no permite reenviar el correo a direcciones externas.',
+  'mailboxes.forwardingPolicy.title': 'Reenvío a direcciones externas',
+  'mailboxes.forwardingPolicy.description':
+    'Decide si los usuarios pueden reenviar su correo, por reenvío o por reglas, a direcciones de fuera de la empresa.',
+  'mailboxes.forwardingPolicy.status': 'Estado',
+  'mailboxes.forwardingPolicy.on': 'Permitido',
+  'mailboxes.forwardingPolicy.off': 'No permitido',
+  'mailboxes.forwardingPolicy.updatedAt': 'Último cambio',
+  'mailboxes.forwardingPolicy.removalNotice':
+    'Si lo desactivas, se retiran en ese momento los reenvíos a direcciones externas que ya tengan guardados los buzones de la empresa, también los de sus reglas. Volver a permitirlo no los restaura.',
+  'mailboxes.forwardingPolicy.enable': 'Permitir',
+  'mailboxes.forwardingPolicy.disable': 'No permitir',
+  'mailboxes.forwardingPolicy.disableTitle': 'Dejar de permitir el reenvío externo',
+  'mailboxes.forwardingPolicy.disableConfirm':
+    'Se retirarán ahora los reenvíos a direcciones de fuera de la empresa de todos los buzones, incluidos los de sus reglas, y no se podrán volver a guardar. Volver a permitirlo más adelante no los restaura.',
+  'mailboxes.forwardingPolicy.allowed': 'Reenvío externo permitido.',
+  'mailboxes.forwardingPolicy.disabled': 'Reenvío externo desactivado y retirado de los buzones.',
+  'mailboxes.forwardingPolicy.readOnly':
+    'Solo quien puede cambiar la política de correo lo modifica.',
+  'mailboxes.mfa.title': 'Verificación en dos pasos',
+  'mailboxes.mfa.description':
+    'La activa cada usuario desde su correo web. Si pierde el móvil y sus códigos de recuperación, puedes restablecerla.',
+  'mailboxes.mfa.status': 'Estado',
+  'mailboxes.mfa.on': 'Activa',
+  'mailboxes.mfa.off': 'No activa',
+  'mailboxes.mfa.reset': 'Restablecer',
+  'mailboxes.mfa.resetTitle': 'Restablecer la verificación en dos pasos',
+  'mailboxes.mfa.resetConfirm':
+    'Se quitará la verificación en dos pasos de {address} y se cerrarán sus sesiones del correo web. Podrá entrar solo con la contraseña y volver a activarla.',
+  'mailboxes.mfa.resetDone': 'Verificación en dos pasos restablecida.',
 } as const;

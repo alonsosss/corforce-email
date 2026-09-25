@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { ApiError, ERROR_CODES } from '@/api/errors';
@@ -31,6 +31,8 @@ describe('inicio de sesion del buzon', () => {
       session: null,
       expired: false,
       passwordChanged: false,
+      mfaExpired: false,
+      mfaUsername: null,
       checkError: null,
     });
   });
@@ -120,5 +122,112 @@ describe('inicio de sesion del buzon', () => {
     await user.click(form.submit);
     expect(await screen.findByText(t('webmail.login.invalid'))).toBeInTheDocument();
     expect(screen.queryByText(t('webmail.login.passwordChanged'))).toBeNull();
+  });
+
+  describe('verificacion en dos pasos', () => {
+    const SESSION = {
+      username: 'ana@empresa.com',
+      display_name: 'Ana',
+      expires_at: '2026-09-13T20:00:00Z',
+      idle_timeout_seconds: 1800,
+      quota: null,
+    };
+
+    async function passwordStep(user: ReturnType<typeof userEvent.setup>) {
+      vi.spyOn(webmailApi, 'login').mockResolvedValue({ mfa_required: true });
+      const form = renderLogin();
+      await user.type(form.username, 'ana@empresa.com');
+      await user.type(form.password, 'buena');
+      await user.click(form.submit);
+      return screen.findByLabelText(new RegExp(`^${t('webmail.login.mfa.code')}`));
+    }
+
+    it('tras la contrasena pide el codigo y abre la sesion con el', async () => {
+      const user = userEvent.setup();
+      const code = await passwordStep(user);
+      expect(useWebmailStore.getState().status).toBe('mfa');
+      expect(code).toHaveAttribute('autocomplete', 'one-time-code');
+      expect(code).toHaveAttribute('inputmode', 'numeric');
+      const verify = vi.spyOn(webmailApi, 'loginMfa').mockResolvedValue(SESSION);
+      vi.spyOn(webmailApi, 'session').mockResolvedValue(SESSION);
+
+      await user.type(code, '123456');
+      await user.click(screen.getByRole('button', { name: t('webmail.login.mfa.submit') }));
+
+      expect(await screen.findByText('Bandeja abierta')).toBeInTheDocument();
+      expect(verify).toHaveBeenCalledWith('123456');
+      expect(useWebmailStore.getState().status).toBe('authenticated');
+    });
+
+    it('un codigo malo deja el paso abierto con el mensaje', async () => {
+      const user = userEvent.setup();
+      const code = await passwordStep(user);
+      vi.spyOn(webmailApi, 'loginMfa').mockRejectedValue(
+        new ApiError(422, { code: ERROR_CODES.INVALID_MFA_CODE, message: '' }),
+      );
+      await user.type(code, '000000');
+      await user.click(screen.getByRole('button', { name: t('webmail.login.mfa.submit') }));
+
+      expect(await screen.findByText(t('webmail.login.mfa.invalid'))).toBeInTheDocument();
+      expect(code).toHaveValue('');
+      expect(useWebmailStore.getState().status).toBe('mfa');
+    });
+
+    it('acepta un codigo de recuperacion en su forma canonica', async () => {
+      const user = userEvent.setup();
+      await passwordStep(user);
+      const verify = vi.spyOn(webmailApi, 'loginMfa').mockResolvedValue(SESSION);
+      vi.spyOn(webmailApi, 'session').mockResolvedValue(SESSION);
+      await user.click(screen.getByRole('button', { name: t('webmail.login.mfa.useRecovery') }));
+      const recovery = screen.getByLabelText(new RegExp(t('webmail.login.mfa.recoveryCode')));
+      expect(recovery).not.toHaveAttribute('inputmode');
+
+      await user.type(recovery, 'abcde fghij');
+      await user.click(screen.getByRole('button', { name: t('webmail.login.mfa.submit') }));
+      await waitFor(() => expect(verify).toHaveBeenCalledWith('ABCDE-FGHIJ'));
+    });
+
+    it('un desafio caducado vuelve a la contrasena con aviso', async () => {
+      const user = userEvent.setup();
+      const code = await passwordStep(user);
+      vi.spyOn(webmailApi, 'loginMfa').mockRejectedValue(
+        new ApiError(401, { code: ERROR_CODES.MFA_CHALLENGE_EXPIRED, message: '' }),
+      );
+      await user.type(code, '123456');
+      await user.click(screen.getByRole('button', { name: t('webmail.login.mfa.submit') }));
+
+      expect(await screen.findByText(t('webmail.login.mfa.expired'))).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: t('webmail.login.submit') })).toBeInTheDocument();
+      expect(useWebmailStore.getState()).toMatchObject({ status: 'anonymous', mfaUsername: null });
+    });
+
+    it('conserva la pantalla a la que se queria ir', async () => {
+      const user = userEvent.setup();
+      render(
+        <MemoryRouter
+          initialEntries={[{ pathname: '/webmail/login', state: { from: '/webmail/settings' } }]}
+        >
+          <Routes>
+            <Route path="/webmail/login" element={<WebmailLoginPage />} />
+            <Route path="/webmail/settings" element={<p>Ajustes abiertos</p>} />
+          </Routes>
+        </MemoryRouter>,
+      );
+      vi.spyOn(webmailApi, 'login').mockResolvedValue({ mfa_required: true });
+      vi.spyOn(webmailApi, 'loginMfa').mockResolvedValue(SESSION);
+      vi.spyOn(webmailApi, 'session').mockResolvedValue(SESSION);
+      await user.type(
+        screen.getByLabelText(new RegExp(`^${t('webmail.login.username')}`)),
+        'ana@empresa.com',
+      );
+      await user.type(screen.getByLabelText(new RegExp(`^${t('common.password')}`)), 'buena');
+      await user.click(screen.getByRole('button', { name: t('webmail.login.submit') }));
+      await user.type(
+        await screen.findByLabelText(new RegExp(`^${t('webmail.login.mfa.code')}`)),
+        '123456',
+      );
+      await user.click(screen.getByRole('button', { name: t('webmail.login.mfa.submit') }));
+      expect(await screen.findByText('Ajustes abiertos')).toBeInTheDocument();
+    });
   });
 });

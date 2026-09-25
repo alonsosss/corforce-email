@@ -70,7 +70,7 @@ describe('cliente del webmail', () => {
 
     const session = await webmailApi.login('ana@empresa.com', 'secreta');
 
-    expect(session.username).toBe('ana@empresa.com');
+    expect(session).toMatchObject({ username: 'ana@empresa.com' });
     expect(calls[0]?.init.method).toBe('POST');
     expect(calls[0]?.url).toBe(endpoints.webmail.session);
     expect(JSON.parse(String(calls[0]?.init.body))).toEqual({

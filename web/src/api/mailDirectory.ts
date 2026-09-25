@@ -140,6 +140,8 @@ export interface Mailbox extends MailboxAccess {
   tls_enforce_out: boolean;
   relayhost_id: string | null;
   force_pw_update: boolean;
+  /** Verificacion en dos pasos del webmail activa en el buzon. */
+  mfa_enabled: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -501,6 +503,8 @@ export const mailDirectoryApi = {
   updateMailbox: (id: string, input: UpdateMailboxRequest) =>
     api.patch<Mailbox>(endpoints.mailboxes.byId(id), { body: input }),
   deleteMailbox: (id: string) => api.delete<null>(endpoints.mailboxes.byId(id)),
+  /** Quita la verificacion en dos pasos del buzon y cierra sus sesiones del webmail. */
+  resetMailboxMfa: (id: string) => api.delete<null>(endpoints.mailboxes.mfa(id)),
   setMailboxPassword: (id: string, password: string) =>
     api.post<null>(endpoints.mailboxes.password(id), { body: { password } }),
   mailboxQuota: (id: string) => api.get<QuotaUsage>(endpoints.mailboxes.quota(id)),
@@ -522,6 +526,21 @@ export const mailDirectoryApi = {
   getVacation: (id: string) => api.get<Vacation>(endpoints.mailboxes.vacation(id)),
   putVacation: (id: string, input: VacationInput) =>
     api.put<Vacation>(endpoints.mailboxes.vacation(id), { body: input }),
+};
+
+/** GET/PUT /mail-directory/mail-policy: politica de correo de la empresa. */
+export interface MailPolicy {
+  /** Apagado, el servicio rechaza reenvios fuera de la empresa y retira los ya guardados. */
+  external_forwarding_allowed: boolean;
+  updated_at: string | null;
+}
+
+export const mailPolicyApi = {
+  get: () => api.get<MailPolicy>(endpoints.mailDirectory.mailPolicy),
+  set: (externalForwardingAllowed: boolean) =>
+    api.put<MailPolicy>(endpoints.mailDirectory.mailPolicy, {
+      body: { external_forwarding_allowed: externalForwardingAllowed },
+    }),
 };
 
 export const mailRoutingApi = {

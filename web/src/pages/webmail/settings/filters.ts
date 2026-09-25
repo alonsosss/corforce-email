@@ -1,4 +1,4 @@
-import { ERROR_CODES, errorCode, errorDetail } from '@/api/errors';
+import { ERROR_CODES, errorCode, errorDetail, errorDetailList } from '@/api/errors';
 import { errorMessage } from '@/api/messages';
 import type {
   FilterLimits,
@@ -133,4 +133,18 @@ export function apiFieldError(err: unknown, prefix: string): FieldErrors | null 
   // Una direccion concreta del reenvio se senala en la lista entera.
   const normalized = key.replace(/^addresses\[\d+\]$/, 'addresses');
   return { [normalized || 'general']: errorMessage(err) };
+}
+
+/**
+ * Texto de un error al guardar reglas o reenvio. Si la empresa no permite reenviar fuera, se
+ * nombran las direcciones rechazadas.
+ */
+export function filtersErrorMessage(err: unknown): string {
+  if (errorCode(err) === ERROR_CODES.EXTERNAL_FORWARDING_DISABLED) {
+    const addresses = errorDetailList(err, 'addresses');
+    if (addresses.length) {
+      return t('webmail.forwarding.externalDisabled', { list: addresses.join(', ') });
+    }
+  }
+  return errorMessage(err);
 }

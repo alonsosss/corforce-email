@@ -134,6 +134,15 @@ export const PERMISSIONS = {
     read: [MODULES.mailboxes, 'assistant_settings', 'read'],
     update: [MODULES.mailboxes, 'assistant_settings', 'update'],
   },
+  // Politica de correo de la empresa (reenvio externo) y restablecimiento de la verificacion en
+  // dos pasos de un buzon (docs/Plan_Webmail_Seguridad.md).
+  mailPolicy: {
+    read: [MODULES.mailboxes, 'mail_policy', 'read'],
+    update: [MODULES.mailboxes, 'mail_policy', 'update'],
+  },
+  mailboxMfa: {
+    delete: [MODULES.mailboxes, 'mailbox_mfa', 'delete'],
+  },
 
   // Migracion de buzones desde otro servidor IMAP (mail-migration).
   mailMigrationJobs: {
