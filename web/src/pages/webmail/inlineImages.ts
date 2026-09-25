@@ -15,6 +15,11 @@ import { webmailApi, type MailMessage, type MessagePart } from '@/api/webmail';
  */
 const INLINE_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
 
+/** Mapa de bits que se puede pintar tal cual (nunca SVG); el tipo se compara sin parametros. */
+export function isBitmapImageType(contentType: string): boolean {
+  return INLINE_IMAGE_TYPES.has((contentType.split(';')[0] ?? '').trim().toLowerCase());
+}
+
 /**
  * Partes en linea que el HTML referencia, por la URL exacta del src. La ruta de la carpeta
  * la escapa el servicio a su manera; se reconoce por el prefijo del API y el final

@@ -7,6 +7,7 @@ import { t } from '@/i18n';
 import { resetWebmailCatalogs } from '@/webmail/catalogs';
 import { useWebmailStore } from '@/webmail/store';
 import ComposePage, { AUTOSAVE_DELAY_MS, UNDO_SEND_MS } from './ComposePage';
+import { NEW_MESSAGE, type ComposeRequest } from './composeWindow';
 import { DRAFTS, INBOX, META, outletFor, renderScreen } from './testing';
 
 const SIGNATURE: Signature = {
@@ -20,12 +21,11 @@ const SIGNATURE: Signature = {
 
 const SENT = { message_id: 'm@x', saved_to_sent: true, draft_removed: false, replayed: false };
 
-function renderCompose(url = '/webmail/compose') {
-  return renderScreen(<ComposePage />, {
-    path: '/webmail/compose',
-    url,
+function renderCompose(request: ComposeRequest = NEW_MESSAGE, onClose = vi.fn()) {
+  renderScreen(<ComposePage request={request} onClose={onClose} />, {
     outlet: outletFor([INBOX, DRAFTS]),
   });
+  return onClose;
 }
 
 async function fillMessage(user: ReturnType<typeof userEvent.setup>) {
@@ -73,7 +73,7 @@ describe('redaccion', () => {
       vi.spyOn(webmailApi, 'signature').mockResolvedValue(SIGNATURE);
       vi.spyOn(webmailApi, 'saveDraft').mockResolvedValue({ uid: 1 });
       const send = vi.spyOn(webmailApi, 'send').mockResolvedValue(SENT);
-      renderCompose();
+      const onClose = renderCompose();
 
       await fillMessage(user);
       await user.click(screen.getByRole('button', { name: t('webmail.compose.send') }));
@@ -94,6 +94,8 @@ describe('redaccion', () => {
         subject: 'Pedido',
       });
       expect(await screen.findByText(t('webmail.compose.sent'))).toBeInTheDocument();
+      // Enviado, la redaccion se cierra sola.
+      expect(onClose).toHaveBeenCalledTimes(1);
       const after = new Event('beforeunload', { cancelable: true });
       window.dispatchEvent(after);
       expect(after.defaultPrevented).toBe(false);
@@ -104,7 +106,7 @@ describe('redaccion', () => {
       vi.spyOn(webmailApi, 'signature').mockResolvedValue(SIGNATURE);
       vi.spyOn(webmailApi, 'saveDraft').mockResolvedValue({ uid: 1 });
       const send = vi.spyOn(webmailApi, 'send').mockResolvedValue(SENT);
-      renderCompose();
+      const onClose = renderCompose();
 
       await fillMessage(user);
       await user.click(screen.getByRole('button', { name: t('webmail.compose.send') }));
@@ -117,6 +119,7 @@ describe('redaccion', () => {
 
       expect(send).not.toHaveBeenCalled();
       expect(screen.getByLabelText(t('webmail.header.subject'))).not.toBeDisabled();
+      expect(onClose).not.toHaveBeenCalled();
     });
 
     it('si el envio falla al vencer el plazo, el error queda en la redaccion', async () => {
@@ -351,7 +354,13 @@ describe('redaccion', () => {
       filename: 'plano.png',
       contentType: 'image/png',
     });
-    renderCompose('/webmail/compose?mode=reply&folder=INBOX&uid=42');
+    renderCompose({
+      kind: 'source',
+      mode: 'reply',
+      folder: 'INBOX',
+      uid: 42,
+      assistantText: null,
+    });
 
     const editor = await screen.findByRole('textbox', { name: t('webmail.compose.body') });
     const quoted = editor.querySelector('blockquote');
@@ -359,5 +368,17 @@ describe('redaccion', () => {
     expect(quoted?.querySelector('img')?.getAttribute('src')).toMatch(/^data:image\/png;base64,/);
     expect(download).toHaveBeenCalledWith('INBOX', 42, '1.2', expect.anything());
     expect(screen.queryByText('plano.png')).toBeNull();
+  });
+
+  it('cerrar y descartar sin cambios cierran la redaccion sin navegar', async () => {
+    const user = userEvent.setup();
+    vi.spyOn(webmailApi, 'signature').mockResolvedValue(SIGNATURE);
+    const onClose = renderCompose();
+
+    await screen.findByLabelText(t('webmail.header.subject'));
+    await user.click(screen.getByRole('button', { name: t('webmail.compose.discard') }));
+    await user.click(screen.getByRole('button', { name: t('webmail.composer.close') }));
+    expect(onClose).toHaveBeenCalledTimes(2);
+    expect(screen.getByTestId('location').textContent).toBe('/webmail');
   });
 });

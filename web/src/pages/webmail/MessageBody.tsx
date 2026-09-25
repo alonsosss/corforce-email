@@ -1,11 +1,19 @@
 import { useMemo, useState } from 'react';
-import { webmailApi, type MailMessage, type MessagePart } from '@/api/webmail';
+import {
+  webmailApi,
+  webmailImageProxyUrl,
+  type MailMessage,
+  type MessagePart,
+} from '@/api/webmail';
 import { errorMessage } from '@/api/messages';
 import { Alert, Button, HtmlPreviewFrame, useToast } from '@/design/components';
 import { IconDownload, IconImage, IconPaperclip } from '@/design/icons';
+import { useResource } from '@/hooks/useResource';
 import { saveBlob } from '@/lib/download';
 import { formatBytes } from '@/lib/quota';
 import { t } from '@/i18n';
+import { webmailMeta } from '@/webmail/catalogs';
+import { AttachmentThumbnail, canThumbnail } from './AttachmentThumbnails';
 import { htmlToPlainText } from './compose';
 import { displayFilename } from './format';
 import { referencedInlineParts } from './inlineImages';
@@ -74,6 +82,7 @@ export function MessageBody({
             height={FRAME_HEIGHT}
             allowRemoteImages={remoteAllowed && !message.remote_images.blocked}
             inlineImages={inlineImages}
+            remoteImageProxy={webmailImageProxyUrl()}
             allowLinks
           />
         </>
@@ -100,12 +109,18 @@ export function MessageBody({
 }
 
 /**
- * Adjuntos: siempre como descarga. Los bytes se piden con la sesion del buzon y se guardan
- * como application/octet-stream; el navegador nunca los abre ni los interpreta.
+ * Adjuntos: la descarga siempre se guarda como application/octet-stream; el navegador nunca
+ * la abre ni la interpreta. Las imagenes de mapa de bits ademas se ven en miniatura.
  */
 function AttachmentList({ message, parts }: { message: MailMessage; parts: MessagePart[] }) {
   const toast = useToast();
+  const meta = useResource(webmailMeta);
   const [busy, setBusy] = useState<string | null>(null);
+  const maxThumbnailBytes = meta.data?.limits.max_download_bytes ?? null;
+  const images = parts.filter((part) => canThumbnail(part, maxThumbnailBytes));
+  const files = parts.filter((part) => !images.includes(part));
+  const nameOf = (part: MessagePart) =>
+    displayFilename(part.filename, t('webmail.attachments.unnamed'));
 
   const download = async (part: MessagePart, name: string) => {
     setBusy(part.part);
@@ -132,27 +147,46 @@ function AttachmentList({ message, parts }: { message: MailMessage; parts: Messa
       <h3 id="wm-attachments" className="cf-wm-section-title">
         {t('webmail.attachments.title', { n: parts.length })}
       </h3>
-      <ul className="cf-wm-attachments">
-        {parts.map((part) => {
-          const name = displayFilename(part.filename, t('webmail.attachments.unnamed'));
-          return (
-            <li key={part.part} className="cf-wm-attachment">
-              <IconPaperclip size={16} />
-              <span className="cf-wm-attachment__name">{name}</span>
-              <span className="cf-text-sm cf-text-muted">{formatBytes(part.size)}</span>
-              <Button
-                size="sm"
-                icon={<IconDownload size={14} />}
-                loading={busy === part.part}
-                aria-label={t('webmail.attachments.downloadName', { name })}
-                onClick={() => void download(part, name)}
-              >
-                {t('webmail.attachments.download')}
-              </Button>
-            </li>
-          );
-        })}
-      </ul>
+      {images.length ? (
+        <ul className="cf-wm-thumbs">
+          {images.map((part) => {
+            const name = nameOf(part);
+            return (
+              <AttachmentThumbnail
+                key={part.part}
+                message={message}
+                part={part}
+                name={name}
+                downloading={busy === part.part}
+                onDownload={() => void download(part, name)}
+              />
+            );
+          })}
+        </ul>
+      ) : null}
+      {files.length ? (
+        <ul className="cf-wm-attachments">
+          {files.map((part) => {
+            const name = nameOf(part);
+            return (
+              <li key={part.part} className="cf-wm-attachment">
+                <IconPaperclip size={16} />
+                <span className="cf-wm-attachment__name">{name}</span>
+                <span className="cf-text-sm cf-text-muted">{formatBytes(part.size)}</span>
+                <Button
+                  size="sm"
+                  icon={<IconDownload size={14} />}
+                  loading={busy === part.part}
+                  aria-label={t('webmail.attachments.downloadName', { name })}
+                  onClick={() => void download(part, name)}
+                >
+                  {t('webmail.attachments.download')}
+                </Button>
+              </li>
+            );
+          })}
+        </ul>
+      ) : null}
     </section>
   );
 }

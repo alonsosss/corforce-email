@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
 import {
   assistantApi,
   type AssistantMessageRef,
@@ -12,7 +11,7 @@ import { Button } from '@/design/components';
 import { IconReply } from '@/design/icons';
 import { t, tEnum } from '@/i18n';
 import { AssistantResult } from './AssistantResult';
-import { assistantTextFromState, charCount } from './assistant';
+import { charCount } from './assistant';
 import { useAssistantStatus } from './useAssistantStatus';
 
 type Result =
@@ -24,6 +23,8 @@ export interface ComposeAssistantProps {
   bodyText: () => string;
   /** Mensaje al que se responde; sin el no se ofrece proponer respuesta. */
   replyTo?: AssistantMessageRef;
+  /** Respuesta propuesta desde el lector: se inserta una sola vez, al abrir la redaccion. */
+  initialText?: string | null;
   disabled?: boolean;
   /** Pone el texto delante del cuerpo (encima de la cita). */
   onInsert: (text: string) => void;
@@ -39,12 +40,11 @@ export interface ComposeAssistantProps {
 export function ComposeAssistant({
   bodyText,
   replyTo,
+  initialText = null,
   disabled = false,
   onInsert,
   onReplace,
 }: ComposeAssistantProps) {
-  const location = useLocation();
-  const navigate = useNavigate();
   const { status, reload } = useAssistantStatus();
   const [result, setResult] = useState<Result | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
@@ -53,11 +53,7 @@ export function ComposeAssistant({
   useEffect(() => {
     if (seeded.current) return;
     seeded.current = true;
-    const text = assistantTextFromState(location.state);
-    if (!text) return;
-    onInsert(text);
-    // El estado se consume una vez: recargar la pagina no vuelve a insertarlo.
-    navigate(`${location.pathname}${location.search}`, { replace: true, state: null });
+    if (initialText) onInsert(initialText);
     // Solo al abrir la redaccion.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

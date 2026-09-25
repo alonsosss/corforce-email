@@ -5,7 +5,9 @@
 // referencias remotas; las imagenes se muestran solo si quien mira lo pide.
 //
 // Dos capas: se reescriben las referencias en el documento y ademas se le pone una CSP
-// propia (meta http-equiv) que no deja cargar nada remoto salvo las imagenes permitidas.
+// propia (meta http-equiv) que no deja cargar nada remoto salvo las imagenes permitidas. El
+// webmail va mas lejos: el servicio reescribe las imagenes remotas a su proxy firmado del
+// mismo origen y aqui solo se admite ese proxy (remoteImageProxy).
 
 export interface PreparedHtml {
   html: string;
@@ -25,6 +27,18 @@ export interface PrepareOptions {
    * tiene efecto si el iframe admite ventanas emergentes.
    */
   openLinksInNewTab?: boolean;
+  /**
+   * URL absoluta del proxy de imagenes del mismo origen (el webmail). Con ella, mostrar las
+   * imagenes remotas solo deja las que ya pasan por ese proxy (absolutas o relativas a la raiz,
+   * que se resuelven contra su origen porque un srcdoc no tiene base) y la CSP solo admite ese
+   * origen: una URL remota directa que se escapara al servicio se quita igual.
+   */
+  remoteImageProxy?: string;
+}
+
+interface ImageProxy {
+  origin: string;
+  pathname: string;
 }
 
 // Elementos que cargan algo por si solos y no son imagenes: se quitan siempre. meta
@@ -63,15 +77,38 @@ function isWebImage(url: string): boolean {
 }
 
 /** srcset: lista de "url descriptor" separados por comas. */
-function srcsetUrls(value: string): string[] {
+function srcsetCandidates(value: string): [string, string][] {
   return value
     .split(',')
-    .map((candidate) => candidate.trim().split(/\s+/)[0] ?? '')
-    .filter(Boolean);
+    .map((candidate): [string, string] => {
+      const [url = '', ...descriptor] = candidate.trim().split(/\s+/);
+      return [url, descriptor.join(' ')];
+    })
+    .filter(([url]) => url !== '');
 }
 
-function contentSecurityPolicy(allowRemoteImages: boolean): string {
-  const images = allowRemoteImages ? 'img-src data: https: http:' : 'img-src data:';
+function parseProxy(value: string | undefined): ImageProxy | null {
+  if (!value) return null;
+  const url = new URL(value);
+  return { origin: url.origin, pathname: url.pathname };
+}
+
+/** La URL absoluta del proxy si la referencia apunta exactamente a el; null en otro caso. */
+function proxiedImage(value: string, proxy: ImageProxy): string | null {
+  const raw = value.trim();
+  const candidate = raw.startsWith('/') && !raw.startsWith('//') ? `${proxy.origin}${raw}` : raw;
+  if (!candidate.startsWith(`${proxy.origin}/`)) return null;
+  try {
+    const url = new URL(candidate);
+    return url.origin === proxy.origin && url.pathname === proxy.pathname ? url.href : null;
+  } catch {
+    return null;
+  }
+}
+
+function contentSecurityPolicy(allowRemoteImages: boolean, proxy: ImageProxy | null): string {
+  const remote = proxy ? proxy.origin : 'https: http:';
+  const images = allowRemoteImages ? `img-src data: ${remote}` : 'img-src data:';
   return [
     "default-src 'none'",
     images,
@@ -87,13 +124,16 @@ function contentSecurityPolicy(allowRemoteImages: boolean): string {
 export function prepareUntrustedHtml(source: string, options: PrepareOptions): PreparedHtml {
   const doc = new DOMParser().parseFromString(source, 'text/html');
   const allow = options.allowRemoteImages;
+  const proxy = parseProxy(options.remoteImageProxy);
   let remoteImages = 0;
 
-  // Decide si una URL de imagen se conserva; cuenta las remotas.
-  const keepImage = (url: string): boolean => {
-    if (isInline(url)) return true;
+  // La URL con la que se conserva una imagen, o null si se quita; cuenta las remotas.
+  const resolveImage = (url: string): string | null => {
+    if (isInline(url)) return url;
     remoteImages += 1;
-    return allow && isWebImage(url);
+    if (!allow) return null;
+    if (proxy) return proxiedImage(url, proxy);
+    return isWebImage(url) ? url : null;
   };
 
   const inlined = (url: string): string | undefined => {
@@ -104,7 +144,9 @@ export function prepareUntrustedHtml(source: string, options: PrepareOptions): P
   const rewriteCss = (css: string): string =>
     css.replace(CSS_IMPORT, '').replace(CSS_URL, (whole, _q: string, url: string) => {
       if (url.startsWith('#')) return whole;
-      return keepImage(url) ? whole : 'none';
+      const kept = resolveImage(url);
+      if (kept === null) return 'none';
+      return kept === url ? whole : `url("${kept}")`;
     });
 
   doc.querySelectorAll(ALWAYS_REMOVED.join(',')).forEach((el) => el.remove());
@@ -113,15 +155,25 @@ export function prepareUntrustedHtml(source: string, options: PrepareOptions): P
     for (const name of IMAGE_ATTRIBUTES) {
       const value = el.getAttribute(name);
       if (value === null) continue;
-      const replacement = inlined(value);
-      if (replacement !== undefined) el.setAttribute(name, replacement);
-      else if (!keepImage(value)) el.removeAttribute(name);
+      const replacement = inlined(value) ?? resolveImage(value);
+      if (replacement === null) el.removeAttribute(name);
+      else if (replacement !== value) el.setAttribute(name, replacement);
     }
     const srcset = el.getAttribute('srcset');
     if (srcset !== null) {
       // map antes que every: cada candidato cuenta aunque el primero ya se bloquee.
-      const kept = srcsetUrls(srcset).map(keepImage);
-      if (!kept.every(Boolean)) el.removeAttribute('srcset');
+      const candidates = srcsetCandidates(srcset);
+      const kept = candidates.map(([url]) => resolveImage(url));
+      if (kept.every((url): url is string => url !== null)) {
+        el.setAttribute(
+          'srcset',
+          candidates
+            .map(([, descriptor], i) => [kept[i], descriptor].filter(Boolean).join(' '))
+            .join(', '),
+        );
+      } else {
+        el.removeAttribute('srcset');
+      }
     }
     const style = el.getAttribute('style');
     if (style !== null) el.setAttribute('style', rewriteCss(style));
@@ -131,7 +183,9 @@ export function prepareUntrustedHtml(source: string, options: PrepareOptions): P
     for (const name of ['href', 'xlink:href']) {
       const value = el.getAttribute(name);
       if (value === null || value.startsWith('#')) continue;
-      if (!keepImage(value)) el.removeAttribute(name);
+      const kept = resolveImage(value);
+      if (kept === null) el.removeAttribute(name);
+      else if (kept !== value) el.setAttribute(name, kept);
     }
   });
 
@@ -152,7 +206,7 @@ export function prepareUntrustedHtml(source: string, options: PrepareOptions): P
   doc.head.prepend(referrer);
   const csp = doc.createElement('meta');
   csp.setAttribute('http-equiv', 'Content-Security-Policy');
-  csp.setAttribute('content', contentSecurityPolicy(allow));
+  csp.setAttribute('content', contentSecurityPolicy(allow, proxy));
   doc.head.prepend(csp);
 
   return { html: `<!DOCTYPE html>${doc.documentElement.outerHTML}`, remoteImages };

@@ -23,6 +23,8 @@ export interface HtmlPreviewFrameProps {
    * recibido, cuyos enlaces ya saneo el servicio (http, https y mailto, noopener).
    */
   allowLinks?: boolean;
+  /** Proxy de imagenes del mismo origen: mostrar las remotas solo admite las que pasan por el. */
+  remoteImageProxy?: string;
 }
 
 const LINKS_SANDBOX = 'allow-popups allow-popups-to-escape-sandbox';
@@ -40,6 +42,7 @@ export function HtmlPreviewFrame({
   allowRemoteImages,
   inlineImages,
   allowLinks = false,
+  remoteImageProxy,
 }: HtmlPreviewFrameProps) {
   const [showRemote, setShowRemote] = useState(false);
   const controlled = allowRemoteImages !== undefined;
@@ -50,8 +53,9 @@ export function HtmlPreviewFrame({
         allowRemoteImages: allow,
         inlineImages,
         openLinksInNewTab: allowLinks,
+        remoteImageProxy,
       }),
-    [html, allow, inlineImages, allowLinks],
+    [html, allow, inlineImages, allowLinks, remoteImageProxy],
   );
 
   return (

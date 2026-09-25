@@ -17,6 +17,7 @@ import { t } from '@/i18n';
 import { resetWebmailCatalogs } from '@/webmail/catalogs';
 import { useWebmailStore } from '@/webmail/store';
 import ComposePage from './ComposePage';
+import { NEW_MESSAGE } from './composeWindow';
 import MailboxPage from './MailboxPage';
 import { MessageView } from './MessageView';
 import { QuickRepliesSettings } from './settings/QuickRepliesSettings';
@@ -290,7 +291,7 @@ describe('redaccion: seguimiento y respuestas rapidas', () => {
       send_at: new Date(Date.now() + 86_400_000).toISOString(),
       follow_up_error: 'REMINDER_LIMIT',
     });
-    renderScreen(<ComposePage />, {
+    renderScreen(<ComposePage request={NEW_MESSAGE} onClose={vi.fn()} />, {
       path: '/webmail/compose',
       outlet: outletFor([INBOX, DRAFTS]),
     });
@@ -312,7 +313,7 @@ describe('redaccion: seguimiento y respuestas rapidas', () => {
     const user = userEvent.setup();
     vi.spyOn(webmailRemindersApi, 'quickReplies').mockResolvedValue(QUICK);
     const saveDraft = vi.spyOn(webmailApi, 'saveDraft').mockResolvedValue({ uid: 9 });
-    renderScreen(<ComposePage />, {
+    renderScreen(<ComposePage request={NEW_MESSAGE} onClose={vi.fn()} />, {
       path: '/webmail/compose',
       outlet: outletFor([INBOX, DRAFTS]),
     });

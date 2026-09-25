@@ -876,6 +876,15 @@ export function composeFormData(input: ComposeInput, replaceUid?: number): FormD
 
 const wm = endpoints.webmail;
 
+/**
+ * URL absoluta del proxy de imagenes remotas del webmail. Al pedir las imagenes de un mensaje,
+ * el servicio reescribe cada una a este proxy con una firma propia (sin cookie), y el lector
+ * solo admite imagenes que pasen por el.
+ */
+export function webmailImageProxyUrl(): string {
+  return new URL(wm.imageProxy, window.location.origin).href;
+}
+
 function flag(value: boolean | undefined): string | undefined {
   return value ? 'true' : undefined;
 }

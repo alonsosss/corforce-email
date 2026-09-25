@@ -29,11 +29,13 @@ import {
 } from '@/webmail/notifications';
 import { SHORTCUTS, useShortcuts } from '@/webmail/shortcuts';
 import { useWebmailStore } from '@/webmail/store';
+import { useComposerHost } from './ComposeWindow';
+import { ComposeControllerContext, NEW_MESSAGE } from './composeWindow';
 import { FolderNav } from './FolderNav';
 import { ProfileMenu } from './ProfileMenu';
 import { SearchBar } from './SearchBar';
 import { defaultFolder, folderWithRole } from './folders';
-import type { WebmailOutlet } from './webmailContext';
+import { WebmailShellContext, type WebmailOutlet } from './webmailContext';
 
 function inboxUnread(folders: readonly WebmailFolder[] | null): number | null {
   if (!folders) return null;
@@ -117,9 +119,10 @@ export function WebmailShell() {
     setMenuOpen(false);
   }, [location.pathname, location.search]);
 
+  const { composer, composerWindow } = useComposerHost();
   const [searchFocus, setSearchFocus] = useState(0);
   useShortcuts({
-    c: () => navigate(paths.webmailCompose),
+    c: () => composer.open(NEW_MESSAGE),
     '?': () => setHelpOpen(true),
     '/': () => setSearchFocus((n) => n + 1),
   });
@@ -171,150 +174,151 @@ export function WebmailShell() {
   );
 
   return (
-    <div className="cf-wm">
-      <a className="cf-wm-skip" href="#wm-main">
-        {t('webmail.skipToContent')}
-      </a>
-      <header className="cf-wm__topbar">
-        <div className="cf-wm__brand">
-          <Button
-            variant="ghost"
-            iconOnly
-            className="cf-wm__menu-toggle"
-            icon={<IconMenu size={18} />}
-            aria-expanded={menuOpen}
-            aria-controls="wm-sidebar"
-            onClick={() => setMenuOpen((v) => !v)}
-          >
-            {t('webmail.folders.title')}
-          </Button>
-          <BrandMark />
-        </div>
-        <div className="cf-wm__search">
-          <SearchBar
-            folder={
-              onMailbox
-                ? current
-                : location.pathname === paths.webmailCompose && params.get('folder')
-                  ? params.get('folder')
-                  : folders.data
-                    ? defaultFolder(folders.data)
-                    : null
-            }
-            focusTick={searchFocus}
-            readsUrl={onMailbox}
-          />
-        </div>
-        <div className="cf-wm__account">
-          <Button
-            variant="ghost"
-            iconOnly
-            className="cf-wm__help"
-            icon={<IconKeyboard size={20} />}
-            onClick={() => setHelpOpen(true)}
-          >
-            {t('webmail.shortcuts.title')}
-          </Button>
-          <Button
-            variant="ghost"
-            iconOnly
-            className="cf-wm__settings"
-            icon={<IconSettings size={20} />}
-            onClick={() => navigate(paths.webmailSettings)}
-          >
-            {t('webmail.settings.open')}
-          </Button>
-          {notificationsSupported() ? (
-            <Button
-              variant="ghost"
-              iconOnly
-              className="cf-wm-notify"
-              aria-pressed={notify}
-              icon={<IconBell size={20} />}
-              onClick={() => void toggleNotify()}
-            >
-              {t(notify ? 'webmail.notify.disable' : 'webmail.notify.enable')}
-            </Button>
-          ) : null}
-          {session ? (
-            <ProfileMenu
-              name={session.display_name}
-              address={session.username}
-              theme={theme}
-              signingOut={signingOut}
-              onToggleTheme={toggle}
-              onSettings={() => navigate(paths.webmailSettings)}
-              onSignOut={() => void signOut()}
-            />
-          ) : null}
-        </div>
-      </header>
-      <aside
-        id="wm-sidebar"
-        className={['cf-wm__sidebar', menuOpen ? 'cf-wm__sidebar--open' : '']
-          .filter(Boolean)
-          .join(' ')}
-      >
-        <Button
-          variant="primary"
-          className="cf-wm__compose"
-          icon={<IconEdit size={18} />}
-          onClick={() => navigate(paths.webmailCompose)}
-        >
-          {t('webmail.compose.new')}
-        </Button>
-        <nav aria-label={t('webmail.apps.label')}>
-          <ul className="cf-wm-apps">
-            {appLink(paths.webmail, t('webmail.apps.mail'), <IconMail size={16} />, true)}
-            {appLink(
-              paths.webmailContacts,
-              t('webmail.apps.contacts'),
-              <IconAddressBook size={16} />,
-            )}
-            {appLink(paths.webmailCalendar, t('webmail.apps.calendar'), <IconCalendar size={16} />)}
-          </ul>
-        </nav>
-        {folders.error && !folders.data ? (
-          <ErrorState error={folders.error} onRetry={reloadFolders} />
-        ) : folders.data ? (
-          <FolderNav folders={folders.data} current={current} onChanged={reloadFolders} />
-        ) : (
-          <Skeleton lines={6} />
-        )}
-        <div className="cf-wm__sidebar-foot">
-          <QuotaSummary quota={session?.quota ?? null} />
-        </div>
-      </aside>
-      <div
-        className={['cf-wm__backdrop', menuOpen ? 'cf-wm__backdrop--visible' : '']
-          .filter(Boolean)
-          .join(' ')}
-        onClick={() => setMenuOpen(false)}
-        aria-hidden="true"
-      />
-      <main className="cf-wm__main" id="wm-main" tabIndex={-1}>
-        <div className="cf-wm__surface">
-          <Outlet context={outlet} />
-        </div>
-      </main>
-      <Modal
-        open={helpOpen}
-        title={t('webmail.shortcuts.title')}
-        onClose={() => setHelpOpen(false)}
-      >
-        <dl className="cf-wm-shortcuts">
-          {SHORTCUTS.map((shortcut) => (
-            <div key={shortcut.keys} className="cf-wm-shortcuts__row">
-              <dt>
-                <kbd>{shortcut.keys}</kbd>
-              </dt>
-              <dd>{t(shortcut.label)}</dd>
+    <WebmailShellContext.Provider value={outlet}>
+      <ComposeControllerContext.Provider value={composer}>
+        <div className="cf-wm">
+          <a className="cf-wm-skip" href="#wm-main">
+            {t('webmail.skipToContent')}
+          </a>
+          <header className="cf-wm__topbar">
+            <div className="cf-wm__brand">
+              <Button
+                variant="ghost"
+                iconOnly
+                className="cf-wm__menu-toggle"
+                icon={<IconMenu size={18} />}
+                aria-expanded={menuOpen}
+                aria-controls="wm-sidebar"
+                onClick={() => setMenuOpen((v) => !v)}
+              >
+                {t('webmail.folders.title')}
+              </Button>
+              <BrandMark />
             </div>
-          ))}
-        </dl>
-        <p className="cf-field__hint">{t('webmail.shortcuts.hint')}</p>
-      </Modal>
-    </div>
+            <div className="cf-wm__search">
+              <SearchBar
+                folder={onMailbox ? current : folders.data ? defaultFolder(folders.data) : null}
+                focusTick={searchFocus}
+                readsUrl={onMailbox}
+              />
+            </div>
+            <div className="cf-wm__account">
+              <Button
+                variant="ghost"
+                iconOnly
+                className="cf-wm__help"
+                icon={<IconKeyboard size={20} />}
+                onClick={() => setHelpOpen(true)}
+              >
+                {t('webmail.shortcuts.title')}
+              </Button>
+              <Button
+                variant="ghost"
+                iconOnly
+                className="cf-wm__settings"
+                icon={<IconSettings size={20} />}
+                onClick={() => navigate(paths.webmailSettings)}
+              >
+                {t('webmail.settings.open')}
+              </Button>
+              {notificationsSupported() ? (
+                <Button
+                  variant="ghost"
+                  iconOnly
+                  className="cf-wm-notify"
+                  aria-pressed={notify}
+                  icon={<IconBell size={20} />}
+                  onClick={() => void toggleNotify()}
+                >
+                  {t(notify ? 'webmail.notify.disable' : 'webmail.notify.enable')}
+                </Button>
+              ) : null}
+              {session ? (
+                <ProfileMenu
+                  name={session.display_name}
+                  address={session.username}
+                  theme={theme}
+                  signingOut={signingOut}
+                  onToggleTheme={toggle}
+                  onSettings={() => navigate(paths.webmailSettings)}
+                  onSignOut={() => void signOut()}
+                />
+              ) : null}
+            </div>
+          </header>
+          <aside
+            id="wm-sidebar"
+            className={['cf-wm__sidebar', menuOpen ? 'cf-wm__sidebar--open' : '']
+              .filter(Boolean)
+              .join(' ')}
+          >
+            <Button
+              variant="primary"
+              className="cf-wm__compose"
+              icon={<IconEdit size={18} />}
+              onClick={() => composer.open(NEW_MESSAGE)}
+            >
+              {t('webmail.compose.new')}
+            </Button>
+            <nav aria-label={t('webmail.apps.label')}>
+              <ul className="cf-wm-apps">
+                {appLink(paths.webmail, t('webmail.apps.mail'), <IconMail size={16} />, true)}
+                {appLink(
+                  paths.webmailContacts,
+                  t('webmail.apps.contacts'),
+                  <IconAddressBook size={16} />,
+                )}
+                {appLink(
+                  paths.webmailCalendar,
+                  t('webmail.apps.calendar'),
+                  <IconCalendar size={16} />,
+                )}
+              </ul>
+            </nav>
+            {folders.error && !folders.data ? (
+              <ErrorState error={folders.error} onRetry={reloadFolders} />
+            ) : folders.data ? (
+              <FolderNav folders={folders.data} current={current} onChanged={reloadFolders} />
+            ) : (
+              <Skeleton lines={6} />
+            )}
+            <div className="cf-wm__sidebar-foot">
+              <QuotaSummary quota={session?.quota ?? null} />
+            </div>
+          </aside>
+          <div
+            className={['cf-wm__backdrop', menuOpen ? 'cf-wm__backdrop--visible' : '']
+              .filter(Boolean)
+              .join(' ')}
+            onClick={() => setMenuOpen(false)}
+            aria-hidden="true"
+          />
+          <main className="cf-wm__main" id="wm-main" tabIndex={-1}>
+            <div className="cf-wm__surface">
+              <Outlet context={outlet} />
+            </div>
+          </main>
+          {composerWindow}
+          <Modal
+            open={helpOpen}
+            title={t('webmail.shortcuts.title')}
+            onClose={() => setHelpOpen(false)}
+          >
+            <dl className="cf-wm-shortcuts">
+              {SHORTCUTS.map((shortcut) => (
+                <div key={shortcut.keys} className="cf-wm-shortcuts__row">
+                  <dt>
+                    <kbd>{shortcut.keys}</kbd>
+                  </dt>
+                  <dd>{t(shortcut.label)}</dd>
+                </div>
+              ))}
+            </dl>
+            <p className="cf-field__hint">{t('webmail.shortcuts.hint')}</p>
+          </Modal>
+        </div>
+      </ComposeControllerContext.Provider>
+    </WebmailShellContext.Provider>
   );
 }
 

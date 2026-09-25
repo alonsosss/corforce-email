@@ -50,6 +50,62 @@ describe('HTML ajeno antes del iframe', () => {
     expect(remoteImages).toBe(9);
   });
 
+  describe('con el proxy de imagenes del mismo origen', () => {
+    const PROXY = 'https://app.test/api/v1/webmail/image-proxy';
+    const SIGNED = '/api/v1/webmail/image-proxy?u=aHR0cHM6Ly94&sig=abc';
+    const PROXIED = `
+      <img src="${SIGNED}" alt="relativa">
+      <img src="https://app.test${SIGNED}&amp;w=2" alt="absoluta">
+      <img src="${TRACKER}" alt="directa">
+      <img src="/api/v1/webmail/folders/INBOX/messages/1/parts/2" alt="otra ruta">
+      <img src="/api/v1/webmail/image-proxy/../folders/x" alt="salto">
+      <img src="https://otro.test/api/v1/webmail/image-proxy?sig=x" alt="otro origen">
+      <img src="//otro.test/api/v1/webmail/image-proxy?sig=x" alt="sin esquema">
+      <img srcset="${SIGNED} 1x, https://app.test${SIGNED} 2x">
+      <img srcset="${SIGNED} 1x, ${TRACKER} 2x" alt="mezcla">
+      <div style="background-image:url('${SIGNED}')">a</div>
+      <div style="background:url(${TRACKER})">b</div>
+      <img src="${PIXEL_DATA}" alt="inline">`;
+
+    it('solo deja el proxy, con URL absoluta, y la CSP solo admite su origen', () => {
+      const { html, remoteImages } = prepareUntrustedHtml(PROXIED, {
+        allowRemoteImages: true,
+        remoteImageProxy: PROXY,
+      });
+      const doc = new DOMParser().parseFromString(html, 'text/html');
+      const src = (alt: string) => doc.querySelector(`img[alt="${alt}"]`)?.getAttribute('src');
+      expect(src('relativa')).toBe(`https://app.test${SIGNED}`);
+      expect(src('absoluta')).toBe(`https://app.test${SIGNED}&w=2`);
+      for (const alt of ['directa', 'otra ruta', 'salto', 'otro origen', 'sin esquema']) {
+        expect(src(alt), alt).toBeNull();
+      }
+      expect(src('inline')).toBe(PIXEL_DATA);
+      expect(doc.querySelector('img[srcset]:not([alt])')?.getAttribute('srcset')).toBe(
+        `https://app.test${SIGNED} 1x, https://app.test${SIGNED} 2x`,
+      );
+      expect(doc.querySelector('img[alt="mezcla"]')?.hasAttribute('srcset')).toBe(false);
+      const styles = [...doc.querySelectorAll('div')].map((div) => div.getAttribute('style'));
+      expect(styles).toEqual([
+        `background-image:url("https://app.test${SIGNED}")`,
+        'background:none',
+      ]);
+      expect(html).not.toMatch(/tracker\.test/);
+      expect(html).toContain('img-src data: https://app.test;');
+      expect(html).not.toContain('https: http:');
+      expect(remoteImages).toBe(13);
+    });
+
+    it('sin permiso tampoco carga el proxy', () => {
+      const { html } = prepareUntrustedHtml(PROXIED, {
+        allowRemoteImages: false,
+        remoteImageProxy: PROXY,
+      });
+      expect(html).not.toContain('image-proxy');
+      expect(html).not.toMatch(/tracker\.test/);
+      expect(html).toContain('img-src data:;');
+    });
+  });
+
   it('un documento sin imagenes remotas no avisa de nada', () => {
     const { remoteImages } = prepareUntrustedHtml(`<p>Hola</p><img src="${PIXEL_DATA}">`, {
       allowRemoteImages: false,

@@ -2062,6 +2062,8 @@ export const es = {
   'webmail.composer.close': 'Guardar y cerrar',
   'webmail.composer.savedOnLeave': 'El mensaje quedó guardado en Borradores.',
   'webmail.composer.saveOnLeaveFailed': 'No se pudo guardar el borrador al salir de la redacción.',
+  'webmail.composer.oneAtATime':
+    'Ya estás redactando un mensaje. Termínalo, guárdalo o descártalo antes de empezar otro.',
   'webmail.reader.replyAll': 'Responder a todos',
   'webmail.reader.forward': 'Reenviar',
   'webmail.reader.editDraft': 'Seguir redactando',
@@ -2096,6 +2098,8 @@ export const es = {
   'webmail.attachments.download': 'Descargar',
   'webmail.attachments.downloadName': 'Descargar {name}',
   'webmail.attachments.unnamed': 'adjunto',
+  'webmail.attachments.view': 'Ver {name}',
+  'webmail.attachments.previewUnavailable': 'Vista previa no disponible',
   'webmail.move.title': 'Mover mensaje',
   'webmail.move.to': 'Carpeta de destino',
   'webmail.move.submit': 'Mover',

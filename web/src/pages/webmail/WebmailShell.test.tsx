@@ -104,12 +104,15 @@ describe('marco del webmail', () => {
     expect(within(help).getByText(t('webmail.shortcuts.archive'))).toBeInTheDocument();
     // Con el dialogo abierto los atajos no actuan.
     fireEvent.keyDown(document.body, { key: 'c' });
-    expect(screen.getByTestId('location').textContent).toBe('/webmail');
+    expect(screen.queryByRole('region', { name: t('webmail.composer.label') })).toBeNull();
     fireEvent.keyDown(document, { key: 'Escape' });
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
 
     fireEvent.keyDown(document.body, { key: 'c' });
-    expect(screen.getByTestId('location').textContent).toBe('/webmail/compose');
+    expect(
+      await screen.findByRole('region', { name: t('webmail.composer.label') }),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId('location').textContent).toBe('/webmail');
   });
 
   it('activa los avisos de escritorio con permiso y avisa del correo nuevo', async () => {

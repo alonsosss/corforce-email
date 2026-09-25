@@ -334,6 +334,7 @@ export const endpoints = {
     vacation: `${API_PREFIX}/webmail/vacation`,
     addressBook: `${API_PREFIX}/webmail/address-book`,
     events: `${API_PREFIX}/webmail/events`,
+    imageProxy: `${API_PREFIX}/webmail/image-proxy`,
     folders: `${API_PREFIX}/webmail/folders`,
     folder: (folder: string) => `${API_PREFIX}/webmail/folders/${seg(folder)}`,
     emptyFolder: (folder: string) => `${API_PREFIX}/webmail/folders/${seg(folder)}/empty`,
