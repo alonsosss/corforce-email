@@ -166,6 +166,9 @@ type HTMLSanitizer interface {
 	Incoming(html string, opts domain.SanitizeOptions) domain.SanitizedHTML
 	// Outgoing devuelve el HTML saneado y su version en texto plano.
 	Outgoing(html string) (clean, plain string)
+	// InlineImages cambia las imagenes data: del HTML saliente ya saneado por cid: y las
+	// devuelve como partes del mensaje.
+	InlineImages(clean string, newID func() string) (string, []domain.InlineImage, error)
 }
 
 // VirusScanner analiza un adjunto antes de guardarlo o enviarlo. Devuelve

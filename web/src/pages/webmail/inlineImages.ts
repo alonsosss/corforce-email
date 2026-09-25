@@ -75,3 +75,18 @@ export async function loadInlineImages(
   );
   return out;
 }
+
+/**
+ * Cambia en el HTML las URL de las partes por sus data: ya descargados. Lo usa la redaccion
+ * al abrir un borrador: el editor solo conserva imagenes data: o https, y al guardar o enviar
+ * el servicio las vuelve a convertir en partes cid:.
+ */
+export function embedInlineImages(html: string, images: ReadonlyMap<string, string>): string {
+  if (!images.size) return html;
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  doc.querySelectorAll('img[src]').forEach((img) => {
+    const data = images.get((img.getAttribute('src') ?? '').trim());
+    if (data) img.setAttribute('src', data);
+  });
+  return doc.body.innerHTML;
+}

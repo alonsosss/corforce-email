@@ -210,7 +210,12 @@ func (s *Service) prepare(ctx context.Context, sess domain.Session, d *domain.Dr
 	}
 	if d.HTML != "" {
 		clean, plain := s.sanitizer.Outgoing(d.HTML)
-		d.HTML = clean
+		withCIDs, inline, err := s.sanitizer.InlineImages(clean, func() string { return newMessageID(d.From.Email) })
+		if err != nil {
+			return err
+		}
+		d.HTML = withCIDs
+		d.Inline = inline
 		if strings.TrimSpace(d.Text) == "" {
 			d.Text = plain
 		}
@@ -247,7 +252,22 @@ func (s *Service) prepare(ctx context.Context, sess domain.Session, d *domain.Dr
 			return err
 		}
 	}
-	return s.scan(ctx, sess, d.Attachments)
+	if err := s.scan(ctx, sess, d.Attachments); err != nil {
+		return err
+	}
+	return s.scanInline(ctx, sess, d.Inline)
+}
+
+// scanInline pasa por ClamAV las imagenes del cuerpo, igual que los adjuntos.
+func (s *Service) scanInline(ctx context.Context, sess domain.Session, images []domain.InlineImage) error {
+	if len(images) == 0 {
+		return nil
+	}
+	as := make([]domain.Attachment, len(images))
+	for i, img := range images {
+		as[i] = domain.Attachment{Filename: img.Filename(), ContentType: img.ContentType, Data: img.Data}
+	}
+	return s.scan(ctx, sess, as)
 }
 
 // checkSender admite el propio buzon y las direcciones concretas que el directorio de la

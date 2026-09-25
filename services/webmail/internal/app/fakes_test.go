@@ -680,6 +680,7 @@ func (c *fakeComposer) Finalize(stored []byte, date time.Time) (domain.Finalized
 type fakeSanitizer struct {
 	opts   domain.SanitizeOptions
 	remote bool
+	inline []domain.InlineImage
 }
 
 func (f *fakeSanitizer) Incoming(html string, opts domain.SanitizeOptions) domain.SanitizedHTML {
@@ -689,6 +690,10 @@ func (f *fakeSanitizer) Incoming(html string, opts domain.SanitizeOptions) domai
 
 func (f *fakeSanitizer) Outgoing(html string) (string, string) {
 	return "limpio:" + html, "texto plano"
+}
+
+func (f *fakeSanitizer) InlineImages(html string, _ func() string) (string, []domain.InlineImage, error) {
+	return html, f.inline, nil
 }
 
 type fakeScanner struct {

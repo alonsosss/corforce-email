@@ -198,6 +198,9 @@ func (nopSanitizer) Incoming(html string, _ domain.SanitizeOptions) domain.Sanit
 	return domain.SanitizedHTML{HTML: html}
 }
 func (nopSanitizer) Outgoing(html string) (string, string) { return html, html }
+func (nopSanitizer) InlineImages(html string, _ func() string) (string, []domain.InlineImage, error) {
+	return html, nil, nil
+}
 
 // stubDirectory hace de mail-directory: el buzon de prueba puede enviar tambien como ventas.
 type stubDirectory struct{}

@@ -4,6 +4,7 @@ import {
   FOLDER_ROLES,
   webmailApi,
   type ComposeInput,
+  type MailMessage,
   type QuickReply,
   type Signature,
 } from '@/api/webmail';
@@ -75,6 +76,7 @@ import { followUpChoices } from './snooze';
 import { formatScheduled } from './schedule';
 import { ScheduleDialog } from './ScheduleDialog';
 import { useComposeWindow } from './composeWindow';
+import { embedInlineImages, loadInlineImages, referencedInlineParts } from './inlineImages';
 import { useWebmailOutlet } from './webmailContext';
 
 const TITLES: Record<ComposeMode | 'new', MessageKey> = {
@@ -89,6 +91,15 @@ const TITLES: Record<ComposeMode | 'new', MessageKey> = {
 export const UNDO_SEND_MS = 10_000;
 /** Pausa de escritura tras la que se guarda el borrador solo. */
 export const AUTOSAVE_DELAY_MS = 5_000;
+
+/**
+ * Las imagenes de un borrador llegan como URL de sus partes, que el editor no conserva: se
+ * incrustan como data: y al guardar o enviar el servicio las vuelve a convertir en cid:.
+ */
+async function withDraftImages(message: MailMessage, signal: AbortSignal): Promise<MailMessage> {
+  const images = await loadInlineImages(message, referencedInlineParts(message), signal);
+  return images.size ? { ...message, html: embedInlineImages(message.html, images) } : message;
+}
 
 export default function ComposePage() {
   const [params] = useSearchParams();
@@ -106,7 +117,9 @@ export default function ComposePage() {
   const source = useQuery(
     (signal) =>
       mode && folder && uid
-        ? webmailApi.message(folder, uid, { peek: true }, signal)
+        ? webmailApi
+            .message(folder, uid, { peek: true }, signal)
+            .then((message) => (mode === 'draft' ? withDraftImages(message, signal) : message))
         : Promise.resolve(null),
     [mode, folder, uid],
   );
@@ -445,6 +458,8 @@ function ComposeForm({
   // borrador en lugar de perderlo (lo pendiente de guardar solo en los ultimos segundos).
   saveOnLeave.current = () => {
     if (!windowed || closing.current || !dirty || !hasContent || blocked) return;
+    // Con la sesion cerrada o caducada no hay donde guardar: la peticion solo fallaria.
+    if (useWebmailStore.getState().status !== 'authenticated') return;
     if (waiting || send.busy || save.busy || autosaving) return;
     webmailApi.saveDraft(input(), draftUid).then(
       () => {
@@ -564,6 +579,13 @@ function ComposeForm({
     <form
       className="cf-wm-compose cf-form"
       onSubmit={submit}
+      onKeyDown={(e) => {
+        // Enter en un campo de una linea no envia: enviar es siempre un gesto explicito.
+        const target = e.target as HTMLInputElement;
+        if (e.key === 'Enter' && target.tagName === 'INPUT' && target.form === e.currentTarget) {
+          e.preventDefault();
+        }
+      }}
       noValidate
       aria-labelledby="wm-compose-title"
     >
@@ -750,6 +772,9 @@ function ComposeForm({
             labelledBy="compose-body-label"
             initialHtml={html}
             allowImages
+            maxImageBytes={
+              limits ? Math.min(limits.max_download_bytes, limits.max_message_bytes) : null
+            }
             minHeight="18rem"
             onChange={edit(setHtml)}
             disabled={busy}
@@ -861,7 +886,7 @@ function ComposeForm({
           iconOnly
           className="cf-wm-compose__discard"
           icon={<IconTrash size={18} />}
-          disabled={busy}
+          disabled={busy || autosaving}
           onClick={() =>
             dirty || draftOrigin === 'auto' ? setConfirmDiscard(true) : navigate(backHref)
           }

@@ -45,7 +45,14 @@ type Config struct {
 	// MaxLargeFileBytes es lo que el webmail deja pasar hacia mail-files en una subida de fichero
 	// grande; el tope exacto lo aplica mail-files.
 	MaxLargeFileBytes int64
+	// ComposeConcurrency es cuantos envios o borradores se componen a la vez en el proceso; 0
+	// usa defaultComposeConcurrency.
+	ComposeConcurrency int
 }
+
+// defaultComposeConcurrency cabe en el contenedor de 512 MiB con mensajes de 25 MiB: cada
+// composicion ocupa hasta unas cinco veces el tope del mensaje.
+const defaultComposeConcurrency = 2
 
 type Handler struct {
 	app     *app.Service
@@ -55,6 +62,8 @@ type Handler struct {
 
 	// assistant es opcional (SetAssistant): sin el, /assistant responde que no esta disponible.
 	assistant *app.AssistantService
+
+	compose *composeGate
 }
 
 func NewHandler(svc *app.Service, cfg Config, logger *zap.Logger) (*Handler, error) {
@@ -62,10 +71,15 @@ func NewHandler(svc *app.Service, cfg Config, logger *zap.Logger) (*Handler, err
 	if err != nil {
 		return nil, err
 	}
-	if cfg.OperationTimeout <= 0 || cfg.TransferTimeout <= 0 || cfg.SessionIdle <= 0 || cfg.SessionMax <= 0 || cfg.MaxMessageBytes <= 0 {
+	if cfg.OperationTimeout <= 0 || cfg.TransferTimeout <= 0 || cfg.SessionIdle <= 0 || cfg.SessionMax <= 0 ||
+		cfg.MaxMessageBytes <= 0 || cfg.ComposeConcurrency < 0 {
 		return nil, errors.New("webmail: plazos y topes del API deben ser positivos")
 	}
-	return &Handler{app: svc, cfg: cfg, origins: guard, logger: logger}, nil
+	if cfg.ComposeConcurrency == 0 {
+		cfg.ComposeConcurrency = defaultComposeConcurrency
+	}
+	return &Handler{app: svc, cfg: cfg, origins: guard, logger: logger,
+		compose: newComposeGate(cfg.ComposeConcurrency)}, nil
 }
 
 // PartURL es la URL de una parte en este API. La usa el saneado para las imagenes cid:.
@@ -249,6 +263,9 @@ func writeError(w http.ResponseWriter, err error) {
 	case errors.As(err, &rcpt):
 		response.ErrWithDetails(w, http.StatusUnprocessableEntity, "RECIPIENT_REJECTED", rcpt.Error(),
 			map[string]string{"address": rcpt.Address})
+	case errors.Is(err, domain.ErrComposeBusy):
+		w.Header().Set("Retry-After", composeRetryAfter)
+		response.Err(w, http.StatusServiceUnavailable, "COMPOSE_BUSY", domain.ErrComposeBusy.Error())
 	case errors.Is(err, domain.ErrSendInProgress):
 		response.Err(w, http.StatusConflict, "SEND_IN_PROGRESS", domain.ErrSendInProgress.Error())
 	case errors.Is(err, domain.ErrDeliveryUncertain):

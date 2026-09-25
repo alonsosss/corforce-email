@@ -1900,6 +1900,8 @@ export const es = {
     'No se pudieron analizar los adjuntos. Vuelve a intentarlo en unos minutos.',
   'error.code.RECIPIENT_REJECTED': 'El servidor de correo rechazó un destinatario.',
   'error.code.SEND_IN_PROGRESS': 'Este mensaje ya se está enviando. Espera unos segundos.',
+  'error.code.COMPOSE_BUSY':
+    'Hay muchos envíos en curso ahora mismo. Espera unos segundos y vuelve a intentarlo.',
   'error.code.DELIVERY_UNCERTAIN':
     'No se pudo confirmar si el mensaje salió: pudo quedar en cola. Revisa Enviados o pregunta a los destinatarios antes de volver a enviarlo.',
   // mail-files, a traves del webmail (ficheros grandes por enlace).
@@ -2170,6 +2172,10 @@ export const es = {
   'webmail.editor.bullets': 'Lista con viñetas',
   'webmail.editor.numbers': 'Lista numerada',
   'webmail.editor.quote': 'Cita',
+  'webmail.editor.image': 'Insertar imagen',
+  'webmail.editor.imageType': '«{name}» no es una imagen PNG, JPEG, GIF ni WebP.',
+  'webmail.editor.imageTooLarge': '«{name}» supera el máximo de {max} por imagen.',
+  'webmail.editor.imageUnreadable': 'No se pudo leer «{name}».',
   'webmail.editor.link': 'Insertar enlace',
   'webmail.editor.clear': 'Quitar formato',
   'webmail.editor.linkTitle': 'Insertar enlace',

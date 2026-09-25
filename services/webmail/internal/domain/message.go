@@ -220,6 +220,7 @@ const (
 	DefaultPerPage = 50
 	MaxPerPage     = 100
 	MaxSearchBytes = 256
+	MaxPage        = 1_000_000
 )
 
 // ListQuery es la pagina pedida de una carpeta.
@@ -287,6 +288,10 @@ func (q ListQuery) WithFilter(f SearchFilter) (ListQuery, error) {
 func NewListQuery(page, perPage int, search string) (ListQuery, error) {
 	if page < 1 {
 		page = 1
+	}
+	// Ningun buzon llega a tantas paginas; el tope evita que (page-1)*perPage se desborde.
+	if page > MaxPage {
+		return ListQuery{}, invalid("page", "demasiado alta")
 	}
 	if perPage < 1 {
 		perPage = DefaultPerPage

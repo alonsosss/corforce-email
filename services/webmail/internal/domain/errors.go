@@ -46,6 +46,9 @@ var (
 	// ErrSendInProgress es otra peticion con la misma clave de idempotencia que aun no
 	// termino.
 	ErrSendInProgress = errors.New("ese envío ya está en curso")
+	// ErrComposeBusy es un envio o borrador que no cabe ahora: el servicio acota cuantos
+	// mensajes compone a la vez para no quedarse sin memoria.
+	ErrComposeBusy = errors.New("hay demasiados envíos en curso; vuelve a intentarlo en unos segundos")
 	// ErrDeliveryUncertain es un envio cuya respuesta final de Postfix se perdio: el mensaje
 	// pudo quedar en cola. Con la misma clave no se vuelve a intentar.
 	ErrDeliveryUncertain = errors.New("no se pudo confirmar si el servidor de correo aceptó el mensaje")

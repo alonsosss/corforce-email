@@ -39,10 +39,21 @@ type Bus struct {
 }
 
 func NewBus(url string, logger *zap.Logger) (*Bus, error) {
+	// Sin tope de reconexiones: con un tope, tras una caida larga de NATS la conexion se
+	// cerraba para siempre y dejaban de llegar eventos como la revocacion de sesiones del
+	// webmail. Las suscripciones se restauran solas al volver a conectar.
 	conn, err := nats.Connect(url,
 		nats.RetryOnFailedConnect(true),
-		nats.MaxReconnects(60),
+		nats.MaxReconnects(-1),
 		nats.ReconnectWait(2*time.Second),
+		nats.DisconnectErrHandler(func(_ *nats.Conn, err error) {
+			if err != nil {
+				logger.Warn("event bus disconnected", zap.Error(err))
+			}
+		}),
+		nats.ReconnectHandler(func(c *nats.Conn) {
+			logger.Info("event bus reconnected", zap.String("url", c.ConnectedUrlRedacted()))
+		}),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("connect nats: %w", err)

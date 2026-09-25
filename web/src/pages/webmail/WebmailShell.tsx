@@ -192,8 +192,17 @@ export function WebmailShell() {
         </div>
         <div className="cf-wm__search">
           <SearchBar
-            folder={onMailbox ? current : folders.data ? defaultFolder(folders.data) : null}
+            folder={
+              onMailbox
+                ? current
+                : location.pathname === paths.webmailCompose && params.get('folder')
+                  ? params.get('folder')
+                  : folders.data
+                    ? defaultFolder(folders.data)
+                    : null
+            }
             focusTick={searchFocus}
+            readsUrl={onMailbox}
           />
         </div>
         <div className="cf-wm__account">

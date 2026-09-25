@@ -815,13 +815,13 @@ a.cf-wm-message:hover {
 .cf-wm-composer--expanded {
   top: var(--cf-space-8);
   bottom: var(--cf-space-8);
-  left: 50%;
-  right: auto;
+  left: 0;
+  right: 0;
   width: min(1040px, calc(100vw - 2 * var(--cf-space-8)));
   height: auto;
+  margin: 0 auto;
   border-bottom: 1px solid var(--cf-border);
   border-radius: var(--cf-radius-md);
-  transform: translateX(-50%);
 }
 .cf-wm-composer__backdrop {
   position: fixed;
@@ -1003,7 +1003,6 @@ a.cf-wm-message:hover {
     height: auto;
     border: 0;
     border-radius: 0;
-    transform: none;
   }
   .cf-wm-composer--minimized {
     right: var(--cf-space-3);

@@ -56,6 +56,12 @@ func (h *Handler) Send(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
+	release, ok := h.compose.acquire(sessionFrom(r).Username)
+	if !ok {
+		writeError(w, domain.ErrComposeBusy)
+		return
+	}
+	defer release()
 	extendDeadlines(w, h.cfg.TransferTimeout)
 	form, err := h.readCompose(w, r)
 	if err != nil {
@@ -95,6 +101,12 @@ func (h *Handler) Send(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) SaveDraft(w http.ResponseWriter, r *http.Request) {
+	release, ok := h.compose.acquire(sessionFrom(r).Username)
+	if !ok {
+		writeError(w, domain.ErrComposeBusy)
+		return
+	}
+	defer release()
 	extendDeadlines(w, h.cfg.TransferTimeout)
 	form, err := h.readCompose(w, r)
 	if err != nil {
@@ -118,6 +130,10 @@ func (h *Handler) SaveDraft(w http.ResponseWriter, r *http.Request) {
 	}
 	response.JSON(w, http.StatusCreated, draftDTO{UID: uid})
 }
+
+// composeRetryAfter son los segundos que el cliente espera antes de reintentar un envio que
+// no cupo.
+const composeRetryAfter = "5"
 
 // readCompose lee el formulario multipart parte a parte, con un tope total. No usa
 // ParseMultipartForm: volcaria los ficheros grandes a un temporal en disco, y la imagen

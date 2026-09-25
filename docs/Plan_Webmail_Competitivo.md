@@ -77,6 +77,14 @@ del buzon.
 8. **Redaccion con formato sin dependencias nuevas**: editor `contenteditable` con una barra minima.
    El HTML resultante lo sanea el servicio al enviar (`HTMLSanitizer.Outgoing`, bluemonday), que
    tambien genera la parte de texto.
+   Las imagenes se insertan con el boton de la barra, pegando o arrastrando (PNG, JPEG, GIF y
+   WebP; tope por imagen: el menor de `max_download_bytes` y `max_message_bytes`). Viajan como
+   `data:` y el servicio (`HTMLSanitizer.InlineImages`) las saca del HTML, comprueba su tipo por la
+   firma del fichero, las pasa por ClamAV y las adjunta en `multipart/related` con `Content-ID`
+   (el HTML las cita con `cid:`), que es lo que muestran Gmail y Outlook. Al abrir un borrador, la
+   interfaz vuelve a incrustar sus partes para que el editor las conserve. Enviar, programar y
+   guardar borradores pasan por un cupo (`WEBMAIL_COMPOSE_CONCURRENCY`, uno a la vez por buzon):
+   sin hueco, 503 `COMPOSE_BUSY` con `Retry-After`.
 
 ## 4. Contratos
 

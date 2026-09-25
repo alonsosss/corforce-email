@@ -259,6 +259,24 @@ func TestSendAnalizaLosAdjuntos(t *testing.T) {
 	}
 }
 
+func TestSendAnalizaLasImagenesDelCuerpo(t *testing.T) {
+	h := newHarness(t)
+	_, sess := h.login(t)
+	h.sanitizer.inline = []domain.InlineImage{{ContentID: "abc@x.com", ContentType: "image/png", Data: []byte("\x89PNG\r\n\x1a\n")}}
+	draft := domain.Draft{To: []domain.Address{{Email: "a@x.com"}}, HTML: `<img src="cid:abc@x.com">`}
+
+	h.scanner.err = fmt.Errorf("%w: Eicar-Test-Signature", domain.ErrAttachmentInfected)
+	if _, err := h.svc.Send(ctx, sess, draft, sendOpts(0)); err != domain.ErrAttachmentInfected {
+		t.Fatalf("imagen infectada: %v", err)
+	}
+	if len(h.sender.calls) != 0 {
+		t.Fatal("una imagen del cuerpo con malware no sale")
+	}
+	if len(h.scanner.scanned) != 1 || h.scanner.scanned[0] != "imagen-abc.png" {
+		t.Fatalf("la imagen pasa por ClamAV: %v", h.scanner.scanned)
+	}
+}
+
 func TestSendRespuestaEncadenaYMarcaRespondido(t *testing.T) {
 	h := newHarness(t)
 	_, sess := h.login(t)

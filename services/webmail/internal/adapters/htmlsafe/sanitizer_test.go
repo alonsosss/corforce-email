@@ -142,3 +142,33 @@ func TestSalienteConservaImagenesYQuitaScripts(t *testing.T) {
 		t.Fatalf("texto plano: %q", plain)
 	}
 }
+
+// png1x1 es un PNG valido minimo.
+const png1x1 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+
+func TestImagenesDelCuerpoPasanACid(t *testing.T) {
+	s := New()
+	clean, _ := s.Outgoing(`<p>Logo</p><img src="data:image/png;base64,` + png1x1 + `" alt="logo">` +
+		`<img src="data:image/png;base64,` + png1x1 + `"><img src="https://x.test/a.png">`)
+	n := 0
+	out, images, err := s.InlineImages(clean, func() string { n++; return "img" + string(rune('0'+n)) + "@empresa.com" })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(images) != 1 || images[0].ContentType != "image/png" || images[0].ContentID != "img1@empresa.com" {
+		t.Fatalf("la misma imagen repetida es una sola parte: %+v", images)
+	}
+	if strings.Count(out, `src="cid:img1@empresa.com"`) != 2 || !strings.Contains(out, "https://x.test/a.png") {
+		t.Fatalf("el HTML cita la parte y conserva la remota: %s", out)
+	}
+	assertAbsent(t, out, "data:")
+}
+
+func TestImagenDelCuerpoConTipoFalsoSeRechaza(t *testing.T) {
+	s := New()
+	// Declara PNG pero son bytes de texto: no se adjunta nada.
+	clean, _ := s.Outgoing(`<img src="data:image/png;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==">`)
+	if _, _, err := s.InlineImages(clean, func() string { return "x@y" }); err == nil {
+		t.Fatal("una imagen cuyo contenido no es del tipo declarado se rechaza")
+	}
+}

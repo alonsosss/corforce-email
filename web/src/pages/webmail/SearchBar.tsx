@@ -22,16 +22,21 @@ export interface SearchBarProps {
   folder: string | null;
   /** El atajo "/" pide el foco del buscador. */
   focusTick?: number;
+  /** Fuera del buzon la URL no lleva criterios de busqueda (en la redaccion, ?to= es un destinatario). */
+  readsUrl?: boolean;
 }
 
 /**
  * Buscador de la barra superior. Los criterios viajan en la URL del buzon; la vista y la
  * pestana abiertas se conservan y la paginacion vuelve a la primera pagina.
  */
-export function SearchBar({ folder, focusTick = 0 }: SearchBarProps) {
+export function SearchBar({ folder, focusTick = 0, readsUrl = true }: SearchBarProps) {
   const [params] = useSearchParams();
   const navigate = useNavigate();
-  const criteria = useMemo(() => readCriteria(params), [params]);
+  const criteria = useMemo(
+    () => (readsUrl ? readCriteria(params) : EMPTY_CRITERIA),
+    [readsUrl, params],
+  );
   const criteriaKey = JSON.stringify(criteria);
   const [draft, setDraft] = useState<SearchCriteria>(criteria);
   const [advanced, setAdvanced] = useState(false);

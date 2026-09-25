@@ -116,6 +116,17 @@ type AssistantUsage struct {
 	Tenant  int
 }
 
+// Exhausted dice si el uso de hoy ya llego a un tope: la siguiente peticion no cabria.
+func (l AssistantLimits) Exhausted(u AssistantUsage) error {
+	if u.Mailbox >= l.MailboxDaily {
+		return &AssistantQuotaError{Scope: QuotaMailbox, Limit: l.MailboxDaily}
+	}
+	if u.Tenant >= l.TenantDaily {
+		return &AssistantQuotaError{Scope: QuotaTenant, Limit: l.TenantDaily}
+	}
+	return nil
+}
+
 // MessageRef identifica un mensaje del buzon.
 type MessageRef struct {
 	Folder string

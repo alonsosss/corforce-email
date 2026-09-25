@@ -78,7 +78,11 @@ const (
 	maxScheduledPollInterval     = 5 * time.Minute
 	defaultScheduledBatch        = 4
 	maxScheduledBatch            = 20
-	defaultScheduledMaxDays      = 365
+	// Envios y borradores interactivos que se componen a la vez; el resto recibe 503 con
+	// Retry-After. Se suma a la memoria del lote programado, asi que ambos se dimensionan juntos.
+	defaultComposeConcurrency = 2
+	maxComposeConcurrency     = 32
+	defaultScheduledMaxDays   = 365
 	// maxScheduledMaxDays queda por debajo de lo que admite mail-directory (366 dias): una hora
 	// que el webmail acepta nunca la rechaza el directorio.
 	maxScheduledMaxDays = 365
@@ -156,6 +160,7 @@ type settings struct {
 	internalToken      string
 	scheduledPoll      time.Duration
 	scheduledBatch     int
+	composeConcurrency int
 	scheduledMaxDays   int
 	remindersPoll      time.Duration
 	remindersBatch     int
@@ -310,7 +315,7 @@ func main() {
 		CookieSecure: st.cookieSecure, SessionIdle: st.sessions.Idle, SessionMax: st.sessions.Max,
 		AllowedOrigins: st.origins, MaxMessageBytes: st.limits.MaxMessageBytes,
 		OperationTimeout: operationTimeout, TransferTimeout: transferTimeout,
-		MaxLargeFileBytes: largeFileCeiling,
+		MaxLargeFileBytes: largeFileCeiling, ComposeConcurrency: st.composeConcurrency,
 	}, logger)
 	if err != nil {
 		log.Fatalf("webmail: %v", err)
@@ -477,6 +482,9 @@ func loadSettings() (settings, error) {
 		return st, err
 	}
 	if st.scheduledBatch, err = config.EnvInt("WEBMAIL_SCHEDULED_BATCH", defaultScheduledBatch, 1, maxScheduledBatch); err != nil {
+		return st, err
+	}
+	if st.composeConcurrency, err = config.EnvInt("WEBMAIL_COMPOSE_CONCURRENCY", defaultComposeConcurrency, 1, maxComposeConcurrency); err != nil {
 		return st, err
 	}
 	if st.scheduledMaxDays, err = config.EnvInt("WEBMAIL_SCHEDULED_MAX_DAYS", defaultScheduledMaxDays, 1, maxScheduledMaxDays); err != nil {

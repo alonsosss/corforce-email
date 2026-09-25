@@ -240,6 +240,14 @@ func (a *AssistantService) run(ctx context.Context, sess domain.Session, action 
 		a.metrics.AssistantRequest(action, domain.AssistantOutcomeDisabled)
 		return none, domain.AssistantPrompt{}, domain.ErrAssistantDisabled
 	}
+	// Con el cupo ya agotado no se lee el buzon: un resumen carga hasta MaxThreadMessages
+	// mensajes. El cupo se consume despues de validar la entrada, como siempre.
+	if usage, err := a.quota.Usage(ctx, mb.TenantID, sess.Username, a.clock()); err == nil {
+		if qerr := a.cfg.Limits.Exhausted(usage); qerr != nil {
+			a.metrics.AssistantRequest(action, domain.AssistantOutcomeQuota)
+			return none, domain.AssistantPrompt{}, qerr
+		}
+	}
 	prompt, err := build()
 	if err != nil {
 		return none, prompt, err

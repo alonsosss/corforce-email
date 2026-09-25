@@ -8,6 +8,7 @@
 package htmlsafe
 
 import (
+	"encoding/base64"
 	"net/url"
 	"regexp"
 	"strings"
@@ -167,6 +168,43 @@ func outgoingImage(src string) string {
 		}
 	}
 	return ""
+}
+
+// InlineImages saca del HTML saliente ya saneado cada imagen data: y la cambia por cid:.
+// La misma imagen repetida comparte parte. Una imagen cuyo contenido no es del tipo que
+// declara, o demasiadas imagenes, dan un error de validacion del campo html.
+func (s *Sanitizer) InlineImages(clean string, newID func() string) (string, []domain.InlineImage, error) {
+	var images []domain.InlineImage
+	byData := map[string]string{}
+	var failure error
+	out := rewrite(clean, func(src string) string {
+		m := inlineImage.FindStringSubmatch(strings.ToLower(src[:min(len(src), 40)]))
+		if m == nil || failure != nil {
+			return src
+		}
+		if cid, ok := byData[src]; ok {
+			return "cid:" + cid
+		}
+		payload := strings.Join(strings.Fields(src[len(m[0]):]), "")
+		data, err := base64.StdEncoding.DecodeString(payload)
+		contentType := "image/" + m[1]
+		if err != nil || !domain.SniffInlineImage(contentType, data) {
+			failure = domain.NewValidationError("html", "una imagen del cuerpo no es válida")
+			return ""
+		}
+		if len(images) == domain.MaxInlineImages {
+			failure = domain.NewValidationError("html", "demasiadas imágenes en el cuerpo")
+			return ""
+		}
+		cid := newID()
+		byData[src] = cid
+		images = append(images, domain.InlineImage{ContentID: cid, ContentType: contentType, Data: data})
+		return "cid:" + cid
+	})
+	if failure != nil {
+		return "", nil, failure
+	}
+	return out, images, nil
 }
 
 func linkTarget(href string) string {

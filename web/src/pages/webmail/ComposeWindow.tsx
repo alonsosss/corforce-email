@@ -12,7 +12,7 @@ import { ComposeWindowContext, type ComposerSize } from './composeWindow';
 export default function ComposeRoute() {
   return (
     <>
-      <MailboxPage />
+      <MailboxPage background />
       <ComposeWindow>
         <ComposePage />
       </ComposeWindow>

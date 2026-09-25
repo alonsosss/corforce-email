@@ -288,4 +288,25 @@ describe('redaccion', () => {
     expect(screen.getByText('luis@cliente.com')).toBeInTheDocument();
     expect(webmailApi.contacts).toHaveBeenCalledWith({ q: 'lui' }, expect.anything());
   });
+
+  it('Enter en un campo o en el dialogo de enlace no envia el mensaje', async () => {
+    const user = userEvent.setup();
+    vi.spyOn(webmailApi, 'signature').mockResolvedValue(SIGNATURE);
+    vi.spyOn(webmailApi, 'saveDraft').mockResolvedValue({ uid: 1 });
+    const send = vi.spyOn(webmailApi, 'send').mockResolvedValue(SENT);
+    renderCompose();
+
+    await fillMessage(user);
+    await user.type(screen.getByLabelText(t('webmail.header.subject')), '{Enter}');
+    await user.click(screen.getByRole('button', { name: t('webmail.editor.link') }));
+    await user.type(
+      await screen.findByLabelText(t('webmail.editor.linkUrl')),
+      'ejemplo.com{Enter}',
+    );
+
+    expect(
+      screen.queryByText(t('webmail.compose.sendingSoon', { s: UNDO_SEND_MS / 1000 })),
+    ).toBeNull();
+    expect(send).not.toHaveBeenCalled();
+  });
 });

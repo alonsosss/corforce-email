@@ -265,6 +265,9 @@ func TestNewListQuery(t *testing.T) {
 	if q, _ := NewListQuery(1, 1000, ""); q.PerPage != MaxPerPage {
 		t.Fatalf("per_page se acota: %d", q.PerPage)
 	}
+	if _, err := NewListQuery(MaxPage+1, 100, ""); err == nil {
+		t.Fatal("una pagina desorbitada se rechaza antes de desbordar la ventana")
+	}
 	if _, err := NewListQuery(1, 10, "a\r\nb"); err == nil {
 		t.Fatal("una busqueda con saltos de linea se rechaza")
 	}

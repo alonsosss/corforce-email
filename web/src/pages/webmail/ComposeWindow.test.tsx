@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ApiError } from '@/api/errors';
 import { webmailApi, type Signature } from '@/api/webmail';
@@ -118,5 +118,41 @@ describe('ventana flotante de redaccion', () => {
 
     await waitFor(() => expect(screen.getByTestId('location').textContent).toBe('/webmail'));
     expect(saveDraft).not.toHaveBeenCalled();
+  });
+
+  it('los atajos del buzon de fondo no actuan mientras se redacta', async () => {
+    const remove = vi
+      .spyOn(webmailApi, 'batch')
+      .mockResolvedValue({ affected: 1, permanent: false });
+    vi.spyOn(webmailApi, 'message').mockRejectedValue(new ApiError(404, null));
+    renderScreen(<ComposeRoute />, {
+      path: '/webmail/compose',
+      url: '/webmail/compose?mode=reply&folder=INBOX&uid=7',
+      outlet: outletFor([INBOX, DRAFTS]),
+    });
+    await screen.findByRole('region', { name: t('webmail.composer.label') });
+
+    fireEvent.keyDown(document.body, { key: '#' });
+    fireEvent.keyDown(document.body, { key: 'e' });
+    fireEvent.keyDown(document.body, { key: 'j' });
+
+    expect(remove).not.toHaveBeenCalled();
+    expect(screen.getByTestId('location').textContent).toBe(
+      '/webmail/compose?mode=reply&folder=INBOX&uid=7',
+    );
+  });
+
+  it('el destinatario de ?to= no filtra el buzon de fondo', async () => {
+    const messages = vi.mocked(webmailApi.messages);
+    renderScreen(<ComposeRoute />, {
+      path: '/webmail/compose',
+      url: '/webmail/compose?to=luis%40cliente.com',
+      outlet: outletFor([INBOX, DRAFTS]),
+    });
+    await screen.findByLabelText(t('webmail.header.subject'));
+    await waitFor(() => expect(messages).toHaveBeenCalled());
+    for (const call of messages.mock.calls) {
+      expect(call[1]).not.toHaveProperty('to', 'luis@cliente.com');
+    }
   });
 });

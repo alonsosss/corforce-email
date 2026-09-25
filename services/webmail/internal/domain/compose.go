@@ -100,7 +100,9 @@ type Draft struct {
 	Text        string
 	HTML        string
 	Attachments []Attachment
-	InReplyTo   *ReplyTarget
+	// Inline son las imagenes del cuerpo; las extrae el servicio del HTML saneado.
+	Inline    []InlineImage
+	InReplyTo *ReplyTarget
 	// Source son adjuntos que el servicio toma del buzon; al resolverse pasan a Attachments.
 	Source *PartSource
 }
@@ -159,6 +161,9 @@ func (d Draft) validate(l Limits) error {
 	if len(d.Attachments)+d.pendingParts() > MaxAttachments {
 		return invalid("attachments", "demasiados adjuntos")
 	}
+	if len(d.Inline) > MaxInlineImages {
+		return invalid("html", "demasiadas imágenes en el cuerpo")
+	}
 	if n := len(d.Recipients()); n > l.MaxRecipients {
 		return ErrTooManyRecipients
 	}
@@ -197,6 +202,9 @@ func (d Draft) ContentBytes() int64 {
 	n := int64(len(d.Subject) + len(d.Text) + len(d.HTML))
 	for _, a := range d.Attachments {
 		n += int64(len(a.Data))
+	}
+	for _, i := range d.Inline {
+		n += int64(len(i.Data))
 	}
 	return n
 }

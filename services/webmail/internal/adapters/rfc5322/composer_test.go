@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/alonsosss/corforce-email/services/webmail/internal/domain"
+	gomessage "github.com/emersion/go-message"
 	"github.com/emersion/go-message/mail"
 )
 
@@ -127,5 +129,48 @@ func TestComposeAlternativaYAdjuntos(t *testing.T) {
 	}
 	if filename != "informe año.pdf" || !bytes.Equal(attached, pdf) {
 		t.Fatalf("adjunto: %q %q", filename, attached)
+	}
+}
+
+func TestComposeImagenesDelCuerpoEnRelated(t *testing.T) {
+	out := outgoing()
+	out.Text = "Logo"
+	out.HTML = `<p>Logo</p><img src="cid:img1@empresa.com">`
+	png := []byte("\x89PNG\r\n\x1a\nresto")
+	out.Inline = []domain.InlineImage{{ContentID: "img1@empresa.com", ContentType: "image/png", Data: png}}
+	raw, err := Composer{}.Compose(out, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertCRLF(t, raw)
+
+	entity, err := gomessage.Read(bytes.NewReader(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var tree []string
+	var cid string
+	var data []byte
+	err = entity.Walk(func(path []int, e *gomessage.Entity, err error) error {
+		if err != nil {
+			return err
+		}
+		ct, _, _ := e.Header.ContentType()
+		tree = append(tree, ct)
+		if ct == "image/png" {
+			cid = e.Header.Get("Content-Id")
+			data, _ = io.ReadAll(e.Body)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"multipart/alternative", "text/plain", "multipart/related", "text/html", "image/png"}
+	if strings.Join(tree, ",") != strings.Join(want, ",") {
+		t.Fatalf("estructura %v, se esperaba %v", tree, want)
+	}
+	if cid != "<img1@empresa.com>" || !bytes.Equal(data, png) {
+		t.Fatalf("imagen: cid %q, %d bytes", cid, len(data))
 	}
 }

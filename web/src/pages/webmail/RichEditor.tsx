@@ -4,12 +4,15 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  type ChangeEvent,
   type ClipboardEvent,
   type ComponentType,
+  type DragEvent,
 } from 'react';
 import { Button, FormField, Input, Modal } from '@/design/components';
 import {
   IconBold,
+  IconImage,
   IconItalic,
   IconLink,
   IconList,
@@ -19,6 +22,7 @@ import {
   IconUnderline,
   type IconProps,
 } from '@/design/icons';
+import { formatBytes } from '@/lib/quota';
 import { t, type MessageKey } from '@/i18n';
 import { cleanFragment, cleanHtml, plainToHtml } from './richText';
 
@@ -34,8 +38,13 @@ export interface RichEditorProps {
   /** Id del elemento que nombra el editor. */
   labelledBy: string;
   disabled?: boolean;
-  /** Admite imagenes https o incrustadas al cargar el contenido (la firma). */
+  /**
+   * Admite imagenes: conserva las https o incrustadas del contenido inicial y deja insertar
+   * nuevas (boton, pegar o arrastrar). El servicio las convierte en partes cid: al enviar.
+   */
   allowImages?: boolean;
+  /** Tope de cada imagen insertada; sin el, el editor no inserta imagenes nuevas. */
+  maxImageBytes?: number | null;
   minHeight?: string;
 }
 
@@ -55,6 +64,18 @@ function exec(command: string, value?: string): boolean {
 
 const LINK_SCHEME = /^(https?:\/\/|mailto:)/i;
 
+/** Tipos que se pueden insertar en el cuerpo: los mismos que el servicio acepta como cid:. */
+const INSERTABLE_IMAGES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
+
+function readAsDataUrl(file: File): Promise<string | null> {
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : null);
+    reader.onerror = () => resolve(null);
+    reader.readAsDataURL(file);
+  });
+}
+
 /** Enlace escrito por el usuario: sin esquema se entiende https; otros esquemas no valen. */
 export function normalizeLink(raw: string): string | null {
   const value = raw.trim();
@@ -70,7 +91,16 @@ export function normalizeLink(raw: string): string | null {
  * antes de entrar; el HTML resultante lo sanea otra vez el servicio al enviar.
  */
 export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function RichEditor(
-  { id, initialHtml, onChange, labelledBy, disabled = false, allowImages = false, minHeight },
+  {
+    id,
+    initialHtml,
+    onChange,
+    labelledBy,
+    disabled = false,
+    allowImages = false,
+    maxImageBytes = null,
+    minHeight,
+  },
   ref,
 ) {
   const editor = useRef<HTMLDivElement>(null);
@@ -78,6 +108,9 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
   const [linking, setLinking] = useState(false);
   const [link, setLink] = useState('');
   const [linkError, setLinkError] = useState<string | null>(null);
+  const [imageError, setImageError] = useState<string | null>(null);
+  const imageInput = useRef<HTMLInputElement>(null);
+  const insertsImages = allowImages && maxImageBytes !== null && maxImageBytes > 0;
 
   useLayoutEffect(() => {
     editor.current?.replaceChildren(cleanFragment(initialHtml, { images: allowImages }));
@@ -110,7 +143,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
     emit();
   };
 
-  const insertHtml = (html: string) => {
+  const insertHtml = (html: string, images = false) => {
     if (!exec('insertHTML', html)) {
       const selection = window.getSelection();
       const node = editor.current;
@@ -118,13 +151,71 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
       const range = selection.getRangeAt(0);
       if (!node.contains(range.commonAncestorContainer)) return;
       range.deleteContents();
-      range.insertNode(cleanFragment(html));
+      range.insertNode(cleanFragment(html, { images }));
       range.collapse(false);
     }
   };
 
+  // Lee cada imagen como data: y la inserta donde esta el cursor. Solo mapas de bits: el
+  // servicio vuelve a comprobar el tipo por su contenido antes de adjuntarla.
+  const insertImages = async (files: readonly File[]) => {
+    setImageError(null);
+    for (const file of files) {
+      if (!INSERTABLE_IMAGES.has(file.type)) {
+        setImageError(t('webmail.editor.imageType', { name: file.name }));
+        continue;
+      }
+      if (maxImageBytes !== null && file.size > maxImageBytes) {
+        setImageError(
+          t('webmail.editor.imageTooLarge', { name: file.name, max: formatBytes(maxImageBytes) }),
+        );
+        continue;
+      }
+      const src = await readAsDataUrl(file);
+      if (!src) {
+        setImageError(t('webmail.editor.imageUnreadable', { name: file.name }));
+        continue;
+      }
+      const img = document.createElement('img');
+      img.setAttribute('src', src);
+      img.setAttribute('alt', file.name);
+      editor.current?.focus();
+      insertHtml(img.outerHTML, true);
+    }
+    emit();
+  };
+
+  const imageFiles = (list: FileList | null): File[] =>
+    Array.from(list ?? []).filter((file) => file.type.startsWith('image/'));
+
+  const onDrop = (e: DragEvent<HTMLDivElement>) => {
+    if (!insertsImages) return;
+    const files = imageFiles(e.dataTransfer.files);
+    if (!files.length) return;
+    e.preventDefault();
+    // El cursor va al punto donde se solto la imagen.
+    const range = document.caretRangeFromPoint?.(e.clientX, e.clientY);
+    const selection = window.getSelection();
+    if (range && selection && editor.current?.contains(range.startContainer)) {
+      selection.removeAllRanges();
+      selection.addRange(range);
+    }
+    void insertImages(files);
+  };
+
+  const onPickImages = (e: ChangeEvent<HTMLInputElement>) => {
+    const files = imageFiles(e.target.files);
+    e.target.value = '';
+    if (files.length) void insertImages(files);
+  };
+
   const onPaste = (e: ClipboardEvent<HTMLDivElement>) => {
     e.preventDefault();
+    const pasted = insertsImages ? imageFiles(e.clipboardData.files) : [];
+    if (pasted.length) {
+      void insertImages(pasted);
+      return;
+    }
     const html = e.clipboardData.getData('text/html');
     const text = e.clipboardData.getData('text/plain');
     insertHtml(html ? cleanHtml(html) : plainToHtml(text));
@@ -197,6 +288,16 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
       run: () => apply('formatBlock', 'blockquote'),
     },
     { id: 'link', label: 'webmail.editor.link', icon: IconLink, run: openLink },
+    ...(insertsImages
+      ? [
+          {
+            id: 'image',
+            label: 'webmail.editor.image' as MessageKey,
+            icon: IconImage,
+            run: () => imageInput.current?.click(),
+          },
+        ]
+      : []),
     {
       id: 'clear',
       label: 'webmail.editor.clear',
@@ -247,7 +348,25 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
         style={minHeight ? { minHeight } : undefined}
         onInput={emit}
         onPaste={onPaste}
+        onDrop={onDrop}
       />
+      {insertsImages ? (
+        <input
+          ref={imageInput}
+          type="file"
+          accept={[...INSERTABLE_IMAGES].join(',')}
+          multiple
+          hidden
+          tabIndex={-1}
+          aria-hidden="true"
+          onChange={onPickImages}
+        />
+      ) : null}
+      {imageError ? (
+        <p className="cf-field__error cf-wm-editor__error" role="alert">
+          {imageError}
+        </p>
+      ) : null}
       <Modal
         open={linking}
         title={t('webmail.editor.linkTitle')}
@@ -264,6 +383,8 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
         <form
           onSubmit={(e) => {
             e.preventDefault();
+            // El editor vive dentro del formulario de la redaccion: el envio no debe subir.
+            e.stopPropagation();
             insertLink();
           }}
         >

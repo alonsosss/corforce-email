@@ -326,6 +326,19 @@ func TestAsistenteEntradaInvalidaNoGastaCupo(t *testing.T) {
 	}
 }
 
+func TestAsistenteConCupoAgotadoNoLeeElBuzon(t *testing.T) {
+	h := newAssistantHarness(t, true)
+	h.quota.mailbox[testUser] = h.svc.cfg.Limits.MailboxDaily
+	var qerr *domain.AssistantQuotaError
+	_, err := h.svc.Summarize(context.Background(), assistantSession(testUser, asTenantA), []domain.MessageRef{inbox1})
+	if !errors.As(err, &qerr) || qerr.Scope != domain.QuotaMailbox {
+		t.Fatalf("cupo agotado: %v", err)
+	}
+	if h.source.calls != 0 {
+		t.Fatalf("con el cupo agotado no se leen mensajes: %d lecturas", h.source.calls)
+	}
+}
+
 func TestAsistenteTruncaElHiloAlTopeServido(t *testing.T) {
 	h := newAssistantHarness(t, true)
 	res, err := h.svc.Summarize(context.Background(), assistantSession(testUser, asTenantA),
