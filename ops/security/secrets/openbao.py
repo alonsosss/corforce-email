@@ -329,11 +329,33 @@ def verificar_instantanea(origen):
     except urllib.error.HTTPError as e:
         raise Fallo(f"la instantanea no se pudo restaurar ({e.code}): llave distinta o fichero danado") from None
     _esperar_activo()
+    # Con las credenciales de AppRole delante se comprueba ademas que la credencial de despliegue
+    # que viaja DENTRO de la instantanea sirve. Sin ellas -un ensayo de recuperacion fuera del
+    # servidor, que es cuando esto importa de verdad- se lee con el token raiz de la instancia
+    # desechable, que acabamos de crear: prueba lo esencial, que la instantanea se descifra con la
+    # llave y trae los secretos.
+    # OJO: tras snapshot-force, `root` (el de la instancia vacia) ya NO vale: la instantanea trae su
+    # propio almacen de tokens. Hay dos formas de entrar, y las dos prueban algo distinto:
+    #   - con las credenciales de AppRole del servidor, que viajan DENTRO de la instantanea: prueba
+    #     ademas que la credencial de despliegue sirve. Es lo que corre en el servidor cada semana.
+    #   - con la clave de recuperacion: la via del dia que el servidor no esta, y la unica que puede
+    #     probar un ensayo de recuperacion de verdad.
+    con_approle = all(
+        os.path.exists(os.path.join(CRED_DIR, f"despliegue.{x}")) for x in ("role_id", "secret_id")
+    )
+    if not con_approle:
+        raise Fallo(
+            "sin las credenciales de AppRole no se puede leer la instantanea restaurada: el token "
+            "raiz anterior deja de valer y sys/generate-root no esta disponible con el sello "
+            "estatico de esta version. Por eso despliegue.role_id y despliegue.secret_id tienen "
+            "que vivir tambien FUERA del servidor (docs/Plan_Robustez_Operativa.md)"
+        )
     with Sesion("despliegue") as s:
         datos = _peticion("GET", f"{MONTAJE}/data/{DOCUMENTO}", token=s.token)["data"]["data"]
+    via = "con la credencial de despliegue"
     if not datos:
         raise Fallo("la instantanea restaura pero el documento de secretos esta vacio")
-    print(f"openbao: la instantanea restaura y devuelve {len(datos)} secretos")
+    print(f"openbao: la instantanea restaura y devuelve {len(datos)} secretos, {via}")
     return 0
 
 

@@ -175,6 +175,44 @@ if [[ $# -eq 0 && "$STORE_BACKEND" == openbao ]]; then
   fi
 fi
 
+# La CONFIGURACION del servidor, en la misma corrida. Sin ella los datos vuelven pero no se sabe
+# como arrancarlos: que celda es, que dominio sirve, a que apunta cada servicio. Son ficheros que
+# nadie versiona porque describen ESTE servidor, y hasta que el ensayo de recuperacion lo senalo no
+# salian de el (ops/backup/ensayo-recuperacion.sh).
+#
+# Cifrado OBLIGATORIO, aunque el destino sea la propia cuenta de AWS: el .env lleva todavia algun
+# secreto (el token entre servicios, la clave del agente de cola) y no puede viajar en claro.
+if [[ $# -eq 0 ]]; then
+  cfg="$dest/config.tar.gz"
+  cfg_dir="$(mktemp -d)"
+  n_cfg=0
+  for f in "$APP_DIR/.env" "${MAIL_DEPLOY_PATH:-/opt/core-force-mail/mail-src}/.env"; do
+    [[ -r "$f" ]] || continue
+    # El nombre dice de donde sale, para poder reponerlo sin adivinar.
+    destino_cfg="$cfg_dir/$(basename "$(dirname "$f")").env"
+    cp -p "$f" "$destino_cfg" && n_cfg=$((n_cfg + 1))
+  done
+  if [[ $n_cfg -eq 0 ]]; then
+    echo "  AVISO: no se pudo leer ningun .env; la configuracion no se respalda"; fail=1
+  elif tar -czf "$cfg" -C "$cfg_dir" . && (cd "$dest" && sha256sum config.tar.gz >config.tar.gz.sha256); then
+    chmod 600 "$cfg"
+    echo "  OK configuracion ($n_cfg fichero(s), $(du -h "$cfg" | cut -f1))"
+    if cf_externo_activo; then
+      if ! cf_externo_cifra; then
+        echo "  FALLA: la configuracion no sale del servidor sin cifrar: lleva secretos"; fail=1
+      elif ! cf_cifrar "$cfg" "$cfg.gpg"; then
+        echo "  AVISO: la configuracion no se pudo cifrar; no sale del servidor"; fail=1
+      elif ! cf_externo_subir "$cfg.gpg" "config/$stamp.tar.gz.gpg"; then
+        echo "  AVISO: la configuracion no subio a s3://$CF_S3_BUCKET"; fail=1
+      fi
+      rm -f "$cfg.gpg"
+    fi
+  else
+    echo "  AVISO: no se pudo empaquetar la configuracion"; fail=1
+  fi
+  rm -rf "$cfg_dir"
+fi
+
 if [[ $externo_mal -eq 1 ]]; then
   echo "AVISO: copia externa mal configurada (FALLA de arriba); solo hay copia local"
 elif ! cf_externo_activo; then

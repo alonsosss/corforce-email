@@ -559,6 +559,18 @@ buzones dio 500 y `mail-auth` no pudo leer el buzon del remitente de las alertas
   ni la guardia de retroceso ni la verificación podían saber qué commit corría cada servicio: el
   despliegue «salía bien» aunque dejara código viejo dentro, y no había rollback por etiqueta.
   Rollback: desde el commit anterior, `DEPLOY_ALLOW_ROLLBACK=1 ./scripts/deploy-ecr.sh <servicios>`.
+* **Ensayo de recuperación.** `make ensayo-recuperacion` (`ops/backup/ensayo-recuperacion.sh`)
+  responde la pregunta que el respaldo semanal no responde: ¿se vuelve con **solo** lo que hay fuera
+  del servidor? Corre en cualquier máquina, en contenedores desechables, sin leer nada de producción:
+  baja del bucket, descifra, restaura las bases en un Postgres limpio, restaura la instantánea de
+  OpenBao y lee sus secretos, y comprueba que los buzones del volumen de correo tienen su fila y su
+  contraseña en la celda. Mide cada fase. Primera corrida (2026-09-25): **OK en 44 s**.
+
+  Lo que tiene que vivir **fuera** del servidor, y sin lo cual no se vuelve: la frase de cifrado de
+  los respaldos, la llave de desbloqueo de OpenBao **con su identificador**, y la credencial de
+  despliegue del almacén (`despliegue.role_id` y `.secret_id`). Esto último lo descubrió el ensayo:
+  con la instantánea restaurada, el token raíz anterior deja de valer y `sys/generate-root` no está
+  disponible con el sello estático, así que la clave de recuperación no abre nada.
 * **Puerta de la CI.** Ni la plataforma ni los motores se despliegan si el commit no tiene una
   ejecución de CI **en verde**, la suya y no la de un commit anterior
   (`despliegue_comprobar_ci`, probada en `ops/scaffold/check-deploy-mail.sh`). La CI corre en cada

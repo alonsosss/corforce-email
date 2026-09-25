@@ -221,6 +221,11 @@ e2e:
 e2e-mail:
 	@bash ops/e2e/mail.sh
 
+# make ensayo-recuperacion  (¿se vuelve de un desastre con solo lo que hay fuera del servidor?
+#   necesita docker y ~/.config/core-force-mail/ensayo.env; no toca produccion, lee del bucket)
+ensayo-recuperacion:
+	@bash ops/backup/ensayo-recuperacion.sh
+
 # make checks  (todo lo que corre CI sin docker, en un solo comando; si CI anade un paso,
 # se anade aqui: un check que solo corre en CI deja pasar lo que rompe el despliegue)
 checks: build check-gofmt check-migrations check-migration-drops check-coupling check-silent-errors \
