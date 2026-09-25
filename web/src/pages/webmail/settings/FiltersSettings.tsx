@@ -1,12 +1,14 @@
 import { useState } from 'react';
+import { ERROR_CODES, errorCode, errorDetailList } from '@/api/errors';
 import {
   webmailApi,
   type Forwarding,
   type MailFilters,
+  type MailFiltersInput,
   type MailRule,
+  type Reauthentication,
   type WebmailFolder,
 } from '@/api/webmail';
-import { errorMessage } from '@/api/messages';
 import { useQuery } from '@/hooks/useQuery';
 import {
   Alert,
@@ -25,14 +27,32 @@ import {
 import { IconChevronDown, IconChevronUp, IconEdit, IconPlus, IconTrash } from '@/design/icons';
 import { t } from '@/i18n';
 import { normalizeRecipient } from '../compose';
-import { apiFieldError, forwardingProblems, toFiltersInput, type FieldErrors } from './filters';
+import {
+  apiFieldError,
+  filtersErrorMessage,
+  forwardingProblems,
+  toFiltersInput,
+  type FieldErrors,
+} from './filters';
+import { ReauthDialog } from './ReauthDialog';
 import { RuleDialog } from './RuleDialog';
+
+/** Guardado a la espera de que el usuario confirme su identidad. */
+interface PendingReauth {
+  input: MailFiltersInput;
+  addresses: string[];
+  resolve: (saved: MailFilters) => void;
+  reject: () => void;
+}
 
 /**
  * Reglas y reenvio comparten recurso (GET/PUT /filters): cada pestana cambia su parte y
- * guarda el conjunto con la otra tal como la devolvio el servicio.
+ * guarda el conjunto con la otra tal como la devolvio el servicio. Un reenvio nuevo a fuera de
+ * la empresa (en el reenvio o en una regla) exige confirmar la identidad: el guardado espera
+ * al dialogo y se repite con la confirmacion; si se cancela, falla con el REAUTH_REQUIRED.
  */
 export function FiltersSettings({ part }: { part: 'rules' | 'forwarding' }) {
+  const [reauth, setReauth] = useState<PendingReauth | null>(null);
   const filters = useQuery((signal) => webmailApi.filters(signal), []);
   const folders = useQuery(
     (signal) => (part === 'rules' ? webmailApi.folders(signal) : Promise.resolve([])),
@@ -59,17 +79,49 @@ export function FiltersSettings({ part }: { part: 'rules' | 'forwarding' }) {
     );
   }
   const save = async (rules: MailRule[], forwarding: Forwarding) => {
-    const saved = await webmailApi.setFilters(toFiltersInput(rules, forwarding));
+    const input = toFiltersInput(rules, forwarding);
+    let saved: MailFilters;
+    try {
+      saved = await webmailApi.setFilters(input);
+    } catch (err) {
+      if (errorCode(err) !== ERROR_CODES.REAUTH_REQUIRED) throw err;
+      saved = await new Promise<MailFilters>((resolve, reject) =>
+        setReauth({
+          input,
+          addresses: errorDetailList(err, 'addresses'),
+          resolve,
+          reject: () => reject(err),
+        }),
+      );
+    }
     filters.setData(saved);
   };
-  return part === 'rules' ? (
-    <RulesCard filters={filters.data} folders={folders.data ?? []} onSave={save} />
-  ) : (
-    <ForwardingCard
-      key={filters.data.forwarding.addresses.join(',')}
-      filters={filters.data}
-      onSave={save}
-    />
+  return (
+    <>
+      {part === 'rules' ? (
+        <RulesCard filters={filters.data} folders={folders.data ?? []} onSave={save} />
+      ) : (
+        <ForwardingCard
+          key={filters.data.forwarding.addresses.join(',')}
+          filters={filters.data}
+          onSave={save}
+        />
+      )}
+      {reauth ? (
+        <ReauthDialog
+          addresses={reauth.addresses}
+          onConfirm={async (confirmation: Reauthentication) => {
+            const saved = await webmailApi.setFilters(reauth.input, confirmation);
+            setReauth(null);
+            reauth.resolve(saved);
+          }}
+          onCancel={() => {
+            setReauth(null);
+            reauth.reject();
+          }}
+        />
+      ) : null}
+    </>
   );
 }
 
@@ -136,7 +188,7 @@ function RulesCard({
         ) : null}
         {error ? (
           <div className="cf-form__error" role="alert">
-            {errorMessage(error)}
+            {filtersErrorMessage(error)}
           </div>
         ) : null}
         {rules.length === 0 ? (
@@ -327,7 +379,7 @@ function ForwardingCard({ filters, onSave }: { filters: MailFilters; onSave: Sav
         <Alert tone="info">{t('webmail.forwarding.spamNote')}</Alert>
         {problems.general || error ? (
           <div className="cf-form__error" role="alert">
-            {problems.general ?? errorMessage(error)}
+            {problems.general ?? filtersErrorMessage(error)}
           </div>
         ) : null}
         <div className="cf-form__actions">

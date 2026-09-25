@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ApiError } from '@/api/errors';
-import { webmailApi, type Signature } from '@/api/webmail';
+import { webmailApi, type MailMessage, type Signature } from '@/api/webmail';
 import { t } from '@/i18n';
 import { resetWebmailCatalogs } from '@/webmail/catalogs';
 import { useWebmailStore } from '@/webmail/store';
@@ -308,5 +308,56 @@ describe('redaccion', () => {
       screen.queryByText(t('webmail.compose.sendingSoon', { s: UNDO_SEND_MS / 1000 })),
     ).toBeNull();
     expect(send).not.toHaveBeenCalled();
+  });
+
+  it('responder y reenviar conservan el formato y las imagenes en linea del original', async () => {
+    vi.spyOn(webmailApi, 'signature').mockResolvedValue(SIGNATURE);
+    const partUrl = '/api/v1/webmail/folders/INBOX/messages/42/parts/1.2';
+    const original: MailMessage = {
+      uid: 42,
+      folder: 'INBOX',
+      from: [{ name: 'Luis', email: 'luis@cliente.com' }],
+      to: [{ name: 'Ana', email: 'ana@empresa.com' }],
+      cc: [],
+      bcc: [],
+      reply_to: [],
+      subject: 'Plano',
+      date: '2026-09-01T10:00:00Z',
+      flags: [],
+      size: 100,
+      has_attachments: true,
+      message_id: 'x@cliente.com',
+      in_reply_to: [],
+      references: [],
+      text: 'Mira el plano',
+      text_truncated: false,
+      html: `<p>Mira el <b>plano</b></p><img src="${partUrl}" alt="plano">`,
+      html_truncated: false,
+      remote_images: { present: false, blocked: false },
+      attachments: [
+        {
+          part: '1.2',
+          filename: 'plano.png',
+          content_type: 'image/png',
+          size: 3,
+          content_id: 'plano@x',
+          inline: true,
+        },
+      ],
+    };
+    vi.spyOn(webmailApi, 'message').mockResolvedValue(original);
+    const download = vi.spyOn(webmailApi, 'downloadPart').mockResolvedValue({
+      blob: new Blob([new Uint8Array([1, 2, 3])]),
+      filename: 'plano.png',
+      contentType: 'image/png',
+    });
+    renderCompose('/webmail/compose?mode=reply&folder=INBOX&uid=42');
+
+    const editor = await screen.findByRole('textbox', { name: t('webmail.compose.body') });
+    const quoted = editor.querySelector('blockquote');
+    expect(quoted?.querySelector('b')?.textContent).toBe('plano');
+    expect(quoted?.querySelector('img')?.getAttribute('src')).toMatch(/^data:image\/png;base64,/);
+    expect(download).toHaveBeenCalledWith('INBOX', 42, '1.2', expect.anything());
+    expect(screen.queryByText('plano.png')).toBeNull();
   });
 });

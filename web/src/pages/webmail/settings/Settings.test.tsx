@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ApiError } from '@/api/errors';
-import { webmailApi, type MailFilters, type Signature } from '@/api/webmail';
+import { webmailApi, type MailFilters, type Signature, type WebmailSecurity } from '@/api/webmail';
 import { t } from '@/i18n';
 import { useWebmailStore } from '@/webmail/store';
 import SettingsPage from '../SettingsPage';
@@ -30,6 +30,16 @@ const FILTERS: MailFilters = {
     max_name_length: 12,
     max_folder_bytes: 30,
   },
+};
+
+const SECURITY_OFF: WebmailSecurity = {
+  mfa: { enabled: false, enabled_at: null, recovery_remaining: 0 },
+  app_passwords: [],
+  app_passwords_max: 25,
+};
+const SECURITY_ON: WebmailSecurity = {
+  ...SECURITY_OFF,
+  mfa: { enabled: true, enabled_at: '2026-09-24T10:00:00Z', recovery_remaining: 10 },
 };
 
 function validation(field: string, message: string) {
@@ -198,6 +208,9 @@ describe('ajustes: reglas y reenvio', () => {
 });
 
 describe('ajustes: contrasena', () => {
+  beforeEach(() => {
+    vi.spyOn(webmailApi, 'security').mockResolvedValue(SECURITY_OFF);
+  });
   afterEach(() => vi.restoreAllMocks());
 
   it('tras cambiarla la sesion queda cerrada y lleva al acceso con aviso', async () => {
@@ -211,7 +224,7 @@ describe('ajustes: contrasena', () => {
     await user.type(screen.getByLabelText(new RegExp(t('webmail.password.repeat'))), 'nueva-1');
     await user.click(screen.getByRole('button', { name: t('webmail.password.submit') }));
 
-    await waitFor(() => expect(change).toHaveBeenCalledWith('vieja', 'nueva-1'));
+    await waitFor(() => expect(change).toHaveBeenCalledWith('vieja', 'nueva-1', undefined));
     expect(useWebmailStore.getState()).toMatchObject({
       status: 'anonymous',
       passwordChanged: true,
@@ -239,5 +252,120 @@ describe('ajustes: contrasena', () => {
     await user.click(screen.getByRole('button', { name: t('webmail.password.submit') }));
     expect(await screen.findByText(t('webmail.password.currentWrong'))).toBeInTheDocument();
     expect(useWebmailStore.getState().status).toBe('authenticated');
+  });
+});
+
+function apiError(status: number, code: string, details?: Record<string, unknown>) {
+  return new ApiError(status, { code, message: '' }, { error: { code, message: '', details } });
+}
+
+describe('ajustes: reenvio externo', () => {
+  beforeEach(() => {
+    vi.spyOn(webmailApi, 'folders').mockResolvedValue([INBOX]);
+    vi.spyOn(webmailApi, 'filters').mockResolvedValue(FILTERS);
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  const addForward = async (user: ReturnType<typeof userEvent.setup>) => {
+    await user.click(await screen.findByLabelText(t('webmail.forwarding.enabled')));
+    await user.type(
+      screen.getByLabelText(t('webmail.forwarding.addresses')),
+      'fuera@otra.com{Enter}',
+    );
+    await user.click(screen.getByRole('button', { name: t('common.save') }));
+  };
+
+  it('un reenvio externo nuevo pide la contrasena y el codigo y repite el guardado con ellos', async () => {
+    const user = userEvent.setup();
+    vi.spyOn(webmailApi, 'security').mockResolvedValue(SECURITY_ON);
+    const save = vi
+      .spyOn(webmailApi, 'setFilters')
+      .mockRejectedValueOnce(apiError(403, 'REAUTH_REQUIRED', { addresses: ['fuera@otra.com'] }))
+      .mockImplementation(async (input) => ({ ...FILTERS, ...input }));
+    renderTab('forwarding');
+    await addForward(user);
+
+    const dialog = await screen.findByRole('dialog', { name: t('webmail.reauth.title') });
+    expect(within(dialog).getByText('fuera@otra.com')).toBeInTheDocument();
+    await user.type(
+      within(dialog).getByLabelText(new RegExp(t('webmail.password.current'))),
+      'clave',
+    );
+    const code = await within(dialog).findByLabelText(new RegExp(t('webmail.security.code')));
+    await user.click(within(dialog).getByRole('button', { name: t('webmail.reauth.submit') }));
+    expect(within(dialog).getByText(t('webmail.security.codeMissing'))).toBeInTheDocument();
+    await user.type(code, '123456');
+    await user.click(within(dialog).getByRole('button', { name: t('webmail.reauth.submit') }));
+
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(2));
+    expect(save.mock.calls[1]?.[1]).toEqual({ current_password: 'clave', code: '123456' });
+    expect(await screen.findByText(t('webmail.forwarding.saved'))).toBeInTheDocument();
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('una contrasena mala deja el dialogo abierto; cancelar no guarda', async () => {
+    const user = userEvent.setup();
+    vi.spyOn(webmailApi, 'security').mockResolvedValue(SECURITY_OFF);
+    const save = vi
+      .spyOn(webmailApi, 'setFilters')
+      .mockRejectedValueOnce(apiError(403, 'REAUTH_REQUIRED', { addresses: ['fuera@otra.com'] }))
+      .mockRejectedValueOnce(apiError(401, 'INVALID_CREDENTIALS'));
+    renderTab('forwarding');
+    await addForward(user);
+
+    const dialog = await screen.findByRole('dialog', { name: t('webmail.reauth.title') });
+    expect(within(dialog).queryByLabelText(new RegExp(t('webmail.security.code')))).toBeNull();
+    await user.type(
+      within(dialog).getByLabelText(new RegExp(t('webmail.password.current'))),
+      'mala',
+    );
+    await user.click(within(dialog).getByRole('button', { name: t('webmail.reauth.submit') }));
+    expect(await within(dialog).findByText(t('webmail.password.currentWrong'))).toBeInTheDocument();
+    expect(save.mock.calls[1]?.[1]).toEqual({ current_password: 'mala', code: undefined });
+
+    await user.click(within(dialog).getByRole('button', { name: t('common.cancel') }));
+    expect(await screen.findByText(t('error.code.REAUTH_REQUIRED'))).toBeInTheDocument();
+    expect(save).toHaveBeenCalledTimes(2);
+  });
+
+  it('si la empresa no permite reenviar fuera se nombran las direcciones', async () => {
+    const user = userEvent.setup();
+    vi.spyOn(webmailApi, 'setFilters').mockRejectedValue(
+      apiError(422, 'EXTERNAL_FORWARDING_DISABLED', { addresses: ['fuera@otra.com'] }),
+    );
+    renderTab('forwarding');
+    await addForward(user);
+
+    expect(
+      await screen.findByText(t('webmail.forwarding.externalDisabled', { list: 'fuera@otra.com' })),
+    ).toBeInTheDocument();
+  });
+});
+
+describe('ajustes: contrasena con verificacion en dos pasos', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it('pide el codigo y lo envia con el cambio', async () => {
+    const user = userEvent.setup();
+    useWebmailStore.setState({ status: 'authenticated' });
+    vi.spyOn(webmailApi, 'security').mockResolvedValue(SECURITY_ON);
+    const change = vi
+      .spyOn(webmailApi, 'changePassword')
+      .mockRejectedValueOnce(apiError(422, 'INVALID_MFA_CODE'))
+      .mockResolvedValue(null);
+    renderTab('password');
+
+    const code = await screen.findByLabelText(new RegExp(t('webmail.security.code')));
+    await user.type(screen.getByLabelText(new RegExp(t('webmail.password.current'))), 'vieja');
+    await user.type(screen.getByLabelText(new RegExp(`^${t('webmail.password.new')}`)), 'nueva-1');
+    await user.type(screen.getByLabelText(new RegExp(t('webmail.password.repeat'))), 'nueva-1');
+    await user.type(code, '000000');
+    await user.click(screen.getByRole('button', { name: t('webmail.password.submit') }));
+    expect(await screen.findByText(t('error.code.INVALID_MFA_CODE'))).toBeInTheDocument();
+    expect(code).toHaveValue('');
+
+    await user.type(code, '123456');
+    await user.click(screen.getByRole('button', { name: t('webmail.password.submit') }));
+    await waitFor(() => expect(change).toHaveBeenLastCalledWith('vieja', 'nueva-1', '123456'));
   });
 });

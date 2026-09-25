@@ -1,6 +1,11 @@
 import { create } from 'zustand';
 import { ERROR_CODES, errorCode } from '@/api/errors';
-import { onWebmailSessionExpired, webmailApi, type WebmailSession } from '@/api/webmail';
+import {
+  isMfaChallenge,
+  onWebmailSessionExpired,
+  webmailApi,
+  type WebmailSession,
+} from '@/api/webmail';
 import { resetWebmailCatalogs } from './catalogs';
 
 /*
@@ -9,7 +14,8 @@ import { resetWebmailCatalogs } from './catalogs';
  * devuelve de la sesion (buzon, nombre, caducidad y cuota); ningun token.
  */
 
-export type WebmailStatus = 'checking' | 'unavailable' | 'anonymous' | 'authenticated';
+/** mfa: la contrasena fue correcta y falta el codigo de la verificacion en dos pasos. */
+export type WebmailStatus = 'checking' | 'unavailable' | 'anonymous' | 'mfa' | 'authenticated';
 
 export interface WebmailState {
   status: WebmailStatus;
@@ -18,10 +24,17 @@ export interface WebmailState {
   expired: boolean;
   /** La sesion termino porque el usuario cambio su contrasena: todas quedan revocadas. */
   passwordChanged: boolean;
+  /** El desafio del segundo paso caduco o se agoto: hay que volver a escribir la contrasena. */
+  mfaExpired: boolean;
+  /** Buzon que espera el segundo paso; solo para mostrarlo. */
+  mfaUsername: string | null;
   /** Por que no se pudo comprobar la sesion (el servicio no respondio). */
   checkError: unknown;
   check: () => Promise<void>;
   login: (username: string, password: string) => Promise<void>;
+  /** Segundo paso: codigo TOTP o de recuperacion. */
+  verifyMfa: (code: string) => Promise<void>;
+  cancelMfa: () => void;
   logout: () => Promise<void>;
   /** Relee la sesion: la cuota cambia al enviar, guardar o borrar. */
   refresh: () => Promise<void>;
@@ -30,7 +43,7 @@ export interface WebmailState {
   acknowledgeExpired: () => void;
 }
 
-const signedOut = { session: null, checkError: null };
+const signedOut = { session: null, checkError: null, mfaUsername: null };
 
 export const useWebmailStore = create<WebmailState>((set, get) => {
   let checking: Promise<void> | null = null;
@@ -41,6 +54,21 @@ export const useWebmailStore = create<WebmailState>((set, get) => {
       set({ ...signedOut, status: 'anonymous', expired: true });
     }
   });
+
+  const openSession = (session: WebmailSession) => {
+    resetWebmailCatalogs();
+    set({
+      status: 'authenticated',
+      session,
+      expired: false,
+      passwordChanged: false,
+      mfaExpired: false,
+      mfaUsername: null,
+      checkError: null,
+    });
+    // El inicio de sesion no trae la cuota; se pide aparte sin bloquear la entrada.
+    void get().refresh();
+  };
 
   const runCheck = async (): Promise<void> => {
     set({ status: 'checking', checkError: null });
@@ -62,6 +90,8 @@ export const useWebmailStore = create<WebmailState>((set, get) => {
     session: null,
     expired: false,
     passwordChanged: false,
+    mfaExpired: false,
+    mfaUsername: null,
     checkError: null,
 
     check: () => {
@@ -72,18 +102,33 @@ export const useWebmailStore = create<WebmailState>((set, get) => {
     },
 
     login: async (username, password) => {
-      const session = await webmailApi.login(username, password);
-      resetWebmailCatalogs();
-      set({
-        status: 'authenticated',
-        session,
-        expired: false,
-        passwordChanged: false,
-        checkError: null,
-      });
-      // El inicio de sesion no trae la cuota; se pide aparte sin bloquear la entrada.
-      void get().refresh();
+      const result = await webmailApi.login(username, password);
+      if (isMfaChallenge(result)) {
+        set({
+          ...signedOut,
+          status: 'mfa',
+          mfaUsername: username,
+          expired: false,
+          passwordChanged: false,
+          mfaExpired: false,
+        });
+        return;
+      }
+      openSession(result);
     },
+
+    verifyMfa: async (code) => {
+      try {
+        openSession(await webmailApi.loginMfa(code));
+      } catch (err) {
+        if (errorCode(err) === ERROR_CODES.MFA_CHALLENGE_EXPIRED) {
+          set({ ...signedOut, status: 'anonymous', mfaExpired: true });
+        }
+        throw err;
+      }
+    },
+
+    cancelMfa: () => set({ ...signedOut, status: 'anonymous', mfaExpired: false }),
 
     logout: async () => {
       try {
@@ -112,6 +157,6 @@ export const useWebmailStore = create<WebmailState>((set, get) => {
       set({ ...signedOut, status: 'anonymous', expired: false, passwordChanged: true });
     },
 
-    acknowledgeExpired: () => set({ expired: false, passwordChanged: false }),
+    acknowledgeExpired: () => set({ expired: false, passwordChanged: false, mfaExpired: false }),
   };
 });

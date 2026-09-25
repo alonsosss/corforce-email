@@ -20,6 +20,7 @@ export const MAILBOX: Mailbox = {
   tls_enforce_out: false,
   relayhost_id: null,
   force_pw_update: false,
+  mfa_enabled: false,
   created_at: '2026-01-01T00:00:00Z',
   updated_at: '2026-01-01T00:00:00Z',
 };

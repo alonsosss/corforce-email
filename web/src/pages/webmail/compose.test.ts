@@ -181,6 +181,53 @@ describe('borrador inicial', () => {
     expect(buildDraft('reply', withParts, OWN).source).toBeUndefined();
   });
 
+  describe('con un original en HTML', () => {
+    const LOGO_URL = '/api/v1/webmail/folders/INBOX/messages/42/parts/1.2';
+    const DATA = 'data:image/png;base64,AAAA';
+    const pdf = part({ part: '2', filename: 'informe.pdf' });
+    const logo = part({
+      part: '1.2',
+      content_id: 'logo@x',
+      inline: true,
+      content_type: 'image/png',
+    });
+    const original = message({
+      html: `<p>Hola <b>equipo</b></p><img src="${LOGO_URL}">`,
+      attachments: [pdf, logo],
+    });
+    const images = new Map([[LOGO_URL, DATA]]);
+
+    it('responder cita el HTML con sus imagenes incrustadas y conserva la cita en texto', () => {
+      const draft = buildDraft('reply', original, OWN, images);
+      const doc = new DOMParser().parseFromString(draft.html ?? '', 'text/html');
+      const quoteBlock = doc.querySelector('blockquote');
+      expect(quoteBlock?.querySelector('b')?.textContent).toBe('equipo');
+      expect(quoteBlock?.querySelector('img')?.getAttribute('src')).toBe(DATA);
+      expect(doc.body.textContent).toContain('Luis');
+      expect(draft.text).toContain('> Linea 1');
+      expect(draft.source).toBeUndefined();
+    });
+
+    it('reenviar lleva la cabecera y el original con sus imagenes, sin volver a adjuntarlas', () => {
+      const draft = buildDraft('forward', original, OWN, images);
+      expect(draft.html).toContain(t('webmail.compose.forwardHeader'));
+      expect(draft.html).toContain(`src="${DATA}"`);
+      expect(draft.html).not.toContain(LOGO_URL);
+      expect(draft.source?.parts).toEqual([pdf]);
+    });
+
+    it('seguir un borrador incrusta sus imagenes y no las adjunta otra vez', () => {
+      const draft = buildDraft('draft', original, OWN, images);
+      expect(draft.html).toContain(`src="${DATA}"`);
+      expect(draft.source?.parts).toEqual([pdf]);
+    });
+
+    it('un original solo en texto se sigue citando linea a linea', () => {
+      expect(buildDraft('reply', message(), OWN, images).html).toBeUndefined();
+      expect(buildDraft('forward', message(), OWN, images).html).toBeUndefined();
+    });
+  });
+
   it('responder propone como remitente la direccion a la que llego el original', () => {
     const draft = buildDraft(
       'reply',

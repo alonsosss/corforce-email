@@ -1,7 +1,6 @@
 import { useMemo, useState } from 'react';
 import { webmailApi, type MailMessage, type MessagePart } from '@/api/webmail';
 import { errorMessage } from '@/api/messages';
-import { useQuery } from '@/hooks/useQuery';
 import { Alert, Button, HtmlPreviewFrame, useToast } from '@/design/components';
 import { IconDownload, IconImage, IconPaperclip } from '@/design/icons';
 import { saveBlob } from '@/lib/download';
@@ -9,7 +8,7 @@ import { formatBytes } from '@/lib/quota';
 import { t } from '@/i18n';
 import { htmlToPlainText } from './compose';
 import { displayFilename } from './format';
-import { loadInlineImages, referencedInlineParts } from './inlineImages';
+import { referencedInlineParts } from './inlineImages';
 
 const FRAME_HEIGHT = '60vh';
 
@@ -19,6 +18,8 @@ export interface MessageBodyProps {
   remoteAllowed: boolean;
   remoteLoading: boolean;
   onAllowRemote: () => void;
+  /** Imagenes en linea ya descargadas (useInlineImages): URL de la parte -> data:. */
+  inlineImages: ReadonlyMap<string, string>;
 }
 
 /**
@@ -31,16 +32,10 @@ export function MessageBody({
   remoteAllowed,
   remoteLoading,
   onAllowRemote,
+  inlineImages,
 }: MessageBodyProps) {
   const [asText, setAsText] = useState(false);
   const refs = useMemo(() => referencedInlineParts(message), [message]);
-  const inline = useQuery(
-    (signal) =>
-      refs.size
-        ? loadInlineImages(message, refs, signal)
-        : Promise.resolve(new Map<string, string>()),
-    [refs],
-  );
   const inlineParts = new Set(refs.values());
   const attachments = message.attachments.filter((part) => !inlineParts.has(part));
   const hasHtml = message.html.trim() !== '';
@@ -78,7 +73,7 @@ export function MessageBody({
             })}
             height={FRAME_HEIGHT}
             allowRemoteImages={remoteAllowed && !message.remote_images.blocked}
-            inlineImages={inline.data ?? undefined}
+            inlineImages={inlineImages}
             allowLinks
           />
         </>

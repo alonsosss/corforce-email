@@ -37,6 +37,8 @@ function escapeHtml(text: string): string {
 export interface PrintOptions {
   /** Quien lee ya pidio las imagenes remotas de este mensaje. */
   allowRemoteImages: boolean;
+  /** Imagenes en linea ya descargadas para la lectura: URL de la parte -> data:. */
+  inlineImages?: ReadonlyMap<string, string>;
 }
 
 /** Documento de impresion: cabeceras escapadas y el cuerpo preparado como en la lectura. */
@@ -59,6 +61,7 @@ export function buildPrintDocument(message: MailMessage, options: PrintOptions):
   )}</title><style>${PRINT_CSS}</style></head><body>${head}${body}</body></html>`;
   return prepareUntrustedHtml(source, {
     allowRemoteImages: options.allowRemoteImages && !message.remote_images.blocked,
+    inlineImages: options.inlineImages,
   }).html;
 }
 

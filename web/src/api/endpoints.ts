@@ -121,6 +121,7 @@ export const endpoints = {
   mailDirectory: {
     meta: `${API_PREFIX}/mail-directory/meta`,
     assistant: `${API_PREFIX}/mail-directory/assistant`,
+    mailPolicy: `${API_PREFIX}/mail-directory/mail-policy`,
   },
   mailDomains: {
     ...collectionOf('/mail-domains'),
@@ -135,6 +136,7 @@ export const endpoints = {
     sieve: (id: string) => `${API_PREFIX}/mailboxes/${seg(id)}/sieve`,
     vacation: (id: string) => `${API_PREFIX}/mailboxes/${seg(id)}/vacation`,
     appPasswords: (id: string) => `${API_PREFIX}/mailboxes/${seg(id)}/app-passwords`,
+    mfa: (id: string) => `${API_PREFIX}/mailboxes/${seg(id)}/mfa`,
     appPassword: (id: string, appPasswordId: string) =>
       `${API_PREFIX}/mailboxes/${seg(id)}/app-passwords/${seg(appPasswordId)}`,
   },
@@ -325,6 +327,7 @@ export const endpoints = {
   // decodifica.
   webmail: {
     session: `${API_PREFIX}/webmail/session`,
+    sessionMfa: `${API_PREFIX}/webmail/session/mfa`,
     meta: `${API_PREFIX}/webmail/meta`,
     metaDav: `${API_PREFIX}/webmail/meta/dav`,
     identities: `${API_PREFIX}/webmail/identities`,
@@ -353,6 +356,13 @@ export const endpoints = {
     signature: `${API_PREFIX}/webmail/signature`,
     filters: `${API_PREFIX}/webmail/filters`,
     password: `${API_PREFIX}/webmail/password`,
+    security: `${API_PREFIX}/webmail/security`,
+    securityMfa: `${API_PREFIX}/webmail/security/mfa`,
+    securityMfaSetup: `${API_PREFIX}/webmail/security/mfa/setup`,
+    securityMfaActivate: `${API_PREFIX}/webmail/security/mfa/activate`,
+    securityRecoveryCodes: `${API_PREFIX}/webmail/security/mfa/recovery-codes`,
+    securityAppPasswords: `${API_PREFIX}/webmail/security/app-passwords`,
+    securityAppPassword: (id: string) => `${API_PREFIX}/webmail/security/app-passwords/${seg(id)}`,
     contacts: `${API_PREFIX}/webmail/contacts`,
     contact: (id: string) => `${API_PREFIX}/webmail/contacts/${seg(id)}`,
     contactsExport: `${API_PREFIX}/webmail/contacts/export`,

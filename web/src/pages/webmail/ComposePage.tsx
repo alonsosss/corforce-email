@@ -76,7 +76,7 @@ import { followUpChoices } from './snooze';
 import { formatScheduled } from './schedule';
 import { ScheduleDialog } from './ScheduleDialog';
 import { useComposeWindow } from './composeWindow';
-import { embedInlineImages, loadInlineImages, referencedInlineParts } from './inlineImages';
+import { loadInlineImages, referencedInlineParts } from './inlineImages';
 import { useWebmailOutlet } from './webmailContext';
 
 const TITLES: Record<ComposeMode | 'new', MessageKey> = {
@@ -92,13 +92,28 @@ export const UNDO_SEND_MS = 10_000;
 /** Pausa de escritura tras la que se guarda el borrador solo. */
 export const AUTOSAVE_DELAY_MS = 5_000;
 
+/** Mensaje de partida con sus imagenes en linea ya descargadas (URL de la parte -> data:). */
+interface ComposeSource {
+  message: MailMessage;
+  inlineImages: Map<string, string>;
+}
+
 /**
- * Las imagenes de un borrador llegan como URL de sus partes, que el editor no conserva: se
- * incrustan como data: y al guardar o enviar el servicio las vuelve a convertir en cid:.
+ * Las imagenes en linea del original (borrador, respuesta o reenvio) llegan como URL de sus
+ * partes, que el editor no conserva: buildDraft las incrusta como data: y al guardar o enviar
+ * el servicio las vuelve a convertir en cid:.
  */
-async function withDraftImages(message: MailMessage, signal: AbortSignal): Promise<MailMessage> {
-  const images = await loadInlineImages(message, referencedInlineParts(message), signal);
-  return images.size ? { ...message, html: embedInlineImages(message.html, images) } : message;
+async function loadComposeSource(
+  folder: string,
+  uid: number,
+  signal: AbortSignal,
+): Promise<ComposeSource> {
+  const message = await webmailApi.message(folder, uid, { peek: true }, signal);
+  const refs = referencedInlineParts(message);
+  const inlineImages = refs.size
+    ? await loadInlineImages(message, refs, signal)
+    : new Map<string, string>();
+  return { message, inlineImages };
 }
 
 export default function ComposePage() {
@@ -116,11 +131,7 @@ export default function ComposePage() {
   // guardar (source_folder, source_uid, source_parts) y los analiza como cualquier otro.
   const source = useQuery(
     (signal) =>
-      mode && folder && uid
-        ? webmailApi
-            .message(folder, uid, { peek: true }, signal)
-            .then((message) => (mode === 'draft' ? withDraftImages(message, signal) : message))
-        : Promise.resolve(null),
+      mode && folder && uid ? loadComposeSource(folder, uid, signal) : Promise.resolve(null),
     [mode, folder, uid],
   );
 
@@ -156,7 +167,7 @@ export default function ComposePage() {
   const direct = toParam ? normalizeRecipient(toParam) : null;
   const seed =
     mode && source.data
-      ? buildDraft(mode, source.data, username)
+      ? buildDraft(mode, source.data.message, username, source.data.inlineImages)
       : { ...EMPTY_DRAFT, to: direct ? [direct] : [] };
   const backHref =
     folder && uid
@@ -169,7 +180,7 @@ export default function ComposePage() {
       seed={seed}
       signature={signature.data}
       backHref={backHref}
-      recipientNames={mode && source.data ? namesOf(source.data) : undefined}
+      recipientNames={mode && source.data ? namesOf(source.data.message) : undefined}
     />
   );
 }

@@ -9,7 +9,6 @@ import {
   type RuleCondition,
   type WebmailFolder,
 } from '@/api/webmail';
-import { errorMessage } from '@/api/messages';
 import { Button, Checkbox, FormField, Input, Modal, Select } from '@/design/components';
 import { IconPlus, IconX } from '@/design/icons';
 import { t } from '@/i18n';
@@ -20,6 +19,7 @@ import {
   apiFieldError,
   emptyCondition,
   emptyRule,
+  filtersErrorMessage,
   ruleProblems,
   type FieldErrors,
 } from './filters';
@@ -299,7 +299,7 @@ export function RuleDialog({ initial, index, limits, folders, onClose, onSave }:
         />
         {problems.general || error ? (
           <div className="cf-form__error" role="alert">
-            {problems.general ?? errorMessage(error)}
+            {problems.general ?? filtersErrorMessage(error)}
           </div>
         ) : null}
       </form>

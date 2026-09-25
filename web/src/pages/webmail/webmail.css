@@ -2315,3 +2315,24 @@ a.cf-wm-message:hover {
 .cf-wm-assistant__privacy {
   margin: 0;
 }
+.cf-wm-reauth__list {
+  margin: 0;
+  padding-left: var(--cf-space-5);
+  overflow-wrap: anywhere;
+}
+.cf-wm-mfa-setup {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--cf-space-5);
+}
+.cf-wm-recovery-codes {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(9rem, 1fr));
+  gap: var(--cf-space-2);
+  margin: 0;
+  padding: var(--cf-space-3);
+  list-style: none;
+  border: 1px solid var(--cf-border);
+  border-radius: var(--cf-radius-md);
+}

@@ -23,6 +23,7 @@ import { AppPasswordsTab } from './AppPasswordsTab';
 import { DavTab } from './DavTab';
 import { LoginsTab } from './LoginsTab';
 import { MailboxDataTab } from './MailboxDataTab';
+import { MailboxMfaCard } from './MailboxMfaCard';
 import { MailboxPasswordTab } from './MailboxPasswordTab';
 import { MailboxQuotaTab } from './MailboxQuotaTab';
 import { MigrationTab } from './MigrationTab';
@@ -125,7 +126,12 @@ export default function MailboxDetailPage() {
         }
       />
       <Tabs items={tabs} value={tab} onChange={setTab} label={m.username} />
-      {tab === 'data' ? <MailboxDataTab mailbox={m} onChange={mailbox.setData} /> : null}
+      {tab === 'data' ? (
+        <div className="cf-stack">
+          <MailboxDataTab mailbox={m} onChange={mailbox.setData} />
+          <MailboxMfaCard mailbox={m} onChange={mailbox.setData} />
+        </div>
+      ) : null}
       {tab === 'password' ? <MailboxPasswordTab mailbox={m} /> : null}
       {tab === 'quota' ? <MailboxQuotaTab mailbox={m} /> : null}
       {tab === 'appPasswords' ? <AppPasswordsTab mailbox={m} /> : null}

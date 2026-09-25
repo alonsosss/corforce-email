@@ -15,6 +15,7 @@ import { t } from '@/i18n';
 import { paths } from '@/paths';
 import { AuthLayout } from '@/pages/auth/AuthLayout';
 import { useWebmailStore } from '@/webmail/store';
+import { normalizeRecoveryCode, TOTP_DIGITS } from './settings/mfa';
 
 interface LocationState {
   from?: string;
@@ -34,6 +35,7 @@ export function WebmailLoginPage() {
   const checkError = useWebmailStore((s) => s.checkError);
   const expired = useWebmailStore((s) => s.expired);
   const passwordChanged = useWebmailStore((s) => s.passwordChanged);
+  const mfaExpired = useWebmailStore((s) => s.mfaExpired);
   const location = useLocation();
 
   if (status === 'authenticated') return <Navigate to={returnPath(location.state)} replace />;
@@ -57,14 +59,24 @@ export function WebmailLoginPage() {
           title={t('webmail.unavailable')}
           onRetry={() => void useWebmailStore.getState().check()}
         />
+      ) : status === 'mfa' ? (
+        <MfaStep />
       ) : (
-        <LoginForm expired={expired} passwordChanged={passwordChanged} />
+        <LoginForm expired={expired} passwordChanged={passwordChanged} mfaExpired={mfaExpired} />
       )}
     </AuthLayout>
   );
 }
 
-function LoginForm({ expired, passwordChanged }: { expired: boolean; passwordChanged: boolean }) {
+function LoginForm({
+  expired,
+  passwordChanged,
+  mfaExpired,
+}: {
+  expired: boolean;
+  passwordChanged: boolean;
+  mfaExpired: boolean;
+}) {
   const login = useWebmailStore((s) => s.login);
   const acknowledgeExpired = useWebmailStore((s) => s.acknowledgeExpired);
   const [username, setUsername] = useState('');
@@ -101,6 +113,8 @@ function LoginForm({ expired, passwordChanged }: { expired: boolean; passwordCha
     <form className="cf-form" onSubmit={(e) => void submit(e)} noValidate>
       {passwordChanged ? (
         <Alert tone="success">{t('webmail.login.passwordChanged')}</Alert>
+      ) : mfaExpired ? (
+        <Alert tone="warning">{t('webmail.login.mfa.expired')}</Alert>
       ) : expired ? (
         <Alert tone="warning">{t('webmail.login.expired')}</Alert>
       ) : null}
@@ -138,6 +152,106 @@ function LoginForm({ expired, passwordChanged }: { expired: boolean; passwordCha
       ) : null}
       <Button type="submit" variant="primary" block loading={busy}>
         {t('webmail.login.submit')}
+      </Button>
+    </form>
+  );
+}
+
+/**
+ * Segundo paso con la verificacion en dos pasos activa: el codigo de la aplicacion
+ * autenticadora o, si no se tiene a mano, uno de los codigos de recuperacion.
+ */
+function MfaStep() {
+  const verifyMfa = useWebmailStore((s) => s.verifyMfa);
+  const cancelMfa = useWebmailStore((s) => s.cancelMfa);
+  const username = useWebmailStore((s) => s.mfaUsername);
+  const [recovery, setRecovery] = useState(false);
+  const [code, setCode] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    const value = recovery ? normalizeRecoveryCode(code) : code.replace(/\s+/g, '');
+    if (!value) {
+      setError(t(recovery ? 'webmail.login.mfa.recoveryMissing' : 'webmail.login.mfa.missing'));
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      await verifyMfa(value);
+    } catch (err) {
+      setCode('');
+      setError(
+        errorMessage(err, {
+          [ERROR_CODES.INVALID_MFA_CODE]: 'webmail.login.mfa.invalid',
+          [ERROR_CODES.RATE_LIMITED]: 'webmail.login.rateLimited',
+        }),
+      );
+      setBusy(false);
+    }
+  };
+
+  const switchMode = () => {
+    setRecovery((v) => !v);
+    setCode('');
+    setError(null);
+  };
+
+  return (
+    <form className="cf-form" onSubmit={(e) => void submit(e)} noValidate>
+      <p className="cf-text-secondary">
+        {t(recovery ? 'webmail.login.mfa.recoveryDescription' : 'webmail.login.mfa.description', {
+          mailbox: username ?? '',
+          n: TOTP_DIGITS,
+        })}
+      </p>
+      {recovery ? (
+        <FormField label={t('webmail.login.mfa.recoveryCode')} htmlFor="wm-mfa-code" required>
+          <Input
+            key="recovery"
+            id="wm-mfa-code"
+            className="cf-mono"
+            autoComplete="off"
+            autoCapitalize="characters"
+            spellCheck={false}
+            placeholder={t('webmail.login.mfa.recoveryPlaceholder')}
+            value={code}
+            onChange={(e) => setCode(e.target.value)}
+            required
+            autoFocus
+          />
+        </FormField>
+      ) : (
+        <FormField label={t('webmail.login.mfa.code')} htmlFor="wm-mfa-code" required>
+          <Input
+            key="totp"
+            id="wm-mfa-code"
+            inputMode="numeric"
+            autoComplete="one-time-code"
+            pattern="[0-9]*"
+            maxLength={TOTP_DIGITS}
+            value={code}
+            onChange={(e) => setCode(e.target.value)}
+            required
+            autoFocus
+          />
+        </FormField>
+      )}
+      {error ? (
+        <div className="cf-form__error" role="alert">
+          {error}
+        </div>
+      ) : null}
+      <Button type="submit" variant="primary" block loading={busy}>
+        {t('webmail.login.mfa.submit')}
+      </Button>
+      <Button variant="ghost" block onClick={switchMode} disabled={busy}>
+        {t(recovery ? 'webmail.login.mfa.useTotp' : 'webmail.login.mfa.useRecovery')}
+      </Button>
+      <Button variant="ghost" block onClick={cancelMfa} disabled={busy}>
+        {t('webmail.login.mfa.cancel')}
       </Button>
     </form>
   );

@@ -10,6 +10,7 @@ import { FiltersSettings } from './settings/FiltersSettings';
 import { LargeFilesSettings } from './settings/LargeFilesSettings';
 import { PasswordSettings } from './settings/PasswordSettings';
 import { QuickRepliesSettings } from './settings/QuickRepliesSettings';
+import { SecuritySettings } from './settings/SecuritySettings';
 import { SignatureSettings } from './settings/SignatureSettings';
 
 const TABS = [
@@ -19,6 +20,7 @@ const TABS = [
   'rules',
   'forwarding',
   'password',
+  'security',
   'files',
   'booking',
 ] as const;
@@ -31,6 +33,7 @@ const TAB_LABELS = {
   rules: 'webmail.settings.tab.rules',
   forwarding: 'webmail.settings.tab.forwarding',
   password: 'webmail.settings.tab.password',
+  security: 'webmail.settings.tab.security',
   files: 'webmail.settings.tab.files',
   booking: 'webmail.settings.tab.booking',
 } as const;
@@ -63,6 +66,7 @@ export default function SettingsPage() {
         {tab === 'rules' ? <FiltersSettings part="rules" /> : null}
         {tab === 'forwarding' ? <FiltersSettings part="forwarding" /> : null}
         {tab === 'password' ? <PasswordSettings /> : null}
+        {tab === 'security' ? <SecuritySettings /> : null}
         {tab === 'files' ? <LargeFilesSettings /> : null}
         {tab === 'booking' ? <BookingSettings /> : null}
       </div>

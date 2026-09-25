@@ -14,8 +14,8 @@ import { formatDateTime } from '@/lib/format';
 import { formatBytes } from '@/lib/quota';
 import { t } from '@/i18n';
 import { addressList, utf8Length } from './format';
-import { referencedInlineParts } from './inlineImages';
-import { signatureHtml, signatureText, textToHtml } from './richText';
+import { embedInlineImages, referencedInlineParts } from './inlineImages';
+import { plainToHtml, signatureHtml, signatureText, textToHtml } from './richText';
 
 export const COMPOSE_MODES = ['reply', 'replyAll', 'forward', 'draft'] as const;
 export type ComposeMode = (typeof COMPOSE_MODES)[number];
@@ -169,7 +169,7 @@ export function messagePlainText(message: Pick<MailMessage, 'text' | 'html'>): s
 
 /**
  * Adjuntos del original que se reenvian o que un borrador conserva: todos menos las
- * imagenes en linea que su HTML muestra (el reenvio va en texto).
+ * imagenes en linea que su HTML muestra, que viajan incrustadas en el cuerpo.
  */
 export function forwardableParts(message: MailMessage): MessagePart[] {
   const inline = new Set(referencedInlineParts(message).values());
@@ -181,11 +181,24 @@ function serverAttachments(message: MailMessage): ServerAttachments | undefined 
   return parts.length ? { folder: message.folder, uid: message.uid, parts } : undefined;
 }
 
-/** Borrador inicial para responder, responder a todos, reenviar o seguir un borrador. */
-export function buildDraft(mode: ComposeMode, message: MailMessage, ownAddress: string): DraftSeed {
+/**
+ * Borrador inicial para responder, responder a todos, reenviar o seguir un borrador. Con un
+ * original en HTML la cita y el reenvio lo conservan con formato, y sus imagenes en linea van
+ * incrustadas (`inlineImages`: URL de la parte -> data:, ya descargadas); el servicio las vuelve
+ * a convertir en partes cid: al enviar. Un original solo en texto se cita linea a linea.
+ */
+export function buildDraft(
+  mode: ComposeMode,
+  message: MailMessage,
+  ownAddress: string,
+  inlineImages: ReadonlyMap<string, string> = new Map(),
+): DraftSeed {
   const body = messagePlainText(message);
   const sender = addressList(message.from) || t('common.dash');
   const date = formatDateTime(message.date);
+  const originalHtml = message.html.trim()
+    ? embedInlineImages(message.html, inlineImages)
+    : undefined;
 
   if (mode === 'draft') {
     return {
@@ -194,7 +207,7 @@ export function buildDraft(mode: ComposeMode, message: MailMessage, ownAddress: 
       bcc: recipients(message.bcc),
       subject: message.subject,
       text: body,
-      html: message.html.trim() ? message.html : undefined,
+      html: originalHtml,
       draftUid: message.uid,
       fromCandidates: message.from.map((a) => a.email),
       source: serverAttachments(message),
@@ -213,6 +226,9 @@ export function buildDraft(mode: ComposeMode, message: MailMessage, ownAddress: 
       ...EMPTY_DRAFT,
       subject: prefixedSubject(t('webmail.compose.forwardPrefix'), message.subject),
       text: ['', '', ...header, '', body].join('\n'),
+      html: originalHtml
+        ? `${plainToHtml(['', '', ...header, ''].join('\n'))}<div>${originalHtml}</div>`
+        : undefined,
       source: serverAttachments(message),
     };
   }
@@ -227,12 +243,16 @@ export function buildDraft(mode: ComposeMode, message: MailMessage, ownAddress: 
     to = all.length ? all : to;
     cc = recipients(message.cc, [ownAddress, ...to]);
   }
+  const replyHeader = t('webmail.compose.replyHeader', { date, sender });
   return {
     to,
     cc,
     bcc: [],
     subject: prefixedSubject(t('webmail.compose.replyPrefix'), message.subject),
-    text: `\n\n${t('webmail.compose.replyHeader', { date, sender })}\n${quote(body)}`,
+    text: `\n\n${replyHeader}\n${quote(body)}`,
+    html: originalHtml
+      ? `${plainToHtml(`\n\n${replyHeader}`)}<blockquote>${originalHtml}</blockquote>`
+      : undefined,
     inReplyTo: { folder: message.folder, uid: message.uid },
     fromCandidates: [...message.to, ...message.cc].map((a) => a.email),
   };
@@ -252,15 +272,16 @@ export function initialBody(
     signature?.enabled === true &&
     (signature.html.trim() !== '' || signature.text.trim() !== '') &&
     (mode === null || (mode !== 'draft' && signature.on_replies));
+  const seedHtml = seed.html ?? textToHtml(seed.text);
   if (!withSignature || !signature) {
-    return { text: seed.text, html: seed.html ?? textToHtml(seed.text) };
+    return { text: seed.text, html: seedHtml };
   }
   const signatureBody = signature.html.trim()
     ? signatureHtml(signature.html)
     : signatureHtml(textToHtml(signature.text));
   return {
     text: `${signatureText(signature.text)}${seed.text}`,
-    html: `${signatureBody}${textToHtml(seed.text)}`,
+    html: `${signatureBody}${seedHtml}`,
   };
 }
 

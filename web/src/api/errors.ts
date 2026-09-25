@@ -61,6 +61,14 @@ export const ERROR_CODES = {
   RECIPIENT_REJECTED: 'RECIPIENT_REJECTED',
   DELIVERY_UNCERTAIN: 'DELIVERY_UNCERTAIN',
   SEND_IN_PROGRESS: 'SEND_IN_PROGRESS',
+  // Verificacion en dos pasos del buzon y reautenticacion (docs/Plan_Webmail_Seguridad.md).
+  MFA_REQUIRED: 'MFA_REQUIRED',
+  INVALID_MFA_CODE: 'INVALID_MFA_CODE',
+  MFA_CHALLENGE_EXPIRED: 'MFA_CHALLENGE_EXPIRED',
+  MFA_ALREADY_ENABLED: 'MFA_ALREADY_ENABLED',
+  MFA_NOT_ENABLED: 'MFA_NOT_ENABLED',
+  REAUTH_REQUIRED: 'REAUTH_REQUIRED',
+  EXTERNAL_FORWARDING_DISABLED: 'EXTERNAL_FORWARDING_DISABLED',
   // Contactos y eventos: el If-Match ya no coincide (412), el recurso cambio en otro dispositivo.
   PRECONDITION_FAILED: 'PRECONDITION_FAILED',
   // Envio programado que ya esta saliendo o salio (409) o que ya no existe (404): la lista
@@ -115,4 +123,14 @@ export function errorDetail(err: unknown, key: string): string | null {
   if (typeof details !== 'object' || details === null) return null;
   const value = (details as Record<string, unknown>)[key];
   return typeof value === 'string' && value ? value : null;
+}
+
+/** Una lista de textos de error.details (por ejemplo, las direcciones de un reenvio). */
+export function errorDetailList(err: unknown, key: string): string[] {
+  if (!isApiError(err) || typeof err.body !== 'object' || err.body === null) return [];
+  const details = (err.body as { error?: { details?: unknown } }).error?.details;
+  if (typeof details !== 'object' || details === null) return [];
+  const value = (details as Record<string, unknown>)[key];
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is string => typeof item === 'string' && item !== '');
 }
