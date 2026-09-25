@@ -28,14 +28,28 @@ contra SES. Apuntarlo aquí no exige tocarlo: en `notification.email_provider` d
 | Campo | Valor |
 |---|---|
 | host | `smtp.core-force.com` |
-| puerto | `2465` (TLS implícito) o `2525` (STARTTLS) |
+| puerto | `2525` (STARTTLS) |
 | usuario | el prefijo de una clave de envío de esa empresa |
 | contraseña | la clave completa (`cfm_...`) |
 
 Esa empresa pasa a enviar por aquí con todo lo anterior incluido. Sirve para probar el camino
 entero con una sola empresa antes de invertir en la automatización.
 
-Requisito: su dominio dado de alta aquí con propósito `sending` o `both` y verificado.
+El puerto es `2525` y no el de TLS implícito: su `SMTPSender` usa `net/smtp.SendMail`, que abre en
+claro y negocia STARTTLS. Contra 2465 se queda esperando el saludo y agota el tiempo.
+
+Requisitos en el ERP, los tres bloqueantes y ninguno evidente desde su pantalla:
+
+* El **remitente** (`notification.email_settings`, «Correo remitente») tiene que estar puesto: sin él
+  `buildEmailConfig` usa el usuario SMTP como dirección de `From`, y aquí el usuario es el prefijo de
+  la clave, que no es una dirección. El relay lo rechaza en `MAIL FROM`.
+* El superadministrador del ERP tiene que **habilitar la cuenta propia** de esa empresa
+  (`own_ses_allowed`): sin eso `GetEffective` descarta la fila de la empresa y usa la cuenta global.
+* El dominio, dado de alta **aquí** con propósito `sending` o `both` y verificado.
+
+Sus dos emisores (el transaccional de `notification` y el de campañas de `crm-email`) leen la misma
+fila, así que el cambio los mueve a los dos a la vez. Sus cabeceras `X-SES-CONFIGURATION-SET` no
+estorban: `pkg/rawmail` las retira antes de entregar a SES.
 
 ## 3. Fase B: la credencial de aprovisionamiento
 
@@ -164,3 +178,29 @@ Por dónde se retoma: fase B2, que empieza por la migración de registro con `ex
 | B1. Familia de credencial y separación de poderes | Hecho (`db3cbe2`): `kind` en las claves, prefijo `cfp_`, dos listas de rutas disjuntas en el gateway, con pruebas de los dos sentidos. Sin rutas de aprovisionamiento todavía |
 | B2. Rutas de aprovisionamiento y cuenta de servicio | Aparcado (2026-09-25) |
 | C. Cambios en el ERP | Aparcado (2026-09-25), en el otro repositorio |
+
+## 8. Estado real tras la fase A (2026-09-25)
+
+Comprobado contra producción, no contra el informe del otro producto:
+
+| Qué | Cómo quedó |
+|---|---|
+| `avisos.core-force.com` | Verificado, `sending_ready`, identidad, DKIM y MAIL FROM correctos en SES |
+| Clave de Campovivo (`u5kw3lf4ikjv`) | Viva, su empresa, en uso |
+| Clave global del otro producto (`dn6enxxxlear`) | Viva, **empresa plataforma**, en uso |
+| Envíos por el relay | Tres, ninguno rechazado; el de Campovivo sale alineado con su dominio |
+
+**Lo que no queda bien y hay que corregir: la cuenta global cuelga de la empresa plataforma.**
+Las empresas del otro producto que no tienen cuenta propia envían con la credencial de la empresa
+plataforma, así que comparten entre ellas —y con el correo operativo de esta plataforma, que sale
+del mismo `avisos.core-force.com`— la lista de supresión, el estado de reputación, el cupo y la
+auditoría. Una queja provocada por una de ellas degrada el correo de recuperación de contraseña de
+esta plataforma, y revocar esa clave las corta todas a la vez.
+
+Es el mismo problema que la fase B2 resuelve de raíz (una empresa aquí por cada empresa de allá).
+Mientras tanto, el paso barato es una empresa propia para el otro producto, con su dominio de envío
+y su clave, de modo que su reputación no toque la de esta plataforma.
+
+También conviene saber que, por la cuenta global, el nombre visible y la dirección de respuesta
+solo aparecen si esa empresa rellenó su remitente en el otro producto. Sin eso, su correo sale como
+la plataforma y sin a quién responder.

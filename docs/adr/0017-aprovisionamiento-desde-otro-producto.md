@@ -112,5 +112,5 @@ credenciales.
   por propiedad, mTLS, auditoría de cada llamada con el ERP como actor, cupos y rotación con dos
   credenciales válidas a la vez.
 * Hay un camino intermedio que da valor sin escribir código: apuntar `notification.email_provider` de
-  una empresa del ERP a `smtp.core-force.com:2465` con una clave de envío de esa empresa. El
+  una empresa del ERP a `smtp.core-force.com:2525` con una clave de envío de esa empresa. El
   `SMTPSender` del ERP no cambia y ya gana rebotes, supresión y reputación.
