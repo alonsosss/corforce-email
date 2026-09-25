@@ -107,13 +107,14 @@ describe('lectura de un mensaje', () => {
       .mockResolvedValueOnce(MESSAGE)
       .mockResolvedValueOnce({
         ...MESSAGE,
-        html: '<p>Hola mundo</p><img src="https://img.test/a.png">',
+        // El servicio reescribe las imagenes remotas a su proxy firmado del mismo origen.
+        html: '<p>Hola mundo</p><img src="/api/v1/webmail/image-proxy?u=eA&amp;sig=f1">',
         remote_images: { present: true, blocked: false },
       });
     const props = renderView();
 
     await screen.findByTitle(bodyTitle);
-    expect(screen.getByTitle(bodyTitle).getAttribute('srcdoc')).not.toContain('img.test');
+    expect(screen.getByTitle(bodyTitle).getAttribute('srcdoc')).not.toContain('image-proxy');
     expect(read).toHaveBeenNthCalledWith(
       1,
       'INBOX',
@@ -136,7 +137,7 @@ describe('lectura de un mensaje', () => {
     );
     await waitFor(() =>
       expect(screen.getByTitle(bodyTitle).getAttribute('srcdoc')).toContain(
-        'https://img.test/a.png',
+        `${window.location.origin}/api/v1/webmail/image-proxy?u=eA`,
       ),
     );
     expect(props.onSeen).toHaveBeenCalledTimes(1);

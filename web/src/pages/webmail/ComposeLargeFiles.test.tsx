@@ -8,6 +8,7 @@ import { t } from '@/i18n';
 import { resetWebmailCatalogs } from '@/webmail/catalogs';
 import { useWebmailStore } from '@/webmail/store';
 import ComposePage from './ComposePage';
+import { NEW_MESSAGE } from './composeWindow';
 import { DRAFTS, INBOX, META, outletFor, renderScreen } from './testing';
 
 const LISTING: LargeFileListing = {
@@ -68,16 +69,14 @@ describe('redaccion: fichero grande por enlace', () => {
   it('el enlace del fichero subido entra en el cuerpo del mensaje', async () => {
     const user = userEvent.setup();
     vi.spyOn(largeFilesApi, 'upload').mockResolvedValue(SHARED);
-    renderScreen(<ComposePage />, {
+    renderScreen(<ComposePage request={NEW_MESSAGE} onClose={vi.fn()} />, {
       path: '/webmail/compose',
       url: '/webmail/compose',
       outlet: outletFor([INBOX, DRAFTS]),
     });
     await user.click(await screen.findByRole('button', { name: t('webmail.compose.toPlain') }));
     await screen.findByText(t('webmail.largeFiles.compose.pick'));
-    const input = document.querySelector<HTMLInputElement>(
-      '.cf-wm-largefiles input[type="file"]',
-    );
+    const input = document.querySelector<HTMLInputElement>('.cf-wm-largefiles input[type="file"]');
     if (!input) throw new Error('sin selector de fichero grande');
     await user.upload(input, new File(['contenido'], 'planos.dwg'));
     const body = screen.getByLabelText(t('webmail.compose.body')) as HTMLTextAreaElement;

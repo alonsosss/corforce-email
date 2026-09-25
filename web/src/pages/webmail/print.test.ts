@@ -39,6 +39,25 @@ describe('impresion', () => {
     expect(doc.querySelector('img')?.getAttribute('src')).toBe(DATA);
   });
 
+  it('con las imagenes remotas pedidas solo imprime las del proxy del mismo origen', () => {
+    const proxied = '/api/v1/webmail/image-proxy?u=eA&sig=f1';
+    const html = buildPrintDocument(
+      {
+        ...MESSAGE,
+        html: `<img src="${proxied}" alt="proxy"><img src="https://tracker.test/p.gif" alt="directa">`,
+        remote_images: { present: true, blocked: false },
+      },
+      { allowRemoteImages: true },
+    );
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    const origin = window.location.origin;
+    expect(doc.querySelector('img[alt="proxy"]')?.getAttribute('src')).toBe(`${origin}${proxied}`);
+    expect(doc.querySelector('img[alt="directa"]')?.hasAttribute('src')).toBe(false);
+    expect(
+      doc.querySelector('meta[http-equiv="Content-Security-Policy"]')?.getAttribute('content'),
+    ).toContain(`img-src data: ${origin};`);
+  });
+
   it('sin ellas no pide la parte al servidor desde el marco', () => {
     const html = buildPrintDocument(MESSAGE, { allowRemoteImages: false });
     expect(html).not.toContain(PART_URL);

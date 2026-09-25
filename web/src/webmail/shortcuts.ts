@@ -4,7 +4,9 @@ import type { MessageKey } from '@/i18n';
 /*
  * Atajos de teclado del webmail. Una sola tecla sin modificadores, como los webmails del
  * mercado. Nunca se disparan mientras se escribe (campos, areas de texto, el editor con
- * formato) ni con un dialogo abierto: el dialogo es dueno del teclado.
+ * formato) ni con un dialogo abierto: el dialogo es dueno del teclado. Una zona marcada con
+ * data-keyboard-owner (la ventana de redaccion) tambien lo es: con "focus" mientras el foco
+ * este dentro, con "capture" mientras exista.
  */
 
 export interface ShortcutHelp {
@@ -40,6 +42,14 @@ function dialogOpen(): boolean {
   return document.querySelector('[aria-modal="true"]') !== null;
 }
 
+function keyboardOwned(target: EventTarget | null): boolean {
+  if (document.querySelector('[data-keyboard-owner="capture"]')) return true;
+  const active = document.activeElement;
+  return [target, active].some(
+    (node) => node instanceof Element && node.closest('[data-keyboard-owner]') !== null,
+  );
+}
+
 export type ShortcutMap = Partial<Record<string, () => void>>;
 
 /** Registra los atajos mientras el componente este montado; el mapa puede cambiar en cada render. */
@@ -51,7 +61,7 @@ export function useShortcuts(map: ShortcutMap, enabled = true): void {
     if (!enabled) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey) return;
-      if (isTypingTarget(e.target) || dialogOpen()) return;
+      if (isTypingTarget(e.target) || dialogOpen() || keyboardOwned(e.target)) return;
       const handler = current.current[e.key];
       if (!handler) return;
       e.preventDefault();

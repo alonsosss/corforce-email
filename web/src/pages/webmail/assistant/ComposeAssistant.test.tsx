@@ -5,7 +5,6 @@ import { MemoryRouter } from 'react-router-dom';
 import { assistantApi, type AssistantStatus } from '@/api/webmailAssistant';
 import { ToastProvider } from '@/design/components';
 import { t } from '@/i18n';
-import { assistantNavigationState } from './assistant';
 import { ComposeAssistant, type ComposeAssistantProps } from './ComposeAssistant';
 
 const STATUS: AssistantStatus = {
@@ -22,7 +21,7 @@ const STATUS: AssistantStatus = {
   usage: { mailbox: 0, tenant: 0 },
 };
 
-function renderCompose(props: Partial<ComposeAssistantProps> = {}, state?: unknown) {
+function renderCompose(props: Partial<ComposeAssistantProps> = {}) {
   const all: ComposeAssistantProps = {
     bodyText: () => 'te mando el informe',
     onInsert: vi.fn(),
@@ -30,7 +29,7 @@ function renderCompose(props: Partial<ComposeAssistantProps> = {}, state?: unkno
     ...props,
   };
   render(
-    <MemoryRouter initialEntries={[{ pathname: '/webmail/compose', state }]}>
+    <MemoryRouter>
       <ToastProvider>
         <ComposeAssistant {...all} />
       </ToastProvider>
@@ -101,7 +100,7 @@ describe('asistente en la redaccion', () => {
     const status = vi
       .spyOn(assistantApi, 'status')
       .mockResolvedValue({ ...STATUS, available: false, reason: 'disabled' });
-    const props = renderCompose({}, assistantNavigationState('Texto del lector'));
+    const props = renderCompose({ initialText: 'Texto del lector' });
     await waitFor(() => expect(status).toHaveBeenCalled());
     expect(props.onInsert).toHaveBeenCalledTimes(1);
     expect(props.onInsert).toHaveBeenCalledWith('Texto del lector');

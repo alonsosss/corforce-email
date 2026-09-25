@@ -1,4 +1,4 @@
-import type { MailMessage } from '@/api/webmail';
+import { webmailImageProxyUrl, type MailMessage } from '@/api/webmail';
 import { formatDateTime } from '@/lib/format';
 import { prepareUntrustedHtml } from '@/lib/untrustedHtml';
 import { t } from '@/i18n';
@@ -62,6 +62,7 @@ export function buildPrintDocument(message: MailMessage, options: PrintOptions):
   return prepareUntrustedHtml(source, {
     allowRemoteImages: options.allowRemoteImages && !message.remote_images.blocked,
     inlineImages: options.inlineImages,
+    remoteImageProxy: webmailImageProxyUrl(),
   }).html;
 }
 

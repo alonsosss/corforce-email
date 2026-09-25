@@ -1,5 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { useContext, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import {
   FOLDER_ROLES,
   webmailApi,
@@ -16,7 +15,6 @@ import {
   Button,
   ChipsInput,
   ConfirmDialog,
-  EmptyState,
   ErrorState,
   FormField,
   Input,
@@ -27,7 +25,6 @@ import {
   type ChipsInputProps,
 } from '@/design/components';
 import {
-  IconChevronLeft,
   IconChevronUp,
   IconClock,
   IconMaximize,
@@ -39,7 +36,6 @@ import {
   IconX,
 } from '@/design/icons';
 import { getLocale, t, type MessageKey } from '@/i18n';
-import { paths } from '@/paths';
 import { mailboxSignature, senderIdentities, webmailMeta } from '@/webmail/catalogs';
 import { useWebmailStore } from '@/webmail/store';
 import { AddressBookPicker } from './AddressBookPicker';
@@ -58,7 +54,6 @@ import {
   identityLabel,
   initialBody,
   normalizeRecipient,
-  parseComposeMode,
   pickSender,
   sendSignature,
   type ComposeMode,
@@ -66,7 +61,6 @@ import {
   type ServerAttachments,
 } from './compose';
 import { folderWithRole } from './folders';
-import { parsePositiveInt } from './format';
 import { useRecipientSuggestions } from './recipients';
 import { RichEditor, type RichEditorHandle } from './RichEditor';
 import { htmlHasContent, textToHtml } from './richText';
@@ -75,7 +69,7 @@ import { QuickReplyPicker } from './QuickReplyPicker';
 import { followUpChoices } from './snooze';
 import { formatScheduled } from './schedule';
 import { ScheduleDialog } from './ScheduleDialog';
-import { useComposeWindow } from './composeWindow';
+import { ComposePristineContext, useComposeWindow, type ComposeRequest } from './composeWindow';
 import { loadInlineImages, referencedInlineParts } from './inlineImages';
 import { useWebmailOutlet } from './webmailContext';
 
@@ -116,13 +110,16 @@ async function loadComposeSource(
   return { message, inlineImages };
 }
 
-export default function ComposePage() {
-  const [params] = useSearchParams();
-  const rawMode = params.get('mode');
-  const mode = parseComposeMode(rawMode);
-  const folder = params.get('folder');
-  const uid = parsePositiveInt(params.get('uid'));
-  const toParam = params.get('to');
+export interface ComposePageProps {
+  request: ComposeRequest;
+  /** Cierra la redaccion: tras enviar, programar o descartar, o cuando el usuario la cierra. */
+  onClose: () => void;
+}
+
+export default function ComposePage({ request, onClose }: ComposePageProps) {
+  const mode = request.kind === 'source' ? request.mode : null;
+  const folder = request.kind === 'source' ? request.folder : null;
+  const uid = request.kind === 'source' ? request.uid : null;
   const username = useWebmailStore((s) => s.session?.username ?? '');
   // La firma no bloquea redactar: si no se puede leer, se abre sin ella.
   const signature = useResource(mailboxSignature);
@@ -135,23 +132,10 @@ export default function ComposePage() {
     [mode, folder, uid],
   );
 
-  if ((rawMode && !mode) || (mode && (!folder || !uid))) {
-    return (
-      <div className="cf-wm-compose">
-        <EmptyState
-          title={t('webmail.compose.invalidLink')}
-          action={
-            <Link className="cf-btn cf-btn--secondary" to={paths.webmail}>
-              {t('webmail.reader.back')}
-            </Link>
-          }
-        />
-      </div>
-    );
-  }
   if (mode && source.error) {
     return (
       <div className="cf-wm-compose">
+        <ComposeHead title={t(TITLES[mode])} onClose={onClose} />
         <ErrorState error={source.error} onRetry={source.reload} />
       </div>
     );
@@ -159,29 +143,108 @@ export default function ComposePage() {
   if ((mode && !source.data) || (!signature.data && !signature.error)) {
     return (
       <div className="cf-wm-compose">
+        <ComposeHead title={t(TITLES[mode ?? 'new'])} onClose={onClose} />
         <Skeleton lines={10} />
       </div>
     );
   }
 
-  const direct = toParam ? normalizeRecipient(toParam) : null;
+  const direct = request.kind === 'new' && request.to ? normalizeRecipient(request.to) : null;
   const seed =
     mode && source.data
       ? buildDraft(mode, source.data.message, username, source.data.inlineImages)
       : { ...EMPTY_DRAFT, to: direct ? [direct] : [] };
-  const backHref =
-    folder && uid
-      ? paths.webmailView({ folder, uid: mode === 'draft' ? undefined : uid })
-      : paths.webmail;
   return (
     <ComposeForm
-      key={`${mode ?? 'new'}:${folder ?? ''}:${uid ?? ''}:${direct ?? ''}`}
       mode={mode}
       seed={seed}
       signature={signature.data}
-      backHref={backHref}
+      assistantText={request.assistantText}
+      onClose={onClose}
       recipientNames={mode && source.data ? namesOf(source.data.message) : undefined}
     />
+  );
+}
+
+/** Cabecera de la redaccion: titulo y, en la ventana flotante, minimizar, ampliar y cerrar. */
+function ComposeHead({
+  title,
+  status,
+  onClose,
+}: {
+  title: string;
+  status?: ReactNode;
+  onClose: () => void;
+}) {
+  const windowed = useComposeWindow();
+  const toggleMinimized = () =>
+    windowed?.setSize(windowed.size === 'minimized' ? 'normal' : 'minimized');
+  return (
+    <div className="cf-wm-compose__head">
+      <h1 id="wm-compose-title" className="cf-wm-compose__title">
+        {windowed ? (
+          <button
+            type="button"
+            className="cf-wm-compose__titlebutton"
+            aria-expanded={windowed.size !== 'minimized'}
+            onClick={toggleMinimized}
+          >
+            {title}
+          </button>
+        ) : (
+          title
+        )}
+      </h1>
+      {status}
+      <div className="cf-wm-compose__window">
+        {windowed ? (
+          <>
+            <Button
+              size="sm"
+              variant="ghost"
+              iconOnly
+              icon={
+                windowed.size === 'minimized' ? (
+                  <IconChevronUp size={16} />
+                ) : (
+                  <IconMinus size={16} />
+                )
+              }
+              onClick={toggleMinimized}
+            >
+              {t(
+                windowed.size === 'minimized'
+                  ? 'webmail.composer.restore'
+                  : 'webmail.composer.minimize',
+              )}
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              iconOnly
+              className="cf-wm-compose__expand"
+              icon={
+                windowed.size === 'expanded' ? (
+                  <IconMinimize size={16} />
+                ) : (
+                  <IconMaximize size={16} />
+                )
+              }
+              onClick={() => windowed.setSize(windowed.size === 'expanded' ? 'normal' : 'expanded')}
+            >
+              {t(
+                windowed.size === 'expanded'
+                  ? 'webmail.composer.collapse'
+                  : 'webmail.composer.expand',
+              )}
+            </Button>
+          </>
+        ) : null}
+        <Button size="sm" variant="ghost" iconOnly icon={<IconX size={16} />} onClick={onClose}>
+          {t('webmail.composer.close')}
+        </Button>
+      </div>
+    </div>
   );
 }
 
@@ -213,19 +276,22 @@ function ComposeForm({
   mode,
   seed,
   signature,
-  backHref,
+  assistantText,
+  onClose,
   recipientNames,
 }: {
   mode: ComposeMode | null;
   seed: DraftSeed;
   signature: Signature | null;
-  backHref: string;
+  /** Texto propuesto por el asistente del lector: se inserta al abrir. */
+  assistantText: string | null;
+  onClose: () => void;
   /** Nombres visibles del mensaje al que se responde: resuelven {nombre} de una respuesta rapida. */
   recipientNames?: Readonly<Record<string, string>>;
 }) {
   const toast = useToast();
-  const navigate = useNavigate();
   const { folders, reloadFolders } = useWebmailOutlet();
+  const reportPristine = useContext(ComposePristineContext);
   const refreshSession = useWebmailStore((s) => s.refresh);
   const meta = useResource(webmailMeta);
   const identities = useResource(senderIdentities);
@@ -352,7 +418,7 @@ function ComposeForm({
     closing.current = true;
     reloadFolders();
     void refreshSession();
-    if (mounted.current) navigate(backHref, { replace: true });
+    if (mounted.current) onClose();
   };
 
   // La clave de idempotencia se conserva mientras se reintenta el mismo contenido: un
@@ -452,6 +518,8 @@ function ComposeForm({
   const save = useAction(() => persistDraft(false));
 
   const autosaving = autosave.state === 'saving';
+  const pristine = version === 0 && !waiting && !send.busy;
+  useEffect(() => reportPristine?.(pristine), [pristine, reportPristine]);
   useEffect(() => {
     if (!dirty || !hasContent || blocked || waiting || send.busy || save.busy || autosaving) {
       return;
@@ -572,7 +640,7 @@ function ComposeForm({
       reloadFolders();
     }
     setConfirmDiscard(false);
-    navigate(backHref);
+    onClose();
   };
 
   const busy = send.busy || save.busy || waiting;
@@ -600,85 +668,11 @@ function ComposeForm({
       noValidate
       aria-labelledby="wm-compose-title"
     >
-      <div className="cf-wm-compose__head">
-        {windowed ? null : (
-          <Link to={backHref} className="cf-btn cf-btn--ghost cf-btn--sm">
-            <IconChevronLeft size={16} />
-            {t('webmail.reader.back')}
-          </Link>
-        )}
-        <h1 id="wm-compose-title" className="cf-wm-compose__title">
-          {windowed ? (
-            <button
-              type="button"
-              className="cf-wm-compose__titlebutton"
-              aria-expanded={windowed.size !== 'minimized'}
-              onClick={() =>
-                windowed.setSize(windowed.size === 'minimized' ? 'normal' : 'minimized')
-              }
-            >
-              {subject.trim() || t(TITLES[mode ?? 'new'])}
-            </button>
-          ) : (
-            t(TITLES[mode ?? 'new'])
-          )}
-        </h1>
-        <AutosaveStatus state={autosave} dirty={dirty} />
-        {windowed ? (
-          <div className="cf-wm-compose__window">
-            <Button
-              size="sm"
-              variant="ghost"
-              iconOnly
-              icon={
-                windowed.size === 'minimized' ? (
-                  <IconChevronUp size={16} />
-                ) : (
-                  <IconMinus size={16} />
-                )
-              }
-              onClick={() =>
-                windowed.setSize(windowed.size === 'minimized' ? 'normal' : 'minimized')
-              }
-            >
-              {t(
-                windowed.size === 'minimized'
-                  ? 'webmail.composer.restore'
-                  : 'webmail.composer.minimize',
-              )}
-            </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              iconOnly
-              className="cf-wm-compose__expand"
-              icon={
-                windowed.size === 'expanded' ? (
-                  <IconMinimize size={16} />
-                ) : (
-                  <IconMaximize size={16} />
-                )
-              }
-              onClick={() => windowed.setSize(windowed.size === 'expanded' ? 'normal' : 'expanded')}
-            >
-              {t(
-                windowed.size === 'expanded'
-                  ? 'webmail.composer.collapse'
-                  : 'webmail.composer.expand',
-              )}
-            </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              iconOnly
-              icon={<IconX size={16} />}
-              onClick={() => navigate(backHref)}
-            >
-              {t('webmail.composer.close')}
-            </Button>
-          </div>
-        ) : null}
-      </div>
+      <ComposeHead
+        title={windowed ? subject.trim() || t(TITLES[mode ?? 'new']) : t(TITLES[mode ?? 'new'])}
+        status={<AutosaveStatus state={autosave} dirty={dirty} />}
+        onClose={onClose}
+      />
       {senders.length > 1 ? (
         <FormField label={t('webmail.header.from')} htmlFor="compose-from">
           <Select
@@ -804,6 +798,7 @@ function ComposeForm({
       <ComposeAssistant
         bodyText={() => (format === 'html' ? htmlToPlainText(html) : text)}
         replyTo={seed.inReplyTo}
+        initialText={assistantText}
         disabled={busy}
         onInsert={insertAssistantText}
         onReplace={replaceWithAssistantText}
@@ -898,9 +893,7 @@ function ComposeForm({
           className="cf-wm-compose__discard"
           icon={<IconTrash size={18} />}
           disabled={busy || autosaving}
-          onClick={() =>
-            dirty || draftOrigin === 'auto' ? setConfirmDiscard(true) : navigate(backHref)
-          }
+          onClick={() => (dirty || draftOrigin === 'auto' ? setConfirmDiscard(true) : onClose())}
         >
           {t('webmail.compose.discard')}
         </Button>

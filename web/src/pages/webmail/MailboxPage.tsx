@@ -38,7 +38,6 @@ import {
   criteriaToFilters,
   criteriaToView,
   isSearching,
-  EMPTY_CRITERIA,
   readCriteria,
   type SearchCriteria,
 } from './search';
@@ -59,16 +58,7 @@ import { RowActions } from './RowActions';
 import { useWebmailOutlet } from './webmailContext';
 
 /** Carpeta, mensaje, pagina y busqueda salen de la query: una recarga vuelve al mismo sitio. */
-export interface MailboxPageProps {
-  /**
-   * Buzon de fondo de la ventana de redaccion: sin atajos (una tecla perdida archivaria o
-   * borraria el mensaje al que se responde) y sin leer criterios de busqueda de la URL,
-   * que alli son los de la redaccion (?to= es un destinatario, no un filtro).
-   */
-  background?: boolean;
-}
-
-export default function MailboxPage({ background = false }: MailboxPageProps) {
+export default function MailboxPage() {
   const { folders } = useWebmailOutlet();
   const [params] = useSearchParams();
   const list = folders.data;
@@ -89,7 +79,7 @@ export default function MailboxPage({ background = false }: MailboxPageProps) {
       </div>
     );
   }
-  return <MailboxView key={folderName} folderName={folderName} background={background} />;
+  return <MailboxView key={folderName} folderName={folderName} />;
 }
 
 function chunk<T>(values: readonly T[], size: number): T[][] {
@@ -98,7 +88,7 @@ function chunk<T>(values: readonly T[], size: number): T[][] {
   return out;
 }
 
-function MailboxView({ folderName, background }: { folderName: string; background: boolean }) {
+function MailboxView({ folderName }: { folderName: string }) {
   const { folders, adjustUnread, reloadFolders, inboxTick } = useWebmailOutlet();
   const refreshSession = useWebmailStore((s) => s.refresh);
   const toast = useToast();
@@ -109,10 +99,7 @@ function MailboxView({ folderName, background }: { folderName: string; backgroun
   const navigate = useNavigate();
   const uid = parsePositiveInt(params.get('uid'));
   const page = parsePositiveInt(params.get('page')) ?? 1;
-  const criteria = useMemo(
-    () => (background ? EMPTY_CRITERIA : readCriteria(params)),
-    [background, params],
-  );
+  const criteria = useMemo(() => readCriteria(params), [params]);
   const criteriaKey = JSON.stringify(criteria);
   const folder = folders.data?.find((f) => f.name === folderName) ?? null;
   const role = folder?.role ?? '';
@@ -327,29 +314,26 @@ function MailboxView({ folderName, background }: { folderName: string; backgroun
       navigate(paths.webmailComposeFrom(mode, folderName, uid));
     }
   };
-  useShortcuts(
-    {
-      j: () => step(1),
-      k: () => step(-1),
-      r: () => reply('reply'),
-      a: () => reply('replyAll'),
-      f: () => reply('forward'),
-      e: () => {
-        const uids = targets();
-        if (!archive || role === FOLDER_ROLES.archive || !uids.length) return;
-        void batchMove(uids, archive, 'webmail.batch.moved').catch((err: unknown) =>
-          toast.error(errorMessage(err)),
-        );
-      },
-      '#': () => {
-        const uids = targets();
-        if (!uids.length) return;
-        if (isTrash) setPurging(uids);
-        else void batchDelete(uids).catch((err: unknown) => toast.error(errorMessage(err)));
-      },
+  useShortcuts({
+    j: () => step(1),
+    k: () => step(-1),
+    r: () => reply('reply'),
+    a: () => reply('replyAll'),
+    f: () => reply('forward'),
+    e: () => {
+      const uids = targets();
+      if (!archive || role === FOLDER_ROLES.archive || !uids.length) return;
+      void batchMove(uids, archive, 'webmail.batch.moved').catch((err: unknown) =>
+        toast.error(errorMessage(err)),
+      );
     },
-    !background,
-  );
+    '#': () => {
+      const uids = targets();
+      if (!uids.length) return;
+      if (isTrash) setPurging(uids);
+      else void batchDelete(uids).catch((err: unknown) => toast.error(errorMessage(err)));
+    },
+  });
 
   const emptyAction = isEmptiable(role) ? (
     <Button

@@ -1,3 +1,4 @@
+import { createContext, useContext } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import type { WebmailFolder } from '@/api/webmail';
 import type { QueryState } from '@/hooks/useQuery';
@@ -12,6 +13,13 @@ export interface WebmailOutlet {
   inboxTick: number;
 }
 
+/** El mismo valor para lo que el marco monta fuera del Outlet (la ventana de redaccion). */
+export const WebmailShellContext = createContext<WebmailOutlet | null>(null);
+
 export function useWebmailOutlet(): WebmailOutlet {
-  return useOutletContext<WebmailOutlet>();
+  const shell = useContext(WebmailShellContext);
+  const outlet = useOutletContext<WebmailOutlet | undefined>();
+  const value = shell ?? outlet;
+  if (!value) throw new Error('useWebmailOutlet fuera del marco del webmail');
+  return value;
 }
