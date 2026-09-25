@@ -156,7 +156,7 @@ despliegue_comprobar_ci() {
   head="$(git rev-parse HEAD)"
   if ! command -v gh >/dev/null 2>&1; then
     veredicto="falta gh: no se puede saber si la CI esta en verde (instalalo y usa gh auth login)"
-  elif ! runs="$(gh run list --workflow "$flujo" --branch main --limit 30 --json headSha,status,conclusion 2>&1)"; then
+  elif ! runs="$(gh run list --workflow "$flujo" --branch main --limit 100 --json headSha,status,conclusion 2>&1)"; then
     veredicto="gh no pudo consultar el flujo $flujo: ${runs:0:200}"
   else
     veredicto="$(RUNS="$runs" python3 - "$head" <<'PY'
@@ -165,14 +165,18 @@ import json, os, sys
 head = sys.argv[1]
 runs = [r for r in json.loads(os.environ["RUNS"] or "[]") if r["headSha"] == head]
 corto = head[:8]
-if any(r["conclusion"] == "success" for r in runs):
-    print("ok")
-elif any(r["conclusion"] in ("failure", "cancelled", "timed_out", "startup_failure") for r in runs):
+# El fallo manda sobre el verde: un commit con una ejecucion roja y otra verde (un re-run parcial,
+# un workflow_dispatch) no esta probado, y darlo por bueno es lo que esta guardia viene a evitar.
+if any(r["conclusion"] in ("failure", "cancelled", "timed_out", "startup_failure") for r in runs):
     print("la CI FALLA para el commit " + corto)
+elif any(r["conclusion"] == "success" for r in runs):
+    print("ok")
 elif any(r["status"] in ("in_progress", "queued", "waiting", "pending", "requested") for r in runs):
     print("la CI todavia corre para el commit " + corto)
 else:
-    print("no hay ninguna ejecucion de la CI para el commit " + corto + "; falta empujarlo a main")
+    print("no hay ninguna ejecucion de la CI para el commit " + corto +
+          "; o no esta empujado a main, o su ejecucion ya no esta entre las ultimas consultadas "
+          "(pasa al volver a un commit antiguo: ahi va DEPLOY_CI=omitir)")
 PY
 )" || veredicto="no se pudo evaluar la puerta de la CI"
   fi

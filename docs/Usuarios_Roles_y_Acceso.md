@@ -283,7 +283,13 @@ Las denegaciones se cuentan en `rbac_denials_total` y se guardan en
 ### 4.1 Claves de API de empresa (V, 2026-09-23)
 
 Segunda forma de autenticarse, para integraciones y no para personas (`docs/adr/0013-claves-de-api-y-relay-smtp.md`).
-Una clave es `cfm_<prefijo>_<secreto>`: el prefijo (12 caracteres) es publico y es el usuario SMTP; el secreto (256
+Hay dos familias de credencial con poderes disjuntos (`docs/adr/0017-aprovisionamiento-desde-otro-producto.md`):
+la de **envio** (`cfm_`), que es la descrita aqui, y la de **aprovisionamiento** (`cfp_`), que creara empresas,
+dominios y claves de envio para otro producto y **no puede mandar un solo correo ni leer un buzon**. La familia va en
+el prefijo del token y en la columna `kind`, y cada una solo entra en su propia lista cerrada de rutas. La de
+aprovisionamiento todavia no tiene ninguna ruta: la integracion esta aparcada.
+
+Una clave de envio es `cfm_<prefijo>_<secreto>`: el prefijo (12 caracteres) es publico y es el usuario SMTP; el secreto (256
 bits) solo se muestra al crearla y access-control guarda su HMAC-SHA256 con la llave `API_KEY_HASH_KEY` del almacen.
 
 * **Quien la crea.** Quien tiene `access/api_keys/create` (el `tenant_admin` siempre), en `POST /api/v1/access/api-keys`

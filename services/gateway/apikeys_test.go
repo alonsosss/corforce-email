@@ -36,8 +36,11 @@ func (s *stubKeys) Resolve(_ context.Context, token, ip string) (*apikey.Princip
 	return s.p, nil
 }
 
+// sendPrincipal: lo que devuelve el resolvedor para una clave de envio. Lleva familia siempre,
+// como pkg/apikey, que normaliza a la de envio una respuesta antigua que no la traiga.
 func sendPrincipal(actions ...string) *apikey.Principal {
-	p := &apikey.Principal{ID: "5d8c7a1e-0b7e-4a52-9c3e-2f7b1c9d0e11", TenantID: "7f0b1e2c-0000-4000-8000-0000000000aa", Prefix: "abcdefgh2345"}
+	p := &apikey.Principal{ID: "5d8c7a1e-0b7e-4a52-9c3e-2f7b1c9d0e11", TenantID: "7f0b1e2c-0000-4000-8000-0000000000aa",
+		Kind: apikey.KindSending, Prefix: "abcdefgh2345"}
 	for _, a := range actions {
 		p.Scopes = append(p.Scopes, middleware.APIKeyScope{Module: "transactional", Resource: "messages", Action: a})
 	}
@@ -235,6 +238,15 @@ func TestTablaDeRutasDeClave(t *testing.T) {
 		"en las dos familias": func(t *routeTable) {
 			t.ProvisioningRoutes = append(t.ProvisioningRoutes, t.APIKeyRoutes[0])
 		},
+		// Dos patrones distintos que casan la misma URL: no se repite el texto, pero esa URL la
+		// alcanzarian las dos familias.
+		"solapada entre familias": func(t *routeTable) {
+			t.ProvisioningRoutes = append(t.ProvisioningRoutes, methodPathSpec{Method: "GET", Path: "/transactional/messages/pendientes"})
+		},
+		"solapada al reves": func(t *routeTable) {
+			t.ProvisioningRoutes = append(t.ProvisioningRoutes, methodPathSpec{Method: "POST", Path: "/organizations/aprovisionar"})
+			t.APIKeyRoutes = append(t.APIKeyRoutes, methodPathSpec{Method: "POST", Path: "/organizations/{accion}"})
+		},
 		"aprovisionamiento con comodin": func(t *routeTable) {
 			t.ProvisioningRoutes = append(t.ProvisioningRoutes, methodPathSpec{Method: "POST", Path: "/transactional/*"})
 		},
@@ -301,5 +313,17 @@ func TestFamiliaDelTokenDebeSerLaDeLaClave(t *testing.T) {
 	}
 	if k.upstream != nil {
 		t.Fatal("no debe llegar al servicio")
+	}
+}
+
+// Una respuesta sin familia no pasa por ninguna: el gateway compara contra un valor concreto, y
+// pkg/apikey ya normaliza lo que viene de un access-control anterior a las dos familias.
+func TestCredencialSinFamiliaNoPasa(t *testing.T) {
+	p := sendPrincipal("create")
+	p.Kind = ""
+	k := newKeyHarness(t, &stubKeys{p: p}, 100)
+	rec := k.do(http.MethodPost, "/api/v1/transactional/messages", testKey)
+	if rec.Code != http.StatusUnauthorized || k.upstream != nil {
+		t.Fatalf("%d %s", rec.Code, rec.Body.String())
 	}
 }

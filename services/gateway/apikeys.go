@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -77,12 +78,39 @@ func (t *routeTable) validateAPIKeyRoutes() error {
 		}
 		seen[key] = true
 	}
-	if _, err := t.matcherFor(t.APIKeyRoutes); err != nil {
+	envio, err := t.matcherFor(t.APIKeyRoutes)
+	if err != nil {
 		return err
 	}
-	_, err := t.matcherFor(t.ProvisioningRoutes)
-	return err
+	aprov, err := t.matcherFor(t.ProvisioningRoutes)
+	if err != nil {
+		return err
+	}
+	// Disjuntas de verdad, no solo sin repetir el texto: dos patrones distintos pueden casar la
+	// misma URL ("/x/{id}" y "/x/pendientes"), y entonces esa URL la alcanzarian LAS DOS familias,
+	// que es justo lo que estas listas separadas evitan. Se prueba cada ruta contra el otro router
+	// con los parametros sustituidos por un valor cualquiera.
+	for _, par := range []struct {
+		rutas []methodPathSpec
+		otro  *chi.Mux
+		lista string
+	}{{t.APIKeyRoutes, aprov, "api_key_routes"}, {t.ProvisioningRoutes, envio, "provisioning_routes"}} {
+		for _, rt := range par.rutas {
+			if par.otro.Match(chi.NewRouteContext(), rt.Method, sinParametros(rt.Path)) {
+				return fmt.Errorf("tabla de rutas: %s %q de %s la alcanza tambien la otra familia de credencial",
+					rt.Method, rt.Path, par.lista)
+			}
+		}
+	}
+	return nil
 }
+
+// parametroDeRuta casa {parametro} en un patron de chi.
+var parametroDeRuta = regexp.MustCompile(`\{[^}]*\}`)
+
+// sinParametros sustituye cada {parametro} por un valor cualquiera, para poder preguntarle a un
+// router si casaria esa URL.
+func sinParametros(patron string) string { return parametroDeRuta.ReplaceAllString(patron, "x") }
 
 // matcherFor arma el router que reconoce una lista de rutas. chi entra en panico con un patron mal
 // escrito: se convierte en error de arranque.
@@ -203,8 +231,10 @@ func (g *apiKeyGate) authenticate(jwt func(http.Handler) http.Handler) func(http
 			}
 			// La familia que dice el prefijo tiene que ser la de la credencial guardada. Lo
 			// comprueba tambien access-control; aqui se repite porque es lo que separa los poderes
-			// y no puede depender de una sola capa.
-			if p.Kind != "" && p.Kind != kind {
+			// y no puede depender de una sola capa. Sin "!= vacia": pkg/apikey normaliza la
+			// respuesta antigua a la familia de envio, asi que un vacio aqui seria una respuesta
+			// que no entendemos y no debe pasar por ninguna familia.
+			if p.Kind != kind {
 				apiKeyRequests.WithLabelValues(apiKeyResultInvalid).Inc()
 				apiKeyError(w, http.StatusUnauthorized, "API_KEY_INVALID", "clave de API inválida, revocada o caducada")
 				return

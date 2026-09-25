@@ -112,3 +112,4 @@ deploy/mail/rspamd/custom/platform_networks.map
 deploy/mail/rspamd/custom/rspamd_trusted.map
 deploy/mail/rspamd/custom/sa-rules
 deploy/mail/rspamd/local.d/redis.conf
+.claude/

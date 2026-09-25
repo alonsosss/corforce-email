@@ -559,6 +559,9 @@ buzones dio 500 y `mail-auth` no pudo leer el buzon del remitente de las alertas
   ni la guardia de retroceso ni la verificación podían saber qué commit corría cada servicio: el
   despliegue «salía bien» aunque dejara código viejo dentro, y no había rollback por etiqueta.
   Rollback: desde el commit anterior, `DEPLOY_ALLOW_ROLLBACK=1 ./scripts/deploy-ecr.sh <servicios>`.
+  Si ese commit es viejo, su ejecución de CI puede haber salido ya de las últimas consultadas, o
+  estar en rojo por algo ajeno: en un rollback de emergencia va además `DEPLOY_CI=omitir`, que queda
+  dicho en la salida.
 * **Ensayo de recuperación.** `make ensayo-recuperacion` (`ops/backup/ensayo-recuperacion.sh`)
   responde la pregunta que el respaldo semanal no responde: ¿se vuelve con **solo** lo que hay fuera
   del servidor? Corre en cualquier máquina, en contenedores desechables, sin leer nada de producción:

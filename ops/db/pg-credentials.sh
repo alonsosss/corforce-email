@@ -119,7 +119,9 @@ cf_pg_montar() {
 # cf_pg_pasar_entorno <VARIABLE>...: hace visible el valor a las herramientas por el ENTORNO, no
 # por argumentos. Es el camino de los secretos que el SQL necesita (un verificador SCRAM, la
 # contrasena del primer superadmin): en el SQL se leen con `\getenv`, asi que no aparecen ni en la
-# linea de ordenes de psql ni en la de docker run ni en `docker inspect`.
+# linea de ordenes de psql ni en la de docker run, que es lo que ve cualquiera con `ps`. OJO: con
+# `docker run -e VAR` el valor SI acaba en la configuracion del contenedor y se ve en
+# `docker inspect` mientras vive; la frontera ahi es el socket de Docker, que ya es de root.
 cf_pg_pasar_entorno() {
   local nombre
   for nombre in "$@"; do

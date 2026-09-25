@@ -194,6 +194,10 @@ ejec() { printf '[{"headSha":"%s","status":"%s","conclusion":"%s"}]' "$1" "$2" "
 git -C "$RG" checkout -q "$MOTOR"
 ci "$(ejec "$MOTOR" completed success)" || mal "ci: rechaza un commit con su CI en verde"
 if ci "$(ejec "$MOTOR" completed failure)"; then mal "ci: despliega con la CI en rojo"; fi
+# Un commit con una roja y una verde (un re-run parcial) no esta probado: manda el fallo.
+if ci "$(printf '[{"headSha":"%s","status":"completed","conclusion":"success"},{"headSha":"%s","status":"completed","conclusion":"failure"}]' "$MOTOR" "$MOTOR")"; then
+  mal "ci: un verde tapa un rojo del mismo commit"
+fi
 grep -q "la CI FALLA para el commit" "$TMP/ci.out" || mal "ci: no dice que la CI fallo"
 if ci "$(ejec "$MOTOR" in_progress "")"; then mal "ci: despliega con la CI todavia corriendo"; fi
 grep -q "todavia corre" "$TMP/ci.out" || mal "ci: no distingue una CI en curso de una que falla"

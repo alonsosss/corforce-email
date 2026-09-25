@@ -514,6 +514,12 @@ mapa pgsql_virtual_relay_domain_maps respaldo.test respaldo.test
 mapa pgsql_relay_recipient_maps cualquiera@respaldo.test cualquiera@respaldo.test
 mapa pgsql_relay_ne conocido@respaldo.test "lmtp:inet:dovecot:24"
 mapa pgsql_relay_ne migrado@respaldo.test "lmtp:inet:dovecot:24"
+# active=2 es "solo recibe", el estado de un buzon al que se le corta el acceso durante la
+# migracion: su correo se entrega igual, no se reenvia al proveedor anterior.
+api PATCH "/mailboxes/$MIGRADOID" '{"active":2}' >/dev/null
+expect "un buzon migrado pasa a solo recibir" "$API_CODE" "200"
+mapa pgsql_relay_ne migrado@respaldo.test "lmtp:inet:dovecot:24"
+api PATCH "/mailboxes/$MIGRADOID" '{"active":1}' >/dev/null
 mapa pgsql_relay_ne nomigrado@respaldo.test ""
 mapa pgsql_relay_ne ventas@acme.test ""
 generados=$(en postfix-mail ls /opt/postfix/conf/sql 2>/dev/null)

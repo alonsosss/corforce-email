@@ -77,7 +77,9 @@ func KindOf(s string) string {
 type Principal struct {
 	ID       string `json:"id"`
 	TenantID string `json:"tenant_id"`
-	// Kind es la familia de la credencial; vacia en una respuesta antigua, que es de envio.
+	// Kind es la familia de la credencial. Una respuesta sin ella es de un access-control anterior
+	// a las dos familias: se normaliza a la de envio al resolver, nunca se deja vacia, porque quien
+	// decide por la familia no puede recibir un valor que case con cualquiera.
 	Kind      string                   `json:"kind"`
 	Prefix    string                   `json:"prefix"`
 	Scopes    []middleware.APIKeyScope `json:"scopes"`
@@ -266,6 +268,12 @@ func (r *Resolver) fetch(ctx context.Context, token, clientIP string) (*Principa
 	p := payload.Data
 	if p.ID == "" || p.TenantID == "" || len(p.Scopes) == 0 {
 		return nil, fmt.Errorf("%w: respuesta incompleta", ErrUnavailable)
+	}
+	// Una respuesta sin familia viene de un access-control anterior a las dos: es de envio. Se
+	// normaliza AQUI para que quien decide por la familia compare contra un valor concreto y no
+	// contra el vacio, que casaria con cualquiera.
+	if p.Kind == "" {
+		p.Kind = KindSending
 	}
 	if _, ok := middleware.ParseAPIKeyScopes(middleware.FormatAPIKeyScopes(p.Scopes)); !ok {
 		return nil, fmt.Errorf("%w: alcance ilegible", ErrUnavailable)
