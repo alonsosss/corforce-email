@@ -181,7 +181,9 @@ export CAMPAIGNS_TICK=1s
 export SUPPRESSION_EXPIRY_SWEEP_INTERVAL=1s
 # Formularios publicos: el tiempo minimo de rellenado a un segundo (la prueba espera, no rellena)
 # y un cupo por IP pequeno para ver el 429 sin cientos de envios.
-export CONTACTS_FORM_MIN_FILL=1s CONTACTS_FORM_SUBMITS_PER_IP=5
+# 3 s y no 1 s: en un runner cargado, pedir el token y enviar sin espera podia pasar del segundo y el
+# envio "demasiado rapido" se aceptaba (202). Los envios validos esperan 3,2 s.
+export CONTACTS_FORM_MIN_FILL=3s CONTACTS_FORM_SUBMITS_PER_IP=5
 
 # Los servicios de la celda arrancan con SU credencial y sin la de plataforma: un permiso que
 # le falte al rol de la celda hace fallar las comprobaciones del correo de mas abajo.
@@ -937,7 +939,7 @@ envio() {
   curl -s -o "$WORK/envio.json" -w '%{http_code}' -X POST "$FPUB/submit" -H 'Content-Type: application/json' \
     -H 'Origin: https://acme.test' -H "X-Real-IP: $1" -d "{\"token\":\"$3\",$2}"
 }
-TK=$(token_formulario); sleep 1.2
+TK=$(token_formulario); sleep 3.2
 expect "un envio valido se acepta" "$(envio 198.51.100.21 '"fields":{"email":"web@cliente.test","first_name":"Wendy"},"consent":true,"homepage":""' "$TK")" "202"
 WEB=$(curl -s "$GW/contacts?search=web@cliente" -H "$A2")
 expect "el contacto entra pendiente de confirmar el doble opt-in" "$(echo "$WEB" | jget data.0.consent_status)" "pending"
@@ -946,25 +948,25 @@ EVID=$(sql mail_tenant_acme "SELECT evidence->>'ip_prefix' || '|' || (evidence ?
 expect "la evidencia guarda la ip truncada y el texto aceptado" "$EVID" "198.51.100.0/24|true"
 expect "el mismo token no vale dos veces" "$(envio 198.51.100.21 '"fields":{"email":"otra@cliente.test"},"consent":true' "$TK")" "400"
 expect "una direccion ya existente recibe la misma respuesta" \
-  "$(TK=$(token_formulario); sleep 1.2; envio 198.51.100.22 '"fields":{"email":"web@cliente.test","first_name":"Otro"},"consent":true' "$TK")" "202"
+  "$(TK=$(token_formulario); sleep 3.2; envio 198.51.100.22 '"fields":{"email":"web@cliente.test","first_name":"Otro"},"consent":true' "$TK")" "202"
 expect "y el envio publico no le cambia el nombre" "$(curl -s "$GW/contacts?search=web@cliente" -H "$A2" | jget data.0.first_name)" "Wendy"
 expect "exclusion manual de una direccion" "$(codigo -X POST "$GW/suppression/entries" -H "$A2" -H 'Content-Type: application/json' \
   -d '{"email":"suprimida-web@cliente.test","reason":"manual"}')" "201"
 expect "el envio de una suprimida recibe la misma respuesta" \
-  "$(TK=$(token_formulario); sleep 1.2; envio 198.51.100.23 '"fields":{"email":"suprimida-web@cliente.test"},"consent":true' "$TK")" "202"
+  "$(TK=$(token_formulario); sleep 3.2; envio 198.51.100.23 '"fields":{"email":"suprimida-web@cliente.test"},"consent":true' "$TK")" "202"
 SUPR=$(curl -s "$GW/contacts?search=suprimida-web" -H "$A2")
 expect "la suprimida queda excluida" "$(echo "$SUPR" | jget data.0.status)" "excluded"
 expect "sin pedirle el doble opt-in (no recibe el correo de confirmacion)" \
   "$(sql mail_tenant_acme "SELECT count(*) FROM contacts.consents k JOIN contacts.contacts c ON c.id = k.contact_id WHERE c.email = 'suprimida-web@cliente.test'")" "0"
 expect "el campo trampa recibe la misma respuesta" \
-  "$(TK=$(token_formulario); sleep 1.2; envio 198.51.100.24 '"fields":{"email":"robot@cliente.test"},"consent":true,"homepage":"https://spam.test"' "$TK")" "202"
+  "$(TK=$(token_formulario); sleep 3.2; envio 198.51.100.24 '"fields":{"email":"robot@cliente.test"},"consent":true,"homepage":"https://spam.test"' "$TK")" "202"
 expect "y no crea nada" "$(curl -s "$GW/contacts?search=robot@cliente" -H "$A2" | jget data)" "[]"
 expect "un envio antes del tiempo minimo se rechaza" \
   "$(envio 198.51.100.25 '"fields":{"email":"rapido@cliente.test"},"consent":true' "$(token_formulario)")" "400"
 cupo=""
 for _ in 1 2 3 4 5 6; do cupo=$(envio 198.51.100.26 '"fields":{"email":"cupo@cliente.test"},"consent":true' "x"); done
 expect "por encima del cupo por IP responde 429" "$cupo" "429"
-TK=$(token_formulario); sleep 1.2
+TK=$(token_formulario); sleep 3.2
 HTMLRESP=$(curl -s -w '\n%{http_code}' -X POST "$FPUB/submit" -H "X-Real-IP: 198.51.100.27" \
   --data-urlencode "_token=$TK" --data-urlencode "field.email=html@cliente.test" --data-urlencode "consent=on")
 contains "el envio desde el iframe responde la pagina de gracias" "$HTMLRESP" "Revisa tu correo para confirmar"
