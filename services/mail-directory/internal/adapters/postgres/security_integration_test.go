@@ -4,15 +4,21 @@ package postgres
 
 import (
 	"bytes"
+	"context"
 	"errors"
+	"os"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/alonsosss/corforce-email/pkg/crypto"
 	"github.com/alonsosss/corforce-email/pkg/db"
 	"github.com/alonsosss/corforce-email/pkg/totp"
 	"github.com/alonsosss/corforce-email/services/mail-directory/internal/app"
 	"github.com/alonsosss/corforce-email/services/mail-directory/internal/domain"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func (f *webmailFixture) outboxCount(t *testing.T, tenant uuid.UUID, subject string) int {
@@ -197,4 +203,92 @@ func TestPoliticaDeReenvioExternoContraPostgres(t *testing.T) {
 	}
 	_, err = f.asRole(t, "mail_engine", uuid.Nil, `SELECT count(*) FROM mail.mail_policy`)
 	expectSQLState(t, err, "42501", "mail_engine lee la politica")
+}
+
+// servicePool abre la base de la prueba con el rol del servicio (mail_service), el que tiene el
+// barrido de mantenimiento de la celda en produccion: ve las filas de todas las empresas.
+func servicePool(t *testing.T, ctx context.Context) *pgxpool.Pool {
+	t.Helper()
+	cfg, err := pgxpool.ParseConfig(os.Getenv("MAIL_DIRECTORY_TEST_DSN"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.AfterConnect = func(ctx context.Context, c *pgx.Conn) error {
+		_, err := c.Exec(ctx, "SET ROLE mail_service")
+		return err
+	}
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+	return pool
+}
+
+// La rotacion de MAIL_ENCRYPTION_KEY re-cifra bajo la llave activa los secretos de todas las
+// empresas de la celda, atados a su buzon; una segunda pasada no toca nada y la sustitucion
+// condicional no pisa lo que otro escribio.
+func TestRotacionDelSecretoDeLaVerificacionContraPostgres(t *testing.T) {
+	f := newWebmailFixture(t)
+	secret, _ := totp.GenerateSecret()
+	for _, m := range []*domain.Mailbox{f.ana, f.luis} {
+		if _, err := f.uc.ActivateMFAByUsername(f.internal, m.Username, secret, mustCode(t, secret)); err != nil {
+			t.Fatalf("activar %s: %v", m.Username, err)
+		}
+	}
+	sealedOf := func(id uuid.UUID) []byte {
+		var sealed []byte
+		if err := f.pool.QueryRow(f.ctx, `SELECT secret_enc FROM mail.mailbox_mfa WHERE mailbox_id = $1`, id).Scan(&sealed); err != nil {
+			t.Fatal(err)
+		}
+		return sealed
+	}
+	before := sealedOf(f.ana.ID)
+
+	newKey := strings.Repeat("6b", 32)
+	t.Setenv("MAIL_DIRECTORY_IT_ROTATE_KEY", newKey)
+	t.Setenv("MAIL_DIRECTORY_IT_ROTATE_KEYS_OLD", strings.Repeat("5a", 32))
+	rotating, err := crypto.LoadKeyRing("MAIL_DIRECTORY_IT_ROTATE_KEY", "MAIL_DIRECTORY_IT_ROTATE_KEYS_OLD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("MAIL_DIRECTORY_IT_ROTATE_KEYS_OLD", "")
+	retired, err := crypto.LoadKeyRing("MAIL_DIRECTORY_IT_ROTATE_KEY", "MAIL_DIRECTORY_IT_ROTATE_KEYS_OLD")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	store := NewMFASecretStore(servicePool(t, f.ctx))
+	rep, err := crypto.RotateStore(f.ctx, rotating, store, uuid.Nil, 1, domain.MFASecretAAD)
+	if err != nil || rep.Rotated < 2 || rep.Pending != 0 {
+		t.Fatalf("rotacion: %+v %v", rep, err)
+	}
+	for _, m := range []*domain.Mailbox{f.ana, f.luis} {
+		if plain, err := retired.DecryptWithAAD(sealedOf(m.ID), domain.MFASecretAAD(m.ID)); err != nil || string(plain) != secret {
+			t.Fatalf("%s sin la llave vieja: %v", m.Username, err)
+		}
+	}
+	if _, err := retired.DecryptWithAAD(sealedOf(f.ana.ID), domain.MFASecretAAD(f.luis.ID)); err == nil {
+		t.Fatal("el secreto re-cifrado de un buzon se abre como el de otro")
+	}
+	again, err := crypto.RotateStore(f.ctx, rotating, store, uuid.Nil, 1, domain.MFASecretAAD)
+	if err != nil || again.Rotated != 0 || again.Pending != 0 {
+		t.Fatalf("segunda pasada: %+v %v", again, err)
+	}
+	rotated := sealedOf(f.ana.ID)
+	if ok, err := store.ReplaceSealed(f.ctx, f.ana.ID, before, []byte("pisado")); err != nil || ok {
+		t.Fatalf("sustituir un cifrado que ya cambio: %v %v", ok, err)
+	}
+	if !bytes.Equal(sealedOf(f.ana.ID), rotated) {
+		t.Fatal("la sustitucion condicional piso la fila")
+	}
+}
+
+func mustCode(t *testing.T, secret string) string {
+	t.Helper()
+	code, err := totp.Generate(secret, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return code
 }

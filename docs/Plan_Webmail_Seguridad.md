@@ -226,8 +226,10 @@ S1 cumple los contratos de 3.1 a 3.3. Lo que el contrato dejaba abierto se resol
 - `pkg/events.EnsureStream` no anade un subject que otro del stream ya captura (JetStream rechaza subjects
   solapados): `audit` pide `mail.mailbox.mfa_enabled` sobre `MAIL_DIRECTORY`, que ya tiene `mail.>`.
 
-Pendiente fuera de S1: re-cifrar los secretos TOTP antes de retirar una llave de `MAIL_ENCRYPTION_KEYS_OLD` (hoy
-se leen con las retiradas, pero ningun proceso los pasa a la activa).
+Re-cifrado de los secretos TOTP al rotar la llave (hecho 2026-09-24): con llaves en `MAIL_ENCRYPTION_KEYS_OLD`,
+mail-directory re-cifra bajo la activa, al arrancar y cada hora, los de `mail.mailbox_mfa` que solo abre una retirada
+(`crypto.RotateStore`, sustitucion condicional) y registra `N re-cifrados, P pendientes`. Procedimiento de la rotacion:
+`docs/Operacion_Despliegue.md`, seccion 2.
 
 ## 4. Bloques
 

@@ -376,7 +376,7 @@ func newItLogin(t *testing.T, pool *pgxpool.Pool) *itLogin {
 		Tenants: itTenants{TenantRepo: NewTenantRepo(pool), slug: l.slug, id: l.tenant},
 		Roles:   NewRoleRepo(pool), Audit: itAudit{}, Events: itEvents{},
 		Tokens: auth.NewTokenService(signer, verifier, 5*time.Minute, time.Hour),
-		Hasher: hasher, UnknownLogins: NewUnknownLoginRepo(pool), Logger: zap.NewNop(),
+		Hasher: hasher, UnknownLogins: NewUnknownLoginRepo(pool), Sealer: testSealer(t), Logger: zap.NewNop(),
 		Now: func() time.Time { return *l.clock },
 	})
 	if err != nil {

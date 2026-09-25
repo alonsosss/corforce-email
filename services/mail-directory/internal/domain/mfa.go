@@ -30,6 +30,10 @@ const (
 	maxTOTPSecretBytes = 64
 )
 
+// MFASecretAAD son los datos autenticados con que se cifra el secreto TOTP del buzon: su id. El
+// cifrado de un buzon copiado a otro no se abre.
+func MFASecretAAD(mailboxID uuid.UUID) []byte { return mailboxID[:] }
+
 // Con que se supero el segundo paso.
 const (
 	MFAMethodTOTP     = "totp"

@@ -16,16 +16,22 @@ const (
 )
 
 type User struct {
-	ID                  uuid.UUID
-	TenantID            uuid.UUID
-	Email               string
-	PasswordHash        string
-	FirstName           string
-	LastName            string
-	AvatarURL           string
-	Status              UserStatus
-	MFAEnabled          bool
-	MFASecret           string
+	ID           uuid.UUID
+	TenantID     uuid.UUID
+	Email        string
+	PasswordHash string
+	FirstName    string
+	LastName     string
+	AvatarURL    string
+	Status       UserStatus
+	MFAEnabled   bool
+	// MFASecretSealed es el secreto TOTP cifrado (mfa_secret_enc, datos autenticados
+	// MFASecretAAD). MFASecretLegacy es el secreto en claro de una fila anterior al cifrado
+	// (mfa_secret): mientras no se cifre, es el que vale.
+	MFASecretSealed []byte
+	MFASecretLegacy string
+	// MFALastStep es el ultimo paso TOTP aceptado: un codigo solo vale con un paso mayor.
+	MFALastStep         int64
 	PasswordChangedAt   *time.Time
 	FailedLoginAttempts int
 	LastFailedLoginAt   *time.Time
@@ -33,6 +39,16 @@ type User struct {
 	LastLoginAt         *time.Time
 	CreatedAt           time.Time
 	UpdatedAt           time.Time
+}
+
+// mfaSecretAADPrefix separa los datos autenticados del secreto TOTP de cualquier otro dato
+// cifrado con la misma llave.
+const mfaSecretAADPrefix = "identity-mfa:"
+
+// MFASecretAAD son los datos autenticados con que se cifra el secreto TOTP del usuario: el
+// cifrado de una cuenta copiado a otra no se abre.
+func MFASecretAAD(userID uuid.UUID) []byte {
+	return []byte(mfaSecretAADPrefix + userID.String())
 }
 
 // Failures es el contador de inicios fallidos de la cuenta, con la regla comun a los correos

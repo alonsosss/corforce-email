@@ -89,7 +89,7 @@ func (tm *team) server(t *testing.T, accessURL string) http.Handler {
 func (tm *team) serverWith(t *testing.T, accessURL string, cfg Config, stepUpMode string) http.Handler {
 	t.Helper()
 	t.Setenv("STEP_UP_MODE", stepUpMode)
-	authUC, err := app.NewAuthUseCase(app.AuthDeps{Users: tm.users, Roles: tm.roles, Hasher: testHasher(t), UnknownLogins: &lgUnknown{}, Logger: zap.NewNop()})
+	authUC, err := app.NewAuthUseCase(app.AuthDeps{Users: tm.users, Roles: tm.roles, Hasher: testHasher(t), UnknownLogins: &lgUnknown{}, Sealer: testSealer(t), Logger: zap.NewNop()})
 	if err != nil {
 		t.Fatal(err)
 	}

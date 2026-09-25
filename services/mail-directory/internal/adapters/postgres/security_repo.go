@@ -5,10 +5,12 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/alonsosss/corforce-email/pkg/crypto"
 	"github.com/alonsosss/corforce-email/pkg/db"
 	"github.com/alonsosss/corforce-email/services/mail-directory/internal/domain"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // MFARepo guarda mail.mailbox_mfa (migracion 16). Filtra por tenant_id ademas de la RLS del Transactor.
@@ -76,6 +78,41 @@ func (r *MFARepo) Delete(ctx context.Context, tenantID, mailboxID uuid.UUID) (bo
 		return false, err
 	}
 	return tag.RowsAffected() > 0, nil
+}
+
+// MFASecretStore recorre los secretos TOTP cifrados de mail.mailbox_mfa de todas las empresas de la
+// celda para re-cifrarlos bajo la llave activa (crypto.RotateStore). Es mantenimiento de la celda, sin
+// usuario detras: corre con el rol de conexion del servicio (politica service_all), no con mail_app.
+type MFASecretStore struct{ pool *pgxpool.Pool }
+
+func NewMFASecretStore(pool *pgxpool.Pool) *MFASecretStore { return &MFASecretStore{pool: pool} }
+
+func (s *MFASecretStore) SealedAfter(ctx context.Context, after uuid.UUID, limit int) ([]crypto.SealedRecord[uuid.UUID], error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT mailbox_id, secret_enc FROM mail.mailbox_mfa WHERE mailbox_id > $1 ORDER BY mailbox_id LIMIT $2`,
+		after, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []crypto.SealedRecord[uuid.UUID]
+	for rows.Next() {
+		var rec crypto.SealedRecord[uuid.UUID]
+		if err := rows.Scan(&rec.Key, &rec.Sealed); err != nil {
+			return nil, err
+		}
+		out = append(out, rec)
+	}
+	return out, rows.Err()
+}
+
+func (s *MFASecretStore) ReplaceSealed(ctx context.Context, mailboxID uuid.UUID, prev, next []byte) (bool, error) {
+	tag, err := s.pool.Exec(ctx,
+		`UPDATE mail.mailbox_mfa SET secret_enc = $3 WHERE mailbox_id = $1 AND secret_enc = $2`, mailboxID, prev, next)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() == 1, nil
 }
 
 // policyLockSpace es la primera mitad de la clave del cerrojo de la politica de correo de una empresa

@@ -171,8 +171,8 @@ uno los suyos como `NOMBRE: ${NOMBRE:-}` (Compose los interpola contra el entorn
 evidencia de dónde lo lee), y `make check-secret-scope`, dentro de `make checks` y de CI, ata la tabla al compose, al
 código y a `secret-keys.txt`: falla si un contenedor recibe o lee un secreto que su fila no lista, si una fila concede
 algo que no se entrega o que el código no lee, o si un secreto no tiene destinatario. Todo servicio Go recibe
-`INTERNAL_GATEWAY_TOKEN`; `identity` es el único con `JWT_SIGNING_KEY`, `audit` con `AUDIT_HASH_KEY*`, `domain-service` y
-`mail-migration` con `MAIL_ENCRYPTION_KEY*`, `mail-security` y `transactional` con `MAIL_LINK_SIGNING_KEY`, y `webmail`
+`INTERNAL_GATEWAY_TOKEN`; `identity` es el único con `JWT_SIGNING_KEY`, `audit` con `AUDIT_HASH_KEY*`, `domain-service`,
+`mail-migration`, `mail-directory` e `identity` con `MAIL_ENCRYPTION_KEY*`, `mail-security` y `transactional` con `MAIL_LINK_SIGNING_KEY`, y `webmail`
 con el maestro de Dovecot del webmail (tabla completa en la ADR). Límite: las variables de entorno son legibles con el
 socket de Docker o como root del host; esto acota lo que ve un servicio comprometido, no un atacante con el servidor.
 
@@ -322,6 +322,34 @@ Rotación: `ops/security/secrets/rotate-key.sh AUDIT_HASH_KEY AUDIT_HASH_KEYS_OL
 pasa la anterior a la lista, y se recrea `audit`. A diferencia de `MAIL_ENCRYPTION_KEYS_OLD`, la lista **no se vacía**
 mientras haya filas firmadas con esas llaves: una fila append-only no se re-firma. Causas del verificador y qué hacer
 con cada una: ADR 0006, sección 5.
+
+Rotación de `MAIL_ENCRYPTION_KEY` (AES-256-GCM, `pkg/crypto.KeyRing`). La llave la reciben `identity` (secreto TOTP del
+segundo factor de la consola, `identity.users.mfa_secret_enc`), `mail-directory` (secreto de la verificación en dos pasos
+de los buzones, `mail.mailbox_mfa.secret_enc`), `domain-service` (claves DKIM y credenciales de terceros) y
+`mail-migration` (credenciales de origen). Las llaves de `MAIL_ENCRYPTION_KEYS_OLD` solo descifran; `identity` y
+`mail-directory`, al arrancar con alguna y después cada hora, re-cifran bajo la activa lo que solo abre una retirada. La
+sustitución es condicional (solo si la fila sigue guardando lo leído), así que varias réplicas pueden hacerlo a la vez y
+una escritura concurrente siempre gana. Procedimiento:
+
+1. `ops/security/secrets/rotate-key.sh MAIL_ENCRYPTION_KEY MAIL_ENCRYPTION_KEYS_OLD --apply`: la nueva queda activa y la
+   anterior pasa a la lista.
+2. Recrear a la vez los cuatro contenedores que la reciben (`reparto.tsv`):
+   `with-secrets.sh docker compose up -d --no-deps identity mail-directory domain-service mail-migration`. Uno que quede
+   con la llave vieja como activa escribiría datos que la nueva réplica no abre hasta que también se recree.
+3. Esperar en el registro de `identity` y de `mail-directory` la línea de la pasada:
+   `rotacion de MAIL_ENCRYPTION_KEY en identity.users: N re-cifrados, 0 pendientes` y
+   `rotacion de MAIL_ENCRYPTION_KEY en mail.mailbox_mfa: N re-cifrados, 0 pendientes`. Las métricas
+   `identity_mfa_secrets_pending_reencryption` y `mail_directory_mfa_secrets_pending_reencryption` dicen lo mismo.
+   `pendientes` son datos que no abre ninguna llave del anillo: con uno solo, retirar la llave deja una cuenta o un buzón
+   sin poder completar el segundo factor, y hay que averiguar con qué llave se cifró antes de seguir. Una pasada
+   interrumpida lo registra como aviso y se reintenta en la siguiente.
+4. **Todavía no** se vacía `MAIL_ENCRYPTION_KEYS_OLD`: `domain-service` y `mail-migration` no re-cifran lo suyo
+   (`KeyRing.Rotate` no se usa en ellos), y sus claves DKIM y credenciales guardadas con la llave anterior solo se leen
+   mientras siga en la lista. Retirarla exige antes el mismo barrido en esos dos servicios (pendiente).
+5. Cuando todos los que la reciben digan `0 pendientes`, quitar la llave vieja de `MAIL_ENCRYPTION_KEYS_OLD` en el
+   almacén (`remove-secret.sh MAIL_ENCRYPTION_KEYS_OLD --apply` si era la única; si quedan otras,
+   `VALOR=... add-secret.sh MAIL_ENCRYPTION_KEYS_OLD --apply` con la lista sin ella) y repetir el paso 2. Copiar antes
+   la llave nueva al respaldo de secretos (sección 6): sin ella lo cifrado desde el paso 1 no se abre.
 
 Ancla externa (ADR 0006, sección 8): la cabeza anclada vive en la base, en el stream `AUDIT_CHAIN` y en el log del
 mismo servidor, y solo protege contra quien no pueda escribir también `audit.chain_anchors`. La copia fuera es un correo:

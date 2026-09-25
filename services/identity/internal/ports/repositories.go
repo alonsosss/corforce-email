@@ -29,11 +29,32 @@ type UserRepository interface {
 	// y los intentos como ResetFailedAttempts, fija last_login_at y, con rehash, cambia el hash.
 	RecordLogin(ctx context.Context, id uuid.UUID, rehash *PasswordRehash) error
 	UpdatePassword(ctx context.Context, id uuid.UUID, hash string) error
-	EnableMFA(ctx context.Context, id uuid.UUID, secret string) error
+	// EnableMFA activa el segundo factor con el secreto ya cifrado, deja vacio el secreto en
+	// claro y apunta step como el ultimo paso usado: el codigo de la activacion no vale despues.
+	EnableMFA(ctx context.Context, id uuid.UUID, sealed []byte, step int64) error
+	// DisableMFA apaga el segundo factor y borra el secreto, cifrado y en claro.
 	DisableMFA(ctx context.Context, id uuid.UUID) error
+	// AdvanceMFAStep guarda step como ultimo paso TOTP aceptado solo si es mayor que el guardado,
+	// en una sola sentencia: false es un codigo ya usado, aunque lleguen dos a la vez.
+	AdvanceMFAStep(ctx context.Context, id uuid.UUID, step int64) (bool, error)
+	// ListPlainMFASecrets devuelve hasta limit secretos en claro de filas anteriores al cifrado,
+	// con id mayor que after, en orden de id.
+	ListPlainMFASecrets(ctx context.Context, after uuid.UUID, limit int) ([]PlainMFASecret, error)
+	// SealPlainMFASecret guarda sealed y vacia el secreto en claro solo si la fila sigue guardando
+	// plain; false si cambio entre tanto.
+	SealPlainMFASecret(ctx context.Context, id uuid.UUID, plain string, sealed []byte) (bool, error)
+	// DropDisabledMFASecrets borra el secreto de las cuentas sin segundo factor activo y dice
+	// cuantas tenian uno.
+	DropDisabledMFASecrets(ctx context.Context) (int64, error)
 	// BumpTokenEpoch adelanta tokens_valid_from a ahora: invalida al instante todos los
 	// access token del usuario emitidos antes (revocacion instantanea via el gateway).
 	BumpTokenEpoch(ctx context.Context, id uuid.UUID) error
+}
+
+// PlainMFASecret es el secreto TOTP en claro de una fila anterior al cifrado.
+type PlainMFASecret struct {
+	UserID uuid.UUID
+	Secret string
 }
 
 // PasswordRehash sustituye el hash de una cuenta por el de la misma contrasena con el coste

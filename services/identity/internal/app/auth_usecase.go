@@ -36,6 +36,7 @@ type AuthUseCase struct {
 	roles           ports.RoleLookup
 	hasher          ports.PasswordHasher
 	unknownLogins   ports.UnknownLoginRepository
+	sealer          ports.SecretSealer
 	// decoyHash es un hash del hasher, de una contrasena aleatoria que no se guarda: el
 	// inicio de sesion que no tiene hash de cuenta que comparar compara contra el.
 	decoyHash string
@@ -61,7 +62,10 @@ type AuthDeps struct {
 	// UnknownLogins cuenta los fallos de los correos sin cuenta: sin el, el bloqueo por
 	// intentos confirmaria que la cuenta existe.
 	UnknownLogins ports.UnknownLoginRepository
-	Logger        *zap.Logger
+	// Sealer cifra el secreto TOTP (MAIL_ENCRYPTION_KEY). Obligatorio: sin el nadie podria
+	// activar ni superar el segundo factor.
+	Sealer ports.SecretSealer
+	Logger *zap.Logger
 	// Now es el reloj de las decisiones de sesion y bloqueo; nil es time.Now.
 	Now func() time.Time
 }
@@ -72,6 +76,9 @@ func NewAuthUseCase(deps AuthDeps) (*AuthUseCase, error) {
 	}
 	if deps.UnknownLogins == nil {
 		return nil, errors.New("auth: faltan los contadores de los correos sin cuenta")
+	}
+	if deps.Sealer == nil {
+		return nil, errors.New("auth: falta el cifrado del secreto del segundo factor")
 	}
 	decoy, err := deps.Hasher.Hash(rand.Text())
 	if err != nil {
@@ -84,6 +91,7 @@ func NewAuthUseCase(deps AuthDeps) (*AuthUseCase, error) {
 	return &AuthUseCase{
 		hasher:          deps.Hasher,
 		unknownLogins:   deps.UnknownLogins,
+		sealer:          deps.Sealer,
 		decoyHash:       decoy,
 		now:             now,
 		users:           deps.Users,
@@ -631,13 +639,19 @@ func (uc *AuthUseCase) SetupMFA(ctx context.Context, userID uuid.UUID, email, is
 	return secret, uri, nil
 }
 
-// ActivateMFA valida el codigo TOTP contra el secreto dado y, si es correcto, persiste
-// el secreto y activa el segundo factor del usuario.
+// ActivateMFA valida el codigo TOTP contra el secreto dado y, si es correcto, guarda el
+// secreto cifrado y activa el segundo factor del usuario. El paso del codigo de activacion
+// queda como el ultimo usado: no vale despues como segundo factor.
 func (uc *AuthUseCase) ActivateMFA(ctx context.Context, userID uuid.UUID, secret, code string) error {
-	if !totp.Validate(secret, code) {
+	step, ok := totp.ValidateStep(secret, code, uc.now())
+	if !ok {
 		return domain.ErrInvalidMFACode
 	}
-	if err := uc.users.EnableMFA(ctx, userID, secret); err != nil {
+	sealed, err := uc.sealer.EncryptWithAAD([]byte(secret), domain.MFASecretAAD(userID))
+	if err != nil {
+		return fmt.Errorf("cifrar el secreto del segundo factor: %w", err)
+	}
+	if err := uc.users.EnableMFA(ctx, userID, sealed, step); err != nil {
 		return fmt.Errorf("enable mfa: %w", err)
 	}
 	return nil
@@ -660,10 +674,101 @@ func (uc *AuthUseCase) DisableMFA(ctx context.Context, userID uuid.UUID, current
 	if uc.hasher.Compare(user.PasswordHash, currentPassword) != nil {
 		return domain.ErrInvalidCredentials
 	}
-	if !totp.Validate(user.MFASecret, code) {
-		return domain.ErrInvalidMFACode
+	if err := uc.consumeTOTP(ctx, user, code); err != nil {
+		return err
 	}
 	return uc.users.DisableMFA(ctx, userID)
+}
+
+// mfaSecret abre el secreto TOTP de la cuenta. El secreto en claro de una fila anterior al
+// cifrado vale mientras no se cifre: si hay uno, lo escribio el codigo anterior y es el vigente.
+func (uc *AuthUseCase) mfaSecret(user *domain.User) (string, error) {
+	if user.MFASecretLegacy != "" {
+		return user.MFASecretLegacy, nil
+	}
+	if len(user.MFASecretSealed) == 0 {
+		return "", errors.New("segundo factor activo sin secreto guardado")
+	}
+	plain, err := uc.sealer.DecryptWithAAD(user.MFASecretSealed, domain.MFASecretAAD(user.ID))
+	if err != nil {
+		return "", fmt.Errorf("abrir el secreto del segundo factor: %w", err)
+	}
+	return string(plain), nil
+}
+
+// consumeTOTP acepta el codigo solo si es valido y su paso es posterior al ultimo aceptado, y
+// lo apunta en la misma sentencia: el mismo codigo no vale dos veces, ni aunque lleguen a la
+// vez. Un secreto que no se puede abrir es un fallo del servicio (una llave retirada antes de
+// tiempo), no un codigo incorrecto: se registra y se devuelve como error interno.
+func (uc *AuthUseCase) consumeTOTP(ctx context.Context, user *domain.User, code string) error {
+	secret, err := uc.mfaSecret(user)
+	if err != nil {
+		uc.logger.Error("no se pudo leer el secreto del segundo factor",
+			zap.String("user_id", user.ID.String()), zap.Error(err))
+		return err
+	}
+	step, ok := totp.ValidateStep(secret, code, uc.now())
+	if !ok {
+		return domain.ErrInvalidMFACode
+	}
+	accepted, err := uc.users.AdvanceMFAStep(ctx, user.ID, step)
+	if err != nil {
+		return fmt.Errorf("apuntar el paso del segundo factor: %w", err)
+	}
+	if !accepted {
+		return domain.ErrInvalidMFACode
+	}
+	return nil
+}
+
+// MFASecretSweep resume una pasada de SealLegacyMFASecrets.
+type MFASecretSweep struct {
+	// Dropped son las cuentas sin segundo factor activo a las que se les borro el secreto;
+	// Sealed, los secretos en claro que quedaron cifrados; Changed, las filas que otro escribio
+	// mientras se cifraban (otra replica, o una activacion): si siguen en claro, la proxima
+	// pasada las cifra.
+	Dropped, Sealed, Changed int
+}
+
+// SealLegacyMFASecrets cifra los secretos TOTP que quedan en claro de antes del cifrado y borra
+// los de las cuentas sin segundo factor activo. Es idempotente y no toma cerrojos: cada fila se
+// sustituye solo si sigue guardando lo leido, asi que varias replicas pueden correrlo a la vez.
+func (uc *AuthUseCase) SealLegacyMFASecrets(ctx context.Context, batch int) (MFASecretSweep, error) {
+	var out MFASecretSweep
+	if batch <= 0 {
+		return out, errors.New("el lote del barrido debe ser positivo")
+	}
+	dropped, err := uc.users.DropDisabledMFASecrets(ctx)
+	if err != nil {
+		return out, fmt.Errorf("borrar los secretos de cuentas sin segundo factor: %w", err)
+	}
+	out.Dropped = int(dropped)
+	after := uuid.Nil
+	for {
+		rows, err := uc.users.ListPlainMFASecrets(ctx, after, batch)
+		if err != nil {
+			return out, fmt.Errorf("leer los secretos en claro: %w", err)
+		}
+		for _, r := range rows {
+			after = r.UserID
+			sealed, err := uc.sealer.EncryptWithAAD([]byte(r.Secret), domain.MFASecretAAD(r.UserID))
+			if err != nil {
+				return out, fmt.Errorf("cifrar el secreto del segundo factor: %w", err)
+			}
+			ok, err := uc.users.SealPlainMFASecret(ctx, r.UserID, r.Secret, sealed)
+			if err != nil {
+				return out, fmt.Errorf("guardar el secreto cifrado: %w", err)
+			}
+			if ok {
+				out.Sealed++
+			} else {
+				out.Changed++
+			}
+		}
+		if len(rows) < batch {
+			return out, nil
+		}
+	}
 }
 
 // StepUp re-verifica la identidad (contrasena y, si la tiene, MFA) y emite un token
@@ -677,8 +782,8 @@ func (uc *AuthUseCase) StepUp(ctx context.Context, userID uuid.UUID, currentPass
 		return "", domain.ErrInvalidCredentials
 	}
 	if user.MFAEnabled {
-		if !totp.Validate(user.MFASecret, code) {
-			return "", domain.ErrInvalidMFACode
+		if err := uc.consumeTOTP(ctx, user, code); err != nil {
+			return "", err
 		}
 	}
 	return uc.tokens.GenerateStepUp(user.ID.String(), user.TenantID.String())
@@ -717,9 +822,11 @@ func (uc *AuthUseCase) VerifyMFAChallenge(ctx context.Context, challengeToken, c
 		return nil, err
 	}
 
-	if !totp.Validate(user.MFASecret, code) {
-		uc.handleFailedLogin(ctx, user, tenantID, ip, ua)
-		return nil, domain.ErrInvalidMFACode
+	if err := uc.consumeTOTP(ctx, user, code); err != nil {
+		if errors.Is(err, domain.ErrInvalidMFACode) {
+			uc.handleFailedLogin(ctx, user, tenantID, ip, ua)
+		}
+		return nil, err
 	}
 
 	uc.users.ResetFailedAttempts(ctx, user.ID)

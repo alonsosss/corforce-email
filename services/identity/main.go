@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"os"
 	"time"
@@ -9,6 +10,7 @@ import (
 	"github.com/alonsosss/corforce-email/pkg/auth"
 	"github.com/alonsosss/corforce-email/pkg/authz"
 	"github.com/alonsosss/corforce-email/pkg/config"
+	"github.com/alonsosss/corforce-email/pkg/crypto"
 	"github.com/alonsosss/corforce-email/pkg/db"
 	"github.com/alonsosss/corforce-email/pkg/events"
 	"github.com/alonsosss/corforce-email/pkg/middleware"
@@ -21,9 +23,11 @@ import (
 	outboxadapter "github.com/alonsosss/corforce-email/services/identity/internal/adapters/outbox"
 	"github.com/alonsosss/corforce-email/services/identity/internal/adapters/passwordhash"
 	"github.com/alonsosss/corforce-email/services/identity/internal/adapters/postgres"
+	prometheusadapter "github.com/alonsosss/corforce-email/services/identity/internal/adapters/prometheus"
 	"github.com/alonsosss/corforce-email/services/identity/internal/adapters/pwned"
 	"github.com/alonsosss/corforce-email/services/identity/internal/adapters/resetqueue"
 	"github.com/alonsosss/corforce-email/services/identity/internal/app"
+	"github.com/alonsosss/corforce-email/services/identity/internal/domain"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -58,6 +62,12 @@ func main() {
 	tokenSvc, tokenVerifier, err := newTokenService(cfg, logger)
 	if err != nil {
 		log.Fatalf("token keys: %v", err)
+	}
+	// Cifra el secreto del segundo factor de cada cuenta. Obligatoria, como en mail-directory:
+	// sin ella nadie podria activar ni superar el segundo factor.
+	keyRing, err := crypto.LoadKeyRing("MAIL_ENCRYPTION_KEY", "MAIL_ENCRYPTION_KEYS_OLD")
+	if err != nil {
+		log.Fatalf("identity: cifrado del secreto del segundo factor: %v", err)
 	}
 
 	ctx := context.Background()
@@ -105,6 +115,7 @@ func main() {
 		Roles:           roleRepo,
 		Hasher:          hasher,
 		UnknownLogins:   unknownLoginRepo,
+		Sealer:          keyRing,
 		Logger:          logger,
 	})
 	if err != nil {
@@ -192,6 +203,7 @@ func main() {
 		resetQueue.Run(workCtx, resetUC.ProcessReset)
 	}()
 	go runUnknownLoginPrune(workCtx, unknownLoginRepo, logger)
+	go runMFASecretMaintenance(workCtx, authUC, postgres.NewMFASecretStore(pool.Pool), keyRing, prometheusadapter.New(), logger)
 
 	handler := identityhttp.NewHandler(authUC, userUC, resetUC, perms, identityhttp.Config{
 		StepUp:           tokenVerifier,
@@ -240,7 +252,61 @@ const (
 	// Los contadores de correos sin cuenta olvidados se borran cada hora, en lotes.
 	unknownLoginPruneEvery = time.Hour
 	unknownLoginPruneBatch = 1000
+
+	// El secreto del segundo factor se revisa al arrancar y despues cada hora: se cifra el que
+	// quede en claro (una replica anterior durante un despliegue aun lo escribe) y, con llaves
+	// retiradas en el anillo, se re-cifra bajo la activa.
+	mfaSecretSweepEvery = time.Hour
+	mfaSecretSweepBatch = 200
 )
+
+// runMFASecretMaintenance corre sweepMFASecrets al arrancar y despues cada mfaSecretSweepEvery.
+func runMFASecretMaintenance(ctx context.Context, authUC *app.AuthUseCase, store *postgres.MFASecretStore,
+	keyRing *crypto.KeyRing, metrics prometheusadapter.Metrics, logger *zap.Logger) {
+	t := time.NewTicker(mfaSecretSweepEvery)
+	defer t.Stop()
+	for {
+		sweepMFASecrets(ctx, authUC, store, keyRing, metrics, logger)
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+	}
+}
+
+// sweepMFASecrets cifra los secretos del segundo factor que queden en claro y, si el anillo tiene
+// llaves retiradas, re-cifra bajo la activa los que solo abre una retirada. Nunca registra un
+// secreto: solo cuentas. Mientras la rotacion diga pendientes > 0 no se puede retirar la llave
+// vieja (docs/Operacion_Despliegue.md, seccion 2, rotacion de MAIL_ENCRYPTION_KEY).
+func sweepMFASecrets(ctx context.Context, authUC *app.AuthUseCase, store *postgres.MFASecretStore,
+	keyRing *crypto.KeyRing, metrics prometheusadapter.Metrics, logger *zap.Logger) {
+	sweep, err := authUC.SealLegacyMFASecrets(ctx, mfaSecretSweepBatch)
+	if err != nil && ctx.Err() == nil {
+		logger.Warn("no se pudieron cifrar los secretos del segundo factor en claro", zap.Error(err))
+	}
+	if sweep.Dropped+sweep.Sealed+sweep.Changed > 0 {
+		logger.Info("secretos del segundo factor en claro",
+			zap.Int("cifrados", sweep.Sealed), zap.Int("cambiados_entre_tanto", sweep.Changed),
+			zap.Int("borrados_sin_segundo_factor", sweep.Dropped))
+	}
+	if !keyRing.HasOldKeys() {
+		return
+	}
+	rep, err := crypto.RotateStore(ctx, keyRing, store, uuid.Nil, mfaSecretSweepBatch, domain.MFASecretAAD)
+	metrics.MFASecretsReencrypted(rep.Rotated)
+	if err != nil {
+		if ctx.Err() == nil {
+			logger.Warn("rotacion de MAIL_ENCRYPTION_KEY en identity.users interrumpida; se reintenta en la proxima pasada",
+				zap.Int("recifrados", rep.Rotated), zap.Error(err))
+		}
+		return
+	}
+	metrics.MFASecretsPending(rep.Pending)
+	logger.Info(fmt.Sprintf("rotacion de MAIL_ENCRYPTION_KEY en identity.users: %d re-cifrados, %d pendientes", rep.Rotated, rep.Pending),
+		zap.Int("revisados", rep.Examined), zap.Int("recifrados", rep.Rotated),
+		zap.Int("cambiados_entre_tanto", rep.Changed), zap.Int("pendientes", rep.Pending))
+}
 
 // runUnknownLoginPrune borra los contadores de correos sin cuenta que ya no cuentan: sin ella,
 // cada correo inventado que alguien prueba dejaria su fila para siempre. Borrarlos no cambia

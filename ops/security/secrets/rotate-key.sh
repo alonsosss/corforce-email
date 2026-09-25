@@ -5,12 +5,13 @@
 # tiene que seguir abriendose hasta que el servicio lo re-cifre. Por eso la rotacion son
 # dos claves: la activa (cifra y descifra) y la lista de retiradas (solo descifran). Este
 # script mueve la activa actual a la lista y pone una nueva; el servicio, al arrancar con
-# llaves retiradas, re-cifra todo lo que encuentra y dice en el log cuando la lista ya
-# se puede vaciar. Procedimiento completo: docs/RUNBOOK-ROTACION-CLAVE-COURIER.md.
+# llaves retiradas, re-cifra lo que encuentra y dice en el log cuando la lista ya se puede
+# vaciar. Procedimiento completo de MAIL_ENCRYPTION_KEY, con los servicios que todavia no
+# re-cifran: docs/Operacion_Despliegue.md, seccion 2, "Rotacion de MAIL_ENCRYPTION_KEY".
 #
 # Uso, en el servidor:
-#   ops/security/secrets/rotate-key.sh CARRIER_ENCRYPTION_KEY CARRIER_ENCRYPTION_KEYS_OLD           # simulacion
-#   ops/security/secrets/rotate-key.sh CARRIER_ENCRYPTION_KEY CARRIER_ENCRYPTION_KEYS_OLD --apply   # rota
+#   ops/security/secrets/rotate-key.sh MAIL_ENCRYPTION_KEY MAIL_ENCRYPTION_KEYS_OLD           # simulacion
+#   ops/security/secrets/rotate-key.sh MAIL_ENCRYPTION_KEY MAIL_ENCRYPTION_KEYS_OLD --apply   # rota
 #
 # Nunca imprime valores: ni la llave nueva, ni la actual, ni las retiradas. La escritura
 # va por add-secret.sh, que verifica releyendo el almacen antes de dar por buena cada clave.

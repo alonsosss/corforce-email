@@ -163,7 +163,7 @@ restauración en un servidor nuevo queda a medias, son las claves del almacén d
 
 | Clave | Sin ella tras un desastre |
 |---|---|
-| `MAIL_ENCRYPTION_KEY` (y `MAIL_ENCRYPTION_KEYS_OLD`) | Las credenciales cifradas en la base (relayhosts, claves DKIM, SES propio, contraseñas de origen de migraciones) no se pueden descifrar |
+| `MAIL_ENCRYPTION_KEY` (y `MAIL_ENCRYPTION_KEYS_OLD`) | Las credenciales cifradas en la base (relayhosts, claves DKIM, SES propio, contraseñas de origen de migraciones) y los secretos del segundo factor (consola y buzones) no se pueden descifrar: nadie con segundo factor activo puede completarlo |
 | `AUDIT_HASH_KEY` (y `AUDIT_HASH_KEYS_OLD`) | Las filas de versión 2 de la cadena de auditoría se restauran pero no se pueden verificar (`hash_key_missing`); `verify-restore.sh` avisa cuando la base restaurada las tiene |
 | `JWT_SIGNING_KEY`, `MAIL_LINK_SIGNING_KEY` | Las sesiones caen (se emiten de nuevo) y los enlaces de baja ya enviados dejan de validar |
 | Contraseñas de los roles de Postgres | Los roles (`mail_svc_*`, celda) no viajan en un volcado por base: se recrean con `ops/db/tenant-service-role.sh --all`, `cell-service-role.sh` y `cell-engine-role.sh` desde el almacén |

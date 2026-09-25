@@ -15,6 +15,7 @@ import (
 
 	"github.com/alonsosss/corforce-email/pkg/auth"
 	"github.com/alonsosss/corforce-email/pkg/authz"
+	"github.com/alonsosss/corforce-email/pkg/crypto"
 	"github.com/alonsosss/corforce-email/pkg/middleware"
 	"github.com/alonsosss/corforce-email/services/identity/internal/adapters/passwordhash"
 	"github.com/alonsosss/corforce-email/services/identity/internal/app"
@@ -227,7 +228,7 @@ func newLoginFixture(t *testing.T) *lgFixture {
 	authUC, err := app.NewAuthUseCase(app.AuthDeps{
 		Users: f.users, Sessions: lgSessions{}, Policies: lgPolicies{}, Audit: lgAudit{}, Events: lgEvents{},
 		Tokens: f.tokens, Tenants: lgTenants{id: f.tenant}, Roles: &roleStore{}, Hasher: testHasher(t),
-		UnknownLogins: &lgUnknown{}, Logger: zap.NewNop(), Now: func() time.Time { return loginNow },
+		UnknownLogins: &lgUnknown{}, Sealer: testSealer(t), Logger: zap.NewNop(), Now: func() time.Time { return loginNow },
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -383,7 +384,7 @@ func TestLoginConElBloqueoVencidoEntra(t *testing.T) {
 func TestElSegundoFactorDeUnaCuentaPendiente(t *testing.T) {
 	f := newLoginFixture(t)
 	u := f.account(domain.UserStatusPending, nil)
-	u.MFAEnabled, u.MFASecret = true, "JBSWY3DPEHPK3PXP"
+	u.MFAEnabled, u.MFASecretLegacy = true, "JBSWY3DPEHPK3PXP"
 	challenge, err := f.tokens.GenerateMFAChallenge(u.ID.String(), f.tenant.String())
 	if err != nil {
 		t.Fatal(err)
@@ -430,4 +431,16 @@ func TestBorrarUnaCuentaAnunciaLaBaja(t *testing.T) {
 	if len(f.deletions.got) != 1 {
 		t.Fatalf("solo la baja que borro se anuncia: %+v", f.deletions.got)
 	}
+}
+
+// testSealer cifra el secreto del segundo factor con una llave de la prueba, como
+// MAIL_ENCRYPTION_KEY en produccion.
+func testSealer(t *testing.T) *crypto.KeyRing {
+	t.Helper()
+	t.Setenv("IDENTITY_TEST_KEY", strings.Repeat("3c", 32))
+	kr, err := crypto.LoadKeyRing("IDENTITY_TEST_KEY", "IDENTITY_TEST_KEYS_OLD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return kr
 }
