@@ -75,7 +75,7 @@ func (uc *UseCase) ActivateMFAByUsername(ctx context.Context, username, rawSecre
 	if err != nil {
 		return nil, err
 	}
-	sealed, err := uc.sealer.Seal([]byte(secret), mailboxID[:])
+	sealed, err := uc.sealer.Seal([]byte(secret), domain.MFASecretAAD(mailboxID))
 	if err != nil {
 		return nil, err
 	}
@@ -232,7 +232,7 @@ func (uc *UseCase) checkMFACode(ctx context.Context, m *domain.Mailbox, code str
 	}
 	switch {
 	case domain.IsTOTPCode(code):
-		secret, err := uc.sealer.Open(state.SecretEnc, m.ID[:])
+		secret, err := uc.sealer.Open(state.SecretEnc, domain.MFASecretAAD(m.ID))
 		if err != nil {
 			return domain.MFAVerification{}, err
 		}

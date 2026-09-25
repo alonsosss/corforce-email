@@ -40,7 +40,18 @@ ALTER TABLE domains.domains ADD CONSTRAINT domains_ses_last_error_length
 CREATE INDEX IF NOT EXISTS idx_domains_ses_pending ON domains.domains (tenant_id)
     WHERE ses_last_error IS NOT NULL;
 
-ALTER TABLE domains.dns_checks DROP CONSTRAINT IF EXISTS dns_checks_record_check;
-ALTER TABLE domains.dns_checks ADD CONSTRAINT dns_checks_record_check
-    CHECK (record IN ('ownership_txt', 'mx', 'spf', 'dkim', 'dkim_previous', 'dmarc', 'mta_sts', 'tls_rpt',
-                      'ses_mail_from_mx', 'ses_mail_from_spf'));
+-- Solo si la restriccion vigente aun no admite los registros de SES: re-ejecutarla sobre una base con una
+-- restriccion posterior mas amplia no la estrecha.
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+         WHERE conname = 'dns_checks_record_check' AND conrelid = 'domains.dns_checks'::regclass
+           AND pg_get_constraintdef(oid) LIKE '%ses_mail_from_spf%'
+    ) THEN
+        ALTER TABLE domains.dns_checks DROP CONSTRAINT IF EXISTS dns_checks_record_check;
+        ALTER TABLE domains.dns_checks ADD CONSTRAINT dns_checks_record_check
+            CHECK (record IN ('ownership_txt', 'mx', 'spf', 'dkim', 'dkim_previous', 'dmarc', 'mta_sts', 'tls_rpt',
+                              'ses_mail_from_mx', 'ses_mail_from_spf'));
+    END IF;
+END $$;

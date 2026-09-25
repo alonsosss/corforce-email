@@ -6,9 +6,11 @@ import (
 	"fmt"
 
 	"github.com/alonsosss/corforce-email/pkg/db"
+	"github.com/alonsosss/corforce-email/pkg/keyrotation"
 	"github.com/alonsosss/corforce-email/services/mail-directory/internal/domain"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // MFARepo guarda mail.mailbox_mfa (migracion 16). Filtra por tenant_id ademas de la RLS del Transactor.
@@ -76,6 +78,13 @@ func (r *MFARepo) Delete(ctx context.Context, tenantID, mailboxID uuid.UUID) (bo
 		return false, err
 	}
 	return tag.RowsAffected() > 0, nil
+}
+
+// NewMFASecretStore es la columna del secreto TOTP cifrado de mail.mailbox_mfa, de todas las empresas de
+// la celda, para re-cifrarla bajo la llave activa. Es mantenimiento de la celda, sin usuario detras:
+// corre con el rol de conexion del servicio (politica service_all), no con mail_app.
+func NewMFASecretStore(pool *pgxpool.Pool) *keyrotation.Column {
+	return keyrotation.MustColumn(pool, "mail.mailbox_mfa", "mailbox_id", "secret_enc")
 }
 
 // policyLockSpace es la primera mitad de la clave del cerrojo de la politica de correo de una empresa

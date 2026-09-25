@@ -37,7 +37,7 @@ Go (todo servicio monta `RequireGatewayToken`, `pkg/middleware/middleware.go`):
 
 | Contenedor | Secretos, además del token interno |
 |---|---|
-| identity | `JWT_SIGNING_KEY` |
+| identity | `JWT_SIGNING_KEY`, `MAIL_ENCRYPTION_KEY`, `MAIL_ENCRYPTION_KEYS_OLD` (secreto del segundo factor; 2026-09-24) |
 | gateway | `REDIS_PASSWORD`, `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY` (usuario de servicio de MinIO, acotado al bucket; 2026-09-23, ADR 0012) |
 | access-control, mail-auth, reputation | `REDIS_PASSWORD` |
 | webmail | `REDIS_PASSWORD`, `WEBMAIL_MASTER_USER`, `WEBMAIL_MASTER_PASSWORD`, `WEBMAIL_IMAGE_PROXY_KEY` (2026-09-24, firma del proxy de imagenes remotas) |
@@ -46,7 +46,8 @@ Go (todo servicio monta `RequireGatewayToken`, `pkg/middleware/middleware.go`):
 | mail-migration | `MAIL_ENCRYPTION_KEY`, `MAIL_ENCRYPTION_KEYS_OLD`, `MAIL_MIGRATION_RUNNER_KEY` |
 | mail-security | `MAIL_REDIS_PASSWORD`, `MAIL_LINK_SIGNING_KEY`, `DOVEADM_API_KEY`, `QUEUE_AGENT_API_KEY` |
 | transactional | `MAIL_LINK_SIGNING_KEY`, `SES_ACCESS_KEY_ID`, `SES_SECRET_ACCESS_KEY` |
-| organization, scheduler, billing, mail-directory, mail-dav, suppression, templates, contacts, campaigns, automations, analytics | ninguno |
+| mail-directory | `MAIL_ENCRYPTION_KEY`, `MAIL_ENCRYPTION_KEYS_OLD` (secreto de la verificacion en dos pasos de los buzones) |
+| organization, scheduler, billing, mail-dav, suppression, templates, contacts, campaigns, automations, analytics | ninguno |
 | redis / grafana | `REDIS_PASSWORD` / `GRAFANA_ADMIN_PASSWORD` |
 | minio / minio-init (perfil autoalojado) | `MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD` / los dos y `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY` (crea el usuario de servicio) |
 | dovecot-mail | `MAIL_REDIS_PASSWORD`, `DOVECOT_MASTER_USER/PASS`, `DOVECOT_MIGRATION_MASTER_USER/PASS`, `DOVEADM_API_KEY` |
@@ -149,7 +150,7 @@ secretos por servicios y falla en silencio el día que se olvida una línea.
   cualquier otro como si fuera el gateway (`X-Gateway-Token`) y, con él, saltarse la autenticación de esa llamada. Es
   intrínseco al diseño actual (`RequireGatewayToken`, `docs/Usuarios_Roles_y_Acceso.md`). El siguiente paso es un token por
   servicio destinatario, con el llamante identificado.
-* **`REDIS_PASSWORD` comparte el Redis de la plataforma** entre cinco servicios y `MAIL_ENCRYPTION_KEY` está en dos: ya no
+* **`REDIS_PASSWORD` comparte el Redis de la plataforma** entre cinco servicios y `MAIL_ENCRYPTION_KEY` está en cuatro: ya no
   llegan a los demás, pero entre ellos son la misma credencial. Un usuario de ACL de Redis por servicio es el siguiente
   paso para Redis.
 * **El `.env` sigue por `env_file` a todos.** En producción no lleva credenciales (la fuente es el almacén,

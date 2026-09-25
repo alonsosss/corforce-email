@@ -134,15 +134,21 @@ func (kr *KeyRing) DecryptWithAAD(data, aad []byte) ([]byte, error) {
 // no la abre ninguna, ErrUndecryptable. Es la pieza que permite RETIRAR una llave vieja:
 // sin re-cifrar lo guardado, el anillo solo servia para seguir leyendo.
 func (kr *KeyRing) Rotate(data []byte) (out []byte, rotated bool, err error) {
-	if _, err := Decrypt(kr.active, data); err == nil {
+	return kr.RotateWithAAD(data, nil)
+}
+
+// RotateWithAAD es Rotate para lo cifrado con EncryptWithAAD: abre y vuelve a cifrar con los
+// mismos aad, de modo que el dato re-cifrado sigue atado a su fila.
+func (kr *KeyRing) RotateWithAAD(data, aad []byte) (out []byte, rotated bool, err error) {
+	if _, err := DecryptWithAAD(kr.active, data, aad); err == nil {
 		return data, false, nil
 	}
 	for _, k := range kr.old {
-		plain, err := Decrypt(k, data)
+		plain, err := DecryptWithAAD(k, data, aad)
 		if err != nil {
 			continue
 		}
-		out, err := Encrypt(kr.active, plain)
+		out, err := EncryptWithAAD(kr.active, plain, aad)
 		if err != nil {
 			return nil, false, err
 		}

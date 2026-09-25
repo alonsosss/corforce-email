@@ -15,6 +15,7 @@ import (
 	"github.com/alonsosss/corforce-email/pkg/crypto"
 	"github.com/alonsosss/corforce-email/pkg/db"
 	"github.com/alonsosss/corforce-email/pkg/events"
+	"github.com/alonsosss/corforce-email/pkg/keyrotation"
 	"github.com/alonsosss/corforce-email/pkg/middleware"
 	"github.com/alonsosss/corforce-email/pkg/outbox"
 	"github.com/alonsosss/corforce-email/pkg/response"
@@ -155,6 +156,11 @@ func main() {
 		Metrics:             metrics,
 		Logger:              logger,
 	})
+
+	mfaStore := postgres.NewMFASecretStore(pool.Pool)
+	go keyrotation.Run(ctx, keyRing, "mail.mailbox_mfa", func(c context.Context) (keyrotation.Result, error) {
+		return keyrotation.Pass(c, keyRing, keyrotation.Target{Store: mfaStore, AAD: domain.MFASecretAAD})
+	}, keyrotation.NewMetrics("mail_directory_mfa", "Secretos de la verificacion en dos pasos de los buzones"), logger)
 
 	r := apiRouter(pool.Pool, membership, handler.NewHandler(uc, perms).Routes(), logger)
 

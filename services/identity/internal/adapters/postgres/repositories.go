@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/alonsosss/corforce-email/pkg/db"
+	"github.com/alonsosss/corforce-email/pkg/keyrotation"
 	"github.com/alonsosss/corforce-email/services/identity/internal/domain"
 	"github.com/alonsosss/corforce-email/services/identity/internal/ports"
 	"github.com/google/uuid"
@@ -79,14 +80,14 @@ func (r *UserRepo) DeleteByTenant(ctx context.Context, tenantID uuid.UUID) (int6
 // selectUserColumns son las columnas de una cuenta completa, con su hash, en el orden que lee
 // scanUser: las tres lecturas que deciden un inicio de sesion comparten unas y otro.
 const selectUserColumns = `id, tenant_id, email, password_hash, first_name, last_name, COALESCE(avatar_url, ''), status,
-mfa_enabled, COALESCE(mfa_secret, ''), password_changed_at, failed_login_attempts,
+mfa_enabled, COALESCE(mfa_secret, ''), mfa_secret_enc, mfa_last_step, password_changed_at, failed_login_attempts,
 last_failed_login_at, locked_until, last_login_at, created_at, updated_at`
 
 func scanUser(row pgx.Row) (*domain.User, error) {
 	u := &domain.User{}
 	if err := row.Scan(
 		&u.ID, &u.TenantID, &u.Email, &u.PasswordHash, &u.FirstName, &u.LastName, &u.AvatarURL, &u.Status,
-		&u.MFAEnabled, &u.MFASecret, &u.PasswordChangedAt, &u.FailedLoginAttempts,
+		&u.MFAEnabled, &u.MFASecretLegacy, &u.MFASecretSealed, &u.MFALastStep, &u.PasswordChangedAt, &u.FailedLoginAttempts,
 		&u.LastFailedLoginAt, &u.LockedUntil, &u.LastLoginAt, &u.CreatedAt, &u.UpdatedAt,
 	); err != nil {
 		return nil, err
@@ -143,11 +144,13 @@ func (r *UserRepo) ListLoginCandidates(ctx context.Context, email string, limit 
 	return users, rows.Err()
 }
 
+// Update guarda el perfil y el estado. El segundo factor no se toca aqui: lo cambian solo
+// EnableMFA y DisableMFA, y reescribirlo desde una lectura anterior podria volver a encender uno
+// recien apagado.
 func (r *UserRepo) Update(ctx context.Context, u *domain.User) error {
 	_, err := r.pool.Exec(ctx,
-		`UPDATE identity.users SET first_name=$1, last_name=$2, status=$3,
- mfa_enabled=$4, mfa_secret=$5, avatar_url=$6 WHERE id=$7`,
-		u.FirstName, u.LastName, u.Status, u.MFAEnabled, u.MFASecret, u.AvatarURL, u.ID,
+		`UPDATE identity.users SET first_name=$1, last_name=$2, status=$3, avatar_url=$4 WHERE id=$5`,
+		u.FirstName, u.LastName, u.Status, u.AvatarURL, u.ID,
 	)
 	return err
 }
@@ -299,20 +302,79 @@ func (r *UserRepo) UpdatePassword(ctx context.Context, id uuid.UUID, hash string
 	return err
 }
 
-func (r *UserRepo) EnableMFA(ctx context.Context, id uuid.UUID, secret string) error {
+func (r *UserRepo) EnableMFA(ctx context.Context, id uuid.UUID, sealed []byte, step int64) error {
 	_, err := r.pool.Exec(ctx,
-		`UPDATE identity.users SET mfa_enabled = TRUE, mfa_secret = $1, updated_at = NOW() WHERE id = $2`,
-		secret, id,
+		`UPDATE identity.users
+		    SET mfa_enabled = TRUE, mfa_secret_enc = $1, mfa_secret = NULL, mfa_last_step = $2, updated_at = NOW()
+		  WHERE id = $3`,
+		sealed, step, id,
 	)
 	return err
 }
 
 func (r *UserRepo) DisableMFA(ctx context.Context, id uuid.UUID) error {
 	_, err := r.pool.Exec(ctx,
-		`UPDATE identity.users SET mfa_enabled = FALSE, mfa_secret = NULL, updated_at = NOW() WHERE id = $1`,
+		`UPDATE identity.users SET mfa_enabled = FALSE, mfa_secret = NULL, mfa_secret_enc = NULL, updated_at = NOW()
+		  WHERE id = $1`,
 		id,
 	)
 	return err
+}
+
+func (r *UserRepo) AdvanceMFAStep(ctx context.Context, id uuid.UUID, step int64) (bool, error) {
+	tag, err := r.pool.Exec(ctx,
+		`UPDATE identity.users SET mfa_last_step = $2 WHERE id = $1 AND mfa_last_step < $2`, id, step)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
+func (r *UserRepo) ListPlainMFASecrets(ctx context.Context, after uuid.UUID, limit int) ([]ports.PlainMFASecret, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT id, mfa_secret FROM identity.users
+		  WHERE mfa_secret IS NOT NULL AND id > $1
+		  ORDER BY id LIMIT $2`, after, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ports.PlainMFASecret
+	for rows.Next() {
+		var p ports.PlainMFASecret
+		if err := rows.Scan(&p.UserID, &p.Secret); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+func (r *UserRepo) SealPlainMFASecret(ctx context.Context, id uuid.UUID, plain string, sealed []byte) (bool, error) {
+	tag, err := r.pool.Exec(ctx,
+		`UPDATE identity.users SET mfa_secret_enc = $3, mfa_secret = NULL
+		  WHERE id = $1 AND mfa_secret = $2`, id, plain, sealed)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
+func (r *UserRepo) DropDisabledMFASecrets(ctx context.Context) (int64, error) {
+	tag, err := r.pool.Exec(ctx,
+		`UPDATE identity.users SET mfa_secret = NULL, mfa_secret_enc = NULL
+		  WHERE NOT mfa_enabled AND (mfa_secret IS NOT NULL OR mfa_secret_enc IS NOT NULL)`)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
+// NewMFASecretStore es la columna del secreto TOTP cifrado de identity.users para re-cifrarla bajo la
+// llave activa. No lee el secreto en claro de las filas anteriores al cifrado: esas las cifra
+// SealLegacyMFASecrets.
+func NewMFASecretStore(pool *pgxpool.Pool) *keyrotation.Column {
+	return keyrotation.MustColumn(pool, "identity.users", "id", "mfa_secret_enc")
 }
 
 func (r *UserRepo) BumpTokenEpoch(ctx context.Context, id uuid.UUID) error {

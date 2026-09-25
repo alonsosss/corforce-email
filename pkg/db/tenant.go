@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 
@@ -503,11 +504,13 @@ type activeTenantRow struct {
 }
 
 func (t *TenantDB) listActiveTenants(ctx context.Context) ([]activeTenantRow, error) {
-	rows, err := t.registry.Query(ctx,
-		`SELECT t.tenant_id, `+targetColumns+`WHERE t.status = 'active'`,
-	)
+	return t.listTenants(ctx, `WHERE t.status = 'active'`)
+}
+
+func (t *TenantDB) listTenants(ctx context.Context, where string) ([]activeTenantRow, error) {
+	rows, err := t.registry.Query(ctx, `SELECT t.tenant_id, `+targetColumns+where)
 	if err != nil {
-		return nil, fmt.Errorf("list active tenants: %w", err)
+		return nil, fmt.Errorf("list tenants: %w", err)
 	}
 	defer rows.Close()
 
@@ -600,4 +603,67 @@ func (t *TenantDB) ForEachActiveTenantConcurrent(ctx context.Context, concurrenc
 	}
 	wg.Wait()
 	return nil
+}
+
+// ForEachTenantDatabase recorre la base de TODAS las empresas del registro, en cualquier estado
+// (una suspendida o inactiva conserva sus datos), con un limite de concurrencia y un plazo por
+// empresa. Es para el mantenimiento que tiene que alcanzar cada fila guardada, como re-cifrar al
+// rotar una llave: por eso, a diferencia de ForEachActiveTenantConcurrent, no calla nada y devuelve
+// las empresas cuya base no se pudo abrir o cuyo fn fallo o entro en panico.
+func (t *TenantDB) ForEachTenantDatabase(ctx context.Context, concurrency int, perTenant time.Duration, fn func(ctx context.Context, tenantID string) error) ([]string, error) {
+	tenants, err := t.listTenants(ctx, "")
+	if err != nil {
+		return nil, err
+	}
+	if concurrency < 1 {
+		concurrency = 1
+	}
+	var (
+		mu     sync.Mutex
+		failed []string
+		wg     sync.WaitGroup
+	)
+	fail := func(id string) {
+		mu.Lock()
+		failed = append(failed, id)
+		mu.Unlock()
+	}
+	sem := make(chan struct{}, concurrency)
+	for _, tr := range tenants {
+		select {
+		case <-ctx.Done():
+			wg.Wait()
+			return failed, ctx.Err()
+		case sem <- struct{}{}:
+		}
+		pool, err := t.manager.GetPool(ctx, tr.target)
+		if err != nil {
+			<-sem
+			fail(tr.id)
+			continue
+		}
+		t.manager.cacheTarget(tr.id, tr.target)
+		wg.Add(1)
+		go func(tr activeTenantRow, pool *pgxpool.Pool) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			defer func() {
+				if recover() != nil {
+					fail(tr.id)
+				}
+			}()
+			tctx := WithTenant(ctx, pool, tr.id)
+			if perTenant > 0 {
+				var cancel context.CancelFunc
+				tctx, cancel = context.WithTimeout(tctx, perTenant)
+				defer cancel()
+			}
+			if err := fn(tctx, tr.id); err != nil {
+				fail(tr.id)
+			}
+		}(tr, pool)
+	}
+	wg.Wait()
+	sort.Strings(failed)
+	return failed, nil
 }

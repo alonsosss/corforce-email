@@ -66,6 +66,13 @@ type PasswordHasher interface {
 	NeedsRehash(hash string) bool
 }
 
+// SecretSealer cifra lo que identity guarda y nunca devuelve (el secreto TOTP). aad ata el dato
+// a su fila: copiado a otra no se abre. Lo implementa el anillo de MAIL_ENCRYPTION_KEY.
+type SecretSealer interface {
+	EncryptWithAAD(plain, aad []byte) ([]byte, error)
+	DecryptWithAAD(sealed, aad []byte) ([]byte, error)
+}
+
 // OutgoingMail es un correo del flujo de identidad. HTMLBody y TextBody llevan el mismo
 // contenido: con los dos, transactional lo envia como multipart/alternative y el cliente que
 // no muestra HTML (o lo bloquea) sigue viendo el texto y el enlace.

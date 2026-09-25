@@ -28,6 +28,20 @@ V = verificado en el codigo. P = propuesto, todavia no implementado.
   el step-up, y con `STEP_UP_MODE=enforce` el servicio verifica el token con `JWT_PUBLIC_KEYS` y no
   arranca sin ellas (V, 2026-09-17). El reto y el step-up salen de
   la misma clave con su propio `typ`: ninguno vale como token de acceso ni al reves.
+* Secreto del segundo factor (V, 2026-09-24, `048_identity_mfa_secret_encryption.sql`): se guarda cifrado con
+  `MAIL_ENCRYPTION_KEY` (AES-256-GCM, `identity.users.mfa_secret_enc`, con `identity-mfa:<id del usuario>` como datos
+  autenticados: copiado a otra cuenta no se abre) y nunca en claro; identity no arranca sin la llave. La columna
+  anterior `mfa_secret` queda vacia: una fila que aun la tenga (una replica anterior durante un despliegue) sigue
+  valiendo y el barrido de identity, al arrancar y cada hora, la cifra y borra el secreto de las cuentas sin segundo
+  factor activo. Con llaves en `MAIL_ENCRYPTION_KEYS_OLD` el mismo barrido re-cifra bajo la activa
+  (`docs/Operacion_Despliegue.md`, seccion 2). Un secreto que ninguna llave abre responde 500 y no cuenta como
+  intento fallido. Guardar el perfil (`PUT /users/{id}`) ya no reescribe el segundo factor.
+* Anti-repeticion del codigo TOTP (V, 2026-09-24): `identity.users.mfa_last_step` guarda el ultimo paso de 30 s
+  aceptado y un codigo solo vale si su paso es mayor, en una sola sentencia condicional (`AdvanceMFAStep`): el mismo
+  codigo, o uno de un paso anterior dentro del margen de una ventana, no sirve dos veces en el reto de inicio de
+  sesion, el step-up ni la desactivacion, ni aunque lleguen a la vez. Activar apunta el paso del codigo de activacion,
+  que tampoco vale despues. Es la misma regla que ya seguia la verificacion en dos pasos de los buzones
+  (`mail.mailbox_mfa.last_step`).
 * Revocacion: `tokens_valid_from` por usuario; el gateway rechaza (401 `SESSION_REVOKED`)
   cualquier access token emitido antes (logout-all, cambio o reinicio de contrasena, MFA
   desactivada) y el de una cuenta que ya no existe en su empresa o no esta activa

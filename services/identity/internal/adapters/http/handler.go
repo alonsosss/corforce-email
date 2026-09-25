@@ -986,13 +986,15 @@ func (h *Handler) MFAChallenge(w http.ResponseWriter, r *http.Request) {
 	res, err := h.auth.VerifyMFAChallenge(r.Context(), req.MFAToken, req.Code, extractClientIP(r), r.UserAgent())
 	if err != nil {
 		// Quien llega aqui ya probo la contrasena: el estado de su cuenta no revela nada.
-		switch err {
-		case domain.ErrAccountLocked:
+		switch {
+		case errors.Is(err, domain.ErrAccountLocked):
 			response.Err(w, http.StatusForbidden, "ACCOUNT_LOCKED", "account is temporarily locked")
-		case domain.ErrAccountInactive:
+		case errors.Is(err, domain.ErrAccountInactive):
 			response.Err(w, http.StatusForbidden, "ACCOUNT_INACTIVE", "account is inactive")
-		default:
+		case errors.Is(err, domain.ErrInvalidMFACode), errors.Is(err, domain.ErrUserNotFound):
 			response.ErrUnauthorized(w, "invalid MFA code")
+		default:
+			response.Unexpected(w, err)
 		}
 		return
 	}
@@ -1056,7 +1058,11 @@ func (h *Handler) MFAActivate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.auth.ActivateMFA(r.Context(), userID, req.Secret, req.Code); err != nil {
-		response.ErrUnauthorized(w, "invalid MFA code")
+		if errors.Is(err, domain.ErrInvalidMFACode) {
+			response.ErrUnauthorized(w, "invalid MFA code")
+		} else {
+			response.Unexpected(w, err)
+		}
 		return
 	}
 
@@ -1093,7 +1099,7 @@ func (h *Handler) StepUp(w http.ResponseWriter, r *http.Request) {
 		case domain.ErrInvalidMFACode:
 			response.ErrUnauthorized(w, "invalid mfa code")
 		default:
-			response.ErrInternal(w)
+			response.Unexpected(w, err)
 		}
 		return
 	}
@@ -1135,7 +1141,7 @@ func (h *Handler) MFADisable(w http.ResponseWriter, r *http.Request) {
 		case domain.ErrInvalidMFACode:
 			response.ErrUnauthorized(w, "invalid mfa code")
 		default:
-			response.ErrInternal(w)
+			response.Unexpected(w, err)
 		}
 		return
 	}

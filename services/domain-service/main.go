@@ -16,6 +16,7 @@ import (
 	"github.com/alonsosss/corforce-email/pkg/crypto"
 	"github.com/alonsosss/corforce-email/pkg/db"
 	"github.com/alonsosss/corforce-email/pkg/events"
+	"github.com/alonsosss/corforce-email/pkg/keyrotation"
 	"github.com/alonsosss/corforce-email/pkg/middleware"
 	"github.com/alonsosss/corforce-email/pkg/outbox"
 	"github.com/alonsosss/corforce-email/pkg/response"
@@ -347,6 +348,12 @@ func main() {
 	// empresa, y solo en una replica a la vez (leader lock sobre el registro). Una
 	// pasada al arrancar cubre lo que quedo pendiente mientras el servicio no corria.
 	go runSweeps(ctx, tenantDB, registryPool, uc, st, logger)
+	// Con llaves en MAIL_ENCRYPTION_KEYS_OLD, re-cifra bajo la activa las claves DKIM y los tokens de
+	// proveedores DNS de todas las empresas, al arrancar y cada hora.
+	sealed := postgres.SealedColumns()
+	go keyrotation.Run(ctx, keyRing, "domains (bases de empresa)", func(c context.Context) (keyrotation.Result, error) {
+		return keyrotation.TenantPass(c, keyRing, tenantDB, st.sweepWorkers, st.sweepTimeout, logger, sealed...)
+	}, keyrotation.NewMetrics("domain_service", "Claves DKIM privadas y tokens de proveedores DNS"), logger)
 
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)

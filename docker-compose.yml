@@ -182,6 +182,9 @@ services:
     environment:
       INTERNAL_GATEWAY_TOKEN: ${INTERNAL_GATEWAY_TOKEN:-}
       JWT_SIGNING_KEY: ${JWT_SIGNING_KEY:-}
+      # Cifra el secreto del segundo factor de cada cuenta; sin ella no arranca.
+      MAIL_ENCRYPTION_KEY: ${MAIL_ENCRYPTION_KEY:-}
+      MAIL_ENCRYPTION_KEYS_OLD: ${MAIL_ENCRYPTION_KEYS_OLD:-}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
     depends_on:
       pgbouncer:

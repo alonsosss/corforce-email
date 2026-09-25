@@ -275,7 +275,7 @@ func newAuthFixture(t *testing.T) *authFixture {
 	uc, err := NewAuthUseCase(AuthDeps{
 		Users: f.users, Sessions: f.sessions, Policies: authPolicies{}, Audit: nopAudit{},
 		Events: f.events, Tokens: f.tokens, Tenants: f.tenants, Roles: noRoles{}, Hasher: f.hasher,
-		UnknownLogins: f.unknown, Logger: zap.NewNop(), Now: func() time.Time { return f.clock },
+		UnknownLogins: f.unknown, Sealer: testSealer(t), Logger: zap.NewNop(), Now: func() time.Time { return f.clock },
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -443,7 +443,7 @@ func TestElSegundoFactorAplicaLaMismaRegla(t *testing.T) {
 	for _, c := range cases {
 		f := newAuthFixture(t)
 		u := f.account(c.status, c.until)
-		u.MFAEnabled, u.MFASecret = true, "JBSWY3DPEHPK3PXP"
+		u.MFAEnabled, u.MFASecretLegacy = true, "JBSWY3DPEHPK3PXP"
 		challenge, err := f.tokens.GenerateMFAChallenge(u.ID.String(), f.tenant.String())
 		if err != nil {
 			t.Fatal(err)
@@ -518,7 +518,7 @@ func TestCadaLoginGastaLasComparacionesDeSuCamino(t *testing.T) {
 func TestElHashDeRellenoTieneElCosteDelHasher(t *testing.T) {
 	for _, cost := range []int{bcrypt.MinCost, bcrypt.MinCost + 1} {
 		h := &countingHasher{cost: cost}
-		uc, err := NewAuthUseCase(AuthDeps{Hasher: h, UnknownLogins: &authUnknown{}, Logger: zap.NewNop()})
+		uc, err := NewAuthUseCase(AuthDeps{Hasher: h, UnknownLogins: &authUnknown{}, Sealer: testSealer(t), Logger: zap.NewNop()})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -526,11 +526,15 @@ func TestElHashDeRellenoTieneElCosteDelHasher(t *testing.T) {
 			t.Errorf("coste %d: %d hashes al construir, relleno con coste %d (%v)", cost, h.hashes, got, err)
 		}
 	}
-	if _, err := NewAuthUseCase(AuthDeps{UnknownLogins: &authUnknown{}, Logger: zap.NewNop()}); err == nil {
+	if _, err := NewAuthUseCase(AuthDeps{UnknownLogins: &authUnknown{}, Sealer: testSealer(t), Logger: zap.NewNop()}); err == nil {
 		t.Fatal("sin hasher el caso de uso no debe construirse")
 	}
 	// Sin los contadores de los correos sin cuenta, el bloqueo delataria las cuentas.
-	if _, err := NewAuthUseCase(AuthDeps{Hasher: &countingHasher{cost: bcrypt.MinCost}, Logger: zap.NewNop()}); err == nil {
+	if _, err := NewAuthUseCase(AuthDeps{Hasher: &countingHasher{cost: bcrypt.MinCost}, Sealer: testSealer(t), Logger: zap.NewNop()}); err == nil {
 		t.Fatal("sin contadores de correos sin cuenta el caso de uso no debe construirse")
+	}
+	// Sin el cifrado, el secreto del segundo factor no se podria guardar ni leer.
+	if _, err := NewAuthUseCase(AuthDeps{Hasher: &countingHasher{cost: bcrypt.MinCost}, UnknownLogins: &authUnknown{}, Logger: zap.NewNop()}); err == nil {
+		t.Fatal("sin cifrado del secreto el caso de uso no debe construirse")
 	}
 }
