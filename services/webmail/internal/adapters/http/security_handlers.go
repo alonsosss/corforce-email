@@ -55,6 +55,13 @@ type recoveryCodesDTO struct {
 	RecoveryCodes []string `json:"recovery_codes"`
 }
 
+// mfaActivationDTO: con other_sessions_closed la respuesta trae ademas la cookie cf_wm nueva de quien
+// activo (o la borra si no se pudo reabrir su sesion).
+type mfaActivationDTO struct {
+	recoveryCodesDTO
+	OtherSessionsClosed bool `json:"other_sessions_closed"`
+}
+
 type currentPasswordRequest struct {
 	CurrentPassword string `json:"current_password"`
 }
@@ -144,7 +151,8 @@ func (h *Handler) PrepareMFA(w http.ResponseWriter, r *http.Request) {
 	response.JSON(w, http.StatusOK, mfaSetupDTO{Secret: setup.Secret, ProvisioningURI: setup.ProvisioningURI})
 }
 
-// ActivateMFA activa con el secreto preparado y un codigo; responde los codigos de recuperacion.
+// ActivateMFA activa con el secreto preparado y un codigo; responde los codigos de recuperacion y
+// cierra las demas sesiones del buzon, con una sesion nueva para quien activa.
 func (h *Handler) ActivateMFA(w http.ResponseWriter, r *http.Request) {
 	var req activateMFARequest
 	if err := validate.DecodeJSONLimit(w, r, &req, maxSecurityBody); err != nil {
@@ -153,12 +161,21 @@ func (h *Handler) ActivateMFA(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := h.opContext(r)
 	defer cancel()
-	codes, err := h.app.ActivateMFA(ctx, sessionFrom(r), req.Secret, req.Code)
+	res, err := h.app.ActivateMFA(ctx, sessionFrom(r), req.Secret, req.Code)
 	if err != nil {
 		h.fail(w, r, err)
 		return
 	}
-	response.JSON(w, http.StatusOK, recoveryCodesDTO{RecoveryCodes: nonNil(codes)})
+	switch {
+	case res.Token != "":
+		h.setCookie(w, res.Token)
+	case res.OtherSessionsClosed:
+		h.clearCookie(w)
+	}
+	response.JSON(w, http.StatusOK, mfaActivationDTO{
+		recoveryCodesDTO:    recoveryCodesDTO{RecoveryCodes: nonNil(res.RecoveryCodes)},
+		OtherSessionsClosed: res.OtherSessionsClosed,
+	})
 }
 
 func (h *Handler) RegenerateRecoveryCodes(w http.ResponseWriter, r *http.Request) {

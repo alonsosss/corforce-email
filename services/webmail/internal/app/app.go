@@ -90,6 +90,29 @@ type Deps struct {
 	MFAChallenges ports.MFAChallengeStore
 	Security      ports.SecurityDirectory
 	TOTP          ports.TOTPProvisioner
+
+	// ImageProxy sirve las imagenes remotas que el lector decide ver. Sin el, ninguna imagen remota
+	// se muestra: nunca se entregan con su URL original.
+	ImageProxy *ImageProxyDeps
+}
+
+// ImageProxyDeps es el proxy de imagenes remotas: quien descarga, como se escribe su URL, la clave
+// con la que se firman los enlaces (domain.DeriveRemoteImageKey) y cuanto valen.
+type ImageProxyDeps struct {
+	Fetcher ports.RemoteImageFetcher
+	URL     ports.RemoteImageURL
+	Key     []byte
+	TTL     time.Duration
+}
+
+// minImageProxyKeyBytes es la longitud de la clave derivada con HMAC-SHA256.
+const minImageProxyKeyBytes = 32
+
+func (d *ImageProxyDeps) validate() error {
+	if d.Fetcher == nil || d.URL == nil || len(d.Key) < minImageProxyKeyBytes || d.TTL <= 0 {
+		return errors.New("webmail: el proxy de imágenes necesita quien descargue, su URL, una clave de 32 bytes y un plazo positivo")
+	}
+	return nil
 }
 
 // Service es el caso de uso del webmail.
@@ -128,6 +151,8 @@ type Service struct {
 	mfaChallenges ports.MFAChallengeStore
 	security      ports.SecurityDirectory
 	totp          ports.TOTPProvisioner
+
+	imageProxy *ImageProxyDeps
 }
 
 // New valida la configuracion y las dependencias: un webmail a medio cablear no arranca.
@@ -167,6 +192,11 @@ func New(d Deps) (*Service, error) {
 	if d.Config.MaxScheduledDays < 1 || d.Config.ScheduledPollInterval <= 0 || d.Config.ScheduledBatch < 1 || d.Config.MaxImportBytes < 1 {
 		return nil, errors.New("webmail: el plazo de programacion, el intervalo y el lote del trabajador y el tope de importacion deben ser positivos")
 	}
+	if d.ImageProxy != nil {
+		if err := d.ImageProxy.validate(); err != nil {
+			return nil, err
+		}
+	}
 	clock := d.Clock
 	if clock == nil {
 		clock = time.Now
@@ -178,7 +208,7 @@ func New(d Deps) (*Service, error) {
 		ledger: d.Ledger, composer: d.Composer, sanitizer: d.Sanitizer, scanner: d.Scanner,
 		partURL: d.PartURL, clock: clock, logger: d.Logger, cfg: d.Config, unsubscriber: d.Unsubscriber,
 		reminders: d.Reminders, quickReplies: d.QuickReplies, largeFiles: d.LargeFiles,
-		mfaChallenges: d.MFAChallenges, security: d.Security, totp: d.TOTP,
+		mfaChallenges: d.MFAChallenges, security: d.Security, totp: d.TOTP, imageProxy: d.ImageProxy,
 	}, nil
 }
 

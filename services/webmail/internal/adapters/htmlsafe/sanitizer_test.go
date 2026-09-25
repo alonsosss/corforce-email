@@ -1,6 +1,7 @@
 package htmlsafe
 
 import (
+	"net/url"
 	"strings"
 	"testing"
 
@@ -8,15 +9,29 @@ import (
 )
 
 func incoming(html string, allowRemote bool) domain.SanitizedHTML {
-	return New().Incoming(html, domain.SanitizeOptions{
+	return New().Incoming(html, options(allowRemote, testProxy))
+}
+
+func options(allowRemote bool, proxy func(string) (string, bool)) domain.SanitizeOptions {
+	return domain.SanitizeOptions{
 		AllowRemoteImages: allowRemote,
+		ProxyRemoteImage:  proxy,
 		ResolveCID: func(cid string) (string, bool) {
 			if cid == "img1@x" {
 				return "/api/v1/webmail/folders/INBOX/messages/9/parts/2", true
 			}
 			return "", false
 		},
-	})
+	}
+}
+
+// testProxy hace de enlace firmado: lleva la URL original escapada tras un prefijo propio. Rechaza
+// las URLs que contienen "rechazada".
+func testProxy(src string) (string, bool) {
+	if strings.Contains(src, "rechazada") {
+		return "", false
+	}
+	return "/api/v1/webmail/image-proxy?u=" + url.QueryEscape(src) + "&s=firma", true
 }
 
 func assertAbsent(t *testing.T, got string, forbidden ...string) {
@@ -93,12 +108,46 @@ func TestImagenesRemotasBloqueadasPorDefecto(t *testing.T) {
 	if !strings.Contains(blocked.HTML, `alt="logo"`) {
 		t.Fatalf("la imagen se sustituye, no desaparece: %s", blocked.HTML)
 	}
+	if blocked.Proxied {
+		t.Fatal("bloqueada no pasa por el proxy")
+	}
 	allowed := incoming(raw, true)
-	if !allowed.RemoteImages || !strings.Contains(allowed.HTML, `src="https://tracker.test/pixel.gif"`) {
-		t.Fatalf("permitida: %+v", allowed)
+	want := `src="/api/v1/webmail/image-proxy?u=https%3A%2F%2Ftracker.test%2Fpixel.gif&amp;s=firma"`
+	if !allowed.RemoteImages || !allowed.Proxied || !strings.Contains(allowed.HTML, want) {
+		t.Fatalf("permitida, por el proxy: %+v", allowed)
+	}
+	if strings.Contains(allowed.HTML, `src="https://tracker.test`) {
+		t.Fatalf("la URL original nunca queda en src: %s", allowed.HTML)
 	}
 	if incoming(`<p>sin imagenes</p>`, false).RemoteImages {
 		t.Fatal("sin imagenes remotas no hay aviso")
+	}
+}
+
+func TestImagenesRemotasPermitidasSinProxySeQuitan(t *testing.T) {
+	out := New().Incoming(`<img src="http://tracker.test/pixel.gif" alt="p">`, options(true, nil))
+	if !out.RemoteImages || out.Proxied || strings.Contains(out.HTML, "tracker.test") || !strings.Contains(out.HTML, `alt="p"`) {
+		t.Fatalf("sin proxy una imagen remota nunca se carga directa: %+v", out)
+	}
+}
+
+func TestImagenRemotaQueElProxyNoFirmaSeQuita(t *testing.T) {
+	out := incoming(`<img src="https://x.test/rechazada.png"><img src="https://x.test/buena.png">`, true)
+	if strings.Contains(out.HTML, "rechazada") || !strings.Contains(out.HTML, "buena.png") || !out.Proxied {
+		t.Fatalf("solo la firmada sale: %s", out.HTML)
+	}
+}
+
+func TestProxyNoTocaImagenesDataNiCID(t *testing.T) {
+	png := `data:image/png;base64,iVBORw0KGgo=`
+	var asked []string
+	out := New().Incoming(`<img src="`+png+`"><img src="cid:img1@x"><img src="HTTPS://x.test/a.png">`,
+		options(true, func(src string) (string, bool) { asked = append(asked, src); return testProxy(src) }))
+	if len(asked) != 1 || !strings.EqualFold(asked[0], "https://x.test/a.png") {
+		t.Fatalf("solo la remota pasa por el proxy: %v", asked)
+	}
+	if !strings.Contains(out.HTML, png) || !strings.Contains(out.HTML, `src="/api/v1/webmail/folders/INBOX/messages/9/parts/2"`) {
+		t.Fatalf("data: y cid: intactas: %s", out.HTML)
 	}
 }
 

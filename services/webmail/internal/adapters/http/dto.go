@@ -113,9 +113,12 @@ type partDTO struct {
 	Inline      bool   `json:"inline"`
 }
 
+// remoteImagesDTO: proxied dice que las imagenes remotas que se muestran apuntan al proxy del webmail
+// (ruta relativa al origen de la aplicacion), nunca al servidor del remitente.
 type remoteImagesDTO struct {
 	Present bool `json:"present"`
 	Blocked bool `json:"blocked"`
+	Proxied bool `json:"proxied"`
 }
 
 type messageDTO struct {
@@ -151,7 +154,7 @@ func toMessageDTO(m *domain.Message) messageDTO {
 		TextTruncated: m.TextTruncated,
 		HTML:          m.HTML,
 		HTMLTruncated: m.HTMLTruncated,
-		RemoteImages:  remoteImagesDTO{Present: m.RemoteImages.Present, Blocked: m.RemoteImages.Blocked},
+		RemoteImages:  remoteImagesDTO{Present: m.RemoteImages.Present, Blocked: m.RemoteImages.Blocked, Proxied: m.RemoteImages.Proxied},
 		Attachments:   parts,
 	}
 }

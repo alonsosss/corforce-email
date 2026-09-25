@@ -181,6 +181,7 @@ services:
       WEBMAIL_TLS_CA_FILE: /run/cfm-e2e/tls/ca.pem
       WEBMAIL_MASTER_USER: ${DOVECOT_MASTER_USER:?lo fija ops/e2e/mail.sh}@platform.local
       WEBMAIL_MASTER_PASSWORD: ${DOVECOT_MASTER_PASS:?lo fija ops/e2e/mail.sh}
+      WEBMAIL_IMAGE_PROXY_KEY: ${WEBMAIL_IMAGE_PROXY_KEY:?lo fija ops/e2e/mail.sh}
       WEBMAIL_CLAMD_ADDR: clamd:3310
       AUTH_COOKIE_SECURE: "false"
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:?lo fija ops/e2e/mail.sh}

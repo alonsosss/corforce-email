@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/alonsosss/corforce-email/pkg/middleware"
 )
@@ -13,43 +14,49 @@ import (
 func setSettingsEnv(t *testing.T, environment string, overrides map[string]string) {
 	t.Helper()
 	vars := map[string]string{
-		"ENVIRONMENT":                         environment,
-		"CELL_CODE":                           "pe-01",
-		"MAIL_AUTH_URL":                       "https://mail-auth:9082",
-		"MAIL_HOSTNAME":                       "mail.cfm.test",
-		"MAIL_DIRECTORY_URL":                  "http://mail-directory:8040",
-		"MAIL_DAV_URL":                        "http://mail-dav:8058",
-		"INTERNAL_GATEWAY_TOKEN":              "gateway-token-0123456789",
-		"WEBMAIL_IMAP_ADDR":                   "dovecot:993",
-		"WEBMAIL_SMTP_ADDR":                   "postfix:587",
-		"WEBMAIL_MASTER_USER":                 "webmail@platform.local",
-		"WEBMAIL_MASTER_PASSWORD":             strings.Repeat("m", minMasterPasswordLen),
-		"WEBMAIL_CLAMD_ADDR":                  "clamd:3310",
-		"WEBMAIL_PORT":                        "",
-		"WEBMAIL_IMAP_TLS":                    "",
-		"WEBMAIL_SMTP_TLS":                    "",
-		"WEBMAIL_TLS_SERVER_NAME":             "",
-		"WEBMAIL_TLS_CA_FILE":                 "",
-		"WEBMAIL_TLS_INSECURE_SKIP_VERIFY":    "",
-		"WEBMAIL_ALLOW_UNSCANNED_ATTACHMENTS": "",
-		"WEBMAIL_SESSION_IDLE":                "",
-		"WEBMAIL_SESSION_MAX":                 "",
-		"WEBMAIL_MAX_RECIPIENTS":              "",
-		"WEBMAIL_MAX_MESSAGE_BYTES":           "",
-		"WEBMAIL_MAX_BODY_PART_BYTES":         "",
-		"WEBMAIL_MAX_ATTACHMENT_BYTES":        "",
-		"WEBMAIL_SCHEDULED_POLL_INTERVAL":     "",
-		"WEBMAIL_SCHEDULED_BATCH":             "",
-		"WEBMAIL_SCHEDULED_MAX_DAYS":          "",
-		"WEBMAIL_REMINDERS_POLL_INTERVAL":     "",
-		"WEBMAIL_REMINDERS_BATCH":             "",
-		"WEBMAIL_REMINDERS_MAX_DAYS":          "",
-		"WEBMAIL_MAX_IMPORT_BYTES":            "",
-		"WEBMAIL_RATE_LIMIT_PER_MAILBOX":      "",
-		"MFA_ISSUER":                          "",
-		"AUTH_COOKIE_SECURE":                  "",
-		"CORS_ALLOWED_ORIGINS":                "",
-		"API_ORIGIN":                          "",
+		"ENVIRONMENT":                          environment,
+		"CELL_CODE":                            "pe-01",
+		"MAIL_AUTH_URL":                        "https://mail-auth:9082",
+		"MAIL_HOSTNAME":                        "mail.cfm.test",
+		"MAIL_DIRECTORY_URL":                   "http://mail-directory:8040",
+		"MAIL_DAV_URL":                         "http://mail-dav:8058",
+		"INTERNAL_GATEWAY_TOKEN":               "gateway-token-0123456789",
+		"WEBMAIL_IMAP_ADDR":                    "dovecot:993",
+		"WEBMAIL_SMTP_ADDR":                    "postfix:587",
+		"WEBMAIL_MASTER_USER":                  "webmail@platform.local",
+		"WEBMAIL_MASTER_PASSWORD":              strings.Repeat("m", minMasterPasswordLen),
+		"WEBMAIL_CLAMD_ADDR":                   "clamd:3310",
+		"WEBMAIL_IMAGE_PROXY_KEY":              strings.Repeat("k", minImageProxyKeyLen),
+		"WEBMAIL_IMAGE_PROXY_TTL":              "",
+		"WEBMAIL_IMAGE_PROXY_TIMEOUT":          "",
+		"WEBMAIL_IMAGE_PROXY_MAX_BYTES":        "",
+		"WEBMAIL_IMAGE_PROXY_CONCURRENCY":      "",
+		"WEBMAIL_IMAGE_PROXY_RATE_PER_MAILBOX": "",
+		"WEBMAIL_PORT":                         "",
+		"WEBMAIL_IMAP_TLS":                     "",
+		"WEBMAIL_SMTP_TLS":                     "",
+		"WEBMAIL_TLS_SERVER_NAME":              "",
+		"WEBMAIL_TLS_CA_FILE":                  "",
+		"WEBMAIL_TLS_INSECURE_SKIP_VERIFY":     "",
+		"WEBMAIL_ALLOW_UNSCANNED_ATTACHMENTS":  "",
+		"WEBMAIL_SESSION_IDLE":                 "",
+		"WEBMAIL_SESSION_MAX":                  "",
+		"WEBMAIL_MAX_RECIPIENTS":               "",
+		"WEBMAIL_MAX_MESSAGE_BYTES":            "",
+		"WEBMAIL_MAX_BODY_PART_BYTES":          "",
+		"WEBMAIL_MAX_ATTACHMENT_BYTES":         "",
+		"WEBMAIL_SCHEDULED_POLL_INTERVAL":      "",
+		"WEBMAIL_SCHEDULED_BATCH":              "",
+		"WEBMAIL_SCHEDULED_MAX_DAYS":           "",
+		"WEBMAIL_REMINDERS_POLL_INTERVAL":      "",
+		"WEBMAIL_REMINDERS_BATCH":              "",
+		"WEBMAIL_REMINDERS_MAX_DAYS":           "",
+		"WEBMAIL_MAX_IMPORT_BYTES":             "",
+		"WEBMAIL_RATE_LIMIT_PER_MAILBOX":       "",
+		"MFA_ISSUER":                           "",
+		"AUTH_COOKIE_SECURE":                   "",
+		"CORS_ALLOWED_ORIGINS":                 "",
+		"API_ORIGIN":                           "",
 	}
 	for key, value := range overrides {
 		vars[key] = value
@@ -273,5 +280,50 @@ func TestLoadSettingsCupoPorBuzonYEmisor(t *testing.T) {
 	setSettingsEnv(t, "production", map[string]string{"WEBMAIL_RATE_LIMIT_PER_MAILBOX": "1200", "MFA_ISSUER": " Correo Empresa "})
 	if st, err = loadSettings(); err != nil || st.mailboxRatePerMin != 1200 || st.mfaIssuer != "Correo Empresa" {
 		t.Fatalf("valores fijados: %d %q %v", st.mailboxRatePerMin, st.mfaIssuer, err)
+	}
+}
+
+func TestLoadSettingsProxyDeImagenes(t *testing.T) {
+	setSettingsEnv(t, "production", nil)
+	st, err := loadSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ip := st.imageProxy
+	if string(ip.secret) != strings.Repeat("k", minImageProxyKeyLen) || ip.ephemeralSecret || ip.ttl != time.Hour ||
+		ip.timeout != 10*time.Second || ip.maxBytes != 5<<20 || ip.concurrency != 8 || ip.ratePerMin != 300 {
+		t.Fatalf("valores por defecto: %+v", ip)
+	}
+	refused := map[string][]string{
+		"WEBMAIL_IMAGE_PROXY_KEY":              {"", strings.Repeat("k", minImageProxyKeyLen-1)},
+		"WEBMAIL_IMAGE_PROXY_TTL":              {"4m", "25h", "60"},
+		"WEBMAIL_IMAGE_PROXY_TIMEOUT":          {"500ms", "61s"},
+		"WEBMAIL_IMAGE_PROXY_MAX_BYTES":        {"65535", "26214401", "5MB"},
+		"WEBMAIL_IMAGE_PROXY_CONCURRENCY":      {"0", "65"},
+		"WEBMAIL_IMAGE_PROXY_RATE_PER_MAILBOX": {"29", "10001"},
+	}
+	for key, values := range refused {
+		for _, value := range values {
+			setSettingsEnv(t, "production", map[string]string{key: value})
+			if _, err := loadSettings(); !errorMentions(key)(err) {
+				t.Errorf("%s=%q deberia impedir el arranque: %v", key, value, err)
+			}
+		}
+	}
+	setSettingsEnv(t, "production", map[string]string{
+		"WEBMAIL_IMAGE_PROXY_TTL": "24h", "WEBMAIL_IMAGE_PROXY_TIMEOUT": "1m", "WEBMAIL_IMAGE_PROXY_MAX_BYTES": "26214400",
+		"WEBMAIL_IMAGE_PROXY_CONCURRENCY": "64", "WEBMAIL_IMAGE_PROXY_RATE_PER_MAILBOX": "10000",
+	})
+	if st, err = loadSettings(); err != nil || st.imageProxy.ttl != 24*time.Hour || st.imageProxy.maxBytes != 25<<20 || st.imageProxy.concurrency != 64 {
+		t.Fatalf("extremos: %+v %v", st.imageProxy, err)
+	}
+	// En desarrollo, sin la clave, se sortea una que muere con el proceso; una corta no vale ni ahi.
+	setSettingsEnv(t, "development", map[string]string{"WEBMAIL_IMAGE_PROXY_KEY": ""})
+	if st, err = loadSettings(); err != nil || !st.imageProxy.ephemeralSecret || len(st.imageProxy.secret) != minImageProxyKeyLen {
+		t.Fatalf("desarrollo: %+v %v", st.imageProxy, err)
+	}
+	setSettingsEnv(t, "development", map[string]string{"WEBMAIL_IMAGE_PROXY_KEY": "corta"})
+	if _, err := loadSettings(); !errorMentions("WEBMAIL_IMAGE_PROXY_KEY")(err) {
+		t.Fatalf("clave corta en desarrollo: %v", err)
 	}
 }

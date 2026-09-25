@@ -90,6 +90,7 @@ func (s *Service) ReadMessage(ctx context.Context, sess domain.Session, folder s
 	}
 	clean := s.sanitizer.Incoming(raw.HTML, domain.SanitizeOptions{
 		AllowRemoteImages: allowRemoteImages,
+		ProxyRemoteImage:  s.remoteImageProxy(sess),
 		ResolveCID: func(cid string) (string, bool) {
 			u, ok := cids[strings.Trim(cid, "<>")]
 			return u, ok
@@ -107,7 +108,7 @@ func (s *Service) ReadMessage(ctx context.Context, sess domain.Session, folder s
 		TextTruncated: raw.TextTruncated,
 		HTML:          clean.HTML,
 		HTMLTruncated: raw.HTMLTruncated,
-		RemoteImages:  domain.RemoteImages{Present: clean.RemoteImages, Blocked: clean.RemoteImages && !allowRemoteImages},
+		RemoteImages:  remoteImagesOf(clean, allowRemoteImages),
 		Attachments:   raw.Parts,
 	}, nil
 }

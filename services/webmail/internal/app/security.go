@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/alonsosss/corforce-email/services/webmail/internal/domain"
 	"go.uber.org/zap"
@@ -54,38 +55,100 @@ func (s *Service) PrepareMFA(ctx context.Context, sess domain.Session, currentPa
 	return domain.MFASetup{Secret: secret, ProvisioningURI: s.totp.ProvisioningURI(secret, sess.Username)}, nil
 }
 
+// MFAActivation es el resultado de activar la verificacion en dos pasos: los codigos de recuperacion,
+// que no se vuelven a mostrar, y la sesion con la que sigue quien la activo.
+type MFAActivation struct {
+	RecoveryCodes []string
+	// OtherSessionsClosed dice si se cerraron las demas sesiones del buzon. Si es false (el almacen
+	// de sesiones no respondio) todas siguen abiertas, tambien la de quien activo.
+	OtherSessionsClosed bool
+	// Token y Session son la sesion nueva de quien activo, que sustituye a la suya. Token vacio con
+	// OtherSessionsClosed: su sesion tambien se cerro y tiene que volver a entrar.
+	Token   string
+	Session domain.Session
+}
+
 // ActivateMFA activa la verificacion en dos pasos con el secreto preparado y un codigo de la
-// aplicacion. Devuelve los codigos de recuperacion, que no se vuelven a mostrar. Un codigo que no
-// vale no consume la preparacion: el usuario puede volver a intentarlo mientras dure.
-func (s *Service) ActivateMFA(ctx context.Context, sess domain.Session, rawSecret, rawCode string) ([]string, error) {
+// aplicacion. Un codigo que no vale no consume la preparacion: el usuario puede volver a intentarlo
+// mientras dure.
+//
+// Activarla cierra las demas sesiones del buzon: una abierta solo con la contrasena (quiza robada,
+// que es por lo que se activa) no debe sobrevivir al segundo factor. Quien activa sigue dentro con
+// una sesion nueva (reissueAfterRevocation).
+func (s *Service) ActivateMFA(ctx context.Context, sess domain.Session, rawSecret, rawCode string) (MFAActivation, error) {
 	secret := strings.ToUpper(strings.TrimSpace(rawSecret))
 	if secret == "" || len(secret) > maxSecretBytes {
-		return nil, domain.NewValidationError("secret", "no es un secreto preparado")
+		return MFAActivation{}, domain.NewValidationError("secret", "no es un secreto preparado")
 	}
 	code, ok := domain.NormalizeMFACode(rawCode)
 	if !ok {
-		return nil, domain.ErrInvalidMFACode
+		return MFAActivation{}, domain.ErrInvalidMFACode
 	}
 	stored, err := s.mfaChallenges.SetupHash(ctx, sess.Username)
 	if err != nil {
 		if errors.Is(err, domain.ErrMFASetupExpired) {
-			return nil, err
+			return MFAActivation{}, err
 		}
-		return nil, unavailable(err)
+		return MFAActivation{}, unavailable(err)
 	}
 	if subtle.ConstantTimeCompare([]byte(stored), []byte(secretHash(secret))) != 1 {
-		return nil, domain.ErrMFASetupExpired
+		return MFAActivation{}, domain.ErrMFASetupExpired
 	}
 	codes, err := s.security.ActivateMFA(ctx, sess.Username, secret, code)
 	if err != nil {
-		return nil, s.securityError("no se pudo activar la verificacion en dos pasos", sess, err)
+		return MFAActivation{}, s.securityError("no se pudo activar la verificacion en dos pasos", sess, err)
 	}
-	if err := s.mfaChallenges.DeleteSetup(ctx, sess.Username); err != nil {
+	// Activada en el directorio, los codigos de recuperacion se entregan pase lo que pase con las
+	// sesiones: no se vuelven a mostrar. El cliente puede haberse ido; el cierre sigue igual.
+	bg := context.WithoutCancel(ctx)
+	if err := s.mfaChallenges.DeleteSetup(bg, sess.Username); err != nil {
 		// La preparacion caduca sola y el directorio ya no admite otra activacion.
 		s.logger.Warn("webmail: no se pudo borrar la preparacion de la verificacion", zap.String("username", sess.Username), zap.Error(err))
 	}
 	s.logger.Info("webmail: verificacion en dos pasos activada", zap.String("username", sess.Username))
-	return codes, nil
+	out := MFAActivation{RecoveryCodes: codes}
+	out.Token, out.Session, out.OtherSessionsClosed = s.reissueAfterRevocation(bg, sess)
+	return out, nil
+}
+
+// reissueAfterRevocation cierra todas las sesiones del buzon y abre una nueva para quien lo pidio.
+//
+// La marca de revocacion alcanza a toda sesion iniciada hasta ella, la de quien pide incluida; la
+// nueva nace un microsegundo despues (la resolucion del almacen) y con la vida maxima de la que
+// sustituye: reabrirla no la alarga. Si al terminar hay una marca posterior (una revocacion del
+// directorio llego a la vez: cambio de contrasena, baja), la sesion nueva tambien cae y no se entrega.
+// closed es false solo si la marca no se pudo poner: entonces no se cerro nada.
+func (s *Service) reissueAfterRevocation(ctx context.Context, sess domain.Session) (token string, fresh domain.Session, closed bool) {
+	at := s.clock().UTC().Truncate(time.Microsecond)
+	if err := s.sessions.Revoke(ctx, sess.Username, at); err != nil {
+		s.logger.Error("webmail: no se pudieron cerrar las demas sesiones del buzon", zap.String("username", sess.Username), zap.Error(err))
+		return "", domain.Session{}, false
+	}
+	s.logger.Info("webmail: sesiones del buzon revocadas", zap.String("username", sess.Username), zap.Time("revoked_at", at))
+	fresh = sess
+	fresh.CreatedAt = at.Add(time.Microsecond)
+	ttl, alive := s.cfg.Sessions.Remaining(fresh, s.clock())
+	if !alive {
+		return "", domain.Session{}, true
+	}
+	token, err := s.newToken()
+	if err != nil {
+		s.logger.Error("webmail: no se pudo generar la sesion nueva", zap.String("username", sess.Username), zap.Error(err))
+		return "", domain.Session{}, true
+	}
+	key, _ := s.sessionKey(token)
+	if err := s.sessions.Create(ctx, key, fresh, ttl); err != nil {
+		s.logger.Error("webmail: no se pudo guardar la sesion nueva", zap.String("username", sess.Username), zap.Error(err))
+		return "", domain.Session{}, true
+	}
+	revokedAt, err := s.sessions.RevokedAt(ctx, sess.Username)
+	if err != nil || fresh.RevokedBy(revokedAt) {
+		s.drop(ctx, key, sess.Username, "revocada al reabrirse")
+		s.logger.Warn("webmail: la sesion nueva no se entrega; quien activo vuelve a entrar", zap.String("username", sess.Username), zap.Error(err))
+		return "", domain.Session{}, true
+	}
+	s.logger.Info("webmail: sesion reabierta tras cerrar las demas", zap.String("username", sess.Username), zap.String("session", key[:12]))
+	return token, fresh, true
 }
 
 // RegenerateRecoveryCodes sustituye los codigos de recuperacion; exige un codigo valido.

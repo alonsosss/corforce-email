@@ -15,30 +15,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alonsosss/corforce-email/services/webmail/internal/adapters/egress"
 	"github.com/alonsosss/corforce-email/services/webmail/internal/domain"
 )
-
-func TestIsPublicAddr(t *testing.T) {
-	blocked := []string{
-		"10.0.0.1", "172.16.5.4", "192.168.1.1", "127.0.0.1", "0.0.0.0", "169.254.169.254", "100.64.0.1",
-		"192.0.2.10", "198.18.0.1", "203.0.113.5", "224.0.0.1", "240.0.0.1", "255.255.255.255",
-		"::1", "::", "fe80::1", "fc00::1", "fd12:3456::1", "ff02::1", "::ffff:10.0.0.1", "::ffff:127.0.0.1",
-		"64:ff9b::a00:1", "2002:a00:1::1", "2001::1", "2001:db8::1", "fec0::1",
-	}
-	for _, s := range blocked {
-		if IsPublicAddr(netip.MustParseAddr(s)) {
-			t.Errorf("%s no es publica", s)
-		}
-	}
-	for _, s := range []string{"8.8.8.8", "93.184.216.34", "2606:4700:4700::1111", "::ffff:8.8.8.8"} {
-		if !IsPublicAddr(netip.MustParseAddr(s)) {
-			t.Errorf("%s es publica", s)
-		}
-	}
-	if IsPublicAddr(netip.Addr{}) {
-		t.Error("una direccion vacia no es publica")
-	}
-}
 
 // fakeDNS responde lo que diga la prueba en cada consulta.
 type fakeDNS struct {
@@ -77,6 +56,11 @@ type harness struct {
 
 func newHarness(t *testing.T, timeout time.Duration) *harness {
 	t.Helper()
+	return newHarnessAllowing(t, timeout, func(a netip.Addr) bool { return a.IsLoopback() })
+}
+
+func newHarnessAllowing(t *testing.T, timeout time.Duration, allowed func(netip.Addr) bool) *harness {
+	t.Helper()
 	h := &harness{dns: &fakeDNS{answers: [][]string{{"127.0.0.1"}}}}
 	h.srv = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h.hits.Add(1)
@@ -90,11 +74,10 @@ func newHarness(t *testing.T, timeout time.Duration) *harness {
 	pool := x509.NewCertPool()
 	pool.AddCert(h.srv.Certificate())
 	var mu sync.Mutex
-	h.client = newClient(timeout, options{
-		resolver: h.dns,
-		rootCAs:  pool,
-		allowed:  func(a netip.Addr) bool { return a.IsLoopback() },
-		dial: func(ctx context.Context, network, address string) (net.Conn, error) {
+	h.client = newClient(timeout, options{rootCAs: pool, egress: egress.Options{
+		Resolver: h.dns,
+		Allowed:  allowed,
+		Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
 			mu.Lock()
 			h.dialed = append(h.dialed, address)
 			mu.Unlock()
@@ -104,7 +87,7 @@ func newHarness(t *testing.T, timeout time.Duration) *harness {
 			var d net.Dialer
 			return d.DialContext(ctx, network, h.srv.Listener.Addr().String())
 		},
-	})
+	}})
 	return h
 }
 
@@ -130,8 +113,7 @@ func TestOneClickEnviaElPOSTDeRFC8058ALaIPComprobada(t *testing.T) {
 }
 
 func TestOneClickRechazaURLsYDestinosNoPublicosSinConectar(t *testing.T) {
-	h := newHarness(t, 5*time.Second)
-	h.client.allowed = IsPublicAddr
+	h := newHarnessAllowing(t, 5*time.Second, egress.IsPublicAddr)
 	for _, target := range []string{
 		"http://example.com/u", "https://example.com:8443/u", "https://user:pw@example.com/u", "ftp://example.com/u",
 		"https://127.0.0.1/u", "https://[::1]/u", "https://169.254.169.254/latest/meta-data", "https://10.0.0.1/u",
@@ -218,34 +200,8 @@ func TestOneClickRespuestasQueNoConfirmanYPlazos(t *testing.T) {
 	}
 }
 
-func TestControlConnCompruebaLaDireccionDeCadaConexion(t *testing.T) {
-	c := New(0)
-	if c.timeout != defaultTimeout {
+func TestPlazoPorDefecto(t *testing.T) {
+	if c := New(0); c.timeout != defaultTimeout {
 		t.Fatalf("plazo por defecto: %v", c.timeout)
-	}
-	if err := c.controlConn("tcp4", "10.0.0.1:443", nil); !errors.Is(err, domain.ErrUnsubscribeRefused) {
-		t.Fatalf("privada: %v", err)
-	}
-	if err := c.controlConn("tcp6", "[fd00::1]:443", nil); !errors.Is(err, domain.ErrUnsubscribeRefused) {
-		t.Fatalf("ULA: %v", err)
-	}
-	if err := c.controlConn("tcp4", "no-es-una-direccion", nil); !errors.Is(err, domain.ErrUnsubscribeRefused) {
-		t.Fatalf("ilegible: %v", err)
-	}
-	if err := c.controlConn("tcp4", "8.8.8.8:443", nil); err != nil {
-		t.Fatalf("publica: %v", err)
-	}
-}
-
-func TestElDialerPorDefectoNoConectaConLoopback(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer ln.Close()
-	c := newClient(time.Second, options{allowed: IsPublicAddr})
-	d := &net.Dialer{Timeout: time.Second, Control: c.controlConn}
-	if _, err := d.DialContext(context.Background(), "tcp", ln.Addr().String()); !errors.Is(err, domain.ErrUnsubscribeRefused) {
-		t.Fatalf("el control del dialer debe cortar la conexion: %v", err)
 	}
 }

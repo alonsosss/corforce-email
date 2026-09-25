@@ -134,10 +134,12 @@ type RawMessage struct {
 	Parts         []Part
 }
 
-// RemoteImages informa de las imagenes remotas del HTML: si las habia y si se bloquearon.
+// RemoteImages informa de las imagenes remotas del HTML: si las habia, si se bloquearon y si las
+// que se muestran pasan por el proxy de imagenes (siempre que se muestra alguna).
 type RemoteImages struct {
 	Present bool
 	Blocked bool
+	Proxied bool
 }
 
 // Message es el mensaje listo para el cliente: HTML ya saneado.

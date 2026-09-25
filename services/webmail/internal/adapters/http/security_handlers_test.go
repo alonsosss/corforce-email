@@ -190,12 +190,25 @@ func TestActivarLaVerificacionPorElAPI(t *testing.T) {
 	if wrong.Code != http.StatusUnprocessableEntity || errorCode(t, wrong) != "INVALID_MFA_CODE" {
 		t.Fatalf("codigo malo: %d %s", wrong.Code, wrong.Body.String())
 	}
+	other := login(t, env.h)
 	ok := do(env.h, http.MethodPost, BasePath+"/security/mfa/activate", jsonBody(map[string]string{"secret": s.Data.Secret, "code": "123456"}), originHeader, cookie)
 	var codes struct {
-		Data recoveryCodesDTO `json:"data"`
+		Data mfaActivationDTO `json:"data"`
 	}
-	if ok.Code != http.StatusOK || json.Unmarshal(ok.Body.Bytes(), &codes) != nil || len(codes.Data.RecoveryCodes) != 2 {
+	if ok.Code != http.StatusOK || json.Unmarshal(ok.Body.Bytes(), &codes) != nil || len(codes.Data.RecoveryCodes) != 2 || !codes.Data.OtherSessionsClosed {
 		t.Fatalf("activar: %d %s", ok.Code, ok.Body.String())
+	}
+	fresh := sessionCookie(ok)
+	if fresh == nil || fresh.Value == "" || fresh.Value == cookie.Value || !fresh.HttpOnly || !fresh.Secure || fresh.Path != BasePath {
+		t.Fatalf("quien activa sigue con una cookie nueva: %+v", fresh)
+	}
+	for name, c := range map[string]*http.Cookie{"otra sesion": other, "la cookie anterior": cookie} {
+		if rec := do(env.h, http.MethodGet, BasePath+"/session", nil, nil, c); rec.Code != http.StatusUnauthorized {
+			t.Errorf("%s queda cerrada: %d", name, rec.Code)
+		}
+	}
+	if rec := do(env.h, http.MethodGet, BasePath+"/session", nil, nil, fresh); rec.Code != http.StatusOK {
+		t.Fatalf("la sesion nueva vale sin volver a entrar: %d %s", rec.Code, rec.Body.String())
 	}
 }
 

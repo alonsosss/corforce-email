@@ -76,7 +76,7 @@ func newSchedulingEnv(t *testing.T) (*testEnv, *stubScheduling) {
 	}
 	h, err := NewHandler(svc, Config{
 		CookieSecure: true, SessionIdle: 30 * time.Minute, SessionMax: 12 * time.Hour,
-		MFAChallengeTTL: 5 * time.Minute, IPRateLimiter: unlimited{}, MailboxRateLimiter: unlimited{},
+		MFAChallengeTTL: 5 * time.Minute, IPRateLimiter: unlimited{}, MailboxRateLimiter: unlimited{}, ImageProxyRateLimiter: unlimited{},
 		AllowedOrigins: []string{allowedOrigin}, MaxMessageBytes: 4096, OperationTimeout: 5 * time.Second, TransferTimeout: 5 * time.Second,
 	}, zap.NewNop())
 	if err != nil {

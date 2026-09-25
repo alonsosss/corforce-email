@@ -55,6 +55,13 @@ type Config struct {
 	// todo lo que se sirve con sesion, de modo que una oficina tras una sola IP no comparte cupo.
 	IPRateLimiter      RateLimiter
 	MailboxRateLimiter RateLimiter
+	// ImageProxyRateLimiter acota por buzon las descargas del proxy de imagenes remotas (el buzon que
+	// firma el enlace, que no lleva sesion), con su propio cupo: un boletin con muchas imagenes no
+	// agota el del resto del webmail. ImageProxyConcurrency es cuantas descargas corren a la vez en el
+	// proceso (0 usa defaultImageProxyConcurrency) e ImageProxyMetrics, opcional, las cuenta.
+	ImageProxyRateLimiter RateLimiter
+	ImageProxyConcurrency int
+	ImageProxyMetrics     ImageProxyMetrics
 }
 
 // RateLimiter decide si una peticion cabe en su cupo y cuanto falta para que se reabra
@@ -68,6 +75,9 @@ type RateLimiter interface {
 // composicion ocupa hasta unas cinco veces el tope del mensaje.
 const defaultComposeConcurrency = 2
 
+// defaultImageProxyConcurrency son las descargas simultaneas del proxy de imagenes si no se configura.
+const defaultImageProxyConcurrency = 8
+
 type Handler struct {
 	app     *app.Service
 	cfg     Config
@@ -78,6 +88,9 @@ type Handler struct {
 	assistant *app.AssistantService
 
 	compose *composeGate
+
+	images       *imageGate
+	imageMetrics ImageProxyMetrics
 }
 
 func NewHandler(svc *app.Service, cfg Config, logger *zap.Logger) (*Handler, error) {
@@ -89,14 +102,25 @@ func NewHandler(svc *app.Service, cfg Config, logger *zap.Logger) (*Handler, err
 		cfg.MaxMessageBytes <= 0 || cfg.ComposeConcurrency < 0 || cfg.MFAChallengeTTL <= 0 {
 		return nil, errors.New("webmail: plazos y topes del API deben ser positivos")
 	}
-	if cfg.IPRateLimiter == nil || cfg.MailboxRateLimiter == nil {
-		return nil, errors.New("webmail: faltan los limitadores de peticiones por IP y por buzón")
+	if cfg.IPRateLimiter == nil || cfg.MailboxRateLimiter == nil || cfg.ImageProxyRateLimiter == nil {
+		return nil, errors.New("webmail: faltan los limitadores de peticiones por IP, por buzón o del proxy de imágenes")
 	}
 	if cfg.ComposeConcurrency == 0 {
 		cfg.ComposeConcurrency = defaultComposeConcurrency
 	}
+	if cfg.ImageProxyConcurrency < 0 {
+		return nil, errors.New("webmail: las descargas simultáneas del proxy de imágenes no pueden ser negativas")
+	}
+	if cfg.ImageProxyConcurrency == 0 {
+		cfg.ImageProxyConcurrency = defaultImageProxyConcurrency
+	}
+	metrics := cfg.ImageProxyMetrics
+	if metrics == nil {
+		metrics = noImageProxyMetrics{}
+	}
 	return &Handler{app: svc, cfg: cfg, origins: guard, logger: logger,
-		compose: newComposeGate(cfg.ComposeConcurrency)}, nil
+		compose: newComposeGate(cfg.ComposeConcurrency),
+		images:  newImageGate(cfg.ImageProxyConcurrency), imageMetrics: metrics}, nil
 }
 
 // PartURL es la URL de una parte en este API. La usa el saneado para las imagenes cid:.
@@ -113,6 +137,8 @@ func (h *Handler) Routes() http.Handler {
 		r.With(h.limitByIP).Post("/session", h.Login)
 		r.With(h.limitByIP).Post("/session/mfa", h.LoginMFA)
 		r.With(h.limitByIP).Delete("/session", h.Logout)
+		// El proxy de imagenes remotas no lleva sesion: lo autoriza la firma del enlace.
+		r.With(h.limitByIP).Get(ImageProxyPath, h.ImageProxy)
 		// El flujo de avisos cuenta una vez por conexion: los latidos no son peticiones.
 		r.With(h.requireSessionPeek, h.limitByMailbox).Get("/events", h.Events)
 		r.Group(func(r chi.Router) {

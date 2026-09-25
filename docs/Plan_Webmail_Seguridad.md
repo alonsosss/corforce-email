@@ -136,7 +136,7 @@ Eventos (outbox, `events.Event` con `TenantID`, `Source: "mail-directory"`):
 | `POST /session/mfa` | `{code}` | como `POST /session` sin TOTP; 422 `INVALID_MFA_CODE`; 401 `MFA_CHALLENGE_EXPIRED` |
 | `GET /security` | | `{mfa: {enabled, enabled_at, recovery_remaining}, app_passwords: [...], app_passwords_max}` |
 | `POST /security/mfa/setup` | `{current_password}` | `{secret, provisioning_uri}` |
-| `POST /security/mfa/activate` | `{secret, code}` | `{recovery_codes}` |
+| `POST /security/mfa/activate` | `{secret, code}` | `{recovery_codes, other_sessions_closed}`; cierra las demás sesiones y renueva `cf_wm` (sección 6.1) |
 | `POST /security/mfa/recovery-codes` | `{code}` | `{recovery_codes}` |
 | `DELETE /security/mfa` | `{current_password, code}` | 204 |
 | `POST /security/app-passwords` | `{name, protocols..., current_password, code?}` | `201 {..., password}` |
@@ -257,3 +257,144 @@ Fusionados S1, S2 y S3 en una rama y cuadrados sus contratos:
 Despliegue: migración de celda 16 y de registro 046 (con resembrado de `tenant_admin`), añadir los cuatro
 subjects nuevos a `AUDIT_SUBJECTS` del `.env` del servidor (que la fija), y los servicios en el orden de
 arriba más gateway y mail-security.
+
+## 6. Proxy de imágenes y sesiones al activar la verificación
+
+Estado: implementado en `services/webmail` (V, 2026-09-24: unitarias de dominio, saneado, caso de uso,
+adaptador HTTP y cliente de descarga con servidores http/https de pruebas; integración del almacén de
+sesiones contra Redis real). Sin desplegar. La interfaz (`web/`) aún no aplica el contrato de 6.2.
+
+### 6.1 Activar la verificación cierra las demás sesiones
+
+`POST /api/v1/webmail/security/mfa/activate {secret, code}`, tras activarse en mail-directory:
+
+1. Pone la marca de revocación del buzón en `at` = ahora (resolución de microsegundos, la del almacén):
+   caen todas las sesiones iniciadas hasta `at`, **también la de quien activa**.
+2. Abre para quien activa una sesión nueva con `CreatedAt = at + 1 µs` (queda fuera de la marca) y la
+   misma vida máxima que la que sustituye (reabrir no la alarga). Token nuevo: la cookie anterior deja de
+   valer.
+3. Relee la marca: si hay una posterior (una revocación del directorio llegó a la vez, con su margen de
+   2 s), la sesión nueva también cae y no se entrega.
+
+Respuesta `200`:
+
+```json
+{"data": {"recovery_codes": ["..."], "other_sessions_closed": true}}
+```
+
+- `other_sessions_closed: true` y `Set-Cookie: cf_wm=<token nuevo>` (mismos atributos que el inicio de
+  sesión): quien activa sigue sin volver a entrar. Toda otra pestaña o dispositivo recibe `401
+  SESSION_EXPIRED` en su siguiente petición.
+- `other_sessions_closed: true` con `Set-Cookie` que **borra** `cf_wm`: no se pudo reabrir (revocación
+  simultánea o fallo al guardar); los códigos se muestran igual y la siguiente petición es `401`.
+- `other_sessions_closed: false` sin cambio de cookie: el almacén de sesiones no respondió; no se cerró
+  nada y la sesión sigue.
+
+Los códigos de recuperación se devuelven en los tres casos: la verificación ya está activa y no se
+vuelven a mostrar. Una petición de la misma pestaña que salga con la cookie vieja mientras la respuesta
+viaja puede recibir `401`; la interfaz debe esperar a la respuesta de la activación antes de seguir.
+
+### 6.2 Proxy de imágenes remotas
+
+Con "mostrar imágenes" (`GET .../messages/{uid}?remote_images=allow`) el HTML ya no apunta al servidor
+del remitente: cada `<img src>` http o https se reescribe a una URL firmada del propio webmail. El
+navegador del lector nunca habla con el remitente (que no ve su IP ni cuándo abre el mensaje). Sin
+permiso, las imágenes remotas se quitan como antes. Una imagen remota nunca sale con su URL original:
+si el proxy no puede firmarla (URL de más de 2048 bytes, puerto no estándar, credenciales en la URL) o
+la sesión no tiene el identificador del buzón (sesión anterior a que mail-auth lo devolviera), se quita.
+`data:` (png, jpeg, gif, webp) y `cid:` no cambian.
+
+**URL** (relativa al origen del API):
+
+```
+/api/v1/webmail/image-proxy?u=<URL>&x=<caducidad>&m=<buzón>&s=<firma>
+```
+
+| Parámetro | Contenido |
+|---|---|
+| `u` | URL original (sin fragmento) en base64url sin relleno |
+| `x` | caducidad, segundos Unix |
+| `m` | UUID del buzón que leyó el mensaje; paga el cupo |
+| `s` | HMAC-SHA256 en base64url sin relleno sobre `image-proxy/v1\n<URL>\n<m>\n<x>` |
+
+La caducidad es `WEBMAIL_IMAGE_PROXY_TTL` (1 h por defecto) redondeada hacia arriba a un cuarto de ese
+plazo: el mismo mensaje abierto varias veces seguidas da la misma URL y el navegador reutiliza la imagen.
+
+**Clave.** `WEBMAIL_IMAGE_PROXY_KEY`, secreto nuevo del almacén (reparto: solo `webmail`), de 32
+caracteres o más; la clave de firma es `HMAC-SHA256(secreto, "webmail-image-proxy/v1")`. Se descartó
+derivarla de un secreto que el webmail ya recibe: `INTERNAL_GATEWAY_TOKEN` lo tienen todos los servicios
+(cualquiera podría forjar enlaces y usar el webmail de proxy), `REDIS_PASSWORD` es compartido y no es una
+clave, `ANTHROPIC_API_KEY` es de un tercero y opcional, y `WEBMAIL_MASTER_PASSWORD` es de cada celda: la
+petición de la imagen sale de un iframe sin cookie, el gateway la lleva a la **celda base**, y esa
+instancia no podría verificar un enlace firmado con el maestro de otra celda. La clave nueva es la misma
+en todas las celdas. En `development` y `test`, sin ella se sortea una por proceso (una sola réplica).
+Rotarla solo rompe las imágenes mostradas durante el último TTL.
+
+**Autorización.** La ruta no usa la cookie de sesión: el mensaje se pinta en un iframe `sandbox` de
+origen opaco, que no la envía. La firma es la autorización: cubre la URL, la caducidad y el buzón, así
+que un enlace no sirve para otra imagen, otro buzón ni más tiempo. Es `GET`, y el control de `Origin`
+del webmail solo mira escrituras.
+
+**Descarga** (`internal/adapters/remoteimage`, sobre `internal/adapters/egress`, que comparte con la
+baja en un clic): http y https solo en 80 y 443; el nombre se resuelve en el webmail y se rechaza si
+alguna de sus direcciones no es pública, se conecta a la dirección comprobada y el control del dialer
+la vuelve a comprobar; sin proxy del entorno; como mucho 3 redirecciones, cada una validada con las
+mismas reglas y sin `Referer`; sin cookies ni credenciales; `User-Agent: CoreForceMail-ImageProxy/1.0`;
+plazo total `WEBMAIL_IMAGE_PROXY_TIMEOUT` (10 s); cuerpo hasta `WEBMAIL_IMAGE_PROXY_MAX_BYTES` (5 MiB, ya
+descomprimido); solo `200`. El tipo lo decide la firma de los bytes, no lo que declara el servidor: png,
+jpeg, gif o webp (`domain.SniffInlineImage`); SVG y todo lo demás se rechaza.
+
+**Respuesta `200`:** los bytes con `Content-Type` del tipo detectado, `Content-Length`,
+`Content-Disposition: inline`, `X-Content-Type-Options: nosniff`, la CSP del API (`default-src 'none';
+frame-ancestors 'none'; base-uri 'none'; form-action 'none'; sandbox`), `Referrer-Policy: no-referrer`,
+`Cache-Control: private, max-age=<segundos hasta x>` y `Cross-Origin-Resource-Policy: cross-origin` (la
+pide un documento de origen opaco; con `same-site` el navegador la bloquearía).
+
+**Errores** (envelope `{error: {code, message}}`, sin detalles del servidor remoto; en el registro solo
+queda el host, nunca la URL):
+
+| Código | HTTP | Cuándo |
+|---|---|---|
+| `IMAGE_LINK_INVALID` | 403 | firma alterada, otro buzón, parámetro ilegible o proxy sin configurar |
+| `IMAGE_LINK_EXPIRED` | 410 | caducado (la firma se comprueba antes) |
+| `RATE_LIMITED` | 429 | cupo de la IP o del buzón; `Retry-After` |
+| `IMAGE_PROXY_BUSY` | 503 | descargas simultáneas agotadas en la réplica; `Retry-After: 2` |
+| `IMAGE_UNAVAILABLE` | 502 | destino no admitido, red, plazo, respuesta distinta de 200 |
+| `IMAGE_TOO_LARGE` | 502 | supera el tope |
+| `IMAGE_TYPE_NOT_ALLOWED` | 502 | no es png, jpeg, gif ni webp |
+
+**Límites.** Por IP, el limitador en memoria de lo que no tiene sesión (600/min) y el general del
+gateway; por buzón (`m`), `WEBMAIL_IMAGE_PROXY_RATE_PER_MAILBOX` (300/min, 30 a 10000) en Redis común a las
+réplicas, con prefijo propio `webmail:image-proxy:<celda>`: un boletín con muchas imágenes no agota el
+cupo del resto del webmail; por réplica, `WEBMAIL_IMAGE_PROXY_CONCURRENCY` descargas a la vez (8, 1 a 64).
+Métrica `webmail_image_proxy_requests_total{outcome}` con `ok`, `invalid`, `expired`, `rate_limited`,
+`busy`, `refused`, `upstream_error`, `too_large` y `not_image`.
+
+**Gateway.** Sin cambios: `webmail` es prefijo `self_authenticated` y todo `/api/v1/webmail/*` llega al
+servicio (una petición sin `cf_wm` va a la celda base). El modo `proxyServiceCSP` conserva la CSP del
+servicio, `Cache-Control`, `Content-Disposition` y `Cross-Origin-Resource-Policy`; retira el
+`X-Content-Type-Options` del servicio y pone el suyo (`nosniff`); solo reescribe cuerpos `text/html`.
+
+**Contrato del mensaje.** `remote_images` gana `proxied`:
+
+```json
+"remote_images": {"present": true, "blocked": false, "proxied": true}
+```
+
+`proxied: true` sale exactamente cuando se muestra alguna imagen remota, y entonces todas las que quedan
+en `html` apuntan a `/api/v1/webmail/image-proxy?`. Con `remote_images=allow` pero sin nada que se pueda
+servir, `blocked` sigue `true`.
+
+**Qué cambia la interfaz** (`web/src/lib/untrustedHtml.ts`, sin tocar aquí):
+
+- `keepImage`: con `allowRemoteImages`, conservar solo las URL que empiezan por
+  `/api/v1/webmail/image-proxy?` (o esa ruta sobre `apiBase()`), resolviéndolas contra
+  `apiBase() || window.location.origin`; **dejar de aceptar** `https?://` de terceros (el servidor ya no
+  las envía, y aceptarlas reabriría la fuga).
+- `contentSecurityPolicy(allow)`: `img-src data: <origen del API>` en lugar de `img-src data: https: http:`
+  (el origen explícito, no `'self'`: en un iframe `sandbox` sin `allow-same-origin` `'self'` no casa con el
+  origen de la aplicación). Sin permiso, `img-src data:` como ahora.
+- `MessageBody` y la impresión (`print.ts`) siguen pasando `allowRemoteImages` solo si
+  `!remote_images.blocked`; el tipo `remote_images` añade `proxied: boolean`.
+- Seguridad: activar la verificación responde `other_sessions_closed` y renueva `cf_wm` (6.1); si la
+  respuesta borra la cookie, mostrar los códigos y después volver al inicio de sesión.

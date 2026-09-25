@@ -8,6 +8,7 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
@@ -39,6 +40,7 @@ import (
 	natsadapter "github.com/alonsosss/corforce-email/services/webmail/internal/adapters/nats"
 	promadapter "github.com/alonsosss/corforce-email/services/webmail/internal/adapters/prometheus"
 	redisadapter "github.com/alonsosss/corforce-email/services/webmail/internal/adapters/redis"
+	"github.com/alonsosss/corforce-email/services/webmail/internal/adapters/remoteimage"
 	"github.com/alonsosss/corforce-email/services/webmail/internal/adapters/rfc5322"
 	smtpadapter "github.com/alonsosss/corforce-email/services/webmail/internal/adapters/smtp"
 	totpadapter "github.com/alonsosss/corforce-email/services/webmail/internal/adapters/totp"
@@ -144,6 +146,28 @@ const (
 
 	// unsubscribeTimeout acota de principio a fin la baja en un clic contra el servidor del boletin.
 	unsubscribeTimeout = 10 * time.Second
+
+	// Proxy de imagenes remotas (docs/Plan_Webmail_Seguridad.md, seccion 6). El enlace firmado vale
+	// WEBMAIL_IMAGE_PROXY_TTL; cada descarga tiene un plazo total y un tope de bytes, y el proceso
+	// retiene a la vez como mucho WEBMAIL_IMAGE_PROXY_CONCURRENCY imagenes de ese tope (8 de 5 MiB son
+	// 40 MiB del contenedor). El cupo por buzon es propio del proxy: un boletin con muchas imagenes no
+	// agota el del resto del webmail.
+	defaultImageProxyTTL         = time.Hour
+	minImageProxyTTL             = 5 * time.Minute
+	maxImageProxyTTL             = 24 * time.Hour
+	defaultImageProxyTimeout     = 10 * time.Second
+	minImageProxyTimeout         = time.Second
+	maxImageProxyTimeout         = time.Minute
+	defaultImageProxyMaxBytes    = 5 << 20
+	minImageProxyMaxBytes        = 64 << 10
+	maxImageProxyMaxBytes        = 25 << 20
+	defaultImageProxyConcurrency = 8
+	maxImageProxyConcurrency     = 64
+	defaultImageProxyRatePerMin  = 300
+	minImageProxyRatePerMin      = 30
+	maxImageProxyRatePerMin      = 10000
+	// minImageProxyKeyLen es lo minimo que se acepta del secreto del que sale la clave de firma.
+	minImageProxyKeyLen = 32
 )
 
 // largeFileCeiling es lo que se deja pasar hacia mail-files en una subida de fichero grande: el mismo
@@ -187,6 +211,20 @@ type settings struct {
 	eventsMailboxes    int
 	mailboxRatePerMin  int
 	mfaIssuer          string
+	imageProxy         imageProxySettings
+}
+
+// imageProxySettings es la configuracion del proxy de imagenes remotas. secret es el
+// WEBMAIL_IMAGE_PROXY_KEY del almacen; ephemeralSecret dice que, en desarrollo y sin el, se sorteo uno
+// que muere con el proceso.
+type imageProxySettings struct {
+	secret          []byte
+	ephemeralSecret bool
+	ttl             time.Duration
+	timeout         time.Duration
+	maxBytes        int64
+	concurrency     int
+	ratePerMin      int
 }
 
 func main() {
@@ -211,6 +249,13 @@ func main() {
 	}
 	if st.imapTLS == imapadapter.TLSNone {
 		logger.Warn("webmail: IMAP sin TLS (solo desarrollo)")
+	}
+	if st.imageProxy.ephemeralSecret {
+		logger.Warn("webmail: WEBMAIL_IMAGE_PROXY_KEY sin definir; se usa una clave aleatoria de este proceso (solo desarrollo, una sola replica)")
+	}
+	imageFetcher, err := remoteimage.New(remoteimage.Config{Timeout: st.imageProxy.timeout, MaxBytes: st.imageProxy.maxBytes})
+	if err != nil {
+		log.Fatalf("webmail: %v", err)
 	}
 
 	engineTLS, err := tlsConfig(st.tlsServerName, st.tlsCAFile, st.tlsInsecure)
@@ -326,8 +371,8 @@ func main() {
 			MFAChallengeTTL: mfaChallengeTTL, MFAMaxAttempts: mfaMaxAttempts, MFASetupTTL: mfaSetupTTL,
 		},
 
-		// La baja en un clic es la unica salida del webmail a servidores de terceros: el cliente
-		// solo conecta con direcciones publicas y sin redirecciones.
+		// La baja en un clic sale a servidores de terceros: el cliente solo conecta con direcciones
+		// publicas y sin redirecciones.
 		Unsubscriber: unsubscribe.New(unsubscribeTimeout),
 		Reminders:    directory,
 		QuickReplies: directory,
@@ -335,6 +380,13 @@ func main() {
 		MFAChallenges: redisadapter.NewMFAStore(rdb, st.cellCode),
 		Security:      directory,
 		TOTP:          totpProvisioner,
+
+		// Las imagenes remotas que el lector decide ver salen por el proxy: la otra salida a terceros,
+		// con las mismas reglas de destino que la baja.
+		ImageProxy: &app.ImageProxyDeps{
+			Fetcher: imageFetcher, URL: handler.RemoteImageURL,
+			Key: domain.DeriveRemoteImageKey(st.imageProxy.secret), TTL: st.imageProxy.ttl,
+		},
 	})
 	if err != nil {
 		log.Fatalf("webmail: %v", err)
@@ -347,6 +399,10 @@ func main() {
 		MFAChallengeTTL:    mfaChallengeTTL,
 		IPRateLimiter:      middleware.NewRateLimiter(ipRateLimitPerMinute, rateLimitWindow),
 		MailboxRateLimiter: middleware.NewSharedRateLimiter(middleware.NewRedisRateLimitStore(rdb), "webmail:mailbox:"+st.cellCode, st.mailboxRatePerMin, rateLimitWindow, logger),
+		ImageProxyRateLimiter: middleware.NewSharedRateLimiter(middleware.NewRedisRateLimitStore(rdb), "webmail:image-proxy:"+st.cellCode,
+			st.imageProxy.ratePerMin, rateLimitWindow, logger),
+		ImageProxyConcurrency: st.imageProxy.concurrency,
+		ImageProxyMetrics:     promadapter.NewImageProxyMetrics(prometheus.DefaultRegisterer),
 	}, logger)
 	if err != nil {
 		log.Fatalf("webmail: %v", err)
@@ -544,7 +600,49 @@ func loadSettings() (settings, error) {
 	if st.internalToken, err = middleware.InternalGatewayToken(); err != nil {
 		return st, fmt.Errorf("%w (sin el mail-directory rechaza la consulta de remitentes)", err)
 	}
+	if st.imageProxy, err = loadImageProxySettings(devRelaxations); err != nil {
+		return st, err
+	}
 	return st, nil
+}
+
+// loadImageProxySettings lee la configuracion del proxy de imagenes remotas. La clave es un secreto
+// del almacen, la misma en todas las replicas y celdas: el gateway lleva una peticion sin cookie (la
+// del iframe del mensaje) a la celda base, que debe poder verificar un enlace firmado en otra.
+func loadImageProxySettings(devRelaxations bool) (imageProxySettings, error) {
+	var ip imageProxySettings
+	var err error
+	secret := os.Getenv("WEBMAIL_IMAGE_PROXY_KEY")
+	switch {
+	case len(secret) >= minImageProxyKeyLen:
+		ip.secret = []byte(secret)
+	case secret == "" && devRelaxations:
+		ip.secret = make([]byte, minImageProxyKeyLen)
+		if _, err := rand.Read(ip.secret); err != nil {
+			return ip, fmt.Errorf("WEBMAIL_IMAGE_PROXY_KEY: %w", err)
+		}
+		ip.ephemeralSecret = true
+	default:
+		return ip, fmt.Errorf("WEBMAIL_IMAGE_PROXY_KEY debe llegar del almacen de secretos y tener al menos %d caracteres (sin ella solo arranca con ENVIRONMENT development o test)", minImageProxyKeyLen)
+	}
+	if ip.ttl, err = config.EnvDuration("WEBMAIL_IMAGE_PROXY_TTL", defaultImageProxyTTL, minImageProxyTTL, maxImageProxyTTL); err != nil {
+		return ip, err
+	}
+	if ip.timeout, err = config.EnvDuration("WEBMAIL_IMAGE_PROXY_TIMEOUT", defaultImageProxyTimeout, minImageProxyTimeout, maxImageProxyTimeout); err != nil {
+		return ip, err
+	}
+	maxBytes, err := config.EnvInt("WEBMAIL_IMAGE_PROXY_MAX_BYTES", defaultImageProxyMaxBytes, minImageProxyMaxBytes, maxImageProxyMaxBytes)
+	if err != nil {
+		return ip, err
+	}
+	ip.maxBytes = int64(maxBytes)
+	if ip.concurrency, err = config.EnvInt("WEBMAIL_IMAGE_PROXY_CONCURRENCY", defaultImageProxyConcurrency, 1, maxImageProxyConcurrency); err != nil {
+		return ip, err
+	}
+	if ip.ratePerMin, err = config.EnvInt("WEBMAIL_IMAGE_PROXY_RATE_PER_MAILBOX", defaultImageProxyRatePerMin, minImageProxyRatePerMin, maxImageProxyRatePerMin); err != nil {
+		return ip, err
+	}
+	return ip, nil
 }
 
 // tlsConfig verifica contra las raices del sistema mas, si se indica, un fichero PEM

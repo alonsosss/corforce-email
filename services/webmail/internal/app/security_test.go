@@ -265,15 +265,90 @@ func TestActivarSoloConElSecretoPreparado(t *testing.T) {
 	if h.mfa.setups[testUser] == "" {
 		t.Fatal("un codigo malo no gasta la preparacion")
 	}
-	codes, err := h.svc.ActivateMFA(ctx, sess, " jbswy3dpehpk3pxp ", "123456")
-	if err != nil || len(codes) != 1 {
-		t.Fatalf("%v %v", codes, err)
+	res, err := h.svc.ActivateMFA(ctx, sess, " jbswy3dpehpk3pxp ", "123456")
+	if err != nil || len(res.RecoveryCodes) != 1 {
+		t.Fatalf("%v %v", res, err)
 	}
 	if h.security.activated != "JBSWY3DPEHPK3PXP" || len(h.mfa.setups) != 0 {
 		t.Fatalf("activado con %q; preparaciones %v", h.security.activated, h.mfa.setups)
 	}
 	if _, err := h.svc.ActivateMFA(ctx, sess, "", "123456"); err == nil {
 		t.Fatal("sin secreto")
+	}
+}
+
+// activateMFA prepara y activa la verificacion con la sesion dada.
+func activateMFA(t *testing.T, h *harness, sess domain.Session) MFAActivation {
+	t.Helper()
+	ctx := context.Background()
+	if _, err := h.svc.PrepareMFA(ctx, sess, testPass, testIP); err != nil {
+		t.Fatal(err)
+	}
+	res, err := h.svc.ActivateMFA(ctx, sess, "JBSWY3DPEHPK3PXP", "123456")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return res
+}
+
+func TestActivarCierraLasDemasSesionesYReabreLaPropia(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	mine, sess := h.login(t)
+	h.clock.Advance(time.Minute)
+	other, _ := h.login(t)
+	h.clock.Advance(time.Minute)
+
+	res := activateMFA(t, h, sess)
+	if !res.OtherSessionsClosed || res.Token == "" || res.Token == mine || len(res.RecoveryCodes) != 1 {
+		t.Fatalf("activacion: %+v", res)
+	}
+	for name, token := range map[string]string{"otra": other, "la propia anterior": mine} {
+		if _, err := h.svc.Authenticate(ctx, token); !errors.Is(err, domain.ErrSessionInvalid) {
+			t.Fatalf("%s sigue abierta: %v", name, err)
+		}
+	}
+	got, err := h.svc.Authenticate(ctx, res.Token)
+	if err != nil || got.Username != testUser {
+		t.Fatalf("la sesion nueva vale: %+v %v", got, err)
+	}
+	mark := h.store.revoked[testUser]
+	if !got.CreatedAt.After(mark) || got.CreatedAt.Sub(mark) != time.Microsecond {
+		t.Fatalf("la sesion nueva nace justo despues de la marca: %v %v", got.CreatedAt, mark)
+	}
+	if !got.ExpiresAt.Equal(sess.ExpiresAt) {
+		t.Fatalf("reabrir no alarga la vida maxima: %v %v", got.ExpiresAt, sess.ExpiresAt)
+	}
+	if len(h.store.sessions) != 1 {
+		t.Fatalf("solo queda la sesion nueva: %d", len(h.store.sessions))
+	}
+}
+
+func TestActivarConUnaRevocacionPosteriorNoEntregaSesion(t *testing.T) {
+	h := newHarness(t)
+	_, sess := h.login(t)
+	// Una revocacion del directorio con su margen, por delante del reloj del webmail.
+	h.store.revoked[testUser] = h.clock.Now().Add(2 * time.Second)
+	res := activateMFA(t, h, sess)
+	if !res.OtherSessionsClosed || res.Token != "" || len(res.RecoveryCodes) != 1 {
+		t.Fatalf("los codigos se entregan pero no una sesion que ya esta revocada: %+v", res)
+	}
+	if len(h.store.sessions) != 0 {
+		t.Fatalf("la sesion nueva revocada se borra: %d", len(h.store.sessions))
+	}
+}
+
+func TestActivarConElAlmacenDeSesionesCaidoEntregaLosCodigos(t *testing.T) {
+	h := newHarness(t)
+	mine, sess := h.login(t)
+	h.store.failRevoke = errors.New("redis caido")
+	res := activateMFA(t, h, sess)
+	if res.OtherSessionsClosed || res.Token != "" || len(res.RecoveryCodes) != 1 {
+		t.Fatalf("sin almacen: %+v", res)
+	}
+	h.store.failRevoke = nil
+	if _, err := h.svc.Authenticate(context.Background(), mine); err != nil {
+		t.Fatalf("si no se cerro nada, la sesion propia sigue: %v", err)
 	}
 }
 

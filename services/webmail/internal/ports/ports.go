@@ -149,6 +149,19 @@ type Unsubscriber interface {
 	OneClick(ctx context.Context, target string) error
 }
 
+// RemoteImageFetcher descarga una imagen remota para el proxy de imagenes. Solo conecta con direcciones
+// publicas en los puertos 80 y 443, comprobadas en cada conexion y en cada redireccion (como mucho
+// unas pocas), sin cookies, credenciales ni Referer, con un plazo total y un tope de bytes. Devuelve
+// los bytes tal como llegan: el tipo lo decide el caso de uso por su firma. Un destino que no admite
+// es domain.ErrRemoteImageRefused; un cuerpo mayor que el tope, domain.ErrRemoteImageTooLarge; una
+// respuesta que no es 200 o un fallo de red, domain.ErrRemoteImageUnavailable.
+type RemoteImageFetcher interface {
+	Fetch(ctx context.Context, rawURL string) ([]byte, error)
+}
+
+// RemoteImageURL construye la URL del proxy de imagenes de un enlace firmado.
+type RemoteImageURL func(domain.SignedRemoteImage) string
+
 // Sender entrega un mensaje por el submission de la celda autenticado como el buzon, de
 // modo que Postfix aplique smtpd_sender_login_maps al remitente.
 type Sender interface {

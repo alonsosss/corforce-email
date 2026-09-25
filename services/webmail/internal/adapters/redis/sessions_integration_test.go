@@ -111,3 +111,34 @@ func TestIntegracionSesionesEnRedis(t *testing.T) {
 		t.Fatal("sin revocacion la marca es cero")
 	}
 }
+
+// Al activar la verificacion en dos pasos se revoca en "at" y quien activo sigue con una sesion que
+// nace un microsegundo despues: la resolucion con la que Redis guarda la marca y el inicio.
+func TestIntegracionSesionReabiertaUnMicrosegundoDespuesDeLaMarca(t *testing.T) {
+	ctx := context.Background()
+	store, _ := testStore(t)
+	at := time.Now().UTC().Truncate(time.Microsecond)
+	sess := domain.Session{Username: "ana@empresa.pe", CreatedAt: at.Add(-time.Minute), ExpiresAt: at.Add(time.Hour)}
+	if err := store.Create(ctx, "k-antes", sess, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Revoke(ctx, sess.Username, at); err != nil {
+		t.Fatal(err)
+	}
+	fresh := sess
+	fresh.CreatedAt = at.Add(time.Microsecond)
+	if err := store.Create(ctx, "k-nueva", fresh, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	mark, err := store.RevokedAt(ctx, sess.Username)
+	if err != nil || !mark.Equal(at) {
+		t.Fatalf("marca: %v %v", mark, err)
+	}
+	got, err := store.Get(ctx, "k-nueva")
+	if err != nil || got.RevokedBy(mark) {
+		t.Fatalf("la sesion reabierta no cae con la marca: %+v %v", got, err)
+	}
+	if _, err := store.Get(ctx, "k-antes"); err != domain.ErrSessionInvalid {
+		t.Fatalf("la anterior se borra: %v", err)
+	}
+}

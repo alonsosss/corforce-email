@@ -40,7 +40,7 @@ Go (todo servicio monta `RequireGatewayToken`, `pkg/middleware/middleware.go`):
 | identity | `JWT_SIGNING_KEY` |
 | gateway | `REDIS_PASSWORD`, `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY` (usuario de servicio de MinIO, acotado al bucket; 2026-09-23, ADR 0012) |
 | access-control, mail-auth, reputation | `REDIS_PASSWORD` |
-| webmail | `REDIS_PASSWORD`, `WEBMAIL_MASTER_USER`, `WEBMAIL_MASTER_PASSWORD` |
+| webmail | `REDIS_PASSWORD`, `WEBMAIL_MASTER_USER`, `WEBMAIL_MASTER_PASSWORD`, `WEBMAIL_IMAGE_PROXY_KEY` (2026-09-24, firma del proxy de imagenes remotas) |
 | audit | `AUDIT_HASH_KEY`, `AUDIT_HASH_KEYS_OLD` |
 | domain-service | `MAIL_ENCRYPTION_KEY`, `MAIL_ENCRYPTION_KEYS_OLD`, `SES_IDENTITIES_ACCESS_KEY_ID`, `SES_IDENTITIES_SECRET_ACCESS_KEY` |
 | mail-migration | `MAIL_ENCRYPTION_KEY`, `MAIL_ENCRYPTION_KEYS_OLD`, `MAIL_MIGRATION_RUNNER_KEY` |

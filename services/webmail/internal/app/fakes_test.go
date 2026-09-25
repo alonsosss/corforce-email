@@ -59,6 +59,7 @@ type fakeStore struct {
 	touches       []time.Duration
 	ignoreTTL     bool
 	failRevokedAt error
+	failRevoke    error
 	failGet       error
 	failCreate    error
 }
@@ -112,6 +113,9 @@ func (s *fakeStore) Delete(_ context.Context, key, _ string) error {
 func (s *fakeStore) Revoke(_ context.Context, username string, at time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.failRevoke != nil {
+		return s.failRevoke
+	}
 	if at.After(s.revoked[username]) {
 		s.revoked[username] = at
 	}
@@ -679,15 +683,25 @@ func (c *fakeComposer) Finalize(stored []byte, date time.Time) (domain.Finalized
 	return f, nil
 }
 
+// fakeSanitizer: con remoteURL, esa es la imagen remota del mensaje; si se permite y hay proxy, el HTML
+// saneado lleva la URL que el proxy le da.
 type fakeSanitizer struct {
-	opts   domain.SanitizeOptions
-	remote bool
-	inline []domain.InlineImage
+	opts      domain.SanitizeOptions
+	remote    bool
+	remoteURL string
+	inline    []domain.InlineImage
 }
 
 func (f *fakeSanitizer) Incoming(html string, opts domain.SanitizeOptions) domain.SanitizedHTML {
 	f.opts = opts
-	return domain.SanitizedHTML{HTML: "limpio:" + html, RemoteImages: f.remote}
+	out := domain.SanitizedHTML{HTML: "limpio:" + html, RemoteImages: f.remote}
+	if f.remoteURL != "" && opts.AllowRemoteImages && opts.ProxyRemoteImage != nil {
+		if u, ok := opts.ProxyRemoteImage(f.remoteURL); ok {
+			out.HTML += "|" + u
+			out.Proxied = true
+		}
+	}
+	return out
 }
 
 func (f *fakeSanitizer) Outgoing(html string) (string, string) {

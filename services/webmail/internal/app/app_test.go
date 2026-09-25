@@ -378,8 +378,11 @@ func TestReadMessageResuelveCIDYBloqueaRemotas(t *testing.T) {
 	}
 
 	msg, _ = h.svc.ReadMessage(ctx, sess, "INBOX", 9, true, true)
-	if msg.RemoteImages.Blocked || !h.sanitizer.opts.AllowRemoteImages {
-		t.Fatal("remote_images=allow levanta el bloqueo solo en esa lectura")
+	if !h.sanitizer.opts.AllowRemoteImages || h.sanitizer.opts.ProxyRemoteImage != nil {
+		t.Fatal("remote_images=allow se pide al saneado; sin proxy no hay con que servirlas")
+	}
+	if !msg.RemoteImages.Blocked || msg.RemoteImages.Proxied {
+		t.Fatalf("sin proxy las imagenes remotas siguen bloqueadas aunque se pidan: %+v", msg.RemoteImages)
 	}
 }
 

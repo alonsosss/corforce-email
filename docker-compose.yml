@@ -420,6 +420,7 @@ services:
       REDIS_PASSWORD: ${REDIS_PASSWORD:-}
       WEBMAIL_MASTER_USER: ${WEBMAIL_MASTER_USER:-}
       WEBMAIL_MASTER_PASSWORD: ${WEBMAIL_MASTER_PASSWORD:-}
+      WEBMAIL_IMAGE_PROXY_KEY: ${WEBMAIL_IMAGE_PROXY_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       CELL_DB_PASSWORD: ${CELL_DB_PASSWORD:-}
       # La credencial de plataforma no llega a los servicios de celda: usan la de su celda

@@ -3,7 +3,7 @@
 // Dos pasadas: bluemonday con una lista blanca estricta (sin scripts, sin manejadores
 // on*, sin formularios, sin iframes, sin estilos que carguen recursos) y despues una
 // propia sobre su salida, que decide que hacer con cada imagen (cid: a la URL del
-// servicio, remotas bloqueadas salvo permiso) y deja en los enlaces solo http, https y
+// servicio, remotas bloqueadas salvo permiso y, con permiso, por el proxy) y deja en los enlaces solo http, https y
 // mailto. La segunda pasada trabaja sobre HTML ya saneado y bien formado.
 package htmlsafe
 
@@ -110,11 +110,11 @@ func (s *Sanitizer) Incoming(raw string, opts domain.SanitizeOptions) domain.San
 	if strings.TrimSpace(raw) == "" {
 		return domain.SanitizedHTML{}
 	}
-	remote := false
+	var found imageFindings
 	out := rewrite(s.policy.Sanitize(raw), func(src string) string {
-		return incomingImage(src, opts, &remote)
+		return incomingImage(src, opts, &found)
 	})
-	return domain.SanitizedHTML{HTML: out, RemoteImages: remote}
+	return domain.SanitizedHTML{HTML: out, RemoteImages: found.remote, Proxied: found.proxied}
 }
 
 // Outgoing sanea el HTML que redacta el usuario (sin scripts ni formularios aunque lo
@@ -127,8 +127,15 @@ func (s *Sanitizer) Outgoing(raw string) (string, string) {
 	return clean, PlainText(clean)
 }
 
-// incomingImage decide la fuente de una imagen recibida. Devolver "" quita el atributo.
-func incomingImage(src string, opts domain.SanitizeOptions, remote *bool) string {
+// imageFindings es lo que el saneado de un mensaje recibido encontro en sus imagenes.
+type imageFindings struct {
+	remote  bool
+	proxied bool
+}
+
+// incomingImage decide la fuente de una imagen recibida. Devolver "" quita el atributo. Una
+// imagen remota permitida sale siempre por el proxy, nunca con su URL original.
+func incomingImage(src string, opts domain.SanitizeOptions, found *imageFindings) string {
 	lower := strings.ToLower(src)
 	switch {
 	case strings.HasPrefix(lower, "cid:"):
@@ -142,9 +149,13 @@ func incomingImage(src string, opts domain.SanitizeOptions, remote *bool) string
 		}
 		return ""
 	case strings.HasPrefix(lower, "http:"), strings.HasPrefix(lower, "https:"):
-		*remote = true
-		if opts.AllowRemoteImages {
-			return src
+		found.remote = true
+		if !opts.AllowRemoteImages || opts.ProxyRemoteImage == nil {
+			return ""
+		}
+		if proxied, ok := opts.ProxyRemoteImage(src); ok {
+			found.proxied = true
+			return proxied
 		}
 		return ""
 	case inlineImage.MatchString(lower):

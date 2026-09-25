@@ -51,8 +51,9 @@ func (stubAuth) Verify(_ context.Context, username, password, _ string) (domain.
 }
 
 type memStore struct {
-	mu sync.Mutex
-	m  map[string]domain.Session
+	mu      sync.Mutex
+	m       map[string]domain.Session
+	revoked map[string]time.Time
 }
 
 func (s *memStore) Create(_ context.Context, key string, sess domain.Session, _ time.Duration) error {
@@ -77,9 +78,26 @@ func (s *memStore) Delete(_ context.Context, key, _ string) error {
 	delete(s.m, key)
 	return nil
 }
-func (s *memStore) Revoke(context.Context, string, time.Time) error { return nil }
-func (s *memStore) RevokedAt(context.Context, string) (time.Time, error) {
-	return time.Time{}, nil
+func (s *memStore) Revoke(_ context.Context, username string, at time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.revoked == nil {
+		s.revoked = map[string]time.Time{}
+	}
+	if at.After(s.revoked[username]) {
+		s.revoked[username] = at
+	}
+	for k, sess := range s.m {
+		if sess.Username == username && !sess.CreatedAt.After(at) {
+			delete(s.m, k)
+		}
+	}
+	return nil
+}
+func (s *memStore) RevokedAt(_ context.Context, username string) (time.Time, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.revoked[username], nil
 }
 
 type stubMail struct{ mb *stubMailbox }
@@ -367,7 +385,7 @@ func newTestEnvWith(t *testing.T, sender ports.Sender, tune func(*Config)) *test
 	}
 	cfg := Config{
 		CookieSecure: true, SessionIdle: 30 * time.Minute, SessionMax: 12 * time.Hour,
-		MFAChallengeTTL: 5 * time.Minute, IPRateLimiter: unlimited{}, MailboxRateLimiter: unlimited{},
+		MFAChallengeTTL: 5 * time.Minute, IPRateLimiter: unlimited{}, MailboxRateLimiter: unlimited{}, ImageProxyRateLimiter: unlimited{},
 		AllowedOrigins:  []string{allowedOrigin, "https://api.example.com"},
 		MaxMessageBytes: 4096, OperationTimeout: 5 * time.Second, TransferTimeout: 5 * time.Second,
 	}
