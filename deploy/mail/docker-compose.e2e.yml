@@ -85,6 +85,7 @@ services:
     environment:
       <<: *celda
       MAIL_DIRECTORY_PORT: "8040"
+      MAIL_ENCRYPTION_KEY: ${MAIL_ENCRYPTION_KEY:?lo fija ops/e2e/mail.sh}
       # La politica MTA-STS se sirve con el MX de la plataforma y enforce comprueba los MX publicados del
       # dominio contra el DNS de la prueba, que se conecta a esta red con el alias e2e-dns.
       MAIL_MX_HOSTNAME: ${MAIL_MX_HOSTNAME:?lo fija ops/e2e/mail.sh}

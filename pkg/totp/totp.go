@@ -40,19 +40,30 @@ func Generate(secret string, t time.Time) (string, error) {
 // Validate checks the provided code against the secret at the current time,
 // accepting codes from [now-skewStep ... now+skewStep] windows.
 func Validate(secret, code string) bool {
-	now := time.Now().UTC()
-	counter := uint64(now.Unix() / period)
+	_, ok := ValidateStep(secret, code, time.Now())
+	return ok
+}
+
+// ValidateStep es Validate a una hora dada y devuelve ademas el paso de 30 s en que el codigo
+// coincide. Con el paso, quien lo llama impide la repeticion: guarda el ultimo paso aceptado y solo
+// admite uno mayor. Se comparan las tres ventanas siempre y en tiempo constante, de modo que el
+// tiempo de respuesta no dice en cual coincidio.
+func ValidateStep(secret, code string, now time.Time) (step int64, ok bool) {
+	if len(code) != digits {
+		return 0, false
+	}
+	counter := now.UTC().Unix() / period
 	for delta := -int64(skewStep); delta <= int64(skewStep); delta++ {
-		c, err := hotp(secret, uint64(int64(counter)+delta))
+		c, err := hotp(secret, uint64(counter+delta))
 		if err != nil {
-			return false
+			return 0, false
 		}
 		candidate := fmt.Sprintf("%0*d", digits, c)
-		if hmac.Equal([]byte(candidate), []byte(code)) {
-			return true
+		if hmac.Equal([]byte(candidate), []byte(code)) && !ok {
+			step, ok = counter+delta, true
 		}
 	}
-	return false
+	return step, ok
 }
 
 // ProvisioningURI returns the otpauth:// URI used to generate a QR code.

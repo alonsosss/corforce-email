@@ -99,6 +99,9 @@ type filterRuleBody struct {
 type filtersRequest struct {
 	Rules      []filterRuleBody  `json:"rules"`
 	Forwarding domain.Forwarding `json:"forwarding"`
+	// Reauthenticated: el webmail acaba de volver a comprobar la contrasena (y el codigo). Sin el, un
+	// destino externo nuevo se rechaza con 403 REAUTH_REQUIRED.
+	Reauthenticated bool `json:"reauthenticated"`
 }
 
 type filtersLimits struct {
@@ -144,7 +147,7 @@ func (req filtersRequest) toApp() (app.PutFiltersRequest, error) {
 			ID: id, Name: r.Name, Enabled: r.Enabled, Match: r.Match, Conditions: r.Conditions, Actions: r.Actions, Stop: r.Stop,
 		})
 	}
-	return app.PutFiltersRequest{Rules: rules, Forwarding: req.Forwarding}, nil
+	return app.PutFiltersRequest{Rules: rules, Forwarding: req.Forwarding, Reauthenticated: req.Reauthenticated}, nil
 }
 
 func (h *Handler) InternalGetFilters(w http.ResponseWriter, r *http.Request) {

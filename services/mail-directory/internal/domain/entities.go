@@ -102,8 +102,11 @@ type Mailbox struct {
 	SieveAccess   bool       `json:"sieve_access"`
 	DAVAccess     bool       `json:"dav_access"`
 	ForcePwUpdate bool       `json:"force_pw_update"`
-	CreatedAt     time.Time  `json:"created_at"`
-	UpdatedAt     time.Time  `json:"updated_at"`
+	// MFAEnabled lo cambian solo la activacion desde el webmail y el restablecimiento del
+	// administrador; la edicion del buzon no lo toca.
+	MFAEnabled bool      `json:"mfa_enabled"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
 }
 
 type Alias struct {

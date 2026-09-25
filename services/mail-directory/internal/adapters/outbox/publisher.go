@@ -17,6 +17,7 @@ import (
 	"github.com/alonsosss/corforce-email/pkg/events"
 	"github.com/alonsosss/corforce-email/pkg/outbox"
 	"github.com/alonsosss/corforce-email/services/mail-directory/internal/domain"
+	"github.com/google/uuid"
 )
 
 const (
@@ -42,6 +43,12 @@ const (
 	SubjectAliasCreated              = "mail.alias.created"
 	SubjectAliasUpdated              = "mail.alias.updated"
 	SubjectAliasDeleted              = "mail.alias.deleted"
+	// Hechos de seguridad para auditoria (docs/Plan_Webmail_Seguridad.md, decision 10). Llevan la
+	// empresa en el sobre: audit los guarda en el rastro de cada una.
+	SubjectMailboxMFAEnabled        = "mail.mailbox.mfa_enabled"
+	SubjectMailboxMFADisabled       = "mail.mailbox.mfa_disabled"
+	SubjectMailboxForwardingChanged = "mail.mailbox.forwarding_changed"
+	SubjectMailPolicyUpdated        = "mail.policy.updated"
 
 	source = "mail-directory"
 )
@@ -183,6 +190,57 @@ func (p *Publisher) AliasDeleted(ctx context.Context, a *domain.Alias) error {
 		"tenant_id": a.TenantID.String(), "id": a.ID.String(), "address": a.Address, "goto": a.Goto,
 		"domain": a.Domain, "active": a.Active, "internal": a.Internal,
 	}})
+}
+
+func (p *Publisher) MailboxMFAEnabled(ctx context.Context, m *domain.Mailbox, at time.Time) error {
+	return p.in(ctx).Publish(SubjectMailboxMFAEnabled, events.Event{TenantID: m.TenantID.String(), Data: map[string]interface{}{
+		"tenant_id": m.TenantID.String(), "id": m.ID.String(), "username": m.Username, "at": at.UTC().Format(time.RFC3339),
+	}})
+}
+
+// MailboxMFADisabled lleva actor_id solo cuando la apago el administrador.
+func (p *Publisher) MailboxMFADisabled(ctx context.Context, m *domain.Mailbox, at time.Time, by string, actorID *uuid.UUID) error {
+	if by != domain.MFADisabledByUser && by != domain.MFADisabledByAdmin {
+		return fmt.Errorf("autor %q desconocido en %s", by, SubjectMailboxMFADisabled)
+	}
+	data := map[string]interface{}{
+		"tenant_id": m.TenantID.String(), "id": m.ID.String(), "username": m.Username, "at": at.UTC().Format(time.RFC3339), "by": by,
+	}
+	evt := events.Event{TenantID: m.TenantID.String(), Data: data}
+	if actorID != nil {
+		data["actor_id"] = actorID.String()
+		evt.UserID = actorID.String()
+	}
+	return p.in(ctx).Publish(SubjectMailboxMFADisabled, evt)
+}
+
+// MailboxForwardingChanged anuncia el cambio del reenvio externo activo del buzon. Las listas nunca van
+// nulas: vacia es "ninguna".
+func (p *Publisher) MailboxForwardingChanged(ctx context.Context, m *domain.Mailbox, at time.Time, change domain.ForwardingChange) error {
+	return p.in(ctx).Publish(SubjectMailboxForwardingChanged, events.Event{TenantID: m.TenantID.String(), Data: map[string]interface{}{
+		"tenant_id": m.TenantID.String(), "id": m.ID.String(), "username": m.Username, "at": at.UTC().Format(time.RFC3339),
+		"external_added": nonNil(change.ExternalAdded), "external_removed": nonNil(change.ExternalRemoved),
+		"forwarding_enabled": change.ForwardingEnabled,
+	}})
+}
+
+// MailPolicyUpdated lleva updated_by vacio si el cambio no tiene usuario.
+func (p *Publisher) MailPolicyUpdated(ctx context.Context, pol *domain.MailPolicy, removedMailboxes int) error {
+	updatedBy := ""
+	if pol.UpdatedBy != nil {
+		updatedBy = pol.UpdatedBy.String()
+	}
+	return p.in(ctx).Publish(SubjectMailPolicyUpdated, events.Event{TenantID: pol.TenantID.String(), UserID: updatedBy, Data: map[string]interface{}{
+		"tenant_id": pol.TenantID.String(), "external_forwarding_allowed": pol.ExternalForwardingAllowed,
+		"updated_by": updatedBy, "removed_mailboxes": removedMailboxes,
+	}})
+}
+
+func nonNil(s []string) []string {
+	if s == nil {
+		return []string{}
+	}
+	return s
 }
 
 // in liga el publicador a la transaccion del contexto.

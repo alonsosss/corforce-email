@@ -8,6 +8,7 @@ import (
 	"github.com/alonsosss/corforce-email/pkg/db"
 	"github.com/alonsosss/corforce-email/services/mail-directory/internal/domain"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 )
 
 // FilterRepo guarda mail.mailbox_filters: las reglas y el reenvio como jsonb y el script generado,
@@ -16,22 +17,19 @@ type FilterRepo struct{ pool *db.ContextPool }
 
 func NewFilterRepo(pool *db.ContextPool) *FilterRepo { return &FilterRepo{pool: pool} }
 
-func (r *FilterRepo) ByUsername(ctx context.Context, tenantID uuid.UUID, username string) (*domain.MailboxFilters, error) {
+const filterColumns = `id, tenant_id, username, rules, forwarding, script_data, created_at, updated_at`
+
+func scanFilters(row pgx.Row) (domain.MailboxFilters, error) {
 	var f domain.MailboxFilters
 	var rules, forwarding []byte
-	err := r.pool.QueryRow(ctx,
-		`SELECT id, tenant_id, username, rules, forwarding, script_data, created_at, updated_at
-		   FROM mail.mailbox_filters WHERE tenant_id = $1 AND username = $2`,
-		tenantID, username,
-	).Scan(&f.ID, &f.TenantID, &f.Username, &rules, &forwarding, &f.ScriptData, &f.CreatedAt, &f.UpdatedAt)
-	if err != nil {
-		return nil, mapErr(err)
+	if err := row.Scan(&f.ID, &f.TenantID, &f.Username, &rules, &forwarding, &f.ScriptData, &f.CreatedAt, &f.UpdatedAt); err != nil {
+		return f, mapErr(err)
 	}
 	if err := json.Unmarshal(rules, &f.Rules); err != nil {
-		return nil, fmt.Errorf("reglas de %s ilegibles: %w", username, err)
+		return f, fmt.Errorf("reglas de %s ilegibles: %w", f.Username, err)
 	}
 	if err := json.Unmarshal(forwarding, &f.Forwarding); err != nil {
-		return nil, fmt.Errorf("reenvio de %s ilegible: %w", username, err)
+		return f, fmt.Errorf("reenvio de %s ilegible: %w", f.Username, err)
 	}
 	if f.Rules == nil {
 		f.Rules = []domain.FilterRule{}
@@ -39,7 +37,21 @@ func (r *FilterRepo) ByUsername(ctx context.Context, tenantID uuid.UUID, usernam
 	if f.Forwarding.Addresses == nil {
 		f.Forwarding.Addresses = []string{}
 	}
+	return f, nil
+}
+
+func (r *FilterRepo) ByUsername(ctx context.Context, tenantID uuid.UUID, username string) (*domain.MailboxFilters, error) {
+	f, err := scanFilters(r.pool.QueryRow(ctx,
+		`SELECT `+filterColumns+` FROM mail.mailbox_filters WHERE tenant_id = $1 AND username = $2`, tenantID, username))
+	if err != nil {
+		return nil, err
+	}
 	return &f, nil
+}
+
+func (r *FilterRepo) ListByTenant(ctx context.Context, tenantID uuid.UUID) ([]domain.MailboxFilters, error) {
+	return collectRows(ctx, r.pool, scanFilters,
+		`SELECT `+filterColumns+` FROM mail.mailbox_filters WHERE tenant_id = $1 ORDER BY username FOR UPDATE`, tenantID)
 }
 
 // Upsert crea o reemplaza las reglas del buzon enteras; solo la misma empresa reemplaza su fila.

@@ -367,7 +367,12 @@ con `dav_access` (docs/adr/0004); `webmail` exige `imap_access` Y
 pasar por aqui; cualquier otro se deniega); bcrypt sobre la contrasena principal y
 despues sobre las de aplicacion activas con ese flag (actualiza `last_used_at`; el
 webmail solo acepta la principal); `active = 2` y `active = 0` no entran;
-`force_pw_update` no bloquea. Freno de fuerza bruta en el Redis de la plataforma
+`force_pw_update` no bloquea. Con `mailboxes.mfa_enabled` (verificacion en dos pasos activa, la lleva
+`mail-directory`; `docs/Plan_Webmail_Seguridad.md`) la contrasena principal solo abre el webmail, que recibe
+`mfa_required: true` en el 200 y pide el segundo paso antes de abrir sesion; por cualquier otro servicio la
+principal correcta se rechaza (401, resultado `mfa_app_password_required`, sin alimentar el freno ni dejar inicio)
+y solo entran las contrasenas de aplicacion. El webmail recibe `mfa_required` siempre (`false` sin verificacion);
+Dovecot y `mail-dav` no. Freno de fuerza bruta en el Redis de la plataforma
 por `(username, real_rip)` y por `real_rip` (`MAIL_AUTH_MAX_FAILURES` 10, de 1 a 1000;
 `MAIL_AUTH_MAX_FAILURES_PER_IP` 50, de 1 a 10000; `MAIL_AUTH_FAILURE_WINDOW` 15m y
 `MAIL_AUTH_LOCK_TTL` 30m, de 1m a 24h). Un valor fuera de rango, o un puerto fuera de 1 a
@@ -435,12 +440,16 @@ directorio:
   cache negativa no bloquea una contrasena buena. `dav_access` (del buzon o de la contrasena de aplicacion) tampoco
   publica `credentials_changed`: `mail-dav` verifica cada peticion contra `mail-auth`, sin sesion ni cache, y
   perderlo se aplica en la siguiente; el evento `mail.mailbox.updated` si lo lista en `changed`. Este consumidor no lee `credential`; el webmail si, y con `app_password` no cierra sus
-  sesiones, porque solo admite la principal. La baja de la empresa no lo publica: cada buzon que
+  sesiones, porque solo admite la principal. Con `mfa` (el administrador restablecio la verificacion en dos
+  pasos) el webmail cierra las suyas. `mail.mailbox.mfa_enabled` se trata aqui como credencial cambiada: al
+  activarse la verificacion la contrasena principal deja de abrir IMAP, POP3, SMTP y Sieve, y la cache de
+  Dovecot y las sesiones abiertas con ella seguirian valiendo; los clientes con contrasena de aplicacion
+  vuelven a entrar solos. La baja de la empresa no lo publica: cada buzon que
   apaga ya sale como `mail.mailbox.updated`, que echa, y ninguno puede reactivarse despues.
 
   `mail.mailbox.updated` y `mail.mailbox.credentials_changed` llevan ademas `changed`, la lista de
   atributos que cambio ese hecho (`domain.MailboxChanges`), con los nombres del JSON del buzon, o
-  `password` / `app_password` cuando lo que cambio fue la credencial misma. Es aditivo y lo usa el
+  `password` / `app_password` / `mfa` cuando lo que cambio fue la credencial misma. Es aditivo y lo usa el
   WEBMAIL para no cerrar la sesion de su usuario ante un cambio que no la invalida (cuota, nombre
   visible, `kind`, TLS, relayhost, `force_pw_update`, `pop3_access`, `sieve_access`, `dav_access`), revocando ante
   cualquier otro atributo, ante uno que no reconozca y ante la falta del campo. Este consumidor NO lo

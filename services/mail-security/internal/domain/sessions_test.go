@@ -39,6 +39,7 @@ func TestMailboxChangeOf(t *testing.T) {
 		"mail.mailbox.updated":             MailboxUpdated,
 		"mail.mailbox.deleted":             MailboxDeleted,
 		"mail.mailbox.credentials_changed": MailboxCredentialsChanged,
+		"mail.mailbox.mfa_enabled":         MailboxCredentialsChanged,
 	} {
 		if got, ok := MailboxChangeOf(subject); !ok || got != want {
 			t.Errorf("%s: %q %v", subject, got, ok)

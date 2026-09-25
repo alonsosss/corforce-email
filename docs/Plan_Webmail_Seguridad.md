@@ -201,6 +201,34 @@ Implementado como la tabla, con estas precisiones, que son el contrato para S3 y
 - Consola: tarjeta "Reenvío a direcciones externas" en Buzones (como `AssistantSettingsCard`); en la
   ficha del buzón, estado de la verificación en dos pasos y "Restablecer".
 
+### 3.6 Estado de S1 (implementado, sin desplegar)
+
+S1 cumple los contratos de 3.1 a 3.3. Lo que el contrato dejaba abierto se resolvio asi:
+
+- `details.addresses` de `REAUTH_REQUIRED` y `EXTERNAL_FORWARDING_DISABLED` es un texto con las direcciones
+  separadas por coma (`"a@x.com,b@y.com"`): `error.details` es un mapa de textos en toda la plataforma
+  (`pkg/response`, y el cliente interno del webmail lo decodifica asi). Una direccion validada no lleva comas.
+- Destino externo **nuevo** = direccion externa que empieza a recibir correo con el cambio: la del reenvio si
+  esta encendido y las acciones `forward` de las reglas activas. Guardar una direccion externa en un reenvio
+  apagado o en una regla apagada no pide nada; encenderlos despues si. Con la politica apagada no se guarda
+  ninguna direccion externa, activa o no.
+- Al apagar la politica: el reenvio pierde sus direcciones externas y se apaga si no le queda ninguna; una regla
+  pierde sus acciones `forward` externas y, si no le queda ninguna accion, se retira entera (solo reenviaba
+  fuera; el correo que casaba se entrega en el buzon). Se repasa tambien al volver a guardar la politica ya
+  apagada. El `PUT` responde ademas `removed_mailboxes`.
+- `mail.mailbox.forwarding_changed` sale cuando cambian las direcciones externas activas o el interruptor del
+  reenvio; la retirada por politica solo se anuncia en `mail.policy.updated` (`removed_mailboxes`).
+- `POST /internal/mail-directory/app-passwords` responde el registro con `password` al mismo nivel
+  (`{id, name, imap_access, ..., password}`).
+- `DELETE /api/v1/mailboxes/{id}/mfa` sobre un buzon sin verificacion: `409 MFA_NOT_ENABLED`.
+- `mail-security` trata `mail.mailbox.mfa_enabled` como credencial cambiada: vacia la cache de Dovecot y cierra
+  las sesiones abiertas con la contrasena principal, que ya no vale por IMAP/POP3/SMTP/Sieve.
+- `pkg/events.EnsureStream` no anade un subject que otro del stream ya captura (JetStream rechaza subjects
+  solapados): `audit` pide `mail.mailbox.mfa_enabled` sobre `MAIL_DIRECTORY`, que ya tiene `mail.>`.
+
+Pendiente fuera de S1: re-cifrar los secretos TOTP antes de retirar una llave de `MAIL_ENCRYPTION_KEYS_OLD` (hoy
+se leen con las retiradas, pero ningun proceso los pasa a la activa).
+
 ## 4. Bloques
 
 - **S1** (mail-directory, migraciones, permisos, eventos, auditoría, mail-auth).

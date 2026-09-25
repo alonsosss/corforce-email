@@ -134,7 +134,8 @@ func TestFirmaYReglasContraPostgres(t *testing.T) {
 		Rules: []domain.FilterRule{{Name: `Cliente "VIP"`, Enabled: true, Match: domain.FilterMatchAny,
 			Conditions: []domain.FilterCondition{{Field: "from", Op: "contains", Value: `a\b"c`}, {Field: "subject", Op: "is", Value: "Pedido"}},
 			Actions:    []domain.FilterAction{{Type: "move", Folder: "Clientes/VIP"}, {Type: "flag"}}, Stop: true}},
-		Forwarding: domain.Forwarding{Enabled: true, Addresses: []string{"copia@otro.example"}, KeepCopy: true},
+		Forwarding:      domain.Forwarding{Enabled: true, Addresses: []string{"copia@otro.example"}, KeepCopy: true},
+		Reauthenticated: true,
 	}
 	saved, err := f.uc.PutFiltersByUsername(f.internal, f.ana.Username, req)
 	if err != nil {
@@ -194,7 +195,7 @@ func TestFirmaYReglasContraPostgres(t *testing.T) {
 	if _, err := f.uc.PutSignatureByUsername(f.internal, f.luis.Username, app.PutSignatureRequest{Enabled: true, Text: "Luis"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.uc.PutFiltersByUsername(f.internal, f.luis.Username, app.PutFiltersRequest{Forwarding: domain.Forwarding{Enabled: true, Addresses: []string{"x@otro.example"}}}); err != nil {
+	if _, err := f.uc.PutFiltersByUsername(f.internal, f.luis.Username, app.PutFiltersRequest{Forwarding: domain.Forwarding{Enabled: true, Addresses: []string{"x@otro.example"}}, Reauthenticated: true}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := f.uc.CreateScheduledSend(f.internal, app.CreateScheduledSendRequest{Username: f.luis.Username, MessageID: "<del@x>", Folder: "Scheduled",

@@ -194,6 +194,18 @@ terminadas a los 30 dias. Las tres llevan `tenant_isolation` para `mail_app` y `
 `mail_service`, y se borran con el buzon. El webmail las usa por `/internal/mail-directory/{signature,filters,
 password,scheduled-sends}` (token de gateway, `RequireInternalCaller`, el buzon sale de su sesion).
 
+`16_mailbox_security.sql` (mail-directory, V 2026-09-24, unitarias e integracion contra Postgres;
+`docs/Plan_Webmail_Seguridad.md`): `mail.mailboxes.mfa_enabled` (lo unico que `mail-auth` lee de la verificacion en
+dos pasos; los motores lo pueden leer por el grant de tabla y no lo usan). `mail.mailbox_mfa` (una fila por buzon
+mientras la verificacion esta activa: `secret_enc`, el secreto TOTP cifrado con `MAIL_ENCRYPTION_KEY` y el id del
+buzon como datos autenticados; `recovery_hashes`, los SHA-256 de los codigos de recuperacion que quedan, a lo sumo
+10; `last_step`, el ultimo paso de 30 s aceptado, que solo avanza con `UPDATE ... WHERE last_step < $paso`). El
+secreto no sale de `mail-directory`. `mail.mail_policy` (una fila por empresa: `external_forwarding_allowed`, sin
+fila permitido). Las dos con `tenant_isolation` para `mail_app` y `service_all` para `mail_service`; `mail_engine`
+no las lee. `mail_policy` y los filtros se ordenan con un cerrojo consultivo por empresa (`mdpl`): quien guarda
+filtros lo toma compartido y quien cambia la politica exclusivo, asi que un reenvio externo no se guarda con la
+politica vieja mientras otra transaccion la apaga. La fila de `mailbox_mfa` se borra con el buzon.
+
 `10_mta_sts.sql` (mail-directory, V 2026-09-21, unitarias, integracion contra Postgres y comprobaciones en
 `ops/e2e/mail.sh` sin ejecutar todavia): la politica MTA-STS (RFC 8461) por dominio de una empresa, para lo que
 otros servidores nos entregan. `mail.mta_sts_policies` guarda una fila por dominio (`UNIQUE (domain)`, `domain =

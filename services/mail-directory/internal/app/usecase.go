@@ -35,7 +35,14 @@ type Deps struct {
 	Reminders    ports.ReminderRepository
 	QuickReplies ports.QuickReplyRepository
 	// Assistant guarda el interruptor del asistente del webmail por empresa.
-	Assistant    ports.AssistantSettingsRepository
+	Assistant ports.AssistantSettingsRepository
+	// MFA guarda la verificacion en dos pasos de los buzones; Sealer cifra su secreto y TOTP comprueba
+	// los codigos.
+	MFA    ports.MFARepository
+	Sealer ports.SecretSealer
+	TOTP   ports.TOTPVerifier
+	// Policies guarda la politica de correo de cada empresa (reenvio externo).
+	Policies     ports.MailPolicyRepository
 	Locator      ports.MailboxLocator
 	Aliases      ports.AliasRepository
 	SpamAliases  ports.SpamAliasRepository
@@ -85,6 +92,10 @@ type UseCase struct {
 	reminders       ports.ReminderRepository
 	quickReplies    ports.QuickReplyRepository
 	assistant       ports.AssistantSettingsRepository
+	mfa             ports.MFARepository
+	sealer          ports.SecretSealer
+	totp            ports.TOTPVerifier
+	policies        ports.MailPolicyRepository
 	locator         ports.MailboxLocator
 	aliases         ports.AliasRepository
 	spamAliases     ports.SpamAliasRepository
@@ -128,7 +139,7 @@ func New(d Deps) *UseCase {
 		senders: d.Senders, retirements: d.Retirements, mtaSTS: d.MTASTS, mtaSTSPublisher: d.MTASTSPublic, mx: d.MX,
 		platformMX: d.PlatformMX, davServerURL: d.DAVServerURL, recreateHold: d.MailboxRecreateHold,
 		secrets: d.Secrets, events: d.Events, plan: d.Plan, metrics: d.Metrics, now: now, logger: logger,
-		assistant: d.Assistant,
+		assistant: d.Assistant, mfa: d.MFA, sealer: d.Sealer, totp: d.TOTP, policies: d.Policies,
 	}
 }
 

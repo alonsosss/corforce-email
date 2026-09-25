@@ -104,7 +104,11 @@ type Mailbox struct {
 	PasswordHash        string
 	Active              int16
 	ForcePasswordUpdate bool
-	Access              ProtocolAccess
+	// MFAEnabled: el buzon tiene la verificacion en dos pasos activa (mail-directory). Con ella la
+	// contrasena principal solo abre el webmail, que pide el segundo paso; los programas de correo
+	// entran con contrasenas de aplicacion.
+	MFAEnabled bool
+	Access     ProtocolAccess
 }
 
 // ProtocolAccess son los cinco flags *_access, comunes al buzon y a la contrasena de
@@ -182,6 +186,9 @@ const (
 	ResultForbiddenNetwork Result = "forbidden_network"
 	// ResultJobCredentialsDisabled es una credencial de trabajo con la funcion sin configurar en mail-auth.
 	ResultJobCredentialsDisabled Result = "job_credentials_disabled"
+	// ResultMFAAppPasswordRequired es la contrasena principal, correcta, de un buzon con verificacion en
+	// dos pasos por un protocolo que no es el webmail: ahi solo entran contrasenas de aplicacion.
+	ResultMFAAppPasswordRequired Result = "mfa_app_password_required"
 	// ResultError es un fallo interno (base o freno). Dovecot lo ve como contrasena
 	// incorrecta; aqui se cuenta aparte para que una caida de la base no parezca una
 	// ola de contrasenas erroneas.
@@ -202,4 +209,6 @@ type Verification struct {
 	Username    string
 	TenantID    uuid.UUID
 	MailboxID   uuid.UUID
+	// MFARequired: la sesion del webmail no se abre hasta superar el segundo paso.
+	MFARequired bool
 }

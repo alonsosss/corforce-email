@@ -291,8 +291,13 @@ func main() {
 // revocacion por clave comprometida lleva motivo y actor) y las migraciones de
 // buzones (quien las lanzo, sobre que buzon y desde que servidor), y el uso del
 // asistente del webmail (quien, que accion y cuanto texto salio al proveedor, sin
-// contenido; docs/adr/0015).
-const defaultAuditSubjects = "identity.>,organization.>,access.>,gateway.>,scheduler.>,domains.>,migration.>,webmail.assistant.used"
+// contenido; docs/adr/0015), y la seguridad de los buzones que anuncia mail-directory:
+// verificacion en dos pasos activada o apagada (y por quien), cambios del reenvio a
+// direcciones externas y la politica de correo de la empresa (docs/Plan_Webmail_Seguridad.md).
+// Los del directorio van uno a uno y no como mail.>: el resto de ese stream es el alta y
+// baja de buzones y aliases, que no son hechos de seguridad.
+const defaultAuditSubjects = "identity.>,organization.>,access.>,gateway.>,scheduler.>,domains.>,migration.>,webmail.assistant.used," +
+	"mail.mailbox.mfa_enabled,mail.mailbox.mfa_disabled,mail.mailbox.forwarding_changed,mail.policy.updated"
 
 // auditSubjects lee de AUDIT_SUBJECTS (lista separada por comas) los subjects que
 // se vuelcan en la bitacora. Va por configuracion y no en codigo porque la

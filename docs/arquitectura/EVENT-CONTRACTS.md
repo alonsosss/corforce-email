@@ -75,7 +75,11 @@ subject y payload. `opaco` = el payload no se puede leer estaticamente.
 | `mail.mailbox.created` | mail-directory | `active`, `domain`, `id`, `kind`, `tenant_id`, `username` |
 | `mail.mailbox.credentials_changed` | mail-directory | `changed`, `changed_at`, `credential`, `id`, `tenant_id`, `username` |
 | `mail.mailbox.deleted` | mail-directory | `active`, `domain`, `id`, `kind`, `tenant_id`, `username` |
+| `mail.mailbox.forwarding_changed` | mail-directory | `at`, `external_added`, `external_removed`, `forwarding_enabled`, `id`, `tenant_id`, `username` |
+| `mail.mailbox.mfa_disabled` | mail-directory | `actor_id`, `at`, `by`, `id`, `tenant_id`, `username` |
+| `mail.mailbox.mfa_enabled` | mail-directory | `at`, `id`, `tenant_id`, `username` |
 | `mail.mailbox.updated` | mail-directory | `active`, `changed`, `domain`, `id`, `kind`, `tenant_id`, `username` |
+| `mail.policy.updated` | mail-directory | `external_forwarding_allowed`, `removed_mailboxes`, `tenant_id`, `updated_by` |
 | `mail_security.quarantine.released` | mail-security | `id`, `rcpt`, `tenant_id`, `user_id` |
 | `mail_security.quarantine.stored` | mail-security | `id`, `qid`, `rcpt`, `score`, `sender`, `subject`, `tenant_id` |
 | `migration.job.cancel_requested` | mail-migration | `job_id`, `mailbox_id`, `status`, `tenant_id` |

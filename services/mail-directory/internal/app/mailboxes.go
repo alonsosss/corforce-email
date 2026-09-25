@@ -349,7 +349,7 @@ func applyMailboxUpdate(m *domain.Mailbox, req UpdateMailboxRequest) {
 }
 
 // DeleteMailbox retira el buzon y todo lo que solo tiene sentido con el: contrasenas de
-// aplicacion, filtros sieve, respuesta automatica, firma, reglas y reenvio, envios programados, recordatorios, respuestas rapidas, uso de
+// aplicacion, verificacion en dos pasos, filtros sieve, respuesta automatica, firma, reglas y reenvio, envios programados, recordatorios, respuestas rapidas, uso de
 // cuota, permisos de remitente y aliases temporales que entregaban en el. El uso de cuota se borra ANTES que el buzon: la politica que lo
 // permite exige que el buzon exista. Su maildir en Dovecot no lo alcanza ningun servicio: la marca de
 // baja que queda en la misma transaccion es lo que el barrido del contenedor de Dovecot consume para
@@ -363,6 +363,13 @@ func (uc *UseCase) DeleteMailbox(ctx context.Context, tenantID, id uuid.UUID) er
 		steps := []func() error{
 			func() error { return uc.mailboxes.DeleteQuotaUsage(ctx, tenantID, m.Username) },
 			func() error { return uc.appPasswords.DeleteByMailbox(ctx, tenantID, id) },
+			func() error {
+				if uc.mfa == nil {
+					return errMFAUnwired
+				}
+				_, err := uc.mfa.Delete(ctx, tenantID, id)
+				return err
+			},
 			func() error { return uc.sieve.DeleteByUsername(ctx, tenantID, m.Username) },
 			func() error { return uc.vacation.DeleteByUsername(ctx, tenantID, m.Username) },
 			func() error { return uc.signatures.DeleteByUsername(ctx, tenantID, m.Username) },

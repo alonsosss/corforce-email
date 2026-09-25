@@ -81,6 +81,7 @@ func (uc *UseCase) Authenticate(ctx context.Context, req domain.VerifyRequest) d
 		v.Username = mailbox.Username
 		v.TenantID = mailbox.TenantID
 		v.MailboxID = mailbox.ID
+		v.MFARequired = mailbox.MFAEnabled
 	}
 	return v
 }
@@ -136,6 +137,13 @@ func (uc *UseCase) verify(ctx context.Context, req domain.VerifyRequest) (domain
 	if !mailbox.Access.Allows(protocol) {
 		uc.logger.Info("mail-auth: protocolo deshabilitado para el buzon", append(fields, zap.String("protocol", string(protocol)))...)
 		return domain.ResultNoAccess, nil
+	}
+	// Con verificacion en dos pasos la contrasena principal solo abre el webmail, que pide el codigo;
+	// por cualquier otro protocolo se saltaria el segundo factor. Como un buzon que no puede entrar, no
+	// alimenta el freno: la contrasena es correcta.
+	if mailbox.MFAEnabled && appPassword == nil && protocol != domain.ProtocolWebmail {
+		uc.logger.Info("mail-auth: contrasena principal con verificacion en dos pasos; hace falta una contrasena de aplicacion", fields...)
+		return domain.ResultMFAAppPasswordRequired, nil
 	}
 
 	uc.throttle.Success(ctx, username, req.RemoteIP)

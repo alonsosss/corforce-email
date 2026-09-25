@@ -34,10 +34,35 @@ func (settingsSecrets) HashPassword(plain string) (string, error) { return "hash
 type settingsEvents struct {
 	ports.EventPublisher
 	credentials int
+	// credential es la ultima credencial anunciada.
+	credential domain.Credential
+	forwarding []domain.ForwardingChange
+	mfaEnabled int
+	// mfaDisabled anota quien apago cada verificacion.
+	mfaDisabled []string
+	policies    []int
 }
 
-func (f *settingsEvents) MailboxCredentialsChanged(context.Context, *domain.Mailbox, domain.Credential, []domain.MailboxAttr) error {
+func (f *settingsEvents) MailboxForwardingChanged(_ context.Context, _ *domain.Mailbox, _ time.Time, c domain.ForwardingChange) error {
+	f.forwarding = append(f.forwarding, c)
+	return nil
+}
+func (f *settingsEvents) MailboxMFAEnabled(context.Context, *domain.Mailbox, time.Time) error {
+	f.mfaEnabled++
+	return nil
+}
+func (f *settingsEvents) MailboxMFADisabled(_ context.Context, _ *domain.Mailbox, _ time.Time, by string, _ *uuid.UUID) error {
+	f.mfaDisabled = append(f.mfaDisabled, by)
+	return nil
+}
+func (f *settingsEvents) MailPolicyUpdated(_ context.Context, _ *domain.MailPolicy, removed int) error {
+	f.policies = append(f.policies, removed)
+	return nil
+}
+
+func (f *settingsEvents) MailboxCredentialsChanged(_ context.Context, _ *domain.Mailbox, c domain.Credential, _ []domain.MailboxAttr) error {
 	f.credentials++
+	f.credential = c
 	return nil
 }
 
@@ -73,6 +98,12 @@ func (f *settingsFilters) Upsert(_ context.Context, v *domain.MailboxFilters) er
 	return nil
 }
 func (f *settingsFilters) DeleteByUsername(context.Context, uuid.UUID, string) error { return nil }
+func (f *settingsFilters) ListByTenant(context.Context, uuid.UUID) ([]domain.MailboxFilters, error) {
+	if f.saved == nil {
+		return nil, nil
+	}
+	return []domain.MailboxFilters{*f.saved}, nil
+}
 
 // settingsScheduled guarda las filas en memoria; claim y cierre siguen el contrato del puerto.
 type settingsScheduled struct {
@@ -146,6 +177,9 @@ type settingsEnv struct {
 	signatures *settingsSignatures
 	filters    *settingsFilters
 	scheduled  *settingsScheduled
+	policies   *secPolicies
+	mfa        *secMFA
+	apps       *secAppPasswords
 	now        time.Time
 }
 
@@ -156,11 +190,16 @@ func settingsServer(t *testing.T) *settingsEnv {
 		m: m, mailboxes: &settingsMailboxes{vacMailboxes: vacMailboxes{m: m}}, events: &settingsEvents{},
 		signatures: &settingsSignatures{}, filters: &settingsFilters{},
 		scheduled: &settingsScheduled{rows: map[uuid.UUID]*domain.ScheduledSend{}},
+		policies:  &secPolicies{rows: map[uuid.UUID]*domain.MailPolicy{}},
+		mfa:       &secMFA{rows: map[uuid.UUID]*domain.MailboxMFA{}},
+		apps:      &secAppPasswords{},
 		now:       time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC),
 	}
 	uc := app.New(app.Deps{
 		Tx: vacTx{}, Mailboxes: e.mailboxes, Retirements: vacRetirements{}, Locator: &vacLocator{m: m},
 		Signatures: e.signatures, Filters: e.filters, Scheduled: e.scheduled, Secrets: settingsSecrets{}, Events: e.events,
+		Domains: secDomains{owned: map[string]bool{"acme.test": true}}, Policies: e.policies,
+		MFA: e.mfa, Sealer: secSealer{}, TOTP: secTOTP{now: func() time.Time { return e.now }}, AppPasswords: e.apps,
 		Clock: func() time.Time { return e.now },
 	})
 	e.h = middleware.InjectFromGateway(NewHandler(uc, authz.NewChecker("http://127.0.0.1:9", "")).Routes())
@@ -249,8 +288,13 @@ func TestReglasInternas(t *testing.T) {
 
 	body := `{"rules":[{"name":"Clientes","enabled":true,"match":"any","conditions":[{"field":"from","op":"contains","value":"cliente"}],` +
 		`"actions":[{"type":"move","folder":"Clientes"},{"type":"forward","address":"fuera@otro.example","keep_copy":true}],"stop":true}],` +
-		`"forwarding":{"enabled":false,"addresses":["copia@otro.example"],"keep_copy":false}}`
-	rec = e.do(http.MethodPut, "/internal/mail-directory/filters?username=ana@acme.test", body)
+		`"forwarding":{"enabled":false,"addresses":["copia@otro.example"],"keep_copy":false}`
+	rec = e.do(http.MethodPut, "/internal/mail-directory/filters?username=ana@acme.test", body+`}`)
+	if env := decodeEnvelope(t, rec, nil); rec.Code != http.StatusForbidden || env.Error == nil || env.Error.Code != "REAUTH_REQUIRED" ||
+		env.Error.Details["addresses"] != "fuera@otro.example" || e.filters.saved != nil {
+		t.Fatalf("un reenvio externo nuevo sin reautenticar: %d %s", rec.Code, rec.Body)
+	}
+	rec = e.do(http.MethodPut, "/internal/mail-directory/filters?username=ana@acme.test", body+`,"reauthenticated":true}`)
 	decodeEnvelope(t, rec, &got)
 	if rec.Code != http.StatusOK || len(got.Rules) != 1 || got.Rules[0].ID == uuid.Nil || got.Forwarding.Addresses[0] != "copia@otro.example" {
 		t.Fatalf("guardar: %d %s", rec.Code, rec.Body)
