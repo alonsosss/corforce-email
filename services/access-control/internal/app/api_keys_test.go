@@ -197,7 +197,7 @@ func TestFamiliasDeCredencial(t *testing.T) {
 	crear := func(f *keysFixture, kind string) *CreatedAPIKey {
 		t.Helper()
 		c, err := f.uc.Create(context.Background(), CreateAPIKeyCommand{
-			TenantID: f.tenant, Actor: f.owner, Name: "ERP", Kind: kind,
+			TenantID: f.tenant, Actor: f.owner, Name: "Integracion", Kind: kind,
 			Scopes: []ScopeRef{{"transactional", "messages", "create"}},
 		})
 		if err != nil {

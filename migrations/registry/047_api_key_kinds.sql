@@ -1,6 +1,6 @@
 -- Schema: access_control | Service: access-control
 -- Familias de credencial (docs/adr/0017): la de envio manda correo y no gestiona credenciales; la de
--- aprovisionamiento crea empresas, dominios y claves de envio para otro producto (el ERP) y no puede
+-- aprovisionamiento crea empresas, dominios y claves de envio para otro producto de la casa y no puede
 -- enviar ni leer un buzon. Las claves que ya existen son todas de envio.
 ALTER TABLE access_control.api_keys
     ADD COLUMN IF NOT EXISTS kind varchar(20) NOT NULL DEFAULT 'sending';
