@@ -433,6 +433,13 @@ expect "lo activa la llamada interna de domain-service" "$(curl -s -o /dev/null 
   "http://127.0.0.1:${PORT[mail-directory]}/internal/mail-directory/domains/respaldo.test/activation" \
   -H "X-Gateway-Token: $INTERNAL_GATEWAY_TOKEN" -H "X-Tenant-ID: $TID" -H 'Content-Type: application/json' -d '{"active":true}')" "200"
 creado "alias conocido del backup MX" POST /mail-routing/aliases '{"address":"conocido@respaldo.test","goto":"conocido@respaldo.test"}'
+# Un buzon migrado del dominio en coexistencia: en esta plataforma un buzon NO deja una fila de alias
+# con su propia direccion, asi que el transporte local tiene que mirar mail.mailboxes. Sin eso, todo
+# buzon ya migrado se reenviaba al proveedor anterior y no se entregaba nunca aqui.
+MIGRADO_PASS="$(rand_hex 10)Aa1!"
+creado "buzon migrado del dominio en coexistencia" POST /mailboxes \
+  "{\"local_part\":\"migrado\",\"domain\":\"respaldo.test\",\"password\":\"$MIGRADO_PASS\"}"
+MIGRADOID=$(echo "$API_BODY" | jget data.id)
 
 echo "== Motores sanos"
 unbound_sano() { [[ "$(docker inspect -f '{{.State.Health.Status}}' "$(c unbound-mail)")" == healthy ]]; }
@@ -506,6 +513,8 @@ mapa pgsql_sasl_passwd_maps_sender_dependent carla@acme.test "relay2user:$RELAY2
 mapa pgsql_virtual_relay_domain_maps respaldo.test respaldo.test
 mapa pgsql_relay_recipient_maps cualquiera@respaldo.test cualquiera@respaldo.test
 mapa pgsql_relay_ne conocido@respaldo.test "lmtp:inet:dovecot:24"
+mapa pgsql_relay_ne migrado@respaldo.test "lmtp:inet:dovecot:24"
+mapa pgsql_relay_ne nomigrado@respaldo.test ""
 mapa pgsql_relay_ne ventas@acme.test ""
 generados=$(en postfix-mail ls /opt/postfix/conf/sql 2>/dev/null)
 sin_prueba=""
