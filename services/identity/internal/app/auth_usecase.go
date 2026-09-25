@@ -693,6 +693,9 @@ func (uc *AuthUseCase) mfaSecret(user *domain.User) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("abrir el secreto del segundo factor: %w", err)
 	}
+	if len(plain) == 0 {
+		return "", errors.New("segundo factor activo con un secreto vacio")
+	}
 	return string(plain), nil
 }
 

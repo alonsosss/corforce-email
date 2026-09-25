@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/alonsosss/corforce-email/pkg/response"
@@ -48,19 +49,42 @@ func RemoteImageURL(s domain.SignedRemoteImage) string {
 	return BasePath + ImageProxyPath + "?" + q.Encode()
 }
 
-// imageGate acota las descargas simultaneas del proxy en el proceso: cada una retiene en memoria hasta
-// el tope de bytes de una imagen.
-type imageGate struct{ slots chan struct{} }
+// imageGate acota las descargas simultaneas del proxy en el proceso (cada una retiene en memoria hasta
+// el tope de bytes de una imagen) y las de cada buzon: sin el tope por buzon, uno con imagenes que
+// responden despacio ocuparia todos los huecos y dejaria el proxy sin servicio para los demas.
+type imageGate struct {
+	slots      chan struct{}
+	perMailbox int
+	mu         sync.Mutex
+	busy       map[string]int
+}
 
-func newImageGate(capacity int) *imageGate { return &imageGate{slots: make(chan struct{}, capacity)} }
+func newImageGate(capacity, perMailbox int) *imageGate {
+	return &imageGate{slots: make(chan struct{}, capacity), perMailbox: perMailbox, busy: map[string]int{}}
+}
 
-func (g *imageGate) acquire() (func(), bool) {
-	select {
-	case g.slots <- struct{}{}:
-		return func() { <-g.slots }, true
-	default:
+func (g *imageGate) acquire(mailbox string) (func(), bool) {
+	g.mu.Lock()
+	if g.busy[mailbox] >= g.perMailbox {
+		g.mu.Unlock()
 		return nil, false
 	}
+	select {
+	case g.slots <- struct{}{}:
+	default:
+		g.mu.Unlock()
+		return nil, false
+	}
+	g.busy[mailbox]++
+	g.mu.Unlock()
+	return func() {
+		g.mu.Lock()
+		if g.busy[mailbox]--; g.busy[mailbox] <= 0 {
+			delete(g.busy, mailbox)
+		}
+		g.mu.Unlock()
+		<-g.slots
+	}, true
 }
 
 // ImageProxy sirve una imagen remota firmada. Orden: cupo por IP (middleware), firma y caducidad, cupo
@@ -81,7 +105,7 @@ func (h *Handler) ImageProxy(w http.ResponseWriter, r *http.Request) {
 		writeRateLimited(w, reset)
 		return
 	}
-	release, ok := h.images.acquire()
+	release, ok := h.images.acquire(link.MailboxID)
 	if !ok {
 		h.imageMetrics.ImageProxyRequest(domain.RemoteImageOutcomeBusy)
 		w.Header().Set("Retry-After", imageProxyRetryAfter)

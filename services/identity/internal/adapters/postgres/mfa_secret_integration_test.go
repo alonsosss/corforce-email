@@ -187,3 +187,35 @@ func TestBarridoYRotacionDelSecretoContraPostgres(t *testing.T) {
 		t.Fatal("la sustitucion condicional piso la fila")
 	}
 }
+
+// Un texto vacio en la columna antigua (lo deja la version anterior al guardar el perfil de una
+// cuenta ya cifrada) no es un secreto: el barrido no lo sella encima del cifrado y lo limpia.
+func TestElBarridoNoSellaUnSecretoVacio(t *testing.T) {
+	pool := registryDB(t)
+	ctx := context.Background()
+	tenant := uuid.New()
+	cleanupTenant(t, pool, tenant)
+	repo := NewUserRepo(pool)
+	id := insertAccount(ctx, t, pool, tenant, "active", nil)
+	if err := repo.EnableMFA(ctx, id, []byte("cifrado"), 1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE identity.users SET mfa_secret = '' WHERE id = $1`, id); err != nil {
+		t.Fatal(err)
+	}
+	plains, err := repo.ListPlainMFASecrets(ctx, uuid.Nil, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range plains {
+		if p.UserID == id {
+			t.Fatal("un secreto vacio no se lista para sellarlo")
+		}
+	}
+	if _, err := repo.DropDisabledMFASecrets(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if r := readMFA(ctx, t, pool, id); !r.enabled || r.plain != nil || !bytes.Equal(r.sealed, []byte("cifrado")) {
+		t.Fatalf("el cifrado se conserva y el texto vacio se limpia: %+v", r)
+	}
+}

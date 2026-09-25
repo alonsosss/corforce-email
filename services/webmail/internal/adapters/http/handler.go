@@ -61,7 +61,10 @@ type Config struct {
 	// proceso (0 usa defaultImageProxyConcurrency) e ImageProxyMetrics, opcional, las cuenta.
 	ImageProxyRateLimiter RateLimiter
 	ImageProxyConcurrency int
-	ImageProxyMetrics     ImageProxyMetrics
+	// ImageProxyConcurrencyPerMailbox es cuantas de esas descargas puede tener a la vez un mismo buzon
+	// (0 usa defaultImageProxyConcurrencyPerMailbox).
+	ImageProxyConcurrencyPerMailbox int
+	ImageProxyMetrics               ImageProxyMetrics
 }
 
 // RateLimiter decide si una peticion cabe en su cupo y cuanto falta para que se reabra
@@ -75,8 +78,12 @@ type RateLimiter interface {
 // composicion ocupa hasta unas cinco veces el tope del mensaje.
 const defaultComposeConcurrency = 2
 
-// defaultImageProxyConcurrency son las descargas simultaneas del proxy de imagenes si no se configura.
-const defaultImageProxyConcurrency = 8
+// defaultImageProxyConcurrency son las descargas simultaneas del proxy de imagenes si no se configura, y
+// defaultImageProxyConcurrencyPerMailbox las de un mismo buzon.
+const (
+	defaultImageProxyConcurrency           = 8
+	defaultImageProxyConcurrencyPerMailbox = 2
+)
 
 type Handler struct {
 	app     *app.Service
@@ -114,13 +121,19 @@ func NewHandler(svc *app.Service, cfg Config, logger *zap.Logger) (*Handler, err
 	if cfg.ImageProxyConcurrency == 0 {
 		cfg.ImageProxyConcurrency = defaultImageProxyConcurrency
 	}
+	if cfg.ImageProxyConcurrencyPerMailbox < 0 {
+		return nil, errors.New("webmail: las descargas simultáneas por buzón del proxy de imágenes no pueden ser negativas")
+	}
+	if cfg.ImageProxyConcurrencyPerMailbox == 0 {
+		cfg.ImageProxyConcurrencyPerMailbox = min(defaultImageProxyConcurrencyPerMailbox, cfg.ImageProxyConcurrency)
+	}
 	metrics := cfg.ImageProxyMetrics
 	if metrics == nil {
 		metrics = noImageProxyMetrics{}
 	}
 	return &Handler{app: svc, cfg: cfg, origins: guard, logger: logger,
 		compose: newComposeGate(cfg.ComposeConcurrency),
-		images:  newImageGate(cfg.ImageProxyConcurrency), imageMetrics: metrics}, nil
+		images:  newImageGate(cfg.ImageProxyConcurrency, cfg.ImageProxyConcurrencyPerMailbox), imageMetrics: metrics}, nil
 }
 
 // PartURL es la URL de una parte en este API. La usa el saneado para las imagenes cid:.

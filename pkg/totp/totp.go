@@ -13,6 +13,9 @@ import (
 	"time"
 )
 
+// MinSecretBytes es la longitud minima de la clave compartida (RFC 4226, seccion 4).
+const MinSecretBytes = 16
+
 const (
 	digits   = 6
 	period   = 30
@@ -83,6 +86,10 @@ func hotp(secret string, counter uint64) (int, error) {
 	key, err := base32.StdEncoding.WithPadding(base32.NoPadding).DecodeString(strings.ToUpper(secret))
 	if err != nil {
 		return 0, fmt.Errorf("totp: decode secret: %w", err)
+	}
+	// RFC 4226 exige al menos 128 bits: con una clave vacia o corta los codigos se adivinan.
+	if len(key) < MinSecretBytes {
+		return 0, fmt.Errorf("totp: secret too short (%d bytes)", len(key))
 	}
 	msg := make([]byte, 8)
 	binary.BigEndian.PutUint64(msg, counter)

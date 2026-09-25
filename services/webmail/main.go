@@ -163,9 +163,11 @@ const (
 	maxImageProxyMaxBytes        = 25 << 20
 	defaultImageProxyConcurrency = 8
 	maxImageProxyConcurrency     = 64
-	defaultImageProxyRatePerMin  = 300
-	minImageProxyRatePerMin      = 30
-	maxImageProxyRatePerMin      = 10000
+	// Descargas simultaneas de un mismo buzon: un correo con imagenes lentas no ocupa todo el proxy.
+	defaultImageProxyConcurrencyPerMailbox = 2
+	defaultImageProxyRatePerMin            = 300
+	minImageProxyRatePerMin                = 30
+	maxImageProxyRatePerMin                = 10000
 	// minImageProxyKeyLen es lo minimo que se acepta del secreto del que sale la clave de firma.
 	minImageProxyKeyLen = 32
 )
@@ -224,7 +226,9 @@ type imageProxySettings struct {
 	timeout         time.Duration
 	maxBytes        int64
 	concurrency     int
-	ratePerMin      int
+	// concurrencyPerMailbox es el tope de descargas simultaneas de un buzon (no mayor que concurrency).
+	concurrencyPerMailbox int
+	ratePerMin            int
 }
 
 func main() {
@@ -401,8 +405,9 @@ func main() {
 		MailboxRateLimiter: middleware.NewSharedRateLimiter(middleware.NewRedisRateLimitStore(rdb), "webmail:mailbox:"+st.cellCode, st.mailboxRatePerMin, rateLimitWindow, logger),
 		ImageProxyRateLimiter: middleware.NewSharedRateLimiter(middleware.NewRedisRateLimitStore(rdb), "webmail:image-proxy:"+st.cellCode,
 			st.imageProxy.ratePerMin, rateLimitWindow, logger),
-		ImageProxyConcurrency: st.imageProxy.concurrency,
-		ImageProxyMetrics:     promadapter.NewImageProxyMetrics(prometheus.DefaultRegisterer),
+		ImageProxyConcurrency:           st.imageProxy.concurrency,
+		ImageProxyConcurrencyPerMailbox: st.imageProxy.concurrencyPerMailbox,
+		ImageProxyMetrics:               promadapter.NewImageProxyMetrics(prometheus.DefaultRegisterer),
 	}, logger)
 	if err != nil {
 		log.Fatalf("webmail: %v", err)
@@ -637,6 +642,10 @@ func loadImageProxySettings(devRelaxations bool) (imageProxySettings, error) {
 	}
 	ip.maxBytes = int64(maxBytes)
 	if ip.concurrency, err = config.EnvInt("WEBMAIL_IMAGE_PROXY_CONCURRENCY", defaultImageProxyConcurrency, 1, maxImageProxyConcurrency); err != nil {
+		return ip, err
+	}
+	if ip.concurrencyPerMailbox, err = config.EnvInt("WEBMAIL_IMAGE_PROXY_CONCURRENCY_PER_MAILBOX",
+		min(defaultImageProxyConcurrencyPerMailbox, ip.concurrency), 1, ip.concurrency); err != nil {
 		return ip, err
 	}
 	if ip.ratePerMin, err = config.EnvInt("WEBMAIL_IMAGE_PROXY_RATE_PER_MAILBOX", defaultImageProxyRatePerMin, minImageProxyRatePerMin, maxImageProxyRatePerMin); err != nil {

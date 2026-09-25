@@ -64,3 +64,16 @@ func TestValidateSigueAceptandoElCodigoActual(t *testing.T) {
 		t.Fatal("el secreto en minusculas no valida")
 	}
 }
+
+// Una clave vacia o de menos de 128 bits no valida nada: sus codigos se calcularian sin conocerla.
+func TestRechazaClavesCortas(t *testing.T) {
+	now := time.Unix(59, 0)
+	for _, secret := range []string{"", "AA", "JBSWY3DPEHPK3PXP"} {
+		if _, ok := ValidateStep(secret, "000000", now); ok {
+			t.Fatalf("clave %q aceptada", secret)
+		}
+		if _, err := Generate(secret, now); err == nil {
+			t.Fatalf("clave %q genera codigos", secret)
+		}
+	}
+}

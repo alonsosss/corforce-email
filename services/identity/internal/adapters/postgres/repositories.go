@@ -333,7 +333,7 @@ func (r *UserRepo) AdvanceMFAStep(ctx context.Context, id uuid.UUID, step int64)
 func (r *UserRepo) ListPlainMFASecrets(ctx context.Context, after uuid.UUID, limit int) ([]ports.PlainMFASecret, error) {
 	rows, err := r.pool.Query(ctx,
 		`SELECT id, mfa_secret FROM identity.users
-		  WHERE mfa_secret IS NOT NULL AND id > $1
+		  WHERE mfa_secret IS NOT NULL AND mfa_secret <> '' AND id > $1
 		  ORDER BY id LIMIT $2`, after, limit)
 	if err != nil {
 		return nil, err
@@ -367,7 +367,13 @@ func (r *UserRepo) DropDisabledMFASecrets(ctx context.Context) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	return tag.RowsAffected(), nil
+	// Un texto vacio en la columna antigua lo deja la version anterior al guardar el perfil de
+	// una cuenta cuyo secreto ya esta cifrado: no es un secreto y no debe sellarse como tal.
+	empty, err := r.pool.Exec(ctx, `UPDATE identity.users SET mfa_secret = NULL WHERE mfa_secret = ''`)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected() + empty.RowsAffected(), nil
 }
 
 // NewMFASecretStore es la columna del secreto TOTP cifrado de identity.users para re-cifrarla bajo la

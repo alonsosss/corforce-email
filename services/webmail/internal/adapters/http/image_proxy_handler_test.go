@@ -316,3 +316,34 @@ func TestHandlerExigeElLimitadorDelProxy(t *testing.T) {
 		t.Fatal("concurrencia negativa")
 	}
 }
+
+// Un buzon no ocupa mas huecos del proxy que su tope: con imagenes lentas, los demas siguen teniendo
+// servicio.
+func TestImageGateAcotaCadaBuzon(t *testing.T) {
+	g := newImageGate(3, 2)
+	a1, ok1 := g.acquire("a")
+	_, ok2 := g.acquire("a")
+	if !ok1 || !ok2 {
+		t.Fatal("el buzon usa sus dos huecos")
+	}
+	if _, ok := g.acquire("a"); ok {
+		t.Fatal("un tercero del mismo buzon no entra")
+	}
+	b, ok := g.acquire("b")
+	if !ok {
+		t.Fatal("otro buzon entra mientras quede hueco global")
+	}
+	if _, ok := g.acquire("c"); ok {
+		t.Fatal("sin hueco global no entra nadie")
+	}
+	a1()
+	if release, ok := g.acquire("a"); !ok {
+		t.Fatal("al liberar uno, el buzon recupera su hueco")
+	} else {
+		release()
+	}
+	b()
+	if len(g.busy) != 1 {
+		t.Fatalf("los buzones sin descargas salen del mapa: %v", g.busy)
+	}
+}

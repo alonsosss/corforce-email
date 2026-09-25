@@ -888,7 +888,9 @@ const wm = endpoints.webmail;
  * solo admite imagenes que pasen por el.
  */
 export function webmailImageProxyUrl(): string {
-  return new URL(wm.imageProxy, window.location.origin).href;
+  // El servicio reescribe las imagenes a rutas relativas al origen del API, que solo difiere del de
+  // la aplicacion cuando VITE_API_URL apunta a otro host.
+  return new URL(wm.imageProxy, apiBase() || window.location.origin).href;
 }
 
 function flag(value: boolean | undefined): string | undefined {
