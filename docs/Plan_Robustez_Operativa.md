@@ -40,6 +40,11 @@ servidor: qué celda es, qué dominio sirve, a dónde apunta cada servicio. Con 
 pero sin ellos, habría que reconstruirlos a mano y de memoria. Ahora viajan cifrados en la misma
 corrida (`config/<sello>.tar.gz.gpg`) y el ensayo los exige.
 
+Y una quinta, al probarlo de verdad: **la politica de IAM del usuario de respaldos no permitia el
+prefijo `config/`**, asi que la configuracion se empaquetaba y se quedaba en el servidor con un
+aviso. Un permiso que falta no da error al aprovisionar: falla el dia del respaldo. Corregido y
+aplicado en AWS el 2026-09-25.
+
 **Qué se hace.** Un guion de ensayo, `ops/backup/ensayo-recuperacion.sh`, que corre en contenedores
 desechables (como `make e2e`) y, **sin tocar producción ni leer nada del servidor**, parte del bucket
 y de las dos claves y comprueba por fases:
@@ -63,8 +68,8 @@ desastre.
 **Criterio de cierre.** El ensayo pasa entero, queda en `make` y se corre cada mes; su resultado y su
 duración van a `docs/Operacion_Despliegue.md`.
 
-**Resultado del primero (2026-09-25): OK en 44 s**, partiendo solo del bucket y de lo de fuera, con
-4 bases restauradas, 44 secretos leídos y 5 buzones comprobados contra su directorio. Tres fallos
+**Resultado (2026-09-25): OK en 48 s**, ya con la configuracion del servidor dentro, partiendo solo del bucket y de lo de fuera, con
+5 bases restauradas, 45 secretos leídos y 5 buzones comprobados contra su directorio. Cinco fallos
 encontrados y arreglados por el camino: el identificador de la llave y la credencial de despliegue
 que faltaban fuera, y un lector de configuración que se comía el relleno final de la llave en base64
 (OpenBao arrancaba y fallaba mucho después, que es la peor forma de fallar).
@@ -141,7 +146,7 @@ tambien en el dia malo, no solo en el bueno.
 
 | Punto | Estado |
 |---|---|
-| 1. Ensayo de recuperación | Hecho: `ops/backup/ensayo-recuperacion.sh`, primera corrida OK en 44 s, con tres huecos encontrados y cerrados |
+| 1. Ensayo de recuperación | Hecho y cerrado: `make ensayo-recuperacion`, OK en 48 s con la configuración incluida, y cinco huecos encontrados y cerrados |
 | 2. Guardia de CI en verde | Hecho: `despliegue_comprobar_ci` en los dos despliegues, con sus cuatro casos probados y dos mutaciones |
 | 3. Rotación de lo expuesto | Hecho en lo que depende de la plataforma: las dos contraseñas de Campovivo rotadas y comprobadas (la vieja ya no entra, ni por web ni por IMAP). Falta el token de Cloudflare, que lo rota quien opera |
 | 4. Integración del ERP aparcada | Hecho: `docs/Plan_Integracion_ERP.md` dice desde dónde se retoma |

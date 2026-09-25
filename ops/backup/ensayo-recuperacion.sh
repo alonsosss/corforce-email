@@ -134,11 +134,15 @@ if ! s3 s3 ls --recursive "s3://$BACKUP_S3_BUCKET/" >"$LISTA" 2>"$TMP/s3.err"; t
   echo "  FALLA: no se pudo listar s3://$BACKUP_S3_BUCKET: $(head -2 "$TMP/s3.err")" >&2
   exit 1
 fi
-awk '{print $4}' "$LISTA" | grep -E '^postgres/' | sed -E 's#^postgres/[^/]+/##; s#\.dump(\.gpg)?$##' |
-  sort -u >"$TMP/sellos.txt"
+# Solo lo que tiene forma de volcado de una corrida: postgres/<base>/<sello>.dump[.gpg] con el
+# sello completo. Cualquier otra cosa en el bucket -una prueba, un resto- se ignora; si no, el
+# "ultimo sello" podia ser un fichero suelto y el ensayo se quedaba sin bases sin decir por que.
+awk '{print $4}' "$LISTA" | grep -E '^postgres/[^/]+/[0-9]{8}T[0-9]{6}Z\.dump(\.gpg)?$' |
+  sed -E 's#^postgres/[^/]+/##; s#\.dump(\.gpg)?$##' | sort -u >"$TMP/sellos.txt"
 SELLO="$(tail -1 "$TMP/sellos.txt")"
 [[ -n "$SELLO" ]] || { echo "  FALLA: el bucket no tiene ningun volcado en postgres/" >&2; exit 1; }
-BASES="$(awk '{print $4}' "$LISTA" | grep -E "^postgres/.*/$SELLO\.dump" | sed -E 's#^postgres/([^/]+)/.*#\1#' | sort -u)"
+BASES="$(awk '{print $4}' "$LISTA" | grep -E "^postgres/[^/]+/$SELLO\.dump(\.gpg)?$" | sed -E 's#^postgres/([^/]+)/.*#\1#' | sort -u)"
+[[ -n "$BASES" ]] || { echo "  FALLA: la corrida $SELLO no tiene ninguna base" >&2; exit 1; }
 ok "corrida $SELLO con $(wc -w <<<"$BASES") base(s): $(tr '\n' ' ' <<<"$BASES")"
 
 edad_h() { # edad en horas de la corrida, por el sello 20260924T191502Z
