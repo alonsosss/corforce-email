@@ -265,6 +265,14 @@ function EnableMfaDialog({
       onActivated(recovery_codes);
     } catch (err) {
       setCode('');
+      // La preparacion caduco (10 min) o se hizo en otra pestana: se vuelve a pedir la contrasena.
+      if (errorCode(err) === ERROR_CODES.MFA_SETUP_EXPIRED) {
+        setSetup(null);
+        setProblems({});
+        setError(err);
+        setBusy(false);
+        return;
+      }
       const field = reauthProblem(err);
       if (field) setProblems(field);
       else setError(err);
@@ -610,7 +618,8 @@ function AppPasswordsCard({
   const [created, setCreated] = useState<CreatedWebmailAppPassword | null>(null);
   const [revoking, setRevoking] = useState<WebmailAppPassword | null>(null);
   const items = security.app_passwords;
-  const full = items.length >= security.app_passwords_max;
+  const max = security.app_passwords_max;
+  const full = max !== null && items.length >= max;
 
   const columns: Column<WebmailAppPassword>[] = [
     { key: 'name', header: t('common.name'), render: (p) => <strong>{p.name}</strong> },
@@ -670,9 +679,7 @@ function AppPasswordsCard({
     >
       {full ? (
         <div style={{ padding: 'var(--cf-space-4)' }}>
-          <Alert tone="info">
-            {t('webmail.security.apps.full', { max: security.app_passwords_max })}
-          </Alert>
+          <Alert tone="info">{t('webmail.security.apps.full', { max: max ?? items.length })}</Alert>
         </div>
       ) : null}
       <DataTable

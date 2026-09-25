@@ -460,7 +460,8 @@ export interface WebmailAppPassword {
 export interface WebmailSecurity {
   mfa: WebmailMfaStatus;
   app_passwords: WebmailAppPassword[];
-  app_passwords_max: number;
+  /** Tope del directorio; null si no lo informa (entonces no se bloquea el alta en la interfaz). */
+  app_passwords_max: number | null;
 }
 
 /** POST /security/mfa/setup: nada queda guardado hasta activar con un codigo. */

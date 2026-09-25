@@ -19,15 +19,16 @@ type mfaStatusDTO struct {
 	RecoveryRemaining int        `json:"recovery_remaining"`
 }
 
-// appPasswordDTO nombra los protocolos igual que la peticion que la crea.
+// appPasswordDTO nombra los protocolos como el listado de administracion (*_access), que es
+// el que ya conoce la interfaz.
 type appPasswordDTO struct {
 	ID         string     `json:"id"`
 	Name       string     `json:"name"`
-	IMAP       bool       `json:"imap"`
-	POP3       bool       `json:"pop3"`
-	SMTP       bool       `json:"smtp"`
-	Sieve      bool       `json:"sieve"`
-	DAV        bool       `json:"dav"`
+	IMAP       bool       `json:"imap_access"`
+	POP3       bool       `json:"pop3_access"`
+	SMTP       bool       `json:"smtp_access"`
+	Sieve      bool       `json:"sieve_access"`
+	DAV        bool       `json:"dav_access"`
 	Active     bool       `json:"active"`
 	LastUsedAt *time.Time `json:"last_used_at"`
 	CreatedAt  time.Time  `json:"created_at"`

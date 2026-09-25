@@ -158,7 +158,7 @@ func TestSeguridadDevuelveEstadoYContrasenas(t *testing.T) {
 		t.Fatalf("%s", rec.Body.String())
 	}
 	var list []map[string]any
-	if err := json.Unmarshal(out.Data["app_passwords"], &list); err != nil || len(list) != 1 || list[0]["imap"] != true || list[0]["pop3"] != false || list[0]["name"] != "Movil" {
+	if err := json.Unmarshal(out.Data["app_passwords"], &list); err != nil || len(list) != 1 || list[0]["imap_access"] != true || list[0]["pop3_access"] != false || list[0]["name"] != "Movil" {
 		t.Fatalf("contrasenas: %s", out.Data["app_passwords"])
 	}
 	if _, ok := list[0]["password"]; ok {
@@ -218,7 +218,7 @@ func TestAccionesQueExigenCodigoConVerificacionActiva(t *testing.T) {
 	var created struct {
 		Data map[string]any `json:"data"`
 	}
-	if json.Unmarshal(rec.Body.Bytes(), &created) != nil || created.Data["password"] != "abcd-efgh-ijkl-mnop" || created.Data["imap"] != true || created.Data["smtp"] != true || created.Data["pop3"] != false {
+	if json.Unmarshal(rec.Body.Bytes(), &created) != nil || created.Data["password"] != "abcd-efgh-ijkl-mnop" || created.Data["imap_access"] != true || created.Data["smtp_access"] != true || created.Data["pop3_access"] != false {
 		t.Fatalf("%s", rec.Body.String())
 	}
 	if in := env.settings.security.created; in == nil || !in.Access.IMAP || !in.Access.SMTP || in.Access.DAV {

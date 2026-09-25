@@ -4802,6 +4802,11 @@ export const es = {
     'La verificación caducó. Vuelve a escribir tu buzón y tu contraseña.',
   'error.code.MFA_ALREADY_ENABLED': 'La verificación en dos pasos ya está activa.',
   'error.code.MFA_NOT_ENABLED': 'La verificación en dos pasos no está activa.',
+  'error.code.MFA_SETUP_EXPIRED':
+    'La preparación de la verificación en dos pasos caducó. Vuelve a escribir tu contraseña para empezar de nuevo.',
+  'error.code.APP_PASSWORD_LIMIT':
+    'Ya tienes el máximo de contraseñas de aplicación. Revoca alguna para crear otra.',
+  'error.code.APP_PASSWORD_NOT_FOUND': 'Esa contraseña de aplicación ya no existe.',
   'error.code.REAUTH_REQUIRED':
     'Reenviar a direcciones de fuera de la empresa exige confirmar tu contraseña.',
   'error.code.EXTERNAL_FORWARDING_DISABLED':
