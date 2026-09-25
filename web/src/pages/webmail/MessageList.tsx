@@ -1,35 +1,23 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { FLAGS, hasFlag, type MessageEnvelope } from '@/api/webmail';
 import type { Page } from '@/api/types';
 import { errorMessage } from '@/api/messages';
 import type { QueryState } from '@/hooks/useQuery';
-import { useResource } from '@/hooks/useResource';
 import {
   Button,
   Checkbox,
   EmptyState,
   ErrorState,
-  FormField,
-  Input,
   Pagination,
   Skeleton,
 } from '@/design/components';
-import { IconFilter, IconPaperclip, IconRefresh, IconSearch, IconStar } from '@/design/icons';
+import { IconPaperclip, IconRefresh, IconStar } from '@/design/icons';
 import { t } from '@/i18n';
-import { webmailMeta } from '@/webmail/catalogs';
 import { showsRecipients } from './folders';
 import { addressLabel, formatMailDate, initialsOf } from './format';
 import { rowUnread } from './smartInbox';
-import {
-  criteriaProblems,
-  criteriaSummary,
-  EMPTY_CRITERIA,
-  hasAdvanced,
-  isSearching,
-  type CriteriaField,
-  type SearchCriteria,
-} from './search';
+import { criteriaSummary, EMPTY_CRITERIA, isSearching, type SearchCriteria } from './search';
 
 const SKELETON_ROWS = 6;
 
@@ -52,10 +40,10 @@ export interface MessageListProps {
   selectionBar?: ReactNode;
   /** Accion de la carpeta junto al titulo (vaciar Papelera o Spam). */
   folderAction?: ReactNode;
-  /** El atajo "/" pide el foco del buscador. */
-  searchFocusTick?: number;
   /** Conmutador de vista y pestanas de la bandeja, bajo el titulo. */
   controls?: ReactNode;
+  /** Acciones rapidas de cada fila (archivar, borrar, leido, posponer). */
+  rowActions?: (message: MessageEnvelope) => ReactNode;
 }
 
 export function MessageList({
@@ -74,15 +62,9 @@ export function MessageList({
   onCheckAll,
   selectionBar,
   folderAction,
-  searchFocusTick = 0,
   controls,
+  rowActions,
 }: MessageListProps) {
-  const [draft, setDraft] = useState<SearchCriteria>(criteria);
-  const [advanced, setAdvanced] = useState(hasAdvanced(criteria));
-  const [problems, setProblems] = useState<Partial<Record<CriteriaField, string>>>({});
-  const searchRef = useRef<HTMLInputElement>(null);
-  // El tope de la busqueda es el del servicio (bytes UTF-8), no uno copiado aqui.
-  const maxSearchBytes = useResource(webmailMeta).data?.limits.max_search_bytes ?? null;
   const data = list.data;
   const items = data?.items ?? [];
   const recipients = showsRecipients(role);
@@ -96,24 +78,6 @@ export function MessageList({
       selectAllRef.current.indeterminate = checkedOnPage > 0 && !allChecked;
     }
   }, [checkedOnPage, allChecked]);
-
-  useEffect(() => {
-    if (searchFocusTick) searchRef.current?.focus();
-  }, [searchFocusTick]);
-
-  const edit = (patch: Partial<SearchCriteria>) => {
-    setDraft((current) => ({ ...current, ...patch }));
-    setProblems({});
-  };
-
-  const submit = () => {
-    const found = criteriaProblems(draft, maxSearchBytes);
-    setProblems(found);
-    if (Object.keys(found).length) return;
-    onSearch(draft);
-  };
-
-  const fieldError = (field: CriteriaField) => problems[field] ?? null;
 
   return (
     <>
@@ -137,151 +101,12 @@ export function MessageList({
           </div>
         </div>
         {controls}
-        <form
-          role="search"
-          className="cf-wm-searchform"
-          noValidate
-          onSubmit={(e) => {
-            e.preventDefault();
-            submit();
-          }}
-        >
-          <div className="cf-wm-search">
-            <label htmlFor="wm-search" className="cf-visually-hidden">
-              {t('webmail.list.search')}
-            </label>
-            <Input
-              ref={searchRef}
-              id="wm-search"
-              type="search"
-              value={draft.q}
-              invalid={Boolean(problems.q)}
-              aria-describedby={problems.q ? 'wm-search-error' : undefined}
-              onChange={(e) => edit({ q: e.target.value })}
-              placeholder={t('webmail.list.searchPlaceholder')}
-            />
-            <Button
-              size="md"
-              variant="ghost"
-              iconOnly
-              icon={<IconFilter size={16} />}
-              aria-expanded={advanced}
-              aria-controls="wm-search-advanced"
-              onClick={() => setAdvanced((open) => !open)}
-            >
-              {t('webmail.search.advanced')}
-            </Button>
-            <Button type="submit" iconOnly icon={<IconSearch size={16} />}>
-              {t('common.search')}
-            </Button>
-          </div>
-          {problems.q ? (
-            <div id="wm-search-error" className="cf-form__error" role="alert">
-              {problems.q}
-            </div>
-          ) : null}
-          {advanced ? (
-            <div id="wm-search-advanced" className="cf-wm-advanced">
-              <FormField
-                label={t('webmail.search.from')}
-                htmlFor="wm-s-from"
-                error={fieldError('from')}
-              >
-                <Input
-                  id="wm-s-from"
-                  value={draft.from}
-                  onChange={(e) => edit({ from: e.target.value })}
-                />
-              </FormField>
-              <FormField label={t('webmail.search.to')} htmlFor="wm-s-to" error={fieldError('to')}>
-                <Input
-                  id="wm-s-to"
-                  value={draft.to}
-                  onChange={(e) => edit({ to: e.target.value })}
-                />
-              </FormField>
-              <FormField
-                label={t('webmail.search.subject')}
-                htmlFor="wm-s-subject"
-                error={fieldError('subject')}
-              >
-                <Input
-                  id="wm-s-subject"
-                  value={draft.subject}
-                  onChange={(e) => edit({ subject: e.target.value })}
-                />
-              </FormField>
-              <div className="cf-form__row">
-                <FormField label={t('webmail.search.since')} htmlFor="wm-s-since">
-                  <Input
-                    id="wm-s-since"
-                    type="date"
-                    value={draft.since}
-                    onChange={(e) => edit({ since: e.target.value })}
-                  />
-                </FormField>
-                <FormField
-                  label={t('webmail.search.before')}
-                  htmlFor="wm-s-before"
-                  error={fieldError('before')}
-                >
-                  <Input
-                    id="wm-s-before"
-                    type="date"
-                    value={draft.before}
-                    invalid={Boolean(problems.before)}
-                    onChange={(e) => edit({ before: e.target.value })}
-                  />
-                </FormField>
-              </div>
-              <div className="cf-wm-advanced__marks">
-                <Checkbox
-                  label={t('webmail.search.unread')}
-                  checked={draft.unread}
-                  onChange={(e) => edit({ unread: e.target.checked })}
-                />
-                <Checkbox
-                  label={t('webmail.search.flagged')}
-                  checked={draft.flagged}
-                  onChange={(e) => edit({ flagged: e.target.checked })}
-                />
-                <Checkbox
-                  label={t('webmail.search.attachments')}
-                  checked={draft.attachments}
-                  onChange={(e) => edit({ attachments: e.target.checked })}
-                />
-              </div>
-              <div className="cf-form__actions">
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => {
-                    setDraft(EMPTY_CRITERIA);
-                    setProblems({});
-                  }}
-                >
-                  {t('common.clear')}
-                </Button>
-                <Button size="sm" type="submit" variant="primary">
-                  {t('common.search')}
-                </Button>
-              </div>
-            </div>
-          ) : null}
-        </form>
         {searching ? (
           <div className="cf-wm-listbar__filter">
             <span className="cf-text-sm cf-truncate">
               {t('webmail.list.results', { q: criteriaSummary(criteria) })}
             </span>
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => {
-                setDraft(EMPTY_CRITERIA);
-                onSearch(EMPTY_CRITERIA);
-              }}
-            >
+            <Button size="sm" variant="ghost" onClick={() => onSearch(EMPTY_CRITERIA)}>
               {t('common.clear')}
             </Button>
           </div>
@@ -338,6 +163,7 @@ export function MessageList({
                 checked={checked.has(message.uid)}
                 onCheck={(value) => onCheck(message.uid, value)}
                 href={hrefFor(message.uid)}
+                actions={rowActions?.(message)}
               />
             ))}
           </ul>
@@ -364,6 +190,7 @@ function MessageRow({
   checked,
   onCheck,
   href,
+  actions,
 }: {
   message: MessageEnvelope;
   recipients: boolean;
@@ -371,6 +198,7 @@ function MessageRow({
   checked: boolean;
   onCheck: (checked: boolean) => void;
   href: string;
+  actions?: ReactNode;
 }) {
   const unread = rowUnread(message, hasFlag(message, FLAGS.seen));
   const flagged = hasFlag(message, FLAGS.flagged);
@@ -424,6 +252,15 @@ function MessageRow({
           ) : null}
         </span>
       </Link>
+      {actions ? (
+        <div
+          className="cf-wm-rowactions"
+          role="group"
+          aria-label={t('webmail.row.actions', { subject })}
+        >
+          {actions}
+        </div>
+      ) : null}
     </li>
   );
 }

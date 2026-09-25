@@ -723,6 +723,14 @@ el usuario y la ruta del servidor y activa `core-force-mail-backup.timer` (08:15
 Alertas del grupo `respaldos` en `ops/observability/prometheus/rules/plataforma.yml`: vigilan la
 antigüedad del último éxito, el error de la última corrida y la ausencia de la serie.
 
+## 6 bis. Alta de un dominio que ya tiene correo en otro proveedor
+
+No se apunta su MX aquí y se crean los buzones después: el MX viene desde el primer día y lo que aún
+no está migrado se reenvía al proveedor anterior (`backupmx`, `relay_all_recipients`,
+`relay_unknown_only` y un `relayhost`), de modo que la migración va buzón a buzón y sin ventana de
+corte. El procedimiento, con los registros DNS, el orden y lo que hay que vigilar, está en
+`docs/Migracion_de_Dominios_en_Coexistencia.md`.
+
 ## 7. Observabilidad
 
 `docker-compose.observability.yml` (Prometheus, Grafana, Loki, Promtail, node-exporter,

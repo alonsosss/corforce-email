@@ -10,12 +10,9 @@ import {
   IconCalendar,
   IconEdit,
   IconKeyboard,
-  IconLogOut,
   IconMail,
   IconMenu,
-  IconMoon,
   IconSettings,
-  IconSun,
 } from '@/design/icons';
 import { useTheme } from '@/design/useTheme';
 import { formatBytes, usageRatio } from '@/lib/quota';
@@ -33,7 +30,8 @@ import {
 import { SHORTCUTS, useShortcuts } from '@/webmail/shortcuts';
 import { useWebmailStore } from '@/webmail/store';
 import { FolderNav } from './FolderNav';
-import { initialsOf } from './format';
+import { ProfileMenu } from './ProfileMenu';
+import { SearchBar } from './SearchBar';
 import { defaultFolder, folderWithRole } from './folders';
 import type { WebmailOutlet } from './webmailContext';
 
@@ -119,9 +117,11 @@ export function WebmailShell() {
     setMenuOpen(false);
   }, [location.pathname, location.search]);
 
+  const [searchFocus, setSearchFocus] = useState(0);
   useShortcuts({
     c: () => navigate(paths.webmailCompose),
     '?': () => setHelpOpen(true),
+    '/': () => setSearchFocus((n) => n + 1),
   });
 
   const onMailbox = location.pathname === paths.webmail;
@@ -189,41 +189,19 @@ export function WebmailShell() {
             {t('webmail.folders.title')}
           </Button>
           <BrandMark />
-          <span className="cf-wm__product">{t('webmail.title')}</span>
+        </div>
+        <div className="cf-wm__search">
+          <SearchBar
+            folder={onMailbox ? current : folders.data ? defaultFolder(folders.data) : null}
+            focusTick={searchFocus}
+          />
         </div>
         <div className="cf-wm__account">
-          {session ? (
-            <div className="cf-wm__identity">
-              <span className="cf-wm-avatar" aria-hidden="true">
-                {initialsOf(session.display_name || session.username)}
-              </span>
-              <span className="cf-wm__identity-text">
-                <span className="cf-wm__identity-name">
-                  {session.display_name || session.username}
-                </span>
-                {session.display_name ? (
-                  <span className="cf-wm__identity-address">{session.username}</span>
-                ) : null}
-              </span>
-            </div>
-          ) : null}
-          {notificationsSupported() ? (
-            <Button
-              variant="ghost"
-              iconOnly
-              className="cf-wm-notify"
-              aria-pressed={notify}
-              icon={<IconBell size={18} />}
-              onClick={() => void toggleNotify()}
-            >
-              {t(notify ? 'webmail.notify.disable' : 'webmail.notify.enable')}
-            </Button>
-          ) : null}
           <Button
             variant="ghost"
             iconOnly
             className="cf-wm__help"
-            icon={<IconKeyboard size={18} />}
+            icon={<IconKeyboard size={20} />}
             onClick={() => setHelpOpen(true)}
           >
             {t('webmail.shortcuts.title')}
@@ -231,28 +209,35 @@ export function WebmailShell() {
           <Button
             variant="ghost"
             iconOnly
-            icon={theme === 'dark' ? <IconSun size={18} /> : <IconMoon size={18} />}
-            onClick={toggle}
+            className="cf-wm__settings"
+            icon={<IconSettings size={20} />}
+            onClick={() => navigate(paths.webmailSettings)}
           >
-            {theme === 'dark' ? t('layout.theme.toLight') : t('layout.theme.toDark')}
+            {t('webmail.settings.open')}
           </Button>
-          <Button
-            variant="ghost"
-            iconOnly
-            icon={<IconLogOut size={18} />}
-            loading={signingOut}
-            onClick={() => void signOut()}
-          >
-            {t('webmail.logout')}
-          </Button>
-          <Button
-            variant="primary"
-            className="cf-wm__compose"
-            icon={<IconEdit size={16} />}
-            onClick={() => navigate(paths.webmailCompose)}
-          >
-            <span className="cf-wm__compose-label">{t('webmail.compose.new')}</span>
-          </Button>
+          {notificationsSupported() ? (
+            <Button
+              variant="ghost"
+              iconOnly
+              className="cf-wm-notify"
+              aria-pressed={notify}
+              icon={<IconBell size={20} />}
+              onClick={() => void toggleNotify()}
+            >
+              {t(notify ? 'webmail.notify.disable' : 'webmail.notify.enable')}
+            </Button>
+          ) : null}
+          {session ? (
+            <ProfileMenu
+              name={session.display_name}
+              address={session.username}
+              theme={theme}
+              signingOut={signingOut}
+              onToggleTheme={toggle}
+              onSettings={() => navigate(paths.webmailSettings)}
+              onSignOut={() => void signOut()}
+            />
+          ) : null}
         </div>
       </header>
       <aside
@@ -261,6 +246,14 @@ export function WebmailShell() {
           .filter(Boolean)
           .join(' ')}
       >
+        <Button
+          variant="primary"
+          className="cf-wm__compose"
+          icon={<IconEdit size={18} />}
+          onClick={() => navigate(paths.webmailCompose)}
+        >
+          {t('webmail.compose.new')}
+        </Button>
         <nav aria-label={t('webmail.apps.label')}>
           <ul className="cf-wm-apps">
             {appLink(paths.webmail, t('webmail.apps.mail'), <IconMail size={16} />, true)}
@@ -280,14 +273,6 @@ export function WebmailShell() {
           <Skeleton lines={6} />
         )}
         <div className="cf-wm__sidebar-foot">
-          <Button
-            variant="ghost"
-            block
-            icon={<IconSettings size={16} />}
-            onClick={() => navigate(paths.webmailSettings)}
-          >
-            {t('webmail.settings.open')}
-          </Button>
           <QuotaSummary quota={session?.quota ?? null} />
         </div>
       </aside>

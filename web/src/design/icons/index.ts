@@ -55,6 +55,8 @@ export { IconLogOut } from './IconLogOut';
 export { IconMail } from './IconMail';
 export { IconMailOpen } from './IconMailOpen';
 export { IconMenu } from './IconMenu';
+export { IconMaximize } from './IconMaximize';
+export { IconMinimize } from './IconMinimize';
 export { IconMinus } from './IconMinus';
 export { IconMonitor } from './IconMonitor';
 export { IconMoon } from './IconMoon';
