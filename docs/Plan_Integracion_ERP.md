@@ -148,9 +148,19 @@ por credencial y métricas propias.
 
 ## 7. Estado
 
+**APARCADO el 2026-09-25.** La base está hecha y no cambia el comportamiento de nada (no hay ninguna
+ruta de aprovisionamiento declarada). Se retoma cuando estén cerrados los puntos 1 a 3 de
+`docs/Plan_Robustez_Operativa.md`: el ensayo de recuperación completa, la puerta de la CI y la
+rotación de lo expuesto. El motivo es de orden, no de diseño: antes de sumar una integración que crea
+empresas conviene saber cuánto se tarda en volver de un desastre.
+
+Por dónde se retoma: fase B2, que empieza por la migración de registro con `external_ref` y
+`provisioned_by` en `organization.tenants`, y la cuenta de servicio por empresa.
+
+
 | Fase | Estado |
 |---|---|
 | A. Envío por SMTP sin código | Disponible hoy: falta elegir la empresa del ERP con la que probar |
 | B1. Familia de credencial y separación de poderes | Hecho (`db3cbe2`): `kind` en las claves, prefijo `cfp_`, dos listas de rutas disjuntas en el gateway, con pruebas de los dos sentidos. Sin rutas de aprovisionamiento todavía |
-| B2. Rutas de aprovisionamiento y cuenta de servicio | Pendiente |
-| C. Cambios en el ERP | Pendiente, en el otro repositorio |
+| B2. Rutas de aprovisionamiento y cuenta de servicio | Aparcado (2026-09-25) |
+| C. Cambios en el ERP | Aparcado (2026-09-25), en el otro repositorio |

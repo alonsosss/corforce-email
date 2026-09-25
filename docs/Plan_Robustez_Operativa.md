@@ -100,5 +100,5 @@ dónde se retoma. Nada más: no se empieza la fase B2 hasta cerrar los puntos 1 
 |---|---|
 | 1. Ensayo de recuperación | Pendiente |
 | 2. Guardia de CI en verde | Hecho: `despliegue_comprobar_ci` en los dos despliegues, con sus cuatro casos probados y dos mutaciones |
-| 3. Rotación de lo expuesto | Pendiente |
-| 4. Integración del ERP aparcada | Pendiente |
+| 3. Rotación de lo expuesto | Hecho en lo que depende de la plataforma: las dos contraseñas de Campovivo rotadas y comprobadas (la vieja ya no entra, ni por web ni por IMAP). Falta el token de Cloudflare, que lo rota quien opera |
+| 4. Integración del ERP aparcada | Hecho: `docs/Plan_Integracion_ERP.md` dice desde dónde se retoma |
