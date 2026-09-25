@@ -28,7 +28,9 @@
 #   4. Secretos     OpenBao arranca vacío, traga la instantánea, se desbloquea con la llave y
 #                   devuelve un secreto. Sin esto, lo cifrado en la base no se descifra y lo demás
 #                   no sirve.
-#   5. Correo       los volúmenes de buzones traen maildirs con mensajes, y cada buzón del volumen
+#   5. Config      la configuración del servidor está y trae lo que hace falta para arrancar: qué
+#                  celda es, qué dominio sirve y a dónde apunta cada servicio.
+#   6. Correo       los volúmenes de buzones traen maildirs con mensajes, y cada buzón del volumen
 #                   tiene su fila y su contraseña en la celda restaurada. Es lo que Dovecot necesita
 #                   para arrancar; arrancarlo de verdad lo cubre `make e2e-mail` sobre el árbol.
 #
@@ -267,7 +269,33 @@ else
 fi
 
 # ── 5. Correo ────────────────────────────────────────────────────────────────────────────────────
-fase "5. Correo (buzones y su directorio)"
+fase "5. Configuracion del servidor"
+CFG="$(grep -E "^config/" <<<"$CLAVES" | sort | tail -1)"
+if [[ -z "$CFG" ]]; then
+  mal "el bucket no trae la configuracion del servidor (config/): los datos volverian, pero no se
+       sabria que celda es, que dominio sirve ni a donde apunta cada servicio"
+elif ! bajar "$CFG" "config.tar.gz"; then
+  mal "la configuracion no se pudo bajar o descifrar"
+else
+  mkdir -p "$TMP/config"
+  if tar -xzf "$TMP/bajado/config.tar.gz" -C "$TMP/config" 2>/dev/null; then
+    n_env=0
+    for f in "$TMP/config"/*.env; do [[ -s "$f" ]] && n_env=$((n_env + 1)); done
+    [[ "$n_env" -gt 0 ]] && ok "$n_env fichero(s) de configuracion" || mal "el paquete de configuracion viene vacio"
+    # Lo minimo para saber que levantar: el perfil, la celda y el nombre del servidor de correo.
+    for clave_cfg in DEPLOY_PROFILE CELL_DB_NAME MAIL_HOSTNAME; do
+      if grep -qhE "^$clave_cfg=." "$TMP/config"/*.env 2>/dev/null; then
+        ok "la configuracion trae $clave_cfg"
+      else
+        mal "la configuracion no trae $clave_cfg: sin eso no se sabe que levantar"
+      fi
+    done
+  else
+    mal "el paquete de configuracion no se puede desempaquetar"
+  fi
+fi
+
+fase "6. Correo (buzones y su directorio)"
 CELDA="$(tr ' ' '\n' <<<"$BASES" | grep -E '^mail_cell_' | head -1)"
 VMAIL=""
 for f in "$TMP/bajado"/vmail*.tar.gz; do [[ -s "$f" ]] && { VMAIL="$(basename "$f")"; break; }; done

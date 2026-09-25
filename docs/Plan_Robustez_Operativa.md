@@ -20,6 +20,7 @@ Y lo que hay fuera son cuatro cosas, ni una más:
 | La frase de cifrado de los respaldos | Fuera del servidor |
 | La llave de desbloqueo de OpenBao **y su identificador** | Fuera del servidor |
 | La credencial de despliegue del almacén (`despliegue.role_id` y `.secret_id`) | Fuera del servidor |
+| La **configuración** del servidor (los dos `.env`) | S3, cifrada |
 
 Si con eso no se vuelve, el respaldo no vale. Y eso no se sabe hasta intentarlo.
 
@@ -32,6 +33,12 @@ bastaban la frase y la llave. No bastan:
   de recuperación **no abre nada**. Lo único que abre es la credencial de AppRole de despliegue, que
   hasta ahora solo existía dentro del servidor. Es decir: **si el servidor hubiera ardido ayer, los
   secretos del respaldo no se habrían podido leer.**
+
+Y una cuarta, encontrada al seguir tirando del hilo: **la configuración del servidor no se
+respaldaba**. Los dos `.env` (plataforma y motores) no los versiona nadie, porque describen *este*
+servidor: qué celda es, qué dominio sirve, a dónde apunta cada servicio. Con los datos de vuelta
+pero sin ellos, habría que reconstruirlos a mano y de memoria. Ahora viajan cifrados en la misma
+corrida (`config/<sello>.tar.gz.gpg`) y el ensayo los exige.
 
 **Qué se hace.** Un guion de ensayo, `ops/backup/ensayo-recuperacion.sh`, que corre en contenedores
 desechables (como `make e2e`) y, **sin tocar producción ni leer nada del servidor**, parte del bucket
