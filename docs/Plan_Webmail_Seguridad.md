@@ -147,6 +147,50 @@ Eventos (outbox, `events.Event` con `TenantID`, `Source: "mail-directory"`):
 Errores nuevos: `MFA_REQUIRED` (falta el código en una acción que lo exige), `INVALID_MFA_CODE`,
 `MFA_CHALLENGE_EXPIRED`, `REAUTH_REQUIRED`, `EXTERNAL_FORWARDING_DISABLED`.
 
+#### Estado de S2 (servicio webmail, V 2026-09-24: unitarias, adaptadores con `httptest`, integración contra Redis real; sin S1 desplegado)
+
+Implementado como la tabla, con estas precisiones, que son el contrato para S3 y S4:
+
+- **Activar exige haber preparado.** `setup` guarda en el Redis del webmail el SHA-256 del secreto,
+  ligado al buzón, 10 minutos; `activate` solo acepta ese secreto (409 `MFA_SETUP_EXPIRED` si no hay
+  preparación o el secreto es otro). Sin esto, una sesión robada llamaría a `activate` con su propio
+  secreto sin pasar por la contraseña. Un código malo no gasta la preparación. `activate` responde 200.
+- **Desactivar no llama antes a `mfa/verify`.** La contraseña se comprueba en mail-auth y el código lo
+  valida mail-directory en el propio `DELETE /internal/mail-directory/mfa {code}`: validarlo antes lo
+  gastaría (anti-repetición) y el `DELETE` lo rechazaría. Lo mismo `recovery-codes {code}`. **S1 debe
+  validar el código dentro de esas dos rutas.** `mfa/verify` lo usan el segundo paso del acceso y la
+  reautenticación (`PUT /filters`, `POST /password`, `POST /security/app-passwords`).
+- **Con TOTP lo dice mail-auth.** La reautenticación sabe si pedir código por `mfa_required` en la
+  respuesta de mail-auth a la contraseña; sin él basta la contraseña. `setup` con TOTP ya activo es 409
+  `MFA_ALREADY_ENABLED`.
+- **Contraseña actual incorrecta** en cualquiera de estos flujos: 401 `INVALID_CREDENTIALS`, como
+  `POST /password`; la sesión sigue abierta.
+- **Códigos adicionales:** 409 `MFA_ALREADY_ENABLED`, 409 `MFA_NOT_ENABLED`, 409 `MFA_SETUP_EXPIRED`,
+  404 `APP_PASSWORD_NOT_FOUND`, 409 `APP_PASSWORD_LIMIT` (el 409 de mail-directory al crear), 429
+  `RATE_LIMITED` con `Retry-After`.
+- **`details.addresses`** de `REAUTH_REQUIRED` y `EXTERNAL_FORWARDING_DISABLED` sale como lista JSON. El
+  cliente de mail-directory la acepta como lista o como texto separado por comas (el `APIError` de
+  `pkg/response` solo admite texto).
+- **Contraseñas de aplicación en el webmail:** `{id, name, imap, pop3, smtp, sieve, dav, active,
+  last_used_at, created_at}` (los mismos nombres que el alta); el alta responde 201 con esos campos y
+  `password`. `app_passwords_max` es `null` salvo que la lista interna llegue como `{items, max}`; el
+  cliente acepta también la lista suelta de la administración y el alta como `{app_password, password}`
+  o plana.
+- **Segundo paso:** el token del desafío tiene la forma del de sesión (`<celda>.<256 bits>`); en Redis
+  solo su SHA-256 (`webmail:<celda>:mfa:c:<hash>`, identidad e intentos). Cada intento se cuenta de
+  forma atómica antes de validar (también un código vacío o imposible, que no llega a mail-directory);
+  el quinto fallo borra el desafío. Si mail-directory responde `MFA_NOT_ENABLED` (restablecido entre los
+  dos pasos) el desafío se borra y la respuesta es `MFA_CHALLENGE_EXPIRED`. La sesión hereda como
+  inicio el de la verificación de la contraseña: una revocación posterior la alcanza.
+- **Cupo:** por IP (en memoria, 600/min) en `POST /session`, `POST /session/mfa`, `DELETE /session`,
+  `/public/booking/*` y toda petición cuya cookie no abre sesión; por buzón (`NewSharedRateLimiter`,
+  limitador `webmail:mailbox:<celda>`, `WEBMAIL_RATE_LIMIT_PER_MAILBOX`, 60 a 100000, 600 por defecto)
+  en todo lo que tiene sesión. `GET /events` cuenta una vez por conexión.
+- **Emisor TOTP:** `MFA_ISSUER` (el de la plataforma; por defecto `Core Force Mail`).
+- **Pendiente para S4 (gateway):** `POST /session/mfa` no lleva `cf_wm`, así que con varias celdas el
+  gateway debe enrutarlo por la celda del token de `cf_wm_mfa` (mismo prefijo `<celda>.`) y añadirlo a
+  `strict_limit`. Con una sola celda funciona sin cambios.
+
 ### 3.5 Web
 
 - Webmail: paso del código en el acceso (TOTP o código de recuperación); pestaña **Seguridad** en

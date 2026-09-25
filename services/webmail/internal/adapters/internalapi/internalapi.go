@@ -22,11 +22,70 @@ import (
 const maxResponseBytes = 4 << 20
 
 // APIError es el error del envelope. details.field dice que campo se rechazo
-// (rules[3].conditions[0].value, emails[1].value...).
+// (rules[3].conditions[0].value, emails[1].value...). Un detalle que es una lista de textos
+// (details.addresses) queda en Lists; uno numerico o booleano, en Details con su texto JSON.
 type APIError struct {
-	Code    string            `json:"code"`
-	Message string            `json:"message"`
-	Details map[string]string `json:"details"`
+	Code    string
+	Message string
+	Details map[string]string
+	Lists   map[string][]string
+}
+
+func (e *APIError) UnmarshalJSON(b []byte) error {
+	var raw struct {
+		Code    string                     `json:"code"`
+		Message string                     `json:"message"`
+		Details map[string]json.RawMessage `json:"details"`
+	}
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return err
+	}
+	*e = APIError{Code: raw.Code, Message: raw.Message}
+	for k, v := range raw.Details {
+		var text string
+		if json.Unmarshal(v, &text) == nil {
+			e.setDetail(k, text)
+			continue
+		}
+		var list []string
+		if json.Unmarshal(v, &list) == nil {
+			if e.Lists == nil {
+				e.Lists = map[string][]string{}
+			}
+			e.Lists[k] = list
+			continue
+		}
+		var scalar any
+		if json.Unmarshal(v, &scalar) == nil {
+			switch scalar.(type) {
+			case float64, bool:
+				e.setDetail(k, string(v))
+			}
+		}
+	}
+	return nil
+}
+
+func (e *APIError) setDetail(k, v string) {
+	if e.Details == nil {
+		e.Details = map[string]string{}
+	}
+	e.Details[k] = v
+}
+
+// List devuelve el detalle k como lista: la lista del envelope o, si el servicio la envio como
+// texto, sus elementos separados por comas.
+func (e *APIError) List(k string) []string {
+	if list, ok := e.Lists[k]; ok {
+		return list
+	}
+	var out []string
+	for _, item := range strings.Split(e.Details[k], ",") {
+		if item = strings.TrimSpace(item); item != "" {
+			out = append(out, item)
+		}
+	}
+	return out
 }
 
 // Meta es la paginacion del envelope.
@@ -42,10 +101,13 @@ type envelope struct {
 	Meta  *Meta           `json:"meta"`
 }
 
-// Errors dice como traducir las respuestas que no son 2xx: primero el codigo de error del envelope
-// (ByCode), despues el codigo HTTP (ByStatus); lo que no esta es indisponibilidad. Field es el campo
-// que se da a un 422 sin details.field.
+// Errors dice como traducir las respuestas que no son 2xx: primero Map, despues el codigo de error
+// del envelope (ByCode), un 422 con mensaje como *domain.ValidationError y por ultimo el codigo HTTP
+// (ByStatus); lo que no esta es indisponibilidad. Field es el campo que se da a un 422 sin
+// details.field.
 type Errors struct {
+	// Map traduce un rechazo que necesita sus detalles; nil deja seguir con el resto de reglas.
+	Map      func(status int, e *APIError) error
 	ByCode   map[string]error
 	ByStatus map[int]error
 	Field    string
@@ -200,17 +262,22 @@ func (c *Caller) statusError(resp *http.Response, apiErr *APIError, errs Errors)
 			ETag: resp.Header.Get("ETag"), RetryAfter: resp.Header.Get("Retry-After"),
 		}
 	}
+	if apiErr != nil && errs.Map != nil {
+		if mapped := errs.Map(status, apiErr); mapped != nil {
+			return mapped
+		}
+	}
+	if apiErr != nil {
+		if mapped, ok := errs.ByCode[apiErr.Code]; ok && mapped != nil {
+			return mapped
+		}
+	}
 	if status == http.StatusUnprocessableEntity && apiErr != nil && apiErr.Message != "" {
 		field := errs.Field
 		if f := apiErr.Details["field"]; f != "" {
 			field = f
 		}
 		return domain.NewValidationError(field, apiErr.Message)
-	}
-	if apiErr != nil {
-		if mapped, ok := errs.ByCode[apiErr.Code]; ok && mapped != nil {
-			return mapped
-		}
 	}
 	if mapped, ok := errs.ByStatus[status]; ok && mapped != nil {
 		return mapped

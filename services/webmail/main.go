@@ -41,6 +41,7 @@ import (
 	redisadapter "github.com/alonsosss/corforce-email/services/webmail/internal/adapters/redis"
 	"github.com/alonsosss/corforce-email/services/webmail/internal/adapters/rfc5322"
 	smtpadapter "github.com/alonsosss/corforce-email/services/webmail/internal/adapters/smtp"
+	totpadapter "github.com/alonsosss/corforce-email/services/webmail/internal/adapters/totp"
 	"github.com/alonsosss/corforce-email/services/webmail/internal/adapters/unsubscribe"
 	"github.com/alonsosss/corforce-email/services/webmail/internal/app"
 	"github.com/alonsosss/corforce-email/services/webmail/internal/domain"
@@ -119,11 +120,27 @@ const (
 	// credencial maestra abre cualquier buzon de la celda.
 	minMasterPasswordLen = 32
 
-	operationTimeout   = 60 * time.Second
-	transferTimeout    = 5 * time.Minute
-	mailAuthTimeout    = 15 * time.Second
-	clamdTimeout       = 60 * time.Second
-	rateLimitPerMinute = 600
+	operationTimeout = 60 * time.Second
+	transferTimeout  = 5 * time.Minute
+	mailAuthTimeout  = 15 * time.Second
+	clamdTimeout     = 60 * time.Second
+	// ipRateLimitPerMinute acota por IP lo que no tiene sesion (inicio de sesion, segundo paso, citas
+	// publicas); lo que tiene sesion lo acota WEBMAIL_RATE_LIMIT_PER_MAILBOX por buzon, comun a todas
+	// las replicas (Redis): una oficina tras una sola IP no comparte cupo.
+	ipRateLimitPerMinute          = 600
+	defaultMailboxRateLimitPerMin = 600
+	minMailboxRateLimitPerMin     = 60
+	maxMailboxRateLimitPerMin     = 100000
+	rateLimitWindow               = time.Minute
+
+	// Verificacion en dos pasos (docs/Plan_Webmail_Seguridad.md, decision 7): el segundo paso del
+	// inicio de sesion espera 5 minutos y admite 5 codigos; un secreto preparado con la contrasena
+	// comprobada vale 10 minutos para activarse. El emisor que muestran las aplicaciones es el de la
+	// plataforma (MFA_ISSUER, el mismo que usa identity).
+	mfaChallengeTTL  = 5 * time.Minute
+	mfaMaxAttempts   = 5
+	mfaSetupTTL      = 10 * time.Minute
+	defaultMFAIssuer = "Core Force Mail"
 
 	// unsubscribeTimeout acota de principio a fin la baja en un clic contra el servidor del boletin.
 	unsubscribeTimeout = 10 * time.Second
@@ -168,6 +185,8 @@ type settings struct {
 	maxImportBytes     int64
 	eventsPerMailbox   int
 	eventsMailboxes    int
+	mailboxRatePerMin  int
+	mfaIssuer          string
 }
 
 func main() {
@@ -239,6 +258,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("webmail: %v", err)
 	}
+	totpProvisioner, err := totpadapter.New(st.mfaIssuer)
+	if err != nil {
+		log.Fatalf("webmail: MFA_ISSUER: %v", err)
+	}
 	directory, err := maildirectorycli.New(st.mailDirectoryURL, st.internalToken)
 	if err != nil {
 		log.Fatalf("webmail: %v", err)
@@ -300,6 +323,7 @@ func main() {
 			ScheduledPollInterval: st.scheduledPoll, ScheduledBatch: st.scheduledBatch,
 			MaxImportBytes:  st.maxImportBytes,
 			MaxReminderDays: st.remindersMaxDays, ReminderPollInterval: st.remindersPoll, ReminderBatch: st.remindersBatch,
+			MFAChallengeTTL: mfaChallengeTTL, MFAMaxAttempts: mfaMaxAttempts, MFASetupTTL: mfaSetupTTL,
 		},
 
 		// La baja en un clic es la unica salida del webmail a servidores de terceros: el cliente
@@ -307,6 +331,10 @@ func main() {
 		Unsubscriber: unsubscribe.New(unsubscribeTimeout),
 		Reminders:    directory,
 		QuickReplies: directory,
+
+		MFAChallenges: redisadapter.NewMFAStore(rdb, st.cellCode),
+		Security:      directory,
+		TOTP:          totpProvisioner,
 	})
 	if err != nil {
 		log.Fatalf("webmail: %v", err)
@@ -316,6 +344,9 @@ func main() {
 		AllowedOrigins: st.origins, MaxMessageBytes: st.limits.MaxMessageBytes,
 		OperationTimeout: operationTimeout, TransferTimeout: transferTimeout,
 		MaxLargeFileBytes: largeFileCeiling, ComposeConcurrency: st.composeConcurrency,
+		MFAChallengeTTL:    mfaChallengeTTL,
+		IPRateLimiter:      middleware.NewRateLimiter(ipRateLimitPerMinute, rateLimitWindow),
+		MailboxRateLimiter: middleware.NewSharedRateLimiter(middleware.NewRedisRateLimitStore(rdb), "webmail:mailbox:"+st.cellCode, st.mailboxRatePerMin, rateLimitWindow, logger),
 	}, logger)
 	if err != nil {
 		log.Fatalf("webmail: %v", err)
@@ -359,7 +390,6 @@ func main() {
 	// freno de fuerza bruta de mail-auth.
 	r.Use(middleware.RequireGatewayToken)
 	r.Use(middleware.Logger(logger))
-	r.Use(middleware.NewRateLimiter(rateLimitPerMinute, time.Minute).Limit)
 	r.Mount("/", h.Routes())
 
 	srv := server.New(st.port, r, logger)
@@ -504,6 +534,13 @@ func loadSettings() (settings, error) {
 		return st, err
 	}
 	st.maxImportBytes = int64(importBytes)
+	if st.mailboxRatePerMin, err = config.EnvInt("WEBMAIL_RATE_LIMIT_PER_MAILBOX", defaultMailboxRateLimitPerMin, minMailboxRateLimitPerMin, maxMailboxRateLimitPerMin); err != nil {
+		return st, err
+	}
+	st.mfaIssuer = envString("MFA_ISSUER", defaultMFAIssuer)
+	if _, err := totpadapter.New(st.mfaIssuer); err != nil {
+		return st, fmt.Errorf("MFA_ISSUER: %w", err)
+	}
 	if st.internalToken, err = middleware.InternalGatewayToken(); err != nil {
 		return st, fmt.Errorf("%w (sin el mail-directory rechaza la consulta de remitentes)", err)
 	}

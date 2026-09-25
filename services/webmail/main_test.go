@@ -45,6 +45,8 @@ func setSettingsEnv(t *testing.T, environment string, overrides map[string]strin
 		"WEBMAIL_REMINDERS_BATCH":             "",
 		"WEBMAIL_REMINDERS_MAX_DAYS":          "",
 		"WEBMAIL_MAX_IMPORT_BYTES":            "",
+		"WEBMAIL_RATE_LIMIT_PER_MAILBOX":      "",
+		"MFA_ISSUER":                          "",
 		"AUTH_COOKIE_SECURE":                  "",
 		"CORS_ALLOWED_ORIGINS":                "",
 		"API_ORIGIN":                          "",
@@ -244,5 +246,32 @@ func TestLoadSettingsRecordatorios(t *testing.T) {
 	})
 	if st, err = loadSettings(); err != nil || st.remindersPoll.Seconds() != 10 || st.remindersBatch != 20 || st.remindersMaxDays != 90 {
 		t.Fatalf("valores fijados: %+v %v", st, err)
+	}
+}
+
+func TestLoadSettingsCupoPorBuzonYEmisor(t *testing.T) {
+	setSettingsEnv(t, "production", nil)
+	st, err := loadSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.mailboxRatePerMin != defaultMailboxRateLimitPerMin || st.mfaIssuer != defaultMFAIssuer {
+		t.Fatalf("valores por defecto: %d %q", st.mailboxRatePerMin, st.mfaIssuer)
+	}
+	refused := map[string][]string{
+		"WEBMAIL_RATE_LIMIT_PER_MAILBOX": {"0", "59", "100001", "x"},
+		"MFA_ISSUER":                     {"Core:Force", strings.Repeat("a", 65), "Core\tForce"},
+	}
+	for key, values := range refused {
+		for _, value := range values {
+			setSettingsEnv(t, "production", map[string]string{key: value})
+			if _, err := loadSettings(); !errorMentions(key)(err) {
+				t.Errorf("%s=%q deberia impedir el arranque: %v", key, value, err)
+			}
+		}
+	}
+	setSettingsEnv(t, "production", map[string]string{"WEBMAIL_RATE_LIMIT_PER_MAILBOX": "1200", "MFA_ISSUER": " Correo Empresa "})
+	if st, err = loadSettings(); err != nil || st.mailboxRatePerMin != 1200 || st.mfaIssuer != "Correo Empresa" {
+		t.Fatalf("valores fijados: %d %q %v", st.mailboxRatePerMin, st.mfaIssuer, err)
 	}
 }

@@ -34,6 +34,8 @@ const (
 	testMailbox = "22222222-2222-4222-8222-222222222222"
 	// legacyUser inicia sesion como un buzon ante un mail-auth que aun no devuelve empresa ni buzon.
 	legacyUser = "antigua@empresa.pe"
+	// mfaUser tiene la verificacion en dos pasos activa: mail-auth responde exito con MFARequired.
+	mfaUser = "doble@empresa.pe"
 )
 
 func (stubAuth) Verify(_ context.Context, username, password, _ string) (domain.Identity, error) {
@@ -42,6 +44,8 @@ func (stubAuth) Verify(_ context.Context, username, password, _ string) (domain.
 		return domain.Identity{Username: username, DisplayName: "Ana", TenantID: testTenant, MailboxID: testMailbox}, nil
 	case username == legacyUser && password == testPass:
 		return domain.Identity{Username: username, DisplayName: "Antigua"}, nil
+	case username == mfaUser && password == testPass:
+		return domain.Identity{Username: username, DisplayName: "Doble", TenantID: testTenant, MailboxID: testMailbox, MFARequired: true}, nil
 	}
 	return domain.Identity{}, domain.ErrInvalidCredentials
 }
@@ -333,6 +337,7 @@ func testDeps(store ports.SessionStore, mb *stubMailbox, sender ports.Sender, va
 		Signatures: settings, Filters: settings, Passwords: settings, Scheduled: settings, Contacts: dav, Calendar: dav,
 		Ledger: &memLedger{m: map[string]domain.SendRecord{}}, Composer: nopComposer{}, Sanitizer: nopSanitizer{}, PartURL: PartURL,
 		Reminders: settings.reminders, QuickReplies: settings.reminders,
+		MFAChallenges: settings.mfa, Security: settings.security, TOTP: stubTOTP{},
 		Logger: zap.NewNop(), Unsubscriber: &stubUnsubscriber{},
 		Config: app.Config{
 			CellCode:         testCell,
@@ -342,22 +347,34 @@ func testDeps(store ports.SessionStore, mb *stubMailbox, sender ports.Sender, va
 			SendTimeout: 5 * time.Second, MaxScheduledDays: 30, ScheduledPollInterval: time.Minute, ScheduledBatch: 5,
 			MaxImportBytes:  512,
 			MaxReminderDays: 30, ReminderPollInterval: time.Minute, ReminderBatch: 5,
+			MFAChallengeTTL: 5 * time.Minute, MFAMaxAttempts: 5, MFASetupTTL: 10 * time.Minute,
 		},
 	}
 }
 
 func newTestEnv(t *testing.T, sender ports.Sender) *testEnv {
 	t.Helper()
+	return newTestEnvWith(t, sender, nil)
+}
+
+// newTestEnvWith es newTestEnv con la configuracion del API retocada por tune.
+func newTestEnvWith(t *testing.T, sender ports.Sender, tune func(*Config)) *testEnv {
+	t.Helper()
 	env := &testEnv{mb: &stubMailbox{}, vac: &stubVacations{}, book: &stubAddressBook{}, settings: newStubSettings(), dav: &stubDAV{}}
 	svc, err := app.New(testDeps(&memStore{m: map[string]domain.Session{}}, env.mb, sender, env.vac, env.book, env.settings, env.dav))
 	if err != nil {
 		t.Fatal(err)
 	}
-	h, err := NewHandler(svc, Config{
+	cfg := Config{
 		CookieSecure: true, SessionIdle: 30 * time.Minute, SessionMax: 12 * time.Hour,
+		MFAChallengeTTL: 5 * time.Minute, IPRateLimiter: unlimited{}, MailboxRateLimiter: unlimited{},
 		AllowedOrigins:  []string{allowedOrigin, "https://api.example.com"},
 		MaxMessageBytes: 4096, OperationTimeout: 5 * time.Second, TransferTimeout: 5 * time.Second,
-	}, zap.NewNop())
+	}
+	if tune != nil {
+		tune(&cfg)
+	}
+	h, err := NewHandler(svc, cfg, zap.NewNop())
 	if err != nil {
 		t.Fatal(err)
 	}

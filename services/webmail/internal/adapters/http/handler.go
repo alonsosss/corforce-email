@@ -48,6 +48,20 @@ type Config struct {
 	// ComposeConcurrency es cuantos envios o borradores se componen a la vez en el proceso; 0
 	// usa defaultComposeConcurrency.
 	ComposeConcurrency int
+	// MFAChallengeTTL es la vida de la cookie del segundo paso: la misma que la del desafio.
+	MFAChallengeTTL time.Duration
+	// IPRateLimiter acota por IP lo que no tiene sesion (inicio y cierre de sesion, segundo paso,
+	// pagina publica de citas y cookies que no abren sesion); MailboxRateLimiter acota por buzon
+	// todo lo que se sirve con sesion, de modo que una oficina tras una sola IP no comparte cupo.
+	IPRateLimiter      RateLimiter
+	MailboxRateLimiter RateLimiter
+}
+
+// RateLimiter decide si una peticion cabe en su cupo y cuanto falta para que se reabra
+// (pkg/middleware.RateLimiter lo cumple).
+type RateLimiter interface {
+	AllowIP(ctx context.Context, ip string) (bool, time.Duration)
+	AllowKey(ctx context.Context, key string) (bool, time.Duration)
 }
 
 // defaultComposeConcurrency cabe en el contenedor de 512 MiB con mensajes de 25 MiB: cada
@@ -72,8 +86,11 @@ func NewHandler(svc *app.Service, cfg Config, logger *zap.Logger) (*Handler, err
 		return nil, err
 	}
 	if cfg.OperationTimeout <= 0 || cfg.TransferTimeout <= 0 || cfg.SessionIdle <= 0 || cfg.SessionMax <= 0 ||
-		cfg.MaxMessageBytes <= 0 || cfg.ComposeConcurrency < 0 {
+		cfg.MaxMessageBytes <= 0 || cfg.ComposeConcurrency < 0 || cfg.MFAChallengeTTL <= 0 {
 		return nil, errors.New("webmail: plazos y topes del API deben ser positivos")
+	}
+	if cfg.IPRateLimiter == nil || cfg.MailboxRateLimiter == nil {
+		return nil, errors.New("webmail: faltan los limitadores de peticiones por IP y por buzón")
 	}
 	if cfg.ComposeConcurrency == 0 {
 		cfg.ComposeConcurrency = defaultComposeConcurrency
@@ -93,11 +110,14 @@ func (h *Handler) Routes() http.Handler {
 	r.Route(BasePath, func(r chi.Router) {
 		r.Use(apiHeaders)
 		r.Use(h.origins.Middleware)
-		r.Post("/session", h.Login)
-		r.Delete("/session", h.Logout)
-		r.With(h.requireSessionPeek).Get("/events", h.Events)
+		r.With(h.limitByIP).Post("/session", h.Login)
+		r.With(h.limitByIP).Post("/session/mfa", h.LoginMFA)
+		r.With(h.limitByIP).Delete("/session", h.Logout)
+		// El flujo de avisos cuenta una vez por conexion: los latidos no son peticiones.
+		r.With(h.requireSessionPeek, h.limitByMailbox).Get("/events", h.Events)
 		r.Group(func(r chi.Router) {
 			r.Use(h.requireSession)
+			r.Use(h.limitByMailbox)
 			r.Get("/session", h.Session)
 			r.Get("/meta", h.Meta)
 			r.Get("/meta/dav", h.DAVMeta)
@@ -165,6 +185,7 @@ func (h *Handler) Routes() http.Handler {
 			r.Get("/availability", h.Availability)
 			r.Get("/booking", h.BookingSettings)
 			r.Put("/booking", h.SaveBookingSettings)
+			h.securityRoutes(r)
 		})
 	})
 	// Pagina publica de citas: sin sesion, con las mismas cabeceras del API y el mismo control de origen en la
@@ -172,6 +193,7 @@ func (h *Handler) Routes() http.Handler {
 	r.Route(PublicBookingPath, func(r chi.Router) {
 		r.Use(apiHeaders)
 		r.Use(h.origins.Middleware)
+		r.Use(h.limitByIP)
 		r.Get("/{cell}/{tenant}/{page}", h.PublicBooking)
 		r.Post("/{cell}/{tenant}/{page}", h.Book)
 	})
@@ -251,10 +273,32 @@ func writeError(w http.ResponseWriter, err error) {
 	var verr *domain.ValidationError
 	var rcpt *domain.RecipientRejectedError
 	var rejection *domain.ServiceRejection
+	var reauth *domain.ReauthRequiredError
+	var forbidden *domain.ExternalForwardingDisabledError
 	if writeReminderError(w, err) {
 		return
 	}
 	switch {
+	case errors.As(err, &reauth):
+		writeAddressesError(w, http.StatusForbidden, "REAUTH_REQUIRED", reauth.Error(), reauth.Addresses)
+	case errors.As(err, &forbidden):
+		writeAddressesError(w, http.StatusUnprocessableEntity, "EXTERNAL_FORWARDING_DISABLED", forbidden.Error(), forbidden.Addresses)
+	case errors.Is(err, domain.ErrMFARequired):
+		response.Err(w, http.StatusForbidden, "MFA_REQUIRED", domain.ErrMFARequired.Error())
+	case errors.Is(err, domain.ErrInvalidMFACode):
+		response.Err(w, http.StatusUnprocessableEntity, "INVALID_MFA_CODE", domain.ErrInvalidMFACode.Error())
+	case errors.Is(err, domain.ErrMFAChallengeExpired):
+		response.Err(w, http.StatusUnauthorized, "MFA_CHALLENGE_EXPIRED", domain.ErrMFAChallengeExpired.Error())
+	case errors.Is(err, domain.ErrMFAAlreadyEnabled):
+		response.Err(w, http.StatusConflict, "MFA_ALREADY_ENABLED", domain.ErrMFAAlreadyEnabled.Error())
+	case errors.Is(err, domain.ErrMFANotEnabled):
+		response.Err(w, http.StatusConflict, "MFA_NOT_ENABLED", domain.ErrMFANotEnabled.Error())
+	case errors.Is(err, domain.ErrMFASetupExpired):
+		response.Err(w, http.StatusConflict, "MFA_SETUP_EXPIRED", domain.ErrMFASetupExpired.Error())
+	case errors.Is(err, domain.ErrAppPasswordNotFound):
+		response.Err(w, http.StatusNotFound, "APP_PASSWORD_NOT_FOUND", domain.ErrAppPasswordNotFound.Error())
+	case errors.Is(err, domain.ErrAppPasswordLimit):
+		response.Err(w, http.StatusConflict, "APP_PASSWORD_LIMIT", domain.ErrAppPasswordLimit.Error())
 	case errors.As(err, &rejection):
 		writeRejection(w, rejection)
 	case errors.As(err, &verr):

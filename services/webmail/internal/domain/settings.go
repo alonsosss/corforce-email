@@ -72,4 +72,7 @@ type MailFilters struct {
 type MailFiltersInput struct {
 	Rules      []FilterRule
 	Forwarding Forwarding
+	// Reauthenticated dice a mail-directory que el usuario acaba de confirmar su contrasena (y su
+	// codigo si tiene verificacion en dos pasos). Solo lo fija el caso de uso tras comprobarlas.
+	Reauthenticated bool
 }

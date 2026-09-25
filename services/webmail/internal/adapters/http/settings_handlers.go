@@ -101,9 +101,13 @@ type forwardingDTO struct {
 	KeepCopy  bool     `json:"keep_copy"`
 }
 
+// filtersRequest lleva, opcionales, la contrasena actual y el codigo con los que el usuario confirma
+// un reenvio externo nuevo cuando el directorio responde REAUTH_REQUIRED.
 type filtersRequest struct {
-	Rules      []filterRuleDTO `json:"rules"`
-	Forwarding forwardingDTO   `json:"forwarding"`
+	Rules           []filterRuleDTO `json:"rules"`
+	Forwarding      forwardingDTO   `json:"forwarding"`
+	CurrentPassword string          `json:"current_password"`
+	Code            string          `json:"code"`
 }
 
 type filtersDTO struct {
@@ -176,7 +180,8 @@ func (h *Handler) SetFilters(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := h.opContext(r)
 	defer cancel()
-	f, err := h.app.SetFilters(ctx, sessionFrom(r), req.toDomain())
+	reauth := domain.Reauthentication{CurrentPassword: req.CurrentPassword, Code: req.Code}
+	f, err := h.app.SetFilters(ctx, sessionFrom(r), req.toDomain(), reauth, clientIP(r))
 	if err != nil {
 		h.fail(w, r, err)
 		return
@@ -187,6 +192,8 @@ func (h *Handler) SetFilters(w http.ResponseWriter, r *http.Request) {
 type passwordRequest struct {
 	CurrentPassword string `json:"current_password"`
 	NewPassword     string `json:"new_password"`
+	// Code es obligatorio con la verificacion en dos pasos activa (403 MFA_REQUIRED sin el).
+	Code string `json:"code"`
 }
 
 // ChangePassword cambia la contrasena del buzon de la sesion. Con la actual incorrecta responde 401
@@ -200,7 +207,7 @@ func (h *Handler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := h.opContext(r)
 	defer cancel()
-	if err := h.app.ChangePassword(ctx, sessionFrom(r), req.CurrentPassword, req.NewPassword, clientIP(r)); err != nil {
+	if err := h.app.ChangePassword(ctx, sessionFrom(r), req.CurrentPassword, req.NewPassword, req.Code, clientIP(r)); err != nil {
 		h.fail(w, r, err)
 		return
 	}

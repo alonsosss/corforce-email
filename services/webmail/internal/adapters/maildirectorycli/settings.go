@@ -92,6 +92,13 @@ type filtersBody struct {
 	Forwarding forwardingJSON `json:"forwarding"`
 }
 
+// filtersRequest es lo que se envia al guardar: las reglas y, si el usuario acaba de confirmar su
+// identidad en el webmail, reauthenticated.
+type filtersRequest struct {
+	filtersBody
+	Reauthenticated bool `json:"reauthenticated,omitempty"`
+}
+
 type filtersData struct {
 	filtersBody
 	UpdatedAt *time.Time     `json:"updated_at"`
@@ -108,10 +115,12 @@ func (c *Client) Filters(ctx context.Context, username string) (domain.MailFilte
 }
 
 // SetFilters los reemplaza. El directorio los valida y genera el Sieve; un rechazo vuelve con su
-// details.field.
+// details.field, y un reenvio externo nuevo sin reautenticar o prohibido por la empresa, con sus
+// destinos (filtersErrors).
 func (c *Client) SetFilters(ctx context.Context, username string, in domain.MailFiltersInput) (domain.MailFilters, error) {
+	body := filtersRequest{filtersBody: toFiltersBody(in), Reauthenticated: in.Reauthenticated}
 	var out filtersData
-	if err := c.api.Do(ctx, internalapi.Request{Method: http.MethodPut, Path: filtersPath, Query: usernameQuery(username), Body: toFiltersBody(in), Out: &out, Errors: internalapi.Errors{Field: "rules"}}); err != nil {
+	if err := c.api.Do(ctx, internalapi.Request{Method: http.MethodPut, Path: filtersPath, Query: usernameQuery(username), Body: body, Out: &out, Errors: filtersErrors}); err != nil {
 		return domain.MailFilters{}, err
 	}
 	return out.toDomain(), nil

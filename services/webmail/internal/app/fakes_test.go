@@ -28,6 +28,8 @@ type fakeAuth struct {
 	calls  int
 	lastIP string
 	err    error
+	// mfa son los buzones con verificacion en dos pasos: mail-auth responde exito con MFARequired.
+	mfa map[string]bool
 }
 
 func (a *fakeAuth) Verify(_ context.Context, username, password, remoteIP string) (domain.Identity, error) {
@@ -37,7 +39,7 @@ func (a *fakeAuth) Verify(_ context.Context, username, password, remoteIP string
 		return domain.Identity{}, a.err
 	}
 	if pw, ok := a.users[username]; ok && pw == password {
-		return domain.Identity{Username: username, DisplayName: a.names[username]}, nil
+		return domain.Identity{Username: username, DisplayName: a.names[username], MFARequired: a.mfa[username]}, nil
 	}
 	return domain.Identity{}, domain.ErrInvalidCredentials
 }
@@ -727,6 +729,8 @@ type harness struct {
 	clock     *testClock
 	unsub     *fakeUnsubscriber
 	reminders *fakeReminders
+	mfa       *fakeMFAStore
+	security  *fakeSecurity
 }
 
 const (
@@ -752,6 +756,8 @@ func newHarness(t *testing.T) *harness {
 		clock:     clock,
 		unsub:     &fakeUnsubscriber{},
 		reminders: newFakeReminders(),
+		mfa:       newFakeMFAStore(clock),
+		security:  &fakeSecurity{validCode: "123456"},
 	}
 	h.mb.folders = []domain.Folder{
 		{Name: "INBOX", Role: domain.RoleInbox, Selectable: true},
@@ -775,6 +781,7 @@ func (h *harness) deps() Deps {
 		Signatures: h.directory, Filters: h.directory, Passwords: h.directory, Scheduled: h.directory, Contacts: h.dav, Calendar: h.dav,
 		Ledger: h.ledger, Composer: h.composer, Sanitizer: h.sanitizer, Scanner: h.scanner,
 		Reminders: h.reminders, QuickReplies: h.reminders,
+		MFAChallenges: h.mfa, Security: h.security, TOTP: fakeTOTP{secret: "JBSWY3DPEHPK3PXP"},
 		PartURL: func(folder string, uid uint32, part string) string {
 			return fmt.Sprintf("/parts/%s/%d/%s", folder, uid, part)
 		},
@@ -795,17 +802,23 @@ func (h *harness) deps() Deps {
 			MaxReminderDays:       30,
 			ReminderPollInterval:  time.Second,
 			ReminderBatch:         5,
+			MFAChallengeTTL:       5 * time.Minute,
+			MFAMaxAttempts:        5,
+			MFASetupTTL:           10 * time.Minute,
 		},
 	}
 }
 
 func (h *harness) login(t *testing.T) (string, domain.Session) {
 	t.Helper()
-	token, sess, err := h.svc.Login(context.Background(), testUser, testPass, testIP, "")
+	res, err := h.svc.Login(context.Background(), testUser, testPass, testIP, "")
 	if err != nil {
 		t.Fatalf("login: %v", err)
 	}
-	return token, sess
+	if res.Token == "" {
+		t.Fatal("login: sin sesion")
+	}
+	return res.Token, res.Session
 }
 
 var keySeq int

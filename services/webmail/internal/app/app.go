@@ -37,6 +37,12 @@ type Config struct {
 	MaxReminderDays      int
 	ReminderPollInterval time.Duration
 	ReminderBatch        int
+	// MFAChallengeTTL es cuanto espera el segundo paso del inicio de sesion y MFAMaxAttempts cuantos
+	// codigos admite un desafio antes de borrarse. MFASetupTTL es cuanto vale un secreto preparado
+	// (con la contrasena comprobada) para activarse.
+	MFAChallengeTTL time.Duration
+	MFAMaxAttempts  int
+	MFASetupTTL     time.Duration
 }
 
 type Deps struct {
@@ -78,6 +84,12 @@ type Deps struct {
 	// Recordatorios (posponer y seguimiento) y respuestas rapidas del buzon, en mail-directory.
 	Reminders    ports.ReminderDirectory
 	QuickReplies ports.QuickReplyDirectory
+
+	// Verificacion en dos pasos y contrasenas de aplicacion (mail-directory), los desafios del
+	// segundo paso del inicio de sesion (Redis) y la preparacion de secretos TOTP.
+	MFAChallenges ports.MFAChallengeStore
+	Security      ports.SecurityDirectory
+	TOTP          ports.TOTPProvisioner
 }
 
 // Service es el caso de uso del webmail.
@@ -112,6 +124,10 @@ type Service struct {
 	// Recordatorios y respuestas rapidas (Deps.Reminders, Deps.QuickReplies).
 	reminders    ports.ReminderDirectory
 	quickReplies ports.QuickReplyDirectory
+
+	mfaChallenges ports.MFAChallengeStore
+	security      ports.SecurityDirectory
+	totp          ports.TOTPProvisioner
 }
 
 // New valida la configuracion y las dependencias: un webmail a medio cablear no arranca.
@@ -123,6 +139,12 @@ func New(d Deps) (*Service, error) {
 	}
 	if d.Reminders == nil || d.QuickReplies == nil {
 		return nil, errors.New("webmail: faltan los recordatorios o las respuestas rapidas del directorio")
+	}
+	if d.MFAChallenges == nil || d.Security == nil || d.TOTP == nil {
+		return nil, errors.New("webmail: faltan la verificacion en dos pasos o las contrasenas de aplicacion")
+	}
+	if d.Config.MFAChallengeTTL <= 0 || d.Config.MFAMaxAttempts < 1 || d.Config.MFASetupTTL <= 0 {
+		return nil, errors.New("webmail: el plazo y los intentos del segundo paso y el plazo de preparacion deben ser positivos")
 	}
 	if d.Config.MaxReminderDays < 1 || d.Config.ReminderPollInterval <= 0 || d.Config.ReminderBatch < 1 {
 		return nil, errors.New("webmail: el plazo, el intervalo y el lote de los recordatorios deben ser positivos")
@@ -156,6 +178,7 @@ func New(d Deps) (*Service, error) {
 		ledger: d.Ledger, composer: d.Composer, sanitizer: d.Sanitizer, scanner: d.Scanner,
 		partURL: d.PartURL, clock: clock, logger: d.Logger, cfg: d.Config, unsubscriber: d.Unsubscriber,
 		reminders: d.Reminders, quickReplies: d.QuickReplies, largeFiles: d.LargeFiles,
+		mfaChallenges: d.MFAChallenges, security: d.Security, totp: d.TOTP,
 	}, nil
 }
 

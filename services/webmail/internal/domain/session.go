@@ -33,12 +33,14 @@ func ParseSessionToken(token string) (cell string, ok bool) {
 
 // Identity es lo que la verificacion del buzon devuelve al abrir el webmail. TenantID y MailboxID
 // son la empresa y el buzon (UUID) que mail-auth devuelve para service webmail; vacios si una
-// version anterior de mail-auth no los envia.
+// version anterior de mail-auth no los envia. MFARequired dice que el buzon tiene la verificacion en
+// dos pasos activa: la contrasena es correcta, pero el webmail no abre sesion sin el segundo paso.
 type Identity struct {
 	Username    string
 	DisplayName string
 	TenantID    string
 	MailboxID   string
+	MFARequired bool
 }
 
 // Session es una sesion de webmail.

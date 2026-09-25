@@ -33,7 +33,7 @@ func TestLosRechazosDelDirectorioConservanElCampo(t *testing.T) {
 	h := newHarness(t)
 	_, sess := h.login(t)
 	h.directory.settingsErr = domain.NewValidationError("rules[3].conditions[0].value", "demasiado largo")
-	_, err := h.svc.SetFilters(context.Background(), sess, domain.MailFiltersInput{})
+	_, err := h.svc.SetFilters(context.Background(), sess, domain.MailFiltersInput{}, domain.Reauthentication{}, testIP)
 	var verr *domain.ValidationError
 	if !errors.As(err, &verr) || verr.Field != "rules[3].conditions[0].value" {
 		t.Fatalf("%v", err)
@@ -57,7 +57,7 @@ func TestLasReglasViajanConElBuzonDeLaSesion(t *testing.T) {
 			Actions:    []domain.FilterAction{{Type: "move", Folder: "Facturas"}, {Type: "forward", Address: "c@x.pe", KeepCopy: &keep}}}},
 		Forwarding: domain.Forwarding{Enabled: true, Addresses: []string{"yo@x.pe"}, KeepCopy: true},
 	}
-	out, err := h.svc.SetFilters(context.Background(), sess, in)
+	out, err := h.svc.SetFilters(context.Background(), sess, in, domain.Reauthentication{}, testIP)
 	if err != nil || h.directory.settingsFor != testUser || len(out.Rules) != 1 || out.Rules[0].Actions[1].Address != "c@x.pe" {
 		t.Fatalf("%+v %v", out, err)
 	}
@@ -69,7 +69,7 @@ func TestCambiarContrasenaCompruebaLaActual(t *testing.T) {
 	ctx := context.Background()
 	calls := h.auth.calls
 
-	if err := h.svc.ChangePassword(ctx, sess, "mala", "nueva-larga-segura", testIP); !errors.Is(err, domain.ErrInvalidCredentials) {
+	if err := h.svc.ChangePassword(ctx, sess, "mala", "nueva-larga-segura", "", testIP); !errors.Is(err, domain.ErrInvalidCredentials) {
 		t.Fatalf("actual incorrecta: %v", err)
 	}
 	if h.auth.calls != calls+1 || h.auth.lastIP != testIP || h.directory.passwordSet != "" {
@@ -81,19 +81,19 @@ func TestCambiarContrasenaCompruebaLaActual(t *testing.T) {
 
 	var verr *domain.ValidationError
 	for _, next := range []string{"", testPass} {
-		if err := h.svc.ChangePassword(ctx, sess, testPass, next, testIP); !errors.As(err, &verr) || verr.Field != "new_password" {
+		if err := h.svc.ChangePassword(ctx, sess, testPass, next, "", testIP); !errors.As(err, &verr) || verr.Field != "new_password" {
 			t.Errorf("nueva %q: %v", next, err)
 		}
 	}
 
 	h.directory.passwordErr = domain.NewValidationError("password", "demasiado corta")
-	if err := h.svc.ChangePassword(ctx, sess, testPass, "corta-pero-no-tanto", testIP); !errors.As(err, &verr) || verr.Field != "new_password" || verr.Reason != "demasiado corta" {
+	if err := h.svc.ChangePassword(ctx, sess, testPass, "corta-pero-no-tanto", "", testIP); !errors.As(err, &verr) || verr.Field != "new_password" || verr.Reason != "demasiado corta" {
 		t.Fatalf("politica del directorio: %v", err)
 	}
 	h.directory.passwordErr = nil
 
 	h.clock.Advance(time.Second)
-	if err := h.svc.ChangePassword(ctx, sess, testPass, "nueva-larga-segura", testIP); err != nil {
+	if err := h.svc.ChangePassword(ctx, sess, testPass, "nueva-larga-segura", "", testIP); err != nil {
 		t.Fatal(err)
 	}
 	if h.directory.passwordFor != testUser || h.directory.passwordSet != "nueva-larga-segura" {
@@ -108,7 +108,7 @@ func TestCambiarContrasenaConMailAuthCaido(t *testing.T) {
 	h := newHarness(t)
 	_, sess := h.login(t)
 	h.auth.err = fmt.Errorf("%w: mail-auth caido", domain.ErrUnavailable)
-	if err := h.svc.ChangePassword(context.Background(), sess, testPass, "nueva-larga-segura", testIP); !errors.Is(err, domain.ErrUnavailable) {
+	if err := h.svc.ChangePassword(context.Background(), sess, testPass, "nueva-larga-segura", "", testIP); !errors.Is(err, domain.ErrUnavailable) {
 		t.Fatalf("%v", err)
 	}
 	if h.directory.passwordSet != "" {

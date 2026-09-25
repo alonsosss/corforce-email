@@ -19,8 +19,8 @@ var ctx = context.Background()
 func TestLoginIdenticoParaInexistenteYContrasenaMala(t *testing.T) {
 	h := newHarness(t)
 
-	_, _, errUnknown := h.svc.Login(ctx, "nadie@empresa.pe", "loquesea-larga", testIP, "")
-	_, _, errWrong := h.svc.Login(ctx, testUser, "mala-contrasena", testIP, "")
+	_, errUnknown := h.svc.Login(ctx, "nadie@empresa.pe", "loquesea-larga", testIP, "")
+	_, errWrong := h.svc.Login(ctx, testUser, "mala-contrasena", testIP, "")
 
 	// El mismo error, no uno equivalente: el adaptador HTTP responde con el mismo cuerpo.
 	if errUnknown != domain.ErrInvalidCredentials || errWrong != domain.ErrInvalidCredentials {
@@ -38,7 +38,7 @@ func TestLoginIdenticoParaInexistenteYContrasenaMala(t *testing.T) {
 func TestLoginConNombreImposibleNoConsultaMailAuth(t *testing.T) {
 	h := newHarness(t)
 	for _, u := range []string{"ana@empresa.pe*webmail@platform.local", "sin-arroba", ""} {
-		if _, _, err := h.svc.Login(ctx, u, testPass, testIP, ""); err != domain.ErrInvalidCredentials {
+		if _, err := h.svc.Login(ctx, u, testPass, testIP, ""); err != domain.ErrInvalidCredentials {
 			t.Fatalf("%q: %v", u, err)
 		}
 	}
@@ -50,7 +50,7 @@ func TestLoginConNombreImposibleNoConsultaMailAuth(t *testing.T) {
 func TestLoginMailAuthNoDisponible(t *testing.T) {
 	h := newHarness(t)
 	h.auth.err = fmt.Errorf("%w: conexion rechazada", domain.ErrUnavailable)
-	if _, _, err := h.svc.Login(ctx, testUser, testPass, testIP, ""); !errors.Is(err, domain.ErrUnavailable) {
+	if _, err := h.svc.Login(ctx, testUser, testPass, testIP, ""); !errors.Is(err, domain.ErrUnavailable) {
 		t.Fatalf("got %v", err)
 	}
 	if len(h.store.sessions) != 0 {
@@ -61,10 +61,11 @@ func TestLoginMailAuthNoDisponible(t *testing.T) {
 func TestLoginRotaElTokenYGuardaSoloSuHash(t *testing.T) {
 	h := newHarness(t)
 	first, _ := h.login(t)
-	second, sess, err := h.svc.Login(ctx, testUser, testPass, testIP, first)
+	res, err := h.svc.Login(ctx, testUser, testPass, testIP, first)
 	if err != nil {
 		t.Fatal(err)
 	}
+	second, sess := res.Token, res.Session
 	if first == second {
 		t.Fatal("el inicio de sesion debe emitir un token nuevo")
 	}

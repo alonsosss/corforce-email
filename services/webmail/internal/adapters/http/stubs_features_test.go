@@ -24,10 +24,15 @@ type stubSettings struct {
 	canceled    []string
 	// reminders hace de mail-directory para los recordatorios y las respuestas rapidas.
 	reminders *stubReminders
+	// security y mfa hacen de mail-directory (verificacion en dos pasos y contrasenas de aplicacion)
+	// y del almacen de desafios.
+	security *stubSecurity
+	mfa      *stubMFAStore
 }
 
 func newStubSettings() *stubSettings {
-	return &stubSettings{rows: map[string]domain.ScheduledSend{}, reminders: newStubReminders()}
+	return &stubSettings{rows: map[string]domain.ScheduledSend{}, reminders: newStubReminders(),
+		security: &stubSecurity{validCode: "123456"}, mfa: newStubMFAStore()}
 }
 
 func (s *stubSettings) Signature(_ context.Context, username string) (domain.Signature, error) {

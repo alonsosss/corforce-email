@@ -33,10 +33,11 @@ func TestIntegracionConversacionesFichaYBaja(t *testing.T) {
 	put("INBOX", "From: \"Ana Gerente\" <ana@ernpresa.test>\nTo: ana@empresa.test\nSubject: Transferencia urgente\nDate: Mon, 1 Sep 2026 14:00:00 +0000\nAuthentication-Results: mx.empresa.test; spf=fail smtp.mailfrom=ernpresa.test; dmarc=fail\n\nPaga hoy\n")
 	_ = mb.Close()
 
-	token, _, err := env.svc.Login(ctx, mailbox, password, "203.0.113.7", "")
+	login, err := env.svc.Login(ctx, mailbox, password, "203.0.113.7", "")
 	if err != nil {
 		t.Fatal(err)
 	}
+	token := login.Token
 	sess, err := env.svc.Authenticate(ctx, token)
 	if err != nil {
 		t.Fatal(err)
@@ -122,10 +123,11 @@ func TestIntegracionConversacionDesdeLaRespuestaTraeElPropioDeEnviados(t *testin
 	put("INBOX", "From: Cliente <c@cliente.test>\nTo: ana@empresa.test\nSubject: Re: Oferta\nDate: Mon, 1 Sep 2026 11:00:00 +0000\nMessage-ID: <c1@cliente.test>\nIn-Reply-To: <o1@empresa.test>\n\nDe acuerdo\n")
 	_ = mb.Close()
 
-	token, _, err := env.svc.Login(ctx, mailbox, password, "203.0.113.7", "")
+	login, err := env.svc.Login(ctx, mailbox, password, "203.0.113.7", "")
 	if err != nil {
 		t.Fatal(err)
 	}
+	token := login.Token
 	sess, err := env.svc.Authenticate(ctx, token)
 	if err != nil {
 		t.Fatal(err)

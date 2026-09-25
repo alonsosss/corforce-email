@@ -31,6 +31,54 @@ type SessionStore interface {
 	RevokedAt(ctx context.Context, username string) (time.Time, error)
 }
 
+// MFAChallengeStore guarda los desafios del segundo paso del inicio de sesion y las preparaciones
+// de la verificacion en dos pasos. Como las sesiones, la clave es el hash del token: el token en
+// claro solo existe en la cookie del navegador.
+type MFAChallengeStore interface {
+	CreateChallenge(ctx context.Context, key string, c domain.MFAChallenge, ttl time.Duration) error
+	// GetChallenge devuelve domain.ErrMFAChallengeExpired si el desafio no existe.
+	GetChallenge(ctx context.Context, key string) (domain.MFAChallenge, error)
+	// CountAttempt suma un intento al desafio y devuelve cuantos lleva, de forma atomica entre
+	// replicas; domain.ErrMFAChallengeExpired si ya no existe.
+	CountAttempt(ctx context.Context, key string) (int, error)
+	DeleteChallenge(ctx context.Context, key string) error
+	// SaveSetup recuerda, para el buzon, el hash del secreto que se acaba de preparar; una
+	// preparacion nueva sustituye a la anterior.
+	SaveSetup(ctx context.Context, username, secretHash string, ttl time.Duration) error
+	// SetupHash devuelve ese hash; domain.ErrMFASetupExpired si no hay ninguno.
+	SetupHash(ctx context.Context, username string) (string, error)
+	DeleteSetup(ctx context.Context, username string) error
+}
+
+// SecurityDirectory es la verificacion en dos pasos y las contrasenas de aplicacion del buzon en
+// mail-directory, que guarda el secreto cifrado y valida los codigos (un codigo vale una sola vez).
+// Un codigo que no vale es domain.ErrInvalidMFACode; el estado que no admite lo pedido,
+// domain.ErrMFAAlreadyEnabled o domain.ErrMFANotEnabled; cualquier otro fallo, domain.ErrUnavailable.
+type SecurityDirectory interface {
+	MFAStatus(ctx context.Context, username string) (domain.MFAStatus, error)
+	// ActivateMFA valida el codigo contra el secreto, lo guarda y devuelve los codigos de
+	// recuperacion, que solo se ven esta vez.
+	ActivateMFA(ctx context.Context, username, secret, code string) ([]string, error)
+	VerifyMFA(ctx context.Context, username, code string) (domain.MFAVerification, error)
+	// RegenerateRecoveryCodes valida el codigo y sustituye todos los de recuperacion.
+	RegenerateRecoveryCodes(ctx context.Context, username, code string) ([]string, error)
+	// DisableMFA valida el codigo y desactiva la verificacion en dos pasos.
+	DisableMFA(ctx context.Context, username, code string) error
+	AppPasswords(ctx context.Context, username string) (domain.AppPasswordList, error)
+	// CreateAppPassword devuelve la contrasena en claro una sola vez; el tope es
+	// domain.ErrAppPasswordLimit y un nombre invalido, un *domain.ValidationError.
+	CreateAppPassword(ctx context.Context, username string, in domain.AppPasswordInput) (domain.CreatedAppPassword, error)
+	// DeleteAppPassword: una que no es del buzon es domain.ErrAppPasswordNotFound.
+	DeleteAppPassword(ctx context.Context, username, id string) error
+}
+
+// TOTPProvisioner prepara el secreto de una aplicacion de autenticacion (RFC 6238) y su URI
+// otpauth://, con el emisor del despliegue.
+type TOTPProvisioner interface {
+	NewSecret() (string, error)
+	ProvisioningURI(secret, account string) string
+}
+
 // MailStore abre el buzon en el servidor IMAP de la celda.
 type MailStore interface {
 	// Open devuelve una conexion autenticada como el buzon; la cierra quien la abre.
@@ -188,7 +236,9 @@ type SignatureDirectory interface {
 }
 
 // FilterDirectory lee y reemplaza las reglas y el reenvio del buzon en mail-directory, que las
-// valida y genera el script Sieve. Errores como SignatureDirectory.
+// valida y genera el script Sieve. Errores como SignatureDirectory, y ademas: un reenvio externo
+// nuevo sin in.Reauthenticated es un *domain.ReauthRequiredError y uno que la empresa prohibe, un
+// *domain.ExternalForwardingDisabledError.
 type FilterDirectory interface {
 	Filters(ctx context.Context, username string) (domain.MailFilters, error)
 	SetFilters(ctx context.Context, username string, in domain.MailFiltersInput) (domain.MailFilters, error)

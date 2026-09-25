@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alonsosss/corforce-email/services/webmail/internal/app"
 	"github.com/alonsosss/corforce-email/services/webmail/internal/domain"
 )
 
@@ -218,14 +219,15 @@ func TestIntegracionEnvioProgramado(t *testing.T) {
 }
 
 func loginIntegration(t *testing.T, svc interface {
-	Login(context.Context, string, string, string, string) (string, domain.Session, error)
+	Login(context.Context, string, string, string, string) (app.LoginResult, error)
 	Authenticate(context.Context, string) (domain.Session, error)
 }) domain.Session {
 	t.Helper()
-	token, _, err := svc.Login(context.Background(), mailbox, password, "203.0.113.7", "")
+	login, err := svc.Login(context.Background(), mailbox, password, "203.0.113.7", "")
 	if err != nil {
 		t.Fatal(err)
 	}
+	token := login.Token
 	sess, err := svc.Authenticate(context.Background(), token)
 	if err != nil {
 		t.Fatal(err)
@@ -369,6 +371,50 @@ func (d staticDirectory) SetFilters(context.Context, string, domain.MailFiltersI
 }
 
 func (d staticDirectory) SetPassword(context.Context, string, string) error { return nil }
+
+// noSecurity es una verificacion en dos pasos que no responde: los buzones de estas pruebas no la
+// tienen activa.
+type noSecurity struct{}
+
+func (noSecurity) CreateChallenge(context.Context, string, domain.MFAChallenge, time.Duration) error {
+	return domain.ErrUnavailable
+}
+func (noSecurity) GetChallenge(context.Context, string) (domain.MFAChallenge, error) {
+	return domain.MFAChallenge{}, domain.ErrUnavailable
+}
+func (noSecurity) CountAttempt(context.Context, string) (int, error) { return 0, domain.ErrUnavailable }
+func (noSecurity) DeleteChallenge(context.Context, string) error     { return domain.ErrUnavailable }
+func (noSecurity) SaveSetup(context.Context, string, string, time.Duration) error {
+	return domain.ErrUnavailable
+}
+func (noSecurity) SetupHash(context.Context, string) (string, error) {
+	return "", domain.ErrUnavailable
+}
+func (noSecurity) DeleteSetup(context.Context, string) error { return domain.ErrUnavailable }
+func (noSecurity) MFAStatus(context.Context, string) (domain.MFAStatus, error) {
+	return domain.MFAStatus{}, domain.ErrUnavailable
+}
+func (noSecurity) ActivateMFA(context.Context, string, string, string) ([]string, error) {
+	return nil, domain.ErrUnavailable
+}
+func (noSecurity) VerifyMFA(context.Context, string, string) (domain.MFAVerification, error) {
+	return domain.MFAVerification{}, domain.ErrUnavailable
+}
+func (noSecurity) RegenerateRecoveryCodes(context.Context, string, string) ([]string, error) {
+	return nil, domain.ErrUnavailable
+}
+func (noSecurity) DisableMFA(context.Context, string, string) error { return domain.ErrUnavailable }
+func (noSecurity) AppPasswords(context.Context, string) (domain.AppPasswordList, error) {
+	return domain.AppPasswordList{}, domain.ErrUnavailable
+}
+func (noSecurity) CreateAppPassword(context.Context, string, domain.AppPasswordInput) (domain.CreatedAppPassword, error) {
+	return domain.CreatedAppPassword{}, domain.ErrUnavailable
+}
+func (noSecurity) DeleteAppPassword(context.Context, string, string) error {
+	return domain.ErrUnavailable
+}
+func (noSecurity) NewSecret() (string, error)            { return "", domain.ErrUnavailable }
+func (noSecurity) ProvisioningURI(string, string) string { return "" }
 
 // noDAV es un mail-dav que no responde: estas pruebas no usan la libreta ni el calendario.
 type noDAV struct{}

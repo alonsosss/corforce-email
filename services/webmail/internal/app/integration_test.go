@@ -58,10 +58,11 @@ func TestIntegracionWebmailContraIMAPYSMTP(t *testing.T) {
 
 	seed(t, store)
 
-	token, _, err := svc.Login(ctx, mailbox, password, "203.0.113.7", "")
+	login, err := svc.Login(ctx, mailbox, password, "203.0.113.7", "")
 	if err != nil {
 		t.Fatal(err)
 	}
+	token := login.Token
 	sess, err := svc.Authenticate(ctx, token)
 	if err != nil {
 		t.Fatal(err)
@@ -367,6 +368,7 @@ func newIntegration(t *testing.T) *integration {
 		Composer: rfc5322.New(), Sanitizer: htmlsafe.New(), PartURL: handler.PartURL, Logger: zap.NewNop(),
 		Unsubscriber: unsubscribe.New(time.Second),
 		Reminders:    reminders, QuickReplies: reminders,
+		MFAChallenges: noSecurity{}, Security: noSecurity{}, TOTP: noSecurity{},
 		Config: app.Config{
 			CellCode:         "pe-01",
 			Sessions:         domain.SessionPolicy{Idle: 30 * time.Minute, Max: 12 * time.Hour},
@@ -375,6 +377,7 @@ func newIntegration(t *testing.T) *integration {
 			SendTimeout: time.Minute, MaxScheduledDays: 30, ScheduledPollInterval: 50 * time.Millisecond,
 			ScheduledBatch: 5, MaxImportBytes: 1 << 20,
 			MaxReminderDays: 30, ReminderPollInterval: 50 * time.Millisecond, ReminderBatch: 5,
+			MFAChallengeTTL: 5 * time.Minute, MFAMaxAttempts: 5, MFASetupTTL: 10 * time.Minute,
 		},
 	})
 	if err != nil {

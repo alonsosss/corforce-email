@@ -41,7 +41,7 @@ func TestUnTokenDeOtraCeldaSeRechazaSinBuscarlo(t *testing.T) {
 	}
 	h.store.failGet = nil
 
-	if _, _, err := h.svc.Login(ctx, testUser, testPass, testIP, foreign); err != nil {
+	if _, err := h.svc.Login(ctx, testUser, testPass, testIP, foreign); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := h.svc.Authenticate(ctx, token); err != nil {

@@ -69,6 +69,9 @@ type verifyResponse struct {
 	DisplayName string `json:"display_name"`
 	TenantID    string `json:"tenant_id"`
 	MailboxID   string `json:"mailbox_id"`
+	// MFARequired llega con exito cuando el buzon tiene la verificacion en dos pasos activa: la
+	// contrasena es correcta pero falta el segundo paso.
+	MFARequired bool `json:"mfa_required"`
 }
 
 // Verify devuelve domain.ErrInvalidCredentials para cualquier rechazo (401 o success
@@ -105,6 +108,7 @@ func (c *Client) Verify(ctx context.Context, username, password, remoteIP string
 		return domain.Identity{
 			Username: username, DisplayName: displayName(out.DisplayName),
 			TenantID: uuidOrEmpty(out.TenantID), MailboxID: uuidOrEmpty(out.MailboxID),
+			MFARequired: out.MFARequired,
 		}, nil
 	case http.StatusUnauthorized:
 		return domain.Identity{}, domain.ErrInvalidCredentials

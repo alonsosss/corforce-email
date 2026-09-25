@@ -45,22 +45,39 @@ func (s *Service) Filters(ctx context.Context, sess domain.Session) (domain.Mail
 
 // SetFilters reemplaza las reglas y el reenvio del buzon de la sesion. Las valida mail-directory,
 // que genera el script Sieve: un dato que rechaza vuelve con su campo (rules[3].conditions[0].value).
-func (s *Service) SetFilters(ctx context.Context, sess domain.Session, in domain.MailFiltersInput) (domain.MailFilters, error) {
+//
+// Un reenvio a direcciones de fuera de la empresa que no estaba guardado exige reautenticacion: sin
+// reauth.CurrentPassword, mail-directory responde *domain.ReauthRequiredError con esos destinos y la
+// interfaz repite con la contrasena (y el codigo con verificacion en dos pasos). Solo tras
+// comprobarlas aqui se le dice al directorio que la peticion viene reautenticada.
+func (s *Service) SetFilters(ctx context.Context, sess domain.Session, in domain.MailFiltersInput, reauth domain.Reauthentication, remoteIP string) (domain.MailFilters, error) {
+	in.Reauthenticated = false
+	if reauth.CurrentPassword != "" {
+		if err := s.reauthenticate(ctx, sess, reauth, remoteIP); err != nil {
+			return domain.MailFilters{}, err
+		}
+		in.Reauthenticated = true
+	}
 	f, err := s.filters.SetFilters(ctx, sess.Username, in)
 	if err != nil {
+		var reauthErr *domain.ReauthRequiredError
+		var forbidden *domain.ExternalForwardingDisabledError
+		if errors.As(err, &reauthErr) || errors.As(err, &forbidden) {
+			return domain.MailFilters{}, err
+		}
 		return domain.MailFilters{}, s.directoryError("no se pudieron guardar las reglas", sess, err)
 	}
 	s.logger.Info("webmail: reglas del buzon cambiadas", zap.String("username", sess.Username),
-		zap.Int("rules", len(in.Rules)), zap.Bool("forwarding", in.Forwarding.Enabled))
+		zap.Int("rules", len(in.Rules)), zap.Bool("forwarding", in.Forwarding.Enabled), zap.Bool("reauthenticated", in.Reauthenticated))
 	return f, nil
 }
 
 // ChangePassword cambia la contrasena del buzon de la sesion. La actual se comprueba antes contra
 // mail-auth, con la IP real del cliente para su freno de fuerza bruta: una contrasena actual mala
-// es domain.ErrInvalidCredentials y no cambia ni revoca nada. El cambio lo hace mail-directory, con
-// su politica y su evento; tras el cambio se revocan tambien aqui las sesiones del buzon, sin
-// esperar al evento.
-func (s *Service) ChangePassword(ctx context.Context, sess domain.Session, current, next, remoteIP string) error {
+// es domain.ErrInvalidCredentials y no cambia ni revoca nada. Con verificacion en dos pasos exige
+// ademas un codigo (domain.ErrMFARequired sin el). El cambio lo hace mail-directory, con su politica
+// y su evento; tras el cambio se revocan tambien aqui las sesiones del buzon, sin esperar al evento.
+func (s *Service) ChangePassword(ctx context.Context, sess domain.Session, current, next, code, remoteIP string) error {
 	if current == "" || len(current) > maxPasswordBytes {
 		return domain.ErrInvalidCredentials
 	}
@@ -73,13 +90,8 @@ func (s *Service) ChangePassword(ctx context.Context, sess domain.Session, curre
 	if next == current {
 		return domain.NewValidationError("new_password", "debe ser distinta de la actual")
 	}
-	if _, err := s.auth.Verify(ctx, sess.Username, current, remoteIP); err != nil {
-		if errors.Is(err, domain.ErrInvalidCredentials) {
-			s.logger.Info("webmail: cambio de contrasena con la actual incorrecta", zap.String("username", sess.Username), zap.String("remote_ip", remoteIP))
-			return domain.ErrInvalidCredentials
-		}
-		s.logFailure("no se pudo verificar la contrasena actual", sess, err)
-		return unavailable(err)
+	if err := s.reauthenticate(ctx, sess, domain.Reauthentication{CurrentPassword: current, Code: code}, remoteIP); err != nil {
+		return err
 	}
 	if err := s.passwords.SetPassword(ctx, sess.Username, next); err != nil {
 		var verr *domain.ValidationError
