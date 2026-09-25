@@ -24,10 +24,15 @@ func NewRepo() *Repo {
 	return &Repo{Templates: map[uuid.UUID]*domain.Template{}}
 }
 
+func sameKey(a, b *string) bool { return a != nil && b != nil && *a == *b }
+
 func (f *Repo) CreateTemplate(_ context.Context, t *domain.Template) error {
 	for _, existing := range f.Templates {
 		if existing.TenantID == t.TenantID && existing.Name == t.Name {
 			return domain.ErrTemplateNameTaken
+		}
+		if existing.TenantID == t.TenantID && sameKey(existing.Key, t.Key) {
+			return domain.ErrTemplateKeyTaken
 		}
 	}
 	t.CreatedAt, t.UpdatedAt = time.Now(), time.Now()
@@ -47,6 +52,16 @@ func (f *Repo) GetTemplate(_ context.Context, tenantID, id uuid.UUID) (*domain.T
 
 func (f *Repo) GetTemplateForUpdate(ctx context.Context, tenantID, id uuid.UUID) (*domain.Template, error) {
 	return f.GetTemplate(ctx, tenantID, id)
+}
+
+func (f *Repo) GetTemplateByKey(_ context.Context, tenantID uuid.UUID, key string) (*domain.Template, error) {
+	for _, t := range f.Templates {
+		if t.TenantID == tenantID && t.Key != nil && *t.Key == key {
+			copied := *t
+			return &copied, nil
+		}
+	}
+	return nil, domain.ErrTemplateNotFound
 }
 
 func (f *Repo) ListTemplates(_ context.Context, tenantID uuid.UUID, filter ports.ListFilter) ([]*domain.Template, int64, error) {
@@ -78,6 +93,9 @@ func (f *Repo) UpdateTemplate(_ context.Context, t *domain.Template) error {
 	for _, other := range f.Templates {
 		if other.ID != t.ID && other.TenantID == t.TenantID && other.Name == t.Name {
 			return domain.ErrTemplateNameTaken
+		}
+		if other.ID != t.ID && other.TenantID == t.TenantID && sameKey(other.Key, t.Key) {
+			return domain.ErrTemplateKeyTaken
 		}
 	}
 	*existing = *t

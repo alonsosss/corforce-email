@@ -102,3 +102,42 @@ func TestRenderErrors(t *testing.T) {
 		t.Errorf("500: %v", err)
 	}
 }
+
+func TestResolveTemplateKeyContract(t *testing.T) {
+	tenant, tpl := uuid.New(), uuid.New()
+	status := http.StatusOK
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.EscapedPath() != "/internal/templates/by-key/pedido.confirmado" || r.Method != http.MethodGet {
+			t.Errorf("ruta %s %s", r.Method, r.URL.EscapedPath())
+		}
+		if r.Header.Get("X-Gateway-Token") != "tok" || r.Header.Get("X-Tenant-ID") != tenant.String() {
+			t.Errorf("cabeceras internas ausentes")
+		}
+		w.WriteHeader(status)
+		if status == http.StatusOK {
+			_, _ = w.Write([]byte(`{"data":{"id":"` + tpl.String() + `","kind":"transactional","status":"active"}}`))
+		} else {
+			_, _ = w.Write([]byte(`{"error":{"message":"clave de plantilla no válida"}}`))
+		}
+	}))
+	defer srv.Close()
+	client := New(srv.URL, "tok")
+
+	id, err := client.ResolveTemplateKey(context.Background(), tenant, "pedido.confirmado")
+	if err != nil || id != tpl {
+		t.Fatalf("ResolveTemplateKey: %s %v", id, err)
+	}
+	status = http.StatusNotFound
+	if _, err := client.ResolveTemplateKey(context.Background(), tenant, "pedido.confirmado"); !errors.Is(err, domain.ErrTemplateNotFound) {
+		t.Errorf("404: %v", err)
+	}
+	status = http.StatusUnprocessableEntity
+	var ve *domain.ValidationError
+	if _, err := client.ResolveTemplateKey(context.Background(), tenant, "pedido.confirmado"); !errors.As(err, &ve) {
+		t.Errorf("422: %v", err)
+	}
+	status = http.StatusBadGateway
+	if _, err := client.ResolveTemplateKey(context.Background(), tenant, "pedido.confirmado"); !errors.Is(err, domain.ErrTemplatesUnavailable) {
+		t.Errorf("502: %v", err)
+	}
+}

@@ -46,6 +46,8 @@ export interface Template {
   id: string;
   name: string;
   description: string;
+  /** Clave estable con la que otro producto nombra la plantilla (pedido.confirmado). */
+  key: string | null;
   kind: TemplateKind;
   status: TemplateStatus;
   /** 0 mientras no hay ninguna version publicada. */
@@ -80,6 +82,8 @@ export interface TemplateVersion {
   variables: TemplateVariable[] | null;
   /** null o ausente: HTML escrito a mano. */
   editor?: EditorDocument | null;
+  /** Marcado estructurado que la plataforma anade al renderizar; null sin marcado. */
+  markup?: TemplateMarkup | null;
   status: VersionStatus;
   published_at: string | null;
   created_by: string;
@@ -100,17 +104,22 @@ export interface TemplateDetail extends Template {
   versions: VersionSummary[];
 }
 
+/** Marcado estructurado: order es la tarjeta de pedido de Gmail (schema.org Order). */
+export type TemplateMarkup = 'order';
+
 export interface TemplateContent {
   subject: string;
   html: string;
   text?: string;
   variables: TemplateVariable[];
   editor?: EditorDocument | null;
+  markup?: TemplateMarkup;
 }
 
 export interface CreateTemplateRequest extends TemplateContent {
   name: string;
   description: string;
+  key?: string;
   kind: TemplateKind;
 }
 
@@ -118,6 +127,8 @@ export interface UpdateTemplateRequest {
   name?: string;
   description?: string;
   status?: TemplateStatus;
+  /** Vacia quita la clave. */
+  key?: string;
 }
 
 export interface TemplateListQuery extends PageQuery {
@@ -161,6 +172,8 @@ export interface TemplateLimits {
   max_list_fields: number;
   /** Elementos de una lista en un envio; mas es un rechazo, no un recorte. */
   max_list_items: number;
+  max_template_key: number;
+  max_brand_image_hosts: number;
 }
 
 /** Tipografia admitida en el kit, con su pila de alternativas seguras para correo. */
@@ -178,6 +191,7 @@ export interface TemplatesMeta {
   version_statuses: VersionStatus[];
   variable_types: VariableType[];
   field_types: FieldType[];
+  markups: TemplateMarkup[];
   reserved_variables: ReservedVariable[];
   editor_kinds: EditorKind[];
   /** Lista cerrada de tipografias del kit de marca. */
@@ -201,6 +215,8 @@ export interface BrandKit {
   colors: string[];
   fonts: string[];
   footer: BrandKitFooter;
+  /** Servidores de las imagenes que llegan en variables; vacio admite cualquier https. */
+  image_hosts: string[];
   updated_at: string | null;
 }
 
@@ -307,6 +323,7 @@ function toBrandKit(data: Partial<BrandKit> | null): BrandKit {
     logo_asset_id: data?.logo_asset_id ?? null,
     colors: data?.colors ?? [],
     fonts: data?.fonts ?? [],
+    image_hosts: data?.image_hosts ?? [],
     footer: {
       company: footer?.company ?? '',
       address: footer?.address ?? '',

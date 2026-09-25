@@ -359,3 +359,41 @@ func checkString(name, typ, s string) error {
 	}
 	return nil
 }
+
+// CheckImageHosts comprueba que cada imagen de los valores ya resueltos (ResolveValues) sale de un
+// servidor permitido, tambien dentro de las listas. allowed decide sobre el nombre de host; una
+// imagen vacia (opcional ausente) no se comprueba.
+func CheckImageHosts(declared []Variable, values map[string]any, allowed func(host string) bool) error {
+	check := func(name string, v any) error {
+		s, _ := v.(string)
+		if s == "" {
+			return nil
+		}
+		u, err := url.Parse(s)
+		if err != nil || !allowed(u.Hostname()) {
+			return fmt.Errorf("%w: la imagen de %q no es de un servidor permitido en el kit de marca", ErrInvalidVariables, name)
+		}
+		return nil
+	}
+	for _, v := range declared {
+		switch v.Type {
+		case VarImage:
+			if err := check(v.Name, values[v.Name]); err != nil {
+				return err
+			}
+		case VarList:
+			items, _ := values[v.Name].([]map[string]any)
+			for i, item := range items {
+				for _, f := range v.Fields {
+					if f.Type != VarImage {
+						continue
+					}
+					if err := check(fmt.Sprintf("%s[%d].%s", v.Name, i, f.Name), item[f.Name]); err != nil {
+						return err
+					}
+				}
+			}
+		}
+	}
+	return nil
+}

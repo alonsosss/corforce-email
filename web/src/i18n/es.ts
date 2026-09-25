@@ -1626,6 +1626,13 @@ export const es = {
   'templates.updated': 'Plantilla actualizada.',
   'templates.deleted': 'Plantilla eliminada.',
   'templates.exists': 'Ya existe una plantilla con ese nombre.',
+  'templates.existsNameOrKey': 'Ya existe una plantilla con ese nombre o con esa clave.',
+  'templates.key.label': 'Clave para integraciones',
+  'templates.key.hint':
+    'Con ella otro sistema envía esta plantilla sin guardar su id (template_key en el API de envío). Vacía, sin clave.',
+  'templates.key.placeholder': 'pedido.confirmado',
+  'templates.key.invalid':
+    'Usa minúsculas, dígitos, _ y - en partes separadas por punto, como pedido.confirmado. Hasta {n} caracteres.',
   'templates.notFound': 'La plantilla no existe.',
   'templates.archive': 'Archivar',
   'templates.archiveConfirm':
@@ -2874,6 +2881,9 @@ export const es = {
   'templates.editor.insertInText': 'Insertar en el texto',
   'templates.editor.insertInLink': 'Añadir al enlace',
   'templates.editor.insertLoop': 'Insertar recorrido',
+  'templates.editor.markupOrder': 'Tarjeta de pedido en Gmail',
+  'templates.editor.markupOrderHint':
+    'Añade al correo el resumen estructurado del pedido (schema.org Order) que Gmail muestra en su vista de compras. Exige las variables requeridas order_number, currency_code (código ISO como PEN), total e items con name, quantity y unit_price. Gmail solo lo muestra a remitentes registrados con Google.',
   'templates.editor.insertLogo': 'Insertar logo',
   'templates.editor.insertFooter': 'Insertar pie legal',
   'templates.editor.editBrandKit': 'Editar el kit de marca',
@@ -3100,6 +3110,15 @@ export const es = {
   'templates.pages.editor.htmlTooLarge': 'El HTML de la página supera {n} bytes.',
   'templates.pages.editor.cssTooLarge': 'Los estilos de la página superan {n} bytes.',
   'templates.pages.editor.tooLarge': 'El diseño supera {n} bytes: simplifícalo antes de guardar.',
+  'templates.brandKit.imageHosts': 'Servidores de imágenes',
+  'templates.brandKit.imageHostsHint':
+    'Desde dónde pueden cargarse las imágenes que llegan en variables, como la foto de cada producto. Un servidor admite también sus subdominios. Vacío admite cualquier servidor https; las imágenes de la biblioteca siempre se admiten.',
+  'templates.brandKit.imageHostsLabel': 'Servidores permitidos',
+  'templates.brandKit.imageHostsMax':
+    'Nombres como cdn.tienda.com, sin https:// ni rutas. Hasta {n}.',
+  'templates.brandKit.imageHostsPlaceholder': 'cdn.tienda.com',
+  'templates.brandKit.removeImageHost': 'Quitar {host}',
+  'templates.brandKit.imageHostInvalid': 'No es un nombre de servidor válido: {hosts}',
   'templates.brandKit.title': 'Kit de marca',
   'templates.brandKit.subtitle':
     'Logo, colores, tipografías y datos del pie legal que usan el editor y la galería.',

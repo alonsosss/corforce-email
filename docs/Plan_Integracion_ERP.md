@@ -126,7 +126,9 @@ Poco, que es el objetivo:
 3. **Reintento.** Basta con reintentar el alta pendiente: la verificación y la reconciliación del DNS
    son de esta plataforma, no del ERP.
 4. **Enviar por aquí.** `notification.email_provider` con los datos de la fase A, o mejor, migrar a la
-   API (`POST /api/v1/transactional/messages`), que da id de mensaje y estado.
+   API (`POST /api/v1/transactional/messages`), que da id de mensaje y estado. Para los correos de
+   pedido, con `template_key` y los datos del pedido en `variables`, sin HTML propio: el contrato
+   está en `docs/Plan_Plantillas_de_Pedido.md`.
 5. **Retirar lo propio:** el DKIM y la verificación de `crm_email`, y el envío directo a SES.
 
 Lo que **no** hay que tocar: el cliente de Cloudflare de las tiendas, que sigue igual. El ERP no

@@ -48,6 +48,7 @@ func TestMetaPublicaElCatalogoDelDominio(t *testing.T) {
 		{"version_statuses", meta.VersionStatuses, domain.VersionStatuses()},
 		{"variable_types", meta.VariableTypes, domain.VariableTypes()},
 		{"field_types", meta.FieldTypes, domain.FieldTypes()},
+		{"markups", meta.Markups, domain.Markups()},
 	}
 	for _, c := range checks {
 		if !slices.Equal(c.got, c.want) {
@@ -70,6 +71,7 @@ func TestMetaPublicaElCatalogoDelDominio(t *testing.T) {
 		MaxAssetBytes: domain.MaxAssetBytes, MaxAssetDimension: domain.MaxAssetDimension,
 		MaxTestRecipients: domain.MaxTestRecipients,
 		MaxListFields:     domain.MaxListFields, MaxListItems: domain.MaxListItems,
+		MaxTemplateKey: domain.MaxTemplateKey, MaxBrandImageHosts: domain.MaxBrandImageHosts,
 	}
 	if !slices.Equal(meta.EditorKinds, domain.EditorKinds()) || !slices.Equal(meta.AssetContentTypes, domain.AssetContentTypes()) ||
 		!slices.Equal(meta.BrandFonts, domain.BrandFonts()) {

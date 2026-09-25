@@ -6,6 +6,12 @@ var (
 	ErrTemplateNotFound  = errors.New("plantilla no encontrada")
 	ErrVersionNotFound   = errors.New("versión no encontrada")
 	ErrTemplateNameTaken = errors.New("ya existe una plantilla con ese nombre")
+	ErrTemplateKeyTaken  = errors.New("ya existe una plantilla con esa clave")
+	// ErrInvalidTemplateKey: la clave estable no tiene el formato admitido.
+	ErrInvalidTemplateKey = errors.New("clave de plantilla no válida")
+	// ErrInvalidMarkup: el marcado pedido no existe, no cabe en ese tipo de plantilla o la
+	// version no declara las variables que necesita.
+	ErrInvalidMarkup = errors.New("marcado estructurado no válido")
 	// ErrTemplateNotArchived: una plantilla se borra solo despues de archivarla, para que
 	// el borrado nunca sea un accidente de un clic.
 	ErrTemplateNotArchived = errors.New("la plantilla debe estar archivada para borrarse")

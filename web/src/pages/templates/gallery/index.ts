@@ -1,4 +1,4 @@
-import type { TemplateKind, TemplateVariable } from '@/api/templates';
+import type { TemplateKind, TemplateMarkup, TemplateVariable } from '@/api/templates';
 import type { MessageKey } from '@/i18n';
 import type { BrandTokens } from '../editor/brand';
 import { abandonedCartTemplate, CART_URL_VARIABLE } from './abandonedCart';
@@ -37,6 +37,8 @@ export interface GalleryTemplate {
   /** Asunto de partida, editable. */
   subject: string;
   variables: TemplateVariable[];
+  /** Marcado estructurado que la plantilla activa al elegirla. */
+  markup?: TemplateMarkup;
   build: (brand: BrandTokens) => string;
 }
 
@@ -108,6 +110,7 @@ export const GALLERY: readonly GalleryTemplate[] = [
     kind: 'transactional',
     subject: 'Recibimos tu pedido N.º {{.order_number}}',
     variables: ORDER_CONFIRMATION_VARIABLES,
+    markup: 'order',
     build: orderConfirmationTemplate,
   },
   {

@@ -54,7 +54,9 @@ type Deps struct {
 	Events      ports.EventPublisher
 	Suppression ports.SuppressionClient
 	Templates   ports.TemplateRenderer
-	Reputation  ports.ReputationClient
+	// TemplateKeys resuelve template_key; nil lo rechaza como no disponible.
+	TemplateKeys ports.TemplateKeyResolver
+	Reputation   ports.ReputationClient
 	// Sender y Limiter son el carril transaccional.
 	Sender  ports.Sender
 	Limiter RateLimiter
@@ -73,19 +75,20 @@ type Deps struct {
 }
 
 type UseCase struct {
-	repo        ports.Repository
-	events      ports.EventPublisher
-	suppression ports.SuppressionClient
-	templates   ports.TemplateRenderer
-	reputation  ports.ReputationClient
-	lanes       map[string]Lane
-	metrics     ports.Metrics
-	links       *domain.LinkSigner
-	utm         *domain.LinkTagger
-	cfg         Config
-	logger      *zap.Logger
-	now         func() time.Time
-	quota       quotaGate
+	repo         ports.Repository
+	events       ports.EventPublisher
+	suppression  ports.SuppressionClient
+	templates    ports.TemplateRenderer
+	templateKeys ports.TemplateKeyResolver
+	reputation   ports.ReputationClient
+	lanes        map[string]Lane
+	metrics      ports.Metrics
+	links        *domain.LinkSigner
+	utm          *domain.LinkTagger
+	cfg          Config
+	logger       *zap.Logger
+	now          func() time.Time
+	quota        quotaGate
 }
 
 func New(d Deps) *UseCase {
@@ -110,11 +113,12 @@ func New(d Deps) *UseCase {
 		metrics = noopMetrics{}
 	}
 	return &UseCase{
-		repo:        d.Repo,
-		events:      d.Events,
-		suppression: d.Suppression,
-		templates:   d.Templates,
-		reputation:  d.Reputation,
+		repo:         d.Repo,
+		events:       d.Events,
+		suppression:  d.Suppression,
+		templates:    d.Templates,
+		templateKeys: d.TemplateKeys,
+		reputation:   d.Reputation,
 		lanes: map[string]Lane{
 			domain.ClassTransactional: {Sender: d.Sender, Limiter: d.Limiter},
 			domain.ClassMarketing:     d.Marketing,

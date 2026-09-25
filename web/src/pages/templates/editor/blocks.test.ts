@@ -14,6 +14,7 @@ const KIT: BrandKit = {
     website: 'javascript:alert(1)',
     support_email: 'no es un correo',
   },
+  image_hosts: [],
   updated_at: null,
 };
 

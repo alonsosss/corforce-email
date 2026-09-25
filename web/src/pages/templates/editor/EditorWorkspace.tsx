@@ -288,7 +288,11 @@ export function EditorWorkspace({ data }: { data: EditorData }) {
         t('templates.editor.tooLarge', { n: meta.limits.max_editor_bytes }),
       );
     }
-    const content: TemplateContent = { ...parsed.content, editor };
+    const content: TemplateContent = {
+      ...parsed.content,
+      editor,
+      ...(doc.markup ? { markup: doc.markup } : {}),
+    };
     const persisted = target.id
       ? {
           templateId: target.id,
@@ -421,7 +425,13 @@ export function EditorWorkspace({ data }: { data: EditorData }) {
 
   const applyChoice = (choice: GalleryTemplate, mjml: string) => {
     if (!engine) return;
-    const applied = applyGallery(doc, mjml, choice.subject, choice.variables);
+    const applied = applyGallery(
+      doc,
+      mjml,
+      choice.subject,
+      choice.variables,
+      choice.markup ?? null,
+    );
     engine.loadMjml(applied.canvas);
     updateDoc(applied.doc);
     setCanvasDirty(true);
@@ -682,6 +692,7 @@ export function EditorWorkspace({ data }: { data: EditorData }) {
               onChange={updateDoc}
               errors={errors}
               meta={meta}
+              kind={target.kind}
               preheaderRef={preheaderRef}
               readOnly={!canSave}
               onGenerateText={() => {

@@ -16,7 +16,7 @@ const (
 	assetSHAConstraint = "assets_tenant_sha256_key"
 
 	brandKitColumns = `tenant_id, logo_asset_id, colors, fonts, footer_company, footer_address, footer_website,
-		footer_support_email, updated_by, updated_at`
+		footer_support_email, image_hosts, updated_by, updated_at`
 	assetColumns = `id, tenant_id, sha256, object_key, content_type, size_bytes, width, height, name, created_by, created_at`
 )
 
@@ -28,7 +28,7 @@ func (r *Repository) GetBrandKit(ctx context.Context, tenantID uuid.UUID) (*doma
 	err := r.pool.QueryRow(ctx,
 		`SELECT `+brandKitColumns+` FROM templates.brand_kits WHERE tenant_id = $1`, tenantID,
 	).Scan(&k.TenantID, &k.LogoAssetID, &k.Colors, &k.Fonts, &k.Footer.Company, &k.Footer.Address,
-		&k.Footer.Website, &k.Footer.SupportEmail, &k.UpdatedBy, &updatedAt)
+		&k.Footer.Website, &k.Footer.SupportEmail, &k.ImageHosts, &k.UpdatedBy, &updatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -43,22 +43,30 @@ func (r *Repository) UpsertBrandKit(ctx context.Context, k *domain.BrandKit) err
 	var updatedAt time.Time
 	err := r.pool.QueryRow(ctx,
 		`INSERT INTO templates.brand_kits (tenant_id, logo_asset_id, colors, fonts, footer_company, footer_address,
-		        footer_website, footer_support_email, updated_by)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		        footer_website, footer_support_email, image_hosts, updated_by)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 		 ON CONFLICT (tenant_id) DO UPDATE SET
 		        logo_asset_id = EXCLUDED.logo_asset_id, colors = EXCLUDED.colors, fonts = EXCLUDED.fonts,
 		        footer_company = EXCLUDED.footer_company, footer_address = EXCLUDED.footer_address,
 		        footer_website = EXCLUDED.footer_website, footer_support_email = EXCLUDED.footer_support_email,
-		        updated_by = EXCLUDED.updated_by
+		        image_hosts = EXCLUDED.image_hosts, updated_by = EXCLUDED.updated_by
 		 RETURNING updated_at`,
 		k.TenantID, k.LogoAssetID, k.Colors, k.Fonts, k.Footer.Company, k.Footer.Address,
-		k.Footer.Website, k.Footer.SupportEmail, k.UpdatedBy,
+		k.Footer.Website, k.Footer.SupportEmail, nonNilHosts(k.ImageHosts), k.UpdatedBy,
 	).Scan(&updatedAt)
 	if err != nil {
 		return err
 	}
 	k.UpdatedAt = &updatedAt
 	return nil
+}
+
+// nonNilHosts: pgx escribe un slice nil como NULL y la columna es NOT NULL.
+func nonNilHosts(h []string) []string {
+	if h == nil {
+		return []string{}
+	}
+	return h
 }
 
 func (r *Repository) CreateAsset(ctx context.Context, a *domain.Asset) error {

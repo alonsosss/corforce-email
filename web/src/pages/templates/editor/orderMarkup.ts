@@ -37,6 +37,7 @@ export const ORDER_ITEMS_VARIABLE: TemplateVariable = {
     { name: 'name', type: 'string', required: true },
     { name: 'detail', type: 'string', required: false },
     { name: 'quantity', type: 'number', required: true },
+    { name: 'unit_price', type: 'number', required: true },
     { name: 'price', type: 'number', required: true },
     { name: 'image_url', type: 'image', required: false },
     { name: 'delivery', type: 'string', required: false },
@@ -114,8 +115,8 @@ export function orderStatusHtml(brand: BrandTokens): string {
 }
 
 /**
- * Productos: imagen, nombre, detalle, cantidad, fecha de entrega y el importe de la linea. El
- * importe es el de la linea (cantidad incluida), tal como lo cobra el sistema de origen.
+ * Productos: imagen, nombre, detalle, cantidad con su precio unitario, fecha de entrega y el
+ * importe de la linea (cantidad incluida), tal como lo cobra el sistema de origen.
  */
 export function orderItemsHtml(brand: BrandTokens): string {
   const small = `font-size:13px;line-height:1.45;color:${brand.muted};`;
@@ -129,7 +130,7 @@ export function orderItemsHtml(brand: BrandTokens): string {
     '<td valign="top" style="padding:16px 0;">' +
     `<div style="font-size:15px;line-height:1.4;font-weight:600;color:${brand.text};">{{.name}}</div>` +
     `{{if .detail}}<div style="${small}">{{.detail}}</div>{{end}}` +
-    `<div style="${small}padding-top:2px;">Cantidad: {{.quantity}}</div>` +
+    `<div style="${small}padding-top:2px;">Cantidad: {{.quantity}} · {{$.currency}} {{money .unit_price}} c/u</div>` +
     `{{if .delivery}}<div style="font-size:13px;line-height:1.45;font-weight:600;color:${brand.primary};padding-top:6px;">{{.delivery}}</div>{{end}}` +
     '</td>' +
     `<td valign="top" align="right" style="padding:16px 0 16px 14px;white-space:nowrap;font-size:15px;line-height:1.4;font-weight:600;color:${brand.text};">` +

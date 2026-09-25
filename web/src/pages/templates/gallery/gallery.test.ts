@@ -24,6 +24,7 @@ const FULL_KIT: BrandKit = {
     website: 'https://empresa.example',
     support_email: 'ayuda@empresa.example',
   },
+  image_hosts: [],
   updated_at: '2026-09-23T10:00:00Z',
 };
 

@@ -27,6 +27,8 @@ type Repository interface {
 	// GetTemplateForUpdate bloquea la fila hasta el fin de la transaccion: serializa la
 	// numeracion de versiones y la publicacion entre peticiones concurrentes.
 	GetTemplateForUpdate(ctx context.Context, tenantID, id uuid.UUID) (*domain.Template, error)
+	// GetTemplateByKey busca la plantilla por su clave estable (ErrTemplateNotFound si no hay).
+	GetTemplateByKey(ctx context.Context, tenantID uuid.UUID, key string) (*domain.Template, error)
 	ListTemplates(ctx context.Context, tenantID uuid.UUID, f ListFilter) ([]*domain.Template, int64, error)
 	UpdateTemplate(ctx context.Context, t *domain.Template) error
 	DeleteTemplate(ctx context.Context, tenantID, id uuid.UUID) error

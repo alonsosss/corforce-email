@@ -82,13 +82,52 @@ type BrandKit struct {
 	Colors      []string
 	Fonts       []string
 	Footer      BrandFooter
-	UpdatedBy   uuid.UUID
-	UpdatedAt   *time.Time
+	// ImageHosts son los servidores desde los que una variable de tipo imagen puede cargar una
+	// imagen (un nombre admite tambien sus subdominios). Vacio: cualquier servidor https.
+	ImageHosts []string
+	UpdatedBy  uuid.UUID
+	UpdatedAt  *time.Time
 }
 
 // EmptyBrandKit es el kit de una empresa que no ha guardado ninguno.
 func EmptyBrandKit(tenantID uuid.UUID) *BrandKit {
-	return &BrandKit{TenantID: tenantID, Colors: []string{}, Fonts: []string{}}
+	return &BrandKit{TenantID: tenantID, Colors: []string{}, Fonts: []string{}, ImageHosts: []string{}}
+}
+
+// MaxBrandImageHosts es el tope de servidores de imagen permitidos del kit.
+const MaxBrandImageHosts = 20
+
+// hostLabelRegex: una etiqueta de un nombre de host en ASCII (un dominio internacional va en
+// punycode, xn--...).
+var hostLabelRegex = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
+
+// normalizeImageHost valida un nombre de host sin esquema, puerto ni ruta, con al menos un punto.
+func normalizeImageHost(h string) (string, bool) {
+	h = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(h)), ".")
+	if h == "" || len(h) > 253 || !strings.Contains(h, ".") {
+		return "", false
+	}
+	for _, label := range strings.Split(h, ".") {
+		if !hostLabelRegex.MatchString(label) {
+			return "", false
+		}
+	}
+	return h, true
+}
+
+// HostAllowed dice si host coincide con alguno de los permitidos o es un subdominio suyo. Una
+// lista vacia lo admite todo.
+func HostAllowed(host string, allowed []string) bool {
+	if len(allowed) == 0 {
+		return true
+	}
+	host = strings.TrimSuffix(strings.ToLower(host), ".")
+	for _, a := range allowed {
+		if host == a || strings.HasSuffix(host, "."+a) {
+			return true
+		}
+	}
+	return false
 }
 
 // NormalizeBrandKit valida el kit y lo devuelve con los colores en mayusculas y los textos sin
@@ -127,6 +166,24 @@ func NormalizeBrandKit(k BrandKit) (BrandKit, error) {
 		fonts = append(fonts, f)
 	}
 	k.Colors, k.Fonts = colors, fonts
+
+	if len(k.ImageHosts) > MaxBrandImageHosts {
+		return k, fmt.Errorf("%w: image_hosts admite hasta %d", ErrInvalidBrandKit, MaxBrandImageHosts)
+	}
+	hosts := make([]string, 0, len(k.ImageHosts))
+	seenHost := map[string]bool{}
+	for i, h := range k.ImageHosts {
+		host, ok := normalizeImageHost(h)
+		if !ok {
+			return k, fmt.Errorf("%w: image_hosts[%d] debe ser un nombre de host como cdn.tienda.com, sin https:// ni rutas", ErrInvalidBrandKit, i)
+		}
+		if seenHost[host] {
+			return k, fmt.Errorf("%w: el servidor %s está repetido", ErrInvalidBrandKit, host)
+		}
+		seenHost[host] = true
+		hosts = append(hosts, host)
+	}
+	k.ImageHosts = hosts
 
 	footer := BrandFooter{
 		Company:      strings.TrimSpace(k.Footer.Company),

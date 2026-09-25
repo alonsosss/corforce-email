@@ -98,6 +98,7 @@ describe('cliente de plantillas: contratos del editor', () => {
       logo_asset_id: null,
       colors: [],
       fonts: [],
+      image_hosts: [],
       footer: { company: '', address: '', website: '', support_email: '' },
       updated_at: null,
     });

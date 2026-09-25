@@ -4,6 +4,7 @@ import {
   type TemplateAsset,
   type TemplateDetail,
   type TemplateKind,
+  type TemplateMarkup,
   type TemplatesMeta,
   type TemplateVariable,
   type TemplateVersion,
@@ -123,6 +124,7 @@ export function initialDocument(version: TemplateVersion | null): DocumentDraft 
     text: content.text,
     variables: content.variables,
     preheader: version?.editor ? readPreheader(version.editor.mjml) : '',
+    markup: version?.markup ?? null,
   };
 }
 
@@ -141,12 +143,16 @@ export function mergeVariables(
   return [...drafts, ...variablesToDrafts(missing)];
 }
 
-/** Aplica una plantilla de la galeria al documento: el asunto solo si estaba vacio. */
+/**
+ * Aplica una plantilla de la galeria al documento: el asunto solo si estaba vacio. El marcado es
+ * el de la plantilla elegida, que sustituye al diseno entero.
+ */
 export function applyGallery(
   doc: DocumentDraft,
   mjml: string,
   subject: string,
   variables: readonly TemplateVariable[],
+  markup: TemplateMarkup | null = null,
 ): { doc: DocumentDraft; canvas: string } {
   return {
     canvas: stripPreheader(mjml),
@@ -155,6 +161,7 @@ export function applyGallery(
       subject: doc.subject.trim() ? doc.subject : subject,
       preheader: readPreheader(mjml),
       variables: mergeVariables(doc.variables, variables),
+      markup,
     },
   };
 }

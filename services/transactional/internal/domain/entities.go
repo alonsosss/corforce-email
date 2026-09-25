@@ -94,6 +94,8 @@ const (
 	// render y una fila en la misma transaccion.
 	MaxBatchRecipients = 500
 	MaxRecipients      = 50
+	// MaxTemplateKey es el tope de la clave estable de una plantilla (templates la valida).
+	MaxTemplateKey = 64
 	// MaxBodyBytes es el tope del cuerpo total (html + texto): el limite de SES v2 sin
 	// adjuntos. Los adjuntos no se admiten en esta fase.
 	MaxBodyBytes = 10 << 20

@@ -94,6 +94,7 @@ func (h *Handler) Routes() http.Handler {
 // middlewares de main.go; aqui no hay usuario ni permiso que comprobar.
 func (h *Handler) InternalRoutes() http.Handler {
 	r := chi.NewRouter()
+	r.Get("/by-key/{key}", h.InternalTemplateByKey)
 	r.Post("/{id}/render", h.InternalRender)
 	return r
 }
@@ -162,6 +163,7 @@ func writeError(w http.ResponseWriter, err error) {
 	case errors.Is(err, domain.ErrAssetRejected):
 		response.Err(w, http.StatusUnprocessableEntity, "ASSET_REJECTED", domain.ErrAssetRejected.Error())
 	case errors.Is(err, domain.ErrTemplateNameTaken),
+		errors.Is(err, domain.ErrTemplateKeyTaken),
 		errors.Is(err, domain.ErrTemplateNotArchived),
 		errors.Is(err, domain.ErrTemplateArchived),
 		errors.Is(err, domain.ErrVersionAlreadyPublished),
@@ -174,6 +176,8 @@ func writeError(w http.ResponseWriter, err error) {
 		errors.Is(err, domain.ErrOutputTooLarge),
 		errors.Is(err, domain.ErrNothingToUpdate),
 		errors.Is(err, domain.ErrInvalidName),
+		errors.Is(err, domain.ErrInvalidTemplateKey),
+		errors.Is(err, domain.ErrInvalidMarkup),
 		errors.Is(err, domain.ErrInvalidKind),
 		errors.Is(err, domain.ErrInvalidTemplateStatus),
 		errors.Is(err, domain.ErrInvalidEditor),
@@ -210,6 +214,8 @@ type limitsMeta struct {
 	MaxTestRecipients    int `json:"max_test_recipients"`
 	MaxListFields        int `json:"max_list_fields"`
 	MaxListItems         int `json:"max_list_items"`
+	MaxTemplateKey       int `json:"max_template_key"`
+	MaxBrandImageHosts   int `json:"max_brand_image_hosts"`
 }
 
 type metaResponse struct {
@@ -218,6 +224,7 @@ type metaResponse struct {
 	VersionStatuses   []string               `json:"version_statuses"`
 	VariableTypes     []string               `json:"variable_types"`
 	FieldTypes        []string               `json:"field_types"`
+	Markups           []string               `json:"markups"`
 	ReservedVariables []reservedVariableMeta `json:"reserved_variables"`
 	EditorKinds       []string               `json:"editor_kinds"`
 	BrandFonts        []domain.BrandFont     `json:"brand_fonts"`
@@ -235,6 +242,7 @@ func (h *Handler) Meta(w http.ResponseWriter, r *http.Request) {
 		VersionStatuses:   domain.VersionStatuses(),
 		VariableTypes:     domain.VariableTypes(),
 		FieldTypes:        domain.FieldTypes(),
+		Markups:           domain.Markups(),
 		ReservedVariables: make([]reservedVariableMeta, 0, len(reserved)),
 		EditorKinds:       domain.EditorKinds(),
 		BrandFonts:        domain.BrandFonts(),
@@ -256,6 +264,7 @@ func domainLimits() limitsMeta {
 		MaxAssetBytes: domain.MaxAssetBytes, MaxAssetDimension: domain.MaxAssetDimension,
 		MaxTestRecipients: domain.MaxTestRecipients,
 		MaxListFields:     domain.MaxListFields, MaxListItems: domain.MaxListItems,
+		MaxTemplateKey: domain.MaxTemplateKey, MaxBrandImageHosts: domain.MaxBrandImageHosts,
 	}
 }
 
@@ -267,6 +276,8 @@ type contentRequest struct {
 	Text      *string                `json:"text,omitempty"`
 	Variables []domain.Variable      `json:"variables"`
 	Editor    *domain.EditorDocument `json:"editor,omitempty"`
+	// Markup es el marcado estructurado que la plataforma anade al renderizar (order) o vacio.
+	Markup string `json:"markup,omitempty"`
 }
 
 func (c contentRequest) validate(v *validate.Validator) {
@@ -275,15 +286,17 @@ func (c contentRequest) validate(v *validate.Validator) {
 	if len(c.Variables) > domain.MaxVariables {
 		v.Add("variables", "supera el máximo de "+strconv.Itoa(domain.MaxVariables))
 	}
+	v.OneOf("markup", c.Markup, domain.Markups())
 }
 
 func (c contentRequest) toDomain() domain.Content {
-	return domain.Content{Subject: c.Subject, HTML: c.HTML, Text: c.Text, Variables: c.Variables, Editor: c.Editor}
+	return domain.Content{Subject: c.Subject, HTML: c.HTML, Text: c.Text, Variables: c.Variables, Editor: c.Editor, Markup: c.Markup}
 }
 
 type createTemplateRequest struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
+	Key         string `json:"key,omitempty"`
 	Kind        string `json:"kind"`
 	contentRequest
 }
@@ -315,7 +328,7 @@ func (h *Handler) CreateTemplate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	t, ver, err := h.uc.CreateTemplate(r.Context(), tenantID, userID, app.CreateTemplateInput{
-		Name: req.Name, Description: req.Description, Kind: req.Kind, Content: req.toDomain(),
+		Name: req.Name, Description: req.Description, Key: req.Key, Kind: req.Kind, Content: req.toDomain(),
 	})
 	if err != nil {
 		writeError(w, err)
@@ -392,6 +405,8 @@ type updateTemplateRequest struct {
 	Name        *string `json:"name,omitempty"`
 	Description *string `json:"description,omitempty"`
 	Status      *string `json:"status,omitempty"`
+	// Key vacia quita la clave.
+	Key *string `json:"key,omitempty"`
 }
 
 func (h *Handler) UpdateTemplate(w http.ResponseWriter, r *http.Request) {
@@ -425,7 +440,7 @@ func (h *Handler) UpdateTemplate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	t, err := h.uc.UpdateTemplate(r.Context(), tenantID, id, app.UpdateTemplateInput{
-		Name: req.Name, Description: req.Description, Status: req.Status,
+		Name: req.Name, Description: req.Description, Status: req.Status, Key: req.Key,
 	})
 	if err != nil {
 		writeError(w, err)
@@ -600,6 +615,28 @@ func (h *Handler) render(w http.ResponseWriter, r *http.Request, preview bool) {
 // InternalRender es lo que llama transactional (y campaigns) por cada envio: sobre una
 // version publicada, o sobre cualquiera en el render de prueba, y con las variables
 // reservadas ya resueltas.
+// InternalTemplateByKey resuelve la clave estable de una plantilla a su id y tipo, para
+// transactional cuando el envio la nombra por clave.
+func (h *Handler) InternalTemplateByKey(w http.ResponseWriter, r *http.Request) {
+	tenantID, ok := tenantFrom(w, r)
+	if !ok {
+		return
+	}
+	t, err := h.uc.TemplateByKey(r.Context(), tenantID, chi.URLParam(r, "key"))
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	response.JSON(w, http.StatusOK, map[string]any{"id": t.ID.String(), "kind": t.Kind, "status": t.Status})
+}
+
+func nilIfEmpty(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
+}
+
 func (h *Handler) InternalRender(w http.ResponseWriter, r *http.Request) {
 	tenantID, ok := tenantFrom(w, r)
 	if !ok {
@@ -653,6 +690,7 @@ func templateResponse(t *domain.Template) map[string]any {
 		"id":              t.ID.String(),
 		"name":            t.Name,
 		"description":     t.Description,
+		"key":             t.Key,
 		"kind":            t.Kind,
 		"status":          t.Status,
 		"current_version": t.CurrentVersion,
@@ -672,6 +710,7 @@ func versionResponse(v *domain.Version) map[string]any {
 		"text":         v.Text,
 		"variables":    v.Variables,
 		"editor":       v.Editor,
+		"markup":       nilIfEmpty(v.Markup),
 		"status":       v.Status,
 		"published_at": v.PublishedAt,
 		"created_by":   v.CreatedBy.String(),

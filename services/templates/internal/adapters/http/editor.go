@@ -113,6 +113,7 @@ type brandKitRequest struct {
 	Colors      []string        `json:"colors"`
 	Fonts       []string        `json:"fonts"`
 	Footer      brandFooterJSON `json:"footer"`
+	ImageHosts  []string        `json:"image_hosts"`
 }
 
 func (h *Handler) GetBrandKit(w http.ResponseWriter, r *http.Request) {
@@ -148,6 +149,7 @@ func (h *Handler) UpdateBrandKit(w http.ResponseWriter, r *http.Request) {
 			Company: req.Footer.Company, Address: req.Footer.Address,
 			Website: req.Footer.Website, SupportEmail: req.Footer.SupportEmail,
 		},
+		ImageHosts: req.ImageHosts,
 	}
 	if req.LogoAssetID != nil && *req.LogoAssetID != "" {
 		id, err := uuid.Parse(*req.LogoAssetID)
@@ -184,7 +186,8 @@ func brandKitResponse(v *app.BrandKitView) map[string]any {
 			Company: k.Footer.Company, Address: k.Footer.Address,
 			Website: k.Footer.Website, SupportEmail: k.Footer.SupportEmail,
 		},
-		"updated_at": k.UpdatedAt,
+		"image_hosts": nonNil(k.ImageHosts),
+		"updated_at":  k.UpdatedAt,
 	}
 }
 

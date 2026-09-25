@@ -14,6 +14,7 @@ import {
   Alert,
   Button,
   Card,
+  ChipsInput,
   ErrorState,
   FormField,
   Input,
@@ -28,6 +29,7 @@ import { formatDateTime } from '@/lib/format';
 import { rules } from '@/lib/validate';
 import { t } from '@/i18n';
 import { MissingPermission } from '@/pages/shared/MissingPermission';
+import { normalizeImageHost } from './imageHosts';
 import { AssetLibrary } from '../AssetLibrary';
 import { findAsset } from '../assets';
 import { safeHttpUrl } from '../editor/brand';
@@ -111,12 +113,17 @@ function BrandKitForm({ loaded, onSaved }: { loaded: LoadedKit; onSaved: () => v
   const canUpdate = can(...PERMISSIONS.brandKit.update);
   const canPickLogo = can(...PERMISSIONS.templateAssets.read);
   const { kit, meta } = loaded;
-  const { max_brand_colors: maxColors, max_brand_fonts: maxFonts } = meta.limits;
+  const {
+    max_brand_colors: maxColors,
+    max_brand_fonts: maxFonts,
+    max_brand_image_hosts: maxImageHosts,
+  } = meta.limits;
   const [logo, setLogo] = useState<TemplateAsset | null>(loaded.logo);
   const [logoId, setLogoId] = useState<string | null>(kit.logo_asset_id);
   const [colors, setColors] = useState<string[]>(kit.colors);
   const [fonts, setFonts] = useState<string[]>(kit.fonts);
   const [footer, setFooter] = useState<BrandKitFooter>(kit.footer);
+  const [imageHosts, setImageHosts] = useState<string[]>(kit.image_hosts);
   const [errors, setErrors] = useState<KitErrors>({});
   const [picking, setPicking] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -147,6 +154,7 @@ function BrandKitForm({ loaded, onSaved }: { loaded: LoadedKit; onSaved: () => v
         colors: normalized,
         fonts,
         footer: trimmed,
+        image_hosts: imageHosts,
       });
       toast.success(t('templates.brandKit.saved'));
       onSaved();
@@ -362,6 +370,29 @@ function BrandKitForm({ loaded, onSaved }: { loaded: LoadedKit; onSaved: () => v
             />
           </FormField>
         </div>
+      </Card>
+      <Card
+        title={t('templates.brandKit.imageHosts')}
+        description={t('templates.brandKit.imageHostsHint')}
+      >
+        <FormField
+          label={t('templates.brandKit.imageHostsLabel')}
+          htmlFor="brand-kit-image-hosts"
+          hint={t('templates.brandKit.imageHostsMax', { n: maxImageHosts })}
+        >
+          <ChipsInput
+            id="brand-kit-image-hosts"
+            values={imageHosts}
+            onChange={(next) => setImageHosts(next.slice(0, maxImageHosts))}
+            normalize={normalizeImageHost}
+            placeholder={t('templates.brandKit.imageHostsPlaceholder')}
+            disabled={readOnly}
+            removeLabel={(host) => t('templates.brandKit.removeImageHost', { host })}
+            rejectedLabel={(rejected) =>
+              t('templates.brandKit.imageHostInvalid', { hosts: rejected.join(', ') })
+            }
+          />
+        </FormField>
       </Card>
       {saveError ? <Alert tone="danger">{errorMessage(saveError)}</Alert> : null}
       <div className="cf-inline" style={{ justifyContent: 'space-between' }}>

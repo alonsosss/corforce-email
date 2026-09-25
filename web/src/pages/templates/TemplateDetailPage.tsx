@@ -19,6 +19,7 @@ import {
   Button,
   Card,
   ConfirmDialog,
+  CopyButton,
   ErrorState,
   FormField,
   Input,
@@ -36,6 +37,7 @@ import { paths } from '@/paths';
 import { FormModal } from '@/pages/shared/FormModal';
 import { ResourceGate } from '@/pages/shared/ResourceGate';
 import { PreviewTab } from './PreviewTab';
+import { normalizeTemplateKey } from './templateKey';
 import { templateKindTone, templateStatusTone } from './templateStatus';
 import { VersionsTab } from './VersionsTab';
 
@@ -169,6 +171,13 @@ export default function TemplateDetailPage() {
           {tpl.description}
         </p>
       ) : null}
+      {tpl.key ? (
+        <div className="cf-inline" style={{ marginBottom: 'var(--cf-space-4)' }}>
+          <span className="cf-text-sm cf-text-secondary">{t('templates.key.label')}</span>
+          <code className="cf-mono">{tpl.key}</code>
+          <CopyButton value={tpl.key} />
+        </div>
+      ) : null}
       {archived ? (
         <div style={{ marginBottom: 'var(--cf-space-4)' }}>
           <Alert tone="warning">{t('templates.archivedNotice')}</Alert>
@@ -251,12 +260,14 @@ function EditForm({
 }: TemplateEditFormProps & { meta: TemplatesMeta }) {
   const [name, setName] = useState(template.name);
   const [description, setDescription] = useState(template.description);
+  const [key, setKey] = useState(template.key ?? '');
   const [errors, setErrors] = useState<Record<string, string | undefined>>({});
 
   const action = useAction(async () => {
     const body = {
       name: changed(name.trim(), template.name),
       description: changed(description.trim(), template.description),
+      key: changed(key.trim(), template.key ?? ''),
     };
     if (isEmptyPatch(body)) {
       onClose();
@@ -274,9 +285,13 @@ function EditForm({
       description:
         validateField(description, rules.maxLength(meta.limits.max_description_length)) ??
         undefined,
+      key:
+        key.trim() && normalizeTemplateKey(key, meta.limits.max_template_key) === null
+          ? t('templates.key.invalid', { n: meta.limits.max_template_key })
+          : undefined,
     };
     setErrors(next);
-    if (next.name || next.description) return;
+    if (next.name || next.description || next.key) return;
     await action.run();
   };
 
@@ -287,7 +302,7 @@ function EditForm({
       submitLabel={t('common.save')}
       busy={action.busy}
       error={action.error}
-      errorOverrides={{ [ERROR_CODES.CONFLICT]: 'templates.exists' }}
+      errorOverrides={{ [ERROR_CODES.CONFLICT]: 'templates.existsNameOrKey' }}
       onClose={onClose}
       onSubmit={submit}
     >
@@ -309,6 +324,23 @@ function EditForm({
           rows={3}
           value={description}
           onChange={(e) => setDescription(e.target.value)}
+        />
+      </FormField>
+      <FormField
+        label={t('templates.key.label')}
+        htmlFor="template-edit-key"
+        error={errors.key}
+        hint={t('templates.key.hint')}
+      >
+        <Input
+          id="template-edit-key"
+          className="cf-mono"
+          value={key}
+          placeholder={t('templates.key.placeholder')}
+          onChange={(e) => setKey(e.target.value)}
+          invalid={Boolean(errors.key)}
+          spellCheck={false}
+          autoComplete="off"
         />
       </FormField>
     </FormModal>

@@ -71,7 +71,13 @@ const CARD = 'padding="28px 0"';
 const ACCENT = (brand: BrandTokens) => `border-top="4px solid ${brand.primary}" ${CARD}`;
 
 export const ORDER_CONFIRMATION_VARIABLES: TemplateVariable[] = uniqueVariables(
-  [FIRST_NAME, ORDER_NUMBER, { name: 'order_date', type: 'string', required: false }],
+  [
+    FIRST_NAME,
+    ORDER_NUMBER,
+    { name: 'order_date', type: 'string', required: false },
+    // Codigo ISO 4217 (PEN) para la tarjeta de pedido de Gmail; currency es el simbolo visible.
+    { name: 'currency_code', type: 'string', required: true },
+  ],
   orderStatusVariables('received'),
   ORDER_ITEMS_VARIABLES,
   ORDER_SUMMARY_VARIABLES,

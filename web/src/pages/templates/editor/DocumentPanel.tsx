@@ -1,6 +1,6 @@
 import type { Ref } from 'react';
-import type { TemplatesMeta } from '@/api/templates';
-import { Button, FormField, Input, Textarea } from '@/design/components';
+import type { TemplateKind, TemplateMarkup, TemplatesMeta } from '@/api/templates';
+import { Button, Checkbox, FormField, Input, Textarea } from '@/design/components';
 import { t } from '@/i18n';
 import type { ContentErrors } from '../content';
 import type { VariableDraft } from '../variables';
@@ -11,6 +11,8 @@ export interface DocumentDraft {
   preheader: string;
   text: string;
   variables: VariableDraft[];
+  /** Marcado estructurado de la version (la tarjeta de pedido de Gmail) o null. */
+  markup: TemplateMarkup | null;
 }
 
 export interface DocumentPanelProps {
@@ -18,6 +20,8 @@ export interface DocumentPanelProps {
   onChange: (next: DocumentDraft) => void;
   errors: ContentErrors;
   meta: TemplatesMeta;
+  /** El marcado de pedido solo se ofrece en una plantilla transaccional. */
+  kind: TemplateKind;
   preheaderRef: Ref<HTMLInputElement>;
   onGenerateText: () => void;
   readOnly: boolean;
@@ -29,6 +33,7 @@ export function DocumentPanel({
   onChange,
   errors,
   meta,
+  kind,
   preheaderRef,
   onGenerateText,
   readOnly,
@@ -81,6 +86,18 @@ export function DocumentPanel({
           <Button size="sm" onClick={onGenerateText}>
             {t('templates.editor.generateText')}
           </Button>
+        </div>
+      ) : null}
+      {kind === 'transactional' && meta.markups.includes('order') ? (
+        <div className="cf-field">
+          <Checkbox
+            id="editor-markup-order"
+            label={t('templates.editor.markupOrder')}
+            checked={value.markup === 'order'}
+            disabled={readOnly}
+            onChange={(e) => onChange({ ...value, markup: e.target.checked ? 'order' : null })}
+          />
+          <span className="cf-field__hint">{t('templates.editor.markupOrderHint')}</span>
         </div>
       ) : null}
       <div className="cf-form__section">{t('templates.variables.title')}</div>

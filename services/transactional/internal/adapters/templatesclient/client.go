@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -53,8 +54,8 @@ func (c *Client) Render(ctx context.Context, tenantID uuid.UUID, r ports.RenderR
 	if err != nil {
 		return nil, err
 	}
-	url := c.baseURL + "/internal/templates/" + r.TemplateID.String() + "/render"
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
+	endpoint := c.baseURL + "/internal/templates/" + r.TemplateID.String() + "/render"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
 	if err != nil {
 		return nil, err
 	}
@@ -93,6 +94,42 @@ func (c *Client) Render(ctx context.Context, tenantID uuid.UUID, r ports.RenderR
 		Subject: out.Data.Subject, HTML: out.Data.HTML, Text: out.Data.Text,
 		Version: out.Data.Version, Kind: out.Data.Kind,
 	}, nil
+}
+
+// ResolveTemplateKey pide a templates el id de la plantilla con esa clave estable.
+func (c *Client) ResolveTemplateKey(ctx context.Context, tenantID uuid.UUID, key string) (uuid.UUID, error) {
+	if c.baseURL == "" {
+		return uuid.Nil, fmt.Errorf("TEMPLATES_URL no configurada")
+	}
+	endpoint := c.baseURL + "/internal/templates/by-key/" + url.PathEscape(key)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	req.Header.Set("X-Gateway-Token", c.token)
+	req.Header.Set("X-Tenant-ID", tenantID.String())
+	resp, err := c.http.Do(httpclient.Idempotent(req))
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("%w: %v", domain.ErrTemplatesUnavailable, err)
+	}
+	defer resp.Body.Close()
+	switch {
+	case resp.StatusCode == http.StatusNotFound:
+		return uuid.Nil, domain.ErrTemplateNotFound
+	case resp.StatusCode == http.StatusUnprocessableEntity || resp.StatusCode == http.StatusBadRequest:
+		return uuid.Nil, domain.NewValidationError("template_key: %s", errorMessage(resp.Body))
+	case resp.StatusCode < 200 || resp.StatusCode >= 300:
+		return uuid.Nil, fmt.Errorf("%w: status %d", domain.ErrTemplatesUnavailable, resp.StatusCode)
+	}
+	var out struct {
+		Data struct {
+			ID uuid.UUID `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil || out.Data.ID == uuid.Nil {
+		return uuid.Nil, fmt.Errorf("%w: respuesta ilegible", domain.ErrTemplatesUnavailable)
+	}
+	return out.Data.ID, nil
 }
 
 // errorMessage extrae el mensaje del envelope de error de pkg/response.

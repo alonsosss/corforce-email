@@ -141,6 +141,12 @@ type TemplateRenderer interface {
 	Render(ctx context.Context, tenantID uuid.UUID, req RenderRequest) (*Rendered, error)
 }
 
+// TemplateKeyResolver traduce la clave estable de una plantilla (pedido.confirmado) a su id en
+// la empresa. domain.ErrTemplateNotFound si no hay ninguna con esa clave.
+type TemplateKeyResolver interface {
+	ResolveTemplateKey(ctx context.Context, tenantID uuid.UUID, key string) (uuid.UUID, error)
+}
+
 // Sender entrega el correo al proveedor. El error, cuando lo hay, es un
 // *domain.SendError ya clasificado.
 type Sender interface {

@@ -186,14 +186,16 @@ func main() {
 	if reputationURL == "" {
 		logger.Error("transactional: REPUTATION_URL no configurada; el marketing respondera 503 y el transaccional saldra sin autorizacion previa")
 	}
+	templates := templatesclient.New(templatesURL, internalToken)
 	uc := app.New(app.Deps{
-		Repo:        postgres.NewRepository(ctxPool),
-		Events:      postgres.NewOutboxPublisher(ctxPool),
-		Suppression: suppressionclient.New(suppressionURL, internalToken),
-		Templates:   templatesclient.New(templatesURL, internalToken),
-		Reputation:  reputationclient.New(reputationURL, internalToken),
-		Sender:      sender,
-		Limiter:     natsadapter.NewTokenBucket(sendRate, int(sendRate)),
+		Repo:         postgres.NewRepository(ctxPool),
+		Events:       postgres.NewOutboxPublisher(ctxPool),
+		Suppression:  suppressionclient.New(suppressionURL, internalToken),
+		Templates:    templates,
+		TemplateKeys: templates,
+		Reputation:   reputationclient.New(reputationURL, internalToken),
+		Sender:       sender,
+		Limiter:      natsadapter.NewTokenBucket(sendRate, int(sendRate)),
 		Marketing: app.Lane{
 			Sender:  sender.WithConfigurationSet(marketingSet),
 			Limiter: natsadapter.NewTokenBucket(marketingRate, int(marketingRate)),

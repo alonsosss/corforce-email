@@ -10,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/alonsosss/corforce-email/services/templates/internal/domain"
+	"github.com/alonsosss/corforce-email/services/templates/internal/markup"
 	"github.com/alonsosss/corforce-email/services/templates/internal/ports"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
@@ -106,8 +107,10 @@ func originOf(raw string) string {
 type CreateTemplateInput struct {
 	Name        string
 	Description string
-	Kind        string
-	Content     domain.Content
+	// Key es la clave estable opcional (pedido.confirmado); vacia, sin clave.
+	Key     string
+	Kind    string
+	Content domain.Content
 }
 
 func (uc *UseCase) CreateTemplate(ctx context.Context, tenantID, userID uuid.UUID, in CreateTemplateInput) (*domain.Template, *domain.Version, error) {
@@ -121,8 +124,15 @@ func (uc *UseCase) CreateTemplate(ctx context.Context, tenantID, userID uuid.UUI
 	if !contains(domain.Kinds(), in.Kind) {
 		return nil, nil, domain.ErrInvalidKind
 	}
+	key, err := domain.NormalizeTemplateKey(in.Key)
+	if err != nil {
+		return nil, nil, err
+	}
 	content, err := uc.prepareContent(in.Content)
 	if err != nil {
+		return nil, nil, err
+	}
+	if err := checkMarkupKind(in.Kind, content.Markup); err != nil {
 		return nil, nil, err
 	}
 
@@ -131,6 +141,7 @@ func (uc *UseCase) CreateTemplate(ctx context.Context, tenantID, userID uuid.UUI
 		TenantID:    tenantID,
 		Name:        name,
 		Description: strings.TrimSpace(in.Description),
+		Key:         key,
 		Kind:        in.Kind,
 		Status:      domain.TemplateStatusActive,
 		CreatedBy:   userID,
@@ -178,16 +189,24 @@ func (uc *UseCase) ListTemplates(ctx context.Context, tenantID uuid.UUID, f port
 	return uc.repo.ListTemplates(ctx, tenantID, f)
 }
 
-// UpdateTemplateInput: los campos nil no cambian.
+// UpdateTemplateInput: los campos nil no cambian. Key vacia quita la clave.
 type UpdateTemplateInput struct {
 	Name        *string
 	Description *string
 	Status      *string
+	Key         *string
 }
 
 func (uc *UseCase) UpdateTemplate(ctx context.Context, tenantID, id uuid.UUID, in UpdateTemplateInput) (*domain.Template, error) {
-	if in.Name == nil && in.Description == nil && in.Status == nil {
+	if in.Name == nil && in.Description == nil && in.Status == nil && in.Key == nil {
 		return nil, domain.ErrNothingToUpdate
+	}
+	var key *string
+	if in.Key != nil {
+		var err error
+		if key, err = domain.NormalizeTemplateKey(*in.Key); err != nil {
+			return nil, err
+		}
 	}
 	if in.Status != nil && !contains(domain.TemplateStatuses(), *in.Status) {
 		return nil, domain.ErrInvalidTemplateStatus
@@ -213,6 +232,9 @@ func (uc *UseCase) UpdateTemplate(ctx context.Context, tenantID, id uuid.UUID, i
 		}
 		if in.Status != nil {
 			t.Status = *in.Status
+		}
+		if in.Key != nil {
+			t.Key = key
 		}
 		if err := uc.repo.UpdateTemplate(ctx, t); err != nil {
 			return err
@@ -270,6 +292,9 @@ func (uc *UseCase) CreateVersion(ctx context.Context, tenantID, templateID, user
 		}
 		if t.Status == domain.TemplateStatusArchived {
 			return domain.ErrTemplateArchived
+		}
+		if err := checkMarkupKind(t.Kind, content.Markup); err != nil {
+			return err
 		}
 		last, err := uc.repo.MaxVersion(ctx, tenantID, templateID)
 		if err != nil {
@@ -392,9 +417,90 @@ func (uc *UseCase) Render(ctx context.Context, tenantID, templateID uuid.UUID, i
 	if err != nil {
 		return nil, err
 	}
+	if err := uc.finishRender(ctx, tenantID, v, values, in, &out); err != nil {
+		return nil, err
+	}
 	out.Version = v.Version
 	out.Kind = t.Kind
 	return &out, nil
+}
+
+// finishRender aplica lo que depende del kit de marca de la empresa: los servidores de imagen
+// permitidos y el marcado estructurado de la version. Las imagenes de ejemplo de un envio de
+// prueba no se comprueban: las pone la plataforma, no quien envia.
+func (uc *UseCase) finishRender(ctx context.Context, tenantID uuid.UUID, v *domain.Version, values map[string]any, in RenderInput, out *domain.Rendered) error {
+	if v.Markup == "" && !hasImages(v.Variables) {
+		return nil
+	}
+	kit, err := uc.brandKit(ctx, tenantID)
+	if err != nil {
+		return err
+	}
+	if !in.Test {
+		platformHost := hostOf(uc.publicBaseURL)
+		allowed := func(host string) bool {
+			return (platformHost != "" && strings.EqualFold(host, platformHost)) || domain.HostAllowed(host, kit.ImageHosts)
+		}
+		if err := domain.CheckImageHosts(v.Variables, values, allowed); err != nil {
+			return err
+		}
+	}
+	if v.Markup != "" {
+		merchant := kit.Footer.Company
+		if merchant == "" {
+			merchant = in.Reserved[domain.ReservedTenantName]
+		}
+		if jsonLD, ok := markup.Build(v.Markup, values, merchant); ok {
+			out.HTML = markup.Inject(out.HTML, jsonLD)
+		} else {
+			uc.logger.Info("correo sin marcado estructurado: faltan datos para uno valido",
+				zap.String("tenant_id", tenantID.String()), zap.String("markup", v.Markup))
+		}
+	}
+	return nil
+}
+
+func hasImages(vars []domain.Variable) bool {
+	for _, v := range vars {
+		if v.Type == domain.VarImage {
+			return true
+		}
+		for _, f := range v.Fields {
+			if f.Type == domain.VarImage {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func hostOf(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	return u.Hostname()
+}
+
+// TemplateByKey busca la plantilla por su clave estable, para quien envia nombrandola asi.
+func (uc *UseCase) TemplateByKey(ctx context.Context, tenantID uuid.UUID, key string) (*domain.Template, error) {
+	normalized, err := domain.NormalizeTemplateKey(key)
+	if err != nil {
+		return nil, err
+	}
+	if normalized == nil {
+		return nil, domain.ErrTemplateNotFound
+	}
+	return uc.repo.GetTemplateByKey(ctx, tenantID, *normalized)
+}
+
+// checkMarkupKind: el marcado de pedido describe una operacion del cliente, asi que solo cabe en
+// una plantilla transaccional.
+func checkMarkupKind(kind, m string) error {
+	if m != "" && kind != domain.KindTransactional {
+		return fmt.Errorf("%w: el marcado %q solo se admite en plantillas transaccionales", domain.ErrInvalidMarkup, m)
+	}
+	return nil
 }
 
 func newVersion(t *domain.Template, number int, c domain.Content, userID uuid.UUID) *domain.Version {
@@ -408,6 +514,7 @@ func newVersion(t *domain.Template, number int, c domain.Content, userID uuid.UU
 		Text:       c.Text,
 		Variables:  c.Variables,
 		Editor:     c.Editor,
+		Markup:     c.Markup,
 		Status:     domain.VersionStatusDraft,
 		CreatedBy:  userID,
 	}
@@ -423,6 +530,9 @@ func (uc *UseCase) prepareContent(c domain.Content) (domain.Content, error) {
 	}
 	c.Editor = editor
 	if _, err := uc.renderer.Compile(c); err != nil {
+		return c, err
+	}
+	if err := markup.Validate(c.Markup, c.Variables); err != nil {
 		return c, err
 	}
 	return c, nil

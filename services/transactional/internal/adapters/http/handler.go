@@ -132,6 +132,7 @@ type createRequest struct {
 	HTML            string            `json:"html,omitempty"`
 	Text            string            `json:"text,omitempty"`
 	TemplateID      *uuid.UUID        `json:"template_id,omitempty"`
+	TemplateKey     string            `json:"template_key,omitempty"`
 	TemplateVersion *int              `json:"template_version,omitempty"`
 	Variables       map[string]any    `json:"variables,omitempty"`
 	Headers         map[string]string `json:"headers,omitempty"`
@@ -184,6 +185,7 @@ func (req createRequest) command(tenantID uuid.UUID, key string) app.CreateMessa
 		HTML:            req.HTML,
 		Text:            req.Text,
 		TemplateID:      req.TemplateID,
+		TemplateKey:     req.TemplateKey,
 		TemplateVersion: req.TemplateVersion,
 		Variables:       req.Variables,
 		Headers:         req.Headers,

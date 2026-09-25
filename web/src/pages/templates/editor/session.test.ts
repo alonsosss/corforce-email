@@ -27,6 +27,7 @@ function detail(current: number, versions: VersionSummary[]): TemplateDetail {
     id: 't',
     name: 'Plantilla',
     description: '',
+    key: null,
     kind: 'marketing',
     status: 'active',
     current_version: current,
@@ -102,6 +103,7 @@ describe('aplicar una plantilla de la galeria', () => {
       preheader: '',
       text: '',
       variables: variablesToDrafts([{ name: 'first_name', type: 'string', required: false }]),
+      markup: 'order' as const,
     };
     const applied = applyGallery(
       doc,
@@ -116,16 +118,19 @@ describe('aplicar una plantilla de la galeria', () => {
     expect(applied.doc.preheader).toBe('Pre');
     expect(applied.doc.variables.map((v) => v.name)).toEqual(['first_name', 'cart_url']);
     expect(applied.canvas).toBe('<mjml><mj-body></mj-body></mjml>');
+    expect(applied.doc.markup).toBeNull();
   });
 
   it('rellena el asunto si estaba vacio', () => {
     const applied = applyGallery(
-      { subject: ' ', preheader: '', text: '', variables: [] },
+      { subject: ' ', preheader: '', text: '', variables: [], markup: null },
       '<mjml><mj-body></mj-body></mjml>',
       'Asunto de la galeria',
       [],
+      'order',
     );
     expect(applied.doc.subject).toBe('Asunto de la galeria');
+    expect(applied.doc.markup).toBe('order');
   });
 });
 

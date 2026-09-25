@@ -1,6 +1,9 @@
 package domain
 
 import (
+	"fmt"
+	"regexp"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -38,6 +41,31 @@ const (
 	MaxVariables    = 100
 )
 
+// Marcado estructurado que la plataforma anade a una version al renderizarla. MarkupOrder es la
+// tarjeta de pedido de Gmail (schema.org Order en JSON-LD); solo en plantillas transaccionales.
+const MarkupOrder = "order"
+
+func Markups() []string { return []string{MarkupOrder} }
+
+// MaxTemplateKey es el tope de la clave estable de una plantilla.
+const MaxTemplateKey = 64
+
+// templateKeyRegex: segmentos en minusculas separados por punto, como pedido.confirmado. La
+// clave viaja en el API de envio, asi que no admite nada que haya que escapar.
+var templateKeyRegex = regexp.MustCompile(`^[a-z][a-z0-9_-]*(\.[a-z][a-z0-9_-]*)*$`)
+
+// NormalizeTemplateKey valida una clave de plantilla. Vacia significa sin clave (nil).
+func NormalizeTemplateKey(key string) (*string, error) {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return nil, nil
+	}
+	if len(key) > MaxTemplateKey || !templateKeyRegex.MatchString(key) {
+		return nil, fmt.Errorf("%w: use minúsculas, dígitos, _ y - en segmentos separados por punto (p. ej. pedido.confirmado), hasta %d caracteres", ErrInvalidTemplateKey, MaxTemplateKey)
+	}
+	return &key, nil
+}
+
 func Kinds() []string            { return []string{KindTransactional, KindMarketing} }
 func TemplateStatuses() []string { return []string{TemplateStatusActive, TemplateStatusArchived} }
 func VersionStatuses() []string {
@@ -47,10 +75,12 @@ func VersionStatuses() []string {
 // Template es la cabecera estable de una plantilla. CurrentVersion es 0 mientras no haya
 // ninguna version publicada.
 type Template struct {
-	ID             uuid.UUID
-	TenantID       uuid.UUID
-	Name           string
-	Description    string
+	ID          uuid.UUID
+	TenantID    uuid.UUID
+	Name        string
+	Description string
+	// Key es la clave estable con la que otro producto nombra la plantilla; nil sin clave.
+	Key            *string
 	Kind           string
 	Status         string
 	CurrentVersion int
@@ -62,15 +92,17 @@ type Template struct {
 // Version es el contenido inmutable de una plantilla. Text nil significa que la parte de
 // texto se genera desde el HTML renderizado.
 type Version struct {
-	ID          uuid.UUID
-	TenantID    uuid.UUID
-	TemplateID  uuid.UUID
-	Version     int
-	Subject     string
-	HTML        string
-	Text        *string
-	Variables   []Variable
-	Editor      *EditorDocument
+	ID         uuid.UUID
+	TenantID   uuid.UUID
+	TemplateID uuid.UUID
+	Version    int
+	Subject    string
+	HTML       string
+	Text       *string
+	Variables  []Variable
+	Editor     *EditorDocument
+	// Markup es el marcado estructurado que se anade al renderizar (MarkupOrder) o vacio.
+	Markup      string
 	Status      string
 	PublishedAt *time.Time
 	CreatedBy   uuid.UUID
@@ -110,6 +142,7 @@ type Content struct {
 	Text      *string
 	Variables []Variable
 	Editor    *EditorDocument
+	Markup    string
 }
 
 // Rendered es la salida de un renderizado. Kind es el tipo de la plantilla renderizada.

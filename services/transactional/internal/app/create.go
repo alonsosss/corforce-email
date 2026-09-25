@@ -15,18 +15,21 @@ import (
 
 // CreateMessagesCommand es una peticion de envio ya decodificada.
 type CreateMessagesCommand struct {
-	TenantID        uuid.UUID
-	CreatedBy       *uuid.UUID
-	IdempotencyKey  string
-	From            domain.Recipient
-	ReplyTo         string
-	To              []domain.Recipient
-	Cc              []domain.Recipient
-	Bcc             []domain.Recipient
-	Subject         string
-	HTML            string
-	Text            string
-	TemplateID      *uuid.UUID
+	TenantID       uuid.UUID
+	CreatedBy      *uuid.UUID
+	IdempotencyKey string
+	From           domain.Recipient
+	ReplyTo        string
+	To             []domain.Recipient
+	Cc             []domain.Recipient
+	Bcc            []domain.Recipient
+	Subject        string
+	HTML           string
+	Text           string
+	TemplateID     *uuid.UUID
+	// TemplateKey nombra la plantilla por su clave estable en vez de por id; se resuelve a
+	// TemplateID antes de nada mas, asi que el mensaje guarda siempre el id.
+	TemplateKey     string
 	TemplateVersion *int
 	Variables       map[string]any
 	Headers         map[string]string
@@ -68,6 +71,9 @@ func (uc *UseCase) CreateMessages(ctx context.Context, cmd CreateMessagesCommand
 			return replay, err
 		}
 	}
+	if err := uc.resolveTemplateKey(ctx, &cmd); err != nil {
+		return nil, err
+	}
 	if err := uc.requireSendingDomain(ctx, cmd.TenantID, cmd.From.Email); err != nil {
 		return nil, err
 	}
@@ -95,6 +101,22 @@ func (uc *UseCase) CreateMessages(ctx context.Context, cmd CreateMessagesCommand
 	}
 
 	return uc.storeSubmission(ctx, cmd.TenantID, cmd.IdempotencyKey, messages, result, nil)
+}
+
+// resolveTemplateKey sustituye template_key por el id de la plantilla en la empresa.
+func (uc *UseCase) resolveTemplateKey(ctx context.Context, cmd *CreateMessagesCommand) error {
+	if cmd.TemplateKey == "" {
+		return nil
+	}
+	if uc.templateKeys == nil {
+		return fmt.Errorf("%w: sin resolucion de template_key", domain.ErrTemplatesUnavailable)
+	}
+	id, err := uc.templateKeys.ResolveTemplateKey(ctx, cmd.TenantID, cmd.TemplateKey)
+	if err != nil {
+		return err
+	}
+	cmd.TemplateID = &id
+	return nil
 }
 
 // storeSubmission guarda los mensajes (y la peticion, con clave de idempotencia) en una
@@ -280,14 +302,20 @@ func (uc *UseCase) validateCreate(cmd *CreateMessagesCommand) error {
 
 	hasBody := strings.TrimSpace(cmd.HTML) != "" || strings.TrimSpace(cmd.Text) != ""
 	hasSubject := strings.TrimSpace(cmd.Subject) != ""
+	cmd.TemplateKey = strings.TrimSpace(cmd.TemplateKey)
+	hasTemplate := cmd.TemplateID != nil || cmd.TemplateKey != ""
 	switch {
-	case cmd.TemplateID != nil && (hasBody || hasSubject):
-		return domain.NewValidationError("template_id cannot be combined with subject, html or text")
-	case cmd.TemplateID == nil && !(hasBody && hasSubject):
-		return domain.NewValidationError("either template_id or subject with html or text is required")
+	case cmd.TemplateID != nil && cmd.TemplateKey != "":
+		return domain.NewValidationError("template_id and template_key are mutually exclusive")
+	case len(cmd.TemplateKey) > domain.MaxTemplateKey:
+		return domain.NewValidationError("template_key must not exceed %d characters", domain.MaxTemplateKey)
+	case hasTemplate && (hasBody || hasSubject):
+		return domain.NewValidationError("template_id or template_key cannot be combined with subject, html or text")
+	case !hasTemplate && !(hasBody && hasSubject):
+		return domain.NewValidationError("either template_id, template_key or subject with html or text is required")
 	}
-	if cmd.TemplateID == nil && cmd.TemplateVersion != nil {
-		return domain.NewValidationError("template_version requires template_id")
+	if !hasTemplate && cmd.TemplateVersion != nil {
+		return domain.NewValidationError("template_version requires template_id or template_key")
 	}
 	if len(cmd.HTML)+len(cmd.Text) > domain.MaxBodyBytes {
 		return domain.NewValidationError("el cuerpo supera el límite de %d bytes", domain.MaxBodyBytes)
@@ -441,7 +469,7 @@ func (uc *UseCase) filterSuppressed(ctx context.Context, tenantID uuid.UUID, pur
 // fansOut dice si la peticion produce un mensaje por destinatario: con plantilla o con
 // enlace de baja, las variables reservadas y la baja son por persona.
 func fansOut(cmd CreateMessagesCommand) bool {
-	return cmd.TemplateID != nil || cmd.Unsubscribable
+	return cmd.TemplateID != nil || cmd.TemplateKey != "" || cmd.Unsubscribable
 }
 
 // recipientCount es el numero de destinatarios que saldran de la peticion ya filtrada: la

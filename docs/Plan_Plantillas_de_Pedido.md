@@ -1,7 +1,7 @@
 # Plan: correos de pedido con lista de productos
 
 El ERP (y cualquier otro producto) envía la confirmación de un pedido con **datos**, nunca con
-HTML: `POST /api/v1/transactional/messages` con `template_id` y `variables`. El diseño vive aquí,
+HTML: `POST /api/v1/transactional/messages` con `template_key` (o `template_id`) y `variables`. El diseño vive aquí,
 en `templates`, versionado y editable desde el editor visual. Este plan añade lo que faltaba para
 que ese correo muestre los productos comprados, al estilo de una tienda grande, sin abrir huecos
 de seguridad ni romper las reglas de Gmail.
@@ -12,7 +12,7 @@ de seguridad ni romper las reglas de Gmail.
 {
   "from": {"email": "pedidos@tienda.example", "name": "Tienda"},
   "to": [{"email": "cliente@example.com", "name": "Ana"}],
-  "template_id": "<uuid de la plantilla de la empresa>",
+  "template_key": "pedido.confirmado",
   "idempotency_key": "pedido-3251789819:confirmado",
   "variables": {
     "first_name": "Ana",
@@ -20,10 +20,12 @@ de seguridad ni romper las reglas de Gmail.
     "order_url": "https://tienda.example/pedidos/3251789819",
     "status": "received",
     "currency": "S/",
+    "currency_code": "PEN",
     "total": "2027.70",
     "items": [
       {"name": "Lavadora 15 kg", "detail": "Color grafito", "quantity": 1,
-       "price": "1899.00", "image_url": "https://tienda.example/img/lavadora.jpg",
+       "unit_price": "1899.00", "price": "1899.00",
+       "image_url": "https://tienda.example/img/lavadora.jpg",
        "delivery": "Llega el miércoles 16 de septiembre"}
     ]
   }
@@ -36,7 +38,12 @@ de seguridad ni romper las reglas de Gmail.
   impuestos y los descuentos son del ERP. La plantilla solo los formatea (`money`).
 * **Fechas** ya redactadas por el ERP (`"Llega el miércoles 16 de septiembre"`), porque el
   idioma y el formato son suyos.
-* El ERP guarda el `template_id` como **configuración por empresa**, nunca en su código.
+* **`template_key`**: la clave estable de la plantilla en la empresa (fase 3). El ERP usa la misma
+  clave para todas sus empresas y no guarda ningún id; cada empresa da esa clave a su plantilla.
+  `template_id` sigue admitido; los dos a la vez es 422. La clave se traduce una vez por petición
+  y el mensaje guarda el id.
+* `currency` es el símbolo que ve el cliente; `currency_code`, el código ISO 4217 que exige la
+  tarjeta de Gmail. `unit_price` es el precio unitario y `price`, el de la línea.
 
 ## 2. Lo que cambia en `templates`
 
@@ -90,7 +97,43 @@ cuenta como ausente).
 |---|---|---|
 | 1 | Tipos `list` e `image`, validación de números, `range` y funciones, verificador | Hecho (2026-09-25) |
 | 2 | Editor: declaración de listas, valores de prueba, bloques de pedido y plantillas de galería | Hecho (2026-09-25) |
-| 3 | Referencia estable a la plantilla por clave (`pedido.confirmado`) en vez de `template_id`, para que el ERP no guarde un id por empresa | Pendiente |
-| 4 | Lista de hosts de imagen permitidos por empresa en el kit de marca | Pendiente |
-| 5 | Marcado de Gmail para pedidos (schema.org `Order`), que exige registrar el remitente con Google | Pendiente |
+| 3 | Clave estable de la plantilla (`template_key`) | Hecho (2026-09-25) |
+| 4 | Servidores de imagen permitidos por empresa en el kit de marca | Hecho (2026-09-25) |
+| 5 | Tarjeta de pedido de Gmail (schema.org `Order`) | Hecho (2026-09-25); que Gmail la muestre depende del registro con Google (sección 6) |
 | 6 | El ERP pasa del relay SMTP a la API con plantilla (`Plan_Integracion_ERP.md`, fase C4) | En el otro repositorio |
+
+## 6. Fases 3 a 5: cómo quedaron
+
+**Clave estable.** `templates.templates.key` (`05_order_key_markup_hosts.sql`): opcional, única por
+empresa, minúsculas, dígitos, `_` y `-` en segmentos separados por punto, hasta 64 caracteres. Se
+pone y se quita en `PATCH /api/v1/templates/{id}` (`key`, vacía la quita) y desde el diálogo de
+edición de la plantilla. `transactional` la resuelve con `GET /internal/templates/by-key/{key}`
+antes de la supresión y la reputación; 404 si no existe.
+
+**Servidores de imagen.** `brand_kits.image_hosts` (hasta 20). Cada imagen que llega en una
+variable de tipo `image`, también dentro de las listas, tiene que salir de uno de ellos o de un
+subdominio suyo; si no, 422. Vacío admite cualquier servidor `https` (así quedan las empresas que no
+lo configuran). El servidor de la plataforma (`PUBLIC_BASE_URL`, donde vive la biblioteca de
+imágenes) se admite siempre. Las imágenes de ejemplo de un envío de prueba no se comprueban.
+
+**Tarjeta de pedido.** `versions.markup = 'order'`, parte del contenido inmutable de la versión y
+solo en plantillas transaccionales. Al guardar se exige que la versión declare como **requeridas**
+`order_number`, `currency_code`, `total` e `items` con `name`, `quantity` y `unit_price` (una
+opcional ausente valdría 0 y la tarjeta mostraría un precio falso). Al renderizar, la plataforma
+genera el JSON-LD con `encoding/json` (ningún valor puede cerrar el `<script>`) y lo pone al final
+del `<head>`. El comercio es el nombre del kit de marca o, sin él, el de la empresa. Si falta algo
+(una moneda que no es ISO 4217, un producto sin nombre), el correo sale igual sin tarjeta: es una
+mejora, no una condición del envío. La plantilla de galería "Confirmación de pedido" la trae
+activada.
+
+**Lo que falta y no es código: el registro con Google.** Gmail solo muestra el marcado de un
+remitente registrado (https://developers.google.com/workspace/gmail/markup/registering-with-google):
+
+1. Probar enviándose a uno mismo (de `cuenta@gmail.com` a la misma), lo único que se ve sin
+   registro.
+2. Mandar un correo real con el marcado desde producción a `schema.whitelisting+sample@gmail.com`.
+3. Rellenar el formulario de registro de Google.
+
+Google pide SPF o DKIM alineados con el remitente (ya los tiene todo dominio verificado aquí) y un
+historial de volumen sostenido hacia Gmail (del orden de cientos de correos al día durante unas
+semanas) con pocas quejas. Cada empresa registra su propio dominio remitente.

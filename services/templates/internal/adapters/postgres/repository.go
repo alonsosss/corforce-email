@@ -29,17 +29,18 @@ func NewRepository(pool *db.ContextPool) *Repository {
 const (
 	uniqueViolation        = "23505"
 	templateNameConstraint = "templates_tenant_name_key"
+	templateKeyConstraint  = "templates_tenant_key_key"
 
-	templateColumns = `id, tenant_id, name, description, kind, status, current_version, created_by, created_at, updated_at`
-	versionColumns  = `id, tenant_id, template_id, version, subject, html, text, variables, editor, status, published_at, created_by, created_at`
+	templateColumns = `id, tenant_id, name, description, key, kind, status, current_version, created_by, created_at, updated_at`
+	versionColumns  = `id, tenant_id, template_id, version, subject, html, text, variables, editor, markup, status, published_at, created_by, created_at`
 )
 
 func (r *Repository) CreateTemplate(ctx context.Context, t *domain.Template) error {
 	err := r.pool.QueryRow(ctx,
-		`INSERT INTO templates.templates (id, tenant_id, name, description, kind, status, current_version, created_by)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		`INSERT INTO templates.templates (id, tenant_id, name, description, key, kind, status, current_version, created_by)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		 RETURNING created_at, updated_at`,
-		t.ID, t.TenantID, t.Name, t.Description, t.Kind, t.Status, t.CurrentVersion, t.CreatedBy,
+		t.ID, t.TenantID, t.Name, t.Description, t.Key, t.Kind, t.Status, t.CurrentVersion, t.CreatedBy,
 	).Scan(&t.CreatedAt, &t.UpdatedAt)
 	return translate(err)
 }
@@ -64,6 +65,15 @@ func (r *Repository) getTemplate(ctx context.Context, tenantID, id uuid.UUID, lo
 		return nil, err
 	}
 	return t, nil
+}
+
+func (r *Repository) GetTemplateByKey(ctx context.Context, tenantID uuid.UUID, key string) (*domain.Template, error) {
+	t, err := scanTemplate(r.pool.QueryRow(ctx,
+		`SELECT `+templateColumns+` FROM templates.templates WHERE tenant_id = $1 AND key = $2`, tenantID, key))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, domain.ErrTemplateNotFound
+	}
+	return t, err
 }
 
 func (r *Repository) ListTemplates(ctx context.Context, tenantID uuid.UUID, f ports.ListFilter) ([]*domain.Template, int64, error) {
@@ -120,10 +130,10 @@ func escapeLike(s string) string {
 func (r *Repository) UpdateTemplate(ctx context.Context, t *domain.Template) error {
 	err := r.pool.QueryRow(ctx,
 		`UPDATE templates.templates
-		    SET name = $3, description = $4, status = $5, current_version = $6
+		    SET name = $3, description = $4, status = $5, current_version = $6, key = $7
 		  WHERE tenant_id = $1 AND id = $2
 		  RETURNING updated_at`,
-		t.TenantID, t.ID, t.Name, t.Description, t.Status, t.CurrentVersion,
+		t.TenantID, t.ID, t.Name, t.Description, t.Status, t.CurrentVersion, t.Key,
 	).Scan(&t.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.ErrTemplateNotFound
@@ -152,10 +162,10 @@ func (r *Repository) CreateVersion(ctx context.Context, v *domain.Version) error
 		return err
 	}
 	err = r.pool.QueryRow(ctx,
-		`INSERT INTO templates.versions (id, tenant_id, template_id, version, subject, html, text, variables, editor, status, created_by)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		`INSERT INTO templates.versions (id, tenant_id, template_id, version, subject, html, text, variables, editor, markup, status, created_by)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 		 RETURNING created_at`,
-		v.ID, v.TenantID, v.TemplateID, v.Version, v.Subject, v.HTML, v.Text, variables, editor, v.Status, v.CreatedBy,
+		v.ID, v.TenantID, v.TemplateID, v.Version, v.Subject, v.HTML, v.Text, variables, editor, nullIfEmpty(v.Markup), v.Status, v.CreatedBy,
 	).Scan(&v.CreatedAt)
 	return translate(err)
 }
@@ -238,7 +248,7 @@ func (r *Repository) MarkPublished(ctx context.Context, tenantID, versionID uuid
 
 func scanTemplate(row pgx.Row) (*domain.Template, error) {
 	var t domain.Template
-	err := row.Scan(&t.ID, &t.TenantID, &t.Name, &t.Description, &t.Kind, &t.Status, &t.CurrentVersion,
+	err := row.Scan(&t.ID, &t.TenantID, &t.Name, &t.Description, &t.Key, &t.Kind, &t.Status, &t.CurrentVersion,
 		&t.CreatedBy, &t.CreatedAt, &t.UpdatedAt)
 	if err != nil {
 		return nil, err
@@ -251,11 +261,15 @@ func scanVersion(row pgx.Row) (*domain.Version, error) {
 		v         domain.Version
 		variables []byte
 		editor    []byte
+		markup    *string
 	)
 	err := row.Scan(&v.ID, &v.TenantID, &v.TemplateID, &v.Version, &v.Subject, &v.HTML, &v.Text, &variables,
-		&editor, &v.Status, &v.PublishedAt, &v.CreatedBy, &v.CreatedAt)
+		&editor, &markup, &v.Status, &v.PublishedAt, &v.CreatedBy, &v.CreatedAt)
 	if err != nil {
 		return nil, err
+	}
+	if markup != nil {
+		v.Markup = *markup
 	}
 	if err := json.Unmarshal(variables, &v.Variables); err != nil {
 		return nil, fmt.Errorf("leer variables de la version %s: %w", v.ID, err)
@@ -284,12 +298,24 @@ func editorJSON(e *domain.EditorDocument) ([]byte, error) {
 	return b, nil
 }
 
-// translate convierte la violacion del nombre unico en el error de dominio; el resto de
-// fallos se devuelven tal cual para que el handler los registre.
+func nullIfEmpty(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
+}
+
+// translate convierte la violacion del nombre o la clave unicos en el error de dominio; el
+// resto de fallos se devuelven tal cual para que el handler los registre.
 func translate(err error) error {
 	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) && pgErr.Code == uniqueViolation && pgErr.ConstraintName == templateNameConstraint {
-		return domain.ErrTemplateNameTaken
+	if errors.As(err, &pgErr) && pgErr.Code == uniqueViolation {
+		switch pgErr.ConstraintName {
+		case templateNameConstraint:
+			return domain.ErrTemplateNameTaken
+		case templateKeyConstraint:
+			return domain.ErrTemplateKeyTaken
+		}
 	}
 	return err
 }
