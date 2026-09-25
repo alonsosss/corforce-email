@@ -73,6 +73,7 @@ DEPLOY_PLAN="${DEPLOY_PLAN:-0}"
 despliegue_comprobar_conexion || exit 1
 if [[ "$DEPLOY_PLAN" != 1 ]]; then
   despliegue_comprobar_arbol || exit 1
+  despliegue_comprobar_ci || exit 1
   despliegue_comprobar_buildkit || exit 1
 fi
 

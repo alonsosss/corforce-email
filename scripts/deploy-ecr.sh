@@ -47,6 +47,7 @@ recargar_prometheus() {
 
 # El plan compara HEAD con el servidor: lo que haya sin commitear no entra en ninguna de las dos cosas.
 [[ "$DEPLOY_PLAN" == 1 ]] || despliegue_comprobar_arbol || exit 1
+[[ "$DEPLOY_PLAN" == 1 ]] || despliegue_comprobar_ci || exit 1
 
 # Ficheros que viajan al servidor: SIEMPRE desde HEAD (git archive), nunca desde el
 # arbol de trabajo. Una migracion nueva sin commitear no puede colarse a produccion.

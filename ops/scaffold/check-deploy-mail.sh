@@ -181,6 +181,36 @@ lin_puerta="$(grep -n "despliegue_comprobar_regresion mail-engines.yml" "$DM" | 
 lin_build="$(grep -n "^# ── 2. build local" "$DM" | head -1 | cut -d: -f1)"
 [[ -n "$lin_puerta" && -n "$lin_build" && "$lin_puerta" -lt "$lin_build" ]] || mal "deploy-mail: la puerta de regresion no va antes de construir"
 
+# --- 2c. puerta de la CI (nada se despliega con main en rojo) ------------------------------------
+# La CI corre en cada push, asi que la regla es simple: o hay una ejecucion verde de ESTE commit, o
+# no se despliega. Se distingue entre fallo, en curso y ausente porque se arreglan de forma distinta.
+ci() { # ci <json de ejecuciones> [VAR=valor...]: deja la salida en $TMP/ci.out
+  local json="$1"; shift
+  printf '%s' "$json" >"$TMP/gh.json"
+  (cd "$RG" && env PATH="$TMP/bin:$PATH" STUB_GH_RUNS="$TMP/gh.json" "$@" bash -c ". '$LIB'; despliegue_comprobar_ci ci.yml") >"$TMP/ci.out" 2>&1
+}
+ejec() { printf '[{"headSha":"%s","status":"%s","conclusion":"%s"}]' "$1" "$2" "$3"; }
+
+git -C "$RG" checkout -q "$MOTOR"
+ci "$(ejec "$MOTOR" completed success)" || mal "ci: rechaza un commit con su CI en verde"
+if ci "$(ejec "$MOTOR" completed failure)"; then mal "ci: despliega con la CI en rojo"; fi
+grep -q "la CI FALLA para el commit" "$TMP/ci.out" || mal "ci: no dice que la CI fallo"
+if ci "$(ejec "$MOTOR" in_progress "")"; then mal "ci: despliega con la CI todavia corriendo"; fi
+grep -q "todavia corre" "$TMP/ci.out" || mal "ci: no distingue una CI en curso de una que falla"
+if ci "$(ejec "$VERDE" completed success)"; then mal "ci: acepta el verde de OTRO commit"; fi
+grep -q "no hay ninguna ejecucion de la CI" "$TMP/ci.out" || mal "ci: no explica que falta la ejecucion del commit"
+if ci "[]"; then mal "ci: acepta sin ninguna ejecucion"; fi
+if ci "[]" STUB_GH_FALLA=1; then mal "ci: acepta si gh falla"; fi
+grep -q "gh no pudo consultar" "$TMP/ci.out" || mal "ci: no explica el fallo de gh"
+ci "[]" DEPLOY_CI=avisar || mal "ci: avisar no deja seguir"
+grep -q "PUERTA DE LA CI" "$TMP/ci.out" || mal "ci: avisar no dice lo que falta"
+ci "[]" DEPLOY_CI=omitir || mal "ci: omitir no deja seguir"
+grep -q "no se comprueba la CI" "$TMP/ci.out" || mal "ci: omitir no lo deja dicho"
+if ci "[]" DEPLOY_CI=quiza; then mal "ci: acepta un modo desconocido"; fi
+# Los dos despliegues la llaman: la plataforma y los motores.
+grep -q "despliegue_comprobar_ci" "$DM" || mal "deploy-mail: no llama a la puerta de la CI"
+grep -q "despliegue_comprobar_ci" "$ROOT/scripts/deploy-ecr.sh" || mal "deploy-ecr: no llama a la puerta de la CI"
+
 # --- 3. ops/maintenance/recursos-externos.sh ----------------------------------------------------
 cat >"$TMP/bin/docker" <<'STUB'
 #!/usr/bin/env bash
@@ -298,8 +328,11 @@ esac
 STUB
 chmod +x "$TMP/bin/aws" "$TMP/bin/docker"
 TAG="$(git -C "$ROOT" rev-parse --short HEAD)"
+# La CI de HEAD, en verde, para el gh falso: el despliegue pasa por la puerta de la CI de verdad en
+# vez de saltarsela, que es lo que se quiere probar en los casos de mas abajo.
+printf '[{"headSha":"%s","status":"completed","conclusion":"success"}]' "$(git -C "$ROOT" rev-parse HEAD)" >"$TMP/gh-ci.json"
 desplegar() {
-  PATH="$TMP/bin:$PATH" STUB_SRV="$S" DEPLOY_HOST=servidor-de-prueba DEPLOY_PATH="$S/app" MAIL_DEPLOY_PATH="$S/mail-src" \
+  PATH="$TMP/bin:$PATH" STUB_SRV="$S" STUB_GH_RUNS="$TMP/gh-ci.json" DEPLOY_HOST=servidor-de-prueba DEPLOY_PATH="$S/app" MAIL_DEPLOY_PATH="$S/mail-src" \
     DEPLOY_LOCK_DIR="$S/candado" MAIL_DEPLOY_REGRESION=omitir DEPLOY_ALLOW_DIRTY="${DEPLOY_ALLOW_DIRTY:-1}" MAIL_DEPLOY_PLAZO=5 MAIL_DEPLOY_ESTABLE=0 ESPERAR_SANOS_PAUSA=1 \
     WITH_SECRETS_ENV_FILE="$S/app/.env" SECRETS_ENV_FILE="$S/secrets.env" SECRETS_DB_ENV_FILE="$S/secrets-db.env" \
     bash "$DM" "$@" >"$TMP/dm.out" 2>&1

@@ -523,6 +523,14 @@ buzones dio 500 y `mail-auth` no pudo leer el buzon del remitente de las alertas
   ni la guardia de retroceso ni la verificación podían saber qué commit corría cada servicio: el
   despliegue «salía bien» aunque dejara código viejo dentro, y no había rollback por etiqueta.
   Rollback: desde el commit anterior, `DEPLOY_ALLOW_ROLLBACK=1 ./scripts/deploy-ecr.sh <servicios>`.
+* **Puerta de la CI.** Ni la plataforma ni los motores se despliegan si el commit no tiene una
+  ejecución de CI **en verde**, la suya y no la de un commit anterior
+  (`despliegue_comprobar_ci`, probada en `ops/scaffold/check-deploy-mail.sh`). La CI corre en cada
+  push a `main`, así que la regla no necesita matices. Distingue los tres casos porque se arreglan de
+  forma distinta: falla (hay que corregir), todavía corre (esperar unos minutos) y no hay ninguna
+  (falta empujar el commit). Salidas declaradas: `DEPLOY_CI=avisar` sigue avisando y `DEPLOY_CI=omitir`
+  no comprueba nada; las dos lo dejan dicho en la salida del despliegue. Existe porque el 2026-09-24
+  `main` estuvo en rojo tres commits y se desplegó igual: lo que lo evitó fue que alguien mirara.
 * Migración de un servidor anterior al etiquetado (imágenes `app-<servicio>:latest`): sin lista a
   mano. `servicios_sin_commit` (`scripts/lib/despliegue.sh`) añade a la detección automática los
   servicios cuyo contenedor corre una imagen sin etiqueta de commit, así que el primer

@@ -135,6 +135,55 @@ PY
   return 1
 }
 
+# Puerta de la CI: no se despliega un commit cuya CI no esta en verde.
+#
+# El 2026-09-24 main estuvo en rojo tres commits y se desplego igual: lo que lo evito fue que
+# alguien mirara, no el sistema. La CI corre en CADA push a main (sin filtros de ruta), asi que la
+# regla no necesita matices: o hay una ejecucion verde de ESTE commit, o no se despliega.
+#
+# Se distingue a proposito entre fallo, en curso y ausente: "todavia corre" se resuelve esperando
+# unos minutos, y "no hay ninguna" casi siempre significa que falta empujar el commit.
+#
+# Como las demas guardias, con salida declarada: DEPLOY_CI=avisar sigue avisando y DEPLOY_CI=omitir
+# no comprueba nada; las dos dejan dicho en la salida que se saltaron.
+despliegue_comprobar_ci() {
+  local flujo="${1:-ci.yml}" modo="${DEPLOY_CI:-exigir}" runs veredicto head
+  case "$modo" in
+    omitir) echo ">> AVISO: no se comprueba la CI (DEPLOY_CI=omitir)" >&2; return 0 ;;
+    exigir | avisar) ;;
+    *) echo "DEPLOY_CI debe ser exigir, avisar u omitir (es '$modo')" >&2; return 1 ;;
+  esac
+  head="$(git rev-parse HEAD)"
+  if ! command -v gh >/dev/null 2>&1; then
+    veredicto="falta gh: no se puede saber si la CI esta en verde (instalalo y usa gh auth login)"
+  elif ! runs="$(gh run list --workflow "$flujo" --branch main --limit 30 --json headSha,status,conclusion 2>&1)"; then
+    veredicto="gh no pudo consultar el flujo $flujo: ${runs:0:200}"
+  else
+    veredicto="$(RUNS="$runs" python3 - "$head" <<'PY'
+import json, os, sys
+
+head = sys.argv[1]
+runs = [r for r in json.loads(os.environ["RUNS"] or "[]") if r["headSha"] == head]
+corto = head[:8]
+if any(r["conclusion"] == "success" for r in runs):
+    print("ok")
+elif any(r["conclusion"] in ("failure", "cancelled", "timed_out", "startup_failure") for r in runs):
+    print("la CI FALLA para el commit " + corto)
+elif any(r["status"] in ("in_progress", "queued", "waiting", "pending", "requested") for r in runs):
+    print("la CI todavia corre para el commit " + corto)
+else:
+    print("no hay ninguna ejecucion de la CI para el commit " + corto + "; falta empujarlo a main")
+PY
+)" || veredicto="no se pudo evaluar la puerta de la CI"
+  fi
+  [[ "$veredicto" == ok ]] && return 0
+  echo "PUERTA DE LA CI: $veredicto" >&2
+  echo "  Mirala con: gh run list --workflow $flujo --branch main --limit 5" >&2
+  if [[ "$modo" == avisar ]]; then echo ">> AVISO: se sigue (DEPLOY_CI=avisar)" >&2; return 0; fi
+  echo "  Solo con una razon: DEPLOY_CI=omitir (queda dicho en la salida)." >&2
+  return 1
+}
+
 # Los Dockerfile de los servicios Go usan "RUN --mount=type=cache": sin BuildKit el build muere a
 # media compilacion con un mensaje que no explica que falta.
 despliegue_comprobar_buildkit() {
