@@ -92,7 +92,7 @@ func (r *APIKeyRepo) Create(ctx context.Context, key *domain.APIKey, event domai
 	if _, err := tx.Exec(ctx,
 		`INSERT INTO access_control.api_keys (id, tenant_id, name, kind, prefix, secret_hash, hash_key_id, created_by, expires_at, created_at)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-		key.ID, key.TenantID, key.Name, key.Kind, key.Prefix, key.SecretHash, key.HashKeyID, key.CreatedBy, key.ExpiresAt, key.CreatedAt,
+		key.ID, key.TenantID, key.Name, domain.APIKeyKindOrDefault(key.Kind), key.Prefix, key.SecretHash, key.HashKeyID, key.CreatedBy, key.ExpiresAt, key.CreatedAt,
 	); err != nil {
 		return err
 	}

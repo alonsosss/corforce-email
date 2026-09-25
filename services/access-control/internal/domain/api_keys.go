@@ -77,6 +77,16 @@ func APIKeyTokenPrefixFor(kind string) string {
 	return ""
 }
 
+// APIKeyKindOrDefault normaliza la familia: vacia es la de envio, que es lo que era toda clave
+// antes de que existieran las dos. Se aplica al guardar para que ninguna fila quede fuera del
+// CHECK de la columna, venga de donde venga.
+func APIKeyKindOrDefault(kind string) string {
+	if kind == "" {
+		return APIKeyKindSending
+	}
+	return kind
+}
+
 // APIKeyKindOf devuelve la familia que anuncia el token por su prefijo, vacia si no es ninguna.
 func APIKeyKindOf(token string) string {
 	switch {
