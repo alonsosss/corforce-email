@@ -105,3 +105,21 @@ func (s SESAccountStatus) MarketingQuotaOpen(sentSince int64, reserve float64) b
 	}
 	return s.SentLast24Hours+float64(sentSince) < s.Max24HourSend*(1-reserve)
 }
+
+// Etiquetas de los mensajes aceptados por el relay SMTP. La cuenta de plataforma es la clave global
+// del otro producto: comparte supresion, reputacion y cupo con el correo de esta plataforma, y su
+// volumen masivo es el umbral para darle empresa propia (docs/Plan_Integracion_ERP.md, 8).
+const (
+	RelayAccountPlatform = "plataforma"
+	RelayAccountTenant   = "empresa"
+	RelayClassBulk       = "masivo"
+	RelayClassNotice     = "aviso"
+)
+
+// RelayClassOf es la clase de un mensaje del relay segun se declare masivo en sus cabeceras.
+func RelayClassOf(bulk bool) string {
+	if bulk {
+		return RelayClassBulk
+	}
+	return RelayClassNotice
+}

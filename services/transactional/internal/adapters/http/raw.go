@@ -62,6 +62,7 @@ func (h *Handler) InternalRawMessage(w http.ResponseWriter, r *http.Request) {
 		Text:           parsed.Text,
 		HTML:           parsed.HTML,
 		Raw:            clean,
+		Bulk:           parsed.Bulk,
 	}
 	if parsed.Sender != nil {
 		cmd.Sender = parsed.Sender.Email

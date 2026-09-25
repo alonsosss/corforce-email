@@ -6,6 +6,7 @@ import (
 
 	"github.com/alonsosss/corforce-email/services/transactional/internal/domain"
 	"github.com/alonsosss/corforce-email/services/transactional/internal/ports"
+	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
 
@@ -43,6 +44,9 @@ type Config struct {
 	// MarketingQuotaReserve es la fraccion de la cuota diaria de SES reservada al transaccional
 	// (SES_MARKETING_QUOTA_RESERVE); cero usa domain.DefaultMarketingQuotaReserve.
 	MarketingQuotaReserve float64
+	// PlatformTenantID es la empresa de plataforma (PLATFORM_TENANT_ID); con ella se separan en las
+	// metricas del relay los envios por la cuenta compartida. uuid.Nil no los separa.
+	PlatformTenantID uuid.UUID
 }
 
 type Deps struct {
@@ -132,6 +136,7 @@ func (noopMetrics) SESEventRejected(string)            {}
 func (noopMetrics) SESAccount(domain.SESAccountStatus) {}
 func (noopMetrics) SESAccountCheckFailed()             {}
 func (noopMetrics) MarketingDeferred()                 {}
+func (noopMetrics) RelayMessage(string, string)        {}
 
 // laneFor devuelve el carril de la clase del mensaje. Una clase sin carril completo es un
 // error de configuracion: el mensaje no sale por el carril de otra clase.

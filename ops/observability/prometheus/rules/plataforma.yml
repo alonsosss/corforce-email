@@ -785,3 +785,24 @@ groups:
         annotations:
           resumen: "El gateway rechaza {{ $value | humanize }} claves de API invalidas por segundo"
           detalle: "Alguien prueba claves en la API de envio o una integracion usa una revocada. access_control_api_key_resolutions_total{result} distingue claves inexistentes (unknown), con otro secreto (secret), revocadas o caducadas."
+
+      # Umbral para dar empresa propia al otro producto (docs/Plan_Integracion_ERP.md, 8). Su clave
+      # global entra por la empresa de plataforma y comparte supresion, reputacion y cupo con el correo
+      # de esta plataforma (recuperacion de contrasena incluida). Mientras mande avisos de pocas
+      # empresas no es un riesgo; lo es cuando manda campanas o crece. Necesita PLATFORM_TENANT_ID en
+      # transactional: sin ella todo cuenta como empresa y estas alertas no suenan.
+      - alert: CuentaCompartidaEnviaMasivo
+        expr: sum(increase(transactional_relay_messages_total{account="plataforma",class="masivo"}[1d])) > 0
+        labels:
+          severidad: media
+        annotations:
+          resumen: "La cuenta compartida del otro producto envia correo masivo ({{ $value | humanize }} en 24 h)"
+          detalle: "Por la clave global (empresa de plataforma) entran mensajes con List-Unsubscribe, List-Id o Precedence bulk: campanas a clientes finales. Es el umbral para separar al otro producto en su propia empresa, con su dominio de envio y su clave (docs/Plan_Integracion_ERP.md, 8): una queja de esas campanas degrada el correo de recuperacion de contrasena de la plataforma."
+
+      - alert: CuentaCompartidaConVolumen
+        expr: sum(increase(transactional_relay_messages_total{account="plataforma"}[1d])) > 300
+        labels:
+          severidad: media
+        annotations:
+          resumen: "La cuenta compartida del otro producto paso de 300 mensajes en 24 h ({{ $value | humanize }})"
+          detalle: "El volumen de la clave global ya no es de avisos internos de unas pocas empresas. Es el umbral para separar al otro producto en su propia empresa (docs/Plan_Integracion_ERP.md, 8) antes de que su reputacion arrastre la de la plataforma."

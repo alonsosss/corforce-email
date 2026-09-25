@@ -200,3 +200,54 @@ func TestSendQueuedSinMIMEFallaDefinitivo(t *testing.T) {
 		t.Fatalf("sin contenido el mensaje falla sin llamar a SES: %+v %v", out, err)
 	}
 }
+
+// El relay cuenta lo que entra por la cuenta de plataforma (la clave global compartida) aparte de
+// lo que entra por la cuenta propia de una empresa, y separa lo masivo de los avisos: es el umbral
+// para darle empresa propia al otro producto. Una repeticion idempotente y un envio del todo
+// suprimido no cuentan, porque no sale nada.
+func TestRawMessageCuentaPorCuentaYClase(t *testing.T) {
+	f := newFixture(t, Config{})
+	f.uc.cfg.PlatformTenantID = f.tenant
+	f.setDomain(f.tenant, shopDomain, "verified", "sending")
+
+	if _, err := f.uc.CreateRawMessage(ctx, smtpCommand(f, "ana@example.com")); err != nil {
+		t.Fatal(err)
+	}
+	masivo := smtpCommand(f, "eva@example.com")
+	masivo.Bulk = true
+	masivo.IdempotencyKey = "campana-1"
+	if _, err := f.uc.CreateRawMessage(ctx, masivo); err != nil {
+		t.Fatal(err)
+	}
+	repetido := smtpCommand(f, "eva@example.com")
+	repetido.Bulk = true
+	repetido.IdempotencyKey = "campana-1"
+	if res, err := f.uc.CreateRawMessage(ctx, repetido); err != nil || !res.Replayed {
+		t.Fatalf("repeticion: %+v %v", res, err)
+	}
+	f.supp.suppressed["nadie@example.com"] = "hard_bounce"
+	if _, err := f.uc.CreateRawMessage(ctx, smtpCommand(f, "nadie@example.com")); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{domain.RelayAccountPlatform + "/" + domain.RelayClassNotice, domain.RelayAccountPlatform + "/" + domain.RelayClassBulk}
+	if len(f.metrics.relay) != len(want) || f.metrics.relay[0] != want[0] || f.metrics.relay[1] != want[1] {
+		t.Fatalf("cuenta de plataforma: %v", f.metrics.relay)
+	}
+
+	otra := newFixture(t, Config{PlatformTenantID: uuid.New()})
+	otra.setDomain(otra.tenant, shopDomain, "verified", "sending")
+	if _, err := otra.uc.CreateRawMessage(ctx, smtpCommand(otra, "ana@example.com")); err != nil {
+		t.Fatal(err)
+	}
+	sinPlataforma := newFixture(t, Config{})
+	sinPlataforma.setDomain(sinPlataforma.tenant, shopDomain, "verified", "sending")
+	if _, err := sinPlataforma.uc.CreateRawMessage(ctx, smtpCommand(sinPlataforma, "ana@example.com")); err != nil {
+		t.Fatal(err)
+	}
+	empresa := domain.RelayAccountTenant + "/" + domain.RelayClassNotice
+	if len(otra.metrics.relay) != 1 || otra.metrics.relay[0] != empresa ||
+		len(sinPlataforma.metrics.relay) != 1 || sinPlataforma.metrics.relay[0] != empresa {
+		t.Fatalf("una empresa con cuenta propia, o sin plataforma configurada, cuenta como empresa: %v %v",
+			otra.metrics.relay, sinPlataforma.metrics.relay)
+	}
+}

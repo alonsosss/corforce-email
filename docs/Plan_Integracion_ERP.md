@@ -164,3 +164,38 @@ Por dónde se retoma: fase B2, que empieza por la migración de registro con `ex
 | B1. Familia de credencial y separación de poderes | Hecho (`db3cbe2`): `kind` en las claves, prefijo `cfp_`, dos listas de rutas disjuntas en el gateway, con pruebas de los dos sentidos. Sin rutas de aprovisionamiento todavía |
 | B2. Rutas de aprovisionamiento y cuenta de servicio | Aparcado (2026-09-25) |
 | C. Cambios en el ERP | Aparcado (2026-09-25), en el otro repositorio |
+
+### 8.1 Remitente de las empresas sin configurar (2026-09-25)
+
+Comprobado en `transactional.messages` de la empresa de plataforma: por la clave global salió hoy
+«Prueba de correo (ERP)» como `Core Force <notificaciones@avisos.core-force.com>` y sin `Reply-To`.
+El destinatario no sabe qué empresa le escribe y, si contesta, la respuesta se pierde
+(`avisos.core-force.com` no tiene MX). La dirección de envío no puede cambiar (no es su dominio),
+pero el nombre visible y la respuesta sí.
+
+La causa está en el otro producto (`services/notification/internal/app/usecase.go`,
+`buildEmailConfig`): por la cuenta global usa el nombre y la respuesta de
+`notification.email_settings` de la empresa, y si no los tiene sale el nombre de la plataforma sin
+respuesta. Corrección, en el otro producto y a cargo de su sesión:
+
+1. Rellenar en cada empresa que envía por la cuenta global el nombre visible (su nombre comercial) y
+   el responder-a (su correo de contacto), con sus datos reales, y mandar la prueba desde su pantalla.
+2. Red de seguridad en `buildEmailConfig`: sin nombre configurado, el de la empresa; sin respuesta
+   configurada, su correo de contacto. Nunca el nombre de la plataforma para una empresa que no lo es.
+
+Se da por cerrado cuando cada prueba aparece aquí con su nombre, su `Reply-To` y `delivered`.
+
+### 8.2 Umbral para separar la empresa compartida
+
+No se separa por fecha sino por umbral. Mientras sean las empresas del propio usuario mandando avisos,
+la cuenta compartida no es un riesgo, y separarla ahora sería trabajo que la fase B2 tira. Se separa
+(una empresa propia para el otro producto, con su dominio de envío y su clave) en cuanto pase
+cualquiera de estas dos cosas:
+
+| Disparador | Cómo se detecta |
+|---|---|
+| El otro producto manda correo a clientes finales en volumen (campañas, no avisos internos) | Alertas `CuentaCompartidaEnviaMasivo` (un solo mensaje masivo por la cuenta global en 24 h: `List-Unsubscribe`, `List-Id` o `Precedence: bulk`) y `CuentaCompartidaConVolumen` (más de 300 en 24 h). Métrica `transactional_relay_messages_total{account,class}`; necesita `PLATFORM_TENANT_ID` en `transactional` |
+| Entra en el otro producto una empresa que no es del usuario | No se ve desde aquí: es un paso del alta de empresas del otro producto, que debe avisar antes de darle envío por la cuenta global |
+
+Cualquiera de los dos convierte «comparten reputación» en un riesgo real para el correo de
+recuperación de contraseña de esta plataforma.

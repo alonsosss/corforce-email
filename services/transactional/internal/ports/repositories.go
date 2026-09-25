@@ -157,6 +157,9 @@ type Metrics interface {
 	SESAccountCheckFailed()
 	// MarketingDeferred cuenta un mensaje de marketing aplazado por la reserva de cuota.
 	MarketingDeferred()
+	// RelayMessage cuenta un mensaje aceptado por el relay SMTP, por cuenta (plataforma o
+	// empresa) y clase (aviso o masivo).
+	RelayMessage(account, class string)
 }
 
 // SESAccountReader lee el estado de la cuenta de SES y su reputacion.

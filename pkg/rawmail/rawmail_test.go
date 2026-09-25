@@ -131,3 +131,26 @@ func TestSanitizeQuitaCabecerasPeligrosas(t *testing.T) {
 		t.Errorf("cabecera sin nombre: %v", err)
 	}
 }
+
+func TestParseReconoceElCorreoMasivo(t *testing.T) {
+	cases := map[string]bool{
+		"":                                   false,
+		"Precedence: first-class\r\n":        false,
+		"Auto-Submitted: auto-generated\r\n": false,
+		"List-Unsubscribe: <mailto:baja@x.test>\r\n": true,
+		"List-Id: Boletin <boletin.x.test>\r\n":      true,
+		"Precedence: bulk\r\n":                       true,
+		"Precedence:  List \r\n":                     true,
+		"Precedence: junk\r\n":                       true,
+	}
+	for extra, want := range cases {
+		raw := []byte("From: Tienda <no-reply@x.test>\r\nTo: ana@example.com\r\nSubject: Hola\r\n" + extra + "\r\ncuerpo\r\n")
+		msg, err := Parse(raw, Limits{})
+		if err != nil {
+			t.Fatalf("%q: %v", extra, err)
+		}
+		if msg.Bulk != want {
+			t.Fatalf("%q: masivo=%v, esperado %v", extra, msg.Bulk, want)
+		}
+	}
+}

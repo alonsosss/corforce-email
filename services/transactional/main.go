@@ -141,6 +141,14 @@ func main() {
 	if err != nil {
 		log.Fatalf("MAIL_LINK_SIGNING_KEY: %v", err)
 	}
+	// La empresa de plataforma separa en las metricas del relay la cuenta compartida del otro
+	// producto. Es opcional: sin ella el relay no distingue cuentas.
+	var platformTenant uuid.UUID
+	if raw := strings.TrimSpace(os.Getenv("PLATFORM_TENANT_ID")); raw != "" {
+		if platformTenant, err = uuid.Parse(raw); err != nil {
+			log.Fatalf("PLATFORM_TENANT_ID no es un uuid valido: %v", err)
+		}
+	}
 	viewTTL, err := config.EnvDuration("VIEW_IN_BROWSER_TTL", domain.DefaultViewInBrowserTTL, minViewInBrowserTTL, maxViewInBrowserTTL)
 	if err != nil {
 		log.Fatal(err)
@@ -199,6 +207,7 @@ func main() {
 			ViewInBrowserTTL:            viewTTL,
 			TestSendsPerHour:            testSendsPerHour,
 			MarketingQuotaReserve:       quotaReserve,
+			PlatformTenantID:            platformTenant,
 		},
 		Logger:  logger,
 		Metrics: promadapter.New(),
