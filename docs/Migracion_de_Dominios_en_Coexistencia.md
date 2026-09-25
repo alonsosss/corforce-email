@@ -60,18 +60,22 @@ Con el proveedor automático conectado, `publish-dns` los publica sin tocar el M
 El DKIM del proveedor anterior usa otro selector y sigue publicado: **no se toca**. Dos selectores
 conviven sin problema, que es lo que permite que ambos firmen durante la transición.
 
-### Paso 2. Crear el relevo al proveedor anterior
+### Paso 2. Crear el transporte hacia el proveedor anterior
 
 Antes de mover el MX, para que el reenvío exista cuando el correo empiece a llegar:
 
 ```
-POST /api/v1/mail-routing/relayhosts
-{"hostname": "mx1.hostinger.com", "active": true}
+POST /api/v1/mail-routing/transports
+{"destination": "<dominio>", "nexthop": "[mx1.hostinger.com]:25", "active": true}
 ```
 
-`hostname` admite el puerto (`mx1.hostinger.com:25`); sin él, el 25. Sin usuario ni contraseña: es el
-MX del proveedor, que acepta el correo de su propio dominio como lo aceptaría de cualquier otro
-servidor de internet. La contraseña, si la hubiera, viaja aparte y no se devuelve nunca.
+`nexthop` entre corchetes para que Postfix entregue a ESE servidor y no vuelva a resolver el MX del
+dominio, que ya apunta aquí: sin corchetes el correo se entrega a sí mismo y se queda en la cola.
+
+**No es un `relayhost`.** El `relayhost` de un dominio (`relayhost_id`) gobierna por dónde SALE el
+correo que envían sus buzones, no lo que entra: ponerlo saca el correo de los buzones ya migrados por
+el servidor del proveedor anterior, que lo rechaza por no estar autorizado. En coexistencia el
+dominio va **sin** `relayhost_id` y con el transporte de arriba.
 
 ### Paso 3. Bajar el TTL del MX
 
@@ -98,8 +102,7 @@ En cuanto el MX apunte aquí, con el dominio ya verificado, dejar el dominio as�
 el dominio -> Directorio; o `PATCH /api/v1/mail-domains/{id}`):
 
 ```
-{"backupmx": true, "relay_all_recipients": true, "relay_unknown_only": true,
- "relayhost_id": "<id del paso 2>"}
+{"backupmx": true, "relay_all_recipients": true, "relay_unknown_only": true}
 ```
 
 Desde este momento el correo del dominio entra por la plataforma y sale al proveedor anterior sin que
@@ -122,15 +125,36 @@ Una segunda pasada de la migración al final del día recoge lo que llegó mient
 
 Cuando no quede ningún buzón en el proveedor anterior:
 
-1. Quitar el reenvío: `{"backupmx": false, "relay_all_recipients": false, "relay_unknown_only": false,
-   "relayhost_id": null}`. A partir de aquí, una dirección que no exista se rechaza en la conexión,
-   que es lo correcto.
+1. Quitar el reenvío: `{"backupmx": false, "relay_all_recipients": false, "relay_unknown_only": false}`
+   y borrar el transporte del paso 2. A partir de aquí, una dirección que no exista se rechaza en la
+   conexión, que es lo correcto.
 2. SPF solo con la plataforma y en `-all`.
 3. DMARC a `p=quarantine` con `rua` al buzón de informes.
 4. Subir de nuevo el TTL del MX.
 5. Retirar el DKIM del proveedor anterior cuando lleve unos días sin firmar nada.
 
-## 4. Lo que hay que vigilar
+## 4. Comprobaciones
+
+Con los mapas que consulta Postfix, sin enviar nada (en el contenedor `postfix-mail`, `postmap -q`;
+un resultado vacío sale como `empty lookup result`):
+
+| Consulta | Mapa | Resultado correcto |
+|---|---|---|
+| `<dominio>` | `pgsql_virtual_relay_domain_maps` | el dominio (es de reenvío) |
+| `cualquiera@<dominio>` | `pgsql_relay_recipient_maps` | la propia dirección (se acepta) |
+| `<buzón migrado>` | `pgsql_relay_ne` | `lmtp:inet:dovecot:24` (se entrega aquí) |
+| `<dirección sin migrar>` | `pgsql_relay_ne` | vacío (sale al proveedor anterior) |
+| `<dominio>` | `pgsql_transport_maps` | `smtp_via_transport_maps:[<mx del proveedor>]:25` |
+| `<buzón migrado>` | `pgsql_sender_dependent_default_transport_maps` | `smtp:` a secas, **sin** el proveedor anterior |
+
+Y con correo real, que es lo que cierra la migración:
+
+1. A un buzón ya migrado: llega a su bandeja aquí (IMAP en `mx.core-force.com`).
+2. A una dirección sin migrar: el registro de Postfix muestra `relay=<mx del proveedor>` y `status=sent`.
+3. Desde un buzón migrado (SMTP autenticado en el 587): sale firmado, `DKIM-Signature` con
+   `d=<dominio>` y el selector de la plataforma.
+
+## 5. Lo que hay que vigilar
 
 * **Rebotes de rebote.** Con `relay_all_recipients` la plataforma acepta el correo antes de saber si
   el destinatario existe en el proveedor anterior. Si este lo rechaza, el rebote lo genera la

@@ -58,10 +58,24 @@ password = ${MAIL_DB_PASSWORD}
 EOF
 )
 
+# Transporte local de un dominio en coexistencia (docs/Migracion_de_Dominios_en_Coexistencia.md): lo
+# que ya existe aqui se entrega por LMTP y el resto sale al relayhost del proveedor anterior. Mira
+# mail.mailboxes ADEMAS de mail.aliases: en esta plataforma un buzon no deja una fila de alias con su
+# propia direccion, asi que mirando solo los alias todo buzon migrado se reenviaba al proveedor
+# anterior y nunca se entregaba en local.
 cat <<EOF > /opt/postfix/conf/sql/pgsql_relay_ne.cf
 ${PGSQL_MAP_HEADER}
-query = SELECT CASE WHEN EXISTS(SELECT address, domain FROM mail.aliases
+query = SELECT CASE WHEN EXISTS(SELECT 1 FROM mail.mailboxes
+      WHERE username = '%s'
+        AND active = 1
+        AND domain IN (
+          SELECT domain FROM mail.domains
+            WHERE backupmx
+              AND relay_all_recipients
+              AND relay_unknown_only)
+      ) OR EXISTS(SELECT 1 FROM mail.aliases
       WHERE address = '%s'
+        AND active = 1
         AND domain IN (
           SELECT domain FROM mail.domains
             WHERE backupmx
