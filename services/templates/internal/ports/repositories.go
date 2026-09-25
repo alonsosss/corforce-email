@@ -63,6 +63,10 @@ type CompiledTemplate interface {
 	Render(values map[string]any) (domain.Rendered, error)
 	// Variables son las declaradas, incluidas las que CompileDraft anadio.
 	Variables() []domain.Variable
+	// ListCap es cuantos elementos de la lista puede mostrar como mucho; 0 si no la recorre.
+	ListCap(name string) int
+	// UnboundedLists son las listas que algun range recorre sin take.
+	UnboundedLists() []string
 }
 
 // EventPublisher emite los hechos del dominio. La implementacion encola en la outbox

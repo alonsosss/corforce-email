@@ -1075,6 +1075,12 @@
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   }
 }
+/* Campos de una variable de tipo lista, sangrados bajo su fila */
+.cf-var-fields {
+  margin-left: var(--cf-space-4);
+  padding-left: var(--cf-space-3);
+  border-left: 2px solid var(--cf-border);
+}
 
 /* Acciones en bloque sobre las filas marcadas */
 .cf-bulkbar {

@@ -208,6 +208,8 @@ func (f *Renderer) CompileDraft(c domain.Content) (ports.CompiledTemplate, error
 }
 
 func (f *compiled) Variables() []domain.Variable { return f.content.Variables }
+func (f *compiled) ListCap(string) int           { return 0 }
+func (f *compiled) UnboundedLists() []string     { return nil }
 
 func (f *compiled) Render(values map[string]any) (domain.Rendered, error) {
 	name, _ := values["name"].(string)

@@ -151,14 +151,26 @@ func TestSampleValuesCompletaLoQueFalta(t *testing.T) {
 		{Name: "b", Type: domain.VarURL, Required: true},
 		{Name: "c", Type: domain.VarNumber, Default: json.RawMessage(`3`)},
 		{Name: "d", Type: domain.VarEmail},
+		{Name: "e", Type: domain.VarImage},
+		{Name: "items", Type: domain.VarList, Fields: []domain.Field{
+			{Name: "name", Type: domain.VarString, Required: true},
+			{Name: "price", Type: domain.VarNumber},
+			{Name: "image_url", Type: domain.VarImage},
+		}},
 	}
-	got := sampleValues(declared, map[string]json.RawMessage{"a": json.RawMessage(`"Ana"`), "b": json.RawMessage(`null`)})
+	got := sampleValues(declared, map[string]json.RawMessage{"a": json.RawMessage(`"Ana"`), "b": json.RawMessage(`null`)},
+		func(name string) int { return 20 })
 	values, err := domain.ResolveValues(declared, got, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if values["a"] != "Ana" || values["b"] != sampleURL || values["c"] != json.Number("3") || values["d"] != sampleRecipientEmail {
+	if values["a"] != "Ana" || values["b"] != sampleURL || values["c"] != json.Number("3") ||
+		values["d"] != sampleRecipientEmail || values["e"] != sampleImageURL {
 		t.Fatalf("valores: %v", values)
+	}
+	items, ok := values["items"].([]map[string]any)
+	if !ok || len(items) != 20 || items[0]["name"] != sampleString || items[0]["image_url"] != sampleImageURL {
+		t.Fatalf("la lista de ejemplo debe llevar los elementos pedidos con valores de su tipo: %v", values["items"])
 	}
 }
 

@@ -2,9 +2,10 @@
 //
 // El HTML se procesa con html/template (escapado contextual: una variable dentro de un
 // href se escapa como URL y en texto como HTML) y el asunto y el texto con text/template.
-// Solo se admite un subconjunto del lenguaje: variables planas {{.nombre}}, {{if}} y las
-// funciones de funcs.go. Todo lo demas (range, with, define, variables locales,
-// cualquier otra funcion) se rechaza al compilar con un error que dice que y donde.
+// Solo se admite un subconjunto del lenguaje: variables planas {{.nombre}}, {{if}}, un
+// {{range}} sin anidar sobre una variable de tipo lista y las funciones de funcs.go. Todo lo
+// demas (with, define, variables locales, cualquier otra funcion) se rechaza al compilar con
+// un error que dice que y donde (walker.go).
 package render
 
 import (
@@ -13,10 +14,8 @@ import (
 	htmltemplate "html/template"
 	"io"
 	"regexp"
-	"sort"
 	"strings"
 	texttemplate "text/template"
-	"text/template/parse"
 
 	"github.com/alonsosss/corforce-email/services/templates/internal/domain"
 )
@@ -35,6 +34,10 @@ type Compiled struct {
 	text      *texttemplate.Template
 	variables []domain.Variable
 	refs      []string
+	// listCaps es cuantos elementos de cada lista puede mostrar la plantilla como mucho, y
+	// unbounded las listas que algun range recorre sin take.
+	listCaps  map[string]int
+	unbounded []string
 	// conditionals son los comentarios condicionales de Outlook apartados del HTML (conditional.go).
 	conditionals *conditionals
 }
@@ -44,6 +47,14 @@ func (c *Compiled) Variables() []domain.Variable { return c.variables }
 
 // References devuelve, ordenados, los nombres de variable que las plantillas usan.
 func (c *Compiled) References() []string { return c.refs }
+
+// ListCap es cuantos elementos de la lista puede mostrar la plantilla como mucho: el mayor
+// take de sus range, o MaxListItems si alguno la recorre entera. 0 si no se recorre.
+func (c *Compiled) ListCap(name string) int { return c.listCaps[name] }
+
+// UnboundedLists son las listas que algun range recorre sin take: su tamano en el correo
+// depende solo de quien envia.
+func (c *Compiled) UnboundedLists() []string { return c.unbounded }
 
 // forbiddenHTML son las construcciones que nunca deben salir en un correo: ejecutan
 // codigo o cargan contenido activo en clientes que lo admitan. Se comprueban sobre la
@@ -87,8 +98,8 @@ func (e *Engine) compile(c domain.Content, declareMissing bool) (*Compiled, erro
 		return nil, err
 	}
 
-	refs := map[string]struct{}{}
-	subject, err := compileText("subject", c.Subject, refs)
+	a := newAnalysis(c.Variables)
+	subject, err := compileText("subject", c.Subject, a)
 	if err != nil {
 		return nil, err
 	}
@@ -96,45 +107,42 @@ func (e *Engine) compile(c domain.Content, declareMissing bool) (*Compiled, erro
 	if err != nil {
 		return nil, err
 	}
-	html, err := compileHTML(htmlSrc, refs)
+	html, err := compileHTML(htmlSrc, a)
 	if err != nil {
 		return nil, err
 	}
 	var text *texttemplate.Template
 	if c.Text != nil {
-		if text, err = compileText("text", *c.Text, refs); err != nil {
+		if text, err = compileText("text", *c.Text, a); err != nil {
 			return nil, err
 		}
 	}
 
-	declared := make(map[string]struct{}, len(c.Variables))
-	for _, v := range c.Variables {
-		declared[v.Name] = struct{}{}
-	}
-	names := make([]string, 0, len(refs))
-	for name := range refs {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	var missing []domain.Variable
-	for _, name := range names {
-		if _, ok := declared[name]; ok || domain.IsReserved(name) {
-			continue
-		}
-		if !declareMissing {
-			return nil, fmt.Errorf("%w: la variable %q se usa pero no está declarada", domain.ErrInvalidTemplate, name)
-		}
-		missing = append(missing, domain.Variable{Name: name, Type: domain.VarString})
-	}
 	variables := c.Variables
-	if len(missing) > 0 {
-		variables = append(append([]domain.Variable(nil), c.Variables...), missing...)
-		if err := domain.ValidateDeclarations(variables); err != nil {
+	if declareMissing {
+		missing, err := a.inferMissing()
+		if err != nil {
 			return nil, err
 		}
+		if len(missing) > 0 {
+			variables = append(append([]domain.Variable(nil), c.Variables...), missing...)
+			if err := domain.ValidateDeclarations(variables); err != nil {
+				return nil, err
+			}
+		}
+	} else {
+		for _, name := range a.names() {
+			if _, ok := a.declared[name]; !ok && !domain.IsReserved(name) {
+				return nil, fmt.Errorf("%w: la variable %q se usa pero no está declarada", domain.ErrInvalidTemplate, name)
+			}
+		}
 	}
+	caps, unbounded := a.listCaps()
 
-	compiled := &Compiled{subject: subject, html: html, text: text, variables: variables, refs: names, conditionals: conds}
+	compiled := &Compiled{
+		subject: subject, html: html, text: text, variables: variables, refs: a.names(),
+		listCaps: caps, unbounded: unbounded, conditionals: conds,
+	}
 	// Ejecucion en seco con valores vacios: fuerza el escapador de html/template, que es
 	// quien detecta contextos ambiguos o mal cerrados, y deja la plantilla lista para
 	// ejecutarse en paralelo.
@@ -162,7 +170,7 @@ func checkSizes(c domain.Content) error {
 	return nil
 }
 
-func compileText(name, src string, refs map[string]struct{}) (*texttemplate.Template, error) {
+func compileText(name, src string, a *analysis) (*texttemplate.Template, error) {
 	t, err := texttemplate.New(name).Funcs(allowedFuncs).Option("missingkey=error").Parse(src)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s", domain.ErrInvalidTemplate, cleanParseError(err))
@@ -170,13 +178,13 @@ func compileText(name, src string, refs map[string]struct{}) (*texttemplate.Temp
 	if len(t.Templates()) != 1 {
 		return nil, fmt.Errorf("%w: %s: no se admiten define, block ni template", domain.ErrInvalidTemplate, name)
 	}
-	if err := (&walker{name: name, refs: refs}).walk(t.Tree.Root); err != nil {
+	if err := (&walker{name: name, a: a}).walk(t.Tree.Root); err != nil {
 		return nil, err
 	}
 	return t, nil
 }
 
-func compileHTML(src string, refs map[string]struct{}) (*htmltemplate.Template, error) {
+func compileHTML(src string, a *analysis) (*htmltemplate.Template, error) {
 	t, err := htmltemplate.New("html").Funcs(allowedFuncs).Option("missingkey=error").Parse(src)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s", domain.ErrInvalidTemplate, cleanParseError(err))
@@ -186,7 +194,7 @@ func compileHTML(src string, refs map[string]struct{}) (*htmltemplate.Template, 
 	}
 	// El arbol se recorre ANTES de la primera ejecucion: el escapador inserta despues sus
 	// propias funciones en las pipelines y las confundiria con funciones del usuario.
-	if err := (&walker{name: "html", refs: refs}).walk(t.Tree.Root); err != nil {
+	if err := (&walker{name: "html", a: a}).walk(t.Tree.Root); err != nil {
 		return nil, err
 	}
 	return t, nil
@@ -271,99 +279,4 @@ func (b *limitedBuffer) Write(p []byte) (int, error) {
 		return 0, domain.ErrOutputTooLarge
 	}
 	return b.Builder.Write(p)
-}
-
-// walker recorre el arbol parseado y acepta solo el subconjunto admitido, anotando las
-// variables referenciadas.
-type walker struct {
-	name string
-	refs map[string]struct{}
-}
-
-func (w *walker) reject(n parse.Node, msg string) error {
-	return fmt.Errorf("%w: %s: %s (en %q)", domain.ErrInvalidTemplate, w.name, msg, n.String())
-}
-
-func (w *walker) walk(n parse.Node) error {
-	switch n := n.(type) {
-	case nil:
-		return nil
-	case *parse.ListNode:
-		if n == nil {
-			return nil
-		}
-		for _, child := range n.Nodes {
-			if err := w.walk(child); err != nil {
-				return err
-			}
-		}
-		return nil
-	case *parse.TextNode, *parse.CommentNode:
-		return nil
-	case *parse.ActionNode:
-		return w.pipe(n.Pipe)
-	case *parse.IfNode:
-		if err := w.pipe(n.Pipe); err != nil {
-			return err
-		}
-		if err := w.walk(n.List); err != nil {
-			return err
-		}
-		return w.walk(n.ElseList)
-	case *parse.RangeNode:
-		return w.reject(n, "range no se admite en esta fase; las variables son escalares")
-	case *parse.WithNode:
-		return w.reject(n, "with no se admite; use {{if .variable}}")
-	case *parse.TemplateNode:
-		return w.reject(n, "no se admiten plantillas anidadas")
-	case *parse.BreakNode, *parse.ContinueNode:
-		return w.reject(n, "break y continue no se admiten")
-	default:
-		return w.reject(n, "construcción no admitida")
-	}
-}
-
-func (w *walker) pipe(p *parse.PipeNode) error {
-	if p == nil {
-		return nil
-	}
-	if len(p.Decl) > 0 {
-		return w.reject(p, "no se admiten variables locales ($x)")
-	}
-	for _, cmd := range p.Cmds {
-		for _, arg := range cmd.Args {
-			if err := w.arg(arg); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-func (w *walker) arg(n parse.Node) error {
-	switch n := n.(type) {
-	case *parse.FieldNode:
-		if len(n.Ident) != 1 {
-			return w.reject(n, "solo se admiten variables planas {{.nombre}}")
-		}
-		w.refs[n.Ident[0]] = struct{}{}
-		return nil
-	case *parse.IdentifierNode:
-		if !isAllowedFunc(n.Ident) {
-			return w.reject(n, fmt.Sprintf("función no permitida %q; se admiten upper, lower, title, default y date", n.Ident))
-		}
-		return nil
-	case *parse.StringNode, *parse.NumberNode, *parse.BoolNode, *parse.NilNode:
-		return nil
-	case *parse.PipeNode:
-		return w.pipe(n)
-	case *parse.DotNode:
-		return w.reject(n, "{{.}} no se admite; nombre la variable")
-	case *parse.VariableNode:
-		return w.reject(n, "no se admiten variables locales ($x)")
-	case *parse.ChainNode:
-		return w.reject(n, "no se admiten accesos encadenados")
-	default:
-		return w.reject(n, "expresión no admitida")
-	}
 }

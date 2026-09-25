@@ -42,6 +42,8 @@ export interface EngineOptions {
   onChange: () => void;
   onSelection: (selection: EngineSelection) => void;
   onBlocks: (blocks: EngineBlocks) => void;
+  /** Un bloque quedo en el lienzo (pulsado o soltado, no un arrastre cancelado). */
+  onBlockAdded: (id: BlockId) => void;
   onAssets: (request: AssetRequest | null) => void;
 }
 
@@ -199,6 +201,11 @@ export function createEngine(options: EngineOptions): EditorEngine {
     });
   });
 
+  editor.on('block:drag:stop', (component: Component | undefined, block: Block | undefined) => {
+    const id = block?.getId() as BlockId | undefined;
+    if (component && id && blockById(id)) options.onBlockAdded(id);
+  });
+
   editor.on('asset:custom', (data: AssetsCustomData) => {
     if (!data.open) {
       options.onAssets(null);
@@ -288,7 +295,9 @@ export function createEngine(options: EngineOptions): EditorEngine {
     },
     appendBlock: (id) => {
       const block = blockById(id);
-      if (block) insertInto(block.content(options.brand), block.placement);
+      if (!block) return;
+      insertInto(block.content(options.brand), block.placement);
+      options.onBlockAdded(id);
     },
     insertMjml: (mjml) => insertInto(mjml, 'column'),
     insertText: (text) => {

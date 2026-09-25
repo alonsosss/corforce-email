@@ -45,7 +45,7 @@ import { VersionTestSend } from '../TestSendModal';
 import { contentFromDraft, type ContentErrors } from '../content';
 import type { GalleryTemplate } from '../gallery';
 import { BlocksPanel } from './BlocksPanel';
-import { logoImage, type BlockId } from './blocks';
+import { BLOCKS, logoImage, type BlockId } from './blocks';
 import { BrandPanel } from './BrandPanel';
 import { brandTokens } from './brand';
 import { DeliverabilityPanel } from './DeliverabilityPanel';
@@ -57,6 +57,7 @@ import {
   applyGallery,
   emptyMjml,
   initialDocument,
+  mergeVariables,
   readTestSendRequest,
   savedDraft,
   targetInfo,
@@ -184,6 +185,17 @@ export function EditorWorkspace({ data }: { data: EditorData }) {
           },
           onSelection: setSelection,
           onBlocks: setBlocks,
+          onBlockAdded: (id) => {
+            const variables = BLOCKS.find((b) => b.id === id)?.variables;
+            if (!variables?.length) return;
+            setDoc((current) => {
+              const merged = mergeVariables(current.variables, variables);
+              return merged.length === current.variables.length
+                ? current
+                : { ...current, variables: merged };
+            });
+            setDocDirty(true);
+          },
           onAssets: setAssetRequest,
         });
         created = instance;

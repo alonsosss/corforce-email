@@ -1,7 +1,7 @@
-import type { TemplateVariable } from '@/api/templates';
-import { Checkbox, FormField, Input } from '@/design/components';
+import type { FieldType, TemplateVariable } from '@/api/templates';
+import { Checkbox, FormField, Input, Textarea } from '@/design/components';
 import { t, tEnum } from '@/i18n';
-import type { ValueDraft } from './variables';
+import { listExample, type ValueDraft } from './variables';
 
 export interface VariableValuesFormProps {
   idPrefix: string;
@@ -11,11 +11,12 @@ export interface VariableValuesFormProps {
   errors?: Record<string, string>;
 }
 
-const INPUT_TYPE: Record<Exclude<TemplateVariable['type'], 'boolean'>, string> = {
+const INPUT_TYPE: Record<Exclude<FieldType, 'boolean'>, string> = {
   string: 'text',
   number: 'number',
   url: 'url',
   email: 'email',
+  image: 'url',
 };
 
 /** Un campo por variable declarada, con el control que corresponde a su tipo. */
@@ -48,6 +49,27 @@ export function VariableValuesForm({
           );
         }
         const raw = values[v.name];
+        if (v.type === 'list') {
+          return (
+            <FormField
+              key={v.name}
+              label={v.name}
+              htmlFor={id}
+              required={v.required}
+              error={error}
+              hint={t('templates.preview.listHint', { example: listExample(v.fields ?? []) })}
+            >
+              <Textarea
+                id={id}
+                mono
+                rows={4}
+                value={typeof raw === 'string' ? raw : ''}
+                onChange={(e) => onChange({ ...values, [v.name]: e.target.value })}
+                invalid={Boolean(error)}
+              />
+            </FormField>
+          );
+        }
         return (
           <FormField
             key={v.name}

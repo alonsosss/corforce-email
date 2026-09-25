@@ -7,6 +7,7 @@ package deliverability
 import (
 	"fmt"
 	"math"
+	"strings"
 )
 
 const (
@@ -35,6 +36,7 @@ const (
 	CodeWidthTooLarge          = "width_too_large"
 	CodeExternalStylesheet     = "external_stylesheet"
 	CodeSpamScoreHigh          = "spam_score_high"
+	CodeUnboundedList          = "unbounded_list"
 )
 
 // Umbrales de las reglas.
@@ -122,6 +124,9 @@ type Input struct {
 	UnsubscribeURL  string
 	PhysicalAddress string
 	Spam            Spam
+	// UnboundedLists son las listas que la plantilla recorre enteras, sin take: el tamano del
+	// correo queda en manos de quien envia.
+	UnboundedLists []string
 }
 
 // Analyze aplica todas las reglas y devuelve el informe. Las incidencias salen primero los
@@ -175,6 +180,9 @@ func Analyze(in Input) Report {
 		"Hay anchos fijos de más de %d px; el correo no se adaptará a pantallas pequeñas", MaxFixedWidthPx)
 	add(CodeExternalStylesheet, SeverityWarning, doc.externalStyles,
 		"Hay hojas de estilo externas o @import; la mayoría de clientes de correo las ignoran")
+	add(CodeUnboundedList, SeverityWarning, len(in.UnboundedLists),
+		"La plantilla recorre entera la lista %s; limite lo que se muestra con {{range take N .lista}} y enlace al resto para que Gmail no recorte el correo",
+		strings.Join(in.UnboundedLists, ", "))
 	spamIssue(in.Spam, add)
 
 	ordered := make([]Issue, 0, len(issues))

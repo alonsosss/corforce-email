@@ -12,16 +12,34 @@ import type { Page, PageQuery } from './types';
 export type TemplateKind = 'transactional' | 'marketing';
 export type TemplateStatus = 'active' | 'archived';
 export type VersionStatus = 'draft' | 'published' | 'superseded';
-export type VariableType = 'string' | 'number' | 'boolean' | 'url' | 'email';
+export type VariableType = 'string' | 'number' | 'boolean' | 'url' | 'email' | 'image' | 'list';
 
-/** Valor por defecto de una variable: el backend acepta el JSON que coincide con su tipo. */
-export type VariableValue = string | number | boolean;
+/** Tipos de un campo de una lista: todos menos la propia lista (un solo nivel). */
+export type FieldType = Exclude<VariableType, 'list'>;
+
+/** Valor de un tipo simple: el backend acepta el JSON que coincide con su tipo. */
+export type ScalarValue = string | number | boolean;
+
+/** Elemento de una lista: un valor por campo declarado. */
+export type ListItem = Record<string, ScalarValue>;
+
+/** Valor de una variable en un render o un envio. */
+export type VariableValue = ScalarValue | ListItem[];
+
+export interface TemplateField {
+  name: string;
+  type: FieldType;
+  required: boolean;
+}
 
 export interface TemplateVariable {
   name: string;
   type: VariableType;
   required: boolean;
-  default?: VariableValue;
+  /** Una lista no admite valor por defecto. */
+  default?: ScalarValue;
+  /** Solo en una lista: los campos de cada elemento. */
+  fields?: TemplateField[];
 }
 
 export interface Template {
@@ -139,6 +157,10 @@ export interface TemplateLimits {
   max_asset_dimension: number;
   /** Destinatarios de un envio de prueba. */
   max_test_recipients: number;
+  /** Campos de una variable de tipo lista. */
+  max_list_fields: number;
+  /** Elementos de una lista en un envio; mas es un rechazo, no un recorte. */
+  max_list_items: number;
 }
 
 /** Tipografia admitida en el kit, con su pila de alternativas seguras para correo. */
@@ -155,6 +177,7 @@ export interface TemplatesMeta {
   statuses: TemplateStatus[];
   version_statuses: VersionStatus[];
   variable_types: VariableType[];
+  field_types: FieldType[];
   reserved_variables: ReservedVariable[];
   editor_kinds: EditorKind[];
   /** Lista cerrada de tipografias del kit de marca. */

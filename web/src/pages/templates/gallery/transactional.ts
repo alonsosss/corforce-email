@@ -16,6 +16,7 @@ export const ORDER_URL_VARIABLE = 'order_url';
 
 export function transactionalTemplate(brand: BrandTokens): string {
   return emailDocument(brand, {
+    transactional: true,
     preheader: 'Hemos recibido tu pedido y ya lo estamos preparando.',
     sections: [
       header(brand),

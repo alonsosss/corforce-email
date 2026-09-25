@@ -4,11 +4,23 @@ import { t, tEnum } from '@/i18n';
 import { isVariableName, type VariableDraft } from '../variables';
 import { variableToken } from './blocks';
 import type { EngineSelection } from './engine';
+import { ORDER_ITEMS_LIMIT } from './orderMarkup';
 
 interface Row {
   name: string;
   type: VariableType;
   reserved: boolean;
+  fields: string[];
+}
+
+/**
+ * Lo que se inserta por una variable: su valor, o en una lista el recorrido con tope y sus
+ * campos, porque una lista no se puede imprimir entera.
+ */
+function tokenFor(row: Row): string {
+  if (row.type !== 'list') return variableToken(row.name);
+  const fields = row.fields.filter(isVariableName).map(variableToken).join(' ');
+  return `{{range take ${ORDER_ITEMS_LIMIT} .${row.name}}}${fields}{{end}}`;
 }
 
 export interface VariablesPanelProps {
@@ -34,8 +46,13 @@ export function VariablesPanel({
   const rows: Row[] = [
     ...declared
       .filter((d) => isVariableName(d.name))
-      .map((d) => ({ name: d.name, type: d.type, reserved: false })),
-    ...reserved.map((r) => ({ name: r.name, type: r.type, reserved: true })),
+      .map((d) => ({
+        name: d.name,
+        type: d.type,
+        reserved: false,
+        fields: d.fields.map((f) => f.name),
+      })),
+    ...reserved.map((r) => ({ name: r.name, type: r.type, reserved: true, fields: [] })),
   ];
   return (
     <div className="cf-stack" style={{ gap: 'var(--cf-space-3)' }}>
@@ -47,7 +64,7 @@ export function VariablesPanel({
       ) : null}
       <ul className="cf-var-list">
         {rows.map((row) => {
-          const token = variableToken(row.name);
+          const token = tokenFor(row);
           return (
             <li key={`${row.reserved ? 'r' : 'd'}-${row.name}`} className="cf-var-list__item">
               <div className="cf-var-list__head">
@@ -65,11 +82,13 @@ export function VariablesPanel({
                   onMouseDown={(e) => e.preventDefault()}
                   onClick={() => onInsertText(token)}
                 >
-                  {t('templates.editor.insertInText')}
+                  {row.type === 'list'
+                    ? t('templates.editor.insertLoop')
+                    : t('templates.editor.insertInText')}
                 </Button>
                 <Button
                   size="sm"
-                  disabled={!selection.hasLink}
+                  disabled={!selection.hasLink || row.type === 'list'}
                   onMouseDown={(e) => e.preventDefault()}
                   onClick={() => onAppendToLink(token)}
                 >

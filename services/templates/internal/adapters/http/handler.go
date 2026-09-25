@@ -208,6 +208,8 @@ type limitsMeta struct {
 	MaxAssetBytes        int `json:"max_asset_bytes"`
 	MaxAssetDimension    int `json:"max_asset_dimension"`
 	MaxTestRecipients    int `json:"max_test_recipients"`
+	MaxListFields        int `json:"max_list_fields"`
+	MaxListItems         int `json:"max_list_items"`
 }
 
 type metaResponse struct {
@@ -215,6 +217,7 @@ type metaResponse struct {
 	Statuses          []string               `json:"statuses"`
 	VersionStatuses   []string               `json:"version_statuses"`
 	VariableTypes     []string               `json:"variable_types"`
+	FieldTypes        []string               `json:"field_types"`
 	ReservedVariables []reservedVariableMeta `json:"reserved_variables"`
 	EditorKinds       []string               `json:"editor_kinds"`
 	BrandFonts        []domain.BrandFont     `json:"brand_fonts"`
@@ -231,6 +234,7 @@ func (h *Handler) Meta(w http.ResponseWriter, r *http.Request) {
 		Statuses:          domain.TemplateStatuses(),
 		VersionStatuses:   domain.VersionStatuses(),
 		VariableTypes:     domain.VariableTypes(),
+		FieldTypes:        domain.FieldTypes(),
 		ReservedVariables: make([]reservedVariableMeta, 0, len(reserved)),
 		EditorKinds:       domain.EditorKinds(),
 		BrandFonts:        domain.BrandFonts(),
@@ -251,6 +255,7 @@ func domainLimits() limitsMeta {
 		MaxBrandColors: domain.MaxBrandColors, MaxBrandFonts: domain.MaxBrandFonts,
 		MaxAssetBytes: domain.MaxAssetBytes, MaxAssetDimension: domain.MaxAssetDimension,
 		MaxTestRecipients: domain.MaxTestRecipients,
+		MaxListFields:     domain.MaxListFields, MaxListItems: domain.MaxListItems,
 	}
 }
 

@@ -382,7 +382,7 @@ func (uc *UseCase) Render(ctx context.Context, tenantID, templateID uuid.UUID, i
 	}
 	given := in.Values
 	if in.Test {
-		given = sampleValues(v.Variables, in.Values)
+		given = sampleValues(v.Variables, in.Values, fixedSampleCount)
 	}
 	values, err := domain.ResolveValues(v.Variables, given, in.Reserved)
 	if err != nil {

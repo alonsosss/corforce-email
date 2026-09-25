@@ -119,6 +119,7 @@ func TestTiposDeVariable(t *testing.T) {
 		domain.Variable{Name: "e", Type: domain.VarEmail},
 		domain.Variable{Name: "n", Type: domain.VarNumber},
 		domain.Variable{Name: "b", Type: domain.VarBoolean},
+		domain.Variable{Name: "i", Type: domain.VarImage},
 	)
 	cases := []struct {
 		name   string
@@ -135,6 +136,13 @@ func TestTiposDeVariable(t *testing.T) {
 		{"numero json", map[string]json.RawMessage{"n": raw(12.5)}, true},
 		{"numero en cadena", map[string]json.RawMessage{"n": raw("42")}, true},
 		{"numero no numerico", map[string]json.RawMessage{"n": raw("abc")}, false},
+		{"numero NaN en cadena", map[string]json.RawMessage{"n": raw("NaN")}, false},
+		{"numero infinito en cadena", map[string]json.RawMessage{"n": raw("-Inf")}, false},
+		{"numero con signo mas", map[string]json.RawMessage{"n": raw("+5")}, false},
+		{"numero con espacios", map[string]json.RawMessage{"n": raw(" 12.50 ")}, true},
+		{"imagen https", map[string]json.RawMessage{"i": raw("https://a.test/p.webp")}, true},
+		{"imagen http", map[string]json.RawMessage{"i": raw("http://a.test/p.png")}, false},
+		{"imagen svg", map[string]json.RawMessage{"i": raw("https://a.test/logo.svg?v=2")}, false},
 		{"booleano", map[string]json.RawMessage{"b": raw(true)}, true},
 		{"booleano en cadena", map[string]json.RawMessage{"b": raw("false")}, true},
 		{"booleano invalido", map[string]json.RawMessage{"b": raw("si")}, false},
@@ -222,8 +230,8 @@ func TestDateConValorNoRFC3339FallaAlRenderizar(t *testing.T) {
 func TestFuncionesProhibidas(t *testing.T) {
 	for _, src := range []string{
 		`{{js .name}}`, `{{html .name}}`, `{{call .name}}`, `{{printf "%s" .name}}`,
-		`{{urlquery .name}}`, `{{len .name}}`, `{{index .name 0}}`, `{{if eq .name "a"}}x{{end}}`,
-		`{{if and .name .name}}x{{end}}`, `{{print .name}}`,
+		`{{urlquery .name}}`, `{{len .name}}`, `{{index .name 0}}`, `{{if lt .name "a"}}x{{end}}`,
+		`{{slice .name 1}}`, `{{print .name}}`,
 	} {
 		_, err := New().Compile(domain.Content{
 			Subject:   "s",
@@ -238,7 +246,7 @@ func TestFuncionesProhibidas(t *testing.T) {
 
 func TestConstruccionesNoAdmitidas(t *testing.T) {
 	cases := map[string]string{
-		`{{range .items}}{{.}}{{end}}`:    "range",
+		`{{range .items}}{{.}}{{end}}`:    "no es una lista",
 		`{{with .name}}{{.}}{{end}}`:      "with",
 		`{{$x := .name}}{{$x}}`:           "variables locales",
 		`{{.}}`:                           "{{.}}",

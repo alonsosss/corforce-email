@@ -2,6 +2,7 @@ import type { BrandTokens } from '../editor/brand';
 import {
   defaultHref,
   legalFooter,
+  transactionalFooter,
   logoImage,
   mjButton,
   mjColumn,
@@ -21,6 +22,8 @@ export const TENANT_NAME_VARIABLE = 'tenant_name';
 export interface DocumentParts {
   preheader: string;
   sections: string[];
+  /** Pie transaccional, sin baja; por defecto el pie legal de marketing. */
+  transactional?: boolean;
 }
 
 export function emailDocument(brand: BrandTokens, parts: DocumentParts): string {
@@ -28,7 +31,7 @@ export function emailDocument(brand: BrandTokens, parts: DocumentParts): string 
     `<mjml><mj-head><mj-preview>${escapeMjml(parts.preheader)}</mj-preview></mj-head>` +
     `<mj-body background-color="${brand.background}" width="600px">` +
     parts.sections.join('') +
-    legalFooter(brand) +
+    (parts.transactional ? transactionalFooter(brand) : legalFooter(brand)) +
     `</mj-body></mjml>`
   );
 }

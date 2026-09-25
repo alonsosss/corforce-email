@@ -1682,12 +1682,29 @@ export const es = {
   'templates.variables.expectBoolean': 'Debe ser verdadero o falso.',
   'templates.variables.expectUrl': 'Debe ser una URL absoluta http o https.',
   'templates.variables.expectEmail': 'Debe ser un correo válido.',
+  'templates.variables.expectImage':
+    'Debe ser una URL https de una imagen PNG, JPG, GIF o WebP. Gmail no muestra SVG.',
+  'templates.variables.expectList':
+    'Debe ser una lista JSON de objetos con valores simples, por ejemplo [{"name": "Producto"}].',
+  'templates.variables.listNeedsFields': 'Una lista debe declarar al menos un campo.',
+  'templates.variables.invalidFieldName':
+    'El nombre de cada campo debe empezar por una letra minúscula y usar solo a-z, 0-9 y _.',
+  'templates.variables.duplicateField': 'El campo {name} está declarado dos veces en la lista.',
+  'templates.variables.fields': 'Campos de cada elemento',
+  'templates.variables.fieldsHint':
+    'Dentro de {{range take 20 .lista}} ... {{end}} cada campo se escribe {{.campo}} y una variable de la plantilla {{$.variable}}.',
+  'templates.variables.addField': 'Añadir campo',
+  'templates.variables.removeField': 'Quitar campo',
+  'templates.variables.fieldName': 'Nombre del campo',
+  'templates.variables.fieldNamePlaceholder': 'nombre_producto',
   'templates.variables.tooMany': 'Una plantilla admite como máximo {n} variables.',
   'templates.variableType.string': 'Texto',
   'templates.variableType.number': 'Número',
   'templates.variableType.boolean': 'Sí o no',
   'templates.variableType.url': 'URL',
   'templates.variableType.email': 'Correo',
+  'templates.variableType.image': 'Imagen',
+  'templates.variableType.list': 'Lista',
   'templates.versions.title': 'Versiones',
   'templates.versions.description':
     'Cada cambio de contenido es una versión nueva. Solo la publicada se usa en los envíos.',
@@ -1711,6 +1728,7 @@ export const es = {
   'templates.preview.render': 'Previsualizar',
   'templates.preview.noVariables': 'La plantilla no declara variables.',
   'templates.preview.defaultPlaceholder': 'Por defecto: {value}',
+  'templates.preview.listHint': 'Lista en JSON. Ejemplo: {example}',
   'templates.preview.html': 'Resultado HTML',
   'templates.preview.text': 'Resultado en texto plano',
 
@@ -2820,6 +2838,7 @@ export const es = {
   'templates.editor.tab.check': 'Revisión',
   'templates.editor.category.layout': 'Estructura',
   'templates.editor.category.content': 'Contenido',
+  'templates.editor.category.order': 'Pedido',
   'templates.editor.category.brand': 'Marca y ajustes',
   'templates.editor.block.section': 'Sección',
   'templates.editor.block.columns1': '1 columna',
@@ -2836,6 +2855,9 @@ export const es = {
   'templates.editor.block.video': 'Video',
   'templates.editor.block.discount': 'Código de descuento',
   'templates.editor.block.legalFooter': 'Pie legal',
+  'templates.editor.block.orderStatus': 'Estado del pedido',
+  'templates.editor.block.orderItems': 'Productos',
+  'templates.editor.block.orderSummary': 'Resumen de importes',
   'templates.editor.block.preheader': 'Preheader',
   'templates.editor.blocksHint':
     'Arrastra un bloque al lienzo o púlsalo para añadirlo junto al elemento seleccionado.',
@@ -2851,6 +2873,7 @@ export const es = {
   'templates.editor.variableReserved': 'Reservada',
   'templates.editor.insertInText': 'Insertar en el texto',
   'templates.editor.insertInLink': 'Añadir al enlace',
+  'templates.editor.insertLoop': 'Insertar recorrido',
   'templates.editor.insertLogo': 'Insertar logo',
   'templates.editor.insertFooter': 'Insertar pie legal',
   'templates.editor.editBrandKit': 'Editar el kit de marca',
@@ -2936,9 +2959,16 @@ export const es = {
   'templates.gallery.eventHint': 'Invitación con fecha, hora, lugar y reserva.',
   'templates.gallery.abandonedCart': 'Carrito abandonado',
   'templates.gallery.abandonedCartHint': 'Recordatorio con enlace al carrito (variable cart_url).',
-  'templates.gallery.transactional': 'Confirmación de pedido',
+  'templates.gallery.transactional': 'Confirmación sencilla',
   'templates.gallery.transactionalHint':
     'Correo transaccional con número y enlace del pedido (order_number, order_url).',
+  'templates.gallery.orderConfirmation': 'Confirmación de pedido',
+  'templates.gallery.orderConfirmationHint':
+    'Estado del pedido, productos con imagen y entrega, resumen de importes, entrega y pago.',
+  'templates.gallery.orderShipped': 'Pedido en camino',
+  'templates.gallery.orderShippedHint':
+    'Aviso de envío con transportista, número de seguimiento, fecha estimada y productos.',
+  'templates.gallery.sampleProduct': 'Producto de ejemplo',
 
   'templates.assets.title': 'Imágenes',
   'templates.assets.hint': 'Cada imagen se analiza con el antivirus antes de guardarse.',
@@ -3153,6 +3183,7 @@ export const es = {
   'templates.check.issue.width_too_large': 'Anchos fijos demasiado grandes',
   'templates.check.issue.external_stylesheet': 'Hoja de estilos externa',
   'templates.check.issue.spam_score_high': 'Puntuación antispam alta',
+  'templates.check.issue.unbounded_list': 'Lista sin tope de elementos',
 
   'nav.group.marketing': 'Marketing',
   'nav.contacts': 'Contactos',

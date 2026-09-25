@@ -250,3 +250,20 @@ func TestLasEstadisticasCuentanTextoVisible(t *testing.T) {
 		t.Fatalf("sin imagenes la proporcion es 1: %v", r.Stats.TextImageRatio)
 	}
 }
+
+func TestUnaListaSinTopeEsUnAviso(t *testing.T) {
+	m := cleanMail()
+	r := m.analyze()
+	if find(r, CodeUnboundedList) != nil {
+		t.Fatal("sin listas no hay aviso")
+	}
+	html := `<!doctype html><html><body>` + m.preheader + `<p>` + testBodyText + `</p>` + m.footer + `</body></html>`
+	r = Analyze(Input{
+		Marketing: true, Subject: m.subject, HTML: html, UnsubscribeURL: testUnsubscribe,
+		PhysicalAddress: m.address, UnboundedLists: []string{"items", "regalos"},
+	})
+	issue := find(r, CodeUnboundedList)
+	if issue == nil || issue.Severity != SeverityWarning || issue.Count != 2 || !r.Passed {
+		t.Fatalf("una lista sin tope avisa y no impide publicar: %+v", r)
+	}
+}

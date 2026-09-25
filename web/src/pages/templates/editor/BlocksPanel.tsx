@@ -2,12 +2,15 @@ import type { ComponentType } from 'react';
 import {
   IconButtonShape,
   IconColumns,
+  IconCreditCard,
   IconEye,
   IconFooter,
   IconHeading,
   IconImage,
+  IconList,
   IconMinus,
   IconMoveVertical,
+  IconRoute,
   IconShare,
   IconSquare,
   IconTag,
@@ -34,12 +37,16 @@ const ICONS: Record<BlockId, ComponentType<IconProps>> = {
   social: IconShare,
   video: IconVideo,
   discount: IconTag,
+  'order-status': IconRoute,
+  'order-items': IconList,
+  'order-summary': IconCreditCard,
   'legal-footer': IconFooter,
 };
 
 const CATEGORIES: { id: BlockCategory; label: MessageKey }[] = [
   { id: 'layout', label: 'templates.editor.category.layout' },
   { id: 'content', label: 'templates.editor.category.content' },
+  { id: 'order', label: 'templates.editor.category.order' },
   { id: 'brand', label: 'templates.editor.category.brand' },
 ];
 

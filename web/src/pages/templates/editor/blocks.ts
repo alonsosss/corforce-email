@@ -1,6 +1,15 @@
+import type { TemplateVariable } from '@/api/templates';
 import type { MessageKey } from '@/i18n';
 import { safeEmail, safeHttpUrl, type BrandTokens } from './brand';
 import { escapeMjml } from './mjmlSource';
+import {
+  ORDER_ITEMS_VARIABLES,
+  ORDER_SUMMARY_VARIABLES,
+  orderItemsHtml,
+  orderStatusHtml,
+  orderStatusVariables,
+  orderSummaryHtml,
+} from './orderMarkup';
 
 // Bloques del editor (docs/Plan_Editor_Correos.md, seccion 6) como MJML. Son funciones
 // puras del kit de marca: la galeria y las pruebas los usan sin cargar el lienzo.
@@ -31,9 +40,12 @@ export type BlockId =
   | 'social'
   | 'video'
   | 'discount'
+  | 'order-status'
+  | 'order-items'
+  | 'order-summary'
   | 'legal-footer';
 
-export type BlockCategory = 'layout' | 'content' | 'brand';
+export type BlockCategory = 'layout' | 'content' | 'order' | 'brand';
 
 export interface BlockDefinition {
   id: BlockId;
@@ -44,6 +56,8 @@ export interface BlockDefinition {
   /** Bloques de contenido: van dentro de una columna. Los de estructura, en el cuerpo. */
   placement: 'body' | 'column';
   content: (brand: BrandTokens) => string;
+  /** Variables que usa el bloque; el editor las declara al anadirlo si faltan. */
+  variables?: readonly TemplateVariable[];
 }
 
 /**
@@ -131,11 +145,10 @@ export function defaultHref(brand: BrandTokens): string {
 }
 
 /**
- * Pie legal: datos de la empresa del kit, contacto y el enlace de baja con la variable
- * reservada. Sin direccion en el kit el pie sale igual y el verificador lo senala
- * (missing_physical_address) en vez de rellenarla con un dato falso.
+ * Lineas de la empresa para un pie: nombre y direccion del kit, y su web y correo de ayuda si
+ * son validos. Solo salen del kit, nunca se inventan.
  */
-export function legalFooter(brand: BrandTokens): string {
+function companyLines(brand: BrandTokens): string[] {
   const { footer } = brand;
   const lines: string[] = [];
   const company = footer.company.trim();
@@ -156,11 +169,10 @@ export function legalFooter(brand: BrandTokens): string {
     );
   }
   if (contact.length) lines.push(contact.join(' · '));
-  lines.push(
-    'Recibes este correo porque te registraste para recibir nuestras comunicaciones. ' +
-      `<a href="${variableToken(UNSUBSCRIBE_VARIABLE)}" style="color:${brand.muted};">Darte de baja</a>` +
-      ` · <a href="${variableToken(VIEW_IN_BROWSER_VARIABLE)}" style="color:${brand.muted};">Ver en el navegador</a>`,
-  );
+  return lines;
+}
+
+function footerSection(brand: BrandTokens, lines: string[]): string {
   return mjSection(
     brand,
     mjColumn(
@@ -172,6 +184,34 @@ export function legalFooter(brand: BrandTokens): string {
     ),
     `background-color="${brand.background}"`,
   );
+}
+
+/**
+ * Pie legal: datos de la empresa del kit, contacto y el enlace de baja con la variable
+ * reservada. Sin direccion en el kit el pie sale igual y el verificador lo senala
+ * (missing_physical_address) en vez de rellenarla con un dato falso.
+ */
+export function legalFooter(brand: BrandTokens): string {
+  return footerSection(brand, [
+    ...companyLines(brand),
+    'Recibes este correo porque te registraste para recibir nuestras comunicaciones. ' +
+      `<a href="${variableToken(UNSUBSCRIBE_VARIABLE)}" style="color:${brand.muted};">Darte de baja</a>` +
+      ` · <a href="${variableToken(VIEW_IN_BROWSER_VARIABLE)}" style="color:${brand.muted};">Ver en el navegador</a>`,
+  ]);
+}
+
+/**
+ * Pie de un correo transaccional: los datos de la empresa y el enlace para verlo en el
+ * navegador, sin baja. Un pedido o una factura no son comunicaciones a las que el cliente se
+ * suscribe: ofrecer la baja confunde, y Gmail y la ley eximen de ella solo al correo que es
+ * transaccional de verdad.
+ */
+export function transactionalFooter(brand: BrandTokens): string {
+  return footerSection(brand, [
+    ...companyLines(brand),
+    'Recibes este correo por una operación que realizaste con nosotros. ' +
+      `<a href="${variableToken(VIEW_IN_BROWSER_VARIABLE)}" style="color:${brand.muted};">Ver en el navegador</a>`,
+  ]);
 }
 
 /** Codigo de descuento destacado; el codigo real lo escribe quien disena la campana. */
@@ -318,6 +358,30 @@ export const BLOCKS: readonly BlockDefinition[] = [
     category: 'content',
     placement: 'column',
     content: (b) => discountCode(b) + mjButton(b, 'Usar mi código', defaultHref(b)),
+  },
+  {
+    id: 'order-status',
+    label: 'templates.editor.block.orderStatus',
+    category: 'order',
+    placement: 'column',
+    content: (b) => mjText(b, orderStatusHtml(b), 'padding="10px 22px"'),
+    variables: orderStatusVariables('received'),
+  },
+  {
+    id: 'order-items',
+    label: 'templates.editor.block.orderItems',
+    category: 'order',
+    placement: 'column',
+    content: (b) => mjText(b, orderItemsHtml(b)),
+    variables: ORDER_ITEMS_VARIABLES,
+  },
+  {
+    id: 'order-summary',
+    label: 'templates.editor.block.orderSummary',
+    category: 'order',
+    placement: 'column',
+    content: (b) => mjText(b, orderSummaryHtml(b)),
+    variables: ORDER_SUMMARY_VARIABLES,
   },
   {
     id: 'legal-footer',

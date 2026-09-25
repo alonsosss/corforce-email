@@ -4,6 +4,12 @@ import type { BrandTokens } from '../editor/brand';
 import { abandonedCartTemplate, CART_URL_VARIABLE } from './abandonedCart';
 import { eventTemplate } from './event';
 import { newsletterTemplate } from './newsletter';
+import {
+  ORDER_CONFIRMATION_VARIABLES,
+  ORDER_SHIPPED_VARIABLES,
+  orderConfirmationTemplate,
+  orderShippedTemplate,
+} from './order';
 import { promotionTemplate } from './promotion';
 import { ORDER_NUMBER_VARIABLE, ORDER_URL_VARIABLE, transactionalTemplate } from './transactional';
 import { welcomeTemplate } from './welcome';
@@ -13,7 +19,14 @@ import { welcomeTemplate } from './welcome';
 // que el editor las anada a la version al elegirlas.
 
 export type GalleryId =
-  'welcome' | 'promotion' | 'newsletter' | 'event' | 'abandoned-cart' | 'transactional';
+  | 'welcome'
+  | 'promotion'
+  | 'newsletter'
+  | 'event'
+  | 'abandoned-cart'
+  | 'transactional'
+  | 'order-confirmation'
+  | 'order-shipped';
 
 export interface GalleryTemplate {
   id: GalleryId;
@@ -87,5 +100,23 @@ export const GALLERY: readonly GalleryTemplate[] = [
       { name: ORDER_URL_VARIABLE, type: 'url', required: true },
     ],
     build: transactionalTemplate,
+  },
+  {
+    id: 'order-confirmation',
+    name: 'templates.gallery.orderConfirmation',
+    description: 'templates.gallery.orderConfirmationHint',
+    kind: 'transactional',
+    subject: 'Recibimos tu pedido N.º {{.order_number}}',
+    variables: ORDER_CONFIRMATION_VARIABLES,
+    build: orderConfirmationTemplate,
+  },
+  {
+    id: 'order-shipped',
+    name: 'templates.gallery.orderShipped',
+    description: 'templates.gallery.orderShippedHint',
+    kind: 'transactional',
+    subject: 'Tu pedido N.º {{.order_number}} va en camino',
+    variables: ORDER_SHIPPED_VARIABLES,
+    build: orderShippedTemplate,
   },
 ];

@@ -19,7 +19,11 @@ const (
 	sampleViewInBrowserURL = "https://example.com/view/verificacion"
 	sampleRecipientEmail   = "destinatario@example.com"
 	sampleURL              = "https://example.com/"
+	sampleImageURL         = "https://example.com/imagen.png"
 	sampleString           = "Ejemplo"
+	// sampleListItems es cuantos elementos lleva una lista de ejemplo en una vista previa o un
+	// envio de prueba. La verificacion usa en cambio el maximo que la plantilla puede mostrar.
+	sampleListItems = 3
 )
 
 // DeliverabilityError es el rechazo de una publicacion por la verificacion; lleva el informe.
@@ -108,7 +112,15 @@ func (uc *UseCase) verify(ctx context.Context, tenantID uuid.UUID, kind string, 
 		return nil, err
 	}
 	declared := compiled.Variables()
-	resolved, err := domain.ResolveValues(declared, sampleValues(declared, values), map[string]string{
+	// Cada lista se mide con el maximo que la plantilla puede mostrar: html_too_large tiene
+	// que ver el peor caso frente al recorte de Gmail, no una muestra de tres productos.
+	worstCase := func(name string) int {
+		if n := compiled.ListCap(name); n > 0 {
+			return n
+		}
+		return sampleListItems
+	}
+	resolved, err := domain.ResolveValues(declared, sampleValues(declared, values, worstCase), map[string]string{
 		domain.ReservedUnsubscribeURL:   sampleUnsubscribeURL,
 		domain.ReservedViewInBrowserURL: sampleViewInBrowserURL,
 		domain.ReservedRecipientEmail:   sampleRecipientEmail,
@@ -140,13 +152,15 @@ func (uc *UseCase) verify(ctx context.Context, tenantID uuid.UUID, kind string, 
 		UnsubscribeURL:  sampleUnsubscribeURL,
 		PhysicalAddress: kit.Footer.Address,
 		Spam:            spam,
+		UnboundedLists:  compiled.UnboundedLists(),
 	})
 	return &report, nil
 }
 
 // sampleValues completa los valores recibidos: una variable sin valor ni default recibe uno de
-// ejemplo de su tipo, para que la verificacion vea el correo como saldria.
-func sampleValues(declared []domain.Variable, values map[string]json.RawMessage) map[string]json.RawMessage {
+// ejemplo de su tipo, para que la verificacion vea el correo como saldria. items dice cuantos
+// elementos lleva cada lista de ejemplo.
+func sampleValues(declared []domain.Variable, values map[string]json.RawMessage, items func(name string) int) map[string]json.RawMessage {
 	out := make(map[string]json.RawMessage, len(declared))
 	for _, v := range declared {
 		if raw, ok := values[v.Name]; ok && string(raw) != "null" {
@@ -156,13 +170,38 @@ func sampleValues(declared []domain.Variable, values map[string]json.RawMessage)
 		if len(v.Default) > 0 {
 			continue
 		}
+		if v.Type == domain.VarList {
+			out[v.Name] = sampleList(v.Fields, items(v.Name))
+			continue
+		}
 		out[v.Name] = sampleOf(v.Type)
 	}
 	return out
 }
 
+func sampleList(fields []domain.Field, n int) json.RawMessage {
+	item := make(map[string]json.RawMessage, len(fields))
+	for _, f := range fields {
+		item[f.Name] = sampleOf(f.Type)
+	}
+	list := make([]map[string]json.RawMessage, n)
+	for i := range list {
+		list[i] = item
+	}
+	b, err := json.Marshal(list)
+	if err != nil {
+		return json.RawMessage(`[]`)
+	}
+	return b
+}
+
+// fixedSampleCount es el numero de elementos de las listas de una vista previa o una prueba.
+func fixedSampleCount(string) int { return sampleListItems }
+
 func sampleOf(typ string) json.RawMessage {
 	switch typ {
+	case domain.VarImage:
+		return json.RawMessage(`"` + sampleImageURL + `"`)
 	case domain.VarURL:
 		return json.RawMessage(`"` + sampleURL + `"`)
 	case domain.VarEmail:

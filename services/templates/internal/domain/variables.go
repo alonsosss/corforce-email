@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/mail"
 	"net/url"
+	"path"
 	"regexp"
 	"strings"
 )
@@ -16,17 +17,57 @@ const (
 	VarBoolean = "boolean"
 	VarURL     = "url"
 	VarEmail   = "email"
+	// VarImage es la URL de una imagen: solo https y nunca SVG. Gmail pasa cada imagen por su
+	// proxy, que no muestra SVG, y una imagen http deja el correo con contenido mixto.
+	VarImage = "image"
+	// VarList es una lista de objetos de un solo nivel con campos declarados (Fields). Solo se
+	// recorre con {{range}}; sus campos son de los tipos simples.
+	VarList = "list"
 )
 
-func VariableTypes() []string { return []string{VarString, VarNumber, VarBoolean, VarURL, VarEmail} }
+func VariableTypes() []string {
+	return []string{VarString, VarNumber, VarBoolean, VarURL, VarEmail, VarImage, VarList}
+}
+
+// FieldTypes son los tipos que admite un campo de una lista: todos menos la propia lista.
+func FieldTypes() []string {
+	return []string{VarString, VarNumber, VarBoolean, VarURL, VarEmail, VarImage}
+}
+
+// Topes de una lista. MaxListItems es un rechazo, no un recorte: quien envia debe saber que su
+// lista no cabe. Lo que se muestra se acota en la plantilla con take.
+const (
+	MaxListFields = 20
+	MaxListItems  = 100
+)
 
 // Variable es una variable declarada por la version. Default se guarda tal cual llego en
 // JSON para no perder la representacion del numero; se comprueba contra Type al guardar.
+// Fields solo existe en una lista.
 type Variable struct {
 	Name     string          `json:"name"`
 	Type     string          `json:"type"`
 	Required bool            `json:"required"`
 	Default  json.RawMessage `json:"default,omitempty"`
+	Fields   []Field         `json:"fields,omitempty"`
+}
+
+// Field es un campo de cada elemento de una lista. Un campo opcional ausente vale el cero de
+// su tipo, como una variable.
+type Field struct {
+	Name     string `json:"name"`
+	Type     string `json:"type"`
+	Required bool   `json:"required"`
+}
+
+// Field devuelve el campo declarado con ese nombre.
+func (v Variable) Field(name string) (Field, bool) {
+	for _, f := range v.Fields {
+		if f.Name == name {
+			return f, true
+		}
+	}
+	return Field{}, false
 }
 
 // Variables reservadas: existen siempre al renderizar y las inyecta quien llama
@@ -77,14 +118,20 @@ func ValidateDeclarations(vars []Variable) error {
 			return fmt.Errorf("%w: la variable %q está declarada dos veces", ErrInvalidVariableDeclaration, v.Name)
 		}
 		seen[v.Name] = struct{}{}
-		if !validType(v.Type) {
+		if !oneOf(v.Type, VariableTypes()) {
 			return fmt.Errorf("%w: variables[%d].type %q debe ser uno de: %s", ErrInvalidVariableDeclaration, i, v.Type, strings.Join(VariableTypes(), ", "))
 		}
+		if err := validateFields(v); err != nil {
+			return err
+		}
 		if len(v.Default) > 0 {
+			if v.Type == VarList {
+				return fmt.Errorf("%w: la lista %q no admite default", ErrInvalidVariableDeclaration, v.Name)
+			}
 			if v.Required {
 				return fmt.Errorf("%w: la variable %q es requerida y no admite default", ErrInvalidVariableDeclaration, v.Name)
 			}
-			if _, err := coerce(v.Name, v.Type, v.Default); err != nil {
+			if _, err := coerceScalar(v.Name, v.Type, v.Default); err != nil {
 				return fmt.Errorf("%w: default de %q: %v", ErrInvalidVariableDeclaration, v.Name, err)
 			}
 		}
@@ -92,9 +139,35 @@ func ValidateDeclarations(vars []Variable) error {
 	return nil
 }
 
-func validType(t string) bool {
-	for _, allowed := range VariableTypes() {
-		if t == allowed {
+func validateFields(v Variable) error {
+	if v.Type != VarList {
+		if len(v.Fields) > 0 {
+			return fmt.Errorf("%w: solo una lista declara campos (%q es %s)", ErrInvalidVariableDeclaration, v.Name, v.Type)
+		}
+		return nil
+	}
+	if len(v.Fields) == 0 || len(v.Fields) > MaxListFields {
+		return fmt.Errorf("%w: la lista %q debe declarar entre 1 y %d campos", ErrInvalidVariableDeclaration, v.Name, MaxListFields)
+	}
+	seen := make(map[string]struct{}, len(v.Fields))
+	for j, f := range v.Fields {
+		if !variableNameRegex.MatchString(f.Name) {
+			return fmt.Errorf("%w: %s.fields[%d].name %q debe ser un identificador en minúsculas (a-z, 0-9, _) de hasta 64 caracteres", ErrInvalidVariableDeclaration, v.Name, j, f.Name)
+		}
+		if _, dup := seen[f.Name]; dup {
+			return fmt.Errorf("%w: el campo %q está declarado dos veces en la lista %q", ErrInvalidVariableDeclaration, f.Name, v.Name)
+		}
+		seen[f.Name] = struct{}{}
+		if !oneOf(f.Type, FieldTypes()) {
+			return fmt.Errorf("%w: %s.fields[%d].type %q debe ser uno de: %s", ErrInvalidVariableDeclaration, v.Name, j, f.Type, strings.Join(FieldTypes(), ", "))
+		}
+	}
+	return nil
+}
+
+func oneOf(t string, allowed []string) bool {
+	for _, a := range allowed {
+		if t == a {
 			return true
 		}
 	}
@@ -111,13 +184,13 @@ func ResolveValues(declared []Variable, values map[string]json.RawMessage, reser
 		raw, present := values[v.Name]
 		switch {
 		case present && !isJSONNull(raw):
-			val, err := coerce(v.Name, v.Type, raw)
+			val, err := coerce(v, raw)
 			if err != nil {
 				return nil, fmt.Errorf("%w: %v", ErrInvalidVariables, err)
 			}
 			out[v.Name] = val
 		case len(v.Default) > 0:
-			val, err := coerce(v.Name, v.Type, v.Default)
+			val, err := coerceScalar(v.Name, v.Type, v.Default)
 			if err != nil {
 				return nil, fmt.Errorf("%w: default de %q: %v", ErrInvalidVariables, v.Name, err)
 			}
@@ -152,18 +225,73 @@ func ZeroValue(typ string) any {
 		return json.Number("0")
 	case VarBoolean:
 		return false
+	case VarList:
+		return []map[string]any{}
 	default:
 		return ""
 	}
+}
+
+// jsonNumber es la gramatica de un numero JSON. strconv.ParseFloat admite ademas NaN, Inf,
+// hexadecimales y un signo +, que no son importes y que encoding/json no sabe escribir.
+var jsonNumber = regexp.MustCompile(`^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][-+]?[0-9]+)?$`)
+
+// coerce interpreta el valor de una variable declarada.
+func coerce(v Variable, raw json.RawMessage) (any, error) {
+	if v.Type == VarList {
+		return coerceList(v, raw)
+	}
+	return coerceScalar(v.Name, v.Type, raw)
+}
+
+// coerceList interpreta una lista: cada elemento es un objeto cuyos campos declarados se
+// validan como una variable; los campos no declarados se ignoran, igual que las variables.
+func coerceList(v Variable, raw json.RawMessage) ([]map[string]any, error) {
+	var items []json.RawMessage
+	if err := json.Unmarshal(raw, &items); err != nil {
+		return nil, fmt.Errorf("la variable %q debe ser una lista", v.Name)
+	}
+	if len(items) > MaxListItems {
+		return nil, fmt.Errorf("la lista %q admite hasta %d elementos y trae %d", v.Name, MaxListItems, len(items))
+	}
+	out := make([]map[string]any, 0, len(items))
+	for i, item := range items {
+		var obj map[string]json.RawMessage
+		if err := json.Unmarshal(item, &obj); err != nil || obj == nil {
+			return nil, fmt.Errorf("%s[%d] debe ser un objeto", v.Name, i)
+		}
+		row := make(map[string]any, len(v.Fields))
+		for _, f := range v.Fields {
+			name := fmt.Sprintf("%s[%d].%s", v.Name, i, f.Name)
+			fraw, present := obj[f.Name]
+			// Un campo opcional en blanco es un campo ausente: un producto sin imagen suele
+			// llegar con "" y no debe tumbar el envio del pedido entero.
+			blank := present && !f.Required && strings.TrimSpace(string(fraw)) == `""`
+			switch {
+			case present && !isJSONNull(fraw) && !blank:
+				val, err := coerceScalar(name, f.Type, fraw)
+				if err != nil {
+					return nil, err
+				}
+				row[f.Name] = val
+			case f.Required:
+				return nil, fmt.Errorf("falta el campo requerido %q", name)
+			default:
+				row[f.Name] = ZeroValue(f.Type)
+			}
+		}
+		out = append(out, row)
+	}
+	return out, nil
 }
 
 // coerce interpreta un valor JSON segun el tipo declarado. Los numeros se conservan como
 // json.Number para imprimirlos exactamente como llegaron (sin notacion cientifica ni
 // perdida de precision). Se admite el numero o el booleano como cadena porque los
 // llamadores que vienen de formularios o de atributos de contacto los traen asi.
-func coerce(name, typ string, raw json.RawMessage) (any, error) {
+func coerceScalar(name, typ string, raw json.RawMessage) (any, error) {
 	switch typ {
-	case VarString, VarURL, VarEmail:
+	case VarString, VarURL, VarEmail, VarImage:
 		var s string
 		if err := json.Unmarshal(raw, &s); err != nil {
 			return nil, fmt.Errorf("la variable %q debe ser una cadena", name)
@@ -183,7 +311,7 @@ func coerce(name, typ string, raw json.RawMessage) (any, error) {
 			}
 			n = json.Number(strings.TrimSpace(s))
 		}
-		if _, err := n.Float64(); err != nil {
+		if !jsonNumber.MatchString(n.String()) {
 			return nil, fmt.Errorf("la variable %q debe ser numérica", name)
 		}
 		return n, nil
@@ -210,6 +338,14 @@ func coerce(name, typ string, raw json.RawMessage) (any, error) {
 // absoluta y http o https: es lo que impide que un valor acabe como javascript: en un href.
 func checkString(name, typ, s string) error {
 	switch typ {
+	case VarImage:
+		u, err := url.Parse(s)
+		if err != nil || u.Scheme != "https" || u.Host == "" {
+			return fmt.Errorf("la variable %q debe ser una URL https de imagen", name)
+		}
+		if strings.EqualFold(path.Ext(u.Path), ".svg") {
+			return fmt.Errorf("la variable %q no puede ser un SVG: Gmail no lo muestra", name)
+		}
 	case VarURL:
 		u, err := url.Parse(s)
 		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {

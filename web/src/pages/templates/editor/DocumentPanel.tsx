@@ -89,6 +89,8 @@ export function DocumentPanel({
         drafts={value.variables}
         onChange={(variables) => onChange({ ...value, variables })}
         types={meta.variable_types}
+        fieldTypes={meta.field_types}
+        maxListFields={meta.limits.max_list_fields}
         maxVariables={meta.limits.max_variables}
         errors={errors.variables}
         countError={errors.variablesCount}

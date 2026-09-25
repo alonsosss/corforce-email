@@ -67,13 +67,21 @@ describe('galeria de plantillas', () => {
           const links = [...doc.querySelectorAll('a[href]')].map(
             (a) => a.getAttribute('href') ?? '',
           );
-          expect(links).toContain('{{.unsubscribe_url}}');
+          // La baja es del correo comercial. Un transaccional no la ofrece: no es una
+          // suscripcion, y mezclarla lo acerca a Promociones.
+          if (template.kind === 'marketing') expect(links).toContain('{{.unsubscribe_url}}');
+          else {
+            expect(links).not.toContain('{{.unsubscribe_url}}');
+            expect(links).toContain('{{.view_in_browser_url}}');
+          }
           expect(links.some((href) => href.startsWith('http://'))).toBe(false);
           expect(links.some((href) => SHORTENERS.test(href))).toBe(false);
 
           for (const img of doc.querySelectorAll('img')) {
             expect(img.getAttribute('alt')?.trim(), img.outerHTML).toBeTruthy();
-            expect(img.getAttribute('src') ?? '').toMatch(/^https:\/\//);
+            // Una imagen es del kit (https) o una variable de tipo imagen, que el servicio
+            // solo acepta en https.
+            expect(img.getAttribute('src') ?? '').toMatch(/^(https:\/\/|\{\{\.[a-z_]+\}\}$)/);
           }
 
           expect(new TextEncoder().encode(html).length).toBeLessThan(GMAIL_CLIP_BYTES);
@@ -101,13 +109,20 @@ describe('galeria de plantillas', () => {
 
         it(`${template.id}: declara las variables que usa`, () => {
           const mjml = template.build(tokens);
-          const used = new Set(
-            [...mjml.matchAll(/\{\{(?:if )?\.([a-z][a-z0-9_]*)/g)].map((m) => m[1]),
-          );
           const declared = new Set(template.variables.map((v) => v.name));
+          const fields = new Set(
+            template.variables.flatMap((v) => v.fields ?? []).map((f) => f.name),
+          );
           const reserved = new Set(['unsubscribe_url', 'view_in_browser_url', 'tenant_name']);
-          for (const name of used) {
-            expect(declared.has(name!) || reserved.has(name!), name).toBe(true);
+          // Toda referencia .nombre de una accion: fuera de un range es una variable, dentro
+          // puede ser un campo de la lista.
+          const actions = [...mjml.matchAll(/\{\{([^}]*)\}\}/g)].map((m) => m[1] ?? '');
+          for (const action of actions) {
+            for (const [, prefix, name] of action.matchAll(/(\$?)\.([a-z][a-z0-9_]*)/g)) {
+              const ok =
+                declared.has(name!) || reserved.has(name!) || (!prefix && fields.has(name!));
+              expect(ok, `${name} en {{${action}}}`).toBe(true);
+            }
           }
         });
       }
