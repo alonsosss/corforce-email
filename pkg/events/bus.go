@@ -103,7 +103,8 @@ func streamConfig(name string, subjects []string, maxAge time.Duration) *nats.St
 // servicio que suma un evento nuevo a un stream ya creado nunca lo recibiria
 // ("no stream matches subject") hasta recrear el stream a mano. La union no
 // quita subjects ajenos a proposito: varios servicios comparten un mismo stream
-// (p. ej. CRM_INBOUND) y reemplazar la lista los haria pisarse entre si.
+// (p. ej. CRM_INBOUND) y reemplazar la lista los haria pisarse entre si. Solo se
+// sustituye un subject que el pedido ya captura (mergeSubjects): nada deja de llegar.
 func (b *Bus) EnsureStream(name string, subjects []string) error {
 	return b.EnsureStreamWithMaxAge(name, subjects, 7*24*time.Hour)
 }
@@ -151,21 +152,7 @@ func (b *Bus) EnsureStreamWithMaxAge(name string, subjects []string, maxAge time
 			continue
 		}
 
-		merged := append([]string(nil), info.Config.Subjects...)
-		added := false
-		for _, want := range subjects {
-			found := false
-			for _, have := range merged {
-				if have == want {
-					found = true
-					break
-				}
-			}
-			if !found {
-				merged = append(merged, want)
-				added = true
-			}
-		}
+		merged, added := mergeSubjects(info.Config.Subjects, subjects)
 		if !added && info.Config.MaxAge == maxAge && info.Config.MaxBytes == streamMaxBytes {
 			return nil
 		}
@@ -184,6 +171,59 @@ func (b *Bus) EnsureStreamWithMaxAge(name string, subjects []string, maxAge time
 		ultimo = fmt.Errorf("no se pudo asegurar el stream %s con sus subjects", name)
 	}
 	return ultimo
+}
+
+// mergeSubjects une a los subjects del stream los pedidos. Un subject pedido que ya captura uno del
+// stream (mail.mailbox.x con mail.> ya declarado) no se anade: JetStream rechaza un stream con
+// subjects que se solapan, y el que lo pide ya recibe sus mensajes. Uno pedido que captura a otros
+// del stream (identity.> sobre identity.user.deleted) los reemplaza, que siguen capturados por el.
+// changed dice si la lista cambio.
+func mergeSubjects(have, want []string) (merged []string, changed bool) {
+	merged = append([]string(nil), have...)
+	for _, w := range want {
+		covered := false
+		for _, h := range merged {
+			if subjectCovers(h, w) {
+				covered = true
+				break
+			}
+		}
+		if covered {
+			continue
+		}
+		kept := merged[:0]
+		for _, h := range merged {
+			if !subjectCovers(w, h) {
+				kept = append(kept, h)
+			}
+		}
+		merged = append(kept, w)
+		changed = true
+	}
+	return merged, changed
+}
+
+// subjectCovers dice si todo mensaje que captura sub lo captura tambien pattern, con los comodines
+// de NATS: * es un token y > uno o mas al final.
+func subjectCovers(pattern, sub string) bool {
+	p, s := strings.Split(pattern, "."), strings.Split(sub, ".")
+	for i, tok := range p {
+		if tok == ">" {
+			return len(s) > i
+		}
+		if i >= len(s) {
+			return false
+		}
+		switch {
+		case tok == "*":
+			if s[i] == ">" {
+				return false
+			}
+		case tok != s[i]:
+			return false
+		}
+	}
+	return len(p) == len(s)
 }
 
 // PublishPersistent publishes to a JetStream stream with deduplication via message ID.

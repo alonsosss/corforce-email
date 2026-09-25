@@ -18,11 +18,13 @@ type stubVerifier struct {
 	got         *domain.VerifyRequest
 	tenantID    uuid.UUID
 	mailboxID   uuid.UUID
+	mfa         bool
 }
 
 func (s *stubVerifier) Authenticate(_ context.Context, req domain.VerifyRequest) domain.Verification {
 	s.got = &req
-	return domain.Verification{Result: s.result, DisplayName: s.displayName, Username: "ana@empresa.pe", TenantID: s.tenantID, MailboxID: s.mailboxID}
+	return domain.Verification{Result: s.result, DisplayName: s.displayName, Username: "ana@empresa.pe", TenantID: s.tenantID,
+		MailboxID: s.mailboxID, MFARequired: s.mfa}
 }
 
 func (s *stubVerifier) RecentLogins(context.Context, uuid.UUID, string, int) ([]domain.Login, error) {
@@ -77,7 +79,7 @@ func TestVerifyDevuelve200ConSuccessTrue(t *testing.T) {
 func TestVerifyDevuelve401ConSuccessFalse(t *testing.T) {
 	for _, result := range []domain.Result{
 		domain.ResultBadPassword, domain.ResultInactive, domain.ResultNoAccess,
-		domain.ResultThrottled, domain.ResultUnknownService, domain.ResultError,
+		domain.ResultThrottled, domain.ResultUnknownService, domain.ResultError, domain.ResultMFAAppPasswordRequired,
 	} {
 		h := NewHandler(&stubVerifier{result: result}).VerifyRoutes()
 		rec := post(t, h, "/", luaBody)
@@ -224,5 +226,39 @@ func TestVerifyDevuelveLaIdentidadSoloAMailDAV(t *testing.T) {
 		if _, ok := decode(rec)[k]; ok {
 			t.Fatalf("un rechazo no debe llevar %s: %q", k, rec.Body.String())
 		}
+	}
+}
+
+// El webmail sabe siempre si falta el segundo paso; Dovecot y mail-dav no reciben el campo.
+func TestVerifyDiceAlWebmailSiFaltaElSegundoPaso(t *testing.T) {
+	stub := &stubVerifier{result: domain.ResultOK, displayName: "Ana", tenantID: uuid.New(), mailboxID: uuid.New(), mfa: true}
+	h := NewHandler(stub).VerifyRoutes()
+	decode := func(rec *httptest.ResponseRecorder) map[string]any {
+		t.Helper()
+		var body map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatalf("cuerpo no es JSON: %q", rec.Body.String())
+		}
+		return body
+	}
+	webmail := `{"username":"ana@empresa.pe","password":"s3cr3t","real_rip":"203.0.113.7","service":"webmail"}`
+	if got := decode(post(t, h, "/", webmail)); got["success"] != true || got["mfa_required"] != true {
+		t.Fatalf("con verificacion: %v", got)
+	}
+	stub.mfa = false
+	if got := decode(post(t, h, "/", webmail)); got["mfa_required"] != false {
+		t.Fatalf("sin verificacion el campo viaja en false: %v", got)
+	}
+	stub.mfa = true
+	for _, service := range []string{"imap", "dav"} {
+		body := decode(post(t, h, "/", `{"username":"ana@empresa.pe","password":"s3cr3t","real_rip":"203.0.113.7","service":"`+service+`"}`))
+		if _, ok := body["mfa_required"]; ok {
+			t.Fatalf("%s no recibe mfa_required: %v", service, body)
+		}
+	}
+	stub.result = domain.ResultMFAAppPasswordRequired
+	rec := post(t, h, "/", `{"username":"ana@empresa.pe","password":"s3cr3t","real_rip":"203.0.113.7","service":"imap"}`)
+	if rec.Code != http.StatusUnauthorized || len(decode(rec)) != 1 {
+		t.Fatalf("la principal con verificacion por imap: %d %s", rec.Code, rec.Body)
 	}
 }

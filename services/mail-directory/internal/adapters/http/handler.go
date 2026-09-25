@@ -65,6 +65,7 @@ func (h *Handler) Routes() chi.Router {
 		// mismo permiso de lectura que el listado de buzones que las usa.
 		r.With(h.require(moduleMailboxes, "mailboxes", actionRead)).Get("/mail-directory/meta", h.Meta)
 		r.Route("/mail-directory/assistant", h.assistantRoutes)
+		r.Route("/mail-directory/mail-policy", h.mailPolicyRoutes)
 	})
 	// Ruta servicio-a-servicio: la protege RequireGatewayToken en main y toma la empresa
 	// de X-Tenant-ID; no pasa por el gateway ni por permisos de usuario.
@@ -112,6 +113,16 @@ func (h *Handler) Routes() chi.Router {
 		r.Put("/internal/mail-directory/quick-replies/{id}", h.InternalUpdateQuickReply)
 		r.Delete("/internal/mail-directory/quick-replies/{id}", h.InternalDeleteQuickReply)
 		r.Get("/internal/mail-directory/assistant", h.InternalAssistant)
+		// Verificacion en dos pasos y contrasenas de aplicacion del buzon; la contrasena (y el codigo
+		// donde hace falta) los comprueba antes el webmail.
+		r.Get("/internal/mail-directory/mfa", h.InternalMFAStatus)
+		r.Delete("/internal/mail-directory/mfa", h.InternalDisableMFA)
+		r.Post("/internal/mail-directory/mfa/activate", h.InternalActivateMFA)
+		r.Post("/internal/mail-directory/mfa/verify", h.InternalVerifyMFA)
+		r.Post("/internal/mail-directory/mfa/recovery-codes", h.InternalRegenerateRecoveryCodes)
+		r.Get("/internal/mail-directory/app-passwords", h.InternalListAppPasswords)
+		r.Post("/internal/mail-directory/app-passwords", h.InternalCreateAppPassword)
+		r.Delete("/internal/mail-directory/app-passwords/{id}", h.InternalDeleteAppPassword)
 	})
 	return r
 }
@@ -195,6 +206,9 @@ func isAny(err error, list []error) bool {
 }
 
 func writeError(w http.ResponseWriter, err error) {
+	if writeSecurityError(w, err) {
+		return
+	}
 	var fieldErr *domain.FieldError
 	switch {
 	case errors.As(err, &fieldErr):

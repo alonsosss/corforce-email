@@ -10,10 +10,13 @@ type Credential string
 const (
 	CredentialPassword    Credential = "password"
 	CredentialAppPassword Credential = "app_password"
+	// CredentialMFA: el administrador restablecio la verificacion en dos pasos del buzon. Una sesion
+	// del webmail abierta con el segundo factor ya no tiene ese respaldo y se cierra.
+	CredentialMFA Credential = "mfa"
 )
 
 func (c Credential) Valid() bool {
-	return c == CredentialPassword || c == CredentialAppPassword
+	return c == CredentialPassword || c == CredentialAppPassword || c == CredentialMFA
 }
 
 // appPasswordLogins son los inicios de sesion que abre una contrasena de aplicacion: los protocolos

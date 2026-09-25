@@ -60,7 +60,8 @@ func TestReglasDelBuzonGeneranScriptYNoReenvianAlPropioBuzon(t *testing.T) {
 		Rules: []domain.FilterRule{{Name: "Clientes", Enabled: true,
 			Conditions: []domain.FilterCondition{{Field: "from", Op: "contains", Value: "cliente"}},
 			Actions:    []domain.FilterAction{{Type: "move", Folder: "Clientes"}}}},
-		Forwarding: domain.Forwarding{Enabled: true, Addresses: []string{"fuera@otro.example"}, KeepCopy: true},
+		Forwarding:      domain.Forwarding{Enabled: true, Addresses: []string{"fuera@otro.example"}, KeepCopy: true},
+		Reauthenticated: true,
 	}
 	saved, err := h.uc.PutFiltersByUsername(ctx, "Ana@acme.test", req)
 	if err != nil {

@@ -87,6 +87,27 @@ func (r *DomainRepo) NameInUse(ctx context.Context, name string) (bool, error) {
 	return inUse, err
 }
 
+func (r *DomainRepo) OwnedNames(ctx context.Context, tenantID uuid.UUID, names []string) ([]string, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT domain FROM mail.domains WHERE tenant_id = $1 AND domain = ANY($2)
+		 UNION
+		 SELECT alias_domain FROM mail.alias_domains WHERE tenant_id = $1 AND alias_domain = ANY($2)`,
+		tenantID, names)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]string, 0, len(names))
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		out = append(out, name)
+	}
+	return out, rows.Err()
+}
+
 func (r *DomainRepo) Usage(ctx context.Context, tenantID uuid.UUID, name string) (mailboxes, aliases, aliasDomains int64, err error) {
 	err = r.pool.QueryRow(ctx,
 		`SELECT (SELECT COUNT(*) FROM mail.mailboxes WHERE tenant_id = $1 AND domain = $2),

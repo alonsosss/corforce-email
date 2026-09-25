@@ -405,6 +405,18 @@ protocolo al buzon cierra al momento la sesion abierta con el (`credentials_chan
 en la misma transaccion, que mail-security atiende echando al buzon), y el buzon sigue entrando por
 los que conserva.
 
+Seguridad de los buzones (V 2026-09-24 en mail-directory y mail-auth, `046_mail_directory_security_permissions.sql`;
+`docs/Plan_Webmail_Seguridad.md`): en el modulo `mailboxes`, `mail_policy/read` y `mail_policy/update` para ver y
+cambiar si los buzones de la empresa pueden reenviar a direcciones externas (apagarlo retira en la misma
+transaccion los reenvios externos ya guardados), y `mailbox_mfa/delete` para restablecer la verificacion en dos
+pasos de un buzon (`DELETE /api/v1/mailboxes/{id}/mfa`, que publica `mail.mailbox.mfa_disabled` con `by: admin` y
+`credentials_changed` con `credential: mfa`, con el que el webmail cierra las sesiones del buzon). Alcance
+`tenant`: llegan al `tenant_admin` al sembrar el rol y con el resembrado. La verificacion en dos pasos del buzon es
+del propio buzon, no de un usuario de la plataforma: la activa y la apaga su dueno desde el webmail; con ella activa
+`mail-auth` solo acepta la contrasena principal en el webmail (que pide el codigo) y los programas de correo entran
+con contrasenas de aplicacion. Guardar un reenvio a una direccion externa nueva exige reautenticacion
+(`403 REAUTH_REQUIRED`); con la politica de la empresa apagada, `422 EXTERNAL_FORWARDING_DISABLED`.
+
 Modulo `migration` (V, 2026-09-21, `035_mail_migration_permissions.sql`): `migration/jobs/read`
 (ver los trabajos de migracion de buzones y su progreso), `migration/jobs/create` (lanzar la
 migracion de un buzon: guarda cifrada una credencial de terceros) y `migration/jobs/cancel`,

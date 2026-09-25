@@ -70,6 +70,9 @@ type verifyResponse struct {
 	Username  *string `json:"username,omitempty"`
 	TenantID  *string `json:"tenant_id,omitempty"`
 	MailboxID *string `json:"mailbox_id,omitempty"`
+	// MFARequired solo viaja al webmail: la contrasena es correcta pero el buzon tiene verificacion en
+	// dos pasos, y el webmail no abre sesion hasta el segundo paso.
+	MFARequired *bool `json:"mfa_required,omitempty"`
 }
 
 // Verify responde 200 {"success":true}, 401 {"success":false} o 400 si el cuerpo esta
@@ -98,8 +101,8 @@ func (h *Handler) Verify(w http.ResponseWriter, r *http.Request) {
 	resp := verifyResponse{Success: true}
 	switch p, _ := domain.ProtocolFromService(body.Service); p {
 	case domain.ProtocolWebmail:
-		tenantID, mailboxID := v.TenantID.String(), v.MailboxID.String()
-		resp.DisplayName, resp.TenantID, resp.MailboxID = &v.DisplayName, &tenantID, &mailboxID
+		tenantID, mailboxID, mfa := v.TenantID.String(), v.MailboxID.String(), v.MFARequired
+		resp.DisplayName, resp.TenantID, resp.MailboxID, resp.MFARequired = &v.DisplayName, &tenantID, &mailboxID, &mfa
 	case domain.ProtocolDAV:
 		tenantID, mailboxID := v.TenantID.String(), v.MailboxID.String()
 		resp.Username, resp.TenantID, resp.MailboxID = &v.Username, &tenantID, &mailboxID

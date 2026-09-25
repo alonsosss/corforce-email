@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	natsadapter "github.com/alonsosss/corforce-email/services/audit/internal/adapters/nats"
 	"github.com/google/uuid"
 )
 
@@ -114,5 +115,35 @@ func TestElTokenInternoSeExigeFueraDeDesarrollo(t *testing.T) {
 	t.Setenv("ENVIRONMENT", "production")
 	if _, err := loadAnchorReportSettings(); err == nil {
 		t.Fatal("en produccion el informe no puede salir sin el token interno")
+	}
+}
+
+// Los hechos de seguridad de los buzones entran por defecto, cada uno con su consumidor sobre el
+// stream del directorio (MAIL_DIRECTORY), y el resto del directorio no.
+func TestLaSeguridadDeLosBuzonesSeAuditaPorDefecto(t *testing.T) {
+	t.Setenv("AUDIT_SUBJECTS", "")
+	sources, err := natsadapter.SourcesFor(auditSubjects())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{
+		"mail.mailbox.mfa_enabled":        "audit-mail-mailbox-mfa_enabled",
+		"mail.mailbox.mfa_disabled":       "audit-mail-mailbox-mfa_disabled",
+		"mail.mailbox.forwarding_changed": "audit-mail-mailbox-forwarding_changed",
+		"mail.policy.updated":             "audit-mail-policy-updated",
+	}
+	for _, s := range sources {
+		if s.Subject == "mail.>" {
+			t.Fatal("el directorio entero no se audita")
+		}
+		if durable, ok := want[s.Subject]; ok {
+			if s.Stream != "MAIL_DIRECTORY" || s.Durable != durable {
+				t.Errorf("%s: %+v", s.Subject, s)
+			}
+			delete(want, s.Subject)
+		}
+	}
+	if len(want) != 0 {
+		t.Fatalf("faltan: %v", want)
 	}
 }

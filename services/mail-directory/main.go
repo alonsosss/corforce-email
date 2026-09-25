@@ -12,6 +12,7 @@ import (
 
 	"github.com/alonsosss/corforce-email/pkg/authz"
 	"github.com/alonsosss/corforce-email/pkg/config"
+	"github.com/alonsosss/corforce-email/pkg/crypto"
 	"github.com/alonsosss/corforce-email/pkg/db"
 	"github.com/alonsosss/corforce-email/pkg/events"
 	"github.com/alonsosss/corforce-email/pkg/middleware"
@@ -79,6 +80,12 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	// Cifra el secreto de la verificacion en dos pasos de cada buzon. Obligatoria, como en
+	// domain-service: sin ella nadie podria activar ni superar el segundo paso.
+	keyRing, err := crypto.LoadKeyRing("MAIL_ENCRYPTION_KEY", "MAIL_ENCRYPTION_KEYS_OLD")
+	if err != nil {
+		log.Fatalf("mail-directory: cifrado del secreto de la verificación en dos pasos: %v", err)
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	pool, err := db.NewCellPool(ctx, cfg.Postgres, logger)
@@ -117,6 +124,10 @@ func main() {
 		Vacation:            postgres.NewVacationRepo(ctxPool),
 		Signatures:          postgres.NewSignatureRepo(ctxPool),
 		Assistant:           postgres.NewAssistantSettingsRepo(ctxPool),
+		MFA:                 postgres.NewMFARepo(ctxPool),
+		Sealer:              secrets.NewKeyRingSealer(keyRing),
+		TOTP:                secrets.TOTP{},
+		Policies:            postgres.NewMailPolicyRepo(ctxPool),
 		Filters:             postgres.NewFilterRepo(ctxPool),
 		Scheduled:           postgres.NewScheduledSendRepo(ctxPool),
 		Reminders:           postgres.NewReminderRepo(ctxPool),

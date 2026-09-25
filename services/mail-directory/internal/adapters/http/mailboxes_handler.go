@@ -25,6 +25,7 @@ func (h *Handler) mailboxRoutes(r chi.Router) {
 	r.With(h.require(moduleMailboxes, res, actionSetPassword)).Post("/{id}/password", h.SetMailboxPassword)
 	r.With(h.require(moduleMailboxes, res, actionRead)).Get("/{id}/quota", getOf(h.uc.MailboxQuota))
 	r.With(h.require(moduleMailboxes, res, actionRead)).Get("/{id}/logins", h.MailboxLogins)
+	r.With(h.require(moduleMailboxes, resourceMailboxMFA, actionDelete)).Delete("/{id}/mfa", h.ResetMailboxMFA)
 
 	r.With(h.require(moduleMailboxes, apRes, actionRead)).Get("/{id}/app-passwords", h.ListAppPasswords)
 	r.With(h.require(moduleMailboxes, apRes, actionCreate)).Post("/{id}/app-passwords", h.CreateAppPassword)

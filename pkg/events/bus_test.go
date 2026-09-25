@@ -1,6 +1,7 @@
 package events
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -42,5 +43,51 @@ func TestStreamConfigBoundsDiskUse(t *testing.T) {
 	}
 	if cfg.MaxAge != 7*24*time.Hour {
 		t.Errorf("MaxAge = %v", cfg.MaxAge)
+	}
+}
+
+// Un stream no admite subjects que se solapan: el consumidor que pide uno ya capturado por el comodin
+// del dueno (audit con mail.mailbox.mfa_enabled sobre mail.>) no lo anade, y el dueno que declara su
+// comodin sobre subjects concretos que otro declaro antes los sustituye.
+func TestMergeSubjectsNoSolapa(t *testing.T) {
+	cases := []struct {
+		have, want, merged []string
+		changed            bool
+	}{
+		{[]string{"mail.>"}, []string{"mail.mailbox.mfa_enabled"}, []string{"mail.>"}, false},
+		{[]string{"mail.>"}, []string{"mail.>"}, []string{"mail.>"}, false},
+		{[]string{"identity.user.deleted"}, []string{"identity.>"}, []string{"identity.>"}, true},
+		{[]string{"a.b", "c.>"}, []string{"a.*"}, []string{"c.>", "a.*"}, true},
+		{[]string{"a.*"}, []string{"a.b.c"}, []string{"a.*", "a.b.c"}, true},
+		{[]string{"a.*"}, []string{"a.>"}, []string{"a.>"}, true},
+		{[]string{"a.>"}, []string{"a"}, []string{"a.>", "a"}, true},
+		{nil, []string{"x.>", "x.y"}, []string{"x.>"}, true},
+	}
+	for _, c := range cases {
+		got, changed := mergeSubjects(c.have, c.want)
+		if changed != c.changed || strings.Join(got, ",") != strings.Join(c.merged, ",") {
+			t.Errorf("mergeSubjects(%v, %v) = %v %v; se esperaba %v %v", c.have, c.want, got, changed, c.merged, c.changed)
+		}
+	}
+}
+
+func TestSubjectCovers(t *testing.T) {
+	cases := []struct {
+		pattern, sub string
+		want         bool
+	}{
+		{"mail.>", "mail.mailbox.created", true},
+		{"mail.>", "mail", false},
+		{"mail.*", "mail.policy", true},
+		{"mail.*", "mail.>", false},
+		{"mail.*", "mail.policy.updated", false},
+		{"mail.policy.updated", "mail.policy.updated", true},
+		{"mail.policy.updated", "mail.>", false},
+		{"*.>", "mail.x", true},
+	}
+	for _, c := range cases {
+		if got := subjectCovers(c.pattern, c.sub); got != c.want {
+			t.Errorf("subjectCovers(%q, %q) = %v", c.pattern, c.sub, got)
+		}
 	}
 }

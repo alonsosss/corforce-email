@@ -21,13 +21,13 @@ func NewMailboxRepo(pool *db.ContextPool) *MailboxRepo { return &MailboxRepo{poo
 // mailboxColumns no incluye password_hash: solo lo escribe este servicio y lo lee mail-auth.
 const mailboxColumns = `id, tenant_id, username, local_part, domain, display_name, quota_bytes, active, kind,
  tls_enforce_in, tls_enforce_out, relayhost_id, imap_access, pop3_access, smtp_access, sieve_access,
- dav_access, force_pw_update, created_at, updated_at`
+ dav_access, force_pw_update, mfa_enabled, created_at, updated_at`
 
 func scanMailbox(row pgx.Row) (domain.Mailbox, error) {
 	var m domain.Mailbox
 	err := row.Scan(&m.ID, &m.TenantID, &m.Username, &m.LocalPart, &m.Domain, &m.DisplayName, &m.QuotaBytes, &m.Active,
 		&m.Kind, &m.TLSEnforceIn, &m.TLSEnforceOut, &m.RelayhostID, &m.IMAPAccess, &m.POP3Access, &m.SMTPAccess,
-		&m.SieveAccess, &m.DAVAccess, &m.ForcePwUpdate, &m.CreatedAt, &m.UpdatedAt)
+		&m.SieveAccess, &m.DAVAccess, &m.ForcePwUpdate, &m.MFAEnabled, &m.CreatedAt, &m.UpdatedAt)
 	return m, mapErr(err)
 }
 
@@ -104,6 +104,11 @@ func (r *MailboxRepo) UpdatePassword(ctx context.Context, tenantID, id uuid.UUID
 	return affected(r.pool.Exec(ctx,
 		`UPDATE mail.mailboxes SET password_hash = $3, force_pw_update = false WHERE tenant_id = $1 AND id = $2`,
 		tenantID, id, hash))
+}
+
+func (r *MailboxRepo) SetMFAEnabled(ctx context.Context, tenantID, id uuid.UUID, enabled bool) error {
+	return affected(r.pool.Exec(ctx,
+		`UPDATE mail.mailboxes SET mfa_enabled = $3 WHERE tenant_id = $1 AND id = $2`, tenantID, id, enabled))
 }
 
 func (r *MailboxRepo) Delete(ctx context.Context, tenantID, id uuid.UUID) error {

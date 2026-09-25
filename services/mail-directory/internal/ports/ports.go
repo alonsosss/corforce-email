@@ -53,6 +53,9 @@ type DomainRepository interface {
 	NameInUse(ctx context.Context, name string) (bool, error)
 	// Usage cuenta buzones, aliases y dominios alias que cuelgan del dominio.
 	Usage(ctx context.Context, tenantID uuid.UUID, name string) (mailboxes, aliases, aliasDomains int64, err error)
+	// OwnedNames devuelve cuales de los nombres son dominios propios o dominios alias de la empresa,
+	// en cualquier estado: una direccion de uno de ellos no sale de la empresa.
+	OwnedNames(ctx context.Context, tenantID uuid.UUID, names []string) ([]string, error)
 }
 
 type AliasDomainRepository interface {
@@ -73,6 +76,8 @@ type MailboxRepository interface {
 	Create(ctx context.Context, m *domain.Mailbox) error
 	Update(ctx context.Context, m *domain.Mailbox) error
 	UpdatePassword(ctx context.Context, tenantID, id uuid.UUID, hash string) error
+	// SetMFAEnabled cambia mail.mailboxes.mfa_enabled, lo unico que mail-auth lee de la verificacion.
+	SetMFAEnabled(ctx context.Context, tenantID, id uuid.UUID, enabled bool) error
 	Delete(ctx context.Context, tenantID, id uuid.UUID) error
 	CountByDomain(ctx context.Context, tenantID uuid.UUID, name string) (int64, error)
 	// QuotaSumByDomain suma las cuotas de los buzones del dominio salvo el excluido.
@@ -137,6 +142,9 @@ type FilterRepository interface {
 	ByUsername(ctx context.Context, tenantID uuid.UUID, username string) (*domain.MailboxFilters, error)
 	Upsert(ctx context.Context, f *domain.MailboxFilters) error
 	DeleteByUsername(ctx context.Context, tenantID uuid.UUID, username string) error
+	// ListByTenant devuelve las filas de todos los buzones de la empresa, bloqueadas hasta el final de
+	// la transaccion: las reescribe quien apaga el reenvio externo.
+	ListByTenant(ctx context.Context, tenantID uuid.UUID) ([]domain.MailboxFilters, error)
 }
 
 // ScheduledSendRepository guarda los envios programados (mail.scheduled_sends). Las operaciones de un
@@ -335,6 +343,9 @@ type RetirementRepository interface {
 type Secrets interface {
 	HashPassword(plain string) (string, error)
 	GenerateAppPassword() (string, error)
+	// GenerateRecoveryCode genera un codigo de recuperacion de domain.RecoveryCodeLength caracteres
+	// de domain.RecoveryCodeAlphabet, sin guion.
+	GenerateRecoveryCode() (string, error)
 }
 
 // EventPublisher emite los hechos del directorio que otros servicios materializan
@@ -363,6 +374,13 @@ type EventPublisher interface {
 	AliasCreated(ctx context.Context, a *domain.Alias) error
 	AliasUpdated(ctx context.Context, a *domain.Alias) error
 	AliasDeleted(ctx context.Context, a *domain.Alias) error
+	// Hechos de seguridad del buzon y de la empresa, para auditoria (docs/Plan_Webmail_Seguridad.md).
+	MailboxMFAEnabled(ctx context.Context, m *domain.Mailbox, at time.Time) error
+	// MailboxMFADisabled lleva by (domain.MFADisabledBy*) y, si fue el administrador, quien.
+	MailboxMFADisabled(ctx context.Context, m *domain.Mailbox, at time.Time, by string, actorID *uuid.UUID) error
+	MailboxForwardingChanged(ctx context.Context, m *domain.Mailbox, at time.Time, change domain.ForwardingChange) error
+	// MailPolicyUpdated lleva cuantos buzones perdieron reenvios externos con el cambio.
+	MailPolicyUpdated(ctx context.Context, p *domain.MailPolicy, removedMailboxes int) error
 }
 
 // PlanAllowance es lo que el plan de la empresa incluye de un recurso: Limit es la cantidad

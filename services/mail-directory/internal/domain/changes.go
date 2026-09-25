@@ -5,8 +5,8 @@ import "github.com/google/uuid"
 // MailboxAttr nombra lo que un hecho del buzon cambio, con el mismo nombre que lleva en el JSON
 // del buzon y en el API. Los eventos mail.mailbox.updated y mail.mailbox.credentials_changed lo
 // publican en changed: quien guarda sesiones del buzon decide con esa lista si tiene que cerrarlas
-// en vez de cerrarlas ante cualquier cambio. AttrPassword y AttrAppPassword no son columnas del
-// buzon: nombran la credencial que dejo de valer.
+// en vez de cerrarlas ante cualquier cambio. AttrPassword, AttrAppPassword y AttrMFA no son columnas
+// del buzon: nombran la credencial que dejo de valer.
 type MailboxAttr string
 
 const (
@@ -25,13 +25,14 @@ const (
 	AttrForcePwUpdate MailboxAttr = "force_pw_update"
 	AttrPassword      MailboxAttr = "password"
 	AttrAppPassword   MailboxAttr = "app_password"
+	AttrMFA           MailboxAttr = "mfa"
 )
 
 var mailboxAttrs = map[MailboxAttr]bool{
 	AttrDisplayName: true, AttrQuotaBytes: true, AttrActive: true, AttrKind: true,
 	AttrTLSEnforceIn: true, AttrTLSEnforceOut: true, AttrRelayhostID: true,
 	AttrIMAPAccess: true, AttrPOP3Access: true, AttrSMTPAccess: true, AttrSieveAccess: true, AttrDAVAccess: true,
-	AttrForcePwUpdate: true, AttrPassword: true, AttrAppPassword: true,
+	AttrForcePwUpdate: true, AttrPassword: true, AttrAppPassword: true, AttrMFA: true,
 }
 
 func (a MailboxAttr) Valid() bool { return mailboxAttrs[a] }

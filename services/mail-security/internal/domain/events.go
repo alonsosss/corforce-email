@@ -22,4 +22,8 @@ const (
 	SubjectMailboxUpdated            = "mail.mailbox.updated"
 	SubjectMailboxDeleted            = "mail.mailbox.deleted"
 	SubjectMailboxCredentialsChanged = "mail.mailbox.credentials_changed"
+	// SubjectMailboxMFAEnabled: el buzon activo la verificacion en dos pasos y su contrasena principal
+	// deja de abrir IMAP, POP3, SMTP y Sieve (mail-auth). Se trata como credencial cambiada: la cache
+	// de Dovecot y las sesiones abiertas con esa contrasena seguirian valiendo.
+	SubjectMailboxMFAEnabled = "mail.mailbox.mfa_enabled"
 )

@@ -41,7 +41,7 @@ func (f *fakeTx) InTx(ctx context.Context, fn func(ctx context.Context) error) e
 	return err
 }
 
-type fakeSecrets struct{}
+type fakeSecrets struct{ seq int }
 
 func (fakeSecrets) HashPassword(plain string) (string, error) { return "hash(" + plain + ")", nil }
 func (fakeSecrets) GenerateAppPassword() (string, error) {
@@ -59,6 +59,12 @@ type fakeEvents struct {
 	credentials []credentialEvent
 	// changed anota el changed de cada mail.mailbox.updated, en orden.
 	changed [][]domain.MailboxAttr
+	// Hechos de seguridad: quien apago cada verificacion (y el administrador), los cambios de reenvio
+	// externo y los buzones retirados por cada cambio de politica.
+	mfaDisabledBy []string
+	mfaActors     []uuid.UUID
+	forwarding    []forwardingEvent
+	policyRemoved []int
 }
 
 type credentialEvent struct {
@@ -136,6 +142,8 @@ type fakeDomains struct {
 	// foreign simula dominios de OTRA empresa: name_in_use los ve, GetByName no.
 	foreign    []string
 	lastFilter ports.DomainFilter
+	// aliasDomains son los dominios alias de la celda, que OwnedNames tambien cuenta.
+	aliasDomains *fakeAliasDomains
 }
 
 func (f *fakeDomains) List(_ context.Context, tenantID uuid.UUID, filter ports.DomainFilter, page ports.Page) ([]domain.Domain, int64, error) {
@@ -847,6 +855,9 @@ type harness struct {
 	transports   *fakeTransports
 	retirements  *fakeRetirements
 	events       *fakeEvents
+	mfa          *fakeMFA
+	policies     *fakePolicies
+	totp         *fakeTOTP
 }
 
 func newHarness() *harness {
@@ -863,6 +874,10 @@ func newHarness() *harness {
 	h.mailboxes = &fakeMailboxes{aliases: h.aliases, now: time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)}
 	locator := &fakeLocator{h: h}
 	h.retirements = &fakeRetirements{h: h, retired: map[uuid.UUID]time.Time{}, now: time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)}
+	h.domains.aliasDomains = h.aliasDomains
+	h.mfa = &fakeMFA{rows: map[uuid.UUID]*domain.MailboxMFA{}}
+	h.policies = &fakePolicies{rows: map[uuid.UUID]*domain.MailPolicy{}}
+	h.totp = &fakeTOTP{codes: map[string]int64{}}
 	h.events.tx = h.tx
 	h.tx.snapshot = h.snapshot
 	h.uc = New(Deps{
@@ -871,7 +886,8 @@ func newHarness() *harness {
 		Signatures: h.signatures, Filters: h.filters, Scheduled: h.scheduled, Reminders: h.reminders, QuickReplies: h.quickReplies, Clock: func() time.Time { return h.clock }, Aliases: h.aliases, SpamAliases: h.spamAliases,
 		SenderACL: h.senderACL, Relayhosts: h.relayhosts, Transports: h.transports, Retirements: h.retirements,
 		MTASTS: h.mtaSTS, MTASTSPublic: fakeMTASTSPublisher{h: h}, MX: h.mx, PlatformMX: platformMXForTests,
-		MailboxRecreateHold: testRecreateHold, Secrets: fakeSecrets{}, Events: h.events, Plan: h.plan,
+		MailboxRecreateHold: testRecreateHold, Secrets: &fakeSecrets{}, Events: h.events, Plan: h.plan,
+		MFA: h.mfa, Sealer: fakeSealer{}, TOTP: h.totp, Policies: h.policies,
 	})
 	return h
 }
@@ -948,7 +964,20 @@ func (h *harness) snapshot() func() {
 	subjects := append([]string(nil), h.events.subjects...)
 	credentials := append([]credentialEvent(nil), h.events.credentials...)
 	retired := maps.Clone(h.retirements.retired)
+	mfa := map[uuid.UUID]*domain.MailboxMFA{}
+	for k, v := range h.mfa.rows {
+		c := *v
+		c.RecoveryHashes = append([]string(nil), v.RecoveryHashes...)
+		mfa[k] = &c
+	}
+	policies := map[uuid.UUID]*domain.MailPolicy{}
+	for k, v := range h.policies.rows {
+		c := *v
+		policies[k] = &c
+	}
+	forwarding := append([]forwardingEvent(nil), h.events.forwarding...)
 	return func() {
+		h.mfa.rows, h.policies.rows, h.events.forwarding = mfa, policies, forwarding
 		h.domains.items, h.aliasDomains.items = domains, aliasDomains
 		h.mailboxes.items, h.aliases.items = mailboxes, aliases
 		h.appPasswords.items = appPasswords

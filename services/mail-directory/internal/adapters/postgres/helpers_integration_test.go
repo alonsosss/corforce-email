@@ -9,10 +9,12 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/alonsosss/corforce-email/pkg/crypto"
 	"github.com/alonsosss/corforce-email/pkg/db"
 	outboxadapter "github.com/alonsosss/corforce-email/services/mail-directory/internal/adapters/outbox"
 	"github.com/alonsosss/corforce-email/services/mail-directory/internal/adapters/secrets"
@@ -119,5 +121,26 @@ func newUseCaseWith(ctxPool *db.ContextPool, mx ports.MXResolver, recreateHold t
 		RecipientMap: NewRecipientMapRepo(ctxPool), BCCMaps: NewBCCMapRepo(ctxPool), Retirements: NewRetirementRepo(ctxPool),
 		MTASTS: NewMTASTSRepo(ctxPool), MTASTSPublic: NewMTASTSPublicReader(ctxPool), MX: mx, PlatformMX: testPlatformMX,
 		MailboxRecreateHold: recreateHold, Secrets: secrets.New(), Events: outboxadapter.NewPublisher(ctxPool),
+		MFA: NewMFARepo(ctxPool), Sealer: testSealer(), TOTP: secrets.TOTP{}, Policies: NewMailPolicyRepo(ctxPool),
 	})
+}
+
+var (
+	sealerOnce sync.Once
+	sealer     *secrets.KeyRingSealer
+)
+
+// testSealer cifra con una llave de la prueba, como MAIL_ENCRYPTION_KEY en produccion.
+func testSealer() *secrets.KeyRingSealer {
+	sealerOnce.Do(func() {
+		if err := os.Setenv("MAIL_DIRECTORY_IT_KEY", strings.Repeat("5a", 32)); err != nil {
+			panic(err)
+		}
+		ring, err := crypto.LoadKeyRing("MAIL_DIRECTORY_IT_KEY", "MAIL_DIRECTORY_IT_KEY_OLD")
+		if err != nil {
+			panic(err)
+		}
+		sealer = secrets.NewKeyRingSealer(ring)
+	})
+	return sealer
 }

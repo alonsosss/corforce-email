@@ -241,12 +241,15 @@ el registro de quién verificó y con qué resultado.
 Hasta ahora `audit` recibía los eventos de dominio por una suscripción de **núcleo** (`QueueSubscribe`, sin estado): todo
 lo publicado con `audit` caído (cada despliegue, cada reinicio) se perdía del rastro, y un servicio cuyo único fin es ser
 evidencia no puede perder evidencia por reiniciarse. Ahora hay **un consumidor durable de JetStream por subject** de
-`AUDIT_SUBJECTS` (`identity.>`, `organization.>`, `access.>`, `gateway.>`, `scheduler.>`, `domains.>`, `migration.>` por
-defecto), con nombre `audit-<subject>` (`audit-identity-all`, ...):
+`AUDIT_SUBJECTS` (`identity.>`, `organization.>`, `access.>`, `gateway.>`, `scheduler.>`, `domains.>`, `migration.>`,
+`webmail.assistant.used` y los cuatro hechos de seguridad de los buzones de `mail-directory`, `mail.mailbox.mfa_enabled`,
+`mail.mailbox.mfa_disabled`, `mail.mailbox.forwarding_changed` y `mail.policy.updated`, por defecto), con nombre `audit-<subject>` (`audit-identity-all`, ...):
 
 * **Stream.** El del dueño del subject (`IDENTITY`, `ORGANIZATION`, `SCHEDULER`, `DOMAINS`, `MIGRATION`,
   `MAIL_DIRECTORY` para `mail.>`) o, si no hay (`gateway.>`, `access.>`), uno propio con el primer token en mayúsculas
-  (`GATEWAY`, `ACCESS`). `audit` lo declara con `EnsureStream`, que une subjects y nunca quita los ajenos. Un `Publish` de
+  (`GATEWAY`, `ACCESS`). `audit` lo declara con `EnsureStream`, que une subjects y nunca quita los ajenos (un subject
+  que el comodin del dueño ya captura, como `mail.policy.updated` con `mail.>`, no se añade: JetStream rechaza subjects
+  solapados). Un `Publish` de
   núcleo a un subject cubierto por un stream también se retiene, así que `identity`, que publica sin JetStream, queda
   cubierto sin tocarla. Un subject nuevo en `AUDIT_SUBJECTS` necesita que su primer token dé el nombre del stream
   del dueño; si no, `EnsureStream` falla por subjects solapados y `audit` lo registra y reintenta.

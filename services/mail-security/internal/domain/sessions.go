@@ -28,7 +28,7 @@ func MailboxChangeOf(subject string) (MailboxChange, bool) {
 		return MailboxUpdated, true
 	case SubjectMailboxDeleted:
 		return MailboxDeleted, true
-	case SubjectMailboxCredentialsChanged:
+	case SubjectMailboxCredentialsChanged, SubjectMailboxMFAEnabled:
 		return MailboxCredentialsChanged, true
 	}
 	return "", false

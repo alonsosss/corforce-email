@@ -128,6 +128,18 @@ func TestRepositorioContraEsquemaReal(t *testing.T) {
 	if !mb.Access.IMAP || mb.Access.POP3 || !mb.Access.DAV {
 		t.Fatalf("flags inesperados: %+v", mb.Access)
 	}
+	if mb.MFAEnabled {
+		t.Fatal("un buzon nace sin verificacion en dos pasos")
+	}
+	if _, err := pool.Exec(ctx, `UPDATE mail.mailboxes SET mfa_enabled = true WHERE id = $1`, mailboxID); err != nil {
+		t.Fatal(err)
+	}
+	if mb, err := repo.FindByUsername(ctx, username); err != nil || !mb.MFAEnabled {
+		t.Fatalf("mfa_enabled se lee: %+v %v", mb, err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE mail.mailboxes SET mfa_enabled = false WHERE id = $1`, mailboxID); err != nil {
+		t.Fatal(err)
+	}
 	if bcrypt.CompareHashAndPassword([]byte(mb.PasswordHash), []byte("secreta")) != nil {
 		t.Fatal("el hash leido no verifica la contrasena sembrada")
 	}
