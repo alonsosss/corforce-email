@@ -250,6 +250,7 @@ type resolveRequest struct {
 type resolvedDTO struct {
 	ID        uuid.UUID  `json:"id"`
 	TenantID  uuid.UUID  `json:"tenant_id"`
+	Kind      string     `json:"kind"`
 	Prefix    string     `json:"prefix"`
 	Scopes    []scopeDTO `json:"scopes"`
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
@@ -276,7 +277,7 @@ func (h *APIKeysHandler) Resolve(w http.ResponseWriter, r *http.Request) {
 		response.Err(w, http.StatusServiceUnavailable, "API_KEY_UNAVAILABLE", "no se pudo comprobar la clave")
 		return
 	}
-	out := resolvedDTO{ID: res.ID, TenantID: res.TenantID, Prefix: res.Prefix, Scopes: make([]scopeDTO, len(res.Scopes)), ExpiresAt: res.ExpiresAt}
+	out := resolvedDTO{ID: res.ID, TenantID: res.TenantID, Kind: res.Kind, Prefix: res.Prefix, Scopes: make([]scopeDTO, len(res.Scopes)), ExpiresAt: res.ExpiresAt}
 	for i, p := range res.Scopes {
 		out.Scopes[i] = scopeDTO{Module: p.Module, Resource: p.Resource, Action: p.Action}
 	}

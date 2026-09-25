@@ -14,17 +14,28 @@ func TestTokenDeClave(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	token := FormatAPIKeyToken(prefix, secret)
+	token := FormatAPIKeyToken(APIKeyKindSending, prefix, secret)
 	if !strings.HasPrefix(token, APIKeyTokenPrefix) || len(prefix) != APIKeyPrefixLen || len(secret) != APIKeySecretLen {
 		t.Fatalf("forma: %q", token)
 	}
-	p, s, err := ParseAPIKeyToken(token)
-	if err != nil || p != prefix || s != secret || !ValidAPIKeyPrefix(p) {
+	k, p, s, err := ParseAPIKeyToken(token)
+	if err != nil || k != APIKeyKindSending || p != prefix || s != secret || !ValidAPIKeyPrefix(p) {
 		t.Fatalf("ida y vuelta: %v", err)
+	}
+	// La familia sale del prefijo del token, sin tocar la base.
+	prov := FormatAPIKeyToken(APIKeyKindProvisioning, prefix, secret)
+	if !strings.HasPrefix(prov, APIKeyProvisioningTokenPrefix) {
+		t.Fatalf("aprovisionamiento: %q", prov)
+	}
+	if k, _, _, err := ParseAPIKeyToken(prov); err != nil || k != APIKeyKindProvisioning {
+		t.Fatalf("familia del token: %q %v", k, err)
+	}
+	if APIKeyKindOf("otro_"+prefix+"_"+secret) != "" || APIKeyTokenPrefixFor("inventada") != "" {
+		t.Fatal("una familia desconocida no tiene prefijo")
 	}
 	for _, bad := range []string{"", prefix, "cfm_" + prefix, "cfm_" + prefix + "_" + secret[:10], "xyz_" + prefix + "_" + secret,
 		"cfm_" + strings.ToUpper(prefix) + "_" + secret, "cfm_" + prefix + "_" + secret + "1", "cfm_" + prefix + "__" + secret[1:]} {
-		if _, _, err := ParseAPIKeyToken(bad); !errors.Is(err, ErrAPIKeyInvalid) {
+		if _, _, _, err := ParseAPIKeyToken(bad); !errors.Is(err, ErrAPIKeyInvalid) {
 			t.Errorf("%q deberia rechazarse", bad)
 		}
 	}

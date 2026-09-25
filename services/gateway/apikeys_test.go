@@ -231,6 +231,13 @@ func TestTablaDeRutasDeClave(t *testing.T) {
 			t.APIKeyRoutes = append(t.APIKeyRoutes, methodPathSpec{Method: "GET", Path: "/nadie/x"})
 		},
 		"repetida": func(t *routeTable) { t.APIKeyRoutes = append(t.APIKeyRoutes, t.APIKeyRoutes[0]) },
+		// La misma ruta en las dos listas daria los mismos poderes a las dos familias.
+		"en las dos familias": func(t *routeTable) {
+			t.ProvisioningRoutes = append(t.ProvisioningRoutes, t.APIKeyRoutes[0])
+		},
+		"aprovisionamiento con comodin": func(t *routeTable) {
+			t.ProvisioningRoutes = append(t.ProvisioningRoutes, methodPathSpec{Method: "POST", Path: "/transactional/*"})
+		},
 		"patron que chi no admite": func(t *routeTable) {
 			t.APIKeyRoutes = append(t.APIKeyRoutes, methodPathSpec{Method: "GET", Path: "/transactional/{id"})
 		},
@@ -243,5 +250,56 @@ func TestTablaDeRutasDeClave(t *testing.T) {
 	}
 	if err := base().validate(); err != nil {
 		t.Fatalf("la tabla embebida: %v", err)
+	}
+}
+
+// Las dos familias de credencial no comparten ninguna ruta: la de envio no entra en las de
+// aprovisionamiento y la de aprovisionamiento no entra en las de envio (docs/adr/0017).
+func TestFamiliasDeCredencialConRutasDisjuntas(t *testing.T) {
+	tbl, err := decodeRouteTable(defaultRoutes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Una ruta de aprovisionamiento de prueba, colgada de un prefijo con modulo que ya existe.
+	tbl.ProvisioningRoutes = append(tbl.ProvisioningRoutes, methodPathSpec{Method: "POST", Path: "/organizations/aprovisionar"})
+	if err := tbl.validate(); err != nil {
+		t.Fatal(err)
+	}
+	gate, err := newAPIKeyGate(tbl, &stubKeys{}, middleware.NewRateLimiter(100, time.Minute), zap.NewNop())
+	if err != nil {
+		t.Fatal(err)
+	}
+	envio := httptest.NewRequest(http.MethodPost, "/api/v1/transactional/messages", nil)
+	aprov := httptest.NewRequest(http.MethodPost, "/api/v1/organizations/aprovisionar", nil)
+	for _, c := range []struct {
+		nombre string
+		req    *http.Request
+		kind   string
+		quiere bool
+	}{
+		{"envio en su ruta", envio, apikey.KindSending, true},
+		{"envio en la de aprovisionamiento", aprov, apikey.KindSending, false},
+		{"aprovisionamiento en la suya", aprov, apikey.KindProvisioning, true},
+		{"aprovisionamiento en la de envio", envio, apikey.KindProvisioning, false},
+		{"familia desconocida", envio, "inventada", false},
+	} {
+		if got := gate.allowedRoute(c.req, c.kind); got != c.quiere {
+			t.Errorf("%s: %v", c.nombre, got)
+		}
+	}
+}
+
+// Una credencial cuyo prefijo dice una familia y cuya clave guardada es de la otra no autentica,
+// aunque la ruta admita esa familia.
+func TestFamiliaDelTokenDebeSerLaDeLaClave(t *testing.T) {
+	p := sendPrincipal("create")
+	p.Kind = apikey.KindProvisioning
+	k := newKeyHarness(t, &stubKeys{p: p}, 100)
+	rec := k.do(http.MethodPost, "/api/v1/transactional/messages", testKey)
+	if rec.Code != http.StatusUnauthorized || !strings.Contains(rec.Body.String(), "API_KEY_INVALID") {
+		t.Fatalf("%d %s", rec.Code, rec.Body.String())
+	}
+	if k.upstream != nil {
+		t.Fatal("no debe llegar al servicio")
 	}
 }

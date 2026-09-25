@@ -18,6 +18,10 @@ import (
 // ambiguedad y cabe en una cabecera o en un usuario SMTP sin escaparlo.
 const (
 	APIKeyTokenPrefix = "cfm_"
+	// APIKeyProvisioningTokenPrefix abre las credenciales de aprovisionamiento (docs/adr/0017), la
+	// otra familia: crean empresas, dominios y claves de envio, y no mandan un solo correo. El
+	// prefijo distinto las separa desde el primer byte, sin consultar la base.
+	APIKeyProvisioningTokenPrefix = "cfp_"
 	// apiKeyPrefixBytes da 12 caracteres (60 bits): unico entre todas las empresas con holgura.
 	apiKeyPrefixBytes = 8
 	APIKeyPrefixLen   = 12
@@ -50,6 +54,40 @@ var (
 	ErrAPIKeyLimit = errors.New("too many active api keys")
 )
 
+// Familias de credencial (docs/adr/0017). Sus poderes son disjuntos a proposito: una clave de envio
+// manda correo y no gestiona credenciales; una de aprovisionamiento crea empresas, dominios y claves
+// de envio, y no puede enviar ni leer un buzon. Quien las acepta decide por el tipo, no por el
+// alcance: un alcance mal sembrado no convierte una credencial en la otra.
+const (
+	APIKeyKindSending      = "sending"
+	APIKeyKindProvisioning = "provisioning"
+)
+
+// APIKeyKinds son las familias validas, en orden estable.
+func APIKeyKinds() []string { return []string{APIKeyKindSending, APIKeyKindProvisioning} }
+
+// APIKeyTokenPrefixFor es el prefijo del token de una familia; vacio si la familia no existe.
+func APIKeyTokenPrefixFor(kind string) string {
+	switch kind {
+	case APIKeyKindSending:
+		return APIKeyTokenPrefix
+	case APIKeyKindProvisioning:
+		return APIKeyProvisioningTokenPrefix
+	}
+	return ""
+}
+
+// APIKeyKindOf devuelve la familia que anuncia el token por su prefijo, vacia si no es ninguna.
+func APIKeyKindOf(token string) string {
+	switch {
+	case strings.HasPrefix(token, APIKeyProvisioningTokenPrefix):
+		return APIKeyKindProvisioning
+	case strings.HasPrefix(token, APIKeyTokenPrefix):
+		return APIKeyKindSending
+	}
+	return ""
+}
+
 // Estados visibles de una clave.
 const (
 	APIKeyActive  = "active"
@@ -76,6 +114,7 @@ type APIKey struct {
 	TenantID   uuid.UUID
 	Name       string
 	Prefix     string
+	Kind       string
 	SecretHash []byte
 	HashKeyID  string
 	CreatedBy  uuid.UUID
@@ -104,6 +143,7 @@ func (k APIKey) Status(now time.Time) string {
 type ResolvedAPIKey struct {
 	ID        uuid.UUID
 	TenantID  uuid.UUID
+	Kind      string
 	Prefix    string
 	Scopes    []Permission
 	ExpiresAt *time.Time
@@ -123,22 +163,26 @@ func NewAPIKeyToken(random io.Reader) (prefix, secret string, err error) {
 	return prefix, apiKeyEncoding.EncodeToString(s[:]), nil
 }
 
-// FormatAPIKeyToken compone el token que se entrega una sola vez.
-func FormatAPIKeyToken(prefix, secret string) string {
-	return APIKeyTokenPrefix + prefix + "_" + secret
+// FormatAPIKeyToken compone el token que se entrega una sola vez, con el prefijo de su familia.
+func FormatAPIKeyToken(kind, prefix, secret string) string {
+	return APIKeyTokenPrefixFor(kind) + prefix + "_" + secret
 }
 
-// ParseAPIKeyToken separa prefijo y secreto y comprueba su forma, sin tocar la base.
-func ParseAPIKeyToken(token string) (prefix, secret string, err error) {
-	rest, ok := strings.CutPrefix(token, APIKeyTokenPrefix)
+// ParseAPIKeyToken separa familia, prefijo y secreto y comprueba su forma, sin tocar la base.
+func ParseAPIKeyToken(token string) (kind, prefix, secret string, err error) {
+	kind = APIKeyKindOf(token)
+	if kind == "" {
+		return "", "", "", ErrAPIKeyInvalid
+	}
+	rest, ok := strings.CutPrefix(token, APIKeyTokenPrefixFor(kind))
 	if !ok {
-		return "", "", ErrAPIKeyInvalid
+		return "", "", "", ErrAPIKeyInvalid
 	}
 	prefix, secret, ok = strings.Cut(rest, "_")
 	if !ok || !ValidAPIKeyPrefix(prefix) || len(secret) != APIKeySecretLen || !inAlphabet(secret) {
-		return "", "", ErrAPIKeyInvalid
+		return "", "", "", ErrAPIKeyInvalid
 	}
-	return prefix, secret, nil
+	return kind, prefix, secret, nil
 }
 
 // ValidAPIKeyPrefix dice si s tiene la forma de un prefijo (tambien el usuario SMTP).

@@ -6,6 +6,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -189,11 +190,69 @@ func (f *keysFixture) create(t *testing.T, scopes ...ScopeRef) *CreatedAPIKey {
 	return c
 }
 
+// Las dos familias de credencial (docs/adr/0017) se distinguen desde el token y no se confunden al
+// resolver: una de aprovisionamiento no pasa por clave de envio ni al reves. Cada familia va en su
+// propio fixture porque el aleatorio de prueba es ciclico y repetiria el prefijo.
+func TestFamiliasDeCredencial(t *testing.T) {
+	crear := func(f *keysFixture, kind string) *CreatedAPIKey {
+		t.Helper()
+		c, err := f.uc.Create(context.Background(), CreateAPIKeyCommand{
+			TenantID: f.tenant, Actor: f.owner, Name: "ERP", Kind: kind,
+			Scopes: []ScopeRef{{"transactional", "messages", "create"}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return c
+	}
+	for _, c := range []struct{ kind, prefijo string }{
+		{domain.APIKeyKindProvisioning, domain.APIKeyProvisioningTokenPrefix},
+		{domain.APIKeyKindSending, domain.APIKeyTokenPrefix},
+		// Sin familia explicita, la de envio: las claves que ya existian no cambian de significado.
+		{"", domain.APIKeyTokenPrefix},
+	} {
+		f := newKeysFixture()
+		creada := crear(f, c.kind)
+		esperada := c.kind
+		if esperada == "" {
+			esperada = domain.APIKeyKindSending
+		}
+		if !strings.HasPrefix(creada.Token, c.prefijo) || creada.Key.Kind != esperada {
+			t.Fatalf("%q: token %q familia %q", c.kind, creada.Token, creada.Key.Kind)
+		}
+		if f.keys.keys[creada.Key.ID].Kind != esperada {
+			t.Fatalf("%q: la familia se guarda con la clave", c.kind)
+		}
+		res, err := f.uc.Resolve(context.Background(), creada.Token, "")
+		if err != nil || res.Kind != esperada {
+			t.Fatalf("%q: resuelta %+v %v", c.kind, res, err)
+		}
+		// El mismo secreto con el prefijo de la otra familia no autentica.
+		otra := domain.APIKeyKindProvisioning
+		if esperada == domain.APIKeyKindProvisioning {
+			otra = domain.APIKeyKindSending
+		}
+		_, _, secret, _ := domain.ParseAPIKeyToken(creada.Token)
+		suplantado := domain.FormatAPIKeyToken(otra, creada.Key.Prefix, secret)
+		if _, err := f.uc.Resolve(context.Background(), suplantado, ""); !errors.Is(err, domain.ErrAPIKeyInvalid) {
+			t.Errorf("%q con el prefijo de la otra familia: %v", c.kind, err)
+		}
+	}
+	// Una familia inventada no crea nada.
+	f := newKeysFixture()
+	if _, err := f.uc.Create(context.Background(), CreateAPIKeyCommand{
+		TenantID: f.tenant, Actor: f.owner, Name: "X", Kind: "inventada",
+		Scopes: []ScopeRef{{"transactional", "messages", "create"}},
+	}); err == nil {
+		t.Fatal("una familia desconocida debe rechazarse")
+	}
+}
+
 func TestCrearClaveGuardaSoloElHash(t *testing.T) {
 	f := newKeysFixture()
 	c := f.create(t, ScopeRef{"transactional", "messages", "create"}, ScopeRef{" transactional", "messages", "create"})
-	prefix, secret, err := domain.ParseAPIKeyToken(c.Token)
-	if err != nil || prefix != c.Key.Prefix {
+	kind, prefix, secret, err := domain.ParseAPIKeyToken(c.Token)
+	if err != nil || prefix != c.Key.Prefix || kind != domain.APIKeyKindSending {
 		t.Fatalf("token: %q %v", c.Token, err)
 	}
 	stored := f.keys.keys[c.Key.ID]
@@ -264,11 +323,13 @@ func TestResolverClave(t *testing.T) {
 	if err != nil || res.TenantID != f.tenant || len(res.Scopes) != 1 || f.keys.touched != 1 {
 		t.Fatalf("resuelta: %+v %v", res, err)
 	}
-	_, secret, _ := domain.ParseAPIKeyToken(c.Token)
+	_, _, secret, _ := domain.ParseAPIKeyToken(c.Token)
 	for name, token := range map[string]string{
 		"malformada":   "cfm_corto_x",
-		"otro secreto": domain.FormatAPIKeyToken(c.Key.Prefix, secret[:len(secret)-1]+"a"),
-		"inexistente":  domain.FormatAPIKeyToken("zzzzzzzzzzzz", secret),
+		"otro secreto": domain.FormatAPIKeyToken(domain.APIKeyKindSending, c.Key.Prefix, secret[:len(secret)-1]+"a"),
+		"inexistente":  domain.FormatAPIKeyToken(domain.APIKeyKindSending, "zzzzzzzzzzzz", secret),
+		// Una clave de envio presentada con el prefijo de la otra familia no autentica.
+		"otra familia": domain.FormatAPIKeyToken(domain.APIKeyKindProvisioning, c.Key.Prefix, secret),
 		"sin prefijo":  secret,
 	} {
 		if _, err := f.uc.Resolve(ctx, token, ""); !errors.Is(err, domain.ErrAPIKeyInvalid) {

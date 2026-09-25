@@ -35,12 +35,12 @@ func NewAPIKeyRepo(pool *pgxpool.Pool) *APIKeyRepo {
 	return &APIKeyRepo{pool: pool}
 }
 
-const apiKeyColumns = `k.id, k.tenant_id, k.name, k.prefix, k.secret_hash, k.hash_key_id, k.created_by,
+const apiKeyColumns = `k.id, k.tenant_id, k.name, k.kind, k.prefix, k.secret_hash, k.hash_key_id, k.created_by,
 	k.expires_at, k.revoked_at, k.revoked_by, k.last_used_at, COALESCE(k.last_used_ip, ''), k.created_at`
 
 func scanAPIKey(row pgx.Row) (*domain.APIKey, error) {
 	k := &domain.APIKey{}
-	err := row.Scan(&k.ID, &k.TenantID, &k.Name, &k.Prefix, &k.SecretHash, &k.HashKeyID, &k.CreatedBy,
+	err := row.Scan(&k.ID, &k.TenantID, &k.Name, &k.Kind, &k.Prefix, &k.SecretHash, &k.HashKeyID, &k.CreatedBy,
 		&k.ExpiresAt, &k.RevokedAt, &k.RevokedBy, &k.LastUsedAt, &k.LastUsedIP, &k.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, domain.ErrAPIKeyNotFound
@@ -90,9 +90,9 @@ func (r *APIKeyRepo) Create(ctx context.Context, key *domain.APIKey, event domai
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err := tx.Exec(ctx,
-		`INSERT INTO access_control.api_keys (id, tenant_id, name, prefix, secret_hash, hash_key_id, created_by, expires_at, created_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-		key.ID, key.TenantID, key.Name, key.Prefix, key.SecretHash, key.HashKeyID, key.CreatedBy, key.ExpiresAt, key.CreatedAt,
+		`INSERT INTO access_control.api_keys (id, tenant_id, name, kind, prefix, secret_hash, hash_key_id, created_by, expires_at, created_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+		key.ID, key.TenantID, key.Name, key.Kind, key.Prefix, key.SecretHash, key.HashKeyID, key.CreatedBy, key.ExpiresAt, key.CreatedAt,
 	); err != nil {
 		return err
 	}

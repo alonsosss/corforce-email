@@ -24,8 +24,15 @@ import (
 	"github.com/alonsosss/corforce-email/pkg/middleware"
 )
 
-// TokenPrefix abre todo token de clave de API.
-const TokenPrefix = "cfm_"
+// Prefijos de las dos familias de credencial (docs/adr/0017): la de envio y la de
+// aprovisionamiento. Sus poderes son disjuntos y quien las acepta decide por la familia, no por el
+// alcance.
+const (
+	TokenPrefix             = "cfm_"
+	ProvisioningTokenPrefix = "cfp_"
+	KindSending             = "sending"
+	KindProvisioning        = "provisioning"
+)
 
 // Limites de la cache: por encima del techo se vacia entera antes de anadir (cada entrada es de
 // una clave o de un intento), y un negativo dura poco para que una clave recien creada sirva ya.
@@ -45,15 +52,33 @@ var (
 	ErrUnavailable = errors.New("apikey: no se pudo comprobar la clave")
 )
 
-// LooksLikeToken dice si un bearer tiene la forma de una clave de API y no de un JWT.
+// LooksLikeToken dice si un bearer tiene la forma de una credencial de cualquier familia y no de
+// un JWT.
 func LooksLikeToken(s string) bool {
-	return strings.HasPrefix(s, TokenPrefix) && len(s) <= maxTokenLen
+	if len(s) > maxTokenLen {
+		return false
+	}
+	return strings.HasPrefix(s, TokenPrefix) || strings.HasPrefix(s, ProvisioningTokenPrefix)
+}
+
+// KindOf devuelve la familia que anuncia el token por su prefijo, vacia si no es ninguna. Es lo
+// unico que se puede saber sin preguntar a access-control, y basta para decidir que rutas admite.
+func KindOf(s string) string {
+	switch {
+	case strings.HasPrefix(s, ProvisioningTokenPrefix):
+		return KindProvisioning
+	case strings.HasPrefix(s, TokenPrefix):
+		return KindSending
+	}
+	return ""
 }
 
 // Principal es una clave resuelta: su empresa y su alcance efectivo.
 type Principal struct {
-	ID        string                   `json:"id"`
-	TenantID  string                   `json:"tenant_id"`
+	ID       string `json:"id"`
+	TenantID string `json:"tenant_id"`
+	// Kind es la familia de la credencial; vacia en una respuesta antigua, que es de envio.
+	Kind      string                   `json:"kind"`
 	Prefix    string                   `json:"prefix"`
 	Scopes    []middleware.APIKeyScope `json:"scopes"`
 	ExpiresAt *time.Time               `json:"expires_at,omitempty"`

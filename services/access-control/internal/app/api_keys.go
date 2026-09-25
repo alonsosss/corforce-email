@@ -67,9 +67,12 @@ type ScopeRef struct {
 
 // CreateAPIKeyCommand es el alta de una clave por una persona de la empresa.
 type CreateAPIKeyCommand struct {
-	TenantID  uuid.UUID
-	Actor     Actor
-	Name      string
+	TenantID uuid.UUID
+	Actor    Actor
+	Name     string
+	// Kind es la familia (domain.APIKeyKind*); vacia, la de envio. La de aprovisionamiento no la
+	// crea una persona por la web: la emite quien opera la plataforma (docs/adr/0017).
+	Kind      string
 	Scopes    []ScopeRef
 	ExpiresAt *time.Time
 }
@@ -84,6 +87,13 @@ type CreatedAPIKey struct {
 // la crea tiene. El secreto solo se guarda como hash.
 func (uc *APIKeysUseCase) Create(ctx context.Context, cmd CreateAPIKeyCommand) (*CreatedAPIKey, error) {
 	now := uc.d.Now().UTC()
+	kind := cmd.Kind
+	if kind == "" {
+		kind = domain.APIKeyKindSending
+	}
+	if domain.APIKeyTokenPrefixFor(kind) == "" {
+		return nil, invalidAPIKey("familia de clave desconocida: %q", kind)
+	}
 	name, err := domain.NormalizeAPIKeyName(cmd.Name)
 	if err != nil {
 		return nil, invalidAPIKey("%s", err.Error())
@@ -120,6 +130,7 @@ func (uc *APIKeysUseCase) Create(ctx context.Context, cmd CreateAPIKeyCommand) (
 		ID:         uuid.New(),
 		TenantID:   cmd.TenantID,
 		Name:       name,
+		Kind:       kind,
 		Prefix:     prefix,
 		SecretHash: hash,
 		HashKeyID:  keyID,
@@ -135,7 +146,7 @@ func (uc *APIKeysUseCase) Create(ctx context.Context, cmd CreateAPIKeyCommand) (
 	if err := uc.d.Keys.Create(ctx, key, event); err != nil {
 		return nil, fmt.Errorf("guardar la clave: %w", err)
 	}
-	return &CreatedAPIKey{Key: key, Token: domain.FormatAPIKeyToken(prefix, secret)}, nil
+	return &CreatedAPIKey{Key: key, Token: domain.FormatAPIKeyToken(kind, prefix, secret)}, nil
 }
 
 // grantedScopes valida el alcance pedido: sin repetir, del catalogo que admite una clave, de
@@ -262,7 +273,7 @@ func (uc *APIKeysUseCase) metric(result string) {
 }
 
 func (uc *APIKeysUseCase) resolve(ctx context.Context, token string) (*domain.ResolvedAPIKey, string, error) {
-	prefix, secret, err := domain.ParseAPIKeyToken(token)
+	kind, prefix, secret, err := domain.ParseAPIKeyToken(token)
 	if err != nil {
 		return nil, domain.APIKeyRejectMalformed, nil
 	}
@@ -272,6 +283,12 @@ func (uc *APIKeysUseCase) resolve(ctx context.Context, token string) (*domain.Re
 	}
 	if err != nil {
 		return nil, "", fmt.Errorf("leer la clave: %w", err)
+	}
+	// El prefijo del token anuncia la familia: si no es la de la clave guardada, el token no es de
+	// esta clave aunque acierte el secreto. Sin esto, una credencial de aprovisionamiento presentada
+	// como cfm_ pasaria por clave de envio.
+	if key.Kind != kind {
+		return nil, domain.APIKeyRejectMalformed, nil
 	}
 	input := domain.APIKeyHashInput(prefix, secret)
 	ok, current, err := uc.d.Hasher.Verify(input, key.SecretHash, key.HashKeyID)
@@ -310,7 +327,7 @@ func (uc *APIKeysUseCase) resolve(ctx context.Context, token string) (*domain.Re
 			}
 		}
 	}
-	return &domain.ResolvedAPIKey{ID: key.ID, TenantID: key.TenantID, Prefix: key.Prefix, Scopes: scopes, ExpiresAt: key.ExpiresAt}, "", nil
+	return &domain.ResolvedAPIKey{ID: key.ID, TenantID: key.TenantID, Kind: key.Kind, Prefix: key.Prefix, Scopes: scopes, ExpiresAt: key.ExpiresAt}, "", nil
 }
 
 // effectiveScopes acota el alcance guardado a lo que el creador tiene ahora. La cuenta cerrada

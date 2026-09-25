@@ -67,6 +67,12 @@ type routeTable struct {
 	// chi bajo /api/v1; cada una cuelga de un prefijo de routes con modulo, y el RBAC la gatea
 	// con el alcance de la clave (apikeys.go).
 	APIKeyRoutes []methodPathSpec `json:"api_key_routes,omitempty"`
+	// ProvisioningRoutes: la lista cerrada de rutas que admiten una credencial de
+	// aprovisionamiento (Authorization: Bearer cfp_..., docs/adr/0017). Las dos listas son
+	// DISJUNTAS a proposito: una credencial de envio no entra aqui y una de aprovisionamiento no
+	// entra en api_key_routes, asi que ninguna hereda los poderes de la otra por un alcance mal
+	// sembrado. Se validan igual que api_key_routes.
+	ProvisioningRoutes []methodPathSpec `json:"provisioning_routes,omitempty"`
 	// Frontend: servicio que sirve la aplicacion web (comodin /*). Opcional: sin el,
 	// el gateway solo expone el API.
 	Frontend string `json:"frontend,omitempty"`

@@ -57,8 +57,8 @@ func (t *routeTable) validateAPIKeyRoutes() error {
 			gated[r.Prefix] = true
 		}
 	}
-	seen := make(map[string]bool, len(t.APIKeyRoutes))
-	for _, rt := range t.APIKeyRoutes {
+	seen := make(map[string]bool, len(t.APIKeyRoutes)+len(t.ProvisioningRoutes))
+	for _, rt := range append(append([]methodPathSpec(nil), t.APIKeyRoutes...), t.ProvisioningRoutes...) {
 		if !apiKeyMethods[rt.Method] {
 			return fmt.Errorf("tabla de rutas: metodo %q invalido en api_key_routes", rt.Method)
 		}
@@ -71,25 +71,30 @@ func (t *routeTable) validateAPIKeyRoutes() error {
 		}
 		key := rt.Method + " " + rt.Path
 		if seen[key] {
+			// Repetida dentro de una lista, o en las dos: lo segundo daria a las dos familias la
+			// misma ruta, que es justo lo que las listas separadas evitan.
 			return fmt.Errorf("tabla de rutas: ruta de clave de API repetida %s", key)
 		}
 		seen[key] = true
 	}
-	_, err := t.apiKeyMatcher()
+	if _, err := t.matcherFor(t.APIKeyRoutes); err != nil {
+		return err
+	}
+	_, err := t.matcherFor(t.ProvisioningRoutes)
 	return err
 }
 
-// apiKeyMatcher arma el router que reconoce las rutas de clave. chi entra en panico con un patron
-// mal escrito: se convierte en error de arranque.
-func (t *routeTable) apiKeyMatcher() (m *chi.Mux, err error) {
+// matcherFor arma el router que reconoce una lista de rutas. chi entra en panico con un patron mal
+// escrito: se convierte en error de arranque.
+func (t *routeTable) matcherFor(routes []methodPathSpec) (m *chi.Mux, err error) {
 	defer func() {
 		if rec := recover(); rec != nil {
-			m, err = nil, fmt.Errorf("tabla de rutas: api_key_routes: %v", rec)
+			m, err = nil, fmt.Errorf("tabla de rutas: rutas de credencial: %v", rec)
 		}
 	}()
 	m = chi.NewRouter()
 	noop := http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})
-	for _, rt := range t.APIKeyRoutes {
+	for _, rt := range routes {
 		m.Method(rt.Method, rt.Path, noop)
 	}
 	return m, nil
@@ -101,7 +106,8 @@ type apiKeyResolver interface {
 }
 
 type apiKeyGate struct {
-	routes   *chi.Mux
+	// routes por familia: la de envio y la de aprovisionamiento no comparten ninguna ruta.
+	routes   map[string]*chi.Mux
 	resolver apiKeyResolver
 	limiter  *middleware.RateLimiter
 	logger   *zap.Logger
@@ -126,11 +132,16 @@ func loadAPIKeySettings() (apiKeySettings, error) {
 }
 
 func newAPIKeyGate(t *routeTable, resolver apiKeyResolver, limiter *middleware.RateLimiter, logger *zap.Logger) (*apiKeyGate, error) {
-	m, err := t.apiKeyMatcher()
+	envio, err := t.matcherFor(t.APIKeyRoutes)
 	if err != nil {
 		return nil, err
 	}
-	return &apiKeyGate{routes: m, resolver: resolver, limiter: limiter, logger: logger}, nil
+	aprov, err := t.matcherFor(t.ProvisioningRoutes)
+	if err != nil {
+		return nil, err
+	}
+	routes := map[string]*chi.Mux{apikey.KindSending: envio, apikey.KindProvisioning: aprov}
+	return &apiKeyGate{routes: routes, resolver: resolver, limiter: limiter, logger: logger}, nil
 }
 
 // bearerToken devuelve el token del Authorization: Bearer, o vacio.
@@ -142,12 +153,18 @@ func bearerToken(r *http.Request) string {
 	return strings.TrimSpace(token)
 }
 
-func (g *apiKeyGate) allowedRoute(r *http.Request) bool {
+// allowedRoute: cada familia solo entra en SU lista. Una credencial de envio en una ruta de
+// aprovisionamiento se rechaza igual que en cualquier otra ruta no listada, y al reves.
+func (g *apiKeyGate) allowedRoute(r *http.Request, kind string) bool {
 	path, ok := strings.CutPrefix(r.URL.Path, "/api/v1")
 	if !ok {
 		return false
 	}
-	return g.routes.Match(chi.NewRouteContext(), r.Method, path)
+	m := g.routes[kind]
+	if m == nil {
+		return false
+	}
+	return m.Match(chi.NewRouteContext(), r.Method, path)
 }
 
 // authenticate envuelve la autenticacion por JWT: un bearer que no es una clave sigue por ella.
@@ -156,11 +173,12 @@ func (g *apiKeyGate) authenticate(jwt func(http.Handler) http.Handler) func(http
 		byJWT := jwt(next)
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			token := bearerToken(r)
-			if !strings.HasPrefix(token, apikey.TokenPrefix) {
+			kind := apikey.KindOf(token)
+			if kind == "" {
 				byJWT.ServeHTTP(w, r)
 				return
 			}
-			if !g.allowedRoute(r) {
+			if !g.allowedRoute(r, kind) {
 				apiKeyRequests.WithLabelValues(apiKeyResultRouteForbidden).Inc()
 				apiKeyError(w, http.StatusUnauthorized, "API_KEY_ROUTE_NOT_ALLOWED", "esta ruta no admite claves de API")
 				return
@@ -181,6 +199,14 @@ func (g *apiKeyGate) authenticate(jwt func(http.Handler) http.Handler) func(http
 				apiKeyRequests.WithLabelValues(apiKeyResultRateLimited).Inc()
 				w.Header().Set("Retry-After", strconv.Itoa(max(1, int(reset.Seconds()+0.999))))
 				apiKeyError(w, http.StatusTooManyRequests, "RATE_LIMITED", "la clave superó su cupo de peticiones")
+				return
+			}
+			// La familia que dice el prefijo tiene que ser la de la credencial guardada. Lo
+			// comprueba tambien access-control; aqui se repite porque es lo que separa los poderes
+			// y no puede depender de una sola capa.
+			if p.Kind != "" && p.Kind != kind {
+				apiKeyRequests.WithLabelValues(apiKeyResultInvalid).Inc()
+				apiKeyError(w, http.StatusUnauthorized, "API_KEY_INVALID", "clave de API inválida, revocada o caducada")
 				return
 			}
 			apiKeyRequests.WithLabelValues(apiKeyResultOK).Inc()
