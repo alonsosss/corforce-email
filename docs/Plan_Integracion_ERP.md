@@ -190,17 +190,37 @@ Comprobado contra producción, no contra el informe del otro producto:
 | Clave global del otro producto (`dn6enxxxlear`) | Viva, **empresa plataforma**, en uso |
 | Envíos por el relay | Tres, ninguno rechazado; el de Campovivo sale alineado con su dominio |
 
-**Lo que no queda bien y hay que corregir: la cuenta global cuelga de la empresa plataforma.**
-Las empresas del otro producto que no tienen cuenta propia envían con la credencial de la empresa
-plataforma, así que comparten entre ellas —y con el correo operativo de esta plataforma, que sale
-del mismo `avisos.core-force.com`— la lista de supresión, el estado de reputación, el cupo y la
-auditoría. Una queja provocada por una de ellas degrada el correo de recuperación de contraseña de
-esta plataforma, y revocar esa clave las corta todas a la vez.
+### 8.1 Remitente de las empresas sin configurar (2026-09-25)
 
-Es el mismo problema que la fase B2 resuelve de raíz (una empresa aquí por cada empresa de allá).
-Mientras tanto, el paso barato es una empresa propia para el otro producto, con su dominio de envío
-y su clave, de modo que su reputación no toque la de esta plataforma.
+Comprobado en `transactional.messages` de la empresa de plataforma: por la clave global salió hoy
+«Prueba de correo (ERP)» como `Core Force <notificaciones@avisos.core-force.com>` y sin `Reply-To`.
+El destinatario no sabe qué empresa le escribe y, si contesta, la respuesta se pierde
+(`avisos.core-force.com` no tiene MX). La dirección de envío no puede cambiar (no es su dominio),
+pero el nombre visible y la respuesta sí.
 
-También conviene saber que, por la cuenta global, el nombre visible y la dirección de respuesta
-solo aparecen si esa empresa rellenó su remitente en el otro producto. Sin eso, su correo sale como
-la plataforma y sin a quién responder.
+La causa está en el otro producto (`services/notification/internal/app/usecase.go`,
+`buildEmailConfig`): por la cuenta global usa el nombre y la respuesta de
+`notification.email_settings` de la empresa, y si no los tiene sale el nombre de la plataforma sin
+respuesta. Corrección, en el otro producto y a cargo de su sesión:
+
+1. Rellenar en cada empresa que envía por la cuenta global el nombre visible (su nombre comercial) y
+   el responder-a (su correo de contacto), con sus datos reales, y mandar la prueba desde su pantalla.
+2. Red de seguridad en `buildEmailConfig`: sin nombre configurado, el de la empresa; sin respuesta
+   configurada, su correo de contacto. Nunca el nombre de la plataforma para una empresa que no lo es.
+
+Se da por cerrado cuando cada prueba aparece aquí con su nombre, su `Reply-To` y `delivered`.
+
+### 8.2 Umbral para separar la empresa compartida
+
+No se separa por fecha sino por umbral. Mientras sean las empresas del propio usuario mandando avisos,
+la cuenta compartida no es un riesgo, y separarla ahora sería trabajo que la fase B2 tira. Se separa
+(una empresa propia para el otro producto, con su dominio de envío y su clave) en cuanto pase
+cualquiera de estas dos cosas:
+
+| Disparador | Cómo se detecta |
+|---|---|
+| El otro producto manda correo a clientes finales en volumen (campañas, no avisos internos) | Alertas `CuentaCompartidaEnviaMasivo` (un solo mensaje masivo por la cuenta global en 24 h: `List-Unsubscribe`, `List-Id` o `Precedence: bulk`) y `CuentaCompartidaConVolumen` (más de 300 en 24 h). Métrica `transactional_relay_messages_total{account,class}`; necesita `PLATFORM_TENANT_ID` en `transactional` |
+| Entra en el otro producto una empresa que no es del usuario | No se ve desde aquí: es un paso del alta de empresas del otro producto, que debe avisar antes de darle envío por la cuenta global |
+
+Cualquiera de los dos convierte «comparten reputación» en un riesgo real para el correo de
+recuperación de contraseña de esta plataforma.

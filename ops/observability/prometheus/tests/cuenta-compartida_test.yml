@@ -1,0 +1,60 @@
+# Pruebas del umbral de la cuenta compartida del otro producto (grupo relay-smtp-y-claves-de-api).
+#
+# Los avisos por la cuenta de plataforma no suenan; un solo mensaje masivo por ella si; lo masivo de
+# una empresa con cuenta propia no; y el volumen suena al pasar de 300 en 24 horas.
+#
+#   make check-alertas
+
+rule_files:
+  - ../rules/plataforma.yml
+
+evaluation_interval: 1m
+
+tests:
+  # ── Solo avisos por la cuenta de plataforma, y masivo de una empresa propia ──
+  - interval: 1m
+    input_series:
+      - series: 'transactional_relay_messages_total{job="mail-services",service="transactional",account="plataforma",class="aviso"}'
+        values: '0+1x60'
+      - series: 'transactional_relay_messages_total{job="mail-services",service="transactional",account="empresa",class="masivo"}'
+        values: '0+5x60'
+    alert_rule_test:
+      - eval_time: 60m
+        alertname: CuentaCompartidaEnviaMasivo
+        exp_alerts: []
+      - eval_time: 60m
+        alertname: CuentaCompartidaConVolumen
+        exp_alerts: []
+
+  # ── Una campana por la cuenta de plataforma ───────────────────────────────
+  - interval: 1m
+    input_series:
+      - series: 'transactional_relay_messages_total{job="mail-services",service="transactional",account="plataforma",class="masivo"}'
+        values: '0 0 0 1 1 1 1 1 1 1'
+    alert_rule_test:
+      - eval_time: 9m
+        alertname: CuentaCompartidaEnviaMasivo
+        exp_alerts:
+          - exp_labels:
+              severidad: media
+            exp_annotations:
+              resumen: "La cuenta compartida del otro producto envia correo masivo (1 en 24 h)"
+              detalle: "Por la clave global (empresa de plataforma) entran mensajes con List-Unsubscribe, List-Id o Precedence bulk: campanas a clientes finales. Es el umbral para separar al otro producto en su propia empresa, con su dominio de envio y su clave (docs/Plan_Integracion_ERP.md, 8): una queja de esas campanas degrada el correo de recuperacion de contrasena de la plataforma."
+
+  # ── Volumen por encima de 300 en 24 horas ─────────────────────────────────
+  - interval: 1m
+    input_series:
+      - series: 'transactional_relay_messages_total{job="mail-services",service="transactional",account="plataforma",class="aviso"}'
+        values: '0+10x40'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: CuentaCompartidaConVolumen
+        exp_alerts: []
+      - eval_time: 40m
+        alertname: CuentaCompartidaConVolumen
+        exp_alerts:
+          - exp_labels:
+              severidad: media
+            exp_annotations:
+              resumen: "La cuenta compartida del otro producto paso de 300 mensajes en 24 h (400)"
+              detalle: "El volumen de la clave global ya no es de avisos internos de unas pocas empresas. Es el umbral para separar al otro producto en su propia empresa (docs/Plan_Integracion_ERP.md, 8) antes de que su reputacion arrastre la de la plataforma."

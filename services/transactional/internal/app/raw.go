@@ -24,6 +24,9 @@ type RawMessageCommand struct {
 	Text    string
 	HTML    string
 	Raw     []byte
+	// Bulk: el mensaje se declara masivo en sus cabeceras (rawmail.Message.Bulk). No cambia como
+	// se envia; solo cuenta para vigilar el umbral de la cuenta compartida.
+	Bulk bool
 }
 
 // CreateRawMessage aplica al mensaje de SMTP las reglas del API: remitente (el del sobre, el de
@@ -99,13 +102,27 @@ func (uc *UseCase) CreateRawMessage(ctx context.Context, cmd RawMessageCommand) 
 		msg.Status = domain.StatusSuppressed
 	}
 	result := &CreateResult{Suppressed: suppressed}
-	return uc.storeSubmission(ctx, cmd.TenantID, cmd.IdempotencyKey, []*domain.Message{msg}, result,
+	res, err := uc.storeSubmission(ctx, cmd.TenantID, cmd.IdempotencyKey, []*domain.Message{msg}, result,
 		func(ctx context.Context, m *domain.Message) error {
 			if m.Status != domain.StatusQueued {
 				return nil
 			}
 			return uc.repo.InsertRawContent(ctx, m.TenantID, m.ID, cmd.Raw)
 		})
+	if err == nil && res != nil && !res.Replayed && msg.Status == domain.StatusQueued {
+		uc.metrics.RelayMessage(uc.relayAccount(cmd.TenantID), domain.RelayClassOf(cmd.Bulk))
+	}
+	return res, err
+}
+
+// relayAccount distingue lo que entra por la cuenta de la empresa de plataforma (la clave global del
+// otro producto, que comparte reputacion con el correo de esta plataforma) de lo que entra por la
+// cuenta propia de una empresa. Sin PlatformTenantID todo cuenta como empresa.
+func (uc *UseCase) relayAccount(tenantID uuid.UUID) string {
+	if uc.cfg.PlatformTenantID != uuid.Nil && tenantID == uc.cfg.PlatformTenantID {
+		return domain.RelayAccountPlatform
+	}
+	return domain.RelayAccountTenant
 }
 
 func validateRaw(cmd *RawMessageCommand) error {

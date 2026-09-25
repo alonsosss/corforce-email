@@ -46,7 +46,7 @@ type testServer struct {
 	metrics *recordingMetrics
 }
 
-type recordingMetrics struct{ rejected, events []string }
+type recordingMetrics struct{ rejected, events, relay []string }
 
 func (m *recordingMetrics) SendAttempt(string, string)         {}
 func (m *recordingMetrics) SESEvent(t string)                  { m.events = append(m.events, t) }
@@ -54,6 +54,9 @@ func (m *recordingMetrics) SESEventRejected(r string)          { m.rejected = ap
 func (m *recordingMetrics) SESAccount(domain.SESAccountStatus) {}
 func (m *recordingMetrics) SESAccountCheckFailed()             {}
 func (m *recordingMetrics) MarketingDeferred()                 {}
+func (m *recordingMetrics) RelayMessage(account, class string) {
+	m.relay = append(m.relay, account+"/"+class)
+}
 
 // newTestServer arma el handler sin base de datos: las rutas que se prueban aqui
 // deciden antes de resolver la empresa (firma, enlace, coherencia de empresa).

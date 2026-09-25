@@ -83,6 +83,9 @@ type Message struct {
 	// reenviado). Es lo que exige pasar por ClamAV.
 	HasAttachments bool
 	Parts          int
+	// Bulk: el mensaje se declara de envio masivo (List-Unsubscribe, List-Id o Precedence bulk,
+	// list o junk), que es como se reconoce una campana frente a un aviso.
+	Bulk bool
 }
 
 // Parse lee el mensaje con los limites dados. Un error envuelve uno de los Err* del paquete.
@@ -99,7 +102,7 @@ func Parse(raw []byte, lim Limits) (*Message, error) {
 		return nil, fmt.Errorf("%w: %v", ErrMalformed, err)
 	}
 	header := mail.Header{Header: entity.Header}
-	msg := &Message{}
+	msg := &Message{Bulk: isBulk(header)}
 	if err := readAddresses(header, msg); err != nil {
 		return nil, err
 	}
@@ -299,4 +302,17 @@ func toCRLF(raw []byte) []byte {
 		out = append(out, c)
 	}
 	return out
+}
+
+// isBulk reconoce las cabeceras con que se marca el correo masivo (RFC 2369, RFC 2919 y la
+// convencion Precedence de las listas).
+func isBulk(h mail.Header) bool {
+	if h.Get("List-Unsubscribe") != "" || h.Get("List-Id") != "" {
+		return true
+	}
+	switch strings.ToLower(strings.TrimSpace(h.Get("Precedence"))) {
+	case "bulk", "list", "junk":
+		return true
+	}
+	return false
 }

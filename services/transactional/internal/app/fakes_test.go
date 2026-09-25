@@ -612,6 +612,7 @@ type fakeMetrics struct {
 	accounts []domain.SESAccountStatus
 	failures int
 	deferred int
+	relay    []string
 }
 
 func (m *fakeMetrics) SendAttempt(class, result string) {
@@ -632,3 +633,8 @@ func (m *fakeMetrics) SESAccount(s domain.SESAccountStatus) {
 }
 func (m *fakeMetrics) SESAccountCheckFailed() { m.mu.Lock(); m.failures++; m.mu.Unlock() }
 func (m *fakeMetrics) MarketingDeferred()     { m.mu.Lock(); m.deferred++; m.mu.Unlock() }
+func (m *fakeMetrics) RelayMessage(account, class string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.relay = append(m.relay, account+"/"+class)
+}

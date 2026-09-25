@@ -26,6 +26,7 @@ type Metrics struct {
 	lastSuccess       prometheus.Gauge
 	checkFailures     prometheus.Counter
 	marketingDeferred prometheus.Counter
+	relayMessages     *prometheus.CounterVec
 	now               func() time.Time
 }
 
@@ -66,10 +67,14 @@ func New() *Metrics {
 			Name: "transactional_marketing_quota_deferred_total",
 			Help: "Mensajes de marketing aplazados porque la cuenta de SES entro en la reserva de cuota del transaccional.",
 		}),
+		relayMessages: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "transactional_relay_messages_total",
+			Help: "Mensajes aceptados por el relay SMTP, por cuenta (plataforma, la clave global compartida; empresa, una cuenta propia) y clase (aviso o masivo, segun sus cabeceras).",
+		}, []string{"account", "class"}),
 		now: time.Now,
 	}
 	prometheus.MustRegister(m.sendAttempts, m.sesEvents, m.sesRejected, m.sendingEnabled, m.productionAccess,
-		m.max24h, m.sent24h, m.maxRate, m.bounceRate, m.complaintRate, m.reputationKnown, m.lastSuccess, m.checkFailures, m.marketingDeferred)
+		m.max24h, m.sent24h, m.maxRate, m.bounceRate, m.complaintRate, m.reputationKnown, m.lastSuccess, m.checkFailures, m.marketingDeferred, m.relayMessages)
 	return m
 }
 
@@ -95,6 +100,10 @@ func (m *Metrics) SESAccount(s domain.SESAccountStatus) {
 func (m *Metrics) SESAccountCheckFailed() { m.checkFailures.Inc() }
 
 func (m *Metrics) MarketingDeferred() { m.marketingDeferred.Inc() }
+
+func (m *Metrics) RelayMessage(account, class string) {
+	m.relayMessages.WithLabelValues(account, class).Inc()
+}
 
 func setRate(g prometheus.Gauge, known prometheus.Gauge, v *float64) {
 	if v == nil {
