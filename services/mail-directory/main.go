@@ -15,6 +15,7 @@ import (
 	"github.com/alonsosss/corforce-email/pkg/crypto"
 	"github.com/alonsosss/corforce-email/pkg/db"
 	"github.com/alonsosss/corforce-email/pkg/events"
+	"github.com/alonsosss/corforce-email/pkg/keyrotation"
 	"github.com/alonsosss/corforce-email/pkg/middleware"
 	"github.com/alonsosss/corforce-email/pkg/outbox"
 	"github.com/alonsosss/corforce-email/pkg/response"
@@ -30,7 +31,6 @@ import (
 	"github.com/alonsosss/corforce-email/services/mail-directory/internal/app"
 	"github.com/alonsosss/corforce-email/services/mail-directory/internal/domain"
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 )
@@ -41,10 +41,6 @@ const (
 	// para poder reconstruir una entrega perdida mientras JetStream aun la recuerda.
 	outboxRetention = 7 * 24 * time.Hour
 	streamRetry     = 5 * time.Second
-	// Con llaves retiradas en MAIL_ENCRYPTION_KEYS_OLD, el secreto de la verificacion en dos pasos
-	// se re-cifra bajo la activa al arrancar y despues cada hora, en lotes.
-	mfaRotationEvery = time.Hour
-	mfaRotationBatch = 200
 )
 
 // mail-directory es un servicio de CELDA: una sola base (la del directorio de correo que
@@ -161,9 +157,10 @@ func main() {
 		Logger:              logger,
 	})
 
-	if keyRing.HasOldKeys() {
-		go runMFASecretRotation(ctx, keyRing, postgres.NewMFASecretStore(pool.Pool), metrics, logger)
-	}
+	mfaStore := postgres.NewMFASecretStore(pool.Pool)
+	go keyrotation.Run(ctx, keyRing, "mail.mailbox_mfa", func(c context.Context) (keyrotation.Result, error) {
+		return keyrotation.Pass(c, keyRing, keyrotation.Target{Store: mfaStore, AAD: domain.MFASecretAAD})
+	}, keyrotation.NewMetrics("mail_directory_mfa", "Secretos de la verificacion en dos pasos de los buzones"), logger)
 
 	r := apiRouter(pool.Pool, membership, handler.NewHandler(uc, perms).Routes(), logger)
 
@@ -234,33 +231,4 @@ func runCellRelay(ctx context.Context, bus *events.Bus, pool *db.Pool, logger *z
 	relay.RunExclusive(ctx, func(c context.Context) (func(), bool) {
 		return db.TryLeaderLock(c, pool.Pool, outbox.CellRelayLockKey)
 	})
-}
-
-// runMFASecretRotation re-cifra bajo la llave activa los secretos de la verificacion en dos pasos
-// que solo abre una llave retirada, al arrancar y despues cada mfaRotationEvery. Nunca registra un
-// secreto: solo cuentas. Mientras diga pendientes > 0 no se puede retirar la llave vieja
-// (docs/Operacion_Despliegue.md, seccion 2, rotacion de MAIL_ENCRYPTION_KEY).
-func runMFASecretRotation(ctx context.Context, keyRing *crypto.KeyRing, store *postgres.MFASecretStore,
-	metrics *prometheusadapter.Metrics, logger *zap.Logger) {
-	t := time.NewTicker(mfaRotationEvery)
-	defer t.Stop()
-	for {
-		rep, err := crypto.RotateStore(ctx, keyRing, store, uuid.Nil, mfaRotationBatch, domain.MFASecretAAD)
-		metrics.MFASecretsReencrypted(rep.Rotated)
-		switch {
-		case err != nil && ctx.Err() == nil:
-			logger.Warn("rotacion de MAIL_ENCRYPTION_KEY en mail.mailbox_mfa interrumpida; se reintenta en la proxima pasada",
-				zap.Int("recifrados", rep.Rotated), zap.Error(err))
-		case err == nil:
-			metrics.MFASecretsPending(rep.Pending)
-			logger.Info(fmt.Sprintf("rotacion de MAIL_ENCRYPTION_KEY en mail.mailbox_mfa: %d re-cifrados, %d pendientes", rep.Rotated, rep.Pending),
-				zap.Int("revisados", rep.Examined), zap.Int("recifrados", rep.Rotated),
-				zap.Int("cambiados_entre_tanto", rep.Changed), zap.Int("pendientes", rep.Pending))
-		}
-		select {
-		case <-ctx.Done():
-			return
-		case <-t.C:
-		}
-	}
 }

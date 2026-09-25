@@ -16,6 +16,7 @@ import (
 	"github.com/alonsosss/corforce-email/pkg/crypto"
 	"github.com/alonsosss/corforce-email/pkg/db"
 	"github.com/alonsosss/corforce-email/pkg/events"
+	"github.com/alonsosss/corforce-email/pkg/keyrotation"
 	"github.com/alonsosss/corforce-email/pkg/mailreconcile"
 	"github.com/alonsosss/corforce-email/pkg/middleware"
 	"github.com/alonsosss/corforce-email/pkg/outbox"
@@ -199,6 +200,13 @@ func envBool(key string) (bool, error) {
 	return v, nil
 }
 
+// La rotacion de MAIL_ENCRYPTION_KEY recorre las bases de empresa de pocas en pocas, con un plazo por
+// empresa: la tabla de trabajos es pequena y solo guarda la contrasena de los activos.
+const (
+	rotationConcurrency   = 4
+	rotationTenantTimeout = 2 * time.Minute
+)
+
 func main() {
 	logger, _ := zap.NewProduction()
 	defer logger.Sync()
@@ -258,6 +266,13 @@ func main() {
 	})
 
 	go natsadapter.NewConsumer(bus, uc, logger).Run(ctx)
+
+	// Con llaves en MAIL_ENCRYPTION_KEYS_OLD, re-cifra bajo la activa las contrasenas de origen de todas
+	// las empresas, al arrancar y cada hora.
+	sealed := postgres.SealedColumns()
+	go keyrotation.Run(ctx, keyRing, "mail_migration.jobs (bases de empresa)", func(c context.Context) (keyrotation.Result, error) {
+		return keyrotation.TenantPass(c, keyRing, tenantDB, rotationConcurrency, rotationTenantTimeout, logger, sealed...)
+	}, keyrotation.NewMetrics("mail_migration", "Contrasenas de origen de los trabajos de migracion"), logger)
 
 	// La conciliacion retira los trabajos que el consumidor no vio: buzones borrados antes de que existiera o
 	// mas alla de lo que el stream conserva, y trabajos que un alta en vuelo inserto despues del evento.

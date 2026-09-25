@@ -323,33 +323,41 @@ pasa la anterior a la lista, y se recrea `audit`. A diferencia de `MAIL_ENCRYPTI
 mientras haya filas firmadas con esas llaves: una fila append-only no se re-firma. Causas del verificador y qué hacer
 con cada una: ADR 0006, sección 5.
 
-Rotación de `MAIL_ENCRYPTION_KEY` (AES-256-GCM, `pkg/crypto.KeyRing`). La llave la reciben `identity` (secreto TOTP del
-segundo factor de la consola, `identity.users.mfa_secret_enc`), `mail-directory` (secreto de la verificación en dos pasos
-de los buzones, `mail.mailbox_mfa.secret_enc`), `domain-service` (claves DKIM y credenciales de terceros) y
-`mail-migration` (credenciales de origen). Las llaves de `MAIL_ENCRYPTION_KEYS_OLD` solo descifran; `identity` y
-`mail-directory`, al arrancar con alguna y después cada hora, re-cifran bajo la activa lo que solo abre una retirada. La
-sustitución es condicional (solo si la fila sigue guardando lo leído), así que varias réplicas pueden hacerlo a la vez y
-una escritura concurrente siempre gana. Procedimiento:
+Rotación de `MAIL_ENCRYPTION_KEY` (AES-256-GCM, `pkg/crypto.KeyRing`). La llave la reciben cuatro servicios, y cada uno
+re-cifra lo suyo (`pkg/keyrotation`): las llaves de `MAIL_ENCRYPTION_KEYS_OLD` solo descifran, y con alguna en la lista
+cada servicio, al arrancar y después cada hora, re-cifra bajo la activa lo que solo abre una retirada:
+
+| Servicio | Base | Columnas cifradas (datos autenticados) | Métrica de pendientes |
+|---|---|---|---|
+| `identity` | registro | `identity.users.mfa_secret_enc` (`identity-mfa:<usuario>`) | `identity_mfa_secrets_pending_reencryption` |
+| `mail-directory` | celda | `mail.mailbox_mfa.secret_enc` (id del buzón) | `mail_directory_mfa_secrets_pending_reencryption` |
+| `domain-service` | cada empresa | `domains.domains.dkim_private_key_enc` y `dkim_previous_private_key_enc`, `domains.dns_providers.api_token_enc` (sin) | `domain_service_secrets_pending_reencryption` |
+| `mail-migration` | cada empresa | `mail_migration.jobs.source_password_enc` (`domain.SourcePasswordAAD`: empresa y trabajo) | `mail_migration_secrets_pending_reencryption` |
+
+Cada uno cuenta además lo re-cifrado en `<prefijo>_secrets_reencrypted_total`. La sustitución es condicional (solo si la
+fila sigue guardando lo leído), así que varias réplicas pueden hacerlo a la vez y una escritura concurrente siempre
+gana. Los dos servicios de empresa recorren la base de **todas** las empresas del registro, en cualquier estado (una
+suspendida conserva sus claves), y una base que no se puede abrir o recorrer entera cuenta como pendiente y sale por su
+id en el campo `empresas_sin_recorrer` del registro. Una columna cifrada nueva se declara en el adaptador de su servicio
+(`SealedColumns` en `domain-service` y `mail-migration`): si no, retirar la llave la deja ilegible. Procedimiento:
 
 1. `ops/security/secrets/rotate-key.sh MAIL_ENCRYPTION_KEY MAIL_ENCRYPTION_KEYS_OLD --apply`: la nueva queda activa y la
    anterior pasa a la lista.
 2. Recrear a la vez los cuatro contenedores que la reciben (`reparto.tsv`):
    `with-secrets.sh docker compose up -d --no-deps identity mail-directory domain-service mail-migration`. Uno que quede
-   con la llave vieja como activa escribiría datos que la nueva réplica no abre hasta que también se recree.
-3. Esperar en el registro de `identity` y de `mail-directory` la línea de la pasada:
-   `rotacion de MAIL_ENCRYPTION_KEY en identity.users: N re-cifrados, 0 pendientes` y
-   `rotacion de MAIL_ENCRYPTION_KEY en mail.mailbox_mfa: N re-cifrados, 0 pendientes`. Las métricas
-   `identity_mfa_secrets_pending_reencryption` y `mail_directory_mfa_secrets_pending_reencryption` dicen lo mismo.
-   `pendientes` son datos que no abre ninguna llave del anillo: con uno solo, retirar la llave deja una cuenta o un buzón
-   sin poder completar el segundo factor, y hay que averiguar con qué llave se cifró antes de seguir. Una pasada
-   interrumpida lo registra como aviso y se reintenta en la siguiente.
-4. **Todavía no** se vacía `MAIL_ENCRYPTION_KEYS_OLD`: `domain-service` y `mail-migration` no re-cifran lo suyo
-   (`KeyRing.Rotate` no se usa en ellos), y sus claves DKIM y credenciales guardadas con la llave anterior solo se leen
-   mientras siga en la lista. Retirarla exige antes el mismo barrido en esos dos servicios (pendiente).
-5. Cuando todos los que la reciben digan `0 pendientes`, quitar la llave vieja de `MAIL_ENCRYPTION_KEYS_OLD` en el
+   con la llave vieja como activa escribiría datos que los demás no abren hasta que también se recree.
+3. Esperar en el registro de cada uno la línea de su pasada con `0 pendientes`:
+   `rotacion de MAIL_ENCRYPTION_KEY en identity.users: N re-cifrados, 0 pendientes`,
+   `... en mail.mailbox_mfa: ...`, `... en domains (bases de empresa): ...` y
+   `... en mail_migration.jobs (bases de empresa): ...`, o las cuatro métricas de pendientes a 0. Los pendientes son
+   datos que no abre ninguna llave del anillo (campo `ilegibles`) más una por cada empresa sin recorrer: con uno solo,
+   retirar la llave deja algo ilegible para siempre (un segundo factor, una clave DKIM, un token DNS o una contraseña de
+   origen), y hay que resolverlo antes de seguir. Una pasada interrumpida lo registra como aviso y se reintenta en la
+   siguiente, a la hora.
+4. Cuando **los cuatro** registren `0 pendientes`, se puede vaciar `MAIL_ENCRYPTION_KEYS_OLD`: copiar antes la llave
+   nueva al respaldo de secretos (sección 6), porque sin ella lo cifrado desde el paso 1 no se abre; quitar la vieja del
    almacén (`remove-secret.sh MAIL_ENCRYPTION_KEYS_OLD --apply` si era la única; si quedan otras,
-   `VALOR=... add-secret.sh MAIL_ENCRYPTION_KEYS_OLD --apply` con la lista sin ella) y repetir el paso 2. Copiar antes
-   la llave nueva al respaldo de secretos (sección 6): sin ella lo cifrado desde el paso 1 no se abre.
+   `VALOR=... add-secret.sh MAIL_ENCRYPTION_KEYS_OLD --apply` con la lista sin ella) y repetir el paso 2.
 
 Ancla externa (ADR 0006, sección 8): la cabeza anclada vive en la base, en el stream `AUDIT_CHAIN` y en el log del
 mismo servidor, y solo protege contra quien no pueda escribir también `audit.chain_anchors`. La copia fuera es un correo:

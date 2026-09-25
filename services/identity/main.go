@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"os"
 	"time"
@@ -13,6 +12,7 @@ import (
 	"github.com/alonsosss/corforce-email/pkg/crypto"
 	"github.com/alonsosss/corforce-email/pkg/db"
 	"github.com/alonsosss/corforce-email/pkg/events"
+	"github.com/alonsosss/corforce-email/pkg/keyrotation"
 	"github.com/alonsosss/corforce-email/pkg/middleware"
 	"github.com/alonsosss/corforce-email/pkg/outbox"
 	"github.com/alonsosss/corforce-email/pkg/response"
@@ -23,7 +23,6 @@ import (
 	outboxadapter "github.com/alonsosss/corforce-email/services/identity/internal/adapters/outbox"
 	"github.com/alonsosss/corforce-email/services/identity/internal/adapters/passwordhash"
 	"github.com/alonsosss/corforce-email/services/identity/internal/adapters/postgres"
-	prometheusadapter "github.com/alonsosss/corforce-email/services/identity/internal/adapters/prometheus"
 	"github.com/alonsosss/corforce-email/services/identity/internal/adapters/pwned"
 	"github.com/alonsosss/corforce-email/services/identity/internal/adapters/resetqueue"
 	"github.com/alonsosss/corforce-email/services/identity/internal/app"
@@ -203,7 +202,8 @@ func main() {
 		resetQueue.Run(workCtx, resetUC.ProcessReset)
 	}()
 	go runUnknownLoginPrune(workCtx, unknownLoginRepo, logger)
-	go runMFASecretMaintenance(workCtx, authUC, postgres.NewMFASecretStore(pool.Pool), keyRing, prometheusadapter.New(), logger)
+	go runMFASecretMaintenance(workCtx, authUC, postgres.NewMFASecretStore(pool.Pool), keyRing,
+		keyrotation.NewMetrics("identity_mfa", "Secretos del segundo factor de la consola"), logger)
 
 	handler := identityhttp.NewHandler(authUC, userUC, resetUC, perms, identityhttp.Config{
 		StepUp:           tokenVerifier,
@@ -256,13 +256,13 @@ const (
 	// El secreto del segundo factor se revisa al arrancar y despues cada hora: se cifra el que
 	// quede en claro (una replica anterior durante un despliegue aun lo escribe) y, con llaves
 	// retiradas en el anillo, se re-cifra bajo la activa.
-	mfaSecretSweepEvery = time.Hour
+	mfaSecretSweepEvery = keyrotation.Every
 	mfaSecretSweepBatch = 200
 )
 
 // runMFASecretMaintenance corre sweepMFASecrets al arrancar y despues cada mfaSecretSweepEvery.
-func runMFASecretMaintenance(ctx context.Context, authUC *app.AuthUseCase, store *postgres.MFASecretStore,
-	keyRing *crypto.KeyRing, metrics prometheusadapter.Metrics, logger *zap.Logger) {
+func runMFASecretMaintenance(ctx context.Context, authUC *app.AuthUseCase, store *keyrotation.Column,
+	keyRing *crypto.KeyRing, metrics *keyrotation.Metrics, logger *zap.Logger) {
 	t := time.NewTicker(mfaSecretSweepEvery)
 	defer t.Stop()
 	for {
@@ -277,10 +277,9 @@ func runMFASecretMaintenance(ctx context.Context, authUC *app.AuthUseCase, store
 
 // sweepMFASecrets cifra los secretos del segundo factor que queden en claro y, si el anillo tiene
 // llaves retiradas, re-cifra bajo la activa los que solo abre una retirada. Nunca registra un
-// secreto: solo cuentas. Mientras la rotacion diga pendientes > 0 no se puede retirar la llave
-// vieja (docs/Operacion_Despliegue.md, seccion 2, rotacion de MAIL_ENCRYPTION_KEY).
-func sweepMFASecrets(ctx context.Context, authUC *app.AuthUseCase, store *postgres.MFASecretStore,
-	keyRing *crypto.KeyRing, metrics prometheusadapter.Metrics, logger *zap.Logger) {
+// secreto: solo cuentas.
+func sweepMFASecrets(ctx context.Context, authUC *app.AuthUseCase, store *keyrotation.Column,
+	keyRing *crypto.KeyRing, metrics *keyrotation.Metrics, logger *zap.Logger) {
 	sweep, err := authUC.SealLegacyMFASecrets(ctx, mfaSecretSweepBatch)
 	if err != nil && ctx.Err() == nil {
 		logger.Warn("no se pudieron cifrar los secretos del segundo factor en claro", zap.Error(err))
@@ -293,19 +292,8 @@ func sweepMFASecrets(ctx context.Context, authUC *app.AuthUseCase, store *postgr
 	if !keyRing.HasOldKeys() {
 		return
 	}
-	rep, err := crypto.RotateStore(ctx, keyRing, store, uuid.Nil, mfaSecretSweepBatch, domain.MFASecretAAD)
-	metrics.MFASecretsReencrypted(rep.Rotated)
-	if err != nil {
-		if ctx.Err() == nil {
-			logger.Warn("rotacion de MAIL_ENCRYPTION_KEY en identity.users interrumpida; se reintenta en la proxima pasada",
-				zap.Int("recifrados", rep.Rotated), zap.Error(err))
-		}
-		return
-	}
-	metrics.MFASecretsPending(rep.Pending)
-	logger.Info(fmt.Sprintf("rotacion de MAIL_ENCRYPTION_KEY en identity.users: %d re-cifrados, %d pendientes", rep.Rotated, rep.Pending),
-		zap.Int("revisados", rep.Examined), zap.Int("recifrados", rep.Rotated),
-		zap.Int("cambiados_entre_tanto", rep.Changed), zap.Int("pendientes", rep.Pending))
+	res, err := keyrotation.Pass(ctx, keyRing, keyrotation.Target{Store: store, AAD: domain.MFASecretAAD})
+	keyrotation.Report(ctx, "identity.users", res, err, metrics, logger)
 }
 
 // runUnknownLoginPrune borra los contadores de correos sin cuenta que ya no cuentan: sin ella,

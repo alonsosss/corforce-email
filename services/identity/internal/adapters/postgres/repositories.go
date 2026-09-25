@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/alonsosss/corforce-email/pkg/crypto"
 	"github.com/alonsosss/corforce-email/pkg/db"
+	"github.com/alonsosss/corforce-email/pkg/keyrotation"
 	"github.com/alonsosss/corforce-email/services/identity/internal/domain"
 	"github.com/alonsosss/corforce-email/services/identity/internal/ports"
 	"github.com/google/uuid"
@@ -370,44 +370,11 @@ func (r *UserRepo) DropDisabledMFASecrets(ctx context.Context) (int64, error) {
 	return tag.RowsAffected(), nil
 }
 
-// MFASecretStore recorre los secretos TOTP cifrados de identity.users para re-cifrarlos bajo la
-// llave activa (crypto.RotateStore). No lee el secreto en claro de las filas anteriores al
-// cifrado: esas las cifra SealLegacyMFASecrets.
-type MFASecretStore struct {
-	pool *pgxpool.Pool
-}
-
-func NewMFASecretStore(pool *pgxpool.Pool) *MFASecretStore {
-	return &MFASecretStore{pool: pool}
-}
-
-func (s *MFASecretStore) SealedAfter(ctx context.Context, after uuid.UUID, limit int) ([]crypto.SealedRecord[uuid.UUID], error) {
-	rows, err := s.pool.Query(ctx,
-		`SELECT id, mfa_secret_enc FROM identity.users
-		  WHERE mfa_secret_enc IS NOT NULL AND id > $1
-		  ORDER BY id LIMIT $2`, after, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []crypto.SealedRecord[uuid.UUID]
-	for rows.Next() {
-		var rec crypto.SealedRecord[uuid.UUID]
-		if err := rows.Scan(&rec.Key, &rec.Sealed); err != nil {
-			return nil, err
-		}
-		out = append(out, rec)
-	}
-	return out, rows.Err()
-}
-
-func (s *MFASecretStore) ReplaceSealed(ctx context.Context, id uuid.UUID, prev, next []byte) (bool, error) {
-	tag, err := s.pool.Exec(ctx,
-		`UPDATE identity.users SET mfa_secret_enc = $3 WHERE id = $1 AND mfa_secret_enc = $2`, id, prev, next)
-	if err != nil {
-		return false, err
-	}
-	return tag.RowsAffected() == 1, nil
+// NewMFASecretStore es la columna del secreto TOTP cifrado de identity.users para re-cifrarla bajo la
+// llave activa. No lee el secreto en claro de las filas anteriores al cifrado: esas las cifra
+// SealLegacyMFASecrets.
+func NewMFASecretStore(pool *pgxpool.Pool) *keyrotation.Column {
+	return keyrotation.MustColumn(pool, "identity.users", "id", "mfa_secret_enc")
 }
 
 func (r *UserRepo) BumpTokenEpoch(ctx context.Context, id uuid.UUID) error {
