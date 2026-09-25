@@ -2026,6 +2026,125 @@ expect "otra pasada con el dani nuevo vivo termina bien" "$BARRIDO_RC" "0"
 contains "y no mueve nada" "$BARRIDO_OUT" " 0 movidos a _garbage"
 maildir_de dani && ok "el maildir del dani nuevo sigue en su sitio" || mal "el barrido movio el maildir del dani recreado"
 
+echo "== Verificacion en dos pasos, contrasenas de aplicacion y reenvio externo (docs/Plan_Webmail_Seguridad.md)"
+# erika es un buzon propio de esta seccion: activar la verificacion le cambia la credencial de IMAP.
+ERIKA_PASS="$(rand_hex 10)Aa1!"
+creado "erika@acme.test se crea para la seccion" POST /mailboxes "{\"local_part\":\"erika\",\"domain\":\"acme.test\",\"password\":\"$ERIKA_PASS\"}"
+ERIKAID=$(echo "$API_BODY" | jget data.id)
+expect "erika entra por IMAP con su contrasena" "$(cliente login erika@acme.test "$ERIKA_PASS")" "OK"
+# totp <secreto>: codigo TOTP (RFC 6238, SHA-1, 6 cifras, 30 s) del paso actual.
+totp() {
+  python3 - "$1" <<'PY'
+import base64, hashlib, hmac, struct, sys, time
+key = base64.b32decode(sys.argv[1].upper() + "=" * (-len(sys.argv[1]) % 8))
+mac = hmac.new(key, struct.pack(">Q", int(time.time()) // 30), hashlib.sha1).digest()
+off = mac[-1] & 0x0F
+print("%06d" % ((struct.unpack(">I", mac[off:off + 4])[0] & 0x7FFFFFFF) % 1000000))
+PY
+}
+# paso_nuevo: espera al siguiente paso de 30 s. Cada codigo vale una sola vez (anti-repeticion).
+paso_nuevo() { sleep $(( 31 - $(date +%s) % 30 )); }
+TARRO_ERIKA="$WORK/erika.cookies"
+wm "$TARRO_ERIKA" POST /session -H 'Content-Type: application/json' -d "{\"username\":\"erika@acme.test\",\"password\":\"$ERIKA_PASS\"}"
+expect "sin verificacion, erika entra al webmail en un paso" "$WM_CODE/$(echo "$WM_BODY" | jget data.username)" "200/erika@acme.test"
+wm "$TARRO_ERIKA" POST /security/mfa/setup -H 'Content-Type: application/json' -d '{"current_password":"no-es-la-suya"}'
+expect "preparar la verificacion exige la contrasena actual" "$WM_CODE" "401"
+wm "$TARRO_ERIKA" POST /security/mfa/setup -H 'Content-Type: application/json' -d "{\"current_password\":\"$ERIKA_PASS\"}"
+SECRETO=$(echo "$WM_BODY" | jget data.secret)
+contains "con la contrasena se prepara: secreto y URI otpauth" "$WM_CODE $(echo "$WM_BODY" | jget data.provisioning_uri)" "200 otpauth://totp/"
+wm "$TARRO_ERIKA" POST /security/mfa/activate -H 'Content-Type: application/json' -d "{\"secret\":\"$SECRETO\",\"code\":\"000000\"}"
+expect "un codigo malo no la activa" "$WM_CODE/$(echo "$WM_BODY" | jget error.code)" "422/INVALID_MFA_CODE"
+wm "$TARRO_ERIKA" POST /security/mfa/activate -H 'Content-Type: application/json' -d "{\"secret\":\"$SECRETO\",\"code\":\"$(totp "$SECRETO")\"}"
+RECUPERACION=$(echo "$WM_BODY" | python3 -c 'import json, sys; print(" ".join(json.load(sys.stdin)["data"]["recovery_codes"]))' 2>/dev/null)
+expect "con el codigo de la aplicacion se activa y entrega 10 codigos de recuperacion" "$WM_CODE/$(wc -w <<<"$RECUPERACION")" "200/10"
+expect "el secreto queda cifrado en mail.mailbox_mfa, no en claro" \
+  "$(sql mail_cell_pe_01 "SELECT mfa_enabled AND position(convert_to('$SECRETO','UTF8') in secret_enc) = 0 FROM mail.mailboxes m JOIN mail.mailbox_mfa f ON f.mailbox_id = m.id WHERE m.username = 'erika@acme.test'")" "t"
+expect "y mail-directory deja el evento mail.mailbox.mfa_enabled en su outbox" \
+  "$(sql mail_cell_pe_01 "SELECT count(*) FROM platform.event_outbox WHERE subject = 'mail.mailbox.mfa_enabled' AND payload::text LIKE '%erika@acme.test%'")" "1"
+imap_principal_rechazada() { login_rechazado erika@acme.test "$ERIKA_PASS"; }
+esperar "con la verificacion activa, IMAP rechaza la contrasena principal (mail-security vacia la cache de Dovecot)" 30 imap_principal_rechazada
+contains "mail-auth explica en su registro que hace falta una contrasena de aplicacion" \
+  "$(docker logs "$(c mail-auth)" 2>&1 | grep '"username":"erika@acme.test"' | grep '"service":"imap"')" "hace falta una contrasena de aplicacion"
+
+paso_nuevo
+wm "$TARRO_ERIKA" POST /security/app-passwords -H 'Content-Type: application/json' -d "{\"name\":\"Thunderbird\",\"imap\":true,\"smtp\":true,\"current_password\":\"$ERIKA_PASS\"}"
+expect "crear una contrasena de aplicacion con verificacion activa exige el codigo" "$WM_CODE/$(echo "$WM_BODY" | jget error.code)" "403/MFA_REQUIRED"
+wm "$TARRO_ERIKA" POST /security/app-passwords -H 'Content-Type: application/json' -d "{\"name\":\"Thunderbird\",\"imap\":true,\"smtp\":true,\"current_password\":\"$ERIKA_PASS\",\"code\":\"$(totp "$SECRETO")\"}"
+ERIKA_APP=$(echo "$WM_BODY" | jget data.password)
+expect "con contrasena y codigo el webmail la crea y la ensena una vez" "$WM_CODE/$(echo "$WM_BODY" | jget data.imap_access)" "201/True"
+expect "IMAP acepta la contrasena de aplicacion" "$(cliente login erika@acme.test "$ERIKA_APP")" "OK"
+wm "$TARRO_ERIKA" GET /security
+expect "la pestana de seguridad la lista con el tope del directorio" "$(echo "$WM_BODY" | jget data.mfa.enabled)/$(echo "$WM_BODY" | jget data.app_passwords.0.name)/$(echo "$WM_BODY" | jget data.app_passwords_max)" "True/Thunderbird/25"
+
+TARRO_ERIKA2="$WORK/erika2.cookies"
+wm "$TARRO_ERIKA2" POST /session -H 'Content-Type: application/json' -d "{\"username\":\"erika@acme.test\",\"password\":\"$ERIKA_PASS\"}"
+expect "con verificacion, la contrasena sola no abre sesion: pide el codigo" "$WM_CODE/$(echo "$WM_BODY" | jget data.mfa_required)" "200/True"
+contains "con la cookie del desafio (cf_wm_mfa)" "$(cat "$TARRO_ERIKA2")" "cf_wm_mfa"
+lacks "y sin cookie de sesion" "$(grep -v cf_wm_mfa "$TARRO_ERIKA2")" "cf_wm"
+wm "$TARRO_ERIKA2" GET /folders
+expect "a medias no se lee el buzon" "$WM_CODE" "401"
+wm "$TARRO_ERIKA2" POST /session/mfa -H 'Content-Type: application/json' -d '{"code":"000000"}'
+expect "un codigo malo en el segundo paso" "$WM_CODE/$(echo "$WM_BODY" | jget error.code)" "422/INVALID_MFA_CODE"
+paso_nuevo
+CODIGO=$(totp "$SECRETO")
+wm "$TARRO_ERIKA2" POST /session/mfa -H 'Content-Type: application/json' -d "{\"code\":\"$CODIGO\"}"
+expect "con el codigo del paso se abre la sesion" "$WM_CODE/$(echo "$WM_BODY" | jget data.username)" "200/erika@acme.test"
+wm "$TARRO_ERIKA2" GET /folders
+expect "y lee sus carpetas" "$WM_CODE" "200"
+TARRO_ERIKA3="$WORK/erika3.cookies"
+wm "$TARRO_ERIKA3" POST /session -H 'Content-Type: application/json' -d "{\"username\":\"erika@acme.test\",\"password\":\"$ERIKA_PASS\"}"
+wm "$TARRO_ERIKA3" POST /session/mfa -H 'Content-Type: application/json' -d "{\"code\":\"$CODIGO\"}"
+expect "el mismo codigo no vale dos veces (anti-repeticion)" "$WM_CODE/$(echo "$WM_BODY" | jget error.code)" "422/INVALID_MFA_CODE"
+PRIMERO=$(awk '{print $1}' <<<"$RECUPERACION")
+wm "$TARRO_ERIKA3" POST /session/mfa -H 'Content-Type: application/json' -d "{\"code\":\"$PRIMERO\"}"
+expect "un codigo de recuperacion abre la sesion" "$WM_CODE/$(echo "$WM_BODY" | jget data.username)" "200/erika@acme.test"
+TARRO_ERIKA4="$WORK/erika4.cookies"
+wm "$TARRO_ERIKA4" POST /session -H 'Content-Type: application/json' -d "{\"username\":\"erika@acme.test\",\"password\":\"$ERIKA_PASS\"}"
+wm "$TARRO_ERIKA4" POST /session/mfa -H 'Content-Type: application/json' -d "{\"code\":\"$PRIMERO\"}"
+expect "y se gasta: el mismo codigo de recuperacion ya no vale" "$WM_CODE/$(echo "$WM_BODY" | jget error.code)" "422/INVALID_MFA_CODE"
+for _ in 1 2 3; do wm "$TARRO_ERIKA4" POST /session/mfa -H 'Content-Type: application/json' -d '{"code":"000000"}'; done
+wm "$TARRO_ERIKA4" POST /session/mfa -H 'Content-Type: application/json' -d '{"code":"000000"}'
+expect "el quinto fallo aun es un codigo malo" "$WM_CODE/$(echo "$WM_BODY" | jget error.code)" "422/INVALID_MFA_CODE"
+wm "$TARRO_ERIKA4" POST /session/mfa -H 'Content-Type: application/json' -d '{"code":"000000"}'
+expect "pero borra el desafio: lo siguiente pide volver a empezar" "$WM_CODE/$(echo "$WM_BODY" | jget error.code)" "401/MFA_CHALLENGE_EXPIRED"
+
+FUERA='{"rules":[],"forwarding":{"enabled":true,"addresses":["fuera@ejemplo.test"],"keep_copy":true}}'
+wm "$TARRO_ERIKA2" PUT /filters -H 'Content-Type: application/json' -d "$FUERA"
+expect "reenviar fuera de la empresa pide volver a autenticarse" "$WM_CODE/$(echo "$WM_BODY" | jget error.code)" "403/REAUTH_REQUIRED"
+contains "y dice a que direcciones" "$WM_BODY" "fuera@ejemplo.test"
+expect "sin guardar nada" "$(sql mail_cell_pe_01 "SELECT count(*) FROM mail.v_sieve_user WHERE username = 'erika@acme.test'")" "0"
+wm "$TARRO_ERIKA2" PUT /filters -H 'Content-Type: application/json' -d '{"rules":[],"forwarding":{"enabled":true,"addresses":["ana@acme.test"],"keep_copy":true}}'
+expect "reenviar dentro de la empresa no la pide" "$WM_CODE" "200"
+paso_nuevo
+wm "$TARRO_ERIKA2" PUT /filters -H 'Content-Type: application/json' \
+  -d "{\"rules\":[],\"forwarding\":{\"enabled\":true,\"addresses\":[\"ana@acme.test\",\"fuera@ejemplo.test\"],\"keep_copy\":true},\"current_password\":\"$ERIKA_PASS\",\"code\":\"$(totp "$SECRETO")\"}"
+expect "con contrasena y codigo el reenvio externo se guarda" "$WM_CODE" "200"
+contains "y el Sieve de erika redirige fuera" "$(sql mail_cell_pe_01 "SELECT script_data FROM mail.v_sieve_user WHERE username = 'erika@acme.test'")" "fuera@ejemplo.test"
+expect "con el evento mail.mailbox.forwarding_changed" \
+  "$(sql mail_cell_pe_01 "SELECT count(*) > 0 FROM platform.event_outbox WHERE subject = 'mail.mailbox.forwarding_changed' AND payload::text LIKE '%fuera@ejemplo.test%'")" "t"
+
+api PUT /mail-directory/mail-policy '{"external_forwarding_allowed":false}'
+expect "el administrador prohibe el reenvio externo de la empresa" "$API_CODE/$(echo "$API_BODY" | jget data.external_forwarding_allowed)" "200/False"
+lacks "y el reenvio ya guardado de erika deja de salir fuera" "$(sql mail_cell_pe_01 "SELECT script_data FROM mail.v_sieve_user WHERE username = 'erika@acme.test'")" "fuera@ejemplo.test"
+contains "conservando el interno" "$(sql mail_cell_pe_01 "SELECT script_data FROM mail.v_sieve_user WHERE username = 'erika@acme.test'")" "ana@acme.test"
+paso_nuevo
+wm "$TARRO_ERIKA2" PUT /filters -H 'Content-Type: application/json' \
+  -d "{\"rules\":[],\"forwarding\":{\"enabled\":true,\"addresses\":[\"fuera@ejemplo.test\"],\"keep_copy\":true},\"current_password\":\"$ERIKA_PASS\",\"code\":\"$(totp "$SECRETO")\"}"
+expect "con la politica apagada no se guarda aunque se reautentique" "$WM_CODE/$(echo "$WM_BODY" | jget error.code)" "422/EXTERNAL_FORWARDING_DISABLED"
+api PUT /mail-directory/mail-policy '{"external_forwarding_allowed":true}'
+expect "el administrador la vuelve a permitir" "$API_CODE" "200"
+
+api GET "/mailboxes/$ERIKAID"
+expect "la ficha del buzon en la consola dice que tiene verificacion" "$(echo "$API_BODY" | jget data.mfa_enabled)" "True"
+api DELETE "/mailboxes/$ERIKAID/mfa"
+expect "el administrador la restablece (dispositivo perdido)" "$API_CODE" "204"
+webmail_erika_cerrada() { wm "$TARRO_ERIKA2" GET /folders; [[ $WM_CODE == 401 ]]; }
+esperar "y las sesiones del webmail de erika se cierran (credentials_changed, credential mfa)" 30 webmail_erika_cerrada
+imap_principal_vuelve() { login_aceptado erika@acme.test "$ERIKA_PASS"; }
+esperar "IMAP vuelve a aceptar la contrasena principal" 30 imap_principal_vuelve
+wm "$TARRO_ERIKA3" POST /session -H 'Content-Type: application/json' -d "{\"username\":\"erika@acme.test\",\"password\":\"$ERIKA_PASS\"}"
+expect "y el webmail vuelve a entrar en un paso" "$WM_CODE/$(echo "$WM_BODY" | jget data.username)" "200/erika@acme.test"
+
 echo "== Gestor de la cola de Postfix (agente en el contenedor -> mail-security -> gateway, solo superadmin)"
 # Sin salida real: con defer_transports=smtp, Postfix no intenta entregar y deja el mensaje diferido en la
 # cola, que es lo que hay que gestionar. Se restaura al terminar.
