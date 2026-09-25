@@ -236,3 +236,24 @@ se leen con las retiradas, pero ningun proceso los pasa a la activa).
 - **S3** (web: webmail y consola).
 - **S4** (integración, e2e, documentos, despliegue): migración de celda → registro → mail-directory,
   mail-auth, audit → webmail → web.
+
+## 5. Estado de la integración (S4)
+
+Fusionados S1, S2 y S3 en una rama y cuadrados sus contratos:
+
+- La lista interna de contraseñas de aplicación de mail-directory es `{items, max}` (el tope sale del
+  directorio: `MaxAppPasswordsPerMailbox`); el webmail la publica en `GET /security` como
+  `app_passwords_max`, y sus contraseñas con los mismos nombres que la administración (`imap_access`...).
+- Códigos de error añadidos por S2 que la interfaz trata: `MFA_SETUP_EXPIRED` (la preparación caducó:
+  se vuelve a pedir la contraseña), `APP_PASSWORD_LIMIT`, `APP_PASSWORD_NOT_FOUND`.
+- Gateway: `POST /webmail/session/mfa` va con el limitador estricto y se enruta por la celda del token de
+  `cf_wm_mfa` (`cell_challenge_cookie` en `routes.json`), porque el segundo paso aún no lleva `cf_wm`.
+- `make e2e-mail` recorre todo contra los motores reales con un buzón propio (erika@): activación con
+  contraseña, secreto cifrado, evento en el outbox, IMAP rechaza la contraseña principal y acepta la de
+  aplicación, los dos pasos del acceso, anti-repetición, códigos de recuperación de un solo uso, el
+  desafío borrado al quinto fallo, reenvío externo con reautenticación y su Sieve, la política que lo
+  retira y lo prohíbe, y el restablecimiento del administrador que cierra las sesiones.
+
+Despliegue: migración de celda 16 y de registro 046 (con resembrado de `tenant_admin`), añadir los cuatro
+subjects nuevos a `AUDIT_SUBJECTS` del `.env` del servidor (que la fija), y los servicios en el orden de
+arriba más gateway y mail-security.
