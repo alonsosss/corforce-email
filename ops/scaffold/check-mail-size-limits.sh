@@ -52,6 +52,19 @@ FAIL=0
 
 falla() { echo "  FALLA: $*"; FAIL=1; }
 
+# sin_generados: quita de la lista los ficheros que .gitignore excluye. El entrypoint de Rspamd
+# genera algunos local.d en tiempo de ejecucion (external_services.conf), y quien haya levantado
+# los motores en su equipo los tiene en el arbol: no son del repositorio y no deben hacer fallar
+# esto. Si git no puede decidir, el fichero se conserva y la comprobacion sigue siendo estricta.
+sin_generados() {
+  local ruta
+  while IFS= read -r ruta; do
+    [[ -z "$ruta" ]] && continue
+    git -C "$ROOT" check-ignore -q "$ruta" 2>/dev/null && continue
+    printf '%s\n' "$ruta"
+  done
+}
+
 # bytes <valor>: el valor como entero decimal (sin ceros a la izquierda que bash lea en octal).
 bytes() { [[ "$1" =~ ^[0-9]+$ ]] && echo $((10#$1)); }
 
@@ -102,7 +115,7 @@ if [[ -z "$R_RAW" ]]; then
 else
   R=$(bytes "$R_RAW") || { R=""; falla "max_message = $R_RAW en $OPTIONS_INC: se escribe en bytes (p. ej. 105906176)"; }
 fi
-OTROS=$(grep -rlE '^[[:space:]]*max_message[[:space:]]*=' "$RSPAMD_DIR" | grep -vxF "$OPTIONS_INC")
+OTROS=$(grep -rlE '^[[:space:]]*max_message[[:space:]]*=' "$RSPAMD_DIR" | grep -vxF "$OPTIONS_INC" | sin_generados)
 if [[ -n "$OTROS" ]]; then
   falla "max_message solo se fija en $OPTIONS_INC; tambien aparece en: $(echo $OTROS)"
 fi
@@ -115,7 +128,7 @@ else
   AV=$(bytes "$AV_RAW") || { AV=""; falla "max_size = $AV_RAW en $AV_CONF: se escribe en bytes (p. ej. 105906176)"; }
 fi
 # Solo la regla clamav fija max_size en local.d; el max_size de oletools vive en el entrypoint.
-OTROS=$(grep -rlE '^[[:space:]]*max_size[[:space:]]*=' "$RSPAMD_DIR/local.d" | grep -vxF "$AV_CONF")
+OTROS=$(grep -rlE '^[[:space:]]*max_size[[:space:]]*=' "$RSPAMD_DIR/local.d" | grep -vxF "$AV_CONF" | sin_generados)
 if [[ -n "$OTROS" ]]; then
   falla "el max_size del antivirus solo se fija en $AV_CONF; tambien aparece en: $(echo $OTROS)"
 fi

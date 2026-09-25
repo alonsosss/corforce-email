@@ -28,6 +28,13 @@ V = verificado en el codigo. P = propuesto, todavia no implementado.
   el step-up, y con `STEP_UP_MODE=enforce` el servicio verifica el token con `JWT_PUBLIC_KEYS` y no
   arranca sin ellas (V, 2026-09-17). El reto y el step-up salen de
   la misma clave con su propio `typ`: ninguno vale como token de acceso ni al reves.
+  **`STEP_UP_MODE=enforce` en produccion desde 2026-09-25** (antes no estaba declarado en ningun
+  sitio, asi que valia el `off` por defecto y las cinco rutas criticas se contentaban con la sesion;
+  comprobado tras activarlo: crear una clave de API responde 403 `STEP_UP_REQUIRED`). Queda un
+  limite que conviene tener presente: `AuthUseCase.StepUp` solo pide el codigo TOTP si la persona
+  **tiene MFA**, de modo que para quien no lo tiene el step-up es volver a escribir la contrasena.
+  Es una barrera real frente a una sesion robada, no frente a una contrasena filtrada; para eso hace
+  falta que las personas con poder de administrar tengan MFA.
 * Secreto del segundo factor (V, 2026-09-24, `048_identity_mfa_secret_encryption.sql`): se guarda cifrado con
   `MAIL_ENCRYPTION_KEY` (AES-256-GCM, `identity.users.mfa_secret_enc`, con `identity-mfa:<id del usuario>` como datos
   autenticados: copiado a otra cuenta no se abre) y nunca en claro; identity no arranca sin la llave. La columna
