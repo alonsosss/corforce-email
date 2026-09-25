@@ -2062,6 +2062,8 @@ export const es = {
   'webmail.composer.close': 'Guardar y cerrar',
   'webmail.composer.savedOnLeave': 'El mensaje quedó guardado en Borradores.',
   'webmail.composer.saveOnLeaveFailed': 'No se pudo guardar el borrador al salir de la redacción.',
+  'webmail.security.mfa.otherSessionsClosed':
+    'Por seguridad se cerraron tus demás sesiones del webmail en otros navegadores y dispositivos.',
   'webmail.composer.oneAtATime':
     'Ya estás redactando un mensaje. Termínalo, guárdalo o descártalo antes de empezar otro.',
   'webmail.reader.replyAll': 'Responder a todos',

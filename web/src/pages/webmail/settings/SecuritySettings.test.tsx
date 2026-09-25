@@ -68,7 +68,7 @@ describe('ajustes: seguridad', () => {
     const activate = vi
       .spyOn(webmailApi, 'mfaActivate')
       .mockRejectedValueOnce(new ApiError(422, { code: 'INVALID_MFA_CODE', message: '' }))
-      .mockResolvedValue({ recovery_codes: CODES });
+      .mockResolvedValue({ recovery_codes: CODES, other_sessions_closed: true });
     const save = vi.spyOn(download, 'saveBlob').mockImplementation(() => undefined);
     renderSecurity();
 
@@ -102,6 +102,9 @@ describe('ajustes: seguridad', () => {
       within(dialog).getByRole('button', { name: t('webmail.security.mfa.activate') }),
     );
     await waitFor(() => expect(activate).toHaveBeenLastCalledWith('JBSWY3DPEHPK3PXP', '123456'));
+    expect(
+      await screen.findByText(t('webmail.security.mfa.otherSessionsClosed')),
+    ).toBeInTheDocument();
 
     dialog = await screen.findByRole('dialog', { name: t('webmail.security.recovery.title') });
     for (const recovery of CODES) expect(within(dialog).getByText(recovery)).toBeInTheDocument();

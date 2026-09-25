@@ -230,7 +230,8 @@ export interface MailMessage extends MessageEnvelope {
   /** HTML ya saneado por el servicio. Solo se pinta en un iframe aislado. */
   html: string;
   html_truncated: boolean;
-  remote_images: { present: boolean; blocked: boolean };
+  /** proxied: las imagenes remotas del html apuntan al proxy firmado del servicio. */
+  remote_images: { present: boolean; blocked: boolean; proxied?: boolean };
   attachments: MessagePart[];
 }
 
@@ -472,6 +473,11 @@ export interface WebmailMfaSetup {
 
 export interface RecoveryCodes {
   recovery_codes: string[];
+}
+
+/** Al activar la verificacion el servicio cierra las demas sesiones del buzon. */
+export interface MfaActivation extends RecoveryCodes {
+  other_sessions_closed: boolean;
 }
 
 export type AppPasswordInput = { name: string } & Record<AppPasswordProtocol, boolean>;
@@ -1095,7 +1101,7 @@ export const webmailApi = {
       json: { current_password: currentPassword },
     }),
   mfaActivate: (secret: string, code: string) =>
-    request<RecoveryCodes>('POST', wm.securityMfaActivate, { json: { secret, code } }),
+    request<MfaActivation>('POST', wm.securityMfaActivate, { json: { secret, code } }),
   regenerateRecoveryCodes: (code: string) =>
     request<RecoveryCodes>('POST', wm.securityRecoveryCodes, { json: { code } }),
   disableMfa: (currentPassword: string, code: string) =>

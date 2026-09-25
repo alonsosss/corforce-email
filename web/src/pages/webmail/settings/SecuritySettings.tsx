@@ -181,9 +181,10 @@ function MfaCard({ mfa, onChanged }: { mfa: WebmailMfaStatus; onChanged: () => v
       {dialog === 'enable' ? (
         <EnableMfaDialog
           onClose={() => setDialog(null)}
-          onActivated={(recovery) => {
+          onActivated={(recovery, otherSessionsClosed) => {
             setDialog(null);
             setCodes(recovery);
+            if (otherSessionsClosed) toast.info(t('webmail.security.mfa.otherSessionsClosed'));
             onChanged();
           }}
         />
@@ -223,7 +224,7 @@ function EnableMfaDialog({
   onActivated,
 }: {
   onClose: () => void;
-  onActivated: (codes: string[]) => void;
+  onActivated: (codes: string[], otherSessionsClosed: boolean) => void;
 }) {
   const [setup, setSetup] = useState<WebmailMfaSetup | null>(null);
   const [password, setPassword] = useState('');
@@ -261,8 +262,11 @@ function EnableMfaDialog({
     setBusy(true);
     setError(null);
     try {
-      const { recovery_codes } = await webmailApi.mfaActivate(setup.secret, code);
-      onActivated(recovery_codes);
+      const { recovery_codes, other_sessions_closed } = await webmailApi.mfaActivate(
+        setup.secret,
+        code,
+      );
+      onActivated(recovery_codes, other_sessions_closed);
     } catch (err) {
       setCode('');
       // La preparacion caduco (10 min) o se hizo en otra pestana: se vuelve a pedir la contrasena.
