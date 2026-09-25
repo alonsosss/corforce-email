@@ -48,10 +48,13 @@ import {
   expandSelection,
   inboxTabs,
   THREADS_VIEW,
+  rowUnread,
   withRowFlags,
 } from './smartInbox';
 import { formatScheduled } from './schedule';
 import { canSnooze } from './snooze';
+import { SnoozeDialog } from './SnoozeDialog';
+import { RowActions } from './RowActions';
 import { useWebmailOutlet } from './webmailContext';
 
 /** Carpeta, mensaje, pagina y busqueda salen de la query: una recarga vuelve al mismo sitio. */
@@ -116,6 +119,7 @@ function MailboxView({ folderName }: { folderName: string }) {
   const [checked, setChecked] = useState<Set<number>>(() => new Set());
   const [purging, setPurging] = useState<number[] | null>(null);
   const [emptying, setEmptying] = useState(false);
+  const [snoozingRow, setSnoozingRow] = useState<number[] | null>(null);
 
   // Un aviso de la bandeja vuelve a leer la lista solo si es la bandeja de entrada.
   const liveTick = role === FOLDER_ROLES.inbox ? inboxTick : 0;
@@ -295,6 +299,7 @@ function MailboxView({ folderName }: { folderName: string }) {
 
   const isTrash = role === FOLDER_ROLES.trash;
   const archive = folders.data ? folderWithRole(folders.data, FOLDER_ROLES.archive) : undefined;
+  const canArchive = Boolean(archive) && role !== FOLDER_ROLES.archive;
 
   // Atajos sobre el mensaje abierto o, sin mensaje abierto, sobre los marcados.
   const targets = (): number[] => expandSelection(rows ?? [], uid ? [uid] : [...checked]);
@@ -386,6 +391,29 @@ function MailboxView({ folderName }: { folderName: string }) {
               />
             </div>
           }
+          rowActions={(row) => {
+            const uids = expandSelection(rows ?? [], [row.uid]);
+            const unread = rowUnread(row, hasFlag(row, FLAGS.seen));
+            return (
+              <RowActions
+                unread={unread}
+                deleteLabel={isTrash ? 'webmail.reader.deleteForever' : 'webmail.batch.delete'}
+                onArchive={
+                  canArchive && archive
+                    ? () => batchMove(uids, archive, 'webmail.batch.moved')
+                    : undefined
+                }
+                onDelete={async () => {
+                  if (isTrash) setPurging(uids);
+                  else await batchDelete(uids);
+                }}
+                onToggleRead={() =>
+                  batchFlags(uids, unread ? { add: [FLAGS.seen] } : { remove: [FLAGS.seen] })
+                }
+                onSnooze={canSnooze(role) ? () => setSnoozingRow(uids) : undefined}
+              />
+            );
+          }}
           selectionBar={
             <BatchBar
               role={role}
@@ -433,6 +461,17 @@ function MailboxView({ folderName }: { folderName: string }) {
           />
         )}
       </section>
+      {snoozingRow ? (
+        <SnoozeDialog
+          title={t('webmail.snooze.title')}
+          confirmLabel={t('webmail.snooze.confirm')}
+          onClose={() => setSnoozingRow(null)}
+          onConfirm={async (until) => {
+            await batchSnooze(snoozingRow, until);
+            setSnoozingRow(null);
+          }}
+        />
+      ) : null}
       <ConfirmDialog
         open={purging !== null}
         title={t('webmail.reader.deleteForever')}

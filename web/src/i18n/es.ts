@@ -2324,6 +2324,8 @@ export const es = {
   'webmail.batch.notSpam': 'No es spam',
   'webmail.batch.notSpamDone': '{n} mensajes devueltos a {folder}. El filtro aprenderá de ellos.',
   'webmail.batch.delete': 'Mover a la papelera',
+  'webmail.batch.archive': 'Archivar',
+  'webmail.row.actions': 'Acciones de «{subject}»',
   'webmail.batch.trashed': '{n} mensajes movidos a la papelera.',
   'webmail.batch.deleted': '{n} mensajes borrados definitivamente.',
   'webmail.batch.deleteForeverConfirm':

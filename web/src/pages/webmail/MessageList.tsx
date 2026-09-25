@@ -42,6 +42,8 @@ export interface MessageListProps {
   folderAction?: ReactNode;
   /** Conmutador de vista y pestanas de la bandeja, bajo el titulo. */
   controls?: ReactNode;
+  /** Acciones rapidas de cada fila (archivar, borrar, leido, posponer). */
+  rowActions?: (message: MessageEnvelope) => ReactNode;
 }
 
 export function MessageList({
@@ -61,6 +63,7 @@ export function MessageList({
   selectionBar,
   folderAction,
   controls,
+  rowActions,
 }: MessageListProps) {
   const data = list.data;
   const items = data?.items ?? [];
@@ -160,6 +163,7 @@ export function MessageList({
                 checked={checked.has(message.uid)}
                 onCheck={(value) => onCheck(message.uid, value)}
                 href={hrefFor(message.uid)}
+                actions={rowActions?.(message)}
               />
             ))}
           </ul>
@@ -186,6 +190,7 @@ function MessageRow({
   checked,
   onCheck,
   href,
+  actions,
 }: {
   message: MessageEnvelope;
   recipients: boolean;
@@ -193,6 +198,7 @@ function MessageRow({
   checked: boolean;
   onCheck: (checked: boolean) => void;
   href: string;
+  actions?: ReactNode;
 }) {
   const unread = rowUnread(message, hasFlag(message, FLAGS.seen));
   const flagged = hasFlag(message, FLAGS.flagged);
@@ -246,6 +252,15 @@ function MessageRow({
           ) : null}
         </span>
       </Link>
+      {actions ? (
+        <div
+          className="cf-wm-rowactions"
+          role="group"
+          aria-label={t('webmail.row.actions', { subject })}
+        >
+          {actions}
+        </div>
+      ) : null}
     </li>
   );
 }

@@ -1216,6 +1216,33 @@ a.cf-wm-message:hover {
 .cf-wm-message-row:hover {
   background: var(--cf-surface-hover);
 }
+.cf-wm-message-row {
+  position: relative;
+}
+.cf-wm-rowactions {
+  position: absolute;
+  top: var(--cf-space-2);
+  right: var(--cf-space-2);
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--cf-radius-full);
+  background: var(--cf-surface);
+  box-shadow: var(--cf-shadow-sm);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--cf-transition);
+}
+.cf-wm-message-row:hover .cf-wm-rowactions,
+.cf-wm-rowactions:focus-within {
+  opacity: 1;
+  pointer-events: auto;
+}
+@media (hover: none) {
+  .cf-wm-rowactions {
+    display: none;
+  }
+}
 .cf-wm-message-row:has(.cf-wm-message[aria-current='true']) {
   background: var(--cf-wm-selected);
 }
@@ -1244,6 +1271,12 @@ a.cf-wm-message:hover {
   font-size: var(--cf-text-sm);
   font-weight: var(--cf-weight-medium);
   color: var(--cf-accent);
+}
+.cf-wm-batch__divider {
+  width: 1px;
+  height: 20px;
+  margin: 0 var(--cf-space-1);
+  background: var(--cf-accent-soft-border);
 }
 .cf-wm-batch__error {
   flex-basis: 100%;

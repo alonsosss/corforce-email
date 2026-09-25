@@ -3,6 +3,7 @@ import { FLAGS, FOLDER_ROLES, type FlagChange, type WebmailFolder } from '@/api/
 import { errorMessage } from '@/api/messages';
 import { Button } from '@/design/components';
 import {
+  IconArchive,
   IconBan,
   IconBell,
   IconCheckSquare,
@@ -47,6 +48,8 @@ export function BatchBar({
   const [snoozing, setSnoozing] = useState(false);
   const junk = folderWithRole(folders, FOLDER_ROLES.junk);
   const inbox = folderWithRole(folders, FOLDER_ROLES.inbox);
+  const archive = folderWithRole(folders, FOLDER_ROLES.archive);
+  const canArchive = Boolean(archive) && role !== FOLDER_ROLES.archive;
   const isJunk = role === FOLDER_ROLES.junk;
   const canReportSpam =
     Boolean(junk) && !isJunk && role !== FOLDER_ROLES.drafts && role !== FOLDER_ROLES.sent;
@@ -83,42 +86,11 @@ export function BatchBar({
         <IconCheckSquare size={16} />
         {t('webmail.batch.selected', { n: uids.length })}
       </span>
-      {button('webmail.batch.markRead', <IconMailOpen size={16} />, () =>
-        onFlags(uids, { add: [FLAGS.seen] }),
-      )}
-      {button('webmail.batch.markUnread', <IconMail size={16} />, () =>
-        onFlags(uids, { remove: [FLAGS.seen] }),
-      )}
-      {button('webmail.batch.flag', <IconStar size={16} />, () =>
-        onFlags(uids, { add: [FLAGS.flagged] }),
-      )}
-      {button('webmail.batch.unflag', <IconStar size={16} className="cf-wm-unflag" />, () =>
-        onFlags(uids, { remove: [FLAGS.flagged] }),
-      )}
-      <Button
-        size="sm"
-        variant="ghost"
-        iconOnly
-        title={t('webmail.batch.move')}
-        icon={<IconFolder size={16} />}
-        disabled={busy}
-        onClick={() => setMoving(true)}
-      >
-        {t('webmail.batch.move')}
-      </Button>
-      {onSnooze ? (
-        <Button
-          size="sm"
-          variant="ghost"
-          iconOnly
-          title={t('webmail.snooze.action')}
-          icon={<IconBell size={16} />}
-          disabled={busy}
-          onClick={() => setSnoozing(true)}
-        >
-          {t('webmail.snooze.action')}
-        </Button>
-      ) : null}
+      {canArchive && archive
+        ? button('webmail.batch.archive', <IconArchive size={16} />, () =>
+            onMove(uids, archive, 'webmail.batch.moved'),
+          )
+        : null}
       {canReportSpam && junk
         ? button('webmail.batch.reportSpam', <IconBan size={16} />, () =>
             onMove(uids, junk, 'webmail.batch.spamDone'),
@@ -133,6 +105,43 @@ export function BatchBar({
         role === FOLDER_ROLES.trash ? 'webmail.reader.deleteForever' : 'webmail.batch.delete',
         <IconTrash size={16} />,
         () => onDelete(uids),
+      )}
+      <span className="cf-wm-batch__divider" aria-hidden="true" />
+      {button('webmail.batch.markRead', <IconMailOpen size={16} />, () =>
+        onFlags(uids, { add: [FLAGS.seen] }),
+      )}
+      {button('webmail.batch.markUnread', <IconMail size={16} />, () =>
+        onFlags(uids, { remove: [FLAGS.seen] }),
+      )}
+      {onSnooze ? (
+        <Button
+          size="sm"
+          variant="ghost"
+          iconOnly
+          title={t('webmail.snooze.action')}
+          icon={<IconBell size={16} />}
+          disabled={busy}
+          onClick={() => setSnoozing(true)}
+        >
+          {t('webmail.snooze.action')}
+        </Button>
+      ) : null}
+      <Button
+        size="sm"
+        variant="ghost"
+        iconOnly
+        title={t('webmail.batch.move')}
+        icon={<IconFolder size={16} />}
+        disabled={busy}
+        onClick={() => setMoving(true)}
+      >
+        {t('webmail.batch.move')}
+      </Button>
+      {button('webmail.batch.flag', <IconStar size={16} />, () =>
+        onFlags(uids, { add: [FLAGS.flagged] }),
+      )}
+      {button('webmail.batch.unflag', <IconStar size={16} className="cf-wm-unflag" />, () =>
+        onFlags(uids, { remove: [FLAGS.flagged] }),
       )}
       {error ? (
         <div className="cf-form__error cf-wm-batch__error" role="alert">
