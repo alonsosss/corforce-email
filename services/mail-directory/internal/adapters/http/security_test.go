@@ -352,6 +352,9 @@ func TestContrasenasDeAplicacionDelWebmail(t *testing.T) {
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), created.ID.String()) || strings.Contains(rec.Body.String(), `"password"`) {
 		t.Fatalf("listar: %d %s", rec.Code, rec.Body)
 	}
+	if !strings.Contains(rec.Body.String(), `"max":25`) {
+		t.Fatalf("la lista lleva el tope: %s", rec.Body)
+	}
 	if rec := e.do(http.MethodDelete, base+"/"+created.ID.String()+user, ""); rec.Code != http.StatusNoContent || len(e.apps.items) != 0 {
 		t.Fatalf("borrar: %d %s", rec.Code, rec.Body)
 	}

@@ -78,8 +78,13 @@ func TestTablaEmbebidaEsValida(t *testing.T) {
 	if webmail == nil || webmail.Service != "webmail" {
 		t.Fatalf("el webmail debe declararse en self_authenticated")
 	}
-	if len(webmail.StrictLimit) != 1 || webmail.StrictLimit[0] != (methodPathSpec{Method: "POST", Path: "/session"}) {
+	// Los dos pasos del inicio de sesion (contrasena y codigo de la verificacion en dos pasos).
+	wantStrict := []methodPathSpec{{Method: "POST", Path: "/session"}, {Method: "POST", Path: "/session/mfa"}}
+	if len(webmail.StrictLimit) != len(wantStrict) || webmail.StrictLimit[0] != wantStrict[0] || webmail.StrictLimit[1] != wantStrict[1] {
 		t.Errorf("el inicio de sesion del webmail debe ir con el limitador estricto: %+v", webmail.StrictLimit)
+	}
+	if webmail.CellChallengeCookie != "cf_wm_mfa" {
+		t.Errorf("el segundo paso del webmail se enruta por la cookie del desafio: %q", webmail.CellChallengeCookie)
 	}
 	if idx["webmail"] != "" {
 		t.Errorf("el webmail no se gatea por modulo")

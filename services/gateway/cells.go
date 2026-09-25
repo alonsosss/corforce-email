@@ -155,6 +155,9 @@ func (t *routeTable) validateSelfAuthCell(s selfAuthSpec) error {
 	if !fieldRe.MatchString(l.UsernameField) || !fieldRe.MatchString(s.CellCookie) {
 		return fmt.Errorf("tabla de rutas: username_field %q o cell_cookie %q invalidos en %q", l.UsernameField, s.CellCookie, s.Prefix)
 	}
+	if s.CellChallengeCookie != "" && (!fieldRe.MatchString(s.CellChallengeCookie) || s.CellChallengeCookie == s.CellCookie) {
+		return fmt.Errorf("tabla de rutas: cell_challenge_cookie %q invalida en %q", s.CellChallengeCookie, s.Prefix)
+	}
 	for _, strict := range s.StrictLimit {
 		if strict.Method == l.Method && strict.Path == l.Path {
 			return nil

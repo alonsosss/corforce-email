@@ -90,6 +90,10 @@ type selfAuthSpec struct {
 	// por la que se enruta el resto. Solo en un servicio de celda, y los dos juntos.
 	CellLogin  *cellLoginSpec `json:"cell_login,omitempty"`
 	CellCookie string         `json:"cell_cookie,omitempty"`
+	// CellChallengeCookie es la cookie de un inicio de sesion a medias (el segundo paso de la
+	// verificacion en dos pasos), cuyo token lleva tambien la celda como prefijo. Se usa cuando
+	// la peticion aun no trae la cookie de sesion.
+	CellChallengeCookie string `json:"cell_challenge_cookie,omitempty"`
 	// Methods son los metodos WebDAV (PROPFIND, REPORT...) que el prefijo admite ademas de los
 	// habituales; sin declararlos el gateway responde 405 (webdav.go).
 	Methods []string `json:"methods,omitempty"`

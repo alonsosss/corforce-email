@@ -176,7 +176,13 @@ func (h *Handler) InternalListAppPasswords(w http.ResponseWriter, r *http.Reques
 		writeError(w, err)
 		return
 	}
-	response.JSON(w, http.StatusOK, items)
+	// El tope viaja con la lista: el webmail lo ensena y no lo copia.
+	response.JSON(w, http.StatusOK, internalAppPasswordList{Items: items, Max: domain.MaxAppPasswordsPerMailbox})
+}
+
+type internalAppPasswordList struct {
+	Items []domain.AppPassword `json:"items"`
+	Max   int                  `json:"max"`
 }
 
 func (h *Handler) InternalCreateAppPassword(w http.ResponseWriter, r *http.Request) {

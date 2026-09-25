@@ -55,7 +55,7 @@ func selfAuthHandlers(t *routeTable, s selfAuthSpec, internalToken string, domai
 		byCell[code] = reverseProxyWith(target, internalToken, proxyServiceCSP)
 	}
 	c := &selfAuthCellRouter{
-		service: s.Service, base: base, byCell: byCell, cookie: s.CellCookie,
+		service: s.Service, base: base, byCell: byCell, cookie: s.CellCookie, challenge: s.CellChallengeCookie,
 		login: loginType(s.CellLogin.UsernameField), domains: domains, logger: logger,
 	}
 	routingFailuresAtZero(s.Service, routingUnresolved, routingNotServed)
@@ -77,9 +77,11 @@ type selfAuthCellRouter struct {
 	base    http.Handler
 	byCell  map[string]http.Handler
 	cookie  string
-	login   reflect.Type
-	domains *tenantcell.Resolver
-	logger  *zap.Logger
+	// challenge es la cookie del segundo paso del inicio de sesion; vacia si el servicio no lo tiene.
+	challenge string
+	login     reflect.Type
+	domains   *tenantcell.Resolver
+	logger    *zap.Logger
 }
 
 // bySession lleva la peticion a la instancia de la celda del token de la cookie.
@@ -98,6 +100,9 @@ func (c *selfAuthCellRouter) bySession(w http.ResponseWriter, r *http.Request) {
 // celda donde esa sesion no existe, que la rechaza y borra la cookie.
 func (c *selfAuthCellRouter) sessionCell(r *http.Request) (string, bool) {
 	cookie, err := r.Cookie(c.cookie)
+	if err != nil && c.challenge != "" {
+		cookie, err = r.Cookie(c.challenge)
+	}
 	if err != nil {
 		return "", false
 	}

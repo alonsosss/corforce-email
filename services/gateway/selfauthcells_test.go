@@ -298,3 +298,34 @@ func TestElCuerpoDelInicioSeDevuelveEntero(t *testing.T) {
 		t.Fatalf("cuerpo sin longitud: %d %+v", rec.Code, got)
 	}
 }
+
+// El segundo paso del inicio de sesion aun no trae la cookie de sesion: va a la celda del token del
+// desafio (cf_wm_mfa), con el limitador estricto. Con la cookie de sesion presente, manda esta.
+func TestElSegundoPasoDelWebmailVaALaCeldaDelDesafio(t *testing.T) {
+	e := nuevoEscenarioWebmail(t, "pe-01")
+	pedir := func(cookies ...*http.Cookie) []llegada {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/webmail/session/mfa", strings.NewReader(`{"code":"123456"}`))
+		req.Header.Set("Content-Type", "application/json")
+		for _, c := range cookies {
+			req.AddCookie(c)
+		}
+		rec := httptest.NewRecorder()
+		e.gw.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("segundo paso: %d", rec.Code)
+		}
+		return e.buzon.take()
+	}
+	if got := pedir(&http.Cookie{Name: "cf_wm_mfa", Value: tokenPe02}); len(got) != 1 || got[0].instancia != "pe-02" {
+		t.Fatalf("el desafio de pe-02 va a pe-02: %+v", got)
+	}
+	if got := pedir(&http.Cookie{Name: "cf_wm_mfa", Value: "sin-celda"}); len(got) != 1 || got[0].instancia != "pe-01" {
+		t.Fatalf("un desafio sin celda va a la base: %+v", got)
+	}
+	if got := pedir(&http.Cookie{Name: "cf_wm", Value: "pe-01.x"}, &http.Cookie{Name: "cf_wm_mfa", Value: tokenPe02}); len(got) != 1 || got[0].instancia != "pe-01" {
+		t.Fatalf("la cookie de sesion manda sobre la del desafio: %+v", got)
+	}
+	if e.strict != 3 {
+		t.Fatalf("el segundo paso pasa por el limitador estricto: %d", e.strict)
+	}
+}
