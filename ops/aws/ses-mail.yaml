@@ -181,6 +181,12 @@ Resources:
         SendingEnabled: true
       SuppressionOptions:
         SuppressedReasons: [BOUNCE, COMPLAINT]
+      # El seguimiento de VDM se activa a nivel de cuenta y alcanza a todo conjunto que no lo
+      # apague: reescribe los enlaces por awstrack.me y mete un pixel de apertura, tambien en
+      # codigos de acceso y comprobantes. El transaccional no se sigue.
+      VdmOptions:
+        DashboardOptions:
+          EngagementMetrics: DISABLED
       Tags:
         - { Key: Project, Value: core-force-mail }
         - { Key: Environment, Value: !Ref Environment }
