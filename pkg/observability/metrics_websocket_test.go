@@ -105,3 +105,32 @@ func TestOtroUpgradeSiEntraEnLaLatencia(t *testing.T) {
 		t.Errorf("un upgrade que no es WebSocket dejo de medirse: %d -> %d", antes, got)
 	}
 }
+
+// Un flujo SSE tampoco es una peticion lenta: el canal en tiempo real del webmail dejaba la
+// p95 de webmail y del gateway en 10s con el servicio sano. Sus bytes si se cuentan.
+func TestElFlujoDeEventosNoEntraEnLaLatencia(t *testing.T) {
+	const ruta = "/api/v1/webmail/events"
+
+	antes := observacionesDeLatencia(t, http.MethodGet, ruta)
+	handler := HTTPMetrics()(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("event: ping\n\n"))
+	}))
+	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, ruta, nil))
+
+	if got := observacionesDeLatencia(t, http.MethodGet, ruta); got != antes {
+		t.Errorf("el flujo de eventos entro en el histograma de latencia: %d -> %d", antes, got)
+	}
+	c, err := responseBytes.GetMetricWithLabelValues(http.MethodGet, ruta)
+	if err != nil {
+		t.Fatalf("no se pudo leer el contador de bytes: %v", err)
+	}
+	m := &dto.Metric{}
+	if err := c.Write(m); err != nil {
+		t.Fatalf("no se pudo volcar el contador de bytes: %v", err)
+	}
+	if m.GetCounter().GetValue() == 0 {
+		t.Error("los bytes del flujo de eventos dejaron de contarse")
+	}
+}

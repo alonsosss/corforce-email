@@ -4155,7 +4155,7 @@ export const es = {
   'reputation.state.warning': 'En aviso',
   'reputation.state.restricted': 'Restringida',
   'reputation.state.suspended': 'Suspendida',
-  'reputation.reason.initial': 'Sin historial de envíos.',
+  'reputation.reason.initial': 'Estado inicial, sin cambios desde el alta.',
   'reputation.reason.insufficient_volume': 'Aún no hay envíos suficientes para juzgar.',
   'reputation.reason.within_thresholds': 'Dentro de los umbrales.',
   'reputation.reason.bounce_rate_warn': 'La tasa de rebote supera el umbral de aviso.',

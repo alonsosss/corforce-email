@@ -22,10 +22,15 @@ const timestampFormat = () =>
     hour12: false,
   });
 
+// Un time.Time vacio de Go se serializa como el año 1: una configuracion que nunca se guardo
+// devuelve esa fecha y se mostraba "31/12/1". Es ausencia de dato, no una fecha.
+const GO_ZERO_TIME_YEAR = 1;
+
 function parse(value: string | null | undefined): Date | null {
   if (!value) return null;
   const d = new Date(value);
-  return Number.isNaN(d.getTime()) ? null : d;
+  if (Number.isNaN(d.getTime()) || d.getUTCFullYear() <= GO_ZERO_TIME_YEAR) return null;
+  return d;
 }
 
 export function formatDateTime(value: string | null | undefined): string {

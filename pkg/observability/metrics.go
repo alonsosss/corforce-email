@@ -161,7 +161,13 @@ func HTTPMetrics() func(http.Handler) http.Handler {
 			if esUpgradeDeWebSocket(r) {
 				return
 			}
-			duration.WithLabelValues(r.Method, route).Observe(time.Since(start).Seconds())
+			// Un flujo de eventos (SSE) es lo mismo sin secuestrar la conexion: el handler
+			// escribe hasta que el servicio lo cierra a proposito. El canal en tiempo real del
+			// webmail dejo LatenciaAlta encendida en webmail y en el gateway con el servicio
+			// sano. Sus bytes si pasan por el ResponseWriter y se siguen contando.
+			if !esFlujoDeEventos(ww) {
+				duration.WithLabelValues(r.Method, route).Observe(time.Since(start).Seconds())
+			}
 			responseBytes.WithLabelValues(r.Method, route).Add(float64(ww.BytesWritten()))
 			// ContentLength es -1 cuando el cuerpo llega troceado (subidas grandes); en ese
 			// caso se omite en vez de sumar basura, que falsearia el total hacia abajo de
@@ -188,6 +194,14 @@ func esUpgradeDeWebSocket(r *http.Request) bool {
 		}
 	}
 	return false
+}
+
+// esFlujoDeEventos mira el Content-Type de la RESPUESTA: lo fija quien sirve el flujo, y el
+// gateway lo copia al reenviarlo, asi que vale igual en el servicio y en el borde sin depender
+// de lo que el cliente anuncie en Accept.
+func esFlujoDeEventos(ww chimw.WrapResponseWriter) bool {
+	media, _, _ := strings.Cut(ww.Header().Get("Content-Type"), ";")
+	return strings.EqualFold(strings.TrimSpace(media), "text/event-stream")
 }
 
 func status(ww chimw.WrapResponseWriter) int {

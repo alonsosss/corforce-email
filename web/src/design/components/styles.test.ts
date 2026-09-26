@@ -34,6 +34,12 @@ describe('estilos del sistema de diseno', () => {
     expect(input).toMatch(/height: var\(--cf-checkbox-target\);/);
   });
 
+  it('la tabla contiene sus textos ocultos y no ensancha la pagina', () => {
+    const wrap = block(components, '.cf-table-wrap');
+    expect(wrap).toMatch(/position: relative;/);
+    expect(wrap).toMatch(/overflow-x: auto;/);
+  });
+
   it('la ayuda de atajos se oculta en pantallas tactiles sin teclado', () => {
     expect(webmail).toMatch(
       /@media \(hover: none\) and \(pointer: coarse\) \{\s*\.cf-btn\.cf-wm__help \{\s*display: none;/,

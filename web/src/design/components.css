@@ -385,8 +385,10 @@
   margin-bottom: var(--cf-space-2);
 }
 
-/* Tabla */
+/* Tabla. Relativa para que los textos ocultos de las acciones (cf-visually-hidden, en
+   absoluto) queden dentro del desplazamiento y no ensanchen la pagina entera. */
 .cf-table-wrap {
+  position: relative;
   overflow-x: auto;
 }
 .cf-table {
