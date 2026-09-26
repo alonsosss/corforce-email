@@ -8,7 +8,7 @@
   gap: var(--cf-space-2);
   height: 36px;
   padding: 0 var(--cf-space-4);
-  border-radius: var(--cf-radius);
+  border-radius: var(--cf-radius-full);
   border: 1px solid transparent;
   font-size: var(--cf-text-sm);
   font-weight: var(--cf-weight-medium);
@@ -37,7 +37,7 @@
 }
 .cf-btn--secondary {
   background: var(--cf-surface);
-  border-color: var(--cf-border-strong);
+  border-color: var(--cf-border);
   color: var(--cf-text);
 }
 .cf-btn--secondary:not(:disabled):hover {
@@ -1519,4 +1519,97 @@
 .cf-flow__issues {
   margin: 0;
   padding-left: var(--cf-space-4);
+}
+
+/* Cuenta: avatar con su panel (consola y webmail) */
+.cf-profile {
+  position: relative;
+  margin-left: var(--cf-space-2);
+}
+.cf-profile__trigger {
+  display: grid;
+  place-items: center;
+  padding: 3px;
+  border-radius: var(--cf-radius-full);
+  transition: background var(--cf-transition);
+}
+.cf-profile__trigger:hover,
+.cf-profile__trigger[aria-expanded='true'] {
+  background: var(--cf-surface-active);
+}
+.cf-profile__panel {
+  position: absolute;
+  top: calc(100% + var(--cf-space-2));
+  right: 0;
+  z-index: var(--cf-z-dropdown);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--cf-space-3);
+  width: min(360px, calc(100vw - 2 * var(--cf-space-4)));
+  padding: var(--cf-space-5);
+  border: 1px solid var(--cf-border);
+  border-radius: var(--cf-radius-lg);
+  background: var(--cf-surface-muted);
+  box-shadow: var(--cf-shadow-lg);
+  text-align: center;
+}
+.cf-profile__address {
+  max-width: 100%;
+  font-size: var(--cf-text-sm);
+  color: var(--cf-text-secondary);
+  overflow-wrap: anywhere;
+}
+.cf-profile__greeting {
+  font-size: var(--cf-text-xl);
+  font-weight: var(--cf-weight-medium);
+  overflow-wrap: anywhere;
+}
+.cf-profile__detail {
+  margin-top: calc(-1 * var(--cf-space-2));
+  font-size: var(--cf-text-sm);
+  color: var(--cf-text-muted);
+  overflow-wrap: anywhere;
+}
+.cf-profile__actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cf-space-2);
+  width: 100%;
+}
+.cf-profile__actions .cf-btn {
+  justify-content: flex-start;
+  height: 44px;
+  padding: 0 var(--cf-space-5);
+  background: var(--cf-surface);
+}
+
+/* Avatares con iniciales */
+.cf-avatar {
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: var(--cf-radius-full);
+  background: var(--cf-avatar-bg);
+  color: var(--cf-avatar-text);
+  font-size: var(--cf-text-sm);
+  font-weight: var(--cf-weight-semibold);
+  letter-spacing: 0.02em;
+}
+.cf-avatar--xl {
+  width: 5rem;
+  height: 5rem;
+  font-size: var(--cf-text-2xl);
+}
+.cf-profile__trigger .cf-avatar {
+  width: 2rem;
+  height: 2rem;
+  font-size: var(--cf-text-xs);
+}
+.cf-avatar--lg {
+  width: 3rem;
+  height: 3rem;
+  font-size: var(--cf-text-base);
 }

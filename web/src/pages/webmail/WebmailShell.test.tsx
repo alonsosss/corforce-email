@@ -156,12 +156,12 @@ describe('marco del webmail', () => {
     renderShell();
 
     const trigger = screen.getByRole('button', {
-      name: t('webmail.profile.open', { name: 'Ana' }),
+      name: t('profile.open', { name: 'Ana' }),
     });
     await user.click(trigger);
     expect(trigger).toHaveAttribute('aria-expanded', 'true');
     expect(screen.getByText('ana@empresa.com')).toBeInTheDocument();
-    expect(screen.getByText(t('webmail.profile.greeting', { name: 'Ana' }))).toBeInTheDocument();
+    expect(screen.getByText(t('profile.greeting', { name: 'Ana' }))).toBeInTheDocument();
 
     fireEvent.keyDown(document, { key: 'Escape' });
     expect(trigger).toHaveAttribute('aria-expanded', 'false');

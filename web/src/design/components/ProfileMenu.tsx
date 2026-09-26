@@ -1,25 +1,33 @@
 import { useEffect, useId, useRef, useState } from 'react';
-import { Button } from '@/design/components';
 import { IconLogOut, IconMoon, IconSettings, IconSun } from '@/design/icons';
 import { t } from '@/i18n';
-import { initialsOf } from './format';
+import { initialsOf } from '@/lib/format';
+import { Button } from './Button';
 
 export interface ProfileMenuProps {
   name: string;
+  /** Direccion o correo que identifica la cuenta; tambien da las iniciales si no hay nombre. */
   address: string;
+  /** Linea secundaria bajo el saludo, por ejemplo los roles de la cuenta. */
+  detail?: string;
   theme: 'light' | 'dark';
   signingOut: boolean;
+  settingsLabel: string;
+  signOutLabel: string;
   onToggleTheme: () => void;
   onSettings: () => void;
   onSignOut: () => void;
 }
 
-/** Cuenta del buzon: identidad, ajustes, tema y cierre de sesion bajo el avatar. */
+/** Cuenta de la sesion: identidad, ajustes, tema y cierre de sesion bajo el avatar. */
 export function ProfileMenu({
   name,
   address,
+  detail,
   theme,
   signingOut,
+  settingsLabel,
+  signOutLabel,
   onToggleTheme,
   onSettings,
   onSignOut,
@@ -55,33 +63,32 @@ export function ProfileMenu({
   };
 
   return (
-    <div className="cf-wm-profile" ref={rootRef}>
+    <div className="cf-profile" ref={rootRef}>
       <button
         ref={triggerRef}
         type="button"
-        className="cf-wm-profile__trigger"
+        className="cf-profile__trigger"
         aria-expanded={open}
         aria-controls={panelId}
         title={address}
         onClick={() => setOpen((v) => !v)}
       >
-        <span className="cf-wm-avatar" aria-hidden="true">
+        <span className="cf-avatar" aria-hidden="true">
           {initials}
         </span>
-        <span className="cf-visually-hidden">{t('webmail.profile.open', { name: label })}</span>
+        <span className="cf-visually-hidden">{t('profile.open', { name: label })}</span>
       </button>
       {open ? (
-        <div id={panelId} className="cf-wm-profile__panel">
-          <p className="cf-wm-profile__address">{address}</p>
-          <span className="cf-wm-avatar cf-wm-avatar--xl" aria-hidden="true">
+        <div id={panelId} className="cf-profile__panel">
+          <p className="cf-profile__address">{address}</p>
+          <span className="cf-avatar cf-avatar--xl" aria-hidden="true">
             {initials}
           </span>
-          <p className="cf-wm-profile__greeting">
-            {t('webmail.profile.greeting', { name: label })}
-          </p>
-          <div className="cf-wm-profile__actions">
+          <p className="cf-profile__greeting">{t('profile.greeting', { name: label })}</p>
+          {detail ? <p className="cf-profile__detail">{detail}</p> : null}
+          <div className="cf-profile__actions">
             <Button icon={<IconSettings size={16} />} onClick={act(onSettings)}>
-              {t('webmail.settings.title')}
+              {settingsLabel}
             </Button>
             <Button
               icon={theme === 'dark' ? <IconSun size={16} /> : <IconMoon size={16} />}
@@ -90,7 +97,7 @@ export function ProfileMenu({
               {theme === 'dark' ? t('layout.theme.toLight') : t('layout.theme.toDark')}
             </Button>
             <Button icon={<IconLogOut size={16} />} loading={signingOut} onClick={onSignOut}>
-              {t('webmail.logout')}
+              {signOutLabel}
             </Button>
           </div>
         </div>

@@ -176,6 +176,8 @@ export const es = {
   'layout.theme.toLight': 'Cambiar a modo claro',
   'layout.theme.toDark': 'Cambiar a modo oscuro',
   'layout.logout': 'Cerrar sesión',
+  'profile.open': 'Cuenta de {name}',
+  'profile.greeting': 'Hola, {name}',
 
   'home.title': 'Inicio',
   'home.subtitle': 'Módulos disponibles para tu cuenta.',
@@ -2076,8 +2078,6 @@ export const es = {
   'webmail.reader.back': 'Volver',
   'webmail.reader.reply': 'Responder',
   'webmail.reader.replyTo': 'Responder a {name}',
-  'webmail.profile.open': 'Cuenta de {name}',
-  'webmail.profile.greeting': 'Hola, {name}',
   'webmail.search.clear': 'Borrar la búsqueda',
   'webmail.composer.label': 'Ventana de redacción',
   'webmail.composer.minimize': 'Minimizar',

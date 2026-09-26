@@ -1,6 +1,6 @@
 import type { Contact, ContactInput, ContactValue, MailAddress } from '@/api/webmail';
 import { getLocale, t } from '@/i18n';
-import { initialsOf } from '../format';
+import { initialsOf } from '@/lib/format';
 
 export function emptyContact(): ContactInput {
   return {

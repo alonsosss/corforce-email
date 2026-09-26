@@ -1,50 +1,11 @@
-/* Webmail: marco propio (no el de la plataforma), tres paneles en escritorio y uno en movil.
-   Los tokens se redefinen dentro de .cf-wm: el estilo del webmail no alcanza a la consola. */
+/* Webmail: marco propio (su sesion no es la de la plataforma), tres paneles en escritorio y uno
+   en movil. Los tokens son los globales; aqui solo el acento de no leidos. */
 
 .cf-wm {
-  --cf-bg: #ffffff;
-  --cf-surface: #ffffff;
-  --cf-surface-raised: #ffffff;
-  --cf-surface-muted: #f7f7f8;
-  --cf-surface-hover: #f0f0f2;
-  --cf-surface-active: #e8e8eb;
-  --cf-border: #e6e6e9;
-  --cf-border-strong: #d4d4d9;
-  --cf-text: #111114;
-  --cf-text-secondary: #55555f;
-  --cf-text-muted: #7c7c87;
-  --cf-link: #0b6fd6;
-  --cf-link-hover: #095cb2;
-  --cf-accent: #0b6fd6;
-  --cf-accent-hover: #095cb2;
-  --cf-accent-contrast: #ffffff;
-  --cf-accent-soft: #eaf3fd;
-  --cf-accent-soft-border: #cde2f9;
-  --cf-focus-ring: 0 0 0 2px var(--cf-surface), 0 0 0 4px var(--cf-accent);
-  --cf-shadow-md: 0 8px 24px -12px rgba(17, 17, 20, 0.18);
-  --cf-shadow-lg: 0 24px 48px -16px rgba(17, 17, 20, 0.24);
-
-  --cf-radius-sm: 8px;
-  --cf-radius: 12px;
-  --cf-radius-md: 16px;
-  --cf-radius-lg: 24px;
-
-  --cf-text-xs: 0.75rem;
-  --cf-text-sm: 0.875rem;
-  --cf-text-base: 0.9375rem;
-  --cf-text-lg: 1.0625rem;
-  --cf-text-xl: 1.3125rem;
-  --cf-text-2xl: 1.5rem;
-
-  --cf-sidebar-width: 264px;
-  --cf-topbar-height: 72px;
-
   /* Acento secundario: no leidos y mensajes propios de una conversacion. */
   --cf-wm-highlight: #e8590c;
   --cf-wm-highlight-soft: #fff1e8;
   --cf-wm-highlight-strong: #b8430a;
-  --cf-wm-avatar-bg: #ececef;
-  --cf-wm-avatar-text: #3f3f46;
   --cf-wm-selected: #ececee;
 
   display: grid;
@@ -61,40 +22,12 @@
 }
 
 [data-theme='dark'] .cf-wm {
-  --cf-bg: #0e0e10;
-  --cf-surface: #151518;
-  --cf-surface-raised: #1b1b1f;
-  --cf-surface-muted: #19191c;
-  --cf-surface-hover: #212126;
-  --cf-surface-active: #2a2a30;
-  --cf-border: #28282e;
-  --cf-border-strong: #3a3a42;
-  --cf-text: #f2f2f4;
-  --cf-text-secondary: #b1b1bb;
-  --cf-text-muted: #878791;
-  --cf-link: #7db9ff;
-  --cf-link-hover: #a2cbff;
-  --cf-accent: #5aa7ff;
-  --cf-accent-hover: #7db9ff;
-  --cf-accent-contrast: #0b0b0d;
-  --cf-accent-soft: #13233a;
-  --cf-accent-soft-border: #1e3656;
-  --cf-shadow-md: 0 10px 24px -10px rgba(0, 0, 0, 0.6);
-  --cf-shadow-lg: 0 24px 48px -16px rgba(0, 0, 0, 0.7);
   --cf-wm-highlight: #ff7a33;
   --cf-wm-highlight-soft: #3a1d0e;
   --cf-wm-highlight-strong: #ffa36b;
-  --cf-wm-avatar-bg: #2a2a30;
-  --cf-wm-avatar-text: #e4e4e8;
   --cf-wm-selected: #26262b;
 }
 
-.cf-wm .cf-btn {
-  border-radius: var(--cf-radius-full);
-}
-.cf-wm .cf-btn--secondary {
-  border-color: var(--cf-border);
-}
 /* El contenedor de destinatarios ya marca el foco con su borde. */
 .cf-wm .cf-chips__input:focus-visible {
   box-shadow: none;
@@ -130,19 +63,6 @@
   gap: var(--cf-space-3);
   min-width: 0;
 }
-.cf-wm__brand .cf-sidebar__mark {
-  width: 32px;
-  height: 32px;
-  border-radius: 10px;
-  background: var(--cf-text);
-  color: var(--cf-bg);
-}
-.cf-wm__brand .cf-sidebar__name {
-  font-size: var(--cf-text-xl);
-  font-weight: var(--cf-weight-medium);
-  letter-spacing: -0.01em;
-  white-space: nowrap;
-}
 .cf-wm__search {
   min-width: 0;
   max-width: 760px;
@@ -177,62 +97,6 @@
   box-shadow: var(--cf-shadow-md);
 }
 
-/* Cuenta: avatar con su panel */
-.cf-wm-profile {
-  position: relative;
-  margin-left: var(--cf-space-2);
-}
-.cf-wm-profile__trigger {
-  display: grid;
-  place-items: center;
-  padding: 3px;
-  border-radius: var(--cf-radius-full);
-  transition: background var(--cf-transition);
-}
-.cf-wm-profile__trigger:hover,
-.cf-wm-profile__trigger[aria-expanded='true'] {
-  background: var(--cf-surface-active);
-}
-.cf-wm-profile__panel {
-  position: absolute;
-  top: calc(100% + var(--cf-space-2));
-  right: 0;
-  z-index: var(--cf-z-dropdown);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: var(--cf-space-3);
-  width: min(360px, calc(100vw - 2 * var(--cf-space-4)));
-  padding: var(--cf-space-5);
-  border: 1px solid var(--cf-border);
-  border-radius: var(--cf-radius-lg);
-  background: var(--cf-surface-muted);
-  box-shadow: var(--cf-shadow-lg);
-  text-align: center;
-}
-.cf-wm-profile__address {
-  max-width: 100%;
-  font-size: var(--cf-text-sm);
-  color: var(--cf-text-secondary);
-  overflow-wrap: anywhere;
-}
-.cf-wm-profile__greeting {
-  font-size: var(--cf-text-xl);
-  font-weight: var(--cf-weight-medium);
-  overflow-wrap: anywhere;
-}
-.cf-wm-profile__actions {
-  display: flex;
-  flex-direction: column;
-  gap: var(--cf-space-2);
-  width: 100%;
-}
-.cf-wm-profile__actions .cf-btn {
-  justify-content: flex-start;
-  height: 44px;
-  padding: 0 var(--cf-space-5);
-  background: var(--cf-surface);
-}
 .cf-wm__menu-toggle {
   display: none;
 }
@@ -281,36 +145,6 @@
   padding: 0 var(--cf-space-3);
   font-size: var(--cf-text-xs);
   color: var(--cf-text-muted);
-}
-
-/* Avatares con iniciales */
-.cf-wm-avatar {
-  display: inline-grid;
-  place-items: center;
-  flex: 0 0 auto;
-  width: 2.5rem;
-  height: 2.5rem;
-  border-radius: var(--cf-radius-full);
-  background: var(--cf-wm-avatar-bg);
-  color: var(--cf-wm-avatar-text);
-  font-size: var(--cf-text-sm);
-  font-weight: var(--cf-weight-semibold);
-  letter-spacing: 0.02em;
-}
-.cf-wm-avatar--xl {
-  width: 5rem;
-  height: 5rem;
-  font-size: var(--cf-text-2xl);
-}
-.cf-wm-profile__trigger .cf-wm-avatar {
-  width: 2rem;
-  height: 2rem;
-  font-size: var(--cf-text-xs);
-}
-.cf-wm-avatar--lg {
-  width: 3rem;
-  height: 3rem;
-  font-size: var(--cf-text-base);
 }
 
 /* Navegacion lateral: aplicaciones y carpetas con el mismo trazo */
@@ -1097,9 +931,6 @@ a.cf-wm-message:hover {
   .cf-wm__account > .cf-btn {
     width: 40px;
     height: 40px;
-  }
-  .cf-wm-profile {
-    margin-left: 0;
   }
 }
 

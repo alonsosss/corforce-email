@@ -31,14 +31,14 @@ import {
   IconUserPlus,
 } from '@/design/icons';
 import { saveBlob } from '@/lib/download';
-import { formatDateTime } from '@/lib/format';
+import { formatDateTime, initialsOf } from '@/lib/format';
 import { t } from '@/i18n';
 import { paths } from '@/paths';
 import { ContactFormDialog } from './contacts/ContactFormDialog';
 import { contactFromSender } from './contacts/contacts';
 import { applyFlagChange } from './flags';
 import { folderWithRole } from './folders';
-import { addressLabel, addressList, initialsOf } from './format';
+import { addressLabel, addressList } from './format';
 import { hasInvitation, InvitationCard } from './InvitationCard';
 import { MessageBody } from './MessageBody';
 import { MoveDialog } from './MoveDialog';
@@ -322,7 +322,7 @@ export function MessageView({
           {data.subject || t('webmail.noSubject')}
         </h2>
         <div className="cf-wm-reader__sender">
-          <span className="cf-wm-avatar cf-wm-avatar--lg" aria-hidden="true">
+          <span className="cf-avatar cf-avatar--lg" aria-hidden="true">
             {sender ? initialsOf(addressLabel(sender)) : null}
           </span>
           <dl className="cf-dl cf-wm-reader__meta">

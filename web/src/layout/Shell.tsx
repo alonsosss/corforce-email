@@ -19,9 +19,11 @@ export function Shell() {
         onClick={closeMenu}
         aria-hidden="true"
       />
-      <Topbar onToggleMenu={() => setMenuOpen((v) => !v)} />
+      <Topbar menuOpen={menuOpen} onToggleMenu={() => setMenuOpen((v) => !v)} />
       <main className="cf-main" id="main">
-        <Outlet />
+        <div className="cf-main__surface">
+          <Outlet />
+        </div>
       </main>
       <StepUpModal />
     </div>

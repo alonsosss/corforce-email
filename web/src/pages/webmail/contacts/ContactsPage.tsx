@@ -219,7 +219,7 @@ export default function ContactsPage() {
                     className="cf-wm-contact-item"
                     aria-current={contact.id === selectedId ? 'true' : undefined}
                   >
-                    <span className="cf-wm-avatar" aria-hidden="true">
+                    <span className="cf-avatar" aria-hidden="true">
                       {contactInitials(contact)}
                     </span>
                     <span className="cf-wm-contact-item__text">
@@ -337,7 +337,7 @@ function ContactDetail({
         </Button>
       </div>
       <header className="cf-wm-contact-head">
-        <span className="cf-wm-avatar cf-wm-avatar--lg" aria-hidden="true">
+        <span className="cf-avatar cf-avatar--lg" aria-hidden="true">
           {contactInitials(data)}
         </span>
         <div>

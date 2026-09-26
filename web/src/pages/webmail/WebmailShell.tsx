@@ -3,7 +3,15 @@ import { NavLink, Outlet, useLocation, useNavigate, useSearchParams } from 'reac
 import { FOLDER_ROLES, webmailApi, type WebmailFolder, type WebmailQuota } from '@/api/webmail';
 import { useQuery } from '@/hooks/useQuery';
 import { BrandMark } from '@/design/BrandMark';
-import { Button, ErrorState, Meter, Modal, Skeleton, useToast } from '@/design/components';
+import {
+  Button,
+  ErrorState,
+  Meter,
+  Modal,
+  ProfileMenu,
+  Skeleton,
+  useToast,
+} from '@/design/components';
 import {
   IconAddressBook,
   IconBell,
@@ -32,7 +40,6 @@ import { useWebmailStore } from '@/webmail/store';
 import { useComposerHost } from './ComposeWindow';
 import { ComposeControllerContext, NEW_MESSAGE } from './composeWindow';
 import { FolderNav } from './FolderNav';
-import { ProfileMenu } from './ProfileMenu';
 import { SearchBar } from './SearchBar';
 import { defaultFolder, folderWithRole } from './folders';
 import { WebmailShellContext, type WebmailOutlet } from './webmailContext';
@@ -239,6 +246,8 @@ export function WebmailShell() {
                   address={session.username}
                   theme={theme}
                   signingOut={signingOut}
+                  settingsLabel={t('webmail.settings.title')}
+                  signOutLabel={t('webmail.logout')}
                   onToggleTheme={toggle}
                   onSettings={() => navigate(paths.webmailSettings)}
                   onSignOut={() => void signOut()}

@@ -81,3 +81,14 @@ export function summarizeUserAgent(ua: string): string {
   const parts = [browser?.replace('/', ' '), os].filter((p): p is string => Boolean(p));
   return parts.length ? parts.join(' - ') : ua.slice(0, 60);
 }
+
+/** Hasta dos iniciales de un nombre o una direccion, para el avatar. */
+export function initialsOf(label: string): string {
+  return label
+    .split(/[\s@.]+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((word) => Array.from(word)[0] ?? '')
+    .join('')
+    .toUpperCase();
+}

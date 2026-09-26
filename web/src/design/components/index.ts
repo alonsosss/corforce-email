@@ -27,3 +27,5 @@ export { DescriptionList } from './DescriptionList';
 export { CopyButton } from './CopyButton';
 export { HtmlPreviewFrame } from './HtmlPreviewFrame';
 export { Meter } from './Meter';
+export { ProfileMenu } from './ProfileMenu';
+export type { ProfileMenuProps } from './ProfileMenu';

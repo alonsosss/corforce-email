@@ -15,7 +15,8 @@ import {
 import { IconPaperclip, IconRefresh, IconStar } from '@/design/icons';
 import { t } from '@/i18n';
 import { showsRecipients } from './folders';
-import { addressLabel, formatMailDate, initialsOf } from './format';
+import { initialsOf } from '@/lib/format';
+import { addressLabel, formatMailDate } from './format';
 import { rowUnread } from './smartInbox';
 import { criteriaSummary, EMPTY_CRITERIA, isSearching, type SearchCriteria } from './search';
 
@@ -223,7 +224,7 @@ function MessageRow({
         onChange={(e) => onCheck(e.target.checked)}
       />
       <Link to={href} className={classes} aria-current={selected ? 'true' : undefined}>
-        <span className="cf-wm-avatar cf-wm-message__avatar" aria-hidden="true">
+        <span className="cf-avatar cf-wm-message__avatar" aria-hidden="true">
           {shown[0] ? initialsOf(addressLabel(shown[0])) : null}
         </span>
         <span className="cf-wm-message__who">

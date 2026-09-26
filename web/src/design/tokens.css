@@ -1,29 +1,8 @@
-/* Tokens del sistema de diseño. Modo claro por defecto; oscuro por [data-theme="dark"]. */
+/* Tokens del sistema de diseño, comunes a la consola y al webmail. Modo claro por defecto;
+   oscuro por [data-theme="dark"]. */
 
 :root {
   color-scheme: light;
-  --cf-brand-50: #eef3fb;
-  --cf-brand-100: #d6e1f3;
-  --cf-brand-200: #aec3e6;
-  --cf-brand-300: #7fa0d4;
-  --cf-brand-400: #4f7cbf;
-  --cf-brand-500: #2a5aa3;
-  --cf-brand-600: #1b3a6b;
-  --cf-brand-700: #152e55;
-  --cf-brand-800: #0f2240;
-  --cf-brand-900: #0a172c;
-
-  --cf-gray-50: #f8fafc;
-  --cf-gray-100: #f1f5f9;
-  --cf-gray-200: #e2e8f0;
-  --cf-gray-300: #cbd5e1;
-  --cf-gray-400: #94a3b8;
-  --cf-gray-500: #64748b;
-  --cf-gray-600: #475569;
-  --cf-gray-700: #334155;
-  --cf-gray-800: #1e293b;
-  --cf-gray-900: #0f172a;
-
   --cf-success: #1f9d55;
   --cf-success-soft: #e3f6ea;
   --cf-success-strong: #146c3a;
@@ -37,34 +16,37 @@
   --cf-info-soft: #e1f0fb;
   --cf-info-strong: #145a8b;
 
-  --cf-bg: #f3f5f8;
+  --cf-bg: #ffffff;
   --cf-surface: #ffffff;
   --cf-surface-raised: #ffffff;
-  --cf-surface-hover: #f5f7fa;
-  --cf-surface-active: #eceff4;
-  --cf-surface-muted: #f8fafc;
-  --cf-border: #dfe4ec;
-  --cf-border-strong: #c3cbd8;
-  --cf-text: #16223b;
-  --cf-text-secondary: #56637a;
-  --cf-text-muted: #7b8698;
+  --cf-surface-hover: #f0f0f2;
+  --cf-surface-active: #e8e8eb;
+  --cf-surface-muted: #f7f7f8;
+  --cf-border: #e6e6e9;
+  --cf-border-strong: #d4d4d9;
+  --cf-text: #111114;
+  --cf-text-secondary: #55555f;
+  --cf-text-muted: #7c7c87;
   --cf-text-inverse: #ffffff;
-  --cf-link: #1b3a6b;
-  --cf-link-hover: #2a5aa3;
+  --cf-link: #0b6fd6;
+  --cf-link-hover: #095cb2;
 
-  --cf-accent: #1b3a6b;
-  --cf-accent-hover: #152e55;
+  --cf-accent: #0b6fd6;
+  --cf-accent-hover: #095cb2;
   --cf-accent-contrast: #ffffff;
-  --cf-accent-soft: #eef3fb;
-  --cf-accent-soft-border: #d6e1f3;
+  --cf-accent-soft: #eaf3fd;
+  --cf-accent-soft-border: #cde2f9;
+
+  --cf-avatar-bg: #ececef;
+  --cf-avatar-text: #3f3f46;
 
   --cf-focus-ring: 0 0 0 2px var(--cf-surface), 0 0 0 4px var(--cf-accent);
-  --cf-overlay: rgba(15, 23, 42, 0.45);
+  --cf-overlay: rgba(17, 17, 20, 0.45);
 
-  --cf-shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.06);
-  --cf-shadow: 0 1px 3px rgba(16, 24, 40, 0.08);
-  --cf-shadow-md: 0 6px 16px -6px rgba(16, 24, 40, 0.16);
-  --cf-shadow-lg: 0 16px 32px -12px rgba(16, 24, 40, 0.24);
+  --cf-shadow-sm: 0 1px 2px rgba(17, 17, 20, 0.06);
+  --cf-shadow: 0 1px 3px rgba(17, 17, 20, 0.08);
+  --cf-shadow-md: 0 8px 24px -12px rgba(17, 17, 20, 0.18);
+  --cf-shadow-lg: 0 24px 48px -16px rgba(17, 17, 20, 0.24);
 
   --cf-space-1: 4px;
   --cf-space-2: 8px;
@@ -76,22 +58,22 @@
   --cf-space-10: 40px;
   --cf-space-12: 48px;
 
-  --cf-radius-sm: 3px;
-  --cf-radius: 5px;
-  --cf-radius-md: 7px;
-  --cf-radius-lg: 10px;
+  --cf-radius-sm: 8px;
+  --cf-radius: 12px;
+  --cf-radius-md: 16px;
+  --cf-radius-lg: 24px;
   --cf-radius-full: 9999px;
 
   --cf-font-sans:
     -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
   --cf-font-mono: 'SF Mono', 'Cascadia Code', 'Fira Code', Menlo, Consolas, monospace;
 
-  --cf-text-xs: 0.6875rem;
-  --cf-text-sm: 0.8125rem;
-  --cf-text-base: 0.875rem;
-  --cf-text-lg: 1rem;
-  --cf-text-xl: 1.125rem;
-  --cf-text-2xl: 1.375rem;
+  --cf-text-xs: 0.75rem;
+  --cf-text-sm: 0.875rem;
+  --cf-text-base: 0.9375rem;
+  --cf-text-lg: 1.0625rem;
+  --cf-text-xl: 1.3125rem;
+  --cf-text-2xl: 1.5rem;
   --cf-text-3xl: 1.75rem;
 
   --cf-leading-tight: 1.25;
@@ -105,8 +87,8 @@
   --cf-ease: cubic-bezier(0.4, 0, 0.2, 1);
   --cf-transition: var(--cf-duration) var(--cf-ease);
 
-  --cf-sidebar-width: 240px;
-  --cf-topbar-height: 56px;
+  --cf-sidebar-width: 264px;
+  --cf-topbar-height: 72px;
   --cf-content-max: 1400px;
 
   --cf-z-sticky: 900;
@@ -117,26 +99,29 @@
 
 [data-theme='dark'] {
   color-scheme: dark;
-  --cf-bg: #0d1220;
-  --cf-surface: #161c2a;
-  --cf-surface-raised: #1d2434;
-  --cf-surface-hover: #1f2738;
-  --cf-surface-active: #283245;
-  --cf-surface-muted: #131927;
-  --cf-border: #293246;
-  --cf-border-strong: #3b475f;
-  --cf-text: #eef2f8;
-  --cf-text-secondary: #a3aec2;
-  --cf-text-muted: #7f8ba3;
-  --cf-text-inverse: #0f172a;
-  --cf-link: #8db0ea;
-  --cf-link-hover: #a9c4f0;
+  --cf-bg: #0e0e10;
+  --cf-surface: #151518;
+  --cf-surface-raised: #1b1b1f;
+  --cf-surface-hover: #212126;
+  --cf-surface-active: #2a2a30;
+  --cf-surface-muted: #19191c;
+  --cf-border: #28282e;
+  --cf-border-strong: #3a3a42;
+  --cf-text: #f2f2f4;
+  --cf-text-secondary: #b1b1bb;
+  --cf-text-muted: #878791;
+  --cf-text-inverse: #0b0b0d;
+  --cf-link: #7db9ff;
+  --cf-link-hover: #a2cbff;
 
-  --cf-accent: #7ea3e6;
-  --cf-accent-hover: #9bb8ec;
-  --cf-accent-contrast: #0d1220;
-  --cf-accent-soft: #1b2740;
-  --cf-accent-soft-border: #2c3c5c;
+  --cf-accent: #5aa7ff;
+  --cf-accent-hover: #7db9ff;
+  --cf-accent-contrast: #0b0b0d;
+  --cf-accent-soft: #13233a;
+  --cf-accent-soft-border: #1e3656;
+
+  --cf-avatar-bg: #2a2a30;
+  --cf-avatar-text: #e4e4e8;
 
   --cf-success-soft: #123322;
   --cf-success-strong: #7ad9a1;
@@ -150,6 +135,6 @@
   --cf-overlay: rgba(0, 0, 0, 0.6);
   --cf-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
   --cf-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
-  --cf-shadow-md: 0 10px 20px rgba(0, 0, 0, 0.45);
-  --cf-shadow-lg: 0 20px 36px rgba(0, 0, 0, 0.55);
+  --cf-shadow-md: 0 10px 24px -10px rgba(0, 0, 0, 0.6);
+  --cf-shadow-lg: 0 24px 48px -16px rgba(0, 0, 0, 0.7);
 }
