@@ -8,6 +8,7 @@ import { useQuery } from '@/hooks/useQuery';
 import {
   Button,
   Card,
+  Checkbox,
   ErrorState,
   FormField,
   Input,
@@ -34,6 +35,7 @@ export function SessionPolicyForm() {
   const [refresh, setRefresh] = useState('');
   const [concurrent, setConcurrent] = useState('');
   const [idle, setIdle] = useState('');
+  const [requireMfa, setRequireMfa] = useState(false);
   const [errors, setErrors] = useState<FieldErrors<Field>>({});
 
   useEffect(() => {
@@ -41,6 +43,7 @@ export function SessionPolicyForm() {
       setRefresh(String(policy.data.refresh_ttl_hours));
       setConcurrent(String(policy.data.max_concurrent_sessions));
       setIdle(String(policy.data.idle_timeout_minutes));
+      setRequireMfa(policy.data.require_mfa);
     }
   }, [policy.data]);
 
@@ -49,6 +52,7 @@ export function SessionPolicyForm() {
       refresh_ttl_hours: Number(refresh),
       max_concurrent_sessions: Number(concurrent),
       idle_timeout_minutes: Number(idle),
+      require_mfa: requireMfa,
     });
     policy.setData(data);
   });
@@ -145,6 +149,15 @@ export function SessionPolicyForm() {
                 disabled={!editable}
               />
             </FormField>
+          </div>
+          <div className="cf-field">
+            <Checkbox
+              label={t('sessions.policy.requireMfa')}
+              checked={requireMfa}
+              onChange={(e) => setRequireMfa(e.target.checked)}
+              disabled={!editable}
+            />
+            <span className="cf-field__hint">{t('sessions.policy.requireMfaHint')}</span>
           </div>
           <p className="cf-text-muted cf-text-sm">
             {t('sessions.policy.updatedAt')}: {formatDateTime(policy.data.updated_at)}

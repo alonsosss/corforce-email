@@ -41,7 +41,10 @@ type LoginResponse struct {
 	TenantID     string   `json:"tenant_id,omitempty"`
 	Roles        []string `json:"roles,omitempty"`
 	MFARequired  bool     `json:"mfa_required,omitempty"`
-	MFAToken     string   `json:"mfa_token,omitempty"`
+	// MFAEnrollmentRequired: la empresa exige segundo factor y la cuenta no lo tiene;
+	// MFAToken es entonces el token de alta, no el del reto.
+	MFAEnrollmentRequired bool   `json:"mfa_enrollment_required,omitempty"`
+	MFAToken              string `json:"mfa_token,omitempty"`
 }
 
 // CreateUserRequest es el alta de una cuenta. Nace sin roles: concederlos es una decision

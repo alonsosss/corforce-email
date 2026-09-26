@@ -101,12 +101,14 @@ func (c *Consumer) Stop() {
 }
 
 // payload es lo que se lee de Data. Se decodifica a una estructura para tolerar los campos
-// que el productor anada; to solo se cuenta.
+// que el productor anada. El envio trae la lista to; el rebote y la queja, un email por
+// destinatario.
 type payload struct {
 	TenantID   string          `json:"tenant_id"`
 	Class      string          `json:"class"`
 	BounceType string          `json:"bounce_type"`
 	To         json.RawMessage `json:"to"`
+	Email      string          `json:"email"`
 	Test       bool            `json:"test"`
 }
 
@@ -120,13 +122,25 @@ func decode(data interface{}) (payload, error) {
 	return p, err
 }
 
-// recipients cuenta los destinatarios de un envio; 0 si el campo falta o no es una lista.
-func (p payload) recipients() int64 {
+// recipients cuenta los destinatarios de un envio que no son del simulador de SES; 0 si el
+// campo falta o no es una lista. simulated dice si el hecho era solo del simulador: el email
+// del rebote o la queja, o una lista to entera del simulador.
+func (p payload) recipients() (n int64, simulated bool) {
+	if p.Email != "" {
+		return 0, domain.IsSimulatorAddress(p.Email)
+	}
 	var list []json.RawMessage
 	if len(p.To) == 0 || json.Unmarshal(p.To, &list) != nil {
-		return 0
+		return 0, false
 	}
-	return int64(len(list))
+	for _, raw := range list {
+		var email string
+		if json.Unmarshal(raw, &email) == nil && domain.IsSimulatorAddress(email) {
+			continue
+		}
+		n++
+	}
+	return n, len(list) > 0 && n == 0
 }
 
 // handle devuelve el manejador de un subject. Sin ack, JetStream reentrega; se acka lo
@@ -171,14 +185,16 @@ func (c *Consumer) handle(subject string) func(events.Event, func()) {
 			logger.Warn("reputation: empresa sin pool; se reintentara", zap.Error(err))
 			return
 		}
+		recipients, simulated := p.recipients()
 		_, err = c.uc.RecordDelivery(tctx, app.DeliveryEvent{
 			EventID:    evt.ID,
 			TenantID:   tenantID,
 			Kind:       kind,
 			Class:      class,
-			Recipients: p.recipients(),
+			Recipients: recipients,
 			BounceType: p.BounceType,
 			Test:       p.Test,
+			Simulated:  simulated,
 			OccurredAt: evt.Timestamp,
 		})
 		if err != nil {

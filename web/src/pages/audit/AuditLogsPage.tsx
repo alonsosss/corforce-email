@@ -11,6 +11,8 @@ import { useAccess } from '@/access/useAccess';
 import { usePagination } from '@/hooks/usePagination';
 import { useQuery } from '@/hooks/useQuery';
 import { MissingPermission } from '@/pages/shared/MissingPermission';
+import { SYSTEM_USER_ID, UserLabel, useUserDirectory } from '@/pages/shared/useUserDirectory';
+import type { User } from '@/api/identity';
 import {
   Badge,
   Button,
@@ -83,6 +85,7 @@ function AuditLogsView() {
   const [draft, setDraft] = useState<Filters>(EMPTY);
   const [applied, setApplied] = useState<Filters>(EMPTY);
   const [selected, setSelected] = useState<AuditLog | null>(null);
+  const users = useUserDirectory();
 
   const logs = useQuery(
     () => auditApi.searchLogs({ page: pager.page, per_page: pager.perPage, ...toQuery(applied) }),
@@ -111,7 +114,7 @@ function AuditLogsView() {
     {
       key: 'user',
       header: t('audit.logs.column.user'),
-      render: (l) => <span className="cf-mono cf-text-sm">{l.user_id}</span>,
+      render: (l) => <UserLabel id={l.user_id} byId={users.byId} />,
     },
     { key: 'module', header: t('audit.logs.column.module'), render: (l) => l.module },
     { key: 'resource', header: t('audit.logs.column.resource'), render: (l) => l.resource },
@@ -165,9 +168,17 @@ function AuditLogsView() {
           </div>
           <div className="cf-field">
             <label className="cf-field__label" htmlFor="audit-user_id">
-              {t('audit.logs.filter.userId')}
+              {t(users.available ? 'audit.logs.filter.user' : 'audit.logs.filter.userId')}
             </label>
-            <Input {...field('user_id')} className="cf-mono" />
+            {users.available ? (
+              <Select
+                {...field('user_id')}
+                placeholder={t('common.all')}
+                options={[{ value: SYSTEM_USER_ID, label: t('user.system') }, ...users.options]}
+              />
+            ) : (
+              <Input {...field('user_id')} className="cf-mono" />
+            )}
           </div>
           <div className="cf-field">
             <label className="cf-field__label" htmlFor="audit-ip_address">
@@ -221,12 +232,22 @@ function AuditLogsView() {
           }}
         />
       </Card>
-      {selected ? <AuditLogDetail log={selected} onClose={() => setSelected(null)} /> : null}
+      {selected ? (
+        <AuditLogDetail log={selected} users={users.byId} onClose={() => setSelected(null)} />
+      ) : null}
     </div>
   );
 }
 
-function AuditLogDetail({ log, onClose }: { log: AuditLog; onClose: () => void }) {
+function AuditLogDetail({
+  log,
+  users,
+  onClose,
+}: {
+  log: AuditLog;
+  users: ReadonlyMap<string, User>;
+  onClose: () => void;
+}) {
   return (
     <Modal open title={t('audit.logs.detailTitle')} onClose={onClose} size="lg">
       <div className="cf-stack" style={{ gap: 'var(--cf-space-4)' }}>
@@ -235,7 +256,12 @@ function AuditLogDetail({ log, onClose }: { log: AuditLog; onClose: () => void }
             { label: t('audit.logs.column.when'), value: formatDateTime(log.created_at) },
             {
               label: t('audit.logs.column.user'),
-              value: <span className="cf-mono">{log.user_id}</span>,
+              value: (
+                <>
+                  <UserLabel id={log.user_id} byId={users} />
+                  <div className="cf-mono cf-text-sm cf-text-muted">{log.user_id}</div>
+                </>
+              ),
             },
             { label: t('audit.logs.column.module'), value: log.module },
             { label: t('audit.logs.column.resource'), value: log.resource },

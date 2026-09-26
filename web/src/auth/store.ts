@@ -22,11 +22,14 @@ export interface AuthState {
   user: User | null;
   /** Token del reto MFA: el login devolvio mfa_required y falta el codigo. */
   mfaToken: string | null;
+  /** Token de alta: la empresa exige segundo factor y la cuenta aun no lo tiene. */
+  mfaEnrollToken: string | null;
   /** La sesion se cerro sin que el usuario lo pidiera (renovacion imposible). */
   sessionExpired: boolean;
   hydrate: () => Promise<void>;
   login: (input: LoginRequest) => Promise<void>;
   completeMfa: (code: string) => Promise<void>;
+  completeMfaEnrollment: (secret: string, code: string) => Promise<void>;
   cancelMfa: () => void;
   logout: () => Promise<void>;
   /**
@@ -47,6 +50,7 @@ const anonymous = {
   roles: [] as string[],
   user: null,
   mfaToken: null,
+  mfaEnrollToken: null,
 };
 
 export const useAuthStore = create<AuthState>((set, get) => {
@@ -66,6 +70,7 @@ export const useAuthStore = create<AuthState>((set, get) => {
       tenantId: claims.tid ?? null,
       roles: claims.roles ?? [],
       mfaToken: null,
+      mfaEnrollToken: null,
       sessionExpired: false,
     });
     startSessionKeepAlive();
@@ -79,6 +84,10 @@ export const useAuthStore = create<AuthState>((set, get) => {
   const finishLogin = async (tokens: SessionTokens): Promise<void> => {
     if (tokens.mfa_required && tokens.mfa_token) {
       set({ mfaToken: tokens.mfa_token });
+      return;
+    }
+    if (tokens.mfa_enrollment_required && tokens.mfa_token) {
+      set({ mfaEnrollToken: tokens.mfa_token });
       return;
     }
     if (!tokens.access_token) {
@@ -129,7 +138,14 @@ export const useAuthStore = create<AuthState>((set, get) => {
       await finishLogin(data);
     },
 
-    cancelMfa: () => set({ mfaToken: null }),
+    completeMfaEnrollment: async (secret, code) => {
+      const enrollToken = get().mfaEnrollToken;
+      if (!enrollToken) return;
+      const { data } = await identityApi.mfaEnrollActivate(enrollToken, secret, code);
+      await finishLogin(data);
+    },
+
+    cancelMfa: () => set({ mfaToken: null, mfaEnrollToken: null }),
 
     logout: async () => {
       try {

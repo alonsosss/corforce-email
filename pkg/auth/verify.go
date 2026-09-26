@@ -98,6 +98,18 @@ func (v *Verifier) ParseMFAChallenge(tokenStr string) (userID, tenantID string, 
 	return claims.UserID, claims.TenantID, nil
 }
 
+// ParseMFAEnrollment valida el token de alta del segundo factor.
+func (v *Verifier) ParseMFAEnrollment(tokenStr string) (userID, tenantID string, err error) {
+	claims := &MFAChallengeClaims{}
+	if err := v.parse(tokenStr, typMFAEnroll, claims); err != nil {
+		return "", "", fmt.Errorf("parse mfa enrollment: %w", err)
+	}
+	if claims.MFA != mfaEnrollPurpose || claims.UserID == "" {
+		return "", "", fmt.Errorf("invalid mfa enrollment token: %w", ErrTokenClaims)
+	}
+	return claims.UserID, claims.TenantID, nil
+}
+
 // ParseStepUp valida un token de step-up y devuelve usuario y empresa.
 func (v *Verifier) ParseStepUp(tokenStr string) (userID, tenantID string, err error) {
 	claims := &StepUpClaims{}

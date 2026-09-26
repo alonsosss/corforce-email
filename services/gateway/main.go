@@ -158,6 +158,10 @@ func main() {
 		r.With(authLimiter.Limit).Post("/auth/login", identity.ServeHTTP)
 		r.Post("/auth/refresh", identity.ServeHTTP)
 		r.With(authLimiter.Limit).Post("/auth/mfa/challenge", identity.ServeHTTP)
+		// Alta obligatoria del segundo factor: tambien es un paso del login, con el token de
+		// alta que identity entrega cuando la empresa exige verificacion en dos pasos.
+		r.With(authLimiter.Limit).Post("/auth/mfa/enroll/setup", identity.ServeHTTP)
+		r.With(authLimiter.Limit).Post("/auth/mfa/enroll/activate", identity.ServeHTTP)
 		r.With(authLimiter.Limit).Post("/auth/forgot-password", identity.ServeHTTP)
 		r.With(authLimiter.Limit).Post("/auth/reset-password", identity.ServeHTTP)
 		// Reglas de contrasena de la empresa del enlace: la pantalla de reinicio las

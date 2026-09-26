@@ -33,6 +33,8 @@ export interface SessionTokens {
   tenant_id?: string;
   roles?: string[];
   mfa_required?: boolean;
+  /** La empresa exige segundo factor y la cuenta no lo tiene: mfa_token es el de alta. */
+  mfa_enrollment_required?: boolean;
   mfa_token?: string;
 }
 
@@ -90,6 +92,7 @@ export interface SessionPolicy {
   refresh_ttl_hours: number;
   max_concurrent_sessions: number;
   idle_timeout_minutes: number;
+  require_mfa: boolean;
   updated_at: string;
   updated_by?: string;
 }
@@ -98,6 +101,7 @@ export interface SessionPolicyInput {
   refresh_ttl_hours: number;
   max_concurrent_sessions: number;
   idle_timeout_minutes: number;
+  require_mfa: boolean;
 }
 
 export interface MfaSetupResponse {
@@ -127,6 +131,14 @@ export const identityApi = {
   mfaChallenge: (mfaToken: string, code: string) =>
     api.post<SessionTokens>(endpoints.auth.mfaChallenge, {
       body: { mfa_token: mfaToken, code, cookie_auth: true },
+    }),
+
+  mfaEnrollSetup: (mfaToken: string) =>
+    api.post<MfaSetupResponse>(endpoints.auth.mfaEnrollSetup, { body: { mfa_token: mfaToken } }),
+
+  mfaEnrollActivate: (mfaToken: string, secret: string, code: string) =>
+    api.post<SessionTokens>(endpoints.auth.mfaEnrollActivate, {
+      body: { mfa_token: mfaToken, secret, code, cookie_auth: true },
     }),
 
   forgotPassword: (email: string) =>

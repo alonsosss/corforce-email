@@ -119,6 +119,16 @@ export const es = {
   'auth.mfa.submit': 'Verificar',
   'auth.mfa.cancel': 'Volver al inicio de sesión',
   'auth.mfa.invalid': 'Código inválido o vencido.',
+  'auth.mfaEnroll.title': 'Activa la verificación en dos pasos',
+  'auth.mfaEnroll.description':
+    'Tu empresa la exige para entrar. Escanea el código con tu aplicación de autenticación y escribe el primer código que te muestre.',
+  'auth.mfaEnroll.secretHint': 'Si no puedes escanear, escribe este secreto en la aplicación.',
+  'auth.mfaEnroll.submit': 'Activar y entrar',
+  'auth.mfaEnroll.expired': 'El paso caducó. Vuelve a iniciar sesión.',
+  'auth.mfaEnroll.alreadyEnabled':
+    'La verificación en dos pasos ya está activa. Vuelve a iniciar sesión.',
+  'error.code.MFA_REQUIRED_BY_POLICY':
+    'Tu empresa exige la verificación en dos pasos: no se puede desactivar.',
   'auth.forgot.title': 'Recuperar contraseña',
   'auth.forgot.description':
     'Te enviaremos un enlace para restablecerla si el correo está registrado.',
@@ -178,6 +188,7 @@ export const es = {
   'layout.logout': 'Cerrar sesión',
   'profile.open': 'Cuenta de {name}',
   'profile.greeting': 'Hola, {name}',
+  'user.system': 'Sistema',
 
   'home.title': 'Inicio',
   'home.subtitle': 'Módulos disponibles para tu cuenta.',
@@ -438,6 +449,8 @@ export const es = {
   'sessions.platformView': 'Vista de plataforma: sesiones de todas las empresas.',
   'sessions.filter.tenant': 'Filtrar por empresa (id)',
   'sessions.filter.user': 'Filtrar por usuario (id)',
+  'sessions.filter.userName': 'Usuario',
+  'sessions.filter.tenantName': 'Empresa',
   'sessions.policy.title': 'Política de sesión',
   'sessions.policy.description':
     'Se aplica a todos los usuarios de la empresa. Guardar requiere reconfirmar tu identidad.',
@@ -449,6 +462,9 @@ export const es = {
   'sessions.policy.idleTimeoutHint': 'De 0 (sin cierre) a 43200 minutos.',
   'sessions.policy.saved': 'Política guardada.',
   'sessions.policy.updatedAt': 'Última modificación',
+  'sessions.policy.requireMfa': 'Exigir la verificación en dos pasos a todas las cuentas',
+  'sessions.policy.requireMfaHint':
+    'Quien no la tenga la configura al volver a entrar, antes de recibir sesión; las sesiones abiertas siguen hasta que caduquen. Con esta opción nadie de la empresa puede desactivarla.',
 
   'orgs.title': 'Empresas',
   'orgs.subtitle': 'Empresas de la plataforma, su celda y sus módulos.',
@@ -556,6 +572,7 @@ export const es = {
   'audit.logs.filter.action': 'Acción',
   'audit.logs.filter.severity': 'Severidad',
   'audit.logs.filter.userId': 'Usuario (id)',
+  'audit.logs.filter.user': 'Usuario',
   'audit.logs.filter.ip': 'Dirección IP',
   'audit.logs.filter.from': 'Desde',
   'audit.logs.filter.to': 'Hasta',

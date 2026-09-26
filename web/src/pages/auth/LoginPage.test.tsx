@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { ApiError, ERROR_CODES } from '@/api/errors';
 import { t } from '@/i18n';
+import { identityApi } from '@/api/identity';
 import { useAuthStore } from '@/auth/store';
 import { useWebmailStore } from '@/webmail/store';
 import LoginPage from './LoginPage';
@@ -41,7 +42,7 @@ async function enter(campos: ReturnType<typeof renderLogin>, email: string) {
 
 describe('inicio de sesion unico', () => {
   beforeEach(() => {
-    useAuthStore.setState({ status: 'anonymous', mfaToken: null });
+    useAuthStore.setState({ status: 'anonymous', mfaToken: null, mfaEnrollToken: null });
   });
   afterEach(() => vi.restoreAllMocks());
 
@@ -115,5 +116,29 @@ describe('inicio de sesion unico', () => {
 
     expect(await screen.findByText(t('webmail.login.rateLimited'))).toBeInTheDocument();
     expect(screen.queryByText(t('auth.login.invalidCredentials'))).toBeNull();
+  });
+
+  it('si la empresa exige segundo factor, lo da de alta antes de entrar', async () => {
+    vi.spyOn(identityApi, 'mfaEnrollSetup').mockResolvedValue({
+      data: { secret: 'JBSWY3DPEHPK3PXP', provisioning_uri: 'otpauth://totp/prueba' },
+    } as Awaited<ReturnType<typeof identityApi.mfaEnrollSetup>>);
+    const activate = vi
+      .spyOn(useAuthStore.getState(), 'completeMfaEnrollment')
+      .mockResolvedValue(undefined);
+    useAuthStore.setState({ mfaEnrollToken: 'token-de-alta' });
+    render(
+      <MemoryRouter initialEntries={['/login']}>
+        <Routes>
+          <Route path="/login" element={<LoginPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByRole('heading', { name: t('auth.mfaEnroll.title') })).toBeInTheDocument();
+    expect(await screen.findByDisplayValue('JBSWY3DPEHPK3PXP')).toBeInTheDocument();
+    const user = userEvent.setup();
+    await user.type(screen.getByLabelText(new RegExp(`^${t('auth.mfa.code')}`)), '123456');
+    await user.click(screen.getByRole('button', { name: t('auth.mfaEnroll.submit') }));
+    expect(activate).toHaveBeenCalledWith('JBSWY3DPEHPK3PXP', '123456');
   });
 });

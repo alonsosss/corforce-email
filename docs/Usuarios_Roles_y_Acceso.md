@@ -35,6 +35,17 @@ V = verificado en el codigo. P = propuesto, todavia no implementado.
   **tiene MFA**, de modo que para quien no lo tiene el step-up es volver a escribir la contrasena.
   Es una barrera real frente a una sesion robada, no frente a una contrasena filtrada; para eso hace
   falta que las personas con poder de administrar tengan MFA.
+* Verificacion en dos pasos obligatoria por empresa (V, 2026-09-26, `049_identity_session_policy_require_mfa.sql`):
+  `identity.session_policies.require_mfa`, editable en `PUT /sessions/policy` (`require_mfa` ausente conserva el
+  valor vigente, para que un cliente que no conoce el campo no la apague). Con la politica activa, la contrasena
+  correcta de una cuenta sin segundo factor no abre sesion: el login responde `mfa_enrollment_required` y un token
+  de alta (`typ` `mfa-enroll+jwt`, 10 minutos, sin roles, no vale como acceso, reto ni step-up) que solo sirve en
+  `POST /auth/mfa/enroll/setup` (devuelve el secreto y la URI) y `POST /auth/mfa/enroll/activate` (activa con el
+  primer codigo y abre la sesion, con la cookie `cf_rt`). El token deja de servir en cuanto la cuenta tiene segundo
+  factor (409 `MFA_ALREADY_ENABLED`). Si la politica no se puede leer el login falla en vez de entrar sin segundo
+  factor. Mientras este activa nadie de la empresa puede desactivar el suyo (409 `MFA_REQUIRED_BY_POLICY`). Las
+  sesiones ya abiertas no se cortan: la exigencia rige desde el siguiente inicio de sesion. Auditoria:
+  `mfa_enrollment_required`, `mfa_enrolled` y la sesion con accion `login_mfa_enrolled`.
 * Secreto del segundo factor (V, 2026-09-24, `048_identity_mfa_secret_encryption.sql`): se guarda cifrado con
   `MAIL_ENCRYPTION_KEY` (AES-256-GCM, `identity.users.mfa_secret_enc`, con `identity-mfa:<id del usuario>` como datos
   autenticados: copiado a otra cuenta no se abre) y nunca en claro; identity no arranca sin la llave. La columna

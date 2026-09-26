@@ -7,7 +7,7 @@ piezas sin leer esto vuelve a abrir un agujero que ya estuvo abierto.
 
 **Refresh token**: cookie `cf_rt` con `HttpOnly`, `Secure`, `SameSite=Strict` y
 `Path=/api/v1/auth`. No viaja en peticiones de negocio (solo renovar y cerrar sesión) y
-ningún script puede leerla. La emite `identity` en login, verificación MFA (`POST /auth/mfa/challenge`) y
+ningún script puede leerla. La emite `identity` en login, verificación MFA (`POST /auth/mfa/challenge`), alta obligatoria del segundo factor (`POST /auth/mfa/enroll/activate`) y
 renovación (`POST /auth/refresh`).
 
 En modo cookie el refresh token **se omite del cuerpo** de la respuesta. Si siguiera en el
@@ -214,7 +214,7 @@ Dos limitadores por IP (`services/gateway/ratelimit.go`, `pkg/middleware/ratelim
 | Limitador | Rutas | Cupo por minuto |
 |---|---|---|
 | `gateway:api` | Todo `/api/v1` | `API_RATE_LIMIT_PER_MIN` (600) |
-| `gateway:auth` | `POST /auth/login`, `/auth/mfa/challenge`, `/auth/forgot-password`, `/auth/reset-password`, `GET /auth/reset-password/policy` y las rutas `strict_limit` de `self_authenticated` (`POST /webmail/session`) | `AUTH_RATE_LIMIT_PER_MIN` (30) |
+| `gateway:auth` | `POST /auth/login`, `/auth/mfa/challenge`, `/auth/mfa/enroll/setup`, `/auth/mfa/enroll/activate`, `/auth/forgot-password`, `/auth/reset-password`, `GET /auth/reset-password/policy` y las rutas `strict_limit` de `self_authenticated` (`POST /webmail/session`) | `AUTH_RATE_LIMIT_PER_MIN` (30) |
 
 El cupo es **uno para todas las réplicas**: cuentan en el Redis de la plataforma
 (`REDIS_*`, cifrado con `REDIS_TLS` fuera de desarrollo: `docs/Operacion_Despliegue.md`,

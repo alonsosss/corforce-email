@@ -164,12 +164,15 @@ type PasswordResetToken struct {
 // reproducen el comportamiento historico (refresh de 7 dias, sin tope de sesiones,
 // sin cierre por inactividad).
 type SessionPolicy struct {
-	TenantID              uuid.UUID  `json:"tenant_id"`
-	RefreshTTLHours       int        `json:"refresh_ttl_hours"`
-	MaxConcurrentSessions int        `json:"max_concurrent_sessions"`
-	IdleTimeoutMinutes    int        `json:"idle_timeout_minutes"`
-	UpdatedAt             time.Time  `json:"updated_at"`
-	UpdatedBy             *uuid.UUID `json:"updated_by,omitempty"`
+	TenantID              uuid.UUID `json:"tenant_id"`
+	RefreshTTLHours       int       `json:"refresh_ttl_hours"`
+	MaxConcurrentSessions int       `json:"max_concurrent_sessions"`
+	IdleTimeoutMinutes    int       `json:"idle_timeout_minutes"`
+	// RequireMFA: quien no tiene segundo factor lo configura al entrar antes de recibir
+	// sesion, y nadie de la empresa puede desactivarlo.
+	RequireMFA bool       `json:"require_mfa"`
+	UpdatedAt  time.Time  `json:"updated_at"`
+	UpdatedBy  *uuid.UUID `json:"updated_by,omitempty"`
 }
 
 // DefaultSessionPolicy es la politica de una empresa que nunca la configuro.

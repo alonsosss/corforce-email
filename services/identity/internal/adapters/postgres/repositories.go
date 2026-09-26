@@ -694,10 +694,10 @@ func (r *SessionPolicyRepo) Get(ctx context.Context, tenantID uuid.UUID) (*domai
 	p := &domain.SessionPolicy{}
 	err := r.pool.QueryRow(ctx,
 		`SELECT tenant_id, refresh_ttl_hours, max_concurrent_sessions, idle_timeout_minutes,
-		        updated_at, updated_by
+		        require_mfa, updated_at, updated_by
 		   FROM identity.session_policies WHERE tenant_id = $1`, tenantID,
 	).Scan(&p.TenantID, &p.RefreshTTLHours, &p.MaxConcurrentSessions, &p.IdleTimeoutMinutes,
-		&p.UpdatedAt, &p.UpdatedBy)
+		&p.RequireMFA, &p.UpdatedAt, &p.UpdatedBy)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.DefaultSessionPolicy(tenantID), nil
 	}
@@ -710,12 +710,12 @@ func (r *SessionPolicyRepo) Get(ctx context.Context, tenantID uuid.UUID) (*domai
 func (r *SessionPolicyRepo) Upsert(ctx context.Context, p *domain.SessionPolicy) error {
 	_, err := r.pool.Exec(ctx,
 		`INSERT INTO identity.session_policies
-		 (tenant_id, refresh_ttl_hours, max_concurrent_sessions, idle_timeout_minutes, updated_at, updated_by)
-		 VALUES ($1,$2,$3,$4,NOW(),$5)
+		 (tenant_id, refresh_ttl_hours, max_concurrent_sessions, idle_timeout_minutes, require_mfa, updated_at, updated_by)
+		 VALUES ($1,$2,$3,$4,$5,NOW(),$6)
 		 ON CONFLICT (tenant_id) DO UPDATE SET
-		  refresh_ttl_hours=$2, max_concurrent_sessions=$3, idle_timeout_minutes=$4,
-		  updated_at=NOW(), updated_by=$5`,
-		p.TenantID, p.RefreshTTLHours, p.MaxConcurrentSessions, p.IdleTimeoutMinutes, p.UpdatedBy,
+		  refresh_ttl_hours=$2, max_concurrent_sessions=$3, idle_timeout_minutes=$4, require_mfa=$5,
+		  updated_at=NOW(), updated_by=$6`,
+		p.TenantID, p.RefreshTTLHours, p.MaxConcurrentSessions, p.IdleTimeoutMinutes, p.RequireMFA, p.UpdatedBy,
 	)
 	return err
 }

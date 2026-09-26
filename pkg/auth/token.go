@@ -19,6 +19,7 @@ const (
 	typAccess       = "at+jwt" // RFC 9068
 	typMFAChallenge = "mfa-challenge+jwt"
 	typStepUp       = "step-up+jwt"
+	typMFAEnroll    = "mfa-enroll+jwt"
 )
 
 type TokenService struct {
@@ -131,6 +132,42 @@ func (ts *TokenService) GenerateMFAChallenge(userID, tenantID string) (string, e
 // the embedded userID and tenantID on success.
 func (ts *TokenService) ValidateMFAChallenge(tokenStr string) (userID, tenantID string, err error) {
 	return ts.verifier.ParseMFAChallenge(tokenStr)
+}
+
+// Alta obligatoria del segundo factor.
+//
+// Cuando la empresa exige verificacion en dos pasos y la cuenta aun no la tiene, la
+// contrasena correcta no abre sesion: sale este token, que solo sirve para configurar el
+// segundo factor. Dura mas que el reto porque hay que instalar la aplicacion y escanear el
+// codigo; no lleva roles ni vale como acceso, reto o step-up (tipo propio).
+const MFAEnrollTTL = 10 * time.Minute
+
+const mfaEnrollPurpose = "enroll"
+
+// GenerateMFAEnrollment emite el token de alta del segundo factor.
+func (ts *TokenService) GenerateMFAEnrollment(userID, tenantID string) (string, error) {
+	now := time.Now().UTC()
+	claims := &MFAChallengeClaims{
+		UserID:   userID,
+		TenantID: tenantID,
+		MFA:      mfaEnrollPurpose,
+		RegisteredClaims: jwt.RegisteredClaims{
+			Issuer:    ts.issuer,
+			Subject:   userID,
+			IssuedAt:  jwt.NewNumericDate(now),
+			ExpiresAt: jwt.NewNumericDate(now.Add(MFAEnrollTTL)),
+		},
+	}
+	token, err := ts.signer.sign(claims, typMFAEnroll)
+	if err != nil {
+		return "", fmt.Errorf("sign mfa enrollment: %w", err)
+	}
+	return token, nil
+}
+
+// ValidateMFAEnrollment valida el token de alta y devuelve usuario y empresa.
+func (ts *TokenService) ValidateMFAEnrollment(tokenStr string) (userID, tenantID string, err error) {
+	return ts.verifier.ParseMFAEnrollment(tokenStr)
 }
 
 // Step-up (re-autenticacion para acciones criticas).

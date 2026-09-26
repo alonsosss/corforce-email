@@ -290,7 +290,110 @@ func (uc *AuthUseCase) completeLogin(ctx context.Context, user *domain.User, req
 		}, nil
 	}
 
+	// La empresa exige segundo factor y la cuenta no lo tiene: la contrasena correcta no
+	// basta. Sale un token que solo sirve para darlo de alta y la sesion se abre al
+	// activarlo (CompleteMFAEnrollment).
+	required, err := uc.mfaRequired(ctx, user.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	if required {
+		enrollToken, err := uc.tokens.GenerateMFAEnrollment(user.ID.String(), user.TenantID.String())
+		if err != nil {
+			return nil, fmt.Errorf("generate mfa enrollment: %w", err)
+		}
+		uc.audit.Log(ctx, &domain.AuditEntry{
+			ID:        uuid.New(),
+			TenantID:  user.TenantID,
+			UserID:    user.ID,
+			Action:    "mfa_enrollment_required",
+			Resource:  "session",
+			IPAddress: req.IPAddress,
+			UserAgent: req.UserAgent,
+			CreatedAt: uc.now(),
+		})
+		return &ports.LoginResponse{
+			MFAEnrollmentRequired: true,
+			MFAToken:              enrollToken,
+		}, nil
+	}
+
 	return uc.openSession(ctx, user, user.TenantID, req.IPAddress, req.UserAgent, "login")
+}
+
+// mfaRequired lee si la empresa exige segundo factor. A diferencia del resto de la politica
+// no cae al valor por defecto si la base falla: dejar entrar sin segundo factor a quien
+// deberia tenerlo es justo lo que la politica impide.
+func (uc *AuthUseCase) mfaRequired(ctx context.Context, tenantID uuid.UUID) (bool, error) {
+	if uc.sessionPolicies == nil {
+		return false, nil
+	}
+	p, err := uc.sessionPolicies.Get(ctx, tenantID)
+	if err != nil {
+		return false, fmt.Errorf("leer si la empresa exige segundo factor: %w", err)
+	}
+	return p != nil && p.RequireMFA, nil
+}
+
+// enrollingUser resuelve la cuenta de un token de alta del segundo factor. El token deja de
+// servir en cuanto la cuenta tiene segundo factor: no se rehace uno que ya existe.
+func (uc *AuthUseCase) enrollingUser(ctx context.Context, enrollToken string) (*domain.User, uuid.UUID, error) {
+	userIDStr, tenantIDStr, err := uc.tokens.ValidateMFAEnrollment(enrollToken)
+	if err != nil {
+		return nil, uuid.Nil, domain.ErrInvalidMFACode
+	}
+	userID, err := uuid.Parse(userIDStr)
+	if err != nil {
+		return nil, uuid.Nil, domain.ErrInvalidMFACode
+	}
+	tenantID, err := uuid.Parse(tenantIDStr)
+	if err != nil {
+		return nil, uuid.Nil, domain.ErrInvalidMFACode
+	}
+	user, err := uc.users.GetByID(ctx, userID)
+	if err != nil {
+		return nil, uuid.Nil, domain.ErrUserNotFound
+	}
+	if err := user.SessionAllowed(uc.now()); err != nil {
+		return nil, uuid.Nil, err
+	}
+	if user.MFAEnabled {
+		return nil, uuid.Nil, domain.ErrMFAAlreadyEnabled
+	}
+	return user, tenantID, nil
+}
+
+// SetupMFAEnrollment genera el secreto para el alta obligatoria del segundo factor.
+func (uc *AuthUseCase) SetupMFAEnrollment(ctx context.Context, enrollToken, issuer string) (secret, uri string, err error) {
+	user, _, err := uc.enrollingUser(ctx, enrollToken)
+	if err != nil {
+		return "", "", err
+	}
+	return uc.SetupMFA(ctx, user.ID, user.Email, issuer)
+}
+
+// CompleteMFAEnrollment activa el segundo factor con el primer codigo y abre la sesion que
+// el login dejo pendiente.
+func (uc *AuthUseCase) CompleteMFAEnrollment(ctx context.Context, enrollToken, secret, code, ip, ua string) (*ports.LoginResponse, error) {
+	user, tenantID, err := uc.enrollingUser(ctx, enrollToken)
+	if err != nil {
+		return nil, err
+	}
+	if err := uc.ActivateMFA(ctx, user.ID, secret, code); err != nil {
+		return nil, err
+	}
+	uc.users.ResetFailedAttempts(ctx, user.ID)
+	uc.audit.Log(ctx, &domain.AuditEntry{
+		ID:        uuid.New(),
+		TenantID:  tenantID,
+		UserID:    user.ID,
+		Action:    "mfa_enrolled",
+		Resource:  "user",
+		IPAddress: ip,
+		UserAgent: ua,
+		CreatedAt: uc.now(),
+	})
+	return uc.openSession(ctx, user, tenantID, ip, ua, "login_mfa_enrolled")
 }
 
 // openSession emite el par de tokens y persiste la sesion nueva; es el tramo comun del
@@ -671,6 +774,13 @@ func (uc *AuthUseCase) DisableMFA(ctx context.Context, userID uuid.UUID, current
 	if !user.MFAEnabled {
 		return nil
 	}
+	required, err := uc.mfaRequired(ctx, user.TenantID)
+	if err != nil {
+		return err
+	}
+	if required {
+		return domain.ErrMFARequiredByPolicy
+	}
 	if uc.hasher.Compare(user.PasswordHash, currentPassword) != nil {
 		return domain.ErrInvalidCredentials
 	}
@@ -905,6 +1015,7 @@ func (uc *AuthUseCase) SaveSessionPolicy(ctx context.Context, p *domain.SessionP
 			"refresh_ttl_hours":       p.RefreshTTLHours,
 			"max_concurrent_sessions": p.MaxConcurrentSessions,
 			"idle_timeout_minutes":    p.IdleTimeoutMinutes,
+			"require_mfa":             p.RequireMFA,
 		},
 		CreatedAt: uc.now(),
 	})

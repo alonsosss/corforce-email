@@ -36,7 +36,7 @@ import { LimitsCard } from './PlanPage';
 import { PlanForm } from './PlanForm';
 import { PlanStatusBadge, SubscriptionStatusBadge } from './subscriptionStatus';
 import { SubscriptionForm } from './SubscriptionForm';
-import { tenantLabel, useTenantDirectory } from './useTenantNames';
+import { tenantLabel, useTenantDirectory } from '@/pages/shared/useTenantDirectory';
 
 type TabId = 'plans' | 'subscriptions';
 

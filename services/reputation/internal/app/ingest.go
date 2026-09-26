@@ -61,7 +61,10 @@ type DeliveryEvent struct {
 	// Test: transactional lo marco como envio de prueba. Su volumen no cuenta; un rebote
 	// permanente o una queja de una prueba si, porque dicen lo mismo de la practica de la
 	// empresa y SES los cuenta igual en la cuenta compartida.
-	Test       bool
+	Test bool
+	// Simulated: todos los destinatarios eran del simulador de SES. No cuenta nada, ni el
+	// volumen ni el rebote ni la queja: SES tampoco lo cuenta en la cuenta.
+	Simulated  bool
 	OccurredAt time.Time
 }
 
@@ -127,7 +130,7 @@ func (ev DeliveryEvent) delta() (domain.Counts, error) {
 	}
 	switch ev.Kind {
 	case KindSent:
-		if ev.Test {
+		if ev.Test || ev.Simulated {
 			return domain.Counts{}, nil
 		}
 		n := ev.Recipients
@@ -136,11 +139,14 @@ func (ev DeliveryEvent) delta() (domain.Counts, error) {
 		}
 		return domain.Counts{Sent: n}, nil
 	case KindBounced:
-		if ev.BounceType != BounceTypePermanent {
+		if ev.Simulated || ev.BounceType != BounceTypePermanent {
 			return domain.Counts{}, nil
 		}
 		return domain.Counts{Bounced: 1}, nil
 	case KindComplained:
+		if ev.Simulated {
+			return domain.Counts{}, nil
+		}
 		return domain.Counts{Complained: 1}, nil
 	}
 	return domain.Counts{}, fmt.Errorf("%w: hecho de entrega desconocido %q", domain.ErrInvalidEvent, ev.Kind)

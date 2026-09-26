@@ -1,10 +1,12 @@
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { signIn } from '@/auth/signIn';
 import { useAuth } from '@/auth/useAuth';
 import { ERROR_CODES } from '@/api/errors';
+import { identityApi, type MfaSetupResponse } from '@/api/identity';
 import { errorMessage } from '@/api/messages';
-import { Button, FormField, Input, PasswordInput } from '@/design/components';
+import { Button, FormField, Input, PasswordInput, Skeleton } from '@/design/components';
+import { QrCode } from '@/pages/shared/QrCode';
 import { t } from '@/i18n';
 import { paths } from '@/paths';
 import { AuthLayout } from './AuthLayout';
@@ -14,12 +16,22 @@ interface LocationState {
 }
 
 export default function LoginPage() {
-  const { status, mfaToken, login, completeMfa, cancelMfa } = useAuth();
+  const { status, mfaToken, mfaEnrollToken, login, completeMfa, completeMfaEnrollment, cancelMfa } =
+    useAuth();
   const location = useLocation();
   const from = (location.state as LocationState | null)?.from ?? paths.home;
 
   if (status === 'authenticated') return <Navigate to={from} replace />;
   if (mfaToken) return <MfaStep onSubmit={completeMfa} onCancel={cancelMfa} />;
+  if (mfaEnrollToken) {
+    return (
+      <MfaEnrollStep
+        enrollToken={mfaEnrollToken}
+        onSubmit={completeMfaEnrollment}
+        onCancel={cancelMfa}
+      />
+    );
+  }
   return <CredentialsStep onSubmit={login} />;
 }
 
@@ -168,6 +180,112 @@ function MfaStep({
         <Button type="submit" variant="primary" block loading={busy}>
           {t('auth.mfa.submit')}
         </Button>
+        <Button variant="ghost" block onClick={onCancel}>
+          {t('auth.mfa.cancel')}
+        </Button>
+      </form>
+    </AuthLayout>
+  );
+}
+
+/**
+ * La empresa exige verificacion en dos pasos y la cuenta no la tiene: la contrasena fue
+ * correcta, pero la sesion se abre al configurar la aplicacion y confirmar el primer codigo.
+ */
+function MfaEnrollStep({
+  enrollToken,
+  onSubmit,
+  onCancel,
+}: {
+  enrollToken: string;
+  onSubmit: (secret: string, code: string) => Promise<void>;
+  onCancel: () => void;
+}) {
+  const [setup, setSetup] = useState<MfaSetupResponse | null>(null);
+  const [code, setCode] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    identityApi
+      .mfaEnrollSetup(enrollToken)
+      .then(({ data }) => {
+        if (!cancelled) setSetup(data);
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) {
+          setError(
+            errorMessage(err, {
+              [ERROR_CODES.UNAUTHORIZED]: 'auth.mfaEnroll.expired',
+              [ERROR_CODES.MFA_ALREADY_ENABLED]: 'auth.mfaEnroll.alreadyEnabled',
+            }),
+          );
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [enrollToken]);
+
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!setup) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await onSubmit(setup.secret, code.trim());
+    } catch (err) {
+      setError(
+        errorMessage(err, {
+          [ERROR_CODES.UNAUTHORIZED]: 'auth.mfa.invalid',
+          [ERROR_CODES.MFA_ALREADY_ENABLED]: 'auth.mfaEnroll.alreadyEnabled',
+        }),
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <AuthLayout title={t('auth.mfaEnroll.title')} subtitle={t('auth.mfaEnroll.description')}>
+      <form className="cf-form" onSubmit={(e) => void submit(e)} noValidate>
+        {setup ? (
+          <>
+            <QrCode value={setup.provisioning_uri} label={t('account.mfa.qrAlt')} />
+            <FormField
+              label={t('account.mfa.secret')}
+              htmlFor="mfa-enroll-secret"
+              hint={t('auth.mfaEnroll.secretHint')}
+            >
+              <Input id="mfa-enroll-secret" className="cf-mono" value={setup.secret} readOnly />
+            </FormField>
+            <FormField label={t('auth.mfa.code')} htmlFor="mfa-enroll-code" required>
+              <Input
+                id="mfa-enroll-code"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                maxLength={6}
+                value={code}
+                onChange={(e) => setCode(e.target.value)}
+                required
+                autoFocus
+              />
+            </FormField>
+          </>
+        ) : error ? null : (
+          <Skeleton lines={4} />
+        )}
+        {error ? (
+          <div className="cf-form__error" role="alert">
+            {error}
+          </div>
+        ) : null}
+        {setup ? (
+          <Button type="submit" variant="primary" block loading={busy}>
+            {t('auth.mfaEnroll.submit')}
+          </Button>
+        ) : null}
         <Button variant="ghost" block onClick={onCancel}>
           {t('auth.mfa.cancel')}
         </Button>

@@ -38,6 +38,8 @@ export const endpoints = {
     resetPasswordPolicy: `${API_PREFIX}/auth/reset-password/policy`,
     stepUp: `${API_PREFIX}/auth/step-up`,
     mfaChallenge: `${API_PREFIX}/auth/mfa/challenge`,
+    mfaEnrollSetup: `${API_PREFIX}/auth/mfa/enroll/setup`,
+    mfaEnrollActivate: `${API_PREFIX}/auth/mfa/enroll/activate`,
     mfaSetup: `${API_PREFIX}/auth/mfa/setup`,
     mfaActivate: `${API_PREFIX}/auth/mfa/activate`,
     mfaDisable: `${API_PREFIX}/auth/mfa/disable`,

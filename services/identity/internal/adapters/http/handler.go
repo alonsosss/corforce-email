@@ -85,6 +85,9 @@ func (h *Handler) Routes() chi.Router {
 			r.Post("/step-up", h.StepUp)
 			r.Route("/mfa", func(r chi.Router) {
 				r.Post("/challenge", h.MFAChallenge)
+				// Alta obligatoria del segundo factor: publicas, con el token de alta del login.
+				r.Post("/enroll/setup", h.MFAEnrollSetup)
+				r.Post("/enroll/activate", h.MFAEnrollActivate)
 				r.Post("/setup", h.MFASetup)
 				r.Post("/activate", h.MFAActivate)
 				r.Delete("/disable", h.MFADisable)
@@ -473,6 +476,9 @@ type sessionPolicyRequest struct {
 	RefreshTTLHours       int `json:"refresh_ttl_hours"`
 	MaxConcurrentSessions int `json:"max_concurrent_sessions"`
 	IdleTimeoutMinutes    int `json:"idle_timeout_minutes"`
+	// RequireMFA ausente conserva el valor vigente: un cliente que no conoce el campo no
+	// apaga la exigencia del segundo factor al guardar lo demas.
+	RequireMFA *bool `json:"require_mfa"`
 }
 
 // GetSessionPolicy devuelve la politica vigente: la configurada por la empresa o la
@@ -511,11 +517,23 @@ func (h *Handler) SaveSessionPolicy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	requireMFA := false
+	if req.RequireMFA != nil {
+		requireMFA = *req.RequireMFA
+	} else {
+		current, err := h.auth.GetSessionPolicy(r.Context(), tenantID)
+		if err != nil {
+			response.Unexpected(w, err)
+			return
+		}
+		requireMFA = current.RequireMFA
+	}
 	policy := &domain.SessionPolicy{
 		TenantID:              tenantID,
 		RefreshTTLHours:       req.RefreshTTLHours,
 		MaxConcurrentSessions: req.MaxConcurrentSessions,
 		IdleTimeoutMinutes:    req.IdleTimeoutMinutes,
+		RequireMFA:            requireMFA,
 	}
 	if err := h.auth.SaveSessionPolicy(r.Context(), policy, actorID); err != nil {
 		if err == domain.ErrInvalidSessionPolicy {
@@ -1002,6 +1020,77 @@ func (h *Handler) MFAChallenge(w http.ResponseWriter, r *http.Request) {
 	response.JSON(w, http.StatusOK, h.issueSession(w, r, res, req.CookieAuth))
 }
 
+type mfaEnrollRequest struct {
+	MFAToken   string `json:"mfa_token"`
+	Secret     string `json:"secret"`
+	Code       string `json:"code"`
+	CookieAuth bool   `json:"cookie_auth"`
+}
+
+// enrollError traduce los errores del alta obligatoria. Quien llega aqui ya probo la
+// contrasena, asi que el estado de su cuenta no revela nada.
+func enrollError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, domain.ErrAccountLocked):
+		response.Err(w, http.StatusForbidden, "ACCOUNT_LOCKED", "account is temporarily locked")
+	case errors.Is(err, domain.ErrAccountInactive):
+		response.Err(w, http.StatusForbidden, "ACCOUNT_INACTIVE", "account is inactive")
+	case errors.Is(err, domain.ErrMFAAlreadyEnabled):
+		response.Err(w, http.StatusConflict, "MFA_ALREADY_ENABLED", "two-step verification is already enabled; sign in again")
+	case errors.Is(err, domain.ErrInvalidMFACode), errors.Is(err, domain.ErrUserNotFound):
+		response.ErrUnauthorized(w, "invalid MFA code or enrollment token")
+	default:
+		response.Unexpected(w, err)
+	}
+}
+
+// MFAEnrollSetup entrega el secreto del alta obligatoria: el login devolvio
+// mfa_enrollment_required y el token de alta.
+func (h *Handler) MFAEnrollSetup(w http.ResponseWriter, r *http.Request) {
+	var req mfaEnrollRequest
+	if err := validate.DecodeJSON(r, &req); err != nil {
+		response.ErrBadRequest(w, err.Error())
+		return
+	}
+	v := validate.New()
+	v.Required("mfa_token", req.MFAToken)
+	if !v.Valid() {
+		response.ErrValidation(w, v.Error())
+		return
+	}
+	secret, uri, err := h.auth.SetupMFAEnrollment(r.Context(), req.MFAToken, h.mfaIssuer)
+	if err != nil {
+		enrollError(w, err)
+		return
+	}
+	response.JSON(w, http.StatusOK, mfaSetupResponse{Secret: secret, ProvisioningURI: uri})
+}
+
+// MFAEnrollActivate activa el segundo factor con el primer codigo y abre la sesion.
+func (h *Handler) MFAEnrollActivate(w http.ResponseWriter, r *http.Request) {
+	var req mfaEnrollRequest
+	if err := validate.DecodeJSON(r, &req); err != nil {
+		response.ErrBadRequest(w, err.Error())
+		return
+	}
+	v := validate.New()
+	v.Required("mfa_token", req.MFAToken)
+	v.Required("secret", req.Secret)
+	v.Required("code", req.Code)
+	v.MinLength("code", req.Code, 6)
+	v.MaxLength("code", req.Code, 6)
+	if !v.Valid() {
+		response.ErrValidation(w, v.Error())
+		return
+	}
+	res, err := h.auth.CompleteMFAEnrollment(r.Context(), req.MFAToken, req.Secret, req.Code, extractClientIP(r), r.UserAgent())
+	if err != nil {
+		enrollError(w, err)
+		return
+	}
+	response.JSON(w, http.StatusOK, h.issueSession(w, r, res, req.CookieAuth))
+}
+
 type mfaSetupResponse struct {
 	Secret          string `json:"secret"`
 	ProvisioningURI string `json:"provisioning_uri"`
@@ -1140,6 +1229,8 @@ func (h *Handler) MFADisable(w http.ResponseWriter, r *http.Request) {
 			response.ErrUnauthorized(w, "current password is incorrect")
 		case domain.ErrInvalidMFACode:
 			response.ErrUnauthorized(w, "invalid mfa code")
+		case domain.ErrMFARequiredByPolicy:
+			response.Err(w, http.StatusConflict, "MFA_REQUIRED_BY_POLICY", "the tenant requires two-step verification")
 		default:
 			response.Unexpected(w, err)
 		}

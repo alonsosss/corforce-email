@@ -21,6 +21,10 @@ var (
 	ErrResetTokenInvalid  = errors.New("reset token is invalid, expired or already used")
 
 	ErrInvalidSessionPolicy = errors.New("session policy values out of range")
+	// ErrMFARequiredByPolicy: la empresa exige verificacion en dos pasos; no se desactiva.
+	ErrMFARequiredByPolicy = errors.New("the tenant requires two-step verification")
+	// ErrMFAAlreadyEnabled: el alta obligatoria no rehace un segundo factor que ya existe.
+	ErrMFAAlreadyEnabled = errors.New("two-step verification is already enabled")
 
 	// ErrFirstUserConflict: la empresa ya tiene cuentas, o la del reintento no coincide con
 	// la que se creo (otro correo, otra contrasena u otra empresa).

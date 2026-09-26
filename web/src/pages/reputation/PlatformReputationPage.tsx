@@ -28,7 +28,7 @@ import { rules, validateField } from '@/lib/validate';
 import { getLocale, t, tEnum } from '@/i18n';
 import { FormModal } from '@/pages/shared/FormModal';
 import { RowActions } from '@/pages/shared/RowActions';
-import { tenantLabel, useTenantDirectory } from '@/pages/billing/useTenantNames';
+import { tenantLabel, useTenantDirectory } from '@/pages/shared/useTenantDirectory';
 import { reasonText, StateBadge } from './reputationState';
 
 /** Una fila por empresa y clase; una empresa cuya base no respondio ocupa una fila sin clase. */

@@ -236,6 +236,32 @@ func TestTiposDeTokenNoIntercambiables(t *testing.T) {
 	}
 }
 
+// El token de alta del segundo factor solo sirve para darlo de alta: no entra en la API ni
+// completa un reto, y un reto no vale como alta.
+func TestTokenDeAltaMFANoIntercambiable(t *testing.T) {
+	s := newTestSigner(t, "vigente")
+	ts := serviceOf(t, s, time.Minute)
+	v := verifierOf(t, s)
+
+	enroll, err := ts.GenerateMFAEnrollment("u", "t")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if uid, tid, err := ts.ValidateMFAEnrollment(enroll); err != nil || uid != "u" || tid != "t" {
+		t.Fatalf("alta propia: %q %q %v", uid, tid, err)
+	}
+	if _, err := v.ParseAccess(enroll); !errors.Is(err, ErrTokenType) {
+		t.Errorf("alta como acceso: %v", err)
+	}
+	if _, _, err := v.ParseMFAChallenge(enroll); !errors.Is(err, ErrTokenType) {
+		t.Errorf("alta como reto MFA: %v", err)
+	}
+	challenge, _ := ts.GenerateMFAChallenge("u", "t")
+	if _, _, err := v.ParseMFAEnrollment(challenge); !errors.Is(err, ErrTokenType) {
+		t.Errorf("reto MFA como alta: %v", err)
+	}
+}
+
 func TestVerificadorSinClaves(t *testing.T) {
 	if _, err := NewVerifier(nil); !errors.Is(err, ErrPublicKeysRequired) {
 		t.Fatalf("sin claves: %v", err)

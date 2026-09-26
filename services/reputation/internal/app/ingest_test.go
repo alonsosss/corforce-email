@@ -151,6 +151,23 @@ func TestRecordDeliveryReboteTransitorioNoCuenta(t *testing.T) {
 	}
 }
 
+// Lo que va al simulador de SES no cuenta: ni envio, ni rebote, ni queja, aunque sea prueba.
+func TestRecordDeliverySimuladorNoCuenta(t *testing.T) {
+	h := newHarness()
+	tenant := uuid.New()
+	for i, kind := range []DeliveryKind{KindSent, KindBounced, KindComplained} {
+		ev := DeliveryEvent{EventID: fmt.Sprintf("s-%d", i), TenantID: tenant, Kind: kind, Class: domain.ClassTransactional,
+			BounceType: BounceTypePermanent, Recipients: 1, Simulated: true}
+		res, err := h.uc.RecordDelivery(ctx, ev)
+		if err != nil || !res.Ignored {
+			t.Fatalf("%s del simulador: %+v %v", kind, res, err)
+		}
+	}
+	if got := h.stats.day(tenant, domain.ClassTransactional, h.today()); got != (domain.Counts{}) {
+		t.Fatalf("el simulador no suma nada: %+v", got)
+	}
+}
+
 func TestRecordDeliveryQuejaCuenta(t *testing.T) {
 	h := newHarness()
 	tenant := uuid.New()
