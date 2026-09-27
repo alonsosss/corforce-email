@@ -24,6 +24,12 @@ Vite reenvia `/api` al gateway (`VITE_DEV_PROXY_TARGET`, por defecto
 cookie del refresh viaja sin excepciones de CORS. El gateway local debe correr con
 `AUTH_COOKIE_SECURE=false`: en `http://localhost` una cookie `Secure` no se guarda.
 
+Para revisar la interfaz con un navegador automatizado (Playwright, el MCP de Chrome DevTools),
+`VITE_AUTOMATION_MODE=observe` en `.env.local`: el detector de la capa 2 comunica la referencia al
+gateway pero monta la aplicacion. Es una variable de compilacion, solo de desarrollo: la imagen de
+produccion no la recibe y siempre bloquea. Para la imagen local de docker se pasa como
+`build.args.VITE_AUTOMATION_MODE` en el compose de la maquina, nunca en `docker-compose.yml`.
+
 Comprobaciones (las mismas que el job `web` del CI):
 
 ```bash

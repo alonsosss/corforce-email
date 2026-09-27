@@ -20,6 +20,10 @@ COPY . .
 # Vacio = mismo origen (lo normal detras del gateway). Solo se fija si el API vive en otro host.
 ARG VITE_API_URL=
 ENV VITE_API_URL=${VITE_API_URL}
+# Detector de navegador automatizado: enforce salvo que una imagen de desarrollo pida observe. El
+# despliegue (scripts/deploy-ecr.sh) no pasa este argumento, asi que produccion compila en enforce.
+ARG VITE_AUTOMATION_MODE=enforce
+ENV VITE_AUTOMATION_MODE=${VITE_AUTOMATION_MODE}
 
 RUN pnpm build
 

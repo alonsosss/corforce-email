@@ -47,6 +47,19 @@ export const SIGNAL_WEIGHTS: Record<AutomationSignal, number> = {
 /** Puntuacion a partir de la cual no se monta la aplicacion. */
 export const BLOCK_THRESHOLD = 3;
 
+/**
+ * Que se hace con un navegador detectado. enforce: pagina de bloqueo. observe: se comunica la
+ * referencia igual, pero la aplicacion se monta; sirve para revisar la interfaz con un navegador
+ * automatizado en desarrollo y para calibrar. Solo se lee de VITE_AUTOMATION_MODE al compilar: la
+ * imagen de produccion no recibe esa variable, asi que compila en enforce.
+ */
+export type AutomationMode = 'enforce' | 'observe';
+
+/** Cualquier valor que no sea exactamente "observe" es enforce: ante la duda, se bloquea. */
+export function parseAutomationMode(raw: string | undefined): AutomationMode {
+  return raw?.trim() === 'observe' ? 'observe' : 'enforce';
+}
+
 const HEADLESS_UA = /HeadlessChrome|PhantomJS|SlimerJS|HtmlUnit/i;
 // Rastros de chromedriver ($cdc_ y cdc_), Selenium, PhantomJS, Nightmare y WebKit automation.
 const AUTOMATION_GLOBAL =

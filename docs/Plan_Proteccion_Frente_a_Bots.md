@@ -120,6 +120,13 @@ protocolo DevTools, `HeadlessChrome` en el agente, ausencia de plugins y de idio
   automatización corriente (Playwright, Puppeteer, Selenium, el MCP de Chrome, `curl`) y a los agentes
   que usan el navegador del propio usuario con el modo de depuración; no a un atacante que se esfuerce.
   Para eso están las capas 3 a 5.
+* **Modo `observe`, solo en desarrollo:** `VITE_AUTOMATION_MODE=observe` al compilar la web hace que el
+  detector comunique la referencia igual pero monte la aplicación, para poder revisar la interfaz con
+  un navegador automatizado y para calibrar las señales. Es una variable de compilación, no un
+  interruptor en la interfaz ni un endpoint: un bot no tiene dónde consultarla ni cómo cambiarla. La
+  imagen de producción no la recibe (`scripts/deploy-ecr.sh` construye con `docker-compose.yml`, que no
+  declara ese argumento), así que producción compila siempre en `enforce`; en local se pasa por
+  `web/.env.local` (`pnpm dev`) o por `build.args` en el compose de la máquina.
 * Pruebas: unitarias del detector con entornos reales (Chrome, Firefox, Safari y móvil de una persona
   no se bloquean; `webdriver`, `HeadlessChrome` y `$cdc_` sí; las débiles solo entre varias), del
   receptor del gateway (422 a todo lo que no es suyo, nada rechazado cuenta) y de la alerta
@@ -316,3 +323,4 @@ vuelta atrás preparada: el registro DNS se despoxiea y todo vuelve a como hoy.
 | 2026-09-27 | Fase 2 hecha: detector en `web/src/security/`, página de bloqueo con referencia, receptor en el gateway con métricas y alerta. Verificado con el MCP de Chrome DevTools. |
 | 2026-09-27 | Fase 3 hecha (3.2 y 3.3): guardia de sondeo en el gateway (`probe.go`), Redis con respaldo en memoria, `PROBE_*`, evento `gateway.security.probe` → `endpoint_probe` en `audit`, alerta `SondeoDeEndpoints`; cupo por credencial `SESSION_RATE_LIMIT_PER_MIN`. Pendiente 3.4 (revocar desde el evento), con el panel de la fase 4. |
 | 2026-09-27 | Fases 1 a 3.3 desplegadas en `e2560ab` (`gateway`, `audit`, `web`, proxy de borde). Verificado en producción: `05-bots.conf` con 43 agentes y `nginx -t` correcto; `GPTBot` y `ClaudeBot` reciben 403 en `/` y en `/api/v1`, `Googlebot` y Chrome 200; el receptor de referencias responde 204/422 y escribe la referencia con IP y agente; `gateway_probe_*` y `gateway_automation_detected_total` en 0 al arrancar. Calibración previa: en las 24 h anteriores el gateway sirvió 9 respuestas de clase sondeo (7 de `/auth`, exentas), lejos de los umbrales. |
+| 2026-09-27 | Capa 2: modo `observe` de compilación (`VITE_AUTOMATION_MODE`) para revisar la interfaz con un navegador automatizado en desarrollo; producción no lo recibe y sigue en `enforce`. |

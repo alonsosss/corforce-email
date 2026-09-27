@@ -3,6 +3,7 @@ import {
   automationReference,
   BLOCK_THRESHOLD,
   detectAutomation,
+  parseAutomationMode,
   reportAutomation,
   type AutomationEnvironment,
 } from './automation';
@@ -104,5 +105,13 @@ describe('deteccion de navegador automatizado', () => {
         body: JSON.stringify({ reference: 'abc123def456', path: '/login', signals: ['webdriver'] }),
       }),
     );
+  });
+
+  it('el modo solo es observe cuando se pide exactamente asi; ante la duda, enforce', () => {
+    expect(parseAutomationMode('observe')).toBe('observe');
+    expect(parseAutomationMode(' observe ')).toBe('observe');
+    for (const raw of [undefined, '', 'enforce', 'Observe', 'OBSERVE', 'off', 'false', '0']) {
+      expect(parseAutomationMode(raw)).toBe('enforce');
+    }
   });
 });
