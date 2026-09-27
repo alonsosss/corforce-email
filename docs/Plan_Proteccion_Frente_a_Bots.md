@@ -209,10 +209,10 @@ limitado.
 | Capa | Dónde | Estado hoy |
 |---|---|---|
 | 0 | Registro DNS propio proxied para `email.core-force.com`; reglas en `ops/security/edge/`; `TRUSTED_PROXY_CIDRS` | Directo a la IP; el proxy de borde propio ya limita por IP |
-| 1 | `web/public/robots.txt` generado; `map` en `selfhosted/edge-proxy` | `robots.txt` solo permite `/p/` y `/citas/`; sin bloqueo de agentes |
-| 2 | `web/src/security/automation.ts`, montado en `main.tsx` y en el shell de las páginas públicas; ruta pública de referencia en `routes.json` | No existe |
-| 3.2 | `services/gateway/probe.go` sobre el limitador compartido; evento por outbox; alerta | Solo `rbac_denials_total` |
-| 3.3 | `services/gateway/ratelimit.go` | Cupo por clave de API ya; por sesión no |
+| 1 | `selfhosted/edge/ai-crawlers.txt` → `15-bots.sh` → mapa `$edge_bot_ia` (403); `web/public/robots.txt` con un grupo por agente | En producción desde el 2026-09-27 (`e2560ab`) |
+| 2 | `web/src/security/automation.ts` montado en `main.tsx`; receptor `POST /api/v1/public/security/automation-detected` en el gateway (`automation.go`) | En producción desde el 2026-09-27 (`e2560ab`); las landing pages no lo llevan a propósito (CSP sin scripts) |
+| 3.2 | `services/gateway/probe.go` (Redis `probe:gateway:*` con respaldo en memoria, `PROBE_*`); evento `gateway.security.probe` → `endpoint_probe` en `audit`; alerta `SondeoDeEndpoints` | En producción desde el 2026-09-27 (`e2560ab`), modo `enforce`, 30 por credencial y 60 por IP en 5 min, bloqueo de 15 min |
+| 3.3 | `services/gateway/ratelimit.go` (`gateway:session`, `SESSION_RATE_LIMIT_PER_MIN`) | En producción desde el 2026-09-27 (`e2560ab`), 300 por minuto por credencial |
 | 3.4 | Página de sesiones y de claves | Revocación existe; falta el enlace desde el evento |
 | 4 | `contacts` (exportar listas), `webmail` (exportar buzón), `analytics` (informes) | Exportar existe en contactos con permiso; sin cupo diario ni marca de agua |
 | 5 | `web/src/pages/security/`, `identity.security_events` | Existe la pantalla de eventos de seguridad de identidad; se amplía |
@@ -315,3 +315,4 @@ vuelta atrás preparada: el registro DNS se despoxiea y todo vuelve a como hoy.
 | 2026-09-27 | Fase 1 hecha: lista `selfhosted/edge/ai-crawlers.txt` (43 agentes), mapa y 403 en el borde, `robots.txt` con un grupo por agente y la prueba que los ata. |
 | 2026-09-27 | Fase 2 hecha: detector en `web/src/security/`, página de bloqueo con referencia, receptor en el gateway con métricas y alerta. Verificado con el MCP de Chrome DevTools. |
 | 2026-09-27 | Fase 3 hecha (3.2 y 3.3): guardia de sondeo en el gateway (`probe.go`), Redis con respaldo en memoria, `PROBE_*`, evento `gateway.security.probe` → `endpoint_probe` en `audit`, alerta `SondeoDeEndpoints`; cupo por credencial `SESSION_RATE_LIMIT_PER_MIN`. Pendiente 3.4 (revocar desde el evento), con el panel de la fase 4. |
+| 2026-09-27 | Fases 1 a 3.3 desplegadas en `e2560ab` (`gateway`, `audit`, `web`, proxy de borde). Verificado en producción: `05-bots.conf` con 43 agentes y `nginx -t` correcto; `GPTBot` y `ClaudeBot` reciben 403 en `/` y en `/api/v1`, `Googlebot` y Chrome 200; el receptor de referencias responde 204/422 y escribe la referencia con IP y agente; `gateway_probe_*` y `gateway_automation_detected_total` en 0 al arrancar. Calibración previa: en las 24 h anteriores el gateway sirvió 9 respuestas de clase sondeo (7 de `/auth`, exentas), lejos de los umbrales. |
