@@ -237,9 +237,11 @@ func (d *DeliveryLog) record(ctx context.Context, rec domain.LogRecord, line dom
 			targets = append(targets, target{tenant, domain.DirectionOutbound})
 		}
 	}
-	// Entrante: entregado en un buzon de la celda o rechazado a la entrada. Un rebote de un envio
-	// a otro servidor no es correo entrante para el dominio de destino.
-	if rec.Local || (rec.Kind == domain.LogReject && qc.SASLUsername == "") {
+	// Entrante: todo lo dirigido a un dominio de la empresa, entregado en un buzon de la celda o
+	// reenviado por un transporte (un dominio en convivencia con su proveedor anterior), y lo
+	// rechazado a la entrada. El rechazo de un envio autenticado es de quien lo envio, no del
+	// destinatario.
+	if rec.Kind == domain.LogDelivery || qc.SASLUsername == "" {
 		tenant, ok, err := d.domainTenant(ctx, domain.AddressDomain(rec.To))
 		if err != nil {
 			return err

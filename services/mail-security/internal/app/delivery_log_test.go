@@ -243,3 +243,25 @@ func TestListValidaLosFiltros(t *testing.T) {
 		}
 	}
 }
+
+// Un dominio en convivencia: lo que no tiene buzon aqui se reenvia al proveedor anterior por un
+// transporte. Ese correo es entrante para la empresa aunque no se entregue en la celda, y su rebote
+// (el proveedor anterior ya no acepta la direccion) tiene que verse.
+func TestElCorreoReenviadoAlProveedorAnteriorEsEntrante(t *testing.T) {
+	h := newDeliveryHarness()
+	h.feed(t,
+		pline("postfix/smtpd", "AB12CD34EF: client=mail-oi1[209.85.1.1]"),
+		pline("postfix/qmgr", "AB12CD34EF: from=<cliente@gmail.com>, size=100, nrcpt=2 (queue active)"),
+		pline("postfix/smtp", "AB12CD34EF: to=<compras@campovivoalimentos.com>, relay=mx1.hostinger.com[172.65.182.103]:25, delay=1, delays=0.1/0/0.4/0.5, dsn=2.0.0, status=sent (250 2.0.0 Ok: queued as 4ABC)"),
+		pline("postfix/smtp", "AB12CD34EF: to=<cf.prueba@campovivoalimentos.com>, relay=mx1.hostinger.com[172.65.182.103]:25, delay=1, delays=0.1/0/0.4/0.5, dsn=5.1.1, status=bounced (host mx1.hostinger.com[172.65.182.103] said: 550 5.1.1 <cf.prueba@campovivoalimentos.com>: Recipient address rejected: User unknown in virtual mailbox table (in reply to RCPT TO command))"),
+		pline("postfix/smtp", "AB12CD34EF: to=<alguien@otra.example>, relay=mx.otra.example[203.0.113.9]:25, delay=1, delays=0.1/0/0.4/0.5, dsn=2.0.0, status=sent (250 ok)"),
+	)
+	evs := h.events(h.campo)
+	if len(evs) != 2 || evs[0].Direction != domain.DirectionInbound || evs[0].Status != domain.DeliverySent ||
+		evs[1].Status != domain.DeliveryBounced || !strings.Contains(evs[1].Reason, "User unknown") {
+		t.Fatalf("entrante reenviado y su rebote: %+v", evs)
+	}
+	if h.metrics.Outcomes["unowned"] != 1 {
+		t.Errorf("el envio a un dominio ajeno sin usuario autenticado no es de nadie: %v", h.metrics.Outcomes)
+	}
+}

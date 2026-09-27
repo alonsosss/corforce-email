@@ -56,7 +56,8 @@ alerta `RegistroDeEntregasAtrasado` avisan del retraso antes de llegar al tope.
 
 **Atribución.** Un envío saliente solo se atribuye con usuario autenticado (`sasl_username`): el
 remitente del sobre se puede falsificar y no basta. El entrante se atribuye por el dominio del
-destinatario cuando se entrega en un buzón de la celda o se rechaza a la entrada.
+destinatario: lo entregado en un buzón de la celda, lo reenviado por un transporte (un dominio en
+convivencia con su proveedor anterior, cuyo rebote tiene que verse) y lo rechazado a la entrada.
 
 **Una sola réplica lee**, con cerrojo de líder renovado cada minuto: dos lectores se repartirían la
 lista de trabajo y desordenarían las líneas de un mismo mensaje.
