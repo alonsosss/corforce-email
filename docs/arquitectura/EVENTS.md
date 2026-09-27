@@ -6,7 +6,7 @@ Convencion de subject: `<dominio>.<entidad>.<accion>`. Un subject tiene UN dueno
 Publicar incluye encolar en la outbox (`outbox.Enqueue`); un consumidor con comodin
 (`*`, `>`) figura en cada subject publicado que recibe.
 
-Resumen: 99 publicaciones, 43 suscripciones, 99 subjects distintos.
+Resumen: 100 publicaciones, 43 suscripciones, 100 subjects distintos.
 
 ## Cruce por subject (dueno -> consumidores)
 
@@ -54,6 +54,7 @@ Resumen: 99 publicaciones, 43 suscripciones, 99 subjects distintos.
 | `domains.domain.sending_status_changed` | domain-service | transactional |
 | `domains.domain.verified` | domain-service | transactional |
 | `gateway.security.exfiltration` | gateway | - |
+| `gateway.security.probe` | gateway | - |
 | `identity.session.revoked_by_admin` | identity | - |
 | `identity.user.created` | identity | - |
 | `identity.user.deleted` | identity | access-control |
@@ -145,7 +146,7 @@ Resumen: 99 publicaciones, 43 suscripciones, 99 subjects distintos.
 - Publica: `domains.dns_provider.connected`, `domains.dns_provider.disconnected`, `domains.domain.created`, `domains.domain.deleted`, `domains.domain.dkim_revoked`, `domains.domain.dkim_rotated`, `domains.domain.dns_published`, `domains.domain.failed`, `domains.domain.sending_status_changed`, `domains.domain.verified`
 
 ### gateway
-- Publica: `audit.api.write`, `gateway.security.exfiltration`
+- Publica: `audit.api.write`, `gateway.security.exfiltration`, `gateway.security.probe`
 
 ### identity
 - Publica: `identity.session.revoked_by_admin`, `identity.user.created`, `identity.user.deleted`, `identity.user.locked`, `identity.user.logged_in`, `identity.user.logged_out`, `identity.user.login_failed`, `identity.user.password_changed`

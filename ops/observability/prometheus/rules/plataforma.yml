@@ -481,6 +481,20 @@ groups:
           resumen: "{{ $labels.service }} no consigue consultar la cola de Postfix"
           detalle: "Las consultas al agente de la cola (puerto 8590 del contenedor de Postfix) fallan de forma sostenida: el agente esta caido o el contenedor de Postfix no esta sano, QUEUE_AGENT_API_KEY es distinta en Postfix y en {{ $labels.service }}, o el certificado no casa con QUEUE_AGENT_TLS_SERVER_NAME. Mientras dure, la alerta ColaDePostfixAtascada no ve la cola."
 
+  # Sondeo de endpoints (docs/Plan_Proteccion_Frente_a_Bots.md, capa 3.2): el gateway bloquea a
+  # la identidad que acumula decenas de 401/403/404/405 en minutos. Cada bloqueo merece una mirada:
+  # es una credencial en manos de un escaner o de un agente, o una integracion rota que hay que
+  # avisar. En modo observe se anota sin bloquear; la alerta lo dice.
+  - name: sondeo-de-endpoints
+    rules:
+      - alert: SondeoDeEndpoints
+        expr: sum by (identity, mode) (increase(gateway_probe_blocks_total[15m])) > 0
+        labels:
+          severidad: media
+        annotations:
+          resumen: "Sondeo de endpoints: {{ $value | humanize }} identidad(es) de tipo {{ $labels.identity }} al umbral en 15 minutos (modo {{ $labels.mode }})"
+          detalle: "El registro del gateway (sondeo de endpoints detectado) da la empresa, el usuario o la clave de API, la IP y la ultima ruta. Con sesion, la empresa lo ve como evento de seguridad (endpoint_probe). Si es una integracion legitima con rutas mal escritas, la ruta lo delata y el bloqueo cae solo a los PROBE_BLOCK_MIN; si es un escaner, revocar la sesion o la clave desde el panel."
+
   # Navegadores automatizados (docs/Plan_Proteccion_Frente_a_Bots.md, capa 2): la web no se monta
   # cuando detecta automatizacion y avisa al gateway con una referencia. Un bloqueo suelto es una
   # persona con una herramienta de depuracion; una rafaga es alguien probando la plataforma con un

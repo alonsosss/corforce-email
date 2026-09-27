@@ -150,6 +150,17 @@ func main() {
 
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Use(exceptWebhooks(table, limiter.Limit))
+		// Rastro de auditoria y guardia de sondeo comparten el bus: el rastro lo abre.
+		modules := table.moduleIndex()
+		trail := newAuditTrail(modules, newExfilCounter(rateStore, st.exfilReads, st.exfilWindow, logger), st.exfilReads, st.exfilWindow, logger)
+		// Sondeo de endpoints (probe.go): por delante de todo lo que cuelga de /api/v1, tambien de
+		// las rutas que no existen; el conteo y el bloqueo, en el Redis de la plataforma.
+		var probeStorage probeStore
+		if rdb != nil {
+			probeStorage = newRedisProbeStore(rdb)
+		}
+		probe := newProbeGuard(st.probe, probeStorage, trail.bus, logger)
+		r.Use(probe.middleware)
 		// Auth publico: login, refresh y el reto MFA (paso del propio login).
 		// Rutas explicitas (no subrouter) para no solapar con las MFA autenticadas.
 		// Limitador estricto en las rutas atacables por fuerza bruta. /auth/refresh
@@ -184,7 +195,6 @@ func main() {
 
 		// Toda ruta con sesion pasa por la misma comprobacion de la sesion (cuenta cerrada o
 		// token revocado), con la cache del RBAC.
-		modules := table.moduleIndex()
 		enforcer := newRBACEnforcer(
 			table.serviceURL("access-control"), internalToken,
 			os.Getenv("RBAC_ENFORCE_MODE"), os.Getenv("RBAC_FAIL_MODE"), os.Getenv("RBAC_READ_MODE"),
@@ -194,14 +204,13 @@ func main() {
 		// Celda destino explicita de un operador (target.go): se valida en toda ruta con sesion,
 		// despues del rastro de auditoria, para que tambien quede la rechazada.
 		targets := newTargetCellGate(table, logger)
-		// Rastro de auditoria: escrituras con modulo y toda peticion con celda destino.
-		trail := newAuditTrail(modules, newExfilCounter(rateStore, st.exfilReads, st.exfilWindow, logger), st.exfilReads, st.exfilWindow, logger)
 
 		// MFA self-service: requiere autenticacion (inyecta X-User-ID) pero NO pasa
 		// por RBAC: es gestion de la propia cuenta, no un recurso protegido por modulo. El
 		// rastro solo publica aqui las peticiones con celda destino (auth tiene su bitacora).
 		r.Group(func(r chi.Router) {
 			r.Use(jwtAuth.Authenticate)
+			r.Use(probe.identify)
 			r.Use(enforcer.sessionCheck)
 			r.Use(trail.middleware)
 			r.Use(targets.middleware)
@@ -215,6 +224,7 @@ func main() {
 		r.Group(func(r chi.Router) {
 			// Las rutas de api_key_routes admiten tambien una clave de API de empresa (apikeys.go).
 			r.Use(apiKeys.authenticate(jwtAuth.Authenticate))
+			r.Use(probe.identify)
 			r.Use(enforcer.sessionCheck)
 			r.Use(enforcer.middleware)
 			// Rastro de auditoria de escrituras: publica un evento por cada
@@ -308,6 +318,18 @@ const (
 	// La ventana vive en memoria del gateway: cada usuario activo conserva su contador hasta dos
 	// ventanas y la limpieza pasa una vez por ventana.
 	maxExfilWindowMin = 60
+
+	// Sondeo de endpoints (probe.go). Umbrales de partida de docs/Plan_Proteccion_Frente_a_Bots.md:
+	// una persona en la consola no acumula treinta 404 en cinco minutos; una integracion con una
+	// ruta mal escrita, tampoco (y si lo hace, la ruta queda en el registro y el bloqueo es corto).
+	defaultProbeMode           = probeModeEnforce
+	defaultProbeThresholdToken = 30
+	defaultProbeThresholdIP    = 60
+	defaultProbeWindowMin      = 5
+	defaultProbeBlockMin       = 15
+	maxProbeThreshold          = 100000
+	maxProbeWindowMin          = 60
+	maxProbeBlockMin           = 1440
 )
 
 // settings son los valores numericos del gateway, leidos al arrancar y antes de conectar a
@@ -319,6 +341,7 @@ type settings struct {
 	webhookPerMin  int
 	exfilReads     int
 	exfilWindow    time.Duration
+	probe          probeSettings
 }
 
 func loadSettings() (settings, error) {
@@ -349,6 +372,33 @@ func loadSettings() (settings, error) {
 		return st, err
 	}
 	st.exfilWindow = time.Duration(windowMin) * time.Minute
+
+	st.probe.Mode = strings.TrimSpace(os.Getenv("PROBE_MODE"))
+	if st.probe.Mode == "" {
+		st.probe.Mode = defaultProbeMode
+	}
+	if st.probe.Mode != probeModeEnforce && st.probe.Mode != probeModeObserve {
+		return st, fmt.Errorf("PROBE_MODE must be %s or %s: %q", probeModeEnforce, probeModeObserve, st.probe.Mode)
+	}
+	tokenThreshold, err := config.EnvInt("PROBE_THRESHOLD_TOKEN", defaultProbeThresholdToken, 1, maxProbeThreshold)
+	if err != nil {
+		return st, err
+	}
+	ipThreshold, err := config.EnvInt("PROBE_THRESHOLD_IP", defaultProbeThresholdIP, 1, maxProbeThreshold)
+	if err != nil {
+		return st, err
+	}
+	probeWindowMin, err := config.EnvInt("PROBE_WINDOW_MIN", defaultProbeWindowMin, 1, maxProbeWindowMin)
+	if err != nil {
+		return st, err
+	}
+	probeBlockMin, err := config.EnvInt("PROBE_BLOCK_MIN", defaultProbeBlockMin, 1, maxProbeBlockMin)
+	if err != nil {
+		return st, err
+	}
+	st.probe.TokenThreshold, st.probe.IPThreshold = int64(tokenThreshold), int64(ipThreshold)
+	st.probe.Window = time.Duration(probeWindowMin) * time.Minute
+	st.probe.BlockFor = time.Duration(probeBlockMin) * time.Minute
 	return st, nil
 }
 

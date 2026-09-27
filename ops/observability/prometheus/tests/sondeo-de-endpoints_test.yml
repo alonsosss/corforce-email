@@ -1,0 +1,39 @@
+# Pruebas de la alerta de sondeo de endpoints.
+#
+# El gateway cuenta cada identidad que llega al umbral de fallos, por tipo y modo. Sin bloqueos
+# no avisa; con uno, avisa con su tipo y su modo. El reloj empieza en 0.
+#
+#   make check-alertas
+
+rule_files:
+  - ../rules/plataforma.yml
+
+evaluation_interval: 1m
+
+tests:
+  - interval: 1m
+    input_series:
+      - series: 'gateway_probe_blocks_total{job="mail-services",service="gateway",instance="gateway:8080",identity="token",mode="enforce"}'
+        values: '0x30'
+      - series: 'gateway_probe_blocks_total{job="mail-services",service="gateway",instance="gateway:8080",identity="ip",mode="enforce"}'
+        values: '0x30'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: SondeoDeEndpoints
+        exp_alerts: []
+
+  - interval: 1m
+    input_series:
+      - series: 'gateway_probe_blocks_total{job="mail-services",service="gateway",instance="gateway:8080",identity="token",mode="enforce"}'
+        values: '0 0 0 1x30'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: SondeoDeEndpoints
+        exp_alerts:
+          - exp_labels:
+              severidad: media
+              identity: token
+              mode: enforce
+            exp_annotations:
+              resumen: "Sondeo de endpoints: 1 identidad(es) de tipo token al umbral en 15 minutos (modo enforce)"
+              detalle: "El registro del gateway (sondeo de endpoints detectado) da la empresa, el usuario o la clave de API, la IP y la ultima ruta. Con sesion, la empresa lo ve como evento de seguridad (endpoint_probe). Si es una integracion legitima con rutas mal escritas, la ruta lo delata y el bloqueo cae solo a los PROBE_BLOCK_MIN; si es un escaner, revocar la sesion o la clave desde el panel."

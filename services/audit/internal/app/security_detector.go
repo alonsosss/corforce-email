@@ -60,6 +60,11 @@ func (d *SecurityDetector) Inspect(ctx context.Context, l *domain.AuditLog, user
 		// la firma de una cuenta comprometida extrayendo datos en masa.
 		d.raise(ctx, l, "bulk_exfiltration", "high",
 			"Volumen inusual de lecturas o descargas: posible extracción masiva de datos", userAgent)
+	case "user.probe_detected":
+		// El gateway bloqueo la credencial por sondear endpoints (decenas de 401/403/404 en
+		// minutos): un escaner o un agente con la sesion o la clave de esta persona.
+		d.raise(ctx, l, "endpoint_probe", "high",
+			"Sondeo de endpoints con esta credencial: bloqueada temporalmente por el gateway", userAgent)
 	}
 }
 

@@ -54,6 +54,7 @@ subject y payload. `opaco` = el payload no se puede leer estaticamente.
 | `domains.domain.sending_status_changed` | domain-service | `domain`, `domain_id`, `purpose`, `sending_ready`, `ses_identity_status`, `status`, `tenant_id` |
 | `domains.domain.verified` | domain-service | `domain`, `domain_id`, `purpose`, `sending_ready`, `status`, `tenant_id` |
 | `gateway.security.exfiltration` | gateway | `count`, `ip`, `tenant_id`, `user_id`, `window` |
+| `gateway.security.probe` | gateway | `api_key_id`, `blocked_for`, `failures`, `identity`, `ip`, `last_path`, `mode`, `tenant_id`, `user_id`, `window` |
 | `identity.session.revoked_by_admin` | identity | `ip`, `session_id`, `target_user_id` |
 | `identity.user.created` | identity | `email` |
 | `identity.user.deleted` | identity | `deleted_at`, `tenant_id`, `user_id` |

@@ -143,20 +143,28 @@ memoria; auditoría con cadena de hashes.
 credenciales rechazadas por identidad**. Se añade en el gateway, reutilizando el limitador compartido
 en Redis que ya sirve a los cupos (`pkg/middleware.NewSharedRateLimiter`):
 
-* Un contador por **identidad** (usuario, clave de API o sesión; y por IP cuando no hay identidad) de
-  respuestas 401, 403, 404 y 405, en ventanas de 5 minutos.
-* Umbrales en el entorno (`PROBE_THRESHOLD_USER`, `PROBE_THRESHOLD_API_KEY`, `PROBE_THRESHOLD_IP`,
-  `PROBE_BLOCK_DURATION`), con valores de partida de 30, 30 y 60 en 5 minutos y bloqueo de 15 minutos.
-* Al superar el umbral: **bloqueo temporal de esa identidad** con 429 y código
-  `PROBE_DETECTED` (a la IP sin identidad, 429 igual), métrica `gateway_probe_blocks_total{identity_kind}`,
-  evento `access.probe.detected` por la outbox del gateway hacia `audit` y hacia el registro de
-  eventos de seguridad de `identity`, y **aviso al administrador de la empresa** por el correo del sistema
-  (con la referencia, la ruta y la hora, nunca la credencial).
-* Alerta `SondeoDeEndpoints` a plataforma cuando hay bloqueos sostenidos o de varias empresas a la vez
-  (barrido generalizado).
-* Excepciones explícitas y probadas: las rutas que devuelven 404 por diseño (un recurso que ya no
-  existe, una página pública sin publicar) no cuentan; cuentan las rutas que **no existen en la tabla**
-  del gateway y los métodos no admitidos.
+* Un contador por **identidad** de respuestas 401, 403, 404 y 405, en ventanas de 5 minutos. La
+  identidad es el **token que presenta la petición** (el de sesión o la clave de API, resumido) y,
+  si no trae ninguno, su IP; con token se cuenta **también** por IP, así que renovar el token no
+  reinicia el conteo. Es por token y no por usuario porque el guardia corre por delante de la
+  autenticación: solo así ve las rutas que no existen, que el enrutador despacha sin pasar por los
+  grupos autenticados. Un guardia interno, ya con la sesión verificada, anota la empresa y el
+  usuario para el evento.
+* Umbrales en el entorno (`PROBE_THRESHOLD_TOKEN`, `PROBE_THRESHOLD_IP`, `PROBE_WINDOW_MIN`,
+  `PROBE_BLOCK_MIN`), con valores de partida de 30 y 60 en 5 minutos y bloqueo de 15 minutos, y
+  `PROBE_MODE` (`enforce` bloquea; `observe` solo cuenta y registra, para calibrar sin cortar a nadie).
+  El conteo y los bloqueos viven en el Redis de la plataforma, comunes a las réplicas, y caen a la
+  memoria de cada réplica si no responde: nunca se deja de contar ni se bloquea por error.
+* Al llegar al umbral: **bloqueo temporal de esa identidad** con 429 y código `PROBE_DETECTED` (con
+  `Retry-After`), métrica `gateway_probe_blocks_total{identity,mode}` y `gateway_probe_rejections_total`,
+  registro con la empresa, el usuario o la clave, la IP y la última ruta, y, si la petición traía
+  sesión verificada, el evento `gateway.security.probe` (`user.probe_detected`) que `audit` convierte
+  en el evento de seguridad `endpoint_probe` de esa empresa, visible en su pantalla de eventos de
+  seguridad. El aviso por correo al administrador queda para la fase 4, con el panel.
+* Alerta `SondeoDeEndpoints` a plataforma con cada identidad que llega al umbral (dice tipo y modo).
+* Excepción explícita y probada: `/api/v1/auth/*` no cuenta (un 401 allí es una contraseña mal
+  escrita y ya tiene su cupo estricto y su bitácora). Un 404 de un recurso que existió y se borró
+  cuenta como uno más: treinta en cinco minutos no los produce una persona.
 
 **3.3 Límite por credencial, no solo por IP.** Hoy un cliente con una clave válida detrás de varias
 IP suma cupos. El limitador compartido ya sabe contar por clave (`AllowKey`): se aplica a las claves
@@ -306,3 +314,4 @@ vuelta atrás preparada: el registro DNS se despoxiea y todo vuelve a como hoy.
 | 2026-09-27 | Plan escrito tras la auditoría. Capas 3.1 y parte de 4 y 5 ya existen (permisos, step-up, MFA, auditoría, sesiones, eventos de seguridad, cupos por IP y por clave). |
 | 2026-09-27 | Fase 1 hecha: lista `selfhosted/edge/ai-crawlers.txt` (43 agentes), mapa y 403 en el borde, `robots.txt` con un grupo por agente y la prueba que los ata. |
 | 2026-09-27 | Fase 2 hecha: detector en `web/src/security/`, página de bloqueo con referencia, receptor en el gateway con métricas y alerta. Verificado con el MCP de Chrome DevTools. |
+| 2026-09-27 | Fase 3 hecha (3.2): guardia de sondeo en el gateway (`probe.go`), Redis con respaldo en memoria, `PROBE_*`, evento `gateway.security.probe` → `endpoint_probe` en `audit`, alerta `SondeoDeEndpoints`. Pendiente de 3.3 (cupo por sesión) y 3.4 (revocar desde el evento). |

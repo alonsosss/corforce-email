@@ -1516,6 +1516,13 @@ sobre el mismo certificado (es el que sirven también Postfix y Dovecot): `Certi
 renueva a los 30 e intenta cada noche: a los 25 lleva cinco fallos, casi siempre el token DNS-01 de Cloudflare revocado o sin
 permiso sobre la zona) y `CertificadoDelRelaySMTPPorCaducar` a dos semanas.
 
+**Sondeo de endpoints.** El gateway bloquea 15 minutos (429 `PROBE_DETECTED`) a la credencial o IP que acumula
+treinta (token) o sesenta (IP) respuestas 401/403/404/405 en cinco minutos (`PROBE_*` en `.env.example`). Cada bloqueo
+sale en la alerta `SondeoDeEndpoints` y en el registro del gateway (`sondeo de endpoints detectado`, con la empresa, el
+usuario o la clave, la IP y la última ruta); con sesión, la empresa lo ve como evento de seguridad `endpoint_probe`. Si
+bloquea a una integración legítima (rutas mal escritas), la ruta del registro lo delata: se corrige en la integración y
+el bloqueo cae solo. Para calibrar sin cortar a nadie, `PROBE_MODE=observe` cuenta y registra sin bloquear.
+
 **Rastreadores de IA.** El borde responde 403 a los agentes de `selfhosted/edge/ai-crawlers.txt` en toda ruta
 (`entrypoint.d/15-bots.sh` genera el mapa al arrancar) y `web/public/robots.txt` les prohíbe todo. Para añadir uno:
 una línea en la lista (solo letras, dígitos, punto, guion, guion bajo y espacio; el arranque rechaza otra cosa) y su
