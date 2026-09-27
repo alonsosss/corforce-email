@@ -6,19 +6,14 @@
 }
 
 .cf-sidebar__mark {
-  width: 32px;
-  height: 32px;
   display: grid;
   place-items: center;
-  border-radius: 10px;
-  background: var(--cf-text);
-  color: var(--cf-bg);
   flex-shrink: 0;
 }
 .cf-sidebar__name {
   font-size: var(--cf-text-xl);
-  font-weight: var(--cf-weight-medium);
-  letter-spacing: -0.01em;
+  font-weight: var(--cf-weight-semibold);
+  letter-spacing: -0.02em;
   line-height: 1.2;
   white-space: nowrap;
 }

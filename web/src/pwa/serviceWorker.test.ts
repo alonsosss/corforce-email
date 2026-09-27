@@ -42,7 +42,7 @@ function setup() {
   const caches = {
     open: async () => cache,
     match: async (req: FakeRequest | string) => cache.match(req),
-    keys: async () => ['cf-shell-v2', 'cf-shell-v1'],
+    keys: async () => ['cf-shell-v3', 'cf-shell-v2'],
     delete: async (name: string) => {
       deleted.push(name);
       return true;
@@ -91,7 +91,7 @@ describe('service worker: solo la carcasa estatica', () => {
     expect(sw.store.has(`${ORIGIN}/offline.html`)).toBe(true);
     expect(sw.store.has(`${ORIGIN}/icons/icon-192.png`)).toBe(true);
     await sw.lifecycle('activate');
-    expect(sw.deleted).toEqual(['cf-shell-v1']);
+    expect(sw.deleted).toEqual(['cf-shell-v2']);
   });
 
   it('nunca intercepta el API, las escrituras ni otros origenes', async () => {
