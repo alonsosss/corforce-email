@@ -3396,6 +3396,20 @@ export const es = {
   'rspamd.history.symbolsFor': 'Símbolos del mensaje {id}',
 
   'nav.platformLogs': 'Registros',
+  'nav.platformAutomationPass': 'Pase de automatización',
+  'automationPass.title': 'Pase de automatización',
+  'automationPass.subtitle':
+    'La web bloquea a todo navegador automatizado (Playwright, el MCP de Chrome DevTools). Para revisar la consola con uno de ellos, abre un pase temporal para tu IP desde la terminal del equipo que tiene la llave del servidor, en la carpeta del repositorio.',
+  'automationPass.commands': 'Comandos',
+  'automationPass.commandsHint':
+    'Se ejecutan en tu terminal, no aquí. Necesitan DEPLOY_HOST, DEPLOY_USER y DEPLOY_SSH_KEY en el entorno, las mismas variables que los despliegues.',
+  'automationPass.on': 'Abrir el pase 4 horas para la IP desde la que te conectas',
+  'automationPass.onHours': 'Abrir el pase 8 horas (de 1 a 168)',
+  'automationPass.state': 'Ver si hay un pase abierto y hasta cuándo',
+  'automationPass.off': 'Cerrar el pase ahora',
+  'automationPass.safetyTitle': 'Por qué no hay un botón aquí',
+  'automationPass.safety':
+    'El pase se abre en el servidor con su llave SSH, no desde la web: si alguien entrara en esta consola no podría desactivar la protección. Caduca solo, admite como mucho 7 días y 256 direcciones, y mientras está abierto suena la alerta PaseDeAutomatizacionActivo.',
   'logs.title': 'Registros',
   'logs.subtitle':
     'Líneas de registro de un servicio de la plataforma o de un motor de correo, desde Loki. Una ventana de hasta 24 horas y hasta 500 líneas por consulta; el texto se busca de forma literal.',

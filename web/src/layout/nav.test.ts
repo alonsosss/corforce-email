@@ -104,6 +104,7 @@ describe('menu frente a rutas', () => {
       paths.platformMailQueue,
       paths.platformRspamd,
       paths.platformLogs,
+      paths.platformAutomationPass,
     ];
     for (const to of platform) {
       const item = allItems.find((i) => i.to === to);

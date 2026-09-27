@@ -121,4 +121,5 @@ export const paths = {
   platformMailQueue: '/platform/mail-queue',
   platformLogs: '/platform/logs',
   platformRspamd: '/platform/rspamd',
+  platformAutomationPass: '/platform/automation-pass',
 } as const;

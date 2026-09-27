@@ -283,6 +283,11 @@ export const SCREENS: readonly ScreenDecl[] = [
     role: SYSTEM_ROLES.superadmin,
     load: () => import('@/pages/rspamd/RspamdPage'),
   },
+  {
+    path: paths.platformAutomationPass,
+    role: SYSTEM_ROLES.superadmin,
+    load: () => import('@/pages/automationPass/AutomationPassPage'),
+  },
 ];
 
 /**
