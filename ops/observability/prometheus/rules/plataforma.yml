@@ -795,6 +795,19 @@ groups:
           resumen: "El relay SMTP rechazo mensajes con malware"
           detalle: "Una integracion de una empresa envia adjuntos infectados: equipo comprometido o clave filtrada. El registro de smtp-relay (adjunto infectado rechazado) da la empresa y la clave; revocarla corta el envio al momento."
 
+      # acme renueva a los 30 dias de la caducidad y lo intenta a diario; el relay recibe una copia del
+      # mismo certificado que sirven Postfix y Dovecot. Si a los 25 dias sigue el viejo, la renovacion
+      # lleva cinco intentos fallando (el token de Cloudflare revocado, Let's Encrypt inaccesible) y
+      # quedan tres semanas para arreglarlo sin que caduque nada.
+      - alert: CertificadoDeCorreoSinRenovar
+        expr: min(smtp_relay_certificate_expiry_timestamp_seconds) - time() < 25 * 86400
+        for: 1h
+        labels:
+          severidad: media
+        annotations:
+          resumen: "El certificado de correo no se ha renovado y caduca en menos de 25 dias"
+          detalle: "acme lo renueva cuando quedan 30 dias y lo intenta cada noche; cinco dias despues sigue el viejo. Ver el registro de acme-mail: el token de Cloudflare (DNS-01, /etc/acme/dns-01.conf) revocado o sin permiso sobre core-force.com, o Let's Encrypt inaccesible. Con el certificado renovado, smtp-relay-certs lo copia al relay."
+
       - alert: CertificadoDelRelaySMTPPorCaducar
         expr: min(smtp_relay_certificate_expiry_timestamp_seconds) - time() < 14 * 86400
         for: 1h

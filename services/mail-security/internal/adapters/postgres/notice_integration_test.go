@@ -259,6 +259,27 @@ func TestIntegracionAvisoDeCuarentena(t *testing.T) {
 			t.Fatal("la fila descartada se borra")
 		}
 
+		// El historial es un rastro (10_notice_grants.sql): la aplicacion registra el uso de un
+		// enlace y lee, pero no altera ni borra, y los avisos ni siquiera los inserta.
+		for name, stmt := range map[string]string{
+			"borrar usos":     `DELETE FROM mail_security.quarantine_link_uses`,
+			"alterar usos":    `UPDATE mail_security.quarantine_link_uses SET action = 'discard'`,
+			"borrar avisos":   `DELETE FROM mail_security.quarantine_notices`,
+			"insertar avisos": `INSERT INTO mail_security.quarantine_notices (tenant_id, rcpt, idempotency_key, status, quarantine_ids) VALUES ($1, 'x@acme.com', 'k', 'sent', ARRAY[gen_random_uuid()])`,
+		} {
+			err := ctxPool.TransactRLS(adminCtx(pool, tenantA), func(ctx context.Context) error {
+				var args []any
+				if strings.Contains(stmt, "$1") {
+					args = append(args, tenantA)
+				}
+				_, err := ctxPool.Exec(ctx, stmt, args...)
+				return err
+			})
+			if err == nil || !strings.Contains(err.Error(), "permission denied") {
+				t.Fatalf("mail_app no debe poder %s: %v", name, err)
+			}
+		}
+
 		// Un enlace de la empresa B con la empresa A en la URL no encuentra nada.
 		forged := target(other, domain.LinkDiscard)
 		forged = forged[:len(forged)-len(other.TenantID.String())] + tenantA.String()

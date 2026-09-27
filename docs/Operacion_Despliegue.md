@@ -1511,8 +1511,10 @@ root y el relay no corre como root: en el perfil autoalojado `smtp-relay-certs` 
 (0640), y el relay lo recarga al cambiar (`selfhosted/smtp-relay/sync-cert.sh`). `smtp-relay-certs` es infraestructura del
 perfil (`perfil-despliegue.sh --infra`): el despliegue lo levanta antes de los servicios, que se recrean con `--no-deps`, y lo
 recrea cuando cambia `selfhosted/smtp-relay/`. El nombre del relay tiene que ir en el
-certificado: añadir `smtp.core-force.com` a `ADDITIONAL_SAN` de acme (`deploy/mail`) y dejar que acme lo renueve; la alerta
-`CertificadoDelRelaySMTPPorCaducar` avisa a dos semanas de la caducidad.
+certificado: añadir `smtp.core-force.com` a `ADDITIONAL_SAN` de acme (`deploy/mail`) y dejar que acme lo renueve. Dos alertas
+sobre el mismo certificado (es el que sirven también Postfix y Dovecot): `CertificadoDeCorreoSinRenovar` a 25 días (acme
+renueva a los 30 e intenta cada noche: a los 25 lleva cinco fallos, casi siempre el token DNS-01 de Cloudflare revocado o sin
+permiso sobre la zona) y `CertificadoDelRelaySMTPPorCaducar` a dos semanas.
 
 **DNS (aplicado el 2026-09-24).** Un registro `A` (y `AAAA` si el servidor tiene IPv6) `smtp.core-force.com` hacia la IP pública del
 servidor (hoy 89.58.10.80), **sin proxy de Cloudflare** (nube gris: Cloudflare no pasa SMTP). No hace falta MX: el relay no

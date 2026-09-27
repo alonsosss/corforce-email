@@ -67,6 +67,15 @@ tests:
             exp_annotations:
               resumen: "El certificado del relay SMTP caduca en menos de dos semanas"
               detalle: "acme no lo renovo o smtp-relay-certs no lo copio al relay. Comprobar que ADDITIONAL_SAN de acme lleva el nombre del relay (SMTP_RELAY_HOSTNAME) y el registro de smtp-relay-certs."
+      # A diez dias tambien avisa la temprana: las dos juntas dicen que lleva mas de veinte dias sin renovar.
+      - eval_time: 90m
+        alertname: CertificadoDeCorreoSinRenovar
+        exp_alerts:
+          - exp_labels:
+              severidad: media
+            exp_annotations:
+              resumen: "El certificado de correo no se ha renovado y caduca en menos de 25 dias"
+              detalle: "acme lo renueva cuando quedan 30 dias y lo intenta cada noche; cinco dias despues sigue el viejo. Ver el registro de acme-mail: el token de Cloudflare (DNS-01, /etc/acme/dns-01.conf) revocado o sin permiso sobre core-force.com, o Let's Encrypt inaccesible. Con el certificado renovado, smtp-relay-certs lo copia al relay."
       - eval_time: 30m
         alertname: ClavesDeAPIProbadas
         exp_alerts:
@@ -87,6 +96,28 @@ tests:
       - eval_time: 25m
         alertname: BarridoDeCredencialesSMTP
         exp_alerts: []
+      - eval_time: 90m
+        alertname: CertificadoDelRelaySMTPPorCaducar
+        exp_alerts: []
+      - eval_time: 90m
+        alertname: CertificadoDeCorreoSinRenovar
+        exp_alerts: []
+
+  # ── Certificado a veinte dias: la renovacion (a los 30) lleva diez noches fallando ─────────
+  # Avisa la temprana y todavia no la de dos semanas.
+  - interval: 1m
+    input_series:
+      - series: 'smtp_relay_certificate_expiry_timestamp_seconds{job="mail-services",service="smtp-relay"}'
+        values: '1728000x120'
+    alert_rule_test:
+      - eval_time: 90m
+        alertname: CertificadoDeCorreoSinRenovar
+        exp_alerts:
+          - exp_labels:
+              severidad: media
+            exp_annotations:
+              resumen: "El certificado de correo no se ha renovado y caduca en menos de 25 dias"
+              detalle: "acme lo renueva cuando quedan 30 dias y lo intenta cada noche; cinco dias despues sigue el viejo. Ver el registro de acme-mail: el token de Cloudflare (DNS-01, /etc/acme/dns-01.conf) revocado o sin permiso sobre core-force.com, o Let's Encrypt inaccesible. Con el certificado renovado, smtp-relay-certs lo copia al relay."
       - eval_time: 90m
         alertname: CertificadoDelRelaySMTPPorCaducar
         exp_alerts: []
