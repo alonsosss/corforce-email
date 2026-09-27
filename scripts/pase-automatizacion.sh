@@ -41,10 +41,20 @@ estado() {
   fi
 }
 
+# Recrea el gateway con la MISMA imagen que dejo el ultimo despliegue: el tag de .deployed-tag y el
+# override de imagenes que corresponda (docker save deja core-force-mail/<svc>; si no, el registro).
+# Sin el override, compose buscaria app-gateway:latest, que no existe, y no recrearia nada.
 recrear_gateway() {
-  local compose_args
+  local compose_args tag imagenes
   compose_args="$(remote "ops/maintenance/perfil-despliegue.sh --compose")"
-  remote "ops/security/secrets/with-secrets.sh docker compose $compose_args up -d --no-deps --no-build gateway" >/dev/null
+  tag="$(remote 'cat .deployed-tag 2>/dev/null' || true)"
+  [[ -n "$tag" ]] || { echo "el servidor no tiene .deployed-tag: despliega primero con scripts/deploy-ecr.sh" >&2; exit 1; }
+  if remote "docker inspect --format '{{.Config.Image}}' app-gateway-1" | grep -q '^core-force-mail/'; then
+    imagenes=docker-compose.images.save.yml
+  else
+    imagenes=docker-compose.images.yml
+  fi
+  remote "export DEPLOY_TAG=$tag && ops/security/secrets/with-secrets.sh docker compose $compose_args -f $imagenes up -d --no-deps --no-build gateway" >/dev/null
   remote "ops/maintenance/esperar-sanos.sh --proyecto app gateway" || {
     echo "!! el gateway no arranco: revisa 'docker logs app-gateway-1' (un pase mal escrito lo impide arrancar)" >&2
     exit 1
