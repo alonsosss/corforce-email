@@ -481,6 +481,20 @@ groups:
           resumen: "{{ $labels.service }} no consigue consultar la cola de Postfix"
           detalle: "Las consultas al agente de la cola (puerto 8590 del contenedor de Postfix) fallan de forma sostenida: el agente esta caido o el contenedor de Postfix no esta sano, QUEUE_AGENT_API_KEY es distinta en Postfix y en {{ $labels.service }}, o el certificado no casa con QUEUE_AGENT_TLS_SERVER_NAME. Mientras dure, la alerta ColaDePostfixAtascada no ve la cola."
 
+  # Navegadores automatizados (docs/Plan_Proteccion_Frente_a_Bots.md, capa 2): la web no se monta
+  # cuando detecta automatizacion y avisa al gateway con una referencia. Un bloqueo suelto es una
+  # persona con una herramienta de depuracion; una rafaga es alguien probando la plataforma con un
+  # navegador controlado, o un falso positivo que hay que calibrar. En los dos casos hay que mirar.
+  - name: navegadores-automatizados
+    rules:
+      - alert: RafagaDeNavegadoresAutomatizados
+        expr: sum(increase(gateway_automation_detected_total[15m])) > 20
+        labels:
+          severidad: media
+        annotations:
+          resumen: "{{ $value | humanize }} bloqueos de navegador automatizado en 15 minutos"
+          detalle: "La web bloqueo mas de veinte navegadores automatizados en un cuarto de hora. El registro del gateway (navegador automatizado bloqueado) da la referencia, la IP, la ruta y las senales de cada uno: si son la misma IP y rutas de la aplicacion es un barrido; si son personas distintas con la misma senal debil, hay que calibrar el detector (web/src/security/automation.ts)."
+
   # Registro de entregas del correo corporativo (docs/Plan_Registro_de_Envios.md): mail-security lee
   # POSTFIX_DELIVERY_LOG. Si no lee, la pantalla Envios deja de mostrar el correo reciente y, al llegar
   # a 200.000 lineas, syslog-ng recorta lo mas antiguo sin leer.

@@ -145,6 +145,13 @@ export const es = {
   'auth.expired.description':
     'Por seguridad la sesión se cerró. Vuelve a iniciar sesión para continuar.',
   'auth.expired.login': 'Iniciar sesión',
+  'security.automation.title': 'No podemos mostrarte la aplicación',
+  'security.automation.description':
+    'Este navegador parece estar controlado por un programa automatizado y la plataforma solo se usa desde un navegador manejado por una persona.',
+  'security.automation.help':
+    'Si eres una persona, cierra las herramientas de automatización o de depuración remota, desactiva las extensiones que controlan el navegador y vuelve a intentarlo. Si el problema sigue, indica la referencia a tu administrador.',
+  'security.automation.reference': 'Referencia:',
+  'security.automation.retry': 'Volver a intentar',
   'auth.stepUp.title': 'Reconfirma tu identidad',
   'auth.stepUp.description':
     'Esta acción es crítica. Introduce tu contraseña actual y, si tienes verificación en dos pasos, el código.',

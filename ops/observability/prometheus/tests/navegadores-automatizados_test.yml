@@ -1,0 +1,37 @@
+# Pruebas de la alerta de navegadores automatizados.
+#
+# El gateway cuenta cada bloqueo que la web le comunica. Un bloqueo suelto no avisa; mas de veinte
+# en 15 minutos, si. El reloj empieza en 0.
+#
+#   make check-alertas
+
+rule_files:
+  - ../rules/plataforma.yml
+
+evaluation_interval: 1m
+
+tests:
+  # ── Bloqueos sueltos a lo largo de una hora: nada que avisar ─────────────────
+  - interval: 1m
+    input_series:
+      - series: 'gateway_automation_detected_total{job="mail-services",service="gateway",instance="gateway:8080"}'
+        values: '0 1 1 1 2 2 2 2 3 3 3 3 3 4 4 4 4 4 5 5 5'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: RafagaDeNavegadoresAutomatizados
+        exp_alerts: []
+
+  # ── Un barrido: tres bloqueos por minuto durante un cuarto de hora ─────────
+  - interval: 1m
+    input_series:
+      - series: 'gateway_automation_detected_total{job="mail-services",service="gateway",instance="gateway:8080"}'
+        values: '0+3x20'
+    alert_rule_test:
+      - eval_time: 16m
+        alertname: RafagaDeNavegadoresAutomatizados
+        exp_alerts:
+          - exp_labels:
+              severidad: media
+            exp_annotations:
+              resumen: "45 bloqueos de navegador automatizado en 15 minutos"
+              detalle: "La web bloqueo mas de veinte navegadores automatizados en un cuarto de hora. El registro del gateway (navegador automatizado bloqueado) da la referencia, la IP, la ruta y las senales de cada uno: si son la misma IP y rutas de la aplicacion es un barrido; si son personas distintas con la misma senal debil, hay que calibrar el detector (web/src/security/automation.ts)."

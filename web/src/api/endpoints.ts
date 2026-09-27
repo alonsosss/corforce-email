@@ -404,6 +404,10 @@ export const endpoints = {
   },
   // Pagina publica de citas (sin sesion): la sirve el webmail de la celda del enlace. Solo la usa
   // api/booking.ts.
+  /** Referencia de un bloqueo por navegador automatizado; la atiende el propio gateway. */
+  publicSecurity: {
+    automationDetected: `${API_PREFIX}/public/security/automation-detected`,
+  },
   publicBooking: {
     page: (cell: string, tenant: string, page: string) =>
       `${API_PREFIX}/public/booking/${seg(cell)}/${seg(tenant)}/${seg(page)}`,

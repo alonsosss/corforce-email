@@ -97,23 +97,35 @@ Es exactamente lo que delató al MCP de Chrome en Adidas y Temu: Chrome pone
 protocolo DevTools, `HeadlessChrome` en el agente, ausencia de plugins y de idiomas, ventana de 0×0,
 `permissions.query` incoherente con `Notification.permission`).
 
-* **Dónde corre:** un módulo pequeño, sin dependencias, que se ejecuta **antes** de montar la aplicación
-  en la consola, el webmail, el login y las páginas públicas (landing, citas, formularios). Como la CSP
-  usa nonce y `strict-dynamic`, va como módulo del propio bundle (no como script inline), así no toca
-  la política.
-* **Qué hace:** calcula una puntuación con las señales anteriores. Por encima del umbral no monta la
-  aplicación: muestra una página de bloqueo con un texto claro, una **referencia** (hash corto del
-  instante, la IP y la ruta, como el "Reference Error" de Akamai) y cómo pedir revisión. La referencia se
-  envía al gateway (`POST /api/v1/public/security/automation-detected`, con su propio cupo) para que
-  quede en el registro de eventos de seguridad y en las métricas.
+* **Dónde corre:** `web/src/security/automation.ts`, un módulo sin dependencias que `main.tsx` ejecuta
+  **antes** de montar la aplicación: consola, webmail, login y páginas de citas (están en la misma
+  aplicación). Va en el propio bundle, así que la CSP con nonce y `strict-dynamic` no cambia. **No
+  corre en las landing pages ni en los formularios incrustados**: se sirven con una CSP sin scripts a
+  propósito, y meter JavaScript ahí abriría más de lo que cierra; a esas rutas las cubren las capas 0
+  y 1.
+* **Qué hace:** puntúa las señales (`webdriver`, agente sin cabeza y rastros de chromedriver o Selenium
+  valen 3 y bastan solas; ventana 0×0 vale 2; sin idiomas y Chrome de escritorio sin plugins valen 1 y
+  solo suman entre varias; umbral 3). Por encima del umbral no monta la aplicación ni registra el service
+  worker: muestra una página de bloqueo con un texto claro, una **referencia** aleatoria de 12 caracteres
+  (como el "Reference Error" de Akamai, pero sin codificar nada) y cómo pedir revisión. La referencia,
+  la ruta y las señales van a `POST /api/v1/public/security/automation-detected`, que atiende el
+  **propio gateway** con el cupo estricto por IP: valida cada campo contra una lista cerrada, cuenta
+  (`gateway_automation_detected_total`, `gateway_automation_signals_total{signal}`) y lo escribe en su
+  registro con la IP y el agente. No es un evento de auditoría: la detección corre antes del inicio de
+  sesión y no hay empresa a la que atribuirlo; cuando el panel de seguridad (fase 4) lo necesite,
+  el bloqueo de una sesión ya identificada sí lo será.
 * **Qué no hace:** no bloquea a los lectores de pantalla ni a los navegadores viejos: las señales de
   accesibilidad no puntúan, y sin JavaScript la aplicación no funciona de todos modos.
 * **Límite honesto:** las herramientas "sigilosas" borran estas señales. Esta capa atrapa la
   automatización corriente (Playwright, Puppeteer, Selenium, el MCP de Chrome, `curl`) y a los agentes
   que usan el navegador del propio usuario con el modo de depuración; no a un atacante que se esfuerce.
   Para eso están las capas 3 a 5.
-* Prueba en CI: un Playwright normal contra la web ve la página de bloqueo; el mismo Playwright con las
-  señales borradas ve el login (documenta el límite en vez de fingir que no existe).
+* Pruebas: unitarias del detector con entornos reales (Chrome, Firefox, Safari y móvil de una persona
+  no se bloquean; `webdriver`, `HeadlessChrome` y `$cdc_` sí; las débiles solo entre varias), del
+  receptor del gateway (422 a todo lo que no es suyo, nada rechazado cuenta) y de la alerta
+  `RafagaDeNavegadoresAutomatizados` (más de 20 en 15 minutos). Comprobado a mano con el MCP de Chrome
+  DevTools contra la web compilada: ve la página de bloqueo y no el login. Una prueba automática con
+  Playwright en CI queda para la fase 7, con los paquetes reutilizables.
 
 ### Capa 3. La credencial: alcance, ritmo y sondeo
 
@@ -292,4 +304,5 @@ vuelta atrás preparada: el registro DNS se despoxiea y todo vuelve a como hoy.
 | Fecha | Qué |
 |---|---|
 | 2026-09-27 | Plan escrito tras la auditoría. Capas 3.1 y parte de 4 y 5 ya existen (permisos, step-up, MFA, auditoría, sesiones, eventos de seguridad, cupos por IP y por clave). |
-| 2026-09-27 | Fase 1 hecha: lista `selfhosted/edge/ai-crawlers.txt` (45 agentes), mapa y 403 en el borde, `robots.txt` con un grupo por agente y la prueba que los ata. |
+| 2026-09-27 | Fase 1 hecha: lista `selfhosted/edge/ai-crawlers.txt` (43 agentes), mapa y 403 en el borde, `robots.txt` con un grupo por agente y la prueba que los ata. |
+| 2026-09-27 | Fase 2 hecha: detector en `web/src/security/`, página de bloqueo con referencia, receptor en el gateway con métricas y alerta. Verificado con el MCP de Chrome DevTools. |

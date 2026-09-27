@@ -168,6 +168,9 @@ func main() {
 		// muestra antes de que el usuario escriba. Publica como el reinicio, con el
 		// mismo limitador; no revela nada del usuario.
 		r.With(authLimiter.Limit).Get("/auth/reset-password/policy", identity.ServeHTTP)
+		// Referencia de un bloqueo por navegador automatizado (automation.go): la atiende el
+		// gateway, sin sesion, con el cupo estricto; solo cuenta y registra.
+		r.With(authLimiter.Limit).Post("/public/security/automation-detected", automationReportHandler(logger))
 
 		// Rutas publicas declaradas en la tabla: webhooks de proveedores y enlaces que
 		// llegan por correo. Sin JWT; el servicio verifica la firma o el enlace. Las de un
