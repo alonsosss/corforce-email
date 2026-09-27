@@ -59,6 +59,13 @@ const (
 	defaultDoveadmURL        = "https://dovecot:8443"
 	defaultQueueAgentURL     = "https://postfix:8590"
 
+	// Registro de entregas (docs/Plan_Registro_de_Envios.md): cuanto se conserva y cada cuanto se
+	// poda. 400 dias como mucho: un registro de envios no es un archivo.
+	defaultDeliveryRetentionDays       = 90
+	maxDeliveryRetentionDays           = 400
+	deliveryPruneInterval              = time.Hour
+	deliveryLogLockKey           int64 = 0x646c76726c6f6721 // "dlvrlog!"
+
 	// Vigilancia de la cola de Postfix: las alertas ColaDePostfixAtascada y GestorDeColaSinRespuesta
 	// (ops/observability/prometheus/rules/plataforma.yml) cuentan con una consulta por minuto como
 	// mucho cada cinco: alargarla exige alargar sus umbrales.
@@ -141,6 +148,7 @@ type settings struct {
 	dkimReconcileInterval    time.Duration
 	quarantineNotifyInterval time.Duration
 	quarantineLinkTTL        time.Duration
+	deliveryRetentionDays    int
 }
 
 // loadSettings falla con un valor fuera de su rango, un host o una URL mal formados y sin token
@@ -215,6 +223,9 @@ func loadSettings() (settings, error) {
 		return st, err
 	}
 	if st.quarantineLinkTTL, err = config.EnvDuration("MAIL_QUARANTINE_LINK_TTL", defaultQuarantineLinkTTL, minQuarantineLinkTTL, maxQuarantineLinkTTL); err != nil {
+		return st, err
+	}
+	if st.deliveryRetentionDays, err = config.EnvInt("MAIL_DELIVERY_LOG_RETENTION_DAYS", defaultDeliveryRetentionDays, 1, maxDeliveryRetentionDays); err != nil {
 		return st, err
 	}
 	return st, nil
@@ -476,6 +487,16 @@ func main() {
 	if queueAgent != nil {
 		go app.NewQueueMonitor(queueAgent, metrics, st.queuePollInterval, logger).Run(ctx)
 	}
+	// Registro de entregas: lee POSTFIX_DELIVERY_LOG (una replica, con cerrojo de lider) y poda por
+	// antiguedad.
+	deliveryLog := app.NewDeliveryLog(app.DeliveryLogDeps{
+		Source: redisadapter.NewDeliveryLog(store), Repo: postgres.NewDeliveryLogRepository(ctxPool), Tx: ctxPool, Directory: directory,
+		Metrics: metrics, Retention: time.Duration(st.deliveryRetentionDays) * 24 * time.Hour, Logger: logger,
+	})
+	go deliveryLog.Run(withPool(ctx), func(c context.Context) (func(), bool) {
+		return db.TryLeaderLock(c, pool.Pool, deliveryLogLockKey)
+	})
+	go deliveryLog.RunPruner(withPool(ctx), deliveryPruneInterval)
 	go dkimUC.RunReconciler(withPool(ctx), st.dkimReconcileInterval,
 		func(c context.Context) (func(), bool) { return db.TryLeaderLock(c, pool.Pool, dkimReconcileLockKey) })
 
@@ -503,6 +524,7 @@ func main() {
 		WithQueue(queueUseCase(queueAgent, logger)).
 		WithAntispam(app.NewAntispamUseCase(antispamReader, logger)).
 		WithSpamCheck(app.NewSpamCheckUseCase(antispamReader, metrics, logger)).
+		WithDeliveryLog(deliveryLog).
 		Routes()
 	if err := membership.AcceptOperators(routes, handler.PlatformRoutes()); err != nil {
 		log.Fatalf("celda de la instancia: %v", err)

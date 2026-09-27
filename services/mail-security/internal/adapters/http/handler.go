@@ -35,6 +35,7 @@ type Handler struct {
 	queue      *app.QueueUseCase
 	antispam   *app.AntispamUseCase
 	spamCheck  *app.SpamCheckUseCase
+	delivery   *app.DeliveryLog
 	authz      *authz.Checker
 	// publicLimiter frena por ip los enlaces sin sesion del aviso de cuarentena, por
 	// debajo del limite general del servicio.
@@ -60,6 +61,12 @@ func (h *Handler) WithQueue(queue *app.QueueUseCase) *Handler {
 // responden 503 NOT_CONFIGURED.
 func (h *Handler) WithAntispam(antispam *app.AntispamUseCase) *Handler {
 	h.antispam = antispam
+	return h
+}
+
+// WithDeliveryLog conecta el registro de entregas. Sin el, su ruta responde 503 NOT_CONFIGURED.
+func (h *Handler) WithDeliveryLog(delivery *app.DeliveryLog) *Handler {
+	h.delivery = delivery
 	return h
 }
 
@@ -154,6 +161,8 @@ func (h *Handler) Routes() chi.Router {
 
 		r.With(h.can("quarantine_settings", "read")).Get("/quarantine-settings", h.GetQuarantineSettings)
 		r.With(h.can("quarantine_settings", "update")).Put("/quarantine-settings", h.PutQuarantineSettings)
+
+		r.With(h.can("delivery_log", "read")).Get("/delivery-log", h.ListDeliveryLog)
 
 		r.With(h.can("smtp_access", "read")).Get("/smtp-access", h.ListSMTPAccess)
 		r.With(h.can("smtp_access", "read")).Get("/smtp-access/{username}", h.GetSMTPAccess)

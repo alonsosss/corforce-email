@@ -92,6 +92,7 @@ export const paths = {
   landingPageEditorPattern: '/sending/pages/:id/editor',
   suppression: '/sending/suppression',
   reputation: '/sending/reputation',
+  sendingLog: '/sending/log',
   contacts: '/marketing/contacts',
   contact: (id: string) => `/marketing/contacts/${encodeURIComponent(id)}`,
   contactList: (id: string) => `/marketing/lists/${encodeURIComponent(id)}`,

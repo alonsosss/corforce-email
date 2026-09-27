@@ -283,7 +283,47 @@ interface StatusResponse {
   status: string;
 }
 
+/**
+ * Registro de entregas del correo corporativo (services/mail-security, domain/delivery.go): lo que
+ * Postfix entrego, reboto, aplazo o rechazo, con la respuesta del otro servidor.
+ */
+export const DELIVERY_STATUSES = ['sent', 'bounced', 'deferred', 'expired', 'rejected'] as const;
+export type DeliveryStatus = (typeof DELIVERY_STATUSES)[number];
+export const DELIVERY_DIRECTIONS = ['outbound', 'inbound'] as const;
+export type DeliveryDirection = (typeof DELIVERY_DIRECTIONS)[number];
+
+export interface DeliveryEvent {
+  id: string;
+  direction: DeliveryDirection;
+  queue_id: string;
+  message_id: string;
+  sender: string;
+  recipient: string;
+  status: DeliveryStatus;
+  /** Codigo de estado extendido (RFC 3463), p. ej. 5.1.1. */
+  dsn: string;
+  /** Servidor que respondio, o none si no se llego a conectar. */
+  relay: string;
+  /** Respuesta del servidor de destino o motivo del rechazo. */
+  reason: string;
+  delay_seconds: string | null;
+  /** Buzon que lo envio autenticado (solo en los salientes). */
+  sasl_username: string;
+  occurred_at: string;
+}
+
+export interface DeliveryLogQuery extends PageQuery {
+  direction?: DeliveryDirection;
+  status?: DeliveryStatus;
+  /** Remitente o destinatario exacto. */
+  address?: string;
+  date_from?: string;
+  date_to?: string;
+}
+
 export const mailSecurityApi = {
+  deliveryLog: (query: DeliveryLogQuery): Promise<Page<DeliveryEvent>> =>
+    fetchPage<DeliveryEvent>(endpoints.mailSecurity.deliveryLog, { ...query }),
   listSpamScores: () => fetchList<SpamScore>(endpoints.mailSecurity.spamScores),
   putSpamScore: (object: string, input: SpamScoreInput) =>
     api.put<SpamScore>(endpoints.mailSecurity.spamScore(object), { body: input }),
@@ -342,8 +382,12 @@ export const mailSecurityApi = {
   rspamdStats: async (signal?: AbortSignal) =>
     (await api.get<RspamdStats>(endpoints.mailSecurity.rspamdStats, { signal })).data,
   rspamdHistory: async (limit: number, signal?: AbortSignal) =>
-    (await api.get<RspamdHistory>(endpoints.mailSecurity.rspamdHistory, { params: { limit }, signal }))
-      .data,
+    (
+      await api.get<RspamdHistory>(endpoints.mailSecurity.rspamdHistory, {
+        params: { limit },
+        signal,
+      })
+    ).data,
 
   getQuarantineSettings: () =>
     api.get<QuarantineSettings>(endpoints.mailSecurity.quarantineSettings),

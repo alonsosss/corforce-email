@@ -29,6 +29,13 @@ const (
 	RedisF2BQueueUnban = "F2B_QUEUE_UNBAN"
 	RedisF2BActiveBans = "F2B_ACTIVE_BANS"
 	RedisF2BPermBans   = "F2B_PERM_BANS"
+
+	// Registro de entregas (docs/Plan_Registro_de_Envios.md). POSTFIX_DELIVERY_LOG la escribe el
+	// syslog-ng de Postfix y solo la lee este servicio; la lista de trabajo y el contexto por id de
+	// cola son solo suyos.
+	RedisDeliveryLog       = "POSTFIX_DELIVERY_LOG"
+	RedisDeliveryLogWork   = "CFM_DELIVERY_LOG_WORK"
+	RedisDeliveryQIDPrefix = "CFM_DELIVERY_QID:"
 )
 
 // SMTPAllowNetsKey es el hash de redes permitidas de un usuario limitado.

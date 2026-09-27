@@ -127,6 +127,12 @@ export const NAV: NavGroup[] = [
         module: MODULES.templates,
       },
       {
+        to: paths.sendingLog,
+        labelKey: 'nav.sendingLog',
+        icon: IconMailOpen,
+        module: MODULES.transactional,
+      },
+      {
         to: paths.suppression,
         labelKey: 'nav.suppression',
         icon: IconBan,

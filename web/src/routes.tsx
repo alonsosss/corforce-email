@@ -162,6 +162,11 @@ export const SCREENS: readonly ScreenDecl[] = [
     load: () => import('@/pages/reputation/ReputationPage'),
   },
   {
+    path: paths.sendingLog,
+    module: MODULES.transactional,
+    load: () => import('@/pages/sendingLog/SendingLogPage'),
+  },
+  {
     path: paths.contacts,
     module: MODULES.contacts,
     load: () => import('@/pages/contacts/ContactsPage'),

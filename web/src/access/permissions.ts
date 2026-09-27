@@ -210,6 +210,13 @@ export const PERMISSIONS = {
   sendingDomains: {
     read: [MODULES.transactional, 'sending_domains', 'read'],
   },
+  transactionalMessages: {
+    read: [MODULES.transactional, 'messages', 'read'],
+  },
+  // 050: registro de entregas del correo corporativo.
+  deliveryLog: {
+    read: [MODULES.mailSecurity, 'delivery_log', 'read'],
+  },
   brandKit: {
     read: [MODULES.templates, 'brand_kit', 'read'],
     update: [MODULES.templates, 'brand_kit', 'update'],

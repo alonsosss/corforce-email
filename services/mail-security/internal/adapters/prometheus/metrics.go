@@ -24,6 +24,9 @@ type Metrics struct {
 	queuePollSuccess   prometheus.Gauge
 	queuePollFailures  prometheus.Counter
 	spamChecks         *prometheus.CounterVec
+	deliveryLines      *prometheus.CounterVec
+	deliveryBacklog    prometheus.Gauge
+	deliveryFailures   prometheus.Counter
 }
 
 func New() *Metrics {
@@ -72,6 +75,18 @@ func New() *Metrics {
 			Name: "mail_security_spam_checks_total",
 			Help: "Puntuaciones antispam de correos sin enviar (verificador de plantillas), por desenlace (scanned: Rspamd dio veredicto; invalid: mensaje vacio o mayor que 2 MiB; unavailable: Rspamd no respondio o no se entendio; not_configured: sin contrasena de lectura del controller o rechazada).",
 		}, []string{"outcome"}),
+		deliveryLines: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "mail_security_delivery_log_lines_total",
+			Help: "Lineas del registro de Postfix que leyo el registro de entregas, por desenlace (stored: evento guardado; duplicate: ya estaba; context: remitente, usuario o message-id de un mensaje en cola; unowned: de ninguna empresa de la celda; ignored: no es una entrega; malformed: ilegible).",
+		}, []string{"outcome"}),
+		deliveryBacklog: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "mail_security_delivery_log_backlog_lines",
+			Help: "Lineas de Postfix que esperan en POSTFIX_DELIVERY_LOG sin leer. Si crece, el registro de entregas va atrasado.",
+		}),
+		deliveryFailures: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "mail_security_delivery_log_store_failures_total",
+			Help: "Intentos de guardar el registro de entregas que fallaron (Redis o la base no respondieron); la linea se reintenta.",
+		}),
 	}
 	// Las series nacen a cero: un contador que aparece ya en 1 no da increase().
 	for _, reason := range domain.DKIMRemovalReasons() {
@@ -92,8 +107,12 @@ func New() *Metrics {
 	for _, outcome := range domain.SpamCheckOutcomes() {
 		m.spamChecks.WithLabelValues(string(outcome))
 	}
+	for _, outcome := range []string{"stored", "duplicate", "context", "unowned", "ignored", "malformed"} {
+		m.deliveryLines.WithLabelValues(outcome)
+	}
 	prometheus.MustRegister(m.dkimRemovals, m.dkimUnresolved, m.dkimLastSuccess, m.dovecotRevocations, m.dovecotFailures,
-		m.quarantine, m.queueMessages, m.queueOldest, m.queuePollSuccess, m.queuePollFailures, m.spamChecks)
+		m.quarantine, m.queueMessages, m.queueOldest, m.queuePollSuccess, m.queuePollFailures, m.spamChecks,
+		m.deliveryLines, m.deliveryBacklog, m.deliveryFailures)
 	return m
 }
 
@@ -145,3 +164,9 @@ func (m *Metrics) QuarantineReleased()    { m.quarantine.WithLabelValues("releas
 func (m *Metrics) QuarantineDiscarded()   { m.quarantine.WithLabelValues("discarded").Inc() }
 func (m *Metrics) QuarantineLearnedSpam() { m.quarantine.WithLabelValues("learned_spam").Inc() }
 func (m *Metrics) QuarantineLearnedHam()  { m.quarantine.WithLabelValues("learned_ham").Inc() }
+
+func (m *Metrics) DeliveryLineProcessed(outcome string) {
+	m.deliveryLines.WithLabelValues(outcome).Inc()
+}
+func (m *Metrics) DeliveryBacklog(lines int64) { m.deliveryBacklog.Set(float64(lines)) }
+func (m *Metrics) DeliveryStoreFailed()        { m.deliveryFailures.Inc() }

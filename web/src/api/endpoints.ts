@@ -173,6 +173,7 @@ export const endpoints = {
     mailboxTag: (username: string) =>
       `${API_PREFIX}/mail-security/mailbox-tags/${addressSeg(username)}`,
     quarantine: `${API_PREFIX}/mail-security/quarantine`,
+    deliveryLog: `${API_PREFIX}/mail-security/delivery-log`,
     quarantineItem: (id: string) => `${API_PREFIX}/mail-security/quarantine/${seg(id)}`,
     quarantineMessage: (id: string) => `${API_PREFIX}/mail-security/quarantine/${seg(id)}/message`,
     quarantineRelease: (id: string) => `${API_PREFIX}/mail-security/quarantine/${seg(id)}/release`,
@@ -224,6 +225,8 @@ export const endpoints = {
   transactional: {
     sendingDomains: `${API_PREFIX}/transactional/sending-domains`,
     messages: `${API_PREFIX}/transactional/messages`,
+    message: (id: string) => `${API_PREFIX}/transactional/messages/${seg(id)}`,
+    messageEvents: (id: string) => `${API_PREFIX}/transactional/messages/${seg(id)}/events`,
   },
   suppression: {
     check: `${API_PREFIX}/suppression/check`,

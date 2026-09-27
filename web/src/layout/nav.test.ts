@@ -84,6 +84,7 @@ describe('menu frente a rutas', () => {
       [paths.templates, MODULES.templates],
       [paths.brandKit, MODULES.templates],
       [paths.landingPages, MODULES.templates],
+      [paths.sendingLog, MODULES.transactional],
       [paths.suppression, MODULES.suppression],
       [paths.reputation, MODULES.reputation],
     ]);

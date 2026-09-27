@@ -481,6 +481,33 @@ groups:
           resumen: "{{ $labels.service }} no consigue consultar la cola de Postfix"
           detalle: "Las consultas al agente de la cola (puerto 8590 del contenedor de Postfix) fallan de forma sostenida: el agente esta caido o el contenedor de Postfix no esta sano, QUEUE_AGENT_API_KEY es distinta en Postfix y en {{ $labels.service }}, o el certificado no casa con QUEUE_AGENT_TLS_SERVER_NAME. Mientras dure, la alerta ColaDePostfixAtascada no ve la cola."
 
+  # Registro de entregas del correo corporativo (docs/Plan_Registro_de_Envios.md): mail-security lee
+  # POSTFIX_DELIVERY_LOG. Si no lee, la pantalla Envios deja de mostrar el correo reciente y, al llegar
+  # a 200.000 lineas, syslog-ng recorta lo mas antiguo sin leer.
+  - name: registro-de-entregas
+    rules:
+      # Unos minutos de correo en rafaga son unos cientos de lineas; 5.000 sostenidas son un lector parado
+      # o que no da abasto.
+      - alert: RegistroDeEntregasAtrasado
+        expr: max by (service) (mail_security_delivery_log_backlog_lines) > 5000
+        for: 15m
+        labels:
+          severidad: media
+        annotations:
+          resumen: "{{ $labels.service }} lleva quince minutos sin leer el registro de entregas de Postfix ({{ $value }} lineas esperando)"
+          detalle: "La lista POSTFIX_DELIVERY_LOG crece: el lector de mail-security no tiene el cerrojo de lider, no llega al Redis de los motores o no da abasto. Las empresas ven su pantalla Envios desactualizada y, a las 200.000 lineas, se pierde lo mas antiguo. Ver los registros de mail-security (registro de entregas: reintento)."
+
+      # Guardar falla de forma sostenida (la base de la celda no responde o rechaza la fila): las lineas se
+      # quedan en la lista de trabajo y se reintentan; mientras, no se registra nada nuevo.
+      - alert: RegistroDeEntregasSinGuardar
+        expr: sum by (service) (increase(mail_security_delivery_log_store_failures_total[10m])) > 0
+        for: 15m
+        labels:
+          severidad: media
+        annotations:
+          resumen: "{{ $labels.service }} no consigue guardar el registro de entregas"
+          detalle: "Los intentos de guardar eventos del registro de entregas fallan desde hace mas de quince minutos. Las lineas esperan en la lista de trabajo y se guardaran al volver la base; si la causa no es la base (una restriccion, un permiso), los registros de mail-security dicen cual."
+
   # Revocacion en Dovecot desde mail-security: con cada evento de buzon (mail.mailbox.*) vacia la
   # cache de autenticacion del buzon y, si ya no puede entrar o cambio su credencial, cierra sus
   # sesiones por el API HTTP de doveadm de la celda. Un fallo deja el evento sin confirmar y

@@ -332,3 +332,40 @@ type Transactor interface {
 type OwnerTransactor interface {
 	Transact(ctx context.Context, fn func(ctx context.Context) error) error
 }
+
+// DeliveryLogRepository guarda y consulta el registro de entregas del correo corporativo. Insert
+// corre sin empresa en el contexto (el lector, como el exportador de la cuarentena); List, bajo RLS
+// y con tenant_id explicito.
+type DeliveryLogRepository interface {
+	// Insert guarda el evento; false si ya existia (misma huella en la empresa).
+	Insert(ctx context.Context, e *domain.DeliveryEvent) (bool, error)
+	List(ctx context.Context, tenantID uuid.UUID, f domain.DeliveryFilter) ([]domain.DeliveryEvent, int64, error)
+	// PruneBefore borra hasta limit eventos anteriores a before y dice cuantos borro.
+	PruneBefore(ctx context.Context, before time.Time, limit int) (int64, error)
+}
+
+// DeliveryLogSource es la lista POSTFIX_DELIVERY_LOG del Redis de los motores, leida con entrega
+// al menos una vez: cada linea pasa a una lista de trabajo y solo se borra de ella tras
+// procesarla.
+type DeliveryLogSource interface {
+	// Next mueve la linea mas antigua a la lista de trabajo; false si no llego ninguna en wait.
+	Next(ctx context.Context, wait time.Duration) (string, bool, error)
+	// Pending devuelve, de la mas antigua a la mas reciente, lo que quedo en la lista de trabajo.
+	Pending(ctx context.Context) ([]string, error)
+	// Ack quita la linea de la lista de trabajo.
+	Ack(ctx context.Context, raw string) error
+	// Backlog es cuantas lineas esperan sin leer.
+	Backlog(ctx context.Context) (int64, error)
+	// LoadContext y SaveContext guardan lo que se sabe de un id de cola hasta su entrega.
+	LoadContext(ctx context.Context, qid string) (domain.QueueContext, error)
+	SaveContext(ctx context.Context, qid string, qc domain.QueueContext, ttl time.Duration) error
+}
+
+// DeliveryLogMetrics cuenta lo que hace el lector del registro de entregas.
+type DeliveryLogMetrics interface {
+	// DeliveryLineProcessed: stored, duplicate, unowned (ninguna empresa de la celda), ignored
+	// (la linea no es de una entrega) o malformed.
+	DeliveryLineProcessed(outcome string)
+	DeliveryBacklog(lines int64)
+	DeliveryStoreFailed()
+}

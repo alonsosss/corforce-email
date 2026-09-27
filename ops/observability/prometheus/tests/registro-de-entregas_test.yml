@@ -1,0 +1,68 @@
+# Pruebas de las alertas del registro de entregas del correo corporativo.
+#
+# mail-security anota cada 30 s cuantas lineas esperan en POSTFIX_DELIVERY_LOG y cuenta los intentos de
+# guardar que fallan. RegistroDeEntregasAtrasado avisa con mas de 5.000 lineas esperando durante 15
+# minutos; RegistroDeEntregasSinGuardar, con fallos al guardar durante 15 minutos. El reloj empieza en 0.
+#
+#   make check-alertas
+
+rule_files:
+  - ../rules/plataforma.yml
+
+evaluation_interval: 1m
+
+tests:
+  # ── Una rafaga que el lector se come en minutos: nada que avisar ────────────
+  - interval: 1m
+    input_series:
+      - series: 'mail_security_delivery_log_backlog_lines{job="mail-services",service="mail-security",instance="mail-security:8042"}'
+        values: '0 8000 6000 3000 100 0x30'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: RegistroDeEntregasAtrasado
+        exp_alerts: []
+
+  # ── Un lector parado: la lista crece y a los 15 minutos avisa ───────────────
+  - interval: 1m
+    input_series:
+      - series: 'mail_security_delivery_log_backlog_lines{job="mail-services",service="mail-security",instance="mail-security:8042"}'
+        values: '6000+100x40'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: RegistroDeEntregasAtrasado
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: RegistroDeEntregasAtrasado
+        exp_alerts:
+          - exp_labels:
+              severidad: media
+              service: mail-security
+            exp_annotations:
+              resumen: "mail-security lleva quince minutos sin leer el registro de entregas de Postfix (8000 lineas esperando)"
+              detalle: "La lista POSTFIX_DELIVERY_LOG crece: el lector de mail-security no tiene el cerrojo de lider, no llega al Redis de los motores o no da abasto. Las empresas ven su pantalla Envios desactualizada y, a las 200.000 lineas, se pierde lo mas antiguo. Ver los registros de mail-security (registro de entregas: reintento)."
+
+  # ── Un fallo suelto al guardar no avisa ─────────────────────────────────────
+  - interval: 1m
+    input_series:
+      - series: 'mail_security_delivery_log_store_failures_total{job="mail-services",service="mail-security",instance="mail-security:8042"}'
+        values: '0 1 1x40'
+    alert_rule_test:
+      - eval_time: 40m
+        alertname: RegistroDeEntregasSinGuardar
+        exp_alerts: []
+
+  # ── Fallos sostenidos al guardar: avisa ─────────────────────────────────────
+  - interval: 1m
+    input_series:
+      - series: 'mail_security_delivery_log_store_failures_total{job="mail-services",service="mail-security",instance="mail-security:8042"}'
+        values: '0+2x40'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: RegistroDeEntregasSinGuardar
+        exp_alerts:
+          - exp_labels:
+              severidad: media
+              service: mail-security
+            exp_annotations:
+              resumen: "mail-security no consigue guardar el registro de entregas"
+              detalle: "Los intentos de guardar eventos del registro de entregas fallan desde hace mas de quince minutos. Las lineas esperan en la lista de trabajo y se guardaran al volver la base; si la causa no es la base (una restriccion, un permiso), los registros de mail-security dicen cual."

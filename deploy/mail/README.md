@@ -881,6 +881,7 @@ sobre un enlace privado hasta que se cifre.
 | `F2B_QUEUE_UNBAN` | hash `red/prefijo -> 1` | mail-security (`POST /api/v1/mail-security/firewall/bans/unban`, solo baneos temporales vigentes) | netfilter | desbaneos pendientes |
 | `F2B_CHANNEL` | pub/sub | syslog-ng de postfix y dovecot | netfilter | lineas de log a evaluar |
 | `F2B_LOG` / `NETFILTER_LOG`, `POSTFIX_MAILLOG`, `DOVECOT_MAILLOG`, `ACME_LOG`, `WATCHDOG_LOG`, `RL_LOG` | list (LPUSH, recortadas por `trim_logs.sh` a `LOG_LINES`) | motores | plataforma (UI de logs) | logs JSON |
+| `POSTFIX_DELIVERY_LOG` | list (LPUSH y LTRIM en un EVAL, tope `delivery_log_max_lines` = 200.000) | syslog-ng de postfix | mail-security, el unico lector (`BLMOVE` a `CFM_DELIVERY_LOG_WORK`; contexto por id de cola en `CFM_DELIVERY_QID:<id>`, 7 dias) | las mismas lineas JSON que `POSTFIX_MAILLOG`, para el registro de entregas por empresa (`docs/Plan_Registro_de_Envios.md`) |
 | `DOVECOT_REPL_HEALTH`, `ACME_FAIL_TIME` | string | dovecot / acme | watchdog | estado |
 | `MC_CHANNEL` | pub/sub | plataforma | dockerapi | `{"api_call":"container_post","post_action":"exec|restart|...","container_name":"...","request":{"cmd":..,"task":..}}` |
 
