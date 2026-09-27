@@ -508,6 +508,15 @@ groups:
         annotations:
           resumen: "{{ $value | humanize }} bloqueos de navegador automatizado en 15 minutos"
           detalle: "La web bloqueo mas de veinte navegadores automatizados en un cuarto de hora. El registro del gateway (navegador automatizado bloqueado) da la referencia, la IP, la ruta y las senales de cada uno: si son la misma IP y rutas de la aplicacion es un barrido; si son personas distintas con la misma senal debil, hay que calibrar el detector (web/src/security/automation.ts)."
+      # Pase de desarrollo (services/gateway/automation_pass.go): mientras esta abierto, un rango de IP
+      # recibe la web en observe. Tiene que verse desde el primer minuto y apagarse solo al caducar.
+      - alert: PaseDeAutomatizacionActivo
+        expr: max(gateway_automation_observe_pass) == 1
+        labels:
+          severidad: media
+        annotations:
+          resumen: "El detector de navegador automatizado deja pasar a un rango de IP en produccion"
+          detalle: "Hay un pase de desarrollo abierto (WEB_AUTOMATION_OBSERVE_UNTIL y WEB_AUTOMATION_OBSERVE_CIDRS en el .env del gateway): las IP de ese rango reciben la web en modo observe y un navegador automatizado entra. Caduca solo a la hora dicha; si ya no hace falta, scripts/pase-automatizacion.sh off lo cierra ahora."
 
   # Registro de entregas del correo corporativo (docs/Plan_Registro_de_Envios.md): mail-security lee
   # POSTFIX_DELIVERY_LOG. Si no lee, la pantalla Envios deja de mostrar el correo reciente y, al llegar

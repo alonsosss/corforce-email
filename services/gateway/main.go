@@ -43,6 +43,17 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	// Pase de desarrollo del detector de navegador automatizado (automation_pass.go): nil salvo que
+	// el entorno lo abra; mal escrito, no se arranca.
+	pass, err := loadAutomationPass(time.Now)
+	if err != nil {
+		log.Fatal(err)
+	}
+	registerAutomationPassGauge(pass)
+	if pass.open() {
+		logger.Warn("pase de desarrollo del detector de automatizacion abierto: esas IP reciben la web en observe",
+			zap.Time("until", pass.until), zap.Int("cidrs", len(pass.cidrs)))
+	}
 
 	table, err := loadRouteTable()
 	if err != nil {
@@ -146,7 +157,11 @@ func main() {
 	mountPublicAliases(r, table, internalToken, limiter.Limit)
 
 	if table.Frontend != "" {
-		r.Handle("/*", reverseProxy(table.serviceURL(table.Frontend), internalToken))
+		var decorators []htmlDecorator
+		if pass != nil {
+			decorators = append(decorators, pass.decorate)
+		}
+		r.Handle("/*", reverseProxy(table.serviceURL(table.Frontend), internalToken, decorators...))
 	}
 
 	r.Route("/api/v1", func(r chi.Router) {
@@ -415,6 +430,10 @@ func loadSettings() (settings, error) {
 	return st, nil
 }
 
+// htmlDecorator retoca el documento de la aplicacion ya marcado con el nonce; solo lo usa el
+// frontend y solo para etiquetas propias (nunca scripts).
+type htmlDecorator func(req *http.Request, body []byte) []byte
+
 // stampCSPNonce marca los <script> del HTML con el nonce de esta respuesta.
 //
 // La politica solo ejecuta scripts que lleven el nonce sorteado para la peticion, asi que
@@ -422,7 +441,7 @@ func loadSettings() (settings, error) {
 // documentos HTML (los assets se sirven intactos) y solo cuando el cuerpo no viene
 // comprimido, porque reescribirlo exigiria descomprimir y volver a comprimir por cada
 // peticion sin ninguna ganancia (el HTML de la aplicacion son dos kilobytes).
-func stampCSPNonce(resp *http.Response) error {
+func stampCSPNonce(resp *http.Response, decorators ...htmlDecorator) error {
 	nonce := middleware.CSPNonce(resp.Request.Context())
 	if nonce == "" || resp.Body == nil {
 		return nil
@@ -442,6 +461,9 @@ func stampCSPNonce(resp *http.Response) error {
 	// sustitucion es sobre el literal de apertura de la etiqueta.
 	marcado := bytes.ReplaceAll(body, []byte("<script "), []byte("<script nonce=\""+nonce+"\" "))
 	marcado = bytes.ReplaceAll(marcado, []byte("<script>"), []byte("<script nonce=\""+nonce+"\">"))
+	for _, decorate := range decorators {
+		marcado = decorate(resp.Request, marcado)
+	}
 
 	resp.Body = io.NopCloser(bytes.NewReader(marcado))
 	resp.ContentLength = int64(len(marcado))
@@ -476,8 +498,8 @@ func dropClientHopHeaders(h http.Header) {
 	h.Set("Connection", strings.Join(keep, ", "))
 }
 
-func reverseProxy(target, internalToken string) http.Handler {
-	return reverseProxyWith(target, internalToken, proxyEdgeCSP)
+func reverseProxy(target, internalToken string, decorators ...htmlDecorator) http.Handler {
+	return reverseProxyWith(target, internalToken, proxyEdgeCSP, decorators...)
 }
 
 // proxyMode decide que politica CSP llega al navegador desde un servicio.
@@ -505,7 +527,7 @@ const (
 // donde se puede incrustar.
 const embeddableFallbackCSP = "default-src 'none'; frame-ancestors 'none'"
 
-func reverseProxyWith(target, internalToken string, mode proxyMode) http.Handler {
+func reverseProxyWith(target, internalToken string, mode proxyMode, decorators ...htmlDecorator) http.Handler {
 	u, err := url.Parse(target)
 	if err != nil {
 		log.Fatalf("upstream invalido %q: %v", target, err)
@@ -536,7 +558,7 @@ func reverseProxyWith(target, internalToken string, mode proxyMode) http.Handler
 		if mode == proxyUntrustedHTML {
 			return nil
 		}
-		return stampCSPNonce(resp)
+		return stampCSPNonce(resp, decorators...)
 	}
 	originalDirector := proxy.Director
 	proxy.Director = func(req *http.Request) {

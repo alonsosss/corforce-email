@@ -3,6 +3,7 @@ import {
   automationReference,
   BLOCK_THRESHOLD,
   detectAutomation,
+  effectiveAutomationMode,
   parseAutomationMode,
   reportAutomation,
   type AutomationEnvironment,
@@ -113,5 +114,19 @@ describe('deteccion de navegador automatizado', () => {
     for (const raw of [undefined, '', 'enforce', 'Observe', 'OBSERVE', 'off', 'false', '0']) {
       expect(parseAutomationMode(raw)).toBe('enforce');
     }
+  });
+
+  it('el gateway puede pedir observe con su etiqueta; la compilacion tambien; nada mas', () => {
+    const withMeta = (content: string | null) => ({
+      querySelector: (sel: string) =>
+        sel === 'meta[name="cfm-automation-mode"]' && content !== null
+          ? ({ getAttribute: () => content } as unknown as Element)
+          : null,
+    });
+    expect(effectiveAutomationMode(undefined, withMeta(null))).toBe('enforce');
+    expect(effectiveAutomationMode(undefined, withMeta('observe'))).toBe('observe');
+    expect(effectiveAutomationMode(undefined, withMeta('enforce'))).toBe('enforce');
+    expect(effectiveAutomationMode(undefined, withMeta('<script>'))).toBe('enforce');
+    expect(effectiveAutomationMode('observe', withMeta(null))).toBe('observe');
   });
 });

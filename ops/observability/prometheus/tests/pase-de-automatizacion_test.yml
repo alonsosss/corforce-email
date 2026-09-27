@@ -1,0 +1,40 @@
+# Pruebas de la alerta del pase de desarrollo del detector de navegador automatizado.
+#
+# El gateway publica 1 mientras WEB_AUTOMATION_OBSERVE_UNTIL esta en el futuro. Un pase abierto
+# tiene que verse desde el primer minuto; al caducar, la alerta se apaga sola.
+#
+#   make check-alertas
+
+rule_files:
+  - ../rules/plataforma.yml
+
+evaluation_interval: 1m
+
+tests:
+  # ── Sin pase: nada ────────────────────────────────────────────────────────────
+  - interval: 1m
+    input_series:
+      - series: 'gateway_automation_observe_pass{job="mail-services",service="gateway",instance="gateway:8080"}'
+        values: '0x10'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: PaseDeAutomatizacionActivo
+        exp_alerts: []
+
+  # ── Pase abierto cuatro minutos y caducado despues ───────────────────────────
+  - interval: 1m
+    input_series:
+      - series: 'gateway_automation_observe_pass{job="mail-services",service="gateway",instance="gateway:8080"}'
+        values: '0 1 1 1 1 0 0 0'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: PaseDeAutomatizacionActivo
+        exp_alerts:
+          - exp_labels:
+              severidad: media
+            exp_annotations:
+              resumen: "El detector de navegador automatizado deja pasar a un rango de IP en produccion"
+              detalle: "Hay un pase de desarrollo abierto (WEB_AUTOMATION_OBSERVE_UNTIL y WEB_AUTOMATION_OBSERVE_CIDRS en el .env del gateway): las IP de ese rango reciben la web en modo observe y un navegador automatizado entra. Caduca solo a la hora dicha; si ya no hace falta, scripts/pase-automatizacion.sh off lo cierra ahora."
+      - eval_time: 7m
+        alertname: PaseDeAutomatizacionActivo
+        exp_alerts: []

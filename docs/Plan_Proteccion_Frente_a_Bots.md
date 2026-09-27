@@ -127,6 +127,15 @@ protocolo DevTools, `HeadlessChrome` en el agente, ausencia de plugins y de idio
   imagen de producción no la recibe (`scripts/deploy-ecr.sh` construye con `docker-compose.yml`, que no
   declara ese argumento), así que producción compila siempre en `enforce`; en local se pasa por
   `web/.env.local` (`pnpm dev`) o por `build.args` en el compose de la máquina.
+* **Pase de desarrollo en producción:** como la compilación de producción no cambia, el único modo de
+  revisar la interfaz de producción con un navegador automatizado es un pase que vive en el gateway
+  (`services/gateway/automation_pass.go`): `WEB_AUTOMATION_OBSERVE_UNTIL` (RFC3339, a lo sumo 7 días) y
+  `WEB_AUTOMATION_OBSERVE_CIDRS` (rangos de 256 direcciones como mucho). Mientras dura, el documento que
+  reciben esas IP lleva `<meta name="cfm-automation-mode" content="observe">` y la web lo trata como
+  observe; para cualquier otra IP no cambia nada, y no hay endpoint que lo consulte ni interfaz que lo
+  toque. Caduca solo, se ve en `gateway_automation_observe_pass` y en la alerta
+  `PaseDeAutomatizacionActivo`, y se maneja con `scripts/pase-automatizacion.sh on|off|estado`. Un valor
+  mal escrito impide arrancar el gateway: no se interpreta con buena voluntad.
 * Pruebas: unitarias del detector con entornos reales (Chrome, Firefox, Safari y móvil de una persona
   no se bloquean; `webdriver`, `HeadlessChrome` y `$cdc_` sí; las débiles solo entre varias), del
   receptor del gateway (422 a todo lo que no es suyo, nada rechazado cuenta) y de la alerta
@@ -324,3 +333,4 @@ vuelta atrás preparada: el registro DNS se despoxiea y todo vuelve a como hoy.
 | 2026-09-27 | Fase 3 hecha (3.2 y 3.3): guardia de sondeo en el gateway (`probe.go`), Redis con respaldo en memoria, `PROBE_*`, evento `gateway.security.probe` → `endpoint_probe` en `audit`, alerta `SondeoDeEndpoints`; cupo por credencial `SESSION_RATE_LIMIT_PER_MIN`. Pendiente 3.4 (revocar desde el evento), con el panel de la fase 4. |
 | 2026-09-27 | Fases 1 a 3.3 desplegadas en `e2560ab` (`gateway`, `audit`, `web`, proxy de borde). Verificado en producción: `05-bots.conf` con 43 agentes y `nginx -t` correcto; `GPTBot` y `ClaudeBot` reciben 403 en `/` y en `/api/v1`, `Googlebot` y Chrome 200; el receptor de referencias responde 204/422 y escribe la referencia con IP y agente; `gateway_probe_*` y `gateway_automation_detected_total` en 0 al arrancar. Calibración previa: en las 24 h anteriores el gateway sirvió 9 respuestas de clase sondeo (7 de `/auth`, exentas), lejos de los umbrales. |
 | 2026-09-27 | Capa 2: modo `observe` de compilación (`VITE_AUTOMATION_MODE`) para revisar la interfaz con un navegador automatizado en desarrollo; producción no lo recibe y sigue en `enforce`. |
+| 2026-09-27 | Capa 2: pase de desarrollo en producción (`automation_pass.go`): acotado en tiempo (7 días como mucho) y a rangos de IP (256 direcciones como mucho), servido como `<meta>` por el gateway solo a esas IP, con métrica y alerta mientras está abierto, y `scripts/pase-automatizacion.sh` para abrirlo y cerrarlo. |

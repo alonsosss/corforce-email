@@ -1523,6 +1523,16 @@ usuario o la clave, la IP y la última ruta); con sesión, la empresa lo ve como
 bloquea a una integración legítima (rutas mal escritas), la ruta del registro lo delata: se corrige en la integración y
 el bloqueo cae solo. Para calibrar sin cortar a nadie, `PROBE_MODE=observe` cuenta y registra sin bloquear.
 
+**Pase de desarrollo del detector de navegador automatizado.** La web bloquea en producción a todo navegador
+automatizado (Playwright, el MCP de Chrome DevTools), también al del equipo. Para revisar la interfaz con uno de ellos,
+`scripts/pase-automatizacion.sh on [horas] [cidr]` (por defecto 4 h y la IP desde la que se ejecuta, /32) escribe
+`WEB_AUTOMATION_OBSERVE_UNTIL` y `WEB_AUTOMATION_OBSERVE_CIDRS` en el `.env` del servidor y recrea el gateway; desde ese
+momento las IP del rango reciben el documento con la etiqueta `cfm-automation-mode=observe` y la aplicación se monta
+aunque el navegador esté automatizado (la referencia se sigue registrando). El resto de internet no nota nada. El pase
+caduca solo, no admite más de 7 días ni rangos de más de 256 direcciones, mientras dura suena
+`PaseDeAutomatizacionActivo`, y `scripts/pase-automatizacion.sh off` lo cierra antes. `estado` dice qué hay. No se
+escribe a mano: un valor mal formado impide arrancar el gateway.
+
 **Rastreadores de IA.** El borde responde 403 a los agentes de `selfhosted/edge/ai-crawlers.txt` en toda ruta
 (`entrypoint.d/15-bots.sh` genera el mapa al arrancar) y `web/public/robots.txt` les prohíbe todo. Para añadir uno:
 una línea en la lista (solo letras, dígitos, punto, guion, guion bajo y espacio; el arranque rechaza otra cosa) y su

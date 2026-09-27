@@ -56,8 +56,24 @@ export const BLOCK_THRESHOLD = 3;
 export type AutomationMode = 'enforce' | 'observe';
 
 /** Cualquier valor que no sea exactamente "observe" es enforce: ante la duda, se bloquea. */
-export function parseAutomationMode(raw: string | undefined): AutomationMode {
+export function parseAutomationMode(raw: string | undefined | null): AutomationMode {
   return raw?.trim() === 'observe' ? 'observe' : 'enforce';
+}
+
+/**
+ * Etiqueta que el gateway anade al documento mientras hay un pase de desarrollo abierto para la
+ * IP del visitante (services/gateway/automation_pass.go). La web no la escribe nunca.
+ */
+export const AUTOMATION_MODE_META = 'cfm-automation-mode';
+
+/** Modo con el que arranca la aplicacion: observe si lo pide la compilacion o el gateway. */
+export function effectiveAutomationMode(
+  buildValue: string | undefined,
+  doc: Pick<Document, 'querySelector'>,
+): AutomationMode {
+  if (parseAutomationMode(buildValue) === 'observe') return 'observe';
+  const meta = doc.querySelector(`meta[name="${AUTOMATION_MODE_META}"]`);
+  return parseAutomationMode(meta?.getAttribute('content'));
 }
 
 const HEADLESS_UA = /HeadlessChrome|PhantomJS|SlimerJS|HtmlUnit/i;
