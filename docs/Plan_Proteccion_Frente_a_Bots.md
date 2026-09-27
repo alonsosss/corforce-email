@@ -70,20 +70,25 @@ antes de tocar el servidor.
     mantiene `ops/security/edge-cloudflare-ips.sh`) y desde la propia máquina; un cliente que salte el
     borde y ataque la IP directa recibe 403 del proxy de borde.
 * **Estado actual:** el ERP ya está proxied (el comodín `*.core-force.com` apunta a Cloudflare); Core
-  Force Mail **no**: `email.core-force.com` va directo a `89.58.10.80`. Ponerlo detrás exige un registro
-  DNS propio proxied (el comodín no sirve) y repasar `TRUSTED_PROXY_CIDRS` para que la IP real llegue
-  al gateway.
+  Force Mail **no**: `email.core-force.com` va directo a `89.58.10.80`. El borde ya sabe exigir Cloudflare
+  (`EDGE_REQUIRE_CLOUDFLARE`, hoy `false` en producción, con la lista de rangos y la IP real por
+  `CF-Connecting-IP` probadas en `test-selfhosted-profile.sh`). Ponerlo detrás es un registro DNS propio
+  proxied (el comodín no sirve), `EDGE_REQUIRE_CLOUDFLARE=true` y `TRUSTED_PROXY_CIDRS` con los rangos.
 
 ### Capa 1. Rastreadores declarados
 
-* **Una sola lista** de agentes de rastreo de IA, en `ops/security/bots/ai-crawlers.txt` (un
-  `User-Agent` por línea, con fecha y fuente), versionada en este repositorio y copiada a los demás
-  con `make sync-bot-list`. De ella se generan:
-  * `robots.txt` de cada plataforma: `Disallow: /` para cada agente de la lista, y lo que ya dice hoy
-    (`Allow: /p/`, `Allow: /citas/`) para los buscadores.
-  * Un `map` de nginx en el proxy de borde que responde **403** a esos agentes en toda ruta, sin llegar
-    al gateway. `robots.txt` es una petición; esto es el bloqueo.
-* Prueba en CI: cada agente de la lista recibe 403 en la raíz y en `/p/`, y `Googlebot` no.
+* **Una sola lista** de agentes de rastreo de IA, en `selfhosted/edge/ai-crawlers.txt` (un
+  `User-Agent` por línea, con fuente y fecha; los buscadores no van), montada en el proxy de borde
+  como `cloudflare-ips.txt`. De ella salen:
+  * El `map` de nginx `$edge_bot_ia` (`entrypoint.d/15-bots.sh` lo genera al arrancar, escapando y
+    validando cada nombre; una línea rara o una lista vacía impiden arrancar) y el **403** en toda ruta
+    del host público, sin llegar al gateway. `robots.txt` es una petición; esto es el bloqueo.
+  * `web/public/robots.txt`: un grupo con `Disallow: /` para cada agente de la lista, más
+    `Google-Extended` y `Applebot-Extended` (fichas de exclusión del entrenamiento que no son agentes).
+    No se genera: una prueba (`web/src/pwa/robots.test.ts`) exige que cada agente de la lista tenga su
+    grupo y que ningún buscador esté en la lista, así que las dos no pueden divergir.
+* Pruebas: la de la web (arriba) y, en `ops/scaffold/test-selfhosted-profile.sh`, GPTBot recibe 403 en
+  una landing page y Googlebot 200 en el borde real.
 
 ### Capa 2. El navegador: detectar automatización en el cliente
 
@@ -286,4 +291,5 @@ vuelta atrás preparada: el registro DNS se despoxiea y todo vuelve a como hoy.
 
 | Fecha | Qué |
 |---|---|
-| 2026-09-27 | Plan escrito tras la auditoría. Capas 3.1 y parte de 4 y 5 ya existen (permisos, step-up, MFA, auditoría, sesiones, eventos de seguridad, cupos por IP y por clave). Nada de las fases 1 a 7 empezado. |
+| 2026-09-27 | Plan escrito tras la auditoría. Capas 3.1 y parte de 4 y 5 ya existen (permisos, step-up, MFA, auditoría, sesiones, eventos de seguridad, cupos por IP y por clave). |
+| 2026-09-27 | Fase 1 hecha: lista `selfhosted/edge/ai-crawlers.txt` (45 agentes), mapa y 403 en el borde, `robots.txt` con un grupo por agente y la prueba que los ata. |

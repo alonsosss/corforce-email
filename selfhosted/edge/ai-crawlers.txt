@@ -1,0 +1,76 @@
+# Rastreadores de inteligencia artificial que no entran (docs/Plan_Proteccion_Frente_a_Bots.md,
+# capa 1). Un agente por linea, tal como se presenta en User-Agent; se compara sin distinguir
+# mayusculas y como subcadena, asi que basta el nombre del producto. De esta lista salen:
+#
+#   * el mapa de nginx del borde (entrypoint.d/15-bots.sh -> 05-bots.conf): 403 en toda ruta;
+#   * las reglas de web/public/robots.txt (una prueba exige que cada agente de aqui figure alli).
+#
+# Aqui van rastreadores de ENTRENAMIENTO y de respuesta de asistentes. No van los buscadores
+# (Googlebot, Bingbot, DuckDuckBot, Applebot) ni los de redes sociales que solo generan la vista
+# previa de un enlace: bloquearlos deja fuera de los resultados a las landing pages de las empresas.
+# Google-Extended y Applebot-Extended no son agentes: son fichas de robots.txt con las que Google y
+# Apple respetan la exclusion del entrenamiento sin dejar de indexar. Van solo en robots.txt.
+#
+# Fuentes: la documentacion de cada proveedor y la lista publica ai.robots.txt (2026-09).
+# Anadir un agente: una linea aqui y su grupo en robots.txt; la prueba de la web avisa si falta.
+
+# OpenAI
+GPTBot
+ChatGPT-User
+OAI-SearchBot
+
+# Anthropic
+ClaudeBot
+Claude-User
+Claude-SearchBot
+anthropic-ai
+
+# Google (entrenamiento y Vertex; Googlebot no esta)
+Google-CloudVertexBot
+GoogleOther
+
+# Perplexity
+PerplexityBot
+Perplexity-User
+
+# Meta
+Meta-ExternalAgent
+Meta-ExternalFetcher
+FacebookBot
+
+# Amazon, Apple y Microsoft (entrenamiento)
+Amazonbot
+Applebot-Extended
+
+# ByteDance
+Bytespider
+TikTokSpider
+
+# Common Crawl y agregadores de datos para entrenamiento
+CCBot
+Diffbot
+omgili
+omgilibot
+webzio-extended
+Timpibot
+img2dataset
+magpie-crawler
+VelenPublicWebCrawler
+Crawlspace
+Brightbot
+SemrushBot-OCOB
+
+# Otros asistentes y modelos
+cohere-ai
+cohere-training-data-crawler
+MistralAI-User
+YouBot
+DuckAssistBot
+AI2Bot
+Ai2Bot-Dolma
+PanguBot
+PetalBot
+ImagesiftBot
+iaskspider
+ICC-Crawler
+Kangaroo Bot

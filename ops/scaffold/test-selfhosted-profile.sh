@@ -376,6 +376,12 @@ redir="$(curl -sS -o /dev/null -w '%{http_code} %{redirect_url}' -H "Host: $HOST
 cf() { docker run --rm --network "$RED_CF" --ip "173.245.48.$1" -v "$W/ca-borde.crt:/ca.crt:ro" --entrypoint sh "$IMG_BORDE" -c "$2" 2>&1 || true; }
 salud="$(cf 10 "curl -sS --cacert /ca.crt --resolve $HOST_PUBLICO:443:173.245.48.2 -H 'CF-Connecting-IP: 203.0.113.7' https://$HOST_PUBLICO/health")"
 [[ "$salud" == *'"status":"ok"'* ]] && ok "desde Cloudflare: el borde reenvia al gateway (/health: $salud)" || mal "desde Cloudflare /health: $salud"
+# Rastreadores de IA (selfhosted/edge/ai-crawlers.txt): 403 en el borde en cualquier ruta, sin
+# llegar al gateway; un buscador y un navegador pasan.
+bot="$(cf 13 "curl -sS -o /dev/null -w '%{http_code}' --cacert /ca.crt --resolve $HOST_PUBLICO:443:173.245.48.2 -H 'CF-Connecting-IP: 203.0.113.7' -A 'Mozilla/5.0 (compatible; GPTBot/1.2; +https://openai.com/gptbot)' https://$HOST_PUBLICO/p/acme/oferta")"
+[[ "$bot" == 403 ]] && ok "GPTBot: 403 en el borde tambien en una landing page" || mal "GPTBot no bloqueado: $bot"
+bot="$(cf 14 "curl -sS -o /dev/null -w '%{http_code}' --cacert /ca.crt --resolve $HOST_PUBLICO:443:173.245.48.2 -H 'CF-Connecting-IP: 203.0.113.7' -A 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)' https://$HOST_PUBLICO/health")"
+[[ "$bot" == 200 ]] && ok "Googlebot pasa (no es un rastreador de IA)" || mal "Googlebot bloqueado: $bot"
 cf 11 "curl -sS -o /dev/null --cacert /ca.crt --resolve $HOST_PUBLICO:443:173.245.48.2 -H 'CF-Connecting-IP: 203.0.113.7' -X POST https://$HOST_PUBLICO/api/v1/auth/refresh" >/dev/null
 claves="$(REDISCLI_AUTH="$REDIS_PASSWORD" redis_cli --tls --cacert /ca/ca.crt --scan --pattern 'rl:gateway:*')"
 grep -q ':ip:203.0.113.7$' <<<"$claves" && ok "el gateway cuenta el cupo por la IP del visitante que dio Cloudflare (rl:...:ip:203.0.113.7), en Redis por TLS" ||

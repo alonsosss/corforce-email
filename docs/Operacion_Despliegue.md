@@ -1516,6 +1516,12 @@ sobre el mismo certificado (es el que sirven también Postfix y Dovecot): `Certi
 renueva a los 30 e intenta cada noche: a los 25 lleva cinco fallos, casi siempre el token DNS-01 de Cloudflare revocado o sin
 permiso sobre la zona) y `CertificadoDelRelaySMTPPorCaducar` a dos semanas.
 
+**Rastreadores de IA.** El borde responde 403 a los agentes de `selfhosted/edge/ai-crawlers.txt` en toda ruta
+(`entrypoint.d/15-bots.sh` genera el mapa al arrancar) y `web/public/robots.txt` les prohíbe todo. Para añadir uno:
+una línea en la lista (solo letras, dígitos, punto, guion, guion bajo y espacio; el arranque rechaza otra cosa) y su
+`User-agent:` en el grupo de robots.txt; `pnpm test` en `web/` falla si falta en uno de los dos. Recrear `edge-proxy`
+(`scripts/deploy-ecr.sh` sin servicios lo hace al cambiar `selfhosted/edge/`). Los buscadores nunca van en esa lista.
+
 **DNS (aplicado el 2026-09-24).** Un registro `A` (y `AAAA` si el servidor tiene IPv6) `smtp.core-force.com` hacia la IP pública del
 servidor (hoy 89.58.10.80), **sin proxy de Cloudflare** (nube gris: Cloudflare no pasa SMTP). No hace falta MX: el relay no
 recibe correo de internet, solo de las integraciones autenticadas. SPF y DKIM no cambian: el correo sale por SES con la identidad

@@ -95,6 +95,11 @@ server {
   if ($edge_rechazar) {
     return 403;
   }
+  # Rastreadores de IA (05-bots.conf, generado de ai-crawlers.txt): fuera en toda ruta, tambien
+  # de las paginas publicas que los buscadores si pueden ver.
+  if ($edge_bot_ia) {
+    return 403;
+  }
 
   location / {
     set $edge_upstream ${EDGE_UPSTREAM};
