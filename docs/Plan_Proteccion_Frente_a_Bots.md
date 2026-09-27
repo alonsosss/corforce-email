@@ -166,10 +166,10 @@ en Redis que ya sirve a los cupos (`pkg/middleware.NewSharedRateLimiter`):
   escrita y ya tiene su cupo estricto y su bitácora). Un 404 de un recurso que existió y se borró
   cuenta como uno más: treinta en cinco minutos no los produce una persona.
 
-**3.3 Límite por credencial, no solo por IP.** Hoy un cliente con una clave válida detrás de varias
-IP suma cupos. El limitador compartido ya sabe contar por clave (`AllowKey`): se aplica a las claves
-de API y a las sesiones con un cupo propio (`API_KEY_RATE_LIMIT_PER_MIN`, hoy solo para claves; y
-`SESSION_RATE_LIMIT_PER_MIN`, nuevo).
+**3.3 Límite por credencial, no solo por IP.** Un cliente con una credencial válida detrás de varias
+IP sumaba cupos. Toda petición autenticada pasa ahora por `SESSION_RATE_LIMIT_PER_MIN` (300 por
+minuto, por usuario de la sesión o por clave de API, compartido entre réplicas en Redis), además del
+general por IP (600) y del propio de las claves de API.
 
 **3.4 Revocación desde donde se ve el problema.** El evento de sondeo enlaza con la sesión o la
 clave; junto al aviso, un botón "cerrar esta sesión" o "revocar esta clave" (la revocación por
@@ -314,4 +314,4 @@ vuelta atrás preparada: el registro DNS se despoxiea y todo vuelve a como hoy.
 | 2026-09-27 | Plan escrito tras la auditoría. Capas 3.1 y parte de 4 y 5 ya existen (permisos, step-up, MFA, auditoría, sesiones, eventos de seguridad, cupos por IP y por clave). |
 | 2026-09-27 | Fase 1 hecha: lista `selfhosted/edge/ai-crawlers.txt` (43 agentes), mapa y 403 en el borde, `robots.txt` con un grupo por agente y la prueba que los ata. |
 | 2026-09-27 | Fase 2 hecha: detector en `web/src/security/`, página de bloqueo con referencia, receptor en el gateway con métricas y alerta. Verificado con el MCP de Chrome DevTools. |
-| 2026-09-27 | Fase 3 hecha (3.2): guardia de sondeo en el gateway (`probe.go`), Redis con respaldo en memoria, `PROBE_*`, evento `gateway.security.probe` → `endpoint_probe` en `audit`, alerta `SondeoDeEndpoints`. Pendiente de 3.3 (cupo por sesión) y 3.4 (revocar desde el evento). |
+| 2026-09-27 | Fase 3 hecha (3.2 y 3.3): guardia de sondeo en el gateway (`probe.go`), Redis con respaldo en memoria, `PROBE_*`, evento `gateway.security.probe` → `endpoint_probe` en `audit`, alerta `SondeoDeEndpoints`; cupo por credencial `SESSION_RATE_LIMIT_PER_MIN`. Pendiente 3.4 (revocar desde el evento), con el panel de la fase 4. |

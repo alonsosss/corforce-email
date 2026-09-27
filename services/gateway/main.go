@@ -109,6 +109,7 @@ func main() {
 		log.Fatalf("redis: %v", err)
 	}
 	limiter, authLimiter := newRateLimiters(rateStore, st.apiRatePerMin, st.authRatePerMin, logger)
+	sessionLimiter := middleware.NewSharedRateLimiter(rateStore, sessionLimiterName, st.sessionRatePerMin, time.Minute, logger)
 	webhookLimiter := newWebhookLimiter(rateStore, st.webhookPerMin, logger)
 
 	identity := reverseProxy(table.serviceURL("identity"), internalToken)
@@ -210,6 +211,7 @@ func main() {
 		// rastro solo publica aqui las peticiones con celda destino (auth tiene su bitacora).
 		r.Group(func(r chi.Router) {
 			r.Use(jwtAuth.Authenticate)
+			r.Use(sessionLimiter.LimitPerUser)
 			r.Use(probe.identify)
 			r.Use(enforcer.sessionCheck)
 			r.Use(trail.middleware)
@@ -224,6 +226,8 @@ func main() {
 		r.Group(func(r chi.Router) {
 			// Las rutas de api_key_routes admiten tambien una clave de API de empresa (apikeys.go).
 			r.Use(apiKeys.authenticate(jwtAuth.Authenticate))
+			// Cupo por credencial, ya identificada: usuario de la sesion o clave de API.
+			r.Use(sessionLimiter.LimitPerUser)
 			r.Use(probe.identify)
 			r.Use(enforcer.sessionCheck)
 			r.Use(enforcer.middleware)
@@ -322,6 +326,11 @@ const (
 	// Sondeo de endpoints (probe.go). Umbrales de partida de docs/Plan_Proteccion_Frente_a_Bots.md:
 	// una persona en la consola no acumula treinta 404 en cinco minutos; una integracion con una
 	// ruta mal escrita, tampoco (y si lo hace, la ruta queda en el registro y el bloqueo es corto).
+	// Cupo por credencial autenticada (capa 3.3): por debajo del general por IP, que cubre a una
+	// oficina entera tras NAT; una sola persona o integracion no necesita mas.
+	defaultSessionRatePerMin = 300
+	maxSessionRatePerMin     = 60000
+
 	defaultProbeMode           = probeModeEnforce
 	defaultProbeThresholdToken = 30
 	defaultProbeThresholdIP    = 60
@@ -335,13 +344,14 @@ const (
 // settings son los valores numericos del gateway, leidos al arrancar y antes de conectar a
 // Redis o a NATS: un limite mal escrito no espera a que respondan para descubrirse.
 type settings struct {
-	port           int
-	apiRatePerMin  int
-	authRatePerMin int
-	webhookPerMin  int
-	exfilReads     int
-	exfilWindow    time.Duration
-	probe          probeSettings
+	port              int
+	apiRatePerMin     int
+	authRatePerMin    int
+	webhookPerMin     int
+	exfilReads        int
+	exfilWindow       time.Duration
+	sessionRatePerMin int
+	probe             probeSettings
 }
 
 func loadSettings() (settings, error) {
@@ -362,6 +372,9 @@ func loadSettings() (settings, error) {
 		return st, fmt.Errorf("AUTH_RATE_LIMIT_PER_MIN=%d must not exceed API_RATE_LIMIT_PER_MIN=%d", st.authRatePerMin, st.apiRatePerMin)
 	}
 	if st.webhookPerMin, err = config.EnvInt("WEBHOOK_RATE_LIMIT_PER_MIN", defaultWebhookRatePerMin, minWebhookRatePerMin, maxWebhookRatePerMin); err != nil {
+		return st, err
+	}
+	if st.sessionRatePerMin, err = config.EnvInt("SESSION_RATE_LIMIT_PER_MIN", defaultSessionRatePerMin, 1, maxSessionRatePerMin); err != nil {
 		return st, err
 	}
 	if st.exfilReads, err = config.EnvInt("EXFIL_READ_THRESHOLD", defaultExfilReads, 1, maxExfilReads); err != nil {

@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-var settingsKeys = []string{"GATEWAY_PORT", "API_RATE_LIMIT_PER_MIN", "AUTH_RATE_LIMIT_PER_MIN", "WEBHOOK_RATE_LIMIT_PER_MIN", "EXFIL_READ_THRESHOLD", "EXFIL_WINDOW_MIN",
+var settingsKeys = []string{"GATEWAY_PORT", "API_RATE_LIMIT_PER_MIN", "AUTH_RATE_LIMIT_PER_MIN", "WEBHOOK_RATE_LIMIT_PER_MIN", "EXFIL_READ_THRESHOLD", "EXFIL_WINDOW_MIN", "SESSION_RATE_LIMIT_PER_MIN",
 	"PROBE_MODE", "PROBE_THRESHOLD_TOKEN", "PROBE_THRESHOLD_IP", "PROBE_WINDOW_MIN", "PROBE_BLOCK_MIN"}
 
 var probeDefaults = probeSettings{Mode: probeModeEnforce, TokenThreshold: 30, IPThreshold: 60, Window: 5 * time.Minute, BlockFor: 15 * time.Minute}
@@ -26,20 +26,21 @@ func TestLoadSettingsDefectosYExtremos(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if st != (settings{port: 8080, apiRatePerMin: 600, authRatePerMin: 30, webhookPerMin: 6000, exfilReads: 400, exfilWindow: 5 * time.Minute, probe: probeDefaults}) {
+	if st != (settings{port: 8080, apiRatePerMin: 600, authRatePerMin: 30, webhookPerMin: 6000, exfilReads: 400, exfilWindow: 5 * time.Minute, sessionRatePerMin: 300, probe: probeDefaults}) {
 		t.Fatalf("defectos: %+v", st)
 	}
 	setSettingsEnv(t, map[string]string{
 		"GATEWAY_PORT": "65535", "API_RATE_LIMIT_PER_MIN": "60000", "AUTH_RATE_LIMIT_PER_MIN": "600",
 		"WEBHOOK_RATE_LIMIT_PER_MIN": "600000", "EXFIL_READ_THRESHOLD": "100000", "EXFIL_WINDOW_MIN": "60",
-		"PROBE_MODE": "observe", "PROBE_THRESHOLD_TOKEN": "100000", "PROBE_THRESHOLD_IP": "100000", "PROBE_WINDOW_MIN": "60", "PROBE_BLOCK_MIN": "1440",
+		"SESSION_RATE_LIMIT_PER_MIN": "60000",
+		"PROBE_MODE":                 "observe", "PROBE_THRESHOLD_TOKEN": "100000", "PROBE_THRESHOLD_IP": "100000", "PROBE_WINDOW_MIN": "60", "PROBE_BLOCK_MIN": "1440",
 	})
 	st, err = loadSettings()
 	if err != nil {
 		t.Fatal(err)
 	}
 	probeMax := probeSettings{Mode: probeModeObserve, TokenThreshold: 100000, IPThreshold: 100000, Window: time.Hour, BlockFor: 24 * time.Hour}
-	if st != (settings{port: 65535, apiRatePerMin: 60000, authRatePerMin: 600, webhookPerMin: 600000, exfilReads: 100000, exfilWindow: time.Hour, probe: probeMax}) {
+	if st != (settings{port: 65535, apiRatePerMin: 60000, authRatePerMin: 600, webhookPerMin: 600000, exfilReads: 100000, exfilWindow: time.Hour, sessionRatePerMin: 60000, probe: probeMax}) {
 		t.Fatalf("maximos: %+v", st)
 	}
 }
@@ -54,6 +55,7 @@ func TestLoadSettingsRangos(t *testing.T) {
 		"WEBHOOK_RATE_LIMIT_PER_MIN": {"59", "600001", "mucho"},
 		"EXFIL_READ_THRESHOLD":       {"0", "100001"},
 		"EXFIL_WINDOW_MIN":           {"0", "61", "5m"},
+		"SESSION_RATE_LIMIT_PER_MIN": {"0", "60001", "cien"},
 		"PROBE_MODE":                 {"off", "audit", "si"},
 		"PROBE_THRESHOLD_TOKEN":      {"0", "100001", "x"},
 		"PROBE_THRESHOLD_IP":         {"0", "100001"},

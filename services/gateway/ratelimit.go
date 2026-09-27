@@ -19,6 +19,10 @@ const (
 	exfilLimiterName = "gateway:exfil"
 	// webhookLimiterName es el cupo de las rutas publicas marcadas "limit": "webhook".
 	webhookLimiterName = "gateway:webhook"
+	// sessionLimiterName es el cupo por credencial autenticada (usuario o clave de API), ademas del
+	// general por IP: una credencial repartida entre varias IP no suma cupos
+	// (docs/Plan_Proteccion_Frente_a_Bots.md, capa 3.3).
+	sessionLimiterName = "gateway:session"
 )
 
 // newRateLimitStore abre el Redis de la plataforma (REDIS_*) para los cupos del gateway,
