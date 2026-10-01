@@ -60,6 +60,24 @@ if grep -q -E 'ENVIRONMENT$|POSTGRES_PASSWORD$|minuscula' "$TMP/claves.out"; the
 if grep -q 'valor-secreto' "$TMP/claves.out"; then mal "claves-env: imprime un valor del .env"; fi
 printf 'ENVIRONMENT\n' | bash "$ROOT/ops/maintenance/claves-env.sh" "$TMP/env" 2>&1 | grep -q 'todas las claves' || mal "claves-env: no reconoce un .env completo"
 
+# --excluir quita los secretos del almacen; --nuevas lista solo las claves aparecidas desde el ultimo
+# despliegue y resume el resto en una linea (con 186 nombres una clave nueva no se veia).
+printf '# secretos\nPOSTGRES_PASSWORD\nDB_UPSTREAM_SSLMODE?\n' >"$TMP/secretos"
+printf 'ENVIRONMENT\nSCHEDULER_URL\nPOSTGRES_PASSWORD\nDB_UPSTREAM_SSLMODE\nNUEVA_CLAVE\n' >"$TMP/esperadas"
+bash "$ROOT/ops/maintenance/claves-env.sh" "$TMP/env" --excluir "$TMP/secretos" <"$TMP/esperadas" >"$TMP/claves.out" 2>&1 ||
+  mal "claves-env --excluir: no debe bloquear"
+if grep -q -E '^  (DB_UPSTREAM_SSLMODE|POSTGRES_PASSWORD)$' "$TMP/claves.out"; then mal "claves-env --excluir: cuenta un secreto del almacen (o no quita el '?')"; fi
+grep -q '^  SCHEDULER_URL$' "$TMP/claves.out" || mal "claves-env --excluir: deja de nombrar una clave que no es secreto"
+bash "$ROOT/ops/maintenance/claves-env.sh" "$TMP/env" --excluir "$TMP/secretos" --nuevas "NUEVA_CLAVE ENVIRONMENT" <"$TMP/esperadas" >"$TMP/claves.out" 2>&1
+grep -q 'claves NUEVAS' "$TMP/claves.out" && grep -q '^  NUEVA_CLAVE$' "$TMP/claves.out" || mal "claves-env --nuevas: no destaca la clave nueva que falta"
+if grep -q '^  SCHEDULER_URL$' "$TMP/claves.out"; then mal "claves-env --nuevas: lista una ausente antigua"; fi
+grep -q 'otras 1 claves' "$TMP/claves.out" || mal "claves-env --nuevas: no resume las ausentes antiguas"
+bash "$ROOT/ops/maintenance/claves-env.sh" "$TMP/env" --nuevas "" <"$TMP/esperadas" >"$TMP/claves.out" 2>&1
+if grep -q 'AVISO' "$TMP/claves.out"; then mal "claves-env --nuevas vacia: avisa sin claves nuevas"; fi
+if bash "$ROOT/ops/maintenance/claves-env.sh" "$TMP/env" --quiza </dev/null >/dev/null 2>&1; then mal "claves-env: acepta una opcion desconocida"; fi
+grep -q 'claves-env.sh .env $args' "$ROOT/scripts/deploy-ecr.sh" && grep -q -- '--excluir ops/security/secrets/secret-keys.txt' "$ROOT/scripts/deploy-ecr.sh" ||
+  mal "deploy-ecr.sh: no pasa los secretos ni las claves nuevas a claves-env"
+
 # --- pgbouncer-userlist.sh --ensure -------------------------------------------------------
 ul() { env -i PATH="$PATH" HOME="$TMP" PGBOUNCER_USERLIST="$TMP/userlist.txt" POSTGRES_PASSWORD=clave-de-prueba \
   bash "$ROOT/ops/db/pgbouncer-userlist.sh" "$@" >"$TMP/ul.out" 2>&1; }

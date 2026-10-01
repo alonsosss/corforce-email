@@ -735,7 +735,12 @@ buzones dio 500 y `mail-auth` no pudo leer el buzon del remitente de las alertas
   reescribirlo a ciegas quitaría el rol cuya contraseña no esté en el entorno y dejaría fuera a
   un servicio que hoy entra. `release.yml`, que no sincroniza `ops/`, usa `--write` solo cuando el
   fichero no existe. `ops/maintenance/claves-env.sh` nombra las claves de `.env.example` que el
-  `.env` del servidor no tiene, sin leer ni imprimir valores y sin bloquear. Después:
+  `.env` del servidor no tiene, sin leer ni imprimir valores y sin bloquear. Desde el 2026-10-01,
+  `deploy-ecr.sh` le quita los secretos del almacén (`secret-keys*.txt`, que nunca van en el
+  `.env`) y le pasa las claves aparecidas en `.env.example` desde lo que corre en el servidor: solo
+  esas se listan, y las ausentes antiguas, que usan su valor por defecto, quedan en una línea de
+  resumen (eran 186 nombres y una clave nueva y obligatoria no se veía). `DEPLOY_CLAVES_TODAS=1`
+  las lista todas. Después:
   `ops/maintenance/esperar-sanos.sh` espera a que cada servicio recreado quede sano, o corriendo
   sin reiniciarse si su imagen no declara chequeo, y si no el despliegue falla con su estado y sus
   últimas líneas de registro. Antes solo se comprobaba que corriera la imagen nueva, y un servicio

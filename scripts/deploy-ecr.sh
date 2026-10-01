@@ -351,9 +351,21 @@ build_en_lotes() {
 UP_LOTE="${DEPLOY_UP_LOTE:-20}"
 # Antes de recrear: el userlist.txt de PgBouncer presente (sin el, el pooler no arranca) y aviso
 # de las claves de .env.example que el .env del servidor no tiene. Solo viajan nombres de claves.
+# Los secretos no cuentan (viven en el almacen) y se destacan las claves aparecidas desde lo que
+# corre en el servidor, que son las que pueden faltar sin que nadie lo sepa. DEPLOY_CLAVES_TODAS=1
+# las lista todas.
 preparar_servidor() {
+  local base nuevas="" args
   remote "ops/security/secrets/with-secrets.sh ops/db/pgbouncer-userlist.sh --ensure"
-  sed -n -E 's/^([A-Z][A-Z0-9_]*)=.*/\1/p' .env.example | remote "ops/maintenance/claves-env.sh .env"
+  args="--excluir ops/security/secrets/secret-keys.txt --excluir ops/security/secrets/secret-keys-db.txt --excluir ops/security/secrets/secret-keys-backup.txt"
+  base="$(remote 'cat .deployed-tag 2>/dev/null' || true)"
+  if [[ "${DEPLOY_CLAVES_TODAS:-0}" != 1 && -n "$base" ]] && git rev-parse -q --verify "$base^{commit}" >/dev/null; then
+    nuevas="$(LC_ALL=C comm -13 \
+      <(git show "$base:.env.example" 2>/dev/null | sed -n -E 's/^([A-Z][A-Z0-9_]*)=.*/\1/p' | LC_ALL=C sort -u) \
+      <(sed -n -E 's/^([A-Z][A-Z0-9_]*)=.*/\1/p' .env.example | LC_ALL=C sort -u) | tr '\n' ' ')"
+    args+=" --nuevas '${nuevas% }'"
+  fi
+  sed -n -E 's/^([A-Z][A-Z0-9_]*)=.*/\1/p' .env.example | remote "ops/maintenance/claves-env.sh .env $args"
 }
 
 # Tras recrear: imagen correcta no es arranque correcto. Un servicio que no arranca por
