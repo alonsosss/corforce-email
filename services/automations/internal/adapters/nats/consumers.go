@@ -113,11 +113,10 @@ func (c *Consumers) keepSubscribing(ctx context.Context, durable string, subscri
 
 func (c *Consumers) Stop() {
 	c.mu.Lock()
-	defer c.mu.Unlock()
-	for _, s := range c.subs {
-		_ = s.Drain()
-	}
+	subs := c.subs
 	c.subs = nil
+	c.mu.Unlock()
+	events.DrainSubscriptions(c.logger, subs...)
 }
 
 // tenantContext resuelve la base de la empresa. ok=false con ack=true cuando la empresa no

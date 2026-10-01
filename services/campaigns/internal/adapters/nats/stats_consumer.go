@@ -68,11 +68,10 @@ func (c *StatsConsumer) Start(ctx context.Context) {
 
 func (c *StatsConsumer) Stop() {
 	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.sub != nil {
-		_ = c.sub.Drain()
-		c.sub = nil
-	}
+	sub := c.sub
+	c.sub = nil
+	c.mu.Unlock()
+	events.DrainSubscriptions(c.logger, sub)
 }
 
 // handle: sin ack, JetStream reentrega. Se acka lo contado y tambien lo que nunca va a

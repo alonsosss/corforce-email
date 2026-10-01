@@ -123,11 +123,10 @@ func (w *SuppressionWorker) subscribeAll(pending []subscription) []subscription 
 
 func (w *SuppressionWorker) Stop() {
 	w.mu.Lock()
-	defer w.mu.Unlock()
-	for _, s := range w.subs {
-		_ = s.Drain()
-	}
+	subs := w.subs
 	w.subs = nil
+	w.mu.Unlock()
+	events.DrainSubscriptions(w.logger, subs...)
 }
 
 // handle: sin ack, JetStream reentrega. Se acka lo procesado y lo que nunca se va a

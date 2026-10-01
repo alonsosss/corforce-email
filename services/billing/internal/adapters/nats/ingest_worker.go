@@ -155,7 +155,7 @@ func (w *IngestWorker) subscribeAll(pending []binding) []binding {
 		w.mu.Lock()
 		if w.stopped {
 			w.mu.Unlock()
-			_ = sub.Drain()
+			events.DrainSubscriptions(w.logger, sub)
 			return nil
 		}
 		w.subs = append(w.subs, sub)
@@ -167,12 +167,11 @@ func (w *IngestWorker) subscribeAll(pending []binding) []binding {
 
 func (w *IngestWorker) Stop() {
 	w.mu.Lock()
-	defer w.mu.Unlock()
 	w.stopped = true
-	for _, s := range w.subs {
-		_ = s.Drain()
-	}
+	subs := w.subs
 	w.subs = nil
+	w.mu.Unlock()
+	events.DrainSubscriptions(w.logger, subs...)
 }
 
 func (w *IngestWorker) onTenantCreated(evt events.Event, ack func()) {

@@ -161,6 +161,11 @@ if ! bash "$ROOT/ops/scaffold/check-motor-os-updates.sh"; then
   FAIL=1
 fi
 
+echo "== 26. Consumidores de NATS: se paran con events.DrainSubscriptions, que espera a los mensajes en vuelo =="
+if ! bash "$ROOT/ops/scaffold/check-subscription-drain.sh"; then
+  FAIL=1
+fi
+
 echo ""
 if [[ $FAIL -ne 0 ]]; then
   echo "VALIDACION: FALLA"; exit 1

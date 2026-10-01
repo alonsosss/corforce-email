@@ -182,9 +182,7 @@ func (c *EventConsumer) Stop() {
 	subs := c.subs
 	c.subs = nil
 	c.mu.Unlock()
-	for _, s := range subs {
-		_ = s.Drain()
-	}
+	events.DrainSubscriptions(c.logger, subs...)
 }
 
 // Handle guarda el apunte del evento y confirma. Sin confirmar quedan los fallos que una nueva

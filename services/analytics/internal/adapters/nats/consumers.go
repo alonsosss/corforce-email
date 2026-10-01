@@ -120,7 +120,7 @@ func (c *Consumers) subscribeAll(pending []binding) []binding {
 		c.mu.Lock()
 		if c.stopped {
 			c.mu.Unlock()
-			_ = sub.Drain()
+			events.DrainSubscriptions(c.logger, sub)
 			return nil
 		}
 		c.subs = append(c.subs, sub)
@@ -132,12 +132,11 @@ func (c *Consumers) subscribeAll(pending []binding) []binding {
 
 func (c *Consumers) Stop() {
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	c.stopped = true
-	for _, s := range c.subs {
-		_ = s.Drain()
-	}
+	subs := c.subs
 	c.subs = nil
+	c.mu.Unlock()
+	events.DrainSubscriptions(c.logger, subs...)
 }
 
 // onEmailEvent cuenta un hito de transactional.email.<accion>. Payload:

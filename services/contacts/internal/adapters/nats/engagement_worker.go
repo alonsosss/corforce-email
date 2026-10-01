@@ -81,11 +81,10 @@ func (w *EngagementWorker) keepSubscribing(ctx context.Context, durable string, 
 
 func (w *EngagementWorker) Stop() {
 	w.mu.Lock()
-	defer w.mu.Unlock()
-	for _, s := range w.subs {
-		_ = s.Drain()
-	}
+	subs := w.subs
 	w.subs = nil
+	w.mu.Unlock()
+	events.DrainSubscriptions(w.logger, subs...)
 }
 
 // engagementEvent interpreta el payload. ok=false: el evento no es de interaccion con un

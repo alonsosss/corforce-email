@@ -119,9 +119,7 @@ func (w *SenderWorker) subscribe() (*natsgo.Subscription, error) {
 }
 
 func (w *SenderWorker) Stop() {
-	if w.sub != nil {
-		_ = w.sub.Drain()
-	}
+	events.DrainSubscriptions(w.logger, w.sub)
 	close(w.stop)
 	w.wg.Wait()
 }
@@ -206,9 +204,7 @@ func (c *DomainsConsumer) Start() error {
 }
 
 func (c *DomainsConsumer) Stop() {
-	if c.sub != nil {
-		_ = c.sub.Drain()
-	}
+	events.DrainSubscriptions(c.logger, c.sub)
 }
 
 func (c *DomainsConsumer) handle(evt events.Event, ack func()) {

@@ -97,11 +97,10 @@ func (w *IngestWorker) subscribeAll(pending []subscription) []subscription {
 
 func (w *IngestWorker) Stop() {
 	w.mu.Lock()
-	defer w.mu.Unlock()
-	for _, s := range w.subs {
-		_ = s.Drain()
-	}
+	subs := w.subs
 	w.subs = nil
+	w.mu.Unlock()
+	events.DrainSubscriptions(w.logger, subs...)
 }
 
 // handle devuelve el manejador de un subject. Sin ack, JetStream reentrega; se acka lo

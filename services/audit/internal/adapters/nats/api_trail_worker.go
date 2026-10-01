@@ -73,9 +73,7 @@ func (w *APITrailWorker) Stop() {
 	w.mu.Lock()
 	sub := w.sub
 	w.mu.Unlock()
-	if sub != nil {
-		_ = sub.Drain()
-	}
+	events.DrainSubscriptions(w.logger, sub)
 }
 
 func (w *APITrailWorker) handle(evt events.Event, ack func()) {

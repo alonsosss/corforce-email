@@ -93,11 +93,10 @@ func (c *Consumer) subscribeAll(pending []subscription) []subscription {
 
 func (c *Consumer) Stop() {
 	c.mu.Lock()
-	defer c.mu.Unlock()
-	for _, s := range c.subs {
-		_ = s.Drain()
-	}
+	subs := c.subs
 	c.subs = nil
+	c.mu.Unlock()
+	events.DrainSubscriptions(c.logger, subs...)
 }
 
 // payload es lo que se lee de Data. Se decodifica a una estructura para tolerar los campos

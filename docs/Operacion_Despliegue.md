@@ -1246,7 +1246,11 @@ el OOM, pero con ClamAV cargando la latencia se degrada.
 `docker-compose.selfhosted.yml` da a cada servicio Go (24) `mem_limit`, `GOMEMLIMIT` (80 % del techo, para que el
 recolector actúe antes que el OOM del cgroup), `pids_limit: 256`, `user: 65532:65532`, `read_only: true`,
 `cap_drop: [ALL]` y `stop_grace_period: 40s` (`pkg/server` espera hasta 30 s a las peticiones en vuelo tras SIGTERM; con
-los 10 s por defecto de compose el kernel las mataba a medias en cada despliegue). Ninguno escribe en disco (imágenes
+los 10 s por defecto de compose el kernel las mataba a medias en cada despliegue). Después, cada consumidor de NATS se para
+con `events.DrainSubscriptions` (hasta 5 s a los mensajes en vuelo): `Drain` de nats.go vuelve en el acto, y lo que el
+servidor empujaba durante la baja quedaba sin confirmar hasta `AckWait` (90 s), así que en cada despliegue había eventos
+con minuto y medio de retraso (2026-10-01). `ops/scaffold/check-subscription-drain.sh` falla con un `.Drain()` suelto fuera
+de `pkg/events`. Ninguno escribe en disco (imágenes
 `scratch`, sin `CreateTemp` ni `WriteFile`), así que no hay tmpfs. `ops/scaffold/check-selfhosted-profile.sh` falla si
 un servicio Go pierde alguno de ellos o si la suma de `mem_limit` del perfil pasa de 6400 MiB (la de hoy: 6288; el techo
 subió de 6144 con el relay SMTP, 3-G: 256 MiB de `smtp-relay` y 16 de `smtp-relay-certs`). La rotación de logs la da
