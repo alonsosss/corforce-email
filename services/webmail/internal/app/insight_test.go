@@ -123,6 +123,38 @@ func TestOrderConversationAcotaALasMasRecientes(t *testing.T) {
 	}
 }
 
+// TestOrderConversationDesempataPorLaCadenaDeRespuestas: Date tiene resolucion de segundos; dos
+// mensajes en el mismo segundo salen en el orden de la conversacion, no en el de las carpetas.
+func TestOrderConversationDesempataPorLaCadenaDeRespuestas(t *testing.T) {
+	at := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	msg := func(folder, id string, replyTo ...string) domain.ConversationMessage {
+		return domain.ConversationMessage{Folder: folder, MessageID: id, InReplyTo: replyTo, Envelope: domain.Envelope{Date: at}}
+	}
+	msgs := []domain.ConversationMessage{
+		msg("INBOX", "<c@x>", "<b@x>"),
+		msg("INBOX", "<a@x>"),
+		msg("Sent", "<b@x>", "<a@x>"),
+		// Cabeceras en ciclo: no cuelga y el mensaje sigue en la conversacion.
+		msg("INBOX", "<y@x>", "<z@x>"),
+		msg("INBOX", "<z@x>", "<y@x>"),
+	}
+	out := orderConversation(msgs)
+	var got []string
+	for _, m := range out {
+		got = append(got, m.MessageID)
+	}
+	if len(out) != 5 || out[0].MessageID != "<a@x>" {
+		t.Fatalf("orden=%v", got)
+	}
+	pos := map[string]int{}
+	for i, id := range got {
+		pos[id] = i
+	}
+	if !(pos["<a@x>"] < pos["<b@x>"] && pos["<b@x>"] < pos["<c@x>"]) {
+		t.Fatalf("la cadena a <- b <- c no sale en orden: %v", got)
+	}
+}
+
 // insightService arma el servicio del arnes con una libreta que responde por consulta.
 func insightService(t *testing.T, h *harness, book *queryBook) *Service {
 	t.Helper()

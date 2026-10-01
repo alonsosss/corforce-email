@@ -114,11 +114,54 @@ func orderConversation(msgs []domain.ConversationMessage) []domain.ConversationM
 		seen[key] = true
 		out = append(out, m)
 	}
-	sort.SliceStable(out, func(i, j int) bool { return out[i].Date.Before(out[j].Date) })
+	// La cabecera Date tiene resolucion de segundos: una respuesta en el mismo segundo que el mensaje
+	// al que contesta desempata por su profundidad en la cadena de In-Reply-To.
+	depth := replyDepths(out)
+	sort.SliceStable(out, func(i, j int) bool {
+		if !out[i].Date.Equal(out[j].Date) {
+			return out[i].Date.Before(out[j].Date)
+		}
+		return depth[out[i].Folder+"\x00"+out[i].MessageID] < depth[out[j].Folder+"\x00"+out[j].MessageID]
+	})
 	if len(out) > domain.MaxThreadMessages {
 		out = out[len(out)-domain.MaxThreadMessages:]
 	}
 	return out
+}
+
+// replyDepths da a cada mensaje (carpeta y Message-ID) cuantos antecesores suyos, por In-Reply-To,
+// estan en la conversacion. Un ciclo de cabeceras mal formadas se corta al no repetir mensajes.
+func replyDepths(msgs []domain.ConversationMessage) map[string]int {
+	byID := make(map[string]domain.ConversationMessage, len(msgs))
+	for _, m := range msgs {
+		if m.MessageID != "" {
+			if _, ok := byID[m.MessageID]; !ok {
+				byID[m.MessageID] = m
+			}
+		}
+	}
+	depths := make(map[string]int, len(msgs))
+	for _, m := range msgs {
+		seen := map[string]bool{m.MessageID: true}
+		d, cur := 0, m
+		for {
+			parent, ok := domain.ConversationMessage{}, false
+			for _, id := range cur.InReplyTo {
+				if p, found := byID[id]; found && !seen[id] {
+					parent, ok = p, true
+					seen[id] = true
+					break
+				}
+			}
+			if !ok {
+				break
+			}
+			d++
+			cur = parent
+		}
+		depths[m.Folder+"\x00"+m.MessageID] = d
+	}
+	return depths
 }
 
 // SenderInsight arma la ficha de un mensaje: pestana, escudo antifraude y baja. Lo que el directorio
