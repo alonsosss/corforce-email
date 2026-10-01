@@ -404,7 +404,9 @@ directorio:
   (600, root), fuera del bind mount de `/etc/dovecot`, con `doveadm_allowed_commands = kick,auth
   cache flush` (con replica, ademas `dsync-server`, porque la regla vale tambien para el puerto
   12345): la clave solo vacia la cache y echa a un buzon; no lee correo ni lista quien esta
-  conectado. Sin clave no se abre el listener. `mail-security` la manda en
+  conectado. Sin replica (`MAIL_REPLICA_IP` o `DOVEADM_REPLICA_PORT` vacias) tampoco se carga el
+  plugin `replication` ni queda un `replicator` en marcha (`/etc/dovecot-auth/replication.conf`):
+  sus `doveadm sync` sin destino chocaban con esa regla y dejaban un error por buzon al arrancar. Sin clave no se abre el listener. `mail-security` la manda en
   `Authorization: X-Dovecot-API <base64>` a `DOVEADM_API_URL` (`https://dovecot:8443`,
   `https://host[:puerto]` sin ruta, usuario, consulta ni fragmento: en claro o mal formada no
   arranca), por TLS verificado contra `DOVEADM_API_TLS_SERVER_NAME` (vacio = `MAIL_HOSTNAME`), con

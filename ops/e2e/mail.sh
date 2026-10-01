@@ -2641,6 +2641,11 @@ errores=$(docker logs "$(c postfix-mail)" 2>&1 | grep -E 'fatal:|panic:|pgsql.*(
 # El maestro sobre nadie@ es una comprobacion de arriba y Dovecot la registra como error.
 errores=$(docker logs "$(c dovecot-mail)" 2>&1 | grep -E 'Fatal:|Panic:|auth.*Error' | grep -v 'nadie@acme.test')
 [[ -z "$errores" ]] && ok "Dovecot sin Fatal ni errores de autenticacion" || { mal "Dovecot"; head -3 <<<"$errores" >&2; }
+# Sin replica configurada no hay replicator: al arrancar pedia un doveadm sync por buzon que la API
+# de doveadm rechaza y dejaba un error por buzon en el registro de produccion.
+lacks "Dovecot sin replica no carga el plugin replication" "$(en dovecot-mail doveconf -h mail_plugins 2>&1)" "replication"
+lacks "ni deja un replicator en marcha" "$(en dovecot-mail ps 2>&1 | grep '[d]ovecot/replicator')" "replicator"
+lacks "ni registra syncs rechazados" "$(docker logs "$(c dovecot-mail)" 2>&1 | grep 'allowed to use command: sync')" "sync"
 for s in unbound-mail redis-mail clamd-mail rspamd-mail dovecot-mail postfix-mail postfix-tlspol-mail olefy-mail mail-directory mail-auth mail-security webmail mail-migration-runner minio; do
   reinicios=$(docker inspect -f '{{.RestartCount}}' "$(c "$s")" 2>/dev/null)
   [[ "$reinicios" == 0 ]] || mal "$s se reinicio ($reinicios veces)"

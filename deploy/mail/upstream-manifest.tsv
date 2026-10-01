@@ -28,12 +28,12 @@ modificado	dovecot/clean_q_aged.sh	postgres,nombres	data/Dockerfiles/dovecot/cle
 nuevo	dovecot/conf/auth/migration-verify.lua	migracion	-
 modificado	dovecot/conf/auth/passwd-verify.lua	servicios-go	data/conf/dovecot/auth/passwd-verify.lua
 modificado	dovecot/conf/conf.d/fts.conf	nombres	data/conf/dovecot/conf.d/fts.conf
-modificado	dovecot/conf/dovecot.conf	postgres,sogo-php,migracion	data/conf/dovecot/dovecot.conf
+modificado	dovecot/conf/dovecot.conf	postgres,sogo-php,migracion,endurecimiento	data/conf/dovecot/dovecot.conf
 identico	dovecot/conf/dovecot.folders.conf	6a747a6efbdc02ab39846b433237a928c976a2b4d3c1d8eedefc25927b90bc83
 modificado	dovecot/conf/global_sieve_after	nombres	data/conf/dovecot/global_sieve_after
 modificado	dovecot/conf/global_sieve_before	nombres	data/conf/dovecot/global_sieve_before
 nuevo	dovecot/crontab	cron	-
-modificado	dovecot/docker-entrypoint.sh	postgres,sogo-php,servicios-go,nombres,migracion	data/Dockerfiles/dovecot/docker-entrypoint.sh
+modificado	dovecot/docker-entrypoint.sh	postgres,sogo-php,servicios-go,nombres,migracion,endurecimiento	data/Dockerfiles/dovecot/docker-entrypoint.sh
 identico	dovecot/maildir_gc.sh	bafa25e04714d9d18d3665e82585f841f088ebe139dbb005f631822144b2e0d2
 nuevo	dovecot/maildir_reconcile.sh	cron,endurecimiento	-
 identico	dovecot/optimize-fts.sh	721e4191857c5433eeecb87f880ea8a2d55373d34becb720c9afc26487649af7
