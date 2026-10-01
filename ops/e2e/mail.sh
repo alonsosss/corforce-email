@@ -2646,6 +2646,10 @@ errores=$(docker logs "$(c dovecot-mail)" 2>&1 | grep -E 'Fatal:|Panic:|auth.*Er
 lacks "Dovecot sin replica no carga el plugin replication" "$(en dovecot-mail doveconf -h mail_plugins 2>&1)" "replication"
 lacks "ni deja un replicator en marcha" "$(en dovecot-mail ps 2>&1 | grep '[d]ovecot/replicator')" "replicator"
 lacks "ni registra syncs rechazados" "$(docker logs "$(c dovecot-mail)" 2>&1 | grep 'allowed to use command: sync')" "sync"
+# Y una replica configurada no arranca a medias (docs/adr/0018): sale antes de esperar a la base.
+REPLICA_SALIDA=$(timeout 60 docker run --rm -e MAIL_REPLICA_IP=192.0.2.10 -e DOVEADM_REPLICA_PORT=12345 "$PROYECTO-dovecot-mail" true 2>&1); REPLICA_RC=$?
+expect "Dovecot con MAIL_REPLICA_IP se niega a arrancar" "$REPLICA_RC" "1"
+contains "y dice por que" "$REPLICA_SALIDA" "docs/adr/0018-dovecot-sin-replica.md"
 for s in unbound-mail redis-mail clamd-mail rspamd-mail dovecot-mail postfix-mail postfix-tlspol-mail olefy-mail mail-directory mail-auth mail-security webmail mail-migration-runner minio; do
   reinicios=$(docker inspect -f '{{.RestartCount}}' "$(c "$s")" 2>/dev/null)
   [[ "$reinicios" == 0 ]] || mal "$s se reinicio ($reinicios veces)"

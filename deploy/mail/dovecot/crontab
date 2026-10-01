@@ -9,4 +9,3 @@
 */5 * * * *  /bin/bash -c 'source /source_env.sh; [[ ${MASTER} == y ]] && /usr/local/bin/gosu vmail /usr/local/bin/maildir_reconcile.sh || exit 0'
 0 3 * * *    /bin/bash -c 'source /source_env.sh; /usr/local/bin/sa-rules.sh'
 0 0 * * *    /bin/bash -c 'source /source_env.sh; /usr/local/bin/gosu vmail /usr/local/bin/optimize-fts.sh'
-*/5 * * * *  /bin/bash -c 'source /source_env.sh; /usr/local/bin/gosu vmail /usr/local/bin/repl_health.sh'

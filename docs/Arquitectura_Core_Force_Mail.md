@@ -78,6 +78,11 @@ Verificado de punta a punta con binarios reales (2026-09-12): alta de dominio po
 Postfix/Dovecot leen bajo el rol `mail_engine` con su ruta Maildir; otra empresa lista cero
 buzones (RLS).
 
+Dovecot no se replica (V 2026-10-01, `make e2e-mail`; `docs/adr/0018-dovecot-sin-replica.md`): un solo
+nodo con respaldos ensayados; la replica heredada de mailcow no funcionaba con la API de doveadm
+restringida y abrirla daria a su clave un `sync` hacia cualquier destino. Con `MAIL_REPLICA_IP` el
+contenedor no arranca.
+
 Verificado con los motores reales (2026-09-13, `make e2e-mail`, `ops/e2e/mail.sh`): Postfix,
 Dovecot, Rspamd, ClamAV, Unbound, Olefy, postfix-tlspol y redis-mail con las imagenes de
 `deploy/mail`, junto a `mail-auth`, `mail-security` (`mail-policy`), `mail-directory` y

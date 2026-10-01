@@ -86,7 +86,6 @@ COPY docker-entrypoint.sh /
 COPY supervisord.conf /etc/supervisor/supervisord.conf
 COPY stop-supervisor.sh /usr/local/sbin/stop-supervisor.sh
 COPY quota_notify.py /usr/local/bin/quota_notify.py
-COPY repl_health.sh /usr/local/bin/repl_health.sh
 COPY optimize-fts.sh /usr/local/bin/optimize-fts.sh
 COPY crontab /etc/crontabs/root
 

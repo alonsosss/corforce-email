@@ -28,6 +28,7 @@ omitido	data/Dockerfiles/sogo	SOGo: el webmail es el servicio Go webmail
 omitido	data/Dockerfiles/phpfpm	PHP: la capa de control es Go
 omitido	data/Dockerfiles/nginx	nginx: el gateway y el borde HTTPS son propios
 omitido	data/Dockerfiles/backup	respaldo de mailcow: lo cubre ops/backup
+omitido	data/Dockerfiles/dovecot/repl_health.sh	replica de Dovecot: no se replica (docs/adr/0018)
 omitido	data/Dockerfiles/dovecot/imapsync	imapsync no se copio (plan de mejoras, C1)
 omitido	data/Dockerfiles/dovecot/quarantine_notify.py	el aviso de cuarentena lo envia mail-security
 omitido	data/Dockerfiles/watchdog/check_mysql_slavestatus.sh	sin MySQL

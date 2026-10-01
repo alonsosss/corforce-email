@@ -402,11 +402,12 @@ directorio:
   y la misma en `dovecot-mail` y en `mail-security`: de 32 a 256 caracteres de `[A-Za-z0-9_-]`
   (`openssl rand -hex 32`). El entrypoint la escribe en `/etc/dovecot-auth/doveadm-api.conf`
   (600, root), fuera del bind mount de `/etc/dovecot`, con `doveadm_allowed_commands = kick,auth
-  cache flush` (con replica, ademas `dsync-server`, porque la regla vale tambien para el puerto
-  12345): la clave solo vacia la cache y echa a un buzon; no lee correo ni lista quien esta
-  conectado. Sin replica (`MAIL_REPLICA_IP` o `DOVEADM_REPLICA_PORT` vacias) tampoco se carga el
-  plugin `replication` ni queda un `replicator` en marcha (`/etc/dovecot-auth/replication.conf`):
-  sus `doveadm sync` sin destino chocaban con esa regla y dejaban un error por buzon al arrancar. Sin clave no se abre el listener. `mail-security` la manda en
+  cache flush` (la regla vale para todas las conexiones del servidor doveadm: el 8443, el 12345 y el
+  socket local): la clave solo vacia la cache y echa a un buzon; no lee correo ni lista quien esta
+  conectado. Dovecot no se replica (`docs/adr/0018-dovecot-sin-replica.md`): sin plugin
+  `replication` ni `replicator`, y con `MAIL_REPLICA_IP` o `DOVEADM_REPLICA_PORT` el contenedor se
+  niega a arrancar. La replica necesitaria `sync` en esa regla, y con el la clave de la API podria
+  sincronizar cualquier buzon hacia un servidor ajeno. Sin clave no se abre el listener. `mail-security` la manda en
   `Authorization: X-Dovecot-API <base64>` a `DOVEADM_API_URL` (`https://dovecot:8443`,
   `https://host[:puerto]` sin ruta, usuario, consulta ni fragmento: en claro o mal formada no
   arranca), por TLS verificado contra `DOVEADM_API_TLS_SERVER_NAME` (vacio = `MAIL_HOSTNAME`), con
@@ -491,7 +492,7 @@ evento, lo registra como cambio que no invalida la sesion y la sesion sigue sirv
 mail-security no echa a nadie de Dovecot por ellos; quitarle `imap_access`, apagar el buzon y
 cambiar su contrasena SI la cierran al momento.
 
-P: `dsync-server` con replica no esta probado. Queda una carrera: una autenticacion que
+Queda una carrera: una autenticacion que
 `mail-auth` acepto antes del cambio y que Dovecot guardara despues del vaciado (mas lenta que el
 rele de la outbox) valdria hasta `auth_cache_ttl`.
 
@@ -884,7 +885,7 @@ sobre un enlace privado hasta que se cifre.
 | `F2B_CHANNEL` | pub/sub | syslog-ng de postfix y dovecot | netfilter | lineas de log a evaluar |
 | `F2B_LOG` / `NETFILTER_LOG`, `POSTFIX_MAILLOG`, `DOVECOT_MAILLOG`, `ACME_LOG`, `WATCHDOG_LOG`, `RL_LOG` | list (LPUSH, recortadas por `trim_logs.sh` a `LOG_LINES`) | motores | plataforma (UI de logs) | logs JSON |
 | `POSTFIX_DELIVERY_LOG` | list (LPUSH y LTRIM en un EVAL, tope `delivery_log_max_lines` = 200.000) | syslog-ng de postfix | mail-security, el unico lector (`BLMOVE` a `CFM_DELIVERY_LOG_WORK`; contexto por id de cola en `CFM_DELIVERY_QID:<id>`, 7 dias) | las mismas lineas JSON que `POSTFIX_MAILLOG`, para el registro de entregas por empresa (`docs/Plan_Registro_de_Envios.md`) |
-| `DOVECOT_REPL_HEALTH`, `ACME_FAIL_TIME` | string | dovecot / acme | watchdog | estado |
+| `DOVECOT_REPL_HEALTH`, `ACME_FAIL_TIME` | string | dovecot (siempre 1 al arrancar: no hay replica) / acme | watchdog | estado |
 | `MC_CHANNEL` | pub/sub | plataforma | dockerapi | `{"api_call":"container_post","post_action":"exec|restart|...","container_name":"...","request":{"cmd":..,"task":..}}` |
 
 Claves DKIM (V, 2026-09-13): `DKIM_PRIV_KEYS` y `DKIM_SELECTORS` solo tienen claves de
@@ -1079,7 +1080,6 @@ sin scheduler externo):
 | `maildir_reconcile.sh` | cada 5 min (`MASTER=y`) | mueve a `_garbage` el maildir de cada buzon borrado (marcas de `mail.mailbox_deletions`, que consume) y los maildir y dominios sin fila en el directorio; seccion "Maildir de un buzon borrado" |
 | `sa-rules.sh` | diaria 03:00 | descarga reglas SpamAssassin de Heinlein y reinicia rspamd via dockerapi si cambian |
 | `optimize-fts.sh` | diaria | `doveadm fts optimize -A` si FTS activo |
-| `repl_health.sh` | cada 5 min | publica `DOVECOT_REPL_HEALTH` |
 
 ## Ficheros generados en tiempo de ejecucion
 

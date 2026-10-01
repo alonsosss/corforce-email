@@ -38,7 +38,6 @@ identico	dovecot/maildir_gc.sh	bafa25e04714d9d18d3665e82585f841f088ebe139dbb005f
 nuevo	dovecot/maildir_reconcile.sh	cron,endurecimiento	-
 identico	dovecot/optimize-fts.sh	721e4191857c5433eeecb87f880ea8a2d55373d34becb720c9afc26487649af7
 modificado	dovecot/quota_notify.py	nombres	data/Dockerfiles/dovecot/quota_notify.py
-modificado	dovecot/repl_health.sh	nombres	data/Dockerfiles/dovecot/repl_health.sh
 identico	dovecot/report-ham.sieve	1b697ba803acd01187a9ec35f173517cee831f7001f2c00e7c356287cea92e74
 identico	dovecot/report-spam.sieve	3e79e19511d45f75b05198718f235e0c6b525ec9d79fcd2474da9429097cb456
 modificado	dovecot/rspamd-pipe-ham	nombres	data/Dockerfiles/dovecot/rspamd-pipe-ham
