@@ -52,7 +52,7 @@ despliegue_comprobar_arbol() {
   return 1
 }
 
-# Puerta de regresion de los motores (docs/Plan_Estrategico_Mejoras_Correo.md, B6): un motor solo se
+# Puerta de regresion de los motores (docs/Plan_Estrategico_Mejoras_Correo.md, B6): un motor, o un servicio que esa prueba ejercita, solo se
 # despliega si make e2e-mail (el flujo de GitHub <flujo>) esta en verde para lo que se va a desplegar.
 # Vale una ejecucion verde de HEAD, o la ultima verde de un commit anterior de main si desde entonces
 # no cambio nada de lo que ese flujo vigila (sus `paths` de push): un cambio de documentacion no
@@ -128,11 +128,24 @@ PY
 )" || veredicto="no se pudo evaluar la puerta de regresion"
   fi
   [[ "$veredicto" == ok ]] && return 0
-  echo "PUERTA DE REGRESION DE LOS MOTORES: $veredicto" >&2
+  echo "PUERTA DE REGRESION (make e2e-mail): $veredicto" >&2
   echo "  Espera al flujo $flujo en GitHub (o lanzalo con: gh workflow run $flujo)." >&2
   if [[ "$modo" == avisar ]]; then echo ">> AVISO: se sigue (MAIL_DEPLOY_REGRESION=avisar)" >&2; return 0; fi
   echo "  Solo con una razon: MAIL_DEPLOY_REGRESION=omitir (queda dicho en la salida)." >&2
   return 1
+}
+
+# despliegue_cubiertos_por <flujo> <servicio>...: escribe los servicios que el flujo vigila por su
+# carpeta (`services/<svc>/**` en sus paths de push). deploy-ecr.sh lo usa para pedir make e2e-mail en
+# verde antes de desplegar un servicio que esa prueba ejercita: el 2026-09-27 el gateway salio a
+# produccion con los avisos del webmail rotos mientras mail-engines.yml llevaba dias en rojo.
+despliegue_cubiertos_por() {
+  local fichero=".github/workflows/${1:?flujo}" s; shift
+  [[ -f "$fichero" ]] || { echo "no existe $fichero" >&2; return 1; }
+  for s in "$@"; do
+    grep -qF -- "- 'services/$s/**'" "$fichero" && echo "$s"
+  done
+  return 0
 }
 
 # Puerta de la CI: no se despliega un commit cuya CI no esta en verde.

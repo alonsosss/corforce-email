@@ -9,6 +9,8 @@
 #   TRANSPORT=save scripts/deploy-ecr.sh ... # sin AWS local: docker save | ssh load
 #   DEPLOY_PLAN=1 scripts/deploy-ecr.sh      # solo dice que desplegaria: no compila, no toma el
 #                                            # candado ni escribe nada (scripts/estado-produccion.sh)
+#   MAIL_DEPLOY_REGRESION=avisar|omitir      # un servicio que prueba make e2e-mail exige su flujo
+#                                            # mail-engines.yml en verde (por defecto, exigir)
 set -euo pipefail
 
 ROOT="$(git -C "$(dirname "$0")" rev-parse --show-toplevel)"; cd "$ROOT"
@@ -275,6 +277,16 @@ fi
 # ── 1b. guardia de retroceso (scripts/lib/despliegue.sh) ─────────────────────
 # Antes del build para fallar pronto; se repite con el candado en la mano.
 guardia_retroceso app "$TAG" "${SVCS[@]}" || exit 1
+
+# ── 1c. puerta de regresion de punta a punta (scripts/lib/despliegue.sh) ─────
+# Un servicio que make e2e-mail ejercita (gateway, webmail, mail-auth...) no sale con esa prueba en
+# rojo o sin cubrir sus cambios: las pruebas unitarias no ven lo que solo se rompe entre servicios.
+# Mismos modos que en deploy-mail.sh: MAIL_DEPLOY_REGRESION=exigir | avisar | omitir.
+mapfile -t CUBIERTOS < <(despliegue_cubiertos_por mail-engines.yml "${SVCS[@]}")
+if [[ ${#CUBIERTOS[@]} -gt 0 ]]; then
+  echo ">> make e2e-mail cubre: ${CUBIERTOS[*]}"
+  despliegue_comprobar_regresion mail-engines.yml || exit 1
+fi
 
 # El servidor no tiene el codigo fuente: solo levanta lo que el override de imagenes
 # referencia. Un servicio ausente del override intentaria compilar alli y el deploy

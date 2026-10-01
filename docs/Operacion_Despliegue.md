@@ -1727,15 +1727,24 @@ dónde se ve qué corre en producción sin depender de que alguien lo recuerde.
 
 Las incidencias que abren los flujos programados se asignan a la variable de repositorio
 `MANTENIMIENTO_RESPONSABLE` (un usuario de GitHub) o, sin ella, al dueño del repositorio. Si no se
-puede asignar, el flujo lo dice en su resumen y no falla. Los fallos de `mail-engines.yml` (la prueba
-nocturna) los notifica GitHub por correo a quien lo tiene configurado.
+puede asignar, el flujo lo dice en su resumen y no falla. Un fallo de `mail-engines.yml` en `main` (la
+prueba nocturna o la de un push) abre o actualiza la incidencia `e2e-motores`, asignada igual, con las
+comprobaciones que fallan; el siguiente verde la cierra. Antes solo llegaba el correo de GitHub y del
+2026-09-27 al 2026-10-01 fallo cada noche sin que nadie actuara (los avisos SSE del webmail, rotos en
+produccion por el gateway).
+
+Mientras `make e2e-mail` este en rojo, o sin un verde que cubra los cambios, no se despliega lo que
+esa prueba ejercita: `scripts/deploy-mail.sh` para los motores y, desde el 2026-10-01,
+`scripts/deploy-ecr.sh` para los servicios cuya carpeta vigila el flujo (gateway, webmail, mail-auth,
+identity...; `despliegue_cubiertos_por` en `scripts/lib/despliegue.sh`). Mismo interruptor en los dos:
+`MAIL_DEPLOY_REGRESION=avisar|omitir`, solo con una razon.
 
 ### Qué avisa solo
 
 | Cuándo | Qué | Aviso |
 |---|---|---|
 | Cada commit | CI: compilación, pruebas, `validate.sh`, `govulncheck` | el commit sale rojo |
-| Cada noche (04:17 UTC) | `mail-engines.yml`: `make e2e-mail` con los motores reales | correo de GitHub |
+| Cada noche (04:17 UTC) | `mail-engines.yml`: `make e2e-mail` con los motores reales | una incidencia `e2e-motores`, asignada, mientras falle |
 | Lunes | `upstream-mailcow.yml`: cambios de mailcow por portar | una incidencia `upstream-mailcow`, asignada |
 | Lunes | Dependabot: Go, web y acciones | como mucho un PR por familia |
 | Día 1 del mes | `imagenes-motores.yml`: Trivy sobre las 11 imágenes | una incidencia `imagenes-motores`, asignada y con su plazo |

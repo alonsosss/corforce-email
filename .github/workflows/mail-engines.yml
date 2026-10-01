@@ -73,6 +73,7 @@ concurrency:
 
 permissions:
   contents: read
+  issues: write
 
 jobs:
   e2e-mail:
@@ -86,4 +87,42 @@ jobs:
           go-version: '1.26'
           cache: true
       - name: make e2e-mail
-        run: make e2e-mail
+        id: e2e
+        run: |
+          set -o pipefail
+          make e2e-mail 2>&1 | tee e2e-mail.log
+
+      # Una prueba en rojo que nadie mira no protege: del 2026-09-27 al 2026-10-01 este flujo fallo cada
+      # noche y el gateway salio a produccion con los avisos del webmail rotos. En main, un fallo abre (o
+      # actualiza) UNA incidencia asignada a quien atiende el mantenimiento, y el siguiente verde la cierra.
+      - name: Incidencia
+        if: always() && github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && (steps.e2e.outcome == 'success' || steps.e2e.outcome == 'failure')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RESPONSABLE: ${{ vars.MANTENIMIENTO_RESPONSABLE || github.repository_owner }}
+          RESULTADO: ${{ steps.e2e.outcome }}
+          EJECUCION: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          numero="$(gh issue list --state open --label e2e-motores --json number --jq '.[0].number // empty')"
+          if [ "$RESULTADO" = success ]; then
+            if [ -n "$numero" ]; then
+              gh issue close "$numero" --comment "make e2e-mail vuelve a pasar en \`${GITHUB_SHA:0:8}\` ($EJECUCION)."
+            fi
+            exit 0
+          fi
+          gh label create e2e-motores --color b60205 --description "make e2e-mail falla en main" 2>/dev/null || true
+          fallas="$(grep -E '^[[:space:]]+FALLA' e2e-mail.log | head -40 || true)"
+          [ -n "$fallas" ] || fallas="$(tail -40 e2e-mail.log)"
+          { printf 'make e2e-mail falla en `main` (`%s`, %s, evento %s).\n\n' "${GITHUB_SHA:0:8}" "$EJECUCION" "$GITHUB_EVENT_NAME"
+            printf 'Mientras siga en rojo, `scripts/deploy-mail.sh` y `scripts/deploy-ecr.sh` (para los servicios que esta prueba cubre) se niegan a desplegar.\n\n'
+            printf '```\n%s\n```\n' "$fallas"; } | head -c 60000 > cuerpo.md
+          titulo="make e2e-mail falla en main"
+          if [ -n "$numero" ]; then
+            gh issue edit "$numero" --body-file cuerpo.md
+            gh issue comment "$numero" --body "Sigue fallando en \`${GITHUB_SHA:0:8}\` ($EJECUCION)."
+          else
+            numero="$(gh issue create --title "$titulo" --label e2e-motores --body-file cuerpo.md | sed 's|.*/||')"
+          fi
+          gh issue edit "$numero" --add-assignee "$RESPONSABLE" ||
+            echo "::warning::no se pudo asignar la incidencia $numero a $RESPONSABLE (define la variable MANTENIMIENTO_RESPONSABLE)"

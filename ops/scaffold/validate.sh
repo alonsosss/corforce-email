@@ -151,6 +151,16 @@ if ! bash "$ROOT/ops/scaffold/check-rspamd-controller-password.sh"; then
   FAIL=1
 fi
 
+echo "== 24. Envoltorios de http.ResponseWriter: dejan vaciar el bufer (Unwrap), o un flujo SSE se queda retenido =="
+if ! bash "$ROOT/ops/scaffold/check-response-writers.sh"; then
+  FAIL=1
+fi
+
+echo "== 25. Imagenes Debian de los motores: actualizan antes de instalar, la base va por detras de -security =="
+if ! bash "$ROOT/ops/scaffold/check-motor-os-updates.sh"; then
+  FAIL=1
+fi
+
 echo ""
 if [[ $FAIL -ne 0 ]]; then
   echo "VALIDACION: FALLA"; exit 1

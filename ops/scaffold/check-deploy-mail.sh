@@ -181,6 +181,20 @@ lin_puerta="$(grep -n "despliegue_comprobar_regresion mail-engines.yml" "$DM" | 
 lin_build="$(grep -n "^# ── 2. build local" "$DM" | head -1 | cut -d: -f1)"
 [[ -n "$lin_puerta" && -n "$lin_build" && "$lin_puerta" -lt "$lin_build" ]] || mal "deploy-mail: la puerta de regresion no va antes de construir"
 
+# El despliegue de la plataforma la pide para los servicios que el flujo vigila por carpeta, antes de
+# construir: el gateway salio con los avisos del webmail rotos y mail-engines.yml en rojo (2026-09-27).
+cub="$(cd "$ROOT" && bash -c ". scripts/lib/despliegue.sh; despliegue_cubiertos_por mail-engines.yml gateway web webmail mail-auth" | tr '\n' ' ')"
+[[ "$cub" == "gateway webmail mail-auth " ]] || mal "cubiertos: esperaba 'gateway webmail mail-auth', salio '$cub'"
+if (cd "$ROOT" && bash -c ". scripts/lib/despliegue.sh; despliegue_cubiertos_por no-existe.yml gateway" >/dev/null 2>&1); then
+  mal "cubiertos: acepta un flujo que no existe"
+fi
+DE="$ROOT/scripts/deploy-ecr.sh"
+grep -q "despliegue_cubiertos_por mail-engines.yml" "$DE" && grep -q "despliegue_comprobar_regresion mail-engines.yml" "$DE" ||
+  mal "deploy-ecr: no pide make e2e-mail para los servicios que esa prueba cubre"
+lin_puerta="$(grep -n "despliegue_comprobar_regresion mail-engines.yml" "$DE" | head -1 | cut -d: -f1)"
+lin_build="$(grep -n "^# ── 2\." "$DE" | head -1 | cut -d: -f1)"
+[[ -n "$lin_puerta" && -n "$lin_build" && "$lin_puerta" -lt "$lin_build" ]] || mal "deploy-ecr: la puerta de regresion no va antes de construir"
+
 # --- 2c. puerta de la CI (nada se despliega con main en rojo) ------------------------------------
 # La CI corre en cada push, asi que la regla es simple: o hay una ejecucion verde de ESTE commit, o
 # no se despliega. Se distingue entre fallo, en curso y ausente porque se arreglan de forma distinta.
