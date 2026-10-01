@@ -156,7 +156,7 @@ if ! bash "$ROOT/ops/scaffold/check-response-writers.sh"; then
   FAIL=1
 fi
 
-echo "== 25. Imagenes Debian de los motores: actualizan antes de instalar, la base va por detras de -security =="
+echo "== 25. Imagenes de los motores: actualizan antes de instalar, la base va por detras de los parches =="
 if ! bash "$ROOT/ops/scaffold/check-motor-os-updates.sh"; then
   FAIL=1
 fi

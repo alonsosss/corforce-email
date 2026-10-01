@@ -1,4 +1,6 @@
 FROM alpine:3.23
+# Parches de la rama de Alpine publicados despues de la imagen base (UPSTREAM.md, seccion 9).
+RUN apk upgrade --no-cache
 
 LABEL maintainer = "Core Force Mail"
 
