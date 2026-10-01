@@ -19,7 +19,7 @@ RUN dpkg-divert --local --rename --add /sbin/initctl \
 RUN groupadd -g 102 postfix \
   && groupadd -g 103 postdrop \
   && useradd -g postfix -u 101 -d /var/spool/postfix -s /usr/sbin/nologin postfix \
-  && apt-get update && apt-get install -y --no-install-recommends \
+  && apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
 	ca-certificates \
 	curl \
 	dirmngr \

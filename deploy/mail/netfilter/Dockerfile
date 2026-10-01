@@ -14,6 +14,7 @@ RUN apk add --virtual .build-deps \
   python3-dev \
   libffi-dev \
   openssl-dev \
+  py3-pip \
 && apk add -U python3 \
   iptables \
   iptables-dev \
@@ -21,16 +22,14 @@ RUN apk add --virtual .build-deps \
   xtables-addons \
   nftables \
   tzdata \
-  py3-pip \
   py3-nftables \
   musl-dev \
-&& pip3 install --ignore-installed --upgrade pip \
+&& pip3 install --ignore-installed \
   jsonschema \
   python-iptables \
   redis \
   ipaddress \
   dnspython \
-&& pip3 uninstall -y pip \
 && apk del .build-deps
 
 #  && pip3 install --upgrade pip python-iptables==0.13.0 redis ipaddress dnspython \

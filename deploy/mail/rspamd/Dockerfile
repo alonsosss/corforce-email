@@ -6,7 +6,7 @@ ARG RSPAMD_VER=rspamd_4.1.4-1~beb659b
 ARG CODENAME=trixie
 ENV LC_ALL=C
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
   tzdata \
   ca-certificates \
   gnupg2 \

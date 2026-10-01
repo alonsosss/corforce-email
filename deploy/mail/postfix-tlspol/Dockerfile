@@ -18,7 +18,7 @@ LABEL maintainer="Core Force Mail"
 ARG DEBIAN_FRONTEND=noninteractive
 ENV LC_ALL=C
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
 	ca-certificates \
 	dirmngr \
   	dnsutils \
