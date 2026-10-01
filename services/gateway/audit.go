@@ -117,6 +117,12 @@ func (r *statusRecorder) WriteHeader(code int) {
 	r.ResponseWriter.WriteHeader(code)
 }
 
+// Unwrap deja que http.ResponseController alcance el escritor real: sin el, el proxy no puede
+// vaciar el bufer y un flujo SSE (los avisos del webmail) se queda retenido en el gateway.
+func (r *statusRecorder) Unwrap() http.ResponseWriter {
+	return r.ResponseWriter
+}
+
 func (a *auditTrail) middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		seg1, _ := pathSegments(r.URL.Path)

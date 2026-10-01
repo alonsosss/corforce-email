@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"net/http"
 	"net/http/httptest"
@@ -209,4 +210,53 @@ func waitFor(t *testing.T, cond func() bool) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatal("condicion no alcanzada a tiempo")
+}
+
+// TestElGuardiaNoRetieneUnFlujoSSE: el guardia envuelve toda respuesta de /api/v1 para leer su
+// codigo; el proxy tiene que poder seguir vaciando el bufer, o los avisos del webmail no llegan
+// hasta que el servicio cierra el flujo.
+func TestElGuardiaNoRetieneUnFlujoSSE(t *testing.T) {
+	liberar := make(chan struct{})
+	defer close(liberar)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("event: ready\ndata: {}\n\n"))
+		http.NewResponseController(w).Flush()
+		select {
+		case <-liberar:
+		case <-r.Context().Done():
+		}
+	}))
+	defer upstream.Close()
+
+	h := newProbeHarness(probeModeEnforce)
+	r := chi.NewRouter()
+	r.Route("/api/v1", func(r chi.Router) {
+		r.Use(h.guard.middleware)
+		r.Handle("/webmail/events", reverseProxy(upstream.URL, "token-interno"))
+	})
+	front := httptest.NewServer(r)
+	defer front.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, front.URL+"/api/v1/webmail/events", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("peticion: %v", err)
+	}
+	defer resp.Body.Close()
+	linea := make(chan string, 1)
+	go func() {
+		line, _ := bufio.NewReader(resp.Body).ReadString('\n')
+		linea <- line
+	}()
+	select {
+	case got := <-linea:
+		if got != "event: ready\n" {
+			t.Fatalf("primera linea del flujo = %q", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("el evento ready no atraveso el guardia mientras el flujo seguia abierto")
+	}
 }
