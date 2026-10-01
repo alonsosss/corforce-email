@@ -52,12 +52,14 @@ if ! git merge-base --is-ancestor "$BASE" HEAD; then
   echo "AVISO: lo que corre (${BASE:0:9}) no es un antecesor de HEAD: o se desplego desde otra rama, o HEAD esta atrasado" >&2
 fi
 
-titulo "Commits sin desplegar en la plataforma"
+# Solo informa: un commit de documentacion, de pruebas o de un motor ya desplegado no deja nada que
+# llevar a la plataforma, y deploy-ecr.sh responde "nada que desplegar". Lo que si queda pendiente lo
+# deciden las secciones de migraciones, servicios, ficheros y motores.
+titulo "Commits desde lo que corre en la plataforma"
 n="$(git rev-list --count "$BASE"..HEAD)"
 if [[ "$n" -eq 0 ]]; then
   echo "ninguno"
 else
-  pendiente=1
   echo "$n commit(s):"
   git log --format='  %h %cs %s' "$BASE"..HEAD | head -40
   [[ "$n" -gt 40 ]] && echo "  ... y $((n - 40)) mas"

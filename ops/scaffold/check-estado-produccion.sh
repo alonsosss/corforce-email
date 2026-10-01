@@ -4,6 +4,7 @@
 # Trabaja en un clon temporal (nunca en este repositorio) con un ssh falso que hace de servidor: sirve
 # el .deployed-tag y el .deploy-log que se le indiquen y anota cada orden que recibe. Recorre:
 #   - un servidor al dia: sale 0 y no lista nada pendiente;
+#   - un commit solo de documentacion: lo lista, pero sale 0 (no hay nada que desplegar);
 #   - un commit nuevo con un servicio, una migracion de celda nueva y otra ya publicada que se edita:
 #     sale 2, lista el servicio y la migracion nueva por su capa y marca la editada;
 #   - un servidor sin .deployed-tag: sale 1 y lo dice;
@@ -67,13 +68,21 @@ grep -q 'produccion esta al dia' "$W/salida" && ok "veredicto al dia" || mal "si
 grep -q 'gateway' "$W/salida" && ok "muestra el historial del .deploy-log" || mal "no muestra el historial"
 sin_escrituras "al dia"
 
+echo "estado-produccion: commit sin nada que llevar a la plataforma"
+printf 'nota de prueba\n' >>"$REPO/docs/Operacion_Despliegue.md"
+git -C "$REPO" add -A && git -C "$REPO" -c user.name=prueba -c user.email=prueba@ejemplo.invalid commit -q -m docs
+correr "$BASE_SHA"
+[[ $RC -eq 0 ]] && ok "sale 0: un commit de documentacion no deja trabajo" || { mal "sale $RC (esperado 0)"; sed 's/^/    /' "$W/salida" >&2; }
+grep -q '^1 commit' "$W/salida" && ok "aun asi lo lista" || mal "no lista el commit de documentacion"
+DOCS_SHA="$(git -C "$REPO" rev-parse --short HEAD)"
+
 echo "estado-produccion: commit con servicio y migraciones"
 MIG_EXISTENTE="$(git -C "$REPO" ls-files 'migrations/cell/canonical/mail-directory/*.sql' | head -1)"
 printf -- '-- Schema: mail | Service: mail-directory\nSELECT 1;\n' >"$REPO/migrations/cell/canonical/mail-directory/99_prueba_estado.sql"
 printf -- '-- cambio de prueba\n' >>"$REPO/$MIG_EXISTENTE"
 printf '// prueba\n' >>"$REPO/services/billing/main.go"
 git -C "$REPO" add -A && git -C "$REPO" -c user.name=prueba -c user.email=prueba@ejemplo.invalid commit -q -m cambio
-correr "$BASE_SHA"
+correr "$DOCS_SHA"
 [[ $RC -eq 2 ]] && ok "sale 2" || { mal "sale $RC (esperado 2)"; sed 's/^/    /' "$W/salida" >&2; }
 grep -q '^1 commit' "$W/salida" && ok "cuenta el commit pendiente" || mal "no cuenta el commit pendiente"
 grep -qE '^servicios: .*\bbilling\b' "$W/salida" && ok "billing pendiente" || mal "no lista billing"
