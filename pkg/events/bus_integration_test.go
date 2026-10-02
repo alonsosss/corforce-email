@@ -1,12 +1,14 @@
 //go:build integration
 
-// Pruebas de DrainSubscriptions contra un NATS real:
+// Pruebas del bus contra un NATS real (DrainSubscriptions y la DLQ):
 //
 //	NATS_TEST_URL=nats://... go test -tags integration ./pkg/events/
 package events
 
 import (
+	"errors"
 	"os"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -78,5 +80,50 @@ func TestDrainSubscriptionsNoEsperaMasDelTope(t *testing.T) {
 	}
 	if d := time.Since(t0); d > 2*time.Second {
 		t.Fatalf("espero %s con un tope de 200ms", d)
+	}
+}
+
+// Atar un consumidor durable deja creada EVENTS_DLQ: el medidor de /metrics pregunta por ella en cada
+// recoleccion y, mientras no existia, cada pregunta era un error de la API de JetStream.
+func TestAtarUnDurableCreaLaDLQ(t *testing.T) {
+	url := os.Getenv("NATS_TEST_URL")
+	if url == "" {
+		if os.Getenv("INTEGRATION_REQUIRED") == "1" {
+			t.Fatal("NATS_TEST_URL no definida con INTEGRATION_REQUIRED=1")
+		}
+		t.Skip("NATS_TEST_URL no definida")
+	}
+	bus, err := NewBus(url, zap.NewNop())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(bus.Close)
+	js, err := bus.conn.JetStream()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := js.DeleteStream(dlqStreamName); err != nil && !errors.Is(err, nats.ErrStreamNotFound) {
+		t.Fatal(err)
+	}
+	if _, err := js.StreamInfo(dlqStreamName); !errors.Is(err, nats.ErrStreamNotFound) {
+		t.Fatalf("EVENTS_DLQ deberia no existir al empezar: %v", err)
+	}
+
+	domain := "dlqit" + strings.ReplaceAll(uuid.NewString()[:8], "-", "")
+	if err := bus.EnsureStream(strings.ToUpper(domain), []string{domain + ".>"}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = js.DeleteStream(strings.ToUpper(domain)) })
+	sub, err := bus.DurableQueueSubscribeNew(domain+".x.y", domain+"-durable", func(_ Event, ack func()) { ack() })
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { DrainSubscriptions(zap.NewNop(), sub) })
+
+	if _, err := js.StreamInfo(dlqStreamName); err != nil {
+		t.Fatalf("EVENTS_DLQ no existe tras atar un durable: %v", err)
+	}
+	if _, err := bus.dlqMessages(); err != nil {
+		t.Fatalf("el medidor de la DLQ falla: %v", err)
 	}
 }

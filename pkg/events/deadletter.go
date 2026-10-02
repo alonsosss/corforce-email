@@ -198,23 +198,34 @@ func dlqCopy(d delivery, meta *nats.MsgMetadata, stream, consumer, reason string
 	return m
 }
 
-// deadLetter guarda la copia en EVENTS_DLQ, que crea el primero que la necesita.
+// ensureDLQStream crea EVENTS_DLQ si no existe. Lo llama cada proceso al atar un consumidor durable,
+// no solo el primero que abandona un evento: dlqMessages pregunta por el stream en cada recoleccion
+// de /metrics, y mientras no existia cada pregunta contaba como error de la API de JetStream (el
+// 2026-10-01, 346 000 de 382 000 llamadas en siete dias, todas de este sondeo). Otra instancia puede
+// crearlo a la vez, o con otra configuracion si cambian los topes: el stream existe y vale igual.
+func ensureDLQStream(js nats.JetStreamContext) error {
+	_, err := js.AddStream(&nats.StreamConfig{
+		Name:     dlqStreamName,
+		Subjects: []string{"dlq.>"},
+		Storage:  nats.FileStorage,
+		MaxAge:   dlqMaxAge,
+		MaxBytes: dlqMaxBytes,
+		Replicas: 1,
+	})
+	if err != nil && !errors.Is(err, nats.ErrStreamNameAlreadyInUse) {
+		return err
+	}
+	return nil
+}
+
+// deadLetter guarda la copia en EVENTS_DLQ.
 func (b *Bus) deadLetter(m *nats.Msg) error {
 	js, err := b.conn.JetStream()
 	if err != nil {
 		return err
 	}
 	if _, err := js.StreamInfo(dlqStreamName); errors.Is(err, nats.ErrStreamNotFound) {
-		_, err = js.AddStream(&nats.StreamConfig{
-			Name:     dlqStreamName,
-			Subjects: []string{"dlq.>"},
-			Storage:  nats.FileStorage,
-			MaxAge:   dlqMaxAge,
-			MaxBytes: dlqMaxBytes,
-			Replicas: 1,
-		})
-		// Otra instancia pudo crearla a la vez: la copia se intenta igual.
-		if err != nil && !errors.Is(err, nats.ErrStreamNameAlreadyInUse) {
+		if err := ensureDLQStream(js); err != nil {
 			return err
 		}
 	}

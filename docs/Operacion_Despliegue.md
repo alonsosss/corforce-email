@@ -844,7 +844,9 @@ es un evento, lo copia en el stream `EVENTS_DLQ` bajo `dlq.<subject original>` y
 La copia lleva el cuerpo intacto y las cabeceras `Dlq-Stream` (stream de origen), `Dlq-Consumer`
 (quién lo abandonó), `Dlq-Reason` (`max_deliveries` o `undecodable`), `Dlq-Deliveries` y
 `Dlq-Stream-Sequence` (su secuencia en el stream de origen). `EVENTS_DLQ` guarda 30 días; los
-streams de origen, 7. Nada reproduce un evento abandonado por su cuenta. Avisan
+streams de origen, 7. La crea cada proceso al atar su primer consumidor durable, no el primer abandono:
+`events_dlq_messages` pregunta por ella en cada recolección de métricas, y mientras no existía cada
+pregunta contaba como error de la API de JetStream (2026-10-02: el 90 % de las llamadas de `/jsz`). Nada reproduce un evento abandonado por su cuenta. Avisan
 `EventosAbandonadosEnDLQ`, `EventosAbandonadosSinCopia` y `DLQConMensajesSinRevisar`
 (`docs/arquitectura/OBSERVABILIDAD.md`, Eventos), y el registro del servicio («evento abandonado y
 guardado en EVENTS_DLQ») da stream, consumidor, subject, `stream_seq` y motivo. Las copias llevan

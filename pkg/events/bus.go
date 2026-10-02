@@ -326,6 +326,9 @@ func (b *Bus) durableSubscribe(subject, durable string, deliver nats.DeliverPoli
 			return nil, fmt.Errorf("create consumer %s: %w", durable, aerr)
 		}
 	}
+	if err := ensureDLQStream(js); err != nil {
+		b.logger.Warn("no se pudo crear EVENTS_DLQ; se creara con el primer abandono", zap.Error(err))
+	}
 	consumer := newDurableConsumer(stream, durable, handler, b.deadLetter, b.logger)
 	dlqDepth.bind(b)
 	return js.Subscribe(subject, func(msg *nats.Msg) { consumer.deliver(natsDelivery{msg: msg}) },
