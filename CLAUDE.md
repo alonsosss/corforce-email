@@ -163,6 +163,8 @@ Documentos rectores, en `docs/`, en este orden. Léelos antes de diseñar o impl
    las reglas de operación heredadas del ERP, ya como documentos propios.
 7. `deploy/mail/README.md`: los motores, sus variables, puertos, cron y los contratos HTTP y
    Redis que los servicios Go deben servirles.
+8. `Registro_de_Incidentes.md`: los incidentes resueltos, su causa raíz y el guardarrail que
+   impide que vuelvan. Léelo antes de tocar algo que ya falló.
 
 Los documentos 2 y 3 separan de forma explícita lo verificado en el código de lo que es
 diseño todavía no implementado. Respeta esa marca: no des por hecho lo que aparece como
@@ -170,6 +172,11 @@ propuesto, y si implementas algo de ahí, muévelo a la parte verificada en la m
 
 Cuando una decisión cambie, actualiza el documento que la contiene en la misma tarea. Un
 documento que contradice al código es peor que ninguno.
+
+Todo incidente resuelto (un fallo en producción, en la CI o en una prueba, una vulnerabilidad,
+un aviso que no avisa) deja su entrada en `docs/Registro_de_Incidentes.md` en la misma tarea:
+síntoma, impacto, causa raíz comprobada, solución con su commit y el guardarrail que impide que
+se repita. Si no hay guardarrail posible, la entrada dice por qué.
 
 ## Decisiones de arquitectura que no se negocian
 
