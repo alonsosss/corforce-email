@@ -182,6 +182,9 @@ describe('posponer desde el lector y en lote', () => {
             onSeen={vi.fn()}
             onFlagsChanged={vi.fn()}
             onGone={onGone}
+            reply={null}
+            onReply={vi.fn()}
+            onReplyClose={vi.fn()}
           />
         </ToastProvider>
       </MemoryRouter>,
@@ -211,6 +214,9 @@ describe('posponer desde el lector y en lote', () => {
             onSeen={vi.fn()}
             onFlagsChanged={vi.fn()}
             onGone={vi.fn()}
+            reply={null}
+            onReply={vi.fn()}
+            onReplyClose={vi.fn()}
           />
         </ToastProvider>
       </MemoryRouter>,

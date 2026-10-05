@@ -15,6 +15,7 @@ import {
   pickSender,
   prefixedSubject,
   quote,
+  withQuoted,
   sendSignature,
 } from './compose';
 
@@ -99,8 +100,20 @@ describe('borrador inicial', () => {
     expect(draft.cc).toEqual([]);
     expect(draft.subject).toBe('Re: Pedido');
     expect(draft.inReplyTo).toEqual({ folder: 'INBOX', uid: 42 });
-    expect(draft.text).toContain('> Linea 1');
-    expect(draft.text).toContain('Luis <luis@cliente.com>');
+    // Se escribe en blanco: la cita va aparte, debajo de lo escrito.
+    expect(draft.text).toBe('');
+    expect(draft.quoted?.text).toContain('> Linea 1');
+    expect(draft.quoted?.text).toContain('Luis <luis@cliente.com>');
+    expect(withQuoted('Gracias', draft.quoted, 'text')).toMatch(/^Gracias\n\n.*Luis/);
+  });
+
+  it('sin cita el cuerpo no cambia; con cita queda debajo de lo escrito', () => {
+    expect(withQuoted('<p>Hola</p>', null, 'html')).toBe('<p>Hola</p>');
+    const quoted = { text: '> Original', html: '<blockquote>Original</blockquote>' };
+    expect(withQuoted('<p>Hola</p>', quoted, 'html')).toBe(
+      '<p>Hola</p><div><br></div><blockquote>Original</blockquote>',
+    );
+    expect(withQuoted('Hola', quoted, 'text')).toBe('Hola\n\n> Original');
   });
 
   it('responder respeta Reply-To', () => {
@@ -199,12 +212,12 @@ describe('borrador inicial', () => {
 
     it('responder cita el HTML con sus imagenes incrustadas y conserva la cita en texto', () => {
       const draft = buildDraft('reply', original, OWN, images);
-      const doc = new DOMParser().parseFromString(draft.html ?? '', 'text/html');
+      const doc = new DOMParser().parseFromString(draft.quoted?.html ?? '', 'text/html');
       const quoteBlock = doc.querySelector('blockquote');
       expect(quoteBlock?.querySelector('b')?.textContent).toBe('equipo');
       expect(quoteBlock?.querySelector('img')?.getAttribute('src')).toBe(DATA);
       expect(doc.body.textContent).toContain('Luis');
-      expect(draft.text).toContain('> Linea 1');
+      expect(draft.quoted?.text).toContain('> Linea 1');
       expect(draft.source).toBeUndefined();
     });
 
@@ -223,7 +236,11 @@ describe('borrador inicial', () => {
     });
 
     it('un original solo en texto se sigue citando linea a linea', () => {
-      expect(buildDraft('reply', message(), OWN, images).html).toBeUndefined();
+      const quoted = buildDraft('reply', message(), OWN, images).quoted?.html ?? '';
+      expect(
+        new DOMParser().parseFromString(quoted, 'text/html').querySelector('blockquote')
+          ?.textContent,
+      ).toContain('Linea 1');
       expect(buildDraft('forward', message(), OWN, images).html).toBeUndefined();
     });
   });

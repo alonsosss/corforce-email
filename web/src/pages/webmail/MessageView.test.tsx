@@ -64,6 +64,9 @@ function renderView(overrides: Partial<MessageViewProps> = {}) {
     onSeen: vi.fn(),
     onFlagsChanged: vi.fn(),
     onGone: vi.fn(),
+    reply: null,
+    onReply: vi.fn(),
+    onReplyClose: vi.fn(),
     ...overrides,
   };
   render(
@@ -98,6 +101,21 @@ describe('lectura de un mensaje', () => {
     expect(sandbox).not.toContain('allow-top-navigation');
     expect(frame.getAttribute('srcdoc')).toContain('Hola mundo');
     expect(screen.queryByText('Hola mundo')).toBeNull();
+  });
+
+  it('responder, responder a todos y reenviar se abren en el lector, no en otra ruta', async () => {
+    const user = userEvent.setup();
+    vi.spyOn(webmailApi, 'message').mockResolvedValue(MESSAGE);
+    const props = renderView();
+
+    await user.click(await screen.findByRole('button', { name: t('webmail.reader.reply') }));
+    await user.click(screen.getByRole('button', { name: t('webmail.reader.replyAll') }));
+    await user.click(screen.getByRole('button', { name: t('webmail.reader.forward') }));
+    expect(vi.mocked(props.onReply).mock.calls.map(([mode]) => mode)).toEqual([
+      'reply',
+      'replyAll',
+      'forward',
+    ]);
   });
 
   it('las imagenes remotas se piden por mensaje, sin volver a marcarlo como leido', async () => {

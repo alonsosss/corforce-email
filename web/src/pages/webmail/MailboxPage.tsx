@@ -33,6 +33,8 @@ import { defaultFolder, folderLabel, folderWithRole, isEmptiable } from './folde
 import { parsePositiveInt } from './format';
 import { MessageList } from './MessageList';
 import { MessageView } from './MessageView';
+import type { ComposeMode } from './compose';
+import type { ComposeRequest } from './composeWindow';
 import { ConversationPanel } from './ConversationPanel';
 import {
   criteriaToFilters,
@@ -120,6 +122,8 @@ function MailboxView({ folderName }: { folderName: string }) {
   const [purging, setPurging] = useState<number[] | null>(null);
   const [emptying, setEmptying] = useState(false);
   const [snoozingRow, setSnoozingRow] = useState<number[] | null>(null);
+  // Respuesta abierta debajo del mensaje; solo se muestra mientras ese mensaje sigue abierto.
+  const [inlineReply, setInlineReply] = useState<ComposeRequest | null>(null);
 
   // Un aviso de la bandeja vuelve a leer la lista solo si es la bandeja de entrada.
   const liveTick = role === FOLDER_ROLES.inbox ? inboxTick : 0;
@@ -309,9 +313,15 @@ function MailboxView({ folderName }: { folderName: string }) {
     const next = rows[Math.min(rows.length - 1, Math.max(0, at === -1 ? 0 : at + delta))];
     if (next && next.uid !== uid) navigate(viewHref({ uid: next.uid, page }));
   };
-  const reply = (mode: string) => {
+  const reply = (mode: Exclude<ComposeMode, 'draft'>, assistantText?: string) => {
     if (uid && role !== FOLDER_ROLES.drafts) {
-      navigate(paths.webmailComposeFrom(mode, folderName, uid));
+      setInlineReply({
+        kind: 'source',
+        mode,
+        folder: folderName,
+        uid,
+        assistantText: assistantText ?? null,
+      });
     }
   };
   useShortcuts({
@@ -452,6 +462,15 @@ function MailboxView({ folderName }: { folderName: string }) {
             onSeen={onSeen}
             onFlagsChanged={onFlagsChanged}
             onGone={onGone}
+            reply={
+              inlineReply?.kind === 'source' &&
+              inlineReply.folder === folderName &&
+              inlineReply.uid === uid
+                ? inlineReply
+                : null
+            }
+            onReply={reply}
+            onReplyClose={() => setInlineReply(null)}
           />
         ) : (
           <EmptyState

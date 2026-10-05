@@ -30,6 +30,7 @@ import {
   IconMaximize,
   IconMinimize,
   IconMinus,
+  IconQuote,
   IconSend,
   IconTrash,
   IconUndo,
@@ -56,6 +57,7 @@ import {
   normalizeRecipient,
   pickSender,
   sendSignature,
+  withQuoted,
   type ComposeMode,
   type DraftSeed,
   type ServerAttachments,
@@ -114,9 +116,14 @@ export interface ComposePageProps {
   request: ComposeRequest;
   /** Cierra la redaccion: tras enviar, programar o descartar, o cuando el usuario la cierra. */
   onClose: () => void;
+  /**
+   * Respuesta dentro del lector, debajo del mensaje, en lugar de la ventana flotante. Sus ids
+   * llevan otro prefijo: puede coexistir con una redaccion abierta en la ventana.
+   */
+  inline?: boolean;
 }
 
-export default function ComposePage({ request, onClose }: ComposePageProps) {
+export default function ComposePage({ request, onClose, inline = false }: ComposePageProps) {
   const mode = request.kind === 'source' ? request.mode : null;
   const folder = request.kind === 'source' ? request.folder : null;
   const uid = request.kind === 'source' ? request.uid : null;
@@ -135,7 +142,7 @@ export default function ComposePage({ request, onClose }: ComposePageProps) {
   if (mode && source.error) {
     return (
       <div className="cf-wm-compose">
-        <ComposeHead title={t(TITLES[mode])} onClose={onClose} />
+        <ComposeHead title={t(TITLES[mode])} titleId={composeIds(inline).title} onClose={onClose} />
         <ErrorState error={source.error} onRetry={source.reload} />
       </div>
     );
@@ -143,7 +150,11 @@ export default function ComposePage({ request, onClose }: ComposePageProps) {
   if ((mode && !source.data) || (!signature.data && !signature.error)) {
     return (
       <div className="cf-wm-compose">
-        <ComposeHead title={t(TITLES[mode ?? 'new'])} onClose={onClose} />
+        <ComposeHead
+          title={t(TITLES[mode ?? 'new'])}
+          titleId={composeIds(inline).title}
+          onClose={onClose}
+        />
         <Skeleton lines={10} />
       </div>
     );
@@ -162,17 +173,36 @@ export default function ComposePage({ request, onClose }: ComposePageProps) {
       assistantText={request.assistantText}
       onClose={onClose}
       recipientNames={mode && source.data ? namesOf(source.data.message) : undefined}
+      inline={inline}
     />
   );
+}
+
+/** Ids de los campos: la redaccion en linea y la de la ventana pueden estar abiertas a la vez. */
+function composeIds(inline: boolean) {
+  const prefix = inline ? 'inline-compose' : 'compose';
+  return {
+    title: `${prefix}-title`,
+    from: `${prefix}-from`,
+    to: `${prefix}-to`,
+    cc: `${prefix}-cc`,
+    bcc: `${prefix}-bcc`,
+    subject: `${prefix}-subject`,
+    body: `${prefix}-body`,
+    bodyLabel: `${prefix}-body-label`,
+    followUp: `${prefix}-follow-up`,
+  };
 }
 
 /** Cabecera de la redaccion: titulo y, en la ventana flotante, minimizar, ampliar y cerrar. */
 function ComposeHead({
   title,
+  titleId,
   status,
   onClose,
 }: {
   title: string;
+  titleId: string;
   status?: ReactNode;
   onClose: () => void;
 }) {
@@ -181,7 +211,7 @@ function ComposeHead({
     windowed?.setSize(windowed.size === 'minimized' ? 'normal' : 'minimized');
   return (
     <div className="cf-wm-compose__head">
-      <h1 id="wm-compose-title" className="cf-wm-compose__title">
+      <h1 id={titleId} className="cf-wm-compose__title">
         {windowed ? (
           <button
             type="button"
@@ -279,6 +309,7 @@ function ComposeForm({
   assistantText,
   onClose,
   recipientNames,
+  inline,
 }: {
   mode: ComposeMode | null;
   seed: DraftSeed;
@@ -288,8 +319,10 @@ function ComposeForm({
   onClose: () => void;
   /** Nombres visibles del mensaje al que se responde: resuelven {nombre} de una respuesta rapida. */
   recipientNames?: Readonly<Record<string, string>>;
+  inline: boolean;
 }) {
   const toast = useToast();
+  const ids = composeIds(inline);
   const { folders, reloadFolders } = useWebmailOutlet();
   const reportPristine = useContext(ComposePristineContext);
   const refreshSession = useWebmailStore((s) => s.refresh);
@@ -306,6 +339,8 @@ function ComposeForm({
   const [format, setFormat] = useState<'html' | 'text'>('html');
   const [html, setHtml] = useState(initial.html);
   const [text, setText] = useState(initial.text);
+  // La cita del original queda plegada fuera del editor hasta que el usuario la despliega.
+  const [quoted, setQuoted] = useState(seed.quoted ?? null);
   // El editor no es controlado: cambiar de modo lo vuelve a montar con el contenido convertido.
   const [editorKey, setEditorKey] = useState(0);
   const [files, setFiles] = useState<File[]>([]);
@@ -334,11 +369,14 @@ function ComposeForm({
   const pending = useRef<{ timer: number; toastId: number; flush: () => void } | null>(null);
   const dirty = version !== savedVersion;
   const windowed = useComposeWindow();
+  const formRef = useRef<HTMLFormElement>(null);
   // Salir a proposito (enviar, programar, descartar) no deja borrador; salir de otro modo, si.
   const closing = useRef(false);
   const saveOnLeave = useRef<() => void>(() => undefined);
 
   useEffect(() => {
+    // En el lector la respuesta se abre debajo del mensaje: se lleva a la vista.
+    if (inline) formRef.current?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' });
     // Al responder se escribe encima de la cita; en lo demas se empieza por el destinatario.
     if (seed.inReplyTo) {
       if (bodyRef.current) {
@@ -348,7 +386,7 @@ function ComposeForm({
         editorRef.current?.focus();
       }
     } else {
-      document.getElementById('compose-to')?.focus();
+      document.getElementById(ids.to)?.focus();
     }
     // Solo al abrir.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -379,7 +417,9 @@ function ComposeForm({
   const from = chosenFrom ?? pickSender(senders, seed.fromCandidates ?? []);
   const serverParts = server?.parts ?? [];
   const limits = meta.data?.limits ?? null;
-  const body = format === 'html' ? html : text;
+  const fullHtml = withQuoted(html, quoted, 'html');
+  const fullText = withQuoted(text, quoted, 'text');
+  const body = format === 'html' ? fullHtml : fullText;
   const problems = composeProblems(
     { to, cc, bcc, subject: subject.trim(), text: body, files, serverParts },
     limits,
@@ -405,8 +445,8 @@ function ComposeForm({
     bcc,
     subject: subject.trim(),
     // Con formato, la parte de texto la genera el servicio a partir del HTML saneado.
-    text: format === 'html' ? '' : text,
-    html: format === 'html' && htmlHasContent(html) ? html : undefined,
+    text: format === 'html' ? '' : fullText,
+    html: format === 'html' && htmlHasContent(fullHtml) ? fullHtml : undefined,
     inReplyTo: seed.inReplyTo,
     attachments: files,
     source: server?.parts.length
@@ -533,10 +573,10 @@ function ComposeForm({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [version, dirty, hasContent, blocked, waiting, send.busy, save.busy, autosaving]);
 
-  // En la ventana flotante, cerrarla o navegar por el buzon de fondo guarda lo escrito como
-  // borrador en lugar de perderlo (lo pendiente de guardar solo en los ultimos segundos).
+  // En la ventana flotante o en el lector, cerrarla o navegar por el buzon guarda lo escrito
+  // como borrador en lugar de perderlo (lo pendiente de guardar solo en los ultimos segundos).
   saveOnLeave.current = () => {
-    if (!windowed || closing.current || !dirty || !hasContent || blocked) return;
+    if (!(windowed || inline) || closing.current || !dirty || !hasContent || blocked) return;
     // Con la sesion cerrada o caducada no hay donde guardar: la peticion solo fallaria.
     if (useWebmailStore.getState().status !== 'authenticated') return;
     if (waiting || send.busy || save.busy || autosaving) return;
@@ -568,15 +608,32 @@ function ComposeForm({
 
   // El enlace de un fichero grande va al cuerpo; si era un adjunto, sale de los adjuntos.
   const addLargeFileLink = (shared: LargeFile, source?: File) => {
-    const quoted = mode !== null && mode !== 'draft';
+    // Con la cita plegada el editor solo tiene lo escrito: el enlace va al final, no delante.
+    const quotedInEditor = mode !== null && mode !== 'draft' && quoted === null;
     if (source) setFiles((current) => current.filter((file) => file !== source));
     if (format === 'html') {
-      setHtml((current) => insertLargeFileLink(current, largeFileLinkHtml(shared), 'html', quoted));
+      setHtml((current) =>
+        insertLargeFileLink(current, largeFileLinkHtml(shared), 'html', quotedInEditor),
+      );
       setEditorKey((k) => k + 1);
     } else {
-      setText((current) => insertLargeFileLink(current, largeFileLinkText(shared), 'text', quoted));
+      setText((current) =>
+        insertLargeFileLink(current, largeFileLinkText(shared), 'text', quotedInEditor),
+      );
     }
     setVersion((v) => v + 1);
+  };
+
+  // Desplegar la cita la pasa al editor tal cual; el contenido que se envia no cambia.
+  const unfoldQuoted = () => {
+    if (!quoted) return;
+    if (format === 'html') {
+      setHtml(fullHtml);
+      setEditorKey((k) => k + 1);
+    } else {
+      setText(fullText);
+    }
+    setQuoted(null);
   };
 
   const switchFormat = () => {
@@ -656,6 +713,7 @@ function ComposeForm({
 
   return (
     <form
+      ref={formRef}
       className="cf-wm-compose cf-form"
       onSubmit={submit}
       onKeyDown={(e) => {
@@ -666,46 +724,51 @@ function ComposeForm({
         }
       }}
       noValidate
-      aria-labelledby="wm-compose-title"
+      aria-labelledby={ids.title}
     >
       <ComposeHead
         title={windowed ? subject.trim() || t(TITLES[mode ?? 'new']) : t(TITLES[mode ?? 'new'])}
+        titleId={ids.title}
         status={<AutosaveStatus state={autosave} dirty={dirty} />}
         onClose={onClose}
       />
       {senders.length > 1 ? (
-        <FormField label={t('webmail.header.from')} htmlFor="compose-from">
-          <Select
-            id="compose-from"
-            options={senders.map((identity) => ({
-              value: identity.email,
-              label: identityLabel(identity),
-            }))}
-            value={from}
-            onChange={(e) => edit(setChosenFrom)(e.target.value)}
-            disabled={busy}
-          />
-        </FormField>
+        <div className="cf-wm-compose__line">
+          <FormField label={t('webmail.header.from')} htmlFor={ids.from}>
+            <Select
+              id={ids.from}
+              options={senders.map((identity) => ({
+                value: identity.email,
+                label: identityLabel(identity),
+              }))}
+              value={from}
+              onChange={(e) => edit(setChosenFrom)(e.target.value)}
+              disabled={busy}
+            />
+          </FormField>
+        </div>
       ) : null}
       {identities.error ? (
         <p className="cf-field__hint">{t('webmail.compose.identitiesUnavailable')}</p>
       ) : null}
-      <FormField
-        label={t('webmail.header.to')}
-        htmlFor="compose-to"
-        error={recipientError ?? problems.recipients ?? null}
-      >
-        <RecipientInput
-          id="compose-to"
-          values={to}
-          onChange={(values) => {
-            edit(setTo)(values);
-            setRecipientError(null);
-          }}
-          invalid={Boolean(recipientError ?? problems.recipients)}
-          {...chips}
-        />
-      </FormField>
+      <div className="cf-wm-compose__line">
+        <FormField
+          label={t('webmail.header.to')}
+          htmlFor={ids.to}
+          error={recipientError ?? problems.recipients ?? null}
+        >
+          <RecipientInput
+            id={ids.to}
+            values={to}
+            onChange={(values) => {
+              edit(setTo)(values);
+              setRecipientError(null);
+            }}
+            invalid={Boolean(recipientError ?? problems.recipients)}
+            {...chips}
+          />
+        </FormField>
+      </div>
       <div>
         <Button
           size="sm"
@@ -727,12 +790,16 @@ function ComposeForm({
       </div>
       {showCopies ? (
         <div className="cf-form__row">
-          <FormField label={t('webmail.header.cc')} htmlFor="compose-cc">
-            <RecipientInput id="compose-cc" values={cc} onChange={edit(setCc)} {...chips} />
-          </FormField>
-          <FormField label={t('webmail.header.bcc')} htmlFor="compose-bcc">
-            <RecipientInput id="compose-bcc" values={bcc} onChange={edit(setBcc)} {...chips} />
-          </FormField>
+          <div className="cf-wm-compose__line">
+            <FormField label={t('webmail.header.cc')} htmlFor={ids.cc}>
+              <RecipientInput id={ids.cc} values={cc} onChange={edit(setCc)} {...chips} />
+            </FormField>
+          </div>
+          <div className="cf-wm-compose__line">
+            <FormField label={t('webmail.header.bcc')} htmlFor={ids.bcc}>
+              <RecipientInput id={ids.bcc} values={bcc} onChange={edit(setBcc)} {...chips} />
+            </FormField>
+          </div>
         </div>
       ) : (
         <div>
@@ -741,26 +808,28 @@ function ComposeForm({
           </Button>
         </div>
       )}
-      <FormField
-        label={t('webmail.header.subject')}
-        htmlFor="compose-subject"
-        error={problems.subject ?? null}
-      >
-        <Input
-          id="compose-subject"
-          value={subject}
-          onChange={(e) => edit(setSubject)(e.target.value)}
-          disabled={busy}
-        />
-      </FormField>
+      <div className="cf-wm-compose__line">
+        <FormField
+          label={t('webmail.header.subject')}
+          htmlFor={ids.subject}
+          error={problems.subject ?? null}
+        >
+          <Input
+            id={ids.subject}
+            value={subject}
+            onChange={(e) => edit(setSubject)(e.target.value)}
+            disabled={busy}
+          />
+        </FormField>
+      </div>
       <div className="cf-field">
         <div className="cf-wm-compose__bodyhead">
           {format === 'html' ? (
-            <span className="cf-field__label" id="compose-body-label">
+            <span className="cf-field__label" id={ids.bodyLabel}>
               {t('webmail.compose.body')}
             </span>
           ) : (
-            <label className="cf-field__label" htmlFor="compose-body" id="compose-body-label">
+            <label className="cf-field__label" htmlFor={ids.body} id={ids.bodyLabel}>
               {t('webmail.compose.body')}
             </label>
           )}
@@ -773,27 +842,42 @@ function ComposeForm({
           <RichEditor
             key={editorKey}
             ref={editorRef}
-            id="compose-body"
-            labelledBy="compose-body-label"
+            id={ids.body}
+            labelledBy={ids.bodyLabel}
             initialHtml={html}
             allowImages
             maxImageBytes={
               limits ? Math.min(limits.max_download_bytes, limits.max_message_bytes) : null
             }
-            minHeight="18rem"
+            minHeight={inline ? '10rem' : '18rem'}
             onChange={edit(setHtml)}
             disabled={busy}
           />
         ) : (
           <Textarea
             ref={bodyRef}
-            id="compose-body"
+            id={ids.body}
             rows={14}
             value={text}
             onChange={(e) => edit(setText)(e.target.value)}
             disabled={busy}
           />
         )}
+        {quoted ? (
+          <div>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="cf-wm-compose__quoted"
+              icon={<IconQuote size={14} />}
+              aria-expanded={false}
+              disabled={busy}
+              onClick={unfoldQuoted}
+            >
+              {t('webmail.compose.showQuoted')}
+            </Button>
+          </div>
+        ) : null}
       </div>
       <ComposeAssistant
         bodyText={() => (format === 'html' ? htmlToPlainText(html) : text)}
@@ -814,9 +898,9 @@ function ComposeForm({
         error={problems.attachments ?? null}
         disabled={busy}
       />
-      <FormField label={t('webmail.followUp.label')} htmlFor="compose-follow-up">
+      <FormField label={t('webmail.followUp.label')} htmlFor={ids.followUp}>
         <Select
-          id="compose-follow-up"
+          id={ids.followUp}
           options={[
             { value: '0', label: t('webmail.followUp.none') },
             ...followUpChoices(limits?.max_reminder_days ?? null).map((days) => ({

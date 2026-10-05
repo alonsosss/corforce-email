@@ -31,6 +31,22 @@ export interface ServerAttachments {
   parts: MessagePart[];
 }
 
+/** Cita del original en los dos formatos del editor. */
+export interface QuotedBody {
+  text: string;
+  html: string;
+}
+
+/** Cuerpo completo: lo escrito y, debajo, la cita plegada si la hay. */
+export function withQuoted(
+  body: string,
+  quoted: QuotedBody | null | undefined,
+  format: 'html' | 'text',
+): string {
+  if (!quoted) return body;
+  return format === 'html' ? `${body}<div><br></div>${quoted.html}` : `${body}\n\n${quoted.text}`;
+}
+
 /** Punto de partida de una redaccion. */
 export interface DraftSeed {
   to: string[];
@@ -40,6 +56,11 @@ export interface DraftSeed {
   text: string;
   /** HTML del borrador que se sigue redactando, si lo tenia; el editor lo limpia al cargarlo. */
   html?: string;
+  /**
+   * Cita del mensaje al que se responde. Queda fuera del editor, plegada debajo de lo que se
+   * escribe, y viaja al final del cuerpo al guardar o enviar (como en Gmail).
+   */
+  quoted?: QuotedBody;
   /** Mensaje al que se responde: el servicio encadena In-Reply-To y References. */
   inReplyTo?: ReplyTarget;
   /** Borrador que se esta editando: se reemplaza al guardar y se retira al enviar. */
@@ -244,15 +265,19 @@ export function buildDraft(
     cc = recipients(message.cc, [ownAddress, ...to]);
   }
   const replyHeader = t('webmail.compose.replyHeader', { date, sender });
+  const quotedText = `${replyHeader}\n${quote(body)}`;
   return {
     to,
     cc,
     bcc: [],
     subject: prefixedSubject(t('webmail.compose.replyPrefix'), message.subject),
-    text: `\n\n${replyHeader}\n${quote(body)}`,
-    html: originalHtml
-      ? `${plainToHtml(`\n\n${replyHeader}`)}<blockquote>${originalHtml}</blockquote>`
-      : undefined,
+    text: '',
+    quoted: {
+      text: quotedText,
+      html: originalHtml
+        ? `${plainToHtml(replyHeader)}<blockquote>${originalHtml}</blockquote>`
+        : textToHtml(quotedText),
+    },
     inReplyTo: { folder: message.folder, uid: message.uid },
     fromCandidates: [...message.to, ...message.cc].map((a) => a.email),
   };

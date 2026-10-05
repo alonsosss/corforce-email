@@ -48,8 +48,10 @@ import { SenderShield } from './SenderShield';
 import { formatScheduled } from './schedule';
 import { canSnooze } from './snooze';
 import { SnoozeDialog } from './SnoozeDialog';
-import { assistantNavigationState } from './assistant/assistant';
 import { MessageAssistant } from './assistant/MessageAssistant';
+import type { ComposeMode } from './compose';
+import ComposePage from './ComposePage';
+import type { ComposeRequest } from './composeWindow';
 
 export interface MessageViewProps {
   folderName: string;
@@ -62,6 +64,11 @@ export interface MessageViewProps {
   onFlagsChanged: (uid: number, flags: string[]) => void;
   /** El mensaje se movio o se borro: ya no esta en esta carpeta. */
   onGone: () => void;
+  /** Respuesta o reenvio abierto debajo del mensaje, si lo hay. */
+  reply: ComposeRequest | null;
+  /** Abre la respuesta o el reenvio debajo del mensaje (como en Gmail). */
+  onReply: (mode: Exclude<ComposeMode, 'draft'>, assistantText?: string) => void;
+  onReplyClose: () => void;
 }
 
 /** Nombre del .eml cuando el servicio no manda uno. */
@@ -82,6 +89,9 @@ export function MessageView({
   onSeen,
   onFlagsChanged,
   onGone,
+  reply,
+  onReply,
+  onReplyClose,
 }: MessageViewProps) {
   const toast = useToast();
   const navigate = useNavigate();
@@ -162,7 +172,7 @@ export function MessageView({
   const seen = flags?.includes(FLAGS.seen) ?? true;
   const flagged = flags?.includes(FLAGS.flagged) ?? false;
   const actionError = changeFlags.error ?? trash.error ?? reclassify.error ?? download.error;
-  const compose = (mode: string) => navigate(paths.webmailComposeFrom(mode, folderName, uid));
+  const editDraft = () => navigate(paths.webmailComposeFrom('draft', folderName, uid));
   const seenLabel = t(seen ? 'webmail.reader.markUnread' : 'webmail.reader.markRead');
   const deleteLabel = t(isTrash ? 'webmail.reader.deleteForever' : 'webmail.reader.delete');
   const sender = data.from[0];
@@ -176,23 +186,18 @@ export function MessageView({
       >
         {back}
         {isDrafts ? (
-          <Button
-            size="sm"
-            variant="primary"
-            icon={<IconEdit size={16} />}
-            onClick={() => compose('draft')}
-          >
+          <Button size="sm" variant="primary" icon={<IconEdit size={16} />} onClick={editDraft}>
             {t('webmail.reader.editDraft')}
           </Button>
         ) : (
           <>
-            <Button size="sm" icon={<IconReply size={16} />} onClick={() => compose('reply')}>
+            <Button size="sm" icon={<IconReply size={16} />} onClick={() => onReply('reply')}>
               {t('webmail.reader.reply')}
             </Button>
-            <Button size="sm" icon={<IconReplyAll size={16} />} onClick={() => compose('replyAll')}>
+            <Button size="sm" icon={<IconReplyAll size={16} />} onClick={() => onReply('replyAll')}>
               {t('webmail.reader.replyAll')}
             </Button>
-            <Button size="sm" icon={<IconForward size={16} />} onClick={() => compose('forward')}>
+            <Button size="sm" icon={<IconForward size={16} />} onClick={() => onReply('forward')}>
               {t('webmail.reader.forward')}
             </Button>
           </>
@@ -374,11 +379,7 @@ export function MessageView({
           key={`${folderName}:${uid}`}
           folder={folderName}
           uid={uid}
-          onReplyWith={(text) =>
-            navigate(paths.webmailComposeFrom('reply', folderName, uid), {
-              state: assistantNavigationState(text),
-            })
-          }
+          onReplyWith={(text) => onReply('reply', text)}
         />
       )}
       {hasInvitation(data) ? <InvitationCard folder={folderName} uid={uid} /> : null}
@@ -391,9 +392,18 @@ export function MessageView({
           inlineImages={inlineImages}
         />
       </div>
-      {isDrafts ? null : (
+      {isDrafts ? null : reply ? (
+        <section className="cf-wm-inline-reply" aria-label={t('webmail.composer.label')}>
+          <ComposePage
+            key={reply.kind === 'source' ? reply.mode : 'new'}
+            request={reply}
+            onClose={onReplyClose}
+            inline
+          />
+        </section>
+      ) : (
         <div className="cf-wm-replybar">
-          <button type="button" className="cf-wm-replybar__field" onClick={() => compose('reply')}>
+          <button type="button" className="cf-wm-replybar__field" onClick={() => onReply('reply')}>
             <span className="cf-wm-replybar__text">
               {t('webmail.reader.replyTo', {
                 name: sender ? addressLabel(sender) : t('webmail.list.noSender'),

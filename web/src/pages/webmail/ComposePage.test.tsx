@@ -363,7 +363,11 @@ describe('redaccion', () => {
     });
 
     const editor = await screen.findByRole('textbox', { name: t('webmail.compose.body') });
-    const quoted = editor.querySelector('blockquote');
+    // La cita empieza plegada debajo de lo que se escribe, como en Gmail.
+    expect(editor.querySelector('blockquote')).toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: t('webmail.compose.showQuoted') }));
+    const unfolded = await screen.findByRole('textbox', { name: t('webmail.compose.body') });
+    const quoted = unfolded.querySelector('blockquote');
     expect(quoted?.querySelector('b')?.textContent).toBe('plano');
     expect(quoted?.querySelector('img')?.getAttribute('src')).toMatch(/^data:image\/png;base64,/);
     expect(download).toHaveBeenCalledWith('INBOX', 42, '1.2', expect.anything());

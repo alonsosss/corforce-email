@@ -778,42 +778,90 @@ a.cf-wm-message:hover {
 }
 
 /* Destinatarios y asunto como lineas, con la etiqueta delante */
-.cf-wm-composer
-  .cf-field:where(:has(#compose-from, #compose-to, #compose-cc, #compose-bcc, #compose-subject)) {
+:is(.cf-wm-composer, .cf-wm-inline-reply) .cf-wm-compose__line > .cf-field {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
   column-gap: var(--cf-space-3);
   border-bottom: 1px solid var(--cf-border);
 }
-.cf-wm-composer
-  .cf-field:where(:has(#compose-from, #compose-to, #compose-cc, #compose-bcc, #compose-subject))
-  > .cf-field__label {
+:is(.cf-wm-composer, .cf-wm-inline-reply) .cf-wm-compose__line > .cf-field > .cf-field__label {
   color: var(--cf-text-muted);
   font-weight: var(--cf-weight-normal);
 }
-.cf-wm-composer
-  .cf-field:where(:has(#compose-from, #compose-to, #compose-cc, #compose-bcc, #compose-subject))
+:is(.cf-wm-composer, .cf-wm-inline-reply)
+  .cf-wm-compose__line
+  > .cf-field
   > :is(.cf-field__error, .cf-field__hint) {
   grid-column: 1 / -1;
   padding-bottom: var(--cf-space-1);
 }
-.cf-wm-composer .cf-field :is(#compose-subject, #compose-from),
-.cf-wm-composer .cf-field .cf-chips {
+:is(.cf-wm-composer, .cf-wm-inline-reply) .cf-wm-compose__line :is(.cf-input, .cf-select),
+:is(.cf-wm-composer, .cf-wm-inline-reply) .cf-wm-compose__line .cf-chips {
   border: 0;
   border-radius: 0;
   background: transparent;
   padding-left: 0;
 }
-.cf-wm-composer .cf-field :is(#compose-subject, #compose-from):focus-visible {
+:is(.cf-wm-composer, .cf-wm-inline-reply)
+  .cf-wm-compose__line
+  :is(.cf-input, .cf-select):focus-visible {
   box-shadow: none;
 }
-.cf-wm-composer .cf-form__row {
+:is(.cf-wm-composer, .cf-wm-inline-reply) .cf-form__row {
   flex-direction: column;
   gap: var(--cf-space-3);
 }
-.cf-wm-composer .cf-wm-editor {
+:is(.cf-wm-composer, .cf-wm-inline-reply) .cf-wm-editor {
   border-color: var(--cf-border);
+}
+.cf-wm-compose__quoted {
+  margin-top: var(--cf-space-2);
+  color: var(--cf-text-muted);
+}
+
+/* Respuesta dentro del lector, debajo del mensaje */
+.cf-wm-inline-reply {
+  margin: var(--cf-space-4) 0 var(--cf-space-5);
+  border: 1px solid var(--cf-border);
+  border-radius: var(--cf-radius-md);
+  background: var(--cf-surface);
+  box-shadow: var(--cf-shadow-md);
+}
+.cf-wm-inline-reply .cf-wm-compose {
+  max-width: none;
+  gap: var(--cf-space-3);
+  padding: var(--cf-space-3) var(--cf-space-4) 0;
+}
+.cf-wm-inline-reply .cf-wm-compose__head {
+  flex-wrap: nowrap;
+  gap: var(--cf-space-2);
+}
+.cf-wm-inline-reply .cf-wm-compose__title {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--cf-text-sm);
+  font-weight: var(--cf-weight-semibold);
+  letter-spacing: 0;
+}
+.cf-wm-inline-reply .cf-wm-compose__status {
+  font-size: var(--cf-text-xs);
+  white-space: nowrap;
+}
+.cf-wm-inline-reply .cf-wm-compose__actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  gap: var(--cf-space-1);
+  margin: 0 calc(-1 * var(--cf-space-4));
+  padding: var(--cf-space-3) var(--cf-space-4);
+  border-top: 1px solid var(--cf-border);
+  border-radius: 0 0 var(--cf-radius-md) var(--cf-radius-md);
+  background: var(--cf-surface);
+}
+.cf-wm-inline-reply .cf-wm-compose__actions .cf-btn--primary {
+  height: 40px;
+  padding: 0 var(--cf-space-6);
 }
 
 @media (max-width: 960px) {

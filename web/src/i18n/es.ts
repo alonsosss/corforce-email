@@ -2301,6 +2301,7 @@ export const es = {
   'webmail.compose.undo': 'Deshacer',
   'webmail.compose.sendUndone': 'Envío cancelado. El mensaje sigue en la redacción.',
   'webmail.compose.toPlain': 'Texto sin formato',
+  'webmail.compose.showQuoted': 'Mostrar el mensaje citado',
   'webmail.compose.toRich': 'Con formato',
   'webmail.compose.autosaving': 'Guardando borrador',
   'webmail.compose.autosaved': 'Borrador guardado a las {time}',
