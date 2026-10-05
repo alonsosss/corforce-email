@@ -69,7 +69,7 @@ solo se enlaza. Las entradas más recientes van arriba.
 | Solución | La respuesta en línea y la ventana reciben ese foco (`tabIndex=-1`), y los atajos tampoco actúan si el foco cae en un contenedor que envuelve una redacción abierta (`4713c0f`) |
 | Que no se repita | `web/src/webmail/shortcuts.test.tsx`: un clic en un hueco de la redacción deja el foco dentro y «e» no archiva; con el foco caído en un contenedor de la redacción tampoco |
 | Detalle | `web/src/webmail/shortcuts.ts` |
-| Desplegado | Pendiente |
+| Desplegado | 2026-10-05, con `2b7a256` (web); la respuesta dentro del recuadro del mensaje, en `7db4d1e` |
 
 ### 2026-10-04 · La recuperación de contraseña no servía a los buzones y no lo decía
 
