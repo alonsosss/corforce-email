@@ -30,6 +30,7 @@ solo se enlaza. Las entradas más recientes van arriba.
 
 | Fecha | Incidente | Impacto | Guardarrail |
 |---|---|---|---|
+| 2026-10-05 | [Escribir una respuesta podía archivar el mensaje abierto](#2026-10-05--escribir-una-respuesta-podía-archivar-el-mensaje-abierto) | Mensajes archivados sin querer al responder en el webmail | `shortcuts.test.tsx` |
 | 2026-10-04 | [La recuperación de contraseña no servía a los buzones y no lo decía](#2026-10-04--la-recuperación-de-contraseña-no-servía-a-los-buzones-y-no-lo-decía) | Un usuario de buzón esperaba un correo que nunca llegaba | `MailboxRecoveryPage.test.tsx` y `make e2e-mail` |
 | 2026-10-02 | [El 90 % de las llamadas a la API de JetStream fallaban](#2026-10-02--el-90--de-las-llamadas-a-la-api-de-jetstream-fallaban) | Ruido que tapaba errores reales | Prueba de integración |
 | 2026-10-01 | [Eventos con 90 s de retraso en cada despliegue](#2026-10-01--eventos-con-90-s-de-retraso-en-cada-despliegue) | Retraso de eventos de 11 servicios en cada reinicio | `check-subscription-drain.sh` |
@@ -42,6 +43,19 @@ solo se enlaza. Las entradas más recientes van arriba.
 | 2026-10-01 | [Vulnerabilidades altas en las imágenes de los motores](#2026-10-01--vulnerabilidades-altas-en-las-imágenes-de-los-motores) | 7 CVE altas con arreglo publicado en producción | `check-motor-os-updates.sh` |
 
 ## Incidentes
+
+### 2026-10-05 · Escribir una respuesta podía archivar el mensaje abierto
+
+| | |
+|---|---|
+| Detectado | Prueba en navegador real contra producción (buzón `it@mentorenergy.uk`) al revisar la respuesta dentro del mensaje: aparecieron avisos de «mensajes movidos a Archivo» mientras se escribía |
+| Síntoma | Tras un clic en un hueco de la respuesta (entre campos, no en el texto), cada «e» tecleada archivaba el mensaje abierto y «#» lo habría borrado |
+| Impacto | Mensajes archivados sin querer al responder dentro del lector, desde `fda805c` (2026-10-04) hasta este arreglo. En la ventana flotante el riesgo ya existía, pero era menor: estaba fuera del lector |
+| Causa raíz | Los atajos de una letra solo se callan si el foco está dentro de la zona de redacción (`data-keyboard-owner`) o en un campo. Un clic en un elemento que no recibe foco lo pasa al ancestro enfocable más cercano, que era el `main` del webmail, fuera de la redacción: la tecla llegaba al atajo de archivar. Comprobado con un registro de teclas en la página: destino `MAIN` y una petición `batch` de archivado por cada «e» |
+| Solución | La respuesta en línea y la ventana reciben ese foco (`tabIndex=-1`), y los atajos tampoco actúan si el foco cae en un contenedor que envuelve una redacción abierta (`4713c0f`) |
+| Que no se repita | `web/src/webmail/shortcuts.test.tsx`: un clic en un hueco de la redacción deja el foco dentro y «e» no archiva; con el foco caído en un contenedor de la redacción tampoco |
+| Detalle | `web/src/webmail/shortcuts.ts` |
+| Desplegado | Pendiente |
 
 ### 2026-10-04 · La recuperación de contraseña no servía a los buzones y no lo decía
 
