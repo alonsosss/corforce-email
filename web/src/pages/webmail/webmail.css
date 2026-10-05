@@ -815,12 +815,34 @@ a.cf-wm-message:hover {
 :is(.cf-wm-composer, .cf-wm-inline-reply) .cf-wm-editor {
   border-color: var(--cf-border);
 }
+.cf-wm-compose__extras {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--cf-space-1);
+}
 .cf-wm-compose__quoted {
   margin-top: var(--cf-space-2);
   color: var(--cf-text-muted);
 }
 
-/* Respuesta dentro del lector, debajo del mensaje */
+/* Respuesta dentro del lector: sigue al mensaje en el mismo recuadro, como en Gmail */
+.cf-wm-inline-reply {
+  /*
+   * Campos que llegan tarde (el remitente) no deben empujar la cabecera bajo la barra del
+   * lector: el navegador no ancla el desplazamiento en la respuesta.
+   */
+  overflow-anchor: none;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: var(--cf-space-3);
+  margin-top: var(--cf-space-4);
+  padding-top: var(--cf-space-4);
+  border-top: 1px solid var(--cf-border);
+}
+.cf-wm-inline-reply__avatar {
+  margin-top: var(--cf-space-1);
+}
 /* La barra de acciones del lector es fija: lo que se lleva a la vista queda debajo de ella. */
 .cf-wm-inline-reply,
 .cf-wm-inline-reply :is(form, button, input, select, textarea, [contenteditable]) {
@@ -830,22 +852,10 @@ a.cf-wm-message:hover {
 :is(.cf-wm-inline-reply, .cf-wm-composer):focus {
   outline: none;
 }
-.cf-wm-inline-reply {
-  /*
-   * Campos que llegan tarde (el remitente) no deben empujar la cabecera bajo la barra del
-   * lector: el navegador no ancla el desplazamiento en la respuesta.
-   */
-  overflow-anchor: none;
-  margin: var(--cf-space-4) 0 var(--cf-space-5);
-  border: 1px solid var(--cf-border);
-  border-radius: var(--cf-radius-md);
-  background: var(--cf-surface);
-  box-shadow: var(--cf-shadow-md);
-}
 .cf-wm-inline-reply .cf-wm-compose {
   max-width: none;
-  gap: var(--cf-space-3);
-  padding: var(--cf-space-3) var(--cf-space-4) 0;
+  gap: var(--cf-space-2);
+  padding: 0;
 }
 .cf-wm-inline-reply .cf-wm-compose__head {
   flex-wrap: nowrap;
@@ -867,11 +877,9 @@ a.cf-wm-message:hover {
   bottom: 0;
   z-index: 1;
   gap: var(--cf-space-1);
-  margin: 0 calc(-1 * var(--cf-space-4));
-  padding: var(--cf-space-3) var(--cf-space-4);
-  border-top: 1px solid var(--cf-border);
-  border-radius: 0 0 var(--cf-radius-md) var(--cf-radius-md);
-  background: var(--cf-surface);
+  margin: 0;
+  padding: var(--cf-space-3) 0;
+  background: var(--cf-surface-muted);
 }
 .cf-wm-inline-reply .cf-wm-compose__actions .cf-btn--primary {
   height: 40px;
@@ -971,6 +979,12 @@ a.cf-wm-message:hover {
   }
   .cf-wm-reader__body {
     padding: var(--cf-space-2);
+  }
+  .cf-wm-inline-reply {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .cf-wm-inline-reply__avatar {
+    display: none;
   }
 }
 

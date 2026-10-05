@@ -31,6 +31,7 @@ import {
   IconMaximize,
   IconMinimize,
   IconMinus,
+  IconPaperclip,
   IconQuote,
   IconSend,
   IconTrash,
@@ -400,6 +401,8 @@ function ComposeForm({
   const [draftOrigin, setDraftOrigin] = useState<'none' | 'seed' | 'manual' | 'auto'>(
     resume?.autosavedDraft ? 'auto' : seed.draftUid ? 'seed' : 'none',
   );
+  // Dentro del lector, adjuntos, seguimiento y ficheros grandes se abren con el clip de la barra.
+  const [showMore, setShowMore] = useState(!inline);
   // Al responder dentro del lector el asunto es el del hilo: se edita solo si se pide.
   const [showSubject, setShowSubject] = useState(
     !(inline && (mode === 'reply' || mode === 'replyAll')),
@@ -762,6 +765,12 @@ function ComposeForm({
   };
 
   const busy = send.busy || save.busy || waiting;
+  const moreVisible =
+    showMore ||
+    files.length > 0 ||
+    serverParts.length > 0 ||
+    followUpDays > 0 ||
+    Boolean(problems.attachments);
 
   // La ventana flotante recibe lo escrito tal cual; si ya hay otra redaccion abierta, se queda aqui.
   const popOut = () => {
@@ -868,7 +877,7 @@ function ComposeForm({
           />
         </FormField>
       </div>
-      <div>
+      <div className="cf-wm-compose__extras">
         <Button
           size="sm"
           variant="ghost"
@@ -877,16 +886,26 @@ function ComposeForm({
         >
           {t('webmail.compose.addressBook')}
         </Button>
-        {showBook ? (
-          <AddressBookPicker
-            chosen={[...to, ...cc, ...bcc]}
-            onPick={(address) => {
-              edit(setTo)([...to, address]);
-              setRecipientError(null);
-            }}
-          />
-        ) : null}
+        {showCopies ? null : (
+          <Button size="sm" variant="ghost" onClick={() => setShowCopies(true)}>
+            {t('webmail.compose.addCopies')}
+          </Button>
+        )}
+        {showSubject || problems.subject ? null : (
+          <Button size="sm" variant="ghost" onClick={() => setShowSubject(true)}>
+            {t('webmail.compose.editSubject')}
+          </Button>
+        )}
       </div>
+      {showBook ? (
+        <AddressBookPicker
+          chosen={[...to, ...cc, ...bcc]}
+          onPick={(address) => {
+            edit(setTo)([...to, address]);
+            setRecipientError(null);
+          }}
+        />
+      ) : null}
       {showCopies ? (
         <div className="cf-form__row">
           <div className="cf-wm-compose__line">
@@ -900,20 +919,7 @@ function ComposeForm({
             </FormField>
           </div>
         </div>
-      ) : (
-        <div>
-          <Button size="sm" variant="ghost" onClick={() => setShowCopies(true)}>
-            {t('webmail.compose.addCopies')}
-          </Button>
-        </div>
-      )}
-      {showSubject || problems.subject ? null : (
-        <div>
-          <Button size="sm" variant="ghost" onClick={() => setShowSubject(true)}>
-            {t('webmail.compose.editSubject')}
-          </Button>
-        </div>
-      )}
+      ) : null}
       {showSubject || problems.subject ? (
         <div className="cf-wm-compose__line">
           <FormField
@@ -995,38 +1001,44 @@ function ComposeForm({
         onInsert={insertAssistantText}
         onReplace={replaceWithAssistantText}
       />
-      <AttachmentPicker
-        files={files}
-        serverParts={serverParts}
-        onFiles={edit(setFiles)}
-        onServerParts={(parts) =>
-          edit(setServer)(server && parts.length ? { ...server, parts } : undefined)
-        }
-        limits={limits}
-        error={problems.attachments ?? null}
-        disabled={busy}
-      />
-      <FormField label={t('webmail.followUp.label')} htmlFor={ids.followUp}>
-        <Select
-          id={ids.followUp}
-          options={[
-            { value: '0', label: t('webmail.followUp.none') },
-            ...followUpChoices(limits?.max_reminder_days ?? null).map((days) => ({
-              value: String(days),
-              label:
-                days === 1 ? t('webmail.followUp.oneDay') : t('webmail.followUp.days', { n: days }),
-            })),
-          ]}
-          value={String(followUpDays)}
-          onChange={(e) => setFollowUpDays(Number(e.target.value))}
-          disabled={busy}
-        />
-      </FormField>
-      <LargeFilePicker
-        suggest={problems.attachments ? files : []}
-        disabled={busy}
-        onShared={addLargeFileLink}
-      />
+      {moreVisible ? (
+        <>
+          <AttachmentPicker
+            files={files}
+            serverParts={serverParts}
+            onFiles={edit(setFiles)}
+            onServerParts={(parts) =>
+              edit(setServer)(server && parts.length ? { ...server, parts } : undefined)
+            }
+            limits={limits}
+            error={problems.attachments ?? null}
+            disabled={busy}
+          />
+          <FormField label={t('webmail.followUp.label')} htmlFor={ids.followUp}>
+            <Select
+              id={ids.followUp}
+              options={[
+                { value: '0', label: t('webmail.followUp.none') },
+                ...followUpChoices(limits?.max_reminder_days ?? null).map((days) => ({
+                  value: String(days),
+                  label:
+                    days === 1
+                      ? t('webmail.followUp.oneDay')
+                      : t('webmail.followUp.days', { n: days }),
+                })),
+              ]}
+              value={String(followUpDays)}
+              onChange={(e) => setFollowUpDays(Number(e.target.value))}
+              disabled={busy}
+            />
+          </FormField>
+          <LargeFilePicker
+            suggest={problems.attachments ? files : []}
+            disabled={busy}
+            onShared={addLargeFileLink}
+          />
+        </>
+      ) : null}
       {waiting ? (
         <div className="cf-wm-undo" role="status">
           <span>{t('webmail.compose.sendingSoon', { s: Math.round(UNDO_SEND_MS / 1000) })}</span>
@@ -1067,6 +1079,19 @@ function ComposeForm({
         >
           {t('webmail.compose.sendLater')}
         </Button>
+        {inline ? (
+          <Button
+            variant="ghost"
+            iconOnly
+            title={t('webmail.compose.moreOptions')}
+            icon={<IconPaperclip size={18} />}
+            aria-expanded={moreVisible}
+            disabled={busy}
+            onClick={() => setShowMore((open) => !open)}
+          >
+            {t('webmail.compose.moreOptions')}
+          </Button>
+        ) : null}
         <Button
           variant="ghost"
           loading={save.busy}

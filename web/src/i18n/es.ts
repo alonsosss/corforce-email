@@ -2286,6 +2286,7 @@ export const es = {
   'webmail.compose.invalidAddresses': 'Direcciones no válidas: {list}',
   'webmail.compose.addCopies': 'Añadir Cc y Cco',
   'webmail.compose.editSubject': 'Editar el asunto',
+  'webmail.compose.moreOptions': 'Adjuntar y más opciones',
   'webmail.compose.addressBook': 'Elegir de la empresa',
   'webmail.compose.addressBookSearch': 'Buscar por nombre o dirección',
   'webmail.compose.addressBookAdd': 'Añadir {address} a los destinatarios',

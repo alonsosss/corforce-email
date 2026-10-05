@@ -31,6 +31,7 @@ import {
   IconUserPlus,
 } from '@/design/icons';
 import { saveBlob } from '@/lib/download';
+import { useWebmailStore } from '@/webmail/store';
 import { formatDateTime, initialsOf } from '@/lib/format';
 import { t } from '@/i18n';
 import { paths } from '@/paths';
@@ -102,6 +103,7 @@ export function MessageView({
   const [purging, setPurging] = useState(false);
   const [newContact, setNewContact] = useState<MailAddress | null>(null);
   const [snoozing, setSnoozing] = useState(false);
+  const session = useWebmailStore((s) => s.session);
 
   const message = useQuery(
     (signal) =>
@@ -176,6 +178,7 @@ export function MessageView({
   const seenLabel = t(seen ? 'webmail.reader.markUnread' : 'webmail.reader.markRead');
   const deleteLabel = t(isTrash ? 'webmail.reader.deleteForever' : 'webmail.reader.delete');
   const sender = data.from[0];
+  const ownName = session?.display_name || session?.username || '';
 
   return (
     <article className="cf-wm-reader" aria-labelledby="wm-subject">
@@ -391,22 +394,27 @@ export function MessageView({
           onAllowRemote={() => setRemote(true)}
           inlineImages={inlineImages}
         />
+        {/* Como en Gmail, la respuesta sigue al mensaje dentro del mismo recuadro. */}
+        {!isDrafts && reply ? (
+          <section
+            className="cf-wm-inline-reply"
+            aria-label={t('webmail.composer.inlineLabel')}
+            data-keyboard-owner="focus"
+            tabIndex={-1}
+          >
+            <span className="cf-avatar cf-wm-inline-reply__avatar" aria-hidden="true">
+              {initialsOf(ownName)}
+            </span>
+            <ComposePage
+              key={reply.kind === 'source' ? reply.mode : 'new'}
+              request={reply}
+              onClose={onReplyClose}
+              inline
+            />
+          </section>
+        ) : null}
       </div>
-      {isDrafts ? null : reply ? (
-        <section
-          className="cf-wm-inline-reply"
-          aria-label={t('webmail.composer.inlineLabel')}
-          data-keyboard-owner="focus"
-          tabIndex={-1}
-        >
-          <ComposePage
-            key={reply.kind === 'source' ? reply.mode : 'new'}
-            request={reply}
-            onClose={onReplyClose}
-            inline
-          />
-        </section>
-      ) : (
+      {isDrafts || reply ? null : (
         <div className="cf-wm-replybar">
           <button type="button" className="cf-wm-replybar__field" onClick={() => onReply('reply')}>
             <span className="cf-wm-replybar__text">

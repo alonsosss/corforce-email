@@ -104,6 +104,19 @@ describe('respuesta dentro del lector', () => {
     expect(screen.getByLabelText(t('webmail.header.subject'))).toHaveValue('Re: Pedido');
   });
 
+  it('adjuntos, seguimiento y ficheros grandes esperan tras el clip de la barra', async () => {
+    const user = userEvent.setup();
+    renderInline(null);
+
+    await screen.findByRole('textbox', { name: t('webmail.compose.body') });
+    expect(screen.queryByLabelText(t('webmail.followUp.label'))).toBeNull();
+    const more = screen.getByRole('button', { name: t('webmail.compose.moreOptions') });
+    expect(more).toHaveAttribute('aria-expanded', 'false');
+    await user.click(more);
+    expect(screen.getByLabelText(t('webmail.followUp.label'))).toBeInTheDocument();
+    expect(more).toHaveAttribute('aria-expanded', 'true');
+  });
+
   it('Ctrl+Enter envia con la cita plegada al final del cuerpo', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
