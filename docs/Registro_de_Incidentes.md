@@ -30,6 +30,7 @@ solo se enlaza. Las entradas más recientes van arriba.
 
 | Fecha | Incidente | Impacto | Guardarrail |
 |---|---|---|---|
+| 2026-10-04 | [La recuperación de contraseña no servía a los buzones y no lo decía](#2026-10-04--la-recuperación-de-contraseña-no-servía-a-los-buzones-y-no-lo-decía) | Un usuario de buzón esperaba un correo que nunca llegaba | `MailboxRecoveryPage.test.tsx` y `make e2e-mail` |
 | 2026-10-02 | [El 90 % de las llamadas a la API de JetStream fallaban](#2026-10-02--el-90--de-las-llamadas-a-la-api-de-jetstream-fallaban) | Ruido que tapaba errores reales | Prueba de integración |
 | 2026-10-01 | [Eventos con 90 s de retraso en cada despliegue](#2026-10-01--eventos-con-90-s-de-retraso-en-cada-despliegue) | Retraso de eventos de 11 servicios en cada reinicio | `check-subscription-drain.sh` |
 | 2026-10-01 | [La réplica de Dovecot no funcionaba y ensuciaba el registro](#2026-10-01--la-réplica-de-dovecot-no-funcionaba-y-ensuciaba-el-registro) | Un error por buzón en cada arranque; réplica rota en silencio | `make e2e-mail` (ADR 0018) |
@@ -41,6 +42,19 @@ solo se enlaza. Las entradas más recientes van arriba.
 | 2026-10-01 | [Vulnerabilidades altas en las imágenes de los motores](#2026-10-01--vulnerabilidades-altas-en-las-imágenes-de-los-motores) | 7 CVE altas con arreglo publicado en producción | `check-motor-os-updates.sh` |
 
 ## Incidentes
+
+### 2026-10-04 · La recuperación de contraseña no servía a los buzones y no lo decía
+
+| | |
+|---|---|
+| Detectado | Prueba manual en producción con `asotoc@core-force.com`: la pantalla respondió y no llegó nada |
+| Síntoma | «Recuperar contraseña» respondía «Si el correo está registrado, recibirás un enlace…» y identity registraba «correo no registrado» |
+| Impacto | Quien solo tiene buzón (la mayoría de los usuarios del webmail) no podía recuperar su contraseña por sí mismo, y el mensaje le hacía esperar un correo que nunca llegaba. Desde que existe el inicio de sesión único |
+| Causa raíz | El inicio de sesión es uno solo para buzones (mail-auth) y cuentas de la consola (identity), pero el enlace de recuperación solo existe en identity. El mensaje es idéntico exista o no el correo, a propósito (contra la enumeración), así que ocultaba también este caso. Un buzón tampoco podría recibir el enlace: es justo el buzón al que no puede entrar |
+| Solución | Recuperación del buzón sin sesión con un código TOTP y uno de recuperación a la vez, en una transacción de mail-directory que cierra las sesiones, borra las contraseñas de aplicación y deja rastro en Auditoría; la pantalla de recuperación explica a quien tiene buzón qué hacer (`12e9ce1`) |
+| Que no se repita | `MailboxRecoveryPage.test.tsx` y las unitarias de mail-directory y webmail; `make e2e-mail` recorre la recuperación contra los motores reales |
+| Detalle | `docs/Plan_Webmail_Seguridad.md`, sección 7 |
+| Desplegado | Pendiente |
 
 ### 2026-10-02 · El 90 % de las llamadas a la API de JetStream fallaban
 
