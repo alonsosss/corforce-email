@@ -218,3 +218,7 @@ func (f *fakeEvents) MailPolicyUpdated(_ context.Context, _ *domain.MailPolicy, 
 	f.policyRemoved = append(f.policyRemoved, removed)
 	return nil
 }
+
+func (f *fakeEvents) MailboxPasswordRecovered(_ context.Context, _ *domain.Mailbox, _ time.Time, _, _ int) error {
+	return f.record("mail.mailbox.password_recovered")
+}

@@ -163,6 +163,19 @@ func (s *stubSecurity) DisableMFA(_ context.Context, _, code string) error {
 	return nil
 }
 
+// stubRecoveryCode es el codigo de recuperacion que admite el doble junto con validCode.
+const stubRecoveryCode = "BBBBB-CCCCC"
+
+func (s *stubSecurity) RecoverPassword(_ context.Context, username, totpCode, recoveryCode, password string) (domain.PasswordRecovery, error) {
+	if len(password) < 8 {
+		return domain.PasswordRecovery{}, domain.NewValidationError("password", "demasiado corta")
+	}
+	if !s.enabled || username != testUser || totpCode != s.validCode || recoveryCode != stubRecoveryCode {
+		return domain.PasswordRecovery{}, domain.ErrPasswordRecoveryRejected
+	}
+	return domain.PasswordRecovery{RecoveryRemaining: 6, AppPasswordsRevoked: 1}, nil
+}
+
 func (s *stubSecurity) AppPasswords(context.Context, string) (domain.AppPasswordList, error) {
 	created := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	return domain.AppPasswordList{Items: []domain.AppPassword{{

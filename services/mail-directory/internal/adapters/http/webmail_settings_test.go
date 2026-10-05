@@ -41,6 +41,12 @@ type settingsEvents struct {
 	// mfaDisabled anota quien apago cada verificacion.
 	mfaDisabled []string
 	policies    []int
+	recovered   int
+}
+
+func (f *settingsEvents) MailboxPasswordRecovered(context.Context, *domain.Mailbox, time.Time, int, int) error {
+	f.recovered++
+	return nil
 }
 
 func (f *settingsEvents) MailboxForwardingChanged(_ context.Context, _ *domain.Mailbox, _ time.Time, c domain.ForwardingChange) error {

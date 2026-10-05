@@ -120,6 +120,8 @@ func (h *Handler) Routes() chi.Router {
 		r.Post("/internal/mail-directory/mfa/activate", h.InternalActivateMFA)
 		r.Post("/internal/mail-directory/mfa/verify", h.InternalVerifyMFA)
 		r.Post("/internal/mail-directory/mfa/recovery-codes", h.InternalRegenerateRecoveryCodes)
+		// Recuperacion de la contrasena sin sesion: aqui se comprueban los dos codigos.
+		r.Post("/internal/mail-directory/password-recovery", h.InternalRecoverPassword)
 		r.Get("/internal/mail-directory/app-passwords", h.InternalListAppPasswords)
 		r.Post("/internal/mail-directory/app-passwords", h.InternalCreateAppPassword)
 		r.Delete("/internal/mail-directory/app-passwords/{id}", h.InternalDeleteAppPassword)

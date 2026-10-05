@@ -129,6 +129,7 @@ func TestLaSeguridadDeLosBuzonesSeAuditaPorDefecto(t *testing.T) {
 	want := map[string]string{
 		"mail.mailbox.mfa_enabled":        "audit-mail-mailbox-mfa_enabled",
 		"mail.mailbox.mfa_disabled":       "audit-mail-mailbox-mfa_disabled",
+		"mail.mailbox.password_recovered": "audit-mail-mailbox-password_recovered",
 		"mail.mailbox.forwarding_changed": "audit-mail-mailbox-forwarding_changed",
 		"mail.policy.updated":             "audit-mail-policy-updated",
 	}

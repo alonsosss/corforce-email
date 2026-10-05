@@ -290,3 +290,101 @@ func (uc *UseCase) newRecoveryCodes() (codes, hashes []string, err error) {
 	}
 	return codes, hashes, nil
 }
+
+// PasswordRecovery es el desenlace de una recuperacion de contrasena admitida.
+type PasswordRecovery struct {
+	RecoveryRemaining   int
+	AppPasswordsRevoked int
+}
+
+// RecoverPasswordByUsername es la recuperacion de la contrasena del buzon sin sesion: quien la pide
+// demuestra tener la aplicacion de autenticacion (un codigo TOTP sin usar) y uno de los codigos de
+// recuperacion guardados aparte. Con uno solo de los dos no basta: el segundo factor pasaria a ser el
+// unico. Todo ocurre en una transaccion: si cualquiera de los dos codigos falla no se gasta ninguno ni
+// cambia nada. Al cambiar la contrasena se borran las contrasenas de aplicacion (una que dejara quien
+// tuviera la cuenta seguiria abriendo IMAP) y el evento de credenciales cierra todas las sesiones.
+//
+// Cualquier motivo de rechazo es domain.ErrPasswordRecoveryRejected; solo la contrasena nueva que la
+// politica no admite se senala, y antes de mirar el buzon, para no revelar si existe.
+func (uc *UseCase) RecoverPasswordByUsername(ctx context.Context, username, rawTOTP, rawRecovery, password string) (PasswordRecovery, error) {
+	if err := uc.mfaWired(); err != nil {
+		return PasswordRecovery{}, err
+	}
+	if err := domain.ValidatePassword(password); err != nil {
+		return PasswordRecovery{}, err
+	}
+	totpCode, recoveryCode := domain.NormalizeMFACode(rawTOTP), domain.NormalizeMFACode(rawRecovery)
+	if !domain.IsTOTPCode(totpCode) || !domain.IsRecoveryCode(recoveryCode) {
+		return PasswordRecovery{}, domain.ErrPasswordRecoveryRejected
+	}
+	hash, err := uc.secrets.HashPassword(password)
+	if err != nil {
+		return PasswordRecovery{}, err
+	}
+	tenantID, mailboxID, err := uc.locate(ctx, username)
+	if err != nil {
+		return PasswordRecovery{}, recoveryRejection(err)
+	}
+	var out PasswordRecovery
+	err = uc.writeTx(ctx, tenantID, func(ctx context.Context) error {
+		m, err := uc.mailboxes.Get(ctx, tenantID, mailboxID)
+		if err != nil {
+			return err
+		}
+		if m.Active != domain.ActiveOn || !m.MFAEnabled {
+			return domain.ErrPasswordRecoveryRejected
+		}
+		// Las formas ya se comprobaron: el primero solo puede validarse como TOTP y el segundo como
+		// codigo de recuperacion.
+		if _, err := uc.checkMFACode(ctx, m, totpCode); err != nil {
+			return err
+		}
+		v, err := uc.checkMFACode(ctx, m, recoveryCode)
+		if err != nil {
+			return err
+		}
+		apps, err := uc.appPasswords.List(ctx, tenantID, mailboxID)
+		if err != nil {
+			return err
+		}
+		if len(apps) > 0 {
+			if err := uc.appPasswords.DeleteByMailbox(ctx, tenantID, mailboxID); err != nil {
+				return err
+			}
+		}
+		if err := uc.mailboxes.UpdatePassword(ctx, tenantID, mailboxID, hash); err != nil {
+			return err
+		}
+		changed := []domain.MailboxAttr{domain.AttrPassword}
+		if len(apps) > 0 {
+			changed = append(changed, domain.AttrAppPassword)
+		}
+		if err := uc.events.MailboxCredentialsChanged(ctx, m, domain.CredentialPassword, changed); err != nil {
+			return err
+		}
+		out = PasswordRecovery{RecoveryRemaining: v.RecoveryRemaining, AppPasswordsRevoked: len(apps)}
+		return uc.events.MailboxPasswordRecovered(ctx, m, uc.now().UTC(), out.RecoveryRemaining, out.AppPasswordsRevoked)
+	})
+	if err != nil {
+		return PasswordRecovery{}, recoveryRejection(err)
+	}
+	uc.logger.Info("mail-directory: contraseña del buzón recuperada con la verificación en dos pasos",
+		zap.String("tenant_id", tenantID.String()), zap.String("mailbox_id", mailboxID.String()),
+		zap.Int("recovery_remaining", out.RecoveryRemaining), zap.Int("app_passwords_revoked", out.AppPasswordsRevoked))
+	return out, nil
+}
+
+// recoveryRejection reduce a domain.ErrPasswordRecoveryRejected lo que dependa del buzon o de los
+// codigos; los fallos de la base o de la configuracion siguen siendo lo que son.
+func recoveryRejection(err error) error {
+	if err == nil {
+		return nil
+	}
+	for _, known := range []error{domain.ErrNotFound, domain.ErrInvalidEmail, domain.ErrInvalidMFACode,
+		domain.ErrMFANotEnabled, domain.ErrTenantRetired, domain.ErrPasswordRecoveryRejected} {
+		if errors.Is(err, known) {
+			return domain.ErrPasswordRecoveryRejected
+		}
+	}
+	return err
+}

@@ -128,6 +128,10 @@ type fakeSecurity struct {
 	created   *domain.AppPasswordInput
 	deleted   string
 	list      domain.AppPasswordList
+	// recoveryCode es el codigo de recuperacion que se admite junto con validCode; recovered, la
+	// contrasena fijada por la ultima recuperacion admitida.
+	recoveryCode string
+	recovered    string
 }
 
 func (f *fakeSecurity) record(call string) {
@@ -204,6 +208,27 @@ func (f *fakeSecurity) DisableMFA(_ context.Context, _, code string) error {
 	}
 	f.enabled, f.disabled = false, true
 	return nil
+}
+
+func (f *fakeSecurity) RecoverPassword(_ context.Context, _, totpCode, recoveryCode, password string) (domain.PasswordRecovery, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.record("recover")
+	if f.err != nil {
+		return domain.PasswordRecovery{}, f.err
+	}
+	if len(password) < 8 {
+		return domain.PasswordRecovery{}, domain.NewValidationError("password", "demasiado corta")
+	}
+	if !f.enabled || totpCode != f.validCode || recoveryCode != f.recoveryCode || f.used[recoveryCode] {
+		return domain.PasswordRecovery{}, domain.ErrPasswordRecoveryRejected
+	}
+	if f.used == nil {
+		f.used = map[string]bool{}
+	}
+	f.used[recoveryCode] = true
+	f.recovered = password
+	return domain.PasswordRecovery{RecoveryRemaining: 9}, nil
 }
 
 func (f *fakeSecurity) AppPasswords(context.Context, string) (domain.AppPasswordList, error) {

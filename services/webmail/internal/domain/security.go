@@ -22,6 +22,11 @@ var (
 	// del mismo buzon, la unica que comprueba la contrasena.
 	ErrMFASetupExpired = errors.New("la preparación de la verificación caducó; vuelve a empezar")
 
+	// ErrPasswordRecoveryRejected es una recuperacion de contrasena que no se admite: buzon
+	// inexistente, inactivo o sin verificacion en dos pasos, o alguno de los dos codigos mal. La ruta
+	// es publica y no dice cual.
+	ErrPasswordRecoveryRejected = errors.New("no se pudo verificar la identidad del buzón")
+
 	ErrAppPasswordNotFound = errors.New("contraseña de aplicación no encontrada")
 	ErrAppPasswordLimit    = errors.New("el buzón alcanzó su máximo de contraseñas de aplicación")
 )
@@ -88,6 +93,13 @@ type MFASetup struct {
 type MFAVerification struct {
 	Method            string
 	RecoveryRemaining int
+}
+
+// PasswordRecovery es el desenlace de una recuperacion de contrasena: los codigos de recuperacion que
+// le quedan al buzon y cuantas contrasenas de aplicacion se borraron.
+type PasswordRecovery struct {
+	RecoveryRemaining   int
+	AppPasswordsRevoked int
 }
 
 // AppPasswordAccess son los protocolos que abre una contrasena de aplicacion.

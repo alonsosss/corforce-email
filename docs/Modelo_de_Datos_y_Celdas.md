@@ -1369,6 +1369,11 @@ otro).
   (metodo con cuerpo, ruta fija, campo del nombre de usuario, y la misma ruta en `strict_limit`,
   porque cada intento pregunta a organization) y `cell_cookie`; en un servicio que no es de celda
   esas claves no se admiten. El frontend sigue sin poder ser de celda.
+* Otras rutas sin sesion que llevan el mismo campo de nombre de usuario se declaran en
+  `cell_username_routes` y se enrutan igual que el inicio de sesion, con las mismas reglas (metodo
+  con cuerpo, ruta fija, en `strict_limit`, sin repetir `cell_login`). Hoy es la recuperacion de la
+  contrasena del buzon (`POST /api/v1/webmail/session/recovery`, docs/Plan_Webmail_Seguridad.md
+  seccion 7), que no trae cookie de la celda del buzon.
 * La autenticacion y la CSP del servicio no cambian: sin JWT ni RBAC en el prefijo y con la
   politica del servicio (`keepUpstreamCSP`) en toda instancia.
 * Probado: unitarias de `pkg/mailcell`; de `pkg/tenantcell` (celda de un dominio, cache y

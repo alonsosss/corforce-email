@@ -28,6 +28,7 @@ export const PUBLIC_SCREENS: readonly ScreenDecl[] = [
   { path: paths.login, load: () => import('@/pages/auth/LoginPage') },
   { path: paths.forgotPassword, load: () => import('@/pages/auth/ForgotPasswordPage') },
   { path: paths.resetPassword, load: () => import('@/pages/auth/ResetPasswordPage') },
+  { path: paths.mailboxRecovery, load: () => import('@/pages/auth/MailboxRecoveryPage') },
   { path: paths.sessionExpired, load: () => import('@/pages/auth/SessionExpiredPage') },
 ];
 

@@ -136,7 +136,7 @@ func (t *routeTable) validatePublicCell(p publicRouteSpec) error {
 // y tampoco se admiten.
 func (t *routeTable) validateSelfAuthCell(s selfAuthSpec) error {
 	cellService := t.Services[s.Service].CellHostsEnv != ""
-	declared := s.CellLogin != nil || s.CellCookie != ""
+	declared := s.CellLogin != nil || s.CellCookie != "" || len(s.CellUsernameRoutes) > 0
 	switch {
 	case !cellService && declared:
 		return fmt.Errorf("tabla de rutas: el prefijo %q declara cell_login o cell_cookie y %q no es un servicio de celda", s.Prefix, s.Service)
@@ -146,24 +146,59 @@ func (t *routeTable) validateSelfAuthCell(s selfAuthSpec) error {
 		return fmt.Errorf("tabla de rutas: el prefijo autenticado por el servicio %q apunta al servicio de celda %q sin cell_login y cell_cookie: el gateway no sabria a que celda llevar el inicio de sesion ni la sesion", s.Prefix, s.Service)
 	}
 	l := s.CellLogin
-	if l.Method != "POST" && l.Method != "PUT" {
-		return fmt.Errorf("tabla de rutas: cell_login de %q con metodo %q: el nombre de usuario viaja en el cuerpo (POST o PUT)", s.Prefix, l.Method)
-	}
-	if !strings.HasPrefix(l.Path, "/") || strings.Contains(l.Path, "..") || strings.ContainsAny(l.Path, "{}*") {
-		return fmt.Errorf("tabla de rutas: ruta invalida %q en cell_login de %q", l.Path, s.Prefix)
-	}
 	if !fieldRe.MatchString(l.UsernameField) || !fieldRe.MatchString(s.CellCookie) {
 		return fmt.Errorf("tabla de rutas: username_field %q o cell_cookie %q invalidos en %q", l.UsernameField, s.CellCookie, s.Prefix)
 	}
 	if s.CellChallengeCookie != "" && (!fieldRe.MatchString(s.CellChallengeCookie) || s.CellChallengeCookie == s.CellCookie) {
 		return fmt.Errorf("tabla de rutas: cell_challenge_cookie %q invalida en %q", s.CellChallengeCookie, s.Prefix)
 	}
+	byUsername := append([]methodPathSpec{{Method: l.Method, Path: l.Path}}, s.CellUsernameRoutes...)
+	seen := map[methodPathSpec]bool{}
+	for _, route := range byUsername {
+		if seen[route] {
+			return fmt.Errorf("tabla de rutas: %s %s repetida entre cell_login y cell_username_routes de %q", route.Method, route.Path, s.Prefix)
+		}
+		seen[route] = true
+		if err := validateUsernameRoute(s, route); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateUsernameRoute: una ruta que se enruta por el nombre de usuario del cuerpo lleva cuerpo
+// (POST o PUT), tiene ruta fija y va con el limitador estricto, porque cada intento pregunta la celda
+// a organization.
+func validateUsernameRoute(s selfAuthSpec, route methodPathSpec) error {
+	if route.Method != "POST" && route.Method != "PUT" {
+		return fmt.Errorf("tabla de rutas: %s de %q se enruta por el nombre de usuario, que viaja en el cuerpo (POST o PUT)", route.Path, s.Prefix)
+	}
+	if !strings.HasPrefix(route.Path, "/") || strings.Contains(route.Path, "..") || strings.ContainsAny(route.Path, "{}*") {
+		return fmt.Errorf("tabla de rutas: ruta invalida %q enrutada por nombre de usuario en %q", route.Path, s.Prefix)
+	}
 	for _, strict := range s.StrictLimit {
-		if strict.Method == l.Method && strict.Path == l.Path {
+		if strict == route {
 			return nil
 		}
 	}
-	return fmt.Errorf("tabla de rutas: el inicio de sesion por celda %s %s de %q debe ir tambien en strict_limit: cada intento pregunta la celda a organization", l.Method, l.Path, s.Prefix)
+	return fmt.Errorf("tabla de rutas: %s %s de %q se enruta por celda y debe ir tambien en strict_limit: cada intento pregunta la celda a organization", route.Method, route.Path, s.Prefix)
+}
+
+// routedByUsername dice si method y path son el inicio de sesion por celda u otra ruta que se enruta
+// como el, por el dominio del nombre de usuario del cuerpo.
+func (s selfAuthSpec) routedByUsername(method, path string) bool {
+	if s.CellLogin == nil {
+		return false
+	}
+	if method == s.CellLogin.Method && path == s.CellLogin.Path {
+		return true
+	}
+	for _, route := range s.CellUsernameRoutes {
+		if route.Method == method && route.Path == path {
+			return true
+		}
+	}
+	return false
 }
 
 // validateCellServices: un servicio de celda tiene alguna ruta, y todas se pueden enrutar por

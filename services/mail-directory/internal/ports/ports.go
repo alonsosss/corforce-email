@@ -379,6 +379,9 @@ type EventPublisher interface {
 	// MailboxMFADisabled lleva by (domain.MFADisabledBy*) y, si fue el administrador, quien.
 	MailboxMFADisabled(ctx context.Context, m *domain.Mailbox, at time.Time, by string, actorID *uuid.UUID) error
 	MailboxForwardingChanged(ctx context.Context, m *domain.Mailbox, at time.Time, change domain.ForwardingChange) error
+	// MailboxPasswordRecovered: el titular recupero la contrasena con su codigo TOTP y uno de
+	// recuperacion; lleva cuantos codigos le quedan y cuantas contrasenas de aplicacion se borraron.
+	MailboxPasswordRecovered(ctx context.Context, m *domain.Mailbox, at time.Time, recoveryRemaining, appPasswordsRevoked int) error
 	// MailPolicyUpdated lleva cuantos buzones perdieron reenvios externos con el cambio.
 	MailPolicyUpdated(ctx context.Context, p *domain.MailPolicy, removedMailboxes int) error
 }

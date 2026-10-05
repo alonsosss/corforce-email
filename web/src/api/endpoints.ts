@@ -333,6 +333,7 @@ export const endpoints = {
   webmail: {
     session: `${API_PREFIX}/webmail/session`,
     sessionMfa: `${API_PREFIX}/webmail/session/mfa`,
+    sessionRecovery: `${API_PREFIX}/webmail/session/recovery`,
     meta: `${API_PREFIX}/webmail/meta`,
     metaDav: `${API_PREFIX}/webmail/meta/dav`,
     identities: `${API_PREFIX}/webmail/identities`,

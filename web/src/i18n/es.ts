@@ -150,6 +150,31 @@ export const es = {
     'Te enviaremos un enlace para restablecerla si el correo está registrado.',
   'auth.forgot.submit': 'Enviar enlace',
   'auth.forgot.backToLogin': 'Volver al inicio de sesión',
+  'auth.forgot.mailboxTitle': '¿Tu cuenta es un buzón de correo?',
+  'auth.forgot.mailboxHint':
+    'Este enlace es para las cuentas de la consola. Si usas el webmail y tienes la verificación en dos pasos activa, recupera tu contraseña con tus códigos. Si no la tienes, pide el cambio al administrador de tu empresa.',
+  'auth.forgot.mailboxLink': 'Recuperar el acceso a mi buzón',
+  'auth.mailboxRecovery.title': 'Recuperar el acceso al buzón',
+  'auth.mailboxRecovery.description':
+    'Necesitas el código de tu aplicación de autenticación y uno de los códigos de recuperación que guardaste al activar la verificación en dos pasos.',
+  'auth.mailboxRecovery.totpCode': 'Código de la aplicación',
+  'auth.mailboxRecovery.recoveryCode': 'Código de recuperación',
+  'auth.mailboxRecovery.recoveryCodeHint':
+    'Tiene la forma XXXXX-XXXXX. Cada código vale una sola vez.',
+  'auth.mailboxRecovery.submit': 'Cambiar contraseña',
+  'auth.mailboxRecovery.rejected':
+    'No pudimos verificar tu identidad. Revisa el correo y los dos códigos. Si perdiste la aplicación o los códigos, pide el cambio al administrador de tu empresa.',
+  'auth.mailboxRecovery.rateLimited':
+    'Demasiados intentos. Espera un rato antes de volver a intentarlo o pide el cambio al administrador de tu empresa.',
+  'auth.mailboxRecovery.done':
+    'Listo. Tu contraseña cambió y se cerraron todas las sesiones de tu buzón.',
+  'auth.mailboxRecovery.remaining': 'Te quedan {count} códigos de recuperación.',
+  'auth.mailboxRecovery.lowCodes':
+    'Te quedan pocos códigos de recuperación: genera otros nuevos en Ajustes, Seguridad, cuando entres.',
+  'auth.mailboxRecovery.appPasswordsRevoked':
+    'Se eliminaron {count} contraseñas de aplicación. Crea otras nuevas para tus programas de correo.',
+  'auth.mailboxRecovery.noAdmin':
+    'Si no tienes la verificación en dos pasos activa, solo el administrador de tu empresa puede cambiarte la contraseña.',
   'auth.reset.title': 'Nueva contraseña',
   'auth.reset.description': 'Elige una contraseña que cumpla las reglas de tu empresa.',
   'auth.reset.newPassword': 'Nueva contraseña',

@@ -2140,11 +2140,42 @@ expect "con la politica apagada no se guarda aunque se reautentique" "$WM_CODE/$
 api PUT /mail-directory/mail-policy '{"external_forwarding_allowed":true}'
 expect "el administrador la vuelve a permitir" "$API_CODE" "200"
 
+webmail_erika_cerrada() { wm "$TARRO_ERIKA2" GET /folders; [[ $WM_CODE == 401 ]]; }
+# Recuperacion sin sesion (docs/Plan_Webmail_Seguridad.md, seccion 7): un TOTP y un codigo de
+# recuperacion a la vez, por el gateway y su enrutado por celda.
+paso_nuevo
+ERIKA_NUEVA="$(rand_hex 10)Bb2!"
+CODIGO=$(totp "$SECRETO")
+SEGUNDO=$(awk '{print $2}' <<<"$RECUPERACION")
+TARRO_REC="$WORK/erika-rec.cookies"
+recuperar() { # recuperar <totp> <codigo de recuperacion>
+  wm "$TARRO_REC" POST /session/recovery -H 'Content-Type: application/json' \
+    -d "{\"username\":\"erika@acme.test\",\"totp_code\":\"$1\",\"recovery_code\":\"$2\",\"new_password\":\"$ERIKA_NUEVA\"}"
+}
+recuperar "$CODIGO" "ZZZZZ-ZZZZZ"
+expect "recuperar con un codigo de recuperacion que no es suyo se rechaza sin decir por que" "$WM_CODE/$(echo "$WM_BODY" | jget error.code)" "422/PASSWORD_RECOVERY_REJECTED"
+recuperar "$CODIGO" "$SEGUNDO"
+expect "el rechazo no gasto el TOTP: con el mismo paso y un codigo suyo se recupera" \
+  "$WM_CODE/$(echo "$WM_BODY" | jget data.recovery_remaining)/$(echo "$WM_BODY" | jget data.app_passwords_revoked)" "200/8/1"
+lacks "recuperar no abre sesion" "$(cat "$TARRO_REC" 2>/dev/null)" "cf_wm"
+expect "deja mail.mailbox.password_recovered en el outbox para la auditoria" \
+  "$(sql mail_cell_pe_01 "SELECT count(*) FROM platform.event_outbox WHERE subject = 'mail.mailbox.password_recovered' AND payload::text LIKE '%erika@acme.test%'")" "1"
+esperar "y cierra las sesiones del webmail de erika" 30 webmail_erika_cerrada
+app_erika_rechazada() { login_rechazado erika@acme.test "$ERIKA_APP"; }
+esperar "y borra su contrasena de aplicacion: IMAP ya no la acepta" 30 app_erika_rechazada
+wm "$TARRO_REC" POST /session -H 'Content-Type: application/json' -d "{\"username\":\"erika@acme.test\",\"password\":\"$ERIKA_PASS\"}"
+expect "la contrasena anterior ya no entra" "$WM_CODE" "401"
+ERIKA_PASS="$ERIKA_NUEVA"
+wm "$TARRO_ERIKA2" POST /session -H 'Content-Type: application/json' -d "{\"username\":\"erika@acme.test\",\"password\":\"$ERIKA_PASS\"}"
+expect "la nueva si, y la verificacion sigue activa" "$WM_CODE/$(echo "$WM_BODY" | jget data.mfa_required)" "200/True"
+paso_nuevo
+wm "$TARRO_ERIKA2" POST /session/mfa -H 'Content-Type: application/json' -d "{\"code\":\"$(totp "$SECRETO")\"}"
+expect "con el codigo vuelve a entrar" "$WM_CODE/$(echo "$WM_BODY" | jget data.username)" "200/erika@acme.test"
+
 api GET "/mailboxes/$ERIKAID"
 expect "la ficha del buzon en la consola dice que tiene verificacion" "$(echo "$API_BODY" | jget data.mfa_enabled)" "True"
 api DELETE "/mailboxes/$ERIKAID/mfa"
 expect "el administrador la restablece (dispositivo perdido)" "$API_CODE" "204"
-webmail_erika_cerrada() { wm "$TARRO_ERIKA2" GET /folders; [[ $WM_CODE == 401 ]]; }
 esperar "y las sesiones del webmail de erika se cierran (credentials_changed, credential mfa)" 30 webmail_erika_cerrada
 imap_principal_vuelve() { login_aceptado erika@acme.test "$ERIKA_PASS"; }
 esperar "IMAP vuelve a aceptar la contrasena principal" 30 imap_principal_vuelve

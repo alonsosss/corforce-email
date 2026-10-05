@@ -136,6 +136,22 @@ func (e *escenarioWebmail) login(body string) *httptest.ResponseRecorder {
 
 const tokenPe02 = "pe-02.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 
+// La recuperacion de la contrasena no lleva sesion: va, como el inicio de sesion, a la celda del
+// dominio del buzon del cuerpo y con el limitador estricto, aunque el navegador traiga una cookie
+// de otra celda.
+func TestLaRecuperacionDelWebmailVaALaCeldaDelDominio(t *testing.T) {
+	e := nuevoEscenarioWebmail(t, "pe-01")
+	body := `{"username":"ana@beta.test","totp_code":"123456","recovery_code":"AAAAA-BBBBB","new_password":"x"}`
+	rec := e.pedir(http.MethodPost, "/api/v1/webmail/session/recovery", body, "pe-01.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
+	got := e.buzon.take()
+	if rec.Code != http.StatusOK || len(got) != 1 || got[0].instancia != "pe-02" || got[0].body != body {
+		t.Fatalf("recuperacion: %d %+v", rec.Code, got)
+	}
+	if e.strict != 1 {
+		t.Fatalf("la recuperacion pasa por el limitador estricto: %d", e.strict)
+	}
+}
+
 // El inicio de sesion va a la instancia de la celda del dominio del buzon, con el cuerpo intacto.
 // Un dominio que organization no conoce va a la celda base, que lo rechaza como a una contrasena
 // mala; una celda sin instancia recibe 503 sin salir hacia ninguna.

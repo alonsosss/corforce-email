@@ -30,7 +30,11 @@ export default function ForgotPasswordPage() {
   };
 
   return (
-    <AuthLayout title={t('auth.forgot.title')} subtitle={t('auth.forgot.description')}>
+    <AuthLayout
+      title={t('auth.forgot.title')}
+      subtitle={t('auth.forgot.description')}
+      footer={<MailboxRecoveryNote />}
+    >
       {sent ? (
         <div className="cf-form">
           <div className="cf-form__success" role="status">
@@ -67,5 +71,19 @@ export default function ForgotPasswordPage() {
         </form>
       )}
     </AuthLayout>
+  );
+}
+
+/**
+ * El enlace por correo solo existe para las cuentas de la consola (identity). Un buzon no tiene a
+ * donde recibirlo: se recupera con su segundo factor o lo cambia el administrador de su empresa.
+ */
+function MailboxRecoveryNote() {
+  return (
+    <>
+      <strong>{t('auth.forgot.mailboxTitle')}</strong>
+      <p>{t('auth.forgot.mailboxHint')}</p>
+      <Link to={paths.mailboxRecovery}>{t('auth.forgot.mailboxLink')}</Link>
+    </>
   );
 }

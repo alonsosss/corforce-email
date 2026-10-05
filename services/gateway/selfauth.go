@@ -25,9 +25,9 @@ func mountSelfAuthenticated(r chi.Router, t *routeTable, strict func(http.Handle
 			for _, l := range s.StrictLimit {
 				// La ruta entera para el resto de metodos y el metodo atacable con el
 				// limitador estricto (chi da prioridad al registro por metodo). El inicio de
-				// sesion por celda se enruta ademas por el dominio del buzon.
+				// sesion por celda, y lo que se enruta como el, va ademas por el dominio del buzon.
 				h := session
-				if s.CellLogin != nil && l.Method == s.CellLogin.Method && l.Path == s.CellLogin.Path {
+				if s.routedByUsername(l.Method, l.Path) {
 					h = login
 				}
 				r.Handle(l.Path, session)

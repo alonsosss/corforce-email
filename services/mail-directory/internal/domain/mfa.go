@@ -153,4 +153,8 @@ var (
 	ErrMFAAlreadyEnabled = errors.New("la verificación en dos pasos ya está activada")
 	// ErrMFANotEnabled: se opera sobre la verificacion de un buzon que no la tiene.
 	ErrMFANotEnabled = errors.New("la verificación en dos pasos no está activada")
+	// ErrPasswordRecoveryRejected: la recuperacion de la contrasena no se admite. Cubre a proposito
+	// un buzon inexistente, inactivo o sin verificacion y cualquiera de los dos codigos mal: la ruta
+	// es publica y no debe decir cual de esas cosas fallo.
+	ErrPasswordRecoveryRejected = errors.New("no se pudo verificar la identidad del buzón")
 )

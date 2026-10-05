@@ -79,6 +79,7 @@ subject y payload. `opaco` = el payload no se puede leer estaticamente.
 | `mail.mailbox.forwarding_changed` | mail-directory | `at`, `external_added`, `external_removed`, `forwarding_enabled`, `id`, `tenant_id`, `username` |
 | `mail.mailbox.mfa_disabled` | mail-directory | `actor_id`, `at`, `by`, `id`, `tenant_id`, `username` |
 | `mail.mailbox.mfa_enabled` | mail-directory | `at`, `id`, `tenant_id`, `username` |
+| `mail.mailbox.password_recovered` | mail-directory | `app_passwords_revoked`, `at`, `id`, `recovery_remaining`, `tenant_id`, `username` |
 | `mail.mailbox.updated` | mail-directory | `active`, `changed`, `domain`, `id`, `kind`, `tenant_id`, `username` |
 | `mail.policy.updated` | mail-directory | `external_forwarding_allowed`, `removed_mailboxes`, `tenant_id`, `updated_by` |
 | `mail_security.quarantine.released` | mail-security | `id`, `rcpt`, `tenant_id`, `user_id` |

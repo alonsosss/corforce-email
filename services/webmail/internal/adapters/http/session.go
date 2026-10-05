@@ -232,3 +232,48 @@ func clientIP(r *http.Request) string {
 	}
 	return host
 }
+
+// RecoveryPath es la recuperacion de contrasena sin sesion. El gateway la enruta a la celda del buzon
+// por el dominio de username, como el inicio de sesion.
+const RecoveryPath = "/session/recovery"
+
+type recoveryRequest struct {
+	Username     string `json:"username"`
+	TOTPCode     string `json:"totp_code"`
+	RecoveryCode string `json:"recovery_code"`
+	NewPassword  string `json:"new_password"`
+}
+
+type recoveryDTO struct {
+	RecoveryRemaining   int `json:"recovery_remaining"`
+	AppPasswordsRevoked int `json:"app_passwords_revoked"`
+}
+
+// RecoverPassword cuenta el intento contra el cupo de la IP y el del buzon antes de mirar nada: un
+// buzon inexistente gasta cupo igual que uno real, y nadie prueba codigos de una cuenta mas alla de
+// ese cupo aunque cambie de IP. No abre sesion: quien recupera vuelve a entrar con la contrasena nueva.
+func (h *Handler) RecoverPassword(w http.ResponseWriter, r *http.Request) {
+	var req recoveryRequest
+	if err := validate.DecodeJSONLimit(w, r, &req, maxLoginBody); err != nil {
+		response.ErrBadRequest(w, err.Error())
+		return
+	}
+	if allowed, reset := h.cfg.RecoveryIPRateLimiter.AllowIP(r.Context(), clientIP(r)); !allowed {
+		writeRateLimited(w, reset)
+		return
+	}
+	if username, ok := domain.NormalizeUsername(req.Username); ok {
+		if allowed, reset := h.cfg.RecoveryMailboxRateLimiter.AllowKey(r.Context(), username); !allowed {
+			writeRateLimited(w, reset)
+			return
+		}
+	}
+	ctx, cancel := h.opContext(r)
+	defer cancel()
+	res, err := h.app.RecoverPassword(ctx, req.Username, req.TOTPCode, req.RecoveryCode, req.NewPassword, clientIP(r))
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	response.JSON(w, http.StatusOK, recoveryDTO{RecoveryRemaining: res.RecoveryRemaining, AppPasswordsRevoked: res.AppPasswordsRevoked})
+}

@@ -6,7 +6,7 @@ Convencion de subject: `<dominio>.<entidad>.<accion>`. Un subject tiene UN dueno
 Publicar incluye encolar en la outbox (`outbox.Enqueue`); un consumidor con comodin
 (`*`, `>`) figura en cada subject publicado que recibe.
 
-Resumen: 100 publicaciones, 43 suscripciones, 100 subjects distintos.
+Resumen: 101 publicaciones, 43 suscripciones, 101 subjects distintos.
 
 ## Cruce por subject (dueno -> consumidores)
 
@@ -79,6 +79,7 @@ Resumen: 100 publicaciones, 43 suscripciones, 100 subjects distintos.
 | `mail.mailbox.forwarding_changed` | mail-directory | mail-security, webmail |
 | `mail.mailbox.mfa_disabled` | mail-directory | mail-security, webmail |
 | `mail.mailbox.mfa_enabled` | mail-directory | mail-security, webmail |
+| `mail.mailbox.password_recovered` | mail-directory | mail-security, webmail |
 | `mail.mailbox.updated` | mail-directory | mail-security, webmail |
 | `mail.policy.updated` | mail-directory | mail-security |
 | `mail_security.quarantine.released` | mail-security | - |
@@ -155,7 +156,7 @@ Resumen: 100 publicaciones, 43 suscripciones, 100 subjects distintos.
 - Consume: `mail.mailbox.deleted`
 
 ### mail-directory
-- Publica: `mail.alias.created`, `mail.alias.deleted`, `mail.alias.updated`, `mail.alias_domain.created`, `mail.alias_domain.deleted`, `mail.alias_domain.updated`, `mail.domain.activated`, `mail.domain.created`, `mail.domain.deleted`, `mail.domain.updated`, `mail.mailbox.created`, `mail.mailbox.credentials_changed`, `mail.mailbox.deleted`, `mail.mailbox.forwarding_changed`, `mail.mailbox.mfa_disabled`, `mail.mailbox.mfa_enabled`, `mail.mailbox.updated`, `mail.policy.updated`
+- Publica: `mail.alias.created`, `mail.alias.deleted`, `mail.alias.updated`, `mail.alias_domain.created`, `mail.alias_domain.deleted`, `mail.alias_domain.updated`, `mail.domain.activated`, `mail.domain.created`, `mail.domain.deleted`, `mail.domain.updated`, `mail.mailbox.created`, `mail.mailbox.credentials_changed`, `mail.mailbox.deleted`, `mail.mailbox.forwarding_changed`, `mail.mailbox.mfa_disabled`, `mail.mailbox.mfa_enabled`, `mail.mailbox.password_recovered`, `mail.mailbox.updated`, `mail.policy.updated`
 
 ### mail-migration
 - Publica: `migration.job.cancel_requested`, `migration.job.cancelled`, `migration.job.completed`, `migration.job.created`, `migration.job.failed`, `migration.job.started`

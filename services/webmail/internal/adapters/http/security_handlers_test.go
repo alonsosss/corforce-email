@@ -2,6 +2,8 @@ package http
 
 import (
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -365,5 +367,72 @@ func TestCupoPorIPEnLoQueNoTieneSesion(t *testing.T) {
 	}
 	if len(mailbox.seen) != 0 {
 		t.Fatalf("sin sesion no se cuenta ningun buzon: %v", mailbox.seen)
+	}
+}
+
+func recoveryBody(username, totpCode, recoveryCode, next string) io.Reader {
+	return jsonBody(map[string]string{"username": username, "totp_code": totpCode, "recovery_code": recoveryCode, "new_password": next})
+}
+
+func TestRecuperarLaContrasenaSinSesion(t *testing.T) {
+	env := newTestEnv(t, nopSender{})
+	env.settings.security.enabled = true
+	headers := map[string]string{"Origin": allowedOrigin, "X-Real-IP": "203.0.113.9"}
+	path := BasePath + RecoveryPath
+
+	rec := do(env.h, http.MethodPost, path, recoveryBody(testUser, "000000", stubRecoveryCode, "nueva-larga-segura"), headers, nil)
+	if rec.Code != http.StatusUnprocessableEntity || errorCode(t, rec) != "PASSWORD_RECOVERY_REJECTED" {
+		t.Fatalf("codigo mal: %d %s", rec.Code, rec.Body.String())
+	}
+	rec = do(env.h, http.MethodPost, path, recoveryBody("nadie@acme.test", "123456", stubRecoveryCode, "nueva-larga-segura"), headers, nil)
+	if rec.Code != http.StatusUnprocessableEntity || errorCode(t, rec) != "PASSWORD_RECOVERY_REJECTED" {
+		t.Fatalf("buzon que no admite recuperacion responde igual: %d %s", rec.Code, rec.Body.String())
+	}
+	rec = do(env.h, http.MethodPost, path, recoveryBody(testUser, "123456", stubRecoveryCode, "corta"), headers, nil)
+	if rec.Code != http.StatusUnprocessableEntity || errorCode(t, rec) != "VALIDATION_ERROR" {
+		t.Fatalf("contrasena nueva: %d %s", rec.Code, rec.Body.String())
+	}
+
+	rec = do(env.h, http.MethodPost, path, recoveryBody(testUser, "123456", stubRecoveryCode, "nueva-larga-segura"), headers, nil)
+	var out struct {
+		Data recoveryDTO `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil || rec.Code != http.StatusOK || out.Data.RecoveryRemaining != 6 || out.Data.AppPasswordsRevoked != 1 {
+		t.Fatalf("recuperar: %d %s", rec.Code, rec.Body.String())
+	}
+	if sessionCookie(rec) != nil {
+		t.Fatal("recuperar no abre sesion")
+	}
+}
+
+func TestCupoPropioDeLaRecuperacion(t *testing.T) {
+	mailbox, ip := newCountingLimiter(2), newCountingLimiter(3)
+	env := newTestEnvWith(t, nopSender{}, func(c *Config) { c.RecoveryMailboxRateLimiter, c.RecoveryIPRateLimiter = mailbox, ip })
+	env.settings.security.enabled = true
+	path := BasePath + RecoveryPath
+	from := func(addr string) map[string]string {
+		return map[string]string{"Origin": allowedOrigin, "X-Real-IP": addr}
+	}
+
+	for i, addr := range []string{"203.0.113.1", "203.0.113.2"} {
+		if rec := do(env.h, http.MethodPost, path, recoveryBody(testUser, "000000", stubRecoveryCode, "nueva-larga-segura"), from(addr), nil); rec.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("intento %d: %d", i, rec.Code)
+		}
+	}
+	rec := do(env.h, http.MethodPost, path, recoveryBody(" "+strings.ToUpper(testUser), "123456", stubRecoveryCode, "nueva-larga-segura"), from("203.0.113.3"), nil)
+	if rec.Code != http.StatusTooManyRequests || errorCode(t, rec) != "RATE_LIMITED" || rec.Header().Get("Retry-After") == "" {
+		t.Fatalf("el cupo del buzon no depende de la IP ni de como se escriba: %d %s", rec.Code, rec.Body.String())
+	}
+
+	for i := 0; i < 2; i++ {
+		do(env.h, http.MethodPost, path, recoveryBody(fmt.Sprintf("otro%d@acme.test", i), "123456", stubRecoveryCode, "nueva-larga-segura"), from("198.51.100.7"), nil)
+	}
+	rec = do(env.h, http.MethodPost, path, recoveryBody("otro9@acme.test", "123456", stubRecoveryCode, "nueva-larga-segura"), from("198.51.100.7"), nil)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("tercer intento de la IP: %d", rec.Code)
+	}
+	rec = do(env.h, http.MethodPost, path, recoveryBody("otro10@acme.test", "123456", stubRecoveryCode, "nueva-larga-segura"), from("198.51.100.7"), nil)
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("una IP no recorre cuentas mas alla de su cupo: %d", rec.Code)
 	}
 }

@@ -49,6 +49,9 @@ const (
 	SubjectMailboxMFADisabled       = "mail.mailbox.mfa_disabled"
 	SubjectMailboxForwardingChanged = "mail.mailbox.forwarding_changed"
 	SubjectMailPolicyUpdated        = "mail.policy.updated"
+	// SubjectMailboxPasswordRecovered: el titular recupero la contrasena sin sesion con su segundo
+	// factor. Es el rastro que ve el administrador de la empresa en la auditoria.
+	SubjectMailboxPasswordRecovered = "mail.mailbox.password_recovered"
 
 	source = "mail-directory"
 )
@@ -221,6 +224,13 @@ func (p *Publisher) MailboxForwardingChanged(ctx context.Context, m *domain.Mail
 		"tenant_id": m.TenantID.String(), "id": m.ID.String(), "username": m.Username, "at": at.UTC().Format(time.RFC3339),
 		"external_added": nonNil(change.ExternalAdded), "external_removed": nonNil(change.ExternalRemoved),
 		"forwarding_enabled": change.ForwardingEnabled,
+	}})
+}
+
+func (p *Publisher) MailboxPasswordRecovered(ctx context.Context, m *domain.Mailbox, at time.Time, recoveryRemaining, appPasswordsRevoked int) error {
+	return p.in(ctx).Publish(SubjectMailboxPasswordRecovered, events.Event{TenantID: m.TenantID.String(), Data: map[string]interface{}{
+		"tenant_id": m.TenantID.String(), "id": m.ID.String(), "username": m.Username, "at": at.UTC().Format(time.RFC3339),
+		"recovery_remaining": recoveryRemaining, "app_passwords_revoked": appPasswordsRevoked,
 	}})
 }
 

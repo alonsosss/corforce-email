@@ -26,6 +26,7 @@ const (
 	codeInvalidMFACode              = "INVALID_MFA_CODE"
 	codeMFAAlreadyEnabled           = "MFA_ALREADY_ENABLED"
 	codeMFANotEnabled               = "MFA_NOT_ENABLED"
+	codePasswordRecoveryRejected    = "PASSWORD_RECOVERY_REJECTED"
 	codeReauthRequired              = "REAUTH_REQUIRED"
 	codeExternalForwardingDisabled  = "EXTERNAL_FORWARDING_DISABLED"
 	maxSecurityBody                 = 4096
@@ -52,6 +53,8 @@ func writeSecurityError(w http.ResponseWriter, err error) bool {
 		response.Err(w, http.StatusConflict, codeMFAAlreadyEnabled, err.Error())
 	case errors.Is(err, domain.ErrMFANotEnabled):
 		response.Err(w, http.StatusConflict, codeMFANotEnabled, err.Error())
+	case errors.Is(err, domain.ErrPasswordRecoveryRejected):
+		response.Err(w, http.StatusUnprocessableEntity, codePasswordRecoveryRejected, err.Error())
 	default:
 		return false
 	}
@@ -150,6 +153,33 @@ func (h *Handler) InternalDisableMFA(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+type passwordRecoveryRequest struct {
+	TOTPCode     string `json:"totp_code"`
+	RecoveryCode string `json:"recovery_code"`
+	Password     string `json:"password"`
+}
+
+type passwordRecoveryResponse struct {
+	RecoveryRemaining   int `json:"recovery_remaining"`
+	AppPasswordsRevoked int `json:"app_passwords_revoked"`
+}
+
+// InternalRecoverPassword es la recuperacion de la contrasena del buzon sin sesion que pide el webmail
+// tras su freno de intentos: 200, 422 PASSWORD_RECOVERY_REJECTED sin decir el motivo, o 422 de
+// validacion si la contrasena nueva no cumple la politica.
+func (h *Handler) InternalRecoverPassword(w http.ResponseWriter, r *http.Request) {
+	var req passwordRecoveryRequest
+	if !decodeSmall(w, r, &req) {
+		return
+	}
+	res, err := h.uc.RecoverPasswordByUsername(r.Context(), r.URL.Query().Get("username"), req.TOTPCode, req.RecoveryCode, req.Password)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	response.JSON(w, http.StatusOK, passwordRecoveryResponse{RecoveryRemaining: res.RecoveryRemaining, AppPasswordsRevoked: res.AppPasswordsRevoked})
 }
 
 // ── Contrasenas de aplicacion del buzon del webmail ──────────────────────────

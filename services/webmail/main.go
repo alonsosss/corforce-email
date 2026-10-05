@@ -144,6 +144,13 @@ const (
 	mfaSetupTTL      = 10 * time.Minute
 	defaultMFAIssuer = "Core Force Mail"
 
+	// Recuperacion de contrasena sin sesion: 5 intentos por buzon y 20 por IP cada hora, comunes a
+	// las replicas. Cada intento exige un TOTP y un codigo de recuperacion de 50 bits a la vez, asi
+	// que el cupo no da para adivinar; lo que frena es el recorrido de cuentas y el ruido.
+	recoveryAttemptsPerMailbox = 5
+	recoveryAttemptsPerIP      = 20
+	recoveryWindow             = time.Hour
+
 	// unsubscribeTimeout acota de principio a fin la baja en un clic contra el servidor del boletin.
 	unsubscribeTimeout = 10 * time.Second
 
@@ -405,6 +412,10 @@ func main() {
 		MailboxRateLimiter: middleware.NewSharedRateLimiter(middleware.NewRedisRateLimitStore(rdb), "webmail:mailbox:"+st.cellCode, st.mailboxRatePerMin, rateLimitWindow, logger),
 		ImageProxyRateLimiter: middleware.NewSharedRateLimiter(middleware.NewRedisRateLimitStore(rdb), "webmail:image-proxy:"+st.cellCode,
 			st.imageProxy.ratePerMin, rateLimitWindow, logger),
+		RecoveryMailboxRateLimiter: middleware.NewSharedRateLimiter(middleware.NewRedisRateLimitStore(rdb), "webmail:recovery-mailbox:"+st.cellCode,
+			recoveryAttemptsPerMailbox, recoveryWindow, logger),
+		RecoveryIPRateLimiter: middleware.NewSharedRateLimiter(middleware.NewRedisRateLimitStore(rdb), "webmail:recovery-ip:"+st.cellCode,
+			recoveryAttemptsPerIP, recoveryWindow, logger),
 		ImageProxyConcurrency:           st.imageProxy.concurrency,
 		ImageProxyConcurrencyPerMailbox: st.imageProxy.concurrencyPerMailbox,
 		ImageProxyMetrics:               promadapter.NewImageProxyMetrics(prometheus.DefaultRegisterer),

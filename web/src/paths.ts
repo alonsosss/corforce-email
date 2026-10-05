@@ -56,6 +56,7 @@ export const paths = {
   login: '/login',
   forgotPassword: '/forgot-password',
   resetPassword: '/reset-password',
+  mailboxRecovery: '/recover-mailbox',
   sessionExpired: '/session-expired',
   account: '/account',
   users: '/users',

@@ -166,6 +166,11 @@ func (f *secAppPasswords) Delete(_ context.Context, _, mailboxID, id uuid.UUID) 
 	return nil
 }
 
+func (f *secAppPasswords) DeleteByMailbox(_ context.Context, _, mailboxID uuid.UUID) error {
+	f.items = slices.DeleteFunc(f.items, func(p domain.AppPassword) bool { return p.MailboxID == mailboxID })
+	return nil
+}
+
 func (f *settingsMailboxes) SetMFAEnabled(_ context.Context, _, _ uuid.UUID, enabled bool) error {
 	f.m.MFAEnabled = enabled
 	return nil
@@ -292,6 +297,45 @@ func TestVerificacionEnDosPasosDelBuzon(t *testing.T) {
 	expectCode(t, e.do(http.MethodPost, mfaPath+"/verify"+user, `{"code":"`+next+`"}`), http.StatusConflict, "MFA_NOT_ENABLED")
 }
 
+const passwordRecoveryPath = "/internal/mail-directory/password-recovery"
+
+func TestRecuperarLaContrasenaDelBuzonPorLaRutaInterna(t *testing.T) {
+	e := settingsServer(t)
+	e.m.Active = domain.ActiveOn
+	user := "?username=ana@acme.test"
+	secret, _ := totp.GenerateSecret()
+	code, _ := totp.Generate(secret, e.now)
+	var codes recoveryCodesResponse
+	decodeEnvelope(t, e.do(http.MethodPost, mfaPath+"/activate"+user, `{"secret":"`+secret+`","code":"`+code+`"}`), &codes)
+	e.apps.items = append(e.apps.items, domain.AppPassword{ID: uuid.New(), MailboxID: e.m.ID, TenantID: e.m.TenantID, Name: "movil"})
+	e.now = e.now.Add(30 * time.Second)
+	next, _ := totp.Generate(secret, e.now)
+
+	body := func(totpCode, recovery, password string) string {
+		return `{"totp_code":"` + totpCode + `","recovery_code":"` + recovery + `","password":"` + password + `"}`
+	}
+	expectCode(t, e.do(http.MethodPost, passwordRecoveryPath+user, body(next, "ZZZZZ-ZZZZZ", "Contrasena-Nueva-2030")), http.StatusUnprocessableEntity, "PASSWORD_RECOVERY_REJECTED")
+	expectCode(t, e.do(http.MethodPost, passwordRecoveryPath+"?username=nadie@acme.test", body(next, codes.RecoveryCodes[0], "Contrasena-Nueva-2030")), http.StatusUnprocessableEntity, "PASSWORD_RECOVERY_REJECTED")
+	expectCode(t, e.do(http.MethodPost, passwordRecoveryPath+user, body(next, codes.RecoveryCodes[0], "corta")), http.StatusUnprocessableEntity, "VALIDATION_ERROR")
+	if e.mailboxes.hash != "" || e.events.credentials != 0 {
+		t.Fatal("un rechazo no cambia la contrasena")
+	}
+
+	// El doble de la base no deshace la transaccion: el primer rechazo dejo gastado el paso de next.
+	e.now = e.now.Add(30 * time.Second)
+	next, _ = totp.Generate(secret, e.now)
+	var out passwordRecoveryResponse
+	rec := e.do(http.MethodPost, passwordRecoveryPath+user, body(next, codes.RecoveryCodes[0], "Contrasena-Nueva-2030"))
+	decodeEnvelope(t, rec, &out)
+	if rec.Code != http.StatusOK || out.RecoveryRemaining != domain.RecoveryCodeCount-1 || out.AppPasswordsRevoked != 1 {
+		t.Fatalf("recuperar: %d %s", rec.Code, rec.Body)
+	}
+	if e.mailboxes.hash != "hash:Contrasena-Nueva-2030" || len(e.apps.items) != 0 || e.events.credentials != 1 ||
+		e.events.credential != domain.CredentialPassword || e.events.recovered != 1 {
+		t.Fatalf("tras recuperar: hash %q apps %d eventos %+v", e.mailboxes.hash, len(e.apps.items), e.events)
+	}
+}
+
 func TestRestablecerLaVerificacionDesdeElPanel(t *testing.T) {
 	e := settingsServer(t)
 	path := "/api/v1/mailboxes/" + e.m.ID.String() + "/mfa"
@@ -374,6 +418,7 @@ func TestRutasDeSeguridadCerradasALasPersonas(t *testing.T) {
 		{http.MethodPost, mfaPath + "/verify?username=ana@acme.test"},
 		{http.MethodPost, mfaPath + "/recovery-codes?username=ana@acme.test"},
 		{http.MethodDelete, mfaPath + "?username=ana@acme.test"},
+		{http.MethodPost, passwordRecoveryPath + "?username=ana@acme.test"},
 		{http.MethodGet, "/internal/mail-directory/app-passwords?username=ana@acme.test"},
 		{http.MethodPost, "/internal/mail-directory/app-passwords?username=ana@acme.test"},
 		{http.MethodDelete, "/internal/mail-directory/app-passwords/" + uuid.NewString() + "?username=ana@acme.test"},

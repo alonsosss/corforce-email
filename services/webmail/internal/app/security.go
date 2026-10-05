@@ -302,3 +302,49 @@ func secretHash(secret string) string {
 	sum := sha256.Sum256([]byte(secret))
 	return hex.EncodeToString(sum[:])
 }
+
+// RecoverPassword es la recuperacion de la contrasena sin sesion de quien la olvido y conserva su
+// segundo factor: un codigo de la aplicacion de autenticacion y uno de los de recuperacion, que
+// mail-directory comprueba juntos en la misma transaccion con el cambio. Con uno solo no basta. El
+// freno de intentos por buzon y por IP lo pone el handler antes de llegar aqui.
+//
+// Todo rechazo es domain.ErrPasswordRecoveryRejected, sin distinguir un buzon inexistente de un codigo
+// mal; la unica respuesta propia es la contrasena nueva que la politica no admite, que no depende del
+// buzon. Tras el cambio se revocan aqui las sesiones del buzon, sin esperar al evento del directorio.
+func (s *Service) RecoverPassword(ctx context.Context, rawUsername, totpCode, recoveryCode, next, remoteIP string) (domain.PasswordRecovery, error) {
+	if next == "" {
+		return domain.PasswordRecovery{}, domain.NewValidationError("new_password", "es obligatoria")
+	}
+	if len(next) > maxPasswordBytes {
+		return domain.PasswordRecovery{}, domain.NewValidationError("new_password", "demasiado larga")
+	}
+	username, ok := domain.NormalizeUsername(rawUsername)
+	if !ok {
+		return domain.PasswordRecovery{}, domain.ErrPasswordRecoveryRejected
+	}
+	totpCode, okTOTP := domain.NormalizeMFACode(totpCode)
+	recoveryCode, okRecovery := domain.NormalizeMFACode(recoveryCode)
+	if !okTOTP || !okRecovery {
+		return domain.PasswordRecovery{}, domain.ErrPasswordRecoveryRejected
+	}
+	res, err := s.security.RecoverPassword(ctx, username, totpCode, recoveryCode, next)
+	if err != nil {
+		var verr *domain.ValidationError
+		switch {
+		case errors.As(err, &verr):
+			return domain.PasswordRecovery{}, domain.NewValidationError("new_password", verr.Reason)
+		case errors.Is(err, domain.ErrPasswordRecoveryRejected):
+			s.logger.Info("webmail: recuperacion de contrasena rechazada", zap.String("username", username), zap.String("remote_ip", remoteIP))
+			return domain.PasswordRecovery{}, err
+		default:
+			s.logger.Error("webmail: no se pudo recuperar la contrasena", zap.String("username", username), zap.Error(err))
+			return domain.PasswordRecovery{}, unavailable(err)
+		}
+	}
+	s.logger.Info("webmail: contrasena del buzon recuperada con la verificacion en dos pasos", zap.String("username", username),
+		zap.String("remote_ip", remoteIP), zap.Int("recovery_remaining", res.RecoveryRemaining), zap.Int("app_passwords_revoked", res.AppPasswordsRevoked))
+	if err := s.RevokeMailbox(context.WithoutCancel(ctx), username, s.clock()); err != nil {
+		s.logger.Warn("webmail: no se pudieron revocar las sesiones tras recuperar la contrasena", zap.String("username", username), zap.Error(err))
+	}
+	return res, nil
+}

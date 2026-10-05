@@ -197,6 +197,12 @@ V = verificado en el codigo. P = propuesto, todavia no implementado.
   enlace completo en la parte de texto, y sale por SES como `multipart/alternative`; el nombre
   del usuario va escapado en la parte HTML (V, 2026-09-24, unitarias). El envio por transactional
   (`POST /internal/send-email`) no lo recorre ninguna prueba de punta a punta (P).
+* Ese enlace solo existe para las cuentas de la consola (identity): un buzon no tiene donde
+  recibirlo. La pantalla lo dice y enlaza la recuperacion del buzon (V, 2026-10-04): sin sesion,
+  con un codigo TOTP y uno de recuperacion a la vez, en una sola transaccion de mail-directory que
+  cierra todas las sesiones, borra las contrasenas de aplicacion y deja rastro en Auditoria
+  (`mail.mailbox.password_recovered`). Un buzon sin verificacion en dos pasos lo cambia su
+  administrador. Detalle en `docs/Plan_Webmail_Seguridad.md`, seccion 7.
 
 ## 2. Roles (V)
 

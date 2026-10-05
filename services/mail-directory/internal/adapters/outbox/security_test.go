@@ -65,6 +65,23 @@ func TestEventosDeVerificacionEnDosPasos(t *testing.T) {
 	}
 }
 
+func TestEventoDeContrasenaRecuperada(t *testing.T) {
+	m := &domain.Mailbox{ID: uuid.New(), TenantID: uuid.New(), Username: "ana@acme.test"}
+	at := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
+	exec := &execCapturado{}
+	if err := NewPublisher(exec).MailboxPasswordRecovered(context.Background(), m, at, 9, 2); err != nil {
+		t.Fatal(err)
+	}
+	evt := sobre(t, exec, SubjectMailboxPasswordRecovered)
+	want := map[string]interface{}{
+		"tenant_id": m.TenantID.String(), "id": m.ID.String(), "username": m.Username, "at": "2030-01-02T03:04:05Z",
+		"recovery_remaining": float64(9), "app_passwords_revoked": float64(2),
+	}
+	if !reflect.DeepEqual(evt.Data, want) || evt.TenantID != m.TenantID.String() {
+		t.Fatalf("contrasena recuperada: %+v", evt)
+	}
+}
+
 func TestEventoDeReenvioExternoConListasNuncaNulas(t *testing.T) {
 	m := &domain.Mailbox{ID: uuid.New(), TenantID: uuid.New(), Username: "ana@acme.test"}
 	exec := &execCapturado{}

@@ -21,6 +21,7 @@ const (
 	mfaVerifyPath     = mfaPath + "/verify"
 	mfaRecoveryPath   = mfaPath + "/recovery-codes"
 	appPasswordsPath  = "/internal/mail-directory/app-passwords"
+	passwordRecovery  = "/internal/mail-directory/password-recovery"
 	maxRecoveryCodes  = 64
 	maxAppPasswordLen = 256
 )
@@ -118,6 +119,34 @@ func (c *Client) RegenerateRecoveryCodes(ctx context.Context, username, code str
 // DisableMFA valida el codigo y desactiva (DELETE .../mfa).
 func (c *Client) DisableMFA(ctx context.Context, username, code string) error {
 	return c.api.Do(ctx, internalapi.Request{Method: http.MethodDelete, Path: mfaPath, Query: usernameQuery(username), Body: codeBody{Code: code}, Errors: mfaErrors})
+}
+
+// recoveryErrors: el rechazo de la recuperacion no dice el motivo; una contrasena que la politica no
+// admite llega como validacion de password.
+var recoveryErrors = internalapi.Errors{
+	ByCode: map[string]error{"PASSWORD_RECOVERY_REJECTED": domain.ErrPasswordRecoveryRejected},
+	Field:  "password",
+}
+
+// RecoverPassword pide la recuperacion de la contrasena del buzon (POST .../password-recovery). POST
+// no se reintenta: los codigos se gastan.
+func (c *Client) RecoverPassword(ctx context.Context, username, totpCode, recoveryCode, password string) (domain.PasswordRecovery, error) {
+	body := struct {
+		TOTPCode     string `json:"totp_code"`
+		RecoveryCode string `json:"recovery_code"`
+		Password     string `json:"password"`
+	}{TOTPCode: totpCode, RecoveryCode: recoveryCode, Password: password}
+	var out struct {
+		RecoveryRemaining   int `json:"recovery_remaining"`
+		AppPasswordsRevoked int `json:"app_passwords_revoked"`
+	}
+	if err := c.api.Do(ctx, internalapi.Request{Method: http.MethodPost, Path: passwordRecovery, Query: usernameQuery(username), Body: body, Out: &out, Errors: recoveryErrors}); err != nil {
+		return domain.PasswordRecovery{}, err
+	}
+	if out.RecoveryRemaining < 0 || out.AppPasswordsRevoked < 0 {
+		return domain.PasswordRecovery{}, c.api.Unavailable("respuesta de recuperación con valores negativos")
+	}
+	return domain.PasswordRecovery{RecoveryRemaining: out.RecoveryRemaining, AppPasswordsRevoked: out.AppPasswordsRevoked}, nil
 }
 
 // appPasswordRow es una contrasena de aplicacion como la sirve la administracion de buzones.

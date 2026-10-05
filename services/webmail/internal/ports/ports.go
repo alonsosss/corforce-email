@@ -64,6 +64,10 @@ type SecurityDirectory interface {
 	RegenerateRecoveryCodes(ctx context.Context, username, code string) ([]string, error)
 	// DisableMFA valida el codigo y desactiva la verificacion en dos pasos.
 	DisableMFA(ctx context.Context, username, code string) error
+	// RecoverPassword fija una contrasena nueva sin sesion si totpCode y recoveryCode son del buzon,
+	// los dos en la misma transaccion. Cualquier rechazo es domain.ErrPasswordRecoveryRejected; una
+	// contrasena que la politica no admite, un *domain.ValidationError.
+	RecoverPassword(ctx context.Context, username, totpCode, recoveryCode, password string) (domain.PasswordRecovery, error)
 	AppPasswords(ctx context.Context, username string) (domain.AppPasswordList, error)
 	// CreateAppPassword devuelve la contrasena en claro una sola vez; el tope es
 	// domain.ErrAppPasswordLimit y un nombre invalido, un *domain.ValidationError.

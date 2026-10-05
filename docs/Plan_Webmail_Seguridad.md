@@ -400,3 +400,49 @@ servir, `blocked` sigue `true`.
   `!remote_images.blocked`; el tipo `remote_images` añade `proxied: boolean`.
 - Seguridad: activar la verificación responde `other_sessions_closed` y renueva `cf_wm` (6.1); si la
   respuesta borra la cookie, mostrar los códigos y después volver al inicio de sesión.
+
+## 7. Recuperación de la contraseña del buzón sin sesión
+
+Estado: implementado (V, 2026-10-04: unitarias de dominio y caso de uso en mail-directory y webmail,
+adaptadores HTTP de los dos, evento del outbox, enrutado por celda del gateway, pantalla de la web).
+La pantalla «Recuperar contraseña» envía el enlace por correo solo a las cuentas de la consola
+(identity); un buzón no tiene dónde recibirlo, porque es justo el buzón al que no puede entrar.
+
+### 7.1 Decisión
+
+- **Dos factores, no uno.** Recuperar exige a la vez un código TOTP sin usar **y** uno de los códigos de
+  recuperación. Con el TOTP solo, el segundo factor pasaría a ser el único: un móvil desbloqueado
+  bastaría para quedarse con la cuenta. Los códigos de recuperación se guardan aparte del móvil.
+- **Solo buzones activos con la verificación ya activa.** Un buzón sin ella sigue el camino de siempre:
+  el administrador de su empresa le pone una contraseña nueva desde la consola.
+- **Una sola transacción en mail-directory.** Comprueba el TOTP (avanza `last_step`), gasta el código de
+  recuperación, borra las contraseñas de aplicación del buzón, guarda la contraseña nueva y encola los
+  eventos. Si cualquiera de los dos códigos falla, se deshace todo: no se gasta ninguno.
+- **Sin enumeración.** Todo rechazo (buzón inexistente, inactivo o sin verificación, o cualquiera de los
+  dos códigos) es el mismo `422 PASSWORD_RECOVERY_REJECTED`. La única respuesta propia es la contraseña
+  nueva que la política no admite, y se comprueba antes de mirar el buzón.
+- **Cierra todo lo abierto.** `mail.mailbox.credentials_changed` con `credential: "password"` (y
+  `app_password` en `changed` si se borró alguna): el webmail revoca las sesiones del buzón y
+  mail-security lo echa de Dovecot. El webmail revoca además sus sesiones en el acto, sin esperar al
+  evento. La verificación en dos pasos sigue activa.
+- **Rastro para el administrador.** `mail.mailbox.password_recovered` (`tenant_id`, `id`, `username`,
+  `at`, `recovery_remaining`, `app_passwords_revoked`) entra en `AUDIT_SUBJECTS`: el administrador lo ve
+  en Auditoría.
+- **Freno propio, más estricto.** 5 intentos por buzón y 20 por IP cada hora (Redis, comunes a las
+  réplicas), además del límite por IP de las rutas sin sesión y del limitador estricto del gateway. El
+  cupo del buzón se gasta exista o no el buzón.
+
+### 7.2 Contratos
+
+| Servicio | Método y ruta | Cuerpo | Respuesta |
+|---|---|---|---|
+| webmail (pública) | `POST /api/v1/webmail/session/recovery` | `{username, totp_code, recovery_code, new_password}` | `200 {recovery_remaining, app_passwords_revoked}`; 422 `PASSWORD_RECOVERY_REJECTED`; 422 `VALIDATION_ERROR` (`new_password`); 429 `RATE_LIMITED` |
+| mail-directory (interna) | `POST /internal/mail-directory/password-recovery?username=` | `{totp_code, recovery_code, password}` | `200 {recovery_remaining, app_passwords_revoked}`; 422 `PASSWORD_RECOVERY_REJECTED`; 422 `VALIDATION_ERROR` |
+
+No abre sesión: quien recupera vuelve a entrar con la contraseña nueva. Gateway: la ruta va en
+`strict_limit` y en `cell_username_routes` del prefijo `webmail`, que la enruta como el inicio de sesión,
+por el dominio de `username`. Web: `/recover-mailbox` (`MailboxRecoveryPage`), enlazada desde «Recuperar
+contraseña».
+
+Despliegue: sin migraciones. Añadir `mail.mailbox.password_recovered` a `AUDIT_SUBJECTS` del `.env` del
+servidor (que la fija) antes de reiniciar audit; servicios mail-directory, webmail, audit, gateway y web.

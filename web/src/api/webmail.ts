@@ -63,6 +63,19 @@ export interface WebmailMfaChallenge {
 
 export type WebmailLoginResult = WebmailSession | WebmailMfaChallenge;
 
+/** Recuperacion de la contrasena del buzon sin sesion, con su segundo factor. */
+export interface MailboxRecoveryRequest {
+  username: string;
+  totp_code: string;
+  recovery_code: string;
+  new_password: string;
+}
+
+export interface MailboxRecoveryResult {
+  recovery_remaining: number;
+  app_passwords_revoked: number;
+}
+
 export function isMfaChallenge(result: WebmailLoginResult): result is WebmailMfaChallenge {
   return 'mfa_required' in result && result.mfa_required === true;
 }
@@ -924,6 +937,12 @@ export const webmailApi = {
   /** Segundo paso del acceso: la cookie cf_wm_mfa del primero identifica el desafio. */
   loginMfa: (code: string) => request<WebmailSession>('POST', wm.sessionMfa, { json: { code } }),
   session: (signal?: AbortSignal) => request<WebmailSession>('GET', wm.session, { signal }),
+  /**
+   * Recuperacion sin sesion: el codigo de la aplicacion y uno de recuperacion, los dos. No abre
+   * sesion; cierra las del buzon y borra sus contrasenas de aplicacion.
+   */
+  recoverPassword: (input: MailboxRecoveryRequest) =>
+    request<MailboxRecoveryResult>('POST', wm.sessionRecovery, { json: input }),
   logout: () => request<null>('DELETE', wm.session),
 
   /** Topes y catalogos del servicio. Se leen por sesion con webmail/catalogs.ts. */

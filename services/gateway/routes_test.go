@@ -1,6 +1,7 @@
 package main
 
 import (
+	"slices"
 	"strings"
 	"testing"
 )
@@ -78,10 +79,14 @@ func TestTablaEmbebidaEsValida(t *testing.T) {
 	if webmail == nil || webmail.Service != "webmail" {
 		t.Fatalf("el webmail debe declararse en self_authenticated")
 	}
-	// Los dos pasos del inicio de sesion (contrasena y codigo de la verificacion en dos pasos).
-	wantStrict := []methodPathSpec{{Method: "POST", Path: "/session"}, {Method: "POST", Path: "/session/mfa"}}
-	if len(webmail.StrictLimit) != len(wantStrict) || webmail.StrictLimit[0] != wantStrict[0] || webmail.StrictLimit[1] != wantStrict[1] {
-		t.Errorf("el inicio de sesion del webmail debe ir con el limitador estricto: %+v", webmail.StrictLimit)
+	// Los dos pasos del inicio de sesion (contrasena y codigo de la verificacion en dos pasos) y la
+	// recuperacion de la contrasena sin sesion.
+	wantStrict := []methodPathSpec{{Method: "POST", Path: "/session"}, {Method: "POST", Path: "/session/mfa"}, {Method: "POST", Path: "/session/recovery"}}
+	if !slices.Equal(webmail.StrictLimit, wantStrict) {
+		t.Errorf("el inicio de sesion y la recuperacion del webmail deben ir con el limitador estricto: %+v", webmail.StrictLimit)
+	}
+	if !webmail.routedByUsername("POST", "/session/recovery") || webmail.routedByUsername("POST", "/session/mfa") {
+		t.Errorf("la recuperacion se enruta por el dominio del buzon y el segundo paso por su cookie: %+v", webmail.CellUsernameRoutes)
 	}
 	if webmail.CellChallengeCookie != "cf_wm_mfa" {
 		t.Errorf("el segundo paso del webmail se enruta por la cookie del desafio: %q", webmail.CellChallengeCookie)
@@ -282,6 +287,24 @@ func TestValidacionRechazaIncoherencias(t *testing.T) {
 		"cell_login con un campo invalido": func(t *routeTable) {
 			webmailCell(t)
 			t.SelfAuthenticated[0].CellLogin.UsernameField = "User-Name"
+		},
+		"ruta por nombre de usuario fuera del limitador estricto": func(t *routeTable) {
+			webmailCell(t)
+			t.SelfAuthenticated[0].CellUsernameRoutes = []methodPathSpec{{Method: "POST", Path: "/session/recovery"}}
+		},
+		"ruta por nombre de usuario sin cuerpo": func(t *routeTable) {
+			webmailCell(t)
+			t.SelfAuthenticated[0].CellUsernameRoutes = []methodPathSpec{{Method: "GET", Path: "/session/recovery"}}
+			t.SelfAuthenticated[0].StrictLimit = append(t.SelfAuthenticated[0].StrictLimit, methodPathSpec{Method: "GET", Path: "/session/recovery"})
+		},
+		"ruta por nombre de usuario que repite el inicio de sesion": func(t *routeTable) {
+			webmailCell(t)
+			t.SelfAuthenticated[0].CellUsernameRoutes = []methodPathSpec{{Method: "POST", Path: "/session"}}
+		},
+		"ruta por nombre de usuario en un servicio que no es de celda": func(t *routeTable) {
+			t.SelfAuthenticated = []selfAuthSpec{{Prefix: "inbox", Service: "identity",
+				StrictLimit:        []methodPathSpec{{Method: "POST", Path: "/recovery"}},
+				CellUsernameRoutes: []methodPathSpec{{Method: "POST", Path: "/recovery"}}}}
 		},
 		"cell_cookie invalida": func(t *routeTable) {
 			webmailCell(t)

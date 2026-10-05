@@ -96,6 +96,10 @@ type selfAuthSpec struct {
 	// por la que se enruta el resto. Solo en un servicio de celda, y los dos juntos.
 	CellLogin  *cellLoginSpec `json:"cell_login,omitempty"`
 	CellCookie string         `json:"cell_cookie,omitempty"`
+	// CellUsernameRoutes son otras rutas sin sesion que llevan en el cuerpo el mismo campo de nombre
+	// de usuario que el inicio de sesion y se enrutan igual, por su dominio (la recuperacion de la
+	// contrasena del buzon). Como el inicio de sesion, van con el limitador estricto.
+	CellUsernameRoutes []methodPathSpec `json:"cell_username_routes,omitempty"`
 	// CellChallengeCookie es la cookie de un inicio de sesion a medias (el segundo paso de la
 	// verificacion en dos pasos), cuyo token lleva tambien la celda como prefijo. Se usa cuando
 	// la peticion aun no trae la cookie de sesion.

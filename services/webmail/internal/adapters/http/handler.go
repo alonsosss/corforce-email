@@ -60,7 +60,12 @@ type Config struct {
 	// agota el del resto del webmail. ImageProxyConcurrency es cuantas descargas corren a la vez en el
 	// proceso (0 usa defaultImageProxyConcurrency) e ImageProxyMetrics, opcional, las cuenta.
 	ImageProxyRateLimiter RateLimiter
-	ImageProxyConcurrency int
+	// RecoveryMailboxRateLimiter y RecoveryIPRateLimiter son el freno propio de la recuperacion de
+	// contrasena sin sesion, mucho mas estricto que el del resto: por buzon, para que nadie pruebe
+	// codigos de una cuenta desde muchas IP, y por IP, para que nadie recorra muchas cuentas.
+	RecoveryMailboxRateLimiter RateLimiter
+	RecoveryIPRateLimiter      RateLimiter
+	ImageProxyConcurrency      int
 	// ImageProxyConcurrencyPerMailbox es cuantas de esas descargas puede tener a la vez un mismo buzon
 	// (0 usa defaultImageProxyConcurrencyPerMailbox).
 	ImageProxyConcurrencyPerMailbox int
@@ -109,8 +114,9 @@ func NewHandler(svc *app.Service, cfg Config, logger *zap.Logger) (*Handler, err
 		cfg.MaxMessageBytes <= 0 || cfg.ComposeConcurrency < 0 || cfg.MFAChallengeTTL <= 0 {
 		return nil, errors.New("webmail: plazos y topes del API deben ser positivos")
 	}
-	if cfg.IPRateLimiter == nil || cfg.MailboxRateLimiter == nil || cfg.ImageProxyRateLimiter == nil {
-		return nil, errors.New("webmail: faltan los limitadores de peticiones por IP, por buzón o del proxy de imágenes")
+	if cfg.IPRateLimiter == nil || cfg.MailboxRateLimiter == nil || cfg.ImageProxyRateLimiter == nil ||
+		cfg.RecoveryMailboxRateLimiter == nil || cfg.RecoveryIPRateLimiter == nil {
+		return nil, errors.New("webmail: faltan los limitadores de peticiones por IP, por buzón, del proxy de imágenes o de la recuperación de contraseña")
 	}
 	if cfg.ComposeConcurrency == 0 {
 		cfg.ComposeConcurrency = defaultComposeConcurrency
@@ -149,6 +155,7 @@ func (h *Handler) Routes() http.Handler {
 		r.Use(h.origins.Middleware)
 		r.With(h.limitByIP).Post("/session", h.Login)
 		r.With(h.limitByIP).Post("/session/mfa", h.LoginMFA)
+		r.With(h.limitByIP).Post(RecoveryPath, h.RecoverPassword)
 		r.With(h.limitByIP).Delete("/session", h.Logout)
 		// El proxy de imagenes remotas no lleva sesion: lo autoriza la firma del enlace.
 		r.With(h.limitByIP).Get(ImageProxyPath, h.ImageProxy)
@@ -332,6 +339,8 @@ func writeError(w http.ResponseWriter, err error) {
 		response.Err(w, http.StatusConflict, "MFA_ALREADY_ENABLED", domain.ErrMFAAlreadyEnabled.Error())
 	case errors.Is(err, domain.ErrMFANotEnabled):
 		response.Err(w, http.StatusConflict, "MFA_NOT_ENABLED", domain.ErrMFANotEnabled.Error())
+	case errors.Is(err, domain.ErrPasswordRecoveryRejected):
+		response.Err(w, http.StatusUnprocessableEntity, "PASSWORD_RECOVERY_REJECTED", domain.ErrPasswordRecoveryRejected.Error())
 	case errors.Is(err, domain.ErrMFASetupExpired):
 		response.Err(w, http.StatusConflict, "MFA_SETUP_EXPIRED", domain.ErrMFASetupExpired.Error())
 	case errors.Is(err, domain.ErrAppPasswordNotFound):
