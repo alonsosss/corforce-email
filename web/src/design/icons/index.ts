@@ -26,6 +26,7 @@ export { IconCrop } from './IconCrop';
 export { IconDownload } from './IconDownload';
 export { IconEdit } from './IconEdit';
 export { IconEye } from './IconEye';
+export { IconExternal } from './IconExternal';
 export { IconEyeOff } from './IconEyeOff';
 export { IconFileText } from './IconFileText';
 export { IconFilter } from './IconFilter';

@@ -46,7 +46,7 @@ export function useComposerHost(): { composer: ComposeController; composerWindow
       if (currentRef.current && !pristine.current) {
         setSize((value) => (value === 'minimized' ? 'normal' : value));
         toast.info(t('webmail.composer.oneAtATime'));
-        return;
+        return false;
       }
       nextId.current += 1;
       const next = { id: nextId.current, request };
@@ -54,6 +54,7 @@ export function useComposerHost(): { composer: ComposeController; composerWindow
       pristine.current = true;
       setCurrent(next);
       setSize('normal');
+      return true;
     },
     [toast],
   );
@@ -107,6 +108,7 @@ function ComposeWindow({
         className={`cf-wm-composer cf-wm-composer--${size}`}
         aria-label={t('webmail.composer.label')}
         data-keyboard-owner={size === 'expanded' ? 'capture' : 'focus'}
+        tabIndex={-1}
       >
         {children}
       </section>

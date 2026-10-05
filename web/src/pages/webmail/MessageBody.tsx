@@ -7,7 +7,7 @@ import {
 } from '@/api/webmail';
 import { errorMessage } from '@/api/messages';
 import { Alert, Button, HtmlPreviewFrame, useToast } from '@/design/components';
-import { IconDownload, IconImage, IconPaperclip } from '@/design/icons';
+import { IconDownload, IconImage, IconPaperclip, IconQuote } from '@/design/icons';
 import { useResource } from '@/hooks/useResource';
 import { saveBlob } from '@/lib/download';
 import { formatBytes } from '@/lib/quota';
@@ -17,8 +17,28 @@ import { AttachmentThumbnail, canThumbnail } from './AttachmentThumbnails';
 import { htmlToPlainText } from './compose';
 import { displayFilename } from './format';
 import { referencedInlineParts } from './inlineImages';
+import { splitQuotedHtml, splitQuotedText } from './quotedHistory';
 
 const FRAME_HEIGHT = '60vh';
+const FRAME_MIN_PX = 120;
+const FRAME_LINE_PX = 24;
+const FRAME_PADDING_PX = 48;
+const CHARS_PER_LINE = 90;
+
+/**
+ * Alto del marco segun lo que hay que leer: el iframe aislado no deja medir su contenido, asi
+ * que un mensaje de solo texto se estima por lineas y uno con imagenes o tablas (boletines,
+ * firmas maquetadas) se queda con el alto de siempre. Quedarse corto solo hace scroll dentro.
+ */
+export function estimateFrameHeight(html: string): string {
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  if (doc.body.querySelector('img, table, video, picture, svg')) return FRAME_HEIGHT;
+  const lines = htmlToPlainText(html)
+    .split('\n')
+    .reduce((sum, line) => sum + Math.max(1, Math.ceil(line.length / CHARS_PER_LINE)), 0);
+  const px = Math.max(FRAME_MIN_PX, lines * FRAME_LINE_PX + FRAME_PADDING_PX);
+  return `min(${FRAME_HEIGHT}, ${px}px)`;
+}
 
 export interface MessageBodyProps {
   message: MailMessage;
@@ -43,19 +63,27 @@ export function MessageBody({
   inlineImages,
 }: MessageBodyProps) {
   const [asText, setAsText] = useState(false);
+  const [showQuoted, setShowQuoted] = useState(false);
   const refs = useMemo(() => referencedInlineParts(message), [message]);
   const inlineParts = new Set(refs.values());
   const attachments = message.attachments.filter((part) => !inlineParts.has(part));
   const hasHtml = message.html.trim() !== '';
   const hasText = message.text.trim() !== '';
   const plain = hasText ? message.text : hasHtml ? htmlToPlainText(message.html) : '';
+  const htmlSplit = useMemo(() => splitQuotedHtml(message.html), [message.html]);
+  const textSplit = useMemo(() => splitQuotedText(plain), [plain]);
+  const showingHtml = hasHtml && !asText;
+  const split = showingHtml ? htmlSplit : textSplit;
+  const folded = split !== null && !showQuoted;
+  const html = folded && htmlSplit ? htmlSplit.main : message.html;
+  const frameHeight = useMemo(() => estimateFrameHeight(html), [html]);
 
   return (
     <div className="cf-stack" style={{ gap: 'var(--cf-space-3)' }}>
       {message.text_truncated || message.html_truncated ? (
         <Alert tone="info">{t('webmail.reader.truncated')}</Alert>
       ) : null}
-      {hasHtml && !asText ? (
+      {showingHtml ? (
         <>
           {message.remote_images.present ? (
             <div className="cf-preview__bar" role="status">
@@ -75,11 +103,11 @@ export function MessageBody({
             </div>
           ) : null}
           <HtmlPreviewFrame
-            html={message.html}
+            html={html}
             title={t('webmail.reader.bodyTitle', {
               subject: message.subject || t('webmail.noSubject'),
             })}
-            height={FRAME_HEIGHT}
+            height={frameHeight}
             allowRemoteImages={remoteAllowed && !message.remote_images.blocked}
             inlineImages={inlineImages}
             remoteImageProxy={webmailImageProxyUrl()}
@@ -87,10 +115,24 @@ export function MessageBody({
           />
         </>
       ) : plain ? (
-        <pre className="cf-wm-text">{plain}</pre>
+        <pre className="cf-wm-text">{folded && textSplit ? textSplit.main : plain}</pre>
       ) : (
         <p className="cf-text-muted">{t('webmail.reader.empty')}</p>
       )}
+      {split ? (
+        <div>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="cf-wm-compose__quoted"
+            icon={<IconQuote size={14} />}
+            aria-expanded={showQuoted}
+            onClick={() => setShowQuoted((v) => !v)}
+          >
+            {t(showQuoted ? 'webmail.reader.hideQuoted' : 'webmail.reader.showQuoted')}
+          </Button>
+        </div>
+      ) : null}
       {hasHtml ? (
         <div>
           <Button

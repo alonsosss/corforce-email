@@ -821,7 +821,21 @@ a.cf-wm-message:hover {
 }
 
 /* Respuesta dentro del lector, debajo del mensaje */
+/* La barra de acciones del lector es fija: lo que se lleva a la vista queda debajo de ella. */
+.cf-wm-inline-reply,
+.cf-wm-inline-reply :is(form, button, input, select, textarea, [contenteditable]) {
+  scroll-margin-top: 4.5rem;
+}
+/* Reciben el foco de un clic en un hueco para que las teclas no lleguen a los atajos. */
+:is(.cf-wm-inline-reply, .cf-wm-composer):focus {
+  outline: none;
+}
 .cf-wm-inline-reply {
+  /*
+   * Campos que llegan tarde (el remitente) no deben empujar la cabecera bajo la barra del
+   * lector: el navegador no ancla el desplazamiento en la respuesta.
+   */
+  overflow-anchor: none;
   margin: var(--cf-space-4) 0 var(--cf-space-5);
   border: 1px solid var(--cf-border);
   border-radius: var(--cf-radius-md);

@@ -1,7 +1,7 @@
 import { createContext, useContext } from 'react';
 import { paths } from '@/paths';
 import { assistantTextFromState } from './assistant/assistant';
-import { parseComposeMode, type ComposeMode } from './compose';
+import { parseComposeMode, type ComposeMode, type DraftSeed } from './compose';
 import { parsePositiveInt } from './format';
 
 export type ComposerSize = 'normal' | 'minimized' | 'expanded';
@@ -18,9 +18,26 @@ export function useComposeWindow(): ComposeWindowState | null {
   return useContext(ComposeWindowContext);
 }
 
-/** Que se redacta: un mensaje nuevo (con destinatario opcional) o uno que parte de otro del buzon. */
+/** Lo que ya estaba escrito en una redaccion que pasa a otro sitio (del lector a la ventana). */
+export interface ComposeResume {
+  kind: 'resume';
+  mode: ComposeMode | null;
+  seed: DraftSeed;
+  files: File[];
+  format: 'html' | 'text';
+  /** El borrador se guardo solo: descartar la redaccion tambien lo retira. */
+  autosavedDraft: boolean;
+  recipientNames?: Readonly<Record<string, string>>;
+  assistantText: null;
+}
+
+/**
+ * Que se redacta: un mensaje nuevo (con destinatario opcional), uno que parte de otro del buzon
+ * o una redaccion en curso que se retoma.
+ */
 export type ComposeRequest =
   | { kind: 'new'; to: string | null; assistantText: string | null }
+  | ComposeResume
   | {
       kind: 'source';
       mode: ComposeMode;
@@ -54,7 +71,7 @@ export function composeRequestFromUrl(
  * si era un borrador que desaparece al enviarse) o la vista en la que estaba el usuario.
  */
 export function composeBackdropPath(request: ComposeRequest, lastView: string | null): string {
-  if (request.kind === 'new') return lastView ?? paths.webmail;
+  if (request.kind !== 'source') return lastView ?? paths.webmail;
   if (request.mode === 'draft') return paths.webmailView({ folder: request.folder });
   const origin = paths.webmailView({ folder: request.folder, uid: request.uid });
   if (lastView?.startsWith(`${paths.webmail}?`)) {
@@ -68,8 +85,11 @@ export function composeBackdropPath(request: ComposeRequest, lastView: string | 
 
 /** Lo que el marco del webmail ofrece para redactar desde cualquier pantalla. */
 export interface ComposeController {
-  /** Abre la ventana; con otra redaccion en curso la trae al frente en lugar de sustituirla. */
-  open: (request: ComposeRequest) => void;
+  /**
+   * Abre la ventana; con otra redaccion en curso la trae al frente en lugar de sustituirla y
+   * devuelve false.
+   */
+  open: (request: ComposeRequest) => boolean;
   /** Ultima vista del webmail distinta de la ruta de redaccion (ruta y query), si la hay. */
   lastView: () => string | null;
 }

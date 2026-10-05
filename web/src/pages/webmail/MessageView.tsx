@@ -393,7 +393,12 @@ export function MessageView({
         />
       </div>
       {isDrafts ? null : reply ? (
-        <section className="cf-wm-inline-reply" aria-label={t('webmail.composer.label')}>
+        <section
+          className="cf-wm-inline-reply"
+          aria-label={t('webmail.composer.inlineLabel')}
+          data-keyboard-owner="focus"
+          tabIndex={-1}
+        >
           <ComposePage
             key={reply.kind === 'source' ? reply.mode : 'new'}
             request={reply}

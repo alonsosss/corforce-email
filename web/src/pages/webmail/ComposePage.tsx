@@ -27,6 +27,7 @@ import {
 import {
   IconChevronUp,
   IconClock,
+  IconExternal,
   IconMaximize,
   IconMinimize,
   IconMinus,
@@ -71,7 +72,13 @@ import { QuickReplyPicker } from './QuickReplyPicker';
 import { followUpChoices } from './snooze';
 import { formatScheduled } from './schedule';
 import { ScheduleDialog } from './ScheduleDialog';
-import { ComposePristineContext, useComposeWindow, type ComposeRequest } from './composeWindow';
+import {
+  ComposeControllerContext,
+  ComposePristineContext,
+  useComposeWindow,
+  type ComposeRequest,
+  type ComposeResume,
+} from './composeWindow';
 import { loadInlineImages, referencedInlineParts } from './inlineImages';
 import { useWebmailOutlet } from './webmailContext';
 
@@ -139,6 +146,22 @@ export default function ComposePage({ request, onClose, inline = false }: Compos
     [mode, folder, uid],
   );
 
+  // Una redaccion que se retoma ya trae lo escrito (con su firma): no se vuelve a construir.
+  if (request.kind === 'resume') {
+    return (
+      <ComposeForm
+        mode={request.mode}
+        seed={request.seed}
+        signature={null}
+        assistantText={null}
+        onClose={onClose}
+        recipientNames={request.recipientNames}
+        inline={inline}
+        resume={request}
+      />
+    );
+  }
+
   if (mode && source.error) {
     return (
       <div className="cf-wm-compose">
@@ -200,11 +223,17 @@ function ComposeHead({
   titleId,
   status,
   onClose,
+  onPopOut,
+  popOutDisabled = false,
 }: {
   title: string;
   titleId: string;
   status?: ReactNode;
   onClose: () => void;
+  /** Pasa la redaccion del lector a la ventana flotante con lo escrito. */
+  onPopOut?: () => void;
+  /** Mientras se envia o se guarda el borrador, lo escrito no puede cambiar de sitio. */
+  popOutDisabled?: boolean;
 }) {
   const windowed = useComposeWindow();
   const toggleMinimized = () =>
@@ -270,6 +299,19 @@ function ComposeHead({
             </Button>
           </>
         ) : null}
+        {onPopOut ? (
+          <Button
+            size="sm"
+            variant="ghost"
+            iconOnly
+            title={t('webmail.composer.popOut')}
+            icon={<IconExternal size={16} />}
+            disabled={popOutDisabled}
+            onClick={onPopOut}
+          >
+            {t('webmail.composer.popOut')}
+          </Button>
+        ) : null}
         <Button size="sm" variant="ghost" iconOnly icon={<IconX size={16} />} onClick={onClose}>
           {t('webmail.composer.close')}
         </Button>
@@ -310,6 +352,7 @@ function ComposeForm({
   onClose,
   recipientNames,
   inline,
+  resume,
 }: {
   mode: ComposeMode | null;
   seed: DraftSeed;
@@ -320,15 +363,22 @@ function ComposeForm({
   /** Nombres visibles del mensaje al que se responde: resuelven {nombre} de una respuesta rapida. */
   recipientNames?: Readonly<Record<string, string>>;
   inline: boolean;
+  /** Redaccion en curso que se retoma: lo escrito, sus adjuntos locales y su formato. */
+  resume?: ComposeResume;
 }) {
   const toast = useToast();
   const ids = composeIds(inline);
+  const composer = useContext(ComposeControllerContext);
   const { folders, reloadFolders } = useWebmailOutlet();
   const reportPristine = useContext(ComposePristineContext);
   const refreshSession = useWebmailStore((s) => s.refresh);
   const meta = useResource(webmailMeta);
   const identities = useResource(senderIdentities);
-  const [initial] = useState(() => initialBody(seed, mode, signature));
+  const [initial] = useState(() =>
+    resume
+      ? { text: seed.text, html: seed.html ?? textToHtml(seed.text) }
+      : initialBody(seed, mode, signature),
+  );
   const [chosenFrom, setChosenFrom] = useState<string | null>(null);
   const [to, setTo] = useState(seed.to);
   const [cc, setCc] = useState(seed.cc);
@@ -336,19 +386,23 @@ function ComposeForm({
   const [showBook, setShowBook] = useState(false);
   const [showCopies, setShowCopies] = useState(seed.cc.length > 0 || seed.bcc.length > 0);
   const [subject, setSubject] = useState(seed.subject);
-  const [format, setFormat] = useState<'html' | 'text'>('html');
+  const [format, setFormat] = useState<'html' | 'text'>(resume?.format ?? 'html');
   const [html, setHtml] = useState(initial.html);
   const [text, setText] = useState(initial.text);
   // La cita del original queda plegada fuera del editor hasta que el usuario la despliega.
   const [quoted, setQuoted] = useState(seed.quoted ?? null);
   // El editor no es controlado: cambiar de modo lo vuelve a montar con el contenido convertido.
   const [editorKey, setEditorKey] = useState(0);
-  const [files, setFiles] = useState<File[]>([]);
+  const [files, setFiles] = useState<File[]>(resume?.files ?? []);
   const [server, setServer] = useState<ServerAttachments | undefined>(seed.source);
   const [draftUid, setDraftUid] = useState(seed.draftUid);
   // De donde sale el borrador: del enlace (se sigue uno), de un guardado a mano o de uno automatico.
   const [draftOrigin, setDraftOrigin] = useState<'none' | 'seed' | 'manual' | 'auto'>(
-    seed.draftUid ? 'seed' : 'none',
+    resume?.autosavedDraft ? 'auto' : seed.draftUid ? 'seed' : 'none',
+  );
+  // Al responder dentro del lector el asunto es el del hilo: se edita solo si se pide.
+  const [showSubject, setShowSubject] = useState(
+    !(inline && (mode === 'reply' || mode === 'replyAll')),
   );
   const [recipientError, setRecipientError] = useState<string | null>(null);
   const [version, setVersion] = useState(0);
@@ -375,8 +429,6 @@ function ComposeForm({
   const saveOnLeave = useRef<() => void>(() => undefined);
 
   useEffect(() => {
-    // En el lector la respuesta se abre debajo del mensaje: se lleva a la vista.
-    if (inline) formRef.current?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' });
     // Al responder se escribe encima de la cita; en lo demas se empieza por el destinatario.
     if (seed.inReplyTo) {
       if (bodyRef.current) {
@@ -388,6 +440,14 @@ function ComposeForm({
     } else {
       document.getElementById(ids.to)?.focus();
     }
+    // En el lector la respuesta se abre debajo del mensaje: despues del foco (que solo desplaza
+    // hasta el campo, y el editor lo toma un instante despues) se lleva entera a la vista, con
+    // su cabecera bajo la barra del lector.
+    if (!inline) return;
+    const frame = window.requestAnimationFrame(() =>
+      formRef.current?.scrollIntoView?.({ block: 'start' }),
+    );
+    return () => window.cancelAnimationFrame(frame);
     // Solo al abrir.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -558,7 +618,8 @@ function ComposeForm({
   const save = useAction(() => persistDraft(false));
 
   const autosaving = autosave.state === 'saving';
-  const pristine = version === 0 && !waiting && !send.busy;
+  // Lo que se retoma ya trae contenido: otra peticion no puede sustituirlo.
+  const pristine = version === 0 && !resume && !waiting && !send.busy;
   useEffect(() => reportPristine?.(pristine), [pristine, reportPristine]);
   useEffect(() => {
     if (!dirty || !hasContent || blocked || waiting || send.busy || save.busy || autosaving) {
@@ -701,6 +762,36 @@ function ComposeForm({
   };
 
   const busy = send.busy || save.busy || waiting;
+
+  // La ventana flotante recibe lo escrito tal cual; si ya hay otra redaccion abierta, se queda aqui.
+  const popOut = () => {
+    if (!composer) return;
+    const opened = composer.open({
+      kind: 'resume',
+      mode,
+      seed: {
+        to,
+        cc,
+        bcc,
+        subject,
+        text: format === 'text' ? text : '',
+        html: format === 'html' ? html : undefined,
+        quoted: quoted ?? undefined,
+        inReplyTo: seed.inReplyTo,
+        draftUid,
+        fromCandidates: from ? [from] : seed.fromCandidates,
+        source: server,
+      },
+      files,
+      format,
+      autosavedDraft: draftOrigin === 'auto',
+      recipientNames,
+      assistantText: null,
+    });
+    if (!opened) return;
+    closing.current = true;
+    onClose();
+  };
   const error = send.error ?? save.error;
   const chips = {
     normalize: normalizeRecipient,
@@ -717,6 +808,12 @@ function ComposeForm({
       className="cf-wm-compose cf-form"
       onSubmit={submit}
       onKeyDown={(e) => {
+        // Ctrl+Enter (Cmd+Enter en Mac) envia desde cualquier campo, como en Gmail.
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+          e.preventDefault();
+          e.currentTarget.requestSubmit();
+          return;
+        }
         // Enter en un campo de una linea no envia: enviar es siempre un gesto explicito.
         const target = e.target as HTMLInputElement;
         if (e.key === 'Enter' && target.tagName === 'INPUT' && target.form === e.currentTarget) {
@@ -731,6 +828,8 @@ function ComposeForm({
         titleId={ids.title}
         status={<AutosaveStatus state={autosave} dirty={dirty} />}
         onClose={onClose}
+        onPopOut={inline && composer ? popOut : undefined}
+        popOutDisabled={busy || autosaving}
       />
       {senders.length > 1 ? (
         <div className="cf-wm-compose__line">
@@ -808,20 +907,29 @@ function ComposeForm({
           </Button>
         </div>
       )}
-      <div className="cf-wm-compose__line">
-        <FormField
-          label={t('webmail.header.subject')}
-          htmlFor={ids.subject}
-          error={problems.subject ?? null}
-        >
-          <Input
-            id={ids.subject}
-            value={subject}
-            onChange={(e) => edit(setSubject)(e.target.value)}
-            disabled={busy}
-          />
-        </FormField>
-      </div>
+      {showSubject || problems.subject ? null : (
+        <div>
+          <Button size="sm" variant="ghost" onClick={() => setShowSubject(true)}>
+            {t('webmail.compose.editSubject')}
+          </Button>
+        </div>
+      )}
+      {showSubject || problems.subject ? (
+        <div className="cf-wm-compose__line">
+          <FormField
+            label={t('webmail.header.subject')}
+            htmlFor={ids.subject}
+            error={problems.subject ?? null}
+          >
+            <Input
+              id={ids.subject}
+              value={subject}
+              onChange={(e) => edit(setSubject)(e.target.value)}
+              disabled={busy}
+            />
+          </FormField>
+        </div>
+      ) : null}
       <div className="cf-field">
         <div className="cf-wm-compose__bodyhead">
           {format === 'html' ? (

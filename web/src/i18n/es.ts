@@ -2225,6 +2225,8 @@ export const es = {
   'webmail.composer.expand': 'Pantalla completa',
   'webmail.composer.collapse': 'Salir de pantalla completa',
   'webmail.composer.close': 'Guardar y cerrar',
+  'webmail.composer.popOut': 'Abrir en una ventana',
+  'webmail.composer.inlineLabel': 'Respuesta al mensaje',
   'webmail.composer.savedOnLeave': 'El mensaje quedó guardado en Borradores.',
   'webmail.composer.saveOnLeaveFailed': 'No se pudo guardar el borrador al salir de la redacción.',
   'webmail.security.mfa.otherSessionsClosed':
@@ -2252,6 +2254,8 @@ export const es = {
   'webmail.reader.showRemote': 'Mostrar imágenes remotas',
   'webmail.reader.bodyTitle': 'Contenido del mensaje: {subject}',
   'webmail.reader.showText': 'Ver como texto sin formato',
+  'webmail.reader.showQuoted': 'Mostrar el historial citado',
+  'webmail.reader.hideQuoted': 'Ocultar el historial citado',
   'webmail.reader.showHtml': 'Ver con formato',
   'webmail.reader.empty': 'Este mensaje no tiene contenido.',
   'webmail.header.from': 'De',
@@ -2281,6 +2285,7 @@ export const es = {
   'webmail.compose.recipientsPlaceholder': 'nombre@empresa.com',
   'webmail.compose.invalidAddresses': 'Direcciones no válidas: {list}',
   'webmail.compose.addCopies': 'Añadir Cc y Cco',
+  'webmail.compose.editSubject': 'Editar el asunto',
   'webmail.compose.addressBook': 'Elegir de la empresa',
   'webmail.compose.addressBookSearch': 'Buscar por nombre o dirección',
   'webmail.compose.addressBookAdd': 'Añadir {address} a los destinatarios',
@@ -2551,6 +2556,7 @@ export const es = {
   'webmail.shortcuts.previous': 'Mensaje anterior',
   'webmail.shortcuts.search': 'Buscar',
   'webmail.shortcuts.help': 'Ver esta ayuda',
+  'webmail.shortcuts.send': 'Enviar el mensaje que se está redactando',
 
   'webmail.notify.enable': 'Activar avisos de escritorio',
   'webmail.notify.disable': 'Desactivar avisos de escritorio',

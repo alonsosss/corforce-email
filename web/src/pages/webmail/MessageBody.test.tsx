@@ -6,7 +6,7 @@ import { webmailApi, type MailMessage, type MessagePart } from '@/api/webmail';
 import { ToastProvider } from '@/design/components';
 import { t } from '@/i18n';
 import { resetWebmailCatalogs } from '@/webmail/catalogs';
-import { MessageBody } from './MessageBody';
+import { estimateFrameHeight, MessageBody } from './MessageBody';
 import { META } from './testing';
 
 const PHOTO: MessagePart = {
@@ -193,5 +193,39 @@ describe('imagenes remotas en el lector', () => {
     expect(
       doc.querySelector('meta[http-equiv="Content-Security-Policy"]')?.getAttribute('content'),
     ).toContain(`img-src data: ${origin};`);
+  });
+});
+
+describe('historial citado en el lector', () => {
+  it('pliega la cita del final y la muestra al pedirla', async () => {
+    const user = userEvent.setup();
+    renderBody({
+      ...messageWith([]),
+      text: '',
+      html: '<div>Bbbb</div><div class="gmail_quote">El dom, Carlos escribió:<blockquote>dasdasd</blockquote></div>',
+    });
+    const title = t('webmail.reader.bodyTitle', { subject: 'Fotos' });
+    expect(screen.getByTitle(title).getAttribute('srcdoc')).not.toContain('dasdasd');
+
+    await user.click(screen.getByRole('button', { name: t('webmail.reader.showQuoted') }));
+    expect(screen.getByTitle(title).getAttribute('srcdoc')).toContain('dasdasd');
+    expect(screen.getByRole('button', { name: t('webmail.reader.hideQuoted') })).toHaveAttribute(
+      'aria-expanded',
+      'true',
+    );
+  });
+
+  it('en texto pliega las lineas citadas', async () => {
+    const user = userEvent.setup();
+    renderBody({ ...messageWith([]), text: 'Listo\n\nEl lun, Luis escribió:\n> Pedido' });
+    expect(screen.getByText('Listo')).toBeInTheDocument();
+    expect(screen.queryByText(/Pedido/)).toBeNull();
+    await user.click(screen.getByRole('button', { name: t('webmail.reader.showQuoted') }));
+    expect(screen.getByText(/Pedido/)).toBeInTheDocument();
+  });
+
+  it('el marco de un mensaje corto no ocupa media pantalla; uno con imagenes si', () => {
+    expect(estimateFrameHeight('<p>Hola</p>')).toBe('min(60vh, 120px)');
+    expect(estimateFrameHeight('<p>Hola</p><img src="x">')).toBe('60vh');
   });
 });

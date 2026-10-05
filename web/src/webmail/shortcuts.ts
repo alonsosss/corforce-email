@@ -26,6 +26,7 @@ export const SHORTCUTS: readonly ShortcutHelp[] = [
   { keys: 'k', label: 'webmail.shortcuts.previous' },
   { keys: '/', label: 'webmail.shortcuts.search' },
   { keys: '?', label: 'webmail.shortcuts.help' },
+  { keys: 'Ctrl + Enter', label: 'webmail.shortcuts.send' },
 ];
 
 export function isTypingTarget(target: EventTarget | null): boolean {
@@ -45,8 +46,19 @@ function dialogOpen(): boolean {
 function keyboardOwned(target: EventTarget | null): boolean {
   if (document.querySelector('[data-keyboard-owner="capture"]')) return true;
   const active = document.activeElement;
-  return [target, active].some(
-    (node) => node instanceof Element && node.closest('[data-keyboard-owner]') !== null,
+  if (
+    [target, active].some(
+      (node) => node instanceof Element && node.closest('[data-keyboard-owner]') !== null,
+    )
+  ) {
+    return true;
+  }
+  // Un clic en un hueco puede dejar el foco en un contenedor que envuelve la redaccion (el
+  // lector): lo que se teclee es texto perdido, nunca un atajo que archive o borre. El body no
+  // cuenta: con la ventana flotante abierta el buzon de fondo conserva sus atajos.
+  if (!(active instanceof Element) || active === document.body) return false;
+  return Array.from(document.querySelectorAll('[data-keyboard-owner]')).some((owner) =>
+    active.contains(owner),
   );
 }
 
