@@ -31,6 +31,7 @@ solo se enlaza. Las entradas más recientes van arriba.
 | Fecha | Incidente | Impacto | Guardarrail |
 |---|---|---|---|
 | 2026-10-05 | [Escribir una respuesta podía archivar el mensaje abierto](#2026-10-05--escribir-una-respuesta-podía-archivar-el-mensaje-abierto) | Mensajes archivados sin querer al responder en el webmail | `shortcuts.test.tsx` |
+| 2026-10-04 | [La CI de integración no compilaba tras un puerto nuevo](#2026-10-04--la-ci-de-integración-no-compilaba-tras-un-puerto-nuevo) | main en rojo unos 30 min; despliegue retenido | `go vet -tags integration` en `make checks` |
 | 2026-10-04 | [La recuperación de contraseña no servía a los buzones y no lo decía](#2026-10-04--la-recuperación-de-contraseña-no-servía-a-los-buzones-y-no-lo-decía) | Un usuario de buzón esperaba un correo que nunca llegaba | `MailboxRecoveryPage.test.tsx` y `make e2e-mail` |
 | 2026-10-02 | [El 90 % de las llamadas a la API de JetStream fallaban](#2026-10-02--el-90--de-las-llamadas-a-la-api-de-jetstream-fallaban) | Ruido que tapaba errores reales | Prueba de integración |
 | 2026-10-01 | [Eventos con 90 s de retraso en cada despliegue](#2026-10-01--eventos-con-90-s-de-retraso-en-cada-despliegue) | Retraso de eventos de 11 servicios en cada reinicio | `check-subscription-drain.sh` |
@@ -43,6 +44,19 @@ solo se enlaza. Las entradas más recientes van arriba.
 | 2026-10-01 | [Vulnerabilidades altas en las imágenes de los motores](#2026-10-01--vulnerabilidades-altas-en-las-imágenes-de-los-motores) | 7 CVE altas con arreglo publicado en producción | `check-motor-os-updates.sh` |
 
 ## Incidentes
+
+### 2026-10-04 · La CI de integración no compilaba tras un puerto nuevo
+
+| | |
+|---|---|
+| Detectado | CI de `12e9ce1`, trabajo «Integracion» |
+| Síntoma | `services/webmail/internal/app/integration_test.go:371`: `noSecurity` no implementa `ports.SecurityDirectory` (falta `RecoverPassword`) |
+| Impacto | main en rojo unos 30 minutos; ningún despliegue salió con ello |
+| Causa raíz | Los dobles de las pruebas de integración llevan la etiqueta `integration` y solo se compilan en `make test-integration` (con docker) o en la CI. `make checks` corría `go vet ./...` sin la etiqueta, así que un método nuevo en un puerto pasaba los checks locales |
+| Solución | El doble implementa el método, y `make checks` corre además `go vet -tags integration ./...` (5 s, sin docker) |
+| Que no se repita | `make checks`: probado quitando el arreglo, falla con el mismo error |
+| Detalle | — |
+| Desplegado | No aplica (CI y checks) |
 
 ### 2026-10-05 · Escribir una respuesta podía archivar el mensaje abierto
 

@@ -233,6 +233,9 @@ checks: build check-gofmt check-migrations check-migration-drops check-coupling 
 	check-secret-scope check-secrets-store check-db-credentials check-compose check-compose-images check-observability-targets \
 	check-service-paths check-alertas validate-scaffold
 	@$(GO) vet ./...
+	@# Las pruebas de integracion solo compilan con su etiqueta; sin esto, un doble que no cumple un
+	@# puerto nuevo solo aparecia en make test-integration (con docker) o en la CI.
+	@$(GO) vet -tags integration ./...
 	@echo "checks: OK"
 
 # make clean-copy  (no queda ningun resto de las bases de referencia en el codigo)

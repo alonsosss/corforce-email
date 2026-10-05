@@ -404,6 +404,9 @@ func (noSecurity) RegenerateRecoveryCodes(context.Context, string, string) ([]st
 	return nil, domain.ErrUnavailable
 }
 func (noSecurity) DisableMFA(context.Context, string, string) error { return domain.ErrUnavailable }
+func (noSecurity) RecoverPassword(context.Context, string, string, string, string) (domain.PasswordRecovery, error) {
+	return domain.PasswordRecovery{}, domain.ErrUnavailable
+}
 func (noSecurity) AppPasswords(context.Context, string) (domain.AppPasswordList, error) {
 	return domain.AppPasswordList{}, domain.ErrUnavailable
 }
