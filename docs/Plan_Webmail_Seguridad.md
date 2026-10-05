@@ -404,7 +404,8 @@ servir, `blocked` sigue `true`.
 ## 7. Recuperación de la contraseña del buzón sin sesión
 
 Estado: implementado (V, 2026-10-04: unitarias de dominio y caso de uso en mail-directory y webmail,
-adaptadores HTTP de los dos, evento del outbox, enrutado por celda del gateway, pantalla de la web).
+adaptadores HTTP de los dos, evento del outbox, enrutado por celda del gateway, pantalla de la web;
+`make e2e-mail` contra los motores reales). Desplegado el 2026-10-05 con `2b7a256`.
 La pantalla «Recuperar contraseña» envía el enlace por correo solo a las cuentas de la consola
 (identity); un buzón no tiene dónde recibirlo, porque es justo el buzón al que no puede entrar.
 

@@ -82,7 +82,7 @@ solo se enlaza. Las entradas más recientes van arriba.
 | Solución | Recuperación del buzón sin sesión con un código TOTP y uno de recuperación a la vez, en una transacción de mail-directory que cierra las sesiones, borra las contraseñas de aplicación y deja rastro en Auditoría; la pantalla de recuperación explica a quien tiene buzón qué hacer (`12e9ce1`) |
 | Que no se repita | `MailboxRecoveryPage.test.tsx` y las unitarias de mail-directory y webmail; `make e2e-mail` recorre la recuperación contra los motores reales |
 | Detalle | `docs/Plan_Webmail_Seguridad.md`, sección 7 |
-| Desplegado | Pendiente |
+| Desplegado | 2026-10-05, `2b7a256` (mail-directory, webmail, audit, gateway, web; `AUDIT_SUBJECTS` del servidor con el subject nuevo) |
 
 ### 2026-10-02 · El 90 % de las llamadas a la API de JetStream fallaban
 
