@@ -9,6 +9,11 @@
 
 # El transporte por defecto es el alias SSM de ~/.ssh/config (ops/aws/setup-ssm-local.sh); en un
 # servidor propio se da DEPLOY_HOST, DEPLOY_USER y DEPLOY_SSH_KEY.
+# Destino propio de esta PC (destino.env.local, sin versionar): solo si la shell no trae uno.
+if [[ -z "${DEPLOY_HOST:-}" && -f "$(dirname "${BASH_SOURCE[0]}")/../../destino.env.local" ]]; then
+  # shellcheck disable=SC1091
+  . "$(dirname "${BASH_SOURCE[0]}")/../../destino.env.local"
+fi
 DEPLOY_HOST="${DEPLOY_HOST:-core-force-mail-ssm}"; DEPLOY_USER="${DEPLOY_USER:-deploy}"
 DEPLOY_PATH="${DEPLOY_PATH:-/opt/core-force-mail/app}"
 SSH_KEY="${DEPLOY_SSH_KEY:-$HOME/.ssh/core-force-mail-prod.pem}"
