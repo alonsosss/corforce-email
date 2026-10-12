@@ -151,6 +151,7 @@ type Service struct {
 	quickReplies ports.QuickReplyDirectory
 	// Remitentes que el buzon fija en Principal (Deps.PrimarySenders).
 	primarySenders ports.PrimarySenderDirectory
+	primaryCache   primarySendersCache
 
 	mfaChallenges ports.MFAChallengeStore
 	security      ports.SecurityDirectory

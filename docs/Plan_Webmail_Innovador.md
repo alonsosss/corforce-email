@@ -57,8 +57,9 @@ calendarios compartidos editables, cifrado extremo a extremo.
    siempre principal, aunque lo envie una maquina (tickets, rebotes); un remitente que el usuario
    fija con "Siempre en Principal" lo es tambien (`mail.mailbox_primary_senders`, migracion
    `mail-directory/17_primary_senders.sql`, hasta 200 por buzon; webmail `/primary-senders`, interno
-   `/internal/mail-directory/primary-senders`; se aplica solo a la bandeja de entrada y, si el
-   directorio no responde, se lista igual sin ellos); y la pestana principal recoge ademas todo lo que
+   `/internal/mail-directory/primary-senders`; se aplica solo a la bandeja de entrada, se cachea un
+   minuto por buzon en el webmail porque el directorio limita las peticiones internas a 120 por minuto
+   y por origen, y si el directorio no responde se lista igual sin ellos); y la pestana principal recoge ademas todo lo que
    esta sin leer, que conserva su categoria y vuelve solo a su pestana al leerlo.
    La baja en un clic la hace el
    servicio (RFC 8058 `POST` a una URL `https` publica con proteccion SSRF: sin IP privadas, sin
