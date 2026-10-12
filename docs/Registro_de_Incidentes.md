@@ -98,7 +98,7 @@ solo se enlaza. Las entradas más recientes van arriba.
 | Solución | Cache de los remitentes fijados por buzón en el caso de uso del webmail, de un minuto, invalidada al fijar o quitar y que recuerda 15 s un fallo (`fa6affc`); la prueba de Principal se ajustó al comportamiento nuevo (`d471f1e`) |; el cupo de mail-directory pasa a contarse por buzón, por ruta y por usuario según la llamada (`ratelimit.go`)
 | Que no se repita | `make e2e-mail` (la reserva falla si mail-directory limita) y `services/mail-directory/ratelimit_test.go`: el cupo de la API interna ya no es por IP de origen sino por buzón (por ruta si no lleva buzón) y el del API con sesión, por usuario, como en mail-files y mail-dav, de modo que otra llamada por petición del webmail al directorio no agota el cupo de los demás |
 | Detalle | `services/mail-directory/main.go` (`NewRateLimiter(120, time.Minute)`), `pkg/middleware/ratelimit.go` |
-| Desplegado | No aplica (el cambio que lo causó, `e74a11c` y `dd71944`, aún no está en producción) |
+| Desplegado | 2026-10-12: la caché con `1f7b494` y el cupo por buzón de mail-directory con `595eb11` |
 
 ### 2026-10-12 · La CI quedó en rojo por 11 vulnerabilidades alcanzables de Go publicadas ese día
 
