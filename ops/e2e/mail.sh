@@ -1586,9 +1586,12 @@ wm "$TARRO_BEA2" GET "/folders/INBOX/messages?category=newsletters"
 contains "la pestana Boletines lo filtra en el servidor" "$WM_BODY" "$BOLETIN"
 lacks "sin el correo principal" "$WM_BODY" "\"subject\":\"$HILO\""
 wm "$TARRO_BEA2" GET "/folders/INBOX/messages?category=primary"
-lacks "y la principal no lo trae" "$WM_BODY" "$BOLETIN"
-contains "pero si el correo normal" "$WM_BODY" "\"subject\":\"$HILO\""
+contains "la principal tambien trae lo no leido, aunque sea un boletin" "$WM_BODY" "$BOLETIN"
+contains "y el correo normal" "$WM_BODY" "\"subject\":\"$HILO\""
 BOLETIN_UID=$(fila "$TARRO_BEA2" INBOX "$BOLETIN" 'm["uid"]')
+wm "$TARRO_BEA2" POST /folders/INBOX/messages/batch -H 'Content-Type: application/json' -d "{\"uids\":[$BOLETIN_UID],\"action\":\"flags\",\"add\":[\"\\\\Seen\"]}"
+wm "$TARRO_BEA2" GET "/folders/INBOX/messages?category=primary"
+lacks "leido, el boletin vuelve a su pestana y deja la principal" "$WM_BODY" "$BOLETIN"
 wm "$TARRO_BEA2" GET "/sender-insight?folder=INBOX&uid=$BOLETIN_UID"
 expect "la ficha del boletin: pestana, baja en un clic y su destino" \
   "$WM_CODE/$(echo "$WM_BODY" | jpy 'd["data"]["category"]')/$(echo "$WM_BODY" | jpy 'd["data"]["unsubscribe"]["method"]')/$(echo "$WM_BODY" | jpy 'd["data"]["unsubscribe"]["target"]')" \
