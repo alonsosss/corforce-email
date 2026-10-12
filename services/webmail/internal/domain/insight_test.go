@@ -35,6 +35,40 @@ func TestClassifySigueElOrdenDeLasReglas(t *testing.T) {
 	}
 }
 
+func TestClassifierRespuestaAMensajePropioEsPrincipal(t *testing.T) {
+	cl := ClassifierFor("Ana@Empresa.test")
+	robot := []Address{{Name: "Soporte", Email: "no-reply@proveedor.test"}}
+	cases := []struct {
+		name string
+		h    MessageHeaders
+		want Category
+	}{
+		{"respuesta de un sistema de tickets", MessageHeaders{HeaderAutoSubmitted: {"auto-generated"}, HeaderInReplyTo: {"<a1@empresa.test>"}}, CategoryPrimary},
+		{"respuesta por References y otra capitalizacion", MessageHeaders{HeaderPrecedence: {"bulk"}, HeaderReferences: {"<x@y.test> <a1@EMPRESA.test>"}}, CategoryPrimary},
+		{"respuesta a un tercero sigue su regla", MessageHeaders{HeaderAutoSubmitted: {"auto-generated"}, HeaderInReplyTo: {"<a1@otra.test>"}}, CategoryNotifications},
+		{"sin respuesta sigue su regla", MessageHeaders{}, CategoryNotifications},
+		{"un dominio que solo empieza igual no cuenta", MessageHeaders{HeaderInReplyTo: {"<a1@empresa.test.evil.example>"}}, CategoryNotifications},
+	}
+	for _, c := range cases {
+		if got := cl.Classify(c.h, robot); got != c.want {
+			t.Errorf("%s: %q, quiero %q", c.name, got, c.want)
+		}
+	}
+}
+
+func TestClassifierSinDominioNoReconoceRespuestas(t *testing.T) {
+	for _, username := range []string{"", "ana", "ana@"} {
+		cl := ClassifierFor(username)
+		h := MessageHeaders{HeaderAutoSubmitted: {"auto-generated"}, HeaderInReplyTo: {"<a@empresa.test>"}}
+		if cl.RepliesToOwn(h) {
+			t.Errorf("%q: no debe reconocer respuestas", username)
+		}
+		if got := cl.Classify(h, nil); got != CategoryNotifications {
+			t.Errorf("%q: %q, quiero la regla base", username, got)
+		}
+	}
+}
+
 func TestParseCategoryYVista(t *testing.T) {
 	for _, c := range Categories {
 		if got, err := ParseCategory(string(c)); err != nil || got != c {

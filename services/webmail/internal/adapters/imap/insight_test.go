@@ -74,13 +74,15 @@ func rawMail(from, subject, date, extra string) string {
 func TestLaPestanaDelListadoYElFiltroEnElServidorCoinciden(t *testing.T) {
 	mb := memMailbox(t)
 	ctx := context.Background()
-	appendRaw(t, mb, "INBOX", rawMail("Cliente <c@cliente.test>", "Pedido", "Mon, 1 Sep 2026 10:00:00 +0000", ""))
+	appendRaw(t, mb, "INBOX", rawMail("Cliente <c@cliente.test>", "Pedido", "Mon, 1 Sep 2026 10:00:00 +0000", ""), domain.FlagSeen)
 	appendRaw(t, mb, "INBOX", rawMail("Tienda <news@tienda.test>", "Ofertas", "Mon, 1 Sep 2026 11:00:00 +0000",
-		"List-Unsubscribe: <https://tienda.test/u>\r\nList-Unsubscribe-Post: List-Unsubscribe=One-Click\r\n"))
+		"List-Unsubscribe: <https://tienda.test/u>\r\nList-Unsubscribe-Post: List-Unsubscribe=One-Click\r\n"), domain.FlagSeen)
 	appendRaw(t, mb, "INBOX", rawMail("Sistema <sistema@proveedor.test>", "Alerta", "Mon, 1 Sep 2026 12:00:00 +0000",
-		"Auto-Submitted: auto-generated\r\nList-Id: <alertas.proveedor.test>\r\n"))
-	appendRaw(t, mb, "INBOX", rawMail("Banco <no-reply@banco.test>", "Movimiento", "Mon, 1 Sep 2026 13:00:00 +0000", ""))
-	appendRaw(t, mb, "INBOX", rawMail("Colega <luis@empresa.test>", "Respuesta", "Mon, 1 Sep 2026 14:00:00 +0000", "Auto-Submitted: no\r\n"))
+		"Auto-Submitted: auto-generated\r\nList-Id: <alertas.proveedor.test>\r\n"), domain.FlagSeen)
+	appendRaw(t, mb, "INBOX", rawMail("Banco <no-reply@banco.test>", "Movimiento", "Mon, 1 Sep 2026 13:00:00 +0000", ""), domain.FlagSeen)
+	appendRaw(t, mb, "INBOX", rawMail("Colega <luis@empresa.test>", "Respuesta", "Mon, 1 Sep 2026 14:00:00 +0000", "Auto-Submitted: no\r\n"), domain.FlagSeen)
+	appendRaw(t, mb, "INBOX", rawMail("Soporte <ayuda@proveedor.test>", "Ticket", "Mon, 1 Sep 2026 15:00:00 +0000",
+		"Auto-Submitted: auto-generated\r\nIn-Reply-To: <consulta-1@empresa.test>\r\n"), domain.FlagSeen)
 
 	q, _ := domain.NewListQuery(1, 50, "")
 	all, err := mb.List(ctx, "INBOX", q)
@@ -90,6 +92,7 @@ func TestLaPestanaDelListadoYElFiltroEnElServidorCoinciden(t *testing.T) {
 	want := map[string]domain.Category{
 		"Pedido": domain.CategoryPrimary, "Ofertas": domain.CategoryNewsletters, "Alerta": domain.CategoryNotifications,
 		"Movimiento": domain.CategoryNotifications, "Respuesta": domain.CategoryPrimary,
+		"Ticket": domain.CategoryPrimary,
 	}
 	byCategory := map[domain.Category]map[uint32]bool{}
 	for _, e := range all.Items {
@@ -227,10 +230,93 @@ func TestParseHeaderFieldsDespliegaLasLineas(t *testing.T) {
 }
 
 func TestCategoryCriteriaSinCategoriaNoFiltra(t *testing.T) {
-	if categoryCriteria("") != nil {
+	if categoryCriteria("", domain.Classifier{}) != nil {
 		t.Fatal("sin pestana no hay criterio")
 	}
-	if c := categoryCriteria(domain.CategoryPrimary); c == nil || len(c.Not) != 3 {
+	if c := categoryCriteria(domain.CategoryPrimary, domain.Classifier{}); c == nil || len(c.Or) != 1 {
 		t.Fatalf("principal: %+v", c)
+	}
+}
+
+func TestLoSinLeerEntraEnPrincipalSinCambiarSuCategoria(t *testing.T) {
+	mb := memMailbox(t)
+	ctx := context.Background()
+	appendRaw(t, mb, "INBOX", rawMail("Banco <no-reply@banco.test>", "Sin leer", "Mon, 1 Sep 2026 10:00:00 +0000", ""))
+	appendRaw(t, mb, "INBOX", rawMail("Banco <no-reply@banco.test>", "Leido", "Mon, 1 Sep 2026 11:00:00 +0000", ""), domain.FlagSeen)
+	appendRaw(t, mb, "INBOX", rawMail("Tienda <news@tienda.test>", "Boletin sin leer", "Mon, 1 Sep 2026 12:00:00 +0000",
+		"List-Unsubscribe: <https://tienda.test/u>\r\n"))
+
+	subjects := func(c domain.Category) map[string]domain.Category {
+		q, _ := domain.NewListQuery(1, 50, "")
+		q, err := q.WithFilter(domain.SearchFilter{Category: c})
+		if err != nil {
+			t.Fatal(err)
+		}
+		page, err := mb.List(ctx, "INBOX", q)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := map[string]domain.Category{}
+		for _, e := range page.Items {
+			out[e.Subject] = e.Category
+		}
+		return out
+	}
+
+	primary := subjects(domain.CategoryPrimary)
+	if len(primary) != 2 || primary["Sin leer"] != domain.CategoryNotifications || primary["Boletin sin leer"] != domain.CategoryNewsletters {
+		t.Fatalf("principal debe traer lo sin leer con su categoria real: %v", primary)
+	}
+	if _, leido := primary["Leido"]; leido {
+		t.Fatalf("lo leido de otra pestana no entra en principal: %v", primary)
+	}
+	if got := subjects(domain.CategoryNotifications); len(got) != 2 {
+		t.Fatalf("notificaciones conserva lo suyo, leido o no: %v", got)
+	}
+	if got := subjects(domain.CategoryNewsletters); len(got) != 1 {
+		t.Fatalf("boletines conserva lo suyo: %v", got)
+	}
+}
+
+func TestUnaRespuestaAUnMensajePropioEsSiemprePrincipal(t *testing.T) {
+	mb := memMailbox(t)
+	ctx := context.Background()
+	appendRaw(t, mb, "INBOX", rawMail("Soporte <customercare@proveedor.test>", "Ticket", "Mon, 1 Sep 2026 10:00:00 +0000",
+		"Auto-Submitted: auto-generated\r\nX-Auto-Response-Suppress: All\r\nIn-Reply-To: <abc123@empresa.test>\r\n"), domain.FlagSeen)
+	appendRaw(t, mb, "INBOX", rawMail("Hilo <lista@proveedor.test>", "Hilo de lista", "Mon, 1 Sep 2026 11:00:00 +0000",
+		"List-Id: <hilo.proveedor.test>\r\nReferences: <otro@x.test> <abc999@EMPRESA.test>\r\n"), domain.FlagSeen)
+	appendRaw(t, mb, "INBOX", rawMail("Soporte <customercare@proveedor.test>", "Aviso ajeno", "Mon, 1 Sep 2026 12:00:00 +0000",
+		"Auto-Submitted: auto-generated\r\nIn-Reply-To: <abc123@otro.test>\r\n"), domain.FlagSeen)
+	appendRaw(t, mb, "INBOX", rawMail("Soporte <customercare@proveedor.test>", "Dominio parecido", "Mon, 1 Sep 2026 13:00:00 +0000",
+		"Auto-Submitted: auto-generated\r\nIn-Reply-To: <abc123@empresa.test.ajeno.example>\r\n"), domain.FlagSeen)
+
+	for _, c := range []domain.Category{domain.CategoryPrimary, domain.CategoryNotifications, domain.CategoryNewsletters} {
+		q, _ := domain.NewListQuery(1, 50, "")
+		q, err := q.WithFilter(domain.SearchFilter{Category: c})
+		if err != nil {
+			t.Fatal(err)
+		}
+		page, err := mb.List(ctx, "INBOX", q)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := map[string]bool{}
+		for _, e := range page.Items {
+			got[e.Subject] = true
+		}
+		switch c {
+		case domain.CategoryPrimary:
+			if !got["Ticket"] || !got["Hilo de lista"] || got["Aviso ajeno"] || got["Dominio parecido"] {
+				t.Errorf("principal: %v", got)
+			}
+		case domain.CategoryNotifications:
+			if got["Ticket"] || !got["Aviso ajeno"] || !got["Dominio parecido"] {
+				t.Errorf("notificaciones: %v", got)
+			}
+		case domain.CategoryNewsletters:
+			if got["Hilo de lista"] {
+				t.Errorf("boletines: %v", got)
+			}
+		}
 	}
 }

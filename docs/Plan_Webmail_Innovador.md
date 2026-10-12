@@ -51,7 +51,12 @@ calendarios compartidos editables, cifrado extremo a extremo.
 4. **Bandeja inteligente y escudo antifraude se calculan en el webmail** al listar y leer, con reglas
    deterministas sobre cabeceras (`List-Id`, `List-Unsubscribe`, `Precedence`, `Auto-Submitted`,
    `Authentication-Results`/`X-Spamd-Result` que ponen nuestros motores) y el directorio de la empresa
-   (dominios propios y nombres de companeros). Nada se envia fuera. La baja en un clic la hace el
+   (dominios propios y nombres de companeros). Nada se envia fuera. Dos excepciones, ambas en
+   `domain.Classifier` y su traduccion a IMAP SEARCH (`categoryCriteria`): un mensaje cuyo `In-Reply-To`
+   o `References` lleva un identificador del dominio del buzon (`@dominio>`) responde a algo propio y es
+   siempre principal, aunque lo envie una maquina (tickets, rebotes); y la pestana principal recoge
+   ademas todo lo que esta sin leer, que conserva su categoria y vuelve solo a su pestana al leerlo.
+   La baja en un clic la hace el
    servicio (RFC 8058 `POST` a una URL `https` publica con proteccion SSRF: sin IP privadas, sin
    redirecciones, tiempo y tamano acotados) o, si solo hay `mailto:`, un correo desde el propio buzon.
 5. **Ficheros grandes**: el fichero va al almacen de objetos (`pkg/objectstore`, MinIO en produccion),

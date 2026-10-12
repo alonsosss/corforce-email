@@ -82,7 +82,7 @@ func (s *Store) Open(ctx context.Context, username string) (ports.Mailbox, error
 	if err != nil {
 		return nil, err
 	}
-	return &mailbox{c: c, logger: s.logger}, nil
+	return &mailbox{c: c, logger: s.logger, classifier: domain.ClassifierFor(username)}, nil
 }
 
 // dial abre la conexion y entra en nombre del buzon. unilateral, si no es nil, recibe lo que Dovecot avisa
@@ -137,6 +137,7 @@ type mailbox struct {
 	selected    string
 	writable    bool
 	uidValidity uint32
+	classifier  domain.Classifier
 }
 
 // watch cierra la conexion si el contexto se cancela: imapclient no acepta contexto por
@@ -234,7 +235,7 @@ func (m *mailbox) List(ctx context.Context, folder string, q domain.ListQuery) (
 	if err := m.selectFolder(folder, false); err != nil {
 		return domain.MessagePage{}, err
 	}
-	uids, err := m.sortedUIDs(searchCriteria(q))
+	uids, err := m.sortedUIDs(searchCriteria(q, m.classifier))
 	if err != nil {
 		return domain.MessagePage{}, err
 	}
@@ -266,7 +267,7 @@ func (m *mailbox) List(ctx context.Context, folder string, q domain.ListQuery) (
 	for _, uid := range page {
 		if b := byUID[uid]; b != nil {
 			env := envelopeOf(b)
-			env.Category = domain.Classify(parseHeaderFields(headerSection(b)), env.From)
+			env.Category = m.classifier.Classify(parseHeaderFields(headerSection(b)), env.From)
 			items = append(items, env)
 		}
 	}
@@ -276,7 +277,7 @@ func (m *mailbox) List(ctx context.Context, folder string, q domain.ListQuery) (
 // searchCriteria traduce la busqueda a IMAP SEARCH. Los textos los cita la libreria y Dovecot los
 // busca como subcadena sin distinguir mayusculas; las fechas son las de la cabecera Date, las
 // mismas por las que se ordena el listado.
-func searchCriteria(q domain.ListQuery) *imaplib.SearchCriteria {
+func searchCriteria(q domain.ListQuery, cl domain.Classifier) *imaplib.SearchCriteria {
 	c := &imaplib.SearchCriteria{}
 	if q.Search != "" {
 		c.Text = []string{q.Search}
@@ -299,7 +300,7 @@ func searchCriteria(q domain.ListQuery) *imaplib.SearchCriteria {
 		// adjuntos; el resto se decide con BODYSTRUCTURE (withAttachments).
 		c.Not = append(c.Not, imaplib.SearchCriteria{Header: []imaplib.SearchCriteriaHeaderField{{Key: "Content-Type", Value: "text/"}}})
 	}
-	if category := categoryCriteria(f.Category); category != nil {
+	if category := categoryCriteria(f.Category, cl); category != nil {
 		c.And(category)
 	}
 	return c

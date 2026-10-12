@@ -39,6 +39,8 @@ const (
 	HeaderListUnsubscribePost = "List-Unsubscribe-Post"
 	HeaderPrecedence          = "Precedence"
 	HeaderAutoSubmitted       = "Auto-Submitted"
+	HeaderInReplyTo           = "In-Reply-To"
+	HeaderReferences          = "References"
 	HeaderAuthResults         = "Authentication-Results"
 	HeaderSpamdResult         = "X-Spamd-Result"
 )
@@ -89,6 +91,41 @@ func (h MessageHeaders) Contains(key, sub string) bool {
 // IsNewsletter: ofrece baja o viene de una lista.
 func (h MessageHeaders) IsNewsletter() bool {
 	return h.Has(HeaderListUnsubscribe) || h.Has(HeaderListID) || h.Contains(HeaderPrecedence, NewsletterPrecedence)
+}
+
+// Classifier es Classify con lo que es propio del buzon: reconoce las respuestas a lo que el
+// buzon envio. Se construye una vez por buzon (ClassifierFor) y el valor cero equivale a Classify.
+type Classifier struct {
+	// ReplyMarker es la subcadena que cierra un Message-ID generado por este buzon, "@dominio>". Una
+	// cabecera In-Reply-To o References que la contiene responde a algo que el buzon envio; el ">"
+	// evita que "@dominio.ajeno" cuente. Vacia, no se reconocen respuestas. La cabecera la escribe el
+	// remitente, asi que solo decide en que pestana cae el mensaje: nada de seguridad depende de ella.
+	ReplyMarker string
+}
+
+// ClassifierFor es el clasificador del buzon username. Un nombre sin dominio no reconoce respuestas.
+func ClassifierFor(username string) Classifier {
+	at := strings.LastIndex(username, "@")
+	if at < 0 || at == len(username)-1 {
+		return Classifier{}
+	}
+	return Classifier{ReplyMarker: strings.ToLower(username[at:]) + ">"}
+}
+
+// RepliesToOwn dice si el mensaje responde a uno enviado desde este buzon o desde su dominio.
+func (c Classifier) RepliesToOwn(h MessageHeaders) bool {
+	return c.ReplyMarker != "" &&
+		(h.Contains(HeaderInReplyTo, c.ReplyMarker) || h.Contains(HeaderReferences, c.ReplyMarker))
+}
+
+// Classify aplica las reglas de Classify tras una excepcion: lo que responde a un mensaje propio es
+// siempre principal, aunque lo envie una maquina (la respuesta de un sistema de tickets, el rebote de
+// un envio, la respuesta automatica de un destinatario).
+func (c Classifier) Classify(h MessageHeaders, from []Address) Category {
+	if c.RepliesToOwn(h) {
+		return CategoryPrimary
+	}
+	return Classify(h, from)
 }
 
 // Classify decide la pestana. En orden: un mensaje generado por una maquina (Auto-Submitted) es

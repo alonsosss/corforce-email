@@ -20,10 +20,11 @@ type SenderInsight struct {
 // InsightHeaderKeys son las cabeceras que se piden al servidor para la ficha.
 var InsightHeaderKeys = []string{
 	HeaderListID, HeaderListUnsubscribe, HeaderListUnsubscribePost, HeaderPrecedence,
-	HeaderAutoSubmitted, HeaderAuthResults, HeaderSpamdResult,
+	HeaderAutoSubmitted, HeaderAuthResults, HeaderSpamdResult, HeaderInReplyTo, HeaderReferences,
 }
 
 // CategoryHeaderKeys son las que decide la categoria en el listado.
 var CategoryHeaderKeys = []string{
 	HeaderListID, HeaderListUnsubscribe, HeaderPrecedence, HeaderAutoSubmitted,
+	HeaderInReplyTo, HeaderReferences,
 }

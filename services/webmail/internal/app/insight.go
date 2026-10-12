@@ -177,7 +177,7 @@ func (s *Service) SenderInsight(ctx context.Context, sess domain.Session, folder
 	in := domain.ShieldInput{From: src.From, ReplyTo: src.ReplyTo, Headers: src.Headers}
 	in.OwnDomains, in.Colleagues, in.Partial = s.companyContext(ctx, sess, src.From)
 	out := domain.SenderInsight{
-		Category: domain.Classify(src.Headers, src.From),
+		Category: domain.ClassifierFor(sess.Username).Classify(src.Headers, src.From),
 		Shield:   domain.AssessSender(in),
 	}
 	if domain.UnsubscribeAllowedIn(role) {
