@@ -30,7 +30,7 @@ solo se enlaza. Las entradas más recientes van arriba.
 
 | Fecha | Incidente | Impacto | Guardarrail |
 |---|---|---|---|
-| 2026-10-12 | [Las reservas de citas y los recordatorios fallaban con 503 por el límite de mail-directory](#2026-10-12--las-reservas-de-citas-y-los-recordatorios-fallaban-con-503-por-el-límite-de-mail-directory) | `make e2e-mail` en rojo en `main` (#29); nada llegó a producción | `make e2e-mail` |
+| 2026-10-12 | [Las reservas de citas y los recordatorios fallaban con 503 por el límite de mail-directory](#2026-10-12--las-reservas-de-citas-y-los-recordatorios-fallaban-con-503-por-el-límite-de-mail-directory) | `make e2e-mail` en rojo en `main` (#29); nada llegó a producción | `make e2e-mail` y `ratelimit_test.go` |
 | 2026-10-12 | [La CI quedó en rojo por 11 vulnerabilidades alcanzables de Go publicadas ese día](#2026-10-12--la-ci-quedó-en-rojo-por-11-vulnerabilidades-alcanzables-de-go-publicadas-ese-día) | CI en rojo unas 3 horas; despliegue retenido | `govulncheck` en la CI y Go atado a `go.mod` |
 | 2026-10-12 | [`make e2e-mail` falló al construir unbound por un error TLS puntual del CDN de Alpine](#2026-10-12--make-e2e-mail-falló-al-construir-unbound-por-un-error-tls-puntual-del-cdn-de-alpine) | Ejecución nocturna en rojo y despliegue de motores retenido (#25) | `check-unbound-install-retry.sh` |
 | 2026-10-05 | [Escribir una respuesta podía archivar el mensaje abierto](#2026-10-05--escribir-una-respuesta-podía-archivar-el-mensaje-abierto) | Mensajes archivados sin querer al responder en el webmail | `shortcuts.test.tsx` |
@@ -82,8 +82,8 @@ solo se enlaza. Las entradas más recientes van arriba.
 | Síntoma | 9 fallos en el flujo de citas: la reserva pública respondía 503 `SERVICE_UNAVAILABLE`; en el log del webmail, `mail-directory respondió 429` |
 | Impacto | `main` en rojo y despliegue retenido por la puerta de `make e2e-mail`. Sin impacto en producción: el cambio no se había desplegado |
 | Causa raíz | Webmail pidió a mail-directory los remitentes fijados en Principal en cada listado de INBOX. Todas las llamadas del webmail llegan a mail-directory desde una misma IP, que tiene 120 peticiones por minuto, y ese cupo ya lo gastaban en gran parte los sondeos de recordatorios y envíos programados: un listado más por segundo agotaba el cupo y las reservas, los recordatorios y los envíos programados recibían 429 |
-| Solución | Cache de los remitentes fijados por buzón en el caso de uso del webmail, de un minuto, invalidada al fijar o quitar y que recuerda 15 s un fallo (`fa6affc`); la prueba de Principal se ajustó al comportamiento nuevo (`d471f1e`) |
-| Que no se repita | `make e2e-mail` (la reserva falla si mail-directory limita). Pendiente de decidir: el límite por IP sobre rutas servicio a servicio es frágil, y cualquier nueva llamada por petición del webmail al directorio vuelve a consumirlo |
+| Solución | Cache de los remitentes fijados por buzón en el caso de uso del webmail, de un minuto, invalidada al fijar o quitar y que recuerda 15 s un fallo (`fa6affc`); la prueba de Principal se ajustó al comportamiento nuevo (`d471f1e`) |; el cupo de mail-directory pasa a contarse por buzón, por ruta y por usuario según la llamada (`ratelimit.go`)
+| Que no se repita | `make e2e-mail` (la reserva falla si mail-directory limita) y `services/mail-directory/ratelimit_test.go`: el cupo de la API interna ya no es por IP de origen sino por buzón (por ruta si no lleva buzón) y el del API con sesión, por usuario, como en mail-files y mail-dav, de modo que otra llamada por petición del webmail al directorio no agota el cupo de los demás |
 | Detalle | `services/mail-directory/main.go` (`NewRateLimiter(120, time.Minute)`), `pkg/middleware/ratelimit.go` |
 | Desplegado | No aplica (el cambio que lo causó, `e74a11c` y `dd71944`, aún no está en producción) |
 

@@ -205,7 +205,7 @@ func apiRouter(pool *pgxpool.Pool, membership *tenantcell.Membership, routes htt
 	r.Use(db.StaticPoolMiddleware(pool))
 	r.Use(middleware.SecureHeaders)
 	r.Use(middleware.Logger(logger))
-	r.Use(middleware.NewRateLimiter(120, time.Minute).Limit)
+	r.Use(rateLimited())
 	r.Use(membership.Require)
 	r.Mount("/", routes)
 	return r

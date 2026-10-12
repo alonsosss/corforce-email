@@ -36,6 +36,7 @@
 #   make e2e-mail
 #   E2E_KEEP=1 make e2e-mail                  # deja contenedores, red y registros
 #   E2E_MAIL_PORT_BASE=29100 make e2e-mail    # otro rango si 29000-29099 esta ocupado
+#   E2E_CARGA=1 make e2e-mail                 # anade una etapa de carga (E2E_CARGA_SESIONES x E2E_CARGA_MENSAJES)
 #   E2E_MAIL_IPV4_NETWORK=172.31.29 make e2e-mail  # otra subred /24 para la red de los motores
 #
 # Una sola ejecucion a la vez (puede correr junto a make e2e, que usa otro prefijo y otros
@@ -2620,6 +2621,20 @@ esperar "Dovecot vuelve" 180 dovecot_sano
 docker exec "$(c postfix-mail)" postqueue -f >/dev/null 2>&1
 contains "y el mensaje llega al buzon de ana" "$(cliente buscar ana@acme.test "$ANA_PASS" "$TOKEN-caida" --espera 60)" "OK 1"
 expect "la cola de Postfix queda vacia" "$(docker exec "$(c postfix-mail)" postqueue -j | wc -l)" "0"
+
+if [[ "${E2E_CARGA:-0}" == "1" ]]; then
+  echo "== Carga: envio autenticado en paralelo por submission hasta el INBOX (E2E_CARGA=1)"
+  # Opcional: no forma parte de la verificacion de CI. Mide aceptacion y entrega bajo concurrencia con la
+  # credencial maestra, que Postfix mapea al buzon (ver el flujo de correo de arriba).
+  CARGA_JSON=$(docker run --rm --network "$E2E_MAIL_NETWORK" -v "$ROOT/ops/e2e/carga_mail.py:/carga.py:ro" -v "$TLS/ca.pem:/ca.pem:ro" \
+    --entrypoint python3 "$PROYECTO-dovecot-mail" /carga.py --ca /ca.pem --nombre "$MAIL_HOSTNAME" \
+    --login "ana@acme.test*$MAESTRO" --clave "$MASTER_PASS" --de ana@acme.test --para bea@acme.test \
+    --destino-login "bea@acme.test*$MAESTRO" --destino-clave "$MASTER_PASS" \
+    --sesiones "${E2E_CARGA_SESIONES:-5}" --mensajes "${E2E_CARGA_MENSAJES:-40}" 2>&1)
+  echo "$CARGA_JSON"
+  expect "todo lo aceptado por submission llega al INBOX" \
+    "$(echo "$CARGA_JSON" | jget aceptados)" "$(echo "$CARGA_JSON" | jget llegados_al_inbox)"
+fi
 
 echo "== Baja de la empresa: su correo deja de entrar y de autenticar en la celda"
 # La saga de baja de organization da de baja a acme en el mail-directory de su celda antes de
