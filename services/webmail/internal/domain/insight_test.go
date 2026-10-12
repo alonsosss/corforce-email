@@ -69,6 +69,19 @@ func TestClassifierSinDominioNoReconoceRespuestas(t *testing.T) {
 	}
 }
 
+func TestClassifierUnRemitenteFijadoEsPrincipalAunqueSeaUnaMaquina(t *testing.T) {
+	cl := ClassifierFor("ana@empresa.test").WithPrimarySenders([]string{"soporte@proveedor.test"})
+	h := MessageHeaders{HeaderAutoSubmitted: {"auto-generated"}}
+	if got := cl.Classify(h, []Address{{Name: "Soporte", Email: "Soporte@Proveedor.TEST"}}); got != CategoryPrimary {
+		t.Fatalf("fijado: %q", got)
+	}
+	for _, other := range []string{"mariana@proveedor.test", "soporte@proveedor.test.ajeno.example", "no-soporte@proveedor.test"} {
+		if got := cl.Classify(h, []Address{{Email: other}}); got != CategoryNotifications {
+			t.Errorf("%s no esta fijado: %q", other, got)
+		}
+	}
+}
+
 func TestParseCategoryYVista(t *testing.T) {
 	for _, c := range Categories {
 		if got, err := ParseCategory(string(c)); err != nil || got != c {

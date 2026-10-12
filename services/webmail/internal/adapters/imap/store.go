@@ -235,7 +235,8 @@ func (m *mailbox) List(ctx context.Context, folder string, q domain.ListQuery) (
 	if err := m.selectFolder(folder, false); err != nil {
 		return domain.MessagePage{}, err
 	}
-	uids, err := m.sortedUIDs(searchCriteria(q, m.classifier))
+	cl := m.classifier.WithPrimarySenders(q.PrimarySenders)
+	uids, err := m.sortedUIDs(searchCriteria(q, cl))
 	if err != nil {
 		return domain.MessagePage{}, err
 	}
@@ -267,7 +268,7 @@ func (m *mailbox) List(ctx context.Context, folder string, q domain.ListQuery) (
 	for _, uid := range page {
 		if b := byUID[uid]; b != nil {
 			env := envelopeOf(b)
-			env.Category = m.classifier.Classify(parseHeaderFields(headerSection(b)), env.From)
+			env.Category = cl.Classify(parseHeaderFields(headerSection(b)), env.From)
 			items = append(items, env)
 		}
 	}

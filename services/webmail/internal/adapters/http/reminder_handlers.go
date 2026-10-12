@@ -328,6 +328,7 @@ var reminderErrorCodes = []struct {
 	{domain.ErrQuickReplyNotFound, http.StatusNotFound, "QUICK_REPLY_NOT_FOUND"},
 	{domain.ErrQuickReplyExists, http.StatusConflict, "QUICK_REPLY_EXISTS"},
 	{domain.ErrQuickReplyLimit, http.StatusConflict, "QUICK_REPLY_LIMIT"},
+	{domain.ErrPrimarySenderLimit, http.StatusConflict, "PRIMARY_SENDER_LIMIT"},
 }
 
 // writeReminderError responde los errores de recordatorios y respuestas rapidas; false si err no es

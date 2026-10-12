@@ -51,6 +51,7 @@ describe('escudo antifraude en la lectura', () => {
   beforeEach(() => {
     resetWebmailCatalogs();
     vi.spyOn(webmailApi, 'davMeta').mockResolvedValue({ limits: {} });
+    vi.spyOn(webmailApi, 'primarySenders').mockResolvedValue([]);
     vi.spyOn(webmailApi, 'contacts').mockResolvedValue({
       items: [],
       page: 1,
@@ -218,5 +219,41 @@ describe('escudo antifraude en la lectura', () => {
     expect(await within(panel).findByText(t('webmail.sender.notContact'))).toBeInTheDocument();
     await user.keyboard('{Escape}');
     expect(screen.queryByRole('complementary')).toBeNull();
+  });
+
+  it('fija al remitente en Principal y lo quita desde el mismo boton', async () => {
+    const user = userEvent.setup();
+    vi.spyOn(webmailApi, 'senderInsight').mockResolvedValue(insight({ category: 'notifications' }));
+    const add = vi.spyOn(webmailApi, 'addPrimarySender').mockResolvedValue(null);
+    const remove = vi.spyOn(webmailApi, 'removePrimarySender').mockResolvedValue(null);
+    renderShield({ sender: { name: 'Soporte', email: 'Soporte@Proveedor.test' } });
+
+    await user.click(await screen.findByRole('button', { name: t('webmail.primarySender.pin') }));
+    expect(add).toHaveBeenCalledWith('soporte@proveedor.test');
+
+    await user.click(await screen.findByRole('button', { name: t('webmail.primarySender.unpin') }));
+    expect(remove).toHaveBeenCalledWith('soporte@proveedor.test');
+    expect(
+      await screen.findByRole('button', { name: t('webmail.primarySender.pin') }),
+    ).toBeInTheDocument();
+  });
+
+  it('un remitente que ya cae en Principal por sus reglas no ofrece fijarlo', async () => {
+    vi.spyOn(webmailApi, 'senderInsight').mockResolvedValue(insight({ category: 'primary' }));
+    renderShield();
+    expect(
+      await screen.findByRole('button', { name: t('webmail.sender.open') }),
+    ).toBeInTheDocument();
+    await waitFor(() => expect(webmailApi.primarySenders).toHaveBeenCalled());
+    expect(screen.queryByRole('button', { name: t('webmail.primarySender.pin') })).toBeNull();
+  });
+
+  it('uno ya fijado se puede quitar aunque su categoria sea principal', async () => {
+    vi.spyOn(webmailApi, 'senderInsight').mockResolvedValue(insight({ category: 'primary' }));
+    vi.spyOn(webmailApi, 'primarySenders').mockResolvedValue(['carlos@gratis.test']);
+    renderShield();
+    expect(
+      await screen.findByRole('button', { name: t('webmail.primarySender.unpin') }),
+    ).toBeInTheDocument();
   });
 });

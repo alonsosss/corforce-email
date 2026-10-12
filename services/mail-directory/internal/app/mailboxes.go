@@ -377,6 +377,7 @@ func (uc *UseCase) DeleteMailbox(ctx context.Context, tenantID, id uuid.UUID) er
 			func() error { return uc.scheduled.DeleteByUsername(ctx, tenantID, m.Username) },
 			func() error { return uc.reminders.DeleteByUsername(ctx, tenantID, m.Username) },
 			func() error { return uc.quickReplies.DeleteByUsername(ctx, tenantID, m.Username) },
+			func() error { return uc.primarySenders.DeleteByUsername(ctx, tenantID, m.Username) },
 			func() error { return uc.senderACL.DeleteByLoggedInAs(ctx, tenantID, m.Username) },
 			func() error { return uc.spamAliases.DeleteByGoto(ctx, tenantID, m.Username) },
 			func() error { return uc.mailboxes.RecordDeletion(ctx, m) },

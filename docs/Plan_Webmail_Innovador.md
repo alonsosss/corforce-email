@@ -54,8 +54,12 @@ calendarios compartidos editables, cifrado extremo a extremo.
    (dominios propios y nombres de companeros). Nada se envia fuera. Dos excepciones, ambas en
    `domain.Classifier` y su traduccion a IMAP SEARCH (`categoryCriteria`): un mensaje cuyo `In-Reply-To`
    o `References` lleva un identificador del dominio del buzon (`@dominio>`) responde a algo propio y es
-   siempre principal, aunque lo envie una maquina (tickets, rebotes); y la pestana principal recoge
-   ademas todo lo que esta sin leer, que conserva su categoria y vuelve solo a su pestana al leerlo.
+   siempre principal, aunque lo envie una maquina (tickets, rebotes); un remitente que el usuario
+   fija con "Siempre en Principal" lo es tambien (`mail.mailbox_primary_senders`, migracion
+   `mail-directory/17_primary_senders.sql`, hasta 200 por buzon; webmail `/primary-senders`, interno
+   `/internal/mail-directory/primary-senders`; se aplica solo a la bandeja de entrada y, si el
+   directorio no responde, se lista igual sin ellos); y la pestana principal recoge ademas todo lo que
+   esta sin leer, que conserva su categoria y vuelve solo a su pestana al leerlo.
    La baja en un clic la hace el
    servicio (RFC 8058 `POST` a una URL `https` publica con proteccion SSRF: sin IP privadas, sin
    redirecciones, tiempo y tamano acotados) o, si solo hay `mailto:`, un correo desde el propio buzon.

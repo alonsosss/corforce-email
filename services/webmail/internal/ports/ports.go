@@ -304,6 +304,15 @@ type QuickReplyDirectory interface {
 	DeleteQuickReply(ctx context.Context, username, id string) error
 }
 
+// PrimarySenderDirectory guarda en mail-directory los remitentes que el buzon fija en Principal. Una
+// direccion que rechaza es un *domain.ValidationError; el tope, domain.ErrPrimarySenderLimit. Fijar
+// una repetida o quitar una ausente no es un error.
+type PrimarySenderDirectory interface {
+	PrimarySenders(ctx context.Context, username string) ([]string, error)
+	AddPrimarySender(ctx context.Context, username, address string) error
+	RemovePrimarySender(ctx context.Context, username, address string) error
+}
+
 // ContactBook es la libreta personal del buzon en mail-dav (la misma que sirve CardDAV). Todo lo que
 // mail-dav rechaza es un *domain.ServiceRejection con su codigo y sus detalles (un id que no existe,
 // un If-Match que ya no casa, un dato invalido, una cuota, un cupo); un fallo de la llamada es

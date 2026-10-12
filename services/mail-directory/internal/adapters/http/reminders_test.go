@@ -146,16 +146,17 @@ type remindersEnv struct {
 	*settingsEnv
 	reminders    *httpReminders
 	quickReplies *httpQuickReplies
+	primary      *httpPrimarySenders
 }
 
 func remindersServer(t *testing.T) *remindersEnv {
 	t.Helper()
 	base := settingsServer(t)
-	e := &remindersEnv{settingsEnv: base, quickReplies: &httpQuickReplies{rows: map[uuid.UUID]*domain.QuickReply{}}}
+	e := &remindersEnv{settingsEnv: base, quickReplies: &httpQuickReplies{rows: map[uuid.UUID]*domain.QuickReply{}}, primary: &httpPrimarySenders{}}
 	e.reminders = &httpReminders{rows: map[uuid.UUID]*domain.Reminder{}, now: func() time.Time { return e.now }}
 	uc := app.New(app.Deps{
 		Tx: vacTx{}, Mailboxes: base.mailboxes, Retirements: vacRetirements{}, Locator: &vacLocator{m: base.m},
-		Reminders: e.reminders, QuickReplies: e.quickReplies, Clock: func() time.Time { return e.now },
+		Reminders: e.reminders, QuickReplies: e.quickReplies, PrimarySenders: e.primary, Clock: func() time.Time { return e.now },
 	})
 	e.h = middleware.InjectFromGateway(NewHandler(uc, authz.NewChecker("http://127.0.0.1:9", "")).Routes())
 	return e
@@ -277,6 +278,9 @@ func TestRutasDeRecordatoriosCerradasALasPersonas(t *testing.T) {
 		{http.MethodGet, "/internal/mail-directory/quick-replies?username=ana@acme.test"},
 		{http.MethodPost, "/internal/mail-directory/quick-replies?username=ana@acme.test"},
 		{http.MethodPut, "/internal/mail-directory/quick-replies/" + id + "?username=ana@acme.test"},
+		{http.MethodGet, "/internal/mail-directory/primary-senders?username=ana@acme.test"},
+		{http.MethodPost, "/internal/mail-directory/primary-senders?username=ana@acme.test"},
+		{http.MethodDelete, "/internal/mail-directory/primary-senders?username=ana@acme.test&address=a@b.example"},
 	} {
 		if rec := e.do(c.method, c.path, `{}`, uuid.NewString()); rec.Code != http.StatusForbidden {
 			t.Errorf("%s %s con usuario: %d", c.method, c.path, rec.Code)

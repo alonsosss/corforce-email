@@ -25,6 +25,7 @@ func (s *Service) ListThreads(ctx context.Context, sess domain.Session, folder s
 	if err := domain.ValidateFolderName(folder); err != nil {
 		return domain.ThreadPage{}, err
 	}
+	q.PrimarySenders = s.primarySendersFor(ctx, sess, folder)
 	var page domain.ThreadPage
 	err := s.withMailbox(ctx, sess, func(mb ports.Mailbox) error {
 		var err error
@@ -177,7 +178,7 @@ func (s *Service) SenderInsight(ctx context.Context, sess domain.Session, folder
 	in := domain.ShieldInput{From: src.From, ReplyTo: src.ReplyTo, Headers: src.Headers}
 	in.OwnDomains, in.Colleagues, in.Partial = s.companyContext(ctx, sess, src.From)
 	out := domain.SenderInsight{
-		Category: domain.ClassifierFor(sess.Username).Classify(src.Headers, src.From),
+		Category: s.classifierFor(ctx, sess, folder).Classify(src.Headers, src.From),
 		Shield:   domain.AssessSender(in),
 	}
 	if domain.UnsubscribeAllowedIn(role) {

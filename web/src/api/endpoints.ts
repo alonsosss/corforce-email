@@ -385,6 +385,7 @@ export const endpoints = {
     followUp: (id: string) => `${API_PREFIX}/webmail/follow-ups/${seg(id)}`,
     quickReplies: `${API_PREFIX}/webmail/quick-replies`,
     quickReply: (id: string) => `${API_PREFIX}/webmail/quick-replies/${seg(id)}`,
+    primarySenders: `${API_PREFIX}/webmail/primary-senders`,
     largeFiles: `${API_PREFIX}/webmail/large-files`,
     largeFile: (id: string) => `${API_PREFIX}/webmail/large-files/${seg(id)}`,
     assistant: `${API_PREFIX}/webmail/assistant`,

@@ -384,9 +384,10 @@ func main() {
 
 		// La baja en un clic sale a servidores de terceros: el cliente solo conecta con direcciones
 		// publicas y sin redirecciones.
-		Unsubscriber: unsubscribe.New(unsubscribeTimeout),
-		Reminders:    directory,
-		QuickReplies: directory,
+		Unsubscriber:   unsubscribe.New(unsubscribeTimeout),
+		Reminders:      directory,
+		QuickReplies:   directory,
+		PrimarySenders: directory,
 
 		MFAChallenges: redisadapter.NewMFAStore(rdb, st.cellCode),
 		Security:      directory,

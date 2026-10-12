@@ -320,3 +320,44 @@ func TestUnaRespuestaAUnMensajePropioEsSiemprePrincipal(t *testing.T) {
 		}
 	}
 }
+
+func TestUnRemitenteFijadoEsSiemprePrincipalEnElListadoYEnElFiltro(t *testing.T) {
+	mb := memMailbox(t)
+	ctx := context.Background()
+	appendRaw(t, mb, "INBOX", rawMail("Soporte <soporte@proveedor.test>", "Ticket", "Mon, 1 Sep 2026 10:00:00 +0000",
+		"Auto-Submitted: auto-generated\r\n"), domain.FlagSeen)
+	appendRaw(t, mb, "INBOX", rawMail("Otro <otro@proveedor.test>", "Otro aviso", "Mon, 1 Sep 2026 11:00:00 +0000",
+		"Auto-Submitted: auto-generated\r\n"), domain.FlagSeen)
+	appendRaw(t, mb, "INBOX", rawMail("Mariana <mariana@proveedor.test>", "Parecido", "Mon, 1 Sep 2026 12:00:00 +0000",
+		"Precedence: bulk\r\n"), domain.FlagSeen)
+
+	list := func(c domain.Category, pinned ...string) map[string]domain.Category {
+		q, _ := domain.NewListQuery(1, 50, "")
+		q, err := q.WithFilter(domain.SearchFilter{Category: c})
+		if err != nil {
+			t.Fatal(err)
+		}
+		q.PrimarySenders = pinned
+		page, err := mb.List(ctx, "INBOX", q)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := map[string]domain.Category{}
+		for _, e := range page.Items {
+			out[e.Subject] = e.Category
+		}
+		return out
+	}
+
+	if got := list(domain.CategoryPrimary); len(got) != 0 {
+		t.Fatalf("sin fijar nada de esto es principal: %v", got)
+	}
+	primary := list(domain.CategoryPrimary, "soporte@proveedor.test")
+	if len(primary) != 1 || primary["Ticket"] != domain.CategoryPrimary {
+		t.Fatalf("principal con el remitente fijado: %v", primary)
+	}
+	notifications := list(domain.CategoryNotifications, "soporte@proveedor.test")
+	if _, ok := notifications["Ticket"]; ok || len(notifications) != 2 {
+		t.Fatalf("lo fijado sale de notificaciones y lo demas se queda: %v", notifications)
+	}
+}

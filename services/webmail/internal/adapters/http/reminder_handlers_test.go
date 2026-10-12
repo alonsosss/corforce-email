@@ -302,6 +302,8 @@ func TestRutasDeRecordatoriosExigenSesionYOrigen(t *testing.T) {
 		{http.MethodPost, "/quick-replies", `{"name":"a","html":"b"}`},
 		{http.MethodPut, "/quick-replies/" + id, `{"name":"a","html":"b"}`},
 		{http.MethodDelete, "/quick-replies/" + id, ""},
+		{http.MethodPut, "/primary-senders", `{"address":"a@b.example"}`},
+		{http.MethodDelete, "/primary-senders?address=a@b.example", ""},
 	} {
 		if rec := do(env.h, w.method, BasePath+w.path, body(w.body), map[string]string{"Content-Type": "application/json"}, cookie); rec.Code != http.StatusForbidden {
 			t.Errorf("%s %s sin Origin: %d", w.method, w.path, rec.Code)
@@ -310,12 +312,48 @@ func TestRutasDeRecordatoriosExigenSesionYOrigen(t *testing.T) {
 			t.Errorf("%s %s sin sesion: %d", w.method, w.path, rec.Code)
 		}
 	}
-	for _, path := range []string{"/snooze", "/follow-ups", "/quick-replies"} {
+	for _, path := range []string{"/snooze", "/follow-ups", "/quick-replies", "/primary-senders"} {
 		if rec := do(env.h, http.MethodGet, BasePath+path, nil, nil, nil); rec.Code != http.StatusUnauthorized {
 			t.Errorf("GET %s sin sesion: %d", path, rec.Code)
 		}
 	}
 	if len(env.settings.reminders.created) != 0 || len(env.settings.reminders.quickIn) != 0 {
 		t.Fatal("nada llega al directorio sin sesion u origen")
+	}
+}
+
+func TestRemitentesFijadosPorHTTP(t *testing.T) {
+	env := newTestEnv(t, nopSender{})
+	cookie := login(t, env.h)
+
+	if rec := do(env.h, http.MethodPut, BasePath+"/primary-senders", body(`{"address":"Soporte@Proveedor.example"}`), jsonOrigin, cookie); rec.Code != http.StatusNoContent {
+		t.Fatalf("fijar: %d %s", rec.Code, rec.Body)
+	}
+	if rec := do(env.h, http.MethodPut, BasePath+"/primary-senders", body(`{"address":"soporte@proveedor.example"}`), jsonOrigin, cookie); rec.Code != http.StatusNoContent {
+		t.Fatalf("repetir es idempotente: %d %s", rec.Code, rec.Body)
+	}
+	if rec := do(env.h, http.MethodPut, BasePath+"/primary-senders", body(`{"address":"no es una direccion"}`), jsonOrigin, cookie); rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("invalida: %d %s", rec.Code, rec.Body)
+	}
+
+	rec := do(env.h, http.MethodGet, BasePath+"/primary-senders", nil, nil, cookie)
+	var list primarySendersDTO
+	envelopeData(t, rec, &list)
+	if rec.Code != http.StatusOK || len(list.Items) != 1 || list.Items[0] != "soporte@proveedor.example" {
+		t.Fatalf("listado: %d %s", rec.Code, rec.Body)
+	}
+
+	env.settings.primary.limit = 1
+	if rec := do(env.h, http.MethodPut, BasePath+"/primary-senders", body(`{"address":"otro@proveedor.example"}`), jsonOrigin, cookie); rec.Code != http.StatusConflict || errorCode(t, rec) != "PRIMARY_SENDER_LIMIT" {
+		t.Fatalf("tope: %d %s", rec.Code, rec.Body)
+	}
+
+	if rec := do(env.h, http.MethodDelete, BasePath+"/primary-senders?address=Soporte@proveedor.example", nil, jsonOrigin, cookie); rec.Code != http.StatusNoContent {
+		t.Fatalf("quitar: %d %s", rec.Code, rec.Body)
+	}
+	rec = do(env.h, http.MethodGet, BasePath+"/primary-senders", nil, nil, cookie)
+	envelopeData(t, rec, &list)
+	if len(list.Items) != 0 || rec.Body.String() == "" {
+		t.Fatalf("tras quitar: %s", rec.Body)
 	}
 }

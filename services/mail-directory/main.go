@@ -133,6 +133,7 @@ func main() {
 		Scheduled:           postgres.NewScheduledSendRepo(ctxPool),
 		Reminders:           postgres.NewReminderRepo(ctxPool),
 		QuickReplies:        postgres.NewQuickReplyRepo(ctxPool),
+		PrimarySenders:      postgres.NewPrimarySenderRepo(ctxPool),
 		Locator:             postgres.NewMailboxLocator(ctxPool),
 		Aliases:             postgres.NewAliasRepo(ctxPool),
 		SpamAliases:         postgres.NewSpamAliasRepo(ctxPool),

@@ -207,6 +207,17 @@ type QuickReplyRepository interface {
 	DeleteByUsername(ctx context.Context, tenantID uuid.UUID, username string) error
 }
 
+// PrimarySenderRepository guarda los remitentes que un buzon fija en Principal
+// (mail.mailbox_primary_senders). Add es idempotente: una direccion repetida no es un error.
+type PrimarySenderRepository interface {
+	ListByUsername(ctx context.Context, tenantID uuid.UUID, username string) ([]domain.PrimarySender, error)
+	Count(ctx context.Context, tenantID uuid.UUID, username string) (int, error)
+	Add(ctx context.Context, s *domain.PrimarySender) error
+	// Remove no falla si la direccion no estaba.
+	Remove(ctx context.Context, tenantID uuid.UUID, username, address string) error
+	DeleteByUsername(ctx context.Context, tenantID uuid.UUID, username string) error
+}
+
 // MTASTSRepository guarda la politica MTA-STS de los dominios de una empresa
 // (mail.mta_sts_policies). Un dominio sin fila no publica politica.
 type MTASTSRepository interface {

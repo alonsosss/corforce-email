@@ -1,8 +1,9 @@
 import { useState } from 'react';
+import { errorMessage } from '@/api/messages';
 import { FOLDER_ROLES, webmailApi, type MailAddress, type WebmailFolder } from '@/api/webmail';
 import { useQuery } from '@/hooks/useQuery';
 import { Alert, Badge, Button, ConfirmDialog, useToast } from '@/design/components';
-import { IconBan, IconLink, IconMail, IconUser } from '@/design/icons';
+import { IconBan, IconInbox, IconLink, IconMail, IconUser } from '@/design/icons';
 import { t } from '@/i18n';
 import { SenderPanel } from './SenderPanel';
 import { isWarning, reasonText, safeUnsubscribeURL, warningReasons } from './shield';
@@ -50,6 +51,8 @@ function SenderShieldBody({
     (signal) => webmailApi.senderInsight(folderName, uid, signal),
     [folderName, uid],
   );
+  const pinnedSenders = useQuery((signal) => webmailApi.primarySenders(signal), []);
+  const [pinning, setPinning] = useState(false);
   const data = insight.data;
   const shield = data?.shield;
   const unsubscribe = data?.unsubscribe;
@@ -57,6 +60,34 @@ function SenderShieldBody({
   const webURL = unsubscribe?.method === 'web' ? safeUnsubscribeURL(unsubscribe.url) : null;
   const canUnsubscribe = unsubscribe?.method === 'one_click' || unsubscribe?.method === 'mailto';
   const senderDomain = sender?.email.split('@')[1] ?? '';
+  const senderAddress = sender?.email.toLowerCase() ?? '';
+  const pinned = pinnedSenders.data?.includes(senderAddress) ?? false;
+  // Un remitente que ya cae en Principal por sus reglas no necesita fijarse; uno ya fijado si puede
+  // quitarse.
+  const canPin =
+    sender !== undefined && pinnedSenders.data !== null && (pinned || data?.category !== 'primary');
+
+  const togglePin = async () => {
+    setPinning(true);
+    try {
+      if (pinned) await webmailApi.removePrimarySender(senderAddress);
+      else await webmailApi.addPrimarySender(senderAddress);
+      pinnedSenders.setData((current) =>
+        pinned
+          ? (current ?? []).filter((address) => address !== senderAddress)
+          : [...(current ?? []), senderAddress],
+      );
+      toast.success(
+        t(pinned ? 'webmail.primarySender.unpinned' : 'webmail.primarySender.pinned', {
+          address: senderAddress,
+        }),
+      );
+    } catch (err) {
+      toast.error(errorMessage(err));
+    } finally {
+      setPinning(false);
+    }
+  };
 
   return (
     <section className="cf-wm-shield" aria-label={t('webmail.shield.label')}>
@@ -103,6 +134,17 @@ function SenderShieldBody({
             onClick={() => setPanel(true)}
           >
             {t('webmail.sender.open')}
+          </Button>
+        ) : null}
+        {canPin ? (
+          <Button
+            size="sm"
+            variant="ghost"
+            icon={<IconInbox size={14} />}
+            loading={pinning}
+            onClick={() => void togglePin()}
+          >
+            {t(pinned ? 'webmail.primarySender.unpin' : 'webmail.primarySender.pin')}
           </Button>
         ) : null}
         {canUnsubscribe ? (

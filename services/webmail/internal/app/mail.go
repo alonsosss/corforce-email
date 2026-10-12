@@ -57,6 +57,7 @@ func (s *Service) ListMessages(ctx context.Context, sess domain.Session, folder 
 	if err := domain.ValidateFolderName(folder); err != nil {
 		return domain.MessagePage{}, err
 	}
+	q.PrimarySenders = s.primarySendersFor(ctx, sess, folder)
 	var page domain.MessagePage
 	err := s.withMailbox(ctx, sess, func(mb ports.Mailbox) error {
 		var err error

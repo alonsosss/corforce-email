@@ -84,6 +84,8 @@ type Deps struct {
 	// Recordatorios (posponer y seguimiento) y respuestas rapidas del buzon, en mail-directory.
 	Reminders    ports.ReminderDirectory
 	QuickReplies ports.QuickReplyDirectory
+	// PrimarySenders guarda los remitentes que el buzon fija en Principal, en mail-directory.
+	PrimarySenders ports.PrimarySenderDirectory
 
 	// Verificacion en dos pasos y contrasenas de aplicacion (mail-directory), los desafios del
 	// segundo paso del inicio de sesion (Redis) y la preparacion de secretos TOTP.
@@ -147,6 +149,8 @@ type Service struct {
 	// Recordatorios y respuestas rapidas (Deps.Reminders, Deps.QuickReplies).
 	reminders    ports.ReminderDirectory
 	quickReplies ports.QuickReplyDirectory
+	// Remitentes que el buzon fija en Principal (Deps.PrimarySenders).
+	primarySenders ports.PrimarySenderDirectory
 
 	mfaChallenges ports.MFAChallengeStore
 	security      ports.SecurityDirectory
@@ -162,8 +166,8 @@ func New(d Deps) (*Service, error) {
 		d.Unsubscriber == nil || d.Ledger == nil || d.Composer == nil || d.Sanitizer == nil || d.PartURL == nil || d.Logger == nil {
 		return nil, errors.New("webmail: faltan dependencias del caso de uso")
 	}
-	if d.Reminders == nil || d.QuickReplies == nil {
-		return nil, errors.New("webmail: faltan los recordatorios o las respuestas rapidas del directorio")
+	if d.Reminders == nil || d.QuickReplies == nil || d.PrimarySenders == nil {
+		return nil, errors.New("webmail: faltan los recordatorios, las respuestas rapidas o los remitentes fijados del directorio")
 	}
 	if d.MFAChallenges == nil || d.Security == nil || d.TOTP == nil {
 		return nil, errors.New("webmail: faltan la verificacion en dos pasos o las contrasenas de aplicacion")
@@ -207,7 +211,7 @@ func New(d Deps) (*Service, error) {
 		scheduling: d.Scheduling, invitations: d.Invitations,
 		ledger: d.Ledger, composer: d.Composer, sanitizer: d.Sanitizer, scanner: d.Scanner,
 		partURL: d.PartURL, clock: clock, logger: d.Logger, cfg: d.Config, unsubscriber: d.Unsubscriber,
-		reminders: d.Reminders, quickReplies: d.QuickReplies, largeFiles: d.LargeFiles,
+		reminders: d.Reminders, quickReplies: d.QuickReplies, primarySenders: d.PrimarySenders, largeFiles: d.LargeFiles,
 		mfaChallenges: d.MFAChallenges, security: d.Security, totp: d.TOTP, imageProxy: d.ImageProxy,
 	}, nil
 }

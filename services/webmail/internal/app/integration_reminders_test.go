@@ -318,3 +318,38 @@ func (m *memReminders) UpdateQuickReply(_ context.Context, _ string, q domain.Qu
 }
 
 func (m *memReminders) DeleteQuickReply(context.Context, string, string) error { return nil }
+
+// memPrimarySenders hace de mail-directory para los remitentes fijados en Principal.
+type memPrimarySenders struct {
+	mu   sync.Mutex
+	rows map[string][]string
+}
+
+func (m *memPrimarySenders) PrimarySenders(_ context.Context, username string) ([]string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]string(nil), m.rows[username]...), nil
+}
+
+func (m *memPrimarySenders) AddPrimarySender(_ context.Context, username, address string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.rows == nil {
+		m.rows = map[string][]string{}
+	}
+	m.rows[username] = append(m.rows[username], strings.ToLower(address))
+	return nil
+}
+
+func (m *memPrimarySenders) RemovePrimarySender(_ context.Context, username, address string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	kept := m.rows[username][:0]
+	for _, a := range m.rows[username] {
+		if a != strings.ToLower(address) {
+			kept = append(kept, a)
+		}
+	}
+	m.rows[username] = kept
+	return nil
+}

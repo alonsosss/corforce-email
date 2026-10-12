@@ -2199,6 +2199,11 @@ export const es = {
   'webmail.unsubscribe.done': 'Baja solicitada a {target}.',
   'webmail.unsubscribe.openPage': 'Abrir la página de baja de {target}',
   'webmail.sender.open': 'Ficha del remitente',
+  'webmail.primarySender.pin': 'Siempre en Principal',
+  'webmail.primarySender.unpin': 'Quitar de Principal',
+  'webmail.primarySender.pinned': 'Los mensajes de {address} llegarán siempre a Principal.',
+  'webmail.primarySender.unpinned':
+    'Los mensajes de {address} vuelven a seguir las reglas de la bandeja.',
   'webmail.sender.title': 'Ficha de {name}',
   'webmail.sender.internal': 'De tu empresa',
   'webmail.sender.contact': 'Contacto personal',

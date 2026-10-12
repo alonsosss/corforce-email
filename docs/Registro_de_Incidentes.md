@@ -47,6 +47,19 @@ solo se enlaza. Las entradas más recientes van arriba.
 
 ## Incidentes
 
+### 2026-10-12 · La respuesta del soporte de un proveedor caía en Notificaciones y pasaba desapercibida
+
+| | |
+|---|---|
+| Detectado | El usuario: la respuesta de Squarespace a su ticket y el correo de restablecer contraseña no estaban en Principal |
+| Síntoma | Dos mensajes sin leer en la bandeja de entrada, pero en la pestaña Notificaciones |
+| Impacto | Un correo esperado (la respuesta de un soporte) quedó fuera de la vista que el usuario mira siempre; no se perdió nada |
+| Causa raíz | Las reglas deterministas de la bandeja inteligente: `no-reply@` por el remitente y `Auto-Submitted: auto-generated` que el sistema de tickets del proveedor pone también a las respuestas de sus agentes (comprobado en las cabeceras). Principal solo recogía lo que no cumple ninguna regla |
+| Solución | Tres cambios en la clasificación: lo sin leer entra también en Principal (conserva su categoría y vuelve a su pestaña al leerlo); un mensaje que responde a algo enviado desde el dominio del buzón es siempre principal; y el botón "Siempre en Principal" por remitente (`mail.mailbox_primary_senders`) (`e74a11c` y el commit de los remitentes fijados) |
+| Que no se repita | Pruebas de que la pestaña del servidor (IMAP SEARCH) y la clasificación del listado coinciden con las tres reglas, incluido el caso del remitente con dominio parecido; prueba de integración de la tabla (RLS, tope, borrado con el buzón) |
+| Detalle | `docs/Plan_Webmail_Innovador.md`, sección 3, punto 4 |
+| Desplegado | Pendiente: la puerta de CI del despliegue exige `main` en verde y hay dos CVE de Go abiertas (`GO-2026-6617`, `GO-2026-6613`) |
+
 ### 2026-10-12 · Al cambiar de buzón, el webmail intentaba abrir un mensaje que no existía
 
 | | |

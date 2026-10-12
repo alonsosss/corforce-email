@@ -367,7 +367,7 @@ func newIntegration(t *testing.T) *integration {
 		Scheduled: scheduled, Contacts: noDAV{}, Calendar: noDAV{}, Ledger: newMemLedger(),
 		Composer: rfc5322.New(), Sanitizer: htmlsafe.New(), PartURL: handler.PartURL, Logger: zap.NewNop(),
 		Unsubscriber: unsubscribe.New(time.Second),
-		Reminders:    reminders, QuickReplies: reminders,
+		Reminders:    reminders, QuickReplies: reminders, PrimarySenders: &memPrimarySenders{},
 		MFAChallenges: noSecurity{}, Security: noSecurity{}, TOTP: noSecurity{},
 		Config: app.Config{
 			CellCode:         "pe-01",

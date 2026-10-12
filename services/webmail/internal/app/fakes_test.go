@@ -743,6 +743,7 @@ type harness struct {
 	clock     *testClock
 	unsub     *fakeUnsubscriber
 	reminders *fakeReminders
+	primary   *fakePrimarySenders
 	mfa       *fakeMFAStore
 	security  *fakeSecurity
 }
@@ -770,6 +771,7 @@ func newHarness(t *testing.T) *harness {
 		clock:     clock,
 		unsub:     &fakeUnsubscriber{},
 		reminders: newFakeReminders(),
+		primary:   newFakePrimarySenders(),
 		mfa:       newFakeMFAStore(clock),
 		security:  &fakeSecurity{validCode: "123456"},
 	}
@@ -794,7 +796,7 @@ func (h *harness) deps() Deps {
 		Auth: h.auth, Sessions: h.store, Mail: h.mail, Sender: h.sender, Directory: h.directory, Vacations: h.directory, AddressBook: h.directory,
 		Signatures: h.directory, Filters: h.directory, Passwords: h.directory, Scheduled: h.directory, Contacts: h.dav, Calendar: h.dav,
 		Ledger: h.ledger, Composer: h.composer, Sanitizer: h.sanitizer, Scanner: h.scanner,
-		Reminders: h.reminders, QuickReplies: h.reminders,
+		Reminders: h.reminders, QuickReplies: h.reminders, PrimarySenders: h.primary,
 		MFAChallenges: h.mfa, Security: h.security, TOTP: fakeTOTP{secret: "JBSWY3DPEHPK3PXP"},
 		PartURL: func(folder string, uid uint32, part string) string {
 			return fmt.Sprintf("/parts/%s/%d/%s", folder, uid, part)

@@ -231,6 +231,9 @@ type ListQuery struct {
 	PerPage int
 	Search  string
 	Filter  SearchFilter
+	// PrimarySenders los pone el caso de uso, no el cliente: las direcciones que el buzon fijo en
+	// Principal, para clasificar y filtrar la pestana.
+	PrimarySenders []string
 }
 
 // SearchFilter son los criterios de la busqueda avanzada; el valor cero de cada uno no filtra.

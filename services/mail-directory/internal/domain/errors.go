@@ -123,6 +123,8 @@ var (
 	ErrReminderNotClaimed = errors.New("el recordatorio no está en curso")
 	// ErrReminderLimit: el buzon alcanzo el maximo de recordatorios activos.
 	ErrReminderLimit = errors.New("el buzón alcanzó su máximo de recordatorios activos")
+	// ErrPrimarySenderLimit: el buzon alcanzo el maximo de remitentes fijados en Principal.
+	ErrPrimarySenderLimit = errors.New("el buzón alcanzó su máximo de remitentes en Principal")
 	// ErrQuickReplyLimit: el buzon alcanzo el maximo de respuestas rapidas.
 	ErrQuickReplyLimit = errors.New("el buzón alcanzó su máximo de respuestas rápidas")
 )

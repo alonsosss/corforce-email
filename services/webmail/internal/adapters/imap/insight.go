@@ -53,11 +53,14 @@ func headerHas(key, value string) imaplib.SearchCriteria {
 	return imaplib.SearchCriteria{Header: []imaplib.SearchCriteriaHeaderField{{Key: key, Value: value}}}
 }
 
+// anyOf une los criterios con OR en un arbol equilibrado: una lista larga no se vuelve una cadena de
+// profundidad lineal que el servidor tenga que recorrer recursivamente.
 func anyOf(list ...imaplib.SearchCriteria) imaplib.SearchCriteria {
 	if len(list) == 1 {
 		return list[0]
 	}
-	return imaplib.SearchCriteria{Or: [][2]imaplib.SearchCriteria{{list[0], anyOf(list[1:]...)}}}
+	mid := len(list) / 2
+	return imaplib.SearchCriteria{Or: [][2]imaplib.SearchCriteria{{anyOf(list[:mid]...), anyOf(list[mid:]...)}}}
 }
 
 // categoryCriteria es la pestana como busqueda IMAP. Las reglas son las de Classifier.Classify (una
@@ -76,25 +79,33 @@ func categoryCriteria(c domain.Category, cl domain.Classifier) *imaplib.SearchCr
 		weakList = append(weakList, headerHas("From", m))
 	}
 	weak := anyOf(weakList...)
-	var reply *imaplib.SearchCriteria
+	// own agrupa lo que el buzon declara suyo: respuestas a lo que envio y remitentes fijados.
+	var ownList []imaplib.SearchCriteria
 	if cl.ReplyMarker != "" {
-		r := anyOf(headerHas(domain.HeaderInReplyTo, cl.ReplyMarker), headerHas(domain.HeaderReferences, cl.ReplyMarker))
-		reply = &r
+		ownList = append(ownList, headerHas(domain.HeaderInReplyTo, cl.ReplyMarker), headerHas(domain.HeaderReferences, cl.ReplyMarker))
+	}
+	for _, address := range cl.PrimarySenders {
+		ownList = append(ownList, headerHas("From", "<"+address+">"))
+	}
+	var own *imaplib.SearchCriteria
+	if len(ownList) > 0 {
+		o := anyOf(ownList...)
+		own = &o
 	}
 	switch c {
 	case domain.CategoryNotifications:
 		weakNotNews := weak
 		weakNotNews.Not = append(weakNotNews.Not, news)
 		out := anyOf(auto, weakNotNews)
-		if reply != nil {
-			out.Not = append(out.Not, *reply)
+		if own != nil {
+			out.Not = append(out.Not, *own)
 		}
 		return &out
 	case domain.CategoryNewsletters:
 		out := news
 		out.Not = append(out.Not, auto)
-		if reply != nil {
-			out.Not = append(out.Not, *reply)
+		if own != nil {
+			out.Not = append(out.Not, *own)
 		}
 		return &out
 	case domain.CategoryPrimary:
@@ -102,8 +113,8 @@ func categoryCriteria(c domain.Category, cl domain.Classifier) *imaplib.SearchCr
 			{Not: []imaplib.SearchCriteria{auto, news, weak}},
 			{NotFlag: []imaplib.Flag{imaplib.FlagSeen}},
 		}
-		if reply != nil {
-			alternatives = append(alternatives, *reply)
+		if own != nil {
+			alternatives = append(alternatives, *own)
 		}
 		out := anyOf(alternatives...)
 		return &out
@@ -120,7 +131,8 @@ func (m *mailbox) ListThreads(ctx context.Context, folder string, q domain.ListQ
 	if err := m.selectFolder(folder, false); err != nil {
 		return domain.ThreadPage{}, err
 	}
-	criteria := searchCriteria(q, m.classifier)
+	cl := m.classifier.WithPrimarySenders(q.PrimarySenders)
+	criteria := searchCriteria(q, cl)
 	uids, err := m.sortedUIDs(criteria)
 	if err != nil {
 		return domain.ThreadPage{}, err
@@ -141,7 +153,7 @@ func (m *mailbox) ListThreads(ctx context.Context, folder string, q domain.ListQ
 	if start == end {
 		return page, nil
 	}
-	page.Items, err = m.summarize(groups[start:end])
+	page.Items, err = m.summarize(groups[start:end], cl)
 	return page, err
 }
 
@@ -235,7 +247,7 @@ func (m *mailbox) threadMessages(uids []imaplib.UID) ([]domain.ThreadMessage, er
 
 // summarize resume cada conversacion de la pagina: el ultimo mensaje entero (con su pestana), los
 // remitentes de los mas recientes y los no leidos de todos, con tres ordenes para toda la pagina.
-func (m *mailbox) summarize(groups [][]imaplib.UID) ([]domain.ThreadSummary, error) {
+func (m *mailbox) summarize(groups [][]imaplib.UID, cl domain.Classifier) ([]domain.ThreadSummary, error) {
 	var latest, scan, all []imaplib.UID
 	for _, g := range groups {
 		capped := g[:min(len(g), domain.MaxThreadMessages)]
@@ -254,7 +266,7 @@ func (m *mailbox) summarize(groups [][]imaplib.UID) ([]domain.ThreadSummary, err
 	envByUID := map[imaplib.UID]domain.Envelope{}
 	for _, b := range full {
 		env := envelopeOf(b)
-		env.Category = m.classifier.Classify(parseHeaderFields(headerSection(b)), env.From)
+		env.Category = cl.Classify(parseHeaderFields(headerSection(b)), env.From)
 		envByUID[b.UID] = env
 	}
 	partial, err := m.c.Fetch(imaplib.UIDSetNum(scan...), &imaplib.FetchOptions{UID: true, Envelope: true}).Collect()

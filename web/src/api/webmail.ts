@@ -194,6 +194,11 @@ export interface ShieldReason {
   params: Record<string, string>;
 }
 
+/** GET /primary-senders: los remitentes que el buzon fijo en la pestana Principal. */
+export interface PrimarySenders {
+  items: string[];
+}
+
 export type UnsubscribeMethod = 'one_click' | 'mailto' | 'web';
 
 /** GET /sender-insight: pestana, escudo antifraude y baja de un mensaje recibido. */
@@ -1050,6 +1055,15 @@ export const webmailApi = {
   /** La baja la decide el mensaje guardado: el cliente solo dice cual es. */
   unsubscribe: (folder: string, uid: number) =>
     request<UnsubscribeResult>('POST', wm.unsubscribe, { json: { folder, uid } }),
+
+  /** Direcciones (en minusculas) que el buzon fijo en Principal. */
+  primarySenders: async (signal?: AbortSignal): Promise<string[]> =>
+    (await request<PrimarySenders>('GET', wm.primarySenders, { signal })).items,
+  /** Fijar una direccion que ya lo esta no es un error. */
+  addPrimarySender: (address: string) =>
+    request<null>('PUT', wm.primarySenders, { json: { address } }),
+  removePrimarySender: (address: string) =>
+    request<null>('DELETE', wm.primarySenders, { params: { address } }),
 
   /** Varios mensajes de la carpeta en una operacion; como mucho limits.max_batch_uids. */
   batch: (folder: string, uids: number[], action: BatchAction) =>

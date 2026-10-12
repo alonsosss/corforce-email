@@ -354,7 +354,7 @@ func testDeps(store ports.SessionStore, mb *stubMailbox, sender ports.Sender, va
 		Sender: sender, Directory: stubDirectory{}, Vacations: vac, AddressBook: book,
 		Signatures: settings, Filters: settings, Passwords: settings, Scheduled: settings, Contacts: dav, Calendar: dav,
 		Ledger: &memLedger{m: map[string]domain.SendRecord{}}, Composer: nopComposer{}, Sanitizer: nopSanitizer{}, PartURL: PartURL,
-		Reminders: settings.reminders, QuickReplies: settings.reminders,
+		Reminders: settings.reminders, QuickReplies: settings.reminders, PrimarySenders: settings.primary,
 		MFAChallenges: settings.mfa, Security: settings.security, TOTP: stubTOTP{},
 		Logger: zap.NewNop(), Unsubscriber: &stubUnsubscriber{},
 		Config: app.Config{

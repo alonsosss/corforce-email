@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"slices"
 	"strings"
 )
 
@@ -101,6 +102,24 @@ type Classifier struct {
 	// evita que "@dominio.ajeno" cuente. Vacia, no se reconocen respuestas. La cabecera la escribe el
 	// remitente, asi que solo decide en que pestana cae el mensaje: nada de seguridad depende de ella.
 	ReplyMarker string
+	// PrimarySenders son las direcciones (minusculas) que el usuario fijo en Principal.
+	PrimarySenders []string
+}
+
+// WithPrimarySenders devuelve el clasificador con los remitentes fijados por el usuario.
+func (c Classifier) WithPrimarySenders(addresses []string) Classifier {
+	c.PrimarySenders = addresses
+	return c
+}
+
+// PinsSender dice si alguno de los remitentes esta fijado en Principal.
+func (c Classifier) PinsSender(from []Address) bool {
+	for _, a := range from {
+		if slices.Contains(c.PrimarySenders, strings.ToLower(a.Email)) {
+			return true
+		}
+	}
+	return false
 }
 
 // ClassifierFor es el clasificador del buzon username. Un nombre sin dominio no reconoce respuestas.
@@ -118,11 +137,11 @@ func (c Classifier) RepliesToOwn(h MessageHeaders) bool {
 		(h.Contains(HeaderInReplyTo, c.ReplyMarker) || h.Contains(HeaderReferences, c.ReplyMarker))
 }
 
-// Classify aplica las reglas de Classify tras una excepcion: lo que responde a un mensaje propio es
-// siempre principal, aunque lo envie una maquina (la respuesta de un sistema de tickets, el rebote de
-// un envio, la respuesta automatica de un destinatario).
+// Classify aplica las reglas de Classify tras dos excepciones: lo que responde a un mensaje propio y lo
+// que envia un remitente fijado por el usuario son siempre principal, aunque lo envie una maquina (la
+// respuesta de un sistema de tickets, el rebote de un envio, la respuesta automatica de un destinatario).
 func (c Classifier) Classify(h MessageHeaders, from []Address) Category {
-	if c.RepliesToOwn(h) {
+	if c.RepliesToOwn(h) || c.PinsSender(from) {
 		return CategoryPrimary
 	}
 	return Classify(h, from)

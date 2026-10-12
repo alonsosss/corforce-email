@@ -112,6 +112,9 @@ func (h *Handler) Routes() chi.Router {
 		r.Post("/internal/mail-directory/quick-replies", h.InternalCreateQuickReply)
 		r.Put("/internal/mail-directory/quick-replies/{id}", h.InternalUpdateQuickReply)
 		r.Delete("/internal/mail-directory/quick-replies/{id}", h.InternalDeleteQuickReply)
+		r.Get("/internal/mail-directory/primary-senders", h.InternalListPrimarySenders)
+		r.Post("/internal/mail-directory/primary-senders", h.InternalAddPrimarySender)
+		r.Delete("/internal/mail-directory/primary-senders", h.InternalRemovePrimarySender)
 		r.Get("/internal/mail-directory/assistant", h.InternalAssistant)
 		// Verificacion en dos pasos y contrasenas de aplicacion del buzon; la contrasena (y el codigo
 		// donde hace falta) los comprueba antes el webmail.

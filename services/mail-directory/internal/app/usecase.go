@@ -34,6 +34,8 @@ type Deps struct {
 	Scheduled    ports.ScheduledSendRepository
 	Reminders    ports.ReminderRepository
 	QuickReplies ports.QuickReplyRepository
+	// PrimarySenders guarda los remitentes que cada buzon fija en Principal.
+	PrimarySenders ports.PrimarySenderRepository
 	// Assistant guarda el interruptor del asistente del webmail por empresa.
 	Assistant ports.AssistantSettingsRepository
 	// MFA guarda la verificacion en dos pasos de los buzones; Sealer cifra su secreto y TOTP comprueba
@@ -91,6 +93,7 @@ type UseCase struct {
 	scheduled       ports.ScheduledSendRepository
 	reminders       ports.ReminderRepository
 	quickReplies    ports.QuickReplyRepository
+	primarySenders  ports.PrimarySenderRepository
 	assistant       ports.AssistantSettingsRepository
 	mfa             ports.MFARepository
 	sealer          ports.SecretSealer
@@ -133,7 +136,7 @@ func New(d Deps) *UseCase {
 	return &UseCase{
 		tx: d.Tx, domains: d.Domains, aliasDomains: d.AliasDomains, mailboxes: d.Mailboxes,
 		appPasswords: d.AppPasswords, sieve: d.Sieve, vacation: d.Vacation,
-		signatures: d.Signatures, filters: d.Filters, scheduled: d.Scheduled, reminders: d.Reminders, quickReplies: d.QuickReplies, locator: d.Locator, aliases: d.Aliases, spamAliases: d.SpamAliases,
+		signatures: d.Signatures, filters: d.Filters, scheduled: d.Scheduled, reminders: d.Reminders, quickReplies: d.QuickReplies, primarySenders: d.PrimarySenders, locator: d.Locator, aliases: d.Aliases, spamAliases: d.SpamAliases,
 		senderACL: d.SenderACL, relayhosts: d.Relayhosts, transports: d.Transports,
 		tlsPolicies: d.TLSPolicies, recipientMap: d.RecipientMap, bccMaps: d.BCCMaps,
 		senders: d.Senders, retirements: d.Retirements, mtaSTS: d.MTASTS, mtaSTSPublisher: d.MTASTSPublic, mx: d.MX,

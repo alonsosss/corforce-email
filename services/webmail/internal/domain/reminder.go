@@ -255,4 +255,6 @@ var (
 	ErrQuickReplyNotFound = errors.New("respuesta rápida no encontrada")
 	ErrQuickReplyExists   = errors.New("ya existe una respuesta rápida con ese nombre")
 	ErrQuickReplyLimit    = errors.New("el buzón alcanzó el máximo de respuestas rápidas")
+	// ErrPrimarySenderLimit: el buzon alcanzo el maximo de remitentes fijados en Principal.
+	ErrPrimarySenderLimit = errors.New("el buzón alcanzó el máximo de remitentes en Principal")
 )

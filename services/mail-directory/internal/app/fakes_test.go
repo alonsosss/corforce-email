@@ -831,33 +831,34 @@ func (f *fakeMX) LookupMX(context.Context, string) ([]string, error) {
 const platformMXForTests = "mx.plataforma.example"
 
 type harness struct {
-	uc           *UseCase
-	plan         *fakePlan
-	tx           *fakeTx
-	domains      *fakeDomains
-	aliasDomains *fakeAliasDomains
-	mailboxes    *fakeMailboxes
-	appPasswords *fakeAppPasswords
-	sieve        *fakeSieve
-	vacation     *fakeVacation
-	signatures   *fakeSignatures
-	filters      *fakeFilters
-	scheduled    *fakeScheduled
-	reminders    *fakeReminders
-	quickReplies *fakeQuickReplies
-	clock        time.Time
-	mtaSTS       *fakeMTASTS
-	mx           *fakeMX
-	aliases      *fakeAliases
-	spamAliases  *fakeSpamAliases
-	senderACL    *fakeSenderACL
-	relayhosts   *fakeRelayhosts
-	transports   *fakeTransports
-	retirements  *fakeRetirements
-	events       *fakeEvents
-	mfa          *fakeMFA
-	policies     *fakePolicies
-	totp         *fakeTOTP
+	uc             *UseCase
+	plan           *fakePlan
+	tx             *fakeTx
+	domains        *fakeDomains
+	aliasDomains   *fakeAliasDomains
+	mailboxes      *fakeMailboxes
+	appPasswords   *fakeAppPasswords
+	sieve          *fakeSieve
+	vacation       *fakeVacation
+	signatures     *fakeSignatures
+	filters        *fakeFilters
+	scheduled      *fakeScheduled
+	reminders      *fakeReminders
+	quickReplies   *fakeQuickReplies
+	primarySenders *fakePrimarySenders
+	clock          time.Time
+	mtaSTS         *fakeMTASTS
+	mx             *fakeMX
+	aliases        *fakeAliases
+	spamAliases    *fakeSpamAliases
+	senderACL      *fakeSenderACL
+	relayhosts     *fakeRelayhosts
+	transports     *fakeTransports
+	retirements    *fakeRetirements
+	events         *fakeEvents
+	mfa            *fakeMFA
+	policies       *fakePolicies
+	totp           *fakeTOTP
 }
 
 func newHarness() *harness {
@@ -871,6 +872,7 @@ func newHarness() *harness {
 	h.scheduled = &fakeScheduled{now: func() time.Time { return h.clock }}
 	h.reminders = &fakeReminders{now: func() time.Time { return h.clock }}
 	h.quickReplies = &fakeQuickReplies{now: func() time.Time { return h.clock }}
+	h.primarySenders = &fakePrimarySenders{now: func() time.Time { return h.clock }}
 	h.mailboxes = &fakeMailboxes{aliases: h.aliases, now: time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)}
 	locator := &fakeLocator{h: h}
 	h.retirements = &fakeRetirements{h: h, retired: map[uuid.UUID]time.Time{}, now: time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)}
@@ -883,7 +885,7 @@ func newHarness() *harness {
 	h.uc = New(Deps{
 		Tx: h.tx, Domains: h.domains, AliasDomains: h.aliasDomains, Mailboxes: h.mailboxes,
 		AppPasswords: h.appPasswords, Sieve: h.sieve, Vacation: h.vacation, Locator: locator,
-		Signatures: h.signatures, Filters: h.filters, Scheduled: h.scheduled, Reminders: h.reminders, QuickReplies: h.quickReplies, Clock: func() time.Time { return h.clock }, Aliases: h.aliases, SpamAliases: h.spamAliases,
+		Signatures: h.signatures, Filters: h.filters, Scheduled: h.scheduled, Reminders: h.reminders, QuickReplies: h.quickReplies, PrimarySenders: h.primarySenders, Clock: func() time.Time { return h.clock }, Aliases: h.aliases, SpamAliases: h.spamAliases,
 		SenderACL: h.senderACL, Relayhosts: h.relayhosts, Transports: h.transports, Retirements: h.retirements,
 		MTASTS: h.mtaSTS, MTASTSPublic: fakeMTASTSPublisher{h: h}, MX: h.mx, PlatformMX: platformMXForTests,
 		MailboxRecreateHold: testRecreateHold, Secrets: &fakeSecrets{}, Events: h.events, Plan: h.plan,
@@ -961,6 +963,11 @@ func (h *harness) snapshot() func() {
 		c := *v
 		quickReplies[k] = &c
 	}
+	primarySenders := map[uuid.UUID]*domain.PrimarySender{}
+	for k, v := range h.primarySenders.items {
+		c := *v
+		primarySenders[k] = &c
+	}
 	subjects := append([]string(nil), h.events.subjects...)
 	credentials := append([]credentialEvent(nil), h.events.credentials...)
 	retired := maps.Clone(h.retirements.retired)
@@ -984,6 +991,7 @@ func (h *harness) snapshot() func() {
 		h.vacation.items = vacation
 		h.signatures.items, h.filters.items, h.scheduled.items = signatures, filters, scheduled
 		h.reminders.items, h.quickReplies.items = reminders, quickReplies
+		h.primarySenders.items = primarySenders
 		h.mtaSTS.items = mtaSTS
 		h.events.subjects, h.events.credentials = subjects, credentials
 		h.retirements.retired = retired
