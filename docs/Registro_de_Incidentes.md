@@ -57,9 +57,9 @@ solo se enlaza. Las entradas más recientes van arriba.
 | Impacto | Un correo esperado (la respuesta de un soporte) quedó fuera de la vista que el usuario mira siempre; no se perdió nada |
 | Causa raíz | Las reglas deterministas de la bandeja inteligente: `no-reply@` por el remitente y `Auto-Submitted: auto-generated` que el sistema de tickets del proveedor pone también a las respuestas de sus agentes (comprobado en las cabeceras). Principal solo recogía lo que no cumple ninguna regla |
 | Solución | Tres cambios en la clasificación: lo sin leer entra también en Principal (conserva su categoría y vuelve a su pestaña al leerlo); un mensaje que responde a algo enviado desde el dominio del buzón es siempre principal; y el botón "Siempre en Principal" por remitente (`mail.mailbox_primary_senders`) (`e74a11c` y el commit de los remitentes fijados) |
-| Que no se repita | Pruebas de que la pestaña del servidor (IMAP SEARCH) y la clasificación del listado coinciden con las tres reglas, incluido el caso del remitente con dominio parecido; prueba de integración de la tabla (RLS, tope, borrado con el buzón) |
+| Que no se repita | Pruebas de que la pestaña del servidor (IMAP SEARCH) y la clasificación del listado coinciden con las tres reglas, incluido el caso del remitente con dominio parecido; prueba de integración de la tabla (RLS, tope, borrado con el buzón). La primera versión pedía la lista al directorio en cada listado y el e2e vio 429 (el directorio limita a 120 por minuto por origen y el webmail es uno solo): ahora se cachea un minuto por buzón y un fallo 15 s, con pruebas que cuentan las lecturas |
 | Detalle | `docs/Plan_Webmail_Innovador.md`, sección 3, punto 4 |
-| Desplegado | Pendiente: la puerta de CI del despliegue exige `main` en verde y hay dos CVE de Go abiertas (`GO-2026-6617`, `GO-2026-6613`) |
+| Desplegado | 2026-10-12, `1f7b494`: migración de celda 17 aplicada a mano antes, luego `mail-directory`, `webmail` y `web`. Probado en producción con un buzón real: fijar y quitar un remitente mueve su correo de Notificaciones a Principal y lo devuelve |
 
 ### 2026-10-12 · Al cambiar de buzón, el webmail intentaba abrir un mensaje que no existía
 
@@ -72,7 +72,7 @@ solo se enlaza. Las entradas más recientes van arriba.
 | Solución | `closedByUser` en el estado del webmail: el cierre voluntario no recuerda la pantalla; la sesión caducada y los enlaces directos siguen volviendo a donde estaban (`7b22c1e`) |
 | Que no se repita | `WebmailApp.test.tsx` (tras el cierre no se arrastra la dirección, sin sesión sí) y las pruebas del store; probado que la prueba falla sin el arreglo |
 | Detalle | `web/src/pages/webmail/WebmailApp.tsx`, `web/src/webmail/store.ts` |
-| Desplegado | Pendiente de despliegue de la web |
+| Desplegado | 2026-10-12, `1f7b494` (web) |
 
 ### 2026-10-12 · Las reservas de citas y los recordatorios fallaban con 503 por el límite de mail-directory
 
