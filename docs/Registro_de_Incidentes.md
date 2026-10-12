@@ -48,6 +48,19 @@ solo se enlaza. Las entradas más recientes van arriba.
 
 ## Incidentes
 
+### 2026-10-12 · El pase de automatización no podía recrear el gateway si iba por detrás del último despliegue
+
+| | |
+|---|---|
+| Detectado | Al abrir el pase para revisar el webmail con el MCP de Chrome, a petición del usuario |
+| Síntoma | `scripts/pase-automatizacion.sh on` escribió las variables en el `.env` y falló al recrear el gateway: `No such image: core-force-mail/gateway:1f7b494` |
+| Impacto | Ninguno para los usuarios: compose abortó antes de tocar el contenedor y el gateway siguió sano en `828eb32`. El pase quedó escrito pero sin efecto hasta recrear |
+| Causa raíz | `recrear_gateway` tomaba el tag de `.deployed-tag`, el del último despliegue. Un despliegue solo reconstruye los servicios que cambiaron, así que el gateway puede ir varios commits por detrás y la imagen de ese tag no existe en el servidor |
+| Solución | Toma el tag de la imagen del gateway en marcha (`docker inspect app-gateway-1`) |
+| Que no se repita | Sin guardarrail automático: el fallo solo aparece contra un servidor con servicios en tags distintos, que ninguna prueba local reproduce. El script falla antes de tocar nada y lo dice |
+| Detalle | `docs/Plan_Proteccion_Frente_a_Bots.md`, capa 2 |
+| Desplegado | No aplica (es un script que corre desde el puesto). Pase abierto 1 hora solo para la IP del usuario, usado y cerrado el 2026-10-12 |
+
 ### 2026-10-12 · La respuesta del soporte de un proveedor caía en Notificaciones y pasaba desapercibida
 
 | | |

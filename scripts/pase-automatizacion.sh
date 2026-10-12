@@ -41,14 +41,16 @@ estado() {
   fi
 }
 
-# Recrea el gateway con la MISMA imagen que dejo el ultimo despliegue: el tag de .deployed-tag y el
-# override de imagenes que corresponda (docker save deja core-force-mail/<svc>; si no, el registro).
-# Sin el override, compose buscaria app-gateway:latest, que no existe, y no recrearia nada.
+# Recrea el gateway con la MISMA imagen que corre ahora: su propio tag y el override de imagenes que
+# corresponda (docker save deja core-force-mail/<svc>; si no, el registro). No el de .deployed-tag:
+# un despliegue solo reconstruye los servicios que cambiaron, asi que el gateway puede ir varios
+# commits por detras y la imagen de ese tag no existe. Sin el override, compose buscaria
+# app-gateway:latest, que no existe, y no recrearia nada.
 recrear_gateway() {
   local compose_args tag imagenes
   compose_args="$(remote "ops/maintenance/perfil-despliegue.sh --compose")"
-  tag="$(remote 'cat .deployed-tag 2>/dev/null' || true)"
-  [[ -n "$tag" ]] || { echo "el servidor no tiene .deployed-tag: despliega primero con scripts/deploy-ecr.sh" >&2; exit 1; }
+  tag="$(remote "docker inspect --format '{{.Config.Image}}' app-gateway-1" | sed 's/.*://' || true)"
+  [[ -n "$tag" ]] || { echo "no hay un gateway en marcha del que tomar la imagen: despliega primero con scripts/deploy-ecr.sh" >&2; exit 1; }
   if remote "docker inspect --format '{{.Config.Image}}' app-gateway-1" | grep -q '^core-force-mail/'; then
     imagenes=docker-compose.images.save.yml
   else
