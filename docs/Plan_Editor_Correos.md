@@ -164,7 +164,7 @@ numeros JSON y simbolos del mas pesado al mas ligero (`description` vacia si Rsp
 `400 BAD_REQUEST` (JSON invalido o campos desconocidos), `400 MESSAGE_REQUIRED` (sin `message` o vacio),
 `413 MESSAGE_TOO_LARGE` (mas de 2 MiB), `503 SPAM_CHECK_UNAVAILABLE` (Rspamd caido, 5xx o respuesta
 ilegible) y `503 NOT_CONFIGURED` (sin `RSPAMD_CONTROLLER_PASSWORD` o rechazada). `/checkv2` se llama en el
-controller: Rspamd 4.1.4 lo atiende con la contrasena de lectura, sin variable nueva. Plazo de 8 s. Sin
+controller: Rspamd 4.2.1 lo atiende con la contrasena de lectura, sin variable nueva. Plazo de 8 s. Sin
 usuario, la ruta no pasa por el filtro de celda (la empresa en `X-Tenant-ID`, si la manda, se ignora): no
 toca datos de ninguna empresa. Comparte el limite de 120 peticiones por minuto e IP del servicio.
 La puntuacion es solo del contenido: la peticion lleva `Settings` sin `hfilter`, `policies` ni los

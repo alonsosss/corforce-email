@@ -2,7 +2,7 @@ FROM debian:trixie-slim
 LABEL maintainer="Core Force Mail"
 
 ARG DEBIAN_FRONTEND=noninteractive
-ARG RSPAMD_VER=rspamd_4.1.4-1~beb659b
+ARG RSPAMD_VER=rspamd_4.2.1-1~b7a16ae
 ARG CODENAME=trixie
 ENV LC_ALL=C
 

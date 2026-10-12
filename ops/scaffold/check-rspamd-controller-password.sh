@@ -3,7 +3,7 @@
 # controller de Rspamd desde el almacen de secretos. Con un rspamadm falso (hash determinista) comprueba:
 #   - lectura y escritura: una linea password y otra enable_password, cada una con el hash de la suya;
 #   - solo lectura: enable_password existe, es aleatoria y distinta de la de lectura en cada arranque
-#     (sin ella, Rspamd deja que la lectura escriba: comprobado con Rspamd 4.1.4);
+#     (sin ella, Rspamd deja que la lectura escriba: comprobado con Rspamd 4.1.4 y 4.2.1);
 #   - ninguna: sin linea password y con enable_password aleatoria (controller cerrado);
 #   - la misma en las dos, o un rspamadm que no devuelve un hash: sale 1 y el fichero anterior queda intacto;
 #   - ninguna contrasena en claro en el fichero ni en la salida, y el fichero en 0640;

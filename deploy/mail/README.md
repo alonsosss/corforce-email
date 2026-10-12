@@ -822,7 +822,7 @@ a `HEAD` con las mismas cabeceras que el `GET` (V, 2026-09-13, `make e2e-mail`: 
 En sentido contrario, `mail-security` llama al controller (`RSPAMD_CONTROLLER_URL`) con la contrasena
 de cada permiso en la cabecera `Password` (docs/adr/0009): `/learnspam` y `/learnham` con la de
 escritura; `/stat`, `/history` y `/checkv2` con la de lectura. `/checkv2` puntua sin entregar el MIME de
-una plantilla (`POST /internal/mail-security/spam-check`, `docs/Plan_Editor_Correos.md`): Rspamd 4.1.4
+una plantilla (`POST /internal/mail-security/spam-check`, `docs/Plan_Editor_Correos.md`): Rspamd 4.2.1
 lo atiende en el controller con la contrasena de lectura (`rspamd_controller_handle_scan` no pide la de
 escritura), asi que no hace falta abrir el worker normal (11333). Se manda sin `Queue-Id` (el
 aprendizaje automatico del bayesiano lo exige, `require_queue_id` de `lua_bayes_learn`), con
