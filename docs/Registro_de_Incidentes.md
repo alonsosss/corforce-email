@@ -59,7 +59,7 @@ solo se enlaza. Las entradas más recientes van arriba.
 | Solución | Un fallo de carga de módulo recarga la página una sola vez (`vite:preloadError` y `errorElement` de las rutas, con marca de hora en `sessionStorage` y ventana de 60 s contra bucles); si persiste, pantalla propia con "Recargar" e "Ir al inicio" y sin error técnico. Excepción de lint acotada a `staleChunk.ts` (una marca de hora, sin datos de sesión) |
 | Que no se repita | `staleChunk.test.ts` (reconoce los mensajes de Chrome, Firefox y Safari; recarga una vez; sin almacenamiento no recarga) y `RouteErrorPage.test.tsx` (nunca muestra el error técnico) |
 | Detalle | `web/src/lib/staleChunk.ts`, `web/src/layout/RouteErrorPage.tsx` |
-| Desplegado | Ver el commit de la siguiente entrada del historial |
+| Desplegado | 2026-10-12, `c31a207` (web) |
 
 ### 2026-10-12 · El pase de automatización no podía recrear el gateway si iba por detrás del último despliegue
 
