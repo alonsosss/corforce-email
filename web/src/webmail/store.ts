@@ -24,6 +24,8 @@ export interface WebmailState {
   expired: boolean;
   /** La sesion termino porque el usuario cambio su contrasena: todas quedan revocadas. */
   passwordChanged: boolean;
+  /** El usuario cerro la sesion: la pantalla que tenia abierta no debe recordarse al volver a entrar. */
+  closedByUser: boolean;
   /** El desafio del segundo paso caduco o se agoto: hay que volver a escribir la contrasena. */
   mfaExpired: boolean;
   /** Buzon que espera el segundo paso; solo para mostrarlo. */
@@ -62,6 +64,7 @@ export const useWebmailStore = create<WebmailState>((set, get) => {
       session,
       expired: false,
       passwordChanged: false,
+      closedByUser: false,
       mfaExpired: false,
       mfaUsername: null,
       checkError: null,
@@ -74,7 +77,7 @@ export const useWebmailStore = create<WebmailState>((set, get) => {
     set({ status: 'checking', checkError: null });
     try {
       const session = await webmailApi.session();
-      set({ status: 'authenticated', session, expired: false, checkError: null });
+      set({ status: 'authenticated', session, expired: false, closedByUser: false, checkError: null });
     } catch (err) {
       if (errorCode(err) === ERROR_CODES.SESSION_EXPIRED) {
         resetWebmailCatalogs();
@@ -90,6 +93,7 @@ export const useWebmailStore = create<WebmailState>((set, get) => {
     session: null,
     expired: false,
     passwordChanged: false,
+    closedByUser: false,
     mfaExpired: false,
     mfaUsername: null,
     checkError: null,
@@ -139,7 +143,7 @@ export const useWebmailStore = create<WebmailState>((set, get) => {
         if (errorCode(err) !== ERROR_CODES.SESSION_EXPIRED) throw err;
       }
       resetWebmailCatalogs();
-      set({ ...signedOut, status: 'anonymous', expired: false });
+      set({ ...signedOut, status: 'anonymous', expired: false, closedByUser: true });
     },
 
     refresh: async () => {

@@ -43,10 +43,15 @@ export default function WebmailApp() {
   );
 }
 
-/** Mientras se comprueba la cookie no se decide nada; sin sesion, al inicio del buzon. */
+/**
+ * Mientras se comprueba la cookie no se decide nada. Sin sesion se vuelve al acceso recordando la
+ * pantalla, salvo si el usuario cerro la sesion: quien entre despues puede ser otro buzon, y un
+ * mensaje abierto no existe en el suyo.
+ */
 function RequireWebmailSession() {
   const status = useWebmailStore((s) => s.status);
   const checkError = useWebmailStore((s) => s.checkError);
+  const closedByUser = useWebmailStore((s) => s.closedByUser);
   const location = useLocation();
 
   if (status === 'checking') {
@@ -72,7 +77,7 @@ function RequireWebmailSession() {
       <Navigate
         to={paths.webmailLogin}
         replace
-        state={{ from: `${location.pathname}${location.search}` }}
+        state={closedByUser ? undefined : { from: `${location.pathname}${location.search}` }}
       />
     );
   }

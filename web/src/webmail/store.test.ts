@@ -23,6 +23,7 @@ describe('sesion del webmail', () => {
       session: null,
       expired: false,
       passwordChanged: false,
+      closedByUser: false,
       checkError: null,
     });
   });
@@ -110,5 +111,32 @@ describe('sesion del webmail', () => {
     vi.spyOn(webmailApi, 'logout').mockRejectedValue(expired());
     await useWebmailStore.getState().logout();
     expect(useWebmailStore.getState()).toMatchObject({ status: 'anonymous', session: null });
+  });
+
+  it('cerrar la sesion lo marca como cierre del usuario y entrar de nuevo lo limpia', async () => {
+    useWebmailStore.setState({ status: 'authenticated', session: SESSION });
+    vi.spyOn(webmailApi, 'logout').mockResolvedValue(null);
+    await useWebmailStore.getState().logout();
+    expect(useWebmailStore.getState().closedByUser).toBe(true);
+
+    vi.spyOn(webmailApi, 'login').mockResolvedValue(SESSION);
+    vi.spyOn(webmailApi, 'session').mockResolvedValue(SESSION);
+    await useWebmailStore.getState().login('ana@empresa.com', 'x');
+    expect(useWebmailStore.getState()).toMatchObject({ status: 'authenticated', closedByUser: false });
+  });
+
+  it('una sesion caducada no cuenta como cierre del usuario', async () => {
+    useWebmailStore.setState({ status: 'authenticated', session: SESSION });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ error: { code: 'SESSION_EXPIRED', message: 'x' } }), {
+            status: 401,
+          }),
+      ),
+    );
+    await webmailApi.folders().catch(() => undefined);
+    expect(useWebmailStore.getState()).toMatchObject({ expired: true, closedByUser: false });
   });
 });
