@@ -166,3 +166,24 @@ func TestLaCacheDeRemitentesFijadosCaducaYEsPorBuzon(t *testing.T) {
 		t.Fatal("otro buzon no comparte entrada")
 	}
 }
+
+func TestSinPestanasLaBandejaNoConsultaLosRemitentesFijados(t *testing.T) {
+	h := newHarness(t)
+	_, sess := h.login(t)
+	d := h.deps()
+	d.Config.InboxCategories = nil
+	svc, err := New(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := svc.Meta().InboxCategories; len(got) != 0 {
+		t.Fatalf("la meta no ofrece pestanas: %v", got)
+	}
+	q, _ := domain.NewListQuery(1, 10, "")
+	if _, err := svc.ListMessages(context.Background(), sess, "INBOX", q); err != nil {
+		t.Fatal(err)
+	}
+	if h.primary.reads != 0 {
+		t.Fatalf("sin pestanas no se pide nada al directorio: %d lecturas", h.primary.reads)
+	}
+}

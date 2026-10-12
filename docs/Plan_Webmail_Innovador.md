@@ -54,7 +54,12 @@ calendarios compartidos editables, cifrado extremo a extremo.
    (dominios propios y nombres de companeros). Nada se envia fuera. Dos excepciones, ambas en
    `domain.Classifier` y su traduccion a IMAP SEARCH (`categoryCriteria`): un mensaje cuyo `In-Reply-To`
    o `References` lleva un identificador del dominio del buzon (`@dominio>`) responde a algo propio y es
-   siempre principal, aunque lo envie una maquina (tickets, rebotes); un remitente que el usuario
+   siempre principal, aunque lo envie una maquina (tickets, rebotes). **Las pestanas estan apagadas
+   por defecto** (2026-10-12, a peticion del usuario: todo llega a Principal): el servicio solo ofrece
+   las de `WEBMAIL_INBOX_CATEGORIES` (`primary,notifications,newsletters`, en ese orden; vacio es
+   ninguna) y sin ellas no consulta los remitentes fijados ni la web muestra "Siempre en Principal".
+   El motor (clasificacion, filtro del servidor, remitentes fijados) sigue entero para volver a
+   encenderlas por configuracion. Con ellas, un remitente que el usuario
    fija con "Siempre en Principal" lo es tambien (`mail.mailbox_primary_senders`, migracion
    `mail-directory/17_primary_senders.sql`, hasta 200 por buzon; webmail `/primary-senders`, interno
    `/internal/mail-directory/primary-senders`; se aplica solo a la bandeja de entrada, se cachea un

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/alonsosss/corforce-email/pkg/middleware"
+	"github.com/alonsosss/corforce-email/services/webmail/internal/domain"
 )
 
 // setSettingsEnv deja una configuracion valida sin ningun respaldo de desarrollo y le aplica
@@ -325,5 +326,38 @@ func TestLoadSettingsProxyDeImagenes(t *testing.T) {
 	setSettingsEnv(t, "development", map[string]string{"WEBMAIL_IMAGE_PROXY_KEY": "corta"})
 	if _, err := loadSettings(); !errorMentions("WEBMAIL_IMAGE_PROXY_KEY")(err) {
 		t.Fatalf("clave corta en desarrollo: %v", err)
+	}
+}
+
+func TestParseInboxCategories(t *testing.T) {
+	got, err := parseInboxCategories("")
+	if err != nil || len(got) != 0 {
+		t.Fatalf("vacio es sin pestanas: %v %v", got, err)
+	}
+	got, err = parseInboxCategories(" primary , newsletters,,")
+	if err != nil || len(got) != 2 || got[0] != domain.CategoryPrimary || got[1] != domain.CategoryNewsletters {
+		t.Fatalf("lista con espacios y vacios: %v %v", got, err)
+	}
+	for _, bad := range []string{"favoritos", "primary,primary", "primary,Primary"} {
+		if _, err := parseInboxCategories(bad); err == nil {
+			t.Errorf("%q: debe rechazarse", bad)
+		}
+	}
+}
+
+func TestLoadSettingsLeeLasPestanasDeLaBandeja(t *testing.T) {
+	setSettingsEnv(t, "development", nil)
+	st, err := loadSettings()
+	if err != nil || len(st.inboxCategories) != 0 {
+		t.Fatalf("por defecto sin pestanas: %v %v", st.inboxCategories, err)
+	}
+	t.Setenv("WEBMAIL_INBOX_CATEGORIES", "primary,notifications")
+	st, err = loadSettings()
+	if err != nil || len(st.inboxCategories) != 2 {
+		t.Fatalf("configuradas: %v %v", st.inboxCategories, err)
+	}
+	t.Setenv("WEBMAIL_INBOX_CATEGORIES", "inventada")
+	if _, err := loadSettings(); !errorMentions("WEBMAIL_INBOX_CATEGORIES")(err) {
+		t.Fatalf("una pestana desconocida impide arrancar: %v", err)
 	}
 }

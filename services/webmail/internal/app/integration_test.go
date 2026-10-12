@@ -371,6 +371,7 @@ func newIntegration(t *testing.T) *integration {
 		MFAChallenges: noSecurity{}, Security: noSecurity{}, TOTP: noSecurity{},
 		Config: app.Config{
 			CellCode:         "pe-01",
+			InboxCategories:  domain.Categories,
 			Sessions:         domain.SessionPolicy{Idle: 30 * time.Minute, Max: 12 * time.Hour},
 			Limits:           domain.Limits{MaxRecipients: 10, MaxMessageBytes: 1 << 20},
 			MaxBodyPartBytes: 64 << 10, MaxAttachmentBytes: 1 << 20,

@@ -364,6 +364,7 @@ func testDeps(store ports.SessionStore, mb *stubMailbox, sender ports.Sender, va
 			MaxBodyPartBytes: 1024, MaxAttachmentBytes: 1024,
 			SendTimeout: 5 * time.Second, MaxScheduledDays: 30, ScheduledPollInterval: time.Minute, ScheduledBatch: 5,
 			MaxImportBytes:  512,
+			InboxCategories: domain.Categories,
 			MaxReminderDays: 30, ReminderPollInterval: time.Minute, ReminderBatch: 5,
 			MFAChallengeTTL: 5 * time.Minute, MFAMaxAttempts: 5, MFASetupTTL: 10 * time.Minute,
 		},

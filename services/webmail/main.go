@@ -17,6 +17,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -212,6 +213,7 @@ type settings struct {
 	scheduledBatch     int
 	composeConcurrency int
 	scheduledMaxDays   int
+	inboxCategories    []domain.Category
 	remindersPoll      time.Duration
 	remindersBatch     int
 	remindersMaxDays   int
@@ -375,7 +377,7 @@ func main() {
 		Config: app.Config{
 			CellCode: st.cellCode, Sessions: st.sessions, Limits: st.limits,
 			MaxBodyPartBytes: st.maxBodyPartBytes, MaxAttachmentBytes: st.maxAttachmentBytes,
-			SendTimeout: transferTimeout, MaxScheduledDays: st.scheduledMaxDays,
+			SendTimeout: transferTimeout, MaxScheduledDays: st.scheduledMaxDays, InboxCategories: st.inboxCategories,
 			ScheduledPollInterval: st.scheduledPoll, ScheduledBatch: st.scheduledBatch,
 			MaxImportBytes:  st.maxImportBytes,
 			MaxReminderDays: st.remindersMaxDays, ReminderPollInterval: st.remindersPoll, ReminderBatch: st.remindersBatch,
@@ -593,6 +595,9 @@ func loadSettings() (settings, error) {
 	if st.scheduledMaxDays, err = config.EnvInt("WEBMAIL_SCHEDULED_MAX_DAYS", defaultScheduledMaxDays, 1, maxScheduledMaxDays); err != nil {
 		return st, err
 	}
+	if st.inboxCategories, err = parseInboxCategories(os.Getenv("WEBMAIL_INBOX_CATEGORIES")); err != nil {
+		return st, fmt.Errorf("WEBMAIL_INBOX_CATEGORIES: %w", err)
+	}
 	if st.remindersPoll, err = config.EnvDuration("WEBMAIL_REMINDERS_POLL_INTERVAL", defaultRemindersPollInterval, minRemindersPollInterval, maxRemindersPollInterval); err != nil {
 		return st, err
 	}
@@ -723,4 +728,26 @@ func envBool(key string, fallback bool) (bool, error) {
 		return false, fmt.Errorf("%s debe ser true o false", key)
 	}
 	return b, nil
+}
+
+// parseInboxCategories lee las pestanas de la bandeja inteligente: nombres de domain.Categories
+// separados por comas, en el orden en que se muestran. Vacio es sin pestanas, que es lo habitual:
+// toda la bandeja llega a Principal. Un nombre desconocido o repetido impide arrancar.
+func parseInboxCategories(raw string) ([]domain.Category, error) {
+	var out []domain.Category
+	for _, name := range strings.Split(raw, ",") {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		c, err := domain.ParseCategory(name)
+		if err != nil {
+			return nil, err
+		}
+		if slices.Contains(out, c) {
+			return nil, fmt.Errorf("la pestana %q esta repetida", name)
+		}
+		out = append(out, c)
+	}
+	return out, nil
 }

@@ -125,7 +125,8 @@ func (s *Service) primarySenderResult(msg string, sess domain.Session, err error
 // primarySendersFor son los remitentes fijados que clasifican la bandeja de entrada. Si el directorio
 // no responde se lista igual, sin ellos: la bandeja no depende de un ajuste de comodidad.
 func (s *Service) primarySendersFor(ctx context.Context, sess domain.Session, folder string) []string {
-	if !strings.EqualFold(folder, inboxFolder) {
+	// Sin pestanas no hay nada que fijar: no se consulta al directorio.
+	if len(s.cfg.InboxCategories) == 0 || !strings.EqualFold(folder, inboxFolder) {
 		return nil
 	}
 	list, err := s.cachedPrimarySenders(ctx, sess.Username)

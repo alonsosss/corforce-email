@@ -50,7 +50,7 @@ func (s *Service) Meta() Meta {
 		MaxReminderDays:    s.cfg.MaxReminderDays,
 		MaxImportBytes:     s.cfg.MaxImportBytes,
 		MaxThreadMessages:  domain.MaxThreadMessages,
-		InboxCategories:    append([]domain.Category(nil), domain.Categories...),
+		InboxCategories:    append([]domain.Category(nil), s.cfg.InboxCategories...),
 		DefaultPageSize:    domain.DefaultPerPage,
 		MaxPageSize:        domain.MaxPerPage,
 		FolderRoles:        append([]domain.FolderRole(nil), domain.SpecialRoles...),

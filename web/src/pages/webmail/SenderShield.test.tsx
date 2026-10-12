@@ -8,7 +8,7 @@ import { ToastProvider } from '@/design/components';
 import { t } from '@/i18n';
 import { resetWebmailCatalogs } from '@/webmail/catalogs';
 import { SenderShield, type SenderShieldProps } from './SenderShield';
-import { INBOX } from './testing';
+import { INBOX, META } from './testing';
 
 const SENDER = { name: 'Carlos Ruiz', email: 'carlos@gratis.test' };
 
@@ -51,6 +51,7 @@ describe('escudo antifraude en la lectura', () => {
   beforeEach(() => {
     resetWebmailCatalogs();
     vi.spyOn(webmailApi, 'davMeta').mockResolvedValue({ limits: {} });
+    vi.spyOn(webmailApi, 'meta').mockResolvedValue(META);
     vi.spyOn(webmailApi, 'primarySenders').mockResolvedValue([]);
     vi.spyOn(webmailApi, 'contacts').mockResolvedValue({
       items: [],
@@ -255,5 +256,18 @@ describe('escudo antifraude en la lectura', () => {
     expect(
       await screen.findByRole('button', { name: t('webmail.primarySender.unpin') }),
     ).toBeInTheDocument();
+  });
+
+  it('sin pestanas en la bandeja no ofrece fijar remitentes ni los consulta', async () => {
+    vi.spyOn(webmailApi, 'meta').mockResolvedValue({ ...META, inbox_categories: [] });
+    vi.spyOn(webmailApi, 'senderInsight').mockResolvedValue(insight({ category: 'notifications' }));
+    const read = vi.spyOn(webmailApi, 'primarySenders');
+    renderShield();
+    expect(
+      await screen.findByRole('button', { name: t('webmail.sender.open') }),
+    ).toBeInTheDocument();
+    await waitFor(() => expect(webmailApi.meta).toHaveBeenCalled());
+    expect(screen.queryByRole('button', { name: t('webmail.primarySender.pin') })).toBeNull();
+    expect(read).not.toHaveBeenCalled();
   });
 });

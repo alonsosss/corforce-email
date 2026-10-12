@@ -26,6 +26,9 @@ type Config struct {
 	SendTimeout time.Duration
 	// MaxScheduledDays es lo mas lejos que se puede programar un envio.
 	MaxScheduledDays int
+	// InboxCategories son las pestanas de la bandeja inteligente que ofrece la bandeja de entrada, en
+	// su orden. Vacio, la bandeja es una sola lista: nada se clasifica a un lado.
+	InboxCategories []domain.Category
 	// ScheduledPollInterval y ScheduledBatch rigen el trabajador de envios programados: cada
 	// cuanto reclama filas vencidas y cuantas a la vez.
 	ScheduledPollInterval time.Duration

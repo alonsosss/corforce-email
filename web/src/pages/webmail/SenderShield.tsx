@@ -2,6 +2,8 @@ import { useState } from 'react';
 import { errorMessage } from '@/api/messages';
 import { FOLDER_ROLES, webmailApi, type MailAddress, type WebmailFolder } from '@/api/webmail';
 import { useQuery } from '@/hooks/useQuery';
+import { useResource } from '@/hooks/useResource';
+import { webmailMeta } from '@/webmail/catalogs';
 import { Alert, Badge, Button, ConfirmDialog, useToast } from '@/design/components';
 import { IconBan, IconInbox, IconLink, IconMail, IconUser } from '@/design/icons';
 import { t } from '@/i18n';
@@ -51,7 +53,13 @@ function SenderShieldBody({
     (signal) => webmailApi.senderInsight(folderName, uid, signal),
     [folderName, uid],
   );
-  const pinnedSenders = useQuery((signal) => webmailApi.primarySenders(signal), []);
+  // Sin pestanas en la bandeja todo llega a Principal: fijar un remitente no tiene nada que hacer.
+  const metaQuery = useResource(webmailMeta);
+  const tabsEnabled = (metaQuery.data?.inbox_categories.length ?? 0) > 0;
+  const pinnedSenders = useQuery(
+    (signal) => (tabsEnabled ? webmailApi.primarySenders(signal) : Promise.resolve([])),
+    [tabsEnabled],
+  );
   const [pinning, setPinning] = useState(false);
   const data = insight.data;
   const shield = data?.shield;
@@ -65,7 +73,10 @@ function SenderShieldBody({
   // Un remitente que ya cae en Principal por sus reglas no necesita fijarse; uno ya fijado si puede
   // quitarse.
   const canPin =
-    sender !== undefined && pinnedSenders.data !== null && (pinned || data?.category !== 'primary');
+    tabsEnabled &&
+    sender !== undefined &&
+    pinnedSenders.data !== null &&
+    (pinned || data?.category !== 'primary');
 
   const togglePin = async () => {
     setPinning(true);
