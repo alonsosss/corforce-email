@@ -5,10 +5,11 @@ RUN apk upgrade --no-cache
 LABEL maintainer = "Core Force Mail"
 
 # install unbound from alpine:edge to get security patches
-# minimum version is pinned; the CDN index fetch is retried because a transient TLS failure
-# makes apk fall back to the stable index, which cannot satisfy the pin
-RUN for intento in 1 2 3 4; do \
-		apk add --no-cache --repository=https://dl-cdn.alpinelinux.org/alpine/edge/main "unbound>=1.26.1-r0" && exit 0; \
+# minimum version is pinned; a failed index fetch makes apk fall back to the stable index, which
+# cannot satisfy the pin, so the install alternates between two mirrors of the same signed index
+RUN for intento in 1 2 3 4 5 6; do \
+		case $((intento % 2)) in 0) espejo=https://uk.alpinelinux.org;; *) espejo=https://dl-cdn.alpinelinux.org;; esac; \
+		apk add --no-cache --repository="$espejo/alpine/edge/main" "unbound>=1.26.1-r0" && exit 0; \
 		sleep $((intento * 10)); \
 	done; exit 1
 

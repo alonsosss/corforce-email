@@ -166,6 +166,11 @@ if ! bash "$ROOT/ops/scaffold/check-subscription-drain.sh"; then
   FAIL=1
 fi
 
+echo "== 27. Imagen de unbound: reintenta la instalacion desde edge ante un fallo de red =="
+if ! bash "$ROOT/ops/scaffold/check-unbound-install-retry.sh"; then
+  FAIL=1
+fi
+
 echo ""
 if [[ $FAIL -ne 0 ]]; then
   echo "VALIDACION: FALLA"; exit 1
