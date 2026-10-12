@@ -30,6 +30,7 @@ solo se enlaza. Las entradas más recientes van arriba.
 
 | Fecha | Incidente | Impacto | Guardarrail |
 |---|---|---|---|
+| 2026-10-12 | [La CI quedó en rojo por 11 vulnerabilidades alcanzables de Go publicadas ese día](#2026-10-12--la-ci-quedó-en-rojo-por-11-vulnerabilidades-alcanzables-de-go-publicadas-ese-día) | CI en rojo unas 3 horas; despliegue retenido | `govulncheck` en la CI y Go atado a `go.mod` |
 | 2026-10-12 | [`make e2e-mail` falló al construir unbound por un error TLS puntual del CDN de Alpine](#2026-10-12--make-e2e-mail-falló-al-construir-unbound-por-un-error-tls-puntual-del-cdn-de-alpine) | Ejecución nocturna en rojo y despliegue de motores retenido (#25) | `check-unbound-install-retry.sh` |
 | 2026-10-05 | [Escribir una respuesta podía archivar el mensaje abierto](#2026-10-05--escribir-una-respuesta-podía-archivar-el-mensaje-abierto) | Mensajes archivados sin querer al responder en el webmail | `shortcuts.test.tsx` |
 | 2026-10-04 | [La CI de integración no compilaba tras un puerto nuevo](#2026-10-04--la-ci-de-integración-no-compilaba-tras-un-puerto-nuevo) | main en rojo unos 30 min; despliegue retenido | `go vet -tags integration` en `make checks` |
@@ -58,6 +59,19 @@ solo se enlaza. Las entradas más recientes van arriba.
 | Que no se repita | `WebmailApp.test.tsx` (tras el cierre no se arrastra la dirección, sin sesión sí) y las pruebas del store; probado que la prueba falla sin el arreglo |
 | Detalle | `web/src/pages/webmail/WebmailApp.tsx`, `web/src/webmail/store.ts` |
 | Desplegado | Pendiente de despliegue de la web |
+
+### 2026-10-12 · La CI quedó en rojo por 11 vulnerabilidades alcanzables de Go publicadas ese día
+
+| | |
+|---|---|
+| Detectado | CI de `9d251ff` en adelante, paso «Vulnerabilidades alcanzables (Go)» (`govulncheck`), al ir a desplegar el port de mailcow |
+| Síntoma | 11 avisos (GO-2026-6599 a 6617): `net/http`, `net/textproto`, `crypto/tls` y `html/template` de Go 1.26.8, y `golang.org/x/net` v0.58.0, con trazas alcanzables desde los servicios |
+| Impacto | CI en rojo unas 3 horas; ningún despliegue salió con ello. En producción corrían binarios con la biblioteca estándar vulnerable hasta el despliegue de `828eb32` |
+| Causa raíz | Aviso nuevo del día, no un cambio nuestro: Go publicó 1.26.9 y `x/net` v0.60.0 con los arreglos. La CI pedía `go-version: '1.26'` y el ejecutor usa la copia en caché (1.26.8), así que ni siquiera un `go.mod` al día evitaba compilar con la anterior |
+| Solución | `go 1.26.9` en `go.mod`, `golang.org/x/net` v0.60.0 y `go-version-file: go.mod` en los flujos (`828eb32`); toda la plataforma reconstruida y desplegada |
+| Que no se repita | Atar el compilador a `go.mod` hace que una imagen o un ejecutor atrasados fallen al construir en lugar de compilar con la biblioteca vulnerable; `govulncheck` en la CI sigue avisando de los nuevos |
+| Detalle | `x/crypto` v0.57.0 tiene un aviso sin versión corregida, no alcanzado por nuestro código; revisar cuando haya arreglo |
+| Desplegado | 2026-10-12, `828eb32` (plataforma completa y motores unbound, postfix-tlspol, postfix y rspamd) |
 
 ### 2026-10-12 · `make e2e-mail` falló al construir unbound por un error TLS puntual del CDN de Alpine
 
