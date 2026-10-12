@@ -46,6 +46,19 @@ solo se enlaza. Las entradas más recientes van arriba.
 
 ## Incidentes
 
+### 2026-10-12 · Al cambiar de buzón, el webmail intentaba abrir un mensaje que no existía
+
+| | |
+|---|---|
+| Detectado | El usuario, al entrar con otro buzón tras cerrar la sesión de `ann@thorre360.com` (log del webmail: `GET .../INBOX/messages/2` 200 y, tras el cierre y la entrada nueva, 404 en el mismo segundo) |
+| Síntoma | Pantalla "No se pudo cargar la información: el mensaje ya no existe" nada más entrar, sin haber abierto nada |
+| Impacto | Aviso rojo engañoso al cambiar de buzón en el mismo navegador; ningún correo se perdió |
+| Causa raíz | `RequireWebmailSession` redirigía al acceso con `from = pathname + search`, y el `search` lleva `folder` y `uid` del mensaje abierto. Tras entrar, `returnPath` volvía a esa dirección aunque el buzón fuera otro |
+| Solución | `closedByUser` en el estado del webmail: el cierre voluntario no recuerda la pantalla; la sesión caducada y los enlaces directos siguen volviendo a donde estaban (`7b22c1e`) |
+| Que no se repita | `WebmailApp.test.tsx` (tras el cierre no se arrastra la dirección, sin sesión sí) y las pruebas del store; probado que la prueba falla sin el arreglo |
+| Detalle | `web/src/pages/webmail/WebmailApp.tsx`, `web/src/webmail/store.ts` |
+| Desplegado | Pendiente de despliegue de la web |
+
 ### 2026-10-12 · `make e2e-mail` falló al construir unbound por un error TLS puntual del CDN de Alpine
 
 | | |
