@@ -154,6 +154,10 @@ const (
 	// unsubscribeTimeout acota de principio a fin la baja en un clic contra el servidor del boletin.
 	unsubscribeTimeout = 10 * time.Second
 
+	// primarySendersCacheTTL es lo que se recuerda de los remitentes fijados en Principal: cada
+	// listado de INBOX los necesita y mail-directory limita las llamadas del webmail por minuto.
+	primarySendersCacheTTL = 30 * time.Second
+
 	// Proxy de imagenes remotas (docs/Plan_Webmail_Seguridad.md, seccion 6). El enlace firmado vale
 	// WEBMAIL_IMAGE_PROXY_TTL; cada descarga tiene un plazo total y un tope de bytes, y el proceso
 	// retiene a la vez como mucho WEBMAIL_IMAGE_PROXY_CONCURRENCY imagenes de ese tope (8 de 5 MiB son
@@ -387,7 +391,7 @@ func main() {
 		Unsubscriber:   unsubscribe.New(unsubscribeTimeout),
 		Reminders:      directory,
 		QuickReplies:   directory,
-		PrimarySenders: directory,
+		PrimarySenders: maildirectorycli.NewCachedPrimarySenders(directory, primarySendersCacheTTL),
 
 		MFAChallenges: redisadapter.NewMFAStore(rdb, st.cellCode),
 		Security:      directory,
