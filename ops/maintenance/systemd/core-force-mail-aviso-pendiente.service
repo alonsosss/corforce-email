@@ -1,0 +1,12 @@
+[Unit]
+Description=Aviso de cambios de main pendientes de desplegar en Core Force Mail
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Unidad de usuario: usa la clave SSH y la sesion de gh de quien despliega. Ajustar WorkingDirectory
+# al clon del repositorio al instalarla (ops/maintenance/systemd/README.md).
+WorkingDirectory=%h/Escritorio/correo Email
+ExecStart="%h/Escritorio/correo Email/scripts/aviso-pendiente.sh"
+TimeoutStartSec=30min

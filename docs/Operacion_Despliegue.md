@@ -1758,8 +1758,18 @@ identity...; `despliegue_cubiertos_por` en `scripts/lib/despliegue.sh`). Mismo i
 | Cada noche (04:17 UTC) | `mail-engines.yml`: `make e2e-mail` con los motores reales | una incidencia `e2e-motores`, asignada, mientras falle |
 | Lunes | `upstream-mailcow.yml`: cambios de mailcow por portar | una incidencia `upstream-mailcow`, asignada |
 | Lunes | Dependabot: Go, web y acciones | como mucho un PR por familia |
+| Lunes | `mantenimiento-go.yml`: parche nuevo de Go en la rama de `go.mod` | un PR con `go` y `golang.org/x/*` subidos y el CI lanzado sobre su rama; sin acceso para abrir PR, una incidencia `mantenimiento-go` |
+| Lunes (esta maquina) | `scripts/aviso-pendiente.sh` por un temporizador de usuario (`ops/maintenance/systemd`) | una incidencia `pendiente-despliegue`, asignada, mientras `main` tenga algo que produccion no; se cierra sola |
 | Día 1 del mes | `imagenes-motores.yml`: Trivy sobre las 11 imágenes | una incidencia `imagenes-motores`, asignada y con su plazo |
 | Cada semana, en el servidor | `ops/backup/verify-restore.sh` restaura el último volcado | alerta si no sirve |
+
+### Lo que no se automatiza: desplegar
+
+El aviso no despliega. `main` recibe commits de varias sesiones y un despliegue desatendido llevaria a
+produccion trabajo a medias (el 2026-09-23 una web salio sin su backend ni su migracion). Desplegar
+exige elegir el commit verificado, leer el plan y las migraciones por capa, y tener la clave del
+servidor, que no esta en GitHub. Desde el aviso, el paso es `scripts/deploy-ecr.sh` y
+`scripts/deploy-mail.sh` desde un worktree en el commit con la CI en verde.
 
 ### Ritmo
 

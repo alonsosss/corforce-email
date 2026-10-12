@@ -1,0 +1,10 @@
+[Unit]
+Description=Cada lunes: avisar de lo que main tiene y produccion no
+
+[Timer]
+# Lunes 08:00 en hora de Lima (UTC-5). Persistent recupera el aviso si la maquina estaba apagada.
+OnCalendar=Mon *-*-* 13:00:00 UTC
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,92 @@
+name: Parches de Go
+
+# Cada lunes comprueba si hay un parche nuevo de Go para la version menor que fija go.mod y, si lo hay,
+# abre un PR que sube la directiva `go` y los modulos golang.org/x/*. Los parches de seguridad de la
+# biblioteca estandar salen asi y los avisos de govulncheck del CI (incidente 2026-10-12) llegan con el
+# arreglo ya preparado. No fusiona ni despliega: eso lo decide una persona con la CI en verde.
+on:
+  schedule:
+    - cron: '0 11 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  actions: write
+
+concurrency:
+  group: mantenimiento-go
+  cancel-in-progress: false
+
+jobs:
+  parche:
+    name: Subir Go y golang.org/x/*
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      RESPONSABLE: ${{ vars.MANTENIMIENTO_RESPONSABLE || github.repository_owner }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Version menor de go.mod
+        id: menor
+        run: |
+          actual="$(sed -n 's/^go //p' go.mod | head -1)"
+          echo "actual=$actual" >> "$GITHUB_OUTPUT"
+          echo "menor=${actual%.*}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ steps.menor.outputs.menor }}
+          check-latest: true
+
+      - name: Parche nuevo
+        id: parche
+        run: |
+          nuevo="$(go env GOVERSION | sed 's/^go//')"
+          actual='${{ steps.menor.outputs.actual }}'
+          if [ "$(printf '%s\n%s\n' "$actual" "$nuevo" | sort -V | tail -1)" = "$actual" ]; then
+            echo "go.mod ya pide $actual, que es el ultimo de su rama."
+            echo "hay=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "hay=true" >> "$GITHUB_OUTPUT"
+            echo "nuevo=$nuevo" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: PR con la subida
+        if: steps.parche.outputs.hay == 'true'
+        env:
+          NUEVO: ${{ steps.parche.outputs.nuevo }}
+          ACTUAL: ${{ steps.menor.outputs.actual }}
+        run: |
+          set -euo pipefail
+          rama="mantenimiento/go-$NUEVO"
+          if git ls-remote --exit-code --heads origin "$rama" >/dev/null 2>&1; then
+            echo "Ya existe $rama: no se abre otro."; exit 0
+          fi
+          go mod edit -go="$NUEVO"
+          modulos="$(go list -m -f '{{if not .Indirect}}{{.Path}}{{end}}' all | grep '^golang.org/x/' || true)"
+          for m in $modulos; do go get "$m@latest"; done
+          go mod tidy
+          go build ./...
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$rama"
+          git commit -am "Go $NUEVO y golang.org/x/*: parche de la rama $(echo "$NUEVO" | cut -d. -f1,2)"
+          git push origin "$rama"
+          cuerpo="Sube \`go\` de $ACTUAL a $NUEVO y los modulos \`golang.org/x/*\` directos a su ultima version. Lo abre mantenimiento-go.yml; revisar el CI y fusionar, y desplegar con scripts/deploy-ecr.sh."
+          gh label create dependencias --color 0366d6 2>/dev/null || true
+          if numero="$(gh pr create --base main --head "$rama" --title "Go $NUEVO y golang.org/x/*" --body "$cuerpo" --label dependencias | sed 's|.*/||')"; then
+            gh pr edit "$numero" --add-assignee "$RESPONSABLE" ||
+              echo "::warning::no se pudo asignar el PR $numero a $RESPONSABLE (define MANTENIMIENTO_RESPONSABLE)"
+            gh workflow run ci.yml --ref "$rama"
+          else
+            # Con "Allow GitHub Actions to create pull requests" apagado el PR no se puede abrir: queda la
+            # rama y una incidencia que dice como seguir.
+            gh label create mantenimiento-go --color 5319e7 2>/dev/null || true
+            gh issue create --title "Go $NUEVO disponible: rama $rama lista" --label mantenimiento-go \
+              --assignee "$RESPONSABLE" --body "$cuerpo Abrir el PR de la rama \`$rama\` a mano."
+            gh workflow run ci.yml --ref "$rama"
+          fi
