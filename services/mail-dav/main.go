@@ -11,7 +11,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"math"
 	"net/http"
 	"os"
 	"strconv"
@@ -460,7 +459,7 @@ func router(dav, api http.Handler, st settings, logger *zap.Logger) http.Handler
 	apiChain := chain(api,
 		middleware.InjectFromGateway,
 		middleware.RequireInternalCaller,
-		limitPerMailbox(middleware.NewRateLimiter(st.ratePerMin, time.Minute)),
+		middleware.NewRateLimiter(st.ratePerMin, time.Minute).LimitByKey(mailboxKey, "demasiadas peticiones del buzon"),
 		limitInflight(slots, func(w http.ResponseWriter) {
 			response.Err(w, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", "servicio ocupado")
 		}),
@@ -501,25 +500,16 @@ func limitInflight(slots chan struct{}, busy func(http.ResponseWriter)) func(htt
 	}
 }
 
-// limitPerMailbox es el cupo de la API interna por buzon (la cabecera que lo nombra): una cabecera que no es
-// un UUID cuenta en un cupo comun y la rechaza despues el manejador.
-func limitPerMailbox(rl *middleware.RateLimiter) func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			key := "mailbox:invalid"
-			if id, err := uuid.Parse(strings.TrimSpace(r.Header.Get(handler.MailboxHeader))); err == nil {
-				key = "mailbox:" + id.String()
-			} else if tenant, ok := publicBookingTenant(r.URL.Path); ok {
-				key = "booking:" + tenant
-			}
-			if ok, reset := rl.AllowKey(r.Context(), key); !ok {
-				w.Header().Set("Retry-After", strconv.Itoa(max(1, int(math.Ceil(reset.Seconds())))))
-				response.Err(w, http.StatusTooManyRequests, "RATE_LIMITED", "demasiadas peticiones del buzon")
-				return
-			}
-			next.ServeHTTP(w, r)
-		})
+// mailboxKey es la clave del cupo de la API interna: el buzon que nombra la cabecera, o la empresa en la
+// pagina publica de citas; una cabecera que no es un UUID cuenta en un cupo comun.
+func mailboxKey(r *http.Request) string {
+	if id, err := uuid.Parse(strings.TrimSpace(r.Header.Get(handler.MailboxHeader))); err == nil {
+		return "mailbox:" + id.String()
 	}
+	if tenant, ok := publicBookingTenant(r.URL.Path); ok {
+		return "booking:" + tenant
+	}
+	return "mailbox:invalid"
 }
 
 // publicBookingTenant es la empresa de una ruta de la pagina publica de citas, que no lleva buzon: su cupo es por

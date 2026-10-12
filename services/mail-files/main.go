@@ -12,10 +12,8 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"math"
 	"net/http"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
@@ -284,7 +282,7 @@ func router(h *handler.Handler, st settings, logger *zap.Logger) http.Handler {
 	internal := chain(h.InternalRoutes(),
 		middleware.InjectFromGateway,
 		middleware.RequireInternalCaller,
-		limitPerMailbox(middleware.NewRateLimiter(st.internalPerMin, time.Minute)),
+		middleware.NewRateLimiter(st.internalPerMin, time.Minute).LimitByKey(mailboxKey, "demasiadas peticiones del buzon"),
 	)
 	public := chain(h.PublicRoutes(), middleware.NewRateLimiter(st.publicPerMin, time.Minute).Limit)
 	split := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -307,23 +305,13 @@ func chain(h http.Handler, mws ...func(http.Handler) http.Handler) http.Handler 
 	return h
 }
 
-// limitPerMailbox es el cupo de la API interna por buzon; una cabecera que no es un UUID cuenta en un
+// mailboxKey es la clave del cupo de la API interna: el buzon; una cabecera que no es un UUID cuenta en un
 // cupo comun y la rechaza despues el manejador.
-func limitPerMailbox(rl *middleware.RateLimiter) func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			key := "mailbox:invalid"
-			if id, err := uuid.Parse(strings.TrimSpace(r.Header.Get(handler.MailboxHeader))); err == nil {
-				key = "mailbox:" + id.String()
-			}
-			if ok, reset := rl.AllowKey(r.Context(), key); !ok {
-				w.Header().Set("Retry-After", strconv.Itoa(max(1, int(math.Ceil(reset.Seconds())))))
-				response.Err(w, http.StatusTooManyRequests, "RATE_LIMITED", "demasiadas peticiones del buzon")
-				return
-			}
-			next.ServeHTTP(w, r)
-		})
+func mailboxKey(r *http.Request) string {
+	if id, err := uuid.Parse(strings.TrimSpace(r.Header.Get(handler.MailboxHeader))); err == nil {
+		return "mailbox:" + id.String()
 	}
+	return "mailbox:invalid"
 }
 
 func envString(key, fallback string) string {

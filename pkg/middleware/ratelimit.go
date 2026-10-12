@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/alonsosss/corforce-email/pkg/response"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 )
@@ -182,6 +183,24 @@ func (rl *RateLimiter) middleware(next http.Handler, identity func(*http.Request
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// LimitByKey cuenta cada peticion contra la clave que devuelve key. Es el cupo de una API interna:
+// todo llega desde las pocas IP de los servicios que la llaman, asi que la identidad util es el
+// buzon, la empresa o la ruta, no el origen. La clave no puede salir sin acotar de la peticion:
+// quien la calcula decide un conjunto finito (un buzon valido, o un cupo comun para lo invalido).
+// Responde 429 con el sobre de error de la plataforma y Retry-After.
+func (rl *RateLimiter) LimitByKey(key func(*http.Request) string, message string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if ok, reset := rl.AllowKey(r.Context(), key(r)); !ok {
+				w.Header().Set("Retry-After", retryAfterSeconds(reset))
+				response.Err(w, http.StatusTooManyRequests, "RATE_LIMITED", message)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
 }
 
 // AllowIP cuenta una operacion de la IP y dice si cabe en el cupo, con cuanto falta para que

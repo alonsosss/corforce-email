@@ -812,7 +812,7 @@ func (h *harness) deps() Deps {
 			MaxAttachmentBytes:    1 << 20,
 			SendTimeout:           time.Minute,
 			MaxScheduledDays:      30,
-			InboxCategories:      domain.Categories,
+			InboxCategories:       domain.Categories,
 			ScheduledPollInterval: time.Second,
 			ScheduledBatch:        5,
 			MaxImportBytes:        1 << 10,

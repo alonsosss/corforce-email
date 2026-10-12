@@ -1,14 +1,11 @@
 package main
 
 import (
-	"math"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/alonsosss/corforce-email/pkg/middleware"
-	"github.com/alonsosss/corforce-email/pkg/response"
 )
 
 const (
@@ -31,24 +28,27 @@ func rateLimited() func(http.Handler) http.Handler {
 	route := middleware.NewRateLimiter(routeRatePerMinute, time.Minute)
 	return func(next http.Handler) http.Handler {
 		perSession := session.LimitPerUser(next)
+		perMailbox := mailbox.LimitByKey(internalMailboxKey, "demasiadas peticiones del buzon")(next)
+		perRoute := route.LimitByKey(internalRouteKey, "demasiadas peticiones")(next)
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if !strings.HasPrefix(r.URL.Path, internalPrefix) {
+			switch {
+			case !strings.HasPrefix(r.URL.Path, internalPrefix):
 				perSession.ServeHTTP(w, r)
-				return
+			case internalMailbox(r) != "":
+				perMailbox.ServeHTTP(w, r)
+			default:
+				perRoute.ServeHTTP(w, r)
 			}
-			rl, key := route, internalRouteKey(r)
-			if username := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("username"))); username != "" {
-				rl, key = mailbox, "mailbox:"+username
-			}
-			if ok, reset := rl.AllowKey(r.Context(), key); !ok {
-				w.Header().Set("Retry-After", strconv.Itoa(max(1, int(math.Ceil(reset.Seconds())))))
-				response.Err(w, http.StatusTooManyRequests, "RATE_LIMITED", "demasiadas peticiones")
-				return
-			}
-			next.ServeHTTP(w, r)
 		})
 	}
 }
+
+// internalMailbox es el buzon que nombra la llamada interna, en minusculas, o vacio si no nombra ninguno.
+func internalMailbox(r *http.Request) string {
+	return strings.ToLower(strings.TrimSpace(r.URL.Query().Get("username")))
+}
+
+func internalMailboxKey(r *http.Request) string { return "mailbox:" + internalMailbox(r) }
 
 // internalRouteKey agrupa por metodo y recurso (sin identificadores), para que el conjunto de
 // claves sea finito.
